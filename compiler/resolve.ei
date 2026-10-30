@@ -1,0 +1,459 @@
+// resolve: the module graph and name keys.
+//
+// Loading mirrors the bootstrap (eider-bootstrap src/main.rs load_module): imports are read
+// relative to the importing file, depth first in source order; a module already loaded (by
+// canonical path) is merged once; two different files with the same stem clash (E0808).
+// Items come out in the bootstrap's order: each module's imports before its own items, so
+// the entry file is last (`Program.order`).
+//
+// Names. The bootstrap gives every top-level name of an imported module the prefix of its
+// file stem (`geo__Point`) and rewrites references inside that module to match, unless a
+// local of the same function shadows them (src/ns.rs). The checker then sees one flat
+// table. We keep that table but key it by integers: a name key is (prefix, symbol) packed in
+// a u64, prefix 0 for the entry file, the prelude, `extern` fns and `main`, and stem symbol
+// + 1 for an imported module. `alias.Name` (kept structurally by the parser) becomes the key
+// of the alias's module. The `*_key` functions below reproduce ns.rs's rewriting rules, so
+// lookups hit exactly what the bootstrap's mangled strings would hit.
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+import "deps/std/fs.ei"
+import "intern.ei"
+import "lex.ei"
+import "ast.ei"
+import "parse.ei"
+import "diag.ei"
+
+/// "no module": the prelude, or an error that belongs to no file.
+pub const NOMOD: u32 = 4294967295
+
+/// An import of a module: `alias` refers to the module with prefix `pre` from (line, col) on.
+pub type Alias = { sym: u32, pre: u32, line: u32, col: u32 }
+
+/// One source file. `path` is the bootstrap's name for it (the importer's directory joined
+/// with the import path); `pre` is 0 for the entry file, else the stem symbol + 1.
+pub type Module = {
+    path: List[u8],
+    pre: u32,
+    src: List[u8],
+    ast: ast.Ast,
+    toks: List[lex.Tok],
+    strs: List[List[u8]],
+    aliases: List[Alias],
+    own: Map[u32, bool],
+}
+
+pub type Program = {
+    mods: List[Module],
+    /// module indices in item order (imports before importers; the entry file, 0, last)
+    order: List[u32],
+    names: intern.Interner,
+    /// canonical paths of loaded files, and (prefix symbol, canonical path) of every import seen
+    seen: List[List[u8]],
+    pre_syms: List[u32],
+    pre_paths: List[List[u8]],
+}
+
+// ---- keys
+
+pub fn key(pre: u32, sym: u32) -> u64 { (pre as u64) * 4294967296 + sym as u64 }
+pub fn key_sym(k: u64) -> u32 { (k % 4294967296) as u32 }
+pub fn key_pre(k: u64) -> u32 { (k / 4294967296) as u32 }
+
+/// The bootstrap's spelling of a key: `stem__Name` for module items (diag demangles it).
+pub fn key_text(names: intern.Interner, k: u64) -> List[u8] uses ffi {
+    let pre = key_pre(k)
+    var out: List[u8] = List.new()
+    if pre > 0 {
+        bytes.append(inout out, intern.name(names, pre - 1))
+        bytes.append(inout out, sys.lit("__"))
+    }
+    bytes.append(inout out, intern.name(names, key_sym(k)))
+    out
+}
+
+pub fn node(p: Program, m: u32, id: u32) -> ast.Node { p.mods[m as usize].ast.nodes[id as usize] }
+pub fn at(p: Program, m: u32, start: u32, i: u32) -> u32 { p.mods[m as usize].ast.extra[(start + i) as usize] }
+
+fn owns(p: Program, m: u32, sym: u32) -> bool {
+    match p.mods[m as usize].own.get(sym) {
+        Some(_) => true
+        None => false
+    }
+}
+
+/// The prefix that alias `sym` stands for at (line, col) in module m (the last import of
+/// that alias before the position, as the bootstrap's parser maps them while it reads).
+fn alias_pre(p: Program, m: u32, sym: u32, line: u32, col: u32) -> u32 {
+    var pre: u32 = 0
+    for a in p.mods[m as usize].aliases {
+        if a.sym == sym && (a.line < line || (a.line == line && a.col < col)) { pre = a.pre }
+    }
+    pre
+}
+
+/// The key of an item declared in module m (types, variants, consts and fns other than
+/// `extern` fns and `main` are prefixed).
+pub fn item_key(p: Program, m: u32, sym: u32) -> u64 { key(p.mods[m as usize].pre, sym) }
+
+/// A name used in an expression (EIdent, ECall): prefixed if it is one of the module's own
+/// items and not a local of the enclosing function (`locals`).
+pub fn expr_key(p: Program, m: u32, sym: u32, qual: u32, line: u32, col: u32, locals: Map[u32, bool]) -> u64 {
+    if qual > 0 { return key(alias_pre(p, m, qual - 1, line, col), sym) }
+    let pre = p.mods[m as usize].pre
+    if pre == 0 { return key(0, sym) }
+    let local = match locals.get(sym) {
+        Some(_) => true
+        None => false
+    }
+    if owns(p, m, sym) && !local { return key(pre, sym) }
+    key(0, sym)
+}
+
+/// A name in a type or a pattern: prefixed if it is one of the module's own items.
+pub fn name_key(p: Program, m: u32, sym: u32, qual: u32, line: u32, col: u32) -> u64 {
+    if qual > 0 { return key(alias_pre(p, m, qual - 1, line, col), sym) }
+    let pre = p.mods[m as usize].pre
+    if pre > 0 && owns(p, m, sym) { return key(pre, sym) }
+    key(0, sym)
+}
+
+// ---- loading
+
+/// A lexer failure as a diagnostic.
+pub fn lex_diag(r: lex.Lex) -> Option[diag.Diag] uses ffi {
+    match r {
+        lex.Done(_) => None
+        lex.Failed(e) => Some(diag.new("E0001", e.line, e.col, sys.lit(e.msg)))
+        lex.BadChar(line, col, ch) => {
+            var m = sys.lit("unexpected character `")
+            bytes.append(inout m, ch)
+            m.push(96)
+            Some(diag.new("E0001", line, col, m))
+        }
+    }
+}
+
+fn in_file(d: diag.Diag, path: List[u8]) -> diag.Diag {
+    var d2 = d
+    if d2.file.len() == 0 { d2.file = path }
+    d2
+}
+
+/// Rust's Path::parent for our purposes: everything before the last `/` ("" for none).
+fn dir_of(path: List[u8]) -> List[u8] {
+    match bytes.rfind_byte(path, 47) {
+        Some(0) => bytes.slice(path, 0, 1)
+        Some(i) => bytes.slice(path, 0, i)
+        None => List.new()
+    }
+}
+
+/// Rust's Path::join: an absolute `rel` replaces `dir`.
+fn join(dir: List[u8], rel: List[u8]) -> List[u8] {
+    if dir.len() == 0 || (rel.len() > 0 && rel[0] == 47) { return rel }
+    var out = dir
+    if out[out.len() - 1] != 47 { out.push(47) }
+    bytes.append(inout out, rel)
+    out
+}
+
+/// Whether the last path component has an extension (a `.` after its first byte).
+fn has_ext(path: List[u8]) -> bool {
+    let start: usize = match bytes.rfind_byte(path, 47) {
+        Some(i) => i + 1
+        None => 0
+    }
+    var i = start + 1
+    while i < path.len() {
+        if path[i] == 46 { return true }
+        i += 1
+    }
+    false
+}
+
+/// The module prefix of an import path: its file stem with non-identifier bytes as `_`.
+fn stem(path: List[u8]) -> List[u8] {
+    let base = match bytes.rfind_byte(path, 47) {
+        Some(i) => bytes.slice(path, i + 1, path.len())
+        None => path
+    }
+    let s = match bytes.rfind_byte(base, 46) {
+        Some(0) => base
+        Some(i) => bytes.slice(base, 0, i)
+        None => base
+    }
+    var out: List[u8] = List.new()
+    for c in s {
+        if bytes.is_ident(c) { out.push(c) } else { out.push(95) }
+    }
+    out
+}
+
+/// std::fs::canonicalize, approximately: absolute and normalized; the path itself when the
+/// file doesn't exist (as the bootstrap's `unwrap_or`).
+fn canonical(path: List[u8]) -> List[u8] uses fs, ffi {
+    if !fs.exists(path) { return path }
+    match fs.absolute(path) {
+        Ok(a) => a
+        Err(_) => path
+    }
+}
+
+fn contains(xs: List[List[u8]], x: List[u8]) -> bool {
+    for y in xs {
+        if bytes.eq(y, x) { return true }
+    }
+    false
+}
+
+/// The bootstrap's io::Error text for a file it can't read (the common cases).
+fn read_error(path: List[u8]) -> List[u8] uses fs, ffi {
+    match fs.kind(path) {
+        fs.Missing => sys.lit("No such file or directory (os error 2)")
+        fs.Dir => sys.lit("Is a directory (os error 21)")
+        _ => sys.lit("Permission denied (os error 13)")
+    }
+}
+
+fn add_module(inout p: Program, path: List[u8], pre: u32, src: List[u8], q: parse.P) -> u32 {
+    var own: Map[u32, bool] = Map.new()
+    let m = Module(path, pre, src, q.ast, q.toks, q.strs, List.new(), own)
+    p.mods.push(m)
+    (p.mods.len() - 1) as u32
+}
+
+/// Lex and parse `src` as module `path`; errors name the file.
+fn parse_file(inout p: Program, path: List[u8], src: List[u8]) -> Result[parse.P, diag.Diag] uses ffi {
+    let r = lex.lex(src, inout p.names)
+    match lex_diag(r) {
+        Some(d) => { return Err(in_file(d, path)) }
+        None => {}
+    }
+    let lx = match r {
+        lex.Done(l) => l
+        _ => { return Err(diag.new("E0001", 1, 1, sys.lit("internal: lexer state"))) }
+    }
+    match parse.parse(lx, p.names) {
+        Ok(q) => {
+            p.names = q.names
+            Ok(q)
+        }
+        Err(d) => Err(in_file(d, path))
+    }
+}
+
+/// Build the program from the parsed entry file `q` (path `file`), loading its imports.
+pub fn load(file: List[u8], src: List[u8], q: parse.P) -> Result[Program, diag.Diag] uses fs, ffi {
+    var p = Program(List.new(), List.new(), q.names, List.new(), List.new(), List.new())
+    p.seen.push(canonical(file))
+    add_module(inout p, file, 0, src, q)
+    load_imports(inout p, 0)?
+    for i in 0..p.mods.len() { compute_own(inout p, i as u32) }
+    Ok(p)
+}
+
+fn load_imports(inout p: Program, m: u32) -> Result[bool, diag.Diag] uses fs, ffi {
+    let a = p.mods[m as usize].ast
+    let dir = dir_of(p.mods[m as usize].path)
+    let file = p.mods[m as usize].path
+    for k in 0..a.items_len {
+        let n = a.nodes[ast.at(a, a.items_start, k) as usize]
+        if n.kind != ast.IImport { continue }
+        let rel = p.mods[m as usize].strs[n.a as usize]
+        var path = join(dir, rel)
+        if !has_ext(path) { bytes.append(inout path, sys.lit(".ei")) }
+        let canon = canonical(path)
+        let st = stem(rel)
+        let pre_sym = intern.intern(inout p.names, st, 0, st.len())
+        let alias = if n.b > 0 { n.b - 1 } else { pre_sym }
+        p.mods[m as usize].aliases.push(Alias(alias, pre_sym + 1, n.line, n.col))
+        var clash = false
+        var known = false
+        for j in 0..p.pre_syms.len() {
+            if p.pre_syms[j] == pre_sym {
+                known = true
+                if !bytes.eq(p.pre_paths[j], canon) {
+                    var msg = sys.lit("two different modules are both named `")
+                    bytes.append(inout msg, st)
+                    bytes.append(inout msg, sys.lit("` ("))
+                    bytes.append(inout msg, p.pre_paths[j])
+                    bytes.append(inout msg, sys.lit(" and "))
+                    bytes.append(inout msg, canon)
+                    bytes.append(inout msg, sys.lit(")"))
+                    var d = diag.new("E0808", n.line, n.col, msg)
+                    d.help = sys.lit("rename one of the files; a module's name is its file name")
+                    return Err(in_file(d, file))
+                }
+            }
+        }
+        if !known {
+            p.pre_syms.push(pre_sym)
+            p.pre_paths.push(canon)
+        }
+        if contains(p.seen, canon) { continue }
+        p.seen.push(canon)
+        let text = match fs.read(path) {
+            Ok(t) => t
+            Err(_) => {
+                var msg = sys.lit("cannot read module `")
+                bytes.append(inout msg, path)
+                bytes.append(inout msg, sys.lit("`: "))
+                bytes.append(inout msg, read_error(path))
+                return Err(in_file(diag.new("E0804", n.line, n.col, msg), file))
+            }
+        }
+        let q = parse_file(inout p, path, text)?
+        let mi = add_module(inout p, path, pre_sym + 1, text, q)
+        load_imports(inout p, mi)?
+    }
+    p.order.push(m)
+    Ok(true)
+}
+
+/// The module's own top-level names (ns.rs `own`): types, variants, consts, traits and fns
+/// other than `extern` fns and `main`.
+fn compute_own(inout p: Program, m: u32) uses ffi {
+    let a = p.mods[m as usize].ast
+    var own: Map[u32, bool] = Map.new()
+    for k in 0..a.items_len {
+        let n = a.nodes[ast.at(a, a.items_start, k) as usize]
+        match n.kind {
+            ast.IType => {
+                own.insert(n.a, true)
+                for v in 0..n.f {
+                    let vn = a.nodes[ast.at(a, n.e, v) as usize]
+                    if vn.kind == ast.Variant { own.insert(vn.a, true) }
+                }
+            }
+            ast.IFn => {
+                if !ast.has(n.b, ast.FN_EXTERN) && !is_main(p, n.a) { own.insert(n.a, true) }
+            }
+            ast.IConst => { own.insert(n.a, true) }
+            ast.ITrait => { own.insert(n.a, true) }
+            _ => {}
+        }
+    }
+    p.mods[m as usize].own = own
+}
+
+fn is_main(p: Program, sym: u32) -> bool uses ffi {
+    bytes.eq(intern.name(p.names, sym), sys.lit("main"))
+}
+
+// ---- function locals (ns.rs collect_*): every name a body binds, unscoped
+
+/// The names fn node `f` of module m binds: its parameters and every binder in its body
+/// (pattern names that are module items excluded, as in the bootstrap).
+pub fn fn_locals(p: Program, m: u32, f: ast.Node) -> Map[u32, bool] {
+    var out: Map[u32, bool] = Map.new()
+    for i in 0..f.f { out.insert(node(p, m, at(p, m, f.e, i)).a, true) }
+    if f.h > 0 { collect_block(p, m, f.h - 1, inout out) }
+    out
+}
+
+fn collect_block(p: Program, m: u32, b: u32, inout out: Map[u32, bool]) {
+    let n = node(p, m, b)
+    for i in 0..n.d { collect_stmt(p, m, at(p, m, n.c, i), inout out) }
+}
+
+fn collect_stmt(p: Program, m: u32, s: u32, inout out: Map[u32, bool]) {
+    let n = node(p, m, s)
+    match n.kind {
+        ast.SLet => {
+            out.insert(n.a, true)
+            collect_expr(p, m, n.c, inout out)
+        }
+        ast.SLetPat => {
+            collect_pat(p, m, n.a, inout out)
+            collect_expr(p, m, n.c, inout out)
+        }
+        ast.SAssign => {
+            collect_expr(p, m, n.a, inout out)
+            collect_expr(p, m, n.c, inout out)
+        }
+        ast.SExpr => collect_expr(p, m, n.a, inout out)
+        ast.SAssert => collect_expr(p, m, n.a, inout out)
+        ast.SWhile => {
+            collect_expr(p, m, n.a, inout out)
+            collect_block(p, m, n.b, inout out)
+        }
+        ast.SFor => {
+            out.insert(n.a, true)
+            collect_expr(p, m, n.b, inout out)
+            collect_expr(p, m, n.c, inout out)
+            collect_block(p, m, n.d, inout out)
+        }
+        ast.SForEach => {
+            out.insert(n.a, true)
+            collect_expr(p, m, n.b, inout out)
+            collect_block(p, m, n.d, inout out)
+        }
+        ast.SReturn => { if n.a > 0 { collect_expr(p, m, n.a - 1, inout out) } }
+        _ => {}
+    }
+}
+
+fn collect_list(p: Program, m: u32, start: u32, len: u32, inout out: Map[u32, bool]) {
+    for i in 0..len { collect_expr(p, m, at(p, m, start, i), inout out) }
+}
+
+fn collect_args(p: Program, m: u32, start: u32, len: u32, inout out: Map[u32, bool]) {
+    for i in 0..len { collect_expr(p, m, node(p, m, at(p, m, start, i)).a, inout out) }
+}
+
+fn collect_expr(p: Program, m: u32, e: u32, inout out: Map[u32, bool]) {
+    let n = node(p, m, e)
+    match n.kind {
+        ast.EUnary => collect_expr(p, m, n.b, inout out)
+        ast.ETry => collect_expr(p, m, n.a, inout out)
+        ast.EField => collect_expr(p, m, n.a, inout out)
+        ast.ECast => collect_expr(p, m, n.a, inout out)
+        ast.ERepeat => collect_expr(p, m, n.a, inout out)
+        ast.EBinary => {
+            collect_expr(p, m, n.b, inout out)
+            collect_expr(p, m, n.c, inout out)
+        }
+        ast.EIndex => {
+            collect_expr(p, m, n.a, inout out)
+            collect_expr(p, m, n.b, inout out)
+        }
+        ast.ECall => collect_args(p, m, n.c, n.d, inout out)
+        ast.EMethod => {
+            collect_expr(p, m, n.a, inout out)
+            collect_args(p, m, n.c, n.d, inout out)
+        }
+        ast.EArray => collect_list(p, m, n.c, n.d, inout out)
+        ast.ETuple => collect_list(p, m, n.c, n.d, inout out)
+        ast.EUnsafe => collect_block(p, m, n.a, inout out)
+        ast.EBlock => collect_block(p, m, n.a, inout out)
+        ast.ELambda => {
+            for i in 0..n.d { out.insert(node(p, m, at(p, m, n.c, i)).a, true) }
+            collect_expr(p, m, n.a, inout out)
+        }
+        ast.EIf => {
+            collect_expr(p, m, n.a, inout out)
+            collect_block(p, m, n.b, inout out)
+            if n.c > 0 { collect_expr(p, m, n.c - 1, inout out) }
+        }
+        ast.EMatch => {
+            collect_expr(p, m, n.a, inout out)
+            for i in 0..n.d {
+                let arm = node(p, m, at(p, m, n.c, i))
+                for j in 0..arm.d { collect_pat(p, m, at(p, m, arm.c, j), inout out) }
+                if arm.b == 1 { collect_stmt(p, m, arm.a, inout out) } else { collect_expr(p, m, arm.a, inout out) }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_pat(p: Program, m: u32, pat: u32, inout out: Map[u32, bool]) {
+    let n = node(p, m, pat)
+    match n.kind {
+        ast.PName => { if n.b == 0 && !owns(p, m, n.a) { out.insert(n.a, true) } }
+        ast.PVariant => { for i in 0..n.d { collect_pat(p, m, at(p, m, n.c, i), inout out) } }
+        ast.PTuple => { for i in 0..n.d { collect_pat(p, m, at(p, m, n.c, i), inout out) } }
+        _ => {}
+    }
+}

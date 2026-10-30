@@ -1046,10 +1046,9 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         node.a = n.sym
         match qualified(inout p, n.sym) {
             Some(q) => {
+                // the position stays at the qualifier, as in the bootstrap
                 node.a = q.sym
                 node.b = n.sym + 1
-                node.line = q.line
-                node.col = q.col
             }
             None => {}
         }
@@ -1232,8 +1231,9 @@ pub fn pattern(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         var qual: u32 = 0
         match qualified(inout p, nm.sym) {
             Some(q) => {
+                // keep the qualifier's position (bootstrap behaviour)
                 qual = nm.sym + 1
-                nm = q
+                nm.sym = q.sym
             }
             None => {}
         }

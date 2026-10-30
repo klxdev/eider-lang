@@ -1,0 +1,523 @@
+// ir: the typed IR that `check` produces and `lower` (C4) translates to C.
+//
+// Everything is an arena of small records addressed by u32 ids, like the AST. A program is
+// a list of functions (index = the checker's function index; tests follow the functions)
+// and constants. Each function owns a range of `locals` (parameters first) and a body
+// block. Expressions are flattened while checking: every intermediate value is a temporary
+// local assigned exactly once, in source evaluation order (left to right), and every read
+// of a variable is an explicit `read` into a temporary at the point the source reads it.
+// So lowering never reorders, hoists or re-evaluates anything; trapping operations carry the
+// source line for the runtime error.
+//
+// Locals     {name sym, ty, kind (L_*), line}
+//            L_PARAM, L_INOUT (a parameter passed by reference), L_LET, L_VAR, L_TEMP
+// Operands   O_INT ty v=value (64-bit two's complement)   O_BOOL v   O_STR v=string index
+//            O_UNIT   O_LOCAL a=local (only temporaries and pattern scrutinees)
+// Places     P_LOCAL a=local
+//            P_FIELD a=base place b=field index (records)
+//            P_INDEX a=base place b=index operand (arrays, bounds-checked) line
+//            P_PAYLOAD a=base place b=variant c=field (the enum at base is that variant)
+// Arguments  (calls, constructors, arrays) a list in `extra` of operand ids, except
+//            that an `inout` call argument is a place id + ARG_PLACE.
+// Statements {kind, dst, a, b, c, ty, line}; a block is a list of statement ids in `extra`
+//   S_COPY    dst := op a
+//   S_READ    dst := place a
+//   S_STORE   place a := op b
+//   S_UNARY   dst := a (U_NEG checked, U_NOT) b=operand
+//   S_BINARY  dst := b (op a = ast.OP_*) c; ty = operand type. + - * / % trap on overflow
+//             and division by zero; +% -% *% wrap; == != compare structurally for any type;
+//             < <= > >= on integers. (&& and || are lowered to S_IF.)
+//   S_CAST    dst := a as ty (traps when out of range)
+//   S_CALL    dst := fn a (args [b/c]); dst = NONE for a () result
+//   S_RECORD  dst := ty(args [b/c])        S_VARIANT dst := variant a of enum ty (args [b/c])
+//   S_ARRAY   dst := [args [b/c]] : ty     S_REPEAT  dst := [op a; b] : ty
+//   S_TAG     dst := (place a is variant b)
+//   S_PRINT   print op a (of type ty)      S_NOWMS dst := now_ms()
+//   S_PANIC   trap with message op a       S_ASSERT  trap unless op a; b = message string+1
+//   S_IF      if op a then block b else block c
+//   S_LOOP    loop { block a }; `continue` runs block b (the step) and loops again
+//   S_BREAK   S_CONTINUE   S_RETURN a = op+1 (0: no value)
+// Functions  {name text, def, ret, locals [lstart/lcount], nparams, body block+1 (0 = none),
+//             caps, is_test}
+// Constants  {name text, ty, value op}
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+import "ast.ei"
+import "intern.ei"
+import "types.ei"
+import "diag.ei"
+
+pub const NONE: u32 = 4294967295
+pub const ARG_PLACE: u32 = 2147483648
+
+pub const L_PARAM: u32 = 0
+pub const L_INOUT: u32 = 1
+pub const L_LET: u32 = 2
+pub const L_VAR: u32 = 3
+pub const L_TEMP: u32 = 4
+
+pub const O_INT: u32 = 0
+pub const O_BOOL: u32 = 1
+pub const O_STR: u32 = 2
+pub const O_UNIT: u32 = 3
+pub const O_LOCAL: u32 = 4
+
+pub const P_LOCAL: u32 = 0
+pub const P_FIELD: u32 = 1
+pub const P_INDEX: u32 = 2
+pub const P_PAYLOAD: u32 = 3
+
+pub const U_NEG: u32 = 0
+pub const U_NOT: u32 = 1
+
+pub const S_COPY: u32 = 0
+pub const S_READ: u32 = 1
+pub const S_STORE: u32 = 2
+pub const S_UNARY: u32 = 3
+pub const S_BINARY: u32 = 4
+pub const S_CAST: u32 = 5
+pub const S_CALL: u32 = 6
+pub const S_RECORD: u32 = 7
+pub const S_VARIANT: u32 = 8
+pub const S_ARRAY: u32 = 9
+pub const S_REPEAT: u32 = 10
+pub const S_TAG: u32 = 11
+pub const S_PRINT: u32 = 12
+pub const S_NOWMS: u32 = 13
+pub const S_PANIC: u32 = 14
+pub const S_ASSERT: u32 = 15
+pub const S_IF: u32 = 16
+pub const S_LOOP: u32 = 17
+pub const S_BREAK: u32 = 18
+pub const S_CONTINUE: u32 = 19
+pub const S_RETURN: u32 = 20
+
+pub type Local = { name: u32, ty: u32, kind: u32, line: u32 }
+pub type Op = { kind: u32, ty: u32, a: u32, v: u64 }
+pub type Place = { kind: u32, ty: u32, a: u32, b: u32, c: u32, line: u32 }
+pub type Stmt = { kind: u32, dst: u32, a: u32, b: u32, c: u32, ty: u32, line: u32 }
+pub type Block = { start: u32, len: u32 }
+pub type Fn = {
+    name: List[u8], ret: u32, lstart: u32, lcount: u32, nparams: u32, body: u32,
+    caps: List[u8], is_test: bool,
+}
+pub type Const = { name: List[u8], ty: u32, op: u32 }
+
+pub type Ir = {
+    fns: List[Fn],
+    consts: List[Const],
+    locals: List[Local],
+    ops: List[Op],
+    places: List[Place],
+    stmts: List[Stmt],
+    blocks: List[Block],
+    extra: List[u32],
+    strs: List[List[u8]],
+    /// statements of the blocks being built, innermost last (see open/close)
+    pending: List[u32],
+    /// the function being built
+    cur: u32,
+}
+
+pub fn new() -> Ir {
+    Ir(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), 0)
+}
+
+// ---- building
+
+/// Declare function `i` (functions are declared in index order before any body is built).
+pub fn declare_fn(inout ir: Ir, name: List[u8], is_test: bool) -> u32 {
+    ir.fns.push(Fn(name, types.UNIT, 0, 0, 0, 0, List.new(), is_test))
+    (ir.fns.len() - 1) as u32
+}
+
+/// Start building function f's body: its locals begin here.
+pub fn begin_fn(inout ir: Ir, f: u32, ret: u32, caps: List[u8]) {
+    ir.cur = f
+    var fd = ir.fns[f as usize]
+    fd.ret = ret
+    fd.caps = caps
+    fd.lstart = ir.locals.len() as u32
+    ir.fns[f as usize] = fd
+}
+
+pub fn end_fn(inout ir: Ir, nparams: u32, body: u32) {
+    var fd = ir.fns[ir.cur as usize]
+    fd.lcount = ir.locals.len() as u32 - fd.lstart
+    fd.nparams = nparams
+    fd.body = body + 1
+    ir.fns[ir.cur as usize] = fd
+}
+
+/// A new local of the current function (its id is relative to the function).
+pub fn local(inout ir: Ir, name: u32, ty: u32, kind: u32, line: u32) -> u32 {
+    let base = ir.fns[ir.cur as usize].lstart
+    ir.locals.push(Local(name, ty, kind, line))
+    ir.locals.len() as u32 - 1 - base
+}
+
+pub fn temp(inout ir: Ir, ty: u32, line: u32) -> u32 { local(inout ir, 0, ty, L_TEMP, line) }
+
+fn op(inout ir: Ir, o: Op) -> u32 {
+    ir.ops.push(o)
+    (ir.ops.len() - 1) as u32
+}
+
+pub fn op_int(inout ir: Ir, ty: u32, v: u64) -> u32 { op(inout ir, Op(O_INT, ty, 0, v)) }
+pub fn op_bool(inout ir: Ir, b: bool) -> u32 {
+    let v: u64 = if b { 1 } else { 0 }
+    op(inout ir, Op(O_BOOL, types.BOOL, 0, v))
+}
+pub fn op_str(inout ir: Ir, s: List[u8]) -> u32 {
+    ir.strs.push(s)
+    let i = (ir.strs.len() - 1) as u32
+    op(inout ir, Op(O_STR, types.STR, i, 0))
+}
+pub fn op_unit(inout ir: Ir) -> u32 { op(inout ir, Op(O_UNIT, types.UNIT, 0, 0)) }
+pub fn op_local(inout ir: Ir, l: u32, ty: u32) -> u32 { op(inout ir, Op(O_LOCAL, ty, l, 0)) }
+
+pub fn op_ty(ir: Ir, o: u32) -> u32 { ir.ops[o as usize].ty }
+
+/// The local an operand reads, if it is a temporary.
+pub fn op_is_local(ir: Ir, o: u32) -> bool { ir.ops[o as usize].kind == O_LOCAL }
+pub fn op_local_id(ir: Ir, o: u32) -> u32 { ir.ops[o as usize].a }
+
+pub fn set_local_ty(inout ir: Ir, l: u32, ty: u32) {
+    let i = (ir.fns[ir.cur as usize].lstart + l) as usize
+    var x = ir.locals[i]
+    x.ty = ty
+    ir.locals[i] = x
+}
+
+fn place(inout ir: Ir, p: Place) -> u32 {
+    ir.places.push(p)
+    (ir.places.len() - 1) as u32
+}
+
+pub fn place_local(inout ir: Ir, l: u32, ty: u32) -> u32 { place(inout ir, Place(P_LOCAL, ty, l, 0, 0, 0)) }
+pub fn place_field(inout ir: Ir, base: u32, i: u32, ty: u32) -> u32 { place(inout ir, Place(P_FIELD, ty, base, i, 0, 0)) }
+pub fn place_index(inout ir: Ir, base: u32, idx: u32, ty: u32, line: u32) -> u32 { place(inout ir, Place(P_INDEX, ty, base, idx, 0, line)) }
+pub fn place_payload(inout ir: Ir, base: u32, v: u32, f: u32, ty: u32) -> u32 { place(inout ir, Place(P_PAYLOAD, ty, base, v, f, 0)) }
+
+/// Append a statement to the innermost open block.
+pub fn emit(inout ir: Ir, kind: u32, dst: u32, a: u32, b: u32, c: u32, ty: u32, line: u32) {
+    ir.stmts.push(Stmt(kind, dst, a, b, c, ty, line))
+    ir.pending.push((ir.stmts.len() - 1) as u32)
+}
+
+/// Store an argument list; returns its start in `extra`.
+pub fn list(inout ir: Ir, ids: List[u32]) -> u32 {
+    let start = ir.extra.len() as u32
+    for x in ids { ir.extra.push(x) }
+    start
+}
+
+/// Open a block: statements emitted from now on belong to it. Returns its mark.
+pub fn open(ir: Ir) -> u32 { ir.pending.len() as u32 }
+
+/// Close the block opened at `mark`; returns the block id.
+pub fn close(inout ir: Ir, mark: u32) -> u32 {
+    let start = ir.extra.len() as u32
+    var i = mark as usize
+    while i < ir.pending.len() {
+        ir.extra.push(ir.pending[i])
+        i += 1
+    }
+    let n = ir.pending.len() as u32 - mark
+    while ir.pending.len() as u32 > mark { ir.pending.pop() }
+    ir.blocks.push(Block(start, n))
+    (ir.blocks.len() - 1) as u32
+}
+
+/// An empty block.
+pub fn empty_block(inout ir: Ir) -> u32 {
+    let m = open(ir)
+    close(inout ir, m)
+}
+
+pub fn add_const(inout ir: Ir, name: List[u8], ty: u32, o: u32) {
+    ir.consts.push(Const(name, ty, o))
+}
+
+// ---- dump (`eiderc ir`): one line per local, statement and constant
+
+type Out = { b: List[u8] }
+
+fn put(inout o: Out, s: str) uses ffi { bytes.append(inout o.b, sys.lit(s)) }
+fn putb(inout o: Out, s: List[u8]) { bytes.append(inout o.b, s) }
+fn putn(inout o: Out, n: u64) { bytes.append(inout o.b, bytes.from_u64(n)) }
+fn putty(inout o: Out, t: types.Types, names: intern.Interner, ty: u32) uses ffi { types.show_into(inout o.b, t, names, ty) }
+
+fn ind(inout o: Out, depth: u32) uses ffi {
+    for i in 0..depth { put(inout o, "  ") }
+}
+
+fn put_local(inout o: Out, l: u32) uses ffi {
+    put(inout o, "%")
+    putn(inout o, l as u64)
+}
+
+fn put_op(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u32) uses ffi {
+    let x = ir.ops[id as usize]
+    match x.kind {
+        0 => {
+            let ik = types.ik(t, x.ty)
+            if types.signed(ik) && x.v >= 9223372036854775808 {
+                put(inout o, "-")
+                putn(inout o, 0 -% x.v)
+            } else {
+                putn(inout o, x.v)
+            }
+            put(inout o, types.int_name(ik))
+        }
+        1 => { if x.v == 1 { put(inout o, "true") } else { put(inout o, "false") } }
+        2 => diag.debug_str(inout o.b, ir.strs[x.a as usize])
+        3 => put(inout o, "()")
+        _ => put_local(inout o, x.a)
+    }
+}
+
+fn put_place(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u32) uses ffi {
+    let x = ir.places[id as usize]
+    match x.kind {
+        0 => put_local(inout o, x.a)
+        1 => {
+            put_place(inout o, ir, t, names, x.a)
+            put(inout o, ".")
+            putn(inout o, x.b as u64)
+        }
+        2 => {
+            put_place(inout o, ir, t, names, x.a)
+            put(inout o, "[")
+            put_op(inout o, ir, t, names, x.b)
+            put(inout o, "]@")
+            putn(inout o, x.line as u64)
+        }
+        _ => {
+            put_place(inout o, ir, t, names, x.a)
+            put(inout o, ".<")
+            putn(inout o, x.b as u64)
+            put(inout o, ">.")
+            putn(inout o, x.c as u64)
+        }
+    }
+}
+
+fn put_args(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, start: u32, n: u32) uses ffi {
+    put(inout o, "(")
+    for i in 0..n {
+        if i > 0 { put(inout o, ", ") }
+        let a = ir.extra[(start + i) as usize]
+        if a >= ARG_PLACE {
+            put(inout o, "inout ")
+            put_place(inout o, ir, t, names, a - ARG_PLACE)
+        } else {
+            put_op(inout o, ir, t, names, a)
+        }
+    }
+    put(inout o, ")")
+}
+
+fn put_dst(inout o: Out, dst: u32) uses ffi {
+    put_local(inout o, dst)
+    put(inout o, " = ")
+}
+
+fn put_block(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, b: u32, depth: u32) uses ffi {
+    let bl = ir.blocks[b as usize]
+    for i in 0..bl.len {
+        put_stmt(inout o, ir, t, names, ir.extra[(bl.start + i) as usize], depth)
+    }
+}
+
+fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u32, depth: u32) uses ffi {
+    let s = ir.stmts[id as usize]
+    ind(inout o, depth)
+    match s.kind {
+        0 => {
+            put_dst(inout o, s.dst)
+            put_op(inout o, ir, t, names, s.a)
+        }
+        1 => {
+            put_dst(inout o, s.dst)
+            put(inout o, "read ")
+            put_place(inout o, ir, t, names, s.a)
+        }
+        2 => {
+            put(inout o, "store ")
+            put_place(inout o, ir, t, names, s.a)
+            put(inout o, " = ")
+            put_op(inout o, ir, t, names, s.b)
+        }
+        3 => {
+            put_dst(inout o, s.dst)
+            if s.a == U_NEG { put(inout o, "neg ") } else { put(inout o, "not ") }
+            put_op(inout o, ir, t, names, s.b)
+        }
+        4 => {
+            put_dst(inout o, s.dst)
+            put_op(inout o, ir, t, names, s.b)
+            put(inout o, " ")
+            put(inout o, ast.op_text(s.a))
+            put(inout o, " ")
+            put_op(inout o, ir, t, names, s.c)
+        }
+        5 => {
+            put_dst(inout o, s.dst)
+            put_op(inout o, ir, t, names, s.a)
+            put(inout o, " as ")
+            putty(inout o, t, names, s.ty)
+        }
+        6 => {
+            if s.dst != NONE { put_dst(inout o, s.dst) }
+            put(inout o, "call ")
+            putb(inout o, ir.fns[s.a as usize].name)
+            put_args(inout o, ir, t, names, s.b, s.c)
+        }
+        7 => {
+            put_dst(inout o, s.dst)
+            putty(inout o, t, names, s.ty)
+            put_args(inout o, ir, t, names, s.b, s.c)
+        }
+        8 => {
+            put_dst(inout o, s.dst)
+            putty(inout o, t, names, s.ty)
+            put(inout o, ".<")
+            putn(inout o, s.a as u64)
+            put(inout o, ">")
+            put_args(inout o, ir, t, names, s.b, s.c)
+        }
+        9 => {
+            put_dst(inout o, s.dst)
+            put(inout o, "array ")
+            putty(inout o, t, names, s.ty)
+            put_args(inout o, ir, t, names, s.b, s.c)
+        }
+        10 => {
+            put_dst(inout o, s.dst)
+            put(inout o, "repeat ")
+            putty(inout o, t, names, s.ty)
+            put(inout o, " (")
+            put_op(inout o, ir, t, names, s.a)
+            put(inout o, ")")
+        }
+        11 => {
+            put_dst(inout o, s.dst)
+            put(inout o, "tag ")
+            put_place(inout o, ir, t, names, s.a)
+            put(inout o, " is <")
+            putn(inout o, s.b as u64)
+            put(inout o, ">")
+        }
+        12 => {
+            put(inout o, "print ")
+            put_op(inout o, ir, t, names, s.a)
+        }
+        13 => {
+            put_dst(inout o, s.dst)
+            put(inout o, "now_ms()")
+        }
+        14 => {
+            put(inout o, "panic ")
+            put_op(inout o, ir, t, names, s.a)
+        }
+        15 => {
+            put(inout o, "assert ")
+            put_op(inout o, ir, t, names, s.a)
+            if s.b > 0 {
+                put(inout o, ", ")
+                diag.debug_str(inout o.b, ir.strs[(s.b - 1) as usize])
+            }
+        }
+        16 => {
+            put(inout o, "if ")
+            put_op(inout o, ir, t, names, s.a)
+            put(inout o, " {\n")
+            put_block(inout o, ir, t, names, s.b, depth + 1)
+            ind(inout o, depth)
+            put(inout o, "} else {\n")
+            put_block(inout o, ir, t, names, s.c, depth + 1)
+            ind(inout o, depth)
+            put(inout o, "}")
+        }
+        17 => {
+            put(inout o, "loop {\n")
+            put_block(inout o, ir, t, names, s.a, depth + 1)
+            ind(inout o, depth)
+            put(inout o, "} step {\n")
+            put_block(inout o, ir, t, names, s.b, depth + 1)
+            ind(inout o, depth)
+            put(inout o, "}")
+        }
+        18 => put(inout o, "break")
+        19 => put(inout o, "continue")
+        _ => {
+            put(inout o, "return")
+            if s.a > 0 {
+                put(inout o, " ")
+                put_op(inout o, ir, t, names, s.a - 1)
+            }
+        }
+    }
+    if s.line > 0 && (s.kind == S_UNARY || s.kind == S_BINARY || s.kind == S_CAST || s.kind == S_READ || s.kind == S_PANIC || s.kind == S_ASSERT) {
+        put(inout o, "  @")
+        putn(inout o, s.line as u64)
+    }
+    put(inout o, "\n")
+}
+
+fn kind_text(k: u32) -> str {
+    match k {
+        0 => "param"
+        1 => "inout"
+        2 => "let"
+        3 => "var"
+        _ => "temp"
+    }
+}
+
+/// The whole program as text.
+pub fn dump(ir: Ir, t: types.Types, names: intern.Interner) -> List[u8] uses ffi {
+    var o = Out(List.new())
+    for c in ir.consts {
+        put(inout o, "const ")
+        putb(inout o, c.name)
+        put(inout o, ": ")
+        putty(inout o, t, names, c.ty)
+        put(inout o, " = ")
+        put_op(inout o, ir, t, names, c.op)
+        put(inout o, "\n")
+    }
+    for f in ir.fns {
+        if f.body == 0 { continue }
+        put(inout o, "\n")
+        if f.is_test { put(inout o, "test ") } else { put(inout o, "fn ") }
+        putb(inout o, f.name)
+        put(inout o, " -> ")
+        putty(inout o, t, names, f.ret)
+        if f.caps.len() > 0 {
+            put(inout o, " uses ")
+            putb(inout o, f.caps)
+        }
+        put(inout o, "\n")
+        for i in 0..f.lcount {
+            let l = ir.locals[(f.lstart + i) as usize]
+            put(inout o, "  ")
+            put_local(inout o, i)
+            put(inout o, " ")
+            put(inout o, kind_text(l.kind))
+            if l.kind != L_TEMP {
+                put(inout o, " ")
+                putb(inout o, intern.name(names, l.name))
+            }
+            put(inout o, ": ")
+            putty(inout o, t, names, l.ty)
+            put(inout o, "\n")
+        }
+        put(inout o, "  {\n")
+        put_block(inout o, ir, t, names, f.body - 1, 2)
+        put(inout o, "  }\n")
+    }
+    o.b
+}

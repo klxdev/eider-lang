@@ -1,0 +1,172 @@
+// fold: compile-time integer arithmetic. The bootstrap folds constants in i128; every value
+// it computes from in-range operands fits in a sign plus a 128-bit magnitude, which is what
+// `Wide` holds (`hi * 2^64 + lo`). Zero is never negative.
+//
+// Only the operations constant folding needs are here: add/sub on any Wide, mul/div/rem on
+// values whose magnitude fits in 64 bits (folded operands are always in their type's range).
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+
+pub type Wide = { neg: bool, hi: u64, lo: u64 }
+
+const B32: u64 = 4294967296
+
+pub fn zero() -> Wide { Wide(false, 0, 0) }
+
+pub fn of_u64(v: u64) -> Wide { Wide(false, 0, v) }
+
+/// -v for a magnitude v.
+pub fn of_neg(v: u64) -> Wide { Wide(v != 0, 0, v) }
+
+pub fn is_zero(a: Wide) -> bool { a.hi == 0 && a.lo == 0 }
+
+fn mk(neg: bool, hi: u64, lo: u64) -> Wide { Wide(neg && (hi != 0 || lo != 0), hi, lo) }
+
+pub fn neg(a: Wide) -> Wide { mk(!a.neg, a.hi, a.lo) }
+
+fn mag_cmp(ah: u64, al: u64, bh: u64, bl: u64) -> i32 {
+    if ah != bh { return if ah < bh { -1 } else { 1 } }
+    if al != bl { return if al < bl { -1 } else { 1 } }
+    0
+}
+
+/// -1, 0 or 1.
+pub fn cmp(a: Wide, b: Wide) -> i32 {
+    if a.neg != b.neg { return if a.neg { -1 } else { 1 } }
+    let m = mag_cmp(a.hi, a.lo, b.hi, b.lo)
+    if a.neg { -m } else { m }
+}
+
+pub fn lt(a: Wide, b: Wide) -> bool { cmp(a, b) < 0 }
+pub fn gt(a: Wide, b: Wide) -> bool { cmp(a, b) > 0 }
+pub fn eq(a: Wide, b: Wide) -> bool { cmp(a, b) == 0 }
+
+/// |a| + |b| with the sign `neg`.
+fn mag_add(neg: bool, a: Wide, b: Wide) -> Wide {
+    let lo = a.lo +% b.lo
+    let carry: u64 = if lo < a.lo { 1 } else { 0 }
+    mk(neg, a.hi +% b.hi +% carry, lo)
+}
+
+/// |a| - |b| (|a| >= |b|) with the sign `neg`.
+fn mag_sub(neg: bool, a: Wide, b: Wide) -> Wide {
+    let borrow: u64 = if a.lo < b.lo { 1 } else { 0 }
+    mk(neg, a.hi -% b.hi -% borrow, a.lo -% b.lo)
+}
+
+pub fn add(a: Wide, b: Wide) -> Wide {
+    if a.neg == b.neg { return mag_add(a.neg, a, b) }
+    if mag_cmp(a.hi, a.lo, b.hi, b.lo) >= 0 { return mag_sub(a.neg, a, b) }
+    mag_sub(b.neg, b, a)
+}
+
+pub fn sub(a: Wide, b: Wide) -> Wide { add(a, neg(b)) }
+
+/// a * b for magnitudes below 2^64 (the product fits in 128 bits).
+pub fn mul(a: Wide, b: Wide) -> Wide {
+    let a0 = a.lo % B32
+    let a1 = a.lo / B32
+    let b0 = b.lo % B32
+    let b1 = b.lo / B32
+    let p00 = a0 * b0
+    let p01 = a0 * b1
+    let p10 = a1 * b0
+    let p11 = a1 * b1
+    let mid = p00 / B32 + p01 % B32 + p10 % B32
+    let lo = (p00 % B32) + (mid % B32) * B32
+    let hi = p11 + p01 / B32 + p10 / B32 + mid / B32
+    mk(a.neg != b.neg, hi, lo)
+}
+
+/// Truncating division (Rust's i128 `/`), magnitudes below 2^64, b != 0.
+pub fn div(a: Wide, b: Wide) -> Wide { mk(a.neg != b.neg, 0, a.lo / b.lo) }
+
+/// Remainder with the sign of the dividend (Rust's i128 `%`), magnitudes below 2^64, b != 0.
+pub fn rem(a: Wide, b: Wide) -> Wide { mk(a.neg, 0, a.lo % b.lo) }
+
+/// The value wrapped into a `bits`-bit integer (two's complement when `signed`), i.e. the
+/// bootstrap's `(v - min).rem_euclid(2^bits) + min`.
+pub fn wrap(a: Wide, bits: u32, signed: bool) -> Wide {
+    let low = if a.neg { 0 -% a.lo } else { a.lo }
+    if bits == 64 {
+        if signed && low >= 9223372036854775808 { return of_neg(0 -% low) }
+        return of_u64(low)
+    }
+    var size: u64 = 256
+    if bits == 32 { size = B32 }
+    let m = low % size
+    if signed && m >= size / 2 { return of_neg(size - m) }
+    of_u64(m)
+}
+
+/// The low 64 bits in two's complement (how a folded value of any integer type is stored).
+pub fn bits64(a: Wide) -> u64 {
+    if a.neg { return 0 -% a.lo }
+    a.lo
+}
+
+/// The value back from its 64-bit two's complement form.
+pub fn from_bits(v: u64, signed: bool) -> Wide {
+    if signed && v >= 9223372036854775808 { return of_neg(0 -% v) }
+    of_u64(v)
+}
+
+/// Decimal text, with a leading `-` for negative values.
+pub fn text(a: Wide) -> List[u8] {
+    var limbs: [u64; 4] = [a.lo % B32, a.lo / B32, a.hi % B32, a.hi / B32]
+    var digits: List[u8] = List.new()
+    while true {
+        var r: u64 = 0
+        var nonzero = false
+        var k: usize = 4
+        while k > 0 {
+            k -= 1
+            let cur = r * B32 + limbs[k]
+            limbs[k] = cur / 10
+            r = cur % 10
+            if limbs[k] != 0 { nonzero = true }
+        }
+        digits.push(48 + r as u8)
+        if !nonzero { break }
+    }
+    var out: List[u8] = List.new()
+    if a.neg { out.push(45) }
+    var i = digits.len()
+    while i > 0 {
+        i -= 1
+        out.push(digits[i])
+    }
+    out
+}
+
+fn digit(c: u8) -> u64 {
+    if c >= 48 && c <= 57 { return (c - 48) as u64 }
+    if c >= 97 && c <= 102 { return (c - 87) as u64 }
+    (c - 55) as u64
+}
+
+/// The value of an integer literal's source text (decimal or `0x` hex, `_` separators);
+/// the lexer has already rejected anything past i128.
+pub fn parse(src: List[u8], start: usize, end: usize) -> Wide {
+    var base: u64 = 10
+    var i = start
+    if end - start > 2 && src[start] == 48 && (src[start + 1] == 120 || src[start + 1] == 88) {
+        base = 16
+        i = start + 2
+    }
+    var hi: u64 = 0
+    var lo: u64 = 0
+    while i < end {
+        let c = src[i]
+        if c != 95 {
+            let d = digit(c)
+            let p0 = (lo % B32) * base + d
+            let p1 = (lo / B32) * base + p0 / B32
+            lo = (p1 % B32) * B32 + p0 % B32
+            hi = hi * base + p1 / B32
+        }
+        i += 1
+    }
+    Wide(false, hi, lo)
+}

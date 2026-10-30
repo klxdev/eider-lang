@@ -1,0 +1,186 @@
+// types: the interned type arena. A type is a small record `{kind, a, b}` addressed by a u32
+// id; equal types have equal ids, so the checker compares types as integers.
+//
+//   T_INT     a = int kind (IK_*)          T_BOOL  T_STR  T_UNIT  T_NEVER
+//   T_ENUM    a = def                      T_RECORD a = def
+//   T_ARRAY   a = element type, b = length
+//
+// The primitive types have fixed ids (I32 .. NEVER below). Enums and records are named
+// definitions (`Def`): one type per definition (v0 has no generic instances), with their
+// fields or variants in the shared `fields` / `variants` lists. A definition is created
+// empty and filled once its field types are resolved, so a type that mentions itself sees
+// an empty definition while it is being filled (that is how the bootstrap detects E0108).
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+import "intern.ei"
+import "resolve.ei"
+
+pub const T_INT: u32 = 0
+pub const T_BOOL: u32 = 1
+pub const T_STR: u32 = 2
+pub const T_UNIT: u32 = 3
+pub const T_NEVER: u32 = 4
+pub const T_ENUM: u32 = 5
+pub const T_RECORD: u32 = 6
+pub const T_ARRAY: u32 = 7
+
+/// Int kinds, in the bootstrap's IntTy order.
+pub const IK_I32: u32 = 0
+pub const IK_I64: u32 = 1
+pub const IK_U8: u32 = 2
+pub const IK_U32: u32 = 3
+pub const IK_U64: u32 = 4
+pub const IK_USIZE: u32 = 5
+
+/// Fixed type ids.
+pub const I32: u32 = 0
+pub const I64: u32 = 1
+pub const U8: u32 = 2
+pub const U32: u32 = 3
+pub const U64: u32 = 4
+pub const USIZE: u32 = 5
+pub const BOOL: u32 = 6
+pub const STR: u32 = 7
+pub const UNIT: u32 = 8
+pub const NEVER: u32 = 9
+
+pub type Ty = { kind: u32, a: u32, b: u32 }
+
+/// A record field or a variant field. `name` is a symbol (unnamed variant fields are named
+/// by their position, as in the bootstrap); `tnode` is its type in the declaring module's AST.
+pub type Field = { name: u32, ty: u32, tnode: u32, line: u32, col: u32 }
+
+/// `key` is the variant's global name key (see resolve.key); `arity` its declared field
+/// count (known before the fields are resolved).
+pub type Variant = { key: u64, arity: u32, fstart: u32, flen: u32 }
+
+/// An enum or record. `module` is the declaring module (resolve.NOMOD for the prelude).
+/// For records `start/len` index `fields`; for enums they index `variants`.
+pub type Def = {
+    key: u64, md: u32, public: bool, node: u32, is_enum: bool, generic: u32,
+    ty: u32, start: u32, len: u32, payload: bool, filled: bool,
+}
+
+pub type Types = {
+    tys: List[Ty],
+    arrays: Map[u64, u32],
+    defs: List[Def],
+    fields: List[Field],
+    variants: List[Variant],
+}
+
+pub fn new() -> Types {
+    var t = Types(List.new(), Map.new(), List.new(), List.new(), List.new())
+    for i in 0..6 { t.tys.push(Ty(T_INT, i as u32, 0)) }
+    t.tys.push(Ty(T_BOOL, 0, 0))
+    t.tys.push(Ty(T_STR, 0, 0))
+    t.tys.push(Ty(T_UNIT, 0, 0))
+    t.tys.push(Ty(T_NEVER, 0, 0))
+    t
+}
+
+pub fn kind(t: Types, id: u32) -> u32 { t.tys[id as usize].kind }
+pub fn get(t: Types, id: u32) -> Ty { t.tys[id as usize] }
+
+pub fn is_int(t: Types, id: u32) -> bool { t.tys[id as usize].kind == T_INT }
+
+pub fn array(inout t: Types, elem: u32, len: u32) -> u32 {
+    let k = (elem as u64) * 4294967296 + len as u64
+    match t.arrays.get(k) {
+        Some(id) => { return id }
+        None => {}
+    }
+    let id = t.tys.len() as u32
+    t.tys.push(Ty(T_ARRAY, elem, len))
+    t.arrays.insert(k, id)
+    id
+}
+
+/// A new (empty) definition and its type.
+pub fn add_def(inout t: Types, d: Def) -> u32 {
+    let di = t.defs.len() as u32
+    let id = t.tys.len() as u32
+    let k = if d.is_enum { T_ENUM } else { T_RECORD }
+    t.tys.push(Ty(k, di, 0))
+    var d2 = d
+    d2.ty = id
+    t.defs.push(d2)
+    di
+}
+
+pub fn def_of(t: Types, ty: u32) -> Def { t.defs[t.tys[ty as usize].a as usize] }
+
+/// Field `i` of a record definition, or of a variant (`start` = Variant.fstart).
+pub fn field(t: Types, start: u32, i: u32) -> Field { t.fields[(start + i) as usize] }
+
+pub fn variant(t: Types, d: Def, i: u32) -> Variant { t.variants[(d.start + i) as usize] }
+
+/// Index of the variant named `key` in enum `d`, if any.
+pub fn find_variant(t: Types, d: Def, key: u64) -> Option[u32] {
+    for i in 0..d.len {
+        if t.variants[(d.start + i) as usize].key == key { return Some(i) }
+    }
+    None
+}
+
+/// Index of the record field named `sym`, if any.
+pub fn find_field(t: Types, d: Def, sym: u32) -> Option[u32] {
+    for i in 0..d.len {
+        if t.fields[(d.start + i) as usize].name == sym { return Some(i) }
+    }
+    None
+}
+
+// ---- integers
+
+pub fn ik(t: Types, id: u32) -> u32 { t.tys[id as usize].a }
+
+pub fn int_name(k: u32) -> str {
+    match k {
+        0 => "i32"
+        1 => "i64"
+        2 => "u8"
+        3 => "u32"
+        4 => "u64"
+        _ => "usize"
+    }
+}
+
+pub fn signed(k: u32) -> bool { k == IK_I32 || k == IK_I64 }
+
+pub fn bits(k: u32) -> u32 {
+    match k {
+        0 => 32
+        3 => 32
+        2 => 8
+        _ => 64
+    }
+}
+
+// ---- display (the bootstrap's `Display for Ty`; module names stay mangled, `diag` demangles)
+
+pub fn show(t: Types, names: intern.Interner, id: u32) -> List[u8] uses ffi {
+    var out: List[u8] = List.new()
+    show_into(inout out, t, names, id)
+    out
+}
+
+pub fn show_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32) uses ffi {
+    let ty = t.tys[id as usize]
+    match ty.kind {
+        0 => bytes.append(inout out, sys.lit(int_name(ty.a)))
+        1 => bytes.append(inout out, sys.lit("bool"))
+        2 => bytes.append(inout out, sys.lit("str"))
+        3 => bytes.append(inout out, sys.lit("()"))
+        4 => out.push(33)
+        7 => {
+            out.push(91)
+            show_into(inout out, t, names, ty.a)
+            bytes.append(inout out, sys.lit("; "))
+            bytes.append(inout out, bytes.from_u64(ty.b as u64))
+            out.push(93)
+        }
+        _ => bytes.append(inout out, resolve.key_text(names, t.defs[ty.a as usize].key))
+    }
+}
