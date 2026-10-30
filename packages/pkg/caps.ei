@@ -63,6 +63,15 @@ fn words(src: List[u8]) -> List[Tok] {
     out
 }
 
+/// The capabilities the compiler knows (check.ei's list); anything else in a `uses` clause
+/// is a compile error.
+fn language_cap(w: List[u8]) -> bool uses ffi {
+    for c in ["io", "clock", "fs", "net", "threads", "ffi", "python", "js", "wasm"] {
+        if bytes.eq(w, sys.lit(c)) { return true }
+    }
+    false
+}
+
 /// Every capability named in a `uses` clause, plus `ffi` when the code declares `extern`.
 pub fn scan(src: List[u8], file: List[u8]) -> List[Use] uses ffi {
     let ws = words(src)
@@ -74,13 +83,23 @@ pub fn scan(src: List[u8], file: List[u8]) -> List[Use] uses ffi {
         if bytes.eq(ws[i].word, k_extern) {
             out.push(Use(sys.lit("ffi"), file, ws[i].line))
         } else if bytes.eq(ws[i].word, k_uses) {
+            // the clause is the rest of the line, continued onto the next one only after a
+            // comma: `uses clock` followed by `fn main()` on the next line names only clock
             var j = i + 1
+            var line = ws[i].line
+            var after_comma = false
             while j < ws.len() {
                 let w = ws[j].word
+                if ws[j].line != line && !after_comma { break }
+                line = ws[j].line
                 if w.len() == 1 && w[0] == 44 {
+                    after_comma = true
                     j += 1
                 } else if w.len() > 0 && bytes.is_alpha(w[0]) {
-                    if !bytes.eq(w, sys.lit("ffi")) { out.push(Use(w, file, ws[j].line)) }
+                    // a word that isn't a capability of the language can't grant anything
+                    // (the compiler rejects it, E0203), e.g. in a compile-fail test
+                    if !bytes.eq(w, sys.lit("ffi")) && language_cap(w) { out.push(Use(w, file, ws[j].line)) }
+                    after_comma = false
                     j += 1
                 } else {
                     break

@@ -295,7 +295,11 @@ mkdir -p "$T/fsdep" "$T/ffidep" "$T/plain" "$T/capsapp"
 manifest "$T/fsdep" fsdep 0.1.0
 printf '// uses net (in a comment: ignored)\npub fn noop() -> i64 { 0 }\n\npub fn save()\n    uses fs {\n}\n' > "$T/fsdep/fsdep.ei"
 manifest "$T/ffidep" ffidep 0.1.0
-printf 'extern "c" fn abs(x: i32) -> i32\n\npub fn noop() -> i64 { 0 }\n' > "$T/ffidep/ffidep.ei"
+printf 'extern "c" fn abs(x: i32) -> i32 uses clock\npub fn noop() -> i64 { 0 }\n' > "$T/ffidep/ffidep.ei"
+# a `uses` clause ends with its line (unless it ends in a comma); words that aren't
+# capabilities of the language are compile errors, not grants (compile-fail tests have them)
+mkdir -p "$T/ffidep/tests"
+printf 'fn f() uses fs,\n    net {\n}\nfn g() uses telepathy {\n}\n' > "$T/ffidep/tests/bad.ei"
 # `uses ffi` alone only means "calls std", so it needs no grant
 manifest "$T/plain" plain 0.1.0
 printf 'pub fn hello() uses ffi {\n}\n' > "$T/plain/plain.ei"
@@ -309,13 +313,15 @@ check "granted fs is accepted" "locked 1 package(s)
 exit 0" "$(pkg capsapp add fsdep --path ../fsdep --uses fs)"
 check "extern needs ffi" "eider-pkg: package \`ffidep\` uses capability \`ffi\` (ffidep.ei:1) but is only granted [io]; to allow it, add \"ffi\" to \`uses\` in its [deps.ffidep] table (it declares \`extern\` functions: unmanaged code)
 exit 1" "$(pkg capsapp add ffidep --path ../ffidep --uses io)"
+check "a clause continues after a comma" "eider-pkg: package \`ffidep\` uses capability \`net\` (tests/bad.ei:2) but is only granted [clock, ffi, fs]; to allow it, add \"net\" to \`uses\` in its [deps.ffidep] table
+exit 1" "$(pkg capsapp add ffidep --path ../ffidep --uses clock,ffi,fs)"
 check "granted ffi is accepted" "locked 2 package(s)
-exit 0" "$(pkg capsapp add ffidep --path ../ffidep --uses io,ffi)"
+exit 0" "$(pkg capsapp add ffidep --path ../ffidep --uses clock,ffi,fs,net)"
 check "uses ffi without extern needs no grant" "locked 3 package(s)
 exit 0" "$(pkg capsapp add plain --path ../plain)"
 check "grants in the tree" "capsapp 0.1.0
   fsdep 0.1.0 uses fs
-  ffidep 0.1.0 uses io,ffi
+  ffidep 0.1.0 uses clock,ffi,fs,net
   plain 0.1.0
 exit 0" "$(pkg capsapp tree)"
 check "unknown capability" "eider-pkg: <T>/capsapp/eider.toml:19:1: unknown capability \`disk\` (known: io, clock, fs, net, threads, ffi)
