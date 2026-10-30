@@ -56,15 +56,69 @@ file implementing exactly this contract. Nothing above the core changes.
 | `int64_t ec_args(void)` | | argv in `out`, each NUL-terminated |
 | `int32_t ec_getenv(void)` | `in[0]` name | `1` and the value in `out`, or `0` if unset |
 | `int64_t ec_write_fd(int32_t fd)` | `in` = bytes | `0`; flushes buffered `print` output first; `fd` is 1 or 2 |
-| `int64_t ec_run(int32_t capture)` | `in` = argv (PATH lookup) | exit code, `128+signal`, or `-errno` if it could not start; with `capture`, the child's stdout is in `out` |
+| `int64_t ec_run(int32_t out_mode, int32_t err_mode, int64_t timeout_ms)` | `in` = argv (PATH lookup) | see [Running a program](#running-a-program) |
 | `void ec_errstr(int64_t status)` | | message for `-errno` in `out` |
 | `void ec_exit(int32_t code)` | | flush and exit |
+
+## Running a program
+
+`ec_run(out_mode, err_mode, timeout_ms)` is one operation: fork, exec `in` as argv (searched
+on `PATH`), collect what was asked for, and reap the child. stdin is always inherited.
+
+- `out_mode`, `err_mode`: `0` the child inherits our stdout / stderr, `1` it is captured.
+  Anything else is `-EINVAL`.
+- `timeout_ms`: `<= 0` no limit. Otherwise a wall-clock deadline measured from the start
+  (`CLOCK_MONOTONIC`). The child is put in its own process group (so the deadline reaches
+  `sh -c` pipelines and other grandchildren); at the deadline the group gets `SIGTERM`, and
+  `SIGKILL` 200 ms later if the child has not been reaped. After the kill the core waits at
+  most another 200 ms for the pipes to close (a descendant that left the group can hold them
+  open), then stops reading and reaps the child. Without a timeout the child stays in our
+  process group, so terminal job control works as usual.
+
+Result:
+
+| Value | Meaning |
+|---|---|
+| `0..255` | the child exited with this code |
+| `128 + n` | the child was killed by signal `n` (indistinguishable from exiting with `128 + n`, as in a shell) |
+| `256` | timed out: the deadline passed and the child was killed (whatever it exited with) |
+| `< 0` | `-errno`: the program could not be started (e.g. `-ENOENT`), or the core failed (fork, pipe, poll) after killing and reaping the child |
+
+`out` holds, whenever the result is `>= 0`:
+
+```
+bytes 0..7    n = length of the captured stdout, unsigned 64-bit little-endian
+bytes 8..8+n  captured stdout
+the rest      captured stderr
+```
+
+A stream that is not captured contributes nothing (`n = 0` when stdout is inherited). On a
+timeout `out` holds whatever was read before the kill.
+
+Why one buffer with a header rather than a second `err` buffer: it adds no functions to the
+ABI (Eider already reads `out` with `ec_out_len`/`ec_out_byte`), keeps the "results flow
+through `out`" rule, and splitting at a length is trivial Eider. A decimal header or a
+separator would need escaping or parsing; 8 bytes is a fixed, binary-safe prefix.
+
+Guarantees a backend must keep:
+
+- Both pipes are drained concurrently (`poll(2)`), so a child that fills one pipe while we
+  wait on the other cannot deadlock.
+- `EINTR` from `poll`, `read` and `waitpid` is retried; the deadline is recomputed after each.
+- The child is reaped on every path that forked, including core errors and the timeout.
+- The exec-failure report travels on a close-on-exec pipe: if exec succeeds the pipe closes
+  and the child's exit status is the result; otherwise the child writes `errno` there and the
+  result is `-errno`.
+- No descriptor of ours leaks into the child: every pipe end is close-on-exec (atomically with
+  `pipe2(O_CLOEXEC)` on Linux; with `fcntl` right after `pipe` elsewhere, which leaves a window
+  where a concurrent `fork` in another thread can inherit them), and the child's stdout /
+  stderr are `dup2` copies, which do not carry the flag.
 
 ## Backends
 
 | Target | Status |
 |---|---|
-| Linux (glibc), x86-64 | exercised by `tests/std` and the package tests |
+| Linux (glibc), x86-64 | exercised by `tests/core` (`ec_run`), `tests/std` and the package tests |
 | Linux, other architectures (aarch64, riscv64, 32-bit) | expected to work (C11 + POSIX only, fixed-width ABI); not yet run |
 | macOS | written (`_NSGetArgv`, `EC_SYM` names); not yet run |
 | FreeBSD / OpenBSD / NetBSD | written (args via an init-array constructor); not yet run |

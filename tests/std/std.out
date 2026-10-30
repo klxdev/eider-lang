@@ -27,6 +27,15 @@ cannot resolve target/tmp/definitely-missing: No such file or directory
 captured
 command failed (exit 3): sh -c printf captured; exit 3
 cannot run eider-no-such-program: No such file or directory
+cannot run eider-no-such-program: No such file or directory
+4 | out | err | finished
+200000
+300000
+inherited
+0 |  | hidden | finished
+137 |  |  | finished
+-1 | early |  | timed out
+0 | quick |  | finished
 true
 set
 exiting

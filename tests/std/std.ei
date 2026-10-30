@@ -86,6 +86,51 @@ fn procs() uses io, fs, net, ffi {
         Ok(_) => print("unexpected")
         Err(e) => print(e)
     }
+    match proc.run_with(bad, proc.limited(1000)) {
+        Ok(_) => print("unexpected")
+        Err(e) => print(e)
+    }
+    // both streams captured
+    show_output(proc.run_with(sh("printf out; printf err >&2; exit 4"), proc.captured()))
+    // more than a pipe buffer on each stream, stderr first (a sequential reader deadlocks)
+    match proc.run_with(sh("head -c 300000 /dev/zero >&2; head -c 200000 /dev/zero"), proc.captured()) {
+        Ok(o) => {
+            print(o.out.len())
+            print(o.err.len())
+        }
+        Err(e) => print(e)
+    }
+    // stdout inherited, stderr captured
+    show_output(proc.run_with(sh("echo inherited; printf hidden >&2"), proc.Options(false, true, 0)))
+    // killed by a signal
+    show_output(proc.run_with(sh("kill -9 $$"), proc.captured()))
+    // a deadline that passes (the sleep is a grandchild: the whole group is killed)
+    show_output(proc.run_with(sh("printf early; sleep 10; echo late"), proc.limited(200)))
+    // a deadline that doesn't
+    show_output(proc.run_with(sh("printf quick"), proc.limited(10000)))
+}
+
+fn sh(script: str) -> List[List[u8]] uses ffi {
+    var a: List[List[u8]] = List.new()
+    a.push(sys.lit("sh"))
+    a.push(sys.lit("-c"))
+    a.push(sys.lit(script))
+    a
+}
+
+fn show_output(r: Result[proc.Output, String]) uses io, ffi {
+    match r {
+        Ok(o) => {
+            var l: List[List[u8]] = List.new()
+            l.push(bytes.from_i64(o.code as i64))
+            l.push(o.out)
+            l.push(o.err)
+            let state = if o.timed_out { sys.lit("timed out") } else { sys.lit("finished") }
+            l.push(state)
+            show(bytes.join(l, sys.lit(" | ")))
+        }
+        Err(e) => print(e)
+    }
 }
 
 fn main() uses io, fs, net, ffi {

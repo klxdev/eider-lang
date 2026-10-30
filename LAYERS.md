@@ -34,4 +34,4 @@ Known limits of this arrangement (all need compiler work):
 
 Known gaps in core/std (fix in core, not by working around them in packages):
 
-- `proc` captures only stdout and has no timeout; `packages/fuzz` shells out to `sh -c 'timeout ... 2>file'` until `ec_run` can capture stderr and enforce a deadline.
+- None open. (`proc` capturing only stdout with no timeout was closed by `ec_run`'s capture modes and deadline, core/ABI.md "Running a program".)

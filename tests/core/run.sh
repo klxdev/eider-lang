@@ -3,6 +3,7 @@
 # core/eider_rt.c: with and without compiler builtins, then under ASan+UBSan and TSan when
 # the toolchain has the sanitizer runtimes (skipped with a message otherwise). UBSan in trap
 # mode needs no runtime library, so undefined behaviour is checked on every toolchain.
+# tests/core/core_test.c (ec_run against core/eider_core.c) runs the same way.
 cd "$(dirname "$0")/../.." || exit 1
 CC=${CC:-cc}
 STRICT="-std=c11 -pedantic -Wall -Wextra -Wconversion -Wshadow -Werror"
@@ -32,12 +33,26 @@ run() {
   fi
 }
 
+# core NAME FLAGS...: build core_test with FLAGS and run it (it re-executes itself as the child)
+core() {
+  name=$1; shift
+  if ! $CC $STRICT "$@" -o "$T/core_$name" tests/core/core_test.c core/eider_core.c -pthread 2>"$T/log"; then
+    echo "FAIL core ($name): build"; cat "$T/log"; fail=1; return
+  fi
+  if "$T/core_$name" >"$T/out" 2>&1; then
+    echo "ok   core ($name): $(tail -1 "$T/out")"
+  else
+    echo "FAIL core ($name)"; cat "$T/out"; fail=1
+  fi
+}
+
 # sanitizer NAME FLAGS...: run under FLAGS if a trivial program builds and runs with them
 sanitizer() {
   name=$1; shift
   printf 'int main(void) { return 0; }\n' > "$T/probe.c"
   if $CC "$@" -o "$T/probe" "$T/probe.c" -pthread >/dev/null 2>&1 && "$T/probe" >/dev/null 2>&1; then
     run "$name" -O1 -g "$@"
+    core "$name" -O1 -g "$@"
   else
     echo "skip rt ($name): $CC cannot build or run with $*"
   fi
@@ -45,6 +60,7 @@ sanitizer() {
 
 run O2 -O2
 run portable -O0 -DEI_RT_PORTABLE
+core O2 -O2
 sanitizer ubsan-trap -fsanitize=undefined -fsanitize-trap=undefined
 sanitizer ubsan-trap,portable -fsanitize=undefined -fsanitize-trap=undefined -DEI_RT_PORTABLE
 sanitizer asan+ubsan -fsanitize=address,undefined -fno-sanitize-recover=undefined

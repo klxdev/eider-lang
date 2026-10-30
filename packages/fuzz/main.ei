@@ -104,22 +104,16 @@ fn parse_opts() -> Result[Opts, String] uses io, fs, net, ffi {
     Ok(Opts(count, seeds, seed, is(mode, "wild"), stage0, env_or("EIDERC", "./target/eiderc")))
 }
 
-/// `<compiler> check --json <path>` with a 30 s limit; stderr goes to `errf` and is read back.
-fn run(compiler: List[u8], path: List[u8], errf: List[u8]) -> Result[Option[Res], String] uses io, fs, net, ffi {
+/// `<compiler> check --json <path>`, killed after 30 s (None).
+fn run(compiler: List[u8], path: List[u8]) -> Result[Option[Res], String] uses io, fs, net, ffi {
     var a: List[List[u8]] = List.new()
-    a.push(sys.lit("sh"))
-    a.push(sys.lit("-c"))
-    a.push(sys.lit("f=$1; shift; exec timeout 30 \"$@\" 2>\"$f\""))
-    a.push(sys.lit("sh"))
-    a.push(errf)
     a.push(compiler)
     a.push(sys.lit("check"))
     a.push(sys.lit("--json"))
     a.push(path)
-    let o = proc.output(a)?
-    if o.code == 124 { return Ok(None) }
-    let e: List[u8] = if fs.exists(errf) { fs.read(errf)? } else { List.new() }
-    Ok(Some(Res(bytes.trim(o.out), bytes.trim(e))))
+    let o = proc.run_with(a, proc.limited(30000))?
+    if o.timed_out { return Ok(None) }
+    Ok(Some(Res(bytes.trim(o.out), bytes.trim(o.err))))
 }
 
 fn shown(r: Option[Res]) -> List[u8] uses ffi {
@@ -167,8 +161,6 @@ fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net, ffi {
     var n_crash: u64 = 0
     var keys: List[List[u8]] = List.new()
     var counts: List[u64] = List.new()
-    fs.mkdir_all(sys.lit("target/fuzz"))?
-    let errf = sys.lit("target/fuzz/stderr")
     var k: u64 = 0
     while k < o.count {
         let seed = fuzz.pick(inout r, o.seeds)
@@ -176,7 +168,7 @@ fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net, ffi {
         let dir = fs.dirname(seed)
         let path = fs.join(dir, sys.lit("fuzz_tmp.ei"))
         fs.write(path, mutant)?
-        let got = run(o.eiderc, path, errf)?
+        let got = run(o.eiderc, path)?
         let unsupported = match got {
             Some(g) => has(g.out, "\"error\":\"unsupported\"")
             None => false
@@ -184,7 +176,7 @@ fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net, ffi {
         if unsupported {
             n_unsup += 1
         } else {
-            let want = run(o.stage0, path, errf)?
+            let want = run(o.stage0, path)?
             let crashed = match want {
                 Some(w) => has(w.err, "panicked")
                 None => true
@@ -225,7 +217,6 @@ fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net, ffi {
         fs.remove_all(path)?
         k += 1
     }
-    fs.remove_all(errf)?
     var s: List[List[u8]] = List.new()
     s.push(sys.lit("{'agree': "))
     s.push(num(n_agree))

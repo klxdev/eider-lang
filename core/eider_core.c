@@ -13,6 +13,9 @@
 #error "eider_core: no Windows backend yet (write eider_core_win32.c against core/ABI.md)"
 #endif
 
+#if defined(__linux__)
+#define _GNU_SOURCE 1 /* pipe2 (close-on-exec pipes without a fork race) */
+#endif
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700 /* realpath (XSI) */
 #if defined(__APPLE__)
@@ -22,6 +25,8 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
+#include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +34,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <crt_externs.h>
@@ -213,66 +219,176 @@ EC_FN(int64_t, ec_write_fd, (int32_t fd)) {
   return 0;
 }
 
-/* Run argv = in[0..] (searched on PATH). capture != 0: the child's stdout goes into out.
-   Returns the exit code, 128+signal, or -errno if the program could not be started. */
-EC_FN(int64_t, ec_run, (int32_t capture)) {
-  if (in_len == 0) return -EINVAL;
+/* A pipe with both ends close-on-exec (atomically where the OS has pipe2). */
+static int cloexec_pipe(int p[2]) {
+#if defined(__linux__)
+  return pipe2(p, O_CLOEXEC);
+#else
+  if (pipe(p) != 0) return -1;
+  if (fcntl(p[0], F_SETFD, FD_CLOEXEC) == 0 && fcntl(p[1], F_SETFD, FD_CLOEXEC) == 0) return 0;
+  int e = errno;
+  close(p[0]);
+  close(p[1]);
+  errno = e;
+  return -1;
+#endif
+}
+
+static void close_fd(int *fd) {
+  if (*fd >= 0) close(*fd);
+  *fd = -1;
+}
+
+static int64_t now_ms(void) {
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return (int64_t)t.tv_sec * 1000 + (int64_t)t.tv_nsec / 1000000;
+}
+
+/* In the child: a close-on-exec copy of `fd` above 0..2, so the dup2s onto 1 and 2 can't
+   overwrite it (our pipes only land on 0..2 if the parent had closed its stdio). */
+static int above_stdio(int fd) {
+  return fd >= 0 && fd <= 2 ? fcntl(fd, F_DUPFD_CLOEXEC, 3) : fd;
+}
+
+#define EC_RUN_TIMEOUT 256
+#define EC_RUN_GRACE_MS 200
+
+/* Run argv = in[0..] (searched on PATH); contract in ABI.md "Running a program".
+   out_mode / err_mode: 0 inherit, 1 capture. timeout_ms > 0: SIGTERM the child's process
+   group at the deadline, SIGKILL after EC_RUN_GRACE_MS. Returns the exit code, 128+signal,
+   EC_RUN_TIMEOUT, or -errno. out = 8-byte little-endian stdout length, stdout, stderr. */
+EC_FN(int64_t, ec_run, (int32_t out_mode, int32_t err_mode, int64_t timeout_ms)) {
+  if (in_len == 0 || out_mode < 0 || out_mode > 1 || err_mode < 0 || err_mode > 1) return -EINVAL;
+  int limited = timeout_ms > 0;
+  if (timeout_ms > 1000000000000) timeout_ms = 1000000000000; /* ~31 years: no overflow */
   int argc = 0;
   while (arg(argc)) argc++;
   char **argv = calloc((size_t)argc + 1, sizeof *argv);
   if (!argv) return -ENOMEM;
   for (int k = 0; k < argc; k++) argv[k] = (char *)arg(k);
-  int fds[2] = {-1, -1}, errp[2] = {-1, -1};
-  if ((capture && pipe(fds) != 0) || pipe(errp) != 0) {
+  /* op: stdout, ep: stderr, xp: exec errno (closes on a successful exec) */
+  int op[2] = {-1, -1}, ep[2] = {-1, -1}, xp[2] = {-1, -1};
+  if ((out_mode && cloexec_pipe(op) != 0) || (err_mode && cloexec_pipe(ep) != 0) ||
+      cloexec_pipe(xp) != 0) {
     int64_t r = fail();
+    close_fd(&op[0]); close_fd(&op[1]); close_fd(&ep[0]); close_fd(&ep[1]);
     free(argv);
     return r;
   }
-  /* the exec-error pipe closes on a successful exec; otherwise reading it waits for the child */
-  fcntl(errp[1], F_SETFD, FD_CLOEXEC);
+  int64_t deadline = limited ? now_ms() + timeout_ms : 0;
   fflush(stdout);
   fflush(stderr);
   pid_t pid = fork();
   if (pid < 0) {
     int64_t r = fail();
+    close_fd(&op[0]); close_fd(&op[1]); close_fd(&ep[0]); close_fd(&ep[1]);
+    close_fd(&xp[0]); close_fd(&xp[1]);
     free(argv);
     return r;
   }
   if (pid == 0) {
-    close(errp[0]);
-    if (capture) {
-      dup2(fds[1], 1);
-      close(fds[0]);
-      close(fds[1]);
+    /* only async-signal-safe calls until exec */
+    if (limited) setpgid(0, 0);
+    int x = above_stdio(xp[1]), o = above_stdio(op[1]), e = above_stdio(ep[1]);
+    if (x < 0) _exit(127);
+    if ((out_mode && (o < 0 || dup2(o, 1) < 0)) || (err_mode && (e < 0 || dup2(e, 2) < 0))) {
+      int en = errno;
+      (void)!write(x, &en, sizeof en);
+      _exit(127);
     }
     execvp(argv[0], argv);
-    int e = errno;
-    (void)!write(errp[1], &e, sizeof e);
+    int en = errno;
+    (void)!write(x, &en, sizeof en);
     _exit(127);
   }
   free(argv);
-  close(errp[1]);
-  out_len = 0;
-  if (capture) {
-    close(fds[1]);
-    char buf[65536];
-    for (;;) {
-      ssize_t n = read(fds[0], buf, sizeof buf);
-      if (n == 0) break;
-      if (n < 0) {
-        if (errno == EINTR) continue;
-        break;
-      }
-      out_put(buf, (size_t)n);
-    }
-    close(fds[0]);
-  }
-  int e = 0, status = 0;
+  if (limited) setpgid(pid, pid); /* also here, so the group exists whichever runs first */
+  close_fd(&op[1]);
+  close_fd(&ep[1]);
+  close_fd(&xp[1]);
+  int xe = 0, status = 0, reaped = 0, stage = 0; /* stage: 0 running, 1 TERM sent, 2 KILL sent */
+  int64_t err = 0;
   ssize_t got;
-  do got = read(errp[0], &e, sizeof e); while (got < 0 && errno == EINTR);
-  close(errp[0]);
-  while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-  if (got == (ssize_t)sizeof e) return -(int64_t)e;
+  do got = read(xp[0], &xe, sizeof xe); while (got < 0 && errno == EINTR);
+  close_fd(&xp[0]);
+  if (got == (ssize_t)sizeof xe) { /* exec failed; the child has exited */
+    close_fd(&op[0]);
+    close_fd(&ep[0]);
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    return xe > 0 ? -(int64_t)xe : -EIO;
+  }
+  out_len = 0;
+  out_put("\0\0\0\0\0\0\0\0", 8);
+  unsigned char *eb = NULL;
+  size_t elen = 0, ecap = 0;
+  char buf[65536];
+  for (;;) {
+    struct pollfd pf[2];
+    nfds_t n = 0;
+    if (op[0] >= 0) { pf[n].fd = op[0]; pf[n].events = POLLIN; pf[n].revents = 0; n++; }
+    if (ep[0] >= 0) { pf[n].fd = ep[0]; pf[n].events = POLLIN; pf[n].revents = 0; n++; }
+    if (n == 0 && !limited) break; /* both pipes closed: the blocking reap below */
+    if (n == 0) {                   /* the child closed its pipes; it may still be running */
+      pid_t w = waitpid(pid, &status, WNOHANG);
+      if (w == pid) { reaped = 1; break; }
+      if (w < 0 && errno != EINTR) { err = fail(); break; }
+    }
+    int wait_ms = -1;
+    if (limited) {
+      int64_t now = now_ms(), left = deadline - now;
+      if (left <= 0) {
+        if (stage == 2) break; /* give up on the pipes; the child got SIGKILL */
+        int sig = stage == 0 ? SIGTERM : SIGKILL;
+        if (kill(-pid, sig) != 0) kill(pid, sig);
+        stage++;
+        deadline = now + EC_RUN_GRACE_MS;
+        continue;
+      }
+      int64_t cap = n == 0 ? 10 : 1000000; /* without pipes, poll the child every 10 ms */
+      wait_ms = (int)(left < cap ? left : cap);
+    }
+    if (n == 0) {
+      if (poll(pf, 0, wait_ms) < 0 && errno != EINTR) { err = fail(); break; }
+      continue;
+    }
+    if (poll(pf, n, wait_ms) < 0) {
+      if (errno == EINTR) continue;
+      err = fail();
+      break;
+    }
+    for (nfds_t i = 0; i < n; i++) {
+      if (!pf[i].revents) continue;
+      ssize_t r = read(pf[i].fd, buf, sizeof buf);
+      if (r < 0 && (errno == EINTR || errno == EAGAIN)) continue;
+      int *fd = pf[i].fd == op[0] ? &op[0] : &ep[0];
+      if (r <= 0) { close_fd(fd); continue; }
+      if (fd == &op[0]) {
+        out_put(buf, (size_t)r);
+      } else {
+        reserve(&eb, &ecap, elen + (size_t)r);
+        memcpy(eb + elen, buf, (size_t)r);
+        elen += (size_t)r;
+      }
+    }
+  }
+  close_fd(&op[0]);
+  close_fd(&ep[0]);
+  if (!reaped) {
+    if (err && (!limited || kill(-pid, SIGKILL) != 0)) kill(pid, SIGKILL);
+    pid_t w;
+    while ((w = waitpid(pid, &status, 0)) < 0 && errno == EINTR) {}
+    if (w < 0 && !err) err = fail();
+  }
+  if (err) {
+    free(eb);
+    return err;
+  }
+  uint64_t olen = (uint64_t)(out_len - 8);
+  for (int i = 0; i < 8; i++) out_p[i] = (unsigned char)(olen >> (8 * i));
+  out_put(eb, elen);
+  free(eb);
+  if (stage > 0) return EC_RUN_TIMEOUT;
   return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
 }
 

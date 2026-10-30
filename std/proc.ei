@@ -4,12 +4,39 @@
 import "../core/sys.ei"
 import "bytes.ei"
 
-pub type Output = { code: i32, out: List[u8] }
+/// What a finished program produced. `out`/`err` are empty for streams that weren't
+/// captured. `timed_out`: the deadline passed and the child was killed; `code` is then -1.
+/// Otherwise `code` is the exit code, or 128+signal if a signal killed it.
+pub type Output = { code: i32, out: List[u8], err: List[u8], timed_out: bool }
 
-fn start(argv: List[List[u8]], capture: bool) -> Result[i32, String] uses io, fs, net, ffi {
+/// How `run_with` runs a program: which of stdout/stderr to capture (the others are
+/// inherited from this process) and a wall-clock limit in milliseconds (0: none). At the
+/// limit the child's process group gets SIGTERM, then SIGKILL 200 ms later.
+pub type Options = { capture_out: bool, capture_err: bool, timeout_ms: i64 }
+
+/// Capture stdout and stderr, no time limit.
+pub fn captured() -> Options { Options(true, true, 0) }
+
+/// Capture stdout and stderr, and kill the child after `ms` milliseconds.
+pub fn limited(ms: i64) -> Options { Options(true, true, ms) }
+
+/// The core's out buffer: 8-byte little-endian stdout length, stdout, stderr.
+fn split(raw: List[u8], code: i32, timed_out: bool) -> Output {
+    var n: u64 = 0
+    var i: usize = 8
+    while i > 0 {
+        i -= 1
+        n = n * 256 + (raw[i] as u64)
+    }
+    let mid = 8 + (n as usize)
+    Output(code, bytes.slice(raw, 8, mid), bytes.slice(raw, mid, raw.len()), timed_out)
+}
+
+/// Run `argv` (searched on PATH) as `opts` says. Err only if it could not be started.
+pub fn run_with(argv: List[List[u8]], opts: Options) -> Result[Output, String] uses io, fs, net, ffi {
     if argv.len() == 0 { return Err(String.from("proc: empty command")) }
     sys.send_all(argv)
-    let n = sys.run(capture)
+    let n = sys.run(opts.capture_out, opts.capture_err, opts.timeout_ms)
     if n < 0 {
         var m = String.from("cannot run ")
         m.append(sys.to_string(argv[0]))
@@ -17,16 +44,20 @@ fn start(argv: List[List[u8]], capture: bool) -> Result[i32, String] uses io, fs
         m.append(sys.error_text(n))
         return Err(m)
     }
-    Ok(n as i32)
+    let timed_out = n == 256
+    let code: i32 = if timed_out { -1 } else { n as i32 }
+    Ok(split(sys.take(), code, timed_out))
 }
 
 /// Run with inherited stdin/stdout/stderr; returns the exit code.
-pub fn run(argv: List[List[u8]]) -> Result[i32, String] uses io, fs, net, ffi { start(argv, false) }
+pub fn run(argv: List[List[u8]]) -> Result[i32, String] uses io, fs, net, ffi {
+    let o = run_with(argv, Options(false, false, 0))?
+    Ok(o.code)
+}
 
 /// Run and capture stdout (stderr still goes to the terminal).
 pub fn output(argv: List[List[u8]]) -> Result[Output, String] uses io, fs, net, ffi {
-    let code = start(argv, true)?
-    Ok(Output(code, sys.take()))
+    run_with(argv, Options(true, false, 0))
 }
 
 /// Run, capture stdout, and fail unless the exit code is 0.
