@@ -31,3 +31,7 @@ Known limits of this arrangement (all need compiler work):
 - `str` has no byte access, so literals become bytes through `sys.lit` (an ffi call).
 - Module names are file stems, so two packages can't both contain `util.ei` (E0808).
 - No bitwise operators: `sha256` uses arithmetic and a byte table.
+
+Known gaps in core/std (fix in core, not by working around them in packages):
+
+- `proc` captures only stdout and has no timeout; `packages/fuzz` shells out to `sh -c 'timeout ... 2>file'` until `ec_run` can capture stderr and enforce a deadline.
