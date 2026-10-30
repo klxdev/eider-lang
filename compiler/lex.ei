@@ -1,0 +1,318 @@
+// lex: source bytes -> tokens. Matches the bootstrap lexer token for token, including its
+// E0001 messages and positions. Columns count Unicode scalar values (UTF-8 lead bytes).
+//
+// Tokens hold no text: identifiers carry an interned symbol id, strings an index into
+// `strs`, integers their value (with `big` set when it doesn't fit in u64; the checker
+// reports those as out of range, and anything past i128 is rejected here).
+
+import "deps/std/bytes.ei"
+import "intern.ei"
+
+pub type Kind =
+    | Ident | Int | Str | Newline | Eof
+    | Arrow | FatArrow | EqEq | NotEq | LtEq | GtEq | AndAnd | OrOr
+    | WAdd | WSub | WMul | PlusEq | MinusEq | StarEq | SlashEq | PercentEq | DotDot
+    | Question | LParen | RParen | LBrace | RBrace | LBracket | RBracket
+    | Comma | Colon | Semi | Dot | Plus | Minus | Star | Slash | Percent
+    | Lt | Gt | Eq | Bang | Pipe
+
+/// `start`/`end` are byte offsets; `line`/`col` the start position; `end_col` is the column
+/// just past the token (tokens never span lines).
+pub type Tok = { kind: Kind, start: u32, end: u32, line: u32, col: u32, end_col: u32, val: u64, big: bool }
+
+pub type Lexed = { toks: List[Tok], strs: List[List[u8]] }
+
+pub type LexError = { line: u32, col: u32, msg: str }
+
+type L = { i: usize, line: u32, col: u32 }
+
+fn at(src: List[u8], i: usize) -> u8 {
+    if i < src.len() { return src[i] }
+    0
+}
+
+/// Advance one byte; the column moves once per scalar (not on UTF-8 continuation bytes).
+fn step(src: List[u8], inout l: L) {
+    let b = src[l.i]
+    if b == 10 {
+        l.line += 1
+        l.col = 1
+    } else if b < 128 || b >= 192 {
+        l.col += 1
+    }
+    l.i += 1
+}
+
+fn err(line: u32, col: u32, m: str) -> LexError { LexError(line, col, m) }
+
+fn tok(k: Kind, start: L, l: L, val: u64) -> Tok {
+    Tok(k, start.i as u32, l.i as u32, start.line, start.col, l.col, val, false)
+}
+
+/// Two-byte symbols, longest first as in the bootstrap's table.
+fn sym2(a: u8, b: u8) -> Option[Kind] {
+    if a == 45 && b == 62 { return Some(Arrow) }        // ->
+    if a == 61 && b == 62 { return Some(FatArrow) }     // =>
+    if a == 61 && b == 61 { return Some(EqEq) }         // ==
+    if a == 33 && b == 61 { return Some(NotEq) }        // !=
+    if a == 60 && b == 61 { return Some(LtEq) }         // <=
+    if a == 62 && b == 61 { return Some(GtEq) }         // >=
+    if a == 38 && b == 38 { return Some(AndAnd) }       // &&
+    if a == 124 && b == 124 { return Some(OrOr) }       // ||
+    if a == 43 && b == 37 { return Some(WAdd) }         // +%
+    if a == 45 && b == 37 { return Some(WSub) }         // -%
+    if a == 42 && b == 37 { return Some(WMul) }         // *%
+    if a == 43 && b == 61 { return Some(PlusEq) }       // +=
+    if a == 45 && b == 61 { return Some(MinusEq) }      // -=
+    if a == 42 && b == 61 { return Some(StarEq) }       // *=
+    if a == 47 && b == 61 { return Some(SlashEq) }      // /=
+    if a == 37 && b == 61 { return Some(PercentEq) }    // %=
+    if a == 46 && b == 46 { return Some(DotDot) }       // ..
+    None
+}
+
+fn sym1(a: u8) -> Option[Kind] {
+    match a {
+        63 => Some(Question)
+        40 => Some(LParen)
+        41 => Some(RParen)
+        123 => Some(LBrace)
+        125 => Some(RBrace)
+        91 => Some(LBracket)
+        93 => Some(RBracket)
+        44 => Some(Comma)
+        58 => Some(Colon)
+        59 => Some(Semi)
+        46 => Some(Dot)
+        43 => Some(Plus)
+        45 => Some(Minus)
+        42 => Some(Star)
+        47 => Some(Slash)
+        37 => Some(Percent)
+        60 => Some(Lt)
+        62 => Some(Gt)
+        61 => Some(Eq)
+        33 => Some(Bang)
+        124 => Some(Pipe)
+        _ => None
+    }
+}
+
+fn hex_val(c: u8) -> Option[u64] {
+    if bytes.is_digit(c) { return Some((c - 48) as u64) }
+    if c >= 97 && c <= 102 { return Some((c - 87) as u64) }
+    if c >= 65 && c <= 70 { return Some((c - 55) as u64) }
+    None
+}
+
+/// value * base + digit in four 32-bit limbs; false once the value exceeds i128's maximum.
+fn acc(inout limbs: [u64; 4], base: u64, digit: u64) -> bool {
+    var carry = digit
+    for k in 0..4 {
+        let j = k as usize
+        let t = limbs[j] * base + carry
+        limbs[j] = t % 4294967296
+        carry = t / 4294967296
+    }
+    carry == 0 && limbs[3] < 2147483648
+}
+
+/// An integer literal at the cursor (a digit). Underscores are allowed after the first digit.
+fn number(src: List[u8], inout l: L) -> Result[Tok, LexError] {
+    let start = l
+    var limbs: [u64; 4] = [0; 4]
+    var ok = true
+    if at(src, l.i) == 48 && (at(src, l.i + 1) == 120 || at(src, l.i + 1) == 88) {
+        step(src, inout l)
+        step(src, inout l)
+        let first = l.i
+        while l.i < src.len() && (hex_val(src[l.i]).is_some() || src[l.i] == 95) {
+            match hex_val(src[l.i]) {
+                Some(d) => { if !acc(inout limbs, 16, d) { ok = false } }
+                None => {}
+            }
+            step(src, inout l)
+        }
+        if l.i == first { return Err(err(start.line, start.col, "expected hex digits after 0x")) }
+    } else {
+        while l.i < src.len() && (bytes.is_digit(src[l.i]) || src[l.i] == 95) {
+            if src[l.i] != 95 {
+                if !acc(inout limbs, 10, (src[l.i] - 48) as u64) { ok = false }
+            }
+            step(src, inout l)
+        }
+    }
+    if !ok { return Err(err(start.line, start.col, "integer literal too large")) }
+    var t = tok(Int, start, l, limbs[0] + limbs[1] * 4294967296)
+    t.big = limbs[2] != 0 || limbs[3] != 0
+    Ok(t)
+}
+
+/// A string literal at the cursor (`"`). Decoded bytes are appended to `strs`.
+fn string(src: List[u8], inout l: L, inout strs: List[List[u8]]) -> Result[Tok, LexError] {
+    let start = l
+    step(src, inout l)
+    var s: List[u8] = List.new()
+    while true {
+        if l.i >= src.len() || src[l.i] == 10 { return Err(err(start.line, start.col, "unterminated string literal")) }
+        let c = src[l.i]
+        if c == 34 {
+            step(src, inout l)
+            break
+        }
+        if c == 92 {
+            let e = at(src, l.i + 1)
+            if e == 110 {
+                s.push(10)
+            } else if e == 116 {
+                s.push(9)
+            } else if e == 34 || e == 92 {
+                s.push(e)
+            } else {
+                return Err(err(l.line, l.col, "unknown escape sequence"))
+            }
+            step(src, inout l)
+            step(src, inout l)
+        } else {
+            s.push(c)
+            step(src, inout l)
+        }
+    }
+    strs.push(s)
+    Ok(tok(Str, start, l, (strs.len() - 1) as u64))
+}
+
+/// The UTF-8 sequence starting at `i`, for "unexpected character" messages.
+fn scalar_at(src: List[u8], i: usize) -> List[u8] {
+    var out: List[u8] = List.new()
+    out.push(src[i])
+    var j = i + 1
+    while j < src.len() && src[j] >= 128 && src[j] < 192 {
+        out.push(src[j])
+        j += 1
+    }
+    out
+}
+
+/// The result of lexing. `BadChar` carries the offending character for the message.
+pub type Lex = | Done(lexed: Lexed) | Failed(error: LexError) | BadChar(line: u32, col: u32, ch: List[u8])
+
+pub fn lex(src: List[u8], inout names: intern.Interner) -> Lex {
+    var toks: List[Tok] = List.new()
+    var strs: List[List[u8]] = List.new()
+    var l = L(0, 1, 1)
+    while l.i < src.len() {
+        let c = src[l.i]
+        let start = l
+        if c == 10 {
+            let n = toks.len()
+            var dup = false
+            if n > 0 {
+                dup = match toks[n - 1].kind {
+                    Newline => true
+                    _ => false
+                }
+            }
+            step(src, inout l)
+            if !dup { toks.push(Tok(Newline, start.i as u32, l.i as u32, start.line, start.col, start.col + 1, 0, false)) }
+        } else if c == 32 || c == 9 || c == 13 {
+            step(src, inout l)
+        } else if c == 47 && at(src, l.i + 1) == 47 {
+            while l.i < src.len() && src[l.i] != 10 { step(src, inout l) }
+        } else if c == 47 && at(src, l.i + 1) == 42 {
+            step(src, inout l)
+            step(src, inout l)
+            while true {
+                if l.i + 1 >= src.len() { return Failed(err(start.line, start.col, "unterminated block comment")) }
+                if src[l.i] == 42 && src[l.i + 1] == 47 {
+                    step(src, inout l)
+                    step(src, inout l)
+                    break
+                }
+                step(src, inout l)
+            }
+        } else if bytes.is_digit(c) {
+            match number(src, inout l) {
+                Ok(t) => toks.push(t)
+                Err(e) => { return Failed(e) }
+            }
+        } else if bytes.is_alpha(c) || c == 95 {
+            while l.i < src.len() && bytes.is_ident(src[l.i]) { step(src, inout l) }
+            let id = intern.intern(inout names, src, start.i, l.i)
+            toks.push(tok(Ident, start, l, id as u64))
+        } else if c == 34 {
+            match string(src, inout l, inout strs) {
+                Ok(t) => toks.push(t)
+                Err(e) => { return Failed(e) }
+            }
+        } else {
+            match sym2(c, at(src, l.i + 1)) {
+                Some(k) => {
+                    step(src, inout l)
+                    step(src, inout l)
+                    toks.push(tok(k, start, l, 0))
+                }
+                None => {
+                    match sym1(c) {
+                        Some(k) => {
+                            step(src, inout l)
+                            toks.push(tok(k, start, l, 0))
+                        }
+                        None => { return BadChar(start.line, start.col, scalar_at(src, l.i)) }
+                    }
+                }
+            }
+        }
+    }
+    toks.push(Tok(Eof, l.i as u32, l.i as u32, l.line, l.col, l.col, 0, false))
+    Done(Lexed(toks, strs))
+}
+
+/// Display name of a token kind, as used in dumps and messages.
+pub fn kind_text(k: Kind) -> str {
+    match k {
+        Ident => "ident"
+        Int => "int"
+        Str => "str"
+        Newline => "newline"
+        Eof => "eof"
+        Arrow => "->"
+        FatArrow => "=>"
+        EqEq => "=="
+        NotEq => "!="
+        LtEq => "<="
+        GtEq => ">="
+        AndAnd => "&&"
+        OrOr => "||"
+        WAdd => "+%"
+        WSub => "-%"
+        WMul => "*%"
+        PlusEq => "+="
+        MinusEq => "-="
+        StarEq => "*="
+        SlashEq => "/="
+        PercentEq => "%="
+        DotDot => ".."
+        Question => "?"
+        LParen => "("
+        RParen => ")"
+        LBrace => "{"
+        RBrace => "}"
+        LBracket => "["
+        RBracket => "]"
+        Comma => ","
+        Colon => ":"
+        Semi => ";"
+        Dot => "."
+        Plus => "+"
+        Minus => "-"
+        Star => "*"
+        Slash => "/"
+        Percent => "%"
+        Lt => "<"
+        Gt => ">"
+        Eq => "="
+        Bang => "!"
+        Pipe => "|"
+    }
+}

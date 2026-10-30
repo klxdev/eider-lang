@@ -1,0 +1,10 @@
+// every token kind, literal form and position rule the lexer has
+fn main() uses io {
+    let x: u32 = 0xff_ff + 1_000 // trailing comment
+    print("q\"t\tn\n\\") /* block
+spanning */ a.b -> => == != <= >= && || +% -% *% += -= *= /= %= ..
+    ? ( ) { } [ ] , : ; . + - * / % < > = ! |
+
+
+    "é" x 18446744073709551615 18446744073709551616 0XAB_cd
+}

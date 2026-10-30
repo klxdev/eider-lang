@@ -1,0 +1,190 @@
+// diag: diagnostics, rendered exactly like the bootstrap (human and --json).
+// Messages are bytes so they can go to stderr.
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+
+pub type Fix = { line: u32, col: u32, delete: u64, insert: List[u8] }
+
+/// `file` is set when the error is in an imported file rather than the entry file.
+pub type Diag = { code: str, line: u32, col: u32, msg: List[u8], help: List[u8], fix: Option[Fix], file: List[u8] }
+
+pub fn new(code: str, line: u32, col: u32, msg: List[u8]) -> Diag {
+    Diag(code, line, col, msg, List.new(), None, List.new())
+}
+
+fn num(inout out: List[u8], n: u64) { bytes.append(inout out, bytes.from_u64(n)) }
+
+/// Rust's {:?} for strings (used for fixes, and by dumps): quotes plus \" \\ \n \t \r and \u{..} for other controls.
+pub fn debug_str(inout out: List[u8], s: List[u8]) uses ffi {
+    out.push(34)
+    for c in s {
+        if c == 34 || c == 92 {
+            out.push(92)
+            out.push(c)
+        } else if c == 10 {
+            bytes.append(inout out, sys.lit("\\n"))
+        } else if c == 9 {
+            bytes.append(inout out, sys.lit("\\t"))
+        } else if c == 13 {
+            bytes.append(inout out, sys.lit("\\r"))
+        } else if c < 32 {
+            bytes.append(inout out, sys.lit("\\u{"))
+            bytes.append(inout out, hex_min(c))
+            out.push(125)
+        } else {
+            out.push(c)
+        }
+    }
+    out.push(34)
+}
+
+fn hex_min(c: u8) -> List[u8] {
+    var out: List[u8] = List.new()
+    let hi = c / 16
+    let lo = c % 16
+    if hi > 0 { out.push(hex_digit(hi)) }
+    out.push(hex_digit(lo))
+    out
+}
+
+fn hex_digit(n: u8) -> u8 {
+    if n < 10 { return 48 + n }
+    87 + n
+}
+
+fn line_of(src: List[u8], n: u32) -> Option[List[u8]] {
+    var line: u32 = 1
+    var start: usize = 0
+    var i: usize = 0
+    while i <= src.len() {
+        if i == src.len() || src[i] == 10 {
+            if line == n {
+                if i == src.len() && start == i { return None }
+                // like Rust's str::lines: a trailing \r is part of the line ending
+                var end = i
+                if end > start && src[end - 1] == 13 { end -= 1 }
+                return Some(bytes.slice(src, start, end))
+            }
+            line += 1
+            start = i + 1
+        }
+        i += 1
+    }
+    None
+}
+
+/// error[CODE]: msg / --> file:L:C / source line with a caret / help / fix
+pub fn render(d: Diag, file: List[u8], src: List[u8]) -> List[u8] uses ffi {
+    var s = sys.lit("error[")
+    bytes.append(inout s, sys.lit(d.code))
+    bytes.append(inout s, sys.lit("]: "))
+    bytes.append(inout s, d.msg)
+    bytes.append(inout s, sys.lit("\n  --> "))
+    bytes.append(inout s, file)
+    s.push(58)
+    num(inout s, d.line as u64)
+    s.push(58)
+    num(inout s, d.col as u64)
+    s.push(10)
+    let ln: u32 = if d.line > 0 { d.line - 1 } else { 0 }
+    match line_of(src, ln + 1) {
+        Some(text) => {
+            let n = bytes.from_u64((ln + 1) as u64)
+            var pad: List[u8] = List.new()
+            for i in 0..n.len() { pad.push(32) }
+            bytes.append(inout s, pad)
+            bytes.append(inout s, sys.lit(" |\n"))
+            bytes.append(inout s, n)
+            bytes.append(inout s, sys.lit(" | "))
+            bytes.append(inout s, text)
+            s.push(10)
+            bytes.append(inout s, pad)
+            bytes.append(inout s, sys.lit(" | "))
+            var k: u32 = 1
+            while k < d.col {
+                s.push(32)
+                k += 1
+            }
+            bytes.append(inout s, sys.lit("^\n"))
+        }
+        None => {}
+    }
+    if d.help.len() > 0 {
+        bytes.append(inout s, sys.lit("  help: "))
+        bytes.append(inout s, d.help)
+        s.push(10)
+    }
+    match d.fix {
+        Some(f) => {
+            bytes.append(inout s, sys.lit("  fix: at "))
+            num(inout s, f.line as u64)
+            s.push(58)
+            num(inout s, f.col as u64)
+            bytes.append(inout s, sys.lit(" delete "))
+            num(inout s, f.delete)
+            bytes.append(inout s, sys.lit(" insert "))
+            debug_str(inout s, f.insert)
+            s.push(10)
+        }
+        None => {}
+    }
+    s
+}
+
+/// A JSON string literal.
+fn jstr(inout out: List[u8], s: List[u8]) uses ffi {
+    out.push(34)
+    for c in s {
+        if c == 34 {
+            bytes.append(inout out, sys.lit("\\\""))
+        } else if c == 92 {
+            bytes.append(inout out, sys.lit("\\\\"))
+        } else if c == 10 {
+            bytes.append(inout out, sys.lit("\\n"))
+        } else if c == 9 {
+            bytes.append(inout out, sys.lit("\\t"))
+        } else if c < 32 {
+            bytes.append(inout out, sys.lit("\\u00"))
+            out.push(hex_digit(c / 16))
+            out.push(hex_digit(c % 16))
+        } else {
+            out.push(c)
+        }
+    }
+    out.push(34)
+}
+
+pub fn json(d: Diag, file: List[u8]) -> List[u8] uses ffi {
+    let f = if d.file.len() > 0 { d.file } else { file }
+    var s = sys.lit("{\"error\":\"")
+    bytes.append(inout s, sys.lit(d.code))
+    bytes.append(inout s, sys.lit("\",\"span\":{\"file\":"))
+    jstr(inout s, f)
+    bytes.append(inout s, sys.lit(",\"line\":"))
+    num(inout s, d.line as u64)
+    bytes.append(inout s, sys.lit(",\"col\":"))
+    num(inout s, d.col as u64)
+    bytes.append(inout s, sys.lit("},\"message\":"))
+    jstr(inout s, d.msg)
+    if d.help.len() > 0 {
+        bytes.append(inout s, sys.lit(",\"help\":"))
+        jstr(inout s, d.help)
+    }
+    match d.fix {
+        Some(x) => {
+            bytes.append(inout s, sys.lit(",\"fix\":{\"at\":{\"line\":"))
+            num(inout s, x.line as u64)
+            bytes.append(inout s, sys.lit(",\"col\":"))
+            num(inout s, x.col as u64)
+            bytes.append(inout s, sys.lit("},\"delete\":"))
+            num(inout s, x.delete)
+            bytes.append(inout s, sys.lit(",\"insert\":"))
+            jstr(inout s, x.insert)
+            s.push(125)
+        }
+        None => {}
+    }
+    s.push(125)
+    s
+}

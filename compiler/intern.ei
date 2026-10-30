@@ -1,0 +1,66 @@
+// intern: identifier bytes -> u32 symbol ids, so later passes compare and hash integers.
+// Open addressing (linear probing); the table doubles at half full.
+
+import "deps/std/bytes.ei"
+
+pub type Interner = { names: List[List[u8]], hashes: List[u64], slots: List[u32] }
+
+pub fn new() -> Interner {
+    var slots: List[u32] = List.new()
+    for i in 0..64 { slots.push(0) }
+    Interner(List.new(), List.new(), slots)
+}
+
+/// Multiplicative string hash (wrapping). Switch to FNV-1a once Eider has XOR.
+fn hash(b: List[u8], start: usize, end: usize) -> u64 {
+    var h: u64 = 14695981039346656037
+    var i = start
+    while i < end {
+        h = (h *% 1099511628211) +% (b[i] as u64 + 1)
+        i += 1
+    }
+    h
+}
+
+fn same(s: Interner, id: u32, b: List[u8], start: usize, end: usize) -> bool {
+    let k = id as usize
+    if s.names[k].len() != end - start { return false }
+    var i: usize = 0
+    while i < end - start {
+        if s.names[k][i] != b[start + i] { return false }
+        i += 1
+    }
+    true
+}
+
+fn grow(inout s: Interner) {
+    let cap = s.slots.len() * 2
+    var slots: List[u32] = List.new()
+    for i in 0..cap { slots.push(0) }
+    for id in 0..s.names.len() {
+        var at = (s.hashes[id] % (cap as u64)) as usize
+        while slots[at] != 0 { at = (at + 1) % cap }
+        slots[at] = (id + 1) as u32
+    }
+    s.slots = slots
+}
+
+/// The id for b[start..end], adding it if new.
+pub fn intern(inout s: Interner, b: List[u8], start: usize, end: usize) -> u32 {
+    let h = hash(b, start, end)
+    let cap = s.slots.len()
+    var at = (h % (cap as u64)) as usize
+    while s.slots[at] != 0 {
+        let id = s.slots[at] - 1
+        if s.hashes[id as usize] == h && same(s, id, b, start, end) { return id }
+        at = (at + 1) % cap
+    }
+    let id = s.names.len() as u32
+    s.names.push(bytes.slice(b, start, end))
+    s.hashes.push(h)
+    s.slots[at] = id + 1
+    if s.names.len() * 2 > cap { grow(inout s) }
+    id
+}
+
+pub fn name(s: Interner, id: u32) -> List[u8] { s.names[id as usize] }

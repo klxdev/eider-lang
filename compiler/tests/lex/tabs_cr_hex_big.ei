@@ -1,0 +1,4 @@
+fn main() {
+	let x = 1
+    let y = 0xFFFF_FFFF_FFFF_FFFF_F
+}

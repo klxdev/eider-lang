@@ -32,3 +32,8 @@
 - `scripts/verify.sh` (skill: .claude/skills/eider-verify) is the full matrix; run it after any compiler change.
 - `run`/`test` compile C at -O0 (gcc ~4x faster than -O2 on a 3k-line program); `build` and `run --release` use -O2. Every non-unit function (and closure body) ends in `ei_unreachable()` or gcc -O0 warns `-Wreturn-type` and pollutes test output.
 - Compile-time benchmark (3,000-line synthetic, 150 record types, 2 cores, no cache): front end ~50 ms; gcc -O2 4.9 s, -O0 1.3 s; clang -O2 ~19 s, -O0 0.5 s. The C is ~3.7x the Eider line count because every type gets its own glue; shrinking that is the main lever.
+
+# Bootstrap bugs (frozen compiler; work around them, and give eiderc a regression test)
+
+- Owned temporaries in an `else if` condition (e.g. `else if bytes.eq(x, sys.lit("a"))`) are declared inside the generated `else { }` block but dropped after it, so the C fails to compile (`tN undeclared`). Bind the value first or compare through a helper function.
+- At -O2 gcc reports `-Wmaybe-uninitialized` on temporaries the bootstrap declares before a branch that always assigns them. Harmless, but eiderc's C must be warning-free.
