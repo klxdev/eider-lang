@@ -3,11 +3,9 @@
 `core/eider_rt.h` + `core/eider_rt.c` are the language runtime: the C that generated code
 calls for traps, checked arithmetic, allocation, `String`, `print`, the clock, and the
 type-independent half of threads. The self-hosted compiler emits `#include "eider_rt.h"`
-and links `eider_rt.c`. The retired stage-0 compiler pasted an equivalent runtime into every
-program as string literals (`eider-bootstrap/src/prelude.rs`, plus runtime C in `src/heap.rs`
-and `src/closure.rs`); this file is the contract that replaced it, with the same observable
-behaviour (trap messages, exit code 101, print formats), because the language contract tests
-compare program output.
+and links `eider_rt.c`. This file is its contract. Its observable behaviour (trap messages,
+exit code 101, print formats) is fixed by the recorded expectations (`tests/oracle/`),
+because the language contract tests compare program output.
 
 ## How the two core files relate
 
@@ -58,7 +56,7 @@ runtime error. It flushes `stdout`, then:
 library entry point; an atomic pointer, so concurrent entries are not a data race). It is
 `""` until set. Line `0` means "no source line" (allocation and thread failures).
 
-Messages generated code relies on, all byte-identical to stage 0:
+Messages generated code relies on, all byte-identical to the recorded expectations:
 
 | Message | Raised by |
 |---|---|
@@ -72,7 +70,7 @@ Messages generated code relies on, all byte-identical to stage 0:
 | `cannot create a thread` (line 0) | `ei_thread_start` |
 | any `panic` / `assert` text | generated code calls `ei_trap` directly |
 
-New in the core (stage 0 ignored these failures): `cannot create a mutex`,
+Also reported (failures the recorded expectations never exercise): `cannot create a mutex`,
 `cannot lock a mutex`, `cannot unlock a mutex`, `cannot join a thread`,
 `cannot create a channel` (all line 0).
 
@@ -95,7 +93,7 @@ if (setjmp(jb) == 0) { t_1(); printf("ok\n"); } else { failed++; }
 ```
 
 The hook is thread-local: a trap on a thread spawned by a test exits the whole test binary
-with 101 (as in stage 0). A `longjmp` out of a failed test does not run drops, so values owned
+with 101. A `longjmp` out of a failed test does not run drops, so values owned
 by the failed test leak, and a lock held at the moment of the trap stays held (for example a
 trap inside a `Mutex.update` closure). Tests after it that use the same Mutex deadlock.
 
@@ -149,7 +147,7 @@ in-range result: `(uint8_t)ei_s2u((int64_t)x, UINT8_MAX, 12)`.
 | `ei_str_from(const char *)`, `ei_str_from_i64(int64_t)` | new String (decimal, `-` for negatives) |
 | `ei_clone_String(const ei_String *)`, `ei_drop_String(ei_String *)` | deep copy; free (sets `p = NULL`, `len = 0`; a second drop is harmless) |
 | `ei_str_cat(s, t, tl)`, `ei_str_push(s, cstr)`, `ei_str_append(s, const ei_String *)` | append; `t` may point into `s` (self-append works); traps if the length overflows |
-| `uint64_t ei_hash_u64(uint64_t)`, `uint64_t ei_hash_str(const char *)` | Map key hashes: murmur3 finalizer; FNV-1a up to the NUL, then the finalizer. Bit-identical to stage 0. |
+| `uint64_t ei_hash_u64(uint64_t)`, `uint64_t ei_hash_str(const char *)` | Map key hashes: murmur3 finalizer; FNV-1a up to the NUL, then the finalizer. Bit-identical to the recorded expectations. |
 
 Strings never contain NUL (they are built from literals and decimal numbers), so `print`,
 `==` (`strcmp`) and `ei_hash_str` all agree on where a String ends.
@@ -161,10 +159,10 @@ Strings never contain NUL (they are built from literals and decimal numbers), so
 | `ei_print_i(int64_t)`, `ei_print_u(uint64_t)` | decimal, then `\n` |
 | `ei_print_b(bool)` | `true` / `false`, then `\n` |
 | `ei_print_s(const char *)` | the bytes up to the NUL, then `\n` |
-| `uint64_t ei_now_ms(void)` | processor time used by the process in ms (`clock()`, as in stage 0); `0` if unavailable |
+| `uint64_t ei_now_ms(void)` | processor time used by the process in ms (`clock()`); `0` if unavailable |
 
 `now_ms` is CPU time, not wall-clock time: it does not advance while the program sleeps or
-blocks, and it sums over threads. Keeping it is a stage-0 compatibility decision; a monotonic
+blocks, and it sums over threads. Keeping it is a compatibility decision (the recorded behaviour); a monotonic
 wall clock belongs in `eider_core.c` if the language wants one.
 
 ## Threads
@@ -175,7 +173,7 @@ failure of the underlying primitive.
 | Type / function | Contract |
 |---|---|
 | `ei_rc` (`atomic_uint_least64_t`), `ei_rc_init` (=1), `ei_rc_inc`, `bool ei_rc_dec` | shared-handle count (`Task`, `Mutex`, `Chan`); `ei_rc_dec` returns `true` for the last reference, and only that caller frees. Sequentially consistent. |
-| `ei_mutex`, `ei_mutex_init/lock/unlock/destroy` | an error-checking `pthread_mutex_t`: locking it again on the thread that holds it (a `Mutex.update` closure using the same Mutex) traps `cannot lock a mutex` instead of being undefined (stage 0 deadlocks) |
+| `ei_mutex`, `ei_mutex_init/lock/unlock/destroy` | an error-checking `pthread_mutex_t`: locking it again on the thread that holds it (a `Mutex.update` closure using the same Mutex) traps `cannot lock a mutex` instead of being undefined (a plain mutex would deadlock) |
 | `ei_thread`, `ei_thread_start(t, run, arg)` | starts `run(arg)` |
 | `ei_thread_join(t)` | waits once; safe from several threads at once and repeatedly (`Task.join` on shared handles) |
 | `ei_thread_destroy(t)` | joins if needed, then releases; last owner only |
@@ -187,7 +185,7 @@ failure of the underlying primitive.
 | `ei_chan_destroy(c)` | frees the queue; does not drop queued values |
 
 Values move through a channel by `memcpy`: ownership moves with the bytes, so the sender
-must not drop what it sent. That is the same move semantics stage 0 has.
+must not drop what it sent. That is the language's move semantics.
 
 Shape of the generated glue for `Chan[T]`:
 
@@ -198,45 +196,44 @@ void ei_chsend_T(const CH_T *c, T v) { ei_chan_send(&c->p->ch, &v); }
 void ei_drop_CH_T(CH_T *x) { if (x->p && ei_rc_dec(&x->p->rc)) { for (uint64_t i = 0; i < ei_chan_len(&x->p->ch); i++) ei_drop_T(ei_chan_at(&x->p->ch, i)); ei_chan_destroy(&x->p->ch); free(x->p); } x->p = NULL; }
 ```
 
-## Inventory of the stage-0 runtime
+## What is core and what is generated
 
-(History: the inventory made while porting.) Every piece of runtime C in stage 0, and where it goes (`P` = `src/prelude.rs`,
-`H` = `src/heap.rs`, `C` = `src/closure.rs`, `K` = `src/check.rs`).
+The rule: anything that does not depend on a concrete type is in the core; anything that
+walks or is parameterised by a concrete type stays compiler output.
 
 ### Core (`eider_rt`)
 
-| Stage 0 | Core |
+| Piece | Core |
 |---|---|
-| `ei_trap`, `ei_jb`, `ei_file` (P:13-30) | `ei_trap`, `ei_set_trap_jmp`, `ei_set_file` |
-| `ei_unreachable` (P:14-18) | same macro |
-| `ei_idx` (P:32) | same |
-| `ei_s2s/s2u/u2s/u2u` (P:37-40) | same |
-| `ei_alloc` (P:42) | same, plus `ei_alloc_n` for the `n * sizeof(T)` call sites (H:307, 366, 400, 437, 496) |
-| `ei_String`, `ei_str_from`, `ei_str_from_i64`, `ei_drop_String`, `ei_clone_String`, `ei_str_cat/push/append` (P:48-67) | same |
-| `ei_hash_u64`, `ei_hash_str` (P:68-75) | same |
-| `ei_print_i/u/b/s` (P:77-80) | same (`int64_t`/`uint64_t` instead of `long long`) |
-| `ei_now_ms` (P:81) | same |
-| arithmetic templates `SMALL_SIGNED` (i32), `SMALL_UNSIGNED` (u8, u32), `I64`, `U64` (P:84-162) | written out per type; usize uses u64 (stage-0 `IntTy::h`) |
-| refcount `atomic_int rc` + `atomic_fetch_*` (H:334-335, 418, 434, 456) | `ei_rc` |
-| `pthread_mutex_*` in Mutex/Task/Chan (H:418-460) | `ei_mutex` |
-| Task thread start/join-once/destroy (H:319, 456-460) | `ei_thread` |
-| Chan queue: ring buffer, cond var, closed flag, send/recv/close (H:434-441, 330-331) | `ei_chan` (type-erased by element size) |
+| traps, the test hook, the source file name | `ei_trap`, `ei_set_trap_jmp`, `ei_set_file` |
+| unreachable code | the `ei_unreachable` macro |
+| index checks, integer conversions | `ei_idx`, `ei_s2s/s2u/u2s/u2u` |
+| allocation | `ei_alloc`, plus `ei_alloc_n` for the `n * sizeof(T)` call sites |
+| `String` | `ei_String`, `ei_str_from`, `ei_str_from_i64`, `ei_drop_String`, `ei_clone_String`, `ei_str_cat/push/append` |
+| Map key hashes | `ei_hash_u64`, `ei_hash_str` |
+| `print` | `ei_print_i/u/b/s` (`int64_t`/`uint64_t`) |
+| the clock | `ei_now_ms` |
+| checked arithmetic | written out per integer type; usize uses the u64 functions |
+| reference counts (Mutex, Task, Chan handles) | `ei_rc` |
+| locks in Mutex/Task/Chan | `ei_mutex` |
+| Task thread start/join-once/destroy | `ei_thread` |
+| Chan queue: ring buffer, cond var, closed flag, send/recv/close | `ei_chan` (type-erased by element size) |
 
 ### Generated (stays compiler output)
 
-| Stage 0 | Why it is per type |
+| Generated | Why it is per type |
 |---|---|
-| `ei_drop_X` / `ei_clone_X` for records, tuples, enums, arrays, List, Map, Box, Fn, Task/Mutex/Chan handles (H:239-378) | walks the fields of a concrete type |
-| `ei_eq_X` (H:192-237) and the inline `==` for String/str (`strcmp`, K:1130) | structural equality per type |
-| `ei_push_X`, `ei_has_X` (List, H:395-405); `pop`, `get`, `map`/`filter`/`fold`/`sum` loops (H:662-878) | monomorphized element type |
-| `ei_mfind/mget/minsert/mremove_X` (Map, H:469-499), hash dispatch (H:380-386) | key/value types; calls `ei_hash_*`, `ei_alloc_n` |
-| `ei_bnew_X` (Box, H:464-468) | element type |
-| `ei_mxnew/mxget/mxset/mxupd_X` (Mutex, H:406-425) | typed value + clone/drop; uses `ei_mutex`, `ei_rc` |
-| `ei_chnew/chsend/chrecv/chclose_X` (Chan, H:426-444) | thin typed wrappers over `ei_chan` |
-| `ei_spawn_X`, `ei_tkmain_X`, `ei_tkjoin_X` (Task, H:445-463) | typed closure and result; uses `ei_thread`, `ei_rc` |
-| closure environments `ei_envdrop_N`, `ei_envclone_N`, `F_X` structs (C:193-224) | captured variables per closure |
+| `ei_drop_X` / `ei_clone_X` for records, tuples, enums, arrays, List, Map, Box, Fn, Task/Mutex/Chan handles | walks the fields of a concrete type |
+| `ei_eq_X` and the inline `==` for String/str (`strcmp`) | structural equality per type |
+| `ei_push_X`, `ei_has_X` (List); `pop`, `get`, `map`/`filter`/`fold`/`sum` loops | monomorphized element type |
+| `ei_mfind/mget/minsert/mremove_X` (Map), hash dispatch | key/value types; calls `ei_hash_*`, `ei_alloc_n` |
+| `ei_bnew_X` (Box) | element type |
+| `ei_mxnew/mxget/mxset/mxupd_X` (Mutex) | typed value + clone/drop; uses `ei_mutex`, `ei_rc` |
+| `ei_chnew/chsend/chrecv/chclose_X` (Chan) | thin typed wrappers over `ei_chan` |
+| `ei_spawn_X`, `ei_tkmain_X`, `ei_tkjoin_X` (Task) | typed closure and result; uses `ei_thread`, `ei_rc` |
+| closure environments `ei_envdrop_N`, `ei_envclone_N`, `F_X` structs | captured variables per closure |
 | unit-enum name tables `T_names[]` (printed with `ei_print_s`) | per enum |
-| `main`, the test driver loop, exported `eider_*` entry points (K:1188-1217) | per program |
+| `main`, the test driver loop, exported `eider_*` entry points | per program |
 
 ## Portability
 
@@ -258,7 +255,7 @@ void ei_drop_CH_T(CH_T *x) { if (x->p && ei_rc_dec(&x->p->rc)) { for (uint64_t i
   `ei_now_ms` is the host clock.
 - Windows: not written (needs a threads backend, like `eider_core`).
 
-## Known gaps carried from stage 0
+## Known gaps
 
 - `ei_str_cat` builds a new buffer on every append, so a loop of `push_str` is quadratic.
   Fixing that needs a capacity field in `ei_String`, which changes the generated layout.

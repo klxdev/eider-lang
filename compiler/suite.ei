@@ -1,5 +1,5 @@
-// suite: `eiderc test --compile-fail <dir>`, the compile-fail runner (the bootstrap's
-// run_compile_fail, same output and exit code; docs/compiler.md, "C7: driver").
+// suite: `eiderc test --compile-fail <dir>`, the compile-fail runner (output
+// and exit code as tests/oracle records; docs/compiler.md, "C7: driver").
 //
 // <dir>/fail/*.ei start with `// expect: CODE LINE:COL` (the header is line 1 of the file
 // as compiled) and must fail with exactly that diagnostic; if it carries a fix, the fixed
@@ -24,7 +24,7 @@ import "resolve.ei"
 import "check.ei"
 import "comptime.ei" as consteval
 
-/// How a file is checked (the bootstrap's Mode, minus Lib).
+/// How a file is checked (the checking modes, minus the library mode).
 pub const BUILD: i32 = 0
 pub const TEST: i32 = 1
 pub const WASM: i32 = 2
@@ -92,7 +92,7 @@ fn mode_of(src: List[u8]) -> i32 uses ffi {
     BUILD
 }
 
-/// `  <tag> <name padded to 28>` (Rust's `{:<28}`).
+/// `  <tag> <name padded to 28>` (left-aligned, padded with spaces to at least 28).
 fn head(tag: str, name: List[u8]) -> List[u8] uses ffi {
     var out = s("  ")
     bytes.append(inout out, s(tag))

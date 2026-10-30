@@ -1,5 +1,5 @@
-// A record whose field is a record. The bootstrap's header gives only the outer one a typedef
-// and does not compile; eiderc's typedefs every record (see run.sh).
+// A record whose field is a record. The recorded oracle's header gives only the outer one a
+// typedef and does not compile; eiderc deliberately typedefs every record (see run.sh).
 type Pt = { x: i32, y: i32 }
 type Seg = { a: Pt, b: Pt }
 

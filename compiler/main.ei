@@ -9,7 +9,7 @@
 // `-l <lib>` (repeatable) links a C library into build, run, test and build --lib.
 // `--wasm` checks (and emits) the file as a WebAssembly module (a library whose exports take
 // and return integers and bool, no threads: E0806): `check --wasm`, `emit-c --wasm`,
-// `emit-header --wasm` (the .d.ts and the loader, \x01-separated, as the bootstrap prints them) and
+// `emit-header --wasm` (the .d.ts and the loader, \x01-separated, as tests/oracle records them) and
 // `build --wasm` / `run --wasm` (<name>.wasm, <name>.d.ts, <name>.js; wasm.ei). `test`
 // ignores it, as it ignores `--lib`.
 
@@ -39,7 +39,7 @@ type Args = {
 }
 
 /// Comparisons go through a function so no owned temporary sits in an `else if` condition
-/// (the bootstrap drops such temporaries outside the block that declares them).
+/// (compiler/ avoids that pattern: such temporaries were once dropped too late, LEARNINGS.md).
 fn is(a: List[u8], s: str) -> bool uses ffi { bytes.eq(a, sys.lit(s)) }
 
 /// `eiderc --help`: every command, option and environment variable.
@@ -86,7 +86,7 @@ fn usage_error(msg: List[u8]) uses io, ffi {
     env.exit(2)
 }
 
-/// No command at all: the usage text on stderr, exit 2 (the bootstrap prints it too).
+/// No command at all: the usage text on stderr, exit 2 (as tests/oracle records).
 fn usage() uses io, ffi {
     io.err(usage_text())
     env.exit(2)
@@ -167,12 +167,12 @@ fn parse_args() -> Args uses io, ffi {
     if !known_cmd(cmd) { usage_error(quoted("unknown command ", cmd)) }
     if compile_fail {
         if !is(cmd, "test") { usage_error(sys.lit("`--compile-fail` goes with `test`")) }
-        // the bootstrap's default suite
+        // the default suite
         if file.len() == 0 { file = sys.lit("tests/checks") }
     }
     if file.len() == 0 { usage_error(quoted("missing the source file for ", cmd)) }
     if is(cmd, "emit-header") { lib = true }
-    // `test` checks the test driver, never a library (the bootstrap's mode order)
+    // `test` checks the test driver, never a library (the recorded mode order)
     if is(cmd, "test") {
         lib = false
         wasm = false
@@ -181,7 +181,7 @@ fn parse_args() -> Args uses io, ffi {
     Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay)
 }
 
-/// Print `d` like the bootstrap: JSON on stdout, or the rendered form (against the source of
+/// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
 /// the file it is in) on stderr. Module prefixes in the text are shown as `module.Name`.
 fn report(d: diag.Diag, a: Args, src: List[u8]) uses io, fs, ffi {
     var d2 = d
@@ -287,7 +287,7 @@ fn main() uses io, fs, net, clock, ffi {
         return
     }
     let p = match parse.parse(lx, names) {
-        // not `Ok(p) => p`: the bootstrap shadows `p` and never assigns it (LEARNINGS.md)
+        // not `Ok(p) => p`: compiler/ avoids an arm binding named like its `let` (LEARNINGS.md)
         Ok(parsed) => parsed
         Err(d) => {
             report(d, a, src)
@@ -308,7 +308,7 @@ fn main() uses io, fs, net, clock, ffi {
             return
         }
     }
-    // `comptime` constants are evaluated between loading and checking, as in the bootstrap
+    // `comptime` constants are evaluated between loading and checking, as tests/oracle expects
     let prog = match consteval.eval(loaded) {
         Ok(x) => x
         Err(d) => {
@@ -347,10 +347,10 @@ fn main() uses io, fs, net, clock, ffi {
         if is(a.cmd, "emit-c") {
             io.out(cprog)
         } else if a.wasm {
-            // the bootstrap: `build --wasm` and `run --wasm` both build the module
+            // as recorded: `build --wasm` and `run --wasm` both build the module
             wasm.build(cprog, lp, a.file, a.out)
         } else if a.lib {
-            // the bootstrap: `build --lib` and `run --lib` both build the library
+            // as recorded: `build --lib` and `run --lib` both build the library
             driver.build_lib(cprog, lower.header(lp), a.file, a.out, a.libs)
         } else if is(a.cmd, "build") {
             driver.build(cprog, a.file, a.out, a.libs)

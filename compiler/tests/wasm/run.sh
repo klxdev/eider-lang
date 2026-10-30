@@ -3,7 +3,7 @@
 # `eiderc build --wasm` gives X.wasm, X.d.ts and X.js; `node X.mjs` against them must print
 # X.out, and the recorded oracle (scripts/test-compiler.sh): the node output must equal
 # tests/oracle/compiler/tests/wasm/X.node and X.d.ts and X.js must equal the oracle's byte for
-# byte (unless line 1 is `// oracle differs: <why>`, for a bug of the bootstrap's shim that
+# byte (unless line 1 is `// oracle differs: <why>`, for a bug of the recorded oracle's shim that
 # eiderc fixes: then only X.out counts, and the recorded output must really differ).
 # BLESS=1 rewrites the oracle files from eiderc's (X.node not for `oracle differs` files).
 # Also: tests/wasm/core.sh (core/wasm and the emitted C compile as strict freestanding C) and

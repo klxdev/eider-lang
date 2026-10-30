@@ -261,7 +261,7 @@ compile_fail "orphan impl" expect E0802 at 1:1 {
 | Snapshot of message and fix | Diagnostics regress for agents that apply fixes automatically |
 | Fix round-trip: apply `fix`, recompile | A suggested fix that doesn't actually fix the error |
 | Coverage gate in CI | Every `E` code in the compiler has at least one `compile_fail` test |
-| Fuzzing with rustc-style mutation (delete a match arm, drop `uses`, widen an int) | Holes no one wrote a test for |
+| Fuzzing by mutating valid programs (delete a match arm, drop `uses`, widen an int) | Holes no one wrote a test for |
 
 The fix round-trip is the important one for agents: for every `compile_fail` that carries a `fix`, the harness applies it and requires the result to compile (or to fail with a different, expected error). That is what makes "the diagnostic tells the agent how to fix it" a tested guarantee instead of a hope.
 

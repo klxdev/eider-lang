@@ -1,5 +1,5 @@
 // Imports: qualified types, variants (in patterns too), constants, functions; an imported
-// unit enum prints like the bootstrap; private and public helpers; tests of
+// unit enum prints its variant name; private and public helpers; tests of
 // imported modules run with the entry file's tests.
 import "lib/geo.ei"
 import "lib/geo.ei" as g

@@ -1,4 +1,4 @@
-// parse: tokens -> ast.Ast. A recursive-descent mirror of the bootstrap parser: the same
+// parse: tokens -> ast.Ast. A recursive-descent parser held to tests/oracle: the same
 // grammar, the same error at the same token with the same message.
 //
 // One deliberate difference: `alias.Name` (where `alias` is an import alias seen earlier in
@@ -79,7 +79,7 @@ fn peek_nonnl_kw(p: P, kw: u32) -> bool {
     t.kind == lex.Ident && t.val == kw as u64
 }
 
-/// The end of the previous token (the bootstrap's prev_end).
+/// The end of the previous token.
 fn prev_end(p: P) -> Name {
     let j: usize = if p.i > 0 { p.i - 1 } else { 0 }
     Name(0, p.toks[j].line, p.toks[j].end_col)
@@ -1051,7 +1051,7 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         node.a = n.sym
         match qualified(inout p, n.sym) {
             Some(q) => {
-                // the position stays at the qualifier, as in the bootstrap
+                // the position stays at the qualifier, as tests/oracle expects
                 node.a = q.sym
                 node.b = n.sym + 1
             }
@@ -1073,7 +1073,7 @@ fn else_branch(inout p: P) -> Result[u32, diag.Diag] uses ffi {
 fn if_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     let pos = expect_kw(inout p, intern.K_IF)?
     if eat_kw(inout p, intern.K_LET) {
-        // `if let PAT = EXPR { A } else { B }` is a two-arm match, as in the bootstrap
+        // `if let PAT = EXPR { A } else { B }` is a two-arm match
         let pat = pattern(inout p)?
         expect(inout p, lex.Eq)?
         let scrut = expr(inout p)?
@@ -1236,13 +1236,13 @@ pub fn pattern(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         var qual: u32 = 0
         match qualified(inout p, nm.sym) {
             Some(q) => {
-                // the position stays at the qualifier, as in the bootstrap
+                // the position stays at the qualifier, as tests/oracle expects
                 qual = nm.sym + 1
                 nm = Name(q.sym, nm.line, nm.col)
             }
             None => {}
         }
-        // `a.b.C` keeps only the last segment (bootstrap behaviour)
+        // `a.b.C` keeps only the last segment (kept for compatibility with tests/oracle)
         while is(p, lex.Dot) {
             adv(inout p)
             nm = ident(inout p)?

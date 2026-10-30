@@ -1,7 +1,7 @@
 #!/bin/sh
 # Tests for the self-hosted compiler (compiler/). Differential against a recorded oracle:
-# tests/oracle/ holds what the bootstrap compiler printed for every input below (recorded
-# before it was retired; docs/compiler.md, "Testing"), one file per (command, input) at
+# tests/oracle/ holds the expected output for every input below (tests/oracle/README.md;
+# docs/compiler.md, "Testing"), one file per (command, input) at
 # tests/oracle/<source path without .ei>.<kind>. Output is compared with the checkout's
 # root written `<root>`. BLESS=1 rewrites the oracle (and the goldens) from eiderc's output:
 # that is how expected behaviour changes from now on, after reviewing the diff.
@@ -20,8 +20,8 @@
 #             `eiderc run` (X.run), and, if it has test blocks, under `eiderc test` (X.test).
 #             eiderc compiles its C with -Werror (on top of the driver's -std=c11 -pedantic
 #             -Wall -Wextra). Exception: a compiler/tests/run file with an X.out (and
-#             X.test.out) next to it is a regression test for a bootstrap bug (LEARNINGS.md),
-#             where the bootstrap's output was wrong; it is compared with that hand-written
+#             X.test.out) next to it is a regression test for behaviour eiderc deliberately
+#             fixed (LEARNINGS.md); it is compared with that hand-written
 #             expected stdout instead (and must exit 0 with empty stderr).
 #   sanitize: every run again with its C at -O2 -Werror (so -Wmaybe-uninitialized is
 #             checked) under UBSan in trap mode (-fsanitize=undefined
@@ -224,7 +224,7 @@ for f in tests/run/*.ei compiler/tests/run/*.ei; do
     outcome env EIDER_CFLAGS=-Werror $new $cmd "$f"
     cp $tmp/out $tmp/got
     if [ -n "$exp" ] && [ -f "$exp" ]; then
-      # a bootstrap-bug regression: hand-written expected output, not the bootstrap's
+      # a regression for a deliberate fix: hand-written expected output, not the oracle's
       { cat "$exp"; echo "--- stderr"; echo "--- exit 0"; } >$tmp/want
     else
       bless "$f" $cmd $tmp/got
@@ -272,7 +272,7 @@ for f in tests/run/*.ei compiler/tests/run/*.ei; do
   fi
 done
 if [ "$ragree" = "$rscope" ]; then v="ok  "; else v="FAIL"; fi
-echo "$v run: $ragree/$rscope run tests in scope agree ($rtotal tests; $rexpected compared with expected output for bootstrap bugs)"
+echo "$v run: $ragree/$rscope run tests in scope agree ($rtotal tests; $rexpected compared with hand-written expected output)"
 echo "     out of scope:$routside"
 if [ "$rsan_ok" = "$rsan" ]; then v="ok  "; else v="FAIL"; fi
 echo "$v sanitize: $rsan_ok/$rsan runs at -O2 under -fsanitize={$sans} match"
@@ -336,7 +336,7 @@ for f in tests/export/mathlib.ei compiler/tests/export/shapes.ei compiler/tests/
     fail=1
     continue
   fi
-  # nested.ei: the bootstrap's header lacked the inner record's typedef, so there is no
+  # nested.ei: the recorded header lacked the inner record's typedef, so there is no
   # oracle for it (compiler/tests/export/run.sh compiles eiderc's)
   case "$f" in tests/export/*|*/shapes.ei)
     $new emit-header "$f" 2>&1 | norm >$tmp/h_got

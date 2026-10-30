@@ -7,8 +7,8 @@
 //   cc -std=c11 -pedantic -Wall -Wextra -Wno-unused-* -O0|-O2 -pthread $EIDER_CFLAGS
 //      -I <root>/core -o <exe> <prog>.c <core objects or sources> -l<lib>..
 //
-// `run` and `test` use -O0 (fast C compiles), `build` and `run --release` -O2, as the bootstrap
-// does. EIDER_CFLAGS (split at spaces) adds flags, e.g. `-Werror` or a sanitizer. `-l <lib>`
+// `run` and `test` use -O0 (fast C compiles), `build` and `run --release` -O2.
+// EIDER_CFLAGS (split at spaces) adds flags, e.g. `-Werror` or a sanitizer. `-l <lib>`
 // options link C libraries (for `extern "c"` functions outside the core).
 //
 // Cache ($EIDER_CACHE: `off`, or a directory; default $XDG_CACHE_HOME/eider, else
@@ -34,7 +34,7 @@
 // for the same flags, and makes lib<name>.a (ar rcs) and lib<name>.so (cc -shared, with the
 // -l libraries) from them, plus <name>.h (lower.header); <name> is `-o`'s file name, else the
 // source's stem, and the files go next to `-o`'s path (else in the working directory), as
-// the bootstrap does. The library is self-contained: it carries the runtime and the core.
+// tests/oracle expects. The library is self-contained: it carries the runtime and the core.
 //
 // Reusable entry points (comptime evaluation builds and runs C through them): `executable`
 // returns a built program (cached or in a work directory) and `discard` removes its work
@@ -408,7 +408,7 @@ pub type Exe = { path: List[u8], dir: List[u8] }
 /// Compile C text `c` into an executable at `exe`; with the cache on, into the cache (`exe`
 /// is then only the scratch name, and nothing is compiled when the binary is cached).
 /// Returns the executable's path. The C file goes to `dir`; on failure the C is kept and
-/// the process exits with 3 (the bootstrap's code), or with `quiet` the C compiler's output is
+/// the process exits with 3 (the recorded exit code), or with `quiet` the C compiler's output is
 /// captured and "" returned.
 fn compile(c: List[u8], dir: List[u8], exe: List[u8], release: bool, libs: List[List[u8]], quiet: bool) -> List[u8] uses io, fs, net, ffi {
     let core = fs.join(root(), s("core"))

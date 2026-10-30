@@ -6,7 +6,7 @@ import "deps/std/bytes.ei"
 
 pub type Interner = { names: List[List[u8]], hashes: List[u64], slots: List[u32] }
 
-/// Keywords get the fixed ids 0..30 (the bootstrap's KW order); a symbol id <= LAST_KEYWORD
+/// Keywords get the fixed ids 0..30; a symbol id <= LAST_KEYWORD
 /// is a keyword. A few well-known names follow.
 pub const K_FN: u32 = 0
 pub const K_TYPE: u32 = 1

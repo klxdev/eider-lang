@@ -1,1 +1,1 @@
-extern "rust" fn f()
+extern "go" fn f()

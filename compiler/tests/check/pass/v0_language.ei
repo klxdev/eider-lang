@@ -1,5 +1,5 @@
 // mode: build
-// Every v0 construct eiderc checks, in one program the bootstrap accepts.
+// Every v0 construct eiderc checks, in one program the recorded oracle accepts.
 type Suit = | Hearts | Spades
 type Card = { rank: u8, suit: Suit }
 type Hand = { cards: [Card; 3], owner: str }

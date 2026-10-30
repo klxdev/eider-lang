@@ -8,7 +8,7 @@ Eider code is partitioned into three layers. Dependencies only point down.
 
 | Layer | Where | Language | What belongs here |
 |---|---|---|---|
-| core | `core/` | C (`eider_core.c`, `eider_rt.{h,c}`; `wasm/`, the runtime's optional WebAssembly backend) + Eider (`sys.ei`, `prelude.ei`) | `eider_rt` is the language runtime generated C calls (traps, checked arithmetic, allocation, String, print, thread primitives; `core/RUNTIME.md`). `prelude.ei` is the language's own Eider source that every program sees (Option, Result and their methods; copied verbatim from the retired bootstrap's EIDER_PRELUDE, so positions agree); it stays that tiny. Otherwise the OS interop boundary and nothing else, specified in `core/ABI.md` so each OS or architecture is one backend file. One OS call per C function, errors as `-errno`, no logic, no pointers exposed to Eider (data crosses a byte at a time through the core's buffers). `sys.ei` is the only module allowed to use `extern`/`unsafe`, and it binds only `ec_*` core symbols. |
+| core | `core/` | C (`eider_core.c`, `eider_rt.{h,c}`; `wasm/`, the runtime's optional WebAssembly backend) + Eider (`sys.ei`, `prelude.ei`) | `eider_rt` is the language runtime generated C calls (traps, checked arithmetic, allocation, String, print, thread primitives; `core/RUNTIME.md`). `prelude.ei` is the language's own Eider source that every program sees (Option, Result and their methods; its text is fixed, since positions recorded in `tests/oracle/` depend on it); it stays that tiny. Otherwise the OS interop boundary and nothing else, specified in `core/ABI.md` so each OS or architecture is one backend file. One OS call per C function, errors as `-errno`, no logic, no pointers exposed to Eider (data crosses a byte at a time through the core's buffers). `sys.ei` is the only module allowed to use `extern`/`unsafe`, and it binds only `ec_*` core symbols. |
 | std | `std/` | Eider | What almost every program needs: `bytes` (text as `List[u8]`), `fs`, `io`, `env`, `proc`. Imports only core and other std modules. |
 | packages | `packages/<name>/` | Eider | Everything else, as ordinary packages with an `eider.toml`: `toml`, `semver`, `sha256`, the package manager itself, and `fuzz` (the compiler's crash and consistency fuzzer, `scripts/fuzz-check.sh`). They import `deps/core/...`, `deps/std/...` and `deps/<dep>/...`. |
 
@@ -28,7 +28,7 @@ can take a pinned package from the repository.
 Building Eider must stay cheap to bootstrap and audit. The rule:
 
 - **To build the compiler from the seed, and to build any Eider program:** a C11 compiler and a
-  POSIX.1-2008 C library with threads (`-pthread`). Nothing else: no Rust, no Python, no make,
+  POSIX.1-2008 C library with threads (`-pthread`). Nothing else: no other language toolchain (no Python), no make,
   no third-party C libraries, no particular C compiler (gcc and clang both work; anything C11
   should). `cc -std=c11 -O2 -pthread -I core -o eiderc seed/eiderc.c core/eider_rt.c core/eider_core.c`
   is the whole bootstrap.
@@ -42,14 +42,14 @@ Building Eider must stay cheap to bootstrap and audit. The rule:
 - **Development and test tooling** may use more: `sh` for the scripts, `git` (package-manager
   tests), a second C compiler (clang), sanitizer runtimes (ASan/UBSan/TSan) and `node` (the
   wasm test). The differential oracle is the recorded `tests/oracle/` (docs/compiler.md, "C7:
-  retiring stage 0"), not a second compiler. `scripts/verify.sh` skips a leg, with the reason,
+  recording the oracle"), not a second compiler. `scripts/verify.sh` skips a leg, with the reason,
   when its tool is missing.
 
 Rules of thumb:
 
 - New C goes in core only if it is an OS call Eider cannot make otherwise. Anything that can be written in Eider is.
 - A module goes in std only if most programs would use it. Formats, algorithms and tools are packages.
-- This repository contains no Rust and needs none. `compiler/` self-hosts and its generated C is committed as `seed/eiderc.c`, so building Eider needs only a C compiler (`scripts/ei` does it; `scripts/selfhost.sh --from-seed` checks that the seed reproduces itself). History: until C7 the compiler was bootstrapped by a temporary Rust stage 0 in the separate `eider-bootstrap` repository, which was also the tests' differential oracle; it was retired at C7, once eiderc reached parity, and its results were recorded in `tests/oracle/` (docs/compiler.md).
+- `compiler/` self-hosts and its generated C is committed as `seed/eiderc.c`, so building Eider needs only a C compiler (`scripts/ei` does it; `scripts/selfhost.sh --from-seed` checks that the seed reproduces itself). The tests' expected results are recorded in `tests/oracle/` (docs/compiler.md, "History").
 
 Tooling:
 
