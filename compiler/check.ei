@@ -23,9 +23,12 @@
 // frame's owned values are dropped when it ends or is left by return/break/continue/`?`.
 // The IR spells all of it out (ir.ei, "Ownership").
 //
-// Features still outside eiderc (closures and fn types, threads, FFI/export, comptime) stop
-// checking with an `unsupported` diagnostic at the point the bootstrap would start handling
-// them, so everything reported before is exact.
+// Closures (closure.rs) are IR functions of their own, built while their enclosing function
+// is (ir.begin_nested), with a snapshot of the locals they mention as their environment.
+//
+// Features still outside eiderc (threads, FFI/export, comptime, and `?` in an
+// expression-bodied closure) stop checking with an `unsupported` diagnostic at the point the
+// bootstrap would start handling them, so everything reported before is exact.
 
 import "deps/core/sys.ei"
 import "deps/std/bytes.ei"

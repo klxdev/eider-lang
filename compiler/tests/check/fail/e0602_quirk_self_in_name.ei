@@ -1,0 +1,11 @@
+// expect: E0602 9:8
+// register_impl compares signatures as text with every `Self` replaced by the target,
+// also inside other names (`MySelf` becomes `MyMySelf`)
+type MySelf = { v: u32 }
+trait Mk {
+    fn mk(self) -> Self
+}
+impl Mk for MySelf {
+    fn mk(self) -> MySelf { self }
+}
+fn main() {}
