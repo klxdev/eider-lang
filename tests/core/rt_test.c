@@ -363,7 +363,7 @@ static void test_string(void) {
 
 static void test_hash(void) {
   EQU(ei_hash_u64(0), 0);
-  /* values from the stage-0 prelude: Map layout must not change */
+  /* values from the bootstrap's prelude: Map layout must not change */
   EQU(ei_hash_u64(1), UINT64_C(0xb456bcfc34c2cb2c));
   EQU(ei_hash_u64(UINT64_MAX), UINT64_C(0x64b5720b4b825f21));
   EQU(ei_hash_str(""), UINT64_C(0xd725c98e9509182e));

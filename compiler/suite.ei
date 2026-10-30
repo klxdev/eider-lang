@@ -1,4 +1,4 @@
-// suite: `eiderc test --compile-fail <dir>`, the compile-fail runner (stage 0's
+// suite: `eiderc test --compile-fail <dir>`, the compile-fail runner (the bootstrap's
 // run_compile_fail, same output and exit code; docs/compiler.md, "C7: driver").
 //
 // <dir>/fail/*.ei start with `// expect: CODE LINE:COL` (the header is line 1 of the file
@@ -24,7 +24,7 @@ import "resolve.ei"
 import "check.ei"
 import "comptime.ei" as consteval
 
-/// How a file is checked (stage 0's Mode, minus Lib).
+/// How a file is checked (the bootstrap's Mode, minus Lib).
 pub const BUILD: i32 = 0
 pub const TEST: i32 = 1
 pub const WASM: i32 = 2

@@ -1,4 +1,4 @@
-// Stage-0 bug (LEARNINGS.md): owned temporaries in an `else if` condition are declared inside
+// Bootstrap bug (LEARNINGS.md): owned temporaries in an `else if` condition are declared inside
 // the generated `else { }` and dropped after it, so its C fails to compile. v0 has no owned
 // types yet (String/List arrive in C5), so this covers the lowering of `else if` conditions
 // that need temporaries: calls, constructed records and enums, nested short-circuits, and

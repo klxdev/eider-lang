@@ -1,5 +1,5 @@
 // Bootstrap bug: a method of the String that `Mutex.get` returns, used inside a call
-// argument (`String.from_int(m.get().len() as i64)`), makes stage 0 emit `void tN = ;`
+// argument (`String.from_int(m.get().len() as i64)`), makes the bootstrap emit `void tN = ;`
 // (its C does not compile). eiderc evaluates it like any other temporary.
 fn main() uses io {
     let log = Mutex.new(String.from("abc"))

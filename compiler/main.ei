@@ -9,7 +9,7 @@
 // `-l <lib>` (repeatable) links a C library into build, run, test and build --lib.
 // `--wasm` checks (and emits) the file as a WebAssembly module (a library whose exports take
 // and return integers and bool, no threads: E0806): `check --wasm`, `emit-c --wasm`,
-// `emit-header --wasm` (the .d.ts and the loader, \x01-separated, as stage 0 prints them) and
+// `emit-header --wasm` (the .d.ts and the loader, \x01-separated, as the bootstrap prints them) and
 // `build --wasm` / `run --wasm` (<name>.wasm, <name>.d.ts, <name>.js; wasm.ei). `test`
 // ignores it, as it ignores `--lib`.
 
@@ -83,7 +83,7 @@ fn usage_error(msg: List[u8]) uses io, ffi {
     env.exit(2)
 }
 
-/// No command at all: the usage text on stderr, exit 2 (stage 0 prints it too).
+/// No command at all: the usage text on stderr, exit 2 (the bootstrap prints it too).
 fn usage() uses io, ffi {
     io.err(usage_text())
     env.exit(2)
@@ -158,12 +158,12 @@ fn parse_args() -> Args uses io, ffi {
     if !known_cmd(cmd) { usage_error(quoted("unknown command ", cmd)) }
     if compile_fail {
         if !is(cmd, "test") { usage_error(sys.lit("`--compile-fail` goes with `test`")) }
-        // stage 0's default suite
+        // the bootstrap's default suite
         if file.len() == 0 { file = sys.lit("tests/checks") }
     }
     if file.len() == 0 { usage_error(quoted("missing the source file for ", cmd)) }
     if is(cmd, "emit-header") { lib = true }
-    // `test` checks the test driver, never a library (stage 0's mode order)
+    // `test` checks the test driver, never a library (the bootstrap's mode order)
     if is(cmd, "test") {
         lib = false
         wasm = false
@@ -275,7 +275,7 @@ fn main() uses io, fs, net, clock, ffi {
             return
         }
     }
-    // `comptime` constants are evaluated between loading and checking, as in stage 0
+    // `comptime` constants are evaluated between loading and checking, as in the bootstrap
     let prog = match consteval.eval(loaded) {
         Ok(x) => x
         Err(d) => {
@@ -314,10 +314,10 @@ fn main() uses io, fs, net, clock, ffi {
         if is(a.cmd, "emit-c") {
             io.out(cprog)
         } else if a.wasm {
-            // stage 0: `build --wasm` and `run --wasm` both build the module
+            // the bootstrap: `build --wasm` and `run --wasm` both build the module
             wasm.build(cprog, lp, a.file, a.out)
         } else if a.lib {
-            // stage 0: `build --lib` and `run --lib` both build the library
+            // the bootstrap: `build --lib` and `run --lib` both build the library
             driver.build_lib(cprog, lower.header(lp), a.file, a.out, a.libs)
         } else if is(a.cmd, "build") {
             driver.build(cprog, a.file, a.out, a.libs)

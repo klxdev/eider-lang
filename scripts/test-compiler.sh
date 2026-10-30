@@ -1,6 +1,6 @@
 #!/bin/sh
 # Tests for the self-hosted compiler (compiler/). Differential against a recorded oracle:
-# tests/oracle/ holds what the stage-0 bootstrap printed for every input below (recorded
+# tests/oracle/ holds what the bootstrap compiler printed for every input below (recorded
 # before it was retired; docs/compiler.md, "Testing"), one file per (command, input) at
 # tests/oracle/<source path without .ei>.<kind>. Output is compared with the checkout's
 # root written `<root>`. BLESS=1 rewrites the oracle (and the goldens) from eiderc's output:

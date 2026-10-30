@@ -1,4 +1,4 @@
-// Stage-0 bug: string literals are pasted into C unescaped except for `"`, `\`, newline and
+// Bootstrap bug: string literals are pasted into C unescaped except for `"`, `\`, newline and
 // tab, and gcc in -std=c11 mode reads `??(` as the trigraph `[` (with a -Wtrigraphs warning
 // on stderr). eiderc escapes `?`, so the text survives. Expected output: bug_trigraph.out.
 

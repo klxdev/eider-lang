@@ -1,6 +1,6 @@
 // resolve: the module graph and name keys.
 //
-// Loading mirrors the bootstrap (eider-bootstrap src/main.rs load_module): imports are read
+// Loading mirrors the bootstrap (its src/main.rs load_module): imports are read
 // relative to the importing file, depth first in source order; a module already loaded (by
 // canonical path) is merged once; two different files with the same stem clash (E0808).
 // Items come out in the bootstrap's order: the prelude first, then each module's imports

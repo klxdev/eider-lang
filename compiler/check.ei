@@ -1,5 +1,5 @@
 // check: type checking, producing the typed IR. A port of the bootstrap's checker
-// (eider-bootstrap src/check.rs, expr.rs, stmt.rs, heap.rs) without its C emission: the
+// (the bootstrap's src/check.rs, expr.rs, stmt.rs, heap.rs) without its C emission: the
 // same passes in the same order, so the first error it reports is the bootstrap's first
 // error (code, position, message, help, fix).
 //
@@ -1189,7 +1189,7 @@ pub fn check_mode(p: resolve.Program, lib: bool) -> Result[C, diag.Diag] uses ff
     }
 }
 
-/// Check the program as a WebAssembly module (stage 0's Mode::Wasm, `--wasm`): a library
+/// Check the program as a WebAssembly module (the bootstrap's Mode::Wasm, `--wasm`): a library
 /// whose exports cross the boundary as integers and bool only, without threads (E0806).
 pub fn check_wasm(p: resolve.Program) -> Result[C, diag.Diag] uses ffi {
     var c = new_checker(p, true)
@@ -1198,7 +1198,7 @@ pub fn check_wasm(p: resolve.Program) -> Result[C, diag.Diag] uses ffi {
         Ok(_) => Ok(c)
         Err(d) => {
             // Until eiderc checks threads, `spawn` and the thread types stop it with
-            // `unsupported` where stage 0 notes them for the E0806 at the end (wasm_threads).
+            // `unsupported` where the bootstrap notes them for the E0806 at the end (wasm_threads).
             if bytes.eq(d.msg, s("not yet supported by eiderc: threads")) { return Err(wasm_threads_error()) }
             Err(in_file(c, d, c.err_mod))
         }
@@ -1209,7 +1209,7 @@ fn wasm_threads_error() -> diag.Diag uses ffi {
     err("E0806", 1, 1, s("threads (`spawn`, `Task`, `Mutex`, `Chan`) aren't available when targeting WebAssembly"))
 }
 
-/// Whether the program uses a thread type (stage 0 notes `Task`, `Mutex` and `Chan` types
+/// Whether the program uses a thread type (the bootstrap notes `Task`, `Mutex` and `Chan` types
 /// as it meets them; the type arena holds every type the program uses).
 fn uses_thread_types(c: C) -> bool uses ffi {
     for ty in 0..c.t.tys.len() {

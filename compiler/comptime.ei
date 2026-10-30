@@ -1,6 +1,6 @@
 // comptime: `const X: T = comptime expr` (docs/compiler.md, "C7: comptime").
 //
-// Stage 0 (eider-bootstrap src/main.rs eval_comptime) evaluates each comptime constant, in
+// The bootstrap (its src/main.rs eval_comptime) evaluated each comptime constant, in
 // item order and after the module graph is loaded but before checking, by compiling the
 // program without `main`, test blocks and the comptime constants still to evaluate, plus a
 // synthetic evaluator
@@ -80,7 +80,7 @@ fn e0807(p: resolve.Program, m: u32, n: ast.Node, msg: List[u8]) -> diag.Diag {
     d
 }
 
-/// Whether type node `t` of module m names an integer type or bool (stage 0 looks at the
+/// Whether type node `t` of module m names an integer type or bool (the bootstrap looks at the
 /// type's spelling, before resolving it).
 fn int_or_bool(inout p: resolve.Program, m: u32, t: u32) -> u32 uses ffi {
     let tn = p.mods[m as usize].ast.nodes[t as usize]
@@ -137,7 +137,7 @@ fn eval_one(inout p: resolve.Program, inout r: Runner, m: u32, id: u32) -> Resul
                 return Err(e0807(p, m, n, msg))
             }
         }
-        // stage 0: a negative value is `-(magnitude)`, both at the expression's position
+        // the bootstrap: a negative value is `-(magnitude)`, both at the expression's position
         md.toks.push(lex.Tok(lex.Int, 0, 0, vn.line, vn.col, vn.col, v, false))
         lit = ast.node(ast.EInt, vn.line, vn.col)
         lit.a = (md.toks.len() - 1) as u32
@@ -158,10 +158,10 @@ fn eval_one(inout p: resolve.Program, inout r: Runner, m: u32, id: u32) -> Resul
 
 /// The evaluator program for comptime constant `id` of module m: `p` without `main`, test
 /// blocks and comptime constants, plus `__ct` and a `main` printing it at the end of m's
-/// items (see the top of this file). Stage 0 appends the two after every item of the
+/// items (see the top of this file). The bootstrap appends the two after every item of the
 /// program, which is the same place when m is the entry file; for a constant of an imported
 /// module only the order in which two independent errors are found can differ. The nodes
-/// take the positions they have in stage 0's stub text (`__ct` at 1:4 for E0107), the
+/// take the positions they have in the bootstrap's stub text (`__ct` at 1:4 for E0107), the
 /// return statement the expression's.
 fn evaluator(inout p: resolve.Program, m: u32, id: u32) -> resolve.Program uses ffi {
     let s_ct = sym(inout p, "__ct")
@@ -244,7 +244,7 @@ fn evaluator(inout p: resolve.Program, m: u32, id: u32) -> resolve.Program uses 
     ev
 }
 
-/// Check the evaluator program like stage 0: its errors are reported as they are, except
+/// Check the evaluator program like the bootstrap: its errors are reported as they are, except
 /// that a missing capability can't be fixed by adding it (the evaluator has none).
 fn checked(ev: resolve.Program) -> Result[check.C, diag.Diag] uses ffi {
     match check.check_mode(ev, false) {
@@ -301,7 +301,7 @@ fn prepare(inout r: Runner) uses io, fs, net, clock, ffi {
     }
 }
 
-/// Run the checked evaluator: lower it to C (traps name the file `program`, as stage 0's
+/// Run the checked evaluator: lower it to C (traps name the file `program`, as the bootstrap's
 /// do), build it with the driver's C compiler invocation at -O0 against the core compiled
 /// once (`prepare`), and run it, capturing its output. This is the one function an IR
 /// interpreter would replace.

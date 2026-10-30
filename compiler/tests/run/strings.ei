@@ -63,6 +63,6 @@ fn main() uses io {
     print(xs.contains(String.from("two")))
     print(xs.contains(String.from("six")))
     // a quote, a backslash, a question mark and a tab survive the round trip (`??(` is
-    // bug_trigraph.ei: stage 0 turns it into `[`)
+    // bug_trigraph.ei: the bootstrap turns it into `[`)
     print(String.from("q\"b\\?(t\t."))
 }

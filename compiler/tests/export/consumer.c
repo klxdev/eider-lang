@@ -2,7 +2,7 @@
 #include <stdio.h>
 #include "shapes.h"
 
-/* nested.h has the same include guard as shapes.h (stage 0's header), so declare by hand */
+/* nested.h has the same include guard as shapes.h (the bootstrap's header), so declare by hand */
 typedef struct { int32_t x, y; } Pt;
 typedef struct { Pt a, b; } Seg;
 int32_t eider_seg_dx(Seg s);
