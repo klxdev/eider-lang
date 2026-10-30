@@ -1,6 +1,6 @@
 # The self-hosted compiler (`eiderc`)
 
-Status: approved direction; C1 to C6 done (eiderc is self-hosted; seed/eiderc.c committed). C7 (parity) has FFI done. This file owns the plan; update it as stages land.
+Status: approved direction; C1 to C6 done (eiderc is self-hosted; seed/eiderc.c committed). C7 (parity) has FFI and comptime done. This file owns the plan; update it as stages land.
 
 Progress: **C1 done** (lexer, interner, diagnostics rendering; `scripts/test-compiler.sh`).
 **C2 done** (parser to the AST arena, `eiderc parse` dump, parse-error corpus and AST goldens).
@@ -11,7 +11,8 @@ see "C4: lowering" below). **C5 done** for S1–S3: checking (see "C5: checking 
 lowering (see "C5: lowering"). **C6 done**: eiderc builds itself to a fixed point and the
 seed is committed (see "C6: self-hosting"). From C7, **FFI is done** (`extern "c"`, `unsafe`, `export fn`,
 `emit-header`, `build --lib`, `-l`; see "C7: FFI"), since `compiler/` reaches the OS only
-through core/sys.ei's externs.
+through core/sys.ei's externs. **Comptime is done** (`const X: T = comptime expr`; see
+"C7: comptime").
 
 ## Goal
 
@@ -134,7 +135,7 @@ language as it is:
   std::fs::canonicalize does, so the deps/ link farm's paths to one file are one module.
 - **Folding** (`fold.ei`) computes in a sign + 128-bit magnitude, enough for every value the
   bootstrap computes in i128 from in-range operands (its E0501 messages print them).
-- **Out of scope** (threads, comptime, WebAssembly; since C5 and C7 everything else) ends checking
+- **Out of scope** (threads, WebAssembly; since C5 and C7 everything else) ends checking
   with an `unsupported` diagnostic at the point where the bootstrap would start handling the
   feature; everything reported before it is exact, and the test script counts such files as
   out of scope.
@@ -144,9 +145,9 @@ language as it is:
   bounds-checked element, enum payload), `&&`/`||` and `match` are lowered to `if`, `for`
   loops to `loop` with a `step` block (what `continue` runs). Constants are folded values.
 - **Tests.** `scripts/test-compiler.sh` compares `check --json` with the bootstrap on
-  tests/checks (51/74 in scope at C3, 64/74 since C5, 69/74 since FFI, all agree),
-  tests/run (3/11, then 8/11, then 9/11), and eiderc's own cases (229 at C3, 418 since C5,
-  456 since FFI) in
+  tests/checks (51/74 in scope at C3, 64/74 since C5, 69/74 since FFI, 72/74 since comptime,
+  all agree), tests/run (3/11, then 8/11, then 9/11, then 10/11), and eiderc's own cases
+  (229 at C3, 418 since C5, 456 since FFI, 503 since comptime) in
   `compiler/tests/check` (fail cases carry `// expect:` headers that also pass the bootstrap's
   compile-fail runner; helper modules in `lib/`); IR goldens live in `compiler/tests/ir`.
   `scripts/fuzz-check.sh` (packages/fuzz) mutates v0 programs and compares both compilers
@@ -343,6 +344,63 @@ started, so callers of std still write `uses ffi`.
   `emit-header` against the bootstrap. `eiderc check` accepts core/sys.ei, std and
   `compiler/main.ei` like the bootstrap (no `unsupported` left in them).
 
+## C7: comptime
+
+`const X: T = comptime expr` (`compiler/comptime.ei`; imported as `consteval`, since
+`comptime` is a keyword). Stage 0's eval_comptime (src/main.rs) runs between loading the
+module graph and checking; so does `comptime.eval`, called by main.ei between
+`resolve.load` and `check.check_mode` (check.ei still answers `unsupported` for a comptime
+constant it is handed, so a caller that skips `eval` finds out).
+
+- **Semantics** (stage 0's). Each comptime constant in item order: if its type isn't
+  spelled as an integer type or `bool`, E0807 at the constant's name. Otherwise an
+  evaluator program is checked: the program without any `main` (imported modules' too),
+  test blocks or comptime constants not yet evaluated, plus `fn __ct() -> T { return expr }`
+  and `fn main() uses io { print(__ct()) }` in the constant's module. Any error is reported
+  as it is (so an unrelated error elsewhere in the program can surface here), except that
+  E0201 with a fix loses the fix and gets the help "`comptime` evaluation can't use
+  capabilities". The program is run; a nonzero exit is E0807 "comptime evaluation of `X`
+  failed: <first stderr line>" (traps name the file `program`), more than one line of
+  output E0807 too, and the printed value replaces the expression as a literal (`-(n)` for a
+  negative value), so later comptime constants see an ordinary constant. Consequences kept
+  for parity: a comptime constant can't use a later one, and nothing outside comptime
+  constants may name a comptime constant that comes later (a plain `const` naming any
+  comptime constant always fails, E0110), because the item is missing from the evaluator
+  of every earlier one.
+- **How.** In process, with eiderc's own passes: `evaluator` copies the resolved program
+  and rewrites each module's item list (the stub nodes are built in the constant's module's
+  AST arena, at stage 0's stub positions), `checked` runs check.ei on it, and
+  `run_evaluator` lowers the IR with `lower.program_for`, compiles it with the driver's
+  `cc_argv` (-O0, `$CC`, `$EIDER_CFLAGS`) against `core/eider_rt.c` and `core/eider_core.c`
+  compiled once per program into a temporary directory, runs it with stdout and stderr
+  captured and returns an `Outcome` (`Printed`, `Failed`, `NoBuild`). The literal is spliced
+  into the original program (a new token and AST node, the constant's `comptime` flag
+  cleared). A comptime constant costs a check of the program plus a C compile and link
+  (~50 ms each for tests/run/comptime.ei's 4 constants; stage 0 compiles its whole C each
+  time).
+- **Differences from stage 0.** Stage 0 appends the stub after the last item of the
+  program; eiderc appends it to the constant's module, which is the same for the entry
+  file, while for an imported module's constant only the order in which two independent
+  errors are found can differ. The evaluator is built with the driver's flags (stage 0:
+  `-O1 -w`), so `$EIDER_CFLAGS` applies to it too.
+- **Later (C8): an IR interpreter.** Evaluating by compiling C needs a C compiler at
+  compile time and keeps the evaluator off capabilities only by checking. An interpreter of
+  eiderc's IR (ints, bool, and whatever the called functions use: records, enums, Lists,
+  closures) would need neither, and no temporary files; it can then lift stage 0's
+  restrictions with a design note (forward references, other constant types). The swap is
+  local: replace `run_evaluator(c: check.C) -> Outcome` in comptime.ei; selection of
+  constants, the evaluator program, error mapping and splicing stay.
+- **Tests.** tests/checks' e0201_comptime_io, e0807_comptime_str and e0807_comptime_trap
+  and tests/run/comptime.ei are in scope; 47 cases in `compiler/tests/check` (`*comptime*`:
+  E0807 for each non-int type and for traps in every arithmetic op, casts, indexing,
+  `panic`, `assert`, `unwrap` in the prelude, a failure in the second of two constants;
+  E0201 for io, clock, ffi and a builtin; the evaluator's own errors (E0110 forward
+  references, E0401, E0501, E0502, E0107 for `__ct` and for an imported `main`, E0112);
+  helper modules `lib/ct_*.ei` for imported constants), and run test
+  `compiler/tests/run/comptime.ei` (chains, negative values, bool, the range edges of every
+  integer type, owned data, records, generics, closures and match during evaluation, an
+  imported module's constants, test blocks using them).
+
 ## C4: lowering
 
 `lower.ei` turns the IR into one C11 file; `driver.ei` compiles and runs it.
@@ -473,8 +531,8 @@ Each with a design note, compile-fail tests and new codes:
 | C4 ✅ | `lower` + C for v0 (plus non-generic payload enums) against `core/eider_rt.*`; driver (`emit-c`, `build`, `run`, `test`) | v0 run tests match (stdout, stderr, exit code, for `run` and `test`); C is `-pedantic -Wall -Wextra -Werror` clean at -O0 and -O2 and clean under UBSan (ASan/TSan when their runtimes exist) |
 | C5 ✅ | S1–S3: payload enums, generics, traits, Option/Result/`?`, tuples, patterns, String/List/Map/Box, closures | all the features `compiler/` itself uses; their tests match (checking ✅, lowering ✅) |
 | C6 ✅ | Self-host: stage1 builds stage2 builds stage3; fixed point; commit the seed | `scripts/selfhost.sh` green (stages compile `-Werror`, stage3 passes `scripts/test-compiler.sh`), `scripts/selfhost.sh --from-seed` reproduces the seed with only a C compiler |
-| C7 | Parity: modules/namespaces, FFI/export/`--lib` (✅ ahead of C5 lowering), threads, WASM, comptime, cache | the full `scripts/verify.sh` passes with `eiderc` in place of the bootstrap; retire eider-bootstrap |
-| C8+ | Language work above, then std and package-manager rework | per feature |
+| C7 | Parity: modules/namespaces, FFI/export/`--lib` (✅ ahead of C5 lowering), threads, WASM, comptime (✅), cache | the full `scripts/verify.sh` passes with `eiderc` in place of the bootstrap; retire eider-bootstrap |
+| C8+ | Language work above, then std and package-manager rework; comptime by an IR interpreter instead of a C compiler ("C7: comptime") | per feature |
 
 ## Testing
 
@@ -496,7 +554,7 @@ compiler/
   eider.toml          package `eiderc`
   main.ei             CLI (lex / parse / check / ir / emit-c / build / run / test)
   source.ei  lex.ei  intern.ei  ast.ei  parse.ei  resolve.ei  types.ei  fold.ei  pats.ei
-  check.ei  ir.ei  lower.ei  emit.ei  diag.ei  driver.ei
+  check.ei  ir.ei  lower.ei  emit.ei  diag.ei  driver.ei  comptime.ei
   tests/              pass-level golden tests (lex, lex_ok, check, ir)
 ```
 

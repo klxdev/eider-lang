@@ -1,0 +1,11 @@
+// expect: E0807 10:7
+fn first(xs: List[i32]) -> Option[i32] {
+    if xs.len() == 0 { return None }
+    return Some(xs[0])
+}
+fn f() -> i32 {
+    let xs: List[i32] = List.new()
+    return first(xs).unwrap()
+}
+const A: i32 = comptime f()
+fn main() uses io { print(A) }

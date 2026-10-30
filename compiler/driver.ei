@@ -80,7 +80,7 @@ pub fn root() -> List[u8] uses io, fs, ffi {
 }
 
 /// A new, empty directory of our own under $TMPDIR (or /tmp).
-fn temp_dir() -> List[u8] uses io, fs, clock, ffi {
+pub fn temp_dir() -> List[u8] uses io, fs, clock, ffi {
     var base = s("/tmp")
     match env.get(s("TMPDIR")) {
         Some(t) => { if t.len() > 0 { base = t } }
@@ -139,7 +139,7 @@ fn write_or_fail(path: List[u8], data: List[u8]) uses io, fs, ffi {
 }
 
 /// The C compiler and the flags every compile uses (core = <root>/core).
-fn cc_argv(core: List[u8], release: bool) -> List[List[u8]] uses io, ffi {
+pub fn cc_argv(core: List[u8], release: bool) -> List[List[u8]] uses io, ffi {
     var cc = s("cc")
     match env.get(s("CC")) {
         Some(x) => { if x.len() > 0 { cc = x } }

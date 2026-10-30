@@ -1,0 +1,5 @@
+// expect: E0110 3:24
+const A: i32 = comptime 5
+fn f() -> i32 { return B }
+const B: i32 = comptime A + 1
+fn main() uses io { print(f()) }

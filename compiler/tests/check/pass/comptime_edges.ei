@@ -1,0 +1,10 @@
+const A: i32 = comptime 2147483647
+const B: i32 = comptime -2147483647 - 1
+const C: i64 = comptime 9223372036854775807
+const D: i64 = comptime -9223372036854775807 - 1
+const E: u8 = comptime 255
+const F: u32 = comptime 4294967295
+const G: u64 = comptime 18446744073709551615
+const H: usize = comptime 18446744073709551615
+const I: u8 = comptime 0
+fn main() uses io { print(A) }

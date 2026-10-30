@@ -1,0 +1,4 @@
+// expect: E0807 3:7
+fn sq(n: i64) -> i64 { return n * n }
+const A: i64 = comptime sq(4294967296)
+fn main() uses io { print(A) }

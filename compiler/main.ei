@@ -29,6 +29,7 @@ import "check.ei"
 import "ir.ei"
 import "lower.ei"
 import "driver.ei"
+import "comptime.ei" as consteval
 
 type Args = {
     cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,
@@ -190,7 +191,16 @@ fn main() uses io, fs, net, clock, ffi {
         report(diag.new("unsupported", 1, 1, sys.lit("not yet supported by eiderc: WebAssembly (--wasm)")), a, src)
         env.exit(1)
     }
-    let prog = match resolve.load(a.file, src, p) {
+    let loaded = match resolve.load(a.file, src, p) {
+        Ok(x) => x
+        Err(d) => {
+            report(d, a, src)
+            env.exit(1)
+            return
+        }
+    }
+    // `comptime` constants are evaluated between loading and checking, as in stage 0
+    let prog = match consteval.eval(loaded) {
         Ok(x) => x
         Err(d) => {
             report(d, a, src)

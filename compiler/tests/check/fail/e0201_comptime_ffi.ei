@@ -1,0 +1,4 @@
+// expect: E0201 3:34
+extern "c" fn abs(x: i32) -> i32
+const A: i32 = comptime unsafe { abs(-3) }
+fn main() uses io { print(A) }

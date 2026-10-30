@@ -1,0 +1,3 @@
+// helper module for e0807_comptime_mod_trap.ei: a trap while evaluating an imported constant
+fn boom(n: u8) -> u8 { return n + 250 }
+pub const X: u8 = comptime boom(10)

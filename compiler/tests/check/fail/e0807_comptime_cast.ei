@@ -1,0 +1,4 @@
+// expect: E0807 3:7
+fn narrow(n: i32) -> u8 { return n as u8 }
+const A: u8 = comptime narrow(256)
+fn main() uses io { print(A) }

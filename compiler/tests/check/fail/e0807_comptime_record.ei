@@ -1,0 +1,4 @@
+// expect: E0807 3:7
+type P = { x: i32 }
+const A: P = comptime P(1)
+fn main() uses io { print(1) }

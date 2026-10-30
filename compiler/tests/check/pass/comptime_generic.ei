@@ -1,0 +1,10 @@
+fn pick[T](a: T, b: T, first: bool) -> T {
+    if first { return a }
+    return b
+}
+const A: u64 = comptime pick(1, 2, false)
+const B: i32 = comptime match Some(3) {
+    Some(v) => v
+    None => 0
+}
+fn main() uses io { print(A) }

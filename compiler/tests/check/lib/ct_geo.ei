@@ -1,0 +1,7 @@
+// helper module for compiler/tests/check/pass/comptime_mod.ei: comptime constants of an imported module
+pub fn sq(n: i32) -> i32 { return n * n }
+fn hidden() -> i32 { return 7 }
+pub const AREA: i32 = comptime sq(4) + hidden()
+pub const NEG: i64 = comptime 0 - 5
+pub const TWICE: i32 = comptime AREA * 2
+pub const ON: bool = comptime AREA > 20
