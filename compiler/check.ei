@@ -84,14 +84,15 @@ type Meth = { head: u64, name: u32, fd: u32, target: List[u8] }
 type TImpl = { tkey: u64, md: u32, node: u32, target: List[u8] }
 
 /// A constant: its type and folded value (`op` is its IR operand).
-type ConstDef = { key: u64, md: u32, public: bool, ty: u32, has_k: bool, k: fold.Wide, op: u32 }
+type ConstDef = { key: u64, md: u32, public: bool, ty: u32, has_k: bool, k: fold.Wide, op: u32, node: u32 }
 
 /// A local variable in scope. `key` is its name key (pattern bindings can carry a module
 /// prefix, see resolve.ei); (line, col) is where it is declared (E0305) and (dline, dcol)
-/// the `let`/`var` it comes from, for the E0303 fix.
+/// the `let`/`var` it comes from, for the E0303 fix. (aline, acol) is the declaration the
+/// IDE recording names (a closure's captured copy keeps its original's).
 type Local = {
     key: u64, ty: u32, mutable: bool, byref: bool, has_decl: bool, line: u32, col: u32,
-    ir: u32, dline: u32, dcol: u32,
+    ir: u32, dline: u32, dcol: u32, aline: u32, acol: u32,
 }
 
 /// A checked expression: its type, the IR operand holding its value, and its value when it
@@ -214,12 +215,93 @@ pub type C = {
     /// checking for WebAssembly (`--wasm`, implies `lib`): exports take and return only
     /// integers and bool, and threads are rejected (E0806)
     wasm: bool,
+    /// the IDE recording (see "IDE recording" below); off unless check_ide
+    rec: Rec,
 }
 
 /// Expected parameter types (NONE: unknown) and return type of a closure.
 type LamHint = { has: bool, params: List[u32], ret: u32 }
 
 fn no_hint() -> LamHint { LamHint(false, List.new(), NONE) }
+
+// ---- IDE recording (ide.ei)
+//
+// With `c.rec.on` (check_ide only) the checker notes what it resolves, where it resolves
+// it: every use of a name with the declaration it resolves to, and the types of bindings
+// and of name-like expressions (identifiers, fields, calls, method calls). Positions are
+// those of AST nodes: a use is the node's (line, col) in module `m` (`qual`: the node is
+// `alias.Name` and starts at the alias); a declaration is the (line, col) of the node that
+// declares it in module `tm` (an item's name, a parameter, a `let`/`var`/`for` statement, a
+// pattern name, a field). Nothing else in the checker reads the recording, and when it is
+// off every note is a test of one bool, so `check`, `build` and the IR are unchanged.
+
+/// A use of a name at (line, col) of module m that resolves to the declaration at
+/// (tline, tcol) of module tm.
+pub type RecRef = { m: u32, line: u32, col: u32, qual: bool, tm: u32, tline: u32, tcol: u32 }
+
+/// The type `ty` of the expression node at (line, col) of module m, or (`binding`) of the
+/// binding declared there.
+pub type RecTy = { m: u32, line: u32, col: u32, qual: bool, binding: bool, ty: u32 }
+
+pub type Rec = { on: bool, refs: List[RecRef], tys: List[RecTy] }
+
+/// Whether use node n starts at an import alias (`alias.Name`).
+fn is_qual(n: ast.Node) -> bool {
+    let k = n.kind
+    n.b > 0 && (k == ast.EIdent || k == ast.ECall || k == ast.TName || k == ast.TGeneric || k == ast.PName || k == ast.PVariant)
+}
+
+fn note_ref(inout c: C, m: u32, n: ast.Node, tm: u32, tline: u32, tcol: u32) {
+    if c.rec.on { c.rec.refs.push(RecRef(m, n.line, n.col, is_qual(n), tm, tline, tcol)) }
+}
+
+/// A use of the type (template) di.
+fn note_def(inout c: C, m: u32, n: ast.Node, di: u32) {
+    if !c.rec.on { return }
+    let d = c.t.defs[di as usize]
+    let tn = ndm(c, d.md, d.node)
+    note_ref(inout c, m, n, d.md, tn.line, tn.col)
+}
+
+/// A use of variant `vkey` of enum di.
+fn note_variant(inout c: C, n: ast.Node, di: u32, vkey: u64) {
+    if !c.rec.on { return }
+    let d = c.t.defs[di as usize]
+    let tn = ndm(c, d.md, d.node)
+    for i in 0..tn.f {
+        let vn = ndm(c, d.md, atm(c, d.md, tn.e, i))
+        if resolve.item_key(c.p, d.md, vn.a) == vkey {
+            let am = c.am
+            note_ref(inout c, am, n, d.md, vn.line, vn.col)
+            return
+        }
+    }
+}
+
+fn note_fn(inout c: C, n: ast.Node, fi: u32) {
+    if !c.rec.on { return }
+    let f = c.fdefs[fi as usize]
+    let fnode = ndm(c, f.md, f.node)
+    let am = c.am
+    note_ref(inout c, am, n, f.md, fnode.line, fnode.col)
+}
+
+fn note_local(inout c: C, n: ast.Node, v: Local) {
+    let am = c.am
+    if c.rec.on { note_ref(inout c, am, n, am, v.aline, v.acol) }
+}
+
+/// A use of field i of record d.
+fn note_field(inout c: C, n: ast.Node, d: types.Def, i: u32) {
+    if !c.rec.on { return }
+    let f = types.field(c.t, d.start, i)
+    let am = c.am
+    note_ref(inout c, am, n, d.md, f.line, f.col)
+}
+
+fn note_ty(inout c: C, n: ast.Node, ty: u32) {
+    if c.rec.on { c.rec.tys.push(RecTy(c.am, n.line, n.col, is_qual(n), false, ty)) }
+}
 
 // ---- messages
 
@@ -582,15 +664,16 @@ fn declare(inout c: C, l: Local) -> Result[bool, diag.Diag] uses ffi {
         }
     }
     c.scopes.push(l)
+    if c.rec.on { c.rec.tys.push(RecTy(c.am, l.aline, l.acol, false, true, l.ty)) }
     Ok(true)
 }
 
 fn local_at(key: u64, ty: u32, mutable: bool, line: u32, col: u32, l: u32) -> Local {
-    Local(key, ty, mutable, false, true, line, col, l, line, col)
+    Local(key, ty, mutable, false, true, line, col, l, line, col, line, col)
 }
 
 fn local_plain(key: u64, ty: u32, byref: bool, line: u32, col: u32, l: u32) -> Local {
-    Local(key, ty, false, byref, false, line, col, l, line, col)
+    Local(key, ty, false, byref, false, line, col, l, line, col, line, col)
 }
 
 // ---- substitutions
@@ -651,6 +734,7 @@ fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] uses ffi {
             }
             let di = mget(c.tmpl, k)
             if di == NONE { return Err(err("E0111", n.line, n.col, q("unknown type `", kt(c, k), "`"))) }
+            note_def(inout c, am, n, di)
             let g = c.t.defs[di as usize].generic
             if g > 0 {
                 return Err(err("E0111", n.line, n.col, q3("type `", kt(c, k), "` needs ", num(g as u64), " type argument(s): `", kt(c, k), "[...]`")))
@@ -688,6 +772,7 @@ fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] uses ffi {
             }
             let di = mget(c.tmpl, k)
             if di == NONE { return Err(err("E0111", n.line, n.col, q("unknown type `", kt(c, k), "`"))) }
+            note_def(inout c, am, n, di)
             inst_type(inout c, di, args, n.line, n.col)
         }
         ast.TTuple => {
@@ -1145,7 +1230,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C uses ffi {
         List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new(),
         List.new(), List.new(), List.new(),
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
-        0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false)
+        0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false, Rec(false, List.new(), List.new()))
 }
 
 /// Every item of the program in the bootstrap's order, as (module, node) pairs.
@@ -1201,6 +1286,24 @@ pub fn check_wasm(p: resolve.Program) -> Result[C, diag.Diag] uses ffi {
             // `unsupported` where the bootstrap notes them for the E0806 at the end (wasm_threads).
             if bytes.eq(d.msg, s("not yet supported by eiderc: threads")) { return Err(wasm_threads_error()) }
             Err(in_file(c, d, c.err_mod))
+        }
+    }
+}
+
+/// What check_ide gathered: the checker as far as it got (its recording in `c.rec`), and the
+/// diagnostic `check` would have reported, if any.
+pub type Recorded = { c: C, err: Option[diag.Diag] }
+
+/// `check` with the IDE recording on (ide.ei). The diagnostic is check's; the recording
+/// holds everything noted before it.
+pub fn check_ide(p: resolve.Program) -> Recorded uses ffi {
+    var c = new_checker(p, false)
+    c.rec.on = true
+    match run(inout c) {
+        Ok(_) => Recorded(c, None)
+        Err(d) => {
+            let d2 = in_file(c, d, c.err_mod)
+            Recorded(c, Some(d2))
         }
     }
 }
@@ -1295,7 +1398,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
         if n.a == c.w.main && (n.f > 0 || n.g > 0 || n.d > 0) {
             return Err(err("E0111", n.line, n.col, s("`main` takes no parameters and returns ()")))
         }
-        check_bounds_known(c, it.m, n.c, n.d)?
+        check_bounds_known(inout c, it.m, n.c, n.d)?
         c.fns.insert(k, c.fdefs.len() as u32)
         // every free function gets an IR function in order; a generic one never gets a body
         // (its instances are functions of their own)
@@ -1343,7 +1446,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
         let ok = (tk == types.T_INT && v.has_k) || (tk == types.T_BOOL && vn.kind == ast.EBool) || (tk == types.T_STR && vn.kind == ast.EStr)
         if !ok { return Err(err("E0504", vn.line, vn.col, s("constant initializers must be literals or compile-time integer expressions"))) }
         c.consts.insert(k, c.cdefs.len() as u32)
-        c.cdefs.push(ConstDef(k, it.m, n.b == 1, ty, v.has_k, v.k, v.op))
+        c.cdefs.push(ConstDef(k, it.m, n.b == 1, ty, v.has_k, v.k, v.op, it.node))
         let cname = kt(c, k)
         ir.add_const(inout c.ir, cname, ty, v.op)
     }
@@ -1460,13 +1563,18 @@ fn check_ffi_sig(c: C, m: u32, n: ast.Node, ps: List[u32], ret: u32) -> Result[b
 }
 
 /// E0603 for a bound naming no trait, on generic parameters [start/len) of module m.
-fn check_bounds_known(c: C, m: u32, start: u32, len: u32) -> Result[bool, diag.Diag] uses ffi {
+fn check_bounds_known(inout c: C, m: u32, start: u32, len: u32) -> Result[bool, diag.Diag] uses ffi {
     for i in 0..len {
         let g = ndm(c, m, atm(c, m, start, i))
         for j in 0..g.d {
             let b = ndm(c, m, atm(c, m, g.c, j))
             let bk = resolve.name_key(c.p, m, b.a, b.b, b.line, b.col)
             if !c.traits.contains(bk) { return Err(err("E0603", g.line, g.col, q("unknown trait `", kt(c, bk), "`"))) }
+            if c.rec.on {
+                let tr = c.trs[mget(c.traits, bk) as usize]
+                let trn = ndm(c, tr.m, tr.node)
+                note_ref(inout c, m, b, tr.m, trn.line, trn.col)
+            }
         }
     }
     Ok(true)
@@ -1513,6 +1621,7 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
         if ti == NONE { return Err(err("E0603", tn.line, tn.col, q("unknown trait `", kt(c, tk), "`"))) }
         let tr = c.trs[ti as usize]
         let trn = ndm(c, tr.m, tr.node)
+        note_ref(inout c, m, tn, tr.m, trn.line, trn.col)
         for i in 0..trn.d {
             let tm = ndm(c, tr.m, atm(c, tr.m, trn.c, i))
             let mid = find_method(c, m, im.e, im.f, tm.a)
@@ -1929,7 +2038,7 @@ fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
     for b in lw.binds {
         let l = ir.local(inout c.ir, resolve.key_sym(b.key), b.ty, kind, b.line)
         bind_value(inout c, l, b.ty, b.place)
-        declare(inout c, Local(b.key, b.ty, n.d == 1, false, true, b.line, b.col, l, n.line, n.col))?
+        declare(inout c, Local(b.key, b.ty, n.d == 1, false, true, b.line, b.col, l, n.line, n.col, b.line, b.col))?
     }
     Ok(types.UNIT)
 }
@@ -2203,6 +2312,7 @@ fn lower_pat(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) -> Re
                         if v.flen > 0 {
                             return Err(err("E0410", n.line, n.col, q3("variant `", kt(c, k), "` has ", num(v.flen as u64), " field(s); write `", kt(c, k), "(...)`")))
                         }
+                        note_variant(inout c, n, d.tmpl, v.key)
                         lw.tests.push(Test(T_TAG, place, ty, vi, fold.zero(), List.new()))
                         return Ok(pats.ctor(inout c.pt, pats.C_VARIANT, vi, 0, List.new()))
                     }
@@ -2265,6 +2375,7 @@ fn lower_pat(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) -> Re
                         if v.flen != n.d {
                             return Err(err("E0410", n.line, n.col, q3("variant `", kt(c, k), "` has ", num(v.flen as u64), " field(s), but the pattern has ", num(n.d as u64), "")))
                         }
+                        note_variant(inout c, n, d.tmpl, v.key)
                         lw.tests.push(Test(T_TAG, place, ty, vi, fold.zero(), List.new()))
                         var subs: List[u32] = List.new()
                         for j in 0..n.d {
@@ -2281,6 +2392,10 @@ fn lower_pat(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) -> Re
             if tk == types.T_RECORD {
                 let d = types.def_of(c.t, ty)
                 if d.key == k {
+                    if c.rec.on {
+                        let am = c.am
+                        note_def(inout c, am, n, d.tmpl)
+                    }
                     if d.len != n.d {
                         return Err(err("E0410", n.line, n.col, q3("`", kt(c, k), "` has ", num(d.len as u64), " field(s), but the pattern has ", num(n.d as u64), "")))
                     }
@@ -2479,6 +2594,10 @@ fn is_place(c: C, e: u32) -> bool {
 /// rvalue comes back as a registered temporary (expr.rs expr).
 fn expr(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
     let v = expr_raw(inout c, e, exp)?
+    if c.rec.on {
+        let n = nd(c, e)
+        if n.kind == ast.EIdent || n.kind == ast.EField || n.kind == ast.ECall || n.kind == ast.EMethod { note_ty(inout c, n, v.ty) }
+    }
     if !owns(c, v.ty) || is_place(c, e) || is_fresh(c, v.op) { return Ok(v) }
     let line = nd(c, e).line
     Ok(mk_fresh(inout c, v, line))
@@ -2510,6 +2629,7 @@ fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
             let li = lookup(c, k)
             if li != NONE {
                 let v = c.scopes[li as usize]
+                note_local(inout c, n, v)
                 let pl = ir.place_local(inout c.ir, v.ir, v.ty)
                 let o = read(inout c, pl, v.ty, 0)
                 return Ok(v_of(v.ty, o))
@@ -2523,7 +2643,15 @@ fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
                 if d.is_enum {
                     let fk = resolve.key(0, n.b)
                     match types.find_variant(c.t, d, fk) {
-                        Some(_) => { return construct(inout c, n.line, n.col, di, fk, 0, 0, exp) }
+                        Some(_) => {
+                            if c.rec.on {
+                                let am = c.am
+                                let base = nd(c, n.a)
+                                note_def(inout c, am, base, di)
+                                note_variant(inout c, n, di, fk)
+                            }
+                            return construct(inout c, n.line, n.col, di, fk, 0, 0, exp)
+                        }
                         None => {
                             return Err(err("E0114", n.line, n.col, q2("enum `", kt(c, d.key), "` has no variant `", nm(c, n.b), "`")))
                         }
@@ -2585,12 +2713,24 @@ fn ident_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag
         if !visible(c, cd.md, cd.public) {
             return Err(err("E0801", n.line, n.col, q2("constant `", kt(c, k), "` is private to module `", c.p.mods[cd.md as usize].path, "`")))
         }
+        if c.rec.on {
+            let am = c.am
+            let cn = ndm(c, cd.md, cd.node)
+            note_ref(inout c, am, n, cd.md, cn.line, cn.col)
+        }
         return Ok(V(cd.ty, cd.op, cd.has_k, cd.k))
     }
     let di = mget(c.variants, k)
-    if di != NONE { return construct(inout c, n.line, n.col, di, k, 0, 0, exp) }
+    if di != NONE {
+        note_variant(inout c, n, di, k)
+        return construct(inout c, n.line, n.col, di, k, 0, 0, exp)
+    }
     if c.fns.contains(k) {
-        if exp != NONE && types.kind(c.t, exp) == types.T_FN { return fn_as_value(inout c, n, k, exp) }
+        if exp != NONE && types.kind(c.t, exp) == types.T_FN {
+            let fi = mget(c.fns, k)
+            note_fn(inout c, n, fi)
+            return fn_as_value(inout c, n, k, exp)
+        }
         return Err(err("E0110", n.line, n.col, q2("`", kt(c, k), "` is a function; call it with `", kt(c, k), "(...)`")))
     }
     Err(err("E0110", n.line, n.col, q("unknown name `", kt(c, k), "`")))
@@ -2613,6 +2753,10 @@ fn place_expr(inout c: C, e: u32) -> Result[PV, diag.Diag] uses ffi {
         let li = lookup(c, k)
         if li != NONE {
             let v = c.scopes[li as usize]
+            if c.rec.on {
+                note_local(inout c, n, v)
+                note_ty(inout c, n, v.ty)
+            }
             return Ok(PV(ir.place_local(inout c.ir, v.ir, v.ty), v.ty, NONE))
         }
     }
@@ -2629,6 +2773,10 @@ fn place_expr(inout c: C, e: u32) -> Result[PV, diag.Diag] uses ffi {
             match types.find_field(c.t, d, n.b) {
                 Some(i) => {
                     let ft = types.field(c.t, d.start, i).ty
+                    if c.rec.on {
+                        note_field(inout c, n, d, i)
+                        note_ty(inout c, n, ft)
+                    }
                     return Ok(PV(ir.place_field(inout c.ir, b.place, i, ft), ft, NONE))
                 }
                 None => {
@@ -2642,6 +2790,7 @@ fn place_expr(inout c: C, e: u32) -> Result[PV, diag.Diag] uses ffi {
                 Some(i) => {
                     if i < es.len() as u64 {
                         let ft = es[i as usize]
+                        note_ty(inout c, n, ft)
                         return Ok(PV(ir.place_field(inout c.ir, b.place, i as u32, ft), ft, NONE))
                     }
                 }
@@ -2975,12 +3124,20 @@ fn call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
     let k = ekey(c, n)
     if is_builtin_fn(c, k) { return builtin(inout c, n, resolve.key_sym(k)) }
     let vd = mget(c.variants, k)
-    if vd != NONE { return construct(inout c, n.line, n.col, vd, k, n.c, n.d, exp) }
+    if vd != NONE {
+        note_variant(inout c, n, vd, k)
+        return construct(inout c, n.line, n.col, vd, k, n.c, n.d, exp)
+    }
     let td = mget(c.tmpl, k)
-    if td != NONE && !c.t.defs[td as usize].is_enum { return construct(inout c, n.line, n.col, td, NONE as u64, n.c, n.d, exp) }
+    if td != NONE && !c.t.defs[td as usize].is_enum {
+        let am = c.am
+        note_def(inout c, am, n, td)
+        return construct(inout c, n.line, n.col, td, NONE as u64, n.c, n.d, exp)
+    }
     let li = lookup(c, k)
     if li != NONE {
         let v = c.scopes[li as usize]
+        note_local(inout c, n, v)
         let pl = ir.place_local(inout c.ir, v.ir, v.ty)
         let fv = v_of(v.ty, read(inout c, pl, v.ty, 0))
         let label = kt(c, k)
@@ -3122,6 +3279,7 @@ fn no_recv() -> Recv { Recv(false, 0, PV(0, 0, NONE)) }
 /// Call declaration fi with the arguments of call node n (ECall or EMethod), inferring its
 /// type parameters (expr.rs call_decl).
 fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv: Recv, exp: u32, is_method: bool) -> Result[V, diag.Diag] uses ffi {
+    note_fn(inout c, n, fi)
     let f = c.fdefs[fi as usize]
     let fm = f.md
     let fnode = ndm(c, fm, f.node)
@@ -3393,6 +3551,11 @@ fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses f
         }
     }
     if is_static {
+        if c.rec.on {
+            let tdi = mget(c.tmpl, static_head)
+            let am = c.am
+            if tdi != NONE { note_def(inout c, am, r, tdi) }
+        }
         let x = resolve.key_sym(static_head)
         if resolve.key_pre(static_head) == 0 && (has_sym(c.w.heap, x) || x == c.w.s_string) {
             return heap_static(inout c, n, x, exp)
@@ -3749,7 +3912,7 @@ fn walk_stmt(c: C, st: u32, inout out: List[u64]) {
 }
 
 /// A captured variable: its name key and its local in the enclosing function.
-type Capture = { key: u64, ty: u32, ir: u32 }
+type Capture = { key: u64, ty: u32, ir: u32, aline: u32, acol: u32 }
 
 /// The state of the enclosing function while a closure body is checked.
 type Saved = {
@@ -3809,7 +3972,7 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
         let li = lookup(c, k)
         if li != NONE {
             let v = c.scopes[li as usize]
-            caps.push(Capture(k, v.ty, v.ir))
+            caps.push(Capture(k, v.ty, v.ir, v.aline, v.acol))
             ckeys.push(k)
         }
     }
@@ -3829,7 +3992,10 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
     let body = nd(c, n.a)
     for cp in caps {
         let l = ir.local(inout c.ir, resolve.key_sym(cp.key), cp.ty, ir.L_CAPTURE, body.line)
-        declare(inout c, local_plain(cp.key, cp.ty, false, body.line, body.col, l))?
+        var cl = local_plain(cp.key, cp.ty, false, body.line, body.col, l)
+        cl.aline = cp.aline
+        cl.acol = cp.acol
+        declare(inout c, cl)?
     }
     for i in 0..n.d {
         let lp = nd(c, at(c, n.c, i))
