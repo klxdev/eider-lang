@@ -1,0 +1,16 @@
+#!/bin/sh
+# Run the eider compiler with the C core linked in, so std/ (pure Eider over core/) works.
+# Usage: scripts/ei run prog.ei [args]   (any eider subcommand)
+root="$(cd "$(dirname "$0")/.." && pwd)"
+out="$root/target/core"
+lib="$out/libeider_core.a"
+src="$root/core/eider_core.c"
+if [ ! -f "$lib" ] || [ "$src" -nt "$lib" ]; then
+  mkdir -p "$out"
+  ${CC:-cc} -std=c11 -O2 -Wall -Wextra -c -o "$out/eider_core.o" "$src" && ar rcs "$lib" "$out/eider_core.o" || exit 3
+  # cached binaries are keyed on the generated C only, so a new core invalidates them
+  rm -rf "${EIDER_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/eider}" 2>/dev/null
+fi
+eider="${EIDER:-$root/target/debug/eider}"
+[ -x "$eider" ] || (cd "$root" && cargo build --quiet) || exit 3
+LIBRARY_PATH="$out${LIBRARY_PATH:+:$LIBRARY_PATH}" exec "$eider" "$@" -l eider_core

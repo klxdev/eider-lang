@@ -1,0 +1,25 @@
+// std/io: raw byte output to stdout/stderr (flushes `print` output first so order is kept).
+
+import "sys.ei"
+
+pub fn out(b: List[u8]) uses io, ffi {
+    sys.send(b)
+    sys.write_fd(1)
+}
+
+pub fn err(b: List[u8]) uses io, ffi {
+    sys.send(b)
+    sys.write_fd(2)
+}
+
+pub fn outln(b: List[u8]) uses io, ffi {
+    var l = b
+    l.push(10)
+    out(l)
+}
+
+pub fn errln(b: List[u8]) uses io, ffi {
+    var l = b
+    l.push(10)
+    err(l)
+}

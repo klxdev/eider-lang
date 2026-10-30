@@ -1,0 +1,204 @@
+// std/fs: files and directories. Paths are bytes; errors are human-readable Strings.
+
+import "sys.ei"
+import "bytes.ei"
+
+pub type Kind = | Missing | File | Dir | Other
+
+fn fail(what: str, path: List[u8], status: i64) -> String uses ffi {
+    var m = String.from(what)
+    m.push_str(" ")
+    m.append(sys.to_string(path))
+    m.push_str(": ")
+    m.append(sys.error_text(status))
+    m
+}
+
+fn one(path: List[u8]) uses ffi {
+    var p: List[List[u8]] = List.new()
+    p.push(path)
+    sys.send_all(p)
+}
+
+pub fn read(path: List[u8]) -> Result[List[u8], String] uses fs, ffi {
+    one(path)
+    let n = sys.read_file()
+    if n < 0 { return Err(fail("cannot read", path, n)) }
+    Ok(sys.take())
+}
+
+fn put(path: List[u8], data: List[u8], append: bool) -> Result[bool, String] uses fs, ffi {
+    var p: List[List[u8]] = List.new()
+    p.push(path)
+    p.push(data)
+    sys.send_all(p)
+    let n = sys.write_file(append)
+    if n < 0 { return Err(fail("cannot write", path, n)) }
+    Ok(true)
+}
+
+pub fn write(path: List[u8], data: List[u8]) -> Result[bool, String] uses fs, ffi { put(path, data, false) }
+pub fn append(path: List[u8], data: List[u8]) -> Result[bool, String] uses fs, ffi { put(path, data, true) }
+
+pub fn kind(path: List[u8]) -> Kind uses fs, ffi {
+    one(path)
+    match sys.kind() {
+        1 => File
+        2 => Dir
+        0 => Missing
+        _ => Other
+    }
+}
+
+pub fn exists(path: List[u8]) -> bool uses fs, ffi {
+    match kind(path) {
+        Missing => false
+        _ => true
+    }
+}
+
+pub fn is_dir(path: List[u8]) -> bool uses fs, ffi {
+    match kind(path) {
+        Dir => true
+        _ => false
+    }
+}
+
+/// Entry names (not full paths), sorted.
+pub fn list(path: List[u8]) -> Result[List[List[u8]], String] uses fs, ffi {
+    one(path)
+    let n = sys.list_dir()
+    if n < 0 { return Err(fail("cannot list", path, n)) }
+    Ok(sort(sys.take_all()))
+}
+
+/// Insertion sort: directory listings are small.
+pub fn sort(xs: List[List[u8]]) -> List[List[u8]] {
+    var out: List[List[u8]] = List.new()
+    for x in xs {
+        out.push(x)
+        var i = out.len() - 1
+        while i > 0 && bytes.compare(out[i - 1], out[i]) > 0 {
+            let a = out[i - 1]
+            out[i - 1] = out[i]
+            out[i] = a
+            i -= 1
+        }
+    }
+    out
+}
+
+/// Create `path` and any missing parents. Fine if it already exists as a directory.
+pub fn mkdir_all(path: List[u8]) -> Result[bool, String] uses fs, ffi {
+    if is_dir(path) { return Ok(true) }
+    match bytes.rfind_byte(path, 47) {
+        Some(i) => {
+            if i > 0 { mkdir_all(bytes.slice(path, 0, i))? }
+        }
+        None => {}
+    }
+    one(path)
+    let n = sys.mkdir()
+    if n < 0 && !is_dir(path) { return Err(fail("cannot create directory", path, n)) }
+    Ok(true)
+}
+
+/// Remove a file, or a directory and everything in it. Fine if it doesn't exist.
+pub fn remove_all(path: List[u8]) -> Result[bool, String] uses fs, ffi {
+    match kind(path) {
+        Missing => { return Ok(true) }
+        Dir => {
+            let names = list(path)?
+            for n in names {
+                remove_all(join(path, n))?
+            }
+        }
+        _ => {}
+    }
+    one(path)
+    let n = sys.remove()
+    if n < 0 { return Err(fail("cannot remove", path, n)) }
+    Ok(true)
+}
+
+pub fn rename(from: List[u8], to: List[u8]) -> Result[bool, String] uses fs, ffi {
+    var p: List[List[u8]] = List.new()
+    p.push(from)
+    p.push(to)
+    sys.send_all(p)
+    let n = sys.rename()
+    if n < 0 { return Err(fail("cannot rename", from, n)) }
+    Ok(true)
+}
+
+/// Copy a file or directory tree. `skip` names (e.g. `.git`) are left out at every level.
+pub fn copy_all(from: List[u8], to: List[u8], skip: List[List[u8]]) -> Result[bool, String] uses fs, ffi {
+    if is_dir(from) {
+        mkdir_all(to)?
+        let names = list(from)?
+        for n in names {
+            var skipped = false
+            for s in skip {
+                if bytes.eq(s, n) { skipped = true }
+            }
+            if !skipped { copy_all(join(from, n), join(to, n), skip)? }
+        }
+        return Ok(true)
+    }
+    let data = read(from)?
+    write(to, data)
+}
+
+/// Every file under `root` as a path relative to it, sorted, skipping `skip` names.
+pub fn walk(root: List[u8], skip: List[List[u8]]) -> Result[List[List[u8]], String] uses fs, ffi {
+    var out: List[List[u8]] = List.new()
+    let top: List[u8] = List.new()
+    walk_into(root, top, skip, inout out)?
+    Ok(out)
+}
+
+fn walk_into(root: List[u8], rel: List[u8], skip: List[List[u8]], inout out: List[List[u8]]) -> Result[bool, String] uses fs, ffi {
+    let here = if rel.len() == 0 { root } else { join(root, rel) }
+    let names = list(here)?
+    for n in names {
+        var skipped = false
+        for s in skip {
+            if bytes.eq(s, n) { skipped = true }
+        }
+        if !skipped {
+            let r = if rel.len() == 0 { n } else { join(rel, n) }
+            if is_dir(join(root, r)) {
+                walk_into(root, r, skip, inout out)?
+            } else {
+                out.push(r)
+            }
+        }
+    }
+    Ok(true)
+}
+
+/// `a/b`, without doubling a slash.
+pub fn join(a: List[u8], b: List[u8]) -> List[u8] {
+    if a.len() == 0 { return b }
+    var out = a
+    if out[out.len() - 1] != 47 { out.push(47) }
+    bytes.append(inout out, b)
+    out
+}
+
+/// Everything before the last `/` ("." when there is none).
+pub fn dirname(p: List[u8]) -> List[u8] {
+    match bytes.rfind_byte(p, 47) {
+        Some(0) => {
+            var r: List[u8] = List.new()
+            r.push(47)
+            return r
+        }
+        Some(i) => { return bytes.slice(p, 0, i) }
+        None => {
+            var d: List[u8] = List.new()
+            d.push(46)
+            return d
+        }
+    }
+}

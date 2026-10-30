@@ -1,0 +1,43 @@
+// std/proc: run other programs. A child process can do anything, so callers need every
+// capability it might use (io, fs, net) in addition to ffi.
+
+import "sys.ei"
+import "bytes.ei"
+
+pub type Output = { code: i32, out: List[u8] }
+
+fn start(argv: List[List[u8]], capture: bool) -> Result[i32, String] uses io, fs, net, ffi {
+    if argv.len() == 0 { return Err(String.from("proc: empty command")) }
+    sys.send_all(argv)
+    let n = sys.run(capture)
+    if n < 0 {
+        var m = String.from("cannot run ")
+        m.append(sys.to_string(argv[0]))
+        m.push_str(": ")
+        m.append(sys.error_text(n))
+        return Err(m)
+    }
+    Ok(n as i32)
+}
+
+/// Run with inherited stdin/stdout/stderr; returns the exit code.
+pub fn run(argv: List[List[u8]]) -> Result[i32, String] uses io, fs, net, ffi { start(argv, false) }
+
+/// Run and capture stdout (stderr still goes to the terminal).
+pub fn output(argv: List[List[u8]]) -> Result[Output, String] uses io, fs, net, ffi {
+    let code = start(argv, true)?
+    Ok(Output(code, sys.take()))
+}
+
+/// Run, capture stdout, and fail unless the exit code is 0.
+pub fn check(argv: List[List[u8]]) -> Result[List[u8], String] uses io, fs, net, ffi {
+    let o = output(argv)?
+    if o.code != 0 {
+        var m = String.from("command failed (exit ")
+        m.append(String.from_int(o.code as i64))
+        m.push_str("): ")
+        m.append(sys.to_string(bytes.join(argv, sys.lit(" "))))
+        return Err(m)
+    }
+    Ok(o.out)
+}

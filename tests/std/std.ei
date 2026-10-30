@@ -1,0 +1,97 @@
+import "../../std/sys.ei"
+import "../../std/bytes.ei"
+import "../../std/fs.ei"
+import "../../std/io.ei"
+import "../../std/env.ei"
+import "../../std/proc.ei"
+
+fn show(b: List[u8]) uses io, ffi { io.outln(b) }
+
+fn files() -> Result[bool, String] uses io, fs, ffi {
+    let root = sys.lit("target/tmp/std_test")
+    fs.remove_all(root)?
+    let d = fs.join(root, sys.lit("a/b"))
+    fs.mkdir_all(d)?
+    fs.write(fs.join(d, sys.lit("x.txt")), sys.lit("one\ntwo\n"))?
+    fs.append(fs.join(d, sys.lit("x.txt")), sys.lit("three"))?
+    fs.write(fs.join(root, sys.lit("top.txt")), sys.lit(""))?
+    for l in bytes.lines(fs.read(fs.join(d, sys.lit("x.txt")))?) { show(l) }
+    var skip: List[List[u8]] = List.new()
+    for f in fs.walk(root, skip)? { show(f) }
+    let copy = sys.lit("target/tmp/std_test_copy")
+    fs.remove_all(copy)?
+    skip.push(sys.lit("top.txt"))
+    fs.copy_all(root, copy, skip)?
+    print(fs.exists(fs.join(copy, sys.lit("a/b/x.txt"))))
+    print(fs.exists(fs.join(copy, sys.lit("top.txt"))))
+    fs.rename(copy, fs.join(root, sys.lit("moved")))?
+    print(fs.is_dir(fs.join(root, sys.lit("moved/a"))))
+    fs.remove_all(root)?
+    print(fs.exists(root))
+    match fs.read(sys.lit("target/tmp/definitely-missing")) {
+        Ok(_) => print("unexpected")
+        Err(e) => print(e)
+    }
+    Ok(true)
+}
+
+fn text() uses io, ffi {
+    show(bytes.trim(sys.lit("  padded \t")))
+    show(bytes.join(bytes.split(sys.lit("a,b,,c"), 44), sys.lit("|")))
+    show(bytes.from_i64(-9223372036854775807 - 1))
+    show(bytes.from_u64(18446744073709551615))
+    match bytes.parse_u64(sys.lit("18446744073709551616")) {
+        Some(_) => print("overflow not caught")
+        None => print("overflow caught")
+    }
+    match bytes.find(sys.lit("hello world"), sys.lit("o w"), 0) {
+        Some(i) => print(i)
+        None => print("not found")
+    }
+    print(bytes.compare(sys.lit("abc"), sys.lit("abd")))
+    print(bytes.starts_with(sys.lit("eider.toml"), sys.lit("eider")))
+    print(bytes.ends_with(sys.lit("eider.toml"), sys.lit(".lock")))
+    show(bytes.hex(sys.lit("Ei")))
+    show(fs.dirname(sys.lit("pkg/src/main.ei")))
+    show(fs.dirname(sys.lit("main.ei")))
+}
+
+fn procs() uses io, fs, net, ffi {
+    var argv: List[List[u8]] = List.new()
+    argv.push(sys.lit("sh"))
+    argv.push(sys.lit("-c"))
+    argv.push(sys.lit("printf captured; exit 3"))
+    match proc.output(argv) {
+        Ok(o) => {
+            print(o.code)
+            show(o.out)
+        }
+        Err(e) => print(e)
+    }
+    match proc.check(argv) {
+        Ok(_) => print("unexpected")
+        Err(e) => print(e)
+    }
+    var bad: List[List[u8]] = List.new()
+    bad.push(sys.lit("eider-no-such-program"))
+    match proc.run(bad) {
+        Ok(_) => print("unexpected")
+        Err(e) => print(e)
+    }
+}
+
+fn main() uses io, fs, net, ffi {
+    text()
+    match files() {
+        Ok(_) => {}
+        Err(e) => print(e)
+    }
+    procs()
+    print(env.args().len() > 0)
+    match env.get(sys.lit("EIDER_STD_TEST")) {
+        Some(v) => show(v)
+        None => print("unset")
+    }
+    print("exiting")
+    env.exit(7)
+}
