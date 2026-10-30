@@ -1,0 +1,207 @@
+// driver: `emit-c`, `build`, `run` and `test` (docs/compiler.md, "C4: lowering").
+//
+// The C goes to a fresh temporary directory ($TMPDIR, else /tmp) and is compiled together
+// with the C core (core/eider_rt.c, the language runtime, and core/eider_core.c, the OS ABI
+// that std sits on) by $CC (default cc):
+//
+//   cc -std=c11 -pedantic -Wall -Wextra -Wno-unused-* -O0|-O2 -pthread $EIDER_CFLAGS
+//      -I <root>/core -o <exe> <prog>.c <root>/core/eider_rt.c <root>/core/eider_core.c
+//
+// `run` and `test` use -O0 (fast C compiles), `build` and `run --release` -O2, as stage 0
+// does. EIDER_CFLAGS (split at spaces) adds flags, e.g. `-Werror` or a sanitizer.
+//
+// The toolchain root (the directory holding core/) is $EIDER_ROOT if set; otherwise the
+// nearest directory above the eiderc binary (argv[0], symlinks resolved) that contains
+// core/eider_rt.h, so target/eiderc in a checkout finds the checkout; otherwise the same
+// search from the working directory.
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+import "deps/std/fs.ei"
+import "deps/std/io.ei"
+import "deps/std/env.ei"
+import "deps/std/proc.ei"
+
+fn s(x: str) -> List[u8] uses ffi { sys.lit(x) }
+
+fn fail(msg: List[u8], code: i32) uses io, ffi {
+    var m = s("eiderc: ")
+    bytes.append(inout m, msg)
+    io.errln(m)
+    env.exit(code)
+}
+
+fn has_core(dir: List[u8]) -> bool uses fs, ffi { fs.exists(fs.join(dir, s("core/eider_rt.h"))) }
+
+/// The nearest of `dir` and its parents that contains core/eider_rt.h ("" if none).
+fn search_up(dir: List[u8]) -> List[u8] uses fs, ffi {
+    var d = dir
+    while d.len() > 0 {
+        if has_core(d) { return d }
+        let up = fs.dirname(d)
+        if bytes.eq(up, d) { break }
+        d = up
+    }
+    List.new()
+}
+
+/// The toolchain root (see the top of this file).
+pub fn root() -> List[u8] uses io, fs, ffi {
+    match env.get(s("EIDER_ROOT")) {
+        Some(r) => { if r.len() > 0 { return r } }
+        None => {}
+    }
+    let argv = env.args()
+    if argv.len() > 0 {
+        let exe: List[u8] = match fs.canonical(argv[0]) {
+            Ok(x) => x
+            Err(_) => List.new()
+        }
+        if exe.len() > 0 {
+            let r = search_up(fs.dirname(exe))
+            if r.len() > 0 { return r }
+        }
+    }
+    let here: List[u8] = match fs.cwd() {
+        Ok(x) => x
+        Err(_) => List.new()
+    }
+    let r = search_up(here)
+    if r.len() == 0 { fail(s("cannot find the toolchain (a directory with core/eider_rt.h); set EIDER_ROOT"), 2) }
+    r
+}
+
+/// A new, empty directory of our own under $TMPDIR (or /tmp).
+fn temp_dir() -> List[u8] uses io, fs, clock, ffi {
+    var base = s("/tmp")
+    match env.get(s("TMPDIR")) {
+        Some(t) => { if t.len() > 0 { base = t } }
+        None => {}
+    }
+    let stamp = now_ms()
+    for k in 0..10000 {
+        var name = s("eiderc-")
+        bytes.append(inout name, bytes.from_u64(stamp))
+        name.push(45)
+        bytes.append(inout name, bytes.from_u64(k as u64))
+        let d = fs.join(base, name)
+        // mkdir fails if the directory exists, so a success means it is ours
+        sys.send(d)
+        if sys.mkdir() == 0 { return d }
+    }
+    fail(s("cannot create a temporary directory"), 3)
+    List.new()
+}
+
+/// The file name of `path` without directories and without its extension.
+pub fn stem(path: List[u8]) -> List[u8] {
+    var start: usize = 0
+    match bytes.rfind_byte(path, 47) {
+        Some(i) => { start = i + 1 }
+        None => {}
+    }
+    var end = path.len()
+    match bytes.rfind_byte(path, 46) {
+        Some(i) => { if i > start { end = i } }
+        None => {}
+    }
+    bytes.slice(path, start, end)
+}
+
+fn extra_flags(inout argv: List[List[u8]]) uses io, ffi {
+    match env.get(s("EIDER_CFLAGS")) {
+        Some(f) => {
+            for x in bytes.split(f, 32) {
+                if x.len() > 0 { argv.push(x) }
+            }
+        }
+        None => {}
+    }
+}
+
+/// Compile C text `c` into the executable `exe`; the C file goes next to it in `dir`.
+/// On failure the C is kept and the process exits with 3 (stage 0's code).
+fn compile(c: List[u8], dir: List[u8], exe: List[u8], release: bool) uses io, fs, net, ffi {
+    let cfile = fs.join(dir, s("prog.c"))
+    match fs.write(cfile, c) {
+        Ok(_) => {}
+        Err(_) => {
+            var m = s("cannot write ")
+            bytes.append(inout m, cfile)
+            fail(m, 3)
+        }
+    }
+    let r = root()
+    let core = fs.join(r, s("core"))
+    var cc = s("cc")
+    match env.get(s("CC")) {
+        Some(x) => { if x.len() > 0 { cc = x } }
+        None => {}
+    }
+    var argv: List[List[u8]] = List.new()
+    argv.push(cc)
+    argv.push(s("-std=c11"))
+    argv.push(s("-pedantic"))
+    argv.push(s("-Wall"))
+    argv.push(s("-Wextra"))
+    argv.push(s("-Wno-unused-function"))
+    argv.push(s("-Wno-unused-variable"))
+    argv.push(s("-Wno-unused-but-set-variable"))
+    argv.push(s("-Wno-unused-parameter"))
+    if release { argv.push(s("-O2")) } else { argv.push(s("-O0")) }
+    argv.push(s("-pthread"))
+    extra_flags(inout argv)
+    argv.push(s("-I"))
+    argv.push(core)
+    argv.push(s("-o"))
+    argv.push(exe)
+    argv.push(cfile)
+    argv.push(fs.join(core, s("eider_rt.c")))
+    argv.push(fs.join(core, s("eider_core.c")))
+    let code = match proc.run(argv) {
+        Ok(n) => n
+        Err(_) => {
+            var m = s("cannot run the C compiler `")
+            bytes.append(inout m, argv[0])
+            bytes.append(inout m, s("` (set $CC)"))
+            fail(m, 3)
+            3
+        }
+    }
+    if code != 0 {
+        var m = s("internal error: generated C failed to compile (kept at ")
+        bytes.append(inout m, cfile)
+        m.push(41)
+        fail(m, 3)
+    }
+    fs.remove_all(cfile)
+}
+
+/// `eiderc build`: an -O2 executable at `out` (default: the source file's stem).
+pub fn build(c: List[u8], file: List[u8], out: List[u8]) uses io, fs, net, clock, ffi {
+    let dir = temp_dir()
+    var exe = out
+    if exe.len() == 0 { exe = stem(file) }
+    compile(c, dir, exe, true)
+    fs.remove_all(dir)
+}
+
+/// `eiderc run` / `eiderc test`: build into a temporary directory, run, exit with the
+/// program's exit code (a program killed by signal n exits 128 + n).
+pub fn run(c: List[u8], file: List[u8], release: bool) uses io, fs, net, clock, ffi {
+    let dir = temp_dir()
+    let exe = fs.join(dir, stem(file))
+    compile(c, dir, exe, release)
+    var argv: List[List[u8]] = List.new()
+    argv.push(exe)
+    let code = match proc.run(argv) {
+        Ok(n) => n
+        Err(_) => {
+            fs.remove_all(dir)
+            fail(s("cannot run the compiled program"), 3)
+            3
+        }
+    }
+    fs.remove_all(dir)
+    env.exit(code)
+}

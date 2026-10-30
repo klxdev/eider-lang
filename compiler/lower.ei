@@ -1,0 +1,934 @@
+// lower: the typed IR (ir.ei) to C11 text. See docs/compiler.md, "C4: lowering".
+//
+// The IR already fixes evaluation order (every intermediate value is a temporary assigned in
+// source order), so lowering is a direct translation, one C statement per IR statement. The C
+// calls the language runtime in core/eider_rt.h for everything that can trap or must not be
+// undefined (checked and wrapping arithmetic, conversions, bounds checks, traps, print); the
+// only C written here besides the program itself is per-type glue (`==` and enum names).
+//
+// C names never collide with each other, with C keywords or with the runtime (`ei_*`, `ec_*`):
+//   t<id>_<Name>   type <id> of the type arena (records, enums), t<id> for arrays
+//   f<i>_<name>    function i (tests: f<i>_test); <name> is the mangled `stem__name`
+//   l<i>[_<name>]  local i of the function being lowered (parameters first)
+//   s<n>           the n-th loop's `continue` label (only when its step block is not empty)
+//   f<n> / v<n>    record field n / the struct of enum variant n (members, not identifiers)
+// Layout: records are structs; arrays are `struct { T a[N]; }` so they copy by value; every
+// enum is `struct { uint32_t tag; union { struct { ... } v<n>; ... } u; }` (the union only
+// when some variant has fields); `str` is `const char *`; `inout` parameters are pointers.
+// Every local is declared at the top of its function with a zero initializer, so no path
+// reads an uninitialized variable (and gcc -O2 has nothing to report).
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+import "intern.ei"
+import "types.ei"
+import "resolve.ei"
+import "ast.ei"
+import "ir.ei"
+
+const NONE: u32 = 4294967295
+
+/// The program being lowered.
+pub type P = { ir: ir.Ir, t: types.Types, names: intern.Interner }
+
+/// Output and the state of the function being lowered: its first local, and the loops
+/// around the current statement (the label number of each, NONE when `continue` can be a
+/// plain C `continue` because the loop's step block is empty).
+type G = { o: List[u8], lbase: u32, loops: List[u32], nlabels: u32 }
+
+fn put(inout g: G, s: str) uses ffi { bytes.append(inout g.o, sys.lit(s)) }
+fn putb(inout g: G, s: List[u8]) { bytes.append(inout g.o, s) }
+fn putn(inout g: G, n: u64) { bytes.append(inout g.o, bytes.from_u64(n)) }
+
+fn ind(inout g: G, depth: u32) uses ffi {
+    for i in 0..depth { put(inout g, "  ") }
+}
+
+/// Identifier characters of `s`; anything else becomes `_`.
+fn ident(inout g: G, s: List[u8]) {
+    for b in s {
+        if bytes.is_ident(b) { g.o.push(b) } else { g.o.push(95) }
+    }
+}
+
+/// A C string literal with the bytes of `s` (stage 0's escaping; `?` is escaped too, so no
+/// trigraph can form).
+pub fn str_lit(inout out: List[u8], s: List[u8]) {
+    out.push(34)
+    for b in s {
+        if b == 34 || b == 92 || b == 63 {
+            out.push(92)
+            out.push(b)
+        } else if b == 10 {
+            out.push(92)
+            out.push(110)
+        } else if b == 9 {
+            out.push(92)
+            out.push(116)
+        } else if b >= 32 && b < 127 {
+            out.push(b)
+        } else {
+            out.push(92)
+            out.push(48 + b / 64)
+            out.push(48 + (b / 8) % 8)
+            out.push(48 + b % 8)
+        }
+    }
+    out.push(34)
+}
+
+// ---- types
+
+fn ty_kind(p: P, ty: u32) -> u32 { types.kind(p.t, ty) }
+
+/// Whether type `ty` is a concrete type with a C definition (generic templates and the
+/// prelude's Option/Result are never instantiated in v0).
+fn usable(p: P, ty: u32) -> bool {
+    let k = ty_kind(p, ty)
+    if k == types.T_ENUM || k == types.T_RECORD {
+        let d = types.def_of(p.t, ty)
+        return d.generic == 0 && d.filled
+    }
+    if k == types.T_ARRAY { return usable(p, types.get(p.t, ty).a) }
+    true
+}
+
+/// The C spelling of integer kind k's function suffix (usize uses the u64 functions).
+fn suffix(k: u32) -> str {
+    match k {
+        0 => "i32"
+        1 => "i64"
+        2 => "u8"
+        3 => "u32"
+        _ => "u64"
+    }
+}
+
+fn int_cty(k: u32) -> str {
+    match k {
+        0 => "int32_t"
+        1 => "int64_t"
+        2 => "uint8_t"
+        3 => "uint32_t"
+        _ => "uint64_t"
+    }
+}
+
+fn cty(inout g: G, p: P, ty: u32) uses ffi {
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_INT {
+        put(inout g, int_cty(t.a))
+    } else if k == types.T_BOOL {
+        put(inout g, "bool")
+    } else if k == types.T_STR {
+        put(inout g, "const char *")
+    } else if k == types.T_UNIT || k == types.T_NEVER {
+        put(inout g, "uint8_t")
+    } else {
+        put(inout g, "t")
+        putn(inout g, ty as u64)
+        if k != types.T_ARRAY {
+            put(inout g, "_")
+            ident(inout g, resolve.key_text(p.names, types.def_of(p.t, ty).key))
+        }
+    }
+}
+
+fn any_payload(p: P, d: types.Def) -> bool {
+    for i in 0..d.len {
+        if types.variant(p.t, d, i).flen > 0 { return true }
+    }
+    false
+}
+
+/// Define type `ty` (after the types it contains) and its glue, once.
+fn def_ty(inout g: G, p: P, ty: u32, inout done: Map[u32, bool]) uses ffi {
+    let k = ty_kind(p, ty)
+    if k != types.T_ENUM && k != types.T_RECORD && k != types.T_ARRAY { return }
+    if done.contains(ty) || !usable(p, ty) { return }
+    done.insert(ty, true)
+    if k == types.T_ARRAY {
+        let t = types.get(p.t, ty)
+        def_ty(inout g, p, t.a, inout done)
+        put(inout g, "typedef struct { ")
+        cty(inout g, p, t.a)
+        put(inout g, " a[")
+        // C has no zero-length arrays; a [T; 0] keeps one unused element
+        if t.b == 0 { put(inout g, "1") } else { putn(inout g, t.b as u64) }
+        put(inout g, "]; } ")
+        cty(inout g, p, ty)
+        put(inout g, ";\n")
+        eq_glue(inout g, p, ty)
+        return
+    }
+    let d = types.def_of(p.t, ty)
+    if k == types.T_RECORD {
+        for i in 0..d.len { def_ty(inout g, p, types.field(p.t, d.start, i).ty, inout done) }
+        put(inout g, "typedef struct {")
+        if d.len == 0 { put(inout g, " uint8_t unused;") }
+        for i in 0..d.len {
+            put(inout g, " ")
+            cty(inout g, p, types.field(p.t, d.start, i).ty)
+            put(inout g, " f")
+            putn(inout g, i as u64)
+            put(inout g, ";")
+        }
+        put(inout g, " } ")
+        cty(inout g, p, ty)
+        put(inout g, ";\n")
+        eq_glue(inout g, p, ty)
+        return
+    }
+    for i in 0..d.len {
+        let v = types.variant(p.t, d, i)
+        for j in 0..v.flen { def_ty(inout g, p, types.field(p.t, v.fstart, j).ty, inout done) }
+    }
+    put(inout g, "typedef struct { uint32_t tag;")
+    if any_payload(p, d) {
+        put(inout g, " union {")
+        for i in 0..d.len {
+            let v = types.variant(p.t, d, i)
+            if v.flen == 0 { continue }
+            put(inout g, " struct {")
+            for j in 0..v.flen {
+                put(inout g, " ")
+                cty(inout g, p, types.field(p.t, v.fstart, j).ty)
+                put(inout g, " f")
+                putn(inout g, j as u64)
+                put(inout g, ";")
+            }
+            put(inout g, " } v")
+            putn(inout g, i as u64)
+            put(inout g, ";")
+        }
+        put(inout g, " } u;")
+    }
+    put(inout g, " } ")
+    cty(inout g, p, ty)
+    put(inout g, ";\n")
+    eq_glue(inout g, p, ty)
+    // variant names, for `print` (stage 0 prints the variant's mangled name)
+    put(inout g, "static inline const char *")
+    cty(inout g, p, ty)
+    put(inout g, "_name(uint32_t tag) {\n  static const char *const n[] = {")
+    for i in 0..d.len {
+        if i > 0 { put(inout g, ",") }
+        put(inout g, " ")
+        str_lit(inout g.o, resolve.key_text(p.names, types.variant(p.t, d, i).key))
+    }
+    put(inout g, " };\n  return n[tag];\n}\n")
+}
+
+/// `a == b` for C expressions a and b of Eider type ty.
+fn eq_expr(inout g: G, p: P, ty: u32, a: List[u8], b: List[u8]) uses ffi {
+    let k = ty_kind(p, ty)
+    if k == types.T_STR {
+        put(inout g, "(strcmp(")
+        putb(inout g, a)
+        put(inout g, ", ")
+        putb(inout g, b)
+        put(inout g, ") == 0)")
+    } else if k == types.T_ENUM || k == types.T_RECORD || k == types.T_ARRAY {
+        cty(inout g, p, ty)
+        put(inout g, "_eq(")
+        putb(inout g, a)
+        put(inout g, ", ")
+        putb(inout g, b)
+        put(inout g, ")")
+    } else {
+        put(inout g, "(")
+        putb(inout g, a)
+        put(inout g, " == ")
+        putb(inout g, b)
+        put(inout g, ")")
+    }
+}
+
+fn member(pre: str, base: str, n: u32) -> List[u8] uses ffi {
+    var m = sys.lit(base)
+    bytes.append(inout m, sys.lit(pre))
+    bytes.append(inout m, bytes.from_u64(n as u64))
+    m
+}
+
+/// Structural equality: `static inline bool t<id>_eq(t<id> a, t<id> b)`.
+fn eq_glue(inout g: G, p: P, ty: u32) uses ffi {
+    put(inout g, "static inline bool ")
+    cty(inout g, p, ty)
+    put(inout g, "_eq(")
+    cty(inout g, p, ty)
+    put(inout g, " a, ")
+    cty(inout g, p, ty)
+    put(inout g, " b) {\n")
+    let k = ty_kind(p, ty)
+    if k == types.T_ARRAY {
+        let t = types.get(p.t, ty)
+        if t.b == 0 {
+            put(inout g, "  return true;\n}\n")
+            return
+        }
+        put(inout g, "  for (uint64_t i = 0; i < ")
+        putn(inout g, t.b as u64)
+        put(inout g, "; i++) if (!")
+        eq_expr(inout g, p, t.a, sys.lit("a.a[i]"), sys.lit("b.a[i]"))
+        put(inout g, ") return false;\n  return true;\n}\n")
+        return
+    }
+    let d = types.def_of(p.t, ty)
+    if k == types.T_RECORD {
+        put(inout g, "  return true")
+        for i in 0..d.len {
+            put(inout g, " && ")
+            eq_expr(inout g, p, types.field(p.t, d.start, i).ty, member(".f", "a", i), member(".f", "b", i))
+        }
+        put(inout g, ";\n}\n")
+        return
+    }
+    put(inout g, "  if (a.tag != b.tag) return false;\n")
+    for i in 0..d.len {
+        let v = types.variant(p.t, d, i)
+        if v.flen == 0 { continue }
+        put(inout g, "  if (a.tag == ")
+        putn(inout g, i as u64)
+        put(inout g, ") return true")
+        for j in 0..v.flen {
+            var x = member(".u.v", "a", i)
+            bytes.append(inout x, member(".f", "", j))
+            var y = member(".u.v", "b", i)
+            bytes.append(inout y, member(".f", "", j))
+            put(inout g, " && ")
+            eq_expr(inout g, p, types.field(p.t, v.fstart, j).ty, x, y)
+        }
+        put(inout g, ";\n")
+    }
+    put(inout g, "  return true;\n}\n")
+}
+
+// ---- operands and places
+
+fn loc(p: P, g: G, l: u32) -> ir.Local { p.ir.locals[(g.lbase + l) as usize] }
+
+fn local_name(inout g: G, p: P, l: u32) uses ffi {
+    let x = loc(p, g, l)
+    put(inout g, "l")
+    putn(inout g, l as u64)
+    if x.kind != ir.L_TEMP && x.name != 0 {
+        put(inout g, "_")
+        ident(inout g, intern.name(p.names, x.name))
+    }
+}
+
+/// A local as a C lvalue (`inout` parameters are pointers).
+fn local_ref(inout g: G, p: P, l: u32) uses ffi {
+    if loc(p, g, l).kind == ir.L_INOUT {
+        put(inout g, "(*")
+        local_name(inout g, p, l)
+        put(inout g, ")")
+    } else {
+        local_name(inout g, p, l)
+    }
+}
+
+/// Integer literal `v` (64-bit two's complement) of kind k, typed exactly.
+fn int_lit(inout g: G, k: u32, v: u64) uses ffi {
+    let neg = types.signed(k) && v >= 9223372036854775808
+    if k == types.IK_I32 {
+        if neg && v == 18446744071562067968 {
+            put(inout g, "INT32_MIN")
+        } else if neg {
+            put(inout g, "((int32_t)-")
+            putn(inout g, 0 -% v)
+            put(inout g, ")")
+        } else {
+            put(inout g, "((int32_t)")
+            putn(inout g, v)
+            put(inout g, ")")
+        }
+    } else if k == types.IK_I64 {
+        if neg && v == 9223372036854775808 {
+            put(inout g, "INT64_MIN")
+        } else if neg {
+            put(inout g, "(-INT64_C(")
+            putn(inout g, 0 -% v)
+            put(inout g, "))")
+        } else {
+            put(inout g, "INT64_C(")
+            putn(inout g, v)
+            put(inout g, ")")
+        }
+    } else if k == types.IK_U8 {
+        put(inout g, "((uint8_t)")
+        putn(inout g, v)
+        put(inout g, ")")
+    } else if k == types.IK_U32 {
+        put(inout g, "UINT32_C(")
+        putn(inout g, v)
+        put(inout g, ")")
+    } else {
+        put(inout g, "UINT64_C(")
+        putn(inout g, v)
+        put(inout g, ")")
+    }
+}
+
+fn op(inout g: G, p: P, id: u32) uses ffi {
+    let x = p.ir.ops[id as usize]
+    if x.kind == ir.O_INT {
+        int_lit(inout g, types.ik(p.t, x.ty), x.v)
+    } else if x.kind == ir.O_BOOL {
+        if x.v == 1 { put(inout g, "true") } else { put(inout g, "false") }
+    } else if x.kind == ir.O_STR {
+        str_lit(inout g.o, p.ir.strs[x.a as usize])
+    } else if x.kind == ir.O_UNIT {
+        put(inout g, "0")
+    } else {
+        local_ref(inout g, p, x.a)
+    }
+}
+
+/// Operand `id` as text (for glue calls that take C expressions).
+fn op_text(inout g: G, p: P, id: u32) -> List[u8] uses ffi {
+    let mark = g.o.len()
+    op(inout g, p, id)
+    let s = bytes.slice(g.o, mark, g.o.len())
+    while g.o.len() > mark { g.o.pop() }
+    s
+}
+
+/// The array length of the type at place `pl`'s base.
+fn base_len(p: P, pl: ir.Place) -> u32 {
+    let bt = p.ir.places[pl.a as usize].ty
+    types.get(p.t, bt).b
+}
+
+/// Bounds checks for every index in place `id`, outermost base first (so they run left to
+/// right, before the statement that uses the place).
+fn checks(inout g: G, p: P, id: u32, depth: u32) uses ffi {
+    let x = p.ir.places[id as usize]
+    if x.kind == ir.P_LOCAL { return }
+    checks(inout g, p, x.a, depth)
+    if x.kind != ir.P_INDEX { return }
+    ind(inout g, depth)
+    put(inout g, "(void)ei_idx((uint64_t)")
+    op(inout g, p, x.b)
+    put(inout g, ", ")
+    putn(inout g, base_len(p, x) as u64)
+    put(inout g, ", ")
+    putn(inout g, x.line as u64)
+    put(inout g, ");\n")
+}
+
+/// A place as a C lvalue (its indices are checked already).
+fn place(inout g: G, p: P, id: u32) uses ffi {
+    let x = p.ir.places[id as usize]
+    if x.kind == ir.P_LOCAL {
+        local_ref(inout g, p, x.a)
+    } else if x.kind == ir.P_FIELD {
+        place(inout g, p, x.a)
+        put(inout g, ".f")
+        putn(inout g, x.b as u64)
+    } else if x.kind == ir.P_INDEX {
+        place(inout g, p, x.a)
+        put(inout g, ".a[")
+        op(inout g, p, x.b)
+        put(inout g, "]")
+    } else {
+        place(inout g, p, x.a)
+        put(inout g, ".u.v")
+        putn(inout g, x.b as u64)
+        put(inout g, ".f")
+        putn(inout g, x.c as u64)
+    }
+}
+
+fn args(inout g: G, p: P, start: u32, n: u32) uses ffi {
+    for i in 0..n {
+        if i > 0 { put(inout g, ", ") }
+        let a = p.ir.extra[(start + i) as usize]
+        if a >= ir.ARG_PLACE {
+            put(inout g, "&")
+            place(inout g, p, a - ir.ARG_PLACE)
+        } else {
+            op(inout g, p, a)
+        }
+    }
+}
+
+fn arg_checks(inout g: G, p: P, start: u32, n: u32, depth: u32) uses ffi {
+    for i in 0..n {
+        let a = p.ir.extra[(start + i) as usize]
+        if a >= ir.ARG_PLACE { checks(inout g, p, a - ir.ARG_PLACE, depth) }
+    }
+}
+
+// ---- statements
+
+fn is_void(p: P, ty: u32) -> bool { ty == types.UNIT || ty == types.NEVER }
+
+fn dst(inout g: G, p: P, l: u32) uses ffi {
+    local_ref(inout g, p, l)
+    put(inout g, " = ")
+}
+
+fn fn_name(inout g: G, p: P, f: u32) uses ffi {
+    put(inout g, "f")
+    putn(inout g, f as u64)
+    let fd = p.ir.fns[f as usize]
+    if fd.is_test {
+        put(inout g, "_test")
+    } else {
+        put(inout g, "_")
+        ident(inout g, fd.name)
+    }
+}
+
+fn block(inout g: G, p: P, b: u32, depth: u32) uses ffi {
+    let bl = p.ir.blocks[b as usize]
+    for i in 0..bl.len { stmt(inout g, p, p.ir.extra[(bl.start + i) as usize], depth) }
+}
+
+/// Whether block b contains a `continue` of its own loop (not of a nested one).
+fn has_continue(p: P, b: u32) -> bool {
+    let bl = p.ir.blocks[b as usize]
+    for i in 0..bl.len {
+        let s = p.ir.stmts[p.ir.extra[(bl.start + i) as usize] as usize]
+        if s.kind == ir.S_CONTINUE { return true }
+        if s.kind == ir.S_IF && (has_continue(p, s.b) || has_continue(p, s.c)) { return true }
+    }
+    false
+}
+
+/// The integer range of kind k as (min, max) in 64-bit two's complement.
+fn kmin(k: u32) -> u64 {
+    match k {
+        0 => 18446744071562067968
+        1 => 9223372036854775808
+        _ => 0
+    }
+}
+
+fn kmax(k: u32) -> u64 {
+    match k {
+        0 => 2147483647
+        1 => 9223372036854775807
+        2 => 255
+        3 => 4294967295
+        _ => 18446744073709551615
+    }
+}
+
+/// The value of comparison `a op b` when one side is a literal at the end of the type's
+/// range, so it is the same for every value of the other side: 1 false, 2 true, 0 unknown.
+/// Lowering writes these as constants (gcc's -Wtype-limits rejects `x >= 0u` and the like).
+fn fixed_cmp(p: P, opk: u32, a: u32, b: u32, ty: u32) -> u32 {
+    let k = types.ik(p.t, ty)
+    let xa = p.ir.ops[a as usize]
+    let xb = p.ir.ops[b as usize]
+    var o = opk
+    var lit: u64 = 0
+    if xb.kind == ir.O_INT && xa.kind != ir.O_INT {
+        lit = xb.v
+    } else if xa.kind == ir.O_INT && xb.kind != ir.O_INT {
+        lit = xa.v
+        // mirror: lit < x  is  x > lit
+        if o == ast.OP_LT { o = ast.OP_GT } else if o == ast.OP_GT { o = ast.OP_LT } else if o == ast.OP_LE { o = ast.OP_GE } else { o = ast.OP_LE }
+    } else {
+        return 0
+    }
+    if lit == kmin(k) && o == ast.OP_LT { return 1 }
+    if lit == kmin(k) && o == ast.OP_GE { return 2 }
+    if lit == kmax(k) && o == ast.OP_GT { return 1 }
+    if lit == kmax(k) && o == ast.OP_LE { return 2 }
+    0
+}
+
+fn binary(inout g: G, p: P, s: ir.Stmt) uses ffi {
+    let o = s.a
+    if o <= ast.OP_WMUL {
+        let k = types.ik(p.t, s.ty)
+        if o == ast.OP_ADD { put(inout g, "ei_add_") }
+        if o == ast.OP_SUB { put(inout g, "ei_sub_") }
+        if o == ast.OP_MUL { put(inout g, "ei_mul_") }
+        if o == ast.OP_DIV { put(inout g, "ei_div_") }
+        if o == ast.OP_REM { put(inout g, "ei_rem_") }
+        if o == ast.OP_WADD { put(inout g, "ei_wadd_") }
+        if o == ast.OP_WSUB { put(inout g, "ei_wsub_") }
+        if o == ast.OP_WMUL { put(inout g, "ei_wmul_") }
+        put(inout g, suffix(k))
+        put(inout g, "(")
+        op(inout g, p, s.b)
+        put(inout g, ", ")
+        op(inout g, p, s.c)
+        if o <= ast.OP_REM {
+            put(inout g, ", ")
+            putn(inout g, s.line as u64)
+        }
+        put(inout g, ")")
+        return
+    }
+    if o == ast.OP_EQ || o == ast.OP_NE {
+        if o == ast.OP_NE { put(inout g, "!") }
+        let a = op_text(inout g, p, s.b)
+        let b = op_text(inout g, p, s.c)
+        eq_expr(inout g, p, s.ty, a, b)
+        return
+    }
+    let fixed = fixed_cmp(p, o, s.b, s.c, s.ty)
+    if fixed == 1 {
+        put(inout g, "false")
+        return
+    }
+    if fixed == 2 {
+        put(inout g, "true")
+        return
+    }
+    put(inout g, "(")
+    op(inout g, p, s.b)
+    put(inout g, " ")
+    put(inout g, ast.op_text(o))
+    put(inout g, " ")
+    op(inout g, p, s.c)
+    put(inout g, ")")
+}
+
+/// `x as target`: the runtime's range checks, then a cast of the in-range value.
+fn cast(inout g: G, p: P, s: ir.Stmt) uses ffi {
+    let from = types.ik(p.t, ir.op_ty(p.ir, s.a))
+    let to = types.ik(p.t, s.ty)
+    put(inout g, "(")
+    put(inout g, int_cty(to))
+    put(inout g, ")")
+    if types.signed(from) && types.signed(to) {
+        put(inout g, "ei_s2s((int64_t)")
+        op(inout g, p, s.a)
+        if to == types.IK_I32 { put(inout g, ", INT32_MIN, INT32_MAX, ") } else { put(inout g, ", INT64_MIN, INT64_MAX, ") }
+    } else if types.signed(from) {
+        put(inout g, "ei_s2u((int64_t)")
+        op(inout g, p, s.a)
+        put(inout g, ", ")
+        int_lit(inout g, types.IK_U64, kmax(to))
+        put(inout g, ", ")
+    } else if types.signed(to) {
+        put(inout g, "ei_u2s((uint64_t)")
+        op(inout g, p, s.a)
+        if to == types.IK_I32 { put(inout g, ", INT32_MAX, ") } else { put(inout g, ", INT64_MAX, ") }
+    } else {
+        put(inout g, "ei_u2u((uint64_t)")
+        op(inout g, p, s.a)
+        put(inout g, ", ")
+        int_lit(inout g, types.IK_U64, kmax(to))
+        put(inout g, ", ")
+    }
+    putn(inout g, s.line as u64)
+    put(inout g, ")")
+}
+
+fn print(inout g: G, p: P, s: ir.Stmt) uses ffi {
+    let t = types.get(p.t, s.ty)
+    if t.kind == types.T_INT && types.signed(t.a) {
+        put(inout g, "ei_print_i((int64_t)")
+    } else if t.kind == types.T_INT {
+        put(inout g, "ei_print_u((uint64_t)")
+    } else if t.kind == types.T_BOOL {
+        put(inout g, "ei_print_b(")
+    } else if t.kind == types.T_STR {
+        put(inout g, "ei_print_s(")
+    } else {
+        put(inout g, "ei_print_s(")
+        cty(inout g, p, s.ty)
+        put(inout g, "_name(")
+        op(inout g, p, s.a)
+        put(inout g, ".tag))")
+        return
+    }
+    op(inout g, p, s.a)
+    put(inout g, ")")
+}
+
+fn stmt(inout g: G, p: P, id: u32, depth: u32) uses ffi {
+    let s = p.ir.stmts[id as usize]
+    let k = s.kind
+    if k == ir.S_IF {
+        ind(inout g, depth)
+        put(inout g, "if (")
+        op(inout g, p, s.a)
+        put(inout g, ") {\n")
+        block(inout g, p, s.b, depth + 1)
+        ind(inout g, depth)
+        if p.ir.blocks[s.c as usize].len > 0 {
+            put(inout g, "} else {\n")
+            block(inout g, p, s.c, depth + 1)
+            ind(inout g, depth)
+        }
+        put(inout g, "}\n")
+        return
+    }
+    if k == ir.S_LOOP {
+        // for (;;) { body; s<n>: ; step } with `continue` as `goto s<n>`
+        var label = NONE
+        let has_step = p.ir.blocks[s.b as usize].len > 0
+        if has_step && has_continue(p, s.a) {
+            label = g.nlabels
+            g.nlabels += 1
+        }
+        let target = if has_step { label } else { NONE }
+        g.loops.push(target)
+        ind(inout g, depth)
+        put(inout g, "for (;;) {\n")
+        block(inout g, p, s.a, depth + 1)
+        if label != NONE {
+            ind(inout g, depth)
+            put(inout g, "s")
+            putn(inout g, label as u64)
+            put(inout g, ":;\n")
+        }
+        block(inout g, p, s.b, depth + 1)
+        ind(inout g, depth)
+        put(inout g, "}\n")
+        g.loops.pop()
+        return
+    }
+    if (k == ir.S_COPY || k == ir.S_READ) && is_void(p, loc(p, g, s.dst).ty) { return }
+    // bounds checks of the places this statement uses
+    if k == ir.S_READ || k == ir.S_STORE || k == ir.S_TAG { checks(inout g, p, s.a, depth) }
+    if k == ir.S_CALL { arg_checks(inout g, p, s.b, s.c, depth) }
+    ind(inout g, depth)
+    if k == ir.S_COPY {
+        dst(inout g, p, s.dst)
+        op(inout g, p, s.a)
+    } else if k == ir.S_READ {
+        dst(inout g, p, s.dst)
+        place(inout g, p, s.a)
+    } else if k == ir.S_STORE {
+        place(inout g, p, s.a)
+        put(inout g, " = ")
+        op(inout g, p, s.b)
+    } else if k == ir.S_UNARY {
+        dst(inout g, p, s.dst)
+        if s.a == ir.U_NOT {
+            put(inout g, "!")
+            op(inout g, p, s.b)
+        } else {
+            put(inout g, "ei_neg_")
+            put(inout g, suffix(types.ik(p.t, s.ty)))
+            put(inout g, "(")
+            op(inout g, p, s.b)
+            put(inout g, ", ")
+            putn(inout g, s.line as u64)
+            put(inout g, ")")
+        }
+    } else if k == ir.S_BINARY {
+        dst(inout g, p, s.dst)
+        binary(inout g, p, s)
+    } else if k == ir.S_CAST {
+        dst(inout g, p, s.dst)
+        cast(inout g, p, s)
+    } else if k == ir.S_CALL {
+        if s.dst != ir.NONE { dst(inout g, p, s.dst) }
+        fn_name(inout g, p, s.a)
+        put(inout g, "(")
+        args(inout g, p, s.b, s.c)
+        put(inout g, ")")
+    } else if k == ir.S_RECORD {
+        dst(inout g, p, s.dst)
+        put(inout g, "(")
+        cty(inout g, p, s.ty)
+        put(inout g, "){")
+        if s.c == 0 { put(inout g, "0") }
+        for i in 0..s.c {
+            if i > 0 { put(inout g, ",") }
+            put(inout g, " .f")
+            putn(inout g, i as u64)
+            put(inout g, " = ")
+            op(inout g, p, p.ir.extra[(s.b + i) as usize])
+        }
+        put(inout g, " }")
+    } else if k == ir.S_VARIANT {
+        dst(inout g, p, s.dst)
+        put(inout g, "(")
+        cty(inout g, p, s.ty)
+        put(inout g, "){ .tag = ")
+        putn(inout g, s.a as u64)
+        for i in 0..s.c {
+            put(inout g, ", .u.v")
+            putn(inout g, s.a as u64)
+            put(inout g, ".f")
+            putn(inout g, i as u64)
+            put(inout g, " = ")
+            op(inout g, p, p.ir.extra[(s.b + i) as usize])
+        }
+        put(inout g, " }")
+    } else if k == ir.S_ARRAY {
+        dst(inout g, p, s.dst)
+        put(inout g, "(")
+        cty(inout g, p, s.ty)
+        put(inout g, "){ {")
+        for i in 0..s.c {
+            if i > 0 { put(inout g, ",") }
+            put(inout g, " ")
+            op(inout g, p, p.ir.extra[(s.b + i) as usize])
+        }
+        put(inout g, " } }")
+    } else if k == ir.S_REPEAT && s.b == 0 {
+        put(inout g, "(void)0")
+    } else if k == ir.S_REPEAT {
+        put(inout g, "for (uint64_t i = 0; i < ")
+        putn(inout g, s.b as u64)
+        put(inout g, "; i++) ")
+        local_ref(inout g, p, s.dst)
+        put(inout g, ".a[i] = ")
+        op(inout g, p, s.a)
+    } else if k == ir.S_TAG {
+        dst(inout g, p, s.dst)
+        put(inout g, "(")
+        place(inout g, p, s.a)
+        put(inout g, ".tag == ")
+        putn(inout g, s.b as u64)
+        put(inout g, ")")
+    } else if k == ir.S_PRINT {
+        print(inout g, p, s)
+    } else if k == ir.S_NOWMS {
+        dst(inout g, p, s.dst)
+        put(inout g, "ei_now_ms()")
+    } else if k == ir.S_PANIC {
+        put(inout g, "ei_trap(")
+        op(inout g, p, s.a)
+        put(inout g, ", ")
+        putn(inout g, s.line as u64)
+        put(inout g, ")")
+    } else if k == ir.S_ASSERT {
+        put(inout g, "if (!")
+        op(inout g, p, s.a)
+        put(inout g, ") ei_trap(")
+        if s.b > 0 {
+            str_lit(inout g.o, p.ir.strs[(s.b - 1) as usize])
+        } else {
+            put(inout g, "\"assertion failed\"")
+        }
+        put(inout g, ", ")
+        putn(inout g, s.line as u64)
+        put(inout g, ")")
+    } else if k == ir.S_BREAK {
+        put(inout g, "break")
+    } else if k == ir.S_CONTINUE {
+        let label = g.loops[g.loops.len() - 1]
+        if label == NONE {
+            put(inout g, "continue")
+        } else {
+            put(inout g, "goto s")
+            putn(inout g, label as u64)
+        }
+    } else {
+        put(inout g, "return")
+        if s.a > 0 {
+            put(inout g, " ")
+            op(inout g, p, s.a - 1)
+        }
+    }
+    put(inout g, ";\n")
+}
+
+// ---- functions and the program
+
+fn signature(inout g: G, p: P, f: u32) uses ffi {
+    let fd = p.ir.fns[f as usize]
+    put(inout g, "static ")
+    if is_void(p, fd.ret) { put(inout g, "void") } else { cty(inout g, p, fd.ret) }
+    put(inout g, " ")
+    fn_name(inout g, p, f)
+    put(inout g, "(")
+    if fd.nparams == 0 { put(inout g, "void") }
+    g.lbase = fd.lstart
+    for i in 0..fd.nparams {
+        if i > 0 { put(inout g, ", ") }
+        let l = loc(p, g, i)
+        cty(inout g, p, l.ty)
+        if l.kind == ir.L_INOUT { put(inout g, " *") } else { put(inout g, " ") }
+        local_name(inout g, p, i)
+    }
+    put(inout g, ")")
+}
+
+fn zero(p: P, ty: u32) -> str {
+    let k = ty_kind(p, ty)
+    if k == types.T_ENUM || k == types.T_RECORD || k == types.T_ARRAY { return "{0}" }
+    if k == types.T_BOOL { return "false" }
+    if k == types.T_STR { return "\"\"" }
+    "0"
+}
+
+fn function(inout g: G, p: P, f: u32) uses ffi {
+    let fd = p.ir.fns[f as usize]
+    signature(inout g, p, f)
+    put(inout g, " {\n")
+    g.lbase = fd.lstart
+    g.loops = List.new()
+    g.nlabels = 0
+    for i in fd.nparams..fd.lcount {
+        let l = loc(p, g, i)
+        if is_void(p, l.ty) { continue }
+        put(inout g, "  ")
+        cty(inout g, p, l.ty)
+        put(inout g, " ")
+        local_name(inout g, p, i)
+        put(inout g, " = ")
+        put(inout g, zero(p, l.ty))
+        put(inout g, ";\n")
+    }
+    block(inout g, p, fd.body - 1, 1)
+    // every path of a function with a result returns; tell the C compiler so
+    if !is_void(p, fd.ret) { put(inout g, "  ei_unreachable();\n") }
+    put(inout g, "}\n\n")
+}
+
+/// The C program for `p`: `main` calls the Eider `main`, or (tests = true) runs every test
+/// block like stage 0's test driver. `file` is the source path named in trap messages.
+pub fn program(p: P, file: List[u8], tests: bool) -> List[u8] uses ffi {
+    var g = G(List.new(), 0, List.new(), 0)
+    put(inout g, "/* generated by eiderc from ")
+    for b in file {
+        // keep the comment closed whatever the path contains
+        if b != 42 && b >= 32 && b < 127 { g.o.push(b) }
+    }
+    put(inout g, " */\n#include <stdio.h>\n#include \"eider_rt.h\"\n\n")
+    var done: Map[u32, bool] = Map.new()
+    for ty in 0..p.t.tys.len() { def_ty(inout g, p, ty as u32, inout done) }
+    put(inout g, "\n")
+    for f in 0..p.ir.fns.len() {
+        if p.ir.fns[f].body == 0 { continue }
+        signature(inout g, p, f as u32)
+        put(inout g, ";\n")
+    }
+    put(inout g, "\n")
+    var main_fn = NONE
+    for f in 0..p.ir.fns.len() {
+        let fd = p.ir.fns[f]
+        if fd.body == 0 { continue }
+        if !fd.is_test && bytes.eq(fd.name, sys.lit("main")) { main_fn = f as u32 }
+        function(inout g, p, f as u32)
+    }
+    put(inout g, "int main(void) {\n")
+    if tests {
+        put(inout g, "  volatile int total = 0, failed = 0;\n  jmp_buf jb;\n  ei_set_trap_jmp(&jb);\n  ei_set_file(")
+        str_lit(inout g.o, file)
+        put(inout g, ");\n")
+        for f in 0..p.ir.fns.len() {
+            let fd = p.ir.fns[f]
+            if !fd.is_test || fd.body == 0 { continue }
+            put(inout g, "  total++;\n  printf(\"test %s ... \", ")
+            str_lit(inout g.o, fd.name)
+            put(inout g, ");\n  fflush(stdout);\n  if (setjmp(jb) == 0) {\n    ")
+            fn_name(inout g, p, f as u32)
+            put(inout g, "();\n    printf(\"ok\\n\");\n  } else {\n    failed++;\n  }\n")
+        }
+        put(inout g, "  printf(\"\\n%d tests, %d failed\\n\", total, failed);\n  return failed ? 1 : 0;\n}\n")
+    } else {
+        put(inout g, "  ei_set_file(")
+        str_lit(inout g.o, file)
+        put(inout g, ");\n  ")
+        fn_name(inout g, p, main_fn)
+        put(inout g, "();\n  return 0;\n}\n")
+    }
+    g.o
+}
