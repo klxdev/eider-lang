@@ -1,0 +1,4 @@
+// expect: E0803 3:17
+type Named = { id: i32, name: String }
+export fn id_of(n: Named) -> i32 { n.id }
+fn main() {}

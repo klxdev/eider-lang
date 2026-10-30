@@ -1,0 +1,6 @@
+// expect: E0201 4:22
+extern "c" fn abs(n: i32) -> i32
+fn main() uses io {
+    let a = unsafe { abs(-3) }
+    print(a)
+}

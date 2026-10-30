@@ -1,0 +1,3 @@
+// expect: E0803 2:26
+extern "c" fn bump(inout n: i32)
+fn main() {}

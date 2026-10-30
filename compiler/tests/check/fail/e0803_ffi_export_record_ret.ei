@@ -1,0 +1,4 @@
+// expect: E0803 3:11
+type Bad = { s: String }
+export fn make() -> Bad { Bad(String.from("x")) }
+fn main() {}

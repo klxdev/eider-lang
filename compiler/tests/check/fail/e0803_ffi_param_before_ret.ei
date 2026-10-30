@@ -1,0 +1,3 @@
+// expect: E0803 2:25
+extern "c" fn f(a: i32, b: Option[i32]) -> String
+fn main() {}

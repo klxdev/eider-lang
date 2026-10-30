@@ -1,0 +1,3 @@
+// expect: E0805 2:11
+import "../lib/ffi_gen.ei"
+fn main() {}

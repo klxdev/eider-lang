@@ -1,0 +1,5 @@
+// expect: E0201 4:11
+import "../lib/ffi_ok.ei"
+fn main() uses io {
+    print(ffi_ok.magnitude(-3))
+}

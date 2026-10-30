@@ -1,0 +1,16 @@
+// externs (with their C symbols) and exports in the IR; calls to externs are plain calls
+extern "c" fn abs(n: i32) -> i32
+extern "c" fn puts(s: str) -> i32
+extern "c" fn srand(seed: u32)
+
+type Pt = { x: i32, y: i32 }
+
+export fn norm1(p: Pt) -> i32 uses ffi { unsafe { abs(p.x) + abs(p.y) } }
+
+fn main() uses ffi {
+    unsafe {
+        srand(1)
+        let r = puts("hi")
+    }
+    let n = norm1(Pt(-1, 2))
+}

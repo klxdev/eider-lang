@@ -1,0 +1,4 @@
+// expect: E0803 3:13
+type Dir = | North | South
+export fn f(d: Dir) -> i32 { 1 }
+fn main() {}

@@ -1,0 +1,3 @@
+// expect: E0803 2:15
+extern "c" fn pair() -> [i32; 2]
+fn main() {}
