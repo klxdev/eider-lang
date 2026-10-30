@@ -1,10 +1,10 @@
 #!/bin/sh
 # Full verification matrix: compile-fail suite, run tests on gcc/clang/ASan+UBSan/TSan, std, export, wasm.
 cd "$(dirname "$0")/.." || exit 1
-cargo build --quiet --manifest-path bootstrap/Cargo.toml --target-dir target 2>&1 | grep -E "^error" -A6
+EIDER=$(scripts/stage0.sh) || exit 3; export EIDER
 EIDER_CACHE=off; export EIDER_CACHE
 fail=0
-./target/debug/eider test --compile-fail tests/checks | tail -1 | grep -q " 0 failed" || { echo "FAIL compile-fail"; fail=1; }
+"$EIDER" test --compile-fail tests/checks | tail -1 | grep -q " 0 failed" || { echo "FAIL compile-fail"; fail=1; }
 S=$(mktemp -d)
 printf '#!/bin/sh\nexec gcc -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wpedantic "$@"\n' > $S/asan.sh
 printf '#!/bin/sh\nexec gcc -fsanitize=thread -Wpedantic "$@"\n' > $S/tsan.sh

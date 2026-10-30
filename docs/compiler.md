@@ -6,8 +6,8 @@ Progress: **C1 done** (lexer, interner, diagnostics rendering; `scripts/test-com
 
 ## Goal
 
-Replace the Rust bootstrap (`bootstrap/`) with a compiler written in Eider, then delete the
-Rust. Afterwards the only non-Eider code in the toolchain is the C core (`core/`), and
+Replace the Rust stage-0 bootstrap (the separate `eider-bootstrap` repository; this
+repository already contains no Rust) with a compiler written in Eider, then retire it. Afterwards the only non-Eider code in the toolchain is the C core (`core/`), and
 building Eider from nothing needs only a C11 compiler.
 
 Non-goals for the first version: a new back end (we keep emitting portable C11), an
@@ -25,12 +25,12 @@ allowed to live with the bootstrap's limits, for one stage only.
 ## Bootstrap chain
 
 ```
-stage0  bootstrap/ (Rust)            compiles compiler/ -> stage1 (a native binary)
+stage0  eider-bootstrap (Rust, external) compiles compiler/ -> stage1 (a native binary)
 stage1  compiler/ built by stage0    compiles compiler/ -> stage2
 stage2  compiler/ built by stage1    compiles compiler/ -> stage3
 fixed point: the C that stage2 and stage3 emit for compiler/ is byte-identical
-seed:   that C is committed as bootstrap/seed/eiderc.c; then bootstrap/*.rs is deleted
-later:  cc bootstrap/seed/eiderc.c core/*.c  ->  a working compiler, no Rust anywhere
+seed:   that C is committed as seed/eiderc.c; eider-bootstrap is retired
+later:  cc seed/eiderc.c core/*.c  ->  a working compiler, no Rust anywhere
 ```
 
 The seed is regenerated (and the fixed point re-checked) whenever the compiler changes in a
@@ -42,9 +42,9 @@ features that the previous seed supports.
 | Code | Today | Target |
 |---|---|---|
 | OS interop | `core/eider_core.c` (ABI in `core/ABI.md`) | unchanged; one backend file per OS |
-| Language runtime (traps, checked arithmetic, allocation, string/list helpers, thread glue) | C text inside `bootstrap/src/prelude.rs`, pasted into every program | `core/eider_rt.h` + `core/eider_rt.c`, specified like the OS ABI, included by generated code |
+| Language runtime (traps, checked arithmetic, allocation, string/list helpers, thread glue) | C text inside the stage-0 compiler (`src/prelude.rs`), pasted into every program | `core/eider_rt.h` + `core/eider_rt.c`, specified like the OS ABI, included by generated code |
 | Per-type glue (drop/clone/equality/hash for each concrete type) | generated C | generated C (compiler output; trusted because the compiler is) |
-| WASM libc shim | C text in `bootstrap/src/wasm_shim.rs` | `core/wasm/` as a separate backend of the same ABIs |
+| WASM libc shim | C text in the stage-0 compiler (`src/wasm_shim.rs`) | `core/wasm/` as a separate backend of the same ABIs |
 
 Moving the runtime into `core/` makes it reviewable, testable under sanitizers on its own,
 and portable per target, instead of being a string inside a compiler.
@@ -134,7 +134,7 @@ Each with a design note, compile-fail tests and new codes:
 | C4 | `lower` + C for v0; runtime moved to `core/eider_rt.*` | v0 run tests match, clean under ASan/UBSan |
 | C5 | S1–S3: payload enums, generics, traits, Option/Result/`?`, tuples, patterns, String/List/Map/Box, closures | all the features `compiler/` itself uses; their tests match |
 | C6 | Self-host: stage1 builds stage2 builds stage3; fixed point; commit the seed | `scripts/selfhost.sh` green |
-| C7 | Parity: modules/namespaces, FFI/export/`--lib`, threads, WASM, comptime, cache | the full `scripts/verify.sh` passes with `eiderc` in place of the bootstrap; delete `bootstrap/src` |
+| C7 | Parity: modules/namespaces, FFI/export/`--lib`, threads, WASM, comptime, cache | the full `scripts/verify.sh` passes with `eiderc` in place of the bootstrap; retire eider-bootstrap |
 | C8+ | Language work above, then std and package-manager rework | per feature |
 
 ## Testing

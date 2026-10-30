@@ -2,7 +2,7 @@
 # Builds calc.ei to WebAssembly and checks it from Node.
 set -e
 cd "$(dirname "$0")"
-EIDER=${EIDER:-../../target/debug/eider}
+EIDER=${EIDER:-$(../../scripts/stage0.sh)} || exit 3
 T=$(mktemp -d)
 $EIDER build --wasm calc.ei -o "$T/calc" >/dev/null
 cat > "$T/t.mjs" <<JS

@@ -7,10 +7,8 @@
 #             (BLESS=1 rewrites the goldens; review the diff).
 cd "$(dirname "$0")/.." || exit 1
 scripts/bootstrap-deps.sh
-cargo build --quiet --manifest-path bootstrap/Cargo.toml --target-dir target 2>&1 | grep -E '^error' -A6
-[ -x target/debug/eider ] || exit 3
+boot=$(scripts/stage0.sh) || exit 3
 EIDER_CACHE=off scripts/ei build compiler/main.ei -o target/eiderc >/dev/null 2>target/eiderc.build.log || { cat target/eiderc.build.log; echo "FAIL build eiderc"; exit 1; }
-boot=./target/debug/eider
 new=./target/eiderc
 lexmsg='unexpected character|unterminated string literal|unknown escape sequence|unterminated block comment|integer literal too large|expected hex digits after 0x'
 fail=0

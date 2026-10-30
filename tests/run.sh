@@ -2,7 +2,7 @@
 # Runs every tests/run/*.ei and compares stdout with the .out file next to it.
 # Extra flags for the C compiler (e.g. sanitizers) come from $EIDER_CFLAGS via a CC wrapper.
 cd "$(dirname "$0")/.." || exit 1
-E=${EIDER:-./target/debug/eider}
+E=${EIDER:-$(scripts/stage0.sh)} || exit 3
 fail=0
 for f in tests/run/*.ei; do
   exp="${f%.ei}.out"

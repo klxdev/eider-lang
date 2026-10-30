@@ -1,7 +1,7 @@
 #!/bin/sh
 # Build an Eider library, link a C program against it (static and shared), compare output.
 cd "$(dirname "$0")/../.." || exit 1
-E=${EIDER:-./target/debug/eider}
+E=${EIDER:-$(scripts/stage0.sh)} || exit 3
 T=$(mktemp -d)
 cp tests/export/mathlib.ei tests/export/driver.c "$T/"
 $E build --lib "$T/mathlib.ei" -o "$T/mathlib" >/dev/null || { echo "FAIL build --lib"; exit 1; }
