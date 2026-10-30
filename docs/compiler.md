@@ -618,8 +618,8 @@ run, wasm, export and thread test), stage 0 was retired in three steps.
   `core/`, then runs it; eiderc links the C core itself (the old `-l eider_core` archive and
   `LIBRARY_PATH` are gone). Every runner (tests/run.sh, tests/export/run.sh,
   tests/wasm/run.sh, tests/std, tests/packages.sh, tests/pkg, scripts/eider-pkg) uses it;
-  `EIDER=<binary>` still picks another compiler where it did. `scripts/test-compiler.sh`
-  tests `target/eiderc-next`, `compiler/` built by the seed (or `EIDERC=`), so a compiler
+  the first three still take `EIDER=<binary>`. `scripts/test-compiler.sh` tests
+  `target/eiderc-next`, `compiler/` built by the seed (or `EIDERC=`), so a compiler
   change is tested before the seed is regenerated. `scripts/selfhost.sh` starts the chain
   from the seed ("Bootstrap chain"). `scripts/verify.sh`'s compile-fail leg is
   `eiderc test --compile-fail tests/checks`.

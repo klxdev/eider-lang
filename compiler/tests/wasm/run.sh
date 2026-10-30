@@ -29,6 +29,10 @@ rm -f target/wasmprobe.c target/wasmprobe.o
 if out=$(EIDER=$E sh tests/wasm/run.sh 2>&1); then echo "$out (eiderc)"; else echo "$out (eiderc)"; fail=1; fi
 T=$(pwd)/target/wasmtest
 rm -rf $T
+# the loaders are ES modules: say so, so a package.json above the checkout (say one with
+# "type": "commonjs") can't make node read them as CommonJS
+mkdir -p $T
+printf '{ "type": "module" }\n' >$T/package.json
 n=0
 ok=0
 for f in compiler/tests/wasm/*.ei; do
