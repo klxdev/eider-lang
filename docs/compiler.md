@@ -42,7 +42,7 @@ features that the previous seed supports.
 | Code | Today | Target |
 |---|---|---|
 | OS interop | `core/eider_core.c` (ABI in `core/ABI.md`) | unchanged; one backend file per OS |
-| Language runtime (traps, checked arithmetic, allocation, string/list helpers, thread glue) | C text inside the stage-0 compiler (`src/prelude.rs`), pasted into every program | `core/eider_rt.h` + `core/eider_rt.c`, specified like the OS ABI, included by generated code |
+| Language runtime (traps, checked arithmetic, allocation, string/list helpers, thread glue) | C text inside the stage-0 compiler (`src/prelude.rs`), pasted into every program | `core/eider_rt.h` + `core/eider_rt.c` (written; contract and inventory in `core/RUNTIME.md`, tested by `tests/core/run.sh`), included by code from the self-hosted compiler |
 | Per-type glue (drop/clone/equality/hash for each concrete type) | generated C | generated C (compiler output; trusted because the compiler is) |
 | WASM libc shim | C text in the stage-0 compiler (`src/wasm_shim.rs`) | `core/wasm/` as a separate backend of the same ABIs |
 

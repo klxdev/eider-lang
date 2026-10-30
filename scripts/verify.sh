@@ -21,6 +21,7 @@ for cc in gcc clang $S/asan.sh $S/tsan.sh; do
   n=$(CC=$cc bash tests/run.sh 2>&1 | grep -vc "^ok")
   [ "$n" = 0 ] && echo "ok   run tests ($name)" || { echo "FAIL run tests ($cc)"; fail=1; }
 done
+sh tests/core/run.sh | grep -q FAIL && { echo "FAIL core"; fail=1; } || echo "ok   core (eider_rt + eider_core, strict warnings, sanitizers when available)"
 sh tests/std/run.sh | grep -q FAIL && { echo "FAIL std"; fail=1; } || echo "ok   std (C core + Eider std)"
 sh tests/packages.sh | grep -q FAIL && { echo "FAIL packages"; fail=1; } || echo "ok   packages (toml, semver, sha256)"
 sh tests/pkg/run.sh | grep -q FAIL && { echo "FAIL pkg"; fail=1; } || echo "ok   pkg (eider-pkg end to end, local git repos)"
