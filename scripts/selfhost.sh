@@ -2,8 +2,10 @@
 # Self-hosting (docs/compiler.md, C6).
 #
 #   scripts/selfhost.sh              stage0 -> stage1 -> stage2 -> stage3, check the fixed point
-#                                    (stage2 and stage3 emit byte-identical C for compiler/), then
-#                                    run scripts/test-compiler.sh against stage3
+#                                    (stage2 and stage3 emit byte-identical C for compiler/), that
+#                                    stage3 frees everything it allocates while compiling
+#                                    compiler/ (-DEI_RT_COUNT_ALLOCS), then run
+#                                    scripts/test-compiler.sh against stage3
 #   scripts/selfhost.sh --seed       ...and write that C to seed/eiderc.c
 #   scripts/selfhost.sh --from-seed  build eiderc from seed/eiderc.c with only a C compiler (no
 #                                    stage 0), and check it reproduces the seed exactly
@@ -23,10 +25,10 @@ scripts/bootstrap-deps.sh
 step() { printf '%-40s' "$1"; }
 die() { echo "FAIL"; [ -n "$2" ] && sed 's/^/    /' "$2" | head -40; echo "selfhost: $1"; exit 1; }
 
-# a compiler built from C: the seed plus the C core, nothing else
+# a compiler built from C: the seed plus the C core, nothing else ($3: extra flags)
 from_c() {
   # the same warning bar eiderc holds its output to (driver.ei), as errors
-  "$CC" -std=c11 -O2 -pedantic -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-variable \
+  "$CC" -std=c11 -O2 $3 -pedantic -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-variable \
     -Wno-unused-but-set-variable -Wno-unused-parameter -pthread -I core -o "$2" "$1" core/eider_rt.c core/eider_core.c \
     2>"$out/cc.log" || die "cc failed on $1" "$out/cc.log"
 }
@@ -54,6 +56,13 @@ from_c "$out/stage3.c" "$out/stage3"
 echo ok
 step "fixed point: stage2.c == stage3.c"
 cmp -s "$out/stage2.c" "$out/stage3.c" || { diff "$out/stage2.c" "$out/stage3.c" > "$out/fixed-point.diff"; die "stage2 and stage3 emit different C" "$out/fixed-point.diff"; }
+echo ok
+step "stage3 leaks nothing (compiler/)"
+# the runtime's allocation counter (core/RUNTIME.md, ei_check_leaks)
+from_c "$out/stage3.c" "$out/stage3-count" -DEI_RT_COUNT_ALLOCS
+"$out/stage3-count" emit-c "$src" > "$out/count.c" 2>"$out/count.log" || die "the counting stage3 could not compile compiler/" "$out/count.log"
+cmp -s "$out/count.c" "$out/stage3.c" || die "the counting stage3 emits different C"
+grep -qx 'eider: outstanding allocations: 0' "$out/count.log" || die "allocations left over" "$out/count.log"
 echo ok
 step "stage3 passes scripts/test-compiler.sh"
 EIDERC="$root/$out/stage3" sh scripts/test-compiler.sh > "$out/tests.log" 2>&1 || die "test failures" "$out/tests.log"

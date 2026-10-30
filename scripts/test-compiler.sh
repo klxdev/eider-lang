@@ -233,15 +233,17 @@ cp -R tests/run $det/a/run
 cp -R compiler/tests/run $det/b/run
 dtotal=0
 dok=0
+# the compiler by absolute path, so it runs from the test directories
+case "$new" in /*) anew=$new ;; *) anew=$(pwd)/$new ;; esac
 for f in tests/run/*.ei compiler/tests/run/*.ei; do
   case " $routside " in *" $(basename "$f") "*) continue ;; esac
   dtotal=$((dtotal + 1))
   case "$f" in tests/*) dir=tests ;; *) dir=compiler/tests ;; esac
   case "$f" in tests/*) copy=$det/a ;; *) copy=$det/b ;; esac
   rel="run/$(basename "$f")"
-  (cd $dir && "$OLDPWD/$new" emit-c "$rel" --test) >$tmp/c1 2>&1
-  (cd $dir && "$OLDPWD/$new" emit-c "$rel" --test) >$tmp/c2 2>&1
-  (cd $copy && "$OLDPWD/$new" emit-c "$rel" --test) >$tmp/c3 2>&1
+  (cd $dir && "$anew" emit-c "$rel" --test) >$tmp/c1 2>&1
+  (cd $dir && "$anew" emit-c "$rel" --test) >$tmp/c2 2>&1
+  (cd $copy && "$anew" emit-c "$rel" --test) >$tmp/c3 2>&1
   if cmp -s $tmp/c1 $tmp/c2 && cmp -s $tmp/c1 $tmp/c3; then
     dok=$((dok + 1))
   else
