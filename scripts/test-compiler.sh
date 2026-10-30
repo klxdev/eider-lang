@@ -35,6 +35,17 @@
 #             consumers of the bootstrap's suite) with EIDER=eiderc, compiler/tests/export/run.sh
 #             (eiderc's own: more types, nested records, two libraries, traps), and
 #             `emit-header` and `check --lib --json` equal to the bootstrap's.
+#   unit:     programs in compiler/tests/unit that drive a compiler module (sha256.ei) must
+#             print their .out.
+#   compile-fail: `eiderc test --compile-fail` prints exactly what stage 0's runner prints
+#             (and exits the same) for compiler/tests/check and compiler/tests/suite (the
+#             runner's own failure cases); for tests/checks it reports 0 failed and every
+#             line but the `skip`s (features eiderc doesn't have yet) and the coverage
+#             summary is stage 0's.
+#   cache:    EIDER_CACHE=<dir>: hits, what the key covers, core objects built once per
+#             toolchain, concurrent runs on an empty cache, no work directories left over.
+#   usage:    `--help` lists every command; unknown options/commands and stray arguments
+#             exit 2.
 cd "$(dirname "$0")/.." || exit 1
 scripts/bootstrap-deps.sh
 boot=$(scripts/stage0.sh) || exit 3
@@ -294,4 +305,96 @@ for f in tests/export/mathlib.ei compiler/tests/export/shapes.ei compiler/tests/
 done
 if [ "$lagree" = "$ltotal" ]; then v="ok  "; else v="FAIL"; fi
 echo "$v export: $lagree/$ltotal files agree on check --lib and emit-header"
+
+# unit: compiler modules driven by a program in compiler/tests/unit, compared with the .out
+# (hand-checked: sha256.out against FIPS 180-4 and sha256sum)
+for f in compiler/tests/unit/*.ei; do
+  outcome env EIDER_CFLAGS=-Werror $new run "$f"
+  { cat "${f%.ei}.out"; echo "--- stderr"; echo "--- exit 0"; } >$tmp/want
+  if cmp -s $tmp/want $tmp/out; then echo "ok   unit $f"; else echo "FAIL unit $f"; diff $tmp/want $tmp/out | head -10; fail=1; fi
+done
+
+# compile-fail: `eiderc test --compile-fail` against stage 0's runner
+for d in compiler/tests/check compiler/tests/suite; do
+  $boot test --compile-fail $d >$tmp/cf_want 2>&1
+  wcode=$?
+  $new test --compile-fail $d >$tmp/cf_got 2>&1
+  gcode=$?
+  if [ $wcode = $gcode ] && cmp -s $tmp/cf_want $tmp/cf_got; then
+    echo "ok   compile-fail: test --compile-fail $d equals stage 0's ($(grep 'error-code coverage' $tmp/cf_got))"
+  else
+    echo "FAIL compile-fail: test --compile-fail $d (exit $gcode, stage 0 $wcode)"
+    diff $tmp/cf_want $tmp/cf_got | head -10
+    fail=1
+  fi
+done
+# tests/checks: files eiderc can't check yet (comptime, threads, wasm mode) are `skip`; every
+# other line is stage 0's
+$boot test --compile-fail tests/checks >$tmp/cf_want 2>&1
+$new test --compile-fail tests/checks >$tmp/cf_got 2>&1
+gcode=$?
+grep '^  skip ' $tmp/cf_got | awk '{print "  ok   " $2 " "}' >$tmp/cf_skipped
+grep -v -F -f $tmp/cf_skipped $tmp/cf_want | grep -v 'passed, .* failed; error-code coverage' | grep -v '^codes without' >$tmp/cf_w
+grep -v '^  skip ' $tmp/cf_got | grep -v 'skipped (not yet supported by eiderc)' | grep -v 'passed, .* failed; error-code coverage' | grep -v '^codes without' >$tmp/cf_g
+# the skipped-count line is followed by a blank line of its own
+uniq $tmp/cf_w >$tmp/cf_w2
+uniq $tmp/cf_g >$tmp/cf_g2
+summary=$(grep 'error-code coverage' $tmp/cf_got)
+if [ $gcode = 0 ] && cmp -s $tmp/cf_w2 $tmp/cf_g2 && echo "$summary" | grep -q ' 0 failed'; then
+  echo "ok   compile-fail: tests/checks: $summary; skipped:$(grep '^  skip ' $tmp/cf_got | awk '{printf " %s", $2}')"
+  grep '^codes without' $tmp/cf_got | sed 's/^/     /'
+else
+  echo "FAIL compile-fail: tests/checks (exit $gcode): $summary"
+  diff $tmp/cf_w2 $tmp/cf_g2 | head -10
+  fail=1
+fi
+
+# cache: EIDER_CACHE=<dir> (driver.ei, "Cache")
+cdir=$(pwd)/target/cachetest
+rm -rf $cdir
+cache_ok=1
+cfail() { echo "FAIL cache: $1"; cache_ok=0; fail=1; }
+EIDER_CACHE=$cdir $new build tests/run/adt.ei -o $tmp/adt1 || cfail "build"
+EIDER_CACHE=$cdir $new build tests/run/adt.ei -o $tmp/adt2 || cfail "second build"
+[ "$(ls $cdir/bin | wc -l)" = 1 ] || cfail "a second build of the same program made another binary"
+[ "$(ls $cdir/core | wc -l)" = 1 ] || cfail "a second build compiled the core again"
+$tmp/adt2 >$tmp/o 2>&1
+cmp -s $tmp/o tests/run/adt.out || cfail "the binary copied out of the cache is wrong"
+EIDER_CACHE=$cdir $new run tests/run/adt.ei >$tmp/o 2>&1
+cmp -s $tmp/o tests/run/adt.out || cfail "run"
+# -O0 for run: one more binary and one more set of core objects
+[ "$(ls $cdir/bin | wc -l)" = 2 ] && [ "$(ls $cdir/core | wc -l)" = 2 ] || cfail "run should add one binary and one core build"
+EIDER_CACHE=$cdir EIDER_CFLAGS=-DEI_RT_COUNT_ALLOCS $new run tests/run/adt.ei >$tmp/o 2>&1
+grep -q '^eider: outstanding allocations: 0' $tmp/o || cfail "EIDER_CFLAGS is not part of the key (the counting runtime didn't run)"
+[ "$(ls $cdir/core | wc -l)" = 3 ] || cfail "new flags should compile the core once more"
+# twelve concurrent runs of a new program on that cache
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  (EIDER_CACHE=$cdir $new run tests/run/closures.ei >$tmp/conc$i 2>&1; echo "exit $?" >>$tmp/conc$i) &
+done
+wait
+{ cat tests/run/closures.out; echo "exit 0"; } >$tmp/conc_want
+for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+  cmp -s $tmp/conc_want $tmp/conc$i || cfail "concurrent run $i: $(head -3 $tmp/conc$i)"
+done
+[ -z "$(ls $cdir/tmp)" ] || cfail "work directories left in $cdir/tmp"
+EIDER_CACHE=off $new run tests/run/adt.ei >/dev/null 2>&1
+[ "$(ls $cdir/bin | wc -l)" = 4 ] || cfail "EIDER_CACHE=off still used the cache"
+rm -rf $cdir
+[ $cache_ok = 1 ] && echo "ok   cache: hits, keys (flags, -O level), core objects once per toolchain, 12 concurrent runs, EIDER_CACHE=off"
+
+# usage: --help lists every command; unknown options and commands are errors
+$new --help >$tmp/o 2>&1
+code=$?
+uok=1
+[ $code = 0 ] || uok=0
+for c in check emit-c emit-header build "build --lib" "build --wasm" run test "test --compile-fail" lex parse ir help; do
+  grep -q "^  eiderc $c " $tmp/o || { echo "FAIL usage: --help does not list \`$c\`"; uok=0; }
+done
+$new check --no-such-flag tests/run/adt.ei >/dev/null 2>&1
+[ $? = 2 ] || { echo "FAIL usage: an unknown option is not an error"; uok=0; }
+$new frobnicate tests/run/adt.ei >/dev/null 2>&1
+[ $? = 2 ] || { echo "FAIL usage: an unknown command is not an error"; uok=0; }
+$new check tests/run/adt.ei extra.ei >/dev/null 2>&1
+[ $? = 2 ] || { echo "FAIL usage: a stray argument is not an error"; uok=0; }
+if [ $uok = 1 ]; then echo "ok   usage: --help lists every command; unknown options, commands and stray arguments exit 2"; else fail=1; fi
 exit $fail
