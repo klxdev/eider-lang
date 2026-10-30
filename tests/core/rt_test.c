@@ -1,0 +1,679 @@
+// Tests for core/eider_rt.{h,c}: every function, every trap edge. Run by tests/core/run.sh.
+// Traps are caught with the runtime's own test hook (ei_set_trap_jmp), and their output is
+// captured and compared byte for byte; the exit path (no hook) runs in a forked child.
+#define _POSIX_C_SOURCE 200809L
+
+#include "../../core/eider_rt.h"
+
+#include <stdio.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+static int failures, checks;
+static jmp_buf jb;
+
+static void check(int ok, const char *what, int line) {
+  checks++;
+  if (!ok) {
+    failures++;
+    fprintf(stderr, "FAIL rt_test.c:%d: %s\n", line, what);
+  }
+}
+
+#define CHECK(c) check((c) ? 1 : 0, #c, __LINE__)
+#define EQI(e, want) check((int64_t)(e) == (int64_t)(want), #e " == " #want, __LINE__)
+#define EQU(e, want) check((uint64_t)(e) == (uint64_t)(want), #e " == " #want, __LINE__)
+#define EQS(got, want) check(strcmp((got), (want)) == 0, #got " is \"" want "\"", __LINE__)
+
+// ---- capturing stdout (fd 1) into a buffer
+
+static char cap[8192];
+static FILE *cap_file;
+static int cap_saved = -1;
+
+static void cap_begin(void) {
+  fflush(stdout);
+  cap_file = tmpfile();
+  if (!cap_file) { perror("tmpfile"); exit(2); }
+  cap_saved = dup(1);
+  dup2(fileno(cap_file), 1);
+}
+
+static const char *cap_end(void) {
+  fflush(stdout);
+  dup2(cap_saved, 1);
+  close(cap_saved);
+  rewind(cap_file);
+  size_t n = fread(cap, 1, sizeof cap - 1, cap_file);
+  cap[n] = 0;
+  fclose(cap_file);
+  return cap;
+}
+
+/* Runs `stmt`, which must trap with `msg` at `line`; checks the hook's exact output. */
+#define TRAPS(stmt, msg, line)                                                               \
+  do {                                                                                       \
+    volatile int hit_ = 0;                                                                   \
+    cap_begin();                                                                             \
+    ei_set_trap_jmp(&jb);                                                                    \
+    if (setjmp(jb) == 0) {                                                                   \
+      stmt;                                                                                  \
+    } else {                                                                                 \
+      hit_ = 1;                                                                              \
+    }                                                                                        \
+    ei_set_trap_jmp(NULL);                                                                   \
+    const char *out_ = cap_end();                                                            \
+    char want_[256];                                                                         \
+    snprintf(want_, sizeof want_, "FAILED\n    %s (rt_test:%d)\n", msg, line);               \
+    check(hit_ && strcmp(out_, want_) == 0, #stmt " traps with \"" msg "\"", __LINE__);      \
+    if (hit_ && strcmp(out_, want_) != 0) fprintf(stderr, "  got: %s", out_);                \
+  } while (0)
+
+#define L 7 /* the source line passed to every checked operation */
+#define OVF_ADD "integer overflow in +"
+#define OVF_SUB "integer overflow in -"
+#define OVF_MUL "integer overflow in *"
+#define DIV0 "division by zero"
+#define REM0 "remainder by zero"
+#define CONV "integer conversion out of range"
+
+// ---- arithmetic
+
+static void test_bits(void) {
+  EQI(ei_bits_i32(0), 0);
+  EQI(ei_bits_i32(0x7fffffffu), INT32_MAX);
+  EQI(ei_bits_i32(0x80000000u), INT32_MIN);
+  EQI(ei_bits_i32(0xffffffffu), -1);
+  EQI(ei_bits_i64(UINT64_C(0x7fffffffffffffff)), INT64_MAX);
+  EQI(ei_bits_i64(UINT64_C(0x8000000000000000)), INT64_MIN);
+  EQI(ei_bits_i64(UINT64_MAX), -1);
+}
+
+static void test_i32(void) {
+  EQI(ei_add_i32(INT32_MAX - 1, 1, L), INT32_MAX);
+  EQI(ei_add_i32(INT32_MIN, INT32_MAX, L), -1);
+  EQI(ei_add_i32(INT32_MIN + 1, -1, L), INT32_MIN);
+  TRAPS((void)ei_add_i32(INT32_MAX, 1, L), OVF_ADD, L);
+  TRAPS((void)ei_add_i32(INT32_MIN, -1, L), OVF_ADD, L);
+  EQI(ei_sub_i32(-1, INT32_MIN, L), INT32_MAX);
+  EQI(ei_sub_i32(INT32_MIN + 1, 1, L), INT32_MIN);
+  TRAPS((void)ei_sub_i32(INT32_MIN, 1, L), OVF_SUB, L);
+  TRAPS((void)ei_sub_i32(INT32_MAX, -1, L), OVF_SUB, L);
+  TRAPS((void)ei_sub_i32(0, INT32_MIN, L), OVF_SUB, L);
+  EQI(ei_mul_i32(46340, 46340, L), 2147395600);
+  EQI(ei_mul_i32(-65536, 32768, L), INT32_MIN);
+  EQI(ei_mul_i32(INT32_MIN, 1, L), INT32_MIN);
+  EQI(ei_mul_i32(INT32_MIN, 0, L), 0);
+  TRAPS((void)ei_mul_i32(46341, 46341, L), OVF_MUL, L);
+  TRAPS((void)ei_mul_i32(65536, 32768, L), OVF_MUL, L);
+  TRAPS((void)ei_mul_i32(INT32_MIN, -1, L), OVF_MUL, L);
+  TRAPS((void)ei_mul_i32(-1, INT32_MIN, L), OVF_MUL, L);
+  EQI(ei_div_i32(-7, 2, L), -3);
+  EQI(ei_div_i32(INT32_MIN, 1, L), INT32_MIN);
+  EQI(ei_div_i32(INT32_MAX, -1, L), -INT32_MAX);
+  TRAPS((void)ei_div_i32(1, 0, L), DIV0, L);
+  TRAPS((void)ei_div_i32(INT32_MIN, -1, L), "integer overflow in /", L);
+  EQI(ei_rem_i32(-7, 2, L), -1);
+  EQI(ei_rem_i32(7, -2, L), 1);
+  EQI(ei_rem_i32(INT32_MIN, 2, L), 0);
+  TRAPS((void)ei_rem_i32(1, 0, L), REM0, L);
+  TRAPS((void)ei_rem_i32(INT32_MIN, -1, L), "integer overflow in %", L);
+  EQI(ei_neg_i32(INT32_MAX, L), -INT32_MAX);
+  EQI(ei_neg_i32(0, L), 0);
+  TRAPS((void)ei_neg_i32(INT32_MIN, L), "integer overflow in negation", L);
+  EQI(ei_wadd_i32(INT32_MAX, 1), INT32_MIN);
+  EQI(ei_wadd_i32(INT32_MIN, -1), INT32_MAX);
+  EQI(ei_wadd_i32(-1, -1), -2);
+  EQI(ei_wsub_i32(INT32_MIN, 1), INT32_MAX);
+  EQI(ei_wsub_i32(INT32_MAX, -1), INT32_MIN);
+  EQI(ei_wmul_i32(INT32_MIN, -1), INT32_MIN);
+  EQI(ei_wmul_i32(65536, 65536), 0);
+  EQI(ei_wmul_i32(INT32_MAX, 2), -2);
+  EQI(ei_wmul_i32(-1, -1), 1);
+  EQI(ei_wmul_i32(INT32_MIN, INT32_MIN), 0);
+}
+
+static void test_i64(void) {
+  EQI(ei_add_i64(INT64_MAX - 1, 1, L), INT64_MAX);
+  EQI(ei_add_i64(INT64_MIN, INT64_MAX, L), -1);
+  EQI(ei_add_i64(INT64_MIN + 1, -1, L), INT64_MIN);
+  TRAPS((void)ei_add_i64(INT64_MAX, 1, L), OVF_ADD, L);
+  TRAPS((void)ei_add_i64(INT64_MIN, -1, L), OVF_ADD, L);
+  TRAPS((void)ei_add_i64(INT64_MAX, INT64_MAX, L), OVF_ADD, L);
+  EQI(ei_sub_i64(-1, INT64_MIN, L), INT64_MAX);
+  EQI(ei_sub_i64(INT64_MIN + 1, 1, L), INT64_MIN);
+  TRAPS((void)ei_sub_i64(INT64_MIN, 1, L), OVF_SUB, L);
+  TRAPS((void)ei_sub_i64(INT64_MAX, -1, L), OVF_SUB, L);
+  TRAPS((void)ei_sub_i64(0, INT64_MIN, L), OVF_SUB, L);
+  EQI(ei_mul_i64(INT64_C(3037000499), INT64_C(3037000499), L), INT64_C(9223372030926249001));
+  EQI(ei_mul_i64(INT64_C(4294967296), -INT64_C(2147483648), L), INT64_MIN);
+  EQI(ei_mul_i64(INT64_MIN, 1, L), INT64_MIN);
+  EQI(ei_mul_i64(1, INT64_MIN, L), INT64_MIN);
+  EQI(ei_mul_i64(0, INT64_MIN, L), 0);
+  EQI(ei_mul_i64(INT64_MIN, 0, L), 0);
+  EQI(ei_mul_i64(-1, -INT64_MAX, L), INT64_MAX);
+  EQI(ei_mul_i64(-3, -5, L), 15);
+  TRAPS((void)ei_mul_i64(INT64_C(3037000500), INT64_C(3037000500), L), OVF_MUL, L);
+  TRAPS((void)ei_mul_i64(-INT64_C(3037000500), INT64_C(3037000500), L), OVF_MUL, L);
+  TRAPS((void)ei_mul_i64(INT64_C(3037000500), -INT64_C(3037000500), L), OVF_MUL, L);
+  TRAPS((void)ei_mul_i64(-INT64_C(4294967296), -INT64_C(2147483648), L), OVF_MUL, L);
+  TRAPS((void)ei_mul_i64(INT64_MIN, -1, L), OVF_MUL, L);
+  TRAPS((void)ei_mul_i64(-1, INT64_MIN, L), OVF_MUL, L);
+  TRAPS((void)ei_mul_i64(-2, -INT64_C(4611686018427387904), L), OVF_MUL, L);
+  EQI(ei_div_i64(-7, 2, L), -3);
+  EQI(ei_div_i64(INT64_MIN, 1, L), INT64_MIN);
+  TRAPS((void)ei_div_i64(1, 0, L), DIV0, L);
+  TRAPS((void)ei_div_i64(INT64_MIN, -1, L), "integer overflow in /", L);
+  EQI(ei_rem_i64(-7, 2, L), -1);
+  EQI(ei_rem_i64(INT64_MIN, 3, L), -2);
+  TRAPS((void)ei_rem_i64(1, 0, L), REM0, L);
+  TRAPS((void)ei_rem_i64(INT64_MIN, -1, L), "integer overflow in %", L);
+  EQI(ei_neg_i64(INT64_MAX, L), -INT64_MAX);
+  TRAPS((void)ei_neg_i64(INT64_MIN, L), "integer overflow in negation", L);
+  EQI(ei_wadd_i64(INT64_MAX, 1), INT64_MIN);
+  EQI(ei_wadd_i64(INT64_MIN, -1), INT64_MAX);
+  EQI(ei_wsub_i64(INT64_MIN, 1), INT64_MAX);
+  EQI(ei_wsub_i64(0, INT64_MIN), INT64_MIN);
+  EQI(ei_wmul_i64(INT64_MIN, -1), INT64_MIN);
+  EQI(ei_wmul_i64(INT64_MAX, 2), -2);
+  EQI(ei_wmul_i64(INT64_C(4294967296), INT64_C(4294967296)), 0);
+  EQI(ei_wmul_i64(-1, -1), 1);
+}
+
+static void test_u8(void) {
+  EQU(ei_add_u8(254, 1, L), 255);
+  TRAPS((void)ei_add_u8(255, 1, L), OVF_ADD, L);
+  TRAPS((void)ei_add_u8(255, 255, L), OVF_ADD, L);
+  EQU(ei_sub_u8(5, 5, L), 0);
+  EQU(ei_sub_u8(255, 0, L), 255);
+  TRAPS((void)ei_sub_u8(0, 1, L), OVF_SUB, L);
+  EQU(ei_mul_u8(15, 17, L), 255);
+  EQU(ei_mul_u8(0, 255, L), 0);
+  TRAPS((void)ei_mul_u8(16, 16, L), OVF_MUL, L);
+  TRAPS((void)ei_mul_u8(255, 255, L), OVF_MUL, L);
+  EQU(ei_div_u8(255, 2, L), 127);
+  TRAPS((void)ei_div_u8(1, 0, L), DIV0, L);
+  EQU(ei_rem_u8(255, 7, L), 3);
+  TRAPS((void)ei_rem_u8(1, 0, L), REM0, L);
+  EQU(ei_wadd_u8(255, 1), 0);
+  EQU(ei_wadd_u8(255, 255), 254);
+  EQU(ei_wsub_u8(0, 1), 255);
+  EQU(ei_wmul_u8(16, 16), 0);
+  EQU(ei_wmul_u8(255, 255), 1);
+}
+
+static void test_u32(void) {
+  EQU(ei_add_u32(UINT32_MAX - 1, 1, L), UINT32_MAX);
+  TRAPS((void)ei_add_u32(UINT32_MAX, 1, L), OVF_ADD, L);
+  TRAPS((void)ei_add_u32(UINT32_MAX, UINT32_MAX, L), OVF_ADD, L);
+  EQU(ei_sub_u32(UINT32_MAX, UINT32_MAX, L), 0);
+  TRAPS((void)ei_sub_u32(0, 1, L), OVF_SUB, L);
+  TRAPS((void)ei_sub_u32(1, UINT32_MAX, L), OVF_SUB, L);
+  EQU(ei_mul_u32(65535, 65537, L), UINT32_MAX);
+  TRAPS((void)ei_mul_u32(65536, 65536, L), OVF_MUL, L);
+  TRAPS((void)ei_mul_u32(UINT32_MAX, UINT32_MAX, L), OVF_MUL, L);
+  EQU(ei_div_u32(UINT32_MAX, 2, L), 2147483647);
+  TRAPS((void)ei_div_u32(1, 0, L), DIV0, L);
+  EQU(ei_rem_u32(UINT32_MAX, 10, L), 5);
+  TRAPS((void)ei_rem_u32(1, 0, L), REM0, L);
+  EQU(ei_wadd_u32(UINT32_MAX, 1), 0);
+  EQU(ei_wsub_u32(0, 1), UINT32_MAX);
+  EQU(ei_wmul_u32(65536, 65536), 0);
+  EQU(ei_wmul_u32(UINT32_MAX, UINT32_MAX), 1);
+}
+
+static void test_u64(void) {
+  EQU(ei_add_u64(UINT64_MAX - 1, 1, L), UINT64_MAX);
+  EQU(ei_add_u64(UINT64_MAX, 0, L), UINT64_MAX);
+  TRAPS((void)ei_add_u64(UINT64_MAX, 1, L), OVF_ADD, L);
+  TRAPS((void)ei_add_u64(1, UINT64_MAX, L), OVF_ADD, L);
+  EQU(ei_sub_u64(UINT64_MAX, UINT64_MAX, L), 0);
+  TRAPS((void)ei_sub_u64(0, 1, L), OVF_SUB, L);
+  TRAPS((void)ei_sub_u64(1, UINT64_MAX, L), OVF_SUB, L);
+  EQU(ei_mul_u64(UINT64_C(4294967295), UINT64_C(4294967297), L), UINT64_MAX);
+  EQU(ei_mul_u64(0, UINT64_MAX, L), 0);
+  EQU(ei_mul_u64(UINT64_MAX, 0, L), 0);
+  EQU(ei_mul_u64(UINT64_MAX, 1, L), UINT64_MAX);
+  TRAPS((void)ei_mul_u64(UINT64_C(4294967296), UINT64_C(4294967296), L), OVF_MUL, L);
+  TRAPS((void)ei_mul_u64(UINT64_MAX, 2, L), OVF_MUL, L);
+  EQU(ei_div_u64(UINT64_MAX, 2, L), INT64_MAX);
+  TRAPS((void)ei_div_u64(1, 0, L), DIV0, L);
+  EQU(ei_rem_u64(UINT64_MAX, 10, L), 5);
+  TRAPS((void)ei_rem_u64(1, 0, L), REM0, L);
+  EQU(ei_wadd_u64(UINT64_MAX, 1), 0);
+  EQU(ei_wsub_u64(0, 1), UINT64_MAX);
+  EQU(ei_wmul_u64(UINT64_C(4294967296), UINT64_C(4294967296)), 0);
+  EQU(ei_wmul_u64(UINT64_MAX, UINT64_MAX), 1);
+}
+
+static void test_conv(void) {
+  EQI(ei_s2s(INT32_MIN, INT32_MIN, INT32_MAX, L), INT32_MIN);
+  EQI(ei_s2s(INT32_MAX, INT32_MIN, INT32_MAX, L), INT32_MAX);
+  EQI(ei_s2s(INT64_MIN, INT64_MIN, INT64_MAX, L), INT64_MIN);
+  TRAPS((void)ei_s2s((int64_t)INT32_MAX + 1, INT32_MIN, INT32_MAX, L), CONV, L);
+  TRAPS((void)ei_s2s((int64_t)INT32_MIN - 1, INT32_MIN, INT32_MAX, L), CONV, L);
+  EQU(ei_s2u(0, UINT8_MAX, L), 0);
+  EQU(ei_s2u(255, UINT8_MAX, L), 255);
+  EQU(ei_s2u(INT64_MAX, UINT64_MAX, L), INT64_MAX);
+  TRAPS((void)ei_s2u(-1, UINT8_MAX, L), CONV, L);
+  TRAPS((void)ei_s2u(256, UINT8_MAX, L), CONV, L);
+  TRAPS((void)ei_s2u(INT64_MIN, UINT64_MAX, L), CONV, L);
+  TRAPS((void)ei_s2u((int64_t)UINT32_MAX + 1, UINT32_MAX, L), CONV, L);
+  EQI(ei_u2s(INT64_MAX, INT64_MAX, L), INT64_MAX);
+  EQI(ei_u2s(INT32_MAX, INT32_MAX, L), INT32_MAX);
+  TRAPS((void)ei_u2s((uint64_t)INT32_MAX + 1, INT32_MAX, L), CONV, L);
+  TRAPS((void)ei_u2s(UINT64_MAX, INT64_MAX, L), CONV, L);
+  TRAPS((void)ei_u2s((uint64_t)INT64_MAX + 1, INT64_MAX, L), CONV, L);
+  EQU(ei_u2u(255, UINT8_MAX, L), 255);
+  EQU(ei_u2u(UINT64_MAX, UINT64_MAX, L), UINT64_MAX);
+  TRAPS((void)ei_u2u(256, UINT8_MAX, L), CONV, L);
+  TRAPS((void)ei_u2u(UINT64_MAX, UINT32_MAX, L), CONV, L);
+}
+
+static void test_idx(void) {
+  EQU(ei_idx(0, 1, L), 0);
+  EQU(ei_idx(UINT64_MAX - 1, UINT64_MAX, L), UINT64_MAX - 1);
+  TRAPS((void)ei_idx(1, 1, L), "index out of bounds", L);
+  TRAPS((void)ei_idx(0, 0, L), "index out of bounds", L);
+  TRAPS((void)ei_idx(UINT64_MAX, UINT64_MAX, L), "index out of bounds", L);
+}
+
+static int classify(int x) {
+  switch (x & 1) {
+    case 0: return 0;
+    case 1: return 1;
+  }
+  ei_unreachable();
+  return -1;
+}
+
+static void test_trap(void) {
+  TRAPS(ei_trap("called `unwrap` on a None value", 42), "called `unwrap` on a None value", 42);
+  TRAPS(ei_trap("", 0), "", 0);
+  TRAPS(ei_trap("negative line", -1), "negative line", -1);
+  EQI(classify(3), 1);
+  /* stdout written before a trap is flushed before the report */
+  cap_begin();
+  ei_set_trap_jmp(&jb);
+  if (setjmp(jb) == 0) {
+    printf("partial ");
+    ei_trap("boom", 1);
+  }
+  ei_set_trap_jmp(NULL);
+  EQS(cap_end(), "partial FAILED\n    boom (rt_test:1)\n");
+}
+
+// ---- allocation and String
+
+static void test_alloc(void) {
+  unsigned char *p = ei_alloc(0);
+  CHECK(p != NULL);
+  free(p);
+  uint64_t *q = ei_alloc_n(4, sizeof *q);
+  for (int i = 0; i < 4; i++) q[i] = (uint64_t)i;
+  EQU(q[3], 3);
+  free(q);
+  p = ei_alloc_n(3, 0);
+  CHECK(p != NULL);
+  free(p);
+  p = ei_alloc_n(0, UINT64_MAX);
+  CHECK(p != NULL);
+  free(p);
+  TRAPS((void)ei_alloc(UINT64_MAX), "out of memory", 0);
+  TRAPS((void)ei_alloc_n(UINT64_MAX / 2 + 1, 2), "out of memory", 0);
+  TRAPS((void)ei_alloc_n(2, UINT64_MAX), "out of memory", 0);
+}
+
+static void test_string(void) {
+  ei_String s = ei_str_from("");
+  EQU(s.len, 0);
+  EQS(s.p, "");
+  ei_str_push(&s, "ab");
+  ei_str_push(&s, "");
+  ei_str_cat(&s, "cdXYZ", 2);
+  EQU(s.len, 4);
+  EQS(s.p, "abcd");
+  ei_String t = ei_clone_String(&s);
+  CHECK(t.p != s.p);
+  ei_str_append(&t, &s);
+  EQS(t.p, "abcdabcd");
+  EQU(t.len, 8);
+  ei_str_append(&t, &t); /* self-append: the source is read before the old buffer is freed */
+  EQS(t.p, "abcdabcdabcdabcd");
+  EQU(t.len, 16);
+  ei_str_cat(&t, t.p + 14, 2);
+  EQS(t.p, "abcdabcdabcdabcdcd");
+  ei_drop_String(&t);
+  CHECK(t.p == NULL);
+  EQU(t.len, 0);
+  TRAPS(ei_str_cat(&s, "x", UINT64_MAX), "out of memory", 0);
+  TRAPS(ei_str_cat(&s, "x", UINT64_MAX - 4), "out of memory", 0);
+  EQS(s.p, "abcd"); /* unchanged by the failed appends */
+  ei_drop_String(&s);
+  ei_drop_String(&s); /* dropping twice is harmless (free(NULL)) */
+
+  const int64_t vals[] = {0, -1, 42, INT64_MAX, INT64_MIN};
+  const char *want[] = {"0", "-1", "42", "9223372036854775807", "-9223372036854775808"};
+  for (int i = 0; i < 5; i++) {
+    ei_String n = ei_str_from_i64(vals[i]);
+    check(strcmp(n.p, want[i]) == 0 && n.len == strlen(want[i]), want[i], __LINE__);
+    ei_drop_String(&n);
+  }
+}
+
+static void test_hash(void) {
+  EQU(ei_hash_u64(0), 0);
+  /* values from the stage-0 prelude: Map layout must not change */
+  EQU(ei_hash_u64(1), UINT64_C(0xb456bcfc34c2cb2c));
+  EQU(ei_hash_u64(UINT64_MAX), UINT64_C(0x64b5720b4b825f21));
+  EQU(ei_hash_str(""), UINT64_C(0xd725c98e9509182e));
+  EQU(ei_hash_str("eider"), UINT64_C(0xe8e45c916e9fea30));
+  EQU(ei_hash_str("\xff"), UINT64_C(0x37e2aaefca88ac51));
+  EQU(ei_hash_str("ab\0cd"), ei_hash_str("ab"));
+}
+
+static void test_print(void) {
+  cap_begin();
+  ei_print_i(0);
+  ei_print_i(-42);
+  ei_print_i(INT64_MIN);
+  ei_print_i(INT64_MAX);
+  ei_print_u(0);
+  ei_print_u(UINT64_MAX);
+  ei_print_b(true);
+  ei_print_b(false);
+  ei_print_s("");
+  ei_print_s("hi there %d");
+  EQS(cap_end(),
+      "0\n-42\n-9223372036854775808\n9223372036854775807\n0\n18446744073709551615\n"
+      "true\nfalse\n\nhi there %d\n");
+}
+
+static void test_clock(void) {
+  uint64_t a = ei_now_ms();
+  volatile uint64_t spin = 0;
+  for (uint64_t i = 0; i < 20000000; i++) spin = spin + i;
+  uint64_t b = ei_now_ms();
+  CHECK(b >= a);
+}
+
+// ---- the exit path (no hook), in forked children
+
+/* Runs fn in a child with stdout+stderr on a pipe; returns its exit status, output in buf. */
+static int in_child(void (*fn)(void), char *buf, size_t cap_n) {
+  int fds[2];
+  if (pipe(fds) != 0) { perror("pipe"); exit(2); }
+  fflush(stdout);
+  fflush(stderr);
+  pid_t pid = fork();
+  if (pid < 0) { perror("fork"); exit(2); }
+  if (pid == 0) {
+    close(fds[0]);
+    dup2(fds[1], 1);
+    dup2(fds[1], 2);
+    close(fds[1]);
+    fn();
+    _exit(0);
+  }
+  close(fds[1]);
+  size_t n = 0;
+  ssize_t r;
+  while (n < cap_n - 1 && (r = read(fds[0], buf + n, cap_n - 1 - n)) > 0) n += (size_t)r;
+  buf[n] = 0;
+  close(fds[0]);
+  int status = 0;
+  waitpid(pid, &status, 0);
+  return WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+}
+
+static void child_trap(void) {
+  printf("out ");
+  ei_trap("boom", 3);
+}
+
+static void child_overflow(void) { (void)ei_add_i32(INT32_MAX, 1, 12); }
+
+static void *trap_worker(void *arg) {
+  (void)arg;
+  ei_trap("from a thread", 5);
+}
+
+/* Several threads trap at once: exactly one report, exit 101. */
+static void child_many(void) {
+  pthread_t th[8];
+  for (int i = 0; i < 8; i++) pthread_create(&th[i], NULL, trap_worker, NULL);
+  for (int i = 0; i < 8; i++) pthread_join(th[i], NULL);
+}
+
+/* The hook is per thread: a trap on a thread without one exits even inside a test. */
+static void child_hook_is_per_thread(void) {
+  jmp_buf mine;
+  ei_set_trap_jmp(&mine);
+  if (setjmp(mine) == 0) {
+    pthread_t th;
+    pthread_create(&th, NULL, trap_worker, NULL);
+    pthread_join(th, NULL);
+  }
+  printf("main thread caught it\n");
+}
+
+static void test_exit_path(void) {
+  char buf[4096];
+  EQI(in_child(child_trap, buf, sizeof buf), 101);
+  EQS(buf, "out eider: runtime error: boom (rt_test:3)\n");
+  EQI(in_child(child_overflow, buf, sizeof buf), 101);
+  EQS(buf, "eider: runtime error: integer overflow in + (rt_test:12)\n");
+  EQI(in_child(child_many, buf, sizeof buf), 101);
+  EQS(buf, "eider: runtime error: from a thread (rt_test:5)\n");
+  EQI(in_child(child_hook_is_per_thread, buf, sizeof buf), 101);
+  EQS(buf, "eider: runtime error: from a thread (rt_test:5)\n");
+}
+
+// ---- threads
+
+static void test_rc(void) {
+  ei_rc rc;
+  ei_rc_init(&rc);
+  ei_rc_inc(&rc);
+  CHECK(!ei_rc_dec(&rc));
+  CHECK(ei_rc_dec(&rc));
+}
+
+typedef struct {
+  ei_mutex *mu;
+  ei_rc *rc;
+  int64_t *counter;
+  int lasts;
+} shared;
+
+static void *bump(void *arg) {
+  shared *s = arg;
+  for (int i = 0; i < 20000; i++) {
+    ei_mutex_lock(s->mu);
+    *s->counter += 1;
+    ei_mutex_unlock(s->mu);
+    ei_rc_inc(s->rc);
+    if (ei_rc_dec(s->rc)) s->lasts++;
+  }
+  return NULL;
+}
+
+static void test_mutex_and_threads(void) {
+  ei_mutex mu;
+  ei_mutex_init(&mu);
+  ei_rc rc;
+  ei_rc_init(&rc);
+  int64_t counter = 0;
+  shared s[8];
+  ei_thread th[8];
+  for (int i = 0; i < 8; i++) {
+    s[i] = (shared){&mu, &rc, &counter, 0};
+    ei_thread_start(&th[i], bump, &s[i]);
+  }
+  for (int i = 0; i < 8; i++) {
+    if (i % 2) ei_thread_join(&th[i]); /* odd ones joined explicitly, all destroyed */
+    ei_thread_destroy(&th[i]);
+  }
+  EQI(counter, 8 * 20000);
+  int lasts = 0;
+  for (int i = 0; i < 8; i++) lasts += s[i].lasts;
+  EQI(lasts, 0);
+  CHECK(ei_rc_dec(&rc));
+  ei_mutex_destroy(&mu);
+}
+
+static ei_chan *wait_chan;
+
+static void *slow(void *arg) {
+  int64_t got = 0;
+  if (ei_chan_recv(wait_chan, &got)) *(int64_t *)arg = got;
+  return NULL;
+}
+
+static void *joiner(void *arg) {
+  ei_thread_join(arg);
+  return NULL;
+}
+
+/* Two threads join the same thread concurrently; it is joined once. */
+static void test_concurrent_join(void) {
+  ei_chan c;
+  ei_chan_init(&c, sizeof(int64_t));
+  wait_chan = &c;
+  int64_t result = 0;
+  ei_thread worker, j1, j2;
+  ei_thread_start(&worker, slow, &result);
+  ei_thread_start(&j1, joiner, &worker);
+  ei_thread_start(&j2, joiner, &worker);
+  int64_t v = 99;
+  ei_chan_send(&c, &v);
+  ei_thread_destroy(&j1);
+  ei_thread_destroy(&j2);
+  CHECK(worker.joined);
+  ei_thread_destroy(&worker);
+  EQI(result, 99);
+  ei_chan_destroy(&c);
+}
+
+typedef struct { uint32_t id; int64_t seq; char tag[13]; } msg;
+static ei_chan *mpsc;
+
+static void *producer(void *arg) {
+  uint32_t id = *(uint32_t *)arg;
+  for (int64_t i = 0; i < 5000; i++) {
+    msg m = {id, i, "payload"};
+    ei_chan_send(mpsc, &m);
+  }
+  return NULL;
+}
+
+static void test_chan_threads(void) {
+  ei_chan c;
+  ei_chan_init(&c, sizeof(msg));
+  mpsc = &c;
+  uint32_t ids[4] = {0, 1, 2, 3};
+  ei_thread th[4];
+  for (int i = 0; i < 4; i++) ei_thread_start(&th[i], producer, &ids[i]);
+  int64_t next[4] = {0, 0, 0, 0};
+  int in_order = 1;
+  for (int n = 0; n < 4 * 5000; n++) {
+    msg m;
+    if (!ei_chan_recv(&c, &m) || m.id > 3) { in_order = 0; break; }
+    if (m.seq != next[m.id] || strcmp(m.tag, "payload") != 0) in_order = 0;
+    next[m.id]++;
+  }
+  CHECK(in_order); /* FIFO per producer, nothing lost or torn */
+  for (int i = 0; i < 4; i++) ei_thread_destroy(&th[i]);
+  ei_chan_close(&c);
+  msg m;
+  CHECK(!ei_chan_recv(&c, &m));
+  ei_chan_destroy(&c);
+
+  /* close wakes a blocked receiver */
+  ei_chan w;
+  ei_chan_init(&w, sizeof(int64_t));
+  wait_chan = &w;
+  int64_t result = -5;
+  ei_thread r;
+  ei_thread_start(&r, slow, &result);
+  ei_chan_close(&w);
+  ei_thread_destroy(&r);
+  EQI(result, -5);
+  ei_chan_destroy(&w);
+}
+
+static void test_chan_single(void) {
+  ei_chan c;
+  ei_chan_init(&c, sizeof(int64_t));
+  int64_t v, got = 0;
+  /* wrap around, then grow while wrapped: order is kept */
+  for (v = 1; v <= 3; v++) ei_chan_send(&c, &v);
+  CHECK(ei_chan_recv(&c, &got) && got == 1);
+  CHECK(ei_chan_recv(&c, &got) && got == 2);
+  for (v = 4; v <= 9; v++) ei_chan_send(&c, &v);
+  EQU(ei_chan_len(&c), 7);
+  EQU(c.cap, 8);
+  int ok = 1;
+  for (uint64_t i = 0; i < ei_chan_len(&c); i++) ok &= *(int64_t *)ei_chan_at(&c, i) == (int64_t)i + 3;
+  CHECK(ok);
+  for (int64_t want = 3; want <= 9; want++) ok &= ei_chan_recv(&c, &got) && got == want;
+  CHECK(ok);
+  EQU(ei_chan_len(&c), 0);
+  /* send after close traps (and leaves the channel usable for draining) */
+  v = 10;
+  ei_chan_send(&c, &v);
+  ei_chan_close(&c);
+  ei_chan_close(&c);
+  TRAPS(ei_chan_send(&c, &v), "send on a closed channel", 0);
+  CHECK(ei_chan_recv(&c, &got) && got == 10);
+  CHECK(!ei_chan_recv(&c, &got));
+  ei_chan_destroy(&c);
+
+  /* zero-size elements (Chan of an empty record) */
+  ei_chan z;
+  ei_chan_init(&z, 0);
+  char dummy = 0;
+  for (int i = 0; i < 10; i++) ei_chan_send(&z, &dummy);
+  EQU(ei_chan_len(&z), 10);
+  for (int i = 0; i < 10; i++) ok &= ei_chan_recv(&z, &dummy);
+  CHECK(ok);
+  ei_chan_close(&z);
+  CHECK(!ei_chan_recv(&z, &dummy));
+  ei_chan_destroy(&z);
+
+  /* destroying a channel that still holds elements (the caller drops them via ei_chan_at) */
+  ei_chan d;
+  ei_chan_init(&d, sizeof(char *));
+  for (int i = 0; i < 5; i++) {
+    char *p = ei_alloc(16);
+    ei_chan_send(&d, &p);
+  }
+  for (uint64_t i = 0; i < ei_chan_len(&d); i++) free(*(char **)ei_chan_at(&d, i));
+  ei_chan_destroy(&d);
+}
+
+int main(void) {
+  ei_set_file("rt_test");
+  test_bits();
+  test_i32();
+  test_i64();
+  test_u8();
+  test_u32();
+  test_u64();
+  test_conv();
+  test_idx();
+  test_trap();
+  test_alloc();
+  test_string();
+  test_hash();
+  test_print();
+  test_clock();
+  test_exit_path();
+  test_rc();
+  test_mutex_and_threads();
+  test_concurrent_join();
+  test_chan_threads();
+  test_chan_single();
+  printf("%d checks, %d failed\n", checks, failures);
+  return failures ? 1 : 0;
+}
