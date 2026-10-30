@@ -240,7 +240,7 @@ started, so callers of std still write `uses ffi`.
   runtime into the C as static functions; eiderc's runtime symbols `ei_*` / `ec_*` are
   global, which static linking resolves to one copy and which two shared Eider libraries
   share). `-l <lib>` (repeatable) links C libraries into `build`, `run` and `test`.
-- **Tests.** The suite's four FFI files and `tests/run/ffi.ei` are in scope; 35 cases in
+- **Tests.** The suite's four FFI files and `tests/run/ffi.ei` are in scope; 38 cases in
   `compiler/tests/check` (`*_ffi_*`: every E0803 shape for externs and exports, nested and
   imported cases, the E0201/E0802 order, unsafe scoping, E0107 between externs); run test
   `compiler/tests/run/ffi_libc.ei` (every C-safe type, unit and `str` results, an extern
