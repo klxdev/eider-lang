@@ -1,0 +1,6 @@
+// an `extern "c"` keeps the C rules (str allowed) in a WebAssembly module; it becomes an import
+extern "c" fn host_len(s: str) -> i32
+export fn f(a: i32) -> i32 uses ffi {
+    let k = unsafe { host_len("abc") }
+    return k + a
+}

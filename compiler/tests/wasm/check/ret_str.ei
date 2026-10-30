@@ -1,0 +1,2 @@
+// E0806 at the function: a str result
+export fn name(n: i32) -> str { return "x" }

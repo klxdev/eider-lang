@@ -1,6 +1,8 @@
 #!/bin/sh
 # Builds calc.ei to WebAssembly and checks it from Node.
+# EIDER=<compiler> picks the compiler (default: stage 0); EIDER=target/eiderc tests eiderc.
 set -e
+case "$EIDER" in ""|/*) ;; */*) EIDER=$(pwd)/$EIDER ;; esac
 cd "$(dirname "$0")"
 EIDER=${EIDER:-$(../../scripts/stage0.sh)} || exit 3
 T=$(mktemp -d)
@@ -14,4 +16,5 @@ let trap = 'none'; try { m.div(1,0) } catch (e) { trap = e.constructor.name }
 console.log(got + ' ' + trap);
 JS
 out=$(node "$T/t.mjs" 2>/dev/null | tail -1)
+rm -rf "$T"
 [ "$out" = "5 12586269025 true false 4950 RuntimeError" ] && echo "ok   tests/wasm" || { echo "FAIL tests/wasm: $out"; exit 1; }

@@ -1,0 +1,2 @@
+// an `inout` integer passes the WebAssembly rule and then fails E0803
+export fn bump(inout n: i32) -> i32 { return n }

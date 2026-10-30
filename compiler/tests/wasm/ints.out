@@ -1,0 +1,15 @@
+number -7 number 2147483647
+bigint -9223372036854775808 bigint 42
+number 255
+number -1
+bigint -709551616
+bigint 1000
+boolean false boolean true
+bigint 199 bigint -201
+undefined undefined
+eider: runtime error: integer overflow in + (lib:6)
+u8_next RuntimeError
+eider: runtime error: integer overflow in * (lib:8)
+u64_big RuntimeError
+eider: runtime error: integer overflow in - (lib:4)
+i32_neg RuntimeError
