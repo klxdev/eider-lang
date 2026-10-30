@@ -21,6 +21,7 @@ extern int64_t xc_ec_cwd(void) __asm__("ec_cwd");
 extern int64_t xc_ec_realpath(void) __asm__("ec_realpath");
 extern int32_t xc_ec_getenv(void) __asm__("ec_getenv");
 extern int64_t xc_ec_write_fd(int32_t) __asm__("ec_write_fd");
+extern int64_t xc_ec_read_fd(int32_t, int64_t) __asm__("ec_read_fd");
 extern int64_t xc_ec_run(int32_t, int32_t, int64_t) __asm__("ec_run");
 extern int64_t xc_ec_args(void) __asm__("ec_args");
 extern int64_t xc_ec_str_len(const char *) __asm__("ec_str_len");
@@ -612,6 +613,7 @@ static int64_t f_sys__cwd(void);
 static int64_t f_sys__realpath(void);
 static bool f_sys__getenv(void);
 static int64_t f_sys__write_fd(int32_t l0_fd);
+static int64_t f_sys__read_fd(int32_t l0_fd, int64_t l1_max);
 static int64_t f_sys__run(bool l0_capture_out, bool l1_capture_err, int64_t l2_timeout_ms);
 static int64_t f_sys__args(void);
 static void f_sys__exit_now(int32_t l0_code);
@@ -667,6 +669,9 @@ static void f_io__out(tl_752cb7b7 l0_b);
 static void f_io__err(tl_752cb7b7 l0_b);
 static void f_io__outln(tl_752cb7b7 l0_b);
 static void f_io__errln(tl_752cb7b7 l0_b);
+static t_Result_acd6ab43 f_io__read(int64_t l0_max);
+static t_Result_acd6ab43 f_io__read_fd(int32_t l0_fd, int64_t l1_max);
+static t_Result_acd6ab43 f_io__read_all(void);
 static tl_a0558209 f_env__args(void);
 static t_Option_0f8a4198 f_env__get(tl_752cb7b7 l0_name);
 static void f_env__exit(int32_t l0_code);
@@ -4209,10 +4214,10 @@ static tl_752cb7b7 f_sys__lit(const char * l0_s) {
     l13 = xc_ec_str_byte(l11, l12);
     l10_b = l13;
     l14 = l10_b;
-    l15 = (uint8_t)ei_s2u((int64_t)l14, UINT64_C(255), 38);
+    l15 = (uint8_t)ei_s2u((int64_t)l14, UINT64_C(255), 39);
     push_tl_752cb7b7(&l2_out, l15);
     l16 = l6_i;
-    l17 = ei_add_i64(l16, INT64_C(1), 39);
+    l17 = ei_add_i64(l16, INT64_C(1), 40);
     l6_i = l17;
   }
   l18 = l2_out;
@@ -4260,10 +4265,10 @@ static void f_sys__send(tl_752cb7b7 l0_b) {
     } else {
       break;
     }
-    (void)ei_idx((uint64_t)l2, l0_b.len, 57);
+    (void)ei_idx((uint64_t)l2, l0_b.len, 58);
     l6_x = l0_b.d[l2];
     l7 = l6_x;
-    l8 = (int32_t)ei_u2s((uint64_t)l7, INT32_MAX, 58);
+    l8 = (int32_t)ei_u2s((uint64_t)l7, INT32_MAX, 59);
     xc_ec_in_push(l8);
     l9 = l1;
     l10 = ei_wadd_u64(l9, UINT64_C(1));
@@ -4314,7 +4319,7 @@ static void f_sys__send_all(tl_a0558209 l0_parts) {
     l10 = UINT64_C(0);
     for (;;) {
       l11 = l10;
-      (void)ei_idx((uint64_t)l9, l0_parts.len, 69);
+      (void)ei_idx((uint64_t)l9, l0_parts.len, 70);
       l12 = l0_parts.d[l9];
       l13 = (l12).len;
       l14 = (l11 < l13);
@@ -4322,11 +4327,11 @@ static void f_sys__send_all(tl_a0558209 l0_parts) {
       } else {
         break;
       }
-      (void)ei_idx((uint64_t)l9, l0_parts.len, 69);
-      (void)ei_idx((uint64_t)l11, l0_parts.d[l9].len, 69);
+      (void)ei_idx((uint64_t)l9, l0_parts.len, 70);
+      (void)ei_idx((uint64_t)l11, l0_parts.d[l9].len, 70);
       l15_x = l0_parts.d[l9].d[l11];
       l16 = l15_x;
-      l17 = (int32_t)ei_u2s((uint64_t)l16, INT32_MAX, 70);
+      l17 = (int32_t)ei_u2s((uint64_t)l16, INT32_MAX, 71);
       xc_ec_in_push(l17);
       l18 = l10;
       l19 = ei_wadd_u64(l18, UINT64_C(1));
@@ -4373,10 +4378,10 @@ static tl_752cb7b7 f_sys__take(void) {
     l10 = xc_ec_out_byte(l9);
     l8_b = l10;
     l11 = l8_b;
-    l12 = (uint8_t)ei_s2u((int64_t)l11, UINT64_C(255), 82);
+    l12 = (uint8_t)ei_s2u((int64_t)l11, UINT64_C(255), 83);
     push_tl_752cb7b7(&l1_out, l12);
     l13 = l4_i;
-    l14 = ei_add_i64(l13, INT64_C(1), 83);
+    l14 = ei_add_i64(l13, INT64_C(1), 84);
     l4_i = l14;
   }
   l15 = l1_out;
@@ -4430,7 +4435,7 @@ static tl_a0558209 f_sys__take_all(void) {
     } else {
       break;
     }
-    (void)ei_idx((uint64_t)l7, l1_raw.len, 93);
+    (void)ei_idx((uint64_t)l7, l1_raw.len, 94);
     l11_b = l1_raw.d[l7];
     l12 = l11_b;
     l13 = (l12 == ((uint8_t)0));
@@ -4588,6 +4593,17 @@ static int64_t f_sys__write_fd(int32_t l0_fd) {
   l1 = l0_fd;
   l2 = xc_ec_write_fd(l1);
   return l2;
+  ei_unreachable();
+}
+
+static int64_t f_sys__read_fd(int32_t l0_fd, int64_t l1_max) {
+  int32_t l2 = 0;
+  int64_t l3 = 0;
+  int64_t l4 = 0;
+  l2 = l0_fd;
+  l3 = l1_max;
+  l4 = xc_ec_read_fd(l2, l3);
+  return l4;
   ei_unreachable();
 }
 
@@ -7526,6 +7542,132 @@ static void f_io__errln(tl_752cb7b7 l0_b) {
   l4 = l3_l;
   f_io__err(l4);
   drop_tl_752cb7b7(&l3_l);
+}
+
+static t_Result_acd6ab43 f_io__read(int64_t l0_max) {
+  int64_t l1 = 0;
+  t_Result_acd6ab43 l2 = {0};
+  l1 = l0_max;
+  l2 = f_io__read_fd(((int32_t)0), l1);
+  return l2;
+  ei_unreachable();
+}
+
+static t_Result_acd6ab43 f_io__read_fd(int32_t l0_fd, int64_t l1_max) {
+  int32_t l2 = 0;
+  int64_t l3 = 0;
+  int64_t l4 = 0;
+  int64_t l5_n = 0;
+  int64_t l6 = 0;
+  bool l7 = false;
+  ei_String l8 = {0};
+  ei_String l9_m = {0};
+  int64_t l10 = 0;
+  ei_String l11 = {0};
+  ei_String l12 = {0};
+  ei_String l13 = {0};
+  t_Result_acd6ab43 l14 = {0};
+  tl_752cb7b7 l15 = {0};
+  t_Result_acd6ab43 l16 = {0};
+  l2 = l0_fd;
+  l3 = l1_max;
+  l4 = f_sys__read_fd(l2, l3);
+  l5_n = l4;
+  l6 = l5_n;
+  l7 = (l6 < INT64_C(0));
+  if (l7) {
+    l8 = ei_str_from("cannot read: ");
+    l9_m = l8;
+    l10 = l5_n;
+    l11 = f_sys__error_text(l10);
+    ei_str_append(&l9_m, &l11);
+    l12 = l9_m;
+    l13 = ei_clone_String(&l12);
+    l14 = (t_Result_acd6ab43){ .tag = 1, .u.v1.f0 = l13 };
+    ei_drop_String(&l11);
+    ei_drop_String(&l9_m);
+    return l14;
+  }
+  l15 = f_sys__take();
+  l16 = (t_Result_acd6ab43){ .tag = 0, .u.v0.f0 = l15 };
+  return l16;
+  ei_unreachable();
+}
+
+static t_Result_acd6ab43 f_io__read_all(void) {
+  tl_752cb7b7 l0 = {0};
+  tl_752cb7b7 l1_all = {0};
+  t_Result_acd6ab43 l2 = {0};
+  bool l3 = false;
+  ei_String l4 = {0};
+  t_Result_acd6ab43 l5 = {0};
+  tl_752cb7b7 l6 = {0};
+  tl_752cb7b7 l7_chunk = {0};
+  tl_752cb7b7 l8 = {0};
+  uint64_t l9 = 0;
+  bool l10 = false;
+  uint64_t l11 = 0;
+  uint64_t l12 = 0;
+  tl_752cb7b7 l13 = {0};
+  uint64_t l14 = 0;
+  bool l15 = false;
+  uint8_t l16_b = 0;
+  uint8_t l17 = 0;
+  uint64_t l18 = 0;
+  uint64_t l19 = 0;
+  tl_752cb7b7 l20 = {0};
+  tl_752cb7b7 l21 = {0};
+  t_Result_acd6ab43 l22 = {0};
+  l0 = (tl_752cb7b7){0};
+  l1_all = l0;
+  for (;;) {
+    if (true) {
+    } else {
+      break;
+    }
+    l2 = f_io__read(INT64_C(65536));
+    l3 = (l2.tag == 1);
+    if (l3) {
+      l4 = l2.u.v1.f0;
+      l5 = (t_Result_acd6ab43){ .tag = 1, .u.v1.f0 = l4 };
+      drop_tl_752cb7b7(&l1_all);
+      return l5;
+    }
+    l6 = l2.u.v0.f0;
+    l7_chunk = l6;
+    l8 = l7_chunk;
+    l9 = (l8).len;
+    l10 = (l9 == UINT64_C(0));
+    if (l10) {
+      drop_tl_752cb7b7(&l7_chunk);
+      break;
+    }
+    l11 = UINT64_C(0);
+    for (;;) {
+      l12 = l11;
+      l13 = l7_chunk;
+      l14 = (l13).len;
+      l15 = (l12 < l14);
+      if (l15) {
+      } else {
+        break;
+      }
+      (void)ei_idx((uint64_t)l12, l7_chunk.len, 52);
+      l16_b = l7_chunk.d[l12];
+      l17 = l16_b;
+      push_tl_752cb7b7(&l1_all, l17);
+      l18 = l11;
+      l19 = ei_wadd_u64(l18, UINT64_C(1));
+      l11 = l19;
+    }
+    drop_tl_752cb7b7(&l7_chunk);
+  }
+  l20 = l1_all;
+  l21 = clone_tl_752cb7b7(&l20);
+  l22 = (t_Result_acd6ab43){ .tag = 0, .u.v0.f0 = l21 };
+  drop_tl_752cb7b7(&l1_all);
+  return l22;
+  ei_unreachable();
 }
 
 /* ---- module env */
