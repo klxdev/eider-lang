@@ -1,0 +1,4 @@
+// expect: E0401 3:8
+fn main() {
+    if 1 { }
+}

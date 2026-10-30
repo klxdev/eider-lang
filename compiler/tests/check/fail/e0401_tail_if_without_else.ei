@@ -1,0 +1,5 @@
+// expect: E0401 4:1
+fn f(c: bool) -> u8 {
+    if c { 1 }
+}
+fn main() {}

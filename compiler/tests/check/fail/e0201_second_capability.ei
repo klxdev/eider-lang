@@ -1,0 +1,5 @@
+// expect: E0201 4:5
+fn tick() uses io, clock { print(now_ms()) }
+fn main() uses io {
+    tick()
+}

@@ -1,0 +1,6 @@
+// expect: E0303 5:10
+type P = { x: i32 }
+fn mk() -> P { P(1) }
+fn main() {
+    mk().x = 2
+}

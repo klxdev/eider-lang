@@ -1,0 +1,17 @@
+// Helper module: imports another module and uses its names qualified.
+import "shapes.ei"
+
+pub fn red() -> shapes.Color { shapes.Red }
+
+pub fn unit_square() -> shapes.Shape { shapes.Square(1) }
+
+pub fn is_red(c: shapes.Color) -> bool {
+    match c {
+        shapes.Red => true
+        _ => false
+    }
+}
+
+/// Unqualified names that aren't this module's own resolve in the entry file (the
+/// bootstrap's flat namespace): `root_helper` is defined by the importer.
+pub fn calls_root() -> i32 { root_helper() }

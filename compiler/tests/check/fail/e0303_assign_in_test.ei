@@ -1,0 +1,6 @@
+// expect: E0303 4:5
+test "t" {
+    let n = 1
+    n = 2
+}
+fn main() {}

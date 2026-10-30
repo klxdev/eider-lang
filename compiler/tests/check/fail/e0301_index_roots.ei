@@ -1,0 +1,6 @@
+// expect: E0301 5:26
+fn f(inout a: i32, inout b: i32) {}
+fn main() {
+    var xs = [1, 2]
+    f(inout xs[0], inout xs[1])
+}

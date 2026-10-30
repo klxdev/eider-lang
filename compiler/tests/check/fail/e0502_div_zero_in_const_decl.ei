@@ -1,0 +1,3 @@
+// expect: E0502 2:24
+const X: i32 = 10 / (5 - 5)
+fn main() {}

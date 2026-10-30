@@ -1,0 +1,5 @@
+// expect: E0802 4:13
+unsafe fn danger() -> i32 { 1 }
+fn main() {
+    let x = danger()
+}

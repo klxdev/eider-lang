@@ -1,0 +1,5 @@
+// expect: E0304 4:17
+fn main() uses io {
+    var x = 1
+    print(inout x)
+}

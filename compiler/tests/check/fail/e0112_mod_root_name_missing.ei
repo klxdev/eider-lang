@@ -1,0 +1,3 @@
+// expect: E0112 17:30
+import "../lib/chain.ei"
+fn main() {}

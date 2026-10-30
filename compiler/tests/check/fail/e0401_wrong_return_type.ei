@@ -1,0 +1,5 @@
+// expect: E0401 3:12
+fn f() -> i32 {
+    return true
+}
+fn main() {}

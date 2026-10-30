@@ -1,0 +1,6 @@
+// Helper module with a failing test block (checked with the entry file's err_mod).
+pub fn one() -> i32 { 1 }
+
+test "in a module" {
+    let x: i32 = true
+}

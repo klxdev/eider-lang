@@ -1,0 +1,3 @@
+// expect: E0804 2:1
+import "../lib/missing/x.ei"
+fn main() {}

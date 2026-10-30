@@ -1,0 +1,4 @@
+// expect: E0201 3:11
+fn main() uses io {
+    print(now_ms())
+}

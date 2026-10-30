@@ -1,0 +1,9 @@
+// expect: E0410 5:9
+type S = | Circle(r: u32) | Dot
+fn f(s: S) -> u32 {
+    match s {
+        Circle => 1
+        Dot => 0
+    }
+}
+fn main() {}

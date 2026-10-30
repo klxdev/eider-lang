@@ -1,0 +1,7 @@
+// expect: E0401 4:11
+fn g() {}
+fn main() {
+    match g() {
+        _ => {}
+    }
+}

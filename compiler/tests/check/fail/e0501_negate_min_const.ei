@@ -1,0 +1,4 @@
+// expect: E0501 3:16
+const M: i32 = -2147483648
+const N: i32 = -M
+fn main() {}

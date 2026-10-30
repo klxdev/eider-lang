@@ -1,0 +1,5 @@
+// expect: E0110 4:13
+fn g() -> i32 { 1 }
+fn main() {
+    let f = g
+}

@@ -1,0 +1,10 @@
+// expect: E0401 6:9
+type A = | X | Y
+type B = | Z | W
+fn f(a: A) -> i32 {
+    match a {
+        Z => 1
+        _ => 2
+    }
+}
+fn main() {}

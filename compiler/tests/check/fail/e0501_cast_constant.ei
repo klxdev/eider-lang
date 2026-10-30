@@ -1,0 +1,4 @@
+// expect: E0501 3:26
+fn main() {
+    let x = (300 as i64) as u8
+}

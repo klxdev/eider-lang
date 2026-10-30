@@ -1,0 +1,9 @@
+// expect: E0114 6:9
+type P = { x: i32 }
+type Q = { x: i32 }
+fn f(p: P) -> i32 {
+    match p {
+        Q(n) => n
+    }
+}
+fn main() {}

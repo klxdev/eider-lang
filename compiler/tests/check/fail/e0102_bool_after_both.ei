@@ -1,0 +1,9 @@
+// expect: E0102 6:9
+fn f(b: bool) -> i32 {
+    match b {
+        true => 1
+        false => 2
+        _ => 3
+    }
+}
+fn main() {}

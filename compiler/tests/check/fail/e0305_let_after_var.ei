@@ -1,0 +1,5 @@
+// expect: E0305 4:5
+fn main() {
+    var n = 1
+    let n = 2
+}

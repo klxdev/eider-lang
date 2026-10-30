@@ -1,0 +1,29 @@
+// mode: build
+// Imports, `pub`, qualified names (types, variants, patterns, constants), aliases, and a
+// module calling back into the entry file's namespace.
+import "../lib/shapes.ei"
+import "../lib/chain.ei" as ch
+
+pub fn root_helper() -> i32 { 41 }
+
+fn label(c: shapes.Color) -> str {
+    match c {
+        shapes.Red => "r"
+        shapes.Green | shapes.Blue => "gb"
+    }
+}
+
+fn main() uses io {
+    let s = shapes.Circle(2)
+    print(shapes.area(s) + shapes.area(ch.unit_square()))
+    print(shapes.name(ch.red()))
+    print(label(shapes.Blue))
+    print(ch.is_red(shapes.Green))
+    print(shapes.uses_helper(1) + shapes.shadow(2) + ch.calls_root())
+    var p = shapes.origin()
+    shapes.bump(inout p)
+    let q: shapes.Point = shapes.Point(p.x, shapes.ORIGIN_X)
+    print(q.x)
+    let shapes_local = 3
+    print(shapes_local)
+}

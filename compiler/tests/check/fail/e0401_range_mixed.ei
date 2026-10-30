@@ -1,0 +1,6 @@
+// expect: E0401 5:17
+fn main() {
+    let n: u8 = 3
+    let m: u32 = 4
+    for i in n..m { }
+}

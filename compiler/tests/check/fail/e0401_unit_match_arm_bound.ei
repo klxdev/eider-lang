@@ -1,0 +1,9 @@
+// expect: E0401 5:14
+fn g() {}
+fn f(n: i32) {
+    let x = match n {
+        0 => g()
+        _ => g()
+    }
+}
+fn main() {}

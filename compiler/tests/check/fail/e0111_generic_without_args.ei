@@ -1,0 +1,4 @@
+// expect: E0111 3:9
+type Box2[T] = { v: T }
+fn f(b: Box2) {}
+fn main() {}

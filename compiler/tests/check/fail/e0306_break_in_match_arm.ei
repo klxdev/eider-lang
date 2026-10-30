@@ -1,0 +1,7 @@
+// expect: E0306 4:14
+fn main() {
+    match 1 {
+        1 => break
+        _ => {}
+    }
+}

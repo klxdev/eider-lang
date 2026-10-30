@@ -1,0 +1,5 @@
+// expect: E0405 4:13
+type S = | Circle(r: u32) | Dot
+fn main() {
+    let s = Circle(1, 2)
+}

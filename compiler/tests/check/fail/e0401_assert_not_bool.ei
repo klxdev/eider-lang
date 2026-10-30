@@ -1,0 +1,4 @@
+// expect: E0401 3:12
+fn main() {
+    assert 1
+}

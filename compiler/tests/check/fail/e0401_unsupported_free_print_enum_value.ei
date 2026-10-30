@@ -1,0 +1,7 @@
+// expect: E0401 6:18
+type C = | R | G
+fn main() uses io {
+    print(C.R)
+    print(R == G)
+    let s: str = R
+}

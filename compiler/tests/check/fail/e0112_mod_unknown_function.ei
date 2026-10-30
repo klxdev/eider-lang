@@ -1,0 +1,5 @@
+// expect: E0112 4:5
+import "../lib/shapes.ei"
+fn main() {
+    shapes.nothing()
+}

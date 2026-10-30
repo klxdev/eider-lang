@@ -1,0 +1,5 @@
+// expect: E0401 4:18
+type P = { x: i32, ok: bool }
+fn main() {
+    let p = P(1, 2)
+}

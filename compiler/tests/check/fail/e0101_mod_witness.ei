@@ -1,0 +1,8 @@
+// expect: E0101 4:5
+import "../lib/shapes.ei"
+fn f(c: shapes.Color) -> i32 {
+    match c {
+        shapes.Red => 1
+    }
+}
+fn main() {}

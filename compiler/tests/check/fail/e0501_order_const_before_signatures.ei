@@ -1,0 +1,4 @@
+// expect: E0501 3:15
+fn f(x: Nope) {}
+const C: u8 = 256
+fn main() {}

@@ -1,0 +1,4 @@
+// expect: E0504 3:14
+type P = { x: i32 }
+const O: P = P(0)
+fn main() {}

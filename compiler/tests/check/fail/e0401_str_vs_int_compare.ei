@@ -1,0 +1,4 @@
+// expect: E0401 3:20
+fn main() {
+    let b = "a" == 1
+}

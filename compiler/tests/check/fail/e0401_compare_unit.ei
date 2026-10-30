@@ -1,0 +1,5 @@
+// expect: E0401 4:17
+fn g() {}
+fn main() {
+    let x = g() == g()
+}

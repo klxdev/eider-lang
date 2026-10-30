@@ -1,0 +1,8 @@
+// expect: E0101 4:5
+type C = | R | G | B
+fn f(c: C) -> i32 {
+    match c {
+        R | G => 1
+    }
+}
+fn main() {}

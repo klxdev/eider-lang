@@ -1,0 +1,4 @@
+// expect: E0107 3:7
+const A: i32 = 1
+const A: i32 = 2
+fn main() {}

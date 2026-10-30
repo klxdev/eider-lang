@@ -1,0 +1,4 @@
+// expect: E0115 3:17
+fn main() {
+    let x = i32.max()
+}

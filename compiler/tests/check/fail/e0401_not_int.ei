@@ -1,0 +1,4 @@
+// expect: E0401 3:14
+fn main() {
+    let x = !1
+}

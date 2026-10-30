@@ -1,0 +1,5 @@
+// expect: E0503 4:15
+fn main() {
+    let a = [true, false]
+    let x = a[len(a)]
+}

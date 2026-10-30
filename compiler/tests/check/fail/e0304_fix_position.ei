@@ -1,0 +1,7 @@
+// expect: E0304 6:15
+type P = { x: i32 }
+fn take(n: i32, inout p: P) {}
+fn main() {
+    var p = P(1)
+    take(1,   p)
+}

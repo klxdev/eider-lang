@@ -1,0 +1,8 @@
+// expect: E0401 4:21
+fn f(n: i32) -> bool {
+    match n {
+        0 => return 1
+        _ => true
+    }
+}
+fn main() {}

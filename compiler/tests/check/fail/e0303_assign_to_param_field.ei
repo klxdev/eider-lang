@@ -1,0 +1,6 @@
+// expect: E0303 4:5
+type P = { x: i32 }
+fn f(p: P) {
+    p.x = 2
+}
+fn main() {}

@@ -1,0 +1,5 @@
+// expect: E0115 4:15
+fn main() {
+    let a = [1, 2, 3]
+    let n = a.len()
+}

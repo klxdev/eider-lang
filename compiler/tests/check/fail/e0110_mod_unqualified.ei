@@ -1,0 +1,5 @@
+// expect: E0110 4:13
+import "../lib/shapes.ei"
+fn main() {
+    let c = Red
+}

@@ -1,0 +1,5 @@
+// expect: E0103 4:7
+fn f(n: i32) {}
+fn main() {
+    f(if true { 1 } else { 2 })
+}

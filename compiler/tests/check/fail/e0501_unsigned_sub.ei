@@ -1,0 +1,4 @@
+// expect: E0501 3:20
+fn main() {
+    let x: u32 = 1 - 2
+}

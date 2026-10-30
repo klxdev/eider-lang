@@ -1,0 +1,7 @@
+// expect: E0201 6:16
+fn f() -> i32 uses io {
+    print(1)
+    1
+}
+const X: i32 = f()
+fn main() {}

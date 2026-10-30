@@ -1,0 +1,6 @@
+// expect: E0401 3:29
+fn f(c: bool) -> i32 {
+    let x = if c { 1 } else { true }
+    x
+}
+fn main() {}

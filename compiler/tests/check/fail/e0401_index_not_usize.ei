@@ -1,0 +1,6 @@
+// expect: E0401 5:15
+fn main() {
+    let a = [1, 2]
+    let i: i32 = 0
+    let y = a[i]
+}

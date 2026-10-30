@@ -1,0 +1,5 @@
+// expect: E0401 4:1
+fn f(n: i32) -> i32 {
+    while true { return n }
+}
+fn main() {}

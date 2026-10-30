@@ -1,0 +1,7 @@
+// expect: E0110 6:11
+fn main() uses io {
+    if true {
+        let inner = 1
+    }
+    print(inner)
+}
