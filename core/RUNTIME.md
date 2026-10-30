@@ -251,9 +251,11 @@ Every piece of runtime C in stage 0, and where it goes (`P` = `src/prelude.rs`,
   UBSan in trap mode (`-fsanitize=undefined -fsanitize-trap=undefined`, needs no runtime
   library). ASan and TSan run when the toolchain has their runtimes (`tests/core/run.sh`
   probes and skips otherwise).
-- WebAssembly: the stage-0 freestanding shim has no pthreads. A wasm backend of this runtime
-  (`core/wasm/`) would provide the same functions with single-threaded `ei_mutex`/`ei_chan`
-  and no `ei_thread`.
+- WebAssembly: `core/wasm/eider_rt.c` is the wasm32 backend of this contract, over the
+  freestanding C library `core/wasm/libc.c` (`core/wasm/README.md`). Same header, same
+  functions; one thread (`ei_mutex_*` do nothing, `ei_thread_*`/`ei_chan_*` trap; programs
+  with threads are rejected, E0806), traps end in `unreachable` instead of `exit(101)`, and
+  `ei_now_ms` is the host clock.
 - Windows: not written (needs a threads backend, like `eider_core`).
 
 ## Known gaps carried from stage 0
