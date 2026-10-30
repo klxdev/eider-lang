@@ -1,0 +1,6 @@
+// expect: E0401 5:16
+type C = | R | G
+fn main() {
+    let R = 5
+    let c: C = R
+}

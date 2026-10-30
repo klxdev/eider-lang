@@ -1,0 +1,5 @@
+// expect: E0401 4:19
+fn main() {
+    let x: u8 = { 5 }
+    let y: bool = { x }
+}

@@ -1,0 +1,5 @@
+// expect: E0110 4:5
+type C = | R | G
+fn main() {
+    R = G
+}

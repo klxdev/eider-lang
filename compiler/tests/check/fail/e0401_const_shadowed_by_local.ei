@@ -1,0 +1,6 @@
+// expect: E0401 5:18
+const N: i32 = 1
+fn main() {
+    let N = true
+    let x: i32 = N
+}

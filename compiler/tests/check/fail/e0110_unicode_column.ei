@@ -1,0 +1,4 @@
+// expect: E0110 3:28
+fn main() {
+    let s = "üé€"; let y = nope
+}

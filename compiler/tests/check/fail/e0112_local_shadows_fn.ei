@@ -1,0 +1,6 @@
+// expect: E0112 5:13
+fn f() -> i32 { 1 }
+fn main() {
+    let f = 2
+    let y = f()
+}

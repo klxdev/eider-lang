@@ -1,0 +1,4 @@
+// expect: E0110 3:13
+fn main() {
+    let x = foo__bar
+}

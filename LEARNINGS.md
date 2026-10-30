@@ -36,4 +36,8 @@
 # Bootstrap bugs (frozen compiler; work around them, and give eiderc a regression test)
 
 - Owned temporaries in an `else if` condition (e.g. `else if bytes.eq(x, sys.lit("a"))`) are declared inside the generated `else { }` block but dropped after it, so the C fails to compile (`tN undeclared`). Bind the value first or compare through a helper function.
+- A match arm binding with the same name as the `let` it initializes (`let p = match r { Ok(p) => p ... }`) gets the same C name as the outer variable, so the arm assigns its own copy and the outer variable stays uninitialized (garbage, or a crash later). Use a different binding name.
+- `len(e)` on an array folds to the length and never evaluates `e` (expr.rs builtin `len`), so side effects in `e` are lost; eiderc's IR keeps them.
+- Folding `u64 * u64` constants overflows i128 and the checker panics (expr.rs binary fold). eiderc computes in 128 bits and has no test for it, since the bootstrap gives no answer.
+- Checker quirks eiderc reproduces for diagnostic parity (docs/compiler.md, "C3: checking"): `Enum.Variant` on an imported module's enum is E0114; some errors in imported modules name the importer's file; a module's test block doesn't let locals shadow the module's item names.
 - At -O2 gcc reports `-Wmaybe-uninitialized` on temporaries the bootstrap declares before a branch that always assigns them. Harmless, but eiderc's C must be warning-free.

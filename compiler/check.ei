@@ -1880,6 +1880,7 @@ fn call_decl(inout c: C, n: ast.Node, fi: u32) -> Result[V, diag.Diag] uses ffi 
     if n.d != fnode.f {
         return Err(err("E0405", n.line, n.col, q3("`", label, "` takes ", num(fnode.f as u64), " argument(s), but ", num(n.d as u64), " were given")))
     }
+    if f.generic { return Err(unsup(n.line, n.col, "generic functions")) }
     // exclusivity of inout borrows
     var roots: List[u64] = List.new()
     for i in 0..n.d {
