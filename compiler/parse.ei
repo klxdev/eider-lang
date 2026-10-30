@@ -157,9 +157,14 @@ fn stem(path: List[u8]) -> List[u8] {
         Some(i) => bytes.slice(base, 0, i)
         None => base
     }
+    // one `_` per non-identifier character, so a multi-byte UTF-8 scalar gives one `_`
     var out: List[u8] = List.new()
     for c in s {
-        if bytes.is_ident(c) { out.push(c) } else { out.push(95) }
+        if bytes.is_ident(c) {
+            out.push(c)
+        } else if c < 128 || c >= 192 {
+            out.push(95)
+        }
     }
     out
 }
@@ -1046,10 +1051,9 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         node.a = n.sym
         match qualified(inout p, n.sym) {
             Some(q) => {
+                // the position stays at the qualifier, as in the bootstrap
                 node.a = q.sym
                 node.b = n.sym + 1
-                node.line = q.line
-                node.col = q.col
             }
             None => {}
         }
@@ -1232,8 +1236,9 @@ pub fn pattern(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         var qual: u32 = 0
         match qualified(inout p, nm.sym) {
             Some(q) => {
+                // the position stays at the qualifier, as in the bootstrap
                 qual = nm.sym + 1
-                nm = q
+                nm = Name(q.sym, nm.line, nm.col)
             }
             None => {}
         }

@@ -1,0 +1,5 @@
+// the default alias of a non-ASCII stem has one `_` per character: `d_`, so `d_.T` is a
+// qualified type and the first error is the `1` on line 5
+import "dé.ei"
+
+fn f(x: d_.T, 1) {}

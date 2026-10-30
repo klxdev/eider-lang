@@ -1,0 +1,2 @@
+type A = { x: i32 }
+impl A fn f() {}
