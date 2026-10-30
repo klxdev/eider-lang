@@ -1,0 +1,96 @@
+-- valid
+ok   null
+ok   true
+ok   false
+ok   0
+ok   -0
+ok   123
+ok   -9223372036854775808
+ok   9223372036854775807
+ok   9223372036854775808
+ok   1.5e-3
+ok   1E+10
+ok   0.000
+ok   []
+ok   {}
+ok   [1,[2,[3,[]]],{"a":{"b":null}}]
+ok   {"k":1,"k":2}
+ok   ""
+ok   "plain \" \\ / \b \f \n \r \t"
+ok   "Aé€😀\u0000\u001f"
+ok   "raw UTF-8: é € 😀"
+-- invalid
+err  unexpected end of input, expected a value at line 1, column 1 (byte 0)
+err  unexpected end of input, expected a value at line 1, column 4 (byte 3)
+err  invalid literal (expected true, false or null) at line 1, column 4 (byte 3)
+err  unexpected character, expected a value at line 1, column 1 (byte 0)
+err  trailing comma in an array at line 1, column 4 (byte 3)
+err  trailing comma in an object at line 1, column 8 (byte 7)
+err  expected `,` or `]` in an array at line 1, column 4 (byte 3)
+err  expected `:` after an object key at line 1, column 6 (byte 5)
+err  expected a string key in an object at line 1, column 2 (byte 1)
+err  expected a value at line 1, column 6 (byte 5)
+err  unexpected end of input, expected a value at line 1, column 2 (byte 1)
+err  unexpected end of input in an object (expected `,` or `}`) at line 1, column 7 (byte 6)
+err  leading zeros are not allowed at line 1, column 2 (byte 1)
+err  expected a digit at line 1, column 2 (byte 1)
+err  expected a digit after the decimal point at line 1, column 3 (byte 2)
+err  unexpected character, expected a value at line 1, column 1 (byte 0)
+err  unexpected character, expected a value at line 1, column 1 (byte 0)
+err  expected a digit in the exponent at line 1, column 3 (byte 2)
+err  expected a digit in the exponent at line 1, column 4 (byte 3)
+err  unexpected character, expected a value at line 1, column 1 (byte 0)
+err  unexpected text after the value at line 1, column 4 (byte 3)
+err  unexpected text after the value at line 1, column 3 (byte 2)
+err  unterminated string at line 1, column 5 (byte 4)
+err  invalid escape in a string at line 1, column 3 (byte 2)
+err  invalid \u escape (expected four hex digits) at line 1, column 2 (byte 1)
+err  invalid \u escape (expected four hex digits) at line 1, column 2 (byte 1)
+err  high surrogate not followed by a low surrogate at line 1, column 2 (byte 1)
+err  high surrogate not followed by a low surrogate at line 1, column 2 (byte 1)
+err  unpaired low surrogate in a \u escape at line 1, column 2 (byte 1)
+err  control character in a string (must be escaped) at line 1, column 5 (byte 4)
+err  unexpected character, expected a value at line 4, column 3 (byte 14)
+err  unexpected character, expected a value at line 1, column 8 (byte 10)
+err  invalid UTF-8 in a string at line 1, column 2 (byte 1)
+err  invalid UTF-8 in a string at line 1, column 2 (byte 1)
+err  invalid UTF-8 in a string at line 1, column 2 (byte 1)
+err  invalid UTF-8 in a string at line 1, column 2 (byte 1)
+err  a byte order mark is not allowed at line 1, column 1 (byte 0)
+512 deep: ok
+nested too deeply at line 1, column 513 (byte 512)
+-- reading
+true
+4
+textDocument/hover
+7
+12
+true
+true
+id
+7
+true
+6
+true
+false
+true
+s
+true
+1.25
+-4
+true
+true
+true
+0
+true
+0
+true
+123456789012345678901234567890
+-1e400
+c3a9f09f9880efbfbf
+-- building
+true
+true
+{"a":[null,true,-9223372036854775808,6.02e23,"ctl:\u0001\b\f\u001f é \"q\" \\ /","x���y"],"empty":[],"obj":{}}
+true
+"line\nbreak"

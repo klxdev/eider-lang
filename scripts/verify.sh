@@ -33,7 +33,7 @@ for cc in gcc clang $S/asan.sh $S/tsan.sh; do
 done
 sh tests/core/run.sh | grep -q FAIL && { echo "FAIL core"; fail=1; } || echo "ok   core (eider_rt + eider_core, strict warnings, sanitizers when available)"
 sh tests/std/run.sh | grep -q FAIL && { echo "FAIL std"; fail=1; } || echo "ok   std (C core + Eider std)"
-sh tests/packages.sh | grep -q FAIL && { echo "FAIL packages"; fail=1; } || echo "ok   packages (toml, semver, sha256)"
+sh tests/packages.sh | grep -q FAIL && { echo "FAIL packages"; fail=1; } || echo "ok   packages (toml, semver, sha256, json)"
 sh tests/pkg/run.sh | grep -q FAIL && { echo "FAIL pkg"; fail=1; } || echo "ok   pkg (eider-pkg end to end, local git repos)"
 sh scripts/test-compiler.sh | grep -q FAIL && { echo "FAIL compiler (eiderc)"; fail=1; } || echo "ok   compiler (eiderc vs the recorded oracle, tests/oracle)"
 sh scripts/selfhost.sh --from-seed >/dev/null 2>&1 && echo "ok   seed (seed/eiderc.c rebuilds itself with only a C compiler)" || { echo "FAIL seed: sh scripts/selfhost.sh --from-seed"; fail=1; }
