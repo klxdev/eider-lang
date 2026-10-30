@@ -1,0 +1,3 @@
+// expect: E0805 2:11
+export fn id[T](x: T) -> T { x }
+fn main() {}

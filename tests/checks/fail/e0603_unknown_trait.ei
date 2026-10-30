@@ -1,0 +1,5 @@
+// expect: E0603 2:6
+fn f[T: Missing](a: T) -> T {
+    a
+}
+fn main() {}

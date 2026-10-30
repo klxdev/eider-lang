@@ -1,0 +1,38 @@
+fn fib(n: u32) -> u64 {
+    var a: u64 = 0
+    var b: u64 = 1
+    for i in 0..n {
+        let t = a + b
+        a = b
+        b = t
+    }
+    return a
+}
+
+fn is_prime(n: i32) -> bool {
+    if n < 2 { return false }
+    var d = 2
+    while d * d <= n {
+        if n % d == 0 { return false }
+        d = d + 1
+    }
+    return true
+}
+
+fn count_primes(limit: i32) -> i32 {
+    var l: List[i32] = List.new()
+    for i in 0..limit { if is_prime(i) { l.push(i) } }
+    return len(l) as i32
+}
+
+const FIB50: u64 = comptime fib(50)
+const PRIMES: i32 = comptime count_primes(1000)
+const NEG: i32 = comptime 3 - fib(10) as i32
+const BIG: bool = comptime FIB50 > 1000
+
+fn main() uses io {
+    print(FIB50)
+    print(PRIMES)
+    print(NEG)
+    print(BIG)
+}

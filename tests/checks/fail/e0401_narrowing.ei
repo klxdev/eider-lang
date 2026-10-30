@@ -1,0 +1,6 @@
+// expect: E0401 3:16
+fn f(x: i64) -> i32 {
+  let y: i32 = x
+  return y
+}
+fn main() {}

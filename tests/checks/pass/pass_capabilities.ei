@@ -1,0 +1,7 @@
+// mode: build
+fn log() uses io { print(1) }
+fn both() uses io, clock {
+  log()
+  print(now_ms())
+}
+fn main() uses io, clock { both() }

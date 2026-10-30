@@ -1,0 +1,3 @@
+pub fn double(n: i32) -> i32 { n * 2 }
+pub type Pair[T] = { a: T, b: T }
+pub fn swap[T](p: Pair[T]) -> Pair[T] { Pair(p.b, p.a) }

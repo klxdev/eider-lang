@@ -1,0 +1,5 @@
+// expect: E0303 4:5
+fn main() {
+    let l: List[i32] = List.new()
+    l.push(1)
+}

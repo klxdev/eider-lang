@@ -1,0 +1,5 @@
+// expect: E0503 4:11
+fn main() uses io {
+  let a = [1, 2, 3]
+  print(a[3])
+}

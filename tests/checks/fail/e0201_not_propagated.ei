@@ -1,0 +1,6 @@
+// expect: E0201 4:3
+fn log() uses io { print(1) }
+fn caller() uses clock {
+  log()
+}
+fn main() {}

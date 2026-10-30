@@ -1,0 +1,7 @@
+target
+*.c.out
+# build outputs from `eider build`
+/*.wasm
+/*.d.ts
+/*.a
+/*.so

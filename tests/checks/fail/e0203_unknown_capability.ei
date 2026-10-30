@@ -1,0 +1,2 @@
+// expect: E0203 2:16
+fn main() uses telepathy {}

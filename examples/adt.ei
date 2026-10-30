@@ -1,0 +1,84 @@
+type Shape = | Circle(r: u32) | Rect(w: u32, h: u32) | Empty
+
+type Pair[A, B] = { first: A, second: B }
+
+trait Area {
+    fn area(self) -> u32
+}
+
+impl Area for Shape {
+    fn area(self) -> u32 {
+        match self {
+            Circle(r) => 3 * r * r
+            Rect(w, h) => w * h
+            Empty => 0
+        }
+    }
+}
+
+fn total[T: Area](a: T, b: T) -> u32 {
+    a.area() + b.area()
+}
+
+fn largest[T](a: T, b: T, bigger: bool) -> T {
+    if bigger { return a }
+    b
+}
+
+fn half(n: u32) -> Result[u32, str] {
+    if n % 2 == 1 { return Err("odd") }
+    Ok(n / 2)
+}
+
+fn quarter(n: u32) -> Result[u32, str] {
+    let h = half(n)?
+    let q = half(h)?
+    Ok(q)
+}
+
+fn find(xs: [i32; 4], want: i32) -> Option[usize] {
+    for i in 0..4 {
+        if xs[i as usize] == want { return Some(i as usize) }
+    }
+    None
+}
+
+fn swap(p: (i32, bool)) -> (bool, i32) {
+    let (a, b) = p
+    (b, a)
+}
+
+fn main() uses io {
+    print(total(Circle(2), Rect(3, 4)))
+    print(Empty.area())
+    print(largest(7, 9, false))
+    let p = Pair(1, true)
+    print(p.first)
+    print(p.second)
+    match quarter(12) {
+        Ok(v) => print(v)
+        Err(e) => print(e)
+    }
+    match quarter(6) {
+        Ok(v) => print(v)
+        Err(e) => print(e)
+    }
+    let r: Result[u32, str] = half(8)
+    print(r.is_ok())
+    print(r.unwrap_or(0))
+    match find([4, 5, 6, 7], 6) {
+        Some(i) => print(i)
+        None => print("none")
+    }
+    if let Some(i) = find([1, 2, 3, 4], 9) { print(i) } else { print("missing") }
+    let (flag, n) = swap((5, true))
+    print(flag)
+    print(n)
+    let o: Option[i32] = None
+    print(o.is_none())
+    match (flag, n) {
+        (true, 5) => print("t5")
+        (true, _) => print("t")
+        (false, _) => print("f")
+    }
+}

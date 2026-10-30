@@ -1,0 +1,3 @@
+// expect: E0108 2:6
+type Node = { next: Node, v: i32 }
+fn main() {}

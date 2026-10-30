@@ -1,0 +1,13 @@
+// mode: build
+type P = { x: i32 }
+fn bump(inout p: P) { p.x += 1 }
+fn two(inout a: P, inout b: P) {
+  bump(inout a)
+  bump(inout b)
+}
+fn main() {
+  var a = P(1)
+  var b = P(2)
+  two(inout a, inout b)
+  bump(inout a)
+}

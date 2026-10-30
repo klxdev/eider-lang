@@ -1,0 +1,5 @@
+// expect: E0502 3:14
+fn f(n: i32) -> i32 {
+  return n / 0
+}
+fn main() {}

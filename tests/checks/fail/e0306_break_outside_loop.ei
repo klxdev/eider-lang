@@ -1,0 +1,4 @@
+// expect: E0306 3:3
+fn main() {
+  break
+}

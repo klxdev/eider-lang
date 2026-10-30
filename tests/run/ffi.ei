@@ -1,0 +1,22 @@
+extern "c" fn abs(n: i32) -> i32
+extern "c" fn labs(n: i64) -> i64
+extern "c" fn strlen(s: str) -> usize
+extern "c" fn atoi(s: str) -> i32
+extern "c" fn toupper(c: i32) -> i32
+
+unsafe fn shout(c: u8) -> u8 uses ffi {
+    toupper(c as i32) as u8
+}
+
+fn main() uses io, ffi {
+    let a = unsafe { abs(-42) }
+    print(a)
+    let b = unsafe { labs(-9000000000) }
+    print(b)
+    let n = unsafe { strlen("eider") }
+    print(n)
+    let v = unsafe { atoi("1234") }
+    print(v + 1)
+    let up = unsafe { shout(97) }
+    print(up)
+}

@@ -1,0 +1,4 @@
+// expect: E0804 2:1
+import "lib/nope.ei"
+
+fn main() {}

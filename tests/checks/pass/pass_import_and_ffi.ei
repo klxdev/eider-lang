@@ -1,0 +1,18 @@
+// mode: build
+import "lib/geometry.ei"
+
+extern "c" fn abs(n: i32) -> i32
+extern "c" fn strlen(s: str) -> usize
+
+unsafe fn raw_len(s: str) -> usize uses ffi {
+    strlen(s)
+}
+
+fn main() uses io, ffi {
+    let p = geometry.Point(1, 2)
+    print(geometry.manhattan(p, geometry.origin()))
+    let n = unsafe { abs(-5) }
+    print(n)
+    let m = unsafe { raw_len("hello") }
+    print(m)
+}

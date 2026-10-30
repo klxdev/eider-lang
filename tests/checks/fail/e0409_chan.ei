@@ -1,0 +1,5 @@
+// expect: E0409 3:18
+fn main() uses io, threads {
+    let c = Chan.new()
+    print(1)
+}

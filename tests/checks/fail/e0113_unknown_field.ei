@@ -1,0 +1,6 @@
+// expect: E0113 4:12
+type P = { x: i32, y: i32 }
+fn f(p: P) -> i32 {
+  return p.z
+}
+fn main() {}

@@ -1,0 +1,11 @@
+import "util.ei"
+
+pub type Shape = | Circle(r: i32) | Tri(w: i32, h: i32)
+pub const SIDES: i32 = 3
+
+pub fn area(s: Shape) -> i32 {
+    match s {
+        Circle(r) => util.double(r),
+        Tri(w, h) => w * h / 2,
+    }
+}

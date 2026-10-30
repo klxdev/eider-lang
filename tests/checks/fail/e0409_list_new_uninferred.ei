@@ -1,0 +1,4 @@
+// expect: E0409 3:18
+fn main() {
+    let l = List.new()
+}

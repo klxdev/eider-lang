@@ -1,0 +1,4 @@
+// expect: E0807 4:7
+fn boom(n: i32) -> i32 { return 10 / n }
+fn main() uses io { print(1) }
+const X: i32 = comptime boom(0)

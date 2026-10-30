@@ -1,0 +1,4 @@
+// expect: E0112 3:3
+fn main() {
+  launch(1)
+}

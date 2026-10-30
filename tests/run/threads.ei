@@ -1,0 +1,42 @@
+fn work(n: i32) -> i32 uses threads {
+    let t = spawn(|| -> i32 n * 2)
+    return t.join()
+}
+
+fn main() uses io, threads {
+    let a = spawn(|| -> i32 21 * 2)
+    print(a.join())
+    print(work(5))
+
+    let m = Mutex.new(0)
+    var ts: List[Task[i32]] = List.new()
+    for i in 0..4 {
+        let mm = m
+        ts.push(spawn(|| -> i32 {
+            for j in 0..1000 {
+                mm.update(|x: i32| -> i32 x + 1)
+            }
+            return 0
+        }))
+    }
+    for t in ts { let r = t.join() }
+    print(m.get())
+
+    let c: Chan[i32] = Chan.new()
+    let cc = c
+    let p = spawn(|| -> i32 {
+        for k in 0..5 { cc.send(k * k) }
+        cc.close()
+        return 0
+    })
+    var sum = 0
+    var going = true
+    while going {
+        match c.recv() {
+            Some(v) => { sum = sum + v }
+            None => { going = false }
+        }
+    }
+    let z = p.join()
+    print(sum)
+}

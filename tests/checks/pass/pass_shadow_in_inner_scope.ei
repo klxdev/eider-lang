@@ -1,0 +1,9 @@
+// mode: build
+fn main() uses io {
+  let n = 1
+  if n == 1 {
+    let n = 2
+    print(n)
+  }
+  print(n)
+}

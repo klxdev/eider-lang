@@ -1,0 +1,70 @@
+type Counter = { step: i32, apply: fn(i32) -> i32 }
+
+fn apply(x: i32, f: fn(i32) -> i32) -> i32 { f(x) }
+fn double(n: i32) -> i32 { n * 2 }
+fn compose[A, B, C](f: fn(A) -> B, g: fn(B) -> C) -> fn(A) -> C {
+    |x| g(f(x))
+}
+fn adder(n: i32) -> fn(i32) -> i32 {
+    |x| x + n
+}
+fn parse_digit(s: str) -> Result[i32, String] {
+    if s == "1" { return Ok(1) }
+    if s == "2" { return Ok(2) }
+    Err(String.from("not a digit"))
+}
+
+fn main() uses io {
+    let k = 10
+    print(apply(5, |x| x + k))
+    print(apply(5, double))
+    let add3 = adder(3)
+    print(add3(4))
+    let both = compose(add3, double)
+    print(both(1))
+
+    var xs: List[i32] = List.new()
+    for i in 1..6 { xs.push(i) }
+    let squares = xs.map(|x| x * x)
+    print(squares.sum())
+    let evens = xs.filter(|x| x % 2 == 0)
+    print(evens.len())
+    print(xs.fold(100, |acc, x| acc - x))
+    print(xs.any(|x| x > 4))
+    print(xs.all(|x| x > 4))
+    var seen: List[String] = List.new()
+    let names = xs.map(|x| String.from_int(x as i64))
+    for n in names { seen.push(n) }
+    print(seen.len())
+    let joined = names.fold(String.from(""), |acc, n| {
+        var r = acc
+        r.append(n)
+        r
+    })
+    print(joined)
+
+    let c = Counter(2, |x| x * 2)
+    print(c.apply(21))
+
+    let s = String.from("captured")
+    let f = || s.len()
+    let g = f
+    print(f())
+    print(g())
+
+    let o: Option[i32] = Some(4)
+    print(o.map(|x| x + 1).unwrap())
+    print(o.and_then(|x| -> Option[i32] { if x > 10 { Some(x) } else { None } }).is_none())
+    let r = parse_digit("2").map(|d| d * 100)
+    print(r.unwrap_or(0))
+    let bad = parse_digit("x").map_err(|e| e.len())
+    match bad {
+        Ok(v) => print(v)
+        Err(n) => print(n)
+    }
+    for w in names {
+        if w.len() > 5 { continue }
+        if w == String.from("4") { break }
+        print(w)
+    }
+}

@@ -1,0 +1,5 @@
+// expect: E0808 3:1
+import "lib/geometry.ei"
+import "lib2/geometry.ei"
+
+fn main() {}

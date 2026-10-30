@@ -1,0 +1,4 @@
+// expect: E0107 3:4
+fn f() {}
+fn f() {}
+fn main() {}

@@ -1,0 +1,4 @@
+// expect: E0001 5:1
+fn main() uses io {
+  print(1)
+

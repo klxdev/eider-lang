@@ -1,0 +1,7 @@
+import "mods/geometry.ei"
+
+fn main() uses io {
+    let p = geometry.Point(3, 4)
+    print(geometry.manhattan(p, geometry.origin()))
+    print(geometry.UNIT)
+}

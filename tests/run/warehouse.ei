@@ -1,0 +1,79 @@
+module warehouse
+
+// A slice of the fulfillment example: enums, records, arrays, inout, match, capabilities, tests.
+
+type BoxSize = | Small | Medium | Large
+
+type Item = { grams: u32, price_cents: i64 }
+
+type Inventory = { stock: [u32; 4], reserved: u32 }
+
+const SKU_COUNT: usize = 4
+
+fn box_limit(b: BoxSize) -> u32 {
+  match b {
+    Small => 2_000
+    Medium => 10_000
+    Large => 25_000
+  }
+}
+
+fn choose_box(grams: u32) -> BoxSize {
+  if grams <= box_limit(Small) { return Small }
+  if grams <= box_limit(Medium) { return Medium }
+  return Large
+}
+
+// `inout` = exclusive mutable access for this call only. Returns false on shortage.
+fn reserve(inout inv: Inventory, sku: usize, qty: u32) -> bool {
+  let have = inv.stock[sku]
+  if have < qty { return false }
+  inv.stock[sku] = have - qty
+  inv.reserved += qty
+  return true
+}
+
+fn total_stock(inv: Inventory) -> u32 {
+  var sum: u32 = 0
+  for i in 0..SKU_COUNT {
+    sum += inv.stock[i]
+  }
+  return sum
+}
+
+fn label(b: BoxSize) -> str {
+  match b {
+    Small => "small"
+    Medium => "medium"
+    Large => "large"
+  }
+}
+
+fn main() uses io {
+  var inv = Inventory([10, 5, 0, 7], 0)
+
+  print(reserve(inout inv, 0, 3))   // true
+  print(reserve(inout inv, 2, 1))   // false: out of stock
+  print(total_stock(inv))           // 19
+  print(inv.reserved)               // 3
+
+  let item = Item(1_800, 2_499)
+  let qty: u32 = 4
+  let box = choose_box(item.grams * qty)
+  print(label(box))                 // medium
+  print(box)                        // Medium
+}
+
+test "reserve rolls forward and refuses shortage" {
+  var inv = Inventory([5, 1, 0, 0], 0)
+  assert reserve(inout inv, 0, 3)
+  assert !reserve(inout inv, 1, 2), "should refuse: only 1 in stock"
+  assert inv.stock[0] == 2
+  assert inv.reserved == 3
+}
+
+test "box selection" {
+  assert choose_box(100) == Small
+  assert choose_box(2_001) == Medium
+  assert choose_box(30_000) == Large
+}

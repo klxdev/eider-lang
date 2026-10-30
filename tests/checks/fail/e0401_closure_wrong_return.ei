@@ -1,0 +1,5 @@
+// expect: E0401 4:28
+fn apply(x: i32, f: fn(i32) -> i32) -> i32 { f(x) }
+fn main() {
+    let a = apply(1, |x| x > 0)
+}

@@ -1,0 +1,3 @@
+// expect: E0302 2:21
+type Cache = { inv: inout Inv }
+fn main() {}

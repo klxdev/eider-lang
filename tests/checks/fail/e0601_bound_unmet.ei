@@ -1,0 +1,10 @@
+// expect: E0601 9:5
+trait Area {
+    fn area(self) -> u32
+}
+fn total[T: Area](a: T) -> u32 {
+    a.area()
+}
+fn main() {
+    total(5)
+}

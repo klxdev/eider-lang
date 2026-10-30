@@ -1,0 +1,4 @@
+// expect: E0402 3:16
+fn main() {
+  let x: i32 = null
+}

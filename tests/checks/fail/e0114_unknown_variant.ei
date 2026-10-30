@@ -1,0 +1,6 @@
+// expect: E0114 4:12
+type C = | R | G
+fn f() -> C {
+  return C.B
+}
+fn main() {}

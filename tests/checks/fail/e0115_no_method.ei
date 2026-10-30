@@ -1,0 +1,5 @@
+// expect: E0115 4:7
+fn main() {
+    let x = 1
+    x.nothing()
+}

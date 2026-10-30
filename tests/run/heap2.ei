@@ -1,0 +1,68 @@
+type Tagged = | Named(name: String, tags: List[String]) | Anon
+
+fn pick(c: bool) -> String {
+    let s = if c { String.from("yes") } else { String.from("no") }
+    s
+}
+
+fn longest(xs: List[String]) -> String {
+    var best = String.from("")
+    for i in 0..xs.len() {
+        let cur = xs[i]
+        if cur.len() > best.len() { best = cur }
+    }
+    best
+}
+
+fn find_named(items: List[Tagged], want: str) -> Option[List[String]] {
+    for i in 0..items.len() {
+        match items[i] {
+            Named(n, tags) => {
+                if n == String.from(want) { return Some(tags) }
+            }
+            Anon => {}
+        }
+    }
+    None
+}
+
+fn drain(inout l: List[String]) -> usize {
+    var n: usize = 0
+    while l.pop().is_some() { n += 1 }
+    n
+}
+
+fn main() uses io {
+    print(pick(true))
+    print(pick(false))
+    var xs: List[String] = List.new()
+    xs.push(String.from("aa"))
+    xs.push(String.from("bbbb"))
+    xs.push(String.from("c"))
+    print(longest(xs))
+    var items: List[Tagged] = List.new()
+    var tags: List[String] = List.new()
+    tags.push(String.from("t1"))
+    items.push(Named(String.from("bob"), tags))
+    items.push(Anon)
+    tags.push(String.from("t2"))
+    items.push(Named(String.from("amy"), tags))
+    match find_named(items, "amy") {
+        Some(t) => print(t.len())
+        None => print("missing")
+    }
+    match find_named(items, "bob") {
+        Some(t) => print(t.len())
+        None => print("missing")
+    }
+    if let Some(t) = find_named(items, "zed") { print(t.len()) } else { print("no zed") }
+    print(drain(inout xs))
+    print(xs.len())
+    var s = String.from("a")
+    s = if s.len() > 5 { String.from("long") } else { String.from("short") }
+    print(s)
+    let arr = [String.from("p"), String.from("q")]
+    print(arr[1])
+    let b = Box.new(items)
+    print(b.get().len())
+}

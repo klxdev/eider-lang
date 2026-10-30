@@ -1,0 +1,13 @@
+pub type Point = { x: i32, y: i32 }
+
+pub fn origin() -> Point { Point(0, 0) }
+
+pub fn manhattan(a: Point, b: Point) -> i32 {
+    abs_diff(a.x, b.x) + abs_diff(a.y, b.y)
+}
+
+fn abs_diff(a: i32, b: i32) -> i32 {
+    if a > b { a - b } else { b - a }
+}
+
+pub const UNIT: i32 = 1

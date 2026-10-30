@@ -1,0 +1,5 @@
+// expect: E0201 4:25
+fn noisy() -> i32 uses io { print(7)
+    return 1 }
+const X: i32 = comptime noisy()
+fn main() uses io { print(X) }

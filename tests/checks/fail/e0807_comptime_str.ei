@@ -1,0 +1,3 @@
+// expect: E0807 2:7
+const NAME: str = comptime "hi"
+fn main() uses io { print(1) }

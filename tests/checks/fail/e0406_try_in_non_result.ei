@@ -1,0 +1,8 @@
+// expect: E0406 7:20
+fn half(n: u32) -> Result[u32, str] {
+    if n % 2 == 1 { return Err("odd") }
+    Ok(n / 2)
+}
+fn main() {
+    let h = half(4)?
+}

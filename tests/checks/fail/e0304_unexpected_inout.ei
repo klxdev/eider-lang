@@ -1,0 +1,6 @@
+// expect: E0304 5:14
+fn show(n: i32) {}
+fn main() {
+  var n = 1
+  show(inout n)
+}

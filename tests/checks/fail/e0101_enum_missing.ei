@@ -1,0 +1,9 @@
+// expect: E0101 4:3
+type Crate = | Small | Medium | Large
+fn limit(b: Crate) -> u32 {
+  match b {
+    Small => 1
+    Medium => 2
+  }
+}
+fn main() {}

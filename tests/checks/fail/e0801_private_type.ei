@@ -1,0 +1,6 @@
+// expect: E0801 5:12
+import "lib/geometry.ei"
+
+fn main() {
+    let h: geometry.Hidden = geometry.Hidden(1)
+}

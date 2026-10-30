@@ -1,0 +1,4 @@
+// expect: E0110 3:9
+fn main() uses io {
+  print(missing)
+}

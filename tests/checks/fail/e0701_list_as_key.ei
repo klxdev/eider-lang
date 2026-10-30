@@ -1,0 +1,4 @@
+// expect: E0701 3:12
+fn main() {
+    let m: Map[List[i32], i32] = Map.new()
+}

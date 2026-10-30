@@ -1,0 +1,6 @@
+// expect: E0806 1:1
+// mode: wasm
+export fn go() -> i32 uses threads {
+    let t = spawn(|| -> i32 1)
+    return t.join()
+}

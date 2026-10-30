@@ -1,0 +1,3 @@
+// expect: E0504 2:29
+const NAME: String = String.from("x")
+fn main() {}

@@ -1,0 +1,8 @@
+// mode: build
+fn f(c: bool) -> i32 {
+  let x = if c { 1 } else { 2 }
+  var y: i32 = 0
+  y = match c { true => x, false => 0 }
+  y
+}
+fn main() {}

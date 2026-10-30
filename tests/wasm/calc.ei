@@ -1,0 +1,16 @@
+export fn add(a: i32, b: i32) -> i32 { return a + b }
+export fn fib(n: u32) -> u64 {
+    var a: u64 = 0
+    var b: u64 = 1
+    for i in 0..n { let t = a + b
+        a = b
+        b = t }
+    return a
+}
+export fn is_even(n: i32) -> bool { return n % 2 == 0 }
+export fn sum_to(n: i32) -> i64 {
+    var l: List[i64] = List.new()
+    for i in 0..n { l.push(i as i64) }
+    return l.sum()
+}
+export fn div(a: i32, b: i32) -> i32 { return a / b }

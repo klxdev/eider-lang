@@ -1,0 +1,9 @@
+// mode: build
+type C = | R | G | B
+fn f(c: C) -> i32 {
+  match c { R => 1, G => 2, B => 3 }
+}
+fn g(n: i32) -> i32 {
+  match n { 0 => 10, 1 | 2 => 20, other => other }
+}
+fn main() {}

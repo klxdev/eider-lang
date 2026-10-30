@@ -1,0 +1,6 @@
+// expect: E0801 5:11
+import "lib/geometry.ei"
+
+fn main() uses io {
+    print(geometry.abs_diff(1, 2))
+}

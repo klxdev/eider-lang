@@ -1,0 +1,27 @@
+module fib
+
+fn fib(n: i64) -> i64 {
+  if n < 2 { return n }
+  return fib(n - 1) + fib(n - 2)
+}
+
+fn collatz_steps(start: u64) -> u32 {
+  var n = start
+  var steps: u32 = 0
+  while n != 1 {
+    n = if n % 2 == 0 { n / 2 } else { 3 * n + 1 }
+    steps += 1
+  }
+  return steps
+}
+
+fn main() uses io, clock {
+  let t0 = now_ms()
+  for i in 0..30 {
+    if i % 10 == 0 { print(fib(i as i64)) }
+  }
+  print(fib(32))
+  print(collatz_steps(27))        // 111
+  let elapsed = now_ms() - t0
+  print(elapsed < 60_000)
+}

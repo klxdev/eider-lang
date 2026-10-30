@@ -1,0 +1,15 @@
+type Vec2 = { x: i32, y: i32 }
+
+export fn add(a: i32, b: i32) -> i32 { a + b }
+
+export fn dot(a: Vec2, b: Vec2) -> i64 {
+    (a.x as i64) * (b.x as i64) + (a.y as i64) * (b.y as i64)
+}
+
+export fn is_even(n: u32) -> bool { n % 2 == 0 }
+
+export fn greeting() -> str { "hello from eider" }
+
+export fn checked_div(a: i32, b: i32) -> i32 { a / b }
+
+fn internal() -> i32 { 1 }

@@ -1,0 +1,120 @@
+type Expr =
+    | Num(n: i32)
+    | Add(l: Box[Expr], r: Box[Expr])
+    | Mul(l: Box[Expr], r: Box[Expr])
+
+fn eval(e: Expr) -> i32 {
+    match e {
+        Num(n) => n
+        Add(l, r) => eval(l.get()) + eval(r.get())
+        Mul(l, r) => eval(l.get()) * eval(r.get())
+    }
+}
+
+fn num(n: i32) -> Expr { Num(n) }
+fn add(a: Expr, b: Expr) -> Expr { Add(Box.new(a), Box.new(b)) }
+fn mul(a: Expr, b: Expr) -> Expr { Mul(Box.new(a), Box.new(b)) }
+
+fn label(n: i32) -> Result[String, String] {
+    if n < 0 { return Err(String.from("negative")) }
+    Ok(String.from_int(n as i64))
+}
+
+fn both(a: i32, b: i32) -> Result[String, String] {
+    let x = label(a)?
+    var y = label(b)?
+    y.push_str("/")
+    y.append(x)
+    Ok(y)
+}
+
+fn first_long(words: List[String], min: usize) -> Option[String] {
+    for i in 0..words.len() {
+        let w = words[i]
+        if w.len() >= min { return Some(w) }
+    }
+    None
+}
+
+fn count_to(limit: usize) -> usize {
+    var l: List[String] = List.new()
+    var i: usize = 0
+    while i < limit {
+        let s = String.from_int(i as i64)
+        i += 1
+        if i == 3 { continue }
+        if i > 6 { break }
+        l.push(s)
+    }
+    l.len()
+}
+
+fn rename(inout s: String) {
+    s = String.from("renamed")
+}
+
+fn index_of(m: Map[String, List[i32]], k: str) -> usize {
+    match m.get(String.from(k)) {
+        Some(v) => v.len()
+        None => 0
+    }
+}
+
+fn pick(flag: bool) -> String {
+    let a = String.from("left")
+    let b = String.from("right")
+    if flag { a } else { b }
+}
+
+fn main() uses io {
+    let e = add(num(2), mul(num(3), num(4)))
+    print(eval(e))
+    match both(7, 9) {
+        Ok(s) => print(s)
+        Err(m) => print(m)
+    }
+    match both(7, -1) {
+        Ok(s) => print(s)
+        Err(m) => print(m)
+    }
+    var words: List[String] = List.new()
+    words.push(String.from("hi"))
+    words.push(String.from("hello"))
+    words.push(String.from("hey"))
+    match first_long(words, 4) {
+        Some(w) => print(w)
+        None => print("none")
+    }
+    print(count_to(100))
+    var name = String.from("orig")
+    rename(inout name)
+    print(name)
+    var m: Map[String, List[i32]] = Map.new()
+    var nums: List[i32] = List.new()
+    nums.push(1)
+    nums.push(2)
+    m.insert(String.from("a"), nums)
+    nums.push(3)
+    m.insert(String.from("b"), nums)
+    print(index_of(m, "a"))
+    print(index_of(m, "b"))
+    print(index_of(m, "c"))
+    for i in 0..300 {
+        m.insert(String.from_int(i as i64), nums)
+    }
+    print(m.len())
+    print(m.remove(String.from("5")))
+    print(m.remove(String.from("5")))
+    print(m.len())
+    print(pick(true))
+    print(pick(false))
+    let t = (String.from("x"), 5)
+    let (s, n) = t
+    print(s)
+    print(n)
+    let same = String.from("abc") == String.from("abc")
+    print(same)
+    let ok = words.len() > 2 && first_long(words, 5).is_some()
+    print(ok)
+    print(words.contains(String.from("hey")))
+}

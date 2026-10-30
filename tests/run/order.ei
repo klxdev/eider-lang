@@ -1,0 +1,76 @@
+module order
+
+type P = { a: i32, b: i32 }
+type Grid = { cells: [[u8; 3]; 2], label: str }
+
+fn trace(n: i32, inout log: i32) -> i32 {
+  log = log * 10 + n
+  return n
+}
+
+fn side(n: i32) -> bool uses io {
+  print(n)
+  return n > 0
+}
+
+fn sum3(a: i32, b: i32, c: i32) -> i32 { a + b + c }
+
+fn pick(n: i32) -> str {
+  match n {
+    0 => "zero"
+    1 | 2 => "small"
+    big => "big"
+  }
+}
+
+fn main() uses io {
+  // left-to-right evaluation of operands and arguments
+  var log = 0
+  let r = trace(1, inout log) + trace(2, inout log) * trace(3, inout log)
+  print(r)        // 7
+  print(log)      // 123
+
+  var log2 = 0
+  let s = sum3(trace(4, inout log2), trace(5, inout log2), trace(6, inout log2))
+  print(s)        // 15
+  print(log2)     // 456
+
+  // short-circuit: rhs with side effects must not run
+  let a = side(0) && side(9)    // prints 0 only
+  let b = side(1) || side(8)    // prints 1 only
+  let c = side(1) && side(2)    // prints 1, 2
+  print(a)
+  print(b)
+  print(c)
+
+  // while condition with a call is re-evaluated each iteration
+  var k = 0
+  while trace(k, inout log) < 3 { k += 1 }
+  print(k)        // 3
+
+  // nested arrays, records, value semantics
+  var g = Grid([[1, 2, 3], [4, 5, 6]], "grid")
+  let copy = g
+  g.cells[1][2] = 60
+  print(g.cells[1][2])      // 60
+  print(copy.cells[1][2])   // 6
+  var row = [0; 4]
+  row[3] = 7
+  print(row[3] as i64 + 1)  // 8
+  print(len(row))           // 4
+
+  // match with binding and or-patterns
+  print(pick(0))
+  print(pick(2))
+  print(pick(99))
+
+  // i64 / u64 edge cases
+  let lo: i64 = -9_223_372_036_854_775_807 - 1
+  print(lo)
+  let hi: u64 = 18_446_744_073_709_551_615
+  print(hi)
+  print(lo +% -1)            // wraps to INT64_MAX
+  let m: i32 = -2_147_483_647 - 1
+  print(m)
+  print(255 as u8 +% 1)      // 0
+}

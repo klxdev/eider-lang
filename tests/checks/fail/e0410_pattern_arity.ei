@@ -1,0 +1,9 @@
+// expect: E0410 5:9
+type Shape = | Rect(w: u32, h: u32) | Empty
+fn f(s: Shape) -> u32 {
+    match s {
+        Rect(w) => w
+        Empty => 0
+    }
+}
+fn main() {}

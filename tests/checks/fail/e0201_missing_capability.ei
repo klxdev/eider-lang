@@ -1,0 +1,4 @@
+// expect: E0201 3:3
+fn main() {
+  print(1)
+}

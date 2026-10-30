@@ -1,0 +1,23 @@
+import "ns/a.ei"
+import "ns/b.ei" as other
+import "ns/util.ei"
+
+fn area(n: i32) -> i32 { n + 1000 }
+
+fn main() uses io {
+    let x = a.Circle(2)
+    let y = other.Circle(2)
+    print(a.area(x))
+    print(other.area(y))
+    print(a.area(a.big()))
+    print(other.area(other.Tri(4, 6)))
+    print(area(1))
+    print(a.SIDES + other.SIDES)
+    match x {
+        a.Circle(r) => print(r),
+        a.Square(s) => print(s),
+    }
+    let p = util.swap(util.Pair(1, 2))
+    print(p.a)
+    print(a.big().describe())
+}

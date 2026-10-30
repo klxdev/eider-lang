@@ -1,0 +1,25 @@
+import "util.ei"
+
+pub type Shape = | Circle(r: i32) | Square(s: i32)
+pub const SIDES: i32 = 4
+
+pub trait Describe { fn describe(self) -> i32 }
+
+impl Describe for Shape {
+    fn describe(self) -> i32 {
+        match self {
+            Circle(r) => r,
+            Square(s) => s * SIDES,
+        }
+    }
+}
+
+pub fn area(s: Shape) -> i32 {
+    let area = match s {
+        Circle(r) => r * r * 3,
+        Square(s) => util.double(s) * s / 2,
+    }
+    return area
+}
+
+pub fn big() -> Shape { Square(10) }

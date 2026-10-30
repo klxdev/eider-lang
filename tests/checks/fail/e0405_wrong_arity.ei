@@ -1,0 +1,5 @@
+// expect: E0405 4:3
+fn f(a: i32) {}
+fn main() {
+  f(1, 2)
+}

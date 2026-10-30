@@ -1,0 +1,3 @@
+// expect: E0803 2:20
+extern "c" fn puts(s: String) -> i32
+fn main() {}
