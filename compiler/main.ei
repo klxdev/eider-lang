@@ -2,7 +2,8 @@
 //
 //   eiderc lex <file.ei>            dump tokens (one per line: line:col kind [value])
 //   eiderc parse <file.ei>          dump the AST (indented S-expressions, see dump.ei)
-//   eiderc check <file.ei> [--json] report the first error, or print `ok` (lex + parse so far)
+//   eiderc check <file.ei> [--json] report the first error, or print `ok`
+//   eiderc ir <file.ei>             dump the typed IR (ir.ei)
 
 import "deps/core/sys.ei"
 import "deps/std/bytes.ei"
@@ -14,6 +15,9 @@ import "lex.ei"
 import "diag.ei"
 import "parse.ei"
 import "dump.ei"
+import "resolve.ei"
+import "check.ei"
+import "ir.ei"
 
 type Args = { cmd: List[u8], file: List[u8], json: bool }
 
@@ -22,7 +26,7 @@ type Args = { cmd: List[u8], file: List[u8], json: bool }
 fn is(a: List[u8], s: str) -> bool uses ffi { bytes.eq(a, sys.lit(s)) }
 
 fn usage() uses io, ffi {
-    io.err(sys.lit("usage: eiderc (lex | parse | check) <file.ei> [--json]\n"))
+    io.err(sys.lit("usage: eiderc (lex | parse | check | ir) <file.ei> [--json]\n"))
     env.exit(2)
 }
 
@@ -45,25 +49,23 @@ fn parse_args() -> Args uses io, ffi {
     Args(cmd, file, json)
 }
 
-/// Print `d` like the bootstrap: JSON on stdout, or the rendered form on stderr.
-fn report(d: diag.Diag, a: Args, src: List[u8]) uses io, ffi {
+/// Print `d` like the bootstrap: JSON on stdout, or the rendered form (against the source of
+/// the file it is in) on stderr. Module prefixes in the text are shown as `module.Name`.
+fn report(d: diag.Diag, a: Args, src: List[u8]) uses io, fs, ffi {
+    var d2 = d
+    d2.msg = diag.demangle(d.msg)
+    d2.help = diag.demangle(d.help)
+    let elsewhere = d2.file.len() > 0 && !bytes.eq(d2.file, a.file)
     if a.json {
-        io.outln(diag.json(d, a.file))
-    } else {
-        io.err(diag.render(d, a.file, src))
-    }
-}
-
-fn lex_diag(r: lex.Lex) -> Option[diag.Diag] uses ffi {
-    match r {
-        lex.Done(_) => None
-        lex.Failed(e) => Some(diag.new("E0001", e.line, e.col, sys.lit(e.msg)))
-        lex.BadChar(line, col, ch) => {
-            var m = sys.lit("unexpected character `")
-            bytes.append(inout m, ch)
-            m.push(96)
-            Some(diag.new("E0001", line, col, m))
+        io.outln(diag.json(d2, a.file))
+    } else if elsewhere {
+        let other: List[u8] = match fs.read(d2.file) {
+            Ok(t) => t
+            Err(_) => List.new()
         }
+        io.err(diag.render(d2, d2.file, other))
+    } else {
+        io.err(diag.render(d2, a.file, src))
     }
 }
 
@@ -112,7 +114,7 @@ fn main() uses io, fs, ffi {
     }
     var names = intern.new()
     let r = lex.lex(src, inout names)
-    match lex_diag(r) {
+    match resolve.lex_diag(r) {
         Some(d) => {
             report(d, a, src)
             env.exit(1)
@@ -138,9 +140,28 @@ fn main() uses io, fs, ffi {
     }
     if is(a.cmd, "parse") {
         io.out(dump.program(p))
-    } else if is(a.cmd, "check") {
-        if !a.json { io.outln(sys.lit("ok")) }
-    } else {
-        usage()
+        return
+    }
+    if !is(a.cmd, "check") && !is(a.cmd, "ir") { usage() }
+    let prog = match resolve.load(a.file, src, p) {
+        Ok(x) => x
+        Err(d) => {
+            report(d, a, src)
+            env.exit(1)
+            return
+        }
+    }
+    let c = match check.check(prog) {
+        Ok(x) => x
+        Err(d) => {
+            report(d, a, src)
+            env.exit(1)
+            return
+        }
+    }
+    if is(a.cmd, "ir") {
+        io.out(ir.dump(c.ir, c.t, c.p.names))
+    } else if !a.json {
+        io.outln(sys.lit("ok"))
     }
 }

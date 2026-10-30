@@ -1,0 +1,6 @@
+// expect: E0303 4:16
+fn main() {
+    match 3 {
+        n => { n = 4 }
+    }
+}

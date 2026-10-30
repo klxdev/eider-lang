@@ -1,0 +1,5 @@
+// expect: E0401 4:27
+import "../lib/shapes.ei"
+fn main() {
+    let p: shapes.Point = 1
+}

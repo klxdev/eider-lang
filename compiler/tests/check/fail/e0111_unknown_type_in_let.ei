@@ -1,0 +1,4 @@
+// expect: E0111 3:12
+fn main() {
+    let x: Nope = 1
+}

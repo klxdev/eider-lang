@@ -1,0 +1,6 @@
+// expect: E0501 5:17
+fn id[T](x: T) -> T { x }
+type Wrap[T] = { v: T }
+fn main() {
+    let y: u8 = 300
+}

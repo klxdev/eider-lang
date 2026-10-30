@@ -1,0 +1,5 @@
+// expect: E0801 4:12
+import "../lib/shapes.ei"
+fn main() {
+    let x: shapes.Secret = shapes.secret()
+}

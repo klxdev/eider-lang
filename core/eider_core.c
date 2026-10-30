@@ -14,6 +14,7 @@
 #endif
 
 #define _POSIX_C_SOURCE 200809L
+#define _XOPEN_SOURCE 700 /* realpath (XSI) */
 #if defined(__APPLE__)
 #define _DARWIN_C_SOURCE 1
 #endif
@@ -185,6 +186,16 @@ EC_FN(int64_t, ec_cwd, (void)) {
     if (e != ERANGE) return -(int64_t)e;
     cap *= 2;
   }
+}
+
+/* The canonical absolute path of in[0] (every symlink, `.` and `..` resolved) into out. */
+EC_FN(int64_t, ec_realpath, (void)) {
+  char *r = realpath(arg(0), NULL);
+  if (!r) return fail();
+  out_len = 0;
+  out_put(r, strlen(r));
+  free(r);
+  return 0;
 }
 
 /* Write in[] to fd 1 or 2, after flushing Eider's buffered `print` output. */

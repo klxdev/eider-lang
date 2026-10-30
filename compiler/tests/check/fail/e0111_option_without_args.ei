@@ -1,0 +1,3 @@
+// expect: E0111 2:11
+fn f() -> Option { 1 }
+fn main() {}

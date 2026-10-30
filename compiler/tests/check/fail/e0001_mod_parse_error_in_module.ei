@@ -1,0 +1,3 @@
+// expect: E0001 2:14
+import "../lib/bad_parse.ei"
+fn main() {}

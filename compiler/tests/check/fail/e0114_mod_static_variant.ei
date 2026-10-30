@@ -1,0 +1,5 @@
+// expect: E0114 4:26
+import "../lib/shapes.ei"
+fn main() {
+    let c = shapes.Color.Red
+}

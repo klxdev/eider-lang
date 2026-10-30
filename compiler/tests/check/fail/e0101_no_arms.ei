@@ -1,0 +1,6 @@
+// expect: E0101 3:5
+fn f(n: i32) {
+    match n {
+    }
+}
+fn main() {}

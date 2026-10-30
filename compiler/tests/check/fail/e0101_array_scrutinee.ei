@@ -1,0 +1,9 @@
+// expect: E0101 8:13
+fn f(a: [i32; 2]) -> i32 {
+    match a {
+        x => 1
+    }
+}
+fn main() {
+    let n = match 1 { 2 => 3 }
+}

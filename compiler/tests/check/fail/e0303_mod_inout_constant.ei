@@ -1,0 +1,5 @@
+// expect: E0303 4:23
+import "../lib/shapes.ei"
+fn main() {
+    shapes.bump(inout shapes.ORIGIN_X)
+}

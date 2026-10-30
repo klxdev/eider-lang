@@ -1,0 +1,4 @@
+// expect: E0501 3:18
+const M: i64 = -9223372036854775807 - 1
+const X: i64 = M / -1
+fn main() {}

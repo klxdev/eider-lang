@@ -1,0 +1,7 @@
+// expect: E0401 4:9
+fn f(n: i32) -> i32 {
+    match n {
+        (a, b) => 1
+    }
+}
+fn main() {}

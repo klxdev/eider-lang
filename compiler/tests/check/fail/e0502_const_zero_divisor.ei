@@ -1,0 +1,4 @@
+// expect: E0502 3:27
+const Z: i32 = 0
+fn f(n: i32) -> i32 { n / Z }
+fn main() {}

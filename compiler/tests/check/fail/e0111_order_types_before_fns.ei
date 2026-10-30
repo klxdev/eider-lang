@@ -1,0 +1,4 @@
+// expect: E0111 3:15
+fn f(x: Missing) {}
+type T = { x: AlsoMissing }
+fn main() {}

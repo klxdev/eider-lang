@@ -1,0 +1,4 @@
+// expect: E0110 3:17
+fn a() -> i32 { first }
+fn b() -> i32 { second }
+fn main() {}

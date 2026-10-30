@@ -1,0 +1,5 @@
+// expect: E0405 4:13
+type C = | R | G
+fn main() {
+    let c = R(1)
+}

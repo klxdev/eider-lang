@@ -1,0 +1,5 @@
+// expect: E0113 4:15
+fn main() {
+    let x = 1
+    let y = x.y
+}

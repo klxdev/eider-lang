@@ -1,0 +1,6 @@
+// expect: E0201 3:5
+fn f() -> i32 {
+    print(1)
+    1
+}
+fn main() {}

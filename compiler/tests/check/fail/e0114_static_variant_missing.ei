@@ -1,0 +1,5 @@
+// expect: E0114 4:15
+type C = | R | G
+fn main() {
+    let c = C.Blue
+}

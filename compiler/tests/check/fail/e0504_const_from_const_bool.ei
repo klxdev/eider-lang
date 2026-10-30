@@ -1,0 +1,4 @@
+// expect: E0504 3:17
+const A: bool = true
+const B: bool = A
+fn main() {}

@@ -1,0 +1,299 @@
+// pats: pattern-matrix exhaustiveness and reachability (Maranget), a port of
+// eider-bootstrap src/pats.rs so witnesses and the arm it calls unreachable are the same.
+//
+// A lowered pattern is `Wild` or a constructor applied to sub-patterns; patterns live in an
+// arena (`Pats`, id 0 is the shared wildcard). A matrix is a flat list of rows of equal
+// width. Constructors: C_VARIANT a=variant index, C_SINGLE (the one constructor of a
+// record), C_BOOL a=0/1, C_INT a=1 if negative v=magnitude, C_STR a=interned contents.
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+import "intern.ei"
+import "types.ei"
+import "resolve.ei"
+import "diag.ei"
+
+pub const C_VARIANT: u32 = 0
+pub const C_SINGLE: u32 = 1
+pub const C_BOOL: u32 = 2
+pub const C_INT: u32 = 3
+pub const C_STR: u32 = 4
+
+pub type Pat = { wild: bool, ck: u32, ca: u32, cv: u64, start: u32, len: u32 }
+
+pub type Pats = { ps: List[Pat], args: List[u32] }
+
+/// Rows of `w` pattern ids each (`n` rows; `w` may be 0).
+pub type M = { w: u32, n: u32, cells: List[u32] }
+
+pub fn new() -> Pats {
+    var p = Pats(List.new(), List.new())
+    p.ps.push(Pat(true, 0, 0, 0, 0, 0))
+    p
+}
+
+pub const WILD: u32 = 0
+
+pub fn ctor(inout p: Pats, ck: u32, ca: u32, cv: u64, subs: List[u32]) -> u32 {
+    let start = p.args.len() as u32
+    for s in subs { p.args.push(s) }
+    p.ps.push(Pat(false, ck, ca, cv, start, subs.len() as u32))
+    (p.ps.len() - 1) as u32
+}
+
+pub fn empty(w: u32) -> M { M(w, 0, List.new()) }
+
+pub fn add_row(inout m: M, row: List[u32]) {
+    for x in row { m.cells.push(x) }
+    m.n += 1
+}
+
+fn cell(m: M, r: u32, c: u32) -> u32 { m.cells[(r * m.w + c) as usize] }
+
+fn same(p: Pats, a: u32, b: u32) -> bool {
+    let x = p.ps[a as usize]
+    let y = p.ps[b as usize]
+    x.ck == y.ck && x.ca == y.ca && x.cv == y.cv
+}
+
+/// One constructor of a type with finitely many: its kind/argument and field types.
+type Sig = { ck: u32, ca: u32, fields: List[u32] }
+
+/// The constructors of `ty`, or None for types with infinitely many values.
+fn sig(t: types.Types, ty: u32) -> Option[List[Sig]] {
+    let k = types.kind(t, ty)
+    var out: List[Sig] = List.new()
+    if k == types.T_BOOL {
+        out.push(Sig(C_BOOL, 1, List.new()))
+        out.push(Sig(C_BOOL, 0, List.new()))
+        return Some(out)
+    }
+    if k == types.T_ENUM {
+        let d = types.def_of(t, ty)
+        for i in 0..d.len {
+            let v = types.variant(t, d, i)
+            var fs: List[u32] = List.new()
+            for j in 0..v.flen { fs.push(types.field(t, v.fstart, j).ty) }
+            out.push(Sig(C_VARIANT, i, fs))
+        }
+        return Some(out)
+    }
+    if k == types.T_RECORD {
+        let d = types.def_of(t, ty)
+        var fs: List[u32] = List.new()
+        for j in 0..d.len { fs.push(types.field(t, d.start, j).ty) }
+        out.push(Sig(C_SINGLE, 0, fs))
+        return Some(out)
+    }
+    None
+}
+
+/// Distinct constructors heading the rows, in order of appearance (as pattern ids).
+fn heads(p: Pats, m: M) -> List[u32] {
+    var hs: List[u32] = List.new()
+    for r in 0..m.n {
+        let x = cell(m, r, 0)
+        if p.ps[x as usize].wild { continue }
+        var dup = false
+        for h in hs {
+            if same(p, h, x) { dup = true }
+        }
+        if !dup { hs.push(x) }
+    }
+    hs
+}
+
+fn heads_have(p: Pats, hs: List[u32], ck: u32, ca: u32) -> bool {
+    for h in hs {
+        let x = p.ps[h as usize]
+        if x.ck == ck && x.ca == ca && x.cv == 0 { return true }
+    }
+    false
+}
+
+/// Rows whose head is constructor `c` (its sub-patterns spliced in) or a wildcard (`arity`
+/// wildcards spliced in).
+fn specialize(p: Pats, m: M, c: Pat, arity: u32) -> M {
+    var out = empty(arity + m.w - 1)
+    for r in 0..m.n {
+        let x = p.ps[cell(m, r, 0) as usize]
+        var row: List[u32] = List.new()
+        if x.wild {
+            for i in 0..arity { row.push(WILD) }
+        } else if x.ck == c.ck && x.ca == c.ca && x.cv == c.cv {
+            for i in 0..x.len { row.push(p.args[(x.start + i) as usize]) }
+        } else {
+            continue
+        }
+        for j in 1..m.w { row.push(cell(m, r, j)) }
+        add_row(inout out, row)
+    }
+    out
+}
+
+fn default_rows(p: Pats, m: M) -> M {
+    var out = empty(m.w - 1)
+    for r in 0..m.n {
+        if !p.ps[cell(m, r, 0) as usize].wild { continue }
+        var row: List[u32] = List.new()
+        for j in 1..m.w { row.push(cell(m, r, j)) }
+        add_row(inout out, row)
+    }
+    out
+}
+
+fn tail(xs: List[u32]) -> List[u32] {
+    var out: List[u32] = List.new()
+    for i in 1..xs.len() { out.push(xs[i]) }
+    out
+}
+
+fn concat(a: List[u32], b: List[u32]) -> List[u32] {
+    var out = a
+    for x in b { out.push(x) }
+    out
+}
+
+fn wilds(n: u32) -> List[u32] {
+    var out: List[u32] = List.new()
+    for i in 0..n { out.push(WILD) }
+    out
+}
+
+/// Would `v` match some value that no row of `m` matches? (`tys` are the column types.)
+pub fn useful(p: Pats, t: types.Types, m: M, v: List[u32], tys: List[u32]) -> bool {
+    if v.len() == 0 { return m.n == 0 }
+    let x = p.ps[v[0] as usize]
+    if !x.wild {
+        let r2 = specialize(p, m, x, x.len)
+        var v2: List[u32] = List.new()
+        for i in 0..x.len { v2.push(p.args[(x.start + i) as usize]) }
+        let v3 = concat(v2, tail(v))
+        let t2 = concat(field_tys(t, tys[0], x), tail(tys))
+        return useful(p, t, r2, v3, t2)
+    }
+    let hs = heads(p, m)
+    match sig(t, tys[0]) {
+        Some(all) => {
+            if complete(p, hs, all) {
+                for s in all {
+                    let c = Pat(false, s.ck, s.ca, 0, 0, 0)
+                    let n = s.fields.len() as u32
+                    let r2 = specialize(p, m, c, n)
+                    let v2 = concat(wilds(n), tail(v))
+                    let t2 = concat(s.fields, tail(tys))
+                    if useful(p, t, r2, v2, t2) { return true }
+                }
+                return false
+            }
+        }
+        None => {}
+    }
+    useful(p, t, default_rows(p, m), tail(v), tail(tys))
+}
+
+fn complete(p: Pats, hs: List[u32], all: List[Sig]) -> bool {
+    for s in all {
+        if !heads_have(p, hs, s.ck, s.ca) { return false }
+    }
+    true
+}
+
+fn field_tys(t: types.Types, ty: u32, c: Pat) -> List[u32] {
+    match sig(t, ty) {
+        Some(all) => {
+            for s in all {
+                if s.ck == c.ck && s.ca == c.ca { return s.fields }
+            }
+            List.new()
+        }
+        None => List.new()
+    }
+}
+
+/// How a constructor prints in a witness.
+fn show(t: types.Types, names: intern.Interner, ty: u32, ck: u32, ca: u32, cv: u64, inner: List[List[u8]]) -> List[u8] uses ffi {
+    var out: List[u8] = List.new()
+    if ck == C_BOOL {
+        let s = if ca == 1 { "true" } else { "false" }
+        return sys.lit(s)
+    }
+    if ck == C_INT {
+        if ca == 1 { out.push(45) }
+        bytes.append(inout out, bytes.from_u64(cv))
+        return out
+    }
+    if ck == C_STR {
+        diag.debug_str(inout out, intern.name(names, ca))
+        return out
+    }
+    let d = types.def_of(t, ty)
+    if ck == C_VARIANT {
+        bytes.append(inout out, resolve.key_text(names, types.variant(t, d, ca).key))
+    } else {
+        bytes.append(inout out, resolve.key_text(names, d.key))
+    }
+    if inner.len() > 0 {
+        out.push(40)
+        for i in 0..inner.len() {
+            if i > 0 { bytes.append(inout out, sys.lit(", ")) }
+            bytes.append(inout out, inner[i])
+        }
+        out.push(41)
+    }
+    out
+}
+
+/// A witness (one text per column) of a value no row matches, or None if `m` is exhaustive.
+pub fn missing(p: Pats, t: types.Types, names: intern.Interner, m: M, tys: List[u32]) -> Option[List[List[u8]]] uses ffi {
+    if tys.len() == 0 {
+        if m.n == 0 { return Some(List.new()) }
+        return None
+    }
+    let hs = heads(p, m)
+    let s0 = sig(t, tys[0])
+    match s0 {
+        Some(all) => {
+            if complete(p, hs, all) {
+                for s in all {
+                    let n = s.fields.len() as u32
+                    let c = Pat(false, s.ck, s.ca, 0, 0, 0)
+                    let r2 = specialize(p, m, c, n)
+                    let t2 = concat(s.fields, tail(tys))
+                    match missing(p, t, names, r2, t2) {
+                        Some(w) => {
+                            var inner: List[List[u8]] = List.new()
+                            for i in 0..n { inner.push(w[i as usize]) }
+                            var out: List[List[u8]] = List.new()
+                            out.push(show(t, names, tys[0], s.ck, s.ca, 0, inner))
+                            for i in n..w.len() as u32 { out.push(w[i as usize]) }
+                            return Some(out)
+                        }
+                        None => {}
+                    }
+                }
+                return None
+            }
+        }
+        None => {}
+    }
+    let w = missing(p, t, names, default_rows(p, m), tail(tys))?
+    var head = sys.lit("_")
+    match s0 {
+        Some(all) => {
+            for s in all {
+                if !heads_have(p, hs, s.ck, s.ca) {
+                    var inner: List[List[u8]] = List.new()
+                    for i in 0..s.fields.len() { inner.push(sys.lit("_")) }
+                    head = show(t, names, tys[0], s.ck, s.ca, 0, inner)
+                    break
+                }
+            }
+        }
+        None => {}
+    }
+    var out: List[List[u8]] = List.new()
+    out.push(head)
+    for x in w { out.push(x) }
+    Some(out)
+}

@@ -146,6 +146,14 @@ pub fn absolute(p: List[u8]) -> Result[List[u8], String] uses fs, ffi {
     Ok(normalize(full))
 }
 
+/// The canonical absolute form of an existing path, with every symlink resolved.
+pub fn canonical(p: List[u8]) -> Result[List[u8], String] uses fs, ffi {
+    one(p)
+    let n = sys.realpath()
+    if n < 0 { return Err(fail("cannot resolve", p, n)) }
+    Ok(sys.take())
+}
+
 /// Fold `.`, `..` and repeated slashes (purely textual; `..` above the root stays at the root).
 pub fn normalize(p: List[u8]) -> List[u8] {
     let abs = p.len() > 0 && p[0] == 47

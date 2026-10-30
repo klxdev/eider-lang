@@ -1,0 +1,99 @@
+const K: i32 = 42i32
+
+fn next -> i32
+  %0 inout n: i32
+  %1 temp: i32
+  %2 temp: i32
+  %3 temp: i32
+  {
+    %1 = read %0
+    %2 = %1 + 1i32  @5
+    store %0 = %2
+    %3 = read %0
+    return %3
+  }
+
+fn main -> () uses io
+  %0 var n: i32
+  %1 temp: i32
+  %2 temp: i32
+  %3 temp: i32
+  %4 let a: i32
+  %5 temp: i32
+  %6 temp: [i32; 3]
+  %7 temp: P
+  %8 var p: P
+  %9 temp: i32
+  %10 temp: usize
+  %11 temp: i32
+  %12 temp: i32
+  %13 temp: i32
+  %14 temp: i32
+  %15 temp: bool
+  %16 temp: bool
+  %17 temp: i32
+  %18 temp: bool
+  %19 let ok: bool
+  %20 temp: i32
+  %21 let i: i32
+  %22 temp: i32
+  %23 temp: i32
+  %24 temp: bool
+  %25 temp: i32
+  %26 temp: bool
+  %27 temp: i32
+  %28 temp: i32
+  %29 temp: i32
+  %30 temp: bool
+  {
+    %0 = 0i32
+    %1 = read %0
+    %2 = call next(inout %0)
+    %3 = %1 + %2  @14
+    %4 = %3
+    %5 = read %4
+    %6 = repeat [i32; 3] (42i32)
+    %7 = P(%5, %6)
+    %8 = %7
+    %9 = call next(inout %0)
+    %10 = %9 as usize  @17
+    %11 = call next(inout %0)
+    %12 = read %8.1[%10]@17
+    %13 = %12 + %11  @17
+    store %8.1[%10]@17 = %13
+    %14 = read %4
+    %15 = %14 > 0i32
+    %16 = %15
+    if %16 {
+      %17 = read %8.1[0usize]@18
+      %18 = %17 == 42i32
+      %16 = %18
+    } else {
+    }
+    %19 = %16
+    %20 = 2i32
+    %21 = 0i32
+    loop {
+      %22 = read %21
+      %23 = read %20
+      %24 = %22 < %23
+      if %24 {
+      } else {
+        break
+      }
+      %25 = read %21
+      %26 = %25 == 1i32
+      if %26 {
+        continue
+      } else {
+      }
+      %27 = read %21
+      print %27
+    } step {
+      %28 = read %21
+      %29 = %28 +% 1i32
+      store %21 = %29
+    }
+    %30 = read %19
+    print %30
+  }

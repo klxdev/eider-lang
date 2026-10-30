@@ -1,0 +1,5 @@
+// expect: E0401 4:7
+fn f(n: u8) {}
+fn main() {
+    f(true)
+}

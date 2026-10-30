@@ -1,8 +1,11 @@
 # The self-hosted compiler (`eiderc`)
 
-Status: approved direction; C1 and C2 done. This file owns the plan; update it as stages land.
+Status: approved direction; C1, C2 and C3 done. This file owns the plan; update it as stages land.
 
-Progress: **C1 done** (lexer, interner, diagnostics rendering; `scripts/test-compiler.sh`). **C2 done** (parser to the AST arena, `eiderc parse` dump, parse-error corpus and AST goldens). Next: C3.
+Progress: **C1 done** (lexer, interner, diagnostics rendering; `scripts/test-compiler.sh`).
+**C2 done** (parser to the AST arena, `eiderc parse` dump, parse-error corpus and AST goldens).
+**C3 done** for v0 plus non-generic payload enums (`resolve.ei`, `types.ei`, `fold.ei`,
+`pats.ei`, `check.ei`, `ir.ei`; see "C3: checking" below). Next: C4.
 
 ## Goal
 
@@ -106,6 +109,49 @@ language as it is:
 - No threads, no closures in hot paths (closures copy their captures).
 - `uses ffi` everywhere is accepted in the compiler for now (it sits on std).
 
+## C3: checking
+
+`eiderc check` runs lex, parse, `resolve.load` (module graph) and `check.check`, and prints
+`ok` or the first diagnostic exactly as the bootstrap does (`--json` byte for byte);
+`eiderc ir` dumps the typed IR.
+
+- **Same passes, same order.** `check.ei` is a port of the bootstrap's checker without its C
+  emission: type templates, non-generic types, function names, constants, every signature,
+  test bodies, then function bodies in *reverse* order (the bootstrap pops a stack). The
+  first error is therefore the bootstrap's first error, including which file it names.
+- **Names.** The bootstrap renames an imported module's items `stem__Name` and its checker
+  sees one flat table (src/ns.rs). `resolve.ei` keys every name as (module prefix, symbol)
+  in a u64 and reproduces ns.rs's rewriting rules (own items, function locals, patterns,
+  tests), so a lookup hits exactly what the mangled string would; messages spell keys the
+  bootstrap's way and `diag.demangle` turns `a__B` into `a.B` like its report. Modules are
+  identified by real path (`fs.canonical`, i.e. the core's `ec_realpath`), as
+  std::fs::canonicalize does, so the deps/ link farm's paths to one file are one module.
+- **Folding** (`fold.ei`) computes in a sign + 128-bit magnitude, enough for every value the
+  bootstrap computes in i128 from in-range operands (its E0501 messages print them).
+- **Out of scope** (generics, traits, impls, tuples, closures, String/List/Map, `?`, threads,
+  FFI/export, comptime) ends checking with an `unsupported` diagnostic at the point where the
+  bootstrap would start handling the feature; everything reported before it is exact, and
+  the test script counts such files as out of scope.
+- **The IR** (node table at the top of `ir.ei`) is what C4 lowers: per function a table of
+  locals and a tree of blocks; every intermediate value is a single-assignment temporary in
+  source evaluation order, variable reads are explicit `read`s of places (local, field,
+  bounds-checked element, enum payload), `&&`/`||` and `match` are lowered to `if`, `for`
+  loops to `loop` with a `step` block (what `continue` runs). Constants are folded values.
+- **Tests.** `scripts/test-compiler.sh` compares `check --json` with the bootstrap on
+  tests/checks (51/74 in scope, all agree), tests/run, and eiderc's own 229 cases in
+  `compiler/tests/check` (fail cases carry `// expect:` headers that also pass the bootstrap's
+  compile-fail runner; helper modules in `lib/`); IR goldens live in `compiler/tests/ir`.
+  `scripts/fuzz-check.py` mutates v0 programs and compares both compilers (thousands of
+  mutants agree; run it after checker changes).
+- **Bootstrap quirks kept for parity** (fix them after the bootstrap is retired, with tests):
+  `Enum.Variant` fails (E0114) for an enum of an imported module, or inside one, because
+  variant names are prefixed but the field name isn't; errors in an imported module's test
+  blocks, and E0801 for a private field type checked while constructing from another module,
+  name the wrong file; that E0801 itself (a public record with a private field type can't be
+  built outside its module) is checked against the constructing module; in a module's test
+  block, a local named like one of the module's items is shadowed by the item; `x /= 0` is
+  not a compile error although `x / 0` is.
+
 ## Language work that lands in `eiderc` (after parity)
 
 Each with a design note, compile-fail tests and new codes:
@@ -130,7 +176,7 @@ Each with a design note, compile-fail tests and new codes:
 |---|---|---|
 | C1 ✅ | `lex`, `intern`, `diag`; `eiderc lex` dumps tokens | every `.ei` in the repo plus `compiler/tests/lex` agrees with the bootstrap on lexer errors (JSON); golden dump in `compiler/tests/lex_ok` |
 | C2 ✅ | `parse` to the AST arena; `eiderc parse` dumps the AST | every `.ei` in the repo parses; parse errors (E0001) match the bootstrap's positions, including the one-file-per-error-path corpus in `compiler/tests/parse`; golden dumps in `compiler/tests/parse_ok` |
-| C3 | `resolve` + `check` for the v0 language (ints, bool, str, records, enums, arrays, control flow, `inout`, capabilities, const folding) | v0 compile-fail and compile-pass tests match |
+| C3 ✅ | `resolve` + `check` for the v0 language (ints, bool, str, records, enums, arrays, control flow, `inout`, capabilities, const folding), producing the typed IR (`eiderc ir`) | v0 compile-fail and compile-pass tests match |
 | C4 | `lower` + C for v0; runtime moved to `core/eider_rt.*` | v0 run tests match, clean under ASan/UBSan |
 | C5 | S1–S3: payload enums, generics, traits, Option/Result/`?`, tuples, patterns, String/List/Map/Box, closures | all the features `compiler/` itself uses; their tests match |
 | C6 | Self-host: stage1 builds stage2 builds stage3; fixed point; commit the seed | `scripts/selfhost.sh` green |
@@ -139,7 +185,7 @@ Each with a design note, compile-fail tests and new codes:
 
 ## Testing
 
-- Golden dumps per pass (`lex`, `parse`, later `check`), regenerated with a bless flag and
+- Golden dumps per pass (`lex`, `parse`, `ir`), regenerated with a bless flag and
   reviewed in diffs.
 - Differential testing: every program in the suites is compiled by both stage0 and
   `eiderc`. Their observable behaviour (stdout, exit code, diagnostics) must match.
@@ -155,10 +201,10 @@ Each with a design note, compile-fail tests and new codes:
 ```
 compiler/
   eider.toml          package `eiderc`
-  main.ei             CLI (lex / parse / check / emit-c / build / run / test)
-  source.ei  lex.ei  intern.ei  ast.ei  parse.ei  resolve.ei  types.ei  check.ei
-  ir.ei  lower.ei  emit.ei  diag.ei  driver.ei
-  tests/              pass-level golden tests
+  main.ei             CLI (lex / parse / check / ir / emit-c / build / run / test)
+  source.ei  lex.ei  intern.ei  ast.ei  parse.ei  resolve.ei  types.ei  fold.ei  pats.ei
+  check.ei  ir.ei  lower.ei  emit.ei  diag.ei  driver.ei
+  tests/              pass-level golden tests (lex, lex_ok, check, ir)
 ```
 
 `compiler/` depends on `core` and `std` only.

@@ -1,0 +1,7 @@
+// expect: E0401 6:17
+fn main() {
+    let x: i32 = true
+}
+test "t" {
+    let y: u8 = false
+}

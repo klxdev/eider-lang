@@ -1,0 +1,4 @@
+// expect: E0110 3:5
+fn main() {
+    missing = 1
+}

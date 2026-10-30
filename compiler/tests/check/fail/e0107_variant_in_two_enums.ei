@@ -1,0 +1,4 @@
+// expect: E0107 3:12
+type A = | X | Y
+type B = | Y | Z
+fn main() {}

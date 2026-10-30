@@ -1,0 +1,3 @@
+// expect: E0110 8:12
+import "../lib/test_shadow.ei"
+fn main() {}

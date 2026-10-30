@@ -1,0 +1,8 @@
+// expect: E0501 4:9
+fn f(x: u8) -> i32 {
+    match x {
+        256 => 1
+        _ => 2
+    }
+}
+fn main() {}

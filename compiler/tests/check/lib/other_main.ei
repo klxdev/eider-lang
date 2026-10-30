@@ -1,0 +1,2 @@
+// Helper module with its own main.
+fn main() {}

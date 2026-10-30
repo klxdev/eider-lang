@@ -1,0 +1,9 @@
+// expect: E0401 6:9
+type P = { x: i32 }
+type C = | R(n: i32) | G
+fn f(p: P) -> i32 {
+    match p {
+        R(n) => n
+    }
+}
+fn main() {}

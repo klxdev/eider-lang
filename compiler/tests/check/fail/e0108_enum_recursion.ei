@@ -1,0 +1,3 @@
+// expect: E0108 2:6
+type Tree = | Leaf | Node(left: Tree, v: i32)
+fn main() {}

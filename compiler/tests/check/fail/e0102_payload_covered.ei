@@ -1,0 +1,11 @@
+// expect: E0102 7:9
+type S = | V(b: bool) | W
+fn f(s: S) -> i32 {
+    match s {
+        V(true) => 1
+        V(false) => 2
+        V(_) => 3
+        W => 4
+    }
+}
+fn main() {}

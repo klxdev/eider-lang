@@ -1,0 +1,3 @@
+// expect: E0111 2:10
+fn f(xs: List) {}
+fn main() {}

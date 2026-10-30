@@ -1,0 +1,5 @@
+// expect: E0401 3:13
+fn f(c: bool) {
+    let x = if c { 1 }
+}
+fn main() {}

@@ -1,0 +1,4 @@
+// expect: E0111 2:9
+fn f(x: Nope) -> i32 { 1 }
+const C: i32 = f(1)
+fn main() {}

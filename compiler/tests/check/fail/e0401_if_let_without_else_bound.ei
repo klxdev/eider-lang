@@ -1,0 +1,7 @@
+// expect: E0401 4:13
+type S = | V(n: i32) | W
+fn f(s: S) -> i32 {
+    let n = if let V(k) = s { k }
+    n
+}
+fn main() {}

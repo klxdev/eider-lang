@@ -1,0 +1,5 @@
+// expect: E0401 3:23
+fn f(c: bool) -> u8 {
+    if c { 1 } else { true }
+}
+fn main() {}

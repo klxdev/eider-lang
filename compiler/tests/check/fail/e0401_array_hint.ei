@@ -1,0 +1,4 @@
+// expect: E0401 3:30
+fn main() {
+    let a: [u8; 2] = [1, 300 as u32]
+}

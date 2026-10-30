@@ -1,0 +1,4 @@
+// Helper module with a private type that a public type leaks.
+type Inner = { v: i32 }
+pub type Outer = { inner: Inner }
+pub fn make() -> Inner { Inner(1) }

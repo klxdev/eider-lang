@@ -19,6 +19,7 @@ extern "c" fn ec_remove() -> i64
 extern "c" fn ec_rename() -> i64
 extern "c" fn ec_symlink() -> i64
 extern "c" fn ec_cwd() -> i64
+extern "c" fn ec_realpath() -> i64
 extern "c" fn ec_getenv() -> i32
 extern "c" fn ec_write_fd(fd: i32) -> i64
 extern "c" fn ec_run(capture: i32) -> i64
@@ -126,6 +127,7 @@ pub fn remove() -> i64 uses ffi { unsafe { ec_remove() } }
 pub fn rename() -> i64 uses ffi { unsafe { ec_rename() } }
 pub fn symlink() -> i64 uses ffi { unsafe { ec_symlink() } }
 pub fn cwd() -> i64 uses ffi { unsafe { ec_cwd() } }
+pub fn realpath() -> i64 uses ffi { unsafe { ec_realpath() } }
 pub fn getenv() -> bool uses ffi {
     let r = unsafe { ec_getenv() }
     r == 1

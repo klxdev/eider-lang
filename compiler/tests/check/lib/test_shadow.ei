@@ -1,0 +1,9 @@
+// Helper module: a test block reads a local named like one of the module's functions
+// (test bodies get no local-shadowing exemption in the bootstrap's renaming).
+fn helper() -> i32 { 1 }
+pub fn two() -> i32 { helper() + 1 }
+
+test "shadow" {
+    let helper = 1
+    assert helper == 1
+}

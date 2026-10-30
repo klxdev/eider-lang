@@ -1,0 +1,2 @@
+// Helper module with a type error in a function body.
+pub fn broken() -> i32 { true }

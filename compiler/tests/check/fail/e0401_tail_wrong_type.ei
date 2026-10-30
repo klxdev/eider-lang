@@ -1,0 +1,3 @@
+// expect: E0401 2:18
+fn f() -> bool { 1 }
+fn main() {}

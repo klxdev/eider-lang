@@ -1,0 +1,5 @@
+// expect: E0303 4:5
+const N: i32 = 1
+fn main() {
+    N = 2
+}

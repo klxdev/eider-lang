@@ -1,0 +1,5 @@
+// expect: E0801 4:13
+import "../lib/shapes.ei" as s
+fn main() {
+    let n = s.helper(1)
+}

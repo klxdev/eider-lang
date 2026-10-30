@@ -1,0 +1,6 @@
+// expect: E0303 4:9
+fn main() {
+    for i in 0..3 {
+        i = 2
+    }
+}

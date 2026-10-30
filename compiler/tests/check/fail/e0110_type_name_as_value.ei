@@ -1,0 +1,5 @@
+// expect: E0110 4:13
+type P = { x: i32 }
+fn main() {
+    let p = P
+}

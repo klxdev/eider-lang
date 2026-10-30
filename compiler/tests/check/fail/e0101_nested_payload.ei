@@ -1,0 +1,9 @@
+// expect: E0101 4:5
+type Shape = | Circle(big: bool) | Dot
+fn f(s: Shape) -> i32 {
+    match s {
+        Circle(true) => 1
+        Dot => 2
+    }
+}
+fn main() {}

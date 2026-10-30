@@ -1,0 +1,7 @@
+// expect: E0201 5:5
+fn f(a: i32,
+     b: i32)
+{
+    print(a)
+}
+fn main() {}

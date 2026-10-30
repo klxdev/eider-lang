@@ -1,0 +1,6 @@
+// expect: E0503 5:15
+const I: usize = 5
+fn main() {
+    let a = [0; 5]
+    let x = a[I]
+}

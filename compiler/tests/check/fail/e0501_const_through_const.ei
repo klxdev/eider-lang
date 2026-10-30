@@ -1,0 +1,4 @@
+// expect: E0501 3:17
+const A: u8 = 200
+const B: u8 = A + A
+fn main() {}

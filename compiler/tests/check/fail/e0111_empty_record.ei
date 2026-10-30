@@ -1,0 +1,3 @@
+// expect: E0111 2:6
+type E = {}
+fn main() {}

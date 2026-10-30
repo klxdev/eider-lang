@@ -1,0 +1,4 @@
+// expect: E0405 3:5
+fn main() {
+    panic("a", "b")
+}

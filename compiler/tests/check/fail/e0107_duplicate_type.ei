@@ -1,0 +1,4 @@
+// expect: E0107 3:6
+type A = { x: i32 }
+type A = | B | C
+fn main() {}

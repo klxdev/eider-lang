@@ -1,0 +1,6 @@
+// expect: E0303 5:16
+fn bump(inout n: i32) { n += 1 }
+fn main() {
+    let n = 1
+    bump(inout n)
+}

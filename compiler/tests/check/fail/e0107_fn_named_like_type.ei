@@ -1,0 +1,4 @@
+// expect: E0107 3:4
+type P = { x: i32 }
+fn P() {}
+fn main() {}

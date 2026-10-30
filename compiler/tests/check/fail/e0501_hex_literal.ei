@@ -1,0 +1,4 @@
+// expect: E0501 3:17
+fn main() {
+    let x: u8 = 0x1FF
+}

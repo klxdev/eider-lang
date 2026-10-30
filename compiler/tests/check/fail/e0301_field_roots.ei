@@ -1,0 +1,7 @@
+// expect: E0301 6:20
+type P = { x: i32, y: i32 }
+fn f(inout a: i32, b: i32) {}
+fn main() {
+    var p = P(1, 2)
+    f(inout p.x, p.y)
+}
