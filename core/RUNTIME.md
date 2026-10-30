@@ -3,9 +3,9 @@
 `core/eider_rt.h` + `core/eider_rt.c` are the language runtime: the C that generated code
 calls for traps, checked arithmetic, allocation, `String`, `print`, the clock, and the
 type-independent half of threads. The self-hosted compiler emits `#include "eider_rt.h"`
-and links `eider_rt.c`. Today the stage-0 compiler pastes an equivalent runtime into every
+and links `eider_rt.c`. The retired stage-0 compiler pasted an equivalent runtime into every
 program as string literals (`eider-bootstrap/src/prelude.rs`, plus runtime C in `src/heap.rs`
-and `src/closure.rs`); this file is the contract that replaces it, with the same observable
+and `src/closure.rs`); this file is the contract that replaced it, with the same observable
 behaviour (trap messages, exit code 101, print formats), because the language contract tests
 compare program output.
 
@@ -200,7 +200,7 @@ void ei_drop_CH_T(CH_T *x) { if (x->p && ei_rc_dec(&x->p->rc)) { for (uint64_t i
 
 ## Inventory of the stage-0 runtime
 
-Every piece of runtime C in stage 0, and where it goes (`P` = `src/prelude.rs`,
+(History: the inventory made while porting.) Every piece of runtime C in stage 0, and where it goes (`P` = `src/prelude.rs`,
 `H` = `src/heap.rs`, `C` = `src/closure.rs`, `K` = `src/check.rs`).
 
 ### Core (`eider_rt`)

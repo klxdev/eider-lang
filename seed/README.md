@@ -9,7 +9,9 @@ cc -std=c11 -O2 -pthread -I core -o eiderc seed/eiderc.c core/eider_rt.c core/ei
 ```
 
 The binary finds the toolchain (`core/`, `core/prelude.ei`) from `$EIDER_ROOT` or the
-directories above it (docs/compiler.md, "C4: lowering", Driver).
+directories above it (docs/compiler.md, "C4: lowering", Driver). `scripts/ei` does exactly
+this into `target/eiderc` (whenever the seed or `core/` is newer) and runs it; every script
+and test runner in the repository uses it.
 
 ## Regenerating
 
@@ -19,19 +21,22 @@ Whenever `compiler/` changes, run
 sh scripts/selfhost.sh --seed
 ```
 
-It builds stage1 with the previous compiler, stage2 with stage1, stage3 with stage2, checks
+It builds the current seed with `cc`, stage1 (`compiler/`) with the seed, stage2 with
+stage1, stage3 with stage2, checks
 that stage2 and stage3 emit the same C, that stage3 leaks nothing while compiling
 `compiler/`, and that stage3 passes `scripts/test-compiler.sh`, then writes stage3's C here.
 Commit the new `eiderc.c` together with the compiler change.
 
 `sh scripts/selfhost.sh --from-seed` must always pass: it builds eiderc from this file with
-only a C compiler (no stage 0) and checks that the result emits exactly this file again for
+only a C compiler and checks that the result emits exactly this file again for
 `compiler/main.ei`. A stale seed fails it.
 
 ## The rule
 
 `compiler/` may only use language features that the **current seed** supports: the seed is
 what builds the next compiler. A new feature lands in the compiler first (implemented, not
-used), the seed is regenerated, and only then may `compiler/` start using it. Until the
-Rust stage 0 (`eider-bootstrap`) is retired, `compiler/` must also still build with stage 0
-(`scripts/selfhost.sh` starts from it).
+used), the seed is regenerated, and only then may `compiler/` start using it.
+
+History: the first seed (C6) was emitted by a chain that started from the Rust stage-0
+bootstrap (the separate `eider-bootstrap` repository); until C7 retired it, `compiler/` also
+had to build with stage 0. Since C7 the chain starts from this file and nothing needs Rust.

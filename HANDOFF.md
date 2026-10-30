@@ -1,19 +1,20 @@
 # Eider handoff
 
-Eider is a compiled, type-safe language that emits C11. Source files use `.ei`, the CLI is `eider`. This repository has no Rust: the current compiler is a frozen stage-0 bootstrap in the separate `eider-bootstrap` repository (~7.8k lines of Rust, no dependencies; `scripts/stage0.sh` builds it from `../eider-bootstrap`); everything new is Eider on top of a small C core. Read `LAYERS.md` first.
+Eider is a compiled, type-safe language that emits C11. Source files use `.ei`, the compiler is `eiderc`. The compiler (`compiler/`) is written in Eider and self-hosted; its C output is committed as `seed/eiderc.c`, so building Eider needs only a C11 compiler: no Rust, nothing else (until C7 a frozen Rust stage-0 bootstrap in a separate repository did that job; it is retired, and its observable results are recorded in `tests/oracle/`). Everything is Eider on top of a small C core. Read `LAYERS.md` first.
 
 ## Get running
 
-Needs: an `eider-bootstrap` checkout next to this one plus Rust (until the self-hosted compiler replaces it), a C11 compiler (`$CC`, default `cc`; gcc and clang both tested). For the WebAssembly path also: clang with the wasm32 target, `wasm-ld`, and Node (tests only).
+Needs: a C11 compiler (`$CC`, default `cc`; gcc and clang both tested) and a POSIX libc with threads. For the WebAssembly path also: clang with the wasm32 target, `wasm-ld`, and Node (tests only).
 
 ```
-$(scripts/stage0.sh) run examples/warehouse.ei
-scripts/ei run tests/std/std.ei   # with the C core linked
+scripts/ei run examples/warehouse.ei   # scripts/ei builds target/eiderc from seed/eiderc.c, then runs it
+scripts/ei run tests/std/std.ei
 scripts/verify.sh          # full matrix; must end with ALL GREEN
+scripts/selfhost.sh        # seed -> stage1 -> stage2 -> stage3; must print SELF-HOSTED
 ```
 
-Commands: `check [--json]`, `emit-c`, `emit-header`, `build [--lib|--wasm] [-o name] [-l lib]`, `run [--release]`, `test`, `test --compile-fail <dir>`.
-Env: `CC`, `WASM_CC`, `EIDER_CACHE` (dir or `off`), `EIDER_RELEASE`.
+Commands: `check [--json]`, `emit-c`, `emit-header`, `build [--lib|--wasm] [-o name] [-l lib]`, `run [--release]`, `test`, `test --compile-fail <dir>`, `lex`, `parse`, `ir` (`scripts/ei --help`).
+Env: `CC`, `WASM_CC`, `EIDER_CFLAGS`, `EIDER_CACHE` (dir or `off`), `EIDER_ROOT`.
 
 ## What is built
 
@@ -32,9 +33,9 @@ Env: `CC`, `WASM_CC`, `EIDER_CACHE` (dir or `off`), `EIDER_RELEASE`.
 
 ## Layout
 
-`lexer.rs` -> `parser.rs` (AST `ast.rs`) -> `ns.rs` (module name mangling) -> `check.rs` + `expr.rs` + `stmt.rs` + `heap.rs` + `closure.rs` + `ffi.rs` (checker and C emitter are one pass) -> `prelude.rs` (C runtime and Option/Result in Eider source). `wasm_shim.rs` is the freestanding libc for WASM. `main.rs` is the CLI, module loader, comptime evaluator, build/cache.
+`compiler/` (docs/compiler.md, "Architecture"): `lex.ei` -> `parse.ei` (AST arena) -> `resolve.ei` (module graph) -> `check.ei` (typed IR, `ir.ei`) -> `lower.ei` (C) -> `driver.ei` (CLI, cc, cache); `comptime.ei`, `wasm.ei`, `suite.ei` (compile-fail runner). The runtime is `core/eider_rt.{h,c}`; `core/wasm/` is the freestanding libc for WASM. After a compiler change: `sh scripts/selfhost.sh --seed` and commit `seed/eiderc.c`.
 
-Tests: `tests/checks/{fail,pass}` (header `// expect: CODE LINE:COL`, header counts as line 1; `// mode: wasm|test|build`), `tests/run/*.ei` + `.out`, `tests/export/`, `tests/wasm/`. `LEARNINGS.md` has the gotchas; read it before changing the checker.
+Tests: `tests/checks/{fail,pass}` (header `// expect: CODE LINE:COL`, header counts as line 1; `// mode: wasm|test|build`), `tests/run/*.ei` + `.out`, `tests/export/`, `tests/wasm/`, and the compiler's own in `compiler/tests/` (`scripts/test-compiler.sh`, against the recorded `tests/oracle/`; `BLESS=1` rewrites the expectations, review the diff). `LEARNINGS.md` has the gotchas; read it before changing the checker.
 
 ## Known limits
 

@@ -78,10 +78,11 @@ other integers and `bool` as `i32`.
 - Threads (E0806), files, processes, environment, arguments (no ABI.md backend; see above).
 - Unsigned results above the signed range come back negative in JavaScript (`u32` as a
   negative number, `u64`/`usize` as a negative BigInt): the loader passes the raw wasm values
-  through, as stage 0's does.
+  through, as stage 0's did (kept for byte-identity with the recorded oracle; a C8 candidate,
+  docs/compiler.md).
 - An export parameter named `x` breaks the loader (`x.eider_<name>(...)` inside an arrow
   function whose parameter shadows `x`). The loader text is stage 0's, kept byte-identical
-  until stage 0 is retired.
+  with the recorded oracle; fixing it is a C8 candidate (docs/compiler.md).
 
 ## Compared with the stage-0 shim
 

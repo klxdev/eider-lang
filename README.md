@@ -2,20 +2,20 @@
 
 A compiled, type-safe language that emits portable C11. The repository is layered (see
 `LAYERS.md`): a small C core (`core/`, contract in `core/ABI.md`), a standard library in
-Eider (`std/`), and packages in Eider (`packages/`). There is no Rust here: until the Eider compiler in `compiler/`
-self-hosts, Eider is compiled by the stage-0 bootstrap in the separate `eider-bootstrap`
-repository (`scripts/stage0.sh` builds it from `../eider-bootstrap`).
+Eider (`std/`), and packages in Eider (`packages/`). The compiler, `eiderc` (`compiler/`), is
+written in Eider and self-hosted: its own C output is committed as `seed/eiderc.c`, so
+building Eider needs only a C11 compiler.
 
 ```
-git clone <eider-bootstrap> ../eider-bootstrap   # stage 0, until compiler/ self-hosts
-scripts/ei run tests/std/std.ei        # any eider command, with the C core linked
-scripts/verify.sh                      # everything
-eider run examples/warehouse.ei        # build + run (eider = $(scripts/stage0.sh))
-eider test examples/warehouse.ei       # run `test` blocks
-eider check file.ei --json             # machine-readable diagnostics for agents
-eider emit-c file.ei                   # inspect the generated C
-eider test --compile-fail tests/checks # compile-fail / compile-pass suite
-tests/run.sh                           # run-and-compare suite (CC=clang works too)
+cc -std=c11 -O2 -pthread -I core -o eiderc seed/eiderc.c core/eider_rt.c core/eider_core.c   # the whole bootstrap
+scripts/ei run examples/warehouse.ei      # build + run (scripts/ei builds target/eiderc from the seed)
+scripts/ei test examples/warehouse.ei     # run `test` blocks
+scripts/ei check file.ei --json           # machine-readable diagnostics for agents
+scripts/ei emit-c file.ei                 # inspect the generated C
+scripts/ei test --compile-fail tests/checks   # compile-fail / compile-pass suite
+tests/run.sh                              # run-and-compare suite (CC=clang works too)
+scripts/verify.sh                         # everything
+scripts/selfhost.sh                       # seed -> stage1 -> stage2 -> stage3, fixed point
 ```
 
 ## What exists
@@ -37,7 +37,7 @@ tests/run.sh                           # run-and-compare suite (CC=clang works t
 
 ## Verification
 
-`scripts/verify.sh`: compile-fail/pass suite (74 files, 42/42 codes), run tests on gcc, clang, ASan+UBSan and TSan, C and C++ consumers of an exported library, and a Node check of the WebAssembly build.
+`scripts/verify.sh`: compile-fail/pass suite (74 files, 42/42 codes), run tests on gcc, clang, ASan+UBSan and TSan, the C core, std, packages and the package manager, the compiler against its recorded oracle (`scripts/test-compiler.sh`), the seed reproducing itself, C and C++ consumers of an exported library, and a Node check of the WebAssembly build.
 
 ## Known limits
 
@@ -51,4 +51,4 @@ tests/run.sh                           # run-and-compare suite (CC=clang works t
 
 ## Layout
 
-Stage-0 compiler (eider-bootstrap `src/`): `lexer.rs` -> `parser.rs` (AST in `ast.rs`) -> `check.rs` (type check and C emit in one pass) -> `prelude.rs` (C runtime) ; `diag.rs` holds codes, fixes, JSON.
+`compiler/` (docs/compiler.md): `lex.ei` -> `parse.ei` (AST arena, `ast.ei`) -> `resolve.ei` (modules) -> `check.ei` (types, typed IR in `ir.ei`) -> `lower.ei` (C) -> `driver.ei` (cc, cache); `diag.ei` holds codes, fixes, JSON. The expected results of its tests are recorded in `tests/oracle/` (`BLESS=1 sh scripts/test-compiler.sh` updates them). History: until C7 Eider was compiled by a Rust stage-0 bootstrap in a separate repository.
