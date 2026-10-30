@@ -1,0 +1,6 @@
+// expect: E0303 4:3
+fn main() {
+  let n = 1
+  n = 2
+  m = 3
+}

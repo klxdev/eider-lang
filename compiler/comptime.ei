@@ -311,6 +311,22 @@ fn run_evaluator(inout r: Runner, c: check.C) -> Outcome uses io, fs, net, clock
         Ok(t) => t
         Err(_) => { return NoBuild }
     }
+    if driver.cache_dir().len() > 0 {
+        // with the cache on, the driver links the cached core objects, and an evaluator
+        // whose C was built before (an unchanged constant) isn't compiled again
+        let e: driver.Exe = match driver.try_executable(text, s("ct"), false, List.new()) {
+            Some(x) => x
+            None => { return NoBuild }
+        }
+        var argv: List[List[u8]] = List.new()
+        argv.push(e.path)
+        let got = proc.run_with(argv, proc.captured())
+        driver.discard(e)
+        return match got {
+            Ok(o) => outcome(o)
+            Err(_) => NoBuild
+        }
+    }
     prepare(inout r)
     if r.broken { return NoBuild }
     let cfile = fs.join(r.dir, s("ct.c"))
@@ -330,12 +346,15 @@ fn run_evaluator(inout r: Runner, c: check.C) -> Outcome uses io, fs, net, clock
     var run: List[List[u8]] = List.new()
     run.push(exe)
     match proc.run_with(run, proc.captured()) {
-        Ok(o) => {
-            if o.code == 0 { return Printed(o.out) }
-            let errs = bytes.lines(o.err)
-            if errs.len() > 0 { return Failed(errs[0]) }
-            Failed(List.new())
-        }
+        Ok(o) => outcome(o)
         Err(_) => NoBuild
     }
+}
+
+/// What an evaluator's run means: its output, or the first line of its trap.
+fn outcome(o: proc.Output) -> Outcome {
+    if o.code == 0 { return Printed(o.out) }
+    let errs = bytes.lines(o.err)
+    if errs.len() > 0 { return Failed(errs[0]) }
+    Failed(List.new())
 }

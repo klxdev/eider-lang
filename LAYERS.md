@@ -12,6 +12,17 @@ Eider code is partitioned into three layers. Dependencies only point down.
 | std | `std/` | Eider | What almost every program needs: `bytes` (text as `List[u8]`), `fs`, `io`, `env`, `proc`. Imports only core and other std modules. |
 | packages | `packages/<name>/` | Eider | Everything else, as ordinary packages with an `eider.toml`: `toml`, `semver`, `sha256`, the package manager itself, and `fuzz` (the compiler differential fuzzer, `scripts/fuzz-check.sh`). They import `deps/core/...`, `deps/std/...` and `deps/<dep>/...`. |
 
+The compiler (`compiler/`, docs/compiler.md) is a program on top of these layers, but it may
+depend only on core and std: it builds itself from the seed with nothing else, and packages
+are resolved by a package manager that the compiler builds. So when the compiler needs an
+algorithm that lives in a package, it carries a small module of its own rather than pulling
+the algorithm into std. The one such case is `compiler/sha256.ei`, the hash of the driver's
+binary and core-object cache (a copy of `packages/sha256`, made faster with an XOR table and
+by not copying the input). Moving sha256 into std was rejected: std is for what most
+programs need, and a hash is a package by the rule below. The copy goes away when
+package-qualified modules land (docs/compiler.md, "Language work" item 4) and the compiler
+can take a pinned package from the repository.
+
 ## Dependencies
 
 Building Eider must stay cheap to bootstrap and audit. The rule:
@@ -23,7 +34,9 @@ Building Eider must stay cheap to bootstrap and audit. The rule:
   is the whole bootstrap.
 - **The language runtime (`core/`) and the compiler (`compiler/`)** may only depend on that. New
   C in core must use only C11 + POSIX; a new dependency for the runtime or the compiler needs a
-  design decision recorded here first.
+  design decision recorded here first. The driver also runs the POSIX utilities `ar` (for
+  `build --lib`) and `cp` (to copy a cached binary out for `build`), and asks `$CC --version`
+  for the cache key (a compiler without it just gets an empty part).
 - **Optional targets** may need more, and stay optional: `build --wasm` needs clang with the
   wasm32 target and `wasm-ld`.
 - **Development and test tooling** may use more: `sh` for the scripts, `git` (package-manager
