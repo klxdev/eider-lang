@@ -39,13 +39,35 @@ _Noreturn void ei_trap(const char *msg, int32_t line) {
 
 // ---- allocation
 
+#ifdef EI_RT_COUNT_ALLOCS
+static atomic_int_least64_t live_allocs;
+#endif
+
 void *ei_alloc(uint64_t n) {
 #if SIZE_MAX < UINT64_MAX
   if (n > SIZE_MAX) ei_trap("out of memory", 0);
 #endif
   void *p = malloc(n ? (size_t)n : 1);
   if (!p) ei_trap("out of memory", 0);
+#ifdef EI_RT_COUNT_ALLOCS
+  atomic_fetch_add(&live_allocs, 1);
+#endif
   return p;
+}
+
+void ei_free(void *p) {
+  if (!p) return;
+#ifdef EI_RT_COUNT_ALLOCS
+  atomic_fetch_sub(&live_allocs, 1);
+#endif
+  free(p);
+}
+
+void ei_check_leaks(void) {
+#ifdef EI_RT_COUNT_ALLOCS
+  fflush(stdout);
+  fprintf(stderr, "eider: outstanding allocations: %" PRIdLEAST64 "\n", (int_least64_t)atomic_load(&live_allocs));
+#endif
 }
 
 void *ei_alloc_n(uint64_t n, uint64_t size) {
@@ -70,7 +92,7 @@ ei_String ei_str_from_i64(int64_t v) {
 }
 
 void ei_drop_String(ei_String *s) {
-  free(s->p);
+  ei_free(s->p);
   s->p = NULL;
   s->len = 0;
 }
@@ -90,7 +112,7 @@ void ei_str_cat(ei_String *s, const char *t, uint64_t tl) {
   if (s->len) memcpy(n, s->p, (size_t)s->len);
   if (tl) memcpy(n + s->len, t, (size_t)tl);
   n[s->len + tl] = 0;
-  free(s->p);
+  ei_free(s->p);
   s->p = n;
   s->len += tl;
 }
@@ -198,7 +220,7 @@ void ei_chan_send(ei_chan *c, const void *elem) {
     uint64_t nc = c->cap ? c->cap * 2 : 4;
     unsigned char *nb = ei_alloc_n(nc, c->size);
     for (uint64_t i = 0; i < c->len; i++) memcpy(nb + i * c->size, slot(c, i), (size_t)c->size);
-    free(c->buf);
+    ei_free(c->buf);
     c->buf = nb;
     c->head = 0;
     c->cap = nc;
@@ -234,7 +256,7 @@ uint64_t ei_chan_len(const ei_chan *c) { return c->len; }
 void *ei_chan_at(ei_chan *c, uint64_t i) { return slot(c, i); }
 
 void ei_chan_destroy(ei_chan *c) {
-  free(c->buf);
+  ei_free(c->buf);
   c->buf = NULL;
   c->len = c->cap = 0;
   pthread_cond_destroy(&c->cv);

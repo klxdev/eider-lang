@@ -181,7 +181,16 @@ fn main() uses io, fs, net, clock, ffi {
     }
     if backend {
         let tests = a.tests || is(a.cmd, "test")
-        let cprog = lower.program(lower.P(c.ir, c.t, c.p.names), a.file, tests)
+        let cprog = match lower.program(lower.P(c.ir, c.t, c.p.names), a.file, tests) {
+            Ok(text) => text
+            Err(m) => {
+                var msg = sys.lit("eiderc: internal error: ")
+                bytes.append(inout msg, m)
+                io.errln(msg)
+                env.exit(3)
+                return
+            }
+        }
         if is(a.cmd, "emit-c") {
             io.out(cprog)
         } else if is(a.cmd, "build") {

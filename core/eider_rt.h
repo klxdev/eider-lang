@@ -247,6 +247,12 @@ static inline uint64_t ei_u2u(uint64_t v, uint64_t hi, int32_t l) {
 void *ei_alloc(uint64_t n);
 /* n * size bytes; traps "out of memory" if the product overflows. */
 void *ei_alloc_n(uint64_t n, uint64_t size);
+/* Frees memory from ei_alloc / ei_alloc_n (NULL is a no-op). */
+void ei_free(void *p);
+/* Leak check for tests: built with -DEI_RT_COUNT_ALLOCS, the runtime counts live
+   allocations and this prints "eider: outstanding allocations: <n>" to stderr (generated
+   main calls it when the program ends normally). Otherwise it does nothing. */
+void ei_check_leaks(void);
 
 // ---- String: owned, NUL-terminated, `len` excludes the NUL. p is never NULL for a live
 // String (ei_drop_String sets it to NULL).
