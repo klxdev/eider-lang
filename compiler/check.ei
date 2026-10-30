@@ -1390,6 +1390,7 @@ fn arm_body(inout c: C, m: ast.Node, i: u32, binds: List[Bind], dest: Dest, exp:
 
 /// The condition of alternatives [from, to): any alternative whose tests all pass.
 fn alt_cond(inout c: C, alts: List[Alt], from: u32, to: u32, line: u32) -> u32 {
+    if to - from == 1 { return tests_cond(inout c, alts[from as usize].tests, line) }
     let r = tmp(inout c, types.BOOL, line)
     let first = tests_cond(inout c, alts[from as usize].tests, line)
     emit(inout c, ir.S_COPY, r, first, 0, 0, types.BOOL, line)
@@ -1409,6 +1410,7 @@ fn alt_cond(inout c: C, alts: List[Alt], from: u32, to: u32, line: u32) -> u32 {
 /// All of `tests`, short-circuiting (a payload is only read once its tag matched).
 fn tests_cond(inout c: C, tests: List[Test], line: u32) -> u32 {
     if tests.len() == 0 { return ir.op_bool(inout c.ir, true) }
+    if tests.len() == 1 { return test_val(inout c, tests[0], line) }
     let r = tmp(inout c, types.BOOL, line)
     let first = test_val(inout c, tests[0], line)
     emit(inout c, ir.S_COPY, r, first, 0, 0, types.BOOL, line)

@@ -460,7 +460,9 @@ fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u3
             }
         }
     }
-    if s.line > 0 && (s.kind == S_UNARY || s.kind == S_BINARY || s.kind == S_CAST || s.kind == S_READ || s.kind == S_PANIC || s.kind == S_ASSERT) {
+    // the source line of operations that can trap (index places print their own)
+    let traps = (s.kind == S_UNARY && s.a == U_NEG) || (s.kind == S_BINARY && s.a <= ast.OP_REM) || s.kind == S_CAST || s.kind == S_PANIC || s.kind == S_ASSERT
+    if s.line > 0 && traps {
         put(inout o, "  @")
         putn(inout o, s.line as u64)
     }

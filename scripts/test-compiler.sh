@@ -5,6 +5,7 @@
 #             compiler reports a lex or parse error, both must report the same JSON diagnostic.
 #   lex_ok:   token dumps of compiler/tests/lex_ok/*.ei match their .tokens goldens
 #             (BLESS=1 rewrites the goldens; review the diff).
+#   ir:       IR dumps of compiler/tests/ir/*.ei match their .ir goldens (BLESS=1 too).
 #   check:    for every compile-fail/pass test (tests/checks/{fail,pass}) whose features eiderc
 #             supports (it doesn't answer `unsupported`), `eiderc check --json` must equal the
 #             bootstrap's byte for byte; the same for tests/run/*.ei. eiderc's own cases in
@@ -39,6 +40,11 @@ for f in compiler/tests/lex_ok/*.ei; do
   g="${f%.ei}.tokens"
   if [ -n "$BLESS" ]; then $new lex "$f" > "$g"; fi
   if $new lex "$f" | cmp -s - "$g"; then echo "ok   lex_ok $f"; else echo "FAIL lex_ok $f"; $new lex "$f" | diff "$g" - | head -10; fail=1; fi
+done
+for f in compiler/tests/ir/*.ei; do
+  g="${f%.ei}.ir"
+  if [ -n "$BLESS" ]; then $new ir "$f" > "$g"; fi
+  if $new ir "$f" | cmp -s - "$g"; then echo "ok   ir $f"; else echo "FAIL ir $f"; $new ir "$f" | diff "$g" - | head -10; fail=1; fi
 done
 
 # check: differential against the bootstrap's `check --json`
