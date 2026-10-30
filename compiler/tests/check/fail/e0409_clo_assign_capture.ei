@@ -1,0 +1,3 @@
+// expect: E0409 3:22
+fn main() { var k = 1
+    let f = |x: i32| { k = 2 } }

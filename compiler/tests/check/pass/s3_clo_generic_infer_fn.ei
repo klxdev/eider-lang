@@ -1,0 +1,4 @@
+// mode: build
+fn app[T, U](x: T, f: fn(T) -> U) -> U { f(x) }
+fn pos(x: i32) -> bool { x > 0 }
+fn main() uses io { print(app(1, pos)) }

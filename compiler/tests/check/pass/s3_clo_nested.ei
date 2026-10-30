@@ -1,0 +1,5 @@
+// mode: build
+fn main() uses io { let a = 1
+    let f = |x: i32| -> i32 { let g = |y: i32| y + a
+        g(x) }
+    print(f(2)) }

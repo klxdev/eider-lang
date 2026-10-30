@@ -1,0 +1,25 @@
+// IR golden: closures (snapshot captures, closure bodies as functions of their own),
+// functions as values, calling fn-typed values and the List combinators.
+fn apply(x: i32, f: fn(i32) -> i32) -> i32 { f(x) }
+
+fn twice(x: i32) -> i32 { x * 2 }
+
+fn main() uses io {
+    let k = 3
+    print(apply(2, |x| x * k))
+    print(apply(2, twice))
+    let greeting = String.from("hi")
+    let say = |n: i32| -> i32 {
+        print(greeting)
+        if n > 9 { return 9 }
+        n
+    }
+    print(say(1))
+    var l: List[i32] = List.new()
+    l.push(1)
+    l.push(2)
+    let big = l.map(|x| x * 10).filter(|x| x > 10)
+    print(big.len())
+    print(l.any(|x| x == 2))
+    print(l.fold(0, |a, x| a + x))
+}

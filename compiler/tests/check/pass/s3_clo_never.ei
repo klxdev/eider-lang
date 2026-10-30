@@ -1,0 +1,3 @@
+// mode: build
+fn main() { let f = |x: i32| panic("no")
+    f(1) }

@@ -10,7 +10,9 @@
 // source line for the runtime error.
 //
 // Locals     {name sym, ty, kind (L_*), line}
-//            L_PARAM, L_INOUT (a parameter passed by reference), L_LET, L_VAR, L_TEMP
+//            L_PARAM, L_INOUT (a parameter passed by reference), L_LET, L_VAR, L_TEMP,
+//            L_CAPTURE (a closure function's first locals: the values its environment holds,
+//            in S_CLOSURE argument order; read-only)
 // Operands   O_INT ty v=value (64-bit two's complement)   O_BOOL v   O_STR v=string index
 //            O_UNIT   O_LOCAL a=local (only temporaries and pattern scrutinees)
 // Places     P_LOCAL a=local
@@ -44,9 +46,14 @@
 //   S_MOVE    dst := place a, which gives up ownership (it is dead afterwards)
 //   S_BUILTIN dst := builtin a (B_*) of args [b/c]; ty = result type; dst = NONE for ()
 //             (B_LIST_SUM traps on overflow at `line`)
+//   S_CLOSURE dst := closure value of type ty: function a with captured values [b/c] (moved
+//             into its environment; the function's L_CAPTURE locals read them)
+//   S_FNREF   dst := function a as a closure value of type ty (no environment)
+//   S_CALLV   dst := call closure op a with args [b/c] (borrowed); dst = NONE for ()
 // Functions  {name text, def, ret, locals [lstart/lcount], nparams, body block+1 (0 = none),
 //             caps, is_test}; generic functions and methods appear once per instance
-//             (`name[i32]`, `Option[i32].unwrap`)
+//             (`name[i32]`, `Option[i32].unwrap`), each closure body is a function of its
+//             own (`main.closure1`) whose parameters follow its captures
 // Constants  {name text, ty, value op}
 //
 // Ownership (String, List, Map, Box and anything containing them) is explicit, so lowering
@@ -87,6 +94,7 @@ pub const L_INOUT: u32 = 1
 pub const L_LET: u32 = 2
 pub const L_VAR: u32 = 3
 pub const L_TEMP: u32 = 4
+pub const L_CAPTURE: u32 = 5
 
 pub const O_INT: u32 = 0
 pub const O_BOOL: u32 = 1
@@ -129,6 +137,9 @@ pub const S_CLONE: u32 = 22
 pub const S_DROP: u32 = 23
 pub const S_MOVE: u32 = 24
 pub const S_BUILTIN: u32 = 25
+pub const S_CLOSURE: u32 = 26
+pub const S_FNREF: u32 = 27
+pub const S_CALLV: u32 = 28
 
 pub const B_STR_FROM: u32 = 0
 pub const B_STR_FROM_INT: u32 = 1
@@ -195,12 +206,18 @@ pub type Ir = {
     strs: List[List[u8]],
     /// statements of the blocks being built, innermost last (see open/close)
     pending: List[u32],
-    /// the function being built
+    /// the function being built and its locals so far (they join `locals` at end_fn, so
+    /// each function's locals stay contiguous although a closure's body is built in the
+    /// middle of its enclosing function's); `outer` saves the enclosing ones
     cur: u32,
+    building: List[Local],
+    outer: List[Outer],
 }
 
+type Outer = { cur: u32, building: List[Local] }
+
 pub fn new() -> Ir {
-    Ir(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), 0)
+    Ir(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new())
 }
 
 // ---- building
@@ -211,29 +228,60 @@ pub fn declare_fn(inout ir: Ir, name: List[u8], is_test: bool) -> u32 {
     (ir.fns.len() - 1) as u32
 }
 
-/// Start building function f's body: its locals begin here.
+/// Start building function f's body.
 pub fn begin_fn(inout ir: Ir, f: u32, ret: u32, caps: List[u8]) {
     ir.cur = f
+    ir.building = List.new()
     var fd = ir.fns[f as usize]
     fd.ret = ret
     fd.caps = caps
-    fd.lstart = ir.locals.len() as u32
     ir.fns[f as usize] = fd
 }
 
+/// Finish the function being built: its locals are stored and its body is block `body`.
 pub fn end_fn(inout ir: Ir, nparams: u32, body: u32) {
     var fd = ir.fns[ir.cur as usize]
-    fd.lcount = ir.locals.len() as u32 - fd.lstart
+    fd.lstart = ir.locals.len() as u32
+    fd.lcount = ir.building.len() as u32
+    for l in ir.building { ir.locals.push(l) }
+    ir.building = List.new()
     fd.nparams = nparams
     fd.body = body + 1
     ir.fns[ir.cur as usize] = fd
 }
 
+/// Start building function f (a closure body) inside the function being built.
+pub fn begin_nested(inout ir: Ir, f: u32, ret: u32, caps: List[u8]) {
+    ir.outer.push(Outer(ir.cur, ir.building))
+    begin_fn(inout ir, f, ret, caps)
+}
+
+/// Finish a function started with begin_nested and resume its enclosing function.
+pub fn end_nested(inout ir: Ir, nparams: u32, body: u32) {
+    end_fn(inout ir, nparams, body)
+    match ir.outer.pop() {
+        Some(o) => {
+            ir.cur = o.cur
+            ir.building = o.building
+        }
+        None => {}
+    }
+}
+
+/// Set the return type of the function being built (a closure's is known at its end).
+pub fn set_ret(inout ir: Ir, ret: u32) {
+    var fd = ir.fns[ir.cur as usize]
+    fd.ret = ret
+    ir.fns[ir.cur as usize] = fd
+}
+
+/// The name of the function being built.
+pub fn cur_name(ir: Ir) -> List[u8] { ir.fns[ir.cur as usize].name }
+
 /// A new local of the current function (its id is relative to the function).
 pub fn local(inout ir: Ir, name: u32, ty: u32, kind: u32, line: u32) -> u32 {
-    let base = ir.fns[ir.cur as usize].lstart
-    ir.locals.push(Local(name, ty, kind, line))
-    ir.locals.len() as u32 - 1 - base
+    ir.building.push(Local(name, ty, kind, line))
+    ir.building.len() as u32 - 1
 }
 
 pub fn temp(inout ir: Ir, ty: u32, line: u32) -> u32 { local(inout ir, 0, ty, L_TEMP, line) }
@@ -263,10 +311,9 @@ pub fn op_is_local(ir: Ir, o: u32) -> bool { ir.ops[o as usize].kind == O_LOCAL 
 pub fn op_local_id(ir: Ir, o: u32) -> u32 { ir.ops[o as usize].a }
 
 pub fn set_local_ty(inout ir: Ir, l: u32, ty: u32) {
-    let i = (ir.fns[ir.cur as usize].lstart + l) as usize
-    var x = ir.locals[i]
+    var x = ir.building[l as usize]
     x.ty = ty
-    ir.locals[i] = x
+    ir.building[l as usize] = x
 }
 
 fn place(inout ir: Ir, p: Place) -> u32 {
@@ -576,6 +623,23 @@ fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u3
             put(inout o, builtin_name(s.a))
             put_args(inout o, ir, t, names, s.b, s.c)
         }
+        26 => {
+            put_dst(inout o, s.dst)
+            put(inout o, "closure ")
+            putb(inout o, ir.fns[s.a as usize].name)
+            put_args(inout o, ir, t, names, s.b, s.c)
+        }
+        27 => {
+            put_dst(inout o, s.dst)
+            put(inout o, "fnref ")
+            putb(inout o, ir.fns[s.a as usize].name)
+        }
+        28 => {
+            if s.dst != NONE { put_dst(inout o, s.dst) }
+            put(inout o, "callv ")
+            put_op(inout o, ir, t, names, s.a)
+            put_args(inout o, ir, t, names, s.b, s.c)
+        }
         _ => {
             put(inout o, "return")
             if s.a > 0 {
@@ -599,6 +663,7 @@ fn kind_text(k: u32) -> str {
         1 => "inout"
         2 => "let"
         3 => "var"
+        5 => "capture"
         _ => "temp"
     }
 }

@@ -1,0 +1,3 @@
+// expect: E0401 3:37
+fn neg(x: i32) -> bool { true }
+fn main() { let f: fn(i32) -> i32 = neg }

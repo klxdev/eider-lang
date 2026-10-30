@@ -1,0 +1,3 @@
+// expect: E0401 3:19
+fn main() uses io { let l: List[i32] = List.new()
+    let m = l.map(|x| print(x)) }

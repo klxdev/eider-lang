@@ -1,0 +1,3 @@
+// expect: E0401 3:20
+fn main() { let l: List[i32] = List.new()
+    l.for_each(|x| x) }

@@ -1,0 +1,3 @@
+// expect: E0401 3:27
+fn main() { let l: List[i32] = List.new()
+    let m = l.fold(true, |a: i32, x| a) }

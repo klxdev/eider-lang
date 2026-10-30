@@ -1,0 +1,3 @@
+// expect: E0401 3:30
+fn main() { let f = |x: i32| x
+    let g: fn(i32) -> bool = f }

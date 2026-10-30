@@ -1,0 +1,4 @@
+// mode: build
+fn h(x: u32) -> Option[u32] { Some(x) }
+fn main() { let f = |x: u32| -> Option[u32] { let y = h(x)?
+    Some(y) } }

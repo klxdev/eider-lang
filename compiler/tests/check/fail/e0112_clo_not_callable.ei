@@ -1,0 +1,3 @@
+// expect: E0112 3:13
+fn main() { let f = 5
+    let y = f(1) }

@@ -1,0 +1,41 @@
+// mode: build
+fn apply(x: i32, f: fn(i32) -> i32) -> i32 { f(x) }
+fn twice(x: i32) -> i32 { x * 2 }
+type Op = { name: str, run: fn(i32) -> i32 }
+fn main() uses io {
+    let k = 3
+    let add = |x: i32| x + k
+    print(add(1))
+    print(apply(2, |x| x * k))
+    print(apply(2, twice))
+    let o = Op("double", twice)
+    print(o.run(4))
+    let f: fn(i32) -> bool = |x| x > 0
+    print(f(1))
+    let g = |x: i32| -> i32 { if x > 0 { x } else { 0 - x } }
+    print(g(-3))
+    let s = String.from("hi")
+    let h = |n: i32| -> i32 { print(s)
+        n }
+    print(h(1))
+    let u = |n: i32| -> () { print(n) }
+    u(2)
+    var l: List[i32] = List.new()
+    l.push(1)
+    l.push(2)
+    let m = l.map(|x| x * 10)
+    print(m[1])
+    print(l.filter(|x| x > 1).len())
+    l.for_each(|x| print(x))
+    print(l.any(|x| x == 2))
+    print(l.all(|x| x > 0))
+    print(l.fold(0, |a, x| a + x))
+    let names: List[String] = List.new()
+    let joined = names.fold(String.from(""), |a, x| a)
+    print(joined)
+    let o2 = Some(3)
+    print(o2.map(|v| v + 1).unwrap())
+    print(o2.and_then(|v| Some(v + 1)).is_some())
+    let w = o2.and_then(|v| -> Option[i32] { if v > 2 { Some(v) } else { None } })
+    print(w.is_none())
+}
