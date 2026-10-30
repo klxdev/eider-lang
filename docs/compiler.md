@@ -1,6 +1,6 @@
 # The self-hosted compiler (`eiderc`)
 
-Status: approved direction; C1 to C6 done (eiderc is self-hosted; seed/eiderc.c committed). C7 (parity) has FFI done. This file owns the plan; update it as stages land.
+Status: approved direction; C1 to C6 done (eiderc is self-hosted; seed/eiderc.c committed). C7 (parity) has FFI and driver parity done. This file owns the plan; update it as stages land.
 
 Progress: **C1 done** (lexer, interner, diagnostics rendering; `scripts/test-compiler.sh`).
 **C2 done** (parser to the AST arena, `eiderc parse` dump, parse-error corpus and AST goldens).
@@ -11,7 +11,8 @@ see "C4: lowering" below). **C5 done** for S1–S3: checking (see "C5: checking 
 lowering (see "C5: lowering"). **C6 done**: eiderc builds itself to a fixed point and the
 seed is committed (see "C6: self-hosting"). From C7, **FFI is done** (`extern "c"`, `unsafe`, `export fn`,
 `emit-header`, `build --lib`, `-l`; see "C7: FFI"), since `compiler/` reaches the OS only
-through core/sys.ei's externs.
+through core/sys.ei's externs. **Driver parity is done** (`test --compile-fail`, the binary
+and core-object cache, work directories, `--help`; see "C7: driver").
 
 ## Goal
 
@@ -343,6 +344,70 @@ started, so callers of std still write `uses ffi`.
   `emit-header` against the bootstrap. `eiderc check` accepts core/sys.ei, std and
   `compiler/main.ei` like the bootstrap (no `unsupported` left in them).
 
+## C7: driver
+
+The rest of stage 0's driver (its main.rs), so the bootstrap's commands all exist in eiderc.
+
+- **`eiderc test --compile-fail [<dir>]`** (`suite.ei`; default `tests/checks`): stage 0's
+  run_compile_fail, same lines, same exit code. Each `<dir>/fail/*.ei` starts with
+  `// expect: CODE LINE:COL` (the header is line 1 of the file as compiled) and must fail
+  with exactly that code and position; if the diagnostic carries a fix, `diag.apply_fix`
+  applies it (columns in Unicode scalar values) and the fixed source must compile
+  (`(fix compiles)`) or fail with another code or position (`(fix resolves it; next: X)`),
+  never with the same error. `<dir>/pass/*.ei` must compile. A file containing
+  `// mode: test` is checked as a test build (no `main` needed: the checker reports a
+  missing `main` last, so that error alone counts as success), `// mode: wasm` as a
+  WebAssembly build. The last line is the error-code coverage against
+  **`diag.all_codes()`**, the one list of the language's codes (stage 0's ALL_CODES, same
+  order; a new code is added there with its test). eiderc's extra: a file it answers
+  `unsupported` for is a `skip` line, counted in `<n> skipped (not yet supported by
+  eiderc)` before the summary, neither passed nor failed. **WebAssembly mode is not in
+  eiderc yet** (being added in parallel as `check --wasm`): until then `// mode: wasm` files
+  are checked as programs and any mismatch is reported as `skip` (TODO in suite.ei).
+  Results: `compiler/tests/check` is byte-identical to stage 0's output (456 passed, 0
+  failed, coverage 37/42). `tests/checks`: 68 passed, 0 failed, 6 skipped, coverage 40/42
+  against stage 0's 74 passed and 42/42; the missing codes are E0806 (WebAssembly:
+  e0806_wasm_str needs wasm mode, e0806_wasm_threads threads too) and E0807 (comptime:
+  e0807_comptime_str, e0807_comptime_trap); the other skips, e0201_comptime_io (comptime) and
+  e0409_chan (threads), have codes covered by other files. `compiler/tests/suite` holds the
+  runner's own cases (wrong code, wrong position, missing header, a file that compiles, a
+  rejected pass file, a fix after non-ASCII text, a fix that leads to the next error, test
+  mode), whose output (6 failed, exit 1) must equal stage 0's too.
+- **Cache** (top of `driver.ei`). `EIDER_CACHE=off` disables it, `EIDER_CACHE=<dir>` moves
+  it, the default is `$XDG_CACHE_HOME/eider`, else `~/.cache/eider` (stage 0's), with
+  eiderc's entries in subdirectories so the two never collide. Keys are SHA-256 (`sha256.ei`,
+  see LAYERS.md for why the compiler has its own) over length-prefixed parts:
+  `core/<key>/{eider_rt.o,eider_core.o}`, the C core compiled once per toolchain, keyed by
+  the whole cc argv (cc, warning and -O flags, `$EIDER_CFLAGS`, `-I <root>/core`, `-fPIC`
+  for libraries), `$CC --version`, `LIBRARY_PATH`/`CPATH`/`C_INCLUDE_PATH` and the bytes of
+  eider_rt.h, eider_rt.c and eider_core.c; and `bin/<key>`, an executable, keyed by the same
+  toolchain parts, the core objects (their path holds their key), the `-l` libraries and the
+  generated C. `run` executes a cached binary in place, `build` copies it to `-o`'s path
+  (removing the old file first, so a running binary isn't rewritten). Not in any key: the
+  contents of external `-l` libraries and of system headers beyond what `--version`
+  identifies (stage 0 keys on cc's name, flags, libs and the C only). With the cache off the
+  core sources are compiled into each program, as before.
+- **Work directories.** Each compile gets its own `eiderc-<ms>-<n>` directory made with an
+  exclusive mkdir, under `<cache>/tmp/`, else (cache off) `<root>/target/tmp/`, else
+  `$TMPDIR` or `/tmp` if neither is writable; it is removed afterwards (kept, with the C, when
+  the C fails to compile). Entries are made there and renamed into the cache, so they appear
+  atomically: the core objects as one directory (a rename onto an existing one fails, and
+  the loser uses the winner's), a binary as one file. Twelve concurrent `eiderc run`s on an
+  empty cache all succeed with one binary and one core build ("cache" in test-compiler.sh).
+- **Reusable entry points** for C built by the compiler itself (comptime): `driver.executable(c,
+  file, release, libs)` returns an `Exe` (the binary's path, cached or in its work
+  directory) for the caller to run, `driver.discard(e)` removes the work directory;
+  `build`, `build_lib` and `run` keep their signatures.
+- **Usage.** `eiderc --help` (also `-h`, `help`) prints every command, option and
+  environment variable to stdout and exits 0; no arguments prints it to stderr and exits 2;
+  an unknown option, an unknown command, a missing source file, a stray second file, `-o`/`-l`
+  without a value, or `--compile-fail` with another command is a one-line `eiderc:` error
+  plus a pointer to `--help`, exit 2 (stage 0 ignores unknown flags).
+- **Tests** (`scripts/test-compiler.sh`): "unit" (compiler/tests/unit/sha256.ei: the FIPS
+  180-4 vectors, the padding edges, 100 KB), "compile-fail", "cache" (hits; the -O level,
+  `EIDER_CFLAGS` and the core in the key; concurrency; no work directory left; `off`) and
+  "usage".
+
 ## C4: lowering
 
 `lower.ei` turns the IR into one C11 file; `driver.ei` compiles and runs it.
@@ -377,11 +442,11 @@ started, so callers of std still write `uses ffi`.
   `\n<n> tests, <k> failed`, exit 1 if any failed (stage 0's format).
 - **Driver.** `emit-c <f> [--test]` prints the C; `build <f> [-o out]` writes an -O2
   executable (default: the source's stem in the working directory); `run <f> [--release]`
-  (-O0, or -O2) and `test <f>` (-O0) build in a fresh directory under `$TMPDIR` (else
-  `/tmp`), run the program with inherited stdio, remove the directory and exit with the
-  program's code. The C is compiled with `$CC` (default `cc`), `-pthread`, extra flags from
-  `$EIDER_CFLAGS` (split at spaces), and linked with `core/eider_rt.c` and `core/eider_core.c`
-  (so programs that use std link once `extern` is supported). If it does not compile, the
+  (-O0, or -O2) and `test <f>` (-O0) build in a fresh work directory (since C7 under the
+  cache or `target/`, see "C7: driver"), run the program with inherited stdio, remove the
+  directory and exit with the program's code. The C is compiled with `$CC` (default `cc`),
+  `-pthread`, extra flags from `$EIDER_CFLAGS` (split at spaces), and linked with the C core
+  (`core/eider_rt.c` and `core/eider_core.c`, since C7 as cached objects). If it does not compile, the
   C is kept and eiderc exits 3. **Toolchain root** (the directory holding `core/`):
   `$EIDER_ROOT`, else the nearest directory above the eiderc binary (argv[0], symlinks
   resolved) that contains `core/eider_rt.h`, else the same search from the working
@@ -401,8 +466,8 @@ started, so callers of std still write `uses ffi`.
   conditions with temporaries; `??(` in strings
   stays `??(`. A program killed by a signal makes `eiderc run` exit 128 + signal (stage 0
   exits 1); `build` without `-o` writes to the working directory (stage 0 writes to its temp
-  directory); there is no binary cache (`EIDER_CACHE` is ignored); driver messages start
-  with `eiderc:`. Kept for parity: an imported module's unit enum prints its mangled name
+  directory); the binary cache keys with SHA-256 over more inputs and lives in subdirectories
+  of the cache directory ("C7: driver"); driver messages start with `eiderc:`. Kept for parity: an imported module's unit enum prints its mangled name
   (`geo__South`), and trap messages always name the entry file, even for a trap in an
   imported module.
 
@@ -413,6 +478,21 @@ lines for lex+parse+check+emit (a 527-line program checks in 4 ms; parsing the 2
 check.ei takes 17 ms). End to end the C compiler dominates: building eiderc itself (7.5k lines
 of Eider -> 17.4k lines of C) is 0.23 s front end + ~5 s gcc -O2 (1.2 s at -O0); `eiderc
 build` of a 76-line program takes 313 ms vs stage 0's 70 ms.
+
+Core objects and the binary cache (C7, "C7: driver"), measured 2026-10-30 on
+`tests/run/adt.ei` (84 lines; 16 cores, gcc; each the median of 4 runs, wall clock):
+
+| | `eiderc build` (-O2) | `eiderc run` (-O0) |
+|---|---|---|
+| before (core sources compiled into every program; = `EIDER_CACHE=off` now) | 0.31 s | 0.14 s |
+| after, first ever (empty cache: also compiles and caches the core) | 0.34 s | 0.16 s |
+| after, program changed (core objects cached, program not) | 0.07 s | 0.06 s |
+| after, program unchanged (binary cache hit: no cc) | 0.01 s | 0.01 s |
+| stage 0 (its C pastes its runtime in; `EIDER_CACHE=off`) | 0.06 s | 0.06 s |
+
+So the core was ~80% of a small build; with it cached, eiderc's edit-and-build loop is at
+stage 0's speed. A hit costs one `cc --version` (part of the key) and hashing the generated C
+and the core sources (sha256.ei at -O2: ~40 ms per MB; a small program's C is ~100 KB).
 
 ### Constraints to keep now (cheap today, expensive to retrofit)
 
@@ -437,8 +517,8 @@ build` of a 76-line program takes 313 ms vs stage 0's 70 ms.
 
 | What | Expected effect |
 |---|---|
-| Build `core/eider_rt.c` and `core/eider_core.c` once per (CC, flags) and link the cached objects | -~250 ms on every eiderc build/run |
-| Binary cache keyed on (generated C, CC, flags, core objects), like stage 0's `EIDER_CACHE` | unchanged programs skip gcc |
+| ✅ (C7) Build `core/eider_rt.c` and `core/eider_core.c` once per (CC, flags) and link the cached objects | measured above: build 0.31 s -> 0.07 s, run 0.14 s -> 0.06 s |
+| ✅ (C7) Binary cache keyed on (generated C, CC, flags, core objects), like stage 0's `EIDER_CACHE` | unchanged programs skip gcc: 0.01 s |
 | Smaller C: declare temporaries in the narrowest scope that still avoids `-Wmaybe-uninitialized`; share glue between identical layouts (only used glue is emitted since C5); eiderc's own C is 74k lines | eiderc emits ~1.5x stage 0's C for the same program; gcc time is roughly linear in it |
 | One C file per module, compiled in parallel (needs constraint 3) | uses the idle cores; most of the gcc time for large programs |
 | -O0 for the edit/run loop by default (already), -O2 only for `build` | 4x faster gcc on large programs |
@@ -473,7 +553,7 @@ Each with a design note, compile-fail tests and new codes:
 | C4 ✅ | `lower` + C for v0 (plus non-generic payload enums) against `core/eider_rt.*`; driver (`emit-c`, `build`, `run`, `test`) | v0 run tests match (stdout, stderr, exit code, for `run` and `test`); C is `-pedantic -Wall -Wextra -Werror` clean at -O0 and -O2 and clean under UBSan (ASan/TSan when their runtimes exist) |
 | C5 ✅ | S1–S3: payload enums, generics, traits, Option/Result/`?`, tuples, patterns, String/List/Map/Box, closures | all the features `compiler/` itself uses; their tests match (checking ✅, lowering ✅) |
 | C6 ✅ | Self-host: stage1 builds stage2 builds stage3; fixed point; commit the seed | `scripts/selfhost.sh` green (stages compile `-Werror`, stage3 passes `scripts/test-compiler.sh`), `scripts/selfhost.sh --from-seed` reproduces the seed with only a C compiler |
-| C7 | Parity: modules/namespaces, FFI/export/`--lib` (✅ ahead of C5 lowering), threads, WASM, comptime, cache | the full `scripts/verify.sh` passes with `eiderc` in place of the bootstrap; retire eider-bootstrap |
+| C7 | Parity: modules/namespaces, FFI/export/`--lib` (✅ ahead of C5 lowering), threads, WASM, comptime, driver (`test --compile-fail`, cache, `--help`: ✅) | the full `scripts/verify.sh` passes with `eiderc` in place of the bootstrap; retire eider-bootstrap |
 | C8+ | Language work above, then std and package-manager rework | per feature |
 
 ## Testing
@@ -494,9 +574,9 @@ Each with a design note, compile-fail tests and new codes:
 ```
 compiler/
   eider.toml          package `eiderc`
-  main.ei             CLI (lex / parse / check / ir / emit-c / build / run / test)
+  main.ei             CLI (`eiderc --help`)
   source.ei  lex.ei  intern.ei  ast.ei  parse.ei  resolve.ei  types.ei  fold.ei  pats.ei
-  check.ei  ir.ei  lower.ei  emit.ei  diag.ei  driver.ei
+  check.ei  ir.ei  lower.ei  emit.ei  diag.ei  driver.ei  suite.ei  sha256.ei
   tests/              pass-level golden tests (lex, lex_ok, check, ir)
 ```
 
