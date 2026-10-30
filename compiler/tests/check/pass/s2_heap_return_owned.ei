@@ -1,0 +1,8 @@
+// mode: build
+fn mk(b: bool) -> String {
+    let s = String.from("a")
+    if b { return s }
+    let t = String.from("b")
+    t
+}
+fn main() uses io { print(mk(true)) }

@@ -1,0 +1,12 @@
+// mode: build
+fn half(n: u32) -> Option[u32] {
+    if n % 2 == 1 { return None }
+    Some(n / 2)
+}
+fn main() uses io {
+    let h = half(4)
+    print(h.unwrap())
+    print(h.is_some())
+    print(half(3).unwrap_or(7))
+    if let Some(v) = half(8) { print(v) } else { print(0) }
+}

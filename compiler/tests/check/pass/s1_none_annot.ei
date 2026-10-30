@@ -1,0 +1,5 @@
+// mode: build
+fn main() { let x: Option[i32] = None
+    let y: Option[i32] = Option.None
+    let z = Some(3)
+    let w: Result[i32, str] = Ok(1) }

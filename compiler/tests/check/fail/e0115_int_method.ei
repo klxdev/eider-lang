@@ -1,0 +1,2 @@
+// expect: E0115 2:23
+fn main() { let b = 5.get() }

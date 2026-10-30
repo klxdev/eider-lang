@@ -1,0 +1,10 @@
+// expect: E0101 5:5
+type T = | A(x: Option[u32]) | B
+fn main() uses io {
+    let t = A(Some(1))
+    match t {
+        A(Some(1)) => print(1)
+        A(None) => print(2)
+        B => print(3)
+    }
+}

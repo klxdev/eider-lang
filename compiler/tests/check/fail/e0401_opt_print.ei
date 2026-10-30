@@ -1,0 +1,2 @@
+// expect: E0401 2:27
+fn main() uses io { print(Some(1)) }

@@ -1,0 +1,15 @@
+// mode: build
+fn half(n: u32) -> Result[u32, str] {
+    if n % 2 == 1 { return Err("odd") }
+    Ok(n / 2)
+}
+fn q(n: u32) -> Result[u32, str] {
+    let a = half(n)?
+    let b = half(a)?
+    Ok(b)
+}
+fn o(n: u32) -> Option[u32] {
+    let x = Some(n)?
+    Some(x + 1)
+}
+fn main() uses io { print(q(8).unwrap()) }

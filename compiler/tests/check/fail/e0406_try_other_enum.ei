@@ -1,0 +1,5 @@
+// expect: E0406 3:34
+type E = | A | B
+fn f() -> Option[u32] { let x = A?
+    Some(1) }
+fn main() {}

@@ -1,0 +1,4 @@
+// expect: E0111 3:12
+type W[T] = { v: T }
+fn a[T](x: W) -> T { x }
+fn main() { let x = a(1) }

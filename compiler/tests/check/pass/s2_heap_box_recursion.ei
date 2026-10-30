@@ -1,0 +1,9 @@
+// mode: build
+type Tree = | Leaf | Node(l: Box[Tree], r: Box[Tree])
+fn depth(t: Tree) -> u32 {
+    match t {
+        Leaf => 0
+        Node(l, r) => 1 + depth(l.get())
+    }
+}
+fn main() uses io { print(depth(Node(Box.new(Leaf), Box.new(Leaf)))) }

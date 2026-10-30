@@ -1,0 +1,7 @@
+// mode: build
+type W = { v: u32 }
+impl W {
+    fn pick[T](self, a: T, b: T) -> T { a }
+}
+fn main() uses io { let w = W(1)
+    print(w.pick(1, 2)) }

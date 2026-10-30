@@ -1,0 +1,5 @@
+// expect: E0405 5:15
+type Sq = { s: u32 }
+impl Sq { fn get(self, x: u32) -> u32 { self.s } }
+fn main() { let a = Sq(1)
+    let b = a.get() }

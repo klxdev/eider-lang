@@ -1,0 +1,3 @@
+// expect: E0405 3:7
+fn main() { var l: List[i32] = List.new()
+    l.push() }

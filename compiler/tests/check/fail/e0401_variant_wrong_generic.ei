@@ -1,0 +1,2 @@
+// expect: E0401 2:39
+fn main() { let a: Option[u32] = Some(true) }

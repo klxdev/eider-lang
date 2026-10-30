@@ -1,0 +1,5 @@
+// mode: build
+type P[A] = { a: A, b: A }
+fn main() uses io { let p = P(1, 2)
+    match p { P(x, 2) => print(x)
+        P(_, _) => {} } }

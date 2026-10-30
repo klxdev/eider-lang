@@ -1,0 +1,5 @@
+// expect: E0115 5:15
+type Sq = { s: u32 }
+impl Sq { fn new(s: u32) -> Sq { Sq(s) } }
+fn main() { let a = Sq(1)
+    let b = a.new(2) }

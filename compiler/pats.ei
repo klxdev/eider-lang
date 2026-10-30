@@ -4,7 +4,7 @@
 // A lowered pattern is `Wild` or a constructor applied to sub-patterns; patterns live in an
 // arena (`Pats`, id 0 is the shared wildcard). A matrix is a flat list of rows of equal
 // width. Constructors: C_VARIANT a=variant index, C_SINGLE (the one constructor of a
-// record), C_BOOL a=0/1, C_INT a=1 if negative v=magnitude, C_STR a=interned contents.
+// record or tuple), C_BOOL a=0/1, C_INT a=1 if negative v=magnitude, C_STR a=interned contents.
 
 import "deps/core/sys.ei"
 import "deps/std/bytes.ei"
@@ -76,6 +76,10 @@ fn sig(t: types.Types, ty: u32) -> Option[List[Sig]] {
             for j in 0..v.flen { fs.push(types.field(t, v.fstart, j).ty) }
             out.push(Sig(C_VARIANT, i, fs))
         }
+        return Some(out)
+    }
+    if k == types.T_TUPLE {
+        out.push(Sig(C_SINGLE, 0, types.elems(t, ty)))
         return Some(out)
     }
     if k == types.T_RECORD {
@@ -225,6 +229,15 @@ fn show(t: types.Types, names: intern.Interner, ty: u32, ck: u32, ca: u32, cv: u
     }
     if ck == C_STR {
         diag.debug_str(inout out, intern.name(names, ca))
+        return out
+    }
+    if types.kind(t, ty) == types.T_TUPLE {
+        out.push(40)
+        for i in 0..inner.len() {
+            if i > 0 { bytes.append(inout out, sys.lit(", ")) }
+            bytes.append(inout out, inner[i])
+        }
+        out.push(41)
         return out
     }
     let d = types.def_of(t, ty)

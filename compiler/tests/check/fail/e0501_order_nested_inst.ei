@@ -1,0 +1,6 @@
+// expect: E0501 3:34
+fn a[T](x: T) -> T { b(x) }
+fn b[T](x: T) -> T { let q: u8 = 300
+    x }
+fn d() { let q: u8 = 303 }
+fn main() { let x = a(1) }

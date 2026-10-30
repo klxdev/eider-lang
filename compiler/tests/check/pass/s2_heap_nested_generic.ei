@@ -1,0 +1,6 @@
+// mode: build
+type W[T] = { v: List[T] }
+fn main() uses io { var l: List[i32] = List.new()
+    l.push(3)
+    let w = W(l)
+    print(w.v[0]) }

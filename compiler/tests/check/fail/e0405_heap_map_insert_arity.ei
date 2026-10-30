@@ -1,0 +1,3 @@
+// expect: E0405 3:7
+fn main() { var m: Map[i32, i32] = Map.new()
+    m.insert(1) }

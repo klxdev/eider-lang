@@ -1,0 +1,47 @@
+// IR golden: ownership of String, List, Map and Box: clones, moves and drops on every
+// exit path (end of block, return, break, continue, `?`, overwritten places).
+type Named = { name: String, tags: List[String] }
+
+fn label(n: Named) -> String {
+    let s = n.name
+    s
+}
+
+fn first_long(xs: List[String], min: usize) -> Option[String] {
+    for x in xs {
+        if x.len() < min { continue }
+        return Some(x)
+    }
+    None
+}
+
+fn count(m: Map[u32, String], k: u32) -> Option[usize] {
+    let v = m.get(k)?
+    Some(v.len())
+}
+
+fn main() uses io {
+    var tags: List[String] = List.new()
+    tags.push(String.from("a"))
+    var n = Named(String.from("x"), tags)
+    n.name = String.from("y")
+    n.tags.push(n.name)
+    print(label(n))
+    var i = 0
+    while i < 3 {
+        let t = String.from_int(i as i64)
+        i += 1
+        if i == 2 { break }
+        print(t)
+    }
+    match first_long(n.tags, 1) {
+        Some(s) => print(s)
+        None => {}
+    }
+    var m: Map[u32, String] = Map.new()
+    m.insert(1, String.from("one"))
+    print(count(m, 1).unwrap_or(0))
+    var b = Box.new(String.from("boxed"))
+    b.set(String.from("again"))
+    print(b.get())
+}

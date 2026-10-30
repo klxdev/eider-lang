@@ -1,0 +1,4 @@
+// expect: E0409 4:16
+type T2[A] = | X(v: A) | Y
+fn main() { let a: T2[u32] = T2.Y
+    let b = T2.Y }

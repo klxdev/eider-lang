@@ -1,0 +1,4 @@
+// expect: E0107 3:7
+type A = { x: u32 }
+trait A { fn f(self) }
+fn main() {}

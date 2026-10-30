@@ -1,0 +1,2 @@
+// expect: E0401 2:29
+fn main() { let a = [String.from("x"); 3] }

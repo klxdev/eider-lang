@@ -1,0 +1,6 @@
+// mode: build
+fn main() uses io { var s = String.from("a")
+    s = String.from("b")
+    let t = s
+    s = t
+    print(s) }

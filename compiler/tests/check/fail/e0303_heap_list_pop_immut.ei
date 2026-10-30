@@ -1,0 +1,3 @@
+// expect: E0303 3:13
+fn main() { let l: List[i32] = List.new()
+    let x = l.pop() }

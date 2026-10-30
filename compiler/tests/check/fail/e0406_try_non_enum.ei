@@ -1,0 +1,4 @@
+// expect: E0406 2:34
+fn f() -> Option[u32] { let x = 5?
+    Some(x) }
+fn main() {}

@@ -1,0 +1,13 @@
+// mode: build
+type W[T] = { v: T }
+impl[T] W[T] {
+    fn get(self) -> T { self.v }
+    fn put(inout self, x: T) { self.v = x }
+}
+fn main() uses io {
+    var w = W(5)
+    w.put(6)
+    print(w.get())
+    var b = W(true)
+    print(b.get())
+}

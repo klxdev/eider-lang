@@ -1,0 +1,4 @@
+// expect: E0115 4:15
+type Sq = { s: u32 }
+fn main() { let a = Sq(1)
+    let b = a.get() }

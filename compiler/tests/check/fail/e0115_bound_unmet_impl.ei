@@ -1,0 +1,6 @@
+// expect: E0115 5:36
+trait Area { fn area(self) -> u32 }
+type Sq = { s: u32 }
+impl Area for Sq { fn area(self) -> u32 { 1 } }
+fn total[T: Area](a: T) -> u32 { a.area() }
+fn main() { let x = total(5) }

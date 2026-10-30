@@ -1,0 +1,4 @@
+// expect: E0401 4:22
+type W[T] = { v: T }
+fn main() { let a: W[i32] = W(1)
+    let b: W[bool] = a }

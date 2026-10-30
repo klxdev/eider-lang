@@ -1,0 +1,3 @@
+// expect: E0603 2:6
+fn f[T: Nope](x: T) {}
+fn main() {}

@@ -1,0 +1,3 @@
+// expect: E0303 3:5
+fn main() { let s = String.from("a")
+    s.push_str("b") }

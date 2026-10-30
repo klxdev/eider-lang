@@ -1,0 +1,5 @@
+// expect: E0107 4:8
+type Sq = { s: u32 }
+impl Sq { fn a(self) -> u32 { 1 }
+    fn a(self) -> u32 { 2 } }
+fn main() {}

@@ -1,0 +1,2 @@
+// expect: E0401 2:25
+fn main() { let x = len(true) }

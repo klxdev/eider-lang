@@ -1,0 +1,5 @@
+// expect: E0401 5:15
+type R = { m: Map[i32, i32] }
+fn main() { let a: Map[i32, i32] = Map.new()
+    let r = R(a)
+    let s = r == r }

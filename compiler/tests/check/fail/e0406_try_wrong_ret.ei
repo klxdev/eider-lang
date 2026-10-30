@@ -1,0 +1,5 @@
+// expect: E0406 3:40
+fn half(n: u32) -> Result[u32, str] { Ok(n) }
+fn f() -> Option[u32] { let x = half(1)?
+    Some(x) }
+fn main() {}

@@ -3,8 +3,14 @@
 // Loading mirrors the bootstrap (eider-bootstrap src/main.rs load_module): imports are read
 // relative to the importing file, depth first in source order; a module already loaded (by
 // canonical path) is merged once; two different files with the same stem clash (E0808).
-// Items come out in the bootstrap's order: each module's imports before its own items, so
-// the entry file is last (`Program.order`).
+// Items come out in the bootstrap's order: the prelude first, then each module's imports
+// before its own items, so the entry file is last (`Program.order`).
+//
+// The prelude (Option, Result and their methods) is Eider source that belongs to the
+// language core: `core/prelude.ei` under the toolchain root, which is $EIDER_ROOT, or else
+// the parent of the directory holding the eiderc executable (argv[0]; `target/eiderc` in a
+// checkout gives the checkout), or else the current directory. It is loaded like a module
+// whose names have no prefix (as the bootstrap parses EIDER_PRELUDE before user items).
 //
 // Names. The bootstrap gives every top-level name of an imported module the prefix of its
 // file stem (`geo__Point`) and rewrites references inside that module to match, unless a
@@ -18,6 +24,7 @@
 import "deps/core/sys.ei"
 import "deps/std/bytes.ei"
 import "deps/std/fs.ei"
+import "deps/std/env.ei"
 import "intern.ei"
 import "lex.ei"
 import "ast.ei"
@@ -52,6 +59,8 @@ pub type Program = {
     seen: List[List[u8]],
     pre_syms: List[u32],
     pre_paths: List[List[u8]],
+    /// the prelude's module index
+    prelude: u32,
 }
 
 // ---- keys
@@ -243,13 +252,58 @@ fn parse_file(inout p: Program, path: List[u8], src: List[u8]) -> Result[parse.P
 }
 
 /// Build the program from the parsed entry file `q` (path `file`), loading its imports.
-pub fn load(file: List[u8], src: List[u8], q: parse.P) -> Result[Program, diag.Diag] uses fs, ffi {
-    var p = Program(List.new(), List.new(), q.names, List.new(), List.new(), List.new())
+pub fn load(file: List[u8], src: List[u8], q: parse.P) -> Result[Program, diag.Diag] uses io, fs, ffi {
+    var p = Program(List.new(), List.new(), q.names, List.new(), List.new(), List.new(), NOMOD)
     p.seen.push(canonical(file))
     add_module(inout p, file, 0, src, q)
     load_imports(inout p, 0)?
+    load_prelude(inout p)?
     for i in 0..p.mods.len() { compute_own(inout p, i as u32) }
     Ok(p)
+}
+
+/// The toolchain root (see the top of this file).
+pub fn toolchain_root() -> List[u8] uses io, ffi {
+    match env.get(sys.lit("EIDER_ROOT")) {
+        Some(r) => { if r.len() > 0 { return r } }
+        None => {}
+    }
+    let argv = env.args()
+    if argv.len() > 0 {
+        let exe = argv[0]
+        match bytes.rfind_byte(exe, 47) {
+            Some(_) => {
+                let up = dir_of(dir_of(exe))
+                if up.len() > 0 { return up }
+            }
+            None => {}
+        }
+    }
+    sys.lit(".")
+}
+
+fn load_prelude(inout p: Program) -> Result[bool, diag.Diag] uses io, fs, ffi {
+    let path = join(toolchain_root(), sys.lit("core/prelude.ei"))
+    let text = match fs.read(path) {
+        Ok(t) => t
+        Err(_) => {
+            var msg = sys.lit("cannot read the prelude `")
+            bytes.append(inout msg, path)
+            bytes.append(inout msg, sys.lit("`: "))
+            bytes.append(inout msg, read_error(path))
+            var d = diag.new("E0804", 1, 1, msg)
+            d.help = sys.lit("set EIDER_ROOT to the Eider toolchain (the directory that holds core/)")
+            return Err(d)
+        }
+    }
+    let q = parse_file(inout p, path, text)?
+    let m = add_module(inout p, path, 0, text, q)
+    p.prelude = m
+    var order: List[u32] = List.new()
+    order.push(m)
+    for x in p.order { order.push(x) }
+    p.order = order
+    Ok(true)
 }
 
 fn load_imports(inout p: Program, m: u32) -> Result[bool, diag.Diag] uses fs, ffi {

@@ -1,0 +1,19 @@
+// mode: build
+import "../lib/geo.ei"
+import "../lib/geo2.ei"
+fn main() uses io {
+    let p = geo.origin(3)
+    print(p.x)
+    let q = p.swap()
+    print(q.y)
+    let s = geo.Circle(2)
+    print(s.area())
+    print(geo.total(s, geo.Sq(1)))
+    let n = geo.names()
+    print(n[0])
+    let b = geo2.Box2(true)
+    print(b.v)
+    let r = geo.Point.mk(1, 2)
+    print(r.x)
+    print(geo2.res(3).unwrap())
+}

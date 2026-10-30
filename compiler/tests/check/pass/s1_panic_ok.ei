@@ -1,0 +1,4 @@
+// mode: build
+fn f(x: u32) -> u32 { if x > 2 { panic("big") }
+    x }
+fn main() { let a = f(1) }

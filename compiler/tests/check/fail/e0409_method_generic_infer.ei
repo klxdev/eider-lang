@@ -1,0 +1,7 @@
+// expect: E0409 7:15
+type W = { v: u32 }
+impl W {
+    fn mk[T](self) -> u32 { 1 }
+}
+fn main() { let w = W(1)
+    let x = w.mk() }
