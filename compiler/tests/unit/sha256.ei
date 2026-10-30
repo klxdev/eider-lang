@@ -1,0 +1,46 @@
+// compiler/sha256.ei (the driver's cache keys): the FIPS 180-4 vectors, the padding edges
+// (55, 56, 63, 64 and 119 bytes) and a multi-block input; same vectors as packages/sha256.
+import "../../sha256.ei"
+
+fn show(d: List[u8]) uses io {
+    var t = String.from("")
+    for b in d {
+        let hi = b / 16
+        let lo = b % 16
+        t.push_str(hexd(hi))
+        t.push_str(hexd(lo))
+    }
+    print(t)
+}
+
+fn hexd(n: u8) -> str {
+    let ds: [str; 16] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"]
+    ds[n as usize]
+}
+
+fn main() uses io {
+    let s = sha256.new()
+    var empty: List[u8] = List.new()
+    show(sha256.digest(s, empty))
+    // "abc"
+    var abc: List[u8] = List.new()
+    abc.push(97)
+    abc.push(98)
+    abc.push(99)
+    show(sha256.digest(s, abc))
+    // "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
+    var long: List[u8] = List.new()
+    for i in 0..14 {
+        for j in 0..4 { long.push((97 + i + j) as u8) }
+    }
+    show(sha256.digest(s, long))
+    var a: List[u8] = List.new()
+    for i in 0..120 {
+        a.push(97)
+        if i == 54 || i == 55 || i == 62 || i == 63 || i == 118 { show(sha256.digest(s, a)) }
+    }
+    // 100,000 bytes: many blocks
+    var m: List[u8] = List.new()
+    for i in 0..100000 { m.push(97) }
+    show(sha256.digest(s, m))
+}
