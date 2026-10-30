@@ -26,8 +26,14 @@
 cd "$(dirname "$0")/.." || exit 1
 scripts/bootstrap-deps.sh
 boot=$(scripts/stage0.sh) || exit 3
-EIDER_CACHE=off scripts/ei build compiler/main.ei -o target/eiderc >/dev/null 2>target/eiderc.build.log || { cat target/eiderc.build.log; echo "FAIL build eiderc"; exit 1; }
-new=./target/eiderc
+# EIDERC=<binary> tests that compiler instead of building target/eiderc with stage 0
+# (scripts/selfhost.sh uses it to put the self-built compiler through the same tests).
+if [ -n "$EIDERC" ]; then
+  new=$EIDERC
+else
+  EIDER_CACHE=off scripts/ei build compiler/main.ei -o target/eiderc >/dev/null 2>target/eiderc.build.log || { cat target/eiderc.build.log; echo "FAIL build eiderc"; exit 1; }
+  new=./target/eiderc
+fi
 # the front end's diagnostics: E0001, plus the parser's E0302 for `inout` in a type and E0402
 # for `null`, in the entry file
 frontmsg='"error":"(E0001|E0402)"|"error":"E0302".*"message":"`inout` is only valid on function parameters'
