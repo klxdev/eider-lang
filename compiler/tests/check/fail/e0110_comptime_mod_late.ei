@@ -1,0 +1,3 @@
+// expect: E0110 4:36
+import "../lib/ct_late.ei"
+fn main() uses io { print(ct_late.uses_late()) }

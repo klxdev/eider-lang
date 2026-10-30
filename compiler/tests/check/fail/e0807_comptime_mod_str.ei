@@ -1,0 +1,3 @@
+// expect: E0807 2:11
+import "../lib/ct_str.ei"
+fn main() uses io { print(1) }

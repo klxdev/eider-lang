@@ -1,0 +1,4 @@
+// expect: E0807 3:7
+fn r(a: usize, b: usize) -> usize { return a % b }
+const A: usize = comptime r(1, 0)
+fn main() uses io { print(A) }

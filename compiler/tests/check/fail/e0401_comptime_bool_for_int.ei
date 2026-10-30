@@ -1,0 +1,3 @@
+// expect: E0401 2:25
+const A: i32 = comptime true
+fn main() uses io { print(A) }

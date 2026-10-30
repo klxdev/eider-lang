@@ -1,0 +1,8 @@
+// expect: E0807 7:7
+fn f() -> u8 {
+    var x: u8 = 200
+    x = x + 100
+    return x
+}
+const A: u8 = comptime f()
+fn main() uses io { print(A) }

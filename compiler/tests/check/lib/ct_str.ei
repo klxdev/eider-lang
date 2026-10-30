@@ -1,0 +1,2 @@
+// helper module for e0807_comptime_mod_str.ei
+pub const S: str = comptime "s"

@@ -1,0 +1,4 @@
+fn f() -> i32 { return 1 }
+test "uses the constant" { assert A == 1 }
+const A: i32 = comptime f()
+fn main() uses io { print(A) }
