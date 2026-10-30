@@ -16,7 +16,7 @@ Rules of thumb:
 
 - New C goes in core only if it is an OS call Eider cannot make otherwise. Anything that can be written in Eider is.
 - A module goes in std only if most programs would use it. Formats, algorithms and tools are packages.
-- This repository contains no Rust. The stage-0 compiler (Eider to C) is the temporary Rust bootstrap in the separate `eider-bootstrap` repository, located by `scripts/stage0.sh` (default `../eider-bootstrap`). It is frozen: fixes only. It is retired when `compiler/` self-hosts and its generated C is committed as the seed; then building Eider needs only a C compiler (docs/compiler.md).
+- This repository contains no Rust. The stage-0 compiler (Eider to C) is the temporary Rust bootstrap in the separate `eider-bootstrap` repository, located by `scripts/stage0.sh` (default `../eider-bootstrap`). It is frozen: fixes only. `compiler/` self-hosts and its generated C is committed as `seed/eiderc.c` (`scripts/selfhost.sh --from-seed` builds the compiler from it with only a C compiler); stage 0 is retired once eiderc reaches parity (C7, docs/compiler.md), after which building Eider needs only a C compiler.
 
 Tooling:
 

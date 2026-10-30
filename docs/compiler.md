@@ -1,6 +1,6 @@
 # The self-hosted compiler (`eiderc`)
 
-Status: approved direction; C1 to C5 done (except FFI, threads, comptime: C7). This file owns the plan; update it as stages land.
+Status: approved direction; C1 to C6 done (eiderc is self-hosted; seed/eiderc.c committed). C7 (parity) has FFI done. This file owns the plan; update it as stages land.
 
 Progress: **C1 done** (lexer, interner, diagnostics rendering; `scripts/test-compiler.sh`).
 **C2 done** (parser to the AST arena, `eiderc parse` dump, parse-error corpus and AST goldens).
@@ -8,8 +8,8 @@ Progress: **C1 done** (lexer, interner, diagnostics rendering; `scripts/test-com
 `pats.ei`, `check.ei`, `ir.ei`; see "C3: checking" below).
 **C4 done** for the same language (`lower.ei`, `driver.ei`; `eiderc emit-c/build/run/test`;
 see "C4: lowering" below). **C5 done** for S1–S3: checking (see "C5: checking S1–S3") and
-lowering (see "C5: lowering"); with core/sys.ei's extern fns stubbed, eiderc compiles its own
-source to C that reaches a fixed point. From C7, **FFI is done** (`extern "c"`, `unsafe`, `export fn`,
+lowering (see "C5: lowering"). **C6 done**: eiderc builds itself to a fixed point and the
+seed is committed (see "C6: self-hosting"). From C7, **FFI is done** (`extern "c"`, `unsafe`, `export fn`,
 `emit-header`, `build --lib`, `-l`; see "C7: FFI"), since `compiler/` reaches the OS only
 through core/sys.ei's externs.
 
@@ -38,7 +38,7 @@ stage0  eider-bootstrap (Rust, external) compiles compiler/ -> stage1 (a native 
 stage1  compiler/ built by stage0    compiles compiler/ -> stage2
 stage2  compiler/ built by stage1    compiles compiler/ -> stage3
 fixed point: the C that stage2 and stage3 emit for compiler/ is byte-identical
-seed:   that C is committed as seed/eiderc.c; eider-bootstrap is retired
+seed:   that C is committed as seed/eiderc.c (done, C6); eider-bootstrap is retired at C7
 later:  cc seed/eiderc.c core/*.c  ->  a working compiler, no Rust anywhere
 ```
 
@@ -241,10 +241,13 @@ whose source is dead.
   registered with what it names; two things with one C name stop `emit-c` with
   `eiderc: internal error: C name clash ...` and exit 3 (`compiler/tests/lower/clash.ei`:
   `Sq.area` and a function `Sq__area`).
-- **Output order** (the per-module boundary): includes, extern prototypes (`extern_protos`,
-  empty until FFI), types, prototypes, shared glue, then functions per module (entry module
+- **Output order** (the per-module boundary): includes, extern prototypes (`extern_protos`:
+  `extern <ret> xc_<name>(<params>) __asm__("<symbol>");`, the names registered by `name_all`
+  like every other), types, prototypes, shared glue, then functions per module (entry module
   first, then the others in order of first appearance), generic instances sorted by C name,
-  tests, `main`. Nothing in the C depends on paths except the trap file name, which is the
+  tests, `main` (a library build has no `main` but the `eider_<name>` export wrappers, also
+  registered names; its header keeps stage 0's spelling, see "C7: FFI"). Nothing in the C
+  depends on paths except the trap file name, which is the
   path as given on the command line.
 - **Leak check.** The runtime built with `-DEI_RT_COUNT_ALLOCS` counts live allocations, and
   generated `main` calls `ei_check_leaks()` when the program ends normally (in test mode only
@@ -261,15 +264,32 @@ whose source is dead.
   agree with the bootstrap, every run is clean under UBSan at -O2 and ends with 0
   outstanding allocations ("leaks"), and `emit-c` of every run test is byte-identical twice
   and from a copy of the test directory at another path ("determinism").
-- **Self-hosting.** With core/sys.ei's 23 `extern "c"` fns replaced by stub fns (and
-  `unsafe { e }` by `{ e }`) in a scratch copy, `eiderc emit-c compiler/main.ei` gives 74k
-  lines of C that compile with `-Werror` at -O0 and -O2 (also under UBSan). With the stubs'
-  bodies pointed back at `core/eider_core.c` by hand, that binary agrees with the
-  stage-0-built eiderc on `check --json`, `ir` and `emit-c` for all 541 test programs and
-  on every run test, emits byte-identical C for its own source (the fixed point), and
-  leaks nothing doing so. What remains for the compiler's own source is FFI only: checking
-  `extern "c"`/`unsafe` and emitting extern prototypes (the marked `extern_protos` spot) and
-  calls by C symbol.
+- **Self-hosting** before FFI landed: with core/sys.ei's extern fns stubbed in a scratch
+  copy, eiderc already compiled its own source to C that reached a fixed point and agreed
+  with the stage-0-built eiderc on all 541 test programs; with FFI merged that became C6.
+
+## C6: self-hosting
+
+`scripts/selfhost.sh` (2026-10-30, 16 cores, gcc): stage 0 builds stage1 from `compiler/`
+(8.3 s, mostly gcc -O2); stage1 emits C for `compiler/main.ei` (0.12 s) that is compiled into
+stage2 with the driver's warning flags as errors (`-Werror`, -O2: ~10 s), stage2 does the same
+for stage3, and stage2's and stage3's C are byte-identical (the fixed point; it was on the
+first run, as the stubbed experiment in "C5: lowering" predicted). Then stage3 rebuilt with
+`-DEI_RT_COUNT_ALLOCS` must emit the same C and report 0 outstanding allocations, and stage3
+must pass the whole `scripts/test-compiler.sh` (`EIDERC=`): 756 files agree on lex/parse,
+69/69 + 9/9 + 456/456 check cases, 33/33 run tests (39 runs under UBSan, 39 leak-free),
+33/33 deterministic, the clash test, and all export tests. The only problem it found was in
+the test script: the determinism check ran `$OLDPWD/$new`, which breaks when `EIDERC` is
+an absolute path.
+
+- **The seed.** `sh scripts/selfhost.sh --seed` writes stage3's C to `seed/eiderc.c`
+  (76,780 lines, 2.1 MB, from 11.7k lines of Eider in `compiler/`); see `seed/README.md`.
+  `sh scripts/selfhost.sh --from-seed` builds eiderc from it with only `cc` (10 s at -O2,
+  2.9 s at -O0) and checks that it emits the seed again; `scripts/verify.sh` runs that leg.
+- **The rule** from now on: `compiler/` may use only features the current seed supports, and
+  the seed is regenerated with every compiler change. Stage 0 stays the start of the chain
+  (and the differential oracle in test-compiler.sh) until C7 parity retires it.
+
 ## C7: FFI
 
 Done ahead of the rest of C7 because eiderc's own source reaches the OS only through
@@ -452,7 +472,7 @@ Each with a design note, compile-fail tests and new codes:
 | C3 ✅ | `resolve` + `check` for the v0 language (ints, bool, str, records, enums, arrays, control flow, `inout`, capabilities, const folding), producing the typed IR (`eiderc ir`) | v0 compile-fail and compile-pass tests match |
 | C4 ✅ | `lower` + C for v0 (plus non-generic payload enums) against `core/eider_rt.*`; driver (`emit-c`, `build`, `run`, `test`) | v0 run tests match (stdout, stderr, exit code, for `run` and `test`); C is `-pedantic -Wall -Wextra -Werror` clean at -O0 and -O2 and clean under UBSan (ASan/TSan when their runtimes exist) |
 | C5 ✅ | S1–S3: payload enums, generics, traits, Option/Result/`?`, tuples, patterns, String/List/Map/Box, closures | all the features `compiler/` itself uses; their tests match (checking ✅, lowering ✅) |
-| C6 | Self-host: stage1 builds stage2 builds stage3; fixed point; commit the seed | `scripts/selfhost.sh` green (stages compile `-Werror`, stage3 passes `scripts/test-compiler.sh`), `scripts/selfhost.sh --from-seed` reproduces the seed with only a C compiler |
+| C6 ✅ | Self-host: stage1 builds stage2 builds stage3; fixed point; commit the seed | `scripts/selfhost.sh` green (stages compile `-Werror`, stage3 passes `scripts/test-compiler.sh`), `scripts/selfhost.sh --from-seed` reproduces the seed with only a C compiler |
 | C7 | Parity: modules/namespaces, FFI/export/`--lib` (✅ ahead of C5 lowering), threads, WASM, comptime, cache | the full `scripts/verify.sh` passes with `eiderc` in place of the bootstrap; retire eider-bootstrap |
 | C8+ | Language work above, then std and package-manager rework | per feature |
 

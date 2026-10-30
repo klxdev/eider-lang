@@ -32,6 +32,7 @@
 - `scripts/verify.sh` (skill: .claude/skills/eider-verify) is the full matrix; run it after any compiler change.
 - `run`/`test` compile C at -O0 (gcc ~4x faster than -O2 on a 3k-line program); `build` and `run --release` use -O2. Every non-unit function (and closure body) ends in `ei_unreachable()` or gcc -O0 warns `-Wreturn-type` and pollutes test output.
 - eiderc's run tests check drops with a counting allocator (`EIDER_CFLAGS=-DEI_RT_COUNT_ALLOCS`: generated `main` reports `eider: outstanding allocations: <n>`), because ASan's runtime isn't installed everywhere. To test eiderc on its own source before FFI lands, stub core/sys.ei's `extern "c"` fns in a scratch copy (docs/compiler.md, "C5: lowering").
+- Self-hosting (C6): `scripts/selfhost.sh` reached the fixed point on its first run because lowering was already deterministic (no index-based names, no map iteration, no paths in the C) and tested with a stubbed-FFI copy first. Scripts that run a compiler from another directory must take an absolute path (`EIDERC=` is one). After any `compiler/` change: `sh scripts/selfhost.sh --seed` and commit seed/eiderc.c.
 - Compile-time benchmark (3,000-line synthetic, 150 record types, 2 cores, no cache): front end ~50 ms; gcc -O2 4.9 s, -O0 1.3 s; clang -O2 ~19 s, -O0 0.5 s. The C is ~3.7x the Eider line count because every type gets its own glue; shrinking that is the main lever.
 
 # Bootstrap bugs (frozen compiler; work around them, and give eiderc a regression test)
