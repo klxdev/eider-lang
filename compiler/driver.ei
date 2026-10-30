@@ -32,7 +32,7 @@ import "deps/std/proc.ei"
 
 fn s(x: str) -> List[u8] uses ffi { sys.lit(x) }
 
-fn fail(msg: List[u8], code: i32) uses io, ffi {
+pub fn fail(msg: List[u8], code: i32) uses io, ffi {
     var m = s("eiderc: ")
     bytes.append(inout m, msg)
     io.errln(m)
@@ -127,7 +127,7 @@ fn extra_flags(inout argv: List[List[u8]]) uses io, ffi {
     }
 }
 
-fn write_or_fail(path: List[u8], data: List[u8]) uses io, fs, ffi {
+pub fn write_or_fail(path: List[u8], data: List[u8]) uses io, fs, ffi {
     match fs.write(path, data) {
         Ok(_) => {}
         Err(_) => {

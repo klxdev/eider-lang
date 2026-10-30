@@ -1,0 +1,2 @@
+// a module needs an `export fn` (E0805); `main` is not required
+fn helper() -> i32 { return 1 }

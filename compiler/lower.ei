@@ -2197,8 +2197,9 @@ fn export_sig(inout g: G, p: P, f: u32, name: List[u8]) uses ffi {
 
 /// A library's entry points: `eider_<name>` for each `export fn`, calling it (a trap inside
 /// exits the process with 101; trap messages name "lib", as in stage 0). Records cross by
-/// value; the header (`header`) declares the same layouts under stage 0's names.
-fn export_wrappers(inout g: G, p: P) uses ffi {
+/// value; the header (`header`) declares the same layouts under stage 0's names. For
+/// WebAssembly (`wasm`) each definition also exports itself under that name (export_name).
+fn export_wrappers(inout g: G, p: P, wasm: bool) uses ffi {
     put(inout g, "/* ---- exported entry points */\n")
     for x in p.ir.exports {
         export_sig(inout g, p, x.f, x.name)
@@ -2206,6 +2207,11 @@ fn export_wrappers(inout g: G, p: P) uses ffi {
     }
     for x in p.ir.exports {
         let fd = p.ir.fns[x.f as usize]
+        if wasm {
+            put(inout g, "__attribute__((export_name(\"eider_")
+            ident(inout g, x.name)
+            put(inout g, "\"))) ")
+        }
         export_sig(inout g, p, x.f, x.name)
         put(inout g, " {\n  ei_set_file(\"lib\");\n  ")
         if !is_void(p, fd.ret) { put(inout g, "return ") }
@@ -2289,7 +2295,13 @@ pub fn program(p: P, file: List[u8], tests: bool) -> Result[List[u8], List[u8]] 
 
 /// The C for `p` as a program, or (lib = true) as a library: no `main`, a C entry point per
 /// `export fn` (export_wrappers).
-pub fn program_for(p: P, file: List[u8], tests: bool, lib: bool) -> Result[List[u8], List[u8]] uses ffi {
+pub fn program_for(p: P, file: List[u8], tests: bool, lib: bool) -> Result[List[u8], List[u8]] uses ffi { emit(p, file, tests, lib, false) }
+
+/// The C for `p` as a WebAssembly module: a library whose entry points are the module's
+/// exports (compiled against core/wasm by wasm.ei).
+pub fn program_wasm(p: P, file: List[u8]) -> Result[List[u8], List[u8]] uses ffi { emit(p, file, false, true, true) }
+
+fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool) -> Result[List[u8], List[u8]] uses ffi {
     var g = G(List.new(), 0, List.new(), 0, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new())
     name_all(inout g, p)
     if g.err.len() > 0 { return Err(g.err) }
@@ -2304,7 +2316,7 @@ pub fn program_for(p: P, file: List[u8], tests: bool, lib: bool) -> Result[List[
         function(inout g, p, f)
     }
     if lib {
-        export_wrappers(inout g, p)
+        export_wrappers(inout g, p, wasm)
     } else if tests {
         put(inout g, "int main(void) {\n  volatile int total = 0, failed = 0;\n  jmp_buf jb;\n  ei_set_trap_jmp(&jb);\n  ei_set_file(")
         str_lit(inout g.o, file)

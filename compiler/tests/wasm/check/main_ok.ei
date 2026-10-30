@@ -1,0 +1,3 @@
+// a `main` is allowed in a module (it is just not exported), and unit results are fine
+fn main() { }
+export fn tick(n: u64) { if n > 0 { return } }

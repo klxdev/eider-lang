@@ -1,0 +1,29 @@
+// Output through env.eider_write (print, String, List, Map inside the module) and traps that
+// print their message and become `unreachable`.
+export fn hello(n: i32) -> i32 uses io {
+    print("hello from wasm")
+    var s = String.from("n = ")
+    s.append(String.from_int(n as i64))
+    print(s)
+    var m: Map[i32, i64] = Map.new()
+    for i in 0..n { m.insert(i, (i * i) as i64) }
+    var total: i64 = 0
+    for i in 0..n {
+        match m.get(i) {
+            Some(v) => { total = total + v }
+            None => {}
+        }
+    }
+    print(total)
+    print(n > 2)
+    return m.len() as i32
+}
+export fn idx(i: i32) -> i32 {
+    let l = [10, 20, 30]
+    return l[i as usize]
+}
+export fn boom(v: i32) -> i32 {
+    if v > 0 { panic("boom") }
+    return v
+}
+export fn add(a: i32, b: i32) -> i32 { return a + b }

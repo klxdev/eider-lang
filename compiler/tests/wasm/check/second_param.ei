@@ -1,0 +1,2 @@
+// E0806 at the first offending parameter, after good ones; str is C-safe but not wasm-safe
+export fn f(a: i32, b: bool, c: str, d: str) -> i32 { return a }

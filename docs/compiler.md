@@ -54,7 +54,7 @@ features that the previous seed supports.
 | OS interop | `core/eider_core.c` (ABI in `core/ABI.md`) | unchanged; one backend file per OS |
 | Language runtime (traps, checked arithmetic, allocation, string/list helpers, thread glue) | C text inside the stage-0 compiler (`src/prelude.rs`), pasted into every program | `core/eider_rt.h` + `core/eider_rt.c` (written; contract and inventory in `core/RUNTIME.md`, tested by `tests/core/run.sh`), included by code from the self-hosted compiler |
 | Per-type glue (drop/clone/equality/hash for each concrete type) | generated C | generated C (compiler output; trusted because the compiler is) |
-| WASM libc shim | C text in the stage-0 compiler (`src/wasm_shim.rs`) | `core/wasm/` as a separate backend of the same ABIs |
+| WASM libc shim | `core/wasm/` (written for eiderc, `core/wasm/README.md`): `eider_rt.c`, the runtime contract for wasm32, and `libc.c`, the freestanding C library; stage 0 still pastes its own (`src/wasm_shim.rs`) | unchanged |
 
 Moving the runtime into `core/` makes it reviewable, testable under sanitizers on its own,
 and portable per target, instead of being a string inside a compiler.
@@ -310,7 +310,7 @@ started, so callers of std still write `uses ffi`.
   the latter. `unsafe` is lexical: a closure created inside `unsafe { }` may call externs.
   With `--lib` (and for `emit-header`) the program is a library: `main` is not required and
   at least one `export fn` is (E0805 at 1:1).
-- **Not supported** (`unsupported`): `--wasm` (E0806 is WebAssembly only), and an extern or
+- **Not supported** (`unsupported`): an extern or
   `unsafe fn` used as a function value, which the bootstrap accepts without `unsafe` or
   `ffi` (a hole; the value can then be called anywhere).
 - **IR.** `Ir.externs` ({function, C symbol, parameter types}; the function has no body and
@@ -400,6 +400,36 @@ constant it is handed, so a caller that skips `eval` finds out).
   `compiler/tests/run/comptime.ei` (chains, negative values, bool, the range edges of every
   integer type, owned data, records, generics, closures and match during evaluation, an
   imported module's constants, test blocks using them).
+
+## C7: WebAssembly
+
+- **Checking.** `--wasm` (`check`, `emit-c`, `emit-header`, `build`, `run`; `test` ignores
+  it like `--lib`) checks the program as a library (`check.check_wasm`: no `main`, E0805)
+  whose exports take only integer and bool parameters (E0806 at the parameter) and return an
+  integer, bool or `()` (E0806 at the function), checked before the E0803 rules, which then
+  allow no records. A program that uses a thread type (`Task`, `Mutex`, `Chan`, so also
+  `spawn`) gets E0806 at 1:1 after everything else is checked, as stage 0 reports it from
+  `note_ty`. Until eiderc checks threads, `spawn` stops checking with `unsupported`, which
+  `check_wasm` turns into that E0806. The compile-fail runner reads `// mode: wasm` and
+  passes `--wasm` (as `scripts/test-compiler.sh` does).
+- **Lowering.** `lower.program_wasm`: the library C, with each `eider_<name>` entry point
+  marked `__attribute__((export_name("eider_<name>")))`.
+- **Driver** (`wasm.ei`). `build --wasm` (and `run --wasm`, as in stage 0) compiles that C
+  with `core/wasm/eider_rt.c` and `core/wasm/libc.c` by `$WASM_CC` (default clang) for
+  wasm32 (the command is at the top of wasm.ei), and writes `<name>.wasm`, `<name>.d.ts` and
+  `<name>.js` (`-o`'s path, else the source's stem), printing `built <wasm>, <d.ts>, <js>`;
+  a failed compile is exit 3 with stage 0's message. The `.d.ts` and the loader are stage 0's
+  text byte for byte (`emit-header --wasm` prints both like stage 0: declarations, `\x01`,
+  loader naming the module `@WASM@`). Only this command needs clang and wasm-ld.
+- **Tests.** The two `e0806_*` compile-fail tests; "wasm" in `scripts/test-compiler.sh`:
+  `check --wasm` and `emit-header --wasm` against the bootstrap, then
+  `compiler/tests/wasm/run.sh`: `tests/wasm/core.sh` (core/wasm warning-free for wasm32 and
+  as `-fsyntax-only -nostdinc` freestanding C on the host; the emitted C of the wasm tests
+  likewise), `tests/wasm/run.sh` with `EIDER=eiderc`, and `compiler/tests/wasm/*.ei` (every
+  integer type and bool both ways, `()` results, output through `eider_write`, traps becoming
+  `unreachable` with the message printed, a line over 511 bytes) run under node against
+  hand-checked `.out` files and against the bootstrap's module (same output, same `.d.ts` and
+  `.js`). Without clang's wasm32 target, wasm-ld or node the module legs print `skip`.
 
 ## C4: lowering
 

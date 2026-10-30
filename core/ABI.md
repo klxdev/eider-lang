@@ -124,5 +124,6 @@ Guarantees a backend must keep:
 | macOS | written (`_NSGetArgv`, `EC_SYM` names); not yet run |
 | FreeBSD / OpenBSD / NetBSD | written (args via an init-array constructor); not yet run |
 | Windows | not written; `eider_core.c` refuses to compile there |
+| WebAssembly (wasm32) | none: a module has no OS. The runtime has a wasm backend (`core/wasm/`); `ec_*` calls become host imports (`core/wasm/README.md`) |
 
 The bootstrap compiler itself is also only exercised on x86-64 Linux.

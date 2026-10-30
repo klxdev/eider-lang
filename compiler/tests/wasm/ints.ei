@@ -1,0 +1,19 @@
+// Every integer type and bool across the WebAssembly boundary, both ways, plus a () export.
+// (No parameter is named `x`: the loader stage 0 generates, kept byte-identical, calls
+// `x.eider_<name>(...)` inside an arrow function whose parameters would shadow it.)
+export fn i32_neg(v: i32) -> i32 { return 0 - v }
+export fn i64_twice(v: i64) -> i64 { return v * 2 }
+export fn u8_next(v: u8) -> u8 { return v + 1 }
+export fn u32_max() -> u32 { return 4294967295 }
+export fn u64_big(v: u64) -> u64 { return v * 1000000000 }
+export fn usize_len(n: usize) -> usize {
+    var l: List[i32] = List.new()
+    for i in 0..n { l.push(i as i32) }
+    return l.len()
+}
+export fn not(b: bool) -> bool { return !b }
+export fn mixed(a: u8, b: i64, c: bool) -> i64 {
+    if c { return a as i64 + b }
+    return b - (a as i64)
+}
+export fn nothing(v: i32) { if v > 0 { return } }

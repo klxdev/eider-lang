@@ -1,0 +1,3 @@
+imports: env.eider_write env.host_scale
+scaled_sum 100
+no imports: LinkError

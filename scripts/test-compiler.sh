@@ -35,6 +35,12 @@
 #             consumers of the bootstrap's suite) with EIDER=eiderc, compiler/tests/export/run.sh
 #             (eiderc's own: more types, nested records, two libraries, traps), and
 #             `emit-header` and `check --lib --json` equal to the bootstrap's.
+#   wasm:     `check --wasm --json` and `emit-header --wasm` equal to the bootstrap's for
+#             tests/wasm and compiler/tests/wasm{,/check} (`// mode: wasm` check tests use --wasm in
+#             the check section); compiler/tests/wasm/run.sh: core/wasm and the emitted C are
+#             strict freestanding C, and `build --wasm` modules run under node like the
+#             bootstrap's, with byte-identical .d.ts/.js (skipped, with the reason, without
+#             clang's wasm32 target, wasm-ld or node: WebAssembly is optional).
 cd "$(dirname "$0")/.." || exit 1
 scripts/bootstrap-deps.sh
 boot=$(scripts/stage0.sh) || exit 3
@@ -94,7 +100,10 @@ check_set() {
   outside=""
   for f in "$@"; do
     total=$((total + 1))
-    got=$($new check --json "$f" 2>&1)
+    # `// mode: wasm` (stage 0's compile-fail runner): check as a WebAssembly module
+    wf=""
+    if grep -q '// mode: wasm' "$f"; then wf=--wasm; fi
+    got=$($new check --json $wf "$f" 2>&1)
     case "$got" in
       *'"error":"unsupported"'*)
         outside="$outside $(basename "$f")"
@@ -103,7 +112,7 @@ check_set() {
         ;;
     esac
     inscope=$((inscope + 1))
-    want=$($boot check --json "$f" 2>&1)
+    want=$($boot check --json $wf "$f" 2>&1)
     if [ "$want" = "$got" ]; then
       agree=$((agree + 1))
     else
@@ -294,4 +303,27 @@ for f in tests/export/mathlib.ei compiler/tests/export/shapes.ei compiler/tests/
 done
 if [ "$lagree" = "$ltotal" ]; then v="ok  "; else v="FAIL"; fi
 echo "$v export: $lagree/$ltotal files agree on check --lib and emit-header"
+
+# wasm: `check --wasm` and `emit-header --wasm` (the .d.ts and the loader) equal the
+# bootstrap's; core/wasm and the emitted C compile as strict freestanding C; and, when clang
+# has the wasm32 target and wasm-ld and node are installed, `build --wasm` modules behave
+# like the bootstrap's (compiler/tests/wasm/run.sh; it skips with the reason otherwise)
+wagree=0
+wtotal=0
+for f in tests/wasm/*.ei compiler/tests/wasm/*.ei compiler/tests/wasm/check/*.ei; do
+  wtotal=$((wtotal + 1))
+  want=$($boot check --wasm --json "$f" 2>&1)
+  got=$($new check --wasm --json "$f" 2>&1)
+  $boot emit-header --wasm "$f" >$tmp/h_want 2>&1
+  $new emit-header --wasm "$f" >$tmp/h_got 2>&1
+  if [ "$want" != "$got" ] || ! cmp -s $tmp/h_want $tmp/h_got; then
+    echo "FAIL check --wasm / emit-header --wasm $f"
+    fail=1
+    continue
+  fi
+  wagree=$((wagree + 1))
+done
+if [ "$wagree" = "$wtotal" ]; then v="ok  "; else v="FAIL"; fi
+echo "$v wasm: $wagree/$wtotal files agree on check --wasm and emit-header --wasm"
+if out=$(sh compiler/tests/wasm/run.sh $new $boot 2>&1); then echo "$out"; else echo "$out"; fail=1; fi
 exit $fail
