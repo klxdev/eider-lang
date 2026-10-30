@@ -11,6 +11,18 @@
 #             supports (it doesn't answer `unsupported`), `eiderc check --json` must equal the
 #             bootstrap's byte for byte; the same for tests/run/*.ei. eiderc's own cases in
 #             compiler/tests/check/{fail,pass} must all be in scope and agree.
+#   run:      every tests/run/*.ei and compiler/tests/run/*.ei that eiderc checks without
+#             `unsupported` must give the same stdout, stderr and exit code under `eiderc run`
+#             as under the bootstrap's `eider run`, and, if it has test blocks, under
+#             `eiderc test` and `eider test`. eiderc compiles its C with -Werror (on top of the
+#             driver's -std=c11 -pedantic -Wall -Wextra). Exception: a compiler/tests/run file
+#             with an X.out (and X.test.out) next to it is a regression test for a bootstrap
+#             bug (LEARNINGS.md), where the bootstrap's output is wrong; it is compared with
+#             that hand-written expected stdout instead (and must exit 0 with empty stderr).
+#   sanitize: every run again with its C at -O2 -Werror (so -Wmaybe-uninitialized is
+#             checked) under UBSan in trap mode (-fsanitize=undefined
+#             -fsanitize-undefined-trap-on-error, no runtime library needed); the output must
+#             equal the plain run's. ASan and TSan run too when their runtimes are installed.
 cd "$(dirname "$0")/.." || exit 1
 scripts/bootstrap-deps.sh
 boot=$(scripts/stage0.sh) || exit 3
@@ -92,4 +104,87 @@ check_set 0 tests/run/*.ei
 echo "$(verdict $inscope) check: $agree/$inscope run tests in scope agree ($total tests)"
 check_set 1 compiler/tests/check/fail/*.ei compiler/tests/check/pass/*.ei
 echo "$(verdict $total) check: $agree/$inscope eiderc check cases agree (compiler/tests/check)"
+
+# run: differential against the bootstrap's `run` / `test` (stdout, stderr, exit code)
+tmp=target/runtest
+mkdir -p $tmp
+# usage: outcome <command...>: writes stdout, stderr and the exit code of the command to $tmp/out
+outcome() {
+  "$@" >$tmp/o 2>$tmp/e
+  code=$?
+  { cat $tmp/o; echo "--- stderr"; cat $tmp/e; echo "--- exit $code"; } >$tmp/out
+}
+has_tests() { grep -q '^test ' "$1"; }
+# ASan/TSan need runtime libraries that may not be installed; UBSan in trap mode needs none
+sans="undefined"
+printf 'int main(void){return 0;}\n' >$tmp/probe.c
+for s in address thread; do
+  if ${CC:-cc} -fsanitize=$s -o $tmp/probe $tmp/probe.c 2>/dev/null; then
+    sans="$sans $s"
+  else
+    echo "     skip $s sanitizer: its runtime library is not installed"
+  fi
+done
+rtotal=0
+rscope=0
+ragree=0
+rexpected=0
+rsan=0
+rsan_ok=0
+routside=""
+for f in tests/run/*.ei compiler/tests/run/*.ei; do
+  rtotal=$((rtotal + 1))
+  case "$($new check --json "$f" 2>&1)" in
+    *'"error":"unsupported"'*)
+      routside="$routside $(basename "$f")"
+      continue
+      ;;
+  esac
+  rscope=$((rscope + 1))
+  ok=1
+  for cmd in run test; do
+    if [ $cmd = test ] && ! has_tests "$f"; then continue; fi
+    exp=""
+    case "$f" in compiler/tests/run/*) exp="${f%.ei}.out" ;; esac
+    [ $cmd = test ] && exp="${exp%.out}.test.out"
+    outcome env EIDER_CFLAGS=-Werror $new $cmd "$f"
+    cp $tmp/out $tmp/got
+    if [ -n "$exp" ] && [ -f "$exp" ]; then
+      # a bootstrap-bug regression: hand-written expected output, not the bootstrap's
+      { cat "$exp"; echo "--- stderr"; echo "--- exit 0"; } >$tmp/want
+    else
+      outcome $boot $cmd "$f"
+      cp $tmp/out $tmp/want
+    fi
+    if ! cmp -s $tmp/want $tmp/got; then
+      echo "FAIL run: eiderc $cmd $f"
+      diff $tmp/want $tmp/got | head -10
+      ok=0
+      fail=1
+    fi
+    # the same program at -O2 under each available sanitizer
+    for s in $sans; do
+      rsan=$((rsan + 1))
+      flags="-Werror -O2 -fsanitize=$s"
+      [ $s = undefined ] && flags="$flags -fsanitize-undefined-trap-on-error"
+      outcome env EIDER_CFLAGS="$flags" $new $cmd "$f"
+      if cmp -s $tmp/got $tmp/out; then
+        rsan_ok=$((rsan_ok + 1))
+      else
+        echo "FAIL sanitize ($s): eiderc $cmd $f"
+        diff $tmp/got $tmp/out | head -10
+        fail=1
+      fi
+    done
+  done
+  if [ $ok = 1 ]; then
+    ragree=$((ragree + 1))
+    case "$f" in compiler/tests/run/*) [ -f "${f%.ei}.out" ] && rexpected=$((rexpected + 1)) ;; esac
+  fi
+done
+if [ "$ragree" = "$rscope" ]; then v="ok  "; else v="FAIL"; fi
+echo "$v run: $ragree/$rscope run tests in scope agree ($rtotal tests; $rexpected compared with expected output for bootstrap bugs)"
+echo "     out of scope:$routside"
+if [ "$rsan_ok" = "$rsan" ]; then v="ok  "; else v="FAIL"; fi
+echo "$v sanitize: $rsan_ok/$rsan runs at -O2 under -fsanitize={$sans} match"
 exit $fail

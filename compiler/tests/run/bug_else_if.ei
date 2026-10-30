@@ -1,0 +1,41 @@
+// Stage-0 bug (LEARNINGS.md): owned temporaries in an `else if` condition are declared inside
+// the generated `else { }` and dropped after it, so its C fails to compile. v0 has no owned
+// types yet (String/List arrive in C5), so this covers the lowering of `else if` conditions
+// that need temporaries: calls, constructed records and enums, nested short-circuits, and
+// conditions with side effects that must run only when reached. Expected: bug_else_if.out.
+
+type Pt = { x: i32, y: i32 }
+type Sh = | Circle(r: u32) | Square(s: u32) | Blank
+
+fn pt(x: i32, y: i32) -> Pt uses io {
+    print(x * 10 + y)
+    Pt(x, y)
+}
+
+fn name(n: u32) -> str uses io {
+    print(n)
+    if n == 0 { "zero" } else if n == 1 { "one" } else { "many" }
+}
+
+fn which(p: Pt, s: Sh) -> i32 uses io {
+    if p == pt(0, 0) {
+        1
+    } else if p == pt(1, 2) && s == Circle(3) {
+        2
+    } else if name(p.x as u32) == "many" || s == Square(4) {
+        3
+    } else if Pt(p.y, p.x) == pt(2, 1) {
+        4
+    } else {
+        5
+    }
+}
+
+fn main() uses io {
+    print(which(Pt(0, 0), Blank))
+    print(which(Pt(1, 2), Circle(3)))
+    print(which(Pt(1, 2), Circle(4)))
+    print(which(Pt(7, 7), Blank))
+    print(which(Pt(1, 1), Square(4)))
+    print(which(Pt(0, 9), Blank))
+}

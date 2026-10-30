@@ -1,0 +1,22 @@
+// Stage-0 bug (LEARNINGS.md): `len(e)` on an array folds to the length and never evaluates
+// `e`. eiderc evaluates `e` for its side effects. Expected output: bug_len_effects.out.
+
+fn make(n: i32) -> [i32; 4] uses io {
+    print(n)
+    [n; 4]
+}
+
+fn count(inout calls: u32) -> [u8; 2] {
+    calls += 1
+    [0, 0]
+}
+
+fn main() uses io {
+    print(len(make(7)))
+    var calls: u32 = 0
+    let total = len(count(inout calls)) + len(count(inout calls))
+    print(total)
+    print(calls)
+    let grid = [[1, 2, 3], [4, 5, 6]]
+    print(len(grid[1]))
+}

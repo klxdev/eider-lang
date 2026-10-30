@@ -40,5 +40,6 @@
 - `len(e)` on an array folds to the length and never evaluates `e` (expr.rs builtin `len`), so side effects in `e` are lost; eiderc's IR keeps them.
 - Folding `u64 * u64` constants overflows i128 and the checker panics (expr.rs binary fold). eiderc computes in 128 bits and has no test for it, since the bootstrap gives no answer.
 - Checker quirks eiderc reproduces for diagnostic parity (docs/compiler.md, "C3: checking"): `Enum.Variant` on an imported module's enum is E0114; some errors in imported modules name the importer's file; a module's test block doesn't let locals shadow the module's item names.
+- String literals are pasted into the C with only `"`, `\`, newline and tab escaped, so `??(` and the other trigraphs turn into `[` etc. under `-std=c11` (plus a `-Wtrigraphs` warning on stderr). eiderc escapes `?` (regression test `compiler/tests/run/bug_trigraph.ei`).
 - At -O2 gcc reports `-Wmaybe-uninitialized` on temporaries the bootstrap declares before a branch that always assigns them. Harmless, but eiderc's C must be warning-free.
 - A match-arm binding with the same name as the `let` it initialises (`let p = match r { Ok(p) => p ... }`) is emitted as a second C variable `v_p` inside the arm's block, so the outer `p` is never assigned and reads garbage (eiderc's `main.ei` crashed in `ast.at`). Give the binding another name.

@@ -1,0 +1,47 @@
+// helper module for compiler/tests/run/modules.ei
+pub type Dir = | North | East | South | West
+pub type Pos = { x: i32, y: i32 }
+pub type Move = | Step(d: Dir, n: i32) | Jump(to: Pos) | Stay
+
+pub const ORIGIN: i32 = 0
+pub const NAME: str = "geo"
+const SECRET: u8 = 7
+
+pub fn apply(p: Pos, m: Move) -> Pos {
+    match m {
+        Step(North, n) => Pos(p.x, p.y + n)
+        Step(East, n) => Pos(p.x + n, p.y)
+        Step(South, n) => Pos(p.x, p.y - n)
+        Step(West, n) => Pos(p.x - n, p.y)
+        Jump(to) => to
+        Stay => p
+    }
+}
+
+pub fn turn(d: Dir) -> Dir {
+    match d {
+        North => East
+        East => South
+        South => West
+        West => North
+    }
+}
+
+pub fn secret() -> u8 { SECRET + helper_priv() }
+
+fn helper_priv() -> u8 { 1 }
+
+/// the same name as a function of the importing file
+pub fn helper() -> u8 { 2 }
+
+pub fn walk(inout p: Pos, d: Dir) {
+    p = apply(p, Step(d, 1))
+}
+
+test "geo turns" {
+    assert turn(West) == North
+}
+
+test "geo fails" {
+    assert turn(North) == West, "north turns east"
+}

@@ -1,0 +1,64 @@
+// Test blocks: passing and failing tests in any order, output from tests, traps deep in
+// calls, names that need escaping in C. `eiderc test` exits 1 when any test fails;
+// `eiderc run` ignores the tests and runs main.
+
+type Counter = { n: u32 }
+
+fn deep(n: u32) -> u32 {
+    if n == 0 { return 10 / n }
+    deep(n - 1)
+}
+
+fn step(inout c: Counter) -> u32 {
+    c.n += 1
+    c.n
+}
+
+test "passes" {
+    var c = Counter(0)
+    assert step(inout c) == 1
+    assert step(inout c) == 2, "second step"
+}
+
+test "prints, then passes" {
+    print("inside a test")
+    print(42)
+}
+
+test "fails on an assert" {
+    print("before the assert")
+    assert 1 + 1 == 3, "arithmetic"
+    print("not printed")
+}
+
+test "passes after a failure" {
+    let c = Counter(7)
+    assert c.n == 7
+}
+
+test "traps deep in a call" {
+    print(deep(5))
+}
+
+test "100% \"quoted\" name\twith tab" {
+    assert true
+}
+
+test "panics" {
+    var c = Counter(0)
+    step(inout c)
+    if c.n == 1 { panic("counter at one") }
+}
+
+test "last one passes" {
+    let xs = [1, 2, 3]
+    var t = 0
+    for x in xs { t += x }
+    assert t == 6
+}
+
+fn main() uses io {
+    print("main runs")
+    var c = Counter(5)
+    print(step(inout c))
+}

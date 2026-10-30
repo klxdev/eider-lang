@@ -1,0 +1,110 @@
+// match on payload enums with nested data: records, arrays and enums inside payloads,
+// nested patterns, or-patterns, literal patterns, bindings, structural ==, unit-enum print.
+
+type Color = | Red | Green | Blue
+type Point = { x: i32, y: i32 }
+type Leaf = | Num(n: i64) | Flag(on: bool) | Name(s: str)
+type Shape =
+    | Dot(at: Point)
+    | Line(from: Point, to: Point)
+    | Poly(pts: [Point; 3], color: Color)
+    | Tagged(leaf: Leaf, weight: u8)
+    | Nothing
+
+fn describe(s: Shape) -> str {
+    match s {
+        Dot(Point(0, 0)) => "dot at the origin"
+        Dot(_) => "dot"
+        Line(Point(0, _), Point(_, 0)) | Line(Point(_, 0), Point(0, _)) => "line touching both axes"
+        Line(a, b) => if a == b { "degenerate line" } else { "line" }
+        Poly(_, Red) => "red polygon"
+        Poly(_, Green) => "green polygon"
+        Poly(pts, _) => if pts[0].x > 0 { "cool polygon right" } else { "cool polygon" }
+        Tagged(Num(0), _) => "zero"
+        Tagged(Num(n), w) => if n < 0 && w > 100 { "heavy negative" } else { "number" }
+        Tagged(Flag(true), 0) => "weightless true"
+        Tagged(Flag(f), _) => if f { "true" } else { "false" }
+        Tagged(Name("eider"), _) => "the duck"
+        Tagged(Name(_), _) => "a name"
+        Nothing => "nothing"
+    }
+}
+
+fn weight(s: Shape) -> i64 {
+    let w: i64 = match s {
+        Dot(p) => (p.x + p.y) as i64
+        Line(a, b) => {
+            let dx = b.x - a.x
+            let dy = b.y - a.y
+            (dx * dx + dy * dy) as i64
+        }
+        Poly(pts, c) => {
+            var t: i64 = 0
+            for q in pts { t += q.x as i64 }
+            match c {
+                Red => t
+                Green => t * 2
+                Blue => t * 3
+            }
+        }
+        Tagged(Num(n), w8) => n * w8 as i64
+        Tagged(_, w8) => w8 as i64
+        Nothing => -1
+    }
+    w
+}
+
+fn grade(n: u32) -> Color {
+    match n {
+        0 | 1 | 2 => Red
+        3 => Green
+        _ => Blue
+    }
+}
+
+fn main() uses io {
+    let o = Point(0, 0)
+    let tri = [Point(1, 2), Point(3, 4), Point(5, 6)]
+    var shapes = [Nothing; 14]
+    shapes[0] = Dot(o)
+    shapes[1] = Dot(Point(1, 0))
+    shapes[2] = Line(Point(0, 5), Point(7, 0))
+    shapes[3] = Line(Point(4, 0), Point(0, 9))
+    shapes[4] = Line(Point(2, 2), Point(2, 2))
+    shapes[5] = Line(Point(1, 2), Point(4, 6))
+    shapes[6] = Poly(tri, Red)
+    shapes[7] = Poly(tri, Blue)
+    shapes[8] = Tagged(Num(0), 3)
+    shapes[9] = Tagged(Num(-5), 200)
+    shapes[10] = Tagged(Flag(true), 0)
+    shapes[11] = Tagged(Flag(false), 9)
+    shapes[12] = Tagged(Name("eider"), 1)
+    shapes[13] = Tagged(Name("teal"), 2)
+    for s in shapes {
+        print(describe(s))
+        print(weight(s))
+    }
+    print(describe(Nothing))
+    print(weight(Nothing))
+
+    // structural equality on nested payloads
+    print(shapes[6] == Poly([Point(1, 2), Point(3, 4), Point(5, 6)], Red))
+    print(shapes[6] == shapes[7])
+    print(shapes[12] == Tagged(Name("eider"), 1))
+    print(shapes[12] != Tagged(Name("eider"), 2))
+    print(shapes[13] == shapes[12])
+    print(Nothing == shapes[0])
+
+    // unit enums print their variant's name
+    for i in 0..6 { print(grade(i as u32)) }
+    let c = grade(3)
+    print(c == Green)
+
+    // payload fields read back after copies and updates
+    var copy = shapes[5]
+    shapes[5] = Nothing
+    print(describe(copy))
+    copy = Dot(Point(-3, 3))
+    print(weight(copy))
+    print(describe(shapes[5]))
+}

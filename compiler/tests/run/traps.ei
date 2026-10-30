@@ -1,0 +1,527 @@
+// Every runtime trap, one per test block (`eiderc test` keeps going after a failure), next
+// to tests that pass. Values go through `id_*` functions so nothing is folded.
+
+fn id_i32(x: i32) -> i32 { x }
+fn id_i64(x: i64) -> i64 { x }
+fn id_u8(x: u8) -> u8 { x }
+fn id_u32(x: u32) -> u32 { x }
+fn id_u64(x: u64) -> u64 { x }
+fn id_usize(x: usize) -> usize { x }
+
+fn wide_i64(x: i64) -> i64 { x }
+
+test "passes before the traps" {
+    assert id_i32(2) + id_i32(2) == 4
+}
+
+test "i32 add overflows" {
+    let x = id_i32(2147483647) + id_i32(1)
+    assert false, "not reached"
+}
+
+test "i32 sub overflows" {
+    let x = id_i32((-2147483647 - 1)) - id_i32(1)
+    assert false, "not reached"
+}
+
+test "i32 mul overflows" {
+    let x = id_i32(2147483647) * id_i32(2)
+    assert false, "not reached"
+}
+
+test "i32 div by zero" {
+    let x = id_i32(7) / id_i32(0)
+    assert false, "not reached"
+}
+
+test "i32 rem by zero" {
+    let x = id_i32(7) % id_i32(0)
+    assert false, "not reached"
+}
+
+test "i32 add overflows below" {
+    let x = id_i32((-2147483647 - 1)) + id_i32(-1)
+    assert false, "not reached"
+}
+
+test "i32 sub overflows above" {
+    let x = id_i32(2147483647) - id_i32(-1)
+    assert false, "not reached"
+}
+
+test "i32 mul overflows negative" {
+    let x = id_i32((-2147483647 - 1)) * id_i32(2)
+    assert false, "not reached"
+}
+
+test "i32 mul min by -1" {
+    let x = id_i32((-2147483647 - 1)) * id_i32(-1)
+    assert false, "not reached"
+}
+
+test "i32 div overflows" {
+    let x = id_i32((-2147483647 - 1)) / id_i32(-1)
+    assert false, "not reached"
+}
+
+test "i32 rem overflows" {
+    let x = id_i32((-2147483647 - 1)) % id_i32(-1)
+    assert false, "not reached"
+}
+
+test "i32 negation overflows" {
+    let x = -id_i32((-2147483647 - 1))
+    assert false, "not reached"
+}
+
+test "i32 compound assignment overflows" {
+    var x = id_i32(2147483647)
+    x += id_i32(1)
+}
+
+test "i64 add overflows" {
+    let x = id_i64(9223372036854775807) + id_i64(1)
+    assert false, "not reached"
+}
+
+test "i64 sub overflows" {
+    let x = id_i64((-9223372036854775807 - 1)) - id_i64(1)
+    assert false, "not reached"
+}
+
+test "i64 mul overflows" {
+    let x = id_i64(9223372036854775807) * id_i64(2)
+    assert false, "not reached"
+}
+
+test "i64 div by zero" {
+    let x = id_i64(7) / id_i64(0)
+    assert false, "not reached"
+}
+
+test "i64 rem by zero" {
+    let x = id_i64(7) % id_i64(0)
+    assert false, "not reached"
+}
+
+test "i64 add overflows below" {
+    let x = id_i64((-9223372036854775807 - 1)) + id_i64(-1)
+    assert false, "not reached"
+}
+
+test "i64 sub overflows above" {
+    let x = id_i64(9223372036854775807) - id_i64(-1)
+    assert false, "not reached"
+}
+
+test "i64 mul overflows negative" {
+    let x = id_i64((-9223372036854775807 - 1)) * id_i64(2)
+    assert false, "not reached"
+}
+
+test "i64 mul min by -1" {
+    let x = id_i64((-9223372036854775807 - 1)) * id_i64(-1)
+    assert false, "not reached"
+}
+
+test "i64 div overflows" {
+    let x = id_i64((-9223372036854775807 - 1)) / id_i64(-1)
+    assert false, "not reached"
+}
+
+test "i64 rem overflows" {
+    let x = id_i64((-9223372036854775807 - 1)) % id_i64(-1)
+    assert false, "not reached"
+}
+
+test "i64 negation overflows" {
+    let x = -id_i64((-9223372036854775807 - 1))
+    assert false, "not reached"
+}
+
+test "i64 compound assignment overflows" {
+    var x = id_i64(9223372036854775807)
+    x += id_i64(1)
+}
+
+test "u8 add overflows" {
+    let x = id_u8(255) + id_u8(1)
+    assert false, "not reached"
+}
+
+test "u8 sub overflows" {
+    let x = id_u8(0) - id_u8(1)
+    assert false, "not reached"
+}
+
+test "u8 mul overflows" {
+    let x = id_u8(255) * id_u8(2)
+    assert false, "not reached"
+}
+
+test "u8 div by zero" {
+    let x = id_u8(7) / id_u8(0)
+    assert false, "not reached"
+}
+
+test "u8 rem by zero" {
+    let x = id_u8(7) % id_u8(0)
+    assert false, "not reached"
+}
+
+test "u8 sub below zero" {
+    let x = id_u8(3) - id_u8(4)
+    assert false, "not reached"
+}
+
+test "u8 compound assignment overflows" {
+    var x = id_u8(255)
+    x += id_u8(1)
+}
+
+test "u32 add overflows" {
+    let x = id_u32(4294967295) + id_u32(1)
+    assert false, "not reached"
+}
+
+test "u32 sub overflows" {
+    let x = id_u32(0) - id_u32(1)
+    assert false, "not reached"
+}
+
+test "u32 mul overflows" {
+    let x = id_u32(4294967295) * id_u32(2)
+    assert false, "not reached"
+}
+
+test "u32 div by zero" {
+    let x = id_u32(7) / id_u32(0)
+    assert false, "not reached"
+}
+
+test "u32 rem by zero" {
+    let x = id_u32(7) % id_u32(0)
+    assert false, "not reached"
+}
+
+test "u32 sub below zero" {
+    let x = id_u32(3) - id_u32(4)
+    assert false, "not reached"
+}
+
+test "u32 compound assignment overflows" {
+    var x = id_u32(4294967295)
+    x += id_u32(1)
+}
+
+test "u64 add overflows" {
+    let x = id_u64(18446744073709551615) + id_u64(1)
+    assert false, "not reached"
+}
+
+test "u64 sub overflows" {
+    let x = id_u64(0) - id_u64(1)
+    assert false, "not reached"
+}
+
+test "u64 mul overflows" {
+    let x = id_u64(18446744073709551615) * id_u64(2)
+    assert false, "not reached"
+}
+
+test "u64 div by zero" {
+    let x = id_u64(7) / id_u64(0)
+    assert false, "not reached"
+}
+
+test "u64 rem by zero" {
+    let x = id_u64(7) % id_u64(0)
+    assert false, "not reached"
+}
+
+test "u64 sub below zero" {
+    let x = id_u64(3) - id_u64(4)
+    assert false, "not reached"
+}
+
+test "u64 compound assignment overflows" {
+    var x = id_u64(18446744073709551615)
+    x += id_u64(1)
+}
+
+test "usize add overflows" {
+    let x = id_usize(18446744073709551615) + id_usize(1)
+    assert false, "not reached"
+}
+
+test "usize sub overflows" {
+    let x = id_usize(0) - id_usize(1)
+    assert false, "not reached"
+}
+
+test "usize mul overflows" {
+    let x = id_usize(18446744073709551615) * id_usize(2)
+    assert false, "not reached"
+}
+
+test "usize div by zero" {
+    let x = id_usize(7) / id_usize(0)
+    assert false, "not reached"
+}
+
+test "usize rem by zero" {
+    let x = id_usize(7) % id_usize(0)
+    assert false, "not reached"
+}
+
+test "usize sub below zero" {
+    let x = id_usize(3) - id_usize(4)
+    assert false, "not reached"
+}
+
+test "usize compound assignment overflows" {
+    var x = id_usize(18446744073709551615)
+    x += id_usize(1)
+}
+
+test "i32 (-2147483647 - 1) as u8" {
+    let x = id_i32((-2147483647 - 1)) as u8
+}
+
+test "i32 -1 as u8" {
+    let x = id_i32(-1) as u8
+}
+
+test "i32 256 as u8" {
+    let x = id_i32(256) as u8
+}
+
+test "i32 2147483647 as u8" {
+    let x = id_i32(2147483647) as u8
+}
+
+test "i32 (-2147483647 - 1) as u32" {
+    let x = id_i32((-2147483647 - 1)) as u32
+}
+
+test "i32 -1 as u32" {
+    let x = id_i32(-1) as u32
+}
+
+test "i32 (-2147483647 - 1) as u64" {
+    let x = id_i32((-2147483647 - 1)) as u64
+}
+
+test "i32 -1 as u64" {
+    let x = id_i32(-1) as u64
+}
+
+test "i32 (-2147483647 - 1) as usize" {
+    let x = id_i32((-2147483647 - 1)) as usize
+}
+
+test "i32 -1 as usize" {
+    let x = id_i32(-1) as usize
+}
+
+test "i64 (-9223372036854775807 - 1) as i32" {
+    let x = id_i64((-9223372036854775807 - 1)) as i32
+}
+
+test "i64 -2147483649 as i32" {
+    let x = id_i64(-2147483649) as i32
+}
+
+test "i64 2147483648 as i32" {
+    let x = id_i64(2147483648) as i32
+}
+
+test "i64 9223372036854775807 as i32" {
+    let x = id_i64(9223372036854775807) as i32
+}
+
+test "i64 (-9223372036854775807 - 1) as u8" {
+    let x = id_i64((-9223372036854775807 - 1)) as u8
+}
+
+test "i64 -1 as u8" {
+    let x = id_i64(-1) as u8
+}
+
+test "i64 256 as u8" {
+    let x = id_i64(256) as u8
+}
+
+test "i64 9223372036854775807 as u8" {
+    let x = id_i64(9223372036854775807) as u8
+}
+
+test "i64 (-9223372036854775807 - 1) as u32" {
+    let x = id_i64((-9223372036854775807 - 1)) as u32
+}
+
+test "i64 -1 as u32" {
+    let x = id_i64(-1) as u32
+}
+
+test "i64 4294967296 as u32" {
+    let x = id_i64(4294967296) as u32
+}
+
+test "i64 9223372036854775807 as u32" {
+    let x = id_i64(9223372036854775807) as u32
+}
+
+test "i64 (-9223372036854775807 - 1) as u64" {
+    let x = id_i64((-9223372036854775807 - 1)) as u64
+}
+
+test "i64 -1 as u64" {
+    let x = id_i64(-1) as u64
+}
+
+test "i64 (-9223372036854775807 - 1) as usize" {
+    let x = id_i64((-9223372036854775807 - 1)) as usize
+}
+
+test "i64 -1 as usize" {
+    let x = id_i64(-1) as usize
+}
+
+test "u32 2147483648 as i32" {
+    let x = id_u32(2147483648) as i32
+}
+
+test "u32 4294967295 as i32" {
+    let x = id_u32(4294967295) as i32
+}
+
+test "u32 256 as u8" {
+    let x = id_u32(256) as u8
+}
+
+test "u32 4294967295 as u8" {
+    let x = id_u32(4294967295) as u8
+}
+
+test "u64 2147483648 as i32" {
+    let x = id_u64(2147483648) as i32
+}
+
+test "u64 18446744073709551615 as i32" {
+    let x = id_u64(18446744073709551615) as i32
+}
+
+test "u64 9223372036854775808 as i64" {
+    let x = id_u64(9223372036854775808) as i64
+}
+
+test "u64 18446744073709551615 as i64" {
+    let x = id_u64(18446744073709551615) as i64
+}
+
+test "u64 256 as u8" {
+    let x = id_u64(256) as u8
+}
+
+test "u64 18446744073709551615 as u8" {
+    let x = id_u64(18446744073709551615) as u8
+}
+
+test "u64 4294967296 as u32" {
+    let x = id_u64(4294967296) as u32
+}
+
+test "u64 18446744073709551615 as u32" {
+    let x = id_u64(18446744073709551615) as u32
+}
+
+test "usize 2147483648 as i32" {
+    let x = id_usize(2147483648) as i32
+}
+
+test "usize 18446744073709551615 as i32" {
+    let x = id_usize(18446744073709551615) as i32
+}
+
+test "usize 9223372036854775808 as i64" {
+    let x = id_usize(9223372036854775808) as i64
+}
+
+test "usize 18446744073709551615 as i64" {
+    let x = id_usize(18446744073709551615) as i64
+}
+
+test "usize 256 as u8" {
+    let x = id_usize(256) as u8
+}
+
+test "usize 18446744073709551615 as u8" {
+    let x = id_usize(18446744073709551615) as u8
+}
+
+test "usize 4294967296 as u32" {
+    let x = id_usize(4294967296) as u32
+}
+
+test "usize 18446744073709551615 as u32" {
+    let x = id_usize(18446744073709551615) as u32
+}
+
+test "index past the end" {
+    let a = [1, 2, 3]
+    let x = a[id_usize(3)]
+}
+
+test "index far past the end" {
+    let a = [1, 2, 3]
+    let x = a[id_usize(18446744073709551615)]
+}
+
+test "store out of bounds" {
+    var a: [u8; 4] = [0; 4]
+    a[id_usize(4)] = 1
+    assert a[0] == 1
+}
+
+test "inner index of a nested array" {
+    var g = [[1, 2], [3, 4], [5, 6]]
+    g[id_usize(2)][id_usize(2)] += 1
+}
+
+test "outer index of a nested array" {
+    let g = [[1, 2], [3, 4], [5, 6]]
+    let x = g[id_usize(3)][id_usize(0)]
+}
+
+test "passes between the traps" {
+    var a = [10, 20, 30]
+    a[id_usize(2)] = 31
+    assert a[2] == 31
+    assert len(a) == 3
+}
+
+fn bump(inout x: i32) { x += 1 }
+
+test "inout argument out of bounds" {
+    var a = [1, 2]
+    bump(inout a[id_usize(2)])
+}
+
+test "panic" {
+    panic("explicit panic")
+}
+
+test "assert without a message" {
+    assert id_i32(1) == 2
+}
+
+test "assert with a message" {
+    assert id_i32(1) == 2, "one is not two"
+}
+
+test "passes at the end" {
+    assert id_u8(255) as u32 == 255
+}
+
+fn main() {}

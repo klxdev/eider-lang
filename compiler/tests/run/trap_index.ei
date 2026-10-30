@@ -1,0 +1,12 @@
+// A trap outside a test: buffered output is flushed, the message goes to stderr, exit 101.
+
+fn at(xs: [i64; 3], i: usize) -> i64 { xs[i] }
+
+fn main() uses io {
+    let xs: [i64; 3] = [10, 20, 30]
+    var i: usize = 0
+    while true {
+        print(at(xs, i))
+        i += 1
+    }
+}
