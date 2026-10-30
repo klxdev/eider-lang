@@ -1,0 +1,48 @@
+// extern "c" calls into libc: every C-safe type, unit and str results, an extern behind a
+// module's public wrapper, `unsafe fn`, nested unsafe blocks, and an export fn called from
+// Eider (it gets a C entry point only in a library).
+import "lib/ffi_wrap.ei"
+
+extern "c" fn abs(n: i32) -> i32
+extern "c" fn llabs(n: i64) -> i64
+extern "c" fn strlen(s: str) -> usize
+extern "c" fn strchr(s: str, c: i32) -> str
+extern "c" fn strcmp(a: str, b: str) -> i32
+extern "c" fn atoll(s: str) -> i64
+extern "c" fn srand(seed: u32)
+extern "c" fn toupper(c: i32) -> i32
+
+type Pair = { a: i32, b: i32 }
+
+export fn sum(p: Pair) -> i32 { p.a + p.b }
+
+unsafe fn upper(c: u8) -> u8 uses ffi {
+    toupper(c as i32) as u8
+}
+
+fn main() uses io, ffi {
+    let a = unsafe { abs(-7) }
+    print(a)
+    let b = unsafe { llabs(-9000000000) }
+    print(b)
+    let n = unsafe { strlen("eider") }
+    print(n + 1)
+    let rest = unsafe { strchr("hello", 108) }
+    print(rest)
+    let cmp = unsafe { strcmp("a", "a") }
+    print(cmp == 0)
+    unsafe {
+        srand(7)
+        let big = atoll("123456789012")
+        print(big * 2)
+        let u = unsafe { upper(101) }
+        print(u)
+    }
+    print(ffi_wrap.distance(-3, 4))
+    print(sum(Pair(2, 3)))
+}
+
+test "externs in tests" {
+    let x = unsafe { abs(-1) }
+    assert x == 1
+}

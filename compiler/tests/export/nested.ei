@@ -1,0 +1,8 @@
+// A record whose field is a record. Stage 0's header gives only the outer one a typedef
+// and does not compile; eiderc's typedefs every record (see run.sh).
+type Pt = { x: i32, y: i32 }
+type Seg = { a: Pt, b: Pt }
+
+export fn seg_dx(s: Seg) -> i32 { s.b.x - s.a.x }
+export fn mid(s: Seg) -> Pt { Pt((s.a.x + s.b.x) / 2, (s.a.y + s.b.y) / 2) }
+export fn crash(n: i32) -> i32 { 10 / n }

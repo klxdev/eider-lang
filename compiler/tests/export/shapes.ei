@@ -1,0 +1,17 @@
+// A library: records, bool, str and () at the C boundary, an export from an imported module
+// (its C name is `eider_units__twice`), an extern called inside an export, and private code.
+import "lib/units.ei"
+
+type Rect = { w: i32, h: i32 }
+type Span = { lo: u64, hi: u64, open: bool }
+
+extern "c" fn labs(n: i64) -> i64
+
+export fn area(r: Rect) -> i64 { (r.w as i64) * (r.h as i64) }
+export fn widen(s: Span, by: u64) -> Span { Span(s.lo, s.hi + by, s.open) }
+export fn gap(a: i64, b: i64) -> i64 uses ffi { unsafe { labs(a - b) } }
+export fn name() -> str { "shapes" }
+export fn touch() {}
+export fn is_square(r: Rect) -> bool { r.w == r.h }
+
+fn helper() -> i32 { units.twice(1) }
