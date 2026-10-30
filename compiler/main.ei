@@ -31,10 +31,11 @@ import "driver.ei"
 import "comptime.ei" as consteval
 import "wasm.ei"
 import "suite.ei"
+import "ide.ei"
 
 type Args = {
     cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,
-    lib: bool, libs: List[List[u8]], wasm: bool, compile_fail: bool,
+    lib: bool, libs: List[List[u8]], wasm: bool, compile_fail: bool, overlay: List[List[u8]],
 }
 
 /// Comparisons go through a function so no owned temporary sits in an `else if` condition
@@ -60,6 +61,8 @@ fn usage_text() -> List[u8] uses ffi {
         "  eiderc lex <file.ei>                       dump the tokens",
         "  eiderc parse <file.ei>                     dump the AST",
         "  eiderc ir <file.ei>                        dump the typed IR",
+        "  eiderc ide <file.ei> [--overlay <path> <text>]  print the IDE analysis (ide.ei): symbols, refs, types;",
+        "                                             --overlay (repeatable) reads <path> from the file <text>",
         "  eiderc help | --help | -h                  print this text",
         "",
         "environment:",
@@ -98,7 +101,7 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] uses ffi {
 }
 
 fn known_cmd(c: List[u8]) -> bool uses ffi {
-    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test")
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide")
 }
 
 fn parse_args() -> Args uses io, ffi {
@@ -113,6 +116,7 @@ fn parse_args() -> Args uses io, ffi {
     var wasm = false
     var compile_fail = false
     var libs: List[List[u8]] = List.new()
+    var overlay: List[List[u8]] = List.new()
     var i: usize = 1
     while i < argv.len() {
         let a = argv[i]
@@ -136,6 +140,11 @@ fn parse_args() -> Args uses io, ffi {
             if i >= argv.len() { usage_error(sys.lit("`-o` needs a file name")) }
             out = argv[i]
             i += 1
+        } else if is(a, "--overlay") {
+            if i + 1 >= argv.len() { usage_error(sys.lit("`--overlay` needs a path and a file with its text")) }
+            overlay.push(argv[i])
+            overlay.push(argv[i + 1])
+            i += 2
         } else if is(a, "-l") {
             if i >= argv.len() { usage_error(sys.lit("`-l` needs a library name")) }
             libs.push(argv[i])
@@ -169,7 +178,7 @@ fn parse_args() -> Args uses io, ffi {
         wasm = false
     }
     if wasm { lib = true }
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail)
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay)
 }
 
 /// Print `d` like the bootstrap: JSON on stdout, or the rendered form (against the source of
@@ -223,9 +232,33 @@ fn dump(lx: lex.Lexed, names: intern.Interner) uses io, ffi {
     io.out(out)
 }
 
+/// `eiderc ide`: the analysis of the file (with the overlays read from their text files).
+fn run_ide(a: Args) uses io, fs, net, clock, ffi {
+    var paths: List[List[u8]] = List.new()
+    var texts: List[List[u8]] = List.new()
+    var k: usize = 0
+    while k + 1 < a.overlay.len() {
+        paths.push(a.overlay[k])
+        let t: List[u8] = match fs.read(a.overlay[k + 1]) {
+            Ok(x) => x
+            Err(_) => {
+                usage_error(quoted("cannot read the overlay text ", a.overlay[k + 1]))
+                List.new()
+            }
+        }
+        texts.push(t)
+        k += 2
+    }
+    io.out(ide.dump(ide.analyze(a.file, paths, texts)))
+}
+
 fn main() uses io, fs, net, clock, ffi {
     let a = parse_args()
     if a.compile_fail { env.exit(suite.run(a.file)) }
+    if is(a.cmd, "ide") {
+        run_ide(a)
+        return
+    }
     let src = match fs.read(a.file) {
         Ok(s) => s
         Err(e) => {

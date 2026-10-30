@@ -1,0 +1,20 @@
+// Partial results when type checking fails midway: bodies are checked last first, so
+// `later` is checked (its refs and types are reported), then `broken` stops the checker
+// at its second statement; `early` is never reached, but its symbols are still there.
+
+type Cell = { v: i32 }
+
+fn early(c: Cell) -> i32 {
+    let w = c.v
+    w
+}
+
+fn broken(c: Cell) -> i32 {
+    let ok = c.v + 1
+    let bad: bool = ok
+    ok
+}
+
+fn later(c: Cell) -> i32 { broken(c) + early(c) }
+
+fn main() uses io { print(later(Cell(1))) }

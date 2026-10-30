@@ -1,0 +1,6 @@
+// An imported module with a parse error (not a .ei file, so the repository-wide front-end
+// check doesn't see it on its own).
+
+pub fn fine() -> i32 { 1 }
+
+pub fn broken( -> i32 { 2 }

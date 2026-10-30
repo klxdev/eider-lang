@@ -637,6 +637,32 @@ run, wasm, export and thread test), stage 0 was retired in three steps.
   mutants (SEED 1 and 3) and 1,000 wild ones (SEED 7) pass; its first run found only
   programs with undefined externs, which led to the `extern` rule.
 
+## IDE analysis (`ide.ei`)
+
+`ide.analyze(entry, overlay_paths, overlay_texts)` is the API a language server
+(eider-analyzer, which imports `deps/eiderc/ide.ei` through a path dependency on
+`compiler/`) builds on; the contract is at the top of `ide.ei`. It runs the passes of
+`eiderc check` and returns the diagnostic `check` reports, plus symbols, refs (use ->
+symbol) and types gathered so far, even when a pass fails. `eiderc ide <file.ei>
+[--overlay <path> <text>]` prints the result for the goldens in `compiler/tests/ide`.
+
+- **No second resolver.** Symbols come from the ASTs of every module that parsed
+  (`resolve.load_from` returns the partial program with the diagnostic). Refs and types are
+  what the checker computed: with `C.rec.on` (only `check.check_ide`) it notes each
+  resolved use (node position -> declaration position) and the types of bindings and of
+  identifiers, fields, calls and method calls ("IDE recording" in check.ei). Off, a note
+  is one bool test and nothing else reads the recording, so check, build and the C are
+  unchanged. Module refs (import paths and aliases, `alias.` qualifiers) come from the
+  ASTs and `Module.aliases`.
+- **Overlays.** `resolve.load_from` reads sources through `resolve.Files`: fs.read, except
+  for files whose canonical path is an overlay's (`resolve.disk()` has none). Module
+  identity (canonical paths, stems) is unchanged.
+- **Never exits.** Comptime constants are evaluated as in `check`; where the driver would
+  exit (no toolchain, no work directory) `analyze` reports a `toolchain` diagnostic instead
+  (`driver.find_root`, `driver.try_work_dir`).
+- **Cost.** `eiderc ide compiler/main.ei` (the whole compiler, 27 files) takes about 0.25 s
+  against 0.16 s for `check`.
+
 ## C8 candidates: parity quirks to fix deliberately
 
 eiderc reproduces these stage-0 behaviours so that its output matched the oracle. Each can
@@ -848,7 +874,8 @@ compiler/
   main.ei             CLI (`eiderc --help`)
   source.ei  lex.ei  intern.ei  ast.ei  parse.ei  resolve.ei  types.ei  fold.ei  pats.ei
   check.ei  ir.ei  lower.ei  emit.ei  diag.ei  driver.ei  comptime.ei  suite.ei  sha256.ei
-  tests/              pass-level golden tests (lex, lex_ok, check, ir, run, wasm, export, ...)
+  ide.ei              the IDE analysis API (`eiderc ide`; "IDE analysis")
+  tests/              pass-level golden tests (lex, lex_ok, check, ir, run, wasm, export, ide, ...)
 tests/oracle/         the recorded expected results (scripts/test-compiler.sh, BLESS=1)
 ```
 

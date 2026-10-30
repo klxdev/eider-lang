@@ -1,0 +1,12 @@
+// Partial results with a parse error in an imported module: the diagnostic names that
+// file; the entry file's symbols are still reported, but nothing is checked (and the
+// import's path refers to no module).
+
+import "lib/broken_mod.txt" as bm
+
+type Unit = { n: i32 }
+
+fn main() uses io {
+    let u = Unit(bm.fine())
+    print(u.n)
+}

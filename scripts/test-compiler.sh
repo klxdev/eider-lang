@@ -48,6 +48,10 @@
 #             node: WebAssembly is optional).
 #   unit:     programs in compiler/tests/unit that drive a compiler module (sha256.ei) must
 #             print their .out.
+#   ide:      `eiderc ide` (ide.ei, the analysis API for language servers) of
+#             compiler/tests/ide/*.ei matches the .ide goldens (BLESS=1 rewrites them; review
+#             them by hand); a `// overlay: <path> <text file>` line in the file adds
+#             `--overlay <path> <text file>`.
 #   compile-fail: `eiderc test --compile-fail` prints exactly the recorded runner output, and
 #             exits the same (<dir>.compile-fail), for compiler/tests/check and
 #             compiler/tests/suite (the runner's own failure cases); for tests/checks it
@@ -380,6 +384,15 @@ for f in compiler/tests/unit/*.ei; do
   if cmp -s $tmp/want $tmp/out; then echo "ok   unit $f"; else echo "FAIL unit $f"; diff $tmp/want $tmp/out | head -10; fail=1; fi
 done
 
+# ide: the IDE analysis against its goldens
+for f in compiler/tests/ide/*.ei; do
+  g="${f%.ei}.ide"
+  ov=$(sed -n 's|^// overlay: \([^ ]*\) \([^ ]*\)$|--overlay \1 \2|p' "$f")
+  $new ide "$f" $ov 2>&1 | norm >$tmp/ide
+  if [ -n "$BLESS" ]; then cp $tmp/ide "$g"; fi
+  if cmp -s $tmp/ide "$g"; then echo "ok   ide $f"; else echo "FAIL ide $f"; diff "$g" $tmp/ide | head -10; fail=1; fi
+done
+
 # compile-fail: `eiderc test --compile-fail` against the recorded runner output (the oracle's
 # <dir>.compile-fail: the output, then `--- exit <code>`)
 for d in compiler/tests/check compiler/tests/suite; do
@@ -461,7 +474,7 @@ $new --help >$tmp/o 2>&1
 code=$?
 uok=1
 [ $code = 0 ] || uok=0
-for c in check emit-c emit-header build "build --lib" "build --wasm" run test "test --compile-fail" lex parse ir help; do
+for c in check emit-c emit-header build "build --lib" "build --wasm" run test "test --compile-fail" lex parse ir ide help; do
   grep -q "^  eiderc $c " $tmp/o || { echo "FAIL usage: --help does not list \`$c\`"; uok=0; }
 done
 $new check --no-such-flag tests/run/adt.ei >/dev/null 2>&1

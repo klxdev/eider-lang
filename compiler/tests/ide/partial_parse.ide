@@ -1,0 +1,12 @@
+files
+  compiler/tests/ide/partial_parse.ei
+diags
+  E0001 compiler/tests/ide/lib/broken_mod.txt:6:16 expected a name
+symbols
+  0 module partial_parse compiler/tests/ide/partial_parse.ei:1:1-1:1 full 1:1-13:1 :: compiler/tests/ide/partial_parse.ei
+  1 type Unit compiler/tests/ide/partial_parse.ei:7:6-7:10 full 7:1-7:23 :: type Unit
+  2 field n compiler/tests/ide/partial_parse.ei:7:15-7:16 full 7:15-7:21 in 1 :: n: i32
+  3 fn main compiler/tests/ide/partial_parse.ei:9:4-9:8 full 9:1-12:2 :: fn main() uses io
+  4 local u compiler/tests/ide/partial_parse.ei:10:9-10:10 full 10:5-10:28 in 3
+refs
+types

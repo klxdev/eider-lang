@@ -1,0 +1,30 @@
+// A module for compiler/tests/ide: types, variants, fields, methods, a trait, a const.
+
+pub type Point = { x: i32, y: i32 }
+
+pub type Shape =
+    | Circle(r: i32)
+    | Rect(Point, Point)
+    | Empty
+
+pub const ORIGIN: i32 = 0
+
+pub trait Area {
+    fn area(self) -> i32
+}
+
+impl Area for Shape {
+    fn area(self) -> i32 {
+        match self {
+            Circle(r) => r * r * 3
+            Rect(a, b) => (b.x - a.x) * (b.y - a.y)
+            Empty => ORIGIN
+        }
+    }
+}
+
+impl Point {
+    fn sum(self) -> i32 { self.x + self.y }
+}
+
+pub fn make(x: i32, y: i32) -> Point { Point(x, y) }
