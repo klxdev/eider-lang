@@ -1,11 +1,13 @@
 # The self-hosted compiler (`eiderc`)
 
-Status: approved direction; C1, C2 and C3 done. This file owns the plan; update it as stages land.
+Status: approved direction; C1 to C4 done. This file owns the plan; update it as stages land.
 
 Progress: **C1 done** (lexer, interner, diagnostics rendering; `scripts/test-compiler.sh`).
 **C2 done** (parser to the AST arena, `eiderc parse` dump, parse-error corpus and AST goldens).
 **C3 done** for v0 plus non-generic payload enums (`resolve.ei`, `types.ei`, `fold.ei`,
-`pats.ei`, `check.ei`, `ir.ei`; see "C3: checking" below). Next: C4.
+`pats.ei`, `check.ei`, `ir.ei`; see "C3: checking" below).
+**C4 done** for the same language (`lower.ei`, `driver.ei`; `eiderc emit-c/build/run/test`;
+see "C4: lowering" below). Next: C5.
 
 ## Goal
 
@@ -152,6 +154,69 @@ language as it is:
   block, a local named like one of the module's items is shadowed by the item; `x /= 0` is
   not a compile error although `x / 0` is.
 
+## C4: lowering
+
+`lower.ei` turns the IR into one C11 file; `driver.ei` compiles and runs it.
+
+- **One C statement per IR statement.** The IR already fixes evaluation order, so lowering
+  never hoists or reorders. Bounds checks are separate statements before the statement that
+  uses a place (`(void)ei_idx(i, n, line);`, outermost index first), so nested indices check
+  left to right. Every trapping operation calls the runtime (`ei_add_i32(a, b, line)`,
+  `ei_s2u(...)`, `ei_trap(msg, line)`); the generated C defines no runtime functions of its
+  own, only per-type glue: `t<id>_eq` (structural `==`) for every record, enum and array type,
+  and `t<id>_name` (variant names for `print`) for every enum, all `static inline`.
+- **Names** cannot collide with each other, C keywords, reserved identifiers or the runtime
+  (`ei_*`, `ec_*`): `t<id>_<Name>` for type `<id>` of the type arena (arrays: `t<id>`),
+  `f<i>_<stem__name>` for function `i` (tests: `f<i>_test`), `l<i>[_<name>]` for local `i`
+  of the current function (parameters first), `s<n>` for a loop's `continue` label. Members
+  are `f<n>` (fields) and `v<n>` (variant structs).
+- **Layout.** Records are structs; arrays are `struct { T a[N]; }` so they copy by value;
+  every enum is `struct { uint32_t tag; union { struct { ... } v<n>; ... } u; }` (no union
+  when no variant has fields); `str` is `const char *`; `bool` is C `bool`; integers are the
+  `<stdint.h>` types (`usize` = `uint64_t`); `inout` parameters are pointers. Types are
+  defined in dependency order. Every local is declared at the top of its function with a zero
+  initializer, so there is no uninitialized read and nothing for `-Wmaybe-uninitialized`.
+  Loops are `for (;;)`; `continue` is `goto s<n>` when the loop has a step block (a `for`
+  loop's increment), else C `continue`. Non-unit functions end in `ei_unreachable()`.
+- **Warnings.** The C compiles with `-std=c11 -pedantic -Wall -Wextra -Werror` except the
+  unused-function/variable/parameter warnings. Comparisons whose result the type's range
+  fixes (`x >= 0` on an unsigned type, `x <= MAX`) are written as constants (gcc's
+  `-Wtype-limits`); `?` in string literals is escaped (`\?`), so no trigraph forms.
+- **`main`.** `ei_set_file("<path as given>")`, then the Eider `main`. With `--test` (and for
+  `eiderc test`) the test driver instead: `ei_set_trap_jmp`, then for each test block in
+  program order `test <name> ... ok` or `FAILED` plus the trap text, then
+  `\n<n> tests, <k> failed`, exit 1 if any failed (stage 0's format).
+- **Driver.** `emit-c <f> [--test]` prints the C; `build <f> [-o out]` writes an -O2
+  executable (default: the source's stem in the working directory); `run <f> [--release]`
+  (-O0, or -O2) and `test <f>` (-O0) build in a fresh directory under `$TMPDIR` (else
+  `/tmp`), run the program with inherited stdio, remove the directory and exit with the
+  program's code. The C is compiled with `$CC` (default `cc`), `-pthread`, extra flags from
+  `$EIDER_CFLAGS` (split at spaces), and linked with `core/eider_rt.c` and `core/eider_core.c`
+  (so programs that use std link once `extern` is supported). If it does not compile, the
+  C is kept and eiderc exits 3. **Toolchain root** (the directory holding `core/`):
+  `$EIDER_ROOT`, else the nearest directory above the eiderc binary (argv[0], symlinks
+  resolved) that contains `core/eider_rt.h`, else the same search from the working
+  directory. That needs no build-time configuration: `target/eiderc` in a checkout finds the
+  checkout, and an installed eiderc needs `EIDER_ROOT` (or a `core/` above it).
+- **Tests** (`scripts/test-compiler.sh`, "run" and "sanitize"): every in-scope program in
+  tests/run and compiler/tests/run (19 of 27; the rest need C5 features) must match the
+  bootstrap's stdout, stderr and exit code under `run`, and under `test` when it has test
+  blocks, with `-Werror`; then again at `-O2 -Werror` under UBSan in trap mode. eiderc's
+  own run tests cover every operator per int type with every trap and the wrapping edges
+  (`arith.ei`, `traps.ei` with 109 trapping test blocks, `limits.ei`), evaluation order,
+  payload-enum matches, `inout`, constants, modules, control flow, test blocks, and traps
+  in `run` (stderr, exit 101).
+- **Differences from stage 0** (deliberate): the bootstrap bugs in LEARNINGS.md are fixed and
+  have regression tests with hand-written expected output (`compiler/tests/run/bug_*.ei` +
+  `.out`): `len(e)` evaluates `e`; `let p = match r { V(p) => p }` assigns `p`; `else if`
+  conditions with temporaries (the owned-value case needs String/List, C5); `??(` in strings
+  stays `??(`. A program killed by a signal makes `eiderc run` exit 128 + signal (stage 0
+  exits 1); `build` without `-o` writes to the working directory (stage 0 writes to its temp
+  directory); there is no binary cache (`EIDER_CACHE` is ignored); driver messages start
+  with `eiderc:`. Kept for parity: an imported module's unit enum prints its mangled name
+  (`geo__South`), and trap messages always name the entry file, even for a trap in an
+  imported module.
+
 ## Language work that lands in `eiderc` (after parity)
 
 Each with a design note, compile-fail tests and new codes:
@@ -177,7 +242,7 @@ Each with a design note, compile-fail tests and new codes:
 | C1 ✅ | `lex`, `intern`, `diag`; `eiderc lex` dumps tokens | every `.ei` in the repo plus `compiler/tests/lex` agrees with the bootstrap on lexer errors (JSON); golden dump in `compiler/tests/lex_ok` |
 | C2 ✅ | `parse` to the AST arena; `eiderc parse` dumps the AST | every `.ei` in the repo parses; parse errors (E0001) match the bootstrap's positions, including the one-file-per-error-path corpus in `compiler/tests/parse`; golden dumps in `compiler/tests/parse_ok` |
 | C3 ✅ | `resolve` + `check` for the v0 language (ints, bool, str, records, enums, arrays, control flow, `inout`, capabilities, const folding), producing the typed IR (`eiderc ir`) | v0 compile-fail and compile-pass tests match |
-| C4 | `lower` + C for v0; runtime moved to `core/eider_rt.*` | v0 run tests match, clean under ASan/UBSan |
+| C4 ✅ | `lower` + C for v0 (plus non-generic payload enums) against `core/eider_rt.*`; driver (`emit-c`, `build`, `run`, `test`) | v0 run tests match (stdout, stderr, exit code, for `run` and `test`); C is `-pedantic -Wall -Wextra -Werror` clean at -O0 and -O2 and clean under UBSan (ASan/TSan when their runtimes exist) |
 | C5 | S1–S3: payload enums, generics, traits, Option/Result/`?`, tuples, patterns, String/List/Map/Box, closures | all the features `compiler/` itself uses; their tests match |
 | C6 | Self-host: stage1 builds stage2 builds stage3; fixed point; commit the seed | `scripts/selfhost.sh` green |
 | C7 | Parity: modules/namespaces, FFI/export/`--lib`, threads, WASM, comptime, cache | the full `scripts/verify.sh` passes with `eiderc` in place of the bootstrap; retire eider-bootstrap |
