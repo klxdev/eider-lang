@@ -1,0 +1,135 @@
+// Drops on every exit path: return from nested blocks and loops, break, continue, `?` on
+// Option and Result, match arms, early returns of owned values, loops that build and
+// discard owned values each iteration. Run with -DEI_RT_COUNT_ALLOCS the test script
+// checks that nothing is left allocated.
+type Item = { name: String, parts: List[String] }
+
+fn item(n: i64) -> Item {
+    var ps: List[String] = List.new()
+    ps.push(String.from_int(n))
+    ps.push(String.from("part"))
+    Item(String.from_int(n * 10), ps)
+}
+
+fn find(limit: i64, want: i64) -> Option[Item] uses io {
+    var i: i64 = 0
+    while i < limit {
+        let it = item(i)
+        let other = item(i + 100)
+        if i == want {
+            let keep = String.from("kept")
+            if keep.len() > 0 { return Some(it) }
+        }
+        if i % 2 == 0 {
+            i += 1
+            continue
+        }
+        if i > 50 { break }
+        print(other.parts.len())
+        i += 1
+    }
+    None
+}
+
+fn parse(s: String) -> Result[i64, String] {
+    if s == String.from("one") { return Ok(1) }
+    if s == String.from("two") { return Ok(2) }
+    var e = String.from("bad: ")
+    e.append(s)
+    Err(e)
+}
+
+fn add(a: String, b: String) -> Result[i64, String] uses io {
+    let tmp = String.from("held across ?")
+    let x = parse(a)?
+    let y = parse(b)?
+    print(tmp)
+    Ok(x + y)
+}
+
+fn first_part(it: Option[Item]) -> Option[String] {
+    let i = it?
+    let w = String.from("w")
+    let p = i.parts.get(0)
+    if w.len() == 1 { return Some(p) }
+    None
+}
+
+fn classify(n: i64) -> String {
+    let label = String.from_int(n)
+    match n {
+        0 => {
+            let z = String.from("zero")
+            return z
+        }
+        1 => String.from("one")
+        _ => {
+            var s = String.from("many:")
+            s.append(label)
+            s
+        }
+    }
+}
+
+fn nested(n: i64) -> i64 {
+    var total: i64 = 0
+    var i: i64 = 0
+    while true {
+        let outer = item(i)
+        var j: i64 = 0
+        while true {
+            let inner = item(j)
+            if j == 2 { break }
+            if j == n { return total + inner.parts.len() as i64 + outer.parts.len() as i64 }
+            j += 1
+            total += 1
+        }
+        i += 1
+        if i == 3 { break }
+    }
+    total
+}
+
+fn main() uses io {
+    match find(10, 4) {
+        Some(it) => print(it.name)
+        None => print("not found")
+    }
+    match find(10, 40) {
+        Some(it) => print(it.name)
+        None => print("not found")
+    }
+    match add(String.from("one"), String.from("two")) {
+        Ok(v) => print(v)
+        Err(e) => print(e)
+    }
+    match add(String.from("one"), String.from("six")) {
+        Ok(v) => print(v)
+        Err(e) => print(e)
+    }
+    match add(String.from("ten"), String.from("two")) {
+        Ok(v) => print(v)
+        Err(e) => print(e)
+    }
+    print(first_part(Some(item(7))).unwrap_or(String.from("-")))
+    print(first_part(None).unwrap_or(String.from("-")))
+    print(classify(0))
+    print(classify(1))
+    print(classify(5))
+    print(nested(1))
+    print(nested(9))
+    var k = 0
+    for w in [String.from("a"), String.from("bb"), String.from("ccc")] {
+        k += 1
+        if w.len() == 1 { continue }
+        if w.len() == 3 { break }
+        print(w)
+    }
+    print(k)
+    var acc: List[String] = List.new()
+    for i in 0..20 {
+        let s = String.from_int(i as i64)
+        if i % 5 == 0 { acc.push(s) }
+    }
+    print(acc.len())
+}

@@ -1,0 +1,147 @@
+// Generic functions and types with several instances (ints, String, records, Lists,
+// Options), generic methods, traits with bounds, Option/Result methods and `?` on both.
+type Pair[A, B] = { a: A, b: B }
+
+type Stack[T] = { items: List[T] }
+
+type Either[L, R] = | Left(l: L) | Right(r: R)
+
+trait Show {
+    fn show(self) -> String
+}
+
+type Pt = { x: i32, y: i32 }
+
+impl Show for Pt {
+    fn show(self) -> String {
+        var s = String.from_int(self.x as i64)
+        s.push_str(",")
+        s.append(String.from_int(self.y as i64))
+        s
+    }
+}
+
+impl Show for bool {
+    fn show(self) -> String {
+        if self { String.from("yes") } else { String.from("no") }
+    }
+}
+
+impl[T] Stack[T] {
+    fn push(inout self, x: T) { self.items.push(x) }
+    fn top(self) -> Option[T] {
+        if self.items.len() == 0 { return None }
+        Some(self.items[self.items.len() - 1])
+    }
+    fn size(self) -> usize { self.items.len() }
+}
+
+fn swap[A, B](p: Pair[A, B]) -> Pair[B, A] { Pair(p.b, p.a) }
+
+fn twice[T](x: T) -> (T, T) { (x, x) }
+
+fn show_all[T: Show](xs: List[T]) -> String {
+    var out = String.from("[")
+    for x in xs {
+        out.append(x.show())
+        out.push_str(";")
+    }
+    out.push_str("]")
+    out
+}
+
+fn pick[T](e: Either[T, String], dflt: T) -> T {
+    match e {
+        Left(v) => v
+        Right(_) => dflt
+    }
+}
+
+fn halve(n: i32) -> Option[i32] {
+    if n % 2 == 1 { return None }
+    Some(n / 2)
+}
+
+fn quarter(n: i32) -> Option[i32] {
+    let h = halve(n)?
+    halve(h)
+}
+
+fn digit(s: String) -> Result[i32, String] {
+    if s == String.from("1") { return Ok(1) }
+    if s == String.from("2") { return Ok(2) }
+    var e = String.from("not a digit: ")
+    e.append(s)
+    Err(e)
+}
+
+fn digits(a: String, b: String) -> Result[i32, String] {
+    let x = digit(a)?
+    let y = digit(b)?
+    Ok(x * 10 + y)
+}
+
+fn main() uses io {
+    let p = swap(Pair(1, String.from("one")))
+    print(p.a)
+    print(p.b)
+    let q = swap(Pair(true, 7 as u8))
+    print(q.a)
+    let r = swap(swap(Pair(String.from("s"), Pt(1, 2))))
+    print(r.a)
+    print(r.b.show())
+    let (t1, t2) = twice(String.from("tw"))
+    print(t1)
+    print(t2)
+    let (u1, _) = twice(5 as i64)
+    print(u1)
+
+    var s: Stack[String] = Stack(List.new())
+    print(s.top().is_none())
+    s.push(String.from("bottom"))
+    s.push(String.from("top"))
+    print(s.size())
+    print(s.top().unwrap_or(String.from("?")))
+    var n: Stack[i32] = Stack(List.new())
+    n.push(3)
+    print(n.top().unwrap_or(0))
+    var lists: Stack[List[i32]] = Stack(List.new())
+    var l: List[i32] = List.new()
+    l.push(1)
+    lists.push(l)
+    print(lists.top().unwrap_or(List.new()).len())
+
+    var pts: List[Pt] = List.new()
+    pts.push(Pt(1, 2))
+    pts.push(Pt(3, 4))
+    print(show_all(pts))
+    var bs: List[bool] = List.new()
+    bs.push(true)
+    bs.push(false)
+    print(show_all(bs))
+
+    let e1: Either[i32, String] = Left(4)
+    print(pick(e1, 0))
+    let e2: Either[i32, String] = Right(String.from("r"))
+    print(pick(e2, 9))
+    let e3: Either[String, String] = Left(String.from("left"))
+    print(pick(e3, String.from("d")))
+
+    print(quarter(8).unwrap_or(-1))
+    print(quarter(6).unwrap_or(-1))
+    print(quarter(5).is_none())
+    match digits(String.from("1"), String.from("2")) {
+        Ok(v) => print(v)
+        Err(e) => print(e)
+    }
+    match digits(String.from("1"), String.from("x")) {
+        Ok(v) => print(v)
+        Err(e) => print(e)
+    }
+    let o: Option[String] = Some(String.from("opt"))
+    print(o.is_some())
+    print(o.unwrap_or(String.from("none")))
+    let res: Result[String, i32] = Err(3)
+    print(res.is_err())
+    print(res.unwrap_or(String.from("fallback")))
+}

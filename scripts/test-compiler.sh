@@ -23,6 +23,12 @@
 #             checked) under UBSan in trap mode (-fsanitize=undefined
 #             -fsanitize-undefined-trap-on-error, no runtime library needed); the output must
 #             equal the plain run's. ASan and TSan run too when their runtimes are installed.
+#   leaks:    every run again with -DEI_RT_COUNT_ALLOCS (the runtime counts live allocations
+#             and generated main reports them when the program ends normally): a run that
+#             exits 0 must report `eider: outstanding allocations: 0`, and apart from that
+#             line the output must equal the plain run's.
+#   determinism: `emit-c` of every run test twice, and once from a copy of the test
+#             directory at another path (same relative file name), must be byte-identical.
 cd "$(dirname "$0")/.." || exit 1
 scripts/bootstrap-deps.sh
 boot=$(scripts/stage0.sh) || exit 3
@@ -131,6 +137,8 @@ ragree=0
 rexpected=0
 rsan=0
 rsan_ok=0
+rleak=0
+rleak_ok=0
 routside=""
 for f in tests/run/*.ei compiler/tests/run/*.ei; do
   rtotal=$((rtotal + 1))
@@ -176,6 +184,21 @@ for f in tests/run/*.ei compiler/tests/run/*.ei; do
         fail=1
       fi
     done
+    # no allocation may be left when the program ends normally
+    rleak=$((rleak + 1))
+    outcome env EIDER_CFLAGS="-Werror -DEI_RT_COUNT_ALLOCS" $new $cmd "$f"
+    leakline=$(grep '^eider: outstanding allocations: ' $tmp/e)
+    grep -v '^eider: outstanding allocations: ' $tmp/out >$tmp/out2
+    if ! cmp -s $tmp/got $tmp/out2; then
+      echo "FAIL leaks: eiderc $cmd $f (output differs)"
+      diff $tmp/got $tmp/out2 | head -10
+      fail=1
+    elif grep -q '^--- exit 0$' $tmp/out && [ "$leakline" != "eider: outstanding allocations: 0" ]; then
+      echo "FAIL leaks: eiderc $cmd $f: ${leakline:-no allocation report}"
+      fail=1
+    else
+      rleak_ok=$((rleak_ok + 1))
+    fi
   done
   if [ $ok = 1 ]; then
     ragree=$((ragree + 1))
@@ -187,4 +210,34 @@ echo "$v run: $ragree/$rscope run tests in scope agree ($rtotal tests; $rexpecte
 echo "     out of scope:$routside"
 if [ "$rsan_ok" = "$rsan" ]; then v="ok  "; else v="FAIL"; fi
 echo "$v sanitize: $rsan_ok/$rsan runs at -O2 under -fsanitize={$sans} match"
+if [ "$rleak_ok" = "$rleak" ]; then v="ok  "; else v="FAIL"; fi
+echo "$v leaks: $rleak_ok/$rleak runs end with no outstanding allocation (-DEI_RT_COUNT_ALLOCS)"
+
+# determinism: the same input gives byte-identical C, also from another directory
+det=target/determinism
+rm -rf $det
+mkdir -p $det/a $det/b
+cp -R tests/run $det/a/run
+cp -R compiler/tests/run $det/b/run
+dtotal=0
+dok=0
+for f in tests/run/*.ei compiler/tests/run/*.ei; do
+  case " $routside " in *" $(basename "$f") "*) continue ;; esac
+  dtotal=$((dtotal + 1))
+  case "$f" in tests/*) dir=tests ;; *) dir=compiler/tests ;; esac
+  case "$f" in tests/*) copy=$det/a ;; *) copy=$det/b ;; esac
+  rel="run/$(basename "$f")"
+  (cd $dir && "$OLDPWD/$new" emit-c "$rel" --test) >$tmp/c1 2>&1
+  (cd $dir && "$OLDPWD/$new" emit-c "$rel" --test) >$tmp/c2 2>&1
+  (cd $copy && "$OLDPWD/$new" emit-c "$rel" --test) >$tmp/c3 2>&1
+  if cmp -s $tmp/c1 $tmp/c2 && cmp -s $tmp/c1 $tmp/c3; then
+    dok=$((dok + 1))
+  else
+    echo "FAIL determinism: emit-c $f"
+    diff $tmp/c1 $tmp/c3 | head -10
+    fail=1
+  fi
+done
+if [ "$dok" = "$dtotal" ]; then v="ok  "; else v="FAIL"; fi
+echo "$v determinism: $dok/$dtotal programs give byte-identical C twice and from a copy at another path"
 exit $fail

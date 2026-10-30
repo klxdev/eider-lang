@@ -1,0 +1,82 @@
+// Closures capturing owned values (snapshots: later changes to the variable don't show),
+// closures stored in records and Lists, copied and dropped, returned from functions,
+// functions as values, nested closures, closures over generic instances.
+type Handler = { name: String, run: fn(i32) -> String }
+
+fn make(prefix: String) -> fn(i32) -> String {
+    |n| -> String {
+        var s = prefix
+        s.append(String.from_int(n as i64))
+        s
+    }
+}
+
+fn twice(f: fn(i32) -> i32, x: i32) -> i32 { f(f(x)) }
+
+fn inc(x: i32) -> i32 { x + 1 }
+
+fn apply_all(fs: List[fn(i32) -> i32], x: i32) -> i32 {
+    var v = x
+    for f in fs { v = f(v) }
+    v
+}
+
+fn wrap[T](x: T) -> fn() -> T { || x }
+
+fn main() uses io {
+    var name = String.from("snap")
+    let show = || name.len()
+    name.push_str("shot")
+    print(show())
+    print(name.len())
+
+    let hi = make(String.from("hi-"))
+    print(hi(1))
+    let copy = hi
+    print(copy(2))
+    var hs: List[Handler] = List.new()
+    hs.push(Handler(String.from("a"), make(String.from("A"))))
+    hs.push(Handler(String.from("b"), |n| String.from_int((n * 2) as i64)))
+    for h in hs {
+        let f = h.run
+        print(f(21))
+        print(h.name)
+    }
+    let h0 = hs[0]
+    hs.clear()
+    let f0 = h0.run
+    print(f0(5))
+
+    print(twice(inc, 1))
+    let k = 10
+    print(twice(|x| x * k, 1))
+    var fs: List[fn(i32) -> i32] = List.new()
+    fs.push(inc)
+    fs.push(|x| x * 3)
+    let words = String.from("abcd")
+    fs.push(|x| x + words.len() as i32)
+    print(apply_all(fs, 1))
+
+    let adder = |a: i32| -> fn(i32) -> i32 {
+        let tag = String.from("t")
+        |b| a + b + tag.len() as i32
+    }
+    let add5 = adder(5)
+    print(add5(1))
+
+    let ws = wrap(String.from("wrapped"))
+    print(ws())
+    let wi = wrap(42)
+    print(wi())
+    var parts: List[String] = List.new()
+    parts.push(String.from("x"))
+    let total = parts.fold(0 as usize, |acc, p| acc + p.len())
+    print(total)
+    let counted = parts.map(|p| -> String {
+        var r = p
+        r.push_str("!")
+        r
+    })
+    print(counted[0])
+    print(parts[0])
+}

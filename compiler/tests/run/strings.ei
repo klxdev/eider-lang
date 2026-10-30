@@ -1,0 +1,68 @@
+// String: building (from, from_int, push_str, append, self-append), len/is_empty,
+// comparison with == and != (also inside records, enums and Lists), printing.
+type Named = { name: String, n: i32 }
+
+type Tag = | Plain(s: String) | Num(n: i64) | Nothing
+
+fn build(n: i32) -> String {
+    var s = String.from("<")
+    var i = 0
+    while i < n {
+        s.append(String.from_int(i as i64))
+        s.push_str(",")
+        i += 1
+    }
+    s.push_str(">")
+    s
+}
+
+fn same(a: String, b: String) -> bool { a == b }
+
+fn main() uses io {
+    let empty = String.from("")
+    print(empty.len())
+    print(empty.is_empty())
+    var s = String.from("ab")
+    s.push_str("cd")
+    print(s)
+    print(s.len())
+    print(s.is_empty())
+    let t = s
+    s.append(t)
+    print(s)
+    let u = s
+    s.append(u)
+    print(s)
+    print(s.len())
+    print(build(0))
+    print(build(5))
+    print(String.from_int(-9223372036854775807 - 1))
+    print(String.from_int(0))
+    print(same(String.from("x"), String.from("x")))
+    print(same(String.from("x"), String.from("y")))
+    print(String.from("abc") != String.from("abd"))
+    print(String.from("") == empty)
+    let a = Named(String.from("k"), 1)
+    let b = Named(String.from("k"), 1)
+    let c = Named(String.from("j"), 1)
+    print(a == b)
+    print(a == c)
+    print(Plain(String.from("p")) == Plain(String.from("p")))
+    print(Plain(String.from("p")) == Plain(String.from("q")))
+    print(Num(3) == Num(3))
+    print(Nothing == Plain(String.from("")))
+    var xs: List[String] = List.new()
+    xs.push(String.from("one"))
+    xs.push(String.from("two"))
+    var ys: List[String] = List.new()
+    ys.push(String.from("one"))
+    ys.push(String.from("two"))
+    print(xs == ys)
+    ys.push(String.from("three"))
+    print(xs == ys)
+    print(xs.contains(String.from("two")))
+    print(xs.contains(String.from("six")))
+    // a quote, a backslash, a question mark and a tab survive the round trip (`??(` is
+    // bug_trigraph.ei: stage 0 turns it into `[`)
+    print(String.from("q\"b\\?(t\t."))
+}

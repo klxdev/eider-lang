@@ -1,0 +1,98 @@
+// Map[K, V] with integer, bool, str and String keys: insert (new and existing key), get,
+// contains, remove, len, is_empty, growth past several rehashes, removing and inserting
+// again, owned values, and copies that don't share.
+fn count_words(ws: List[String]) -> Map[String, i32] {
+    var m: Map[String, i32] = Map.new()
+    for w in ws {
+        let old = m.get(w).unwrap_or(0)
+        m.insert(w, old + 1)
+    }
+    m
+}
+
+fn main() uses io {
+    var m: Map[u64, u64] = Map.new()
+    print(m.len())
+    print(m.is_empty())
+    var i: u64 = 0
+    while i < 1000 {
+        m.insert(i * 7, i)
+        i += 1
+    }
+    print(m.len())
+    print(m.get(700).unwrap_or(0))
+    print(m.contains(701))
+    print(m.contains(6993))
+    i = 0
+    while i < 1000 {
+        if i % 3 == 0 { m.remove(i * 7) }
+        i += 1
+    }
+    print(m.len())
+    print(m.contains(0))
+    print(m.contains(7))
+    print(m.remove(7))
+    print(m.remove(7))
+    m.insert(7, 77)
+    m.insert(7, 78)
+    print(m.get(7).unwrap_or(0))
+    print(m.len())
+
+    var neg: Map[i32, bool] = Map.new()
+    neg.insert(-1, true)
+    neg.insert(-2147483647 - 1, false)
+    print(neg.get(-1).unwrap_or(false))
+    print(neg.contains(-2147483647 - 1))
+    print(neg.contains(1))
+
+    var flags: Map[bool, str] = Map.new()
+    flags.insert(true, "yes")
+    flags.insert(false, "no")
+    print(flags.get(true).unwrap_or("?"))
+    print(flags.get(false).unwrap_or("?"))
+
+    var lits: Map[str, i32] = Map.new()
+    lits.insert("a", 1)
+    lits.insert("b", 2)
+    lits.insert("a", 3)
+    print(lits.get("a").unwrap_or(0))
+    print(lits.len())
+
+    var ws: List[String] = List.new()
+    ws.push(String.from("the"))
+    ws.push(String.from("cat"))
+    ws.push(String.from("the"))
+    ws.push(String.from("hat"))
+    ws.push(String.from("the"))
+    let counts = count_words(ws)
+    print(counts.get(String.from("the")).unwrap_or(0))
+    print(counts.get(String.from("cat")).unwrap_or(0))
+    print(counts.get(String.from("dog")).unwrap_or(0))
+    print(counts.len())
+
+    var owners: Map[u32, String] = Map.new()
+    owners.insert(1, String.from("ann"))
+    owners.insert(2, String.from("bob"))
+    owners.insert(1, String.from("cy"))
+    match owners.get(1) {
+        Some(s) => print(s)
+        None => print("none")
+    }
+    let copy = owners
+    owners.remove(2)
+    print(owners.len())
+    print(copy.len())
+    print(copy.contains(2))
+    var lists: Map[String, List[i32]] = Map.new()
+    var l: List[i32] = List.new()
+    l.push(1)
+    lists.insert(String.from("k"), l)
+    l.push(2)
+    lists.insert(String.from("j"), l)
+    match lists.get(String.from("k")) {
+        Some(v) => print(v.len())
+        None => print(0)
+    }
+    print(lists.remove(String.from("j")))
+    print(lists.len())
+}
