@@ -7,3 +7,4 @@ target
 /*.so
 # materialized dependencies (eider-pkg fetch)
 deps/
+.claude/worktrees/
