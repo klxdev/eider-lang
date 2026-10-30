@@ -395,7 +395,7 @@ cross threads only by move (the spawned closure, `send`) or by copy under the lo
   channel sent into itself) leak, as with any reference count; a Task whose last handle is
   dropped on its own thread traps (`cannot join a thread`).
 - **Tests.** tests/run/threads.ei, and the threads cases of tests/checks (except
-  `e0806_wasm_threads`, WebAssembly); 41 fail and 3 pass cases `*_thr_*` in
+  `e0806_wasm_threads`, WebAssembly); 38 fail and 3 pass cases `*_thr_*` in
   `compiler/tests/check`; run tests `threads_chan` (8/1/16 producers x consumers with exact
   sums, `close` waking blocked receivers, queued owned values dropped, a 6-stage pipeline),
   `threads_mutex` (16 x 2000 increments, String/record/List values under the lock, racing
@@ -407,7 +407,8 @@ cross threads only by move (the spawned closure, `send`) or by copy under the lo
   `bug_update_capture` and `bug_get_method_arg` (stage 0 emits `void tN = ;` for
   `String.from_int(m.get().len() as i64)`). Each also ran 50 times under UBSan (trap mode,
   -O2), the allocation counter, clang's and gcc's TSan, and clang's ASan+UBSan, with no
-  report (see the branch's commit log for the numbers).
+  report: 8 programs x 5 builds x 50 runs, twice (before and after the error-checking
+  mutex). In the suite: 41/41 run tests, 144/144 sanitizer runs, 48/48 leak-free.
 
 ## C4: lowering
 
