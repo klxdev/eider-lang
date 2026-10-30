@@ -1,0 +1,32 @@
+// Golden AST dump: every expression form, precedence and qualified names.
+import "../../ast.ei"
+import "../../intern.ei" as names
+
+fn exprs(xs: List[i32], inout acc: i32) -> Result[i32, str] uses ffi {
+    let lits = (0x1F, 18446744073709551616, "a\"b\n\t\\", true, false)
+    let prec = -a + b * c % d - e / f +% g -% h *% i
+    let cmp = a == b && c != d || e < f && g <= h || i > j && k >= l
+    let un = !!ok && -(-x) < 0
+    let k = ast.TName
+    let n = names.new()
+    let q = names.LAST_KEYWORD as u64 as i64
+    let calls = f(inout acc, xs, ast.add(inout t, m))
+    let chain = xs.get(0).unwrap().len()
+    let fields = p.first.second.0
+    let idx = grid[i][j + 1]
+    let tried = parse(s)?.value?
+    let arrs = ([], [1], [1, 2,], [0; 8], [[1, 2], [3]])
+    let one = (1,)
+    let blk = { 1 }
+    let raw = unsafe { ec_now() }
+    let lam0 = || 1
+    let lam1 = |a, b: i32| -> i32 a + b
+    let lam2 = |x|
+        x * 2
+    let cond = if a { 1 } else if b { 2 } else { 3 }
+    let m = match k {
+        ast.TName => 1
+        _ => 2
+    }
+    Ok(prec)
+}

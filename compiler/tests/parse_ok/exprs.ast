@@ -1,0 +1,197 @@
+(IImport 2:1 path="../../ast.ei")
+(IImport 3:1 path="../../intern.ei" alias=names)
+(IFn 5:4 name=exprs end=5:69
+  param (Param 5:10 name=xs
+    type (TGeneric 5:14 name=List
+      arg (TName 5:19 name=i32)))
+  param (Param 5:31 name=acc inout
+    type (TName 5:36 name=i32))
+  ret (TGeneric 5:44 name=Result
+    arg (TName 5:51 name=i32)
+    arg (TName 5:56 name=str))
+  cap (Cap 5:66 name=ffi)
+  body (Block 5:70 end=32:1
+    stmt (SLet 6:5 name=lits
+      init (ETuple 6:16
+        elem (EInt 6:17 value=31)
+        elem (EInt 6:23 value=big)
+        elem (EStr 6:45 value="a\"b\n\t\\")
+        elem (EBool 6:59 value=true)
+        elem (EBool 6:65 value=false)))
+    stmt (SLet 7:5 name=prec
+      init (EBinary 7:44 op=`-%`
+        lhs (EBinary 7:39 op=`+%`
+          lhs (EBinary 7:31 op=`-`
+            lhs (EBinary 7:19 op=`+`
+              lhs (EUnary 7:16 op=`-`
+                operand (EIdent 7:17 name=a))
+              rhs (EBinary 7:27 op=`%`
+                lhs (EBinary 7:23 op=`*`
+                  lhs (EIdent 7:21 name=b)
+                  rhs (EIdent 7:25 name=c))
+                rhs (EIdent 7:29 name=d)))
+            rhs (EBinary 7:35 op=`/`
+              lhs (EIdent 7:33 name=e)
+              rhs (EIdent 7:37 name=f)))
+          rhs (EIdent 7:42 name=g))
+        rhs (EBinary 7:49 op=`*%`
+          lhs (EIdent 7:47 name=h)
+          rhs (EIdent 7:52 name=i))))
+    stmt (SLet 8:5 name=cmp
+      init (EBinary 8:51 op=`||`
+        lhs (EBinary 8:32 op=`||`
+          lhs (EBinary 8:22 op=`&&`
+            lhs (EBinary 8:17 op=`==`
+              lhs (EIdent 8:15 name=a)
+              rhs (EIdent 8:20 name=b))
+            rhs (EBinary 8:27 op=`!=`
+              lhs (EIdent 8:25 name=c)
+              rhs (EIdent 8:30 name=d)))
+          rhs (EBinary 8:41 op=`&&`
+            lhs (EBinary 8:37 op=`<`
+              lhs (EIdent 8:35 name=e)
+              rhs (EIdent 8:39 name=f))
+            rhs (EBinary 8:46 op=`<=`
+              lhs (EIdent 8:44 name=g)
+              rhs (EIdent 8:49 name=h))))
+        rhs (EBinary 8:60 op=`&&`
+          lhs (EBinary 8:56 op=`>`
+            lhs (EIdent 8:54 name=i)
+            rhs (EIdent 8:58 name=j))
+          rhs (EBinary 8:65 op=`>=`
+            lhs (EIdent 8:63 name=k)
+            rhs (EIdent 8:68 name=l)))))
+    stmt (SLet 9:5 name=un
+      init (EBinary 9:19 op=`&&`
+        lhs (EUnary 9:14 op=`!`
+          operand (EUnary 9:15 op=`!`
+            operand (EIdent 9:16 name=ok)))
+        rhs (EBinary 9:28 op=`<`
+          lhs (EUnary 9:22 op=`-`
+            operand (EUnary 9:24 op=`-`
+              operand (EIdent 9:25 name=x)))
+          rhs (EInt 9:30 value=0))))
+    stmt (SLet 10:5 name=k
+      init (EIdent 10:13 name=TName qual=ast))
+    stmt (SLet 11:5 name=n
+      init (ECall 11:13 name=new qual=names))
+    stmt (SLet 12:5 name=q
+      init (ECast 12:39
+        expr (ECast 12:32
+          expr (EIdent 12:13 name=LAST_KEYWORD qual=names)
+          type (TName 12:35 name=u64))
+        type (TName 12:42 name=i64)))
+    stmt (SLet 13:5 name=calls
+      init (ECall 13:17 name=f
+        arg (EArg 13:19 inout
+          expr (EIdent 13:25 name=acc))
+        arg (EArg 13:30
+          expr (EIdent 13:30 name=xs))
+        arg (EArg 13:34
+          expr (ECall 13:34 name=add qual=ast
+            arg (EArg 13:42 inout
+              expr (EIdent 13:48 name=t))
+            arg (EArg 13:51
+              expr (EIdent 13:51 name=m))))))
+    stmt (SLet 14:5 name=chain
+      init (EMethod 14:36 name=len
+        recv (EMethod 14:27 name=unwrap
+          recv (EMethod 14:20 name=get
+            recv (EIdent 14:17 name=xs)
+            arg (EArg 14:24
+              expr (EInt 14:24 value=0))))))
+    stmt (SLet 15:5 name=fields
+      init (EField 15:33 name=0
+        recv (EField 15:26 name=second
+          recv (EField 15:20 name=first
+            recv (EIdent 15:18 name=p)))))
+    stmt (SLet 16:5 name=idx
+      init (EIndex 16:22
+        recv (EIndex 16:19
+          recv (EIdent 16:15 name=grid)
+          index (EIdent 16:20 name=i))
+        index (EBinary 16:25 op=`+`
+          lhs (EIdent 16:23 name=j)
+          rhs (EInt 16:27 value=1))))
+    stmt (SLet 17:5 name=tried
+      init (ETry 17:32
+        expr (EField 17:27 name=value
+          recv (ETry 17:25
+            expr (ECall 17:17 name=parse
+              arg (EArg 17:23
+                expr (EIdent 17:23 name=s)))))))
+    stmt (SLet 18:5 name=arrs
+      init (ETuple 18:16
+        elem (EArray 18:17)
+        elem (EArray 18:21
+          elem (EInt 18:22 value=1))
+        elem (EArray 18:26
+          elem (EInt 18:27 value=1)
+          elem (EInt 18:30 value=2))
+        elem (ERepeat 18:35 count=8
+          elem (EInt 18:36 value=0))
+        elem (EArray 18:43
+          elem (EArray 18:44
+            elem (EInt 18:45 value=1)
+            elem (EInt 18:48 value=2))
+          elem (EArray 18:52
+            elem (EInt 18:53 value=3)))))
+    stmt (SLet 19:5 name=one
+      init (ETuple 19:15
+        elem (EInt 19:16 value=1)))
+    stmt (SLet 20:5 name=blk
+      init (EBlock 20:15
+        block (Block 20:15 end=20:19
+          stmt (SExpr 20:17
+            expr (EInt 20:17 value=1)))))
+    stmt (SLet 21:5 name=raw
+      init (EUnsafe 21:15
+        block (Block 21:22 end=21:33
+          stmt (SExpr 21:24
+            expr (ECall 21:24 name=ec_now)))))
+    stmt (SLet 22:5 name=lam0
+      init (ELambda 22:16
+        body (EInt 22:19 value=1)))
+    stmt (SLet 23:5 name=lam1
+      init (ELambda 23:16
+        param (LParam 23:17 name=a)
+        param (LParam 23:20 name=b
+          type (TName 23:23 name=i32))
+        ret (TName 23:31 name=i32)
+        body (EBinary 23:37 op=`+`
+          lhs (EIdent 23:35 name=a)
+          rhs (EIdent 23:39 name=b))))
+    stmt (SLet 24:5 name=lam2
+      init (ELambda 24:16
+        param (LParam 24:17 name=x)
+        body (EBinary 25:11 op=`*`
+          lhs (EIdent 25:9 name=x)
+          rhs (EInt 25:13 value=2))))
+    stmt (SLet 26:5 name=cond
+      init (EIf 26:16
+        cond (EIdent 26:19 name=a)
+        then (Block 26:21 end=26:25
+          stmt (SExpr 26:23
+            expr (EInt 26:23 value=1)))
+        else (EIf 26:32
+          cond (EIdent 26:35 name=b)
+          then (Block 26:37 end=26:41
+            stmt (SExpr 26:39
+              expr (EInt 26:39 value=2)))
+          else (EBlock 26:48
+            block (Block 26:48 end=26:52
+              stmt (SExpr 26:50
+                expr (EInt 26:50 value=3)))))))
+    stmt (SLet 27:5 name=m
+      init (EMatch 27:13 end=30:5
+        scrutinee (EIdent 27:19 name=k)
+        arm (Arm 28:9
+          pat (PName 28:9 name=TName qual=ast)
+          body (EInt 28:22 value=1))
+        arm (Arm 29:9
+          pat (PWild 29:9)
+          body (EInt 29:14 value=2))))
+    stmt (SExpr 31:5
+      expr (ECall 31:5 name=Ok
+        arg (EArg 31:8
+          expr (EIdent 31:8 name=prec))))))

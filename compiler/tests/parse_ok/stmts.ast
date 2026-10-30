@@ -1,0 +1,223 @@
+(IImport 2:1 path="../../lex.ei")
+(IFn 4:4 name=stmts end=4:47
+  param (Param 4:10 name=xs
+    type (TGeneric 4:14 name=List
+      arg (TName 4:19 name=i32)))
+  param (Param 4:25 name=o
+    type (TGeneric 4:28 name=Option
+      arg (TName 4:35 name=i32)))
+  ret (TName 4:44 name=i32)
+  body (Block 4:48 end=55:1
+    stmt (SLet 5:5 name=a
+      init (EInt 5:13 value=1))
+    stmt (SLet 5:16 name=b mut
+      type (TName 5:23 name=i32)
+      init (EInt 5:29 value=2))
+    stmt (SLetPat 6:5
+      pat (PTuple 6:9
+        sub (PName 6:10 name=c)
+        sub (PTuple 6:13
+          sub (PName 6:14 name=d)
+          sub (PWild 6:17)))
+      init (ETuple 6:23
+        elem (EInt 6:24 value=3)
+        elem (ETuple 6:27
+          elem (EInt 6:28 value=4)
+          elem (EInt 6:31 value=5))))
+    stmt (SLetPat 7:5 mut
+      pat (PTuple 7:9
+        sub (PName 7:10 name=e)
+        sub (PName 7:13 name=f))
+      init (ETuple 8:9
+        elem (EInt 8:10 value=6)
+        elem (EInt 8:13 value=7)))
+    stmt (SAssign 9:5 op=`=`
+      target (EIdent 9:5 name=b)
+      value (EInt 9:9 value=1))
+    stmt (SAssign 10:5 op=`+=`
+      target (EIdent 10:5 name=b)
+      value (EInt 10:10 value=1))
+    stmt (SAssign 11:5 op=`-=`
+      target (EIdent 11:5 name=b)
+      value (EInt 11:10 value=1))
+    stmt (SAssign 12:5 op=`*=`
+      target (EIdent 12:5 name=b)
+      value (EInt 12:10 value=2))
+    stmt (SAssign 13:5 op=`/=`
+      target (EIdent 13:5 name=b)
+      value (EInt 13:10 value=2))
+    stmt (SAssign 14:5 op=`%=`
+      target (EIdent 14:5 name=b)
+      value (EInt 14:10 value=2))
+    stmt (SAssign 15:5 op=`=`
+      target (EIndex 15:7
+        recv (EIdent 15:5 name=xs)
+        index (EInt 15:8 value=0))
+      value (EIdent 15:13 name=b))
+    stmt (SWhile 16:5
+      cond (EBinary 16:13 op=`<`
+        lhs (EIdent 16:11 name=b)
+        rhs (EInt 16:15 value=10))
+      body (Block 16:18 end=16:27
+        stmt (SAssign 16:20 op=`+=`
+          target (EIdent 16:20 name=b)
+          value (EInt 16:25 value=1))))
+    stmt (SFor 17:5 var=i
+      lo (EInt 17:14 value=0)
+      hi (EInt 17:17 value=10)
+      body (Block 17:20 end=17:31
+        stmt (SContinue 17:22)))
+    stmt (SForEach 18:5 var=x
+      iter (EIdent 18:14 name=xs)
+      body (Block 18:17 end=18:25
+        stmt (SBreak 18:19)))
+    stmt (SAssert 19:5
+      cond (EBinary 19:14 op=`>`
+        lhs (EIdent 19:12 name=b)
+        rhs (EInt 19:16 value=0)))
+    stmt (SAssert 20:5 message="positive"
+      cond (EBinary 20:14 op=`>`
+        lhs (EIdent 20:12 name=b)
+        rhs (EInt 20:16 value=0)))
+    stmt (SExpr 21:5
+      expr (EMatch 21:5 end=21:33
+        scrutinee (EIdent 21:22 name=o)
+        arm (Arm 21:5
+          pat (PVariant 21:12 name=Some
+            sub (PName 21:17 name=v))
+          body (EBlock 21:5
+            block (Block 21:24 end=21:32
+              stmt (SAssign 21:26 op=`=`
+                target (EIdent 21:26 name=b)
+                value (EIdent 21:30 name=v)))))
+        arm (Arm 21:5
+          pat (PWild 21:5)
+          body (EBlock 21:5
+            block (Block 21:33 end=21:33)))))
+    stmt (SExpr 22:5
+      expr (EMatch 22:5 end=24:6
+        scrutinee (EIdent 22:22 name=o)
+        arm (Arm 22:5
+          pat (PVariant 22:12 name=Some
+            sub (PName 22:17 name=v))
+          body (EBlock 22:5
+            block (Block 22:24 end=24:5
+              stmt (SAssign 23:9 op=`=`
+                target (EIdent 23:9 name=b)
+                value (EIdent 23:13 name=v)))))
+        arm (Arm 22:5
+          pat (PWild 22:5)
+          body (EMatch 24:12 end=26:6
+            scrutinee (EIdent 24:26 name=o)
+            arm (Arm 24:12
+              pat (PName 24:19 name=None)
+              body (EBlock 24:12
+                block (Block 24:28 end=26:5
+                  stmt (SAssign 25:9 op=`=`
+                    target (EIdent 25:9 name=b)
+                    value (EInt 25:13 value=0)))))
+            arm (Arm 24:12
+              pat (PWild 24:12)
+              body (EBlock 26:12
+                block (Block 26:12 end=28:5
+                  stmt (SAssign 27:9 op=`=`
+                    target (EIdent 27:9 name=b)
+                    value (EInt 27:13 value=1)))))))))
+    stmt (SLet 29:5 name=w
+      init (EMatch 29:13 end=29:37
+        scrutinee (EIdent 29:30 name=o)
+        arm (Arm 29:13
+          pat (PVariant 29:20 name=Some
+            sub (PName 29:25 name=v))
+          body (EBlock 29:13
+            block (Block 29:32 end=29:36
+              stmt (SExpr 29:34
+                expr (EIdent 29:34 name=v)))))
+        arm (Arm 29:13
+          pat (PWild 29:13)
+          body (EBlock 29:43
+            block (Block 29:43 end=29:47
+              stmt (SExpr 29:45
+                expr (EInt 29:45 value=0)))))))
+    stmt (SExpr 30:5
+      expr (EMatch 30:5 end=34:5
+        scrutinee (EIdent 30:11 name=o)
+        arm (Arm 31:9
+          pat (PVariant 31:9 name=Some
+            sub (PInt 31:14 value=1))
+          pat (PVariant 31:19 name=Some
+            sub (PInt 31:24 value=-2))
+          body (EBlock 31:31
+            block (Block 31:31 end=31:39
+              stmt (SAssign 31:33 op=`=`
+                target (EIdent 31:33 name=b)
+                value (EInt 31:37 value=3)))))
+        arm (Arm 32:9 stmt
+          pat (PVariant 32:9 name=Some
+            sub (PWild 32:14))
+          body (SReturn 32:20
+            value (EIdent 32:27 name=b)))
+        arm (Arm 33:9
+          pat (PName 33:9 name=None)
+          body (EBlock 33:17
+            block (Block 33:17 end=33:18)))))
+    stmt (SForEach 35:5 var=x
+      iter (EIdent 35:14 name=xs)
+      body (Block 35:17 end=42:5
+        stmt (SExpr 36:9
+          expr (EMatch 36:9 end=41:9
+            scrutinee (EIdent 36:15 name=x)
+            arm (Arm 37:13 stmt
+              pat (PInt 37:13 value=0)
+              body (SBreak 37:18))
+            arm (Arm 38:13 stmt
+              pat (PInt 38:13 value=1)
+              body (SContinue 38:18))
+            arm (Arm 39:13 stmt
+              pat (PInt 39:13 value=2)
+              body (SAssert 39:18 message="two"
+                cond (EBinary 39:27 op=`==`
+                  lhs (EIdent 39:25 name=x)
+                  rhs (EInt 39:30 value=2))))
+            arm (Arm 40:13 stmt
+              pat (PWild 40:13)
+              body (SReturn 40:18))))))
+    stmt (SExpr 43:5
+      expr (EMatch 43:5 end=46:5
+        scrutinee (EIdent 43:11 name=t)
+        arm (Arm 44:9
+          pat (PTuple 44:9
+            sub (PBool 44:10 value=true)
+            sub (PStr 44:16 value="s")
+            sub (PName 44:21 name=n))
+          body (EInt 44:27 value=1))
+        arm (Arm 45:9
+          pat (PTuple 45:9
+            sub (PBool 45:10 value=false)
+            sub (PWild 45:17)
+            sub (PWild 45:20))
+          body (EInt 45:26 value=2))))
+    stmt (SExpr 47:5
+      expr (EMatch 47:5 end=53:5
+        scrutinee (EIdent 47:11 name=k)
+        arm (Arm 48:9
+          pat (PName 48:9 name=Ident qual=lex)
+          pat (PName 48:21 name=Int qual=lex)
+          body (EInt 48:32 value=1))
+        arm (Arm 49:9
+          pat (PName 49:18 name=Str)
+          body (EInt 49:25 value=2))
+        arm (Arm 50:9
+          pat (PVariant 50:15 name=Rect
+            sub (PName 50:20 name=w)
+            sub (PName 50:23 name=h))
+          body (EInt 50:29 value=3))
+        arm (Arm 51:9
+          pat (PVariant 51:9 name=Failed qual=lex
+            sub (PName 51:20 name=e))
+          body (EInt 51:26 value=4))
+        arm (Arm 52:9
+          pat (PName 52:9 name=other)
+          body (EInt 52:18 value=5))))
+    stmt (SReturn 54:5
+      value (EIdent 54:12 name=b))))

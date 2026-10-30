@@ -1,0 +1,55 @@
+// Golden AST dump: statements, if-let desugaring, match arms and every pattern form.
+import "../../lex.ei"
+
+fn stmts(xs: List[i32], o: Option[i32]) -> i32 {
+    let a = 1; var b: i32 = 2
+    let (c, (d, _)) = (3, (4, 5))
+    var (e, f) =
+        (6, 7)
+    b = 1
+    b += 1
+    b -= 1
+    b *= 2
+    b /= 2
+    b %= 2
+    xs[0] = b
+    while b < 10 { b += 1 }
+    for i in 0..10 { continue }
+    for x in xs { break }
+    assert b > 0
+    assert b > 0, "positive"
+    if let Some(v) = o { b = v }
+    if let Some(v) = o {
+        b = v
+    } else if let None = o {
+        b = 0
+    } else {
+        b = 1
+    }
+    let w = if let Some(v) = o { v } else { 0 }
+    match o {
+        Some(1) | Some(-2) => { b = 3 }
+        Some(_) => return b
+        None => {}
+    }
+    for x in xs {
+        match x {
+            0 => break
+            1 => continue
+            2 => assert x == 2, "two"
+            _ => return
+        }
+    }
+    match t {
+        (true, "s", n) => 1,
+        (false, _, _) => 2
+    }
+    match k {
+        lex.Ident | lex.Int => 1
+        lex.Kind.Str => 2
+        Shape.Rect(w, h) => 3
+        lex.Failed(e) => 4
+        other => 5
+    }
+    return b
+}

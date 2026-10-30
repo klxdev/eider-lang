@@ -1,8 +1,8 @@
 # The self-hosted compiler (`eiderc`)
 
-Status: approved direction; C1 done. This file owns the plan; update it as stages land.
+Status: approved direction; C1 and C2 done. This file owns the plan; update it as stages land.
 
-Progress: **C1 done** (lexer, interner, diagnostics rendering; `scripts/test-compiler.sh`). Next: C2.
+Progress: **C1 done** (lexer, interner, diagnostics rendering; `scripts/test-compiler.sh`). **C2 done** (parser to the AST arena, `eiderc parse` dump, parse-error corpus and AST goldens). Next: C3.
 
 ## Goal
 
@@ -129,7 +129,7 @@ Each with a design note, compile-fail tests and new codes:
 | Id | Scope | Done when |
 |---|---|---|
 | C1 ✅ | `lex`, `intern`, `diag`; `eiderc lex` dumps tokens | every `.ei` in the repo plus `compiler/tests/lex` agrees with the bootstrap on lexer errors (JSON); golden dump in `compiler/tests/lex_ok` |
-| C2 | `parse` to the AST arena; `eiderc parse` dumps the AST | every `.ei` in the repo parses; parse errors (E0001) match the bootstrap's positions |
+| C2 ✅ | `parse` to the AST arena; `eiderc parse` dumps the AST | every `.ei` in the repo parses; parse errors (E0001) match the bootstrap's positions, including the one-file-per-error-path corpus in `compiler/tests/parse`; golden dumps in `compiler/tests/parse_ok` |
 | C3 | `resolve` + `check` for the v0 language (ints, bool, str, records, enums, arrays, control flow, `inout`, capabilities, const folding) | v0 compile-fail and compile-pass tests match |
 | C4 | `lower` + C for v0; runtime moved to `core/eider_rt.*` | v0 run tests match, clean under ASan/UBSan |
 | C5 | S1–S3: payload enums, generics, traits, Option/Result/`?`, tuples, patterns, String/List/Map/Box, closures | all the features `compiler/` itself uses; their tests match |

@@ -1,0 +1,56 @@
+// Golden AST dump: every item kind and every type form.
+module demo.items
+
+import "../../ast.ei"
+import "../../intern.ei" as names
+
+pub type Pair[A, B] = { first: A, second: B }
+
+type Shape =
+    | Circle(i64)
+    | Rect(w: i64, h: i64)
+    | Empty
+
+type Wrap = | One(List[ast.Node], names.Interner)
+
+pub trait Area {
+    fn area(self) -> i64
+    fn name(self) -> str { "shape" }
+}
+
+impl Area for Shape {
+    fn area(self) -> i64 { 0 }
+}
+
+impl[T: Area + names.Show] Pair[T, T] {
+    fn both(self: Pair[T, T], inout out: List[i64]) uses io, ffi {}
+}
+
+extern "c" fn ec_now() -> i64
+pub extern "c" fn ec_put(b: u8) -> i32
+
+export fn add(a: i32, b: i32) -> i32 { a + b }
+
+unsafe fn raw() {}
+
+pub fn types(
+    a: [u8; 4],
+    t: (i32, bool),
+    one: (i32,),
+    paren: (i32),
+    u: (),
+    f: fn(i32, str) -> bool,
+    g: fn(),
+)
+    -> Option[List[i32]]
+    uses io
+{
+    None
+}
+
+const LIMIT: u32 = 10
+pub const SIZE: u64 = comptime LIMIT as u64 * 2
+
+test "adds" {
+    assert add(1, 2) == 3
+}
