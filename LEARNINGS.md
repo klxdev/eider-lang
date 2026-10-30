@@ -37,3 +37,4 @@
 
 - Owned temporaries in an `else if` condition (e.g. `else if bytes.eq(x, sys.lit("a"))`) are declared inside the generated `else { }` block but dropped after it, so the C fails to compile (`tN undeclared`). Bind the value first or compare through a helper function.
 - At -O2 gcc reports `-Wmaybe-uninitialized` on temporaries the bootstrap declares before a branch that always assigns them. Harmless, but eiderc's C must be warning-free.
+- A match-arm binding with the same name as the `let` it initialises (`let p = match r { Ok(p) => p ... }`) is emitted as a second C variable `v_p` inside the arm's block, so the outer `p` is never assigned and reads garbage (eiderc's `main.ei` crashed in `ast.at`). Give the binding another name.

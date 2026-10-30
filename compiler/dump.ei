@@ -1,0 +1,369 @@
+// dump: the AST as an indented S-expression, for `eiderc parse` and the parse_ok goldens.
+//
+// One node per line: `(Kind line:col slot=value ...`, then each child on its own line, indented
+// two spaces and prefixed with its role (`body (Block ...`). Symbols print as their text,
+// strings escaped, operators in backticks, flags as bare words when set. The closing parens
+// follow the last child. An optional child or empty list prints nothing.
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+import "intern.ei"
+import "ast.ei"
+import "diag.ei"
+import "parse.ei"
+
+fn put(inout out: List[u8], s: str) uses ffi { bytes.append(inout out, sys.lit(s)) }
+
+fn num(inout out: List[u8], n: u64) { bytes.append(inout out, bytes.from_u64(n)) }
+
+fn pos(inout out: List[u8], line: u32, col: u32) {
+    num(inout out, line as u64)
+    out.push(58)
+    num(inout out, col as u64)
+}
+
+/// ` label=name` for a symbol.
+fn sym(inout out: List[u8], p: parse.P, label: str, s: u32) uses ffi {
+    out.push(32)
+    put(inout out, label)
+    out.push(61)
+    bytes.append(inout out, intern.name(p.names, s))
+}
+
+/// ` qual=alias` when the optional qualifier (sym+1) is present.
+fn qual(inout out: List[u8], p: parse.P, q: u32) uses ffi {
+    if q > 0 { sym(inout out, p, "qual", q - 1) }
+}
+
+/// ` label` when `on`.
+fn flag(inout out: List[u8], label: str, on: bool) uses ffi {
+    if on {
+        out.push(32)
+        put(inout out, label)
+    }
+}
+
+fn str_slot(inout out: List[u8], p: parse.P, label: str, si: u32) uses ffi {
+    out.push(32)
+    put(inout out, label)
+    out.push(61)
+    diag.debug_str(inout out, p.strs[si as usize])
+}
+
+fn int_slot(inout out: List[u8], p: parse.P, tok: u32, negated: bool) uses ffi {
+    let t = p.toks[tok as usize]
+    put(inout out, " value=")
+    if negated { out.push(45) }
+    // past u64 the token keeps no exact value (the checker rejects those as out of range)
+    if t.big {
+        put(inout out, "big")
+    } else {
+        num(inout out, t.val)
+    }
+}
+
+fn end(inout out: List[u8], n: ast.Node) uses ffi {
+    put(inout out, " end=")
+    pos(inout out, n.end_line, n.end_col)
+}
+
+fn fn_flags(inout out: List[u8], f: u32) uses ffi {
+    if f == 0 { return }
+    put(inout out, " flags=")
+    var first = true
+    let names = ["pub", "extern", "unsafe", "export"]
+    var bit: u32 = 1
+    for i in 0..4 {
+        if ast.has(f, bit) {
+            if !first { out.push(44) }
+            put(inout out, names[i as usize])
+            first = false
+        }
+        bit = bit * 2
+    }
+}
+
+/// A child on its own line: newline, indent, role, node.
+fn child(inout out: List[u8], p: parse.P, label: str, id: u32, depth: u32) uses ffi {
+    out.push(10)
+    var k: u32 = 0
+    while k < depth {
+        out.push(32)
+        out.push(32)
+        k += 1
+    }
+    put(inout out, label)
+    out.push(32)
+    node(inout out, p, id, depth)
+}
+
+/// An optional child stored as id+1.
+fn opt(inout out: List[u8], p: parse.P, label: str, id1: u32, depth: u32) uses ffi {
+    if id1 > 0 { child(inout out, p, label, id1 - 1, depth) }
+}
+
+/// The child list [start/len] in `extra`.
+fn kids(inout out: List[u8], p: parse.P, label: str, start: u32, len: u32, depth: u32) uses ffi {
+    var i: u32 = 0
+    while i < len {
+        child(inout out, p, label, ast.at(p.ast, start, i), depth)
+        i += 1
+    }
+}
+
+pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) uses ffi {
+    let n = p.ast.nodes[id as usize]
+    let d = depth + 1
+    out.push(40)
+    put(inout out, ast.kind_text(n.kind))
+    out.push(32)
+    pos(inout out, n.line, n.col)
+    match n.kind {
+        ast.TName => {
+            sym(inout out, p, "name", n.a)
+            qual(inout out, p, n.b)
+        }
+        ast.TGeneric => {
+            sym(inout out, p, "name", n.a)
+            qual(inout out, p, n.b)
+            kids(inout out, p, "arg", n.c, n.d, d)
+        }
+        ast.TArray => {
+            put(inout out, " len=")
+            num(inout out, n.b as u64)
+            child(inout out, p, "elem", n.a, d)
+        }
+        ast.TTuple => kids(inout out, p, "elem", n.c, n.d, d)
+        ast.TUnit => {}
+        ast.TFn => {
+            kids(inout out, p, "param", n.c, n.d, d)
+            opt(inout out, p, "ret", n.g, d)
+        }
+        ast.EInt => int_slot(inout out, p, n.a, false)
+        ast.EStr => str_slot(inout out, p, "value", n.a)
+        ast.EBool => {
+            let v = if n.a == 1 { " value=true" } else { " value=false" }
+            put(inout out, v)
+        }
+        ast.EIdent => {
+            sym(inout out, p, "name", n.a)
+            qual(inout out, p, n.b)
+        }
+        ast.EUnary => {
+            let op = if n.a == 0 { " op=`-`" } else { " op=`!`" }
+            put(inout out, op)
+            child(inout out, p, "operand", n.b, d)
+        }
+        ast.EBinary => {
+            put(inout out, " op=`")
+            put(inout out, ast.op_text(n.a))
+            out.push(96)
+            child(inout out, p, "lhs", n.b, d)
+            child(inout out, p, "rhs", n.c, d)
+        }
+        ast.ECall => {
+            sym(inout out, p, "name", n.a)
+            qual(inout out, p, n.b)
+            kids(inout out, p, "arg", n.c, n.d, d)
+        }
+        ast.EMethod => {
+            sym(inout out, p, "name", n.b)
+            child(inout out, p, "recv", n.a, d)
+            kids(inout out, p, "arg", n.c, n.d, d)
+        }
+        ast.EField => {
+            sym(inout out, p, "name", n.b)
+            child(inout out, p, "recv", n.a, d)
+        }
+        ast.EIndex => {
+            child(inout out, p, "recv", n.a, d)
+            child(inout out, p, "index", n.b, d)
+        }
+        ast.ECast => {
+            child(inout out, p, "expr", n.a, d)
+            child(inout out, p, "type", n.b, d)
+        }
+        ast.EArray => kids(inout out, p, "elem", n.c, n.d, d)
+        ast.ERepeat => {
+            put(inout out, " count=")
+            num(inout out, n.b as u64)
+            child(inout out, p, "elem", n.a, d)
+        }
+        ast.ETuple => kids(inout out, p, "elem", n.c, n.d, d)
+        ast.ETry => child(inout out, p, "expr", n.a, d)
+        ast.EUnsafe => child(inout out, p, "block", n.a, d)
+        ast.EBlock => child(inout out, p, "block", n.a, d)
+        ast.ELambda => {
+            kids(inout out, p, "param", n.c, n.d, d)
+            opt(inout out, p, "ret", n.g, d)
+            child(inout out, p, "body", n.a, d)
+        }
+        ast.EIf => {
+            child(inout out, p, "cond", n.a, d)
+            child(inout out, p, "then", n.b, d)
+            opt(inout out, p, "else", n.c, d)
+        }
+        ast.EMatch => {
+            end(inout out, n)
+            child(inout out, p, "scrutinee", n.a, d)
+            kids(inout out, p, "arm", n.c, n.d, d)
+        }
+        ast.EArg => {
+            flag(inout out, "inout", n.b == 1)
+            child(inout out, p, "expr", n.a, d)
+        }
+        ast.LParam => {
+            sym(inout out, p, "name", n.a)
+            opt(inout out, p, "type", n.b, d)
+        }
+        ast.Arm => {
+            flag(inout out, "stmt", n.b == 1)
+            kids(inout out, p, "pat", n.c, n.d, d)
+            child(inout out, p, "body", n.a, d)
+        }
+        ast.Block => {
+            end(inout out, n)
+            kids(inout out, p, "stmt", n.c, n.d, d)
+        }
+        ast.SLet => {
+            sym(inout out, p, "name", n.a)
+            flag(inout out, "mut", n.d == 1)
+            opt(inout out, p, "type", n.b, d)
+            child(inout out, p, "init", n.c, d)
+        }
+        ast.SLetPat => {
+            flag(inout out, "mut", n.d == 1)
+            child(inout out, p, "pat", n.a, d)
+            child(inout out, p, "init", n.c, d)
+        }
+        ast.SAssign => {
+            put(inout out, " op=`")
+            if n.b > 0 { put(inout out, ast.op_text(n.b - 1)) }
+            put(inout out, "=`")
+            child(inout out, p, "target", n.a, d)
+            child(inout out, p, "value", n.c, d)
+        }
+        ast.SExpr => child(inout out, p, "expr", n.a, d)
+        ast.SWhile => {
+            child(inout out, p, "cond", n.a, d)
+            child(inout out, p, "body", n.b, d)
+        }
+        ast.SFor => {
+            sym(inout out, p, "var", n.a)
+            child(inout out, p, "lo", n.b, d)
+            child(inout out, p, "hi", n.c, d)
+            child(inout out, p, "body", n.d, d)
+        }
+        ast.SForEach => {
+            sym(inout out, p, "var", n.a)
+            child(inout out, p, "iter", n.b, d)
+            child(inout out, p, "body", n.d, d)
+        }
+        ast.SReturn => opt(inout out, p, "value", n.a, d)
+        ast.SBreak => {}
+        ast.SContinue => {}
+        ast.SAssert => {
+            if n.b > 0 { str_slot(inout out, p, "message", n.b - 1) }
+            child(inout out, p, "cond", n.a, d)
+        }
+        ast.PWild => {}
+        ast.PName => {
+            sym(inout out, p, "name", n.a)
+            qual(inout out, p, n.b)
+        }
+        ast.PInt => int_slot(inout out, p, n.a, n.b == 1)
+        ast.PBool => {
+            let v = if n.a == 1 { " value=true" } else { " value=false" }
+            put(inout out, v)
+        }
+        ast.PStr => str_slot(inout out, p, "value", n.a)
+        ast.PVariant => {
+            sym(inout out, p, "name", n.a)
+            qual(inout out, p, n.b)
+            kids(inout out, p, "sub", n.c, n.d, d)
+        }
+        ast.PTuple => kids(inout out, p, "sub", n.c, n.d, d)
+        ast.IType => {
+            sym(inout out, p, "name", n.a)
+            flag(inout out, "pub", n.b == 1)
+            kids(inout out, p, "generic", n.c, n.d, d)
+            kids(inout out, p, "member", n.e, n.f, d)
+        }
+        ast.Variant => {
+            sym(inout out, p, "name", n.a)
+            kids(inout out, p, "field", n.c, n.d, d)
+        }
+        ast.VField => {
+            if n.c == 1 {
+                sym(inout out, p, "name", n.a)
+            } else {
+                put(inout out, " index=")
+                num(inout out, n.a as u64)
+            }
+            child(inout out, p, "type", n.b, d)
+        }
+        ast.Field => {
+            sym(inout out, p, "name", n.a)
+            child(inout out, p, "type", n.b, d)
+        }
+        ast.GParam => {
+            sym(inout out, p, "name", n.a)
+            kids(inout out, p, "bound", n.c, n.d, d)
+        }
+        ast.IFn => {
+            sym(inout out, p, "name", n.a)
+            fn_flags(inout out, n.b)
+            end(inout out, n)
+            kids(inout out, p, "generic", n.c, n.d, d)
+            kids(inout out, p, "param", n.e, n.f, d)
+            opt(inout out, p, "ret", n.g, d)
+            kids(inout out, p, "cap", n.i, n.j, d)
+            opt(inout out, p, "body", n.h, d)
+        }
+        ast.Param => {
+            sym(inout out, p, "name", n.a)
+            flag(inout out, "inout", n.c == 1)
+            child(inout out, p, "type", n.b, d)
+        }
+        ast.Cap => sym(inout out, p, "name", n.a)
+        ast.ITrait => {
+            sym(inout out, p, "name", n.a)
+            flag(inout out, "pub", n.b == 1)
+            kids(inout out, p, "method", n.c, n.d, d)
+        }
+        ast.IImpl => {
+            kids(inout out, p, "generic", n.c, n.d, d)
+            opt(inout out, p, "trait", n.a, d)
+            child(inout out, p, "target", n.b, d)
+            kids(inout out, p, "method", n.e, n.f, d)
+        }
+        ast.IConst => {
+            sym(inout out, p, "name", n.a)
+            flag(inout out, "pub", n.b == 1)
+            flag(inout out, "comptime", n.e == 1)
+            child(inout out, p, "type", n.c, d)
+            child(inout out, p, "value", n.d, d)
+        }
+        ast.ITest => {
+            str_slot(inout out, p, "name", n.a)
+            child(inout out, p, "body", n.b, d)
+        }
+        ast.IImport => {
+            str_slot(inout out, p, "path", n.a)
+            if n.b > 0 { sym(inout out, p, "alias", n.b - 1) }
+        }
+    }
+    out.push(41)
+}
+
+/// The whole file: each top-level item from column 0.
+pub fn program(p: parse.P) -> List[u8] uses ffi {
+    var out: List[u8] = List.new()
+    var i: u32 = 0
+    while i < p.ast.items_len {
+        node(inout out, p, ast.at(p.ast, p.ast.items_start, i), 0)
+        out.push(10)
+        i += 1
+    }
+    out
+}
