@@ -1,0 +1,55 @@
+import "../deps/core/sys.ei"
+import "../deps/std/bytes.ei"
+import "../deps/std/io.ei"
+import "../toml.ei"
+
+fn dump(src: str) uses io, ffi {
+    match toml.parse(sys.lit(src)) {
+        Ok(doc) => {
+            for e in doc {
+                var l = e.key
+                bytes.append(inout l, sys.lit(" = "))
+                match e.val {
+                    toml.Str(s) => bytes.append(inout l, toml.quote(s))
+                    toml.Int(n) => bytes.append(inout l, bytes.from_i64(n))
+                    toml.Bool(b) => {
+                        let w = if b { sys.lit("true") } else { sys.lit("false") }
+                        bytes.append(inout l, w)
+                    }
+                    toml.Strs(items) => {
+                        l.push(91)
+                        for i in 0..items.len() {
+                            if i > 0 { l.push(44) }
+                            bytes.append(inout l, toml.quote(items[i]))
+                        }
+                        l.push(93)
+                    }
+                }
+                bytes.append(inout l, sys.lit("  @"))
+                bytes.append(inout l, bytes.from_u64(e.line as u64))
+                io.outln(l)
+            }
+        }
+        Err(e) => {
+            var l = sys.lit("error ")
+            bytes.append(inout l, bytes.from_u64(e.line as u64))
+            l.push(58)
+            bytes.append(inout l, bytes.from_u64(e.col as u64))
+            io.outln(l)
+            print(e.msg)
+        }
+    }
+    print("--")
+}
+
+fn main() uses io, ffi {
+    dump("# manifest\n[package]\nname = \"warehouse\"   # trailing\nversion = \"0.1.0\"\n\n[deps.json]\ngit = \"https://example.com/json.git\"\nversion = \"1.2.0\"\nuses = [\"io\", \"fs\",]\n\n[deps]\ngeom = { path = \"../geom\", uses = [] }\n\"quoted key\" = -42\nflag = false\n")
+    dump("[[package]]\nname = \"a\"\n[[package]]\nname = \"b\"\ndeps = [\n  \"a\", # comment\n  \"c\"\n]\n")
+    dump("a = \"tab\\tq\\\"\"\nb = 1_000\n")
+    dump("a = 1\na = 2\n")
+    dump("[x]\nname \"oops\"\n")
+    dump("s = \"no end\n")
+    dump("arr = [1, 2]\n")
+    dump("n = 99999999999999999999\n")
+    dump("k = \"v\" junk\n")
+}

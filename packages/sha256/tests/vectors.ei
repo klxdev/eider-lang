@@ -1,0 +1,17 @@
+import "../deps/core/sys.ei"
+import "../deps/std/bytes.ei"
+import "../deps/std/io.ei"
+import "../sha256.ei"
+
+fn main() uses io, ffi {
+    let s = sha256.new()
+    io.outln(bytes.hex(sha256.digest(s, sys.lit(""))))
+    io.outln(bytes.hex(sha256.digest(s, sys.lit("abc"))))
+    io.outln(bytes.hex(sha256.digest(s, sys.lit("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"))))
+    // 55, 56 and 64 bytes: the padding edge cases
+    var b: List[u8] = List.new()
+    for i in 0..64 {
+        b.push(97)
+        if i == 54 || i == 55 || i == 63 { io.outln(bytes.hex(sha256.digest(s, b))) }
+    }
+}

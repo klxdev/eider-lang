@@ -14,6 +14,7 @@ for cc in gcc clang $S/asan.sh $S/tsan.sh; do
   [ "$n" = 0 ] && echo "ok   run tests ($(basename $cc))" || { echo "FAIL run tests ($cc)"; fail=1; }
 done
 sh tests/std/run.sh | grep -q FAIL && { echo "FAIL std"; fail=1; } || echo "ok   std (C core + Eider std)"
+sh tests/packages.sh | grep -q FAIL && { echo "FAIL packages"; fail=1; } || echo "ok   packages (toml, semver, sha256)"
 bash tests/export/run.sh | tail -1 | grep -q "^ok" || { echo "FAIL export"; fail=1; }
 sh tests/wasm/run.sh || fail=1
 rm -rf $S

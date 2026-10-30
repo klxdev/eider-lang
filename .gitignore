@@ -5,3 +5,5 @@ target
 /*.d.ts
 /*.a
 /*.so
+# materialized dependencies (eider-pkg fetch)
+deps/

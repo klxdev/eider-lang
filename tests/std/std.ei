@@ -1,4 +1,4 @@
-import "../../std/sys.ei"
+import "../../core/sys.ei"
 import "../../std/bytes.ei"
 import "../../std/fs.ei"
 import "../../std/io.ei"

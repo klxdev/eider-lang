@@ -93,16 +93,28 @@ int64_t ec_list_dir(void) {
   return 0;
 }
 
-/* 0 missing, 1 file, 2 directory, 3 other. Follows symlinks. */
-int32_t ec_kind(void) {
+/* 0 missing, 1 file, 2 directory, 3 other, 4 symlink (only when follow == 0). */
+int32_t ec_kind(int32_t follow) {
   struct stat st;
-  if (stat(arg(0), &st) != 0) return 0;
+  if ((follow ? stat(arg(0), &st) : lstat(arg(0), &st)) != 0) return 0;
+  if (S_ISLNK(st.st_mode)) return 4;
   return S_ISREG(st.st_mode) ? 1 : S_ISDIR(st.st_mode) ? 2 : 3;
 }
 
 int64_t ec_mkdir(void) { return mkdir(arg(0), 0777) == 0 ? 0 : -errno; }
 int64_t ec_remove(void) { return remove(arg(0)) == 0 ? 0 : -errno; }
 int64_t ec_rename(void) { return rename(arg(0), arg(1)) == 0 ? 0 : -errno; }
+/* in = target NUL linkpath */
+int64_t ec_symlink(void) { return symlink(arg(0), arg(1)) == 0 ? 0 : -errno; }
+
+/* out = the current directory */
+int64_t ec_cwd(void) {
+  char buf[4096];
+  out_len = 0;
+  if (!getcwd(buf, sizeof buf)) return -errno;
+  out_put(buf, strlen(buf));
+  return 0;
+}
 
 /* getenv(in[0]) -> out; 1 if set, 0 if not. */
 int32_t ec_getenv(void) {

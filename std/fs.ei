@@ -1,9 +1,10 @@
 // std/fs: files and directories. Paths are bytes; errors are human-readable Strings.
 
-import "sys.ei"
+import "../core/sys.ei"
 import "bytes.ei"
 
-pub type Kind = | Missing | File | Dir | Other
+/// What is at a path, without following a final symlink.
+pub type Kind = | Missing | File | Dir | Link | Other
 
 fn fail(what: str, path: List[u8], status: i64) -> String uses ffi {
     var m = String.from(what)
@@ -42,10 +43,11 @@ pub fn append(path: List[u8], data: List[u8]) -> Result[bool, String] uses fs, f
 
 pub fn kind(path: List[u8]) -> Kind uses fs, ffi {
     one(path)
-    match sys.kind() {
+    match sys.kind(false) {
+        0 => Missing
         1 => File
         2 => Dir
-        0 => Missing
+        4 => Link
         _ => Other
     }
 }
@@ -57,11 +59,10 @@ pub fn exists(path: List[u8]) -> bool uses fs, ffi {
     }
 }
 
+/// True for a directory or a symlink to one.
 pub fn is_dir(path: List[u8]) -> bool uses fs, ffi {
-    match kind(path) {
-        Dir => true
-        _ => false
-    }
+    one(path)
+    sys.kind(true) == 2
 }
 
 /// Entry names (not full paths), sorted.
@@ -104,6 +105,7 @@ pub fn mkdir_all(path: List[u8]) -> Result[bool, String] uses fs, ffi {
 }
 
 /// Remove a file, or a directory and everything in it. Fine if it doesn't exist.
+/// Symlinks are removed, never followed.
 pub fn remove_all(path: List[u8]) -> Result[bool, String] uses fs, ffi {
     match kind(path) {
         Missing => { return Ok(true) }
@@ -119,6 +121,55 @@ pub fn remove_all(path: List[u8]) -> Result[bool, String] uses fs, ffi {
     let n = sys.remove()
     if n < 0 { return Err(fail("cannot remove", path, n)) }
     Ok(true)
+}
+
+/// Create a symlink at `link` pointing to `target`.
+pub fn symlink(target: List[u8], link: List[u8]) -> Result[bool, String] uses fs, ffi {
+    var p: List[List[u8]] = List.new()
+    p.push(target)
+    p.push(link)
+    sys.send_all(p)
+    let n = sys.symlink()
+    if n < 0 { return Err(fail("cannot create symlink", link, n)) }
+    Ok(true)
+}
+
+pub fn cwd() -> Result[List[u8], String] uses fs, ffi {
+    let n = sys.cwd()
+    if n < 0 { return Err(sys.error_text(n)) }
+    Ok(sys.take())
+}
+
+/// Make `p` absolute (against the current directory) and fold `.` and `..` segments.
+pub fn absolute(p: List[u8]) -> Result[List[u8], String] uses fs, ffi {
+    let full = if p.len() > 0 && p[0] == 47 { p } else { join(cwd()?, p) }
+    Ok(normalize(full))
+}
+
+/// Fold `.`, `..` and repeated slashes (purely textual; `..` above the root stays at the root).
+pub fn normalize(p: List[u8]) -> List[u8] {
+    let abs = p.len() > 0 && p[0] == 47
+    var keep: List[List[u8]] = List.new()
+    for seg in bytes.split(p, 47) {
+        if seg.len() == 0 || (seg.len() == 1 && seg[0] == 46) {
+            // skip
+        } else if seg.len() == 2 && seg[0] == 46 && seg[1] == 46 {
+            if keep.len() > 0 && !(keep[keep.len() - 1].len() == 2 && keep[keep.len() - 1][0] == 46) {
+                keep.pop()
+            } else if !abs {
+                keep.push(seg)
+            }
+        } else {
+            keep.push(seg)
+        }
+    }
+    var sep: List[u8] = List.new()
+    sep.push(47)
+    var out: List[u8] = List.new()
+    if abs { out.push(47) }
+    bytes.append(inout out, bytes.join(keep, sep))
+    if out.len() == 0 { out.push(46) }
+    out
 }
 
 pub fn rename(from: List[u8], to: List[u8]) -> Result[bool, String] uses fs, ffi {

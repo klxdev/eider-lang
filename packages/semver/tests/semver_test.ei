@@ -1,0 +1,29 @@
+import "../deps/core/sys.ei"
+import "../deps/std/io.ei"
+import "../semver.ei"
+
+fn show(s: str) uses io, ffi {
+    match semver.parse(sys.lit(s)) {
+        Some(v) => io.outln(semver.text(v))
+        None => print("invalid")
+    }
+}
+
+fn cmp(a: str, b: str) uses io, ffi {
+    match (semver.parse(sys.lit(a)), semver.parse(sys.lit(b))) {
+        (Some(x), Some(y)) => print(semver.compare(x, y))
+        _ => print("invalid")
+    }
+}
+
+fn main() uses io, ffi {
+    show("1.2.3")
+    show("0.10.0")
+    show("1.2")
+    show("1.02.3")
+    show("v1.2.3")
+    show("1.2.3.4")
+    cmp("1.2.3", "1.2.4")
+    cmp("1.10.0", "1.9.9")
+    cmp("2.0.0", "2.0.0")
+}

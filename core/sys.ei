@@ -1,6 +1,6 @@
-// std/sys: the one module that talks to C (core/eider_core.c). Everything else in std is
-// plain Eider built on these functions. No pointers cross the boundary: data moves a byte
-// at a time through the core's `in` and `out` buffers.
+// core/sys: the Eider half of the core, and the only module that talks to C (eider_core.c).
+// std/ and every package are plain Eider built on these functions. No pointers cross the
+// boundary: data moves a byte at a time through the core's `in` and `out` buffers.
 
 extern "c" fn ec_in_clear()
 extern "c" fn ec_in_push(b: i32)
@@ -11,10 +11,12 @@ extern "c" fn ec_str_byte(s: str, i: i64) -> i32
 extern "c" fn ec_read_file() -> i64
 extern "c" fn ec_write_file(append: i32) -> i64
 extern "c" fn ec_list_dir() -> i64
-extern "c" fn ec_kind() -> i32
+extern "c" fn ec_kind(follow: i32) -> i32
 extern "c" fn ec_mkdir() -> i64
 extern "c" fn ec_remove() -> i64
 extern "c" fn ec_rename() -> i64
+extern "c" fn ec_symlink() -> i64
+extern "c" fn ec_cwd() -> i64
 extern "c" fn ec_getenv() -> i32
 extern "c" fn ec_write_fd(fd: i32) -> i64
 extern "c" fn ec_run(capture: i32) -> i64
@@ -111,10 +113,15 @@ pub fn write_file(append: bool) -> i64 uses ffi {
     unsafe { ec_write_file(a) }
 }
 pub fn list_dir() -> i64 uses ffi { unsafe { ec_list_dir() } }
-pub fn kind() -> i32 uses ffi { unsafe { ec_kind() } }
+pub fn kind(follow: bool) -> i32 uses ffi {
+    let f = if follow { 1 } else { 0 }
+    unsafe { ec_kind(f) }
+}
 pub fn mkdir() -> i64 uses ffi { unsafe { ec_mkdir() } }
 pub fn remove() -> i64 uses ffi { unsafe { ec_remove() } }
 pub fn rename() -> i64 uses ffi { unsafe { ec_rename() } }
+pub fn symlink() -> i64 uses ffi { unsafe { ec_symlink() } }
+pub fn cwd() -> i64 uses ffi { unsafe { ec_cwd() } }
 pub fn getenv() -> bool uses ffi {
     let r = unsafe { ec_getenv() }
     r == 1

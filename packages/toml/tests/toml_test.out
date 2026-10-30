@@ -1,0 +1,35 @@
+package.name = "warehouse"  @3
+package.version = "0.1.0"  @4
+deps.json.git = "https://example.com/json.git"  @7
+deps.json.version = "1.2.0"  @8
+deps.json.uses = ["io","fs"]  @9
+deps.geom.path = "../geom"  @12
+deps.geom.uses = []  @12
+deps.quoted key = -42  @13
+deps.flag = false  @14
+--
+package.0.name = "a"  @2
+package.1.name = "b"  @4
+package.1.deps = ["a","c"]  @5
+--
+a = "tab\tq\""  @1
+b = 1000  @2
+--
+error 2:1
+duplicate key
+--
+error 2:6
+expected `=` after the key
+--
+error 1:12
+unterminated string
+--
+error 1:8
+arrays may only hold strings here
+--
+error 1:25
+integer out of range
+--
+error 1:9
+expected the end of the line
+--
