@@ -1,10 +1,15 @@
 # Eider
 
-The Eider compiler: Rust front end, portable C11 back end. No dependencies beyond a Rust toolchain and any C11 compiler (`$CC`, default `cc`).
+A compiled, type-safe language that emits portable C11. The repository is layered (see
+`LAYERS.md`): a small C core (`core/`, contract in `core/ABI.md`), a standard library in
+Eider (`std/`), and packages in Eider (`packages/`). `bootstrap/` holds the temporary Rust
+compiler that turns Eider into C until the compiler is rewritten in Eider.
 
 ```
-cargo build --release
-eider run examples/warehouse.ei        # build + run
+cargo build --manifest-path bootstrap/Cargo.toml --target-dir target
+scripts/ei run tests/std/std.ei        # any eider command, with the C core linked
+scripts/verify.sh                      # everything
+eider run examples/warehouse.ei        # build + run (target/debug/eider)
 eider test examples/warehouse.ei       # run `test` blocks
 eider check file.ei --json             # machine-readable diagnostics for agents
 eider emit-c file.ei                   # inspect the generated C
@@ -45,4 +50,4 @@ tests/run.sh                           # run-and-compare suite (CC=clang works t
 
 ## Layout
 
-`lexer.rs` -> `parser.rs` (AST in `ast.rs`) -> `check.rs` (type check and C emit in one pass) -> `prelude.rs` (C runtime) ; `diag.rs` holds codes, fixes, JSON.
+Bootstrap compiler (`bootstrap/src/`): `lexer.rs` -> `parser.rs` (AST in `ast.rs`) -> `check.rs` (type check and C emit in one pass) -> `prelude.rs` (C runtime) ; `diag.rs` holds codes, fixes, JSON.

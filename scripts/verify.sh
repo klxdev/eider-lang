@@ -1,7 +1,7 @@
 #!/bin/sh
 # Full verification matrix: compile-fail suite, run tests on gcc/clang/ASan+UBSan/TSan, std, export, wasm.
 cd "$(dirname "$0")/.." || exit 1
-cargo build --quiet 2>&1 | grep -E "^error" -A6
+cargo build --quiet --manifest-path bootstrap/Cargo.toml --target-dir target 2>&1 | grep -E "^error" -A6
 EIDER_CACHE=off; export EIDER_CACHE
 fail=0
 ./target/debug/eider test --compile-fail tests/checks | tail -1 | grep -q " 0 failed" || { echo "FAIL compile-fail"; fail=1; }

@@ -1,0 +1,206 @@
+// manifest: read and validate eider.toml.
+//
+//   [package]
+//   name = "warehouse"          # [a-z][a-z0-9_]*; also the module name importers use
+//   version = "0.1.0"           # MAJOR.MINOR.PATCH
+//   entry = "warehouse.ei"      # what `import "deps/<name>/<entry>"` loads (default <name>.ei)
+//   main = "main.ei"            # program entry for run/build (optional)
+//
+//   [deps.json]                 # one table per dependency; the key must equal its package name
+//   git = "https://..."         #   either git + (version | rev) ...
+//   version = "1.2.0"           #   minimum version; tag v1.2.0 (or 1.2.0)
+//   path = "../geom"            #   ... or a local directory
+//   uses = ["io", "fs"]         #   capabilities granted to the dependency (default: none)
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+import "deps/std/fs.ei"
+import "deps/toml/toml.ei"
+import "deps/semver/semver.ei"
+
+pub type Source = | Path(dir: List[u8]) | Git(url: List[u8], version: List[u8], rev: List[u8])
+
+pub type Dep = { name: List[u8], source: Source, grants: List[List[u8]], line: u32 }
+
+pub type Manifest = { name: List[u8], version: List[u8], entry: List[u8], main: List[u8], deps: List[Dep], dir: List[u8] }
+
+pub fn file_in(dir: List[u8]) -> List[u8] uses ffi { fs.join(dir, sys.lit("eider.toml")) }
+
+pub fn at(file: List[u8], line: u32, col: u32, m: String) -> String uses ffi {
+    var s = sys.to_string(file)
+    s.push_str(":")
+    s.append(String.from_int(line as i64))
+    s.push_str(":")
+    s.append(String.from_int(col as i64))
+    s.push_str(": ")
+    s.append(m)
+    s
+}
+
+fn bad(file: List[u8], line: u32, m: str) -> String uses ffi { at(file, line, 1, String.from(m)) }
+
+pub fn valid_name(n: List[u8]) -> bool {
+    if n.len() == 0 { return false }
+    if !(n[0] >= 97 && n[0] <= 122) { return false }
+    for c in n {
+        if !((c >= 97 && c <= 122) || bytes.is_digit(c) || c == 95) { return false }
+    }
+    true
+}
+
+pub fn known_cap(c: List[u8]) -> bool uses ffi {
+    let caps = ["io", "clock", "fs", "net", "threads", "ffi"]
+    for i in 0..6 {
+        if bytes.eq(c, sys.lit(caps[i as usize])) { return true }
+    }
+    false
+}
+
+fn str_at(doc: List[toml.Entry], file: List[u8], k: List[u8]) -> Result[Option[List[u8]], String] uses ffi {
+    match toml.get(doc, k) {
+        Some(e) => {
+            match e.val {
+                toml.Str(s) => Ok(Some(s))
+                _ => {
+                    var m = String.from("`")
+                    m.append(sys.to_string(k))
+                    m.push_str("` must be a string")
+                    Err(at(file, e.line, 1, m))
+                }
+            }
+        }
+        None => Ok(None)
+    }
+}
+
+fn key(a: str, b: List[u8], c: str) -> List[u8] uses ffi {
+    var k = sys.lit(a)
+    bytes.append(inout k, b)
+    bytes.append(inout k, sys.lit(c))
+    k
+}
+
+/// Parse eider.toml text. `file` is used in messages, `dir` is the manifest's directory.
+pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, String] uses ffi {
+    let doc = match toml.parse(src) {
+        Ok(d) => d
+        Err(e) => { return Err(at(file, e.line, e.col, e.msg)) }
+    }
+    // every key must be one we know: catches typos like `verison`
+    let top_ok = ["package.name", "package.version", "package.entry", "package.main", "package.description"]
+    let dep_ok = ["path", "git", "version", "rev", "uses"]
+    for e in doc {
+        var ok = false
+        for i in 0..5 {
+            if bytes.eq(e.key, sys.lit(top_ok[i as usize])) { ok = true }
+        }
+        if !ok && bytes.starts_with(e.key, sys.lit("deps.")) {
+            let rest = bytes.slice(e.key, 5, e.key.len())
+            match bytes.find_byte(rest, 46, 0) {
+                Some(dot) => {
+                    let field = bytes.slice(rest, dot + 1, rest.len())
+                    for i in 0..5 {
+                        if bytes.eq(field, sys.lit(dep_ok[i as usize])) { ok = true }
+                    }
+                }
+                None => {}
+            }
+        }
+        if !ok {
+            var m = String.from("unknown key `")
+            m.append(sys.to_string(e.key))
+            m.push_str("`")
+            return Err(at(file, e.line, 1, m))
+        }
+    }
+    let name = match str_at(doc, file, sys.lit("package.name"))? {
+        Some(n) => n
+        None => { return Err(bad(file, 1, "missing `name` in [package]")) }
+    }
+    if !valid_name(name) {
+        let line = match toml.get(doc, sys.lit("package.name")) {
+            Some(e) => e.line
+            None => 1 as u32
+        }
+        return Err(bad(file, line, "package names are lowercase letters, digits and `_`, starting with a letter"))
+    }
+    let version = match str_at(doc, file, sys.lit("package.version"))? {
+        Some(v) => v
+        None => { return Err(bad(file, 1, "missing `version` in [package]")) }
+    }
+    if semver.parse(version).is_none() {
+        return Err(bad(file, 1, "`version` must be MAJOR.MINOR.PATCH, e.g. \"0.1.0\""))
+    }
+    let entry = match str_at(doc, file, sys.lit("package.entry"))? {
+        Some(e) => e
+        None => bytes.concat(name, sys.lit(".ei"))
+    }
+    let none: List[u8] = List.new()
+    let main = match str_at(doc, file, sys.lit("package.main"))? {
+        Some(m) => m
+        None => none
+    }
+    var deps: List[Dep] = List.new()
+    for dn in toml.children(doc, sys.lit("deps")) {
+        let line = match toml.get(doc, key("deps.", dn, ".path")) {
+            Some(e) => e.line
+            None => match toml.get(doc, key("deps.", dn, ".git")) {
+                Some(e) => e.line
+                None => 1 as u32
+            }
+        }
+        if !valid_name(dn) { return Err(bad(file, line, "dependency names are lowercase letters, digits and `_`")) }
+        if bytes.eq(dn, name) { return Err(bad(file, line, "a package can't depend on itself")) }
+        let path = str_at(doc, file, key("deps.", dn, ".path"))?
+        let git = str_at(doc, file, key("deps.", dn, ".git"))?
+        let ver = str_at(doc, file, key("deps.", dn, ".version"))?
+        let rev = str_at(doc, file, key("deps.", dn, ".rev"))?
+        var grants: List[List[u8]] = List.new()
+        match toml.get(doc, key("deps.", dn, ".uses")) {
+            Some(e) => {
+                match e.val {
+                    toml.Strs(items) => {
+                        for c in items {
+                            if !known_cap(c) {
+                                var m = String.from("unknown capability `")
+                                m.append(sys.to_string(c))
+                                m.push_str("` (known: io, clock, fs, net, threads, ffi)")
+                                return Err(at(file, e.line, 1, m))
+                            }
+                            grants.push(c)
+                        }
+                    }
+                    _ => { return Err(bad(file, e.line, "`uses` must be an array of capability names")) }
+                }
+            }
+            None => {}
+        }
+        let source = match (path, git) {
+            (Some(p), None) => {
+                if ver.is_some() || rev.is_some() { return Err(bad(file, line, "a path dependency takes no `version` or `rev`")) }
+                Path(p)
+            }
+            (None, Some(g)) => {
+                match (ver, rev) {
+                    (Some(v), None) => {
+                        if semver.parse(v).is_none() { return Err(bad(file, line, "`version` must be MAJOR.MINOR.PATCH")) }
+                        Git(g, v, none)
+                    }
+                    (None, Some(r)) => Git(g, none, r)
+                    (None, None) => { return Err(bad(file, line, "a git dependency needs `version` (a minimum) or `rev`")) }
+                    _ => { return Err(bad(file, line, "give either `version` or `rev`, not both")) }
+                }
+            }
+            (None, None) => { return Err(bad(file, line, "a dependency needs `path` or `git`")) }
+            _ => { return Err(bad(file, line, "give either `path` or `git`, not both")) }
+        }
+        deps.push(Dep(dn, source, grants, line))
+    }
+    Ok(Manifest(name, version, entry, main, deps, dir))
+}
+
+pub fn load(dir: List[u8]) -> Result[Manifest, String] uses fs, ffi {
+    let file = file_in(dir)
+    let src = fs.read(file)?
+    parse(src, file, dir)
+}

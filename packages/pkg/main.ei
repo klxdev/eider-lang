@@ -1,0 +1,16 @@
+import "deps/core/sys.ei"
+import "deps/std/io.ei"
+import "deps/std/fs.ei"
+import "manifest.ei"
+import "lockfile.ei"
+import "store.ei"
+
+fn main() uses io, fs, ffi {
+    match manifest.load(sys.lit("packages/pkg")) {
+        Ok(m) => {
+            io.outln(m.name)
+            for d in m.deps { io.outln(d.name) }
+        }
+        Err(e) => print(e)
+    }
+}

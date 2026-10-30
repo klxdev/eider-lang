@@ -1,0 +1,241 @@
+// store: the shared package store and the per-project deps/ link farm.
+//
+//   $EIDER_HOME (default ~/.eider)
+//     git/<url-as-name>/       bare mirror of each git source (the only network use)
+//     pkg/<name>-<hash16>/     an exported commit; immutable once written
+//     index/<commit>           the full content hash of that commit's export
+//     tmp/                     staging for exports
+//
+// A project's deps/ holds `.all/<name>/` for every package in the graph: a directory of
+// symlinks to the package's files plus its own `deps/` with links to its direct
+// dependencies only. The project's own `deps/<name>` link only to its direct dependencies.
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+import "deps/std/fs.ei"
+import "deps/std/env.ei"
+import "deps/std/proc.ei"
+import "deps/sha256/sha256.ei"
+
+pub type Export = { dir: List[u8], hash: List[u8] }
+
+pub fn home() -> Result[List[u8], String] uses io, fs, ffi {
+    match env.get(sys.lit("EIDER_HOME")) {
+        Some(h) => { return fs.absolute(h) }
+        None => {}
+    }
+    match env.get(sys.lit("HOME")) {
+        Some(h) => Ok(fs.join(h, sys.lit(".eider")))
+        None => Err(String.from("set EIDER_HOME or HOME"))
+    }
+}
+
+/// Names that never belong to a package's content.
+pub fn skipped() -> List[List[u8]] uses ffi {
+    var s: List[List[u8]] = List.new()
+    s.push(sys.lit(".git"))
+    s.push(sys.lit("deps"))
+    s.push(sys.lit("vendor"))
+    s
+}
+
+/// sha256 over every file: `path NUL hex(sha256(content)) LF`, in sorted path order.
+pub fn tree_hash(dir: List[u8]) -> Result[List[u8], String] uses fs, ffi {
+    let s = sha256.new()
+    var manifest: List[u8] = List.new()
+    for rel in fs.walk(dir, skipped())? {
+        let data = fs.read(fs.join(dir, rel))?
+        bytes.append(inout manifest, rel)
+        manifest.push(0)
+        bytes.append(inout manifest, bytes.hex(sha256.digest(s, data)))
+        manifest.push(10)
+    }
+    var out = sys.lit("sha256-")
+    bytes.append(inout out, bytes.hex(sha256.digest(s, manifest)))
+    Ok(out)
+}
+
+fn mirror_dir(home: List[u8], url: List[u8]) -> List[u8] uses ffi {
+    var name: List[u8] = List.new()
+    for c in url {
+        if bytes.is_ident(c) || c == 45 || c == 46 { name.push(c) } else { name.push(95) }
+    }
+    fs.join(fs.join(home, sys.lit("git")), name)
+}
+
+fn git(args: List[List[u8]]) -> Result[List[u8], String] uses io, fs, net, ffi {
+    var argv: List[List[u8]] = List.new()
+    argv.push(sys.lit("git"))
+    for a in args { argv.push(a) }
+    proc.check(argv)
+}
+
+fn a2(a: List[u8], b: List[u8]) -> List[List[u8]] {
+    var l: List[List[u8]] = List.new()
+    l.push(a)
+    l.push(b)
+    l
+}
+
+/// The commit `ref` names in the mirror, if any.
+fn rev_parse(m: List[u8], r: List[u8]) -> Option[List[u8]] uses io, fs, net, ffi {
+    var args = a2(sys.lit("-C"), m)
+    args.push(sys.lit("rev-parse"))
+    args.push(sys.lit("--verify"))
+    args.push(sys.lit("--quiet"))
+    var spec = r
+    bytes.append(inout spec, sys.lit("^{commit}"))
+    args.push(spec)
+    var argv: List[List[u8]] = List.new()
+    argv.push(sys.lit("git"))
+    for a in args { argv.push(a) }
+    match proc.output(argv) {
+        Ok(o) => {
+            if o.code != 0 { return None }
+            Some(bytes.trim(o.out))
+        }
+        Err(_) => None
+    }
+}
+
+fn candidates(want: List[u8], is_rev: bool) -> List[List[u8]] uses ffi {
+    var c: List[List[u8]] = List.new()
+    if is_rev {
+        c.push(want)
+        return c
+    }
+    var v = sys.lit("refs/tags/v")
+    bytes.append(inout v, want)
+    c.push(v)
+    var plain = sys.lit("refs/tags/")
+    bytes.append(inout plain, want)
+    c.push(plain)
+    c
+}
+
+/// Find the commit for a version (tag `v<version>` or `<version>`) or rev. Clones or updates
+/// the mirror only when the commit isn't already known locally, and never when `offline`.
+pub fn resolve_commit(home: List[u8], url: List[u8], want: List[u8], is_rev: bool, offline: bool) -> Result[List[u8], String] uses io, fs, net, ffi {
+    let m = mirror_dir(home, url)
+    if fs.exists(m) {
+        for r in candidates(want, is_rev) {
+            match rev_parse(m, r) {
+                Some(c) => { return Ok(c) }
+                None => {}
+            }
+        }
+    }
+    if offline {
+        var e = String.from("offline: ")
+        e.append(sys.to_string(url))
+        e.push_str(" has no local copy of ")
+        e.append(sys.to_string(want))
+        return Err(e)
+    }
+    if fs.exists(m) {
+        var args = a2(sys.lit("-C"), m)
+        args.push(sys.lit("remote"))
+        args.push(sys.lit("update"))
+        args.push(sys.lit("--prune"))
+        git(args)?
+    } else {
+        fs.mkdir_all(fs.dirname(m))?
+        var args = a2(sys.lit("clone"), sys.lit("--mirror"))
+        args.push(sys.lit("--quiet"))
+        args.push(url)
+        args.push(m)
+        git(args)?
+    }
+    for r in candidates(want, is_rev) {
+        match rev_parse(m, r) {
+            Some(c) => { return Ok(c) }
+            None => {}
+        }
+    }
+    var e = String.from("")
+    e.append(sys.to_string(url))
+    if is_rev {
+        e.push_str(" has no rev `")
+    } else {
+        e.push_str(" has no tag `v")
+    }
+    e.append(sys.to_string(want))
+    e.push_str("`")
+    Err(e)
+}
+
+/// The store directory for `commit` of `url`, exporting it on first use.
+pub fn checkout(home: List[u8], url: List[u8], commit: List[u8], name: List[u8]) -> Result[Export, String] uses io, fs, net, ffi {
+    let index = fs.join(fs.join(home, sys.lit("index")), commit)
+    if fs.exists(index) {
+        let h = bytes.trim(fs.read(index)?)
+        let dir = store_dir(home, name, h)
+        if fs.is_dir(dir) { return Ok(Export(dir, h)) }
+    }
+    let tmp = fs.join(fs.join(home, sys.lit("tmp")), commit)
+    fs.remove_all(tmp)?
+    fs.mkdir_all(tmp)?
+    var tar = tmp
+    bytes.append(inout tar, sys.lit(".tar"))
+    var args = a2(sys.lit("-C"), mirror_dir(home, url))
+    args.push(sys.lit("archive"))
+    args.push(sys.lit("--format=tar"))
+    args.push(sys.lit("-o"))
+    args.push(tar)
+    args.push(commit)
+    git(args)?
+    var untar: List[List[u8]] = List.new()
+    untar.push(sys.lit("tar"))
+    untar.push(sys.lit("-xf"))
+    untar.push(tar)
+    untar.push(sys.lit("-C"))
+    untar.push(tmp)
+    proc.check(untar)?
+    fs.remove_all(tar)?
+    let h = tree_hash(tmp)?
+    let dir = store_dir(home, name, h)
+    if fs.exists(dir) {
+        fs.remove_all(tmp)?
+    } else {
+        fs.mkdir_all(fs.dirname(dir))?
+        fs.rename(tmp, dir)?
+    }
+    fs.mkdir_all(fs.dirname(index))?
+    fs.write(index, h)?
+    Ok(Export(dir, h))
+}
+
+pub fn store_dir(home: List[u8], name: List[u8], hash: List[u8]) -> List[u8] uses ffi {
+    var leaf = name
+    leaf.push(45)
+    // "sha256-" is 7 bytes; keep 16 hex digits
+    bytes.append(inout leaf, bytes.slice(hash, 7, 23))
+    fs.join(fs.join(home, sys.lit("pkg")), leaf)
+}
+
+/// One package's directory under deps/.all: links to its files plus deps/ for its own deps.
+pub fn link_package(all: List[u8], name: List[u8], src: List[u8], deps: List[List[u8]], toolchain: List[u8]) -> Result[bool, String] uses fs, ffi {
+    let here = fs.join(all, name)
+    fs.mkdir_all(here)?
+    let skip = skipped()
+    for entry in fs.list(src)? {
+        var keep = true
+        for s in skip {
+            if bytes.eq(s, entry) { keep = false }
+        }
+        if keep { fs.symlink(fs.join(src, entry), fs.join(here, entry))? }
+    }
+    let own = fs.join(here, sys.lit("deps"))
+    link_deps(own, deps, sys.lit("../.."), toolchain)
+}
+
+/// deps/<d> -> <up>/<d> for each dep, plus deps/core and deps/std from the toolchain.
+pub fn link_deps(dir: List[u8], deps: List[List[u8]], up: List[u8], toolchain: List[u8]) -> Result[bool, String] uses fs, ffi {
+    fs.mkdir_all(dir)?
+    fs.symlink(fs.join(toolchain, sys.lit("core")), fs.join(dir, sys.lit("core")))?
+    fs.symlink(fs.join(toolchain, sys.lit("std")), fs.join(dir, sys.lit("std")))?
+    for d in deps {
+        fs.symlink(fs.join(up, d), fs.join(dir, d))?
+    }
+    Ok(true)
+}

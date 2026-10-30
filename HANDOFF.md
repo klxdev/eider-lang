@@ -1,15 +1,15 @@
 # Eider handoff
 
-Eider is a compiled, type-safe language that emits C11. The compiler is a Rust crate with no dependencies (~7.8k lines). Source files use `.ei`, the CLI is `eider`.
+Eider is a compiled, type-safe language that emits C11. Source files use `.ei`, the CLI is `eider`. The current compiler is a frozen Rust bootstrap in `bootstrap/` (~7.8k lines, no dependencies); everything new is Eider on top of a small C core. Read `LAYERS.md` first.
 
 ## Get running
 
 Needs: Rust (built with 1.97), a C11 compiler (`$CC`, default `cc`; gcc and clang both tested). For the WebAssembly path also: clang with the wasm32 target, `wasm-ld`, and Node (tests only).
 
 ```
-tar xzf eider.tar.gz && cd eider
-cargo build --release
-./target/release/eider run examples/warehouse.ei
+cargo build --manifest-path bootstrap/Cargo.toml --target-dir target
+./target/debug/eider run examples/warehouse.ei
+scripts/ei run tests/std/std.ei   # with the C core linked
 scripts/verify.sh          # full matrix; must end with ALL GREEN
 ```
 

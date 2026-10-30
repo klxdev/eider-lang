@@ -1,0 +1,14 @@
+[package]
+name = "pkg"
+version = "0.1.0"
+main = "main.ei"
+description = "eider-pkg: the Eider package manager"
+
+[deps.toml]
+path = "../toml"
+
+[deps.semver]
+path = "../semver"
+
+[deps.sha256]
+path = "../sha256"

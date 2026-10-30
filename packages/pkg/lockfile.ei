@@ -1,0 +1,184 @@
+// lockfile: the resolved package graph, as written to eider.lock.
+//
+//   # eider.lock: written by `eider-pkg`. Do not edit.
+//   version = 1
+//
+//   [[package]]
+//   name = "json"
+//   version = "1.2.0"
+//   source = "git+https://example.com/json.git#<commit>"   # or "path+../geom"
+//   rev = "main"                                           # only for `rev` dependencies
+//   hash = "sha256-<hex>"                                  # git packages only
+//   deps = ["util"]
+//   grants = ["io"]
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+import "deps/std/fs.ei"
+import "deps/toml/toml.ei"
+import "manifest.ei"
+
+/// One resolved package. `loc` is the git URL or the absolute directory of a path package;
+/// `want` is the version or rev that was asked for; `dir` is where its files are.
+pub type Pkg = {
+    name: List[u8],
+    version: List[u8],
+    git: bool,
+    loc: List[u8],
+    want: List[u8],
+    is_rev: bool,
+    commit: List[u8],
+    hash: List[u8],
+    dir: List[u8],
+    deps: List[List[u8]],
+    grants: List[List[u8]],
+}
+
+pub fn file_in(dir: List[u8]) -> List[u8] uses ffi { fs.join(dir, sys.lit("eider.lock")) }
+
+pub fn find(pkgs: List[Pkg], name: List[u8]) -> Option[Pkg] {
+    for p in pkgs {
+        if bytes.eq(p.name, name) { return Some(p) }
+    }
+    None
+}
+
+fn strs(items: List[List[u8]]) -> List[u8] {
+    var out: List[u8] = List.new()
+    out.push(91)
+    for i in 0..items.len() {
+        if i > 0 {
+            out.push(44)
+            out.push(32)
+        }
+        bytes.append(inout out, toml.quote(items[i]))
+    }
+    out.push(93)
+    out
+}
+
+fn line(inout out: List[u8], k: str, v: List[u8]) uses ffi {
+    bytes.append(inout out, sys.lit(k))
+    bytes.append(inout out, sys.lit(" = "))
+    bytes.append(inout out, v)
+    out.push(10)
+}
+
+/// Path from directory `from` to `to` (both absolute and normalized).
+pub fn relative(from: List[u8], to: List[u8]) -> List[u8] uses ffi {
+    let a = bytes.split(from, 47)
+    let b = bytes.split(to, 47)
+    var i: usize = 0
+    while i < a.len() && i < b.len() && bytes.eq(a[i], b[i]) { i += 1 }
+    var parts: List[List[u8]] = List.new()
+    var j = i
+    while j < a.len() {
+        if a[j].len() > 0 { parts.push(sys.lit("..")) }
+        j += 1
+    }
+    while i < b.len() {
+        if b[i].len() > 0 { parts.push(b[i]) }
+        i += 1
+    }
+    if parts.len() == 0 { return sys.lit(".") }
+    bytes.join(parts, sys.lit("/"))
+}
+
+/// Lockfile text; packages sorted by name so the file is stable.
+pub fn render(pkgs: List[Pkg], root: List[u8]) -> List[u8] uses ffi {
+    var sorted: List[Pkg] = List.new()
+    for p in pkgs {
+        sorted.push(p)
+        var i = sorted.len() - 1
+        while i > 0 && bytes.compare(sorted[i - 1].name, sorted[i].name) > 0 {
+            let t = sorted[i - 1]
+            sorted[i - 1] = sorted[i]
+            sorted[i] = t
+            i -= 1
+        }
+    }
+    var out = sys.lit("# eider.lock: written by `eider-pkg`. Do not edit.\nversion = 1\n")
+    for p in sorted {
+        bytes.append(inout out, sys.lit("\n[[package]]\n"))
+        line(inout out, "name", toml.quote(p.name))
+        line(inout out, "version", toml.quote(p.version))
+        var src = if p.git { sys.lit("git+") } else { sys.lit("path+") }
+        if p.git {
+            bytes.append(inout src, p.loc)
+            src.push(35)
+            bytes.append(inout src, p.commit)
+        } else {
+            bytes.append(inout src, relative(root, p.loc))
+        }
+        line(inout out, "source", toml.quote(src))
+        if p.is_rev { line(inout out, "rev", toml.quote(p.want)) }
+        if p.git { line(inout out, "hash", toml.quote(p.hash)) }
+        line(inout out, "deps", strs(p.deps))
+        line(inout out, "grants", strs(p.grants))
+    }
+    out
+}
+
+fn field(doc: List[toml.Entry], prefix: List[u8], k: str) -> List[u8] uses ffi {
+    var key = prefix
+    bytes.append(inout key, sys.lit(k))
+    match toml.get(doc, key) {
+        Some(e) => match e.val {
+            toml.Str(s) => s
+            _ => List.new()
+        }
+        None => List.new()
+    }
+}
+
+fn list_field(doc: List[toml.Entry], prefix: List[u8], k: str) -> List[List[u8]] uses ffi {
+    var key = prefix
+    bytes.append(inout key, sys.lit(k))
+    match toml.get(doc, key) {
+        Some(e) => match e.val {
+            toml.Strs(items) => items
+            _ => List.new()
+        }
+        None => List.new()
+    }
+}
+
+/// Parse eider.lock in project `root`. A missing file is an empty lock.
+pub fn load(root: List[u8]) -> Result[List[Pkg], String] uses fs, ffi {
+    let file = file_in(root)
+    var pkgs: List[Pkg] = List.new()
+    if !fs.exists(file) { return Ok(pkgs) }
+    let src = fs.read(file)?
+    let doc = match toml.parse(src) {
+        Ok(d) => d
+        Err(e) => { return Err(manifest.at(file, e.line, e.col, e.msg)) }
+    }
+    var n: u64 = 0
+    while true {
+        var prefix = sys.lit("package.")
+        bytes.append(inout prefix, bytes.from_u64(n))
+        prefix.push(46)
+        let name = field(doc, prefix, "name")
+        if name.len() == 0 { break }
+        let src = field(doc, prefix, "source")
+        let rev = field(doc, prefix, "rev")
+        let none: List[u8] = List.new()
+        let p = if bytes.starts_with(src, sys.lit("git+")) {
+            let rest = bytes.slice(src, 4, src.len())
+            let hashpos = match bytes.rfind_byte(rest, 35) {
+                Some(i) => i
+                None => { return Err(manifest.at(file, 1, 1, String.from("bad git source in lockfile; run `eider-pkg update`"))) }
+            }
+            let want = if rev.len() > 0 { rev } else { field(doc, prefix, "version") }
+            Pkg(name, field(doc, prefix, "version"), true, bytes.slice(rest, 0, hashpos), want, rev.len() > 0,
+                bytes.slice(rest, hashpos + 1, rest.len()), field(doc, prefix, "hash"), none, list_field(doc, prefix, "deps"), list_field(doc, prefix, "grants"))
+        } else {
+            let rel = bytes.slice(src, 5, src.len())
+            let dir = fs.normalize(fs.join(root, rel))
+            Pkg(name, field(doc, prefix, "version"), false, dir, none, false, none, none, dir, list_field(doc, prefix, "deps"), list_field(doc, prefix, "grants"))
+        }
+        pkgs.push(p)
+        n += 1
+    }
+    Ok(pkgs)
+}

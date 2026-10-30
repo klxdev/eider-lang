@@ -14,5 +14,5 @@ if [ ! -f "$lib" ] || [ "$src" -nt "$lib" ]; then
   rm -rf "${EIDER_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/eider}" 2>/dev/null
 fi
 eider="${EIDER:-$root/target/debug/eider}"
-[ -x "$eider" ] || (cd "$root" && cargo build --quiet) || exit 3
+[ -x "$eider" ] || cargo build --quiet --manifest-path "$root/bootstrap/Cargo.toml" --target-dir "$root/target" || exit 3
 LIBRARY_PATH="$out${LIBRARY_PATH:+:$LIBRARY_PATH}" exec "$eider" "$@" -l eider_core

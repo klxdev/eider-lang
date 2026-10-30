@@ -1,10 +1,14 @@
 # Layers
 
+Anything that is not Eider is unmanaged code: it is outside the language's safety checks and
+is a security and performance risk. The goal is that the only unmanaged code is the C core,
+and that the core is as small as it can be.
+
 Eider code is partitioned into three layers. Dependencies only point down.
 
 | Layer | Where | Language | What belongs here |
 |---|---|---|---|
-| core | `core/` | C (`eider_core.c`) + Eider (`sys.ei`) | The OS boundary and nothing else. One OS call per C function, errors as `-errno`, no logic, no pointers exposed to Eider (data crosses a byte at a time through the core's buffers). `sys.ei` is the only module allowed to use `extern`/`unsafe`. |
+| core | `core/` | C (`eider_core.c`) + Eider (`sys.ei`) | The OS interop boundary and nothing else, specified in `core/ABI.md` so each OS or architecture is one backend file. One OS call per C function, errors as `-errno`, no logic, no pointers exposed to Eider (data crosses a byte at a time through the core's buffers). `sys.ei` is the only module allowed to use `extern`/`unsafe`, and it binds only `ec_*` core symbols. |
 | std | `std/` | Eider | What almost every program needs: `bytes` (text as `List[u8]`), `fs`, `io`, `env`, `proc`. Imports only core and other std modules. |
 | packages | `packages/<name>/` | Eider | Everything else, as ordinary packages with an `eider.toml`: `toml`, `semver`, `sha256`, and the package manager itself. They import `deps/core/...`, `deps/std/...` and `deps/<dep>/...`. |
 
@@ -12,7 +16,7 @@ Rules of thumb:
 
 - New C goes in core only if it is an OS call Eider cannot make otherwise. Anything that can be written in Eider is.
 - A module goes in std only if most programs would use it. Formats, algorithms and tools are packages.
-- The Rust compiler in `src/` is the bootstrap: it compiles Eider to C and is not extended. Language features wait for the self-hosted compiler.
+- `bootstrap/` is the temporary Rust compiler (Eider to C). It is frozen: no new features, only fixes needed to build the Eider compiler. Plan: write the compiler in Eider, compile it with the bootstrap, check in its generated C as the seed, then delete `bootstrap/`. After that, building Eider from scratch needs only a C compiler.
 
 Tooling:
 

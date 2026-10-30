@@ -1,6 +1,8 @@
 // core/sys: the Eider half of the core, and the only module that talks to C (eider_core.c).
 // std/ and every package are plain Eider built on these functions. No pointers cross the
 // boundary: data moves a byte at a time through the core's `in` and `out` buffers.
+// Only core symbols (ec_*) are bound here, never libc names, so platform symbol rules stay
+// inside the C file (see core/ABI.md).
 
 extern "c" fn ec_in_clear()
 extern "c" fn ec_in_push(b: i32)
@@ -20,17 +22,20 @@ extern "c" fn ec_cwd() -> i64
 extern "c" fn ec_getenv() -> i32
 extern "c" fn ec_write_fd(fd: i32) -> i64
 extern "c" fn ec_run(capture: i32) -> i64
-extern "c" fn strlen(s: str) -> usize
-extern "c" fn strerror(e: i32) -> str
-extern "c" fn exit(code: i32)
+extern "c" fn ec_args() -> i64
+extern "c" fn ec_str_len(s: str) -> i64
+extern "c" fn ec_errstr(e: i64)
+extern "c" fn ec_exit(code: i32)
 
 /// The bytes of a string literal.
 pub fn lit(s: str) -> List[u8] uses ffi {
     var out: List[u8] = List.new()
-    let n = unsafe { strlen(s) }
-    for i in 0..n {
-        let b = unsafe { ec_str_byte(s, i as i64) }
+    let n = unsafe { ec_str_len(s) }
+    var i: i64 = 0
+    while i < n {
+        let b = unsafe { ec_str_byte(s, i) }
         out.push(b as u8)
+        i += 1
     }
     out
 }
@@ -100,9 +105,8 @@ pub fn take_all() -> List[List[u8]] uses ffi {
 
 /// The text for a negative status returned by the core (-errno).
 pub fn error_text(status: i64) -> String uses ffi {
-    let e = (0 - status) as i32
-    let s = unsafe { strerror(e) }
-    String.from(s)
+    unsafe { ec_errstr(status) }
+    to_string(take())
 }
 
 // ---- operations (arguments must already be in the input buffer)
@@ -131,4 +135,5 @@ pub fn run(capture: bool) -> i64 uses ffi {
     let c = if capture { 1 } else { 0 }
     unsafe { ec_run(c) }
 }
-pub fn exit_now(code: i32) uses ffi { unsafe { exit(code) } }
+pub fn args() -> i64 uses ffi { unsafe { ec_args() } }
+pub fn exit_now(code: i32) uses ffi { unsafe { ec_exit(code) } }
