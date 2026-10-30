@@ -64,6 +64,31 @@ fn locked_commit(o: Opts, r: Req) -> Option[lockfile.Pkg] {
     None
 }
 
+/// Offline, a version requirement that eider.lock doesn't pin is met by the locked version
+/// of the same package when that one is higher: with an up-to-date lock MVS selects at least
+/// that version anyway, and the lower version's manifest may only exist in a mirror we can't
+/// reach. This is what lets `fetch --offline` work from vendor/, which holds only the
+/// selected versions.
+fn settle(o: Opts, r: Req) -> Req {
+    if !(o.use_lock && o.offline && r.git && !r.is_rev) { return r }
+    if locked_commit(o, r).is_some() { return r }
+    for p in o.locked {
+        if p.git && !p.is_rev && bytes.eq(p.name, r.name) && bytes.eq(p.loc, r.loc) {
+            match (semver.parse(p.want), semver.parse(r.want)) {
+                (Some(a), Some(b)) => {
+                    if semver.compare(a, b) > 0 {
+                        var s = r
+                        s.want = p.want
+                        return s
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    r
+}
+
 fn mismatch(what: str, name: List[u8], a: List[u8], b: List[u8]) -> String uses ffi {
     var m = String.from(what)
     m.push_str(" `")
@@ -85,14 +110,14 @@ fn visit(o: Opts, r: Req) -> Result[lockfile.Pkg, String] uses io, fs, net, ffi 
         let pinned = locked_commit(o, r)
         commit = match pinned {
             Some(p) => p.commit
-            None => store.resolve_commit(o.home, r.loc, r.want, r.is_rev, o.offline)?
+            None => store.resolve_commit(o.home, r.loc, r.want, r.is_rev, o.offline, !o.use_lock)?
         }
         let expect = match pinned {
             Some(p) => p.hash
             None => none
         }
         let vend = fs.join(o.vendor, r.name)
-        if expect.len() > 0 && fs.is_dir(vend) {
+        if expect.len() > 0 && o.vendor.len() > 0 && fs.is_dir(vend) {
             let h = store.tree_hash(vend)?
             if !bytes.eq(h, expect) {
                 return Err(mismatch("vendor/ doesn't match eider.lock for", r.name, h, expect))
@@ -100,7 +125,7 @@ fn visit(o: Opts, r: Req) -> Result[lockfile.Pkg, String] uses io, fs, net, ffi 
             dir = vend
             hash = h
         } else {
-            let ex = store.checkout(o.home, r.loc, commit, r.name)?
+            let ex = store.checkout(o.home, r.loc, commit, r.name, r.want, o.offline)?
             if expect.len() > 0 && !bytes.eq(ex.hash, expect) {
                 return Err(mismatch("content hash differs from eider.lock for", r.name, ex.hash, expect))
             }
@@ -116,7 +141,12 @@ fn visit(o: Opts, r: Req) -> Result[lockfile.Pkg, String] uses io, fs, net, ffi 
     }
     let m = manifest.load(dir)?
     if !bytes.eq(m.name, r.name) {
-        return Err(mismatch("dependency name doesn't match the package's own name for", r.name, r.name, m.name))
+        var e = String.from("dependency `")
+        e.append(text(r.name))
+        e.push_str("` points at the package `")
+        e.append(text(m.name))
+        e.push_str("` (the [deps.<name>] key must be the package's own name)")
+        return Err(e)
     }
     if r.git && !r.is_rev && !bytes.eq(m.version, r.want) {
         return Err(mismatch("the tag's eider.toml has a different version for", r.name, r.want, m.version))
@@ -190,7 +220,7 @@ pub fn resolve(root: manifest.Manifest, o: Opts) -> Result[List[lockfile.Pkg], S
     var from_keys: List[List[u8]] = List.new()
     for d in root.deps { from_keys.push(none) }
     while qi < queue.len() {
-        let r = queue[qi]
+        let r = settle(o, queue[qi])
         let from = from_keys[qi]
         qi += 1
         edges.push(Edge(from, r.name, r.grants))

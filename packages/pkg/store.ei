@@ -2,7 +2,8 @@
 //
 //   $EIDER_HOME (default ~/.eider)
 //     git/<url-as-name>/       bare mirror of each git source (the only network use)
-//     pkg/<name>-<hash16>/     an exported commit; immutable once written
+//     pkg/<name>-<hash16>/     an exported commit; immutable once written (re-hashed on each
+//                              use: a modified copy is an error, never silently reused)
 //     index/<commit>           the full content hash of that commit's export
 //     tmp/                     staging for exports
 //
@@ -79,6 +80,7 @@ fn a2(a: List[u8], b: List[u8]) -> List[List[u8]] {
 
 /// The commit `ref` names in the mirror, if any.
 fn rev_parse(m: List[u8], r: List[u8]) -> Option[List[u8]] uses io, fs, net, ffi {
+    if !fs.exists(m) { return None }
     var args = a2(sys.lit("-C"), m)
     args.push(sys.lit("rev-parse"))
     args.push(sys.lit("--verify"))
@@ -113,30 +115,34 @@ fn candidates(want: List[u8], is_rev: bool) -> List[List[u8]] uses ffi {
     c
 }
 
-/// Find the commit for a version (tag `v<version>` or `<version>`) or rev. Clones or updates
-/// the mirror only when the commit isn't already known locally, and never when `offline`.
-pub fn resolve_commit(home: List[u8], url: List[u8], want: List[u8], is_rev: bool, offline: bool) -> Result[List[u8], String] uses io, fs, net, ffi {
-    let m = mirror_dir(home, url)
-    if fs.exists(m) {
-        for r in candidates(want, is_rev) {
-            match rev_parse(m, r) {
-                Some(c) => { return Ok(c) }
-                None => {}
-            }
+fn find_commit(m: List[u8], want: List[u8], is_rev: bool) -> Option[List[u8]] uses io, fs, net, ffi {
+    for r in candidates(want, is_rev) {
+        match rev_parse(m, r) {
+            Some(c) => { return Some(c) }
+            None => {}
         }
     }
-    if offline {
-        var e = String.from("offline: ")
-        e.append(sys.to_string(url))
-        e.push_str(" has no local copy of ")
-        e.append(sys.to_string(want))
-        return Err(e)
-    }
+    None
+}
+
+fn offline_error(url: List[u8], want: List[u8]) -> String uses ffi {
+    var e = String.from("offline: ")
+    e.append(sys.to_string(url))
+    e.push_str(" has no local copy of ")
+    e.append(sys.to_string(want))
+    e
+}
+
+/// Clone the mirror of `url`, or bring an existing one up to date (tags may have moved).
+fn sync_mirror(home: List[u8], url: List[u8]) -> Result[bool, String] uses io, fs, net, ffi {
+    let m = mirror_dir(home, url)
     if fs.exists(m) {
         var args = a2(sys.lit("-C"), m)
-        args.push(sys.lit("remote"))
-        args.push(sys.lit("update"))
+        args.push(sys.lit("fetch"))
+        args.push(sys.lit("--quiet"))
         args.push(sys.lit("--prune"))
+        args.push(sys.lit("--force"))
+        args.push(sys.lit("origin"))
         git(args)?
     } else {
         fs.mkdir_all(fs.dirname(m))?
@@ -146,11 +152,25 @@ pub fn resolve_commit(home: List[u8], url: List[u8], want: List[u8], is_rev: boo
         args.push(m)
         git(args)?
     }
-    for r in candidates(want, is_rev) {
-        match rev_parse(m, r) {
+    Ok(true)
+}
+
+/// Find the commit for a version (tag `v<version>` or `<version>`) or rev. Clones or updates
+/// the mirror only when the commit isn't already known locally (or when `refresh`, for
+/// `update`, since tags can move), and never when `offline`.
+pub fn resolve_commit(home: List[u8], url: List[u8], want: List[u8], is_rev: bool, offline: bool, refresh: bool) -> Result[List[u8], String] uses io, fs, net, ffi {
+    let m = mirror_dir(home, url)
+    if !refresh || offline {
+        match find_commit(m, want, is_rev) {
             Some(c) => { return Ok(c) }
             None => {}
         }
+        if offline { return Err(offline_error(url, want)) }
+    }
+    sync_mirror(home, url)?
+    match find_commit(m, want, is_rev) {
+        Some(c) => { return Ok(c) }
+        None => {}
     }
     var e = String.from("")
     e.append(sys.to_string(url))
@@ -164,13 +184,46 @@ pub fn resolve_commit(home: List[u8], url: List[u8], want: List[u8], is_rev: boo
     Err(e)
 }
 
-/// The store directory for `commit` of `url`, exporting it on first use.
-pub fn checkout(home: List[u8], url: List[u8], commit: List[u8], name: List[u8]) -> Result[Export, String] uses io, fs, net, ffi {
+/// The store directory for `commit` of `url`, exporting it on first use. A store directory
+/// that no longer matches the hash recorded when it was exported is an error, never reused.
+/// `want` (the version or rev asked for) is only for messages.
+pub fn checkout(home: List[u8], url: List[u8], commit: List[u8], name: List[u8], want: List[u8], offline: bool) -> Result[Export, String] uses io, fs, net, ffi {
     let index = fs.join(fs.join(home, sys.lit("index")), commit)
     if fs.exists(index) {
         let h = bytes.trim(fs.read(index)?)
         let dir = store_dir(home, name, h)
-        if fs.is_dir(dir) { return Ok(Export(dir, h)) }
+        if fs.is_dir(dir) {
+            let now = tree_hash(dir)?
+            if !bytes.eq(now, h) {
+                var e = String.from("the store copy of `")
+                e.append(sys.to_string(name))
+                e.push_str("` at ")
+                e.append(sys.to_string(dir))
+                e.push_str(" was modified (content hash ")
+                e.append(sys.to_string(now))
+                e.push_str(", exported as ")
+                e.append(sys.to_string(h))
+                e.push_str("); delete that directory and fetch again")
+                return Err(e)
+            }
+            return Ok(Export(dir, h))
+        }
+    }
+    // the commit may be pinned by eider.lock but missing from a new or deleted mirror
+    let m = mirror_dir(home, url)
+    if rev_parse(m, commit).is_none() {
+        if offline { return Err(offline_error(url, want)) }
+        sync_mirror(home, url)?
+        if rev_parse(m, commit).is_none() {
+            var e = String.from("")
+            e.append(sys.to_string(url))
+            e.push_str(" no longer has commit ")
+            e.append(sys.to_string(commit))
+            e.push_str(" (locked for `")
+            e.append(sys.to_string(name))
+            e.push_str("`); run `eider-pkg update`")
+            return Err(e)
+        }
     }
     let tmp = fs.join(fs.join(home, sys.lit("tmp")), commit)
     fs.remove_all(tmp)?

@@ -73,6 +73,14 @@ fn str_at(doc: List[toml.Entry], file: List[u8], k: List[u8]) -> Result[Option[L
     }
 }
 
+/// The line of key `k`, or `dflt` when it's absent.
+fn line_of(doc: List[toml.Entry], k: List[u8], dflt: u32) -> u32 {
+    match toml.get(doc, k) {
+        Some(e) => e.line
+        None => dflt
+    }
+}
+
 fn key(a: str, b: List[u8], c: str) -> List[u8] uses ffi {
     var k = sys.lit(a)
     bytes.append(inout k, b)
@@ -129,7 +137,7 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
         None => { return Err(bad(file, 1, "missing `version` in [package]")) }
     }
     if semver.parse(version).is_none() {
-        return Err(bad(file, 1, "`version` must be MAJOR.MINOR.PATCH, e.g. \"0.1.0\""))
+        return Err(bad(file, line_of(doc, sys.lit("package.version"), 1), "`version` must be MAJOR.MINOR.PATCH, e.g. \"0.1.0\""))
     }
     let entry = match str_at(doc, file, sys.lit("package.entry"))? {
         Some(e) => e
@@ -183,7 +191,7 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
             (None, Some(g)) => {
                 match (ver, rev) {
                     (Some(v), None) => {
-                        if semver.parse(v).is_none() { return Err(bad(file, line, "`version` must be MAJOR.MINOR.PATCH")) }
+                        if semver.parse(v).is_none() { return Err(bad(file, line_of(doc, key("deps.", dn, ".version"), line), "`version` must be MAJOR.MINOR.PATCH")) }
                         Git(g, v, none)
                     }
                     (None, Some(r)) => Git(g, none, r)
