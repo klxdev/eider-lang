@@ -217,6 +217,44 @@ language as it is:
   (`geo__South`), and trap messages always name the entry file, even for a trap in an
   imported module.
 
+## Compile speed
+
+Measured 2026-10-30 (16 cores, gcc, one run each). The front end is cheap: about 1 ms per 100
+lines for lex+parse+check+emit (a 527-line program checks in 4 ms; parsing the 2,026-line
+check.ei takes 17 ms). End to end the C compiler dominates: building eiderc itself (7.5k lines
+of Eider -> 17.4k lines of C) is 0.23 s front end + ~5 s gcc -O2 (1.2 s at -O0); `eiderc
+build` of a 76-line program takes 313 ms vs stage 0's 70 ms.
+
+### Constraints to keep now (cheap today, expensive to retrofit)
+
+1. **Stable C names.** Generated names must depend only on what they name (module identity,
+   symbol, and for instances the type arguments), never on arena indexes or declaration
+   order. Today lower.ei uses `t<id>_` and `f<i>_` (indexes into whole-program arenas), so
+   editing one module renames symbols everywhere: that defeats per-module caching, parallel
+   translation units and readable diffs of generated C, and makes the self-host fixed point
+   fragile. Fix in the next lowering round (C5 lowering): mangle `<module>__<name>` plus a
+   short hash of the type arguments for generic instances; keep a collision check.
+2. **Deterministic output.** Same input, byte-identical C (no hash-map iteration order, no
+   temp paths or timestamps in the C). Needed for caching and the fixed point; test it.
+3. **Per-module boundaries in lowering.** Emit each module's functions as a unit, and
+   collect per-type glue and generic instances in one place keyed by stable name, so the
+   output can later be split into one C file per module (plus one for shared glue) compiled
+   in parallel. Don't let lowering interleave modules arbitrarily.
+4. **The IR stays the only input to lowering**, so a second back end (a fast non-C debug
+   path) can be added without touching check.
+
+### Optimisations to do later (no architectural impact)
+
+| What | Expected effect |
+|---|---|
+| Build `core/eider_rt.c` and `core/eider_core.c` once per (CC, flags) and link the cached objects | -~250 ms on every eiderc build/run |
+| Binary cache keyed on (generated C, CC, flags, core objects), like stage 0's `EIDER_CACHE` | unchanged programs skip gcc |
+| Smaller C: declare temporaries in the narrowest scope that still avoids `-Wmaybe-uninitialized`; share glue between identical layouts; emit only used glue | eiderc emits ~1.5x stage 0's C for the same program; gcc time is roughly linear in it |
+| One C file per module, compiled in parallel (needs constraint 3) | uses the idle cores; most of the gcc time for large programs |
+| -O0 for the edit/run loop by default (already), -O2 only for `build` | 4x faster gcc on large programs |
+| Incremental front end: cache per-module check results keyed by source hash and the interfaces of imports | matters once programs are large; the front end is not the bottleneck today |
+| A direct debug back end (no C compiler in the loop) | edit/run latency independent of gcc |
+
 ## Language work that lands in `eiderc` (after parity)
 
 Each with a design note, compile-fail tests and new codes:
