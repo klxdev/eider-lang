@@ -1,0 +1,6 @@
+// an extern behind a public wrapper (the core/sys.ei pattern)
+extern "c" fn labs(n: i64) -> i64
+
+pub fn distance(a: i64, b: i64) -> i64 uses ffi {
+    unsafe { labs(a - b) }
+}

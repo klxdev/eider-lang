@@ -1,14 +1,22 @@
-// driver: `emit-c`, `build`, `run` and `test` (docs/compiler.md, "C4: lowering").
+// driver: `emit-c`, `build`, `build --lib`, `run` and `test` (docs/compiler.md, "C4:
+// lowering" and "C7: FFI").
 //
 // The C goes to a fresh temporary directory ($TMPDIR, else /tmp) and is compiled together
 // with the C core (core/eider_rt.c, the language runtime, and core/eider_core.c, the OS ABI
 // that std sits on) by $CC (default cc):
 //
 //   cc -std=c11 -pedantic -Wall -Wextra -Wno-unused-* -O0|-O2 -pthread $EIDER_CFLAGS
-//      -I <root>/core -o <exe> <prog>.c <root>/core/eider_rt.c <root>/core/eider_core.c
+//      -I <root>/core -o <exe> <prog>.c <root>/core/eider_rt.c <root>/core/eider_core.c -l<lib>..
 //
 // `run` and `test` use -O0 (fast C compiles), `build` and `run --release` -O2, as stage 0
-// does. EIDER_CFLAGS (split at spaces) adds flags, e.g. `-Werror` or a sanitizer.
+// does. EIDER_CFLAGS (split at spaces) adds flags, e.g. `-Werror` or a sanitizer. `-l <lib>`
+// options link C libraries (for `extern "c"` functions outside the core).
+//
+// `build --lib` compiles the same three files with -O2 -fPIC to objects and makes
+// lib<name>.a (ar rcs) and lib<name>.so (cc -shared, with the -l libraries) from them, plus
+// <name>.h (lower.header); <name> is `-o`'s file name, else the source's stem, and the files
+// go next to `-o`'s path (else in the working directory), as stage 0 does. The library is
+// self-contained: it carries the runtime and the core.
 //
 // The toolchain root (the directory holding core/) is $EIDER_ROOT if set; otherwise the
 // nearest directory above the eiderc binary (argv[0], symlinks resolved) that contains
@@ -119,20 +127,19 @@ fn extra_flags(inout argv: List[List[u8]]) uses io, ffi {
     }
 }
 
-/// Compile C text `c` into the executable `exe`; the C file goes next to it in `dir`.
-/// On failure the C is kept and the process exits with 3 (stage 0's code).
-fn compile(c: List[u8], dir: List[u8], exe: List[u8], release: bool) uses io, fs, net, ffi {
-    let cfile = fs.join(dir, s("prog.c"))
-    match fs.write(cfile, c) {
+fn write_or_fail(path: List[u8], data: List[u8]) uses io, fs, ffi {
+    match fs.write(path, data) {
         Ok(_) => {}
         Err(_) => {
             var m = s("cannot write ")
-            bytes.append(inout m, cfile)
+            bytes.append(inout m, path)
             fail(m, 3)
         }
     }
-    let r = root()
-    let core = fs.join(r, s("core"))
+}
+
+/// The C compiler and the flags every compile uses (core = <root>/core).
+fn cc_argv(core: List[u8], release: bool) -> List[List[u8]] uses io, ffi {
     var cc = s("cc")
     match env.get(s("CC")) {
         Some(x) => { if x.len() > 0 { cc = x } }
@@ -153,11 +160,45 @@ fn compile(c: List[u8], dir: List[u8], exe: List[u8], release: bool) uses io, fs
     extra_flags(inout argv)
     argv.push(s("-I"))
     argv.push(core)
+    argv
+}
+
+fn add_libs(inout argv: List[List[u8]], libs: List[List[u8]]) uses ffi {
+    for l in libs {
+        var a = s("-l")
+        bytes.append(inout a, l)
+        argv.push(a)
+    }
+}
+
+/// Run a toolchain command; exit 3 when it can't be started or fails (`what` names it).
+fn tool(argv: List[List[u8]], what: str) uses io, fs, net, ffi {
+    let code = match proc.run(argv) {
+        Ok(n) => n
+        Err(_) => {
+            var m = s("cannot run `")
+            bytes.append(inout m, argv[0])
+            bytes.append(inout m, s("`"))
+            fail(m, 3)
+            3
+        }
+    }
+    if code != 0 { fail(s(what), 3) }
+}
+
+/// Compile C text `c` into the executable `exe`; the C file goes next to it in `dir`.
+/// On failure the C is kept and the process exits with 3 (stage 0's code).
+fn compile(c: List[u8], dir: List[u8], exe: List[u8], release: bool, libs: List[List[u8]]) uses io, fs, net, ffi {
+    let cfile = fs.join(dir, s("prog.c"))
+    write_or_fail(cfile, c)
+    let core = fs.join(root(), s("core"))
+    var argv = cc_argv(core, release)
     argv.push(s("-o"))
     argv.push(exe)
     argv.push(cfile)
     argv.push(fs.join(core, s("eider_rt.c")))
     argv.push(fs.join(core, s("eider_core.c")))
+    add_libs(inout argv, libs)
     let code = match proc.run(argv) {
         Ok(n) => n
         Err(_) => {
@@ -178,20 +219,97 @@ fn compile(c: List[u8], dir: List[u8], exe: List[u8], release: bool) uses io, fs
 }
 
 /// `eiderc build`: an -O2 executable at `out` (default: the source file's stem).
-pub fn build(c: List[u8], file: List[u8], out: List[u8]) uses io, fs, net, clock, ffi {
+pub fn build(c: List[u8], file: List[u8], out: List[u8], libs: List[List[u8]]) uses io, fs, net, clock, ffi {
     let dir = temp_dir()
     var exe = out
     if exe.len() == 0 { exe = stem(file) }
-    compile(c, dir, exe, true)
+    compile(c, dir, exe, true, libs)
     fs.remove_all(dir)
+}
+
+/// `eiderc build --lib`: lib<name>.a, lib<name>.so and <name>.h (see the top of this file)
+/// from the library C `c` and its header `h`.
+pub fn build_lib(c: List[u8], h: List[u8], file: List[u8], out: List[u8], libs: List[List[u8]]) uses io, fs, net, clock, ffi {
+    var base = out
+    if base.len() == 0 { base = stem(file) }
+    var name = base
+    var odir: List[u8] = List.new()
+    match bytes.rfind_byte(base, 47) {
+        Some(i) => {
+            name = bytes.slice(base, i + 1, base.len())
+            odir = bytes.slice(base, 0, i + 1)
+        }
+        None => {}
+    }
+    var hfile = base
+    bytes.append(inout hfile, s(".h"))
+    var afile = odir
+    bytes.append(inout afile, s("lib"))
+    bytes.append(inout afile, name)
+    var sofile = afile
+    bytes.append(inout afile, s(".a"))
+    bytes.append(inout sofile, s(".so"))
+    let dir = temp_dir()
+    let core = fs.join(root(), s("core"))
+    let cfile = fs.join(dir, s("lib.c"))
+    write_or_fail(cfile, c)
+    var srcs: List[List[u8]] = List.new()
+    srcs.push(cfile)
+    srcs.push(fs.join(core, s("eider_rt.c")))
+    srcs.push(fs.join(core, s("eider_core.c")))
+    var objs: List[List[u8]] = List.new()
+    for i in 0..srcs.len() {
+        var o = fs.join(dir, s("o"))
+        bytes.append(inout o, bytes.from_u64(i as u64))
+        bytes.append(inout o, s(".o"))
+        var argv = cc_argv(core, true)
+        argv.push(s("-fPIC"))
+        argv.push(s("-c"))
+        argv.push(s("-o"))
+        argv.push(o)
+        argv.push(srcs[i])
+        let what = if i == 0 { "internal error: generated C failed to compile" } else { "compiling the C core failed" }
+        tool(argv, what)
+        objs.push(o)
+    }
+    fs.remove_all(afile)
+    var ar: List[List[u8]] = List.new()
+    ar.push(s("ar"))
+    ar.push(s("rcs"))
+    ar.push(afile)
+    for o in objs { ar.push(o) }
+    tool(ar, "`ar` failed")
+    var cc = s("cc")
+    match env.get(s("CC")) {
+        Some(x) => { if x.len() > 0 { cc = x } }
+        None => {}
+    }
+    var so: List[List[u8]] = List.new()
+    so.push(cc)
+    so.push(s("-shared"))
+    so.push(s("-pthread"))
+    so.push(s("-o"))
+    so.push(sofile)
+    for o in objs { so.push(o) }
+    add_libs(inout so, libs)
+    tool(so, "linking the shared library failed")
+    write_or_fail(hfile, h)
+    fs.remove_all(dir)
+    var m = s("built ")
+    bytes.append(inout m, afile)
+    bytes.append(inout m, s(", "))
+    bytes.append(inout m, sofile)
+    bytes.append(inout m, s(", "))
+    bytes.append(inout m, hfile)
+    io.outln(m)
 }
 
 /// `eiderc run` / `eiderc test`: build into a temporary directory, run, exit with the
 /// program's exit code (a program killed by signal n exits 128 + n).
-pub fn run(c: List[u8], file: List[u8], release: bool) uses io, fs, net, clock, ffi {
+pub fn run(c: List[u8], file: List[u8], release: bool, libs: List[List[u8]]) uses io, fs, net, clock, ffi {
     let dir = temp_dir()
     let exe = fs.join(dir, stem(file))
-    compile(c, dir, exe, release)
+    compile(c, dir, exe, release, libs)
     var argv: List[List[u8]] = List.new()
     argv.push(exe)
     let code = match proc.run(argv) {

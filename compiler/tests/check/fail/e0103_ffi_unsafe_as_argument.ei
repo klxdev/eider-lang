@@ -1,0 +1,5 @@
+// expect: E0103 4:11
+extern "c" fn abs(n: i32) -> i32
+fn main() uses io, ffi {
+    print(unsafe { abs(-1) })
+}

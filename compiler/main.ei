@@ -5,9 +5,14 @@
 //   eiderc check <file.ei> [--json] report the first error, or print `ok`
 //   eiderc ir <file.ei>             dump the typed IR (ir.ei)
 //   eiderc emit-c <file.ei> [--test] print the generated C (--test: with the test driver)
+//   eiderc emit-header <file.ei>    print the C header for the `export fn`s
 //   eiderc build <file.ei> [-o out]  compile to a native binary (-O2; driver.ei)
+//   eiderc build --lib <file.ei> [-o name]  build lib<name>.a, lib<name>.so and <name>.h
 //   eiderc run <file.ei> [--release] build and run (-O0 unless --release)
 //   eiderc test <file.ei>           run the `test` blocks
+// `--lib` checks (and emits) the file as a library: no `main`, at least one `export fn`.
+// `-l <lib>` (repeatable) links a C library into build, run, test and build --lib.
+// `--wasm` (stage 0: WebAssembly) answers `unsupported`.
 
 import "deps/core/sys.ei"
 import "deps/std/bytes.ei"
@@ -25,14 +30,17 @@ import "ir.ei"
 import "lower.ei"
 import "driver.ei"
 
-type Args = { cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool }
+type Args = {
+    cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,
+    lib: bool, libs: List[List[u8]], wasm: bool,
+}
 
 /// Comparisons go through a function so no owned temporary sits in an `else if` condition
 /// (the bootstrap drops such temporaries outside the block that declares them).
 fn is(a: List[u8], s: str) -> bool uses ffi { bytes.eq(a, sys.lit(s)) }
 
 fn usage() uses io, ffi {
-    io.err(sys.lit("usage: eiderc (lex | parse | check | ir | emit-c | build | run | test) <file.ei> [--json] [--test] [--release] [-o out]\n"))
+    io.err(sys.lit("usage: eiderc (lex | parse | check | ir | emit-c | emit-header | build | run | test) <file.ei> [--json] [--test] [--release] [--lib] [-o out] [-l lib]\n"))
     env.exit(2)
 }
 
@@ -44,6 +52,9 @@ fn parse_args() -> Args uses io, ffi {
     var out: List[u8] = List.new()
     var release = false
     var tests = false
+    var lib = false
+    var wasm = false
+    var libs: List[List[u8]] = List.new()
     var i: usize = 1
     while i < argv.len() {
         let a = argv[i]
@@ -54,9 +65,17 @@ fn parse_args() -> Args uses io, ffi {
             release = true
         } else if is(a, "--test") {
             tests = true
+        } else if is(a, "--lib") {
+            lib = true
+        } else if is(a, "--wasm") {
+            wasm = true
         } else if is(a, "-o") {
             if i >= argv.len() { usage() }
             out = argv[i]
+            i += 1
+        } else if is(a, "-l") {
+            if i >= argv.len() { usage() }
+            libs.push(argv[i])
             i += 1
         } else if cmd.len() == 0 {
             cmd = a
@@ -65,7 +84,10 @@ fn parse_args() -> Args uses io, ffi {
         }
     }
     if cmd.len() == 0 || file.len() == 0 { usage() }
-    Args(cmd, file, json, out, release, tests)
+    if is(cmd, "emit-header") { lib = true }
+    // `test` checks the test driver, never a library (stage 0's mode order)
+    if is(cmd, "test") { lib = false }
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm)
 }
 
 /// Print `d` like the bootstrap: JSON on stdout, or the rendered form (against the source of
@@ -161,8 +183,13 @@ fn main() uses io, fs, net, clock, ffi {
         io.out(dump.program(p))
         return
     }
-    let backend = is(a.cmd, "emit-c") || is(a.cmd, "build") || is(a.cmd, "run") || is(a.cmd, "test")
+    let backend = is(a.cmd, "emit-c") || is(a.cmd, "emit-header") || is(a.cmd, "build") || is(a.cmd, "run") || is(a.cmd, "test")
     if !is(a.cmd, "check") && !is(a.cmd, "ir") && !backend { usage() }
+    if a.wasm {
+        // WebAssembly (stage 0's --wasm, E0806) is C7 work still to do
+        report(diag.new("unsupported", 1, 1, sys.lit("not yet supported by eiderc: WebAssembly (--wasm)")), a, src)
+        env.exit(1)
+    }
     let prog = match resolve.load(a.file, src, p) {
         Ok(x) => x
         Err(d) => {
@@ -171,7 +198,7 @@ fn main() uses io, fs, net, clock, ffi {
             return
         }
     }
-    let c = match check.check(prog) {
+    let c = match check.check_mode(prog, a.lib) {
         Ok(x) => x
         Err(d) => {
             report(d, a, src)
@@ -181,7 +208,12 @@ fn main() uses io, fs, net, clock, ffi {
     }
     if backend {
         let tests = a.tests || is(a.cmd, "test")
-        let cprog = match lower.program(lower.P(c.ir, c.t, c.p.names), a.file, tests) {
+        let lp = lower.P(c.ir, c.t, c.p.names)
+        if is(a.cmd, "emit-header") {
+            io.out(lower.header(lp))
+            return
+        }
+        let cprog = match lower.program_for(lp, a.file, tests, a.lib) {
             Ok(text) => text
             Err(m) => {
                 var msg = sys.lit("eiderc: internal error: ")
@@ -193,10 +225,13 @@ fn main() uses io, fs, net, clock, ffi {
         }
         if is(a.cmd, "emit-c") {
             io.out(cprog)
+        } else if a.lib {
+            // stage 0: `build --lib` and `run --lib` both build the library
+            driver.build_lib(cprog, lower.header(lp), a.file, a.out, a.libs)
         } else if is(a.cmd, "build") {
-            driver.build(cprog, a.file, a.out)
+            driver.build(cprog, a.file, a.out, a.libs)
         } else {
-            driver.run(cprog, a.file, a.release)
+            driver.run(cprog, a.file, a.release, a.libs)
         }
     } else if is(a.cmd, "ir") {
         io.out(ir.dump(c.ir, c.t, c.p.names))

@@ -1,0 +1,3 @@
+// expect: E0803 2:19
+extern "c" fn sum(xs: List[i32]) -> i32
+fn main() {}

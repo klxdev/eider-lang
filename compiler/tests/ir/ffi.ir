@@ -1,0 +1,35 @@
+extern abs(i32) -> i32 = "abs"
+extern puts(str) -> i32 = "puts"
+extern srand(u32) -> () = "srand"
+export norm1 as eider_norm1
+
+fn norm1 -> i32 uses ffi
+  %0 param p: Pt
+  %1 temp: i32
+  %2 temp: i32
+  %3 temp: i32
+  %4 temp: i32
+  %5 temp: i32
+  {
+    %1 = read %0.0
+    %2 = call abs(%1)
+    %3 = read %0.1
+    %4 = call abs(%3)
+    %5 = %2 + %4  @8
+    return %5
+  }
+
+fn main -> () uses ffi
+  %0 temp: i32
+  %1 let r: i32
+  %2 temp: Pt
+  %3 temp: i32
+  %4 let n: i32
+  {
+    call srand(1u32)
+    %0 = call puts("hi")
+    %1 = %0
+    %2 = Pt(-1i32, 2i32)
+    %3 = call norm1(%2)
+    %4 = %3
+  }

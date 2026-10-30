@@ -1,0 +1,7 @@
+// expect: E0802 6:11
+import "../lib/ffi_ok.ei"
+extern "c" fn labs(n: i64) -> i64
+fn main() uses io, ffi {
+    print(ffi_ok.magnitude(-3))
+    print(labs(-4))
+}

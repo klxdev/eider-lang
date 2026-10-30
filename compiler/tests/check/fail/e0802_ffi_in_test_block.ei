@@ -1,0 +1,6 @@
+// expect: E0802 5:13
+extern "c" fn abs(n: i32) -> i32
+fn main() {}
+test "no unsafe" {
+    let a = abs(-1)
+}

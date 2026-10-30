@@ -1,0 +1,6 @@
+// expect: E0201 4:5
+extern "c" fn abs(n: i32) -> i32
+unsafe fn wrap(n: i32) -> i32 {
+    abs(n)
+}
+fn main() {}

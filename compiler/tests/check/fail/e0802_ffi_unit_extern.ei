@@ -1,0 +1,5 @@
+// expect: E0802 4:5
+extern "c" fn srand(seed: u32)
+fn main() uses ffi {
+    srand(1)
+}

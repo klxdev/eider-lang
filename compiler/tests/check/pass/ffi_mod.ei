@@ -1,0 +1,10 @@
+// externs live in a module and are reached through public wrappers
+import "../lib/ffi_ok.ei"
+
+extern "c" fn labs(n: i64) -> i64
+
+fn main() uses io, ffi {
+    print(ffi_ok.magnitude(-3))
+    let m = unsafe { labs(-4) }
+    print(m)
+}

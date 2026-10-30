@@ -1,0 +1,4 @@
+// expect: E0805 3:11
+trait Show { fn show(self) -> i32 }
+export fn id[T: Show](x: T) -> i32 { x.show() }
+fn main() {}

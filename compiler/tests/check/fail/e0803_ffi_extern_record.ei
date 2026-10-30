@@ -1,0 +1,4 @@
+// expect: E0803 3:28
+type P = { x: i32 }
+extern "c" fn take(n: i32, p: P) -> i32
+fn main() {}

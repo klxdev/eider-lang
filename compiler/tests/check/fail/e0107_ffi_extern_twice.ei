@@ -1,0 +1,4 @@
+// expect: E0107 3:15
+extern "c" fn abs(n: i32) -> i32
+extern "c" fn abs(n: i64) -> i64
+fn main() {}

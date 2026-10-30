@@ -1,0 +1,5 @@
+// expect: E0802 4:8
+extern "c" fn abs(n: i32) -> i32
+fn main() uses io, ffi {
+    if abs(-1) == 1 { print(1) }
+}

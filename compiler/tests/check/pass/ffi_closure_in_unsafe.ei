@@ -1,0 +1,7 @@
+// a closure created inside `unsafe` may call an extern (stage 0: unsafe_depth is lexical)
+extern "c" fn abs(n: i32) -> i32
+
+fn main() uses io, ffi {
+    let f = unsafe { |x: i32| -> i32 { abs(x) } }
+    print(f(-2))
+}

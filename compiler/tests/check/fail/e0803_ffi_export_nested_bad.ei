@@ -1,0 +1,5 @@
+// expect: E0803 4:13
+type Inner = { xs: List[u8] }
+type Outer = { n: i32, inner: Inner }
+export fn f(o: Outer) -> i32 { o.n }
+fn main() {}
