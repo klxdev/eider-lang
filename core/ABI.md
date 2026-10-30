@@ -57,6 +57,7 @@ file implementing exactly this contract. Nothing above the core changes.
 | `int64_t ec_args(void)` | | argv in `out`, each NUL-terminated |
 | `int32_t ec_getenv(void)` | `in[0]` name | `1` and the value in `out`, or `0` if unset |
 | `int64_t ec_write_fd(int32_t fd)` | `in` = bytes | `0`; flushes buffered `print` output first; `fd` is 1 or 2 |
+| `int64_t ec_read_fd(int32_t fd, int64_t max)` | | reads up to `max` bytes (at most 1 MiB per call) from `fd` into `out`; returns the count, `0` at end of file; `EINTR` is retried; `-EINVAL` for `fd < 0` or `max <= 0`. One `read(2)`: fewer bytes than `max` is not end of file |
 | `int64_t ec_run(int32_t out_mode, int32_t err_mode, int64_t timeout_ms)` | `in` = argv (PATH lookup) | see [Running a program](#running-a-program) |
 | `void ec_errstr(int64_t status)` | | message for `-errno` in `out` |
 | `void ec_exit(int32_t code)` | | flush and exit |
@@ -119,7 +120,7 @@ Guarantees a backend must keep:
 
 | Target | Status |
 |---|---|
-| Linux (glibc), x86-64 | exercised by `tests/core` (`ec_run`), `tests/std` and the package tests |
+| Linux (glibc), x86-64 | exercised by `tests/core` (`ec_run`, `ec_read_fd`), `tests/std` and the package tests |
 | Linux, other architectures (aarch64, riscv64, 32-bit) | expected to work (C11 + POSIX only, fixed-width ABI); not yet run |
 | macOS | written (`_NSGetArgv`, `EC_SYM` names); not yet run |
 | FreeBSD / OpenBSD / NetBSD | written (args via an init-array constructor); not yet run |

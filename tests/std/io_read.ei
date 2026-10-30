@@ -1,0 +1,45 @@
+// std/io input: io.read, io.read_fd and io.read_all on stdin (tests/std/io_read.in).
+
+import "../../core/sys.ei"
+import "../../std/bytes.ei"
+import "../../std/io.ei"
+
+fn main() uses io, ffi {
+    // small reads: never more than asked for
+    let first = match io.read(5) {
+        Ok(b) => b
+        Err(e) => {
+            print(e)
+            return
+        }
+    }
+    print(first.len())
+    io.outln(first)
+    // invalid arguments are errors, not end of input
+    match io.read(0) {
+        Ok(_) => print("unexpected")
+        Err(e) => print(e)
+    }
+    match io.read_fd(-1, 10) {
+        Ok(_) => print("unexpected")
+        Err(e) => print(e)
+    }
+    // the rest, then end of input (empty, repeatedly)
+    match io.read_all() {
+        Ok(rest) => {
+            print(rest.len())
+            for l in bytes.lines(rest) { io.outln(l) }
+            // the input ends with multi-byte UTF-8 and no newline: the last byte of the euro sign
+            print(rest[rest.len() - 1])
+        }
+        Err(e) => print(e)
+    }
+    match io.read(100) {
+        Ok(b) => print(b.len())
+        Err(e) => print(e)
+    }
+    match io.read_all() {
+        Ok(b) => print(b.len())
+        Err(e) => print(e)
+    }
+}

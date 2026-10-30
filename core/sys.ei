@@ -22,6 +22,7 @@ extern "c" fn ec_cwd() -> i64
 extern "c" fn ec_realpath() -> i64
 extern "c" fn ec_getenv() -> i32
 extern "c" fn ec_write_fd(fd: i32) -> i64
+extern "c" fn ec_read_fd(fd: i32, max: i64) -> i64
 extern "c" fn ec_run(out_mode: i32, err_mode: i32, timeout_ms: i64) -> i64
 extern "c" fn ec_args() -> i64
 extern "c" fn ec_str_len(s: str) -> i64
@@ -133,6 +134,8 @@ pub fn getenv() -> bool uses ffi {
     r == 1
 }
 pub fn write_fd(fd: i32) -> i64 uses ffi { unsafe { ec_write_fd(fd) } }
+/// Read up to `max` bytes from `fd` into `out`: the count, 0 at end of file, or -errno.
+pub fn read_fd(fd: i32, max: i64) -> i64 uses ffi { unsafe { ec_read_fd(fd, max) } }
 /// Run argv (in the input buffer). Captured output is in `out` as an 8-byte little-endian
 /// stdout length, stdout, then stderr; a result of 256 means the timeout killed the child
 /// (core/ABI.md "Running a program"). timeout_ms <= 0: no limit.

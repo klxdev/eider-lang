@@ -1,4 +1,5 @@
-// std/io: raw byte output to stdout/stderr (flushes `print` output first so order is kept).
+// std/io: raw byte output to stdout/stderr (flushes `print` output first so order is kept),
+// and raw byte input from stdin.
 
 import "../core/sys.ei"
 
@@ -24,3 +25,31 @@ pub fn errln(b: List[u8]) uses io, ffi {
     err(l)
 }
 
+
+/// Up to `max` bytes from stdin (one read: it returns as soon as some input is available,
+/// at most 1 MiB). Empty at end of input. Err for `max <= 0` or a failed read.
+pub fn read(max: i64) -> Result[List[u8], String] uses io, ffi {
+    read_fd(0, max)
+}
+
+/// Up to `max` bytes from file descriptor `fd` (see `read`).
+pub fn read_fd(fd: i32, max: i64) -> Result[List[u8], String] uses io, ffi {
+    let n = sys.read_fd(fd, max)
+    if n < 0 {
+        var m = String.from("cannot read: ")
+        m.append(sys.error_text(n))
+        return Err(m)
+    }
+    Ok(sys.take())
+}
+
+/// All of stdin until end of input.
+pub fn read_all() -> Result[List[u8], String] uses io, ffi {
+    var all: List[u8] = List.new()
+    while true {
+        let chunk = read(65536)?
+        if chunk.len() == 0 { break }
+        for b in chunk { all.push(b) }
+    }
+    Ok(all)
+}

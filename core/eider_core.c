@@ -248,6 +248,26 @@ EC_FN(int64_t, ec_write_fd, (int32_t fd)) {
   return 0;
 }
 
+#define EC_READ_MAX ((int64_t)1 << 20)
+
+/* Read up to max bytes (at most EC_READ_MAX per call) from fd into out, replacing it.
+   Returns the count, 0 at end of file, -errno on error; EINTR is retried. */
+EC_FN(int64_t, ec_read_fd, (int32_t fd, int64_t max)) {
+  out_len = 0;
+  if (fd < 0 || max <= 0) return -EINVAL;
+  size_t n = (size_t)(max < EC_READ_MAX ? max : EC_READ_MAX);
+  reserve(&out_p, &out_cap, n + 1);
+  ssize_t r;
+  do r = read(fd, out_p, n); while (r < 0 && errno == EINTR);
+  if (r < 0) {
+    out_p[0] = 0;
+    return fail();
+  }
+  out_len = (size_t)r;
+  out_p[out_len] = 0;
+  return (int64_t)r;
+}
+
 /* A pipe with both ends close-on-exec (atomically where the OS has pipe2). */
 static int cloexec_pipe(int p[2]) {
 #if defined(__linux__)

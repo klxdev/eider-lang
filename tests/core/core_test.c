@@ -1,4 +1,4 @@
-// Tests for ec_run in core/eider_core.c (contract: core/ABI.md "Running a program").
+// Tests for ec_run and ec_read_fd in core/eider_core.c (contract: core/ABI.md).
 // Run by tests/core/run.sh. The children are this binary re-executed with `child <mode>`, so
 // each test controls exactly what the child does.
 #define _POSIX_C_SOURCE 200809L
@@ -22,6 +22,7 @@ void ec_in_push(int32_t b);
 int64_t ec_out_len(void);
 int32_t ec_out_byte(int64_t i);
 int64_t ec_run(int32_t out_mode, int32_t err_mode, int64_t timeout_ms);
+int64_t ec_read_fd(int32_t fd, int64_t max);
 
 static int failures, checks;
 static char self[4096];
@@ -390,6 +391,67 @@ static void test_eintr(void) {
   CHECK(no_zombies());
 }
 
+// ---- ec_read_fd
+
+/* out holds exactly `want` */
+static int out_is(const char *want) {
+  size_t n = strlen(want);
+  if (ec_out_len() != (int64_t)n) return 0;
+  for (size_t i = 0; i < n; i++)
+    if (ec_out_byte((int64_t)i) != (unsigned char)want[i]) return 0;
+  return 1;
+}
+
+static int late_fd;
+static void *late_writer(void *p) {
+  (void)p;
+  struct timespec t = {0, 50 * 1000000};
+  nanosleep(&t, NULL);
+  write_all(late_fd, "late", 4);
+  return NULL;
+}
+
+static void test_read_fd(void) {
+  int p[2];
+  CHECK(pipe(p) == 0);
+  write_all(p[1], "abcdef", 6);
+  EQI(ec_read_fd(p[0], 4), 4);
+  CHECK(out_is("abcd"));
+  EQI(ec_read_fd(p[0], (int64_t)1 << 40), 2); /* a huge max is capped, not allocated */
+  CHECK(out_is("ef"));
+  /* a NUL byte is data */
+  write_all(p[1], "x\0y", 3);
+  EQI(ec_read_fd(p[0], 16), 3);
+  CHECK(ec_out_byte(1) == 0 && ec_out_byte(2) == 'y');
+  close(p[1]);
+  EQI(ec_read_fd(p[0], 16), 0); /* end of file */
+  EQI(ec_out_len(), 0);
+  close(p[0]);
+  EQI(ec_read_fd(p[0], 16), -EBADF);
+  EQI(ec_out_len(), 0);
+  EQI(ec_read_fd(0, 0), -EINVAL);
+  EQI(ec_read_fd(-1, 16), -EINVAL);
+  /* a blocking read interrupted by signals (no SA_RESTART) is retried */
+  CHECK(pipe(p) == 0);
+  struct sigaction sa;
+  memset(&sa, 0, sizeof sa);
+  sa.sa_handler = on_alarm;
+  sigemptyset(&sa.sa_mask);
+  sigaction(SIGALRM, &sa, NULL);
+  struct itimerval it = {{0, 1000}, {0, 1000}}, off = {{0, 0}, {0, 0}};
+  late_fd = p[1];
+  pthread_t t;
+  pthread_create(&t, NULL, late_writer, NULL);
+  setitimer(ITIMER_REAL, &it, NULL);
+  EQI(ec_read_fd(p[0], 16), 4);
+  setitimer(ITIMER_REAL, &off, NULL);
+  signal(SIGALRM, SIG_DFL);
+  pthread_join(t, NULL);
+  CHECK(out_is("late"));
+  close(p[0]);
+  close(p[1]);
+}
+
 int main(int argc, char **argv) {
   if (argc >= 3 && !strcmp(argv[1], "child")) return child(argv[2], argc > 3 ? argv[3] : NULL);
   snprintf(self, sizeof self, "%s", argv[0]);
@@ -407,6 +469,7 @@ int main(int argc, char **argv) {
   test_threads();
 #endif
   test_eintr();
+  test_read_fd();
   printf("%d checks, %d failed\n", checks, failures);
   return failures ? 1 : 0;
 }
