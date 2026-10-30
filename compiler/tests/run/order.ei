@@ -1,0 +1,103 @@
+// Evaluation order: everything is evaluated exactly once, left to right (the spirit of
+// tests/run/order.ei, plus the places where a lowering could hoist or reorder).
+
+type P = { a: i32, b: i32, c: i32 }
+type Pair = { l: [i32; 2], r: P }
+type Slot = | Empty | Full(p: P)
+
+fn t(n: i32) -> i32 uses io {
+    print(n)
+    n
+}
+
+fn ix(n: usize) -> usize uses io {
+    print(n)
+    n
+}
+
+fn yes(n: i32) -> bool uses io {
+    print(n)
+    true
+}
+
+fn no(n: i32) -> bool uses io {
+    print(n)
+    false
+}
+
+fn log(inout l: i32, n: i32) -> i32 {
+    l = l * 10 + n
+    n
+}
+
+fn three(a: i32, b: i32, c: i32) -> i32 { a * 100 + b * 10 + c }
+
+fn main() uses io {
+    // operands, arguments, constructors, array literals
+    print(t(1) - t(2) * t(3))
+    print(three(t(4), t(5), t(6)))
+    let p = P(t(7), t(8), t(9))
+    print(p.c)
+    let arr = [t(10), t(11), t(12)]
+    print(arr[2])
+    let pair = Pair([t(13), t(14)], P(t(15), t(16), t(17)))
+    print(pair.r.a)
+    let bx = Full(P(t(18), t(19), t(20)))
+    print(bx == Full(P(18, 19, 20)))
+
+    // inout arguments interleaved with reads
+    var l = 0
+    let s = log(inout l, 1) + log(inout l, 2) * log(inout l, 3)
+    print(s)
+    print(l)
+
+    // the index is evaluated before the right-hand side; compound assignment reads once
+    var a = [0, 0, 0, 0]
+    a[ix(1)] = t(21)
+    a[ix(2)] += t(22)
+    print(a[1] + a[2])
+    var g = [[0, 0], [0, 0]]
+    g[ix(1)][ix(0)] = t(23)
+    print(g[1][0])
+
+    // short-circuit: the right side runs only when needed
+    let x1 = no(24) && yes(25)
+    let x2 = yes(26) || no(27)
+    let x3 = yes(28) && no(29) || yes(30)
+    let x4 = no(31) || (yes(32) && no(33))
+    print(x1)
+    print(x2)
+    print(x3)
+    print(x4)
+
+    // a match scrutinee is evaluated once; arm conditions in order
+    match t(34) {
+        1 => print(0)
+        34 => print(35)
+        _ => print(0)
+    }
+    let m = match Full(P(t(36), 0, 0)) {
+        Empty => 0
+        Full(q) => q.a + 1
+    }
+    print(m)
+
+    // if conditions, while conditions every iteration, range bounds once
+    if no(38) {
+        print(0)
+    } else if yes(39) {
+        print(40)
+    } else {
+        print(0)
+    }
+    var k = 0
+    while t(k) < 2 { k += 1 }
+    for i in t(41)..t(43) { print(i * 10) }
+    var total = 0
+    for v in [t(44), t(45)] { total += v }
+    print(total)
+
+    // a trap happens after the operands to its left have run
+    print(t(46) + t(2147483647) * t(2))
+    print(0)
+}

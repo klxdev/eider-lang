@@ -1,0 +1,42 @@
+// Imports: qualified types, variants (in patterns too), constants, functions; an imported
+// unit enum prints like stage 0; private and public helpers; tests of
+// imported modules run with the entry file's tests.
+import "lib/geo.ei"
+import "lib/geo.ei" as g
+
+fn helper() -> u8 { 100 }
+
+fn name(d: geo.Dir) -> str {
+    match d {
+        geo.North => "N"
+        geo.East => "E"
+        _ => "S or W"
+    }
+}
+
+fn main() uses io {
+    var p = geo.Pos(geo.ORIGIN, geo.ORIGIN)
+    p = geo.apply(p, geo.Step(geo.North, 3))
+    p = geo.apply(p, geo.Step(geo.East, 2))
+    p = geo.apply(p, g.Stay)
+    print(p.x)
+    print(p.y)
+    p = geo.apply(p, geo.Jump(geo.Pos(-1, -2)))
+    print(p.x * 10 + p.y)
+    geo.walk(inout p, geo.West)
+    print(p.x)
+    var d = geo.South
+    for i in 0..5 {
+        print(d)
+        print(name(d))
+        d = geo.turn(d)
+    }
+    print(geo.NAME)
+    print(geo.secret() + helper())
+    print(geo.helper())
+    print(g.turn(g.North) == geo.East)
+}
+
+test "entry passes" {
+    assert geo.apply(geo.Pos(1, 1), geo.Stay) == geo.Pos(1, 1)
+}

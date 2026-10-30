@@ -1,0 +1,54 @@
+// Constants: every integer type at its edges, bool and str, constant expressions, constants
+// used in expressions, conditions and other constants' initializers.
+
+const I32_MIN: i32 = -2147483647 - 1
+const I32_MAX: i32 = 2147483647
+const I64_MIN: i64 = -9223372036854775807 - 1
+const I64_MAX: i64 = 9223372036854775807
+const U8_MAX: u8 = 255
+const U32_MAX: u32 = 4294967295
+const U64_MAX: u64 = 18446744073709551615
+const USIZE_MAX: usize = 18446744073709551615
+const ZERO: u64 = 0
+const WRAPPED: u8 = 200 +% 100
+const DERIVED: i64 = I64_MAX / 2 - 7 * 3
+const NEG: i32 = -(I32_MAX % 1000)
+const ON: bool = true
+const OFF: bool = false
+const GREETING: str = "hello, \"quoted\"\tand tabbed\\ é?"
+const EMPTY: str = ""
+
+fn classify(n: i32) -> str {
+    if n == I32_MIN { "min" } else if n == I32_MAX { "max" } else if n == 0 { "zero" } else { "other" }
+}
+
+fn main() uses io {
+    print(I32_MIN)
+    print(I32_MAX)
+    print(I64_MIN)
+    print(I64_MAX)
+    print(U8_MAX)
+    print(U32_MAX)
+    print(U64_MAX)
+    print(USIZE_MAX)
+    print(ZERO)
+    print(WRAPPED)
+    print(DERIVED)
+    print(NEG)
+    print(ON)
+    print(OFF)
+    print(GREETING)
+    print(EMPTY)
+    print(classify(I32_MIN))
+    print(classify(I32_MAX))
+    print(classify(0))
+    print(classify(NEG))
+    var n = I32_MAX
+    n -= 1
+    print(n)
+    print(I32_MAX +% 1 == I32_MIN)
+    print(ON && !OFF)
+    print(GREETING == "hello, \"quoted\"\tand tabbed\\ é?")
+    let arr = [U8_MAX; 3]
+    print(arr[2])
+}

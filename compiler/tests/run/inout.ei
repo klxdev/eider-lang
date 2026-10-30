@@ -1,0 +1,96 @@
+// inout parameters: locals, fields, array elements and nested places as arguments, passing
+// an inout parameter on, several inout arguments in one call, and value semantics for
+// everything that is not inout.
+
+type Acc = { total: i64, count: u32, last: [i32; 3] }
+type Grid = { cells: [[u8; 3]; 2], name: str }
+type Cell = | Empty | Has(acc: Acc)
+
+fn add(inout a: Acc, v: i32) {
+    a.total += v as i64
+    a.count += 1
+    a.last[(a.count % 3) as usize] = v
+}
+
+fn add_twice(inout a: Acc, v: i32) {
+    add(inout a, v)
+    add(inout a, v * 2)
+}
+
+fn swap(inout x: i32, inout y: i32) {
+    let t = x
+    x = y
+    y = t
+}
+
+fn fill(inout row: [u8; 3], v: u8) {
+    for i in 0..3 { row[i as usize] = v + i as u8 }
+}
+
+fn rename(inout g: Grid, n: str) -> str {
+    let old = g.name
+    g.name = n
+    old
+}
+
+fn bump(inout n: u8) -> u8 {
+    n += 1
+    n
+}
+
+fn untouched(a: Acc) -> i64 {
+    var b = a
+    b.total = 0
+    a.total + b.total
+}
+
+fn main() uses io {
+    var a = Acc(0, 0, [0, 0, 0])
+    add(inout a, 5)
+    add_twice(inout a, 7)
+    print(a.total)
+    print(a.count)
+    print(a.last[0] * 100 + a.last[1] * 10 + a.last[2])
+    print(untouched(a))
+
+    var x = 1
+    var y = 2
+    swap(inout x, inout y)
+    print(x * 10 + y)
+    var pair = [3, 4]
+    swap(inout pair[0], inout y)
+    print(pair[0] * 10 + y)
+
+    var g = Grid([[0, 0, 0], [0, 0, 0]], "first")
+    fill(inout g.cells[1], 10)
+    fill(inout g.cells[0], 20)
+    print(g.cells[1][2] as u32 + g.cells[0][0] as u32)
+    let copy = g
+    print(rename(inout g, "second"))
+    print(g.name)
+    print(copy.name)
+    print(bump(inout g.cells[0][1]) + bump(inout g.cells[0][1]))
+    print(g.cells[0][1])
+
+    var accs = [a, a]
+    add(inout accs[1], -100)
+    print(accs[0].total)
+    print(accs[1].total)
+    var i: usize = 0
+    while i < 2 {
+        add(inout accs[i], 1)
+        i += 1
+    }
+    print(accs[0].count + accs[1].count)
+
+    var c = Has(a)
+    match c {
+        Has(inner) => {
+            var v = inner
+            add(inout v, 1000)
+            print(v.total)
+        }
+        Empty => print(0)
+    }
+    print(c == Has(a))
+}

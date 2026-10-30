@@ -1,0 +1,13 @@
+// panic and failed asserts outside a test: stderr and exit 101 (the first one ends it).
+
+fn check(n: u8) uses io {
+    assert n < 3, "n is too big"
+    print(n)
+}
+
+fn main() uses io {
+    for i in 0..10 {
+        check(i as u8)
+    }
+    panic("not reached")
+}
