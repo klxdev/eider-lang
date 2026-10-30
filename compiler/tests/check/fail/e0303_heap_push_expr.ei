@@ -1,0 +1,4 @@
+// expect: E0303 4:13
+fn mk() -> List[i32] { let l: List[i32] = List.new()
+    l }
+fn main() { mk().push(1) }

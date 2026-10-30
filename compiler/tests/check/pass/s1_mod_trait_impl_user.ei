@@ -1,0 +1,5 @@
+// mode: build
+import "../lib/geo.ei"
+type Mine = { v: u32 }
+impl geo.Area for Mine { fn area(self) -> u32 { self.v } }
+fn main() uses io { print(geo.total(Mine(1), Mine(2))) }

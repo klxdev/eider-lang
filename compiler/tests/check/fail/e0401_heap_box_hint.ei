@@ -1,0 +1,2 @@
+// expect: E0401 2:40
+fn main() { let b: Box[bool] = Box.new(1) }

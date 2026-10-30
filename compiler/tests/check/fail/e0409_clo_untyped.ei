@@ -1,0 +1,2 @@
+// expect: E0409 2:22
+fn main() { let f = |x| x }

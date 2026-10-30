@@ -1,0 +1,3 @@
+// expect: E0504 2:22
+const N: List[i32] = 5
+fn main() {}

@@ -1,0 +1,10 @@
+// mode: build
+fn main() uses io {
+    let a: Option[u32] = None
+    print(a.is_none())
+    let r: Result[u32, str] = Err("x")
+    print(r.is_err())
+    print(r.unwrap_or(4))
+    let o = r.ok()
+    print(o.is_some())
+}

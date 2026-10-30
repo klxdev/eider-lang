@@ -1,0 +1,13 @@
+// expect: E0601 12:15
+trait Show {
+    fn show(self) -> u32
+}
+type W[T] = { v: T }
+impl[T] Show for W[T] {
+    fn show(self) -> u32 { 1 }
+}
+fn s[T: Show](x: T) -> u32 { x.show() }
+fn main() {
+    let ok = s(W(true))
+    let bad = s(5)
+}

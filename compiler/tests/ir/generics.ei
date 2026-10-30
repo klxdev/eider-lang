@@ -1,0 +1,42 @@
+// IR golden: tuples, generic instances, methods, traits, `?` and `if let`.
+type Pair[A, B] = { a: A, b: B }
+
+trait Area {
+    fn area(self) -> u32
+}
+
+type Sq = { s: u32 }
+
+impl Area for Sq {
+    fn area(self) -> u32 { self.s * self.s }
+}
+
+impl Sq {
+    fn grow(inout self, by: u32) { self.s += by }
+}
+
+fn swap[A, B](p: Pair[A, B]) -> Pair[B, A] { Pair(p.b, p.a) }
+
+fn total[T: Area](a: T, b: T) -> u32 { a.area() + b.area() }
+
+fn half(n: u32) -> Result[u32, bool] {
+    if n % 2 == 1 { return Err(true) }
+    Ok(n / 2)
+}
+
+fn quarter(n: u32) -> Result[u32, bool] {
+    let h = half(n)?
+    half(h)
+}
+
+fn main() uses io {
+    let p = swap(Pair(1, true))
+    let t = (p.a, p.b)
+    let (x, y) = t
+    if x { print(y) }
+    var s = Sq(2)
+    s.grow(1)
+    print(total(s, Sq(1)))
+    if let Ok(q) = quarter(8) { print(q) }
+    print(half(3).unwrap_or(0))
+}

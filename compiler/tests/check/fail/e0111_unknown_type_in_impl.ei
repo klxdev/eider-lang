@@ -1,0 +1,3 @@
+// expect: E0111 2:6
+impl Nope { fn f(self) {} }
+fn main() {}

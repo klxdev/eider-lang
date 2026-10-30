@@ -1,0 +1,4 @@
+// expect: E0201 4:37
+fn loud(x: i32) -> i32 uses io { print(x)
+    x }
+fn main() { let f: fn(i32) -> i32 = loud }

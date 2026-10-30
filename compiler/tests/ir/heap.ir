@@ -1,0 +1,257 @@
+
+fn label -> String
+  %0 param n: Named
+  %1 temp: String
+  %2 temp: String
+  %3 let s: String
+  %4 temp: String
+  %5 temp: String
+  {
+    %1 = read %0.0
+    %2 = clone %1
+    %3 = %2
+    %4 = read %3
+    %5 = clone %4
+    drop %3: String
+    return %5
+  }
+
+fn first_long -> Option[String]
+  %0 param xs: List[String]
+  %1 param min: usize
+  %2 temp: usize
+  %3 temp: usize
+  %4 temp: List[String]
+  %5 temp: usize
+  %6 temp: bool
+  %7 let x: String
+  %8 temp: String
+  %9 temp: String
+  %10 temp: usize
+  %11 temp: usize
+  %12 temp: bool
+  %13 temp: String
+  %14 temp: String
+  %15 temp: Option[String]
+  %16 temp: usize
+  %17 temp: usize
+  %18 temp: Option[String]
+  {
+    %2 = 0usize
+    loop {
+      %3 = read %2
+      %4 = read %0
+      %5 = len(%4)
+      %6 = %3 < %5
+      if %6 {
+      } else {
+        break
+      }
+      %8 = read %0[%3]@11
+      %7 = clone %8
+      %9 = read %7
+      %10 = len(%9)
+      %11 = read %1
+      %12 = %10 < %11
+      if %12 {
+        drop %7: String
+        continue
+      } else {
+      }
+      %13 = read %7
+      %14 = clone %13
+      %15 = Option[String].<0>(%14)
+      drop %7: String
+      return %15
+    } step {
+      %16 = read %2
+      %17 = %16 +% 1usize
+      store %2 = %17
+    }
+    %18 = Option[String].<1>()
+    return %18
+  }
+
+fn count -> Option[usize]
+  %0 param m: Map[u32, String]
+  %1 param k: u32
+  %2 temp: Map[u32, String]
+  %3 temp: u32
+  %4 temp: Option[String]
+  %5 temp: Option[String]
+  %6 temp: bool
+  %7 temp: Option[usize]
+  %8 temp: String
+  %9 let v: String
+  %10 temp: String
+  %11 temp: usize
+  %12 temp: Option[usize]
+  {
+    %2 = read %0
+    %3 = read %1
+    %4 = map_get(%2, %3)
+    %5 = clone %4
+    %6 = tag %5 is <1>
+    if %6 {
+      %7 = Option[usize].<1>()
+      return %7
+    } else {
+    }
+    %8 = move %5.<0>.0
+    %9 = %8
+    %10 = read %9
+    %11 = len(%10)
+    %12 = Option[usize].<0>(%11)
+    drop %9: String
+    return %12
+  }
+
+fn main -> () uses io
+  %0 temp: List[String]
+  %1 var tags: List[String]
+  %2 temp: String
+  %3 temp: String
+  %4 temp: List[String]
+  %5 temp: List[String]
+  %6 temp: Named
+  %7 var n: Named
+  %8 temp: String
+  %9 temp: String
+  %10 temp: String
+  %11 temp: Named
+  %12 temp: String
+  %13 var i: i32
+  %14 temp: i32
+  %15 temp: bool
+  %16 temp: i32
+  %17 temp: i64
+  %18 temp: String
+  %19 let t: String
+  %20 temp: i32
+  %21 temp: i32
+  %22 temp: i32
+  %23 temp: bool
+  %24 temp: String
+  %25 temp: List[String]
+  %26 temp: Option[String]
+  %27 temp: bool
+  %28 let s: String
+  %29 temp: String
+  %30 temp: String
+  %31 temp: Map[u32, String]
+  %32 var m: Map[u32, String]
+  %33 temp: String
+  %34 temp: Map[u32, String]
+  %35 temp: Option[usize]
+  %36 temp: usize
+  %37 temp: String
+  %38 temp: Box[String]
+  %39 var b: Box[String]
+  %40 temp: String
+  %41 temp: Box[String]
+  %42 temp: String
+  %43 temp: String
+  {
+    %0 = list_new()
+    %1 = %0
+    %2 = string_from("a")
+    push(inout %1, %2)
+    %3 = string_from("x")
+    %4 = read %1
+    %5 = clone %4
+    %6 = Named(%3, %5)
+    %7 = %6
+    %8 = string_from("y")
+    drop %7.0: String
+    store %7.0 = %8
+    %9 = read %7.0
+    %10 = clone %9
+    push(inout %7.1, %10)
+    %11 = read %7
+    %12 = call label(%11)
+    print %12
+    %13 = 0i32
+    loop {
+      %14 = read %13
+      %15 = %14 < 3i32
+      if %15 {
+      } else {
+        break
+      }
+      %16 = read %13
+      %17 = %16 as i64  @32
+      %18 = string_from_int(%17)
+      %19 = %18
+      %20 = read %13
+      %21 = %20 + 1i32  @33
+      store %13 = %21
+      %22 = read %13
+      %23 = %22 == 2i32
+      if %23 {
+        drop %19: String
+        break
+      } else {
+      }
+      %24 = read %19
+      print %24
+      drop %19: String
+    } step {
+    }
+    %25 = read %7.1
+    %26 = call first_long(%25, 1usize)
+    %27 = tag %26 is <0>
+    if %27 {
+      %29 = read %26.<0>.0
+      %28 = clone %29
+      %30 = read %28
+      print %30
+      drop %28: String
+    } else {
+    }
+    %31 = map_new()
+    %32 = %31
+    %33 = string_from("one")
+    insert(inout %32, 1u32, %33)
+    %34 = read %32
+    %35 = call count(%34, 1u32)
+    %36 = call Option[usize].unwrap_or(%35, 0usize)
+    print %36
+    %37 = string_from("boxed")
+    %38 = box_new(%37)
+    %39 = %38
+    %40 = string_from("again")
+    drop *%39: String
+    store *%39 = %40
+    %41 = read %39
+    %42 = read *%41
+    %43 = clone %42
+    print %43
+    drop %43: String
+    drop %39: Box[String]
+    drop %32: Map[u32, String]
+    drop %26: Option[String]
+    drop %12: String
+    drop %7: Named
+    drop %1: List[String]
+  }
+
+fn Option[usize].unwrap_or -> usize
+  %0 param self: Option[usize]
+  %1 param default: usize
+  %2 temp: Option[usize]
+  %3 temp: bool
+  %4 let v: usize
+  %5 temp: usize
+  %6 temp: usize
+  {
+    %2 = read %0
+    %3 = tag %2 is <0>
+    if %3 {
+      %4 = read %2.<0>.0
+      %5 = read %4
+      return %5
+    } else {
+      %6 = read %1
+      return %6
+    }
+  }

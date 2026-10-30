@@ -1,0 +1,2 @@
+// expect: E0409 2:25
+fn main() { let a = Map.new() }

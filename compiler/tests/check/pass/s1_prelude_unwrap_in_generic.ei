@@ -1,0 +1,3 @@
+// mode: build
+fn get[T](o: Option[T]) -> T { o.unwrap() }
+fn main() uses io { print(get(Some(5))) }

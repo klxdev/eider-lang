@@ -1,0 +1,6 @@
+// expect: E0602 5:1
+trait Area { fn area(self) -> u32
+    fn name(self) -> str }
+type Sq = { s: u32 }
+impl Area for Sq { fn area(self) -> u32 { 1 } }
+fn main() {}

@@ -1,0 +1,4 @@
+// mode: build
+type T = { x: u32 }
+fn f[T](a: T) -> T { a }
+fn main() uses io { print(f(1)) }

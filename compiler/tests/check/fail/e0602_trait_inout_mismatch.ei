@@ -1,0 +1,5 @@
+// expect: E0602 4:21
+trait T1 { fn f(inout self) }
+type Sq = { s: u32 }
+impl T1 for Sq { fn f(self) { } }
+fn main() {}

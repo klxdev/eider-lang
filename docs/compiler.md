@@ -1,13 +1,14 @@
 # The self-hosted compiler (`eiderc`)
 
-Status: approved direction; C1 to C4 done. This file owns the plan; update it as stages land.
+Status: approved direction; C1 to C4 done, C5 checking done. This file owns the plan; update it as stages land.
 
 Progress: **C1 done** (lexer, interner, diagnostics rendering; `scripts/test-compiler.sh`).
 **C2 done** (parser to the AST arena, `eiderc parse` dump, parse-error corpus and AST goldens).
 **C3 done** for v0 plus non-generic payload enums (`resolve.ei`, `types.ei`, `fold.ei`,
 `pats.ei`, `check.ei`, `ir.ei`; see "C3: checking" below).
 **C4 done** for the same language (`lower.ei`, `driver.ei`; `eiderc emit-c/build/run/test`;
-see "C4: lowering" below). Next: C5.
+see "C4: lowering" below). **C5 checking done** for S1–S3 (see "C5: checking S1–S3"); its
+lowering is next, then C6.
 
 ## Goal
 
@@ -130,17 +131,18 @@ language as it is:
   std::fs::canonicalize does, so the deps/ link farm's paths to one file are one module.
 - **Folding** (`fold.ei`) computes in a sign + 128-bit magnitude, enough for every value the
   bootstrap computes in i128 from in-range operands (its E0501 messages print them).
-- **Out of scope** (generics, traits, impls, tuples, closures, String/List/Map, `?`, threads,
-  FFI/export, comptime) ends checking with an `unsupported` diagnostic at the point where the
-  bootstrap would start handling the feature; everything reported before it is exact, and
-  the test script counts such files as out of scope.
+- **Out of scope** (threads, FFI/export, comptime; since C5 everything else) ends checking
+  with an `unsupported` diagnostic at the point where the bootstrap would start handling the
+  feature; everything reported before it is exact, and the test script counts such files as
+  out of scope.
 - **The IR** (node table at the top of `ir.ei`) is what C4 lowers: per function a table of
   locals and a tree of blocks; every intermediate value is a single-assignment temporary in
   source evaluation order, variable reads are explicit `read`s of places (local, field,
   bounds-checked element, enum payload), `&&`/`||` and `match` are lowered to `if`, `for`
   loops to `loop` with a `step` block (what `continue` runs). Constants are folded values.
 - **Tests.** `scripts/test-compiler.sh` compares `check --json` with the bootstrap on
-  tests/checks (51/74 in scope, all agree), tests/run, and eiderc's own 229 cases in
+  tests/checks (51/74 in scope at C3, 64/74 since C5, all agree), tests/run (3/11, then
+  8/11), and eiderc's own cases (229 at C3, 418 since C5) in
   `compiler/tests/check` (fail cases carry `// expect:` headers that also pass the bootstrap's
   compile-fail runner; helper modules in `lib/`); IR goldens live in `compiler/tests/ir`.
   `scripts/fuzz-check.sh` (packages/fuzz) mutates v0 programs and compares both compilers
@@ -152,7 +154,46 @@ language as it is:
   name the wrong file; that E0801 itself (a public record with a private field type can't be
   built outside its module) is checked against the constructing module; in a module's test
   block, a local named like one of the module's items is shadowed by the item; `x /= 0` is
-  not a compile error although `x / 0` is.
+  not a compile error although `x / 0` is. Since C5: a name in an impl target that isn't
+  a type parameter matches every type (check.rs unify_ast), so `impl Area for Sq` meets
+  `T: Area` for any T (the instance body then fails) and `impl W[i32]`'s methods apply to
+  every `W`; register_impl compares signatures as text after replacing every `Self`, also
+  inside names like `MySelf`; impls on fn types never match a receiver (head_of spells
+  the whole type).
+
+## C5: checking S1–S3
+
+`check.ei` covers the rest of the bootstrap's checker that `compiler/`, std and the
+packages use: everything in them checks `ok` in both compilers once core/sys.ei's `extern`
+fns are replaced by stubs (FFI itself is C7).
+
+- **S1.** Tuples (types, literals, `.0`, patterns, `let (a, b) =`); generic types and
+  functions, monomorphized on demand: a generic type is a template definition and each
+  instance its own definition (types.ei; type lists are interned so instances compare as
+  ids), a generic function or method one IR function per instance (`swap[i32, bool]`,
+  `Option[u32].unwrap`), with the bootstrap's inference (unify_ast from the expected type,
+  the receiver, then argument by argument; E0409). Traits, impls and bounds (E0601, E0602,
+  E0603), inherent and generic methods, `Self`, `?` (E0406), `if let`, nested patterns.
+  Bodies are checked from a stack of instances like the bootstrap's `pending`, so the first
+  error is the same one. Option and Result come from **`core/prelude.ei`**, the
+  bootstrap's EIDER_PRELUDE verbatim, which `resolve.load` reads from the toolchain root:
+  `$EIDER_ROOT`, else the parent of the directory holding the eiderc binary (argv[0]),
+  else the current directory.
+- **S2.** String, List, Map, Box with heap.rs's associated functions and methods, `len`,
+  `for x in list`, list indexing, E0303 (mutating methods need an assignable receiver),
+  E0409 (`List.new()`/`Map.new()` need an annotation), E0701 (Map keys), E0504 (owned
+  constants), `==` without Maps. Ownership follows heap.rs (reads borrow, storing a borrow
+  clones, fresh values are registered in their block's frame and moved out by `take`,
+  frames are dropped on every exit) and is explicit in the IR: S_CLONE, S_DROP, S_MOVE,
+  S_BUILTIN; `lower` only prints it (ir.ei, "Ownership").
+- **S3.** fn types, closures with snapshot captures (each body an IR function whose
+  L_CAPTURE locals hold the environment; S_CLOSURE builds it), named functions as values
+  (S_FNREF), calls of fn values (S_CALLV), map/filter/for_each/any/all/fold as IR loops,
+  and the closure cases of E0405/E0409. `?` in an expression-bodied closure stays
+  `unsupported`: the bootstrap checks it against the enclosing function (LEARNINGS.md).
+- **Tests.** Every new rule has cases in `compiler/tests/check` (`s1_*`, `s2_*`, `s3_*`
+  pass files, and fail files by code); IR goldens `generics`, `heap` and `closures` in
+  `compiler/tests/ir` show where clones and drops go.
 
 ## C4: lowering
 
@@ -281,7 +322,7 @@ Each with a design note, compile-fail tests and new codes:
 | C2 ✅ | `parse` to the AST arena; `eiderc parse` dumps the AST | every `.ei` in the repo parses; parse errors (E0001) match the bootstrap's positions, including the one-file-per-error-path corpus in `compiler/tests/parse`; golden dumps in `compiler/tests/parse_ok` |
 | C3 ✅ | `resolve` + `check` for the v0 language (ints, bool, str, records, enums, arrays, control flow, `inout`, capabilities, const folding), producing the typed IR (`eiderc ir`) | v0 compile-fail and compile-pass tests match |
 | C4 ✅ | `lower` + C for v0 (plus non-generic payload enums) against `core/eider_rt.*`; driver (`emit-c`, `build`, `run`, `test`) | v0 run tests match (stdout, stderr, exit code, for `run` and `test`); C is `-pedantic -Wall -Wextra -Werror` clean at -O0 and -O2 and clean under UBSan (ASan/TSan when their runtimes exist) |
-| C5 | S1–S3: payload enums, generics, traits, Option/Result/`?`, tuples, patterns, String/List/Map/Box, closures | all the features `compiler/` itself uses; their tests match |
+| C5 | S1–S3: payload enums, generics, traits, Option/Result/`?`, tuples, patterns, String/List/Map/Box, closures | all the features `compiler/` itself uses; their tests match (checking ✅; lowering next) |
 | C6 | Self-host: stage1 builds stage2 builds stage3; fixed point; commit the seed | `scripts/selfhost.sh` green |
 | C7 | Parity: modules/namespaces, FFI/export/`--lib`, threads, WASM, comptime, cache | the full `scripts/verify.sh` passes with `eiderc` in place of the bootstrap; retire eider-bootstrap |
 | C8+ | Language work above, then std and package-manager rework | per feature |

@@ -1,0 +1,2 @@
+// mode: build
+fn main() uses io { print(Some(1) == None) }

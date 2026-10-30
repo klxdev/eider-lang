@@ -1,0 +1,3 @@
+// expect: E0405 3:13
+fn main() { let f = |x: i32| x
+    let y = f(1, 2) }

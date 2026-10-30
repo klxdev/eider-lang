@@ -1,0 +1,11 @@
+// mode: build
+// methods of `impl W[i32]` apply to every W (type arguments that aren't type
+// parameters match anything)
+type W[T] = { v: T }
+impl W[i32] {
+    fn get(self) -> u32 { 1 }
+}
+fn main() uses io {
+    let w = W(true)
+    print(w.get())
+}

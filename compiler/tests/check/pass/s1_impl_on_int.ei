@@ -1,0 +1,4 @@
+// mode: build
+impl i32 { fn twice(self) -> i32 { self * 2 } }
+fn main() uses io { let x: i32 = 3
+    print(x.twice()) }

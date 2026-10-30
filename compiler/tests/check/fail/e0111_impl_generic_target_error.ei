@@ -1,0 +1,5 @@
+// expect: E0111 3:30
+type S[T] = { v: T }
+impl[T] S[T] { fn f(self, x: Nope) {} }
+fn main() { let s = S(1)
+    s.f(1) }

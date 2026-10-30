@@ -1,18 +1,34 @@
-// check: type checking for the v0 language (plus non-generic payload enums), producing the
-// typed IR. A port of the bootstrap's checker (eider-bootstrap src/check.rs, expr.rs,
-// stmt.rs) without its C emission: the same passes in the same order, so the first error
-// it reports is the bootstrap's first error (code, position, message, help, fix).
+// check: type checking, producing the typed IR. A port of the bootstrap's checker
+// (eider-bootstrap src/check.rs, expr.rs, stmt.rs, heap.rs) without its C emission: the
+// same passes in the same order, so the first error it reports is the bootstrap's first
+// error (code, position, message, help, fix).
 //
 // Pass order (check.rs run_inner): type templates (E0107), non-generic types (field types,
-// E0108), traits, function names, impls, constants in order, every function signature in
-// order, test bodies, then function bodies in reverse order (the bootstrap pops them off a
-// stack). Errors in imported modules name their file the way the bootstrap does: explicitly
-// for types and signatures, otherwise through `err_mod`, the module of the item being
-// checked (left stale while tests are checked, as in the bootstrap).
+// E0108), traits, function names, impls, constants in order, the signatures of every
+// concrete function and then of every concrete method, test bodies, then function bodies
+// from a stack: the bootstrap pushes every instance it creates (concrete functions first,
+// generic instances when a call needs them) and checks the most recent one first. Errors in
+// imported modules name their file the way the bootstrap does: explicitly for types and
+// signatures, otherwise through `err_mod`, the module of the item being checked (left stale
+// while tests are checked, as in the bootstrap).
 //
-// Features outside v0 (generics, traits, impls, tuples, closures, String/List/Map, `?`,
-// threads, FFI/export, comptime) stop checking with an `unsupported` diagnostic at the point
-// the bootstrap would start handling them, so everything reported before is exact.
+// Generics are monomorphized on demand: a generic type gets one definition per instance
+// (types.ei), a generic function or method one IR function per instance, checked with its
+// type parameters substituted (`tsubst`). Type arguments are inferred like the bootstrap
+// does (unify_ast: from the expected type, the receiver, then argument by argument).
+//
+// Ownership (heap.rs): reading owned data out of a place borrows it; storing a borrowed
+// value clones it (`take`); a fresh owned value (call result, constructor, ...) lives in a
+// temporary registered in the innermost frame (one per block) until it is moved out; every
+// frame's owned values are dropped when it ends or is left by return/break/continue/`?`.
+// The IR spells all of it out (ir.ei, "Ownership").
+//
+// Closures (closure.rs) are IR functions of their own, built while their enclosing function
+// is (ir.begin_nested), with a snapshot of the locals they mention as their environment.
+//
+// Features still outside eiderc (threads, FFI/export, comptime, and `?` in an
+// expression-bodied closure) stop checking with an `unsupported` diagnostic at the point the
+// bootstrap would start handling them, so everything reported before is exact.
 
 import "deps/core/sys.ei"
 import "deps/std/bytes.ei"
@@ -28,19 +44,40 @@ import "ir.ei"
 
 const NONE: u32 = 4294967295
 
-/// A function: its declaration, and its signature once resolved (`has_sig`): parameter types
-/// in `ptys` [pstart, plen), capability symbols in `capl` [cstart, clen).
+/// A function or method declaration. `generic`: it has its own type parameters. `ir`: the
+/// IR function of a concrete free function (declared in order with the functions); `inode`
+/// the impl a method belongs to (NONE for free functions).
 type FnDef = {
-    key: u64, md: u32, node: u32, public: bool, generic: bool, unsafe_fn: bool,
-    has_sig: bool, ret: u32, pstart: u32, plen: u32, cstart: u32, clen: u32,
+    key: u64, md: u32, node: u32, public: bool, generic: bool, unsafe_fn: bool, ir: u32, inode: u32,
 }
+
+/// An instance of a function: its type substitution [sstart, slen) in `sub_s`/`sub_t`, its
+/// IR function, and its signature: parameter types in `ptys` [pstart, plen), capability
+/// symbols in `capl` [cstart, clen).
+type Inst = {
+    fd: u32, sstart: u32, slen: u32, ir: u32, ret: u32, pstart: u32, plen: u32, cstart: u32, clen: u32,
+}
+
+/// A substitution of type parameters (symbols; `Self` is intern.S_SELF_TYPE) by types.
+type Subst = { syms: List[u32], tys: List[u32] }
+
+/// A method registered by an impl: its head (see head_key), name, declaration, and the
+/// impl's target as the bootstrap spells it (for duplicate checks).
+type Meth = { head: u64, name: u32, fd: u32, target: List[u8] }
+
+/// An impl of a trait: the trait, the impl (module, node) and its target's spelling.
+type TImpl = { tkey: u64, md: u32, node: u32, target: List[u8] }
 
 /// A constant: its type and folded value (`op` is its IR operand).
 type ConstDef = { key: u64, md: u32, public: bool, ty: u32, has_k: bool, k: fold.Wide, op: u32 }
 
 /// A local variable in scope. `key` is its name key (pattern bindings can carry a module
-/// prefix, see resolve.ei); `decl` is the `let`/`var` position for the E0303 fix.
-type Local = { key: u64, ty: u32, mutable: bool, byref: bool, has_decl: bool, line: u32, col: u32, ir: u32 }
+/// prefix, see resolve.ei); (line, col) is where it is declared (E0305) and (dline, dcol)
+/// the `let`/`var` it comes from, for the E0303 fix.
+type Local = {
+    key: u64, ty: u32, mutable: bool, byref: bool, has_decl: bool, line: u32, col: u32,
+    ir: u32, dline: u32, dcol: u32,
+}
 
 /// A checked expression: its type, the IR operand holding its value, and its value when it
 /// is a compile-time integer (`has_k`).
@@ -66,11 +103,45 @@ type Test = { kind: u32, place: u32, ty: u32, a: u32, w: fold.Wide, s: List[u8] 
 type Bind = { key: u64, place: u32, ty: u32, line: u32, col: u32 }
 type Lowered = { tests: List[Test], binds: List[Bind] }
 
+/// An owned value in a frame (`l` = NONE once it moved out).
+type Owned = { l: u32, ty: u32 }
+
+/// Heads of methods that aren't named types (head_key).
+const H_ARRAY: u64 = 18446744073709551615
+const H_UNIT: u64 = 18446744073709551614
+const H_NEVER: u64 = 18446744073709551613
+const H_FN: u64 = 18446744073709551612
+
+/// Built-in method and associated function names (indexes into W.hm).
+const M_LEN: u32 = 0
+const M_IS_EMPTY: u32 = 1
+const M_PUSH_STR: u32 = 2
+const M_APPEND: u32 = 3
+const M_PUSH: u32 = 4
+const M_POP: u32 = 5
+const M_CLEAR: u32 = 6
+const M_GET: u32 = 7
+const M_CONTAINS: u32 = 8
+const M_INSERT: u32 = 9
+const M_REMOVE: u32 = 10
+const M_MAP: u32 = 11
+const M_FILTER: u32 = 12
+const M_FOR_EACH: u32 = 13
+const M_ANY: u32 = 14
+const M_ALL: u32 = 15
+const M_FOLD: u32 = 16
+const M_SUM: u32 = 17
+const M_SET: u32 = 18
+const M_FROM: u32 = 19
+const M_FROM_INT: u32 = 20
+const M_NEW: u32 = 21
+
 /// Well-known symbols.
 type W = {
     ints: List[u32], s_bool: u32, s_str: u32, s_self: u32, s_string: u32, heap: List[u32],
     print: u32, len: u32, now_ms: u32, panic: u32, spawn: u32, main: u32,
     option: u32, result: u32, caps: List[u32], io: u32, clock: u32, threads: u32,
+    list: u32, map: u32, boxs: u32, some: u32, none: u32, ok: u32, errv: u32, hm: List[u32],
 }
 
 pub type C = {
@@ -83,13 +154,28 @@ pub type C = {
     variants: Map[u64, u32],
     fns: Map[u64, u32],
     consts: Map[u64, u32],
+    traits: Map[u64, u32],
+    trs: List[Item],
+    timpls: List[TImpl],
+    meths: List[Meth],
     fdefs: List[FnDef],
+    insts: List[Inst],
+    inst_ix: Map[u64, u32],
     cdefs: List[ConstDef],
     ptys: List[u32],
     capl: List[u32],
+    sub_s: List[u32],
+    sub_t: List[u32],
+    pending: List[u32],
+    // the body being checked
+    tsubst: Subst,
     scopes: List[Local],
     marks: List[u32],
-    // the body being checked
+    frames: List[Owned],
+    fmarks: List[u32],
+    firs: List[u32],
+    fresh: Map[u32, bool],
+    loop_bases: List[u32],
     am: u32,
     locals: Map[u32, bool],
     cur_all: bool,
@@ -101,7 +187,18 @@ pub type C = {
     sig_col: u32,
     loops: u32,
     unsafe_depth: u32,
+    /// parameter/return hints for the closure about to be checked (expr.rs lam_hint)
+    lam: LamHint,
+    closures: u32,
+    /// checking an expression-bodied closure, whose `?` the bootstrap checks against the
+    /// enclosing function (closure.rs sets `ret` only afterwards); eiderc leaves it out
+    lam_expr: bool,
 }
+
+/// Expected parameter types (NONE: unknown) and return type of a closure.
+type LamHint = { has: bool, params: List[u32], ret: u32 }
+
+fn no_hint() -> LamHint { LamHint(false, List.new(), NONE) }
 
 // ---- messages
 
@@ -154,10 +251,11 @@ fn mismatch(c: C, line: u32, col: u32, expected: u32, found: u32) -> diag.Diag u
     d
 }
 
-/// Name the file of module m on `d` unless it already names one (the bootstrap's in_file).
+/// Name the file of module m on `d` unless it already names one (the bootstrap's in_file;
+/// the prelude has no file).
 fn in_file(c: C, d: diag.Diag, m: u32) -> diag.Diag {
     var d2 = d
-    if d2.file.len() == 0 && m != resolve.NOMOD { d2.file = c.p.mods[m as usize].path }
+    if d2.file.len() == 0 && m != resolve.NOMOD && m != c.p.prelude { d2.file = c.p.mods[m as usize].path }
     d2
 }
 
@@ -227,7 +325,7 @@ fn lit(c: C, tok: u32) -> fold.Wide {
 fn v_of(ty: u32, op: u32) -> V { V(ty, op, false, fold.zero()) }
 
 fn visible(c: C, md: u32, public: bool) -> bool {
-    public || md == resolve.NOMOD || c.cur_all || md == c.cur_mod
+    public || md == resolve.NOMOD || md == c.p.prelude || c.cur_all || md == c.cur_mod
 }
 
 fn is_value_form(c: C, e: u32) -> bool {
@@ -280,6 +378,159 @@ fn const_v(inout c: C, ty: u32, w: fold.Wide) -> V {
     V(ty, o, true, w)
 }
 
+/// A builtin operation with a result (dst NONE for ()).
+fn builtin_op(inout c: C, b: u32, args: List[u32], rty: u32, line: u32) -> u32 {
+    let st = ir.list(inout c.ir, args)
+    let n = args.len() as u32
+    if rty == types.UNIT {
+        emit(inout c, ir.S_BUILTIN, ir.NONE, b, st, n, rty, line)
+        return ir.op_unit(inout c.ir)
+    }
+    emit_val(inout c, ir.S_BUILTIN, b, st, n, rty, rty, line)
+}
+
+// ---- ownership (heap.rs)
+
+/// Does a value of this type own heap memory?
+fn owns(c: C, ty: u32) -> bool {
+    let t = types.get(c.t, ty)
+    if t.kind == types.T_STRING || t.kind == types.T_LIST || t.kind == types.T_MAP || t.kind == types.T_BOX || t.kind == types.T_FN { return true }
+    if t.kind == types.T_ARRAY { return owns(c, t.a) }
+    if t.kind == types.T_TUPLE {
+        for x in types.elems(c.t, ty) {
+            if owns(c, x) { return true }
+        }
+        return false
+    }
+    if t.kind != types.T_ENUM && t.kind != types.T_RECORD { return false }
+    let d = c.t.defs[t.a as usize]
+    if d.is_enum {
+        for i in 0..d.len {
+            let v = types.variant(c.t, d, i)
+            for j in 0..v.flen {
+                if owns(c, types.field(c.t, v.fstart, j).ty) { return true }
+            }
+        }
+        return false
+    }
+    for j in 0..d.len {
+        if owns(c, types.field(c.t, d.start, j).ty) { return true }
+    }
+    false
+}
+
+fn push_frame(inout c: C) {
+    c.fmarks.push(c.frames.len() as u32)
+    c.firs.push(c.ir.pending.len() as u32)
+}
+
+/// Whether the innermost frame's code ends in a jump (its drops would be dead code).
+fn frame_done(c: C) -> bool {
+    let from = c.firs[c.firs.len() - 1]
+    let k = ir.last_kind(c.ir, from)
+    k == ir.S_RETURN || k == ir.S_BREAK || k == ir.S_CONTINUE
+}
+
+fn emit_drop(inout c: C, place: u32, ty: u32) { emit(inout c, ir.S_DROP, 0, place, 0, 0, ty, 0) }
+
+fn drop_local(inout c: C, o: Owned) {
+    let pl = ir.place_local(inout c.ir, o.l, o.ty)
+    emit_drop(inout c, pl, o.ty)
+}
+
+fn pop_frame(inout c: C, drops: bool) {
+    let m: u32 = match c.fmarks.pop() {
+        Some(x) => x
+        None => 0
+    }
+    var emit_them = drops
+    if emit_them && frame_done(c) { emit_them = false }
+    c.firs.pop()
+    if emit_them {
+        var i = c.frames.len()
+        while i > m as usize {
+            i -= 1
+            let o = c.frames[i]
+            if o.l != NONE { drop_local(inout c, o) }
+        }
+    }
+    while c.frames.len() as u32 > m { c.frames.pop() }
+}
+
+/// Drop everything in frames `base..` (innermost first) without popping them.
+fn drop_frames_from(inout c: C, base: u32) {
+    if base as usize >= c.fmarks.len() { return }
+    let from = c.fmarks[base as usize] as usize
+    var i = c.frames.len()
+    while i > from {
+        i -= 1
+        let o = c.frames[i]
+        if o.l != NONE { drop_local(inout c, o) }
+    }
+}
+
+fn has_pending_drops(c: C) -> bool {
+    for o in c.frames {
+        if o.l != NONE { return true }
+    }
+    false
+}
+
+/// Register local l as owning a value of type ty in the innermost frame.
+fn register(inout c: C, l: u32, ty: u32) {
+    if owns(c, ty) { c.frames.push(Owned(l, ty)) }
+}
+
+fn cancel(inout c: C, l: u32) {
+    for i in 0..c.frames.len() {
+        if c.frames[i].l == l { c.frames[i] = Owned(NONE, 0) }
+    }
+    c.fresh.remove(l)
+}
+
+fn is_fresh(c: C, o: u32) -> bool {
+    if !ir.op_is_local(c.ir, o) { return false }
+    c.fresh.contains(ir.op_local_id(c.ir, o))
+}
+
+/// Make an owned rvalue a registered temporary (dropped with its frame unless moved).
+fn mk_fresh(inout c: C, v: V, line: u32) -> V {
+    if !owns(c, v.ty) || is_fresh(c, v.op) { return v }
+    var l: u32 = 0
+    if ir.op_is_local(c.ir, v.op) {
+        l = ir.op_local_id(c.ir, v.op)
+    } else {
+        l = tmp(inout c, v.ty, line)
+        emit(inout c, ir.S_COPY, l, v.op, 0, 0, v.ty, line)
+    }
+    c.fresh.insert(l, true)
+    register(inout c, l, v.ty)
+    v_of(v.ty, ir.op_local(inout c.ir, l, v.ty))
+}
+
+/// An operand that owns v's value, ready to be moved into new storage: a fresh temporary
+/// leaves its frame, anything else is cloned.
+fn take(inout c: C, v: V, line: u32) -> u32 {
+    if !owns(c, v.ty) { return v.op }
+    if is_fresh(c, v.op) {
+        let l = ir.op_local_id(c.ir, v.op)
+        cancel(inout c, l)
+        return v.op
+    }
+    emit_val(inout c, ir.S_CLONE, v.op, 0, 0, v.ty, v.ty, line)
+}
+
+/// Declare a pattern binding's storage: clones owned data out of the scrutinee.
+fn bind_value(inout c: C, l: u32, ty: u32, place: u32) {
+    if owns(c, ty) {
+        let b = read(inout c, place, ty, 0)
+        emit(inout c, ir.S_CLONE, l, b, 0, 0, ty, 0)
+        register(inout c, l, ty)
+    } else {
+        emit(inout c, ir.S_READ, l, place, 0, 0, ty, 0)
+    }
+}
+
 // ---- scopes
 
 fn push_scope(inout c: C) { c.marks.push(c.scopes.len() as u32) }
@@ -312,10 +563,47 @@ fn declare(inout c: C, l: Local) -> Result[bool, diag.Diag] uses ffi {
     Ok(true)
 }
 
+fn local_at(key: u64, ty: u32, mutable: bool, line: u32, col: u32, l: u32) -> Local {
+    Local(key, ty, mutable, false, true, line, col, l, line, col)
+}
+
+fn local_plain(key: u64, ty: u32, byref: bool, line: u32, col: u32, l: u32) -> Local {
+    Local(key, ty, false, byref, false, line, col, l, line, col)
+}
+
+// ---- substitutions
+
+fn no_subst() -> Subst { Subst(List.new(), List.new()) }
+
+fn subst_get(sb: Subst, sym: u32) -> u32 {
+    for i in 0..sb.syms.len() {
+        if sb.syms[i] == sym { return sb.tys[i] }
+    }
+    NONE
+}
+
+fn subst_set(inout sb: Subst, sym: u32, ty: u32) {
+    for i in 0..sb.syms.len() {
+        if sb.syms[i] == sym {
+            sb.tys[i] = ty
+            return
+        }
+    }
+    sb.syms.push(sym)
+    sb.tys.push(ty)
+}
+
+/// The type parameter symbols of generic parameter list [start/len) in module m.
+fn gparams(c: C, m: u32, start: u32, len: u32) -> List[u32] {
+    var out: List[u32] = List.new()
+    for i in 0..len { out.push(ndm(c, m, atm(c, m, start, i)).a) }
+    out
+}
+
 // ---- types
 
 /// Resolve type node `tn` of module `am` (names resolve in that module, visibility from the
-/// module being checked).
+/// module being checked, type parameters from `tsubst`).
 fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] uses ffi {
     let n = ndm(c, am, tn)
     match n.kind {
@@ -326,12 +614,16 @@ fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] uses ffi {
             Ok(types.array(inout c.t, e, n.b))
         }
         ast.TName => {
+            if n.b == 0 {
+                let sub = subst_get(c.tsubst, n.a)
+                if sub != NONE { return Ok(sub) }
+            }
             let k = resolve.name_key(c.p, am, n.a, n.b, n.line, n.col)
             let ik = int_kind(c, k)
             if ik != NONE { return Ok(ik) }
             if is_root(k, c.w.s_bool) { return Ok(types.BOOL) }
             if is_root(k, c.w.s_str) { return Ok(types.STR) }
-            if is_root(k, c.w.s_string) { return Err(unsup(n.line, n.col, "the String type")) }
+            if is_root(k, c.w.s_string) { return Ok(types.STRING) }
             if resolve.key_pre(k) == 0 && has_sym(c.w.heap, n.a) {
                 return Err(err("E0111", n.line, n.col, q2("type `", kt(c, k), "` needs type arguments: `", kt(c, k), "[...]`")))
             }
@@ -341,68 +633,156 @@ fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] uses ffi {
             if g > 0 {
                 return Err(err("E0111", n.line, n.col, q3("type `", kt(c, k), "` needs ", num(g as u64), " type argument(s): `", kt(c, k), "[...]`")))
             }
-            inst_type(inout c, di, n.line, n.col)
+            inst_type(inout c, di, List.new(), n.line, n.col)
         }
         ast.TGeneric => {
+            var args: List[u32] = List.new()
             for i in 0..n.d {
                 let arg = atm(c, am, n.c, i)
-                resolve_ty(inout c, am, arg)?
+                args.push(resolve_ty(inout c, am, arg)?)
             }
-            Err(unsup(n.line, n.col, "generic types"))
+            let k = resolve.name_key(c.p, am, n.a, n.b, n.line, n.col)
+            if resolve.key_pre(k) == 0 && has_sym(c.w.heap, n.a) {
+                var want: u32 = 1
+                if n.a == c.w.map { want = 2 }
+                if args.len() as u32 != want {
+                    return Err(err("E0111", n.line, n.col, q3("type `", kt(c, k), "` takes ", num(want as u64), " type argument(s), but ", num(args.len() as u64), " were given")))
+                }
+                let is_task = n.a == c.w.heap[3]
+                for a in args {
+                    if (a == types.UNIT || a == types.NEVER) && !is_task {
+                        return Err(err("E0111", n.line, n.col, q("`", kt(c, k), "` can't hold ()")))
+                    }
+                }
+                if n.a == c.w.list { return Ok(types.list_of(inout c.t, args[0])) }
+                if n.a == c.w.boxs { return Ok(types.box_of(inout c.t, args[0])) }
+                if n.a == c.w.map {
+                    check_map_key(c, args[0], n.line, n.col)?
+                    return Ok(types.map_of(inout c.t, args[0], args[1]))
+                }
+                return Err(unsup(n.line, n.col, "threads"))
+            }
+            let di = mget(c.tmpl, k)
+            if di == NONE { return Err(err("E0111", n.line, n.col, q("unknown type `", kt(c, k), "`"))) }
+            inst_type(inout c, di, args, n.line, n.col)
         }
-        ast.TTuple => Err(unsup(n.line, n.col, "tuples"))
-        _ => Err(unsup(n.line, n.col, "function types"))
+        ast.TTuple => {
+            var elems: List[u32] = List.new()
+            for i in 0..n.d {
+                let x = atm(c, am, n.c, i)
+                elems.push(resolve_ty(inout c, am, x)?)
+            }
+            Ok(types.tuple(inout c.t, elems))
+        }
+        _ => {
+            var ps: List[u32] = List.new()
+            for i in 0..n.d {
+                let x = atm(c, am, n.c, i)
+                ps.push(resolve_ty(inout c, am, x)?)
+            }
+            var r = types.UNIT
+            if n.g > 0 { r = resolve_ty(inout c, am, n.g - 1)? }
+            Ok(types.fn_of(inout c.t, ps, r))
+        }
     }
 }
 
-/// The type of definition di, resolving its fields the first time (check.rs inst_type).
-fn inst_type(inout c: C, di: u32, line: u32, col: u32) -> Result[u32, diag.Diag] uses ffi {
+/// Resolve `tn` of module am with the type parameters of `sb` (and no others).
+fn resolve_with(inout c: C, am: u32, tn: u32, sb: Subst) -> Result[u32, diag.Diag] uses ffi {
+    let saved = c.tsubst
+    c.tsubst = sb
+    let r = resolve_ty(inout c, am, tn)
+    c.tsubst = saved
+    r
+}
+
+fn check_map_key(c: C, k: u32, line: u32, col: u32) -> Result[bool, diag.Diag] uses ffi {
+    let tk = types.kind(c.t, k)
+    if tk == types.T_INT || tk == types.T_BOOL || tk == types.T_STRING || tk == types.T_STR { return Ok(true) }
+    Err(err("E0701", line, col, q("", ts(c, k), " can't be a Map key; keys must be integers, bool, str or String")))
+}
+
+/// The type of template di applied to `args`, resolving its fields the first time
+/// (check.rs inst_type).
+fn inst_type(inout c: C, di: u32, args: List[u32], line: u32, col: u32) -> Result[u32, diag.Diag] uses ffi {
     let d = c.t.defs[di as usize]
     if !visible(c, d.md, d.public) {
         let path = c.p.mods[d.md as usize].path
         return Err(errh("E0801", line, col, q2("type `", kt(c, d.key), "` is private to module `", path, "`"), "mark it `pub` in its own file to use it from other modules"))
     }
-    if d.filled { return Ok(d.ty) }
-    var d2 = d
-    d2.filled = true
-    c.t.defs[di as usize] = d2
+    if args.len() as u32 != d.generic {
+        return Err(err("E0111", line, col, q3("type `", kt(c, d.key), "` takes ", num(d.generic as u64), " type argument(s), but ", num(args.len() as u64), " were given")))
+    }
+    var inst = di
+    var sb = no_subst()
+    if d.generic > 0 {
+        let lid = types.list(inout c.t, args)
+        let found = types.find_inst(c.t, di, lid)
+        if found != types.NOTY { return Ok(c.t.defs[found as usize].ty) }
+        let tn = ndm(c, d.md, d.node)
+        let gs = gparams(c, d.md, tn.c, tn.d)
+        for i in 0..gs.len() { subst_set(inout sb, gs[i], args[i]) }
+        var start = d.start
+        if d.is_enum {
+            start = c.t.variants.len() as u32
+            for i in 0..d.len {
+                let v = types.variant(c.t, d, i)
+                c.t.variants.push(types.Variant(v.key, v.arity, 0, 0))
+            }
+        }
+        inst = types.add_def(inout c.t, types.Def(d.key, d.md, d.public, d.node, d.is_enum, 0, 0, start, d.len, false, true, di, lid))
+    } else {
+        if d.filled { return Ok(d.ty) }
+        var d2 = d
+        d2.filled = true
+        c.t.defs[di as usize] = d2
+    }
     let saved_all = c.cur_all
     let saved_mod = c.cur_mod
+    let saved_sub = c.tsubst
     c.cur_all = false
     c.cur_mod = d.md
-    let r = fill_type(inout c, di)
+    c.tsubst = sb
+    let r = fill_type(inout c, inst)
     c.cur_all = saved_all
     c.cur_mod = saved_mod
+    c.tsubst = saved_sub
     match r {
         Ok(_) => {}
         Err(e) => { return Err(in_file(c, e, d.md)) }
     }
     // by-value recursion would have infinite size
-    let d3 = c.t.defs[di as usize]
+    let d3 = c.t.defs[inst as usize]
     var seen: Map[u32, bool] = Map.new()
     if d3.is_enum {
         for i in 0..d3.len {
             let v = types.variant(c.t, d3, i)
             for j in 0..v.flen {
-                if reaches(c, types.field(c.t, v.fstart, j).ty, di, inout seen) { return Err(recursive(c, d3)) }
+                if reaches(c, types.field(c.t, v.fstart, j).ty, inst, inout seen) { return Err(recursive(c, d3)) }
             }
         }
     } else {
         for j in 0..d3.len {
-            if reaches(c, types.field(c.t, d3.start, j).ty, di, inout seen) { return Err(recursive(c, d3)) }
+            if reaches(c, types.field(c.t, d3.start, j).ty, inst, inout seen) { return Err(recursive(c, d3)) }
         }
     }
-    Ok(d.ty)
+    Ok(d3.ty)
 }
 
 fn recursive(c: C, d: types.Def) -> diag.Diag uses ffi {
     let n = ndm(c, d.md, d.node)
-    errh("E0108", n.line, n.col, q("type `", kt(c, d.key), "` contains itself and would have infinite size"), "use an index into a List, or Box[T], to express recursion")
+    errh("E0108", n.line, n.col, q("type `", ts(c, d.ty), "` contains itself and would have infinite size"), "use an index into a List, or Box[T], to express recursion")
 }
 
 fn reaches(c: C, ty: u32, target: u32, inout seen: Map[u32, bool]) -> bool {
     let t = types.get(c.t, ty)
     if t.kind == types.T_ARRAY { return reaches(c, t.a, target, inout seen) }
+    if t.kind == types.T_TUPLE {
+        for x in types.elems(c.t, ty) {
+            if reaches(c, x, target, inout seen) { return true }
+        }
+        return false
+    }
     if t.kind != types.T_ENUM && t.kind != types.T_RECORD { return false }
     if t.a == target { return true }
     if seen.contains(t.a) { return false }
@@ -488,6 +868,221 @@ fn fill_type(inout c: C, di: u32) -> Result[bool, diag.Diag] uses ffi {
     Ok(true)
 }
 
+// ---- generic inference (check.rs unify_ast and friends), over type nodes of module m
+
+/// Does type node tn mention a type parameter of `gs` that `sb` doesn't bind?
+fn has_unbound(c: C, m: u32, tn: u32, sb: Subst, gs: List[u32]) -> bool {
+    let n = ndm(c, m, tn)
+    match n.kind {
+        ast.TName => n.b == 0 && has_sym(gs, n.a) && subst_get(sb, n.a) == NONE
+        ast.TArray => has_unbound(c, m, n.a, sb, gs)
+        ast.TUnit => false
+        _ => {
+            for i in 0..n.d {
+                if has_unbound(c, m, atm(c, m, n.c, i), sb, gs) { return true }
+            }
+            if n.kind == ast.TFn && n.g > 0 { return has_unbound(c, m, n.g - 1, sb, gs) }
+            false
+        }
+    }
+}
+
+/// The type arguments of the heap type `t` named by symbol `sym`, or None if they differ.
+fn heap_parts(c: C, sym: u32, t: types.Ty) -> Option[List[u32]] {
+    var parts: List[u32] = List.new()
+    if t.kind == types.T_LIST && sym == c.w.list {
+        parts.push(t.a)
+        return Some(parts)
+    }
+    if t.kind == types.T_BOX && sym == c.w.boxs {
+        parts.push(t.a)
+        return Some(parts)
+    }
+    if t.kind == types.T_MAP && sym == c.w.map {
+        parts.push(t.a)
+        parts.push(t.b)
+        return Some(parts)
+    }
+    None
+}
+
+/// Bind the type parameters `gs` in type node tn by matching it against `actual`. False on
+/// a conflict. Like the bootstrap, a name that isn't a type parameter matches anything.
+fn unify_ast(c: C, m: u32, tn: u32, actual: u32, inout sb: Subst, gs: List[u32]) -> bool {
+    let n = ndm(c, m, tn)
+    let t = types.get(c.t, actual)
+    match n.kind {
+        ast.TName => {
+            if n.b == 0 && has_sym(gs, n.a) {
+                let bound = subst_get(sb, n.a)
+                if bound != NONE { return bound == actual }
+                subst_set(inout sb, n.a, actual)
+            }
+            true
+        }
+        ast.TGeneric => {
+            var parts: List[u32] = List.new()
+            if n.b == 0 && has_sym(c.w.heap, n.a) {
+                match heap_parts(c, n.a, t) {
+                    Some(ps) => { parts = ps }
+                    None => { return false }
+                }
+            } else {
+                if t.kind != types.T_ENUM && t.kind != types.T_RECORD { return false }
+                let d = types.def_of(c.t, actual)
+                let k = resolve.name_key(c.p, m, n.a, n.b, n.line, n.col)
+                if c.t.defs[d.tmpl as usize].key != k { return false }
+                if d.args != types.NOTY { parts = types.list_items(c.t, d.args) }
+            }
+            if parts.len() as u32 != n.d { return false }
+            for i in 0..n.d {
+                if !unify_ast(c, m, atm(c, m, n.c, i), parts[i as usize], inout sb, gs) { return false }
+            }
+            true
+        }
+        ast.TArray => t.kind == types.T_ARRAY && t.b == n.b && unify_ast(c, m, n.a, t.a, inout sb, gs)
+        ast.TTuple => {
+            if t.kind != types.T_TUPLE || t.b != n.d { return false }
+            let es = types.elems(c.t, actual)
+            for i in 0..n.d {
+                if !unify_ast(c, m, atm(c, m, n.c, i), es[i as usize], inout sb, gs) { return false }
+            }
+            true
+        }
+        ast.TFn => {
+            if t.kind != types.T_FN { return false }
+            let ps = types.elems(c.t, actual)
+            if ps.len() as u32 != n.d { return false }
+            for i in 0..n.d {
+                if !unify_ast(c, m, atm(c, m, n.c, i), ps[i as usize], inout sb, gs) { return false }
+            }
+            if n.g > 0 { return unify_ast(c, m, n.g - 1, t.b, inout sb, gs) }
+            t.b == types.UNIT
+        }
+        _ => actual == types.UNIT
+    }
+}
+
+/// A type node as the bootstrap's show_ast spells it (module items mangled, type
+/// parameters `gens` as written).
+fn show_ast(c: C, m: u32, tn: u32, gens: List[u32]) -> List[u8] uses ffi {
+    let n = ndm(c, m, tn)
+    var out: List[u8] = List.new()
+    match n.kind {
+        ast.TName => { bytes.append(inout out, ty_name(c, m, n, gens)) }
+        ast.TGeneric => {
+            bytes.append(inout out, ty_name(c, m, n, gens))
+            out.push(91)
+            show_list(c, m, n.c, n.d, gens, inout out)
+            out.push(93)
+        }
+        ast.TArray => {
+            out.push(91)
+            bytes.append(inout out, show_ast(c, m, n.a, gens))
+            bytes.append(inout out, s("; "))
+            bytes.append(inout out, num(n.b as u64))
+            out.push(93)
+        }
+        ast.TTuple => {
+            out.push(40)
+            show_list(c, m, n.c, n.d, gens, inout out)
+            out.push(41)
+        }
+        ast.TFn => {
+            bytes.append(inout out, s("fn("))
+            show_list(c, m, n.c, n.d, gens, inout out)
+            out.push(41)
+            if n.g > 0 {
+                bytes.append(inout out, s(" -> "))
+                bytes.append(inout out, show_ast(c, m, n.g - 1, gens))
+            }
+        }
+        _ => { bytes.append(inout out, s("()")) }
+    }
+    out
+}
+
+fn show_list(c: C, m: u32, start: u32, len: u32, gens: List[u32], inout out: List[u8]) uses ffi {
+    for i in 0..len {
+        if i > 0 { bytes.append(inout out, s(", ")) }
+        bytes.append(inout out, show_ast(c, m, atm(c, m, start, i), gens))
+    }
+}
+
+fn ty_name(c: C, m: u32, n: ast.Node, gens: List[u32]) -> List[u8] uses ffi {
+    if n.b == 0 && has_sym(gens, n.a) { return nm(c, n.a) }
+    kt(c, resolve.name_key(c.p, m, n.a, n.b, n.line, n.col))
+}
+
+/// `text` with every `Self` replaced by `with` (Rust's str::replace).
+fn replace_self(text: List[u8], with: List[u8]) -> List[u8] {
+    var out: List[u8] = List.new()
+    var i: usize = 0
+    while i < text.len() {
+        if i + 4 <= text.len() && text[i] == 83 && text[i + 1] == 101 && text[i + 2] == 108 && text[i + 3] == 102 {
+            bytes.append(inout out, with)
+            i += 4
+        } else {
+            out.push(text[i])
+            i += 1
+        }
+    }
+    out
+}
+
+/// The method-table head of an impl target (check.rs head_of_ast).
+fn head_key(c: C, m: u32, tn: u32, gens: List[u32]) -> u64 {
+    let n = ndm(c, m, tn)
+    if n.kind == ast.TName || n.kind == ast.TGeneric {
+        if n.b == 0 && has_sym(gens, n.a) { return resolve.key(0, n.a) }
+        return resolve.name_key(c.p, m, n.a, n.b, n.line, n.col)
+    }
+    if n.kind == ast.TArray { return H_ARRAY }
+    if n.kind == ast.TFn { return H_FN }
+    H_UNIT
+}
+
+/// The method-table head of a type (check.rs head_of).
+fn head_of(c: C, ty: u32) -> u64 {
+    let t = types.get(c.t, ty)
+    match t.kind {
+        0 => resolve.key(0, c.w.ints[t.a as usize])
+        1 => resolve.key(0, c.w.s_bool)
+        2 => resolve.key(0, c.w.s_str)
+        3 => H_UNIT
+        4 => H_NEVER
+        5 => c.t.defs[c.t.defs[t.a as usize].tmpl as usize].key
+        6 => c.t.defs[c.t.defs[t.a as usize].tmpl as usize].key
+        7 => H_ARRAY
+        8 => H_UNIT
+        9 => resolve.key(0, c.w.s_string)
+        10 => resolve.key(0, c.w.list)
+        11 => resolve.key(0, c.w.map)
+        12 => resolve.key(0, c.w.boxs)
+        _ => H_FN
+    }
+}
+
+fn head_text(c: C, h: u64) -> List[u8] uses ffi {
+    if h == H_ARRAY { return s("[]") }
+    if h == H_UNIT { return s("()") }
+    if h == H_NEVER { return s("!") }
+    if h == H_FN { return s("fn") }
+    kt(c, h)
+}
+
+/// Does `ty` implement trait `tk`? (check.rs implements: the target of some impl unifies)
+fn implements(c: C, tk: u64, ty: u32) -> bool {
+    for im in c.timpls {
+        if im.tkey != tk { continue }
+        let n = ndm(c, im.md, im.node)
+        let gs = gparams(c, im.md, n.c, n.d)
+        var sb = no_subst()
+        if unify_ast(c, im.md, n.b, ty, inout sb, gs) { return true }
+    }
+    false
+}
+
 // ---- program
 
 fn well_known(inout names: intern.Interner) -> W uses ffi {
@@ -497,10 +1092,14 @@ fn well_known(inout names: intern.Interner) -> W uses ffi {
     for w in ["List", "Map", "Box", "Task", "Mutex", "Chan"] { heap.push(sym(inout names, w)) }
     var caps: List[u32] = List.new()
     for w in ["io", "clock", "fs", "net", "threads", "ffi", "python", "js", "wasm"] { caps.push(sym(inout names, w)) }
+    var hm: List[u32] = List.new()
+    for w in ["len", "is_empty", "push_str", "append", "push", "pop", "clear", "get", "contains", "insert", "remove",
+        "map", "filter", "for_each", "any", "all", "fold", "sum", "set", "from", "from_int", "new"] { hm.push(sym(inout names, w)) }
     W(ints, sym(inout names, "bool"), sym(inout names, "str"), sym(inout names, "Self"), sym(inout names, "String"), heap,
         sym(inout names, "print"), sym(inout names, "len"), sym(inout names, "now_ms"), sym(inout names, "panic"),
         sym(inout names, "spawn"), sym(inout names, "main"), sym(inout names, "Option"), sym(inout names, "Result"),
-        caps, caps[0], caps[1], caps[4])
+        caps, caps[0], caps[1], caps[4], heap[0], heap[1], heap[2],
+        sym(inout names, "Some"), sym(inout names, "None"), sym(inout names, "Ok"), sym(inout names, "Err"), hm)
 }
 
 fn sym(inout names: intern.Interner, w: str) -> u32 uses ffi {
@@ -511,29 +1110,11 @@ fn sym(inout names: intern.Interner, w: str) -> u32 uses ffi {
 fn new_checker(p: resolve.Program) -> C uses ffi {
     var p2 = p
     let w = well_known(inout p2.names)
-    C(p2, types.new(), ir.new(), pats.new(), w, Map.new(), Map.new(), Map.new(), Map.new(),
-        List.new(), List.new(), List.new(), List.new(), List.new(), List.new(),
-        0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0)
-}
-
-/// The prelude's Option[T] and Result[T, E] (generic, so only their names matter in v0).
-fn add_prelude(inout c: C) uses ffi {
-    let names = [["Option", "Some", "None"], ["Result", "Ok", "Err"]]
-    for i in 0..2 {
-        let row = names[i as usize]
-        let tsym = sym(inout c.p.names, row[0])
-        let start = c.t.variants.len() as u32
-        let a1 = sym(inout c.p.names, row[1])
-        let a2 = sym(inout c.p.names, row[2])
-        let arity2: u32 = if i == 0 { 0 } else { 1 }
-        c.t.variants.push(types.Variant(resolve.key(0, a1), 1, 0, 0))
-        c.t.variants.push(types.Variant(resolve.key(0, a2), arity2, 0, 0))
-        let g: u32 = if i == 0 { 1 } else { 2 }
-        let di = types.add_def(inout c.t, types.Def(resolve.key(0, tsym), resolve.NOMOD, true, NONE, true, g, 0, start, 2, true, false))
-        c.tmpl.insert(resolve.key(0, tsym), di)
-        c.variants.insert(resolve.key(0, a1), di)
-        c.variants.insert(resolve.key(0, a2), di)
-    }
+    C(p2, types.new(), ir.new(), pats.new(), w, Map.new(), Map.new(), Map.new(), Map.new(), Map.new(),
+        List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new(),
+        List.new(), List.new(), List.new(),
+        no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
+        0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false)
 }
 
 /// Every item of the program in the bootstrap's order, as (module, node) pairs.
@@ -581,7 +1162,6 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
         let n = ndm(c, it.m, it.node)
         if n.kind == ast.IConst && n.e == 1 { return Err(unsup(n.line, n.col, "comptime")) }
     }
-    add_prelude(inout c)
     // 1. type templates
     for it in its {
         let n = ndm(c, it.m, it.node)
@@ -596,7 +1176,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
         let start = c.t.variants.len() as u32
         var vlen: u32 = 0
         if is_enum { vlen = n.f }
-        let di = types.add_def(inout c.t, types.Def(k, it.m, n.b == 1, it.node, is_enum, n.d, 0, start, vlen, false, false))
+        let di = types.add_def(inout c.t, types.Def(k, it.m, n.b == 1, it.node, is_enum, n.d, 0, start, vlen, false, false, types.NOTY, types.EMPTY))
         if is_enum {
             var mine: List[u64] = List.new()
             for i in 0..n.f {
@@ -618,12 +1198,19 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
         if n.kind != ast.IType || n.d > 0 { continue }
         c.err_mod = it.m
         let di = mget(c.tmpl, resolve.item_key(c.p, it.m, n.a))
-        inst_type(inout c, di, n.line, n.col)?
+        inst_type(inout c, di, List.new(), n.line, n.col)?
     }
     // 3. traits
     for it in its {
         let n = ndm(c, it.m, it.node)
-        if n.kind == ast.ITrait { return Err(unsup(n.line, n.col, "traits")) }
+        if n.kind != ast.ITrait { continue }
+        c.err_mod = it.m
+        let k = resolve.item_key(c.p, it.m, n.a)
+        if c.traits.contains(k) || c.tmpl.contains(k) {
+            return Err(err("E0107", n.line, n.col, q("`", kt(c, k), "` is already defined")))
+        }
+        c.traits.insert(k, c.trs.len() as u32)
+        c.trs.push(it)
     }
     // 4. free functions
     for it in its {
@@ -644,24 +1231,22 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
         if n.a == c.w.main && (n.f > 0 || n.g > 0 || n.d > 0) {
             return Err(err("E0111", n.line, n.col, s("`main` takes no parameters and returns ()")))
         }
-        for i in 0..n.d {
-            let g = ndm(c, it.m, atm(c, it.m, n.c, i))
-            if g.d > 0 {
-                // there are no traits in v0, so every bound is unknown
-                let b = ndm(c, it.m, atm(c, it.m, g.c, 0))
-                let bk = resolve.name_key(c.p, it.m, b.a, b.b, b.line, b.col)
-                return Err(err("E0603", g.line, g.col, q("unknown trait `", kt(c, bk), "`")))
-            }
-        }
+        check_bounds_known(c, it.m, n.c, n.d)?
         c.fns.insert(k, c.fdefs.len() as u32)
-        c.fdefs.push(FnDef(k, it.m, it.node, ast.has(n.b, ast.FN_PUBLIC), n.d > 0, ast.has(n.b, ast.FN_UNSAFE), false, types.UNIT, 0, 0, 0, 0))
+        // every free function gets an IR function in order; a generic one never gets a body
+        // (its instances are functions of their own)
         let fname = kt(c, k)
-        ir.declare_fn(inout c.ir, fname, false)
+        let decl_ir = ir.declare_fn(inout c.ir, fname, false)
+        let irf = if n.d == 0 { decl_ir } else { NONE }
+        c.fdefs.push(FnDef(k, it.m, it.node, ast.has(n.b, ast.FN_PUBLIC), n.d > 0, ast.has(n.b, ast.FN_UNSAFE), irf, NONE))
     }
     // 5. impls
+    var concrete: List[u32] = List.new()
     for it in its {
         let n = ndm(c, it.m, it.node)
-        if n.kind == ast.IImpl { return Err(unsup(n.line, n.col, "impl blocks")) }
+        if n.kind != ast.IImpl { continue }
+        c.err_mod = it.m
+        register_impl(inout c, it.m, it.node, inout concrete)?
     }
     // constants and other code outside functions build into a scratch IR function
     let scratch = ir.declare_fn(inout c.ir, s("<const>"), false)
@@ -677,16 +1262,18 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
         c.locals = Map.new()
         c.scopes = List.new()
         c.marks = List.new()
+        reset_frames(inout c)
         push_scope(inout c)
         let k = resolve.item_key(c.p, it.m, n.a)
         if c.consts.contains(k) || c.fns.contains(k) {
             return Err(err("E0107", n.line, n.col, q("`", kt(c, k), "` is already defined")))
         }
         let ty = resolve_ty(inout c, it.m, n.c)?
+        let vn = ndm(c, it.m, n.d)
+        if owns(c, ty) { return Err(err("E0504", vn.line, vn.col, s("constants can't own heap memory; build the value in a function instead"))) }
         let mark = ir.open(c.ir)
         let v = expr(inout c, n.d, ty)?
         ir.close(inout c.ir, mark)
-        let vn = ndm(c, it.m, n.d)
         if v.ty != ty { return Err(mismatch(c, vn.line, vn.col, ty, v.ty)) }
         let tk = types.kind(c.t, ty)
         let ok = (tk == types.T_INT && v.has_k) || (tk == types.T_BOOL && vn.kind == ast.EBool) || (tk == types.T_STR && vn.kind == ast.EStr)
@@ -698,50 +1285,250 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
     }
     c.cur_all = true
     c.cur_mod = resolve.NOMOD
-    // 7. signatures of every concrete function, in order
-    var bodies: List[u32] = List.new()
+    // 7. signatures of every concrete function, then of every concrete method
     for fi in 0..c.fdefs.len() {
         let f = c.fdefs[fi]
-        if f.generic { continue }
+        if f.generic || f.inode != NONE { continue }
         c.err_mod = f.md
-        instantiate(inout c, fi as u32)?
-        if ndm(c, f.md, f.node).h > 0 { bodies.push(fi as u32) }
+        instantiate(inout c, fi as u32, no_subst())?
+    }
+    for fi in concrete {
+        let f = c.fdefs[fi as usize]
+        c.err_mod = f.md
+        c.cur_mod = f.md
+        c.cur_all = false
+        let target = ndm(c, f.md, f.inode).b
+        let self_ty = resolve_ty(inout c, f.md, target)?
+        c.cur_mod = resolve.NOMOD
+        c.cur_all = true
+        var sb = no_subst()
+        subst_set(inout sb, intern.S_SELF_TYPE, self_ty)
+        instantiate(inout c, fi, sb)?
     }
     // tests (checked with every capability; err_mod is left as it was, like the bootstrap)
     for it in its {
         let n = ndm(c, it.m, it.node)
         if n.kind == ast.ITest { check_test(inout c, it.m, n)? }
     }
-    // function bodies, last instantiated first
-    var i = bodies.len()
-    while i > 0 {
-        i -= 1
-        check_fn(inout c, bodies[i])?
+    // function bodies: the most recently instantiated first
+    while c.pending.len() > 0 {
+        let i: u32 = match c.pending.pop() {
+            Some(x) => x
+            None => 0
+        }
+        check_fn(inout c, i)?
     }
     c.err_mod = resolve.NOMOD
     if !c.fns.contains(resolve.key(0, c.w.main)) { return Err(err("E0112", 1, 1, s("no `main` function"))) }
     Ok(true)
 }
 
-/// Resolve function fi's signature once (check.rs instantiate).
-fn instantiate(inout c: C, fi: u32) -> Result[bool, diag.Diag] uses ffi {
+/// E0603 for a bound naming no trait, on generic parameters [start/len) of module m.
+fn check_bounds_known(c: C, m: u32, start: u32, len: u32) -> Result[bool, diag.Diag] uses ffi {
+    for i in 0..len {
+        let g = ndm(c, m, atm(c, m, start, i))
+        for j in 0..g.d {
+            let b = ndm(c, m, atm(c, m, g.c, j))
+            let bk = resolve.name_key(c.p, m, b.a, b.b, b.line, b.col)
+            if !c.traits.contains(bk) { return Err(err("E0603", g.line, g.col, q("unknown trait `", kt(c, bk), "`"))) }
+        }
+    }
+    Ok(true)
+}
+
+fn find_method(c: C, m: u32, start: u32, len: u32, name: u32) -> u32 {
+    for i in 0..len {
+        let id = atm(c, m, start, i)
+        if ndm(c, m, id).a == name { return id }
+    }
+    NONE
+}
+
+/// A trait method's return type or parameter type as compared by register_impl.
+fn norm(c: C, m: u32, tn1: u32, gens: List[u32], target: List[u8]) -> List[u8] uses ffi {
+    if tn1 == 0 { return s("()") }
+    replace_self(show_ast(c, m, tn1 - 1, gens), target)
+}
+
+fn concat_syms(a: List[u32], b: List[u32]) -> List[u32] {
+    var out = a
+    for x in b { out.push(x) }
+    out
+}
+
+/// Register the methods of impl node `id` of module m (check.rs register_impl).
+fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Result[bool, diag.Diag] uses ffi {
+    let im = ndm(c, m, id)
+    let igens = gparams(c, m, im.c, im.d)
+    let head = head_key(c, m, im.b, igens)
+    let target = show_ast(c, m, im.b, igens)
+    var names: List[u32] = List.new()
+    for i in 0..im.f {
+        let mn = ndm(c, m, atm(c, m, im.e, i))
+        if has_sym(names, mn.a) {
+            return Err(err("E0107", mn.line, mn.col, q("method `", nm(c, mn.a), "` is defined twice in this impl")))
+        }
+        names.push(mn.a)
+    }
+    if im.a > 0 {
+        let tn = ndm(c, m, im.a - 1)
+        let tk = resolve.name_key(c.p, m, tn.a, tn.b, tn.line, tn.col)
+        let ti = mget(c.traits, tk)
+        if ti == NONE { return Err(err("E0603", tn.line, tn.col, q("unknown trait `", kt(c, tk), "`"))) }
+        let tr = c.trs[ti as usize]
+        let trn = ndm(c, tr.m, tr.node)
+        for i in 0..trn.d {
+            let tm = ndm(c, tr.m, atm(c, tr.m, trn.c, i))
+            let mid = find_method(c, m, im.e, im.f, tm.a)
+            if mid == NONE {
+                return Err(err("E0602", im.line, im.col, q2("impl of `", kt(c, tk), "` is missing method `", nm(c, tm.a), "`")))
+            }
+            let mn = ndm(c, m, mid)
+            let mgens = concat_syms(igens, gparams(c, m, mn.c, mn.d))
+            let tgens = gparams(c, tr.m, tm.c, tm.d)
+            var differs = !bytes.eq(norm(c, m, mn.g, mgens, target), norm(c, tr.m, tm.g, tgens, target))
+            var k: u32 = 1
+            while k < mn.f && k < tm.f {
+                let a = ndm(c, m, atm(c, m, mn.e, k))
+                let b = ndm(c, tr.m, atm(c, tr.m, tm.e, k))
+                if !bytes.eq(norm(c, m, a.b + 1, mgens, target), norm(c, tr.m, b.b + 1, tgens, target)) { differs = true }
+                k += 1
+            }
+            if mn.f != tm.f { differs = true }
+            k = 0
+            while k < mn.f && k < tm.f {
+                let a = ndm(c, m, atm(c, m, mn.e, k))
+                let b = ndm(c, tr.m, atm(c, tr.m, tm.e, k))
+                if a.c != b.c { differs = true }
+                k += 1
+            }
+            if differs {
+                return Err(err("E0602", mn.line, mn.col, q2("method `", nm(c, mn.a), "` doesn't match the signature in trait `", kt(c, tk), "`")))
+            }
+        }
+        for i in 0..im.f {
+            let mn = ndm(c, m, atm(c, m, im.e, i))
+            if find_method(c, tr.m, trn.c, trn.d, mn.a) == NONE {
+                return Err(err("E0602", mn.line, mn.col, q2("trait `", kt(c, tk), "` has no method `", nm(c, mn.a), "`")))
+            }
+        }
+        for x in c.timpls {
+            if x.tkey == tk && bytes.eq(x.target, target) {
+                return Err(err("E0107", im.line, im.col, q2("`", kt(c, tk), "` is already implemented for `", target, "`")))
+            }
+        }
+        c.timpls.push(TImpl(tk, m, id, target))
+    }
+    for i in 0..im.f {
+        let mid = atm(c, m, im.e, i)
+        let mn = ndm(c, m, mid)
+        for x in c.meths {
+            if x.head == head && x.name == mn.a && bytes.eq(x.target, target) {
+                return Err(err("E0107", mn.line, mn.col, q2("method `", nm(c, mn.a), "` is already defined for `", target, "`")))
+            }
+        }
+        let fi = c.fdefs.len() as u32
+        c.fdefs.push(FnDef(resolve.key(0, mn.a), m, mid, true, mn.d > 0, ast.has(mn.b, ast.FN_UNSAFE), NONE, id))
+        if im.d == 0 && mn.d == 0 && mn.h > 0 { concrete.push(fi) }
+        c.meths.push(Meth(head, mn.a, fi, target))
+    }
+    Ok(true)
+}
+
+/// The type parameters of declaration fi, impl's first (call_decl's all_generics).
+fn all_generics(c: C, fi: u32) -> List[u32] {
     let f = c.fdefs[fi as usize]
-    if f.has_sig { return Ok(true) }
+    let n = ndm(c, f.md, f.node)
+    var out: List[u32] = List.new()
+    if f.inode != NONE {
+        let im = ndm(c, f.md, f.inode)
+        out = gparams(c, f.md, im.c, im.d)
+    }
+    for x in gparams(c, f.md, n.c, n.d) { out.push(x) }
+    out
+}
+
+/// The generic parameter nodes of declaration fi, impl's first.
+fn all_gparam_nodes(c: C, fi: u32) -> List[u32] {
+    let f = c.fdefs[fi as usize]
+    let n = ndm(c, f.md, f.node)
+    var out: List[u32] = List.new()
+    if f.inode != NONE {
+        let im = ndm(c, f.md, f.inode)
+        for i in 0..im.d { out.push(atm(c, f.md, im.c, i)) }
+    }
+    for i in 0..n.d { out.push(atm(c, f.md, n.c, i)) }
+    out
+}
+
+/// The IR name of an instance: `name`, `name[T1, ..]`, `Self.name[..]`.
+fn inst_name(c: C, fi: u32, sb: Subst) -> List[u8] uses ffi {
+    let f = c.fdefs[fi as usize]
+    var out: List[u8] = List.new()
+    if f.inode != NONE {
+        bytes.append(inout out, ts(c, subst_get(sb, intern.S_SELF_TYPE)))
+        out.push(46)
+    }
+    bytes.append(inout out, kt(c, f.key))
+    let n = ndm(c, f.md, f.node)
+    if n.d > 0 {
+        out.push(91)
+        let gs = gparams(c, f.md, n.c, n.d)
+        for i in 0..gs.len() {
+            if i > 0 { bytes.append(inout out, s(", ")) }
+            bytes.append(inout out, ts(c, subst_get(sb, gs[i])))
+        }
+        out.push(93)
+    }
+    out
+}
+
+/// The instance of declaration fi for substitution sb, resolving its signature the first
+/// time and queueing its body (check.rs instantiate).
+fn instantiate(inout c: C, fi: u32, sb: Subst) -> Result[u32, diag.Diag] uses ffi {
+    let f = c.fdefs[fi as usize]
+    var keyl: List[u32] = List.new()
+    if f.inode != NONE { keyl.push(subst_get(sb, intern.S_SELF_TYPE)) } else { keyl.push(NONE) }
+    for g in all_generics(c, fi) { keyl.push(subst_get(sb, g)) }
+    let lid = types.list(inout c.t, keyl)
+    let ik = (fi as u64) * 4294967296 + lid as u64
+    let found = mget(c.inst_ix, ik)
+    if found != NONE { return Ok(found) }
     let saved_all = c.cur_all
     let saved_mod = c.cur_mod
+    let saved_sub = c.tsubst
     c.cur_all = false
     c.cur_mod = f.md
+    c.tsubst = sb
     let r = signature(inout c, fi)
     c.cur_all = saved_all
     c.cur_mod = saved_mod
-    match r {
-        Ok(_) => Ok(true)
-        Err(d) => Err(in_file(c, d, f.md))
+    c.tsubst = saved_sub
+    var inst = match r {
+        Ok(x) => x
+        Err(d) => { return Err(in_file(c, d, f.md)) }
     }
+    inst.sstart = c.sub_s.len() as u32
+    inst.slen = sb.syms.len() as u32
+    for i in 0..sb.syms.len() {
+        c.sub_s.push(sb.syms[i])
+        c.sub_t.push(sb.tys[i])
+    }
+    if f.ir != NONE {
+        inst.ir = f.ir
+    } else {
+        let iname = inst_name(c, fi, sb)
+        inst.ir = ir.declare_fn(inout c.ir, iname, false)
+    }
+    let ii = c.insts.len() as u32
+    c.insts.push(inst)
+    c.inst_ix.insert(ik, ii)
+    if ndm(c, f.md, f.node).h > 0 { c.pending.push(ii) }
+    Ok(ii)
 }
 
-fn signature(inout c: C, fi: u32) -> Result[bool, diag.Diag] uses ffi {
-    var f = c.fdefs[fi as usize]
+fn signature(inout c: C, fi: u32) -> Result[Inst, diag.Diag] uses ffi {
+    let f = c.fdefs[fi as usize]
     let m = f.md
     let n = ndm(c, m, f.node)
     var ps: List[u32] = List.new()
@@ -761,16 +1548,11 @@ fn signature(inout c: C, fi: u32) -> Result[bool, diag.Diag] uses ffi {
         }
         caps.push(cn.a)
     }
-    f.pstart = c.ptys.len() as u32
-    f.plen = ps.len() as u32
+    let pstart = c.ptys.len() as u32
     for x in ps { c.ptys.push(x) }
-    f.cstart = c.capl.len() as u32
-    f.clen = caps.len() as u32
+    let cstart = c.capl.len() as u32
     for x in caps { c.capl.push(x) }
-    f.ret = ret
-    f.has_sig = true
-    c.fdefs[fi as usize] = f
-    Ok(true)
+    Ok(Inst(fi, 0, 0, NONE, ret, pstart, ps.len() as u32, cstart, caps.len() as u32))
 }
 
 fn caps_text(c: C, caps: List[u32]) -> List[u8] uses ffi {
@@ -780,6 +1562,15 @@ fn caps_text(c: C, caps: List[u32]) -> List[u8] uses ffi {
         bytes.append(inout out, nm(c, caps[i]))
     }
     out
+}
+
+fn reset_frames(inout c: C) {
+    c.frames = List.new()
+    c.fmarks = List.new()
+    c.firs = List.new()
+    c.fresh = Map.new()
+    c.loop_bases = List.new()
+    push_frame(inout c)
 }
 
 fn begin_body(inout c: C, m: u32, ret: u32, caps: List[u32], line: u32, col: u32) {
@@ -795,6 +1586,7 @@ fn begin_body(inout c: C, m: u32, ret: u32, caps: List[u32], line: u32, col: u32
 }
 
 fn check_test(inout c: C, m: u32, n: ast.Node) -> Result[bool, diag.Diag] uses ffi {
+    c.tsubst = no_subst()
     c.cur_all = true
     c.cur_mod = resolve.NOMOD
     c.unsafe_depth = 0
@@ -805,6 +1597,7 @@ fn check_test(inout c: C, m: u32, n: ast.Node) -> Result[bool, diag.Diag] uses f
     let f = ir.declare_fn(inout c.ir, tname, true)
     let ctext = caps_text(c, caps)
     ir.begin_fn(inout c.ir, f, types.UNIT, ctext)
+    reset_frames(inout c)
     let mark = ir.open(c.ir)
     block_body(inout c, n.b, Dest(D_DISCARD, 0), NONE)?
     let b = ir.close(inout c.ir, mark)
@@ -812,10 +1605,17 @@ fn check_test(inout c: C, m: u32, n: ast.Node) -> Result[bool, diag.Diag] uses f
     Ok(true)
 }
 
-fn check_fn(inout c: C, fi: u32) -> Result[bool, diag.Diag] uses ffi {
-    let f = c.fdefs[fi as usize]
+fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] uses ffi {
+    let inst = c.insts[ii as usize]
+    let f = c.fdefs[inst.fd as usize]
     let m = f.md
     let n = ndm(c, m, f.node)
+    var sb = no_subst()
+    for i in 0..inst.slen {
+        sb.syms.push(c.sub_s[(inst.sstart + i) as usize])
+        sb.tys.push(c.sub_t[(inst.sstart + i) as usize])
+    }
+    c.tsubst = sb
     c.cur_all = false
     c.cur_mod = m
     c.err_mod = m
@@ -823,27 +1623,29 @@ fn check_fn(inout c: C, fi: u32) -> Result[bool, diag.Diag] uses ffi {
     c.locals = Map.new()
     if c.p.mods[m as usize].pre > 0 { c.locals = resolve.fn_locals(c.p, m, n) }
     var caps: List[u32] = List.new()
-    for i in 0..f.clen { caps.push(c.capl[(f.cstart + i) as usize]) }
-    begin_body(inout c, m, f.ret, caps, n.end_line, n.end_col)
+    for i in 0..inst.clen { caps.push(c.capl[(inst.cstart + i) as usize]) }
+    begin_body(inout c, m, inst.ret, caps, n.end_line, n.end_col)
     let ctext = caps_text(c, caps)
-    ir.begin_fn(inout c.ir, fi, f.ret, ctext)
+    ir.begin_fn(inout c.ir, inst.ir, inst.ret, ctext)
+    reset_frames(inout c)
     for i in 0..n.f {
         let pn = ndm(c, m, atm(c, m, n.e, i))
-        let ty = c.ptys[(f.pstart + i) as usize]
+        let ty = c.ptys[(inst.pstart + i) as usize]
         let kind = if pn.c == 1 { ir.L_INOUT } else { ir.L_PARAM }
         let l = ir.local(inout c.ir, pn.a, ty, kind, pn.line)
-        declare(inout c, Local(resolve.key(0, pn.a), ty, false, pn.c == 1, false, pn.line, pn.col, l))?
+        declare(inout c, local_plain(resolve.key(0, pn.a), ty, pn.c == 1, pn.line, pn.col, l))?
     }
-    let dest = if f.ret == types.UNIT { Dest(D_DISCARD, 0) } else { Dest(D_RETURN, 0) }
+    let dest = if inst.ret == types.UNIT { Dest(D_DISCARD, 0) } else { Dest(D_RETURN, 0) }
     let body = n.h - 1
     let mark = ir.open(c.ir)
-    let t = block_body(inout c, body, dest, f.ret)?
+    let t = block_body(inout c, body, dest, inst.ret)?
     let b = ir.close(inout c.ir, mark)
-    if f.ret != types.UNIT && t != types.NEVER && t != f.ret {
+    if inst.ret != types.UNIT && t != types.NEVER && t != inst.ret {
         let bn = ndm(c, m, body)
-        return Err(errh("E0401", bn.end_line, bn.end_col, q2("function `", kt(c, f.key), "` must return ", ts(c, f.ret), ", but its body ends without producing one"), "add a `return` or end the body with an expression of that type"))
+        return Err(errh("E0401", bn.end_line, bn.end_col, q2("function `", kt(c, f.key), "` must return ", ts(c, inst.ret), ", but its body ends without producing one"), "add a `return` or end the body with an expression of that type"))
     }
     ir.end_fn(inout c.ir, n.f, b)
+    c.tsubst = no_subst()
     Ok(true)
 }
 
@@ -852,6 +1654,7 @@ fn check_fn(inout c: C, fi: u32) -> Result[bool, diag.Diag] uses ffi {
 fn block_body(inout c: C, b: u32, dest: Dest, exp: u32) -> Result[u32, diag.Diag] uses ffi {
     let n = nd(c, b)
     push_scope(inout c)
+    push_frame(inout c)
     var ty = types.UNIT
     for i in 0..n.d {
         let st = at(c, n.c, i)
@@ -863,6 +1666,7 @@ fn block_body(inout c: C, b: u32, dest: Dest, exp: u32) -> Result[u32, diag.Diag
         }
     }
     pop_scope(inout c)
+    pop_frame(inout c, ty != types.NEVER)
     Ok(ty)
 }
 
@@ -894,25 +1698,33 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] uses ffi {
                 let v = expr(inout c, n.c, declared)?
                 if fin == NONE { fin = v.ty }
                 check_bindable(c, v.ty, fin, init.line, init.col)?
+                let o = take(inout c, v, n.line)
                 l = ir.local(inout c.ir, n.a, fin, kind, n.line)
-                emit(inout c, ir.S_COPY, l, v.op, 0, 0, fin, n.line)
+                emit(inout c, ir.S_COPY, l, o, 0, 0, fin, n.line)
             }
-            declare(inout c, Local(resolve.key(0, n.a), fin, n.d == 1, false, true, n.line, n.col, l))?
+            register(inout c, l, fin)
+            declare(inout c, local_at(resolve.key(0, n.a), fin, n.d == 1, n.line, n.col, l))?
             Ok(types.UNIT)
         }
-        ast.SLetPat => Err(unsup(n.line, n.col, "tuple patterns"))
+        ast.SLetPat => let_pat(inout c, n)
         ast.SAssign => assign(inout c, n)
         ast.SExpr => compile_value(inout c, n.a, Dest(D_DISCARD, 0), NONE)
         ast.SWhile => {
             let lm = ir.open(c.ir)
+            let base = c.fmarks.len() as u32
+            // temporaries of the condition live for one iteration
+            push_frame(inout c)
             let cv = expr(inout c, n.a, types.BOOL)?
             if cv.ty != types.BOOL {
                 let cn = nd(c, n.a)
                 return Err(mismatch(c, cn.line, cn.col, types.BOOL, cv.ty))
             }
-            emit_exit_unless(inout c, cv.op, n.line)
             c.loops += 1
+            c.loop_bases.push(base)
+            emit_exit_unless(inout c, cv.op, base, n.line)
             block_body(inout c, n.b, Dest(D_DISCARD, 0), NONE)?
+            pop_frame(inout c, true)
+            c.loop_bases.pop()
             c.loops -= 1
             let body = ir.close(inout c.ir, lm)
             let step = ir.empty_block(inout c.ir)
@@ -924,6 +1736,7 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] uses ffi {
         ast.SReturn => {
             if n.a == 0 {
                 if c.ret != types.UNIT { return Err(err("E0401", n.line, n.col, q("`return` needs a value of type ", ts(c, c.ret), ""))) }
+                drop_frames_from(inout c, 0)
                 emit(inout c, ir.S_RETURN, 0, 0, 0, 0, 0, n.line)
                 return Ok(types.NEVER)
             }
@@ -954,16 +1767,49 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] uses ffi {
     }
 }
 
+/// `let PAT = init` (stmt.rs SK::LetPat).
+fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
+    let v = expr(inout c, n.c, NONE)?
+    let init = nd(c, n.c)
+    check_bindable(c, v.ty, v.ty, init.line, init.col)?
+    let acc = place_of_op(inout c, v.op, v.ty, n.line)
+    var lw = Lowered(List.new(), List.new())
+    let pir = lower_pat(inout c, n.a, v.ty, acc, inout lw)?
+    var rows = pats.empty(1)
+    var row: List[u32] = List.new()
+    row.push(pir)
+    pats.add_row(inout rows, row)
+    var tys: List[u32] = List.new()
+    tys.push(v.ty)
+    match pats.missing(c.pt, c.t, c.p.names, rows, tys) {
+        Some(w) => {
+            let pn = nd(c, n.a)
+            return Err(errh("E0101", pn.line, pn.col, q("refutable pattern in `let`: `", w[0], "` is not matched"), "use `match` or `if let` for patterns that can fail"))
+        }
+        None => {}
+    }
+    let kind = if n.d == 1 { ir.L_VAR } else { ir.L_LET }
+    for b in lw.binds {
+        let l = ir.local(inout c.ir, resolve.key_sym(b.key), b.ty, kind, b.line)
+        bind_value(inout c, l, b.ty, b.place)
+        declare(inout c, Local(b.key, b.ty, n.d == 1, false, true, b.line, b.col, l, n.line, n.col))?
+    }
+    Ok(types.UNIT)
+}
+
 fn loop_exit(inout c: C, n: ast.Node, kind: u32) -> Result[u32, diag.Diag] uses ffi {
     if c.loops == 0 { return Err(err("E0306", n.line, n.col, s("`break`/`continue` outside of a loop"))) }
+    let base: u32 = if c.loop_bases.len() > 0 { c.loop_bases[c.loop_bases.len() - 1] } else { 0 }
+    drop_frames_from(inout c, base)
     emit(inout c, kind, 0, 0, 0, 0, 0, n.line)
     Ok(types.NEVER)
 }
 
-/// `if !cond { break }` at the top of a loop body.
-fn emit_exit_unless(inout c: C, cond: u32, line: u32) {
+/// `if !cond { <drop frames base..>; break }` at the top of a loop body.
+fn emit_exit_unless(inout c: C, cond: u32, base: u32, line: u32) {
     let then = ir.empty_block(inout c.ir)
     let m = ir.open(c.ir)
+    drop_frames_from(inout c, base)
     emit(inout c, ir.S_BREAK, 0, 0, 0, 0, 0, line)
     let els = ir.close(inout c.ir, m)
     emit(inout c, ir.S_IF, 0, cond, then, els, 0, line)
@@ -995,12 +1841,15 @@ fn for_range(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
     let iv = read(inout c, pl, it, 0)
     let ev = read(inout c, end, it, 0)
     let cond = emit_val(inout c, ir.S_BINARY, ast.OP_LT, iv, ev, it, types.BOOL, 0)
-    emit_exit_unless(inout c, cond, n.line)
+    let base = c.fmarks.len() as u32
+    emit_exit_unless(inout c, cond, base, n.line)
     c.loops += 1
+    c.loop_bases.push(base)
     push_scope(inout c)
-    declare(inout c, Local(resolve.key(0, n.a), it, false, false, false, n.line, n.col, l))?
+    declare(inout c, local_plain(resolve.key(0, n.a), it, false, n.line, n.col, l))?
     block_body(inout c, n.d, Dest(D_DISCARD, 0), NONE)?
     pop_scope(inout c)
+    c.loop_bases.pop()
     c.loops -= 1
     let body = ir.close(inout c.ir, lm)
     let sm = ir.open(c.ir)
@@ -1014,32 +1863,52 @@ fn for_range(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
 }
 
 fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
-    let v = expr(inout c, n.b, NONE)?
-    let t = types.get(c.t, v.ty)
-    if t.kind != types.T_ARRAY {
+    let pv = place_expr(inout c, n.b)?
+    let t = types.get(c.t, pv.ty)
+    if t.kind != types.T_ARRAY && t.kind != types.T_LIST {
         let itn = nd(c, n.b)
-        return Err(errh("E0401", itn.line, itn.col, q("can't iterate over a value of type ", ts(c, v.ty), ""), "iterate over a List or an array, or use a range: `for i in 0..n`"))
+        return Err(errh("E0401", itn.line, itn.col, q("can't iterate over a value of type ", ts(c, pv.ty), ""), "iterate over a List or an array, or use a range: `for i in 0..n`"))
     }
+    let is_list = t.kind == types.T_LIST
     let et = t.a
-    // arr := iter; i := 0; loop { if !(i < len) break; x := arr[i]; body } step { i = i +% 1 }
-    let arr = place_of_op(inout c, v.op, v.ty, n.line)
+    // arrays are copied first; a List is iterated in place, its length read every time:
+    // i := 0; loop { if !(i < len) break; x := clone(seq[i]); body } step { i = i +% 1 }
+    var seq = pv.place
+    if !is_list {
+        var o = pv.op
+        if o == NONE { o = read(inout c, pv.place, pv.ty, 0) }
+        seq = place_of_op(inout c, o, pv.ty, n.line)
+    }
     let idx = tmp(inout c, types.USIZE, n.line)
     let zero = ir.op_int(inout c.ir, types.USIZE, 0)
     emit(inout c, ir.S_COPY, idx, zero, 0, 0, types.USIZE, n.line)
     let ip = ir.place_local(inout c.ir, idx, types.USIZE)
     let lm = ir.open(c.ir)
     let iv = read(inout c, ip, types.USIZE, 0)
-    let lim = ir.op_int(inout c.ir, types.USIZE, t.b as u64)
+    var lim = ir.op_int(inout c.ir, types.USIZE, t.b as u64)
+    if is_list {
+        let lv = read(inout c, seq, pv.ty, 0)
+        var largs: List[u32] = List.new()
+        largs.push(lv)
+        lim = builtin_op(inout c, ir.B_LEN, largs, types.USIZE, 0)
+    }
     let cond = emit_val(inout c, ir.S_BINARY, ast.OP_LT, iv, lim, types.USIZE, types.BOOL, 0)
-    emit_exit_unless(inout c, cond, n.line)
+    let base = c.fmarks.len() as u32
+    emit_exit_unless(inout c, cond, base, n.line)
     c.loops += 1
+    c.loop_bases.push(base)
+    push_frame(inout c)
     push_scope(inout c)
     let l = ir.local(inout c.ir, n.a, et, ir.L_LET, n.line)
-    let ep = ir.place_index(inout c.ir, arr, iv, et, 0)
-    emit(inout c, ir.S_READ, l, ep, 0, 0, et, 0)
-    declare(inout c, Local(resolve.key(0, n.a), et, false, false, false, n.line, n.col, l))?
+    var eline: u32 = 0
+    if is_list { eline = n.line }
+    let ep = ir.place_index(inout c.ir, seq, iv, et, eline)
+    bind_value(inout c, l, et, ep)
+    declare(inout c, local_plain(resolve.key(0, n.a), et, false, n.line, n.col, l))?
     block_body(inout c, n.d, Dest(D_DISCARD, 0), NONE)?
     pop_scope(inout c)
+    pop_frame(inout c, true)
+    c.loop_bases.pop()
     c.loops -= 1
     let body = ir.close(inout c.ir, lm)
     let sm = ir.open(c.ir)
@@ -1075,7 +1944,7 @@ fn check_assignable(c: C, target: u32, verb: str) -> Result[bool, diag.Diag] use
         var d = err("E0303", r.line, r.col, q2("cannot ", s(verb), " `", kt(c, r.key), "`: it is not mutable"))
         if v.has_decl {
             d.help = q("declare `", kt(c, r.key), "` with `var`")
-            d.fix = Some(diag.Fix(v.line, v.col, 3, s("var")))
+            d.fix = Some(diag.Fix(v.dline, v.dcol, 3, s("var")))
         } else {
             d.help = s("parameters are immutable; declare it `inout` to modify the caller's value")
         }
@@ -1094,13 +1963,16 @@ fn assign(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
         let t = compile_value(inout c, n.c, Dest(D_VAR, t0), tv.ty)?
         check_bindable(c, t, tv.ty, vn.line, vn.col)?
         let o = ir.op_local(inout c.ir, t0, tv.ty)
+        if owns(c, tv.ty) { emit_drop(inout c, tv.place, tv.ty) }
         emit(inout c, ir.S_STORE, 0, tv.place, o, 0, tv.ty, n.line)
         return Ok(types.UNIT)
     }
     let vv = expr(inout c, n.c, tv.ty)?
     if vv.ty != tv.ty { return Err(mismatch(c, vn.line, vn.col, tv.ty, vv.ty)) }
     if n.b == 0 {
-        emit(inout c, ir.S_STORE, 0, tv.place, vv.op, 0, tv.ty, n.line)
+        let o = take(inout c, vv, n.line)
+        if owns(c, tv.ty) { emit_drop(inout c, tv.place, tv.ty) }
+        emit(inout c, ir.S_STORE, 0, tv.place, o, 0, tv.ty, n.line)
         return Ok(types.UNIT)
     }
     let op = n.b - 1
@@ -1130,12 +2002,15 @@ fn compile_value(inout c: C, e: u32, dest: Dest, exp: u32) -> Result[u32, diag.D
     if v.ty == types.NEVER { return Ok(types.NEVER) }
     if dest.kind == D_RETURN {
         if v.ty != c.ret { return Err(mismatch(c, n.line, n.col, c.ret, v.ty)) }
-        emit(inout c, ir.S_RETURN, 0, v.op + 1, 0, 0, 0, n.line)
+        let o = take(inout c, v, n.line)
+        drop_frames_from(inout c, 0)
+        emit(inout c, ir.S_RETURN, 0, o + 1, 0, 0, 0, n.line)
         return Ok(v.ty)
     }
     if dest.kind == D_VAR {
         if v.ty == types.UNIT { return Err(err("E0401", n.line, n.col, s("cannot bind a value of type ()"))) }
-        emit(inout c, ir.S_COPY, dest.local, v.op, 0, 0, v.ty, n.line)
+        let o = take(inout c, v, n.line)
+        emit(inout c, ir.S_COPY, dest.local, o, 0, 0, v.ty, n.line)
         return Ok(v.ty)
     }
     Ok(types.UNIT)
@@ -1228,7 +2103,20 @@ fn lower_pat(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) -> Re
             lw.tests.push(Test(T_STR, place, ty, 0, fold.zero(), b))
             Ok(pats.ctor(inout c.pt, pats.C_STR, id, 0, List.new()))
         }
-        ast.PTuple => Err(err("E0401", n.line, n.col, q("tuple pattern used on a value of type ", ts(c, ty), "")))
+        ast.PTuple => {
+            if tk != types.T_TUPLE { return Err(err("E0401", n.line, n.col, q("tuple pattern used on a value of type ", ts(c, ty), ""))) }
+            let es = types.elems(c.t, ty)
+            if es.len() as u32 != n.d {
+                return Err(err("E0410", n.line, n.col, q2("tuple pattern has ", num(n.d as u64), " elements, but the value has ", num(es.len() as u64), "")))
+            }
+            var subs: List[u32] = List.new()
+            for j in 0..n.d {
+                let fp = ir.place_field(inout c.ir, place, j, es[j as usize])
+                let sp = at(c, n.c, j)
+                subs.push(lower_pat(inout c, sp, es[j as usize], fp, inout lw)?)
+            }
+            Ok(pats.ctor(inout c.pt, pats.C_SINGLE, 0, 0, subs))
+        }
         _ => {
             // PVariant
             let k = resolve.name_key(c.p, c.am, n.a, n.b, n.line, n.col)
@@ -1368,10 +2256,11 @@ fn finish_match(c: C, m: ast.Node, i: u32, dest: Dest, result: u32, t: u32) -> R
 fn arm_body(inout c: C, m: ast.Node, i: u32, binds: List[Bind], dest: Dest, exp: u32) -> Result[u32, diag.Diag] uses ffi {
     let arm = nd(c, at(c, m.c, i))
     push_scope(inout c)
+    push_frame(inout c)
     for b in binds {
         let l = ir.local(inout c.ir, resolve.key_sym(b.key), b.ty, ir.L_LET, b.line)
-        emit(inout c, ir.S_READ, l, b.place, 0, 0, b.ty, 0)
-        declare(inout c, Local(b.key, b.ty, false, false, false, b.line, b.col, l))?
+        bind_value(inout c, l, b.ty, b.place)
+        declare(inout c, local_plain(b.key, b.ty, false, b.line, b.col, l))?
     }
     var t = types.UNIT
     if arm.b == 1 {
@@ -1384,6 +2273,7 @@ fn arm_body(inout c: C, m: ast.Node, i: u32, binds: List[Bind], dest: Dest, exp:
             t = compile_value(inout c, arm.a, dest, exp)?
         }
     }
+    pop_frame(inout c, t != types.NEVER)
     pop_scope(inout c)
     Ok(t)
 }
@@ -1440,8 +2330,24 @@ fn test_val(inout c: C, t: Test, line: u32) -> u32 {
 
 // ---- expressions
 
-/// Check expression e against the expected type `exp` (NONE: no expectation).
+/// Is e a place (variable, field, element) rather than a fresh value? (expr.rs is_place)
+fn is_place(c: C, e: u32) -> bool {
+    let n = nd(c, e)
+    if n.kind == ast.EIdent { return lookup(c, ekey(c, n)) != NONE }
+    if n.kind == ast.EField { return static_tmpl(c, n) == NONE }
+    n.kind == ast.EIndex
+}
+
+/// Check expression e against the expected type `exp` (NONE: no expectation). An owned
+/// rvalue comes back as a registered temporary (expr.rs expr).
 fn expr(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
+    let v = expr_raw(inout c, e, exp)?
+    if !owns(c, v.ty) || is_place(c, e) || is_fresh(c, v.op) { return Ok(v) }
+    let line = nd(c, e).line
+    Ok(mk_fresh(inout c, v, line))
+}
+
+fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
     let n = nd(c, e)
     match n.kind {
         ast.EInt => {
@@ -1474,6 +2380,19 @@ fn expr(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
             ident_value(inout c, n, k, exp)
         }
         ast.EField => {
+            let di = static_tmpl(c, n)
+            if di != NONE {
+                let d = c.t.defs[di as usize]
+                if d.is_enum {
+                    let fk = resolve.key(0, n.b)
+                    match types.find_variant(c.t, d, fk) {
+                        Some(_) => { return construct(inout c, n.line, n.col, di, fk, 0, 0, exp) }
+                        None => {
+                            return Err(err("E0114", n.line, n.col, q2("enum `", kt(c, d.key), "` has no variant `", nm(c, n.b), "`")))
+                        }
+                    }
+                }
+            }
             let pv = place_expr(inout c, e)?
             if pv.op != NONE { return Ok(v_of(pv.ty, pv.op)) }
             let o = read(inout c, pv.place, pv.ty, 0)
@@ -1496,23 +2415,24 @@ fn expr(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
         }
         ast.EBinary => binary(inout c, n, exp)
         ast.ECall => call(inout c, n, exp)
-        ast.EMethod => method_call(inout c, n)
+        ast.EMethod => method_call(inout c, n, exp)
         ast.ECast => cast(inout c, n)
         ast.EArray => array_lit(inout c, n, exp)
         ast.ERepeat => {
             var exp_elem = NONE
             if exp != NONE && types.kind(c.t, exp) == types.T_ARRAY { exp_elem = types.get(c.t, exp).a }
             let v = expr(inout c, n.a, exp_elem)?
-            if exp_elem != NONE && v.ty != exp_elem {
-                let x = nd(c, n.a)
-                return Err(mismatch(c, x.line, x.col, exp_elem, v.ty))
+            let x = nd(c, n.a)
+            if exp_elem != NONE && v.ty != exp_elem { return Err(mismatch(c, x.line, x.col, exp_elem, v.ty)) }
+            if owns(c, v.ty) {
+                return Err(err("E0401", x.line, x.col, q("`[x; n]` can't repeat a ", ts(c, v.ty), " (it owns heap memory); build the array element by element")))
             }
             let ty = types.array(inout c.t, v.ty, n.b)
             Ok(v_of(ty, emit_val(inout c, ir.S_REPEAT, v.op, n.b, 0, ty, ty, n.line)))
         }
-        ast.ETuple => Err(unsup(n.line, n.col, "tuples"))
-        ast.ETry => Err(unsup(n.line, n.col, "`?`"))
-        ast.ELambda => Err(unsup(n.line, n.col, "closures"))
+        ast.ETuple => tuple_lit(inout c, n, exp)
+        ast.ETry => try_op(inout c, n)
+        ast.ELambda => lambda(inout c, n, exp)
         _ => {
             // EIf, EMatch, EBlock, EUnsafe in expression position
             Err(errh("E0103", n.line, n.col, s("`if`, `match` and blocks can only be used as a statement, a function's final expression, or the right side of `let`, `=` or `return`"), "bind the result first: `let x = match ... { ... }`, then use `x`"))
@@ -1533,20 +2453,19 @@ fn ident_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag
     let di = mget(c.variants, k)
     if di != NONE { return construct(inout c, n.line, n.col, di, k, 0, 0, exp) }
     if c.fns.contains(k) {
+        if exp != NONE && types.kind(c.t, exp) == types.T_FN { return fn_as_value(inout c, n, k, exp) }
         return Err(err("E0110", n.line, n.col, q2("`", kt(c, k), "` is a function; call it with `", kt(c, k), "(...)`")))
     }
     Err(err("E0110", n.line, n.col, q("unknown name `", kt(c, k), "`")))
 }
 
-/// `Enum.Variant` where `Enum` names an enum template (not a local or constant): the def.
-fn static_enum(c: C, n: ast.Node) -> u32 {
+/// `Type.x` where `Type` names a type template (not a local or constant): the template.
+fn static_tmpl(c: C, n: ast.Node) -> u32 {
     let b = nd(c, n.a)
     if b.kind != ast.EIdent { return NONE }
     let tk = ekey(c, b)
     if lookup(c, tk) != NONE || c.consts.contains(tk) { return NONE }
-    let di = mget(c.tmpl, tk)
-    if di == NONE || !c.t.defs[di as usize].is_enum { return NONE }
-    di
+    mget(c.tmpl, tk)
 }
 
 /// A place expression (variable, field, element), or a value held in a temporary.
@@ -1561,19 +2480,10 @@ fn place_expr(inout c: C, e: u32) -> Result[PV, diag.Diag] uses ffi {
         }
     }
     if n.kind == ast.EField {
-        let di = static_enum(c, n)
-        if di != NONE {
-            let fk = resolve.key(0, n.b)
-            let d = c.t.defs[di as usize]
-            match types.find_variant(c.t, d, fk) {
-                Some(_) => {
-                    let v = construct(inout c, n.line, n.col, di, fk, 0, 0, NONE)?
-                    return Ok(value_place(inout c, v, n.line))
-                }
-                None => {
-                    return Err(err("E0114", n.line, n.col, q2("enum `", kt(c, d.key), "` has no variant `", nm(c, n.b), "`")))
-                }
-            }
+        let di = static_tmpl(c, n)
+        if di != NONE && c.t.defs[di as usize].is_enum {
+            let v = expr(inout c, e, NONE)?
+            return Ok(value_place(inout c, v, n.line))
         }
         let b = place_expr(inout c, n.a)?
         let bt = types.get(c.t, b.ty)
@@ -1585,15 +2495,34 @@ fn place_expr(inout c: C, e: u32) -> Result[PV, diag.Diag] uses ffi {
                     return Ok(PV(ir.place_field(inout c.ir, b.place, i, ft), ft, NONE))
                 }
                 None => {
-                    return Err(err("E0113", n.line, n.col, q2("type `", kt(c, d.key), "` has no field `", nm(c, n.b), "`")))
+                    return Err(err("E0113", n.line, n.col, q2("type `", ts(c, b.ty), "` has no field `", nm(c, n.b), "`")))
                 }
             }
+        }
+        if bt.kind == types.T_TUPLE {
+            let es = types.elems(c.t, b.ty)
+            match bytes.parse_u64(nm(c, n.b)) {
+                Some(i) => {
+                    if i < es.len() as u64 {
+                        let ft = es[i as usize]
+                        return Ok(PV(ir.place_field(inout c.ir, b.place, i as u32, ft), ft, NONE))
+                    }
+                }
+                None => {}
+            }
+            return Err(err("E0113", n.line, n.col, q2("tuple ", ts(c, b.ty), " has no element `", nm(c, n.b), "`")))
         }
         return Err(err("E0113", n.line, n.col, q("type ", ts(c, b.ty), " has no fields")))
     }
     if n.kind == ast.EIndex {
         let b = place_expr(inout c, n.a)?
         let bt = types.get(c.t, b.ty)
+        if bt.kind == types.T_LIST {
+            let vi = expr(inout c, n.b, types.USIZE)?
+            let x = nd(c, n.b)
+            if vi.ty != types.USIZE { return Err(mismatch(c, x.line, x.col, types.USIZE, vi.ty)) }
+            return Ok(PV(ir.place_index(inout c.ir, b.place, vi.op, bt.a, n.line), bt.a, NONE))
+        }
         if bt.kind != types.T_ARRAY {
             return Err(err("E0401", n.line, n.col, q("cannot index a value of type ", ts(c, b.ty), "")))
         }
@@ -1642,6 +2571,36 @@ fn negate(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
     Ok(v_of(v.ty, emit_val(inout c, ir.S_UNARY, ir.U_NEG, v.op, 0, v.ty, v.ty, n.line)))
 }
 
+/// Does `==` work on this type? (heap.rs eq_supported: Maps have no structural equality)
+fn eq_supported(c: C, ty: u32, shallow: bool) -> bool {
+    let t = types.get(c.t, ty)
+    if t.kind == types.T_MAP || t.kind == types.T_FN { return false }
+    if t.kind == types.T_ENUM || t.kind == types.T_RECORD {
+        if shallow { return true }
+        let d = c.t.defs[t.a as usize]
+        if d.is_enum {
+            for i in 0..d.len {
+                let v = types.variant(c.t, d, i)
+                for j in 0..v.flen {
+                    if !eq_supported(c, types.field(c.t, v.fstart, j).ty, true) { return false }
+                }
+            }
+            return true
+        }
+        for j in 0..d.len {
+            if !eq_supported(c, types.field(c.t, d.start, j).ty, true) { return false }
+        }
+        return true
+    }
+    if t.kind == types.T_ARRAY || t.kind == types.T_LIST || t.kind == types.T_BOX { return eq_supported(c, t.a, true) }
+    if t.kind == types.T_TUPLE {
+        for x in types.elems(c.t, ty) {
+            if !eq_supported(c, x, true) { return false }
+        }
+    }
+    true
+}
+
 fn binary(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
     let op = n.a
     let ln = nd(c, n.b)
@@ -1653,9 +2612,11 @@ fn binary(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
         let t = tmp(inout c, types.BOOL, n.line)
         emit(inout c, ir.S_COPY, t, vl.op, 0, 0, types.BOOL, n.line)
         let rm = ir.open(c.ir)
+        push_frame(inout c)
         let vr = expr(inout c, n.c, types.BOOL)?
         if vr.ty != types.BOOL { return Err(mismatch(c, rn.line, rn.col, types.BOOL, vr.ty)) }
         emit(inout c, ir.S_COPY, t, vr.op, 0, 0, types.BOOL, n.line)
+        pop_frame(inout c, true)
         let rb = ir.close(inout c.ir, rm)
         let eb = ir.empty_block(inout c.ir)
         let tv = ir.op_local(inout c.ir, t, types.BOOL)
@@ -1691,6 +2652,9 @@ fn binary(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
             return fold_arith(inout c, n, op, ik, ty, vl.k, vr.k)
         }
         return Ok(v_of(ty, emit_val(inout c, ir.S_BINARY, op, vl.op, vr.op, ty, ty, n.line)))
+    }
+    if (op == ast.OP_EQ || op == ast.OP_NE) && !eq_supported(c, ty, false) {
+        return Err(err("E0401", n.line, n.col, q("`==` is not supported for ", ts(c, ty), " (Maps have no structural equality)")))
     }
     let tk = types.kind(c.t, ty)
     if tk == types.T_UNIT || tk == types.T_NEVER {
@@ -1750,7 +2714,7 @@ fn array_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi
     var exp_elem = NONE
     if exp != NONE && types.kind(c.t, exp) == types.T_ARRAY { exp_elem = types.get(c.t, exp).a }
     if n.d == 0 { return Err(err("E0401", n.line, n.col, s("cannot infer the element type of an empty array"))) }
-    var ops: List[u32] = List.new()
+    var vs: List[V] = List.new()
     var first = NONE
     for i in 0..n.d {
         let x = at(c, n.c, i)
@@ -1762,11 +2726,108 @@ fn array_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi
             return Err(mismatch(c, xn.line, xn.col, want, v.ty))
         }
         if first == NONE { first = v.ty }
-        ops.push(v.op)
+        vs.push(v)
     }
+    var ops: List[u32] = List.new()
+    for v in vs { ops.push(take(inout c, v, n.line)) }
     let ty = types.array(inout c.t, first, n.d)
     let start = ir.list(inout c.ir, ops)
     Ok(v_of(ty, emit_val(inout c, ir.S_ARRAY, 0, start, n.d, ty, ty, n.line)))
+}
+
+fn tuple_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
+    var hints: List[u32] = List.new()
+    if exp != NONE && types.kind(c.t, exp) == types.T_TUPLE && types.get(c.t, exp).b == n.d { hints = types.elems(c.t, exp) }
+    var vs: List[V] = List.new()
+    var tys: List[u32] = List.new()
+    for i in 0..n.d {
+        let x = at(c, n.c, i)
+        var h = NONE
+        if hints.len() > 0 { h = hints[i as usize] }
+        let v = expr(inout c, x, h)?
+        if v.ty == types.UNIT || v.ty == types.NEVER {
+            let xn = nd(c, x)
+            return Err(err("E0401", xn.line, xn.col, s("tuple elements can't be ()")))
+        }
+        tys.push(v.ty)
+        vs.push(v)
+    }
+    let ty = types.tuple(inout c.t, tys)
+    var ops: List[u32] = List.new()
+    for v in vs { ops.push(take(inout c, v, n.line)) }
+    let start = ir.list(inout c.ir, ops)
+    Ok(v_of(ty, emit_val(inout c, ir.S_TUPLE, 0, start, n.d, ty, ty, n.line)))
+}
+
+/// `x?` on a Result or Option (expr.rs try_op): on Err/None, drop everything and return it.
+fn try_op(inout c: C, n: ast.Node) -> Result[V, diag.Diag] uses ffi {
+    if c.lam_expr { return Err(unsup(n.line, n.col, "`?` in a closure without a block body")) }
+    let v = expr(inout c, n.a, NONE)?
+    let vt = types.get(c.t, v.ty)
+    if vt.kind != types.T_ENUM {
+        return Err(err("E0406", n.line, n.col, q("`?` needs a Result or Option, found ", ts(c, v.ty), "")))
+    }
+    let d = types.def_of(c.t, v.ty)
+    let tkey = c.t.defs[d.tmpl as usize].key
+    let is_result = is_root(tkey, c.w.result)
+    if !is_result && !is_root(tkey, c.w.option) {
+        return Err(err("E0406", n.line, n.col, q("`?` needs a Result or Option, found ", ts(c, v.ty), "")))
+    }
+    let tname = kt(c, tkey)
+    let rt = types.get(c.t, c.ret)
+    var same = false
+    if rt.kind == types.T_ENUM { same = c.t.defs[types.def_of(c.t, c.ret).tmpl as usize].key == tkey }
+    if !same {
+        return Err(err("E0406", n.line, n.col, q3("`?` on a ", tname, " needs the enclosing function to return a ", tname, ", but it returns ", ts(c, c.ret), "")))
+    }
+    let args = types.list_items(c.t, d.args)
+    if is_result {
+        let rargs = types.list_items(c.t, types.def_of(c.t, c.ret).args)
+        if args[1] != rargs[1] {
+            return Err(err("E0401", n.line, n.col, q2("`?` can't convert the error type ", ts(c, args[1]), " into ", ts(c, rargs[1]), "")))
+        }
+    }
+    // t := x (owned); if t is Err/None { return Err(move t.error) / None } ; value := move t.value
+    let o = take(inout c, v, n.line)
+    let tp = place_of_op(inout c, o, v.ty, n.line)
+    var bad = c.w.none
+    var good = c.w.some
+    if is_result {
+        bad = c.w.errv
+        good = c.w.ok
+    }
+    let bad_i = variant_index(c, v.ty, bad)
+    let good_i = variant_index(c, v.ty, good)
+    let rbad_i = variant_index(c, c.ret, bad)
+    let isbad = emit_val(inout c, ir.S_TAG, tp, bad_i, 0, v.ty, types.BOOL, n.line)
+    let bm = ir.open(c.ir)
+    var rargs: List[u32] = List.new()
+    if is_result {
+        let et = args[1]
+        let ep = ir.place_payload(inout c.ir, tp, bad_i, 0, et)
+        rargs.push(emit_val(inout c, ir.S_MOVE, ep, 0, 0, et, et, n.line))
+    }
+    let st = ir.list(inout c.ir, rargs)
+    let rty = c.ret
+    let rv = emit_val(inout c, ir.S_VARIANT, rbad_i, st, rargs.len() as u32, rty, rty, n.line)
+    drop_frames_from(inout c, 0)
+    emit(inout c, ir.S_RETURN, 0, rv + 1, 0, 0, 0, n.line)
+    let then = ir.close(inout c.ir, bm)
+    let els = ir.empty_block(inout c.ir)
+    emit(inout c, ir.S_IF, 0, isbad, then, els, 0, n.line)
+    let vt0 = args[0]
+    let vp = ir.place_payload(inout c.ir, tp, good_i, 0, vt0)
+    if owns(c, vt0) { return Ok(v_of(vt0, emit_val(inout c, ir.S_MOVE, vp, 0, 0, vt0, vt0, n.line))) }
+    Ok(v_of(vt0, read(inout c, vp, vt0, 0)))
+}
+
+/// The index of the variant named `sym` (an unprefixed name) of enum type ty.
+fn variant_index(c: C, ty: u32, sym: u32) -> u32 {
+    let vi: u32 = match types.find_variant(c.t, types.def_of(c.t, ty), resolve.key(0, sym)) {
+        Some(i) => i
+        None => 0
+    }
+    vi
 }
 
 // ---- calls
@@ -1783,7 +2844,10 @@ fn call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
     let li = lookup(c, k)
     if li != NONE {
         let v = c.scopes[li as usize]
-        return Err(err("E0112", n.line, n.col, q2("`", kt(c, k), "` has type ", ts(c, v.ty), ", so it can't be called")))
+        let pl = ir.place_local(inout c.ir, v.ir, v.ty)
+        let fv = v_of(v.ty, read(inout c, pl, v.ty, 0))
+        let label = kt(c, k)
+        return call_value(inout c, n, label, fv)
     }
     let fi = mget(c.fns, k)
     if fi == NONE { return Err(err("E0112", n.line, n.col, q("unknown function `", kt(c, k), "`"))) }
@@ -1791,48 +2855,89 @@ fn call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
     if !visible(c, f.md, f.public) {
         return Err(errh("E0801", n.line, n.col, q2("function `", kt(c, k), "` is private to module `", c.p.mods[f.md as usize].path, "`"), "mark it `pub` in its own file to use it from other modules"))
     }
-    call_decl(inout c, n, fi)
+    let label = kt(c, k)
+    call_decl(inout c, n, label, fi, no_subst(), no_recv(), exp, false)
 }
 
-/// Construct record `di` (vkey = NONE) or variant `vkey` of enum `di` from the arguments
-/// [start/len) (check.rs construct).
+/// The field type nodes (in the template's module) of record di or of variant `vkey` of
+/// enum di.
+fn field_nodes(c: C, di: u32, vkey: u64) -> List[u32] {
+    let d = c.t.defs[di as usize]
+    let tn = ndm(c, d.md, d.node)
+    var out: List[u32] = List.new()
+    if vkey == NONE as u64 {
+        for i in 0..tn.f { out.push(ndm(c, d.md, atm(c, d.md, tn.e, i)).b) }
+        return out
+    }
+    for i in 0..tn.f {
+        let vn = ndm(c, d.md, atm(c, d.md, tn.e, i))
+        if resolve.item_key(c.p, d.md, vn.a) == vkey {
+            for j in 0..vn.d { out.push(ndm(c, d.md, atm(c, d.md, vn.c, j)).b) }
+        }
+    }
+    out
+}
+
+/// Construct record template `di` (vkey = NONE) or variant `vkey` of enum template `di`
+/// from the arguments [start/len), inferring type arguments from the expected type and
+/// the arguments (expr.rs construct).
 fn construct(inout c: C, line: u32, col: u32, di: u32, vkey: u64, start: u32, len: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
     let d = c.t.defs[di as usize]
-    var vi = NONE
-    var arity: u32 = 0
-    if vkey != NONE as u64 {
-        match types.find_variant(c.t, d, vkey) {
-            Some(i) => { vi = i }
-            None => {}
-        }
-        arity = types.variant(c.t, d, vi).arity
-    } else {
-        arity = ndm(c, d.md, d.node).f
-    }
+    let fas = field_nodes(c, di, vkey)
     let label = if vkey != NONE as u64 { kt(c, vkey) } else { kt(c, d.key) }
-    if len != arity {
-        return Err(err("E0405", line, col, q3("`", label, "` takes ", num(arity as u64), " value(s), but ", num(len as u64), " were given")))
+    if len != fas.len() as u32 {
+        return Err(err("E0405", line, col, q3("`", label, "` takes ", num(fas.len() as u64), " value(s), but ", num(len as u64), " were given")))
     }
-    if d.generic > 0 { return Err(unsup(line, col, "generic types")) }
-    var ops: List[u32] = List.new()
+    let tn = ndm(c, d.md, d.node)
+    let gs = gparams(c, d.md, tn.c, tn.d)
+    var sb = no_subst()
+    if exp != NONE {
+        let et = types.get(c.t, exp)
+        if et.kind == types.T_ENUM || et.kind == types.T_RECORD {
+            let ed = types.def_of(c.t, exp)
+            if ed.tmpl == di && ed.args != types.NOTY {
+                let args = types.list_items(c.t, ed.args)
+                for i in 0..gs.len() {
+                    if i < args.len() { subst_set(inout sb, gs[i], args[i]) }
+                }
+            }
+        }
+    }
+    var vs: List[V] = List.new()
     for i in 0..len {
         let a = nd(c, at(c, start, i))
         let x = nd(c, a.a)
         if a.b == 1 { return Err(err("E0304", x.line, x.col, s("`inout` is not allowed here"))) }
-        var tnode: u32 = 0
-        if vi != NONE {
-            tnode = types.field(c.t, types.variant(c.t, d, vi).fstart, i).tnode
-        } else {
-            tnode = types.field(c.t, d.start, i).tnode
-        }
-        let hint = resolve_ty(inout c, d.md, tnode)?
+        let fa = fas[i as usize]
+        var hint = NONE
+        if !has_unbound(c, d.md, fa, sb, gs) { hint = resolve_with(inout c, d.md, fa, sb)? }
         let v = expr(inout c, a.a, hint)?
-        if v.ty != hint { return Err(mismatch(c, x.line, x.col, hint, v.ty)) }
-        ops.push(v.op)
+        if hint != NONE {
+            if v.ty != hint { return Err(mismatch(c, x.line, x.col, hint, v.ty)) }
+        } else if !unify_ast(c, d.md, fa, v.ty, inout sb, gs) {
+            return Err(err("E0401", x.line, x.col, q2("this value has type ", ts(c, v.ty), ", which doesn't fit field type `", show_ast(c, d.md, fa, gs), "`")))
+        }
+        vs.push(v)
     }
-    let ty = inst_type(inout c, di, line, col)?
+    var targs: List[u32] = List.new()
+    for g in gs {
+        let t = subst_get(sb, g)
+        if t == NONE {
+            return Err(errh("E0409", line, col, q2("cannot infer type parameter `", nm(c, g), "` of `", kt(c, d.key), "`"), "add a type annotation, e.g. `let x: Option[i32] = None`"))
+        }
+        targs.push(t)
+    }
+    let ty = inst_type(inout c, di, targs, line, col)?
+    var ops: List[u32] = List.new()
+    for v in vs { ops.push(take(inout c, v, line)) }
     let st = ir.list(inout c.ir, ops)
-    if vi != NONE { return Ok(v_of(ty, emit_val(inout c, ir.S_VARIANT, vi, st, len, ty, ty, line))) }
+    if vkey != NONE as u64 {
+        let vi: u32 = match types.find_variant(c.t, types.def_of(c.t, ty), vkey) {
+            Some(i) => i
+            None => 0
+        }
+        return Ok(v_of(ty, emit_val(inout c, ir.S_VARIANT, vi, st, len, ty, ty, line)))
+    }
     Ok(v_of(ty, emit_val(inout c, ir.S_RECORD, 0, st, len, ty, ty, line)))
 }
 
@@ -1872,20 +2977,61 @@ fn cap_error(c: C, line: u32, col: u32, what: List[u8], cap: u32) -> diag.Diag u
     d
 }
 
-fn call_decl(inout c: C, n: ast.Node, fi: u32) -> Result[V, diag.Diag] uses ffi {
+/// A method call's receiver: its expression and place (`has` = false for none).
+type Recv = { has: bool, e: u32, pv: PV }
+
+fn no_recv() -> Recv { Recv(false, 0, PV(0, 0, NONE)) }
+
+/// Call declaration fi with the arguments of call node n (ECall or EMethod), inferring its
+/// type parameters (expr.rs call_decl).
+fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv: Recv, exp: u32, is_method: bool) -> Result[V, diag.Diag] uses ffi {
     let f = c.fdefs[fi as usize]
     let fm = f.md
     let fnode = ndm(c, fm, f.node)
-    let label = kt(c, f.key)
-    if n.d != fnode.f {
-        return Err(err("E0405", n.line, n.col, q3("`", label, "` takes ", num(fnode.f as u64), " argument(s), but ", num(n.d as u64), " were given")))
+    var sb = sb0
+    var gs = gparams(c, fm, fnode.c, fnode.d)
+    var target: u32 = NONE
+    if f.inode != NONE {
+        let im = ndm(c, fm, f.inode)
+        target = im.b
+        for g in gparams(c, fm, im.c, im.d) { gs.push(g) }
+        gs.push(intern.S_SELF_TYPE)
     }
-    if f.generic { return Err(unsup(n.line, n.col, "generic functions")) }
+    let gnodes = all_gparam_nodes(c, fi)
+    var has_self = false
+    if fnode.f > 0 { has_self = ndm(c, fm, atm(c, fm, fnode.e, 0)).a == intern.S_SELF }
+    if recv.has && !has_self {
+        return Err(err("E0115", n.line, n.col, q2("`", label, "` is an associated function; call it as `Type.", nm(c, fnode.a), "(...)`")))
+    }
+    if !recv.has && has_self && is_method {
+        return Err(err("E0115", n.line, n.col, q2("`", label, "` takes `self`; call it as `value.", nm(c, fnode.a), "(...)`")))
+    }
+    let skip: u32 = if recv.has { 1 } else { 0 }
+    let np = fnode.f - skip
+    if n.d != np {
+        return Err(err("E0405", n.line, n.col, q3("`", label, "` takes ", num(np as u64), " argument(s), but ", num(n.d as u64), " were given")))
+    }
+    // bind type parameters from the expected type, then from the receiver type
+    if fnode.g > 0 && exp != NONE {
+        var s2 = sb
+        if unify_ast(c, fm, fnode.g - 1, exp, inout s2, gs) { sb = s2 }
+    }
+    if target != NONE {
+        let st = subst_get(sb, intern.S_SELF_TYPE)
+        if st != NONE {
+            var s2 = sb
+            if unify_ast(c, fm, target, st, inout s2, gs) { sb = s2 }
+        }
+    }
     // exclusivity of inout borrows
     var roots: List[u64] = List.new()
+    if recv.has && ndm(c, fm, atm(c, fm, fnode.e, 0)).c == 1 {
+        let r = root(c, recv.e)
+        if r.ok { roots.push(r.key) }
+    }
     for i in 0..n.d {
         let a = nd(c, at(c, n.c, i))
-        let pn = ndm(c, fm, atm(c, fm, fnode.e, i))
+        let pn = ndm(c, fm, atm(c, fm, fnode.e, i + skip))
         if pn.c == 1 && a.b == 1 {
             let r = root(c, a.a)
             if r.ok {
@@ -1898,7 +3044,7 @@ fn call_decl(inout c: C, n: ast.Node, fi: u32) -> Result[V, diag.Diag] uses ffi 
     }
     for i in 0..n.d {
         let a = nd(c, at(c, n.c, i))
-        let pn = ndm(c, fm, atm(c, fm, fnode.e, i))
+        let pn = ndm(c, fm, atm(c, fm, fnode.e, i + skip))
         if pn.c != 1 {
             var ids: List[u64] = List.new()
             idents(c, a.a, inout ids)
@@ -1911,11 +3057,36 @@ fn call_decl(inout c: C, n: ast.Node, fi: u32) -> Result[V, diag.Diag] uses ffi 
         }
     }
     var args: List[u32] = List.new()
+    if recv.has {
+        if ndm(c, fm, atm(c, fm, fnode.e, 0)).c == 1 {
+            check_assignable(c, recv.e, "borrow as inout")?
+            args.push(recv.pv.place + ir.ARG_PLACE)
+        } else if recv.pv.op != NONE {
+            args.push(recv.pv.op)
+        } else {
+            args.push(read(inout c, recv.pv.place, recv.pv.ty, 0))
+        }
+    }
     for i in 0..n.d {
         let a = nd(c, at(c, n.c, i))
         let x = nd(c, a.a)
-        let pn = ndm(c, fm, atm(c, fm, fnode.e, i))
-        let hint = resolve_ty(inout c, fm, pn.b)?
+        let pn = ndm(c, fm, atm(c, fm, fnode.e, i + skip))
+        var hint = NONE
+        if !has_unbound(c, fm, pn.b, sb, gs) { hint = resolve_with(inout c, fm, pn.b, sb)? }
+        let ptn = ndm(c, fm, pn.b)
+        if hint == NONE && ptn.kind == ast.TFn && x.kind == ast.ELambda {
+            var hp: List[u32] = List.new()
+            for j in 0..ptn.d {
+                let pt = atm(c, fm, ptn.c, j)
+                if has_unbound(c, fm, pt, sb, gs) { hp.push(NONE) } else { hp.push(resolve_with(inout c, fm, pt, sb)?) }
+            }
+            var hr = types.UNIT
+            if ptn.g > 0 {
+                hr = NONE
+                if !has_unbound(c, fm, ptn.g - 1, sb, gs) { hr = resolve_with(inout c, fm, ptn.g - 1, sb)? }
+            }
+            c.lam = LamHint(true, hp, hr)
+        }
         if pn.c == 1 && a.b == 0 {
             var d = err("E0304", x.line, x.col, q("parameter `", nm(c, pn.a), "` is `inout`; pass the argument as `inout ...`"))
             d.fix = Some(diag.Fix(x.line, x.col, 0, s("inout ")))
@@ -1924,15 +3095,56 @@ fn call_decl(inout c: C, n: ast.Node, fi: u32) -> Result[V, diag.Diag] uses ffi 
         if pn.c != 1 && a.b == 1 {
             return Err(err("E0304", x.line, x.col, q("parameter `", nm(c, pn.a), "` is not `inout`; remove the `inout`")))
         }
+        var ty: u32 = 0
         if pn.c == 1 {
             check_assignable(c, a.a, "borrow as inout")?
             let pv = place_expr(inout c, a.a)?
-            if pv.ty != hint { return Err(mismatch(c, x.line, x.col, hint, pv.ty)) }
+            ty = pv.ty
             args.push(pv.place + ir.ARG_PLACE)
         } else {
-            let v = expr(inout c, a.a, hint)?
-            if v.ty != hint { return Err(mismatch(c, x.line, x.col, hint, v.ty)) }
+            var hint2 = hint
+            if hint2 == NONE && ptn.kind == ast.TFn && x.kind == ast.EIdent {
+                let xk = ekey(c, x)
+                let xf = mget(c.fns, xk)
+                if lookup(c, xk) == NONE && xf != NONE && !c.fdefs[xf as usize].generic {
+                    let xi = instantiate(inout c, xf, no_subst())?
+                    hint2 = inst_fn_type(inout c, xi)
+                }
+            }
+            let v = expr(inout c, a.a, hint2)?
+            ty = v.ty
             args.push(v.op)
+        }
+        if hint != NONE {
+            if ty != hint { return Err(mismatch(c, x.line, x.col, hint, ty)) }
+        } else if !unify_ast(c, fm, pn.b, ty, inout sb, gs) {
+            return Err(err("E0401", x.line, x.col, q2("argument of type ", ts(c, ty), " doesn't match parameter type `", show_ast(c, fm, pn.b, gs), "`")))
+        }
+    }
+    // finish inference
+    if target != NONE && subst_get(sb, intern.S_SELF_TYPE) == NONE && !has_unbound(c, fm, target, sb, gs) {
+        let t = resolve_with(inout c, fm, target, sb)?
+        subst_set(inout sb, intern.S_SELF_TYPE, t)
+    }
+    for g in gnodes {
+        let gn = ndm(c, fm, g)
+        if subst_get(sb, gn.a) == NONE {
+            return Err(errh("E0409", n.line, n.col, q2("cannot infer type parameter `", nm(c, gn.a), "` of `", label, "`"), "add a type annotation to the binding that receives the result"))
+        }
+    }
+    if target != NONE && subst_get(sb, intern.S_SELF_TYPE) == NONE {
+        return Err(err("E0409", n.line, n.col, q("cannot infer the type for `", label, "`")))
+    }
+    for g in gnodes {
+        let gn = ndm(c, fm, g)
+        let ty = subst_get(sb, gn.a)
+        for j in 0..gn.d {
+            let b = ndm(c, fm, atm(c, fm, gn.c, j))
+            let bk = resolve.name_key(c.p, fm, b.a, b.b, b.line, b.col)
+            if !c.traits.contains(bk) { return Err(err("E0603", gn.line, gn.col, q("unknown trait `", kt(c, bk), "`"))) }
+            if !implements(c, bk, ty) {
+                return Err(err("E0601", n.line, n.col, q3("type ", ts(c, ty), " doesn't implement trait `", kt(c, bk), "` (required by `", label, "`)")))
+            }
         }
     }
     for i in 0..fnode.j {
@@ -1942,14 +3154,16 @@ fn call_decl(inout c: C, n: ast.Node, fi: u32) -> Result[V, diag.Diag] uses ffi 
     if f.unsafe_fn && c.unsafe_depth == 0 {
         return Err(errh("E0802", n.line, n.col, q("call to unsafe function `", label, "` is only allowed in an `unsafe` block or `unsafe fn`"), "wrap the call: `unsafe { ... }`"))
     }
-    instantiate(inout c, fi)?
-    let ret = c.fdefs[fi as usize].ret
+    let ii = instantiate(inout c, fi, sb)?
+    let inst = c.insts[ii as usize]
+    let ret = inst.ret
     let st = ir.list(inout c.ir, args)
+    let na = args.len() as u32
     if ret == types.UNIT {
-        emit(inout c, ir.S_CALL, ir.NONE, fi, st, n.d, ret, n.line)
+        emit(inout c, ir.S_CALL, ir.NONE, inst.ir, st, na, ret, n.line)
         return Ok(v_of(ret, ir.op_unit(inout c.ir)))
     }
-    Ok(v_of(ret, emit_val(inout c, ir.S_CALL, fi, st, n.d, ret, ret, n.line)))
+    Ok(v_of(ret, emit_val(inout c, ir.S_CALL, inst.ir, st, na, ret, ret, n.line)))
 }
 
 fn builtin(inout c: C, n: ast.Node, which: u32) -> Result[V, diag.Diag] uses ffi {
@@ -1966,7 +3180,7 @@ fn builtin(inout c: C, n: ast.Node, which: u32) -> Result[V, diag.Diag] uses ffi
         let ae = arg_expr(c, at(c, n.c, 0))
         let v = expr(inout c, ae, NONE)?
         let tk = types.kind(c.t, v.ty)
-        var ok = tk == types.T_INT || tk == types.T_BOOL || tk == types.T_STR
+        var ok = tk == types.T_INT || tk == types.T_BOOL || tk == types.T_STR || tk == types.T_STRING
         if tk == types.T_ENUM && !types.def_of(c.t, v.ty).payload { ok = true }
         if !ok {
             let x = nd(c, ae)
@@ -1980,11 +3194,14 @@ fn builtin(inout c: C, n: ast.Node, which: u32) -> Result[V, diag.Diag] uses ffi
         let ae = arg_expr(c, at(c, n.c, 0))
         let v = expr(inout c, ae, NONE)?
         let t = types.get(c.t, v.ty)
-        if t.kind != types.T_ARRAY {
-            let x = nd(c, ae)
-            return Err(err("E0401", x.line, x.col, q("`len` needs an array, List, Map or String, found ", ts(c, v.ty), "")))
+        if t.kind == types.T_ARRAY { return Ok(const_v(inout c, types.USIZE, fold.of_u64(t.b as u64))) }
+        if t.kind == types.T_STRING || t.kind == types.T_LIST || t.kind == types.T_MAP {
+            var largs: List[u32] = List.new()
+            largs.push(v.op)
+            return Ok(v_of(types.USIZE, builtin_op(inout c, ir.B_LEN, largs, types.USIZE, n.line)))
         }
-        return Ok(const_v(inout c, types.USIZE, fold.of_u64(t.b as u64)))
+        let x = nd(c, ae)
+        return Err(err("E0401", x.line, x.col, q("`len` needs an array, List, Map or String, found ", ts(c, v.ty), "")))
     }
     if which == c.w.spawn {
         if !has_sym(c.caps, c.w.threads) { return Err(cap_error(c, n.line, n.col, s("spawn"), c.w.threads)) }
@@ -2007,20 +3224,755 @@ fn builtin(inout c: C, n: ast.Node, which: u32) -> Result[V, diag.Diag] uses ffi
     Ok(v_of(types.U64, emit_val(inout c, ir.S_NOWMS, 0, 0, 0, 0, types.U64, n.line)))
 }
 
-fn method_call(inout c: C, n: ast.Node) -> Result[V, diag.Diag] uses ffi {
+// ---- methods
+
+/// Whether name key k names a type (expr.rs is_type_name).
+fn is_type_name(c: C, k: u64) -> bool {
+    if c.tmpl.contains(k) { return true }
+    if resolve.key_pre(k) != 0 { return false }
+    let x = resolve.key_sym(k)
+    has_sym(c.w.ints, x) || x == c.w.s_bool || x == c.w.s_str || x == c.w.s_string || has_sym(c.w.heap, x)
+}
+
+fn label_of(c: C, head: List[u8], name: u32) -> List[u8] {
+    var l = head
+    l.push(46)
+    bytes.append(inout l, nm(c, name))
+    l
+}
+
+fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
     let r = nd(c, n.a)
+    var static_head: u64 = 0
+    var is_static = false
     if r.kind == ast.EIdent {
         let k = ekey(c, r)
-        if lookup(c, k) == NONE && !c.consts.contains(k) {
-            let builtin_ty = resolve.key_pre(k) == 0 && (has_sym(c.w.ints, r.a) || r.a == c.w.s_bool || r.a == c.w.s_str)
-            let heap = resolve.key_pre(k) == 0 && (has_sym(c.w.heap, r.a) || r.a == c.w.s_string)
-            if heap { return Err(unsup(n.line, n.col, "String, List and Map")) }
-            if c.tmpl.contains(k) || builtin_ty {
-                if is_root(k, c.w.option) || is_root(k, c.w.result) { return Err(unsup(n.line, n.col, "methods")) }
-                return Err(err("E0115", n.line, n.col, q2("type ", kt(c, k), " has no method `", nm(c, n.b), "`")))
-            }
+        if lookup(c, k) == NONE && !c.consts.contains(k) && is_type_name(c, k) {
+            is_static = true
+            static_head = k
         }
     }
-    let v = expr(inout c, n.a, NONE)?
-    Err(err("E0115", n.line, n.col, q2("type ", ts(c, v.ty), " has no method `", nm(c, n.b), "`")))
+    if is_static {
+        let x = resolve.key_sym(static_head)
+        if resolve.key_pre(static_head) == 0 && (has_sym(c.w.heap, x) || x == c.w.s_string) {
+            return heap_static(inout c, n, x, exp)
+        }
+        for m in c.meths {
+            if m.head == static_head && m.name == n.b {
+                let label = label_of(c, kt(c, static_head), n.b)
+                return call_decl(inout c, n, label, m.fd, no_subst(), no_recv(), exp, true)
+            }
+        }
+        return Err(err("E0115", n.line, n.col, q2("type ", kt(c, static_head), " has no method `", nm(c, n.b), "`")))
+    }
+    let pv = place_expr(inout c, n.a)?
+    let tk = types.kind(c.t, pv.ty)
+    if tk == types.T_STRING || tk == types.T_LIST || tk == types.T_MAP || tk == types.T_BOX {
+        return heap_method(inout c, n, pv)
+    }
+    let head = head_of(c, pv.ty)
+    var any = false
+    for m in c.meths {
+        if m.head != head || m.name != n.b { continue }
+        any = true
+        let f = c.fdefs[m.fd as usize]
+        let im = ndm(c, f.md, f.inode)
+        let gs = gparams(c, f.md, im.c, im.d)
+        var sb = no_subst()
+        if !unify_ast(c, f.md, im.b, pv.ty, inout sb, gs) { continue }
+        subst_set(inout sb, intern.S_SELF_TYPE, pv.ty)
+        let label = label_of(c, head_text(c, head), n.b)
+        return call_decl(inout c, n, label, m.fd, sb, Recv(true, n.a, pv), exp, true)
+    }
+    if !any && tk == types.T_RECORD {
+        let d = types.def_of(c.t, pv.ty)
+        match types.find_field(c.t, d, n.b) {
+            Some(i) => {
+                let ft = types.field(c.t, d.start, i).ty
+                if types.kind(c.t, ft) == types.T_FN {
+                    let fp = ir.place_field(inout c.ir, pv.place, i, ft)
+                    let fv = v_of(ft, read(inout c, fp, ft, 0))
+                    let label = nm(c, n.b)
+                    return call_value(inout c, n, label, fv)
+                }
+            }
+            None => {}
+        }
+    }
+    Err(err("E0115", n.line, n.col, q2("type ", ts(c, pv.ty), " has no method `", nm(c, n.b), "`")))
+}
+
+/// Check the arguments of a built-in method against `tys` (heap.rs eval_args).
+fn eval_args(inout c: C, n: ast.Node, tys: List[u32], label: List[u8]) -> Result[List[V], diag.Diag] uses ffi {
+    if n.d != tys.len() as u32 {
+        return Err(err("E0405", n.line, n.col, q3("`", label, "` takes ", num(tys.len() as u64), " argument(s), but ", num(n.d as u64), " were given")))
+    }
+    var vs: List[V] = List.new()
+    for i in 0..n.d {
+        let a = nd(c, at(c, n.c, i))
+        let x = nd(c, a.a)
+        if a.b == 1 { return Err(err("E0304", x.line, x.col, s("`inout` is not allowed here"))) }
+        let t = tys[i as usize]
+        let v = expr(inout c, a.a, t)?
+        if v.ty != t { return Err(mismatch(c, x.line, x.col, t, v.ty)) }
+        vs.push(v)
+    }
+    Ok(vs)
+}
+
+fn one(t: u32) -> List[u32] {
+    var out: List[u32] = List.new()
+    out.push(t)
+    out
+}
+
+fn two(a: u32, b: u32) -> List[u32] {
+    var out: List[u32] = List.new()
+    out.push(a)
+    out.push(b)
+    out
+}
+
+/// `String.from(..)`, `List.new()`, ... (heap.rs heap_static).
+fn heap_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
+    let label = label_of(c, nm(c, head), n.b)
+    let mi = sym_index(c.w.hm, n.b)
+    if head == c.w.s_string && mi == M_FROM {
+        let vs = eval_args(inout c, n, one(types.STR), label)?
+        return Ok(v_of(types.STRING, builtin_op(inout c, ir.B_STR_FROM, one(vs[0].op), types.STRING, n.line)))
+    }
+    if head == c.w.s_string && mi == M_FROM_INT {
+        let vs = eval_args(inout c, n, one(types.I64), label)?
+        return Ok(v_of(types.STRING, builtin_op(inout c, ir.B_STR_FROM_INT, one(vs[0].op), types.STRING, n.line)))
+    }
+    if (head == c.w.list || head == c.w.map) && mi == M_NEW {
+        let want_list = head == c.w.list
+        var ok = false
+        if exp != NONE {
+            let ek = types.kind(c.t, exp)
+            ok = (want_list && ek == types.T_LIST) || (!want_list && ek == types.T_MAP)
+        }
+        if !ok {
+            let ex = if want_list { "annotate the binding, e.g. `let x: List[i32] = List.new()`" } else { "annotate the binding, e.g. `let x: Map[str, i32] = Map.new()`" }
+            return Err(errh("E0409", n.line, n.col, q("cannot infer the type arguments of `", nm(c, head), "`"), ex))
+        }
+        if n.d > 0 { return Err(err("E0405", n.line, n.col, q("`", label, "` takes no arguments"))) }
+        let b = if want_list { ir.B_LIST_NEW } else { ir.B_MAP_NEW }
+        return Ok(v_of(exp, builtin_op(inout c, b, List.new(), exp, n.line)))
+    }
+    if head == c.w.boxs && mi == M_NEW {
+        if n.d != 1 { return Err(err("E0405", n.line, n.col, s("`Box.new` takes exactly one argument"))) }
+        var hint = NONE
+        if exp != NONE && types.kind(c.t, exp) == types.T_BOX { hint = types.get(c.t, exp).a }
+        let ae = arg_expr(c, at(c, n.c, 0))
+        let x = nd(c, ae)
+        let v = expr(inout c, ae, hint)?
+        if hint != NONE && v.ty != hint { return Err(mismatch(c, x.line, x.col, hint, v.ty)) }
+        if v.ty == types.UNIT || v.ty == types.NEVER { return Err(err("E0401", x.line, x.col, s("can't box ()"))) }
+        let ty = types.box_of(inout c.t, v.ty)
+        let o = take(inout c, v, n.line)
+        return Ok(v_of(ty, builtin_op(inout c, ir.B_BOX_NEW, one(o), ty, n.line)))
+    }
+    if has_sym(c.w.heap, head) && head != c.w.list && head != c.w.map && head != c.w.boxs { return Err(unsup(n.line, n.col, "threads")) }
+    Err(err("E0115", n.line, n.col, q2("`", nm(c, head), "` has no associated function `", nm(c, n.b), "`")))
+}
+
+/// The receiver's value (borrowed), read where the receiver was evaluated.
+fn recv_op(inout c: C, pv: PV) -> u32 {
+    if pv.op != NONE { return pv.op }
+    read(inout c, pv.place, pv.ty, 0)
+}
+
+/// Methods of String, List, Map and Box (heap.rs heap_method). Mutating methods need the
+/// receiver to be assignable and take it as a place.
+fn heap_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] uses ffi {
+    let ty = pv.ty
+    let t = types.get(c.t, ty)
+    let tk = t.kind
+    let label = label_of(c, ts(c, ty), n.b)
+    let mi = sym_index(c.w.hm, n.b)
+    let place = pv.place + ir.ARG_PLACE
+    let is_str = tk == types.T_STRING
+    let is_list = tk == types.T_LIST
+    let is_map = tk == types.T_MAP
+    if (is_str || is_list || is_map) && (mi == M_LEN || mi == M_IS_EMPTY) {
+        let ro = recv_op(inout c, pv)
+        eval_args(inout c, n, List.new(), label)?
+        if mi == M_LEN { return Ok(v_of(types.USIZE, builtin_op(inout c, ir.B_LEN, one(ro), types.USIZE, n.line))) }
+        return Ok(v_of(types.BOOL, builtin_op(inout c, ir.B_IS_EMPTY, one(ro), types.BOOL, n.line)))
+    }
+    if is_map && mi == M_LEN {
+        let ro = recv_op(inout c, pv)
+        eval_args(inout c, n, List.new(), label)?
+        return Ok(v_of(types.USIZE, builtin_op(inout c, ir.B_LEN, one(ro), types.USIZE, n.line)))
+    }
+    if is_str && (mi == M_PUSH_STR || mi == M_APPEND) {
+        check_assignable(c, n.a, "modify")?
+        let argt = if mi == M_PUSH_STR { types.STR } else { types.STRING }
+        let vs = eval_args(inout c, n, one(argt), label)?
+        let b = if mi == M_PUSH_STR { ir.B_STR_PUSH } else { ir.B_STR_APPEND }
+        return Ok(v_of(types.UNIT, builtin_op(inout c, b, two(place, vs[0].op), types.UNIT, n.line)))
+    }
+    if is_list {
+        let el = t.a
+        if mi == M_PUSH {
+            check_assignable(c, n.a, "modify")?
+            let vs = eval_args(inout c, n, one(el), label)?
+            let x = take(inout c, vs[0], n.line)
+            return Ok(v_of(types.UNIT, builtin_op(inout c, ir.B_LIST_PUSH, two(place, x), types.UNIT, n.line)))
+        }
+        if mi == M_POP {
+            check_assignable(c, n.a, "modify")?
+            eval_args(inout c, n, List.new(), label)?
+            let opt = option_of(inout c, el, n)?
+            return Ok(v_of(opt, builtin_op(inout c, ir.B_LIST_POP, one(place), opt, n.line)))
+        }
+        if mi == M_CLEAR {
+            check_assignable(c, n.a, "modify")?
+            eval_args(inout c, n, List.new(), label)?
+            return Ok(v_of(types.UNIT, builtin_op(inout c, ir.B_LIST_CLEAR, one(place), types.UNIT, n.line)))
+        }
+        if mi == M_GET {
+            let ro = recv_op(inout c, pv)
+            let vs = eval_args(inout c, n, one(types.USIZE), label)?
+            let lp = place_of_op(inout c, ro, ty, n.line)
+            let ep = ir.place_index(inout c.ir, lp, vs[0].op, el, n.line)
+            let o = read(inout c, ep, el, n.line)
+            if owns(c, el) { return Ok(v_of(el, emit_val(inout c, ir.S_CLONE, o, 0, 0, el, el, n.line))) }
+            return Ok(v_of(el, o))
+        }
+        if mi == M_CONTAINS {
+            let ro = recv_op(inout c, pv)
+            let vs = eval_args(inout c, n, one(el), label)?
+            return Ok(v_of(types.BOOL, builtin_op(inout c, ir.B_LIST_CONTAINS, two(ro, vs[0].op), types.BOOL, n.line)))
+        }
+        if mi == M_MAP || mi == M_FILTER || mi == M_FOR_EACH || mi == M_ANY || mi == M_ALL {
+            if n.d != 1 { return Err(err("E0405", n.line, n.col, q("`", label, "` takes exactly one closure"))) }
+            return combinator(inout c, n, pv, mi)
+        }
+        if mi == M_FOLD {
+            if n.d != 2 { return Err(err("E0405", n.line, n.col, s("`fold` takes an initial value and a closure"))) }
+            return fold_list(inout c, n, pv)
+        }
+        if mi == M_SUM {
+            if !types.is_int(c.t, el) {
+                return Err(err("E0401", n.line, n.col, q("`sum` needs a List of integers, found List[", ts(c, el), "]")))
+            }
+            let ro = recv_op(inout c, pv)
+            eval_args(inout c, n, List.new(), label)?
+            return Ok(v_of(el, builtin_op(inout c, ir.B_LIST_SUM, one(ro), el, n.line)))
+        }
+    }
+    if is_map {
+        let kty = t.a
+        let vty = t.b
+        if mi == M_INSERT {
+            check_assignable(c, n.a, "modify")?
+            let vs = eval_args(inout c, n, two(kty, vty), label)?
+            let ko = take(inout c, vs[0], n.line)
+            let vo = take(inout c, vs[1], n.line)
+            var args = two(place, ko)
+            args.push(vo)
+            return Ok(v_of(types.UNIT, builtin_op(inout c, ir.B_MAP_INSERT, args, types.UNIT, n.line)))
+        }
+        if mi == M_CONTAINS {
+            let ro = recv_op(inout c, pv)
+            let vs = eval_args(inout c, n, one(kty), label)?
+            return Ok(v_of(types.BOOL, builtin_op(inout c, ir.B_MAP_CONTAINS, two(ro, vs[0].op), types.BOOL, n.line)))
+        }
+        if mi == M_REMOVE {
+            check_assignable(c, n.a, "modify")?
+            let vs = eval_args(inout c, n, one(kty), label)?
+            return Ok(v_of(types.BOOL, builtin_op(inout c, ir.B_MAP_REMOVE, two(place, vs[0].op), types.BOOL, n.line)))
+        }
+        if mi == M_GET {
+            let ro = recv_op(inout c, pv)
+            let vs = eval_args(inout c, n, one(kty), label)?
+            let opt = option_of(inout c, vty, n)?
+            let o = builtin_op(inout c, ir.B_MAP_GET, two(ro, vs[0].op), opt, n.line)
+            if owns(c, opt) { return Ok(v_of(opt, emit_val(inout c, ir.S_CLONE, o, 0, 0, opt, opt, n.line))) }
+            return Ok(v_of(opt, o))
+        }
+    }
+    if tk == types.T_BOX {
+        let el = t.a
+        if mi == M_GET {
+            let ro = recv_op(inout c, pv)
+            eval_args(inout c, n, List.new(), label)?
+            let bp = place_of_op(inout c, ro, ty, n.line)
+            let dp = ir.place_deref(inout c.ir, bp, el)
+            let o = read(inout c, dp, el, 0)
+            if owns(c, el) { return Ok(v_of(el, emit_val(inout c, ir.S_CLONE, o, 0, 0, el, el, n.line))) }
+            return Ok(v_of(el, o))
+        }
+        if mi == M_SET {
+            check_assignable(c, n.a, "modify")?
+            let vs = eval_args(inout c, n, one(el), label)?
+            let x = take(inout c, vs[0], n.line)
+            let dp = ir.place_deref(inout c.ir, pv.place, el)
+            if owns(c, el) { emit_drop(inout c, dp, el) }
+            emit(inout c, ir.S_STORE, 0, dp, x, 0, el, n.line)
+            return Ok(v_of(types.UNIT, ir.op_unit(inout c.ir)))
+        }
+    }
+    Err(err("E0115", n.line, n.col, q2("type ", ts(c, ty), " has no method `", nm(c, n.b), "`")))
+}
+
+/// The prelude's Option[el].
+fn option_of(inout c: C, el: u32, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
+    let di = mget(c.tmpl, resolve.key(0, c.w.option))
+    inst_type(inout c, di, one(el), n.line, n.col)
+}
+
+// ---- closures (closure.rs)
+
+/// Every name a closure body mentions (closure.rs walk_expr; patterns are not walked).
+fn walk_expr(c: C, e: u32, inout out: List[u64]) {
+    let n = nd(c, e)
+    match n.kind {
+        ast.EIdent => out.push(ekey(c, n))
+        ast.EUnary => walk_expr(c, n.b, inout out)
+        ast.ECast => walk_expr(c, n.a, inout out)
+        ast.EField => walk_expr(c, n.a, inout out)
+        ast.ERepeat => walk_expr(c, n.a, inout out)
+        ast.ETry => walk_expr(c, n.a, inout out)
+        ast.EBinary => {
+            walk_expr(c, n.b, inout out)
+            walk_expr(c, n.c, inout out)
+        }
+        ast.EIndex => {
+            walk_expr(c, n.a, inout out)
+            walk_expr(c, n.b, inout out)
+        }
+        ast.ECall => {
+            out.push(ekey(c, n))
+            for i in 0..n.d { walk_expr(c, arg_expr(c, at(c, n.c, i)), inout out) }
+        }
+        ast.EMethod => {
+            walk_expr(c, n.a, inout out)
+            for i in 0..n.d { walk_expr(c, arg_expr(c, at(c, n.c, i)), inout out) }
+        }
+        ast.EArray => { for i in 0..n.d { walk_expr(c, at(c, n.c, i), inout out) } }
+        ast.ETuple => { for i in 0..n.d { walk_expr(c, at(c, n.c, i), inout out) } }
+        ast.ELambda => walk_expr(c, n.a, inout out)
+        ast.EIf => {
+            walk_expr(c, n.a, inout out)
+            walk_block(c, n.b, inout out)
+            if n.c > 0 { walk_expr(c, n.c - 1, inout out) }
+        }
+        ast.EMatch => {
+            walk_expr(c, n.a, inout out)
+            for i in 0..n.d {
+                let arm = nd(c, at(c, n.c, i))
+                if arm.b == 1 { walk_stmt(c, arm.a, inout out) } else { walk_expr(c, arm.a, inout out) }
+            }
+        }
+        ast.EBlock => walk_block(c, n.a, inout out)
+        ast.EUnsafe => walk_block(c, n.a, inout out)
+        _ => {}
+    }
+}
+
+fn walk_block(c: C, b: u32, inout out: List[u64]) {
+    let n = nd(c, b)
+    for i in 0..n.d { walk_stmt(c, at(c, n.c, i), inout out) }
+}
+
+fn walk_stmt(c: C, st: u32, inout out: List[u64]) {
+    let n = nd(c, st)
+    match n.kind {
+        ast.SLet => walk_expr(c, n.c, inout out)
+        ast.SLetPat => walk_expr(c, n.c, inout out)
+        ast.SAssign => {
+            walk_expr(c, n.a, inout out)
+            walk_expr(c, n.c, inout out)
+        }
+        ast.SExpr => walk_expr(c, n.a, inout out)
+        ast.SWhile => {
+            walk_expr(c, n.a, inout out)
+            walk_block(c, n.b, inout out)
+        }
+        ast.SFor => {
+            walk_expr(c, n.b, inout out)
+            walk_expr(c, n.c, inout out)
+            walk_block(c, n.d, inout out)
+        }
+        ast.SForEach => {
+            walk_expr(c, n.b, inout out)
+            walk_block(c, n.d, inout out)
+        }
+        ast.SReturn => { if n.a > 0 { walk_expr(c, n.a - 1, inout out) } }
+        ast.SAssert => walk_expr(c, n.a, inout out)
+        _ => {}
+    }
+}
+
+/// A captured variable: its name key and its local in the enclosing function.
+type Capture = { key: u64, ty: u32, ir: u32 }
+
+/// The state of the enclosing function while a closure body is checked.
+type Saved = {
+    scopes: List[Local], marks: List[u32], frames: List[Owned], fmarks: List[u32], firs: List[u32],
+    fresh: Map[u32, bool], ret: u32, loops: u32, loop_bases: List[u32], lam_expr: bool,
+}
+
+/// `|params| body` (closure.rs lambda): the body becomes an IR function of its own whose
+/// environment holds a snapshot (clone) of every enclosing local the body mentions.
+fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
+    var hp: List[u32] = List.new()
+    var hr = NONE
+    if exp != NONE && types.kind(c.t, exp) == types.T_FN {
+        hp = types.elems(c.t, exp)
+        hr = types.get(c.t, exp).b
+    } else if c.lam.has {
+        hp = c.lam.params
+        hr = c.lam.ret
+    }
+    c.lam = no_hint()
+    if hp.len() > 0 && hp.len() as u32 != n.d {
+        return Err(err("E0405", n.line, n.col, q2("this closure takes ", num(n.d as u64), " parameter(s), but ", num(hp.len() as u64), " are expected here")))
+    }
+    var ptys: List[u32] = List.new()
+    var pkeys: List[u64] = List.new()
+    for i in 0..n.d {
+        let lp = nd(c, at(c, n.c, i))
+        var hinted = NONE
+        if (i as usize) < hp.len() { hinted = hp[i as usize] }
+        var ty = hinted
+        if lp.b > 0 {
+            let am = c.am
+            let t = resolve_ty(inout c, am, lp.b - 1)?
+            if hinted != NONE && hinted != t { return Err(mismatch(c, lp.line, lp.col, hinted, t)) }
+            ty = t
+        } else if hinted == NONE {
+            let pn = nm(c, lp.a)
+            var d = err("E0409", lp.line, lp.col, q("cannot infer the type of closure parameter `", pn, "`"))
+            d.help = q("annotate it: `|", pn, ": i32| ...`")
+            return Err(d)
+        }
+        ptys.push(ty)
+        pkeys.push(resolve.key(0, lp.a))
+    }
+    var ret_hint = hr
+    if n.g > 0 {
+        let am = c.am
+        ret_hint = resolve_ty(inout c, am, n.g - 1)?
+    }
+    // captured variables
+    var names: List[u64] = List.new()
+    walk_expr(c, n.a, inout names)
+    var caps: List[Capture] = List.new()
+    var ckeys: List[u64] = List.new()
+    for k in names {
+        if pkeys.contains(k) || ckeys.contains(k) { continue }
+        let li = lookup(c, k)
+        if li != NONE {
+            let v = c.scopes[li as usize]
+            caps.push(Capture(k, v.ty, v.ir))
+            ckeys.push(k)
+        }
+    }
+    c.closures += 1
+    var fname = ir.cur_name(c.ir)
+    bytes.append(inout fname, s(".closure"))
+    bytes.append(inout fname, num(c.closures as u64))
+    let f = ir.declare_fn(inout c.ir, fname, false)
+    let saved = Saved(c.scopes, c.marks, c.frames, c.fmarks, c.firs, c.fresh, c.ret, c.loops, c.loop_bases, c.lam_expr)
+    let ctext = caps_text(c, c.caps)
+    ir.begin_nested(inout c.ir, f, types.UNIT, ctext)
+    c.scopes = List.new()
+    c.marks = List.new()
+    push_scope(inout c)
+    reset_frames(inout c)
+    c.loops = 0
+    let body = nd(c, n.a)
+    for cp in caps {
+        let l = ir.local(inout c.ir, resolve.key_sym(cp.key), cp.ty, ir.L_CAPTURE, body.line)
+        declare(inout c, local_plain(cp.key, cp.ty, false, body.line, body.col, l))?
+    }
+    for i in 0..n.d {
+        let lp = nd(c, at(c, n.c, i))
+        let l = ir.local(inout c.ir, lp.a, ptys[i as usize], ir.L_PARAM, lp.line)
+        declare(inout c, local_plain(pkeys[i as usize], ptys[i as usize], false, lp.line, lp.col, l))?
+    }
+    let mark = ir.open(c.ir)
+    let rty = lambda_body(inout c, n.a, ret_hint)?
+    let b = ir.close(inout c.ir, mark)
+    ir.set_ret(inout c.ir, rty)
+    ir.end_nested(inout c.ir, n.d, b)
+    c.scopes = saved.scopes
+    c.marks = saved.marks
+    c.frames = saved.frames
+    c.fmarks = saved.fmarks
+    c.firs = saved.firs
+    c.fresh = saved.fresh
+    c.ret = saved.ret
+    c.loops = saved.loops
+    c.loop_bases = saved.loop_bases
+    c.lam_expr = saved.lam_expr
+    let fty = types.fn_of(inout c.t, ptys, rty)
+    // the environment: a snapshot of each captured variable
+    var ops: List[u32] = List.new()
+    for cp in caps {
+        let pl = ir.place_local(inout c.ir, cp.ir, cp.ty)
+        let o = read(inout c, pl, cp.ty, 0)
+        ops.push(take(inout c, v_of(cp.ty, o), n.line))
+    }
+    let st = ir.list(inout c.ir, ops)
+    Ok(v_of(fty, emit_val(inout c, ir.S_CLOSURE, f, st, ops.len() as u32, fty, fty, n.line)))
+}
+
+/// Check a closure body; returns its return type (closure.rs lambda_body).
+fn lambda_body(inout c: C, e: u32, ret_hint: u32) -> Result[u32, diag.Diag] uses ffi {
+    let body = nd(c, e)
+    if is_value_form(c, e) {
+        if ret_hint == NONE {
+            return Err(errh("E0409", body.line, body.col, s("cannot infer the closure's return type"), "write it: `|x| -> i32 { ... }`"))
+        }
+        c.ret = ret_hint
+        c.lam_expr = false
+        let dest = if ret_hint == types.UNIT { Dest(D_DISCARD, 0) } else { Dest(D_RETURN, 0) }
+        let t = compile_value(inout c, e, dest, ret_hint)?
+        if ret_hint != types.UNIT && t != types.NEVER && t != ret_hint { return Err(mismatch(c, body.line, body.col, ret_hint, t)) }
+        return Ok(ret_hint)
+    }
+    c.lam_expr = true
+    let v = expr(inout c, e, ret_hint)?
+    if ret_hint != NONE && v.ty != ret_hint && v.ty != types.NEVER { return Err(mismatch(c, body.line, body.col, ret_hint, v.ty)) }
+    var ret = ret_hint
+    if ret == NONE {
+        ret = v.ty
+        if v.ty == types.NEVER { ret = types.UNIT }
+    }
+    c.ret = ret
+    if v.ty == types.NEVER { return Ok(ret) }
+    if ret == types.UNIT {
+        drop_frames_from(inout c, 0)
+        return Ok(ret)
+    }
+    let o = take(inout c, v, body.line)
+    drop_frames_from(inout c, 0)
+    emit(inout c, ir.S_RETURN, 0, o + 1, 0, 0, 0, body.line)
+    Ok(ret)
+}
+
+/// Call the closure value fv with the arguments of call node n (closure.rs call_value).
+fn call_value(inout c: C, n: ast.Node, label: List[u8], fv: V) -> Result[V, diag.Diag] uses ffi {
+    if types.kind(c.t, fv.ty) != types.T_FN {
+        return Err(err("E0112", n.line, n.col, q2("`", label, "` has type ", ts(c, fv.ty), ", so it can't be called")))
+    }
+    let ps = types.elems(c.t, fv.ty)
+    let r = types.get(c.t, fv.ty).b
+    if n.d != ps.len() as u32 {
+        return Err(err("E0405", n.line, n.col, q3("`", label, "` takes ", num(ps.len() as u64), " argument(s), but ", num(n.d as u64), " were given")))
+    }
+    var args: List[u32] = List.new()
+    for i in 0..n.d {
+        let a = nd(c, at(c, n.c, i))
+        let x = nd(c, a.a)
+        if a.b == 1 { return Err(err("E0304", x.line, x.col, s("closures can't take `inout` arguments"))) }
+        let t = ps[i as usize]
+        let v = expr(inout c, a.a, t)?
+        if v.ty != t { return Err(mismatch(c, x.line, x.col, t, v.ty)) }
+        args.push(v.op)
+    }
+    Ok(v_of(r, callv(inout c, fv.op, args, r, n.line)))
+}
+
+fn callv(inout c: C, f: u32, args: List[u32], r: u32, line: u32) -> u32 {
+    let st = ir.list(inout c.ir, args)
+    let na = args.len() as u32
+    if r == types.UNIT {
+        emit(inout c, ir.S_CALLV, ir.NONE, f, st, na, r, line)
+        return ir.op_unit(inout c.ir)
+    }
+    emit_val(inout c, ir.S_CALLV, f, st, na, r, r, line)
+}
+
+/// The fn type of instance ii.
+fn inst_fn_type(inout c: C, ii: u32) -> u32 {
+    let inst = c.insts[ii as usize]
+    var ps: List[u32] = List.new()
+    for i in 0..inst.plen { ps.push(c.ptys[(inst.pstart + i) as usize]) }
+    types.fn_of(inout c.t, ps, inst.ret)
+}
+
+/// A named function used as a value of the expected fn type (closure.rs fn_as_value).
+fn fn_as_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag] uses ffi {
+    let fi = mget(c.fns, k)
+    let f = c.fdefs[fi as usize]
+    let label = kt(c, k)
+    if f.generic {
+        return Err(err("E0409", n.line, n.col, q("generic function `", label, "` can't be used as a value; wrap it in a closure")))
+    }
+    let ii = instantiate(inout c, fi, no_subst())?
+    let fnode = ndm(c, f.md, f.node)
+    for i in 0..fnode.f {
+        if ndm(c, f.md, atm(c, f.md, fnode.e, i)).c == 1 {
+            return Err(err("E0304", n.line, n.col, q("`", label, "` has `inout` parameters and can't be used as a value")))
+        }
+    }
+    let actual = inst_fn_type(inout c, ii)
+    if actual != exp { return Err(mismatch(c, n.line, n.col, exp, actual)) }
+    let inst = c.insts[ii as usize]
+    for i in 0..inst.clen {
+        let cap = c.capl[(inst.cstart + i) as usize]
+        if !has_sym(c.caps, cap) { return Err(cap_error(c, n.line, n.col, label, cap)) }
+    }
+    Ok(v_of(actual, emit_val(inout c, ir.S_FNREF, inst.ir, 0, 0, actual, actual, n.line)))
+}
+
+/// A loop over the elements of the List at place `seq` (see list_loop_end).
+type ListLoop = { ip: u32, mark: u32, iv: u32 }
+
+/// i := 0; loop { if !(i < len(seq)) break; ...
+fn list_loop(inout c: C, seq: u32, lty: u32, line: u32) -> ListLoop {
+    let idx = tmp(inout c, types.USIZE, line)
+    let zero = ir.op_int(inout c.ir, types.USIZE, 0)
+    emit(inout c, ir.S_COPY, idx, zero, 0, 0, types.USIZE, line)
+    let ip = ir.place_local(inout c.ir, idx, types.USIZE)
+    let lm = ir.open(c.ir)
+    let iv = read(inout c, ip, types.USIZE, 0)
+    let lv = read(inout c, seq, lty, 0)
+    let lim = builtin_op(inout c, ir.B_LEN, one(lv), types.USIZE, 0)
+    let cond = emit_val(inout c, ir.S_BINARY, ast.OP_LT, iv, lim, types.USIZE, types.BOOL, 0)
+    let base = c.fmarks.len() as u32
+    emit_exit_unless(inout c, cond, base, line)
+    ListLoop(ip, lm, iv)
+}
+
+/// ... } step { i = i +% 1 }
+fn list_loop_end(inout c: C, lp: ListLoop, line: u32) {
+    let body = ir.close(inout c.ir, lp.mark)
+    let sm = ir.open(c.ir)
+    let cur = read(inout c, lp.ip, types.USIZE, 0)
+    let one1 = ir.op_int(inout c.ir, types.USIZE, 1)
+    let next = emit_val(inout c, ir.S_BINARY, ast.OP_WADD, cur, one1, types.USIZE, types.USIZE, 0)
+    emit(inout c, ir.S_STORE, 0, lp.ip, next, 0, types.USIZE, 0)
+    let step = ir.close(inout c.ir, sm)
+    emit(inout c, ir.S_LOOP, 0, body, step, 0, 0, line)
+}
+
+/// The closure argument of a List combinator, checked against `fn(el) -> want`.
+fn closure_arg(inout c: C, n: ast.Node, i: u32, ps: List[u32], want: u32) -> Result[V, diag.Diag] uses ffi {
+    c.lam = LamHint(true, ps, want)
+    let ae = arg_expr(c, at(c, n.c, i))
+    let fv = expr(inout c, ae, NONE)?
+    c.lam = no_hint()
+    Ok(fv)
+}
+
+/// map / filter / for_each / any / all on a List (heap.rs heap_method).
+fn combinator(inout c: C, n: ast.Node, pv: PV, mi: u32) -> Result[V, diag.Diag] uses ffi {
+    let ty = pv.ty
+    let el = types.get(c.t, ty).a
+    var want = NONE
+    if mi == M_FILTER || mi == M_ANY || mi == M_ALL { want = types.BOOL }
+    if mi == M_FOR_EACH { want = types.UNIT }
+    let ro = recv_op(inout c, pv)
+    let fv = closure_arg(inout c, n, 0, one(el), want)?
+    let ae = nd(c, arg_expr(c, at(c, n.c, 0)))
+    var ok = types.kind(c.t, fv.ty) == types.T_FN
+    if ok {
+        let ps = types.elems(c.t, fv.ty)
+        ok = ps.len() == 1 && ps[0] == el
+    }
+    if !ok {
+        return Err(err("E0401", ae.line, ae.col, q2("expected a closure taking ", ts(c, el), ", found ", ts(c, fv.ty), "")))
+    }
+    let rt = types.get(c.t, fv.ty).b
+    if want != NONE && rt != want { return Err(mismatch(c, ae.line, ae.col, want, rt)) }
+    let seq = place_of_op(inout c, ro, ty, n.line)
+    if mi == M_MAP {
+        if rt == types.UNIT || rt == types.NEVER { return Err(err("E0401", ae.line, ae.col, s("`map` needs a closure that returns a value"))) }
+        let out_ty = types.list_of(inout c.t, rt)
+        let out = builtin_op(inout c, ir.B_LIST_NEW, List.new(), out_ty, n.line)
+        let outp = place_of_op(inout c, out, out_ty, n.line) + ir.ARG_PLACE
+        let lp = list_loop(inout c, seq, ty, n.line)
+        let ipl = ir.place_index(inout c.ir, seq, lp.iv, el, n.line)
+    let item = read(inout c, ipl, el, 0)
+        let r = callv(inout c, fv.op, one(item), rt, n.line)
+        builtin_op(inout c, ir.B_LIST_PUSH, two(outp, r), types.UNIT, n.line)
+        list_loop_end(inout c, lp, n.line)
+        return Ok(v_of(out_ty, out))
+    }
+    if mi == M_FILTER {
+        let out = builtin_op(inout c, ir.B_LIST_NEW, List.new(), ty, n.line)
+        let outp = place_of_op(inout c, out, ty, n.line) + ir.ARG_PLACE
+        let lp = list_loop(inout c, seq, ty, n.line)
+        let ipl = ir.place_index(inout c.ir, seq, lp.iv, el, n.line)
+    let item = read(inout c, ipl, el, 0)
+        let keep = callv(inout c, fv.op, one(item), types.BOOL, n.line)
+        let tm = ir.open(c.ir)
+        var x = item
+        if owns(c, el) { x = emit_val(inout c, ir.S_CLONE, item, 0, 0, el, el, n.line) }
+        builtin_op(inout c, ir.B_LIST_PUSH, two(outp, x), types.UNIT, n.line)
+        let then = ir.close(inout c.ir, tm)
+        let els = ir.empty_block(inout c.ir)
+        emit(inout c, ir.S_IF, 0, keep, then, els, 0, n.line)
+        list_loop_end(inout c, lp, n.line)
+        return Ok(v_of(ty, out))
+    }
+    if mi == M_FOR_EACH {
+        let lp = list_loop(inout c, seq, ty, n.line)
+        let ipl = ir.place_index(inout c.ir, seq, lp.iv, el, n.line)
+    let item = read(inout c, ipl, el, 0)
+        callv(inout c, fv.op, one(item), types.UNIT, n.line)
+        list_loop_end(inout c, lp, n.line)
+        return Ok(v_of(types.UNIT, ir.op_unit(inout c.ir)))
+    }
+    // any / all: r := !any; loop { if f(x) == any { r = any; break } }
+    let any = mi == M_ANY
+    let r = tmp(inout c, types.BOOL, n.line)
+    let init = ir.op_bool(inout c.ir, !any)
+    emit(inout c, ir.S_COPY, r, init, 0, 0, types.BOOL, n.line)
+    let lp = list_loop(inout c, seq, ty, n.line)
+    let ipl = ir.place_index(inout c.ir, seq, lp.iv, el, n.line)
+    let item = read(inout c, ipl, el, 0)
+    let b = callv(inout c, fv.op, one(item), types.BOOL, n.line)
+    let hm = ir.open(c.ir)
+    let val = ir.op_bool(inout c.ir, any)
+    emit(inout c, ir.S_COPY, r, val, 0, 0, types.BOOL, n.line)
+    emit(inout c, ir.S_BREAK, 0, 0, 0, 0, 0, n.line)
+    let hit = ir.close(inout c.ir, hm)
+    let none = ir.empty_block(inout c.ir)
+    if any {
+        emit(inout c, ir.S_IF, 0, b, hit, none, 0, n.line)
+    } else {
+        emit(inout c, ir.S_IF, 0, b, none, hit, 0, n.line)
+    }
+    list_loop_end(inout c, lp, n.line)
+    Ok(v_of(types.BOOL, ir.op_local(inout c.ir, r, types.BOOL)))
+}
+
+/// `l.fold(init, f)`: acc := init; for x in l { acc = f(acc, x) } (the old acc dropped).
+fn fold_list(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] uses ffi {
+    let ty = pv.ty
+    let el = types.get(c.t, ty).a
+    let ro = recv_op(inout c, pv)
+    let ie = arg_expr(c, at(c, n.c, 0))
+    let init = expr(inout c, ie, NONE)?
+    let acc_ty = init.ty
+    let fv = closure_arg(inout c, n, 1, two(acc_ty, el), acc_ty)?
+    let want = types.fn_of(inout c.t, two(acc_ty, el), acc_ty)
+    if fv.ty != want {
+        let ae = nd(c, arg_expr(c, at(c, n.c, 1)))
+        var m = q3("expected fn(", ts(c, acc_ty), ", ", ts(c, el), ") -> ", ts(c, acc_ty), ", found ")
+        bytes.append(inout m, ts(c, fv.ty))
+        return Err(err("E0401", ae.line, ae.col, m))
+    }
+    let seq = place_of_op(inout c, ro, ty, n.line)
+    let acc = tmp(inout c, acc_ty, n.line)
+    let io = take(inout c, init, n.line)
+    emit(inout c, ir.S_COPY, acc, io, 0, 0, acc_ty, n.line)
+    let accp = ir.place_local(inout c.ir, acc, acc_ty)
+    let lp = list_loop(inout c, seq, ty, n.line)
+    let ipl = ir.place_index(inout c.ir, seq, lp.iv, el, n.line)
+    let item = read(inout c, ipl, el, 0)
+    let av = read(inout c, accp, acc_ty, 0)
+    let nv = callv(inout c, fv.op, two(av, item), acc_ty, n.line)
+    if owns(c, acc_ty) { emit_drop(inout c, accp, acc_ty) }
+    emit(inout c, ir.S_STORE, 0, accp, nv, 0, acc_ty, n.line)
+    list_loop_end(inout c, lp, n.line)
+    Ok(v_of(acc_ty, ir.op_local(inout c.ir, acc, acc_ty)))
 }

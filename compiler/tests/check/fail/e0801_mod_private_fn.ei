@@ -1,0 +1,3 @@
+// expect: E0801 3:21
+import "../lib/geo.ei"
+fn main() { let x = geo.hidden() }

@@ -1,0 +1,2 @@
+// expect: E0115 2:28
+fn main() { let b = String.new() }

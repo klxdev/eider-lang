@@ -1,0 +1,16 @@
+// mode: build
+fn pair(a: i32, b: bool) -> (i32, bool) { (a, b) }
+fn main() uses io {
+    let p = pair(1, true)
+    let (x, y) = p
+    print(p.0)
+    print(p.1)
+    print(x)
+    if y { print(1) }
+    var q: (u8, (i32, i32)) = (1, (2, 3))
+    q.1.0 = 5
+    match q {
+        (1, (a, _)) => print(a)
+        (_, b) => print(b.1)
+    }
+}

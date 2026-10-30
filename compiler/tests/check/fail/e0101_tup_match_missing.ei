@@ -1,0 +1,7 @@
+// expect: E0101 3:5
+fn main() { let p = (true, false)
+    match p {
+        (true, _) => {}
+        (false, true) => {}
+    }
+}

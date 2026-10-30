@@ -1,0 +1,4 @@
+// expect: E0115 4:15
+type R = { v: i32 }
+fn main() { let r = R(1)
+    let x = r.v(1) }

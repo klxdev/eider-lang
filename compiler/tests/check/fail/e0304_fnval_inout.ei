@@ -1,0 +1,3 @@
+// expect: E0304 3:37
+fn bump(inout x: i32) -> i32 { x }
+fn main() { let f: fn(i32) -> i32 = bump }

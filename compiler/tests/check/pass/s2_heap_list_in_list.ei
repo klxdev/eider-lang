@@ -1,0 +1,7 @@
+// mode: build
+fn main() uses io { var l: List[List[i32]] = List.new()
+    var a: List[i32] = List.new()
+    a.push(1)
+    l.push(a)
+    l[0].push(2)
+    print(l[0].len()) }

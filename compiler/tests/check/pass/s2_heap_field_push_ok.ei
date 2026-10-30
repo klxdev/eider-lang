@@ -1,0 +1,6 @@
+// mode: build
+type R = { l: List[i32] }
+fn main() uses io { var l: List[i32] = List.new()
+    var r = R(l)
+    r.l.push(1)
+    print(r.l.len()) }

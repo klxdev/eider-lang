@@ -1,0 +1,5 @@
+// mode: build
+fn main() uses io { let p = (String.from("a"), 1)
+    let (s, n) = p
+    print(s)
+    print(p.0) }

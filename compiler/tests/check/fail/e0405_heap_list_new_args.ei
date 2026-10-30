@@ -1,0 +1,2 @@
+// expect: E0405 2:37
+fn main() { let a: List[i32] = List.new(1) }

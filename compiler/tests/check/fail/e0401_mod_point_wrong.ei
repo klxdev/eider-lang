@@ -1,0 +1,3 @@
+// expect: E0401 3:49
+import "../lib/geo.ei"
+fn main() { let p: geo.Point[bool] = geo.origin(1) }

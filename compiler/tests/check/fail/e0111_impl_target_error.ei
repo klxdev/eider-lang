@@ -1,0 +1,4 @@
+// expect: E0111 3:24
+type S = { v: u32 }
+impl S { fn f(self, x: Nope) {} }
+fn main() {}

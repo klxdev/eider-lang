@@ -1,0 +1,3 @@
+// expect: E0401 3:15
+fn main() { let a = String.from("a")
+    let b = a < a }

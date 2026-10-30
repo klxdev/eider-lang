@@ -1,0 +1,299 @@
+
+fn apply -> i32
+  %0 param x: i32
+  %1 param f: fn(i32) -> i32
+  %2 temp: fn(i32) -> i32
+  %3 temp: i32
+  %4 temp: i32
+  {
+    %2 = read %1
+    %3 = read %0
+    %4 = callv %2(%3)
+    return %4
+  }
+
+fn twice -> i32
+  %0 param x: i32
+  %1 temp: i32
+  %2 temp: i32
+  {
+    %1 = read %0
+    %2 = %1 * 2i32  @5
+    return %2
+  }
+
+fn main -> () uses io
+  %0 let k: i32
+  %1 temp: i32
+  %2 temp: fn(i32) -> i32
+  %3 temp: i32
+  %4 temp: fn(i32) -> i32
+  %5 temp: i32
+  %6 temp: String
+  %7 let greeting: String
+  %8 temp: String
+  %9 temp: String
+  %10 temp: fn(i32) -> i32
+  %11 let say: fn(i32) -> i32
+  %12 temp: fn(i32) -> i32
+  %13 temp: i32
+  %14 temp: List[i32]
+  %15 var l: List[i32]
+  %16 temp: List[i32]
+  %17 temp: fn(i32) -> i32
+  %18 temp: List[i32]
+  %19 temp: usize
+  %20 temp: usize
+  %21 temp: List[i32]
+  %22 temp: usize
+  %23 temp: bool
+  %24 temp: i32
+  %25 temp: i32
+  %26 temp: usize
+  %27 temp: usize
+  %28 temp: fn(i32) -> bool
+  %29 temp: List[i32]
+  %30 temp: usize
+  %31 temp: usize
+  %32 temp: List[i32]
+  %33 temp: usize
+  %34 temp: bool
+  %35 temp: i32
+  %36 temp: bool
+  %37 temp: usize
+  %38 temp: usize
+  %39 let big: List[i32]
+  %40 temp: List[i32]
+  %41 temp: usize
+  %42 temp: List[i32]
+  %43 temp: fn(i32) -> bool
+  %44 temp: bool
+  %45 temp: usize
+  %46 temp: usize
+  %47 temp: List[i32]
+  %48 temp: usize
+  %49 temp: bool
+  %50 temp: i32
+  %51 temp: bool
+  %52 temp: usize
+  %53 temp: usize
+  %54 temp: List[i32]
+  %55 temp: fn(i32, i32) -> i32
+  %56 temp: i32
+  %57 temp: usize
+  %58 temp: usize
+  %59 temp: List[i32]
+  %60 temp: usize
+  %61 temp: bool
+  %62 temp: i32
+  %63 temp: i32
+  %64 temp: i32
+  %65 temp: usize
+  %66 temp: usize
+  {
+    %0 = 3i32
+    %1 = read %0
+    %2 = closure main.closure1(%1)
+    %3 = call apply(2i32, %2)
+    print %3
+    %4 = fnref twice
+    %5 = call apply(2i32, %4)
+    print %5
+    %6 = string_from("hi")
+    %7 = %6
+    %8 = read %7
+    %9 = clone %8
+    %10 = closure main.closure2(%9)
+    %11 = %10
+    %12 = read %11
+    %13 = callv %12(1i32)
+    print %13
+    %14 = list_new()
+    %15 = %14
+    push(inout %15, 1i32)
+    push(inout %15, 2i32)
+    %16 = read %15
+    %17 = closure main.closure3()
+    %18 = list_new()
+    %19 = 0usize
+    loop {
+      %20 = read %19
+      %21 = read %16
+      %22 = len(%21)
+      %23 = %20 < %22
+      if %23 {
+      } else {
+        break
+      }
+      %24 = read %16[%20]@21
+      %25 = callv %17(%24)
+      push(inout %18, %25)
+    } step {
+      %26 = read %19
+      %27 = %26 +% 1usize
+      store %19 = %27
+    }
+    %28 = closure main.closure4()
+    %29 = list_new()
+    %30 = 0usize
+    loop {
+      %31 = read %30
+      %32 = read %18
+      %33 = len(%32)
+      %34 = %31 < %33
+      if %34 {
+      } else {
+        break
+      }
+      %35 = read %18[%31]@21
+      %36 = callv %28(%35)
+      if %36 {
+        push(inout %29, %35)
+      } else {
+      }
+    } step {
+      %37 = read %30
+      %38 = %37 +% 1usize
+      store %30 = %38
+    }
+    %39 = %29
+    %40 = read %39
+    %41 = len(%40)
+    print %41
+    %42 = read %15
+    %43 = closure main.closure5()
+    %44 = false
+    %45 = 0usize
+    loop {
+      %46 = read %45
+      %47 = read %42
+      %48 = len(%47)
+      %49 = %46 < %48
+      if %49 {
+      } else {
+        break
+      }
+      %50 = read %42[%46]@23
+      %51 = callv %43(%50)
+      if %51 {
+        %44 = true
+        break
+      } else {
+      }
+    } step {
+      %52 = read %45
+      %53 = %52 +% 1usize
+      store %45 = %53
+    }
+    print %44
+    %54 = read %15
+    %55 = closure main.closure6()
+    %56 = 0i32
+    %57 = 0usize
+    loop {
+      %58 = read %57
+      %59 = read %54
+      %60 = len(%59)
+      %61 = %58 < %60
+      if %61 {
+      } else {
+        break
+      }
+      %62 = read %54[%58]@24
+      %63 = read %56
+      %64 = callv %55(%63, %62)
+      store %56 = %64
+    } step {
+      %65 = read %57
+      %66 = %65 +% 1usize
+      store %57 = %66
+    }
+    print %56
+    drop %55: fn(i32, i32) -> i32
+    drop %43: fn(i32) -> bool
+    drop %39: List[i32]
+    drop %28: fn(i32) -> bool
+    drop %18: List[i32]
+    drop %17: fn(i32) -> i32
+    drop %15: List[i32]
+    drop %11: fn(i32) -> i32
+    drop %7: String
+    drop %4: fn(i32) -> i32
+    drop %2: fn(i32) -> i32
+  }
+
+fn main.closure1 -> i32 uses io
+  %0 capture k: i32
+  %1 param x: i32
+  %2 temp: i32
+  %3 temp: i32
+  %4 temp: i32
+  {
+    %2 = read %1
+    %3 = read %0
+    %4 = %2 * %3  @9
+    return %4
+  }
+
+fn main.closure2 -> i32 uses io
+  %0 capture greeting: String
+  %1 param n: i32
+  %2 temp: String
+  %3 temp: i32
+  %4 temp: bool
+  %5 temp: i32
+  {
+    %2 = read %0
+    print %2
+    %3 = read %1
+    %4 = %3 > 9i32
+    if %4 {
+      return 9i32
+    } else {
+    }
+    %5 = read %1
+    return %5
+  }
+
+fn main.closure3 -> i32 uses io
+  %0 param x: i32
+  %1 temp: i32
+  %2 temp: i32
+  {
+    %1 = read %0
+    %2 = %1 * 10i32  @21
+    return %2
+  }
+
+fn main.closure4 -> bool uses io
+  %0 param x: i32
+  %1 temp: i32
+  %2 temp: bool
+  {
+    %1 = read %0
+    %2 = %1 > 10i32
+    return %2
+  }
+
+fn main.closure5 -> bool uses io
+  %0 param x: i32
+  %1 temp: i32
+  %2 temp: bool
+  {
+    %1 = read %0
+    %2 = %1 == 2i32
+    return %2
+  }
+
+fn main.closure6 -> i32 uses io
+  %0 param a: i32
+  %1 param x: i32
+  %2 temp: i32
+  %3 temp: i32
+  %4 temp: i32
+  {
+    %2 = read %0
+    %3 = read %1
+    %4 = %2 + %3  @24
+    return %4
+  }

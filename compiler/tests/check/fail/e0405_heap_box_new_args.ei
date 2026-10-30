@@ -1,0 +1,2 @@
+// expect: E0405 2:25
+fn main() { let b = Box.new(1, 2) }

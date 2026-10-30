@@ -10,13 +10,16 @@
 // source line for the runtime error.
 //
 // Locals     {name sym, ty, kind (L_*), line}
-//            L_PARAM, L_INOUT (a parameter passed by reference), L_LET, L_VAR, L_TEMP
+//            L_PARAM, L_INOUT (a parameter passed by reference), L_LET, L_VAR, L_TEMP,
+//            L_CAPTURE (a closure function's first locals: the values its environment holds,
+//            in S_CLOSURE argument order; read-only)
 // Operands   O_INT ty v=value (64-bit two's complement)   O_BOOL v   O_STR v=string index
 //            O_UNIT   O_LOCAL a=local (only temporaries and pattern scrutinees)
 // Places     P_LOCAL a=local
-//            P_FIELD a=base place b=field index (records)
-//            P_INDEX a=base place b=index operand (arrays, bounds-checked) line
+//            P_FIELD a=base place b=field index (records and tuples)
+//            P_INDEX a=base place b=index operand (arrays and Lists, bounds-checked) line
 //            P_PAYLOAD a=base place b=variant c=field (the enum at base is that variant)
+//            P_DEREF a=base place (the value a Box at base points to)
 // Arguments  (calls, constructors, arrays) a list in `extra` of operand ids, except
 //            that an `inout` call argument is a place id + ARG_PLACE.
 // Statements {kind, dst, a, b, c, ty, line}; a block is a list of statement ids in `extra`
@@ -37,9 +40,44 @@
 //   S_IF      if op a then block b else block c
 //   S_LOOP    loop { block a }; `continue` runs block b (the step) and loops again
 //   S_BREAK   S_CONTINUE   S_RETURN a = op+1 (0: no value)
+//   S_TUPLE   dst := (args [b/c]) : ty
+//   S_CLONE   dst := deep copy of op a (of type ty)
+//   S_DROP    drop the value in place a (of type ty)
+//   S_MOVE    dst := place a, which gives up ownership (it is dead afterwards)
+//   S_BUILTIN dst := builtin a (B_*) of args [b/c]; ty = result type; dst = NONE for ()
+//             (B_LIST_SUM traps on overflow at `line`)
+//   S_CLOSURE dst := closure value of type ty: function a with captured values [b/c] (moved
+//             into its environment; the function's L_CAPTURE locals read them)
+//   S_FNREF   dst := function a as a closure value of type ty (no environment)
+//   S_CALLV   dst := call closure op a with args [b/c] (borrowed); dst = NONE for ()
 // Functions  {name text, def, ret, locals [lstart/lcount], nparams, body block+1 (0 = none),
-//             caps, is_test}
+//             caps, is_test}; generic functions and methods appear once per instance
+//             (`name[i32]`, `Option[i32].unwrap`), each closure body is a function of its
+//             own (`main.closure1`) whose parameters follow its captures
 // Constants  {name text, ty, value op}
+//
+// Ownership (String, List, Map, Box and anything containing them) is explicit, so lowering
+// never decides it. Every local, temporary and place owns the value stored in it. S_READ is
+// a bitwise copy: of an owned type it is a *borrow* (a view that is never dropped and is
+// used only while the place is unchanged: as a call argument, an operand, a match
+// scrutinee). An owned value moves when its owner, a temporary that is never used again,
+// is stored (S_COPY, S_STORE, constructor and builtin arguments that take ownership,
+// S_RETURN); a borrow that must be stored is first S_CLONEd. Values whose owner goes out of
+// scope get an S_DROP on every exit path (end of block, `return`, `break`, `continue`,
+// `?`), innermost first, in reverse order of creation; a place that is overwritten is
+// dropped right before the store. Builtin argument conventions: the receiver of a mutating
+// builtin is a place (+ARG_PLACE); B_LIST_PUSH's element and B_MAP_INSERT's key and value
+// are moved in; every other argument is borrowed. B_LIST_POP's result is owned; B_MAP_GET's
+// Option borrows its payload from the map (the checker clones it).
+//
+// Builtins     B_STR_FROM(str) -> String          B_STR_FROM_INT(i64) -> String
+//   B_LEN(x) -> usize, B_IS_EMPTY(x) -> bool, x a String, List or Map
+//   B_STR_PUSH(inout s, str)    B_STR_APPEND(inout s, String)
+//   B_LIST_NEW -> ty    B_MAP_NEW -> ty    B_BOX_NEW(v) -> ty
+//   B_LIST_PUSH(inout l, x)    B_LIST_POP(inout l) -> Option[T]    B_LIST_CLEAR(inout l)
+//   B_LIST_CONTAINS(l, x) -> bool    B_LIST_SUM(l) -> T
+//   B_MAP_INSERT(inout m, k, v)    B_MAP_CONTAINS(m, k) -> bool    B_MAP_REMOVE(inout m, k) -> bool
+//   B_MAP_GET(m, k) -> Option[V]
 
 import "deps/core/sys.ei"
 import "deps/std/bytes.ei"
@@ -56,6 +94,7 @@ pub const L_INOUT: u32 = 1
 pub const L_LET: u32 = 2
 pub const L_VAR: u32 = 3
 pub const L_TEMP: u32 = 4
+pub const L_CAPTURE: u32 = 5
 
 pub const O_INT: u32 = 0
 pub const O_BOOL: u32 = 1
@@ -67,6 +106,7 @@ pub const P_LOCAL: u32 = 0
 pub const P_FIELD: u32 = 1
 pub const P_INDEX: u32 = 2
 pub const P_PAYLOAD: u32 = 3
+pub const P_DEREF: u32 = 4
 
 pub const U_NEG: u32 = 0
 pub const U_NOT: u32 = 1
@@ -92,6 +132,56 @@ pub const S_LOOP: u32 = 17
 pub const S_BREAK: u32 = 18
 pub const S_CONTINUE: u32 = 19
 pub const S_RETURN: u32 = 20
+pub const S_TUPLE: u32 = 21
+pub const S_CLONE: u32 = 22
+pub const S_DROP: u32 = 23
+pub const S_MOVE: u32 = 24
+pub const S_BUILTIN: u32 = 25
+pub const S_CLOSURE: u32 = 26
+pub const S_FNREF: u32 = 27
+pub const S_CALLV: u32 = 28
+
+pub const B_STR_FROM: u32 = 0
+pub const B_STR_FROM_INT: u32 = 1
+pub const B_LEN: u32 = 2
+pub const B_IS_EMPTY: u32 = 3
+pub const B_STR_PUSH: u32 = 4
+pub const B_STR_APPEND: u32 = 5
+pub const B_LIST_NEW: u32 = 6
+pub const B_MAP_NEW: u32 = 7
+pub const B_LIST_PUSH: u32 = 8
+pub const B_LIST_POP: u32 = 9
+pub const B_LIST_CLEAR: u32 = 10
+pub const B_LIST_CONTAINS: u32 = 11
+pub const B_LIST_SUM: u32 = 12
+pub const B_MAP_INSERT: u32 = 13
+pub const B_MAP_CONTAINS: u32 = 14
+pub const B_MAP_REMOVE: u32 = 15
+pub const B_MAP_GET: u32 = 16
+pub const B_BOX_NEW: u32 = 17
+
+pub fn builtin_name(b: u32) -> str {
+    match b {
+        0 => "string_from"
+        1 => "string_from_int"
+        2 => "len"
+        3 => "is_empty"
+        4 => "push_str"
+        5 => "append"
+        6 => "list_new"
+        7 => "map_new"
+        8 => "push"
+        9 => "pop"
+        10 => "clear"
+        11 => "contains"
+        12 => "sum"
+        13 => "insert"
+        14 => "map_contains"
+        15 => "remove"
+        16 => "map_get"
+        _ => "box_new"
+    }
+}
 
 pub type Local = { name: u32, ty: u32, kind: u32, line: u32 }
 pub type Op = { kind: u32, ty: u32, a: u32, v: u64 }
@@ -116,12 +206,18 @@ pub type Ir = {
     strs: List[List[u8]],
     /// statements of the blocks being built, innermost last (see open/close)
     pending: List[u32],
-    /// the function being built
+    /// the function being built and its locals so far (they join `locals` at end_fn, so
+    /// each function's locals stay contiguous although a closure's body is built in the
+    /// middle of its enclosing function's); `outer` saves the enclosing ones
     cur: u32,
+    building: List[Local],
+    outer: List[Outer],
 }
 
+type Outer = { cur: u32, building: List[Local] }
+
 pub fn new() -> Ir {
-    Ir(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), 0)
+    Ir(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new())
 }
 
 // ---- building
@@ -132,29 +228,60 @@ pub fn declare_fn(inout ir: Ir, name: List[u8], is_test: bool) -> u32 {
     (ir.fns.len() - 1) as u32
 }
 
-/// Start building function f's body: its locals begin here.
+/// Start building function f's body.
 pub fn begin_fn(inout ir: Ir, f: u32, ret: u32, caps: List[u8]) {
     ir.cur = f
+    ir.building = List.new()
     var fd = ir.fns[f as usize]
     fd.ret = ret
     fd.caps = caps
-    fd.lstart = ir.locals.len() as u32
     ir.fns[f as usize] = fd
 }
 
+/// Finish the function being built: its locals are stored and its body is block `body`.
 pub fn end_fn(inout ir: Ir, nparams: u32, body: u32) {
     var fd = ir.fns[ir.cur as usize]
-    fd.lcount = ir.locals.len() as u32 - fd.lstart
+    fd.lstart = ir.locals.len() as u32
+    fd.lcount = ir.building.len() as u32
+    for l in ir.building { ir.locals.push(l) }
+    ir.building = List.new()
     fd.nparams = nparams
     fd.body = body + 1
     ir.fns[ir.cur as usize] = fd
 }
 
+/// Start building function f (a closure body) inside the function being built.
+pub fn begin_nested(inout ir: Ir, f: u32, ret: u32, caps: List[u8]) {
+    ir.outer.push(Outer(ir.cur, ir.building))
+    begin_fn(inout ir, f, ret, caps)
+}
+
+/// Finish a function started with begin_nested and resume its enclosing function.
+pub fn end_nested(inout ir: Ir, nparams: u32, body: u32) {
+    end_fn(inout ir, nparams, body)
+    match ir.outer.pop() {
+        Some(o) => {
+            ir.cur = o.cur
+            ir.building = o.building
+        }
+        None => {}
+    }
+}
+
+/// Set the return type of the function being built (a closure's is known at its end).
+pub fn set_ret(inout ir: Ir, ret: u32) {
+    var fd = ir.fns[ir.cur as usize]
+    fd.ret = ret
+    ir.fns[ir.cur as usize] = fd
+}
+
+/// The name of the function being built.
+pub fn cur_name(ir: Ir) -> List[u8] { ir.fns[ir.cur as usize].name }
+
 /// A new local of the current function (its id is relative to the function).
 pub fn local(inout ir: Ir, name: u32, ty: u32, kind: u32, line: u32) -> u32 {
-    let base = ir.fns[ir.cur as usize].lstart
-    ir.locals.push(Local(name, ty, kind, line))
-    ir.locals.len() as u32 - 1 - base
+    ir.building.push(Local(name, ty, kind, line))
+    ir.building.len() as u32 - 1
 }
 
 pub fn temp(inout ir: Ir, ty: u32, line: u32) -> u32 { local(inout ir, 0, ty, L_TEMP, line) }
@@ -184,10 +311,9 @@ pub fn op_is_local(ir: Ir, o: u32) -> bool { ir.ops[o as usize].kind == O_LOCAL 
 pub fn op_local_id(ir: Ir, o: u32) -> u32 { ir.ops[o as usize].a }
 
 pub fn set_local_ty(inout ir: Ir, l: u32, ty: u32) {
-    let i = (ir.fns[ir.cur as usize].lstart + l) as usize
-    var x = ir.locals[i]
+    var x = ir.building[l as usize]
     x.ty = ty
-    ir.locals[i] = x
+    ir.building[l as usize] = x
 }
 
 fn place(inout ir: Ir, p: Place) -> u32 {
@@ -199,6 +325,13 @@ pub fn place_local(inout ir: Ir, l: u32, ty: u32) -> u32 { place(inout ir, Place
 pub fn place_field(inout ir: Ir, base: u32, i: u32, ty: u32) -> u32 { place(inout ir, Place(P_FIELD, ty, base, i, 0, 0)) }
 pub fn place_index(inout ir: Ir, base: u32, idx: u32, ty: u32, line: u32) -> u32 { place(inout ir, Place(P_INDEX, ty, base, idx, 0, line)) }
 pub fn place_payload(inout ir: Ir, base: u32, v: u32, f: u32, ty: u32) -> u32 { place(inout ir, Place(P_PAYLOAD, ty, base, v, f, 0)) }
+pub fn place_deref(inout ir: Ir, base: u32, ty: u32) -> u32 { place(inout ir, Place(P_DEREF, ty, base, 0, 0, 0)) }
+
+/// The kind of the last statement of the innermost open block (NONE if it is empty).
+pub fn last_kind(ir: Ir, mark: u32) -> u32 {
+    if ir.pending.len() as u32 <= mark { return NONE }
+    ir.stmts[ir.pending[ir.pending.len() - 1] as usize].kind
+}
 
 /// Append a statement to the innermost open block.
 pub fn emit(inout ir: Ir, kind: u32, dst: u32, a: u32, b: u32, c: u32, ty: u32, line: u32) {
@@ -294,12 +427,16 @@ fn put_place(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u
             put(inout o, "]@")
             putn(inout o, x.line as u64)
         }
-        _ => {
+        3 => {
             put_place(inout o, ir, t, names, x.a)
             put(inout o, ".<")
             putn(inout o, x.b as u64)
             put(inout o, ">.")
             putn(inout o, x.c as u64)
+        }
+        _ => {
+            put(inout o, "*")
+            put_place(inout o, ir, t, names, x.a)
         }
     }
 }
@@ -452,6 +589,50 @@ fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u3
         }
         18 => put(inout o, "break")
         19 => put(inout o, "continue")
+        21 => {
+            put_dst(inout o, s.dst)
+            put(inout o, "tuple ")
+            putty(inout o, t, names, s.ty)
+            put_args(inout o, ir, t, names, s.b, s.c)
+        }
+        22 => {
+            put_dst(inout o, s.dst)
+            put(inout o, "clone ")
+            put_op(inout o, ir, t, names, s.a)
+        }
+        23 => {
+            put(inout o, "drop ")
+            put_place(inout o, ir, t, names, s.a)
+            put(inout o, ": ")
+            putty(inout o, t, names, s.ty)
+        }
+        24 => {
+            put_dst(inout o, s.dst)
+            put(inout o, "move ")
+            put_place(inout o, ir, t, names, s.a)
+        }
+        25 => {
+            if s.dst != NONE { put_dst(inout o, s.dst) }
+            put(inout o, builtin_name(s.a))
+            put_args(inout o, ir, t, names, s.b, s.c)
+        }
+        26 => {
+            put_dst(inout o, s.dst)
+            put(inout o, "closure ")
+            putb(inout o, ir.fns[s.a as usize].name)
+            put_args(inout o, ir, t, names, s.b, s.c)
+        }
+        27 => {
+            put_dst(inout o, s.dst)
+            put(inout o, "fnref ")
+            putb(inout o, ir.fns[s.a as usize].name)
+        }
+        28 => {
+            if s.dst != NONE { put_dst(inout o, s.dst) }
+            put(inout o, "callv ")
+            put_op(inout o, ir, t, names, s.a)
+            put_args(inout o, ir, t, names, s.b, s.c)
+        }
         _ => {
             put(inout o, "return")
             if s.a > 0 {
@@ -461,7 +642,7 @@ fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u3
         }
     }
     // the source line of operations that can trap (index places print their own)
-    let traps = (s.kind == S_UNARY && s.a == U_NEG) || (s.kind == S_BINARY && s.a <= ast.OP_REM) || s.kind == S_CAST || s.kind == S_PANIC || s.kind == S_ASSERT
+    let traps = (s.kind == S_UNARY && s.a == U_NEG) || (s.kind == S_BINARY && s.a <= ast.OP_REM) || s.kind == S_CAST || s.kind == S_PANIC || s.kind == S_ASSERT || (s.kind == S_BUILTIN && s.a == B_LIST_SUM)
     if s.line > 0 && traps {
         put(inout o, "  @")
         putn(inout o, s.line as u64)
@@ -475,6 +656,7 @@ fn kind_text(k: u32) -> str {
         1 => "inout"
         2 => "let"
         3 => "var"
+        5 => "capture"
         _ => "temp"
     }
 }

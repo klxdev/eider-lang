@@ -1,0 +1,20 @@
+// mode: build
+fn id[T](x: T) -> T { x }
+fn first[A, B](p: (A, B)) -> A { p.0 }
+type Pair[A, B] = { a: A, b: B }
+type Tree[T] = | Leaf | Node(v: T, n: u32)
+fn swap[A, B](p: Pair[A, B]) -> Pair[B, A] { Pair(p.b, p.a) }
+fn main() uses io {
+    print(id(3))
+    print(id(true))
+    let u: u8 = 1
+    print(first((u, 2)))
+    let p = Pair(1, true)
+    let q = swap(p)
+    print(q.a)
+    let t: Tree[i32] = Node(5, 1)
+    match t {
+        Leaf => print(0)
+        Node(v, _) => print(v)
+    }
+}

@@ -1,0 +1,5 @@
+// expect: E0303 5:5
+type Sq = { s: u32 }
+impl Sq { fn grow(inout self) { self.s += 1 } }
+fn main() { let a = Sq(1)
+    a.grow() }

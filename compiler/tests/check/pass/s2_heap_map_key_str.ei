@@ -1,0 +1,6 @@
+// mode: build
+fn main() uses io { var a: Map[str, i32] = Map.new()
+    a.insert("x", 1)
+    var b: Map[String, bool] = Map.new()
+    b.insert(String.from("y"), true)
+    print(b.contains(String.from("y"))) }

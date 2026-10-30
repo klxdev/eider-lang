@@ -1,0 +1,7 @@
+// mode: build
+type W[T] = { v: T }
+impl[T] W[T] {
+    fn get(self) -> T { self.v + 1 }
+}
+fn main() { let w = W(5)
+    let x = w.get() }

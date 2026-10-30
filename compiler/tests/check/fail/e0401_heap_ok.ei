@@ -1,0 +1,48 @@
+// expect: E0401 43:28
+type Inv = { name: String, items: List[u32], idx: Map[u32, String], b: Box[u32] }
+fn total(xs: List[u32]) -> u32 {
+    var t: u32 = 0
+    for x in xs { t += x }
+    t
+}
+fn main() uses io {
+    var s = String.from("ab")
+    s.push_str("cd")
+    let t = String.from_int(42)
+    s.append(t)
+    print(s)
+    print(s.len())
+    print(len(s))
+    print(s.is_empty())
+    var l: List[u32] = List.new()
+    l.push(1)
+    l.push(2)
+    print(l[0])
+    print(l.get(1))
+    print(l.contains(2))
+    print(l.sum())
+    print(total(l))
+    l[0] = 9
+    match l.pop() {
+        Some(x) => print(x)
+        None => {}
+    }
+    l.clear()
+    var m: Map[u32, String] = Map.new()
+    m.insert(1, String.from("one"))
+    print(m.contains(1))
+    print(m.len())
+    match m.get(1) {
+        Some(v) => print(v)
+        None => {}
+    }
+    print(m.remove(1))
+    var b = Box.new(5)
+    print(b.get())
+    b.set(6)
+    let inv = Inv(s, l, m, b)
+    print(inv.name)
+    let ss: List[String] = List.new()
+    for x in ss { print(x) }
+    print(s == String.from("x"))
+}

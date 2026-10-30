@@ -1,0 +1,3 @@
+// mode: build
+import "../lib/geo2.ei"
+fn main() { let x = geo2.mk() }

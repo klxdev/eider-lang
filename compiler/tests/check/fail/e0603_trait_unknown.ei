@@ -1,0 +1,4 @@
+// expect: E0603 3:6
+type Sq = { s: u32 }
+impl Shape for Sq { fn area(self) -> u32 { 1 } }
+fn main() {}

@@ -1,0 +1,7 @@
+// expect: E0112 5:29
+type V = { a: u32 }
+impl V {
+    fn new() -> Self { V(1) }
+    fn copy(self) -> Self { Self(self.a) }
+}
+fn main() { let v = V.new() }

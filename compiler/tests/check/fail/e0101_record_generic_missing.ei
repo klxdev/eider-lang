@@ -1,0 +1,4 @@
+// expect: E0101 4:5
+type P[A] = { a: A, b: bool }
+fn main() { let p = P(1, true)
+    match p { P(_, true) => {} } }
