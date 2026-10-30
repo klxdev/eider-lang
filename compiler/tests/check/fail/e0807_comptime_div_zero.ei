@@ -1,0 +1,4 @@
+// expect: E0807 3:7
+fn d(a: i32, b: i32) -> i32 { return a / b }
+const A: i32 = comptime d(1, 0)
+fn main() uses io { print(A) }

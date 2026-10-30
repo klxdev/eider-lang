@@ -1,0 +1,3 @@
+// expect: E0807 3:11
+import "../lib/ct_trap.ei"
+fn main() uses io { print(ct_trap.X) }

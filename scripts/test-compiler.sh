@@ -379,8 +379,13 @@ done
 [ -z "$(ls $cdir/tmp)" ] || cfail "work directories left in $cdir/tmp"
 EIDER_CACHE=off $new run tests/run/adt.ei >/dev/null 2>&1
 [ "$(ls $cdir/bin | wc -l)" = 4 ] || cfail "EIDER_CACHE=off still used the cache"
+# comptime evaluators go through the cache too (twice: built, then cache hits)
+for i in 1 2; do
+  EIDER_CACHE=$cdir $new run tests/run/comptime.ei >$tmp/o 2>&1
+  cmp -s $tmp/o tests/run/comptime.out || cfail "comptime with the cache (pass $i)"
+done
 rm -rf $cdir
-[ $cache_ok = 1 ] && echo "ok   cache: hits, keys (flags, -O level), core objects once per toolchain, 12 concurrent runs, EIDER_CACHE=off"
+[ $cache_ok = 1 ] && echo "ok   cache: hits, keys (flags, -O level), core objects once per toolchain, 12 concurrent runs, comptime evaluators, EIDER_CACHE=off"
 
 # usage: --help lists every command; unknown options and commands are errors
 $new --help >$tmp/o 2>&1

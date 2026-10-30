@@ -1,0 +1,7 @@
+// expect: E0201 3:5
+fn f() -> i32 {
+    print(1)
+    return 2
+}
+const A: i32 = comptime 1
+fn main() uses io { print(A) }

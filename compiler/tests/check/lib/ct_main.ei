@@ -1,0 +1,3 @@
+// helper module for e0107_comptime_mod_main.ei: an imported module with a `main`
+pub const Q: i32 = comptime 9
+fn main() uses io { print(Q) }

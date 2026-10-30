@@ -1,0 +1,147 @@
+// `const X: T = comptime expr`: chains (later constants use earlier ones), negative values,
+// bool, the range edges of every integer type, evaluation with owned data, records,
+// generics, closures and match, constants of an imported module, and test blocks that use
+// comptime constants.
+import "lib/ct_mod.ei"
+
+type Pt = { x: i32, y: i32 }
+
+fn fib(n: u32) -> u64 {
+    var a: u64 = 0
+    var b: u64 = 1
+    for i in 0..n {
+        let t = a + b
+        a = b
+        b = t
+    }
+    return a
+}
+
+fn primes(limit: i32) -> List[i32] {
+    var l: List[i32] = List.new()
+    var n = 2
+    while n < limit {
+        var d = 2
+        var prime = true
+        while d * d <= n {
+            if n % d == 0 { prime = false }
+            d = d + 1
+        }
+        if prime { l.push(n) }
+        n = n + 1
+    }
+    return l
+}
+
+fn total(xs: List[i32]) -> i32 {
+    var t = 0
+    for x in xs { t = t + x }
+    return t
+}
+
+fn pick[T](a: T, b: T, first: bool) -> T {
+    if first { return a }
+    return b
+}
+
+fn area(p: Pt) -> i32 { return p.x * p.y }
+
+fn word_len() -> u8 {
+    var s = String.from("comptime")
+    s.push_str("!")
+    return s.len() as u8
+}
+
+fn apply(f: fn(i32) -> i32, x: i32) -> i32 { return f(x) }
+
+// chains
+const A: i32 = comptime 5
+const B: i32 = comptime A + A
+const C: i32 = comptime B * A - 100
+const D: bool = comptime C < 0
+const FIB: u64 = comptime fib(90)
+const FIB_ODD: bool = comptime FIB % 2 == 1
+
+// negative values and bool
+const NEG: i32 = comptime 3 - fib(10) as i32
+const NEG64: i64 = comptime -(FIB as i64)
+const NO: bool = comptime 1 > 2
+const YES: bool = comptime !NO
+
+// range edges of every integer type
+const I32_MAX: i32 = comptime 2147483647
+const I32_MIN: i32 = comptime -2147483647 - 1
+const I64_MAX: i64 = comptime 9223372036854775807
+const I64_MIN: i64 = comptime -9223372036854775807 - 1
+const U8_MAX: u8 = comptime 255
+const U8_MIN: u8 = comptime 0
+const U32_MAX: u32 = comptime 4294967295
+const U32_MIN: u32 = comptime 0
+const U64_MAX: u64 = comptime 18446744073709551615
+const U64_MIN: u64 = comptime 0
+const USIZE_MAX: usize = comptime 18446744073709551615
+const ZERO_NEG: i32 = comptime 0 - 0
+
+// owned data, records, generics, closures, match
+const PRIMES: i32 = comptime total(primes(100))
+const COUNT: usize = comptime primes(1000).len()
+const LEN: u8 = comptime word_len()
+const AREA: i32 = comptime area(Pt(6, 7))
+const PICKED: u64 = comptime pick(1, 2, false)
+const CLOSURE: i32 = comptime apply(|x: i32| -> i32 { x * 3 }, 14)
+const MATCHED: i32 = comptime match Some(A) {
+    Some(v) => v * 100
+    None => 0
+}
+
+// an imported module's constants, and one built from them
+const MOD: i32 = comptime ct_mod.AREA + ct_mod.sq(2)
+
+fn main() uses io {
+    print(A)
+    print(B)
+    print(C)
+    print(D)
+    print(FIB)
+    print(FIB_ODD)
+    print(NEG)
+    print(NEG64)
+    print(NO)
+    print(YES)
+    print(I32_MAX)
+    print(I32_MIN)
+    print(I64_MAX)
+    print(I64_MIN)
+    print(U8_MAX)
+    print(U8_MIN)
+    print(U32_MAX)
+    print(U32_MIN)
+    print(U64_MAX)
+    print(U64_MIN)
+    print(USIZE_MAX)
+    print(ZERO_NEG)
+    print(PRIMES)
+    print(COUNT)
+    print(LEN)
+    print(AREA)
+    print(PICKED)
+    print(CLOSURE)
+    print(MATCHED)
+    print(ct_mod.AREA)
+    print(ct_mod.NEG)
+    print(ct_mod.TWICE)
+    print(ct_mod.ON)
+    print(MOD)
+    // comptime constants are ordinary constants afterwards: folded, usable anywhere
+    let x: u8 = U8_MAX - 5
+    print(x)
+    print(I64_MIN + 1)
+}
+
+test "comptime constants in tests" {
+    assert C == -50
+    assert D
+    assert I64_MIN < 0
+    assert U64_MAX == 18446744073709551615
+    assert MOD == 27
+}

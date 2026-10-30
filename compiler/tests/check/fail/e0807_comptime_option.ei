@@ -1,0 +1,3 @@
+// expect: E0807 2:7
+const A: Option[i32] = comptime None
+fn main() uses io { print(1) }

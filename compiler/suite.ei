@@ -22,6 +22,7 @@ import "diag.ei"
 import "parse.ei"
 import "resolve.ei"
 import "check.ei"
+import "comptime.ei" as consteval
 
 /// How a file is checked (stage 0's Mode, minus Lib).
 pub const BUILD: i32 = 0
@@ -32,8 +33,9 @@ fn s(x: str) -> List[u8] uses ffi { sys.lit(x) }
 
 fn is(a: List[u8], x: str) -> bool uses ffi { bytes.eq(a, sys.lit(x)) }
 
-/// Lex, parse, load and check `src` as the file `file` in `mode`: Ok when it compiles.
-pub fn compile(file: List[u8], src: List[u8], mode: i32) -> Result[bool, diag.Diag] uses io, fs, ffi {
+/// Lex, parse, load, evaluate comptime constants and check `src` as the file `file` in
+/// `mode`: Ok when it compiles.
+pub fn compile(file: List[u8], src: List[u8], mode: i32) -> Result[bool, diag.Diag] uses io, fs, net, clock, ffi {
     var names = intern.new()
     let r = lex.lex(src, inout names)
     match resolve.lex_diag(r) {
@@ -45,7 +47,9 @@ pub fn compile(file: List[u8], src: List[u8], mode: i32) -> Result[bool, diag.Di
         _ => { return Ok(true) }
     }
     let parsed = parse.parse(lx, names)?
-    let prog = resolve.load(file, src, parsed)?
+    let loaded = resolve.load(file, src, parsed)?
+    // `comptime` constants are evaluated between loading and checking, as in main.ei
+    let prog = consteval.eval(loaded)?
     // TODO(wasm): check WASM-mode files in WebAssembly mode (E0806) once eiderc has it (the
     // in-process side of `eiderc check --wasm`); until then they are checked as programs
     // and `run` reports a mismatch on them as `skip`.
@@ -163,7 +167,7 @@ fn has(xs: List[List[u8]], x: List[u8]) -> bool {
 }
 
 /// Run the suite in `dir`; returns the exit code (1 if anything failed).
-pub fn run(dir: List[u8]) -> i32 uses io, fs, ffi {
+pub fn run(dir: List[u8]) -> i32 uses io, fs, net, clock, ffi {
     var pass: u64 = 0
     var failed: u64 = 0
     var skipped: u64 = 0

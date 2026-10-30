@@ -1,0 +1,7 @@
+// expect: E0807 6:7
+fn f() -> i32 {
+    assert 1 == 2, "never"
+    return 1
+}
+const A: i32 = comptime f()
+fn main() uses io { print(A) }

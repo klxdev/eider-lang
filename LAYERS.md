@@ -23,6 +23,27 @@ programs need, and a hash is a package by the rule below. The copy goes away whe
 package-qualified modules land (docs/compiler.md, "Language work" item 4) and the compiler
 can take a pinned package from the repository.
 
+## Dependencies
+
+Building Eider must stay cheap to bootstrap and audit. The rule:
+
+- **To build the compiler from the seed, and to build any Eider program:** a C11 compiler and a
+  POSIX.1-2008 C library with threads (`-pthread`). Nothing else: no Rust, no Python, no make,
+  no third-party C libraries, no particular C compiler (gcc and clang both work; anything C11
+  should). `cc -std=c11 -O2 -pthread -I core -o eiderc seed/eiderc.c core/eider_rt.c core/eider_core.c`
+  is the whole bootstrap.
+- **The language runtime (`core/`) and the compiler (`compiler/`)** may only depend on that. New
+  C in core must use only C11 + POSIX; a new dependency for the runtime or the compiler needs a
+  design decision recorded here first. The driver also runs the POSIX utilities `ar` (for
+  `build --lib`) and `cp` (to copy a cached binary out for `build`), and asks `$CC --version`
+  for the cache key (a compiler without it just gets an empty part).
+- **Optional targets** may need more, and stay optional: `build --wasm` needs clang with the
+  wasm32 target and `wasm-ld`.
+- **Development and test tooling** may use more: `sh` for the scripts, `git` (package-manager
+  tests), a second C compiler (clang), sanitizer runtimes (ASan/UBSan/TSan), `node` (the wasm
+  test), and, until C7 retires it, the stage-0 bootstrap (Rust) as the differential oracle.
+  `scripts/verify.sh` skips a leg, with the reason, when its tool is missing.
+
 Rules of thumb:
 
 - New C goes in core only if it is an OS call Eider cannot make otherwise. Anything that can be written in Eider is.

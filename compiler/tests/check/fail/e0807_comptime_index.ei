@@ -1,0 +1,7 @@
+// expect: E0807 6:7
+fn at(i: usize) -> i32 {
+    let a = [1, 2]
+    return a[i]
+}
+const A: i32 = comptime at(5)
+fn main() uses io { print(A) }

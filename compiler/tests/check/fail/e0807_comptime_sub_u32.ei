@@ -1,0 +1,4 @@
+// expect: E0807 3:7
+fn pred(n: u32) -> u32 { return n - 1 }
+const A: u32 = comptime pred(0)
+fn main() uses io { print(A) }

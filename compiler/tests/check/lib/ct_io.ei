@@ -1,0 +1,6 @@
+// helper module for e0201_comptime_mod_io.ei
+fn noisy() -> i32 uses io {
+    print(1)
+    return 1
+}
+pub const Y: i32 = comptime noisy()

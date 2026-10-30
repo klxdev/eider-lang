@@ -1,0 +1,4 @@
+// expect: E0201 3:25
+fn f() -> i32 uses clock { return now_ms() as i32 }
+const A: i32 = comptime f()
+fn main() uses io { print(A) }

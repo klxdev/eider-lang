@@ -1,0 +1,4 @@
+// helper module for e0110_comptime_mod_late.ei: a function using a comptime constant
+fn helper() -> i32 { return 3 }
+pub const LATE: i32 = comptime helper()
+pub fn uses_late() -> i32 { return LATE }

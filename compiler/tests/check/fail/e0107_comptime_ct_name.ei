@@ -1,0 +1,4 @@
+// expect: E0107 1:4
+fn __ct() -> i32 { return 1 }
+const A: i32 = comptime 1
+fn main() uses io { print(A) }

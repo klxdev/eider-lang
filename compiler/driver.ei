@@ -102,6 +102,10 @@ pub fn root() -> List[u8] uses io, fs, ffi {
     r
 }
 
+/// A new work directory of our own (`work_dir`: under the cache or target/, never shared
+/// with another process); the caller removes it.
+pub fn temp_dir() -> List[u8] uses io, fs, clock, ffi { work_dir() }
+
 /// The file name of `path` without directories and without its extension.
 pub fn stem(path: List[u8]) -> List[u8] {
     var start: usize = 0
@@ -140,7 +144,7 @@ fn write_or_fail(path: List[u8], data: List[u8]) uses io, fs, ffi {
 }
 
 /// The C compiler and the flags every compile uses (core = <root>/core).
-fn cc_argv(core: List[u8], release: bool) -> List[List[u8]] uses io, ffi {
+pub fn cc_argv(core: List[u8], release: bool) -> List[List[u8]] uses io, ffi {
     var cc = s("cc")
     match env.get(s("CC")) {
         Some(x) => { if x.len() > 0 { cc = x } }
@@ -301,8 +305,9 @@ fn read_or_fail(path: List[u8]) -> List[u8] uses io, fs, ffi {
 
 /// The C core for compiles with `argv` (cc and its flags): with the cache on, its two
 /// objects from <cache>/core/ (compiled into `dir` and renamed into place first if missing;
-/// `id` is toolchain_id(argv)), else its two sources.
-fn core_inputs(argv: List[List[u8]], id: List[List[u8]], core: List[u8], cache: List[u8], dir: List[u8]) -> List[List[u8]] uses io, fs, net, ffi {
+/// `id` is toolchain_id(argv)), else its two sources. `quiet`: a failure returns no inputs
+/// instead of being reported (and exiting).
+fn core_inputs(argv: List[List[u8]], id: List[List[u8]], core: List[u8], cache: List[u8], dir: List[u8], quiet: bool) -> List[List[u8]] uses io, fs, net, ffi {
     var srcs: List[List[u8]] = List.new()
     srcs.push(fs.join(core, s("eider_rt.c")))
     srcs.push(fs.join(core, s("eider_core.c")))
@@ -319,7 +324,10 @@ fn core_inputs(argv: List[List[u8]], id: List[List[u8]], core: List[u8], cache: 
     if fs.is_dir(objdir) { return objs }
     let tmp = fs.join(dir, s("core"))
     sys.send(tmp)
-    if sys.mkdir() != 0 { fail(s("cannot create a work directory"), 3) }
+    if sys.mkdir() != 0 {
+        if quiet { return List.new() }
+        fail(s("cannot create a work directory"), 3)
+    }
     var made: List[List[u8]] = List.new()
     made.push(fs.join(tmp, s("eider_rt.o")))
     made.push(fs.join(tmp, s("eider_core.o")))
@@ -329,7 +337,11 @@ fn core_inputs(argv: List[List[u8]], id: List[List[u8]], core: List[u8], cache: 
         a.push(s("-o"))
         a.push(made[i as usize])
         a.push(srcs[i as usize])
-        tool(a, "compiling the C core failed")
+        if quiet {
+            if !quiet_ok(a) { return List.new() }
+        } else {
+            tool(a, "compiling the C core failed")
+        }
     }
     match fs.mkdir_all(fs.join(cache, s("core"))) {
         Ok(_) => {}
@@ -346,41 +358,17 @@ fn core_inputs(argv: List[List[u8]], id: List[List[u8]], core: List[u8], cache: 
     objs
 }
 
-/// A compiled program: `path` is the executable (in the cache, or in `dir`); `dir` is the
-/// work directory, removed by `discard`.
-pub type Exe = { path: List[u8], dir: List[u8] }
-
-/// Compile C text `c` into an executable at `exe`; with the cache on, into the cache (`exe`
-/// is then only the scratch name, and nothing is compiled when the binary is cached).
-/// Returns the executable's path. The C file goes to `dir`; on failure the C is kept and
-/// the process exits with 3 (stage 0's code).
-fn compile(c: List[u8], dir: List[u8], exe: List[u8], release: bool, libs: List[List[u8]]) -> List[u8] uses io, fs, net, ffi {
-    let core = fs.join(root(), s("core"))
-    let cc = cc_argv(core, release)
-    let cache = cache_dir()
-    var id: List[List[u8]] = List.new()
-    if cache.len() > 0 { id = toolchain_id(cc) }
-    let inputs = core_inputs(cc, id, core, cache, dir)
-    var bin: List[u8] = List.new()
-    if cache.len() > 0 {
-        var parts = id
-        parts.push(s("executable"))
-        parts.push(bytes.from_u64(inputs.len() as u64))
-        for x in inputs { parts.push(x) }
-        parts.push(bytes.from_u64(libs.len() as u64))
-        for l in libs { parts.push(l) }
-        parts.push(c)
-        bin = fs.join(fs.join(cache, s("bin")), key(parts))
-        if fs.exists(bin) { return bin }
+/// Run a command with its output captured; whether it succeeded.
+fn quiet_ok(argv: List[List[u8]]) -> bool uses io, fs, net, ffi {
+    match proc.run_with(argv, proc.captured()) {
+        Ok(o) => o.code == 0
+        Err(_) => false
     }
-    let cfile = fs.join(dir, s("prog.c"))
-    write_or_fail(cfile, c)
-    var argv = cc
-    argv.push(s("-o"))
-    argv.push(exe)
-    argv.push(cfile)
-    for x in inputs { argv.push(x) }
-    add_libs(inout argv, libs)
+}
+
+/// Run the C compiler on the generated C `cfile` with inherited stdio; exit 3 if it can't
+/// start or fails (the C is kept).
+fn cc_or_fail(argv: List[List[u8]], cfile: List[u8]) uses io, fs, net, ffi {
     let code = match proc.run(argv) {
         Ok(n) => n
         Err(_) => {
@@ -396,6 +384,57 @@ fn compile(c: List[u8], dir: List[u8], exe: List[u8], release: bool, libs: List[
         bytes.append(inout m, cfile)
         m.push(41)
         fail(m, 3)
+    }
+}
+
+/// A compiled program: `path` is the executable (in the cache, or in `dir`); `dir` is the
+/// work directory, removed by `discard`.
+pub type Exe = { path: List[u8], dir: List[u8] }
+
+/// Compile C text `c` into an executable at `exe`; with the cache on, into the cache (`exe`
+/// is then only the scratch name, and nothing is compiled when the binary is cached).
+/// Returns the executable's path. The C file goes to `dir`; on failure the C is kept and
+/// the process exits with 3 (stage 0's code), or with `quiet` the C compiler's output is
+/// captured and "" returned.
+fn compile(c: List[u8], dir: List[u8], exe: List[u8], release: bool, libs: List[List[u8]], quiet: bool) -> List[u8] uses io, fs, net, ffi {
+    let core = fs.join(root(), s("core"))
+    let cc = cc_argv(core, release)
+    let cache = cache_dir()
+    var id: List[List[u8]] = List.new()
+    if cache.len() > 0 { id = toolchain_id(cc) }
+    let inputs = core_inputs(cc, id, core, cache, dir, quiet)
+    if inputs.len() == 0 { return List.new() }
+    var bin: List[u8] = List.new()
+    if cache.len() > 0 {
+        var parts = id
+        parts.push(s("executable"))
+        parts.push(bytes.from_u64(inputs.len() as u64))
+        for x in inputs { parts.push(x) }
+        parts.push(bytes.from_u64(libs.len() as u64))
+        for l in libs { parts.push(l) }
+        parts.push(c)
+        bin = fs.join(fs.join(cache, s("bin")), key(parts))
+        if fs.exists(bin) { return bin }
+    }
+    let cfile = fs.join(dir, s("prog.c"))
+    if quiet {
+        match fs.write(cfile, c) {
+            Ok(_) => {}
+            Err(_) => { return List.new() }
+        }
+    } else {
+        write_or_fail(cfile, c)
+    }
+    var argv = cc
+    argv.push(s("-o"))
+    argv.push(exe)
+    argv.push(cfile)
+    for x in inputs { argv.push(x) }
+    add_libs(inout argv, libs)
+    if quiet {
+        if !quiet_ok(argv) { return List.new() }
+    } else {
+        cc_or_fail(argv, cfile)
     }
     fs.remove_all(cfile)
     if bin.len() > 0 {
@@ -417,8 +456,20 @@ fn compile(c: List[u8], dir: List[u8], exe: List[u8], release: bool, libs: List[
 /// picks -O2. Remove its work directory with `discard` when done.
 pub fn executable(c: List[u8], file: List[u8], release: bool, libs: List[List[u8]]) -> Exe uses io, fs, net, clock, ffi {
     let dir = work_dir()
-    let path = compile(c, dir, fs.join(dir, stem(file)), release, libs)
+    let path = compile(c, dir, fs.join(dir, stem(file)), release, libs, false)
     Exe(path, dir)
+}
+
+/// `executable` for C that may not compile (comptime evaluators): the C compiler's output is
+/// captured, and on any failure the work directory is removed and the result is None.
+pub fn try_executable(c: List[u8], file: List[u8], release: bool, libs: List[List[u8]]) -> Option[Exe] uses io, fs, net, clock, ffi {
+    let dir = work_dir()
+    let path = compile(c, dir, fs.join(dir, stem(file)), release, libs, true)
+    if path.len() == 0 {
+        fs.remove_all(dir)
+        return None
+    }
+    Some(Exe(path, dir))
 }
 
 pub fn discard(e: Exe) uses fs, ffi { fs.remove_all(e.dir) }
@@ -429,9 +480,9 @@ pub fn build(c: List[u8], file: List[u8], out: List[u8], libs: List[List[u8]]) u
     if dest.len() == 0 { dest = stem(file) }
     let dir = work_dir()
     if cache_dir().len() == 0 {
-        compile(c, dir, dest, true, libs)
+        compile(c, dir, dest, true, libs, false)
     } else {
-        let path = compile(c, dir, fs.join(dir, stem(file)), true, libs)
+        let path = compile(c, dir, fs.join(dir, stem(file)), true, libs, false)
         // a new file rather than a rewrite of the old one, which may be running
         fs.remove_all(dest)
         var cp: List[List[u8]] = List.new()
@@ -476,7 +527,7 @@ pub fn build_lib(c: List[u8], h: List[u8], file: List[u8], out: List[u8], libs: 
     write_or_fail(cfile, c)
     var srcs: List[List[u8]] = List.new()
     srcs.push(cfile)
-    for x in core_inputs(cc, id, core, cache, dir) { srcs.push(x) }
+    for x in core_inputs(cc, id, core, cache, dir, false) { srcs.push(x) }
     var objs: List[List[u8]] = List.new()
     for i in 0..srcs.len() {
         if bytes.ends_with(srcs[i], s(".o")) {
