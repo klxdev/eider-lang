@@ -1,15 +1,10 @@
 // eiderc: the Eider compiler, written in Eider. See docs/compiler.md.
 //
-//   eiderc lex <file.ei>            dump tokens (one per line: line:col kind [value])
-//   eiderc parse <file.ei>          dump the AST (indented S-expressions, see dump.ei)
-//   eiderc check <file.ei> [--json] report the first error, or print `ok`
-//   eiderc ir <file.ei>             dump the typed IR (ir.ei)
-//   eiderc emit-c <file.ei> [--test] print the generated C (--test: with the test driver)
-//   eiderc emit-header <file.ei>    print the C header for the `export fn`s
-//   eiderc build <file.ei> [-o out]  compile to a native binary (-O2; driver.ei)
-//   eiderc build --lib <file.ei> [-o name]  build lib<name>.a, lib<name>.so and <name>.h
-//   eiderc run <file.ei> [--release] build and run (-O0 unless --release)
-//   eiderc test <file.ei>           run the `test` blocks
+// `eiderc --help` (usage_text below) lists every command, option and environment
+// variable; an unknown option or command, a missing source file or a stray argument is a
+// usage error (exit 2). `lex` dumps tokens (one per line: line:col kind [value]), `parse`
+// the AST (dump.ei), `ir` the typed IR (ir.ei); `build`, `run` and `test` go through
+// driver.ei, `test --compile-fail` through suite.ei.
 // `--lib` checks (and emits) the file as a library: no `main`, at least one `export fn`.
 // `-l <lib>` (repeatable) links a C library into build, run, test and build --lib.
 // `--wasm` (stage 0: WebAssembly) answers `unsupported`.
@@ -29,19 +24,75 @@ import "check.ei"
 import "ir.ei"
 import "lower.ei"
 import "driver.ei"
+import "suite.ei"
 
 type Args = {
     cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,
-    lib: bool, libs: List[List[u8]], wasm: bool,
+    lib: bool, libs: List[List[u8]], wasm: bool, compile_fail: bool,
 }
 
 /// Comparisons go through a function so no owned temporary sits in an `else if` condition
 /// (the bootstrap drops such temporaries outside the block that declares them).
 fn is(a: List[u8], s: str) -> bool uses ffi { bytes.eq(a, sys.lit(s)) }
 
-fn usage() uses io, ffi {
-    io.err(sys.lit("usage: eiderc (lex | parse | check | ir | emit-c | emit-header | build | run | test) <file.ei> [--json] [--test] [--release] [--lib] [-o out] [-l lib]\n"))
+/// `eiderc --help`: every command, option and environment variable.
+fn usage_text() -> List[u8] uses ffi {
+    var t: List[u8] = List.new()
+    for l in [
+        "eiderc 0.1.0 (the Eider compiler, written in Eider: Eider -> C11)",
+        "",
+        "usage:",
+        "  eiderc check <file.ei> [--json] [--lib]    type-check only: `ok` or the first error",
+        "  eiderc emit-c <file.ei> [--test] [--lib]   print the generated C (--test: with the test driver)",
+        "  eiderc emit-header <file.ei>               print the C header for the `export fn`s",
+        "  eiderc build <file.ei> [-o out] [-l lib]   compile to a native binary (-O2) via $CC (default: cc)",
+        "  eiderc build --lib <file.ei> [-o name]     build lib<name>.a, lib<name>.so and <name>.h from `export fn`s",
+        "  eiderc build --wasm <file.ei> [-o name]    WebAssembly (not yet supported by eiderc)",
+        "  eiderc run <file.ei> [--release] [-l lib]  build and run (-O0 unless --release)",
+        "  eiderc test <file.ei> [-l lib]             run the `test` blocks",
+        "  eiderc test --compile-fail [<dir>]         run the compile-fail suite (<dir>/fail, <dir>/pass; default tests/checks)",
+        "  eiderc lex <file.ei>                       dump the tokens",
+        "  eiderc parse <file.ei>                     dump the AST",
+        "  eiderc ir <file.ei>                        dump the typed IR",
+        "  eiderc help | --help | -h                  print this text",
+        "",
+        "environment:",
+        "  CC            the C compiler (default cc)",
+        "  EIDER_CFLAGS  extra C compiler flags, split at spaces",
+        "  EIDER_CACHE   `off`, or the cache directory (default $XDG_CACHE_HOME/eider, else ~/.cache/eider)",
+        "  EIDER_ROOT    the toolchain, the directory holding core/ (default: found above the eiderc binary)",
+    ] {
+        bytes.append(inout t, sys.lit(l))
+        t.push(10)
+    }
+    t
+}
+
+/// A usage error: the message and a pointer to --help on stderr, exit 2.
+fn usage_error(msg: List[u8]) uses io, ffi {
+    var m = sys.lit("eiderc: ")
+    bytes.append(inout m, msg)
+    io.errln(m)
+    io.errln(sys.lit("run `eiderc --help` for the commands and options"))
     env.exit(2)
+}
+
+/// No command at all: the usage text on stderr, exit 2 (stage 0 prints it too).
+fn usage() uses io, ffi {
+    io.err(usage_text())
+    env.exit(2)
+}
+
+fn quoted(pre: str, a: List[u8]) -> List[u8] uses ffi {
+    var m = sys.lit(pre)
+    m.push(96)
+    bytes.append(inout m, a)
+    m.push(96)
+    m
+}
+
+fn known_cmd(c: List[u8]) -> bool uses ffi {
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test")
 }
 
 fn parse_args() -> Args uses io, ffi {
@@ -54,12 +105,16 @@ fn parse_args() -> Args uses io, ffi {
     var tests = false
     var lib = false
     var wasm = false
+    var compile_fail = false
     var libs: List[List[u8]] = List.new()
     var i: usize = 1
     while i < argv.len() {
         let a = argv[i]
         i += 1
-        if is(a, "--json") {
+        if is(a, "--help") || is(a, "-h") {
+            io.out(usage_text())
+            env.exit(0)
+        } else if is(a, "--json") {
             json = true
         } else if is(a, "--release") {
             release = true
@@ -69,25 +124,42 @@ fn parse_args() -> Args uses io, ffi {
             lib = true
         } else if is(a, "--wasm") {
             wasm = true
+        } else if is(a, "--compile-fail") {
+            compile_fail = true
         } else if is(a, "-o") {
-            if i >= argv.len() { usage() }
+            if i >= argv.len() { usage_error(sys.lit("`-o` needs a file name")) }
             out = argv[i]
             i += 1
         } else if is(a, "-l") {
-            if i >= argv.len() { usage() }
+            if i >= argv.len() { usage_error(sys.lit("`-l` needs a library name")) }
             libs.push(argv[i])
             i += 1
+        } else if a.len() > 1 && a[0] == 45 {
+            usage_error(quoted("unknown option ", a))
         } else if cmd.len() == 0 {
             cmd = a
         } else if file.len() == 0 {
             file = a
+        } else {
+            usage_error(quoted("unexpected argument ", a))
         }
     }
-    if cmd.len() == 0 || file.len() == 0 { usage() }
+    if cmd.len() == 0 { usage() }
+    if is(cmd, "help") {
+        io.out(usage_text())
+        env.exit(0)
+    }
+    if !known_cmd(cmd) { usage_error(quoted("unknown command ", cmd)) }
+    if compile_fail {
+        if !is(cmd, "test") { usage_error(sys.lit("`--compile-fail` goes with `test`")) }
+        // stage 0's default suite
+        if file.len() == 0 { file = sys.lit("tests/checks") }
+    }
+    if file.len() == 0 { usage_error(quoted("missing the source file for ", cmd)) }
     if is(cmd, "emit-header") { lib = true }
     // `test` checks the test driver, never a library (stage 0's mode order)
     if is(cmd, "test") { lib = false }
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm)
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail)
 }
 
 /// Print `d` like the bootstrap: JSON on stdout, or the rendered form (against the source of
@@ -143,6 +215,7 @@ fn dump(lx: lex.Lexed, names: intern.Interner) uses io, ffi {
 
 fn main() uses io, fs, net, clock, ffi {
     let a = parse_args()
+    if a.compile_fail { env.exit(suite.run(a.file)) }
     let src = match fs.read(a.file) {
         Ok(s) => s
         Err(e) => {
@@ -184,7 +257,6 @@ fn main() uses io, fs, net, clock, ffi {
         return
     }
     let backend = is(a.cmd, "emit-c") || is(a.cmd, "emit-header") || is(a.cmd, "build") || is(a.cmd, "run") || is(a.cmd, "test")
-    if !is(a.cmd, "check") && !is(a.cmd, "ir") && !backend { usage() }
     if a.wasm {
         // WebAssembly (stage 0's --wasm, E0806) is C7 work still to do
         report(diag.new("unsupported", 1, 1, sys.lit("not yet supported by eiderc: WebAssembly (--wasm)")), a, src)

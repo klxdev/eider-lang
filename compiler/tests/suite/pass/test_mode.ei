@@ -1,0 +1,2 @@
+// mode: test
+test "no main needed" { assert(true) }

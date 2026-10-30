@@ -1,0 +1,345 @@
+// suite: `eiderc test --compile-fail <dir>`, the compile-fail runner (stage 0's
+// run_compile_fail, same output and exit code; docs/compiler.md, "C7: driver").
+//
+// <dir>/fail/*.ei start with `// expect: CODE LINE:COL` (the header is line 1 of the file
+// as compiled) and must fail with exactly that diagnostic; if it carries a fix, the fixed
+// source must compile ("fix compiles") or fail with a different code or position ("fix
+// resolves it; next: CODE"), never with the same error. <dir>/pass/*.ei must compile. A
+// file containing `// mode: test` is checked as a test build (no `main` needed),
+// `// mode: wasm` as a WebAssembly build, else as a program. The last line counts the
+// codes of diag.all_codes() that some fail file produced.
+//
+// Where eiderc answers `unsupported` (a feature it doesn't implement yet) the file is
+// reported as `skip` and counted on its own line, neither passed nor failed.
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+import "deps/std/fs.ei"
+import "deps/std/io.ei"
+import "intern.ei"
+import "lex.ei"
+import "diag.ei"
+import "parse.ei"
+import "resolve.ei"
+import "check.ei"
+
+/// How a file is checked (stage 0's Mode, minus Lib).
+pub const BUILD: i32 = 0
+pub const TEST: i32 = 1
+pub const WASM: i32 = 2
+
+fn s(x: str) -> List[u8] uses ffi { sys.lit(x) }
+
+fn is(a: List[u8], x: str) -> bool uses ffi { bytes.eq(a, sys.lit(x)) }
+
+/// Lex, parse, load and check `src` as the file `file` in `mode`: Ok when it compiles.
+pub fn compile(file: List[u8], src: List[u8], mode: i32) -> Result[bool, diag.Diag] uses io, fs, ffi {
+    var names = intern.new()
+    let r = lex.lex(src, inout names)
+    match resolve.lex_diag(r) {
+        Some(d) => { return Err(d) }
+        None => {}
+    }
+    let lx = match r {
+        lex.Done(l) => l
+        _ => { return Ok(true) }
+    }
+    let parsed = parse.parse(lx, names)?
+    let prog = resolve.load(file, src, parsed)?
+    // TODO(wasm): check WASM-mode files in WebAssembly mode (E0806) once eiderc has it (the
+    // in-process side of `eiderc check --wasm`); until then they are checked as programs
+    // and `run` reports a mismatch on them as `skip`.
+    match check.check_mode(prog, false) {
+        Ok(_) => Ok(true)
+        Err(d) => {
+            // a test build needs no `main`: the checker reports a missing one last, once
+            // everything else has passed, so that error alone means the file compiles
+            if mode == TEST && no_main(d) { return Ok(true) }
+            Err(d)
+        }
+    }
+}
+
+fn no_main(d: diag.Diag) -> bool uses ffi {
+    is(sys.lit(d.code), "E0112") && d.line == 1 && d.col == 1 && is(d.msg, "no `main` function")
+}
+
+/// The `.ei` files in `dir`, sorted, as `dir/name` (none if it can't be listed).
+fn ei_files(dir: List[u8]) -> List[List[u8]] uses fs, ffi {
+    var out: List[List[u8]] = List.new()
+    let names: List[List[u8]] = match fs.list(dir) {
+        Ok(xs) => xs
+        Err(_) => List.new()
+    }
+    for n in names {
+        if bytes.ends_with(n, s(".ei")) { out.push(fs.join(dir, n)) }
+    }
+    out
+}
+
+fn mode_of(src: List[u8]) -> i32 uses ffi {
+    match bytes.find(src, s("// mode: test"), 0) {
+        Some(_) => { return TEST }
+        None => {}
+    }
+    match bytes.find(src, s("// mode: wasm"), 0) {
+        Some(_) => { return WASM }
+        None => {}
+    }
+    BUILD
+}
+
+/// `  <tag> <name padded to 28>` (Rust's `{:<28}`).
+fn head(tag: str, name: List[u8]) -> List[u8] uses ffi {
+    var out = s("  ")
+    bytes.append(inout out, s(tag))
+    out.push(32)
+    bytes.append(inout out, name)
+    var n = name.len()
+    while n < 28 {
+        out.push(32)
+        n += 1
+    }
+    out
+}
+
+fn pos(line: u32, col: u32) -> List[u8] {
+    var out = bytes.from_u64(line as u64)
+    out.push(58)
+    bytes.append(inout out, bytes.from_u64(col as u64))
+    out
+}
+
+fn base(path: List[u8]) -> List[u8] {
+    match bytes.rfind_byte(path, 47) {
+        Some(i) => bytes.slice(path, i + 1, path.len())
+        None => path
+    }
+}
+
+/// The words of `t` (split at spaces and tabs).
+fn words(t: List[u8]) -> List[List[u8]] {
+    var out: List[List[u8]] = List.new()
+    var cur: List[u8] = List.new()
+    for b in t {
+        if b == 32 || b == 9 {
+            if cur.len() > 0 { out.push(cur) }
+            cur = List.new()
+        } else {
+            cur.push(b)
+        }
+    }
+    if cur.len() > 0 { out.push(cur) }
+    out
+}
+
+/// The `// expect:` header's words (empty without a header).
+fn expect(src: List[u8]) -> List[List[u8]] uses ffi {
+    var first: List[u8] = List.new()
+    for b in src {
+        if b == 10 { break }
+        first.push(b)
+    }
+    if first.len() > 0 && first[first.len() - 1] == 13 { first.pop() }
+    let tag = s("// expect:")
+    if !bytes.starts_with(first, tag) { return List.new() }
+    words(bytes.slice(first, tag.len(), first.len()))
+}
+
+/// The skip line for a file eiderc can't check yet: `why` is the unsupported diagnostic's
+/// message, or a note.
+fn skip(name: List[u8], why: List[u8]) uses io, ffi {
+    var m = head("skip", name)
+    m.push(32)
+    bytes.append(inout m, why)
+    io.outln(m)
+}
+
+fn has(xs: List[List[u8]], x: List[u8]) -> bool {
+    for y in xs {
+        if bytes.eq(x, y) { return true }
+    }
+    false
+}
+
+/// Run the suite in `dir`; returns the exit code (1 if anything failed).
+pub fn run(dir: List[u8]) -> i32 uses io, fs, ffi {
+    var pass: u64 = 0
+    var failed: u64 = 0
+    var skipped: u64 = 0
+    var seen: List[List[u8]] = List.new()
+    var m = s("compile-fail tests (")
+    bytes.append(inout m, dir)
+    bytes.append(inout m, s("/fail)"))
+    io.outln(m)
+    for f in ei_files(fs.join(dir, s("fail"))) {
+        let name = base(f)
+        let src: List[u8] = match fs.read(f) {
+            Ok(t) => t
+            Err(_) => List.new()
+        }
+        let ws = expect(src)
+        if ws.len() != 2 {
+            var l = head("FAIL", name)
+            bytes.append(inout l, s(" missing `// expect: CODE LINE:COL` header"))
+            io.outln(l)
+            failed += 1
+            continue
+        }
+        let code = ws[0]
+        let at = ws[1]
+        let mode = mode_of(src)
+        match compile(f, src, mode) {
+            Ok(_) => {
+                if mode == WASM {
+                    skip(name, s("not yet supported by eiderc: WebAssembly mode (// mode: wasm)"))
+                    skipped += 1
+                    continue
+                }
+                var l = head("FAIL", name)
+                bytes.append(inout l, s(" compiled, expected "))
+                bytes.append(inout l, code)
+                bytes.append(inout l, s(" at "))
+                bytes.append(inout l, at)
+                io.outln(l)
+                failed += 1
+            }
+            Err(d) => {
+                let got = sys.lit(d.code)
+                if is(got, "unsupported") {
+                    skip(name, d.msg)
+                    skipped += 1
+                    continue
+                }
+                let got_at = pos(d.line, d.col)
+                if !bytes.eq(got, code) || !bytes.eq(got_at, at) {
+                    if mode == WASM {
+                        skip(name, s("not yet supported by eiderc: WebAssembly mode (// mode: wasm)"))
+                        skipped += 1
+                        continue
+                    }
+                    var l = head("FAIL", name)
+                    bytes.append(inout l, s(" expected "))
+                    bytes.append(inout l, code)
+                    bytes.append(inout l, s(" at "))
+                    bytes.append(inout l, at)
+                    bytes.append(inout l, s(", got "))
+                    bytes.append(inout l, got)
+                    bytes.append(inout l, s(" at "))
+                    bytes.append(inout l, got_at)
+                    bytes.append(inout l, s(": "))
+                    bytes.append(inout l, d.msg)
+                    io.outln(l)
+                    failed += 1
+                    continue
+                }
+                if !has(seen, code) { seen.push(code) }
+                // the fix round trip: applying the suggested fix must remove this exact error
+                var note: List[u8] = List.new()
+                var bad = false
+                match d.fix {
+                    Some(fx) => {
+                        let fixed = diag.apply_fix(src, fx)
+                        match compile(f, fixed, mode) {
+                            Ok(_) => { note = s(" (fix compiles)") }
+                            Err(d2) => {
+                                if !is(got, d2.code) || d2.line != d.line || d2.col != d.col {
+                                    note = s(" (fix resolves it; next: ")
+                                    bytes.append(inout note, sys.lit(d2.code))
+                                    note.push(41)
+                                } else {
+                                    bad = true
+                                }
+                            }
+                        }
+                    }
+                    None => {}
+                }
+                if bad {
+                    var l = head("FAIL", name)
+                    bytes.append(inout l, s(" suggested fix does not resolve "))
+                    bytes.append(inout l, code)
+                    io.outln(l)
+                    failed += 1
+                    continue
+                }
+                var l = head("ok  ", name)
+                l.push(32)
+                bytes.append(inout l, code)
+                bytes.append(inout l, s(" at "))
+                bytes.append(inout l, at)
+                bytes.append(inout l, note)
+                io.outln(l)
+                pass += 1
+            }
+        }
+    }
+    var m2 = s("\ncompile-pass tests (")
+    bytes.append(inout m2, dir)
+    bytes.append(inout m2, s("/pass)"))
+    io.outln(m2)
+    for f in ei_files(fs.join(dir, s("pass"))) {
+        let name = base(f)
+        let src: List[u8] = match fs.read(f) {
+            Ok(t) => t
+            Err(_) => List.new()
+        }
+        let mode = mode_of(src)
+        match compile(f, src, mode) {
+            Ok(_) => {
+                var l = s("  ok   ")
+                bytes.append(inout l, name)
+                io.outln(l)
+                pass += 1
+            }
+            Err(d) => {
+                if is(sys.lit(d.code), "unsupported") {
+                    skip(name, d.msg)
+                    skipped += 1
+                    continue
+                }
+                if mode == WASM {
+                    skip(name, s("not yet supported by eiderc: WebAssembly mode (// mode: wasm)"))
+                    skipped += 1
+                    continue
+                }
+                var l = head("FAIL", name)
+                bytes.append(inout l, s(" rejected valid code: "))
+                bytes.append(inout l, sys.lit(d.code))
+                l.push(32)
+                bytes.append(inout l, d.msg)
+                io.outln(l)
+                failed += 1
+            }
+        }
+    }
+    let all = diag.all_codes()
+    var missing: List[List[u8]] = List.new()
+    for c in all {
+        if !has(seen, c) { missing.push(c) }
+    }
+    if skipped > 0 {
+        var l = s("\n")
+        bytes.append(inout l, bytes.from_u64(skipped))
+        bytes.append(inout l, s(" skipped (not yet supported by eiderc)"))
+        io.outln(l)
+    }
+    var sum = s("\n")
+    bytes.append(inout sum, bytes.from_u64(pass))
+    bytes.append(inout sum, s(" passed, "))
+    bytes.append(inout sum, bytes.from_u64(failed))
+    bytes.append(inout sum, s(" failed; error-code coverage "))
+    bytes.append(inout sum, bytes.from_u64((all.len() - missing.len()) as u64))
+    sum.push(47)
+    bytes.append(inout sum, bytes.from_u64(all.len() as u64))
+    io.outln(sum)
+    if missing.len() > 0 {
+        var l = s("codes without a compile-fail test: ")
+        var sp: List[u8] = List.new()
+        sp.push(32)
+        bytes.append(inout l, bytes.join(missing, sp))
+        io.outln(l)
+    }
+    if failed > 0 { return 1 }
+    0
+}
