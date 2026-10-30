@@ -52,6 +52,7 @@ file implementing exactly this contract. Nothing above the core changes.
 | `int64_t ec_rename(void)` | `in[0]` from, `in[1]` to | `0` |
 | `int64_t ec_symlink(void)` | `in[0]` target, `in[1]` link path | `0` |
 | `int64_t ec_cwd(void)` | | current directory in `out` |
+| `int64_t ec_realpath(void)` | `in[0]` path | canonical absolute path (symlinks resolved) in `out`; the path must exist |
 | `int64_t ec_args(void)` | | argv in `out`, each NUL-terminated |
 | `int32_t ec_getenv(void)` | `in[0]` name | `1` and the value in `out`, or `0` if unset |
 | `int64_t ec_write_fd(int32_t fd)` | `in` = bytes | `0`; flushes buffered `print` output first; `fd` is 1 or 2 |

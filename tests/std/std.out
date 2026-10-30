@@ -18,8 +18,11 @@ top.txt
 true
 false
 true
+true
+true
 false
 cannot read target/tmp/definitely-missing: No such file or directory
+cannot resolve target/tmp/definitely-missing: No such file or directory
 3
 captured
 command failed (exit 3): sh -c printf captured; exit 3

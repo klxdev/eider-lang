@@ -190,11 +190,10 @@ fn stem(path: List[u8]) -> List[u8] {
     out
 }
 
-/// std::fs::canonicalize, approximately: absolute and normalized; the path itself when the
-/// file doesn't exist (as the bootstrap's `unwrap_or`).
+/// std::fs::canonicalize (symlinks resolved, so the deps/ link farm's paths to one file
+/// agree), or the path itself when it can't be resolved (the bootstrap's `unwrap_or`).
 fn canonical(path: List[u8]) -> List[u8] uses fs, ffi {
-    if !fs.exists(path) { return path }
-    match fs.absolute(path) {
+    match fs.canonical(path) {
         Ok(a) => a
         Err(_) => path
     }

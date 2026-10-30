@@ -26,9 +26,17 @@ fn files() -> Result[bool, String] uses io, fs, ffi {
     print(fs.exists(fs.join(copy, sys.lit("top.txt"))))
     fs.rename(copy, fs.join(root, sys.lit("moved")))?
     print(fs.is_dir(fs.join(root, sys.lit("moved/a"))))
+    fs.symlink(sys.lit("moved"), fs.join(root, sys.lit("link")))?
+    let via_link = fs.canonical(fs.join(root, sys.lit("link/a/../a")))?
+    print(bytes.eq(via_link, fs.canonical(fs.join(root, sys.lit("moved/a")))?))
+    print(bytes.ends_with(via_link, sys.lit("/moved/a")))
     fs.remove_all(root)?
     print(fs.exists(root))
     match fs.read(sys.lit("target/tmp/definitely-missing")) {
+        Ok(_) => print("unexpected")
+        Err(e) => print(e)
+    }
+    match fs.canonical(sys.lit("target/tmp/definitely-missing")) {
         Ok(_) => print("unexpected")
         Err(e) => print(e)
     }
