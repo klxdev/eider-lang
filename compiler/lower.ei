@@ -35,9 +35,9 @@
 // Layout: records and tuples are structs (`f<n>`); arrays `struct { T a[N]; }` so they copy
 // by value; every enum is `struct { uint32_t tag; union { struct { ... } v<n>; ... } u; }`
 // (the union only when some variant has fields); `str` is `const char *`; String is the
-// runtime's `ei_String`; List[T] `{ T *d; uint64_t len, cap; }`; Map[K, V] the bootstrap's open
+// runtime's `ei_String`; List[T] `{ T *d; uint64_t len, cap; }`; Map[K, V] an open
 // addressing table `{ K *k; V *v; uint8_t *s; uint64_t len, cap, used; }` (s: 0 empty, 1 used,
-// 2 deleted; same hashing and probing as the bootstrap); Box[T] `{ T *p; }`; a fn value
+// 2 deleted; hashing and probing fixed by tests/oracle); Box[T] `{ T *p; }`; a fn value
 // `{ void *env; R (*call)(void *, ...); void (*drop)(void *); void *(*clone)(void *); }`;
 // Task[T], Mutex[T] and Chan[T] `{ struct <name>_c *p; }`, a pointer to a shared object that
 // starts with the runtime's `ei_rc` count and embeds the runtime's thread, mutex or channel
@@ -133,7 +133,7 @@ fn ident_into(inout out: List[u8], s: List[u8]) {
 
 fn ident(inout g: G, s: List[u8]) { ident_into(inout g.o, s) }
 
-/// A C string literal with the bytes of `s` (the bootstrap's escaping; `?` is escaped too, so no
+/// A C string literal with the bytes of `s` (escaped as tests/oracle expects; `?` is escaped too, so no
 /// trigraph can form).
 pub fn str_lit(inout out: List[u8], s: List[u8]) {
     out.push(34)
@@ -501,7 +501,7 @@ fn ret_cty(inout g: G, p: P, ty: u32) uses ffi {
     if is_void(p, ty) { put(inout g, "void") } else { cty(inout g, p, ty) }
 }
 
-/// Whether values of type `ty` own heap data (heap.rs owns), memoized.
+/// Whether values of type `ty` own heap data, memoized.
 fn owns(inout g: G, p: P, ty: u32) -> bool {
     let m = g.own[ty as usize]
     if m > 0 { return m == 2 }
@@ -772,7 +772,7 @@ fn clone_expr(inout g: G, p: P, ty: u32, ptr: List[u8]) uses ffi {
     put(inout g, ")")
 }
 
-/// The hash of Map key expression v of type kty (the bootstrap's hash dispatch).
+/// The hash of Map key expression v of type kty (ei_hash_str for String and str keys, else ei_hash_u64).
 fn hash_expr(inout g: G, p: P, kty: u32, v: str) uses ffi {
     let k = ty_kind(p, kty)
     if k == types.T_STRING {
@@ -1080,7 +1080,7 @@ fn clone_glue(inout g: G, p: P, ty: u32) uses ffi {
     put(inout g, "\n  return r;\n}\n")
 }
 
-/// Variant names, for `print` (the bootstrap prints the variant's mangled name).
+/// Variant names, for `print` (the variant's mangled name is printed, as tests/oracle expects).
 fn name_glue(inout g: G, p: P, ty: u32) uses ffi {
     let mark = g.o.len()
     put(inout g, "static const char *")
@@ -1145,7 +1145,7 @@ fn box_glue(inout g: G, p: P, ty: u32) uses ffi {
     put(inout g, " b;\n  b.p = ei_alloc(sizeof *b.p);\n  *b.p = v;\n  return b;\n}\n")
 }
 
-/// The bootstrap's Map operations (heap.rs gen_ops): `find_M` (slot or -1), `get_M` (pointer to
+/// The Map operations: `find_M` (slot or -1), `get_M` (pointer to
 /// the value or NULL), `ins_M` (moves key and value in; an existing key keeps its slot, its
 /// old value and the new key are dropped), `rem_M` (drops the entry; true if it was there).
 fn map_glue(inout g: G, p: P, kind: u32, ty: u32) uses ffi {
@@ -2233,8 +2233,8 @@ fn export_sig(inout g: G, p: P, f: u32, name: List[u8]) uses ffi {
 }
 
 /// A library's entry points: `eider_<name>` for each `export fn`, calling it (a trap inside
-/// exits the process with 101; trap messages name "lib", as in the bootstrap). Records cross by
-/// value; the header (`header`) declares the same layouts under the bootstrap's names. For
+/// exits the process with 101; trap messages name "lib", as tests/oracle expects). Records cross by
+/// value; the header (`header`) declares the same layouts under the header's names. For
 /// WebAssembly (`wasm`) each definition also exports itself under that name (export_name).
 fn export_wrappers(inout g: G, p: P, wasm: bool) uses ffi {
     put(inout g, "/* ---- exported entry points */\n")
@@ -2326,7 +2326,7 @@ fn section(inout g: G, o: Order, i: usize) uses ffi {
 }
 
 /// The C program for `p`: `main` calls the Eider `main`, or (tests = true) runs every test
-/// block like the bootstrap's test driver. `file` is the source path named in trap messages.
+/// block, with the recorded test-driver output. `file` is the source path named in trap messages.
 /// Fails (with the message) only on a C name clash.
 pub fn program(p: P, file: List[u8], tests: bool) -> Result[List[u8], List[u8]] uses ffi { program_for(p, file, tests, false) }
 
@@ -2427,11 +2427,11 @@ fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool) -> Result[List
     Ok(g.o)
 }
 
-// ---- the library header (docs/compiler.md, "C7: FFI"). It spells types as the bootstrap's
+// ---- the library header (docs/compiler.md, "C7: FFI"). It spells types as the recorded
 // header does (`R_<mangled>` records with `f_<field>` members), so it is byte-identical
-// to the bootstrap's; the layouts equal the C's `t_` structs, which is all the ABI needs.
+// to the header tests/oracle records; the layouts equal the C's `t_` structs, which is all the ABI needs.
 
-/// The bootstrap's C name of a type's spelling (ty.rs mangle).
+/// The C name of a type's spelling (the mangling the recorded headers use).
 fn mangle(inout out: List[u8], s: List[u8]) uses ffi {
     for b in s {
         if bytes.is_ident(b) {
@@ -2458,7 +2458,7 @@ fn mangle(inout out: List[u8], s: List[u8]) uses ffi {
     }
 }
 
-/// A type as the header spells it (the bootstrap's names: records are `R_<mangled name>`).
+/// A type as the header spells it (records are `R_<mangled name>`).
 fn h_ty(inout out: List[u8], p: P, ty: u32) uses ffi {
     let k = ty_kind(p, ty)
     if k == types.T_INT {
@@ -2476,8 +2476,8 @@ fn h_ty(inout out: List[u8], p: P, ty: u32) uses ffi {
 }
 
 /// A record and the records in it, each once, in dependency order. Each gets its typedef
-/// (the bootstrap gives one only to records that are parameter or return types, so its header
-/// does not compile when a record is a field of another).
+/// (deliberately: the recorded header gave one only to parameter and return records, so it
+/// did not compile when a record is a field of another).
 fn h_def(inout out: List[u8], p: P, ty: u32, inout done: Map[u32, bool]) uses ffi {
     if ty_kind(p, ty) != types.T_RECORD || done.contains(ty) { return }
     done.insert(ty, true)
@@ -2505,7 +2505,7 @@ fn h_def(inout out: List[u8], p: P, ty: u32, inout done: Map[u32, bool]) uses ff
 }
 
 /// The C (and C++) header of a library: its records and an `eider_<name>` prototype per
-/// `export fn`, as the bootstrap writes it (`emit-header`, `build --lib`).
+/// `export fn`, byte-identical to tests/oracle (`emit-header`, `build --lib`).
 pub fn header(p: P) -> List[u8] uses ffi {
     var out = sys.lit("/* generated by eider: C interface */\n#ifndef EIDER_EXPORTS_H\n#define EIDER_EXPORTS_H\n#include <stdint.h>\n#include <stdbool.h>\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n")
     var done: Map[u32, bool] = Map.new()

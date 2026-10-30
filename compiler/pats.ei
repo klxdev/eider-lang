@@ -1,5 +1,5 @@
-// pats: pattern-matrix exhaustiveness and reachability (Maranget), a port of
-// the bootstrap's src/pats.rs so witnesses and the arm it calls unreachable are the same.
+// pats: pattern-matrix exhaustiveness and reachability (Maranget); its
+// witnesses and the arms it calls unreachable are exactly those tests/oracle records.
 //
 // A lowered pattern is `Wild` or a constructor applied to sub-patterns; patterns live in an
 // arena (`Pats`, id 0 is the shared wildcard). A matrix is a flat list of rows of equal

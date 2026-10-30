@@ -1,32 +1,32 @@
-// check: type checking, producing the typed IR. A port of the bootstrap's checker
-// (the bootstrap's src/check.rs, expr.rs, stmt.rs, heap.rs) without its C emission: the
-// same passes in the same order, so the first error it reports is the bootstrap's first
-// error (code, position, message, help, fix).
+// check: type checking, producing the typed IR. The checker runs its passes in a fixed
+// order and emits no C itself (lowering does). The order is part of the contract: only the
+// first error is reported, and it must be the one tests/oracle records for the input
+// (code, position, message, help, fix).
 //
-// Pass order (check.rs run_inner): type templates (E0107), non-generic types (field types,
+// Pass order: type templates (E0107), non-generic types (field types,
 // E0108), traits, function names, impls, constants in order, the signatures of every
 // concrete function and then of every concrete method, test bodies, then function bodies
-// from a stack: the bootstrap pushes every instance it creates (concrete functions first,
-// generic instances when a call needs them) and checks the most recent one first. Errors in
-// imported modules name their file the way the bootstrap does: explicitly for types and
+// from a stack: every instance created is pushed (concrete functions first,
+// generic instances when a call needs them) and the most recent one is checked first. Errors in
+// imported modules name their file as the recorded expectations do: explicitly for types and
 // signatures, otherwise through `err_mod`, the module of the item being checked (left stale
-// while tests are checked, as in the bootstrap).
+// while tests are checked, kept for compatibility with tests/oracle).
 //
 // Generics are monomorphized on demand: a generic type gets one definition per instance
 // (types.ei), a generic function or method one IR function per instance, checked with its
-// type parameters substituted (`tsubst`). Type arguments are inferred like the bootstrap
-// does (unify_ast: from the expected type, the receiver, then argument by argument).
+// type parameters substituted (`tsubst`). Type arguments are inferred in a fixed order
+// (unify_ast: from the expected type, the receiver, then argument by argument).
 //
-// Ownership (heap.rs): reading owned data out of a place borrows it; storing a borrowed
+// Ownership: reading owned data out of a place borrows it; storing a borrowed
 // value clones it (`take`); a fresh owned value (call result, constructor, ...) lives in a
 // temporary registered in the innermost frame (one per block) until it is moved out; every
 // frame's owned values are dropped when it ends or is left by return/break/continue/`?`.
 // The IR spells all of it out (ir.ei, "Ownership").
 //
-// Closures (closure.rs) are IR functions of their own, built while their enclosing function
+// Closures are IR functions of their own, built while their enclosing function
 // is (ir.begin_nested), with a snapshot of the locals they mention as their environment.
 //
-// FFI (ffi.rs): `extern "c"` declarations are functions without a body whose signatures
+// FFI: `extern "c"` declarations are functions without a body whose signatures
 // must be C-safe (E0803); calling one needs the `ffi` capability (E0201) and an `unsafe`
 // block or `unsafe fn` (E0802), like calling an `unsafe fn`. `export fn`s (E0805: not
 // generic) take C-safe parameters, records of them included; a library (`lib`) needs at
@@ -34,15 +34,15 @@
 // Checking for WebAssembly (`wasm`, check_wasm) is checking a library whose exports take and
 // return only integers and bool, with no thread types anywhere (E0806).
 //
-// Threads (heap.rs Task/Mutex/Chan, expr.rs spawn): `spawn` needs the `threads`
+// Threads (Task/Mutex/Chan, spawn): `spawn` needs the `threads`
 // capability; Task, Mutex and Chan are shared handles (copying one shares it), checked in
 // `thread_static` / `thread_method` and recorded as builtins (ir.ei, B_SPAWN ...). Values
 // moved into a spawned closure, a Mutex or a channel are owned by it from then on.
 //
 // Features still outside eiderc (`?` in an
-// expression-bodied closure, and `extern`/`unsafe` functions used as values, which the
-// bootstrap lets through without `unsafe` or `ffi`) stop checking with an `unsupported`
-// diagnostic at the point the bootstrap would start handling them, so everything reported
+// expression-bodied closure, and `extern`/`unsafe` functions used as values, which would
+// otherwise pass without `unsafe` or `ffi`; LEARNINGS.md) stop checking with an `unsupported`
+// diagnostic at the point where handling them would start, so everything reported
 // before is exact.
 
 import "deps/core/sys.ei"
@@ -77,7 +77,7 @@ type Inst = {
 type Subst = { syms: List[u32], tys: List[u32] }
 
 /// A method registered by an impl: its head (see head_key), name, declaration, and the
-/// impl's target as the bootstrap spells it (for duplicate checks).
+/// impl's target as show_ast spells it (for duplicate checks).
 type Meth = { head: u64, name: u32, fd: u32, target: List[u8] }
 
 /// An impl of a trait: the trait, the impl (module, node) and its target's spelling.
@@ -202,11 +202,11 @@ pub type C = {
     sig_col: u32,
     loops: u32,
     unsafe_depth: u32,
-    /// parameter/return hints for the closure about to be checked (expr.rs lam_hint)
+    /// parameter/return hints for the closure about to be checked
     lam: LamHint,
     closures: u32,
-    /// checking an expression-bodied closure, whose `?` the bootstrap checks against the
-    /// enclosing function (closure.rs sets `ret` only afterwards); eiderc leaves it out
+    /// checking an expression-bodied closure, whose `?` would be checked against the
+    /// enclosing function's return type (LEARNINGS.md); eiderc leaves it out
     lam_expr: bool,
     /// checking a library (`build --lib`, `emit-header`): no `main`, at least one export
     lib: bool,
@@ -272,7 +272,7 @@ fn mismatch(c: C, line: u32, col: u32, expected: u32, found: u32) -> diag.Diag u
     d
 }
 
-/// Name the file of module m on `d` unless it already names one (the bootstrap's in_file;
+/// Name the file of module m on `d` unless it already names one (the innermost file wins;
 /// the prelude has no file).
 fn in_file(c: C, d: diag.Diag, m: u32) -> diag.Diag {
     var d2 = d
@@ -354,7 +354,7 @@ fn is_value_form(c: C, e: u32) -> bool {
     k == ast.EIf || k == ast.EMatch || k == ast.EBlock || k == ast.EUnsafe
 }
 
-/// An integer literal, possibly negated (the bootstrap's is_lit).
+/// An integer literal, possibly negated.
 fn is_lit(c: C, e: u32) -> bool {
     let n = nd(c, e)
     if n.kind == ast.EInt { return true }
@@ -410,7 +410,7 @@ fn builtin_op(inout c: C, b: u32, args: List[u32], rty: u32, line: u32) -> u32 {
     emit_val(inout c, ir.S_BUILTIN, b, st, n, rty, rty, line)
 }
 
-// ---- ownership (heap.rs)
+// ---- ownership
 
 /// Does a value of this type own heap memory?
 fn owns(c: C, ty: u32) -> bool {
@@ -727,7 +727,7 @@ fn check_map_key(c: C, k: u32, line: u32, col: u32) -> Result[bool, diag.Diag] u
 }
 
 /// The type of template di applied to `args`, resolving its fields the first time
-/// (check.rs inst_type).
+/// (memoized per instance).
 fn inst_type(inout c: C, di: u32, args: List[u32], line: u32, col: u32) -> Result[u32, diag.Diag] uses ffi {
     let d = c.t.defs[di as usize]
     if !visible(c, d.md, d.public) {
@@ -834,7 +834,7 @@ fn has_field(fs: List[types.Field], sym: u32) -> bool {
     false
 }
 
-/// Resolve the fields of definition di (check.rs fill_type).
+/// Resolve the fields of definition di.
 fn fill_type(inout c: C, di: u32) -> Result[bool, diag.Diag] uses ffi {
     let d = c.t.defs[di as usize]
     let m = d.md
@@ -892,7 +892,7 @@ fn fill_type(inout c: C, di: u32) -> Result[bool, diag.Diag] uses ffi {
     Ok(true)
 }
 
-// ---- generic inference (check.rs unify_ast and friends), over type nodes of module m
+// ---- generic inference (unify_ast and friends), over type nodes of module m
 
 /// Does type node tn mention a type parameter of `gs` that `sb` doesn't bind?
 fn has_unbound(c: C, m: u32, tn: u32, sb: Subst, gs: List[u32]) -> bool {
@@ -935,7 +935,7 @@ fn heap_parts(c: C, sym: u32, t: types.Ty) -> Option[List[u32]] {
 }
 
 /// Bind the type parameters `gs` in type node tn by matching it against `actual`. False on
-/// a conflict. Like the bootstrap, a name that isn't a type parameter matches anything.
+/// a conflict. A name that isn't a type parameter matches anything (a C8 candidate).
 fn unify_ast(c: C, m: u32, tn: u32, actual: u32, inout sb: Subst, gs: List[u32]) -> bool {
     let n = ndm(c, m, tn)
     let t = types.get(c.t, actual)
@@ -991,7 +991,7 @@ fn unify_ast(c: C, m: u32, tn: u32, actual: u32, inout sb: Subst, gs: List[u32])
     }
 }
 
-/// A type node as the bootstrap's show_ast spells it (module items mangled, type
+/// A type node as messages spell it (show_ast: module items mangled, type
 /// parameters `gens` as written).
 fn show_ast(c: C, m: u32, tn: u32, gens: List[u32]) -> List[u8] uses ffi {
     let n = ndm(c, m, tn)
@@ -1042,7 +1042,7 @@ fn ty_name(c: C, m: u32, n: ast.Node, gens: List[u32]) -> List[u8] uses ffi {
     kt(c, resolve.name_key(c.p, m, n.a, n.b, n.line, n.col))
 }
 
-/// `text` with every `Self` replaced by `with` (Rust's str::replace).
+/// `text` with every `Self` replaced by `with`, textually (also inside `MySelf`; a C8 candidate).
 fn replace_self(text: List[u8], with: List[u8]) -> List[u8] {
     var out: List[u8] = List.new()
     var i: usize = 0
@@ -1058,7 +1058,7 @@ fn replace_self(text: List[u8], with: List[u8]) -> List[u8] {
     out
 }
 
-/// The method-table head of an impl target (check.rs head_of_ast).
+/// The method-table head of an impl target.
 fn head_key(c: C, m: u32, tn: u32, gens: List[u32]) -> u64 {
     let n = ndm(c, m, tn)
     if n.kind == ast.TName || n.kind == ast.TGeneric {
@@ -1070,7 +1070,7 @@ fn head_key(c: C, m: u32, tn: u32, gens: List[u32]) -> u64 {
     H_UNIT
 }
 
-/// The method-table head of a type (check.rs head_of).
+/// The method-table head of a type.
 fn head_of(c: C, ty: u32) -> u64 {
     let t = types.get(c.t, ty)
     match t.kind {
@@ -1102,7 +1102,7 @@ fn head_text(c: C, h: u64) -> List[u8] uses ffi {
     kt(c, h)
 }
 
-/// Does `ty` implement trait `tk`? (check.rs implements: the target of some impl unifies)
+/// Does `ty` implement trait `tk`? (yes when the target of some impl unifies with it)
 fn implements(c: C, tk: u64, ty: u32) -> bool {
     for im in c.timpls {
         if im.tkey != tk { continue }
@@ -1148,7 +1148,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C uses ffi {
         0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false)
 }
 
-/// Every item of the program in the bootstrap's order, as (module, node) pairs.
+/// Every item of the program in load order (resolve.ei), as (module, node) pairs.
 type Item = { m: u32, node: u32 }
 
 fn items(p: resolve.Program) -> List[Item] {
@@ -1189,7 +1189,7 @@ pub fn check_mode(p: resolve.Program, lib: bool) -> Result[C, diag.Diag] uses ff
     }
 }
 
-/// Check the program as a WebAssembly module (the bootstrap's Mode::Wasm, `--wasm`): a library
+/// Check the program as a WebAssembly module (`--wasm`): a library
 /// whose exports cross the boundary as integers and bool only, without threads (E0806).
 pub fn check_wasm(p: resolve.Program) -> Result[C, diag.Diag] uses ffi {
     var c = new_checker(p, true)
@@ -1198,7 +1198,7 @@ pub fn check_wasm(p: resolve.Program) -> Result[C, diag.Diag] uses ffi {
         Ok(_) => Ok(c)
         Err(d) => {
             // Until eiderc checks threads, `spawn` and the thread types stop it with
-            // `unsupported` where the bootstrap notes them for the E0806 at the end (wasm_threads).
+            // `unsupported`; thread types are noted for the E0806 at the end (wasm_threads).
             if bytes.eq(d.msg, s("not yet supported by eiderc: threads")) { return Err(wasm_threads_error()) }
             Err(in_file(c, d, c.err_mod))
         }
@@ -1209,8 +1209,8 @@ fn wasm_threads_error() -> diag.Diag uses ffi {
     err("E0806", 1, 1, s("threads (`spawn`, `Task`, `Mutex`, `Chan`) aren't available when targeting WebAssembly"))
 }
 
-/// Whether the program uses a thread type (the bootstrap notes `Task`, `Mutex` and `Chan` types
-/// as it meets them; the type arena holds every type the program uses).
+/// Whether the program uses a thread type (`Task`, `Mutex` or `Chan`, wherever it is met;
+/// the type arena holds every type the program uses).
 fn uses_thread_types(c: C) -> bool uses ffi {
     for ty in 0..c.t.tys.len() {
         let k = types.kind(c.t, ty as u32)
@@ -1371,7 +1371,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
         subst_set(inout sb, intern.S_SELF_TYPE, self_ty)
         instantiate(inout c, fi, sb)?
     }
-    // tests (checked with every capability; err_mod is left as it was, like the bootstrap)
+    // tests (checked with every capability; err_mod is left as it was, as tests/oracle expects)
     for it in its {
         let n = ndm(c, it.m, it.node)
         if n.kind == ast.ITest { check_test(inout c, it.m, n)? }
@@ -1411,7 +1411,7 @@ fn record_ffi(inout c: C, ii: u32) uses ffi {
     }
 }
 
-/// Whether type ty can cross the C boundary (ffi.rs ffi_safe): integers, bool and str; ()
+/// Whether type ty can cross the C boundary: integers, bool and str; ()
 /// as a return type; records made only of those when `records` (exports).
 fn ffi_safe(c: C, ty: u32, is_ret: bool, records: bool) -> bool {
     let k = types.kind(c.t, ty)
@@ -1425,8 +1425,8 @@ fn ffi_safe(c: C, ty: u32, is_ret: bool, records: bool) -> bool {
     true
 }
 
-/// E0803 for an `extern "c"` or `export` signature that can't cross the C boundary (ffi.rs
-/// check_ffi_sig; node n of module m, parameter types ps).
+/// E0803 for an `extern "c"` or `export` signature that can't cross the C boundary
+/// (node n of module m, parameter types ps).
 fn check_ffi_sig(c: C, m: u32, n: ast.Node, ps: List[u32], ret: u32) -> Result[bool, diag.Diag] uses ffi {
     let is_export = ast.has(n.b, ast.FN_EXPORT)
     let what = if is_export { "export" } else { "extern \"c\"" }
@@ -1492,7 +1492,7 @@ fn concat_syms(a: List[u32], b: List[u32]) -> List[u32] {
     out
 }
 
-/// Register the methods of impl node `id` of module m (check.rs register_impl).
+/// Register the methods of impl node `id` of module m.
 fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Result[bool, diag.Diag] uses ffi {
     let im = ndm(c, m, id)
     let igens = gparams(c, m, im.c, im.d)
@@ -1620,7 +1620,7 @@ fn inst_name(c: C, fi: u32, sb: Subst) -> List[u8] uses ffi {
 }
 
 /// The instance of declaration fi for substitution sb, resolving its signature the first
-/// time and queueing its body (check.rs instantiate).
+/// time and queueing its body.
 fn instantiate(inout c: C, fi: u32, sb: Subst) -> Result[u32, diag.Diag] uses ffi {
     let f = c.fdefs[fi as usize]
     var keyl: List[u32] = List.new()
@@ -1904,7 +1904,7 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] uses ffi {
     }
 }
 
-/// `let PAT = init` (stmt.rs SK::LetPat).
+/// `let PAT = init`.
 fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
     let v = expr(inout c, n.c, NONE)?
     let init = nd(c, n.c)
@@ -2058,7 +2058,7 @@ fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
     Ok(types.UNIT)
 }
 
-/// The variable an assignment target or `inout` argument is rooted at (check.rs root).
+/// The variable an assignment target or `inout` argument is rooted at.
 type Root = { ok: bool, key: u64, line: u32, col: u32 }
 
 fn root(c: C, e: u32) -> Root {
@@ -2467,7 +2467,7 @@ fn test_val(inout c: C, t: Test, line: u32) -> u32 {
 
 // ---- expressions
 
-/// Is e a place (variable, field, element) rather than a fresh value? (expr.rs is_place)
+/// Is e a place (variable, field, element) rather than a fresh value?
 fn is_place(c: C, e: u32) -> bool {
     let n = nd(c, e)
     if n.kind == ast.EIdent { return lookup(c, ekey(c, n)) != NONE }
@@ -2476,7 +2476,7 @@ fn is_place(c: C, e: u32) -> bool {
 }
 
 /// Check expression e against the expected type `exp` (NONE: no expectation). An owned
-/// rvalue comes back as a registered temporary (expr.rs expr).
+/// rvalue comes back as a registered temporary.
 fn expr(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
     let v = expr_raw(inout c, e, exp)?
     if !owns(c, v.ty) || is_place(c, e) || is_fresh(c, v.op) { return Ok(v) }
@@ -2708,7 +2708,7 @@ fn negate(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
     Ok(v_of(v.ty, emit_val(inout c, ir.S_UNARY, ir.U_NEG, v.op, 0, v.ty, v.ty, n.line)))
 }
 
-/// Does `==` work on this type? (heap.rs eq_supported: Maps have no structural equality)
+/// Does `==` work on this type? (Maps have no structural equality)
 fn eq_supported(c: C, ty: u32, shallow: bool) -> bool {
     let t = types.get(c.t, ty)
     if t.kind == types.T_MAP || t.kind == types.T_FN || types.is_handle(t.kind) { return false }
@@ -2896,7 +2896,7 @@ fn tuple_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi
     Ok(v_of(ty, emit_val(inout c, ir.S_TUPLE, 0, start, n.d, ty, ty, n.line)))
 }
 
-/// `x?` on a Result or Option (expr.rs try_op): on Err/None, drop everything and return it.
+/// `x?` on a Result or Option: on Err/None, drop everything and return it.
 fn try_op(inout c: C, n: ast.Node) -> Result[V, diag.Diag] uses ffi {
     if c.lam_expr { return Err(unsup(n.line, n.col, "`?` in a closure without a block body")) }
     let v = expr(inout c, n.a, NONE)?
@@ -3017,7 +3017,7 @@ fn field_nodes(c: C, di: u32, vkey: u64) -> List[u32] {
 
 /// Construct record template `di` (vkey = NONE) or variant `vkey` of enum template `di`
 /// from the arguments [start/len), inferring type arguments from the expected type and
-/// the arguments (expr.rs construct).
+/// the arguments.
 fn construct(inout c: C, line: u32, col: u32, di: u32, vkey: u64, start: u32, len: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
     let d = c.t.defs[di as usize]
     let fas = field_nodes(c, di, vkey)
@@ -3078,7 +3078,7 @@ fn construct(inout c: C, line: u32, col: u32, di: u32, vkey: u64, start: u32, le
     Ok(v_of(ty, emit_val(inout c, ir.S_RECORD, 0, st, len, ty, ty, line)))
 }
 
-/// Every name an argument reads (check.rs idents; not through calls' names or value forms).
+/// Every name an argument reads (not through calls' names or value forms).
 fn idents(c: C, e: u32, inout out: List[u64]) {
     let n = nd(c, e)
     match n.kind {
@@ -3120,7 +3120,7 @@ type Recv = { has: bool, e: u32, pv: PV }
 fn no_recv() -> Recv { Recv(false, 0, PV(0, 0, NONE)) }
 
 /// Call declaration fi with the arguments of call node n (ECall or EMethod), inferring its
-/// type parameters (expr.rs call_decl).
+/// type parameters.
 fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv: Recv, exp: u32, is_method: bool) -> Result[V, diag.Diag] uses ffi {
     let f = c.fdefs[fi as usize]
     let fm = f.md
@@ -3366,7 +3366,7 @@ fn builtin(inout c: C, n: ast.Node, which: u32) -> Result[V, diag.Diag] uses ffi
 
 // ---- methods
 
-/// Whether name key k names a type (expr.rs is_type_name).
+/// Whether name key k names a type.
 fn is_type_name(c: C, k: u64) -> bool {
     if c.tmpl.contains(k) { return true }
     if resolve.key_pre(k) != 0 { return false }
@@ -3443,7 +3443,7 @@ fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses f
     Err(err("E0115", n.line, n.col, q2("type ", ts(c, pv.ty), " has no method `", nm(c, n.b), "`")))
 }
 
-/// Check the arguments of a built-in method against `tys` (heap.rs eval_args).
+/// Check the arguments of a built-in method against `tys`.
 fn eval_args(inout c: C, n: ast.Node, tys: List[u32], label: List[u8]) -> Result[List[V], diag.Diag] uses ffi {
     if n.d != tys.len() as u32 {
         return Err(err("E0405", n.line, n.col, q3("`", label, "` takes ", num(tys.len() as u64), " argument(s), but ", num(n.d as u64), " were given")))
@@ -3474,7 +3474,7 @@ fn two(a: u32, b: u32) -> List[u32] {
     out
 }
 
-/// `String.from(..)`, `List.new()`, ... (heap.rs heap_static).
+/// `String.from(..)`, `List.new()`, ...
 fn heap_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
     let label = label_of(c, nm(c, head), n.b)
     let mi = sym_index(c.w.hm, n.b)
@@ -3524,7 +3524,7 @@ fn recv_op(inout c: C, pv: PV) -> u32 {
     read(inout c, pv.place, pv.ty, 0)
 }
 
-/// Methods of String, List, Map and Box (heap.rs heap_method). Mutating methods need the
+/// Methods of String, List, Map and Box. Mutating methods need the
 /// receiver to be assignable and take it as a place.
 fn heap_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] uses ffi {
     let ty = pv.ty
@@ -3665,9 +3665,9 @@ fn option_of(inout c: C, el: u32, n: ast.Node) -> Result[u32, diag.Diag] uses ff
     inst_type(inout c, di, one(el), n.line, n.col)
 }
 
-// ---- closures (closure.rs)
+// ---- closures
 
-/// Every name a closure body mentions (closure.rs walk_expr; patterns are not walked).
+/// Every name a closure body mentions (patterns are not walked).
 fn walk_expr(c: C, e: u32, inout out: List[u64]) {
     let n = nd(c, e)
     match n.kind {
@@ -3757,7 +3757,7 @@ type Saved = {
     fresh: Map[u32, bool], ret: u32, loops: u32, loop_bases: List[u32], lam_expr: bool,
 }
 
-/// `|params| body` (closure.rs lambda): the body becomes an IR function of its own whose
+/// `|params| body`: the body becomes an IR function of its own whose
 /// environment holds a snapshot (clone) of every enclosing local the body mentions.
 fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
     var hp: List[u32] = List.new()
@@ -3863,7 +3863,7 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
     Ok(v_of(fty, emit_val(inout c, ir.S_CLOSURE, f, st, ops.len() as u32, fty, fty, n.line)))
 }
 
-/// Check a closure body; returns its return type (closure.rs lambda_body).
+/// Check a closure body; returns its return type.
 fn lambda_body(inout c: C, e: u32, ret_hint: u32) -> Result[u32, diag.Diag] uses ffi {
     let body = nd(c, e)
     if is_value_form(c, e) {
@@ -3897,7 +3897,7 @@ fn lambda_body(inout c: C, e: u32, ret_hint: u32) -> Result[u32, diag.Diag] uses
     Ok(ret)
 }
 
-/// Call the closure value fv with the arguments of call node n (closure.rs call_value).
+/// Call the closure value fv with the arguments of call node n.
 fn call_value(inout c: C, n: ast.Node, label: List[u8], fv: V) -> Result[V, diag.Diag] uses ffi {
     if types.kind(c.t, fv.ty) != types.T_FN {
         return Err(err("E0112", n.line, n.col, q2("`", label, "` has type ", ts(c, fv.ty), ", so it can't be called")))
@@ -3938,7 +3938,7 @@ fn inst_fn_type(inout c: C, ii: u32) -> u32 {
     types.fn_of(inout c.t, ps, inst.ret)
 }
 
-/// A named function used as a value of the expected fn type (closure.rs fn_as_value).
+/// A named function used as a value of the expected fn type.
 fn fn_as_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag] uses ffi {
     let fi = mget(c.fns, k)
     let f = c.fdefs[fi as usize]
@@ -3960,7 +3960,7 @@ fn fn_as_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag
         let cap = c.capl[(inst.cstart + i) as usize]
         if !has_sym(c.caps, cap) { return Err(cap_error(c, n.line, n.col, label, cap)) }
     }
-    // the bootstrap lets these through with neither `unsafe` nor `ffi` (a hole, not a rule)
+    // checking declared capabilities alone would pass these with neither `unsafe` nor `ffi`
     if f.unsafe_fn { return Err(unsup(n.line, n.col, "`extern` and `unsafe` functions as values")) }
     Ok(v_of(actual, emit_val(inout c, ir.S_FNREF, inst.ir, 0, 0, actual, actual, n.line)))
 }
@@ -4005,7 +4005,7 @@ fn closure_arg(inout c: C, n: ast.Node, i: u32, ps: List[u32], want: u32) -> Res
     Ok(fv)
 }
 
-/// map / filter / for_each / any / all on a List (heap.rs heap_method).
+/// map / filter / for_each / any / all on a List.
 fn combinator(inout c: C, n: ast.Node, pv: PV, mi: u32) -> Result[V, diag.Diag] uses ffi {
     let ty = pv.ty
     let el = types.get(c.t, ty).a
@@ -4120,7 +4120,7 @@ fn fold_list(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] uses ffi {
     Ok(v_of(acc_ty, ir.op_local(inout c.ir, acc, acc_ty)))
 }
 
-// ---- threads (heap.rs Task/Mutex/Chan, expr.rs spawn)
+// ---- threads (Task/Mutex/Chan, spawn)
 //
 // Task, Mutex and Chan are shared handles: copying one shares the object (a reference
 // count), so threads share data only through them; everything else a closure captures is a
@@ -4147,7 +4147,7 @@ fn spawn(inout c: C, n: ast.Node) -> Result[V, diag.Diag] uses ffi {
     Ok(v_of(ty, builtin_op(inout c, ir.B_SPAWN, one(o), ty, n.line)))
 }
 
-/// `Mutex.new(v)` and `Chan.new()` (heap.rs heap_static).
+/// `Mutex.new(v)` and `Chan.new()`.
 fn thread_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
     if head == c.w.heap[4] {
         if n.d != 1 { return Err(err("E0405", n.line, n.col, s("`Mutex.new` takes exactly one argument"))) }
@@ -4169,7 +4169,7 @@ fn thread_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag
     Ok(v_of(exp, builtin_op(inout c, ir.B_CHAN_NEW, List.new(), exp, n.line)))
 }
 
-/// Methods of Task, Mutex and Chan (heap.rs heap_method).
+/// Methods of Task, Mutex and Chan.
 fn thread_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] uses ffi {
     let ty = pv.ty
     let t = types.get(c.t, ty)

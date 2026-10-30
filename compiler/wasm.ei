@@ -12,14 +12,14 @@
 //         -I <root>/core -Wl,--no-entry -Wl,--allow-undefined -o <name>.wasm
 //         <prog>.c <root>/core/wasm/eider_rt.c <root>/core/wasm/libc.c
 //
-// (the bootstrap's command, with the core in place of its pasted shim). --allow-undefined turns
+// (the core's freestanding libc in place of a per-build shim). --allow-undefined turns
 // every function the module does not define (`extern "c"` functions, the native core's ec_*)
 // into an import from "env", which the host supplies through the loader's `imports`.
 //
 // Next to <name>.wasm go <name>.d.ts (TypeScript declarations of the exports) and <name>.js
 // (an ES module loader that supplies the host imports and wraps the exports), byte-identical
-// to the bootstrap's (ffi.rs ts_decls, js_loader). `emit-header --wasm` prints both the way the
-// bootstrap did: the declarations, a \x01 byte, then the loader naming the module `@WASM@`.
+// to what tests/oracle records. `emit-header --wasm` prints both the way the oracle
+// records them: the declarations, a \x01 byte, then the loader naming the module `@WASM@`.
 
 import "deps/core/sys.ei"
 import "deps/std/bytes.ei"
@@ -35,7 +35,7 @@ import "driver.ei"
 
 fn s(x: str) -> List[u8] uses ffi { sys.lit(x) }
 
-/// A type as TypeScript sees it crossing the boundary (ffi.rs ts_ty): 64-bit integers are
+/// A type as TypeScript sees it crossing the boundary: 64-bit integers are
 /// BigInts, the other integers numbers.
 fn ts_ty(p: lower.P, ty: u32) -> str {
     if ty == types.UNIT || ty == types.NEVER { return "void" }
@@ -99,7 +99,7 @@ pub fn loader(p: lower.P, wasm_file: List[u8]) -> List[u8] uses ffi {
     o
 }
 
-/// `emit-header --wasm`: the bootstrap's form of both texts.
+/// `emit-header --wasm`: both texts, in the recorded form.
 pub fn header(p: lower.P) -> List[u8] uses ffi {
     var o = dts(p)
     o.push(1)
@@ -107,7 +107,7 @@ pub fn header(p: lower.P) -> List[u8] uses ffi {
     o
 }
 
-/// `eiderc build --wasm` (and `run --wasm`, as in the bootstrap): <name>.wasm, <name>.d.ts and
+/// `eiderc build --wasm` (and `run --wasm`, which builds the same): <name>.wasm, <name>.d.ts and
 /// <name>.js, where <name> is `-o`'s path, else the source's stem.
 pub fn build(c: List[u8], p: lower.P, file: List[u8], out: List[u8]) uses io, fs, net, clock, ffi {
     var base = out

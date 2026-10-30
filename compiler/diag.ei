@@ -1,4 +1,4 @@
-// diag: diagnostics, rendered exactly like the bootstrap (human and --json).
+// diag: diagnostics, rendered exactly as tests/oracle records them (human and --json).
 // Messages are bytes so they can go to stderr.
 
 import "deps/core/sys.ei"
@@ -13,7 +13,7 @@ pub fn new(code: str, line: u32, col: u32, msg: List[u8]) -> Diag {
     Diag(code, line, col, msg, List.new(), None, List.new())
 }
 
-/// Every error code of the language, in the bootstrap's order (its ALL_CODES). This is the
+/// Every error code of the language, in the fixed order the recorded expectations use. This is the
 /// one list: `eiderc test --compile-fail` measures its coverage line against it, so a new
 /// code is added here together with its compile-fail test. (`unsupported` is eiderc's
 /// marker for a feature it doesn't implement yet, not a code of the language.)
@@ -28,7 +28,7 @@ pub fn all_codes() -> List[List[u8]] uses ffi {
     out
 }
 
-/// `src` with fix `f` applied (the bootstrap's apply_fix): at line:col (columns count
+/// `src` with fix `f` applied: at line:col (columns count
 /// Unicode scalar values; past the end means the end), delete `f.delete` bytes and insert
 /// `f.insert`.
 pub fn apply_fix(src: List[u8], f: Fix) -> List[u8] {
@@ -64,7 +64,7 @@ pub fn apply_fix(src: List[u8], f: Fix) -> List[u8] {
 fn alnum(c: u8) -> bool { (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) }
 fn alpha(c: u8) -> bool { (c >= 65 && c <= 90) || (c >= 97 && c <= 122) }
 
-/// `a__B` -> `a.B` (module-prefixed names in messages; the bootstrap's ns::demangle): a
+/// `a__B` -> `a.B` (module-prefixed names in messages, shown as `module.Name`): a
 /// double underscore between an alphanumeric and a letter.
 pub fn demangle(s: List[u8]) -> List[u8] {
     var out: List[u8] = List.new()
@@ -83,7 +83,7 @@ pub fn demangle(s: List[u8]) -> List[u8] {
 
 fn num(inout out: List[u8], n: u64) { bytes.append(inout out, bytes.from_u64(n)) }
 
-/// Rust's {:?} for strings (used for fixes, and by dumps): quotes plus \" \\ \n \t \r and \u{..} for other controls.
+/// Debug-style quoting of a string (used for fixes, and by dumps): quotes plus \" \\ \n \t \r and \u{..} for other controls.
 pub fn debug_str(inout out: List[u8], s: List[u8]) uses ffi {
     out.push(34)
     for c in s {
@@ -129,7 +129,7 @@ fn line_of(src: List[u8], n: u32) -> Option[List[u8]] {
         if i == src.len() || src[i] == 10 {
             if line == n {
                 if i == src.len() && start == i { return None }
-                // like Rust's str::lines: a trailing \r is part of the line ending
+                // lines end at \n, and a trailing \r is part of the line ending (\r\n)
                 var end = i
                 if end > start && src[end - 1] == 13 { end -= 1 }
                 return Some(bytes.slice(src, start, end))
