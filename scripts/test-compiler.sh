@@ -1,24 +1,28 @@
 #!/bin/sh
-# Tests for the self-hosted compiler (compiler/). Differential: the bootstrap is the oracle.
+# Tests for the self-hosted compiler (compiler/). Differential against a recorded oracle:
+# tests/oracle/ holds what the stage-0 bootstrap printed for every input below (recorded
+# before it was retired; docs/compiler.md, "Testing"), one file per (command, input) at
+# tests/oracle/<source path without .ei>.<kind>. Output is compared with the checkout's
+# root written `<root>`. BLESS=1 rewrites the oracle (and the goldens) from eiderc's output:
+# that is how expected behaviour changes from now on, after reviewing the diff.
 #
-#   front:    for every .ei in the repo and in compiler/tests/{lex,parse}, whenever either
-#             compiler reports a lex or parse error, both must report the same JSON diagnostic.
+#   front:    for every .ei in the repo and in compiler/tests/{lex,parse}, eiderc's lex or
+#             parse error (if any) must be the recorded one (X.front; no file: none).
 #   lex_ok:   token dumps of compiler/tests/lex_ok/*.ei match their .tokens goldens
 #   parse_ok: AST dumps of compiler/tests/parse_ok/*.ei match their .ast goldens
-#             (BLESS=1 rewrites the goldens; review the diff).
-#   ir:       IR dumps of compiler/tests/ir/*.ei match their .ir goldens (BLESS=1 too).
+#   ir:       IR dumps of compiler/tests/ir/*.ei match their .ir goldens.
 #   check:    for every compile-fail/pass test (tests/checks/{fail,pass}) whose features eiderc
 #             supports (it doesn't answer `unsupported`), `eiderc check --json` must equal the
-#             bootstrap's byte for byte; the same for tests/run/*.ei. eiderc's own cases in
-#             compiler/tests/check/{fail,pass} must all be in scope and agree.
+#             oracle (X.check.json) byte for byte; the same for tests/run/*.ei. eiderc's own
+#             cases in compiler/tests/check/{fail,pass} must all be in scope and agree.
 #   run:      every tests/run/*.ei and compiler/tests/run/*.ei that eiderc checks without
-#             `unsupported` must give the same stdout, stderr and exit code under `eiderc run`
-#             as under the bootstrap's `eider run`, and, if it has test blocks, under
-#             `eiderc test` and `eider test`. eiderc compiles its C with -Werror (on top of the
-#             driver's -std=c11 -pedantic -Wall -Wextra). Exception: a compiler/tests/run file
-#             with an X.out (and X.test.out) next to it is a regression test for a bootstrap
-#             bug (LEARNINGS.md), where the bootstrap's output is wrong; it is compared with
-#             that hand-written expected stdout instead (and must exit 0 with empty stderr).
+#             `unsupported` must give the recorded stdout, stderr and exit code under
+#             `eiderc run` (X.run), and, if it has test blocks, under `eiderc test` (X.test).
+#             eiderc compiles its C with -Werror (on top of the driver's -std=c11 -pedantic
+#             -Wall -Wextra). Exception: a compiler/tests/run file with an X.out (and
+#             X.test.out) next to it is a regression test for a bootstrap bug (LEARNINGS.md),
+#             where the bootstrap's output was wrong; it is compared with that hand-written
+#             expected stdout instead (and must exit 0 with empty stderr).
 #   sanitize: every run again with its C at -O2 -Werror (so -Wmaybe-uninitialized is
 #             checked) under UBSan in trap mode (-fsanitize=undefined
 #             -fsanitize-undefined-trap-on-error, no runtime library needed); the output must
@@ -31,38 +35,55 @@
 #             directory at another path (same relative file name), must be byte-identical.
 #   names:    two functions with one C name (compiler/tests/lower/clash.ei) stop `emit-c`
 #             with an internal error (exit 3) naming both.
-#   export:   libraries from `eiderc build --lib`: tests/export/run.sh (the C and C++
-#             consumers of the bootstrap's suite) with EIDER=eiderc, compiler/tests/export/run.sh
-#             (eiderc's own: more types, nested records, two libraries, traps), and
-#             `emit-header` and `check --lib --json` equal to the bootstrap's.
-#   wasm:     `check --wasm --json` and `emit-header --wasm` equal to the bootstrap's for
-#             tests/wasm and compiler/tests/wasm{,/check} (`// mode: wasm` check tests use --wasm in
-#             the check section); compiler/tests/wasm/run.sh: core/wasm and the emitted C are
-#             strict freestanding C, and `build --wasm` modules run under node like the
-#             bootstrap's, with byte-identical .d.ts/.js (skipped, with the reason, without
-#             clang's wasm32 target, wasm-ld or node: WebAssembly is optional).
+#   export:   libraries from `eiderc build --lib`: tests/export/run.sh (C and C++ consumers)
+#             with EIDER=eiderc, compiler/tests/export/run.sh (eiderc's own: more types,
+#             nested records, two libraries, traps), and `check --lib --json`
+#             (X.check-lib.json) and `emit-header` (X.emit-header) equal to the oracle.
+#   wasm:     `check --wasm --json` and `emit-header --wasm` equal to the oracle
+#             (X.check-wasm.json, X.emit-header-wasm) for tests/wasm and
+#             compiler/tests/wasm{,/check} (`// mode: wasm` check tests use --wasm in the check
+#             section); compiler/tests/wasm/run.sh: core/wasm and the emitted C are strict
+#             freestanding C, and `build --wasm` modules give the recorded node output and
+#             .d.ts/.js (skipped, with the reason, without clang's wasm32 target, wasm-ld or
+#             node: WebAssembly is optional).
 #   unit:     programs in compiler/tests/unit that drive a compiler module (sha256.ei) must
 #             print their .out.
-#   compile-fail: `eiderc test --compile-fail` prints exactly what stage 0's runner prints
-#             (and exits the same) for compiler/tests/check and compiler/tests/suite (the
-#             runner's own failure cases); for tests/checks it reports 0 failed and every
-#             line but the `skip`s (features eiderc doesn't have yet) and the coverage
-#             summary is stage 0's.
+#   compile-fail: `eiderc test --compile-fail` prints exactly the recorded runner output, and
+#             exits the same (<dir>.compile-fail), for compiler/tests/check and
+#             compiler/tests/suite (the runner's own failure cases); for tests/checks it
+#             reports 0 failed and every line but the `skip`s (features eiderc doesn't have)
+#             and the coverage summary is the recorded one.
 #   cache:    EIDER_CACHE=<dir>: hits, what the key covers, core objects built once per
 #             toolchain, concurrent runs on an empty cache, no work directories left over.
 #   usage:    `--help` lists every command; unknown options/commands and stray arguments
 #             exit 2.
 cd "$(dirname "$0")/.." || exit 1
 scripts/bootstrap-deps.sh
-boot=$(scripts/stage0.sh) || exit 3
-# EIDERC=<binary> tests that compiler instead of building target/eiderc with stage 0
-# (scripts/selfhost.sh uses it to put the self-built compiler through the same tests).
+# EIDERC=<binary> tests that compiler instead of target/eiderc-next, compiler/ as built by
+# the seed's eiderc (scripts/ei); scripts/selfhost.sh uses it for its stage 3.
 if [ -n "$EIDERC" ]; then
   new=$EIDERC
 else
-  EIDER_CACHE=off scripts/ei build compiler/main.ei -o target/eiderc >/dev/null 2>target/eiderc.build.log || { cat target/eiderc.build.log; echo "FAIL build eiderc"; exit 1; }
-  new=./target/eiderc
+  EIDER_CACHE=off scripts/ei build compiler/main.ei -o target/eiderc-next >/dev/null 2>target/eiderc.build.log || { cat target/eiderc.build.log; echo "FAIL build eiderc"; exit 1; }
+  new=./target/eiderc-next
 fi
+# the oracle (see the top): `oracle <source> <kind>` is the expected file of that (input,
+# command); norm writes the checkout's root as <root>
+O=tests/oracle
+oracle() { echo "$O/${1%.ei}.$2"; }
+rootre=$(pwd | sed 's/[]\/.[*^$|]/\\&/g')
+norm() { sed "s|$rootre/|<root>/|g"; }
+# want_of <source> <kind>: the expected text (a placeholder that never matches if there is
+# no oracle file; BLESS=1 records one)
+want_of() { p=$(oracle "$1" "$2"); if [ -f "$p" ]; then cat "$p"; else echo "(no oracle file $p)"; fi; }
+# bless <source> <kind> <file>: under BLESS=1, make <file> the expected output
+bless() {
+  [ -n "$BLESS" ] || return 0
+  p=$(oracle "$1" "$2")
+  mkdir -p "$(dirname "$p")"
+  cp "$3" "$p"
+}
+mkdir -p target/runtest
 # the front end's diagnostics: E0001, plus the parser's E0302 for `inout` in a type and E0402
 # for `null`, in the entry file
 frontmsg='"error":"(E0001|E0402)"|"error":"E0302".*"message":"`inout` is only valid on function parameters'
@@ -74,16 +95,23 @@ fail=0
 n=0
 for f in $(find . -name '*.ei' -not -path './target/*' -not -path './.claude/*' -not -path '*/deps/*' | sort); do
   n=$((n + 1))
-  want=$(front "$($boot check --json "$f" 2>/dev/null | head -1)" "$f")
-  got=$(front "$($new check --json "$f" 2>/dev/null | head -1)" "$f")
+  # no .front file: no lex or parse error expected
+  p=$(oracle "${f#./}" front)
+  want=""
+  [ -f "$p" ] && want=$(cat "$p")
+  got=$(front "$($new check --json "$f" 2>/dev/null | head -1 | norm)" "$f")
+  if [ -n "$BLESS" ]; then
+    if [ -n "$got" ]; then mkdir -p "$(dirname "$p")"; echo "$got" >"$p"; else rm -f "$p"; fi
+    want=$got
+  fi
   if [ "$want" != "$got" ]; then
     echo "FAIL front end $f"
-    echo "  bootstrap: $want"
-    echo "  eiderc:    $got"
+    echo "  oracle: $want"
+    echo "  eiderc: $got"
     fail=1
   fi
 done
-[ $fail = 0 ] && echo "ok   front end (lex+parse): $n files agree with the bootstrap"
+[ $fail = 0 ] && echo "ok   front end (lex+parse): $n files agree with the oracle"
 for f in compiler/tests/lex_ok/*.ei; do
   g="${f%.ei}.tokens"
   if [ -n "$BLESS" ]; then $new lex "$f" > "$g"; fi
@@ -100,7 +128,7 @@ for f in compiler/tests/ir/*.ei; do
   if $new ir "$f" | cmp -s - "$g"; then echo "ok   ir $f"; else echo "FAIL ir $f"; $new ir "$f" | diff "$g" - | head -10; fail=1; fi
 done
 
-# check: differential against the bootstrap's `check --json`
+# check: `check --json` against the oracle
 # usage: check_set <must-be-in-scope: 0|1> files...; sets total, inscope, agree, outside
 check_set() {
   strict=$1
@@ -111,10 +139,11 @@ check_set() {
   outside=""
   for f in "$@"; do
     total=$((total + 1))
-    # `// mode: wasm` (stage 0's compile-fail runner): check as a WebAssembly module
+    # `// mode: wasm` (as the compile-fail runner reads it): check as a WebAssembly module
     wf=""
     if grep -q '// mode: wasm' "$f"; then wf=--wasm; fi
-    got=$($new check --json $wf "$f" 2>&1)
+    $new check --json $wf "$f" 2>&1 | norm >target/runtest/check
+    got=$(cat target/runtest/check)
     case "$got" in
       *'"error":"unsupported"'*)
         outside="$outside $(basename "$f")"
@@ -123,13 +152,14 @@ check_set() {
         ;;
     esac
     inscope=$((inscope + 1))
-    want=$($boot check --json $wf "$f" 2>&1)
+    bless "$f" check.json target/runtest/check
+    want=$(want_of "$f" check.json)
     if [ "$want" = "$got" ]; then
       agree=$((agree + 1))
     else
       echo "FAIL check $f"
-      echo "  bootstrap: $want"
-      echo "  eiderc:    $got"
+      echo "  oracle: $want"
+      echo "  eiderc: $got"
       fail=1
     fi
   done
@@ -143,14 +173,14 @@ echo "$(verdict $inscope) check: $agree/$inscope run tests in scope agree ($tota
 check_set 1 compiler/tests/check/fail/*.ei compiler/tests/check/pass/*.ei
 echo "$(verdict $total) check: $agree/$inscope eiderc check cases agree (compiler/tests/check)"
 
-# run: differential against the bootstrap's `run` / `test` (stdout, stderr, exit code)
+# run: `run` / `test` (stdout, stderr, exit code) against the oracle
 tmp=target/runtest
 mkdir -p $tmp
 # usage: outcome <command...>: writes stdout, stderr and the exit code of the command to $tmp/out
 outcome() {
   "$@" >$tmp/o 2>$tmp/e
   code=$?
-  { cat $tmp/o; echo "--- stderr"; cat $tmp/e; echo "--- exit $code"; } >$tmp/out
+  { cat $tmp/o; echo "--- stderr"; cat $tmp/e; echo "--- exit $code"; } | norm >$tmp/out
 }
 has_tests() { grep -q '^test ' "$1"; }
 # ASan/TSan need runtime libraries that may not be installed; UBSan in trap mode needs none
@@ -193,8 +223,8 @@ for f in tests/run/*.ei compiler/tests/run/*.ei; do
       # a bootstrap-bug regression: hand-written expected output, not the bootstrap's
       { cat "$exp"; echo "--- stderr"; echo "--- exit 0"; } >$tmp/want
     else
-      outcome $boot $cmd "$f"
-      cp $tmp/out $tmp/want
+      bless "$f" $cmd $tmp/got
+      if [ -f "$(oracle "$f" $cmd)" ]; then cp "$(oracle "$f" $cmd)" $tmp/want; else echo "(no oracle file $(oracle "$f" $cmd))" >$tmp/want; fi
     fi
     if ! cmp -s $tmp/want $tmp/got; then
       echo "FAIL run: eiderc $cmd $f"
@@ -291,20 +321,23 @@ lagree=0
 ltotal=0
 for f in tests/export/mathlib.ei compiler/tests/export/shapes.ei compiler/tests/export/nested.ei tests/run/ffi.ei tests/checks/pass/pass_import_and_ffi.ei; do
   ltotal=$((ltotal + 1))
-  want=$($boot check --lib --json "$f" 2>&1)
-  got=$($new check --lib --json "$f" 2>&1)
+  $new check --lib --json "$f" 2>&1 | norm >$tmp/l_got
+  bless "$f" check-lib.json $tmp/l_got
+  want=$(want_of "$f" check-lib.json)
+  got=$(cat $tmp/l_got)
   if [ "$want" != "$got" ]; then
     echo "FAIL check --lib $f"
-    echo "  bootstrap: $want"
-    echo "  eiderc:    $got"
+    echo "  oracle: $want"
+    echo "  eiderc: $got"
     fail=1
     continue
   fi
-  # nested.ei: stage 0's header lacks the inner record's typedef (compiler/tests/export)
+  # nested.ei: the bootstrap's header lacked the inner record's typedef, so there is no
+  # oracle for it (compiler/tests/export/run.sh compiles eiderc's)
   case "$f" in tests/export/*|*/shapes.ei)
-    $boot emit-header "$f" >$tmp/h_want 2>&1
-    $new emit-header "$f" >$tmp/h_got 2>&1
-    if ! cmp -s $tmp/h_want $tmp/h_got; then
+    $new emit-header "$f" 2>&1 | norm >$tmp/h_got
+    bless "$f" emit-header $tmp/h_got
+    if ! cmp -s "$(oracle "$f" emit-header)" $tmp/h_got; then
       echo "FAIL emit-header $f"
       fail=1
       continue
@@ -316,18 +349,20 @@ if [ "$lagree" = "$ltotal" ]; then v="ok  "; else v="FAIL"; fi
 echo "$v export: $lagree/$ltotal files agree on check --lib and emit-header"
 
 # wasm: `check --wasm` and `emit-header --wasm` (the .d.ts and the loader) equal the
-# bootstrap's; core/wasm and the emitted C compile as strict freestanding C; and, when clang
+# oracle; core/wasm and the emitted C compile as strict freestanding C; and, when clang
 # has the wasm32 target and wasm-ld and node are installed, `build --wasm` modules behave
-# like the bootstrap's (compiler/tests/wasm/run.sh; it skips with the reason otherwise)
+# as recorded (compiler/tests/wasm/run.sh; it skips with the reason otherwise)
 wagree=0
 wtotal=0
 for f in tests/wasm/*.ei compiler/tests/wasm/*.ei compiler/tests/wasm/check/*.ei; do
   wtotal=$((wtotal + 1))
-  want=$($boot check --wasm --json "$f" 2>&1)
-  got=$($new check --wasm --json "$f" 2>&1)
-  $boot emit-header --wasm "$f" >$tmp/h_want 2>&1
-  $new emit-header --wasm "$f" >$tmp/h_got 2>&1
-  if [ "$want" != "$got" ] || ! cmp -s $tmp/h_want $tmp/h_got; then
+  $new check --wasm --json "$f" 2>&1 | norm >$tmp/w_got
+  $new emit-header --wasm "$f" 2>&1 | norm >$tmp/h_got
+  bless "$f" check-wasm.json $tmp/w_got
+  bless "$f" emit-header-wasm $tmp/h_got
+  want=$(want_of "$f" check-wasm.json)
+  got=$(cat $tmp/w_got)
+  if [ "$want" != "$got" ] || ! cmp -s "$(oracle "$f" emit-header-wasm)" $tmp/h_got; then
     echo "FAIL check --wasm / emit-header --wasm $f"
     fail=1
     continue
@@ -336,7 +371,7 @@ for f in tests/wasm/*.ei compiler/tests/wasm/*.ei compiler/tests/wasm/check/*.ei
 done
 if [ "$wagree" = "$wtotal" ]; then v="ok  "; else v="FAIL"; fi
 echo "$v wasm: $wagree/$wtotal files agree on check --wasm and emit-header --wasm"
-if out=$(sh compiler/tests/wasm/run.sh $new $boot 2>&1); then echo "$out"; else echo "$out"; fail=1; fi
+if out=$(sh compiler/tests/wasm/run.sh $new 2>&1); then echo "$out"; else echo "$out"; fail=1; fi
 # unit: compiler modules driven by a program in compiler/tests/unit, compared with the .out
 # (hand-checked: sha256.out against FIPS 180-4 and sha256sum)
 for f in compiler/tests/unit/*.ei; do
@@ -345,25 +380,28 @@ for f in compiler/tests/unit/*.ei; do
   if cmp -s $tmp/want $tmp/out; then echo "ok   unit $f"; else echo "FAIL unit $f"; diff $tmp/want $tmp/out | head -10; fail=1; fi
 done
 
-# compile-fail: `eiderc test --compile-fail` against stage 0's runner
+# compile-fail: `eiderc test --compile-fail` against the recorded runner output (the oracle's
+# <dir>.compile-fail: the output, then `--- exit <code>`)
 for d in compiler/tests/check compiler/tests/suite; do
-  $boot test --compile-fail $d >$tmp/cf_want 2>&1
-  wcode=$?
-  $new test --compile-fail $d >$tmp/cf_got 2>&1
+  $new test --compile-fail $d >$tmp/cf_o 2>&1
   gcode=$?
-  if [ $wcode = $gcode ] && cmp -s $tmp/cf_want $tmp/cf_got; then
-    echo "ok   compile-fail: test --compile-fail $d equals stage 0's ($(grep 'error-code coverage' $tmp/cf_got))"
+  { norm <$tmp/cf_o; echo "--- exit $gcode"; } >$tmp/cf_got
+  [ -n "$BLESS" ] && cp $tmp/cf_got $O/$d.compile-fail
+  if cmp -s $O/$d.compile-fail $tmp/cf_got; then
+    echo "ok   compile-fail: test --compile-fail $d equals the oracle ($(grep 'error-code coverage' $tmp/cf_got))"
   else
-    echo "FAIL compile-fail: test --compile-fail $d (exit $gcode, stage 0 $wcode)"
-    diff $tmp/cf_want $tmp/cf_got | head -10
+    echo "FAIL compile-fail: test --compile-fail $d (exit $gcode)"
+    diff $O/$d.compile-fail $tmp/cf_got | head -10
     fail=1
   fi
 done
-# tests/checks: files eiderc can't check yet (comptime, threads, wasm mode) are `skip`; every
-# other line is stage 0's
-$boot test --compile-fail tests/checks >$tmp/cf_want 2>&1
-$new test --compile-fail tests/checks >$tmp/cf_got 2>&1
+# tests/checks: files eiderc can't check (`unsupported`) are `skip`; every other line is the
+# oracle's
+$new test --compile-fail tests/checks >$tmp/cf_o 2>&1
 gcode=$?
+norm <$tmp/cf_o >$tmp/cf_got
+[ -n "$BLESS" ] && { cat $tmp/cf_got; echo "--- exit $gcode"; } >$O/tests/checks.compile-fail
+sed '$d' $O/tests/checks.compile-fail >$tmp/cf_want
 grep '^  skip ' $tmp/cf_got | awk '{print "  ok   " $2 " "}' >$tmp/cf_skipped
 grep -v -F -f $tmp/cf_skipped $tmp/cf_want | grep -v 'passed, .* failed; error-code coverage' | grep -v '^codes without' >$tmp/cf_w
 grep -v '^  skip ' $tmp/cf_got | grep -v 'skipped (not yet supported by eiderc)' | grep -v 'passed, .* failed; error-code coverage' | grep -v '^codes without' >$tmp/cf_g

@@ -1,5 +1,5 @@
-// stage 0 differs: its shim formats each printf into a 512-byte buffer and drops the rest,
-// so a line longer than 511 bytes comes out cut. core/wasm/libc.c writes it in chunks.
+// oracle differs: the bootstrap's shim formatted each printf into a 512-byte buffer and
+// dropped the rest, so a line over 511 bytes came out cut. core/wasm/libc.c writes it in chunks.
 export fn long_line(n: i32) -> i32 uses io {
     var s = String.from("")
     for i in 0..n { s.push_str("0123456789") }
