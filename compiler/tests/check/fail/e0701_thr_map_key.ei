@@ -1,0 +1,4 @@
+// expect: E0701 3:12
+fn main() uses io {
+    let m: Map[Chan[i32], i32] = Map.new()
+}

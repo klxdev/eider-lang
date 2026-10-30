@@ -1,0 +1,5 @@
+// expect: E0115 4:13
+fn main() uses io {
+    let m = Mutex.new(1)
+    print(m.len())
+}

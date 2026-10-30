@@ -8,6 +8,9 @@
 //   T_LIST    a = element type             T_BOX   a = element type
 //   T_MAP     a = key type, b = value type
 //   T_FN      a = type list (parameter types), b = return type
+//   T_TASK    a = result type (`Task[T]`; creating one also interns `fn() -> T`)
+//   T_MUTEX   a = element type             T_CHAN  a = element type
+//             (shared, reference-counted handles: copying one shares the same object)
 //
 // The primitive types have fixed ids (I32 .. STRING below). Enums and records are named
 // definitions (`Def`) with their fields or variants in the shared `fields` / `variants`
@@ -39,6 +42,9 @@ pub const T_LIST: u32 = 10
 pub const T_MAP: u32 = 11
 pub const T_BOX: u32 = 12
 pub const T_FN: u32 = 13
+pub const T_TASK: u32 = 14
+pub const T_MUTEX: u32 = 15
+pub const T_CHAN: u32 = 16
 
 /// Int kinds, in the bootstrap's IntTy order.
 pub const IK_I32: u32 = 0
@@ -165,6 +171,44 @@ pub fn box_of(inout t: Types, elem: u32) -> u32 { comp(inout t, T_BOX, elem, 0) 
 pub fn fn_of(inout t: Types, params: List[u32], ret: u32) -> u32 {
     let l = list(inout t, params)
     comp(inout t, T_FN, l, ret)
+}
+/// `Task[elem]`; also interns `fn() -> elem`, the closure a Task runs (its layout holds one).
+pub fn task_of(inout t: Types, elem: u32) -> u32 {
+    let run = fn_of(inout t, List.new(), elem)
+    comp(inout t, T_TASK, elem, 0)
+}
+pub fn mutex_of(inout t: Types, elem: u32) -> u32 { comp(inout t, T_MUTEX, elem, 0) }
+pub fn chan_of(inout t: Types, elem: u32) -> u32 { comp(inout t, T_CHAN, elem, 0) }
+
+/// Whether `k` is one of the shared handle kinds (Task, Mutex, Chan).
+pub fn is_handle(k: u32) -> bool { k == T_TASK || k == T_MUTEX || k == T_CHAN }
+
+/// The id of an interned composite type (not an array) if it exists, else NOTY. Read-only,
+/// for passes that can't intern (lowering).
+pub fn find_comp(t: Types, k: u32, a: u32, b: u32) -> u32 {
+    let key = (k as u64) * 72057594037927936 + (a as u64) * 268435456 + b as u64
+    match t.comps.get(key) {
+        Some(id) => id
+        None => NOTY
+    }
+}
+
+/// The id of the interned type list `xs` if it exists, else NOTY (read-only `list`).
+pub fn find_list(t: Types, xs: List[u32]) -> u32 {
+    let n = xs.len() as u32
+    for i in 0..t.lists.len() {
+        let sp = t.lists[i]
+        if sp.len != n { continue }
+        var same = true
+        for j in 0..n {
+            if t.cells[(sp.start + j) as usize] != xs[j as usize] {
+                same = false
+                break
+            }
+        }
+        if same { return i as u32 }
+    }
+    NOTY
 }
 
 /// The element types of a tuple, or the parameter types of a fn type.
@@ -301,6 +345,21 @@ pub fn show_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32)
         }
         12 => {
             bytes.append(inout out, sys.lit("Box["))
+            show_into(inout out, t, names, ty.a)
+            out.push(93)
+        }
+        14 => {
+            bytes.append(inout out, sys.lit("Task["))
+            show_into(inout out, t, names, ty.a)
+            out.push(93)
+        }
+        15 => {
+            bytes.append(inout out, sys.lit("Mutex["))
+            show_into(inout out, t, names, ty.a)
+            out.push(93)
+        }
+        16 => {
+            bytes.append(inout out, sys.lit("Chan["))
             show_into(inout out, t, names, ty.a)
             out.push(93)
         }

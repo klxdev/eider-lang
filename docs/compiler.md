@@ -1,6 +1,6 @@
 # The self-hosted compiler (`eiderc`)
 
-Status: approved direction; C1 to C6 done (eiderc is self-hosted; seed/eiderc.c committed). C7 (parity) has FFI and comptime done. This file owns the plan; update it as stages land.
+Status: approved direction; C1 to C6 done (eiderc is self-hosted; seed/eiderc.c committed). C7 (parity) has FFI, comptime, WebAssembly and threads done. This file owns the plan; update it as stages land.
 
 Progress: **C1 done** (lexer, interner, diagnostics rendering; `scripts/test-compiler.sh`).
 **C2 done** (parser to the AST arena, `eiderc parse` dump, parse-error corpus and AST goldens).
@@ -12,7 +12,8 @@ lowering (see "C5: lowering"). **C6 done**: eiderc builds itself to a fixed poin
 seed is committed (see "C6: self-hosting"). From C7, **FFI is done** (`extern "c"`, `unsafe`, `export fn`,
 `emit-header`, `build --lib`, `-l`; see "C7: FFI"), since `compiler/` reaches the OS only
 through core/sys.ei's externs. **Comptime is done** (`const X: T = comptime expr`; see
-"C7: comptime").
+"C7: comptime"). **Threads are done** (`spawn`, Task, Mutex, Chan, the `threads`
+capability; see "C7: threads").
 
 ## Goal
 
@@ -135,7 +136,7 @@ language as it is:
   std::fs::canonicalize does, so the deps/ link farm's paths to one file are one module.
 - **Folding** (`fold.ei`) computes in a sign + 128-bit magnitude, enough for every value the
   bootstrap computes in i128 from in-range operands (its E0501 messages print them).
-- **Out of scope** (threads, WebAssembly; since C5 and C7 everything else) ends checking
+- **Out of scope** (nothing language-level since C7; earlier, threads, comptime, WebAssembly and FFI until their C7 sections) ends checking
   with an `unsupported` diagnostic at the point where the bootstrap would start handling the
   feature; everything reported before it is exact, and the test script counts such files as
   out of scope.
@@ -430,6 +431,72 @@ constant it is handed, so a caller that skips `eval` finds out).
   `unreachable` with the message printed, a line over 511 bytes) run under node against
   hand-checked `.out` files and against the bootstrap's module (same output, same `.d.ts` and
   `.js`). Without clang's wasm32 target, wasm-ld or node the module legs print `skip`.
+
+## C7: threads
+
+A port of heap.rs's Task/Mutex/Chan and expr.rs's `spawn`. Threads share data only through
+these handles: everything else a closure captures is a snapshot (a deep copy), and values
+cross threads only by move (the spawned closure, `send`) or by copy under the lock
+(`Mutex.get`, `Task.join`).
+
+- **Checking** (`check.ei`: `spawn`, `thread_static`, `thread_method`, kept apart from the
+  rest). Types `Task[T]` (T may be `()`), `Mutex[T]`, `Chan[T]` (E0111 for `()`, arity,
+  bare names); `owns` is true for them, `==` is not supported (E0401, also inside Lists,
+  records, ...), they can't be Map keys (E0701) or printed. `spawn(f)` needs `threads`
+  (E0201, checked before anything else), exactly one argument (E0405), a closure with no
+  parameters (E0401) that returns (E0401 for `!`); the closure gets no hint, so a
+  value-form body needs `-> T` (E0409). `Mutex.new(v)` (E0405, hint from the annotation,
+  E0401 for `()`), `Chan.new()` (E0409 without a `Chan` annotation, then E0405), `Task`
+  has no associated functions (E0115). Methods: `join`, `get`, `set`, `update` (E0405
+  "`update` takes exactly one closure"; the closure is checked against `fn(T) -> T` with
+  that hint), `send`, `recv` (-> `Option[T]`), `close`; anything else is E0115, also a
+  method a user `impl` adds to `Mutex[i32]` (stage 0 tries the built-in methods first).
+  None needs an assignable receiver or a capability. Diagnostics are stage 0's byte for byte.
+- **IR** (ir.ei): types T_TASK/T_MUTEX/T_CHAN (types.ei; `task_of` also interns
+  `fn() -> T`); builtins B_SPAWN, B_TASK_JOIN, B_MUTEX_NEW/GET/SET/UPDATE,
+  B_CHAN_NEW/SEND/RECV/CLOSE (no new statement kinds). Receivers are borrowed operands;
+  spawn's closure and the values given to `Mutex.new`, `set` and `send` are moved in;
+  `join`, `get` and `recv` give owned results; `update` borrows its closure, which its
+  owner drops (golden `compiler/tests/ir/threads`).
+- **Lowering** (`lower.ei`, "threads"). A handle is `{ struct <name>_c *p; }` (`tk_`,
+  `tx_`, `tc_` names); the shared object starts with the runtime's `ei_rc` and embeds an
+  `ei_thread` + the closure + the result (Task), an `ei_mutex` + the value (Mutex) or an
+  `ei_chan` of `sizeof(T)` elements (Chan); those structs are emitted after every type, so
+  `type Node = { next: Option[Mutex[Node]] }` works. Glue per type only (`spawn_`/`run_`/
+  `join_`, `new_`/`get_`/`set_`/`upd_`, `new_`/`send_`/`recv_`, plus drop and clone):
+  every lock, wait, thread start and join is a call into core/eider_rt.c. Copying a handle
+  is `ei_rc_inc`; the last drop frees the object: a Task joins its thread first (so no
+  thread outlives its last handle, and the leak check at the end of `main` runs with no
+  thread left), then drops its closure and result; a Mutex drops its value; a Chan drops
+  the values still queued (`ei_chan_len`/`ei_chan_at`).
+- **Deliberate differences from stage 0.** `Mutex.update` borrows its closure: stage 0
+  drops it inside the update and the caller drops it again, so a capturing closure is freed
+  twice (regression test `bug_update_capture`). `set` and `update` drop the old value
+  after unlocking, not under the lock: dropping a value can join a thread (a Task inside
+  the Mutex), and that thread may need the same lock, which deadlocks stage 0. Stage 0's
+  own ring buffer, its unchecked pthread calls and its non-atomic `int` count are the core's
+  `ei_chan`, checked calls and 64-bit `ei_rc`. The core's mutex is error-checking, so an
+  `update` closure that uses the same Mutex traps (`cannot lock a mutex`, exit 101) where
+  stage 0 relocks a default pthread mutex (undefined; glibc deadlocks). Kept: a trap inside an `update` closure in
+  test mode longjmps with the lock held (core/RUNTIME.md); `contains` on a List of handles
+  compares them as equal, as stage 0's glue does; reference cycles through handles (a
+  channel sent into itself) leak, as with any reference count; a Task whose last handle is
+  dropped on its own thread traps (`cannot join a thread`).
+- **Tests.** tests/run/threads.ei, and the threads cases of tests/checks (except
+  `e0806_wasm_threads`, WebAssembly); 38 fail and 3 pass cases `*_thr_*` in
+  `compiler/tests/check`; run tests `threads_chan` (8/1/16 producers x consumers with exact
+  sums, `close` waking blocked receivers, queued owned values dropped, a 6-stage pipeline),
+  `threads_mutex` (16 x 2000 increments, String/record/List values under the lock, racing
+  `set`/`get`), `threads_task` (owned results, joins from many threads, Tasks dropped
+  unjoined, nested and recursive spawns, snapshots, 200 Tasks), `threads_handles` (handles
+  in records, enums, Box, Option, Lists, channels of Tasks and reply channels, a recursive
+  type through a Mutex, one fn value spawned many times), `trap_threads` (send on a closed
+  channel from another thread, threads in test blocks), and the regressions
+  `bug_update_capture` and `bug_get_method_arg` (stage 0 emits `void tN = ;` for
+  `String.from_int(m.get().len() as i64)`). Each also ran 50 times under UBSan (trap mode,
+  -O2), the allocation counter, clang's and gcc's TSan, and clang's ASan+UBSan, with no
+  report: 8 programs x 5 builds x 50 runs, twice (before and after the error-checking
+  mutex). In the suite: 41/41 run tests, 144/144 sanitizer runs, 48/48 leak-free.
 
 ## C4: lowering
 

@@ -1,0 +1,7 @@
+// expect: E0401 6:20
+fn first[T](a: Mutex[T], b: Mutex[T]) -> T { a.get() }
+fn main() uses io {
+    let x = Mutex.new(1)
+    let y = Mutex.new(true)
+    print(first(x, y))
+}

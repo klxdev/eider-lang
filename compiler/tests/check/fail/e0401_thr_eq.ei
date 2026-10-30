@@ -1,0 +1,6 @@
+// expect: E0401 5:13
+fn main() uses io {
+    let a = Mutex.new(1)
+    let b = a
+    print(a == b)
+}

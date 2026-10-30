@@ -1,0 +1,4 @@
+// expect: E0401 3:35
+fn main() uses io {
+    let m: Mutex[i64] = Mutex.new(true)
+}

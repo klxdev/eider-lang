@@ -1,0 +1,4 @@
+// expect: E0409 3:29
+fn main() uses io {
+    let c: List[i32] = Chan.new()
+}

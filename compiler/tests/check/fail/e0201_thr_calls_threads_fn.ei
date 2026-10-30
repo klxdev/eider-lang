@@ -1,0 +1,6 @@
+// expect: E0201 6:27
+fn work() -> i32 uses threads {
+    let t = spawn(|| -> i32 7)
+    t.join()
+}
+fn main() uses io { print(work()) }

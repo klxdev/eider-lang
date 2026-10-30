@@ -1,0 +1,9 @@
+// expect: E0201 5:17
+type W = { n: i32 }
+impl W {
+    fn go(self) -> i32 {
+        let t = spawn(|| -> i32 2)
+        t.join()
+    }
+}
+fn main() uses io, threads { print(W(1).go()) }

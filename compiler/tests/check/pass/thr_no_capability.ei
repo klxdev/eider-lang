@@ -1,0 +1,19 @@
+// Mutex and Chan need no capability; only `spawn` needs `threads`
+fn main() uses io {
+    let m = Mutex.new(String.from("a"))
+    m.update(|s: String| -> String {
+        var t = s
+        t.push_str("b")
+        return t
+    })
+    print(m.get())
+    let c: Chan[List[i32]] = Chan.new()
+    var l: List[i32] = List.new()
+    l.push(1)
+    c.send(l)
+    c.close()
+    match c.recv() {
+        Some(x) => print(x.len())
+        None => print(0)
+    }
+}

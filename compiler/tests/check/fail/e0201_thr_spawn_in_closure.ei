@@ -1,0 +1,8 @@
+// expect: E0201 4:17
+fn main() uses io {
+    let f = || -> i32 {
+        let t = spawn(|| -> i32 1)
+        t.join()
+    }
+    print(f())
+}

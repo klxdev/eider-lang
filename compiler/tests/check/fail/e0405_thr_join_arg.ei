@@ -1,0 +1,5 @@
+// expect: E0405 4:13
+fn main() uses io, threads {
+    let t = spawn(|| -> i32 1)
+    print(t.join(1))
+}

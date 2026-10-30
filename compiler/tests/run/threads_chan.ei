@@ -1,0 +1,176 @@
+// Channels under load: many producers and consumers, owned values moved through a
+// channel, `close` waking every blocked receiver, and values still queued when the last
+// handle goes away (they are dropped with the channel; the leak check counts them).
+
+type Job = { id: i32, name: String, tags: List[String] }
+
+fn job(i: i32) -> Job {
+    var name = String.from("job")
+    name.append(String.from_int(i as i64))
+    var tags: List[String] = List.new()
+    tags.push(String.from("t"))
+    Job(i, name, tags)
+}
+
+/// `np` producers each send `per` jobs; `nc` consumers sum ids and name lengths until the
+/// channel closes. The main thread closes it after joining every producer.
+fn crowd(np: i32, nc: i32, per: i32) -> i64 uses threads {
+    let c: Chan[Job] = Chan.new()
+    var producers: List[Task[i32]] = List.new()
+    for p in 0..np {
+        let cc = c
+        producers.push(spawn(|| -> i32 {
+            for k in 0..per { cc.send(job(p * per + k)) }
+            return per
+        }))
+    }
+    var consumers: List[Task[i64]] = List.new()
+    for q in 0..nc {
+        let cc = c
+        consumers.push(spawn(|| -> i64 {
+            var sum: i64 = 0
+            var going = true
+            while going {
+                match cc.recv() {
+                    Some(j) => { sum = sum + j.id as i64 + j.name.len() as i64 + j.tags.len() as i64 }
+                    None => { going = false }
+                }
+            }
+            return sum
+        }))
+    }
+    var sent = 0
+    for t in producers { sent = sent + t.join() }
+    c.close()
+    var total: i64 = 0
+    for t in consumers { total = total + t.join() }
+    total + sent as i64
+}
+
+fn expected(np: i32, per: i32) -> i64 {
+    var total: i64 = 0
+    for i in 0..np * per {
+        var name = String.from("job")
+        name.append(String.from_int(i as i64))
+        total = total + i as i64 + name.len() as i64 + 1
+    }
+    total + (np * per) as i64
+}
+
+/// Receivers blocked in `recv` on an empty channel all wake up with None on close.
+fn wake_all(n: i32) -> i32 uses threads {
+    let c: Chan[String] = Chan.new()
+    let started: Chan[i32] = Chan.new()
+    var ts: List[Task[i32]] = List.new()
+    for i in 0..n {
+        let cc = c
+        let st = started
+        ts.push(spawn(|| -> i32 {
+            st.send(i)
+            match cc.recv() {
+                Some(s) => { return 1 }
+                None => { return 0 }
+            }
+        }))
+    }
+    // every receiver has started (it may or may not be blocked yet; either way it sees
+    // the closed, empty channel)
+    for i in 0..n {
+        match started.recv() {
+            Some(x) => {}
+            None => {}
+        }
+    }
+    c.close()
+    var got = 0
+    for t in ts { got = got + t.join() }
+    got
+}
+
+/// Values queued in a channel nobody reads are dropped with it.
+fn abandon() -> usize uses threads {
+    let c: Chan[List[String]] = Chan.new()
+    let cc = c
+    let t = spawn(|| -> usize {
+        for i in 0..50 {
+            var l: List[String] = List.new()
+            l.push(String.from("x"))
+            l.push(String.from_int(i as i64))
+            cc.send(l)
+        }
+        return 50
+    })
+    t.join()
+}
+
+/// Close with values still queued: receivers drain them, then get None.
+fn drain_after_close() -> i32 {
+    let c: Chan[String] = Chan.new()
+    for i in 0..10 { c.send(String.from_int(i as i64)) }
+    c.close()
+    var n = 0
+    var going = true
+    while going {
+        match c.recv() {
+            Some(s) => { n = n + s.len() as i32 }
+            None => { going = false }
+        }
+    }
+    // recv after the end keeps returning None
+    match c.recv() {
+        Some(s) => { n = n + 1000 }
+        None => {}
+    }
+    n
+}
+
+/// A pipeline: stage k reads from its input and writes to its output; FIFO order is kept.
+fn pipeline(stages: i32, n: i32) -> i64 uses threads {
+    let first: Chan[i64] = Chan.new()
+    var input = first
+    var ts: List[Task[i32]] = List.new()
+    for s in 0..stages {
+        let out: Chan[i64] = Chan.new()
+        let i2 = input
+        let o2 = out
+        ts.push(spawn(|| -> i32 {
+            var going = true
+            while going {
+                match i2.recv() {
+                    Some(v) => o2.send(v * 2 + 1)
+                    None => { going = false }
+                }
+            }
+            o2.close()
+            return 0
+        }))
+        input = out
+    }
+    for i in 0..n { first.send(i as i64) }
+    first.close()
+    var acc: i64 = 0
+    var pos: i64 = 0
+    var going = true
+    while going {
+        match input.recv() {
+            Some(v) => {
+                acc = acc + v * (pos + 1)
+                pos = pos + 1
+            }
+            None => { going = false }
+        }
+    }
+    for t in ts { let z = t.join() }
+    acc
+}
+
+fn main() uses io, threads {
+    print(crowd(8, 8, 500) == expected(8, 500))
+    print(crowd(1, 16, 300) == expected(1, 300))
+    print(crowd(16, 1, 100) == expected(16, 100))
+    print(wake_all(12))
+    print(abandon())
+    print(drain_after_close())
+    print(pipeline(6, 200))
+    for round in 0..20 { print(wake_all(4) + crowd(3, 3, 20) as i32 - crowd(3, 3, 20) as i32) }
+}

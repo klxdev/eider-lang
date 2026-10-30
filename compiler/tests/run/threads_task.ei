@@ -1,0 +1,157 @@
+// Tasks: results that own heap data (String, List, records, Option), joining twice and
+// from several threads, Tasks dropped without a join (the drop waits for the thread),
+// Task[()], nested spawns, and captured values that are snapshots.
+
+type Report = { name: String, parts: List[String], score: i64 }
+
+fn words(n: i32) -> List[String] {
+    var out: List[String] = List.new()
+    for i in 0..n {
+        var w = String.from("w")
+        w.append(String.from_int(i as i64))
+        out.push(w)
+    }
+    out
+}
+
+fn report(n: i32) -> Report uses threads {
+    let t = spawn(|| -> Report {
+        var name = String.from("r")
+        name.append(String.from_int(n as i64))
+        return Report(name, words(n), (n * 10) as i64)
+    })
+    t.join()
+}
+
+/// Parallel sum by recursive splitting: every level spawns two more Tasks.
+fn psum(lo: i64, hi: i64, depth: i32) -> i64 uses threads {
+    if depth == 0 || hi - lo < 2 {
+        var s: i64 = 0
+        var i = lo
+        while i < hi {
+            s = s + i
+            i = i + 1
+        }
+        return s
+    }
+    let mid = lo + (hi - lo) / 2
+    let a = spawn(|| -> i64 psum(lo, mid, depth - 1))
+    let b = spawn(|| -> i64 psum(mid, hi, depth - 1))
+    a.join() + b.join()
+}
+
+/// A Task handle shared with other threads: each joins it and gets its own copy.
+fn shared_join(n: i32) -> i32 uses threads {
+    let t = spawn(|| -> String {
+        var s = String.from("")
+        for i in 0..100 { s.push_str("ab") }
+        return s
+    })
+    var js: List[Task[i32]] = List.new()
+    for i in 0..n {
+        let tt = t
+        js.push(spawn(|| -> i32 {
+            let s = tt.join()
+            let again = tt.join()
+            return s.len() as i32 + again.len() as i32
+        }))
+    }
+    var total = 0
+    for j in js { total = total + j.join() }
+    total + t.join().len() as i32
+}
+
+/// Tasks dropped without a join: the last handle's drop joins the thread first, so the
+/// work is finished when the function returns.
+fn fire_and_forget(n: i32) -> i64 uses threads {
+    let m = Mutex.new(0 as i64)
+    for i in 0..n {
+        let mm = m
+        let t = spawn(|| -> List[String] {
+            mm.update(|x: i64| -> i64 x + 1)
+            return words(3)
+        })
+    }
+    m.get()
+}
+
+/// Captures are snapshots: the spawned closure gets its own copy of a String and a List.
+fn snapshots() -> String uses threads {
+    var s = String.from("before")
+    var l: List[i32] = List.new()
+    l.push(1)
+    let t = spawn(|| -> String {
+        var mine = s
+        mine.push_str("+thread")
+        var ll = l
+        ll.push(2)
+        mine.append(String.from_int(ll.len() as i64))
+        return mine
+    })
+    s.push_str("+main")
+    l.push(9)
+    l.push(9)
+    var r = t.join()
+    r.push_str(" ")
+    r.append(s)
+    r.append(String.from_int(l.len() as i64))
+    r
+}
+
+/// Unit tasks, Options and tasks stored in a List and joined in reverse.
+fn misc() -> i64 uses io, threads {
+    let u = spawn(|| print(7))
+    u.join()
+    let o = spawn(|| -> Option[String] Some(String.from("some")))
+    match o.join() {
+        Some(x) => print(x)
+        None => print("none")
+    }
+    var ts: List[Task[List[i64]]] = List.new()
+    for i in 0..10 {
+        ts.push(spawn(|| -> List[i64] {
+            var l: List[i64] = List.new()
+            for k in 0..i { l.push(k as i64) }
+            return l
+        }))
+    }
+    var acc: i64 = 0
+    var k = ts.len()
+    while k > 0 {
+        k -= 1
+        let l = ts[k].join()
+        acc = acc + l.sum() + l.len() as i64
+    }
+    acc
+}
+
+/// Spawns inside spawns inside spawns; each level returns a String built from below.
+fn nest(depth: i32) -> String uses threads {
+    if depth == 0 { return String.from(".") }
+    let t = spawn(|| -> String {
+        var s = String.from_int(depth as i64)
+        let inner = spawn(|| -> String nest(depth - 1))
+        s.append(inner.join())
+        return s
+    })
+    t.join()
+}
+
+fn main() uses io, threads {
+    let r = report(5)
+    print(r.name)
+    print(r.parts.len())
+    print(r.parts[4])
+    print(r.score)
+    print(psum(0, 100000, 6))
+    print(shared_join(12))
+    print(fire_and_forget(64))
+    print(snapshots())
+    print(misc())
+    print(nest(12))
+    var many: List[Task[String]] = List.new()
+    for i in 0..200 { many.push(spawn(|| -> String String.from_int(i as i64))) }
+    var total = 0
+    for t in many { total = total + t.join().len() as i32 }
+    print(total)
+}

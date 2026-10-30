@@ -84,6 +84,15 @@
 //   B_LIST_CONTAINS(l, x) -> bool    B_LIST_SUM(l) -> T
 //   B_MAP_INSERT(inout m, k, v)    B_MAP_CONTAINS(m, k) -> bool    B_MAP_REMOVE(inout m, k) -> bool
 //   B_MAP_GET(m, k) -> Option[V]
+// Threads (C7; Task, Mutex and Chan are shared handles, see types.ei). Every receiver is
+// a borrowed operand. Moved in: B_SPAWN's closure (the Task owns it and runs it on a new
+// thread), B_MUTEX_NEW's and B_MUTEX_SET's value, B_CHAN_SEND's value (the channel owns
+// it until a receiver takes it). Owned results: B_TASK_JOIN (a copy of the result; the
+// Task keeps its own), B_MUTEX_GET (a copy), B_CHAN_RECV (the value, moved out of the
+// channel). B_MUTEX_UPDATE borrows its closure and runs it on the value with the lock held.
+//   B_SPAWN(f) -> Task[T]    B_TASK_JOIN(t) -> T
+//   B_MUTEX_NEW(v) -> ty    B_MUTEX_GET(m) -> T    B_MUTEX_SET(m, v)    B_MUTEX_UPDATE(m, f)
+//   B_CHAN_NEW -> ty    B_CHAN_SEND(c, v)    B_CHAN_RECV(c) -> Option[T]    B_CHAN_CLOSE(c)
 
 import "deps/core/sys.ei"
 import "deps/std/bytes.ei"
@@ -165,6 +174,16 @@ pub const B_MAP_CONTAINS: u32 = 14
 pub const B_MAP_REMOVE: u32 = 15
 pub const B_MAP_GET: u32 = 16
 pub const B_BOX_NEW: u32 = 17
+pub const B_SPAWN: u32 = 18
+pub const B_TASK_JOIN: u32 = 19
+pub const B_MUTEX_NEW: u32 = 20
+pub const B_MUTEX_GET: u32 = 21
+pub const B_MUTEX_SET: u32 = 22
+pub const B_MUTEX_UPDATE: u32 = 23
+pub const B_CHAN_NEW: u32 = 24
+pub const B_CHAN_SEND: u32 = 25
+pub const B_CHAN_RECV: u32 = 26
+pub const B_CHAN_CLOSE: u32 = 27
 
 pub fn builtin_name(b: u32) -> str {
     match b {
@@ -185,7 +204,17 @@ pub fn builtin_name(b: u32) -> str {
         14 => "map_contains"
         15 => "remove"
         16 => "map_get"
-        _ => "box_new"
+        17 => "box_new"
+        18 => "spawn"
+        19 => "join"
+        20 => "mutex_new"
+        21 => "mutex_get"
+        22 => "mutex_set"
+        23 => "mutex_update"
+        24 => "chan_new"
+        25 => "send"
+        26 => "recv"
+        _ => "close"
     }
 }
 
