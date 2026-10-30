@@ -333,13 +333,6 @@ pub fn last_kind(ir: Ir, mark: u32) -> u32 {
     ir.stmts[ir.pending[ir.pending.len() - 1] as usize].kind
 }
 
-/// Rename function f (instances get their name once their type arguments are known).
-pub fn rename_fn(inout ir: Ir, f: u32, name: List[u8]) {
-    var fd = ir.fns[f as usize]
-    fd.name = name
-    ir.fns[f as usize] = fd
-}
-
 /// Append a statement to the innermost open block.
 pub fn emit(inout ir: Ir, kind: u32, dst: u32, a: u32, b: u32, c: u32, ty: u32, line: u32) {
     ir.stmts.push(Stmt(kind, dst, a, b, c, ty, line))
