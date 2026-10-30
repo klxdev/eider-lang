@@ -24,6 +24,7 @@
 
 #include <dirent.h>
 #include <errno.h>
+#include <pthread.h>
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
@@ -53,8 +54,36 @@
 static _Thread_local unsigned char *in_p, *out_p;
 static _Thread_local size_t in_len, in_cap, out_len, out_cap;
 
+/* A thread's buffers are freed when it exits: the first allocation registers the thread with
+   a pthread key whose destructor runs at thread exit (thread-local storage is still valid
+   then). The main thread's buffers live until the process ends. */
+static pthread_key_t buf_key;
+static pthread_once_t buf_once = PTHREAD_ONCE_INIT;
+static _Thread_local int buf_registered;
+
+static void free_bufs(void *unused) {
+  (void)unused;
+  free(in_p);
+  free(out_p);
+  in_p = out_p = NULL;
+  in_len = in_cap = out_len = out_cap = 0;
+}
+
+static void make_buf_key(void) {
+  if (pthread_key_create(&buf_key, free_bufs) != 0) { fputs("eider_core: cannot create a thread key\n", stderr); exit(101); }
+}
+
+static void register_bufs(void) {
+  if (buf_registered) return;
+  pthread_once(&buf_once, make_buf_key);
+  /* any non-NULL value makes the destructor run */
+  if (pthread_setspecific(buf_key, &buf_registered) != 0) { fputs("eider_core: cannot register thread buffers\n", stderr); exit(101); }
+  buf_registered = 1;
+}
+
 static void reserve(unsigned char **p, size_t *cap, size_t need) {
   if (need <= *cap) return;
+  register_bufs();
   size_t n = *cap ? *cap : 256;
   while (n < need) {
     if (n > SIZE_MAX / 2) { fputs("eider_core: buffer too large\n", stderr); exit(101); }
