@@ -9,8 +9,10 @@
 //   eider-pkg [-C dir] tree                   print the locked graph
 //   eider-pkg hash <dir>                      content hash of a directory
 //
-// Only fetch/update/add may touch the network, and only when a commit isn't already in
-// the local mirror. Needs EIDER_ROOT (the toolchain checkout with core/ and std/).
+// Only fetch/update/add/remove/vendor may touch the network: fetch and friends only when a
+// commit isn't already in the local mirror, update always refreshes the mirrors (tags can
+// move). Paths in arguments are relative to -C. Needs EIDER_ROOT (the toolchain checkout
+// with core/ and std/).
 
 import "deps/core/sys.ei"
 import "deps/std/bytes.ei"
@@ -69,10 +71,16 @@ fn toolchain() -> Result[List[u8], String] uses io, fs, ffi {
 // ---- fetch / update / vendor
 
 fn sync(c: Cli, use_lock: bool, offline: bool) -> Result[List[lockfile.Pkg], String] uses io, fs, net, ffi {
+    sync_from(c, use_lock, offline, fs.join(c.dir, sys.lit("vendor")))
+}
+
+/// Resolve, write eider.lock and relink deps/. Pinned git packages come from `vendor`
+/// when it holds them (an empty `vendor` means the store only).
+fn sync_from(c: Cli, use_lock: bool, offline: bool, vendor: List[u8]) -> Result[List[lockfile.Pkg], String] uses io, fs, net, ffi {
     let root = manifest.load(c.dir)?
     let tc = toolchain()?
     let locked = lockfile.load(c.dir)?
-    let o = resolve.Opts(store.home()?, offline, use_lock, locked, fs.join(c.dir, sys.lit("vendor")))
+    let o = resolve.Opts(store.home()?, offline, use_lock, locked, vendor)
     let pkgs = resolve.resolve(root, o)?
     resolve.check_grants(pkgs)?
     fs.write(lockfile.file_in(c.dir), lockfile.render(pkgs, c.dir))?
@@ -95,8 +103,20 @@ fn report(pkgs: List[lockfile.Pkg]) uses io, ffi {
 }
 
 fn vendor(c: Cli) -> Result[bool, String] uses io, fs, net, ffi {
-    let pkgs = sync(c, true, true)?
+    // from the store, so a stale vendor/ is replaced rather than reported
+    let none: List[u8] = List.new()
+    let pkgs = sync_from(c, true, c.offline, none)?
     let vdir = fs.join(c.dir, sys.lit("vendor"))
+    // drop what the graph no longer has
+    if fs.is_dir(vdir) {
+        for old in fs.list(vdir)? {
+            var keep = false
+            for p in pkgs {
+                if p.git && bytes.eq(p.name, old) { keep = true }
+            }
+            if !keep { fs.remove_all(fs.join(vdir, old))? }
+        }
+    }
     for p in pkgs {
         if p.git {
             let dst = fs.join(vdir, p.name)
@@ -330,7 +350,9 @@ fn run(c: Cli) -> Result[bool, String] uses io, fs, net, ffi {
     if is(c.cmd, "tree") { return tree(c) }
     if is(c.cmd, "hash") {
         if c.args.len() != 1 { return Err(usage()) }
-        let d = fs.absolute(c.args[0])?
+        // relative to -C, like every other path the tool takes
+        let a = c.args[0]
+        let d = if a.len() > 0 && a[0] == 47 { fs.normalize(a) } else { fs.normalize(fs.join(c.dir, a)) }
         io.outln(store.tree_hash(d)?)
         return Ok(true)
     }
