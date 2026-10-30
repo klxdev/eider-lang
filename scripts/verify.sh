@@ -6,8 +6,16 @@ EIDER_CACHE=off; export EIDER_CACHE
 fail=0
 "$EIDER" test --compile-fail tests/checks | tail -1 | grep -q " 0 failed" && echo "ok   compile-fail suite (stage 0)" || { echo "FAIL compile-fail"; fail=1; }
 S=$(mktemp -d)
-printf '#!/bin/sh\nexec gcc -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wpedantic "$@"\n' > $S/asan.sh
-printf '#!/bin/sh\nexec gcc -fsanitize=thread -Wpedantic "$@"\n' > $S/tsan.sh
+# sanitizer wrappers: gcc when its sanitizer runtimes are installed, otherwise clang's
+san_cc() {
+  for c in gcc clang; do
+    printf 'int main(void){return 0;}\n' > $S/san.c
+    command -v $c >/dev/null && $c -fsanitize=$1 -o $S/san $S/san.c 2>/dev/null && $S/san && { echo $c; return; }
+  done
+  echo gcc
+}
+printf '#!/bin/sh\nexec %s -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wpedantic "$@"\n' "$(san_cc address,undefined)" > $S/asan.sh
+printf '#!/bin/sh\nexec %s -fsanitize=thread -Wpedantic "$@"\n' "$(san_cc thread)" > $S/tsan.sh
 chmod +x $S/*.sh
 # A missing toolchain is reported as `skip` with the reason, never as a pass; the final line
 # says how many legs were skipped so a partial run can't be mistaken for a full one.
