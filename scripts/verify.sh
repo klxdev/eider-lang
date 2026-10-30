@@ -15,6 +15,7 @@ for cc in gcc clang $S/asan.sh $S/tsan.sh; do
 done
 sh tests/std/run.sh | grep -q FAIL && { echo "FAIL std"; fail=1; } || echo "ok   std (C core + Eider std)"
 sh tests/packages.sh | grep -q FAIL && { echo "FAIL packages"; fail=1; } || echo "ok   packages (toml, semver, sha256)"
+sh tests/pkg/run.sh | grep -q FAIL && { echo "FAIL pkg"; fail=1; } || echo "ok   pkg (eider-pkg end to end, local git repos)"
 sh scripts/test-compiler.sh | grep -q FAIL && { echo "FAIL compiler (eiderc)"; fail=1; } || echo "ok   compiler (eiderc vs bootstrap)"
 bash tests/export/run.sh | tail -1 | grep -q "^ok" || { echo "FAIL export"; fail=1; }
 sh tests/wasm/run.sh || fail=1

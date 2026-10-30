@@ -23,6 +23,7 @@ Tooling:
 - `scripts/ei <eider args>`: the compiler with the C core linked (`-l eider_core`).
 - `scripts/bootstrap-deps.sh`: links `deps/core` and `deps/std` into each package so the package manager can be built before it exists.
 - `tests/std/run.sh`, `tests/packages.sh`: suites for std and packages (both run by `scripts/verify.sh`).
+- `tests/pkg/run.sh`: eider-pkg end to end against local git repositories under `target/tmp/pkgtest/` (no network; also run by `scripts/verify.sh`).
 
 Known limits of this arrangement (all need compiler work):
 
