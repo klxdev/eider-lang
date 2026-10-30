@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"tests/checks/fail/e0401_map_equality.ei","line":5,"col":18},"message":"`==` is not supported for Map[i32, i32] (Maps have no structural equality)"}

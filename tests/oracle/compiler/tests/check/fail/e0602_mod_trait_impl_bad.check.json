@@ -1,0 +1,1 @@
+{"error":"E0602","span":{"file":"compiler/tests/check/fail/e0602_mod_trait_impl_bad.ei","line":4,"col":29},"message":"method `area` doesn't match the signature in trait `geo.Area`"}

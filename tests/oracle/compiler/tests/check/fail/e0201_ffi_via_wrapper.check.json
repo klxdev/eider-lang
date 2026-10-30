@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_ffi_via_wrapper.ei","line":4,"col":11},"message":"call to `ffi_ok.magnitude` requires capability `ffi`","fix":{"at":{"line":3,"col":18},"delete":0,"insert":", ffi"}}

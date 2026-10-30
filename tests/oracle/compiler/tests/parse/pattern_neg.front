@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/pattern_neg.ei","line":3,"col":10},"message":"expected integer after `-` in pattern"}

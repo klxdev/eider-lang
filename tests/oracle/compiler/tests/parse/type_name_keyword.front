@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/type_name_keyword.ei","line":1,"col":6},"message":"`fn` is a keyword and can't be used as a name"}

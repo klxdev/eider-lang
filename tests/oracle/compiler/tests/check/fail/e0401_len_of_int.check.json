@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_len_of_int.ei","line":3,"col":17},"message":"`len` needs an array, List, Map or String, found i32"}

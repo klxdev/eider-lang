@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_u64_literal.ei","line":3,"col":18},"message":"literal 18446744073709551616 doesn't fit in u64 (max 18446744073709551615)"}

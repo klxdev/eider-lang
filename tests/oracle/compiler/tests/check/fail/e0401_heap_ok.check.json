@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_ok.ei","line":43,"col":28},"message":"expected Box[u32], found Box[i32]"}

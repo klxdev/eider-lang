@@ -1,0 +1,1 @@
+{"error":"E0114","span":{"file":"compiler/tests/check/fail/e0114_static_variant_missing.ei","line":4,"col":15},"message":"enum `C` has no variant `Blue`"}

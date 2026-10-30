@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_trait_twice_in_impl.ei","line":4,"col":8},"message":"method `a` is defined twice in this impl"}

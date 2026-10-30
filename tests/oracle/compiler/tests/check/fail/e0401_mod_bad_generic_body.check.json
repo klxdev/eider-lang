@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/../lib/geo.ei","line":24,"col":32},"message":"expected bool, found i32"}

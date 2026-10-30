@@ -1,0 +1,8 @@
+test geo turns ... ok
+test geo fails ... FAILED
+    north turns east (compiler/tests/run/modules.ei:46)
+test entry passes ... ok
+
+3 tests, 1 failed
+--- stderr
+--- exit 1

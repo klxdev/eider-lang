@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex/hex_no_digits.ei","line":2,"col":13},"message":"expected hex digits after 0x"}

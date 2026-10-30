@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_builtin_fn_name.ei","line":2,"col":4},"message":"`len` is already defined"}

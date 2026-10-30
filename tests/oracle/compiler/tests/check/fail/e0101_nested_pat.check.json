@@ -1,0 +1,1 @@
+{"error":"E0101","span":{"file":"compiler/tests/check/fail/e0101_nested_pat.ei","line":5,"col":5},"message":"non-exhaustive match: `A(Some(_))` is not handled","help":"add an arm for it, or a `_` arm"}

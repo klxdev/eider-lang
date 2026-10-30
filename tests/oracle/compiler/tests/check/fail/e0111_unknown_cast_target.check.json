@@ -1,0 +1,1 @@
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_unknown_cast_target.ei","line":3,"col":18},"message":"unknown type `int`"}

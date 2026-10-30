@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_trait_dup_impl.ei","line":5,"col":1},"message":"`Area` is already implemented for `Sq`"}

@@ -1,0 +1,1 @@
+{"error":"E0301","span":{"file":"compiler/tests/check/fail/e0301_field_roots.ei","line":6,"col":20},"message":"`p` is borrowed mutably by another argument of this call and can't be read here"}

@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_empty_array.ei","line":3,"col":13},"message":"cannot infer the element type of an empty array"}

@@ -1,0 +1,1 @@
+{"error":"E0405","span":{"file":"compiler/tests/check/fail/e0405_local_named_print_is_still_builtin.ei","line":4,"col":5},"message":"`print` takes exactly one argument"}

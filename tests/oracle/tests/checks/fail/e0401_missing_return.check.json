@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"tests/checks/fail/e0401_missing_return.ei","line":4,"col":1},"message":"function `f` must return i32, but its body ends without producing one","help":"add a `return` or end the body with an expression of that type"}

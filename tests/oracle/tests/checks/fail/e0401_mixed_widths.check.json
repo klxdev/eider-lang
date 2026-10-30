@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"tests/checks/fail/e0401_mixed_widths.ei","line":2,"col":34},"message":"expected u8, found u32","help":"there are no implicit conversions; use an explicit cast: `value as u8`"}

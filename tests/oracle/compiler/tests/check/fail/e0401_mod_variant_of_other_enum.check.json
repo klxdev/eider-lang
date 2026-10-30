@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_mod_variant_of_other_enum.ei","line":5,"col":9},"message":"`shapes.Circle` is a variant of shapes.Shape, but the value has type shapes.Color"}

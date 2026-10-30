@@ -1,0 +1,1 @@
+{"error":"E0304","span":{"file":"compiler/tests/check/fail/e0304_fix_position.ei","line":6,"col":15},"message":"parameter `p` is `inout`; pass the argument as `inout ...`","fix":{"at":{"line":6,"col":15},"delete":0,"insert":"inout "}}

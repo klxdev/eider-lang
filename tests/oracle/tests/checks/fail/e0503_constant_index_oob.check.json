@@ -1,0 +1,1 @@
+{"error":"E0503","span":{"file":"tests/checks/fail/e0503_constant_index_oob.ei","line":4,"col":11},"message":"index 3 is out of bounds for an array of length 3"}

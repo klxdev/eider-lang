@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_negative_pattern_unsigned.ei","line":4,"col":9},"message":"pattern -1 doesn't fit in u8"}

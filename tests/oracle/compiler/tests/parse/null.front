@@ -1,0 +1,1 @@
+{"error":"E0402","span":{"file":"./compiler/tests/parse/null.ei","line":2,"col":13},"message":"`null` does not exist in Eider; absence is modelled with Option[T]"}

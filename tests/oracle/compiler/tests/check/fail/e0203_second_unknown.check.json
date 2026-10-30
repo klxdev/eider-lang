@@ -1,0 +1,1 @@
+{"error":"E0203","span":{"file":"compiler/tests/check/fail/e0203_second_unknown.ei","line":2,"col":17},"message":"unknown capability `telepathy`","help":"known capabilities: io, clock, fs, net, threads, ffi, python, js, wasm"}

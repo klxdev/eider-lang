@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_clo_fn_type_display.ei","line":3,"col":30},"message":"expected fn(i32) -> bool, found fn(i32) -> i32"}

@@ -1,0 +1,1 @@
+{"error":"E0108","span":{"file":"compiler/tests/check/fail/e0108_enum_recursion.ei","line":2,"col":6},"message":"type `Tree` contains itself and would have infinite size","help":"use an index into a List, or Box[T], to express recursion"}

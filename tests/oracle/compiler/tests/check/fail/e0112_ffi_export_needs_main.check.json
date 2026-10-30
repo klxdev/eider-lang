@@ -1,0 +1,1 @@
+{"error":"E0112","span":{"file":"compiler/tests/check/fail/e0112_ffi_export_needs_main.ei","line":1,"col":1},"message":"no `main` function"}

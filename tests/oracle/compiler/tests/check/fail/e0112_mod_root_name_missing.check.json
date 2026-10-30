@@ -1,0 +1,1 @@
+{"error":"E0112","span":{"file":"compiler/tests/check/fail/../lib/chain.ei","line":17,"col":30},"message":"unknown function `root_helper`"}

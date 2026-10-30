@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_thr_spawn_uses_io.ei","line":4,"col":9},"message":"call to `print` requires capability `io`","fix":{"at":{"line":2,"col":23},"delete":0,"insert":", io"}}

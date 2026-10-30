@@ -1,0 +1,1 @@
+{"error":"E0110","span":{"file":"compiler/tests/check/fail/e0110_fn_as_value.ei","line":4,"col":13},"message":"`g` is a function; call it with `g(...)`"}

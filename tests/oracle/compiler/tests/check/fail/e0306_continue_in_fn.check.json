@@ -1,0 +1,1 @@
+{"error":"E0306","span":{"file":"compiler/tests/check/fail/e0306_continue_in_fn.ei","line":3,"col":15},"message":"`break`/`continue` outside of a loop"}

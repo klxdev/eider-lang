@@ -1,0 +1,1 @@
+{"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_heap_push_expr.ei","line":4,"col":13},"message":"cannot modify this expression"}

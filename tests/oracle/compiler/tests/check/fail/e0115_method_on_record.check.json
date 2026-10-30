@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_method_on_record.ei","line":5,"col":15},"message":"type P has no method `get`"}

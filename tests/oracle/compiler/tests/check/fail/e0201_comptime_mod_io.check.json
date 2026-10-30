@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"compiler/tests/check/fail/../lib/ct_io.ei","line":6,"col":29},"message":"call to `ct_io.noisy` requires capability `io`","help":"`comptime` evaluation can't use capabilities"}

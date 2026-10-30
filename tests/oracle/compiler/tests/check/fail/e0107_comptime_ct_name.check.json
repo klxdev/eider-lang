@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_comptime_ct_name.ei","line":1,"col":4},"message":"`__ct` is already defined"}

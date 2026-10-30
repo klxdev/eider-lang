@@ -1,0 +1,1 @@
+{"error":"E0112","span":{"file":"compiler/tests/check/fail/e0112_self_in_impl.ei","line":5,"col":29},"message":"unknown function `Self`"}

@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_opt_print.ei","line":2,"col":27},"message":"cannot print a value of type Option[i32] yet"}

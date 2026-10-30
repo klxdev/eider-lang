@@ -1,0 +1,1 @@
+{"error":"E0405","span":{"file":"compiler/tests/check/fail/e0405_unit_variant_called.ei","line":4,"col":13},"message":"`R` takes 0 value(s), but 1 were given"}

@@ -1,0 +1,1 @@
+{"error":"E0603","span":{"file":"compiler/tests/check/fail/e0603_trait_unknown.ei","line":3,"col":6},"message":"unknown trait `Shape`"}

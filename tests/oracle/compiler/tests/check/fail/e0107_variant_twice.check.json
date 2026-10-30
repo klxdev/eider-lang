@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_variant_twice.ei","line":2,"col":20},"message":"variant `X` is already defined (variant names must be unique)"}

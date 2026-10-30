@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_order_two_generic.ei","line":4,"col":34},"message":"literal 301 doesn't fit in u8 (max 255)"}

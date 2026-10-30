@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/expected_expr.ei","line":2,"col":13},"message":"expected an expression"}

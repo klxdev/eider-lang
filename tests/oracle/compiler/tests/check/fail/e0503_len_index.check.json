@@ -1,0 +1,1 @@
+{"error":"E0503","span":{"file":"compiler/tests/check/fail/e0503_len_index.ei","line":4,"col":15},"message":"index 2 is out of bounds for an array of length 2"}

@@ -1,0 +1,1 @@
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_option_without_args.ei","line":2,"col":11},"message":"type `Option` needs 1 type argument(s): `Option[...]`"}

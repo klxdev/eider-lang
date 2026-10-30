@@ -1,0 +1,1 @@
+{"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_inout_of_literal.ei","line":4,"col":16},"message":"cannot borrow as inout this expression"}

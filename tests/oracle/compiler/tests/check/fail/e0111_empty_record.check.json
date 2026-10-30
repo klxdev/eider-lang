@@ -1,0 +1,1 @@
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_empty_record.ei","line":2,"col":6},"message":"records need at least one field"}

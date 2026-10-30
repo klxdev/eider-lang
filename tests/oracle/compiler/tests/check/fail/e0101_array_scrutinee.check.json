@@ -1,0 +1,1 @@
+{"error":"E0101","span":{"file":"compiler/tests/check/fail/e0101_array_scrutinee.ei","line":8,"col":13},"message":"non-exhaustive match: `_` is not handled","help":"add an arm for it, or a `_` arm"}

@@ -1,0 +1,1 @@
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_list_without_args.ei","line":2,"col":10},"message":"type `List` needs type arguments: `List[...]`"}

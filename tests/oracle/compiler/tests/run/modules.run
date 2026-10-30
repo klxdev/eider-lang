@@ -1,0 +1,20 @@
+2
+3
+-12
+-2
+geo__South
+S or W
+geo__West
+S or W
+geo__North
+N
+geo__East
+E
+geo__South
+S or W
+geo
+108
+2
+true
+--- stderr
+--- exit 0

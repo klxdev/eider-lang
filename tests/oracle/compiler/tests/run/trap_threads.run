@@ -1,0 +1,5 @@
+1
+one
+--- stderr
+eider: runtime error: send on a closed channel (compiler/tests/run/trap_threads.ei:0)
+--- exit 101

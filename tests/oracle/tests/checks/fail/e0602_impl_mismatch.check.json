@@ -1,0 +1,1 @@
+{"error":"E0602","span":{"file":"tests/checks/fail/e0602_impl_mismatch.ei","line":7,"col":8},"message":"method `area` doesn't match the signature in trait `Area`"}

@@ -1,0 +1,1 @@
+{"error":"E0405","span":{"file":"compiler/tests/check/fail/e0405_len_arity.ei","line":3,"col":13},"message":"`len` takes exactly one argument"}

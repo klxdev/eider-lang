@@ -1,0 +1,1 @@
+{"error":"E0803","span":{"file":"compiler/tests/check/fail/e0803_ffi_extern_string_ret.ei","line":2,"col":15},"message":"return type String can't cross the C boundary","help":"C-safe types: integers, bool, str (const char*), and records made only of those (export only)"}

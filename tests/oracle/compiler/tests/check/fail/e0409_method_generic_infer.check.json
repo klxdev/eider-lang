@@ -1,0 +1,1 @@
+{"error":"E0409","span":{"file":"compiler/tests/check/fail/e0409_method_generic_infer.ei","line":7,"col":15},"message":"cannot infer type parameter `T` of `W.mk`","help":"add a type annotation to the binding that receives the result"}

@@ -1,0 +1,1 @@
+{"error":"E0410","span":{"file":"tests/checks/fail/e0410_pattern_arity.ei","line":5,"col":9},"message":"variant `Rect` has 2 field(s), but the pattern has 1"}

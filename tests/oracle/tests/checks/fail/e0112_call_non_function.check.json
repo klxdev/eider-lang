@@ -1,0 +1,1 @@
+{"error":"E0112","span":{"file":"tests/checks/fail/e0112_call_non_function.ei","line":4,"col":13},"message":"`x` has type i32, so it can't be called"}

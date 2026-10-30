@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/call_not_named.ei","line":2,"col":8},"message":"only named functions can be called"}

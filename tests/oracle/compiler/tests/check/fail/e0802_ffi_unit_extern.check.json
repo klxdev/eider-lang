@@ -1,0 +1,1 @@
+{"error":"E0802","span":{"file":"compiler/tests/check/fail/e0802_ffi_unit_extern.ei","line":4,"col":5},"message":"call to C function `srand` is only allowed in an `unsafe` block or `unsafe fn`","help":"wrap the call: `unsafe { ... }`"}

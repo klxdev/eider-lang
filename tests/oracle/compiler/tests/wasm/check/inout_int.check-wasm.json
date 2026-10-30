@@ -1,0 +1,1 @@
+{"error":"E0803","span":{"file":"compiler/tests/wasm/check/inout_int.ei","line":2,"col":22},"message":"`n` is `inout`; export functions can't take `inout` parameters"}

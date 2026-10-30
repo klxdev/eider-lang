@@ -1,0 +1,1 @@
+{"error":"E0405","span":{"file":"compiler/tests/check/fail/e0405_heap_fold_arity.ei","line":3,"col":15},"message":"`fold` takes an initial value and a closure"}

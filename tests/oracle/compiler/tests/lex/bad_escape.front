@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex/bad_escape.ei","line":2,"col":15},"message":"unknown escape sequence"}

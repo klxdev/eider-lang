@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"tests/checks/fail/e0115_no_method.ei","line":4,"col":7},"message":"type i32 has no method `nothing`"}

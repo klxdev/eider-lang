@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_thr_print_task.ei","line":4,"col":11},"message":"cannot print a value of type Task[i32] yet"}

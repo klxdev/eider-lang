@@ -1,0 +1,1 @@
+{"error":"E0112","span":{"file":"compiler/tests/check/fail/e0112_clo_not_callable.ei","line":3,"col":13},"message":"`f` has type i32, so it can't be called"}

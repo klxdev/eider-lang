@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/trait_brace.ei","line":1,"col":9},"message":"expected `{`"}

@@ -1,0 +1,1 @@
+{"error":"E0112","span":{"file":"tests/checks/fail/e0112_unknown_function.ei","line":3,"col":3},"message":"unknown function `launch`"}

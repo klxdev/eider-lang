@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/extern_bad_abi.ei","line":1,"col":8},"message":"expected the ABI string: `extern \"c\" fn ...`"}

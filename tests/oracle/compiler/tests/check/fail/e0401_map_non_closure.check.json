@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_map_non_closure.ei","line":3,"col":19},"message":"expected a closure taking i32, found i32"}

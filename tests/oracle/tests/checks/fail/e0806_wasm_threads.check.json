@@ -1,0 +1,1 @@
+{"error":"E0806","span":{"file":"tests/checks/fail/e0806_wasm_threads.ei","line":1,"col":1},"message":"threads (`spawn`, `Task`, `Mutex`, `Chan`) aren't available when targeting WebAssembly"}

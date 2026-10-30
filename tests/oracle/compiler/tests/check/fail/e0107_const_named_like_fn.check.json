@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_const_named_like_fn.ei","line":3,"col":7},"message":"`f` is already defined"}

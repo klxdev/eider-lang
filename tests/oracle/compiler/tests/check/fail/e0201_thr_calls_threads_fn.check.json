@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_thr_calls_threads_fn.ei","line":6,"col":27},"message":"call to `work` requires capability `threads`","fix":{"at":{"line":6,"col":18},"delete":0,"insert":", threads"}}

@@ -1,0 +1,1 @@
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_fn_type_unknown.ei","line":2,"col":12},"message":"unknown type `Nope`"}

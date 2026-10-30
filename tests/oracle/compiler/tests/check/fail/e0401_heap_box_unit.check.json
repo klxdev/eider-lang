@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_box_unit.ei","line":3,"col":29},"message":"can't box ()"}

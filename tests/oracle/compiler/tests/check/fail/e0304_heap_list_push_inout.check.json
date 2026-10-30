@@ -1,0 +1,1 @@
+{"error":"E0304","span":{"file":"compiler/tests/check/fail/e0304_heap_list_push_inout.ei","line":4,"col":18},"message":"`inout` is not allowed here"}

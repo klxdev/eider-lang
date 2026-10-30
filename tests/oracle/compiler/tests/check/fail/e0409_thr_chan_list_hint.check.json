@@ -1,0 +1,1 @@
+{"error":"E0409","span":{"file":"compiler/tests/check/fail/e0409_thr_chan_list_hint.ei","line":3,"col":29},"message":"cannot infer the element type of `Chan`","help":"annotate the binding, e.g. `let c: Chan[i32] = Chan.new()`"}

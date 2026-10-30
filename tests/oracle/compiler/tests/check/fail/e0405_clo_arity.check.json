@@ -1,0 +1,1 @@
+{"error":"E0405","span":{"file":"compiler/tests/check/fail/e0405_clo_arity.ei","line":3,"col":30},"message":"this closure takes 2 parameter(s), but 1 are expected here"}

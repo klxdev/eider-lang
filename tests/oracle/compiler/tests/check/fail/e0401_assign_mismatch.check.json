@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_assign_mismatch.ei","line":4,"col":14},"message":"expected u8, found u64","help":"there are no implicit conversions; use an explicit cast: `value as u8`"}

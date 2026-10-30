@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_repeat.ei","line":2,"col":29},"message":"`[x; n]` can't repeat a String (it owns heap memory); build the array element by element"}

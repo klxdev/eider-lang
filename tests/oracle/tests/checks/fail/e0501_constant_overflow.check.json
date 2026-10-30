@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"tests/checks/fail/e0501_constant_overflow.ei","line":2,"col":21},"message":"200 + 100 = 300 doesn't fit in u8","help":"use the wrapping operator `+%` if overflow is intended"}

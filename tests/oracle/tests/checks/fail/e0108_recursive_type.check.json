@@ -1,0 +1,1 @@
+{"error":"E0108","span":{"file":"tests/checks/fail/e0108_recursive_type.ei","line":2,"col":6},"message":"type `Node` contains itself and would have infinite size","help":"use an index into a List, or Box[T], to express recursion"}

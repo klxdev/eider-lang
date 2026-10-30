@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_return_type_of_tail_if.ei","line":3,"col":23},"message":"expected u8, found bool"}

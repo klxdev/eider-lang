@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/else_block.ei","line":2,"col":21},"message":"expected `{`"}

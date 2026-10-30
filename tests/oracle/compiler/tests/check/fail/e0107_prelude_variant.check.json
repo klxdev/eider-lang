@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_prelude_variant.ei","line":2,"col":16},"message":"variant `Some` is already defined (variant names must be unique)"}

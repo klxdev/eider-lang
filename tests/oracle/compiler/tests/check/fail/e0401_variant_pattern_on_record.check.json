@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_variant_pattern_on_record.ei","line":6,"col":9},"message":"`R` is a variant of C, but the value has type P"}

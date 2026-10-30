@@ -1,0 +1,1 @@
+{"error":"E0503","span":{"file":"compiler/tests/check/fail/e0503_folded_index.ei","line":4,"col":17},"message":"index 3 is out of bounds for an array of length 3"}

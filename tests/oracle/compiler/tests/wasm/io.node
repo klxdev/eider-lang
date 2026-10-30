@@ -1,0 +1,12 @@
+hello from wasm
+n = 5
+30
+true
+hello -> 5
+eider: runtime error: index out of bounds (lib:23)
+idx RuntimeError unreachable
+eider: runtime error: boom (lib:26)
+boom RuntimeError unreachable
+eider: runtime error: integer overflow in + (lib:29)
+add RuntimeError unreachable
+after traps 3 30 0

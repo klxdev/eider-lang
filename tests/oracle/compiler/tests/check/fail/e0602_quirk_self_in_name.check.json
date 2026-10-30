@@ -1,0 +1,1 @@
+{"error":"E0602","span":{"file":"compiler/tests/check/fail/e0602_quirk_self_in_name.ei","line":9,"col":8},"message":"method `mk` doesn't match the signature in trait `Mk`"}

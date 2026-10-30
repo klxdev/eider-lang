@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/param_colon.ei","line":1,"col":7},"message":"expected `:`"}

@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_range_not_int.ei","line":3,"col":14},"message":"range bounds must be integers, found bool"}

@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_bind_unit.ei","line":4,"col":13},"message":"cannot bind a value of type ()"}

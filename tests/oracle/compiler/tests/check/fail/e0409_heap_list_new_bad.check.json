@@ -1,0 +1,1 @@
+{"error":"E0409","span":{"file":"compiler/tests/check/fail/e0409_heap_list_new_bad.ei","line":2,"col":26},"message":"cannot infer the type arguments of `List`","help":"annotate the binding, e.g. `let x: List[i32] = List.new()`"}

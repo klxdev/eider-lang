@@ -1,0 +1,1 @@
+{"error":"E0405","span":{"file":"compiler/tests/check/fail/e0405_heap_box_new_args.ei","line":2,"col":25},"message":"`Box.new` takes exactly one argument"}

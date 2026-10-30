@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_comptime_clock.ei","line":3,"col":25},"message":"call to `f` requires capability `clock`","help":"`comptime` evaluation can't use capabilities"}

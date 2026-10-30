@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_tail_if_without_else.ei","line":4,"col":1},"message":"function `f` must return u8, but its body ends without producing one","help":"add a `return` or end the body with an expression of that type"}

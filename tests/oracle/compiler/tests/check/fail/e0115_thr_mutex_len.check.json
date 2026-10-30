@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_thr_mutex_len.ei","line":4,"col":13},"message":"type Mutex[i32] has no method `len`"}

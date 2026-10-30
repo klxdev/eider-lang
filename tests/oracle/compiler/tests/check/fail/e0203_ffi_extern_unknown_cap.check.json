@@ -1,0 +1,1 @@
+{"error":"E0203","span":{"file":"compiler/tests/check/fail/e0203_ffi_extern_unknown_cap.ei","line":2,"col":24},"message":"unknown capability `disk`","help":"known capabilities: io, clock, fs, net, threads, ffi, python, js, wasm"}

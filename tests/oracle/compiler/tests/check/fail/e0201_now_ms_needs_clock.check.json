@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_now_ms_needs_clock.ei","line":3,"col":11},"message":"call to `now_ms` requires capability `clock`","fix":{"at":{"line":2,"col":18},"delete":0,"insert":", clock"}}

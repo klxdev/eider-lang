@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_prelude_variant_pattern.ei","line":4,"col":9},"message":"`None` is a variant of Option, but the value has type i32"}

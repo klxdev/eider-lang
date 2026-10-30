@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_method_on_int_type.ei","line":3,"col":17},"message":"type i32 has no method `max`"}

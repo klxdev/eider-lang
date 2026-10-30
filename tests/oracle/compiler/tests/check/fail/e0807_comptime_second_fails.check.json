@@ -1,0 +1,1 @@
+{"error":"E0807","span":{"file":"compiler/tests/check/fail/e0807_comptime_second_fails.ei","line":4,"col":7},"message":"comptime evaluation of `B` failed: eider: runtime error: division by zero (program:2)"}

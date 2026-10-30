@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/for_in.ei","line":2,"col":11},"message":"expected `in`"}

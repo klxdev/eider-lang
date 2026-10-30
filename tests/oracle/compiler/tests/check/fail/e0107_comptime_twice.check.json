@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_comptime_twice.ei","line":3,"col":7},"message":"`A` is already defined"}

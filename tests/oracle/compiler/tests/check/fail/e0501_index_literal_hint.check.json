@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_index_literal_hint.ei","line":4,"col":15},"message":"literal 18446744073709551616 doesn't fit in usize (max 18446744073709551615)"}

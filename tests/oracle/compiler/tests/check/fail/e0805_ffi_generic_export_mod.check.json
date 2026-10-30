@@ -1,0 +1,1 @@
+{"error":"E0805","span":{"file":"compiler/tests/check/fail/../lib/ffi_gen.ei","line":2,"col":11},"message":"an `export fn` can't be generic","help":"exported functions need a fixed C signature; export a concrete wrapper"}

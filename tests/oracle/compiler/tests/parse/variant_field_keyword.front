@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/variant_field_keyword.ei","line":1,"col":14},"message":"`fn` is a keyword and can't be used as a name"}

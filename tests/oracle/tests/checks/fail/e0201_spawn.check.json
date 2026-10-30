@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"tests/checks/fail/e0201_spawn.ei","line":3,"col":13},"message":"call to `spawn` requires capability `threads`","fix":{"at":{"line":2,"col":14},"delete":0,"insert":" uses threads"}}

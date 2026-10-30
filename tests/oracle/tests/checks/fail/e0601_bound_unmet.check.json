@@ -1,0 +1,1 @@
+{"error":"E0601","span":{"file":"tests/checks/fail/e0601_bound_unmet.ei","line":9,"col":5},"message":"type i32 doesn't implement trait `Area` (required by `total`)"}

@@ -1,0 +1,1 @@
+{"error":"E0112","span":{"file":"compiler/tests/check/fail/e0112_order_main_last.ei","line":1,"col":1},"message":"no `main` function"}

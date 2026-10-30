@@ -1,0 +1,1 @@
+{"error":"E0409","span":{"file":"compiler/tests/check/fail/e0409_enum_variant_static_generic.ei","line":4,"col":16},"message":"cannot infer type parameter `A` of `T2`","help":"add a type annotation, e.g. `let x: Option[i32] = None`"}

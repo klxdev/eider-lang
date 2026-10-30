@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/extern_with_body.ei","line":1,"col":15},"message":"an `extern \"c\"` function is only declared here; it has no body"}

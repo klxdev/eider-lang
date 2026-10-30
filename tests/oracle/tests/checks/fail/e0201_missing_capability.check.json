@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"tests/checks/fail/e0201_missing_capability.ei","line":3,"col":3},"message":"call to `print` requires capability `io`","fix":{"at":{"line":2,"col":10},"delete":0,"insert":" uses io"}}

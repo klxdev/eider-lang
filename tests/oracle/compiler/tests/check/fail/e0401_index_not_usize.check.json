@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_index_not_usize.ei","line":5,"col":15},"message":"expected usize, found i32","help":"there are no implicit conversions; use an explicit cast: `value as usize`"}

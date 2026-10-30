@@ -1,0 +1,1 @@
+{"error":"E0110","span":{"file":"compiler/tests/check/fail/e0110_out_of_scope.ei","line":6,"col":11},"message":"unknown name `inner`"}

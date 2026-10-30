@@ -1,0 +1,1 @@
+{"error":"E0701","span":{"file":"tests/checks/fail/e0701_list_as_key.ei","line":3,"col":12},"message":"List[i32] can't be a Map key; keys must be integers, bool, str or String"}

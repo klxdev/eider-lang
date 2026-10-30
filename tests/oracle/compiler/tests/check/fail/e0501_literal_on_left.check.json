@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_literal_on_left.ei","line":2,"col":21},"message":"literal 300 doesn't fit in u8 (max 255)"}

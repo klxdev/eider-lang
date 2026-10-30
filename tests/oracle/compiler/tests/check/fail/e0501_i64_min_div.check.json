@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_i64_min_div.ei","line":3,"col":18},"message":"-9223372036854775808 / -1 = 9223372036854775808 doesn't fit in i64","help":"use the wrapping operator `*%` if overflow is intended"}

@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_heap_unknown_assoc.ei","line":2,"col":28},"message":"`String` has no associated function `new`"}

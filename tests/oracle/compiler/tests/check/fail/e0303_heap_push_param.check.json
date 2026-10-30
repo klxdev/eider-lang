@@ -1,0 +1,1 @@
+{"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_heap_push_param.ei","line":2,"col":22},"message":"cannot modify `l`: it is not mutable","help":"parameters are immutable; declare it `inout` to modify the caller's value"}

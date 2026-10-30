@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_box_hint.ei","line":2,"col":40},"message":"expected bool, found i32"}

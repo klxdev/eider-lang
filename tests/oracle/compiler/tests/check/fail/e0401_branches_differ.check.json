@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_branches_differ.ei","line":3,"col":29},"message":"branches have different types: i32 and bool"}

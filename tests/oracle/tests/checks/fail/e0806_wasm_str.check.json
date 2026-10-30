@@ -1,0 +1,1 @@
+{"error":"E0806","span":{"file":"tests/checks/fail/e0806_wasm_str.ei","line":3,"col":17},"message":"parameter `name` has type str; WebAssembly exports take only integers and bool"}

@@ -1,0 +1,1 @@
+{"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_assign_to_param_field.ei","line":4,"col":5},"message":"cannot assign to `p`: it is not mutable","help":"parameters are immutable; declare it `inout` to modify the caller's value"}

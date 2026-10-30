@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_variant_wrong_generic.ei","line":2,"col":39},"message":"expected u32, found bool"}

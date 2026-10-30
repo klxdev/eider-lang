@@ -1,0 +1,1 @@
+{"error":"E0306","span":{"file":"tests/checks/fail/e0306_break_outside_loop.ei","line":3,"col":3},"message":"`break`/`continue` outside of a loop"}

@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_negate_unsigned_value.ei","line":2,"col":21},"message":"cannot negate a value of type u8"}

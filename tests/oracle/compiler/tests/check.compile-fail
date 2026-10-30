@@ -1,0 +1,551 @@
+compile-fail tests (compiler/tests/check/fail)
+  ok   e0001_clo_list_of_fn.ei      E0001 at 4:15
+  ok   e0001_mod_parse_error_in_module.ei E0001 at 2:14
+  ok   e0001_or_pattern_binds.ei    E0001 at 4:13
+  ok   e0101_array_scrutinee.ei     E0101 at 8:13
+  ok   e0101_bool_missing.ei        E0101 at 3:5
+  ok   e0101_mod_witness.ei         E0101 at 4:5
+  ok   e0101_negative_patterns.ei   E0101 at 3:5
+  ok   e0101_nested_pat.ei          E0101 at 5:5
+  ok   e0101_nested_payload.ei      E0101 at 4:5
+  ok   e0101_no_arms.ei             E0101 at 3:5
+  ok   e0101_or_pattern_missing.ei  E0101 at 4:5
+  ok   e0101_pat_none_missing.ei    E0101 at 3:5
+  ok   e0101_record_fields.ei       E0101 at 4:5
+  ok   e0101_record_generic_missing.ei E0101 at 4:5
+  ok   e0101_str_patterns.ei        E0101 at 3:5
+  ok   e0101_tup_match_missing.ei   E0101 at 3:5
+  ok   e0101_tup_refutable.ei       E0101 at 3:9
+  ok   e0102_after_binding.ei       E0102 at 6:9
+  ok   e0102_after_wildcard.ei      E0102 at 5:9
+  ok   e0102_bool_after_both.ei     E0102 at 6:9
+  ok   e0102_or_pattern_all_covered.ei E0102 at 7:9
+  ok   e0102_pat_unreachable.ei     E0102 at 5:9
+  ok   e0102_payload_covered.ei     E0102 at 7:9
+  ok   e0103_block_in_binary.ei     E0103 at 3:17
+  ok   e0103_ffi_unsafe_as_argument.ei E0103 at 4:11
+  ok   e0103_if_as_argument.ei      E0103 at 4:7
+  ok   e0107_builtin_fn_name.ei     E0107 at 2:4
+  ok   e0107_builtin_type_name.ei   E0107 at 2:6
+  ok   e0107_comptime_ct_name.ei    E0107 at 1:4
+  ok   e0107_comptime_mod_main.ei   E0107 at 4:4
+  ok   e0107_comptime_twice.ei      E0107 at 3:7
+  ok   e0107_const_named_like_fn.ei E0107 at 3:7
+  ok   e0107_duplicate_const.ei     E0107 at 3:7
+  ok   e0107_duplicate_field.ei     E0107 at 2:28
+  ok   e0107_duplicate_type.ei      E0107 at 3:6
+  ok   e0107_duplicate_variant_field.ei E0107 at 2:29
+  ok   e0107_ffi_extern_like_fn.ei  E0107 at 3:15
+  ok   e0107_ffi_extern_twice.ei    E0107 at 3:15
+  ok   e0107_fn_named_like_type.ei  E0107 at 3:4
+  ok   e0107_fn_named_like_variant.ei E0107 at 3:4
+  ok   e0107_mod_two_mains.ei       E0107 at 3:4
+  ok   e0107_prelude_type.ei        E0107 at 2:6
+  ok   e0107_prelude_variant.ei     E0107 at 2:16
+  ok   e0107_trait_dup_impl.ei      E0107 at 5:1
+  ok   e0107_trait_dup_method.ei    E0107 at 4:14
+  ok   e0107_trait_dup_name.ei      E0107 at 2:7
+  ok   e0107_trait_dup_name2.ei     E0107 at 3:7
+  ok   e0107_trait_twice_in_impl.ei E0107 at 4:8
+  ok   e0107_variant_in_two_enums.ei E0107 at 3:12
+  ok   e0107_variant_twice.ei       E0107 at 2:20
+  ok   e0108_array_recursion.ei     E0108 at 2:6
+  ok   e0108_enum_recursion.ei      E0108 at 2:6
+  ok   e0108_gen_recursive.ei       E0108 at 2:6
+  ok   e0108_mutual_recursion.ei    E0108 at 2:6
+  ok   e0110_assign_to_variant.ei   E0110 at 4:5
+  ok   e0110_comptime_forward.ei    E0110 at 2:25
+  ok   e0110_comptime_later_in_fn.ei E0110 at 3:24
+  ok   e0110_comptime_mod_forward.ei E0110 at 2:29
+  ok   e0110_comptime_mod_late.ei   E0110 at 4:36
+  ok   e0110_comptime_plain_const.ei E0110 at 3:16
+  ok   e0110_comptime_unknown.ei    E0110 at 2:25
+  ok   e0110_const_before_definition.ei E0110 at 2:16
+  ok   e0110_double_underscore_demangled.ei E0110 at 3:13
+  ok   e0110_fn_as_value.ei         E0110 at 4:13
+  ok   e0110_fnval_noexp.ei         E0110 at 3:21
+  ok   e0110_mod_test_local_named_like_fn.ei E0110 at 8:12
+  ok   e0110_mod_unqualified.ei     E0110 at 4:13
+  ok   e0110_order_last_body_first.ei E0110 at 3:17
+  ok   e0110_out_of_scope.ei        E0110 at 6:11
+  ok   e0110_type_name_as_value.ei  E0110 at 4:13
+  ok   e0110_unicode_column.ei      E0110 at 3:28
+  ok   e0110_unknown_assign_target.ei E0110 at 3:5
+  ok   e0111_empty_record.ei        E0111 at 2:6
+  ok   e0111_ffi_extern_unit_param.ei E0111 at 2:17
+  ok   e0111_fn_type_unknown.ei     E0111 at 2:12
+  ok   e0111_gen_needs_args.ei      E0111 at 3:20
+  ok   e0111_gen_wrong_arity.ei     E0111 at 3:20
+  ok   e0111_generic_without_args.ei E0111 at 3:9
+  ok   e0111_heap_list_args.ei      E0111 at 2:20
+  ok   e0111_heap_list_noargs.ei    E0111 at 2:20
+  ok   e0111_heap_list_unit.ei      E0111 at 2:20
+  ok   e0111_impl_generic_target_error.ei E0111 at 3:30
+  ok   e0111_impl_target_error.ei   E0111 at 3:24
+  ok   e0111_list_without_args.ei   E0111 at 2:10
+  ok   e0111_main_returns.ei        E0111 at 2:4
+  ok   e0111_main_with_params.ei    E0111 at 2:4
+  ok   e0111_option_without_args.ei E0111 at 2:11
+  ok   e0111_order_const_call_resolves_params.ei E0111 at 2:9
+  ok   e0111_order_signature_before_body.ei E0111 at 5:9
+  ok   e0111_order_types_before_fns.ei E0111 at 3:15
+  ok   e0111_self_outside.ei        E0111 at 2:9
+  ok   e0111_self_outside_impl.ei   E0111 at 2:9
+  ok   e0111_sig_error_generic.ei   E0111 at 3:12
+  ok   e0111_thr_chan_unit.ei       E0111 at 2:9
+  ok   e0111_thr_mutex_two_args.ei  E0111 at 2:9
+  ok   e0111_thr_task_bare.ei       E0111 at 2:9
+  ok   e0111_unit_param.ei          E0111 at 2:6
+  ok   e0111_unknown_cast_target.ei E0111 at 3:18
+  ok   e0111_unknown_field_type.ei  E0111 at 2:15
+  ok   e0111_unknown_type_in_impl.ei E0111 at 2:6
+  ok   e0111_unknown_type_in_let.ei E0111 at 3:12
+  ok   e0111_zero_length_array.ei   E0111 at 2:9
+  ok   e0112_clo_not_callable.ei    E0112 at 3:13
+  ok   e0112_comptime_no_main.ei    E0112 at 1:1
+  ok   e0112_enum_called.ei         E0112 at 4:13
+  ok   e0112_ffi_export_needs_main.ei E0112 at 1:1
+  ok   e0112_local_shadows_fn.ei    E0112 at 5:13
+  ok   e0112_mod_root_name_missing.ei E0112 at 17:30
+  ok   e0112_mod_unknown_function.ei E0112 at 4:5
+  ok   e0112_no_main.ei             E0112 at 1:1
+  ok   e0112_order_main_last.ei     E0112 at 1:1
+  ok   e0112_param_called.ei        E0112 at 2:23
+  ok   e0112_self_in_impl.ei        E0112 at 5:29
+  ok   e0113_field_of_array.ei      E0113 at 4:15
+  ok   e0113_no_fields.ei           E0113 at 4:15
+  ok   e0113_record_field_assign.ei E0113 at 5:7
+  ok   e0113_tup_bad_field.ei       E0113 at 3:15
+  ok   e0113_tup_bad_field_name.ei  E0113 at 3:15
+  ok   e0113_tuple_field_on_record.ei E0113 at 5:15
+  ok   e0114_mod_static_variant.ei  E0114 at 4:26
+  ok   e0114_record_name_mismatch.ei E0114 at 6:9
+  ok   e0114_static_variant_missing.ei E0114 at 4:15
+  ok   e0114_unknown_constructor_pattern.ei E0114 at 5:9
+  ok   e0115_assoc_with_value.ei    E0115 at 5:15
+  ok   e0115_bound_unmet_impl.ei    E0115 at 5:36
+  ok   e0115_clo_field_noncallable.ei E0115 at 4:15
+  ok   e0115_heap_unknown_assoc.ei  E0115 at 2:28
+  ok   e0115_heap_unknown_method.ei E0115 at 3:15
+  ok   e0115_int_method.ei          E0115 at 2:23
+  ok   e0115_method_not_found.ei    E0115 at 4:15
+  ok   e0115_method_on_array.ei     E0115 at 4:15
+  ok   e0115_method_on_int_type.ei  E0115 at 3:17
+  ok   e0115_method_on_record.ei    E0115 at 5:15
+  ok   e0115_quirk_bound_name_target.ei E0115 at 12:36
+  ok   e0115_self_static.ei         E0115 at 4:24
+  ok   e0115_static_method.ei       E0115 at 4:15
+  ok   e0115_static_not_found.ei    E0115 at 3:24
+  ok   e0115_thr_chan_get.ei        E0115 at 4:13
+  ok   e0115_thr_impl_method.ei     E0115 at 6:13
+  ok   e0115_thr_mutex_len.ei       E0115 at 4:13
+  ok   e0115_thr_task_new.ei        E0115 at 3:18
+  ok   e0115_unwrap_unknown_method.ei E0115 at 3:15
+  ok   e0201_comptime_builtin.ei    E0201 at 2:25
+  ok   e0201_comptime_clock.ei      E0201 at 3:25
+  ok   e0201_comptime_ffi.ei        E0201 at 3:34
+  ok   e0201_comptime_main.ei       E0201 at 2:25
+  ok   e0201_comptime_mod_io.ei     E0201 at 6:29
+  ok   e0201_comptime_other_fn.ei   E0201 at 3:5
+  ok   e0201_ffi_extern_own_caps.ei E0201 at 4:22 (fix compiles)
+  ok   e0201_ffi_no_unsafe_either.ei E0201 at 4:13 (fix resolves it; next: E0802)
+  ok   e0201_ffi_other_caps.ei      E0201 at 4:22 (fix compiles)
+  ok   e0201_ffi_unsafe_fn_without_ffi.ei E0201 at 4:5 (fix compiles)
+  ok   e0201_ffi_via_wrapper.ei     E0201 at 4:11 (fix compiles)
+  ok   e0201_fix_after_params_on_next_line.ei E0201 at 5:5 (fix compiles)
+  ok   e0201_fix_after_return_type.ei E0201 at 3:5 (fix compiles)
+  ok   e0201_fnval_caps.ei          E0201 at 4:37 (fix compiles)
+  ok   e0201_in_const.ei            E0201 at 6:16 (fix resolves it; next: E0001)
+  ok   e0201_now_ms_needs_clock.ei  E0201 at 3:11 (fix compiles)
+  ok   e0201_print_before_arity.ei  E0201 at 3:5 (fix resolves it; next: E0405)
+  ok   e0201_print_in_test_fn_ok_but_main.ei E0201 at 3:13 (fix compiles)
+  ok   e0201_second_capability.ei   E0201 at 4:5 (fix compiles)
+  ok   e0201_thr_calls_threads_fn.ei E0201 at 6:27 (fix compiles)
+  ok   e0201_thr_spawn_in_closure.ei E0201 at 4:17 (fix compiles)
+  ok   e0201_thr_spawn_in_method.ei E0201 at 5:17 (fix compiles)
+  ok   e0201_thr_spawn_uses_io.ei   E0201 at 4:9 (fix compiles)
+  ok   e0203_ffi_extern_unknown_cap.ei E0203 at 2:24
+  ok   e0203_second_unknown.ei      E0203 at 2:17
+  ok   e0301_field_roots.ei         E0301 at 6:20
+  ok   e0301_index_roots.ei         E0301 at 5:26
+  ok   e0301_method_style_roots.ei  E0301 at 6:19
+  ok   e0301_read_in_binary.ei      E0301 at 5:9
+  ok   e0303_assign_call_result.ei  E0303 at 5:10
+  ok   e0303_assign_constant.ei     E0303 at 4:5
+  ok   e0303_assign_field_of_let.ei E0303 at 5:5 (fix compiles)
+  ok   e0303_assign_for_var.ei      E0303 at 4:9
+  ok   e0303_assign_in_test.ei      E0303 at 4:5 (fix compiles)
+  ok   e0303_assign_match_binding.ei E0303 at 4:16
+  ok   e0303_assign_to_param_field.ei E0303 at 4:5
+  ok   e0303_compound_on_let.ei     E0303 at 4:5 (fix compiles)
+  ok   e0303_heap_field_push.ei     E0303 at 5:5 (fix compiles)
+  ok   e0303_heap_list_pop_immut.ei E0303 at 3:13 (fix compiles)
+  ok   e0303_heap_push_expr.ei      E0303 at 4:13
+  ok   e0303_heap_push_immut.ei     E0303 at 3:5 (fix compiles)
+  ok   e0303_heap_push_param.ei     E0303 at 2:22
+  ok   e0303_heap_push_str_immut.ei E0303 at 3:5 (fix compiles)
+  ok   e0303_inout_of_let.ei        E0303 at 5:16 (fix compiles)
+  ok   e0303_inout_of_literal.ei    E0303 at 4:16
+  ok   e0303_inout_self_immutable.ei E0303 at 5:5 (fix compiles)
+  ok   e0303_mod_inout_constant.ei  E0303 at 4:23
+  ok   e0304_clo_call_inout.ei      E0304 at 4:21
+  ok   e0304_fix_position.ei        E0304 at 6:15 (fix compiles)
+  ok   e0304_fnval_inout.ei         E0304 at 3:37
+  ok   e0304_heap_list_push_inout.ei E0304 at 4:18
+  ok   e0304_inout_in_constructor.ei E0304 at 5:21
+  ok   e0304_inout_to_print.ei      E0304 at 4:17
+  ok   e0304_thr_spawn_inout.ei     E0304 at 4:25
+  ok   e0305_duplicate_binding.ei   E0305 at 5:14
+  ok   e0305_duplicate_param.ei     E0305 at 2:14
+  ok   e0305_for_var_vs_body.ei     E0305 at 5:9
+  ok   e0305_let_after_var.ei       E0305 at 4:5
+  ok   e0306_break_in_match_arm.ei  E0306 at 4:14
+  ok   e0306_continue_in_fn.ei      E0306 at 3:15
+  ok   e0401_add_bools.ei           E0401 at 3:18
+  ok   e0401_arg_mismatch.ei        E0401 at 4:7
+  ok   e0401_array_equality_types.ei E0401 at 3:23
+  ok   e0401_array_hint.ei          E0401 at 3:30
+  ok   e0401_assert_not_bool.ei     E0401 at 3:12
+  ok   e0401_assign_mismatch.ei     E0401 at 4:14
+  ok   e0401_bind_never.ei          E0401 at 3:13
+  ok   e0401_bind_unit.ei           E0401 at 4:13
+  ok   e0401_block_value_hint.ei    E0401 at 4:19
+  ok   e0401_branch_literal_default.ei E0401 at 3:29
+  ok   e0401_branches_differ.ei     E0401 at 3:29
+  ok   e0401_cast_from_bool.ei      E0401 at 3:18
+  ok   e0401_cast_to_bool.ei        E0401 at 3:15
+  ok   e0401_clo_call_mismatch.ei   E0401 at 3:15
+  ok   e0401_clo_eq.ei              E0401 at 3:15
+  ok   e0401_clo_fn_type_display.ei E0401 at 3:30
+  ok   e0401_clo_param_mismatch.ei  E0401 at 3:31
+  ok   e0401_clo_unit_type_display.ei E0401 at 3:30
+  ok   e0401_clo_wrong_return.ei    E0401 at 3:36
+  ok   e0401_compare_unit.ei        E0401 at 4:17
+  ok   e0401_compound_on_bool.ei    E0401 at 4:5
+  ok   e0401_comptime_bool_for_int.ei E0401 at 2:25
+  ok   e0401_comptime_error_elsewhere.ei E0401 at 5:19
+  ok   e0401_comptime_int_for_bool.ei E0401 at 2:26
+  ok   e0401_comptime_wrong_int.ei  E0401 at 3:25
+  ok   e0401_const_shadowed_by_local.ei E0401 at 5:18
+  ok   e0401_const_type_mismatch.ei E0401 at 2:15
+  ok   e0401_empty_array.ei         E0401 at 3:13
+  ok   e0401_field_mismatch.ei      E0401 at 4:18
+  ok   e0401_filter_wrong_ret.ei    E0401 at 3:28
+  ok   e0401_fnval_mismatch.ei      E0401 at 3:37
+  ok   e0401_fold_wrong.ei          E0401 at 3:30
+  ok   e0401_fold_wrong2.ei         E0401 at 3:27
+  ok   e0401_for_each_ret.ei        E0401 at 3:20
+  ok   e0401_foreach_int.ei         E0401 at 3:14
+  ok   e0401_gen_body_error_twice.ei E0401 at 2:26
+  ok   e0401_gen_conflict.ei        E0401 at 3:29
+  ok   e0401_gen_display.ei         E0401 at 4:22
+  ok   e0401_gen_field_mismatch.ei  E0401 at 3:29
+  ok   e0401_gen_hint_mismatch.ei   E0401 at 3:38
+  ok   e0401_heap_box_hint.ei       E0401 at 2:40
+  ok   e0401_heap_box_unit.ei       E0401 at 3:29
+  ok   e0401_heap_cast_string.ei    E0401 at 3:15
+  ok   e0401_heap_for_map.ei        E0401 at 3:14
+  ok   e0401_heap_index_list_bad.ei E0401 at 3:15
+  ok   e0401_heap_index_str.ei      E0401 at 3:14
+  ok   e0401_heap_len_bool.ei       E0401 at 2:25
+  ok   e0401_heap_list_get_arg.ei   E0401 at 3:19
+  ok   e0401_heap_list_of_map_eq.ei E0401 at 3:15
+  ok   e0401_heap_list_push_arg.ei  E0401 at 3:12
+  ok   e0401_heap_map_eq.ei         E0401 at 3:15
+  ok   e0401_heap_map_get_wrong.ei  E0401 at 3:29
+  ok   e0401_heap_map_in_record_eq.ei E0401 at 5:15
+  ok   e0401_heap_ok.ei             E0401 at 43:28
+  ok   e0401_heap_print_list.ei     E0401 at 3:11
+  ok   e0401_heap_repeat.ei         E0401 at 2:29
+  ok   e0401_heap_string_lt.ei      E0401 at 3:15
+  ok   e0401_heap_sum_bool.ei       E0401 at 3:15
+  ok   e0401_if_condition.ei        E0401 at 3:8
+  ok   e0401_if_let_without_else_bound.ei E0401 at 4:13
+  ok   e0401_if_without_else_bound.ei E0401 at 3:13
+  ok   e0401_index_non_array.ei     E0401 at 4:14
+  ok   e0401_index_not_usize.ei     E0401 at 5:15
+  ok   e0401_int_pattern_on_bool.ei E0401 at 4:9
+  ok   e0401_len_of_int.ei          E0401 at 3:17
+  ok   e0401_local_shadows_variant.ei E0401 at 5:16
+  ok   e0401_map_closure_wrong.ei   E0401 at 3:20
+  ok   e0401_map_non_closure.ei     E0401 at 3:19
+  ok   e0401_map_unit.ei            E0401 at 3:19
+  ok   e0401_match_branches_differ.ei E0401 at 5:14
+  ok   e0401_match_on_unit.ei       E0401 at 4:11
+  ok   e0401_missing_return_after_while.ei E0401 at 4:1
+  ok   e0401_mixed_array.ei         E0401 at 3:17
+  ok   e0401_mod_bad_generic_body.ei E0401 at 24:32
+  ok   e0401_mod_error_in_module_body.ei E0401 at 2:26
+  ok   e0401_mod_point_wrong.ei     E0401 at 3:49
+  ok   e0401_mod_type_display.ei    E0401 at 4:27
+  ok   e0401_mod_variant_of_other_enum.ei E0401 at 5:9
+  ok   e0401_negate_bool.ei         E0401 at 3:13
+  ok   e0401_negate_unsigned_literal.ei E0401 at 3:18
+  ok   e0401_negate_unsigned_value.ei E0401 at 2:21
+  ok   e0401_not_int.ei             E0401 at 3:14
+  ok   e0401_opt_print.ei           E0401 at 2:27
+  ok   e0401_order_module_test_stale_file.ei E0401 at 5:18
+  ok   e0401_order_test_before_bodies.ei E0401 at 6:17
+  ok   e0401_ordering_bools.ei      E0401 at 3:18
+  ok   e0401_panic_non_str.ei       E0401 at 3:11
+  ok   e0401_prelude_variant_on_enum.ei E0401 at 5:9
+  ok   e0401_prelude_variant_pattern.ei E0401 at 4:9
+  ok   e0401_print_payload_enum.ei  E0401 at 4:13
+  ok   e0401_print_record.ei        E0401 at 4:11
+  ok   e0401_range_mixed.ei         E0401 at 5:17
+  ok   e0401_range_not_int.ei       E0401 at 3:14
+  ok   e0401_return_in_match_arm.ei E0401 at 4:21
+  ok   e0401_return_type_of_tail_if.ei E0401 at 3:23
+  ok   e0401_return_value_from_unit.ei E0401 at 3:12
+  ok   e0401_return_without_value.ei E0401 at 3:5
+  ok   e0401_str_vs_int_compare.ei  E0401 at 3:20
+  ok   e0401_tail_if_without_else.ei E0401 at 4:1
+  ok   e0401_tail_wrong_type.ei     E0401 at 2:18
+  ok   e0401_thr_eq.ei              E0401 at 5:13
+  ok   e0401_thr_eq_list_of_chan.ei E0401 at 5:13
+  ok   e0401_thr_generic_mismatch.ei E0401 at 6:20
+  ok   e0401_thr_join_type.ei       E0401 at 4:23
+  ok   e0401_thr_mutex_hint.ei      E0401 at 3:35
+  ok   e0401_thr_mutex_unit.ei      E0401 at 4:23
+  ok   e0401_thr_print_task.ei      E0401 at 4:11
+  ok   e0401_thr_recv_type.ei       E0401 at 4:20
+  ok   e0401_thr_send_type.ei       E0401 at 4:12
+  ok   e0401_thr_set_type.ei        E0401 at 4:11
+  ok   e0401_thr_spawn_not_fn.ei    E0401 at 3:19
+  ok   e0401_thr_spawn_params.ei    E0401 at 3:19
+  ok   e0401_thr_update_not_closure.ei E0401 at 4:14
+  ok   e0401_thr_update_param.ei    E0401 at 4:15
+  ok   e0401_thr_update_ret.ei      E0401 at 4:14
+  ok   e0401_try_err_conv.ei        E0401 at 3:46
+  ok   e0401_tup_lt.ei              E0401 at 3:15
+  ok   e0401_tup_mismatch.ei        E0401 at 2:34
+  ok   e0401_tup_pat_nontuple.ei    E0401 at 2:17
+  ok   e0401_tup_unit_elem.ei       E0401 at 3:25
+  ok   e0401_tuple_pattern.ei       E0401 at 4:9
+  ok   e0401_unit_match_arm_bound.ei E0401 at 5:14
+  ok   e0401_unsupported_free_print_enum_value.ei E0401 at 6:18
+  ok   e0401_variant_of_other_enum.ei E0401 at 6:9
+  ok   e0401_variant_pattern_on_record.ei E0401 at 6:9
+  ok   e0401_variant_wrong_generic.ei E0401 at 2:39
+  ok   e0401_while_condition.ei     E0401 at 3:11
+  ok   e0401_wrong_return_type.ei   E0401 at 3:12
+  ok   e0405_clo_arity.ei           E0405 at 3:30
+  ok   e0405_clo_call_arity.ei      E0405 at 3:13
+  ok   e0405_heap_box_new_args.ei   E0405 at 2:25
+  ok   e0405_heap_fold_arity.ei     E0405 at 3:15
+  ok   e0405_heap_list_new_args.ei  E0405 at 2:37
+  ok   e0405_heap_list_push_arity.ei E0405 at 3:7
+  ok   e0405_heap_map_closure.ei    E0405 at 3:15
+  ok   e0405_heap_map_insert_arity.ei E0405 at 3:7
+  ok   e0405_len_arity.ei           E0405 at 3:13
+  ok   e0405_local_named_print_is_still_builtin.ei E0405 at 4:5
+  ok   e0405_method_arity.ei        E0405 at 5:15
+  ok   e0405_now_ms_arity.ei        E0405 at 3:13
+  ok   e0405_panic_arity.ei         E0405 at 3:5
+  ok   e0405_record_arity.ei        E0405 at 4:13
+  ok   e0405_thr_chan_new_arg.ei    E0405 at 3:29
+  ok   e0405_thr_join_arg.ei        E0405 at 4:13
+  ok   e0405_thr_mutex_new_none.ei  E0405 at 3:19
+  ok   e0405_thr_send_none.ei       E0405 at 4:7
+  ok   e0405_thr_spawn_none.ei      E0405 at 3:13
+  ok   e0405_thr_spawn_two.ei       E0405 at 3:13
+  ok   e0405_thr_update_none.ei     E0405 at 4:7
+  ok   e0405_thr_update_two_params.ei E0405 at 4:14
+  ok   e0405_unit_variant_called.ei E0405 at 4:13
+  ok   e0405_variant_arity.ei       E0405 at 4:13
+  ok   e0406_try_non_enum.ei        E0406 at 2:34
+  ok   e0406_try_other_enum.ei      E0406 at 3:34
+  ok   e0406_try_wrong_ret.ei       E0406 at 3:40
+  ok   e0409_clo_assign_capture.ei  E0409 at 3:22
+  ok   e0409_clo_block_no_ret.ei    E0409 at 2:30
+  ok   e0409_clo_untyped.ei         E0409 at 2:22
+  ok   e0409_enum_variant_static_generic.ei E0409 at 4:16
+  ok   e0409_fnval_generic.ei       E0409 at 3:37
+  ok   e0409_gen_infer_fail.ei      E0409 at 3:21
+  ok   e0409_heap_list_new_bad.ei   E0409 at 2:26
+  ok   e0409_heap_map_new_bad.ei    E0409 at 2:25
+  ok   e0409_method_generic_infer.ei E0409 at 7:15
+  ok   e0409_none_infer.ei          E0409 at 2:21
+  ok   e0409_thr_chan_list_hint.ei  E0409 at 3:29
+  ok   e0409_thr_spawn_no_ret.ei    E0409 at 3:22
+  ok   e0410_payload_variant_without_args.ei E0410 at 5:9
+  ok   e0410_record_pattern_arity.ei E0410 at 5:9
+  ok   e0410_tup_pat_len.ei         E0410 at 3:9
+  ok   e0410_unit_variant_with_args.ei E0410 at 6:9
+  ok   e0501_big_hex_literal.ei     E0501 at 3:18
+  ok   e0501_cast_constant.ei       E0501 at 3:26
+  ok   e0501_cast_literal.ei        E0501 at 3:13
+  ok   e0501_comparison_literal.ei  E0501 at 2:27
+  ok   e0501_comptime_folded.ei     E0501 at 2:27
+  ok   e0501_comptime_literal.ei    E0501 at 2:24
+  ok   e0501_const_through_const.ei E0501 at 3:17
+  ok   e0501_fold_precedence.ei     E0501 at 2:17
+  ok   e0501_gen_body_error.ei      E0501 at 2:34
+  ok   e0501_hex_literal.ei         E0501 at 3:17
+  ok   e0501_hint_into_branches.ei  E0501 at 3:35
+  ok   e0501_huge_literal.ei        E0501 at 3:13
+  ok   e0501_i64_min_div.ei         E0501 at 3:18
+  ok   e0501_index_literal_hint.ei  E0501 at 4:15
+  ok   e0501_literal_from_left_operand.ei E0501 at 2:25
+  ok   e0501_literal_on_left.ei     E0501 at 2:21
+  ok   e0501_mul_help.ei            E0501 at 2:18
+  ok   e0501_negate_min_const.ei    E0501 at 3:16
+  ok   e0501_negative_literal.ei    E0501 at 3:18
+  ok   e0501_negative_pattern_unsigned.ei E0501 at 4:9
+  ok   e0501_nested_negation.ei     E0501 at 3:22
+  ok   e0501_order_const_before_signatures.ei E0501 at 3:15
+  ok   e0501_order_generic_vs_concrete.ei E0501 at 2:34
+  ok   e0501_order_methods.ei       E0501 at 4:31
+  ok   e0501_order_nested_inst.ei   E0501 at 3:34
+  ok   e0501_order_test_inst.ei     E0501 at 2:34
+  ok   e0501_order_two_generic.ei   E0501 at 4:34
+  ok   e0501_pattern_range.ei       E0501 at 4:9
+  ok   e0501_rem_help.ei            E0501 at 3:25
+  ok   e0501_u64_literal.ei         E0501 at 3:18
+  ok   e0501_unsigned_sub.ei        E0501 at 3:20
+  ok   e0501_unused_generic_fn_is_not_checked.ei E0501 at 5:17
+  ok   e0501_wrapping_then_checked.ei E0501 at 2:27
+  ok   e0502_comptime_div_zero.ei   E0502 at 2:29
+  ok   e0502_const_zero_divisor.ei  E0502 at 3:27
+  ok   e0502_div_zero_in_const_decl.ei E0502 at 2:24
+  ok   e0502_rem_zero.ei            E0502 at 2:27
+  ok   e0503_assign_target.ei       E0503 at 4:7
+  ok   e0503_const_index_through_const.ei E0503 at 5:15
+  ok   e0503_folded_index.ei        E0503 at 4:17
+  ok   e0503_len_index.ei           E0503 at 4:15
+  ok   e0504_bool_comparison.ei     E0504 at 2:19
+  ok   e0504_const_from_const_bool.ei E0504 at 3:17
+  ok   e0504_heap_owned_const.ei    E0504 at 2:26
+  ok   e0504_heap_owned_const_list.ei E0504 at 2:22
+  ok   e0504_record_const.ei        E0504 at 3:14
+  ok   e0601_bound_second_param.ei  E0601 at 11:15
+  ok   e0601_bound_unmet_generic_impl.ei E0601 at 12:15
+  ok   e0602_mod_trait_impl_bad.ei  E0602 at 4:29
+  ok   e0602_quirk_self_in_name.ei  E0602 at 9:8
+  ok   e0602_trait_extra_method.ei  E0602 at 5:8
+  ok   e0602_trait_inout_mismatch.ei E0602 at 4:21
+  ok   e0602_trait_missing_method.ei E0602 at 5:1
+  ok   e0602_trait_param_count.ei   E0602 at 4:21
+  ok   e0602_trait_param_mismatch.ei E0602 at 4:21
+  ok   e0603_bound_on_fn.ei         E0603 at 2:6
+  ok   e0603_bound_unknown_fn.ei    E0603 at 2:6
+  ok   e0603_trait_unknown.ei       E0603 at 3:6
+  ok   e0701_heap_map_key.ei        E0701 at 2:20
+  ok   e0701_heap_map_key_rec.ei    E0701 at 3:20
+  ok   e0701_thr_map_key.ei         E0701 at 3:12
+  ok   e0801_mod_private_const.ei   E0801 at 4:11
+  ok   e0801_mod_private_fn.ei      E0801 at 3:21
+  ok   e0801_mod_private_fn_via_alias.ei E0801 at 4:13
+  ok   e0801_mod_private_type_annotation.ei E0801 at 4:12
+  ok   e0801_mod_private_type_in_public_field.ei E0801 at 3:27
+  ok   e0802_ffi_in_if_cond.ei      E0802 at 4:8
+  ok   e0802_ffi_in_test_block.ei   E0802 at 5:13
+  ok   e0802_ffi_mod_wrapper.ei     E0802 at 6:11
+  ok   e0802_ffi_unit_extern.ei     E0802 at 4:5
+  ok   e0802_ffi_unsafe_ends.ei     E0802 at 5:13
+  ok   e0802_ffi_unsafe_fn_call.ei  E0802 at 4:11
+  ok   e0802_unsafe_fn_call.ei      E0802 at 4:13
+  ok   e0803_ffi_export_box.ei      E0803 at 2:13
+  ok   e0803_ffi_export_enum.ei     E0803 at 3:13
+  ok   e0803_ffi_export_inout.ei    E0803 at 2:22
+  ok   e0803_ffi_export_nested_bad.ei E0803 at 4:13
+  ok   e0803_ffi_export_record_ret.ei E0803 at 3:11
+  ok   e0803_ffi_export_record_string.ei E0803 at 3:17
+  ok   e0803_ffi_extern_array_ret.ei E0803 at 2:15
+  ok   e0803_ffi_extern_fn_type.ei  E0803 at 2:17
+  ok   e0803_ffi_extern_inout.ei    E0803 at 2:26
+  ok   e0803_ffi_extern_list.ei     E0803 at 2:19
+  ok   e0803_ffi_extern_record.ei   E0803 at 3:28
+  ok   e0803_ffi_extern_string_ret.ei E0803 at 2:15
+  ok   e0803_ffi_extern_tuple.ei    E0803 at 2:17
+  ok   e0803_ffi_first_of_two.ei    E0803 at 3:19
+  ok   e0803_ffi_mod_extern.ei      E0803 at 3:19
+  ok   e0803_ffi_param_before_ret.ei E0803 at 2:25
+  ok   e0804_mod_missing_nested.ei  E0804 at 2:1
+  ok   e0805_ffi_generic_export_bounded.ei E0805 at 3:11
+  ok   e0805_ffi_generic_export_mod.ei E0805 at 2:11
+  ok   e0807_comptime_add_u8.ei     E0807 at 7:7
+  ok   e0807_comptime_array.ei      E0807 at 2:7
+  ok   e0807_comptime_assert.ei     E0807 at 6:7
+  ok   e0807_comptime_cast.ei       E0807 at 3:7
+  ok   e0807_comptime_div_zero.ei   E0807 at 3:7
+  ok   e0807_comptime_index.ei      E0807 at 6:7
+  ok   e0807_comptime_mod_str.ei    E0807 at 2:11
+  ok   e0807_comptime_mod_trap.ei   E0807 at 3:11
+  ok   e0807_comptime_mul_i64.ei    E0807 at 3:7
+  ok   e0807_comptime_option.ei     E0807 at 2:7
+  ok   e0807_comptime_panic.ei      E0807 at 3:7
+  ok   e0807_comptime_record.ei     E0807 at 3:7
+  ok   e0807_comptime_rem_zero.ei   E0807 at 3:7
+  ok   e0807_comptime_second_fails.ei E0807 at 4:7
+  ok   e0807_comptime_string.ei     E0807 at 2:7
+  ok   e0807_comptime_sub_u32.ei    E0807 at 3:7
+  ok   e0807_comptime_type_first.ei E0807 at 2:7
+  ok   e0807_comptime_unwrap.ei     E0807 at 10:7
+
+compile-pass tests (compiler/tests/check/pass)
+  ok   comptime_chain.ei
+  ok   comptime_edges.ei
+  ok   comptime_generic.ei
+  ok   comptime_mod.ei
+  ok   comptime_no_io_main.ei
+  ok   comptime_tests.ei
+  ok   ffi_closure_in_unsafe.ei
+  ok   ffi_mod.ei
+  ok   ffi_types.ei
+  ok   s1_gen_option_ok.ei
+  ok   s1_gen_unused_generic.ei
+  ok   s1_generic_impl.ei
+  ok   s1_generic_impl_bad.ei
+  ok   s1_generic_shadow_type.ei
+  ok   s1_impl_on_int.ei
+  ok   s1_impl_on_list.ei
+  ok   s1_method_generic.ei
+  ok   s1_mod_ok.ei
+  ok   s1_mod_private_type.ei
+  ok   s1_mod_trait_impl_user.ei
+  ok   s1_none_annot.ei
+  ok   s1_opt_eq.ei
+  ok   s1_option_methods.ei
+  ok   s1_panic_ok.ei
+  ok   s1_prelude_unwrap_in_generic.ei
+  ok   s1_quirk_impl_concrete_args.ei
+  ok   s1_record_generic_pattern.ei
+  ok   s1_trait_generic_bound_ok.ei
+  ok   s1_trait_ok.ei
+  ok   s1_trait_quirk_name_target.ei
+  ok   s1_trait_self_ret.ei
+  ok   s1_try_ok.ei
+  ok   s1_tup_eq.ei
+  ok   s1_tup_ok.ei
+  ok   s2_gen_fn_ok.ei
+  ok   s2_heap_assign_owned.ei
+  ok   s2_heap_box_recursion.ei
+  ok   s2_heap_break_drops.ei
+  ok   s2_heap_field_push_ok.ei
+  ok   s2_heap_generic_list.ei
+  ok   s2_heap_generic_map_unify.ei
+  ok   s2_heap_inout_list.ei
+  ok   s2_heap_list_in_list.ei
+  ok   s2_heap_map_key_str.ei
+  ok   s2_heap_nested_generic.ei
+  ok   s2_heap_return_owned.ei
+  ok   s2_heap_tuple_owned.ei
+  ok   s2_heap_while_cond_owned.ei
+  ok   s3_clo_capture_shadow.ei
+  ok   s3_clo_generic_infer.ei
+  ok   s3_clo_generic_infer_fn.ei
+  ok   s3_clo_nested.ei
+  ok   s3_clo_never.ei
+  ok   s3_clo_ok.ei
+  ok   s3_clo_return_in_block.ei
+  ok   s3_clo_try_block.ei
+  ok   thr_generic.ei
+  ok   thr_no_capability.ei
+  ok   thr_types.ei
+  ok   v0_language.ei
+  ok   v0_modules.ei
+
+544 passed, 0 failed; error-code coverage 38/42
+codes without a compile-fail test: E0302 E0402 E0806 E0808
+--- exit 0

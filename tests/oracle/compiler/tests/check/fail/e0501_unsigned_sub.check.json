@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_unsigned_sub.ei","line":3,"col":20},"message":"1 - 2 = -1 doesn't fit in u32","help":"use the wrapping operator `-%` if overflow is intended"}

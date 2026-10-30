@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/cast_type.ei","line":2,"col":18},"message":"expected a type"}

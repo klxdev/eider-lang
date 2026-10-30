@@ -1,0 +1,1 @@
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_gen_needs_args.ei","line":3,"col":20},"message":"type `Box2` needs 1 type argument(s): `Box2[...]`"}

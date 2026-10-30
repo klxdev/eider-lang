@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_negate_bool.ei","line":3,"col":13},"message":"cannot negate a value of type bool"}

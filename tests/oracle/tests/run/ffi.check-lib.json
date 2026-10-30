@@ -1,0 +1,1 @@
+{"error":"E0805","span":{"file":"tests/run/ffi.ei","line":1,"col":1},"message":"a library needs at least one `export fn`"}

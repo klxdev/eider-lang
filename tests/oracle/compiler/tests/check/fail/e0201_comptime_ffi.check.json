@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_comptime_ffi.ei","line":3,"col":34},"message":"call to `abs` requires capability `ffi`","help":"`comptime` evaluation can't use capabilities"}

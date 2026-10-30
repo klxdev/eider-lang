@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_hint_into_branches.ei","line":3,"col":35},"message":"literal 256 doesn't fit in u8 (max 255)"}

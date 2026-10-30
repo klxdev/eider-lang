@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_unwrap_unknown_method.ei","line":3,"col":15},"message":"type Option[i32] has no method `frob`"}

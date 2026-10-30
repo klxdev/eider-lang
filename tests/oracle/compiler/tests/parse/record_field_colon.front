@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/record_field_colon.ei","line":1,"col":14},"message":"expected `:`"}

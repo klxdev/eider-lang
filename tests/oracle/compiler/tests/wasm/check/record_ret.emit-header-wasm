@@ -1,0 +1,5 @@
+error[E0806]: return type P isn't supported for WebAssembly exports (integers, bool, or ())
+  --> compiler/tests/wasm/check/record_ret.ei:3:11
+  |
+3 | export fn origin(n: i32) -> P { return P(n, n) }
+  |           ^

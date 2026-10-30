@@ -1,0 +1,1 @@
+{"error":"E0306","span":{"file":"compiler/tests/check/fail/e0306_break_in_match_arm.ei","line":4,"col":14},"message":"`break`/`continue` outside of a loop"}

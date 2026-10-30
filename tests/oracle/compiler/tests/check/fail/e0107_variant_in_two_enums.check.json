@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_variant_in_two_enums.ei","line":3,"col":12},"message":"variant `Y` is already defined (variant names must be unique)"}

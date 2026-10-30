@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_huge_literal.ei","line":3,"col":13},"message":"literal 170141183460469231731687303715884105727 doesn't fit in i32 (max 2147483647)"}

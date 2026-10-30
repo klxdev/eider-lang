@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_cast_constant.ei","line":3,"col":26},"message":"300 doesn't fit in u8"}

@@ -1,0 +1,6 @@
+10
+20
+30
+--- stderr
+eider: runtime error: index out of bounds (compiler/tests/run/trap_index.ei:3)
+--- exit 101

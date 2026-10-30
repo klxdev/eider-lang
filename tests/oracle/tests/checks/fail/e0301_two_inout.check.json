@@ -1,0 +1,1 @@
+{"error":"E0301","span":{"file":"tests/checks/fail/e0301_two_inout.ei","line":6,"col":23},"message":"`p` is borrowed mutably more than once in this call"}

@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_fn_named_like_variant.ei","line":3,"col":4},"message":"`X` is already defined"}

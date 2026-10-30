@@ -1,0 +1,18 @@
+test passes ... ok
+test prints, then passes ... inside a test
+42
+ok
+test fails on an assert ... before the assert
+FAILED
+    arithmetic (compiler/tests/run/tests.ei:30)
+test passes after a failure ... ok
+test traps deep in a call ... FAILED
+    division by zero (compiler/tests/run/tests.ei:8)
+test 100% "quoted" name	with tab ... ok
+test panics ... FAILED
+    counter at one (compiler/tests/run/tests.ei:50)
+test last one passes ... ok
+
+8 tests, 3 failed
+--- stderr
+--- exit 1

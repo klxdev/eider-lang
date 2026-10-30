@@ -1,0 +1,1 @@
+{"error":"E0110","span":{"file":"compiler/tests/check/fail/e0110_mod_test_local_named_like_fn.ei","line":8,"col":12},"message":"`test_shadow.helper` is a function; call it with `test_shadow.helper(...)`"}

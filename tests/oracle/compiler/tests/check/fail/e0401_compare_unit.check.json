@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_compare_unit.ei","line":4,"col":17},"message":"cannot compare values of type ()"}

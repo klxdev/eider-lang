@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/import_alias_utf8.ei","line":5,"col":15},"message":"expected a name"}

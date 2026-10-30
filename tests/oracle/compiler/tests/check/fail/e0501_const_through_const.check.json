@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_const_through_const.ei","line":3,"col":17},"message":"200 + 200 = 400 doesn't fit in u8","help":"use the wrapping operator `+%` if overflow is intended"}

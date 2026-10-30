@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"tests/checks/fail/e0201_not_propagated.ei","line":4,"col":3},"message":"call to `log` requires capability `io`","fix":{"at":{"line":3,"col":23},"delete":0,"insert":", io"}}

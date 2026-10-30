@@ -1,0 +1,1 @@
+{"error":"E0808","span":{"file":"tests/checks/fail/e0808_module_name_clash.ei","line":3,"col":1},"message":"two different modules are both named `geometry` (<root>/tests/checks/fail/lib/geometry.ei and <root>/tests/checks/fail/lib2/geometry.ei)","help":"rename one of the files; a module's name is its file name"}

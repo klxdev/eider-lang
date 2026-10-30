@@ -1,0 +1,1 @@
+{"error":"E0304","span":{"file":"tests/checks/fail/e0304_missing_inout_at_call.ei","line":5,"col":8},"message":"parameter `n` is `inout`; pass the argument as `inout ...`","fix":{"at":{"line":5,"col":8},"delete":0,"insert":"inout "}}

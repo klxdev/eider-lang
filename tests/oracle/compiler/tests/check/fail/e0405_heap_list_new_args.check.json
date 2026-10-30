@@ -1,0 +1,1 @@
+{"error":"E0405","span":{"file":"compiler/tests/check/fail/e0405_heap_list_new_args.ei","line":2,"col":37},"message":"`List.new` takes no arguments"}

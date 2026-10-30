@@ -1,0 +1,1 @@
+{"error":"E0114","span":{"file":"compiler/tests/check/fail/e0114_mod_static_variant.ei","line":4,"col":26},"message":"enum `shapes.Color` has no variant `Red`"}

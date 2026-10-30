@@ -1,0 +1,1 @@
+{"error":"E0110","span":{"file":"compiler/tests/check/fail/e0110_assign_to_variant.ei","line":4,"col":5},"message":"unknown name `R`"}

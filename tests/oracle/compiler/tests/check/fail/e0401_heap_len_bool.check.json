@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_len_bool.ei","line":2,"col":25},"message":"`len` needs an array, List, Map or String, found bool"}

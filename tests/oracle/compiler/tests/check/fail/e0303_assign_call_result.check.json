@@ -1,0 +1,1 @@
+{"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_assign_call_result.ei","line":5,"col":10},"message":"cannot assign to this expression"}

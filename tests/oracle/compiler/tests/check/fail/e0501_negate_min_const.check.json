@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_negate_min_const.ei","line":3,"col":16},"message":"negating -2147483648 overflows i32"}

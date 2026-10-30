@@ -1,0 +1,1 @@
+{"error":"E0301","span":{"file":"tests/checks/fail/e0301_inout_and_read.ei","line":6,"col":14},"message":"`p` is borrowed mutably by another argument of this call and can't be read here"}

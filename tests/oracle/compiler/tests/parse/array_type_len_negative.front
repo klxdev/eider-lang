@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/array_type_len_negative.ei","line":1,"col":15},"message":"expected array length (integer literal)"}

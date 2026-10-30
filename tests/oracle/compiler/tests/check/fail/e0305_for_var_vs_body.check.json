@@ -1,0 +1,1 @@
+{"error":"E0305","span":{"file":"compiler/tests/check/fail/e0305_for_var_vs_body.ei","line":5,"col":9},"message":"`i` is already declared in this scope","help":"assign to it (declare with `var`), or pick a different name"}

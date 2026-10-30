@@ -1,0 +1,1 @@
+{"error":"E0801","span":{"file":"compiler/tests/check/fail/e0801_mod_private_const.ei","line":4,"col":11},"message":"constant `shapes.HIDDEN` is private to module `compiler/tests/check/fail/../lib/shapes.ei`"}

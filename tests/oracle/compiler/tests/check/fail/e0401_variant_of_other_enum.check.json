@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_variant_of_other_enum.ei","line":6,"col":9},"message":"`Z` is a variant of B, but the value has type A"}

@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_map_in_record_eq.ei","line":5,"col":15},"message":"`==` is not supported for R (Maps have no structural equality)"}

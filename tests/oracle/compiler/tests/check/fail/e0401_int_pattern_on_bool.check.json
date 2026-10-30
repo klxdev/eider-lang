@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_int_pattern_on_bool.ei","line":4,"col":9},"message":"expected bool, found i32"}

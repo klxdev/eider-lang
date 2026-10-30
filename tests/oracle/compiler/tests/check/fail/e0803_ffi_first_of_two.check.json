@@ -1,0 +1,1 @@
+{"error":"E0803","span":{"file":"compiler/tests/check/fail/e0803_ffi_first_of_two.ei","line":3,"col":19},"message":"parameter `s` has type String, which can't cross the C boundary","help":"C-safe types: integers, bool, str (const char*), and records made only of those (export only)"}

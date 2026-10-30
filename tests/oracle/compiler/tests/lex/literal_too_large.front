@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex/literal_too_large.ei","line":2,"col":13},"message":"integer literal too large"}

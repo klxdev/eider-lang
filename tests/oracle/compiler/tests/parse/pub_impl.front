@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/pub_impl.ei","line":2,"col":5},"message":"`pub` doesn't apply to `impl`; methods follow the visibility of their type"}

@@ -1,0 +1,1 @@
+{"error":"E0114","span":{"file":"compiler/tests/check/fail/e0114_unknown_constructor_pattern.ei","line":5,"col":9},"message":"type C has no variant or constructor `Q`"}

@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_list_of_map_eq.ei","line":3,"col":15},"message":"`==` is not supported for List[Map[i32, i32]] (Maps have no structural equality)"}

@@ -1,0 +1,1 @@
+{"error":"E0101","span":{"file":"compiler/tests/check/fail/e0101_mod_witness.ei","line":4,"col":5},"message":"non-exhaustive match: `shapes.Green` is not handled","help":"add an arm for it, or a `_` arm"}

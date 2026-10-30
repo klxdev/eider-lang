@@ -1,0 +1,1 @@
+{"error":"E0409","span":{"file":"compiler/tests/check/fail/e0409_clo_block_no_ret.ei","line":2,"col":30},"message":"cannot infer the closure's return type","help":"write it: `|x| -> i32 { ... }`"}

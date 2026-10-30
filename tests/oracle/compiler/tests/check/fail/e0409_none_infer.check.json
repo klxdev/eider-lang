@@ -1,0 +1,1 @@
+{"error":"E0409","span":{"file":"compiler/tests/check/fail/e0409_none_infer.ei","line":2,"col":21},"message":"cannot infer type parameter `E` of `Result`","help":"add a type annotation, e.g. `let x: Option[i32] = None`"}

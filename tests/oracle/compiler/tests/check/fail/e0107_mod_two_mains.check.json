@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_mod_two_mains.ei","line":3,"col":4},"message":"`main` is already defined"}

@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"tests/checks/fail/e0107_duplicate_fn.ei","line":3,"col":4},"message":"`f` is already defined"}

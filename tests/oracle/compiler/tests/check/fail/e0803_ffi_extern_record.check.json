@@ -1,0 +1,1 @@
+{"error":"E0803","span":{"file":"compiler/tests/check/fail/e0803_ffi_extern_record.ei","line":3,"col":28},"message":"parameter `p` has type P, which can't cross the C boundary","help":"C-safe types: integers, bool, str (const char*), and records made only of those (export only)"}

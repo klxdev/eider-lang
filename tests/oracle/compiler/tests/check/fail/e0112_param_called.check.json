@@ -1,0 +1,1 @@
+{"error":"E0112","span":{"file":"compiler/tests/check/fail/e0112_param_called.ei","line":2,"col":23},"message":"`g` has type i32, so it can't be called"}

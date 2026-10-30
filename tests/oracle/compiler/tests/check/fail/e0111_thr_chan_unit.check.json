@@ -1,0 +1,1 @@
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_thr_chan_unit.ei","line":2,"col":9},"message":"`Chan` can't hold ()"}

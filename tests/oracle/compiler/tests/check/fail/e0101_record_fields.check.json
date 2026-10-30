@@ -1,0 +1,1 @@
+{"error":"E0101","span":{"file":"compiler/tests/check/fail/e0101_record_fields.ei","line":4,"col":5},"message":"non-exhaustive match: `P(false, false)` is not handled","help":"add an arm for it, or a `_` arm"}

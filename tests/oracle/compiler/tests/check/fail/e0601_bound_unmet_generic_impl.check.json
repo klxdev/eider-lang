@@ -1,0 +1,1 @@
+{"error":"E0601","span":{"file":"compiler/tests/check/fail/e0601_bound_unmet_generic_impl.ei","line":12,"col":15},"message":"type i32 doesn't implement trait `Show` (required by `s`)"}

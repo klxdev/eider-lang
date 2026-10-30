@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_tuple_pattern.ei","line":4,"col":9},"message":"tuple pattern used on a value of type i32"}

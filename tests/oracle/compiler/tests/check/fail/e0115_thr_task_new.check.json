@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_thr_task_new.ei","line":3,"col":18},"message":"`Task` has no associated function `new`"}

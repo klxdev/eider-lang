@@ -1,0 +1,1 @@
+{"error":"E0504","span":{"file":"tests/checks/fail/e0504_nonconst_initializer.ei","line":3,"col":16},"message":"constant initializers must be literals or compile-time integer expressions"}

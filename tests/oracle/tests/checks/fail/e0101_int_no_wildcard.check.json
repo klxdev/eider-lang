@@ -1,0 +1,1 @@
+{"error":"E0101","span":{"file":"tests/checks/fail/e0101_int_no_wildcard.ei","line":3,"col":3},"message":"non-exhaustive match: `_` is not handled","help":"add an arm for it, or a `_` arm"}

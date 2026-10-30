@@ -1,0 +1,1 @@
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_heap_list_args.ei","line":2,"col":20},"message":"type `List` takes 1 type argument(s), but 2 were given"}

@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"compiler/tests/check/fail/e0001_clo_list_of_fn.ei","line":4,"col":15},"message":"only named functions can be called"}

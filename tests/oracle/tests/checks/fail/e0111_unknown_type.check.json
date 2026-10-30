@@ -1,0 +1,1 @@
+{"error":"E0111","span":{"file":"tests/checks/fail/e0111_unknown_type.ei","line":2,"col":9},"message":"unknown type `Widget`"}

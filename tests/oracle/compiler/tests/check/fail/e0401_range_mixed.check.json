@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_range_mixed.ei","line":5,"col":17},"message":"expected u8, found u32","help":"there are no implicit conversions; use an explicit cast: `value as u8`"}

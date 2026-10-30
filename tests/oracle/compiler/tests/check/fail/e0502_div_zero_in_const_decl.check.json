@@ -1,0 +1,1 @@
+{"error":"E0502","span":{"file":"compiler/tests/check/fail/e0502_div_zero_in_const_decl.ei","line":2,"col":24},"message":"division by zero"}

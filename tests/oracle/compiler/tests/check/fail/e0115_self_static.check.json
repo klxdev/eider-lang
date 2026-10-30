@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_self_static.ei","line":4,"col":24},"message":"`Sq.get` takes `self`; call it as `value.get(...)`"}

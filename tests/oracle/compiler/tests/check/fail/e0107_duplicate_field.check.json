@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_duplicate_field.ei","line":2,"col":28},"message":"duplicate field `x`"}

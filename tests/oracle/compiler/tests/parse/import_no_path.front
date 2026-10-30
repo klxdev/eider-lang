@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/import_no_path.ei","line":1,"col":8},"message":"expected a file path string after `import`, e.g. `import \"util.ei\"`"}

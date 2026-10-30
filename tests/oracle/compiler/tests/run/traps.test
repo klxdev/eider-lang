@@ -1,0 +1,225 @@
+test passes before the traps ... ok
+test i32 add overflows ... FAILED
+    integer overflow in + (compiler/tests/run/traps.ei:18)
+test i32 sub overflows ... FAILED
+    integer overflow in - (compiler/tests/run/traps.ei:23)
+test i32 mul overflows ... FAILED
+    integer overflow in * (compiler/tests/run/traps.ei:28)
+test i32 div by zero ... FAILED
+    division by zero (compiler/tests/run/traps.ei:33)
+test i32 rem by zero ... FAILED
+    remainder by zero (compiler/tests/run/traps.ei:38)
+test i32 add overflows below ... FAILED
+    integer overflow in + (compiler/tests/run/traps.ei:43)
+test i32 sub overflows above ... FAILED
+    integer overflow in - (compiler/tests/run/traps.ei:48)
+test i32 mul overflows negative ... FAILED
+    integer overflow in * (compiler/tests/run/traps.ei:53)
+test i32 mul min by -1 ... FAILED
+    integer overflow in * (compiler/tests/run/traps.ei:58)
+test i32 div overflows ... FAILED
+    integer overflow in / (compiler/tests/run/traps.ei:63)
+test i32 rem overflows ... FAILED
+    integer overflow in % (compiler/tests/run/traps.ei:68)
+test i32 negation overflows ... FAILED
+    integer overflow in negation (compiler/tests/run/traps.ei:73)
+test i32 compound assignment overflows ... FAILED
+    integer overflow in + (compiler/tests/run/traps.ei:79)
+test i64 add overflows ... FAILED
+    integer overflow in + (compiler/tests/run/traps.ei:83)
+test i64 sub overflows ... FAILED
+    integer overflow in - (compiler/tests/run/traps.ei:88)
+test i64 mul overflows ... FAILED
+    integer overflow in * (compiler/tests/run/traps.ei:93)
+test i64 div by zero ... FAILED
+    division by zero (compiler/tests/run/traps.ei:98)
+test i64 rem by zero ... FAILED
+    remainder by zero (compiler/tests/run/traps.ei:103)
+test i64 add overflows below ... FAILED
+    integer overflow in + (compiler/tests/run/traps.ei:108)
+test i64 sub overflows above ... FAILED
+    integer overflow in - (compiler/tests/run/traps.ei:113)
+test i64 mul overflows negative ... FAILED
+    integer overflow in * (compiler/tests/run/traps.ei:118)
+test i64 mul min by -1 ... FAILED
+    integer overflow in * (compiler/tests/run/traps.ei:123)
+test i64 div overflows ... FAILED
+    integer overflow in / (compiler/tests/run/traps.ei:128)
+test i64 rem overflows ... FAILED
+    integer overflow in % (compiler/tests/run/traps.ei:133)
+test i64 negation overflows ... FAILED
+    integer overflow in negation (compiler/tests/run/traps.ei:138)
+test i64 compound assignment overflows ... FAILED
+    integer overflow in + (compiler/tests/run/traps.ei:144)
+test u8 add overflows ... FAILED
+    integer overflow in + (compiler/tests/run/traps.ei:148)
+test u8 sub overflows ... FAILED
+    integer overflow in - (compiler/tests/run/traps.ei:153)
+test u8 mul overflows ... FAILED
+    integer overflow in * (compiler/tests/run/traps.ei:158)
+test u8 div by zero ... FAILED
+    division by zero (compiler/tests/run/traps.ei:163)
+test u8 rem by zero ... FAILED
+    remainder by zero (compiler/tests/run/traps.ei:168)
+test u8 sub below zero ... FAILED
+    integer overflow in - (compiler/tests/run/traps.ei:173)
+test u8 compound assignment overflows ... FAILED
+    integer overflow in + (compiler/tests/run/traps.ei:179)
+test u32 add overflows ... FAILED
+    integer overflow in + (compiler/tests/run/traps.ei:183)
+test u32 sub overflows ... FAILED
+    integer overflow in - (compiler/tests/run/traps.ei:188)
+test u32 mul overflows ... FAILED
+    integer overflow in * (compiler/tests/run/traps.ei:193)
+test u32 div by zero ... FAILED
+    division by zero (compiler/tests/run/traps.ei:198)
+test u32 rem by zero ... FAILED
+    remainder by zero (compiler/tests/run/traps.ei:203)
+test u32 sub below zero ... FAILED
+    integer overflow in - (compiler/tests/run/traps.ei:208)
+test u32 compound assignment overflows ... FAILED
+    integer overflow in + (compiler/tests/run/traps.ei:214)
+test u64 add overflows ... FAILED
+    integer overflow in + (compiler/tests/run/traps.ei:218)
+test u64 sub overflows ... FAILED
+    integer overflow in - (compiler/tests/run/traps.ei:223)
+test u64 mul overflows ... FAILED
+    integer overflow in * (compiler/tests/run/traps.ei:228)
+test u64 div by zero ... FAILED
+    division by zero (compiler/tests/run/traps.ei:233)
+test u64 rem by zero ... FAILED
+    remainder by zero (compiler/tests/run/traps.ei:238)
+test u64 sub below zero ... FAILED
+    integer overflow in - (compiler/tests/run/traps.ei:243)
+test u64 compound assignment overflows ... FAILED
+    integer overflow in + (compiler/tests/run/traps.ei:249)
+test usize add overflows ... FAILED
+    integer overflow in + (compiler/tests/run/traps.ei:253)
+test usize sub overflows ... FAILED
+    integer overflow in - (compiler/tests/run/traps.ei:258)
+test usize mul overflows ... FAILED
+    integer overflow in * (compiler/tests/run/traps.ei:263)
+test usize div by zero ... FAILED
+    division by zero (compiler/tests/run/traps.ei:268)
+test usize rem by zero ... FAILED
+    remainder by zero (compiler/tests/run/traps.ei:273)
+test usize sub below zero ... FAILED
+    integer overflow in - (compiler/tests/run/traps.ei:278)
+test usize compound assignment overflows ... FAILED
+    integer overflow in + (compiler/tests/run/traps.ei:284)
+test i32 (-2147483647 - 1) as u8 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:288)
+test i32 -1 as u8 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:292)
+test i32 256 as u8 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:296)
+test i32 2147483647 as u8 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:300)
+test i32 (-2147483647 - 1) as u32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:304)
+test i32 -1 as u32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:308)
+test i32 (-2147483647 - 1) as u64 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:312)
+test i32 -1 as u64 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:316)
+test i32 (-2147483647 - 1) as usize ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:320)
+test i32 -1 as usize ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:324)
+test i64 (-9223372036854775807 - 1) as i32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:328)
+test i64 -2147483649 as i32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:332)
+test i64 2147483648 as i32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:336)
+test i64 9223372036854775807 as i32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:340)
+test i64 (-9223372036854775807 - 1) as u8 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:344)
+test i64 -1 as u8 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:348)
+test i64 256 as u8 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:352)
+test i64 9223372036854775807 as u8 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:356)
+test i64 (-9223372036854775807 - 1) as u32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:360)
+test i64 -1 as u32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:364)
+test i64 4294967296 as u32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:368)
+test i64 9223372036854775807 as u32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:372)
+test i64 (-9223372036854775807 - 1) as u64 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:376)
+test i64 -1 as u64 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:380)
+test i64 (-9223372036854775807 - 1) as usize ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:384)
+test i64 -1 as usize ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:388)
+test u32 2147483648 as i32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:392)
+test u32 4294967295 as i32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:396)
+test u32 256 as u8 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:400)
+test u32 4294967295 as u8 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:404)
+test u64 2147483648 as i32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:408)
+test u64 18446744073709551615 as i32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:412)
+test u64 9223372036854775808 as i64 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:416)
+test u64 18446744073709551615 as i64 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:420)
+test u64 256 as u8 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:424)
+test u64 18446744073709551615 as u8 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:428)
+test u64 4294967296 as u32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:432)
+test u64 18446744073709551615 as u32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:436)
+test usize 2147483648 as i32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:440)
+test usize 18446744073709551615 as i32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:444)
+test usize 9223372036854775808 as i64 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:448)
+test usize 18446744073709551615 as i64 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:452)
+test usize 256 as u8 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:456)
+test usize 18446744073709551615 as u8 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:460)
+test usize 4294967296 as u32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:464)
+test usize 18446744073709551615 as u32 ... FAILED
+    integer conversion out of range (compiler/tests/run/traps.ei:468)
+test index past the end ... FAILED
+    index out of bounds (compiler/tests/run/traps.ei:473)
+test index far past the end ... FAILED
+    index out of bounds (compiler/tests/run/traps.ei:478)
+test store out of bounds ... FAILED
+    index out of bounds (compiler/tests/run/traps.ei:483)
+test inner index of a nested array ... FAILED
+    index out of bounds (compiler/tests/run/traps.ei:489)
+test outer index of a nested array ... FAILED
+    index out of bounds (compiler/tests/run/traps.ei:494)
+test passes between the traps ... ok
+test inout argument out of bounds ... FAILED
+    index out of bounds (compiler/tests/run/traps.ei:508)
+test panic ... FAILED
+    explicit panic (compiler/tests/run/traps.ei:512)
+test assert without a message ... FAILED
+    assertion failed (compiler/tests/run/traps.ei:516)
+test assert with a message ... FAILED
+    one is not two (compiler/tests/run/traps.ei:520)
+test passes at the end ... ok
+
+112 tests, 109 failed
+--- stderr
+--- exit 1

@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_method_on_array.ei","line":4,"col":15},"message":"type [i32; 3] has no method `len`"}

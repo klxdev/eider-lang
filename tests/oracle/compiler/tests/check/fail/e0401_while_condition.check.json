@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_while_condition.ei","line":3,"col":11},"message":"expected bool, found i32"}

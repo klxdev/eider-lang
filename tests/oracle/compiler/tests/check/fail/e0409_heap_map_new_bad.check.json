@@ -1,0 +1,1 @@
+{"error":"E0409","span":{"file":"compiler/tests/check/fail/e0409_heap_map_new_bad.ei","line":2,"col":25},"message":"cannot infer the type arguments of `Map`","help":"annotate the binding, e.g. `let x: Map[str, i32] = Map.new()`"}

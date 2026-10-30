@@ -1,0 +1,1 @@
+{"error":"E0304","span":{"file":"tests/checks/fail/e0304_unexpected_inout.ei","line":5,"col":14},"message":"parameter `n` is not `inout`; remove the `inout`"}

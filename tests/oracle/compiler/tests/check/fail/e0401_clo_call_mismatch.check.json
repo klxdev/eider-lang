@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_clo_call_mismatch.ei","line":3,"col":15},"message":"expected i32, found bool"}

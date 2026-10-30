@@ -1,0 +1,1 @@
+{"error":"E0405","span":{"file":"compiler/tests/check/fail/e0405_thr_update_none.ei","line":4,"col":7},"message":"`update` takes exactly one closure"}

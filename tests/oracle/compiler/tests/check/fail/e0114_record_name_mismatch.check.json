@@ -1,0 +1,1 @@
+{"error":"E0114","span":{"file":"compiler/tests/check/fail/e0114_record_name_mismatch.ei","line":6,"col":9},"message":"type P has no variant or constructor `Q`"}

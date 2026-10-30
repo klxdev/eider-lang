@@ -1,0 +1,1 @@
+{"error":"E0806","span":{"file":"compiler/tests/wasm/check/ret_str.ei","line":2,"col":11},"message":"return type str isn't supported for WebAssembly exports (integers, bool, or ())"}

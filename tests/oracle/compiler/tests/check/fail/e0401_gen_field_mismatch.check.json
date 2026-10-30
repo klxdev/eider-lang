@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_gen_field_mismatch.ei","line":3,"col":29},"message":"expected i32, found bool"}

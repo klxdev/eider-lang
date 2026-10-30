@@ -1,0 +1,1 @@
+{"error":"E0406","span":{"file":"compiler/tests/check/fail/e0406_try_wrong_ret.ei","line":3,"col":40},"message":"`?` on a Result needs the enclosing function to return a Result, but it returns Option[u32]"}

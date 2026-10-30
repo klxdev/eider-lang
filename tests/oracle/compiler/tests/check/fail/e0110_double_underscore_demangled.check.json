@@ -1,0 +1,1 @@
+{"error":"E0110","span":{"file":"compiler/tests/check/fail/e0110_double_underscore_demangled.ei","line":3,"col":13},"message":"unknown name `foo.bar`"}

@@ -1,0 +1,1 @@
+{"error":"E0113","span":{"file":"compiler/tests/check/fail/e0113_tup_bad_field_name.ei","line":3,"col":15},"message":"tuple (i32, i32) has no element `foo`"}

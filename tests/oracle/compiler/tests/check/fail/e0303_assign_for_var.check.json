@@ -1,0 +1,1 @@
+{"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_assign_for_var.ei","line":4,"col":9},"message":"cannot assign to `i`: it is not mutable","help":"parameters are immutable; declare it `inout` to modify the caller's value"}

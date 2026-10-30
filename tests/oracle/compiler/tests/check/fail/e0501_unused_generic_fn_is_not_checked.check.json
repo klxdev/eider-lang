@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_unused_generic_fn_is_not_checked.ei","line":5,"col":17},"message":"literal 300 doesn't fit in u8 (max 255)"}

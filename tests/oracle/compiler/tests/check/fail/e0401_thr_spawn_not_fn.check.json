@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_thr_spawn_not_fn.ei","line":3,"col":19},"message":"`spawn` needs a closure with no parameters, found i32"}

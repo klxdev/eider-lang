@@ -1,0 +1,1 @@
+{"error":"E0602","span":{"file":"compiler/tests/check/fail/e0602_trait_missing_method.ei","line":5,"col":1},"message":"impl of `Area` is missing method `name`"}

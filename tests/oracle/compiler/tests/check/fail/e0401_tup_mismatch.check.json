@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_tup_mismatch.ei","line":2,"col":34},"message":"expected (i32, bool), found (i32, i32)"}

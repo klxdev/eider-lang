@@ -1,0 +1,1 @@
+{"error":"E0807","span":{"file":"compiler/tests/check/fail/e0807_comptime_sub_u32.ei","line":3,"col":7},"message":"comptime evaluation of `A` failed: eider: runtime error: integer overflow in - (program:2)"}

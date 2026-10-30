@@ -1,0 +1,1 @@
+{"error":"E0112","span":{"file":"compiler/tests/check/fail/e0112_enum_called.ei","line":4,"col":13},"message":"unknown function `C`"}

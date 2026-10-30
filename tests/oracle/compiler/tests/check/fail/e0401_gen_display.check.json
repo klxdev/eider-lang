@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_gen_display.ei","line":4,"col":22},"message":"expected W[bool], found W[i32]"}

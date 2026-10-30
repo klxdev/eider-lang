@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/test_name.ei","line":1,"col":6},"message":"expected test name string"}

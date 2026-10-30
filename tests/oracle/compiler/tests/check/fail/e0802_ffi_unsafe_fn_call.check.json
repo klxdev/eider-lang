@@ -1,0 +1,1 @@
+{"error":"E0802","span":{"file":"compiler/tests/check/fail/e0802_ffi_unsafe_fn_call.ei","line":4,"col":11},"message":"call to unsafe function `danger` is only allowed in an `unsafe` block or `unsafe fn`","help":"wrap the call: `unsafe { ... }`"}

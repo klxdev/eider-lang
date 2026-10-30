@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_tup_unit_elem.ei","line":3,"col":25},"message":"tuple elements can't be ()"}

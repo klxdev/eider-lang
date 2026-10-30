@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_gen_body_error.ei","line":2,"col":34},"message":"literal 300 doesn't fit in u8 (max 255)"}

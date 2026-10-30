@@ -1,0 +1,1 @@
+{"error":"E0804","span":{"file":"tests/checks/fail/e0804_missing_module.ei","line":2,"col":1},"message":"cannot read module `tests/checks/fail/lib/nope.ei`: No such file or directory (os error 2)"}

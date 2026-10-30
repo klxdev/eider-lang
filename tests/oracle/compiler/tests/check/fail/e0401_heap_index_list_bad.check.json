@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_index_list_bad.ei","line":3,"col":15},"message":"expected usize, found bool"}

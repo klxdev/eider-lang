@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/repeat_close.ei","line":2,"col":19},"message":"expected `]`"}

@@ -1,0 +1,1 @@
+{"error":"E0113","span":{"file":"compiler/tests/check/fail/e0113_field_of_array.ei","line":4,"col":15},"message":"type [i32; 2] has no fields"}

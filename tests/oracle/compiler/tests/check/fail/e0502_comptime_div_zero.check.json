@@ -1,0 +1,1 @@
+{"error":"E0502","span":{"file":"compiler/tests/check/fail/e0502_comptime_div_zero.ei","line":2,"col":29},"message":"division by zero"}

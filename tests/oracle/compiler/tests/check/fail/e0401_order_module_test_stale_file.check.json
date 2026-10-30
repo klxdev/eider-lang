@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_order_module_test_stale_file.ei","line":5,"col":18},"message":"expected i32, found bool"}

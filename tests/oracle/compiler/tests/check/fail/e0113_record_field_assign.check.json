@@ -1,0 +1,1 @@
+{"error":"E0113","span":{"file":"compiler/tests/check/fail/e0113_record_field_assign.ei","line":5,"col":7},"message":"type `P` has no field `y`"}

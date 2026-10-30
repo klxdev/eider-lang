@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_branch_literal_default.ei","line":3,"col":29},"message":"branches have different types: i32 and u8"}

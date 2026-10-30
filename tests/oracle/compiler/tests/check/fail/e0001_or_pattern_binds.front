@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/check/fail/e0001_or_pattern_binds.ei","line":4,"col":13},"message":"or-patterns can't bind names"}

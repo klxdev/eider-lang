@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_panic_non_str.ei","line":3,"col":11},"message":"expected str, found i32"}

@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_map_get_wrong.ei","line":3,"col":29},"message":"expected Option[bool], found Option[i32]"}

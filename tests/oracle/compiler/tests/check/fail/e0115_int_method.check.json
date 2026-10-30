@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_int_method.ei","line":2,"col":23},"message":"type i32 has no method `get`"}

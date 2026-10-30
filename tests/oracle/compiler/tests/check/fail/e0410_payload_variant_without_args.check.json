@@ -1,0 +1,1 @@
+{"error":"E0410","span":{"file":"compiler/tests/check/fail/e0410_payload_variant_without_args.ei","line":5,"col":9},"message":"variant `Circle` has 1 field(s); write `Circle(...)`"}

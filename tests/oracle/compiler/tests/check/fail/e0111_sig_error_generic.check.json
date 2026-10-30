@@ -1,0 +1,1 @@
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_sig_error_generic.ei","line":3,"col":12},"message":"type `W` needs 1 type argument(s): `W[...]`"}

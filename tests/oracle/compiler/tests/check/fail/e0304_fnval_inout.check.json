@@ -1,0 +1,1 @@
+{"error":"E0304","span":{"file":"compiler/tests/check/fail/e0304_fnval_inout.ei","line":3,"col":37},"message":"`bump` has `inout` parameters and can't be used as a value"}

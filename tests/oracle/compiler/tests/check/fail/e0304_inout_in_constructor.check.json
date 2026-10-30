@@ -1,0 +1,1 @@
+{"error":"E0304","span":{"file":"compiler/tests/check/fail/e0304_inout_in_constructor.ei","line":5,"col":21},"message":"`inout` is not allowed here"}

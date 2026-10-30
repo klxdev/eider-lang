@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_second_capability.ei","line":4,"col":5},"message":"call to `tick` requires capability `clock`","fix":{"at":{"line":3,"col":18},"delete":0,"insert":", clock"}}

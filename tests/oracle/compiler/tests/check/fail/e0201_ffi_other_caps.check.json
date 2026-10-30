@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_ffi_other_caps.ei","line":4,"col":22},"message":"call to `abs` requires capability `ffi`","fix":{"at":{"line":3,"col":18},"delete":0,"insert":", ffi"}}

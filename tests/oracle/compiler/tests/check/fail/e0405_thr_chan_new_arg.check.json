@@ -1,0 +1,1 @@
+{"error":"E0405","span":{"file":"compiler/tests/check/fail/e0405_thr_chan_new_arg.ei","line":3,"col":29},"message":"`Chan.new` takes no arguments"}

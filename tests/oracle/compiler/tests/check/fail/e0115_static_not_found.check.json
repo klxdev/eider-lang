@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_static_not_found.ei","line":3,"col":24},"message":"type Sq has no method `get`"}

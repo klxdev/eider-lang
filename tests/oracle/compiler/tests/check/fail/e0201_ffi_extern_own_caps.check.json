@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_ffi_extern_own_caps.ei","line":4,"col":22},"message":"call to `now` requires capability `clock`","fix":{"at":{"line":3,"col":19},"delete":0,"insert":", clock"}}

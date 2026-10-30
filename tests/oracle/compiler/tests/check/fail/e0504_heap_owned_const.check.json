@@ -1,0 +1,1 @@
+{"error":"E0504","span":{"file":"compiler/tests/check/fail/e0504_heap_owned_const.ei","line":2,"col":26},"message":"constants can't own heap memory; build the value in a function instead"}

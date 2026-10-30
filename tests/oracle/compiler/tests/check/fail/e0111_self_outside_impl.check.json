@@ -1,0 +1,1 @@
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_self_outside_impl.ei","line":2,"col":9},"message":"unknown type `Self`"}

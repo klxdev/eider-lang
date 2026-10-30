@@ -1,0 +1,1 @@
+{"error":"E0301","span":{"file":"compiler/tests/check/fail/e0301_method_style_roots.ei","line":6,"col":19},"message":"`p` is borrowed mutably by another argument of this call and can't be read here"}

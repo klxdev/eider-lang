@@ -1,0 +1,6 @@
+test module constants ... ok
+test comptime constants in tests ... ok
+
+2 tests, 0 failed
+--- stderr
+--- exit 0

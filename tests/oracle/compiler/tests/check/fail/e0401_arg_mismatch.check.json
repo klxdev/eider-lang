@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_arg_mismatch.ei","line":4,"col":7},"message":"expected u8, found bool"}

@@ -1,0 +1,1 @@
+{"error":"E0302","span":{"file":"./compiler/tests/parse/inout_in_type.ei","line":1,"col":9},"message":"`inout` is only valid on function parameters; types can't hold references","help":"store the value itself, or an index into a List, or Shared[Mutex[T]]"}

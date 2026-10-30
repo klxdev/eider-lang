@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_nested_negation.ei","line":3,"col":22},"message":"literal -2147483649 doesn't fit in i32"}

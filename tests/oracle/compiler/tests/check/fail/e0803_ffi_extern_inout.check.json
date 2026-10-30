@@ -1,0 +1,1 @@
+{"error":"E0803","span":{"file":"compiler/tests/check/fail/e0803_ffi_extern_inout.ei","line":2,"col":26},"message":"`n` is `inout`; extern \"c\" functions can't take `inout` parameters"}

@@ -1,0 +1,5 @@
+error[E0803]: `n` is `inout`; export functions can't take `inout` parameters
+  --> compiler/tests/wasm/check/inout_int.ei:2:22
+  |
+2 | export fn bump(inout n: i32) -> i32 { return n }
+  |                      ^

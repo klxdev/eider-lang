@@ -1,0 +1,1 @@
+{"error":"E0101","span":{"file":"compiler/tests/check/fail/e0101_tup_refutable.ei","line":3,"col":9},"message":"refutable pattern in `let`: `(_, _)` is not matched","help":"use `match` or `if let` for patterns that can fail"}

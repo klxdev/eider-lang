@@ -1,0 +1,1 @@
+{"error":"E0110","span":{"file":"compiler/tests/check/fail/e0110_comptime_plain_const.ei","line":3,"col":16},"message":"unknown name `A`"}

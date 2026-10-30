@@ -1,0 +1,1 @@
+{"error":"E0410","span":{"file":"compiler/tests/check/fail/e0410_record_pattern_arity.ei","line":5,"col":9},"message":"`P` has 2 field(s), but the pattern has 1"}

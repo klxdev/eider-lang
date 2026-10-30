@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_return_in_match_arm.ei","line":4,"col":21},"message":"expected bool, found i32"}

@@ -1,0 +1,1 @@
+{"error":"E0112","span":{"file":"compiler/tests/check/fail/e0112_mod_unknown_function.ei","line":4,"col":5},"message":"unknown function `shapes.nothing`"}

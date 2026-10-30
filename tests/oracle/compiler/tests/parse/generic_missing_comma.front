@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/generic_missing_comma.ei","line":1,"col":8},"message":"expected `,`"}

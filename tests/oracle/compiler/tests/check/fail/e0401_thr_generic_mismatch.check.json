@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_thr_generic_mismatch.ei","line":6,"col":20},"message":"expected Mutex[i32], found Mutex[bool]"}

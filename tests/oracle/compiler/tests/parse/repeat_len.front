@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/repeat_len.ei","line":2,"col":17},"message":"expected a positive integer literal for the array length"}

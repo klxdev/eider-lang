@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_fold_precedence.ei","line":2,"col":17},"message":"2 + 254 = 256 doesn't fit in u8","help":"use the wrapping operator `+%` if overflow is intended"}

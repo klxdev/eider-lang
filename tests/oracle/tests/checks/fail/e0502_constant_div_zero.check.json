@@ -1,0 +1,1 @@
+{"error":"E0502","span":{"file":"tests/checks/fail/e0502_constant_div_zero.ei","line":3,"col":14},"message":"division by zero"}

@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_duplicate_type.ei","line":3,"col":6},"message":"`A` is already defined"}

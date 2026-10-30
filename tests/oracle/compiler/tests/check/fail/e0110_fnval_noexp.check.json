@@ -1,0 +1,1 @@
+{"error":"E0110","span":{"file":"compiler/tests/check/fail/e0110_fnval_noexp.ei","line":3,"col":21},"message":"`neg` is a function; call it with `neg(...)`"}

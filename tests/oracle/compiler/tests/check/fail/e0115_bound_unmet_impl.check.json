@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_bound_unmet_impl.ei","line":5,"col":36},"message":"type i32 has no method `area`"}

@@ -1,0 +1,1 @@
+{"error":"E0406","span":{"file":"tests/checks/fail/e0406_try_in_non_result.ei","line":7,"col":20},"message":"`?` on a Result needs the enclosing function to return a Result, but it returns ()"}

@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_trait_dup_method.ei","line":4,"col":14},"message":"method `a` is already defined for `Sq`"}

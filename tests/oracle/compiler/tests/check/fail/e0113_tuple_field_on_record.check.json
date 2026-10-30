@@ -1,0 +1,1 @@
+{"error":"E0113","span":{"file":"compiler/tests/check/fail/e0113_tuple_field_on_record.ei","line":5,"col":15},"message":"type `P` has no field `0`"}

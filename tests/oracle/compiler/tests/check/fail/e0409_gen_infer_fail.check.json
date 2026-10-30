@@ -1,0 +1,1 @@
+{"error":"E0409","span":{"file":"compiler/tests/check/fail/e0409_gen_infer_fail.ei","line":3,"col":21},"message":"cannot infer type parameter `T` of `none`","help":"add a type annotation to the binding that receives the result"}

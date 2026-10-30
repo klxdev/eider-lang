@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex/unterminated_comment.ei","line":2,"col":1},"message":"unterminated block comment"}

@@ -1,0 +1,1 @@
+{"error":"E0502","span":{"file":"compiler/tests/check/fail/e0502_rem_zero.ei","line":2,"col":27},"message":"division by zero"}

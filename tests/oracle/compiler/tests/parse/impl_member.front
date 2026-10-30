@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/impl_member.ei","line":3,"col":5},"message":"expected `fn`"}

@@ -1,0 +1,6 @@
+test threads in a test ... ok
+test a channel in a test ... ok
+
+2 tests, 0 failed
+--- stderr
+--- exit 0

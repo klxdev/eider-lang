@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_filter_wrong_ret.ei","line":3,"col":28},"message":"expected bool, found i32"}

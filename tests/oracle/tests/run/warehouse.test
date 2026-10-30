@@ -1,0 +1,6 @@
+test reserve rolls forward and refuses shortage ... ok
+test box selection ... ok
+
+2 tests, 0 failed
+--- stderr
+--- exit 0

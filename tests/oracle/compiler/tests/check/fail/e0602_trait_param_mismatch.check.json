@@ -1,0 +1,1 @@
+{"error":"E0602","span":{"file":"compiler/tests/check/fail/e0602_trait_param_mismatch.ei","line":4,"col":21},"message":"method `f` doesn't match the signature in trait `T1`"}

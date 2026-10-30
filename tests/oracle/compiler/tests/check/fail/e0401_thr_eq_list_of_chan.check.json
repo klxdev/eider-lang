@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_thr_eq_list_of_chan.ei","line":5,"col":13},"message":"`==` is not supported for List[Chan[i32]] (Maps have no structural equality)"}

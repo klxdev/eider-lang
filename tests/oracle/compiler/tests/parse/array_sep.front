@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/array_sep.ei","line":2,"col":16},"message":"expected `,` or `]`"}

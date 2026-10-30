@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_fnval_mismatch.ei","line":3,"col":37},"message":"expected fn(i32) -> i32, found fn(i32) -> bool"}

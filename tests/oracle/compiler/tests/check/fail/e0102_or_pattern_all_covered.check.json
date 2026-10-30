@@ -1,0 +1,1 @@
+{"error":"E0102","span":{"file":"compiler/tests/check/fail/e0102_or_pattern_all_covered.ei","line":7,"col":9},"message":"unreachable arm: everything it matches is already handled above"}

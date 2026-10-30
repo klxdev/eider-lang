@@ -1,0 +1,1 @@
+{"error":"E0409","span":{"file":"compiler/tests/check/fail/e0409_fnval_generic.ei","line":3,"col":37},"message":"generic function `id` can't be used as a value; wrap it in a closure"}

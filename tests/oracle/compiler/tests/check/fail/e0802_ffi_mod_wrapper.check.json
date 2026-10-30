@@ -1,0 +1,1 @@
+{"error":"E0802","span":{"file":"compiler/tests/check/fail/e0802_ffi_mod_wrapper.ei","line":6,"col":11},"message":"call to C function `labs` is only allowed in an `unsafe` block or `unsafe fn`","help":"wrap the call: `unsafe { ... }`"}

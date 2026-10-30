@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/error_at_newline.ei","line":1,"col":13},"message":"expected `=`"}

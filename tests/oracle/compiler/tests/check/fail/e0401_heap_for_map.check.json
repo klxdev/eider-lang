@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_for_map.ei","line":3,"col":14},"message":"can't iterate over a value of type Map[i32, i32]","help":"iterate over a List or an array, or use a range: `for i in 0..n`"}

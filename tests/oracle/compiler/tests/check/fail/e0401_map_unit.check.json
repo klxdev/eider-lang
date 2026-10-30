@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_map_unit.ei","line":3,"col":19},"message":"`map` needs a closure that returns a value"}

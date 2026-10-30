@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_print_list.ei","line":3,"col":11},"message":"cannot print a value of type List[i32] yet"}

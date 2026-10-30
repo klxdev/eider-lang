@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_negate_unsigned_literal.ei","line":3,"col":18},"message":"cannot negate an unsigned integer (u32)"}

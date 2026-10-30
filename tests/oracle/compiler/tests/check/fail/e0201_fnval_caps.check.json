@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_fnval_caps.ei","line":4,"col":37},"message":"call to `loud` requires capability `io`","fix":{"at":{"line":4,"col":10},"delete":0,"insert":" uses io"}}

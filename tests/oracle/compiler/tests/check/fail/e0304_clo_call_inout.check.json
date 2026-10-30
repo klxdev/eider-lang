@@ -1,0 +1,1 @@
+{"error":"E0304","span":{"file":"compiler/tests/check/fail/e0304_clo_call_inout.ei","line":4,"col":21},"message":"closures can't take `inout` arguments"}

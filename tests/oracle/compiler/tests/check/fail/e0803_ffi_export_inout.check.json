@@ -1,0 +1,1 @@
+{"error":"E0803","span":{"file":"compiler/tests/check/fail/e0803_ffi_export_inout.ei","line":2,"col":22},"message":"`n` is `inout`; export functions can't take `inout` parameters"}

@@ -1,0 +1,1 @@
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_thr_mutex_two_args.ei","line":2,"col":9},"message":"type `Mutex` takes 1 type argument(s), but 2 were given"}

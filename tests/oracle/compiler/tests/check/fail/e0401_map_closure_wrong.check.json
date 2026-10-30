@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_map_closure_wrong.ei","line":3,"col":20},"message":"expected i32, found bool"}

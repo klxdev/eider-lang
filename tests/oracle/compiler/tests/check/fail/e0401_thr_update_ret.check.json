@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_thr_update_ret.ei","line":4,"col":14},"message":"expected fn(i32) -> i32, found fn(i32) -> bool"}

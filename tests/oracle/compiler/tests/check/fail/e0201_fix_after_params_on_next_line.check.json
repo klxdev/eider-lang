@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_fix_after_params_on_next_line.ei","line":5,"col":5},"message":"call to `print` requires capability `io`","fix":{"at":{"line":3,"col":13},"delete":0,"insert":" uses io"}}

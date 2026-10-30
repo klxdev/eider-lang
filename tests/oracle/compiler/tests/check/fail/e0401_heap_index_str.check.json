@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_index_str.ei","line":3,"col":14},"message":"cannot index a value of type String"}

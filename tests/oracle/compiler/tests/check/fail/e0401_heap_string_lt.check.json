@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_string_lt.ei","line":3,"col":15},"message":"operator < is not supported for String"}

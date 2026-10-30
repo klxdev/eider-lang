@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_print_payload_enum.ei","line":4,"col":13},"message":"cannot print a value of type S yet"}

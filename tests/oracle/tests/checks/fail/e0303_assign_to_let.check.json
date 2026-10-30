@@ -1,0 +1,1 @@
+{"error":"E0303","span":{"file":"tests/checks/fail/e0303_assign_to_let.ei","line":4,"col":3},"message":"cannot assign to `n`: it is not mutable","help":"declare `n` with `var`","fix":{"at":{"line":3,"col":3},"delete":3,"insert":"var"}}

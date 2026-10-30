@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./tests/checks/fail/e0001_missing_brace.ei","line":5,"col":1},"message":"unexpected end of file, expected `}`"}

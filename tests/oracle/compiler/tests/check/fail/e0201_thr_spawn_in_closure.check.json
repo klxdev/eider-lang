@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_thr_spawn_in_closure.ei","line":4,"col":17},"message":"call to `spawn` requires capability `threads`","fix":{"at":{"line":2,"col":18},"delete":0,"insert":", threads"}}

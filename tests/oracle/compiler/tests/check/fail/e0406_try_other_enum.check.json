@@ -1,0 +1,1 @@
+{"error":"E0406","span":{"file":"compiler/tests/check/fail/e0406_try_other_enum.ei","line":3,"col":34},"message":"`?` needs a Result or Option, found E"}

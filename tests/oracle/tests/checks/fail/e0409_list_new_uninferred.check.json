@@ -1,0 +1,1 @@
+{"error":"E0409","span":{"file":"tests/checks/fail/e0409_list_new_uninferred.ei","line":3,"col":18},"message":"cannot infer the type arguments of `List`","help":"annotate the binding, e.g. `let x: List[i32] = List.new()`"}

@@ -1,0 +1,1 @@
+{"error":"E0807","span":{"file":"compiler/tests/check/fail/../lib/ct_trap.ei","line":3,"col":11},"message":"comptime evaluation of `ct_trap.X` failed: eider: runtime error: integer overflow in + (program:2)"}

@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_ordering_bools.ei","line":3,"col":18},"message":"operator < is not supported for bool"}

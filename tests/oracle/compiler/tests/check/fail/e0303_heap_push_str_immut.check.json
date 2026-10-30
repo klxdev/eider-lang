@@ -1,0 +1,1 @@
+{"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_heap_push_str_immut.ei","line":3,"col":5},"message":"cannot modify `s`: it is not mutable","help":"declare `s` with `var`","fix":{"at":{"line":2,"col":13},"delete":3,"insert":"var"}}

@@ -1,0 +1,1 @@
+{"error":"E0409","span":{"file":"tests/checks/fail/e0409_closure_param_untyped.ei","line":3,"col":14},"message":"cannot infer the type of closure parameter `x`","help":"annotate it: `|x: i32| ...`"}

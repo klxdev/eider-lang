@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_block_value_hint.ei","line":4,"col":19},"message":"expected bool, found u8"}

@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex/escape_at_eof.ei","line":1,"col":23},"message":"unknown escape sequence"}

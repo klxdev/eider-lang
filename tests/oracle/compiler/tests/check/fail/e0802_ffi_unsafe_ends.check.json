@@ -1,0 +1,1 @@
+{"error":"E0802","span":{"file":"compiler/tests/check/fail/e0802_ffi_unsafe_ends.ei","line":5,"col":13},"message":"call to C function `abs` is only allowed in an `unsafe` block or `unsafe fn`","help":"wrap the call: `unsafe { ... }`"}

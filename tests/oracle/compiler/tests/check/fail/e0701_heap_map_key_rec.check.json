@@ -1,0 +1,1 @@
+{"error":"E0701","span":{"file":"compiler/tests/check/fail/e0701_heap_map_key_rec.ei","line":3,"col":20},"message":"R can't be a Map key; keys must be integers, bool, str or String"}

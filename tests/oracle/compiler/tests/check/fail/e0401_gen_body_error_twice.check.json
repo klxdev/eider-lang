@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_gen_body_error_twice.ei","line":2,"col":26},"message":"expected bool, found i32"}
