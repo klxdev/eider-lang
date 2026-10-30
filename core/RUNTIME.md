@@ -175,7 +175,7 @@ failure of the underlying primitive.
 | Type / function | Contract |
 |---|---|
 | `ei_rc` (`atomic_uint_least64_t`), `ei_rc_init` (=1), `ei_rc_inc`, `bool ei_rc_dec` | shared-handle count (`Task`, `Mutex`, `Chan`); `ei_rc_dec` returns `true` for the last reference, and only that caller frees. Sequentially consistent. |
-| `ei_mutex`, `ei_mutex_init/lock/unlock/destroy` | a default `pthread_mutex_t` |
+| `ei_mutex`, `ei_mutex_init/lock/unlock/destroy` | an error-checking `pthread_mutex_t`: locking it again on the thread that holds it (a `Mutex.update` closure using the same Mutex) traps `cannot lock a mutex` instead of being undefined (stage 0 deadlocks) |
 | `ei_thread`, `ei_thread_start(t, run, arg)` | starts `run(arg)` |
 | `ei_thread_join(t)` | waits once; safe from several threads at once and repeatedly (`Task.join` on shared handles) |
 | `ei_thread_destroy(t)` | joins if needed, then releases; last owner only |

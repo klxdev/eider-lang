@@ -153,7 +153,15 @@ void ei_rc_inc(ei_rc *rc) { atomic_fetch_add(rc, 1); }
 bool ei_rc_dec(ei_rc *rc) { return atomic_fetch_sub(rc, 1) == 1; }
 
 void ei_mutex_init(ei_mutex *m) {
-  if (pthread_mutex_init(&m->mu, NULL) != 0) ei_trap("cannot create a mutex", 0);
+  /* error-checking: locking a mutex this thread already holds (a `Mutex.update` closure
+     that uses the same Mutex) traps "cannot lock a mutex" instead of being undefined */
+  pthread_mutexattr_t a;
+  if (pthread_mutexattr_init(&a) != 0) ei_trap("cannot create a mutex", 0);
+  if (pthread_mutexattr_settype(&a, PTHREAD_MUTEX_ERRORCHECK) != 0 || pthread_mutex_init(&m->mu, &a) != 0) {
+    pthread_mutexattr_destroy(&a);
+    ei_trap("cannot create a mutex", 0);
+  }
+  pthread_mutexattr_destroy(&a);
 }
 void ei_mutex_lock(ei_mutex *m) {
   if (pthread_mutex_lock(&m->mu) != 0) ei_trap("cannot lock a mutex", 0);

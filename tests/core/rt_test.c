@@ -519,6 +519,10 @@ static void test_mutex_and_threads(void) {
   for (int i = 0; i < 8; i++) lasts += s[i].lasts;
   EQI(lasts, 0);
   CHECK(ei_rc_dec(&rc));
+  /* relocking a mutex this thread holds traps (error-checking mutex), it doesn't hang */
+  ei_mutex_lock(&mu);
+  TRAPS(ei_mutex_lock(&mu), "cannot lock a mutex", 0);
+  ei_mutex_unlock(&mu);
   ei_mutex_destroy(&mu);
 }
 
