@@ -216,12 +216,48 @@ fn contains(xs: List[List[u8]], x: List[u8]) -> bool {
 }
 
 /// The bootstrap's io::Error text for a file it can't read (the common cases).
-fn read_error(path: List[u8]) -> List[u8] uses fs, ffi {
+pub fn read_error(path: List[u8]) -> List[u8] uses fs, ffi {
     match fs.kind(path) {
         fs.Missing => sys.lit("No such file or directory (os error 2)")
         fs.Dir => sys.lit("Is a directory (os error 21)")
         _ => sys.lit("Permission denied (os error 13)")
     }
+}
+
+/// Where loading reads source files: the file system, except for overlay files (an
+/// editor's unsaved buffers, ide.ei), each of which replaces the file with the same
+/// canonical path. `disk()` has no overlay, and then reading is exactly fs.read.
+pub type Files = { canon: List[List[u8]], texts: List[List[u8]] }
+
+pub fn disk() -> Files { Files(List.new(), List.new()) }
+
+/// Files with `texts[i]` in place of the file at `paths[i]`.
+pub fn overlay(paths: List[List[u8]], texts: List[List[u8]]) -> Files uses fs, ffi {
+    var f = disk()
+    for i in 0..paths.len() {
+        if i < texts.len() {
+            f.canon.push(canonical(paths[i]))
+            f.texts.push(texts[i])
+        }
+    }
+    f
+}
+
+/// The contents of `path` (whose canonical path is `canon`), or None if it can't be read.
+pub fn read_file(fp: Files, path: List[u8], canon: List[u8]) -> Option[List[u8]] uses fs, ffi {
+    for i in 0..fp.canon.len() {
+        if bytes.eq(fp.canon[i], canon) { return Some(fp.texts[i]) }
+    }
+    match fs.read(path) {
+        Ok(t) => Some(t)
+        Err(_) => None
+    }
+}
+
+/// read_file for a path whose canonical form isn't known yet.
+pub fn read_source(fp: Files, path: List[u8]) -> Option[List[u8]] uses fs, ffi {
+    if fp.canon.len() == 0 { return read_file(fp, path, path) }
+    read_file(fp, path, canonical(path))
 }
 
 fn add_module(inout p: Program, path: List[u8], pre: u32, src: List[u8], q: parse.P) -> u32 {
@@ -253,13 +289,37 @@ fn parse_file(inout p: Program, path: List[u8], src: List[u8]) -> Result[parse.P
 
 /// Build the program from the parsed entry file `q` (path `file`), loading its imports.
 pub fn load(file: List[u8], src: List[u8], q: parse.P) -> Result[Program, diag.Diag] uses io, fs, ffi {
+    let l = load_from(file, src, q, disk())
+    match l.err {
+        Some(d) => Err(d)
+        None => Ok(l.p)
+    }
+}
+
+/// A loaded program, or as much of it as was loaded before the diagnostic `err`: every
+/// module read and parsed until then (ide.ei).
+pub type Loaded = { p: Program, err: Option[diag.Diag] }
+
+/// `load`, reading sources through `fp`.
+pub fn load_from(file: List[u8], src: List[u8], q: parse.P, fp: Files) -> Loaded uses io, fs, ffi {
     var p = Program(List.new(), List.new(), q.names, List.new(), List.new(), List.new(), NOMOD)
     p.seen.push(canonical(file))
     add_module(inout p, file, 0, src, q)
-    load_imports(inout p, 0)?
-    load_prelude(inout p)?
+    match load_all(inout p, fp) {
+        Ok(_) => {}
+        Err(d) => {
+            for i in 0..p.mods.len() { compute_own(inout p, i as u32) }
+            return Loaded(p, Some(d))
+        }
+    }
     for i in 0..p.mods.len() { compute_own(inout p, i as u32) }
-    Ok(p)
+    Loaded(p, None)
+}
+
+fn load_all(inout p: Program, fp: Files) -> Result[bool, diag.Diag] uses io, fs, ffi {
+    load_imports(inout p, 0, fp)?
+    load_prelude(inout p, fp)?
+    Ok(true)
 }
 
 /// The toolchain root (see the top of this file).
@@ -282,11 +342,11 @@ pub fn toolchain_root() -> List[u8] uses io, ffi {
     sys.lit(".")
 }
 
-fn load_prelude(inout p: Program) -> Result[bool, diag.Diag] uses io, fs, ffi {
+fn load_prelude(inout p: Program, fp: Files) -> Result[bool, diag.Diag] uses io, fs, ffi {
     let path = join(toolchain_root(), sys.lit("core/prelude.ei"))
-    let text = match fs.read(path) {
-        Ok(t) => t
-        Err(_) => {
+    let text = match read_source(fp, path) {
+        Some(t) => t
+        None => {
             var msg = sys.lit("cannot read the prelude `")
             bytes.append(inout msg, path)
             bytes.append(inout msg, sys.lit("`: "))
@@ -306,7 +366,7 @@ fn load_prelude(inout p: Program) -> Result[bool, diag.Diag] uses io, fs, ffi {
     Ok(true)
 }
 
-fn load_imports(inout p: Program, m: u32) -> Result[bool, diag.Diag] uses fs, ffi {
+fn load_imports(inout p: Program, m: u32, fp: Files) -> Result[bool, diag.Diag] uses fs, ffi {
     let a = p.mods[m as usize].ast
     let dir = dir_of(p.mods[m as usize].path)
     let file = p.mods[m as usize].path
@@ -346,9 +406,9 @@ fn load_imports(inout p: Program, m: u32) -> Result[bool, diag.Diag] uses fs, ff
         }
         if contains(p.seen, canon) { continue }
         p.seen.push(canon)
-        let text = match fs.read(path) {
-            Ok(t) => t
-            Err(_) => {
+        let text = match read_file(fp, path, canon) {
+            Some(t) => t
+            None => {
                 var msg = sys.lit("cannot read module `")
                 bytes.append(inout msg, path)
                 bytes.append(inout msg, sys.lit("`: "))
@@ -358,7 +418,7 @@ fn load_imports(inout p: Program, m: u32) -> Result[bool, diag.Diag] uses fs, ff
         }
         let q = parse_file(inout p, path, text)?
         let mi = add_module(inout p, path, pre_sym + 1, text, q)
-        load_imports(inout p, mi)?
+        load_imports(inout p, mi, fp)?
     }
     p.order.push(m)
     Ok(true)

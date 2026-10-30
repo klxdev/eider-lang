@@ -78,6 +78,13 @@ fn search_up(dir: List[u8]) -> List[u8] uses fs, ffi {
 
 /// The toolchain root (see the top of this file).
 pub fn root() -> List[u8] uses io, fs, ffi {
+    let r = find_root()
+    if r.len() == 0 { fail(s("cannot find the toolchain (a directory with core/eider_rt.h); set EIDER_ROOT"), 2) }
+    r
+}
+
+/// `root`, or "" when there is none (instead of exiting).
+pub fn find_root() -> List[u8] uses io, fs, ffi {
     match env.get(s("EIDER_ROOT")) {
         Some(r) => { if r.len() > 0 { return r } }
         None => {}
@@ -97,9 +104,7 @@ pub fn root() -> List[u8] uses io, fs, ffi {
         Ok(x) => x
         Err(_) => List.new()
     }
-    let r = search_up(here)
-    if r.len() == 0 { fail(s("cannot find the toolchain (a directory with core/eider_rt.h); set EIDER_ROOT"), 2) }
-    r
+    search_up(here)
 }
 
 /// A new work directory of our own (`work_dir`: under the cache or target/, never shared
@@ -249,10 +254,20 @@ fn fresh_dir(base: List[u8]) -> List[u8] uses fs, clock, ffi {
 /// The work directory for one compile: under <cache>/tmp/, else <root>/target/tmp/, else
 /// $TMPDIR (or /tmp), whichever is writable first.
 fn work_dir() -> List[u8] uses io, fs, clock, ffi {
+    // without a toolchain, exit 2 for that first (as before try_work_dir existed)
+    root()
+    let d = try_work_dir()
+    if d.len() == 0 { fail(s("cannot create a work directory"), 3) }
+    d
+}
+
+/// `work_dir`, or "" when none can be made (instead of exiting).
+pub fn try_work_dir() -> List[u8] uses io, fs, clock, ffi {
     var bases: List[List[u8]] = List.new()
     let cache = cache_dir()
     if cache.len() > 0 { bases.push(fs.join(cache, s("tmp"))) }
-    bases.push(fs.join(root(), s("target/tmp")))
+    let r = find_root()
+    if r.len() > 0 { bases.push(fs.join(r, s("target/tmp"))) }
     var t = s("/tmp")
     match env.get(s("TMPDIR")) {
         Some(x) => { if x.len() > 0 { t = x } }
@@ -263,7 +278,6 @@ fn work_dir() -> List[u8] uses io, fs, clock, ffi {
         let d = fresh_dir(b)
         if d.len() > 0 { return d }
     }
-    fail(s("cannot create a work directory"), 3)
     List.new()
 }
 
