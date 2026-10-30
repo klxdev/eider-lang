@@ -31,8 +31,10 @@
 // block or `unsafe fn` (E0802), like calling an `unsafe fn`. `export fn`s (E0805: not
 // generic) take C-safe parameters, records of them included; a library (`lib`) needs at
 // least one and no `main`. Both are recorded in the IR (ir.ei, Externs and Exports).
+// Checking for WebAssembly (`wasm`, check_wasm) is checking a library whose exports take and
+// return only integers and bool, with no thread types anywhere (E0806).
 //
-// Features still outside eiderc (threads, comptime, WebAssembly, `?` in an
+// Features still outside eiderc (threads, comptime, `?` in an
 // expression-bodied closure, and `extern`/`unsafe` functions used as values, which the
 // bootstrap lets through without `unsafe` or `ffi`) stop checking with an `unsupported`
 // diagnostic at the point the bootstrap would start handling them, so everything reported
@@ -204,6 +206,9 @@ pub type C = {
     /// checking a library (`build --lib`, `emit-header`): no `main`, at least one export
     lib: bool,
     exports: u32,
+    /// checking for WebAssembly (`--wasm`, implies `lib`): exports take and return only
+    /// integers and bool, and threads are rejected (E0806)
+    wasm: bool,
 }
 
 /// Expected parameter types (NONE: unknown) and return type of a closure.
@@ -1125,7 +1130,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C uses ffi {
         List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new(),
         List.new(), List.new(), List.new(),
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
-        0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0)
+        0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false)
 }
 
 /// Every item of the program in the bootstrap's order, as (module, node) pairs.
@@ -1167,6 +1172,38 @@ pub fn check_mode(p: resolve.Program, lib: bool) -> Result[C, diag.Diag] uses ff
         Ok(_) => Ok(c)
         Err(d) => Err(in_file(c, d, c.err_mod))
     }
+}
+
+/// Check the program as a WebAssembly module (stage 0's Mode::Wasm, `--wasm`): a library
+/// whose exports cross the boundary as integers and bool only, without threads (E0806).
+pub fn check_wasm(p: resolve.Program) -> Result[C, diag.Diag] uses ffi {
+    var c = new_checker(p, true)
+    c.wasm = true
+    match run(inout c) {
+        Ok(_) => Ok(c)
+        Err(d) => {
+            // Until eiderc checks threads, `spawn` and the thread types stop it with
+            // `unsupported` where stage 0 notes them for the E0806 at the end (wasm_threads).
+            if bytes.eq(d.msg, s("not yet supported by eiderc: threads")) { return Err(wasm_threads_error()) }
+            Err(in_file(c, d, c.err_mod))
+        }
+    }
+}
+
+fn wasm_threads_error() -> diag.Diag uses ffi {
+    err("E0806", 1, 1, s("threads (`spawn`, `Task`, `Mutex`, `Chan`) aren't available when targeting WebAssembly"))
+}
+
+/// Whether the program uses a thread type (stage 0 notes `Task`, `Mutex` and `Chan` types
+/// as it meets them; the type arena holds every type the program uses).
+fn uses_thread_types(c: C) -> bool uses ffi {
+    for ty in 0..c.t.tys.len() {
+        let k = types.kind(c.t, ty as u32)
+        if k == types.T_RECORD || k == types.T_ENUM { continue }
+        let t = types.show(c.t, c.p.names, ty as u32)
+        if bytes.starts_with(t, s("Task[")) || bytes.starts_with(t, s("Mutex[")) || bytes.starts_with(t, s("Chan[")) { return true }
+    }
+    false
 }
 
 fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
@@ -1338,6 +1375,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
     } else if !c.fns.contains(resolve.key(0, c.w.main)) {
         return Err(err("E0112", 1, 1, s("no `main` function")))
     }
+    if c.wasm && uses_thread_types(c) { return Err(wasm_threads_error()) }
     Ok(true)
 }
 
@@ -1378,16 +1416,29 @@ fn check_ffi_sig(c: C, m: u32, n: ast.Node, ps: List[u32], ret: u32) -> Result[b
     let is_export = ast.has(n.b, ast.FN_EXPORT)
     let what = if is_export { "export" } else { "extern \"c\"" }
     let help = "C-safe types: integers, bool, str (const char*), and records made only of those (export only)"
+    if is_export && c.wasm {
+        for i in 0..n.f {
+            let k = types.kind(c.t, ps[i as usize])
+            if k != types.T_INT && k != types.T_BOOL {
+                let pn = ndm(c, m, atm(c, m, n.e, i))
+                return Err(err("E0806", pn.line, pn.col, q2("parameter `", nm(c, pn.a), "` has type ", ts(c, ps[i as usize]), "; WebAssembly exports take only integers and bool")))
+            }
+        }
+        let rk = types.kind(c.t, ret)
+        if rk != types.T_INT && rk != types.T_BOOL && rk != types.T_UNIT {
+            return Err(err("E0806", n.line, n.col, q("return type ", ts(c, ret), " isn't supported for WebAssembly exports (integers, bool, or ())")))
+        }
+    }
     for i in 0..n.f {
         let pn = ndm(c, m, atm(c, m, n.e, i))
         if pn.c == 1 {
             return Err(err("E0803", pn.line, pn.col, q2("`", nm(c, pn.a), "` is `inout`; ", sys.lit(what), " functions can't take `inout` parameters")))
         }
-        if !ffi_safe(c, ps[i as usize], false, is_export) {
+        if !ffi_safe(c, ps[i as usize], false, is_export && !c.wasm) {
             return Err(errh("E0803", pn.line, pn.col, q2("parameter `", nm(c, pn.a), "` has type ", ts(c, ps[i as usize]), ", which can't cross the C boundary"), help))
         }
     }
-    if !ffi_safe(c, ret, true, is_export) {
+    if !ffi_safe(c, ret, true, is_export && !c.wasm) {
         return Err(errh("E0803", n.line, n.col, q("return type ", ts(c, ret), " can't cross the C boundary"), help))
     }
     Ok(true)

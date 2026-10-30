@@ -12,7 +12,11 @@
 //   eiderc test <file.ei>           run the `test` blocks
 // `--lib` checks (and emits) the file as a library: no `main`, at least one `export fn`.
 // `-l <lib>` (repeatable) links a C library into build, run, test and build --lib.
-// `--wasm` (stage 0: WebAssembly) answers `unsupported`.
+// `--wasm` checks (and emits) the file as a WebAssembly module (a library whose exports take
+// and return integers and bool, no threads: E0806): `check --wasm`, `emit-c --wasm`,
+// `emit-header --wasm` (the .d.ts and the loader, \x01-separated, as stage 0 prints them) and
+// `build --wasm` / `run --wasm` (<name>.wasm, <name>.d.ts, <name>.js; wasm.ei). `test`
+// ignores it, as it ignores `--lib`.
 
 import "deps/core/sys.ei"
 import "deps/std/bytes.ei"
@@ -29,6 +33,7 @@ import "check.ei"
 import "ir.ei"
 import "lower.ei"
 import "driver.ei"
+import "wasm.ei"
 
 type Args = {
     cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,
@@ -40,7 +45,7 @@ type Args = {
 fn is(a: List[u8], s: str) -> bool uses ffi { bytes.eq(a, sys.lit(s)) }
 
 fn usage() uses io, ffi {
-    io.err(sys.lit("usage: eiderc (lex | parse | check | ir | emit-c | emit-header | build | run | test) <file.ei> [--json] [--test] [--release] [--lib] [-o out] [-l lib]\n"))
+    io.err(sys.lit("usage: eiderc (lex | parse | check | ir | emit-c | emit-header | build | run | test) <file.ei> [--json] [--test] [--release] [--lib] [--wasm] [-o out] [-l lib]\n"))
     env.exit(2)
 }
 
@@ -86,7 +91,11 @@ fn parse_args() -> Args uses io, ffi {
     if cmd.len() == 0 || file.len() == 0 { usage() }
     if is(cmd, "emit-header") { lib = true }
     // `test` checks the test driver, never a library (stage 0's mode order)
-    if is(cmd, "test") { lib = false }
+    if is(cmd, "test") {
+        lib = false
+        wasm = false
+    }
+    if wasm { lib = true }
     Args(cmd, file, json, out, release, tests, lib, libs, wasm)
 }
 
@@ -185,11 +194,6 @@ fn main() uses io, fs, net, clock, ffi {
     }
     let backend = is(a.cmd, "emit-c") || is(a.cmd, "emit-header") || is(a.cmd, "build") || is(a.cmd, "run") || is(a.cmd, "test")
     if !is(a.cmd, "check") && !is(a.cmd, "ir") && !backend { usage() }
-    if a.wasm {
-        // WebAssembly (stage 0's --wasm, E0806) is C7 work still to do
-        report(diag.new("unsupported", 1, 1, sys.lit("not yet supported by eiderc: WebAssembly (--wasm)")), a, src)
-        env.exit(1)
-    }
     let prog = match resolve.load(a.file, src, p) {
         Ok(x) => x
         Err(d) => {
@@ -198,7 +202,8 @@ fn main() uses io, fs, net, clock, ffi {
             return
         }
     }
-    let c = match check.check_mode(prog, a.lib) {
+    let checked = if a.wasm { check.check_wasm(prog) } else { check.check_mode(prog, a.lib) }
+    let c = match checked {
         Ok(x) => x
         Err(d) => {
             report(d, a, src)
@@ -210,10 +215,11 @@ fn main() uses io, fs, net, clock, ffi {
         let tests = a.tests || is(a.cmd, "test")
         let lp = lower.P(c.ir, c.t, c.p.names)
         if is(a.cmd, "emit-header") {
-            io.out(lower.header(lp))
+            if a.wasm { io.out(wasm.header(lp)) } else { io.out(lower.header(lp)) }
             return
         }
-        let cprog = match lower.program_for(lp, a.file, tests, a.lib) {
+        let lowered = if a.wasm { lower.program_wasm(lp, a.file) } else { lower.program_for(lp, a.file, tests, a.lib) }
+        let cprog = match lowered {
             Ok(text) => text
             Err(m) => {
                 var msg = sys.lit("eiderc: internal error: ")
@@ -225,6 +231,9 @@ fn main() uses io, fs, net, clock, ffi {
         }
         if is(a.cmd, "emit-c") {
             io.out(cprog)
+        } else if a.wasm {
+            // stage 0: `build --wasm` and `run --wasm` both build the module
+            wasm.build(cprog, lp, a.file, a.out)
         } else if a.lib {
             // stage 0: `build --lib` and `run --lib` both build the library
             driver.build_lib(cprog, lower.header(lp), a.file, a.out, a.libs)
