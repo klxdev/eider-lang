@@ -1,0 +1,3 @@
+// expect: E0803 2:13
+export fn f(b: Box[i32]) -> i32 { 1 }
+fn main() {}

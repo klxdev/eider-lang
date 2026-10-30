@@ -1,0 +1,2 @@
+// a generic export in an imported module
+export fn first[T](x: T, y: T) -> T { x }

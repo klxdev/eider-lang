@@ -1,0 +1,5 @@
+// expect: E0201 4:13
+extern "c" fn abs(n: i32) -> i32
+fn main() {
+    let a = abs(-3)
+}

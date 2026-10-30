@@ -26,9 +26,17 @@
 // Closures (closure.rs) are IR functions of their own, built while their enclosing function
 // is (ir.begin_nested), with a snapshot of the locals they mention as their environment.
 //
-// Features still outside eiderc (threads, FFI/export, comptime, and `?` in an
-// expression-bodied closure) stop checking with an `unsupported` diagnostic at the point the
-// bootstrap would start handling them, so everything reported before is exact.
+// FFI (ffi.rs): `extern "c"` declarations are functions without a body whose signatures
+// must be C-safe (E0803); calling one needs the `ffi` capability (E0201) and an `unsafe`
+// block or `unsafe fn` (E0802), like calling an `unsafe fn`. `export fn`s (E0805: not
+// generic) take C-safe parameters, records of them included; a library (`lib`) needs at
+// least one and no `main`. Both are recorded in the IR (ir.ei, Externs and Exports).
+//
+// Features still outside eiderc (threads, comptime, WebAssembly, `?` in an
+// expression-bodied closure, and `extern`/`unsafe` functions used as values, which the
+// bootstrap lets through without `unsafe` or `ffi`) stop checking with an `unsupported`
+// diagnostic at the point the bootstrap would start handling them, so everything reported
+// before is exact.
 
 import "deps/core/sys.ei"
 import "deps/std/bytes.ei"
@@ -193,6 +201,9 @@ pub type C = {
     /// checking an expression-bodied closure, whose `?` the bootstrap checks against the
     /// enclosing function (closure.rs sets `ret` only afterwards); eiderc leaves it out
     lam_expr: bool,
+    /// checking a library (`build --lib`, `emit-header`): no `main`, at least one export
+    lib: bool,
+    exports: u32,
 }
 
 /// Expected parameter types (NONE: unknown) and return type of a closure.
@@ -1107,14 +1118,14 @@ fn sym(inout names: intern.Interner, w: str) -> u32 uses ffi {
     intern.intern(inout names, b, 0, b.len())
 }
 
-fn new_checker(p: resolve.Program) -> C uses ffi {
+fn new_checker(p: resolve.Program, lib: bool) -> C uses ffi {
     var p2 = p
     let w = well_known(inout p2.names)
     C(p2, types.new(), ir.new(), pats.new(), w, Map.new(), Map.new(), Map.new(), Map.new(), Map.new(),
         List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new(),
         List.new(), List.new(), List.new(),
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
-        0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false)
+        0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0)
 }
 
 /// Every item of the program in the bootstrap's order, as (module, node) pairs.
@@ -1147,8 +1158,11 @@ fn fn_key(c: C, m: u32, n: ast.Node) -> u64 {
 }
 
 /// Check the whole program; on success `c.ir` holds the typed IR.
-pub fn check(p: resolve.Program) -> Result[C, diag.Diag] uses ffi {
-    var c = new_checker(p)
+pub fn check(p: resolve.Program) -> Result[C, diag.Diag] uses ffi { check_mode(p, false) }
+
+/// Check the program as a program (`lib` = false) or as a library of `export fn`s.
+pub fn check_mode(p: resolve.Program, lib: bool) -> Result[C, diag.Diag] uses ffi {
+    var c = new_checker(p, lib)
     match run(inout c) {
         Ok(_) => Ok(c)
         Err(d) => Err(in_file(c, d, c.err_mod))
@@ -1225,9 +1239,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
             if n.d > 0 {
                 return Err(in_file(c, errh("E0805", n.line, n.col, s("an `export fn` can't be generic"), "exported functions need a fixed C signature; export a concrete wrapper"), it.m))
             }
-            return Err(unsup(n.line, n.col, "`export fn`"))
         }
-        if ast.has(n.b, ast.FN_EXTERN) { return Err(unsup(n.line, n.col, "`extern` functions")) }
         if n.a == c.w.main && (n.f > 0 || n.g > 0 || n.d > 0) {
             return Err(err("E0111", n.line, n.col, s("`main` takes no parameters and returns ()")))
         }
@@ -1290,7 +1302,9 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
         let f = c.fdefs[fi]
         if f.generic || f.inode != NONE { continue }
         c.err_mod = f.md
-        instantiate(inout c, fi as u32, no_subst())?
+        let ii = instantiate(inout c, fi as u32, no_subst())?
+        let fl = ndm(c, f.md, f.node).b
+        if ast.has(fl, ast.FN_EXTERN) || ast.has(fl, ast.FN_EXPORT) { record_ffi(inout c, ii) }
     }
     for fi in concrete {
         let f = c.fdefs[fi as usize]
@@ -1319,7 +1333,63 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
         check_fn(inout c, i)?
     }
     c.err_mod = resolve.NOMOD
-    if !c.fns.contains(resolve.key(0, c.w.main)) { return Err(err("E0112", 1, 1, s("no `main` function"))) }
+    if c.lib {
+        if c.exports == 0 { return Err(err("E0805", 1, 1, s("a library needs at least one `export fn`"))) }
+    } else if !c.fns.contains(resolve.key(0, c.w.main)) {
+        return Err(err("E0112", 1, 1, s("no `main` function")))
+    }
+    Ok(true)
+}
+
+/// Record instance ii of an `extern "c"` or `export` function in the IR.
+fn record_ffi(inout c: C, ii: u32) uses ffi {
+    let inst = c.insts[ii as usize]
+    let f = c.fdefs[inst.fd as usize]
+    let n = ndm(c, f.md, f.node)
+    if ast.has(n.b, ast.FN_EXTERN) {
+        var ps: List[u32] = List.new()
+        for i in 0..inst.plen { ps.push(c.ptys[(inst.pstart + i) as usize]) }
+        let sym = nm(c, n.a)
+        ir.add_extern(inout c.ir, inst.ir, sym, ps, inst.ret)
+    } else {
+        let name = kt(c, f.key)
+        ir.add_export(inout c.ir, inst.ir, name)
+        c.exports += 1
+    }
+}
+
+/// Whether type ty can cross the C boundary (ffi.rs ffi_safe): integers, bool and str; ()
+/// as a return type; records made only of those when `records` (exports).
+fn ffi_safe(c: C, ty: u32, is_ret: bool, records: bool) -> bool {
+    let k = types.kind(c.t, ty)
+    if k == types.T_INT || k == types.T_BOOL || k == types.T_STR { return true }
+    if k == types.T_UNIT { return is_ret }
+    if k != types.T_RECORD || !records { return false }
+    let d = types.def_of(c.t, ty)
+    for i in 0..d.len {
+        if !ffi_safe(c, types.field(c.t, d.start, i).ty, false, true) { return false }
+    }
+    true
+}
+
+/// E0803 for an `extern "c"` or `export` signature that can't cross the C boundary (ffi.rs
+/// check_ffi_sig; node n of module m, parameter types ps).
+fn check_ffi_sig(c: C, m: u32, n: ast.Node, ps: List[u32], ret: u32) -> Result[bool, diag.Diag] uses ffi {
+    let is_export = ast.has(n.b, ast.FN_EXPORT)
+    let what = if is_export { "export" } else { "extern \"c\"" }
+    let help = "C-safe types: integers, bool, str (const char*), and records made only of those (export only)"
+    for i in 0..n.f {
+        let pn = ndm(c, m, atm(c, m, n.e, i))
+        if pn.c == 1 {
+            return Err(err("E0803", pn.line, pn.col, q2("`", nm(c, pn.a), "` is `inout`; ", sys.lit(what), " functions can't take `inout` parameters")))
+        }
+        if !ffi_safe(c, ps[i as usize], false, is_export) {
+            return Err(errh("E0803", pn.line, pn.col, q2("parameter `", nm(c, pn.a), "` has type ", ts(c, ps[i as usize]), ", which can't cross the C boundary"), help))
+        }
+    }
+    if !ffi_safe(c, ret, true, is_export) {
+        return Err(errh("E0803", n.line, n.col, q("return type ", ts(c, ret), " can't cross the C boundary"), help))
+    }
     Ok(true)
 }
 
@@ -1548,6 +1618,7 @@ fn signature(inout c: C, fi: u32) -> Result[Inst, diag.Diag] uses ffi {
         }
         caps.push(cn.a)
     }
+    if ast.has(n.b, ast.FN_EXTERN) || ast.has(n.b, ast.FN_EXPORT) { check_ffi_sig(c, m, n, ps, ret)? }
     let pstart = c.ptys.len() as u32
     for x in ps { c.ptys.push(x) }
     let cstart = c.capl.len() as u32
@@ -3151,8 +3222,11 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
         let cap = ndm(c, fm, atm(c, fm, fnode.i, i)).a
         if !has_sym(c.caps, cap) { return Err(cap_error(c, n.line, n.col, label, cap)) }
     }
+    let is_extern = ast.has(fnode.b, ast.FN_EXTERN)
+    if is_extern && !has_sym(c.caps, c.w.caps[5]) { return Err(cap_error(c, n.line, n.col, label, c.w.caps[5])) }
     if f.unsafe_fn && c.unsafe_depth == 0 {
-        return Err(errh("E0802", n.line, n.col, q("call to unsafe function `", label, "` is only allowed in an `unsafe` block or `unsafe fn`"), "wrap the call: `unsafe { ... }`"))
+        let what = if is_extern { "call to C function `" } else { "call to unsafe function `" }
+        return Err(errh("E0802", n.line, n.col, q(what, label, "` is only allowed in an `unsafe` block or `unsafe fn`"), "wrap the call: `unsafe { ... }`"))
     }
     let ii = instantiate(inout c, fi, sb)?
     let inst = c.insts[ii as usize]
@@ -3819,6 +3893,8 @@ fn fn_as_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag
         let cap = c.capl[(inst.cstart + i) as usize]
         if !has_sym(c.caps, cap) { return Err(cap_error(c, n.line, n.col, label, cap)) }
     }
+    // the bootstrap lets these through with neither `unsafe` nor `ffi` (a hole, not a rule)
+    if f.unsafe_fn { return Err(unsup(n.line, n.col, "`extern` and `unsafe` functions as values")) }
     Ok(v_of(actual, emit_val(inout c, ir.S_FNREF, inst.ir, 0, 0, actual, actual, n.line)))
 }
 

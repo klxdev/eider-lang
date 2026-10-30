@@ -23,6 +23,10 @@
 #             checked) under UBSan in trap mode (-fsanitize=undefined
 #             -fsanitize-undefined-trap-on-error, no runtime library needed); the output must
 #             equal the plain run's. ASan and TSan run too when their runtimes are installed.
+#   export:   libraries from `eiderc build --lib`: tests/export/run.sh (the C and C++
+#             consumers of the bootstrap's suite) with EIDER=eiderc, compiler/tests/export/run.sh
+#             (eiderc's own: more types, nested records, two libraries, traps), and
+#             `emit-header` and `check --lib --json` equal to the bootstrap's.
 cd "$(dirname "$0")/.." || exit 1
 scripts/bootstrap-deps.sh
 boot=$(scripts/stage0.sh) || exit 3
@@ -193,4 +197,35 @@ echo "$v run: $ragree/$rscope run tests in scope agree ($rtotal tests; $rexpecte
 echo "     out of scope:$routside"
 if [ "$rsan_ok" = "$rsan" ]; then v="ok  "; else v="FAIL"; fi
 echo "$v sanitize: $rsan_ok/$rsan runs at -O2 under -fsanitize={$sans} match"
+
+# export: `eiderc build --lib`, its header, and checking as a library
+if out=$(EIDER=$new sh tests/export/run.sh 2>&1); then echo "$out (eiderc)"; else echo "FAIL tests/export with eiderc: $out"; fail=1; fi
+if out=$(sh compiler/tests/export/run.sh $new 2>&1); then echo "$out"; else echo "$out"; fail=1; fi
+lagree=0
+ltotal=0
+for f in tests/export/mathlib.ei compiler/tests/export/shapes.ei compiler/tests/export/nested.ei tests/run/ffi.ei tests/checks/pass/pass_import_and_ffi.ei; do
+  ltotal=$((ltotal + 1))
+  want=$($boot check --lib --json "$f" 2>&1)
+  got=$($new check --lib --json "$f" 2>&1)
+  if [ "$want" != "$got" ]; then
+    echo "FAIL check --lib $f"
+    echo "  bootstrap: $want"
+    echo "  eiderc:    $got"
+    fail=1
+    continue
+  fi
+  # nested.ei: stage 0's header lacks the inner record's typedef (compiler/tests/export)
+  case "$f" in tests/export/*|*/shapes.ei)
+    $boot emit-header "$f" >$tmp/h_want 2>&1
+    $new emit-header "$f" >$tmp/h_got 2>&1
+    if ! cmp -s $tmp/h_want $tmp/h_got; then
+      echo "FAIL emit-header $f"
+      fail=1
+      continue
+    fi
+  esac
+  lagree=$((lagree + 1))
+done
+if [ "$lagree" = "$ltotal" ]; then v="ok  "; else v="FAIL"; fi
+echo "$v export: $lagree/$ltotal files agree on check --lib and emit-header"
 exit $fail

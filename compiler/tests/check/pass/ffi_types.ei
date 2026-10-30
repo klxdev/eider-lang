@@ -1,0 +1,40 @@
+// every C-safe extern type, called from unsafe blocks and an unsafe fn
+type Pt = { x: i32, y: i32 }
+type Seg = { a: Pt, b: Pt, open: bool }
+extern "c" fn f_i32(a: i32) -> i32
+extern "c" fn f_i64(a: i64) -> i64
+extern "c" fn f_u8(a: u8) -> u8
+extern "c" fn f_u32(a: u32) -> u32
+extern "c" fn f_u64(a: u64) -> u64
+extern "c" fn f_usize(a: usize) -> usize
+extern "c" fn f_bool(a: bool) -> bool
+extern "c" fn f_str(a: str) -> str
+extern "c" fn f_unit()
+extern "c" fn f_many(a: i32, b: str, c: bool, d: u64) -> i64
+
+unsafe fn all_of_them() -> i64 uses ffi {
+    f_unit()
+    let a = f_i32(1)
+    let b = f_many(a, f_str("x"), f_bool(true), f_u64(2))
+    b
+}
+
+export fn seg_len(s: Seg) -> i32 { s.b.x - s.a.x }
+export fn origin() -> Pt { Pt(0, 0) }
+export fn nothing() {}
+export fn flags(a: bool, b: u8, c: usize) -> bool { a }
+
+fn main() uses ffi {
+    let x = unsafe { all_of_them() }
+    let y = unsafe {
+        let p = f_u8(1)
+        f_u32(p as u32)
+    }
+    unsafe {
+        unsafe { f_unit() }
+        let z = f_usize(3)
+    }
+    let s = seg_len(Seg(Pt(0, 0), origin(), false))
+    nothing()
+    let f = flags(true, 1, 2)
+}

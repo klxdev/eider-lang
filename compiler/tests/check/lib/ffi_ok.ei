@@ -1,0 +1,3 @@
+// an extern behind a public wrapper (the core/sys.ei pattern)
+extern "c" fn abs(n: i32) -> i32
+pub fn magnitude(n: i32) -> i32 uses ffi { unsafe { abs(n) } }

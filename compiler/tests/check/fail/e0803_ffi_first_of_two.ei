@@ -1,0 +1,5 @@
+// expect: E0803 3:19
+extern "c" fn ok(n: i32) -> i32
+extern "c" fn bad(s: String)
+extern "c" fn worse(xs: List[i32])
+fn main() {}

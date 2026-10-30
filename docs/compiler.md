@@ -8,7 +8,9 @@ Progress: **C1 done** (lexer, interner, diagnostics rendering; `scripts/test-com
 `pats.ei`, `check.ei`, `ir.ei`; see "C3: checking" below).
 **C4 done** for the same language (`lower.ei`, `driver.ei`; `eiderc emit-c/build/run/test`;
 see "C4: lowering" below). **C5 checking done** for S1–S3 (see "C5: checking S1–S3"); its
-lowering is next, then C6.
+lowering is next, then C6. From C7, **FFI is done** (`extern "c"`, `unsafe`, `export fn`,
+`emit-header`, `build --lib`, `-l`; see "C7: FFI"), since `compiler/` reaches the OS only
+through core/sys.ei's externs.
 
 ## Goal
 
@@ -131,7 +133,7 @@ language as it is:
   std::fs::canonicalize does, so the deps/ link farm's paths to one file are one module.
 - **Folding** (`fold.ei`) computes in a sign + 128-bit magnitude, enough for every value the
   bootstrap computes in i128 from in-range operands (its E0501 messages print them).
-- **Out of scope** (threads, FFI/export, comptime; since C5 everything else) ends checking
+- **Out of scope** (threads, comptime, WebAssembly; since C5 and C7 everything else) ends checking
   with an `unsupported` diagnostic at the point where the bootstrap would start handling the
   feature; everything reported before it is exact, and the test script counts such files as
   out of scope.
@@ -141,8 +143,9 @@ language as it is:
   bounds-checked element, enum payload), `&&`/`||` and `match` are lowered to `if`, `for`
   loops to `loop` with a `step` block (what `continue` runs). Constants are folded values.
 - **Tests.** `scripts/test-compiler.sh` compares `check --json` with the bootstrap on
-  tests/checks (51/74 in scope at C3, 64/74 since C5, all agree), tests/run (3/11, then
-  8/11), and eiderc's own cases (229 at C3, 418 since C5) in
+  tests/checks (51/74 in scope at C3, 64/74 since C5, 69/74 since FFI, all agree),
+  tests/run (3/11, then 8/11, then 9/11), and eiderc's own cases (229 at C3, 418 since C5,
+  456 since FFI) in
   `compiler/tests/check` (fail cases carry `// expect:` headers that also pass the bootstrap's
   compile-fail runner; helper modules in `lib/`); IR goldens live in `compiler/tests/ir`.
   `scripts/fuzz-check.sh` (packages/fuzz) mutates v0 programs and compares both compilers
@@ -165,7 +168,7 @@ language as it is:
 
 `check.ei` covers the rest of the bootstrap's checker that `compiler/`, std and the
 packages use: everything in them checks `ok` in both compilers once core/sys.ei's `extern`
-fns are replaced by stubs (FFI itself is C7).
+fns are replaced by stubs (and, since "C7: FFI", without stubs).
 
 - **S1.** Tuples (types, literals, `.0`, patterns, `let (a, b) =`); generic types and
   functions, monomorphized on demand: a generic type is a template definition and each
@@ -194,6 +197,59 @@ fns are replaced by stubs (FFI itself is C7).
 - **Tests.** Every new rule has cases in `compiler/tests/check` (`s1_*`, `s2_*`, `s3_*`
   pass files, and fail files by code); IR goldens `generics`, `heap` and `closures` in
   `compiler/tests/ir` show where clones and drops go.
+
+## C7: FFI
+
+Done ahead of the rest of C7 because eiderc's own source reaches the OS only through
+core/sys.ei's `extern "c"` functions. A port of the bootstrap's ffi.rs and the extern/unsafe
+parts of check.rs and expr.rs; capability encapsulation ("Language work" item 5) is not
+started, so callers of std still write `uses ffi`.
+
+- **Checking.** An `extern "c" fn` is a free function without a body, named globally
+  (never module-prefixed), and `unsafe` (the parser marks it). When its signature is
+  resolved (with every other concrete signature, in item order) it must be C-safe, else
+  E0803: each parameter in order is not `inout` and is an integer, `bool` or `str`; the
+  return type is one of those or `()`. An `export fn` must not be generic (E0805, when
+  function names are registered) and gets the same E0803 check, where records made only of
+  C-safe types (recursively) are allowed too. A call to an extern needs, after the callee's
+  own `uses` capabilities, the `ffi` capability (E0201, with the usual fix), then an
+  `unsafe` block or `unsafe fn` around it (E0802, "call to C function"); an `unsafe fn` only
+  the latter. `unsafe` is lexical: a closure created inside `unsafe { }` may call externs.
+  With `--lib` (and for `emit-header`) the program is a library: `main` is not required and
+  at least one `export fn` is (E0805 at 1:1).
+- **Not supported** (`unsupported`): `--wasm` (E0806 is WebAssembly only), and an extern or
+  `unsafe fn` used as a function value, which the bootstrap accepts without `unsafe` or
+  `ffi` (a hole; the value can then be called anywhere).
+- **IR.** `Ir.externs` ({function, C symbol, parameter types}; the function has no body and
+  carries the return type) and `Ir.exports` ({function, `stem__name`}), shown first by
+  `eiderc ir` (golden `compiler/tests/ir/ffi`). Calls to externs are ordinary `S_CALL`s.
+- **Lowering.** `extern_protos`: `extern <ret> <C name>(<params>) __asm__("<symbol>");`,
+  under eiderc's own function name so it never clashes with libc headers or other
+  declarations of the symbol (core/ABI.md rule 5; ELF only, Mach-O would need the `_`).
+  `program_for(.., lib = true)` drops `main` and adds one non-static entry point per export,
+  `<ret> eider_<stem__name>(<params>) { ei_set_file("lib"); return f(..); }`; a trap inside
+  exits the process with 101 and names `lib`. `header` is stage 0's header byte for byte
+  (records `R_<mangled name>` with fields `f_<name>`, `extern "C"` for C++), except that
+  every record gets a typedef: stage 0 gives one only to parameter and return types, so its
+  header doesn't compile when a record is a field of another.
+- **Driver.** `emit-header <f>`; `build --lib <f> [-o name]` compiles the library C,
+  `core/eider_rt.c` and `core/eider_core.c` at -O2 -fPIC, makes `lib<name>.a` (ar rcs) and
+  `lib<name>.so` (cc -shared, with the `-l` libraries) next to `-o`'s path (else in the
+  working directory) plus `<name>.h`, and prints `built <a>, <so>, <h>` like stage 0. The
+  library carries the runtime and the core, so a consumer links only it (stage 0 pasted its
+  runtime into the C as static functions; eiderc's runtime symbols `ei_*` / `ec_*` are
+  global, which static linking resolves to one copy and which two shared Eider libraries
+  share). `-l <lib>` (repeatable) links C libraries into `build`, `run` and `test`.
+- **Tests.** The suite's four FFI files and `tests/run/ffi.ei` are in scope; 38 cases in
+  `compiler/tests/check` (`*_ffi_*`: every E0803 shape for externs and exports, nested and
+  imported cases, the E0201/E0802 order, unsafe scoping, E0107 between externs); run test
+  `compiler/tests/run/ffi_libc.ei` (every C-safe type, unit and `str` results, an extern
+  behind a module's wrapper); "export" in `scripts/test-compiler.sh`: `tests/export/run.sh`
+  with `EIDER=eiderc` (C and C++ consumers, static and shared, trap exit code),
+  `compiler/tests/export/run.sh` (more types, nested records, an imported module's export,
+  two libraries in one program, headers as C11 and C++ with -Werror), and `check --lib` and
+  `emit-header` against the bootstrap. `eiderc check` accepts core/sys.ei, std and
+  `compiler/main.ei` like the bootstrap (no `unsupported` left in them).
 
 ## C4: lowering
 
@@ -324,7 +380,7 @@ Each with a design note, compile-fail tests and new codes:
 | C4 ✅ | `lower` + C for v0 (plus non-generic payload enums) against `core/eider_rt.*`; driver (`emit-c`, `build`, `run`, `test`) | v0 run tests match (stdout, stderr, exit code, for `run` and `test`); C is `-pedantic -Wall -Wextra -Werror` clean at -O0 and -O2 and clean under UBSan (ASan/TSan when their runtimes exist) |
 | C5 | S1–S3: payload enums, generics, traits, Option/Result/`?`, tuples, patterns, String/List/Map/Box, closures | all the features `compiler/` itself uses; their tests match (checking ✅; lowering next) |
 | C6 | Self-host: stage1 builds stage2 builds stage3; fixed point; commit the seed | `scripts/selfhost.sh` green (stages compile `-Werror`, stage3 passes `scripts/test-compiler.sh`), `scripts/selfhost.sh --from-seed` reproduces the seed with only a C compiler |
-| C7 | Parity: modules/namespaces, FFI/export/`--lib`, threads, WASM, comptime, cache | the full `scripts/verify.sh` passes with `eiderc` in place of the bootstrap; retire eider-bootstrap |
+| C7 | Parity: modules/namespaces, FFI/export/`--lib` (✅ ahead of C5 lowering), threads, WASM, comptime, cache | the full `scripts/verify.sh` passes with `eiderc` in place of the bootstrap; retire eider-bootstrap |
 | C8+ | Language work above, then std and package-manager rework | per feature |
 
 ## Testing

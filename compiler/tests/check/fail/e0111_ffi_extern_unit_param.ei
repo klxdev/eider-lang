@@ -1,0 +1,3 @@
+// expect: E0111 2:17
+extern "c" fn f(x: ())
+fn main() {}
