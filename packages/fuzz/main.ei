@@ -1,0 +1,267 @@
+// eider-fuzz: differential fuzzing of `eiderc check --json` against the bootstrap.
+//
+//   scripts/fuzz-check.sh [count] [seed files...]       (default 500 mutants)
+//   SEED=n                     PRNG seed (default 1)
+//   MODE=semantic|wild         mutation strategy (default semantic)
+//   EIDERC=path                compiler under test (default ./target/eiderc)
+//
+// Run from the repository root (the wrapper does). Mutates v0 programs (identifiers,
+// literals, type names, operators, small insertions; fuzz.ei) and reports every mutant where
+// the two compilers disagree; it is kept next to its seed (imports are relative) as
+// fuzz_<n>.ei, so `eiderc check --json <that file>` replays it. Mutants eiderc calls
+// `unsupported`, and inputs the bootstrap crashes on, are skipped. Exit status 1 when any
+// mutant disagreed.
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+import "deps/std/fs.ei"
+import "deps/std/io.ei"
+import "deps/std/env.ei"
+import "deps/std/proc.ei"
+import "fuzz.ei"
+
+type Opts = { count: u64, seeds: List[List[u8]], seed: u64, wild: bool, stage0: List[u8], eiderc: List[u8] }
+
+/// What one compiler printed: stdout and stderr, both trimmed (None: it timed out).
+type Res = { out: List[u8], err: List[u8] }
+
+fn is(a: List[u8], s: str) -> bool uses ffi { bytes.eq(a, sys.lit(s)) }
+
+fn has(hay: List[u8], s: str) -> bool uses ffi {
+    match bytes.find(hay, sys.lit(s), 0) {
+        Some(_) => true
+        None => false
+    }
+}
+
+fn line(parts: List[List[u8]]) uses io, ffi {
+    let none: List[u8] = List.new()
+    io.outln(bytes.join(parts, none))
+}
+
+fn num(n: u64) -> List[u8] { bytes.from_u64(n) }
+
+/// The `.ei` files directly in `dir` (leftover fuzz_*.ei mutants excluded), as paths.
+fn ei_files(dir: str, inout out: List[List[u8]]) -> Result[bool, String] uses fs, ffi {
+    let d = sys.lit(dir)
+    for n in fs.list(d)? {
+        if bytes.ends_with(n, sys.lit(".ei")) && !bytes.starts_with(n, sys.lit("fuzz_")) {
+            out.push(fs.join(d, n))
+        }
+    }
+    Ok(true)
+}
+
+fn default_seeds() -> Result[List[List[u8]], String] uses fs, ffi {
+    var s: List[List[u8]] = List.new()
+    ei_files("compiler/tests/check/pass", inout s)?
+    ei_files("compiler/tests/check/fail", inout s)?
+    ei_files("compiler/tests/ir", inout s)?
+    s.push(sys.lit("tests/run/order.ei"))
+    s.push(sys.lit("tests/run/warehouse.ei"))
+    s.push(sys.lit("tests/run/modules.ei"))
+    s.push(sys.lit("examples/warehouse.ei"))
+    Ok(fs.sort(s))
+}
+
+fn env_or(name: str, dflt: str) -> List[u8] uses io, ffi {
+    match env.get(sys.lit(name)) {
+        Some(v) => v
+        None => sys.lit(dflt)
+    }
+}
+
+fn parse_opts() -> Result[Opts, String] uses io, fs, net, ffi {
+    let argv = env.args()
+    var count: u64 = 500
+    var seeds: List[List[u8]] = List.new()
+    if argv.len() > 1 {
+        match bytes.parse_u64(argv[1]) {
+            Some(n) => { count = n }
+            None => {
+                var m = String.from("count must be a number: ")
+                m.append(sys.to_string(argv[1]))
+                return Err(m)
+            }
+        }
+    }
+    var i: usize = 2
+    while i < argv.len() {
+        seeds.push(argv[i])
+        i += 1
+    }
+    if seeds.len() == 0 { seeds = default_seeds()? }
+    var seed: u64 = 1
+    match bytes.parse_u64(env_or("SEED", "1")) {
+        Some(n) => { seed = n }
+        None => { return Err(String.from("SEED must be a number")) }
+    }
+    let mode = env_or("MODE", "semantic")
+    if !is(mode, "semantic") && !is(mode, "wild") { return Err(String.from("MODE must be semantic or wild")) }
+    var s0arg: List[List[u8]] = List.new()
+    s0arg.push(sys.lit("scripts/stage0.sh"))
+    let stage0 = bytes.trim(proc.check(s0arg)?)
+    Ok(Opts(count, seeds, seed, is(mode, "wild"), stage0, env_or("EIDERC", "./target/eiderc")))
+}
+
+/// `<compiler> check --json <path>` with a 30 s limit; stderr goes to `errf` and is read back.
+fn run(compiler: List[u8], path: List[u8], errf: List[u8]) -> Result[Option[Res], String] uses io, fs, net, ffi {
+    var a: List[List[u8]] = List.new()
+    a.push(sys.lit("sh"))
+    a.push(sys.lit("-c"))
+    a.push(sys.lit("f=$1; shift; exec timeout 30 \"$@\" 2>\"$f\""))
+    a.push(sys.lit("sh"))
+    a.push(errf)
+    a.push(compiler)
+    a.push(sys.lit("check"))
+    a.push(sys.lit("--json"))
+    a.push(path)
+    let o = proc.output(a)?
+    if o.code == 124 { return Ok(None) }
+    let e: List[u8] = if fs.exists(errf) { fs.read(errf)? } else { List.new() }
+    Ok(Some(Res(bytes.trim(o.out), bytes.trim(e))))
+}
+
+fn shown(r: Option[Res]) -> List[u8] uses ffi {
+    match r {
+        Some(x) => x.out
+        None => sys.lit("None")
+    }
+}
+
+fn agree(got: Option[Res], want: Option[Res]) -> bool {
+    match (got, want) {
+        (Some(g), Some(w)) => bytes.eq(g.out, w.out) && g.err.len() == 0
+        _ => false
+    }
+}
+
+/// Count `code` in the sorted (code, count) table.
+fn tally(inout keys: List[List[u8]], inout counts: List[u64], code: List[u8]) {
+    for i in 0..keys.len() {
+        if bytes.eq(keys[i], code) {
+            counts[i] += 1
+            return
+        }
+    }
+    keys.push(code)
+    counts.push(1)
+    var i = keys.len() - 1
+    while i > 0 && bytes.compare(keys[i - 1], keys[i]) > 0 {
+        let k = keys[i - 1]
+        keys[i - 1] = keys[i]
+        keys[i] = k
+        let c = counts[i - 1]
+        counts[i - 1] = counts[i]
+        counts[i] = c
+        i -= 1
+    }
+}
+
+fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net, ffi {
+    let t = fuzz.tables()
+    var r = fuzz.rng(o.seed)
+    var n_agree: u64 = 0
+    var n_unsup: u64 = 0
+    var n_dis: u64 = 0
+    var n_crash: u64 = 0
+    var keys: List[List[u8]] = List.new()
+    var counts: List[u64] = List.new()
+    fs.mkdir_all(sys.lit("target/fuzz"))?
+    let errf = sys.lit("target/fuzz/stderr")
+    var k: u64 = 0
+    while k < o.count {
+        let seed = fuzz.pick(inout r, o.seeds)
+        let mutant = fuzz.mutate(t, fs.read(seed)?, inout r, o.wild)
+        let dir = fs.dirname(seed)
+        let path = fs.join(dir, sys.lit("fuzz_tmp.ei"))
+        fs.write(path, mutant)?
+        let got = run(o.eiderc, path, errf)?
+        let unsupported = match got {
+            Some(g) => has(g.out, "\"error\":\"unsupported\"")
+            None => false
+        }
+        if unsupported {
+            n_unsup += 1
+        } else {
+            let want = run(o.stage0, path, errf)?
+            let crashed = match want {
+                Some(w) => has(w.err, "panicked")
+                None => true
+            }
+            if crashed {
+                n_crash += 1
+            } else if agree(got, want) {
+                n_agree += 1
+                let g = shown(got)
+                let code = if g.len() == 0 { sys.lit("ok") } else { bytes.slice(g, 10, 15) }
+                tally(inout keys, inout counts, code)
+            } else {
+                n_dis += 1
+                var name = sys.lit("fuzz_")
+                bytes.append(inout name, num(k))
+                bytes.append(inout name, sys.lit(".ei"))
+                let keep = fs.join(dir, name)
+                fs.write(keep, mutant)?
+                var l1: List[List[u8]] = List.new()
+                l1.push(sys.lit("DISAGREE "))
+                l1.push(keep)
+                line(l1)
+                var l2: List[List[u8]] = List.new()
+                l2.push(sys.lit("  bootstrap: "))
+                l2.push(shown(want))
+                line(l2)
+                var l3: List[List[u8]] = List.new()
+                l3.push(sys.lit("  eiderc:    "))
+                l3.push(shown(got))
+                l3.push(sys.lit(" "))
+                match got {
+                    Some(g) => l3.push(bytes.slice(g.err, 0, 200))
+                    None => {}
+                }
+                line(l3)
+            }
+        }
+        fs.remove_all(path)?
+        k += 1
+    }
+    fs.remove_all(errf)?
+    var s: List[List[u8]] = List.new()
+    s.push(sys.lit("{'agree': "))
+    s.push(num(n_agree))
+    s.push(sys.lit(", 'unsupported': "))
+    s.push(num(n_unsup))
+    s.push(sys.lit(", 'disagree': "))
+    s.push(num(n_dis))
+    s.push(sys.lit(", 'bootstrap crashed': "))
+    s.push(num(n_crash))
+    s.push(sys.lit("}"))
+    line(s)
+    var c: List[List[u8]] = List.new()
+    for i in 0..keys.len() {
+        var kv = keys[i]
+        kv.push(58)
+        bytes.append(inout kv, num(counts[i]))
+        c.push(kv)
+    }
+    io.outln(bytes.join(c, sys.lit(" ")))
+    Ok(n_dis == 0)
+}
+
+fn main() uses io, fs, net, ffi {
+    let r: Result[bool, String] = match parse_opts() {
+        Ok(o) => campaign(o)
+        Err(e) => Err(e)
+    }
+    match r {
+        Ok(true) => {}
+        Ok(false) => { env.exit(1) }
+        Err(e) => {
+            // TODO(compiler): Strings can't reach stderr until they have byte access.
+            var m = String.from("fuzz-check: ")
+            m.append(e)
+            print(m)
+            env.exit(2)
+        }
+    }
+}

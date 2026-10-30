@@ -1,0 +1,5 @@
+[package]
+name = "fuzz"
+version = "0.1.0"
+main = "main.ei"
+description = "differential fuzzer: eiderc check --json against the bootstrap"

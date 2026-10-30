@@ -1,0 +1,264 @@
+// fuzz: the mutation half of the differential fuzzer (main.ei runs the compilers).
+//
+// A deterministic PRNG, a tokenizer for Eider source over bytes, and the two mutation
+// strategies: `semantic` (type names, literals, identifiers, operators, let/var) and
+// `wild` (any token replaced, deleted, extended or prefixed). Pure apart from `sys.lit`.
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+
+// ---- PRNG: a 64-bit LCG (Knuth's MMIX constants), wrapping arithmetic only
+
+pub type Rng = { state: u64 }
+
+pub fn rng(seed: u64) -> Rng {
+    var r = Rng(seed *% 6364136223846793005 +% 1442695040888963407)
+    next(inout r)
+    r
+}
+
+/// The next 32 random bits (the high half of the state; the low bits of an LCG are weak).
+pub fn next(inout r: Rng) -> u64 {
+    r.state = r.state *% 6364136223846793005 +% 1442695040888963407
+    r.state / 4294967296
+}
+
+/// Uniform-ish in 0..n (n > 0; the modulo bias is negligible for the small n used here).
+pub fn below(inout r: Rng, n: usize) -> usize {
+    (next(inout r) % (n as u64)) as usize
+}
+
+pub fn pick(inout r: Rng, xs: List[List[u8]]) -> List[u8] {
+    xs[below(inout r, xs.len())]
+}
+
+// ---- word lists
+
+pub type Tables = {
+    tynames: List[List[u8]],
+    nums: List[List[u8]],
+    kw: List[List[u8]],
+    suffix: List[List[u8]],
+    ops: List[List[u8]],
+    bools: List[List[u8]],
+    bindings: List[List[u8]],
+    unary: List[List[u8]],
+    inserts: List[List[u8]],
+}
+
+/// `~`-separated words (no entry contains `~`).
+fn words(s: str) -> List[List[u8]] uses ffi { bytes.split(sys.lit(s), 126) }
+
+pub fn tables() -> Tables uses ffi {
+    Tables(
+        words("i32~i64~u8~u32~u64~usize~bool~str"),
+        words("0~1~2~255~256~4294967296~18446744073709551615~18446744073709551616"),
+        words("let~var~if~else~while~for~return~break~continue~match~inout~true~false~fn~pub~uses~io~clock~as~_"),
+        words(" + 1~ * 300~ / 0~ == true~ as u8~.x~[0]~[9]~ as usize~ + true"),
+        words("==~<~+~-~*~/~%~&&~||~+%~*%"),
+        words("true~false~1~\"s\""),
+        words("let~var"),
+        words("inout ~-~!"),
+        words("inout ~-~!~return ~unsafe "),
+    )
+}
+
+pub fn member(xs: List[List[u8]], t: List[u8]) -> bool {
+    for x in xs {
+        if bytes.eq(x, t) { return true }
+    }
+    false
+}
+
+// ---- tokens
+
+/// Python's `\s` restricted to ASCII: \t \n \v \f \r, \x1c-\x1f and space.
+pub fn is_ws(b: u8) -> bool { (b >= 9 && b <= 13) || (b >= 28 && b <= 32) }
+
+/// Non-empty and all whitespace (`str.isspace`).
+pub fn is_space_tok(t: List[u8]) -> bool {
+    if t.len() == 0 { return false }
+    for b in t {
+        if !is_ws(b) { return false }
+    }
+    true
+}
+
+pub fn is_digits(t: List[u8]) -> bool {
+    if t.len() == 0 { return false }
+    for b in t {
+        if !bytes.is_digit(b) { return false }
+    }
+    true
+}
+
+pub fn is_ident_tok(t: List[u8]) -> bool {
+    if t.len() == 0 { return false }
+    if !(bytes.is_alpha(t[0]) || t[0] == 95) { return false }
+    for b in t {
+        if !bytes.is_ident(b) { return false }
+    }
+    true
+}
+
+/// Split `src` into tokens whose concatenation is `src`: string literals, identifiers,
+/// digit runs, the two-character operators, whitespace runs, and otherwise one character
+/// (a whole UTF-8 sequence). Same as scripts/fuzz-check.py's TOK regex.
+pub fn tokens(src: List[u8]) -> List[List[u8]] {
+    var out: List[List[u8]] = List.new()
+    var i: usize = 0
+    while i < src.len() {
+        let j = token_end(src, i)
+        out.push(bytes.slice(src, i, j))
+        i = j
+    }
+    out
+}
+
+fn token_end(s: List[u8], i: usize) -> usize {
+    let c = s[i]
+    let n = s.len()
+    if c == 34 {
+        match string_end(s, i) {
+            Some(e) => { return e }
+            None => {}
+        }
+    }
+    if bytes.is_alpha(c) || c == 95 {
+        var j = i + 1
+        while j < n && bytes.is_ident(s[j]) { j += 1 }
+        return j
+    }
+    if bytes.is_digit(c) {
+        var j = i + 1
+        while j < n && bytes.is_digit(s[j]) { j += 1 }
+        return j
+    }
+    if i + 1 < n && is_pair(c, s[i + 1]) { return i + 2 }
+    if is_ws(c) {
+        var j = i + 1
+        while j < n && is_ws(s[j]) { j += 1 }
+        return j
+    }
+    // one character: a lead byte and its continuation bytes
+    var j = i + 1
+    if c >= 192 {
+        while j < n && s[j] >= 128 && s[j] < 192 { j += 1 }
+    }
+    j
+}
+
+/// End of a terminated `"..."` literal starting at `i` (escapes may cover any byte).
+fn string_end(s: List[u8], i: usize) -> Option[usize] {
+    var j = i + 1
+    while j < s.len() {
+        if s[j] == 34 { return Some(j + 1) }
+        if s[j] == 92 {
+            if j + 1 >= s.len() { return None }
+            j += 2
+        } else {
+            j += 1
+        }
+    }
+    None
+}
+
+/// -> => == != <= >= && || +% -% *% ..
+fn is_pair(a: u8, b: u8) -> bool {
+    if a == 45 { return b == 62 || b == 37 }
+    if a == 61 { return b == 62 || b == 61 }
+    if a == 33 || a == 60 || a == 62 { return b == 61 }
+    if a == 38 || a == 124 || a == 46 { return b == a }
+    if a == 43 || a == 42 { return b == 37 }
+    false
+}
+
+/// Identifier tokens that aren't keywords or type names, with repeats (so frequent names
+/// are picked more often).
+pub fn idents(t: Tables, toks: List[List[u8]]) -> List[List[u8]] {
+    var out: List[List[u8]] = List.new()
+    for x in toks {
+        if is_ident_tok(x) && !member(t.kw, x) && !member(t.tynames, x) { out.push(x) }
+    }
+    out
+}
+
+// ---- mutations
+
+/// Replace one random token with something of the same kind (most tokens are left alone).
+pub fn semantic(t: Tables, inout toks: List[List[u8]], inout r: Rng, ids: List[List[u8]]) {
+    let i = below(inout r, toks.len())
+    let tok = toks[i]
+    let roll = below(inout r, 1000)
+    let ty = member(t.tynames, tok)
+    let num = is_digits(tok)
+    let id = member(ids, tok)
+    let bl = member(t.bools, tok)
+    let op = member(t.ops, tok)
+    let bind = member(t.bindings, tok)
+    if ty {
+        toks[i] = pick(inout r, t.tynames)
+    } else if num {
+        toks[i] = pick(inout r, t.nums)
+    } else if id && roll < 500 {
+        toks[i] = pick(inout r, ids)
+    } else if id && roll < 800 {
+        toks[i] = bytes.concat(tok, pick(inout r, t.suffix))
+    } else if id {
+        toks[i] = bytes.concat(pick(inout r, t.unary), tok)
+    } else if bl {
+        toks[i] = pick(inout r, t.bools)
+    } else if op {
+        toks[i] = pick(inout r, t.ops)
+    } else if bind {
+        toks[i] = pick(inout r, t.bindings)
+    }
+}
+
+/// Replace, delete, extend or prefix one random non-whitespace token.
+pub fn wild(t: Tables, inout toks: List[List[u8]], inout r: Rng, ids: List[List[u8]]) {
+    var idx: List[usize] = List.new()
+    for k in 0..toks.len() {
+        if !is_space_tok(toks[k]) { idx.push(k) }
+    }
+    if idx.len() == 0 { return }
+    let i = idx[below(inout r, idx.len())]
+    let roll = below(inout r, 1000)
+    if roll < 300 && ids.len() > 0 {
+        toks[i] = pick(inout r, ids)
+    } else if roll < 450 {
+        toks[i] = pick(inout r, t.nums)
+    } else if roll < 600 {
+        toks[i] = pick(inout r, t.tynames)
+    } else if roll < 700 {
+        toks[i] = pick(inout r, t.kw)
+    } else if roll < 800 {
+        toks[i] = List.new()
+    } else if roll < 900 {
+        toks[i] = bytes.concat(toks[i], pick(inout r, t.suffix))
+    } else {
+        let ins = pick(inout r, t.inserts)
+        var out: List[List[u8]] = List.new()
+        for k in 0..toks.len() {
+            if k == i { out.push(ins) }
+            out.push(toks[k])
+        }
+        toks = out
+    }
+}
+
+/// One or two mutations of `src`.
+pub fn mutate(t: Tables, src: List[u8], inout r: Rng, wild_mode: bool) -> List[u8] {
+    var toks = tokens(src)
+    let ids = idents(t, toks)
+    let rounds = 1 + below(inout r, 2)
+    for _ in 0..rounds {
+        if wild_mode {
+            wild(t, inout toks, inout r, ids)
+        } else {
+            semantic(t, inout toks, inout r, ids)
+        }
+    }
+    let none: List[u8] = List.new()
+    bytes.join(toks, none)
+}

@@ -1,0 +1,106 @@
+2784682393
+1644385741
+3416422068
+2149679590
+3 1 4 3 4 1 4 5 3 5 0 2
+[let] [ ] [s] [ ] [=] [ ] ["a\"b"] [ ] [+] [ ] [x1_y] [->] [z] [=>] [w] [==] [1] [!=] [2] [<=] [3] [>=] [4] [&&] [a] [||] [b] [+%] [c] [-%] [d] [*%] [e] [..] [f]
+["] [open] [ ] [\]
+[é] [ ] [12] [ab] [	
+ ] [x]
+f,a,b,a,b
+fn f(a: i32) -> i32 {
+    let b = a * 2 + 4294967296
+    if b > 3 && true { return b }
+    0
+}
+
+fn f(a: i32) -> i32 {
+    let b = a * 2 + 1
+    if b > 3 && true { return b }
+    0
+}
+
+fn f(a: i32) -> i32 {
+    let b = a * 2 + 1
+    if b > 3 && true { return b }
+    0
+}
+
+fn f(a: i32) -> i32 {
+    let b = a * 2 + 1
+    if b > 3 && true { return b }
+    0
+}
+
+fn b(a: i32) -> i32 {
+    let b = a * 2 + 1
+    if b > 3 && true { return b }
+    0
+}
+
+fn f(a: i32) -> i32 {
+    let b = a * 2 + 1
+    if b > 3 && true { return b }
+    0
+}
+
+fn f(a: i32) -> i32 {
+    let b = a * 2 + 1
+    if b > 3 && true { return b }
+    0
+}
+
+fn f(a: i32) -> i32 {
+    let b = a * 2 + 1
+    if b > 3 && true { return b }
+    0
+}
+
+fn b(a: i32) -> i32 {
+    let as usize b = a * 2 + 1
+    if b > 3 && true { return b }
+    0
+}
+
+a f(a: i32for -> i32 {
+    let b = a * 2 + 1
+    if b > 3 && true { return b }
+    0
+}
+
+fn f(a: i32) -> i32 {
+    let inout = a * 2 + 1
+    if b > 3 && true { return b }
+    0
+}
+
+fn f(a: i32) -> i32 {
+    let b = a * 2 * 300 + 1
+    match b > 3 && true { return b }
+    0
+}
+
+fn f(a: i32) -> i32 {
+    let b = a * 2 b 1
+    if b > 3 && true { return b }
+    0
+}
+
+fn f(a: i32) -> i32 {
+    let b = a * 2 + 1
+    usize b > 3 && true { return b }
+    0
+}
+
+b f(a: i32) -> i32 {
+    let b = a * 2 + 1
+    if -b > 3 && true { return b }
+    0
+}
+
+fn f(a: i32) -> i32 {
+    let b = return a * 2 + 1
+    if 256 > 3 && true { return b }
+    0
+}
+

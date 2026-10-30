@@ -1,0 +1,47 @@
+import "../deps/core/sys.ei"
+import "../deps/std/bytes.ei"
+import "../deps/std/io.ei"
+import "../fuzz.ei"
+
+fn show_tokens(s: str) uses io, ffi {
+    var parts: List[List[u8]] = List.new()
+    for t in fuzz.tokens(sys.lit(s)) {
+        var q = sys.lit("[")
+        bytes.append(inout q, t)
+        q.push(93)
+        parts.push(q)
+    }
+    io.outln(bytes.join(parts, sys.lit(" ")))
+}
+
+fn show_mutants(seed: u64, wild: bool, src: List[u8]) uses io, ffi {
+    let t = fuzz.tables()
+    var r = fuzz.rng(seed)
+    for _ in 0..4 {
+        io.outln(fuzz.mutate(t, src, inout r, wild))
+    }
+}
+
+fn main() uses io, ffi {
+    // the PRNG sequence is part of the tool's contract: SEED=n replays a run
+    var r = fuzz.rng(1)
+    for _ in 0..4 { print(fuzz.next(inout r)) }
+    var r2 = fuzz.rng(42)
+    var dice: List[List[u8]] = List.new()
+    for _ in 0..12 { dice.push(bytes.from_u64(fuzz.below(inout r2, 6) as u64)) }
+    io.outln(bytes.join(dice, sys.lit(" ")))
+
+    show_tokens("let s = \"a\\\"b\" + x1_y->z=>w==1!=2<=3>=4&&a||b+%c-%d*%e..f")
+    show_tokens("\"open \\")
+    show_tokens("é 12ab\t\n x")
+
+    let t = fuzz.tables()
+    let ids = fuzz.idents(t, fuzz.tokens(sys.lit("fn f(a: i32) -> bool { let b = a == 1 return b }")))
+    io.outln(bytes.join(ids, sys.lit(",")))
+
+    let src = sys.lit("fn f(a: i32) -> i32 {\n    let b = a * 2 + 1\n    if b > 3 && true { return b }\n    0\n}\n")
+    show_mutants(1, false, src)
+    show_mutants(7, false, src)
+    show_mutants(1, true, src)
+    show_mutants(7, true, src)
+}

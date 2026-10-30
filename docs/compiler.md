@@ -141,8 +141,8 @@ language as it is:
   tests/checks (51/74 in scope, all agree), tests/run, and eiderc's own 229 cases in
   `compiler/tests/check` (fail cases carry `// expect:` headers that also pass the bootstrap's
   compile-fail runner; helper modules in `lib/`); IR goldens live in `compiler/tests/ir`.
-  `scripts/fuzz-check.py` mutates v0 programs and compares both compilers (thousands of
-  mutants agree; run it after checker changes).
+  `scripts/fuzz-check.sh` (packages/fuzz) mutates v0 programs and compares both compilers
+  (thousands of mutants agree; run it after checker changes).
 - **Bootstrap quirks kept for parity** (fix them after the bootstrap is retired, with tests):
   `Enum.Variant` fails (E0114) for an enum of an imported module, or inside one, because
   variant names are prefixed but the field name isn't; errors in an imported module's test
