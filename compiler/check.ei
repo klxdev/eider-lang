@@ -32,7 +32,12 @@
 // generic) take C-safe parameters, records of them included; a library (`lib`) needs at
 // least one and no `main`. Both are recorded in the IR (ir.ei, Externs and Exports).
 //
-// Features still outside eiderc (threads, comptime, WebAssembly, `?` in an
+// Threads (heap.rs Task/Mutex/Chan, expr.rs spawn): `spawn` needs the `threads`
+// capability; Task, Mutex and Chan are shared handles (copying one shares it), checked in
+// `thread_static` / `thread_method` and recorded as builtins (ir.ei, B_SPAWN ...). Values
+// moved into a spawned closure, a Mutex or a channel are owned by it from then on.
+//
+// Features still outside eiderc (comptime, WebAssembly, `?` in an
 // expression-bodied closure, and `extern`/`unsafe` functions used as values, which the
 // bootstrap lets through without `unsafe` or `ffi`) stop checking with an `unsupported`
 // diagnostic at the point the bootstrap would start handling them, so everything reported
@@ -406,6 +411,7 @@ fn builtin_op(inout c: C, b: u32, args: List[u32], rty: u32, line: u32) -> u32 {
 fn owns(c: C, ty: u32) -> bool {
     let t = types.get(c.t, ty)
     if t.kind == types.T_STRING || t.kind == types.T_LIST || t.kind == types.T_MAP || t.kind == types.T_BOX || t.kind == types.T_FN { return true }
+    if types.is_handle(t.kind) { return true }
     if t.kind == types.T_ARRAY { return owns(c, t.a) }
     if t.kind == types.T_TUPLE {
         for x in types.elems(c.t, ty) {
@@ -671,7 +677,9 @@ fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] uses ffi {
                     check_map_key(c, args[0], n.line, n.col)?
                     return Ok(types.map_of(inout c.t, args[0], args[1]))
                 }
-                return Err(unsup(n.line, n.col, "threads"))
+                if is_task { return Ok(types.task_of(inout c.t, args[0])) }
+                if n.a == c.w.heap[4] { return Ok(types.mutex_of(inout c.t, args[0])) }
+                return Ok(types.chan_of(inout c.t, args[0]))
             }
             let di = mget(c.tmpl, k)
             if di == NONE { return Err(err("E0111", n.line, n.col, q("unknown type `", kt(c, k), "`"))) }
@@ -914,6 +922,10 @@ fn heap_parts(c: C, sym: u32, t: types.Ty) -> Option[List[u32]] {
         parts.push(t.b)
         return Some(parts)
     }
+    if (t.kind == types.T_TASK && sym == c.w.heap[3]) || (t.kind == types.T_MUTEX && sym == c.w.heap[4]) || (t.kind == types.T_CHAN && sym == c.w.heap[5]) {
+        parts.push(t.a)
+        return Some(parts)
+    }
     None
 }
 
@@ -1070,6 +1082,9 @@ fn head_of(c: C, ty: u32) -> u64 {
         10 => resolve.key(0, c.w.list)
         11 => resolve.key(0, c.w.map)
         12 => resolve.key(0, c.w.boxs)
+        14 => resolve.key(0, c.w.heap[3])
+        15 => resolve.key(0, c.w.heap[4])
+        16 => resolve.key(0, c.w.heap[5])
         _ => H_FN
     }
 }
@@ -2645,7 +2660,7 @@ fn negate(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
 /// Does `==` work on this type? (heap.rs eq_supported: Maps have no structural equality)
 fn eq_supported(c: C, ty: u32, shallow: bool) -> bool {
     let t = types.get(c.t, ty)
-    if t.kind == types.T_MAP || t.kind == types.T_FN { return false }
+    if t.kind == types.T_MAP || t.kind == types.T_FN || types.is_handle(t.kind) { return false }
     if t.kind == types.T_ENUM || t.kind == types.T_RECORD {
         if shallow { return true }
         let d = c.t.defs[t.a as usize]
@@ -3279,7 +3294,7 @@ fn builtin(inout c: C, n: ast.Node, which: u32) -> Result[V, diag.Diag] uses ffi
     }
     if which == c.w.spawn {
         if !has_sym(c.caps, c.w.threads) { return Err(cap_error(c, n.line, n.col, s("spawn"), c.w.threads)) }
-        return Err(unsup(n.line, n.col, "threads"))
+        return spawn(inout c, n)
     }
     if which == c.w.panic {
         if n.d != 1 { return Err(err("E0405", n.line, n.col, s("`panic` takes exactly one message"))) }
@@ -3344,6 +3359,7 @@ fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses f
     if tk == types.T_STRING || tk == types.T_LIST || tk == types.T_MAP || tk == types.T_BOX {
         return heap_method(inout c, n, pv)
     }
+    if types.is_handle(tk) { return thread_method(inout c, n, pv) }
     let head = head_of(c, pv.ty)
     var any = false
     for m in c.meths {
@@ -3447,7 +3463,7 @@ fn heap_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag.D
         let o = take(inout c, v, n.line)
         return Ok(v_of(ty, builtin_op(inout c, ir.B_BOX_NEW, one(o), ty, n.line)))
     }
-    if has_sym(c.w.heap, head) && head != c.w.list && head != c.w.map && head != c.w.boxs { return Err(unsup(n.line, n.col, "threads")) }
+    if (head == c.w.heap[4] || head == c.w.heap[5]) && mi == M_NEW { return thread_static(inout c, n, head, exp) }
     Err(err("E0115", n.line, n.col, q2("`", nm(c, head), "` has no associated function `", nm(c, n.b), "`")))
 }
 
@@ -4051,4 +4067,111 @@ fn fold_list(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] uses ffi {
     emit(inout c, ir.S_STORE, 0, accp, nv, 0, acc_ty, n.line)
     list_loop_end(inout c, lp, n.line)
     Ok(v_of(acc_ty, ir.op_local(inout c.ir, acc, acc_ty)))
+}
+
+// ---- threads (heap.rs Task/Mutex/Chan, expr.rs spawn)
+//
+// Task, Mutex and Chan are shared handles: copying one shares the object (a reference
+// count), so threads share data only through them; everything else a closure captures is a
+// snapshot. Receivers are borrowed operands (no method mutates the handle itself, so none
+// needs an assignable receiver). The closure given to `spawn`, a Mutex's new value and a
+// sent value are moved in (`take`); `join`, `get` and `recv` give owned results.
+
+fn is_word(c: C, sym: u32, w: str) -> bool uses ffi { bytes.eq(nm(c, sym), s(w)) }
+
+/// `spawn(closure)`; the `threads` capability is checked by the caller.
+fn spawn(inout c: C, n: ast.Node) -> Result[V, diag.Diag] uses ffi {
+    if n.d != 1 { return Err(err("E0405", n.line, n.col, s("`spawn` takes exactly one closure"))) }
+    let ae = arg_expr(c, at(c, n.c, 0))
+    let x = nd(c, ae)
+    c.lam = no_hint()
+    let fv = expr(inout c, ae, NONE)?
+    let ft = types.get(c.t, fv.ty)
+    if ft.kind != types.T_FN || types.list_len(c.t, ft.a) != 0 {
+        return Err(err("E0401", x.line, x.col, q("`spawn` needs a closure with no parameters, found ", ts(c, fv.ty), "")))
+    }
+    if ft.b == types.NEVER { return Err(err("E0401", x.line, x.col, s("the closure never returns a value"))) }
+    let ty = types.task_of(inout c.t, ft.b)
+    let o = take(inout c, fv, n.line)
+    Ok(v_of(ty, builtin_op(inout c, ir.B_SPAWN, one(o), ty, n.line)))
+}
+
+/// `Mutex.new(v)` and `Chan.new()` (heap.rs heap_static).
+fn thread_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
+    if head == c.w.heap[4] {
+        if n.d != 1 { return Err(err("E0405", n.line, n.col, s("`Mutex.new` takes exactly one argument"))) }
+        var hint = NONE
+        if exp != NONE && types.kind(c.t, exp) == types.T_MUTEX { hint = types.get(c.t, exp).a }
+        let ae = arg_expr(c, at(c, n.c, 0))
+        let x = nd(c, ae)
+        let v = expr(inout c, ae, hint)?
+        if hint != NONE && v.ty != hint { return Err(mismatch(c, x.line, x.col, hint, v.ty)) }
+        if v.ty == types.UNIT || v.ty == types.NEVER { return Err(err("E0401", x.line, x.col, s("can't put () in a Mutex"))) }
+        let ty = types.mutex_of(inout c.t, v.ty)
+        let o = take(inout c, v, n.line)
+        return Ok(v_of(ty, builtin_op(inout c, ir.B_MUTEX_NEW, one(o), ty, n.line)))
+    }
+    if exp == NONE || types.kind(c.t, exp) != types.T_CHAN {
+        return Err(errh("E0409", n.line, n.col, s("cannot infer the element type of `Chan`"), "annotate the binding, e.g. `let c: Chan[i32] = Chan.new()`"))
+    }
+    if n.d > 0 { return Err(err("E0405", n.line, n.col, s("`Chan.new` takes no arguments"))) }
+    Ok(v_of(exp, builtin_op(inout c, ir.B_CHAN_NEW, List.new(), exp, n.line)))
+}
+
+/// Methods of Task, Mutex and Chan (heap.rs heap_method).
+fn thread_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] uses ffi {
+    let ty = pv.ty
+    let t = types.get(c.t, ty)
+    let el = t.a
+    let label = label_of(c, ts(c, ty), n.b)
+    if t.kind == types.T_TASK && is_word(c, n.b, "join") {
+        let ro = recv_op(inout c, pv)
+        eval_args(inout c, n, List.new(), label)?
+        return Ok(v_of(el, builtin_op(inout c, ir.B_TASK_JOIN, one(ro), el, n.line)))
+    }
+    if t.kind == types.T_MUTEX {
+        if is_word(c, n.b, "get") {
+            let ro = recv_op(inout c, pv)
+            eval_args(inout c, n, List.new(), label)?
+            return Ok(v_of(el, builtin_op(inout c, ir.B_MUTEX_GET, one(ro), el, n.line)))
+        }
+        if is_word(c, n.b, "set") {
+            let ro = recv_op(inout c, pv)
+            let vs = eval_args(inout c, n, one(el), label)?
+            let x = take(inout c, vs[0], n.line)
+            return Ok(v_of(types.UNIT, builtin_op(inout c, ir.B_MUTEX_SET, two(ro, x), types.UNIT, n.line)))
+        }
+        if is_word(c, n.b, "update") {
+            if n.d != 1 { return Err(err("E0405", n.line, n.col, s("`update` takes exactly one closure"))) }
+            let ro = recv_op(inout c, pv)
+            let fv = closure_arg(inout c, n, 0, one(el), el)?
+            let want = types.fn_of(inout c.t, one(el), el)
+            if fv.ty != want {
+                let ae = nd(c, arg_expr(c, at(c, n.c, 0)))
+                return Err(mismatch(c, ae.line, ae.col, want, fv.ty))
+            }
+            // the closure is borrowed: its owner (a fresh temporary or a variable) drops it
+            return Ok(v_of(types.UNIT, builtin_op(inout c, ir.B_MUTEX_UPDATE, two(ro, fv.op), types.UNIT, n.line)))
+        }
+    }
+    if t.kind == types.T_CHAN {
+        if is_word(c, n.b, "send") {
+            let ro = recv_op(inout c, pv)
+            let vs = eval_args(inout c, n, one(el), label)?
+            let x = take(inout c, vs[0], n.line)
+            return Ok(v_of(types.UNIT, builtin_op(inout c, ir.B_CHAN_SEND, two(ro, x), types.UNIT, n.line)))
+        }
+        if is_word(c, n.b, "close") {
+            let ro = recv_op(inout c, pv)
+            eval_args(inout c, n, List.new(), label)?
+            return Ok(v_of(types.UNIT, builtin_op(inout c, ir.B_CHAN_CLOSE, one(ro), types.UNIT, n.line)))
+        }
+        if is_word(c, n.b, "recv") {
+            let ro = recv_op(inout c, pv)
+            eval_args(inout c, n, List.new(), label)?
+            let opt = option_of(inout c, el, n)?
+            return Ok(v_of(opt, builtin_op(inout c, ir.B_CHAN_RECV, one(ro), opt, n.line)))
+        }
+    }
+    Err(err("E0115", n.line, n.col, q2("type ", ts(c, ty), " has no method `", nm(c, n.b), "`")))
 }

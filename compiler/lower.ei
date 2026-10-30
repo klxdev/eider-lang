@@ -18,10 +18,13 @@
 // type (`swap[i32, bool]`, `Pair[i32, bool]`, `List[String]`):
 //   t_<key>[_<h>]  record or enum (`_<h>` for instances of generic types)
 //   ta_<h> tt_<h> tl_<h> tm_<h> tb_<h> tf_<h>   array, tuple, List, Map, Box, fn type
+//   tk_<h> tx_<h> tc_<h>   Task, Mutex, Chan handles (`struct <name>_c` is the shared object)
 //   f_<name>[_<h>] function: `.` becomes `__` (methods `Sq__area`, closures `main__closure1`,
 //                  numbered per enclosing function), `[...]` is dropped and `_<h>` appended
 //   x_<name>_<h>   test block (`_2`, `_3`... for repeated names)
 //   <op>_<type>    glue: eq_ drop_ clone_ name_ push_ has_ find_ get_ ins_ rem_ new_
+//                  threads: spawn_ run_ join_ (Task), new_ get_ set_ upd_ (Mutex),
+//                  new_ send_ recv_ (Chan)
 //   env_<f> edrop_<f> eclone_<f> k_<f>   closure environment and its glue; thunk of a
 //                  function used as a value
 //   l<i>[_<name>]  local i of the function being lowered (parameters first)
@@ -35,7 +38,10 @@
 // runtime's `ei_String`; List[T] `{ T *d; uint64_t len, cap; }`; Map[K, V] stage 0's open
 // addressing table `{ K *k; V *v; uint8_t *s; uint64_t len, cap, used; }` (s: 0 empty, 1 used,
 // 2 deleted; same hashing and probing as stage 0); Box[T] `{ T *p; }`; a fn value
-// `{ void *env; R (*call)(void *, ...); void (*drop)(void *); void *(*clone)(void *); }`.
+// `{ void *env; R (*call)(void *, ...); void (*drop)(void *); void *(*clone)(void *); }`;
+// Task[T], Mutex[T] and Chan[T] `{ struct <name>_c *p; }`, a pointer to a shared object that
+// starts with the runtime's `ei_rc` count and embeds the runtime's thread, mutex or channel
+// (see "threads" below). Copying a handle shares the object; the last drop frees it.
 // Every struct type is forward-declared, then defined after the types it contains by value.
 // `inout` parameters are pointers. Every local is declared at the top of its function with a
 // zero initializer, so no path reads an uninitialized variable (and gcc -O2 has nothing to
@@ -72,6 +78,16 @@ const GK_REM: u32 = 10
 const GK_NEW: u32 = 11
 const GK_ENV: u32 = 12
 const GK_THUNK: u32 = 13
+// threads (keyed by the handle type)
+const GK_SPAWN: u32 = 14
+const GK_JOIN: u32 = 15
+const GK_MXNEW: u32 = 16
+const GK_MXGET: u32 = 17
+const GK_MXSET: u32 = 18
+const GK_MXUPD: u32 = 19
+const GK_CHNEW: u32 = 20
+const GK_CHSEND: u32 = 21
+const GK_CHRECV: u32 = 22
 
 /// Output and lowering state. `o` is the text being written; `pr` collects glue prototypes
 /// and `envs` closure environment structs while glue is generated. Per type: its C name
@@ -203,7 +219,7 @@ fn clash(inout g: G, name: List[u8], from: List[u8]) uses ffi {
 }
 
 fn is_struct_kind(k: u32) -> bool {
-    k == types.T_ENUM || k == types.T_RECORD || k == types.T_ARRAY || k == types.T_TUPLE || k == types.T_LIST || k == types.T_MAP || k == types.T_BOX || k == types.T_FN
+    k == types.T_ENUM || k == types.T_RECORD || k == types.T_ARRAY || k == types.T_TUPLE || k == types.T_LIST || k == types.T_MAP || k == types.T_BOX || k == types.T_FN || types.is_handle(k)
 }
 
 /// Whether type `ty` is concrete (no generic template inside it).
@@ -214,7 +230,7 @@ fn usable(p: P, ty: u32) -> bool {
         let d = types.def_of(p.t, ty)
         return d.generic == 0 && d.filled
     }
-    if k == types.T_ARRAY || k == types.T_LIST || k == types.T_BOX { return usable(p, t.a) }
+    if k == types.T_ARRAY || k == types.T_LIST || k == types.T_BOX || types.is_handle(k) { return usable(p, t.a) }
     if k == types.T_MAP { return usable(p, t.a) && usable(p, t.b) }
     if k == types.T_TUPLE {
         for x in types.elems(p.t, ty) {
@@ -252,6 +268,9 @@ fn type_name(p: P, ty: u32) -> List[u8] uses ffi {
     if k == types.T_MAP { bytes.append(inout out, sys.lit("tm_")) }
     if k == types.T_BOX { bytes.append(inout out, sys.lit("tb_")) }
     if k == types.T_FN { bytes.append(inout out, sys.lit("tf_")) }
+    if k == types.T_TASK { bytes.append(inout out, sys.lit("tk_")) }
+    if k == types.T_MUTEX { bytes.append(inout out, sys.lit("tx_")) }
+    if k == types.T_CHAN { bytes.append(inout out, sys.lit("tc_")) }
     hex8(inout out, h64(shown))
     out
 }
@@ -489,7 +508,7 @@ fn owns(inout g: G, p: P, ty: u32) -> bool {
     let t = types.get(p.t, ty)
     let k = t.kind
     var r = false
-    if k == types.T_STRING || k == types.T_LIST || k == types.T_MAP || k == types.T_BOX || k == types.T_FN {
+    if k == types.T_STRING || k == types.T_LIST || k == types.T_MAP || k == types.T_BOX || k == types.T_FN || types.is_handle(k) {
         r = true
     } else if k == types.T_ARRAY {
         r = owns(inout g, p, t.a)
@@ -598,6 +617,15 @@ fn def_ty(inout g: G, p: P, ty: u32, inout done: Map[u32, bool]) uses ffi {
         put(inout g, " { ")
         cty(inout g, p, t.a)
         put(inout g, " *p; };\n")
+        return
+    }
+    if types.is_handle(k) {
+        // the shared object's struct is defined after every type (handle_bodies)
+        put(inout g, "struct ")
+        cty(inout g, p, ty)
+        put(inout g, " { struct ")
+        cty(inout g, p, ty)
+        put(inout g, "_c *p; };\n")
         return
     }
     if k == types.T_FN {
@@ -789,6 +817,8 @@ fn glue(inout g: G, p: P, key: u64) uses ffi {
         env_glue(inout g, p, id)
     } else if kind == GK_THUNK {
         thunk_glue(inout g, p, id)
+    } else if kind >= GK_SPAWN {
+        thread_glue(inout g, p, kind, id)
     } else {
         map_glue(inout g, p, kind, id)
     }
@@ -948,6 +978,8 @@ fn drop_glue(inout g: G, p: P, ty: u32) uses ffi {
         put(inout g, "ei_free(x->p); x->p = NULL;")
     } else if k == types.T_FN {
         put(inout g, "if (x->drop) { x->drop(x->env); }\n  x->env = NULL; x->drop = NULL; x->clone = NULL;")
+    } else if types.is_handle(k) {
+        handle_drop(inout g, p, ty)
     }
     put(inout g, "\n}\n")
 }
@@ -1041,6 +1073,9 @@ fn clone_glue(inout g: G, p: P, ty: u32) uses ffi {
         put(inout g, ";")
     } else if k == types.T_FN {
         put(inout g, "if (x->clone) { r.env = x->clone(x->env); }")
+    } else if types.is_handle(k) {
+        // shares the object
+        put(inout g, "if (r.p) ei_rc_inc(&r.p->rc);")
     }
     put(inout g, "\n  return r;\n}\n")
 }
@@ -1713,6 +1748,8 @@ fn builtin(inout g: G, p: P, s: ir.Stmt, depth: u32) uses ffi {
         put(inout g, "(")
         arg_val(inout g, p, barg(p, s, 0))
         put(inout g, ")")
+    } else if b >= ir.B_SPAWN {
+        thread_builtin(inout g, p, s)
     } else if b == ir.B_LIST_PUSH || b == ir.B_LIST_CONTAINS {
         let lt = arg_ty(p, barg(p, s, 0))
         if b == ir.B_LIST_PUSH {
@@ -2364,6 +2401,7 @@ pub fn program_for(p: P, file: List[u8], tests: bool, lib: bool) -> Result[List[
     }
     var done: Map[u32, bool] = Map.new()
     for ty in 0..p.t.tys.len() { def_ty(inout g, p, ty as u32, inout done) }
+    handle_bodies(inout g, p)
     let envs = g.envs
     putb(inout g, envs)
     put(inout g, "\n/* ---- prototypes */\n")
@@ -2482,4 +2520,278 @@ pub fn header(p: P) -> List[u8] uses ffi {
     bytes.append(inout out, protos)
     bytes.append(inout out, sys.lit("#ifdef __cplusplus\n}\n#endif\n#endif\n"))
     out
+}
+
+// ---- threads (docs/compiler.md, "C7: threads")
+//
+// A Task[T], Mutex[T] or Chan[T] value is a handle `{ struct <name>_c *p; }` to a shared
+// object holding the runtime's reference count (core/eider_rt.h `ei_rc`) and its thread,
+// mutex or channel. Everything that needs a lock, a thread or a condition variable is a
+// runtime call; the glue here only adds the typed payload:
+//   struct tk_<h>_c { ei_rc rc; ei_thread th; F f; T r; }   F = fn() -> T; no r for ()
+//   struct tx_<h>_c { ei_rc rc; ei_mutex mu; T v; }
+//   struct tc_<h>_c { ei_rc rc; ei_chan ch; }                elements are T by value
+// Copying a handle increments the count; the last drop frees the object: a Task joins its
+// thread first (so no thread outlives its last handle, and the program never ends with one
+// running), then drops its closure and result; a Mutex drops its value; a Chan drops the
+// values still queued. Values cross threads only by move (spawn's closure, send) or by
+// copy under the lock (Mutex.get); old values a Mutex replaces are dropped after the lock
+// is released, so a drop that joins a thread (a Task in a Mutex) never runs under it.
+
+/// The shared objects' structs, after every type is complete.
+fn handle_bodies(inout g: G, p: P) uses ffi {
+    for ty in 0..p.t.tys.len() {
+        let t = types.get(p.t, ty as u32)
+        if !types.is_handle(t.kind) || g.tn[ty].len() == 0 { continue }
+        put(inout g, "struct ")
+        cty(inout g, p, ty as u32)
+        put(inout g, "_c { ei_rc rc; ")
+        if t.kind == types.T_TASK {
+            put(inout g, "ei_thread th; ")
+            cty(inout g, p, task_fn(p, t.a))
+            put(inout g, " f; ")
+            if !is_void(p, t.a) {
+                cty(inout g, p, t.a)
+                put(inout g, " r; ")
+            }
+        } else if t.kind == types.T_MUTEX {
+            put(inout g, "ei_mutex mu; ")
+            cty(inout g, p, t.a)
+            put(inout g, " v; ")
+        } else {
+            put(inout g, "ei_chan ch; ")
+        }
+        put(inout g, "};\n")
+    }
+}
+
+/// `fn() -> T`, the closure type a Task[T] runs (types.task_of interns it).
+fn task_fn(p: P, el: u32) -> u32 { types.find_comp(p.t, types.T_FN, types.EMPTY, el) }
+
+/// `fn(T) -> T`, Mutex[T].update's closure type (the checker interns it).
+fn update_fn(p: P, el: u32) -> u32 {
+    var ps: List[u32] = List.new()
+    ps.push(el)
+    let l = types.find_list(p.t, ps)
+    if l == types.NOTY { return types.NOTY }
+    types.find_comp(p.t, types.T_FN, l, el)
+}
+
+/// The body of drop_T for handle type ty (x is the handle's address).
+fn handle_drop(inout g: G, p: P, ty: u32) uses ffi {
+    let t = types.get(p.t, ty)
+    put(inout g, "if (x->p && ei_rc_dec(&x->p->rc)) {\n    ")
+    if t.kind == types.T_TASK {
+        put(inout g, "ei_thread_destroy(&x->p->th);\n    ")
+        drop_call(inout g, p, task_fn(p, t.a), sys.lit("&x->p->f"))
+        if !is_void(p, t.a) { drop_call(inout g, p, t.a, sys.lit("&x->p->r")) }
+    } else if t.kind == types.T_MUTEX {
+        drop_call(inout g, p, t.a, sys.lit("&x->p->v"))
+        put(inout g, "ei_mutex_destroy(&x->p->mu);")
+    } else {
+        if owns(inout g, p, t.a) {
+            put(inout g, "for (uint64_t i = 0; i < ei_chan_len(&x->p->ch); i++) { ")
+            drop_call(inout g, p, t.a, sys.lit("ei_chan_at(&x->p->ch, i)"))
+            put(inout g, "}\n    ")
+        }
+        put(inout g, "ei_chan_destroy(&x->p->ch);")
+    }
+    put(inout g, "\n    ei_free(x->p);\n  }\n  x->p = NULL;")
+}
+
+/// `static <ret> <op><handle>(<handle> h` ... the start of a glue function for handle ty.
+fn handle_sig(inout g: G, p: P, ret: u32, op: str, ty: u32, h: str) uses ffi {
+    put(inout g, "static ")
+    ret_cty(inout g, p, ret)
+    put(inout g, " ")
+    gname(inout g, p, op, ty)
+    put(inout g, "(")
+    cty(inout g, p, ty)
+    put(inout g, " ")
+    put(inout g, h)
+}
+
+/// `T old = <place>; ` when T owns heap data (dropped by old_drop after the unlock).
+fn old_save(inout g: G, p: P, el: u32) uses ffi {
+    if !owns(inout g, p, el) { return }
+    cty(inout g, p, el)
+    put(inout g, " old = m.p->v;\n  ")
+}
+
+fn old_drop(inout g: G, p: P, el: u32) uses ffi {
+    if !owns(inout g, p, el) { return }
+    put(inout g, "\n  ")
+    drop_call(inout g, p, el, sys.lit("&old"))
+}
+
+fn thread_glue(inout g: G, p: P, kind: u32, ty: u32) uses ffi {
+    let el = types.get(p.t, ty).a
+    let unit_r = is_void(p, el)
+    let mark = g.o.len()
+    if kind == GK_SPAWN {
+        // the thread's entry point: runs the closure, keeps its result in the object
+        put(inout g, "static void *")
+        gname(inout g, p, "run_", ty)
+        put(inout g, "(void *q)")
+        proto(inout g, mark)
+        put(inout g, " {\n  struct ")
+        cty(inout g, p, ty)
+        put(inout g, "_c *c = q;\n  ")
+        if !unit_r { put(inout g, "c->r = ") }
+        put(inout g, "c->f.call(c->f.env);\n  return NULL;\n}\n")
+        let m2 = g.o.len()
+        put(inout g, "static ")
+        cty(inout g, p, ty)
+        put(inout g, " ")
+        gname(inout g, p, "spawn_", ty)
+        put(inout g, "(")
+        cty(inout g, p, task_fn(p, el))
+        put(inout g, " f)")
+        proto(inout g, m2)
+        put(inout g, " {\n  ")
+        cty(inout g, p, ty)
+        put(inout g, " t;\n  t.p = ei_alloc(sizeof *t.p);\n  ei_rc_init(&t.p->rc);\n  t.p->f = f;\n  ei_thread_start(&t.p->th, ")
+        gname(inout g, p, "run_", ty)
+        put(inout g, ", t.p);\n  return t;\n}\n")
+    } else if kind == GK_JOIN {
+        // waits for the thread (once, whoever asks first); the result stays in the Task
+        handle_sig(inout g, p, el, "join_", ty, "t)")
+        proto(inout g, mark)
+        put(inout g, " {\n  ei_thread_join(&t.p->th);\n")
+        if !unit_r {
+            put(inout g, "  return ")
+            clone_expr(inout g, p, el, sys.lit("&t.p->r"))
+            put(inout g, ";\n")
+        }
+        put(inout g, "}\n")
+    } else if kind == GK_MXNEW {
+        put(inout g, "static ")
+        cty(inout g, p, ty)
+        put(inout g, " ")
+        gname(inout g, p, "new_", ty)
+        put(inout g, "(")
+        cty(inout g, p, el)
+        put(inout g, " v)")
+        proto(inout g, mark)
+        put(inout g, " {\n  ")
+        cty(inout g, p, ty)
+        put(inout g, " m;\n  m.p = ei_alloc(sizeof *m.p);\n  ei_rc_init(&m.p->rc);\n  ei_mutex_init(&m.p->mu);\n  m.p->v = v;\n  return m;\n}\n")
+    } else if kind == GK_MXGET {
+        handle_sig(inout g, p, el, "get_", ty, "m)")
+        proto(inout g, mark)
+        put(inout g, " {\n  ei_mutex_lock(&m.p->mu);\n  ")
+        cty(inout g, p, el)
+        put(inout g, " r = ")
+        clone_expr(inout g, p, el, sys.lit("&m.p->v"))
+        put(inout g, ";\n  ei_mutex_unlock(&m.p->mu);\n  return r;\n}\n")
+    } else if kind == GK_MXSET {
+        handle_sig(inout g, p, types.UNIT, "set_", ty, "m, ")
+        cty(inout g, p, el)
+        put(inout g, " v)")
+        proto(inout g, mark)
+        put(inout g, " {\n  ei_mutex_lock(&m.p->mu);\n  ")
+        old_save(inout g, p, el)
+        put(inout g, "m.p->v = v;\n  ei_mutex_unlock(&m.p->mu);")
+        old_drop(inout g, p, el)
+        put(inout g, "\n}\n")
+    } else if kind == GK_MXUPD {
+        // the closure runs with the lock held, on a borrow of the value
+        handle_sig(inout g, p, types.UNIT, "upd_", ty, "m, ")
+        cty(inout g, p, update_fn(p, el))
+        put(inout g, " f)")
+        proto(inout g, mark)
+        put(inout g, " {\n  ei_mutex_lock(&m.p->mu);\n  ")
+        cty(inout g, p, el)
+        put(inout g, " nv = f.call(f.env, m.p->v);\n  ")
+        old_save(inout g, p, el)
+        put(inout g, "m.p->v = nv;\n  ei_mutex_unlock(&m.p->mu);")
+        old_drop(inout g, p, el)
+        put(inout g, "\n}\n")
+    } else if kind == GK_CHNEW {
+        put(inout g, "static ")
+        cty(inout g, p, ty)
+        put(inout g, " ")
+        gname(inout g, p, "new_", ty)
+        put(inout g, "(void)")
+        proto(inout g, mark)
+        put(inout g, " {\n  ")
+        cty(inout g, p, ty)
+        put(inout g, " c;\n  c.p = ei_alloc(sizeof *c.p);\n  ei_rc_init(&c.p->rc);\n  ei_chan_init(&c.p->ch, sizeof(")
+        cty(inout g, p, el)
+        put(inout g, "));\n  return c;\n}\n")
+    } else if kind == GK_CHSEND {
+        // the value's bytes move into the queue: the channel owns it now
+        handle_sig(inout g, p, types.UNIT, "send_", ty, "c, ")
+        cty(inout g, p, el)
+        put(inout g, " v)")
+        proto(inout g, mark)
+        put(inout g, " {\n  ei_chan_send(&c.p->ch, &v);\n}\n")
+    } else {
+        handle_sig(inout g, p, types.BOOL, "recv_", ty, "c, ")
+        cty(inout g, p, el)
+        put(inout g, " *out)")
+        proto(inout g, mark)
+        put(inout g, " {\n  return ei_chan_recv(&c.p->ch, out);\n}\n")
+    }
+}
+
+/// `<op><handle>(args)` with glue kind gk for handle type ty.
+fn thread_call(inout g: G, p: P, s: ir.Stmt, gk: u32, op: str, ty: u32) uses ffi {
+    need(inout g, gk, ty)
+    bdst(inout g, p, s)
+    gname(inout g, p, op, ty)
+    put(inout g, "(")
+    for i in 0..s.c {
+        if i > 0 { put(inout g, ", ") }
+        arg_val(inout g, p, barg(p, s, i))
+    }
+    put(inout g, ")")
+}
+
+fn thread_builtin(inout g: G, p: P, s: ir.Stmt) uses ffi {
+    let b = s.a
+    if b == ir.B_SPAWN {
+        thread_call(inout g, p, s, GK_SPAWN, "spawn_", s.ty)
+        return
+    }
+    if b == ir.B_MUTEX_NEW {
+        thread_call(inout g, p, s, GK_MXNEW, "new_", s.ty)
+        return
+    }
+    if b == ir.B_CHAN_NEW {
+        thread_call(inout g, p, s, GK_CHNEW, "new_", s.ty)
+        return
+    }
+    let ht = arg_ty(p, barg(p, s, 0))
+    if b == ir.B_TASK_JOIN {
+        thread_call(inout g, p, s, GK_JOIN, "join_", ht)
+    } else if b == ir.B_MUTEX_GET {
+        thread_call(inout g, p, s, GK_MXGET, "get_", ht)
+    } else if b == ir.B_MUTEX_SET {
+        thread_call(inout g, p, s, GK_MXSET, "set_", ht)
+    } else if b == ir.B_MUTEX_UPDATE {
+        thread_call(inout g, p, s, GK_MXUPD, "upd_", ht)
+    } else if b == ir.B_CHAN_SEND {
+        thread_call(inout g, p, s, GK_CHSEND, "send_", ht)
+    } else if b == ir.B_CHAN_CLOSE {
+        put(inout g, "ei_chan_close(&")
+        arg_val(inout g, p, barg(p, s, 0))
+        put(inout g, ".p->ch)")
+    } else {
+        // { T v; if (recv_C(c, &v)) dst = Some(v); else dst = None; }
+        need(inout g, GK_CHRECV, ht)
+        put(inout g, "{ ")
+        cty(inout g, p, types.get(p.t, ht).a)
+        put(inout g, " v; if (")
+        gname(inout g, p, "recv_", ht)
+        put(inout g, "(")
+        arg_val(inout g, p, barg(p, s, 0))
+        put(inout g, ", &v)) ")
+        bdst(inout g, p, s)
+        option_lit(inout g, p, s.ty, sys.lit("v"))
+        put(inout g, "; else ")
+        bdst(inout g, p, s)
+        option_lit(inout g, p, s.ty, List.new())
+        put(inout g, "; }")
+    }
 }
