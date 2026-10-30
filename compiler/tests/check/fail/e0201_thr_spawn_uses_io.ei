@@ -1,0 +1,7 @@
+// expect: E0201 4:9
+fn main() uses threads {
+    let t = spawn(|| -> i32 {
+        print(1)
+        return 1
+    })
+}

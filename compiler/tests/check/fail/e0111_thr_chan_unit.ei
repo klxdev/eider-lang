@@ -1,0 +1,3 @@
+// expect: E0111 2:9
+fn f(c: Chan[()]) {}
+fn main() {}

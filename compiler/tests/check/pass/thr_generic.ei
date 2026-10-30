@@ -1,0 +1,26 @@
+type Cell[T] = { m: Mutex[T] }
+fn get_it[T](m: Mutex[T]) -> T { m.get() }
+fn all[T](c: Chan[T]) -> List[T] {
+    var out: List[T] = List.new()
+    var go = true
+    while go {
+        match c.recv() {
+            Some(x) => out.push(x)
+            None => { go = false }
+        }
+    }
+    out
+}
+fn run[T](f: fn() -> T) -> Task[T] uses threads { spawn(f) }
+fn main() uses io, threads {
+    let cell = Cell(Mutex.new(3))
+    print(get_it(cell.m))
+    let c: Chan[str] = Chan.new()
+    c.send("x")
+    c.close()
+    print(all(c).len())
+    let t = run(|| -> bool true)
+    print(t.join())
+    let u = spawn(|| print(5))
+    u.join()
+}

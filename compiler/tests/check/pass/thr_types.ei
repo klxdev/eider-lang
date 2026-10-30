@@ -1,0 +1,11 @@
+type Node = { v: i32, next: Option[Mutex[Node]] }
+type Msg =
+    | Work(i32, Chan[i32])
+    | Stop
+fn handles(ts: List[Task[i32]], ms: [Mutex[i32]; 2], cs: (Chan[Msg], bool)) -> usize { ts.len() }
+fn main() uses io {
+    let n = Node(1, None)
+    let m = Mutex.new(n)
+    let n2 = Node(2, Some(m))
+    print(n2.v)
+}

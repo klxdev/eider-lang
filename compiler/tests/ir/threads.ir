@@ -1,0 +1,100 @@
+
+fn main -> () uses io, threads
+  %0 temp: String
+  %1 temp: Mutex[String]
+  %2 let m: Mutex[String]
+  %3 temp: Mutex[String]
+  %4 temp: Mutex[String]
+  %5 let mm: Mutex[String]
+  %6 temp: Mutex[String]
+  %7 temp: Mutex[String]
+  %8 temp: fn() -> String
+  %9 temp: Task[String]
+  %10 let t: Task[String]
+  %11 temp: Task[String]
+  %12 temp: String
+  %13 let r: String
+  %14 temp: Mutex[String]
+  %15 temp: String
+  %16 temp: String
+  %17 temp: Chan[String]
+  %18 let c: Chan[String]
+  %19 temp: Chan[String]
+  %20 temp: String
+  %21 temp: Chan[String]
+  %22 temp: Chan[String]
+  %23 temp: Option[String]
+  %24 temp: bool
+  %25 let s: String
+  %26 temp: String
+  %27 temp: String
+  {
+    %0 = string_from("a")
+    %1 = mutex_new(%0)
+    %2 = %1
+    %3 = read %2
+    %4 = clone %3
+    %5 = %4
+    %6 = read %5
+    %7 = clone %6
+    %8 = closure main.closure1(%7)
+    %9 = spawn(%8)
+    %10 = %9
+    %11 = read %10
+    %12 = join(%11)
+    %13 = %12
+    %14 = read %2
+    %15 = read %13
+    %16 = clone %15
+    mutex_set(%14, %16)
+    %17 = chan_new()
+    %18 = %17
+    %19 = read %18
+    %20 = string_from("x")
+    send(%19, %20)
+    %21 = read %18
+    close(%21)
+    %22 = read %18
+    %23 = recv(%22)
+    %24 = tag %23 is <0>
+    if %24 {
+      %26 = read %23.<0>.0
+      %25 = clone %26
+      %27 = read %25
+      print %27
+      drop %25: String
+    } else {
+    }
+    drop %23: Option[String]
+    drop %18: Chan[String]
+    drop %13: String
+    drop %10: Task[String]
+    drop %5: Mutex[String]
+    drop %2: Mutex[String]
+  }
+
+fn main.closure1 -> String uses io, threads
+  %0 capture mm: Mutex[String]
+  %1 temp: Mutex[String]
+  %2 temp: fn(String) -> String
+  %3 temp: Mutex[String]
+  %4 temp: String
+  {
+    %1 = read %0
+    %2 = closure main.closure1.closure2()
+    mutex_update(%1, %2)
+    %3 = read %0
+    %4 = mutex_get(%3)
+    drop %2: fn(String) -> String
+    return %4
+  }
+
+fn main.closure1.closure2 -> String uses io, threads
+  %0 param s: String
+  %1 temp: String
+  %2 temp: String
+  {
+    %1 = read %0
+    %2 = clone %1
+    return %2
+  }

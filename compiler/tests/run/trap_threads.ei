@@ -1,0 +1,54 @@
+// Traps and threads: `send` on a closed channel traps (stderr, exit 101) whichever thread
+// sends; test blocks that use threads pass and fail like any other (a trap on the test's
+// own thread fails just that test).
+
+fn main() uses io, threads {
+    let c: Chan[String] = Chan.new()
+    let cc = c
+    let t = spawn(|| -> i32 {
+        cc.send(String.from("one"))
+        cc.close()
+        return 1
+    })
+    print(t.join())
+    match c.recv() {
+        Some(s) => print(s)
+        None => print("none")
+    }
+    let w = spawn(|| -> i32 {
+        cc.send(String.from("two"))
+        return 2
+    })
+    print(w.join())
+}
+
+test "threads in a test" {
+    let m = Mutex.new(0)
+    var ts: List[Task[i32]] = List.new()
+    for i in 0..4 {
+        let mm = m
+        ts.push(spawn(|| -> i32 {
+            for j in 0..100 { mm.update(|x: i32| -> i32 x + 1) }
+            return j_done()
+        }))
+    }
+    for t in ts { assert t.join() == 1 }
+    assert m.get() == 400
+}
+
+fn j_done() -> i32 { 1 }
+
+test "send after close on the test's thread" {
+    let c: Chan[i32] = Chan.new()
+    c.close()
+    c.send(1)
+}
+
+test "a channel after the failed test" {
+    let c: Chan[i32] = Chan.new()
+    c.send(5)
+    match c.recv() {
+        Some(x) => { assert x == 5 }
+        None => { assert false }
+    }
+}

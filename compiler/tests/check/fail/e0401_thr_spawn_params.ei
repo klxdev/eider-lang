@@ -1,0 +1,4 @@
+// expect: E0401 3:19
+fn main() uses io, threads {
+    let t = spawn(|x: i32| -> i32 x)
+}

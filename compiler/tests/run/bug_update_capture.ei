@@ -1,0 +1,38 @@
+// Bootstrap bug: stage 0's Mutex.update drops the closure it is given, and the caller
+// drops it again, so a closure that captures anything owned is freed twice (stage 0
+// crashes with a double free). eiderc's update borrows the closure; its owner drops it once.
+
+fn main() uses io, threads {
+    let m = Mutex.new(String.from("a"))
+    let suffix = String.from("bc")
+    m.update(|s: String| -> String {
+        var t = s
+        t.append(suffix)
+        return t
+    })
+    print(m.get())
+    // a stored closure, used twice
+    let add = |s: String| -> String {
+        var t = s
+        t.append(suffix)
+        return t
+    }
+    m.update(add)
+    m.update(add)
+    print(m.get())
+    // from several threads, capturing a handle and a String
+    let n = Mutex.new(0)
+    let step = Mutex.new(3)
+    var ts: List[Task[i32]] = List.new()
+    for i in 0..8 {
+        let nn = n
+        let ss = step
+        let tag = String.from("tag")
+        ts.push(spawn(|| -> i32 {
+            for j in 0..100 { nn.update(|x: i32| -> i32 x + ss.get() + tag.len() as i32 - 3) }
+            return 0
+        }))
+    }
+    for t in ts { let z = t.join() }
+    print(n.get())
+}

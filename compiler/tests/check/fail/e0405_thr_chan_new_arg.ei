@@ -1,0 +1,4 @@
+// expect: E0405 3:29
+fn main() uses io {
+    let c: Chan[i32] = Chan.new(1)
+}

@@ -1,0 +1,19 @@
+// Threads in the IR: spawn moves its closure in, Mutex.new/set and send move their value
+// in, join/get/recv give owned results, update borrows its closure, handles are dropped.
+fn main() uses io, threads {
+    let m = Mutex.new(String.from("a"))
+    let mm = m
+    let t = spawn(|| -> String {
+        mm.update(|s: String| -> String s)
+        return mm.get()
+    })
+    let r = t.join()
+    m.set(r)
+    let c: Chan[String] = Chan.new()
+    c.send(String.from("x"))
+    c.close()
+    match c.recv() {
+        Some(s) => print(s)
+        None => {}
+    }
+}

@@ -1,0 +1,6 @@
+// expect: E0401 5:13
+fn main() uses io {
+    let a: List[Chan[i32]] = List.new()
+    let b: List[Chan[i32]] = List.new()
+    print(a == b)
+}

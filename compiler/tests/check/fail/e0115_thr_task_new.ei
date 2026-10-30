@@ -1,0 +1,4 @@
+// expect: E0115 3:18
+fn main() uses io {
+    let t = Task.new()
+}
