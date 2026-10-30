@@ -1,5 +1,5 @@
-// Bootstrap bug (LEARNINGS.md): `len(e)` on an array folds to the length and never evaluates
-// `e`. eiderc evaluates `e` for its side effects. Expected output: bug_len_effects.out.
+// Regression (LEARNINGS.md): `len(e)` on an array once folded to the length and never evaluated
+// `e`. eiderc deliberately evaluates `e` for its side effects. Expected output: bug_len_effects.out.
 
 fn make(n: i32) -> [i32; 4] uses io {
     print(n)

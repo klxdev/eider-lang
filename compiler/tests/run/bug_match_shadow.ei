@@ -1,6 +1,6 @@
-// Bootstrap bug (LEARNINGS.md): a match-arm binding named like the `let` it initialises
-// (`let p = match r { Ok(p) => p ... }`) becomes a second C variable, so the outer `p` is
-// never assigned. eiderc assigns it. Expected output: bug_match_shadow.out.
+// Regression (LEARNINGS.md): a match-arm binding named like the `let` it initialises
+// (`let p = match r { Ok(p) => p ... }`) once became a second C variable, so the outer `p`
+// was never assigned. eiderc deliberately assigns it. Expected output: bug_match_shadow.out.
 
 type Res = | Good(v: i32) | Bad(code: u8)
 type Pt = { x: i64, y: i64 }

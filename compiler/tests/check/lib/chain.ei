@@ -13,5 +13,5 @@ pub fn is_red(c: shapes.Color) -> bool {
 }
 
 /// Unqualified names that aren't this module's own resolve in the entry file (the
-/// bootstrap's flat namespace): `root_helper` is defined by the importer.
+/// flat namespace the recorded expectations assume): `root_helper` is defined by the importer.
 pub fn calls_root() -> i32 { root_helper() }

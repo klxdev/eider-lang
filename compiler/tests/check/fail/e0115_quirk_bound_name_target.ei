@@ -1,6 +1,6 @@
 // expect: E0115 12:36
-// a bound naming a non-generic impl target is met by every type (the bootstrap's unify_ast
-// matches any type against a name that isn't a type parameter), so the error comes from
+// a bound naming a non-generic impl target is met by every type (a name that isn't a type
+// parameter matches any type; a C8 candidate, docs/compiler.md), so the error comes from
 // the instance's body
 trait Area {
     fn area(self) -> u32

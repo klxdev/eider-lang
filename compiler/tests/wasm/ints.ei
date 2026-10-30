@@ -1,5 +1,5 @@
 // Every integer type and bool across the WebAssembly boundary, both ways, plus a () export.
-// (No parameter is named `x`: the loader the bootstrap generated, kept byte-identical, calls
+// (No parameter is named `x`: the generated loader, byte-identical to the recorded one, calls
 // `x.eider_<name>(...)` inside an arrow function whose parameters would shadow it.)
 export fn i32_neg(v: i32) -> i32 { return 0 - v }
 export fn i64_twice(v: i64) -> i64 { return v * 2 }
