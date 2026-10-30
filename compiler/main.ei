@@ -1,7 +1,7 @@
 // eiderc: the Eider compiler, written in Eider. See docs/compiler.md.
 //
 //   eiderc lex <file.ei>            dump tokens (one per line: line:col kind [value])
-//   eiderc check <file.ei> [--json] report the first error, or print `ok`
+//   eiderc check <file.ei> [--json] report the first error, or print `ok` (lex + parse so far)
 
 import "deps/core/sys.ei"
 import "deps/std/bytes.ei"
@@ -11,6 +11,7 @@ import "deps/std/env.ei"
 import "intern.ei"
 import "lex.ei"
 import "diag.ei"
+import "parse.ei"
 
 type Args = { cmd: List[u8], file: List[u8], json: bool }
 
@@ -116,12 +117,23 @@ fn main() uses io, fs, ffi {
         }
         None => {}
     }
+    let lx = match r {
+        lex.Done(l) => l
+        _ => { return }
+    }
     if is(a.cmd, "lex") {
-        match r {
-            lex.Done(lx) => dump(lx, names)
-            _ => {}
+        dump(lx, names)
+        return
+    }
+    let p = match parse.parse(lx, names) {
+        Ok(p) => p
+        Err(d) => {
+            report(d, a, src)
+            env.exit(1)
+            return
         }
-    } else if is(a.cmd, "check") {
+    }
+    if is(a.cmd, "check") {
         if !a.json { io.outln(sys.lit("ok")) }
     } else {
         usage()

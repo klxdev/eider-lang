@@ -1,0 +1,185 @@
+// ast: the syntax tree as a flat arena. A node is a kind plus eight u32 slots (`a`..`h`) and
+// its source span (plus `i`, `j` for the one kind that needs ten); child lists live in `extra` as (start, len) slot pairs. Ids are indexes
+// into `nodes`. Optional children are stored as id+1 (0 = absent).
+//
+// Slot meaning per kind (sym = interned symbol id, tok = token index, str = string index,
+// [x/y] = a list in extra starting at slot x with length in slot y):
+//
+// types      TName a=sym b=qualifier sym+1        TGeneric a=sym b=qual+1 [c/d]=args
+//            TArray a=elem b=len                  TTuple [c/d]                TUnit
+//            TFn [c/d]=params g=ret+1
+// exprs      EInt a=tok   EStr a=str   EBool a=0/1   EIdent a=sym
+//            EUnary a=op (0 neg, 1 not) b=operand  EBinary a=op (OP_*) b=lhs c=rhs
+//            ECall a=callee sym [c/d]=args         EMethod a=recv b=name sym [c/d]=args
+//            EField a=recv b=name sym              EIndex a=recv b=index
+//            ECast a=expr b=type                   EArray [c/d]   ERepeat a=elem b=count
+//            ETuple [c/d]   ETry a   EUnsafe a=block   EBlock a=block
+//            ELambda a=body g=ret+1 [c/d]=LParam   EIf a=cond b=then c=else+1
+//            EMatch a=scrutinee [c/d]=Arm, end span = closing brace
+//            EArg a=expr b=inout (call arguments)  LParam a=sym b=type+1
+//            Arm [c/d]=pats a=body b=1 if body is a statement
+// stmts      Block [c/d]=stmts, end span = closing brace
+//            SLet a=sym b=type+1 c=init d=mutable  SLetPat a=pat c=init d=mutable
+//            SAssign a=target b=op+1 (0 plain) c=value   SExpr a
+//            SWhile a=cond b=block   SFor a=var sym b=lo c=hi d=block   SForEach a=var b=iter d=block
+//            SReturn a=expr+1   SBreak   SContinue   SAssert a=cond b=message str+1
+// patterns   PWild  PName a=sym b=qual+1  PInt a=tok b=negated  PBool a  PStr a=str
+//            PVariant a=sym b=qual+1 [c/d]=subpatterns   PTuple [c/d]
+// items      IType a=sym b=public [c/d]=GParam [e/f]=Variant or Field (a record when no Variant)
+//            Variant a=sym [c/d]=VField   VField a=name sym, or position for unnamed, b=type c=named
+//            Field a=sym b=type             GParam a=sym [c/d]=bounds (TName)
+//            IFn a=sym b=flags (FN_*) [c/d]=GParam [e/f]=Param g=ret+1 h=body+1 [i/j]=Cap,
+//                end span = end of the signature (where `uses` goes)
+//            Param a=sym b=type c=inout   Cap a=sym
+//            ITrait a=sym b=public [c/d]=IFn   IImpl a=trait TName+1 b=target type [c/d]=GParam [e/f]=IFn
+//            IConst a=sym b=public c=type d=value e=comptime
+//            ITest a=name str b=block      IImport a=path str b=alias sym+1
+
+pub type Kind =
+    | TName | TGeneric | TArray | TTuple | TUnit | TFn
+    | EInt | EStr | EBool | EIdent | EUnary | EBinary | ECall | EMethod | EField | EIndex
+    | ECast | EArray | ERepeat | ETuple | ETry | EUnsafe | EBlock | ELambda | EIf | EMatch
+    | EArg | LParam | Arm
+    | Block | SLet | SLetPat | SAssign | SExpr | SWhile | SFor | SForEach | SReturn | SBreak
+    | SContinue | SAssert
+    | PWild | PName | PInt | PBool | PStr | PVariant | PTuple
+    | IType | Variant | VField | Field | GParam | IFn | Param | Cap | ITrait | IImpl | IConst
+    | ITest | IImport
+
+pub type Node = {
+    kind: Kind,
+    a: u32, b: u32, c: u32, d: u32, e: u32, f: u32, g: u32, h: u32, i: u32, j: u32,
+    line: u32, col: u32, end_line: u32, end_col: u32,
+}
+
+pub type Ast = { nodes: List[Node], extra: List[u32], items_start: u32, items_len: u32 }
+
+pub const OP_ADD: u32 = 0
+pub const OP_SUB: u32 = 1
+pub const OP_MUL: u32 = 2
+pub const OP_DIV: u32 = 3
+pub const OP_REM: u32 = 4
+pub const OP_WADD: u32 = 5
+pub const OP_WSUB: u32 = 6
+pub const OP_WMUL: u32 = 7
+pub const OP_EQ: u32 = 8
+pub const OP_NE: u32 = 9
+pub const OP_LT: u32 = 10
+pub const OP_LE: u32 = 11
+pub const OP_GT: u32 = 12
+pub const OP_GE: u32 = 13
+pub const OP_AND: u32 = 14
+pub const OP_OR: u32 = 15
+
+pub const FN_PUBLIC: u32 = 1
+pub const FN_EXTERN: u32 = 2
+pub const FN_UNSAFE: u32 = 4
+pub const FN_EXPORT: u32 = 8
+
+pub fn op_text(op: u32) -> str {
+    match op {
+        0 => "+"
+        1 => "-"
+        2 => "*"
+        3 => "/"
+        4 => "%"
+        5 => "+%"
+        6 => "-%"
+        7 => "*%"
+        8 => "=="
+        9 => "!="
+        10 => "<"
+        11 => "<="
+        12 => ">"
+        13 => ">="
+        14 => "&&"
+        _ => "||"
+    }
+}
+
+/// Whether `flags` has bit `flag` (flags are sums of distinct powers of two).
+pub fn has(flags: u32, flag: u32) -> bool { (flags / flag) % 2 == 1 }
+
+pub fn new() -> Ast { Ast(List.new(), List.new(), 0, 0) }
+
+pub fn node(k: Kind, line: u32, col: u32) -> Node { Node(k, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, line, col, line, col) }
+
+pub fn add(inout ast: Ast, n: Node) -> u32 {
+    ast.nodes.push(n)
+    (ast.nodes.len() - 1) as u32
+}
+
+/// Store a child list; returns its start slot (the length is `ids.len()`).
+pub fn list(inout ast: Ast, ids: List[u32]) -> u32 {
+    let start = ast.extra.len() as u32
+    for id in ids { ast.extra.push(id) }
+    start
+}
+
+pub fn at(ast: Ast, start: u32, i: u32) -> u32 { ast.extra[(start + i) as usize] }
+
+pub fn kind_text(k: Kind) -> str {
+    match k {
+        TName => "TName"
+        TGeneric => "TGeneric"
+        TArray => "TArray"
+        TTuple => "TTuple"
+        TUnit => "TUnit"
+        TFn => "TFn"
+        EInt => "EInt"
+        EStr => "EStr"
+        EBool => "EBool"
+        EIdent => "EIdent"
+        EUnary => "EUnary"
+        EBinary => "EBinary"
+        ECall => "ECall"
+        EMethod => "EMethod"
+        EField => "EField"
+        EIndex => "EIndex"
+        ECast => "ECast"
+        EArray => "EArray"
+        ERepeat => "ERepeat"
+        ETuple => "ETuple"
+        ETry => "ETry"
+        EUnsafe => "EUnsafe"
+        EBlock => "EBlock"
+        ELambda => "ELambda"
+        EIf => "EIf"
+        EMatch => "EMatch"
+        EArg => "EArg"
+        LParam => "LParam"
+        Arm => "Arm"
+        Block => "Block"
+        SLet => "SLet"
+        SLetPat => "SLetPat"
+        SAssign => "SAssign"
+        SExpr => "SExpr"
+        SWhile => "SWhile"
+        SFor => "SFor"
+        SForEach => "SForEach"
+        SReturn => "SReturn"
+        SBreak => "SBreak"
+        SContinue => "SContinue"
+        SAssert => "SAssert"
+        PWild => "PWild"
+        PName => "PName"
+        PInt => "PInt"
+        PBool => "PBool"
+        PStr => "PStr"
+        PVariant => "PVariant"
+        PTuple => "PTuple"
+        IType => "IType"
+        Variant => "Variant"
+        VField => "VField"
+        Field => "Field"
+        GParam => "GParam"
+        IFn => "IFn"
+        Param => "Param"
+        Cap => "Cap"
+        ITrait => "ITrait"
+        IImpl => "IImpl"
+        IConst => "IConst"
+        ITest => "ITest"
+        IImport => "IImport"
+    }
+}

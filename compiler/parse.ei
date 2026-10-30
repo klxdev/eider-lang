@@ -1,0 +1,1268 @@
+// parse: tokens -> ast.Ast. A recursive-descent mirror of the bootstrap parser: the same
+// grammar, the same error at the same token with the same message.
+//
+// One deliberate difference: `alias.Name` (where `alias` is an import alias seen earlier in
+// the file) is kept as a qualified name in the tree instead of being mangled here. The
+// resolver decides what it refers to, so a local variable named like an alias works.
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+import "intern.ei"
+import "lex.ei"
+import "ast.ei"
+import "diag.ei"
+
+pub type P = {
+    toks: List[lex.Tok],
+    strs: List[List[u8]],
+    i: usize,
+    ast: ast.Ast,
+    names: intern.Interner,
+    aliases: List[u32],
+}
+
+type Name = { sym: u32, line: u32, col: u32 }
+
+// ---- token helpers
+
+fn cur(p: P) -> lex.Tok { p.toks[p.i] }
+fn kind(p: P) -> lex.Kind { p.toks[p.i].kind }
+fn kind_at(p: P, j: usize) -> lex.Kind {
+    if j < p.toks.len() { return p.toks[j].kind }
+    lex.Eof
+}
+fn is(p: P, k: lex.Kind) -> bool { p.toks[p.i].kind == k }
+fn is_nl(p: P) -> bool { is(p, lex.Newline) }
+fn is_eof(p: P) -> bool { is(p, lex.Eof) }
+
+fn adv(inout p: P) {
+    if p.i + 1 < p.toks.len() { p.i += 1 }
+}
+
+fn eat(inout p: P, k: lex.Kind) -> bool {
+    if is(p, k) {
+        adv(inout p)
+        return true
+    }
+    false
+}
+
+fn is_kw(p: P, kw: u32) -> bool { is(p, lex.Ident) && p.toks[p.i].val == kw as u64 }
+
+fn eat_kw(inout p: P, kw: u32) -> bool {
+    if is_kw(p, kw) {
+        adv(inout p)
+        return true
+    }
+    false
+}
+
+fn skip_nl(inout p: P) {
+    while is_nl(p) { adv(inout p) }
+}
+
+fn skip_seps(inout p: P) {
+    while is_nl(p) || is(p, lex.Semi) { adv(inout p) }
+}
+
+/// The kind of the next token that isn't a newline.
+fn peek_nonnl(p: P) -> lex.Tok {
+    var j = p.i
+    while p.toks[j].kind == lex.Newline && j + 1 < p.toks.len() { j += 1 }
+    p.toks[j]
+}
+
+fn peek_nonnl_is(p: P, k: lex.Kind) -> bool { peek_nonnl(p).kind == k }
+
+fn peek_nonnl_kw(p: P, kw: u32) -> bool {
+    let t = peek_nonnl(p)
+    t.kind == lex.Ident && t.val == kw as u64
+}
+
+/// The end of the previous token (the bootstrap's prev_end).
+fn prev_end(p: P) -> Name {
+    let j: usize = if p.i > 0 { p.i - 1 } else { 0 }
+    Name(0, p.toks[j].line, p.toks[j].end_col)
+}
+
+// ---- errors
+
+fn err_at(line: u32, col: u32, m: List[u8]) -> diag.Diag { diag.new("E0001", line, col, m) }
+
+fn err(p: P, m: str) -> diag.Diag uses ffi {
+    let t = cur(p)
+    err_at(t.line, t.col, sys.lit(m))
+}
+
+fn quoted(pre: str, mid: List[u8], post: str) -> List[u8] uses ffi {
+    var m = sys.lit(pre)
+    bytes.append(inout m, mid)
+    bytes.append(inout m, sys.lit(post))
+    m
+}
+
+fn expect(inout p: P, k: lex.Kind) -> Result[Name, diag.Diag] uses ffi {
+    let t = cur(p)
+    if eat(inout p, k) { return Ok(Name(0, t.line, t.col)) }
+    Err(err_at(t.line, t.col, quoted("expected `", sys.lit(lex.kind_text(k)), "`")))
+}
+
+fn expect_kw(inout p: P, kw: u32) -> Result[Name, diag.Diag] uses ffi {
+    let t = cur(p)
+    if eat_kw(inout p, kw) { return Ok(Name(0, t.line, t.col)) }
+    Err(err_at(t.line, t.col, quoted("expected `", intern.name(p.names, kw), "`")))
+}
+
+/// A non-keyword identifier.
+fn ident(inout p: P) -> Result[Name, diag.Diag] uses ffi {
+    let t = cur(p)
+    if t.kind == lex.Ident {
+        if t.val > intern.LAST_KEYWORD as u64 {
+            adv(inout p)
+            return Ok(Name(t.val as u32, t.line, t.col))
+        }
+        return Err(err_at(t.line, t.col, quoted("`", intern.name(p.names, t.val as u32), "` is a keyword and can't be used as a name")))
+    }
+    Err(err(p, "expected a name"))
+}
+
+/// After an identifier `first`: if it is an import alias followed by `. Name`, consume both and
+/// return the name (the qualifier is `first`).
+fn qualified(inout p: P, first: u32) -> Option[Name] {
+    if !p.aliases.contains(first) || !is(p, lex.Dot) { return None }
+    let n = p.i + 1
+    if n < p.toks.len() && p.toks[n].kind == lex.Ident && p.toks[n].val > intern.LAST_KEYWORD as u64 {
+        let t = p.toks[n]
+        adv(inout p)
+        adv(inout p)
+        return Some(Name(t.val as u32, t.line, t.col))
+    }
+    None
+}
+
+fn add(inout p: P, n: ast.Node) -> u32 { ast.add(inout p.ast, n) }
+
+fn list(inout p: P, ids: List[u32]) -> u32 { ast.list(inout p.ast, ids) }
+
+fn mk(k: ast.Kind, line: u32, col: u32) -> ast.Node { ast.node(k, line, col) }
+
+/// The file stem of an import path, made identifier-safe (the default alias).
+fn stem(path: List[u8]) -> List[u8] {
+    let base = match bytes.rfind_byte(path, 47) {
+        Some(i) => bytes.slice(path, i + 1, path.len())
+        None => path
+    }
+    let s = match bytes.rfind_byte(base, 46) {
+        Some(0) => base
+        Some(i) => bytes.slice(base, 0, i)
+        None => base
+    }
+    var out: List[u8] = List.new()
+    for c in s {
+        if bytes.is_ident(c) { out.push(c) } else { out.push(95) }
+    }
+    out
+}
+
+// ---- items
+
+pub fn program(inout p: P) -> Result[bool, diag.Diag] uses ffi {
+    var items: List[u32] = List.new()
+    skip_seps(inout p)
+    while !is_eof(p) {
+        if is_kw(p, intern.K_MODULE) {
+            adv(inout p)
+            ident(inout p)?
+            while eat(inout p, lex.Dot) { ident(inout p)? }
+            skip_seps(inout p)
+            continue
+        }
+        if is_kw(p, intern.K_IMPORT) {
+            let t = cur(p)
+            adv(inout p)
+            if !is(p, lex.Str) { return Err(err(p, "expected a file path string after `import`, e.g. `import \"util.ei\"`")) }
+            let si = cur(p).val as u32
+            adv(inout p)
+            var n = mk(ast.IImport, t.line, t.col)
+            n.a = si
+            if eat_kw(inout p, intern.K_AS) {
+                let al = ident(inout p)?
+                n.b = al.sym + 1
+                p.aliases.push(al.sym)
+            } else {
+                let s = stem(p.strs[si as usize])
+                let al = intern.intern(inout p.names, s, 0, s.len())
+                p.aliases.push(al)
+            }
+            items.push(add(inout p, n))
+            skip_seps(inout p)
+            continue
+        }
+        let public = eat_kw(inout p, intern.K_PUB)
+        let pf: u32 = if public { 1 } else { 0 }
+        if is_kw(p, intern.K_TYPE) {
+            let id = type_decl(inout p, pf)?
+            items.push(id)
+        } else if is_kw(p, intern.K_EXTERN) {
+            adv(inout p)
+            var abi_ok = false
+            if is(p, lex.Str) {
+                let s = p.strs[cur(p).val as usize]
+                abi_ok = s.len() == 1 && s[0] == 99
+            }
+            if !abi_ok { return Err(err(p, "expected the ABI string: `extern \"c\" fn ...`")) }
+            adv(inout p)
+            let id = fn_decl(inout p, true, pf + ast.FN_EXTERN + ast.FN_UNSAFE)?
+            let f = p.ast.nodes[id as usize]
+            if f.h != 0 { return Err(err_at(f.line, f.col, sys.lit("an `extern \"c\"` function is only declared here; it has no body"))) }
+            items.push(id)
+        } else if is_kw(p, intern.K_EXPORT) {
+            adv(inout p)
+            items.push(fn_decl(inout p, false, ast.FN_EXPORT + ast.FN_PUBLIC)?)
+        } else if is_kw(p, intern.K_UNSAFE) {
+            adv(inout p)
+            items.push(fn_decl(inout p, false, pf + ast.FN_UNSAFE)?)
+        } else if is_kw(p, intern.K_FN) {
+            items.push(fn_decl(inout p, false, pf)?)
+        } else if is_kw(p, intern.K_CONST) {
+            items.push(const_decl(inout p, pf)?)
+        } else if is_kw(p, intern.K_TEST) {
+            if public { return Err(err(p, "`pub` doesn't apply to tests")) }
+            items.push(test_decl(inout p)?)
+        } else if is_kw(p, intern.K_TRAIT) {
+            items.push(trait_decl(inout p, pf)?)
+        } else if is_kw(p, intern.K_IMPL) {
+            if public { return Err(err(p, "`pub` doesn't apply to `impl`; methods follow the visibility of their type")) }
+            items.push(impl_decl(inout p)?)
+        } else {
+            return Err(err(p, "expected `fn`, `type`, `const`, `trait`, `impl`, `import` or `test`"))
+        }
+        skip_seps(inout p)
+    }
+    p.ast.items_start = list(inout p, items)
+    p.ast.items_len = items.len() as u32
+    Ok(true)
+}
+
+/// `[T, U: Bound + Other]`; returns (start, len) of GParam nodes.
+fn generics(inout p: P) -> Result[List[u32], diag.Diag] uses ffi {
+    var gs: List[u32] = List.new()
+    if !eat(inout p, lex.LBracket) { return Ok(gs) }
+    while true {
+        skip_nl(inout p)
+        let g = ident(inout p)?
+        var bounds: List[u32] = List.new()
+        if eat(inout p, lex.Colon) {
+            while true {
+                let b = ident(inout p)?
+                var tn = mk(ast.TName, b.line, b.col)
+                tn.a = b.sym
+                match qualified(inout p, b.sym) {
+                    Some(q) => {
+                        tn.a = q.sym
+                        tn.b = b.sym + 1
+                    }
+                    None => {}
+                }
+                bounds.push(add(inout p, tn))
+                if !eat(inout p, lex.Plus) { break }
+            }
+        }
+        var gn = mk(ast.GParam, g.line, g.col)
+        gn.a = g.sym
+        gn.c = list(inout p, bounds)
+        gn.d = bounds.len() as u32
+        gs.push(add(inout p, gn))
+        skip_nl(inout p)
+        if eat(inout p, lex.RBracket) { return Ok(gs) }
+        expect(inout p, lex.Comma)?
+    }
+    Ok(gs)
+}
+
+fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
+    expect_kw(inout p, intern.K_TYPE)?
+    let name = ident(inout p)?
+    let gs = generics(inout p)?
+    for g in gs {
+        let gn = p.ast.nodes[g as usize]
+        if gn.d > 0 {
+            return Err(err_at(gn.line, gn.col, sys.lit("type parameters can't have bounds on a type declaration; put them on impls and functions")))
+        }
+    }
+    expect(inout p, lex.Eq)?
+    skip_nl(inout p)
+    var members: List[u32] = List.new()
+    if is(p, lex.LBrace) {
+        adv(inout p)
+        while true {
+            skip_nl(inout p)
+            if eat(inout p, lex.RBrace) { break }
+            let f = ident(inout p)?
+            expect(inout p, lex.Colon)?
+            let t = ty(inout p)?
+            var fnode = mk(ast.Field, f.line, f.col)
+            fnode.a = f.sym
+            fnode.b = t
+            members.push(add(inout p, fnode))
+            skip_nl(inout p)
+            if !eat(inout p, lex.Comma) && !is(p, lex.RBrace) && !is_nl(p) { return Err(err(p, "expected `,` or `}`")) }
+        }
+    } else {
+        while true {
+            expect(inout p, lex.Pipe)?
+            skip_nl(inout p)
+            let v = ident(inout p)?
+            var fields: List[u32] = List.new()
+            if eat(inout p, lex.LParen) {
+                while true {
+                    skip_nl(inout p)
+                    if eat(inout p, lex.RParen) { break }
+                    let named = is(p, lex.Ident) && kind_at(p, p.i + 1) == lex.Colon
+                    let t0 = cur(p)
+                    var vf = mk(ast.VField, t0.line, t0.col)
+                    if named {
+                        let f = ident(inout p)?
+                        expect(inout p, lex.Colon)?
+                        vf.a = f.sym
+                        vf.c = 1
+                    } else {
+                        vf.a = fields.len() as u32
+                    }
+                    vf.b = ty(inout p)?
+                    fields.push(add(inout p, vf))
+                    skip_nl(inout p)
+                    if !eat(inout p, lex.Comma) && !is(p, lex.RParen) { return Err(err(p, "expected `,` or `)`")) }
+                }
+            }
+            var vn = mk(ast.Variant, v.line, v.col)
+            vn.a = v.sym
+            vn.c = list(inout p, fields)
+            vn.d = fields.len() as u32
+            members.push(add(inout p, vn))
+            if peek_nonnl_is(p, lex.Pipe) {
+                skip_nl(inout p)
+            } else {
+                break
+            }
+        }
+    }
+    var n = mk(ast.IType, name.line, name.col)
+    n.a = name.sym
+    n.b = public
+    n.c = list(inout p, gs)
+    n.d = gs.len() as u32
+    n.e = list(inout p, members)
+    n.f = members.len() as u32
+    Ok(add(inout p, n))
+}
+
+/// Comma-separated items of `f` until `close`, with newlines allowed around them.
+fn ty_list(inout p: P, close: lex.Kind) -> Result[List[u32], diag.Diag] uses ffi {
+    var ts: List[u32] = List.new()
+    while true {
+        skip_nl(inout p)
+        if eat(inout p, close) { break }
+        ts.push(ty(inout p)?)
+        skip_nl(inout p)
+        if !eat(inout p, lex.Comma) && !is(p, close) { return Err(err(p, "expected `,` or `)`")) }
+    }
+    Ok(ts)
+}
+
+pub fn ty(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    let t = cur(p)
+    if is_kw(p, intern.K_INOUT) {
+        var d = diag.new("E0302", t.line, t.col, sys.lit("`inout` is only valid on function parameters; types can't hold references"))
+        d.help = sys.lit("store the value itself, or an index into a List, or Shared[Mutex[T]]")
+        return Err(d)
+    }
+    if is_kw(p, intern.K_FN) {
+        adv(inout p)
+        expect(inout p, lex.LParen)?
+        let ps = ty_list(inout p, lex.RParen)?
+        var n = mk(ast.TFn, t.line, t.col)
+        n.c = list(inout p, ps)
+        n.d = ps.len() as u32
+        if eat(inout p, lex.Arrow) { n.g = ty(inout p)? + 1 }
+        return Ok(add(inout p, n))
+    }
+    if eat(inout p, lex.LBracket) {
+        let el = ty(inout p)?
+        expect(inout p, lex.Semi)?
+        let lt = cur(p)
+        if !(lt.kind == lex.Int && !lt.big && lt.val <= 4294967295) { return Err(err(p, "expected array length (integer literal)")) }
+        adv(inout p)
+        expect(inout p, lex.RBracket)?
+        var n = mk(ast.TArray, t.line, t.col)
+        n.a = el
+        n.b = lt.val as u32
+        return Ok(add(inout p, n))
+    }
+    if eat(inout p, lex.LParen) {
+        if eat(inout p, lex.RParen) { return Ok(add(inout p, mk(ast.TUnit, t.line, t.col))) }
+        var ts: List[u32] = List.new()
+        ts.push(ty(inout p)?)
+        var trailing = false
+        while eat(inout p, lex.Comma) {
+            if is(p, lex.RParen) {
+                trailing = true
+                break
+            }
+            ts.push(ty(inout p)?)
+        }
+        expect(inout p, lex.RParen)?
+        if ts.len() == 1 && !trailing { return Ok(ts[0]) }
+        var n = mk(ast.TTuple, t.line, t.col)
+        n.c = list(inout p, ts)
+        n.d = ts.len() as u32
+        return Ok(add(inout p, n))
+    }
+    if t.kind == lex.Ident && t.val > intern.LAST_KEYWORD as u64 {
+        adv(inout p)
+        var sym = t.val as u32
+        var qual: u32 = 0
+        match qualified(inout p, sym) {
+            Some(q) => {
+                qual = sym + 1
+                sym = q.sym
+            }
+            None => {}
+        }
+        if is(p, lex.LBracket) {
+            adv(inout p)
+            var args: List[u32] = List.new()
+            while true {
+                skip_nl(inout p)
+                args.push(ty(inout p)?)
+                skip_nl(inout p)
+                if eat(inout p, lex.RBracket) { break }
+                expect(inout p, lex.Comma)?
+            }
+            var n = mk(ast.TGeneric, t.line, t.col)
+            n.a = sym
+            n.b = qual
+            n.c = list(inout p, args)
+            n.d = args.len() as u32
+            return Ok(add(inout p, n))
+        }
+        var n = mk(ast.TName, t.line, t.col)
+        n.a = sym
+        n.b = qual
+        return Ok(add(inout p, n))
+    }
+    Err(err(p, "expected a type"))
+}
+
+fn fn_decl(inout p: P, allow_no_body: bool, flags: u32) -> Result[u32, diag.Diag] uses ffi {
+    expect_kw(inout p, intern.K_FN)?
+    let name = ident(inout p)?
+    let gs = generics(inout p)?
+    expect(inout p, lex.LParen)?
+    var params: List[u32] = List.new()
+    while true {
+        skip_nl(inout p)
+        if eat(inout p, lex.RParen) { break }
+        let inout_flag = eat_kw(inout p, intern.K_INOUT)
+        let n = ident(inout p)?
+        var pn = mk(ast.Param, n.line, n.col)
+        pn.a = n.sym
+        pn.c = if inout_flag { 1 } else { 0 }
+        if n.sym == intern.S_SELF && !is(p, lex.Colon) {
+            var st = mk(ast.TName, n.line, n.col)
+            st.a = intern.S_SELF_TYPE
+            pn.b = add(inout p, st)
+        } else {
+            expect(inout p, lex.Colon)?
+            pn.b = ty(inout p)?
+        }
+        params.push(add(inout p, pn))
+        skip_nl(inout p)
+        if !eat(inout p, lex.Comma) && !is(p, lex.RParen) { return Err(err(p, "expected `,` or `)`")) }
+    }
+    var sig_end = prev_end(p)
+    var ret: u32 = 0
+    if peek_nonnl_is(p, lex.Arrow) {
+        skip_nl(inout p)
+        adv(inout p)
+        ret = ty(inout p)? + 1
+        sig_end = prev_end(p)
+    }
+    var caps: List[u32] = List.new()
+    if peek_nonnl_kw(p, intern.K_USES) {
+        skip_nl(inout p)
+        adv(inout p)
+        while true {
+            let c = ident(inout p)?
+            var cn = mk(ast.Cap, c.line, c.col)
+            cn.a = c.sym
+            caps.push(add(inout p, cn))
+            if !eat(inout p, lex.Comma) { break }
+        }
+        sig_end = prev_end(p)
+    }
+    var n = mk(ast.IFn, name.line, name.col)
+    n.a = name.sym
+    n.b = flags
+    n.c = list(inout p, gs)
+    n.d = gs.len() as u32
+    n.e = list(inout p, params)
+    n.f = params.len() as u32
+    n.g = ret
+    n.end_line = sig_end.line
+    n.end_col = sig_end.col
+    if !(allow_no_body && !peek_nonnl_is(p, lex.LBrace)) {
+        skip_nl(inout p)
+        n.h = block(inout p)? + 1
+    }
+    n.i = list(inout p, caps)
+    n.j = caps.len() as u32
+    Ok(add(inout p, n))
+}
+
+fn trait_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
+    expect_kw(inout p, intern.K_TRAIT)?
+    let name = ident(inout p)?
+    skip_nl(inout p)
+    expect(inout p, lex.LBrace)?
+    var methods: List[u32] = List.new()
+    while true {
+        skip_seps(inout p)
+        if eat(inout p, lex.RBrace) { break }
+        methods.push(fn_decl(inout p, true, 0)?)
+    }
+    var n = mk(ast.ITrait, name.line, name.col)
+    n.a = name.sym
+    n.b = public
+    n.c = list(inout p, methods)
+    n.d = methods.len() as u32
+    Ok(add(inout p, n))
+}
+
+fn impl_decl(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    let pos = expect_kw(inout p, intern.K_IMPL)?
+    let gs = generics(inout p)?
+    let first = ty(inout p)?
+    var n = mk(ast.IImpl, pos.line, pos.col)
+    if eat_kw(inout p, intern.K_FOR) {
+        if !(p.ast.nodes[first as usize].kind == ast.TName) { return Err(err(p, "expected a trait name before `for`")) }
+        n.a = first + 1
+        n.b = ty(inout p)?
+    } else {
+        n.b = first
+    }
+    skip_nl(inout p)
+    expect(inout p, lex.LBrace)?
+    var methods: List[u32] = List.new()
+    while true {
+        skip_seps(inout p)
+        if eat(inout p, lex.RBrace) { break }
+        methods.push(fn_decl(inout p, false, 0)?)
+    }
+    n.c = list(inout p, gs)
+    n.d = gs.len() as u32
+    n.e = list(inout p, methods)
+    n.f = methods.len() as u32
+    Ok(add(inout p, n))
+}
+
+fn const_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
+    expect_kw(inout p, intern.K_CONST)?
+    let name = ident(inout p)?
+    expect(inout p, lex.Colon)?
+    let t = ty(inout p)?
+    expect(inout p, lex.Eq)?
+    let is_comptime = eat_kw(inout p, intern.K_COMPTIME)
+    let v = expr(inout p)?
+    var n = mk(ast.IConst, name.line, name.col)
+    n.a = name.sym
+    n.b = public
+    n.c = t
+    n.d = v
+    n.e = if is_comptime { 1 } else { 0 }
+    Ok(add(inout p, n))
+}
+
+fn test_decl(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    let pos = expect_kw(inout p, intern.K_TEST)?
+    if !is(p, lex.Str) { return Err(err(p, "expected test name string")) }
+    let si = cur(p).val as u32
+    adv(inout p)
+    skip_nl(inout p)
+    var n = mk(ast.ITest, pos.line, pos.col)
+    n.a = si
+    n.b = block(inout p)?
+    Ok(add(inout p, n))
+}
+
+// ---- statements
+
+pub fn block(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    let open = expect(inout p, lex.LBrace)?
+    var stmts: List[u32] = List.new()
+    while true {
+        skip_seps(inout p)
+        if is(p, lex.RBrace) {
+            let t = cur(p)
+            adv(inout p)
+            var n = mk(ast.Block, open.line, open.col)
+            n.c = list(inout p, stmts)
+            n.d = stmts.len() as u32
+            n.end_line = t.line
+            n.end_col = t.col
+            return Ok(add(inout p, n))
+        }
+        if is_eof(p) { return Err(err(p, "unexpected end of file, expected `}`")) }
+        stmts.push(stmt(inout p)?)
+        if !(is_nl(p) || is(p, lex.Semi) || is(p, lex.RBrace)) { return Err(err(p, "expected a newline or `;` after statement")) }
+    }
+    Err(err(p, "unreachable"))
+}
+
+fn assign_op(k: lex.Kind) -> u32 {
+    match k {
+        lex.Eq => 1
+        lex.PlusEq => ast.OP_ADD + 2
+        lex.MinusEq => ast.OP_SUB + 2
+        lex.StarEq => ast.OP_MUL + 2
+        lex.SlashEq => ast.OP_DIV + 2
+        lex.PercentEq => ast.OP_REM + 2
+        _ => 0
+    }
+}
+
+fn stmt(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    let t = cur(p)
+    if is_kw(p, intern.K_LET) || is_kw(p, intern.K_VAR) {
+        let mutable: u32 = if is_kw(p, intern.K_VAR) { 1 } else { 0 }
+        adv(inout p)
+        if is(p, lex.LParen) {
+            let pat = pattern(inout p)?
+            expect(inout p, lex.Eq)?
+            skip_nl(inout p)
+            var n = mk(ast.SLetPat, t.line, t.col)
+            n.a = pat
+            n.c = expr(inout p)?
+            n.d = mutable
+            return Ok(add(inout p, n))
+        }
+        let name = ident(inout p)?
+        var n = mk(ast.SLet, t.line, t.col)
+        n.a = name.sym
+        n.d = mutable
+        if eat(inout p, lex.Colon) { n.b = ty(inout p)? + 1 }
+        expect(inout p, lex.Eq)?
+        skip_nl(inout p)
+        n.c = expr(inout p)?
+        return Ok(add(inout p, n))
+    }
+    if eat_kw(inout p, intern.K_WHILE) {
+        var n = mk(ast.SWhile, t.line, t.col)
+        n.a = expr(inout p)?
+        n.b = block(inout p)?
+        return Ok(add(inout p, n))
+    }
+    if eat_kw(inout p, intern.K_FOR) {
+        let v = ident(inout p)?
+        expect_kw(inout p, intern.K_IN)?
+        let lo = expr(inout p)?
+        if eat(inout p, lex.DotDot) {
+            var n = mk(ast.SFor, t.line, t.col)
+            n.a = v.sym
+            n.b = lo
+            n.c = expr(inout p)?
+            n.d = block(inout p)?
+            return Ok(add(inout p, n))
+        }
+        var n = mk(ast.SForEach, t.line, t.col)
+        n.a = v.sym
+        n.b = lo
+        n.d = block(inout p)?
+        return Ok(add(inout p, n))
+    }
+    if eat_kw(inout p, intern.K_RETURN) {
+        var n = mk(ast.SReturn, t.line, t.col)
+        if !(is_nl(p) || is_eof(p) || is(p, lex.Semi) || is(p, lex.RBrace)) { n.a = expr(inout p)? + 1 }
+        return Ok(add(inout p, n))
+    }
+    if eat_kw(inout p, intern.K_BREAK) { return Ok(add(inout p, mk(ast.SBreak, t.line, t.col))) }
+    if eat_kw(inout p, intern.K_CONTINUE) { return Ok(add(inout p, mk(ast.SContinue, t.line, t.col))) }
+    if eat_kw(inout p, intern.K_ASSERT) {
+        var n = mk(ast.SAssert, t.line, t.col)
+        n.a = expr(inout p)?
+        if eat(inout p, lex.Comma) {
+            if !is(p, lex.Str) { return Err(err(p, "expected message string")) }
+            n.b = cur(p).val as u32 + 1
+            adv(inout p)
+        }
+        return Ok(add(inout p, n))
+    }
+    let e = expr(inout p)?
+    let op = assign_op(kind(p))
+    if op > 0 {
+        adv(inout p)
+        skip_nl(inout p)
+        var n = mk(ast.SAssign, t.line, t.col)
+        n.a = e
+        n.b = op - 1
+        n.c = expr(inout p)?
+        return Ok(add(inout p, n))
+    }
+    var n = mk(ast.SExpr, t.line, t.col)
+    n.a = e
+    Ok(add(inout p, n))
+}
+
+// ---- expressions
+
+pub fn expr(inout p: P) -> Result[u32, diag.Diag] uses ffi { or_expr(inout p) }
+
+fn bin(inout p: P, op: u32, l: u32, r: u32, line: u32, col: u32) -> u32 {
+    var n = mk(ast.EBinary, line, col)
+    n.a = op
+    n.b = l
+    n.c = r
+    add(inout p, n)
+}
+
+fn or_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    var l = and_expr(inout p)?
+    while is(p, lex.OrOr) {
+        let t = cur(p)
+        adv(inout p)
+        skip_nl(inout p)
+        let r = and_expr(inout p)?
+        l = bin(inout p, ast.OP_OR, l, r, t.line, t.col)
+    }
+    Ok(l)
+}
+
+fn and_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    var l = cmp_expr(inout p)?
+    while is(p, lex.AndAnd) {
+        let t = cur(p)
+        adv(inout p)
+        skip_nl(inout p)
+        let r = cmp_expr(inout p)?
+        l = bin(inout p, ast.OP_AND, l, r, t.line, t.col)
+    }
+    Ok(l)
+}
+
+fn cmp_op(k: lex.Kind) -> u32 {
+    match k {
+        lex.EqEq => ast.OP_EQ + 1
+        lex.NotEq => ast.OP_NE + 1
+        lex.Lt => ast.OP_LT + 1
+        lex.LtEq => ast.OP_LE + 1
+        lex.Gt => ast.OP_GT + 1
+        lex.GtEq => ast.OP_GE + 1
+        _ => 0
+    }
+}
+
+fn add_op(k: lex.Kind) -> u32 {
+    match k {
+        lex.Plus => ast.OP_ADD + 1
+        lex.Minus => ast.OP_SUB + 1
+        lex.WAdd => ast.OP_WADD + 1
+        lex.WSub => ast.OP_WSUB + 1
+        _ => 0
+    }
+}
+
+fn mul_op(k: lex.Kind) -> u32 {
+    match k {
+        lex.Star => ast.OP_MUL + 1
+        lex.Slash => ast.OP_DIV + 1
+        lex.Percent => ast.OP_REM + 1
+        lex.WMul => ast.OP_WMUL + 1
+        _ => 0
+    }
+}
+
+fn cmp_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    var l = add_expr(inout p)?
+    while cmp_op(kind(p)) > 0 {
+        let t = cur(p)
+        let op = cmp_op(t.kind) - 1
+        adv(inout p)
+        skip_nl(inout p)
+        let r = add_expr(inout p)?
+        l = bin(inout p, op, l, r, t.line, t.col)
+    }
+    Ok(l)
+}
+
+fn add_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    var l = mul_expr(inout p)?
+    while add_op(kind(p)) > 0 {
+        let t = cur(p)
+        let op = add_op(t.kind) - 1
+        adv(inout p)
+        skip_nl(inout p)
+        let r = mul_expr(inout p)?
+        l = bin(inout p, op, l, r, t.line, t.col)
+    }
+    Ok(l)
+}
+
+fn mul_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    var l = cast_expr(inout p)?
+    while mul_op(kind(p)) > 0 {
+        let t = cur(p)
+        let op = mul_op(t.kind) - 1
+        adv(inout p)
+        skip_nl(inout p)
+        let r = cast_expr(inout p)?
+        l = bin(inout p, op, l, r, t.line, t.col)
+    }
+    Ok(l)
+}
+
+fn cast_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    var l = unary(inout p)?
+    while is_kw(p, intern.K_AS) {
+        let t = cur(p)
+        adv(inout p)
+        var n = mk(ast.ECast, t.line, t.col)
+        n.a = l
+        n.b = ty(inout p)?
+        l = add(inout p, n)
+    }
+    Ok(l)
+}
+
+fn unary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    let t = cur(p)
+    if eat(inout p, lex.Minus) || eat(inout p, lex.Bang) {
+        var n = mk(ast.EUnary, t.line, t.col)
+        n.a = if t.kind == lex.Minus { 0 } else { 1 }
+        n.b = unary(inout p)?
+        return Ok(add(inout p, n))
+    }
+    postfix(inout p)
+}
+
+/// Call arguments after `(`.
+fn args(inout p: P) -> Result[List[u32], diag.Diag] uses ffi {
+    var out: List[u32] = List.new()
+    while true {
+        skip_nl(inout p)
+        if eat(inout p, lex.RParen) { return Ok(out) }
+        let t = cur(p)
+        let io = eat_kw(inout p, intern.K_INOUT)
+        var n = mk(ast.EArg, t.line, t.col)
+        n.a = expr(inout p)?
+        n.b = if io { 1 } else { 0 }
+        out.push(add(inout p, n))
+        skip_nl(inout p)
+        if !eat(inout p, lex.Comma) && !is(p, lex.RParen) { return Err(err(p, "expected `,` or `)`")) }
+    }
+    Ok(out)
+}
+
+fn postfix(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    var e = primary(inout p)?
+    while true {
+        let t = cur(p)
+        if is(p, lex.LParen) {
+            let en = p.ast.nodes[e as usize]
+            if !(en.kind == ast.EIdent) { return Err(err(p, "only named functions can be called")) }
+            adv(inout p)
+            let a = args(inout p)?
+            var n = mk(ast.ECall, en.line, en.col)
+            n.a = en.a
+            n.b = en.b
+            n.c = list(inout p, a)
+            n.d = a.len() as u32
+            e = add(inout p, n)
+        } else if is(p, lex.Dot) {
+            adv(inout p)
+            let ft = cur(p)
+            var fsym: u32 = 0
+            if ft.kind == lex.Int {
+                adv(inout p)
+                let digits = bytes.from_u64(ft.val)
+                fsym = intern.intern(inout p.names, digits, 0, digits.len())
+            } else {
+                fsym = ident(inout p)?.sym
+            }
+            if is(p, lex.LParen) {
+                adv(inout p)
+                let a = args(inout p)?
+                var n = mk(ast.EMethod, ft.line, ft.col)
+                n.a = e
+                n.b = fsym
+                n.c = list(inout p, a)
+                n.d = a.len() as u32
+                e = add(inout p, n)
+            } else {
+                var n = mk(ast.EField, ft.line, ft.col)
+                n.a = e
+                n.b = fsym
+                e = add(inout p, n)
+            }
+        } else if is(p, lex.LBracket) {
+            adv(inout p)
+            skip_nl(inout p)
+            let i = expr(inout p)?
+            skip_nl(inout p)
+            expect(inout p, lex.RBracket)?
+            var n = mk(ast.EIndex, t.line, t.col)
+            n.a = e
+            n.b = i
+            e = add(inout p, n)
+        } else if is(p, lex.Question) {
+            adv(inout p)
+            var n = mk(ast.ETry, t.line, t.col)
+            n.a = e
+            e = add(inout p, n)
+        } else {
+            return Ok(e)
+        }
+    }
+    Ok(e)
+}
+
+fn primary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    let t = cur(p)
+    if t.kind == lex.Int {
+        var n = mk(ast.EInt, t.line, t.col)
+        n.a = p.i as u32
+        adv(inout p)
+        return Ok(add(inout p, n))
+    }
+    if t.kind == lex.Str {
+        adv(inout p)
+        var n = mk(ast.EStr, t.line, t.col)
+        n.a = t.val as u32
+        return Ok(add(inout p, n))
+    }
+    if t.kind == lex.LParen {
+        adv(inout p)
+        skip_nl(inout p)
+        let first = expr(inout p)?
+        skip_nl(inout p)
+        if is(p, lex.Comma) {
+            var es: List[u32] = List.new()
+            es.push(first)
+            while eat(inout p, lex.Comma) {
+                skip_nl(inout p)
+                if is(p, lex.RParen) { break }
+                es.push(expr(inout p)?)
+                skip_nl(inout p)
+            }
+            expect(inout p, lex.RParen)?
+            var n = mk(ast.ETuple, t.line, t.col)
+            n.c = list(inout p, es)
+            n.d = es.len() as u32
+            return Ok(add(inout p, n))
+        }
+        expect(inout p, lex.RParen)?
+        return Ok(first)
+    }
+    if t.kind == lex.LBrace {
+        var n = mk(ast.EBlock, t.line, t.col)
+        n.a = block(inout p)?
+        return Ok(add(inout p, n))
+    }
+    if is_kw(p, intern.K_UNSAFE) {
+        adv(inout p)
+        skip_nl(inout p)
+        var n = mk(ast.EUnsafe, t.line, t.col)
+        n.a = block(inout p)?
+        return Ok(add(inout p, n))
+    }
+    if t.kind == lex.Pipe || t.kind == lex.OrOr {
+        var params: List[u32] = List.new()
+        adv(inout p)
+        if t.kind == lex.Pipe {
+            while true {
+                if eat(inout p, lex.Pipe) { break }
+                let n = ident(inout p)?
+                var lp = mk(ast.LParam, n.line, n.col)
+                lp.a = n.sym
+                if eat(inout p, lex.Colon) { lp.b = ty(inout p)? + 1 }
+                params.push(add(inout p, lp))
+                if !eat(inout p, lex.Comma) && !is(p, lex.Pipe) { return Err(err(p, "expected `,` or `|` in closure parameters")) }
+            }
+        }
+        var n = mk(ast.ELambda, t.line, t.col)
+        if eat(inout p, lex.Arrow) { n.g = ty(inout p)? + 1 }
+        skip_nl(inout p)
+        n.a = expr(inout p)?
+        n.c = list(inout p, params)
+        n.d = params.len() as u32
+        return Ok(add(inout p, n))
+    }
+    if t.kind == lex.LBracket {
+        adv(inout p)
+        skip_nl(inout p)
+        if eat(inout p, lex.RBracket) { return Ok(add(inout p, mk(ast.EArray, t.line, t.col))) }
+        let first = expr(inout p)?
+        skip_nl(inout p)
+        if eat(inout p, lex.Semi) {
+            let lt = cur(p)
+            if !(lt.kind == lex.Int && !lt.big && lt.val >= 1 && lt.val <= 4294967295) {
+                return Err(err(p, "expected a positive integer literal for the array length"))
+            }
+            adv(inout p)
+            expect(inout p, lex.RBracket)?
+            var n = mk(ast.ERepeat, t.line, t.col)
+            n.a = first
+            n.b = lt.val as u32
+            return Ok(add(inout p, n))
+        }
+        var es: List[u32] = List.new()
+        es.push(first)
+        while true {
+            skip_nl(inout p)
+            if eat(inout p, lex.RBracket) { break }
+            if !eat(inout p, lex.Comma) { return Err(err(p, "expected `,` or `]`")) }
+            skip_nl(inout p)
+            if eat(inout p, lex.RBracket) { break }
+            es.push(expr(inout p)?)
+        }
+        var n = mk(ast.EArray, t.line, t.col)
+        n.c = list(inout p, es)
+        n.d = es.len() as u32
+        return Ok(add(inout p, n))
+    }
+    if t.kind == lex.Ident {
+        if t.val == intern.K_TRUE as u64 || t.val == intern.K_FALSE as u64 {
+            adv(inout p)
+            var n = mk(ast.EBool, t.line, t.col)
+            n.a = if t.val == intern.K_TRUE as u64 { 1 } else { 0 }
+            return Ok(add(inout p, n))
+        }
+        if t.val == intern.K_NULL as u64 {
+            return Err(diag.new("E0402", t.line, t.col, sys.lit("`null` does not exist in Eider; absence is modelled with Option[T]")))
+        }
+        if t.val == intern.K_IF as u64 { return if_expr(inout p) }
+        if t.val == intern.K_MATCH as u64 { return match_expr(inout p) }
+        let n = ident(inout p)?
+        var node = mk(ast.EIdent, n.line, n.col)
+        node.a = n.sym
+        match qualified(inout p, n.sym) {
+            Some(q) => {
+                node.a = q.sym
+                node.b = n.sym + 1
+                node.line = q.line
+                node.col = q.col
+            }
+            None => {}
+        }
+        return Ok(add(inout p, node))
+    }
+    Err(err(p, "expected an expression"))
+}
+
+fn else_branch(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    if is_kw(p, intern.K_IF) { return if_expr(inout p) }
+    let t = cur(p)
+    var n = mk(ast.EBlock, t.line, t.col)
+    n.a = block(inout p)?
+    Ok(add(inout p, n))
+}
+
+fn if_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    let pos = expect_kw(inout p, intern.K_IF)?
+    if eat_kw(inout p, intern.K_LET) {
+        // `if let PAT = EXPR { A } else { B }` is a two-arm match, as in the bootstrap
+        let pat = pattern(inout p)?
+        expect(inout p, lex.Eq)?
+        let scrut = expr(inout p)?
+        let then = block(inout p)?
+        let end = prev_end(p)
+        var els: u32 = 0
+        if peek_nonnl_kw(p, intern.K_ELSE) {
+            skip_nl(inout p)
+            adv(inout p)
+            els = else_branch(inout p)?
+        } else {
+            var b = mk(ast.Block, end.line, end.col)
+            b.end_line = end.line
+            b.end_col = end.col
+            let bid = add(inout p, b)
+            var eb = mk(ast.EBlock, pos.line, pos.col)
+            eb.a = bid
+            els = add(inout p, eb)
+        }
+        var then_e = mk(ast.EBlock, pos.line, pos.col)
+        then_e.a = then
+        let then_id = add(inout p, then_e)
+        var pats1: List[u32] = List.new()
+        pats1.push(pat)
+        var arm1 = mk(ast.Arm, pos.line, pos.col)
+        arm1.a = then_id
+        arm1.c = list(inout p, pats1)
+        arm1.d = 1
+        let a1 = add(inout p, arm1)
+        var pats2: List[u32] = List.new()
+        pats2.push(add(inout p, mk(ast.PWild, pos.line, pos.col)))
+        var arm2 = mk(ast.Arm, pos.line, pos.col)
+        arm2.a = els
+        arm2.c = list(inout p, pats2)
+        arm2.d = 1
+        let a2 = add(inout p, arm2)
+        var arms: List[u32] = List.new()
+        arms.push(a1)
+        arms.push(a2)
+        var m = mk(ast.EMatch, pos.line, pos.col)
+        m.a = scrut
+        m.c = list(inout p, arms)
+        m.d = 2
+        m.end_line = end.line
+        m.end_col = end.col
+        return Ok(add(inout p, m))
+    }
+    var n = mk(ast.EIf, pos.line, pos.col)
+    n.a = expr(inout p)?
+    n.b = block(inout p)?
+    if peek_nonnl_kw(p, intern.K_ELSE) {
+        skip_nl(inout p)
+        adv(inout p)
+        n.c = else_branch(inout p)? + 1
+    }
+    Ok(add(inout p, n))
+}
+
+fn match_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    let pos = expect_kw(inout p, intern.K_MATCH)?
+    let s = expr(inout p)?
+    expect(inout p, lex.LBrace)?
+    var arms: List[u32] = List.new()
+    while true {
+        while is_nl(p) || is(p, lex.Comma) { adv(inout p) }
+        if is(p, lex.RBrace) {
+            let t = cur(p)
+            adv(inout p)
+            var n = mk(ast.EMatch, pos.line, pos.col)
+            n.a = s
+            n.c = list(inout p, arms)
+            n.d = arms.len() as u32
+            n.end_line = t.line
+            n.end_col = t.col
+            return Ok(add(inout p, n))
+        }
+        let at = cur(p)
+        var pats: List[u32] = List.new()
+        pats.push(pattern(inout p)?)
+        while eat(inout p, lex.Pipe) {
+            skip_nl(inout p)
+            pats.push(pattern(inout p)?)
+        }
+        expect(inout p, lex.FatArrow)?
+        skip_nl(inout p)
+        var arm = mk(ast.Arm, at.line, at.col)
+        if is_kw(p, intern.K_RETURN) || is_kw(p, intern.K_BREAK) || is_kw(p, intern.K_CONTINUE) || is_kw(p, intern.K_ASSERT) {
+            arm.a = stmt(inout p)?
+            arm.b = 1
+        } else {
+            arm.a = expr(inout p)?
+        }
+        arm.c = list(inout p, pats)
+        arm.d = pats.len() as u32
+        arms.push(add(inout p, arm))
+        if !(is_nl(p) || is(p, lex.Comma) || is(p, lex.RBrace)) { return Err(err(p, "expected a newline, `,` or `}` after match arm")) }
+    }
+    Err(err(p, "unreachable"))
+}
+
+/// Sub-patterns after `(`, up to `)`.
+fn pat_list(inout p: P) -> Result[List[u32], diag.Diag] uses ffi {
+    var ps: List[u32] = List.new()
+    while true {
+        skip_nl(inout p)
+        if eat(inout p, lex.RParen) { break }
+        ps.push(pattern(inout p)?)
+        skip_nl(inout p)
+        if !eat(inout p, lex.Comma) && !is(p, lex.RParen) { return Err(err(p, "expected `,` or `)`")) }
+    }
+    Ok(ps)
+}
+
+pub fn pattern(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+    let t = cur(p)
+    if t.kind == lex.Int {
+        let ti = p.i as u32
+        adv(inout p)
+        var n = mk(ast.PInt, t.line, t.col)
+        n.a = ti
+        return Ok(add(inout p, n))
+    }
+    if t.kind == lex.Str {
+        adv(inout p)
+        var n = mk(ast.PStr, t.line, t.col)
+        n.a = t.val as u32
+        return Ok(add(inout p, n))
+    }
+    if t.kind == lex.Minus {
+        adv(inout p)
+        if !is(p, lex.Int) { return Err(err(p, "expected integer after `-` in pattern")) }
+        let ti = p.i as u32
+        adv(inout p)
+        var n = mk(ast.PInt, t.line, t.col)
+        n.a = ti
+        n.b = 1
+        return Ok(add(inout p, n))
+    }
+    if t.kind == lex.LParen {
+        adv(inout p)
+        let ps = pat_list(inout p)?
+        if ps.len() == 1 { return Ok(ps[0]) }
+        var n = mk(ast.PTuple, t.line, t.col)
+        n.c = list(inout p, ps)
+        n.d = ps.len() as u32
+        return Ok(add(inout p, n))
+    }
+    if t.kind == lex.Ident && t.val == intern.S_UNDERSCORE as u64 {
+        adv(inout p)
+        return Ok(add(inout p, mk(ast.PWild, t.line, t.col)))
+    }
+    if t.kind == lex.Ident && (t.val == intern.K_TRUE as u64 || t.val == intern.K_FALSE as u64) {
+        adv(inout p)
+        var n = mk(ast.PBool, t.line, t.col)
+        n.a = if t.val == intern.K_TRUE as u64 { 1 } else { 0 }
+        return Ok(add(inout p, n))
+    }
+    if t.kind == lex.Ident {
+        var nm = ident(inout p)?
+        var qual: u32 = 0
+        match qualified(inout p, nm.sym) {
+            Some(q) => {
+                qual = nm.sym + 1
+                nm = q
+            }
+            None => {}
+        }
+        // `a.b.C` keeps only the last segment (bootstrap behaviour)
+        while is(p, lex.Dot) {
+            adv(inout p)
+            nm = ident(inout p)?
+            qual = 0
+        }
+        if eat(inout p, lex.LParen) {
+            let ps = pat_list(inout p)?
+            var n = mk(ast.PVariant, nm.line, nm.col)
+            n.a = nm.sym
+            n.b = qual
+            n.c = list(inout p, ps)
+            n.d = ps.len() as u32
+            return Ok(add(inout p, n))
+        }
+        var n = mk(ast.PName, nm.line, nm.col)
+        n.a = nm.sym
+        n.b = qual
+        return Ok(add(inout p, n))
+    }
+    Err(err(p, "expected a pattern"))
+}
+
+/// Parse a lexed file.
+pub fn parse(lx: lex.Lexed, names: intern.Interner) -> Result[P, diag.Diag] uses ffi {
+    var p = P(lx.toks, lx.strs, 0, ast.new(), names, List.new())
+    program(inout p)?
+    Ok(p)
+}

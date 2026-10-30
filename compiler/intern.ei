@@ -1,14 +1,61 @@
 // intern: identifier bytes -> u32 symbol ids, so later passes compare and hash integers.
 // Open addressing (linear probing); the table doubles at half full.
 
+import "deps/core/sys.ei"
 import "deps/std/bytes.ei"
 
 pub type Interner = { names: List[List[u8]], hashes: List[u64], slots: List[u32] }
 
-pub fn new() -> Interner {
+/// Keywords get the fixed ids 0..30 (the bootstrap's KW order); a symbol id <= LAST_KEYWORD
+/// is a keyword. A few well-known names follow.
+pub const K_FN: u32 = 0
+pub const K_TYPE: u32 = 1
+pub const K_LET: u32 = 2
+pub const K_VAR: u32 = 3
+pub const K_IF: u32 = 4
+pub const K_ELSE: u32 = 5
+pub const K_WHILE: u32 = 6
+pub const K_FOR: u32 = 7
+pub const K_IN: u32 = 8
+pub const K_RETURN: u32 = 9
+pub const K_MATCH: u32 = 10
+pub const K_TRUE: u32 = 11
+pub const K_FALSE: u32 = 12
+pub const K_USES: u32 = 13
+pub const K_TEST: u32 = 14
+pub const K_ASSERT: u32 = 15
+pub const K_INOUT: u32 = 16
+pub const K_AS: u32 = 17
+pub const K_CONST: u32 = 18
+pub const K_MODULE: u32 = 19
+pub const K_BREAK: u32 = 20
+pub const K_CONTINUE: u32 = 21
+pub const K_NULL: u32 = 22
+pub const K_IMPORT: u32 = 23
+pub const K_TRAIT: u32 = 24
+pub const K_IMPL: u32 = 25
+pub const K_PUB: u32 = 26
+pub const K_COMPTIME: u32 = 27
+pub const K_EXTERN: u32 = 28
+pub const K_EXPORT: u32 = 29
+pub const K_UNSAFE: u32 = 30
+pub const LAST_KEYWORD: u32 = 30
+pub const S_UNDERSCORE: u32 = 31
+pub const S_SELF: u32 = 32
+pub const S_SELF_TYPE: u32 = 33
+
+pub fn new() -> Interner uses ffi {
     var slots: List[u32] = List.new()
     for i in 0..64 { slots.push(0) }
-    Interner(List.new(), List.new(), slots)
+    var s = Interner(List.new(), List.new(), slots)
+    let words = ["fn", "type", "let", "var", "if", "else", "while", "for", "in", "return", "match", "true", "false", "uses", "test",
+        "assert", "inout", "as", "const", "module", "break", "continue", "null", "import", "trait", "impl", "pub", "comptime", "extern",
+        "export", "unsafe", "_", "self", "Self"]
+    for i in 0..34 {
+        let w = sys.lit(words[i as usize])
+        intern(inout s, w, 0, w.len())
+    }
+    s
 }
 
 /// Multiplicative string hash (wrapping). Switch to FNV-1a once Eider has XOR.

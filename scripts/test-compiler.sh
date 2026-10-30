@@ -1,8 +1,8 @@
 #!/bin/sh
 # Tests for the self-hosted compiler (compiler/). Differential: the bootstrap is the oracle.
 #
-#   lex:      for every .ei in the repo and in compiler/tests/lex, whenever either compiler
-#             reports a lexer error, both must report the same JSON diagnostic.
+#   front:    for every .ei in the repo and in compiler/tests/{lex,parse}, whenever either
+#             compiler reports a lex or parse error, both must report the same JSON diagnostic.
 #   lex_ok:   token dumps of compiler/tests/lex_ok/*.ei match their .tokens goldens
 #             (BLESS=1 rewrites the goldens; review the diff).
 cd "$(dirname "$0")/.." || exit 1
@@ -10,7 +10,9 @@ scripts/bootstrap-deps.sh
 boot=$(scripts/stage0.sh) || exit 3
 EIDER_CACHE=off scripts/ei build compiler/main.ei -o target/eiderc >/dev/null 2>target/eiderc.build.log || { cat target/eiderc.build.log; echo "FAIL build eiderc"; exit 1; }
 new=./target/eiderc
-lexmsg='unexpected character|unterminated string literal|unknown escape sequence|unterminated block comment|integer literal too large|expected hex digits after 0x'
+# eiderc implements lexing and parsing so far: compare the diagnostics those passes produce
+# (E0001, plus the parser's E0302 for `inout` in a type and E0402 for `null`)
+frontmsg='"error":"(E0001|E0402)"|"error":"E0302".*"message":"`inout` is only valid on function parameters'
 fail=0
 n=0
 for f in $(find . -name '*.ei' -not -path './target/*' -not -path '*/deps/*' | sort); do
@@ -20,15 +22,15 @@ for f in $(find . -name '*.ei' -not -path './target/*' -not -path '*/deps/*' | s
   # the bootstrap also parses, type-checks and follows imports; compare lexer errors only,
   # and only those in the entry file
   case "$want" in *"\"file\":\"$f\""*) ;; *) want="" ;; esac
-  echo "$want" | grep -qE "\"error\":\"E0001\".*\"message\":\"($lexmsg)" || want=""
+  echo "$want" | grep -qE "$frontmsg" || want=""
   if [ "$want" != "$got" ]; then
-    echo "FAIL lex $f"
+    echo "FAIL front end $f"
     echo "  bootstrap: $want"
     echo "  eiderc:    $got"
     fail=1
   fi
 done
-[ $fail = 0 ] && echo "ok   lex: $n files agree with the bootstrap"
+[ $fail = 0 ] && echo "ok   front end (lex+parse): $n files agree with the bootstrap"
 for f in compiler/tests/lex_ok/*.ei; do
   g="${f%.ei}.tokens"
   if [ -n "$BLESS" ]; then $new lex "$f" > "$g"; fi
