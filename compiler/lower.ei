@@ -2132,8 +2132,11 @@ fn function(inout g: G, p: P, f: u32) uses ffi {
     put(inout g, "}\n\n")
 }
 
-/// Extern prototypes (`extern "c"` functions, FFI). Stage C7 / the FFI work emits them
-/// here, after the includes and before any Eider type or function. Nothing yet.
+/// EXTERN PROTOTYPES (FFI): `extern "c"` functions are declared here, after the includes and
+/// before any Eider type or function (stage 0 writes `extern T f_name(..) __asm__("name")`,
+/// LEARNINGS.md). An extern function is an IR function without a body, so today `name_all`
+/// gives it no C name and `order` skips it; the FFI work names it (in `name_all`, so the clash
+/// check covers it) and emits its prototype here. Nothing yet.
 fn extern_protos(inout g: G, p: P) uses ffi {
 }
 

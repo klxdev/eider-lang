@@ -16,6 +16,7 @@ ASAN_OPTIONS=allocator_may_return_null=1; export ASAN_OPTIONS
 TSAN_OPTIONS="allocator_may_return_null=1 halt_on_error=1"; export TSAN_OPTIONS
 UBSAN_OPTIONS=halt_on_error=1; export UBSAN_OPTIONS
 
+if $CC $STRICT -DEI_RT_COUNT_ALLOCS -c core/eider_rt.c -o "$T/o.o" 2>"$T/log"; then echo "ok   strict core/eider_rt.c (-DEI_RT_COUNT_ALLOCS)"; else echo "FAIL strict core/eider_rt.c (-DEI_RT_COUNT_ALLOCS)"; cat "$T/log"; fail=1; fi
 for f in core/eider_core.c core/eider_rt.c; do
   if $CC $STRICT -c "$f" -o "$T/o.o" 2>"$T/log"; then echo "ok   strict $f"; else echo "FAIL strict $f"; cat "$T/log"; fail=1; fi
 done
@@ -60,6 +61,7 @@ sanitizer() {
 
 run O2 -O2
 run portable -O0 -DEI_RT_PORTABLE
+run count-allocs -O0 -DEI_RT_COUNT_ALLOCS
 core O2 -O2
 sanitizer ubsan-trap -fsanitize=undefined -fsanitize-trap=undefined
 sanitizer ubsan-trap,portable -fsanitize=undefined -fsanitize-trap=undefined -DEI_RT_PORTABLE

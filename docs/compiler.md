@@ -1,14 +1,15 @@
 # The self-hosted compiler (`eiderc`)
 
-Status: approved direction; C1 to C4 done, C5 checking done. This file owns the plan; update it as stages land.
+Status: approved direction; C1 to C5 done (except FFI, threads, comptime: C7). This file owns the plan; update it as stages land.
 
 Progress: **C1 done** (lexer, interner, diagnostics rendering; `scripts/test-compiler.sh`).
 **C2 done** (parser to the AST arena, `eiderc parse` dump, parse-error corpus and AST goldens).
 **C3 done** for v0 plus non-generic payload enums (`resolve.ei`, `types.ei`, `fold.ei`,
 `pats.ei`, `check.ei`, `ir.ei`; see "C3: checking" below).
 **C4 done** for the same language (`lower.ei`, `driver.ei`; `eiderc emit-c/build/run/test`;
-see "C4: lowering" below). **C5 checking done** for S1–S3 (see "C5: checking S1–S3"); its
-lowering is next, then C6.
+see "C4: lowering" below). **C5 done** for S1–S3: checking (see "C5: checking S1–S3") and
+lowering (see "C5: lowering"); with core/sys.ei's extern fns stubbed, eiderc compiles its own
+source to C that reaches a fixed point. Next: FFI (in progress), then C6.
 
 ## Goal
 
@@ -195,6 +196,78 @@ fns are replaced by stubs (FFI itself is C7).
   pass files, and fail files by code); IR goldens `generics`, `heap` and `closures` in
   `compiler/tests/ir` show where clones and drops go.
 
+## C5: lowering
+
+`lower.ei` lowers every IR node of S1–S3. The checker already placed every clone, move and
+drop (ir.ei, "Ownership"), so lowering only prints them: S_READ is a bitwise copy (a borrow
+of owned data), S_CLONE calls the type's clone, S_DROP its drop, S_MOVE is a bitwise copy
+whose source is dead.
+
+- **Layout** (stage 0's, heap.rs and closure.rs): tuples are structs `f<n>`; String is the
+  runtime's `ei_String`; List[T] `{ T *d; uint64_t len, cap; }` (grows by doubling from 4);
+  Map[K, V] stage 0's open-addressing table `{ K *k; V *v; uint8_t *s; uint64_t len, cap,
+  used; }` (slot states empty/used/deleted, capacity a power of two from 8, grows when
+  `(used + 1) * 4 > cap * 3`, keys hashed with `ei_hash_u64`/`ei_hash_str` and probed
+  linearly, so lookups behave exactly as stage 0's; Maps have no iteration, so their order is
+  not observable); Box[T] `{ T *p; }`; a fn value `{ void *env; R (*call)(void *, ...);
+  void (*drop)(void *); void *(*clone)(void *); }`. A closure body is a C function taking
+  the environment first; its L_CAPTURE locals are copies (borrows) of the environment's
+  fields. S_CLOSURE allocates the environment struct `env_<f>` and moves the captured values
+  in; S_FNREF points at a thunk `k_<f>` with no environment; S_CALLV is
+  `f.call(f.env, args)`.
+- **Builtins** call the runtime for String (`ei_str_from`, `ei_str_push`, `ei_str_append`,
+  ...) and generated glue for the rest: `push_`, `has_` (List), `find_`, `get_`, `ins_`,
+  `rem_` (Map), `new_` (Box); `pop`, `sum`, `len`, `is_empty` and `Map.get`'s Option are
+  written inline; `clear` is the List's drop (which leaves it empty).
+- **Glue** (`eq_`, `drop_`, `clone_`, `name_` and the above, plus `env_`/`edrop_`/`eclone_`
+  per closure body and `k_` per function used as a value) is requested while the functions
+  are lowered and generated afterwards from a work list, each item once, keyed by kind and
+  type; only what is used is emitted, in one shared section. Every size computation goes
+  through `ei_alloc_n` (overflow-checked); memory is freed with `ei_free`.
+- **Stable names.** C names depend only on what they name, never on arena indexes or
+  declaration order. Module identity is today's module prefix (the file stem, unique per
+  program by E0808; none for the entry module), which the checker spells into every item's
+  name (`stem__name`). `<h>` is 8 hex digits of a 64-bit hash of the spelled name or type:
+  `t_<key>` for records and enums (`t_<key>_<h>` for instances such as `Pair[i32, bool]`),
+  `ta_<h>`, `tt_<h>`, `tl_<h>`, `tm_<h>`, `tb_<h>`, `tf_<h>` for arrays, tuples, Lists,
+  Maps, Boxes and fn types, `f_<name>` for functions with `.` spelled `__` (`f_Sq__area`,
+  `f_geo__area`) and `_<h>` replacing the type arguments of instances
+  (`f_Option__unwrap_or_<h>`), closures numbered per enclosing function
+  (`f_main__closure2`, not the checker's program-wide counter), `x_<name>_<h>` for test
+  blocks (`_2`, ... for repeated names), and glue `<op>_<type>`. Every global name is
+  registered with what it names; two things with one C name stop `emit-c` with
+  `eiderc: internal error: C name clash ...` and exit 3 (`compiler/tests/lower/clash.ei`:
+  `Sq.area` and a function `Sq__area`).
+- **Output order** (the per-module boundary): includes, extern prototypes (`extern_protos`,
+  empty until FFI), types, prototypes, shared glue, then functions per module (entry module
+  first, then the others in order of first appearance), generic instances sorted by C name,
+  tests, `main`. Nothing in the C depends on paths except the trap file name, which is the
+  path as given on the command line.
+- **Leak check.** The runtime built with `-DEI_RT_COUNT_ALLOCS` counts live allocations, and
+  generated `main` calls `ei_check_leaks()` when the program ends normally (in test mode only
+  if no test failed, since a trap does not unwind), which then prints
+  `eider: outstanding allocations: <n>` to stderr. ASan isn't installed here, so this is how
+  drops on every exit path are checked.
+- **Tests** (`scripts/test-compiler.sh`): tests/run's adt, closures, heap and heap2 now pass,
+  and compiler/tests/run adds `strings`, `lists`, `maps`, `owned`, `exits`, `generics` and
+  `closures2` (String building and comparison; every List and Map operation with int, bool,
+  str and String keys, including rehashing; Box; nested owned data in records, enums, tuples,
+  arrays and Lists; copies that don't share; drops on return/break/continue/`?`/match arms;
+  generic functions, types and methods with several instances; closures capturing owned
+  values, stored, copied and returned; `?` on Option and Result): 31/31 in-scope run tests
+  agree with the bootstrap, every run is clean under UBSan at -O2 and ends with 0
+  outstanding allocations ("leaks"), and `emit-c` of every run test is byte-identical twice
+  and from a copy of the test directory at another path ("determinism").
+- **Self-hosting.** With core/sys.ei's 23 `extern "c"` fns replaced by stub fns (and
+  `unsafe { e }` by `{ e }`) in a scratch copy, `eiderc emit-c compiler/main.ei` gives 74k
+  lines of C that compile with `-Werror` at -O0 and -O2 (also under UBSan). With the stubs'
+  bodies pointed back at `core/eider_core.c` by hand, that binary agrees with the
+  stage-0-built eiderc on `check --json`, `ir` and `emit-c` for all 541 test programs and
+  on every run test, emits byte-identical C for its own source (the fixed point), and
+  leaks nothing doing so. What remains for the compiler's own source is FFI only: checking
+  `extern "c"`/`unsafe` and emitting extern prototypes (the marked `extern_protos` spot) and
+  calls by C symbol.
+
 ## C4: lowering
 
 `lower.ei` turns the IR into one C11 file; `driver.ei` compiles and runs it.
@@ -204,18 +277,18 @@ fns are replaced by stubs (FFI itself is C7).
   uses a place (`(void)ei_idx(i, n, line);`, outermost index first), so nested indices check
   left to right. Every trapping operation calls the runtime (`ei_add_i32(a, b, line)`,
   `ei_s2u(...)`, `ei_trap(msg, line)`); the generated C defines no runtime functions of its
-  own, only per-type glue: `t<id>_eq` (structural `==`) for every record, enum and array type,
-  and `t<id>_name` (variant names for `print`) for every enum, all `static inline`.
+  own, only per-type glue (since C5: generated once per type and only when used; see
+  "C5: lowering").
 - **Names** cannot collide with each other, C keywords, reserved identifiers or the runtime
-  (`ei_*`, `ec_*`): `t<id>_<Name>` for type `<id>` of the type arena (arrays: `t<id>`),
-  `f<i>_<stem__name>` for function `i` (tests: `f<i>_test`), `l<i>[_<name>]` for local `i`
-  of the current function (parameters first), `s<n>` for a loop's `continue` label. Members
-  are `f<n>` (fields) and `v<n>` (variant structs).
+  (`ei_*`, `ec_*`), and since C5 depend only on what they name ("C5: lowering", "Stable
+  names"; at C4 they were arena indexes, `t<id>_`/`f<i>_`). Locals are `l<i>[_<name>]` for
+  local `i` of the current function (parameters first), `s<n>` is a loop's `continue` label.
+  Members are `f<n>` (fields) and `v<n>` (variant structs).
 - **Layout.** Records are structs; arrays are `struct { T a[N]; }` so they copy by value;
   every enum is `struct { uint32_t tag; union { struct { ... } v<n>; ... } u; }` (no union
   when no variant has fields); `str` is `const char *`; `bool` is C `bool`; integers are the
-  `<stdint.h>` types (`usize` = `uint64_t`); `inout` parameters are pointers. Types are
-  defined in dependency order. Every local is declared at the top of its function with a zero
+  `<stdint.h>` types (`usize` = `uint64_t`); `inout` parameters are pointers. Every struct
+  type is forward-declared, then defined after the types it contains by value. Every local is declared at the top of its function with a zero
   initializer, so there is no uninitialized read and nothing for `-Wmaybe-uninitialized`.
   Loops are `for (;;)`; `continue` is `goto s<n>` when the loop has a step block (a `for`
   loop's increment), else C `continue`. Non-unit functions end in `ei_unreachable()`.
@@ -240,7 +313,7 @@ fns are replaced by stubs (FFI itself is C7).
   directory. That needs no build-time configuration: `target/eiderc` in a checkout finds the
   checkout, and an installed eiderc needs `EIDER_ROOT` (or a `core/` above it).
 - **Tests** (`scripts/test-compiler.sh`, "run" and "sanitize"): every in-scope program in
-  tests/run and compiler/tests/run (19 of 27; the rest need C5 features) must match the
+  tests/run and compiler/tests/run (19 of 27 at C4, 31 of 34 since C5) must match the
   bootstrap's stdout, stderr and exit code under `run`, and under `test` when it has test
   blocks, with `-Werror`; then again at `-O2 -Werror` under UBSan in trap mode. eiderc's
   own run tests cover every operator per int type with every trap and the wrapping edges
@@ -250,7 +323,7 @@ fns are replaced by stubs (FFI itself is C7).
 - **Differences from stage 0** (deliberate): the bootstrap bugs in LEARNINGS.md are fixed and
   have regression tests with hand-written expected output (`compiler/tests/run/bug_*.ei` +
   `.out`): `len(e)` evaluates `e`; `let p = match r { V(p) => p }` assigns `p`; `else if`
-  conditions with temporaries (the owned-value case needs String/List, C5); `??(` in strings
+  conditions with temporaries; `??(` in strings
   stays `??(`. A program killed by a signal makes `eiderc run` exit 128 + signal (stage 0
   exits 1); `build` without `-o` writes to the working directory (stage 0 writes to its temp
   directory); there is no binary cache (`EIDER_CACHE` is ignored); driver messages start
@@ -268,19 +341,20 @@ build` of a 76-line program takes 313 ms vs stage 0's 70 ms.
 
 ### Constraints to keep now (cheap today, expensive to retrofit)
 
-1. **Stable C names.** Generated names must depend only on what they name (module identity,
-   symbol, and for instances the type arguments), never on arena indexes or declaration
-   order. Today lower.ei uses `t<id>_` and `f<i>_` (indexes into whole-program arenas), so
-   editing one module renames symbols everywhere: that defeats per-module caching, parallel
-   translation units and readable diffs of generated C, and makes the self-host fixed point
-   fragile. Fix in the next lowering round (C5 lowering): mangle `<module>__<name>` plus a
-   short hash of the type arguments for generic instances; keep a collision check.
-2. **Deterministic output.** Same input, byte-identical C (no hash-map iteration order, no
-   temp paths or timestamps in the C). Needed for caching and the fixed point; test it.
-3. **Per-module boundaries in lowering.** Emit each module's functions as a unit, and
-   collect per-type glue and generic instances in one place keyed by stable name, so the
+1. **Stable C names** (done in C5 lowering). Generated names must depend only on what they
+   name (module identity, symbol, and for instances the type arguments), never on arena
+   indexes or declaration order, or editing one module renames symbols everywhere: that
+   defeats per-module caching, parallel translation units and readable diffs of generated
+   C, and makes the self-host fixed point fragile. See "C5: lowering", "Stable names"; the
+   clash check stays.
+2. **Deterministic output** (done; tested by "determinism" in test-compiler.sh). Same
+   input, byte-identical C (no hash-map iteration order, no temp paths or timestamps in the
+   C). Needed for caching and the fixed point.
+3. **Per-module boundaries in lowering** (done). Each module's functions are emitted as a
+   unit, per-type glue and generic instances in one place keyed by stable name, so the
    output can later be split into one C file per module (plus one for shared glue) compiled
-   in parallel. Don't let lowering interleave modules arbitrarily.
+   in parallel. Don't let lowering interleave modules arbitrarily. (Type definitions are one
+   shared section too.)
 4. **The IR stays the only input to lowering**, so a second back end (a fast non-C debug
    path) can be added without touching check.
 
@@ -290,7 +364,7 @@ build` of a 76-line program takes 313 ms vs stage 0's 70 ms.
 |---|---|
 | Build `core/eider_rt.c` and `core/eider_core.c` once per (CC, flags) and link the cached objects | -~250 ms on every eiderc build/run |
 | Binary cache keyed on (generated C, CC, flags, core objects), like stage 0's `EIDER_CACHE` | unchanged programs skip gcc |
-| Smaller C: declare temporaries in the narrowest scope that still avoids `-Wmaybe-uninitialized`; share glue between identical layouts; emit only used glue | eiderc emits ~1.5x stage 0's C for the same program; gcc time is roughly linear in it |
+| Smaller C: declare temporaries in the narrowest scope that still avoids `-Wmaybe-uninitialized`; share glue between identical layouts (only used glue is emitted since C5); eiderc's own C is 74k lines | eiderc emits ~1.5x stage 0's C for the same program; gcc time is roughly linear in it |
 | One C file per module, compiled in parallel (needs constraint 3) | uses the idle cores; most of the gcc time for large programs |
 | -O0 for the edit/run loop by default (already), -O2 only for `build` | 4x faster gcc on large programs |
 | Incremental front end: cache per-module check results keyed by source hash and the interfaces of imports | matters once programs are large; the front end is not the bottleneck today |
@@ -322,7 +396,7 @@ Each with a design note, compile-fail tests and new codes:
 | C2 ✅ | `parse` to the AST arena; `eiderc parse` dumps the AST | every `.ei` in the repo parses; parse errors (E0001) match the bootstrap's positions, including the one-file-per-error-path corpus in `compiler/tests/parse`; golden dumps in `compiler/tests/parse_ok` |
 | C3 ✅ | `resolve` + `check` for the v0 language (ints, bool, str, records, enums, arrays, control flow, `inout`, capabilities, const folding), producing the typed IR (`eiderc ir`) | v0 compile-fail and compile-pass tests match |
 | C4 ✅ | `lower` + C for v0 (plus non-generic payload enums) against `core/eider_rt.*`; driver (`emit-c`, `build`, `run`, `test`) | v0 run tests match (stdout, stderr, exit code, for `run` and `test`); C is `-pedantic -Wall -Wextra -Werror` clean at -O0 and -O2 and clean under UBSan (ASan/TSan when their runtimes exist) |
-| C5 | S1–S3: payload enums, generics, traits, Option/Result/`?`, tuples, patterns, String/List/Map/Box, closures | all the features `compiler/` itself uses; their tests match (checking ✅; lowering next) |
+| C5 ✅ | S1–S3: payload enums, generics, traits, Option/Result/`?`, tuples, patterns, String/List/Map/Box, closures | all the features `compiler/` itself uses; their tests match (checking ✅, lowering ✅) |
 | C6 | Self-host: stage1 builds stage2 builds stage3; fixed point; commit the seed | `scripts/selfhost.sh` green |
 | C7 | Parity: modules/namespaces, FFI/export/`--lib`, threads, WASM, comptime, cache | the full `scripts/verify.sh` passes with `eiderc` in place of the bootstrap; retire eider-bootstrap |
 | C8+ | Language work above, then std and package-manager rework | per feature |

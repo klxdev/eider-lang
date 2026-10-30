@@ -103,7 +103,7 @@ trap inside a `Mutex.update` closure). Tests after it that use the same Mutex de
 
 | In `eider_rt.h`, `static inline` | In `eider_rt.c` |
 |---|---|
-| `ei_idx`, all checked/wrapping arithmetic, `ei_bits_*`, conversions, `ei_hash_u64`, `ei_unreachable()` (macro) | `ei_trap`, `ei_set_file`, `ei_set_trap_jmp`, allocation, `String`, `ei_hash_str`, print, clock, threads |
+| `ei_idx`, all checked/wrapping arithmetic, `ei_bits_*`, conversions, `ei_hash_u64`, `ei_unreachable()` (macro) | `ei_trap`, `ei_set_file`, `ei_set_trap_jmp`, allocation (`ei_alloc`, `ei_alloc_n`, `ei_free`, `ei_check_leaks`), `String`, `ei_hash_str`, print, clock, threads |
 
 The inline set is what sits on every arithmetic expression and index. Each takes the
 fast path in a compare and a branch to the out-of-line `ei_trap`.
@@ -143,6 +143,8 @@ in-range result: `(uint8_t)ei_s2u((int64_t)x, UINT8_MAX, 12)`.
 |---|---|
 | `void *ei_alloc(uint64_t n)` | never `NULL`; `n == 0` allocates 1 byte; traps `out of memory` (also when `n` does not fit `size_t`). Free with `free`. |
 | `void *ei_alloc_n(uint64_t n, uint64_t size)` | `n * size` bytes; traps if the product overflows. Generated List/Map/clone growth uses this. |
+| `void ei_free(void *p)` | frees memory from `ei_alloc`/`ei_alloc_n` (`NULL` is a no-op); generated glue and the runtime free through it |
+| `void ei_check_leaks(void)` | built with `-DEI_RT_COUNT_ALLOCS`, the runtime counts live allocations (atomically) and this prints `eider: outstanding allocations: <n>` to stderr; otherwise it does nothing. Generated `main` calls it when the program ends normally (test mode: only if no test failed). A leak check for test suites where ASan is not available. |
 | `ei_String` | `{ char *p; uint64_t len; }`, NUL-terminated, `len` excludes the NUL |
 | `ei_str_from(const char *)`, `ei_str_from_i64(int64_t)` | new String (decimal, `-` for negatives) |
 | `ei_clone_String(const ei_String *)`, `ei_drop_String(ei_String *)` | deep copy; free (sets `p = NULL`, `len = 0`; a second drop is harmless) |

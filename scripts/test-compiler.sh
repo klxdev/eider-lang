@@ -29,6 +29,8 @@
 #             line the output must equal the plain run's.
 #   determinism: `emit-c` of every run test twice, and once from a copy of the test
 #             directory at another path (same relative file name), must be byte-identical.
+#   names:    two functions with one C name (compiler/tests/lower/clash.ei) stop `emit-c`
+#             with an internal error (exit 3) naming both.
 cd "$(dirname "$0")/.." || exit 1
 scripts/bootstrap-deps.sh
 boot=$(scripts/stage0.sh) || exit 3
@@ -240,4 +242,13 @@ for f in tests/run/*.ei compiler/tests/run/*.ei; do
 done
 if [ "$dok" = "$dtotal" ]; then v="ok  "; else v="FAIL"; fi
 echo "$v determinism: $dok/$dtotal programs give byte-identical C twice and from a copy at another path"
+# the C name clash check stops lowering loudly (exit 3 and both names)
+$new emit-c compiler/tests/lower/clash.ei >$tmp/o 2>$tmp/e
+code=$?
+if [ $code = 3 ] && grep -q 'C name clash: `f_Sq__area` names both `Sq__area` and `Sq.area`' $tmp/e; then
+  echo "ok   names: a C name clash is an internal error (compiler/tests/lower/clash.ei)"
+else
+  echo "FAIL names: compiler/tests/lower/clash.ei exited $code: $(cat $tmp/e)"
+  fail=1
+fi
 exit $fail

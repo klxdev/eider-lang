@@ -1,0 +1,14 @@
+// Two functions whose C names clash (`Sq.area` and `Sq__area` both lower to `f_Sq__area`):
+// eiderc must stop with an internal error naming both, never emit C that miscompiles.
+type Sq = { s: u32 }
+
+impl Sq {
+    fn area(self) -> u32 { self.s * self.s }
+}
+
+fn Sq__area(x: u32) -> u32 { x }
+
+fn main() uses io {
+    print(Sq(3).area())
+    print(Sq__area(2))
+}
