@@ -78,11 +78,12 @@ check_set() {
     fi
   done
 }
+verdict() { if [ "$agree" = "$inscope" ] && [ "$1" = "$inscope" ]; then echo "ok  "; else echo "FAIL"; fi; }
 check_set 0 tests/checks/fail/*.ei tests/checks/pass/*.ei
-echo "ok   check: $agree/$inscope check tests in scope agree ($total tests, $((total - inscope)) out of scope)"
+echo "$(verdict $inscope) check: $agree/$inscope check tests in scope agree ($total tests, $((total - inscope)) out of scope)"
 echo "     out of scope:$outside"
 check_set 0 tests/run/*.ei
-echo "ok   check: $agree/$inscope run tests in scope agree ($total tests)"
+echo "$(verdict $inscope) check: $agree/$inscope run tests in scope agree ($total tests)"
 check_set 1 compiler/tests/check/fail/*.ei compiler/tests/check/pass/*.ei
-echo "ok   check: $agree/$inscope eiderc check cases agree (compiler/tests/check)"
+echo "$(verdict $total) check: $agree/$inscope eiderc check cases agree (compiler/tests/check)"
 exit $fail
