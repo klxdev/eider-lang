@@ -2,4 +2,4 @@
 name = "fuzz"
 version = "0.1.0"
 main = "main.ei"
-description = "differential fuzzer: eiderc check --json against the bootstrap"
+description = "crash and consistency fuzzer for eiderc (check, emit-c, build, run), plus check --json against a reference compiler"

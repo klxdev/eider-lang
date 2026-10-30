@@ -1,16 +1,35 @@
-// eider-fuzz: differential fuzzing of `eiderc check --json` against the bootstrap.
+// eider-fuzz: a crash and consistency fuzzer for eiderc, plus an optional differential check
+// against a reference compiler (docs/compiler.md, "Testing").
 //
 //   scripts/fuzz-check.sh [count] [seed files...]       (default 500 mutants)
 //   SEED=n                     PRNG seed (default 1)
 //   MODE=semantic|wild         mutation strategy (default semantic)
-//   EIDERC=path                compiler under test (default ./target/eiderc)
+//   EIDERC=path                compiler under test (default ./target/eiderc-next: compiler/
+//                              built by the seed)
+//   REF=path|none              reference for `check --json` (default ./target/eiderc: the seed
+//                              built by scripts/ei; `none` turns the comparison off)
 //
 // Run from the repository root (the wrapper does). Mutates v0 programs (identifiers,
-// literals, type names, operators, small insertions; fuzz.ei) and reports every mutant where
-// the two compilers disagree; it is kept next to its seed (imports are relative) as
-// fuzz_<n>.ei, so `eiderc check --json <that file>` replays it. Mutants eiderc calls
-// `unsupported`, and inputs the bootstrap crashes on, are skipped. Exit status 1 when any
-// mutant disagreed.
+// literals, type names, operators, small insertions; fuzz.ei) and holds eiderc to invariants
+// that need no second compiler:
+//
+//   check   `check --json` ends within 30 s, with exit 0 and no output or exit 1 and one
+//           `{"error":"<code>",...}` line, and nothing on stderr (no internal error, no crash)
+//   emit-c  `emit-c` succeeds exactly when check does, and fails with check's code
+//   build   a program check accepts builds (the C it lowers to compiles), unless it declares an
+//           `extern "c"` fn (which may name a symbol nothing defines; such programs are
+//           counted, not built)
+//   run     that program, run for at most 10 s, exits (0, 101 for a trap, or its own code);
+//           a signal is a failure, except SIGSEGV, which is counted separately: a stack
+//           overflow from unbounded recursion ends that way (no guard yet)
+//   ref     with REF, `check --json` prints exactly what REF prints. With compiler/ equal to
+//           the seed's source the two agree by construction; after a compiler change this
+//           shows every diagnostic the change moved (intended or not).
+//
+// A failing mutant is kept next to its seed (imports are relative) as fuzz_<n>.ei, so the
+// failing command replays it. Mutants eiderc calls `unsupported` are skipped. C warnings
+// (e.g. gcc's -Winfinite-recursion) are counted, not failures. Exit status 1 when any
+// mutant failed.
 
 import "deps/core/sys.ei"
 import "deps/std/bytes.ei"
@@ -20,10 +39,13 @@ import "deps/std/env.ei"
 import "deps/std/proc.ei"
 import "fuzz.ei"
 
-type Opts = { count: u64, seeds: List[List[u8]], seed: u64, wild: bool, stage0: List[u8], eiderc: List[u8] }
+type Opts = { count: u64, seeds: List[List[u8]], seed: u64, wild: bool, eiderc: List[u8], reference: List[u8] }
 
-/// What one compiler printed: stdout and stderr, both trimmed (None: it timed out).
-type Res = { out: List[u8], err: List[u8] }
+/// What a command printed (stdout and stderr trimmed) and how it ended (code -1: timed out).
+type Res = { code: i32, out: List[u8], err: List[u8] }
+
+/// The counters of a campaign.
+type Stats = { ok: u64, unsup: u64, failed: u64, foreign: u64, built: u64, warned: u64, ran: u64, segv: u64, slow: u64 }
 
 fn is(a: List[u8], s: str) -> bool uses ffi { bytes.eq(a, sys.lit(s)) }
 
@@ -40,6 +62,8 @@ fn line(parts: List[List[u8]]) uses io, ffi {
 }
 
 fn num(n: u64) -> List[u8] { bytes.from_u64(n) }
+
+fn int(n: i32) -> List[u8] { bytes.from_i64(n as i64) }
 
 /// The `.ei` files directly in `dir` (leftover fuzz_*.ei mutants excluded), as paths.
 fn ei_files(dir: str, inout out: List[List[u8]]) -> Result[bool, String] uses fs, ffi {
@@ -71,7 +95,7 @@ fn env_or(name: str, dflt: str) -> List[u8] uses io, ffi {
     }
 }
 
-fn parse_opts() -> Result[Opts, String] uses io, fs, net, ffi {
+fn parse_opts() -> Result[Opts, String] uses io, fs, ffi {
     let argv = env.args()
     var count: u64 = 500
     var seeds: List[List[u8]] = List.new()
@@ -98,35 +122,50 @@ fn parse_opts() -> Result[Opts, String] uses io, fs, net, ffi {
     }
     let mode = env_or("MODE", "semantic")
     if !is(mode, "semantic") && !is(mode, "wild") { return Err(String.from("MODE must be semantic or wild")) }
-    var s0arg: List[List[u8]] = List.new()
-    s0arg.push(sys.lit("scripts/stage0.sh"))
-    let stage0 = bytes.trim(proc.check(s0arg)?)
-    Ok(Opts(count, seeds, seed, is(mode, "wild"), stage0, env_or("EIDERC", "./target/eiderc")))
+    var reference = env_or("REF", "./target/eiderc")
+    if is(reference, "none") { reference = List.new() }
+    Ok(Opts(count, seeds, seed, is(mode, "wild"), env_or("EIDERC", "./target/eiderc-next"), reference))
 }
 
-/// `<compiler> check --json <path>`, killed after 30 s (None).
-fn run(compiler: List[u8], path: List[u8]) -> Result[Option[Res], String] uses io, fs, net, ffi {
+/// Run argv for at most `ms` milliseconds.
+fn exec(argv: List[List[u8]], ms: i64) -> Result[Res, String] uses io, fs, net, ffi {
+    let o = proc.run_with(argv, proc.limited(ms))?
+    let code = if o.timed_out { -1 } else { o.code }
+    Ok(Res(code, bytes.trim(o.out), bytes.trim(o.err)))
+}
+
+/// `<compiler> <cmd> [--json] <path> [-o <out>]`, killed after 30 s.
+fn compile(compiler: List[u8], cmd: str, json: bool, path: List[u8], out: List[u8]) -> Result[Res, String] uses io, fs, net, ffi {
     var a: List[List[u8]] = List.new()
     a.push(compiler)
-    a.push(sys.lit("check"))
-    a.push(sys.lit("--json"))
+    a.push(sys.lit(cmd))
+    if json { a.push(sys.lit("--json")) }
     a.push(path)
-    let o = proc.run_with(a, proc.limited(30000))?
-    if o.timed_out { return Ok(None) }
-    Ok(Some(Res(bytes.trim(o.out), bytes.trim(o.err))))
+    if out.len() > 0 {
+        a.push(sys.lit("-o"))
+        a.push(out)
+    }
+    exec(a, 30000)
 }
 
-fn shown(r: Option[Res]) -> List[u8] uses ffi {
-    match r {
-        Some(x) => x.out
-        None => sys.lit("None")
+/// The code of a `check --json` diagnostic (`{"error":"E0101",...}`), or "" if `out` isn't one.
+fn json_code(out: List[u8]) -> List[u8] uses ffi {
+    let none: List[u8] = List.new()
+    if !bytes.starts_with(out, sys.lit("{\"error\":\"")) { return none }
+    match bytes.find_byte(out, 34, 10) {
+        Some(e) => bytes.slice(out, 10, e)
+        None => none
     }
 }
 
-fn agree(got: Option[Res], want: Option[Res]) -> bool {
-    match (got, want) {
-        (Some(g), Some(w)) => bytes.eq(g.out, w.out) && g.err.len() == 0
-        _ => false
+/// Whether `err` (human-readable diagnostics) reports `error[<code>]`.
+fn reports(err: List[u8], code: List[u8]) -> bool uses ffi {
+    var want = sys.lit("error[")
+    bytes.append(inout want, code)
+    want.push(93)
+    match bytes.find(err, want, 0) {
+        Some(_) => true
+        None => false
     }
 }
 
@@ -152,15 +191,104 @@ fn tally(inout keys: List[List[u8]], inout counts: List[u64], code: List[u8]) {
     }
 }
 
+/// `FAIL <what> <kept mutant>` and the evidence, one line each.
+fn report(what: List[u8], keep: List[u8], r: Res, detail: List[u8]) uses io, ffi {
+    var l1: List[List[u8]] = List.new()
+    l1.push(sys.lit("FAIL "))
+    l1.push(what)
+    l1.push(sys.lit(" "))
+    l1.push(keep)
+    line(l1)
+    var l2: List[List[u8]] = List.new()
+    l2.push(sys.lit("  exit "))
+    l2.push(int(r.code))
+    l2.push(sys.lit(": "))
+    l2.push(bytes.slice(r.out, 0, 300))
+    l2.push(sys.lit(" "))
+    l2.push(bytes.slice(r.err, 0, 300))
+    line(l2)
+    if detail.len() > 0 {
+        var l3: List[List[u8]] = List.new()
+        l3.push(sys.lit("  "))
+        l3.push(bytes.slice(detail, 0, 300))
+        line(l3)
+    }
+}
+
+/// The invariant a mutant breaks (`what`; empty for none) with the result to show and a
+/// detail line, or, when it breaks none, its diagnostic code (`ok`, `unsupported`, `E0101`...).
+type Verdict = { what: List[u8], res: Res, detail: List[u8], code: List[u8] }
+
+fn verdict(what: str, r: Res, detail: List[u8]) -> Verdict uses ffi {
+    let none: List[u8] = List.new()
+    Verdict(sys.lit(what), r, detail, none)
+}
+
+/// Hold mutant `path` to the invariants (top of file); counts what it built and ran in `st`.
+fn judge(o: Opts, path: List[u8], src: List[u8], bin: List[u8], inout st: Stats) -> Result[Verdict, String] uses io, fs, net, ffi {
+    let none: List[u8] = List.new()
+    let c = compile(o.eiderc, "check", true, path, none)?
+    if c.code == -1 { return Ok(verdict("check (timeout)", c, none)) }
+    if c.err.len() > 0 || (c.code != 0 && c.code != 1) { return Ok(verdict("check (crash or stderr)", c, none)) }
+    let code = json_code(c.out)
+    if c.code == 0 && c.out.len() > 0 { return Ok(verdict("check (output on success)", c, none)) }
+    if c.code == 1 && code.len() == 0 { return Ok(verdict("check (no diagnostic)", c, none)) }
+    if is(code, "unsupported") {
+        var v = verdict("", c, none)
+        v.code = code
+        return Ok(v)
+    }
+    if o.reference.len() > 0 {
+        let w = compile(o.reference, "check", true, path, none)?
+        if !bytes.eq(w.out, c.out) || w.code != c.code {
+            var d = sys.lit("REF: ")
+            bytes.append(inout d, w.out)
+            return Ok(verdict("ref (check --json differs)", c, d))
+        }
+    }
+    let e = compile(o.eiderc, "emit-c", false, path, none)?
+    if c.code == 0 {
+        if e.code != 0 { return Ok(verdict("emit-c (fails where check succeeds)", e, none)) }
+    } else {
+        if e.code != 1 || !reports(e.err, code) {
+            var d = sys.lit("check: ")
+            bytes.append(inout d, c.out)
+            return Ok(verdict("emit-c (does not fail like check)", e, d))
+        }
+    }
+    // an `extern "c"` fn may name a symbol nothing defines, and calling one is unmanaged code
+    if c.code == 0 && has(src, "extern") { st.foreign += 1 }
+    if c.code == 0 && !has(src, "extern") {
+        let b = compile(o.eiderc, "build", false, path, bin)?
+        if b.code != 0 { return Ok(verdict("build (a checked program does not build)", b, none)) }
+        st.built += 1
+        if b.err.len() > 0 { st.warned += 1 }
+        var a: List[List[u8]] = List.new()
+        a.push(bin)
+        let r = exec(a, 10000)?
+        if r.code == -1 {
+            st.slow += 1
+        } else if r.code == 139 {
+            st.segv += 1
+        } else if r.code > 128 {
+            return Ok(verdict("run (killed by a signal)", r, none))
+        } else {
+            st.ran += 1
+        }
+    }
+    var v = verdict("", c, none)
+    v.code = if code.len() == 0 { sys.lit("ok") } else { code }
+    Ok(v)
+}
+
 fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net, ffi {
     let t = fuzz.tables()
     var r = fuzz.rng(o.seed)
-    var n_agree: u64 = 0
-    var n_unsup: u64 = 0
-    var n_dis: u64 = 0
-    var n_crash: u64 = 0
+    var st = Stats(0, 0, 0, 0, 0, 0, 0, 0, 0)
     var keys: List[List[u8]] = List.new()
     var counts: List[u64] = List.new()
+    fs.mkdir_all(sys.lit("target/fuzz"))?
+    let bin = sys.lit("target/fuzz/prog")
     var k: u64 = 0
     while k < o.count {
         let seed = fuzz.pick(inout r, o.seeds)
@@ -168,64 +296,43 @@ fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net, ffi {
         let dir = fs.dirname(seed)
         let path = fs.join(dir, sys.lit("fuzz_tmp.ei"))
         fs.write(path, mutant)?
-        let got = run(o.eiderc, path)?
-        let unsupported = match got {
-            Some(g) => has(g.out, "\"error\":\"unsupported\"")
-            None => false
-        }
-        if unsupported {
-            n_unsup += 1
+        let v = judge(o, path, mutant, bin, inout st)?
+        if v.what.len() > 0 {
+            st.failed += 1
+            var name = sys.lit("fuzz_")
+            bytes.append(inout name, num(k))
+            bytes.append(inout name, sys.lit(".ei"))
+            let keep = fs.join(dir, name)
+            fs.write(keep, mutant)?
+            report(v.what, keep, v.res, v.detail)
+        } else if is(v.code, "unsupported") {
+            st.unsup += 1
         } else {
-            let want = run(o.stage0, path)?
-            let crashed = match want {
-                Some(w) => has(w.err, "panicked")
-                None => true
-            }
-            if crashed {
-                n_crash += 1
-            } else if agree(got, want) {
-                n_agree += 1
-                let g = shown(got)
-                let code = if g.len() == 0 { sys.lit("ok") } else { bytes.slice(g, 10, 15) }
-                tally(inout keys, inout counts, code)
-            } else {
-                n_dis += 1
-                var name = sys.lit("fuzz_")
-                bytes.append(inout name, num(k))
-                bytes.append(inout name, sys.lit(".ei"))
-                let keep = fs.join(dir, name)
-                fs.write(keep, mutant)?
-                var l1: List[List[u8]] = List.new()
-                l1.push(sys.lit("DISAGREE "))
-                l1.push(keep)
-                line(l1)
-                var l2: List[List[u8]] = List.new()
-                l2.push(sys.lit("  bootstrap: "))
-                l2.push(shown(want))
-                line(l2)
-                var l3: List[List[u8]] = List.new()
-                l3.push(sys.lit("  eiderc:    "))
-                l3.push(shown(got))
-                l3.push(sys.lit(" "))
-                match got {
-                    Some(g) => l3.push(bytes.slice(g.err, 0, 200))
-                    None => {}
-                }
-                line(l3)
-            }
+            st.ok += 1
+            tally(inout keys, inout counts, v.code)
         }
         fs.remove_all(path)?
         k += 1
     }
     var s: List[List[u8]] = List.new()
-    s.push(sys.lit("{'agree': "))
-    s.push(num(n_agree))
+    s.push(sys.lit("{'ok': "))
+    s.push(num(st.ok))
     s.push(sys.lit(", 'unsupported': "))
-    s.push(num(n_unsup))
-    s.push(sys.lit(", 'disagree': "))
-    s.push(num(n_dis))
-    s.push(sys.lit(", 'bootstrap crashed': "))
-    s.push(num(n_crash))
+    s.push(num(st.unsup))
+    s.push(sys.lit(", 'failed': "))
+    s.push(num(st.failed))
+    s.push(sys.lit(", 'not built (extern)': "))
+    s.push(num(st.foreign))
+    s.push(sys.lit(", 'built': "))
+    s.push(num(st.built))
+    s.push(sys.lit(", 'C warnings': "))
+    s.push(num(st.warned))
+    s.push(sys.lit(", 'ran': "))
+    s.push(num(st.ran))
+    s.push(sys.lit(", 'SIGSEGV': "))
+    s.push(num(st.segv))
+    s.push(sys.lit(", 'run timeouts': "))
+    s.push(num(st.slow))
     s.push(sys.lit("}"))
     line(s)
     var c: List[List[u8]] = List.new()
@@ -236,7 +343,8 @@ fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net, ffi {
         c.push(kv)
     }
     io.outln(bytes.join(c, sys.lit(" ")))
-    Ok(n_dis == 0)
+    fs.remove_all(sys.lit("target/fuzz"))?
+    Ok(st.failed == 0)
 }
 
 fn main() uses io, fs, net, ffi {

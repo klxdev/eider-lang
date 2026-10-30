@@ -1,10 +1,12 @@
 #!/bin/sh
 # Full verification matrix: compile-fail suite, run tests on gcc/clang/ASan+UBSan/TSan, std, export, wasm.
+# The compiler is target/eiderc, built from the seed by scripts/ei (only a C compiler).
 cd "$(dirname "$0")/.." || exit 1
-EIDER=$(scripts/stage0.sh) || exit 3; export EIDER
 EIDER_CACHE=off; export EIDER_CACHE
+scripts/ei --help >/dev/null || { echo "FAIL build target/eiderc from seed/eiderc.c"; exit 3; }
+EIDER=$(pwd)/target/eiderc; export EIDER
 fail=0
-"$EIDER" test --compile-fail tests/checks | tail -1 | grep -q " 0 failed" && echo "ok   compile-fail suite (stage 0)" || { echo "FAIL compile-fail"; fail=1; }
+"$EIDER" test --compile-fail tests/checks | tail -1 | grep -q " 0 failed" && echo "ok   compile-fail suite (eiderc)" || { echo "FAIL compile-fail"; fail=1; }
 S=$(mktemp -d)
 # sanitizer wrappers: gcc when its sanitizer runtimes are installed, otherwise clang's
 san_cc() {
@@ -33,17 +35,12 @@ sh tests/core/run.sh | grep -q FAIL && { echo "FAIL core"; fail=1; } || echo "ok
 sh tests/std/run.sh | grep -q FAIL && { echo "FAIL std"; fail=1; } || echo "ok   std (C core + Eider std)"
 sh tests/packages.sh | grep -q FAIL && { echo "FAIL packages"; fail=1; } || echo "ok   packages (toml, semver, sha256)"
 sh tests/pkg/run.sh | grep -q FAIL && { echo "FAIL pkg"; fail=1; } || echo "ok   pkg (eider-pkg end to end, local git repos)"
-sh scripts/test-compiler.sh | grep -q FAIL && { echo "FAIL compiler (eiderc)"; fail=1; } || echo "ok   compiler (eiderc vs bootstrap)"
+sh scripts/test-compiler.sh | grep -q FAIL && { echo "FAIL compiler (eiderc)"; fail=1; } || echo "ok   compiler (eiderc vs the recorded oracle, tests/oracle)"
 sh scripts/selfhost.sh --from-seed >/dev/null 2>&1 && echo "ok   seed (seed/eiderc.c rebuilds itself with only a C compiler)" || { echo "FAIL seed: sh scripts/selfhost.sh --from-seed"; fail=1; }
 bash tests/export/run.sh | tail -1 | grep -q "^ok" && echo "ok   export (C and C++ consumers)" || { echo "FAIL export"; fail=1; }
 printf 'int x;\n' > $S/wasm.c
 if "${WASM_CC:-clang}" --target=wasm32 -c -o $S/wasm.o $S/wasm.c 2>/dev/null && command -v wasm-ld >/dev/null && command -v node >/dev/null; then
   sh tests/wasm/run.sh || fail=1
-  # the same with eiderc (built by scripts/test-compiler.sh above)
-  if [ -x target/eiderc ]; then
-    out=$(EIDER=$(pwd)/target/eiderc sh tests/wasm/run.sh 2>&1) || fail=1
-    echo "$out (eiderc)"
-  fi
 else
   skip "wasm: needs clang with the wasm32 target, wasm-ld and node"
 fi

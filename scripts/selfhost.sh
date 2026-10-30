@@ -1,17 +1,17 @@
 #!/bin/sh
-# Self-hosting (docs/compiler.md, C6).
+# Self-hosting (docs/compiler.md, C6 and "Bootstrap chain").
 #
-#   scripts/selfhost.sh              stage0 -> stage1 -> stage2 -> stage3, check the fixed point
+#   scripts/selfhost.sh              seed -> stage1 -> stage2 -> stage3, check the fixed point
 #                                    (stage2 and stage3 emit byte-identical C for compiler/), that
 #                                    stage3 frees everything it allocates while compiling
 #                                    compiler/ (-DEI_RT_COUNT_ALLOCS), then run
 #                                    scripts/test-compiler.sh against stage3
 #   scripts/selfhost.sh --seed       ...and write that C to seed/eiderc.c
-#   scripts/selfhost.sh --from-seed  build eiderc from seed/eiderc.c with only a C compiler (no
-#                                    stage 0), and check it reproduces the seed exactly
+#   scripts/selfhost.sh --from-seed  build eiderc from seed/eiderc.c with only a C compiler, and
+#                                    check it reproduces the seed exactly (a stale seed fails)
 #
-# stage0 is the Rust bootstrap (scripts/stage0.sh); every later stage is compiler/ built by the
-# stage before it. Outputs go to target/selfhost/.
+# The seed is seed/eiderc.c compiled by $CC; every later stage is compiler/ built by the stage
+# before it, each with only $CC and the C core. Outputs go to target/selfhost/.
 cd "$(dirname "$0")/.." || exit 1
 root=$(pwd)
 out=target/selfhost
@@ -43,8 +43,12 @@ if [ "$1" = "--from-seed" ]; then
   exit 0
 fi
 
-step "stage1: stage0 builds compiler/"
-scripts/ei build "$src" -o "$out/stage1" >"$out/err.log" 2>&1 || die "stage 0 could not build compiler/" "$out/err.log"
+step "seed: cc builds seed/eiderc.c"
+from_c seed/eiderc.c "$out/seeded"
+echo ok
+step "stage1: the seed builds compiler/"
+"$out/seeded" emit-c "$src" > "$out/stage1.c" 2>"$out/err.log" || die "the seed could not compile compiler/" "$out/err.log"
+from_c "$out/stage1.c" "$out/stage1"
 echo ok
 step "stage2: stage1 builds compiler/"
 "$out/stage1" emit-c "$src" > "$out/stage2.c" 2>"$out/err.log" || die "stage1 could not compile compiler/" "$out/err.log"

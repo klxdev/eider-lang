@@ -1,17 +1,15 @@
 #!/bin/sh
-# Run the eider compiler with the C core linked in, so std/ (pure Eider over core/) works.
-# Usage: scripts/ei run prog.ei [args]   (any eider subcommand)
+# Run the eider compiler: target/eiderc, built from the seed (seed/eiderc.c) with only $CC
+# whenever it is missing or older than the seed or anything in core/. eiderc links the C core
+# into every program itself.
+# Usage: scripts/ei run prog.ei [args]   (any eiderc command; `scripts/ei --help`)
 root="$(cd "$(dirname "$0")/.." && pwd)"
-cc="${CC:-cc}"
-# one core build per C compiler (sanitizer wrappers produce incompatible objects)
-out="$root/target/core/$(printf %s "$cc" | cksum | cut -d" " -f1)"
-lib="$out/libeider_core.a"
-src="$root/core/eider_core.c"
-if [ ! -f "$lib" ] || [ "$src" -nt "$lib" ]; then
-  mkdir -p "$out"
-  "$cc" -std=c11 -O2 -Wall -Wextra -c -o "$out/eider_core.o" "$src" && ar rcs "$lib" "$out/eider_core.o" || exit 3
-  # cached binaries are keyed on the generated C only, so a new core invalidates them
-  rm -rf "${EIDER_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/eider}" 2>/dev/null
+bin="$root/target/eiderc"
+if [ ! -x "$bin" ] || [ -n "$(find "$root/seed/eiderc.c" "$root/core" -newer "$bin" 2>/dev/null | head -1)" ]; then
+  mkdir -p "$root/target"
+  # built next to the target and renamed into place, so concurrent callers never run half a file
+  tmp="$bin.$$"
+  ${CC:-cc} -std=c11 -O2 -pthread -I "$root/core" -o "$tmp" "$root/seed/eiderc.c" "$root/core/eider_rt.c" "$root/core/eider_core.c" &&
+    mv -f "$tmp" "$bin" || { rm -f "$tmp"; echo "ei: could not build target/eiderc from seed/eiderc.c" >&2; exit 3; }
 fi
-eider="${EIDER:-$("$root/scripts/stage0.sh")}" || exit 3
-LIBRARY_PATH="$out${LIBRARY_PATH:+:$LIBRARY_PATH}" exec "$eider" "$@" -l eider_core
+exec "$bin" "$@"

@@ -1,10 +1,10 @@
 #!/bin/sh
 # Builds calc.ei to WebAssembly and checks it from Node.
-# EIDER=<compiler> picks the compiler (default: stage 0); EIDER=target/eiderc tests eiderc.
+# EIDER=<compiler> picks the compiler (default: scripts/ei, the seed's eiderc).
 set -e
 case "$EIDER" in ""|/*) ;; */*) EIDER=$(pwd)/$EIDER ;; esac
 cd "$(dirname "$0")"
-EIDER=${EIDER:-$(../../scripts/stage0.sh)} || exit 3
+EIDER=${EIDER:-$(cd ../.. && pwd)/scripts/ei}
 T=$(mktemp -d)
 $EIDER build --wasm calc.ei -o "$T/calc" >/dev/null
 cat > "$T/t.mjs" <<JS
