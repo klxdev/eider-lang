@@ -20,8 +20,10 @@ file implementing exactly this contract. Nothing above the core changes.
    (`__asm__("ec_x")`). Backends must export each function under exactly that name. On
    Mach-O, which decorates C names with `_`, `eider_core.c` pins the name with `EC_SYM`.
    Eider code never binds libc names directly.
-6. **Single-threaded buffers.** `in`/`out` are process-global. Calls that use them must not
-   run concurrently. `std/` is not thread-safe yet; threads must not do I/O through it.
+6. **Per-thread buffers.** `in`/`out` are thread-local (C11 `_Thread_local`), so each Eider
+   thread has its own and a sequence of push / call / read is never interleaved with
+   another thread's. (A buffer is freed only at process exit; threads that do I/O keep
+   their buffer's high-water mark until then.)
 
 ## Buffers
 

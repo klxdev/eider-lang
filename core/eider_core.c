@@ -42,8 +42,9 @@
 #endif
 #define EC_FN(ret, name, params) ret name params EC_SYM(name); ret name params
 
-static unsigned char *in_p, *out_p;
-static size_t in_len, in_cap, out_len, out_cap;
+/* Per-thread, so Eider threads (spawn) can do I/O independently. */
+static _Thread_local unsigned char *in_p, *out_p;
+static _Thread_local size_t in_len, in_cap, out_len, out_cap;
 
 static void reserve(unsigned char **p, size_t *cap, size_t need) {
   if (need <= *cap) return;

@@ -1,16 +1,356 @@
+// eider-pkg: the Eider package manager.
+//
+//   eider-pkg [-C dir] init [name]
+//   eider-pkg [-C dir] add <name> (--path P | --git URL (--version V | --rev R)) [--uses a,b]
+//   eider-pkg [-C dir] remove <name>
+//   eider-pkg [-C dir] fetch [--offline]      resolve (keeping eider.lock pins), link deps/
+//   eider-pkg [-C dir] update [--offline]     re-resolve ignoring eider.lock
+//   eider-pkg [-C dir] vendor                 copy git packages into vendor/ (offline builds)
+//   eider-pkg [-C dir] tree                   print the locked graph
+//   eider-pkg hash <dir>                      content hash of a directory
+//
+// Only fetch/update/add may touch the network, and only when a commit isn't already in
+// the local mirror. Needs EIDER_ROOT (the toolchain checkout with core/ and std/).
+
 import "deps/core/sys.ei"
-import "deps/std/io.ei"
+import "deps/std/bytes.ei"
 import "deps/std/fs.ei"
+import "deps/std/io.ei"
+import "deps/std/env.ei"
 import "manifest.ei"
 import "lockfile.ei"
 import "store.ei"
+import "resolve.ei"
 
-fn main() uses io, fs, ffi {
-    match manifest.load(sys.lit("packages/pkg")) {
-        Ok(m) => {
-            io.outln(m.name)
-            for d in m.deps { io.outln(d.name) }
+type Cli = { dir: List[u8], cmd: List[u8], args: List[List[u8]], offline: bool }
+
+fn is(a: List[u8], s: str) -> bool uses ffi { bytes.eq(a, sys.lit(s)) }
+
+fn say(s: str) uses io, ffi { io.outln(sys.lit(s)) }
+
+fn usage() -> String {
+    String.from("usage: eider-pkg [-C dir] (init [name] | add <name> --path P | add <name> --git URL --version V|--rev R [--uses a,b] | remove <name> | fetch [--offline] | update [--offline] | vendor | tree | hash <dir>)")
+}
+
+fn parse_cli() -> Result[Cli, String] uses io, fs, ffi {
+    let argv = env.args()
+    var dir = fs.cwd()?
+    var cmd: List[u8] = List.new()
+    var rest: List[List[u8]] = List.new()
+    var offline = false
+    var i: usize = 1
+    while i < argv.len() {
+        let a = argv[i]
+        if is(a, "-C") && i + 1 < argv.len() {
+            dir = fs.absolute(argv[i + 1])?
+            i += 2
+            continue
         }
-        Err(e) => print(e)
+        if is(a, "--offline") {
+            offline = true
+        } else if cmd.len() == 0 {
+            cmd = a
+        } else {
+            rest.push(a)
+        }
+        i += 1
+    }
+    if cmd.len() == 0 { return Err(usage()) }
+    Ok(Cli(dir, cmd, rest, offline))
+}
+
+fn toolchain() -> Result[List[u8], String] uses io, fs, ffi {
+    match env.get(sys.lit("EIDER_ROOT")) {
+        Some(r) => fs.absolute(r)
+        None => Err(String.from("EIDER_ROOT is not set (it should point at the Eider checkout with core/ and std/; scripts/eider-pkg sets it)"))
+    }
+}
+
+// ---- fetch / update / vendor
+
+fn sync(c: Cli, use_lock: bool, offline: bool) -> Result[List[lockfile.Pkg], String] uses io, fs, net, ffi {
+    let root = manifest.load(c.dir)?
+    let tc = toolchain()?
+    let locked = lockfile.load(c.dir)?
+    let o = resolve.Opts(store.home()?, offline, use_lock, locked, fs.join(c.dir, sys.lit("vendor")))
+    let pkgs = resolve.resolve(root, o)?
+    resolve.check_grants(pkgs)?
+    fs.write(lockfile.file_in(c.dir), lockfile.render(pkgs, c.dir))?
+    let deps = fs.join(c.dir, sys.lit("deps"))
+    fs.remove_all(deps)?
+    let all = fs.join(deps, sys.lit(".all"))
+    fs.mkdir_all(all)?
+    for p in pkgs { store.link_package(all, p.name, p.dir, p.deps, tc)? }
+    var direct: List[List[u8]] = List.new()
+    for d in root.deps { direct.push(d.name) }
+    store.link_deps(deps, direct, sys.lit(".all"), tc)?
+    Ok(pkgs)
+}
+
+fn report(pkgs: List[lockfile.Pkg]) uses io, ffi {
+    var l = sys.lit("locked ")
+    bytes.append(inout l, bytes.from_u64(pkgs.len() as u64))
+    bytes.append(inout l, sys.lit(" package(s)"))
+    io.outln(l)
+}
+
+fn vendor(c: Cli) -> Result[bool, String] uses io, fs, net, ffi {
+    let pkgs = sync(c, true, true)?
+    let vdir = fs.join(c.dir, sys.lit("vendor"))
+    for p in pkgs {
+        if p.git {
+            let dst = fs.join(vdir, p.name)
+            if !bytes.eq(fs.normalize(p.dir), fs.normalize(dst)) {
+                fs.remove_all(dst)?
+                fs.copy_all(p.dir, dst, store.skipped())?
+            }
+        }
+    }
+    // relink so deps/ points into vendor/
+    sync(c, true, true)?
+    say("vendored git packages into vendor/")
+    Ok(true)
+}
+
+// ---- manifest editing
+
+fn add(c: Cli) -> Result[bool, String] uses io, fs, net, ffi {
+    if c.args.len() < 1 { return Err(usage()) }
+    let name = c.args[0]
+    let file = manifest.file_in(c.dir)
+    let before = fs.read(file)?
+    let m = manifest.parse(before, file, c.dir)?
+    for d in m.deps {
+        if bytes.eq(d.name, name) {
+            var e = String.from("`")
+            e.append(sys.to_string(name))
+            e.push_str("` is already a dependency")
+            return Err(e)
+        }
+    }
+    var table = sys.lit("\n[deps.")
+    bytes.append(inout table, name)
+    bytes.append(inout table, sys.lit("]\n"))
+    var i: usize = 1
+    while i < c.args.len() {
+        let flag = c.args[i]
+        if i + 1 >= c.args.len() { return Err(usage()) }
+        let v = c.args[i + 1]
+        let k = if is(flag, "--path") {
+            sys.lit("path")
+        } else if is(flag, "--git") {
+            sys.lit("git")
+        } else if is(flag, "--version") {
+            sys.lit("version")
+        } else if is(flag, "--rev") {
+            sys.lit("rev")
+        } else if is(flag, "--uses") {
+            sys.lit("uses")
+        } else {
+            return Err(usage())
+        }
+        bytes.append(inout table, k)
+        bytes.append(inout table, sys.lit(" = "))
+        if is(flag, "--uses") {
+            var caps: List[List[u8]] = List.new()
+            for cap in bytes.split(v, 44) {
+                let t = bytes.trim(cap)
+                if t.len() > 0 { caps.push(manifest_quote(t)) }
+            }
+            table.push(91)
+            bytes.append(inout table, bytes.join(caps, sys.lit(", ")))
+            table.push(93)
+        } else {
+            bytes.append(inout table, manifest_quote(v))
+        }
+        table.push(10)
+        i += 2
+    }
+    var after = before
+    if after.len() > 0 && after[after.len() - 1] != 10 { after.push(10) }
+    bytes.append(inout after, table)
+    manifest.parse(after, file, c.dir)?
+    fs.write(file, after)?
+    match sync(c, true, c.offline) {
+        Ok(p) => {
+            report(p)
+            Ok(true)
+        }
+        Err(e) => {
+            fs.write(file, before)?
+            Err(e)
+        }
+    }
+}
+
+fn manifest_quote(s: List[u8]) -> List[u8] {
+    var out: List[u8] = List.new()
+    out.push(34)
+    for c in s {
+        if c == 34 || c == 92 { out.push(92) }
+        out.push(c)
+    }
+    out.push(34)
+    out
+}
+
+/// Drop the `[deps.<name>]` table: its header through the line before the next header.
+fn remove(c: Cli) -> Result[bool, String] uses io, fs, net, ffi {
+    if c.args.len() != 1 { return Err(usage()) }
+    let name = c.args[0]
+    let file = manifest.file_in(c.dir)
+    let before = fs.read(file)?
+    var header = sys.lit("[deps.")
+    bytes.append(inout header, name)
+    header.push(93)
+    var kept: List[List[u8]] = List.new()
+    var skipping = false
+    var found = false
+    for line in bytes.lines(before) {
+        let t = bytes.trim(line)
+        if t.len() > 0 && t[0] == 91 { skipping = bytes.eq(t, header) }
+        if skipping {
+            found = true
+        } else {
+            kept.push(line)
+        }
+    }
+    if !found {
+        var e = String.from("no [deps.")
+        e.append(sys.to_string(name))
+        e.push_str("] table in eider.toml (inline `name = { ... }` entries must be removed by hand)")
+        return Err(e)
+    }
+    while kept.len() > 0 && kept[kept.len() - 1].len() == 0 { kept.pop() }
+    var after = bytes.join(kept, sys.lit("\n"))
+    after.push(10)
+    manifest.parse(after, file, c.dir)?
+    fs.write(file, after)?
+    let pkgs = sync(c, true, c.offline)?
+    report(pkgs)
+    Ok(true)
+}
+
+fn init(c: Cli) -> Result[bool, String] uses io, fs, ffi {
+    let file = manifest.file_in(c.dir)
+    if fs.exists(file) { return Err(String.from("eider.toml already exists")) }
+    var name = if c.args.len() > 0 { c.args[0] } else {
+        match bytes.rfind_byte(c.dir, 47) {
+            Some(i) => bytes.slice(c.dir, i + 1, c.dir.len())
+            None => c.dir
+        }
+    }
+    var clean: List[u8] = List.new()
+    for ch in name {
+        if ch >= 65 && ch <= 90 {
+            clean.push(ch + 32)
+        } else if bytes.is_ident(ch) {
+            clean.push(ch)
+        } else {
+            clean.push(95)
+        }
+    }
+    if !manifest.valid_name(clean) {
+        return Err(String.from("can't derive a package name from the directory; pass one: eider-pkg init <name>"))
+    }
+    var t = sys.lit("[package]\nname = \"")
+    bytes.append(inout t, clean)
+    bytes.append(inout t, sys.lit("\"\nversion = \"0.1.0\"\nmain = \"main.ei\"\n"))
+    fs.mkdir_all(c.dir)?
+    fs.write(file, t)?
+    let main_file = fs.join(c.dir, sys.lit("main.ei"))
+    if !fs.exists(main_file) {
+        fs.write(main_file, sys.lit("import \"deps/core/sys.ei\"\nimport \"deps/std/io.ei\"\n\nfn main() uses io, ffi {\n    io.outln(sys.lit(\"hello from eider\"))\n}\n"))?
+    }
+    let gi = fs.join(c.dir, sys.lit(".gitignore"))
+    if !fs.exists(gi) { fs.write(gi, sys.lit("deps/\n"))? }
+    var l = sys.lit("created package `")
+    bytes.append(inout l, clean)
+    l.push(96)
+    io.outln(l)
+    Ok(true)
+}
+
+fn tree(c: Cli) -> Result[bool, String] uses io, fs, ffi {
+    let root = manifest.load(c.dir)?
+    let pkgs = lockfile.load(c.dir)?
+    var l = root.name
+    l.push(32)
+    bytes.append(inout l, root.version)
+    io.outln(l)
+    var seen: List[List[u8]] = List.new()
+    for d in root.deps { tree_line(pkgs, d.name, 1, inout seen) }
+    Ok(true)
+}
+
+fn tree_line(pkgs: List[lockfile.Pkg], name: List[u8], depth: usize, inout seen: List[List[u8]]) uses io, ffi {
+    var l: List[u8] = List.new()
+    for i in 0..depth {
+        bytes.append(inout l, sys.lit("  "))
+    }
+    bytes.append(inout l, name)
+    match lockfile.find(pkgs, name) {
+        Some(p) => {
+            l.push(32)
+            bytes.append(inout l, p.version)
+            if p.grants.len() > 0 {
+                bytes.append(inout l, sys.lit(" uses "))
+                bytes.append(inout l, bytes.join(p.grants, sys.lit(",")))
+            }
+            var dup = false
+            for s in seen {
+                if bytes.eq(s, name) { dup = true }
+            }
+            if dup {
+                bytes.append(inout l, sys.lit(" (*)"))
+                io.outln(l)
+                return
+            }
+            seen.push(name)
+            io.outln(l)
+            for d in p.deps { tree_line(pkgs, d, depth + 1, inout seen) }
+        }
+        None => {
+            bytes.append(inout l, sys.lit(" (not locked: run eider-pkg fetch)"))
+            io.outln(l)
+        }
+    }
+}
+
+fn run(c: Cli) -> Result[bool, String] uses io, fs, net, ffi {
+    if is(c.cmd, "init") { return init(c) }
+    if is(c.cmd, "add") { return add(c) }
+    if is(c.cmd, "remove") { return remove(c) }
+    if is(c.cmd, "fetch") || is(c.cmd, "update") {
+        let pkgs = sync(c, is(c.cmd, "fetch"), c.offline)?
+        report(pkgs)
+        return Ok(true)
+    }
+    if is(c.cmd, "vendor") { return vendor(c) }
+    if is(c.cmd, "tree") { return tree(c) }
+    if is(c.cmd, "hash") {
+        if c.args.len() != 1 { return Err(usage()) }
+        let d = fs.absolute(c.args[0])?
+        io.outln(store.tree_hash(d)?)
+        return Ok(true)
+    }
+    Err(usage())
+}
+
+fn main() uses io, fs, net, ffi {
+    let r: Result[bool, String] = match parse_cli() {
+        Ok(c) => run(c)
+        Err(e) => Err(e)
+    }
+    match r {
+        Ok(_) => {}
+        Err(e) => {
+            // TODO(compiler): Strings can't reach stderr until they have byte access, so the
+            // message goes to stdout. Exit status 1 still marks the failure.
+            var m = String.from("eider-pkg: ")
+            m.append(e)
+            print(m)
+            env.exit(1)
+        }
     }
 }

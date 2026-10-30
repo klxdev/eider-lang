@@ -1,0 +1,288 @@
+// resolve: from a root manifest to the full package graph (minimal version selection).
+//
+// Every requirement reachable from the root is visited, including the requirements of
+// versions that end up not selected (as in Go's MVS). Then, per package name, the highest
+// required version wins, and only packages reachable through the selected versions are
+// kept. A dependency's capability grant is the intersection of what every depender grants.
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+import "deps/std/fs.ei"
+import "deps/semver/semver.ei"
+import "manifest.ei"
+import "lockfile.ei"
+import "store.ei"
+import "caps.ei"
+
+pub type Opts = { home: List[u8], offline: bool, use_lock: bool, locked: List[lockfile.Pkg], vendor: List[u8] }
+
+type Req = { name: List[u8], git: bool, loc: List[u8], want: List[u8], is_rev: bool, grants: List[List[u8]], by: List[u8] }
+
+type Edge = { from: List[u8], to: List[u8], grants: List[List[u8]] }
+
+/// Identity of one visited (package, version) node; the root is "".
+fn key(name: List[u8], want: List[u8]) -> List[u8] {
+    var k = name
+    k.push(64)
+    bytes.append(inout k, want)
+    k
+}
+
+fn pkg_key(p: lockfile.Pkg) -> List[u8] { key(p.name, p.want) }
+
+fn text(b: List[u8]) -> String uses ffi { sys.to_string(b) }
+
+fn req_of(d: manifest.Dep, base: List[u8], by: List[u8], by_git: bool) -> Result[Req, String] uses ffi {
+    let none: List[u8] = List.new()
+    match d.source {
+        manifest.Path(p) => {
+            if by_git {
+                var m = String.from("`")
+                m.append(text(by))
+                m.push_str("` comes from git but has a path dependency on `")
+                m.append(text(d.name))
+                m.push_str("`; published packages can only depend on git packages")
+                return Err(m)
+            }
+            let loc = if p.len() > 0 && p[0] == 47 { fs.normalize(p) } else { fs.normalize(fs.join(base, p)) }
+            Ok(Req(d.name, false, loc, none, false, d.grants, by))
+        }
+        manifest.Git(url, v, r) => {
+            if r.len() > 0 { return Ok(Req(d.name, true, url, r, true, d.grants, by)) }
+            Ok(Req(d.name, true, url, v, false, d.grants, by))
+        }
+    }
+}
+
+fn locked_commit(o: Opts, r: Req) -> Option[lockfile.Pkg] {
+    if !o.use_lock { return None }
+    for p in o.locked {
+        if p.git && bytes.eq(p.name, r.name) && bytes.eq(p.loc, r.loc) && bytes.eq(p.want, r.want) && p.is_rev == r.is_rev {
+            return Some(p)
+        }
+    }
+    None
+}
+
+fn mismatch(what: str, name: List[u8], a: List[u8], b: List[u8]) -> String uses ffi {
+    var m = String.from(what)
+    m.push_str(" `")
+    m.append(text(name))
+    m.push_str("`: ")
+    m.append(text(a))
+    m.push_str(" vs ")
+    m.append(text(b))
+    m
+}
+
+/// Fetch (if needed) and read one requirement's package.
+fn visit(o: Opts, r: Req) -> Result[lockfile.Pkg, String] uses io, fs, net, ffi {
+    let none: List[u8] = List.new()
+    var dir = r.loc
+    var commit = none
+    var hash = none
+    if r.git {
+        let pinned = locked_commit(o, r)
+        commit = match pinned {
+            Some(p) => p.commit
+            None => store.resolve_commit(o.home, r.loc, r.want, r.is_rev, o.offline)?
+        }
+        let expect = match pinned {
+            Some(p) => p.hash
+            None => none
+        }
+        let vend = fs.join(o.vendor, r.name)
+        if expect.len() > 0 && fs.is_dir(vend) {
+            let h = store.tree_hash(vend)?
+            if !bytes.eq(h, expect) {
+                return Err(mismatch("vendor/ doesn't match eider.lock for", r.name, h, expect))
+            }
+            dir = vend
+            hash = h
+        } else {
+            let ex = store.checkout(o.home, r.loc, commit, r.name)?
+            if expect.len() > 0 && !bytes.eq(ex.hash, expect) {
+                return Err(mismatch("content hash differs from eider.lock for", r.name, ex.hash, expect))
+            }
+            dir = ex.dir
+            hash = ex.hash
+        }
+    } else if !fs.is_dir(dir) {
+        var m = String.from("path dependency `")
+        m.append(text(r.name))
+        m.push_str("` not found at ")
+        m.append(text(dir))
+        return Err(m)
+    }
+    let m = manifest.load(dir)?
+    if !bytes.eq(m.name, r.name) {
+        return Err(mismatch("dependency name doesn't match the package's own name for", r.name, r.name, m.name))
+    }
+    if r.git && !r.is_rev && !bytes.eq(m.version, r.want) {
+        return Err(mismatch("the tag's eider.toml has a different version for", r.name, r.want, m.version))
+    }
+    var deps: List[List[u8]] = List.new()
+    for d in m.deps { deps.push(d.name) }
+    let grants: List[List[u8]] = List.new()
+    Ok(lockfile.Pkg(r.name, m.version, r.git, r.loc, r.want, r.is_rev, commit, hash, dir, deps, grants))
+}
+
+fn contains(xs: List[List[u8]], x: List[u8]) -> bool {
+    for y in xs {
+        if bytes.eq(x, y) { return true }
+    }
+    false
+}
+
+fn intersect(a: List[List[u8]], b: List[List[u8]]) -> List[List[u8]] {
+    var out: List[List[u8]] = List.new()
+    for x in a {
+        if contains(b, x) { out.push(x) }
+    }
+    out
+}
+
+/// Pick, for `name`, the node to use: the highest version (or the one rev) among visited nodes.
+fn select(nodes: List[lockfile.Pkg], name: List[u8]) -> Result[lockfile.Pkg, String] uses ffi {
+    var best: Option[lockfile.Pkg] = None
+    for n in nodes {
+        if bytes.eq(n.name, name) {
+            best = match best {
+                None => Some(n)
+                Some(b) => {
+                    if b.git != n.git || !bytes.eq(b.loc, n.loc) {
+                        return Err(mismatch("two different packages are named", name, b.loc, n.loc))
+                    }
+                    if b.is_rev || n.is_rev {
+                        if !(b.is_rev && n.is_rev && bytes.eq(b.want, n.want)) {
+                            return Err(mismatch("conflicting requirements (pin one `rev` or use versions) for", name, b.want, n.want))
+                        }
+                        Some(b)
+                    } else {
+                        let bv = semver.parse(b.want)
+                        let nv = semver.parse(n.want)
+                        match (bv, nv) {
+                            (Some(x), Some(y)) => {
+                                if semver.compare(y, x) > 0 { Some(n) } else { Some(b) }
+                            }
+                            _ => Some(b)
+                        }
+                    }
+                }
+            }
+        }
+    }
+    match best {
+        Some(b) => Ok(b)
+        None => Err(mismatch("internal: nothing selected for", name, name, name))
+    }
+}
+
+/// Resolve `root` into the list of packages to install (root itself excluded).
+pub fn resolve(root: manifest.Manifest, o: Opts) -> Result[List[lockfile.Pkg], String] uses io, fs, net, ffi {
+    let none: List[u8] = List.new()
+    var queue: List[Req] = List.new()
+    for d in root.deps { queue.push(req_of(d, root.dir, none, false)?) }
+    var nodes: List[lockfile.Pkg] = List.new()
+    var edges: List[Edge] = List.new()
+    var qi: usize = 0
+    // edges hang off the requiring node, so pruned versions' requirements drop out later
+    var from_keys: List[List[u8]] = List.new()
+    for d in root.deps { from_keys.push(none) }
+    while qi < queue.len() {
+        let r = queue[qi]
+        let from = from_keys[qi]
+        qi += 1
+        edges.push(Edge(from, r.name, r.grants))
+        let k = key(r.name, r.want)
+        var seen = false
+        for n in nodes {
+            if bytes.eq(pkg_key(n), k) && bytes.eq(n.loc, r.loc) { seen = true }
+        }
+        if !seen {
+            let p = visit(o, r)?
+            let m = manifest.load(p.dir)?
+            for d in m.deps {
+                queue.push(req_of(d, p.dir, p.name, p.git)?)
+                from_keys.push(k)
+            }
+            nodes.push(p)
+        }
+    }
+    // walk the selected graph from the root
+    var picked: List[lockfile.Pkg] = List.new()
+    var frontier: List[List[u8]] = List.new()
+    frontier.push(none)
+    var fi: usize = 0
+    while fi < frontier.len() {
+        let from = frontier[fi]
+        fi += 1
+        for e in edges {
+            if bytes.eq(e.from, from) {
+                var have = false
+                for p in picked {
+                    if bytes.eq(p.name, e.to) { have = true }
+                }
+                if !have {
+                    let s = select(nodes, e.to)?
+                    frontier.push(pkg_key(s))
+                    picked.push(s)
+                }
+            }
+        }
+    }
+    // grants: intersection over the edges that come from the root or a picked node
+    var out: List[lockfile.Pkg] = List.new()
+    for p in picked {
+        var g: Option[List[List[u8]]] = None
+        for e in edges {
+            if bytes.eq(e.to, p.name) {
+                var live = e.from.len() == 0
+                for q in picked {
+                    if bytes.eq(pkg_key(q), e.from) { live = true }
+                }
+                if live {
+                    g = match g {
+                        None => Some(e.grants)
+                        Some(cur) => Some(intersect(cur, e.grants))
+                    }
+                }
+            }
+        }
+        var q = p
+        q.grants = match g {
+            Some(x) => x
+            None => List.new()
+        }
+        out.push(q)
+    }
+    Ok(out)
+}
+
+/// Every package must stay within its grants (see caps.ei).
+pub fn check_grants(pkgs: List[lockfile.Pkg]) -> Result[bool, String] uses fs, ffi {
+    for p in pkgs {
+        for u in caps.scan_dir(p.dir, store.skipped())? {
+            if !contains(p.grants, u.cap) {
+                var m = String.from("package `")
+                m.append(text(p.name))
+                m.push_str("` uses capability `")
+                m.append(text(u.cap))
+                m.push_str("` (")
+                m.append(text(u.file))
+                m.push_str(":")
+                m.append(String.from_int(u.line as i64))
+                m.push_str(") but is only granted [")
+                m.append(text(bytes.join(p.grants, sys.lit(", "))))
+                m.push_str("]; to allow it, add \"")
+                m.append(text(u.cap))
+                m.push_str("\" to `uses` in its [deps.")
+                m.append(text(p.name))
+                m.push_str("] table")
+                if bytes.eq(u.cap, sys.lit("ffi")) { m.push_str(" (it declares `extern` functions: unmanaged code)") }
+                return Err(m)
+            }
+        }
+    }
+    Ok(true)
+}

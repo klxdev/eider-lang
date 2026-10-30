@@ -136,4 +136,5 @@ pub fn run(capture: bool) -> i64 uses ffi {
     unsafe { ec_run(c) }
 }
 pub fn args() -> i64 uses ffi { unsafe { ec_args() } }
+
 pub fn exit_now(code: i32) uses ffi { unsafe { ec_exit(code) } }

@@ -1,0 +1,11 @@
+#!/bin/sh
+# Build (when its sources changed) and run eider-pkg, the package manager written in Eider.
+root="$(cd "$(dirname "$0")/.." && pwd)"
+bin="$root/target/eider-pkg"
+newest=$(find "$root/packages/pkg" "$root/packages/toml" "$root/packages/semver" "$root/packages/sha256" "$root/std" "$root/core" -name '*.ei' -newer "$bin" 2>/dev/null | head -1)
+if [ ! -x "$bin" ] || [ -n "$newest" ]; then
+  "$root/scripts/bootstrap-deps.sh"
+  mkdir -p "$root/target"
+  EIDER_CACHE=off "$root/scripts/ei" build "$root/packages/pkg/main.ei" -o "$bin" || exit 3
+fi
+EIDER_ROOT="${EIDER_ROOT:-$root}" exec "$bin" "$@"
