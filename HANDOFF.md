@@ -1,6 +1,6 @@
 # Eider handoff
 
-Eider is a compiled, type-safe language that emits C11. Source files use `.ei`, the compiler is `eiderc`. The compiler (`compiler/`) is written in Eider and self-hosted; its C output is committed as `seed/eiderc.c`, so building Eider needs only a C11 compiler: no Rust, nothing else (until C7 a frozen Rust stage-0 bootstrap in a separate repository did that job; it is retired, and its observable results are recorded in `tests/oracle/`). Everything is Eider on top of a small C core. Read `LAYERS.md` first.
+Eider is a compiled, type-safe language that emits C11. Source files use `.ei`, the compiler is `eiderc`. The compiler (`compiler/`) is written in Eider and self-hosted; its C output is committed as `seed/eiderc.c`, so building Eider needs only a C11 compiler, nothing else; the compiler tests' expected results are recorded in `tests/oracle/` (docs/compiler.md, "History"). Everything is Eider on top of a small C core. Read `LAYERS.md` first.
 
 ## Get running
 

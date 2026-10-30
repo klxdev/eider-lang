@@ -37,6 +37,4 @@ only a C compiler and checks that the result emits exactly this file again for
 what builds the next compiler. A new feature lands in the compiler first (implemented, not
 used), the seed is regenerated, and only then may `compiler/` start using it.
 
-History: the first seed (C6) was emitted by a chain that started from the Rust stage-0
-bootstrap (the separate `eider-bootstrap` repository); until C7 retired it, `compiler/` also
-had to build with stage 0. Since C7 the chain starts from this file and nothing needs Rust.
+Since C7 the chain starts from this file (docs/compiler.md, "Bootstrap chain" and "History").
