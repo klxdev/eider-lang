@@ -122,7 +122,9 @@ Guarantees a backend must keep:
 ## OS primitives: common rules
 
 The sections below are the Layer 0 OS primitives (roadmap "Layers and their branches",
-`layer/core-os`). They follow the rules above, plus:
+`layer/core-os`). Eider binds them in `core/os.ei` (not `core/sys.ei`, which the compiler
+imports, so the seed does not carry them); std/fd, net, poll, time, random, signal and child
+wrap them. They follow the rules above, plus:
 
 - **Descriptors are `int32_t`.** Every descriptor the core creates is close-on-exec
   (atomically where the OS allows: `O_CLOEXEC`, `SOCK_CLOEXEC`, `accept4`, `pipe2`,

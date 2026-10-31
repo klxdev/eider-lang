@@ -5,7 +5,7 @@ import "core/sys"
 import "std/fd"
 import "std/io"
 import "std/poll"
-import "std/proc"
+import "std/child"
 import "std/signal"
 
 /// Wait (about 2 s at most) until the signal pipe has something, then what it holds. A wait
@@ -30,7 +30,7 @@ fn run() -> Result[bool, String] uses io, fs, net, ffi {
     print(sfd == signal.events_fd()?)
     let p = poll.create()?
     poll.add(p, sfd, poll.READ, 1)?
-    let me = proc.id()
+    let me = child.id()
     for s in [signal.TERM, signal.INT, signal.HUP] {
         signal.watch(s)?
         signal.send(me, s)?
@@ -43,9 +43,9 @@ fn run() -> Result[bool, String] uses io, fs, net, ffi {
     argv.push(sys.lit("sh"))
     argv.push(sys.lit("-c"))
     argv.push(sys.lit("exit 4"))
-    let c = proc.start(argv, proc.NULL, proc.NULL, proc.NULL)?
+    let c = child.start(argv, child.NULL, child.NULL, child.NULL)?
     show(next(p)?)
-    print(proc.wait(c.pid)?.code)
+    print(child.wait(c.pid)?.code)
     signal.reset(signal.CHLD)?
     // blocked: held back until unblocked
     signal.watch(signal.USR1)?

@@ -3,6 +3,7 @@
 // scheduler built on them are layer/runtime's.
 
 import "core/sys"
+import "core/os"
 import "fd.ei"
 
 /// Interest: wake for reading, for writing; edge-triggered; one-shot (re-arm with `modify`).
@@ -21,13 +22,13 @@ pub type Waker = { r: i32, w: i32 }
 
 /// A new poller (a descriptor: close it with fd.close).
 pub fn create() -> Result[i32, String] uses io, ffi {
-    let n = sys.poll_new()
+    let n = os.poll_new()
     if n < 0 { return Err(fd.error("poller", n)) }
     Ok(n as i32)
 }
 
 fn ctl(p: i32, op: i32, f: i32, interest: i32, token: i64) -> Result[bool, String] uses io, ffi {
-    let n = sys.poll_ctl(p, op, f, interest, token)
+    let n = os.poll_ctl(p, op, f, interest, token)
     if n < 0 { return Err(fd.error("poll register", n)) }
     Ok(true)
 }
@@ -42,13 +43,14 @@ pub fn remove(p: i32, f: i32) -> Result[bool, String] uses io, ffi { ctl(p, 2, f
 /// a timeout; a signal ends the wait early (with the signal pipe's event if it is watched,
 /// possibly with none: loop).
 pub fn wait(p: i32, max: i32, timeout_ms: i64) -> Result[List[Event], String] uses io, ffi {
-    let n = sys.poll_wait(p, max, timeout_ms)
+    let n = os.poll_wait(p, max, timeout_ms)
     if n < 0 { return Err(fd.error("poll wait", n)) }
     var out: List[Event] = List.new()
-    var i: i64 = 0
-    while i < n {
-        let token = sys.out_u64(i * 16) as i64
-        let f = sys.out_u32(i * 16 + 8)
+    let r = sys.take()
+    var i: usize = 0
+    while i < (n as usize) {
+        let token = os.le_u64(r, i * 16) as i64
+        let f = os.le_u32(r, i * 16 + 8)
         out.push(Event(token, (f & 1) != 0, (f & 2) != 0, (f & 4) != 0, (f & 8) != 0, (f & 16) != 0))
         i += 1
     }
@@ -56,7 +58,7 @@ pub fn wait(p: i32, max: i32, timeout_ms: i64) -> Result[List[Event], String] us
 }
 
 pub fn waker() -> Result[Waker, String] uses io, ffi {
-    let n = sys.waker_new()
+    let n = os.waker_new()
     if n < 0 { return Err(fd.error("waker", n)) }
     let p = fd.take_pair()
     Ok(Waker(p.r, p.w))
@@ -64,7 +66,7 @@ pub fn waker() -> Result[Waker, String] uses io, ffi {
 
 /// Make the waker readable (several wakes before a drain are one).
 pub fn wake(w: Waker) -> Result[bool, String] uses io, ffi {
-    let n = sys.waker_wake(w.w)
+    let n = os.waker_wake(w.w)
     if n < 0 { return Err(fd.error("wake", n)) }
     Ok(true)
 }
@@ -76,6 +78,6 @@ pub fn drain(w: Waker) uses io, ffi {
 
 /// Close both ends.
 pub fn close_waker(w: Waker) uses io, ffi {
-    sys.fd_close(w.r)
-    if w.w != w.r { sys.fd_close(w.w) }
+    os.fd_close(w.r)
+    if w.w != w.r { os.fd_close(w.w) }
 }

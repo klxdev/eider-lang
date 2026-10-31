@@ -3,11 +3,12 @@
 // There is no time-based fallback: no OS source is an error.
 
 import "core/sys"
+import "core/os"
 
 /// `n` random bytes (at most 1 MiB per call). On Linux this waits, once per boot, until the
 /// kernel's pool is seeded.
 pub fn bytes(n: i64) -> Result[List[u8], String] uses io, ffi {
-    let r = sys.random(n, false)
+    let r = os.random(n, false)
     if r < 0 {
         var m = String.from("random: ")
         m.append(sys.error_text(r))

@@ -11,7 +11,7 @@ because the language contract tests compare program output.
 
 | File | Role | Called by | Contract |
 |---|---|---|---|
-| `eider_core.c` | OS ABI: one OS operation per function, errors as `-errno`, data through byte buffers | Eider code, through `extern "c"` bindings in `core/sys.ei` | `core/ABI.md` |
+| `eider_core.c` | OS ABI: one OS operation per function, errors as `-errno`, data through byte buffers | Eider code, through `extern "c"` bindings in `core/sys.ei` and `core/os.ei` | `core/ABI.md` |
 | `eider_rt.h` / `eider_rt.c` | Language runtime: what the semantics of the language need | generated C only, never Eider source | this file |
 
 They are independent (neither includes the other) and share only the process's `stdout`:

@@ -3,6 +3,7 @@
 // (layer/std). A descriptor is an i32; close it with `close`.
 
 import "core/sys"
+import "core/os"
 
 /// Open flags: one access mode, plus any of the others.
 pub const READ: i32 = 0
@@ -45,7 +46,7 @@ pub fn error(what: str, status: i64) -> String uses ffi {
 }
 
 /// True when a status means "not now" (a non-blocking descriptor with nothing to do).
-pub fn would_block(status: i64) -> bool uses ffi { sys.err_kind(status) == 1 }
+pub fn would_block(status: i64) -> bool uses ffi { os.err_kind(status) == 1 }
 
 fn path_arg(path: List[u8]) uses ffi {
     var p: List[List[u8]] = List.new()
@@ -57,7 +58,7 @@ fn path_arg(path: List[u8]) uses ffi {
 /// file (before the umask). Always close-on-exec.
 pub fn open(path: List[u8], flags: i32, mode: i32) -> Result[i32, String] uses fs, ffi {
     path_arg(path)
-    let n = sys.fd_open(flags, mode)
+    let n = os.fd_open(flags, mode)
     if n < 0 {
         var m = String.from("cannot open ")
         m.append(sys.to_string(path))
@@ -69,7 +70,7 @@ pub fn open(path: List[u8], flags: i32, mode: i32) -> Result[i32, String] uses f
 }
 
 pub fn close(fd: i32) -> Result[bool, String] uses io, ffi {
-    let n = sys.fd_close(fd)
+    let n = os.fd_close(fd)
     if n < 0 { return Err(error("close", n)) }
     Ok(true)
 }
@@ -94,7 +95,7 @@ pub fn try_read(fd: i32, max: i64) -> Result[Option[List[u8]], String] uses io, 
 /// One write: the number of bytes written (may be fewer than given).
 pub fn write(fd: i32, data: List[u8]) -> Result[i64, String] uses io, ffi {
     sys.send(data)
-    let n = sys.fd_write(fd)
+    let n = os.fd_write(fd)
     if n < 0 { return Err(error("write", n)) }
     Ok(n)
 }
@@ -117,7 +118,7 @@ pub fn write_all(fd: i32, data: List[u8]) -> Result[bool, String] uses io, ffi {
 
 /// Up to `max` bytes at offset `off` (the file offset doesn't move).
 pub fn read_at(fd: i32, max: i64, off: i64) -> Result[List[u8], String] uses io, ffi {
-    let n = sys.fd_pread(fd, max, off)
+    let n = os.fd_pread(fd, max, off)
     if n < 0 { return Err(error("read", n)) }
     Ok(sys.take())
 }
@@ -125,44 +126,45 @@ pub fn read_at(fd: i32, max: i64, off: i64) -> Result[List[u8], String] uses io,
 /// `data` at offset `off` (the file offset doesn't move): the number of bytes written.
 pub fn write_at(fd: i32, data: List[u8], off: i64) -> Result[i64, String] uses io, ffi {
     sys.send(data)
-    let n = sys.fd_pwrite(fd, off)
+    let n = os.fd_pwrite(fd, off)
     if n < 0 { return Err(error("write", n)) }
     Ok(n)
 }
 
 /// Move the file offset; the new offset.
 pub fn seek(fd: i32, off: i64, origin: i32) -> Result[i64, String] uses io, ffi {
-    let n = sys.fd_seek(fd, off, origin)
+    let n = os.fd_seek(fd, off, origin)
     if n < 0 { return Err(error("seek", n)) }
     Ok(n)
 }
 
 /// Data and metadata to stable storage.
 pub fn sync(fd: i32) -> Result[bool, String] uses io, ffi {
-    let n = sys.fd_sync(fd, false)
+    let n = os.fd_sync(fd, false)
     if n < 0 { return Err(error("sync", n)) }
     Ok(true)
 }
 
 /// The data (and only the metadata needed to read it back) to stable storage.
 pub fn sync_data(fd: i32) -> Result[bool, String] uses io, ffi {
-    let n = sys.fd_sync(fd, true)
+    let n = os.fd_sync(fd, true)
     if n < 0 { return Err(error("sync", n)) }
     Ok(true)
 }
 
 pub fn truncate(fd: i32, len: i64) -> Result[bool, String] uses io, ffi {
-    let n = sys.fd_truncate(fd, len)
+    let n = os.fd_truncate(fd, len)
     if n < 0 { return Err(error("truncate", n)) }
     Ok(true)
 }
 
 fn take_stat() -> Stat uses ffi {
-    Stat(sys.out_u64(0) as i64, sys.out_u64(8) as i32, sys.out_u64(16) as i32, sys.out_u64(24) as i64)
+    let r = sys.take()
+    Stat(os.le_u64(r, 0) as i64, os.le_u64(r, 8) as i32, os.le_u64(r, 16) as i32, os.le_u64(r, 24) as i64)
 }
 
 pub fn stat(fd: i32) -> Result[Stat, String] uses io, ffi {
-    let n = sys.fd_stat(fd)
+    let n = os.fd_stat(fd)
     if n < 0 { return Err(error("stat", n)) }
     Ok(take_stat())
 }
@@ -170,7 +172,7 @@ pub fn stat(fd: i32) -> Result[Stat, String] uses io, ffi {
 /// What is at `path`; `follow`: describe a final symlink's target rather than the link.
 pub fn stat_path(path: List[u8], follow: bool) -> Result[Stat, String] uses fs, ffi {
     path_arg(path)
-    let n = sys.stat(follow)
+    let n = os.stat(follow)
     if n < 0 {
         var m = String.from("cannot stat ")
         m.append(sys.to_string(path))
@@ -182,7 +184,7 @@ pub fn stat_path(path: List[u8], follow: bool) -> Result[Stat, String] uses fs, 
 }
 
 pub fn chmod(fd: i32, mode: i32) -> Result[bool, String] uses io, ffi {
-    let n = sys.fd_chmod(fd, mode)
+    let n = os.fd_chmod(fd, mode)
     if n < 0 { return Err(error("chmod", n)) }
     Ok(true)
 }
@@ -193,7 +195,7 @@ pub fn lock(fd: i32, exclusive: bool, wait: bool) -> Result[bool, String] uses i
     var op: i32 = 1
     if exclusive { op = 2 }
     if !wait { op = op | 4 }
-    let n = sys.fd_lock(fd, op)
+    let n = os.fd_lock(fd, op)
     if n < 0 {
         if !wait && would_block(n) { return Ok(false) }
         return Err(error("lock", n))
@@ -202,30 +204,33 @@ pub fn lock(fd: i32, exclusive: bool, wait: bool) -> Result[bool, String] uses i
 }
 
 pub fn unlock(fd: i32) -> Result[bool, String] uses io, ffi {
-    let n = sys.fd_lock(fd, 0)
+    let n = os.fd_lock(fd, 0)
     if n < 0 { return Err(error("unlock", n)) }
     Ok(true)
 }
 
 pub fn set_nonblocking(fd: i32, on: bool) -> Result[bool, String] uses io, ffi {
-    let n = sys.fd_nonblock(fd, on)
+    let n = os.fd_nonblock(fd, on)
     if n < 0 { return Err(error("set non-blocking", n)) }
     Ok(true)
 }
 
 /// Another descriptor for the same open file (shared offset and locks).
 pub fn dup(fd: i32) -> Result[i32, String] uses io, ffi {
-    let n = sys.fd_dup(fd)
+    let n = os.fd_dup(fd)
     if n < 0 { return Err(error("dup", n)) }
     Ok(n as i32)
 }
 
 /// The two descriptors in `out` (a pipe, a socket pair, a waker).
-pub fn take_pair() -> Pair uses ffi { Pair(sys.out_fd(0), sys.out_fd(4)) }
+pub fn take_pair() -> Pair uses ffi {
+    let r = sys.take()
+    Pair(os.le_fd(r, 0), os.le_fd(r, 4))
+}
 
 /// A pipe: bytes written to `w` are read from `r`.
 pub fn pipe() -> Result[Pair, String] uses io, ffi {
-    let n = sys.pipe()
+    let n = os.pipe()
     if n < 0 { return Err(error("pipe", n)) }
     Ok(take_pair())
 }
