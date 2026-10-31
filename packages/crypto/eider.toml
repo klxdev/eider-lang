@@ -1,0 +1,9 @@
+[package]
+name = "crypto"
+version = "0.1.0"
+description = "Hashes, HMAC, HKDF, AEAD, X25519, Ed25519 and P-256 over the core's crypto provider (an OpenSSL-compatible libcrypto; AWS-LC by default)"
+
+# The backend a program links (scripts/crypto-build.sh, scripts/ei-crypto read this table in
+# the program's eider.toml; this one only documents it): awslc, openssl, libressl.
+[crypto]
+provider = "awslc"

@@ -40,6 +40,7 @@
 #if defined(__APPLE__)
 #include <crt_externs.h>
 #endif
+#include "eider_core_ext.h"
 
 /* Eider declares externs as `T f(...) __asm__("f")`, i.e. by raw symbol name. Where the
    platform decorates C names (Mach-O prefixes `_`), pin the raw name (GNU C extension). */
@@ -61,8 +62,17 @@ static pthread_key_t buf_key;
 static pthread_once_t buf_once = PTHREAD_ONCE_INIT;
 static _Thread_local int buf_registered;
 
+/* Zero n bytes so the compiler can't drop it as a dead store before free (the buffers can
+   hold keys and plaintext: core/crypto). */
+static void wipe(unsigned char *p, size_t n) {
+  volatile unsigned char *v = p;
+  while (n--) *v++ = 0;
+}
+
 static void free_bufs(void *unused) {
   (void)unused;
+  if (in_p) wipe(in_p, in_cap);
+  if (out_p) wipe(out_p, out_cap);
   free(in_p);
   free(out_p);
   in_p = out_p = NULL;
@@ -89,8 +99,15 @@ static void reserve(unsigned char **p, size_t *cap, size_t need) {
     if (n > SIZE_MAX / 2) { fputs("eider_core: buffer too large\n", stderr); exit(101); }
     n *= 2;
   }
-  unsigned char *q = realloc(*p, n);
+  /* not realloc: the old block is wiped before it is freed, so growing a buffer never
+     leaves a copy of its contents in freed memory */
+  unsigned char *q = malloc(n);
   if (!q) { fputs("eider_core: out of memory\n", stderr); exit(101); }
+  if (*p) {
+    memcpy(q, *p, *cap);
+    wipe(*p, *cap);
+    free(*p);
+  }
   *p = q;
   *cap = n;
 }
@@ -142,6 +159,43 @@ EC_FN(int64_t, ec_out_len, (void)) { return (int64_t)out_len; }
 
 EC_FN(int32_t, ec_out_byte, (int64_t i)) {
   return i >= 0 && (uint64_t)i < out_len ? out_p[i] : -1;
+}
+
+// ---- core extensions (core/eider_core_ext.h): for C linked into the same program that
+// implements more of the ABI over these buffers (core/crypto). Never bound by Eider.
+
+const unsigned char *ec_ext_in(size_t *len) {
+  reserve(&in_p, &in_cap, 1);
+  in_p[in_len] = 0;
+  *len = in_len;
+  return in_p;
+}
+
+unsigned char *ec_ext_out(size_t n) {
+  if (out_p) wipe(out_p, out_len);
+  out_len = 0;
+  if (n > SIZE_MAX - 1) { fputs("eider_core: buffer too large\n", stderr); exit(101); }
+  reserve(&out_p, &out_cap, n + 1);
+  out_len = n;
+  out_p[n] = 0;
+  return out_p;
+}
+
+void ec_ext_out_truncate(size_t n) {
+  if (n >= out_len) return;
+  wipe(out_p + n, out_len - n);
+  out_len = n;
+}
+
+void ec_ext_in_wipe(void) {
+  if (in_p) wipe(in_p, in_cap);
+  in_len = 0;
+}
+
+void ec_ext_wipe(void) {
+  if (in_p) wipe(in_p, in_cap);
+  if (out_p) wipe(out_p, out_cap);
+  in_len = out_len = 0;
 }
 
 /* Length and bytes of a string literal (Eider bounds-checks i against ec_str_len). */
