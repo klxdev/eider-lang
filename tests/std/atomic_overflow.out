@@ -1,0 +1,4 @@
+9223372036854775806
+9223372036854775807
+eider: runtime error: integer overflow in + (tests/std/atomic_overflow.ei:65)
+exit 101

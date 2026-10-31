@@ -1,0 +1,121 @@
+// std/atomic: every operation and ordering; counters shared by many threads (fetch-add,
+// compare-exchange loops, update); a ticket counter handing out every number exactly once;
+// a spin lock from compare-exchange (acquire) and store (release) whose sections never overlap;
+// overflow and use after free end the program (atomic_overflow.ei, atomic_freed.ei).
+
+import "std/atomic"
+
+fn main() uses io, threads {
+    let a = atomic.new(5)
+    print(a.load(atomic.SeqCst))
+    a.store(7, atomic.Release)
+    print(a.load(atomic.Acquire))
+    print(a.swap(9, atomic.AcqRel))
+    print(a.add(1, atomic.Relaxed))
+    print(a.sub(20, atomic.SeqCst))
+    print(a.load(atomic.Relaxed))
+    print(a.wrapping_add(-1, atomic.SeqCst))
+    print(a.load(atomic.SeqCst))
+    match a.compare_exchange(-11, 100, atomic.SeqCst) {
+        Ok(v) => print(v)
+        Err(v) => print(-1)
+    }
+    match a.compare_exchange(-11, 200, atomic.Acquire) {
+        Ok(v) => print(-1)
+        Err(v) => print(v)
+    }
+    print(a.update(atomic.SeqCst, |v| v * 2))
+    print(a.load(atomic.SeqCst))
+    a.store(9223372036854775807, atomic.SeqCst)
+    print(a.wrapping_add(1, atomic.SeqCst))
+    print(a.load(atomic.SeqCst))
+    a.free()
+
+    // 8 threads x 5000 increments, three ways
+    let n = atomic.new(0)
+    var ts: List[Task[i32]] = List.new()
+    for i in 0..8 {
+        let c = n
+        let k = i
+        ts.push(spawn(|| -> i32 {
+            for j in 0..5000 {
+                if k % 3 == 0 {
+                    c.add(1, atomic.Relaxed)
+                } else if k % 3 == 1 {
+                    c.update(atomic.AcqRel, |v| v + 1)
+                } else {
+                    var seen = c.load(atomic.Relaxed)
+                    var done = false
+                    while !done {
+                        match c.compare_exchange(seen, seen + 1, atomic.SeqCst) {
+                            Ok(v) => { done = true }
+                            Err(v) => { seen = v }
+                        }
+                    }
+                }
+            }
+            0
+        }))
+    }
+    for t in ts { let z = t.join() }
+    print(n.load(atomic.SeqCst))
+    n.free()
+
+    // a ticket counter handing out unique numbers: every number exactly once
+    let next = atomic.new(0)
+    let seen: Chan[i64] = Chan.new()
+    var ws: List[Task[i32]] = List.new()
+    for i in 0..4 {
+        let nx = next
+        let out = seen
+        ws.push(spawn(|| -> i32 {
+            for j in 0..250 { out.send(nx.wrapping_add(1, atomic.AcqRel)) }
+            0
+        }))
+    }
+    for t in ws { let z = t.join() }
+    seen.close()
+    var marks: List[bool] = List.new()
+    for i in 0..1000 { marks.push(false) }
+    var dups = 0
+    var going = true
+    while going {
+        match seen.recv() {
+            Some(v) => {
+                if marks[v as usize] { dups += 1 }
+                marks[v as usize] = true
+            }
+            None => { going = false }
+        }
+    }
+    var all = true
+    for m in marks { if !m { all = false } }
+    print(all)
+    print(dups)
+    next.free()
+
+    // a spin lock from compare-exchange: the critical sections never overlap
+    let lock = atomic.new(0)
+    let inside = atomic.new(0)
+    let overlaps = atomic.new(0)
+    var ls: List[Task[i32]] = List.new()
+    for i in 0..4 {
+        let l = lock
+        let ins = inside
+        let ov = overlaps
+        ls.push(spawn(|| -> i32 {
+            for j in 0..300 {
+                while l.compare_exchange(0, 1, atomic.Acquire).is_err() {}
+                if ins.wrapping_add(1, atomic.Relaxed) != 0 { ov.add(1, atomic.Relaxed) }
+                ins.wrapping_add(-1, atomic.Relaxed)
+                l.store(0, atomic.Release)
+            }
+            0
+        }))
+    }
+    for t in ls { let z = t.join() }
+    print(overlaps.load(atomic.SeqCst))
+    lock.free()
+    inside.free()
+    overlaps.free()
+}

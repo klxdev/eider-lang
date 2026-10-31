@@ -1,0 +1,343 @@
+// std/task: structured concurrency on OS threads (decision C4; docs/runtime.md "Tasks").
+//
+// - `Token`: a cancellation token with an optional deadline. Tokens form a tree: cancelling a
+//   token cancels every token made from it, and a child's deadline is never later than its
+//   parent's. A token past its deadline counts as cancelled. Cancellation is cooperative:
+//   code checks `is_cancelled`/`check`, or waits with the token's deadline or a `cancel_case`
+//   in a select; nothing is interrupted from outside.
+// - `Group[T]`: a parent that starts children (each gets the group's token) and waits for
+//   all of them. The first child that fails cancels the others; `wait` always waits for
+//   every child (no child outlives its group), then gives every result in start order or
+//   the first error.
+// - `Pool`: a fixed set of worker threads taking jobs from a bounded queue (back-pressure:
+//   submitting waits while the queue is full, until a deadline).
+//
+// These run on OS threads; when the compiler makes stackless tasks from functions that use a
+// blocking capability (C4), the same API runs them on the pool's workers instead.
+
+import "sync.ei"
+import "chan.ei"
+import "time.ei"
+
+const NEVER: i64 = 9223372036854775807
+
+type TokSt = {
+    cancelled: bool,
+    deadline_ns: i64,
+    kids: List[Token],
+    next_id: i64,
+    waiters: List[sync.Parker],
+}
+
+/// A cancellation token; copies share it (see the module comment).
+pub type Token = { st: sync.Lock[TokSt], id: i64 }
+
+/// A token that is cancelled only by `cancel` (the root of a tree).
+pub fn root() -> Token { Token(sync.lock(TokSt(false, NEVER, List.new(), 1, List.new())), 0) }
+
+/// A root token that also expires at `dl`.
+pub fn root_until(dl: time.Deadline) -> Token {
+    Token(sync.lock(TokSt(false, dl.mono_ns(), List.new(), 1, List.new())), 0)
+}
+
+impl Token {
+    /// A token cancelled when this one is (and by its own `cancel`, which doesn't reach
+    /// this one). Already cancelled if this one is.
+    fn child(self) -> Token { self.child_until(time.never()) }
+
+    /// A child (as `child`) that also expires at `dl`: its deadline is the earlier of `dl`
+    /// and this token's.
+    fn child_until(self, dl: time.Deadline) -> Token {
+        let parent = self
+        let made = self.st.with(|s: TokSt| -> (TokSt, Token) {
+            var t = s
+            var at = dl.mono_ns()
+            if t.deadline_ns < at { at = t.deadline_ns }
+            let kid = Token(sync.lock(TokSt(t.cancelled, at, List.new(), 1, List.new())), t.next_id)
+            t.next_id += 1
+            if !t.cancelled { t.kids.push(kid) }
+            (t, kid)
+        })
+        made
+    }
+
+    /// Cancels this token and every token made from it, and wakes whoever waits on them.
+    /// Cancelling twice is harmless.
+    fn cancel(self) uses io {
+        let kids = self.st.with(|s: TokSt| -> (TokSt, List[Token]) {
+            var t = s
+            if t.cancelled { return (t, List.new()) }
+            t.cancelled = true
+            sync.wake_all(t.waiters)
+            t.waiters = List.new()
+            let k = t.kids
+            t.kids = List.new()
+            (t, k)
+        })
+        for k in kids { k.cancel() }
+    }
+
+    /// Whether the token is cancelled or past its deadline.
+    fn is_cancelled(self) -> bool uses clock {
+        let (c, at) = self.st.with(|s: TokSt| -> (TokSt, (bool, i64)) (s, (s.cancelled, s.deadline_ns)))
+        c || time.at_mono_ns(at).expired()
+    }
+
+    /// Why the token is cancelled, or None: "cancelled" or "deadline exceeded".
+    fn reason(self) -> Option[String] uses clock {
+        let (c, at) = self.st.with(|s: TokSt| -> (TokSt, (bool, i64)) (s, (s.cancelled, s.deadline_ns)))
+        if c { return Some(String.from("cancelled")) }
+        if time.at_mono_ns(at).expired() { return Some(String.from("deadline exceeded")) }
+        None
+    }
+
+    /// Ok while the token is live, else Err(reason): `tok.check()?` in a loop.
+    fn check(self) -> Result[bool, String] uses clock {
+        match self.reason() {
+            Some(r) => Err(r)
+            None => Ok(true)
+        }
+    }
+
+    /// The token's deadline (`never()` if it has none): pass it to blocking calls.
+    fn deadline(self) -> time.Deadline {
+        time.at_mono_ns(self.st.with(|s: TokSt| -> (TokSt, i64) (s, s.deadline_ns)))
+    }
+
+    /// The earlier of `dl` and the token's deadline.
+    fn bound(self, dl: time.Deadline) -> time.Deadline { dl.earlier(self.deadline()) }
+
+    /// Waits until the token is cancelled or expires (true), or `dl` passes first (false).
+    fn wait(self, dl: time.Deadline) -> bool uses io, clock {
+        let c = self.cancel_case(true)
+        var cases: List[chan.Case[bool]] = List.new()
+        cases.push(c)
+        chan.select(cases, dl).is_some()
+    }
+
+    /// A select case that is ready, producing `u`, once the token is cancelled or expires.
+    fn cancel_case[U](self, u: U) -> chan.Case[U] uses io, clock {
+        let st = self.st
+        let at = self.deadline().mono_ns()
+        chan.Case(|me: sync.Parker, reg: bool| -> Option[U] {
+            let c = st.with(|s: TokSt| -> (TokSt, bool) {
+                var t = s
+                t.waiters = sync.without(t.waiters, me)
+                if !t.cancelled && reg { t.waiters.push(me) }
+                let was = t.cancelled
+                (t, was)
+            })
+            if c || time.at_mono_ns(at).expired() { return Some(u) }
+            None
+        }, |me: sync.Parker| {
+            st.update(|s: TokSt| -> TokSt {
+                var t = s
+                t.waiters = sync.without(t.waiters, me)
+                t
+            })
+        }, at)
+    }
+
+    /// Forgets `kid`, a finished child: it is no longer cancelled with this token (a Group
+    /// does this in `wait`, so a long-lived parent doesn't collect dead children).
+    fn detach(self, kid: Token) {
+        let id = kid.id
+        self.st.update(|s: TokSt| -> TokSt {
+            var t = s
+            var keep: List[Token] = List.new()
+            for k in t.kids {
+                if k.id != id { keep.push(k) }
+            }
+            t.kids = keep
+            t
+        })
+    }
+}
+
+// ---- groups
+
+/// A task group (see the module comment). Start children with `spawn` (a thread each) or
+/// `spawn_on` (a pool's workers), then `wait`.
+pub type Group[T] = {
+    parent: Token,
+    tok: Token,
+    results: List[chan.Channel[Result[T, String]]],
+    threads: List[Task[i32]],
+    errs: sync.Lock[List[String]],
+}
+
+/// A group whose token is a child of `parent`.
+pub fn group[T](parent: Token) -> Group[T] { group_until(parent, time.never()) }
+
+/// A group whose token also expires at `dl`: children see it as cancelled from then on.
+pub fn group_until[T](parent: Token, dl: time.Deadline) -> Group[T] {
+    Group(parent, parent.child_until(dl), List.new(), List.new(), sync.lock(List.new()))
+}
+
+/// What a child runs: `f` with the token (unless it is cancelled already), recording an
+/// error and cancelling the siblings when it fails.
+fn run_child[T](f: fn(Token) -> Result[T, String], tok: Token, errs: sync.Lock[List[String]], out: chan.Channel[Result[T, String]]) uses io, clock {
+    var r: Result[T, String] = Err(String.from("cancelled"))
+    match tok.reason() {
+        Some(why) => { r = Err(why) }
+        None => { r = f(tok) }
+    }
+    match r {
+        Ok(v) => {}
+        Err(e) => {
+            errs.update(|l: List[String]| -> List[String] {
+                var m = l
+                m.push(e)
+                m
+            })
+            tok.cancel()
+        }
+    }
+    let z = out.try_send(r)
+}
+
+impl[T] Group[T] {
+    /// The group's token (what every child gets).
+    fn token(self) -> Token { self.tok }
+
+    /// Starts `f(token)` on a thread of its own.
+    fn spawn(inout self, f: fn(Token) -> Result[T, String]) uses threads, io, clock {
+        let out: chan.Channel[Result[T, String]] = chan.bounded(1)
+        let tok = self.tok
+        let errs = self.errs
+        let o = out
+        self.results.push(out)
+        self.threads.push(spawn(|| -> i32 {
+            run_child(f, tok, errs, o)
+            0
+        }))
+    }
+
+    /// Starts `f(token)` as a job on `p`, waiting while its queue is full until the group's
+    /// deadline. A child that can't be queued by then (or because the pool is shut down)
+    /// fails with "deadline exceeded" / "pool is shut down" and cancels the group.
+    fn spawn_on(inout self, p: Pool, f: fn(Token) -> Result[T, String]) uses io, clock {
+        let out: chan.Channel[Result[T, String]] = chan.bounded(1)
+        let tok = self.tok
+        let errs = self.errs
+        let o = out
+        self.results.push(out)
+        match p.submit(|| run_child(f, tok, errs, o), tok.deadline()) {
+            Ok(b) => {}
+            Err(e) => {
+                errs.update(|l: List[String]| -> List[String] {
+                    var m = l
+                    m.push(e)
+                    m
+                })
+                tok.cancel()
+                let z = out.try_send(Err(e))
+            }
+        }
+    }
+
+    /// Cancels every child (they see it through the token).
+    fn cancel(self) uses io { self.tok.cancel() }
+
+    /// Waits for every child, then: Ok(their results, in start order), or Err(the first
+    /// error). Never returns before all children have finished, whatever the deadline: a
+    /// child that ignores its token keeps the group waiting (cancellation is cooperative).
+    /// Then the group's token is detached from its parent.
+    fn wait(self) -> Result[List[T], String] uses io, clock {
+        var vals: List[T] = List.new()
+        for c in self.results {
+            match c.recv(time.never()) {
+                chan.Value(r) => {
+                    match r {
+                        Ok(v) => vals.push(v)
+                        Err(e) => {}
+                    }
+                }
+                chan.Empty => {}
+                chan.Closed => {}
+            }
+        }
+        for t in self.threads { let z = t.join() }
+        self.parent.detach(self.tok)
+        let errs = self.errs.get()
+        if errs.len() > 0 { return Err(errs[0]) }
+        Ok(vals)
+    }
+}
+
+// ---- the pool
+
+/// Worker threads taking jobs from a bounded queue. Copies share the pool.
+pub type Pool = { jobs: chan.Channel[fn()], workers: List[Task[i32]] }
+
+/// A pool of `n` workers (at least 1) and a queue of `queue` jobs (at least 1).
+pub fn pool(n: usize, queue: usize) -> Pool uses threads, io, clock {
+    if n == 0 { panic("task.pool: needs at least one worker") }
+    let jobs: chan.Channel[fn()] = chan.bounded(queue)
+    var ws: List[Task[i32]] = List.new()
+    for i in 0..n {
+        let js = jobs
+        ws.push(spawn(|| -> i32 {
+            var going = true
+            while going {
+                match js.recv(time.never()) {
+                    chan.Value(job) => job()
+                    chan.Empty => {}
+                    chan.Closed => { going = false }
+                }
+            }
+            0
+        }))
+    }
+    Pool(jobs, ws)
+}
+
+/// A job's result, filled in when it has run.
+pub type Future[T] = { ch: chan.Channel[T] }
+
+impl[T] Future[T] {
+    /// The result, waiting for it until `dl` (None: not done by then; ask again).
+    /// Cancel-safe: giving up leaves the result for a later `get`.
+    fn get(self, dl: time.Deadline) -> Option[T] uses io, clock {
+        match self.ch.recv(dl) {
+            chan.Value(v) => Some(v)
+            chan.Empty => None
+            chan.Closed => None
+        }
+    }
+}
+
+impl Pool {
+    /// Queues `job`, waiting while the queue is full until `dl`. Err("deadline exceeded")
+    /// or Err("pool is shut down") when it wasn't queued (then it never runs).
+    fn submit(self, job: fn(), dl: time.Deadline) -> Result[bool, String] uses io, clock {
+        match self.jobs.send(job, dl) {
+            chan.Sent => Ok(true)
+            chan.Full(j) => Err(String.from("deadline exceeded"))
+            chan.Rejected(j) => Err(String.from("pool is shut down"))
+        }
+    }
+
+    /// Runs `f` on a worker; its result arrives in the Future. Err as for `submit`.
+    fn run[T](self, f: fn() -> T, dl: time.Deadline) -> Result[Future[T], String] uses io, clock {
+        let out: chan.Channel[T] = chan.bounded(1)
+        let o = out
+        self.submit(|| {
+            let z = o.try_send(f())
+        }, dl)?
+        Ok(Future(out))
+    }
+
+    /// Workers in the pool.
+    fn size(self) -> usize { self.workers.len() }
+
+    /// Jobs waiting in the queue.
+    fn queued(self) -> usize { self.jobs.len() }
+
+    /// Stops taking jobs, lets the workers finish what is queued, and waits for them. Safe to
+    /// call from several copies; must not be called from a job (it would wait for itself).
+    fn shutdown(self) uses io {
+        self.jobs.close()
+        for w in self.workers { let z = w.join() }
+    }
+}

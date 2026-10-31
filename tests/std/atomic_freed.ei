@@ -1,0 +1,12 @@
+// std/atomic: a handle used after free ends the program with a runtime error (exit 101);
+// output printed before it is kept.
+
+import "std/atomic"
+
+fn main() uses io {
+    let a = atomic.new(1)
+    let b = a
+    a.free()
+    print(1)
+    print(b.load(atomic.SeqCst))
+}

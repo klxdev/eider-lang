@@ -1,0 +1,116 @@
+// std/atomic: 64-bit integers that several threads read and change without a lock, with
+// explicit memory orderings (C11's model). A cell lives in the core, not in an Eider value
+// (core/ABI.md "Atomic cells"), so an `Atomic` is a handle: copies of it (captured by a
+// spawned closure, sent through a channel, kept in a record) all name the same cell. That is
+// what makes it shareable before the language has a built-in atomic type; it also means the
+// cell is not freed by itself: call `free` once no thread uses it any more (as with a file
+// descriptor). Using a freed handle ends the program with a runtime error; it never reads or
+// changes another cell, and never touches freed memory (docs/runtime.md, "Atomics").
+//
+// No capability: like a Mutex, a cell is memory shared between threads, not the OS.
+// Cancel-safety: every operation is a single atomic step; none blocks.
+
+import "core/os"
+
+/// Memory orderings. `Relaxed`: atomic, no ordering of other memory. `Acquire` (loads and
+/// read-modify-writes): what the thread that released this value wrote before is visible
+/// after. `Release` (stores and read-modify-writes): what this thread wrote before becomes
+/// visible to a thread that acquires the value. `AcqRel`: both (read-modify-writes only).
+/// `SeqCst`: Acquire/Release plus one total order of all SeqCst operations. A load can't be
+/// Release or AcqRel and a store can't be Acquire or AcqRel (a runtime error, as in Rust).
+pub type Order = | Relaxed | Acquire | Release | AcqRel | SeqCst
+
+fn code(o: Order) -> i32 {
+    match o {
+        Relaxed => 0
+        Acquire => 1
+        Release => 2
+        AcqRel => 3
+        SeqCst => 4
+    }
+}
+
+/// A shared 64-bit integer (a handle; see the module comment).
+pub type Atomic = { h: i64 }
+
+/// A new cell holding `v`. Traps if the process has 16M cells in use already.
+pub fn new(v: i64) -> Atomic {
+    let h = os.atomic_new(v)
+    if h <= 0 { panic("atomic.new: no more atomic cells (16M in use)") }
+    Atomic(h)
+}
+
+impl Atomic {
+    fn load(self, o: Order) -> i64 {
+        let c = code(o)
+        if c == 2 || c == 3 { panic("atomic: a load can't have Release or AcqRel ordering") }
+        os.atomic_load(self.h, c)
+    }
+
+    fn store(self, v: i64, o: Order) {
+        let c = code(o)
+        if c == 1 || c == 3 { panic("atomic: a store can't have Acquire or AcqRel ordering") }
+        os.atomic_store(self.h, v, c)
+    }
+
+    /// Replaces the value with `v`; the value it had.
+    fn swap(self, v: i64, o: Order) -> i64 { os.atomic_swap(self.h, v, code(o)) }
+
+    /// Adds `n`; the value it had. Traps on overflow (`integer overflow in +`), like `+`, and
+    /// then leaves the cell unchanged.
+    fn add(self, n: i64, o: Order) -> i64 {
+        let c = code(o)
+        var seen = os.atomic_load(self.h, 0)
+        while true {
+            let next = seen + n
+            let got = os.atomic_cas(self.h, seen, next, c)
+            if got == seen { return seen }
+            seen = got
+        }
+        seen
+    }
+
+    /// Subtracts `n`; the value it had. Traps on overflow.
+    fn sub(self, n: i64, o: Order) -> i64 {
+        let c = code(o)
+        var seen = os.atomic_load(self.h, 0)
+        while true {
+            let next = seen - n
+            let got = os.atomic_cas(self.h, seen, next, c)
+            if got == seen { return seen }
+            seen = got
+        }
+        seen
+    }
+
+    /// Adds `n` modulo 2^64 (two's complement); the value it had. One hardware operation.
+    fn wrapping_add(self, n: i64, o: Order) -> i64 { os.atomic_add(self.h, n, code(o)) }
+
+    /// If the value is `expected`, replaces it with `new`: Ok(expected). Otherwise nothing
+    /// changes: Err(the value it has). A failed exchange is a load with `o` minus its release
+    /// half. Never fails spuriously.
+    fn compare_exchange(self, expected: i64, new: i64, o: Order) -> Result[i64, i64] {
+        let got = os.atomic_cas(self.h, expected, new, code(o))
+        if got == expected { return Ok(got) }
+        Err(got)
+    }
+
+    /// Applies `f` atomically (a compare-and-swap loop, so `f` may run more than once and
+    /// must have no effects); the value it had.
+    fn update(self, o: Order, f: fn(i64) -> i64) -> i64 {
+        let c = code(o)
+        var seen = os.atomic_load(self.h, 0)
+        while true {
+            let got = os.atomic_cas(self.h, seen, f(seen), c)
+            if got == seen { return seen }
+            seen = got
+        }
+        seen
+    }
+
+    /// Frees the cell. Every copy of the handle is then invalid. Freeing twice is a runtime
+    /// error.
+    fn free(self) {
+        if os.atomic_free(self.h) < 0 { panic("atomic: free of a handle that is not in use") }
+    }
+}

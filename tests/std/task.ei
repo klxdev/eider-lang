@@ -1,0 +1,201 @@
+// std/task: cancellation tokens (trees, deadlines, waiting, select cases, detach), task
+// groups on threads and on a pool (results in start order, the first error cancels the
+// siblings, the parent waits for every child, deadlines reach the children, a cancelled
+// parent reaches the group), and the pool (results through futures, back-pressure with a
+// deadline, shutdown that finishes the queue, submitting after shutdown).
+
+import "std/task"
+import "std/time"
+import "std/chan"
+import "std/atomic"
+
+fn err_of[T](r: Result[T, String]) -> String {
+    match r {
+        Ok(v) => String.from("no error?")
+        Err(e) => e
+    }
+}
+
+fn main() uses io, clock, threads {
+    // tokens: a tree, cancelled from any node downwards, never upwards
+    let root = task.root()
+    let a = root.child()
+    let b = a.child()
+    let c = root.child()
+    print(root.is_cancelled() || a.is_cancelled() || b.is_cancelled())
+    a.cancel()
+    print(a.is_cancelled())
+    print(b.is_cancelled())
+    print(c.is_cancelled())
+    print(root.is_cancelled())
+    print(b.reason().unwrap())
+    print(b.check().is_err())
+    print(a.child().is_cancelled())
+    a.cancel()
+
+    // deadlines: a child's is never later than its parent's; past it, a token is cancelled
+    let short = root.child_until(time.after_ms(30))
+    let longer = short.child_until(time.after_ms(100000))
+    print(longer.deadline().mono_ns() == short.deadline().mono_ns())
+    print(root.deadline().is_never())
+    print(short.is_cancelled())
+    let t0 = time.mono_ns()
+    print(longer.wait(time.after_ms(5000)))
+    print(time.mono_ns() - t0 >= 25000000)
+    print(longer.reason().unwrap())
+    print(c.wait(time.after_ms(20)))
+    print(c.bound(time.after_ms(10)).is_never())
+
+    // waiting is woken by a cancel from another thread
+    let w = root.child()
+    let ww = w
+    let canceller = spawn(|| -> i32 {
+        time.sleep_ms(20)
+        ww.cancel()
+        0
+    })
+    print(w.wait(time.after_ms(5000)))
+    let z1 = canceller.join()
+
+    // a select between a channel and a token
+    let jobs: chan.Channel[i64] = chan.bounded(4)
+    let stop = root.child()
+    var cases: List[chan.Case[i64]] = List.new()
+    cases.push(jobs.recv_case(|o: Option[i64]| -> i64 { o.unwrap_or(-2) }))
+    cases.push(stop.cancel_case(-1 as i64))
+    jobs.try_send(5)
+    print(chan.select(cases, time.never()).unwrap())
+    stop.cancel()
+    print(chan.select(cases, time.never()).unwrap())
+
+    // a group on threads: every result, in start order
+    var g: task.Group[i64] = task.group(root)
+    for i in 0..8 {
+        let k = i as i64
+        g.spawn(|t: task.Token| -> Result[i64, String] {
+            time.sleep_ms(8 - k)
+            Ok(k * k)
+        })
+    }
+    let r = g.wait().unwrap()
+    print(r.len())
+    print(r[0] + r[3] + r[7])
+
+    // the first error cancels the siblings; wait still waits for all of them
+    let finished = atomic.new(0)
+    var h: task.Group[i64] = task.group(root)
+    for i in 0..6 {
+        let k = i as i64
+        let fin = finished
+        h.spawn(|t: task.Token| -> Result[i64, String] {
+            if k == 2 {
+                time.sleep_ms(10)
+                fin.add(1, atomic.SeqCst)
+                return Err(String.from("child 2 failed"))
+            }
+            // the others run until cancelled
+            let woke = t.wait(time.after_ms(10000))
+            fin.add(1, atomic.SeqCst)
+            if woke { return Err(t.reason().unwrap()) }
+            Ok(k)
+        })
+    }
+    match h.wait() {
+        Ok(v) => print("no error?")
+        Err(e) => print(e)
+    }
+    print(finished.load(atomic.SeqCst))
+    finished.free()
+
+    // a group's deadline reaches its children
+    let t1 = time.mono_ns()
+    var d: task.Group[i64] = task.group_until(root, time.after_ms(30))
+    for i in 0..3 {
+        d.spawn(|t: task.Token| -> Result[i64, String] {
+            while !t.is_cancelled() { time.sleep_ms(1) }
+            t.check()?
+            Ok(1)
+        })
+    }
+    match d.wait() {
+        Ok(v) => print("no error?")
+        Err(e) => print(e)
+    }
+    print(time.mono_ns() - t1 >= 25000000)
+
+    // cancelling the parent reaches a running group
+    let p = root.child()
+    var pg: task.Group[i64] = task.group(p)
+    pg.spawn(|t: task.Token| -> Result[i64, String] {
+        t.wait(time.after_ms(10000))
+        t.check()?
+        Ok(0)
+    })
+    time.sleep_ms(10)
+    p.cancel()
+    print(err_of(pg.wait()))
+    // a group made under a cancelled parent: its children don't run
+    let ran = atomic.new(0)
+    var late: task.Group[i64] = task.group(p)
+    let rr = ran
+    late.spawn(|t: task.Token| -> Result[i64, String] {
+        rr.add(1, atomic.SeqCst)
+        Ok(1)
+    })
+    print(err_of(late.wait()))
+    print(ran.load(atomic.SeqCst))
+    ran.free()
+
+    // the pool: jobs, futures, a group on the pool
+    let pool = task.pool(4, 16)
+    print(pool.size())
+    var fs: List[task.Future[i64]] = List.new()
+    for i in 0..20 {
+        let k = i as i64
+        fs.push(pool.run(|| -> i64 { k * 10 }, time.never()).unwrap())
+    }
+    var sum: i64 = 0
+    for f in fs { sum += f.get(time.never()).unwrap() }
+    print(sum)
+    var pgr: task.Group[i64] = task.group(root)
+    for i in 0..10 {
+        let k = i as i64
+        pgr.spawn_on(pool, |t: task.Token| -> Result[i64, String] { Ok(k + 100) })
+    }
+    let pr = pgr.wait().unwrap()
+    print(pr[0] + pr[9])
+    // a future not ready by its deadline can be asked again
+    let slow = pool.run(|| -> i64 {
+        time.sleep_ms(40)
+        7
+    }, time.never()).unwrap()
+    print(slow.get(time.after_ms(1)).is_none())
+    print(slow.get(time.never()).unwrap())
+
+    // back-pressure: one worker busy, a queue of one, the third submit times out
+    let small = task.pool(1, 1)
+    let gate: chan.Channel[i64] = chan.bounded(1)
+    let gg = gate
+    let started: chan.Channel[i64] = chan.bounded(1)
+    let st = started
+    print(small.submit(|| {
+        st.try_send(1)
+        gg.recv(time.never())
+    }, time.never()).is_ok())
+    started.recv(time.never())
+    print(small.submit(|| {}, time.never()).is_ok())
+    let t2 = time.mono_ns()
+    print(err_of(small.submit(|| {}, time.after_ms(30))))
+    print(time.mono_ns() - t2 >= 25000000)
+    gate.try_send(1)
+    // shutdown finishes the queue, then refuses new jobs
+    let count = atomic.new(0)
+    let cc = count
+    small.submit(|| { cc.add(1, atomic.SeqCst) }, time.never())
+    small.shutdown()
+    print(count.load(atomic.SeqCst))
+    print(err_of(small.submit(|| {}, time.never())))
+    count.free()
+    pool.shutdown()
+    pool.shutdown()
+}

@@ -196,3 +196,24 @@ pub fn wait(pid: i32, nohang: bool) -> i64 uses io, fs, net, ffi {
 }
 pub fn kill(pid: i32, sig: i32) -> i64 uses io, fs, net, ffi { unsafe { ec_kill(pid, sig) } }
 pub fn getpid() -> i64 uses io, ffi { unsafe { ec_getpid() } }
+
+// one descriptor's readiness (core/ABI.md "Readiness")
+extern "c" fn ec_fd_wait(fd: i32, interest: i32, timeout_ms: i64) -> i64
+pub fn fd_wait(fd: i32, interest: i32, timeout_ms: i64) -> i64 uses io, ffi { unsafe { ec_fd_wait(fd, interest, timeout_ms) } }
+
+// atomic cells (core/ABI.md "Atomic cells"). No real capability: like a Mutex, a cell is
+// memory shared between threads, not the OS, so these take only `ffi` (which stays in core).
+extern "c" fn ec_atomic_new(v: i64) -> i64
+extern "c" fn ec_atomic_free(h: i64) -> i64
+extern "c" fn ec_atomic_load(h: i64, order: i32) -> i64
+extern "c" fn ec_atomic_store(h: i64, v: i64, order: i32) -> i64
+extern "c" fn ec_atomic_swap(h: i64, v: i64, order: i32) -> i64
+extern "c" fn ec_atomic_add(h: i64, n: i64, order: i32) -> i64
+extern "c" fn ec_atomic_cas(h: i64, expected: i64, desired: i64, order: i32) -> i64
+pub fn atomic_new(v: i64) -> i64 uses ffi { unsafe { ec_atomic_new(v) } }
+pub fn atomic_free(h: i64) -> i64 uses ffi { unsafe { ec_atomic_free(h) } }
+pub fn atomic_load(h: i64, order: i32) -> i64 uses ffi { unsafe { ec_atomic_load(h, order) } }
+pub fn atomic_store(h: i64, v: i64, order: i32) -> i64 uses ffi { unsafe { ec_atomic_store(h, v, order) } }
+pub fn atomic_swap(h: i64, v: i64, order: i32) -> i64 uses ffi { unsafe { ec_atomic_swap(h, v, order) } }
+pub fn atomic_add(h: i64, n: i64, order: i32) -> i64 uses ffi { unsafe { ec_atomic_add(h, n, order) } }
+pub fn atomic_cas(h: i64, expected: i64, desired: i64, order: i32) -> i64 uses ffi { unsafe { ec_atomic_cas(h, expected, desired, order) } }

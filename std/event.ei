@@ -1,0 +1,183 @@
+// std/event: an event loop over core's poller and waker (core/ABI.md "Readiness"), with
+// timers in a binary heap (docs/runtime.md "Event loop and timers").
+//
+// A Loop is owned by one thread, which calls `poll` in a loop. Each round waits until a
+// watched descriptor is ready, the earliest timer is due, another thread wakes the loop, or
+// the round's deadline passes, whichever is first, and returns what happened: descriptor
+// events (the poller's, by token), then the timers that are due, earliest first, then
+// `Woken` if the waker was used. A round is cancel-safe: it never consumes an event it
+// doesn't return (descriptors are level-triggered unless watched with poll.EDGE; a due timer
+// stays due until a round returns it).
+//
+// Timers have millisecond resolution (the poller's timeout): one fires at its deadline or up
+// to 1 ms after it, never before. Cancelling is O(1) (a timer is skipped when it reaches the
+// top of the heap); adding and firing are O(log n).
+//
+// This is the reactor the stackless task scheduler of decision C4 will park tasks on; it is
+// usable on its own today for single-threaded servers.
+
+import "poll.ei"
+import "time.ei"
+import "fd.ei"
+
+/// What a round of `poll` returns.
+/// - `Ready(token, ev)`: a watched descriptor is ready (`ev` says how).
+/// - `Timer(id)`: the timer `id` is due (it fires once).
+/// - `Woken`: another thread called `wake` (several wakes before a round are one).
+pub type Event = | Ready(token: i64, ev: poll.Event) | Timer(id: i64) | Woken
+
+type Entry = { at: i64, id: i64 }
+
+/// An event loop: a poller, a waker, and timers.
+pub type Loop = { p: i32, w: poll.Waker, heap: List[Entry], live: Map[i64, bool], next_id: i64 }
+
+/// The token of the loop's own waker (descriptor tokens are 0 up to, not including, this).
+const WAKE: i64 = 9223372036854775807
+
+pub fn new() -> Result[Loop, String] uses io {
+    let p = poll.create()?
+    match poll.waker() {
+        Ok(w) => {
+            match poll.add(p, w.r, poll.READ, WAKE) {
+                Ok(b) => {}
+                Err(e) => {
+                    poll.close_waker(w)
+                    fd.close(p)
+                    return Err(e)
+                }
+            }
+            Ok(Loop(p, w, List.new(), Map.new(), 1))
+        }
+        Err(e) => {
+            fd.close(p)
+            Err(e)
+        }
+    }
+}
+
+fn less(a: Entry, b: Entry) -> bool { a.at < b.at || (a.at == b.at && a.id < b.id) }
+
+impl Loop {
+    /// Watch `f` for `interest` (poll.READ | poll.WRITE | poll.EDGE | poll.ONESHOT); its
+    /// events carry `token` (>= 0).
+    fn watch(self, f: i32, interest: i32, token: i64) -> Result[bool, String] uses io {
+        if token < 0 || token == WAKE { return Err(String.from("event: a token is 0 or more, below the largest i64")) }
+        poll.add(self.p, f, interest, token)
+    }
+
+    /// Change what `f` is watched for (and re-arm a one-shot registration).
+    fn rewatch(self, f: i32, interest: i32, token: i64) -> Result[bool, String] uses io {
+        if token < 0 || token == WAKE { return Err(String.from("event: a token is 0 or more, below the largest i64")) }
+        poll.modify(self.p, f, interest, token)
+    }
+
+    /// Stop watching `f` (before closing it).
+    fn unwatch(self, f: i32) -> Result[bool, String] uses io { poll.remove(self.p, f) }
+
+    /// A timer due at `dl`: its id (`Timer(id)` when it fires). A timer at `never()` never
+    /// fires (but counts until cancelled).
+    fn timer_at(inout self, dl: time.Deadline) -> i64 {
+        let id = self.next_id
+        self.next_id += 1
+        self.live.insert(id, true)
+        self.heap.push(Entry(dl.mono_ns(), id))
+        var i = self.heap.len() - 1
+        while i > 0 {
+            let up = (i - 1) / 2
+            if !less(self.heap[i], self.heap[up]) { break }
+            let t = self.heap[i]
+            self.heap[i] = self.heap[up]
+            self.heap[up] = t
+            i = up
+        }
+        id
+    }
+
+    /// A timer due `d` from now.
+    fn timer_after(inout self, d: time.Duration) -> i64 uses clock { self.timer_at(time.after(d)) }
+
+    /// Cancels timer `id`: true if it was pending (it will not fire), false if it had fired
+    /// or was cancelled already.
+    fn cancel_timer(inout self, id: i64) -> bool {
+        if !self.live.contains(id) { return false }
+        self.live.remove(id)
+        true
+    }
+
+    /// Timers that are pending.
+    fn timers(self) -> usize { self.live.len() }
+
+    /// When the earliest pending timer is due (`never()` if none).
+    fn next_timer(inout self) -> time.Deadline {
+        self.drop_dead()
+        if self.heap.len() == 0 { return time.never() }
+        time.at_mono_ns(self.heap[0].at)
+    }
+
+    // the heap's top, without the cancelled timers above it
+    fn drop_dead(inout self) {
+        while self.heap.len() > 0 && !self.live.contains(self.heap[0].id) { self.pop_top() }
+    }
+
+    fn pop_top(inout self) {
+        let n = self.heap.len()
+        self.heap[0] = self.heap[n - 1]
+        self.heap.pop()
+        let m = n - 1
+        var i: usize = 0
+        while true {
+            let l = 2 * i + 1
+            let r = l + 1
+            var s = i
+            if l < m && less(self.heap[l], self.heap[s]) { s = l }
+            if r < m && less(self.heap[r], self.heap[s]) { s = r }
+            if s == i { break }
+            let t = self.heap[i]
+            self.heap[i] = self.heap[s]
+            self.heap[s] = t
+            i = s
+        }
+    }
+
+    /// The loop's waker, for other threads: `poll.wake(w)` makes the loop's current or next
+    /// round return `Woken`. Valid until `close`.
+    fn waker(self) -> poll.Waker { self.w }
+
+    /// Wake the loop (from any thread, through a copy of the Loop or its `waker`).
+    fn wake(self) -> Result[bool, String] uses io { poll.wake(self.w) }
+
+    /// One round (see the module comment): waits until something happens or `dl` passes;
+    /// empty when `dl` passed with nothing to report.
+    fn poll(inout self, dl: time.Deadline) -> Result[List[Event], String] uses io, clock {
+        var out: List[Event] = List.new()
+        var woken = false
+        let until = dl.earlier(self.next_timer())
+        let evs = poll.wait(self.p, 256, until.timeout_ms())?
+        for e in evs {
+            if e.token == WAKE {
+                woken = true
+            } else {
+                out.push(Ready(e.token, e))
+            }
+        }
+        if woken { poll.drain(self.w) }
+        // the timers that are due, earliest first
+        let now = time.mono_ns()
+        self.drop_dead()
+        while self.heap.len() > 0 && self.heap[0].at <= now {
+            let id = self.heap[0].id
+            self.live.remove(id)
+            self.pop_top()
+            out.push(Timer(id))
+            self.drop_dead()
+        }
+        if woken { out.push(Woken) }
+        Ok(out)
+    }
+
+    /// Closes the poller and the waker (descriptors still watched are not closed).
+    fn close(self) uses io {
+        poll.close_waker(self.w)
+        fd.close(self.p)
+    }
+}
