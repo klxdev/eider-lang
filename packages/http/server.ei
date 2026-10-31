@@ -230,6 +230,11 @@ fn date_of(cfg: Config) -> List[u8] uses clock {
     http.imf_date(time.unix_seconds())
 }
 
+/// Whether the stop signal has come (its waker is readable, and stays so), without waiting.
+fn stop_signalled(stop: poll.Waker) -> bool uses io, clock {
+    fd.wait_ready(stop.r, fd.READY_READ, time.now()).unwrap_or(false)
+}
+
 /// What a wait on a connection ended with.
 type Wake = | Readable | TimedOut | Stopped | Failed
 
@@ -380,6 +385,11 @@ fn serve_conn(c: i32, peer: List[u8], h: fn(http.Request) -> http.Response, cfg:
         let mut req = parse.to_request(m)
         req.peer = peer
         let head_only = is_head(req.method)
+        // `stopping` is what the last wait saw; the stop may have come after it, while the
+        // rest of this request was read (a wait that saw only data, then a read that got the
+        // bytes sent after the stop too), so the signal is checked again here: a request in
+        // flight at the stop is answered with `Connection: close`
+        if !stopping && stop_signalled(stop) { stopping = true }
         let keep = req.keep_alive && served < cfg.max_requests && !stopping && waiting(sh) == 0
         let resp = h(req)
         let out = match http.write_response(resp, head_only, keep, date_of(cfg)) {
