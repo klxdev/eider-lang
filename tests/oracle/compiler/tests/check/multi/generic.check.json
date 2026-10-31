@@ -1,0 +1,2 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/multi/generic.ei","line":4,"col":17},"message":"literal 300 doesn't fit in u8 (max 255)"}
+{"error":"E0401","span":{"file":"compiler/tests/check/multi/generic.ei","line":8,"col":22},"message":"expected bool, found i32"}

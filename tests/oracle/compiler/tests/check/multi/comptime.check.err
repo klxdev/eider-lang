@@ -1,0 +1,12 @@
+error[E0501]: 200 + 100 = 300 doesn't fit in u8
+  --> compiler/tests/check/multi/comptime.ei:3:30
+  |
+3 | const BAD: u8 = comptime 200 + 100
+  |                              ^
+  help: use the wrapping operator `+%` if overflow is intended
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/comptime.ei:10:19
+   |
+10 |     let y: bool = GOOD
+   |                   ^
+error: 2 errors

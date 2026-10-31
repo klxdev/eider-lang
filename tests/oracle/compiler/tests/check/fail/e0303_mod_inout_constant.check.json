@@ -1,1 +1,2 @@
 {"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_mod_inout_constant.ei","line":4,"col":23},"message":"cannot borrow as inout constant `shapes.ORIGIN_X`"}
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0303_mod_inout_constant.ei","line":4,"col":23},"message":"expected shapes.Point, found i32"}

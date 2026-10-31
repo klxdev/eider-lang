@@ -1,0 +1,26 @@
+error[E0107]: `Pair` is already defined
+  --> compiler/tests/check/multi/items.ei:5:6
+  |
+5 | type Pair = { c: bool }
+  |      ^
+error[E0111]: unknown type `Missing`
+  --> compiler/tests/check/multi/items.ei:4:26
+  |
+4 | type Pair = { a: i32, b: Missing }
+  |                          ^
+error[E0111]: unknown type `Nowhere`
+  --> compiler/tests/check/multi/items.ei:7:24
+  |
+7 | fn sum(p: Pair, extra: Nowhere) -> i32 { p.a + p.b + extra }
+  |                        ^
+error[E0401]: expected str, found i32
+  --> compiler/tests/check/multi/items.ei:15:18
+   |
+15 |     let s: str = 7
+   |                  ^
+error[E0113]: type `Pair` has no field `c`
+  --> compiler/tests/check/multi/items.ei:9:30
+  |
+9 | fn first(p: Pair) -> i32 { p.c }
+  |                              ^
+error: 5 errors

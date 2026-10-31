@@ -3,3 +3,4 @@ error[E0806]: return type P isn't supported for WebAssembly exports (integers, b
   |
 3 | export fn origin(n: i32) -> P { return P(n, n) }
   |           ^
+error: 1 error

@@ -1,1 +1,2 @@
 {"error":"E0603","span":{"file":"compiler/tests/check/fail/e0603_bound_on_fn.ei","line":2,"col":6},"message":"unknown trait `Show`"}
+{"error":"E0603","span":{"file":"compiler/tests/check/fail/e0603_bound_on_fn.ei","line":2,"col":6},"message":"unknown trait `Eq`"}

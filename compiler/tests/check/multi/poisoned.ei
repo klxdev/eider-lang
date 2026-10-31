@@ -1,0 +1,28 @@
+// An expression whose checking failed has the error type: every later use of it is
+// accepted silently (operators, fields, methods, calls, conditions, loops, matches), while
+// real errors after it in the same body are still reported.
+type P = { x: i32, y: i32 }
+
+fn takes(p: P, n: i32) -> i32 { p.x + n }
+
+fn main() uses io {
+    let v = no_such_value
+    let w = v + 1
+    let f = v.x.y
+    let m = v.len()
+    let r = takes(v, w)
+    if v { print(1) }
+    while v && w > 2 { print(2) }
+    for i in v { print(i) }
+    for j in 0..v { print(j) }
+    match v {
+        Some(z) => print(z)
+        _ => {}
+    }
+    let (a, b) = v
+    print(a + b)
+    let q: P = v
+    print(q.x)
+    let bad: bool = 5
+    print(takes(P(1, 2), true))
+}

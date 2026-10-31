@@ -1,0 +1,5 @@
+{"error":"E0110","span":{"file":"compiler/tests/check/multi/unknown_names.ei","line":17,"col":5},"message":"unknown name `gone`"}
+{"error":"E0110","span":{"file":"compiler/tests/check/multi/unknown_names.ei","line":10,"col":13},"message":"unknown name `missing`"}
+{"error":"E0112","span":{"file":"compiler/tests/check/multi/unknown_names.ei","line":11,"col":5},"message":"unknown function `undefined_fn`"}
+{"error":"E0110","span":{"file":"compiler/tests/check/multi/unknown_names.ei","line":11,"col":32},"message":"unknown name `gone`"}
+{"error":"E0110","span":{"file":"compiler/tests/check/multi/unknown_names.ei","line":4,"col":13},"message":"unknown name `missing`"}

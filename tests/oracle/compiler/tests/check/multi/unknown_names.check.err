@@ -1,0 +1,26 @@
+error[E0110]: unknown name `gone`
+  --> compiler/tests/check/multi/unknown_names.ei:17:5
+   |
+17 |     gone = 3
+   |     ^
+error[E0110]: unknown name `missing`
+  --> compiler/tests/check/multi/unknown_names.ei:10:13
+   |
+10 |     let t = missing
+   |             ^
+error[E0112]: unknown function `undefined_fn`
+  --> compiler/tests/check/multi/unknown_names.ei:11:5
+   |
+11 |     undefined_fn(t, missing) + gone
+   |     ^
+error[E0110]: unknown name `gone`
+  --> compiler/tests/check/multi/unknown_names.ei:11:32
+   |
+11 |     undefined_fn(t, missing) + gone
+   |                                ^
+error[E0110]: unknown name `missing`
+  --> compiler/tests/check/multi/unknown_names.ei:4:13
+  |
+4 |     let x = missing + 1
+  |             ^
+error: 5 errors

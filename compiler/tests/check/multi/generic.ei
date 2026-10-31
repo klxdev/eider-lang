@@ -1,0 +1,15 @@
+// An error in a generic function's body is reported for its first instance only, not
+// again for each instance; another function's errors are still reported.
+fn wrap[T](x: T) -> T {
+    let n: u8 = 300
+    x
+}
+
+fn other() -> bool { 1 }
+
+fn main() uses io {
+    let a = wrap(1)
+    let b = wrap(true)
+    let c = wrap("s")
+    print(other())
+}

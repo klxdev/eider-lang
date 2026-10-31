@@ -1,1 +1,2 @@
 {"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_order_generic_vs_concrete.ei","line":2,"col":34},"message":"literal 300 doesn't fit in u8 (max 255)"}
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_order_generic_vs_concrete.ei","line":4,"col":22},"message":"literal 302 doesn't fit in u8 (max 255)"}

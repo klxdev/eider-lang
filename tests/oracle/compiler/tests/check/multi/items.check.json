@@ -1,0 +1,5 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/multi/items.ei","line":5,"col":6},"message":"`Pair` is already defined"}
+{"error":"E0111","span":{"file":"compiler/tests/check/multi/items.ei","line":4,"col":26},"message":"unknown type `Missing`"}
+{"error":"E0111","span":{"file":"compiler/tests/check/multi/items.ei","line":7,"col":24},"message":"unknown type `Nowhere`"}
+{"error":"E0401","span":{"file":"compiler/tests/check/multi/items.ei","line":15,"col":18},"message":"expected str, found i32"}
+{"error":"E0113","span":{"file":"compiler/tests/check/multi/items.ei","line":9,"col":30},"message":"type `Pair` has no field `c`"}

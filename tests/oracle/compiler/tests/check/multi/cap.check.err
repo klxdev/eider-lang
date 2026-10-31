@@ -1,0 +1,17 @@
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap.ei:5:19
+  |
+5 |     let a: bool = 1
+  |                   ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap.ei:6:19
+  |
+6 |     let b: bool = 2
+  |                   ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap.ei:7:19
+  |
+7 |     let c: bool = 3
+  |                   ^
+error: 5 errors
+note: only the first 3 of 5 errors are shown; `--max-errors N` shows N (0: all)

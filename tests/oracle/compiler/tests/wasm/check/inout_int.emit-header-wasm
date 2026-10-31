@@ -3,3 +3,4 @@ error[E0803]: `n` is `inout`; export functions can't take `inout` parameters
   |
 2 | export fn bump(inout n: i32) -> i32 { return n }
   |                      ^
+error: 1 error

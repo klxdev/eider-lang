@@ -1,0 +1,502 @@
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:3:20
+  |
+3 |     let v0: bool = 0
+  |                    ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:4:20
+  |
+4 |     let v1: bool = 1
+  |                    ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:5:20
+  |
+5 |     let v2: bool = 2
+  |                    ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:6:20
+  |
+6 |     let v3: bool = 3
+  |                    ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:7:20
+  |
+7 |     let v4: bool = 4
+  |                    ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:8:20
+  |
+8 |     let v5: bool = 5
+  |                    ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:9:20
+  |
+9 |     let v6: bool = 6
+  |                    ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:10:20
+   |
+10 |     let v7: bool = 7
+   |                    ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:11:20
+   |
+11 |     let v8: bool = 8
+   |                    ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:12:20
+   |
+12 |     let v9: bool = 9
+   |                    ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:13:21
+   |
+13 |     let v10: bool = 10
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:14:21
+   |
+14 |     let v11: bool = 11
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:15:21
+   |
+15 |     let v12: bool = 12
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:16:21
+   |
+16 |     let v13: bool = 13
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:17:21
+   |
+17 |     let v14: bool = 14
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:18:21
+   |
+18 |     let v15: bool = 15
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:19:21
+   |
+19 |     let v16: bool = 16
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:20:21
+   |
+20 |     let v17: bool = 17
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:21:21
+   |
+21 |     let v18: bool = 18
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:22:21
+   |
+22 |     let v19: bool = 19
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:23:21
+   |
+23 |     let v20: bool = 20
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:24:21
+   |
+24 |     let v21: bool = 21
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:25:21
+   |
+25 |     let v22: bool = 22
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:26:21
+   |
+26 |     let v23: bool = 23
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:27:21
+   |
+27 |     let v24: bool = 24
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:28:21
+   |
+28 |     let v25: bool = 25
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:29:21
+   |
+29 |     let v26: bool = 26
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:30:21
+   |
+30 |     let v27: bool = 27
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:31:21
+   |
+31 |     let v28: bool = 28
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:32:21
+   |
+32 |     let v29: bool = 29
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:33:21
+   |
+33 |     let v30: bool = 30
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:34:21
+   |
+34 |     let v31: bool = 31
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:35:21
+   |
+35 |     let v32: bool = 32
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:36:21
+   |
+36 |     let v33: bool = 33
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:37:21
+   |
+37 |     let v34: bool = 34
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:38:21
+   |
+38 |     let v35: bool = 35
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:39:21
+   |
+39 |     let v36: bool = 36
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:40:21
+   |
+40 |     let v37: bool = 37
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:41:21
+   |
+41 |     let v38: bool = 38
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:42:21
+   |
+42 |     let v39: bool = 39
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:43:21
+   |
+43 |     let v40: bool = 40
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:44:21
+   |
+44 |     let v41: bool = 41
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:45:21
+   |
+45 |     let v42: bool = 42
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:46:21
+   |
+46 |     let v43: bool = 43
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:47:21
+   |
+47 |     let v44: bool = 44
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:48:21
+   |
+48 |     let v45: bool = 45
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:49:21
+   |
+49 |     let v46: bool = 46
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:50:21
+   |
+50 |     let v47: bool = 47
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:51:21
+   |
+51 |     let v48: bool = 48
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:52:21
+   |
+52 |     let v49: bool = 49
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:53:21
+   |
+53 |     let v50: bool = 50
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:54:21
+   |
+54 |     let v51: bool = 51
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:55:21
+   |
+55 |     let v52: bool = 52
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:56:21
+   |
+56 |     let v53: bool = 53
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:57:21
+   |
+57 |     let v54: bool = 54
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:58:21
+   |
+58 |     let v55: bool = 55
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:59:21
+   |
+59 |     let v56: bool = 56
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:60:21
+   |
+60 |     let v57: bool = 57
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:61:21
+   |
+61 |     let v58: bool = 58
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:62:21
+   |
+62 |     let v59: bool = 59
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:63:21
+   |
+63 |     let v60: bool = 60
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:64:21
+   |
+64 |     let v61: bool = 61
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:65:21
+   |
+65 |     let v62: bool = 62
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:66:21
+   |
+66 |     let v63: bool = 63
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:67:21
+   |
+67 |     let v64: bool = 64
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:68:21
+   |
+68 |     let v65: bool = 65
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:69:21
+   |
+69 |     let v66: bool = 66
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:70:21
+   |
+70 |     let v67: bool = 67
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:71:21
+   |
+71 |     let v68: bool = 68
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:72:21
+   |
+72 |     let v69: bool = 69
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:73:21
+   |
+73 |     let v70: bool = 70
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:74:21
+   |
+74 |     let v71: bool = 71
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:75:21
+   |
+75 |     let v72: bool = 72
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:76:21
+   |
+76 |     let v73: bool = 73
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:77:21
+   |
+77 |     let v74: bool = 74
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:78:21
+   |
+78 |     let v75: bool = 75
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:79:21
+   |
+79 |     let v76: bool = 76
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:80:21
+   |
+80 |     let v77: bool = 77
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:81:21
+   |
+81 |     let v78: bool = 78
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:82:21
+   |
+82 |     let v79: bool = 79
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:83:21
+   |
+83 |     let v80: bool = 80
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:84:21
+   |
+84 |     let v81: bool = 81
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:85:21
+   |
+85 |     let v82: bool = 82
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:86:21
+   |
+86 |     let v83: bool = 83
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:87:21
+   |
+87 |     let v84: bool = 84
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:88:21
+   |
+88 |     let v85: bool = 85
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:89:21
+   |
+89 |     let v86: bool = 86
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:90:21
+   |
+90 |     let v87: bool = 87
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:91:21
+   |
+91 |     let v88: bool = 88
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:92:21
+   |
+92 |     let v89: bool = 89
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:93:21
+   |
+93 |     let v90: bool = 90
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:94:21
+   |
+94 |     let v91: bool = 91
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:95:21
+   |
+95 |     let v92: bool = 92
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:96:21
+   |
+96 |     let v93: bool = 93
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:97:21
+   |
+97 |     let v94: bool = 94
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:98:21
+   |
+98 |     let v95: bool = 95
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:99:21
+   |
+99 |     let v96: bool = 96
+   |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:100:21
+    |
+100 |     let v97: bool = 97
+    |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:101:21
+    |
+101 |     let v98: bool = 98
+    |                     ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/cap_default.ei:102:21
+    |
+102 |     let v99: bool = 99
+    |                     ^
+error: 105 errors
+note: only the first 100 of 105 errors are shown; `--max-errors N` shows N (0: all)

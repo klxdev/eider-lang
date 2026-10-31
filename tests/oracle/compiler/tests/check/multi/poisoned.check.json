@@ -1,0 +1,3 @@
+{"error":"E0110","span":{"file":"compiler/tests/check/multi/poisoned.ei","line":9,"col":13},"message":"unknown name `no_such_value`"}
+{"error":"E0401","span":{"file":"compiler/tests/check/multi/poisoned.ei","line":26,"col":21},"message":"expected bool, found i32"}
+{"error":"E0401","span":{"file":"compiler/tests/check/multi/poisoned.ei","line":27,"col":26},"message":"expected i32, found bool"}

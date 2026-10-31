@@ -1,0 +1,19 @@
+// An unknown name is reported once per function however often it is used, and again in
+// another function; values computed from it don't cascade.
+fn a() -> i32 {
+    let x = missing + 1
+    let y = missing * 2
+    missing + x + y
+}
+
+fn b() -> i32 {
+    let t = missing
+    undefined_fn(t, missing) + gone
+}
+
+fn main() uses io {
+    print(a())
+    print(b())
+    gone = 3
+    print(gone)
+}

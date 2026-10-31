@@ -3,3 +3,4 @@ error[E0806]: parameter `p` has type P; WebAssembly exports take only integers a
   |
 3 | export fn sum(p: P) -> i32 { return p.x + p.y }
   |               ^
+error: 1 error

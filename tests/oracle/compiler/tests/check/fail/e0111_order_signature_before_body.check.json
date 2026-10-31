@@ -1,1 +1,2 @@
 {"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_order_signature_before_body.ei","line":5,"col":9},"message":"unknown type `Nope`"}
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0111_order_signature_before_body.ei","line":3,"col":18},"message":"expected i32, found bool"}

@@ -1,1 +1,2 @@
 {"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_print_before_arity.ei","line":3,"col":5},"message":"call to `print` requires capability `io`","fix":{"at":{"line":2,"col":10},"delete":0,"insert":" uses io"}}
+{"error":"E0405","span":{"file":"compiler/tests/check/fail/e0201_print_before_arity.ei","line":3,"col":5},"message":"`print` takes exactly one argument"}
