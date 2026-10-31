@@ -77,7 +77,7 @@ impl Loop {
     /// A timer due at `dl`: its id (`Timer(id)` when it fires). A timer at `never()` never
     /// fires (but counts until cancelled).
     fn timer_at(inout self, dl: time.Deadline) -> i64 {
-        let id = self.next_id
+        let id = self.next_id.copy()
         self.next_id += 1
         self.live.insert(id, true)
         self.heap.push(Entry(dl.mono_ns(), id))
@@ -85,7 +85,7 @@ impl Loop {
         while i > 0 {
             let up = (i - 1) / 2
             if !less(self.heap[i], self.heap[up]) { break }
-            let t = self.heap[i]
+            let t = self.heap[i].copy()
             self.heap[i] = self.heap[up]
             self.heap[up] = t
             i = up
@@ -132,7 +132,7 @@ impl Loop {
             if l < m && less(self.heap[l], self.heap[s]) { s = l }
             if r < m && less(self.heap[r], self.heap[s]) { s = r }
             if s == i { break }
-            let t = self.heap[i]
+            let t = self.heap[i].copy()
             self.heap[i] = self.heap[s]
             self.heap[s] = t
             i = s
@@ -165,7 +165,7 @@ impl Loop {
         let now = time.mono_ns()
         self.drop_dead()
         while self.heap.len() > 0 && self.heap[0].at <= now {
-            let id = self.heap[0].id
+            let id = self.heap[0].id.copy()
             self.live.remove(id)
             self.pop_top()
             out.push(Timer(id))

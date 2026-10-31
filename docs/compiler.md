@@ -1749,9 +1749,9 @@ compiler, built by this one, emits byte-identical C for compiler/ (its meaning i
 unchanged). compiler/tests/migrate/var.ei has the hand-checked expected rewrite (var.out).
 
 **Existing code under the new meaning.** A `let` of a place whose place is written while the
-binding is still used later now sees the write; under the old meaning it kept its copy. An
-audit build of the checker (not committed: it reported every write to a place that overlaps
-a live reference, whether or not it invalidates) found every such site in the repository:
+binding is still used later now sees the write; under the old meaning it kept its copy. The
+audit (`eiderc audit-refs`, below; first a throwaway build of the same check) found every
+such site in the repository:
 in compiler/ (114 bindings: `let start = l` before `step(inout l)`, `let d = c.t.defs[i]`
 before `f(inout c, d)`, ...), std/fs.ei, packages (json, toml, pkg, fuzz) and the tests
 (compiler/tests/run/{closures2,cow,inout,lists,maps,owned,text_cow,traits_*}.ei,
@@ -1761,7 +1761,25 @@ both compilers; the sorts in compiler/tests/run/traits_{custom,derived,generic}.
 `let t = xs[j]` swap is generic, got the `+ Copy` bound E0605 asks for, and
 compiler/tests/run/traits_drop.ei's "written while shared" cases use `var` (their point is
 the implicit share, which `.copy()` of a record with its own Drop doesn't make). The recorded
-outputs are unchanged. After that the audit build reports only the new tests.
+outputs are unchanged. After that the audit reports only the new tests.
+
+**Audit: `eiderc audit-refs <file> [--json]`.** For code written when `let` copied (other
+branches, old packages): every write that changes what a live `let` or pattern reference
+sees without invalidating it (an invalidating one is E0308), where the binding used to keep
+its own copy and now sees the change. A write overlaps a reference when they have the same
+root and one's path is a prefix of the other's (indices compared as equal); `let mut` and
+`mut` aliases are left out (new code means the alias). Each finding is a `note[audit]`
+(stderr, rendered like a diagnostic, then `audit-refs: N write(s) change what a reference
+sees`) or, with `--json`, a JSON object per line on stdout like a diagnostic's, with
+`"audit":"reference"` in place of `"error"` and the machine-applicable `.copy()` fix at
+the binding (none in a generic body or for a type without Copy). The program's errors
+follow (exit 1); findings alone exit 0. Applying every fix gives the old meaning back, under
+both the seed and the new compiler. Test: compiler/tests/audit/refs.ei (a swap, a counter, a
+record snapshot, a tuple pattern; a `.copy()` and a binding not used after the write are not
+reported), against its hand-checked refs.out. Run on the whole repository after the merge of
+layer/runtime (std/{time,atomic,sync,chan,task,event}.ei, std/fd, std/poll, tests/std,
+tests/core, examples/ and the rest): 4 sites, all in std/event.ei (the timer heap's two
+swaps and two ids read before `self` changes), which got `.copy()`; nothing else.
 
 **Codes.** New: E0307 (a mutable alias of a read-only place), E0308 (the protection rule).
 Changed: none of the existing messages; E0301 gains the two reference cases above.

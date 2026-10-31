@@ -61,6 +61,8 @@
 #             migrate-var.sh) on a copy of core, std, packages and compiler check, pass the
 #             package tests, and (`var` -> `let mut`) give a compiler that emits the same C;
 #             `eiderc migrate-var` of compiler/tests/migrate/*.ei equals the hand-checked .out.
+#   audit-refs: `eiderc audit-refs --json` of compiler/tests/audit/*.ei equals the hand-checked
+#             .out (the writes that change what a `let` reference sees).
 #   packages: compiler/tests/pkgs, packages with eider.toml and eider.lock (two packages
 #             with a util.ei, a dependency chain, vendored and store dependencies, the
 #             package-import errors E0808/E0809/E0810, capability grants and E0204, `eiderc
@@ -534,6 +536,11 @@ for f in packages/*/tests/*.ei; do
   cmp -s $tmp/mo "${f%.ei}.out" || { echo "FAIL migration: run $f"; diff "${f%.ei}.out" $tmp/mo | head -10; mig_ok=0; }
 done
 if [ $mig_ok = 1 ]; then echo "ok   migration: $(wc -l <$tmp/mig) files rewritten to package imports, $(wc -l <$tmp/migc) without \`uses ffi\` and $(grep -c '^migrated' $tmp/migv) without \`var\` check and pass their package tests; the migrated compiler emits the same C"; else fail=1; fi
+# audit-refs: `eiderc audit-refs --json` of compiler/tests/audit/*.ei gives the hand-checked .out
+for f in compiler/tests/audit/*.ei; do
+  $new audit-refs --json "$f" >$tmp/ar 2>&1
+  if cmp -s $tmp/ar "${f%.ei}.out"; then echo "ok   audit-refs $f"; else echo "FAIL audit-refs $f"; diff "${f%.ei}.out" $tmp/ar | head -10; fail=1; fi
+done
 # migrate-var: `eiderc migrate-var` of compiler/tests/migrate/*.ei gives the hand-checked .out,
 # which checks
 for f in compiler/tests/migrate/*.ei; do

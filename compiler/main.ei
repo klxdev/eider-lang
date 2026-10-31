@@ -6,7 +6,9 @@
 // the AST (dump.ei), `ir` the typed IR (ir.ei); `build`, `run` and `test` go through
 // driver.ei, `test --compile-fail` through suite.ei, `caps` through resolve.caps_json ("C8.5"),
 // `migrate-var` through check.var_fixes ("C8.6": the file with every `var` it can rewrite as
-// `let mut`, on stdout; the file must check, apart from having no `main`).
+// `let mut`, on stdout; the file must check, apart from having no `main`), `audit-refs`
+// through check.check_audit (every write that changes what a `let` or pattern reference
+// sees, which code written when `let` copied didn't mean; then the errors, if any).
 // `--lib` checks (and emits) the file as a library: no `main`, at least one `export fn`.
 // `-l <lib>` (repeatable) links a C library into build, run, test and build --lib.
 // `--wasm` checks (and emits) the file as a WebAssembly module (a library whose exports take
@@ -68,6 +70,8 @@ fn usage_text() -> List[u8] {
         "  eiderc ir <file.ei>                        dump the typed IR",
         "  eiderc caps <file.ei>                      each package's capability use, one JSON line per capability",
         "  eiderc migrate-var <file.ei>               print the file with its `var`s rewritten as `let mut` (deprecated `var`)",
+        "  eiderc audit-refs <file.ei> [--json]       every write that changes what a `let` reference sees (it was a copy",
+        "                                             before C8.6), with the `.copy()` that keeps the old meaning",
         "  eiderc ide <file.ei> [--overlay <path> <text>]  print the IDE analysis (ide.ei): symbols, refs, types;",
         "                                             --overlay (repeatable) reads <path> from the file <text>",
         "  eiderc help | --help | -h                  print this text",
@@ -112,7 +116,7 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] {
 }
 
 fn known_cmd(c: List[u8]) -> bool {
-    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var")
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "audit-refs")
 }
 
 fn parse_args() -> Args uses io {
@@ -335,6 +339,44 @@ fn migrate_var(a: Args, src: List[u8]) uses io, fs, net, clock {
     fail(first.diags, a, src)
 }
 
+/// `eiderc audit-refs`: one finding per line (`--json`: a JSON object per line, with "audit"
+/// in place of "error"; else rendered as notes), then (human output) how many there are.
+fn audit_report(hits: List[diag.Diag], a: Args, src: List[u8]) uses io, fs {
+    for d in hits {
+        if a.json {
+            let j = diag.json(d, a.file)
+            // {"error":"audit", ... -> {"audit":"reference", ...
+            var out = sys.lit("{\"audit\":\"reference\"")
+            bytes.append(inout out, bytes.slice(j, 16, j.len()))
+            io.outln(out)
+        } else {
+            // rendered like a diagnostic, as a note: `note[audit]: ...`
+            var d2 = d
+            d2.msg = diag.demangle(d.msg)
+            let elsewhere = d2.file.len() > 0 && !bytes.eq(d2.file, a.file)
+            var text: List[u8] = List.new()
+            if elsewhere {
+                let other: List[u8] = match fs.read(d2.file) {
+                    Ok(t) => t
+                    Err(_) => List.new()
+                }
+                text = diag.render(d2, d2.file, other)
+            } else {
+                text = diag.render(d2, a.file, src)
+            }
+            var out = sys.lit("note")
+            bytes.append(inout out, bytes.slice(text, 5, text.len()))
+            io.err(out)
+        }
+    }
+    if !a.json {
+        var m = sys.lit("audit-refs: ")
+        bytes.append(inout m, bytes.from_u64(hits.len() as u64))
+        bytes.append(inout m, sys.lit(" write(s) change what a reference sees"))
+        io.errln(m)
+    }
+}
+
 fn emit_migrated(src: List[u8], fixes: List[diag.Fix]) uses io {
     var out = src
     for f in fixes { out = diag.apply_fix(out, f) }
@@ -444,8 +486,14 @@ fn main() uses io, fs, net, clock {
     // `comptime` constants are evaluated between loading and checking, as tests/oracle expects
     let ev = consteval.eval_all(ld.p)
     for d in ev.diags { diags.push(d) }
-    let k = check.check_all(ev.p, a.lib, a.wasm)
+    let audit = is(a.cmd, "audit-refs")
+    let k = if audit { check.check_audit(ev.p) } else { check.check_all(ev.p, a.lib, a.wasm) }
     for d in k.diags { diags.push(d) }
+    if audit {
+        audit_report(check.audit_hits(k.c), a, src)
+        if diags.len() > 0 { fail(diags, a, src) }
+        return
+    }
     // nothing is lowered after an error
     if diags.len() > 0 { fail(diags, a, src) }
     let c = k.c

@@ -967,11 +967,14 @@ type VarSite = { m: u32, fixes: List[diag.Fix] }
 /// functions that have references, the stack of source positions writes are reported at
 /// (the innermost assignment or call being checked), the `var` rewrites, and whether the
 /// body being checked has a reference (so other bodies note no writes).
+/// With `audit` (`eiderc audit-refs`, "Audit" below), `hits` collects every write that
+/// changes what a live reference sees without invalidating it.
 type Refs = {
     refs: List[RefInfo], writes: List[WriteInfo], fns: Map[u32, bool], wpos: List[u64], vars: List[VarSite], any: bool,
+    audit: bool, hits: List[diag.Diag],
 }
 
-fn no_refs() -> Refs { Refs(List.new(), List.new(), Map.new(), List.new(), List.new(), false) }
+fn no_refs() -> Refs { Refs(List.new(), List.new(), Map.new(), List.new(), List.new(), false, false, List.new()) }
 
 fn ref_note(inout c: C, kind: u32, i: u32) { ir.emit(inout c.ir, ir.S_NOTE, 0, kind, i, 0, 0, 0) }
 
@@ -1294,7 +1297,8 @@ fn lv_loop(inout c: C, f: u32, body: u32, step: u32, after: List[u32], report: b
 
 /// E0308 when write w (of function f) invalidates a reference in `live` (the earliest one).
 fn check_write(inout c: C, f: u32, w: u32, live: List[u32], inout seen: List[u64], inout found: List[Found]) {
-    let wi = c.rf.writes[w as usize]
+    let wi = c.rf.writes[w as usize].copy()
+    if c.rf.audit { audit_write(inout c, f, wi, live) }
     var best = NONE
     for r in live {
         if (best == NONE || r < best) && invalidates(c, c.rf.refs[r as usize].place, wi.place) { best = r }
@@ -1327,6 +1331,75 @@ fn check_write(inout c: C, f: u32, w: u32, live: List[u32], inout seen: List[u64
     d.help = h
     d.fix = rf.fix
     found.push(Found(d, wi.m))
+}
+
+// ---- Audit (`eiderc audit-refs`, docs/compiler.md "C8.6")
+//
+// Code written when `let` copied a place means something else now wherever it writes the
+// place while the binding is still used: the binding sees the write. Invalidating writes are
+// E0308; the audit reports the others, each with the `.copy()` that restores the old meaning
+// (none in a generic body or for a type without Copy). It covers `let` and pattern
+// references (both were copies), not `let mut` / `mut` aliases (new code means the alias).
+
+/// Whether a write to place w changes what reference place r sees: same root, and one path
+/// a prefix of the other (any two indices count as equal).
+fn overlaps(c: C, r: u32, w: u32) -> bool {
+    if place_root(c, r) != place_root(c, w) { return false }
+    var rs: List[Step] = List.new()
+    var ws: List[Step] = List.new()
+    path(c, r, inout rs)
+    path(c, w, inout ws)
+    var i: usize = 0
+    while i < rs.len() && i < ws.len() {
+        if rs[i].kind != ws[i].kind || rs[i].a != ws[i].a { return false }
+        i += 1
+    }
+    true
+}
+
+fn audit_write(inout c: C, f: u32, wi: WriteInfo, live: List[u32]) {
+    for r in live {
+        let rf = c.rf.refs[r as usize]
+        if rf.mutable || !overlaps(c, rf.place, wi.place) || invalidates(c, rf.place, wi.place) { continue }
+        // (repeats, from the instances of a generic body, go in audit_hits)
+        let rn = kt(c, rf.key)
+        var msg = q2("this write changes what `", rn, "` sees (`", place_name(c, f, wi.place), "`): `")
+        bytes.append(inout msg, rn)
+        bytes.append(inout msg, s("` is a reference since C8.6, it used to be a copy (line "))
+        bytes.append(inout msg, num(rf.line as u64))
+        bytes.append(inout msg, s(")"))
+        var d = err("audit", wi.line, wi.col, msg)
+        d.help = s("bind a copy to keep the old meaning: `.copy()`")
+        d.fix = rf.fix
+        c.rf.hits.push(in_file(c, d, wi.m))
+    }
+}
+
+/// `check_all` with the audit on.
+pub fn check_audit(p: resolve.Program) -> Checked {
+    var c = new_checker(p, false)
+    c.rf.audit = true
+    finish(inout c)
+}
+
+/// The audit's findings, by file (the entry's first), line and column.
+pub fn audit_hits(c: C) -> List[diag.Diag] {
+    var out: List[diag.Diag] = List.new()
+    for d in c.rf.hits {
+        var i: usize = 0
+        while i < out.len() && before_or_same(out[i], d) { i += 1 }
+        var next: List[diag.Diag] = List.new()
+        for j in 0..i { next.push(out[j]) }
+        next.push(d)
+        for j in i..out.len() { next.push(out[j]) }
+        out = next
+    }
+    diag.dedup(out)
+}
+
+fn before_or_same(a: diag.Diag, b: diag.Diag) -> bool {
+    if !bytes.eq(a.file, b.file) { return a.file.len() == 0 || (b.file.len() > 0 && bytes.compare(a.file, b.file) < 0) }
+    a.line < b.line || (a.line == b.line && a.col <= b.col)
 }
 
 /// Remove the S_NOTEs from every block (they are the checker's own; lowering never sees them).
