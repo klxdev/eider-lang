@@ -5988,8 +5988,59 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     // a language trait's method, derived ("Operation traits")
     let li = lang_method(c, n.b)
     if li != NONE && li != TR_ITER && li != TR_DROP { return trait_method(inout c, n, pv, li) }
+    if is_word(c, n.b, "take") || is_word(c, n.b, "replace") { return take_replace(inout c, n, pv) }
     let fd = err("E0115", n.line, n.col, q2("type ", ts(c, pv.ty), " has no method `", nm(c, n.b), "`"))
     fail_call(inout c, fd, n.c, n.d)
+}
+
+/// `x.replace(v)` and `x.take()` (docs/compiler.md, "C8.15: take and replace"), for a type
+/// with no method of that name: the value moves out of the place x (no copy) and v, or for
+/// `take` the type's empty value (String, List, Map: empty; Option: None), moves in; the old
+/// value is the result. x must be writable, as for any write.
+fn take_replace(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
+    let ty = pv.ty
+    let label = label_of(c, ts(c, ty), n.b)
+    let is_take = is_word(c, n.b, "take")
+    let tk = types.kind(c.t, ty)
+    if is_take && tk != types.T_STRING && tk != types.T_LIST && tk != types.T_MAP && !is_option(c, ty) {
+        let fd = errh("E0115", n.line, n.col, q2("type ", ts(c, ty), " has no method `", nm(c, n.b), "`"), "`take()` leaves an empty value behind, so it is for String, List, Map and Option; `x.replace(v)` takes any value out and leaves v")
+        return fail_call(inout c, fd, n.c, n.d)
+    }
+    if pv.op != NONE {
+        let fd = errh("E0303", n.line, n.col, q("`", label, "` needs a place to move the value out of"), "call it on a variable, a field or an element")
+        return fail_call(inout c, fd, n.c, n.d)
+    }
+    assignable_or_record(inout c, n.a, "modify")
+    let mut newv: u32 = 0
+    if is_take {
+        eval_args(inout c, n, List.new(), label)?
+        if tk == types.T_STRING {
+            let mut sargs: List[u32] = List.new()
+            sargs.push(ir.op_str(inout c.ir, List.new()))
+            newv = builtin_op(inout c, ir.B_STR_FROM, sargs, ty, n.line)
+        } else if tk == types.T_LIST {
+            newv = builtin_op(inout c, ir.B_LIST_NEW, List.new(), ty, n.line)
+        } else if tk == types.T_MAP {
+            newv = builtin_op(inout c, ir.B_MAP_NEW, List.new(), ty, n.line)
+        } else {
+            let st = ir.list(inout c.ir, List.new())
+            let ni = variant_index(c, ty, c.w.none)
+            newv = emit_val(inout c, ir.S_VARIANT, ni, st, 0, ty, ty, n.line)
+        }
+    } else {
+        let mut tys: List[u32] = List.new()
+        tys.push(ty)
+        let vs = eval_args(inout c, n, tys, label)?
+        newv = take(inout c, vs[0], n.line)
+    }
+    let old = emit_val(inout c, ir.S_MOVE, pv.place, 0, 0, ty, ty, n.line)
+    emit(inout c, ir.S_STORE, 0, pv.place, newv, 0, ty, n.line)
+    Ok(v_of(ty, old))
+}
+
+fn is_option(c: C, ty: u32) -> bool {
+    if types.kind(c.t, ty) != types.T_ENUM { return false }
+    c.t.defs[types.def_of(c.t, ty).tmpl as usize].key == resolve.key(0, c.w.option)
 }
 
 /// `x.copy()`, `x.eq(y)`, `x.compare(y)`, `x.hash()`, `x.show(inout out)` and `x.to_string()`

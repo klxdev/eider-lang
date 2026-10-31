@@ -1,0 +1,6 @@
+// expect: E0401 5:23
+// `replace` takes a value of the place's type (docs/compiler.md, "C8.15: take and replace")
+fn main() {
+    let mut s = String.from("a")
+    let t = s.replace(1)
+}

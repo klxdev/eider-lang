@@ -2065,6 +2065,44 @@ Compile-fail: `e0101_for_refutable`, `e0410_for_pattern_shape`, `e0405_map_keys_
 `e0401_heap_for_box`. The `for` E0401 help now lists a Map: "iterate over a List, an array, a
 Map, a range ..." (oracle: the three cases with that help).
 
+## C8.15: take and replace
+
+Wave 4, the `take`/`replace` part of item 8.15 (C8.6 "Choices the charter left open": the
+successor of `var` for values without Copy). Code: check.ei (`take_replace`, reached from
+`method_call_in`).
+
+- `x.replace(v) -> T` moves the value out of the place x (a variable, field or element: no
+  copy, not even a copy-on-write share) and moves v in; the result is the old value. Any
+  type, including types without Copy (a record holding a Chan or a Task) and type parameters
+  (`fn swap_out[T](inout slot: T, v: T) -> T { slot.replace(v) }`).
+- `x.take() -> T` is `x.replace(empty)` for the types with an empty value: String (`""`),
+  List and Map (empty), Option (`None`). On any other type it is E0115 "type P has no method
+  `take`", with the help that names the four and `replace`.
+- They are methods of every type that has no method of that name: a type's own `take` or
+  `replace` (std/stream's BufReader has a `take`) wins, as C8.19 decides for every method
+  name. They are not free functions, because `take` and `replace` are common function names
+  (compiler/tests name functions `take` in entry files, where a built-in function name is
+  reserved).
+- x must be a writable place: a read-only binding is E0303 as for any write (`cannot modify
+  `s``), a fresh value is E0303 "`List[i32].take` needs a place to move the value out of".
+  The write is an assignment for the protection rule (E0308 while a reference points into
+  x, compiler/tests/check/fail/e0308_take_while_referenced.ei).
+- IR: `old := S_MOVE x; S_STORE x := new` (no S_DROP: the old value moved out, so nothing is
+  dropped or copied); lowering un-shares the containers on x's path first, as for any write,
+  so taking from a copy-on-write share leaves the other holder intact.
+
+The pattern `let k = t.kids; t.kids = List.new()` that needed `var` (a copy) is now `let k =
+t.kids.take()`. std and packages keep their `var`s until the next seed (they are built by
+the seed, which lacks take/replace); what is left there (106 `var`s, all in generic bodies or
+of values without Copy: std/chan, deque, heap, set, sort, stream, strings, task, testing)
+moves to `let mut` with `take`/`replace` or `.copy()` case by case then.
+
+Tests: compiler/tests/run/take_replace.ei (a List field of a recursive record, a String, a
+Chan inside a List element, an `inout self` method, Option, Map, an integer, an own `take`
+winning, a generic `replace` through `inout`, copy-on-write independence; hand-checked .out,
+leak-free, sanitizers); compile-fail `e0115_take_no_empty`, `e0303_take_fresh`,
+`e0303_replace_read_only`, `e0401_replace_type`, `e0308_take_while_referenced`.
+
 ## Language work that lands in `eiderc` (after parity)
 
 Each with a design note, compile-fail tests and new codes:

@@ -1,0 +1,6 @@
+// expect: E0303 5:21
+// `take()` moves out of a place, not a fresh value (docs/compiler.md, "C8.15: take and replace")
+fn make() -> List[i32] { List.new() }
+fn main() {
+    let xs = make().take()
+}
