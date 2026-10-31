@@ -947,6 +947,37 @@ and the core sources (sha256.ei at -O2: ~40 ms per MB; a small program's C is ~1
 | Incremental front end: cache per-module check results keyed by source hash and the interfaces of imports | matters once programs are large; the front end is not the bottleneck today |
 | A direct debug back end (no C compiler in the loop) | edit/run latency independent of gcc |
 
+## C8 plan: the backlog
+
+Goal: the easiest, most secure and most performant language for systems, services and general
+development (docs/design/memory-model.md is the charter for the memory model). Work runs in
+waves. Within a wave, items touch different files and run in parallel; a wave starts when the
+previous one is merged, the seed regenerated and `scripts/verify.sh` is ALL GREEN.
+
+Rules for every item: diagnostics keep the first-error contract; oracle changes only through
+reviewed `BLESS=1` runs with the diff explained; no item commits `seed/eiderc.c` (the seed is
+regenerated once per wave after the merge); `compiler/` uses a new feature only after the
+seed that supports it is committed; each item adds compile-fail and run tests, a docs section,
+and leaves the analyzer building.
+
+| Wave | Item | Scope | Depends on |
+|---|---|---|---|
+| 1 | **8.1 Copy-on-write** | heap types share buffers with a refcount, copy on first write; non-atomic, atomic once sent to a thread; drops once at the last holder; quadratic `String` append fixed (capacity) | — |
+| 1 | **8.2 Small language gaps** | bitwise operators `& \| ^ << >> ~` (checked shifts); `String`/`str` byte access, slicing, building from bytes; `()` values (`Ok(())`); `main` returning an exit code; `impl` on built-in types | — |
+| 1 | **8.3 Package-qualified modules** | module identity = (package, path) instead of file stem (no more E0808 for two packages' `util.ei`); bare `import "json"` resolved through `eider.lock`; the `deps/` link farm retired | — |
+| 2 | **8.4 Operation traits** | `Copy`, `Eq`, `Ord`, `Hash`, `Show`, `Iter`, `Drop` in the core prelude; automatic derive; orphan rule; generic bounds with suggested fixes; Map keys any `Hash + Eq`; `for` over any `Iter` | 8.1, 8.2 |
+| 2 | **8.5 Capability encapsulation** | `ffi` becomes a property of a package (granted in eider.toml); std callers stop writing `uses ffi`; the compiler reports each package's real capability use and eider-pkg checks grants from that instead of scanning text | 8.3 |
+| 3 | **8.6 References by default** | `let` binds a read-only reference to a place, `let mut` a mutable alias, fresh values are owned; `.copy()`; pattern bindings the same; the protection rule (no invalidating write while a reference is alive) with fixes; references are C pointers; `var` deprecated with a mechanical fix | 8.1, 8.4 |
+| 3 | **8.7 `Ref[T]`** | shared mutable handle with scoped `read`/`update`, run-time conflict check, not sendable | 8.4 |
+| 4 | **8.8 Closures by reference** | non-escaping closures capture by reference | 8.6 |
+| 4 | **8.9 Std on the new base** | std speaks `String`, uses traits and references; `List[u8]` workarounds and `sys.lit` byte loops go; std callers need no `uses ffi` | 8.2, 8.4, 8.5, 8.6 |
+| 4 | **8.10 Parity quirks** | fix each item in "C8 candidates" deliberately (wasm loader bugs, checker quirks), re-blessing the oracle per item | — |
+| 5 | **8.11 Comptime interpreter** | evaluate `comptime` by interpreting the IR: no C compiler at compile time, no capabilities by construction | — |
+| 5 | **8.12 Performance** | smaller generated C, one C file per module compiled in parallel, incremental front end keyed by module hash | 8.3 |
+| 5 | **8.13 Tooling** | `eiderc fmt` (formatter); analyzer: rename, workspace symbols, signature help, inlay hints, formatting; tree-sitter grammar generated from the compiler grammar | 8.9 |
+| 5 | **8.14 Package manager on bare imports** | eider-pkg reworked for 8.3/8.5 (no link farm, compiler-reported grants), registry design | 8.3, 8.5 |
+| later | 8.15 Projections, lints | std accessors returning references; lints for real copies at escapes and `Ref` cycles | 8.6, 8.7 |
+
 ## Language work that lands in `eiderc` (after parity)
 
 Each with a design note, compile-fail tests and new codes:
@@ -976,7 +1007,7 @@ Each with a design note, compile-fail tests and new codes:
 | C5 ✅ | S1–S3: payload enums, generics, traits, Option/Result/`?`, tuples, patterns, String/List/Map/Box, closures | all the features `compiler/` itself uses; their tests match (checking ✅, lowering ✅) |
 | C6 ✅ | Self-host: stage1 builds stage2 builds stage3; fixed point; commit the seed | `scripts/selfhost.sh` green (stages compile `-Werror`, stage3 passes `scripts/test-compiler.sh`), `scripts/selfhost.sh --from-seed` reproduces the seed with only a C compiler |
 | C7 ✅ | Parity: modules/namespaces, FFI/export/`--lib`, threads, WASM, comptime, driver (`test --compile-fail`, cache, `--help`); then record the oracle in `tests/oracle/` and build everything from the seed ("History") | in a clean clone with only a C toolchain `verify.sh` ends ALL GREEN and `selfhost.sh` prints SELF-HOSTED |
-| C8+ | Language work above, the parity quirks in "C8 candidates", then std and package-manager rework; comptime by an IR interpreter instead of a C compiler ("C7: comptime") | per feature |
+| C8+ | See "C8 plan: the backlog" (waves 1–5). Language work above, the parity quirks in "C8 candidates", then std and package-manager rework; comptime by an IR interpreter instead of a C compiler ("C7: comptime") | per feature |
 
 ## Testing
 
