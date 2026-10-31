@@ -1,0 +1,30 @@
+// errors in method bodies, a trait signature, a test block and nested blocks
+type Counter = { n: i32 }
+
+trait Show {
+    fn show(self) ->
+}
+
+impl Counter {
+    fn get(self) -> i32 {
+        while true {
+            let k = [1, 2
+            break
+        }
+        self.n
+    }
+    fn bump(self) -> i32 { self.n + + }
+    fn ok(self) -> i32 { self.n }
+}
+
+test "counts" {
+    let c = Counter(1)
+    assert c.get() == 1, 7
+    for i in 0..3 { c.bump(; }
+}
+
+pub test "not public" {}
+
+fn main() {
+    print("still parsed")
+}

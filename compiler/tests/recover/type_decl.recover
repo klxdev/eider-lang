@@ -1,0 +1,19 @@
+{"error":"E0001","span":{"file":"compiler/tests/recover/type_decl.src","line":2,"col":19},"message":"expected a name"}
+{"error":"E0001","span":{"file":"compiler/tests/recover/type_decl.src","line":4,"col":20},"message":"expected `,` or `)`"}
+{"error":"E0001","span":{"file":"compiler/tests/recover/type_decl.src","line":6,"col":8},"message":"type parameters can't have bounds on a type declaration; put them on impls and functions"}
+{"error":"E0302","span":{"file":"compiler/tests/recover/type_decl.src","line":10,"col":15},"message":"`inout` is only valid on function parameters; types can't hold references","help":"store the value itself, or an index into a List, or Shared[Mutex[T]]"}
+(IError 2:1 item=type name=A end=2:29)
+(IError 4:1 item=type name=B end=4:25)
+(IError 6:1 item=type name=C end=6:26)
+(IType 8:10 name=D pub
+  member (Field 8:16 name=ok
+    type (TName 8:20 name=bool)))
+(IError 10:1 item=type name=E end=10:26)
+(IFn 12:4 name=use_d end=12:23
+  param (Param 12:10 name=d
+    type (TName 12:13 name=D))
+  ret (TName 12:19 name=bool)
+  body (Block 12:24 end=12:31
+    stmt (SExpr 12:26
+      expr (EField 12:28 name=ok
+        recv (EIdent 12:26 name=d)))))

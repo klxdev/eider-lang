@@ -1,0 +1,27 @@
+// several independent syntax errors in different functions and items
+fn a() -> i32 {
+    let x = 1 +
+    let y = 2
+    x + y
+}
+
+fn b(n: i32) -> i32 {
+    if n > 0 {
+        return n *
+    }
+    n
+}
+
+const C: i32 = (1, 2
+
+type Point = { x: i32, y: i32 }
+
+fn c() {
+    let p = Point(1, 2)
+    p.x = = 3
+    print(p.x)
+}
+
+fn d(a: i32,, b: i32) -> i32 { a }
+
+fn ok() -> i32 { 42 }

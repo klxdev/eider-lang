@@ -1,0 +1,60 @@
+{"error":"E0001","span":{"file":"compiler/tests/recover/impl_test.src","line":5,"col":21},"message":"expected a type"}
+{"error":"E0001","span":{"file":"compiler/tests/recover/impl_test.src","line":12,"col":13},"message":"expected `,` or `]`"}
+{"error":"E0001","span":{"file":"compiler/tests/recover/impl_test.src","line":16,"col":37},"message":"expected an expression"}
+{"error":"E0001","span":{"file":"compiler/tests/recover/impl_test.src","line":22,"col":26},"message":"expected message string"}
+{"error":"E0001","span":{"file":"compiler/tests/recover/impl_test.src","line":23,"col":28},"message":"expected an expression"}
+{"error":"E0001","span":{"file":"compiler/tests/recover/impl_test.src","line":26,"col":5},"message":"`pub` doesn't apply to tests"}
+(IType 2:6 name=Counter
+  member (Field 2:18 name=n
+    type (TName 2:21 name=i32)))
+(IError 4:1 item=trait name=Show end=6:2)
+(IImpl 8:1
+  target (TName 8:6 name=Counter)
+  method (IFn 9:8 name=get end=9:24
+    param (Param 9:12 name=self
+      type (TName 9:12 name=Self))
+    ret (TName 9:21 name=i32)
+    body (Block 9:25 end=15:5
+      stmt (SWhile 10:9
+        cond (EBool 10:15 value=true)
+        body (Block 10:20 end=13:9
+          stmt (SError 11:13 end=11:26)
+          stmt (SBreak 12:13)))
+      stmt (SExpr 14:9
+        expr (EField 14:14 name=n
+          recv (EIdent 14:9 name=self)))))
+  method (IFn 16:8 name=bump end=16:25
+    param (Param 16:13 name=self
+      type (TName 16:13 name=Self))
+    ret (TName 16:22 name=i32)
+    body (Block 16:26 end=16:39
+      stmt (SError 16:28 end=16:38)))
+  method (IFn 17:8 name=ok end=17:23
+    param (Param 17:11 name=self
+      type (TName 17:11 name=Self))
+    ret (TName 17:20 name=i32)
+    body (Block 17:24 end=17:33
+      stmt (SExpr 17:26
+        expr (EField 17:31 name=n
+          recv (EIdent 17:26 name=self))))))
+(ITest 20:1 name="counts"
+  body (Block 20:15 end=24:1
+    stmt (SLet 21:5 name=c
+      init (ECall 21:13 name=Counter
+        arg (EArg 21:21
+          expr (EInt 21:21 value=1))))
+    stmt (SError 22:5 end=22:27)
+    stmt (SFor 23:5 var=i
+      lo (EInt 23:14 value=0)
+      hi (EInt 23:17 value=3)
+      body (Block 23:19 end=23:30
+        stmt (SError 23:21 end=23:29)))))
+(IError 26:1 end=26:4)
+(ITest 26:5 name="not public"
+  body (Block 26:23 end=26:24))
+(IFn 28:4 name=main end=28:10
+  body (Block 28:11 end=30:1
+    stmt (SExpr 29:5
+      expr (ECall 29:5 name=print
+        arg (EArg 29:11
+          expr (EStr 29:11 value="still parsed"))))))

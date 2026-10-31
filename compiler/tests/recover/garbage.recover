@@ -1,0 +1,13 @@
+{"error":"E0001","span":{"file":"compiler/tests/recover/garbage.src","line":4,"col":1},"message":"expected `fn`, `type`, `const`, `trait`, `impl`, `import` or `test`"}
+{"error":"E0001","span":{"file":"compiler/tests/recover/garbage.src","line":9,"col":1},"message":"expected `fn`, `type`, `const`, `trait`, `impl`, `import` or `test`"}
+(IFn 2:4 name=a end=2:7
+  body (Block 2:8 end=2:9))
+(IError 4:1 end=5:11)
+(IFn 7:4 name=b end=7:7
+  body (Block 7:8 end=7:9))
+(IError 9:1 end=11:6)
+(IFn 13:8 name=c flags=pub end=13:18
+  ret (TName 13:15 name=i32)
+  body (Block 13:19 end=13:23
+    stmt (SExpr 13:21
+      expr (EInt 13:21 value=1))))

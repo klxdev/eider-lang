@@ -1,0 +1,30 @@
+{"error":"E0001","span":{"file":"compiler/tests/recover/unclosed_brace.src","line":7,"col":1},"message":"`fn` is a keyword and can't be used as a name"}
+{"error":"E0001","span":{"file":"compiler/tests/recover/unclosed_brace.src","line":13,"col":1},"message":"expected an expression"}
+{"error":"E0001","span":{"file":"compiler/tests/recover/unclosed_brace.src","line":17,"col":1},"message":"unexpected end of file, expected `}`"}
+(IFn 2:4 name=a end=2:7
+  body (Block 2:8 end=5:27
+    stmt (SLet 3:5 name=x
+      init (EInt 3:13 value=1))
+    stmt (SExpr 4:5
+      expr (EIf 4:5
+        cond (EBinary 4:10 op=`>`
+          lhs (EIdent 4:8 name=x)
+          rhs (EInt 4:12 value=0))
+        then (Block 4:14 end=5:27
+          stmt (SExpr 5:9
+            expr (ECall 5:9 name=print
+              arg (EArg 5:15
+                expr (EStr 5:15 value="positive"))))
+          stmt (SError 7:1 end=7:1))))))
+(IFn 7:4 name=b end=7:14
+  ret (TName 7:11 name=i32)
+  body (Block 7:15 end=9:1
+    stmt (SExpr 8:5
+      expr (EInt 8:5 value=7))))
+(IFn 11:4 name=c end=11:7
+  body (Block 11:8 end=13:1
+    stmt (SError 12:5 end=12:17)))
+(IFn 15:4 name=d end=15:7
+  body (Block 15:8 end=16:15
+    stmt (SLet 16:5 name=z
+      init (EInt 16:13 value=1))))

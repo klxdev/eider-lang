@@ -1,0 +1,18 @@
+// errors inside match arms: the other arms and statements survive
+type Shape = | Circle(r: i32) | Square(s: i32) | Dot
+
+fn area(s: Shape) -> i32 {
+    let a = match s {
+        Circle(r) => r * * r
+        Square(x) => x * x
+        Dot => 0,
+        => 1
+    }
+    let b = match a {
+        0 => let
+        _ => a
+    }
+    a + b
+}
+
+fn after() -> i32 { 1 }

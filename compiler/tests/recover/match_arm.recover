@@ -1,0 +1,49 @@
+{"error":"E0001","span":{"file":"compiler/tests/recover/match_arm.src","line":6,"col":26},"message":"expected an expression"}
+{"error":"E0001","span":{"file":"compiler/tests/recover/match_arm.src","line":9,"col":9},"message":"expected a pattern"}
+{"error":"E0001","span":{"file":"compiler/tests/recover/match_arm.src","line":12,"col":14},"message":"`let` is a keyword and can't be used as a name"}
+(IType 2:6 name=Shape
+  member (Variant 2:16 name=Circle
+    field (VField 2:23 name=r
+      type (TName 2:26 name=i32)))
+  member (Variant 2:33 name=Square
+    field (VField 2:40 name=s
+      type (TName 2:43 name=i32)))
+  member (Variant 2:50 name=Dot))
+(IFn 4:4 name=area end=4:25
+  param (Param 4:9 name=s
+    type (TName 4:12 name=Shape))
+  ret (TName 4:22 name=i32)
+  body (Block 4:26 end=16:1
+    stmt (SLet 5:5 name=a
+      init (EMatch 5:13 end=10:5
+        scrutinee (EIdent 5:19 name=s)
+        arm (Arm 6:9
+          body (EError 6:9 end=6:29))
+        arm (Arm 7:9
+          pat (PVariant 7:9 name=Square
+            sub (PName 7:16 name=x))
+          body (EBinary 7:24 op=`*`
+            lhs (EIdent 7:22 name=x)
+            rhs (EIdent 7:26 name=x)))
+        arm (Arm 8:9
+          pat (PName 8:9 name=Dot)
+          body (EInt 8:16 value=0))
+        arm (Arm 9:9
+          body (EError 9:9 end=9:13))))
+    stmt (SLet 11:5 name=b
+      init (EMatch 11:13 end=14:5
+        scrutinee (EIdent 11:19 name=a)
+        arm (Arm 12:9
+          body (EError 12:9 end=12:17))
+        arm (Arm 13:9
+          pat (PWild 13:9)
+          body (EIdent 13:14 name=a))))
+    stmt (SExpr 15:5
+      expr (EBinary 15:7 op=`+`
+        lhs (EIdent 15:5 name=a)
+        rhs (EIdent 15:9 name=b)))))
+(IFn 18:4 name=after end=18:18
+  ret (TName 18:15 name=i32)
+  body (Block 18:19 end=18:23
+    stmt (SExpr 18:21
+      expr (EInt 18:21 value=1))))

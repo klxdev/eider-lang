@@ -1,0 +1,12 @@
+// errors inside type declarations
+type A = { x: i32,, y: i32 }
+
+type B = | One(i32 | Two
+
+type C[T: Ord] = { v: T }
+
+pub type D = { ok: bool }
+
+type E = { x: inout i32 }
+
+fn use_d(d: D) -> bool { d.ok }
