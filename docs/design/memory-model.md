@@ -1,6 +1,6 @@
 # Eider memory model (draft for iteration)
 
-Status: **draft**. Decisions marked ✅ are agreed; ❓ are open. Nothing here is implemented
+Status: **draft**. Shared doc for iterating: https://claude.ai/artifact/92bM8TX24tgdviTuHrNJ6L (this file is the source of truth; synced from it). Decisions marked ✅ are agreed; ❓ are open. Nothing here is implemented
 yet beyond what Eider already does (value semantics, `inout`, `Mutex`/`Chan`). Iterate on
 this file; when a section settles, it becomes a C8 work item (docs/compiler.md).
 
@@ -14,11 +14,13 @@ Simple like Go and Zig, with the memory-safety and correctness guarantees of Rus
 
 ## The model in five rules ✅ (wording to refine)
 
-1. Everything is a value. Binding or passing something does not copy it.
-2. To change something, mark it `mut` (or pass it `inout`).
+1. Everything is a value. Binding or passing something does not copy it: `let x = place`
+   refers to the place.
+2. To change something through a binding, declare it `let mut` (a mutable alias of the place)
+   or pass it `inout`. To get an independent value, `copy` it.
 3. A reference lives inside its scope. When it escapes (returned, stored, sent to a thread),
    it becomes a value: cheap, because large values are copy-on-write.
-4. To share mutable state, use `Shared[T]`, or `Mutex[T]` across threads.
+4. To share mutable state beyond a scope, use `Ref[T]`, or `Mutex[T]` across threads.
 5. Errors are `Result`, absence is `Option`, every case is handled in `match`, side effects
    are declared with `uses`.
 
@@ -50,72 +52,63 @@ print(o.qty)
 - `let` of a fresh value (call result, literal, constructor) owns it.
 - A `let` binding can't be assigned to and can't be mutated through.
 
-### `let mut` ❓ (the user's intent, to pin down)
+### `let mut` ✅ (a mutable alias)
 
-User's statement: **"for mut, others in scope can update the reference."**
-
-Two readings, with different consequences:
-
-**Reading A: `let mut` is a mutable alias of the place.** Writes through the binding change
-the original, and the original can still be changed by other code in the scope.
+`let mut x = place` binds a mutable reference to the place: writes through `x` change the
+original, and other code in the scope may also write the place. Both always see the same value.
 
 ```eider
 let mut o = orders[i]
 o.qty += 1             // orders[i].qty changes too
-orders[i].qty = 0      // and o sees it
+orders[i].qty = 0      // o sees 0
+let mut total = 0      // of a fresh value: an ordinary mutable variable
+total += 1
 ```
 
-Safe only if nothing can invalidate the place while `o` is alive. Changing `orders[i]`'s
-fields is fine (same memory). But `orders.push(x)` may move the list's buffer, and
-`orders = other` drops it: either would leave `o` dangling. So Reading A needs a rule such
-as "while a `let mut` reference to an element is alive, the container it points into can't
-be resized, replaced or dropped" (field and element *writes* stay allowed). That is still
-checkable without lifetimes, but it is a new kind of rule ("structural" vs "content"
-changes) that every programmer has to learn.
+- `let mut` of a fresh value owns it (an ordinary mutable local).
+- `let mut` of a read-only place (a parameter, a `let` binding) is an error: an alias can't add
+  write access. Take a `copy` instead.
+- An invalidating write while any reference into the place is alive stays forbidden (the
+  protection rule, below).
 
-**Reading B: `let mut` is a mutable binding.** The binding can be reassigned and mutated, and
-code in the same scope sees those updates through the binding. It starts as its own value
-(a copy-on-write copy of a place, or the fresh value itself), so it never aliases the
-original.
+### `copy` ✅ (for every type)
 
-```eider
-let mut total = 0
-total += 1             // the binding is updatable
-let mut o = orders[i]  // o is its own value
-o.qty += 1             // orders[i] is unchanged
-```
+`copy(x)` returns an independent value equal to `x`, for every type, with no trait to
+implement: `let mut o = copy(orders[i])` changes `o` only. With copy-on-write it costs a
+reference-count increment until one side is written.
 
-No new safety rule: this is today's `var` with the new spelling.
+- Values (integers, records, enums, tuples, arrays, `String`, `List`, `Map`, `Box`): a value
+  copy, made lazily by copy-on-write.
+- Handles (`Ref`, `Mutex`, `Chan`, `Task`): ❓ proposal: copying a handle gives another handle to
+  the same shared value, since that is what a handle is; to copy the contents,
+  `r.read(|v| copy(v))`.
+- Implicit copies still happen at escapes (rule 3); `copy` is for when you want your own value
+  inside the scope.
 
-**Recommendation:** Reading B for `let mut`, and keep in-place changes to an element explicit
-through `inout`, which already has the exclusivity rule:
+## The protection rule ✅ (revised for `let mut` aliases)
 
-```eider
-bump(inout orders[i])          // changes orders[i] in place
-```
+While a reference is alive (until its last use), no write may free, move or reinterpret memory
+it points into. Plain writes are allowed; invalidating writes are compile errors with a
+machine-applicable fix ("take a `copy` first", or "use the reference before the change").
 
-If in-place local aliases (Reading A) are wanted, add them as a separate, explicit form
-later (e.g. `let inout o = orders[i]`), with exclusivity: while `o` is alive, `orders` is
-reachable only through `o`. That keeps "mutation through an alias" visible at the point it
-happens, which is most of what makes Rust code easy to reason about.
-
-**Decide:** A, B, or B plus an explicit in-place alias form.
-
-## The protection rule ✅ (applies to every reference)
-
-While a reference is in use (until its last use in the scope), the place it refers to can't be
-moved, dropped, or changed in a way that could invalidate it. Violations are compile errors
-with a machine-applicable fix (usually "make it `let mut` to take your own value", or "use the
-value before changing the original").
+- **Allowed** while references into a place are alive: writing a scalar field or element,
+  writing through `let mut` aliases, calling methods that don't resize or replace.
+- **Invalidating (error):** resizing a container the reference points into (`push`, `insert`,
+  `remove`, `pop`, `clear`); assigning a new value over a place that owns heap memory a
+  reference points into (a `String`, `List` or `Box`); replacing an enum value whose payload a
+  reference points into (type confusion); moving or dropping the place.
 
 ```eider
 let o = orders[0]
-orders.push(new_order)     // error: `orders` is changed while `o` (line 1) still refers into it
+orders[0].qty = 5          // fine: o sees 5
+orders.push(new_order)     // error: may move the buffer `o` points into
 print(o.qty)               //        o is used here
 ```
 
-This is the existing `inout` exclusivity check (E0301) extended to read references. No
-lifetimes are needed because references never outlive their scope.
+The check works on place paths (root, fields, elements) and needs no lifetimes, because
+references never outlive their scope; it generalises today's `inout` exclusivity check (E0301).
+Element indices are not tracked one by one: a reference into `orders[i]` and a resize of
+`orders` conflict whatever `i` is.
 
 ## Crossing boundaries
 
@@ -132,8 +125,7 @@ fn first(orders: List[Order]) -> Order {
 }
 ```
 
-❓ Should the compiler warn when an escape forces a *real* copy (a shared buffer about to be
-mutated)? Default proposal: silent; a lint later.
+✅ Decided: escapes that force a real copy are silent; a lint may point them out later.
 
 ### Copy-on-write values ✅
 
@@ -146,12 +138,13 @@ atomic once a value is sent to another thread.
 This is what makes large lists, parsed files and configuration cheap to pass, store and
 return.
 
-### Shared mutable state: `Shared[T]` ✅ (API to refine)
+### Shared mutable state: `Ref[T]` ✅ (API to refine)
 
-For state that several owners must see change: caches, memo tables, graphs, observer lists.
+For state several owners must see change: caches, memo tables, graphs, observer lists. (A
+plain reference is a binding inside a scope; a `Ref[T]` is the handle that outlives scopes.)
 
 ```eider
-type Ctx = { cache: Shared[Map[String, Answer]], rows: List[Row] }   // rows: copy-on-write
+type Ctx = { cache: Ref[Map[String, Answer]], rows: List[Row] }   // rows: copy-on-write
 
 fn lookup(ctx: Ctx, key: String) -> Option[Answer] {
     ctx.cache.read(|m| m.get(key))                  // no copy of the map
@@ -162,14 +155,12 @@ fn remember(ctx: Ctx, key: String, a: Answer) {
 }
 ```
 
-- Copying a `Shared` shares the same value (handle semantics, like `Mutex` today).
+- Copying a `Ref` shares the same value (handle semantics, like `Mutex` today).
 - Access is scoped (`read`, `update`), so no reference to the inside escapes.
-- Overlapping access (an `update` inside a `read` of the same `Shared`) traps at run time,
-  like Rust's `RefCell`.
+- Overlapping access (an `update` inside a `read` of the same `Ref`) traps at run time, like
+  Rust's `RefCell`.
 - Not sendable to another thread: use `Mutex[T]`, which has the same scoped shape.
-- Cycles of `Shared` leak (as `Rc` cycles do in Rust): not a safety issue; a lint later.
-
-❓ Name: `Shared[T]`, `Cell[T]`, `Ref[T]`?
+- Cycles of `Ref` leak (as `Rc` cycles do in Rust): not a safety issue; a lint later.
 
 ### Threads ✅
 
@@ -178,22 +169,19 @@ fn remember(ctx: Ctx, key: String, a: Answer) {
 - Mutable state crosses threads only inside `Mutex[T]` / `Chan[T]`.
 - References never cross threads (rule 3).
 
-## Functions
+## Functions and closures ✅
 
-- Parameters are read-only references (as today); `inout` parameters are mutable references
-  with exclusivity (as today). ✅
-- ❓ `mut` parameters (`fn f(mut x: T)`): "give me my own value that I may change locally". Useful
-  sugar for `let mut x = x`; add only if it carries its weight.
+- Parameters are read-only references; `inout` parameters are mutable references with
+  exclusivity (both as today).
+- No `mut` parameters for now. `let mut x = x` on a read-only parameter is an error (an alias
+  can't add write access); write `let mut x = copy(x)`.
 - Return values are always values (owned). Returning a reference into an argument is not
   possible; accessors that return a reference ("projections") are a later, std-only feature.
-
-## Closures ❓
-
-- Escaping closures (stored, returned, spawned) capture by value (cheap with copy-on-write).
-- Proposal: non-escaping closures (passed straight to `map`, `filter`, `fold`, `read`,
-  `update`) capture by reference, so they cost nothing and see the current values.
-- Closures that change captured state: only through `inout` parameters of the closure or a
-  `Shared`; no implicit mutable captures.
+- Non-escaping closures (passed straight to `map`, `filter`, `fold`, `read`, `update`) capture
+  by reference, so they cost nothing and see current values; escaping closures (stored,
+  returned, spawned) capture by value, cheap with copy-on-write.
+- Closures change captured state only through their own `inout` parameters or a `Ref`; no
+  implicit mutable captures.
 
 ## What we will not add ✅
 
@@ -204,27 +192,42 @@ true?
 
 ## What it costs, honestly
 
-- Can't build structures out of references (self-referential structs, intrusive lists): use
-  indices or handles (`Shared`), as the compiler already does with its arenas.
-- Run-time checks remain where Rust has them too: bounds, overflow, and `Shared` access
-  conflicts.
-- `Shared` cycles leak.
+- Aliasing inside a scope is visible: a `let mut` alias changes the original, so a reader of a
+  function must follow its aliases. Reasoning stays local to the scope.
+- Two kinds of write to learn: plain writes are fine under live references, invalidating ones
+  are not.
+- No structures built from references (self-referential structs, intrusive lists): use indices
+  or `Ref` handles, as the compiler already does with its arenas.
+- Run-time checks remain where Rust has them too: bounds, overflow, and `Ref` access conflicts.
+- `Ref` cycles leak.
 
-## Build order (once the open questions settle)
+## Build order
 
-1. Copy-on-write for heap types: runtime and lowering only; no semantic change.
-2. References by default + `let mut` + the protection rule: checker analysis, new errors with
-   fixes, lowering (a reference is a C pointer; no clone, no drop). `var` keeps working as a
-   deprecated spelling of `let mut` with an automatic fix, so existing code migrates mechanically.
-3. `Shared[T]` on the existing handle machinery.
-4. Non-escaping closure captures by reference.
-5. Later: projections for std accessors; lints for real copies and `Shared` cycles.
+1. Copy-on-write for heap types: runtime and lowering only, no semantic change.
+2. References by default, `let mut` aliases, `copy` and the protection rule: checker analysis on
+   place paths, new errors with fixes, lowering (a reference is a C pointer: no clone, no drop).
+   `var` keeps working as a deprecated spelling with an automatic fix: `var x = place` becomes
+   `let mut x = copy(place)` (today's `var` makes its own value), `var x = fresh` becomes
+   `let mut x = fresh`, so existing code migrates mechanically with unchanged meaning.
+3. `Ref[T]` on the existing handle machinery.
+4. Non-escaping closures capture by reference.
+5. Later: projections for std accessors; lints for real copies and `Ref` cycles.
 
-## Open questions (summary)
+## Decisions
 
-1. `let mut`: Reading A (mutable alias), B (mutable binding, own value), or B plus an explicit
-   in-place alias form (`let inout`)?
-2. Warn on escapes that force a real copy?
-3. Name for `Shared[T]`.
-4. `mut` parameters: yes or no?
-5. Closures: non-escaping capture by reference?
+| Question | Decision |
+|---|---|
+| `let mut` | A mutable alias of the place (Reading A), plus `copy` for every type |
+| Warn when an escape forces a real copy | No: silent; a lint later |
+| Name of the shared handle | `Ref[T]` |
+| `mut` parameters | Not now; `let mut x = copy(x)` |
+| Closure captures | Non-escaping by reference, escaping by value |
+
+## Open questions
+
+1. `copy` of a handle (`Ref`, `Mutex`, `Chan`, `Task`): another handle to the same value
+   (proposal), or a copy of the contents?
+2. Spelling: a built-in `copy(x)` (proposal: works for every type with nothing to implement) or
+   a method `x.copy()`?
+3. Pattern bindings in `match` and `if let`: read-only references like `let` (proposal), with
+   `mut` in a pattern making an alias?
