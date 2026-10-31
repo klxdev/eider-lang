@@ -230,8 +230,9 @@ const NEVER: i64 = 9223372036854775807
 
 /// One alternative of a `select`, producing a U when it is chosen. Made by
 /// `Channel.recv_case`, `timer_case`, `task.Token.cancel_case`, or by hand:
-/// - `poll(me, reg)`: take the case's event if it is ready (`Some`), else `None`, and when
-///   `reg` is set leave `me` in the case's waiter list, all in one critical section;
+/// - `poll(me, reg)`: take the case's event if it is ready (`Some`, and then `me` must not
+///   be left in any list), else `None`, and when `reg` is set leave `me` in the case's
+///   waiter list, all in one critical section;
 /// - `leave(me)`: take `me` out of that list;
 /// - `at_ns`: when the case becomes ready by itself (a timer), on the monotonic clock, or
 ///   the largest i64 for never.

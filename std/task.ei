@@ -120,6 +120,8 @@ impl Token {
         let st = self.st
         let at = self.deadline().mono_ns()
         chan.Case(|me: sync.Parker, reg: bool| -> Option[U] {
+            // ready cases leave no registration behind (select only leaves the others)
+            if time.at_mono_ns(at).expired() { return Some(u) }
             let c = st.with(|s: TokSt| -> (TokSt, bool) {
                 var t = s
                 t.waiters = sync.without(t.waiters, me)
@@ -127,7 +129,7 @@ impl Token {
                 let was = t.cancelled
                 (t, was)
             })
-            if c || time.at_mono_ns(at).expired() { return Some(u) }
+            if c { return Some(u) }
             None
         }, |me: sync.Parker| {
             st.update(|s: TokSt| -> TokSt {

@@ -142,10 +142,11 @@ wrap them. They follow the rules above, plus:
 - **Capabilities** (docs/compiler.md, "C8.5": `ffi` doesn't leave core, so each `core/os.ei`
   wrapper declares the real capability next to it): `fs` for `fd_open`, `fd_stat`, `stat`,
   `fd_chmod`, `fd_truncate`, `fd_lock`, `fd_sync`; `io` for the other descriptor operations
-  (close, write, pread, pwrite, seek, dup, non-blocking), `pipe`, `poll_*`, `waker_*`,
+  (close, write, pread, pwrite, seek, dup, non-blocking, `fd_wait`), `pipe`, `poll_*`, `waker_*`,
   `signal_*`, `random` and `getpid`; `net` for `sock_*` and `dns_*`; `clock` for
   `time_mono_ns`, `time_wall_ns`, `sleep_ns`; `io, fs, net` for `spawn`, `wait` and `kill`
-  (a child, or a signal to a process, can do anything; as `sys.run`). `err_kind` takes only
+  (a child, or a signal to a process, can do anything; as `sys.run`). `err_kind` and the
+  `atomic_*` cells (memory shared between threads, like a Mutex, not the OS) take only
   `ffi`, the `le_*` readers nothing. The std modules on top declare the same real
   capabilities and no `ffi`.
 
@@ -303,6 +304,7 @@ descriptors; each registration carries a 64-bit token that comes back with its e
 | `int64_t ec_poll_wait(int32_t pfd, int32_t max, int64_t timeout_ms)` | | the number of events (at most `max`, capped at 1024); `out` = that many 16-byte records. `timeout_ms` `< 0` wait forever, `0` don't wait. A signal ends the wait early (it is not resumed): the core then collects whatever is ready without waiting, so a watched signal shows up at once as its signal pipe's event. The result can be `0` events (a spurious wakeup, which a loop must tolerate anyway) |
 | `int64_t ec_waker_new(void)` | | `0`; `out` = read end, write end (u32 each; on Linux one `eventfd`, so both are the same descriptor; a pipe elsewhere). Both non-blocking. Register the read end for reading |
 | `int64_t ec_waker_wake(int32_t wfd)` | | `0`: the read end becomes readable. Safe from any thread and from a signal handler; waking an already-woken waker is not an error. Drain it with `ec_read_fd(r, 4096)` (until `-EAGAIN`) |
+| `int64_t ec_fd_wait(int32_t fd, int32_t interest, int64_t timeout_ms)` | | one descriptor's readiness, without a poller (`poll(2)`): `interest` `1` readable, `2` writable, or both (anything else `-EINVAL`); waits at most `timeout_ms` (`< 0` forever, `0` not at all). The flags that are set (`1` readable, `2` writable, `4` error, `8` hang-up; error and hang-up are reported whatever the interest), or `0` when the time ran out; `-EBADF` for a descriptor that isn't open. A signal doesn't end the wait: it resumes with the time left (measured on the monotonic clock). This is how a thread blocks on its own waker with a deadline (std/sync's Parker) and how std/fd waits for one descriptor |
 
 Event record: u64 token; u32 flags: `1` readable, `2` writable, `4` error (read `ec_sock_error`),
 `8` hang-up (no more writing is possible), `16` the peer has finished sending (reads will hit
@@ -384,6 +386,46 @@ core makes is close-on-exec); same environment, current directory and process gr
 when) or it stays a zombie until this process ends. Pipe handling (and deadlines) belongs to the
 caller's event loop.
 
+## Atomic cells
+
+64-bit integers that every thread may read and change with atomic operations (C11
+`<stdatomic.h>`), for std/atomic until the language has a built-in atomic type
+(core/RUNTIME.md "Atomics"). Not an OS operation, but the same rules: one atomic operation per
+function, no pointers cross. Eider holds a cell by a **handle**: `(generation << 32) | index`,
+always `> 0`. Cells sit in chunks of 4096 that are allocated on first use and never freed or
+moved (at most 4096 chunks, 16M cells in use at once), so every operation on any handle
+touches valid memory. A cell's generation is odd while it is in use and even while it is free;
+a handle whose generation is not its cell's current one (the cell was freed, or the number was
+never a handle) ends the process: `eider: runtime error: invalid atomic handle (freed, or not
+made by atomic.new)` on stderr after flushing stdout, exit code `101`, like a trap (the
+operations return values, so they have no error result to give). A slot whose generation would
+no longer fit 31 bits is retired instead of reused, so a stale handle is never mistaken for a
+new one.
+
+`order` is the memory ordering: `0` relaxed, `1` acquire, `2` release, `3` acquire-release,
+`4` sequentially consistent. One that doesn't apply to the operation (release on a load,
+acquire on a store) or an unknown number is sequentially consistent (std/atomic refuses the
+inapplicable ones before calling). A failed compare-and-swap is a load with the success
+ordering minus its release half.
+
+| Function | Result |
+|---|---|
+| `int64_t ec_atomic_new(int64_t v)` | a new cell holding `v`: its handle, or `-ENOMEM` (no memory for a chunk, or 16M cells in use). Takes a process-wide lock (allocation only) |
+| `int64_t ec_atomic_free(int64_t h)` | `0`; the cell is free and every copy of `h` invalid. `-EINVAL` if `h` is not a cell in use (freed already, or not a handle): nothing changes |
+| `int64_t ec_atomic_load(int64_t h, int32_t order)` | the value |
+| `int64_t ec_atomic_store(int64_t h, int64_t v, int32_t order)` | `0`; the cell holds `v` |
+| `int64_t ec_atomic_swap(int64_t h, int64_t v, int32_t order)` | the value it held; it holds `v` |
+| `int64_t ec_atomic_add(int64_t h, int64_t n, int32_t order)` | the value it held; it holds that plus `n`, wrapping (two's complement, as C11 defines for atomic types; std/atomic's checked `add` is a compare-and-swap loop) |
+| `int64_t ec_atomic_cas(int64_t h, int64_t expected, int64_t desired, int32_t order)` | the value it held; if that was `expected` it now holds `desired` (strong: never fails spuriously) |
+
+Lock-freedom: the operations are lock-free where `_Atomic int64_t` is (every 64-bit target;
+32-bit targets may use the C library's locks, which is correct but slower). Freeing a cell
+while another thread still uses it is a bug in the program, not undefined behaviour: the other
+thread's operation either fails the generation check (and ends the process) or, if it already
+passed it, acts on the freed cell, which is still valid memory (and, if a later
+`ec_atomic_new` has handed the slot out again in between, on that new cell's value: a logic
+error, never memory corruption).
+
 ## WebAssembly
 
 None of these functions exist in `core/wasm/`: a wasm module has no descriptors, sockets,
@@ -401,7 +443,7 @@ would only be meaningful for the clocks, and `now_ms` already covers that.
 
 | Target | Status |
 |---|---|
-| Linux (glibc), x86-64 | exercised by `tests/core` (`core_test.c`: `ec_run`, `ec_read_fd`; `os_test.c`: every OS primitive, with epoll), `tests/std` and the package tests, with gcc and clang, under ASan+UBSan and TSan |
+| Linux (glibc), x86-64 | exercised by `tests/core` (`core_test.c`: `ec_run`, `ec_read_fd`; `os_test.c`: every OS primitive, with epoll, and the atomic cells), `tests/std` and the package tests, with gcc and clang, under ASan+UBSan and TSan |
 | Linux, other architectures (aarch64, riscv64, 32-bit) | expected to work (C11 + POSIX only, fixed-width ABI); not yet run |
 | macOS | written (`_NSGetArgv`, `EC_SYM` names, kqueue, `arc4random_buf`, `F_FULLFSYNC`, `SO_NOSIGPIPE`); not yet compiled or run |
 | FreeBSD / OpenBSD / NetBSD / DragonFly | written (args via an init-array constructor, kqueue, `accept4`, `arc4random_buf`); not yet compiled or run |

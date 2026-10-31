@@ -1,5 +1,6 @@
 // core/os: the Layer 0 OS primitives (core/ABI.md, from "OS primitives: common rules" on):
-// descriptors, sockets, name resolution, readiness, time, signals, randomness, processes.
+// descriptors, sockets, name resolution, readiness, time, signals, randomness, processes,
+// and the atomic cells (ABI "Atomic cells") std/atomic holds by handle.
 // Like core/sys (whose buffer functions it uses for arguments and results), it binds only
 // ec_* core symbols. It is a module of its own so that programs that don't use these
 // primitives, the compiler among them, don't carry their bindings (seed/eiderc.c stays as
