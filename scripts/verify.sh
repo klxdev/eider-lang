@@ -1,5 +1,5 @@
 #!/bin/sh
-# Full verification matrix: compile-fail suite, run tests on gcc/clang/ASan+UBSan/TSan, std, export, wasm.
+# Full verification matrix: compile-fail suite, run tests on gcc/clang/ASan+UBSan/TSan, std, export, wasm, and the editor tooling (eider-analyzer, tree-sitter-eider) when their repositories are next to this one.
 # The compiler is target/eiderc, built from the seed by scripts/ei (only a C compiler).
 cd "$(dirname "$0")/.." || exit 1
 EIDER_CACHE=off; export EIDER_CACHE
@@ -49,6 +49,17 @@ sh tests/pkg/run.sh | grep -q FAIL && { echo "FAIL pkg"; fail=1; } || echo "ok  
 sh scripts/test-compiler.sh | grep -q FAIL && { echo "FAIL compiler (eiderc)"; fail=1; } || echo "ok   compiler (eiderc vs the recorded oracle, tests/oracle)"
 sh scripts/selfhost.sh --from-seed >/dev/null 2>&1 && echo "ok   seed (seed/eiderc.c rebuilds itself with only a C compiler)" || { echo "FAIL seed: sh scripts/selfhost.sh --from-seed"; fail=1; }
 bash tests/export/run.sh | tail -1 | grep -q "^ok" && echo "ok   export (C and C++ consumers)" || { echo "FAIL export"; fail=1; }
+# tools: eider-analyzer and tree-sitter-eider, the editor tooling in their own repositories
+# (scripts/check-tools.sh; EIDER_ANALYZER, TREE_SITTER_EIDER, default ../<name>), built and
+# tested against this checkout. A half whose repository or tool is missing is a skipped leg,
+# so a plain checkout stays green.
+sh scripts/check-tools.sh > $S/tools 2>&1; trc=$?
+while IFS= read -r l; do case $l in "skip: "*) skip "tools (eider-analyzer, tree-sitter-eider): ${l#skip: }" ;; esac; done < $S/tools
+if [ $trc != 0 ]; then
+  echo "FAIL tools (eider-analyzer, tree-sitter-eider): sh scripts/check-tools.sh"; grep -A6 "^FAIL" $S/tools | head -20; fail=1
+elif grep -q "^ok" $S/tools; then
+  echo "ok   tools (eider-analyzer, tree-sitter-eider): $(grep "^ok" $S/tools | sed -E 's/^ok +([a-z-]+).*/\1/' | paste -sd, - | sed 's/,/, /g') against this checkout"
+fi
 printf 'int x;\n' > $S/wasm.c
 if "${WASM_CC:-clang}" --target=wasm32 -c -o $S/wasm.o $S/wasm.c 2>/dev/null && command -v wasm-ld >/dev/null && command -v node >/dev/null; then
   sh tests/wasm/run.sh || fail=1
