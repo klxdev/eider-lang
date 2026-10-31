@@ -143,11 +143,13 @@ void ei_drop_String(ei_String *s) {
   s->cap = 0;
 }
 
-ei_String ei_clone_String(const ei_String *s) {
+ei_String ei_share_String(const ei_String *s) {
   ei_String r = *s;
   ei_buf_inc(r.p);
   return r;
 }
+
+ei_String ei_clone_String(const ei_String *s) { return str_new(s->p, s->len, s->len); }
 
 void ei_str_unique(ei_String *s) {
   if (!ei_buf_shared(s->p)) return;

@@ -379,7 +379,7 @@ static void test_string(void) {
   ei_str_cat(&s, "cdXYZ", 2);
   EQU(s.len, 4);
   EQS(s.p, "abcd");
-  ei_String t = ei_clone_String(&s);
+  ei_String t = ei_share_String(&s);
   CHECK(t.p == s.p); /* a copy shares the buffer */
   EQU(ei_buf_count(s.p), 2);
   ei_str_append(&t, &s); /* ...until one side changes */
@@ -416,17 +416,23 @@ static void test_string(void) {
   CHECK(moves < 20);
   CHECK(g.p[g.len] == 0);
   /* a shared String is copied on its first change, then changed in place */
-  ei_String h = ei_clone_String(&g);
+  ei_String h = ei_share_String(&g);
   ei_str_push(&h, "y");
   EQU(g.len, 100000);
   EQU(h.len, 100001);
   CHECK(g.p[g.len] == 0 && h.p[h.len - 1] == 'y');
-  ei_String u = ei_clone_String(&h);
+  ei_String u = ei_share_String(&h);
   ei_str_unique(&u);
   CHECK(u.p != h.p && strcmp(u.p, h.p) == 0);
   ei_str_unique(&u); /* already its own: no copy */
   EQU(ei_buf_count(u.p), 1);
   ei_drop_String(&u);
+  /* ei_clone_String is a copy with its own buffer (what code from before C8.1 calls) */
+  ei_String v = ei_clone_String(&h);
+  CHECK(v.p != h.p && strcmp(v.p, h.p) == 0 && v.len == h.len);
+  EQU(ei_buf_count(h.p), 1);
+  EQU(ei_buf_count(v.p), 1);
+  ei_drop_String(&v);
   ei_drop_String(&h);
   ei_drop_String(&g);
   /* appending to a dropped (empty) String allocates */

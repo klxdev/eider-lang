@@ -145,7 +145,8 @@ in-range result: `(uint8_t)ei_s2u((int64_t)x, UINT8_MAX, 12)`.
 | `void ei_check_leaks(void)` | built with `-DEI_RT_COUNT_ALLOCS`, the runtime counts live allocations (atomically) and this prints `eider: outstanding allocations: <n>` to stderr; otherwise it does nothing. Generated `main` calls it when the program ends normally (test mode: only if no test failed). A leak check for test suites where ASan is not available. |
 | `ei_String` | `{ char *p; uint64_t len; uint64_t cap; }`, NUL-terminated, `len` excludes the NUL; `p` is a shared buffer (below) of `cap + 1` bytes |
 | `ei_str_from(const char *)`, `ei_str_from_i64(int64_t)` | new String (decimal, `-` for negatives), `cap == len` |
-| `ei_clone_String(const ei_String *)` | a copy that shares the buffer (one more holder; O(1)) |
+| `ei_share_String(const ei_String *)` | a copy that shares the buffer (one more holder; O(1)); generated code calls this |
+| `ei_clone_String(const ei_String *)` | a copy with a buffer of its own (`cap == len`). Code from an eiderc before copy-on-write calls it, so such programs (and the seed until it is regenerated) stay correct against this core |
 | `ei_drop_String(ei_String *)` | one holder fewer, freed by the last (sets `p = NULL`, `len = cap = 0`; a second drop is harmless) |
 | `ei_str_unique(ei_String *)` | gives the String a buffer of its own: copies it only when it is shared |
 | `ei_str_cat(s, t, tl)`, `ei_str_push(s, cstr)`, `ei_str_append(s, const ei_String *)` | append: in place when the buffer is `s`'s own and has room, else into a new buffer of amortised capacity (at least double, at least 15 bytes), built before the old one is let go, so `t` may point into `s` (self-append works); traps if the length overflows |
@@ -239,7 +240,7 @@ walks or is parameterised by a concrete type stays compiler output.
 | index checks, integer conversions | `ei_idx`, `ei_s2s/s2u/u2s/u2u` |
 | allocation | `ei_alloc`, plus `ei_alloc_n` for the `n * sizeof(T)` call sites |
 | shared buffers (copy-on-write) | `ei_buf_hdr`, `ei_buf_alloc/grow/free`, `ei_buf_inc/dec/shared/count`, `ei_grow_cap` |
-| `String` | `ei_String`, `ei_str_from`, `ei_str_from_i64`, `ei_drop_String`, `ei_clone_String`, `ei_str_unique`, `ei_str_cat/push/append` |
+| `String` | `ei_String`, `ei_str_from`, `ei_str_from_i64`, `ei_drop_String`, `ei_share_String`, `ei_clone_String`, `ei_str_unique`, `ei_str_cat/push/append` |
 | Map key hashes | `ei_hash_u64`, `ei_hash_str` |
 | `print` | `ei_print_i/u/b/s` (`int64_t`/`uint64_t`) |
 | the clock | `ei_now_ms` |

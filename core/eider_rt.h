@@ -295,7 +295,10 @@ typedef struct { char *p; uint64_t len; uint64_t cap; } ei_String;
 ei_String ei_str_from(const char *s);
 ei_String ei_str_from_i64(int64_t v);
 void ei_drop_String(ei_String *s);
-/* Shares the buffer (O(1)). */
+/* A copy that shares the buffer (O(1)): what generated code calls for a String copy. */
+ei_String ei_share_String(const ei_String *s);
+/* A copy with a buffer of its own (code generated before copy-on-write calls this, so a
+   program built by an older eiderc stays correct against this core). */
 ei_String ei_clone_String(const ei_String *s);
 /* Gives s a buffer of its own (copies it only when it is shared). */
 void ei_str_unique(ei_String *s);
