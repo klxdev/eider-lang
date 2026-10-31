@@ -3,7 +3,7 @@
 // `read_line`/`read_until`/`peek`, `BufWriter` with `flush`), and the streams themselves:
 // `Fd` for any descriptor (files, pipes, sockets, child streams, stdin/stdout/stderr),
 // `Bytes` (reading from memory) and `Buffer` (writing to memory). docs/std.md has the
-// overview; decisions C23-C26.
+// overview; decisions C23-C27.
 //
 // Rules every stream here follows:
 //
@@ -903,7 +903,7 @@ impl[R: Reader] Reader for BufReader[R] {
 
 /// A Writer with a buffer: small writes are collected and written underneath `cap` bytes at
 /// a time. Call `flush` when done: nothing flushes a BufWriter when it goes away, because a
-/// drop can't do I/O (decision C25). A failed or timed-out flush keeps what it could not
+/// drop can't do I/O (decision C26). A failed or timed-out flush keeps what it could not
 /// write, so it can be retried.
 pub type BufWriter[W] = { inner: W, buf: List[u8], cap: usize }
 
