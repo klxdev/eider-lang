@@ -1,0 +1,16 @@
+# eider.lock: written by `eider-pkg`. Do not edit.
+version = 1
+
+[[package]]
+name = "fuzz"
+version = "0.1.0"
+source = "path+../fuzz"
+deps = []
+grants = []
+
+[[package]]
+name = "json"
+version = "0.1.0"
+source = "path+../json"
+deps = []
+grants = []
