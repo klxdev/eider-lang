@@ -112,7 +112,7 @@ pub fn decode(raw: List[u8], at: usize, len: usize) -> Addr {
     Addr(fam, port, List.new(), 0, none)
 }
 
-fn take_addr() -> Addr uses ffi {
+fn take_addr() -> Addr {
     let raw = sys.take()
     decode(raw, 0, raw.len())
 }
@@ -165,24 +165,24 @@ fn be16(g: u64) -> List[u8] {
     b
 }
 
-fn error(what: str, status: i64) -> String uses ffi { fd.error(what, status) }
+fn error(what: str, status: i64) -> String { fd.error(what, status) }
 
 /// A new socket: `family` IPV4/IPV6/UNIX, `kind` STREAM/DATAGRAM. The first socket a program
 /// makes sets SIGPIPE to ignored (core/ABI.md "SIGPIPE").
-pub fn socket(family: i32, kind: i32, nonblock: bool) -> Result[i32, String] uses net, ffi {
+pub fn socket(family: i32, kind: i32, nonblock: bool) -> Result[i32, String] uses net {
     let n = os.sock_open(family, kind, nonblock)
     if n < 0 { return Err(error("socket", n)) }
     Ok(n as i32)
 }
 
 /// Two connected Unix-domain sockets.
-pub fn pair(kind: i32) -> Result[fd.Pair, String] uses net, ffi {
+pub fn pair(kind: i32) -> Result[fd.Pair, String] uses net {
     let n = os.sock_pair(kind)
     if n < 0 { return Err(error("socketpair", n)) }
     Ok(fd.take_pair())
 }
 
-pub fn bind(s: i32, a: Addr) -> Result[bool, String] uses net, ffi {
+pub fn bind(s: i32, a: Addr) -> Result[bool, String] uses net {
     sys.send(encode(a))
     let n = os.sock_bind(s)
     if n < 0 {
@@ -195,14 +195,14 @@ pub fn bind(s: i32, a: Addr) -> Result[bool, String] uses net, ffi {
     Ok(true)
 }
 
-pub fn listen(s: i32, backlog: i32) -> Result[bool, String] uses net, ffi {
+pub fn listen(s: i32, backlog: i32) -> Result[bool, String] uses net {
     let n = os.sock_listen(s, backlog)
     if n < 0 { return Err(error("listen", n)) }
     Ok(true)
 }
 
 /// A socket bound to `a` and listening (SO_REUSEADDR set first): the usual server start.
-pub fn listener(a: Addr, nonblock: bool) -> Result[i32, String] uses net, ffi {
+pub fn listener(a: Addr, nonblock: bool) -> Result[i32, String] uses net {
     let s = socket(a.family, STREAM, nonblock)?
     if a.family != UNIX { set_option(s, REUSE_ADDR, 1)? }
     bind(s, a)?
@@ -211,7 +211,7 @@ pub fn listener(a: Addr, nonblock: bool) -> Result[i32, String] uses net, ffi {
 }
 
 /// The next connection; None on a non-blocking listener with nothing pending.
-pub fn accept(s: i32, nonblock: bool) -> Result[Option[Accepted], String] uses net, ffi {
+pub fn accept(s: i32, nonblock: bool) -> Result[Option[Accepted], String] uses net {
     let n = os.sock_accept(s, nonblock)
     if n < 0 {
         if fd.would_block(n) { return Ok(None) }
@@ -222,7 +222,7 @@ pub fn accept(s: i32, nonblock: bool) -> Result[Option[Accepted], String] uses n
 
 /// Ok(true) when connected; Ok(false) when a non-blocking connect is under way (wait until
 /// the socket is writable, then `connect_result`).
-pub fn connect(s: i32, a: Addr) -> Result[bool, String] uses net, ffi {
+pub fn connect(s: i32, a: Addr) -> Result[bool, String] uses net {
     sys.send(encode(a))
     let n = os.sock_connect(s)
     if n < 0 {
@@ -237,20 +237,20 @@ pub fn connect(s: i32, a: Addr) -> Result[bool, String] uses net, ffi {
 }
 
 /// How a non-blocking connect ended (its pending error).
-pub fn connect_result(s: i32) -> Result[bool, String] uses net, ffi {
+pub fn connect_result(s: i32) -> Result[bool, String] uses net {
     let n = os.sock_error(s)
     if n < 0 { return Err(error("connect", n)) }
     Ok(true)
 }
 
-pub fn shutdown(s: i32, how: i32) -> Result[bool, String] uses net, ffi {
+pub fn shutdown(s: i32, how: i32) -> Result[bool, String] uses net {
     let n = os.sock_shutdown(s, how)
     if n < 0 { return Err(error("shutdown", n)) }
     Ok(true)
 }
 
 /// One send: the number of bytes sent.
-pub fn send(s: i32, data: List[u8]) -> Result[i64, String] uses net, ffi {
+pub fn send(s: i32, data: List[u8]) -> Result[i64, String] uses net {
     sys.send(data)
     let n = os.sock_send(s)
     if n < 0 { return Err(error("send", n)) }
@@ -258,7 +258,7 @@ pub fn send(s: i32, data: List[u8]) -> Result[i64, String] uses net, ffi {
 }
 
 /// Send all of `data` (blocking sockets).
-pub fn send_all(s: i32, data: List[u8]) -> Result[bool, String] uses net, ffi {
+pub fn send_all(s: i32, data: List[u8]) -> Result[bool, String] uses net {
     var rest = data
     while rest.len() > 0 {
         let n = send(s, rest)?
@@ -268,14 +268,14 @@ pub fn send_all(s: i32, data: List[u8]) -> Result[bool, String] uses net, ffi {
 }
 
 /// Up to `max` bytes; empty at end of stream.
-pub fn recv(s: i32, max: i64) -> Result[List[u8], String] uses net, ffi {
+pub fn recv(s: i32, max: i64) -> Result[List[u8], String] uses net {
     let n = os.sock_recv(s, max, false)
     if n < 0 { return Err(error("recv", n)) }
     Ok(sys.take())
 }
 
 /// `recv` on a non-blocking socket: None when nothing is available yet.
-pub fn try_recv(s: i32, max: i64) -> Result[Option[List[u8]], String] uses net, ffi {
+pub fn try_recv(s: i32, max: i64) -> Result[Option[List[u8]], String] uses net {
     let n = os.sock_recv(s, max, false)
     if n < 0 {
         if fd.would_block(n) { return Ok(None) }
@@ -285,14 +285,14 @@ pub fn try_recv(s: i32, max: i64) -> Result[Option[List[u8]], String] uses net, 
 }
 
 /// Up to `max` bytes, left queued.
-pub fn peek(s: i32, max: i64) -> Result[List[u8], String] uses net, ffi {
+pub fn peek(s: i32, max: i64) -> Result[List[u8], String] uses net {
     let n = os.sock_recv(s, max, true)
     if n < 0 { return Err(error("recv", n)) }
     Ok(sys.take())
 }
 
 /// One datagram to `to`: the number of bytes sent.
-pub fn send_to(s: i32, data: List[u8], to: Addr) -> Result[i64, String] uses net, ffi {
+pub fn send_to(s: i32, data: List[u8], to: Addr) -> Result[i64, String] uses net {
     let a = encode(to)
     sys.send(bytes.concat(a, data))
     let n = os.sock_sendto(s, a.len() as i32)
@@ -301,7 +301,7 @@ pub fn send_to(s: i32, data: List[u8], to: Addr) -> Result[i64, String] uses net
 }
 
 /// One datagram (truncated to `max` bytes) and its sender.
-pub fn recv_from(s: i32, max: i64) -> Result[Datagram, String] uses net, ffi {
+pub fn recv_from(s: i32, max: i64) -> Result[Datagram, String] uses net {
     let n = os.sock_recvfrom(s, max)
     if n < 0 { return Err(error("recvfrom", n)) }
     let raw = sys.take()
@@ -309,26 +309,26 @@ pub fn recv_from(s: i32, max: i64) -> Result[Datagram, String] uses net, ffi {
     Ok(Datagram(decode(raw, 1, alen), bytes.slice(raw, 1 + alen, raw.len())))
 }
 
-pub fn local_addr(s: i32) -> Result[Addr, String] uses net, ffi {
+pub fn local_addr(s: i32) -> Result[Addr, String] uses net {
     let n = os.sock_name(s, false)
     if n < 0 { return Err(error("getsockname", n)) }
     Ok(take_addr())
 }
 
-pub fn peer_addr(s: i32) -> Result[Addr, String] uses net, ffi {
+pub fn peer_addr(s: i32) -> Result[Addr, String] uses net {
     let n = os.sock_name(s, true)
     if n < 0 { return Err(error("getpeername", n)) }
     Ok(take_addr())
 }
 
 /// Set an option (REUSE_ADDR, NODELAY, ...; booleans are 0/1, timeouts in ms).
-pub fn set_option(s: i32, opt: i32, value: i64) -> Result[bool, String] uses net, ffi {
+pub fn set_option(s: i32, opt: i32, value: i64) -> Result[bool, String] uses net {
     let n = os.sock_setopt(s, opt, value)
     if n < 0 { return Err(error("setsockopt", n)) }
     Ok(true)
 }
 
-pub fn get_option(s: i32, opt: i32) -> Result[i64, String] uses net, ffi {
+pub fn get_option(s: i32, opt: i32) -> Result[i64, String] uses net {
     let n = os.sock_getopt(s, opt)
     if n < 0 { return Err(error("getsockopt", n)) }
     Ok(n)
@@ -337,18 +337,18 @@ pub fn get_option(s: i32, opt: i32) -> Result[i64, String] uses net, ffi {
 /// Resolve `host` and `service` (a port number or a service name) to addresses of `kind`
 /// (STREAM, DATAGRAM, or 0 for both) and `family` (IPV4, IPV6, or 0 for both), in the
 /// resolver's order. Blocks while the resolver works.
-pub fn lookup(host: List[u8], service: List[u8], family: i32, kind: i32) -> Result[List[Addr], String] uses net, ffi {
+pub fn lookup(host: List[u8], service: List[u8], family: i32, kind: i32) -> Result[List[Addr], String] uses net {
     resolve(host, service, family, kind, 0)
 }
 
 /// `lookup` for a numeric host ("127.0.0.1", "::1"): never asks a name server.
-pub fn parse(host: List[u8], port: i32) -> Result[Addr, String] uses net, ffi {
+pub fn parse(host: List[u8], port: i32) -> Result[Addr, String] uses net {
     let r = resolve(host, bytes.from_u64(port as u64), 0, STREAM, 2)?
     if r.len() == 0 { return Err(String.from("no address")) }
     Ok(r[0])
 }
 
-fn resolve(host: List[u8], service: List[u8], family: i32, kind: i32, flags: i32) -> Result[List[Addr], String] uses net, ffi {
+fn resolve(host: List[u8], service: List[u8], family: i32, kind: i32, flags: i32) -> Result[List[Addr], String] uses net {
     var p: List[List[u8]] = List.new()
     p.push(host)
     p.push(service)
@@ -374,7 +374,7 @@ fn resolve(host: List[u8], service: List[u8], family: i32, kind: i32, flags: i32
 
 /// The host name and service name of an address (numeric when `numeric`, or when no name is
 /// known).
-pub fn reverse(a: Addr, numeric: bool) -> Result[List[List[u8]], String] uses net, ffi {
+pub fn reverse(a: Addr, numeric: bool) -> Result[List[List[u8]], String] uses net {
     sys.send(encode(a))
     let flags: i32 = if numeric { 3 } else { 0 }
     let n = os.dns_reverse(flags)

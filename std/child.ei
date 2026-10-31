@@ -1,7 +1,7 @@
 // std/child: start programs without waiting, with each of stdin/stdout/stderr inherited,
 // /dev/null or a pipe, so they can become streams; wait (blocking or not), kill
 // (core/ABI.md "Processes"). std/proc runs a program to completion instead. A child can do
-// anything, so callers need every capability it might use (io, fs, net) in addition to ffi.
+// anything, so starting, waiting for and killing one needs io, fs and net.
 
 import "core/sys"
 import "core/os"
@@ -20,7 +20,7 @@ pub type Child = { pid: i32, stdin: i32, stdout: i32, stderr: i32 }
 pub type Exit = { code: i32, signal: i32 }
 
 /// Start `argv` (searched on PATH) without waiting for it. Err if it could not be started.
-pub fn start(argv: List[List[u8]], stdin: i32, stdout: i32, stderr: i32) -> Result[Child, String] uses io, fs, net, ffi {
+pub fn start(argv: List[List[u8]], stdin: i32, stdout: i32, stderr: i32) -> Result[Child, String] uses io, fs, net {
     if argv.len() == 0 { return Err(String.from("proc: empty command")) }
     sys.send_all(argv)
     let n = os.spawn(stdin, stdout, stderr)
@@ -41,7 +41,7 @@ fn exit_of(n: i64) -> Exit {
 }
 
 /// Wait for child `pid` to end.
-pub fn wait(pid: i32) -> Result[Exit, String] uses io, ffi {
+pub fn wait(pid: i32) -> Result[Exit, String] uses io, fs, net {
     let n = os.wait(pid, false)
     if n < 0 {
         var m = String.from("wait: ")
@@ -52,7 +52,7 @@ pub fn wait(pid: i32) -> Result[Exit, String] uses io, ffi {
 }
 
 /// None while child `pid` is still running.
-pub fn try_wait(pid: i32) -> Result[Option[Exit], String] uses io, ffi {
+pub fn try_wait(pid: i32) -> Result[Option[Exit], String] uses io, fs, net {
     let n = os.wait(pid, true)
     if n < 0 {
         if os.err_kind(n) == 1 { return Ok(None) }
@@ -64,7 +64,7 @@ pub fn try_wait(pid: i32) -> Result[Option[Exit], String] uses io, ffi {
 }
 
 /// Send signal `sig` (std/signal numbers) to process `pid`.
-pub fn kill(pid: i32, sig: i32) -> Result[bool, String] uses io, ffi {
+pub fn kill(pid: i32, sig: i32) -> Result[bool, String] uses io, fs, net {
     let n = os.kill(pid, sig)
     if n < 0 {
         var m = String.from("kill: ")
@@ -75,4 +75,4 @@ pub fn kill(pid: i32, sig: i32) -> Result[bool, String] uses io, ffi {
 }
 
 /// This process's id.
-pub fn id() -> i32 uses io, ffi { os.getpid() as i32 }
+pub fn id() -> i32 uses io { os.getpid() as i32 }

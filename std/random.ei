@@ -7,7 +7,7 @@ import "core/os"
 
 /// `n` random bytes (at most 1 MiB per call). On Linux this waits, once per boot, until the
 /// kernel's pool is seeded.
-pub fn bytes(n: i64) -> Result[List[u8], String] uses io, ffi {
+pub fn bytes(n: i64) -> Result[List[u8], String] uses io {
     let r = os.random(n, false)
     if r < 0 {
         var m = String.from("random: ")
@@ -18,7 +18,7 @@ pub fn bytes(n: i64) -> Result[List[u8], String] uses io, ffi {
 }
 
 /// A random u64.
-pub fn next_u64() -> Result[u64, String] uses io, ffi {
+pub fn next_u64() -> Result[u64, String] uses io {
     let b = bytes(8)?
     var v: u64 = 0
     for x in b { v = v * 256 + (x as u64) }
@@ -26,7 +26,7 @@ pub fn next_u64() -> Result[u64, String] uses io, ffi {
 }
 
 /// A random number in [0, n) without modulo bias; n > 0.
-pub fn below(n: u64) -> Result[u64, String] uses io, ffi {
+pub fn below(n: u64) -> Result[u64, String] uses io {
     // reject the top partial range, so every residue is equally likely
     let top: u64 = 18446744073709551615
     let limit = top - (top % n)

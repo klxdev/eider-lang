@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_core_os_needs_net.ei","line":7,"col":13},"message":"call to `os.sock_open` requires capability `net`","fix":{"at":{"line":6,"col":10},"delete":0,"insert":" uses net"}}

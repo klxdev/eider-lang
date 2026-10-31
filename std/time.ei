@@ -5,19 +5,19 @@
 import "core/os"
 
 /// Nanoseconds from an arbitrary start; never goes backwards, unaffected by setting the clock.
-pub fn mono_ns() -> i64 uses clock, ffi { os.time_mono_ns() }
+pub fn mono_ns() -> i64 uses clock { os.time_mono_ns() }
 
 /// Milliseconds on the same clock.
-pub fn mono_ms() -> i64 uses clock, ffi { os.time_mono_ns() / 1000000 }
+pub fn mono_ms() -> i64 uses clock { os.time_mono_ns() / 1000000 }
 
 /// Nanoseconds since 1970-01-01 00:00 UTC. It jumps when the system clock is set: use it for
 /// timestamps, never to measure durations.
-pub fn wall_ns() -> i64 uses clock, ffi { os.time_wall_ns() }
+pub fn wall_ns() -> i64 uses clock { os.time_wall_ns() }
 
 /// Seconds since the Unix epoch.
-pub fn unix_seconds() -> i64 uses clock, ffi { os.time_wall_ns() / 1000000000 }
+pub fn unix_seconds() -> i64 uses clock { os.time_wall_ns() / 1000000000 }
 
 /// Sleep at least `ns` nanoseconds (signals don't cut it short).
-pub fn sleep_ns(ns: i64) uses clock, ffi { os.sleep_ns(ns) }
+pub fn sleep_ns(ns: i64) uses clock { os.sleep_ns(ns) }
 
-pub fn sleep_ms(ms: i64) uses clock, ffi { os.sleep_ns(ms * 1000000) }
+pub fn sleep_ms(ms: i64) uses clock { os.sleep_ns(ms * 1000000) }

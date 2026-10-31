@@ -21,28 +21,28 @@ pub type Event = { token: i64, readable: bool, writable: bool, error: bool, hang
 pub type Waker = { r: i32, w: i32 }
 
 /// A new poller (a descriptor: close it with fd.close).
-pub fn create() -> Result[i32, String] uses io, ffi {
+pub fn create() -> Result[i32, String] uses io {
     let n = os.poll_new()
     if n < 0 { return Err(fd.error("poller", n)) }
     Ok(n as i32)
 }
 
-fn ctl(p: i32, op: i32, f: i32, interest: i32, token: i64) -> Result[bool, String] uses io, ffi {
+fn ctl(p: i32, op: i32, f: i32, interest: i32, token: i64) -> Result[bool, String] uses io {
     let n = os.poll_ctl(p, op, f, interest, token)
     if n < 0 { return Err(fd.error("poll register", n)) }
     Ok(true)
 }
 
 /// Watch `f` for `interest` (READ | WRITE | ...); its events carry `token`.
-pub fn add(p: i32, f: i32, interest: i32, token: i64) -> Result[bool, String] uses io, ffi { ctl(p, 0, f, interest, token) }
-pub fn modify(p: i32, f: i32, interest: i32, token: i64) -> Result[bool, String] uses io, ffi { ctl(p, 1, f, interest, token) }
+pub fn add(p: i32, f: i32, interest: i32, token: i64) -> Result[bool, String] uses io { ctl(p, 0, f, interest, token) }
+pub fn modify(p: i32, f: i32, interest: i32, token: i64) -> Result[bool, String] uses io { ctl(p, 1, f, interest, token) }
 /// Stop watching `f` (do it before closing `f`).
-pub fn remove(p: i32, f: i32) -> Result[bool, String] uses io, ffi { ctl(p, 2, f, 0, 0) }
+pub fn remove(p: i32, f: i32) -> Result[bool, String] uses io { ctl(p, 2, f, 0, 0) }
 
 /// Up to `max` events, waiting at most `timeout_ms` (< 0: forever, 0: not at all). Empty on
 /// a timeout; a signal ends the wait early (with the signal pipe's event if it is watched,
 /// possibly with none: loop).
-pub fn wait(p: i32, max: i32, timeout_ms: i64) -> Result[List[Event], String] uses io, ffi {
+pub fn wait(p: i32, max: i32, timeout_ms: i64) -> Result[List[Event], String] uses io {
     let n = os.poll_wait(p, max, timeout_ms)
     if n < 0 { return Err(fd.error("poll wait", n)) }
     var out: List[Event] = List.new()
@@ -57,7 +57,7 @@ pub fn wait(p: i32, max: i32, timeout_ms: i64) -> Result[List[Event], String] us
     Ok(out)
 }
 
-pub fn waker() -> Result[Waker, String] uses io, ffi {
+pub fn waker() -> Result[Waker, String] uses io {
     let n = os.waker_new()
     if n < 0 { return Err(fd.error("waker", n)) }
     let p = fd.take_pair()
@@ -65,19 +65,19 @@ pub fn waker() -> Result[Waker, String] uses io, ffi {
 }
 
 /// Make the waker readable (several wakes before a drain are one).
-pub fn wake(w: Waker) -> Result[bool, String] uses io, ffi {
+pub fn wake(w: Waker) -> Result[bool, String] uses io {
     let n = os.waker_wake(w.w)
     if n < 0 { return Err(fd.error("wake", n)) }
     Ok(true)
 }
 
 /// Clear a woken waker.
-pub fn drain(w: Waker) uses io, ffi {
+pub fn drain(w: Waker) uses io {
     while sys.read_fd(w.r, 4096) > 0 {}
 }
 
 /// Close both ends.
-pub fn close_waker(w: Waker) uses io, ffi {
+pub fn close_waker(w: Waker) uses io {
     os.fd_close(w.r)
     if w.w != w.r { os.fd_close(w.w) }
 }

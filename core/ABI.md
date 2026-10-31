@@ -139,6 +139,15 @@ wrap them. They follow the rules above, plus:
   ("u32" = 4 bytes LE, "u64" = 8 bytes LE). A pair of descriptors is two u32.
 - **Portable numbers.** Flags, option names, signal numbers and address families are Eider's
   own numbers, the same on every system; the backend translates them.
+- **Capabilities** (docs/compiler.md, "C8.5": `ffi` doesn't leave core, so each `core/os.ei`
+  wrapper declares the real capability next to it): `fs` for `fd_open`, `fd_stat`, `stat`,
+  `fd_chmod`, `fd_truncate`, `fd_lock`, `fd_sync`; `io` for the other descriptor operations
+  (close, write, pread, pwrite, seek, dup, non-blocking), `pipe`, `poll_*`, `waker_*`,
+  `signal_*`, `random` and `getpid`; `net` for `sock_*` and `dns_*`; `clock` for
+  `time_mono_ns`, `time_wall_ns`, `sleep_ns`; `io, fs, net` for `spawn`, `wait` and `kill`
+  (a child, or a signal to a process, can do anything; as `sys.run`). `err_kind` takes only
+  `ffi`, the `le_*` readers nothing. The std modules on top declare the same real
+  capabilities and no `ffi`.
 
 ## Error kinds
 
