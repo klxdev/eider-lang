@@ -1,6 +1,6 @@
 // std/fs: files and directories. Paths are bytes; errors are human-readable Strings.
 
-import "../core/sys.ei"
+import "core/sys"
 import "bytes.ei"
 
 /// What is at a path, without following a final symlink.

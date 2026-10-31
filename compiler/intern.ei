@@ -1,8 +1,8 @@
 // intern: identifier bytes -> u32 symbol ids, so later passes compare and hash integers.
 // Open addressing (linear probing); the table doubles at half full.
 
-import "../core/sys.ei"
-import "../std/bytes.ei"
+import "core/sys"
+import "std/bytes"
 
 pub type Interner = { names: List[List[u8]], hashes: List[u64], slots: List[u32] }
 

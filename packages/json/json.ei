@@ -20,8 +20,8 @@
 // `new_array`, `new_object`; children before parents) and written (`write`). `quote` writes one
 // JSON string and replaces invalid UTF-8 with U+FFFD, so the output is always valid JSON.
 
-import "../../core/sys.ei"
-import "../../std/bytes.ei"
+import "core/sys"
+import "std/bytes"
 
 pub const NULL: u32 = 1
 pub const BOOL: u32 = 2

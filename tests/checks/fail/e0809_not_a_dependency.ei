@@ -1,0 +1,5 @@
+// expect: E0809 3:1
+// a file in no package can only import core and std by name
+import "json"
+
+fn main() {}

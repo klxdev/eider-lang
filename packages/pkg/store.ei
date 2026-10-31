@@ -11,12 +11,12 @@
 // project is vendor/<name> when that exists, else pkg/<name>-<hash16> here, the hash being
 // the one eider.lock records.
 
-import "../../core/sys.ei"
-import "../../std/bytes.ei"
-import "../../std/fs.ei"
-import "../../std/env.ei"
-import "../../std/proc.ei"
-import "../sha256/sha256.ei"
+import "core/sys"
+import "std/bytes"
+import "std/fs"
+import "std/env"
+import "std/proc"
+import "sha256"
 
 pub type Export = { dir: List[u8], hash: List[u8] }
 

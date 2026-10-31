@@ -36,10 +36,10 @@
 // below reproduce that renaming's rules, so lookups hit exactly what the mangled
 // `stem__Name` strings would hit.
 
-import "../core/sys.ei"
-import "../std/bytes.ei"
-import "../std/fs.ei"
-import "../std/env.ei"
+import "core/sys"
+import "std/bytes"
+import "std/fs"
+import "std/env"
 import "intern.ei"
 import "lex.ei"
 import "ast.ei"

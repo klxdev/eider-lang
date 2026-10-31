@@ -6,7 +6,7 @@
 // shifted halves, and AND and XOR go through 256x256 byte tables, one byte of each operand
 // at a time. Build a `Sha` once with `new()` (~1 ms) and reuse it.
 
-import "../std/bytes.ei"
+import "std/bytes"
 
 pub type Sha = { and_t: List[u8], xor_t: List[u8], pow: List[u64], k: List[u32] }
 

@@ -12,10 +12,10 @@
 // Where eiderc answers `unsupported` (a feature it doesn't implement yet) the file is
 // reported as `skip` and counted on its own line, neither passed nor failed.
 
-import "../core/sys.ei"
-import "../std/bytes.ei"
-import "../std/fs.ei"
-import "../std/io.ei"
+import "core/sys"
+import "std/bytes"
+import "std/fs"
+import "std/io"
 import "intern.ei"
 import "lex.ei"
 import "diag.ei"

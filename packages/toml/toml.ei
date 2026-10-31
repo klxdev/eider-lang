@@ -6,7 +6,7 @@
 // The document is flattened: every value gets its full dotted key, and the n-th `[[a]]`
 // table (from 0) is the key prefix `a.<n>`.
 
-import "../../std/bytes.ei"
+import "std/bytes"
 
 pub type Val = | Str(s: List[u8]) | Int(n: i64) | Bool(b: bool) | Strs(items: List[List[u8]])
 

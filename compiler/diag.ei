@@ -1,8 +1,8 @@
 // diag: diagnostics, rendered exactly as tests/oracle records them (human and --json).
 // Messages are bytes so they can go to stderr.
 
-import "../core/sys.ei"
-import "../std/bytes.ei"
+import "core/sys"
+import "std/bytes"
 
 pub type Fix = { line: u32, col: u32, delete: u64, insert: List[u8] }
 

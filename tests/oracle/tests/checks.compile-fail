@@ -70,6 +70,8 @@ compile-fail tests (tests/checks/fail)
   ok   e0807_comptime_str.ei        E0807 at 2:7
   ok   e0807_comptime_trap.ei       E0807 at 4:7
   ok   e0808_module_name_clash.ei   E0808 at 3:1
+  ok   e0809_not_a_dependency.ei    E0809 at 3:1
+  ok   e0810_no_lock.ei             E0810 at 2:1
 
 compile-pass tests (tests/checks/pass)
   ok   pass_bitwise_units_bytes.ei
@@ -81,6 +83,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-79 passed, 0 failed; error-code coverage 46/48
-codes without a compile-fail test: E0809 E0810
+81 passed, 0 failed; error-code coverage 48/48
 --- exit 0

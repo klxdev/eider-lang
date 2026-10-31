@@ -13,11 +13,11 @@
 //   path = "../geom"            #   ... or a local directory
 //   uses = ["io", "fs"]         #   capabilities granted to the dependency (default: none)
 
-import "../../core/sys.ei"
-import "../../std/bytes.ei"
-import "../../std/fs.ei"
-import "../toml/toml.ei"
-import "../semver/semver.ei"
+import "core/sys"
+import "std/bytes"
+import "std/fs"
+import "toml"
+import "semver"
 
 pub type Source = | Path(dir: List[u8]) | Git(url: List[u8], version: List[u8], rev: List[u8])
 

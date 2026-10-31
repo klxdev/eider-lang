@@ -1,0 +1,1 @@
+{"error":"E0809","span":{"file":"tests/checks/fail/e0809_not_a_dependency.ei","line":3,"col":1},"message":"unknown package `json`: this file is in no package (no eider.toml above it)","help":"packages are imported from inside a package: create eider.toml with `eider-pkg init`, then `eider-pkg add json ...`; a path import names a file with its extension, like `\"json.ei\"`"}

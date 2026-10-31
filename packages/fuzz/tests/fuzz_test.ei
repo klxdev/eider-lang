@@ -1,6 +1,6 @@
-import "../../../core/sys.ei"
-import "../../../std/bytes.ei"
-import "../../../std/io.ei"
+import "core/sys"
+import "std/bytes"
+import "std/io"
 import "../fuzz.ei"
 
 fn show_tokens(s: str) uses io, ffi {

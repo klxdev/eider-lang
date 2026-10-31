@@ -5,8 +5,8 @@
 // Only the operations constant folding needs are here: add/sub on any Wide, mul/div/rem on
 // values whose magnitude fits in 64 bits (folded operands are always in their type's range).
 
-import "../core/sys.ei"
-import "../std/bytes.ei"
+import "core/sys"
+import "std/bytes"
 
 pub type Wide = { neg: bool, hi: u64, lo: u64 }
 

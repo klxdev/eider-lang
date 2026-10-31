@@ -46,8 +46,8 @@
 // diagnostic at the point where handling them would start, so everything reported
 // before is exact.
 
-import "../core/sys.ei"
-import "../std/bytes.ei"
+import "core/sys"
+import "std/bytes"
 import "intern.ei"
 import "lex.ei"
 import "ast.ei"

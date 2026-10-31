@@ -54,9 +54,9 @@
 // toolchain or a work directory is missing (where `check` would exit), that is a
 // `toolchain` diagnostic instead.
 
-import "../core/sys.ei"
-import "../std/bytes.ei"
-import "../std/fs.ei"
+import "core/sys"
+import "std/bytes"
+import "std/fs"
 import "intern.ei"
 import "lex.ei"
 import "ast.ei"

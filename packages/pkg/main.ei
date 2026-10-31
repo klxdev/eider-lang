@@ -20,11 +20,11 @@
 // eider.lock and fills the store, and links nothing: the deps/ link farm of earlier versions
 // is gone (a deps/ an earlier eider-pkg made, recognisable by its deps/.all, is removed).
 
-import "../../core/sys.ei"
-import "../../std/bytes.ei"
-import "../../std/fs.ei"
-import "../../std/io.ei"
-import "../../std/env.ei"
+import "core/sys"
+import "std/bytes"
+import "std/fs"
+import "std/io"
+import "std/env"
 import "manifest.ei"
 import "lockfile.ei"
 import "store.ei"

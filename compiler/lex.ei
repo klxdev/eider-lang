@@ -8,8 +8,8 @@
 // `lex` stops at the first error; `lex_all` (Lexed2) records every error and goes on, for
 // reporting all the syntax errors of a file. Both run the same scanner (`run`).
 
-import "../core/sys.ei"
-import "../std/bytes.ei"
+import "core/sys"
+import "std/bytes"
 import "intern.ei"
 import "diag.ei"
 

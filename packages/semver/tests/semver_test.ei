@@ -1,5 +1,5 @@
-import "../../../core/sys.ei"
-import "../../../std/io.ei"
+import "core/sys"
+import "std/io"
 import "../semver.ei"
 
 fn show(s: str) uses io, ffi {
