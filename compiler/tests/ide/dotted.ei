@@ -1,0 +1,17 @@
+// Dotted imports (docs/compiler.md, "C8.26: dotted imports"; this file is in package eiderc, so
+// its own modules are `eiderc.<path>`): refs from an import's last
+// segment and its alias to the module, from group members, and from the module segment of a
+// use through the std namespace (`strings` in `std.strings.repeat`), whose module is loaded
+// by that use; the namespace itself (`std`) names no module.
+import eiderc.tests.ide.lib.shapes as sh
+import std.{bytes, fs as files}
+import std
+
+fn area(s: sh.Shape) -> i32 { s.area() }
+
+fn main() uses io, fs {
+    print(area(sh.Circle(2)) + sh.make(1, 2).x)
+    print(std.strings.repeat("ab", 2))
+    print(bytes.eq(std.strings.repeat("a", 1).bytes(), "a".bytes()))
+    print(files.exists("x".bytes()))
+}

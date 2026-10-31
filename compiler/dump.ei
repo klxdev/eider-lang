@@ -363,6 +363,10 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
         ast.IImport => {
             str_slot(inout out, p, "path", n.a)
             if n.b > 0 { sym(inout out, p, "alias", n.b - 1) }
+            // a dotted import (docs/compiler.md, "C8.26"); the quoted form prints as before
+            flag(inout out, "dotted", n.c == parse.IMPORT_DOTTED)
+            flag(inout out, "namespace", n.c == parse.IMPORT_NAMESPACE)
+            flag(inout out, "implied", n.c == parse.IMPORT_IMPLIED)
         }
         ast.EError => end(inout out, n)
         ast.SError => end(inout out, n)

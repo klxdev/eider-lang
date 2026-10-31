@@ -1,0 +1,1 @@
+{"error":"E0804","span":{"file":"tests/checks/fail/e0804_unknown_module_namespace.ei","line":6,"col":5},"message":"unknown module `std.nope`","help":"there is no file ./std/nope.ei (the namespace names one module, then an item of it: `std.nope.Name`)"}

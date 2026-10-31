@@ -378,12 +378,25 @@ fn tok_at(b: B, m: u32, line: u32, col: u32) -> u32 {
     NONE
 }
 
-/// The name token of a use node at (line, col): after `alias .` when it is qualified.
+/// The name token of a use node at (line, col): after `alias .` when it is qualified, after
+/// `ns . module .` when it is qualified through a package namespace (`std.bytes.eq`).
 fn use_tok(b: B, m: u32, line: u32, col: u32, qual: bool) -> u32 {
     let i = tok_at(b, m, line, col)
     if i == NONE || !qual { return i }
+    if ns_at(b, m, i) && i + 4 < ntoks(b, m) && tkind(b, m, i + 4) == lex.Ident { return i + 4 }
     if i + 2 < ntoks(b, m) && tkind(b, m, i + 2) == lex.Ident { return i + 2 }
     i
+}
+
+/// Whether token i of module m is a package namespace's alias (`std` of `import std`: its
+/// Alias has no module) followed by `. module .`.
+fn ns_at(b: B, m: u32, i: u32) -> bool {
+    if i + 3 >= ntoks(b, m) || tkind(b, m, i) != lex.Ident || tkind(b, m, i + 1) != lex.Dot || tkind(b, m, i + 3) != lex.Dot { return false }
+    let sym = tok(b, m, i).val as u32
+    for a in b.p.mods[m as usize].aliases {
+        if a.sym == sym && a.pre == 0 { return true }
+    }
+    false
 }
 
 fn tok_span(b: B, m: u32, first: u32, last: u32) -> Span {
@@ -916,10 +929,22 @@ fn module_refs(inout b: B, m: u32, inout refs: Refs) {
         if k >= b.p.mods[m as usize].aliases.len() { break }
         let al = b.p.mods[m as usize].aliases[k]
         k += 1
+        // a namespace names no module; an implied import has no text of its own
+        if n.c == parse.IMPORT_NAMESPACE || n.c == parse.IMPORT_IMPLIED { continue }
         let mi = module_of_pre(b, al.pre)
-        let ti = tok_at(b, m, n.line, n.col)
-        if mi == NONE || ti == NONE { continue }
+        if mi == NONE { continue }
         let target = b.modsym[mi as usize]
+        if n.c == parse.IMPORT_DOTTED {
+            // `a.b.c [as x]` from (d, e): the last segment and the alias
+            let mut ti = tok_at(b, m, n.d, n.e)
+            if ti == NONE { continue }
+            while ti + 2 < ntoks(b, m) && tkind(b, m, ti + 1) == lex.Dot && tkind(b, m, ti + 2) == lex.Ident { ti += 2 }
+            add_ref(b, m, ti, target, inout refs)
+            if n.b > 0 && ti + 2 < ntoks(b, m) && tkind(b, m, ti + 2) == lex.Ident { add_ref(b, m, ti + 2, target, inout refs) }
+            continue
+        }
+        let ti = tok_at(b, m, n.line, n.col)
+        if ti == NONE { continue }
         if ti + 1 < ntoks(b, m) && tkind(b, m, ti + 1) == lex.Str { add_ref(b, m, ti + 1, target, inout refs) }
         if n.b > 0 && ti + 3 < ntoks(b, m) && tkind(b, m, ti + 3) == lex.Ident { add_ref(b, m, ti + 3, target, inout refs) }
     }
@@ -932,6 +957,11 @@ fn module_refs(inout b: B, m: u32, inout refs: Refs) {
         if mi == NONE { continue }
         let ti = tok_at(b, m, n.line, n.col)
         if ti == NONE { continue }
+        // through a namespace, the module's segment: `bytes` of `std.bytes.eq`
+        if ns_at(b, m, ti) {
+            add_ref(b, m, ti + 2, b.modsym[mi as usize], inout refs)
+            continue
+        }
         add_ref(b, m, ti, b.modsym[mi as usize], inout refs)
     }
 }

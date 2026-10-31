@@ -1,0 +1,4 @@
+// expect: E0812 2:1
+import lib.selfdep.selfdep
+
+fn main() {}

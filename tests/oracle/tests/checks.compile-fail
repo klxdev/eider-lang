@@ -1,4 +1,6 @@
 compile-fail tests (tests/checks/fail)
+  ok   e0001_import_from.ei         E0001 at 3:14
+  ok   e0001_import_wildcard.ei     E0001 at 3:12
   ok   e0001_missing_brace.ei       E0001 at 5:1
   ok   e0002_bitwise_needs_parens.ei E0002 at 3:11 (fix compiles)
   ok   e0101_enum_missing.ei        E0101 at 4:3
@@ -75,6 +77,8 @@ compile-fail tests (tests/checks/fail)
   ok   e0802_unsafe_required.ei     E0802 at 4:13
   ok   e0803_ffi_bad_type.ei        E0803 at 2:20
   ok   e0804_missing_module.ei      E0804 at 2:1
+  ok   e0804_unknown_module.ei      E0804 at 3:1
+  ok   e0804_unknown_module_namespace.ei E0804 at 6:5
   ok   e0805_generic_export.ei      E0805 at 2:11
   ok   e0806_wasm_str.ei            E0806 at 3:17
   ok   e0806_wasm_threads.ei        E0806 at 1:1
@@ -84,10 +88,13 @@ compile-fail tests (tests/checks/fail)
   ok   e0809_not_a_dependency.ei    E0809 at 3:1
   ok   e0810_no_lock.ei             E0810 at 2:1
   ok   e0811_toolchain_series.ei    E0811 at 3:1
+  ok   e0812_ambiguous_package.ei   E0812 at 2:1
+  ok   e0813_alias_clash.ei         E0813 at 4:1
 
 compile-pass tests (tests/checks/pass)
   ok   pass_bitwise_units_bytes.ei
   ok   pass_capabilities.ei
+  ok   pass_dotted_imports.ei
   ok   pass_import_and_ffi.ei
   ok   pass_inout_and_var.ei
   ok   pass_match_all.ei
@@ -95,5 +102,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-93 passed, 0 failed; error-code coverage 56/56
+100 passed, 0 failed; error-code coverage 58/58
 --- exit 0

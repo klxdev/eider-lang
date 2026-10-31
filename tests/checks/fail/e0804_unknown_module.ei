@@ -1,0 +1,5 @@
+// expect: E0804 3:1
+// a dotted import of a module that does not exist (docs/compiler.md, "C8.26: dotted imports")
+import std.nope
+
+fn main() {}

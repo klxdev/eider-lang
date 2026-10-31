@@ -1,0 +1,9 @@
+--- stderr
+error[E0809]: unknown module `legacy.util`: `legacy` is neither this package (`app`) nor one of its dependencies (<root>/compiler/tests/pkgs/app/eider.toml)
+  --> compiler/tests/pkgs/app/dotted_unknown.ei:3:1
+  |
+3 | import legacy.util
+  | ^
+  help: add it with `eider-pkg add legacy --path <dir>` or `eider-pkg add legacy --git <url> --version <v>`: a package imports only its own dependencies
+error: 1 error
+--- exit 1

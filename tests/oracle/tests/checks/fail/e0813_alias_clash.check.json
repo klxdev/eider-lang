@@ -1,0 +1,1 @@
+{"error":"E0813","span":{"file":"tests/checks/fail/e0813_alias_clash.ei","line":4,"col":1},"message":"the alias `fs` already names another module (imported on line 3)","help":"give one of them another name with `as`: `import std.io as <name>`"}

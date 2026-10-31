@@ -1,0 +1,9 @@
+//! Dotted imports in a documented module (docs/compiler.md, "C8.26: dotted imports"): a type
+//! named through the std namespace links to std's module, one through the package's own
+//! name to the module of this package.
+
+import std
+import shapes.util.geo
+
+/// How long a shape takes to draw.
+pub fn draw_time(v: geo.Vec) -> std.time.Duration { std.time.nanos(geo.len(v)) }
