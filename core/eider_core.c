@@ -289,6 +289,31 @@ EC_FN(void, ec_errstr, (int64_t e)) {
   out_put(m, strlen(m));
 }
 
+/* A portable kind for status e (errno values differ between systems; ABI.md "Error kinds"). */
+EC_FN(int32_t, ec_err_kind, (int64_t e)) {
+  if (e >= 0) return 0;
+  if (e <= -1000001) return e == -1000001 ? 4 : e == -1000002 ? 17 : 18; /* resolver */
+  if (e < -100000) return 0;
+  int n = (int)-e;
+  if (n == EAGAIN || n == EWOULDBLOCK) return 1;
+  if (n == EINPROGRESS || n == EALREADY) return 2;
+  if (n == EINTR) return 3;
+  if (n == ENOENT) return 4;
+  if (n == EEXIST) return 5;
+  if (n == EPIPE) return 6;
+  if (n == ECONNRESET || n == ECONNABORTED) return 7;
+  if (n == ECONNREFUSED) return 8;
+  if (n == ETIMEDOUT) return 9;
+  if (n == EACCES || n == EPERM) return 10;
+  if (n == EADDRINUSE) return 11;
+  if (n == EADDRNOTAVAIL) return 12;
+  if (n == ENOTCONN) return 13;
+  if (n == EINVAL) return 14;
+  if (n == ECHILD) return 15;
+  if (n == ENOSYS || n == EAFNOSUPPORT || n == EPROTONOSUPPORT || n == ENOPROTOOPT || n == EOPNOTSUPP) return 16;
+  return 0;
+}
+
 EC_FN(void, ec_exit, (int32_t code)) {
   fflush(stdout);
   exit(code);
@@ -1346,7 +1371,8 @@ EC_FN(int64_t, ec_poll_ctl, (int32_t pfd, int32_t op, int32_t fd, int32_t intere
 
 /* Wait up to timeout_ms (< 0 forever, 0 don't wait) for at most max events: their number;
    out = that many 16-byte records (event_put). flags: 1 readable, 2 writable, 4 error,
-   8 hang-up, 16 the peer finished sending. A signal interrupting the wait returns 0. */
+   8 hang-up, 16 the peer finished sending. A signal ends the wait early: what is ready then
+   (the signal pipe, if the signal is watched) is collected without waiting again. */
 EC_FN(int64_t, ec_poll_wait, (int32_t pfd, int32_t max, int64_t timeout_ms)) {
   out_len = 0;
   if (max <= 0) return -EINVAL;
@@ -1356,6 +1382,7 @@ EC_FN(int64_t, ec_poll_wait, (int32_t pfd, int32_t max, int64_t timeout_ms)) {
   struct epoll_event *ev = malloc((size_t)m * sizeof *ev);
   if (!ev) return -ENOMEM;
   int n = epoll_wait(pfd, ev, m, (int)t);
+  if (n < 0 && errno == EINTR) n = epoll_wait(pfd, ev, m, 0); /* collect, don't wait again */
   if (n < 0) {
     int64_t r = errno == EINTR ? 0 : fail();
     free(ev);
@@ -1377,6 +1404,10 @@ EC_FN(int64_t, ec_poll_wait, (int32_t pfd, int32_t max, int64_t timeout_ms)) {
   if (!ev) return -ENOMEM;
   struct timespec ts = {(time_t)(t / 1000), (long)((t % 1000) * 1000000)};
   int n = kevent(pfd, NULL, 0, ev, m, t < 0 ? NULL : &ts);
+  if (n < 0 && errno == EINTR) {
+    struct timespec zero = {0, 0};
+    n = kevent(pfd, NULL, 0, ev, m, &zero); /* collect, don't wait again */
+  }
   if (n < 0) {
     int64_t r = errno == EINTR ? 0 : fail();
     free(ev);

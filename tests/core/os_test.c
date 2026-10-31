@@ -29,6 +29,7 @@ void ec_in_push(int32_t b);
 int64_t ec_out_len(void);
 int32_t ec_out_byte(int64_t i);
 void ec_errstr(int64_t e);
+int32_t ec_err_kind(int64_t e);
 int64_t ec_read_fd(int32_t fd, int64_t max);
 int64_t ec_fd_open(int32_t flags, int32_t mode);
 int64_t ec_fd_close(int32_t fd);
@@ -284,6 +285,7 @@ static void test_fd(void) {
   EQI(ec_fd_lock((int32_t)fd, 2), 0);
   int64_t busy = ec_fd_lock((int32_t)fd2, 2 | 4);
   CHECK(busy == -EWOULDBLOCK || busy == -EAGAIN);
+  EQI(ec_err_kind(busy), 1);
   EQI(ec_fd_lock((int32_t)fd2, 1 | 4), busy);
   EQI(ec_fd_lock((int32_t)fd, 0), 0);
   EQI(ec_fd_lock((int32_t)fd2, 1 | 4), 0);
@@ -418,6 +420,7 @@ static void echo_round(int family) {
   set_addr(a, an);
   int64_t c = ec_sock_connect((int32_t)cs);
   CHECK(c == 0 || c == -EINPROGRESS);
+  CHECK(c == 0 || ec_err_kind(c) == 2);
   EQI(ec_poll_ctl((int32_t)p, 0, (int32_t)ls, 1, 100), 0);
   EQI(ec_poll_ctl((int32_t)p, 0, (int32_t)cs, 2, 200), 0);
   EQI(ec_poll_ctl((int32_t)p, 0, (int32_t)cs, 2, 200), -EEXIST);
@@ -497,6 +500,7 @@ static void test_tcp(void) {
   s = ec_sock_open(4, 1, 0);
   set_addr(a, addr4(a, port, 127, 0, 0, 1));
   EQI(ec_sock_connect((int32_t)s), -ECONNREFUSED);
+  EQI(ec_err_kind(-ECONNREFUSED), 8);
   EQI(ec_sock_name((int32_t)s, 1), -ENOTCONN);
   ec_fd_close((int32_t)s);
   /* malformed addresses and arguments */
@@ -652,6 +656,14 @@ static void test_dns(void) {
   push_str("not-a-number");
   int64_t e = ec_dns_lookup(0, 1, 2);
   CHECK(e <= -1000001 && e >= -1000009);
+  EQI(ec_err_kind(e), 4);
+  EQI(ec_err_kind(-1000002), 17);
+  EQI(ec_err_kind(-1000005), 18);
+  EQI(ec_err_kind(0), 0);
+  EQI(ec_err_kind(5), 0);
+  EQI(ec_err_kind(-EBADF), 0);
+  EQI(ec_err_kind(-ENOENT), 4);
+  EQI(ec_err_kind(-EPIPE), 6);
   ec_errstr(e);
   CHECK(ec_out_len() > 0 && !out_is("unknown error"));
   /* passive with no host: the wildcard address */

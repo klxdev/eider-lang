@@ -129,14 +129,42 @@ The sections below are the Layer 0 OS primitives (roadmap "Layers and their bran
   `F_DUPFD_CLOEXEC`, `EPOLL_CLOEXEC`; with `fcntl` right after creation on macOS, the same
   window `ec_run` documents). A child gets only what `ec_spawn` / `ec_run` hand it.
 - **`EINTR` is retried** inside every blocking call, except where a row says otherwise
-  (`ec_fd_close`, `ec_poll_wait`). Signals reach Eider as events (Signals, below), never as
-  interrupted calls.
+  (`ec_fd_close`, and `ec_poll_wait`, which ends early). Signals reach Eider as events
+  (Signals, below), never as interrupted calls.
 - **One call, short counts.** `write`-like operations make one system call and return the
   count; fewer bytes than given is not an error. Reads return at most 1 MiB per call.
 - **Fixed layouts.** Multi-value results go into `out` as little-endian fixed-width fields
   ("u32" = 4 bytes LE, "u64" = 8 bytes LE). A pair of descriptors is two u32.
 - **Portable numbers.** Flags, option names, signal numbers and address families are Eider's
   own numbers, the same on every system; the backend translates them.
+
+## Error kinds
+
+`-errno` values differ between systems (`EAGAIN` is 11 on Linux, 35 on macOS), so Eider never
+compares them with numbers. `int32_t ec_err_kind(int64_t status)` names the ones a program
+acts on:
+
+| Kind | Errors |
+|---|---|
+| `0` | none of these, or not an error (`status >= 0`) |
+| `1` would block | `EAGAIN`, `EWOULDBLOCK` |
+| `2` in progress | `EINPROGRESS`, `EALREADY` |
+| `3` interrupted | `EINTR` |
+| `4` not found | `ENOENT`, and the resolver's "no such name" |
+| `5` already exists | `EEXIST` |
+| `6` broken pipe | `EPIPE` |
+| `7` connection reset | `ECONNRESET`, `ECONNABORTED` |
+| `8` connection refused | `ECONNREFUSED` |
+| `9` timed out | `ETIMEDOUT` |
+| `10` permission denied | `EACCES`, `EPERM` |
+| `11` address in use | `EADDRINUSE` |
+| `12` address not available | `EADDRNOTAVAIL` |
+| `13` not connected | `ENOTCONN` |
+| `14` invalid argument | `EINVAL` |
+| `15` no child | `ECHILD` |
+| `16` unsupported | `ENOSYS`, `EAFNOSUPPORT`, `EPROTONOSUPPORT`, `ENOPROTOOPT`, `EOPNOTSUPP` |
+| `17` resolver: try again | `EAI_AGAIN` |
+| `18` resolver: other failure | the other resolver statuses |
 
 ## File descriptors
 
@@ -261,7 +289,7 @@ descriptors; each registration carries a 64-bit token that comes back with its e
 |---|---|---|
 | `int64_t ec_poll_new(void)` | | the poller's descriptor (close with `ec_fd_close`) |
 | `int64_t ec_poll_ctl(int32_t pfd, int32_t op, int32_t fd, int32_t interest, int64_t token)` | | `0`. `op` `0` add (`-EEXIST` if already there), `1` modify (`-ENOENT` if not there, on epoll), `2` remove. `interest`: `1` readable, `2` writable, `+4` edge-triggered (report only changes), `+8` one-shot (after one event the registration is disarmed until the next modify) |
-| `int64_t ec_poll_wait(int32_t pfd, int32_t max, int64_t timeout_ms)` | | the number of events (at most `max`, capped at 1024); `out` = that many 16-byte records. `timeout_ms` `< 0` wait forever, `0` don't wait. A signal interrupting the wait is `0` events (a spurious wakeup, which a loop must tolerate anyway); the wait is not resumed |
+| `int64_t ec_poll_wait(int32_t pfd, int32_t max, int64_t timeout_ms)` | | the number of events (at most `max`, capped at 1024); `out` = that many 16-byte records. `timeout_ms` `< 0` wait forever, `0` don't wait. A signal ends the wait early (it is not resumed): the core then collects whatever is ready without waiting, so a watched signal shows up at once as its signal pipe's event. The result can be `0` events (a spurious wakeup, which a loop must tolerate anyway) |
 | `int64_t ec_waker_new(void)` | | `0`; `out` = read end, write end (u32 each; on Linux one `eventfd`, so both are the same descriptor; a pipe elsewhere). Both non-blocking. Register the read end for reading |
 | `int64_t ec_waker_wake(int32_t wfd)` | | `0`: the read end becomes readable. Safe from any thread and from a signal handler; waking an already-woken waker is not an error. Drain it with `ec_read_fd(r, 4096)` (until `-EAGAIN`) |
 
