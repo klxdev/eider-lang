@@ -1,0 +1,80 @@
+-- the specification's examples
+--> {"jsonrpc": "2.0", "method": "subtract", "params": [42, 23], "id": 1}
+<-- {"jsonrpc":"2.0","result":19,"id":1}
+--> {"jsonrpc": "2.0", "method": "subtract", "params": [23, 42], "id": 2}
+<-- {"jsonrpc":"2.0","result":-19,"id":2}
+--> {"jsonrpc": "2.0", "method": "subtract", "params": {"subtrahend": 23, "minuend": 42}, "id": 3}
+<-- {"jsonrpc":"2.0","result":19,"id":3}
+--> {"jsonrpc": "2.0", "method": "update", "params": [1,2,3,4,5]}
+<-- (nothing)
+--> {"jsonrpc": "2.0", "method": "foobar"}
+<-- (nothing)
+--> {"jsonrpc": "2.0", "method": "foobaz", "id": "1"}
+<-- {"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"},"id":"1"}
+--> {"jsonrpc": "2.0", "method": "foobar, "params": "bar", "baz]
+<-- {"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error","data":"expected `,` or `}` in an object at line 1, column 40 (byte 39)"},"id":null}
+--> {"jsonrpc": "2.0", "method": 1, "params": "bar"}
+<-- {"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":null}
+--> [{"jsonrpc": "2.0", "method": "sum", "params": [1,2,4], "id": "1"},{"jsonrpc": "2.0", "method"]
+<-- {"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error","data":"expected `:` after an object key at line 1, column 95 (byte 94)"},"id":null}
+--> []
+<-- {"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":null}
+--> [1]
+<-- [{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":null}]
+--> [1,2,3]
+<-- [{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":null},{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":null},{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":null}]
+--> [{"jsonrpc": "2.0", "method": "sum", "params": [1,2,4], "id": "1"}, {"jsonrpc": "2.0", "method": "notify_hello", "params": [7]}, {"jsonrpc": "2.0", "method": "subtract", "params": [42,23], "id": "2"}, {"foo": "boo"}, {"jsonrpc": "2.0", "method": "foo.get", "params": {"name": "myself"}, "id": "5"}, {"jsonrpc": "2.0", "method": "get_data", "id": "9"}]
+<-- [{"jsonrpc":"2.0","result":7,"id":"1"},{"jsonrpc":"2.0","result":19,"id":"2"},{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":null},{"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"},"id":"5"},{"jsonrpc":"2.0","result":["hello",5],"id":"9"}]
+--> [{"jsonrpc": "2.0", "method": "notify_sum", "params": [1,2,4]}, {"jsonrpc": "2.0", "method": "notify_hello", "params": [7]}]
+<-- (nothing)
+-- requests that are not quite right
+--> {"jsonrpc": "1.0", "method": "sum", "id": 4}
+<-- {"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":4}
+--> {"method": "sum", "id": 4}
+<-- {"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":4}
+--> {"jsonrpc": "2.0", "method": "sum", "params": 3, "id": 4}
+<-- {"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":4}
+--> {"jsonrpc": "2.0", "method": "sum", "id": [4]}
+<-- {"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request"},"id":null}
+--> {"jsonrpc": "2.0", "method": "sum", "id": null}
+<-- {"jsonrpc":"2.0","result":0,"id":null}
+--> {"jsonrpc": "2.0", "method": "subtract", "params": [1], "id": 5}
+<-- {"jsonrpc":"2.0","error":{"code":-32602,"message":"Invalid params","data":"missing parameter subtrahend (position 1)"},"id":5}
+--> {"jsonrpc": "2.0", "method": "subtract", "params": [1, "x"], "id": 6}
+<-- {"jsonrpc":"2.0","error":{"code":-32602,"message":"Invalid params","data":"parameter subtrahend must be an integer"},"id":6}
+--> {"jsonrpc": "2.0", "method": "subtract", "params": [1, 2, 3], "id": 7}
+<-- {"jsonrpc":"2.0","error":{"code":-32602,"message":"Invalid params","data":"too many parameters"},"id":7}
+--> {"jsonrpc": "2.0", "method": "get_data", "params": [1], "id": 8}
+<-- {"jsonrpc":"2.0","error":{"code":-32602,"message":"Invalid params","data":"this method takes no parameters"},"id":8}
+--> {"jsonrpc": "2.0", "method": "greet", "params": {"name": "Ada \"L\"", "loud": true}, "id": 9}
+<-- {"jsonrpc":"2.0","result":{"greeting":"hello, Ada \"L\"!"},"id":9}
+--> {"jsonrpc": "2.0", "method": "greet", "params": ["Bob", 1], "id": 10}
+<-- {"jsonrpc":"2.0","error":{"code":-32602,"message":"Invalid params","data":"parameter loud must be true or false"},"id":10}
+--> {"jsonrpc": "2.0", "method": "fail", "params": {"item": {"sku": 12}}, "id": 11}
+<-- {"jsonrpc":"2.0","error":{"code":-32001,"message":"out of stock","data":{"sku":12}},"id":11}
+--> {"jsonrpc": "2.0", "method": "fail", "params": {"item": 1}}
+<-- (nothing)
+-->   
+<-- {"jsonrpc":"2.0","error":{"code":-32700,"message":"Parse error","data":"unexpected end of input, expected a value at line 1, column 3 (byte 2)"},"id":null}
+--> [{"jsonrpc":"2.0","method":"x","id":1},{"jsonrpc":"2.0","method":"x","id":2},{"jsonrpc":"2.0","method":"x","id":3}]
+<-- {"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid Request","data":"batch too large"},"id":null}
+-- over HTTP
+405 allow=POST type=text/plain; charset=utf-8 405 Method Not Allowed
+
+415 type=text/plain; charset=utf-8 415 Unsupported Media Type
+
+415 type=text/plain; charset=utf-8 415 Unsupported Media Type
+
+200 type=application/json {"jsonrpc":"2.0","result":3,"id":1}
+204 
+-- the client's view of replies
+{"jsonrpc":"2.0","method":"subtract","params":[42,23],"id":7}
+{"jsonrpc":"2.0","method":"update"}
+value {"a":[1,2]}
+fault -32601 Method not found 
+fault -32700 Parse error "x"
+jsonrpc: response for another id
+jsonrpc: a response has exactly one of result and error
+jsonrpc: not a JSON-RPC 2.0 response
+jsonrpc: response without an id
+jsonrpc: response is not JSON: invalid literal (expected true, false or null) at line 1, column 2 (byte 1)

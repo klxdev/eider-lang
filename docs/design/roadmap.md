@@ -64,7 +64,7 @@ Goal of P0: a JSON-over-HTTP service written in Eider that handles thousands of 
 | P0.9 | Comptime reflection | Inspect a type's fields, variants and attributes at compile time; generate code from it | compiler | 8.11, P0.8 |
 | P0.10 | JSON with derive | `Json` trait derived for records and enums; renames/skips/defaults via attributes; streaming encode/decode with size limits | packages/json | P0.9 |
 | P0.11 | Time | Monotonic clock and wall clock, `Duration`, `Instant`, RFC 3339 parse/format, timers | std | P0.1 |
-| P0.12 | HTTP/1.1 server and client | Routing, request/response types, keep-alive, chunked bodies, header/body/time limits by default, graceful shutdown | std/http | P0.1–P0.7, P0.11 |
+| P0.12 | HTTP/1.1 server and client | Routing, request/response types, keep-alive, chunked bodies, header/body/time limits by default, graceful shutdown. **Started** in `packages/http` on OS threads (docs/services.md; decision C40), with JSON-RPC 2.0 (the first step of P1.1) | packages/http | P0.1–P0.7, P0.11 |
 | P0.13 | Service basics | Structured logging (JSON lines), config from env/files (TOML), signals (SIGTERM drain), process exit codes | std | P0.5, P0.11 |
 | P0.14 | Debugging through Eider source | Emit `#line` directives in generated C so gdb/lldb, sanitizers and crashes point at `.ei` lines | compiler | — |
 
