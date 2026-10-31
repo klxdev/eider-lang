@@ -22,5 +22,21 @@ for b in c llvm; do
   $T/$b/consumer >$T/$b.out 2>&1 || { echo "FAIL run ($b)"; cat $T/$b.out; exit 1; }
   cmp -s $T/$b.out compiler/tests/llvm/abi.out || { echo "FAIL abi ($b backend):"; diff compiler/tests/llvm/abi.out $T/$b.out; exit 1; }
 done
-rm -rf $T
 echo "ok   llvm abi: records of mixed field types by value between C and LLVM IR ($n functions native; registers, coercion, byval, sret)"
+# DWARF variables and types (-g, at -O0 so nothing is optimized away): every parameter, local,
+# member and type name of dwarf.ei in the debug info (llvm-dwarfdump, else readelf)
+EIDER_CACHE=off EIDER_CFLAGS=-O0 $E build --backend=llvm -g compiler/tests/llvm/dwarf.ei -o $T/dwarf >$T/dwarf.log 2>&1 || { echo "FAIL build -g dwarf.ei"; cat $T/dwarf.log; exit 1; }
+[ "$($T/dwarf | tr "\n" " ")" = "48 true " ] || { echo "FAIL run dwarf.ei"; exit 1; }
+if command -v llvm-dwarfdump >/dev/null 2>&1; then
+  llvm-dwarfdump --debug-info $T/dwarf >$T/dwarf.txt 2>&1
+elif command -v readelf >/dev/null 2>&1; then
+  readelf --debug-dump=info $T/dwarf >$T/dwarf.txt 2>/dev/null
+else
+  echo "skip llvm dwarf: no llvm-dwarfdump or readelf"; rm -rf $T; exit 0
+fi
+for v in shape_arg scale_arg acc_total origin_pt names_list flag_ok Point px py Shape Circle centre radius len cap; do
+  grep -Eq "(: |\")$v(\"|\$)" $T/dwarf.txt || { echo "FAIL llvm dwarf: no '$v' in the debug info"; exit 1; }
+done
+grep -q "DW_TAG_formal_parameter" $T/dwarf.txt && grep -q "DW_OP_fbreg" $T/dwarf.txt || { echo "FAIL llvm dwarf: no parameter with a frame location"; exit 1; }
+rm -rf $T
+echo "ok   llvm dwarf: -g describes parameters, locals and their types (records, enums, List, String) with frame locations"

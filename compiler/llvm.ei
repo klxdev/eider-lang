@@ -4,27 +4,33 @@
 //
 // Function by function: a function whose statements this file can lower is emitted as LLVM IR
 // (`native`); any other falls back to the C backend. lower.program_split writes the C half (the
-// fallback functions, all the per-type glue, `main` and the test driver) with prototypes for
-// the native functions and external linkage everywhere, so the halves call each other through
-// the C ABI (llvm_abi.ei: System V x86-64). Every Eider-to-Eider call uses that convention too,
-// whichever half the callee is in, so a function can move between the halves freely.
+// fallback functions, the per-type glue this half asks for (`gneed`), `main` and the test
+// driver) with prototypes for the native functions and external linkage everywhere. Calls from
+// Eider to Eider use an internal convention (`@<name>.i`, internal linkage; `isig`: records
+// the C ABI passes in memory go by reference); the C half reaches a native function through a
+// C-convention wrapper `@<name>` (llvm_abi.ei: System V x86-64), and this half reaches a
+// fallback through a shim `@<name>.i`, so a function can still move between the halves.
 //
 // Semantics are the C backend's, statement for statement, with nothing undefined: checked
 // arithmetic is `llvm.*.with.overflow` and an explicit trap branch (the runtime's ei_trap with
 // the same message and the same encoded line, so traps print and exit exactly as in C), bounds
 // checks are an `icmp uge` and a trap branch, division checks zero and MIN / -1 first, shifts
-// check the count, and no instruction carries `nsw`, `nuw`, `exact` or `inbounds` (nothing
-// is proven yet). Wrapping operators are plain `add`/`sub`/`mul`. Per-type operations (drop,
-// clone, ==, Ord, Show, List and Map operations, copy-on-write `uniq_`) call the C half's glue,
-// exactly where lower.ei calls it, so the glue the C half emits is the glue this half needs;
-// the hot helpers (ei_idx, checked arithmetic, conversions, shifts, ei_hash_u64) are inline IR.
+// check the count. Flags only restate what a check or a language rule proved: `nsw`/`nuw` on
+// checked arithmetic past its trap branch, `inbounds` GEPs, `noalias`/`noundef`/
+// `dereferenceable` on the internal convention's parameters (param_attrs); never `exact`.
+// Wrapping operators are plain `add`/`sub`/`mul`. Per-type operations (drop, clone, ==, Ord,
+// Show, List and Map operations, copy-on-write `uniq_`) call the C half's glue, exactly where
+// lower.ei calls it; the hot helpers (ei_idx, checked arithmetic, conversions, shifts,
+// ei_hash_u64) are inline IR.
 //
-// Values: every local is an `alloca` (`%l<i>`, zeroed at entry as C's `= {0}`), scalars are
-// SSA registers between statements (bool is `i1` there and `i8` in memory), aggregates are
-// moved with `llvm.memcpy`. Types are the C layouts (llvm_abi.ei): `%t<id>` per struct type
-// (`%t<id>.v<i>` an enum variant's payload struct, `%t<id>.d` a shared record's buffer),
-// `%ei.String` for String. Control flow is the IR's structure: S_IF and S_LOOP become
-// labelled blocks (`L<n>`), break/continue/return branches, code after them a dead block.
+// Values: a local is an `alloca` (`%l<i>`), zeroed at entry only when the IR may read it
+// before assigning it, or, for a scalar assigned once and read only after that, an SSA value
+// with no alloca (`scan`). Scalars are SSA registers between statements (bool is `i1` there and
+// `i8` in memory), aggregates are moved with `llvm.memcpy`. Types are the C layouts
+// (llvm_abi.ei): `%t<id>` per struct type (`%t<id>.v<i>` an enum variant's payload struct,
+// `%t<id>.d` a shared record's buffer), `%ei.String` for String. Control flow is the IR's
+// structure: S_IF and S_LOOP become labelled blocks (`L<n>`), break/continue/return branches,
+// code after them a dead block.
 //
 // Debug info (`-g`): a DICompileUnit, a DIFile per module, a DISubprogram per native
 // function and a DILocation per statement (the statement's source line), so a debugger
@@ -33,6 +39,7 @@
 import "core/sys"
 import "std/bytes"
 import "types.ei"
+import "intern.ei"
 import "ast.ei"
 import "ir.ei"
 import "lower.ei"
@@ -122,6 +129,8 @@ type E = {
     /// C conventions by signature (csig_of)
     sigs: List[abi.Sig],
     sigmemo: Map[u64, u32],
+    /// debug info: the metadata node of each type's DWARF description (0: not yet)
+    dty: List[u32],
 }
 
 // ---- text
@@ -3251,6 +3260,7 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
         alloca(inout e, p, i, l.ty)
         if sc.nz[i as usize] { zero(inout e, p, l.ty, laddr(i)) }
     }
+    if e.dbg { declare_locals(inout e, p, f) }
     block(inout e, p, fd.body - 1)
     if !e.term {
         if sg.ret.kind == abi.A_VOID || sg.ret.kind == abi.A_SRET { stmt_text(inout e, lit("ret void")) } else { stmt_text(inout e, lit("unreachable")) }
@@ -3475,6 +3485,190 @@ fn subprogram(inout e: E, p: lower.P, f: u32, line: u32) {
     bytes.append(inout e.md, lit(", spFlags: DISPFlagDefinition, unit: !0)\n"))
 }
 
+/// DWARF variables (`-g`): a DILocalVariable for every parameter and named local that has an
+/// address (SSA values are unnamed temporaries), declared at that address; an `inout`
+/// parameter's address is the caller's value.
+fn declare_locals(inout e: E, p: lower.P, f: u32) {
+    let fd = p.ir.fns[f as usize]
+    let fm = file_md(inout e, fd.file)
+    declare(inout e, lit("llvm.dbg.declare"), lit("declare void @llvm.dbg.declare(metadata, metadata, metadata)"))
+    for i in 0..fd.lcount {
+        let l = loc(p, e, i)
+        if i < e.nc || is_void(l.ty) || e.ssa[i as usize] || l.name == 0 { continue }
+        let isparam = i < e.nc + fd.nparams
+        if !isparam && l.kind == ir.L_TEMP { continue }
+        let tyid = di_type(inout e, p, l.ty)
+        let v = e.nmd.copy()
+        e.nmd += 1
+        bytes.append(inout e.md, num("!", v as u64))
+        bytes.append(inout e.md, lit(" = !DILocalVariable(name: "))
+        md_string(inout e.md, intern.name(p.names, l.name))
+        let argn = num(", arg: ", (i - e.nc + 1) as u64)
+        let scope = num(", scope: !", e.sp as u64)
+        if isparam { bytes.append(inout e.md, argn) }
+        bytes.append(inout e.md, scope)
+        bytes.append(inout e.md, num(", file: !", fm as u64))
+        let ln: u32 = if l.line > 0 { l.line } else { 1 }
+        bytes.append(inout e.md, num(", line: ", ln as u64))
+        bytes.append(inout e.md, num(", type: !", tyid as u64))
+        bytes.append(inout e.md, lit(")\n"))
+        ins(inout e)
+        w(inout e, "call void @llvm.dbg.declare(metadata ptr %l")
+        wn(inout e, i as u64)
+        w(inout e, ", metadata !")
+        wn(inout e, v as u64)
+        w(inout e, ", metadata !DIExpression())")
+        fin(inout e)
+    }
+}
+
+/// The DWARF description of type ty (memoized; a node's number is taken before its members
+/// are described, so recursive types refer to themselves).
+fn di_type(inout e: E, p: lower.P, ty: u32) -> u32 {
+    if e.dty[ty as usize] > 0 { return e.dty[ty as usize] }
+    let id = e.nmd.copy()
+    e.nmd += 1
+    e.dty[ty as usize] = id
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    let mut o = num("!", id as u64)
+    let bits = size(inout e, p, ty) * 8
+    if k == types.T_INT || k == types.T_BOOL || k == types.T_UNIT || k == types.T_NEVER {
+        let enc = if k == types.T_BOOL { "DW_ATE_boolean" } else if k == types.T_INT && t.a == types.IK_U8 { "DW_ATE_unsigned_char" } else if k == types.T_INT && types.signed(t.a) { "DW_ATE_signed" } else { "DW_ATE_unsigned" }
+        bytes.append(inout o, lit(" = !DIBasicType(name: "))
+        md_string(inout o, types.show(p.t, p.names, ty))
+        bytes.append(inout o, num(", size: ", bits))
+        bytes.append(inout o, lit(", encoding: "))
+        bytes.append(inout o, lit(enc))
+        bytes.append(inout o, lit(")\n"))
+        bytes.append(inout e.md, o)
+        return id
+    }
+    if k == types.T_STR {
+        let c = di_char(inout e)
+        bytes.append(inout o, num(" = !DIDerivedType(tag: DW_TAG_pointer_type, name: \"str\", baseType: !", c as u64))
+        bytes.append(inout o, lit(", size: 64)\n"))
+        bytes.append(inout e.md, o)
+        return id
+    }
+    if k == types.T_ARRAY {
+        let n: u64 = if t.b == 0 { 1 } else { t.b as u64 }
+        let el = di_type(inout e, p, t.a)
+        bytes.append(inout o, num(" = !DICompositeType(tag: DW_TAG_array_type, baseType: !", el as u64))
+        bytes.append(inout o, num(", size: ", bits))
+        bytes.append(inout o, num(", elements: !{!DISubrange(count: ", n))
+        bytes.append(inout o, lit(")})\n"))
+        bytes.append(inout e.md, o)
+        return id
+    }
+    // a structure: its members by name, type and offset
+    let mut ms: List[u32] = List.new()
+    if k == types.T_TUPLE || (k == types.T_RECORD && !lower.shared_rec(p, ty)) {
+        let parts = abi.parts(p, ty, NONE)
+        let d = types.def_of(p.t, ty)
+        for j in 0..parts.len() {
+            let nm = if k == types.T_RECORD { intern.name(p.names, types.field(p.t, d.start, j as u32).name) } else { bytes.from_u64(j as u64) }
+            let off = abi.offset_of(inout e.lay, p, parts, j as u32) * 8
+            ms.push(di_member(inout e, p, nm, parts[j], off))
+        }
+    } else if k == types.T_STRING || k == types.T_LIST {
+        let mut ptys: List[u32] = List.new()
+        ptys.push(types.STR)
+        ptys.push(types.U64)
+        ptys.push(types.U64)
+        let first = if k == types.T_STRING { lit("p") } else { lit("d") }
+        if k == types.T_STRING {
+            ms.push(di_member(inout e, p, first, types.STR, 0))
+        } else {
+            let el = di_type(inout e, p, t.a)
+            let pt = e.nmd.copy()
+            e.nmd += 1
+            bytes.append(inout e.md, num("!", pt as u64))
+            bytes.append(inout e.md, num(" = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !", el as u64))
+            bytes.append(inout e.md, lit(", size: 64)\n"))
+            ms.push(di_member_node(inout e, first, pt, 64, 0))
+        }
+        ms.push(di_member(inout e, p, lit("len"), types.U64, 64))
+        ms.push(di_member(inout e, p, lit("cap"), types.U64, 128))
+    } else if k == types.T_ENUM {
+        ms.push(di_member(inout e, p, lit("tag"), types.U32, 0))
+        let d = types.def_of(p.t, ty)
+        if lower.any_payload(p, d) {
+            let u = abi.union_of(inout e.lay, p, ty)
+            let uoff = (4 + u[1] - 1) / u[1] * u[1]
+            for i in 0..d.len {
+                let vr = types.variant(p.t, d, i)
+                if vr.flen == 0 { continue }
+                let parts = abi.parts(p, ty, i)
+                let vs = abi.struct_of(inout e.lay, p, parts)
+                let mut vms: List[u32] = List.new()
+                for j in 0..parts.len() {
+                    let off = abi.offset_of(inout e.lay, p, parts, j as u32) * 8
+                    let fname = intern.name(p.names, types.field(p.t, vr.fstart, j as u32).name)
+                    vms.push(di_member(inout e, p, fname, parts[j], off))
+                }
+                let vn = intern.name(p.names, (vr.key % 4294967296) as u32)
+                let vt = di_struct(inout e, vn, vs[0] * 8, vms)
+                ms.push(di_member_node(inout e, vn, vt, vs[0] * 8, uoff * 8))
+            }
+        }
+    }
+    bytes.append(inout o, lit(" = !DICompositeType(tag: DW_TAG_structure_type, name: "))
+    md_string(inout o, types.show(p.t, p.names, ty))
+    bytes.append(inout o, num(", size: ", bits))
+    bytes.append(inout o, lit(", elements: !{"))
+    for j in 0..ms.len() {
+        if j > 0 { bytes.append(inout o, lit(", ")) }
+        bytes.append(inout o, num("!", ms[j] as u64))
+    }
+    bytes.append(inout o, lit("})\n"))
+    bytes.append(inout e.md, o)
+    id
+}
+
+fn di_char(inout e: E) -> u32 {
+    let id = e.nmd.copy()
+    e.nmd += 1
+    bytes.append(inout e.md, num("!", id as u64))
+    bytes.append(inout e.md, lit(" = !DIBasicType(name: \"char\", size: 8, encoding: DW_ATE_signed_char)\n"))
+    id
+}
+
+fn di_member(inout e: E, p: lower.P, name: List[u8], ty: u32, off: u64) -> u32 {
+    let t = di_type(inout e, p, ty)
+    let bits = size(inout e, p, ty) * 8
+    di_member_node(inout e, name, t, bits, off)
+}
+
+fn di_member_node(inout e: E, name: List[u8], t: u32, bits: u64, off: u64) -> u32 {
+    let id = e.nmd.copy()
+    e.nmd += 1
+    bytes.append(inout e.md, num("!", id as u64))
+    bytes.append(inout e.md, lit(" = !DIDerivedType(tag: DW_TAG_member, name: "))
+    md_string(inout e.md, name)
+    bytes.append(inout e.md, num(", baseType: !", t as u64))
+    bytes.append(inout e.md, num(", size: ", bits))
+    bytes.append(inout e.md, num(", offset: ", off))
+    bytes.append(inout e.md, lit(")\n"))
+    id
+}
+
+fn di_struct(inout e: E, name: List[u8], bits: u64, ms: List[u32]) -> u32 {
+    let id = e.nmd.copy()
+    e.nmd += 1
+    bytes.append(inout e.md, num("!", id as u64))
+    bytes.append(inout e.md, lit(" = !DICompositeType(tag: DW_TAG_structure_type, name: "))
+    md_string(inout e.md, name)
+    bytes.append(inout e.md, num(", size: ", bits))
+    bytes.append(inout e.md, lit(", elements: !{"))
+    for j in 0..ms.len() {
+        if j > 0 { bytes.append(inout e.md, lit(", ")) }
+        bytes.append(inout e.md, num("!", ms[j] as u64))
+    }
+    bytes.append(inout e.md, lit("})\n"))
+    id
+}
+
 // ---- the program
 
 /// The LLVM version this backend's IR needs (opaque pointers, `poison`, the overflow
@@ -3485,7 +3679,7 @@ pub const MIN_LLVM: u64 = 17
 /// (debug info), `dir` the working directory, `debug` whether to emit debug info.
 pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[List[u8]], dir: List[u8], debug: bool) -> Result[Out, List[u8]] {
     let names = lower.c_names(p)?
-    let mut e = E(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), abi.new_lay(p), List.new(), names.tys, names.fns, List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), Map.new(), 0, 0, 0, false, List.new(), 0, 0, 0, List.new(), List.new(), false, abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new(), debug, false, List.new(), List.new(), List.new(), 4, 0, 0, Map.new(), Map.new(), paths, dir, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new())
+    let mut e = E(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), abi.new_lay(p), List.new(), names.tys, names.fns, List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), Map.new(), 0, 0, 0, false, List.new(), 0, 0, 0, List.new(), List.new(), false, abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new(), debug, false, List.new(), List.new(), List.new(), 4, 0, 0, Map.new(), Map.new(), paths, dir, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new())
     let nosig = abi.Sig(abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new())
     for f in 0..p.ir.fns.len() {
         e.isigs.push(nosig.copy())
@@ -3497,6 +3691,7 @@ pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[L
     for i in 0..p.t.tys.len() {
         e.tdone.push(false)
         e.own.push(0)
+        e.dty.push(0)
     }
     for i in 0..p.ir.strs.len() { e.sused.push(false) }
     for f in 0..p.ir.fns.len() {
@@ -3588,7 +3783,7 @@ pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[L
         bytes.append(inout ll, lit("!0 = distinct !DICompileUnit(language: DW_LANG_C11, file: !"))
         let f0 = file_md(inout e, 0)
         bytes.append(inout ll, bytes.from_u64(f0 as u64))
-        bytes.append(inout ll, lit(", producer: \"eiderc (llvm backend)\", isOptimized: false, runtimeVersion: 0, emissionKind: LineTablesOnly)\n"))
+        bytes.append(inout ll, lit(", producer: \"eiderc (llvm backend)\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)\n"))
         bytes.append(inout ll, lit("!1 = !{i32 7, !\"Dwarf Version\", i32 5}\n!2 = !{i32 2, !\"Debug Info Version\", i32 3}\n!3 = !DISubroutineType(types: !{})\n"))
         bytes.append(inout ll, e.md)
     }

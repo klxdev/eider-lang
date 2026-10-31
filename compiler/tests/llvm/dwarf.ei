@@ -1,0 +1,25 @@
+// DWARF variables and types (`-g`, docs/compiler.md "Backends"): compiler/tests/llvm/run.sh
+// builds this with --backend=llvm -g and finds each variable, parameter and member below in
+// `readelf --debug-dump=info` (llvm-dwarfdump when it is installed).
+
+type Point = { px: i64, py: i64 }
+
+type Shape = | Dot | Circle(centre: Point, radius: u32)
+
+fn area(shape_arg: Shape, scale_arg: u64) -> u64 {
+    let mut acc_total: u64 = 0
+    match shape_arg {
+        Dot => { acc_total = 1 }
+        Circle(c, r) => { acc_total = (r as u64) * (r as u64) * 3 + (c.px as u64) }
+    }
+    acc_total * scale_arg
+}
+
+fn main() uses io {
+    let origin_pt = Point(4, 5)
+    let mut names_list: List[String] = List.new()
+    names_list.push(String.from("a"))
+    let flag_ok = names_list.len() == 1
+    print(area(Circle(origin_pt, 2), 3))
+    print(flag_ok)
+}
