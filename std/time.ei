@@ -126,3 +126,54 @@ pub fn sleep_until(dl: Deadline) uses clock {
     let left = dl.remaining()
     if left.ns > 0 { os.sleep_ns(left.ns) }
 }
+
+// ---- Clock: time as a value that can be replaced in tests (decision C10)
+
+/// A source of time. Code that takes a `C: Clock` instead of calling `mono_ns` directly can
+/// be tested deterministically with std/testing's FakeClock, whose time moves only when the
+/// test says so (and when the code sleeps on it). `system()` is the real one. A copy of a
+/// clock is the same clock (methods take `self`, so a FakeClock's copies share their time).
+/// What a fake clock can't change: the deadlines that std's blocking calls wait on are on
+/// the real monotonic clock (a deadline from `deadline_on` with a fake clock is only for
+/// `expired_on`/`remaining_on`).
+pub trait Clock {
+    /// Nanoseconds on the monotonic clock (`mono_ns`).
+    fn mono_ns(self) -> i64 uses clock
+    /// Nanoseconds since the Unix epoch (`wall_ns`).
+    fn wall_ns(self) -> i64 uses clock
+    /// Waits for `d` (a fake clock just moves on by `d`).
+    fn sleep(self, d: Duration) uses clock
+}
+
+/// The operating system's clocks.
+pub type System = { unused: u8 }
+
+pub fn system() -> System { System(0) }
+
+impl Clock for System {
+    fn mono_ns(self) -> i64 uses clock { os.time_mono_ns() }
+    fn wall_ns(self) -> i64 uses clock { os.time_wall_ns() }
+    fn sleep(self, d: Duration) uses clock { os.sleep_ns(d.ns) }
+}
+
+/// The deadline `d` from now on clock `c` (saturating, as `after`).
+pub fn deadline_on[C: Clock](c: C, d: Duration) -> Deadline uses clock {
+    let now = c.mono_ns()
+    if d.ns >= MAX - now { return Deadline(MAX) }
+    if d.ns <= 0 { return Deadline(now) }
+    Deadline(now + d.ns)
+}
+
+/// Whether `dl` has passed on clock `c`.
+pub fn expired_on[C: Clock](c: C, dl: Deadline) -> bool uses clock {
+    if dl.at_ns == MAX { return false }
+    c.mono_ns() >= dl.at_ns
+}
+
+/// The time left until `dl` on clock `c` (zero once passed).
+pub fn remaining_on[C: Clock](c: C, dl: Deadline) -> Duration uses clock {
+    if dl.at_ns == MAX { return Duration(MAX) }
+    let now = c.mono_ns()
+    if now >= dl.at_ns { return Duration(0) }
+    Duration(dl.at_ns - now)
+}

@@ -1,0 +1,343 @@
+// std/encoding: hex, base64 (RFC 4648: the standard and the URL-safe alphabet, with or
+// without padding) and fixed-width integers in little- and big-endian byte order. Pure, no
+// capabilities. Decoders are strict: they reject whitespace, wrong padding and
+// non-canonical trailing bits (RFC 4648 section 3.5), and say where (`DecodeError`), so a
+// value has exactly one encoding, which matters for signatures and cache keys.
+// (Integers are 8, 32 or 64 bits wide in Eider; 16-bit values travel in a u32.)
+
+// ---- errors
+
+/// What was wrong with encoded input.
+pub type DecodeKind = | InvalidByte | BadLength | BadPadding | NonCanonical
+
+/// A failed decode: the kind, and the byte offset in the input where it was found.
+pub type DecodeError = { kind: DecodeKind, at: usize }
+
+impl Show for DecodeError {
+    fn show(self, inout out: String) {
+        match self.kind {
+            InvalidByte => out.push_str("invalid byte")
+            BadLength => out.push_str("bad length")
+            BadPadding => out.push_str("bad padding")
+            NonCanonical => out.push_str("non-canonical trailing bits")
+        }
+        out.push_str(" at offset ")
+        out.append(self.at.to_string())
+    }
+}
+
+fn text(b: List[u8]) -> String {
+    match String.from_bytes(b) {
+        Ok(s) => s
+        Err(_) => String.from("")
+    }
+}
+
+// ---- hex
+
+fn hex_digit(n: u8, up: bool) -> u8 {
+    if n < 10 { return 48 + n }
+    if up { return 55 + n }
+    87 + n
+}
+
+/// Two lower-case hex digits per byte.
+pub fn hex(b: List[u8]) -> String { text(hex_bytes(b, false)) }
+
+/// Two upper-case hex digits per byte.
+pub fn hex_upper(b: List[u8]) -> String { text(hex_bytes(b, true)) }
+
+fn hex_bytes(b: List[u8], up: bool) -> List[u8] {
+    var out: List[u8] = List.new()
+    for x in b {
+        out.push(hex_digit(x >> 4, up))
+        out.push(hex_digit(x & 15, up))
+    }
+    out
+}
+
+fn hex_val(c: u8) -> Option[u8] {
+    if c >= 48 && c <= 57 { return Some(c - 48) }
+    if c >= 97 && c <= 102 { return Some(c - 87) }
+    if c >= 65 && c <= 70 { return Some(c - 55) }
+    None
+}
+
+/// The bytes of hex digits (either case, nothing else; an even number of them).
+pub fn unhex(s: List[u8]) -> Result[List[u8], DecodeError] {
+    if s.len() % 2 != 0 { return Err(DecodeError(BadLength, s.len())) }
+    var out: List[u8] = List.new()
+    var i: usize = 0
+    while i < s.len() {
+        let hi = match hex_val(s[i]) {
+            Some(v) => v
+            None => return Err(DecodeError(InvalidByte, i))
+        }
+        let lo = match hex_val(s[i + 1]) {
+            Some(v) => v
+            None => return Err(DecodeError(InvalidByte, i + 1))
+        }
+        out.push((hi << 4) | lo)
+        i += 2
+    }
+    Ok(out)
+}
+
+// ---- base64
+
+/// Which 64 characters: the standard alphabet (`+` and `/`) or the URL- and file-name-safe
+/// one (`-` and `_`).
+pub type Alphabet = | Standard | UrlSafe
+
+/// Padding when decoding: `=` required (to a multiple of 4 characters), forbidden, or
+/// either.
+pub type Padding = | Required | Forbidden | Optional
+
+fn b64_char(v: u8, a: Alphabet) -> u8 {
+    if v < 26 { return 65 + v }
+    if v < 52 { return 71 + v }
+    if v < 62 { return v - 4 }
+    let url = match a {
+        UrlSafe => true
+        Standard => false
+    }
+    if v == 62 { return if url { 45 } else { 43 } }
+    if url { 95 } else { 47 }
+}
+
+fn b64_val(c: u8, a: Alphabet) -> Option[u8] {
+    if c >= 65 && c <= 90 { return Some(c - 65) }
+    if c >= 97 && c <= 122 { return Some(c - 71) }
+    if c >= 48 && c <= 57 { return Some(c + 4) }
+    let url = match a {
+        UrlSafe => true
+        Standard => false
+    }
+    if url {
+        if c == 45 { return Some(62) }
+        if c == 95 { return Some(63) }
+    } else {
+        if c == 43 { return Some(62) }
+        if c == 47 { return Some(63) }
+    }
+    None
+}
+
+/// Base64 of `b` in alphabet `a`, padded with `=` to a multiple of 4 when `pad`.
+pub fn base64_encode(b: List[u8], a: Alphabet, pad: bool) -> String {
+    var out: List[u8] = List.new()
+    var i: usize = 0
+    while i + 3 <= b.len() {
+        let n = ((b[i] as u32) << 16) | ((b[i + 1] as u32) << 8) | (b[i + 2] as u32)
+        out.push(b64_char(((n >> 18) & 63) as u8, a))
+        out.push(b64_char(((n >> 12) & 63) as u8, a))
+        out.push(b64_char(((n >> 6) & 63) as u8, a))
+        out.push(b64_char((n & 63) as u8, a))
+        i += 3
+    }
+    let rest = b.len() - i
+    if rest == 1 {
+        let n = (b[i] as u32) << 16
+        out.push(b64_char(((n >> 18) & 63) as u8, a))
+        out.push(b64_char(((n >> 12) & 63) as u8, a))
+        if pad {
+            out.push(61)
+            out.push(61)
+        }
+    } else if rest == 2 {
+        let n = ((b[i] as u32) << 16) | ((b[i + 1] as u32) << 8)
+        out.push(b64_char(((n >> 18) & 63) as u8, a))
+        out.push(b64_char(((n >> 12) & 63) as u8, a))
+        out.push(b64_char(((n >> 6) & 63) as u8, a))
+        if pad { out.push(61) }
+    }
+    text(out)
+}
+
+/// Standard alphabet, padded (MIME without line breaks, PEM bodies, HTTP Basic auth).
+pub fn base64(b: List[u8]) -> String { base64_encode(b, Standard, true) }
+
+/// URL-safe alphabet, no padding (JWT, URLs, file names).
+pub fn base64_url(b: List[u8]) -> String { base64_encode(b, UrlSafe, false) }
+
+/// The bytes of base64 text in alphabet `a`, with padding as `p` says.
+pub fn base64_decode(s: List[u8], a: Alphabet, p: Padding) -> Result[List[u8], DecodeError] {
+    // the data characters, and how many `=` follow them
+    var n = s.len()
+    var pads: usize = 0
+    while n > 0 && s[n - 1] == 61 && pads < 2 {
+        n -= 1
+        pads += 1
+    }
+    for i in 0..n {
+        match b64_val(s[i], a) {
+            Some(_) => {}
+            None => return Err(DecodeError(InvalidByte, i))
+        }
+    }
+    if pads > 0 {
+        match p {
+            Forbidden => return Err(DecodeError(BadPadding, n))
+            _ => {}
+        }
+        if (n + pads) % 4 != 0 { return Err(DecodeError(BadPadding, n)) }
+    } else {
+        match p {
+            Required => {
+                if n % 4 != 0 { return Err(DecodeError(BadPadding, n)) }
+            }
+            _ => {}
+        }
+    }
+    if n % 4 == 1 { return Err(DecodeError(BadLength, n)) }
+    if pads > 0 && n % 4 == 0 { return Err(DecodeError(BadPadding, n)) }
+    if pads > 0 && (4 - n % 4) != pads { return Err(DecodeError(BadPadding, n)) }
+    var out: List[u8] = List.new()
+    var acc: u32 = 0
+    var bits: u32 = 0
+    for i in 0..n {
+        let v = match b64_val(s[i], a) {
+            Some(x) => x
+            None => return Err(DecodeError(InvalidByte, i))
+        }
+        acc = ((acc << 6) | (v as u32)) & 16777215
+        bits += 6
+        if bits >= 8 {
+            bits -= 8
+            out.push(((acc >> bits) & 255) as u8)
+        }
+    }
+    // the bits left over must be zero (one encoding per value)
+    if bits > 0 && (acc & ((1 << bits) - 1)) != 0 { return Err(DecodeError(NonCanonical, n - 1)) }
+    Ok(out)
+}
+
+/// Standard alphabet, padding required.
+pub fn unbase64(s: List[u8]) -> Result[List[u8], DecodeError] { base64_decode(s, Standard, Required) }
+
+/// URL-safe alphabet, padding optional.
+pub fn unbase64_url(s: List[u8]) -> Result[List[u8], DecodeError] { base64_decode(s, UrlSafe, Optional) }
+
+// ---- integers in byte order
+
+/// The two's-complement bits of `n` (i32 -> u32).
+pub fn bits32(n: i32) -> u32 {
+    if n >= 0 { return n as u32 }
+    ((n as i64) + 4294967296) as u32
+}
+
+/// The i32 with these two's-complement bits.
+pub fn signed32(v: u32) -> i32 {
+    if v < 2147483648 { return v as i32 }
+    ((v as i64) - 4294967296) as i32
+}
+
+/// The two's-complement bits of `n` (i64 -> u64).
+pub fn bits64(n: i64) -> u64 {
+    if n >= 0 { return n as u64 }
+    ~((0 - (n + 1)) as u64)
+}
+
+/// The i64 with these two's-complement bits.
+pub fn signed64(v: u64) -> i64 {
+    if v < 9223372036854775808 { return v as i64 }
+    0 - ((~v) as i64) - 1
+}
+
+fn push_le(inout out: List[u8], v: u64, n: u32) {
+    var x = v
+    for i in 0..n {
+        out.push((x & 255) as u8)
+        x = x >> 8
+    }
+}
+
+fn push_be(inout out: List[u8], v: u64, n: u32) {
+    var i = n
+    while i > 0 {
+        i -= 1
+        out.push(((v >> ((i * 8) as u64)) & 255) as u8)
+    }
+}
+
+fn read_le(b: List[u8], at: usize, n: usize) -> Option[u64] {
+    if at + n > b.len() { return None }
+    var v: u64 = 0
+    var i = n
+    while i > 0 {
+        i -= 1
+        v = (v << 8) | (b[at + i] as u64)
+    }
+    Some(v)
+}
+
+fn read_be(b: List[u8], at: usize, n: usize) -> Option[u64] {
+    if at + n > b.len() { return None }
+    var v: u64 = 0
+    for i in 0..n { v = (v << 8) | (b[at + i] as u64) }
+    Some(v)
+}
+
+/// Appends the low 16 bits of `v` (traps if `v` doesn't fit).
+pub fn push_u16_le(inout out: List[u8], v: u32) {
+    assert v <= 65535, "push_u16: value doesn't fit in 16 bits"
+    push_le(inout out, v as u64, 2)
+}
+
+pub fn push_u16_be(inout out: List[u8], v: u32) {
+    assert v <= 65535, "push_u16: value doesn't fit in 16 bits"
+    push_be(inout out, v as u64, 2)
+}
+
+pub fn push_u32_le(inout out: List[u8], v: u32) { push_le(inout out, v as u64, 4) }
+pub fn push_u32_be(inout out: List[u8], v: u32) { push_be(inout out, v as u64, 4) }
+pub fn push_u64_le(inout out: List[u8], v: u64) { push_le(inout out, v, 8) }
+pub fn push_u64_be(inout out: List[u8], v: u64) { push_be(inout out, v, 8) }
+pub fn push_i32_le(inout out: List[u8], v: i32) { push_le(inout out, bits32(v) as u64, 4) }
+pub fn push_i32_be(inout out: List[u8], v: i32) { push_be(inout out, bits32(v) as u64, 4) }
+pub fn push_i64_le(inout out: List[u8], v: i64) { push_le(inout out, bits64(v), 8) }
+pub fn push_i64_be(inout out: List[u8], v: i64) { push_be(inout out, bits64(v), 8) }
+
+/// The 16-bit value at `b[at..at+2]`, or None if `b` is too short.
+pub fn u16_le(b: List[u8], at: usize) -> Option[u32] {
+    let v = read_le(b, at, 2)?
+    Some(v as u32)
+}
+
+pub fn u16_be(b: List[u8], at: usize) -> Option[u32] {
+    let v = read_be(b, at, 2)?
+    Some(v as u32)
+}
+
+pub fn u32_le(b: List[u8], at: usize) -> Option[u32] {
+    let v = read_le(b, at, 4)?
+    Some(v as u32)
+}
+
+pub fn u32_be(b: List[u8], at: usize) -> Option[u32] {
+    let v = read_be(b, at, 4)?
+    Some(v as u32)
+}
+
+pub fn u64_le(b: List[u8], at: usize) -> Option[u64] { read_le(b, at, 8) }
+pub fn u64_be(b: List[u8], at: usize) -> Option[u64] { read_be(b, at, 8) }
+
+pub fn i32_le(b: List[u8], at: usize) -> Option[i32] {
+    let v = read_le(b, at, 4)?
+    Some(signed32(v as u32))
+}
+
+pub fn i32_be(b: List[u8], at: usize) -> Option[i32] {
+    let v = read_be(b, at, 4)?
+    Some(signed32(v as u32))
+}
+
+pub fn i64_le(b: List[u8], at: usize) -> Option[i64] {
+    let v = read_le(b, at, 8)?
+    Some(signed64(v))
+}
+
+pub fn i64_be(b: List[u8], at: usize) -> Option[i64] {
+    let v = read_be(b, at, 8)?
+    Some(signed64(v))
+}
