@@ -296,14 +296,54 @@ void ei_free(void *p);
    main calls it when the program ends normally). Otherwise it does nothing. */
 void ei_check_leaks(void);
 
-// ---- String: owned, NUL-terminated, `len` excludes the NUL. p is never NULL for a live
-// String (ei_drop_String sets it to NULL).
+// ---- shared buffers (copy-on-write). String, List, Map and Box values share their heap
+// buffer: a header with a reference count sits right before the data, and the value points
+// at the data. A copy increments the count; a value whose count is above one makes its own
+// copy before it is changed; the last drop frees. Counts are not atomic: a buffer is only
+// ever reachable from one thread at a time (values are made unique, by generated glue,
+// before they cross to another thread; core/RUNTIME.md, "Shared buffers").
 
-typedef struct { char *p; uint64_t len; } ei_String;
+/* 16 bytes, so the data keeps malloc's alignment. */
+typedef struct { uint64_t n; uint64_t unused; } ei_buf_hdr;
+/* A buffer of n * size bytes with count 1 (traps "out of memory" on overflow). */
+void *ei_buf_alloc(uint64_t n, uint64_t size);
+/* Resizes buffer d (unique, or NULL for a new one) to n * size bytes, keeping its contents
+   up to the smaller size; returns the (possibly moved) data. */
+void *ei_buf_grow(void *d, uint64_t n, uint64_t size);
+/* Frees buffer d (NULL is a no-op), whatever its count: callers free at count zero. */
+void ei_buf_free(void *d);
+/* The amortised capacity for len + extra elements: at least min, doubling cap; traps
+   "out of memory" when len + extra overflows. */
+uint64_t ei_grow_cap(uint64_t cap, uint64_t len, uint64_t extra, uint64_t min);
+
+static inline ei_buf_hdr *ei_buf_h(void *d) { return (ei_buf_hdr *)d - 1; }
+/* Another holder (NULL is a no-op). */
+static inline void ei_buf_inc(void *d) {
+  if (d) ei_buf_h(d)->n++;
+}
+/* One holder fewer; true when that was the last one (the caller drops the contents and
+   calls ei_buf_free). NULL: false. */
+static inline bool ei_buf_dec(void *d) { return d && --ei_buf_h(d)->n == 0; }
+/* Whether d has more than one holder (so it must be copied before a change). */
+static inline bool ei_buf_shared(const void *d) { return d && ((const ei_buf_hdr *)d - 1)->n > 1; }
+/* d's count (tests). */
+static inline uint64_t ei_buf_count(const void *d) { return d ? ((const ei_buf_hdr *)d - 1)->n : 0; }
+
+// ---- String: NUL-terminated, `len` excludes the NUL, `cap` is the room for bytes before
+// the NUL (the buffer holds cap + 1). p is a shared buffer and never NULL for a live String
+// (ei_drop_String sets it to NULL).
+
+typedef struct { char *p; uint64_t len; uint64_t cap; } ei_String;
 ei_String ei_str_from(const char *s);
 ei_String ei_str_from_i64(int64_t v);
 void ei_drop_String(ei_String *s);
+/* A copy that shares the buffer (O(1)): what generated code calls for a String copy. */
+ei_String ei_share_String(const ei_String *s);
+/* A copy with a buffer of its own (code generated before copy-on-write calls this, so a
+   program built by an older eiderc stays correct against this core). */
 ei_String ei_clone_String(const ei_String *s);
+/* Gives s a buffer of its own (copies it only when it is shared). */
+void ei_str_unique(ei_String *s);
 void ei_str_cat(ei_String *s, const char *t, uint64_t tl);
 void ei_str_push(ei_String *s, const char *t);
 void ei_str_append(ei_String *s, const ei_String *t);

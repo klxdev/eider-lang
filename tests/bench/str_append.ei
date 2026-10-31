@@ -1,0 +1,13 @@
+// Benchmark (scripts/bench.sh): a String built by many small appends. Before C8.1 every
+// append copied the whole String (quadratic); with a capacity it is amortised linear.
+
+fn main() uses io {
+    var s = String.from("")
+    var i: u32 = 0
+    while i < 200000 {
+        s.push_str("ab")
+        if i % 1000 == 0 { s.append(String.from_int(i as i64)) }
+        i += 1
+    }
+    print(s.len())
+}

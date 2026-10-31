@@ -69,7 +69,7 @@ Messages generated code relies on, all byte-identical to the recorded expectatio
 | `slice out of bounds`, `slice not on a character boundary` | `ei_str_slice` |
 | `push_byte needs an ASCII byte (1 to 127)` | `ei_str_push_byte` |
 | `exit code out of range` | generated `main` when the Eider `main` returns an i32 outside 0..255 |
-| `out of memory` (line 0) | `ei_alloc`, `ei_alloc_n`, `ei_str_*`, `ei_chan_send` |
+| `out of memory` (line 0) | `ei_alloc`, `ei_alloc_n`, `ei_buf_alloc`, `ei_buf_grow`, `ei_grow_cap`, `ei_str_*`, `ei_chan_send` |
 | `send on a closed channel` (line 0) | `ei_chan_send` |
 | `cannot create a thread` (line 0) | `ei_thread_start` |
 | any `panic` / `assert` text | generated code calls `ei_trap` directly |
@@ -105,7 +105,7 @@ trap inside a `Mutex.update` closure). Tests after it that use the same Mutex de
 
 | In `eider_rt.h`, `static inline` | In `eider_rt.c` |
 |---|---|
-| `ei_idx`, all checked/wrapping arithmetic, `ei_bits_*`, conversions, `ei_hash_u64`, `ei_unreachable()` (macro) | `ei_trap`, `ei_set_file`, `ei_set_trap_jmp`, allocation (`ei_alloc`, `ei_alloc_n`, `ei_free`, `ei_check_leaks`), `String`, `ei_hash_str`, print, clock, threads |
+| `ei_idx`, all checked/wrapping arithmetic, `ei_bits_*`, conversions, `ei_hash_u64`, the buffer counts (`ei_buf_h/inc/dec/shared/count`), `ei_unreachable()` (macro) | `ei_trap`, `ei_set_file`, `ei_set_trap_jmp`, allocation (`ei_alloc`, `ei_alloc_n`, `ei_free`, `ei_check_leaks`, `ei_buf_alloc/grow/free`, `ei_grow_cap`), `String`, `ei_hash_str`, print, clock, threads |
 
 The inline set is what sits on every arithmetic expression and index. Each takes the
 fast path in a compare and a branch to the out-of-line `ei_trap`.
@@ -154,15 +154,39 @@ in-range result: `(uint8_t)ei_s2u((int64_t)x, UINT8_MAX, 12)`.
 | `ei_clone_String(const ei_String *)`, `ei_drop_String(ei_String *)` | deep copy; free (sets `p = NULL`, `len = 0`; a second drop is harmless) |
 | `ei_str_cat(s, t, tl)`, `ei_str_push(s, cstr)`, `ei_str_append(s, const ei_String *)` | append; `t` may point into `s` (self-append works); traps if the length overflows |
 | `uint8_t ei_str_byte(s, n, i, line)` | byte `i` of text `s` of length `n` (a String's `p, len` or a str and its `strlen`); traps `index out of bounds` |
-| `ei_String ei_str_slice(s, n, a, b, line)` | new String of bytes `[a, b)`; traps `slice out of bounds` unless `a <= b <= n`, `slice not on a character boundary` if `a` or `b` is a UTF-8 continuation byte |
-| `uint64_t ei_utf8_check(const uint8_t *d, uint64_t n)` | offset of the first byte that isn't valid UTF-8 (RFC 3629) or is NUL, `n` if none (`String.from_bytes`) |
-| `ei_String ei_str_from_n(const char *s, uint64_t n)` | new String of `s[0..n)` (checked by the caller) |
-| `void ei_str_push_byte(ei_String *s, uint8_t b, int32_t line)` | appends `b`; traps `push_byte needs an ASCII byte (1 to 127)` otherwise |
+| `ei_str_from(const char *)`, `ei_str_from_i64(int64_t)` | new String (decimal, `-` for negatives), `cap == len` |
 | `uint64_t ei_hash_u64(uint64_t)`, `uint64_t ei_hash_str(const char *)` | Map key hashes: murmur3 finalizer; FNV-1a up to the NUL, then the finalizer. Bit-identical to the recorded expectations. |
 
 Strings never contain NUL and are always valid UTF-8 (they are built from literals, decimal
 numbers, checked bytes and ASCII `push_byte`), so `print`, `==` and `<` (`strcmp`) and
 `ei_hash_str` all agree on where a String ends.
+
+## Shared buffers (copy-on-write)
+
+`String`, `List[T]`, `Map[K, V]` and `Box[T]` share their heap buffer between copies. A
+buffer is an allocation with a 16-byte header `ei_buf_hdr { uint64_t n; uint64_t unused; }`
+(the count of holders; 16 bytes keep malloc's alignment for the data) followed by the data;
+values point at the data, so a NULL pointer is an empty buffer with no holders. A copy is
+`ei_buf_inc`; a value whose buffer is shared (`ei_buf_shared`) copies it before any change
+(per-type `uniq_` glue, `ei_str_unique`, inside `ei_str_cat`); a drop is `ei_buf_dec`, and the
+caller that gets `true` (the last holder) drops the elements once and calls `ei_buf_free`.
+
+| Function | Contract |
+|---|---|
+| `void *ei_buf_alloc(uint64_t n, uint64_t size)` | a buffer of `n * size` bytes, count 1; traps `out of memory` if the size overflows |
+| `void *ei_buf_grow(void *d, uint64_t n, uint64_t size)` | resizes a buffer with one holder (or `NULL`: a new one) to `n * size` bytes, keeping the contents (`realloc`: still one allocation for the counter) |
+| `void ei_buf_free(void *d)` | frees it whatever the count (`NULL` is a no-op) |
+| `ei_buf_inc(d)`, `bool ei_buf_dec(d)`, `bool ei_buf_shared(d)`, `uint64_t ei_buf_count(d)` (inline) | one more holder; one fewer, `true` when it was the last; more than one holder; the count (0 for `NULL`; tests) |
+| `uint64_t ei_grow_cap(uint64_t cap, uint64_t len, uint64_t extra, uint64_t min)` | the amortised capacity for `len + extra` elements: `max(2 * cap, len + extra, min)` (doubling saturates at `UINT64_MAX`, which then fails to allocate); traps `out of memory` if `len + extra` overflows. List and Map growth and `ei_str_cat` use it |
+
+**Counts are not atomic**, which is sound because a buffer is reachable from one thread at a
+time: before a value crosses to another thread the generated glue makes every buffer it
+reaches its own (`own_` glue: `uniq` at every level). That happens to `spawn`'s closure
+(through the fn value's `own` hook, which owns the captures), to the value given to
+`Mutex.new`, `Mutex.set` and `Chan.send`, to the result of a `Mutex.update` closure (under the
+lock), and to the copies `Mutex.get` and `Task.join` hand out (made and owned under the
+Mutex's lock, or the Task's own lock, since joins may run on several threads at once). The
+shared handles themselves (`ei_rc`) stay atomic.
 
 ## Print and clock
 
@@ -221,7 +245,8 @@ walks or is parameterised by a concrete type stays compiler output.
 | unreachable code | the `ei_unreachable` macro |
 | index checks, integer conversions | `ei_idx`, `ei_s2s/s2u/u2s/u2u` |
 | allocation | `ei_alloc`, plus `ei_alloc_n` for the `n * sizeof(T)` call sites |
-| `String` | `ei_String`, `ei_str_from`, `ei_str_from_i64`, `ei_drop_String`, `ei_clone_String`, `ei_str_cat/push/append` |
+| shared buffers (copy-on-write) | `ei_buf_hdr`, `ei_buf_alloc/grow/free`, `ei_buf_inc/dec/shared/count`, `ei_grow_cap` |
+| `String` | `ei_String`, `ei_str_from`, `ei_str_from_i64`, `ei_drop_String`, `ei_share_String`, `ei_clone_String`, `ei_str_unique`, `ei_str_cat/push/append` |
 | Map key hashes | `ei_hash_u64`, `ei_hash_str` |
 | `print` | `ei_print_i/u/b/s` (`int64_t`/`uint64_t`) |
 | the clock | `ei_now_ms` |
@@ -235,7 +260,8 @@ walks or is parameterised by a concrete type stays compiler output.
 
 | Generated | Why it is per type |
 |---|---|
-| `ei_drop_X` / `ei_clone_X` for records, tuples, enums, arrays, List, Map, Box, Fn, Task/Mutex/Chan handles | walks the fields of a concrete type |
+| `ei_drop_X` / `ei_clone_X` for records, tuples, enums, arrays, List, Map, Box, Fn, Task/Mutex/Chan handles | walks the fields of a concrete type (a List, Map or Box clone is one `ei_buf_inc`) |
+| `uniq_X` (List, Map, Box), `own_X` (any type that owns heap data) | copy-on-write: copy a shared buffer's elements; own every buffer before a thread crossing |
 | `ei_eq_X` and the inline `==` for String/str (`strcmp`) | structural equality per type |
 | `ei_push_X`, `ei_has_X` (List); `pop`, `get`, `map`/`filter`/`fold`/`sum` loops | monomorphized element type |
 | `ei_mfind/mget/minsert/mremove_X` (Map), hash dispatch | key/value types; calls `ei_hash_*`, `ei_alloc_n` |
@@ -269,8 +295,6 @@ walks or is parameterised by a concrete type stays compiler output.
 
 ## Known gaps
 
-- `ei_str_cat` builds a new buffer on every append, so a loop of `push_str` is quadratic.
-  Fixing that needs a capacity field in `ei_String`, which changes the generated layout.
 - Traps do not unwind: no drops run (irrelevant when exiting; a leak and possibly a held lock
   in `test` mode, see above).
 - `ei_trap` called while a runtime lock is held (an allocation failure during `ei_chan_send`
