@@ -1,0 +1,391 @@
+// std/net: sockets (TCP, UDP, Unix domain) and name resolution. Thin wrappers over the core
+// (core/ABI.md "Addresses", "Sockets", "Name resolution"); a socket is a descriptor (i32), read
+// and closed with std/fd too. Non-blocking use goes with std/poll; connection and listener
+// types on tasks come later (layer/std, layer/runtime).
+
+import "core/sys"
+import "bytes.ei"
+import "fd.ei"
+
+/// Address families.
+pub const IPV4: i32 = 4
+pub const IPV6: i32 = 6
+pub const UNIX: i32 = 1
+
+/// Socket types.
+pub const STREAM: i32 = 1
+pub const DATAGRAM: i32 = 2
+
+/// Socket options (`set_option` / `get_option`).
+pub const REUSE_ADDR: i32 = 1
+pub const REUSE_PORT: i32 = 2
+pub const NODELAY: i32 = 3
+pub const KEEPALIVE: i32 = 4
+pub const RECV_BUFFER: i32 = 5
+pub const SEND_BUFFER: i32 = 6
+pub const V6_ONLY: i32 = 7
+pub const BROADCAST: i32 = 8
+pub const RECV_TIMEOUT_MS: i32 = 9
+pub const SEND_TIMEOUT_MS: i32 = 10
+
+/// `shutdown` directions.
+pub const SHUT_READ: i32 = 0
+pub const SHUT_WRITE: i32 = 1
+pub const SHUT_BOTH: i32 = 2
+
+/// A socket address. IPv4/IPv6: `ip` is the 4 or 16 address bytes, `port` the port, `scope`
+/// the IPv6 scope id. Unix: `path` (empty for an unnamed socket).
+pub type Addr = { family: i32, port: i32, ip: List[u8], scope: u32, path: List[u8] }
+
+/// A connection from `accept`.
+pub type Accepted = { fd: i32, peer: Addr }
+
+/// A datagram from `recv_from`.
+pub type Datagram = { from: Addr, data: List[u8] }
+
+pub fn ipv4(a: u8, b: u8, c: u8, d: u8, port: i32) -> Addr {
+    var ip: List[u8] = List.new()
+    ip.push(a)
+    ip.push(b)
+    ip.push(c)
+    ip.push(d)
+    Addr(IPV4, port, ip, 0, List.new())
+}
+
+/// An IPv6 address from its 16 bytes.
+pub fn ipv6(ip: List[u8], port: i32) -> Addr { Addr(IPV6, port, ip, 0, List.new()) }
+
+/// ::1
+pub fn ipv6_loopback(port: i32) -> Addr {
+    var ip: List[u8] = List.new()
+    for i in 0..16 {
+        let b: u8 = if i == 15 { 1 } else { 0 }
+        ip.push(b)
+    }
+    ipv6(ip, port)
+}
+
+pub fn unix(path: List[u8]) -> Addr { Addr(UNIX, 0, List.new(), 0, path) }
+
+/// The same address with another port.
+pub fn with_port(a: Addr, port: i32) -> Addr { Addr(a.family, port, a.ip, a.scope, a.path) }
+
+/// The core's byte layout (core/ABI.md "Addresses").
+pub fn encode(a: Addr) -> List[u8] {
+    var out: List[u8] = List.new()
+    out.push(a.family as u8)
+    out.push(((a.port >> 8) & 255) as u8)
+    out.push((a.port & 255) as u8)
+    if a.family == UNIX {
+        bytes.append(inout out, a.path)
+        return out
+    }
+    bytes.append(inout out, a.ip)
+    if a.family == IPV6 {
+        var s = a.scope
+        for i in 0..4 {
+            out.push((s & 255) as u8)
+            s = s >> 8
+        }
+    }
+    out
+}
+
+/// An address in the core's layout, from `raw[at..at+len]`.
+pub fn decode(raw: List[u8], at: usize, len: usize) -> Addr {
+    let none: List[u8] = List.new()
+    if len < 3 { return Addr(0, 0, List.new(), 0, none) }
+    let fam = raw[at] as i32
+    let port = (raw[at + 1] as i32) * 256 + (raw[at + 2] as i32)
+    if fam == UNIX { return Addr(UNIX, 0, List.new(), 0, bytes.slice(raw, at + 3, at + len)) }
+    if fam == IPV4 { return Addr(IPV4, port, bytes.slice(raw, at + 3, at + 7), 0, none) }
+    if fam == IPV6 {
+        var scope: u32 = 0
+        var i: usize = 4
+        while i > 0 {
+            i -= 1
+            scope = scope * 256 + (raw[at + 19 + i] as u32)
+        }
+        return Addr(IPV6, port, bytes.slice(raw, at + 3, at + 19), scope, none)
+    }
+    Addr(fam, port, List.new(), 0, none)
+}
+
+fn take_addr() -> Addr uses ffi {
+    let raw = sys.take()
+    decode(raw, 0, raw.len())
+}
+
+/// "127.0.0.1:80", "[::1]:80" (hex groups, no zero compression), "unix:/path".
+pub fn text(a: Addr) -> List[u8] {
+    var out: List[u8] = List.new()
+    if a.family == UNIX {
+        bytes.append(inout out, bytes.concat(lit_unix(), a.path))
+        return out
+    }
+    if a.family == IPV4 {
+        for i in 0..4 {
+            if i > 0 { out.push(46) }
+            bytes.append(inout out, bytes.from_u64(a.ip[i as usize] as u64))
+        }
+    } else {
+        out.push(91)
+        var i: usize = 0
+        while i < 16 {
+            if i > 0 { out.push(58) }
+            let g = (a.ip[i] as u64) * 256 + (a.ip[i + 1] as u64)
+            bytes.append(inout out, hex_group(g))
+            i += 2
+        }
+        out.push(93)
+    }
+    out.push(58)
+    bytes.append(inout out, bytes.from_u64(a.port as u64))
+    out
+}
+
+fn lit_unix() -> List[u8] {
+    var u: List[u8] = List.new()
+    for b in [117, 110, 105, 120, 58] { u.push(b as u8) }
+    u
+}
+
+fn hex_group(g: u64) -> List[u8] {
+    let digits = bytes.hex(bytes.slice(be16(g), 0, 2))
+    var start: usize = 0
+    while start < 3 && digits[start] == 48 { start += 1 }
+    bytes.slice(digits, start, 4)
+}
+
+fn be16(g: u64) -> List[u8] {
+    var b: List[u8] = List.new()
+    b.push((g / 256) as u8)
+    b.push((g % 256) as u8)
+    b
+}
+
+fn error(what: str, status: i64) -> String uses ffi { fd.error(what, status) }
+
+/// A new socket: `family` IPV4/IPV6/UNIX, `kind` STREAM/DATAGRAM. The first socket a program
+/// makes sets SIGPIPE to ignored (core/ABI.md "SIGPIPE").
+pub fn socket(family: i32, kind: i32, nonblock: bool) -> Result[i32, String] uses net, ffi {
+    let n = sys.sock_open(family, kind, nonblock)
+    if n < 0 { return Err(error("socket", n)) }
+    Ok(n as i32)
+}
+
+/// Two connected Unix-domain sockets.
+pub fn pair(kind: i32) -> Result[fd.Pair, String] uses net, ffi {
+    let n = sys.sock_pair(kind)
+    if n < 0 { return Err(error("socketpair", n)) }
+    Ok(fd.take_pair())
+}
+
+pub fn bind(s: i32, a: Addr) -> Result[bool, String] uses net, ffi {
+    sys.send(encode(a))
+    let n = sys.sock_bind(s)
+    if n < 0 {
+        var m = String.from("cannot bind ")
+        m.append(sys.to_string(text(a)))
+        m.push_str(": ")
+        m.append(sys.error_text(n))
+        return Err(m)
+    }
+    Ok(true)
+}
+
+pub fn listen(s: i32, backlog: i32) -> Result[bool, String] uses net, ffi {
+    let n = sys.sock_listen(s, backlog)
+    if n < 0 { return Err(error("listen", n)) }
+    Ok(true)
+}
+
+/// A socket bound to `a` and listening (SO_REUSEADDR set first): the usual server start.
+pub fn listener(a: Addr, nonblock: bool) -> Result[i32, String] uses net, ffi {
+    let s = socket(a.family, STREAM, nonblock)?
+    if a.family != UNIX { set_option(s, REUSE_ADDR, 1)? }
+    bind(s, a)?
+    listen(s, 128)?
+    Ok(s)
+}
+
+/// The next connection; None on a non-blocking listener with nothing pending.
+pub fn accept(s: i32, nonblock: bool) -> Result[Option[Accepted], String] uses net, ffi {
+    let n = sys.sock_accept(s, nonblock)
+    if n < 0 {
+        if fd.would_block(n) { return Ok(None) }
+        return Err(error("accept", n))
+    }
+    Ok(Some(Accepted(n as i32, take_addr())))
+}
+
+/// Ok(true) when connected; Ok(false) when a non-blocking connect is under way (wait until
+/// the socket is writable, then `connect_result`).
+pub fn connect(s: i32, a: Addr) -> Result[bool, String] uses net, ffi {
+    sys.send(encode(a))
+    let n = sys.sock_connect(s)
+    if n < 0 {
+        if sys.err_kind(n) == 2 { return Ok(false) }
+        var m = String.from("cannot connect to ")
+        m.append(sys.to_string(text(a)))
+        m.push_str(": ")
+        m.append(sys.error_text(n))
+        return Err(m)
+    }
+    Ok(true)
+}
+
+/// How a non-blocking connect ended (its pending error).
+pub fn connect_result(s: i32) -> Result[bool, String] uses net, ffi {
+    let n = sys.sock_error(s)
+    if n < 0 { return Err(error("connect", n)) }
+    Ok(true)
+}
+
+pub fn shutdown(s: i32, how: i32) -> Result[bool, String] uses net, ffi {
+    let n = sys.sock_shutdown(s, how)
+    if n < 0 { return Err(error("shutdown", n)) }
+    Ok(true)
+}
+
+/// One send: the number of bytes sent.
+pub fn send(s: i32, data: List[u8]) -> Result[i64, String] uses net, ffi {
+    sys.send(data)
+    let n = sys.sock_send(s)
+    if n < 0 { return Err(error("send", n)) }
+    Ok(n)
+}
+
+/// Send all of `data` (blocking sockets).
+pub fn send_all(s: i32, data: List[u8]) -> Result[bool, String] uses net, ffi {
+    var rest = data
+    while rest.len() > 0 {
+        let n = send(s, rest)?
+        rest = bytes.slice(rest, n as usize, rest.len())
+    }
+    Ok(true)
+}
+
+/// Up to `max` bytes; empty at end of stream.
+pub fn recv(s: i32, max: i64) -> Result[List[u8], String] uses net, ffi {
+    let n = sys.sock_recv(s, max, false)
+    if n < 0 { return Err(error("recv", n)) }
+    Ok(sys.take())
+}
+
+/// `recv` on a non-blocking socket: None when nothing is available yet.
+pub fn try_recv(s: i32, max: i64) -> Result[Option[List[u8]], String] uses net, ffi {
+    let n = sys.sock_recv(s, max, false)
+    if n < 0 {
+        if fd.would_block(n) { return Ok(None) }
+        return Err(error("recv", n))
+    }
+    Ok(Some(sys.take()))
+}
+
+/// Up to `max` bytes, left queued.
+pub fn peek(s: i32, max: i64) -> Result[List[u8], String] uses net, ffi {
+    let n = sys.sock_recv(s, max, true)
+    if n < 0 { return Err(error("recv", n)) }
+    Ok(sys.take())
+}
+
+/// One datagram to `to`: the number of bytes sent.
+pub fn send_to(s: i32, data: List[u8], to: Addr) -> Result[i64, String] uses net, ffi {
+    let a = encode(to)
+    sys.send(bytes.concat(a, data))
+    let n = sys.sock_sendto(s, a.len() as i32)
+    if n < 0 { return Err(error("sendto", n)) }
+    Ok(n)
+}
+
+/// One datagram (truncated to `max` bytes) and its sender.
+pub fn recv_from(s: i32, max: i64) -> Result[Datagram, String] uses net, ffi {
+    let n = sys.sock_recvfrom(s, max)
+    if n < 0 { return Err(error("recvfrom", n)) }
+    let raw = sys.take()
+    let alen = raw[0] as usize
+    Ok(Datagram(decode(raw, 1, alen), bytes.slice(raw, 1 + alen, raw.len())))
+}
+
+pub fn local_addr(s: i32) -> Result[Addr, String] uses net, ffi {
+    let n = sys.sock_name(s, false)
+    if n < 0 { return Err(error("getsockname", n)) }
+    Ok(take_addr())
+}
+
+pub fn peer_addr(s: i32) -> Result[Addr, String] uses net, ffi {
+    let n = sys.sock_name(s, true)
+    if n < 0 { return Err(error("getpeername", n)) }
+    Ok(take_addr())
+}
+
+/// Set an option (REUSE_ADDR, NODELAY, ...; booleans are 0/1, timeouts in ms).
+pub fn set_option(s: i32, opt: i32, value: i64) -> Result[bool, String] uses net, ffi {
+    let n = sys.sock_setopt(s, opt, value)
+    if n < 0 { return Err(error("setsockopt", n)) }
+    Ok(true)
+}
+
+pub fn get_option(s: i32, opt: i32) -> Result[i64, String] uses net, ffi {
+    let n = sys.sock_getopt(s, opt)
+    if n < 0 { return Err(error("getsockopt", n)) }
+    Ok(n)
+}
+
+/// Resolve `host` and `service` (a port number or a service name) to addresses of `kind`
+/// (STREAM, DATAGRAM, or 0 for both) and `family` (IPV4, IPV6, or 0 for both), in the
+/// resolver's order. Blocks while the resolver works.
+pub fn lookup(host: List[u8], service: List[u8], family: i32, kind: i32) -> Result[List[Addr], String] uses net, ffi {
+    resolve(host, service, family, kind, 0)
+}
+
+/// `lookup` for a numeric host ("127.0.0.1", "::1"): never asks a name server.
+pub fn parse(host: List[u8], port: i32) -> Result[Addr, String] uses net, ffi {
+    let r = resolve(host, bytes.from_u64(port as u64), 0, STREAM, 2)?
+    if r.len() == 0 { return Err(String.from("no address")) }
+    Ok(r[0])
+}
+
+fn resolve(host: List[u8], service: List[u8], family: i32, kind: i32, flags: i32) -> Result[List[Addr], String] uses net, ffi {
+    var p: List[List[u8]] = List.new()
+    p.push(host)
+    p.push(service)
+    sys.send_all(p)
+    let n = sys.dns_lookup(family, kind, flags)
+    if n < 0 {
+        var m = String.from("cannot resolve ")
+        m.append(sys.to_string(host))
+        m.push_str(": ")
+        m.append(sys.error_text(n))
+        return Err(m)
+    }
+    let raw = sys.take()
+    var out: List[Addr] = List.new()
+    var at: usize = 0
+    while at + 2 <= raw.len() {
+        let len = raw[at + 1] as usize
+        out.push(decode(raw, at + 2, len))
+        at = at + 2 + len
+    }
+    Ok(out)
+}
+
+/// The host name and service name of an address (numeric when `numeric`, or when no name is
+/// known).
+pub fn reverse(a: Addr, numeric: bool) -> Result[List[List[u8]], String] uses net, ffi {
+    sys.send(encode(a))
+    let flags: i32 = if numeric { 3 } else { 0 }
+    let n = sys.dns_reverse(flags)
+    if n < 0 { return Err(error("getnameinfo", n)) }
+    let raw = sys.take()
+    var parts: List[List[u8]] = List.new()
+    match bytes.find_byte(raw, 0, 0) {
+        Some(i) => {
+            parts.push(bytes.slice(raw, 0, i))
+            parts.push(bytes.slice(raw, i + 1, raw.len()))
+        }
+        None => { parts.push(raw) }
+    }
+    Ok(parts)
+}

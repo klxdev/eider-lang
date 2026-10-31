@@ -1,0 +1,93 @@
+// std/signal: TERM, INT, HUP and CHLD delivered as events on the signal pipe, seen by a
+// poller; blocking holds a signal back until unblocked; a graceful-shutdown loop.
+
+import "core/sys"
+import "std/fd"
+import "std/io"
+import "std/poll"
+import "std/proc"
+import "std/signal"
+
+/// Wait (about 2 s at most) until the signal pipe has something, then what it holds. A wait
+/// can end with no events (the signal interrupted it), so loop.
+fn next(p: i32) -> Result[List[i32], String] uses io, ffi {
+    for i in 0..20 {
+        let ev = poll.wait(p, 4, 100)?
+        if ev.len() > 0 {
+            let got = signal.pending()?
+            if got.len() > 0 { return Ok(got) }
+        }
+    }
+    Err(String.from("no signal arrived"))
+}
+
+fn show(sigs: List[i32]) uses io {
+    for s in sigs { print(s) }
+}
+
+fn run() -> Result[bool, String] uses io, fs, net, ffi {
+    let sfd = signal.events_fd()?
+    print(sfd == signal.events_fd()?)
+    let p = poll.create()?
+    poll.add(p, sfd, poll.READ, 1)?
+    let me = proc.id()
+    for s in [signal.TERM, signal.INT, signal.HUP] {
+        signal.watch(s)?
+        signal.send(me, s)?
+        show(next(p)?)
+        signal.reset(s)?
+    }
+    // a child's exit
+    signal.watch(signal.CHLD)?
+    var argv: List[List[u8]] = List.new()
+    argv.push(sys.lit("sh"))
+    argv.push(sys.lit("-c"))
+    argv.push(sys.lit("exit 4"))
+    let c = proc.start(argv, proc.NULL, proc.NULL, proc.NULL)?
+    show(next(p)?)
+    print(proc.wait(c.pid)?.code)
+    signal.reset(signal.CHLD)?
+    // blocked: held back until unblocked
+    signal.watch(signal.USR1)?
+    signal.block(signal.USR1)?
+    signal.send(me, signal.USR1)?
+    print(signal.pending()?.len())
+    signal.unblock(signal.USR1)?
+    show(next(p)?)
+    signal.reset(signal.USR1)?
+    // ignored: nothing happens
+    signal.ignore(signal.USR2)?
+    signal.send(me, signal.USR2)?
+    signal.reset(signal.USR2)?
+    print(signal.pending()?.len())
+    match signal.watch(signal.KILL) {
+        Ok(_) => print("unexpected")
+        Err(e) => print(e)
+    }
+    // graceful shutdown: serve until TERM arrives
+    signal.watch(signal.TERM)?
+    var served = 0
+    var running = true
+    while running {
+        let ev = poll.wait(p, 4, 0)?
+        if ev.len() > 0 {
+            for s in signal.pending()? {
+                if s == signal.TERM { running = false }
+            }
+        } else {
+            served += 1
+            if served == 3 { signal.send(me, signal.TERM)? }
+        }
+    }
+    print(served)
+    signal.reset(signal.TERM)?
+    fd.close(p)?
+    Ok(true)
+}
+
+fn main() uses io, fs, net, ffi {
+    match run() {
+        Ok(_) => print("done")
+        Err(e) => print(e)
+    }
+}

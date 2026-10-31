@@ -1,0 +1,28 @@
+11
+hello
+world
+1
+5
+hello World
+11
+true
+416
+true
+384
+5
+true
+true
+false
+false
+true
+true
+2
+close: Bad file descriptor
+hello++
+cannot open target/tmp/std_fd/data.txt: File exists
+cannot stat target/tmp/std_fd/missing: No such file or directory
+would block
+through the pipe
+0
+done
+exit 0

@@ -1,0 +1,74 @@
+// std/signal: signals as events. A watched signal is delivered as one byte (its number) on
+// the process's signal pipe, which a poller can watch like any descriptor (core/ABI.md
+// "Signals"). Graceful shutdown: watch TERM and INT, add `events_fd()` to the poller, and stop
+// when either arrives.
+
+import "core/sys"
+import "fd.ei"
+
+/// Signal numbers (the same on every system; the core translates).
+pub const HUP: i32 = 1
+pub const INT: i32 = 2
+pub const QUIT: i32 = 3
+pub const KILL: i32 = 9
+pub const USR1: i32 = 10
+pub const USR2: i32 = 12
+pub const PIPE: i32 = 13
+pub const ALRM: i32 = 14
+pub const TERM: i32 = 15
+pub const CHLD: i32 = 17
+pub const WINCH: i32 = 28
+
+fn set(sig: i32, how: i32) -> Result[bool, String] uses io, ffi {
+    let n = sys.signal_set(sig, how)
+    if n < 0 { return Err(fd.error("signal", n)) }
+    Ok(true)
+}
+
+/// Deliver `sig` to the signal pipe instead of its default action.
+pub fn watch(sig: i32) -> Result[bool, String] uses io, ffi { set(sig, 2) }
+
+/// Ignore `sig`.
+pub fn ignore(sig: i32) -> Result[bool, String] uses io, ffi { set(sig, 1) }
+
+/// Back to the default action.
+pub fn reset(sig: i32) -> Result[bool, String] uses io, ffi { set(sig, 0) }
+
+/// Block `sig` in this thread (it stays pending until unblocked).
+pub fn block(sig: i32) -> Result[bool, String] uses io, ffi {
+    let n = sys.signal_mask(sig, true)
+    if n < 0 { return Err(fd.error("signal mask", n)) }
+    Ok(true)
+}
+
+pub fn unblock(sig: i32) -> Result[bool, String] uses io, ffi {
+    let n = sys.signal_mask(sig, false)
+    if n < 0 { return Err(fd.error("signal mask", n)) }
+    Ok(true)
+}
+
+/// The signal pipe's read end (non-blocking; the same every time; never close it).
+pub fn events_fd() -> Result[i32, String] uses io, ffi {
+    let n = sys.signal_fd()
+    if n < 0 { return Err(fd.error("signal pipe", n)) }
+    Ok(n as i32)
+}
+
+/// The signals delivered since the last call, in order (empty if none).
+pub fn pending() -> Result[List[i32], String] uses io, ffi {
+    let f = events_fd()?
+    var out: List[i32] = List.new()
+    while true {
+        let n = sys.read_fd(f, 256)
+        if n <= 0 { break }
+        for b in sys.take() { out.push(b as i32) }
+    }
+    Ok(out)
+}
+
+/// Send `sig` to process `pid` (0: only check that it exists).
+pub fn send(pid: i32, sig: i32) -> Result[bool, String] uses io, ffi {
+    let n = sys.kill(pid, sig)
+    if n < 0 { return Err(fd.error("kill", n)) }
+    Ok(true)
+}

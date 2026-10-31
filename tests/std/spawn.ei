@@ -1,0 +1,77 @@
+// std/proc start/wait/try_wait/kill: a child's stdin, stdout and stderr as pipes; /dev/null;
+// a non-blocking wait on a running child; a child killed by a signal.
+
+import "core/sys"
+import "std/bytes"
+import "std/fd"
+import "std/io"
+import "std/proc"
+import "std/signal"
+
+fn sh(script: str) -> List[List[u8]] uses ffi {
+    var a: List[List[u8]] = List.new()
+    a.push(sys.lit("sh"))
+    a.push(sys.lit("-c"))
+    a.push(sys.lit(script))
+    a
+}
+
+fn read_all(f: i32) -> Result[List[u8], String] uses io, ffi {
+    var all: List[u8] = List.new()
+    while true {
+        let b = fd.read(f, 4096)?
+        if b.len() == 0 { break }
+        bytes.append(inout all, b)
+    }
+    Ok(all)
+}
+
+fn run() -> Result[bool, String] uses io, fs, net, ffi {
+    // all three piped: tr upper-cases stdin; a note on stderr
+    let c = proc.start(sh("tr a-z A-Z; echo note >&2"), proc.PIPE, proc.PIPE, proc.PIPE)?
+    fd.write_all(c.stdin, sys.lit("streams to a child\n"))?
+    fd.close(c.stdin)?
+    io.out(read_all(c.stdout)?)
+    io.out(read_all(c.stderr)?)
+    fd.close(c.stdout)?
+    fd.close(c.stderr)?
+    let e = proc.wait(c.pid)?
+    print(e.code)
+    print(e.signal)
+    // /dev/null in, stdout piped, stderr inherited; exit code
+    let d = proc.start(sh("cat; echo after; exit 6"), proc.NULL, proc.PIPE, proc.INHERIT)?
+    print(d.stdin)
+    io.out(read_all(d.stdout)?)
+    fd.close(d.stdout)?
+    print(proc.wait(d.pid)?.code)
+    // a running child: try_wait says so; TERM ends it
+    let s = proc.start(sh("exec sleep 10"), proc.NULL, proc.NULL, proc.NULL)?
+    match proc.try_wait(s.pid)? {
+        Some(_) => print("finished too soon")
+        None => print("running")
+    }
+    proc.kill(s.pid, signal.TERM)?
+    let k = proc.wait(s.pid)?
+    print(k.code)
+    print(k.signal)
+    match proc.wait(s.pid) {
+        Ok(_) => print("unexpected")
+        Err(m) => print(m)
+    }
+    // not startable
+    var bad: List[List[u8]] = List.new()
+    bad.push(sys.lit("eider-no-such-program"))
+    match proc.start(bad, proc.INHERIT, proc.PIPE, proc.PIPE) {
+        Ok(_) => print("unexpected")
+        Err(m) => print(m)
+    }
+    print(proc.id() > 0)
+    Ok(true)
+}
+
+fn main() uses io, fs, net, ffi {
+    match run() {
+        Ok(_) => print("done")
+        Err(e) => print(e)
+    }
+}

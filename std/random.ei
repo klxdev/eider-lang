@@ -1,0 +1,37 @@
+// std/random: bytes from the operating system's CSPRNG (getrandom on Linux, arc4random_buf on
+// macOS and the BSDs; core/ABI.md "Randomness"). Suitable for keys, nonces and hash seeds.
+// There is no time-based fallback: no OS source is an error.
+
+import "core/sys"
+
+/// `n` random bytes (at most 1 MiB per call). On Linux this waits, once per boot, until the
+/// kernel's pool is seeded.
+pub fn bytes(n: i64) -> Result[List[u8], String] uses io, ffi {
+    let r = sys.random(n, false)
+    if r < 0 {
+        var m = String.from("random: ")
+        m.append(sys.error_text(r))
+        return Err(m)
+    }
+    Ok(sys.take())
+}
+
+/// A random u64.
+pub fn next_u64() -> Result[u64, String] uses io, ffi {
+    let b = bytes(8)?
+    var v: u64 = 0
+    for x in b { v = v * 256 + (x as u64) }
+    Ok(v)
+}
+
+/// A random number in [0, n) without modulo bias; n > 0.
+pub fn below(n: u64) -> Result[u64, String] uses io, ffi {
+    // reject the top partial range, so every residue is equally likely
+    let top: u64 = 18446744073709551615
+    let limit = top - (top % n)
+    while true {
+        let v = next_u64()?
+        if v < limit { return Ok(v % n) }
+    }
+    Ok(0)
+}
