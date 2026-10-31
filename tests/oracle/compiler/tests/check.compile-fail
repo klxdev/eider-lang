@@ -1,5 +1,6 @@
 compile-fail tests (compiler/tests/check/fail)
   ok   e0001_clo_list_of_fn.ei      E0001 at 4:15
+  ok   e0001_literal_past_u128.ei   E0001 at 5:13
   ok   e0001_mod_parse_error_in_module.ei E0001 at 2:14
   ok   e0001_or_pattern_binds.ei    E0001 at 4:13
   ok   e0002_add_and.ei             E0002 at 3:11 (fix compiles)
@@ -704,6 +705,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-702 passed, 0 failed; error-code coverage 51/55
+703 passed, 0 failed; error-code coverage 51/55
 codes without a compile-fail test: E0302 E0402 E0806 E0808
 --- exit 0
