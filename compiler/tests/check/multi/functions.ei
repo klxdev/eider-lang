@@ -1,0 +1,25 @@
+// Independent type errors in several functions: each is reported (bodies are checked in
+// reverse order, the last first), and an error in one body doesn't stop the others.
+fn area(w: i32, h: i32) -> i32 {
+    let s: bool = w * h
+    w * h
+}
+
+fn label(n: u8) -> str {
+    if n { return "many" }
+    "few"
+}
+
+fn twice(x: i64) -> i64 {
+    let y: i64 = x + 1
+    y * true
+}
+
+fn ok(a: i32) -> i32 { a + 1 }
+
+fn main() uses io {
+    print(area(2, 3))
+    print(label(300))
+    print(twice(4))
+    print(ok(false))
+}

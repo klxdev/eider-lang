@@ -1,0 +1,16 @@
+// Errors in items: a field or a parameter whose type doesn't resolve has the error type
+// (the record and the function are still usable), a type defined twice is reported once
+// and the first one is used, and the bodies are still checked.
+type Pair = { a: i32, b: Missing }
+type Pair = { c: bool }
+
+fn sum(p: Pair, extra: Nowhere) -> i32 { p.a + p.b + extra }
+
+fn first(p: Pair) -> i32 { p.c }
+
+fn main() uses io {
+    let p = Pair(1, 2)
+    print(sum(p, 3))
+    print(first(p))
+    let s: str = 7
+}

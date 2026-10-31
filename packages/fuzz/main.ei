@@ -13,18 +13,22 @@
 // literals, type names, operators, small insertions; fuzz.ei) and holds eiderc to invariants
 // that need no second compiler:
 //
-//   check   `check --json` ends within 30 s, with exit 0 and no output or exit 1 and one
-//           `{"error":"<code>",...}` line, and nothing on stderr (no internal error, no crash)
-//   emit-c  `emit-c` succeeds exactly when check does, and fails with check's code
+//   check   `check --json` ends within 30 s, with exit 0 and no output or exit 1 and one or
+//           more `{"error":"<code>",...}` lines (every independent error; at most 100, then
+//           a `{"note":...}` line), none repeated, and nothing on stderr (no internal error,
+//           no crash)
+//   emit-c  `emit-c` succeeds exactly when check does, and fails with check's first code
 //   build   a program check accepts builds (the C it lowers to compiles), unless it declares an
 //           `extern "c"` fn (which may name a symbol nothing defines; such programs are
 //           counted, not built)
 //   run     that program, run for at most 10 s, exits (0, 101 for a trap, or its own code);
 //           a signal is a failure, except SIGSEGV, which is counted separately: a stack
 //           overflow from unbounded recursion ends that way (no guard yet)
-//   ref     with REF, `check --json` prints exactly what REF prints. With compiler/ equal to
-//           the seed's source the two agree by construction; after a compiler change this
-//           shows every diagnostic the change moved (intended or not).
+//   ref     with REF, `check --json` exits as REF does and its first line (the first
+//           diagnostic) is exactly REF's. With compiler/ equal to the seed's source the two
+//           agree by construction; after a compiler change this shows every first diagnostic
+//           the change moved (intended or not). (A REF that stops at the first error prints
+//           only that line; further lines are the errors found after it.)
 //
 // A failing mutant is kept next to its seed (imports are relative) as fuzz_<n>.ei, so the
 // failing command replays it. Mutants eiderc calls `unsupported` are skipped. C warnings
@@ -148,6 +152,30 @@ fn compile(compiler: List[u8], cmd: str, json: bool, path: List[u8], out: List[u
     exec(a, 30000)
 }
 
+/// The first line of `out`.
+fn first_line(out: List[u8]) -> List[u8] {
+    match bytes.find_byte(out, 10, 0) {
+        Some(i) => bytes.slice(out, 0, i)
+        None => out
+    }
+}
+
+/// Whether every line of `check --json` output is a diagnostic, none repeated, except a last
+/// `{"note":...}` line.
+fn well_formed(out: List[u8]) -> bool uses ffi {
+    let ls = bytes.lines(out)
+    for i in 0..ls.len() {
+        let l = ls[i]
+        if json_code(l).len() == 0 {
+            if i + 1 < ls.len() || !bytes.starts_with(l, sys.lit("{\"note\":")) { return false }
+        }
+        for j in 0..i {
+            if bytes.eq(ls[j], l) { return false }
+        }
+    }
+    true
+}
+
 /// The code of a `check --json` diagnostic (`{"error":"E0101",...}`), or "" if `out` isn't one.
 fn json_code(out: List[u8]) -> List[u8] uses ffi {
     let none: List[u8] = List.new()
@@ -233,6 +261,7 @@ fn judge(o: Opts, path: List[u8], src: List[u8], bin: List[u8], inout st: Stats)
     let code = json_code(c.out)
     if c.code == 0 && c.out.len() > 0 { return Ok(verdict("check (output on success)", c, none)) }
     if c.code == 1 && code.len() == 0 { return Ok(verdict("check (no diagnostic)", c, none)) }
+    if c.code == 1 && !well_formed(c.out) { return Ok(verdict("check (a line that is no diagnostic, or a repeated one)", c, none)) }
     if is(code, "unsupported") {
         var v = verdict("", c, none)
         v.code = code
@@ -240,7 +269,7 @@ fn judge(o: Opts, path: List[u8], src: List[u8], bin: List[u8], inout st: Stats)
     }
     if o.reference.len() > 0 {
         let w = compile(o.reference, "check", true, path, none)?
-        if !bytes.eq(w.out, c.out) || w.code != c.code {
+        if !bytes.eq(first_line(w.out), first_line(c.out)) || w.code != c.code {
             var d = sys.lit("REF: ")
             bytes.append(inout d, w.out)
             return Ok(verdict("ref (check --json differs)", c, d))

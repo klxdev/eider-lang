@@ -11,12 +11,15 @@
 #   lex_ok:   token dumps of compiler/tests/lex_ok/*.ei match their .tokens goldens
 #   parse_ok: AST dumps of compiler/tests/parse_ok/*.ei match their .ast goldens
 #   recover:  the recovering front end (lex.lex_all, parse.parse_all), run by
-#             compiler/tests/recover/front_all.ei: for compiler/tests/recover/*.src (programs
+#             `eiderc parse --all-errors`: for compiler/tests/recover/*.src (programs
 #             with several syntax errors; not .ei, so the front-end loop above skips them) every
 #             diagnostic as JSON lines, then the AST dump with its error nodes, matches the
 #             .recover golden; and for every file of the front-end loop its first diagnostic
 #             is `eiderc parse`'s error, or with none the dump is `eiderc parse`'s.
 #   ir:       IR dumps of compiler/tests/ir/*.ei match their .ir goldens.
+#   multi:    compiler/tests/check/multi/*.ei have several independent errors: `check --json`
+#             (one JSON line per diagnostic) and `check` (rendered diagnostics, the summary,
+#             the --max-errors note) equal the oracle (X.check.json, X.check.err).
 #   check:    for every compile-fail/pass test (tests/checks/{fail,pass}) whose features eiderc
 #             supports (it doesn't answer `unsupported`), `eiderc check --json` must equal the
 #             oracle (X.check.json) byte for byte; the same for tests/run/*.ei. eiderc's own
@@ -133,34 +136,28 @@ for f in compiler/tests/parse_ok/*.ei; do
   if $new parse "$f" | cmp -s - "$g"; then echo "ok   parse_ok $f"; else echo "FAIL parse_ok $f"; $new parse "$f" | diff "$g" - | head -10; fail=1; fi
 done
 # recover: every syntax error at once (see the top)
-if $new build compiler/tests/recover/front_all.ei -o target/runtest/front_all >target/runtest/front_all.log 2>&1; then
-  for f in compiler/tests/recover/*.src; do
-    g="${f%.src}.recover"
-    target/runtest/front_all "$f" >target/runtest/recover 2>&1
-    if [ -n "$BLESS" ]; then cp target/runtest/recover "$g"; fi
-    if cmp -s target/runtest/recover "$g"; then echo "ok   recover $f"; else echo "FAIL recover $f"; diff "$g" target/runtest/recover | head -10; fail=1; fi
-  done
-  rn=0
-  rbad=""
-  for f in $(find . -name '*.ei' -not -path './target/*' -not -path './.claude/*' -not -path '*/deps/*' | sort); do
-    rn=$((rn + 1))
-    $new parse --json "$f" >target/runtest/rp 2>/dev/null
-    target/runtest/front_all "$f" >target/runtest/ra 2>&1
-    if head -1 target/runtest/rp | grep -q '^{"error"'; then
-      [ "$(head -1 target/runtest/rp)" = "$(head -1 target/runtest/ra)" ] || rbad="$rbad $f"
-    else
-      cmp -s target/runtest/rp target/runtest/ra || rbad="$rbad $f"
-    fi
-  done
-  if [ -z "$rbad" ]; then
-    echo "ok   recover: $rn files: the first of all the front-end errors is eiderc's, and without one the dump is eiderc's"
+for f in compiler/tests/recover/*.src; do
+  g="${f%.src}.recover"
+  $new parse --all-errors "$f" >target/runtest/recover 2>&1
+  if [ -n "$BLESS" ]; then cp target/runtest/recover "$g"; fi
+  if cmp -s target/runtest/recover "$g"; then echo "ok   recover $f"; else echo "FAIL recover $f"; diff "$g" target/runtest/recover | head -10; fail=1; fi
+done
+rn=0
+rbad=""
+for f in $(find . -name '*.ei' -not -path './target/*' -not -path './.claude/*' -not -path '*/deps/*' | sort); do
+  rn=$((rn + 1))
+  $new parse --json "$f" >target/runtest/rp 2>/dev/null
+  $new parse --all-errors "$f" >target/runtest/ra 2>&1
+  if head -1 target/runtest/rp | grep -q '^{"error"'; then
+    [ "$(head -1 target/runtest/rp)" = "$(head -1 target/runtest/ra)" ] || rbad="$rbad $f"
   else
-    echo "FAIL recover: first error or dump differs from eiderc parse:$rbad"
-    fail=1
+    cmp -s target/runtest/rp target/runtest/ra || rbad="$rbad $f"
   fi
+done
+if [ -z "$rbad" ]; then
+  echo "ok   recover: $rn files: the first of all the front-end errors is eiderc's, and without one the dump is eiderc's"
 else
-  cat target/runtest/front_all.log
-  echo "FAIL recover: build compiler/tests/recover/front_all.ei"
+  echo "FAIL recover: first error or dump differs from eiderc parse:$rbad"
   fail=1
 fi
 for f in compiler/tests/ir/*.ei; do
@@ -213,6 +210,33 @@ check_set 0 tests/run/*.ei
 echo "$(verdict $inscope) check: $agree/$inscope run tests in scope agree ($total tests)"
 check_set 1 compiler/tests/check/fail/*.ei compiler/tests/check/pass/*.ei
 echo "$(verdict $total) check: $agree/$inscope eiderc check cases agree (compiler/tests/check)"
+
+# multi: programs with several independent errors (compiler/tests/check/multi): everything
+# `check --json` and `check` print, against the oracle (X.check.json, X.check.err: every
+# diagnostic in order, the summary, the --max-errors note); a first line `// args: <options>`
+# adds options
+mtotal=0
+magree=0
+for f in compiler/tests/check/multi/*.ei; do
+  mtotal=$((mtotal + 1))
+  args=$(sed -n '1s|^// args: ||p' "$f")
+  $new check --json $args "$f" 2>&1 | norm >target/runtest/m_json
+  $new check $args "$f" 2>&1 | norm >target/runtest/m_err
+  bless "$f" check.json target/runtest/m_json
+  bless "$f" check.err target/runtest/m_err
+  ok=1
+  for k in check.json check.err; do
+    p=$(oracle "$f" $k)
+    if [ ! -f "$p" ] || ! cmp -s "$p" "target/runtest/m_${k#check.}"; then
+      echo "FAIL multi $f ($k)"
+      if [ -f "$p" ]; then diff "$p" "target/runtest/m_${k#check.}" | head -10; else echo "  (no oracle file $p)"; fi
+      ok=0
+      fail=1
+    fi
+  done
+  [ $ok = 1 ] && magree=$((magree + 1))
+done
+if [ "$magree" = "$mtotal" ]; then echo "ok   multi: $magree/$mtotal programs with several errors report them all (compiler/tests/check/multi)"; else echo "FAIL multi: $magree/$mtotal programs with several errors agree"; fi
 
 # run: `run` / `test` (stdout, stderr, exit code) against the oracle
 tmp=target/runtest

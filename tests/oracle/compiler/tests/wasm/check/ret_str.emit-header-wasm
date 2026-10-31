@@ -3,3 +3,4 @@ error[E0806]: return type str isn't supported for WebAssembly exports (integers,
   |
 2 | export fn name(n: i32) -> str { return "x" }
   |           ^
+error: 1 error

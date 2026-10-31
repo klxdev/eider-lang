@@ -1,1 +1,2 @@
 {"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_in_const.ei","line":6,"col":16},"message":"call to `f` requires capability `io`","fix":{"at":{"line":0,"col":0},"delete":0,"insert":" uses io"}}
+{"error":"E0504","span":{"file":"compiler/tests/check/fail/e0201_in_const.ei","line":6,"col":16},"message":"constant initializers must be literals or compile-time integer expressions"}

@@ -34,7 +34,8 @@ fn s(x: str) -> List[u8] uses ffi { sys.lit(x) }
 fn is(a: List[u8], x: str) -> bool uses ffi { bytes.eq(a, sys.lit(x)) }
 
 /// Lex, parse, load, evaluate comptime constants and check `src` as the file `file` in
-/// `mode`: Ok when it compiles.
+/// `mode`: Ok when it compiles, else the first diagnostic (the passes recover and find
+/// more, as `eiderc check` reports them; the runner judges a file by its first).
 pub fn compile(file: List[u8], src: List[u8], mode: i32) -> Result[bool, diag.Diag] uses io, fs, net, clock, ffi {
     var names = intern.new()
     let r = lex.lex(src, inout names)
@@ -47,20 +48,19 @@ pub fn compile(file: List[u8], src: List[u8], mode: i32) -> Result[bool, diag.Di
         _ => { return Ok(true) }
     }
     let parsed = parse.parse(lx, names)?
-    let loaded = resolve.load(file, src, parsed)?
+    let ld = resolve.load_from(file, src, parsed, resolve.disk())
+    if ld.diags.len() > 0 { return Err(ld.diags[0]) }
     // `comptime` constants are evaluated between loading and checking, as in main.ei
-    let prog = consteval.eval(loaded)?
+    let ev = consteval.eval_all(ld.p)
+    if ev.diags.len() > 0 { return Err(ev.diags[0]) }
     // `// mode: wasm` files are checked like `eiderc check --wasm` (E0806)
-    let checked = if mode == WASM { check.check_wasm(prog) } else { check.check_mode(prog, false) }
-    match checked {
-        Ok(_) => Ok(true)
-        Err(d) => {
-            // a test build needs no `main`: the checker reports a missing one last, once
-            // everything else has passed, so that error alone means the file compiles
-            if mode == TEST && no_main(d) { return Ok(true) }
-            Err(d)
-        }
-    }
+    let k = check.check_all(ev.p, mode == WASM, mode == WASM)
+    if k.diags.len() == 0 { return Ok(true) }
+    let d = k.diags[0]
+    // a test build needs no `main`: the checker reports a missing one last, so that
+    // error alone means the file compiles
+    if mode == TEST && k.diags.len() == 1 && no_main(d) { return Ok(true) }
+    Err(d)
 }
 
 fn no_main(d: diag.Diag) -> bool uses ffi {

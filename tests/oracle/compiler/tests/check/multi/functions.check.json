@@ -1,0 +1,5 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/multi/functions.ei","line":22,"col":17},"message":"literal 300 doesn't fit in u8 (max 255)"}
+{"error":"E0401","span":{"file":"compiler/tests/check/multi/functions.ei","line":24,"col":14},"message":"expected i32, found bool"}
+{"error":"E0401","span":{"file":"compiler/tests/check/multi/functions.ei","line":15,"col":9},"message":"expected i64, found bool"}
+{"error":"E0401","span":{"file":"compiler/tests/check/multi/functions.ei","line":9,"col":8},"message":"expected bool, found u8"}
+{"error":"E0401","span":{"file":"compiler/tests/check/multi/functions.ei","line":4,"col":21},"message":"expected bool, found i32"}

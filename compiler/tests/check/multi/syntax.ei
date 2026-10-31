@@ -1,0 +1,25 @@
+// Syntax errors don't stop checking: the parts that parsed are checked, and what the
+// skipped parts would have declared is never reported as unknown, nor anything on the
+// line of a syntax error (the parser may have misread it).
+fn broken(x: i32) -> i32 {
+    let y = (x +
+    let z: bool = 3
+    let t: u8 = 300
+    y + z + t
+}
+
+fn lost(a: i32 -> i32 { a }
+
+fn arms(o: Option[i32]) -> i32 {
+    match o {
+        Some(v) => v +
+        None => 0
+    }
+}
+
+fn main() uses io {
+    print(broken(1))
+    print(lost(2))
+    print(arms(None))
+    let w: str = 4
+}

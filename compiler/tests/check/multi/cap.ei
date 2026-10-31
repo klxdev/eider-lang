@@ -1,0 +1,10 @@
+// args: --max-errors 3
+// With --max-errors 3 only the first three of the five errors are shown, then a note says
+// how many there were.
+fn main() uses io {
+    let a: bool = 1
+    let b: bool = 2
+    let c: bool = 3
+    let d: bool = 4
+    let e: bool = 5
+}

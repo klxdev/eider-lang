@@ -1,1 +1,2 @@
 {"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_order_types_before_fns.ei","line":3,"col":15},"message":"unknown type `AlsoMissing`"}
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_order_types_before_fns.ei","line":2,"col":9},"message":"unknown type `Missing`"}

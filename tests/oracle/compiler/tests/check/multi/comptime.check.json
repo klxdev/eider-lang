@@ -1,0 +1,2 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/multi/comptime.ei","line":3,"col":30},"message":"200 + 100 = 300 doesn't fit in u8","help":"use the wrapping operator `+%` if overflow is intended"}
+{"error":"E0401","span":{"file":"compiler/tests/check/multi/comptime.ei","line":10,"col":19},"message":"expected bool, found i32"}

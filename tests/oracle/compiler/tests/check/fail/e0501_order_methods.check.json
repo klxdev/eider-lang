@@ -1,1 +1,3 @@
 {"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_order_methods.ei","line":4,"col":31},"message":"literal 301 doesn't fit in u8 (max 255)"}
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_order_methods.ei","line":3,"col":36},"message":"literal 300 doesn't fit in u8 (max 255)"}
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_order_methods.ei","line":5,"col":22},"message":"literal 302 doesn't fit in u8 (max 255)"}

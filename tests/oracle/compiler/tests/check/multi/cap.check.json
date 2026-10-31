@@ -1,0 +1,4 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/multi/cap.ei","line":5,"col":19},"message":"expected bool, found i32"}
+{"error":"E0401","span":{"file":"compiler/tests/check/multi/cap.ei","line":6,"col":19},"message":"expected bool, found i32"}
+{"error":"E0401","span":{"file":"compiler/tests/check/multi/cap.ei","line":7,"col":19},"message":"expected bool, found i32"}
+{"note":"only the first 3 of 5 errors are shown; `--max-errors N` shows N (0: all)"}

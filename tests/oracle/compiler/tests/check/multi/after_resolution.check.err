@@ -1,0 +1,17 @@
+error[E0804]: cannot read module `compiler/tests/check/multi/../lib/no_such_module.ei`: No such file or directory (os error 2)
+  --> compiler/tests/check/multi/after_resolution.ei:4:1
+  |
+4 | import "../lib/no_such_module.ei" as gone
+  | ^
+error[E0801]: function `shapes.helper` is private to module `compiler/tests/check/multi/../lib/shapes.ei`
+  --> compiler/tests/check/multi/after_resolution.ei:11:11
+   |
+11 |     print(shapes.helper(1) + 1)
+   |           ^
+  help: mark it `pub` in its own file to use it from other modules
+error[E0401]: expected i32, found str
+  --> compiler/tests/check/multi/after_resolution.ei:13:18
+   |
+13 |     let n: i32 = shapes.name(c)
+   |                  ^
+error: 3 errors

@@ -1,0 +1,16 @@
+error[E0110]: unknown name `no_such_value`
+  --> compiler/tests/check/multi/poisoned.ei:9:13
+  |
+9 |     let v = no_such_value
+  |             ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/poisoned.ei:26:21
+   |
+26 |     let bad: bool = 5
+   |                     ^
+error[E0401]: expected i32, found bool
+  --> compiler/tests/check/multi/poisoned.ei:27:26
+   |
+27 |     print(takes(P(1, 2), true))
+   |                          ^
+error: 3 errors

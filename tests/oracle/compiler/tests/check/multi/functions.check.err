@@ -1,0 +1,26 @@
+error[E0501]: literal 300 doesn't fit in u8 (max 255)
+  --> compiler/tests/check/multi/functions.ei:22:17
+   |
+22 |     print(label(300))
+   |                 ^
+error[E0401]: expected i32, found bool
+  --> compiler/tests/check/multi/functions.ei:24:14
+   |
+24 |     print(ok(false))
+   |              ^
+error[E0401]: expected i64, found bool
+  --> compiler/tests/check/multi/functions.ei:15:9
+   |
+15 |     y * true
+   |         ^
+error[E0401]: expected bool, found u8
+  --> compiler/tests/check/multi/functions.ei:9:8
+  |
+9 |     if n { return "many" }
+  |        ^
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/functions.ei:4:21
+  |
+4 |     let s: bool = w * h
+  |                     ^
+error: 5 errors

@@ -1,0 +1,11 @@
+// A comptime constant whose evaluation fails is reported and has the error type: its uses
+// are accepted silently, the next constant is still evaluated, and the program is checked.
+const BAD: u8 = comptime 200 + 100
+const GOOD: i32 = comptime 6 * 7
+
+fn main() uses io {
+    let x = BAD + 1
+    print(x)
+    print(GOOD)
+    let y: bool = GOOD
+}

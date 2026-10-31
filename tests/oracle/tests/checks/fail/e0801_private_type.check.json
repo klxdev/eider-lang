@@ -1,1 +1,2 @@
 {"error":"E0801","span":{"file":"tests/checks/fail/e0801_private_type.ei","line":5,"col":12},"message":"type `geometry.Hidden` is private to module `tests/checks/fail/lib/geometry.ei`","help":"mark it `pub` in its own file to use it from other modules"}
+{"error":"E0801","span":{"file":"tests/checks/fail/e0801_private_type.ei","line":5,"col":30},"message":"type `geometry.Hidden` is private to module `tests/checks/fail/lib/geometry.ei`","help":"mark it `pub` in its own file to use it from other modules"}

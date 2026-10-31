@@ -1,0 +1,3 @@
+{"error":"E0804","span":{"file":"compiler/tests/check/multi/after_resolution.ei","line":4,"col":1},"message":"cannot read module `compiler/tests/check/multi/../lib/no_such_module.ei`: No such file or directory (os error 2)"}
+{"error":"E0801","span":{"file":"compiler/tests/check/multi/after_resolution.ei","line":11,"col":11},"message":"function `shapes.helper` is private to module `compiler/tests/check/multi/../lib/shapes.ei`","help":"mark it `pub` in its own file to use it from other modules"}
+{"error":"E0401","span":{"file":"compiler/tests/check/multi/after_resolution.ei","line":13,"col":18},"message":"expected i32, found str"}

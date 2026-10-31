@@ -1,0 +1,15 @@
+// Errors after resolution errors: a module that can't be read is reported and left out
+// (its names, through its alias, are never reported unknown), a private item is reported
+// and then used as if it were visible, and checking goes on with the rest.
+import "../lib/no_such_module.ei" as gone
+import "../lib/shapes.ei"
+
+fn main() uses io {
+    let p = gone.make(1, 2)
+    let q: gone.Thing = p
+    print(gone.LIMIT + q.x)
+    print(shapes.helper(1) + 1)
+    let c = shapes.Red
+    let n: i32 = shapes.name(c)
+    print(n)
+}

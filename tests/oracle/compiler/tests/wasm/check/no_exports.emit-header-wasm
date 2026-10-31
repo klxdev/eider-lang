@@ -3,3 +3,4 @@ error[E0805]: a library needs at least one `export fn`
   |
 1 | // a module needs an `export fn` (E0805); `main` is not required
   | ^
+error: 1 error

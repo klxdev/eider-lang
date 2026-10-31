@@ -1,1 +1,2 @@
 {"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_ffi_no_unsafe_either.ei","line":4,"col":13},"message":"call to `abs` requires capability `ffi`","fix":{"at":{"line":3,"col":10},"delete":0,"insert":" uses ffi"}}
+{"error":"E0802","span":{"file":"compiler/tests/check/fail/e0201_ffi_no_unsafe_either.ei","line":4,"col":13},"message":"call to C function `abs` is only allowed in an `unsafe` block or `unsafe fn`","help":"wrap the call: `unsafe { ... }`"}

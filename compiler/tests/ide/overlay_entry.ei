@@ -1,5 +1,5 @@
 // overlay: compiler/tests/ide/overlay_entry.ei compiler/tests/ide/lib/entry_overlay.txt
 // The entry file itself overlaid with a buffer that doesn't parse: the parse error (at
-// the buffer's position) and nothing else.
+// the buffer's position), and the symbols of what parsed (from the buffer).
 
 fn main() uses io { print(1) }

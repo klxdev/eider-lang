@@ -32,10 +32,12 @@ import "comptime.ei" as consteval
 import "wasm.ei"
 import "suite.ei"
 import "ide.ei"
+import "front.ei"
 
 type Args = {
     cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,
     lib: bool, libs: List[List[u8]], wasm: bool, compile_fail: bool, overlay: List[List[u8]],
+    max_errors: u64, all_errors: bool,
 }
 
 /// Comparisons go through a function so no owned temporary sits in an `else if` condition
@@ -49,7 +51,7 @@ fn usage_text() -> List[u8] uses ffi {
         "eiderc 0.1.0 (the Eider compiler, written in Eider: Eider -> C11)",
         "",
         "usage:",
-        "  eiderc check <file.ei> [--json] [--lib] [--wasm]  type-check only: `ok` or the first error",
+        "  eiderc check <file.ei> [--json] [--lib] [--wasm]  type-check only: `ok` or the errors",
         "  eiderc emit-c <file.ei> [--test] [--lib]   print the generated C (--test: with the test driver)",
         "  eiderc emit-header <file.ei>               print the C header for the `export fn`s",
         "  eiderc build <file.ei> [-o out] [-l lib]   compile to a native binary (-O2) via $CC (default: cc)",
@@ -59,11 +61,16 @@ fn usage_text() -> List[u8] uses ffi {
         "  eiderc test <file.ei> [-l lib]             run the `test` blocks",
         "  eiderc test --compile-fail [<dir>]         run the compile-fail suite (<dir>/fail, <dir>/pass; default tests/checks)",
         "  eiderc lex <file.ei>                       dump the tokens",
-        "  eiderc parse <file.ei>                     dump the AST",
+        "  eiderc parse <file.ei> [--all-errors]      dump the AST (--all-errors: every syntax error as JSON lines,",
+        "                                             then the AST with its error nodes)",
         "  eiderc ir <file.ei>                        dump the typed IR",
         "  eiderc ide <file.ei> [--overlay <path> <text>]  print the IDE analysis (ide.ei): symbols, refs, types;",
         "                                             --overlay (repeatable) reads <path> from the file <text>",
         "  eiderc help | --help | -h                  print this text",
+        "",
+        "errors: every independent error is reported, in the order found, then `error: N errors`",
+        "(stderr); with --json one JSON object per line (stdout). --max-errors N shows at most N",
+        "(default 100, 0: all; a final note says when some were left out).",
         "",
         "environment:",
         "  CC            the C compiler (default cc)",
@@ -117,6 +124,8 @@ fn parse_args() -> Args uses io, ffi {
     var compile_fail = false
     var libs: List[List[u8]] = List.new()
     var overlay: List[List[u8]] = List.new()
+    var max_errors = diag.MAX_ERRORS
+    var all_errors = false
     var i: usize = 1
     while i < argv.len() {
         let a = argv[i]
@@ -149,6 +158,15 @@ fn parse_args() -> Args uses io, ffi {
             if i >= argv.len() { usage_error(sys.lit("`-l` needs a library name")) }
             libs.push(argv[i])
             i += 1
+        } else if is(a, "--all-errors") {
+            all_errors = true
+        } else if is(a, "--max-errors") {
+            if i >= argv.len() { usage_error(sys.lit("`--max-errors` needs a number")) }
+            match bytes.parse_u64(argv[i]) {
+                Some(nmax) => { max_errors = nmax }
+                None => usage_error(quoted("`--max-errors` needs a number, not ", argv[i]))
+            }
+            i += 1
         } else if a.len() > 1 && a[0] == 45 {
             usage_error(quoted("unknown option ", a))
         } else if cmd.len() == 0 {
@@ -178,7 +196,7 @@ fn parse_args() -> Args uses io, ffi {
         wasm = false
     }
     if wasm { lib = true }
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay)
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay, max_errors, all_errors)
 }
 
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
@@ -199,6 +217,33 @@ fn report(d: diag.Diag, a: Args, src: List[u8]) uses io, fs, ffi {
     } else {
         io.err(diag.render(d2, a.file, src))
     }
+}
+
+fn one(d: diag.Diag) -> List[diag.Diag] {
+    var out: List[diag.Diag] = List.new()
+    out.push(d)
+    out
+}
+
+/// Report every diagnostic of the run (each once, at most `--max-errors`), then the summary
+/// (human output) and, if some were left out, the note saying so; exit 1.
+fn fail(ds: List[diag.Diag], a: Args, src: List[u8]) uses io, fs, ffi {
+    let all = diag.dedup(ds)
+    let total = all.len() as u64
+    var shown = total
+    if a.max_errors > 0 && total > a.max_errors { shown = a.max_errors }
+    for i in 0..shown { report(all[i as usize], a, src) }
+    if !a.json { io.errln(diag.summary(total)) }
+    if shown < total {
+        if a.json {
+            io.outln(diag.capped_json(shown, total))
+        } else {
+            var m = sys.lit("note: ")
+            bytes.append(inout m, diag.capped_note(shown, total))
+            io.errln(m)
+        }
+    }
+    env.exit(1)
 }
 
 fn dump(lx: lex.Lexed, names: intern.Interner) uses io, ffi {
@@ -269,63 +314,50 @@ fn main() uses io, fs, net, clock, ffi {
             return
         }
     }
+    if is(a.cmd, "parse") && a.all_errors {
+        // every syntax error as JSON lines, then the tree with its error nodes
+        io.out(front.report(a.file, src))
+        if front.analyze(src).diags.len() > 0 { env.exit(1) }
+        return
+    }
     var names = intern.new()
-    let r = lex.lex(src, inout names)
-    match resolve.lex_diag(r) {
-        Some(d) => {
-            report(d, a, src)
-            env.exit(1)
-        }
-        None => {}
-    }
-    let lx = match r {
-        lex.Done(l) => l
-        _ => { return }
-    }
     if is(a.cmd, "lex") {
-        dump(lx, names)
+        let r = lex.lex(src, inout names)
+        match resolve.lex_diag(r) {
+            Some(d) => { fail(one(d), a, src) }
+            None => {}
+        }
+        match r {
+            lex.Done(lx) => dump(lx, names)
+            _ => {}
+        }
         return
     }
-    let p = match parse.parse(lx, names) {
-        // not `Ok(p) => p`: compiler/ avoids an arm binding named like its `let` (LEARNINGS.md)
-        Ok(parsed) => parsed
-        Err(d) => {
-            report(d, a, src)
-            env.exit(1)
-            return
-        }
-    }
+    // the front end recovers: every lex and parse error, and the tree with error nodes
+    let lx2 = lex.lex_all(src, inout names)
+    let pr = parse.parse_all(lx2.lexed, names)
+    let fdiags = front.merge(lx2.diags, pr.diags)
     if is(a.cmd, "parse") {
-        io.out(dump.program(p))
+        if fdiags.len() > 0 { fail(one(fdiags[0]), a, src) }
+        io.out(dump.program(pr.p))
         return
     }
+    let p = pr.p
     let backend = is(a.cmd, "emit-c") || is(a.cmd, "emit-header") || is(a.cmd, "build") || is(a.cmd, "run") || is(a.cmd, "test")
-    let loaded = match resolve.load(a.file, src, p) {
-        Ok(x) => x
-        Err(d) => {
-            report(d, a, src)
-            env.exit(1)
-            return
-        }
-    }
+    // every pass goes on after an error, with what it has (docs/compiler.md, "Several errors")
+    var ld = resolve.load_from(a.file, src, p, resolve.disk())
+    resolve.note_syntax(inout ld.p, 0, fdiags)
+    var diags = fdiags
+    for d in ld.diags { diags.push(d) }
+    if ld.fatal { fail(diags, a, src) }
     // `comptime` constants are evaluated between loading and checking, as tests/oracle expects
-    let prog = match consteval.eval(loaded) {
-        Ok(x) => x
-        Err(d) => {
-            report(d, a, src)
-            env.exit(1)
-            return
-        }
-    }
-    let checked = if a.wasm { check.check_wasm(prog) } else { check.check_mode(prog, a.lib) }
-    let c = match checked {
-        Ok(x) => x
-        Err(d) => {
-            report(d, a, src)
-            env.exit(1)
-            return
-        }
-    }
+    let ev = consteval.eval_all(ld.p)
+    for d in ev.diags { diags.push(d) }
+    let k = check.check_all(ev.p, a.lib, a.wasm)
+    for d in k.diags { diags.push(d) }
+    // nothing is lowered after an error
+    if diags.len() > 0 { fail(diags, a, src) }
+    let c = k.c
     if backend {
         let tests = a.tests || is(a.cmd, "test")
         let lp = lower.P(c.ir, c.t, c.p.names)
