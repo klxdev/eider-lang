@@ -1,0 +1,12 @@
+// `eiderc audit-refs --json`: a `for` over a reference reads its List again every
+// iteration, so a push to that List in the body changes what the loop sees (it used to run
+// over a copy). Expected: loop.out.
+fn main() uses io {
+    var xs: List[i32] = List.new()
+    xs.push(1)
+    let all = xs
+    for x in all {
+        if x < 3 { xs.push(x + 1) }
+    }
+    print(xs.len())
+}

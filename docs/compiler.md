@@ -1776,7 +1776,7 @@ the binding (none in a generic body or for a type without Copy). The program's e
 follow (exit 1); findings alone exit 0. Applying every fix gives the old meaning back, under
 both the seed and the new compiler. Test: compiler/tests/audit/refs.ei (a swap, a counter, a
 record snapshot, a tuple pattern; a `.copy()` and a binding not used after the write are not
-reported), against its hand-checked refs.out. Run on the whole repository after the merge of
+reported), and loop.ei (a push to the List a `for` runs over through a reference), against their hand-checked .out. Run on the whole repository after the merge of
 layer/runtime (std/{time,atomic,sync,chan,task,event}.ei, std/fd, std/poll, tests/std,
 tests/core, examples/ and the rest): 4 sites, all in std/event.ei (the timer heap's two
 swaps and two ids read before `self` changes); and after the merge of layer/services
