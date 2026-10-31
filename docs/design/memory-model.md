@@ -12,7 +12,7 @@ Simple like Go and Zig, with the memory-safety and correctness guarantees of Rus
 - Safety comes from a small model the compiler can check completely, not from a large type
   system the programmer has to satisfy.
 
-## The model in five rules ✅ (wording to refine)
+## The model in six rules ✅ (wording to refine)
 
 1. Everything is a value. Binding or passing something does not copy it: `let x = place`
    refers to the place.
