@@ -61,6 +61,9 @@ pub type Program = {
     pre_paths: List[List[u8]],
     /// the prelude's module index
     prelude: u32,
+    /// the prefixes (stem symbol + 1) of imports that failed to load (a missing or
+    /// unparsable file, a clash): names qualified by them are not reported as unknown
+    broken: List[u32],
 }
 
 // ---- keys
@@ -287,39 +290,37 @@ fn parse_file(inout p: Program, path: List[u8], src: List[u8]) -> Result[parse.P
     }
 }
 
-/// Build the program from the parsed entry file `q` (path `file`), loading its imports.
+/// Build the program from the parsed entry file `q` (path `file`), loading its imports; the
+/// first diagnostic, if there is one.
 pub fn load(file: List[u8], src: List[u8], q: parse.P) -> Result[Program, diag.Diag] uses io, fs, ffi {
     let l = load_from(file, src, q, disk())
-    match l.err {
-        Some(d) => Err(d)
-        None => Ok(l.p)
-    }
+    if l.diags.len() > 0 { return Err(l.diags[0]) }
+    Ok(l.p)
 }
 
-/// A loaded program, or as much of it as was loaded before the diagnostic `err`: every
-/// module read and parsed until then (ide.ei).
-pub type Loaded = { p: Program, err: Option[diag.Diag] }
+/// A loaded program and the diagnostics of loading it, in the order found. An import that
+/// can't be loaded (unreadable, unparsable, clashing) is reported and left out, its prefix
+/// in `p.broken`, and loading goes on; `fatal`: the prelude is missing, and the program
+/// can't be checked.
+pub type Loaded = { p: Program, diags: List[diag.Diag], fatal: bool }
 
 /// `load`, reading sources through `fp`.
 pub fn load_from(file: List[u8], src: List[u8], q: parse.P, fp: Files) -> Loaded uses io, fs, ffi {
-    var p = Program(List.new(), List.new(), q.names, List.new(), List.new(), List.new(), NOMOD)
+    var p = Program(List.new(), List.new(), q.names, List.new(), List.new(), List.new(), NOMOD, List.new())
     p.seen.push(canonical(file))
     add_module(inout p, file, 0, src, q)
-    match load_all(inout p, fp) {
+    var diags: List[diag.Diag] = List.new()
+    load_imports(inout p, 0, fp, inout diags)
+    var fatal = false
+    match load_prelude(inout p, fp) {
         Ok(_) => {}
         Err(d) => {
-            for i in 0..p.mods.len() { compute_own(inout p, i as u32) }
-            return Loaded(p, Some(d))
+            diags.push(d)
+            fatal = true
         }
     }
     for i in 0..p.mods.len() { compute_own(inout p, i as u32) }
-    Loaded(p, None)
-}
-
-fn load_all(inout p: Program, fp: Files) -> Result[bool, diag.Diag] uses io, fs, ffi {
-    load_imports(inout p, 0, fp)?
-    load_prelude(inout p, fp)?
-    Ok(true)
+    Loaded(p, diags, fatal)
 }
 
 /// The toolchain root (see the top of this file).
@@ -366,7 +367,8 @@ fn load_prelude(inout p: Program, fp: Files) -> Result[bool, diag.Diag] uses io,
     Ok(true)
 }
 
-fn load_imports(inout p: Program, m: u32, fp: Files) -> Result[bool, diag.Diag] uses fs, ffi {
+/// Load module m's imports (and theirs, depth first), recording what fails in `diags`.
+fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag]) uses fs, ffi {
     let a = p.mods[m as usize].ast
     let dir = dir_of(p.mods[m as usize].path)
     let file = p.mods[m as usize].path
@@ -396,9 +398,14 @@ fn load_imports(inout p: Program, m: u32, fp: Files) -> Result[bool, diag.Diag] 
                     bytes.append(inout msg, sys.lit(")"))
                     var d = diag.new("E0808", n.line, n.col, msg)
                     d.help = sys.lit("rename one of the files; a module's name is its file name")
-                    return Err(in_file(d, file))
+                    diags.push(in_file(d, file))
+                    clash = true
                 }
             }
+        }
+        if clash {
+            p.broken.push(pre_sym + 1)
+            continue
         }
         if !known {
             p.pre_syms.push(pre_sym)
@@ -406,22 +413,33 @@ fn load_imports(inout p: Program, m: u32, fp: Files) -> Result[bool, diag.Diag] 
         }
         if contains(p.seen, canon) { continue }
         p.seen.push(canon)
-        let text = match read_file(fp, path, canon) {
-            Some(t) => t
+        let found = read_file(fp, path, canon)
+        var text: List[u8] = List.new()
+        match found {
+            Some(t) => { text = t }
             None => {
                 var msg = sys.lit("cannot read module `")
                 bytes.append(inout msg, path)
                 bytes.append(inout msg, sys.lit("`: "))
                 bytes.append(inout msg, read_error(path))
-                return Err(in_file(diag.new("E0804", n.line, n.col, msg), file))
+                diags.push(in_file(diag.new("E0804", n.line, n.col, msg), file))
+                p.broken.push(pre_sym + 1)
+                continue
             }
         }
-        let q = parse_file(inout p, path, text)?
-        let mi = add_module(inout p, path, pre_sym + 1, text, q)
-        load_imports(inout p, mi, fp)?
+        let parsed = parse_file(inout p, path, text)
+        match parsed {
+            Ok(q) => {
+                let mi = add_module(inout p, path, pre_sym + 1, text, q)
+                load_imports(inout p, mi, fp, inout diags)
+            }
+            Err(d) => {
+                diags.push(d)
+                p.broken.push(pre_sym + 1)
+            }
+        }
     }
     p.order.push(m)
-    Ok(true)
 }
 
 /// The module's own top-level names: types, variants, consts, traits and fns

@@ -50,9 +50,23 @@ fn sym(inout p: resolve.Program, w: str) -> u32 uses ffi {
 pub type Outcome = | Printed(out: List[u8]) | Failed(why: List[u8]) | NoBuild
 
 /// Evaluate every comptime constant of `p`, in item order; the result has each replaced by
-/// its value as a literal.
+/// its value as a literal. The first diagnostic, if there is one (see eval_all).
 pub fn eval(p: resolve.Program) -> Result[resolve.Program, diag.Diag] uses io, fs, net, clock, ffi {
+    let ev = eval_all(p)
+    if ev.diags.len() > 0 { return Err(ev.diags[0]) }
+    Ok(ev.p)
+}
+
+/// The program with its comptime constants evaluated, and the diagnostics of evaluating
+/// them (one per constant that failed), in item order.
+pub type Evaluated = { p: resolve.Program, diags: List[diag.Diag] }
+
+/// Evaluate every comptime constant of `p`, in item order. A constant whose evaluation
+/// fails is reported (the evaluator's first diagnostic) and becomes a constant of the error
+/// type (its `comptime` flag 2), which check.ei accepts silently, and the rest go on.
+pub fn eval_all(p: resolve.Program) -> Evaluated uses io, fs, net, clock, ffi {
     var prog = p
+    var diags: List[diag.Diag] = List.new()
     var r = Runner(List.new(), List.new(), false)
     for m in p.order {
         let a = p.mods[m as usize].ast
@@ -63,15 +77,19 @@ pub fn eval(p: resolve.Program) -> Result[resolve.Program, diag.Diag] uses io, f
                 match eval_one(inout prog, inout r, m, id) {
                     Ok(_) => {}
                     Err(d) => {
-                        finish(r)
-                        return Err(d)
+                        diags.push(d)
+                        var md = prog.mods[m as usize]
+                        var cn = md.ast.nodes[id as usize]
+                        cn.e = 2
+                        md.ast.nodes[id as usize] = cn
+                        prog.mods[m as usize] = md
                     }
                 }
             }
         }
     }
     finish(r)
-    Ok(prog)
+    Evaluated(prog, diags)
 }
 
 fn e0807(p: resolve.Program, m: u32, n: ast.Node, msg: List[u8]) -> diag.Diag {
@@ -177,6 +195,7 @@ fn evaluator(inout p: resolve.Program, m: u32, id: u32) -> resolve.Program uses 
             let n = md.ast.nodes[it as usize]
             let is_main = n.kind == ast.IFn && n.a == s_main && !ast.has(n.b, ast.FN_EXTERN)
             let drop = n.kind == ast.ITest || (n.kind == ast.IConst && n.e == 1) || is_main
+            // (a constant whose evaluation failed, `e` 2, stays: it is of the error type)
             if !drop { keep.push(it) }
         }
         if i as u32 == m {
@@ -247,6 +266,7 @@ fn evaluator(inout p: resolve.Program, m: u32, id: u32) -> resolve.Program uses 
 /// Check the evaluator program as tests/oracle records: its errors are reported as they are, except
 /// that a missing capability can't be fixed by adding it (the evaluator has none).
 fn checked(ev: resolve.Program) -> Result[check.C, diag.Diag] uses ffi {
+    // the first diagnostic: the rest of the program's are found again when it is checked
     match check.check_mode(ev, false) {
         Ok(c) => Ok(c)
         Err(d) => {

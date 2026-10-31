@@ -13,6 +13,65 @@ pub fn new(code: str, line: u32, col: u32, msg: List[u8]) -> Diag {
     Diag(code, line, col, msg, List.new(), None, List.new())
 }
 
+// ---- several diagnostics
+//
+// A run reports every diagnostic its passes found, in the order found (the first is the
+// one a compiler stopping at the first error reports), each once (`dedup`), at most
+// `--max-errors` of them (default 100, 0: all): `capped_note` says so after them.
+
+/// The default `--max-errors`.
+pub const MAX_ERRORS: u64 = 100
+
+/// Whether two diagnostics report the same error: code, place and message (the help and
+/// the fix can differ: a comptime evaluator reports a missing capability without its fix).
+pub fn same(a: Diag, b: Diag) -> bool uses ffi {
+    a.line == b.line && a.col == b.col && bytes.eq(sys.lit(a.code), sys.lit(b.code)) && bytes.eq(a.file, b.file) &&
+        bytes.eq(a.msg, b.msg)
+}
+
+/// `ds` without repetitions (a later report of an earlier error is dropped; passes can find
+/// one error twice, e.g. a comptime evaluator and the checker).
+pub fn dedup(ds: List[Diag]) -> List[Diag] uses ffi {
+    var out: List[Diag] = List.new()
+    for d in ds {
+        var dup = false
+        for x in out {
+            if same(x, d) {
+                dup = true
+                break
+            }
+        }
+        if !dup { out.push(d) }
+    }
+    out
+}
+
+/// The summary after the diagnostics (human output): `error: 1 error`, `error: 3 errors`.
+pub fn summary(n: u64) -> List[u8] uses ffi {
+    var s = sys.lit("error: ")
+    num(inout s, n)
+    if n == 1 { bytes.append(inout s, sys.lit(" error")) } else { bytes.append(inout s, sys.lit(" errors")) }
+    s
+}
+
+/// The note when only `shown` of `total` diagnostics are shown (`--max-errors`).
+pub fn capped_note(shown: u64, total: u64) -> List[u8] uses ffi {
+    var s = sys.lit("only the first ")
+    num(inout s, shown)
+    bytes.append(inout s, sys.lit(" of "))
+    num(inout s, total)
+    bytes.append(inout s, sys.lit(" errors are shown; `--max-errors N` shows N (0: all)"))
+    s
+}
+
+/// capped_note as a JSON line (`--json`).
+pub fn capped_json(shown: u64, total: u64) -> List[u8] uses ffi {
+    var s = sys.lit("{\"note\":")
+    jstr(inout s, capped_note(shown, total))
+    s.push(125)
+    s
+}
+
 /// Every error code of the language, in the fixed order the recorded expectations use. This is the
 /// one list: `eiderc test --compile-fail` measures its coverage line against it, so a new
 /// code is added here together with its compile-fail test. (`unsupported` is eiderc's

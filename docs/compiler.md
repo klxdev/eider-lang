@@ -125,9 +125,8 @@ between `check` and `lower` removes that class of bug and is where later work (o
 another back end) attaches.
 
 Diagnostics: one list of codes (`diag.all_codes()`), human and `--json` rendering,
-machine-applicable fixes. Today only the first error is reported (as tests/oracle records);
-the compiler should report multiple independent errors per run once the passes support
-recovery.
+machine-applicable fixes. Every independent error is reported, the first exactly as a
+compiler stopping at the first error reports it ("Several errors").
 
 ## Writing the compiler in today's Eider
 
@@ -143,13 +142,14 @@ seed supports:
 ## C3: checking
 
 `eiderc check` runs lex, parse, `resolve.load` (module graph) and `check.check`, and prints
-`ok` or the first diagnostic exactly as tests/oracle records it (`--json` byte for byte);
+`ok` or the diagnostics exactly as tests/oracle records them (`--json` byte for byte);
 `eiderc ir` dumps the typed IR.
 
 - **Fixed passes, fixed order.** `check.ei` runs: type templates, non-generic types,
   function names, constants, every signature, test bodies, then function bodies in *reverse*
-  order (popped from a stack). Only the first error is reported, so this order decides which
-  error (and which file) a program with several errors reports, as tests/oracle records it.
+  order (popped from a stack). This order decides which error (and which file) comes first
+  in a program with several errors, as tests/oracle records it, and the order of the rest
+  ("Several errors").
 - **Names.** An imported module's items are named `stem__Name`, and the checker sees one
   flat table. `resolve.ei` keys every name as (module prefix, symbol) in a u64 and applies
   the renaming rules (own items, function locals, patterns, tests), so a lookup hits exactly
@@ -653,11 +653,12 @@ moved to the seed alone ("History"), in three steps.
 (eider-analyzer, which imports `deps/eiderc/ide.ei` through a path dependency on
 `compiler/`) builds on; the contract is at the top of `ide.ei`. It runs the passes of
 `eiderc check` and returns the diagnostic `check` reports, plus symbols, refs (use ->
-symbol) and types gathered so far, even when a pass fails. `eiderc ide <file.ei>
+symbol) and types gathered, also after errors (every diagnostic `check` reports, "Several
+errors"). `eiderc ide <file.ei>
 [--overlay <path> <text>]` prints the result for the goldens in `compiler/tests/ide`.
 
 - **No second resolver.** Symbols come from the ASTs of every module that parsed
-  (`resolve.load_from` returns the partial program with the diagnostic). Refs and types are
+  (`resolve.load_from` returns the program without the imports that failed). Refs and types are
   what the checker computed: with `C.rec.on` (only `check.check_ide`) it notes each
   resolved use (node position -> declaration position) and the types of bindings and of
   identifiers, fields, calls and method calls ("IDE recording" in check.ei). Off, a note
@@ -672,6 +673,69 @@ symbol) and types gathered so far, even when a pass fails. `eiderc ide <file.ei>
   (`driver.find_root`, `driver.try_work_dir`).
 - **Cost.** `eiderc ide compiler/main.ei` (the whole compiler, 27 files) takes about 0.25 s
   against 0.16 s for `check`.
+
+## Several errors
+
+A run reports every independent error, not only the first. The rule that keeps this
+honest: the first diagnostic of every program is byte for byte the one a compiler stopping
+at the first error reports (code, position, message, help, fix), because nothing changes
+until an error has been found; the passes only go on afterwards, and what they find is
+appended in the order found. The compile-fail runner (suite.ei) still judges a file by its
+first diagnostic, so its output, tests/checks' 74/74 and the 42/42 coverage are unchanged.
+
+- **Loading** (`resolve.load_from` -> `Loaded { p, diags, fatal }`). An import that can't be
+  read or parsed, or that clashes with another module's name (E0804, E0001, E0808), is
+  reported and left out, and loading goes on; its prefix goes into `Program.broken`, and a
+  diagnostic naming `alias.X` of such a module is a consequence (never reported). Only a
+  missing prelude is fatal.
+- **Comptime** (`comptime.eval_all`). A constant whose evaluation fails is reported (the
+  evaluator's first diagnostic) and its `comptime` flag becomes 2: check.ei makes it a
+  constant of the error type, so its uses are silent; the next constants are still
+  evaluated. An error elsewhere in the program found by an evaluator is found again by the
+  checker; the copy is dropped (`diag.dedup`: same code, file, position and message).
+- **Checking** (check.ei, "Recovery"; `check.check_all` -> `Checked { c, diags }`, with
+  `check_mode`/`check_wasm` giving the first). An error is an `Err` that stops at the
+  nearest recovery point instead of ending the run: there it is recorded (naming the file
+  the end of the run would name) and checking resumes with the state from before the
+  failed part. Recovery points: every expression (`expr`: the failed expression stands for
+  a value of the error type), every statement (a failed `let` still binds its names, to the
+  error type), every function and test body, every item of each pass, every field of a
+  type and every part of a signature (a field, parameter or return type that doesn't
+  resolve is the error type; an unknown capability is left out). Some errors are recorded
+  where they are found and checking goes on as if they weren't there: a missing capability,
+  a missing `unsafe`, assigning to or borrowing something immutable, a private item (used
+  as if visible), a call to an unknown or misused function or method (its arguments are
+  still checked), a duplicate definition (the first is used), an impl's mismatches (its
+  methods are still registered).
+- **No cascades.** The error type (`types.poison`, shown `{error}`, interned on first use so
+  a program without errors never has it and lowering never sees it) is compatible with
+  every type (`same`), and every operation on it gives it again silently: operators, fields,
+  indexing, methods, calls (no instance of a generic function is made for it, nothing is
+  inferred from it), conditions, loops over it (the body is checked with an error-typed
+  variable), matches (its patterns bind error-typed names and the match isn't judged for
+  reachability or exhaustiveness), `?`, casts, closures where an error value is expected.
+  A diagnostic that still mentions `{error}` is a consequence and is dropped, as are the
+  `cascade` diagnostics produced where only a consequence is known. An "unknown ..." name
+  and a missing capability (one fix) are reported once per body; a generic body is
+  reported for its first instance with errors only. `unsupported` still ends checking and is
+  reported only when nothing else was. A failed statement that ends a block makes its type
+  the error type, so "must return" doesn't follow a failed `return`.
+- **Output** (main.ei `fail`). Human: each diagnostic rendered as before, then
+  `error: N errors` (one line, stderr). `--json`: one JSON object per line (JSON Lines), the
+  first line the single line of a first-error compiler. At most `--max-errors N`
+  diagnostics (default 100, 0: all); when some are left out a final note says so
+  (`note: only the first 100 of 250 errors are shown; ...` on stderr, or a
+  `{"note":"..."}` line with --json). Exit codes are unchanged (1), and nothing is lowered or
+  built after an error. `ide.analyze` returns every diagnostic (no cap), and the IDE
+  recording goes on after errors.
+- **Tests.** The oracle (tests/oracle, `BLESS=1`) gained lines only after the first: for
+  every changed file the recorded text is a prefix of the new one. compiler/tests/check/multi
+  holds programs with several errors (across functions, unknown names used repeatedly, an
+  error value used in later statements, errors after resolution errors, items, generics,
+  comptime, the `--max-errors` cap); `scripts/test-compiler.sh` compares everything `check
+  --json` and `check` print for them with the oracle (X.check.json, X.check.err). The
+  fuzzer holds every line of `check --json` to be a diagnostic, none repeated, and only the
+  first line to equal the reference compiler's.
 
 ## C8 candidates: parity quirks to fix deliberately
 

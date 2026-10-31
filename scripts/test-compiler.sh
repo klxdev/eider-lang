@@ -11,6 +11,9 @@
 #   lex_ok:   token dumps of compiler/tests/lex_ok/*.ei match their .tokens goldens
 #   parse_ok: AST dumps of compiler/tests/parse_ok/*.ei match their .ast goldens
 #   ir:       IR dumps of compiler/tests/ir/*.ei match their .ir goldens.
+#   multi:    compiler/tests/check/multi/*.ei have several independent errors: `check --json`
+#             (one JSON line per diagnostic) and `check` (rendered diagnostics, the summary,
+#             the --max-errors note) equal the oracle (X.check.json, X.check.err).
 #   check:    for every compile-fail/pass test (tests/checks/{fail,pass}) whose features eiderc
 #             supports (it doesn't answer `unsupported`), `eiderc check --json` must equal the
 #             oracle (X.check.json) byte for byte; the same for tests/run/*.ei. eiderc's own
@@ -176,6 +179,33 @@ check_set 0 tests/run/*.ei
 echo "$(verdict $inscope) check: $agree/$inscope run tests in scope agree ($total tests)"
 check_set 1 compiler/tests/check/fail/*.ei compiler/tests/check/pass/*.ei
 echo "$(verdict $total) check: $agree/$inscope eiderc check cases agree (compiler/tests/check)"
+
+# multi: programs with several independent errors (compiler/tests/check/multi): everything
+# `check --json` and `check` print, against the oracle (X.check.json, X.check.err: every
+# diagnostic in order, the summary, the --max-errors note); a first line `// args: <options>`
+# adds options
+mtotal=0
+magree=0
+for f in compiler/tests/check/multi/*.ei; do
+  mtotal=$((mtotal + 1))
+  args=$(sed -n '1s|^// args: ||p' "$f")
+  $new check --json $args "$f" 2>&1 | norm >target/runtest/m_json
+  $new check $args "$f" 2>&1 | norm >target/runtest/m_err
+  bless "$f" check.json target/runtest/m_json
+  bless "$f" check.err target/runtest/m_err
+  ok=1
+  for k in check.json check.err; do
+    p=$(oracle "$f" $k)
+    if [ ! -f "$p" ] || ! cmp -s "$p" "target/runtest/m_${k#check.}"; then
+      echo "FAIL multi $f ($k)"
+      if [ -f "$p" ]; then diff "$p" "target/runtest/m_${k#check.}" | head -10; else echo "  (no oracle file $p)"; fi
+      ok=0
+      fail=1
+    fi
+  done
+  [ $ok = 1 ] && magree=$((magree + 1))
+done
+if [ "$magree" = "$mtotal" ]; then echo "ok   multi: $magree/$mtotal programs with several errors report them all (compiler/tests/check/multi)"; else echo "FAIL multi: $magree/$mtotal programs with several errors agree"; fi
 
 # run: `run` / `test` (stdout, stderr, exit code) against the oracle
 tmp=target/runtest

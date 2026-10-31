@@ -11,6 +11,7 @@
 //   T_TASK    a = result type (`Task[T]`; creating one also interns `fn() -> T`)
 //   T_MUTEX   a = element type             T_CHAN  a = element type
 //             (shared, reference-counted handles: copying one shares the same object)
+//   T_POISON  the type of an expression whose checking failed (see `poison` below)
 //
 // The primitive types have fixed ids (I32 .. STRING below). Enums and records are named
 // definitions (`Def`) with their fields or variants in the shared `fields` / `variants`
@@ -45,6 +46,7 @@ pub const T_FN: u32 = 13
 pub const T_TASK: u32 = 14
 pub const T_MUTEX: u32 = 15
 pub const T_CHAN: u32 = 16
+pub const T_POISON: u32 = 17
 
 /// Int kinds, in a fixed order.
 pub const IK_I32: u32 = 0
@@ -179,6 +181,39 @@ pub fn task_of(inout t: Types, elem: u32) -> u32 {
 }
 pub fn mutex_of(inout t: Types, elem: u32) -> u32 { comp(inout t, T_MUTEX, elem, 0) }
 pub fn chan_of(inout t: Types, elem: u32) -> u32 { comp(inout t, T_CHAN, elem, 0) }
+
+/// The error type ("poison"): the type of an expression, binding, field or signature part
+/// whose checking failed after a diagnostic was recorded. It is compatible with every type,
+/// so the checker can go on without reporting errors that are only consequences of the
+/// first (check.ei, "Recovery"); it is shown as `{error}`, and a diagnostic whose text
+/// mentions it is such a consequence and is never reported. It is interned on first use,
+/// so a program without errors never has it (lowering never sees it).
+pub fn poison(inout t: Types) -> u32 { comp(inout t, T_POISON, 0, 0) }
+
+/// Whether type `id` is the error type or is built from it (`List[{error}]`, `(i32, {error})`,
+/// `Option[{error}]`, ...). NOTY is not.
+pub fn has_poison(t: Types, id: u32) -> bool {
+    if id == NOTY || id as usize >= t.tys.len() { return false }
+    let ty = t.tys[id as usize]
+    let k = ty.kind
+    if k == T_POISON { return true }
+    if k == T_ARRAY || k == T_LIST || k == T_BOX || is_handle(k) { return has_poison(t, ty.a) }
+    if k == T_MAP { return has_poison(t, ty.a) || has_poison(t, ty.b) }
+    if k == T_TUPLE || k == T_FN {
+        for x in list_items(t, ty.a) {
+            if has_poison(t, x) { return true }
+        }
+        return k == T_FN && has_poison(t, ty.b)
+    }
+    if k == T_ENUM || k == T_RECORD {
+        let d = t.defs[ty.a as usize]
+        if d.args == NOTY { return false }
+        for x in list_items(t, d.args) {
+            if has_poison(t, x) { return true }
+        }
+    }
+    false
+}
 
 /// Whether `k` is one of the shared handle kinds (Task, Mutex, Chan).
 pub fn is_handle(k: u32) -> bool { k == T_TASK || k == T_MUTEX || k == T_CHAN }
@@ -363,6 +398,7 @@ pub fn show_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32)
             show_into(inout out, t, names, ty.a)
             out.push(93)
         }
+        17 => bytes.append(inout out, sys.lit("{error}"))
         13 => {
             bytes.append(inout out, sys.lit("fn("))
             show_list(inout out, t, names, ty.a)
