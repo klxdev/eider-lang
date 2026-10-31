@@ -1,0 +1,192 @@
+// RFC test vectors (tests/crypto/vectors/rfc.rsp) and the package's misuse checks, against
+// whichever backend this program is linked with (tests/crypto/run.sh runs it on each).
+
+import "std/bytes"
+import "std/io"
+import "vec.ei"
+import "../../packages/crypto/crypto.ei"
+
+fn eqb(a: List[u8], b: List[u8]) -> bool { bytes.eq(a, b) }
+
+fn prefix(a: List[u8], n: usize) -> List[u8] { bytes.slice(a, 0, n) }
+
+fn sec(r: vec.Rec, s: str) -> bool { bytes.starts_with(r.section, s.bytes()) }
+
+fn aead_case(inout t: vec.Tally, r: vec.Rec) uses io {
+    let key = crypto.aead_key(crypto.ChaCha20Poly1305, vec.get_hex(r, "Key")).unwrap()
+    let n = crypto.nonce(vec.get_hex(r, "Nonce")).unwrap()
+    let aad = vec.get_hex(r, "AAD")
+    let pt = vec.get_hex(r, "PT")
+    let mut sealed = vec.get_hex(r, "CT")
+    bytes.append(inout sealed, vec.get_hex(r, "Tag"))
+    match crypto.seal(key, n, aad, pt) {
+        Ok(c) => vec.check(inout t, eqb(c, sealed), vec.label("chacha20-poly1305 seal", r.section))
+        Err(_) => vec.check(inout t, false, vec.label("chacha20-poly1305 seal", r.section))
+    }
+    match crypto.open(key, n, aad, sealed) {
+        Ok(p) => vec.check(inout t, eqb(p, pt), vec.label("chacha20-poly1305 open", r.section))
+        Err(_) => vec.check(inout t, false, vec.label("chacha20-poly1305 open", r.section))
+    }
+    // any change to the ciphertext, the tag, the associated data or the nonce: no plaintext
+    let mut bad = sealed.copy()
+    bad[0] = bad[0] ^ 1
+    vec.check(inout t, crypto.open(key, n, aad, bad).is_err(), "chacha20-poly1305 open: altered ciphertext".bytes())
+    let mut bad_tag = sealed.copy()
+    let last = bad_tag.len() - 1
+    bad_tag[last] = bad_tag[last] ^ 128
+    vec.check(inout t, crypto.open(key, n, aad, bad_tag).is_err(), "chacha20-poly1305 open: altered tag".bytes())
+    let mut bad_aad = aad.copy()
+    bad_aad.push(0)
+    vec.check(inout t, crypto.open(key, n, bad_aad, sealed).is_err(), "chacha20-poly1305 open: altered aad".bytes())
+    let mut nb = n.bytes.copy()
+    nb[11] = nb[11] ^ 1
+    let n2 = crypto.nonce(nb).unwrap()
+    match crypto.open(key, n2, aad, sealed) {
+        Ok(_) => vec.check(inout t, false, "chacha20-poly1305 open: altered nonce".bytes())
+        Err(e) => {
+            let auth = match e {
+                crypto.AuthFailed => true
+                _ => false
+            }
+            vec.check(inout t, auth, "chacha20-poly1305 open: altered nonce gives AuthFailed".bytes())
+        }
+    }
+}
+
+fn x25519_case(inout t: vec.Tally, r: vec.Rec) uses io {
+    let sk = crypto.x25519_secret(vec.get_hex(r, "Scalar")).unwrap()
+    let pk = crypto.x25519_public_key(vec.get_hex(r, "U")).unwrap()
+    match crypto.x25519_agree(sk, pk) {
+        Ok(s) => vec.check(inout t, eqb(s.bytes, vec.get_hex(r, "Out")), "x25519 (RFC 7748 5.2)".bytes())
+        Err(_) => vec.check(inout t, false, "x25519 (RFC 7748 5.2)".bytes())
+    }
+}
+
+fn x25519_iterated(inout t: vec.Tally, r: vec.Rec) uses io {
+    let mut k = vec.rep(0, 32)
+    k[0] = 9
+    let mut u = k.copy()
+    let mut i: u32 = 0
+    while i < 1000 {
+        let sk = crypto.x25519_secret(k.copy()).unwrap()
+        let pk = crypto.x25519_public_key(u.copy()).unwrap()
+        let out = crypto.x25519_agree(sk, pk).unwrap().bytes
+        u = k.copy()
+        k = out
+        i += 1
+        if i == 1 { vec.check(inout t, eqb(k, vec.get_hex(r, "Iter1")), "x25519 iterated once".bytes()) }
+    }
+    vec.check(inout t, eqb(k, vec.get_hex(r, "Iter1000")), "x25519 iterated 1000 times".bytes())
+}
+
+fn x25519_dh(inout t: vec.Tally, r: vec.Rec) uses io {
+    let a = crypto.x25519_secret(vec.get_hex(r, "A")).unwrap()
+    let b = crypto.x25519_secret(vec.get_hex(r, "B")).unwrap()
+    let apub = crypto.x25519_public(a).unwrap()
+    let bpub = crypto.x25519_public(b).unwrap()
+    vec.check(inout t, eqb(apub.bytes, vec.get_hex(r, "APub")), "x25519 public (Alice)".bytes())
+    vec.check(inout t, eqb(bpub.bytes, vec.get_hex(r, "BPub")), "x25519 public (Bob)".bytes())
+    let k1 = crypto.x25519_agree(a, bpub).unwrap()
+    let k2 = crypto.x25519_agree(b, apub).unwrap()
+    vec.check(inout t, eqb(k1.bytes, vec.get_hex(r, "K")) && eqb(k2.bytes, vec.get_hex(r, "K")), "x25519 shared secret".bytes())
+    // a small-order point (u = 0) gives an all-zero secret, which is refused
+    let zero = crypto.x25519_public_key(vec.rep(0, 32)).unwrap()
+    vec.check(inout t, crypto.x25519_agree(a, zero).is_err(), "x25519 refuses an all-zero shared secret".bytes())
+}
+
+fn ed25519_case(inout t: vec.Tally, r: vec.Rec) uses io {
+    let seed = crypto.ed25519_seed(vec.get_hex(r, "Secret")).unwrap()
+    let msg = vec.get_hex(r, "Msg")
+    let pk = crypto.ed25519_public(seed).unwrap()
+    vec.check(inout t, eqb(pk.bytes, vec.get_hex(r, "Public")), "ed25519 public".bytes())
+    let sig = crypto.ed25519_sign(seed, msg).unwrap()
+    vec.check(inout t, eqb(sig.bytes, vec.get_hex(r, "Sig")), "ed25519 sign".bytes())
+    vec.check(inout t, crypto.ed25519_verify(pk, msg, sig), "ed25519 verify".bytes())
+    let mut m2 = msg.copy()
+    m2.push(0)
+    vec.check(inout t, !crypto.ed25519_verify(pk, m2, sig), "ed25519 verify: altered message".bytes())
+    let mut sb = sig.bytes.copy()
+    sb[0] = sb[0] ^ 1
+    vec.check(inout t, !crypto.ed25519_verify(pk, msg, crypto.ed25519_signature(sb).unwrap()), "ed25519 verify: altered signature".bytes())
+}
+
+fn hkdf_case(inout t: vec.Tally, r: vec.Rec) uses io {
+    let prk = crypto.hkdf_extract(crypto.Sha256, vec.get_hex(r, "salt"), vec.get_hex(r, "IKM")).unwrap()
+    vec.check(inout t, eqb(prk.bytes, vec.get_hex(r, "PRK")), vec.label("hkdf-sha256 extract", r.section))
+    let okm = crypto.hkdf_expand(prk, vec.get_hex(r, "info"), vec.get_int(r, "L") as usize).unwrap()
+    vec.check(inout t, eqb(okm, vec.get_hex(r, "OKM")), vec.label("hkdf-sha256 expand", r.section))
+}
+
+fn hmac_case(inout t: vec.Tally, r: vec.Rec) uses io {
+    let key = vec.get_hex(r, "Key")
+    let data = vec.get_hex(r, "Data")
+    let names = ["HMAC-SHA-256", "HMAC-SHA-384", "HMAC-SHA-512"]
+    let hashes = [crypto.Sha256, crypto.Sha384, crypto.Sha512]
+    let mut i: usize = 0
+    while i < 3 {
+        let want = vec.get_hex(r, names[i])
+        let k = crypto.hmac_key(hashes[i], key.copy())
+        let tag = crypto.hmac(k, data.copy()).unwrap()
+        // test case 5 prints the tag truncated to 128 bits
+        vec.check(inout t, eqb(prefix(tag.bytes, want.len()), want), vec.label("hmac (RFC 4231)", r.section))
+        vec.check(inout t, tag.matches(tag.bytes.copy()) && !tag.matches(vec.rep(0, tag.bytes.len())), "hmac tag comparison".bytes())
+        i += 1
+    }
+}
+
+fn misuse(inout t: vec.Tally) uses io {
+    vec.check(inout t, crypto.aead_key(crypto.Aes128Gcm, vec.rep(0, 32)).is_err(), "aead key of the wrong length is refused".bytes())
+    vec.check(inout t, crypto.nonce(vec.rep(0, 8)).is_err(), "nonce of the wrong length is refused".bytes())
+    vec.check(inout t, crypto.x25519_secret(vec.rep(1, 31)).is_err(), "short x25519 key is refused".bytes())
+    vec.check(inout t, crypto.ed25519_signature(vec.rep(1, 63)).is_err(), "short ed25519 signature is refused".bytes())
+    vec.check(inout t, crypto.p256_secret(vec.rep(0, 32)).is_err(), "p256 private key 0 is refused".bytes())
+    vec.check(inout t, crypto.p256_secret(vec.rep(255, 32)).is_err(), "p256 private key >= n is refused".bytes())
+    let prk = crypto.prk(crypto.Sha256, vec.rep(7, 32)).unwrap()
+    vec.check(inout t, crypto.hkdf_expand(prk, List.new(), 255 * 32 + 1).is_err(), "hkdf output longer than 255 blocks is refused".bytes())
+    vec.check(inout t, crypto.hkdf_expand(prk, List.new(), 255 * 32).is_ok(), "hkdf output of 255 blocks".bytes())
+    vec.check(inout t, crypto.prk(crypto.Sha256, vec.rep(7, 31)).is_err(), "a prk shorter than the hash is refused".bytes())
+    let k3 = crypto.hmac_key(crypto.Sha3_256, vec.rep(1, 32))
+    vec.check(inout t, crypto.hmac(k3, List.new()).is_err(), "hmac with a non-SHA-2 hash is refused".bytes())
+    vec.check(inout t, crypto.ct_equal("abc".bytes(), "abc".bytes()), "ct_equal: equal".bytes())
+    vec.check(inout t, !crypto.ct_equal("abc".bytes(), "abd".bytes()), "ct_equal: different".bytes())
+    vec.check(inout t, !crypto.ct_equal("abc".bytes(), "ab".bytes()), "ct_equal: different lengths".bytes())
+    vec.check(inout t, crypto.ct_equal(List.new(), List.new()), "ct_equal: empty".bytes())
+    // nonces for TLS records: iv XOR sequence number
+    let iv = crypto.nonce(vec.h("000102030405060708090a0b")).unwrap()
+    let n5 = crypto.nonce_for_sequence(iv, 258)
+    vec.check(inout t, eqb(n5.bytes, vec.h("000102030405060708090b09")), "nonce_for_sequence".bytes())
+    // the DER form of an ECDSA signature, both ways
+    let rs = vec.h("00000000000000000000000000000000000000000000000000000000000000018000000000000000000000000000000000000000000000000000000000000000")
+    let sig = crypto.p256_signature_raw(rs.copy()).unwrap()
+    vec.check(inout t, eqb(sig.der, vec.h("30260201010221008000000000000000000000000000000000000000000000000000000000000000")), "ecdsa signature to DER".bytes())
+    let back = sig.raw().unwrap()
+    vec.check(inout t, eqb(back, rs), "ecdsa signature from DER".bytes())
+    let lax = crypto.p256_signature_der(vec.h("30070202000102020001"))
+    vec.check(inout t, lax.raw().is_err(), "non-minimal DER integers are refused".bytes())
+    // random bytes: the right length, and two draws differ
+    let a = crypto.random_bytes(32).unwrap()
+    let b = crypto.random_bytes(32).unwrap()
+    vec.check(inout t, a.len() == 32 && !eqb(a, b), "random_bytes".bytes())
+    // empty inputs everywhere
+    vec.check(inout t, eqb(crypto.sha256(List.new()), vec.h("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")), "sha256 of nothing".bytes())
+    let gk = crypto.aead_key(crypto.Aes128Gcm, vec.rep(0, 16)).unwrap()
+    let zn = crypto.nonce(vec.rep(0, 12)).unwrap()
+    let sealed = crypto.seal(gk, zn, List.new(), List.new()).unwrap()
+    vec.check(inout t, eqb(sealed, vec.h("58e2fccefa7e3061367f1d57a4e7455a")), "aes-128-gcm of nothing (GCM spec test case 1)".bytes())
+    vec.check(inout t, crypto.open(gk, zn, List.new(), vec.rep(0, 15)).is_err(), "aead open of less than a tag".bytes())
+}
+
+fn main() uses io, fs {
+    let mut t = vec.tally()
+    for r in vec.records(vec.read_vectors("rfc.rsp")) {
+        if sec(r, "[RFC 8439") { aead_case(inout t, r) }
+        if sec(r, "[RFC 7748 5.2 X25519]") { x25519_case(inout t, r) }
+        if sec(r, "[RFC 7748 5.2 X25519 iterated") { x25519_iterated(inout t, r) }
+        if sec(r, "[RFC 7748 6.1") { x25519_dh(inout t, r) }
+        if sec(r, "[RFC 8032") { ed25519_case(inout t, r) }
+        if sec(r, "[A.") { hkdf_case(inout t, r) }
+        if sec(r, "[4.") { hmac_case(inout t, r) }
+    }
+    misuse(inout t)
+    vec.finish(t, "rfc")
+}

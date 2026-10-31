@@ -1,0 +1,12 @@
+# The pinned AWS-LC release vendored in vendor/ (read by scripts/update-awslc.sh; sh syntax).
+# Release page: https://github.com/aws/aws-lc/releases/tag/v5.12.0 (published 2026-10-23)
+TAG=v5.12.0
+COMMIT=cd481c207e38f06aeb5766f4a1cdfce10a4c0af8
+# https://github.com/aws/aws-lc/archive/refs/tags/v5.12.0.tar.gz
+TARBALL_SHA256=52c7f98ffd296d267cc015ad4653d1ffae399db65b14421da4f5f7efc44becd2
+# The source lists come from aws-lc-sys's CMake-free "cc builder" (builder/cc_builder/*.rs).
+# aws-lc-sys 0.47.0 (aws-lc-rs v1.19.0) bundles exactly this AWS-LC commit.
+CRATE=aws-lc-sys
+CRATE_VERSION=0.47.0
+# https://static.crates.io/crates/aws-lc-sys/aws-lc-sys-0.47.0.crate
+CRATE_SHA256=8bfbe32ac36b3c428696ce315464181bc4029d689fd58e3f2a4e58c252242f52

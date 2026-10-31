@@ -1,0 +1,318 @@
+// Wycheproof vectors (tests/crypto/vectors/wycheproof_*.json, C2SP/wycheproof testvectors_v1):
+// X25519, Ed25519, ECDSA P-256/SHA-256, ECDH P-256, AES-GCM, ChaCha20-Poly1305, HKDF, HMAC.
+//
+// "valid" must succeed with the expected output and "invalid" must fail, on every backend.
+// "acceptable" (legal but unusual inputs, e.g. a non-canonical X25519 u-coordinate) may go
+// either way; how many were accepted is printed, so backends can be compared.
+// Groups with parameters the package doesn't offer (nonces other than 96 bits, tags other
+// than 128 bits, AES-192) are counted as skipped.
+
+import "std/bytes"
+import "std/io"
+import "vec.ei"
+import "../../packages/crypto/crypto.ei"
+import "../../packages/json/json.ei"
+
+fn eqb(a: List[u8], b: List[u8]) -> bool { bytes.eq(a, b) }
+
+fn doc(name: str) -> json.Doc uses io, fs {
+    match json.parse(vec.read_vectors(name)) {
+        Ok(d) => d
+        Err(_) => panic("wycheproof: vector file is not JSON")
+    }
+}
+
+fn str_of(d: json.Doc, obj: u32, key: str) -> List[u8] {
+    match json.field(d, obj, key) {
+        Some(id) => json.as_str(d, id).unwrap_or(List.new())
+        None => List.new()
+    }
+}
+
+fn hex_of(d: json.Doc, obj: u32, key: str) -> List[u8] { vec.unhex(str_of(d, obj, key)) }
+
+fn int_of(d: json.Doc, obj: u32, key: str) -> i64 {
+    match json.field(d, obj, key) {
+        Some(id) => json.as_int(d, id).unwrap_or(-1)
+        None => -1
+    }
+}
+
+fn groups(d: json.Doc) -> List[u32] {
+    let mut out: List[u32] = List.new()
+    let g = json.field(d, d.root, "testGroups").unwrap()
+    let mut i: u32 = 0
+    while i < json.len(d, g) {
+        out.push(json.at(d, g, i).unwrap())
+        i += 1
+    }
+    out
+}
+
+fn tests_of(d: json.Doc, group: u32) -> List[u32] {
+    let mut out: List[u32] = List.new()
+    let ts = json.field(d, group, "tests").unwrap()
+    let mut i: u32 = 0
+    while i < json.len(d, ts) {
+        out.push(json.at(d, ts, i).unwrap())
+        i += 1
+    }
+    out
+}
+
+/// What a test expects: 0 invalid, 1 valid, 2 acceptable.
+fn expect(d: json.Doc, tc: u32) -> u32 {
+    let r = str_of(d, tc, "result")
+    if bytes.eq(r, "valid".bytes()) { return 1 }
+    if bytes.eq(r, "acceptable".bytes()) { return 2 }
+    0
+}
+
+fn what(file: str, d: json.Doc, tc: u32) -> List[u8] {
+    let mut m = file.bytes()
+    bytes.append(inout m, " tcId ".bytes())
+    bytes.append(inout m, bytes.from_i64(int_of(d, tc, "tcId")))
+    m
+}
+
+/// Acceptable cases accepted / seen, per file.
+pub type Acc = { seen: u64, accepted: u64 }
+
+// one outcome: ok = the operation succeeded and gave the expected output; failed = it was refused
+fn judge(inout t: vec.Tally, inout acc: Acc, e: u32, ok: bool, failed: bool, w: List[u8]) uses io {
+    if e == 1 {
+        vec.check(inout t, ok, w)
+    } else if e == 0 {
+        vec.check(inout t, failed, w)
+    } else {
+        // acceptable: either a refusal or the expected output, never a wrong output
+        acc.seen += 1
+        if ok { acc.accepted += 1 }
+        vec.check(inout t, ok || failed, w)
+    }
+}
+
+fn report_acc(file: str, acc: Acc) uses io {
+    if acc.seen == 0 { return }
+    let mut m = "acceptable ".bytes()
+    bytes.append(inout m, file.bytes())
+    bytes.append(inout m, ": ".bytes())
+    bytes.append(inout m, bytes.from_u64(acc.accepted))
+    bytes.append(inout m, " of ".bytes())
+    bytes.append(inout m, bytes.from_u64(acc.seen))
+    bytes.append(inout m, " accepted".bytes())
+    io.outln(m)
+}
+
+fn x25519(inout t: vec.Tally) uses io, fs {
+    let f = "wycheproof_x25519_test.json"
+    let d = doc(f)
+    let mut acc = Acc(0, 0)
+    for g in groups(d) {
+        for tc in tests_of(d, g) {
+            let e = expect(d, tc)
+            let want = hex_of(d, tc, "shared")
+            let mut ok = false
+            let mut failed = false
+            match crypto.x25519_secret(hex_of(d, tc, "private")) {
+                Ok(sk) => {
+                    match crypto.x25519_public_key(hex_of(d, tc, "public")) {
+                        Ok(pk) => {
+                            match crypto.x25519_agree(sk, pk) {
+                                Ok(s) => { ok = eqb(s.bytes, want) }
+                                Err(_) => { failed = true }
+                            }
+                        }
+                        Err(_) => { failed = true }
+                    }
+                }
+                Err(_) => { failed = true }
+            }
+            judge(inout t, inout acc, e, ok, failed, what(f, d, tc))
+        }
+    }
+    report_acc(f, acc)
+}
+
+fn ed25519(inout t: vec.Tally) uses io, fs {
+    let f = "wycheproof_ed25519_test.json"
+    let d = doc(f)
+    let mut acc = Acc(0, 0)
+    for g in groups(d) {
+        let pkobj = json.field(d, g, "publicKey").unwrap()
+        let pkb = hex_of(d, pkobj, "pk")
+        for tc in tests_of(d, g) {
+            let e = expect(d, tc)
+            let mut valid = false
+            match crypto.ed25519_public_key(pkb.copy()) {
+                Ok(pk) => {
+                    match crypto.ed25519_signature(hex_of(d, tc, "sig")) {
+                        Ok(sig) => { valid = crypto.ed25519_verify(pk, hex_of(d, tc, "msg"), sig) }
+                        Err(_) => {}
+                    }
+                }
+                Err(_) => {}
+            }
+            judge(inout t, inout acc, e, valid, !valid, what(f, d, tc))
+        }
+    }
+    report_acc(f, acc)
+}
+
+fn ecdsa(inout t: vec.Tally) uses io, fs {
+    let f = "wycheproof_ecdsa_secp256r1_sha256_test.json"
+    let d = doc(f)
+    let mut acc = Acc(0, 0)
+    for g in groups(d) {
+        let pkobj = json.field(d, g, "publicKey").unwrap()
+        let pkb = hex_of(d, pkobj, "uncompressed")
+        for tc in tests_of(d, g) {
+            let e = expect(d, tc)
+            let mut valid = false
+            match crypto.p256_public_key(pkb.copy()) {
+                Ok(pk) => { valid = crypto.p256_verify(pk, hex_of(d, tc, "msg"), crypto.p256_signature_der(hex_of(d, tc, "sig"))) }
+                Err(_) => {}
+            }
+            judge(inout t, inout acc, e, valid, !valid, what(f, d, tc))
+        }
+    }
+    report_acc(f, acc)
+}
+
+// a Wycheproof private key as 32 bytes: it may carry a leading 00 or be shorter
+fn scalar32(b: List[u8]) -> List[u8] {
+    let mut i: usize = 0
+    while b.len() - i > 32 && b[i] == 0 { i += 1 }
+    let mut out: List[u8] = List.new()
+    let mut pad = 32 - (b.len() - i)
+    while pad > 0 {
+        out.push(0)
+        pad -= 1
+    }
+    bytes.append(inout out, bytes.slice(b, i, b.len()))
+    out
+}
+
+fn ecdh(inout t: vec.Tally) uses io, fs {
+    let f = "wycheproof_ecdh_secp256r1_ecpoint_test.json"
+    let d = doc(f)
+    let mut acc = Acc(0, 0)
+    for g in groups(d) {
+        for tc in tests_of(d, g) {
+            let e = expect(d, tc)
+            let mut ok = false
+            let mut failed = false
+            let priv = hex_of(d, tc, "private")
+            if priv.len() > 33 {
+                failed = true
+            } else {
+                match crypto.p256_secret(scalar32(priv)) {
+                    Ok(sk) => {
+                        match crypto.p256_public_key(hex_of(d, tc, "public")) {
+                            Ok(pk) => {
+                                match crypto.p256_agree(sk, pk) {
+                                    Ok(z) => { ok = eqb(z.bytes, hex_of(d, tc, "shared")) }
+                                    Err(_) => { failed = true }
+                                }
+                            }
+                            Err(_) => { failed = true }
+                        }
+                    }
+                    Err(_) => { failed = true }
+                }
+            }
+            judge(inout t, inout acc, e, ok, failed, what(f, d, tc))
+        }
+    }
+    report_acc(f, acc)
+}
+
+fn aead(inout t: vec.Tally, f: str, chacha: bool) uses io, fs {
+    let d = doc(f)
+    let mut acc = Acc(0, 0)
+    for g in groups(d) {
+        let ks = int_of(d, g, "keySize")
+        let usable = int_of(d, g, "ivSize") == 96 && int_of(d, g, "tagSize") == 128 && (chacha || ks == 128 || ks == 256)
+        let tcs = tests_of(d, g)
+        if !usable {
+            vec.skip(inout t, tcs.len() as u64)
+            continue
+        }
+        let alg = if chacha { crypto.ChaCha20Poly1305 } else if ks == 128 { crypto.Aes128Gcm } else { crypto.Aes256Gcm }
+        for tc in tcs {
+            let e = expect(d, tc)
+            let key = crypto.aead_key(alg, hex_of(d, tc, "key")).unwrap()
+            let n = crypto.nonce(hex_of(d, tc, "iv")).unwrap()
+            let aad = hex_of(d, tc, "aad")
+            let pt = hex_of(d, tc, "msg")
+            let mut sealed = hex_of(d, tc, "ct")
+            bytes.append(inout sealed, hex_of(d, tc, "tag"))
+            let mut ok = false
+            let mut failed = false
+            match crypto.open(key, n, aad.copy(), sealed.copy()) {
+                Ok(p) => { ok = eqb(p, pt) }
+                Err(_) => { failed = true }
+            }
+            if e == 1 {
+                // sealing is deterministic: it must give exactly the recorded ciphertext
+                match crypto.seal(key, n, aad, pt) {
+                    Ok(c) => { ok = ok && eqb(c, sealed) }
+                    Err(_) => { ok = false }
+                }
+            }
+            judge(inout t, inout acc, e, ok, failed, what(f, d, tc))
+        }
+    }
+    report_acc(f, acc)
+}
+
+fn hkdf(inout t: vec.Tally, f: str, h: crypto.Hash) uses io, fs {
+    let d = doc(f)
+    let mut acc = Acc(0, 0)
+    for g in groups(d) {
+        for tc in tests_of(d, g) {
+            let e = expect(d, tc)
+            let mut ok = false
+            let mut failed = false
+            let prk = crypto.hkdf_extract(h, hex_of(d, tc, "salt"), hex_of(d, tc, "ikm")).unwrap()
+            match crypto.hkdf_expand(prk, hex_of(d, tc, "info"), int_of(d, tc, "size") as usize) {
+                Ok(okm) => { ok = eqb(okm, hex_of(d, tc, "okm")) }
+                Err(_) => { failed = true }
+            }
+            judge(inout t, inout acc, e, ok, failed, what(f, d, tc))
+        }
+    }
+    report_acc(f, acc)
+}
+
+fn hmac(inout t: vec.Tally, f: str, h: crypto.Hash) uses io, fs {
+    let d = doc(f)
+    let mut acc = Acc(0, 0)
+    for g in groups(d) {
+        let tbytes = (int_of(d, g, "tagSize") / 8) as usize
+        for tc in tests_of(d, g) {
+            let e = expect(d, tc)
+            let k = crypto.hmac_key(h, hex_of(d, tc, "key"))
+            let tag = crypto.hmac(k, hex_of(d, tc, "msg")).unwrap()
+            // a truncated tag is compared (in constant time) with the same prefix
+            let ok = crypto.ct_equal(bytes.slice(tag.bytes, 0, tbytes), hex_of(d, tc, "tag"))
+            judge(inout t, inout acc, e, ok, !ok, what(f, d, tc))
+        }
+    }
+    report_acc(f, acc)
+}
+
+fn main() uses io, fs {
+    let mut t = vec.tally()
+    x25519(inout t)
+    ed25519(inout t)
+    ecdsa(inout t)
+    ecdh(inout t)
+    aead(inout t, "wycheproof_aes_gcm_test.json", false)
+    aead(inout t, "wycheproof_chacha20_poly1305_test.json", true)
+    hkdf(inout t, "wycheproof_hkdf_sha256_test.json", crypto.Sha256)
+    hkdf(inout t, "wycheproof_hkdf_sha384_test.json", crypto.Sha384)
+    hmac(inout t, "wycheproof_hmac_sha256_test.json", crypto.Sha256)
+    hmac(inout t, "wycheproof_hmac_sha384_test.json", crypto.Sha384)
+    vec.finish(t, "wycheproof")
+}

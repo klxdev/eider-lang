@@ -1,0 +1,7 @@
+// expect: E0001 5:13
+// A literal past 2^128 is a lexer error; checking goes on after it and used to overflow
+// while folding the literal (fold.parse), crashing the compiler.
+fn main() {
+    let x = 340282366920938463463374607431768211456
+    let y = 0xffffffffffffffffffffffffffffffffff
+}

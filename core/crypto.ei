@@ -1,0 +1,244 @@
+// core/crypto: the Eider half of the core's crypto ABI (core/ABI.md "Crypto",
+// core/crypto/eider_crypto.h). Like core/sys it is only bindings: each function puts its
+// inputs in the core's `in` buffer, makes one ec_crypto_* call, copies `out` and wipes both
+// buffers. Algorithms, key types and checks live in packages/crypto.
+//
+// Only ec_crypto_* symbols are bound here. A program that imports this module must link a
+// crypto backend (`-l eider_crypto`, scripts/ei-crypto; core/crypto/README.md).
+//
+// Every function returns Ok(bytes) or Err(status), status being one of the EC_CRYPTO_E*
+// codes below (or -errno). Inputs that are secret (keys, seeds, plaintext) are zeroed in the
+// core's buffers before the call returns; the copies in Eider lists are ordinary values.
+
+import "core/sys"
+
+extern "c" fn ec_crypto_backend() -> i32
+extern "c" fn ec_crypto_provider() -> i64
+extern "c" fn ec_crypto_supports(alg: i32) -> i32
+extern "c" fn ec_crypto_wipe()
+extern "c" fn ec_crypto_random(n: i64) -> i64
+extern "c" fn ec_crypto_hash(alg: i32) -> i64
+extern "c" fn ec_crypto_hmac(hash: i32, key_len: i64) -> i64
+extern "c" fn ec_crypto_hkdf_extract(hash: i32, salt_len: i64) -> i64
+extern "c" fn ec_crypto_hkdf_expand(hash: i32, prk_len: i64, len: i64) -> i64
+extern "c" fn ec_crypto_aead_seal(alg: i32, key_len: i64, nonce_len: i64, aad_len: i64) -> i64
+extern "c" fn ec_crypto_aead_open(alg: i32, key_len: i64, nonce_len: i64, aad_len: i64) -> i64
+extern "c" fn ec_crypto_x25519_public() -> i64
+extern "c" fn ec_crypto_x25519() -> i64
+extern "c" fn ec_crypto_ed25519_public() -> i64
+extern "c" fn ec_crypto_ed25519_sign() -> i64
+extern "c" fn ec_crypto_ed25519_verify() -> i64
+extern "c" fn ec_crypto_p256_public() -> i64
+extern "c" fn ec_crypto_p256_sign() -> i64
+extern "c" fn ec_crypto_p256_verify(sig_len: i64) -> i64
+extern "c" fn ec_crypto_p256_ecdh() -> i64
+extern "c" fn ec_crypto_ct_equal(len: i64) -> i64
+
+// status codes (eider_crypto.h)
+pub const EUNSUPPORTED: i64 = -5001
+pub const ELENGTH: i64 = -5002
+pub const EKEY: i64 = -5003
+pub const EAUTH: i64 = -5004
+pub const EBACKEND: i64 = -5005
+
+// algorithm ids (eider_crypto.h)
+pub const SHA256: i32 = 1
+pub const SHA384: i32 = 2
+pub const SHA512: i32 = 3
+pub const SHA3_256: i32 = 4
+pub const SHA3_384: i32 = 5
+pub const SHA3_512: i32 = 6
+pub const BLAKE2B_256: i32 = 7
+pub const BLAKE2B_512: i32 = 8
+pub const HMAC_SHA256: i32 = 10
+pub const HMAC_SHA384: i32 = 11
+pub const HMAC_SHA512: i32 = 12
+pub const HKDF_SHA256: i32 = 13
+pub const HKDF_SHA384: i32 = 14
+pub const HKDF_SHA512: i32 = 15
+pub const AES_128_GCM: i32 = 20
+pub const AES_256_GCM: i32 = 21
+pub const CHACHA20_POLY1305: i32 = 22
+pub const X25519: i32 = 30
+pub const ED25519: i32 = 31
+pub const ECDSA_P256_SHA256: i32 = 32
+pub const ECDH_P256: i32 = 33
+pub const RANDOM: i32 = 40
+
+// backend families (ec_crypto_backend)
+pub const OPENSSL: i32 = 1
+pub const AWSLC: i32 = 2
+pub const BORINGSSL: i32 = 3
+pub const LIBRESSL: i32 = 4
+
+fn send2(a: List[u8], b: List[u8]) uses ffi {
+    let mut all = a.copy()
+    for x in b { all.push(x) }
+    sys.send(all)
+}
+
+fn send3(a: List[u8], b: List[u8], c: List[u8]) uses ffi {
+    let mut all = a.copy()
+    for x in b { all.push(x) }
+    for x in c { all.push(x) }
+    sys.send(all)
+}
+
+fn send4(a: List[u8], b: List[u8], c: List[u8], d: List[u8]) uses ffi {
+    let mut all = a.copy()
+    for x in b { all.push(x) }
+    for x in c { all.push(x) }
+    for x in d { all.push(x) }
+    sys.send(all)
+}
+
+/// The result of an operation: `out` on success (then both buffers are wiped), else the status.
+fn result(status: i64) -> Result[List[u8], i64] uses ffi {
+    if status < 0 {
+        unsafe { ec_crypto_wipe() }
+        return Err(status)
+    }
+    let out = sys.take()
+    unsafe { ec_crypto_wipe() }
+    Ok(out)
+}
+
+/// A check (verify, compare): Ok(true) / Ok(false), or Err(status).
+fn check(status: i64) -> Result[bool, i64] uses ffi {
+    unsafe { ec_crypto_wipe() }
+    if status < 0 { return Err(status) }
+    Ok(status == 1)
+}
+
+pub fn backend() -> i32 uses ffi { unsafe { ec_crypto_backend() } }
+
+/// The library's name and version, e.g. "aws-lc: OpenSSL 1.1.1 (compatible; AWS-LC 5.12.0)".
+pub fn provider() -> List[u8] uses ffi {
+    let n = unsafe { ec_crypto_provider() }
+    result(n).unwrap_or(List.new())
+}
+
+/// Whether this backend provides `alg` (one of the ids above).
+pub fn supports(alg: i32) -> bool uses ffi {
+    let r = unsafe { ec_crypto_supports(alg) }
+    r == 1
+}
+
+pub fn random(n: i64) -> Result[List[u8], i64] uses io, ffi {
+    let s = unsafe { ec_crypto_random(n) }
+    result(s)
+}
+
+pub fn hash(alg: i32, msg: List[u8]) -> Result[List[u8], i64] uses ffi {
+    sys.send(msg)
+    let s = unsafe { ec_crypto_hash(alg) }
+    result(s)
+}
+
+pub fn hmac(hash_alg: i32, key: List[u8], msg: List[u8]) -> Result[List[u8], i64] uses ffi {
+    let kn = key.len() as i64
+    send2(key, msg)
+    let s = unsafe { ec_crypto_hmac(hash_alg, kn) }
+    result(s)
+}
+
+pub fn hkdf_extract(hash_alg: i32, salt: List[u8], ikm: List[u8]) -> Result[List[u8], i64] uses ffi {
+    let sn = salt.len() as i64
+    send2(salt, ikm)
+    let s = unsafe { ec_crypto_hkdf_extract(hash_alg, sn) }
+    result(s)
+}
+
+pub fn hkdf_expand(hash_alg: i32, prk: List[u8], info: List[u8], len: i64) -> Result[List[u8], i64] uses ffi {
+    let pn = prk.len() as i64
+    send2(prk, info)
+    let s = unsafe { ec_crypto_hkdf_expand(hash_alg, pn, len) }
+    result(s)
+}
+
+/// ciphertext || 16-byte tag
+pub fn aead_seal(alg: i32, key: List[u8], nonce: List[u8], aad: List[u8], plaintext: List[u8]) -> Result[List[u8], i64] uses ffi {
+    let kn = key.len() as i64
+    let nn = nonce.len() as i64
+    let an = aad.len() as i64
+    send4(key, nonce, aad, plaintext)
+    let s = unsafe { ec_crypto_aead_seal(alg, kn, nn, an) }
+    result(s)
+}
+
+/// The plaintext, or Err(EAUTH) when the tag doesn't match (the core has then already
+/// zeroed whatever it decrypted).
+pub fn aead_open(alg: i32, key: List[u8], nonce: List[u8], aad: List[u8], sealed: List[u8]) -> Result[List[u8], i64] uses ffi {
+    let kn = key.len() as i64
+    let nn = nonce.len() as i64
+    let an = aad.len() as i64
+    send4(key, nonce, aad, sealed)
+    let s = unsafe { ec_crypto_aead_open(alg, kn, nn, an) }
+    result(s)
+}
+
+pub fn x25519_public(private: List[u8]) -> Result[List[u8], i64] uses ffi {
+    sys.send(private)
+    let s = unsafe { ec_crypto_x25519_public() }
+    result(s)
+}
+
+pub fn x25519(private: List[u8], peer: List[u8]) -> Result[List[u8], i64] uses ffi {
+    send2(private, peer)
+    let s = unsafe { ec_crypto_x25519() }
+    result(s)
+}
+
+pub fn ed25519_public(seed: List[u8]) -> Result[List[u8], i64] uses ffi {
+    sys.send(seed)
+    let s = unsafe { ec_crypto_ed25519_public() }
+    result(s)
+}
+
+pub fn ed25519_sign(seed: List[u8], msg: List[u8]) -> Result[List[u8], i64] uses ffi {
+    send2(seed, msg)
+    let s = unsafe { ec_crypto_ed25519_sign() }
+    result(s)
+}
+
+pub fn ed25519_verify(public: List[u8], sig: List[u8], msg: List[u8]) -> Result[bool, i64] uses ffi {
+    send3(public, sig, msg)
+    let s = unsafe { ec_crypto_ed25519_verify() }
+    check(s)
+}
+
+pub fn p256_public(private: List[u8]) -> Result[List[u8], i64] uses ffi {
+    sys.send(private)
+    let s = unsafe { ec_crypto_p256_public() }
+    result(s)
+}
+
+/// A DER-encoded ECDSA signature over SHA-256(msg).
+pub fn p256_sign(private: List[u8], msg: List[u8]) -> Result[List[u8], i64] uses io, ffi {
+    send2(private, msg)
+    let s = unsafe { ec_crypto_p256_sign() }
+    result(s)
+}
+
+pub fn p256_verify(public: List[u8], der_sig: List[u8], msg: List[u8]) -> Result[bool, i64] uses ffi {
+    let sn = der_sig.len() as i64
+    send3(public, der_sig, msg)
+    let s = unsafe { ec_crypto_p256_verify(sn) }
+    check(s)
+}
+
+pub fn p256_ecdh(private: List[u8], peer: List[u8]) -> Result[List[u8], i64] uses ffi {
+    send2(private, peer)
+    let s = unsafe { ec_crypto_p256_ecdh() }
+    result(s)
+}
+
+/// Constant-time equality of two byte strings of the same length (different lengths: false,
+/// without looking at the contents; the length is not secret).
+pub fn ct_equal(a: List[u8], b: List[u8]) -> bool uses ffi {
+    if a.len() != b.len() { return false }
+    let n = a.len() as i64
+    send2(a, b)
+    let s = unsafe { ec_crypto_ct_equal(n) }
+    check(s).unwrap_or(false)
+}
