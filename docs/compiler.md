@@ -973,7 +973,7 @@ and leaves the analyzer building.
 | 1 | **8.1 Copy-on-write** | heap types share buffers with a refcount, copy on first write; non-atomic counts, values made unique before they cross threads; drops once at the last holder; quadratic `String` append fixed (capacity) | — |
 | 1 | **8.2 Small language gaps** | bitwise operators `& \| ^ << >> ~` (checked shifts); `String`/`str` byte access, slicing, building from bytes; `()` values (`Ok(())`); `main` returning an exit code; `impl` on built-in types | — |
 | 1 | **8.3 Package-qualified modules** (done: "C8.3: packages and modules"; package imports in compiler/, std/, packages/ after the next seed) | module identity = (package, path) instead of file stem (no more E0808 for two packages' `util.ei`); bare `import "json"` resolved through `eider.lock`; the `deps/` link farm retired | — |
-| 2 | **8.4 Operation traits** | `Copy`, `Eq`, `Ord`, `Hash`, `Show`, `Iter`, `Drop` in the core prelude; automatic derive; orphan rule; generic bounds with suggested fixes; Map keys any `Hash + Eq`; `for` over any `Iter` | 8.1, 8.2 |
+| 2 | **8.4 Operation traits** (done: "C8.4: operation traits") | `Copy`, `Eq`, `Ord`, `Hash`, `Show`, `Iter`, `Drop` in the core prelude; automatic derive; orphan rule; generic bounds with suggested fixes; Map keys any `Hash + Eq`; `for` over any `Iter` | 8.1, 8.2 |
 | 2 | **8.5 Capability encapsulation** | `ffi` becomes a property of a package (granted in eider.toml); std callers stop writing `uses ffi`; the compiler reports each package's real capability use and eider-pkg checks grants from that instead of scanning text | 8.3 |
 | 3 | **8.6 References by default** | `let` binds a read-only reference to a place, `let mut` a mutable alias, fresh values are owned; `.copy()`; pattern bindings the same; the protection rule (no invalidating write while a reference is alive) with fixes; references are C pointers; `var` deprecated with a mechanical fix | 8.1, 8.4 |
 | 3 | **8.7 `Ref[T]`** | shared mutable handle with scoped `read`/`update`, run-time conflict check, not sendable | 8.4 |
@@ -1285,6 +1285,188 @@ E0401/E0115/E0303/E0405 cases in `compiler/tests/check/fail`, `c8_*_ok.ei` in
   `&=`, `|=`, `^=`, `<<=`, `>>=`; binary `|` `^` `&` `<<` `>>` at the levels above, between
   comparisons and `+ -`; prefix `~` with `-` and `!`; the compound assignments with the
   others; `()` as an expression and a pattern.
+
+## C8.4: operation traits
+
+Wave 2, item 8.4 (docs/design/memory-model.md, "Operations are traits"): every operation the
+language performs on values is a trait of the core prelude, derived when a type's parts have
+it, and implementable by the type's own package. Code: check.ei's "Operation traits" and
+"Bounds of generic code" sections, lower.ei's "operation traits" glue, ir.Ir.impls. `compiler/`
+uses none of it until the next seed.
+
+**The prelude** gains, after Option and Result (so every position tests/oracle records for
+prelude items is unchanged):
+
+```eider
+type Ordering = | Less | Equal | Greater
+trait Copy { fn copy(self) -> Self }
+trait Eq { fn eq(self, other: Self) -> bool }
+trait Ord { fn compare(self, other: Self) -> Ordering }
+trait Hash { fn hash(self) -> u64 }
+trait Show { fn show(self, inout out: String) }
+trait Iter { fn next(inout self) -> Option[Item] }
+trait Drop { fn drop(inout self) }
+```
+
+`Ordering`, `Less`, `Equal` and `Greater` are prelude names like `Some`. `Iter`'s `next` returns
+`Option[...]` of whatever item type the impl chooses (the language has no associated types;
+the item type is read off the impl, and an impl whose `next` returns anything else is E0602).
+A trait the entry module defines with one of these names **shadows** it in the program's names
+(`trait Show` in compiler/tests/run/generics.ei is that program's own trait, and `impl Show
+for bool` implements it); the language goes on using the prelude's, which that program then
+can't implement. `Ordering` is resolved when a program first uses it, so a program that
+doesn't has the types, and the C, it had before.
+
+**Which types have which trait.** A record, enum, tuple, array, List, Box (and Map, where
+noted) has a trait when every part has it ("derived"; no annotation and no opt-out: a type
+lacks a trait only when a part does). A record or enum may instead implement one itself,
+which replaces the derived one everywhere: in the operator, and inside the derived operations
+of every type that contains it (`==` on a `List[Name]` uses Name's own `eq`).
+
+| | Copy | Eq | Ord | Hash | Show | Iter | Drop |
+|---|---|---|---|---|---|---|---|
+| integers, bool, str, String | yes | yes | yes | yes | yes | | |
+| `()` (as a part: `Ok(())`) | yes | yes | yes | yes | yes | | |
+| records, enums, tuples, arrays, List, Box | derived | derived | derived | derived | derived | List, arrays | |
+| Map[K, V] | derived | K, V | no | no | K, V | | |
+| fn values | yes | no | no | no | no | | |
+| Mutex[T] | if T | no | no | no | no | | |
+| Task, Chan, `!` | no | no | no | no | no | | |
+| own impl (records, enums) | any of the seven; Drop for records only | | | | | | |
+
+`Ord` and `Hash` promise `Eq` (an own `Ord` or `Hash` on a type without `Eq` is E0601). Comparing
+two `()`s directly stays E0401 ("cannot compare values of type ()").
+
+**The operations.**
+
+- **Copy**: `x.copy()` is a full clone: heap buffers are shared copy-on-write as by every copy,
+  a Mutex inside gets a new Mutex holding a copy of the contents (locked while it is read), a
+  part with its own `copy` is copied by it, and a record with its own Drop gets a buffer of its
+  own. Task and Chan have no Copy, so `.copy()` on them or on anything holding them is E0601
+  ("a running thread can't be cloned and a copied queue has no clear meaning; share the
+  handle instead"). Implicit copies (binding, passing, storing: value semantics) stay the
+  copy-on-write share and never run user code.
+- **Eq**: `==`, `!=`, `x.eq(y)` and `List.contains`. Derived structurally. **Map equality**:
+  two Maps are equal when they have the same keys, each with an equal value; the slots' order
+  (which depends on the insertion history) is not part of the value. So Map[K, V] has Eq when V
+  has it (K always does).
+- **Ord**: `<` `<=` `>` `>=` and `x.compare(y) -> Ordering`. Integers by value, `false < true`,
+  str and String by bytes (Unicode scalar order), records and tuples lexicographically by
+  field, arrays and Lists lexicographically then by length, Box by contents, enums by variant
+  order then payload. Maps have no order. Sorting is ordinary code over `T: Ord`
+  (compiler/tests/run/traits_derived.ei sorts Strings, records and enums).
+- **Hash**: Map keys are any type with Hash and Eq (E0701 says which part lacks which). The key
+  types of before (integers, bool, str, String) hash bit for bit as before (`ei_hash_u64`,
+  `ei_hash_str`), so lookups and probing are unchanged; other keys hash by combining their parts'
+  hashes (`h = ei_hash_u64(h ^ part)`, from a fixed seed, with the tag for enums and the length
+  for Lists). A key type with a part that has its own `==` but a derived hash is E0701 (equal
+  keys must hash alike). `x.hash() -> u64`. Maps have no hash.
+- **Show**: `fn show(self, inout out: String)` appends a value's text; `x.to_string() ->
+  String` and `print(x)` go through it. Everything that printed before prints exactly as
+  before (integers, bool, str, String, enums without payloads: same C, same text); the rest is
+  derived: `P { x: 1, y: -2 }`, `Circle(3)`, `Dot`, `Some(Pair { a: 1, b: "x" })`, `(1, "one",
+  true)`, `(5,)`, `[1, 2]`, `{"k": 1}` (slot order), `Box(...)`, `Ok(())`. Text inside another
+  value is quoted, with `\"`, `\\`, `\n`, `\t`, `\r` escaped; on its own it is printed raw. Type
+  and variant names are spelled as `print` spells variants (resolve.shown). An own Show is
+  used wherever the value appears (`[#2!9, #1!5]` for a List of Jobs).
+- **Iter**: `for x in e` over a type with its own Iter runs on a copy of e, owned by the loop
+  (`it := e; loop { r := it.next(); if r is None break; x := r's item; body }`), so the
+  original is unchanged; break, continue, return and `?` drop what they leave. Ranges, Lists
+  and arrays keep their own loops (same IR, same C). `I: Iter` is met by List, arrays and own
+  impls.
+- **Drop**: a record's own `drop` runs exactly once per value, when its last holder goes. A
+  record with its own Drop is laid out as a pointer to a shared buffer holding its fields
+  (`struct t_R { struct td_R *p; }`, made by `rnew_R`): every copy shares it (a count, as for
+  Box), and the last drop runs `drop` and then drops the fields in declaration order (a holder
+  that `drop` hands the value to keeps it alive; values in one scope go in reverse order of
+  creation, as before). A write to a shared value first makes a copy of its own, through the
+  type's own Copy if it has one (a resource type can make a new resource there), else field by
+  field as any copy makes them; from then on there are two values, each dropped once. Across
+  threads, every buffer a value reaches is made unique when it crosses (C8.1), so a value
+  captured by a spawned closure, sent while still held, or handed out by `Mutex.get` crosses
+  as a value of its own; a value created on a thread, sent without being kept, or kept in a
+  Mutex is one value, dropped once. Drop is for records only, for all of their instances
+  (`impl[T] Drop for R[T]`, no bounds), and `drop` can't declare capabilities, because it
+  runs wherever the last holder goes (a closure's environment, another thread, a container's
+  glue), where no `uses` could be checked (E0606); calling `.drop()` is E0115; such records
+  can't cross the C boundary (E0803).
+
+**Own impls and the orphan rule.** `impl Eq for Name { ... }` (or any of the seven) is allowed
+only in the package that defines the type; a file in no package counts as the program's own
+(so the tests' single files and their lib/ modules can). Anything else is **E0604**: a built-in
+type ("defined by the language core"), a prelude type (Option, Result, Ordering), a type of
+another package ("defined by package `geo`"), or a type parameter (`impl[T] Eq for T`). The
+impl is then left out. A generic impl may have bounds (`impl[T: Show] Show for Tagged[T]`); it
+applies to the instances that meet them. Lowering finds an own impl through ir.Ir.impls: after
+every pending body, `scan_impls` instantiates the impl's method for every concrete record and
+enum type the program made that has one (and the bodies that brings in), and the glue
+(`eq_`, `cmp_`, `hash_`, `show_`, `copy_`, `drop_`, `uniq_`) calls it.
+
+**Bounds in generic code.** A generic body may use an operation on a type parameter only when
+its bounds promise it: `==` needs `T: Eq`, `<` and `compare` `T: Ord`, `print`/`show` `T:
+Show`, `.copy()` `T: Copy`, `for` `T: Iter`, `List[T].contains` `T: Eq`, and `Map[K, V]`, also
+in a signature, `K: Hash + Eq`; a call to a function with bounds passes them on. Otherwise
+**E0605** "`==` needs `T: Eq`", with a fix that adds the bound (`: Eq` after the parameter, or ` +
+Eq` after its last bound; the compile-fail runner holds every fix to compile). Instances are
+checked with concrete types, which can't tell a T from the type it stands for, so the check is
+a pass of its own (`abstract_bodies`): after every body, each generic declaration that has an
+instance (prelude ones aside) is checked once more with its type parameters as `T_PARAM`
+types, which have exactly what their bounds say (Ord and Hash promise Eq). The pass works on
+a copy of the checker (a copy-on-write share of its state), keeps only its E0605s (everything
+else it could find, the instances found, or will find, with real types) and is skipped
+entirely in a program without generic instances (compiler/ itself). So E0605s come after
+every other diagnostic of the program, each bound once per body, and a generic declaration
+that is never used is still not checked.
+
+**Codes.** New: E0604 (orphan rule), E0605 (missing bound, with a fix), E0606 (a Drop impl
+that doesn't qualify). Changed messages (E0401, E0601, E0701): an operation on a type that
+lacks the trait says which trait and which part, e.g. "`==` needs `Eq`, which List[Chan[i32]]
+doesn't implement (its part Chan[i32] doesn't)", with a help for handles and fn values;
+"Map[...] can't be a Map key: it doesn't implement `Hash`"; `for` over a type without Iter keeps
+its message and its help now mentions Iter.
+
+**Zero cost.** Derived operations are the glue there was (eq_, drop_, clone_, the Map glue,
+print's own code), plus glue for what had none (cmp_, hash_ for new key types, show_, copy_).
+The C of every program that compiled before is byte for byte the C it had: all 65 run tests,
+examples and benchmarks, and eiderc's own (123,423 lines), compared against the seed with the
+old prelude. Map equality, ordering, printing and copying of other types is new code; own
+impls are calls. Benchmarks (`REPS=11 sh scripts/bench.sh target/eiderc-before:target/before
+target/eiderc-next`, before = eiderc at 722b20e, 16 cores, gcc -O2, median wall time):
+list_copies 3 ms / 3 ms, state 4 ms / 4 ms, str_append 4 ms / 4 ms, eiderc `emit-c
+compiler/main.ei` (19,456 lines) 179 ms / 179 ms. The bounds pass costs nothing there (eiderc
+has no generic instances); in a program with them it rechecks each used generic body once.
+
+**Known limits.** A program that shadows a language trait can't implement that trait. Drop
+and threads: a shared value that crosses to another thread becomes a copy (above), so a
+resource meant to be shared across threads belongs in a Mutex. The order of a Map's printed
+entries follows its slots (fixed for a given insertion history, not sorted). `main`'s `Err` is still printed only for the types C8.2 lists.
+
+**Oracle changes** (`BLESS=1`, reviewed): only messages, positions unchanged. Tests whose
+program became valid were changed to keep failing with the same code at the same place,
+with a type that still lacks the trait (a Mutex, Chan, Task or fn value inside): e0401_*
+for `==` on Maps, Lists of Maps and records holding Maps, `<` on Lists, tuples and bools,
+printing records, payload enums, Lists and Options; e0701_* for List and record keys;
+tests/checks' e0401_map_equality and e0701_list_as_key. e0603_bound_on_fn names traits that
+don't exist (`Display`, `Order`), since `Show` and `Eq` now do; the pass test
+s2_heap_generic_map_unify adds the `K: Hash + Eq` its `Map[K, V]` parameter now needs. The
+IDE goldens count 28 more prelude symbols. The compile-fail coverage lines count 51 codes.
+
+**Tests.** Run (compiler/tests/run, recorded output checked by hand): `traits_derived`
+(printing, `==`, Map equality, ordering, sorting, `compare`, Map keys of records, enums,
+tuples and Lists, hashing, `to_string`/`show`, `.copy()` with a Mutex inside), `traits_custom`
+(own Eq + Hash as Map keys, own Ord sorting, own Show inside derived text, own Copy, a
+generic impl with a bound), `traits_iter` (user iterators, owned items, break, continue,
+return and `?` in the loop, nested loops, a generic iterator), `traits_drop` (once under
+sharing, reverse order, `drop` before fields, copy on write with and without an own Copy, in
+Lists, Maps, Boxes and Options, `?`/return/break/continue, threads: created there, sent
+through a channel, replaced in a shared Mutex, captured), `traits_generic` (bounds met by
+derived and own impls); every run is also leak-checked and run under the sanitizers.
+Compile-fail: `e0604_*`, `e0605_*` (each fix compiles), `e0606_*`, `e0601_copy_*`,
+`e0601_ord_without_eq`, `e0701_custom_eq_no_hash`, `e0115_drop_call`,
+`e0602_iter_next_not_option`, `e0401_contains_no_eq`, `e0401_for_record_no_iter` in
+compiler/tests/check/fail and one per new code in tests/checks; pass: `c84_traits_ok`,
+`c84_shadow_ok`; several errors: compiler/tests/check/multi/traits.ei; packages:
+compiler/tests/pkgs/app/orphan.ei (an impl for another package's type).
 
 ## Language work that lands in `eiderc` (after parity)
 
