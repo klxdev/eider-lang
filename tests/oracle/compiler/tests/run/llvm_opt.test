@@ -1,0 +1,20 @@
+test the convention through a test's own C entry ... ok
+test u8 counter overflows in a loop ... FAILED
+    integer overflow in + (compiler/tests/run/llvm_opt.ei:81)
+test i32 sum of squares overflows in a loop ... FAILED
+    integer overflow in + (compiler/tests/run/llvm_opt.ei:86)
+test i64 doubling overflows in a loop ... FAILED
+    integer overflow in * (compiler/tests/run/llvm_opt.ei:92)
+test usize countdown underflows in a loop ... FAILED
+    integer overflow in - (compiler/tests/run/llvm_opt.ei:98)
+test negation of the minimum in a loop ... FAILED
+    integer overflow in negation (compiler/tests/run/llvm_opt.ei:103)
+test u64 multiply overflows ... FAILED
+    integer overflow in * (compiler/tests/run/llvm_opt.ei:108)
+test array index past the end in a loop ... FAILED
+    index out of bounds (compiler/tests/run/llvm_opt.ei:115)
+test passes after the traps ... ok
+
+9 tests, 7 failed
+--- stderr
+--- exit 1

@@ -1,0 +1,16 @@
+// A List index past the end in a loop whose index the LLVM backend's flags describe
+// (`nuw` on the step, `inbounds` on the element address after its bounds check): the check
+// still traps on the first index that is out of bounds (llvm_opt.ei has the others).
+
+fn main() uses io {
+    let mut xs: List[u64] = List.new()
+    xs.push(1)
+    xs.push(2)
+    let mut t: u64 = 0
+    let mut i: usize = 0
+    while i <= xs.len() {
+        t += xs[i]
+        print(t)
+        i += 1
+    }
+}

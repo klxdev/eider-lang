@@ -81,6 +81,8 @@ type E = {
     fail: List[u8],
     /// debug info
     dbg: bool,
+    /// the statement being emitted addresses places whose indices it doesn't check (gep_kw)
+    unchecked: bool,
     md: List[u8],
     nmd: u32,
     sp: u32,
@@ -595,7 +597,7 @@ fn declare_sig(inout e: E, p: lower.P, name: List[u8], s: abi.Sig, noreturn: boo
 fn load_piece(inout e: E, a: List[u8], off: u64, bits: u32) -> List[u8] {
     let mut at = a.copy()
     if off > 0 {
-        let mut g = sys.lit("getelementptr i8, ptr ")
+        let mut g = sys.lit("getelementptr inbounds i8, ptr ")
         bytes.append(inout g, a)
         bytes.append(inout g, sys.lit(", i64 "))
         bytes.append(inout g, bytes.from_u64(off))
@@ -610,7 +612,7 @@ fn load_piece(inout e: E, a: List[u8], off: u64, bits: u32) -> List[u8] {
 fn store_piece(inout e: E, v: List[u8], a: List[u8], off: u64, bits: u32) {
     let mut at = a.copy()
     if off > 0 {
-        let mut g = sys.lit("getelementptr i8, ptr ")
+        let mut g = sys.lit("getelementptr inbounds i8, ptr ")
         bytes.append(inout g, a)
         bytes.append(inout g, sys.lit(", i64 "))
         bytes.append(inout g, bytes.from_u64(off))
@@ -846,7 +848,7 @@ fn copy_mem(inout e: E, p: lower.P, ty: u32, dst: List[u8], src: List[u8]) {
 
 /// The address of member i of the struct %t<ty> (or a variant/buffer struct named by sfx).
 fn gep(inout e: E, p: lower.P, sty: List[u8], a: List[u8], i: u32) -> List[u8] {
-    let mut t = sys.lit("getelementptr ")
+    let mut t = sys.lit("getelementptr inbounds ")
     bytes.append(inout t, sty)
     bytes.append(inout t, sys.lit(", ptr "))
     bytes.append(inout t, a)
@@ -947,6 +949,15 @@ fn idx64(inout e: E, p: lower.P, id: u32) -> List[u8] {
     val(inout e, t)
 }
 
+/// `getelementptr inbounds` for an element of a place: its index is in bounds, because
+/// every statement that addresses a place first checks its indices (`checks`, outermost
+/// first), except a closure call's `inout` arguments (S_CALLV, as in the C backend), whose
+/// element addresses are therefore plain GEPs.
+fn gep_kw(e: E) -> str {
+    if e.unchecked { return "getelementptr " }
+    "getelementptr inbounds "
+}
+
 /// The address of a place (its indices are checked already).
 fn paddr(inout e: E, p: lower.P, id: u32) -> List[u8] {
     let x = p.ir.places[id as usize]
@@ -965,7 +976,7 @@ fn paddr(inout e: E, p: lower.P, id: u32) -> List[u8] {
         let et = types.get(p.t, bty).a
         if kind(p, bty) == types.T_LIST {
             let d = load_ptr_field(inout e, p, bty, b, 0)
-            let mut t = sys.lit("getelementptr ")
+            let mut t = sys.lit(gep_kw(e))
             bytes.append(inout t, mty(inout e, p, et))
             bytes.append(inout t, sys.lit(", ptr "))
             bytes.append(inout t, d)
@@ -973,7 +984,7 @@ fn paddr(inout e: E, p: lower.P, id: u32) -> List[u8] {
             bytes.append(inout t, i)
             return val(inout e, t)
         }
-        let mut t = sys.lit("getelementptr ")
+        let mut t = sys.lit(gep_kw(e))
         bytes.append(inout t, mty(inout e, p, bty))
         bytes.append(inout t, sys.lit(", ptr "))
         bytes.append(inout t, b)
@@ -1424,7 +1435,7 @@ fn stmt(inout e: E, p: lower.P, id: u32) {
         let d = dst_addr(s.dst)
         let et = types.get(p.t, s.ty).a
         for i in 0..s.c {
-            let mut t = sys.lit("getelementptr ")
+            let mut t = sys.lit("getelementptr inbounds ")
             bytes.append(inout t, mty(inout e, p, s.ty))
             bytes.append(inout t, sys.lit(", ptr "))
             bytes.append(inout t, d)
@@ -1478,7 +1489,9 @@ fn stmt(inout e: E, p: lower.P, id: u32) {
         bytes.append(inout t, f)
         stmt_text(inout e, t)
     } else if k == ir.S_CALLV {
+        e.unchecked = true
         callv(inout e, p, s)
+        e.unchecked = false
     } else if k == ir.S_BREAK {
         let t = e.brks[e.brks.len() - 1 - s.a as usize].copy()
         br(inout e, t)
@@ -1520,7 +1533,7 @@ fn repeat(inout e: E, p: lower.P, s: ir.Stmt) {
     w(inout e, " = ")
     wb(inout e, ph)
     fin(inout e)
-    let mut t = sys.lit("getelementptr ")
+    let mut t = sys.lit("getelementptr inbounds ")
     bytes.append(inout t, mty(inout e, p, s.ty))
     bytes.append(inout t, sys.lit(", ptr "))
     bytes.append(inout t, d)
@@ -1530,7 +1543,7 @@ fn repeat(inout e: E, p: lower.P, s: ir.Stmt) {
     put_op(inout e, p, et, s.a, f)
     ins(inout e)
     wb(inout e, nx)
-    w(inout e, " = add i64 ")
+    w(inout e, " = add nuw nsw i64 ")
     wb(inout e, i)
     w(inout e, ", 1")
     fin(inout e)
@@ -1557,7 +1570,8 @@ fn unary(inout e: E, p: lower.P, s: ir.Stmt) {
     let mn = int_text(ik, lower.kmin(ik))
     let c = icmp(inout e, "eq", it, v, mn)
     trap_if(inout e, c, "integer overflow in negation", s.line)
-    let r = val(inout e, catb(sys.lit("sub "), catb(it, catb(sys.lit(" 0, "), v))))
+    // v is not the minimum (checked): `nsw`
+    let r = val(inout e, catb(sys.lit("sub nsw "), catb(it, catb(sys.lit(" 0, "), v))))
     store(inout e, p, s.ty, r, d)
 }
 
@@ -1607,7 +1621,19 @@ fn checked(inout e: E, intr: str, it: List[u8], a: List[u8], b: List[u8], text: 
     bytes.append(inout x, r)
     let ov = val(inout e, cat(x, ", 1"))
     trap_if(inout e, ov, text, line)
-    val(inout e, cat(x, ", 0"))
+    // past the check the operation doesn't overflow: the same operation with its flag
+    // (`nsw` signed, `nuw` unsigned), which tells the optimizer so (loops, ranges)
+    let ip = sys.lit(intr)
+    let op = if ip[1] == 97 { "add" } else if ip[1] == 115 { "sub" } else { "mul" }
+    let fl = if ip[0] == 115 { " nsw " } else { " nuw " }
+    let mut t2 = sys.lit(op)
+    bytes.append(inout t2, sys.lit(fl))
+    bytes.append(inout t2, it)
+    bytes.append(inout t2, sys.lit(" "))
+    bytes.append(inout t2, a)
+    bytes.append(inout t2, sys.lit(", "))
+    bytes.append(inout t2, b)
+    val(inout e, t2)
 }
 
 fn binary(inout e: E, p: lower.P, s: ir.Stmt) {
@@ -2172,7 +2198,7 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         stmt_text(inout e, catb(sys.lit("store i64 "), catb(m, catb(sys.lit(", ptr "), lf))))
         let dp = load_ptr_field(inout e, p, lt, lp, 0)
         let et = types.get(p.t, lt).a
-        let mut g = sys.lit("getelementptr ")
+        let mut g = sys.lit("getelementptr inbounds ")
         bytes.append(inout g, mty(inout e, p, et))
         bytes.append(inout g, sys.lit(", ptr "))
         bytes.append(inout g, dp)
@@ -2319,7 +2345,7 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         let ct = arg_ty(p, barg(p, s, 0))
         let q = load_ptr_field(inout e, p, ct, c, 0)
         // `struct <chan>_c { ei_rc rc; ei_chan ch; }`: ch follows the 8-byte count
-        let ch = val(inout e, catb(sys.lit("getelementptr i8, ptr "), cat(q, ", i64 8")))
+        let ch = val(inout e, catb(sys.lit("getelementptr inbounds i8, ptr "), cat(q, ", i64 8")))
         rt_call(inout e, p, "ei_chan_close", tys1(types.STR), args1(ch), types.UNIT)
         return
     }
@@ -2386,7 +2412,7 @@ fn map_lists(inout e: E, p: lower.P, s: ir.Stmt) {
     condbr(inout e, c, lb, lx)
     label(inout e, lb)
     let sp = load_ptr_field(inout e, p, mt, mp, 2)
-    let sa = val(inout e, catb(sys.lit("getelementptr i8, ptr "), catb(sp, catb(sys.lit(", i64 "), i))))
+    let sa = val(inout e, catb(sys.lit("getelementptr inbounds i8, ptr "), catb(sp, catb(sys.lit(", i64 "), i))))
     let sv = val(inout e, catb(sys.lit("load i8, ptr "), sa))
     let used = val(inout e, catb(sys.lit("icmp eq i8 "), cat(sv, ", 1")))
     condbr(inout e, used, lu, lnx)
@@ -2413,7 +2439,7 @@ fn map_lists(inout e: E, p: lower.P, s: ir.Stmt) {
     label(inout e, lnx)
     ins(inout e)
     wb(inout e, nx)
-    w(inout e, " = add i64 ")
+    w(inout e, " = add nuw nsw i64 ")
     wb(inout e, i)
     w(inout e, ", 1")
     fin(inout e)
@@ -2429,7 +2455,7 @@ fn map_lists(inout e: E, p: lower.P, s: ir.Stmt) {
 /// &m.k[i] (field 0) or &m.v[i] (field 1) of the Map at mp.
 fn elem_addr(inout e: E, p: lower.P, mt: u32, mp: List[u8], fi: u32, et: u32, i: List[u8]) -> List[u8] {
     let base = load_ptr_field(inout e, p, mt, mp, fi)
-    let mut g = sys.lit("getelementptr ")
+    let mut g = sys.lit("getelementptr inbounds ")
     bytes.append(inout g, mty(inout e, p, et))
     bytes.append(inout g, sys.lit(", ptr "))
     bytes.append(inout g, base)
@@ -2460,7 +2486,7 @@ fn ref_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
     ms.push(types.I64)
     ms.push(el)
     let voff = abi.offset_of(inout e.lay, p, ms, 1)
-    let va = val(inout e, catb(sys.lit("getelementptr i8, ptr "), catb(q, num(", i64 ", voff))))
+    let va = val(inout e, catb(sys.lit("getelementptr inbounds i8, ptr "), catb(q, num(", i64 ", voff))))
     let st = val(inout e, catb(sys.lit("load i64, ptr "), q))
     if upd {
         let c1 = icmp(inout e, "slt", sys.lit("i64"), st, sys.lit("0"))
@@ -2564,7 +2590,7 @@ fn list_sum(inout e: E, p: lower.P, s: ir.Stmt) {
     condbr(inout e, c, lb, lx)
     label(inout e, lb)
     let dp = load_ptr_field(inout e, p, lt, lp, 0)
-    let mut g = sys.lit("getelementptr ")
+    let mut g = sys.lit("getelementptr inbounds ")
     bytes.append(inout g, it)
     bytes.append(inout g, sys.lit(", ptr "))
     bytes.append(inout g, dp)
@@ -2580,7 +2606,7 @@ fn list_sum(inout e: E, p: lower.P, s: ir.Stmt) {
     label(inout e, back)
     ins(inout e)
     wb(inout e, nx)
-    w(inout e, " = add i64 ")
+    w(inout e, " = add nuw nsw i64 ")
     wb(inout e, i)
     w(inout e, ", 1")
     fin(inout e)
@@ -2967,12 +2993,12 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
         let an = num("%a", ai as u64)
         ai += 1
         if l.kind == ir.L_INOUT {
-            stmt_text(inout e, catb(laddr(li), catb(sys.lit(" = getelementptr i8, ptr "), cat(an, ", i64 0"))))
+            stmt_text(inout e, catb(laddr(li), catb(sys.lit(" = getelementptr inbounds i8, ptr "), cat(an, ", i64 0"))))
             continue
         }
         if is_void(l.ty) { continue }
         if a.kind == abi.A_BYVAL || (a.kind == A_REF && !sc.wr[li as usize]) {
-            stmt_text(inout e, catb(laddr(li), catb(sys.lit(" = getelementptr i8, ptr "), cat(an, ", i64 0"))))
+            stmt_text(inout e, catb(laddr(li), catb(sys.lit(" = getelementptr inbounds i8, ptr "), cat(an, ", i64 0"))))
             continue
         }
         alloca(inout e, p, li, l.ty)
@@ -3241,7 +3267,7 @@ pub const MIN_LLVM: u64 = 17
 /// (debug info), `dir` the working directory, `debug` whether to emit debug info.
 pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[List[u8]], dir: List[u8], debug: bool) -> Result[Out, List[u8]] {
     let names = lower.c_names(p)?
-    let mut e = E(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), abi.new_lay(p), List.new(), names.tys, names.fns, List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), Map.new(), 0, 0, 0, false, List.new(), 0, 0, 0, List.new(), List.new(), false, abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new(), debug, List.new(), 4, 0, 0, Map.new(), Map.new(), paths, dir, List.new(), List.new(), List.new(), List.new(), List.new())
+    let mut e = E(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), abi.new_lay(p), List.new(), names.tys, names.fns, List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), Map.new(), 0, 0, 0, false, List.new(), 0, 0, 0, List.new(), List.new(), false, abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new(), debug, false, List.new(), 4, 0, 0, Map.new(), Map.new(), paths, dir, List.new(), List.new(), List.new(), List.new(), List.new())
     let nosig = abi.Sig(abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new())
     for f in 0..p.ir.fns.len() {
         e.isigs.push(nosig.copy())
