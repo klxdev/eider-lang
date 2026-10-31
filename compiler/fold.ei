@@ -170,3 +170,57 @@ pub fn parse(src: List[u8], start: usize, end: usize) -> Wide {
     }
     Wide(false, hi, lo)
 }
+
+// ---- bitwise operators (written with arithmetic: the seed compiling this has none)
+
+const MAX64: u64 = 18446744073709551615
+
+/// 2^n for n < 64.
+fn pow2(n: u64) -> u64 {
+    var r: u64 = 1
+    var i: u64 = 0
+    while i < n {
+        r = r * 2
+        i += 1
+    }
+    r
+}
+
+/// x & y (op 0), x | y (1) or x ^ y (2) on 64 bits.
+fn bits_op(op: u32, x: u64, y: u64) -> u64 {
+    var a = x
+    var b = y
+    var r: u64 = 0
+    var bit: u64 = 1
+    for i in 0..64 {
+        let p = a % 2
+        let q = b % 2
+        var on = false
+        if op == 0 { on = p == 1 && q == 1 }
+        if op == 1 { on = p == 1 || q == 1 }
+        if op == 2 { on = p != q }
+        if on { r = r + bit }
+        a = a / 2
+        b = b / 2
+        if i < 63 { bit = bit * 2 }
+    }
+    r
+}
+
+/// A bitwise operation on values of a `bits`-bit integer type (in range, as folded operands
+/// are): 0 `&`, 1 `|`, 2 `^`, 3 `<<`, 4 `>>` (arithmetic when `signed`; the count b is
+/// already known to be in range), 5 `~a` (b unused). The result is in the type's range: the
+/// operation on the two's-complement bits, as the runtime computes it.
+pub fn bitwise(op: u32, a: Wide, b: Wide, bits: u32, signed: bool) -> Wide {
+    let x = bits64(a)
+    var r: u64 = 0
+    if op <= 2 { r = bits_op(op, x, bits64(b)) }
+    if op == 3 { r = x *% pow2(b.lo) }
+    if op == 4 {
+        // floor(a / 2^b), for negative a too: -((|a| - 1) / 2^b) - 1
+        if a.neg { return of_neg((a.lo - 1) / pow2(b.lo) + 1) }
+        return of_u64(a.lo / pow2(b.lo))
+    }
+    if op == 5 { r = MAX64 - x }
+    wrap(from_bits(r, signed), bits, signed)
+}

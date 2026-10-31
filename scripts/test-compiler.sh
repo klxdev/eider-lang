@@ -97,9 +97,9 @@ bless() {
   cp "$3" "$p"
 }
 mkdir -p target/runtest
-# the front end's diagnostics: E0001, plus the parser's E0302 for `inout` in a type and E0402
+# the front end's diagnostics: E0001, E0002 (bitwise operators mixed without parentheses), plus the parser's E0302 for `inout` in a type and E0402
 # for `null`, in the entry file
-frontmsg='"error":"(E0001|E0402)"|"error":"E0302".*"message":"`inout` is only valid on function parameters'
+frontmsg='"error":"(E0001|E0002|E0402)"|"error":"E0302".*"message":"`inout` is only valid on function parameters'
 front() {
   case "$1" in *"\"file\":\"$2\""*) ;; *) return ;; esac
   echo "$1" | grep -E "$frontmsg"

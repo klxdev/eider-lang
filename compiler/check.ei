@@ -152,6 +152,11 @@ const M_SET: u32 = 18
 const M_FROM: u32 = 19
 const M_FROM_INT: u32 = 20
 const M_NEW: u32 = 21
+const M_BYTE: u32 = 22
+const M_SLICE: u32 = 23
+const M_BYTES: u32 = 24
+const M_PUSH_BYTE: u32 = 25
+const M_FROM_BYTES: u32 = 26
 
 /// Well-known symbols.
 type W = {
@@ -1500,7 +1505,8 @@ fn well_known(inout names: intern.Interner) -> W uses ffi {
     for w in ["io", "clock", "fs", "net", "threads", "ffi", "python", "js", "wasm"] { caps.push(sym(inout names, w)) }
     var hm: List[u32] = List.new()
     for w in ["len", "is_empty", "push_str", "append", "push", "pop", "clear", "get", "contains", "insert", "remove",
-        "map", "filter", "for_each", "any", "all", "fold", "sum", "set", "from", "from_int", "new"] { hm.push(sym(inout names, w)) }
+        "map", "filter", "for_each", "any", "all", "fold", "sum", "set", "from", "from_int", "new",
+        "byte", "slice", "bytes", "push_byte", "from_bytes"] { hm.push(sym(inout names, w)) }
     W(ints, sym(inout names, "bool"), sym(inout names, "str"), sym(inout names, "Self"), sym(inout names, "String"), heap,
         sym(inout names, "print"), sym(inout names, "len"), sym(inout names, "now_ms"), sym(inout names, "panic"),
         sym(inout names, "spawn"), sym(inout names, "main"), sym(inout names, "Option"), sym(inout names, "Result"),
@@ -1725,9 +1731,8 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
                 record(inout c, rd)
             }
         }
-        if n.a == c.w.main && (n.f > 0 || n.g > 0 || n.d > 0) {
-            record(inout c, err("E0111", n.line, n.col, s("`main` takes no parameters and returns ()")))
-        }
+        // (the return type is checked with the signature, pass 7)
+        if n.a == c.w.main && (n.f > 0 || n.d > 0) { record(inout c, main_error(n)) }
         check_bounds_known(inout c, it.m, n.c, n.d)?
         c.fns.insert(k, c.fdefs.len() as u32)
         // every free function gets an IR function in order; a generic one never gets a body
@@ -1797,7 +1802,12 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
         c.err_mod = f.md
         c.seen = List.new()
         let ii = instantiate(inout c, fi as u32, no_subst())?
-        let fl = ndm(c, f.md, f.node).b
+        let fnode = ndm(c, f.md, f.node)
+        if f.key == resolve.key(0, c.w.main) {
+            c.ir.main_line = fnode.line
+            if fnode.f == 0 && fnode.d == 0 && !main_returns_ok(c, c.insts[ii as usize].ret) { record(inout c, main_error(fnode)) }
+        }
+        let fl = fnode.b
         if ast.has(fl, ast.FN_EXTERN) || ast.has(fl, ast.FN_EXPORT) { record_ffi(inout c, ii) }
     }
     for fi in concrete {
@@ -1879,6 +1889,26 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
 
 /// Check constant node n (key k) of item it; false when it is a constant of the error type
 /// (its initializer failed, and that was recorded).
+/// E0111: `main`'s signature (docs/compiler.md, "C8.2: small language gaps").
+fn main_error(n: ast.Node) -> diag.Diag uses ffi {
+    errh("E0111", n.line, n.col, s("`main` takes no parameters and returns (), i32 or Result[(), E]"), "an i32 is the exit code (0 to 255); an Err is printed and exits with 1")
+}
+
+/// Whether `main` may return ty: (), i32 (the exit code) or Result[(), E] for any E.
+fn main_returns_ok(c: C, ty: u32) -> bool {
+    if ty == types.UNIT || ty == types.I32 || poisoned(c, ty) { return true }
+    main_result(c, ty)
+}
+
+/// Whether ty is Result[(), E].
+fn main_result(c: C, ty: u32) -> bool {
+    if types.kind(c.t, ty) != types.T_ENUM { return false }
+    let d = types.def_of(c.t, ty)
+    let rk = resolve.key(0, c.w.result)
+    if c.t.defs[d.tmpl as usize].key != rk || d.args == types.EMPTY { return false }
+    types.list_at(c.t, d.args, 0) == types.UNIT
+}
+
 fn check_const(inout c: C, it: Item, n: ast.Node, k: u64) -> Result[bool, diag.Diag] uses ffi {
     let ty = resolve_ty(inout c, it.m, n.c)?
     let vn = ndm(c, it.m, n.d)
@@ -2096,6 +2126,12 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
         }
         if dup {
             let rd = err("E0107", mn.line, mn.col, q2("method `", nm(c, mn.a), "` is already defined for `", target, "`"))
+            record(inout c, rd)
+            continue
+        }
+        let bk = builtin_head_kind(c, head)
+        if bk != NONE && (builtin_method(c, bk, mn.a) || builtin_static(c, resolve.key_sym(head), mn.a)) {
+            let rd = in_file(c, errh("E0116", mn.line, mn.col, q2("`", target, "` already has a built-in `", nm(c, mn.a), "`"), "built-in methods can't be replaced; give this method another name"), m)
             record(inout c, rd)
             continue
         }
@@ -2469,6 +2505,12 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] uses ffi {
                 return Ok(types.NEVER)
             }
             let e = nd(c, n.a - 1)
+            if c.ret == types.UNIT && e.kind == ast.ETuple && e.d == 0 {
+                // `return ()` is `return`
+                drop_frames_from(inout c, 0)
+                emit(inout c, ir.S_RETURN, 0, 0, 0, 0, 0, n.line)
+                return Ok(types.NEVER)
+            }
             if c.ret == types.UNIT { return Err(err("E0401", e.line, e.col, s("this function returns (), it can't return a value"))) }
             let ret = c.ret
             let t = compile_value(inout c, n.a - 1, Dest(D_RETURN, 0), ret)?
@@ -2730,6 +2772,7 @@ fn assign(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
     if !types.is_int(c.t, tv.ty) && !poisoned(c, tv.ty) && !poisoned(c, vv.ty) {
         return Err(err("E0401", n.line, n.col, q2("operator ", s(ast.op_text(op)), "= needs integers, found ", ts(c, tv.ty), "")))
     }
+    if (op == ast.OP_SHL || op == ast.OP_SHR) && types.is_int(c.t, tv.ty) { check_shift(c, vn, types.ik(c.t, tv.ty), vv)? }
     let cur = read(inout c, tv.place, tv.ty, n.line)
     let r = emit_val(inout c, ir.S_BINARY, op, cur, vv.op, tv.ty, tv.ty, n.line)
     emit(inout c, ir.S_STORE, 0, tv.place, r, 0, tv.ty, n.line)
@@ -2865,6 +2908,8 @@ fn lower_pat(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) -> Re
             Ok(pats.ctor(inout c.pt, pats.C_STR, id, 0, List.new()))
         }
         ast.PTuple => {
+            // `()` matches the one unit value
+            if n.d == 0 && tk == types.T_UNIT { return Ok(pats.WILD) }
             if tk != types.T_TUPLE { return Err(err("E0401", n.line, n.col, q("tuple pattern used on a value of type ", ts(c, ty), ""))) }
             let es = types.elems(c.t, ty)
             if es.len() as u32 != n.d {
@@ -3219,6 +3264,7 @@ fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
         }
         ast.EUnary => {
             if n.a == 0 { return negate(inout c, n, exp) }
+            if n.a == 2 { return bit_not(inout c, n, exp) }
             let v = expr(inout c, n.b, types.BOOL)?
             if !same(c, v.ty, types.BOOL) {
                 let x = nd(c, n.b)
@@ -3419,6 +3465,18 @@ fn negate(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
     Ok(v_of(v.ty, emit_val(inout c, ir.S_UNARY, ir.U_NEG, v.op, 0, v.ty, v.ty, n.line)))
 }
 
+/// `~x`: the bitwise complement of an integer (any integer type; no trap).
+fn bit_not(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
+    let v = expr(inout c, n.b, exp)?
+    if poisoned(c, v.ty) { return Ok(v) }
+    if !types.is_int(c.t, v.ty) {
+        return Err(err("E0401", n.line, n.col, q("operator ~ needs an integer, found ", ts(c, v.ty), "")))
+    }
+    let ik = types.ik(c.t, v.ty)
+    if v.has_k { return Ok(const_v(inout c, v.ty, fold.bitwise(5, v.k, fold.zero(), types.bits(ik), types.signed(ik)))) }
+    Ok(v_of(v.ty, emit_val(inout c, ir.S_UNARY, ir.U_BNOT, v.op, 0, v.ty, v.ty, n.line)))
+}
+
 /// Does `==` work on this type? (Maps have no structural equality)
 fn eq_supported(c: C, ty: u32, shallow: bool) -> bool {
     let t = types.get(c.t, ty)
@@ -3475,7 +3533,7 @@ fn binary(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
         }
         return Ok(v_of(types.BOOL, tv))
     }
-    let arith = op <= ast.OP_WMUL
+    let arith = op <= ast.OP_WMUL || ast.is_bitwise(op)
     let exp_operand = if arith { exp } else { NONE }
     var vl = v_of(types.UNIT, 0)
     var vr = v_of(types.UNIT, 0)
@@ -3501,7 +3559,9 @@ fn binary(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
         if (op == ast.OP_DIV || op == ast.OP_REM) && vr.has_k && fold.is_zero(vr.k) {
             return Err(err("E0502", rn.line, rn.col, s("division by zero")))
         }
+        if op == ast.OP_SHL || op == ast.OP_SHR { check_shift(c, rn, ik, vr)? }
         if vl.has_k && vr.has_k {
+            if ast.is_bitwise(op) { return Ok(const_v(inout c, ty, fold.bitwise(op - ast.OP_BAND, vl.k, vr.k, types.bits(ik), types.signed(ik)))) }
             return fold_arith(inout c, n, op, ik, ty, vl.k, vr.k)
         }
         return Ok(v_of(ty, emit_val(inout c, ir.S_BINARY, op, vl.op, vr.op, ty, ty, n.line)))
@@ -3513,10 +3573,23 @@ fn binary(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
     if tk == types.T_UNIT || tk == types.T_NEVER {
         return Err(err("E0401", n.line, n.col, q("cannot compare values of type ", ts(c, ty), "")))
     }
-    if tk != types.T_INT && op != ast.OP_EQ && op != ast.OP_NE {
+    // < <= > >= order integers, and String and str by their bytes (Unicode scalar order)
+    let ordered = tk == types.T_INT || tk == types.T_STRING || tk == types.T_STR
+    if !ordered && op != ast.OP_EQ && op != ast.OP_NE {
         return Err(err("E0401", n.line, n.col, q2("operator ", s(ast.op_text(op)), " is not supported for ", ts(c, ty), "")))
     }
     Ok(v_of(types.BOOL, emit_val(inout c, ir.S_BINARY, op, vl.op, vr.op, ty, types.BOOL, n.line)))
+}
+
+/// A shift count known at compile time must be below the width (and not negative): E0505.
+fn check_shift(c: C, rn: ast.Node, ik: u32, vr: V) -> Result[bool, diag.Diag] uses ffi {
+    if !vr.has_k { return Ok(true) }
+    let bits = types.bits(ik)
+    if fold.lt(vr.k, fold.zero()) || !fold.lt(vr.k, fold.of_u64(bits as u64)) {
+        let m = q3("shift count ", fold.text(vr.k), " is out of range for ", s(types.int_name(ik)), " (0 to ", num((bits - 1) as u64), ")")
+        return Err(errh("E0505", rn.line, rn.col, m, "a shift count must be at least 0 and less than the type's width in bits"))
+    }
+    Ok(true)
 }
 
 fn fold_arith(inout c: C, n: ast.Node, op: u32, ik: u32, ty: u32, a: fold.Wide, b: fold.Wide) -> Result[V, diag.Diag] uses ffi {
@@ -3590,6 +3663,8 @@ fn array_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi
 }
 
 fn tuple_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
+    // `()`: the unit value
+    if n.d == 0 { return Ok(v_of(types.UNIT, ir.op_unit(inout c.ir))) }
     var hints: List[u32] = List.new()
     if exp != NONE && types.kind(c.t, exp) == types.T_TUPLE && types.get(c.t, exp).b == n.d { hints = types.elems(c.t, exp) }
     var vs: List[V] = List.new()
@@ -4104,7 +4179,7 @@ fn builtin(inout c: C, n: ast.Node, which: u32) -> Result[V, diag.Diag] uses ffi
         if poisoned(c, v.ty) { return Ok(v_of(types.USIZE, ir.op_int(inout c.ir, types.USIZE, 0))) }
         let t = types.get(c.t, v.ty)
         if t.kind == types.T_ARRAY { return Ok(const_v(inout c, types.USIZE, fold.of_u64(t.b as u64))) }
-        if t.kind == types.T_STRING || t.kind == types.T_LIST || t.kind == types.T_MAP {
+        if t.kind == types.T_STRING || t.kind == types.T_STR || t.kind == types.T_LIST || t.kind == types.T_MAP {
             var largs: List[u32] = List.new()
             largs.push(v.op)
             return Ok(v_of(types.USIZE, builtin_op(inout c, ir.B_LEN, largs, types.USIZE, n.line)))
@@ -4180,15 +4255,15 @@ fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses f
             if tdi != NONE { note_def(inout c, am, r, tdi) }
         }
         let x = resolve.key_sym(static_head)
-        if resolve.key_pre(static_head) == 0 && (has_sym(c.w.heap, x) || x == c.w.s_string) {
-            return heap_static(inout c, n, x, exp)
-        }
+        let heap_head = resolve.key_pre(static_head) == 0 && (has_sym(c.w.heap, x) || x == c.w.s_string)
+        if heap_head && builtin_static(c, x, n.b) { return heap_static(inout c, n, x, exp) }
         for m in c.meths {
             if m.head == static_head && m.name == n.b {
                 let label = label_of(c, kt(c, static_head), n.b)
                 return call_decl(inout c, n, label, m.fd, no_subst(), no_recv(), exp, true)
             }
         }
+        if heap_head { return heap_static(inout c, n, x, exp) }
         let fd = err("E0115", n.line, n.col, q2("type ", kt(c, static_head), " has no method `", nm(c, n.b), "`"))
         return fail_call(inout c, fd, n.c, n.d)
     }
@@ -4196,10 +4271,10 @@ fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses f
     let tk = types.kind(c.t, pv.ty)
     // a method of an error value: only its arguments are checked
     if tk == types.T_POISON { return fail_call(inout c, quiet(), n.c, n.d) }
-    if tk == types.T_STRING || tk == types.T_LIST || tk == types.T_MAP || tk == types.T_BOX {
+    if builtin_method(c, tk, n.b) {
+        if types.is_handle(tk) { return thread_method(inout c, n, pv) }
         return heap_method(inout c, n, pv)
     }
-    if types.is_handle(tk) { return thread_method(inout c, n, pv) }
     let head = head_of(c, pv.ty)
     var any = false
     for m in c.meths {
@@ -4214,6 +4289,8 @@ fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses f
         let label = label_of(c, head_text(c, head), n.b)
         return call_decl(inout c, n, label, m.fd, sb, Recv(true, n.a, pv), exp, true)
     }
+    // a handle's unknown method: thread_method's message
+    if !any && types.is_handle(tk) { return thread_method(inout c, n, pv) }
     if !any && tk == types.T_RECORD {
         let d = types.def_of(c.t, pv.ty)
         match types.find_field(c.t, d, n.b) {
@@ -4231,6 +4308,46 @@ fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses f
     }
     let fd = err("E0115", n.line, n.col, q2("type ", ts(c, pv.ty), " has no method `", nm(c, n.b), "`"))
     fail_call(inout c, fd, n.c, n.d)
+}
+
+/// The built-in methods of type kind tk (heap_method, thread_method): an impl on the type
+/// can add methods (found after these), but not one of these names (E0116).
+fn builtin_method(c: C, tk: u32, name: u32) -> bool uses ffi {
+    let mi = sym_index(c.w.hm, name)
+    if tk == types.T_STRING {
+        return mi == M_LEN || mi == M_IS_EMPTY || mi == M_PUSH_STR || mi == M_APPEND || mi == M_BYTE || mi == M_SLICE || mi == M_BYTES || mi == M_PUSH_BYTE
+    }
+    if tk == types.T_STR { return mi == M_LEN || mi == M_IS_EMPTY || mi == M_BYTE || mi == M_SLICE || mi == M_BYTES }
+    if tk == types.T_LIST { return mi == M_LEN || mi == M_IS_EMPTY || (mi >= M_PUSH && mi <= M_CONTAINS) || (mi >= M_MAP && mi <= M_SUM) }
+    if tk == types.T_MAP { return mi == M_LEN || mi == M_IS_EMPTY || mi == M_GET || mi == M_CONTAINS || mi == M_INSERT || mi == M_REMOVE }
+    if tk == types.T_BOX { return mi == M_GET || mi == M_SET }
+    if tk == types.T_TASK { return is_word(c, name, "join") }
+    if tk == types.T_MUTEX { return mi == M_GET || mi == M_SET || is_word(c, name, "update") }
+    if tk == types.T_CHAN { return is_word(c, name, "send") || is_word(c, name, "recv") || is_word(c, name, "close") }
+    false
+}
+
+/// The built-in associated functions of String, List, Map, Box, Mutex and Chan (head: the
+/// type's symbol).
+fn builtin_static(c: C, head: u32, name: u32) -> bool {
+    let mi = sym_index(c.w.hm, name)
+    if head == c.w.s_string { return mi == M_FROM || mi == M_FROM_INT || mi == M_FROM_BYTES }
+    mi == M_NEW && head != c.w.heap[3]
+}
+
+/// The type kind of a built-in method head (head_of), or NONE.
+fn builtin_head_kind(c: C, head: u64) -> u32 {
+    if resolve.key_pre(head) != 0 { return NONE }
+    let x = resolve.key_sym(head)
+    if x == c.w.s_string { return types.T_STRING }
+    if x == c.w.s_str { return types.T_STR }
+    if x == c.w.list { return types.T_LIST }
+    if x == c.w.map { return types.T_MAP }
+    if x == c.w.boxs { return types.T_BOX }
+    if x == c.w.heap[3] { return types.T_TASK }
+    if x == c.w.heap[4] { return types.T_MUTEX }
+    if x == c.w.heap[5] { return types.T_CHAN }
+    NONE
 }
 
 /// Check the arguments of a built-in method against `tys`.
@@ -4271,6 +4388,13 @@ fn heap_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag.D
     if head == c.w.s_string && mi == M_FROM {
         let vs = eval_args(inout c, n, one(types.STR), label)?
         return Ok(v_of(types.STRING, builtin_op(inout c, ir.B_STR_FROM, one(vs[0].op), types.STRING, n.line)))
+    }
+    if head == c.w.s_string && mi == M_FROM_BYTES {
+        let lt = types.list_of(inout c.t, types.U8)
+        let vs = eval_args(inout c, n, one(lt), label)?
+        let di = mget(c.tmpl, resolve.key(0, c.w.result))
+        let rt = inst_type(inout c, di, two(types.STRING, types.USIZE), n.line, n.col)?
+        return Ok(v_of(rt, builtin_op(inout c, ir.B_STR_FROM_BYTES, one(vs[0].op), rt, n.line)))
     }
     if head == c.w.s_string && mi == M_FROM_INT {
         let vs = eval_args(inout c, n, one(types.I64), label)?
@@ -4327,7 +4451,8 @@ fn heap_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] uses ffi
     let is_str = tk == types.T_STRING
     let is_list = tk == types.T_LIST
     let is_map = tk == types.T_MAP
-    if (is_str || is_list || is_map) && (mi == M_LEN || mi == M_IS_EMPTY) {
+    let is_cstr = tk == types.T_STR
+    if (is_str || is_cstr || is_list || is_map) && (mi == M_LEN || mi == M_IS_EMPTY) {
         let ro = recv_op(inout c, pv)
         eval_args(inout c, n, List.new(), label)?
         if mi == M_LEN { return Ok(v_of(types.USIZE, builtin_op(inout c, ir.B_LEN, one(ro), types.USIZE, n.line))) }
@@ -4337,6 +4462,10 @@ fn heap_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] uses ffi
         let ro = recv_op(inout c, pv)
         eval_args(inout c, n, List.new(), label)?
         return Ok(v_of(types.USIZE, builtin_op(inout c, ir.B_LEN, one(ro), types.USIZE, n.line)))
+    }
+    if is_str || is_cstr {
+        let tv = text_method(inout c, n, pv, mi, label)?
+        if tv.ty != NONE { return Ok(tv) }
     }
     if is_str && (mi == M_PUSH_STR || mi == M_APPEND) {
         assignable_or_record(inout c, n.a, "modify")
@@ -4449,6 +4578,41 @@ fn heap_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] uses ffi
     }
     let fd = err("E0115", n.line, n.col, q2("type ", ts(c, ty), " has no method `", nm(c, n.b), "`"))
     fail_call(inout c, fd, n.c, n.d)
+}
+
+/// The byte methods of String and str (C8.2): byte, slice, bytes, and push_byte on String.
+/// V.ty is NONE when `mi` isn't one of them.
+fn text_method(inout c: C, n: ast.Node, pv: PV, mi: u32, label: List[u8]) -> Result[V, diag.Diag] uses ffi {
+    if mi == M_BYTE {
+        let ro = recv_op(inout c, pv)
+        let vs = eval_args(inout c, n, one(types.USIZE), label)?
+        return Ok(v_of(types.U8, builtin_op(inout c, ir.B_STR_BYTE, two(ro, vs[0].op), types.U8, n.line)))
+    }
+    if mi == M_SLICE {
+        let ro = recv_op(inout c, pv)
+        let vs = eval_args(inout c, n, two(types.USIZE, types.USIZE), label)?
+        var args = two(ro, vs[0].op)
+        args.push(vs[1].op)
+        return Ok(v_of(types.STRING, builtin_op(inout c, ir.B_STR_SLICE, args, types.STRING, n.line)))
+    }
+    if mi == M_BYTES {
+        let ro = recv_op(inout c, pv)
+        eval_args(inout c, n, List.new(), label)?
+        let lt = types.list_of(inout c.t, types.U8)
+        return Ok(v_of(lt, builtin_op(inout c, ir.B_STR_BYTES, one(ro), lt, n.line)))
+    }
+    if mi == M_PUSH_BYTE && types.kind(c.t, pv.ty) == types.T_STRING {
+        assignable_or_record(inout c, n.a, "modify")
+        let vs = eval_args(inout c, n, one(types.U8), label)?
+        let v = vs[0]
+        if v.has_k && (fold.is_zero(v.k) || !fold.lt(v.k, fold.of_u64(128))) {
+            let x = nd(c, arg_expr(c, at(c, n.c, 0)))
+            return Err(errh("E0506", x.line, x.col, q("`push_byte` takes an ASCII byte (1 to 127), not ", fold.text(v.k), ""), "a String is always valid UTF-8: build other text with `push_str`, `append` or `String.from_bytes`"))
+        }
+        let place = pv.place + ir.ARG_PLACE
+        return Ok(v_of(types.UNIT, builtin_op(inout c, ir.B_STR_PUSH_BYTE, two(place, v.op), types.UNIT, n.line)))
+    }
+    Ok(v_of(NONE, 0))
 }
 
 /// The prelude's Option[el].

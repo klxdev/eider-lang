@@ -9,7 +9,7 @@
 //            TArray a=elem b=len                  TTuple [c/d]                TUnit
 //            TFn [c/d]=params g=ret+1
 // exprs      EInt a=tok   EStr a=str   EBool a=0/1   EIdent a=sym b=qual+1
-//            EUnary a=op (0 neg, 1 not) b=operand  EBinary a=op (OP_*) b=lhs c=rhs
+//            EUnary a=op (0 neg, 1 not, 2 bitwise not `~`) b=operand  EBinary a=op (OP_*) b=lhs c=rhs
 //            ECall a=callee sym b=qual+1 [c/d]=args  EMethod a=recv b=name sym [c/d]=args
 //            EField a=recv b=name sym              EIndex a=recv b=index
 //            ECast a=expr b=type                   EArray [c/d]   ERepeat a=elem b=count
@@ -77,6 +77,16 @@ pub const OP_GT: u32 = 12
 pub const OP_GE: u32 = 13
 pub const OP_AND: u32 = 14
 pub const OP_OR: u32 = 15
+// bitwise operators (docs/compiler.md, "C8.2: small language gaps"); after OP_OR so the
+// ranges above (`op <= OP_WMUL` is arithmetic) keep their meaning
+pub const OP_BAND: u32 = 16
+pub const OP_BOR: u32 = 17
+pub const OP_BXOR: u32 = 18
+pub const OP_SHL: u32 = 19
+pub const OP_SHR: u32 = 20
+
+/// Whether op is one of `& | ^ << >>`.
+pub fn is_bitwise(op: u32) -> bool { op >= OP_BAND && op <= OP_SHR }
 
 pub const FN_PUBLIC: u32 = 1
 pub const FN_EXTERN: u32 = 2
@@ -100,7 +110,12 @@ pub fn op_text(op: u32) -> str {
         12 => ">"
         13 => ">="
         14 => "&&"
-        _ => "||"
+        15 => "||"
+        16 => "&"
+        17 => "|"
+        18 => "^"
+        19 => "<<"
+        _ => ">>"
     }
 }
 
