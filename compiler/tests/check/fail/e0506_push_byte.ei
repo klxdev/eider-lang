@@ -1,0 +1,5 @@
+// expect: E0506 4:17
+fn main() {
+    var s = String.from("a")
+    s.push_byte(200)
+}

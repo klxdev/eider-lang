@@ -1,1 +1,1 @@
-{"error":"E0001","span":{"file":"./compiler/tests/lex/bad_char_after_utf8.ei","line":2,"col":21},"message":"unexpected character `~`"}
+{"error":"E0001","span":{"file":"./compiler/tests/lex/bad_char_after_utf8.ei","line":2,"col":21},"message":"unexpected character `$`"}

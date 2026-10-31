@@ -1,0 +1,5 @@
+// expect: E0303 4:5
+fn main() {
+    let s = String.from("a")
+    s.push_byte(65)
+}

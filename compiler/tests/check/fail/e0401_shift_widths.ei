@@ -1,0 +1,5 @@
+// expect: E0401 3:10
+fn f(a: u64, n: u32) -> u64 {
+    a << n
+}
+fn main() {}

@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_str_unknown.ei","line":3,"col":11},"message":"type str has no method `chars`"}

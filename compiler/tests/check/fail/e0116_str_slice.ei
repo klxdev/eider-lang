@@ -1,0 +1,6 @@
+// expect: E0116 4:8
+impl str {
+    fn ok(self) -> bool { true }
+    fn slice(self, a: usize) -> str { self }
+}
+fn main() {}

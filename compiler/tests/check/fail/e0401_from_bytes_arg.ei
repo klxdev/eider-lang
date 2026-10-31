@@ -1,0 +1,4 @@
+// expect: E0401 3:23
+fn main() {
+    String.from_bytes("abc")
+}

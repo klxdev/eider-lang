@@ -1,0 +1,40 @@
+// C8.2's other additions check: unit values and patterns, `main` returning Result[(), E],
+// byte methods of String and str, String.from_bytes, ordering of String and str, impls
+// on built-in types (found after the built-in methods).
+impl String {
+    fn bytes_twice(self) -> usize { self.len() * 2 }
+}
+
+impl[T] List[T] {
+    fn first_or(self, d: T) -> T {
+        if self.len() > 0 { return self[0] }
+        d
+    }
+}
+
+fn unit_ok(b: bool) -> Result[(), str] {
+    if b { return Err("no") }
+    Ok(())
+}
+
+fn text(s: String, t: str) -> bool {
+    let a: u8 = s.byte(0)
+    let b = t.byte(0)
+    let c: String = s.slice(0, 1)
+    let d: List[u8] = t.bytes()
+    let e: Result[String, usize] = String.from_bytes(d)
+    var f = c
+    f.push_byte(33)
+    a == b && s < f && t >= "a" && s.bytes_twice() > 0 && e.is_ok() && t.len() > 0
+}
+
+fn main() -> Result[(), str] {
+    match unit_ok(false) {
+        Ok(()) => {}
+        Err(_) => {}
+    }
+    let l: List[i32] = List.new()
+    let x = l.first_or(3)
+    unit_ok(text(String.from("a"), "b"))?
+    Ok(())
+}

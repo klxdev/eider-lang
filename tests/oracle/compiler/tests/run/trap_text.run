@@ -1,0 +1,5 @@
+a
+añ
+--- stderr
+eider: runtime error: slice not on a character boundary (compiler/tests/run/trap_text.ei:4)
+--- exit 101

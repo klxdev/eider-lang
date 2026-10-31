@@ -1,0 +1,6 @@
+// `main` returning Result[(), E] that is Ok exits 0.
+
+fn main() -> Result[(), i64] uses io {
+    print("fine")
+    Ok(())
+}

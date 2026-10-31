@@ -1,0 +1,5 @@
+// expect: E0002 3:11
+fn f(x: u32) -> bool {
+    x & 1 == 0
+}
+fn main() {}

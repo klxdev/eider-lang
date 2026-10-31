@@ -1,0 +1,5 @@
+// expect: E0116 3:8
+impl String {
+    fn from_bytes(x: i32) -> i32 { x }
+}
+fn main() {}

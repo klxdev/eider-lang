@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_byte_index_type.ei","line":3,"col":12},"message":"expected usize, found u32","help":"there are no implicit conversions; use an explicit cast: `value as usize`"}

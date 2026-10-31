@@ -1,0 +1,16 @@
+// E0002 doesn't stop parsing or checking: the tree is whole (the operators group as the
+// fix says), so every mixed operator is reported, and so are the type errors after them.
+fn flags(x: u32) -> bool {
+    x & 4 == 4
+}
+
+fn mask(a: u32, b: u32) -> u32 {
+    a | b & 255
+}
+
+fn wrong(a: u8) -> u8 {
+    let t: bool = a
+    a << 9
+}
+
+fn main() {}

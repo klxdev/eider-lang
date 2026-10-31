@@ -1,0 +1,4 @@
+number 821 bigint -3 number 240
+number 659
+eider: runtime error: shift count out of range (lib:4)
+sar RuntimeError

@@ -1,0 +1,5 @@
+// expect: E0116 3:8
+impl String {
+    fn len(self) -> usize { 0 }
+}
+fn main() {}

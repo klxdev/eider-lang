@@ -1,0 +1,26 @@
+error[E0002]: `==` and `&` can't be mixed without parentheses
+  --> compiler/tests/check/multi/bitwise.ei:4:11
+  |
+4 |     x & 4 == 4
+  |           ^
+  help: Eider doesn't rank bitwise operators against comparisons, arithmetic or each other; parenthesize the operation that comes first
+  fix: at 4:5 delete 5 insert "(x & 4)"
+error[E0002]: `|` and `&` can't be mixed without parentheses
+  --> compiler/tests/check/multi/bitwise.ei:8:7
+  |
+8 |     a | b & 255
+  |       ^
+  help: Eider doesn't rank bitwise operators against comparisons, arithmetic or each other; parenthesize the operation that comes first
+  fix: at 8:9 delete 7 insert "(b & 255)"
+error[E0401]: expected bool, found u8
+  --> compiler/tests/check/multi/bitwise.ei:12:19
+   |
+12 |     let t: bool = a
+   |                   ^
+error[E0505]: shift count 9 is out of range for u8 (0 to 7)
+  --> compiler/tests/check/multi/bitwise.ei:13:10
+   |
+13 |     a << 9
+   |          ^
+  help: a shift count must be at least 0 and less than the type's width in bits
+error: 4 errors

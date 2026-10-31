@@ -2,6 +2,14 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0001_clo_list_of_fn.ei      E0001 at 4:15
   ok   e0001_mod_parse_error_in_module.ei E0001 at 2:14
   ok   e0001_or_pattern_binds.ei    E0001 at 4:13
+  ok   e0002_add_and.ei             E0002 at 3:11 (fix compiles)
+  ok   e0002_and_eq.ei              E0002 at 3:11 (fix compiles)
+  ok   e0002_and_or.ei              E0002 at 3:11 (fix compiles)
+  ok   e0002_eq_and.ei              E0002 at 3:7 (fix compiles)
+  ok   e0002_in_let.ei              E0002 at 3:19 (fix compiles)
+  ok   e0002_mul_shift.ei           E0002 at 3:11 (fix compiles)
+  ok   e0002_or_xor.ei              E0002 at 3:7 (fix compiles)
+  ok   e0002_shift_sub.ei           E0002 at 3:7 (fix compiles)
   ok   e0101_array_scrutinee.ei     E0101 at 8:13
   ok   e0101_bool_missing.ei        E0101 at 3:5
   ok   e0101_mod_witness.ei         E0101 at 4:5
@@ -83,7 +91,9 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0111_impl_generic_target_error.ei E0111 at 3:30
   ok   e0111_impl_target_error.ei   E0111 at 3:24
   ok   e0111_list_without_args.ei   E0111 at 2:10
+  ok   e0111_main_result_ok_type.ei E0111 at 2:4
   ok   e0111_main_returns.ei        E0111 at 2:4
+  ok   e0111_main_u8.ei             E0111 at 2:4
   ok   e0111_main_with_params.ei    E0111 at 2:4
   ok   e0111_option_without_args.ei E0111 at 2:11
   ok   e0111_order_const_call_resolves_params.ei E0111 at 2:9
@@ -136,11 +146,17 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0115_self_static.ei         E0115 at 4:24
   ok   e0115_static_method.ei       E0115 at 4:15
   ok   e0115_static_not_found.ei    E0115 at 3:24
+  ok   e0115_str_push_byte.ei       E0115 at 3:9
+  ok   e0115_str_unknown.ei         E0115 at 3:11
   ok   e0115_thr_chan_get.ei        E0115 at 4:13
   ok   e0115_thr_impl_method.ei     E0115 at 6:13
   ok   e0115_thr_mutex_len.ei       E0115 at 4:13
   ok   e0115_thr_task_new.ei        E0115 at 3:18
   ok   e0115_unwrap_unknown_method.ei E0115 at 3:15
+  ok   e0116_list_static.ei         E0116 at 3:8
+  ok   e0116_str_slice.ei           E0116 at 4:8
+  ok   e0116_string_from_bytes.ei   E0116 at 3:8
+  ok   e0116_string_len.ei          E0116 at 3:8
   ok   e0201_comptime_builtin.ei    E0201 at 2:25
   ok   e0201_comptime_clock.ei      E0201 at 3:25
   ok   e0201_comptime_ffi.ei        E0201 at 3:34
@@ -188,6 +204,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0303_inout_of_literal.ei    E0303 at 4:16
   ok   e0303_inout_self_immutable.ei E0303 at 5:5 (fix compiles)
   ok   e0303_mod_inout_constant.ei  E0303 at 4:23
+  ok   e0303_push_byte_let.ei       E0303 at 4:5 (fix compiles)
   ok   e0304_clo_call_inout.ei      E0304 at 4:21
   ok   e0304_fix_position.ei        E0304 at 6:15 (fix compiles)
   ok   e0304_fnval_inout.ei         E0304 at 3:37
@@ -209,9 +226,13 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_assign_mismatch.ei     E0401 at 4:14
   ok   e0401_bind_never.ei          E0401 at 3:13
   ok   e0401_bind_unit.ei           E0401 at 4:13
+  ok   e0401_bit_assign_string.ei   E0401 at 4:5
+  ok   e0401_bit_bool.ei            E0401 at 3:7
   ok   e0401_block_value_hint.ei    E0401 at 4:19
+  ok   e0401_bnot_bool.ei           E0401 at 3:5
   ok   e0401_branch_literal_default.ei E0401 at 3:29
   ok   e0401_branches_differ.ei     E0401 at 3:29
+  ok   e0401_byte_index_type.ei     E0401 at 3:12
   ok   e0401_cast_from_bool.ei      E0401 at 3:18
   ok   e0401_cast_to_bool.ei        E0401 at 3:15
   ok   e0401_clo_call_mismatch.ei   E0401 at 3:15
@@ -236,6 +257,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_fold_wrong2.ei         E0401 at 3:27
   ok   e0401_for_each_ret.ei        E0401 at 3:20
   ok   e0401_foreach_int.ei         E0401 at 3:14
+  ok   e0401_from_bytes_arg.ei      E0401 at 3:23
   ok   e0401_gen_body_error_twice.ei E0401 at 2:26
   ok   e0401_gen_conflict.ei        E0401 at 3:29
   ok   e0401_gen_display.ei         E0401 at 4:22
@@ -249,6 +271,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_heap_index_str.ei      E0401 at 3:14
   ok   e0401_heap_len_bool.ei       E0401 at 2:25
   ok   e0401_heap_list_get_arg.ei   E0401 at 3:19
+  ok   e0401_heap_list_lt.ei        E0401 at 3:15
   ok   e0401_heap_list_of_map_eq.ei E0401 at 3:15
   ok   e0401_heap_list_push_arg.ei  E0401 at 3:12
   ok   e0401_heap_map_eq.ei         E0401 at 3:15
@@ -257,7 +280,6 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_heap_ok.ei             E0401 at 43:28
   ok   e0401_heap_print_list.ei     E0401 at 3:11
   ok   e0401_heap_repeat.ei         E0401 at 2:29
-  ok   e0401_heap_string_lt.ei      E0401 at 3:15
   ok   e0401_heap_sum_bool.ei       E0401 at 3:15
   ok   e0401_if_condition.ei        E0401 at 3:8
   ok   e0401_if_let_without_else_bound.ei E0401 at 4:13
@@ -298,6 +320,8 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_return_type_of_tail_if.ei E0401 at 3:23
   ok   e0401_return_value_from_unit.ei E0401 at 3:12
   ok   e0401_return_without_value.ei E0401 at 3:5
+  ok   e0401_shift_widths.ei        E0401 at 3:10
+  ok   e0401_str_lt_string.ei       E0401 at 3:9
   ok   e0401_str_vs_int_compare.ei  E0401 at 3:20
   ok   e0401_tail_if_without_else.ei E0401 at 4:1
   ok   e0401_tail_wrong_type.ei     E0401 at 2:18
@@ -323,6 +347,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_tup_unit_elem.ei       E0401 at 3:25
   ok   e0401_tuple_pattern.ei       E0401 at 4:9
   ok   e0401_unit_match_arm_bound.ei E0401 at 5:14
+  ok   e0401_unit_pattern.ei        E0401 at 4:9
   ok   e0401_unsupported_free_print_enum_value.ei E0401 at 6:18
   ok   e0401_variant_of_other_enum.ei E0401 at 6:9
   ok   e0401_variant_pattern_on_record.ei E0401 at 6:9
@@ -343,6 +368,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0405_now_ms_arity.ei        E0405 at 3:13
   ok   e0405_panic_arity.ei         E0405 at 3:5
   ok   e0405_record_arity.ei        E0405 at 4:13
+  ok   e0405_slice_arity.ei         E0405 at 3:7
   ok   e0405_thr_chan_new_arg.ei    E0405 at 3:29
   ok   e0405_thr_join_arg.ei        E0405 at 4:13
   ok   e0405_thr_mutex_new_none.ei  E0405 at 3:19
@@ -418,6 +444,13 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0504_heap_owned_const.ei    E0504 at 2:26
   ok   e0504_heap_owned_const_list.ei E0504 at 2:22
   ok   e0504_record_const.ei        E0504 at 3:14
+  ok   e0505_shift_assign.ei        E0505 at 4:11
+  ok   e0505_shift_const.ei         E0505 at 2:23
+  ok   e0505_shift_negative.ei      E0505 at 3:10
+  ok   e0505_shift_u8.ei            E0505 at 3:22
+  ok   e0505_shift_width.ei         E0505 at 3:10
+  ok   e0506_push_byte.ei           E0506 at 4:17
+  ok   e0506_push_byte_nul.ei       E0506 at 4:17
   ok   e0601_bound_second_param.ei  E0601 at 11:15
   ok   e0601_bound_unmet_generic_impl.ei E0601 at 12:15
   ok   e0602_mod_trait_impl_bad.ei  E0602 at 4:29
@@ -484,6 +517,8 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0807_comptime_unwrap.ei     E0807 at 10:7
 
 compile-pass tests (compiler/tests/check/pass)
+  ok   c8_bitwise_ok.ei
+  ok   c8_gaps_ok.ei
   ok   comptime_chain.ei
   ok   comptime_edges.ei
   ok   comptime_generic.ei
@@ -546,6 +581,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-544 passed, 0 failed; error-code coverage 38/42
+579 passed, 0 failed; error-code coverage 42/46
 codes without a compile-fail test: E0302 E0402 E0806 E0808
 --- exit 0

@@ -76,5 +76,6 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-74 passed, 0 failed; error-code coverage 42/42
+74 passed, 0 failed; error-code coverage 42/46
+codes without a compile-fail test: E0002 E0116 E0505 E0506
 --- exit 0

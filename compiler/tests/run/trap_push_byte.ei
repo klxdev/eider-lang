@@ -1,0 +1,12 @@
+// push_byte takes only ASCII (1 to 127), so a String stays valid UTF-8: a lead byte of a
+// longer sequence traps.
+
+fn add(inout s: String, b: u8) { s.push_byte(b) }
+
+fn main() uses io {
+    var s = String.from("ok")
+    add(inout s, 33)
+    print(s)
+    add(inout s, 195)
+    print(s)
+}

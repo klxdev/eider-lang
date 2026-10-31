@@ -1,0 +1,1 @@
+{"error":"E0405","span":{"file":"compiler/tests/check/fail/e0405_slice_arity.ei","line":3,"col":7},"message":"`String.slice` takes 2 argument(s), but 1 were given"}

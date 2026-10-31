@@ -61,9 +61,11 @@ Tooling:
 Known limits of this arrangement (all need compiler work):
 
 - Every caller of std needs `uses ffi`, because capabilities propagate and std sits on `extern` calls.
-- `str` has no byte access, so literals become bytes through `sys.lit` (an ffi call).
+- `str` has no byte access, so literals become bytes through `sys.lit` (an ffi call). (C8.2
+  adds `str.bytes()`/`byte(i)`; std switches with 8.9, after the seed has them.)
 - Module names are file stems, so two packages can't both contain `util.ei` (E0808).
-- No bitwise operators: `sha256` uses arithmetic and a byte table.
+- No bitwise operators: `sha256` uses arithmetic and a byte table. (C8.2 adds them; the
+  packages and `compiler/sha256.ei` can use them once the seed is regenerated.)
 
 Known gaps in core/std (fix in core, not by working around them in packages):
 

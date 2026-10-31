@@ -1,0 +1,4 @@
+7
+--- stderr
+error: not a number: x
+--- exit 1

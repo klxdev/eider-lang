@@ -1,0 +1,121 @@
+// Bitwise operators on every integer type (docs/compiler.md, "C8.2: small language gaps"):
+// & | ^ ~ << >> and the compound assignments, run time and folded, at the edges of each
+// type. Expected values are in the comments.
+
+fn u8s(a: u8, b: u8, n: u8) uses io {
+    print(a & b)
+    print(a | b)
+    print(a ^ b)
+    print(~a)
+    print(a << n)
+    print(a >> n)
+}
+
+fn u32s(a: u32, b: u32, n: u32) uses io {
+    print(a & b)
+    print(a | b)
+    print(a ^ b)
+    print(~a)
+    print(a << n)
+    print(a >> n)
+}
+
+fn u64s(a: u64, b: u64, n: u64) uses io {
+    print(a & b)
+    print(a | b)
+    print(a ^ b)
+    print(~a)
+    print(a << n)
+    print(a >> n)
+}
+
+fn usizes(a: usize, n: usize) uses io {
+    print(a & 255)
+    print(a >> n)
+    print(a << n)
+}
+
+fn i32s(a: i32, b: i32, n: i32) uses io {
+    print(a & b)
+    print(a | b)
+    print(a ^ b)
+    print(~a)
+    print(a << n)
+    print(a >> n)
+}
+
+fn i64s(a: i64, b: i64, n: i64) uses io {
+    print(a & b)
+    print(a | b)
+    print(a ^ b)
+    print(~a)
+    print(a << n)
+    print(a >> n)
+}
+
+const MASK: u32 = (1 << 12) - 1
+const HIGH: i64 = -1 << 63
+const NEG: i32 = -100 >> 3
+const FLIP: u8 = ~0x0F
+const MIX: u64 = ((0xFF00 & 0x0FF0) | (1 << 40)) ^ 3
+
+fn main() uses io {
+    print("u8")
+    u8s(240, 60, 2)   // 48 252 204 15 192 60
+    u8s(255, 1, 7)    // 1 255 254 0 128 1
+    u8s(0, 0, 0)      // 0 0 0 255 0 0
+    print("u32")
+    u32s(4294967295, 65535, 31)  // 65535 4294967295 4294901760 0 2147483648 1
+    u32s(1, 2, 0)                // 0 3 3 4294967294 1 1
+    print("u64")
+    u64s(18446744073709551615, 1, 63)  // 1 18446744073709551615 18446744073709551614 0 9223372036854775808 1
+    u64s(12, 10, 1)                    // 8 14 6 18446744073709551603 24 6
+    print("usize")
+    usizes(4096, 4)  // 0 256 65536
+    print("i32")
+    i32s(-1, 5, 31)            // 5 -1 -6 0 -2147483648 -1
+    i32s(-2147483648, -1, 1)   // -2147483648 -1 2147483647 2147483647 0 -1073741824
+    i32s(2147483647, 6, 30)    // 6 2147483647 2147483641 -2147483648 -1073741824 1
+    i32s(-7, 3, 1)             // 1 -5 -6 6 -14 -4
+    print("i64")
+    i64s(-1, 9223372036854775807, 63)  // 9223372036854775807 -1 -9223372036854775808 0 -9223372036854775808 -1
+    i64s(-9223372036854775808, 1, 62)  // 0 -9223372036854775807 -9223372036854775807 9223372036854775807 0 -2
+    print("folded")
+    print(MASK)   // 4095
+    print(HIGH)   // -9223372036854775808
+    print(NEG)    // -13
+    print(FLIP)   // 240
+    print(MIX)    // 1099511631619
+    let k: u8 = b_check()
+    print(k)      // 170
+    print(~5)     // -6
+    print(-8 >> 1)  // -4
+    print((-1 as i64) >> 10)  // -1
+    print((3 & 5) == 1)       // true
+    print(1 << 4 == 16)       // true (a shift may be compared)
+    print(0xF0 >> 4 & 0x3)    // 3 (a shift may be an operand of &)
+    print("compound")
+    var x: u32 = 1
+    x <<= 20     // 1048576
+    x |= 7       // 1048583
+    x &= 0xFF    // 7
+    x ^= 2       // 5
+    x >>= 1      // 2
+    print(x)
+    var y: i32 = -64
+    y >>= 3
+    print(y)     // -8
+    y <<= 2
+    print(y)     // -32
+    // operands are evaluated left to right, once
+    var i: u32 = 0
+    let z = next(inout i) | (next(inout i) << 4)
+    print(z)     // 1 | (2 << 4) = 33
+}
+
+fn b_check() -> u8 { (0xAA & 0xFF) | 0 }
+
+fn next(inout i: u32) -> u32 {
+    i += 1
+    i
+}

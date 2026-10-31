@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_from_bytes_arg.ei","line":3,"col":23},"message":"expected List[u8], found str"}

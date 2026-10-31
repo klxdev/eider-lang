@@ -1,0 +1,5 @@
+// expect: E0401 3:9
+fn f(a: str, b: String) -> bool {
+    a < b
+}
+fn main() {}

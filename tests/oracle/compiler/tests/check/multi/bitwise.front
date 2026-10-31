@@ -1,0 +1,1 @@
+{"error":"E0002","span":{"file":"./compiler/tests/check/multi/bitwise.ei","line":4,"col":11},"message":"`==` and `&` can't be mixed without parentheses","help":"Eider doesn't rank bitwise operators against comparisons, arithmetic or each other; parenthesize the operation that comes first","fix":{"at":{"line":4,"col":5},"delete":5,"insert":"(x & 4)"}}

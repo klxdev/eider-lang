@@ -1,0 +1,20 @@
+// How C8.2's operators group: `|` loosest, then `^`, `&`, shifts, then arithmetic; a shift
+// may be an operand of `& | ^` and of a comparison; `~` is a prefix operator; `()` is an
+// expression and a pattern.
+fn f(a: u32, b: u32) -> bool {
+    let x = a >> 4 & 15
+    let y = (a | b) ^ (~a & (b << 2))
+    let z = a | b | x
+    var w = a
+    w <<= 3
+    w ^= x
+    (y & 1) == 0 && a << 1 > z
+}
+
+fn g() -> Result[(), str] {
+    match Ok(()) {
+        Ok(()) => {}
+        Err(_) => {}
+    }
+    Ok(())
+}

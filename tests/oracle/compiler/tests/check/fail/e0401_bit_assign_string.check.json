@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_bit_assign_string.ei","line":4,"col":5},"message":"operator |= needs integers, found String"}

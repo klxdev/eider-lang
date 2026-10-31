@@ -1,0 +1,1 @@
+{"error":"E0505","span":{"file":"compiler/tests/check/fail/e0505_shift_width.ei","line":3,"col":10},"message":"shift count 32 is out of range for u32 (0 to 31)","help":"a shift count must be at least 0 and less than the type's width in bits"}

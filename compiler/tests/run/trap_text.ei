@@ -1,0 +1,11 @@
+// Slicing a String inside a character traps (a String stays valid UTF-8): output so far is
+// flushed, the message goes to stderr, exit 101.
+
+fn cut(s: String, a: usize, b: usize) -> String { s.slice(a, b) }
+
+fn main() uses io {
+    let s = String.from("añb")
+    print(cut(s, 0, 1))
+    print(cut(s, 0, 3))
+    print(cut(s, 0, 2))
+}

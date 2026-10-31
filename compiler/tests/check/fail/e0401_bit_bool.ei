@@ -1,0 +1,5 @@
+// expect: E0401 3:7
+fn f(a: bool, b: bool) -> bool {
+    a & b
+}
+fn main() {}

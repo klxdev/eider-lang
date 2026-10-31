@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_str_push_byte.ei","line":3,"col":9},"message":"type str has no method `push_byte`"}
