@@ -830,7 +830,7 @@ review the oracle diff, add a test, and regenerate the seed.
   breaks; `u32` results above the signed range come back as negative numbers and
   `u64`/`usize` results as negative BigInts, because the loader passes the raw wasm values
   through.
-- Runtime: `ei_now_ms` is processor time (`clock()`), not a wall clock (core/RUNTIME.md).
+- Runtime: `ei_now_ms` is the monotonic clock in ms (it was processor time, `clock()`, until layer/core-os; core/RUNTIME.md).
 - Answered `unsupported` where the recorded behaviour is wrong, waiting for a language
   decision: `?` in an expression-bodied closure (recorded: checked against the enclosing
   function's return type), and an `extern "c"` or `unsafe fn` used as a function value
@@ -1589,7 +1589,8 @@ tests/run, tests/std, tests/checks). So:
 
 **Tests.** compiler/tests/check/fail: `e0204_method_fs` (a grant of `io` to a package whose
 method uses `fs`), `e0204_unsafe_fn` (an `unsafe fn` without an `ffi` grant),
-`e0201_std_needs_fs_not_ffi` and `e0201_core_wrapper_needs_fs` (the fix adds the real
+`e0201_std_needs_fs_not_ffi`, `e0201_core_wrapper_needs_fs` and `e0201_core_os_needs_net`
+(core/os.ei's `sock_open` from another package needs `net`; the fix adds the real
 capability and then compiles); compiler/tests/check/pass/c85_std_without_ffi.ei (std's
 bytes, env, fs, io and proc with the real capabilities only); tests/checks/fail:
 `e0204_ungranted_fs`, `e0204_ungranted_ffi` (an extern granted only `io`) and

@@ -1,0 +1,94 @@
+// std/fd: open, read/write, positioned I/O, seek, stat, truncate, sync, chmod, flock, dup,
+// pipes and non-blocking reads.
+
+import "core/sys"
+import "std/fs"
+import "std/fd"
+import "std/io"
+
+fn show(b: List[u8]) uses io, ffi { io.outln(b) }
+
+fn run() -> Result[bool, String] uses io, fs, ffi {
+    let dir = sys.lit("target/tmp/std_fd")
+    fs.remove_all(dir)?
+    fs.mkdir_all(dir)?
+    let path = fs.join(dir, sys.lit("data.txt"))
+    let f = fd.open(path, fd.READ_WRITE | fd.CREATE | fd.TRUNCATE, 416)?
+    fd.write_all(f, sys.lit("hello world"))?
+    print(fd.seek(f, 0, fd.FROM_CURRENT)?)
+    fd.seek(f, 0, fd.FROM_START)?
+    show(fd.read(f, 5)?)
+    // positioned I/O leaves the offset alone
+    show(fd.read_at(f, 100, 6)?)
+    print(fd.write_at(f, sys.lit("W"), 6)?)
+    print(fd.seek(f, 0, fd.FROM_CURRENT)?)
+    show(fd.read_at(f, 100, 0)?)
+    let st = fd.stat(f)?
+    print(st.size)
+    print(st.kind == fd.FILE)
+    print(st.mode)
+    print(st.mtime_ns > 1577836800000000000)
+    fd.chmod(f, 384)?
+    print(fd.stat(f)?.mode)
+    fd.truncate(f, 5)?
+    print(fd.stat(f)?.size)
+    fd.sync(f)?
+    fd.sync_data(f)?
+    print(fd.stat_path(dir, true)?.kind == fd.DIR)
+    // flock belongs to the open file: a second open of the same file conflicts
+    let g = fd.open(path, fd.READ, 0)?
+    print(fd.lock(f, true, true)?)
+    print(fd.lock(g, true, false)?)
+    print(fd.lock(g, false, false)?)
+    fd.unlock(f)?
+    print(fd.lock(g, false, false)?)
+    print(fd.lock(f, false, false)?)
+    // dup shares the offset
+    let d = fd.dup(f)?
+    fd.seek(d, 2, fd.FROM_START)?
+    print(fd.seek(f, 0, fd.FROM_CURRENT)?)
+    fd.close(d)?
+    fd.close(g)?
+    fd.close(f)?
+    match fd.close(f) {
+        Ok(_) => print("unexpected")
+        Err(e) => print(e)
+    }
+    // append, exclusive create
+    let a = fd.open(path, fd.WRITE | fd.APPEND, 0)?
+    fd.write_all(a, sys.lit("++"))?
+    fd.close(a)?
+    show(fs.read(path)?)
+    match fd.open(path, fd.WRITE | fd.CREATE | fd.EXCLUSIVE, 384) {
+        Ok(_) => print("unexpected")
+        Err(e) => print(e)
+    }
+    match fd.stat_path(fs.join(dir, sys.lit("missing")), true) {
+        Ok(_) => print("unexpected")
+        Err(e) => print(e)
+    }
+    // a pipe, non-blocking
+    let p = fd.pipe()?
+    fd.set_nonblocking(p.r, true)?
+    match fd.try_read(p.r, 10)? {
+        Some(_) => print("unexpected data")
+        None => print("would block")
+    }
+    fd.write_all(p.w, sys.lit("through the pipe"))?
+    match fd.try_read(p.r, 100)? {
+        Some(b) => show(b)
+        None => print("unexpected block")
+    }
+    fd.close(p.w)?
+    print(fd.read(p.r, 10)?.len())
+    fd.close(p.r)?
+    fs.remove_all(dir)?
+    Ok(true)
+}
+
+fn main() uses io, fs, ffi {
+    match run() {
+        Ok(_) => print("done")
+        Err(e) => print(e)
+    }
+}

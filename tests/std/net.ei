@@ -1,0 +1,224 @@
+// std/net + std/poll: a TCP echo over loopback with non-blocking accept/connect driven by the
+// poller, a UDP round trip, a Unix-domain socket, socket options, name resolution, and a
+// waker woken from another thread.
+
+import "core/sys"
+import "std/bytes"
+import "std/fd"
+import "std/fs"
+import "std/io"
+import "std/net"
+import "std/poll"
+import "std/time"
+
+fn show(b: List[u8]) uses io, ffi { io.outln(b) }
+
+const LISTENER: i64 = 1
+const CLIENT: i64 = 2
+const SERVER: i64 = 3
+
+fn tcp_echo() -> Result[bool, String] uses io, net, ffi {
+    let ls = net.listener(net.ipv4(127, 0, 0, 1, 0), true)?
+    let port = net.local_addr(ls)?.port
+    print(port > 0)
+    match net.accept(ls, true)? {
+        Some(_) => print("unexpected connection")
+        None => print("accept would block")
+    }
+    let p = poll.create()?
+    let cs = net.socket(net.IPV4, net.STREAM, true)?
+    net.set_option(cs, net.NODELAY, 1)?
+    print(net.get_option(cs, net.NODELAY)? != 0)
+    let at_once = net.connect(cs, net.ipv4(127, 0, 0, 1, port))?
+    poll.add(p, ls, poll.READ, LISTENER)?
+    poll.add(p, cs, poll.WRITE, CLIENT)?
+    var conn: i32 = -1
+    var reply: List[u8] = List.new()
+    var done = false
+    var rounds = 0
+    while !done && rounds < 50 {
+        rounds += 1
+        let events = poll.wait(p, 8, 2000)?
+        if events.len() == 0 { return Err(String.from("poll timed out")) }
+        for e in events {
+            if e.token == LISTENER && e.readable && conn < 0 {
+                match net.accept(ls, true)? {
+                    Some(a) => {
+                        conn = a.fd
+                        show(bytes.slice(net.text(a.peer), 0, 10))
+                        poll.add(p, conn, poll.READ, SERVER)?
+                    }
+                    None => {}
+                }
+            } else if e.token == CLIENT && e.writable {
+                net.connect_result(cs)?
+                net.send_all(cs, sys.lit("hello over tcp"))?
+                poll.modify(p, cs, poll.READ, CLIENT)?
+            } else if e.token == SERVER && e.readable {
+                match net.try_recv(conn, 100)? {
+                    Some(b) => {
+                        if b.len() == 0 {
+                            print(e.peer_closed)
+                            poll.remove(p, conn)?
+                            fd.close(conn)?
+                        } else {
+                            net.send_all(conn, b)?
+                        }
+                    }
+                    None => {}
+                }
+            } else if e.token == CLIENT && e.readable {
+                match net.try_recv(cs, 100)? {
+                    Some(b) => {
+                        if b.len() == 0 {
+                            done = true
+                        } else {
+                            bytes.append(inout reply, b)
+                            if reply.len() == 14 { net.shutdown(cs, net.SHUT_WRITE)? }
+                        }
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+    show(reply)
+    print(at_once || done)
+    poll.remove(p, cs)?
+    print(poll.wait(p, 8, 0)?.len())
+    fd.close(cs)?
+    fd.close(ls)?
+    fd.close(p)?
+    // refused
+    let probe = net.socket(net.IPV4, net.STREAM, false)?
+    net.bind(probe, net.ipv4(127, 0, 0, 1, 0))?
+    let closed_port = net.local_addr(probe)?.port
+    fd.close(probe)?
+    let c2 = net.socket(net.IPV4, net.STREAM, false)?
+    match net.connect(c2, net.ipv4(127, 0, 0, 1, closed_port)) {
+        Ok(_) => print("unexpected connect")
+        Err(e) => print(bytes.ends_with(e.bytes(), sys.lit("Connection refused")))
+    }
+    fd.close(c2)?
+    Ok(true)
+}
+
+fn udp() -> Result[bool, String] uses io, net, ffi {
+    let a = net.socket(net.IPV4, net.DATAGRAM, false)?
+    let b = net.socket(net.IPV4, net.DATAGRAM, false)?
+    net.bind(a, net.ipv4(127, 0, 0, 1, 0))?
+    net.bind(b, net.ipv4(127, 0, 0, 1, 0))?
+    let aa = net.local_addr(a)?
+    let ba = net.local_addr(b)?
+    net.send_to(a, sys.lit("ping"), ba)?
+    let d = net.recv_from(b, 100)?
+    show(d.data)
+    print(d.from.port == aa.port)
+    net.send_to(b, sys.lit("pong, truncated"), d.from)?
+    let r = net.recv_from(a, 4)?
+    show(r.data)
+    fd.close(a)?
+    fd.close(b)?
+    Ok(true)
+}
+
+fn unix_socket() -> Result[bool, String] uses io, fs, net, ffi {
+    let dir = sys.lit("target/tmp/std_net")
+    fs.remove_all(dir)?
+    fs.mkdir_all(dir)?
+    let path = fs.join(dir, sys.lit("s"))
+    let ls = net.listener(net.unix(path), false)?
+    show(net.text(net.local_addr(ls)?))
+    let c = net.socket(net.UNIX, net.STREAM, false)?
+    net.connect(c, net.unix(path))?
+    let s = match net.accept(ls, false)? {
+        Some(x) => x
+        None => { return Err(String.from("no connection")) }
+    }
+    show(net.text(s.peer))
+    net.send_all(c, sys.lit("over a unix socket"))?
+    show(net.recv(s.fd, 100)?)
+    show(net.text(net.peer_addr(c)?))
+    fd.close(s.fd)?
+    // the peer is gone: an error, not a SIGPIPE
+    match net.send(c, sys.lit("late")) {
+        Ok(_) => print("unexpected send")
+        Err(_) => print("send failed")
+    }
+    fd.close(c)?
+    fd.close(ls)?
+    let pr = net.pair(net.STREAM)?
+    net.send_all(pr.r, sys.lit("pair"))?
+    show(fd.read(pr.w, 10)?)
+    fd.close(pr.r)?
+    fd.close(pr.w)?
+    fs.remove_all(dir)?
+    Ok(true)
+}
+
+fn names() -> Result[bool, String] uses io, net, ffi {
+    let all = net.lookup(sys.lit("localhost"), sys.lit("80"), 0, net.STREAM)?
+    var loopback = all.len() > 0
+    for a in all {
+        if a.port != 80 { loopback = false }
+        if a.family == net.IPV4 && a.ip[0] != 127 { loopback = false }
+        if a.family == net.IPV6 && !bytes.eq(a.ip, net.ipv6_loopback(0).ip) { loopback = false }
+    }
+    print(loopback)
+    show(net.text(net.parse(sys.lit("10.1.2.3"), 8080)?))
+    show(net.text(net.parse(sys.lit("::1"), 443)?))
+    show(net.text(net.parse(sys.lit("2001:db8::ff00:42:8329"), 1)?))
+    match net.parse(sys.lit("not-an-address"), 1) {
+        Ok(_) => print("unexpected")
+        Err(_) => print("not numeric")
+    }
+    let rev = net.reverse(net.ipv4(127, 0, 0, 1, 22), true)?
+    show(bytes.join(rev, sys.lit(" ")))
+    Ok(true)
+}
+
+fn waker() -> Result[bool, String] uses io, clock, threads, ffi {
+    let p = poll.create()?
+    let w = poll.waker()?
+    poll.add(p, w.r, poll.READ, 9)?
+    print(poll.wait(p, 4, 0)?.len())
+    let t = spawn(|| -> i32 {
+        time.sleep_ms(20)
+        match poll.wake(w) {
+            Ok(_) => { return 0 }
+            Err(_) => { return 1 }
+        }
+    })
+    print(t.join())
+    let ev = poll.wait(p, 4, 5000)?
+    print(ev.len())
+    print(ev[0].token)
+    poll.drain(w)
+    print(poll.wait(p, 4, 0)?.len())
+    poll.close_waker(w)
+    fd.close(p)?
+    Ok(true)
+}
+
+fn main() uses io, fs, net, clock, threads, ffi {
+    match tcp_echo() {
+        Ok(_) => {}
+        Err(e) => print(e)
+    }
+    match udp() {
+        Ok(_) => {}
+        Err(e) => print(e)
+    }
+    match unix_socket() {
+        Ok(_) => {}
+        Err(e) => print(e)
+    }
+    match names() {
+        Ok(_) => {}
+        Err(e) => print(e)
+    }
+    match waker() {
+        Ok(_) => {}
+        Err(e) => print(e)
+    }
+}

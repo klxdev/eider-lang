@@ -1,0 +1,8 @@
+// expect: E0201 7:13
+import "core/os"
+
+// core/os.ei's wrappers declare their real capability next to `ffi`, so opening a socket
+// from another package needs `net` (and not `ffi`)
+fn main() {
+    let s = os.sock_open(4, 1, false)
+}

@@ -381,7 +381,7 @@ void ei_print_u(uint64_t v);
 void ei_print_b(bool v);
 void ei_print_s(const char *v);
 
-// ---- clock: processor time used by the program, in milliseconds (C clock()).
+// ---- clock: milliseconds on the monotonic clock (CLOCK_MONOTONIC), from an arbitrary start.
 
 uint64_t ei_now_ms(void);
 

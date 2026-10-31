@@ -1,0 +1,53 @@
+// std/random: bytes from the OS CSPRNG are not constant, and sizes are what was asked.
+
+import "std/bytes"
+import "std/random"
+
+fn main() uses io, ffi {
+    match random.bytes(32) {
+        Ok(a) => {
+            print(a.len())
+            match random.bytes(32) {
+                Ok(b) => print(bytes.eq(a, b))
+                Err(e) => print(e)
+            }
+            var varied = false
+            for x in a {
+                if x != a[0] { varied = true }
+            }
+            print(varied)
+        }
+        Err(e) => print(e)
+    }
+    match random.bytes(0) {
+        Ok(z) => print(z.len())
+        Err(e) => print(e)
+    }
+    match random.bytes(-1) {
+        Ok(_) => print("unexpected")
+        Err(e) => print(e)
+    }
+    // two u64s colliding has probability 2^-64
+    match random.next_u64() {
+        Ok(x) => {
+            match random.next_u64() {
+                Ok(y) => print(x != y)
+                Err(e) => print(e)
+            }
+        }
+        Err(e) => print(e)
+    }
+    var in_range = true
+    var seen_top = false
+    for i in 0..200 {
+        match random.below(3) {
+            Ok(v) => {
+                if v >= 3 { in_range = false }
+                if v == 2 { seen_top = true }
+            }
+            Err(e) => print(e)
+        }
+    }
+    print(in_range)
+    print(seen_top)
+}

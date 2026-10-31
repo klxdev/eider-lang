@@ -3,7 +3,9 @@
 # core/eider_rt.c: with and without compiler builtins, then under ASan+UBSan and TSan when
 # the toolchain has the sanitizer runtimes (skipped with a message otherwise). UBSan in trap
 # mode needs no runtime library, so undefined behaviour is checked on every toolchain.
-# tests/core/core_test.c (ec_run against core/eider_core.c) runs the same way.
+# tests/core/core_test.c (ec_run, ec_read_fd) and tests/core/os_test.c (descriptors, sockets,
+# DNS, readiness, time, signals, randomness, processes) run against core/eider_core.c the same
+# way.
 cd "$(dirname "$0")/../.." || exit 1
 CC=${CC:-cc}
 STRICT="-std=c11 -pedantic -Wall -Wextra -Wconversion -Wshadow -Werror"
@@ -34,17 +36,20 @@ run() {
   fi
 }
 
-# core NAME FLAGS...: build core_test with FLAGS and run it (it re-executes itself as the child)
+# core NAME FLAGS...: build core_test and os_test with FLAGS and run them (each re-executes
+# itself as the child)
 core() {
   name=$1; shift
-  if ! $CC $STRICT "$@" -o "$T/core_$name" tests/core/core_test.c core/eider_core.c -pthread 2>"$T/log"; then
-    echo "FAIL core ($name): build"; cat "$T/log"; fail=1; return
-  fi
-  if "$T/core_$name" >"$T/out" 2>&1; then
-    echo "ok   core ($name): $(tail -1 "$T/out")"
-  else
-    echo "FAIL core ($name)"; cat "$T/out"; fail=1
-  fi
+  for t in core os; do
+    if ! $CC $STRICT "$@" -o "$T/${t}_$name" tests/core/${t}_test.c core/eider_core.c -pthread 2>"$T/log"; then
+      echo "FAIL $t ($name): build"; cat "$T/log"; fail=1; continue
+    fi
+    if "$T/${t}_$name" >"$T/out" 2>&1; then
+      echo "ok   $t ($name): $(tail -1 "$T/out")"
+    else
+      echo "FAIL $t ($name)"; cat "$T/out"; fail=1
+    fi
+  done
 }
 
 # sanitizer NAME FLAGS...: run under FLAGS if a trivial program builds and runs with them

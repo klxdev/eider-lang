@@ -1,0 +1,15 @@
+STREAMS TO A CHILD
+note
+0
+0
+-1
+after
+6
+running
+-1
+15
+wait: No child processes
+cannot run eider-no-such-program: No such file or directory
+true
+done
+exit 0
