@@ -1,0 +1,27 @@
+// Benchmark (scripts/bench.sh): copies of a List of Strings kept as snapshots, a few of
+// them changed afterwards. Before C8.1 every copy was deep (an allocation per String);
+// copy-on-write makes a copy O(1) and copies only the snapshots that change.
+
+fn total(l: List[String]) -> usize {
+    var n: usize = 0
+    for s in l { n += s.len() }
+    n
+}
+
+fn main() uses io {
+    var base: List[String] = List.new()
+    for i in 0..3000 { base.push(String.from_int(i as i64)) }
+    var snaps: List[List[String]] = List.new()
+    var acc: usize = 0
+    for r in 0..3000 {
+        var c = base
+        if r % 500 == 0 { c[0].push_str("changed") }
+        acc += c.len()
+        snaps.push(c)
+    }
+    base.push(String.from("one more"))
+    print(acc)
+    print(total(snaps[0]))
+    print(total(snaps[1]))
+    print(total(base))
+}

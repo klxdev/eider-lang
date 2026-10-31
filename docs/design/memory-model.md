@@ -189,8 +189,9 @@ fn first(orders: List[Order]) -> Order {
 `String`, `List`, `Map`, `Box` (and records/enums containing them) share their heap buffer
 with a reference count. A "copy" bumps the count; the first mutation of a buffer whose count is
 greater than one makes the real copy. Semantics are unchanged (still values), so existing code
-and tests are unaffected. Counts are non-atomic for values that never leave their thread and
-atomic once a value is sent to another thread.
+and tests are unaffected. Counts are non-atomic: a value is made unique (every buffer it reaches
+its own) before it crosses to another thread, so no count is ever shared by two threads (C8.1;
+docs/compiler.md, "C8.1: copy-on-write", has the scheme and why it beat atomic counts).
 
 This is what makes large lists, parsed files and configuration cheap to pass, store and
 return.
