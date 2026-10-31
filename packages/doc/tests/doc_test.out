@@ -40,13 +40,14 @@ fn main() uses io {
     print(x)
 }
 -- site
-error: target/doc-test/site/SUMMARY.md:5: cannot read the page: cannot read target/doc-test/site/gone.md: No such file or directory
+error: target/doc-test/site/SUMMARY.md:5: cannot read the page target/doc-test/site/gone.md
 error: target/doc-test/site/SUMMARY.md:10: no module or package `nope` was documented
 error: target/doc-test/site/a.md:4: unknown api: target: no item `Missing` in module geo/shapes
-error: target/doc-test/site/a.md:4: links to a page SUMMARY.md doesn't list: c.md
+error: target/doc-test/site/a.md:4: links to a file that doesn't exist: c.md
 error: target/doc-test/site/a.md:5: no heading `#nope` in sub/b.md
 error: target/doc-test/site/a.md:5: images must be local files: https://example.com/x.png
 wrote index.html
+wrote notes/n.html
 wrote a.html
 wrote sub/b.html
 wrote img/logo.txt
@@ -62,6 +63,10 @@ a.html has href="api/geo/shapes.html#Point"
 a.html has &lt;script&gt;alert(1)&lt;/script&gt;
 a.html has <a href="sub/b.html">B</a>
 a.html has aria-current="page"
+n.html has href="../a.html#section-two"
+n.html has href="https://example.com/repo/target/doc-test/geo/shapes.ei"
+n.html has href="https://example.com/repo/target/doc-test/geo/util/"
+n.html has <a href="../notes/n.html" aria-current="page">Note</a>
 shapes.html has id="Point"
 shapes.html has id="Point.x"
 shapes.html has id="origin"

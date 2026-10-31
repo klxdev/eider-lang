@@ -16,17 +16,19 @@ import "summary.ei"
 import "assets.ei"
 
 /// What to build: the Markdown site (`site`: a directory with SUMMARY.md, or empty for an
-/// API-only site), the API, the output directory and the site's name.
-pub type Config = { site: List[u8], out: List[u8], title: List[u8] }
+/// API-only site), the output directory, the site's name, and the URL that links to other
+/// files of the repository start with (`<repo_url>/<path from the current directory>`;
+/// empty: such links stay as written).
+pub type Config = { site: List[u8], out: List[u8], title: List[u8], repo_url: List[u8] }
 
-/// A Markdown page: its file (relative to the site directory), its output path, its title
-/// (the first `#` heading, else the SUMMARY.md entry's) and its SUMMARY.md entry.
-type Page = { src: List[u8], out: List[u8], title: List[u8], entry: u32, text: List[u8] }
+/// A Markdown page: its file (absolute), its output path, its title (the first `#`
+/// heading, else the SUMMARY.md entry's) and its SUMMARY.md entry.
+type Page = { abs: List[u8], out: List[u8], title: List[u8], entry: u32, text: List[u8] }
 
 /// The build: errors are `file:line: message`.
 type Cx = {
     cfg: Config, api: model.Api, sum: summary.Summary, pages: List[Page], errs: List[List[u8]],
-    index: List[List[u8]], files: List[List[u8]], datas: List[List[u8]],
+    index: List[List[u8]], files: List[List[u8]], datas: List[List[u8]], site_abs: List[u8], root_abs: List[u8],
 }
 
 fn err(inout cx: Cx, file: List[u8], line: u32, msg: List[u8]) {
@@ -38,6 +40,22 @@ fn err(inout cx: Cx, file: List[u8], line: u32, msg: List[u8]) {
     cx.errs.push(m)
 }
 
+fn absolute(p: List[u8]) -> List[u8] uses fs {
+    if p.len() == 0 { return p }
+    match fs.absolute(p.copy()) {
+        Ok(a) => a
+        Err(_) => p
+    }
+}
+
+/// A file as errors name it: relative to the current directory when it is below it.
+fn shown_path(cx: Cx, abs: List[u8]) -> List[u8] {
+    match path.relative_to(abs.copy(), cx.root_abs.copy()) {
+        Some(r) => r
+        None => abs
+    }
+}
+
 fn cat(a: str, b: List[u8]) -> List[u8] {
     let mut m = a.bytes()
     bytes.append(inout m, b)
@@ -46,7 +64,7 @@ fn cat(a: str, b: List[u8]) -> List[u8] {
 
 /// Builds the site into `cfg.out`; returns the errors (none: success).
 pub fn build(cfg: Config, api: model.Api) -> List[List[u8]] uses fs {
-    let mut cx = Cx(cfg.copy(), api, summary.Summary(List.new(), List.new()), List.new(), List.new(), List.new(), List.new(), List.new())
+    let mut cx = Cx(cfg.copy(), api, summary.Summary(List.new(), List.new()), List.new(), List.new(), List.new(), List.new(), List.new(), absolute(cfg.site), absolute(".".bytes()))
     if cfg.site.len() > 0 { load_site(inout cx) }
     for i in 0..cx.pages.len() { md_page(inout cx, i) }
     for i in 0..cx.api.packages.len() { package_page(inout cx, i) }
@@ -125,16 +143,37 @@ fn load_site(inout cx: Cx) uses fs {
             err(inout cx, sp.copy(), e.line, "an entry links to a .md page or to api:<package>".bytes())
             continue
         }
-        let file = path.normalize(e.href)
-        let text = match fs.read(fs.join(cx.cfg.site, file.copy())) {
+        let abs = path.normalize(path.join(cx.site_abs.copy(), e.href.copy()))
+        let text = match fs.read(abs.copy()) {
             Ok(t) => t
             Err(m) => {
-                err(inout cx, sp.copy(), e.line, cat("cannot read the page: ", m.bytes()))
+                let shown = shown_path(cx, abs.copy())
+                err(inout cx, sp.copy(), e.line, cat("cannot read the page ", shown))
                 continue
             }
         }
-        let out = html_of(file.copy())
-        cx.pages.push(Page(file, out, e.title, i as u32, text))
+        let out = match out_of(cx, abs.copy()) {
+            Some(o) => html_of(o)
+            None => {
+                err(inout cx, sp.copy(), e.line, cat("a page must be in the site's directory or next to it: ", e.href.copy()))
+                continue
+            }
+        }
+        cx.pages.push(Page(abs, out, e.title, i as u32, text))
+    }
+}
+
+/// Where a file of the site goes in the output: its path relative to the site's directory,
+/// or, for a file beside it (docs/design next to docs/site), relative to the directory
+/// above (`design/memory-model.md`).
+fn out_of(cx: Cx, abs: List[u8]) -> Option[List[u8]] {
+    match path.relative_to(abs.copy(), cx.site_abs.copy()) {
+        Some(r) => { return Some(r) }
+        None => {}
+    }
+    match path.parent(cx.site_abs.copy()) {
+        Some(up) => path.relative_to(abs, up)
+        None => None
     }
 }
 
@@ -187,18 +226,22 @@ fn has_scheme(h: List[u8]) -> bool {
     false
 }
 
-fn page_index(cx: Cx, file: List[u8]) -> u32 {
+fn page_index(cx: Cx, abs: List[u8]) -> u32 {
     for i in 0..cx.pages.len() {
-        if bytes.eq(cx.pages[i].src, file) { return i as u32 }
+        if bytes.eq(cx.pages[i].abs, abs) { return i as u32 }
     }
     model.none()
 }
 
-/// The href map for the links of document `d`, which is shown on site page `page`: `api:`
-/// targets resolved, `.md` links (relative to `dir`, the Markdown file's directory, when
-/// `dir_ok`) turned into `.html`; problems reported against `file`, whose line 1 is the
-/// document's line `first`.
-fn hrefs(inout cx: Cx, d: markdown.Doc, page: List[u8], dir: List[u8], dir_ok: bool, file: List[u8], first: u32) -> Map[List[u8], List[u8]] uses fs {
+/// The href map for the links of document `d`, which is shown on site page `page`:
+/// - `api:` targets resolved;
+/// - with `dir` (the absolute directory of the Markdown file; empty for doc comments):
+///   links to pages SUMMARY.md lists go to their `.html` (a missing heading is an error),
+///   images are copied into the site, and links to other files of the repository go to
+///   `repo_url/<path>` (kept as written without a repo URL); a link to a file that doesn't
+///   exist, or to a `.md` file of the site that SUMMARY.md doesn't list, is an error.
+/// Problems are reported against `file`, whose line 1 is the document's line `first`.
+fn hrefs(inout cx: Cx, d: markdown.Doc, page: List[u8], dir: List[u8], file: List[u8], first: u32) -> Map[List[u8], List[u8]] uses fs {
     let mut m: Map[List[u8], List[u8]] = Map.new()
     for l in markdown.links(d) {
         let line = first + l.line - 1
@@ -206,23 +249,33 @@ fn hrefs(inout cx: Cx, d: markdown.Doc, page: List[u8], dir: List[u8], dir_ok: b
         if l.image {
             if has_scheme(h) || bytes.starts_with(h, "//".bytes()) {
                 err(inout cx, file.copy(), line, cat("images must be local files: ", h))
-            } else if dir_ok && h.len() > 0 {
-                let src = path.normalize(path.join(dir, h.copy()))
-                match fs.read(fs.join(cx.cfg.site, src.copy())) {
-                    Ok(data) => emit(inout cx, src, data)
-                    Err(_) => err(inout cx, file.copy(), line, cat("no such image: ", h))
+            } else if dir.len() > 0 && h.len() > 0 {
+                let abs = path.normalize(path.join(dir.copy(), h.copy()))
+                let data = match fs.read(abs.copy()) {
+                    Ok(x) => x
+                    Err(_) => {
+                        err(inout cx, file.copy(), line, cat("no such image: ", h))
+                        continue
+                    }
+                }
+                match out_of(cx, abs) {
+                    Some(o) => {
+                        m.insert(h.copy(), html.rel(page.copy(), o.copy()))
+                        emit(inout cx, o, data)
+                    }
+                    None => err(inout cx, file.copy(), line, cat("an image must be in the site's directory or next to it: ", h))
                 }
             }
             continue
         }
         if bytes.starts_with(h, "api:".bytes()) {
             match model.resolve(cx.api, bytes.slice(h, 4, h.len())) {
-                Ok(to) => { m.insert(h.copy(), html.rel(page, to)) }
+                Ok(to) => { m.insert(h.copy(), html.rel(page.copy(), to)) }
                 Err(e) => err(inout cx, file.copy(), line, cat("unknown api: target: ", e))
             }
             continue
         }
-        if has_scheme(h) || h.len() == 0 || h[0] == 35 || !dir_ok { continue }
+        if has_scheme(h) || h.len() == 0 || h[0] == 35 || dir.len() == 0 || bytes.starts_with(h, "//".bytes()) { continue }
         let mut target = h.copy()
         let mut frag: List[u8] = List.new()
         match bytes.find_byte(h, 35, 0) {
@@ -232,31 +285,52 @@ fn hrefs(inout cx: Cx, d: markdown.Doc, page: List[u8], dir: List[u8], dir_ok: b
             }
             None => {}
         }
-        if !bytes.ends_with(target, ".md".bytes()) { continue }
-        let file_md = path.normalize(path.join(dir, target.copy()))
-        let pi = page_index(cx, file_md.copy())
-        if pi == model.none() {
-            err(inout cx, file.copy(), line, cat("links to a page SUMMARY.md doesn't list: ", file_md))
+        let abs = path.normalize(path.join(dir.copy(), target.copy()))
+        let pi = page_index(cx, abs.copy())
+        if pi != model.none() {
+            if frag.len() > 1 {
+                let want = bytes.slice(frag, 1, frag.len())
+                let mut found = false
+                for hd in markdown.headings(markdown.parse(cx.pages[pi as usize].text)) {
+                    if bytes.eq(hd.anchor, want) { found = true }
+                }
+                if !found {
+                    let mut msg = "no heading `".bytes()
+                    bytes.append(inout msg, frag.copy())
+                    bytes.append(inout msg, "` in ".bytes())
+                    bytes.append(inout msg, target.copy())
+                    err(inout cx, file.copy(), line, msg)
+                }
+            }
+            let mut out = html.rel(page.copy(), cx.pages[pi as usize].out.copy())
+            bytes.append(inout out, frag)
+            m.insert(h.copy(), out)
             continue
         }
-        if frag.len() > 1 {
-            let want = bytes.slice(frag, 1, frag.len())
-            let mut found = false
-            for hd in markdown.headings(markdown.parse(cx.pages[pi as usize].text)) {
-                if bytes.eq(hd.anchor, want) { found = true }
-            }
-            if !found {
-                let mut msg = "no heading `".bytes()
-                bytes.append(inout msg, frag)
-                bytes.append(inout msg, "` in ".bytes())
-                bytes.append(inout msg, file_md)
-                err(inout cx, file.copy(), line, msg)
-            }
+        if !fs.exists(abs.copy()) {
+            err(inout cx, file.copy(), line, cat("links to a file that doesn't exist: ", target))
+            continue
         }
-        let mut out = bytes.slice(target, 0, target.len() - 3)
-        bytes.append(inout out, ".html".bytes())
-        bytes.append(inout out, frag)
-        m.insert(h.copy(), out)
+        let in_site = match path.relative_to(abs.copy(), cx.site_abs.copy()) {
+            Some(_) => true
+            None => false
+        }
+        if in_site && bytes.ends_with(target, ".md".bytes()) {
+            err(inout cx, file.copy(), line, cat("links to a page SUMMARY.md doesn't list: ", target))
+            continue
+        }
+        if cx.cfg.repo_url.len() == 0 { continue }
+        match path.relative_to(abs.copy(), cx.root_abs.copy()) {
+            Some(r) => {
+                let mut out = cx.cfg.repo_url.copy()
+                if out[out.len() - 1] != 47 { out.push(47) }
+                bytes.append(inout out, r)
+                if fs.is_dir(abs) { out.push(47) }
+                bytes.append(inout out, frag)
+                m.insert(h.copy(), out)
+            }
+            None => {}
+        }
     }
     m
 }
@@ -272,8 +346,8 @@ fn md_options(m: Map[List[u8], List[u8]], anchors: bool) -> markdown.Options {
 fn md_page(inout cx: Cx, i: usize) uses fs {
     let pg = cx.pages[i].copy()
     let d = markdown.parse(pg.text)
-    let shown = fs.join(cx.cfg.site, pg.src.copy())
-    let m = hrefs(inout cx, d, pg.out, fs.dirname(pg.src), true, shown, 1)
+    let shown = shown_path(cx, pg.abs.copy())
+    let m = hrefs(inout cx, d, pg.out.copy(), fs.dirname(pg.abs.copy()), shown, 1)
     let body = markdown.html(d, md_options(m, true))
     let mut title = markdown.title(d)
     if title.len() == 0 { title = pg.title.copy() }
@@ -357,7 +431,9 @@ fn entry_page(cx: Cx, e: summary.Entry) -> List[u8] {
             Err(_) => List.new()
         }
     }
-    html_of(path.normalize(e.href))
+    let pi = page_index(cx, path.normalize(path.join(cx.site_abs.copy(), e.href.copy())))
+    if pi == model.none() { return html_of(path.normalize(e.href)) }
+    cx.pages[pi as usize].out.copy()
 }
 
 /// The modules of package `pi` as a nested list (when `page` is one of its pages).
@@ -511,7 +587,7 @@ fn kind_label(k: List[u8]) -> List[u8] {
 fn doc_html(inout cx: Cx, doc: List[u8], page: List[u8], file: List[u8], first: u32) -> List[u8] uses fs {
     if doc.len() == 0 { return List.new() }
     let d = markdown.parse(doc)
-    let m = hrefs(inout cx, d, page, List.new(), false, file, first)
+    let m = hrefs(inout cx, d, page, List.new(), file, first)
     markdown.html(d, md_options(m, false))
 }
 
@@ -804,7 +880,7 @@ fn module_page(inout cx: Cx, mi: usize) uses fs {
             html.put(inout o, "\">")
             if g == 4 { html.text(inout o, it.sig.copy()) } else { html.text(inout o, it.name.copy()) }
             html.put(inout o, "</a></dt><dd>")
-            bytes.append(inout o, markdown.inline_html(markdown.summary(it.doc.copy()), markdown.options()))
+            html.text(inout o, markdown.summary(it.doc.copy()))
             html.put(inout o, "</dd>")
         }
         if any { html.put(inout o, "</dl>\n") }
@@ -869,7 +945,7 @@ fn package_page(inout cx: Cx, pi: usize) {
         html.put(inout o, "\">")
         html.text(inout o, model.key(md.copy()))
         html.put(inout o, "</a></dt><dd>")
-        bytes.append(inout o, markdown.inline_html(markdown.summary(module_doc(md.copy())), markdown.options()))
+        html.text(inout o, markdown.summary(module_doc(md.copy())))
         html.put(inout o, "</dd>")
     }
     html.put(inout o, "</dl>\n")

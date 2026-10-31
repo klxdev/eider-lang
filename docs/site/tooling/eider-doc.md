@@ -165,10 +165,20 @@ Each `## Section` is a group in the navigation. An entry is `- [Title](page.md)`
 `- [Title](api:<package>)` for a package's generated API. Two more spaces of indentation
 nest an entry under the one above it. A page's title is its `#` heading.
 
+A page can also live next to the site's directory. For example, `- [Roadmap](../design/roadmap.md)`
+in `docs/site/SUMMARY.md` puts `docs/design/roadmap.md` on the site as `design/roadmap.html`.
+Such pages are shown but not doc-tested: they are notes, not written for the test rules.
+
 Links between pages are written to the `.md` files (`[the tour](../guide/tour.md#modules)`)
-and become links to the `.html` pages. A link to a page `SUMMARY.md` doesn't list, or to a
-heading that doesn't exist, fails the build. So do remote images: images must be files of the
-site, and they are copied into it.
+and become links to the `.html` pages. A link to any other file that exists, such as
+`[the example](../../../examples/todo/todo.ei)`, goes to `<repo url>/<its path>` when
+`--repo-url` is given (`scripts/docs.sh` gives the GitHub repository), and stays as written
+otherwise. These links fail the build:
+
+- a link to a file that doesn't exist;
+- a link to a `.md` page in the site's directory that `SUMMARY.md` doesn't list;
+- a link to a heading that doesn't exist;
+- a remote image. Images must be files of the site, and they are copied into it.
 
 ```sh
 eider-doc build --site docs --out public --title "My library" .
@@ -182,6 +192,7 @@ eider-doc test --site docs .
 | `--out <dir>` | where the site goes (default `target/site`) |
 | `--site <dir>` | the directory with `SUMMARY.md` and the pages (default `docs/site` when it has a `SUMMARY.md`; `--site ''` for an API-only site) |
 | `--title <name>` | the site's name (default: the first package's name) |
+| `--repo-url <url>` | where links to files that aren't pages go: `<url>/<path from the current directory>` (for example `https://github.com/you/lib/blob/main`) |
 | `<package dirs...>` | the packages to document (default: the current directory; in the Eider repository, core, std and every package) |
 
 The site has `index.html`, the pages, `api/<package>/<module>.html` for each module,

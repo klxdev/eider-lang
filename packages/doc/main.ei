@@ -21,7 +21,7 @@ import "model.ei"
 import "site.ei"
 import "doctest.ei"
 
-type Args = { cmd: List[u8], out: List[u8], site: List[u8], site_set: bool, title: List[u8], dirs: List[List[u8]] }
+type Args = { cmd: List[u8], out: List[u8], site: List[u8], site_set: bool, title: List[u8], repo_url: List[u8], dirs: List[List[u8]] }
 
 fn usage() -> List[u8] {
     let mut t: List[u8] = List.new()
@@ -29,10 +29,11 @@ fn usage() -> List[u8] {
         "eider-doc: documentation sites and doc tests for Eider packages",
         "",
         "usage:",
-        "  eider-doc build [--out dir] [--site dir] [--title name] [package dirs...]",
+        "  eider-doc build [--out dir] [--site dir] [--title name] [--repo-url url] [package dirs...]",
         "      write the site into --out (default target/site): the Markdown pages listed in the",
         "      site's SUMMARY.md (default docs/site, when it exists; --site '' for none) and the",
-        "      API of each package (eiderc doc --json <dir>)",
+        "      API of each package (eiderc doc --json <dir>); links from pages to other files go to",
+        "      <url>/<path from the current directory> with --repo-url, else stay as written",
         "  eider-doc test [--site dir] [package dirs...]",
         "      run the code blocks of the site's pages and of the packages' doc comments as tests",
         "  eider-doc help",
@@ -55,7 +56,7 @@ fn die(msg: List[u8]) uses io {
 
 fn parse_args() -> Args uses io {
     let argv = env.args()
-    let mut a = Args(List.new(), "target/site".bytes(), List.new(), false, List.new(), List.new())
+    let mut a = Args(List.new(), "target/site".bytes(), List.new(), false, List.new(), List.new(), List.new())
     let mut i: usize = 1
     while i < argv.len() {
         let x = argv[i].copy()
@@ -63,7 +64,7 @@ fn parse_args() -> Args uses io {
         if bytes.eq(x, "--help".bytes()) || bytes.eq(x, "-h".bytes()) || bytes.eq(x, "help".bytes()) {
             io.out(usage())
             env.exit(0)
-        } else if bytes.eq(x, "--out".bytes()) || bytes.eq(x, "--site".bytes()) || bytes.eq(x, "--title".bytes()) {
+        } else if bytes.eq(x, "--out".bytes()) || bytes.eq(x, "--site".bytes()) || bytes.eq(x, "--title".bytes()) || bytes.eq(x, "--repo-url".bytes()) {
             if i >= argv.len() {
                 let mut m = x.copy()
                 bytes.append(inout m, " needs a value".bytes())
@@ -76,6 +77,8 @@ fn parse_args() -> Args uses io {
             } else if bytes.eq(x, "--site".bytes()) {
                 a.site = v
                 a.site_set = true
+            } else if bytes.eq(x, "--repo-url".bytes()) {
+                a.repo_url = v
             } else {
                 a.title = v
             }
@@ -182,7 +185,7 @@ fn build(a: Args) uses io, fs, net {
     if title.len() == 0 {
         if in_toolchain() || api.packages.len() == 0 { title = "Eider".bytes() } else { title = api.packages[0].name.copy() }
     }
-    let cfg = site.Config(site_dir(a), a.out.copy(), title)
+    let cfg = site.Config(site_dir(a), a.out.copy(), title, a.repo_url.copy())
     let errs = site.build(cfg, api)
     for e in errs {
         let m = e.copy()
@@ -216,6 +219,8 @@ fn run_tests(a: Args) uses io, fs, net {
             }
         }
         for p in pages {
+            // pages beside the site (docs/design: notes, not written to the contract) are shown, not tested
+            if bytes.starts_with(p, "../".bytes()) { continue }
             match fs.read(fs.join(sd.copy(), p.copy())) {
                 Ok(t) => {
                     for c in doctest.cases(fs.join(sd.copy(), p.copy()), t, 1) { cases.push(c) }

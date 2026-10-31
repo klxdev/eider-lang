@@ -4,8 +4,8 @@
 #   sh scripts/docs.sh test                       runs the doc tests of the pages and of
 #                                                 the doc comments of core, std and packages/*
 # Needs only a C compiler: the compiler comes from the seed (scripts/ei) and eider-doc is
-# built with it. The seed's compiler has no `eiderc doc` until the seed is regenerated after
-# docs/compiler.md "Documentation: `eiderc doc`", so until then this uses compiler/ as the
+# built with it. When the seed's compiler has no `eiderc doc` (a compiler change that hasn't
+# reached the seed yet), this uses compiler/ as the
 # seed builds it (target/eiderc-next, rebuilt when compiler/, std/ or core/ is newer).
 cd "$(dirname "$0")/.." || exit 1
 mkdir -p target
@@ -28,4 +28,4 @@ if [ "$1" = test ]; then
   shift
   exec $bin test "$@"
 fi
-exec $bin build --out target/site "$@"
+exec $bin build --out target/site --repo-url "${EIDER_REPO_URL:-https://github.com/klxdev/eider-lang/blob/main}" "$@"

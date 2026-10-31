@@ -184,15 +184,16 @@ fn site_build() uses io, fs {
         Err(e) => say(e)
     }
     let out = fs.join(root.copy(), "out".bytes())
-    let errs = site.build(site.Config(sd.copy(), out.copy(), "Test".bytes()), api.copy())
+    let errs = site.build(site.Config(sd.copy(), out.copy(), "Test".bytes(), "https://example.com/repo".bytes()), api.copy())
     for e in errs { say(label("error: ", e)) }
     // without the broken entries and links it builds; the sources aren't there, so the
     // source pages are the only errors
-    put_file(sd.copy(), "SUMMARY.md", "## Guide\n\n- [A](a.md)\n  - [B](sub/b.md)\n\n## API\n\n- [geo](api:geo)\n")
+    put_file(sd.copy(), "SUMMARY.md", "## Guide\n\n- [A](a.md)\n  - [B](sub/b.md)\n\n## Notes\n\n- [Note](../notes/n.md)\n\n## API\n\n- [geo](api:geo)\n")
+    put_file(root.copy(), "notes/n.md", "# Note\n\nBack to [A](../site/a.md#section-two); [the source](../geo/shapes.ei), [a directory](../geo/util/), [the package](../geo/).\n")
     put_file(sd.copy(), "a.md", "# Page A\n\nSee [B](sub/b.md#second) and [the point](api:geo/shapes#Point). ![logo](img/logo.txt)\n\n## Section two\n\n<script>alert(1)</script>\n")
-    let errs2 = site.build(site.Config(sd.copy(), out.copy(), "Test".bytes()), api)
+    let errs2 = site.build(site.Config(sd.copy(), out.copy(), "Test".bytes(), "https://example.com/repo".bytes()), api)
     for e in errs2 { say(label("error: ", e)) }
-    for f in ["index.html", "a.html", "sub/b.html", "img/logo.txt", "api/index.html", "api/geo/index.html", "api/geo/shapes.html", "api/geo/util/vec.html", "style.css", "search-index.js", "search-index.json"] {
+    for f in ["index.html", "notes/n.html", "a.html", "sub/b.html", "img/logo.txt", "api/index.html", "api/geo/index.html", "api/geo/shapes.html", "api/geo/util/vec.html", "style.css", "search-index.js", "search-index.json"] {
         let there = fs.exists(fs.join(out.copy(), f.bytes()))
         if there { say(label("wrote ", f.bytes())) } else { say(label("MISSING ", f.bytes())) }
     }
@@ -204,6 +205,17 @@ fn site_build() uses io, fs {
         match bytes.find(a, want.bytes(), 0) {
             Some(_) => say(label("a.html has ", want.bytes()))
             None => say(label("a.html LACKS ", want.bytes()))
+        }
+    }
+    // a page beside the site, with links back into it and to files of the repository
+    let n: List[u8] = match fs.read(fs.join(out.copy(), "notes/n.html".bytes())) {
+        Ok(t) => t
+        Err(_) => List.new()
+    }
+    for want in ["href=\"../a.html#section-two\"", "href=\"https://example.com/repo/target/doc-test/geo/shapes.ei\"", "href=\"https://example.com/repo/target/doc-test/geo/util/\"", "<a href=\"../notes/n.html\" aria-current=\"page\">Note</a>"] {
+        match bytes.find(n, want.bytes(), 0) {
+            Some(_) => say(label("n.html has ", want.bytes()))
+            None => say(label("n.html LACKS ", want.bytes()))
         }
     }
     let s: List[u8] = match fs.read(fs.join(out.copy(), "api/geo/shapes.html".bytes())) {

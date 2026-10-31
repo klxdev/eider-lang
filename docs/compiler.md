@@ -743,9 +743,9 @@ format for users). Without `--json` it prints a text listing like `go doc`.
 - core, std and every package under packages/ must document with no warning, and core must
   have the prelude.
 
-**Seed.** `doc` is new in compiler/, and the seed doesn't have it until it is regenerated.
-Until then scripts/docs.sh uses compiler/ as the seed builds it (`target/eiderc-next`),
-whenever `target/eiderc doc` fails. Once the seed has `doc`, docs.sh uses `target/eiderc`.
+**Seed.** The seed was regenerated with `doc`, so scripts/docs.sh uses `target/eiderc`. When
+a compiler change hasn't reached the seed yet and `target/eiderc doc` fails, docs.sh falls
+back to compiler/ as the seed builds it (`target/eiderc-next`).
 
 ## Front-end recovery
 
