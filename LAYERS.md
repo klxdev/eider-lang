@@ -58,7 +58,7 @@ Building Eider must stay cheap to bootstrap and audit. The rule:
   and every pair of backends must agree byte for byte (tests/crypto/run.sh).
 - **Development and test tooling** may use more: `sh` for the scripts, `git` (package-manager
   tests), a second C compiler (clang), sanitizer runtimes (ASan/UBSan/TSan) and `node` (the
-  wasm test). The differential oracle is the recorded `tests/oracle/` (docs/compiler.md, "C7:
+  wasm test, and the tree-sitter CLI of the grammar check, `scripts/check-tools.sh`). The differential oracle is the recorded `tests/oracle/` (docs/compiler.md, "C7:
   recording the oracle"), not a second compiler. `scripts/verify.sh` skips a leg, with the reason,
   when its tool is missing.
 
@@ -78,6 +78,9 @@ Tooling:
 - `tests/std/run.sh`, `tests/packages.sh`: suites for std and packages (both run by `scripts/verify.sh`).
 - `scripts/docs.sh [test]`: builds the documentation site into `target/site` with eider-doc (docs/site, docs/site/tooling/eider-doc.md), or runs its doc tests (both run by `scripts/verify.sh`).
 - `tests/pkg/run.sh`: eider-pkg end to end against local git repositories under `target/tmp/pkgtest/` (no network; also run by `scripts/verify.sh`).
+- `scripts/check-tools.sh`: the editor tooling, which lives in its own repositories next to this one (`EIDER_ANALYZER`, `TREE_SITTER_EIDER`; default `../eider-analyzer`, `../tree-sitter-eider`): eider-analyzer (the language server, written in Eider, with `compiler/` as a path dependency) is built and tested against this checkout, and tree-sitter-eider's `scripts/check-eider-lang.sh` must parse every `.ei` file here without ERROR or MISSING nodes. It is the "tools" leg of `scripts/verify.sh`; a missing repository or tool (the tree-sitter CLI needs `node`) is a skipped leg, so a plain checkout stays green.
+
+**A syntax or IDE-visible change updates the grammar and analyzer in the same wave.** A new token, keyword, operator, item, statement, pattern or literal form, or a change to what the IDE shows (prelude items, built-in types and methods, symbols, diagnostics with fixes), lands together with the matching change to tree-sitter-eider (grammar.js, the queries, a `test/corpus` case) and to eider-analyzer (the lexical stand-in, completion and hover, a session test), committed in their repositories in the same wave. The "Syntax changes (for the tree-sitter grammar)" paragraph of each docs/compiler.md section says what the grammar needs. `scripts/verify.sh` is not ALL GREEN with the tools leg failing: before C152 the two drifted from C8.2 to C8.25 unnoticed, and editors showed false errors such as "expected `=`" on `let mut`.
 
 Known limits of this arrangement (all need compiler work):
 
