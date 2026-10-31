@@ -90,8 +90,10 @@ Stats { requests: 1000, errors: 20 }
   `f(old) -> new` under the lock.
 - An `update` closure that locks the same mutex again traps (`cannot lock a mutex`) instead
   of deadlocking.
-- `std/sync`'s `Lock[T]` adds `with(f)`, which returns a result along with the new value:
-  "change the state and tell me what happened" in one critical section. The example services
+- `std/sync`'s `Lock[T]` adds `modify(f)`, whose closure changes the value in place
+  (`|inout s: T| -> R`) and returns a result: "change the state and tell me what happened"
+  in one critical section, without copying the state. (`with(f)`, whose closure returns the
+  new value and the result, is kept for code that builds a new value.) The example services
   of eider-rpc and eider-openapi ([Building services](services.md)) keep their state in one.
 
 ## `Chan[T]`: sending values

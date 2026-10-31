@@ -599,7 +599,21 @@ The rest of the driver, so every command the tests use exists in eiderc.
   environment variable to stdout and exits 0; no arguments prints it to stderr and exits 2;
   an unknown option, an unknown command, a missing source file, a stray second file, `-o`/`-l`
   without a value, or `--compile-fail` with another command is a one-line `eiderc:` error
-  plus a pointer to `--help`, exit 2 (unknown flags are not silently ignored).
+  plus a pointer to `--help`, exit 2 (unknown flags are not silently ignored). The text is
+  recorded (tests/oracle/compiler/main.help, the version written `<VERSION>`).
+- **Program arguments** (C300). `eiderc run <file> [options] [--] args...`: a word after the
+  file that isn't an option goes to the program, and after `--` every word does, options
+  included (`eiderc run server.ei --release -- --port 80`); the program sees them after its
+  own path in `env.args()`. Program arguments or `--` with another command are a usage
+  error (a stray second file of `check` still is one). `run --lib` and `run --wasm` only
+  build and ignore them, as before.
+- **Toolchain root** (C301, `toolchain.ei`). One lookup for the driver (the core it compiles)
+  and resolve (the prelude, `std/...` and `core/...` imports): `$EIDER_ROOT`, else the
+  nearest directory above the eiderc binary (argv[0], symlinks resolved) holding
+  `core/eider_rt.h`, else the same search from the working directory (resolve then uses
+  `.`, so the E0804 names `./core/prelude.ei`). Before, resolve took the directory two
+  levels above argv[0] unresolved, so an eiderc at `<root>/bin/x/eiderc` failed with E0804
+  for the prelude while the driver found the core.
 - **Tests** (`scripts/test-compiler.sh`): "unit" (compiler/tests/unit/sha256.ei: the FIPS
   180-4 vectors, the padding edges, 100 KB), "compile-fail", "cache" (hits; the -O level,
   `EIDER_CFLAGS` and the core in the key; concurrency; no work directory left; `off`) and
@@ -677,6 +691,13 @@ errors"). `eiderc ide <file.ei>
   is one bool test and nothing else reads the recording, so check, build and the C are
   unchanged. Module refs (import paths and aliases, `alias.` qualifiers) come from the
   ASTs and `Module.aliases`.
+- **Labels** (C304, #83). A loop label (`outer: for ...`, "C8.22") is a symbol of kind
+  `SK_LABEL` (12) in the enclosing function, its detail `outer: for` / `outer: while`;
+  `break outer` and `continue outer` are refs to the nearest enclosing loop with that label,
+  found from the AST while the bodies' locals are walked (labels are their own namespace,
+  and sibling loops may share one, so a label is resolved lexically, not by name).
+  compiler/tests/ide/labels.ei; eider-analyzer shows them in the outline (under their
+  function) and finds their references.
 - **Overlays.** `resolve.load_from` reads sources through `resolve.Files`: fs.read, except
   for files whose canonical path is an overlay's (`resolve.disk()` has none). Module
   identity (packages, paths in them) is unchanged by an overlay.
@@ -890,9 +911,11 @@ review the oracle diff, add a test, and regenerate the seed.
   `program` ("C7: comptime"; a trap in an imported module or the prelude names its file
   since "C8.16").
 - Threads: `contains` on a List of handles compares them as equal ("C7: threads").
-- Library header: every header has the include guard `EIDER_EXPORTS_H`, so two libraries'
-  headers can't be included together (compiler/tests/export/consumer.c declares by hand);
-  header type names keep the recorded spelling (`R_<mangled name>`, "C7: FFI").
+- Library header: header type names keep the recorded spelling (`R_<mangled name>`, "C7:
+  FFI"), so two libraries exporting records of one name can't be included together. (The
+  shared include guard `EIDER_EXPORTS_H` is fixed: each header's guard is
+  `EIDER_<NAME>_H`, from the library's name, C302; compiler/tests/export/consumer.c
+  includes two headers.)
 - WebAssembly loader (kept byte-identical to `tests/oracle/compiler/tests/wasm/*.js`,
   core/wasm/README.md): an export
   parameter named `x` shadows the loader's `const x = inst.exports`, so calling that export
@@ -948,7 +971,9 @@ review the oracle diff, add a test, and regenerate the seed.
   `$EIDER_ROOT`, else the nearest directory above the eiderc binary (argv[0], symlinks
   resolved) that contains `core/eider_rt.h`, else the same search from the working
   directory. That needs no build-time configuration: `target/eiderc` in a checkout finds the
-  checkout, and an installed eiderc needs `EIDER_ROOT` (or a `core/` above it).
+  checkout, and an installed eiderc needs `EIDER_ROOT` (or a `core/` above it). resolve finds
+  the prelude and std the same way (`toolchain.ei`, C301; before, it took the directory two
+  levels above argv[0]).
 - **Tests** (`scripts/test-compiler.sh`, "run" and "sanitize"): every in-scope program in
   tests/run and compiler/tests/run (19 of 27 at C4, 31 of 34 since C5) must match the
   recorded stdout, stderr and exit code under `run`, and under `test` when it has test
@@ -1490,8 +1515,8 @@ two `()`s directly stays E0401 ("cannot compare values of type ()").
 - **Iter**: `for x in e` over a type with its own Iter runs on a copy of e, owned by the loop
   (`it := e; loop { r := it.next(); if r is None break; x := r's item; body }`), so the
   original is unchanged; break, continue, return and `?` drop what they leave. Ranges, Lists
-  and arrays keep their own loops (same IR, same C). `I: Iter` is met by List, arrays and own
-  impls.
+  and arrays keep their own loops (same IR, same C; since C303 a List's loop also runs over
+  its own share of the List, "C8.20"). `I: Iter` is met by List, arrays and own impls.
 - **Drop**: a record's own `drop` runs exactly once per value, when its last holder goes. A
   record with its own Drop is laid out as a pointer to a shared buffer holding its fields
   (`struct t_R { struct td_R *p; }`, made by `rnew_R`): every copy shares it (a count, as for
@@ -1755,7 +1780,10 @@ uses none of the new syntax until the next seed.
   (a copy-on-write share), silently. Passing a reference as an ordinary argument is a borrow
   as for any place.
 - `for x in xs` keeps its own copy of each element (unchanged: the charter names `let` and
-  pattern bindings only, and the loop runs over a List that its body may still push to).
+  pattern bindings only, and the body may still write or push to the List). Since C303 the
+  loop runs over a snapshot of the List taken when it starts (as over an array or a Map,
+  "C8.20"); before, it read the List place again at each iteration, so it saw the body's
+  writes and pushes.
 - `var` (deprecated) keeps making its own copy, so every existing `var` means what it did.
 - Exclusivity (E0301) counts a reference as the variable its place is rooted at: `f(inout
   xs, o)` with `o = xs[0]` is E0301 "`o` refers into `xs`, which is borrowed mutably by
@@ -1902,8 +1930,9 @@ its children and http's server test hung under this compiler; it binds with `var
 the audit's help says to for such types. That finding was missed by the first sweep, which
 only applied fixes, and is the reason for test-compiler.sh's "meaning" leg: tests/std, the
 packages' and the examples' tests must give their .out under this compiler as well as the
-seed. The `for x in r` over a reference r to a List keeps r alive for the whole loop now (the
-List is read again each iteration), so a push to it in the body is reported too.
+seed. The `for x in r` over a reference r to a List kept r alive for the whole loop (the List
+was read again each iteration), so a push to it in the body was reported too; since C303 the
+loop takes a snapshot when it starts, which is r's last use there.
 
 There is no way in 8.6 other than the deprecated `var` to take a share of a value without
 Copy out of a place before replacing the place (`let k = t.kids; t.kids = List.new()`): a
@@ -2276,6 +2305,25 @@ ir.ei (B_MAP_KEYS, B_MAP_VALUES, B_MAP_ENTRIES), lower.ei (`map_lists`).
   so the body may insert into or remove from `m` and the loop still sees each pair from
   before exactly once (value semantics; a live view would make every resize during the loop
   an E0308).
+- **Lists too** (C303, #81). `for x in xs` over a List runs over a snapshot of `xs` taken
+  before the loop, like an array (copied) and a Map (its entries): the loop owns a share of
+  the List (`take`, a copy-on-write count), reads its length and elements from that share,
+  and drops it after the loop on every exit. A write, push, pop or clear of `xs` in the body
+  changes `xs` (the first one un-shares it: one copy per loop that writes, none otherwise)
+  and not what the loop walks. Before, the loop read the List place again at each
+  iteration, so it saw later elements written and visited elements pushed (the language
+  reference described that, while "C8.4"'s Iter said the loop runs on a copy); the snapshot is what the
+  memory model's value semantics and the two other sequences mean, and a protection rule
+  (no invalidating write to a List while it is walked) would have made every such push an
+  E0308. A `for` over a reference now uses the reference once, at the start (the protection
+  rule no longer keeps it alive through the loop). The audit for code that relied on the
+  old behaviour (every write to the walked List inside the body, through a temporary
+  audit-refs variant over every .ei file here and in the sibling repositories) found none
+  outside compiler/tests/audit/loop.ei, whose finding is gone (C303). Tests:
+  compiler/tests/run/for_snapshot.ei (element writes, push, pop, clear, an `inout` argument,
+  a reference, a mutable alias, a List of records with break and continue, nested loops over
+  one List; hand-checked .out, leak-free, sanitizers). The IR and C of a loop over a List
+  place gain the share and its drop.
 - `for` takes any irrefutable pattern, over every sequence (`for (n, (name, on)) in pairs`,
   `for (mut n, _) in ps`): each binding owns a copy of its part, as a `for` variable does
   (C8.6); a pattern that can fail is **E0101** "refutable pattern in `for`", a wrong shape
@@ -2596,8 +2644,10 @@ chain, the root, a Failure into an application error by `From`, printing; hand-c
 leak-free, sanitizers); compile-fail `e0601_context_needs_error`, `e0401_failure_no_from`.
 
 **Remaining.** `dyn Error` causes (P0.7); `main` returning `Result[(), Failure]` printing
-the chain (C8.2's list of printable `Err`s); std/stream's `Error` and the other std errors
-implementing `error.Error` (8.9, std's owners).
+the chain (C8.2's list of printable `Err`s). (std's own errors implement `error.Error`
+since C322: String, the errors of fs/io/proc, through an impl in std/error, and
+stream.Error, strings.ParseError and encoding.DecodeError in their modules; docs/std.md
+"Errors and std/error".)
 
 ## C8.25: method chains across lines
 

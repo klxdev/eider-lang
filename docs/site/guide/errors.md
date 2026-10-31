@@ -265,21 +265,24 @@ line 1: expected a number
 true
 ```
 
-> **Note:** The toolchain's own I/O functions (`std/fs`, `std/io`, `std/env`) return
-> `Result[_, String]`, and `String` doesn't implement `error.Error` (it is a built-in type,
-> so the orphan rule keeps std from implementing the trait for it). Wrap such an error
-> first: `fs.read(p).map_err(|e| error.Failure(e, None)).context("reading the config")`.
-> `std/stream`'s typed `stream.Error` has a `From[String]` impl for `?` and keeps its own
-> kind (`e.kind == stream.TimedOut`).
+Every error the standard library returns is an `error.Error`, so `.context` and `?` work
+on them as they are: the `String` errors of `std/fs`, `std/io` and `std/proc` (std/error
+implements `error.Error` for `String`: the message is the text, with no source), and the
+typed `stream.Error`, `strings.ParseError` and `encoding.DecodeError`:
 
 ```eider
 import std.error
 import std.fs
+import std.strings
 
 fn load(path: str) -> Result[List[u8], error.Failure] uses fs {
-    let r = fs.read(String.from(path).bytes())
-    let text = r.map_err(|e| error.Failure(e, None)).context("reading the config")?
+    let text = fs.read(String.from(path).bytes()).context("reading the config")?
     Ok(text)
+}
+
+fn port(text: str) -> Result[i64, error.Failure] {
+    let n = strings.parse_i64(text)?            // a ParseError, through From
+    Ok(n)
 }
 
 fn main() uses io, fs {
@@ -287,12 +290,20 @@ fn main() uses io, fs {
         Ok(_) => print("loaded")
         Err(f) => print(f)
     }
+    match port("80x") {
+        Ok(n) => print(n)
+        Err(f) => print(f)
+    }
 }
 ```
 
 ```output
 reading the config: cannot read /nonexistent/app.toml: No such file or directory
+invalid digit at byte 2
 ```
+
+A Failure keeps messages only. To act on what kind of I/O error it was, use `std/stream`'s
+typed errors (`e.kind == stream.TimedOut`) before wrapping them.
 
 An application error can take a `Failure` too (`impl From[error.Failure] for AppError`), so
 `?` keeps working across layers.

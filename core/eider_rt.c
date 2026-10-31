@@ -580,6 +580,56 @@ void ei_thread_destroy(ei_thread *t) {
   ei_mutex_destroy(&t->mu);
 }
 
+// ---- the program entry (core/RUNTIME.md "Stack overflow": the main thread). The Eider
+// `main` runs on a runtime thread of its own, with the guard, alternate stack and stack size
+// every spawned thread has. The C main thread blocks every signal before it starts it (the
+// new thread inherits that mask and restores the original first), then only waits: a
+// signal for the process is delivered to a thread that doesn't block it, which is the Eider
+// main thread or one it spawned, as when it ran on the C main thread.
+
+#if defined(EI_GUARDED_STACKS)
+typedef struct {
+  int (*body)(void);
+  sigset_t mask; /* the C main thread's mask before ei_main blocked everything */
+  int code;
+} main_ctx;
+
+static void *main_run(void *p) {
+  main_ctx *m = p;
+  pthread_sigmask(SIG_SETMASK, &m->mask, NULL);
+  m->code = m->body();
+  return NULL;
+}
+#endif
+
+int ei_main(int (*body)(void)) {
+#if defined(EI_GUARDED_STACKS)
+  main_ctx m;
+  m.body = body;
+  m.code = 0;
+  sigset_t all;
+  sigfillset(&all);
+  if (pthread_sigmask(SIG_SETMASK, &all, &m.mask) == 0) {
+    pthread_once(&fault_once, fault_handlers_install);
+    ei_thread t;
+    memset(&t, 0, sizeof t);
+    t.run = main_run;
+    t.arg = &m;
+    if (thread_start_guarded(&t)) {
+      /* the body exits the process itself when it calls exit (env.exit, a trap) */
+      int r = pthread_join(t.th, NULL);
+      map_release(t.map, t.map_len);
+      pthread_sigmask(SIG_SETMASK, &m.mask, NULL);
+      if (r != 0) ei_trap("cannot join a thread", 0);
+      return m.code;
+    }
+    pthread_sigmask(SIG_SETMASK, &m.mask, NULL);
+  }
+#endif
+  /* no guarded thread: the body runs here, on the kernel's stack (an overflow is SIGSEGV) */
+  return body();
+}
+
 void ei_chan_init(ei_chan *c, uint64_t elem_size) {
   ei_mutex_init(&c->mu);
   if (pthread_cond_init(&c->cv, NULL) != 0) {

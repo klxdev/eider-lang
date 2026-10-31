@@ -5,6 +5,8 @@
 //! ASCII only (Unicode case mapping and the White_Space property are P2, docs/std.md).
 //! Integer parsing reports what was wrong (`ParseError`) instead of returning None.
 
+import std.error
+
 /// A text argument: `str` or `String`.
 pub trait Text {
     fn text(self) -> String
@@ -369,6 +371,12 @@ impl Show for ParseError {
             OutOfRange => out.push_str("number out of range")
         }
     }
+}
+
+/// A ParseError is an `error.Error` (its text, no source): `.context` and `?` into a Failure.
+impl error.Error for ParseError {
+    fn message(self) -> String { self.to_string() }
+    fn source(self) -> Option[error.Failure] { None }
 }
 
 fn digit(b: u8, radix: u32) -> Option[u32] {

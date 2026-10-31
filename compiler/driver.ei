@@ -40,10 +40,10 @@
 // returns a built program (cached or in a work directory) and `discard` removes its work
 // directory; `build`, `build_lib` and `run` are the commands.
 //
-// The toolchain root (the directory holding core/) is $EIDER_ROOT if set; otherwise the
-// nearest directory above the eiderc binary (argv[0], symlinks resolved) that contains
-// core/eider_rt.h, so target/eiderc in a checkout finds the checkout; otherwise the same
-// search from the working directory.
+// The toolchain root (the directory holding core/) is toolchain.find's (toolchain.ei, shared
+// with resolve): $EIDER_ROOT if set; otherwise the nearest directory above the eiderc binary
+// (argv[0], symlinks resolved) that contains core/eider_rt.h, so target/eiderc in a checkout
+// finds the checkout; otherwise the same search from the working directory.
 
 import "core/sys"
 import "std/bytes"
@@ -52,6 +52,7 @@ import "std/io"
 import "std/env"
 import "std/proc"
 import "sha256.ei"
+import "toolchain.ei"
 
 fn s(x: str) -> List[u8] { sys.lit(x) }
 
@@ -62,20 +63,6 @@ pub fn fail(msg: List[u8], code: i32) uses io {
     env.exit(code)
 }
 
-fn has_core(dir: List[u8]) -> bool uses fs { fs.exists(fs.join(dir, s("core/eider_rt.h"))) }
-
-/// The nearest of `dir` and its parents that contains core/eider_rt.h ("" if none).
-fn search_up(dir: List[u8]) -> List[u8] uses fs {
-    let mut d = dir.copy()
-    while d.len() > 0 {
-        if has_core(d) { return d }
-        let up = fs.dirname(d)
-        if bytes.eq(up, d) { break }
-        d = up
-    }
-    List.new()
-}
-
 /// The toolchain root (see the top of this file).
 pub fn root() -> List[u8] uses io, fs {
     let r = find_root()
@@ -83,29 +70,9 @@ pub fn root() -> List[u8] uses io, fs {
     r
 }
 
-/// `root`, or "" when there is none (instead of exiting).
-pub fn find_root() -> List[u8] uses io, fs {
-    match env.get(s("EIDER_ROOT")) {
-        Some(r) => { if r.len() > 0 { return r } }
-        None => {}
-    }
-    let argv = env.args()
-    if argv.len() > 0 {
-        let exe: List[u8] = match fs.canonical(argv[0]) {
-            Ok(x) => x
-            Err(_) => List.new()
-        }
-        if exe.len() > 0 {
-            let r = search_up(fs.dirname(exe))
-            if r.len() > 0 { return r }
-        }
-    }
-    let here: List[u8] = match fs.cwd() {
-        Ok(x) => x
-        Err(_) => List.new()
-    }
-    search_up(here)
-}
+/// `root`, or "" when there is none (instead of exiting): toolchain.find, the lookup resolve
+/// uses for the prelude and std too.
+pub fn find_root() -> List[u8] uses io, fs { toolchain.find() }
 
 /// A new work directory of our own (`work_dir`: under the cache or target/, never shared
 /// with another process); the caller removes it.
@@ -542,6 +509,18 @@ pub fn build(c: List[u8], file: List[u8], out: List[u8], libs: List[List[u8]]) u
 
 /// `eiderc build --lib`: lib<name>.a, lib<name>.so and <name>.h (see the top of this file)
 /// from the library C `c` and its header `h`.
+/// The name of the library `build --lib` makes from `file` with `-o out` (lib<name>.a,
+/// <name>.h): out's file name, else the source's stem. The header's include guard is
+/// derived from it (lower.header).
+pub fn lib_name(file: List[u8], out: List[u8]) -> List[u8] {
+    let mut base = out.copy()
+    if base.len() == 0 { base = stem(file) }
+    match bytes.rfind_byte(base, 47) {
+        Some(i) => bytes.slice(base, i + 1, base.len())
+        None => base
+    }
+}
+
 pub fn build_lib(c: List[u8], h: List[u8], file: List[u8], out: List[u8], libs: List[List[u8]]) uses io, fs, net, clock {
     let mut base = out.copy()
     if base.len() == 0 { base = stem(file) }
@@ -620,11 +599,13 @@ pub fn build_lib(c: List[u8], h: List[u8], file: List[u8], out: List[u8], libs: 
 }
 
 /// `eiderc run` / `eiderc test`: build (or take from the cache), run, exit with the
-/// program's exit code (a program killed by signal n exits 128 + n).
-pub fn run(c: List[u8], file: List[u8], release: bool, libs: List[List[u8]]) uses io, fs, net, clock {
+/// program's exit code (a program killed by signal n exits 128 + n). `args` are the
+/// program's arguments (`eiderc run x.ei [--] args...`; none for `test`).
+pub fn run(c: List[u8], file: List[u8], release: bool, libs: List[List[u8]], args: List[List[u8]]) uses io, fs, net, clock {
     let e = executable(c, file, release, libs)
     let mut argv: List[List[u8]] = List.new()
     argv.push(e.path)
+    for x in args { argv.push(x) }
     let code = match proc.run(argv) {
         Ok(n) => n
         Err(_) => {

@@ -1,0 +1,4 @@
+10000
+--- stderr
+eider: runtime error: stack overflow (compiler/tests/run/stack_overflow_main.ei:0)
+--- exit 101

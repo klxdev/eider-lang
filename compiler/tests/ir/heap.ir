@@ -12,57 +12,65 @@ fn label -> String
 fn first_long -> Option[String]
   %0 param xs: List[String]
   %1 param min: usize
-  %2 temp: usize
-  %3 temp: usize
+  %2 temp: List[String]
+  %3 temp: List[String]
   %4 temp: List[String]
   %5 temp: usize
-  %6 temp: bool
-  %7 let x: String
-  %8 temp: String
-  %9 temp: String
-  %10 temp: usize
-  %11 temp: usize
-  %12 temp: bool
-  %13 temp: String
-  %14 temp: String
-  %15 temp: Option[String]
-  %16 temp: usize
-  %17 temp: usize
+  %6 temp: usize
+  %7 temp: List[String]
+  %8 temp: usize
+  %9 temp: bool
+  %10 let x: String
+  %11 temp: String
+  %12 temp: String
+  %13 temp: usize
+  %14 temp: usize
+  %15 temp: bool
+  %16 temp: String
+  %17 temp: String
   %18 temp: Option[String]
+  %19 temp: usize
+  %20 temp: usize
+  %21 temp: Option[String]
   {
-    %2 = 0usize
+    %2 = read %0
+    %3 = clone %2
+    %4 = %3
+    %5 = 0usize
     loop {
-      %3 = read %2
-      %4 = read %0
-      %5 = len(%4)
-      %6 = %3 < %5
-      if %6 {
+      %6 = read %5
+      %7 = read %4
+      %8 = len(%7)
+      %9 = %6 < %8
+      if %9 {
       } else {
         break
       }
-      %8 = read %0[%3]@11
-      %7 = clone %8
-      %9 = read %7
-      %10 = len(%9)
-      %11 = read %1
-      %12 = %10 < %11
-      if %12 {
-        drop %7: String
+      %11 = read %4[%6]@11
+      %10 = clone %11
+      %12 = read %10
+      %13 = len(%12)
+      %14 = read %1
+      %15 = %13 < %14
+      if %15 {
+        drop %10: String
         continue
       } else {
       }
-      %13 = read %7
-      %14 = clone %13
-      %15 = Option[String].<0>(%14)
-      drop %7: String
-      return %15
+      %16 = read %10
+      %17 = clone %16
+      %18 = Option[String].<0>(%17)
+      drop %10: String
+      drop %4: List[String]
+      return %18
     } step {
-      %16 = read %2
-      %17 = %16 +% 1usize
-      store %2 = %17
+      %19 = read %5
+      %20 = %19 +% 1usize
+      store %5 = %20
     }
-    %18 = Option[String].<1>()
-    return %18
+    %21 = Option[String].<1>()
+    drop %4: List[String]
+    return %21
   }
 
 fn count -> Option[usize]

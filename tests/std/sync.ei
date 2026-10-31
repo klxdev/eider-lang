@@ -1,0 +1,89 @@
+// std/sync's Lock: modify (in place, with a result), with, update and get; results and
+// captured values that share buffers with the guarded value stay independent of it; 8
+// threads changing one record of a List and a Map in place with exact totals; and a large
+// value changed many times, which is quick only because nothing of it is copied (issue #90:
+// each call used to copy the whole value).
+
+import std.sync
+
+type St = { n: i64, names: List[String], seen: Map[String, i64] }
+
+fn main() uses io, threads {
+    // the four operations and their results
+    let l = sync.lock(St(0, List.new(), Map.new()))
+    let k = String.from("a")
+    let r = l.modify(|inout s: St| -> i64 {
+        s.n += 1
+        s.names.push(k)
+        s.seen.insert(k, 1)
+        s.n * 10
+    })
+    print(r)
+    print(l.with(|s: St| -> (St, usize) (s, s.names.len())))
+    l.update(|s: St| -> St {
+        let mut t = s.copy()
+        t.n += 100
+        t
+    })
+    print(l.get().n)
+    l.modify(|inout s: St| -> () { s.n += 1 })
+    print(l.get().n)
+
+    // a result that shares a part of the value, then changed: the value keeps its own
+    let mut got = l.modify(|inout s: St| -> String s.names[0])
+    got.push_str("bc")
+    print(got)
+    print(l.get().names[0])
+    // a captured value put into the value, then changed by its owner
+    let mut mine = String.from("x")
+    l.modify(|inout s: St| -> () { s.names.push(mine) })
+    mine.push_str("yz")
+    print(mine)
+    print(l.get().names[1])
+    // a copy from get is independent too
+    let mut c = l.get()
+    c.names.push(String.from("only in the copy"))
+    print(c.names.len())
+    print(l.get().names.len())
+
+    // 8 threads x 500 changes in place, each returning what it saw
+    let sh = sync.lock(St(0, List.new(), Map.new()))
+    let mut ts: List[Task[i64]] = List.new()
+    for i in 0..8 {
+        ts.push(spawn(|| -> i64 {
+            let mut last: i64 = 0
+            for j in 0..500 {
+                let name = String.from_int((i * 1000 + j) as i64)
+                last = sh.modify(|inout s: St| -> i64 {
+                    s.n += 1
+                    s.names.push(name)
+                    s.seen.insert(name, s.n)
+                    s.n
+                })
+            }
+            last
+        }))
+    }
+    let mut most: i64 = 0
+    for t in ts {
+        let v = t.join()
+        if v > most { most = v }
+    }
+    let fin = sh.get()
+    print(most)
+    print(fin.n)
+    print(fin.names.len())
+    print(fin.seen.len())
+    print(fin.seen.get(String.from("7499")).is_some())
+
+    // a large value changed many times: 2000 changes of a million-element List (copying it
+    // each time would be 16 GB)
+    let mut big: List[i64] = List.new()
+    for i in 0..1000000 { big.push(i as i64) }
+    let bl = sync.lock(big)
+    for i in 0..2000 { bl.modify(|inout xs: List[i64]| -> () { xs[i as usize] = xs[i as usize] + 1 }) }
+    let mut sum: i64 = 0
+    for i in 0..1000 { sum += bl.with(|xs: List[i64]| -> (List[i64], i64) (xs, xs[i as usize])) }
+    print(sum)
+    print(bl.modify(|inout xs: List[i64]| -> usize xs.len()))
+}

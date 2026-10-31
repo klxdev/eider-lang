@@ -42,7 +42,7 @@ arguments are relative to it.
 `--offline` makes `fetch` and `update` fail instead of touching the network. Only `add`,
 `remove`, `fetch`, `update` and `vendor` ever do, and `fetch` only when a pinned commit
 isn't already in the local mirror. Errors are printed as `eider-pkg: <message>` with exit
-code 1 (on stdout, not stderr, for now).
+code 1 on stderr; stdout carries only what a command reports when it succeeds.
 
 ## eider.toml
 

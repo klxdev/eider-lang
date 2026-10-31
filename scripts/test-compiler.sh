@@ -35,7 +35,8 @@
 #   sanitize: every run again with its C at -O2 -Werror (so -Wmaybe-uninitialized is
 #             checked) under UBSan in trap mode (-fsanitize=undefined
 #             -fsanitize-undefined-trap-on-error, no runtime library needed); the output must
-#             equal the plain run's. ASan and TSan run too when their runtimes are installed.
+#             equal the plain run's. ASan and TSan run too when their runtimes are installed
+#             (a test with `// nosan: thread` skips TSan: compiler/tests/run/stack_overflow_main.ei).
 #   leaks:    every run again with -DEI_RT_COUNT_ALLOCS (the runtime counts live allocations
 #             and generated main reports them when the program ends normally): a run that
 #             exits 0 must report `eider: outstanding allocations: 0`, and apart from that
@@ -94,8 +95,11 @@
 #             toolchain, concurrent runs on an empty cache, no work directories left over.
 #   doc:      `eiderc doc` of compiler/tests/doc/shapes (JSON, text, --private) and of one of
 #             its files equals the goldens there; core, std and packages/* document cleanly.
-#   usage:    `--help` lists every command; unknown options/commands and stray arguments
-#             exit 2; `--version` and `version` print `eiderc <VERSION>`.
+#   usage:    `--help` lists every command and equals the oracle (X.help); unknown
+#             options/commands and stray arguments exit 2; `--version` and `version` print
+#             `eiderc <VERSION>`; `run <file> [--] args...` passes the arguments to the program
+#             (compiler/tests/driver/args.ei); an eiderc at <root>/bin/x/eiderc finds its
+#             toolchain (toolchain.ei).
 cd "$(dirname "$0")/.." || exit 1
 mkdir -p target
 # EIDERC=<binary> tests that compiler instead of target/eiderc-next, compiler/ as built by
@@ -325,6 +329,9 @@ for f in tests/run/*.ei compiler/tests/run/*.ei; do
     fi
     # the same program at -O2 under each available sanitizer
     for s in $sans; do
+      # `// nosan: thread` in a test: not under that sanitizer (TSan runs out of stack inside
+      # its own runtime before a stack overflow reaches the runtime's guard; core/RUNTIME.md)
+      case " $(sed -n 's|^// nosan: ||p' "$f") " in *" $s "*) continue ;; esac
       rsan=$((rsan + 1))
       flags="-Werror -O2 -fsanitize=$s"
       [ $s = undefined ] && flags="$flags -fsanitize-undefined-trap-on-error"
@@ -711,7 +718,8 @@ pcheck "\"kind\":\"lock\",\"fn\":$(fnid bump $p),\"line\":$(at 'm.update(' $src)
 pcheck "\"kind\":\"recv\",\"fn\":$(fnid main $p),\"line\":$(at 'c.recv()' $src)," $p "conc: receive waits in main"
 pcheck "\"kind\":\"spawn\",\"fn\":$(fnid main $p),\"line\":$(at 'ts.push(spawn(' $src),\"n\":8," $p "conc: 8 spawns"
 pcheck '"key":"work","value":"bump"' $p "conc: the label"
-pcheck '"threads_started":9,"threads_exited":8' $p "conc: threads"
+# (9 threads: main and 8 spawns; main ends too, since it runs on a runtime thread: ei_main)
+pcheck '"threads_started":9,"threads_exited":9' $p "conc: threads"
 grep -q '^320$' $pdir/conc.out || { echo "FAIL profile: conc output"; pfail=1; }
 # cpu samples, labels, a snapshot and the file at exit
 (cd $pdir && EIDER_PROF=$pdir/cpu.prof EIDER_PROF_HZ=500 ./cpu >cpu.out 2>&1)
@@ -822,5 +830,32 @@ for v in --version version; do
   [ $? = 0 ] && [ "$got" = "$want" ] || { echo "FAIL usage: \`eiderc $v\` prints \`$got\`, not \`$want\`"; uok=0; }
 done
 head -1 $tmp/o | grep -q "^$want " || { echo "FAIL usage: --help does not start with \`$want\`"; uok=0; }
-if [ $uok = 1 ]; then echo "ok   usage: --help lists every command; unknown options, commands and stray arguments exit 2; --version is VERSION"; else fail=1; fi
+# the whole --help text is the oracle's (tests/oracle/compiler/main.help, the version written
+# <VERSION>): every option and environment variable (WASM_CC too) is listed
+sed "1s/^$want /eiderc <VERSION> /" $tmp/o >$tmp/help
+bless compiler/main.ei help $tmp/help
+want_of compiler/main.ei help | cmp -s - $tmp/help || { echo "FAIL usage: --help differs from the oracle"; want_of compiler/main.ei help | diff - $tmp/help | head -10; uok=0; }
+# `run <file> [--] args...`: the program gets every argument after the file; after `--` also
+# the ones that look like options (driver.run); with another command they are an error
+printf '1: [a]\n2: [-b]\n3: [c d]\n4: [--release]\n5: [--]\n5\n' >$tmp/args_want
+EIDER_CACHE=off $new run compiler/tests/driver/args.ei a -- -b "c d" --release -- >$tmp/args_got 2>&1
+cmp -s $tmp/args_want $tmp/args_got || { echo "FAIL usage: run args.ei a -- ... gives:"; head -5 $tmp/args_got; uok=0; }
+printf '1: [x]\n2: [y]\n2\n' >$tmp/args_want
+EIDER_CACHE=off $new run compiler/tests/driver/args.ei --release x y >$tmp/args_got 2>&1
+cmp -s $tmp/args_want $tmp/args_got || { echo "FAIL usage: run --release args.ei x y gives:"; head -5 $tmp/args_got; uok=0; }
+$new check compiler/tests/driver/args.ei -- x >/dev/null 2>&1
+[ $? = 2 ] || { echo "FAIL usage: program arguments to check are not an error"; uok=0; }
+# the toolchain root (toolchain.ei, shared by the driver and resolve): an eiderc two levels
+# below the root (<root>/bin/x/eiderc) finds the prelude, std and the core without EIDER_ROOT
+tc=$(pwd)/target/tctest
+rm -rf $tc
+mkdir -p $tc/bin/x
+cp $new $tc/bin/x/eiderc
+ln -s "$(pwd)/core" $tc/core
+ln -s "$(pwd)/std" $tc/std
+targs=$(pwd)/compiler/tests/driver/args.ei
+(unset EIDER_ROOT; cd $tc && EIDER_CACHE=off ./bin/x/eiderc run "$targs" deep) >$tmp/tc_got 2>&1
+printf '1: [deep]\n1\n' | cmp -s - $tmp/tc_got || { echo "FAIL usage: an eiderc at <root>/bin/x/eiderc gives:"; head -5 $tmp/tc_got; uok=0; }
+rm -rf $tc
+if [ $uok = 1 ]; then echo "ok   usage: --help lists every command and equals the oracle; unknown options, commands and stray arguments exit 2; --version is VERSION; run passes program arguments; an eiderc below <root>/bin finds the toolchain"; else fail=1; fi
 exit $fail

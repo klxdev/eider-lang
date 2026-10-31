@@ -118,7 +118,9 @@ fn main() uses threads {
 ```
 
 [`std/sync`](api:std/sync#Lock)'s `Lock[T]` is a lock whose closure also returns a result, for
-read-modify-write operations that need to report something.
+read-modify-write operations that need to report something: `l.modify(|inout s: T| -> R
+{ ... })` changes the value in place (nothing of it is copied), `l.with(|s: T| -> (T, R)
+...)` builds a new value, `l.update(f)` and `l.get()` are as for a Mutex.
 
 ## `Chan[T]`
 

@@ -152,15 +152,13 @@ fn main() uses io {
 ## `for` loop variables
 
 The variable (or pattern bindings) of a `for` loop is a read-only copy of each element, not a
-reference, so the body may change the sequence while the loop runs. What the loop then sees
-depends on the sequence:
-
-- A `for` over a List place reads the List again at each iteration: element `i` is read when
-  iteration `i` starts, and the loop ends when `i` reaches the List's current length. So
-  elements the body pushes are visited, writes to later elements are seen, and a `pop` ends
-  the loop sooner.
-- A `for` over an array, a Map (its entries) or a fresh value runs over a copy taken when the
-  loop starts; changes made by the body are not seen.
+reference, so the body may change the sequence while the loop runs. The loop itself runs over
+a **snapshot** of the sequence taken when it starts, whatever the sequence is (a List, an
+array, a Map's entries, an `Iter` value): elements the body pushes are not visited, writes to
+later elements are not seen by the loop, and a `pop` or `clear` doesn't end it sooner. The
+changes are in the sequence once the loop is done. The snapshot is cheap: it shares the
+List's buffer (copy-on-write), and the body's first write to the List makes the copy. A
+worklist that must see what it adds is written with an index (`while i < xs.len()`).
 
 See [statements](statements.md).
 
@@ -170,12 +168,12 @@ fn main() uses io {
     xs.push(1)
     xs.push(2)
     for x in xs {
-        if x < 10 { xs.push(x + 10) }  // visited later in this loop
+        if x < 10 { xs.push(x + 10) }  // not visited: the loop walks [1, 2]
     }
     print(xs)
     let mut arr = [1, 2, 3]
     for a in arr {
-        arr[2] = 9                     // not seen: the loop runs over a copy
+        arr[2] = 9                     // not seen by the loop either
         print(a)
     }
 }

@@ -1,0 +1,62 @@
+files
+  compiler/tests/ide/labels.ei
+  <prelude>
+diags
+symbols
+  0 module labels compiler/tests/ide/labels.ei:1:1-1:1 full 1:1-30:1 :: compiler/tests/ide/labels.ei
+  1 fn find compiler/tests/ide/labels.ei:4:4-4:8 full 4:1-23:2 :: fn find(xs: List[i64], want: i64) -> bool
+  2 param xs compiler/tests/ide/labels.ei:4:9-4:11 full 4:9-4:22 in 1 :: xs: List[i64]
+  3 param want compiler/tests/ide/labels.ei:4:24-4:28 full 4:24-4:33 in 1 :: want: i64
+  4 local found compiler/tests/ide/labels.ei:5:13-5:18 full 5:5-5:26 in 1 :: bool
+  5 local x compiler/tests/ide/labels.ei:6:15-6:16 full 6:15-6:16 in 1 :: i64
+  6 label rows compiler/tests/ide/labels.ei:6:5-6:9 full 6:5-6:9 in 1 :: rows: for
+  7 local i compiler/tests/ide/labels.ei:7:17-7:18 full 7:9-7:27 in 1 :: i64
+  8 label cols compiler/tests/ide/labels.ei:8:9-8:13 full 8:9-8:13 in 1 :: cols: while
+  9 local k compiler/tests/ide/labels.ei:18:15-18:16 full 18:15-18:16 in 1 :: i32
+  10 label rows compiler/tests/ide/labels.ei:18:5-18:9 full 18:5-18:9 in 1 :: rows: for
+  11 fn main compiler/tests/ide/labels.ei:25:4-25:8 full 25:1-29:2 :: fn main()
+  12 local xs compiler/tests/ide/labels.ei:26:13-26:15 full 26:5-26:39 in 11 :: List[i64]
+  13 local f compiler/tests/ide/labels.ei:28:9-28:10 full 28:5-28:24 in 11 :: bool
+  (95 symbols in <prelude>)
+refs
+  compiler/tests/ide/labels.ei:6:20-6:22 -> 2 param xs
+  compiler/tests/ide/labels.ei:8:21-8:22 -> 7 local i
+  compiler/tests/ide/labels.ei:9:13-9:14 -> 7 local i
+  compiler/tests/ide/labels.ei:10:16-10:17 -> 5 local x
+  compiler/tests/ide/labels.ei:10:21-10:25 -> 3 param want
+  compiler/tests/ide/labels.ei:11:17-11:22 -> 4 local found
+  compiler/tests/ide/labels.ei:12:23-12:27 -> 6 label rows
+  compiler/tests/ide/labels.ei:14:16-14:17 -> 7 local i
+  compiler/tests/ide/labels.ei:14:34-14:38 -> 8 label cols
+  compiler/tests/ide/labels.ei:15:16-15:17 -> 5 local x
+  compiler/tests/ide/labels.ei:15:33-15:37 -> 6 label rows
+  compiler/tests/ide/labels.ei:19:12-19:13 -> 9 local k
+  compiler/tests/ide/labels.ei:19:27-19:31 -> 10 label rows
+  compiler/tests/ide/labels.ei:22:5-22:10 -> 4 local found
+  compiler/tests/ide/labels.ei:27:5-27:7 -> 12 local xs
+  compiler/tests/ide/labels.ei:28:13-28:17 -> 1 fn find
+  compiler/tests/ide/labels.ei:28:18-28:20 -> 12 local xs
+types
+  compiler/tests/ide/labels.ei:4:9-4:11 : List[i64]
+  compiler/tests/ide/labels.ei:4:24-4:28 : i64
+  compiler/tests/ide/labels.ei:5:13-5:18 : bool
+  compiler/tests/ide/labels.ei:6:15-6:16 : i64
+  compiler/tests/ide/labels.ei:6:20-6:22 : List[i64]
+  compiler/tests/ide/labels.ei:7:17-7:18 : i64
+  compiler/tests/ide/labels.ei:8:21-8:22 : i64
+  compiler/tests/ide/labels.ei:9:13-9:14 : i64
+  compiler/tests/ide/labels.ei:10:16-10:17 : i64
+  compiler/tests/ide/labels.ei:10:21-10:25 : i64
+  compiler/tests/ide/labels.ei:11:17-11:22 : bool
+  compiler/tests/ide/labels.ei:14:16-14:17 : i64
+  compiler/tests/ide/labels.ei:15:16-15:17 : i64
+  compiler/tests/ide/labels.ei:18:15-18:16 : i32
+  compiler/tests/ide/labels.ei:19:12-19:13 : i32
+  compiler/tests/ide/labels.ei:22:5-22:10 : bool
+  compiler/tests/ide/labels.ei:26:13-26:15 : List[i64]
+  compiler/tests/ide/labels.ei:26:34-26:37 : List[i64]
+  compiler/tests/ide/labels.ei:27:5-27:7 : List[i64]
+  compiler/tests/ide/labels.ei:27:8-27:12 : ()
+  compiler/tests/ide/labels.ei:28:9-28:10 : bool
+  compiler/tests/ide/labels.ei:28:13-28:17 : bool
+  compiler/tests/ide/labels.ei:28:18-28:20 : List[i64]

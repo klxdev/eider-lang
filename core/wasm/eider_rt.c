@@ -293,6 +293,9 @@ void ei_thread_destroy(ei_thread *t) {
   (void)t;
   ei_trap(EI_WASM_NO_THREADS, 0);
 }
+/* One thread and no signals: the body runs on the module's own stack (modules are libraries,
+   so generated code doesn't call this today). */
+int ei_main(int (*body)(void)) { return body(); }
 
 void ei_chan_init(ei_chan *c, uint64_t elem_size) {
   (void)c;
