@@ -51,4 +51,4 @@ scripts/selfhost.sh                       # seed -> stage1 -> stage2 -> stage3, 
 
 ## Layout
 
-`compiler/` (docs/compiler.md): `lex.ei` -> `parse.ei` (AST arena, `ast.ei`) -> `resolve.ei` (modules) -> `check.ei` (types, typed IR in `ir.ei`) -> `lower.ei` (C) -> `driver.ei` (cc, cache); `diag.ei` holds codes, fixes, JSON. The expected results of its tests are recorded in `tests/oracle/` (`BLESS=1 sh scripts/test-compiler.sh` updates them). History: until C7 Eider was compiled by a Rust stage-0 bootstrap in a separate repository.
+`compiler/` (docs/compiler.md): `lex.ei` -> `parse.ei` (AST arena, `ast.ei`) -> `resolve.ei` (modules) -> `check.ei` (types, typed IR in `ir.ei`) -> `lower.ei` (C) -> `driver.ei` (cc, cache); `diag.ei` holds codes, fixes, JSON. The expected results of its tests are recorded in `tests/oracle/` (`BLESS=1 sh scripts/test-compiler.sh` updates them).

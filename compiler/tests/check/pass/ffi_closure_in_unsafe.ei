@@ -1,4 +1,4 @@
-// a closure created inside `unsafe` may call an extern (the bootstrap: unsafe_depth is lexical)
+// a closure created inside `unsafe` may call an extern (`unsafe` is lexical, closures included)
 extern "c" fn abs(n: i32) -> i32
 
 fn main() uses io, ffi {

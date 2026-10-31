@@ -1,0 +1,5 @@
+// The editor's unsaved buffer for lib/ov.ei.
+
+pub fn extra() -> bool { true }
+
+pub fn value() -> i32 { 2 }

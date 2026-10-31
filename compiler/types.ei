@@ -18,7 +18,7 @@
 // (`Option[i32]`) is its own definition (`tmpl` = the template, `args` = its type
 // arguments), created on demand (monomorphization). A definition is created empty and
 // filled once its field types are resolved, so a type that mentions itself sees an empty
-// definition while it is being filled (that is how the bootstrap detects E0108).
+// definition while it is being filled (that is how E0108 is detected).
 //
 // Type lists (tuple elements, fn parameters, instance arguments) are interned too: equal
 // lists have equal ids, so composite types are compared as integers as well.
@@ -46,7 +46,7 @@ pub const T_TASK: u32 = 14
 pub const T_MUTEX: u32 = 15
 pub const T_CHAN: u32 = 16
 
-/// Int kinds, in the bootstrap's IntTy order.
+/// Int kinds, in a fixed order.
 pub const IK_I32: u32 = 0
 pub const IK_I64: u32 = 1
 pub const IK_U8: u32 = 2
@@ -73,7 +73,7 @@ pub const NOTY: u32 = 4294967295
 pub type Ty = { kind: u32, a: u32, b: u32 }
 
 /// A record field or a variant field. `name` is a symbol (unnamed variant fields are named
-/// by their position, as in the bootstrap); `tnode` is its type in the declaring module's AST.
+/// by their position); `tnode` is its type in the declaring module's AST.
 pub type Field = { name: u32, ty: u32, tnode: u32, line: u32, col: u32 }
 
 /// `key` is the variant's global name key (see resolve.key); `arity` its declared field
@@ -302,7 +302,7 @@ pub fn bits(k: u32) -> u32 {
     }
 }
 
-// ---- display (the bootstrap's `Display for Ty`; module names stay mangled, `diag` demangles)
+// ---- display (type names as diagnostics print them; module names stay mangled, `diag` demangles)
 
 pub fn show(t: Types, names: intern.Interner, id: u32) -> List[u8] uses ffi {
     var out: List[u8] = List.new()

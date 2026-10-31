@@ -1,6 +1,6 @@
-// Bootstrap bug: a method of the String that `Mutex.get` returns, used inside a call
-// argument (`String.from_int(m.get().len() as i64)`), makes the bootstrap emit `void tN = ;`
-// (its C does not compile). eiderc evaluates it like any other temporary.
+// Regression: a method of the String that `Mutex.get` returns, used inside a call argument
+// (`String.from_int(m.get().len() as i64)`), once emitted `void tN = ;` (C that does not
+// compile). eiderc deliberately evaluates it like any other temporary; hand-written .out.
 fn main() uses io {
     let log = Mutex.new(String.from("abc"))
     var out = String.from("")

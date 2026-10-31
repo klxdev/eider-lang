@@ -1,0 +1,346 @@
+files
+  compiler/tests/ide/kinds.ei
+  compiler/tests/ide/lib/shapes.ei
+  <prelude>
+diags
+symbols
+  0 module kinds compiler/tests/ide/kinds.ei:1:1-1:1 full 1:1-68:1 :: compiler/tests/ide/kinds.ei
+  1 type Pair compiler/tests/ide/kinds.ei:6:6-6:10 full 6:1-6:30 :: type Pair[T]
+  2 field a compiler/tests/ide/kinds.ei:6:18-6:19 full 6:18-6:22 in 1 :: a: T
+  3 field b compiler/tests/ide/kinds.ei:6:24-6:25 full 6:24-6:28 in 1 :: b: T
+  4 fn first compiler/tests/ide/kinds.ei:8:4-8:9 full 8:1-8:37 :: fn first[T](p: Pair[T]) -> T
+  5 param p compiler/tests/ide/kinds.ei:8:13-8:14 full 8:13-8:23 in 4 :: p: Pair[T]
+  6 fn area_of compiler/tests/ide/kinds.ei:10:4-10:11 full 10:1-10:49 :: fn area_of[T: sh.Area](x: T) -> i32
+  7 param x compiler/tests/ide/kinds.ei:10:24-10:25 full 10:24-10:28 in 6 :: x: T
+  8 const LIMIT compiler/tests/ide/kinds.ei:12:7-12:12 full 12:1-12:22 :: const LIMIT: i32 = 10
+  9 type Mode compiler/tests/ide/kinds.ei:14:6-14:10 full 14:1-14:34 :: type Mode
+  10 variant Fast compiler/tests/ide/kinds.ei:14:15-14:19 full 14:15-14:19 in 9 :: Fast
+  11 variant Slow compiler/tests/ide/kinds.ei:14:22-14:26 full 14:22-14:34 in 9 :: Slow(n: i32)
+  12 field n compiler/tests/ide/kinds.ei:14:27-14:28 full 14:27-14:33 in 11 :: n: i32
+  13 fn speed compiler/tests/ide/kinds.ei:16:4-16:9 full 16:1-29:2 :: fn speed(m: Mode, o: Option[i32]) -> i32
+  14 param m compiler/tests/ide/kinds.ei:16:10-16:11 full 16:10-16:17 in 13 :: m: Mode
+  15 param o compiler/tests/ide/kinds.ei:16:19-16:20 full 16:19-16:33 in 13 :: o: Option[i32]
+  16 local lo compiler/tests/ide/kinds.ei:17:10-17:12 full 17:10-17:12 in 13 :: i32
+  17 local hi compiler/tests/ide/kinds.ei:17:14-17:16 full 17:14-17:16 in 13 :: i32
+  18 local extra compiler/tests/ide/kinds.ei:18:9-18:14 full 18:5-20:6 in 13 :: i32
+  19 local x compiler/tests/ide/kinds.ei:19:14-19:15 full 19:14-19:15 in 13 :: i32
+  20 local v compiler/tests/ide/kinds.ei:21:9-21:10 full 21:5-24:6 in 13 :: i32
+  21 local v compiler/tests/ide/kinds.ei:22:14-22:15 full 22:14-22:15 in 13 :: i32
+  22 local n compiler/tests/ide/kinds.ei:27:14-27:15 full 27:14-27:15 in 13 :: i32
+  23 fn total compiler/tests/ide/kinds.ei:31:4-31:9 full 31:1-39:2 :: fn total(shapes: List[sh.Shape], inout count: i32) -> i32
+  24 param shapes compiler/tests/ide/kinds.ei:31:10-31:16 full 31:10-31:32 in 23 :: shapes: List[sh.Shape]
+  25 param count compiler/tests/ide/kinds.ei:31:40-31:45 full 31:34-31:50 in 23 :: inout count: i32
+  26 local sum compiler/tests/ide/kinds.ei:32:9-32:12 full 32:5-32:16 in 23 :: i32
+  27 local s compiler/tests/ide/kinds.ei:33:9-33:10 full 33:9-33:10 in 23 :: shapes.Shape
+  28 local i compiler/tests/ide/kinds.ei:37:9-37:10 full 37:9-37:10 in 23 :: i32
+  29 fn describe compiler/tests/ide/kinds.ei:41:4-41:12 full 41:1-47:2 :: fn describe(s: sh.Shape) -> i32
+  30 param s compiler/tests/ide/kinds.ei:41:13-41:14 full 41:13-41:24 in 29 :: s: sh.Shape
+  31 local r compiler/tests/ide/kinds.ei:43:19-43:20 full 43:19-43:20 in 29 :: i32
+  32 local p compiler/tests/ide/kinds.ei:44:17-44:18 full 44:17-44:18 in 29 :: shapes.Point
+  33 local q compiler/tests/ide/kinds.ei:44:20-44:21 full 44:20-44:21 in 29 :: shapes.Point
+  34 fn main compiler/tests/ide/kinds.ei:49:4-49:8 full 49:1-61:2 :: fn main() uses io
+  35 local p compiler/tests/ide/kinds.ei:50:9-50:10 full 50:5-50:26 in 34 :: shapes.Point
+  36 local ints compiler/tests/ide/kinds.ei:51:9-51:13 full 51:5-51:30 in 34 :: Pair[i32]
+  37 local flags compiler/tests/ide/kinds.ei:52:9-52:14 full 52:5-52:34 in 34 :: Pair[bool]
+  38 local n compiler/tests/ide/kinds.ei:53:9-53:10 full 53:5-53:14 in 34 :: i32
+  39 local shapes compiler/tests/ide/kinds.ei:54:9-54:15 full 54:5-54:44 in 34 :: List[shapes.Shape]
+  40 local add compiler/tests/ide/kinds.ei:57:9-57:12 full 57:5-57:22 in 34 :: fn(i32, i32) -> i32
+  41 param a compiler/tests/ide/kinds.ei:57:16-57:17 full 57:16-57:22 in 34 :: i32
+  42 param b compiler/tests/ide/kinds.ei:57:24-57:25 full 57:24-57:30 in 34 :: i32
+  43 test totals compiler/tests/ide/kinds.ei:63:6-63:14 full 63:1-67:2 :: test "totals"
+  44 local n compiler/tests/ide/kinds.ei:64:9-64:10 full 64:5-64:14 in 43 :: i32
+  45 local none compiler/tests/ide/kinds.ei:65:9-65:13 full 65:5-65:42 in 43 :: List[shapes.Shape]
+  46 module shapes compiler/tests/ide/lib/shapes.ei:1:1-1:1 full 1:1-31:1 :: compiler/tests/ide/lib/shapes.ei
+  47 type Point compiler/tests/ide/lib/shapes.ei:3:10-3:15 full 3:1-3:36 :: pub type Point
+  48 field x compiler/tests/ide/lib/shapes.ei:3:20-3:21 full 3:20-3:26 in 47 :: x: i32
+  49 field y compiler/tests/ide/lib/shapes.ei:3:28-3:29 full 3:28-3:34 in 47 :: y: i32
+  50 type Shape compiler/tests/ide/lib/shapes.ei:5:10-5:15 full 5:1-8:12 :: pub type Shape
+  51 variant Circle compiler/tests/ide/lib/shapes.ei:6:7-6:13 full 6:7-6:21 in 50 :: Circle(r: i32)
+  52 field r compiler/tests/ide/lib/shapes.ei:6:14-6:15 full 6:14-6:20 in 51 :: r: i32
+  53 variant Rect compiler/tests/ide/lib/shapes.ei:7:7-7:11 full 7:7-7:25 in 50 :: Rect(Point, Point)
+  54 variant Empty compiler/tests/ide/lib/shapes.ei:8:7-8:12 full 8:7-8:12 in 50 :: Empty
+  55 const ORIGIN compiler/tests/ide/lib/shapes.ei:10:11-10:17 full 10:1-10:26 :: pub const ORIGIN: i32 = 0
+  56 trait Area compiler/tests/ide/lib/shapes.ei:12:11-12:15 full 12:1-14:2 :: pub trait Area
+  57 method area compiler/tests/ide/lib/shapes.ei:13:8-13:12 full 13:5-13:25 in 56 :: fn area(self) -> i32
+  58 param self compiler/tests/ide/lib/shapes.ei:13:13-13:17 full 13:13-13:17 in 57 :: self
+  59 fn make compiler/tests/ide/lib/shapes.ei:30:8-30:12 full 30:1-30:53 :: pub fn make(x: i32, y: i32) -> Point
+  60 param x compiler/tests/ide/lib/shapes.ei:30:13-30:14 full 30:13-30:19 in 59 :: x: i32
+  61 param y compiler/tests/ide/lib/shapes.ei:30:21-30:22 full 30:21-30:27 in 59 :: y: i32
+  62 method area compiler/tests/ide/lib/shapes.ei:17:8-17:12 full 17:5-23:6 in 50 :: fn area(self) -> i32
+  63 param self compiler/tests/ide/lib/shapes.ei:17:13-17:17 full 17:13-17:17 in 62 :: self
+  64 local r compiler/tests/ide/lib/shapes.ei:19:20-19:21 full 19:20-19:21 in 62 :: i32
+  65 local a compiler/tests/ide/lib/shapes.ei:20:18-20:19 full 20:18-20:19 in 62 :: shapes.Point
+  66 local b compiler/tests/ide/lib/shapes.ei:20:21-20:22 full 20:21-20:22 in 62 :: shapes.Point
+  67 method sum compiler/tests/ide/lib/shapes.ei:27:8-27:11 full 27:5-27:44 in 47 :: fn sum(self) -> i32
+  68 param self compiler/tests/ide/lib/shapes.ei:27:12-27:16 full 27:12-27:16 in 67 :: self
+  (62 symbols in <prelude>)
+refs
+  compiler/tests/ide/kinds.ei:4:8-4:23 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:4:27-4:29 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:8:16-8:20 -> 1 type Pair
+  compiler/tests/ide/kinds.ei:8:32-8:33 -> 5 param p
+  compiler/tests/ide/kinds.ei:8:34-8:35 -> 2 field a
+  compiler/tests/ide/kinds.ei:10:15-10:17 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:10:18-10:22 -> 56 trait Area
+  compiler/tests/ide/kinds.ei:10:39-10:40 -> 7 param x
+  compiler/tests/ide/kinds.ei:10:41-10:45 -> 62 method area
+  compiler/tests/ide/kinds.ei:16:13-16:17 -> 9 type Mode
+  compiler/tests/ide/kinds.ei:16:22-16:28 -> <prelude> type Option
+  compiler/tests/ide/kinds.ei:18:23-18:27 -> 1 type Pair
+  compiler/tests/ide/kinds.ei:18:28-18:30 -> 16 local lo
+  compiler/tests/ide/kinds.ei:18:32-18:34 -> 17 local hi
+  compiler/tests/ide/kinds.ei:19:9-19:13 -> 1 type Pair
+  compiler/tests/ide/kinds.ei:19:23-19:24 -> 19 local x
+  compiler/tests/ide/kinds.ei:21:19-21:20 -> 15 param o
+  compiler/tests/ide/kinds.ei:22:9-22:13 -> <prelude> variant Some
+  compiler/tests/ide/kinds.ei:22:20-22:21 -> 21 local v
+  compiler/tests/ide/kinds.ei:23:9-23:13 -> <prelude> variant None
+  compiler/tests/ide/kinds.ei:23:17-23:19 -> 17 local hi
+  compiler/tests/ide/kinds.ei:25:11-25:12 -> 14 param m
+  compiler/tests/ide/kinds.ei:26:9-26:13 -> 10 variant Fast
+  compiler/tests/ide/kinds.ei:26:17-26:19 -> 16 local lo
+  compiler/tests/ide/kinds.ei:26:22-26:27 -> 18 local extra
+  compiler/tests/ide/kinds.ei:27:9-27:13 -> 11 variant Slow
+  compiler/tests/ide/kinds.ei:27:20-27:21 -> 20 local v
+  compiler/tests/ide/kinds.ei:27:24-27:25 -> 22 local n
+  compiler/tests/ide/kinds.ei:31:23-31:25 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:31:26-31:31 -> 50 type Shape
+  compiler/tests/ide/kinds.ei:33:14-33:20 -> 24 param shapes
+  compiler/tests/ide/kinds.ei:34:9-34:12 -> 26 local sum
+  compiler/tests/ide/kinds.ei:34:16-34:17 -> 27 local s
+  compiler/tests/ide/kinds.ei:34:18-34:22 -> 62 method area
+  compiler/tests/ide/kinds.ei:35:9-35:14 -> 25 param count
+  compiler/tests/ide/kinds.ei:37:17-37:22 -> 8 const LIMIT
+  compiler/tests/ide/kinds.ei:37:25-37:28 -> 26 local sum
+  compiler/tests/ide/kinds.ei:37:32-37:33 -> 28 local i
+  compiler/tests/ide/kinds.ei:38:5-38:8 -> 26 local sum
+  compiler/tests/ide/kinds.ei:41:16-41:18 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:41:19-41:24 -> 50 type Shape
+  compiler/tests/ide/kinds.ei:42:11-42:12 -> 30 param s
+  compiler/tests/ide/kinds.ei:43:9-43:11 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:43:12-43:18 -> 51 variant Circle
+  compiler/tests/ide/kinds.ei:43:25-43:26 -> 31 local r
+  compiler/tests/ide/kinds.ei:44:9-44:11 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:44:12-44:16 -> 53 variant Rect
+  compiler/tests/ide/kinds.ei:44:26-44:27 -> 32 local p
+  compiler/tests/ide/kinds.ei:44:28-44:31 -> 67 method sum
+  compiler/tests/ide/kinds.ei:44:36-44:37 -> 33 local q
+  compiler/tests/ide/kinds.ei:44:38-44:39 -> 48 field x
+  compiler/tests/ide/kinds.ei:45:9-45:11 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:45:12-45:17 -> 54 variant Empty
+  compiler/tests/ide/kinds.ei:45:21-45:23 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:45:24-45:30 -> 55 const ORIGIN
+  compiler/tests/ide/kinds.ei:50:13-50:15 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:50:16-50:20 -> 59 fn make
+  compiler/tests/ide/kinds.ei:51:16-51:20 -> 1 type Pair
+  compiler/tests/ide/kinds.ei:51:21-51:22 -> 35 local p
+  compiler/tests/ide/kinds.ei:51:23-51:24 -> 48 field x
+  compiler/tests/ide/kinds.ei:51:26-51:27 -> 35 local p
+  compiler/tests/ide/kinds.ei:51:28-51:29 -> 49 field y
+  compiler/tests/ide/kinds.ei:52:17-52:21 -> 1 type Pair
+  compiler/tests/ide/kinds.ei:54:22-54:24 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:54:25-54:30 -> 50 type Shape
+  compiler/tests/ide/kinds.ei:55:5-55:11 -> 39 local shapes
+  compiler/tests/ide/kinds.ei:55:17-55:19 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:55:20-55:26 -> 51 variant Circle
+  compiler/tests/ide/kinds.ei:56:5-56:11 -> 39 local shapes
+  compiler/tests/ide/kinds.ei:56:17-56:19 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:56:20-56:24 -> 53 variant Rect
+  compiler/tests/ide/kinds.ei:56:25-56:26 -> 35 local p
+  compiler/tests/ide/kinds.ei:56:28-56:30 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:56:31-56:36 -> 47 type Point
+  compiler/tests/ide/kinds.ei:57:32-57:33 -> 41 param a
+  compiler/tests/ide/kinds.ei:57:36-57:37 -> 42 param b
+  compiler/tests/ide/kinds.ei:58:11-58:16 -> 23 fn total
+  compiler/tests/ide/kinds.ei:58:17-58:23 -> 39 local shapes
+  compiler/tests/ide/kinds.ei:58:31-58:32 -> 38 local n
+  compiler/tests/ide/kinds.ei:58:36-58:41 -> 4 fn first
+  compiler/tests/ide/kinds.ei:58:42-58:46 -> 36 local ints
+  compiler/tests/ide/kinds.ei:58:50-58:53 -> 40 local add
+  compiler/tests/ide/kinds.ei:58:54-58:55 -> 38 local n
+  compiler/tests/ide/kinds.ei:58:57-58:65 -> 29 fn describe
+  compiler/tests/ide/kinds.ei:58:66-58:68 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:58:69-58:74 -> 54 variant Empty
+  compiler/tests/ide/kinds.ei:59:8-59:13 -> 4 fn first
+  compiler/tests/ide/kinds.ei:59:14-59:19 -> 37 local flags
+  compiler/tests/ide/kinds.ei:59:29-59:30 -> 38 local n
+  compiler/tests/ide/kinds.ei:60:11-60:16 -> 13 fn speed
+  compiler/tests/ide/kinds.ei:60:17-60:21 -> 9 type Mode
+  compiler/tests/ide/kinds.ei:60:22-60:26 -> 10 variant Fast
+  compiler/tests/ide/kinds.ei:60:28-60:32 -> <prelude> variant None
+  compiler/tests/ide/kinds.ei:60:36-60:41 -> 13 fn speed
+  compiler/tests/ide/kinds.ei:60:42-60:46 -> 11 variant Slow
+  compiler/tests/ide/kinds.ei:60:51-60:55 -> <prelude> variant Some
+  compiler/tests/ide/kinds.ei:60:62-60:69 -> 6 fn area_of
+  compiler/tests/ide/kinds.ei:60:70-60:72 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:60:73-60:78 -> 54 variant Empty
+  compiler/tests/ide/kinds.ei:65:20-65:22 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:65:23-65:28 -> 50 type Shape
+  compiler/tests/ide/kinds.ei:66:12-66:17 -> 23 fn total
+  compiler/tests/ide/kinds.ei:66:18-66:22 -> 45 local none
+  compiler/tests/ide/kinds.ei:66:30-66:31 -> 44 local n
+  compiler/tests/ide/lib/shapes.ei:7:12-7:17 -> 47 type Point
+  compiler/tests/ide/lib/shapes.ei:7:19-7:24 -> 47 type Point
+  compiler/tests/ide/lib/shapes.ei:16:6-16:10 -> 56 trait Area
+  compiler/tests/ide/lib/shapes.ei:16:15-16:20 -> 50 type Shape
+  compiler/tests/ide/lib/shapes.ei:18:15-18:19 -> 63 param self
+  compiler/tests/ide/lib/shapes.ei:19:13-19:19 -> 51 variant Circle
+  compiler/tests/ide/lib/shapes.ei:19:26-19:27 -> 64 local r
+  compiler/tests/ide/lib/shapes.ei:19:30-19:31 -> 64 local r
+  compiler/tests/ide/lib/shapes.ei:20:13-20:17 -> 53 variant Rect
+  compiler/tests/ide/lib/shapes.ei:20:28-20:29 -> 66 local b
+  compiler/tests/ide/lib/shapes.ei:20:30-20:31 -> 48 field x
+  compiler/tests/ide/lib/shapes.ei:20:34-20:35 -> 65 local a
+  compiler/tests/ide/lib/shapes.ei:20:36-20:37 -> 48 field x
+  compiler/tests/ide/lib/shapes.ei:20:42-20:43 -> 66 local b
+  compiler/tests/ide/lib/shapes.ei:20:44-20:45 -> 49 field y
+  compiler/tests/ide/lib/shapes.ei:20:48-20:49 -> 65 local a
+  compiler/tests/ide/lib/shapes.ei:20:50-20:51 -> 49 field y
+  compiler/tests/ide/lib/shapes.ei:21:13-21:18 -> 54 variant Empty
+  compiler/tests/ide/lib/shapes.ei:21:22-21:28 -> 55 const ORIGIN
+  compiler/tests/ide/lib/shapes.ei:26:6-26:11 -> 47 type Point
+  compiler/tests/ide/lib/shapes.ei:27:27-27:31 -> 68 param self
+  compiler/tests/ide/lib/shapes.ei:27:32-27:33 -> 48 field x
+  compiler/tests/ide/lib/shapes.ei:27:36-27:40 -> 68 param self
+  compiler/tests/ide/lib/shapes.ei:27:41-27:42 -> 49 field y
+  compiler/tests/ide/lib/shapes.ei:30:32-30:37 -> 47 type Point
+  compiler/tests/ide/lib/shapes.ei:30:40-30:45 -> 47 type Point
+  compiler/tests/ide/lib/shapes.ei:30:46-30:47 -> 60 param x
+  compiler/tests/ide/lib/shapes.ei:30:49-30:50 -> 61 param y
+types
+  compiler/tests/ide/kinds.ei:8:13-8:14 : Pair[bool]
+  compiler/tests/ide/kinds.ei:8:13-8:14 : Pair[i32]
+  compiler/tests/ide/kinds.ei:8:32-8:33 : Pair[bool]
+  compiler/tests/ide/kinds.ei:8:32-8:33 : Pair[i32]
+  compiler/tests/ide/kinds.ei:8:34-8:35 : bool
+  compiler/tests/ide/kinds.ei:8:34-8:35 : i32
+  compiler/tests/ide/kinds.ei:10:24-10:25 : shapes.Shape
+  compiler/tests/ide/kinds.ei:10:39-10:40 : shapes.Shape
+  compiler/tests/ide/kinds.ei:10:41-10:45 : i32
+  compiler/tests/ide/kinds.ei:16:10-16:11 : Mode
+  compiler/tests/ide/kinds.ei:16:19-16:20 : Option[i32]
+  compiler/tests/ide/kinds.ei:17:10-17:12 : i32
+  compiler/tests/ide/kinds.ei:17:14-17:16 : i32
+  compiler/tests/ide/kinds.ei:18:9-18:14 : i32
+  compiler/tests/ide/kinds.ei:18:23-18:27 : Pair[i32]
+  compiler/tests/ide/kinds.ei:18:28-18:30 : i32
+  compiler/tests/ide/kinds.ei:18:32-18:34 : i32
+  compiler/tests/ide/kinds.ei:19:14-19:15 : i32
+  compiler/tests/ide/kinds.ei:19:23-19:24 : i32
+  compiler/tests/ide/kinds.ei:21:9-21:10 : i32
+  compiler/tests/ide/kinds.ei:21:19-21:20 : Option[i32]
+  compiler/tests/ide/kinds.ei:22:14-22:15 : i32
+  compiler/tests/ide/kinds.ei:22:20-22:21 : i32
+  compiler/tests/ide/kinds.ei:23:17-23:19 : i32
+  compiler/tests/ide/kinds.ei:25:11-25:12 : Mode
+  compiler/tests/ide/kinds.ei:26:17-26:19 : i32
+  compiler/tests/ide/kinds.ei:26:22-26:27 : i32
+  compiler/tests/ide/kinds.ei:27:14-27:15 : i32
+  compiler/tests/ide/kinds.ei:27:20-27:21 : i32
+  compiler/tests/ide/kinds.ei:27:24-27:25 : i32
+  compiler/tests/ide/kinds.ei:31:10-31:16 : List[shapes.Shape]
+  compiler/tests/ide/kinds.ei:31:40-31:45 : i32
+  compiler/tests/ide/kinds.ei:32:9-32:12 : i32
+  compiler/tests/ide/kinds.ei:33:9-33:10 : shapes.Shape
+  compiler/tests/ide/kinds.ei:33:14-33:20 : List[shapes.Shape]
+  compiler/tests/ide/kinds.ei:34:9-34:12 : i32
+  compiler/tests/ide/kinds.ei:34:16-34:17 : shapes.Shape
+  compiler/tests/ide/kinds.ei:34:18-34:22 : i32
+  compiler/tests/ide/kinds.ei:35:9-35:14 : i32
+  compiler/tests/ide/kinds.ei:37:9-37:10 : i32
+  compiler/tests/ide/kinds.ei:37:17-37:22 : i32
+  compiler/tests/ide/kinds.ei:37:25-37:28 : i32
+  compiler/tests/ide/kinds.ei:37:32-37:33 : i32
+  compiler/tests/ide/kinds.ei:38:5-38:8 : i32
+  compiler/tests/ide/kinds.ei:41:13-41:14 : shapes.Shape
+  compiler/tests/ide/kinds.ei:42:11-42:12 : shapes.Shape
+  compiler/tests/ide/kinds.ei:43:19-43:20 : i32
+  compiler/tests/ide/kinds.ei:43:25-43:26 : i32
+  compiler/tests/ide/kinds.ei:44:17-44:18 : shapes.Point
+  compiler/tests/ide/kinds.ei:44:20-44:21 : shapes.Point
+  compiler/tests/ide/kinds.ei:44:26-44:27 : shapes.Point
+  compiler/tests/ide/kinds.ei:44:28-44:31 : i32
+  compiler/tests/ide/kinds.ei:44:36-44:37 : shapes.Point
+  compiler/tests/ide/kinds.ei:44:38-44:39 : i32
+  compiler/tests/ide/kinds.ei:45:24-45:30 : i32
+  compiler/tests/ide/kinds.ei:50:9-50:10 : shapes.Point
+  compiler/tests/ide/kinds.ei:50:16-50:20 : shapes.Point
+  compiler/tests/ide/kinds.ei:51:9-51:13 : Pair[i32]
+  compiler/tests/ide/kinds.ei:51:16-51:20 : Pair[i32]
+  compiler/tests/ide/kinds.ei:51:21-51:22 : shapes.Point
+  compiler/tests/ide/kinds.ei:51:23-51:24 : i32
+  compiler/tests/ide/kinds.ei:51:26-51:27 : shapes.Point
+  compiler/tests/ide/kinds.ei:51:28-51:29 : i32
+  compiler/tests/ide/kinds.ei:52:9-52:14 : Pair[bool]
+  compiler/tests/ide/kinds.ei:52:17-52:21 : Pair[bool]
+  compiler/tests/ide/kinds.ei:53:9-53:10 : i32
+  compiler/tests/ide/kinds.ei:54:9-54:15 : List[shapes.Shape]
+  compiler/tests/ide/kinds.ei:54:39-54:42 : List[shapes.Shape]
+  compiler/tests/ide/kinds.ei:55:5-55:11 : List[shapes.Shape]
+  compiler/tests/ide/kinds.ei:55:12-55:16 : ()
+  compiler/tests/ide/kinds.ei:55:20-55:26 : shapes.Shape
+  compiler/tests/ide/kinds.ei:56:5-56:11 : List[shapes.Shape]
+  compiler/tests/ide/kinds.ei:56:12-56:16 : ()
+  compiler/tests/ide/kinds.ei:56:20-56:24 : shapes.Shape
+  compiler/tests/ide/kinds.ei:56:25-56:26 : shapes.Point
+  compiler/tests/ide/kinds.ei:56:31-56:36 : shapes.Point
+  compiler/tests/ide/kinds.ei:57:9-57:12 : fn(i32, i32) -> i32
+  compiler/tests/ide/kinds.ei:57:16-57:17 : i32
+  compiler/tests/ide/kinds.ei:57:24-57:25 : i32
+  compiler/tests/ide/kinds.ei:57:32-57:33 : i32
+  compiler/tests/ide/kinds.ei:57:36-57:37 : i32
+  compiler/tests/ide/kinds.ei:58:5-58:10 : ()
+  compiler/tests/ide/kinds.ei:58:11-58:16 : i32
+  compiler/tests/ide/kinds.ei:58:17-58:23 : List[shapes.Shape]
+  compiler/tests/ide/kinds.ei:58:31-58:32 : i32
+  compiler/tests/ide/kinds.ei:58:36-58:41 : i32
+  compiler/tests/ide/kinds.ei:58:42-58:46 : Pair[i32]
+  compiler/tests/ide/kinds.ei:58:50-58:53 : i32
+  compiler/tests/ide/kinds.ei:58:54-58:55 : i32
+  compiler/tests/ide/kinds.ei:58:57-58:65 : i32
+  compiler/tests/ide/kinds.ei:58:69-58:74 : shapes.Shape
+  compiler/tests/ide/kinds.ei:59:8-59:13 : bool
+  compiler/tests/ide/kinds.ei:59:14-59:19 : Pair[bool]
+  compiler/tests/ide/kinds.ei:59:23-59:28 : ()
+  compiler/tests/ide/kinds.ei:59:29-59:30 : i32
+  compiler/tests/ide/kinds.ei:60:5-60:10 : ()
+  compiler/tests/ide/kinds.ei:60:11-60:16 : i32
+  compiler/tests/ide/kinds.ei:60:22-60:26 : Mode
+  compiler/tests/ide/kinds.ei:60:28-60:32 : Option[i32]
+  compiler/tests/ide/kinds.ei:60:36-60:41 : i32
+  compiler/tests/ide/kinds.ei:60:42-60:46 : Mode
+  compiler/tests/ide/kinds.ei:60:51-60:55 : Option[i32]
+  compiler/tests/ide/kinds.ei:60:62-60:69 : i32
+  compiler/tests/ide/kinds.ei:60:73-60:78 : shapes.Shape
+  compiler/tests/ide/kinds.ei:64:9-64:10 : i32
+  compiler/tests/ide/kinds.ei:65:9-65:13 : List[shapes.Shape]
+  compiler/tests/ide/kinds.ei:65:37-65:40 : List[shapes.Shape]
+  compiler/tests/ide/kinds.ei:66:12-66:17 : i32
+  compiler/tests/ide/kinds.ei:66:18-66:22 : List[shapes.Shape]
+  compiler/tests/ide/kinds.ei:66:30-66:31 : i32
+  compiler/tests/ide/lib/shapes.ei:17:13-17:17 : shapes.Shape
+  compiler/tests/ide/lib/shapes.ei:18:15-18:19 : shapes.Shape
+  compiler/tests/ide/lib/shapes.ei:19:20-19:21 : i32
+  compiler/tests/ide/lib/shapes.ei:19:26-19:27 : i32
+  compiler/tests/ide/lib/shapes.ei:19:30-19:31 : i32
+  compiler/tests/ide/lib/shapes.ei:20:18-20:19 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:20:21-20:22 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:20:28-20:29 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:20:30-20:31 : i32
+  compiler/tests/ide/lib/shapes.ei:20:34-20:35 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:20:36-20:37 : i32
+  compiler/tests/ide/lib/shapes.ei:20:42-20:43 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:20:44-20:45 : i32
+  compiler/tests/ide/lib/shapes.ei:20:48-20:49 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:20:50-20:51 : i32
+  compiler/tests/ide/lib/shapes.ei:21:22-21:28 : i32
+  compiler/tests/ide/lib/shapes.ei:27:12-27:16 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:27:27-27:31 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:27:32-27:33 : i32
+  compiler/tests/ide/lib/shapes.ei:27:36-27:40 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:27:41-27:42 : i32
+  compiler/tests/ide/lib/shapes.ei:30:13-30:14 : i32
+  compiler/tests/ide/lib/shapes.ei:30:21-30:22 : i32
+  compiler/tests/ide/lib/shapes.ei:30:40-30:45 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:30:46-30:47 : i32
+  compiler/tests/ide/lib/shapes.ei:30:49-30:50 : i32

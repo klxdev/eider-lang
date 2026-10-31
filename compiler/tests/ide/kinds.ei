@@ -1,0 +1,67 @@
+// Every symbol kind, refs across modules (plain and `alias.Name`), refs to locals,
+// params, fields, methods and variants in patterns, and generic instances.
+
+import "lib/shapes.ei" as sh
+
+type Pair[T] = { a: T, b: T }
+
+fn first[T](p: Pair[T]) -> T { p.a }
+
+fn area_of[T: sh.Area](x: T) -> i32 { x.area() }
+
+const LIMIT: i32 = 10
+
+type Mode = | Fast | Slow(n: i32)
+
+fn speed(m: Mode, o: Option[i32]) -> i32 {
+    let (lo, hi) = (1, 2)
+    let extra = match Pair(lo, hi) {
+        Pair(x, _) => x
+    }
+    let v = match o {
+        Some(v) => v
+        None => hi
+    }
+    match m {
+        Fast => lo + extra
+        Slow(n) => v + n
+    }
+}
+
+fn total(shapes: List[sh.Shape], inout count: i32) -> i32 {
+    var sum = 0
+    for s in shapes {
+        sum += s.area()
+        count += 1
+    }
+    for i in 0..LIMIT { sum += i }
+    sum
+}
+
+fn describe(s: sh.Shape) -> i32 {
+    match s {
+        sh.Circle(r) => r
+        sh.Rect(p, q) => p.sum() + q.x
+        sh.Empty => sh.ORIGIN
+    }
+}
+
+fn main() uses io {
+    let p = sh.make(1, 2)
+    let ints = Pair(p.x, p.y)
+    let flags = Pair(true, false)
+    var n = 0
+    var shapes: List[sh.Shape] = List.new()
+    shapes.push(sh.Circle(2))
+    shapes.push(sh.Rect(p, sh.Point(3, 4)))
+    let add = |a: i32, b: i32| a + b
+    print(total(shapes, inout n) + first(ints) + add(n, describe(sh.Empty)))
+    if first(flags) { print(n) }
+    print(speed(Mode.Fast, None) + speed(Slow(3), Some(4)) + area_of(sh.Empty))
+}
+
+test "totals" {
+    var n = 0
+    let none: List[sh.Shape] = List.new()
+    assert total(none, inout n) == 0
+}

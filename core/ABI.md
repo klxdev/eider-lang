@@ -127,4 +127,4 @@ Guarantees a backend must keep:
 | Windows | not written; `eider_core.c` refuses to compile there |
 | WebAssembly (wasm32) | none: a module has no OS. The runtime has a wasm backend (`core/wasm/`); `ec_*` calls become host imports (`core/wasm/README.md`) |
 
-The bootstrap compiler itself is also only exercised on x86-64 Linux.
+The compiler itself (`seed/eiderc.c` and its self-hosting chain) is also only exercised on x86-64 Linux.

@@ -1,0 +1,7 @@
+files
+  compiler/tests/ide/overlay_entry.ei
+diags
+  E0001 compiler/tests/ide/overlay_entry.ei:5:1 expected an expression
+symbols
+refs
+types

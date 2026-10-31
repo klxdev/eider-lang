@@ -1,0 +1,10 @@
+// overlay: ./compiler/tests/ide/lib/../lib/ov.ei compiler/tests/ide/lib/ov_overlay.txt
+// An overlay that differs from disk: on disk, lib/ov.ei has no `extra` (`eiderc check`
+// fails with E0112); with the overlay (given by another spelling of the same path, equal
+// after canonicalisation) it checks, and the symbols and positions are the overlay's.
+
+import "lib/ov.ei"
+
+fn main() uses io {
+    if ov.extra() { print(ov.value()) }
+}

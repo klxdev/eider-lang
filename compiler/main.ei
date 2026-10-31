@@ -9,7 +9,7 @@
 // `-l <lib>` (repeatable) links a C library into build, run, test and build --lib.
 // `--wasm` checks (and emits) the file as a WebAssembly module (a library whose exports take
 // and return integers and bool, no threads: E0806): `check --wasm`, `emit-c --wasm`,
-// `emit-header --wasm` (the .d.ts and the loader, \x01-separated, as the bootstrap prints them) and
+// `emit-header --wasm` (the .d.ts and the loader, \x01-separated, as tests/oracle records them) and
 // `build --wasm` / `run --wasm` (<name>.wasm, <name>.d.ts, <name>.js; wasm.ei). `test`
 // ignores it, as it ignores `--lib`.
 
@@ -31,14 +31,15 @@ import "driver.ei"
 import "comptime.ei" as consteval
 import "wasm.ei"
 import "suite.ei"
+import "ide.ei"
 
 type Args = {
     cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,
-    lib: bool, libs: List[List[u8]], wasm: bool, compile_fail: bool,
+    lib: bool, libs: List[List[u8]], wasm: bool, compile_fail: bool, overlay: List[List[u8]],
 }
 
 /// Comparisons go through a function so no owned temporary sits in an `else if` condition
-/// (the bootstrap drops such temporaries outside the block that declares them).
+/// (compiler/ avoids that pattern: such temporaries were once dropped too late, LEARNINGS.md).
 fn is(a: List[u8], s: str) -> bool uses ffi { bytes.eq(a, sys.lit(s)) }
 
 /// `eiderc --help`: every command, option and environment variable.
@@ -60,6 +61,8 @@ fn usage_text() -> List[u8] uses ffi {
         "  eiderc lex <file.ei>                       dump the tokens",
         "  eiderc parse <file.ei>                     dump the AST",
         "  eiderc ir <file.ei>                        dump the typed IR",
+        "  eiderc ide <file.ei> [--overlay <path> <text>]  print the IDE analysis (ide.ei): symbols, refs, types;",
+        "                                             --overlay (repeatable) reads <path> from the file <text>",
         "  eiderc help | --help | -h                  print this text",
         "",
         "environment:",
@@ -83,7 +86,7 @@ fn usage_error(msg: List[u8]) uses io, ffi {
     env.exit(2)
 }
 
-/// No command at all: the usage text on stderr, exit 2 (the bootstrap prints it too).
+/// No command at all: the usage text on stderr, exit 2 (as tests/oracle records).
 fn usage() uses io, ffi {
     io.err(usage_text())
     env.exit(2)
@@ -98,7 +101,7 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] uses ffi {
 }
 
 fn known_cmd(c: List[u8]) -> bool uses ffi {
-    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test")
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide")
 }
 
 fn parse_args() -> Args uses io, ffi {
@@ -113,6 +116,7 @@ fn parse_args() -> Args uses io, ffi {
     var wasm = false
     var compile_fail = false
     var libs: List[List[u8]] = List.new()
+    var overlay: List[List[u8]] = List.new()
     var i: usize = 1
     while i < argv.len() {
         let a = argv[i]
@@ -136,6 +140,11 @@ fn parse_args() -> Args uses io, ffi {
             if i >= argv.len() { usage_error(sys.lit("`-o` needs a file name")) }
             out = argv[i]
             i += 1
+        } else if is(a, "--overlay") {
+            if i + 1 >= argv.len() { usage_error(sys.lit("`--overlay` needs a path and a file with its text")) }
+            overlay.push(argv[i])
+            overlay.push(argv[i + 1])
+            i += 2
         } else if is(a, "-l") {
             if i >= argv.len() { usage_error(sys.lit("`-l` needs a library name")) }
             libs.push(argv[i])
@@ -158,21 +167,21 @@ fn parse_args() -> Args uses io, ffi {
     if !known_cmd(cmd) { usage_error(quoted("unknown command ", cmd)) }
     if compile_fail {
         if !is(cmd, "test") { usage_error(sys.lit("`--compile-fail` goes with `test`")) }
-        // the bootstrap's default suite
+        // the default suite
         if file.len() == 0 { file = sys.lit("tests/checks") }
     }
     if file.len() == 0 { usage_error(quoted("missing the source file for ", cmd)) }
     if is(cmd, "emit-header") { lib = true }
-    // `test` checks the test driver, never a library (the bootstrap's mode order)
+    // `test` checks the test driver, never a library (the recorded mode order)
     if is(cmd, "test") {
         lib = false
         wasm = false
     }
     if wasm { lib = true }
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail)
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay)
 }
 
-/// Print `d` like the bootstrap: JSON on stdout, or the rendered form (against the source of
+/// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
 /// the file it is in) on stderr. Module prefixes in the text are shown as `module.Name`.
 fn report(d: diag.Diag, a: Args, src: List[u8]) uses io, fs, ffi {
     var d2 = d
@@ -223,9 +232,33 @@ fn dump(lx: lex.Lexed, names: intern.Interner) uses io, ffi {
     io.out(out)
 }
 
+/// `eiderc ide`: the analysis of the file (with the overlays read from their text files).
+fn run_ide(a: Args) uses io, fs, net, clock, ffi {
+    var paths: List[List[u8]] = List.new()
+    var texts: List[List[u8]] = List.new()
+    var k: usize = 0
+    while k + 1 < a.overlay.len() {
+        paths.push(a.overlay[k])
+        let t: List[u8] = match fs.read(a.overlay[k + 1]) {
+            Ok(x) => x
+            Err(_) => {
+                usage_error(quoted("cannot read the overlay text ", a.overlay[k + 1]))
+                List.new()
+            }
+        }
+        texts.push(t)
+        k += 2
+    }
+    io.out(ide.dump(ide.analyze(a.file, paths, texts)))
+}
+
 fn main() uses io, fs, net, clock, ffi {
     let a = parse_args()
     if a.compile_fail { env.exit(suite.run(a.file)) }
+    if is(a.cmd, "ide") {
+        run_ide(a)
+        return
+    }
     let src = match fs.read(a.file) {
         Ok(s) => s
         Err(e) => {
@@ -254,7 +287,7 @@ fn main() uses io, fs, net, clock, ffi {
         return
     }
     let p = match parse.parse(lx, names) {
-        // not `Ok(p) => p`: the bootstrap shadows `p` and never assigns it (LEARNINGS.md)
+        // not `Ok(p) => p`: compiler/ avoids an arm binding named like its `let` (LEARNINGS.md)
         Ok(parsed) => parsed
         Err(d) => {
             report(d, a, src)
@@ -275,7 +308,7 @@ fn main() uses io, fs, net, clock, ffi {
             return
         }
     }
-    // `comptime` constants are evaluated between loading and checking, as in the bootstrap
+    // `comptime` constants are evaluated between loading and checking, as tests/oracle expects
     let prog = match consteval.eval(loaded) {
         Ok(x) => x
         Err(d) => {
@@ -314,10 +347,10 @@ fn main() uses io, fs, net, clock, ffi {
         if is(a.cmd, "emit-c") {
             io.out(cprog)
         } else if a.wasm {
-            // the bootstrap: `build --wasm` and `run --wasm` both build the module
+            // as recorded: `build --wasm` and `run --wasm` both build the module
             wasm.build(cprog, lp, a.file, a.out)
         } else if a.lib {
-            // the bootstrap: `build --lib` and `run --lib` both build the library
+            // as recorded: `build --lib` and `run --lib` both build the library
             driver.build_lib(cprog, lower.header(lp), a.file, a.out, a.libs)
         } else if is(a.cmd, "build") {
             driver.build(cprog, a.file, a.out, a.libs)

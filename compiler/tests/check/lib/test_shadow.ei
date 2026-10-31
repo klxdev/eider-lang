@@ -1,5 +1,5 @@
 // Helper module: a test block reads a local named like one of the module's functions
-// (test bodies get no local-shadowing exemption in the bootstrap's renaming).
+// (test bodies get no local-shadowing exemption when module names are renamed).
 fn helper() -> i32 { 1 }
 pub fn two() -> i32 { helper() + 1 }
 

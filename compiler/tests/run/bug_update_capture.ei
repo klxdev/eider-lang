@@ -1,6 +1,6 @@
-// Bootstrap bug: the bootstrap's Mutex.update drops the closure it is given, and the caller
-// drops it again, so a closure that captures anything owned is freed twice (the bootstrap
-// crashes with a double free). eiderc's update borrows the closure; its owner drops it once.
+// Regression: Mutex.update once dropped the closure it was given, and the caller dropped it
+// again, so a closure that captures anything owned was freed twice (a double-free crash).
+// eiderc's update deliberately borrows the closure; its owner drops it once.
 
 fn main() uses io, threads {
     let m = Mutex.new(String.from("a"))

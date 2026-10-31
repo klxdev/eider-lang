@@ -1,0 +1,3 @@
+// On disk: no `extra`. The overlay (lib/ov_overlay.txt) adds it.
+
+pub fn value() -> i32 { 1 }

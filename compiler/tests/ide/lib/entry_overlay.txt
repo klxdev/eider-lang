@@ -1,0 +1,5 @@
+// The editor's unsaved buffer for overlay_entry.ei: a parse error.
+
+fn main() uses io {
+    let x = (1 +
+}

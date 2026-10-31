@@ -1,4 +1,4 @@
-// fold: compile-time integer arithmetic. The bootstrap folds constants in i128; every value
+// fold: compile-time integer arithmetic. Constants fold as in 128-bit signed arithmetic; every value
 // it computes from in-range operands fits in a sign plus a 128-bit magnitude, which is what
 // `Wide` holds (`hi * 2^64 + lo`). Zero is never negative.
 //
@@ -79,14 +79,14 @@ pub fn mul(a: Wide, b: Wide) -> Wide {
     mk(a.neg != b.neg, hi, lo)
 }
 
-/// Truncating division (Rust's i128 `/`), magnitudes below 2^64, b != 0.
+/// Truncating division (as in 128-bit signed `/`), magnitudes below 2^64, b != 0.
 pub fn div(a: Wide, b: Wide) -> Wide { mk(a.neg != b.neg, 0, a.lo / b.lo) }
 
-/// Remainder with the sign of the dividend (Rust's i128 `%`), magnitudes below 2^64, b != 0.
+/// Remainder with the sign of the dividend (as in 128-bit signed `%`), magnitudes below 2^64, b != 0.
 pub fn rem(a: Wide, b: Wide) -> Wide { mk(a.neg, 0, a.lo % b.lo) }
 
 /// The value wrapped into a `bits`-bit integer (two's complement when `signed`), i.e. the
-/// bootstrap's `(v - min).rem_euclid(2^bits) + min`.
+/// `min + ((v - min) mod 2^bits)`, with a non-negative modulus.
 pub fn wrap(a: Wide, bits: u32, signed: bool) -> Wide {
     let low = if a.neg { 0 -% a.lo } else { a.lo }
     if bits == 64 {

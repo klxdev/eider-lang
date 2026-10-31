@@ -93,47 +93,41 @@ fn dot(a: List[f64], b: List[f64]) -> Result[f64, str] uses ffi {
 }
 ```
 
-## 3. Rust: `extern "C"` plus cbindgen
+## 3. C: a library that returns memory it owns
 
-**The Rust library:**
+**The C library (any language with a C ABI looks the same from Eider):**
 
-```rust
-// vendor/slug/src/lib.rs
-use std::ffi::{c_char, CStr, CString};
+```c
+// vendor/slug/slug.h
+char *slugify(const char *input);   // malloc'd, or NULL on failure; free with slugify_free
+void slugify_free(char *p);
+```
 
-#[no_mangle]
-pub extern "C" fn slugify(input: *const c_char) -> *mut c_char {
-    // Panics must not unwind across the C boundary
-    std::panic::catch_unwind(|| {
-        let s = unsafe { CStr::from_ptr(input) }.to_string_lossy();
-        let slug = s.to_lowercase().split_whitespace().collect::<Vec<_>>().join("-");
-        CString::new(slug).unwrap().into_raw()
-    })
-    .unwrap_or(std::ptr::null_mut())
-}
+```c
+// vendor/slug/slug.c
+#include <ctype.h>
+#include <stdlib.h>
+#include <string.h>
+#include "slug.h"
 
-#[no_mangle]
-pub extern "C" fn slugify_free(p: *mut c_char) {
-    if !p.is_null() {
-        unsafe { drop(CString::from_raw(p)) }
+char *slugify(const char *input) {
+    char *out = malloc(strlen(input) + 1);
+    if (!out) return NULL;
+    size_t n = 0;
+    int gap = 0;
+    for (const char *c = input; *c; c++) {
+        if (isspace((unsigned char)*c)) { gap = n > 0; continue; }
+        if (gap) { out[n++] = '-'; gap = 0; }
+        out[n++] = (char)tolower((unsigned char)*c);
     }
+    out[n] = '\0';
+    return out;
 }
+
+void slugify_free(char *p) { free(p); }
 ```
 
-```toml
-# vendor/slug/Cargo.toml
-[package]
-name = "slug"
-version = "0.1.0"
-edition = "2021"
-
-[lib]
-crate-type = ["staticlib"]
-```
-
-`cbindgen` generates `slug.h` from the Rust source.
-
-**Annotation (memory allocated by Rust must be freed by Rust):**
+**Annotation (memory allocated by the library must be freed by the library):**
 
 ```toml
 [functions.slugify]
@@ -269,7 +263,7 @@ console.log(textkit.word_count("hello brave new world")); // 4
 
 ## 7. WASM components: sandboxed, any source language
 
-**The WIT interface (the component itself could be written in Rust, Go, C, etc.):**
+**The WIT interface (the component itself could be written in C, Zig, Go, etc.):**
 
 ```wit
 package acme:imaging@1.0.0;
@@ -360,9 +354,10 @@ lang = "zig"
 path = "vendor/mathx"                # built with `zig build-lib`
 
 [native.slug]
-lang   = "rust"
-path   = "vendor/slug"               # built with `cargo build --release`
-header = "cbindgen"
+lang    = "c"
+path    = "vendor/slug"
+files   = ["slug.c"]
+headers = ["slug.h"]
 
 [native.geo]
 lang   = "cpp"
