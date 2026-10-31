@@ -62,7 +62,41 @@ WriteZero. Code acts on the kind (`e.kind == stream.TimedOut`) and shows the mes
 (`print(e)`: "read: Connection reset by peer"); a Kind shows as its name (`TimedOut`).
 `impl From[String] for stream.Error` (kind Other) lets `?` pass on the String errors of `fs`,
 `net`, ... in a function that returns `stream.Error`; going the other way, an application
-gives its own error type an `impl From[stream.Error]` (decision C103).
+gives its own error type an `impl From[stream.Error]` (decision C103). `stream.Error` is an
+`error.Error` too ("Errors and std/error" below), so `.context("...")` and `?` into an
+`error.Failure` work on it.
+
+## Errors and std/error
+
+Every error std returns works with std/error's `.context`, `.with_context` and `?` into an
+`error.Failure` (docs/compiler.md "C8.24"; decision C322, issue #70):
+
+| Error | Where | As an `error.Error` |
+|---|---|---|
+| `String` | `fs`, `io`, `proc`, `fd`, `net`, `poll`, ... (and any `Result[T, String]`) | `impl error.Error for String` in std/error: the message is the String, no source |
+| `stream.Error` | `stream` | its message (the kind stays with the stream.Error) |
+| `strings.ParseError` | `strings.parse_*` | its text (`invalid digit at byte 2`) |
+| `encoding.DecodeError` | `encoding` | its text (`invalid byte at offset 3`) |
+
+```
+fn config(path: List[u8]) -> Result[List[u8], error.Failure] uses fs {
+    let text = fs.read(path).context("reading the config")?
+    Ok(text)
+}
+// Err: reading the config: cannot read app.toml: No such file or directory
+```
+
+Why an impl for String and not typed `fs.Error`/`io.Error`: the String errors are the
+seed's (std/bytes, fs, io, env and proc are compiled into seed/eiderc.c, and compiler/ uses
+them with their String errors throughout), so typed errors there would change the
+compiler's code and wait for a seed regeneration, while the impl lives in std/error, which
+the seed doesn't compile, and works with the seed and with eiderc as they are. The orphan
+rule (E0604) is about the language's traits; `error.Error` is std's, and std/error is the
+package that defines it, so the impl is std's to give. A program that wants kinds to act on
+already has them: std/stream's typed errors over the same calls (`stream.open`, `Fd`,
+sockets). A program can no longer give String its own `error.Error` impl (E0107, already
+implemented); none in this repository or the sibling repositories did, since the guide said
+to `map_err` instead.
 
 **Deadlines (C5).** Every blocking operation has a `_by(..., dl: time.Deadline)` form, and
 when the deadline passes it returns `Err` with kind `TimedOut`, so it composes with `?`
@@ -237,7 +271,8 @@ is regenerated. The earlier plan moved Reader/Writer and `Error` into std/io at 
 regeneration; it was dropped, because it would tie every change of the stream layer (large
 and still evolving) to the compiler's bootstrap while giving programs nothing but another
 import path. std/io stays the raw stdout/stderr/stdin calls the compiler uses, fs/io keep
-their String errors, and `impl From[String] for stream.Error` lets `?` bridge the two.
+their String errors, and `impl From[String] for stream.Error` lets `?` bridge the two (and
+String is an `error.Error`, "Errors and std/error" above).
 
 ## Next
 
@@ -245,7 +280,7 @@ their String errors, and `impl From[String] for stream.Error` lets `?` bridge th
   BufReader's buffer), in-place sorting.
 - After P0.2 (lightweight tasks): `Fd` waits park the task instead of the thread; the API
   stays.
-- P0.6: `stream.Error` implements the error trait, with context chains.
+- `dyn Error` causes (P0.7), so a Failure can keep a stream.Error's kind.
 - `var` is gone from std except six shares of generic or Copy-less values out of read-only
   parameters (decision C100), which wait for a way to copy those (a `Copy`-free share).
 - Seeded SipHash Map (C6), `BTreeMap`, RwLock/Once, logging and config (roadmap layer/std).

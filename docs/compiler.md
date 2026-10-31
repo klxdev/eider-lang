@@ -2593,8 +2593,10 @@ chain, the root, a Failure into an application error by `From`, printing; hand-c
 leak-free, sanitizers); compile-fail `e0601_context_needs_error`, `e0401_failure_no_from`.
 
 **Remaining.** `dyn Error` causes (P0.7); `main` returning `Result[(), Failure]` printing
-the chain (C8.2's list of printable `Err`s); std/stream's `Error` and the other std errors
-implementing `error.Error` (8.9, std's owners).
+the chain (C8.2's list of printable `Err`s). (std's own errors implement `error.Error`
+since C322: String, the errors of fs/io/proc, through an impl in std/error, and
+stream.Error, strings.ParseError and encoding.DecodeError in their modules; docs/std.md
+"Errors and std/error".)
 
 ## C8.25: method chains across lines
 

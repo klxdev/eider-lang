@@ -72,6 +72,14 @@ impl Error for Failure {
     }
 }
 
+/// A String is an Error whose message is itself, with no source: the errors of std/fs,
+/// std/io and std/proc (and any `Result[T, String]`) take `.context` and `?` into a Failure
+/// as they are (decision C322).
+impl Error for String {
+    fn message(self) -> String { self.copy() }
+    fn source(self) -> Option[Failure] { None }
+}
+
 impl Show for Failure {
     fn show(self, inout out: String) {
         out.append(self.message.copy())
