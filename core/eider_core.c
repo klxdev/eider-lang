@@ -13,32 +13,62 @@
 #error "eider_core: no Windows backend yet (write eider_core_win32.c against core/ABI.md)"
 #endif
 
+/* Feature macros: each system's own "everything" switch. On the BSDs the default environment
+   already exposes POSIX plus the BSD calls the core needs (flock, kqueue, accept4,
+   arc4random_buf); defining _POSIX_C_SOURCE there would hide them. */
 #if defined(__linux__)
-#define _GNU_SOURCE 1 /* pipe2 (close-on-exec pipes without a fork race) */
+#define _GNU_SOURCE 1 /* pipe2, accept4, epoll, eventfd, getrandom, MSG_NOSIGNAL */
+#define _FILE_OFFSET_BITS 64 /* 64-bit off_t on 32-bit Linux too */
+#elif defined(__APPLE__)
+#define _DARWIN_C_SOURCE 1
+#elif defined(__FreeBSD__) || defined(__OpenBSD__) || defined(__NetBSD__) || defined(__DragonFly__)
+#define EC_BSD 1
+#if defined(__NetBSD__)
+#define _NETBSD_SOURCE 1
 #endif
+#else
 #define _POSIX_C_SOURCE 200809L
 #define _XOPEN_SOURCE 700 /* realpath (XSI) */
-#if defined(__APPLE__)
-#define _DARWIN_C_SOURCE 1
 #endif
 
 #include <dirent.h>
 #include <errno.h>
 #include <pthread.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <poll.h>
 #include <signal.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <sys/types.h>
+#include <sys/un.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 #if defined(__APPLE__)
 #include <crt_externs.h>
+#endif
+#if defined(__linux__) || defined(__APPLE__) || defined(EC_BSD)
+#include <sys/file.h> /* flock: not POSIX, but on every system with a backend here */
+#define EC_HAVE_FLOCK 1
+#endif
+#if defined(__linux__)
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
+#include <sys/random.h>
+#define EC_EPOLL 1
+#elif defined(__APPLE__) || defined(EC_BSD)
+#include <sys/event.h>
+#define EC_KQUEUE 1
 #endif
 
 /* Eider declares externs as `T f(...) __asm__("f")`, i.e. by raw symbol name. Where the
@@ -117,6 +147,108 @@ static const char *arg(int k) {
 
 static int64_t fail(void) { return errno ? -(int64_t)errno : -EIO; }
 
+/* Little-endian fields into out (the layouts in ABI.md). */
+static void out_u32(uint32_t v) {
+  unsigned char b[4];
+  for (int i = 0; i < 4; i++) b[i] = (unsigned char)(v >> (8 * i));
+  out_put(b, 4);
+}
+
+static void out_u64(uint64_t v) {
+  unsigned char b[8];
+  for (int i = 0; i < 8; i++) b[i] = (unsigned char)(v >> (8 * i));
+  out_put(b, 8);
+}
+
+/* The whole of `in` as bytes (never NULL). */
+static const unsigned char *in_bytes(void) {
+  reserve(&in_p, &in_cap, 1);
+  return in_p;
+}
+
+/* ---- signal numbers
+
+   Eider uses one numbering on every system: the traditional numbers, which are also
+   Linux's (HUP 1, INT 2, QUIT 3, ABRT 6, KILL 9, USR1 10, USR2 12, PIPE 13, ALRM 14, TERM 15,
+   CHLD 17, CONT 18, STOP 19, TSTP 20, WINCH 28). Other systems translate here. */
+static const int sig_map[][2] = {
+  {1, SIGHUP}, {2, SIGINT}, {3, SIGQUIT}, {6, SIGABRT}, {9, SIGKILL}, {10, SIGUSR1},
+  {12, SIGUSR2}, {13, SIGPIPE}, {14, SIGALRM}, {15, SIGTERM}, {17, SIGCHLD}, {18, SIGCONT},
+  {19, SIGSTOP}, {20, SIGTSTP},
+#if defined(SIGWINCH)
+  {28, SIGWINCH},
+#endif
+};
+#define SIG_COUNT (sizeof sig_map / sizeof sig_map[0])
+
+/* Native number for Eider number `s` (0 stays 0, for kill's existence check); -1 if unknown. */
+static int sig_native(int32_t s) {
+  if (s == 0) return 0;
+  for (size_t i = 0; i < SIG_COUNT; i++)
+    if (sig_map[i][0] == s) return sig_map[i][1];
+  return -1;
+}
+
+/* Eider number for native signal `n`; 0 if it has none. Async-signal-safe. */
+static int sig_portable(int n) {
+  for (size_t i = 0; i < SIG_COUNT; i++)
+    if (sig_map[i][1] == n) return sig_map[i][0];
+  return 0;
+}
+
+/* The signal pipe (ec_signal_fd): created once, never closed. The handler writes one byte,
+   the signal's Eider number, per delivery. */
+static int sig_pipe[2] = {-1, -1};
+static int sig_pipe_err;
+static pthread_once_t sig_pipe_once = PTHREAD_ONCE_INIT;
+
+static void on_signal(int n) {
+  int e = errno;
+  unsigned char b = (unsigned char)sig_portable(n);
+  (void)!write(sig_pipe[1], &b, 1); /* full pipe: the delivery is dropped, never blocks */
+  errno = e;
+}
+
+/* SIGPIPE is ignored from the first socket, pipe or piped spawn on (ABI.md "SIGPIPE"). */
+static pthread_once_t sigpipe_once = PTHREAD_ONCE_INIT;
+static void ignore_sigpipe(void) {
+  struct sigaction sa;
+  memset(&sa, 0, sizeof sa);
+  sa.sa_handler = SIG_IGN;
+  sigemptyset(&sa.sa_mask);
+  sigaction(SIGPIPE, &sa, NULL);
+}
+static void ignore_sigpipe_once(void) { pthread_once(&sigpipe_once, ignore_sigpipe); }
+
+/* Around fork: every signal blocked in the forking thread, so no handler of ours runs in the
+   child before it has reset them. */
+static void block_signals(sigset_t *old) {
+  sigset_t all;
+  sigfillset(&all);
+  pthread_sigmask(SIG_SETMASK, &all, old);
+}
+
+static void restore_signals(const sigset_t *old) { pthread_sigmask(SIG_SETMASK, old, NULL); }
+
+/* In a forked child, before exec (async-signal-safe calls only): signals the core delivers
+   to the signal pipe, and SIGPIPE, go back to their defaults, and the mask is emptied, so the
+   new program starts as it would from a shell. */
+static void child_reset_signals(void) {
+  struct sigaction dfl, cur;
+  memset(&dfl, 0, sizeof dfl);
+  dfl.sa_handler = SIG_DFL;
+  sigemptyset(&dfl.sa_mask);
+  for (size_t i = 0; i < SIG_COUNT; i++) {
+    int n = sig_map[i][1];
+    if (n == SIGKILL || n == SIGSTOP) continue;
+    if (sigaction(n, NULL, &cur) == 0 && (cur.sa_handler == on_signal || n == SIGPIPE))
+      sigaction(n, &dfl, NULL);
+  }
+  sigset_t none;
+  sigemptyset(&none);
+  sigprocmask(SIG_SETMASK, &none, NULL);
+}
+
 // ---- buffers
 
 EC_FN(void, ec_in_clear, (void)) {
@@ -148,10 +280,12 @@ EC_FN(int32_t, ec_out_byte, (int64_t i)) {
 EC_FN(int64_t, ec_str_len, (const char *s)) { return (int64_t)strlen(s); }
 EC_FN(int32_t, ec_str_byte, (const char *s, int64_t i)) { return (unsigned char)s[i]; }
 
-/* The text for status -errno `e`, into out. */
+static const char *resolver_text(int64_t e);
+
+/* The text for status -errno `e`, or a resolver status (ec_dns_lookup), into out. */
 EC_FN(void, ec_errstr, (int64_t e)) {
   out_len = 0;
-  const char *m = e < 0 && e > -100000 ? strerror((int)-e) : "unknown error";
+  const char *m = e < 0 && e > -100000 ? strerror((int)-e) : resolver_text(e);
   out_put(m, strlen(m));
 }
 
@@ -328,7 +462,10 @@ EC_FN(int64_t, ec_run, (int32_t out_mode, int32_t err_mode, int64_t timeout_ms))
   int64_t deadline = limited ? now_ms() + timeout_ms : 0;
   fflush(stdout);
   fflush(stderr);
+  sigset_t oldmask;
+  block_signals(&oldmask);
   pid_t pid = fork();
+  if (pid != 0) restore_signals(&oldmask);
   if (pid < 0) {
     int64_t r = fail();
     close_fd(&op[0]); close_fd(&op[1]); close_fd(&ep[0]); close_fd(&ep[1]);
@@ -338,6 +475,7 @@ EC_FN(int64_t, ec_run, (int32_t out_mode, int32_t err_mode, int64_t timeout_ms))
   }
   if (pid == 0) {
     /* only async-signal-safe calls until exec */
+    child_reset_signals();
     if (limited) setpgid(0, 0);
     int x = above_stdio(xp[1]), o = above_stdio(op[1]), e = above_stdio(ep[1]);
     if (x < 0) _exit(127);
@@ -495,3 +633,1031 @@ EC_FN(int64_t, ec_remove, (void)) { return remove(arg(0)) == 0 ? 0 : fail(); }
 EC_FN(int64_t, ec_rename, (void)) { return rename(arg(0), arg(1)) == 0 ? 0 : fail(); }
 /* in = target NUL linkpath */
 EC_FN(int64_t, ec_symlink, (void)) { return symlink(arg(0), arg(1)) == 0 ? 0 : fail(); }
+
+// ---- file descriptors (ABI.md "File descriptors")
+
+/* Eider open flags (the same on every system) -> O_* flags. Always close-on-exec. */
+#define EC_O_ACCESS 3
+#define EC_O_CREATE 4
+#define EC_O_EXCL 8
+#define EC_O_TRUNC 16
+#define EC_O_APPEND 32
+#define EC_O_NONBLOCK 64
+#define EC_O_DIRECTORY 128
+#define EC_O_NOFOLLOW 256
+#define EC_O_ALL 511
+
+/* in[0] path. Returns the new descriptor. */
+EC_FN(int64_t, ec_fd_open, (int32_t flags, int32_t mode)) {
+  if (flags < 0 || (flags & ~EC_O_ALL) || (flags & EC_O_ACCESS) == 3) return -EINVAL;
+  int acc = flags & EC_O_ACCESS;
+  int f = (acc == 0 ? O_RDONLY : acc == 1 ? O_WRONLY : O_RDWR) | O_CLOEXEC;
+  if (flags & EC_O_CREATE) f |= O_CREAT;
+  if (flags & EC_O_EXCL) f |= O_EXCL;
+  if (flags & EC_O_TRUNC) f |= O_TRUNC;
+  if (flags & EC_O_APPEND) f |= O_APPEND;
+  if (flags & EC_O_NONBLOCK) f |= O_NONBLOCK;
+  if (flags & EC_O_DIRECTORY) f |= O_DIRECTORY;
+  if (flags & EC_O_NOFOLLOW) f |= O_NOFOLLOW;
+  int fd;
+  do fd = open(arg(0), f, (mode_t)(mode & 07777)); while (fd < 0 && errno == EINTR);
+  return fd < 0 ? fail() : fd;
+}
+
+/* close(2). EINTR counts as closed (on Linux and the BSDs the descriptor is gone). */
+EC_FN(int64_t, ec_fd_close, (int32_t fd)) {
+  if (close(fd) == 0 || errno == EINTR) return 0;
+  return fail();
+}
+
+/* One write(2) of in: the count written (may be short). EINTR is retried. */
+EC_FN(int64_t, ec_fd_write, (int32_t fd)) {
+  const unsigned char *b = in_bytes();
+  ssize_t w;
+  do w = write(fd, b, in_len); while (w < 0 && errno == EINTR);
+  return w < 0 ? fail() : (int64_t)w;
+}
+
+/* One pread(2) of up to max bytes (at most EC_READ_MAX) at offset off into out. */
+EC_FN(int64_t, ec_fd_pread, (int32_t fd, int64_t max, int64_t off)) {
+  out_len = 0;
+  if (fd < 0 || max <= 0 || off < 0) return -EINVAL;
+  size_t n = (size_t)(max < EC_READ_MAX ? max : EC_READ_MAX);
+  reserve(&out_p, &out_cap, n + 1);
+  ssize_t r;
+  do r = pread(fd, out_p, n, (off_t)off); while (r < 0 && errno == EINTR);
+  if (r < 0) {
+    out_p[0] = 0;
+    return fail();
+  }
+  out_len = (size_t)r;
+  out_p[out_len] = 0;
+  return (int64_t)r;
+}
+
+/* One pwrite(2) of in at offset off: the count written. */
+EC_FN(int64_t, ec_fd_pwrite, (int32_t fd, int64_t off)) {
+  if (off < 0) return -EINVAL;
+  const unsigned char *b = in_bytes();
+  ssize_t w;
+  do w = pwrite(fd, b, in_len, (off_t)off); while (w < 0 && errno == EINTR);
+  return w < 0 ? fail() : (int64_t)w;
+}
+
+/* lseek(2); whence 0 start, 1 current, 2 end. The new offset. */
+EC_FN(int64_t, ec_fd_seek, (int32_t fd, int64_t off, int32_t whence)) {
+  int w = whence == 0 ? SEEK_SET : whence == 1 ? SEEK_CUR : whence == 2 ? SEEK_END : -1;
+  if (w < 0) return -EINVAL;
+  off_t r = lseek(fd, (off_t)off, w);
+  return r < 0 ? fail() : (int64_t)r;
+}
+
+/* Flush to stable storage: data_only != 0 is fdatasync (metadata only as needed to read the
+   data back). On macOS both are fcntl(F_FULLFSYNC): its fsync does not reach the disk. */
+EC_FN(int64_t, ec_fd_sync, (int32_t fd, int32_t data_only)) {
+  int r;
+#if defined(__APPLE__)
+  (void)data_only;
+  do r = fcntl(fd, F_FULLFSYNC); while (r < 0 && errno == EINTR);
+#else
+  do r = data_only ? fdatasync(fd) : fsync(fd); while (r < 0 && errno == EINTR);
+#endif
+  return r < 0 ? fail() : 0;
+}
+
+EC_FN(int64_t, ec_fd_truncate, (int32_t fd, int64_t len)) {
+  if (len < 0) return -EINVAL;
+  int r;
+  do r = ftruncate(fd, (off_t)len); while (r < 0 && errno == EINTR);
+  return r < 0 ? fail() : 0;
+}
+
+/* stat layout into out: size, kind, mode, mtime (ns since the epoch), 8 bytes LE each. */
+static void stat_put(const struct stat *st) {
+  int64_t kind = S_ISREG(st->st_mode) ? 1 : S_ISDIR(st->st_mode) ? 2 : S_ISLNK(st->st_mode) ? 4
+               : S_ISFIFO(st->st_mode) ? 5 : S_ISSOCK(st->st_mode) ? 6 : S_ISCHR(st->st_mode) ? 7
+               : S_ISBLK(st->st_mode) ? 8 : 3;
+#if defined(__APPLE__)
+  const struct timespec *m = &st->st_mtimespec;
+#else
+  const struct timespec *m = &st->st_mtim;
+#endif
+  out_len = 0;
+  out_u64((uint64_t)(int64_t)st->st_size);
+  out_u64((uint64_t)kind);
+  out_u64((uint64_t)(st->st_mode & 07777));
+  out_u64((uint64_t)((int64_t)m->tv_sec * 1000000000 + (int64_t)m->tv_nsec));
+}
+
+EC_FN(int64_t, ec_fd_stat, (int32_t fd)) {
+  struct stat st;
+  out_len = 0;
+  if (fstat(fd, &st) != 0) return fail();
+  stat_put(&st);
+  return 0;
+}
+
+/* in[0] path; follow == 0 describes a final symlink itself (kind 4). */
+EC_FN(int64_t, ec_stat, (int32_t follow)) {
+  struct stat st;
+  out_len = 0;
+  if ((follow ? stat(arg(0), &st) : lstat(arg(0), &st)) != 0) return fail();
+  stat_put(&st);
+  return 0;
+}
+
+EC_FN(int64_t, ec_fd_chmod, (int32_t fd, int32_t mode)) {
+  return fchmod(fd, (mode_t)(mode & 07777)) == 0 ? 0 : fail();
+}
+
+/* flock(2): op 0 unlock, 1 shared, 2 exclusive; +4 don't wait (-EWOULDBLOCK if held). */
+EC_FN(int64_t, ec_fd_lock, (int32_t fd, int32_t op)) {
+#if defined(EC_HAVE_FLOCK)
+  int kind = op & 3, o = kind == 0 ? LOCK_UN : kind == 1 ? LOCK_SH : kind == 2 ? LOCK_EX : -1;
+  if (o < 0 || op < 0 || op > 7) return -EINVAL;
+  if (op & 4) o |= LOCK_NB;
+  int r;
+  do r = flock(fd, o); while (r < 0 && errno == EINTR);
+  return r < 0 ? fail() : 0;
+#else
+  (void)fd;
+  (void)op;
+  return -ENOSYS;
+#endif
+}
+
+/* O_NONBLOCK on (on != 0) or off. */
+EC_FN(int64_t, ec_fd_nonblock, (int32_t fd, int32_t on)) {
+  int fl = fcntl(fd, F_GETFL);
+  if (fl < 0) return fail();
+  fl = on ? fl | O_NONBLOCK : fl & ~O_NONBLOCK;
+  return fcntl(fd, F_SETFL, fl) == 0 ? 0 : fail();
+}
+
+/* A close-on-exec duplicate (the lowest free descriptor). */
+EC_FN(int64_t, ec_fd_dup, (int32_t fd)) {
+  int r = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+  return r < 0 ? fail() : r;
+}
+
+/* Two descriptors into out (4 bytes LE each). */
+static void two_fds(int a, int b) {
+  out_len = 0;
+  out_u32((uint32_t)a);
+  out_u32((uint32_t)b);
+}
+
+/* A close-on-exec pipe: out = read end, write end. */
+EC_FN(int64_t, ec_pipe, (void)) {
+  int p[2];
+  out_len = 0;
+  ignore_sigpipe_once();
+  if (cloexec_pipe(p) != 0) return fail();
+  two_fds(p[0], p[1]);
+  return 0;
+}
+
+// ---- sockets (ABI.md "Sockets" and "Addresses")
+
+#if defined(__APPLE__) || defined(EC_BSD)
+#define EC_SA_LEN 1 /* sockaddrs carry their length */
+#endif
+
+/* An Eider address (bytes [0, n) of `a`) as a sockaddr; its length, or 0 if malformed. */
+static socklen_t addr_get(const unsigned char *a, size_t n, struct sockaddr_storage *ss) {
+  memset(ss, 0, sizeof *ss);
+  if (n < 3) return 0;
+  uint16_t port = (uint16_t)((a[1] << 8) | a[2]);
+  if (a[0] == 4 && n == 7) {
+    struct sockaddr_in *s = (struct sockaddr_in *)ss;
+    s->sin_family = AF_INET;
+    s->sin_port = htons(port);
+    memcpy(&s->sin_addr, a + 3, 4);
+#if defined(EC_SA_LEN)
+    s->sin_len = sizeof *s;
+#endif
+    return sizeof *s;
+  }
+  if (a[0] == 6 && n == 23) {
+    struct sockaddr_in6 *s = (struct sockaddr_in6 *)ss;
+    s->sin6_family = AF_INET6;
+    s->sin6_port = htons(port);
+    memcpy(&s->sin6_addr, a + 3, 16);
+    s->sin6_scope_id = (uint32_t)a[19] | (uint32_t)a[20] << 8 | (uint32_t)a[21] << 16 | (uint32_t)a[22] << 24;
+#if defined(EC_SA_LEN)
+    s->sin6_len = sizeof *s;
+#endif
+    return sizeof *s;
+  }
+  if (a[0] == 1) {
+    struct sockaddr_un *s = (struct sockaddr_un *)ss;
+    size_t plen = n - 3;
+    if (plen >= sizeof s->sun_path) return 0;
+    s->sun_family = AF_UNIX;
+    memcpy(s->sun_path, a + 3, plen);
+    /* a pathname gets its NUL; an abstract name (Linux, leading NUL) is exactly its bytes;
+       an empty path is the unnamed address */
+    size_t len = offsetof(struct sockaddr_un, sun_path) + plen + (plen > 0 && a[3] != 0 ? 1 : 0);
+#if defined(EC_SA_LEN)
+    s->sun_len = (unsigned char)len;
+#endif
+    return (socklen_t)len;
+  }
+  return 0;
+}
+
+/* A sockaddr as an Eider address, appended to out. */
+static void addr_put(const struct sockaddr_storage *ss, socklen_t len) {
+  unsigned char h[3] = {0, 0, 0};
+  if (ss->ss_family == AF_INET && len >= (socklen_t)sizeof(struct sockaddr_in)) {
+    const struct sockaddr_in *s = (const struct sockaddr_in *)ss;
+    uint16_t port = ntohs(s->sin_port);
+    h[0] = 4; h[1] = (unsigned char)(port >> 8); h[2] = (unsigned char)port;
+    out_put(h, 3);
+    out_put(&s->sin_addr, 4);
+  } else if (ss->ss_family == AF_INET6 && len >= (socklen_t)sizeof(struct sockaddr_in6)) {
+    const struct sockaddr_in6 *s = (const struct sockaddr_in6 *)ss;
+    uint16_t port = ntohs(s->sin6_port);
+    h[0] = 6; h[1] = (unsigned char)(port >> 8); h[2] = (unsigned char)port;
+    out_put(h, 3);
+    out_put(&s->sin6_addr, 16);
+    out_u32(s->sin6_scope_id);
+  } else if (ss->ss_family == AF_UNIX) {
+    const struct sockaddr_un *s = (const struct sockaddr_un *)ss;
+    size_t off = offsetof(struct sockaddr_un, sun_path), plen = 0;
+    if ((size_t)len > off) plen = (size_t)len - off;
+    if (plen > sizeof s->sun_path) plen = sizeof s->sun_path;
+    if (plen > 0 && s->sun_path[0] != 0) plen = strnlen(s->sun_path, plen); /* pathname */
+    h[0] = 1;
+    out_put(h, 3);
+    out_put(s->sun_path, plen);
+  } else {
+    out_put(h, 3); /* unknown family */
+  }
+}
+
+static int set_cloexec_nonblock(int fd, int nonblock) {
+  if (fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) return -1;
+  if (nonblock) {
+    int fl = fcntl(fd, F_GETFL);
+    if (fl < 0 || fcntl(fd, F_SETFL, fl | O_NONBLOCK) != 0) return -1;
+  }
+  return 0;
+}
+
+static void no_sigpipe(int fd) {
+#if defined(SO_NOSIGPIPE)
+  int one = 1;
+  setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+#else
+  (void)fd;
+#endif
+}
+
+#if defined(MSG_NOSIGNAL)
+#define EC_MSG_NOSIGNAL MSG_NOSIGNAL
+#else
+#define EC_MSG_NOSIGNAL 0
+#endif
+
+static int sock_type(int32_t type) { return type == 1 ? SOCK_STREAM : type == 2 ? SOCK_DGRAM : -1; }
+
+/* family 4 IPv4, 6 IPv6, 1 Unix; type 1 stream, 2 datagram. Close-on-exec, and
+   non-blocking when nonblock != 0. */
+EC_FN(int64_t, ec_sock_open, (int32_t family, int32_t type, int32_t nonblock)) {
+  int dom = family == 4 ? AF_INET : family == 6 ? AF_INET6 : family == 1 ? AF_UNIX : -1;
+  int ty = sock_type(type);
+  if (dom < 0) return -EAFNOSUPPORT;
+  if (ty < 0) return -EINVAL;
+  ignore_sigpipe_once();
+#if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
+  int fd = socket(dom, ty | SOCK_CLOEXEC | (nonblock ? SOCK_NONBLOCK : 0), 0);
+  if (fd < 0) return fail();
+#else
+  int fd = socket(dom, ty, 0);
+  if (fd < 0) return fail();
+  if (set_cloexec_nonblock(fd, nonblock) != 0) {
+    int64_t r = fail();
+    close(fd);
+    return r;
+  }
+#endif
+  no_sigpipe(fd);
+  return fd;
+}
+
+/* A connected pair of Unix-domain sockets: out = two descriptors. */
+EC_FN(int64_t, ec_sock_pair, (int32_t type)) {
+  int ty = sock_type(type), p[2];
+  out_len = 0;
+  if (ty < 0) return -EINVAL;
+  ignore_sigpipe_once();
+#if defined(SOCK_CLOEXEC)
+  if (socketpair(AF_UNIX, ty | SOCK_CLOEXEC, 0, p) != 0) return fail();
+#else
+  if (socketpair(AF_UNIX, ty, 0, p) != 0) return fail();
+  if (set_cloexec_nonblock(p[0], 0) != 0 || set_cloexec_nonblock(p[1], 0) != 0) {
+    int64_t r = fail();
+    close(p[0]);
+    close(p[1]);
+    return r;
+  }
+#endif
+  no_sigpipe(p[0]);
+  no_sigpipe(p[1]);
+  two_fds(p[0], p[1]);
+  return 0;
+}
+
+/* in = address */
+EC_FN(int64_t, ec_sock_bind, (int32_t fd)) {
+  struct sockaddr_storage ss;
+  socklen_t len = addr_get(in_bytes(), in_len, &ss);
+  if (!len) return -EINVAL;
+  return bind(fd, (struct sockaddr *)&ss, len) == 0 ? 0 : fail();
+}
+
+EC_FN(int64_t, ec_sock_listen, (int32_t fd, int32_t backlog)) {
+  return listen(fd, backlog) == 0 ? 0 : fail();
+}
+
+/* The new connection's descriptor (close-on-exec, non-blocking if nonblock != 0); its peer
+   address in out. EINTR is retried. */
+EC_FN(int64_t, ec_sock_accept, (int32_t fd, int32_t nonblock)) {
+  struct sockaddr_storage ss;
+  socklen_t len;
+  int c;
+  out_len = 0;
+  do {
+    len = sizeof ss;
+    memset(&ss, 0, sizeof ss);
+#if defined(__linux__) || defined(EC_BSD)
+    c = accept4(fd, (struct sockaddr *)&ss, &len, SOCK_CLOEXEC | (nonblock ? SOCK_NONBLOCK : 0));
+#else
+    c = accept(fd, (struct sockaddr *)&ss, &len);
+#endif
+  } while (c < 0 && errno == EINTR);
+  if (c < 0) return fail();
+#if !defined(__linux__) && !defined(EC_BSD)
+  if (set_cloexec_nonblock(c, nonblock) != 0) {
+    int64_t r = fail();
+    close(c);
+    return r;
+  }
+#endif
+  no_sigpipe(c);
+  addr_put(&ss, len);
+  return c;
+}
+
+/* in = address. 0 when connected; -EINPROGRESS on a non-blocking socket (wait for
+   writability, then ec_sock_error). A blocking connect interrupted by a signal is waited
+   for here (it cannot be restarted). */
+EC_FN(int64_t, ec_sock_connect, (int32_t fd)) {
+  struct sockaddr_storage ss;
+  socklen_t len = addr_get(in_bytes(), in_len, &ss);
+  if (!len) return -EINVAL;
+  if (connect(fd, (struct sockaddr *)&ss, len) == 0) return 0;
+  if (errno != EINTR) return fail();
+  struct pollfd pf = {fd, POLLOUT, 0};
+  while (poll(&pf, 1, -1) < 0)
+    if (errno != EINTR) return fail();
+  int e = 0;
+  socklen_t el = sizeof e;
+  if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &e, &el) != 0) return fail();
+  return e ? -(int64_t)e : 0;
+}
+
+/* The socket's pending error (SO_ERROR, which clears it): 0 or -errno. How a non-blocking
+   connect reports its outcome. */
+EC_FN(int64_t, ec_sock_error, (int32_t fd)) {
+  int e = 0;
+  socklen_t el = sizeof e;
+  if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &e, &el) != 0) return fail();
+  return e ? -(int64_t)e : 0;
+}
+
+/* how: 0 reading, 1 writing, 2 both */
+EC_FN(int64_t, ec_sock_shutdown, (int32_t fd, int32_t how)) {
+  int h = how == 0 ? SHUT_RD : how == 1 ? SHUT_WR : how == 2 ? SHUT_RDWR : -1;
+  if (h < 0) return -EINVAL;
+  return shutdown(fd, h) == 0 ? 0 : fail();
+}
+
+/* One send(2) of in (never raises SIGPIPE): the count sent. */
+EC_FN(int64_t, ec_sock_send, (int32_t fd)) {
+  const unsigned char *b = in_bytes();
+  ssize_t w;
+  do w = send(fd, b, in_len, EC_MSG_NOSIGNAL); while (w < 0 && errno == EINTR);
+  return w < 0 ? fail() : (int64_t)w;
+}
+
+/* One recv(2) of up to max bytes (at most EC_READ_MAX) into out; peek != 0 leaves them
+   queued. 0 at end of stream. */
+EC_FN(int64_t, ec_sock_recv, (int32_t fd, int64_t max, int32_t peek)) {
+  out_len = 0;
+  if (fd < 0 || max <= 0) return -EINVAL;
+  size_t n = (size_t)(max < EC_READ_MAX ? max : EC_READ_MAX);
+  reserve(&out_p, &out_cap, n + 1);
+  ssize_t r;
+  do r = recv(fd, out_p, n, peek ? MSG_PEEK : 0); while (r < 0 && errno == EINTR);
+  if (r < 0) {
+    out_p[0] = 0;
+    return fail();
+  }
+  out_len = (size_t)r;
+  out_p[out_len] = 0;
+  return (int64_t)r;
+}
+
+/* in = address (addr_len bytes) then the datagram. The count sent. */
+EC_FN(int64_t, ec_sock_sendto, (int32_t fd, int32_t addr_len)) {
+  if (addr_len < 0 || (size_t)addr_len > in_len) return -EINVAL;
+  const unsigned char *b = in_bytes();
+  struct sockaddr_storage ss;
+  socklen_t len = addr_get(b, (size_t)addr_len, &ss);
+  if (!len) return -EINVAL;
+  ssize_t w;
+  do w = sendto(fd, b + addr_len, in_len - (size_t)addr_len, EC_MSG_NOSIGNAL, (struct sockaddr *)&ss, len);
+  while (w < 0 && errno == EINTR);
+  return w < 0 ? fail() : (int64_t)w;
+}
+
+/* One recvfrom(2) of up to max bytes: the count; out = 1 byte A, the sender's address (A
+   bytes), the data. A datagram longer than max is truncated (the rest is dropped). */
+EC_FN(int64_t, ec_sock_recvfrom, (int32_t fd, int64_t max)) {
+  out_len = 0;
+  if (fd < 0 || max <= 0) return -EINVAL;
+  size_t n = (size_t)(max < EC_READ_MAX ? max : EC_READ_MAX);
+  unsigned char *buf = malloc(n);
+  if (!buf) return -ENOMEM;
+  struct sockaddr_storage ss;
+  socklen_t len;
+  ssize_t r;
+  do {
+    len = sizeof ss;
+    memset(&ss, 0, sizeof ss);
+    r = recvfrom(fd, buf, n, 0, (struct sockaddr *)&ss, &len);
+  } while (r < 0 && errno == EINTR);
+  if (r < 0) {
+    int64_t e = fail();
+    free(buf);
+    return e;
+  }
+  out_put("", 1);
+  addr_put(&ss, len);
+  out_p[0] = (unsigned char)(out_len - 1);
+  out_put(buf, (size_t)r);
+  free(buf);
+  return (int64_t)r;
+}
+
+/* getsockname (peer == 0) or getpeername: the address into out. */
+EC_FN(int64_t, ec_sock_name, (int32_t fd, int32_t peer)) {
+  struct sockaddr_storage ss;
+  socklen_t len = sizeof ss;
+  memset(&ss, 0, sizeof ss);
+  out_len = 0;
+  if ((peer ? getpeername(fd, (struct sockaddr *)&ss, &len) : getsockname(fd, (struct sockaddr *)&ss, &len)) != 0)
+    return fail();
+  addr_put(&ss, len);
+  return 0;
+}
+
+/* Eider option numbers -> (level, name). 0 if the system lacks the option. */
+static int sockopt(int32_t opt, int *level, int *name) {
+  *level = SOL_SOCKET;
+  switch (opt) {
+  case 1: *name = SO_REUSEADDR; return 1;
+#if defined(SO_REUSEPORT)
+  case 2: *name = SO_REUSEPORT; return 1;
+#endif
+  case 3: *level = IPPROTO_TCP; *name = TCP_NODELAY; return 1;
+  case 4: *name = SO_KEEPALIVE; return 1;
+  case 5: *name = SO_RCVBUF; return 1;
+  case 6: *name = SO_SNDBUF; return 1;
+  case 7: *level = IPPROTO_IPV6; *name = IPV6_V6ONLY; return 1;
+  case 8: *name = SO_BROADCAST; return 1;
+  case 9: *name = SO_RCVTIMEO; return 1;
+  case 10: *name = SO_SNDTIMEO; return 1;
+  default: return 0;
+  }
+}
+
+/* Set option opt (ABI.md table) to value; 9/10 (timeouts) take milliseconds, 0 = none. */
+EC_FN(int64_t, ec_sock_setopt, (int32_t fd, int32_t opt, int64_t value)) {
+  int level, name;
+  if (!sockopt(opt, &level, &name)) return opt == 2 ? -ENOPROTOOPT : -EINVAL;
+  if (opt == 9 || opt == 10) {
+    if (value < 0) return -EINVAL;
+    struct timeval tv;
+    tv.tv_sec = (time_t)(value / 1000);
+    tv.tv_usec = (suseconds_t)((value % 1000) * 1000);
+    return setsockopt(fd, level, name, &tv, sizeof tv) == 0 ? 0 : fail();
+  }
+  if (value < INT_MIN || value > INT_MAX) return -EINVAL;
+  int v = (int)value;
+  return setsockopt(fd, level, name, &v, sizeof v) == 0 ? 0 : fail();
+}
+
+/* The option's value (booleans 0/1 as the system reports them, sizes in bytes, timeouts in
+   ms). */
+EC_FN(int64_t, ec_sock_getopt, (int32_t fd, int32_t opt)) {
+  int level, name;
+  if (!sockopt(opt, &level, &name)) return opt == 2 ? -ENOPROTOOPT : -EINVAL;
+  if (opt == 9 || opt == 10) {
+    struct timeval tv;
+    socklen_t l = sizeof tv;
+    if (getsockopt(fd, level, name, &tv, &l) != 0) return fail();
+    return (int64_t)tv.tv_sec * 1000 + (int64_t)tv.tv_usec / 1000;
+  }
+  int v = 0;
+  socklen_t l = sizeof v;
+  if (getsockopt(fd, level, name, &v, &l) != 0) return fail();
+  return v;
+}
+
+// ---- DNS (ABI.md "Name resolution")
+
+/* Resolver failures are -(EC_EAI_BASE + k), k indexing this table (0 unused). */
+#define EC_EAI_BASE 1000000
+static const int eai_codes[] = {0, EAI_NONAME, EAI_AGAIN, EAI_FAIL, EAI_FAMILY, EAI_SOCKTYPE,
+                                EAI_SERVICE, EAI_MEMORY, EAI_BADFLAGS, EAI_OVERFLOW};
+#define EAI_COUNT (sizeof eai_codes / sizeof eai_codes[0])
+
+static const char *resolver_text(int64_t e) {
+  int64_t k = -e - EC_EAI_BASE;
+  return k >= 1 && k < (int64_t)EAI_COUNT ? gai_strerror(eai_codes[k]) : "unknown error";
+}
+
+static int64_t eai_status(int e) {
+  if (e == EAI_SYSTEM) return fail();
+#if defined(EAI_NODATA) && EAI_NODATA != EAI_NONAME
+  if (e == EAI_NODATA) e = EAI_NONAME;
+#endif
+#if defined(EAI_ADDRFAMILY) && EAI_ADDRFAMILY != EAI_NONAME
+  if (e == EAI_ADDRFAMILY) e = EAI_NONAME;
+#endif
+  for (size_t k = 1; k < EAI_COUNT; k++)
+    if (eai_codes[k] == e) return -(int64_t)(EC_EAI_BASE + k);
+  return -(int64_t)(EC_EAI_BASE + 3); /* EAI_FAIL */
+}
+
+/* in = host NUL service (either may be empty). family 0 any, 4, 6; socktype 0 any, 1 stream,
+   2 datagram; flags 1 passive, 2 numeric host only, 4 address-config. The number of results;
+   out = per result: 1 byte socktype (1/2/0 other), 1 byte A, the address (A bytes). */
+EC_FN(int64_t, ec_dns_lookup, (int32_t family, int32_t socktype, int32_t flags)) {
+  struct addrinfo hints, *res = NULL;
+  memset(&hints, 0, sizeof hints);
+  hints.ai_family = family == 0 ? AF_UNSPEC : family == 4 ? AF_INET : family == 6 ? AF_INET6 : -1;
+  hints.ai_socktype = socktype == 0 ? 0 : sock_type(socktype);
+  if (hints.ai_family == -1 || hints.ai_socktype < 0 || flags < 0 || flags > 7) return -EINVAL;
+  if (flags & 1) hints.ai_flags |= AI_PASSIVE;
+  if (flags & 2) hints.ai_flags |= AI_NUMERICHOST;
+  if (flags & 4) hints.ai_flags |= AI_ADDRCONFIG;
+  const char *host = arg(0), *serv = arg(1);
+  if (host && !*host) host = NULL;
+  if (serv && !*serv) serv = NULL;
+  out_len = 0;
+  int e = getaddrinfo(host, serv, &hints, &res);
+  if (e != 0) return eai_status(e);
+  int64_t count = 0;
+  for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
+    if (ai->ai_family != AF_INET && ai->ai_family != AF_INET6) continue;
+    struct sockaddr_storage ss;
+    memset(&ss, 0, sizeof ss);
+    size_t l = (size_t)ai->ai_addrlen < sizeof ss ? (size_t)ai->ai_addrlen : sizeof ss;
+    memcpy(&ss, ai->ai_addr, l);
+    unsigned char h[2] = {(unsigned char)(ai->ai_socktype == SOCK_STREAM ? 1 : ai->ai_socktype == SOCK_DGRAM ? 2 : 0), 0};
+    size_t at = out_len;
+    out_put(h, 2);
+    addr_put(&ss, (socklen_t)l);
+    out_p[at + 1] = (unsigned char)(out_len - at - 2);
+    count++;
+  }
+  freeaddrinfo(res);
+  return count;
+}
+
+/* in = address. flags 1 numeric host, 2 numeric service, 4 name required, 8 datagram
+   service. out = host NUL service. */
+EC_FN(int64_t, ec_dns_reverse, (int32_t flags)) {
+  struct sockaddr_storage ss;
+  socklen_t len = addr_get(in_bytes(), in_len, &ss);
+  out_len = 0;
+  if (!len || flags < 0 || flags > 15) return -EINVAL;
+  int f = 0;
+  if (flags & 1) f |= NI_NUMERICHOST;
+  if (flags & 2) f |= NI_NUMERICSERV;
+  if (flags & 4) f |= NI_NAMEREQD;
+  if (flags & 8) f |= NI_DGRAM;
+  char host[1025], serv[32];
+  int e = getnameinfo((struct sockaddr *)&ss, len, host, sizeof host, serv, sizeof serv, f);
+  if (e != 0) return eai_status(e);
+  out_put(host, strlen(host) + 1);
+  out_put(serv, strlen(serv));
+  return 0;
+}
+
+// ---- readiness (ABI.md "Readiness")
+
+#define EC_POLL_MAX 1024
+
+#if defined(EC_EPOLL) || defined(EC_KQUEUE)
+/* One event record into out: token (8 bytes LE), flags (4), 4 zero bytes. */
+static void event_put(uint64_t token, uint32_t flags) {
+  out_u64(token);
+  out_u32(flags);
+  out_u32(0);
+}
+#endif
+
+#if defined(EC_KQUEUE)
+#if defined(__NetBSD__) && defined(__NetBSD_Version__) && __NetBSD_Version__ < 1000000000
+#define EC_UDATA(t) ((intptr_t)(t))
+#else
+#define EC_UDATA(t) ((void *)(uintptr_t)(t))
+#endif
+#if defined(EV_DISPATCH)
+#define EC_EV_ONESHOT EV_DISPATCH /* like EPOLLONESHOT: disabled, not deleted, after one event */
+#else
+#define EC_EV_ONESHOT EV_ONESHOT
+#endif
+#endif
+
+/* A new poller (epoll or kqueue descriptor, close-on-exec). */
+EC_FN(int64_t, ec_poll_new, (void)) {
+#if defined(EC_EPOLL)
+  int fd = epoll_create1(EPOLL_CLOEXEC);
+  return fd < 0 ? fail() : fd;
+#elif defined(EC_KQUEUE)
+  int fd = kqueue();
+  if (fd < 0) return fail();
+  if (fcntl(fd, F_SETFD, FD_CLOEXEC) != 0) {
+    int64_t r = fail();
+    close(fd);
+    return r;
+  }
+  return fd;
+#else
+  return -ENOSYS;
+#endif
+}
+
+/* op 0 add, 1 modify, 2 remove fd. interest: 1 readable, 2 writable, 4 edge-triggered,
+   8 one-shot (disarmed after one event until modified). token comes back with its events. */
+EC_FN(int64_t, ec_poll_ctl, (int32_t pfd, int32_t op, int32_t fd, int32_t interest, int64_t token)) {
+  if (op < 0 || op > 2 || interest < 0 || interest > 15) return -EINVAL;
+#if defined(EC_EPOLL)
+  struct epoll_event ev;
+  memset(&ev, 0, sizeof ev);
+  if (interest & 1) ev.events |= EPOLLIN | EPOLLRDHUP;
+  if (interest & 2) ev.events |= EPOLLOUT;
+  if (interest & 4) ev.events |= EPOLLET;
+  if (interest & 8) ev.events |= EPOLLONESHOT;
+  ev.data.u64 = (uint64_t)token;
+  int o = op == 0 ? EPOLL_CTL_ADD : op == 1 ? EPOLL_CTL_MOD : EPOLL_CTL_DEL;
+  return epoll_ctl(pfd, o, fd, &ev) == 0 ? 0 : fail();
+#elif defined(EC_KQUEUE)
+  /* one filter per direction: added when wanted, deleted (if present) otherwise */
+  struct kevent ch[2], res[2];
+  unsigned short add = (unsigned short)(EV_ADD | EV_ENABLE | EV_RECEIPT | (interest & 4 ? EV_CLEAR : 0) |
+                                        (interest & 8 ? EC_EV_ONESHOT : 0));
+  const short filt[2] = {EVFILT_READ, EVFILT_WRITE};
+  for (int i = 0; i < 2; i++) {
+    int want = op != 2 && (interest & (1 << i));
+    EV_SET(&ch[i], (uintptr_t)fd, filt[i], want ? add : (unsigned short)(EV_DELETE | EV_RECEIPT), 0, 0, EC_UDATA(token));
+  }
+  int n = kevent(pfd, ch, 2, res, 2, NULL);
+  if (n < 0) return fail();
+  for (int i = 0; i < n; i++) {
+    if (!(res[i].flags & EV_ERROR) || res[i].data == 0) continue;
+    int bit = res[i].filter == EVFILT_READ ? 1 : 2;
+    int deleting = op == 2 || !(interest & bit);
+    if (deleting && res[i].data == ENOENT) continue; /* a filter that wasn't there */
+    return -(int64_t)res[i].data;
+  }
+  return 0;
+#else
+  (void)pfd; (void)fd; (void)token;
+  return -ENOSYS;
+#endif
+}
+
+/* Wait up to timeout_ms (< 0 forever, 0 don't wait) for at most max events: their number;
+   out = that many 16-byte records (event_put). flags: 1 readable, 2 writable, 4 error,
+   8 hang-up, 16 the peer finished sending. A signal interrupting the wait returns 0. */
+EC_FN(int64_t, ec_poll_wait, (int32_t pfd, int32_t max, int64_t timeout_ms)) {
+  out_len = 0;
+  if (max <= 0) return -EINVAL;
+  int m = max < EC_POLL_MAX ? max : EC_POLL_MAX;
+  int64_t t = timeout_ms < 0 ? -1 : timeout_ms > INT_MAX ? INT_MAX : timeout_ms;
+#if defined(EC_EPOLL)
+  struct epoll_event *ev = malloc((size_t)m * sizeof *ev);
+  if (!ev) return -ENOMEM;
+  int n = epoll_wait(pfd, ev, m, (int)t);
+  if (n < 0) {
+    int64_t r = errno == EINTR ? 0 : fail();
+    free(ev);
+    return r;
+  }
+  for (int i = 0; i < n; i++) {
+    uint32_t e = ev[i].events, f = 0;
+    if (e & EPOLLIN) f |= 1;
+    if (e & EPOLLOUT) f |= 2;
+    if (e & EPOLLERR) f |= 4;
+    if (e & EPOLLHUP) f |= 8;
+    if (e & EPOLLRDHUP) f |= 16;
+    event_put(ev[i].data.u64, f);
+  }
+  free(ev);
+  return n;
+#elif defined(EC_KQUEUE)
+  struct kevent *ev = malloc((size_t)m * sizeof *ev);
+  if (!ev) return -ENOMEM;
+  struct timespec ts = {(time_t)(t / 1000), (long)((t % 1000) * 1000000)};
+  int n = kevent(pfd, NULL, 0, ev, m, t < 0 ? NULL : &ts);
+  if (n < 0) {
+    int64_t r = errno == EINTR ? 0 : fail();
+    free(ev);
+    return r;
+  }
+  for (int i = 0; i < n; i++) {
+    uint32_t f = 0;
+    int eof = (ev[i].flags & EV_EOF) != 0;
+    if (ev[i].filter == EVFILT_READ) f |= eof ? 1u | 16u : 1u;
+    if (ev[i].filter == EVFILT_WRITE) f |= eof ? 2u | 8u : 2u;
+    if (eof && ev[i].fflags != 0) f |= 4u; /* fflags: the socket error */
+    if (ev[i].flags & EV_ERROR) f |= 4u;
+    event_put((uint64_t)(uintptr_t)ev[i].udata, f);
+  }
+  free(ev);
+  return n;
+#else
+  (void)pfd;
+  (void)m;
+  (void)t;
+  return -ENOSYS;
+#endif
+}
+
+/* A cross-thread wakeup: out = read end, write end (one eventfd on Linux, so both are the
+   same descriptor; a pipe elsewhere). Both non-blocking and close-on-exec. Register the read
+   end with a poller; ec_waker_wake makes it readable; drain it with ec_read_fd. */
+EC_FN(int64_t, ec_waker_new, (void)) {
+  out_len = 0;
+#if defined(__linux__)
+  int fd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+  if (fd < 0) return fail();
+  two_fds(fd, fd);
+#else
+  int p[2];
+  if (cloexec_pipe(p) != 0) return fail();
+  if (set_cloexec_nonblock(p[0], 1) != 0 || set_cloexec_nonblock(p[1], 1) != 0) {
+    int64_t r = fail();
+    close(p[0]);
+    close(p[1]);
+    return r;
+  }
+  two_fds(p[0], p[1]);
+#endif
+  return 0;
+}
+
+/* Make the waker readable. Async-signal-safe; a wake already pending is not an error. */
+EC_FN(int64_t, ec_waker_wake, (int32_t wfd)) {
+#if defined(__linux__)
+  uint64_t one = 1;
+  ssize_t w;
+  do w = write(wfd, &one, sizeof one); while (w < 0 && errno == EINTR);
+#else
+  unsigned char one = 1;
+  ssize_t w;
+  do w = write(wfd, &one, 1); while (w < 0 && errno == EINTR);
+#endif
+  if (w < 0 && errno != EAGAIN && errno != EWOULDBLOCK) return fail();
+  return 0;
+}
+
+// ---- time (ABI.md "Time")
+
+/* Nanoseconds on a clock that never goes backwards or jumps (not counting suspend), from an
+   arbitrary start. */
+EC_FN(int64_t, ec_time_mono_ns, (void)) {
+  struct timespec t;
+#if defined(__APPLE__) && defined(CLOCK_UPTIME_RAW)
+  if (clock_gettime(CLOCK_UPTIME_RAW, &t) != 0) return fail();
+#else
+  if (clock_gettime(CLOCK_MONOTONIC, &t) != 0) return fail();
+#endif
+  return (int64_t)t.tv_sec * 1000000000 + (int64_t)t.tv_nsec;
+}
+
+/* Nanoseconds since 1970-01-01 UTC (CLOCK_REALTIME; it can jump). */
+EC_FN(int64_t, ec_time_wall_ns, (void)) {
+  struct timespec t;
+  if (clock_gettime(CLOCK_REALTIME, &t) != 0) return fail();
+  return (int64_t)t.tv_sec * 1000000000 + (int64_t)t.tv_nsec;
+}
+
+/* Sleep at least ns nanoseconds; a signal doesn't cut it short. */
+EC_FN(int64_t, ec_sleep_ns, (int64_t ns)) {
+  if (ns <= 0) return 0;
+  struct timespec t = {(time_t)(ns / 1000000000), (long)(ns % 1000000000)}, rem;
+  while (nanosleep(&t, &rem) != 0) {
+    if (errno != EINTR) return fail();
+    t = rem;
+  }
+  return 0;
+}
+
+// ---- signals (ABI.md "Signals")
+
+static void make_sig_pipe(void) {
+  int p[2];
+  if (cloexec_pipe(p) != 0 || set_cloexec_nonblock(p[0], 1) != 0 || set_cloexec_nonblock(p[1], 1) != 0) {
+    sig_pipe_err = errno ? errno : EIO;
+    return;
+  }
+  sig_pipe[0] = p[0];
+  sig_pipe[1] = p[1];
+}
+
+/* The read end of the process's signal pipe (created on first use; the same descriptor every
+   time; never close it). Each delivery of a signal set to 2 by ec_signal_set is one byte,
+   its Eider number. Non-blocking. */
+EC_FN(int64_t, ec_signal_fd, (void)) {
+  pthread_once(&sig_pipe_once, make_sig_pipe);
+  return sig_pipe[0] >= 0 ? sig_pipe[0] : -(int64_t)sig_pipe_err;
+}
+
+/* how: 0 default action, 1 ignore, 2 deliver to the signal pipe (SA_RESTART). */
+EC_FN(int64_t, ec_signal_set, (int32_t sig, int32_t how)) {
+  int n = sig_native(sig);
+  if (n <= 0 || how < 0 || how > 2) return -EINVAL;
+  struct sigaction sa;
+  memset(&sa, 0, sizeof sa);
+  sigemptyset(&sa.sa_mask);
+  if (how == 2) {
+    int64_t p = ec_signal_fd();
+    if (p < 0) return p;
+    sa.sa_handler = on_signal;
+    sa.sa_flags = SA_RESTART | (n == SIGCHLD ? SA_NOCLDSTOP : 0);
+  } else {
+    sa.sa_handler = how == 0 ? SIG_DFL : SIG_IGN;
+  }
+  return sigaction(n, &sa, NULL) == 0 ? 0 : fail();
+}
+
+/* Block (block != 0) or unblock sig in the calling thread's mask. */
+EC_FN(int64_t, ec_signal_mask, (int32_t sig, int32_t block)) {
+  int n = sig_native(sig);
+  if (n <= 0) return -EINVAL;
+  sigset_t s;
+  sigemptyset(&s);
+  sigaddset(&s, n);
+  int e = pthread_sigmask(block ? SIG_BLOCK : SIG_UNBLOCK, &s, NULL);
+  return e ? -(int64_t)e : 0;
+}
+
+// ---- randomness (ABI.md "Randomness")
+
+/* n bytes (at most EC_READ_MAX) from the OS's CSPRNG into out. Linux: getrandom, which
+   waits until the kernel pool is first seeded, or with nonblock != 0 returns -EAGAIN then.
+   macOS and the BSDs: arc4random_buf (never fails, never blocks). */
+EC_FN(int64_t, ec_random, (int64_t n, int32_t nonblock)) {
+  out_len = 0;
+  if (n < 0 || n > EC_READ_MAX) return -EINVAL;
+  reserve(&out_p, &out_cap, (size_t)n + 1);
+#if defined(__linux__)
+  size_t got = 0;
+  while (got < (size_t)n) {
+    ssize_t r = getrandom(out_p + got, (size_t)n - got, nonblock ? GRND_NONBLOCK : 0);
+    if (r < 0) {
+      if (errno == EINTR) continue;
+      return fail();
+    }
+    got += (size_t)r;
+  }
+#elif defined(__APPLE__) || defined(EC_BSD)
+  (void)nonblock;
+  arc4random_buf(out_p, (size_t)n);
+#else
+  (void)nonblock;
+  return -ENOSYS; /* never a time-based fallback */
+#endif
+  out_len = (size_t)n;
+  out_p[out_len] = 0;
+  return n;
+}
+
+// ---- processes (ABI.md "Processes")
+
+/* Start in = argv (searched on PATH). in_mode/out_mode/err_mode for the child's 0/1/2:
+   0 inherit, 1 /dev/null, 2 a pipe. Returns the pid; out = our ends of the three pipes (4
+   bytes LE each, -1 where not a pipe), close-on-exec and blocking. */
+EC_FN(int64_t, ec_spawn, (int32_t in_mode, int32_t out_mode, int32_t err_mode)) {
+  int32_t mode[3] = {in_mode, out_mode, err_mode};
+  out_len = 0;
+  if (in_len == 0) return -EINVAL;
+  for (int k = 0; k < 3; k++)
+    if (mode[k] < 0 || mode[k] > 2) return -EINVAL;
+  int argc = 0;
+  while (arg(argc)) argc++;
+  char **argv = calloc((size_t)argc + 1, sizeof *argv);
+  if (!argv) return -ENOMEM;
+  for (int k = 0; k < argc; k++) argv[k] = (char *)arg(k);
+  int p[3][2] = {{-1, -1}, {-1, -1}, {-1, -1}}, xp[2] = {-1, -1}, nul = -1;
+  int64_t err = 0;
+  if (in_mode == 2) ignore_sigpipe_once();
+  for (int k = 0; k < 3 && !err; k++)
+    if (mode[k] == 2 && cloexec_pipe(p[k]) != 0) err = fail();
+  if (!err && (in_mode == 1 || out_mode == 1 || err_mode == 1)) {
+    nul = open("/dev/null", O_RDWR | O_CLOEXEC);
+    if (nul < 0) err = fail();
+  }
+  if (!err && cloexec_pipe(xp) != 0) err = fail();
+  pid_t pid = -1;
+  if (!err) {
+    fflush(stdout);
+    fflush(stderr);
+    sigset_t oldmask;
+    block_signals(&oldmask);
+    pid = fork();
+    if (pid != 0) restore_signals(&oldmask);
+    if (pid < 0) err = fail();
+  }
+  if (pid == 0) {
+    /* only async-signal-safe calls until exec; every source lifted above 0..2 first, so no
+       dup2 overwrites one still needed */
+    child_reset_signals();
+    int x = above_stdio(xp[1]);
+    int src[3];
+    for (int k = 0; k < 3; k++)
+      src[k] = above_stdio(mode[k] == 2 ? p[k][k == 0 ? 0 : 1] : mode[k] == 1 ? nul : -1);
+    if (x < 0) _exit(127);
+    for (int k = 0; k < 3; k++) {
+      if (mode[k] == 0) continue;
+      if (src[k] < 0 || dup2(src[k], k) < 0) {
+        int en = errno;
+        (void)!write(x, &en, sizeof en);
+        _exit(127);
+      }
+    }
+    execvp(argv[0], argv);
+    int en = errno;
+    (void)!write(x, &en, sizeof en);
+    _exit(127);
+  }
+  free(argv);
+  close_fd(&nul);
+  close_fd(&xp[1]);
+  close_fd(&p[0][0]);
+  close_fd(&p[1][1]);
+  close_fd(&p[2][1]);
+  if (!err) {
+    int xe = 0;
+    ssize_t got;
+    do got = read(xp[0], &xe, sizeof xe); while (got < 0 && errno == EINTR);
+    if (got == (ssize_t)sizeof xe) { /* exec failed; the child has exited */
+      int st;
+      while (waitpid(pid, &st, 0) < 0 && errno == EINTR) {}
+      err = xe > 0 ? -(int64_t)xe : -EIO;
+    }
+  }
+  close_fd(&xp[0]);
+  if (err) {
+    close_fd(&p[0][1]);
+    close_fd(&p[1][0]);
+    close_fd(&p[2][0]);
+    return err;
+  }
+  out_u32((uint32_t)p[0][1]);
+  out_u32((uint32_t)p[1][0]);
+  out_u32((uint32_t)p[2][0]);
+  return pid;
+}
+
+/* waitpid(pid) (pid -1: any child). 0..255 exit code, 256 + Eider signal number if a signal
+   killed it, -EAGAIN if nohang != 0 and it is still running. out = the reaped pid (4 bytes
+   LE). EINTR is retried. */
+EC_FN(int64_t, ec_wait, (int32_t pid, int32_t nohang)) {
+  int st = 0;
+  pid_t r;
+  out_len = 0;
+  do r = waitpid((pid_t)pid, &st, nohang ? WNOHANG : 0); while (r < 0 && errno == EINTR);
+  if (r < 0) return fail();
+  if (r == 0) return -EAGAIN;
+  out_u32((uint32_t)r);
+  if (WIFEXITED(st)) return WEXITSTATUS(st);
+  return 256 + sig_portable(WTERMSIG(st));
+}
+
+/* kill(2) with an Eider signal number (0: only check that pid exists). */
+EC_FN(int64_t, ec_kill, (int32_t pid, int32_t sig)) {
+  int n = sig_native(sig);
+  if (n < 0) return -EINVAL;
+  return kill((pid_t)pid, n) == 0 ? 0 : fail();
+}
+
+EC_FN(int64_t, ec_getpid, (void)) { return (int64_t)getpid(); }
