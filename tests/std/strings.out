@@ -1,0 +1,69 @@
+Some(3)
+None
+Some(8)
+Some(10)
+true
+3
+2
+6
+7
+true
+true
+false
+["a", "b", "", "c"]
+[""]
+["a", "b", "c"]
+["a", "b,c,d"]
+["h", "é", "€"]
+["h", "é€"]
+Some(("key", "value=x"))
+None
+["lots", "of", "space"]
+["a", "b", "", "c"]
+a+b+c
+padded
+x  
+  x
+body
+file.tar
+file
+Some("abc")
+None
+Some("x")
+a+b+c
+aaaaaa
+ab-c
+same
+ababab
+0
+HELLO, WöRLD
+hello
+true
+false
+Ok(-9223372036854775808)
+Ok(9223372036854775807)
+Err(number out of range)
+Ok(42)
+Ok(0)
+Ok(18446744073709551615)
+Err(number out of range)
+Err(invalid digit at byte 0)
+Ok(-2147483648)
+Err(number out of range)
+Ok(255)
+Err(number out of range)
+Ok(65535)
+Ok(12)
+Err(number out of range)
+Err(number out of range)
+Ok(-255)
+Ok(10)
+Ok(1295)
+invalid digit at byte 2
+no digits
+no digits
+number out of range
+true
+Some(true)
+None
+exit 0
