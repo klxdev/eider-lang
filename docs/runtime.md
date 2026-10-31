@@ -341,8 +341,10 @@ calls pays most. `EIDER_PROF=off` leaves only the shadow stack.
    generated, methods `load`/`store`/`swap`/`add`/`compare_exchange` lowered to the inline
    `ei_atomic_*`). Then std/atomic keeps its API, loses `free`, and needs no core cells.
    It touches types/check/lower in the thread-handle code, so it waits for 8.6 to land.
-2. **The main thread's stack**: generated `main` calls a runtime entry (`ei_main`) that runs
-   the Eider `main` on a guarded runtime thread, so an overflow there is reported too.
+2. ~~**The main thread's stack**~~ (done, C305, #80): generated `main` is
+   `return ei_main(ei_main_body);`, which runs the Eider `main` (or the test driver) on a
+   guarded runtime thread, so an overflow there is a `stack overflow` trap too
+   (core/RUNTIME.md "Stack overflow").
 3. **Stackless tasks (C4).** The pieces here are what they run on: a task that would `park`
    instead returns to its worker; `Parker.unpark` becomes "make the task runnable"; the
    `event.Loop` is the reactor that wakes tasks blocked on descriptors and timers; `Pool`

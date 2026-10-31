@@ -292,9 +292,10 @@ is not a reference into the sequence). Instead of a name, the loop may take an i
 pattern in parentheses, usually a tuple: `for (k, v) in m`, `for (i, (a, b)) in pairs`;
 a refutable pattern is E0101.
 
-A Map is iterated over a snapshot of its entries taken when the loop starts, so the body
-may insert and remove. A List is read again at each iteration: elements the body pushes are
-visited too.
+Every sequence is iterated over a snapshot taken when the loop starts: a List or an array as
+it was then, a Map's entries. So the body may write, push, pop, insert and remove; the loop
+still sees each element from before exactly once, and none it added (see
+[Memory model](memory.md#for-loop-variables)).
 
 ```eider
 fn main() uses io {

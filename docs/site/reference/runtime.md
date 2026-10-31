@@ -119,7 +119,7 @@ Every trap the language raises:
 | `cannot create a thread` (line 0) | `spawn` when the OS refuses |
 | `cannot lock a mutex` (line 0) | a `Mutex.update` closure using the same Mutex |
 | `cannot join a thread` (line 0) | the last handle of a Task dropped on that task's own thread |
-| `stack overflow` (line 0) | unbounded recursion on a spawned thread |
+| `stack overflow` (line 0) | unbounded recursion, on any thread (`main`'s too) |
 | `Ref read while it is being updated`, `Ref updated while it is being read`, `Ref updated while it is already being updated` | overlapping access to one `Ref` ([memory model](memory.md#access-conflicts)) |
 | `a Ref can't be sent to another thread` (line 0) | a closure capturing a Ref, stored first and then spawned or sent |
 | `called `unwrap` on a None value`, `called `unwrap` on an Err value` | `Option.unwrap`, `Result.unwrap` (from `core/prelude.ei`) |
@@ -165,9 +165,9 @@ fn main() {
 
 ### Stack overflow
 
-A spawned thread runs on a stack with a guard region; overflowing it is reported as the trap
-`stack overflow` (exit 101). The main thread's stack has no such handler: unbounded recursion
-on it ends the process with `SIGSEGV` (`eiderc run` then exits with 139).
+Every thread of a program runs on an 8 MiB stack with a guard region, `main` included (it
+runs on a runtime thread of its own, not on the process's initial stack); overflowing it is
+reported as the trap `stack overflow` (exit 101), after what `print` buffered is written.
 
 ## `panic` and `assert`
 
