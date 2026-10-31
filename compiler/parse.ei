@@ -787,7 +787,9 @@ fn impl_decl(inout p: P) -> Result[u32, diag.Diag] {
     let first = ty(inout p)?
     let mut n = mk(ast.IImpl, pos.line, pos.col)
     if eat_kw(inout p, intern.K_FOR) {
-        if !(p.ast.nodes[first as usize].kind == ast.TName) { return Err(err(p, "expected a trait name before `for`")) }
+        // a trait name, or one with type arguments (`From[E]`: docs/compiler.md, "C8.21")
+        let fk = p.ast.nodes[first as usize].kind
+        if !(fk == ast.TName || fk == ast.TGeneric) { return Err(err(p, "expected a trait name before `for`")) }
         n.a = first + 1
         n.b = ty(inout p)?
     } else {

@@ -1,0 +1,83 @@
+// Error conversion for `?` (docs/compiler.md, "C8.21"): `impl From[E1] for E2` lets `?` on a
+// Result[_, E1] return Err(E2.from(e)) from a function returning Result[_, E2]; one target
+// may convert from several sources; `E2.from(x)` picks the impl by x's type; generic impls.
+// Expected output: from_try.out.
+type IoError = { code: i32, msg: String }
+type ParseError = | Empty | Bad(at: usize)
+
+type AppError =
+    | Io(code: i32, msg: String)
+    | Parse(what: String)
+
+impl From[IoError] for AppError {
+    fn from(value: IoError) -> AppError { Io(value.code, value.msg) }
+}
+
+impl From[ParseError] for AppError {
+    fn from(value: ParseError) -> Self {
+        match value {
+            Empty => Parse(String.from("empty"))
+            Bad(at) => {
+                let mut s = String.from("bad at ")
+                s.append(String.from_int(at as i64))
+                Parse(s)
+            }
+        }
+    }
+}
+
+// a generic target: the type argument follows the source
+type Tagged[T] = { tag: String, inner: T }
+
+impl[T] From[T] for Tagged[T] {
+    fn from(value: T) -> Tagged[T] { Tagged(String.from("wrapped"), value) }
+}
+
+fn read(n: i32) -> Result[i32, IoError] {
+    if n < 0 { return Err(IoError(5, String.from("no such file"))) }
+    Ok(n * 2)
+}
+
+fn parse(n: i32) -> Result[usize, ParseError] {
+    if n == 0 { return Err(Empty) }
+    if n > 100 { return Err(Bad(n as usize)) }
+    Ok(n as usize)
+}
+
+fn run(n: i32) -> Result[usize, AppError] {
+    let x = read(n)?
+    let y = parse(x)?
+    Ok(y + 1)
+}
+
+fn same(n: i32) -> Result[i32, IoError] {
+    // no conversion when the error types agree
+    let x = read(n)?
+    Ok(x)
+}
+
+fn tagged(n: i32) -> Result[i32, Tagged[ParseError]] {
+    let v = parse(n)?
+    Ok(v as i32)
+}
+
+fn main() uses io {
+    print(run(3))
+    print(run(-1))
+    print(run(0))
+    print(run(60))
+    print(same(-1).is_err())
+    let e = AppError.from(Bad(7))
+    print(e)
+    let f = AppError.from(IoError(1, String.from("x")))
+    print(f)
+    match tagged(0) {
+        Ok(v) => print(v)
+        Err(t) => {
+            print(t.tag)
+            print(t.inner)
+        }
+    }
+    let w: Tagged[i32] = Tagged.from(9)
+    print(w.inner)
+}

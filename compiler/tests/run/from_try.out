@@ -1,0 +1,10 @@
+Ok(7)
+Err(Io(5, "no such file"))
+Err(Parse("empty"))
+Err(Parse("bad at 120"))
+true
+Parse("bad at 7")
+Io(1, "x")
+wrapped
+Empty
+9

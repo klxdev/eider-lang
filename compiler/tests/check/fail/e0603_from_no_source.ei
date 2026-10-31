@@ -1,0 +1,7 @@
+// expect: E0603 4:6
+// `From` names its source type (docs/compiler.md, "C8.21")
+type E = { m: i32 }
+impl From for E {
+    fn from(value: i32) -> E { E(value) }
+}
+fn main() {}

@@ -1,0 +1,1 @@
+{"error":"E0603","span":{"file":"compiler/tests/check/fail/e0603_from_no_source.ei","line":4,"col":6},"message":"`From` takes the type it converts from: `impl From[Source] for Target`","help":"e.g. `impl From[stream.Error] for AppError { fn from(value: stream.Error) -> AppError { ... } }`"}

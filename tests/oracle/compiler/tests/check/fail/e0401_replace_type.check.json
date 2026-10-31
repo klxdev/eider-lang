@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_replace_type.ei","line":5,"col":23},"message":"expected String, found i32"}

@@ -1,0 +1,1 @@
+{"error":"E0602","span":{"file":"compiler/tests/check/fail/e0602_from_signature.ei","line":5,"col":8},"message":"method `from` doesn't match the signature in trait `From`: it is `fn from(value: u8) -> E`","help":"a conversion takes the value to convert and returns the target"}

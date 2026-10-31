@@ -1,0 +1,10 @@
+// expect: E0107 7:1
+// one conversion per source type (docs/compiler.md, "C8.21")
+type E = { m: i32 }
+impl From[i32] for E {
+    fn from(value: i32) -> E { E(value) }
+}
+impl From[i32] for E {
+    fn from(value: i32) -> Self { E(0) }
+}
+fn main() {}

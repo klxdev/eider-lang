@@ -36,6 +36,7 @@
 //                end span = end of the signature (where `uses` goes)
 //            Param a=sym b=type c=inout   Cap a=sym
 //            ITrait a=sym b=public [c/d]=IFn   IImpl a=trait TName+1 b=target type [c/d]=GParam [e/f]=IFn
+//                (the trait is a TGeneric for `impl From[E] for T`)
 //            IConst a=sym b=public c=type d=value e=comptime
 //            ITest a=name str b=block      IImport a=path str b=alias sym+1
 // errors     (only from parse.parse_all, so never in a tree that parsed without errors; the

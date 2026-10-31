@@ -1,0 +1,1 @@
+{"error":"E0604","span":{"file":"compiler/tests/check/fail/e0604_from_orphan.ei","line":3,"col":1},"message":"only the package that defines `String` can implement `From` for it","help":"convert in a function of your own, or wrap the type in a record of your own"}

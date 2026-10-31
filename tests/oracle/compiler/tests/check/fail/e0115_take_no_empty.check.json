@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_take_no_empty.ei","line":6,"col":15},"message":"type P has no method `take`","help":"`take()` leaves an empty value behind, so it is for String, List, Map and Option; `x.replace(v)` takes any value out and leaves v"}

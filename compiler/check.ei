@@ -268,7 +268,12 @@ pub type C = {
     rf: Refs,
     /// type aliases ("Type aliases" below)
     al: Aliases,
+    /// impls of the prelude's `From` ("Error conversion" below)
+    froms: List[FromImpl],
 }
+
+/// `impl From[Source] for Target` (module md, IImpl node) and its `from` method (FnDef fd).
+type FromImpl = { md: u32, node: u32, fd: u32, target: List[u8], source: List[u8] }
 
 /// Type aliases (docs/compiler.md, "C8.18"): name key -> index into `defs` (the alias's
 /// module and IType node); `stack` holds the aliases being resolved (a cycle is E0111).
@@ -2303,6 +2308,152 @@ fn lang_prepass(inout c: C, its: List[Item]) {
     }
 }
 
+// ---- Error conversion (docs/compiler.md, "C8.21")
+//
+// The prelude's `trait From { fn from(value: Source) -> Self }` is implemented as `impl
+// From[E1] for E2 { fn from(value: E1) -> E2 { ... } }`, any number of times per target
+// (one per source type), only in the target's package (the orphan rule, E0604). Its `from`
+// is reached two ways: `E2.from(x)` (the impl is chosen by x's type) and `?`, which in a
+// function returning Result[_, E2] turns Err(e: E1) into Err(E2.from(e)). `from` declares
+// no capabilities, since `?` converts wherever it is written.
+
+/// Check and register `impl From[...] for ...` (module m, node id).
+fn register_from(inout c: C, m: u32, id: u32, igens: List[u32], target: List[u8], inout concrete: List[u32]) -> Result[bool, diag.Diag] {
+    let im = ndm(c, m, id)
+    let tn = ndm(c, m, im.a - 1)
+    if tn.kind != ast.TGeneric || tn.d != 1 {
+        record(inout c, errh("E0603", tn.line, tn.col, s("`From` takes the type it converts from: `impl From[Source] for Target`"), "e.g. `impl From[stream.Error] for AppError { fn from(value: stream.Error) -> AppError { ... } }`"))
+        return Ok(true)
+    }
+    let snode = atm(c, m, tn.c, 0)
+    let source = show_ast(c, m, snode, igens)
+    // the orphan rule: the target's own package
+    let h = head_key(c, m, im.b, igens)
+    let di = mget(c.tmpl, h)
+    let tgt = ndm(c, m, im.b)
+    let named = (tgt.kind == ast.TName || tgt.kind == ast.TGeneric) && !(tgt.b == 0 && has_sym(igens, tgt.a))
+    let mut ok = false
+    if named && di != NONE {
+        let dm = c.t.defs[di as usize].md
+        ok = dm != c.p.prelude && c.p.mods[dm as usize].pkg == c.p.mods[m as usize].pkg
+    }
+    if !ok {
+        let msg = q2("only the package that defines `", target, "` can implement `From` for it", List.new(), "")
+        record(inout c, errh("E0604", im.line, im.col, msg, "convert in a function of your own, or wrap the type in a record of your own"))
+        return Ok(true)
+    }
+    // exactly `fn from(value: Source) -> Target` (or `-> Self`)
+    let mut fi = NONE
+    for i in 0..im.f {
+        let mid = atm(c, m, im.e, i)
+        let mn = ndm(c, m, mid)
+        if !is_word(c, mn.a, "from") {
+            let rd = err("E0602", mn.line, mn.col, q("trait `From` has no method `", nm(c, mn.a), "`"))
+            record(inout c, rd)
+            continue
+        }
+        if fi != NONE {
+            record(inout c, err("E0107", mn.line, mn.col, s("method `from` is defined twice in this impl")))
+            continue
+        }
+        let mut fits = mn.f == 1 && mn.g > 0 && mn.d == 0
+        if fits {
+            let pn = ndm(c, m, atm(c, m, mn.e, 0))
+            let rt = show_ast(c, m, mn.g - 1, igens)
+            fits = pn.c == 0 && !is_word(c, pn.a, "self") && bytes.eq(show_ast(c, m, pn.b, igens), source) && (bytes.eq(rt, target) || bytes.eq(rt, s("Self")))
+        }
+        if !fits {
+            record(inout c, errh("E0602", mn.line, mn.col, q2("method `from` doesn't match the signature in trait `From`: it is `fn from(value: ", source, ") -> ", target, "`"), "a conversion takes the value to convert and returns the target"))
+            continue
+        }
+        if mn.j > 0 {
+            record(inout c, errh("E0602", mn.line, mn.col, s("`from` can't declare capabilities"), "`?` converts errors wherever it is written; do the work that needs a capability before returning the error"))
+            continue
+        }
+        fi = c.fdefs.len() as u32
+        c.fdefs.push(FnDef(resolve.key(0, mn.a), m, mid, true, false, ast.has(mn.b, ast.FN_UNSAFE), NONE, id))
+        if im.d == 0 && mn.h > 0 { concrete.push(fi) }
+    }
+    if fi == NONE {
+        if im.f == 0 { record(inout c, err("E0602", im.line, im.col, s("impl of `From` is missing method `from`"))) }
+        return Ok(true)
+    }
+    for x in c.froms {
+        if bytes.eq(x.target, target) && bytes.eq(x.source, source) {
+            record(inout c, err("E0107", im.line, im.col, q2("`From[", source, "]` is already implemented for `", target, "`")))
+            return Ok(true)
+        }
+    }
+    c.froms.push(FromImpl(m, id, fi, target, source))
+    Ok(true)
+}
+
+/// A `From` impl (of target head `head`, 0: any) that converts `source` into `target` (NONE:
+/// unknown):
+/// its index in c.froms and the substitution of its type parameters (and Self).
+type FromHit = { ix: u32, sb: Subst }
+
+fn find_from(c: C, head: u64, target: u32, source: u32) -> FromHit {
+    for i in 0..c.froms.len() {
+        let x = c.froms[i]
+        let n = ndm(c, x.md, x.node)
+        let gs = gparams(c, x.md, n.c, n.d)
+        if head != 0 && head_key(c, x.md, n.b, gs) != head { continue }
+        let tn = ndm(c, x.md, n.a - 1)
+        let mut sb = no_subst()
+        if source != NONE && !unify_ast(c, x.md, atm(c, x.md, tn.c, 0), source, inout sb, gs) { continue }
+        if target != NONE && !unify_ast(c, x.md, n.b, target, inout sb, gs) { continue }
+        if !impl_bounds_hold(c, x.md, n, sb) { continue }
+        return FromHit(i as u32, sb)
+    }
+    FromHit(NONE, no_subst())
+}
+
+/// The instance of hit's `from`, its target type resolved (the impl's type parameters must
+/// all be bound by the source and target).
+fn from_instance(inout c: C, hit: FromHit, line: u32, col: u32) -> Result[u32, diag.Diag] {
+    let x = c.froms[hit.ix as usize].copy()
+    let n = ndm(c, x.md, x.node)
+    let gs = gparams(c, x.md, n.c, n.d)
+    for g in gs {
+        if subst_get(hit.sb, g) == NONE {
+            return Err(errh("E0409", line, col, q("cannot infer the type `From` converts into for `", x.target, "`"), "add a type annotation to the binding that receives the result"))
+        }
+    }
+    let ty = resolve_with(inout c, x.md, n.b, hit.sb)?
+    let mut sb = hit.sb.copy()
+    subst_set(inout sb, intern.S_SELF_TYPE, ty)
+    instantiate(inout c, x.fd, sb)
+}
+
+/// Whether some `From` impl targets head h.
+fn has_from(c: C, h: u64) -> bool {
+    for x in c.froms {
+        let n = ndm(c, x.md, x.node)
+        if head_key(c, x.md, n.b, gparams(c, x.md, n.c, n.d)) == h { return true }
+    }
+    false
+}
+
+/// `Target.from(x)`: the `From` impl for x's type (and the expected type, if any).
+fn from_call(inout c: C, n: ast.Node, head: u64, exp: u32) -> Result[V, diag.Diag] {
+    let label = label_of(c, kt(c, head), n.b)
+    if n.d != 1 { return Err(err("E0405", n.line, n.col, q2("`", label, "` takes 1 argument(s), but ", num(n.d as u64), " were given"))) }
+    let a = nd(c, at(c, n.c, 0))
+    let x = nd(c, a.a)
+    if a.b == 1 { return Err(err("E0304", x.line, x.col, s("`inout` is not allowed here"))) }
+    let v = expr(inout c, a.a, NONE)?
+    if poisoned(c, v.ty) { return Ok(poison_v(inout c)) }
+    let hit = find_from(c, head, exp, v.ty)
+    if hit.ix == NONE {
+        return Err(errh("E0401", x.line, x.col, q2("`", kt(c, head), "` has no `From` conversion from ", ts(c, v.ty), ""), "implement `From[...]` for it with that source type"))
+    }
+    let ii = from_instance(inout c, hit, n.line, n.col)?
+    let inst = c.insts[ii as usize].copy()
+    let st = ir.list(inout c.ir, one(v.op))
+    Ok(v_of(inst.ret, emit_val(inout c, ir.S_CALL, inst.ir, st, 1, inst.ret, inst.ret, n.line)))
+}
+
 /// The impl (index in timpls) of language trait tr that applies to record or enum ty: its
 /// target has ty's head and unifies with it, and its type parameters meet their bounds.
 fn custom_impl(c: C, tr: u32, ty: u32) -> u32 {
@@ -2753,7 +2904,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C {
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
         0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false, Rec(false, List.new(), List.new()),
         List.new(), List.new(), false, Map.new(), false, false, Map.new(), List.new(), lt, no_refs(),
-        Aliases(Map.new(), List.new(), List.new()))
+        Aliases(Map.new(), List.new(), List.new()), List.new())
 }
 
 /// Every item of the program in load order (resolve.ei), as (module, node) pairs.
@@ -3333,6 +3484,13 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
         let tn = ndm(c, m, im.a - 1)
         let tk = resolve.name_key(c.p, m, tn.a, tn.b, tn.line, tn.col)
         let ti = mget(c.traits, tk)
+        let is_from = ti != NONE && c.trs[ti as usize].m == c.p.prelude && is_word(c, tn.a, "From") && tn.b == 0
+        if is_from { return register_from(inout c, m, id, igens, target, inout concrete) }
+        if ti != NONE && tn.kind == ast.TGeneric {
+            let rd = err("E0603", tn.line, tn.col, q("trait `", kt(c, tk), "` takes no type arguments"))
+            record(inout c, rd)
+            return Ok(true)
+        }
         if ti == NONE {
             let rd = err("E0603", tn.line, tn.col, q("unknown trait `", kt(c, tk), "`"))
             record(inout c, rd)
@@ -3506,7 +3664,15 @@ fn instantiate(inout c: C, fi: u32, sb: Subst) -> Result[u32, diag.Diag] {
     if f.ir != NONE {
         inst.ir = f.ir
     } else {
-        let iname = inst_name(c, fi, sb)
+        let mut iname = inst_name(c, fi, sb)
+        // a `From` impl's `from` is named by its source too: one target has several
+        for x in c.froms {
+            if x.fd == fi && inst.plen > 0 {
+                iname.push(91)
+                bytes.append(inout iname, ts(c, c.ptys[inst.pstart as usize]))
+                iname.push(93)
+            }
+        }
         inst.ir = ir.declare_fn(inout c.ir, iname, false)
     }
     let ii = c.insts.len() as u32
@@ -5342,10 +5508,18 @@ fn try_op(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
         return Err(err("E0406", n.line, n.col, q3("`?` on a ", tname, " needs the enclosing function to return a ", tname, ", but it returns ", ts(c, c.ret), "")))
     }
     let args = types.list_items(c.t, d.args)
+    // `From` converts the error ("Error conversion"): the instance of its `from`, or NONE
+    let mut conv = NONE
     if is_result {
         let rargs = types.list_items(c.t, types.def_of(c.t, c.ret).args)
         if args[1] != rargs[1] {
-            return Err(err("E0401", n.line, n.col, q2("`?` can't convert the error type ", ts(c, args[1]), " into ", ts(c, rargs[1]), "")))
+            let hit = find_from(c, 0, rargs[1], args[1])
+            if hit.ix == NONE {
+                let mut cd = err("E0401", n.line, n.col, q2("`?` can't convert the error type ", ts(c, args[1]), " into ", ts(c, rargs[1]), ""))
+                cd.help = q2("implement `From[", ts(c, args[1]), "]` for ", ts(c, rargs[1]), " (in its package), or convert with `match`")
+                return Err(cd)
+            }
+            conv = from_instance(inout c, hit, n.line, n.col)?
         }
     }
     // t := x (owned); if t is Err/None { return Err(move t.error) / None } ; value := move t.value
@@ -5366,7 +5540,19 @@ fn try_op(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
     if is_result {
         let et = args[1]
         let ep = ir.place_payload(inout c.ir, tp, bad_i, 0, et)
-        rargs.push(emit_val(inout c, ir.S_MOVE, ep, 0, 0, et, et, n.line))
+        let mv = emit_val(inout c, ir.S_MOVE, ep, 0, 0, et, et, n.line)
+        if conv == NONE {
+            rargs.push(mv)
+        } else {
+            // Err(Target.from(e)): `from` borrows e, which is dropped after the call
+            let inst = c.insts[conv as usize].copy()
+            let cst = ir.list(inout c.ir, one(mv))
+            rargs.push(emit_val(inout c, ir.S_CALL, inst.ir, cst, 1, inst.ret, inst.ret, n.line))
+            if owns(c, et) {
+                let mp = place_of_op(inout c, mv, et, n.line)
+                emit(inout c, ir.S_DROP, 0, mp, 0, 0, et, n.line)
+            }
+        }
     }
     let st = ir.list(inout c.ir, rargs)
     let rty = c.ret.copy()
@@ -5926,6 +6112,7 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
         let x = resolve.key_sym(static_head)
         let heap_head = resolve.key_pre(static_head) == 0 && (has_sym(c.w.heap, x) || x == c.w.s_string)
         if heap_head && builtin_static(c, x, n.b) { return heap_static(inout c, n, x, exp) }
+        if is_word(c, n.b, "from") && has_from(c, static_head) { return from_call(inout c, n, static_head, exp) }
         for m in c.meths {
             if m.head == static_head && m.name == n.b {
                 let label = label_of(c, kt(c, static_head), n.b)

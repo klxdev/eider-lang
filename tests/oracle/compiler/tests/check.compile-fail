@@ -49,6 +49,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0107_ffi_extern_twice.ei    E0107 at 3:15
   ok   e0107_fn_named_like_type.ei  E0107 at 3:4
   ok   e0107_fn_named_like_variant.ei E0107 at 3:4
+  ok   e0107_from_twice.ei          E0107 at 7:1
   ok   e0107_mod_two_mains.ei       E0107 at 3:4
   ok   e0107_prelude_type.ei        E0107 at 2:6
   ok   e0107_prelude_variant.ei     E0107 at 2:16
@@ -155,6 +156,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0115_static_not_found.ei    E0115 at 3:24
   ok   e0115_str_push_byte.ei       E0115 at 3:9
   ok   e0115_str_unknown.ei         E0115 at 3:11
+  ok   e0115_take_no_empty.ei       E0115 at 6:15
   ok   e0115_thr_chan_get.ei        E0115 at 4:13
   ok   e0115_thr_impl_method.ei     E0115 at 6:13
   ok   e0115_thr_mutex_len.ei       E0115 at 4:13
@@ -221,6 +223,8 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0303_inout_self_immutable.ei E0303 at 5:5 (fix compiles)
   ok   e0303_mod_inout_constant.ei  E0303 at 4:23
   ok   e0303_push_byte_let.ei       E0303 at 4:5 (fix compiles)
+  ok   e0303_replace_read_only.ei   E0303 at 5:13 (fix compiles)
+  ok   e0303_take_fresh.ei          E0303 at 5:21
   ok   e0304_clo_call_inout.ei      E0304 at 4:21
   ok   e0304_fix_position.ei        E0304 at 6:15 (fix compiles)
   ok   e0304_fnval_inout.ei         E0304 at 3:37
@@ -255,6 +259,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0308_no_copy.ei             E0308 at 6:8
   ok   e0308_pop.ei                 E0308 at 7:8 (fix compiles)
   ok   e0308_push.ei                E0308 at 7:12 (fix compiles)
+  ok   e0308_take_while_referenced.ei E0308 at 7:18 (fix compiles)
   ok   e0308_through_alias.ei       E0308 at 7:9 (fix compiles)
   ok   e0401_add_bools.ei           E0401 at 3:18
   ok   e0401_alias_generic_arg.ei   E0401 at 7:20
@@ -300,6 +305,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_for_record_no_iter.ei  E0401 at 3:22
   ok   e0401_foreach_int.ei         E0401 at 3:14
   ok   e0401_from_bytes_arg.ei      E0401 at 3:23
+  ok   e0401_from_call_no_impl.ei   E0401 at 8:20
   ok   e0401_gen_body_error_twice.ei E0401 at 2:26
   ok   e0401_gen_conflict.ei        E0401 at 3:29
   ok   e0401_gen_display.ei         E0401 at 4:22
@@ -359,6 +365,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_print_record.ei        E0401 at 4:11
   ok   e0401_range_mixed.ei         E0401 at 5:17
   ok   e0401_range_not_int.ei       E0401 at 3:14
+  ok   e0401_replace_type.ei        E0401 at 5:23
   ok   e0401_return_in_match_arm.ei E0401 at 4:21
   ok   e0401_return_type_of_tail_if.ei E0401 at 3:23
   ok   e0401_return_value_from_unit.ei E0401 at 3:12
@@ -384,6 +391,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_thr_update_param.ei    E0401 at 4:15
   ok   e0401_thr_update_ret.ei      E0401 at 4:14
   ok   e0401_try_err_conv.ei        E0401 at 3:46
+  ok   e0401_try_no_from.ei         E0401 at 7:16
   ok   e0401_tup_lt.ei              E0401 at 3:15
   ok   e0401_tup_mismatch.ei        E0401 at 2:34
   ok   e0401_tup_pat_nontuple.ei    E0401 at 2:17
@@ -503,6 +511,8 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0601_copy_chan.ei           E0601 at 4:15
   ok   e0601_copy_task_in_record.ei E0601 at 5:15
   ok   e0601_ord_without_eq.ei      E0601 at 3:1
+  ok   e0602_from_caps.ei           E0602 at 5:8
+  ok   e0602_from_signature.ei      E0602 at 5:8
   ok   e0602_iter_next_not_option.ei E0602 at 4:8
   ok   e0602_mod_trait_impl_bad.ei  E0602 at 4:29
   ok   e0602_quirk_self_in_name.ei  E0602 at 9:8
@@ -513,7 +523,10 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0602_trait_param_mismatch.ei E0602 at 4:21
   ok   e0603_bound_on_fn.ei         E0603 at 2:6
   ok   e0603_bound_unknown_fn.ei    E0603 at 2:6
+  ok   e0603_from_no_source.ei      E0603 at 4:6
+  ok   e0603_trait_type_args.ei     E0603 at 4:6
   ok   e0603_trait_unknown.ei       E0603 at 3:6
+  ok   e0604_from_orphan.ei         E0604 at 3:1
   ok   e0604_orphan_builtin.ei      E0604 at 2:1
   ok   e0604_orphan_list.ei         E0604 at 3:1
   ok   e0604_orphan_param.ei        E0604 at 2:1
@@ -654,6 +667,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-652 passed, 0 failed; error-code coverage 50/54
+665 passed, 0 failed; error-code coverage 50/54
 codes without a compile-fail test: E0302 E0402 E0806 E0808
 --- exit 0

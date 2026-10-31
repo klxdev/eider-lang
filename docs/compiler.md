@@ -2103,6 +2103,53 @@ winning, a generic `replace` through `inout`, copy-on-write independence; hand-c
 leak-free, sanitizers); compile-fail `e0115_take_no_empty`, `e0303_take_fresh`,
 `e0303_replace_read_only`, `e0401_replace_type`, `e0308_take_while_referenced`.
 
+## C8.21: error conversion for `?`
+
+Wave 4, item 8.21 (roadmap P0.6, its compiler part; docs/std.md "Error conversions for `?`").
+Code: core/prelude.ei (`trait From`), parse.ei (`impl_decl`), check.ei's "Error conversion"
+section (`register_from`, `find_from`, `from_instance`, `from_call`) and `try_op`,
+`instantiate` (instance names).
+
+**The trait.** The prelude ends with `trait From { fn from(value: Source) -> Self }` (after
+the operation traits, so no recorded prelude position moves; `Source` is a placeholder read
+off each impl, as `Iter`'s `Item` is). It is the one trait that takes a type argument in an
+impl: `impl From[E1] for E2 { fn from(value: E1) -> E2 { ... } }` (`-> Self` too; generic:
+`impl[T] From[T] for Tagged[T]`). A target may convert from any number of sources, one impl
+per source (E0107 for a second). As for the operation traits (C8.4):
+
+- the orphan rule: only the package that defines the target implements `From` for it
+  (**E0604**, "only the package that defines `String` can implement `From` for it"); the
+  source may be any type;
+- the method is exactly `fn from(value: Source) -> Target` (**E0602** otherwise, saying the
+  expected signature), and it declares no capabilities (E0602 "`from` can't declare
+  capabilities": `?` converts wherever it is written, as C8.4's `drop` runs wherever its
+  value goes);
+- `impl From for X` without the source is **E0603**; type arguments on any other trait are
+  E0603 "trait `Show` takes no type arguments";
+- a program whose entry module defines its own `From` trait shadows the prelude's (C8.4).
+
+**`?`.** In a function returning `Result[T2, E2]`, `x?` on a `Result[T1, E1]` with E1 not E2
+returns `Err(E2.from(e))` when some impl converts E1 into E2 (its type parameters bound by
+both); the error value is moved out, borrowed by `from`, then dropped. Without one it stays
+E0401 "`?` can't convert the error type A into B", which now has the help "implement
+`From[A]` for B (in its package), or convert with `match`". Option's `?` is unchanged.
+
+**Calls.** `E2.from(x)` checks x first and picks the impl whose source fits x's type (and the
+expected type, for a generic target); none is E0401 "`E` has no `From` conversion from bool".
+`from` is not an ordinary method of E2 (it isn't in the method table, so several impls never
+clash), and its instances are named by source (`AppError.from[IoError]`).
+
+No `Into`, no blanket conversions (`impl[T] From[T] for T`), no `Error` trait or context
+chains yet: those are the std half of P0.6 (decision C66).
+
+**Tests.** Run: compiler/tests/run/from_try.ei (two sources into one enum, `?` through both in
+one function, no conversion when the types agree, explicit `AppError.from(...)` choosing by
+argument, a generic target `Tagged[T]`; hand-checked .out, leak-free, sanitizers).
+Compile-fail: `e0604_from_orphan`, `e0602_from_signature`, `e0602_from_caps`,
+`e0603_from_no_source`, `e0603_trait_type_args`, `e0107_from_twice`, `e0401_from_call_no_impl`,
+`e0401_try_no_from`. Oracle: the help on the existing "`?` can't convert" cases, and the IDE
+goldens' prelude symbols (the trait and its method).
+
 ## Language work that lands in `eiderc` (after parity)
 
 Each with a design note, compile-fail tests and new codes:

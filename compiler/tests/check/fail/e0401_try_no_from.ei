@@ -1,0 +1,10 @@
+// expect: E0401 7:16
+// `?` converts an error only through a `From` impl (docs/compiler.md, "C8.21")
+type A = { m: i32 }
+type B = { n: i32 }
+fn f() -> Result[i32, A] { Err(A(1)) }
+fn g() -> Result[i32, B] {
+    let x = f()?
+    Ok(x)
+}
+fn main() {}

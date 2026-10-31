@@ -1,1 +1,1 @@
-{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_try_err_conv.ei","line":3,"col":46},"message":"`?` can't convert the error type str into bool"}
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_try_err_conv.ei","line":3,"col":46},"message":"`?` can't convert the error type str into bool","help":"implement `From[str]` for bool (in its package), or convert with `match`"}
