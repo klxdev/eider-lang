@@ -1,0 +1,231 @@
+// std/path: POSIX paths as bytes (List[u8], like std/fs), purely textual: nothing here
+// looks at the file system (std/fs.canonical does). The separator is `/`; a path is
+// absolute when it starts with one. Components are the parts between separators; empty
+// ones (`a//b`) and `.` are not components, except that a path made only of `.` is ".".
+// Trailing separators don't change what a path names ("a/b/" is "a/b").
+
+/// The separator, `/`.
+pub const SEP: u8 = 47
+
+fn dot() -> List[u8] {
+    var d: List[u8] = List.new()
+    d.push(46)
+    d
+}
+
+fn root() -> List[u8] {
+    var r: List[u8] = List.new()
+    r.push(SEP)
+    r
+}
+
+fn sub(p: List[u8], a: usize, b: usize) -> List[u8] {
+    var out: List[u8] = List.new()
+    var i = a
+    while i < b {
+        out.push(p[i])
+        i += 1
+    }
+    out
+}
+
+fn is_dotdot(c: List[u8]) -> bool { c.len() == 2 && c[0] == 46 && c[1] == 46 }
+fn is_dot(c: List[u8]) -> bool { c.len() == 1 && c[0] == 46 }
+
+pub fn is_absolute(p: List[u8]) -> bool { p.len() > 0 && p[0] == SEP }
+pub fn is_relative(p: List[u8]) -> bool { !is_absolute(p) }
+
+/// The components, without separators or `.`: "/usr//lib/./x" is ["/", "usr", "lib", "x"]
+/// (an absolute path's first component is "/"). `..` is kept (folding it is `normalize`'s
+/// job, since it isn't textual when symlinks are involved).
+pub fn components(p: List[u8]) -> List[List[u8]] {
+    var out: List[List[u8]] = List.new()
+    if is_absolute(p) { out.push(root()) }
+    var cur: List[u8] = List.new()
+    for b in p {
+        if b == SEP {
+            if cur.len() > 0 && !is_dot(cur) { out.push(cur) }
+            cur = List.new()
+        } else {
+            cur.push(b)
+        }
+    }
+    if cur.len() > 0 && !is_dot(cur) { out.push(cur) }
+    out
+}
+
+/// Components back into a path (the inverse of `components`; "." for none).
+pub fn from_components(cs: List[List[u8]]) -> List[u8] {
+    var out: List[u8] = List.new()
+    var i: usize = 0
+    if cs.len() > 0 && cs[0].len() == 1 && cs[0][0] == SEP {
+        out.push(SEP)
+        i = 1
+    }
+    var first = true
+    while i < cs.len() {
+        if !first { out.push(SEP) }
+        for b in cs[i] { out.push(b) }
+        first = false
+        i += 1
+    }
+    if out.len() == 0 { return dot() }
+    out
+}
+
+/// `b` under `a` ("a" + "b" is "a/b"); an absolute `b` replaces `a`, as a shell resolves it.
+/// Exactly one separator goes between them. An empty side gives the other.
+pub fn join(a: List[u8], b: List[u8]) -> List[u8] {
+    if is_absolute(b) || a.len() == 0 { return b }
+    if b.len() == 0 { return a }
+    var out = a
+    if out[out.len() - 1] != SEP { out.push(SEP) }
+    for x in b { out.push(x) }
+    out
+}
+
+/// `join` over several parts, left to right.
+pub fn join_all(parts: List[List[u8]]) -> List[u8] {
+    var out: List[u8] = List.new()
+    for p in parts { out = join(out, p) }
+    out
+}
+
+// The end of `p` without its trailing separators (but keeping a lone root).
+fn trimmed_end(p: List[u8]) -> usize {
+    var z = p.len()
+    while z > 1 && p[z - 1] == SEP { z -= 1 }
+    z
+}
+
+/// The path without its last component: "/a/b" is "/a", "/a" is "/", "a" is "" (the current
+/// directory, as a prefix to `join` to); None for "/" and "", which have no parent.
+pub fn parent(p: List[u8]) -> Option[List[u8]] {
+    let cs = components(p)
+    if cs.len() == 0 { return None }
+    if cs.len() == 1 {
+        if is_absolute(p) { return None }
+        let none: List[u8] = List.new()
+        return Some(none)
+    }
+    var keep: List[List[u8]] = List.new()
+    for i in 0..cs.len() - 1 { keep.push(cs[i]) }
+    Some(from_components(keep))
+}
+
+/// The last component: "/a/b.txt" is "b.txt", "a/b/" is "b"; None for "/", "" and a path
+/// ending in "..".
+pub fn file_name(p: List[u8]) -> Option[List[u8]] {
+    let cs = components(p)
+    if cs.len() == 0 { return None }
+    let last = cs[cs.len() - 1]
+    if is_dotdot(last) || (last.len() == 1 && last[0] == SEP) { return None }
+    Some(last)
+}
+
+// Where the extension's dot is in a file name: the last `.`, not at the start.
+fn ext_dot(name: List[u8]) -> Option[usize] {
+    var i = name.len()
+    while i > 1 {
+        i -= 1
+        if name[i] == 46 { return Some(i) }
+    }
+    None
+}
+
+/// The file name's extension, without the dot: "a/b.tar.gz" is "gz"; None for "b",
+/// ".bashrc" (a leading dot starts a hidden name, not an extension) and no file name.
+pub fn extension(p: List[u8]) -> Option[List[u8]] {
+    let name = file_name(p)?
+    let d = ext_dot(name)?
+    Some(sub(name, d + 1, name.len()))
+}
+
+/// The file name without its extension: "b.tar.gz" is "b.tar", ".bashrc" is ".bashrc".
+pub fn stem(p: List[u8]) -> Option[List[u8]] {
+    let name = file_name(p)?
+    match ext_dot(name) {
+        Some(d) => Some(sub(name, 0, d))
+        None => Some(name)
+    }
+}
+
+/// The path with its extension replaced by `ext` (added if it has none; removed if `ext` is
+/// empty). A path without a file name is returned unchanged.
+pub fn with_extension(p: List[u8], ext: List[u8]) -> List[u8] {
+    let z = trimmed_end(p)
+    let base = sub(p, 0, z)
+    match file_name(base) {
+        None => return p
+        Some(_) => {}
+    }
+    var stop = z
+    match extension(base) {
+        Some(e) => { stop = z - e.len() - 1 }
+        None => {}
+    }
+    var out = sub(base, 0, stop)
+    if ext.len() > 0 {
+        out.push(46)
+        for b in ext { out.push(b) }
+    }
+    out
+}
+
+/// The path with its file name replaced by `name`.
+pub fn with_file_name(p: List[u8], name: List[u8]) -> List[u8] {
+    match parent(p) {
+        Some(d) => join(d, name)
+        None => join(p, name)
+    }
+}
+
+/// Folds `.`, `..` and repeated or trailing separators, textually: "a/./b/../c//" is "a/c",
+/// "/../x" is "/x" (nothing is above the root), "../a/.." is ".."; "" and "a/.." are ".".
+/// Textual folding can differ from what the file system does when a component before `..`
+/// is a symlink (std/fs.canonical resolves them).
+pub fn normalize(p: List[u8]) -> List[u8] {
+    let abs = is_absolute(p)
+    var keep: List[List[u8]] = List.new()
+    for c in components(p) {
+        if c.len() == 1 && c[0] == SEP {
+            keep.push(c)
+        } else if is_dotdot(c) {
+            let n = keep.len()
+            if n > 0 && !is_dotdot(keep[n - 1]) && !(keep[n - 1].len() == 1 && keep[n - 1][0] == SEP) {
+                keep.pop()
+            } else if !abs {
+                keep.push(c)
+            }
+        } else {
+            keep.push(c)
+        }
+    }
+    from_components(keep)
+}
+
+/// Whether `p` is `base` or under it, component by component ("/a/bc" is not under "/a/b").
+pub fn starts_with(p: List[u8], base: List[u8]) -> bool {
+    match relative_to(p, base) {
+        Some(_) => true
+        None => false
+    }
+}
+
+/// `p` relative to `base` when `p` is under it (component by component, no `..` added):
+/// "/a/b/c" relative to "/a" is "b/c", and to itself ".". None otherwise.
+pub fn relative_to(p: List[u8], base: List[u8]) -> Option[List[u8]] {
+    let pc = components(p)
+    let bc = components(base)
+    if bc.len() > pc.len() { return None }
+    for i in 0..bc.len() {
+        if pc[i] != bc[i] { return None }
+    }
+    var rest: List[List[u8]] = List.new()
+    var i = bc.len()
+    while i < pc.len() {
+        rest.push(pc[i])
+        i += 1
+    }
+    Some(from_components(rest))
+}

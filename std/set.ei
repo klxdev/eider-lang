@@ -1,0 +1,95 @@
+// std/set: `Set[T]`, a set of distinct values of any `T: Hash + Eq`, over the built-in Map.
+// Insert, remove and lookup are O(1) on average. The elements also live in a List, so
+// `items()` lists them (a Map can't be iterated yet: docs/std.md, "Needs the compiler"):
+// in insertion order until something is removed, after which the last element takes the
+// removed one's place (removal is a swap, to stay O(1)). Two Sets are equal when they
+// hold the same elements, in any order. A value like any other: copies don't share.
+
+pub type Set[T] = { index: Map[T, usize], elems: List[T] }
+
+pub fn new[T: Hash + Eq]() -> Set[T] { Set(Map.new(), List.new()) }
+
+/// A Set of the distinct elements of `xs` (first occurrences, in order).
+pub fn from_list[T: Hash + Eq](xs: List[T]) -> Set[T] {
+    var s: Set[T] = new()
+    for x in xs { s.insert(x) }
+    s
+}
+
+impl[T: Hash + Eq] Set[T] {
+    fn len(self) -> usize { self.elems.len() }
+    fn is_empty(self) -> bool { self.elems.len() == 0 }
+    fn contains(self, x: T) -> bool { self.index.contains(x) }
+
+    /// Adds `x`: true when it wasn't there yet.
+    fn insert(inout self, x: T) -> bool {
+        if self.index.contains(x) { return false }
+        let n = self.elems.len()
+        self.index.insert(x, n)
+        self.elems.push(x)
+        true
+    }
+
+    /// Removes `x`: true when it was there.
+    fn remove(inout self, x: T) -> bool {
+        let i = match self.index.get(x) {
+            Some(k) => k
+            None => return false
+        }
+        self.index.remove(x)
+        let last = self.elems.len() - 1
+        if i != last {
+            let moved = self.elems[last]
+            self.elems[i] = moved
+            self.index.insert(moved, i)
+        }
+        self.elems.pop()
+        true
+    }
+
+    fn clear(inout self) {
+        self.index = Map.new()
+        self.elems.clear()
+    }
+
+    /// The elements (see the module comment for their order).
+    fn items(self) -> List[T] { self.elems }
+
+    /// Elements in either set.
+    fn union(self, o: Set[T]) -> Set[T] {
+        var out = self
+        for x in o.elems { out.insert(x) }
+        out
+    }
+
+    /// Elements in both sets.
+    fn intersection(self, o: Set[T]) -> Set[T] {
+        var out: Set[T] = new()
+        for x in self.elems {
+            if o.contains(x) { out.insert(x) }
+        }
+        out
+    }
+
+    /// Elements of this set that aren't in `o`.
+    fn difference(self, o: Set[T]) -> Set[T] {
+        var out: Set[T] = new()
+        for x in self.elems {
+            if !o.contains(x) { out.insert(x) }
+        }
+        out
+    }
+
+    /// Whether every element is also in `o`.
+    fn is_subset(self, o: Set[T]) -> bool {
+        if self.elems.len() > o.elems.len() { return false }
+        for x in self.elems {
+            if !o.contains(x) { return false }
+        }
+        true
+    }
+}
+
+impl[T: Hash + Eq] Eq for Set[T] {
+    fn eq(self, o: Set[T]) -> bool { self.elems.len() == o.elems.len() && self.is_subset(o) }
+}

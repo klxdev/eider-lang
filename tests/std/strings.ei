@@ -1,0 +1,96 @@
+// std/strings: find/rfind/count, starts/ends_with, split (empty parts, limits, empty
+// separator over multi-byte characters), split_once, fields, lines, join, trims, replace,
+// repeat, ASCII case, integer parsing (signs, radixes, limits at both ends, error kinds).
+
+import "std/strings"
+
+fn main() uses io {
+    let s = String.from("one, two, three")
+    print(strings.find(s, ","))
+    print(strings.find(s, "four"))
+    print(strings.find_from(s, ",", 4))
+    print(strings.rfind(s, "t"))
+    print(strings.contains("héllo", "él"))
+    print(strings.count("cheese", "e"))
+    print(strings.count("aaaa", "aa"))
+    print(strings.count("héllo", ""))
+    print(strings.char_count("héllo €"))
+    print(strings.starts_with(s, "one"))
+    print(strings.ends_with(s, "three"))
+    print(strings.ends_with("e", "three"))
+
+    print(strings.split("a,b,,c", ","))
+    print(strings.split("", ","))
+    print(strings.split("a--b--c", "--"))
+    print(strings.split_n("a,b,c,d", ",", 2))
+    print(strings.split("hé€", ""))
+    print(strings.split_n("hé€", "", 2))
+    print(strings.split_once("key=value=x", "="))
+    print(strings.split_once("novalue", "="))
+    print(strings.fields("  lots   of\t space \n"))
+    print(strings.lines("a\nb\n\nc\n"))
+    print(strings.join(strings.split("a b c", " "), "+"))
+
+    print(strings.trim("  \t padded \n"))
+    print(strings.trim_start("  x  "))
+    print(strings.trim_end("  x  "))
+    print(strings.trim_prefix("prefix-body", "prefix-"))
+    print(strings.trim_suffix("file.tar.gz", ".gz"))
+    print(strings.trim_suffix("file", ".gz"))
+    print(strings.strip_prefix("Bearer abc", "Bearer "))
+    print(strings.strip_prefix("Basic abc", "Bearer "))
+    print(strings.strip_suffix("x.ei", ".ei"))
+
+    print(strings.replace("a-b-c", "-", "+"))
+    print(strings.replace("aaa", "a", "aa"))
+    print(strings.replace_n("a-b-c", "-", "", 1))
+    print(strings.replace("same", "", "x"))
+    print(strings.repeat("ab", 3))
+    print(strings.repeat("ab", 0).len())
+    print(strings.to_upper("Hello, wörld"))
+    print(strings.to_lower("HeLLo"))
+    print(strings.eq_ignore_case("Content-Length", "content-length"))
+    print(strings.eq_ignore_case("abc", "abd"))
+
+    print(strings.parse_i64("-9223372036854775808"))
+    print(strings.parse_i64("9223372036854775807"))
+    print(strings.parse_i64("9223372036854775808"))
+    print(strings.parse_i64("+42"))
+    print(strings.parse_i64("-0"))
+    print(strings.parse_u64("18446744073709551615"))
+    print(strings.parse_u64("18446744073709551616"))
+    print(strings.parse_u64("-1"))
+    print(strings.parse_i32("-2147483648"))
+    print(strings.parse_i32("2147483648"))
+    print(strings.parse_u8("255"))
+    print(strings.parse_u8("256"))
+    print(strings.parse_uint_radix("65535", 10, 65535))
+    print(strings.parse_usize("12"))
+    print(strings.parse_uint_radix("9", 10, 5))
+    print(strings.parse_int_radix("-9", 10, -5, 5))
+    print(strings.parse_int_radix("-ff", 16, -1000, 1000))
+    print(strings.parse_uint_radix("1010", 2, 255))
+    print(strings.parse_uint_radix("zz", 36, 18446744073709551615))
+    match strings.parse_i64("12x4") {
+        Ok(_) => print("parsed?")
+        Err(e) => print(e)
+    }
+    match strings.parse_i64("") {
+        Ok(_) => print("parsed?")
+        Err(e) => print(e)
+    }
+    match strings.parse_i64("-") {
+        Ok(_) => print("parsed?")
+        Err(e) => print(e)
+    }
+    match strings.parse_u8("300") {
+        Ok(_) => print("parsed?")
+        Err(e) => print(e)
+    }
+    match strings.parse_i64(" 1") {
+        Ok(_) => print("parsed?")
+        Err(e) => print(e.kind == strings.InvalidDigit)
+    }
+    print(strings.parse_bool("true"))
+    print(strings.parse_bool("True"))
+}
