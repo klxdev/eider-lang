@@ -60,7 +60,7 @@ impl Atomic {
     /// then leaves the cell unchanged.
     fn add(self, n: i64, o: Order) -> i64 {
         let c = code(o)
-        var seen = os.atomic_load(self.h, 0)
+        let mut seen = os.atomic_load(self.h, 0)
         while true {
             let next = seen + n
             let got = os.atomic_cas(self.h, seen, next, c)
@@ -73,7 +73,7 @@ impl Atomic {
     /// Subtracts `n`; the value it had. Traps on overflow.
     fn sub(self, n: i64, o: Order) -> i64 {
         let c = code(o)
-        var seen = os.atomic_load(self.h, 0)
+        let mut seen = os.atomic_load(self.h, 0)
         while true {
             let next = seen - n
             let got = os.atomic_cas(self.h, seen, next, c)
@@ -99,7 +99,7 @@ impl Atomic {
     /// must have no effects); the value it had.
     fn update(self, o: Order, f: fn(i64) -> i64) -> i64 {
         let c = code(o)
-        var seen = os.atomic_load(self.h, 0)
+        let mut seen = os.atomic_load(self.h, 0)
         while true {
             let got = os.atomic_cas(self.h, seen, f(seen), c)
             if got == seen { return seen }

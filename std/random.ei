@@ -10,7 +10,7 @@ import "core/os"
 pub fn bytes(n: i64) -> Result[List[u8], String] uses io {
     let r = os.random(n, false)
     if r < 0 {
-        var m = String.from("random: ")
+        let mut m = String.from("random: ")
         m.append(sys.error_text(r))
         return Err(m)
     }
@@ -20,7 +20,7 @@ pub fn bytes(n: i64) -> Result[List[u8], String] uses io {
 /// A random u64.
 pub fn next_u64() -> Result[u64, String] uses io {
     let b = bytes(8)?
-    var v: u64 = 0
+    let mut v: u64 = 0
     for x in b { v = v * 256 + (x as u64) }
     Ok(v)
 }

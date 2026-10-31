@@ -36,15 +36,15 @@ pub fn compiler(toolchain: List[u8]) -> List[u8] uses io {
 /// The string or number after `"key":` in a JSON line of `eiderc caps` (strings unescaped;
 /// "" when the key is missing).
 fn field(line: List[u8], key: str) -> List[u8] {
-    var pat = sys.lit("\"")
+    let mut pat = sys.lit("\"")
     bytes.append(inout pat, sys.lit(key))
     bytes.append(inout pat, sys.lit("\":"))
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     let at = match bytes.find(line, pat, 0) {
         Some(i) => i + pat.len()
         None => { return out }
     }
-    var i = at
+    let mut i = at.copy()
     if i < line.len() && line[i] == 34 {
         i += 1
         while i < line.len() && line[i] != 34 {
@@ -70,16 +70,16 @@ fn field(line: List[u8], key: str) -> List[u8] {
 /// for the module `dir`/`entry` (its entry module or program; none when that file doesn't
 /// exist).
 pub fn of_package(eiderc: List[u8], dir: List[u8], entry: List[u8], name: List[u8]) -> Result[List[Use], String] uses io, fs, net {
-    var out: List[Use] = List.new()
+    let mut out: List[Use] = List.new()
     let file = fs.join(dir, entry)
     if !fs.exists(file) { return Ok(out) }
-    var argv: List[List[u8]] = List.new()
+    let mut argv: List[List[u8]] = List.new()
     argv.push(eiderc)
     argv.push(sys.lit("caps"))
     argv.push(file)
     let r = proc.run_with(argv, proc.captured())?
     if r.code != 0 {
-        var m = String.from("cannot list the capabilities of package `")
+        let mut m = String.from("cannot list the capabilities of package `")
         m.append(sys.to_string(name))
         m.push_str("`: `")
         m.append(sys.to_string(eiderc))

@@ -82,7 +82,7 @@ fn lower_byte(c: u8) -> u8 {
 }
 
 pub fn lower(s: List[u8]) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     for c in s { out.push(lower_byte(c)) }
     out
 }
@@ -98,8 +98,8 @@ pub fn eq_ci(a: List[u8], b: List[u8]) -> bool {
 
 /// `s` without leading and trailing SP and HTAB (OWS).
 pub fn trim_ows(s: List[u8]) -> List[u8] {
-    var a: usize = 0
-    var z = s.len()
+    let mut a: usize = 0
+    let mut z = s.len()
     while a < z && (s[a] == 32 || s[a] == 9) { a += 1 }
     while z > a && (s[z - 1] == 32 || s[z - 1] == 9) { z -= 1 }
     bytes.slice(s, a, z)
@@ -107,7 +107,7 @@ pub fn trim_ows(s: List[u8]) -> List[u8] {
 
 /// The elements of a comma-separated list (`#element`), trimmed, empty ones dropped.
 pub fn list_items(v: List[u8]) -> List[List[u8]] {
-    var out: List[List[u8]] = List.new()
+    let mut out: List[List[u8]] = List.new()
     for part in bytes.split(v, 44) {
         let t = trim_ows(part)
         if t.len() > 0 { out.push(t) }
@@ -127,7 +127,7 @@ pub fn find(hs: List[Header], name: List[u8]) -> Option[List[u8]] {
 
 /// How many headers are called `name`.
 pub fn count(hs: List[Header], name: List[u8]) -> usize {
-    var n: usize = 0
+    let mut n: usize = 0
     for h in hs {
         if eq_ci(h.name, name) { n += 1 }
     }
@@ -136,7 +136,7 @@ pub fn count(hs: List[Header], name: List[u8]) -> usize {
 
 /// `hs` without the headers called `name`.
 pub fn without(hs: List[Header], name: List[u8]) -> List[Header] {
-    var out: List[Header] = List.new()
+    let mut out: List[Header] = List.new()
     for h in hs {
         if !eq_ci(h.name, name) { out.push(h) }
     }
@@ -169,8 +169,8 @@ impl Request {
         let want = sys.lit(name)
         for kv in bytes.split(self.query, 38) {
             if kv.len() == 0 { continue }
-            var k = kv
-            var v: List[u8] = List.new()
+            let mut k = kv.copy()
+            let mut v: List[u8] = List.new()
             match bytes.find_byte(kv, 61, 0) {
                 Some(i) => {
                     k = bytes.slice(kv, 0, i)
@@ -212,7 +212,7 @@ pub fn response(status: i32) -> Response { Response(status, List.new(), List.new
 
 /// A response with a body and its Content-Type.
 pub fn respond(status: i32, content_type: str, body: List[u8]) -> Response {
-    var hs: List[Header] = List.new()
+    let mut hs: List[Header] = List.new()
     hs.push(Header(sys.lit("Content-Type"), sys.lit(content_type)))
     Response(status, hs, body, 11, true)
 }
@@ -225,7 +225,7 @@ pub fn json_response(status: i32, body: List[u8]) -> Response { respond(status, 
 
 /// A plain-text error response: the status and its reason phrase as the body.
 pub fn error_response(status: i32) -> Response {
-    var b = bytes.from_u64(status as u64)
+    let mut b = bytes.from_u64(status as u64)
     b.push(32)
     bytes.append(inout b, reason(status))
     b.push(10)
@@ -236,20 +236,20 @@ pub fn error_response(status: i32) -> Response {
 /// "http://host/a?b" is ("/a", "b") too (RFC 9112 3.2.2); anything else ("*", an authority)
 /// is (target, "").
 pub fn split_target(t: List[u8]) -> (List[u8], List[u8]) {
-    var s = t
+    let mut s = t.copy()
     if s.len() > 0 && s[0] != 47 {
         // absolute-form: scheme "://" authority path-abempty [ "?" query ]
         match bytes.find(s, sys.lit("://"), 0) {
             Some(i) => {
                 let rest = bytes.slice(s, i + 3, s.len())
-                var cut = rest.len()
+                let mut cut = rest.len()
                 for k in 0..rest.len() {
                     if rest[k] == 47 || rest[k] == 63 {
                         cut = k
                         break
                     }
                 }
-                var p = sys.lit("/")
+                let mut p = sys.lit("/")
                 if cut < rest.len() && rest[cut] == 47 { p = List.new() }
                 bytes.append(inout p, bytes.slice(rest, cut, rest.len()))
                 s = p
@@ -274,8 +274,8 @@ fn hexval(c: u8) -> i32 {
 
 /// `s` with `%XX` decoded (and `+` as a space when `plus`); None for a malformed escape.
 pub fn pct_decode(s: List[u8], plus: bool) -> Option[List[u8]] {
-    var out: List[u8] = List.new()
-    var i: usize = 0
+    let mut out: List[u8] = List.new()
+    let mut i: usize = 0
     while i < s.len() {
         let c = s[i]
         if c == 37 {
@@ -304,7 +304,7 @@ fn hex_upper(n: u8) -> u8 {
 /// `s` percent-encoded for a path segment or a query value: everything but the unreserved
 /// characters (ALPHA DIGIT `-` `.` `_` `~`) becomes `%XX`.
 pub fn pct_encode(s: List[u8]) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     for c in s {
         if bytes.is_alpha(c) || bytes.is_digit(c) || c == 45 || c == 46 || c == 95 || c == 126 {
             out.push(c)
@@ -374,12 +374,12 @@ pub fn bodyless(status: i32) -> bool { (status >= 100 && status < 200) || status
 pub fn check_headers(hs: List[Header]) -> Result[bool, String] {
     for h in hs {
         if !is_token(h.name) {
-            var m = String.from("invalid header name ")
+            let mut m = String.from("invalid header name ")
             m.append(sys.to_string(json_ish(h.name)))
             return Err(m)
         }
         if !valid_value(h.value) {
-            var m = String.from("invalid value for header ")
+            let mut m = String.from("invalid value for header ")
             m.append(sys.to_string(h.name))
             return Err(m)
         }
@@ -389,7 +389,7 @@ pub fn check_headers(hs: List[Header]) -> Result[bool, String] {
 
 // `s` with bytes outside printable ASCII as `\xNN`, quoted (for messages)
 fn json_ish(s: List[u8]) -> List[u8] {
-    var out = sys.lit("\"")
+    let mut out = sys.lit("\"")
     for c in s {
         if c >= 32 && c < 127 && c != 34 && c != 92 {
             out.push(c)
@@ -424,7 +424,7 @@ fn put_header(inout out: List[u8], name: List[u8], value: List[u8]) {
 pub fn write_response(r: Response, head_only: bool, keep_alive: bool, date: List[u8]) -> Result[List[u8], String] {
     check_headers(r.headers)?
     if r.status < 100 || r.status > 999 { return Err(String.from("invalid status code")) }
-    var out = sys.lit("HTTP/1.1 ")
+    let mut out = sys.lit("HTTP/1.1 ")
     bytes.append(inout out, bytes.from_u64(r.status as u64))
     out.push(32)
     bytes.append(inout out, reason(r.status))
@@ -455,7 +455,7 @@ pub fn write_request(r: Request, host: List[u8], keep_alive: bool) -> Result[Lis
         if c <= 32 || c >= 127 { return Err(String.from("invalid request target (encode it first)")) }
     }
     if !valid_value(host) { return Err(String.from("invalid host")) }
-    var out = r.method
+    let mut out = r.method.copy()
     out.push(32)
     bytes.append(inout out, r.target)
     bytes.append(inout out, sys.lit(" HTTP/1.1"))
@@ -478,15 +478,15 @@ pub fn write_request(r: Request, host: List[u8], keep_alive: bool) -> Result[Lis
 
 fn hex_lower(n: usize) -> List[u8] {
     if n == 0 { return sys.lit("0") }
-    var rev: List[u8] = List.new()
-    var v = n
+    let mut rev: List[u8] = List.new()
+    let mut v = n.copy()
     while v > 0 {
         let d = (v % 16) as u8
         if d < 10 { rev.push(48 + d) } else { rev.push(87 + d) }
         v = v / 16
     }
-    var out: List[u8] = List.new()
-    var i = rev.len()
+    let mut out: List[u8] = List.new()
+    let mut i = rev.len()
     while i > 0 {
         i -= 1
         out.push(rev[i])
@@ -498,8 +498,8 @@ fn hex_lower(n: usize) -> List[u8] {
 /// last chunk and no trailers.
 pub fn chunked(body: List[u8], size: usize) -> List[u8] {
     let step: usize = if size == 0 { 1 } else { size }
-    var out: List[u8] = List.new()
-    var i: usize = 0
+    let mut out: List[u8] = List.new()
+    let mut i: usize = 0
     while i < body.len() {
         let end = if i + step < body.len() { i + step } else { body.len() }
         bytes.append(inout out, hex_lower(end - i))
@@ -543,7 +543,7 @@ pub fn imf_date(unix: i64) -> List[u8] {
     let y = yoe + era * 400 + jan
     let wd = sys.lit("Thu~Fri~Sat~Sun~Mon~Tue~Wed")
     let mn = sys.lit("Jan~Feb~Mar~Apr~May~Jun~Jul~Aug~Sep~Oct~Nov~Dec")
-    var out = bytes.split(wd, 126)[(days % 7) as usize]
+    let mut out = bytes.split(wd, 126)[(days % 7) as usize]
     bytes.append(inout out, sys.lit(", "))
     two(inout out, d)
     out.push(32)

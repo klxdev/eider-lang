@@ -70,9 +70,9 @@ fn end(inout out: List[u8], n: ast.Node) {
 fn fn_flags(inout out: List[u8], f: u32) {
     if f == 0 { return }
     put(inout out, " flags=")
-    var first = true
+    let mut first = true
     let names = ["pub", "extern", "unsafe", "export"]
-    var bit: u32 = 1
+    let mut bit: u32 = 1
     for i in 0..4 {
         if ast.has(f, bit) {
             if !first { out.push(44) }
@@ -86,7 +86,7 @@ fn fn_flags(inout out: List[u8], f: u32) {
 /// A child on its own line: newline, indent, role, node.
 fn child(inout out: List[u8], p: parse.P, label: str, id: u32, depth: u32) {
     out.push(10)
-    var k: u32 = 0
+    let mut k: u32 = 0
     while k < depth {
         out.push(32)
         out.push(32)
@@ -104,7 +104,7 @@ fn opt(inout out: List[u8], p: parse.P, label: str, id1: u32, depth: u32) {
 
 /// The child list [start/len] in `extra`.
 fn kids(inout out: List[u8], p: parse.P, label: str, start: u32, len: u32, depth: u32) {
-    var i: u32 = 0
+    let mut i: u32 = 0
     while i < len {
         child(inout out, p, label, ast.at(p.ast, start, i), depth)
         i += 1
@@ -368,8 +368,8 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
 
 /// The whole file: each top-level item from column 0.
 pub fn program(p: parse.P) -> List[u8] {
-    var out: List[u8] = List.new()
-    var i: u32 = 0
+    let mut out: List[u8] = List.new()
+    let mut i: u32 = 0
     while i < p.ast.items_len {
         node(inout out, p, ast.at(p.ast, p.ast.items_start, i), 0)
         out.push(10)

@@ -22,8 +22,8 @@ pub fn limited(ms: i64) -> Options { Options(true, true, ms) }
 
 /// The core's out buffer: 8-byte little-endian stdout length, stdout, stderr.
 fn split(raw: List[u8], code: i32, timed_out: bool) -> Output {
-    var n: u64 = 0
-    var i: usize = 8
+    let mut n: u64 = 0
+    let mut i: usize = 8
     while i > 0 {
         i -= 1
         n = n * 256 + (raw[i] as u64)
@@ -38,7 +38,7 @@ pub fn run_with(argv: List[List[u8]], opts: Options) -> Result[Output, String] u
     sys.send_all(argv)
     let n = sys.run(opts.capture_out, opts.capture_err, opts.timeout_ms)
     if n < 0 {
-        var m = String.from("cannot run ")
+        let mut m = String.from("cannot run ")
         m.append(sys.to_string(argv[0]))
         m.push_str(": ")
         m.append(sys.error_text(n))
@@ -64,7 +64,7 @@ pub fn output(argv: List[List[u8]]) -> Result[Output, String] uses io, fs, net {
 pub fn check(argv: List[List[u8]]) -> Result[List[u8], String] uses io, fs, net {
     let o = output(argv)?
     if o.code != 0 {
-        var m = String.from("command failed (exit ")
+        let mut m = String.from("command failed (exit ")
         m.append(String.from_int(o.code as i64))
         m.push_str("): ")
         m.append(sys.to_string(bytes.join(argv, sys.lit(" "))))

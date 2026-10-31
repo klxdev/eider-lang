@@ -55,7 +55,7 @@ fn two_ints(p: jsonrpc.Params) -> Result[Two, jsonrpc.Error] {
 impl Store {
     fn put(self, k: List[u8], v: List[u8]) -> Option[List[u8]] {
         self.st.with(|s: Kv| -> (Kv, Option[List[u8]]) {
-            var t = s
+            let mut t = s.copy()
             let old = t.vals.get(k)
             if old.is_none() { t.keys.push(k) }
             t.vals.insert(k, v)
@@ -72,10 +72,10 @@ impl Store {
 
     fn delete(self, k: List[u8]) -> bool {
         self.st.with(|s: Kv| -> (Kv, bool) {
-            var t = s
+            let mut t = s.copy()
             if !t.vals.contains(k) { return (t, false) }
             t.vals.remove(k)
-            var keep: List[List[u8]] = List.new()
+            let mut keep: List[List[u8]] = List.new()
             for x in t.keys {
                 if !bytes.eq(x, k) { keep.push(x) }
             }
@@ -89,13 +89,13 @@ impl Store {
 
 /// The JSON-RPC methods over `s`.
 pub fn rpc(s: Store) -> jsonrpc.Table {
-    var t = jsonrpc.table()
+    let mut t = jsonrpc.table()
     t.add_typed("kv.put", put_args, opt_string, |a: Put| -> Result[Option[List[u8]], jsonrpc.Error] { Ok(s.put(a.key, a.value)) })
     t.add_typed("kv.get", key_arg, opt_string, |k: List[u8]| -> Result[Option[List[u8]], jsonrpc.Error] { Ok(s.get(k)) })
     t.add_typed("kv.delete", key_arg, jsonrpc.boolean, |k: List[u8]| -> Result[bool, jsonrpc.Error] { Ok(s.delete(k)) })
     t.add("kv.keys", |p: jsonrpc.Params| -> Result[List[u8], jsonrpc.Error] {
         p.none()?
-        var items: List[List[u8]] = List.new()
+        let mut items: List[List[u8]] = List.new()
         for k in s.keys() { items.push(jsonrpc.string(k)) }
         Ok(jsonrpc.array(items))
     })
@@ -116,7 +116,7 @@ pub fn rpc(s: Store) -> jsonrpc.Table {
 
 /// The whole service: /rpc, /health and /kv/:key.
 pub fn app(s: Store) -> fn(http.Request) -> http.Response {
-    var r = router.new()
+    let mut r = router.new()
     r.post("/rpc", jsonrpc.handler(rpc(s)))
     r.get("/health", |q: http.Request| -> http.Response { http.text(200, "ok") })
     r.get("/kv/:key", |q: http.Request| -> http.Response {

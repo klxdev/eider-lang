@@ -113,7 +113,7 @@ impl Suite {
         self.checks += 1
         if cond { return true }
         self.failed += 1
-        var m = String.from("FAIL ")
+        let mut m = String.from("FAIL ")
         m.append(self.name)
         m.push_str(": ")
         m.push_str(what)
@@ -125,7 +125,7 @@ impl Suite {
 
     /// Prints "<name>: N checks, M failed" to stderr; 0 when none failed, else 1.
     fn done(self) -> i32 uses io {
-        var m = self.name
+        let mut m = self.name.copy()
         m.push_str(": ")
         m.append(self.checks.to_string())
         m.push_str(" checks, ")
@@ -138,8 +138,8 @@ impl Suite {
 
 // the lines of a text (a final newline doesn't add an empty one)
 fn split_lines(s: String) -> List[String] {
-    var out: List[String] = List.new()
-    var a: usize = 0
+    let mut out: List[String] = List.new()
+    let mut a: usize = 0
     for i in 0..s.len() {
         if s.byte(i) == 10 {
             out.push(s.slice(a, i))
@@ -159,12 +159,12 @@ pub fn diff_lines(a: String, b: String) -> String {
     let n = x.len()
     let m = y.len()
     // lcs[i * (m + 1) + j]: the LCS length of x[i..] and y[j..]
-    var lcs: List[u32] = List.new()
+    let mut lcs: List[u32] = List.new()
     for k in 0..(n + 1) * (m + 1) { lcs.push(0) }
-    var i = n
+    let mut i = n.copy()
     while i > 0 {
         i -= 1
-        var j = m
+        let mut j = m.copy()
         while j > 0 {
             j -= 1
             let v = if x[i] == y[j] {
@@ -177,9 +177,9 @@ pub fn diff_lines(a: String, b: String) -> String {
             lcs[i * (m + 1) + j] = v
         }
     }
-    var out = String.from("")
-    var p: usize = 0
-    var q: usize = 0
+    let mut out = String.from("")
+    let mut p: usize = 0
+    let mut q: usize = 0
     while p < n || q < m {
         if p < n && q < m && x[p] == y[q] {
             out.push_str("  ")
@@ -246,7 +246,7 @@ pub fn script(steps: List[Step], chunk: usize) -> Script { Script(steps, 0, 0, c
 
 /// A scripted Reader giving `data` `chunk` bytes at a time, then the end.
 pub fn chunks(data: List[u8], chunk: usize) -> Script {
-    var s: List[Step] = List.new()
+    let mut s: List[Step] = List.new()
     s.push(Data(data))
     script(s, chunk)
 }
@@ -266,10 +266,10 @@ impl Script {
                         self.at += 1
                         self.off = 0
                     } else {
-                        var n = b.len() - o
+                        let mut n = b.len() - o
                         if n > max { n = max }
                         if self.chunk > 0 && n > self.chunk { n = self.chunk }
-                        var out: List[u8] = List.new()
+                        let mut out: List[u8] = List.new()
                         for i in o..o + n { out.push(b[i]) }
                         self.off += n
                         return Ok(out)
@@ -325,7 +325,7 @@ impl Sink {
             if timed { return Err(stream.timed_out("write")) }
             return Err(stream.error(self.kind, "write: scripted failure"))
         }
-        var n = data.len()
+        let mut n = data.len()
         if self.per_write > 0 && n > self.per_write { n = self.per_write }
         let room = self.fail_at - self.data.len()
         if n > room { n = room }
@@ -382,8 +382,8 @@ impl PipeReader {
             return Err(stream.error(stream.WouldBlock, "read: the in-memory pipe is empty"))
         }
         let n = if max < s.data.len() { max } else { s.data.len() }
-        var out: List[u8] = List.new()
-        var rest: List[u8] = List.new()
+        let mut out: List[u8] = List.new()
+        let mut rest: List[u8] = List.new()
         for i in 0..s.data.len() {
             if i < n { out.push(s.data[i]) } else { rest.push(s.data[i]) }
         }
@@ -406,7 +406,7 @@ impl PipeWriter {
         let s = self.st.get()
         if s.reader_gone { return Err(stream.error(stream.BrokenPipe, "write: the in-memory pipe's reader is closed")) }
         if s.closed { return Err(stream.error(stream.InvalidInput, "write: the in-memory pipe is closed")) }
-        var d = s.data
+        let mut d = s.data.copy()
         for b in data { d.push(b) }
         self.st.set(PipeState(d, false, false))
         Ok(data.len())

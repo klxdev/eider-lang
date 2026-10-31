@@ -28,7 +28,7 @@ pub type Manifest = { name: List[u8], version: List[u8], entry: List[u8], main: 
 pub fn file_in(dir: List[u8]) -> List[u8] { fs.join(dir, sys.lit("eider.toml")) }
 
 pub fn at(file: List[u8], line: u32, col: u32, m: String) -> String {
-    var s = sys.to_string(file)
+    let mut s = sys.to_string(file)
     s.push_str(":")
     s.append(String.from_int(line as i64))
     s.push_str(":")
@@ -68,7 +68,7 @@ fn str_at(doc: List[toml.Entry], file: List[u8], k: List[u8]) -> Result[Option[L
             match e.val {
                 toml.Str(s) => Ok(Some(s))
                 _ => {
-                    var m = String.from("`")
+                    let mut m = String.from("`")
                     m.append(sys.to_string(k))
                     m.push_str("` must be a string")
                     Err(at(file, e.line, 1, m))
@@ -88,7 +88,7 @@ fn line_of(doc: List[toml.Entry], k: List[u8], dflt: u32) -> u32 {
 }
 
 fn key(a: str, b: List[u8], c: str) -> List[u8] {
-    var k = sys.lit(a)
+    let mut k = sys.lit(a)
     bytes.append(inout k, b)
     bytes.append(inout k, sys.lit(c))
     k
@@ -104,7 +104,7 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
     let top_ok = ["package.name", "package.version", "package.entry", "package.main", "package.description"]
     let dep_ok = ["path", "git", "version", "rev", "uses"]
     for e in doc {
-        var ok = false
+        let mut ok = false
         for i in 0..5 {
             if bytes.eq(e.key, sys.lit(top_ok[i as usize])) { ok = true }
         }
@@ -121,7 +121,7 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
             }
         }
         if !ok {
-            var m = String.from("unknown key `")
+            let mut m = String.from("unknown key `")
             m.append(sys.to_string(e.key))
             m.push_str("`")
             return Err(at(file, e.line, 1, m))
@@ -157,7 +157,7 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
         Some(m) => m
         None => none
     }
-    var deps: List[Dep] = List.new()
+    let mut deps: List[Dep] = List.new()
     for dn in toml.children(doc, sys.lit("deps")) {
         let line = match toml.get(doc, key("deps.", dn, ".path")) {
             Some(e) => e.line
@@ -168,7 +168,7 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
         }
         if !valid_name(dn) { return Err(bad(file, line, "dependency names are lowercase letters, digits and `_`")) }
         if toolchain_name(dn) {
-            var m = String.from("`")
+            let mut m = String.from("`")
             m.append(sys.to_string(dn))
             m.push_str("` is part of the toolchain: import its modules (`import \"")
             m.append(sys.to_string(dn))
@@ -180,14 +180,14 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
         let git = str_at(doc, file, key("deps.", dn, ".git"))?
         let ver = str_at(doc, file, key("deps.", dn, ".version"))?
         let rev = str_at(doc, file, key("deps.", dn, ".rev"))?
-        var grants: List[List[u8]] = List.new()
+        let mut grants: List[List[u8]] = List.new()
         match toml.get(doc, key("deps.", dn, ".uses")) {
             Some(e) => {
                 match e.val {
                     toml.Strs(items) => {
                         for c in items {
                             if !known_cap(c) {
-                                var m = String.from("unknown capability `")
+                                let mut m = String.from("unknown capability `")
                                 m.append(sys.to_string(c))
                                 m.push_str("` (known: io, clock, fs, net, threads, ffi)")
                                 return Err(at(file, e.line, 1, m))

@@ -36,7 +36,7 @@ fn find_in(s: String, n: String, from: usize) -> Option[usize] {
     let last = s.len() - n.len()
     if n.len() == 0 { return if from <= s.len() { Some(from) } else { None } }
     let first = n.byte(0)
-    var i = from
+    let mut i = from.copy()
     while i <= last {
         if s.byte(i) == first && at(s, n, i) { return Some(i) }
         i += 1
@@ -101,7 +101,7 @@ pub fn ends_with[A: Text, B: Text](s: A, suffix: B) -> bool {
 
 // the number of characters (scalar values) of valid UTF-8
 fn chars(s: String) -> usize {
-    var n: usize = 0
+    let mut n: usize = 0
     for i in 0..s.len() {
         let b = s.byte(i)
         if b < 128 || b >= 192 { n += 1 }
@@ -372,7 +372,7 @@ impl Show for ParseError {
 }
 
 fn digit(b: u8, radix: u32) -> Option[u32] {
-    var d: u32 = 99
+    let mut d: u32 = 99
     if b >= 48 && b <= 57 { d = (b - 48) as u32 }
     if b >= 97 && b <= 122 { d = (b - 87) as u32 }
     if b >= 65 && b <= 90 { d = (b - 55) as u32 }
@@ -384,7 +384,7 @@ fn digit(b: u8, radix: u32) -> Option[u32] {
 fn magnitude(t: String, from: usize, radix: u32, limit: u64) -> Result[u64, ParseError] {
     if from >= t.len() { return Err(ParseError(Empty, from)) }
     let r = radix as u64
-    var v: u64 = 0
+    let mut v: u64 = 0
     for i in from..t.len() {
         let d = match digit(t.byte(i), radix) {
             Some(x) => x as u64

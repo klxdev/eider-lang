@@ -40,7 +40,7 @@ pub type Pair = { r: i32, w: i32 }
 
 /// "<what>: <the system's message for status>"
 pub fn error(what: str, status: i64) -> String {
-    var m = String.from(what)
+    let mut m = String.from(what)
     m.push_str(": ")
     m.append(sys.error_text(status))
     m
@@ -50,7 +50,7 @@ pub fn error(what: str, status: i64) -> String {
 pub fn would_block(status: i64) -> bool { os.err_kind(status) == 1 }
 
 fn path_arg(path: List[u8]) {
-    var p: List[List[u8]] = List.new()
+    let mut p: List[List[u8]] = List.new()
     p.push(path)
     sys.send_all(p)
 }
@@ -61,7 +61,7 @@ pub fn open(path: List[u8], flags: i32, mode: i32) -> Result[i32, String] uses f
     path_arg(path)
     let n = os.fd_open(flags, mode)
     if n < 0 {
-        var m = String.from("cannot open ")
+        let mut m = String.from("cannot open ")
         m.append(sys.to_string(path))
         m.push_str(": ")
         m.append(sys.error_text(n))
@@ -134,11 +134,11 @@ pub fn write(fd: i32, data: List[u8]) -> Result[i64, String] uses io {
 
 /// Write all of `data` (blocking descriptors).
 pub fn write_all(fd: i32, data: List[u8]) -> Result[bool, String] uses io {
-    var rest = data
+    let mut rest = data.copy()
     while rest.len() > 0 {
         let n = write(fd, rest)?
-        var next: List[u8] = List.new()
-        var i = n as usize
+        let mut next: List[u8] = List.new()
+        let mut i = n as usize
         while i < rest.len() {
             next.push(rest[i])
             i += 1
@@ -206,7 +206,7 @@ pub fn stat_path(path: List[u8], follow: bool) -> Result[Stat, String] uses fs {
     path_arg(path)
     let n = os.stat(follow)
     if n < 0 {
-        var m = String.from("cannot stat ")
+        let mut m = String.from("cannot stat ")
         m.append(sys.to_string(path))
         m.push_str(": ")
         m.append(sys.error_text(n))
@@ -224,7 +224,7 @@ pub fn chmod(fd: i32, mode: i32) -> Result[bool, String] uses fs {
 /// An advisory lock on the whole file (flock): exclusive or shared. With `wait` false,
 /// Ok(false) when another open file holds a conflicting lock.
 pub fn lock(fd: i32, exclusive: bool, wait: bool) -> Result[bool, String] uses fs {
-    var op: i32 = 1
+    let mut op: i32 = 1
     if exclusive { op = 2 }
     if !wait { op = op | 4 }
     let n = os.fd_lock(fd, op)

@@ -74,8 +74,8 @@ fn flag(b: bool) -> i32 {
 
 /// Little-endian unsigned 32-bit field of `b` (a result taken with sys.take) at byte `at`.
 pub fn le_u32(b: List[u8], at: usize) -> u32 {
-    var v: u32 = 0
-    var i: usize = 4
+    let mut v: u32 = 0
+    let mut i: usize = 4
     while i > 0 {
         i -= 1
         v = v * 256 + (b[at + i] as u32)
@@ -92,8 +92,8 @@ pub fn le_fd(b: List[u8], at: usize) -> i32 {
 
 /// Little-endian unsigned 64-bit field of `b` at byte `at`.
 pub fn le_u64(b: List[u8], at: usize) -> u64 {
-    var v: u64 = 0
-    var i: usize = 8
+    let mut v: u64 = 0
+    let mut i: usize = 8
     while i > 0 {
         i -= 1
         v = v * 256 + (b[at + i] as u64)

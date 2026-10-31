@@ -228,7 +228,7 @@ fn advance(inout p: Parser) -> Step {
 /// The end of the line starting at `p.pos`: Ok(Some(index of its LF)), Ok(None) when not
 /// complete yet, Err(why) for a bare CR or LF. Used for chunk and trailer lines.
 fn line_end(p: Parser) -> Result[Option[usize], str] {
-    var i = p.pos
+    let mut i = p.pos.copy()
     while i < p.buf.len() {
         let c = p.buf[i]
         if c == 10 {
@@ -249,9 +249,9 @@ fn chunk_line(inout p: Parser) -> Option[Step] {
         Err(w) => { return Some(fail(inout p, 400, w)) }
     }
     // 1*HEXDIG [ chunk-ext ] CRLF
-    var i = p.pos
-    var size: usize = 0
-    var digits = 0
+    let mut i = p.pos.copy()
+    let mut size: usize = 0
+    let mut digits = 0
     while i < end - 1 {
         let h = hexval(p.buf[i])
         if h < 0 { break }
@@ -263,7 +263,7 @@ fn chunk_line(inout p: Parser) -> Option[Step] {
     if digits == 0 { return Some(fail(inout p, 400, "invalid chunk size")) }
     if i < end - 1 {
         // chunk-ext: BWS ";" ... with no control characters
-        var j = i
+        let mut j = i.copy()
         while j < end - 1 && (p.buf[j] == 32 || p.buf[j] == 9) { j += 1 }
         if j >= end - 1 || p.buf[j] != 59 { return Some(fail(inout p, 400, "invalid chunk size")) }
         while j < end - 1 {
@@ -351,9 +351,9 @@ fn scan_head(inout p: Parser) -> Option[Step] {
 /// The head is buf[pos..=end] (end is the LF of its empty line): parse it and choose the
 /// framing.
 fn head_done(inout p: Parser, end: usize) -> Option[Step] {
-    var lines: List[List[u8]] = List.new()
-    var s = p.pos
-    var i = p.pos
+    let mut lines: List[List[u8]] = List.new()
+    let mut s = p.pos.copy()
+    let mut i = p.pos.copy()
     while i < end - 1 {
         if p.buf[i] == 10 {
             lines.push(bytes.slice(p.buf, s, i - 1))
@@ -435,7 +435,7 @@ fn status_line(inout p: Parser, line: List[u8]) -> Option[Step] {
     if line.len() < 12 || line[8] != 32 { return Some(fail(inout p, 400, "invalid status line")) }
     let v = version(bytes.slice(line, 0, 8))
     if v <= 0 { return Some(fail(inout p, 400, "invalid HTTP version")) }
-    var st: i32 = 0
+    let mut st: i32 = 0
     for k in 9..12 {
         let c = line[k as usize]
         if !bytes.is_digit(c) { return Some(fail(inout p, 400, "invalid status code")) }

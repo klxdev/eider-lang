@@ -59,7 +59,7 @@ pub fn unbounded[T]() -> Channel[T] {
 
 fn reserve_send(st: sync.Lock[St], me: sync.Parker, reg: bool) -> i32 uses io {
     st.with(|s: St| -> (St, i32) {
-        var t = s
+        let mut t = s.copy()
         t.tx = sync.without(t.tx, me)
         if t.closed { return (t, 2) }
         if t.len < t.cap {
@@ -75,7 +75,7 @@ fn reserve_send(st: sync.Lock[St], me: sync.Parker, reg: bool) -> i32 uses io {
 
 fn reserve_recv(st: sync.Lock[St], me: sync.Parker, reg: bool) -> i32 uses io {
     st.with(|s: St| -> (St, i32) {
-        var t = s
+        let mut t = s.copy()
         t.rx = sync.without(t.rx, me)
         if t.len > 0 {
             t.len -= 1
@@ -91,7 +91,7 @@ fn reserve_recv(st: sync.Lock[St], me: sync.Parker, reg: bool) -> i32 uses io {
 
 fn leave_rx(st: sync.Lock[St], me: sync.Parker) {
     st.update(|s: St| -> St {
-        var t = s
+        let mut t = s.copy()
         t.rx = sync.without(t.rx, me)
         t
     })
@@ -99,7 +99,7 @@ fn leave_rx(st: sync.Lock[St], me: sync.Parker) {
 
 fn leave_tx(st: sync.Lock[St], me: sync.Parker) {
     st.update(|s: St| -> St {
-        var t = s
+        let mut t = s.copy()
         t.tx = sync.without(t.tx, me)
         t
     })

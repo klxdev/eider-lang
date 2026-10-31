@@ -93,7 +93,7 @@ const CONN: i64 = 3
 
 fn bump(sh: sync.Lock[Shared], what: i32) {
     sh.update(|s: Shared| -> Shared {
-        var t = s
+        let mut t = s.copy()
         if what == 0 { t.stats.connections += 1 }
         if what == 1 { t.stats.rejected += 1 }
         if what == 2 { t.stats.requests += 1 }
@@ -146,7 +146,7 @@ impl Server {
         })
         let sh = sync.lock(Shared(Stats(0, 0, 0, 0, 0), 0))
         let pool = task.pool(cfg.workers, cfg.queue)
-        var running = true
+        let mut running = true
         match poll.add(p, ls, poll.READ, LISTENER) {
             Ok(b) => {}
             Err(e) => { running = false }
@@ -156,12 +156,12 @@ impl Server {
             Err(e) => { running = false }
         }
         while running {
-            var evs: List[poll.Event] = List.new()
+            let mut evs: List[poll.Event] = List.new()
             match poll.wait(p, 8, -1) {
                 Ok(v) => { evs = v }
                 Err(e) => { running = false }
             }
-            var accept_now = false
+            let mut accept_now = false
             for e in evs {
                 if e.token == STOP { running = false }
                 if e.token == LISTENER { accept_now = true }
@@ -213,7 +213,7 @@ fn accept_some(ls: i32, stop: poll.Waker, h: fn(http.Request) -> http.Response, 
 
 /// 503 without reading anything (best effort: the socket's send buffer is empty).
 fn reject(c: i32, cfg: Config) uses net, io, clock {
-    var r = http.error_response(503)
+    let mut r = http.error_response(503)
     r.set_header("Retry-After", sys.lit("1"))
     match http.write_response(r, false, false, date_of(cfg)) {
         Ok(b) => {
@@ -236,8 +236,8 @@ fn wait_conn(p: i32, dl: time.Deadline) -> Wake uses io, clock {
     while true {
         match poll.wait(p, 4, dl.timeout_ms()) {
             Ok(evs) => {
-                var stop = false
-                var ready = false
+                let mut stop = false
+                let mut ready = false
                 for e in evs {
                     if e.token == STOP { stop = true }
                     if e.token == CONN { ready = true }
@@ -275,19 +275,19 @@ fn serve_conn(c: i32, h: fn(http.Request) -> http.Response, cfg: Config, stop: p
             return
         }
     }
-    var ok = poll.add(p, c, poll.READ, CONN).is_ok() && poll.add(p, stop.r, poll.READ, STOP).is_ok()
-    var stopping = false
-    var parser = parse.requests(cfg.limits)
-    var served: u32 = 0
+    let mut ok = poll.add(p, c, poll.READ, CONN).is_ok() && poll.add(p, stop.r, poll.READ, STOP).is_ok()
+    let mut stopping = false
+    let mut parser = parse.requests(cfg.limits)
+    let mut served: u32 = 0
     // what ends the connection: 0 keep going, 1 close after a response (a lingering
     // close), 2 close now
-    var end = 0
+    let mut end = 0
     if !ok { end = 2 }
     while end == 0 {
         // read one request
-        var started = !parser.idle()
-        var dl = if started { time.after(cfg.read_timeout) } else { time.after(cfg.idle_timeout) }
-        var got: Option[parse.Msg] = None
+        let mut started = !parser.idle()
+        let mut dl = if started { time.after(cfg.read_timeout) } else { time.after(cfg.idle_timeout) }
+        let mut got: Option[parse.Msg] = None
         while end == 0 && got.is_none() {
             match parser.next() {
                 parse.Done(m) => { got = Some(m) }
@@ -299,7 +299,7 @@ fn serve_conn(c: i32, h: fn(http.Request) -> http.Response, cfg: Config, stop: p
                 parse.More => {
                     if parser.wants_continue() {
                         parser.continue_sent()
-                        var cont = sys.lit("HTTP/1.1 100 Continue")
+                        let mut cont = sys.lit("HTTP/1.1 100 Continue")
                         for k in 0..2 {
                             cont.push(13)
                             cont.push(10)

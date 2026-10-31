@@ -11,7 +11,7 @@ import "../parse.ei"
 
 /// Test text: `\n` is CRLF, `~` a bare LF, `^` a bare CR.
 fn wire(s: str) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     for c in sys.lit(s) {
         if c == 10 {
             out.push(13)
@@ -28,7 +28,7 @@ fn wire(s: str) -> List[u8] {
 }
 
 fn show_msg(m: parse.Msg) -> List[u8] {
-    var l: List[u8] = List.new()
+    let mut l: List[u8] = List.new()
     if m.method.len() > 0 {
         bytes.append(inout l, m.method)
         l.push(32)
@@ -55,12 +55,12 @@ fn show_step(s: parse.Step) -> List[u8] {
     match s {
         parse.More => sys.lit("more")
         parse.Done(m) => {
-            var l = sys.lit("done ")
+            let mut l = sys.lit("done ")
             bytes.append(inout l, show_msg(m))
             l
         }
         parse.Bad(st, why) => {
-            var l = sys.lit("bad ")
+            let mut l = sys.lit("bad ")
             bytes.append(inout l, bytes.from_u64(st as u64))
             l.push(32)
             bytes.append(inout l, why)
@@ -80,10 +80,10 @@ fn is_more(s: parse.Step) -> bool {
 /// Every message in `input` (fed in pieces of `piece` bytes; 0: all at once), then `eof`
 /// when `close`, as one line per step.
 fn run(response: bool, input: List[u8], piece: usize, close: bool) -> List[List[u8]] {
-    var p = if response { parse.responses(http.limits()) } else { parse.requests(http.limits()) }
-    var out: List[List[u8]] = List.new()
-    var i: usize = 0
-    var stop = false
+    let mut p = if response { parse.responses(http.limits()) } else { parse.requests(http.limits()) }
+    let mut out: List[List[u8]] = List.new()
+    let mut i: usize = 0
+    let mut stop = false
     let step: usize = if piece == 0 { input.len() + 1 } else { piece }
     while !stop {
         if i < input.len() {
@@ -91,7 +91,7 @@ fn run(response: bool, input: List[u8], piece: usize, close: bool) -> List[List[
             p.feed(bytes.slice(input, i, end))
             i = end
         }
-        var drained = false
+        let mut drained = false
         while !drained {
             let s = p.next()
             if is_more(s) {
@@ -142,7 +142,7 @@ fn check(response: bool, input: List[u8], close: bool) uses io {
 
 /// `s` on one line: a newline shown as `\\n`.
 fn shown(s: List[u8]) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     for c in s {
         if c == 10 {
             out.push(92)
@@ -199,7 +199,7 @@ fn main() uses io {
     resp("HTTP/1.1 200 OK\nContent-Length: 5\n\nab", true)
     resp("HTTP/1.1 200 OK\nTransfer-Encoding: gzip\n\nraw", true)
     // a response to HEAD has no body whatever it says
-    var hp = parse.responses(http.limits())
+    let mut hp = parse.responses(http.limits())
     hp.expect_no_body()
     hp.feed(wire("HTTP/1.1 200 OK\nContent-Length: 10\n\n"))
     io.outln(show_step(hp.next()))
@@ -212,7 +212,7 @@ fn main() uses io {
     }
 
     print("-- limits")
-    var lim = http.limits()
+    let mut lim = http.limits()
     lim.max_line = 32
     lim.max_headers = 2
     lim.max_head = 80
@@ -226,13 +226,13 @@ fn main() uses io {
     limited(lim, "POST / HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\n\n8\n12345678\n0\n\n")
     limited(lim, "POST / HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\n\n0\nT: 1\nU: 2\n\n")
     // a limit is hit before the head is complete (no end of line needed)
-    var p = parse.requests(lim)
+    let mut p = parse.requests(lim)
     p.feed(wire("GET /aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
     io.outln(show_step(p.next()))
     io.outln(show_step(p.next()))
 
     print("-- expect 100-continue")
-    var e = parse.requests(http.limits())
+    let mut e = parse.requests(http.limits())
     e.feed(wire("POST / HTTP/1.1\nHost: a\nExpect: 100-continue\nContent-Length: 2\n\n"))
     io.outln(show_step(e.next()))
     print(e.wants_continue())
@@ -242,7 +242,7 @@ fn main() uses io {
     io.outln(show_step(e.next()))
 
     print("-- requests become Request values")
-    var rp = parse.requests(http.limits())
+    let mut rp = parse.requests(http.limits())
     rp.feed(wire("GET /users/42?name=a%20b&x=y+z&bad=%zz HTTP/1.1\nHost: h\nX-Thing: v\n\n"))
     match rp.next() {
         parse.Done(m) => {
@@ -262,13 +262,13 @@ fn main() uses io {
 }
 
 fn limited(lim: http.Limits, s: str) uses io {
-    var p = parse.requests(lim)
+    let mut p = parse.requests(lim)
     p.feed(wire(s))
     io.outln(show_step(p.next()))
 }
 
 fn wire_bytes(s: List[u8]) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     for c in s {
         if c == 10 {
             out.push(13)
@@ -293,7 +293,7 @@ fn wire_bytes(s: List[u8]) -> List[u8] {
 /// Malformed requests (`\n` CRLF, `~` bare LF, `^` bare CR, `` ` `` 0x01, `@` 0x7F, `$` 0x80).
 /// Each must be refused.
 pub fn corpus() -> List[List[u8]] {
-    var all: List[List[u8]] = List.new()
+    let mut all: List[List[u8]] = List.new()
     all.push(sys.lit("GET / HTTP/1.1~Host: a~~"))
     all.push(sys.lit("GET / HTTP/1.1\nHost: a~\n"))
     all.push(sys.lit("GET / HTTP/1.1^Host: a\n\n"))

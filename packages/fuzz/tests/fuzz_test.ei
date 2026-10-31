@@ -4,9 +4,9 @@ import "std/io"
 import "../fuzz.ei"
 
 fn show_tokens(s: str) uses io {
-    var parts: List[List[u8]] = List.new()
+    let mut parts: List[List[u8]] = List.new()
     for t in fuzz.tokens(sys.lit(s)) {
-        var q = sys.lit("[")
+        let mut q = sys.lit("[")
         bytes.append(inout q, t)
         q.push(93)
         parts.push(q)
@@ -16,7 +16,7 @@ fn show_tokens(s: str) uses io {
 
 fn show_mutants(seed: u64, wild: bool, src: List[u8]) uses io {
     let t = fuzz.tables()
-    var r = fuzz.rng(seed)
+    let mut r = fuzz.rng(seed)
     for _ in 0..4 {
         io.outln(fuzz.mutate(t, src, inout r, wild))
     }
@@ -24,10 +24,10 @@ fn show_mutants(seed: u64, wild: bool, src: List[u8]) uses io {
 
 fn main() uses io {
     // the PRNG sequence is part of the tool's contract: SEED=n replays a run
-    var r = fuzz.rng(1)
+    let mut r = fuzz.rng(1)
     for _ in 0..4 { print(fuzz.next(inout r)) }
-    var r2 = fuzz.rng(42)
-    var dice: List[List[u8]] = List.new()
+    let mut r2 = fuzz.rng(42)
+    let mut dice: List[List[u8]] = List.new()
     for _ in 0..12 { dice.push(bytes.from_u64(fuzz.below(inout r2, 6) as u64)) }
     io.outln(bytes.join(dice, sys.lit(" ")))
 

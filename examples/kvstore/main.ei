@@ -48,7 +48,7 @@ fn main() uses io, net, clock, threads {
             return
         }
     }
-    var l = sys.lit("kvstore: listening on http://")
+    let mut l = sys.lit("kvstore: listening on http://")
     bytes.append(inout l, net.text(srv.addr()))
     io.outln(l)
 
@@ -59,7 +59,7 @@ fn main() uses io, net, clock, threads {
     let sig_fd = signal.events_fd().unwrap()
     let t = tok
     let waiter = spawn(|| -> i32 {
-        var going = true
+        let mut going = true
         while going {
             match fd.wait_ready(sig_fd, fd.READY_READ, t.deadline()) {
                 Ok(true) => {
@@ -75,7 +75,7 @@ fn main() uses io, net, clock, threads {
 
     match srv.serve(kv.app(kv.store()), tok) {
         Ok(st) => {
-            var m = String.from("kvstore: stopped after ")
+            let mut m = String.from("kvstore: stopped after ")
             m.append(String.from_int(st.requests))
             m.push_str(" requests on ")
             m.append(String.from_int(st.connections))

@@ -342,21 +342,21 @@ fn note_ty(inout c: C, n: ast.Node, ty: u32) {
 fn s(x: str) -> List[u8] { sys.lit(x) }
 
 fn q(pre: str, x: List[u8], post: str) -> List[u8] {
-    var m = sys.lit(pre)
+    let mut m = sys.lit(pre)
     bytes.append(inout m, x)
     bytes.append(inout m, sys.lit(post))
     m
 }
 
 fn q2(pre: str, x: List[u8], mid: str, y: List[u8], post: str) -> List[u8] {
-    var m = q(pre, x, mid)
+    let mut m = q(pre, x, mid)
     bytes.append(inout m, y)
     bytes.append(inout m, sys.lit(post))
     m
 }
 
 fn q3(pre: str, x: List[u8], m1: str, y: List[u8], m2: str, z: List[u8], post: str) -> List[u8] {
-    var m = q2(pre, x, m1, y, m2)
+    let mut m = q2(pre, x, m1, y, m2)
     bytes.append(inout m, z)
     bytes.append(inout m, sys.lit(post))
     m
@@ -367,7 +367,7 @@ fn num(n: u64) -> List[u8] { bytes.from_u64(n) }
 fn err(code: str, line: u32, col: u32, msg: List[u8]) -> diag.Diag { diag.new(code, line, col, msg) }
 
 fn errh(code: str, line: u32, col: u32, msg: List[u8], help: str) -> diag.Diag {
-    var d = diag.new(code, line, col, msg)
+    let mut d = diag.new(code, line, col, msg)
     d.help = sys.lit(help)
     d
 }
@@ -381,7 +381,7 @@ fn kt(c: C, k: u64) -> List[u8] { resolve.key_text(c.p.names, k) }
 fn nm(c: C, sym: u32) -> List[u8] { intern.name(c.p.names, sym) }
 
 fn mismatch(c: C, line: u32, col: u32, expected: u32, found: u32) -> diag.Diag {
-    var d = err("E0401", line, col, q2("expected ", ts(c, expected), ", found ", ts(c, found), ""))
+    let mut d = err("E0401", line, col, q2("expected ", ts(c, expected), ", found ", ts(c, found), ""))
     if types.is_int(c.t, expected) && types.is_int(c.t, found) {
         d.help = q("there are no implicit conversions; use an explicit cast: `value as ", ts(c, expected), "`")
     }
@@ -391,7 +391,7 @@ fn mismatch(c: C, line: u32, col: u32, expected: u32, found: u32) -> diag.Diag {
 /// Name the file of module m on `d` unless it already names one (the innermost file wins;
 /// the prelude has no file).
 fn in_file(c: C, d: diag.Diag, m: u32) -> diag.Diag {
-    var d2 = d
+    let mut d2 = d.copy()
     if d2.file.len() == 0 && m != resolve.NOMOD && m != c.p.prelude { d2.file = c.p.mods[m as usize].path }
     d2
 }
@@ -485,7 +485,7 @@ fn consequence(c: C, d: diag.Diag) -> bool {
     let et = s("{error}")
     if contains_text(d.msg, et) || contains_text(d.help, et) { return true }
     for pre in c.p.broken {
-        var t = s("`")
+        let mut t = s("`")
         bytes.append(inout t, nm(c, pre - 1))
         bytes.append(inout t, s("__"))
         if contains_text(d.msg, t) { return true }
@@ -503,7 +503,7 @@ fn syntax_consequence(c: C, d: diag.Diag) -> bool {
     if !unknown { return false }
     if c.body_err || c.mod_err.contains(c.err_mod) { return true }
     for f in c.failed {
-        var t = s("`")
+        let mut t = s("`")
         bytes.append(inout t, f)
         t.push(96)
         if contains_text(d.msg, t) { return true }
@@ -540,7 +540,7 @@ fn entry_skipped(c: C) -> bool {
 /// name, and the fix of a missing capability (one per capability). Empty for the others.
 fn once_key(d: diag.Diag) -> List[u8] {
     if bytes.starts_with(d.msg, s("unknown ")) {
-        var k = sys.lit(d.code)
+        let mut k = sys.lit(d.code)
         bytes.append(inout k, d.msg)
         return k
     }
@@ -548,7 +548,7 @@ fn once_key(d: diag.Diag) -> List[u8] {
     if is_code(d, "E0201") || is_code(d, "E0605") {
         match d.fix {
             Some(f) => {
-                var k = sys.lit(d.code)
+                let mut k = sys.lit(d.code)
                 k.push(32)
                 bytes.append(inout k, num(f.line as u64))
                 k.push(58)
@@ -833,11 +833,11 @@ fn pop_frame(inout c: C, drops: bool) {
         Some(x) => x
         None => 0
     }
-    var emit_them = drops
+    let mut emit_them = drops.copy()
     if emit_them && frame_done(c) { emit_them = false }
     c.firs.pop()
     if emit_them {
-        var i = c.frames.len()
+        let mut i = c.frames.len()
         while i > m as usize {
             i -= 1
             let o = c.frames[i].copy()
@@ -851,7 +851,7 @@ fn pop_frame(inout c: C, drops: bool) {
 fn drop_frames_from(inout c: C, base: u32) {
     if base as usize >= c.fmarks.len() { return }
     let from = c.fmarks[base as usize] as usize
-    var i = c.frames.len()
+    let mut i = c.frames.len()
     while i > from {
         i -= 1
         let o = c.frames[i].copy()
@@ -886,7 +886,7 @@ fn is_fresh(c: C, o: u32) -> bool {
 /// Make an owned rvalue a registered temporary (dropped with its frame unless moved).
 fn mk_fresh(inout c: C, v: V, line: u32) -> V {
     if !owns(c, v.ty) || is_fresh(c, v.op) { return v }
-    var l: u32 = 0
+    let mut l: u32 = 0
     if ir.op_is_local(c.ir, v.op) {
         l = ir.op_local_id(c.ir, v.op)
     } else {
@@ -1032,7 +1032,7 @@ fn generic_body(c: C) -> bool {
 /// E0307: a mutable alias of a place that can't be written (`let mut x = p` with p a
 /// parameter, a `let` binding, a capture...).
 fn alias_error(c: C, line: u32, col: u32, what: List[u8], rk: u64, fix: Option[diag.Fix]) -> diag.Diag {
-    var d = err("E0307", line, col, q2("", what, " would be a mutable alias of `", kt(c, rk), "`, which is read-only"))
+    let mut d = err("E0307", line, col, q2("", what, " would be a mutable alias of `", kt(c, rk), "`, which is read-only"))
     d.help = s("an alias can't add write access; take an independent value with `.copy()`")
     d.fix = fix
     d
@@ -1040,7 +1040,7 @@ fn alias_error(c: C, line: u32, col: u32, what: List[u8], rk: u64, fix: Option[d
 
 /// E0301 for a reference k into variable r, read by a call that also borrows r mutably.
 fn alias_read_error(c: C, line: u32, col: u32, k: u64, r: u64) -> diag.Diag {
-    var d = err("E0301", line, col, q2("`", kt(c, k), "` refers into `", kt(c, r), "`, which is borrowed mutably by another argument of this call"))
+    let mut d = err("E0301", line, col, q2("`", kt(c, k), "` refers into `", kt(c, r), "`, which is borrowed mutably by another argument of this call"))
     d.help = q("bind a copy instead of a reference: `.copy()` (the call may change `", kt(c, r), "`)")
     let li = lookup(c, k)
     if li != NONE && c.scopes[li as usize].refid != NONE { d.fix = c.rf.refs[c.scopes[li as usize].refid as usize].fix }
@@ -1062,7 +1062,7 @@ fn new_ref(inout c: C, key: u64, ty: u32, place: u32, mutable: bool, rk: u64, li
 
 /// A use of every reference expression e names (e is read again where this is noted).
 fn note_uses(inout c: C, e: u32) {
-    var ks: List[u64] = List.new()
+    let mut ks: List[u64] = List.new()
     idents(c, e, inout ks)
     for k in ks {
         let li = lookup(c, k)
@@ -1075,7 +1075,7 @@ fn note_uses(inout c: C, e: u32) {
 
 /// Whether a reference is in scope (only then can a write invalidate one).
 fn refs_in_scope(c: C) -> bool {
-    var i = c.scopes.len()
+    let mut i = c.scopes.len()
     while i > 0 {
         i -= 1
         if c.scopes[i].alias != NONE { return true }
@@ -1114,8 +1114,8 @@ fn note_writes(inout c: C, kind: u32, a: u32, b: u32, x: u32) {
         write_note(inout c, a, W_ASSIGN, List.new())
         return
     }
-    var wk = W_INOUT
-    var what: List[u8] = List.new()
+    let mut wk = W_INOUT
+    let mut what: List[u8] = List.new()
     if kind == ir.S_BUILTIN && resizes(a) {
         wk = W_RESIZE
         what = s(ir.builtin_name(a))
@@ -1129,8 +1129,8 @@ fn note_writes(inout c: C, kind: u32, a: u32, b: u32, x: u32) {
 fn write_note(inout c: C, place: u32, kind: u32, what: List[u8]) {
     // temporaries are never referred to
     if c.ir.building[place_root(c, place) as usize].kind == ir.L_TEMP { return }
-    var line: u32 = 0
-    var col: u32 = 0
+    let mut line: u32 = 0
+    let mut col: u32 = 0
     if c.rf.wpos.len() > 0 {
         let pos = c.rf.wpos[c.rf.wpos.len() - 1]
         line = (pos / 4294967296) as u32
@@ -1168,8 +1168,8 @@ fn path(c: C, p: u32, inout out: List[Step]) {
 /// or a payload.
 fn invalidates(c: C, r: u32, w: u32) -> bool {
     if place_root(c, r) != place_root(c, w) { return false }
-    var rs: List[Step] = List.new()
-    var ws: List[Step] = List.new()
+    let mut rs: List[Step] = List.new()
+    let mut ws: List[Step] = List.new()
     path(c, r, inout rs)
     path(c, w, inout ws)
     if ws.len() > rs.len() { return false }
@@ -1187,7 +1187,7 @@ fn invalidates(c: C, r: u32, w: u32) -> bool {
 fn place_name(c: C, f: u32, p: u32) -> List[u8] {
     let x = c.ir.places[p as usize]
     if x.kind == ir.P_LOCAL { return nm(c, c.ir.locals[(c.ir.fns[f as usize].lstart + x.a) as usize].name) }
-    var t = place_name(c, f, x.a)
+    let mut t = place_name(c, f, x.a)
     if x.kind == ir.P_FIELD {
         let bty = c.ir.places[x.a as usize].ty
         t.push(46)
@@ -1204,7 +1204,7 @@ fn place_name(c: C, f: u32, p: u32) -> List[u8] {
 }
 
 fn union(a: List[u32], b: List[u32]) -> List[u32] {
-    var out = a
+    let mut out = a.copy()
     for x in b {
         if !out.contains(x) { out.push(x) }
     }
@@ -1212,7 +1212,7 @@ fn union(a: List[u32], b: List[u32]) -> List[u32] {
 }
 
 fn without(a: List[u32], x: u32) -> List[u32] {
-    var out: List[u32] = List.new()
+    let mut out: List[u32] = List.new()
     for y in a {
         if y != x { out.push(y) }
     }
@@ -1223,20 +1223,20 @@ fn without(a: List[u32], x: u32) -> List[u32] {
 /// then the notes are removed from the IR.
 fn protect(inout c: C) {
     if c.rf.refs.len() == 0 { return }
-    var seen: List[u64] = List.new()
+    let mut seen: List[u64] = List.new()
     for f in 0..c.ir.fns.len() {
         if !c.rf.fns.contains(f as u32) { continue }
         let body = c.ir.fns[f].body.copy()
         if body == 0 { continue }
         let none: List[u32] = List.new()
-        var found: List[Found] = List.new()
+        let mut found: List[Found] = List.new()
         lv_block(inout c, f as u32, body - 1, none, none, none, true, inout seen, inout found)
         // a function's errors in source order (the pass found them backwards)
-        var sorted: List[Found] = List.new()
+        let mut sorted: List[Found] = List.new()
         for x in found {
-            var i: usize = 0
+            let mut i: usize = 0
             while i < sorted.len() && (sorted[i].d.line < x.d.line || (sorted[i].d.line == x.d.line && sorted[i].d.col <= x.d.col)) { i += 1 }
-            var next: List[Found] = List.new()
+            let mut next: List[Found] = List.new()
             for j in 0..i { next.push(sorted[j]) }
             next.push(x)
             for j in i..sorted.len() { next.push(sorted[j]) }
@@ -1259,8 +1259,8 @@ type Found = { d: diag.Diag, m: u32 }
 /// (`cont`). With `report`, every noted write is checked against those live after it.
 fn lv_block(inout c: C, f: u32, b: u32, after: List[u32], brk: List[u32], cont: List[u32], report: bool, inout seen: List[u64], inout found: List[Found]) -> List[u32] {
     let bl = c.ir.blocks[b as usize].copy()
-    var live = after
-    var i = bl.len
+    let mut live = after.copy()
+    let mut i = bl.len.copy()
     while i > 0 {
         i -= 1
         let st = c.ir.stmts[c.ir.extra[(bl.start + i) as usize] as usize].copy()
@@ -1293,7 +1293,7 @@ fn lv_block(inout c: C, f: u32, b: u32, after: List[u32], brk: List[u32], cont: 
 /// A loop: its body falls through, and `continue` goes, to the step, then the body again;
 /// `break` leaves it to `after`. The references live at its head, to a fixed point.
 fn lv_loop(inout c: C, f: u32, body: u32, step: u32, after: List[u32], report: bool, inout seen: List[u64], inout found: List[Found]) -> List[u32] {
-    var head: List[u32] = List.new()
+    let mut head: List[u32] = List.new()
     while true {
         let sin = lv_block(inout c, f, step, head, after, head, false, inout seen, inout found)
         let bin = lv_block(inout c, f, body, sin, after, sin, false, inout seen, inout found)
@@ -1312,7 +1312,7 @@ fn lv_loop(inout c: C, f: u32, body: u32, step: u32, after: List[u32], report: b
 fn check_write(inout c: C, f: u32, w: u32, live: List[u32], inout seen: List[u64], inout found: List[Found]) {
     let wi = c.rf.writes[w as usize].copy()
     if c.rf.audit { audit_write(inout c, f, wi, live) }
-    var best = NONE
+    let mut best = NONE
     for r in live {
         if (best == NONE || r < best) && invalidates(c, c.rf.refs[r as usize].place, wi.place) { best = r }
     }
@@ -1324,7 +1324,7 @@ fn check_write(inout c: C, f: u32, w: u32, live: List[u32], inout seen: List[u64
     let rf = c.rf.refs[best as usize]
     let pn = place_name(c, f, wi.place)
     let rn = kt(c, rf.key)
-    var msg: List[u8] = List.new()
+    let mut msg: List[u8] = List.new()
     if wi.kind == W_RESIZE {
         msg = q3("can't call `", wi.what, "` on `", pn, "` while `", rn, "` refers into it")
     } else if wi.kind == W_INOUT {
@@ -1332,8 +1332,8 @@ fn check_write(inout c: C, f: u32, w: u32, live: List[u32], inout seen: List[u64
     } else {
         msg = q2("can't assign to `", pn, "` while `", rn, "` refers into it")
     }
-    var d = err("E0308", wi.line, wi.col, msg)
-    var h = q("`", rn, "` is used after this change, which may free, move or replace what it refers to; use it before the change")
+    let mut d = err("E0308", wi.line, wi.col, msg)
+    let mut h = q("`", rn, "` is used after this change, which may free, move or replace what it refers to; use it before the change")
     let has_fix = match rf.fix {
         Some(_) => true
         None => false
@@ -1358,11 +1358,11 @@ fn check_write(inout c: C, f: u32, w: u32, live: List[u32], inout seen: List[u64
 /// a prefix of the other (any two indices count as equal).
 fn overlaps(c: C, r: u32, w: u32) -> bool {
     if place_root(c, r) != place_root(c, w) { return false }
-    var rs: List[Step] = List.new()
-    var ws: List[Step] = List.new()
+    let mut rs: List[Step] = List.new()
+    let mut ws: List[Step] = List.new()
     path(c, r, inout rs)
     path(c, w, inout ws)
-    var i: usize = 0
+    let mut i: usize = 0
     while i < rs.len() && i < ws.len() {
         if rs[i].kind != ws[i].kind || rs[i].a != ws[i].a { return false }
         i += 1
@@ -1376,12 +1376,12 @@ fn audit_write(inout c: C, f: u32, wi: WriteInfo, live: List[u32]) {
         if rf.mutable || !overlaps(c, rf.place, wi.place) || invalidates(c, rf.place, wi.place) { continue }
         // (repeats, from the instances of a generic body, go in audit_hits)
         let rn = kt(c, rf.key)
-        var msg = q2("this write changes what `", rn, "` sees (`", place_name(c, f, wi.place), "`): `")
+        let mut msg = q2("this write changes what `", rn, "` sees (`", place_name(c, f, wi.place), "`): `")
         bytes.append(inout msg, rn)
         bytes.append(inout msg, s("` is a reference since C8.6, it used to be a copy (line "))
         bytes.append(inout msg, num(rf.line as u64))
         bytes.append(inout msg, s(")"))
-        var d = err("audit", wi.line, wi.col, msg)
+        let mut d = err("audit", wi.line, wi.col, msg)
         d.help = s("bind a copy to keep the old meaning: `.copy()`")
         let fixed = match rf.fix {
             Some(_) => true
@@ -1396,18 +1396,18 @@ fn audit_write(inout c: C, f: u32, wi: WriteInfo, live: List[u32]) {
 
 /// `check_all` with the audit on.
 pub fn check_audit(p: resolve.Program) -> Checked {
-    var c = new_checker(p, false)
+    let mut c = new_checker(p, false)
     c.rf.audit = true
     finish(inout c)
 }
 
 /// The audit's findings, by file (the entry's first), line and column.
 pub fn audit_hits(c: C) -> List[diag.Diag] {
-    var out: List[diag.Diag] = List.new()
+    let mut out: List[diag.Diag] = List.new()
     for d in c.rf.hits {
-        var i: usize = 0
+        let mut i: usize = 0
         while i < out.len() && before_or_same(out[i], d) { i += 1 }
-        var next: List[diag.Diag] = List.new()
+        let mut next: List[diag.Diag] = List.new()
         for j in 0..i { next.push(out[j]) }
         next.push(d)
         for j in i..out.len() { next.push(out[j]) }
@@ -1425,7 +1425,7 @@ fn before_or_same(a: diag.Diag, b: diag.Diag) -> bool {
 fn strip_notes(inout c: C) {
     for b in 0..c.ir.blocks.len() {
         let bl = c.ir.blocks[b]
-        var n: u32 = 0
+        let mut n: u32 = 0
         for i in 0..bl.len {
             let sid = c.ir.extra[(bl.start + i) as usize]
             if c.ir.stmts[sid as usize].kind != ir.S_NOTE {
@@ -1450,7 +1450,7 @@ fn pop_scope(inout c: C) {
 }
 
 fn lookup(c: C, k: u64) -> u32 {
-    var i = c.scopes.len()
+    let mut i = c.scopes.len()
     while i > 0 {
         i -= 1
         if c.scopes[i].key == k { return i as u32 }
@@ -1502,7 +1502,7 @@ fn subst_set(inout sb: Subst, sym: u32, ty: u32) {
 
 /// The type parameter symbols of generic parameter list [start/len) in module m.
 fn gparams(c: C, m: u32, start: u32, len: u32) -> List[u32] {
-    var out: List[u32] = List.new()
+    let mut out: List[u32] = List.new()
     for i in 0..len { out.push(ndm(c, m, atm(c, m, start, i)).a) }
     out
 }
@@ -1544,14 +1544,14 @@ fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] {
             inst_type(inout c, di, List.new(), n.line, n.col)
         }
         ast.TGeneric => {
-            var args: List[u32] = List.new()
+            let mut args: List[u32] = List.new()
             for i in 0..n.d {
                 let arg = atm(c, am, n.c, i)
                 args.push(resolve_ty(inout c, am, arg)?)
             }
             let k = resolve.name_key(c.p, am, n.a, n.b, n.line, n.col)
             if resolve.key_pre(k) == 0 && has_sym(c.w.heap, n.a) {
-                var want: u32 = 1
+                let mut want: u32 = 1
                 if n.a == c.w.map { want = 2 }
                 if args.len() as u32 != want {
                     return Err(err("E0111", n.line, n.col, q3("type `", kt(c, k), "` takes ", num(want as u64), " type argument(s), but ", num(args.len() as u64), " were given")))
@@ -1578,7 +1578,7 @@ fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] {
             inst_type(inout c, di, args, n.line, n.col)
         }
         ast.TTuple => {
-            var elems: List[u32] = List.new()
+            let mut elems: List[u32] = List.new()
             for i in 0..n.d {
                 let x = atm(c, am, n.c, i)
                 elems.push(resolve_ty(inout c, am, x)?)
@@ -1586,12 +1586,12 @@ fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] {
             Ok(types.tuple(inout c.t, elems))
         }
         _ => {
-            var ps: List[u32] = List.new()
+            let mut ps: List[u32] = List.new()
             for i in 0..n.d {
                 let x = atm(c, am, n.c, i)
                 ps.push(resolve_ty(inout c, am, x)?)
             }
-            var r = types.UNIT
+            let mut r = types.UNIT
             if n.g > 0 { r = resolve_ty(inout c, am, n.g - 1)? }
             Ok(types.fn_of(inout c.t, ps, r))
         }
@@ -1611,24 +1611,24 @@ fn resolve_with(inout c: C, am: u32, tn: u32, sb: Subst) -> Result[u32, diag.Dia
 /// hash too, since equal keys must hash alike.
 fn check_map_key(c: C, k: u32, line: u32, col: u32) -> Result[bool, diag.Diag] {
     for tr in [TR_HASH, TR_EQ] {
-        var seen: Map[u32, bool] = Map.new()
+        let mut seen: Map[u32, bool] = Map.new()
         let part = lacks(c, tr, k, inout seen)
         if part != NONE && types.kind(c.t, part) == types.T_PARAM {
             // generic code: the key's type parameter needs both bounds
-            var trs: List[u32] = List.new()
+            let mut trs: List[u32] = List.new()
             if !has_trait(c, TR_HASH, part) { trs.push(TR_HASH) }
             if !has_trait(c, TR_EQ, part) || !has_trait(c, TR_HASH, part) { trs.push(TR_EQ) }
             return Err(bound_err(c, line, col, q("a key of ", ts(c, k), ""), trait_names(c, trs), part))
         }
         if part != NONE {
-            var m = q2("", ts(c, k), " can't be a Map key: it doesn't implement `", trait_name(c, tr), "`")
+            let mut m = q2("", ts(c, k), " can't be a Map key: it doesn't implement `", trait_name(c, tr), "`")
             if part != k { bytes.append(inout m, q(" (its part ", ts(c, part), " doesn't)")) }
             let h = lack_help(c, tr, part)
             if s(h).len() == 0 { return Err(err("E0701", line, col, m)) }
             return Err(errh("E0701", line, col, m, h))
         }
     }
-    var seen2: Map[u32, bool] = Map.new()
+    let mut seen2: Map[u32, bool] = Map.new()
     let odd = eq_without_hash(c, k, inout seen2)
     if odd != NONE {
         return Err(errh("E0701", line, col, q2("", ts(c, k), " can't be a Map key: ", ts(c, odd), " has its own `Eq` but a derived `Hash`"), "equal keys must hash alike: implement `Hash` for it too"))
@@ -1684,8 +1684,8 @@ fn inst_type(inout c: C, di: u32, args: List[u32], line: u32, col: u32) -> Resul
     if args.len() as u32 != d.generic {
         return Err(err("E0111", line, col, q3("type `", kt(c, d.key), "` takes ", num(d.generic as u64), " type argument(s), but ", num(args.len() as u64), " were given")))
     }
-    var inst = di
-    var sb = no_subst()
+    let mut inst = di.copy()
+    let mut sb = no_subst()
     if d.generic > 0 {
         let lid = types.list(inout c.t, args)
         let found = types.find_inst(c.t, di, lid)
@@ -1693,7 +1693,7 @@ fn inst_type(inout c: C, di: u32, args: List[u32], line: u32, col: u32) -> Resul
         let tn = ndm(c, d.md, d.node)
         let gs = gparams(c, d.md, tn.c, tn.d)
         for i in 0..gs.len() { subst_set(inout sb, gs[i], args[i]) }
-        var start = d.start
+        let mut start = d.start.copy()
         if d.is_enum {
             start = c.t.variants.len() as u32
             for i in 0..d.len {
@@ -1704,7 +1704,7 @@ fn inst_type(inout c: C, di: u32, args: List[u32], line: u32, col: u32) -> Resul
         inst = types.add_def(inout c.t, types.Def(d.key, d.md, d.public, d.node, d.is_enum, 0, 0, start, d.len, false, true, di, lid))
     } else {
         if d.filled { return Ok(d.ty) }
-        var d2 = d
+        let mut d2 = d.copy()
         d2.filled = true
         c.t.defs[di as usize] = d2
     }
@@ -1724,7 +1724,7 @@ fn inst_type(inout c: C, di: u32, args: List[u32], line: u32, col: u32) -> Resul
     }
     // by-value recursion would have infinite size
     let d3 = c.t.defs[inst as usize]
-    var seen: Map[u32, bool] = Map.new()
+    let mut seen: Map[u32, bool] = Map.new()
     if d3.is_enum {
         for i in 0..d3.len {
             let v = types.variant(c.t, d3, i)
@@ -1788,7 +1788,7 @@ fn fill_type(inout c: C, di: u32) -> Result[bool, diag.Diag] {
     let n = ndm(c, m, d.node)
     if !d.is_enum {
         if n.f == 0 { return Err(err("E0111", n.line, n.col, s("records need at least one field"))) }
-        var fs: List[types.Field] = List.new()
+        let mut fs: List[types.Field] = List.new()
         for i in 0..n.f {
             let fnode = ndm(c, m, atm(c, m, n.e, i))
             // a duplicate is reported and kept (lookups find the first)
@@ -1799,7 +1799,7 @@ fn fill_type(inout c: C, di: u32) -> Result[bool, diag.Diag] {
             let ty = item_ty(inout c, m, fnode.b)?
             fs.push(types.Field(fnode.a, ty, fnode.b, fnode.line, fnode.col))
         }
-        var d2 = c.t.defs[di as usize]
+        let mut d2 = c.t.defs[di as usize].copy()
         d2.start = c.t.fields.len() as u32
         d2.len = fs.len() as u32
         for f in fs { c.t.fields.push(f) }
@@ -1807,14 +1807,14 @@ fn fill_type(inout c: C, di: u32) -> Result[bool, diag.Diag] {
         return Ok(true)
     }
     // enum: resolve every variant's fields, then store them contiguously
-    var all: List[types.Field] = List.new()
-    var lens: List[u32] = List.new()
+    let mut all: List[types.Field] = List.new()
+    let mut lens: List[u32] = List.new()
     for i in 0..n.f {
         let vn = ndm(c, m, atm(c, m, n.e, i))
-        var fs: List[types.Field] = List.new()
+        let mut fs: List[types.Field] = List.new()
         for j in 0..vn.d {
             let vf = ndm(c, m, atm(c, m, vn.c, j))
-            var fname = vf.a
+            let mut fname = vf.a.copy()
             if vf.c == 0 {
                 let digits = bytes.from_u64(vf.a as u64)
                 fname = intern.intern(inout c.p.names, digits, 0, digits.len())
@@ -1829,12 +1829,12 @@ fn fill_type(inout c: C, di: u32) -> Result[bool, diag.Diag] {
         lens.push(fs.len() as u32)
         for f in fs { all.push(f) }
     }
-    var at_f = c.t.fields.len() as u32
+    let mut at_f = c.t.fields.len() as u32
     for f in all { c.t.fields.push(f) }
-    var d2 = c.t.defs[di as usize]
-    var payload = false
+    let mut d2 = c.t.defs[di as usize].copy()
+    let mut payload = false
     for i in 0..d2.len {
-        var v = c.t.variants[(d2.start + i) as usize]
+        let mut v = c.t.variants[(d2.start + i) as usize].copy()
         v.fstart = at_f
         v.flen = lens[i as usize]
         at_f += v.flen
@@ -1882,7 +1882,7 @@ fn has_unbound(c: C, m: u32, tn: u32, sb: Subst, gs: List[u32]) -> bool {
 
 /// The type arguments of the heap type `t` named by symbol `sym`, or None if they differ.
 fn heap_parts(c: C, sym: u32, t: types.Ty) -> Option[List[u32]] {
-    var parts: List[u32] = List.new()
+    let mut parts: List[u32] = List.new()
     if t.kind == types.T_LIST && sym == c.w.list {
         parts.push(t.a)
         return Some(parts)
@@ -1920,7 +1920,7 @@ fn unify_ast(c: C, m: u32, tn: u32, actual: u32, inout sb: Subst, gs: List[u32])
             true
         }
         ast.TGeneric => {
-            var parts: List[u32] = List.new()
+            let mut parts: List[u32] = List.new()
             if n.b == 0 && has_sym(c.w.heap, n.a) {
                 match heap_parts(c, n.a, t) {
                     Some(ps) => { parts = ps }
@@ -1966,7 +1966,7 @@ fn unify_ast(c: C, m: u32, tn: u32, actual: u32, inout sb: Subst, gs: List[u32])
 /// parameters `gens` as written).
 fn show_ast(c: C, m: u32, tn: u32, gens: List[u32]) -> List[u8] {
     let n = ndm(c, m, tn)
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     match n.kind {
         ast.TName => { bytes.append(inout out, ty_name(c, m, n, gens)) }
         ast.TGeneric => {
@@ -2015,8 +2015,8 @@ fn ty_name(c: C, m: u32, n: ast.Node, gens: List[u32]) -> List[u8] {
 
 /// `text` with every `Self` replaced by `with`, textually (also inside `MySelf`; a C8 candidate).
 fn replace_self(text: List[u8], with: List[u8]) -> List[u8] {
-    var out: List[u8] = List.new()
-    var i: usize = 0
+    let mut out: List[u8] = List.new()
+    let mut i: usize = 0
     while i < text.len() {
         if i + 4 <= text.len() && text[i] == 83 && text[i + 1] == 101 && text[i + 2] == 108 && text[i + 3] == 102 {
             bytes.append(inout out, with)
@@ -2083,7 +2083,7 @@ fn implements(c: C, tk: u64, ty: u32) -> bool {
         if im.tkey != tk { continue }
         let n = ndm(c, im.md, im.node)
         let gs = gparams(c, im.md, n.c, n.d)
-        var sb = no_subst()
+        let mut sb = no_subst()
         if unify_ast(c, im.md, n.b, ty, inout sb, gs) { return true }
     }
     false
@@ -2128,18 +2128,18 @@ type Lang = {
 }
 
 fn new_lang(inout names: intern.Interner) -> Lang {
-    var ns: List[u32] = List.new()
+    let mut ns: List[u32] = List.new()
     for w in ["Copy", "Eq", "Ord", "Hash", "Show", "Iter", "Drop"] { ns.push(sym(inout names, w)) }
-    var ms: List[u32] = List.new()
+    let mut ms: List[u32] = List.new()
     for w in ["copy", "eq", "compare", "hash", "show", "next", "drop"] { ms.push(sym(inout names, w)) }
-    var sh: List[bool] = List.new()
+    let mut sh: List[bool] = List.new()
     for i in 0..NTR { sh.push(false) }
     Lang(ns, ms, sh, Map.new(), false, NONE, 0, sym(inout names, "to_string"), sym(inout names, "Ordering"),
         false, List.new(), List.new(), List.new())
 }
 
 fn bit(i: u32) -> u32 {
-    var b: u32 = 1
+    let mut b: u32 = 1
     for k in 0..i { b = b * 2 }
     b
 }
@@ -2184,7 +2184,7 @@ fn lang_prepass(inout c: C, its: List[Item]) {
         let tr = lang_of_key(c, resolve.name_key(c.p, it.m, tn.a, tn.b, tn.line, tn.col))
         if tr == NONE { continue }
         let h = head_key(c, it.m, n.b, gparams(c, it.m, n.c, n.d))
-        var bits: u32 = 0
+        let mut bits: u32 = 0
         let old = mget(c.lt.heads, h)
         if old != NONE { bits = old }
         if !has_bit(bits, tr) { bits += bit(tr) }
@@ -2204,7 +2204,7 @@ fn custom_impl(c: C, tr: u32, ty: u32) -> u32 {
         let n = ndm(c, im.md, im.node)
         let gs = gparams(c, im.md, n.c, n.d)
         if head_key(c, im.md, n.b, gs) != h { continue }
-        var sb = no_subst()
+        let mut sb = no_subst()
         if !unify_ast(c, im.md, n.b, ty, inout sb, gs) { continue }
         if impl_bounds_hold(c, im.md, n, sb) { return i as u32 }
     }
@@ -2243,7 +2243,7 @@ fn has_drop(c: C, ty: u32) -> bool {
 
 /// Whether ty has language trait tr.
 fn has_trait(c: C, tr: u32, ty: u32) -> bool {
-    var seen: Map[u32, bool] = Map.new()
+    let mut seen: Map[u32, bool] = Map.new()
     lacks(c, tr, ty, inout seen) == NONE
 }
 
@@ -2312,7 +2312,7 @@ fn lacks(c: C, tr: u32, ty: u32, inout seen: Map[u32, bool]) -> u32 {
 
 /// The error when `what` needs language trait tr of ty, which it lacks (`part`: lacks' answer).
 fn lack_msg(c: C, what: List[u8], tr: u32, ty: u32, part: u32) -> List[u8] {
-    var m = q2("", what, " needs `", trait_name(c, tr), "`, which ")
+    let mut m = q2("", what, " needs `", trait_name(c, tr), "`, which ")
     bytes.append(inout m, ts(c, ty))
     bytes.append(inout m, s(" doesn't implement"))
     if part != ty && part != NONE { bytes.append(inout m, q(" (its part ", ts(c, part), " doesn't)")) }
@@ -2336,7 +2336,7 @@ fn lack_err(c: C, code: str, line: u32, col: u32, what: List[u8], tr: u32, ty: u
         Some(d) => { return d }
         None => {}
     }
-    var seen: Map[u32, bool] = Map.new()
+    let mut seen: Map[u32, bool] = Map.new()
     let part = lacks(c, tr, ty, inout seen)
     if part == NONE { return err(code, line, col, lack_msg(c, what, tr, ty, part)) }
     let h = lack_help(c, tr, part)
@@ -2357,13 +2357,13 @@ fn impl_instance(inout c: C, tr: u32, ix: u32, ty: u32) -> Result[u32, diag.Diag
     let im = c.timpls[ix as usize]
     let n = ndm(c, im.md, im.node)
     let gs = gparams(c, im.md, n.c, n.d)
-    var fd = NONE
+    let mut fd = NONE
     for m in c.meths {
         let f = c.fdefs[m.fd as usize]
         if f.inode == im.node && f.md == im.md && m.name == c.lt.meths[tr as usize] { fd = m.fd }
     }
     if fd == NONE { return Ok(NONE) }
-    var sb = no_subst()
+    let mut sb = no_subst()
     unify_ast(c, im.md, n.b, ty, inout sb, gs)
     subst_set(inout sb, intern.S_SELF_TYPE, ty)
     let ii = instantiate(inout c, fd, sb)?
@@ -2401,8 +2401,8 @@ fn check_lang_impl(inout c: C, m: u32, im: ast.Node, tr: u32, igens: List[u32]) 
     let tname = show_ast(c, m, im.b, igens)
     let h = head_key(c, m, im.b, igens)
     let di = mget(c.tmpl, h)
-    var owner = s("the language core")
-    var ok = false
+    let mut owner = s("the language core")
+    let mut ok = false
     let named = tn.kind == ast.TName || tn.kind == ast.TGeneric
     if named && tn.b == 0 && has_sym(igens, tn.a) {
         owner = s("no package: a type parameter stands for every type")
@@ -2425,7 +2425,7 @@ fn check_lang_impl(inout c: C, m: u32, im: ast.Node, tr: u32, igens: List[u32]) 
     let d = c.t.defs[di as usize]
     if tr == TR_DROP {
         // a Drop impl is for a record, for each of its instances: `impl[T] Drop for R[T]`
-        var whole = !d.is_enum && tn.d == im.d
+        let mut whole = !d.is_enum && tn.d == im.d
         if tn.kind == ast.TGeneric {
             for i in 0..tn.d {
                 let a = ndm(c, m, atm(c, m, tn.c, i))
@@ -2494,13 +2494,13 @@ fn param_has(c: C, ty: u32, tk: u64) -> bool {
 /// The names of language traits `trs`.
 /// [TR_ITER] (for_each has a local named `one`).
 fn iter_only() -> List[u32] {
-    var out: List[u32] = List.new()
+    let mut out: List[u32] = List.new()
     out.push(TR_ITER)
     out
 }
 
 fn trait_names(c: C, trs: List[u32]) -> List[List[u8]] {
-    var out: List[List[u8]] = List.new()
+    let mut out: List[List[u8]] = List.new()
     for tr in trs { out.push(trait_name(c, tr)) }
     out
 }
@@ -2509,23 +2509,23 @@ fn trait_names(c: C, trs: List[u32]) -> List[List[u8]] {
 /// to its bounds.
 fn bound_err(c: C, line: u32, col: u32, what: List[u8], trs: List[List[u8]], ty: u32) -> diag.Diag {
     let name = nm(c, types.get(c.t, ty).a)
-    var bounds: List[u8] = List.new()
+    let mut bounds: List[u8] = List.new()
     for i in 0..trs.len() {
         if i > 0 { bytes.append(inout bounds, s(" + ")) }
         bytes.append(inout bounds, trs[i])
     }
-    var want = name
+    let mut want = name.copy()
     bytes.append(inout want, s(": "))
     bytes.append(inout want, bounds)
-    var d = errh("E0605", line, col, q2("", what, " needs `", want, "`"), "a generic body can only use what its type parameters' bounds promise; add the bound")
+    let mut d = errh("E0605", line, col, q2("", what, " needs `", want, "`"), "a generic body can only use what its type parameters' bounds promise; add the bound")
     let i = param_ix(c, ty)
     if i == NONE { return d }
     let m = c.lt.pm[i as usize]
     let g = ndm(c, m, c.lt.pn[i as usize])
     // after the parameter's name, or after its last bound
-    var at_line = g.line
-    var at_col = g.col + name.len() as u32
-    var ins = s(": ")
+    let mut at_line = g.line.copy()
+    let mut at_col = g.col + name.len() as u32
+    let mut ins = s(": ")
     if g.d > 0 {
         let b = ndm(c, m, atm(c, m, g.c, g.d - 1))
         at_line = b.line
@@ -2541,7 +2541,7 @@ fn bound_err(c: C, line: u32, col: u32, what: List[u8], trs: List[List[u8]], ty:
 /// lack_err's E0605 when the part lacking trait tr is a type parameter (else NONE-coded: the
 /// caller reports its own error).
 fn param_lack(c: C, line: u32, col: u32, what: List[u8], tr: u32, ty: u32) -> Option[diag.Diag] {
-    var seen: Map[u32, bool] = Map.new()
+    let mut seen: Map[u32, bool] = Map.new()
     let part = lacks(c, tr, ty, inout seen)
     if part == NONE || types.kind(c.t, part) != types.T_PARAM { return None }
     Some(bound_err(c, line, col, what, trait_names(c, one(tr)), part))
@@ -2550,7 +2550,7 @@ fn param_lack(c: C, line: u32, col: u32, what: List[u8], tr: u32, ty: u32) -> Op
 /// Check every generic declaration with an instance against its bounds (see above); the
 /// E0605s found are appended.
 fn abstract_bodies(inout c: C) {
-    var fds: List[u32] = List.new()
+    let mut fds: List[u32] = List.new()
     for inst in c.insts {
         if inst.slen == 0 || has_sym(fds, inst.fd) { continue }
         let f = c.fdefs[inst.fd as usize]
@@ -2560,10 +2560,10 @@ fn abstract_bodies(inout c: C) {
     if fds.len() == 0 { return }
     let saved = c.copy()
     c.lt.abs = true
-    var found: List[diag.Diag] = List.new()
+    let mut found: List[diag.Diag] = List.new()
     for fd in fds {
         let f = c.fdefs[fd as usize].copy()
-        var sb = no_subst()
+        let mut sb = no_subst()
         for gn in all_gparam_nodes(c, fd) {
             let g = ndm(c, f.md, gn)
             let ty = types.param(inout c.t, g.a, fd)
@@ -2610,13 +2610,13 @@ fn abstract_bodies(inout c: C) {
 // ---- program
 
 fn well_known(inout names: intern.Interner) -> W {
-    var ints: List[u32] = List.new()
+    let mut ints: List[u32] = List.new()
     for w in ["i32", "i64", "u8", "u32", "u64", "usize"] { ints.push(sym(inout names, w)) }
-    var heap: List[u32] = List.new()
+    let mut heap: List[u32] = List.new()
     for w in ["List", "Map", "Box", "Task", "Mutex", "Chan"] { heap.push(sym(inout names, w)) }
-    var caps: List[u32] = List.new()
+    let mut caps: List[u32] = List.new()
     for w in ["io", "clock", "fs", "net", "threads", "ffi", "python", "js", "wasm"] { caps.push(sym(inout names, w)) }
-    var hm: List[u32] = List.new()
+    let mut hm: List[u32] = List.new()
     for w in ["len", "is_empty", "push_str", "append", "push", "pop", "clear", "get", "contains", "insert", "remove",
         "map", "filter", "for_each", "any", "all", "fold", "sum", "set", "from", "from_int", "new",
         "byte", "slice", "bytes", "push_byte", "from_bytes"] { hm.push(sym(inout names, w)) }
@@ -2633,7 +2633,7 @@ fn sym(inout names: intern.Interner, w: str) -> u32 {
 }
 
 fn new_checker(p: resolve.Program, lib: bool) -> C {
-    var p2 = p
+    let mut p2 = p.copy()
     let w = well_known(inout p2.names)
     let lt = new_lang(inout p2.names)
     C(p2, types.new(), ir.new(), pats.new(), w, Map.new(), Map.new(), Map.new(), Map.new(), Map.new(),
@@ -2648,7 +2648,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C {
 type Item = { m: u32, node: u32 }
 
 fn items(p: resolve.Program) -> List[Item] {
-    var out: List[Item] = List.new()
+    let mut out: List[Item] = List.new()
     for m in p.order {
         let a = p.mods[m as usize].ast
         for k in 0..a.items_len { out.push(Item(m, ast.at(a, a.items_start, k))) }
@@ -2696,7 +2696,7 @@ pub type Checked = { c: C, diags: List[diag.Diag] }
 /// Check the program (as a library with `lib`, as a WebAssembly module with `wasm`),
 /// recovering from errors (see "Recovery").
 pub fn check_all(p: resolve.Program, lib: bool, wasm: bool) -> Checked {
-    var c = new_checker(p, lib)
+    let mut c = new_checker(p, lib)
     c.wasm = wasm
     finish(inout c)
 }
@@ -2707,7 +2707,7 @@ fn finish(inout c: C) -> Checked {
     match run(inout c) {
         Ok(_) => {}
         Err(d) => {
-            var d2 = in_file(c, d, c.err_mod)
+            let mut d2 = in_file(c, d, c.err_mod)
             // Until eiderc checks threads, `spawn` and the thread types stop it with
             // `unsupported`; thread types are noted for the E0806 at the end (wasm_threads).
             if c.wasm && bytes.eq(d.msg, s("not yet supported by eiderc: threads")) { d2 = wasm_threads_error() }
@@ -2725,7 +2725,7 @@ pub type Recorded = { c: C, diags: List[diag.Diag] }
 /// `check` with the IDE recording on (ide.ei). The diagnostics are check's; the recording
 /// holds everything noted, also after an error.
 pub fn check_ide(p: resolve.Program) -> Recorded {
-    var c = new_checker(p, false)
+    let mut c = new_checker(p, false)
     c.rec.on = true
     let k = finish(inout c)
     Recorded(k.c, k.diags)
@@ -2774,14 +2774,14 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
             record(inout c, rd)
             continue
         }
-        var is_enum = false
+        let mut is_enum = false
         if n.f > 0 { is_enum = ndm(c, it.m, atm(c, it.m, n.e, 0)).kind == ast.Variant }
         let start = c.t.variants.len() as u32
-        var vlen: u32 = 0
+        let mut vlen: u32 = 0
         if is_enum { vlen = n.f }
         let di = types.add_def(inout c.t, types.Def(k, it.m, n.b == 1, it.node, is_enum, n.d, 0, start, vlen, false, false, types.NOTY, types.EMPTY))
         if is_enum {
-            var mine: List[u64] = List.new()
+            let mut mine: List[u64] = List.new()
             for i in 0..n.f {
                 let vn = ndm(c, it.m, atm(c, it.m, n.e, i))
                 let vk = resolve.item_key(c.p, it.m, vn.a)
@@ -2865,7 +2865,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
         c.fdefs.push(FnDef(k, it.m, it.node, ast.has(n.b, ast.FN_PUBLIC), n.d > 0, ast.has(n.b, ast.FN_UNSAFE), irf, NONE))
     }
     // 5. impls
-    var concrete: List[u32] = List.new()
+    let mut concrete: List[u32] = List.new()
     for it in its {
         let n = ndm(c, it.m, it.node)
         if n.kind != ast.IImpl { continue }
@@ -2896,7 +2896,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
             continue
         }
         // a comptime constant whose evaluation failed (comptime.ei) was reported then
-        var ok = n.e != 2
+        let mut ok = n.e != 2
         if ok {
             let sp = snap(c)
             let r = check_const(inout c, it, n, k)
@@ -2943,7 +2943,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
         let st = resolve_ty(inout c, f.md, target)
         c.cur_mod = resolve.NOMOD
         c.cur_all = true
-        var self_ty = types.UNIT
+        let mut self_ty = types.UNIT
         match st {
             Ok(t) => { self_ty = t }
             Err(d) => {
@@ -2953,7 +2953,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
                 continue
             }
         }
-        var sb = no_subst()
+        let mut sb = no_subst()
         subst_set(inout sb, intern.S_SELF_TYPE, self_ty)
         instantiate(inout c, fi, sb)?
     }
@@ -3063,7 +3063,7 @@ fn record_ffi(inout c: C, ii: u32) {
     let f = c.fdefs[inst.fd as usize]
     let n = ndm(c, f.md, f.node)
     if ast.has(n.b, ast.FN_EXTERN) {
-        var ps: List[u32] = List.new()
+        let mut ps: List[u32] = List.new()
         for i in 0..inst.plen { ps.push(c.ptys[(inst.pstart + i) as usize]) }
         let sym = nm(c, n.a)
         ir.add_extern(inout c.ir, inst.ir, sym, ps, inst.ret)
@@ -3161,7 +3161,7 @@ fn norm(c: C, m: u32, tn1: u32, gens: List[u32], target: List[u8]) -> List[u8] {
 }
 
 fn concat_syms(a: List[u32], b: List[u32]) -> List[u32] {
-    var out = a
+    let mut out = a.copy()
     for x in b { out.push(x) }
     out
 }
@@ -3181,7 +3181,7 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
     let igens = gparams(c, m, im.c, im.d)
     let head = head_key(c, m, im.b, igens)
     let target = show_ast(c, m, im.b, igens)
-    var names: List[u32] = List.new()
+    let mut names: List[u32] = List.new()
     for i in 0..im.f {
         let mn = ndm(c, m, atm(c, m, im.e, i))
         if has_sym(names, mn.a) {
@@ -3216,10 +3216,10 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
                 let mn = ndm(c, m, mid)
                 let mgens = concat_syms(igens, gparams(c, m, mn.c, mn.d))
                 let tgens = gparams(c, tr.m, tm.c, tm.d)
-                var differs = !bytes.eq(norm(c, m, mn.g, mgens, target), norm(c, tr.m, tm.g, tgens, target))
+                let mut differs = !bytes.eq(norm(c, m, mn.g, mgens, target), norm(c, tr.m, tm.g, tgens, target))
                 // Iter's `next` returns `Option[Item]` for the item type the impl chooses
                 if lang == TR_ITER { differs = !option_ret(c, m, mn) }
-                var k: u32 = 1
+                let mut k: u32 = 1
                 while k < mn.f && k < tm.f {
                     let a = ndm(c, m, atm(c, m, mn.e, k))
                     let b = ndm(c, tr.m, atm(c, tr.m, tm.e, k))
@@ -3257,13 +3257,13 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
             c.timpls.push(TImpl(tk, m, id, target))
         }
     }
-    var done: List[u32] = List.new()
+    let mut done: List[u32] = List.new()
     for i in 0..im.f {
         let mid = atm(c, m, im.e, i)
         let mn = ndm(c, m, mid)
         if has_sym(done, mn.a) { continue }
         done.push(mn.a)
-        var dup = false
+        let mut dup = false
         for x in c.meths {
             if x.head == head && x.name == mn.a && bytes.eq(x.target, target) { dup = true }
         }
@@ -3290,7 +3290,7 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
 fn all_generics(c: C, fi: u32) -> List[u32] {
     let f = c.fdefs[fi as usize]
     let n = ndm(c, f.md, f.node)
-    var out: List[u32] = List.new()
+    let mut out: List[u32] = List.new()
     if f.inode != NONE {
         let im = ndm(c, f.md, f.inode)
         out = gparams(c, f.md, im.c, im.d)
@@ -3303,7 +3303,7 @@ fn all_generics(c: C, fi: u32) -> List[u32] {
 fn all_gparam_nodes(c: C, fi: u32) -> List[u32] {
     let f = c.fdefs[fi as usize]
     let n = ndm(c, f.md, f.node)
-    var out: List[u32] = List.new()
+    let mut out: List[u32] = List.new()
     if f.inode != NONE {
         let im = ndm(c, f.md, f.inode)
         for i in 0..im.d { out.push(atm(c, f.md, im.c, i)) }
@@ -3315,7 +3315,7 @@ fn all_gparam_nodes(c: C, fi: u32) -> List[u32] {
 /// The IR name of an instance: `name`, `name[T1, ..]`, `Self.name[..]`.
 fn inst_name(c: C, fi: u32, sb: Subst) -> List[u8] {
     let f = c.fdefs[fi as usize]
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     if f.inode != NONE {
         bytes.append(inout out, ts(c, subst_get(sb, intern.S_SELF_TYPE)))
         out.push(46)
@@ -3338,7 +3338,7 @@ fn inst_name(c: C, fi: u32, sb: Subst) -> List[u8] {
 /// time and queueing its body.
 fn instantiate(inout c: C, fi: u32, sb: Subst) -> Result[u32, diag.Diag] {
     let f = c.fdefs[fi as usize].copy()
-    var keyl: List[u32] = List.new()
+    let mut keyl: List[u32] = List.new()
     if f.inode != NONE { keyl.push(subst_get(sb, intern.S_SELF_TYPE)) } else { keyl.push(NONE) }
     for g in all_generics(c, fi) { keyl.push(subst_get(sb, g)) }
     let lid = types.list(inout c.t, keyl)
@@ -3355,7 +3355,7 @@ fn instantiate(inout c: C, fi: u32, sb: Subst) -> Result[u32, diag.Diag] {
     c.cur_all = saved_all
     c.cur_mod = saved_mod
     c.tsubst = saved_sub
-    var inst = match r {
+    let mut inst = match r {
         Ok(x) => x
         Err(d) => { return Err(in_file(c, d, f.md)) }
     }
@@ -3384,10 +3384,10 @@ fn signature(inout c: C, fi: u32) -> Result[Inst, diag.Diag] {
     let f = c.fdefs[fi as usize]
     let m = f.md.copy()
     let n = ndm(c, m, f.node)
-    var ps: List[u32] = List.new()
+    let mut ps: List[u32] = List.new()
     for i in 0..n.f {
         let pn = ndm(c, m, atm(c, m, n.e, i))
-        var ty = item_ty(inout c, m, pn.b)?
+        let mut ty = item_ty(inout c, m, pn.b)?
         if ty == types.UNIT {
             let rd = in_file(c, err("E0111", pn.line, pn.col, s("parameters can't have type ()")), m)
             record(inout c, rd)
@@ -3395,9 +3395,9 @@ fn signature(inout c: C, fi: u32) -> Result[Inst, diag.Diag] {
         }
         ps.push(ty)
     }
-    var ret = types.UNIT
+    let mut ret = types.UNIT
     if n.g > 0 { ret = item_ty(inout c, m, n.g - 1)? }
-    var caps: List[u32] = List.new()
+    let mut caps: List[u32] = List.new()
     for i in 0..n.j {
         let cn = ndm(c, m, atm(c, m, n.i, i))
         if !has_sym(c.w.caps, cn.a) {
@@ -3407,7 +3407,7 @@ fn signature(inout c: C, fi: u32) -> Result[Inst, diag.Diag] {
         }
         caps.push(cn.a)
     }
-    var whole = !poisoned(c, ret)
+    let mut whole = !poisoned(c, ret)
     for x in ps {
         if poisoned(c, x) { whole = false }
     }
@@ -3428,7 +3428,7 @@ fn signature(inout c: C, fi: u32) -> Result[Inst, diag.Diag] {
 }
 
 fn caps_text(c: C, caps: List[u32]) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     for i in 0..caps.len() {
         if i > 0 { bytes.append(inout out, s(", ")) }
         bytes.append(inout out, nm(c, caps[i]))
@@ -3485,7 +3485,7 @@ fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] {
     let f = c.fdefs[inst.fd as usize].copy()
     let m = f.md.copy()
     let n = ndm(c, m, f.node)
-    var sb = no_subst()
+    let mut sb = no_subst()
     for i in 0..inst.slen {
         sb.syms.push(c.sub_s[(inst.sstart + i) as usize])
         sb.tys.push(c.sub_t[(inst.sstart + i) as usize])
@@ -3499,7 +3499,7 @@ fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] {
     c.unsafe_depth = if f.unsafe_fn { 1 } else { 0 }
     c.locals = Map.new()
     if c.p.mods[m as usize].pre > 0 { c.locals = resolve.fn_locals(c.p, m, n) }
-    var caps: List[u32] = List.new()
+    let mut caps: List[u32] = List.new()
     for i in 0..inst.clen { caps.push(c.capl[(inst.cstart + i) as usize]) }
     begin_body(inout c, m, inst.ret, caps, n.end_line, n.end_col)
     let ctext = caps_text(c, caps)
@@ -3536,8 +3536,8 @@ fn block_body(inout c: C, b: u32, dest: Dest, exp: u32) -> Result[u32, diag.Diag
     let n = nd(c, b)
     push_scope(inout c)
     push_frame(inout c)
-    var ty = types.UNIT
-    var saw_err = false
+    let mut ty = types.UNIT
+    let mut saw_err = false
     for i in 0..n.d {
         let st = at(c, n.c, i)
         let sn = nd(c, st)
@@ -3579,7 +3579,7 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] {
     let n = nd(c, st)
     match n.kind {
         ast.SLet => {
-            var declared = NONE
+            let mut declared = NONE
             let am = c.am.copy()
             if n.b > 0 {
                 // an annotation that doesn't resolve: the initializer is still checked
@@ -3600,8 +3600,8 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] {
             let alias_ro = place_init && n.d == 2 && !writable(c, root(c, n.c).key)
             if place_init && n.d != 1 && !alias_ro { return let_ref(inout c, n, declared) }
             let kind = if n.d == 0 { ir.L_LET } else { ir.L_VAR }
-            var fin = declared
-            var l: u32 = 0
+            let mut fin = declared.copy()
+            let mut l: u32 = 0
             if is_value_form(c, n.c) {
                 l = ir.local(inout c.ir, n.a, declared, kind, n.line)
                 let t = compile_value(inout c, n.c, Dest(D_VAR, l), declared)?
@@ -3688,7 +3688,7 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] {
                 let cn = nd(c, n.a)
                 return Err(mismatch(c, cn.line, cn.col, types.BOOL, cv.ty))
             }
-            var msg: u32 = 0
+            let mut msg: u32 = 0
             if n.b > 0 {
                 c.ir.strs.push(c.p.mods[c.am as usize].strs[(n.b - 1) as usize])
                 msg = c.ir.strs.len() as u32
@@ -3705,8 +3705,8 @@ fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     // of a place (not `var`): the bindings are references into it ("References")
     let place_init = ref_init(c, n.c)
     let is_ref = place_init && n.d != 1
-    var vty: u32 = 0
-    var acc: u32 = 0
+    let mut vty: u32 = 0
+    let mut acc: u32 = 0
     if is_ref {
         let sp = snap(c)
         match place_expr(inout c, n.c) {
@@ -3738,14 +3738,14 @@ fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
         vty = v.ty
         acc = place_of_op(inout c, v.op, v.ty, n.line)
     }
-    var lw = Lowered(List.new(), List.new())
+    let mut lw = Lowered(List.new(), List.new())
     c.pat_bad = false
     let pir = lower_pat(inout c, n.a, vty, acc, inout lw)?
-    var rows = pats.empty(1)
-    var row: List[u32] = List.new()
+    let mut rows = pats.empty(1)
+    let mut row: List[u32] = List.new()
     row.push(pir)
     pats.add_row(inout rows, row)
-    var tys: List[u32] = List.new()
+    let mut tys: List[u32] = List.new()
     tys.push(vty)
     let missing: Option[List[List[u8]]] = if c.pat_bad { None } else { pats.missing(c.pt, c.t, c.p.names, rows, tys) }
     match missing {
@@ -3761,7 +3761,7 @@ fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
         if is_ref {
             if !b.mutable || writable(c, rk) {
                 let fx = copy_fix(c, vty, n.e, n.f)
-                var v = new_ref(inout c, b.key, b.ty, b.place, b.mutable, rk, b.line, b.col, fx)
+                let mut v = new_ref(inout c, b.key, b.ty, b.place, b.mutable, rk, b.line, b.col, fx)
                 v.dline = n.line
                 v.dcol = n.col
                 declare(inout c, v)?
@@ -3821,11 +3821,11 @@ fn let_ref(inout c: C, n: ast.Node, declared: u32) -> Result[u32, diag.Diag] {
 fn note_var(inout c: C, n: ast.Node, place: bool, ty: u32, binds: List[Bind]) {
     // (in a generic body only a fresh value: `.copy()` of a place could need a bound)
     if (place && generic_body(c)) || poisoned(c, ty) { return }
-    var fx: List[diag.Fix] = List.new()
+    let mut fx: List[diag.Fix] = List.new()
     if place {
         // `.copy()` must make what `var` made: the implicit copy, which shares a Mutex and a
         // record with its own Drop and never runs an own `copy`
-        var seen: Map[u32, bool] = Map.new()
+        let mut seen: Map[u32, bool] = Map.new()
         if copy_differs(c, ty, inout seen) { return }
         match copy_fix(c, ty, n.e, n.f) {
             Some(f) => fx.push(f)
@@ -3881,11 +3881,11 @@ fn copy_differs(c: C, ty: u32, inout seen: Map[u32, bool]) -> bool {
 /// The edits that rewrite the `var`s of module m (each edit once, last in the file first, so
 /// they can be applied in order).
 pub fn var_fixes(c: C, m: u32) -> List[diag.Fix] {
-    var all: List[diag.Fix] = List.new()
+    let mut all: List[diag.Fix] = List.new()
     for v in c.rf.vars {
         if v.m != m { continue }
         for f in v.fixes {
-            var dup = false
+            let mut dup = false
             for g in all {
                 if g.line == f.line && g.col == f.col { dup = true }
             }
@@ -3893,11 +3893,11 @@ pub fn var_fixes(c: C, m: u32) -> List[diag.Fix] {
         }
     }
     // insertion sort, by position, descending
-    var out: List[diag.Fix] = List.new()
+    let mut out: List[diag.Fix] = List.new()
     for f in all {
-        var i: usize = 0
+        let mut i: usize = 0
         while i < out.len() && (out[i].line > f.line || (out[i].line == f.line && out[i].col > f.col)) { i += 1 }
-        var next: List[diag.Fix] = List.new()
+        let mut next: List[diag.Fix] = List.new()
         for j in 0..i { next.push(out[j]) }
         next.push(f)
         for j in i..out.len() { next.push(out[j]) }
@@ -3925,8 +3925,8 @@ fn emit_exit_unless(inout c: C, cond: u32, base: u32, line: u32) {
 }
 
 fn for_range(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
-    var vl = v_of(types.UNIT, 0)
-    var vh = v_of(types.UNIT, 0)
+    let mut vl = v_of(types.UNIT, 0)
+    let mut vh = v_of(types.UNIT, 0)
     if is_lit(c, n.b) && !is_lit(c, n.c) {
         vh = expr(inout c, n.c, NONE)?
         vl = expr(inout c, n.b, vh.ty)?
@@ -3991,9 +3991,9 @@ fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     let et = if err_seq { poison(inout c) } else { t.a }
     // arrays are copied first; a List is iterated in place, its length read every time:
     // i := 0; loop { if !(i < len) break; x := clone(seq[i]); body } step { i = i +% 1 }
-    var seq = pv.place
+    let mut seq = pv.place.copy()
     if !is_list {
-        var o = pv.op
+        let mut o = pv.op.copy()
         if o == NONE { o = read(inout c, pv.place, pv.ty, 0) }
         seq = place_of_op(inout c, o, pv.ty, n.line)
     }
@@ -4006,10 +4006,10 @@ fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     // for the whole loop ("References")
     if is_list && c.rf.any { note_uses(inout c, n.b) }
     let iv = read(inout c, ip, types.USIZE, 0)
-    var lim = ir.op_int(inout c.ir, types.USIZE, t.b as u64)
+    let mut lim = ir.op_int(inout c.ir, types.USIZE, t.b as u64)
     if is_list {
         let lv = read(inout c, seq, pv.ty, 0)
-        var largs: List[u32] = List.new()
+        let mut largs: List[u32] = List.new()
         largs.push(lv)
         lim = builtin_op(inout c, ir.B_LEN, largs, types.USIZE, 0)
     }
@@ -4021,7 +4021,7 @@ fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     push_frame(inout c)
     push_scope(inout c)
     let l = ir.local(inout c.ir, n.a, et, ir.L_LET, n.line)
-    var eline: u32 = 0
+    let mut eline: u32 = 0
     if is_list { eline = n.line }
     let ep = ir.place_index(inout c.ir, seq, iv, et, eline)
     bind_value(inout c, l, et, ep)
@@ -4062,8 +4062,8 @@ fn for_iter(inout c: C, n: ast.Node, pv: PV) -> Result[u32, diag.Diag] {
         }
     }
     let oty = inst.ret.copy()
-    var et = poison(inout c)
-    var si: u32 = 0
+    let mut et = poison(inout c)
+    let mut si: u32 = 0
     if types.kind(c.t, oty) == types.T_ENUM && !poisoned(c, oty) {
         let od = types.def_of(c.t, oty)
         for i in 0..od.len {
@@ -4074,7 +4074,7 @@ fn for_iter(inout c: C, n: ast.Node, pv: PV) -> Result[u32, diag.Diag] {
             }
         }
     }
-    var o = pv.op
+    let mut o = pv.op.copy()
     if o == NONE { o = read(inout c, pv.place, ty, 0) }
     let owned = take(inout c, v_of(ty, o), n.line)
     let itl = tmp(inout c, ty, n.line)
@@ -4128,7 +4128,7 @@ fn check_assignable(c: C, target: u32, verb: str) -> Result[bool, diag.Diag] {
     if li != NONE {
         let v = c.scopes[li as usize]
         if v.mutable || v.byref { return Ok(true) }
-        var d = err("E0303", r.line, r.col, q2("cannot ", s(verb), " `", kt(c, r.key), "`: it is not mutable"))
+        let mut d = err("E0303", r.line, r.col, q2("cannot ", s(verb), " `", kt(c, r.key), "`: it is not mutable"))
         if v.has_decl {
             d.help = q("declare `", kt(c, r.key), "` with `var`")
             d.fix = Some(diag.Fix(v.dline, v.dcol, 3, s("var")))
@@ -4244,7 +4244,7 @@ fn compile_if(inout c: C, n: ast.Node, dest: Dest, exp: u32) -> Result[u32, diag
     }
     let el = nd(c, n.c - 1)
     let em = ir.open(c.ir)
-    var t2 = types.UNIT
+    let mut t2 = types.UNIT
     if el.kind == ast.EBlock {
         t2 = block_body(inout c, el.a, dest, exp)?
     } else {
@@ -4295,7 +4295,7 @@ fn lower_pat(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) -> Re
         }
         ast.PInt => {
             if tk != types.T_INT { return Err(mismatch(c, n.line, n.col, ty, types.I32)) }
-            var w = lit(c, n.a)
+            let mut w = lit(c, n.a)
             if n.b == 1 { w = fold.neg(w) }
             let ik = types.ik(c.t, ty)
             if !fits(ik, w) {
@@ -4325,7 +4325,7 @@ fn lower_pat(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) -> Re
             if es.len() as u32 != n.d {
                 return Err(err("E0410", n.line, n.col, q2("tuple pattern has ", num(n.d as u64), " elements, but the value has ", num(es.len() as u64), "")))
             }
-            var subs: List[u32] = List.new()
+            let mut subs: List[u32] = List.new()
             for j in 0..n.d {
                 let fp = ir.place_field(inout c.ir, place, j, es[j as usize])
                 let sp = at(c, n.c, j)
@@ -4346,7 +4346,7 @@ fn lower_pat(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) -> Re
                         }
                         note_variant(inout c, n, d.tmpl, v.key)
                         lw.tests.push(Test(T_TAG, place, ty, vi, fold.zero(), List.new()))
-                        var subs: List[u32] = List.new()
+                        let mut subs: List[u32] = List.new()
                         for j in 0..n.d {
                             let f = types.field(c.t, v.fstart, j)
                             let fp = ir.place_payload(inout c.ir, place, vi, j, f.ty)
@@ -4368,7 +4368,7 @@ fn lower_pat(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) -> Re
                     if d.len != n.d {
                         return Err(err("E0410", n.line, n.col, q3("`", kt(c, k), "` has ", num(d.len as u64), " field(s), but the pattern has ", num(n.d as u64), "")))
                     }
-                    var subs: List[u32] = List.new()
+                    let mut subs: List[u32] = List.new()
                     for j in 0..n.d {
                         let f = types.field(c.t, d.start, j)
                         let fp = ir.place_field(inout c.ir, place, j, f.ty)
@@ -4410,8 +4410,8 @@ fn compile_match(inout c: C, m: ast.Node, dest: Dest, exp: u32) -> Result[u32, d
     let sn = nd(c, m.a)
     // a place scrutinee: the bindings are references into it ("References")
     let is_ref = ref_init(c, m.a)
-    var sv = v_of(types.UNIT, 0)
-    var place: u32 = NONE
+    let mut sv = v_of(types.UNIT, 0)
+    let mut place: u32 = NONE
     if is_ref {
         let sp = snap(c)
         match place_expr(inout c, m.a) {
@@ -4440,16 +4440,16 @@ fn compile_match(inout c: C, m: ast.Node, dest: Dest, exp: u32) -> Result[u32, d
     let rk: u64 = if place != NONE && is_ref { root(c, m.a).key } else { 0 }
     let sc = Scrut(is_ref, rk, sv.ty, m.e, m.f)
     // lower every pattern, checking reachability
-    var rows = pats.empty(1)
-    var tys: List[u32] = List.new()
+    let mut rows = pats.empty(1)
+    let mut tys: List[u32] = List.new()
     tys.push(sv.ty)
-    var alts: List[Alt] = List.new()
-    var alt_start: List[u32] = List.new()
-    var arm_binds: List[List[Bind]] = List.new()
+    let mut alts: List[Alt] = List.new()
+    let mut alt_start: List[u32] = List.new()
+    let mut arm_binds: List[List[Bind]] = List.new()
     for i in 0..m.d {
         let arm = nd(c, at(c, m.c, i))
-        var useful = false
-        var binds: List[Bind] = List.new()
+        let mut useful = false
+        let mut binds: List[Bind] = List.new()
         alt_start.push(alts.len() as u32)
         if arm.d == 0 {
             // an arm the parser skipped (no patterns, an EError body): the match isn't judged
@@ -4458,13 +4458,13 @@ fn compile_match(inout c: C, m: ast.Node, dest: Dest, exp: u32) -> Result[u32, d
         }
         for j in 0..arm.d {
             let pid = at(c, arm.c, j)
-            var lw = Lowered(List.new(), List.new())
+            let mut lw = Lowered(List.new(), List.new())
             let pir = lower_pat(inout c, pid, sv.ty, place, inout lw)?
             if arm.d > 1 && lw.binds.len() > 0 && !c.pat_bad {
                 let pn = nd(c, pid)
                 return Err(err("E0001", pn.line, pn.col, s("or-patterns can't bind names")))
             }
-            var v: List[u32] = List.new()
+            let mut v: List[u32] = List.new()
             v.push(pir)
             if pats.useful(c.pt, c.t, rows, v, tys) { useful = true }
             pats.add_row(inout rows, v)
@@ -4533,7 +4533,7 @@ fn arm_body(inout c: C, m: ast.Node, i: u32, binds: List[Bind], sc: Scrut, dest:
         if sc.is_ref {
             if !b.mutable || writable(c, sc.rk) {
                 let fx = copy_fix(c, sc.ty, sc.line, sc.col)
-                var v = new_ref(inout c, b.key, b.ty, b.place, b.mutable, sc.rk, b.line, b.col, fx)
+                let mut v = new_ref(inout c, b.key, b.ty, b.place, b.mutable, sc.rk, b.line, b.col, fx)
                 // (assigning to an arm binding is reported as before: it is no `let`)
                 v.has_decl = false
                 declare(inout c, v)?
@@ -4546,11 +4546,11 @@ fn arm_body(inout c: C, m: ast.Node, i: u32, binds: List[Bind], sc: Scrut, dest:
         let kind = if b.mutable { ir.L_VAR } else { ir.L_LET }
         let l = ir.local(inout c.ir, resolve.key_sym(b.key), b.ty, kind, b.line)
         bind_value(inout c, l, b.ty, b.place)
-        var v = local_plain(b.key, b.ty, false, b.line, b.col, l)
+        let mut v = local_plain(b.key, b.ty, false, b.line, b.col, l)
         v.mutable = b.mutable
         declare(inout c, v)?
     }
-    var t = types.UNIT
+    let mut t = types.UNIT
     if arm.b == 1 {
         t = stmt(inout c, arm.a)?
     } else {
@@ -4611,7 +4611,7 @@ fn test_val(inout c: C, t: Test, line: u32) -> u32 {
         if t.a == 1 { return v }
         return emit_val(inout c, ir.S_UNARY, ir.U_NOT, v, 0, types.BOOL, types.BOOL, 0)
     }
-    var k = ir.op_str(inout c.ir, t.s)
+    let mut k = ir.op_str(inout c.ir, t.s)
     if t.kind == T_INT { k = int_op(inout c, t.ty, t.w) }
     emit_val(inout c, ir.S_BINARY, ast.OP_EQ, v, k, t.ty, types.BOOL, 0)
 }
@@ -4653,7 +4653,7 @@ fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
     let n = nd(c, e)
     match n.kind {
         ast.EInt => {
-            var ik = types.IK_I32
+            let mut ik = types.IK_I32
             if exp != NONE && types.is_int(c.t, exp) { ik = types.ik(c.t, exp) }
             let w = lit(c, n.a)
             if fold.gt(w, imax(ik)) {
@@ -4731,7 +4731,7 @@ fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
         ast.ECast => cast(inout c, n)
         ast.EArray => array_lit(inout c, n, exp)
         ast.ERepeat => {
-            var exp_elem = NONE
+            let mut exp_elem = NONE
             if exp != NONE && types.kind(c.t, exp) == types.T_ARRAY { exp_elem = types.get(c.t, exp).a }
             let v = expr(inout c, n.a, exp_elem)?
             let x = nd(c, n.a)
@@ -4892,7 +4892,7 @@ fn value_place(inout c: C, v: V, line: u32) -> PV {
 fn negate(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let x = nd(c, n.b)
     if x.kind == ast.EInt {
-        var ik = types.IK_I32
+        let mut ik = types.IK_I32
         if exp != NONE && types.is_int(c.t, exp) { ik = types.ik(c.t, exp) }
         if !types.signed(ik) {
             return Err(err("E0401", n.line, n.col, q("cannot negate an unsigned integer (", s(types.int_name(ik)), ")")))
@@ -4958,8 +4958,8 @@ fn binary(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     }
     let arith = op <= ast.OP_WMUL || ast.is_bitwise(op)
     let exp_operand = if arith { exp } else { NONE }
-    var vl = v_of(types.UNIT, 0)
-    var vr = v_of(types.UNIT, 0)
+    let mut vl = v_of(types.UNIT, 0)
+    let mut vr = v_of(types.UNIT, 0)
     if is_lit(c, n.b) && !is_lit(c, n.c) {
         vr = expr(inout c, n.c, exp_operand)?
         vl = expr(inout c, n.b, vr.ty)?
@@ -5015,8 +5015,8 @@ fn check_shift(c: C, rn: ast.Node, ik: u32, vr: V) -> Result[bool, diag.Diag] {
 }
 
 fn fold_arith(inout c: C, n: ast.Node, op: u32, ik: u32, ty: u32, a: fold.Wide, b: fold.Wide) -> Result[V, diag.Diag] {
-    var wide = fold.zero()
-    var wraps = false
+    let mut wide = fold.zero()
+    let mut wraps = false
     if op == ast.OP_ADD || op == ast.OP_WADD { wide = fold.add(a, b) }
     if op == ast.OP_SUB || op == ast.OP_WSUB { wide = fold.sub(a, b) }
     if op == ast.OP_MUL || op == ast.OP_WMUL { wide = fold.mul(a, b) }
@@ -5025,10 +5025,10 @@ fn fold_arith(inout c: C, n: ast.Node, op: u32, ik: u32, ty: u32, a: fold.Wide, 
     if op == ast.OP_WADD || op == ast.OP_WSUB || op == ast.OP_WMUL { wraps = true }
     if wraps { return Ok(const_v(inout c, ty, fold.wrap(wide, types.bits(ik), types.signed(ik)))) }
     if !fits(ik, wide) {
-        var m = fold.text(a)
+        let mut m = fold.text(a)
         bytes.append(inout m, q2(" ", s(ast.op_text(op)), " ", fold.text(b), " = "))
         bytes.append(inout m, q2("", fold.text(wide), " doesn't fit in ", s(types.int_name(ik)), ""))
-        var d = err("E0501", n.line, n.col, m)
+        let mut d = err("E0501", n.line, n.col, m)
         let w = if op == ast.OP_ADD { "+%" } else if op == ast.OP_SUB { "-%" } else { "*%" }
         d.help = q("use the wrapping operator `", s(w), "` if overflow is intended")
         return Err(d)
@@ -5060,14 +5060,14 @@ fn cast(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
 }
 
 fn array_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
-    var exp_elem = NONE
+    let mut exp_elem = NONE
     if exp != NONE && types.kind(c.t, exp) == types.T_ARRAY { exp_elem = types.get(c.t, exp).a }
     if n.d == 0 { return Err(err("E0401", n.line, n.col, s("cannot infer the element type of an empty array"))) }
-    var vs: List[V] = List.new()
-    var first = NONE
+    let mut vs: List[V] = List.new()
+    let mut first = NONE
     for i in 0..n.d {
         let x = at(c, n.c, i)
-        var want = exp_elem
+        let mut want = exp_elem.copy()
         if want == NONE { want = first }
         let v = expr(inout c, x, want)?
         if want != NONE && !same(c, v.ty, want) {
@@ -5077,7 +5077,7 @@ fn array_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
         if first == NONE || poisoned(c, first) { first = v.ty }
         vs.push(v)
     }
-    var ops: List[u32] = List.new()
+    let mut ops: List[u32] = List.new()
     for v in vs { ops.push(take(inout c, v, n.line)) }
     let ty = types.array(inout c.t, first, n.d)
     let start = ir.list(inout c.ir, ops)
@@ -5087,13 +5087,13 @@ fn array_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
 fn tuple_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     // `()`: the unit value
     if n.d == 0 { return Ok(v_of(types.UNIT, ir.op_unit(inout c.ir))) }
-    var hints: List[u32] = List.new()
+    let mut hints: List[u32] = List.new()
     if exp != NONE && types.kind(c.t, exp) == types.T_TUPLE && types.get(c.t, exp).b == n.d { hints = types.elems(c.t, exp) }
-    var vs: List[V] = List.new()
-    var tys: List[u32] = List.new()
+    let mut vs: List[V] = List.new()
+    let mut tys: List[u32] = List.new()
     for i in 0..n.d {
         let x = at(c, n.c, i)
-        var h = NONE
+        let mut h = NONE
         if hints.len() > 0 { h = hints[i as usize] }
         let v = expr(inout c, x, h)?
         if v.ty == types.UNIT || v.ty == types.NEVER {
@@ -5104,7 +5104,7 @@ fn tuple_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
         vs.push(v)
     }
     let ty = types.tuple(inout c.t, tys)
-    var ops: List[u32] = List.new()
+    let mut ops: List[u32] = List.new()
     for v in vs { ops.push(take(inout c, v, n.line)) }
     let start = ir.list(inout c.ir, ops)
     Ok(v_of(ty, emit_val(inout c, ir.S_TUPLE, 0, start, n.d, ty, ty, n.line)))
@@ -5127,7 +5127,7 @@ fn try_op(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
     }
     let tname = kt(c, tkey)
     let rt = types.get(c.t, c.ret)
-    var same = false
+    let mut same = false
     if rt.kind == types.T_ENUM { same = c.t.defs[types.def_of(c.t, c.ret).tmpl as usize].key == tkey }
     if !same {
         return Err(err("E0406", n.line, n.col, q3("`?` on a ", tname, " needs the enclosing function to return a ", tname, ", but it returns ", ts(c, c.ret), "")))
@@ -5142,8 +5142,8 @@ fn try_op(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
     // t := x (owned); if t is Err/None { return Err(move t.error) / None } ; value := move t.value
     let o = take(inout c, v, n.line)
     let tp = place_of_op(inout c, o, v.ty, n.line)
-    var bad = c.w.none
-    var good = c.w.some
+    let mut bad = c.w.none.copy()
+    let mut good = c.w.some.copy()
     if is_result {
         bad = c.w.errv
         good = c.w.ok
@@ -5153,7 +5153,7 @@ fn try_op(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
     let rbad_i = variant_index(c, c.ret, bad)
     let isbad = emit_val(inout c, ir.S_TAG, tp, bad_i, 0, v.ty, types.BOOL, n.line)
     let bm = ir.open(c.ir)
-    var rargs: List[u32] = List.new()
+    let mut rargs: List[u32] = List.new()
     if is_result {
         let et = args[1]
         let ep = ir.place_payload(inout c.ir, tp, bad_i, 0, et)
@@ -5236,7 +5236,7 @@ fn call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
 fn field_nodes(c: C, di: u32, vkey: u64) -> List[u32] {
     let d = c.t.defs[di as usize]
     let tn = ndm(c, d.md, d.node)
-    var out: List[u32] = List.new()
+    let mut out: List[u32] = List.new()
     if vkey == NONE as u64 {
         for i in 0..tn.f { out.push(ndm(c, d.md, atm(c, d.md, tn.e, i)).b) }
         return out
@@ -5263,7 +5263,7 @@ fn construct(inout c: C, line: u32, col: u32, di: u32, vkey: u64, start: u32, le
     }
     let tn = ndm(c, d.md, d.node)
     let gs = gparams(c, d.md, tn.c, tn.d)
-    var sb = no_subst()
+    let mut sb = no_subst()
     if exp != NONE {
         let et = types.get(c.t, exp)
         if et.kind == types.T_ENUM || et.kind == types.T_RECORD {
@@ -5276,14 +5276,14 @@ fn construct(inout c: C, line: u32, col: u32, di: u32, vkey: u64, start: u32, le
             }
         }
     }
-    var vs: List[V] = List.new()
-    var tainted = poisoned(c, exp)
+    let mut vs: List[V] = List.new()
+    let mut tainted = poisoned(c, exp)
     for i in 0..len {
         let a = nd(c, at(c, start, i))
         let x = nd(c, a.a)
         if a.b == 1 { return Err(err("E0304", x.line, x.col, s("`inout` is not allowed here"))) }
         let fa = fas[i as usize]
-        var hint = NONE
+        let mut hint = NONE
         if !has_unbound(c, d.md, fa, sb, gs) { hint = resolve_with(inout c, d.md, fa, sb)? }
         let v = expr(inout c, a.a, hint)?
         if poisoned(c, v.ty) { tainted = true }
@@ -5294,7 +5294,7 @@ fn construct(inout c: C, line: u32, col: u32, di: u32, vkey: u64, start: u32, le
         }
         vs.push(v)
     }
-    var targs: List[u32] = List.new()
+    let mut targs: List[u32] = List.new()
     for g in gs {
         let t = subst_get(sb, g)
         // nothing to infer from an error value
@@ -5305,7 +5305,7 @@ fn construct(inout c: C, line: u32, col: u32, di: u32, vkey: u64, start: u32, le
         targs.push(t)
     }
     let ty = inst_type(inout c, di, targs, line, col)?
-    var ops: List[u32] = List.new()
+    let mut ops: List[u32] = List.new()
     for v in vs { ops.push(take(inout c, v, line)) }
     let st = ir.list(inout c.ir, ops)
     if vkey != NONE as u64 {
@@ -5348,7 +5348,7 @@ fn idents(c: C, e: u32, inout out: List[u64]) {
 }
 
 fn cap_error(c: C, line: u32, col: u32, what: List[u8], cap: u32) -> diag.Diag {
-    var d = err("E0201", line, col, q2("call to `", what, "` requires capability `", nm(c, cap), "`"))
+    let mut d = err("E0201", line, col, q2("call to `", what, "` requires capability `", nm(c, cap), "`"))
     let ins = if c.caps.len() == 0 { q(" uses ", nm(c, cap), "") } else { q(", ", nm(c, cap), "") }
     d.fix = Some(diag.Fix(c.sig_line, c.sig_col, 0, ins))
     d
@@ -5375,9 +5375,9 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
     let f = c.fdefs[fi as usize].copy()
     let fm = f.md.copy()
     let fnode = ndm(c, fm, f.node)
-    var sb = sb0
-    var gs = gparams(c, fm, fnode.c, fnode.d)
-    var target: u32 = NONE
+    let mut sb = sb0.copy()
+    let mut gs = gparams(c, fm, fnode.c, fnode.d)
+    let mut target: u32 = NONE
     if f.inode != NONE {
         let im = ndm(c, fm, f.inode)
         target = im.b
@@ -5385,7 +5385,7 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
         gs.push(intern.S_SELF_TYPE)
     }
     let gnodes = all_gparam_nodes(c, fi)
-    var has_self = false
+    let mut has_self = false
     if fnode.f > 0 { has_self = ndm(c, fm, atm(c, fm, fnode.e, 0)).a == intern.S_SELF }
     if recv.has && !has_self {
         let fd = err("E0115", n.line, n.col, q2("`", label, "` is an associated function; call it as `Type.", nm(c, fnode.a), "(...)`"))
@@ -5401,21 +5401,21 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
         let fd = err("E0405", n.line, n.col, q3("`", label, "` takes ", num(np as u64), " argument(s), but ", num(n.d as u64), " were given"))
         return fail_call(inout c, fd, n.c, n.d)
     }
-    var tainted = poisoned(c, exp) || (recv.has && poisoned(c, recv.pv.ty))
+    let mut tainted = poisoned(c, exp) || (recv.has && poisoned(c, recv.pv.ty))
     // bind type parameters from the expected type, then from the receiver type
     if fnode.g > 0 && exp != NONE {
-        var s2 = sb
+        let mut s2 = sb.copy()
         if unify_ast(c, fm, fnode.g - 1, exp, inout s2, gs) { sb = s2 }
     }
     if target != NONE {
         let st = subst_get(sb, intern.S_SELF_TYPE)
         if st != NONE {
-            var s2 = sb
+            let mut s2 = sb.copy()
             if unify_ast(c, fm, target, st, inout s2, gs) { sb = s2 }
         }
     }
     // exclusivity of inout borrows
-    var roots: List[u64] = List.new()
+    let mut roots: List[u64] = List.new()
     // (a reference counts as the variable its place is rooted at: `canon`)
     if recv.has && ndm(c, fm, atm(c, fm, fnode.e, 0)).c == 1 {
         let r = root(c, recv.e)
@@ -5440,7 +5440,7 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
         let a = nd(c, at(c, n.c, i))
         let pn = ndm(c, fm, atm(c, fm, fnode.e, i + skip))
         if pn.c != 1 {
-            var ids: List[u64] = List.new()
+            let mut ids: List[u64] = List.new()
             idents(c, a.a, inout ids)
             for r in roots {
                 for k in ids {
@@ -5453,7 +5453,7 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
             }
         }
     }
-    var args: List[u32] = List.new()
+    let mut args: List[u32] = List.new()
     if recv.has {
         if ndm(c, fm, atm(c, fm, fnode.e, 0)).c == 1 {
             assignable_or_record(inout c, recv.e, "borrow as inout")
@@ -5468,16 +5468,16 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
         let a = nd(c, at(c, n.c, i))
         let x = nd(c, a.a)
         let pn = ndm(c, fm, atm(c, fm, fnode.e, i + skip))
-        var hint = NONE
+        let mut hint = NONE
         if !has_unbound(c, fm, pn.b, sb, gs) { hint = resolve_with(inout c, fm, pn.b, sb)? }
         let ptn = ndm(c, fm, pn.b)
         if hint == NONE && ptn.kind == ast.TFn && x.kind == ast.ELambda {
-            var hp: List[u32] = List.new()
+            let mut hp: List[u32] = List.new()
             for j in 0..ptn.d {
                 let pt = atm(c, fm, ptn.c, j)
                 if has_unbound(c, fm, pt, sb, gs) { hp.push(NONE) } else { hp.push(resolve_with(inout c, fm, pt, sb)?) }
             }
-            var hr = types.UNIT
+            let mut hr = types.UNIT
             if ptn.g > 0 {
                 hr = NONE
                 if !has_unbound(c, fm, ptn.g - 1, sb, gs) { hr = resolve_with(inout c, fm, ptn.g - 1, sb)? }
@@ -5485,21 +5485,21 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
             c.lam = LamHint(true, hp, hr)
         }
         if pn.c == 1 && a.b == 0 {
-            var d = err("E0304", x.line, x.col, q("parameter `", nm(c, pn.a), "` is `inout`; pass the argument as `inout ...`"))
+            let mut d = err("E0304", x.line, x.col, q("parameter `", nm(c, pn.a), "` is `inout`; pass the argument as `inout ...`"))
             d.fix = Some(diag.Fix(x.line, x.col, 0, s("inout ")))
             return Err(d)
         }
         if pn.c != 1 && a.b == 1 {
             return Err(err("E0304", x.line, x.col, q("parameter `", nm(c, pn.a), "` is not `inout`; remove the `inout`")))
         }
-        var ty: u32 = 0
+        let mut ty: u32 = 0
         if pn.c == 1 {
             assignable_or_record(inout c, a.a, "borrow as inout")
             let pv = place_expr(inout c, a.a)?
             ty = pv.ty
             args.push(pv.place + ir.ARG_PLACE)
         } else {
-            var hint2 = hint
+            let mut hint2 = hint.copy()
             if hint2 == NONE && ptn.kind == ast.TFn && x.kind == ast.EIdent {
                 let xk = ekey(c, x)
                 let xf = mget(c.fns, xk)
@@ -5546,12 +5546,12 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
             if !c.traits.contains(bk) { return Err(err("E0603", gn.line, gn.col, q("unknown trait `", kt(c, bk), "`"))) }
             if !implements(c, bk, ty) {
                 // in generic code, a type parameter's bound (or a part's) is what's missing
-                var seen: Map[u32, bool] = Map.new()
+                let mut seen: Map[u32, bool] = Map.new()
                 let tr = lang_of_key(c, bk)
-                var part = ty
+                let mut part = ty.copy()
                 if tr != NONE { part = lacks(c, tr, ty, inout seen) }
                 if part != NONE && types.kind(c.t, part) == types.T_PARAM {
-                    var names: List[List[u8]] = List.new()
+                    let mut names: List[List[u8]] = List.new()
                     names.push(kt(c, bk))
                     return Err(bound_err(c, n.line, n.col, q("`", label, "`"), names, part))
                 }
@@ -5633,7 +5633,7 @@ fn builtin(inout c: C, n: ast.Node, which: u32) -> Result[V, diag.Diag] {
         let t = types.get(c.t, v.ty)
         if t.kind == types.T_ARRAY { return Ok(const_v(inout c, types.USIZE, fold.of_u64(t.b as u64))) }
         if t.kind == types.T_STRING || t.kind == types.T_STR || t.kind == types.T_LIST || t.kind == types.T_MAP {
-            var largs: List[u32] = List.new()
+            let mut largs: List[u32] = List.new()
             largs.push(v.op)
             return Ok(v_of(types.USIZE, builtin_op(inout c, ir.B_LEN, largs, types.USIZE, n.line)))
         }
@@ -5684,7 +5684,7 @@ fn is_type_name(c: C, k: u64) -> bool {
 }
 
 fn label_of(c: C, head: List[u8], name: u32) -> List[u8] {
-    var l = head
+    let mut l = head.copy()
     l.push(46)
     bytes.append(inout l, nm(c, name))
     l
@@ -5699,8 +5699,8 @@ fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
 
 fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let r = nd(c, n.a)
-    var static_head: u64 = 0
-    var is_static = false
+    let mut static_head: u64 = 0
+    let mut is_static = false
     if r.kind == ast.EIdent {
         let k = ekey(c, r)
         if lookup(c, k) == NONE && !c.consts.contains(k) && is_type_name(c, k) {
@@ -5740,14 +5740,14 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
         let fd = errh("E0115", n.line, n.col, q("`drop` of ", ts(c, pv.ty), " can't be called"), "it runs by itself, once, when the value's last holder goes")
         return fail_call(inout c, fd, n.c, n.d)
     }
-    var any = false
+    let mut any = false
     for m in c.meths {
         if m.head != head || m.name != n.b { continue }
         any = true
         let f = c.fdefs[m.fd as usize]
         let im = ndm(c, f.md, f.inode)
         let gs = gparams(c, f.md, im.c, im.d)
-        var sb = no_subst()
+        let mut sb = no_subst()
         if !unify_ast(c, f.md, im.b, pv.ty, inout sb, gs) { continue }
         subst_set(inout sb, intern.S_SELF_TYPE, pv.ty)
         let label = label_of(c, head_text(c, head), n.b)
@@ -5784,16 +5784,16 @@ fn trait_method(inout c: C, n: ast.Node, pv: PV, tr: u32) -> Result[V, diag.Diag
     let label = label_of(c, ts(c, ty), n.b)
     let need = if tr == NTR { TR_SHOW } else { tr }
     if !has_trait(c, need, ty) {
-        var what = s("`.")
+        let mut what = s("`.")
         bytes.append(inout what, nm(c, n.b))
         bytes.append(inout what, s("()`"))
-        var seen: Map[u32, bool] = Map.new()
+        let mut seen: Map[u32, bool] = Map.new()
         let part = lacks(c, need, ty, inout seen)
         if part != NONE && types.kind(c.t, part) == types.T_PARAM {
             let bd = bound_err(c, n.line, n.col, what, trait_names(c, one(need)), part)
             return fail_call(inout c, bd, n.c, n.d)
         }
-        var m = q3("type ", ts(c, ty), " doesn't implement trait `", trait_name(c, need), "` (required by ", what, ")")
+        let mut m = q3("type ", ts(c, ty), " doesn't implement trait `", trait_name(c, need), "` (required by ", what, ")")
         if part != ty && part != NONE { bytes.append(inout m, q(": its part ", ts(c, part), " doesn't")) }
         let h = lack_help(c, need, part)
         let fd = if s(h).len() == 0 { err("E0601", n.line, n.col, m) } else { errh("E0601", n.line, n.col, m, h) }
@@ -5804,7 +5804,7 @@ fn trait_method(inout c: C, n: ast.Node, pv: PV, tr: u32) -> Result[V, diag.Diag
         let a = nd(c, at(c, n.c, 0))
         let x = nd(c, a.a)
         if a.b != 1 {
-            var d = err("E0304", x.line, x.col, s("parameter `out` is `inout`; pass the argument as `inout ...`"))
+            let mut d = err("E0304", x.line, x.col, s("parameter `out` is `inout`; pass the argument as `inout ...`"))
             d.fix = Some(diag.Fix(x.line, x.col, 0, s("inout ")))
             return Err(d)
         }
@@ -5882,7 +5882,7 @@ fn eval_args(inout c: C, n: ast.Node, tys: List[u32], label: List[u8]) -> Result
     if n.d != tys.len() as u32 {
         return Err(err("E0405", n.line, n.col, q3("`", label, "` takes ", num(tys.len() as u64), " argument(s), but ", num(n.d as u64), " were given")))
     }
-    var vs: List[V] = List.new()
+    let mut vs: List[V] = List.new()
     for i in 0..n.d {
         let a = nd(c, at(c, n.c, i))
         let x = nd(c, a.a)
@@ -5896,13 +5896,13 @@ fn eval_args(inout c: C, n: ast.Node, tys: List[u32], label: List[u8]) -> Result
 }
 
 fn one(t: u32) -> List[u32] {
-    var out: List[u32] = List.new()
+    let mut out: List[u32] = List.new()
     out.push(t)
     out
 }
 
 fn two(a: u32, b: u32) -> List[u32] {
-    var out: List[u32] = List.new()
+    let mut out: List[u32] = List.new()
     out.push(a)
     out.push(b)
     out
@@ -5930,7 +5930,7 @@ fn heap_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag.D
     if (head == c.w.list || head == c.w.map) && mi == M_NEW {
         let want_list = head == c.w.list
         if poisoned(c, exp) { return Ok(poison_v(inout c)) }
-        var ok = false
+        let mut ok = false
         if exp != NONE {
             let ek = types.kind(c.t, exp)
             ok = (want_list && ek == types.T_LIST) || (!want_list && ek == types.T_MAP)
@@ -5945,7 +5945,7 @@ fn heap_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag.D
     }
     if head == c.w.boxs && mi == M_NEW {
         if n.d != 1 { return Err(err("E0405", n.line, n.col, s("`Box.new` takes exactly one argument"))) }
-        var hint = NONE
+        let mut hint = NONE
         if exp != NONE && types.kind(c.t, exp) == types.T_BOX { hint = types.get(c.t, exp).a }
         let ae = arg_expr(c, at(c, n.c, 0))
         let x = nd(c, ae)
@@ -6060,7 +6060,7 @@ fn heap_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
             let vs = eval_args(inout c, n, two(kty, vty), label)?
             let ko = take(inout c, vs[0], n.line)
             let vo = take(inout c, vs[1], n.line)
-            var args = two(place, ko)
+            let mut args = two(place, ko)
             args.push(vo)
             return Ok(v_of(types.UNIT, builtin_op(inout c, ir.B_MAP_INSERT, args, types.UNIT, n.line)))
         }
@@ -6119,7 +6119,7 @@ fn text_method(inout c: C, n: ast.Node, pv: PV, mi: u32, label: List[u8]) -> Res
     if mi == M_SLICE {
         let ro = recv_op(inout c, pv)
         let vs = eval_args(inout c, n, two(types.USIZE, types.USIZE), label)?
-        var args = two(ro, vs[0].op)
+        let mut args = two(ro, vs[0].op)
         args.push(vs[1].op)
         return Ok(v_of(types.STRING, builtin_op(inout c, ir.B_STR_SLICE, args, types.STRING, n.line)))
     }
@@ -6244,8 +6244,8 @@ type Saved = {
 /// `|params| body`: the body becomes an IR function of its own whose
 /// environment holds a snapshot (clone) of every enclosing local the body mentions.
 fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
-    var hp: List[u32] = List.new()
-    var hr = NONE
+    let mut hp: List[u32] = List.new()
+    let mut hr = NONE
     // a closure where an error value is expected: its parameters and result are of the error type
     let err_exp = poisoned(c, exp) && types.kind(c.t, exp) != types.T_FN
     if err_exp { hr = exp }
@@ -6260,13 +6260,13 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     if hp.len() > 0 && hp.len() as u32 != n.d {
         return Err(err("E0405", n.line, n.col, q2("this closure takes ", num(n.d as u64), " parameter(s), but ", num(hp.len() as u64), " are expected here")))
     }
-    var ptys: List[u32] = List.new()
-    var pkeys: List[u64] = List.new()
+    let mut ptys: List[u32] = List.new()
+    let mut pkeys: List[u64] = List.new()
     for i in 0..n.d {
         let lp = nd(c, at(c, n.c, i))
-        var hinted = NONE
+        let mut hinted = NONE
         if (i as usize) < hp.len() { hinted = hp[i as usize] }
-        var ty = hinted
+        let mut ty = hinted.copy()
         if lp.b > 0 {
             let am = c.am.copy()
             let t = resolve_ty(inout c, am, lp.b - 1)?
@@ -6276,23 +6276,23 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
             ty = exp
         } else if hinted == NONE {
             let pn = nm(c, lp.a)
-            var d = err("E0409", lp.line, lp.col, q("cannot infer the type of closure parameter `", pn, "`"))
+            let mut d = err("E0409", lp.line, lp.col, q("cannot infer the type of closure parameter `", pn, "`"))
             d.help = q("annotate it: `|", pn, ": i32| ...`")
             return Err(d)
         }
         ptys.push(ty)
         pkeys.push(resolve.key(0, lp.a))
     }
-    var ret_hint = hr
+    let mut ret_hint = hr.copy()
     if n.g > 0 {
         let am = c.am.copy()
         ret_hint = resolve_ty(inout c, am, n.g - 1)?
     }
     // captured variables
-    var names: List[u64] = List.new()
+    let mut names: List[u64] = List.new()
     walk_expr(c, n.a, inout names)
-    var caps: List[Capture] = List.new()
-    var ckeys: List[u64] = List.new()
+    let mut caps: List[Capture] = List.new()
+    let mut ckeys: List[u64] = List.new()
     for k in names {
         if pkeys.contains(k) || ckeys.contains(k) { continue }
         let li = lookup(c, k)
@@ -6303,7 +6303,7 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
         }
     }
     c.closures += 1
-    var fname = ir.cur_name(c.ir)
+    let mut fname = ir.cur_name(c.ir)
     bytes.append(inout fname, s(".closure"))
     bytes.append(inout fname, num(c.closures as u64))
     let f = ir.declare_fn(inout c.ir, fname, false)
@@ -6319,7 +6319,7 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let r = lambda_in(inout c, n, caps, ptys, pkeys, ret_hint)
     // the enclosing function's state comes back also when the closure failed
     let b = ir.close(inout c.ir, mark)
-    var rty = types.UNIT
+    let mut rty = types.UNIT
     match r {
         Ok(t) => { rty = t }
         Err(_) => {}
@@ -6342,9 +6342,9 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     }
     let fty = types.fn_of(inout c.t, ptys, rty)
     // the environment: a snapshot of each captured variable
-    var ops: List[u32] = List.new()
+    let mut ops: List[u32] = List.new()
     for cp in caps {
-        var pl = cp.alias
+        let mut pl = cp.alias.copy()
         if pl == NONE {
             pl = ir.place_local(inout c.ir, cp.ir, cp.ty)
         } else {
@@ -6362,7 +6362,7 @@ fn lambda_in(inout c: C, n: ast.Node, caps: List[Capture], ptys: List[u32], pkey
     let body = nd(c, n.a)
     for cp in caps {
         let l = ir.local(inout c.ir, resolve.key_sym(cp.key), cp.ty, ir.L_CAPTURE, body.line)
-        var cl = local_plain(cp.key, cp.ty, false, body.line, body.col, l)
+        let mut cl = local_plain(cp.key, cp.ty, false, body.line, body.col, l)
         cl.aline = cp.aline
         cl.acol = cp.acol
         declare(inout c, cl)?
@@ -6392,7 +6392,7 @@ fn lambda_body(inout c: C, e: u32, ret_hint: u32) -> Result[u32, diag.Diag] {
     c.lam_expr = true
     let v = expr(inout c, e, ret_hint)?
     if ret_hint != NONE && !same(c, v.ty, ret_hint) && v.ty != types.NEVER { return Err(mismatch(c, body.line, body.col, ret_hint, v.ty)) }
-    var ret = ret_hint
+    let mut ret = ret_hint.copy()
     if ret == NONE {
         ret = v.ty
         if v.ty == types.NEVER { ret = types.UNIT }
@@ -6421,7 +6421,7 @@ fn call_value(inout c: C, n: ast.Node, label: List[u8], fv: V) -> Result[V, diag
         let fd = err("E0405", n.line, n.col, q3("`", label, "` takes ", num(ps.len() as u64), " argument(s), but ", num(n.d as u64), " were given"))
         return fail_call(inout c, fd, n.c, n.d)
     }
-    var args: List[u32] = List.new()
+    let mut args: List[u32] = List.new()
     for i in 0..n.d {
         let a = nd(c, at(c, n.c, i))
         let x = nd(c, a.a)
@@ -6447,7 +6447,7 @@ fn callv(inout c: C, f: u32, args: List[u32], r: u32, line: u32) -> u32 {
 /// The fn type of instance ii.
 fn inst_fn_type(inout c: C, ii: u32) -> u32 {
     let inst = c.insts[ii as usize].copy()
-    var ps: List[u32] = List.new()
+    let mut ps: List[u32] = List.new()
     for i in 0..inst.plen { ps.push(c.ptys[(inst.pstart + i) as usize]) }
     types.fn_of(inout c.t, ps, inst.ret)
 }
@@ -6523,14 +6523,14 @@ fn closure_arg(inout c: C, n: ast.Node, i: u32, ps: List[u32], want: u32) -> Res
 fn combinator(inout c: C, n: ast.Node, pv: PV, mi: u32) -> Result[V, diag.Diag] {
     let ty = pv.ty
     let el = types.get(c.t, ty).a
-    var want = NONE
+    let mut want = NONE
     if mi == M_FILTER || mi == M_ANY || mi == M_ALL { want = types.BOOL }
     if mi == M_FOR_EACH { want = types.UNIT }
     let ro = recv_op(inout c, pv)
     let fv = closure_arg(inout c, n, 0, one(el), want)?
     let ae = nd(c, arg_expr(c, at(c, n.c, 0)))
     if poisoned(c, fv.ty) || poisoned(c, el) { return Ok(poison_v(inout c)) }
-    var ok = types.kind(c.t, fv.ty) == types.T_FN
+    let mut ok = types.kind(c.t, fv.ty) == types.T_FN
     if ok {
         let ps = types.elems(c.t, fv.ty)
         ok = ps.len() == 1 && ps[0] == el
@@ -6562,7 +6562,7 @@ fn combinator(inout c: C, n: ast.Node, pv: PV, mi: u32) -> Result[V, diag.Diag] 
     let item = read(inout c, ipl, el, 0)
         let keep = callv(inout c, fv.op, one(item), types.BOOL, n.line)
         let tm = ir.open(c.ir)
-        var x = item
+        let mut x = item.copy()
         if owns(c, el) { x = emit_val(inout c, ir.S_CLONE, item, 0, 0, el, el, n.line) }
         builtin_op(inout c, ir.B_LIST_PUSH, two(outp, x), types.UNIT, n.line)
         let then = ir.close(inout c.ir, tm)
@@ -6616,7 +6616,7 @@ fn fold_list(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
     if poisoned(c, fv.ty) || poisoned(c, want) { return Ok(poison_v(inout c)) }
     if fv.ty != want {
         let ae = nd(c, arg_expr(c, at(c, n.c, 1)))
-        var m = q3("expected fn(", ts(c, acc_ty), ", ", ts(c, el), ") -> ", ts(c, acc_ty), ", found ")
+        let mut m = q3("expected fn(", ts(c, acc_ty), ", ", ts(c, el), ") -> ", ts(c, acc_ty), ", found ")
         bytes.append(inout m, ts(c, fv.ty))
         return Err(err("E0401", ae.line, ae.col, m))
     }
@@ -6668,7 +6668,7 @@ fn spawn(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
 fn thread_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag.Diag] {
     if head == c.w.heap[4] {
         if n.d != 1 { return Err(err("E0405", n.line, n.col, s("`Mutex.new` takes exactly one argument"))) }
-        var hint = NONE
+        let mut hint = NONE
         if exp != NONE && types.kind(c.t, exp) == types.T_MUTEX { hint = types.get(c.t, exp).a }
         let ae = arg_expr(c, at(c, n.c, 0))
         let x = nd(c, ae)

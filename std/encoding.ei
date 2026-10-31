@@ -48,7 +48,7 @@ pub fn hex(b: List[u8]) -> String { text(hex_bytes(b, false)) }
 pub fn hex_upper(b: List[u8]) -> String { text(hex_bytes(b, true)) }
 
 fn hex_bytes(b: List[u8], up: bool) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     for x in b {
         out.push(hex_digit(x >> 4, up))
         out.push(hex_digit(x & 15, up))
@@ -66,8 +66,8 @@ fn hex_val(c: u8) -> Option[u8] {
 /// The bytes of hex digits (either case, nothing else; an even number of them).
 pub fn unhex(s: List[u8]) -> Result[List[u8], DecodeError] {
     if s.len() % 2 != 0 { return Err(DecodeError(BadLength, s.len())) }
-    var out: List[u8] = List.new()
-    var i: usize = 0
+    let mut out: List[u8] = List.new()
+    let mut i: usize = 0
     while i < s.len() {
         let hi = match hex_val(s[i]) {
             Some(v) => v
@@ -125,8 +125,8 @@ fn b64_val(c: u8, a: Alphabet) -> Option[u8] {
 
 /// Base64 of `b` in alphabet `a`, padded with `=` to a multiple of 4 when `pad`.
 pub fn base64_encode(b: List[u8], a: Alphabet, pad: bool) -> String {
-    var out: List[u8] = List.new()
-    var i: usize = 0
+    let mut out: List[u8] = List.new()
+    let mut i: usize = 0
     while i + 3 <= b.len() {
         let n = ((b[i] as u32) << 16) | ((b[i + 1] as u32) << 8) | (b[i + 2] as u32)
         out.push(b64_char(((n >> 18) & 63) as u8, a))
@@ -163,8 +163,8 @@ pub fn base64_url(b: List[u8]) -> String { base64_encode(b, UrlSafe, false) }
 /// The bytes of base64 text in alphabet `a`, with padding as `p` says.
 pub fn base64_decode(s: List[u8], a: Alphabet, p: Padding) -> Result[List[u8], DecodeError] {
     // the data characters, and how many `=` follow them
-    var n = s.len()
-    var pads: usize = 0
+    let mut n = s.len()
+    let mut pads: usize = 0
     while n > 0 && s[n - 1] == 61 && pads < 2 {
         n -= 1
         pads += 1
@@ -192,9 +192,9 @@ pub fn base64_decode(s: List[u8], a: Alphabet, p: Padding) -> Result[List[u8], D
     if n % 4 == 1 { return Err(DecodeError(BadLength, n)) }
     if pads > 0 && n % 4 == 0 { return Err(DecodeError(BadPadding, n)) }
     if pads > 0 && (4 - n % 4) != pads { return Err(DecodeError(BadPadding, n)) }
-    var out: List[u8] = List.new()
-    var acc: u32 = 0
-    var bits: u32 = 0
+    let mut out: List[u8] = List.new()
+    let mut acc: u32 = 0
+    let mut bits: u32 = 0
     for i in 0..n {
         let v = match b64_val(s[i], a) {
             Some(x) => x
@@ -245,7 +245,7 @@ pub fn signed64(v: u64) -> i64 {
 }
 
 fn push_le(inout out: List[u8], v: u64, n: u32) {
-    var x = v
+    let mut x = v.copy()
     for i in 0..n {
         out.push((x & 255) as u8)
         x = x >> 8
@@ -253,7 +253,7 @@ fn push_le(inout out: List[u8], v: u64, n: u32) {
 }
 
 fn push_be(inout out: List[u8], v: u64, n: u32) {
-    var i = n
+    let mut i = n.copy()
     while i > 0 {
         i -= 1
         out.push(((v >> ((i * 8) as u64)) & 255) as u8)
@@ -262,8 +262,8 @@ fn push_be(inout out: List[u8], v: u64, n: u32) {
 
 fn read_le(b: List[u8], at: usize, n: usize) -> Option[u64] {
     if at + n > b.len() { return None }
-    var v: u64 = 0
-    var i = n
+    let mut v: u64 = 0
+    let mut i = n.copy()
     while i > 0 {
         i -= 1
         v = (v << 8) | (b[at + i] as u64)
@@ -273,7 +273,7 @@ fn read_le(b: List[u8], at: usize, n: usize) -> Option[u64] {
 
 fn read_be(b: List[u8], at: usize, n: usize) -> Option[u64] {
     if at + n > b.len() { return None }
-    var v: u64 = 0
+    let mut v: u64 = 0
     for i in 0..n { v = (v << 8) | (b[at + i] as u64) }
     Some(v)
 }

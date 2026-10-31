@@ -21,7 +21,7 @@ fn show(r: Result[jsonrpc.Reply, String]) uses io {
     match r {
         Ok(jsonrpc.Value(d, n)) => io.outln(bytes.concat(sys.lit("= "), json.write(d, n)))
         Ok(jsonrpc.Fault(e)) => {
-            var l = sys.lit("! ")
+            let mut l = sys.lit("! ")
             bytes.append(inout l, bytes.from_i64(e.code))
             l.push(32)
             bytes.append(inout l, e.message)
@@ -33,7 +33,7 @@ fn show(r: Result[jsonrpc.Reply, String]) uses io {
 
 fn main() uses io, net, clock, threads {
     let dl = time.after_ms(20000)
-    var cfg = server.config()
+    let mut cfg = server.config()
     cfg.workers = 4
     let srv = server.listen(net.ipv4(127, 0, 0, 1, 0), cfg).unwrap()
     let addr = srv.addr()
@@ -44,7 +44,7 @@ fn main() uses io, net, clock, threads {
     let running = spawn(|| -> server.Stats { srv.serve(h, t).unwrap() })
 
     print("-- calls on one connection")
-    var c = client.connect(addr, dl).unwrap()
+    let mut c = client.connect(addr, dl).unwrap()
     show(jsonrpc.call(inout c, "/rpc", "kv.put", sys.lit("[\"lang\", \"eider\"]"), 1, dl))
     show(jsonrpc.call(inout c, "/rpc", "kv.put", sys.lit("{\"key\": \"lang\", \"value\": \"Eider\"}"), 2, dl))
     show(jsonrpc.call(inout c, "/rpc", "kv.get", sys.lit("[\"lang\"]"), 3, dl))
@@ -74,18 +74,18 @@ fn main() uses io, net, clock, threads {
     io.outln(client.get(addr, "/health", dl).unwrap().body)
 
     print("-- four clients at once")
-    var g: task.Group[i64] = task.group(tok.child())
+    let mut g: task.Group[i64] = task.group(tok.child())
     for w in 0..4 {
         let who = w as i64
         g.spawn(|tk: task.Token| -> Result[i64, String] {
-            var cc = client.connect(addr, tk.bound(dl))?
-            var stored: i64 = 0
+            let mut cc = client.connect(addr, tk.bound(dl))?
+            let mut stored: i64 = 0
             for i in 0..25 {
-                var key = sys.lit("w")
+                let mut key = sys.lit("w")
                 bytes.append(inout key, bytes.from_i64(who))
                 key.push(45)
                 bytes.append(inout key, bytes.from_i64(i as i64))
-                var params = sys.lit("[")
+                let mut params = sys.lit("[")
                 json.quote_into(inout params, key)
                 bytes.append(inout params, sys.lit(", \"v\"]"))
                 match jsonrpc.call(inout cc, "/rpc", "kv.put", params, i as i64, tk.bound(dl))? {
@@ -97,7 +97,7 @@ fn main() uses io, net, clock, threads {
             Ok(stored)
         })
     }
-    var total: i64 = 0
+    let mut total: i64 = 0
     for n in g.wait().unwrap() { total += n }
     print(total)
     match jsonrpc.call(inout c, "/rpc", "kv.keys", List.new(), 15, dl).unwrap() {

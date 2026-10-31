@@ -37,7 +37,7 @@ fn pattern(p: str) -> List[Seg] {
     let s = sys.lit(p)
     if s.len() == 0 || s[0] != 47 { panic("router: a pattern starts with /") }
     let parts = bytes.split(bytes.slice(s, 1, s.len()), 47)
-    var out: List[Seg] = List.new()
+    let mut out: List[Seg] = List.new()
     for i in 0..parts.len() {
         let t = parts[i]
         if t.len() > 0 && t[0] == 58 {
@@ -57,7 +57,7 @@ fn pattern(p: str) -> List[Seg] {
 /// malformed escape.
 fn segments(path: List[u8]) -> Option[List[List[u8]]] {
     if path.len() == 0 || path[0] != 47 { return None }
-    var out: List[List[u8]] = List.new()
+    let mut out: List[List[u8]] = List.new()
     for raw in bytes.split(bytes.slice(path, 1, path.len()), 47) {
         out.push(http.pct_decode(raw, false)?)
     }
@@ -66,12 +66,12 @@ fn segments(path: List[u8]) -> Option[List[List[u8]]] {
 
 /// The parameters if `segs` matches `path`.
 fn match_route(segs: List[Seg], path: List[List[u8]]) -> Option[List[http.Header]] {
-    var ps: List[http.Header] = List.new()
+    let mut ps: List[http.Header] = List.new()
     for i in 0..segs.len() {
         let s = segs[i]
         if s.kind == REST {
-            var rest: List[List[u8]] = List.new()
-            var k = i
+            let mut rest: List[List[u8]] = List.new()
+            let mut k = i.copy()
             while k < path.len() {
                 rest.push(path[k])
                 k += 1
@@ -93,7 +93,7 @@ fn match_route(segs: List[Seg], path: List[List[u8]]) -> Option[List[http.Header
 
 /// Whether route `a` is more specific than route `b` (see the module comment).
 fn more_specific(a: List[Seg], b: List[Seg]) -> bool {
-    var i: usize = 0
+    let mut i: usize = 0
     while i < a.len() && i < b.len() {
         if a[i].kind != b[i].kind { return a[i].kind < b[i].kind }
         i += 1
@@ -129,17 +129,17 @@ impl Router {
             }
         }
         // the best route with the method, and the methods of every route matching the path
-        var best: Option[usize] = None
-        var best_get: Option[usize] = None
-        var best_params: List[http.Header] = List.new()
-        var get_params: List[http.Header] = List.new()
-        var allowed: List[List[u8]] = List.new()
+        let mut best: Option[usize] = None
+        let mut best_get: Option[usize] = None
+        let mut best_params: List[http.Header] = List.new()
+        let mut get_params: List[http.Header] = List.new()
+        let mut allowed: List[List[u8]] = List.new()
         let head = bytes.eq(req.method, sys.lit("HEAD"))
         for i in 0..self.routes.len() {
             let r = self.routes[i]
             match match_route(r.segs, path) {
                 Some(ps) => {
-                    var seen = false
+                    let mut seen = false
                     for a in allowed {
                         if bytes.eq(a, r.method) { seen = true }
                     }
@@ -173,7 +173,7 @@ impl Router {
         }
         match best {
             Some(i) => {
-                var r = req
+                let mut r = req.copy()
                 r.params = best_params
                 let h = self.routes[i].h
                 h(r)
@@ -183,15 +183,15 @@ impl Router {
                     let nf = self.not_found
                     return nf(req)
                 }
-                var methods = allowed
-                var has_get = false
-                var has_head = false
+                let mut methods = allowed.copy()
+                let mut has_get = false
+                let mut has_head = false
                 for m in allowed {
                     if bytes.eq(m, sys.lit("GET")) { has_get = true }
                     if bytes.eq(m, sys.lit("HEAD")) { has_head = true }
                 }
                 if has_get && !has_head { methods.push(sys.lit("HEAD")) }
-                var resp = http.error_response(405)
+                let mut resp = http.error_response(405)
                 resp.set_header("Allow", bytes.join(methods, sys.lit(", ")))
                 resp
             }

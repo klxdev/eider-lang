@@ -120,15 +120,15 @@ impl Conn {
 }
 
 fn bad(why: List[u8]) -> String {
-    var m = String.from("invalid response: ")
+    let mut m = String.from("invalid response: ")
     m.append(sys.to_string(why))
     m
 }
 
 /// One request on a new connection, closed afterwards.
 pub fn fetch(a: net.Addr, req: http.Request, dl: time.Deadline) -> Result[http.Response, String] uses net, io, clock {
-    var c = connect(a, dl)?
-    var r = req
+    let mut c = connect(a, dl)?
+    let mut r = req.copy()
     r.keep_alive = false
     let resp = c.request(r, dl)
     c.close()
@@ -142,7 +142,7 @@ pub fn get(a: net.Addr, target: str, dl: time.Deadline) -> Result[http.Response,
 
 /// POST `body` with `content_type` to `target` (one-shot).
 pub fn post(a: net.Addr, target: str, content_type: str, body: List[u8], dl: time.Deadline) -> Result[http.Response, String] uses net, io, clock {
-    var r = http.request("POST", sys.lit(target))
+    let mut r = http.request("POST", sys.lit(target))
     r.set_header("Content-Type", sys.lit(content_type))
     r.body = body
     fetch(a, r, dl)

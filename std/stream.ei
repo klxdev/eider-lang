@@ -132,7 +132,7 @@ pub fn error_text(kind: Kind, message: String) -> Error { Error(kind, message) }
 
 /// The error for a negative core status: its kind, and "<what>: <the system's message>".
 pub fn os_error(what: str, status: i64) -> Error {
-    var m = String.from(what)
+    let mut m = String.from(what)
     m.push_str(": ")
     m.append(sys.error_text(status))
     Error(kind_of(os.err_kind(status)), m)
@@ -140,7 +140,7 @@ pub fn os_error(what: str, status: i64) -> Error {
 
 /// "<what>: timed out", kind TimedOut.
 pub fn timed_out(what: str) -> Error {
-    var m = String.from(what)
+    let mut m = String.from(what)
     m.push_str(": timed out")
     Error(TimedOut, m)
 }
@@ -213,7 +213,7 @@ fn text_of(b: List[u8]) -> Result[String, Error] {
     match String.from_bytes(b) {
         Ok(s) => Ok(s)
         Err(at) => {
-            var m = String.from("not UTF-8 text at byte ")
+            let mut m = String.from("not UTF-8 text at byte ")
             m.append(at.to_string())
             Err(Error(InvalidData, m))
         }
@@ -244,7 +244,7 @@ pub fn read_exact_by[R: Reader](inout r: R, n: usize, dl: time.Deadline) -> Resu
 }
 
 fn eof(want: usize, got: usize) -> Error {
-    var m = String.from("unexpected end of stream after ")
+    let mut m = String.from("unexpected end of stream after ")
     m.append(got.to_string())
     m.push_str(" of ")
     m.append(want.to_string())
@@ -323,8 +323,8 @@ pub fn copy_by[R: Reader, W: Writer](inout r: R, inout w: W, dl: time.Deadline) 
 
 /// data[at..]
 fn tail(data: List[u8], at: usize) -> List[u8] {
-    var out: List[u8] = List.new()
-    var i = at
+    let mut out: List[u8] = List.new()
+    let mut i = at.copy()
     while i < data.len() {
         out.push(data[i])
         i += 1
@@ -334,8 +334,8 @@ fn tail(data: List[u8], at: usize) -> List[u8] {
 
 /// data[a..b]
 fn part(data: List[u8], a: usize, b: usize) -> List[u8] {
-    var out: List[u8] = List.new()
-    var i = a
+    let mut out: List[u8] = List.new()
+    let mut i = a.copy()
     while i < b {
         out.push(data[i])
         i += 1
@@ -364,12 +364,12 @@ pub fn stderr() -> Fd { Fd(2) }
 /// Open `path` with std/fd's flags (`fd.READ`, `fd.WRITE | fd.CREATE | fd.TRUNCATE`, ...) and
 /// permission bits `mode` for a created file.
 pub fn open(path: List[u8], flags: i32, mode: i32) -> Result[Fd, Error] uses fs {
-    var p: List[List[u8]] = List.new()
+    let mut p: List[List[u8]] = List.new()
     p.push(path)
     sys.send_all(p)
     let n = os.fd_open(flags, mode)
     if n < 0 {
-        var m = String.from("cannot open ")
+        let mut m = String.from("cannot open ")
         m.append(sys.to_string(path))
         m.push_str(": ")
         m.append(sys.error_text(n))
@@ -509,7 +509,7 @@ pub fn connect_by(a: net.Addr, dl: time.Deadline) -> Result[Fd, Error] uses net,
     if c < 0 {
         if os.err_kind(c) != 2 {
             s.close()
-            var m = String.from("cannot connect to ")
+            let mut m = String.from("cannot connect to ")
             m.append(sys.to_string(net.text(a)))
             m.push_str(": ")
             m.append(sys.error_text(c))
@@ -525,7 +525,7 @@ pub fn connect_by(a: net.Addr, dl: time.Deadline) -> Result[Fd, Error] uses net,
         let r = os.sock_error(s.fd)
         if r < 0 {
             s.close()
-            var m = String.from("cannot connect to ")
+            let mut m = String.from("cannot connect to ")
             m.append(sys.to_string(net.text(a)))
             m.push_str(": ")
             m.append(sys.error_text(r))
@@ -585,7 +585,7 @@ impl Bytes {
     /// The next line without its `\n` (or `\r\n`); None at end of input.
     fn read_line(inout self) -> Option[List[u8]] {
         if self.pos >= self.data.len() { return None }
-        var end = self.pos
+        let mut end = self.pos.copy()
         while end < self.data.len() && self.data[end] != 10 { end += 1 }
         let stop = if end < self.data.len() { end + 1 } else { end }
         let line = strip_eol(part(self.data, self.pos, stop))
@@ -647,7 +647,7 @@ impl Writer for Discard {
 }
 
 fn strip_eol(l: List[u8]) -> List[u8] {
-    var n = l.len()
+    let mut n = l.len()
     if n > 0 && l[n - 1] == 10 { n -= 1 }
     if n > 0 && l[n - 1] == 13 { n -= 1 }
     if n == l.len() { return l }

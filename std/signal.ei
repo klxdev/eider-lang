@@ -58,7 +58,7 @@ pub fn events_fd() -> Result[i32, String] uses io {
 /// The signals delivered since the last call, in order (empty if none).
 pub fn pending() -> Result[List[i32], String] uses io {
     let f = events_fd()?
-    var out: List[i32] = List.new()
+    let mut out: List[i32] = List.new()
     while true {
         let n = sys.read_fd(f, 256)
         if n <= 0 { break }

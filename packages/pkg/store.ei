@@ -33,7 +33,7 @@ pub fn home() -> Result[List[u8], String] uses io, fs {
 
 /// Names that never belong to a package's content.
 pub fn skipped() -> List[List[u8]] {
-    var s: List[List[u8]] = List.new()
+    let mut s: List[List[u8]] = List.new()
     s.push(sys.lit(".git"))
     s.push(sys.lit("deps"))
     s.push(sys.lit("vendor"))
@@ -43,7 +43,7 @@ pub fn skipped() -> List[List[u8]] {
 /// sha256 over every file: `path NUL hex(sha256(content)) LF`, in sorted path order.
 pub fn tree_hash(dir: List[u8]) -> Result[List[u8], String] uses fs {
     let s = sha256.new()
-    var manifest: List[u8] = List.new()
+    let mut manifest: List[u8] = List.new()
     for rel in fs.walk(dir, skipped())? {
         let data = fs.read(fs.join(dir, rel))?
         bytes.append(inout manifest, rel)
@@ -51,13 +51,13 @@ pub fn tree_hash(dir: List[u8]) -> Result[List[u8], String] uses fs {
         bytes.append(inout manifest, bytes.hex(sha256.digest(s, data)))
         manifest.push(10)
     }
-    var out = sys.lit("sha256-")
+    let mut out = sys.lit("sha256-")
     bytes.append(inout out, bytes.hex(sha256.digest(s, manifest)))
     Ok(out)
 }
 
 fn mirror_dir(home: List[u8], url: List[u8]) -> List[u8] {
-    var name: List[u8] = List.new()
+    let mut name: List[u8] = List.new()
     for c in url {
         if bytes.is_ident(c) || c == 45 || c == 46 { name.push(c) } else { name.push(95) }
     }
@@ -65,14 +65,14 @@ fn mirror_dir(home: List[u8], url: List[u8]) -> List[u8] {
 }
 
 fn git(args: List[List[u8]]) -> Result[List[u8], String] uses io, fs, net {
-    var argv: List[List[u8]] = List.new()
+    let mut argv: List[List[u8]] = List.new()
     argv.push(sys.lit("git"))
     for a in args { argv.push(a) }
     proc.check(argv)
 }
 
 fn a2(a: List[u8], b: List[u8]) -> List[List[u8]] {
-    var l: List[List[u8]] = List.new()
+    let mut l: List[List[u8]] = List.new()
     l.push(a)
     l.push(b)
     l
@@ -81,14 +81,14 @@ fn a2(a: List[u8], b: List[u8]) -> List[List[u8]] {
 /// The commit `ref` names in the mirror, if any.
 fn rev_parse(m: List[u8], r: List[u8]) -> Option[List[u8]] uses io, fs, net {
     if !fs.exists(m) { return None }
-    var args = a2(sys.lit("-C"), m)
+    let mut args = a2(sys.lit("-C"), m)
     args.push(sys.lit("rev-parse"))
     args.push(sys.lit("--verify"))
     args.push(sys.lit("--quiet"))
-    var spec = r
+    let mut spec = r.copy()
     bytes.append(inout spec, sys.lit("^{commit}"))
     args.push(spec)
-    var argv: List[List[u8]] = List.new()
+    let mut argv: List[List[u8]] = List.new()
     argv.push(sys.lit("git"))
     for a in args { argv.push(a) }
     match proc.output(argv) {
@@ -101,15 +101,15 @@ fn rev_parse(m: List[u8], r: List[u8]) -> Option[List[u8]] uses io, fs, net {
 }
 
 fn candidates(want: List[u8], is_rev: bool) -> List[List[u8]] {
-    var c: List[List[u8]] = List.new()
+    let mut c: List[List[u8]] = List.new()
     if is_rev {
         c.push(want)
         return c
     }
-    var v = sys.lit("refs/tags/v")
+    let mut v = sys.lit("refs/tags/v")
     bytes.append(inout v, want)
     c.push(v)
-    var plain = sys.lit("refs/tags/")
+    let mut plain = sys.lit("refs/tags/")
     bytes.append(inout plain, want)
     c.push(plain)
     c
@@ -126,7 +126,7 @@ fn find_commit(m: List[u8], want: List[u8], is_rev: bool) -> Option[List[u8]] us
 }
 
 fn offline_error(url: List[u8], want: List[u8]) -> String {
-    var e = String.from("offline: ")
+    let mut e = String.from("offline: ")
     e.append(sys.to_string(url))
     e.push_str(" has no local copy of ")
     e.append(sys.to_string(want))
@@ -137,7 +137,7 @@ fn offline_error(url: List[u8], want: List[u8]) -> String {
 fn sync_mirror(home: List[u8], url: List[u8]) -> Result[bool, String] uses io, fs, net {
     let m = mirror_dir(home, url)
     if fs.exists(m) {
-        var args = a2(sys.lit("-C"), m)
+        let mut args = a2(sys.lit("-C"), m)
         args.push(sys.lit("fetch"))
         args.push(sys.lit("--quiet"))
         args.push(sys.lit("--prune"))
@@ -146,7 +146,7 @@ fn sync_mirror(home: List[u8], url: List[u8]) -> Result[bool, String] uses io, f
         git(args)?
     } else {
         fs.mkdir_all(fs.dirname(m))?
-        var args = a2(sys.lit("clone"), sys.lit("--mirror"))
+        let mut args = a2(sys.lit("clone"), sys.lit("--mirror"))
         args.push(sys.lit("--quiet"))
         args.push(url)
         args.push(m)
@@ -172,7 +172,7 @@ pub fn resolve_commit(home: List[u8], url: List[u8], want: List[u8], is_rev: boo
         Some(c) => { return Ok(c) }
         None => {}
     }
-    var e = String.from("")
+    let mut e = String.from("")
     e.append(sys.to_string(url))
     if is_rev {
         e.push_str(" has no rev `")
@@ -195,7 +195,7 @@ pub fn checkout(home: List[u8], url: List[u8], commit: List[u8], name: List[u8],
         if fs.is_dir(dir) {
             let now = tree_hash(dir)?
             if !bytes.eq(now, h) {
-                var e = String.from("the store copy of `")
+                let mut e = String.from("the store copy of `")
                 e.append(sys.to_string(name))
                 e.push_str("` at ")
                 e.append(sys.to_string(dir))
@@ -215,7 +215,7 @@ pub fn checkout(home: List[u8], url: List[u8], commit: List[u8], name: List[u8],
         if offline { return Err(offline_error(url, want)) }
         sync_mirror(home, url)?
         if rev_parse(m, commit).is_none() {
-            var e = String.from("")
+            let mut e = String.from("")
             e.append(sys.to_string(url))
             e.push_str(" no longer has commit ")
             e.append(sys.to_string(commit))
@@ -228,16 +228,16 @@ pub fn checkout(home: List[u8], url: List[u8], commit: List[u8], name: List[u8],
     let tmp = fs.join(fs.join(home, sys.lit("tmp")), commit)
     fs.remove_all(tmp)?
     fs.mkdir_all(tmp)?
-    var tar = tmp
+    let mut tar = tmp.copy()
     bytes.append(inout tar, sys.lit(".tar"))
-    var args = a2(sys.lit("-C"), mirror_dir(home, url))
+    let mut args = a2(sys.lit("-C"), mirror_dir(home, url))
     args.push(sys.lit("archive"))
     args.push(sys.lit("--format=tar"))
     args.push(sys.lit("-o"))
     args.push(tar)
     args.push(commit)
     git(args)?
-    var untar: List[List[u8]] = List.new()
+    let mut untar: List[List[u8]] = List.new()
     untar.push(sys.lit("tar"))
     untar.push(sys.lit("-xf"))
     untar.push(tar)
@@ -259,7 +259,7 @@ pub fn checkout(home: List[u8], url: List[u8], commit: List[u8], name: List[u8],
 }
 
 pub fn store_dir(home: List[u8], name: List[u8], hash: List[u8]) -> List[u8] {
-    var leaf = name
+    let mut leaf = name.copy()
     leaf.push(45)
     // "sha256-" is 7 bytes; keep 16 hex digits
     bytes.append(inout leaf, bytes.slice(hash, 7, 23))

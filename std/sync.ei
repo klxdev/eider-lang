@@ -109,7 +109,7 @@ pub fn wake_all(ws: List[Parker]) uses io {
 
 /// `ws` without `p`.
 pub fn without(ws: List[Parker], p: Parker) -> List[Parker] {
-    var out: List[Parker] = List.new()
+    let mut out: List[Parker] = List.new()
     for q in ws {
         if q.w.r != p.w.r { out.push(q) }
     }

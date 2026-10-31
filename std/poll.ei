@@ -45,13 +45,13 @@ pub fn remove(p: i32, f: i32) -> Result[bool, String] uses io { ctl(p, 2, f, 0, 
 pub fn wait(p: i32, max: i32, timeout_ms: i64) -> Result[List[Event], String] uses io {
     let n = os.poll_wait(p, max, timeout_ms)
     if n < 0 { return Err(fd.error("poll wait", n)) }
-    var out: List[Event] = List.new()
+    let mut out: List[Event] = List.new()
     let r = sys.take()
-    var i: usize = 0
+    let mut i: usize = 0
     while i < (n as usize) {
         // the token's bits as i64 (a negative token comes back as a u64 above i64's range)
         let u = os.le_u64(r, i * 16)
-        var token: i64 = 0
+        let mut token: i64 = 0
         if u > 9223372036854775807 {
             token = (u - 9223372036854775808) as i64 - 9223372036854775807 - 1
         } else {

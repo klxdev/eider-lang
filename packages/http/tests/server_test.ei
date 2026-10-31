@@ -23,7 +23,7 @@ fn lit(s: str) -> List[u8] { sys.lit(s) }
 
 /// `\n` is CRLF.
 fn wire(s: str) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     for c in sys.lit(s) {
         if c == 10 {
             out.push(13)
@@ -36,7 +36,7 @@ fn wire(s: str) -> List[u8] {
 }
 
 fn app() -> router.Router {
-    var r = router.new()
+    let mut r = router.new()
     r.get("/hello", |q: http.Request| -> http.Response { http.text(200, "hello, world") })
     r.get("/users/:id", |q: http.Request| -> http.Response {
         http.respond(200, "text/plain", bytes.concat(lit("user "), q.param("id").unwrap()))
@@ -51,7 +51,7 @@ fn app() -> router.Router {
         http.respond(200, "text/plain", q.query_param("q").unwrap_or(lit("-")))
     })
     r.get("/bad-header", |q: http.Request| -> http.Response {
-        var resp = http.text(200, "x")
+        let mut resp = http.text(200, "x")
         resp.set_header("X-Injected", wire("a\nSet-Cookie: evil=1"))
         resp
     })
@@ -61,7 +61,7 @@ fn app() -> router.Router {
 fn loopback() -> net.Addr { net.ipv4(127, 0, 0, 1, 0) }
 
 fn show_resp(r: http.Response) uses io {
-    var l = bytes.from_u64(r.status as u64)
+    let mut l = bytes.from_u64(r.status as u64)
     l.push(32)
     for name in [lit("content-type"), lit("content-length"), lit("allow"), lit("connection"), lit("retry-after")] {
         match http.find(r.headers, name) {
@@ -83,7 +83,7 @@ fn show(r: Result[http.Response, String]) uses io {
     match r {
         Ok(resp) => show_resp(resp)
         Err(e) => {
-            var m = String.from("error: ")
+            let mut m = String.from("error: ")
             m.append(e)
             print(m)
         }
@@ -99,8 +99,8 @@ fn raw(a: net.Addr) -> i32 uses net {
 
 /// The responses on `s` until `n` arrived, the peer closed, or `dl`; "eof" when it closed.
 fn read_responses(s: i32, n: usize, dl: time.Deadline) uses io, clock, net {
-    var p = parse.responses(http.limits())
-    var got: usize = 0
+    let mut p = parse.responses(http.limits())
+    let mut got: usize = 0
     while got < n {
         match p.next() {
             parse.Done(m) => {
@@ -158,7 +158,7 @@ fn start(cfg: server.Config, tok: task.Token) -> (net.Addr, Task[server.Stats]) 
 
 fn main() uses io, net, clock, threads {
     let dl = time.after_ms(20000)
-    var cfg = server.config()
+    let mut cfg = server.config()
     cfg.workers = 4
     let tok = task.root()
     let (a, th) = start(cfg, tok)
@@ -181,13 +181,13 @@ fn main() uses io, net, clock, threads {
     show(client.fetch(a, http.request("PUT", lit("/hello")), dl))
 
     print("-- keep-alive")
-    var c = client.connect(a, dl).unwrap()
+    let mut c = client.connect(a, dl).unwrap()
     show(c.request(http.request("GET", lit("/hello")), dl))
     print(c.open)
-    var post = http.request("POST", lit("/echo"))
+    let mut post = http.request("POST", lit("/echo"))
     post.body = lit("body one")
     show(c.request(post, dl))
-    var last = http.request("GET", lit("/users/7"))
+    let mut last = http.request("GET", lit("/users/7"))
     last.keep_alive = false
     show(c.request(last, dl))
     print(c.open)
@@ -228,7 +228,7 @@ fn main() uses io, net, clock, threads {
     print(st.rejected)
 
     print("-- deadlines")
-    var tc = server.config()
+    let mut tc = server.config()
     tc.workers = 2
     tc.read_timeout = time.millis(200)
     tc.idle_timeout = time.millis(300)
@@ -249,7 +249,7 @@ fn main() uses io, net, clock, threads {
     print(time.mono_ns() - t1 >= 300000000)
     fd.close(s7).unwrap()
     // max requests: the second response closes the connection
-    var c2 = client.connect(b, dl).unwrap()
+    let mut c2 = client.connect(b, dl).unwrap()
     show(c2.request(http.request("GET", lit("/hello")), dl))
     show(c2.request(http.request("GET", lit("/hello")), dl))
     print(c2.open)
@@ -258,13 +258,13 @@ fn main() uses io, net, clock, threads {
     print(st2.timeouts)
 
     print("-- back-pressure")
-    var bc = server.config()
+    let mut bc = server.config()
     bc.workers = 1
     bc.queue = 1
     let tok3 = task.root()
     let (d, th3) = start(bc, tok3)
     // A holds the only worker (its first response proves it is being served) ...
-    var ca = client.connect(d, dl).unwrap()
+    let mut ca = client.connect(d, dl).unwrap()
     show(ca.request(http.request("GET", lit("/hello")), dl))
     // ... B waits in the queue (it sent its request), C finds the queue full
     let sb = raw(d)
@@ -285,7 +285,7 @@ fn main() uses io, net, clock, threads {
     print("-- graceful shutdown")
     let tok4 = task.root()
     let (e, th4) = start(server.config(), tok4)
-    var idle = client.connect(e, dl).unwrap()
+    let mut idle = client.connect(e, dl).unwrap()
     show(idle.request(http.request("GET", lit("/hello")), dl))
     // a request half sent when the server is told to stop ...
     let s8 = raw(e)

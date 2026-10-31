@@ -9,7 +9,7 @@ fn main() uses io {
     io.outln(bytes.hex(sha256.digest(s, sys.lit("abc"))))
     io.outln(bytes.hex(sha256.digest(s, sys.lit("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"))))
     // 55, 56 and 64 bytes: the padding edge cases
-    var b: List[u8] = List.new()
+    let mut b: List[u8] = List.new()
     for i in 0..64 {
         b.push(97)
         if i == 54 || i == 55 || i == 63 { io.outln(bytes.hex(sha256.digest(s, b))) }

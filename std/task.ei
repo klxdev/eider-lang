@@ -51,7 +51,7 @@ impl Token {
         let parent = self
         let made = self.st.with(|s: TokSt| -> (TokSt, Token) {
             var t = s
-            var at = dl.mono_ns()
+            let mut at = dl.mono_ns()
             if t.deadline_ns < at { at = t.deadline_ns }
             let kid = Token(sync.lock(TokSt(t.cancelled, at, List.new(), 1, List.new())), t.next_id)
             t.next_id += 1
@@ -111,7 +111,7 @@ impl Token {
     /// Waits until the token is cancelled or expires (true), or `dl` passes first (false).
     fn wait(self, dl: time.Deadline) -> bool uses io, clock {
         let c = self.cancel_case(true)
-        var cases: List[chan.Case[bool]] = List.new()
+        let mut cases: List[chan.Case[bool]] = List.new()
         cases.push(c)
         chan.select(cases, dl).is_some()
     }
@@ -147,7 +147,7 @@ impl Token {
         let id = kid.id
         self.st.update(|s: TokSt| -> TokSt {
             var t = s
-            var keep: List[Token] = List.new()
+            let mut keep: List[Token] = List.new()
             for k in t.kids {
                 if k.id != id { keep.push(k) }
             }
@@ -277,11 +277,11 @@ pub type Pool = { jobs: chan.Channel[fn()], workers: List[Task[i32]] }
 pub fn pool(n: usize, queue: usize) -> Pool uses threads, io, clock {
     if n == 0 { panic("task.pool: needs at least one worker") }
     let jobs: chan.Channel[fn()] = chan.bounded(queue)
-    var ws: List[Task[i32]] = List.new()
+    let mut ws: List[Task[i32]] = List.new()
     for i in 0..n {
         let js = jobs
         ws.push(spawn(|| -> i32 {
-            var going = true
+            let mut going = true
             while going {
                 match js.recv(time.never()) {
                     chan.Value(job) => job()

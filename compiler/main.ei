@@ -50,7 +50,7 @@ fn is(a: List[u8], s: str) -> bool { bytes.eq(a, sys.lit(s)) }
 
 /// `eiderc --help`: every command, option and environment variable.
 fn usage_text() -> List[u8] {
-    var t: List[u8] = List.new()
+    let mut t: List[u8] = List.new()
     for l in [
         "eiderc 0.1.0 (the Eider compiler, written in Eider: Eider -> C11)",
         "",
@@ -94,7 +94,7 @@ fn usage_text() -> List[u8] {
 
 /// A usage error: the message and a pointer to --help on stderr, exit 2.
 fn usage_error(msg: List[u8]) uses io {
-    var m = sys.lit("eiderc: ")
+    let mut m = sys.lit("eiderc: ")
     bytes.append(inout m, msg)
     io.errln(m)
     io.errln(sys.lit("run `eiderc --help` for the commands and options"))
@@ -108,7 +108,7 @@ fn usage() uses io {
 }
 
 fn quoted(pre: str, a: List[u8]) -> List[u8] {
-    var m = sys.lit(pre)
+    let mut m = sys.lit(pre)
     m.push(96)
     bytes.append(inout m, a)
     m.push(96)
@@ -121,20 +121,20 @@ fn known_cmd(c: List[u8]) -> bool {
 
 fn parse_args() -> Args uses io {
     let argv = env.args()
-    var cmd: List[u8] = List.new()
-    var file: List[u8] = List.new()
-    var json = false
-    var out: List[u8] = List.new()
-    var release = false
-    var tests = false
-    var lib = false
-    var wasm = false
-    var compile_fail = false
-    var libs: List[List[u8]] = List.new()
-    var overlay: List[List[u8]] = List.new()
-    var max_errors = diag.MAX_ERRORS
-    var all_errors = false
-    var i: usize = 1
+    let mut cmd: List[u8] = List.new()
+    let mut file: List[u8] = List.new()
+    let mut json = false
+    let mut out: List[u8] = List.new()
+    let mut release = false
+    let mut tests = false
+    let mut lib = false
+    let mut wasm = false
+    let mut compile_fail = false
+    let mut libs: List[List[u8]] = List.new()
+    let mut overlay: List[List[u8]] = List.new()
+    let mut max_errors = diag.MAX_ERRORS
+    let mut all_errors = false
+    let mut i: usize = 1
     while i < argv.len() {
         let a = argv[i]
         i += 1
@@ -210,7 +210,7 @@ fn parse_args() -> Args uses io {
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
 /// the file it is in) on stderr. Module prefixes in the text are shown as `module.Name`.
 fn report(d: diag.Diag, a: Args, src: List[u8]) uses io, fs {
-    var d2 = d
+    let mut d2 = d.copy()
     d2.msg = diag.demangle(d.msg)
     d2.help = diag.demangle(d.help)
     let elsewhere = d2.file.len() > 0 && !bytes.eq(d2.file, a.file)
@@ -228,7 +228,7 @@ fn report(d: diag.Diag, a: Args, src: List[u8]) uses io, fs {
 }
 
 fn one(d: diag.Diag) -> List[diag.Diag] {
-    var out: List[diag.Diag] = List.new()
+    let mut out: List[diag.Diag] = List.new()
     out.push(d)
     out
 }
@@ -238,7 +238,7 @@ fn one(d: diag.Diag) -> List[diag.Diag] {
 fn fail(ds: List[diag.Diag], a: Args, src: List[u8]) uses io, fs {
     let all = diag.dedup(ds)
     let total = all.len() as u64
-    var shown = total
+    let mut shown = total.copy()
     if a.max_errors > 0 && total > a.max_errors { shown = a.max_errors }
     for i in 0..shown { report(all[i as usize], a, src) }
     if !a.json { io.errln(diag.summary(total)) }
@@ -246,7 +246,7 @@ fn fail(ds: List[diag.Diag], a: Args, src: List[u8]) uses io, fs {
         if a.json {
             io.outln(diag.capped_json(shown, total))
         } else {
-            var m = sys.lit("note: ")
+            let mut m = sys.lit("note: ")
             bytes.append(inout m, diag.capped_note(shown, total))
             io.errln(m)
         }
@@ -255,7 +255,7 @@ fn fail(ds: List[diag.Diag], a: Args, src: List[u8]) uses io, fs {
 }
 
 fn dump(lx: lex.Lexed, names: intern.Interner) uses io {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     for t in lx.toks {
         bytes.append(inout out, bytes.from_u64(t.line as u64))
         out.push(58)
@@ -287,9 +287,9 @@ fn dump(lx: lex.Lexed, names: intern.Interner) uses io {
 
 /// `eiderc ide`: the analysis of the file (with the overlays read from their text files).
 fn run_ide(a: Args) uses io, fs, net, clock {
-    var paths: List[List[u8]] = List.new()
-    var texts: List[List[u8]] = List.new()
-    var k: usize = 0
+    let mut paths: List[List[u8]] = List.new()
+    let mut texts: List[List[u8]] = List.new()
+    let mut k: usize = 0
     while k + 1 < a.overlay.len() {
         paths.push(a.overlay[k])
         let t: List[u8] = match fs.read(a.overlay[k + 1]) {
@@ -315,8 +315,8 @@ fn migrate_var(a: Args, src: List[u8]) uses io, fs, net, clock {
         emit_migrated(src, first.fixes)
         return
     }
-    var dir = sys.lit(".")
-    var base = a.file
+    let mut dir = sys.lit(".")
+    let mut base = a.file.copy()
     match bytes.rfind_byte(a.file, 47) {
         Some(i) => {
             dir = bytes.slice(a.file, 0, i + 1)
@@ -325,10 +325,10 @@ fn migrate_var(a: Args, src: List[u8]) uses io, fs, net, clock {
         None => {}
     }
     // (in the file's directory made absolute, so the entry is in the file's package)
-    var entry = canon(dir)
+    let mut entry = canon(dir)
     entry.push(47)
     bytes.append(inout entry, sys.lit("__migrate_var__.ei"))
-    var esrc = sys.lit("import \"")
+    let mut esrc = sys.lit("import \"")
     bytes.append(inout esrc, base)
     bytes.append(inout esrc, sys.lit("\"\nfn main() {}\n"))
     let second = migration(entry, esrc, a.file)
@@ -346,15 +346,15 @@ fn audit_report(hits: List[diag.Diag], a: Args, src: List[u8]) uses io, fs {
         if a.json {
             let j = diag.json(d, a.file)
             // {"error":"audit", ... -> {"audit":"reference", ...
-            var out = sys.lit("{\"audit\":\"reference\"")
+            let mut out = sys.lit("{\"audit\":\"reference\"")
             bytes.append(inout out, bytes.slice(j, 16, j.len()))
             io.outln(out)
         } else {
             // rendered like a diagnostic, as a note: `note[audit]: ...`
-            var d2 = d
+            let mut d2 = d.copy()
             d2.msg = diag.demangle(d.msg)
             let elsewhere = d2.file.len() > 0 && !bytes.eq(d2.file, a.file)
-            var text: List[u8] = List.new()
+            let mut text: List[u8] = List.new()
             if elsewhere {
                 let other: List[u8] = match fs.read(d2.file) {
                     Ok(t) => t
@@ -364,13 +364,13 @@ fn audit_report(hits: List[diag.Diag], a: Args, src: List[u8]) uses io, fs {
             } else {
                 text = diag.render(d2, a.file, src)
             }
-            var out = sys.lit("note")
+            let mut out = sys.lit("note")
             bytes.append(inout out, bytes.slice(text, 5, text.len()))
             io.err(out)
         }
     }
     if !a.json {
-        var m = sys.lit("audit-refs: ")
+        let mut m = sys.lit("audit-refs: ")
         bytes.append(inout m, bytes.from_u64(hits.len() as u64))
         bytes.append(inout m, sys.lit(" write(s) change what a reference sees"))
         io.errln(m)
@@ -378,7 +378,7 @@ fn audit_report(hits: List[diag.Diag], a: Args, src: List[u8]) uses io, fs {
 }
 
 fn emit_migrated(src: List[u8], fixes: List[diag.Fix]) uses io {
-    var out = src
+    let mut out = src.copy()
     for f in fixes { out = diag.apply_fix(out, f) }
     io.out(out)
 }
@@ -388,11 +388,11 @@ fn emit_migrated(src: List[u8], fixes: List[diag.Fix]) uses io {
 type Migration = { ok: bool, fixes: List[diag.Fix], diags: List[diag.Diag] }
 
 fn migration(entry: List[u8], esrc: List[u8], target: List[u8]) -> Migration uses io, fs, net, clock {
-    var names = intern.new()
+    let mut names = intern.new()
     let lx = lex.lex_all(esrc, inout names)
     let pr = parse.parse_all(lx.lexed, names)
-    var diags = front.merge(lx.diags, pr.diags)
-    var ld = resolve.load_from(entry, esrc, pr.p, resolve.disk())
+    let mut diags = front.merge(lx.diags, pr.diags)
+    let mut ld = resolve.load_from(entry, esrc, pr.p, resolve.disk())
     resolve.note_syntax(inout ld.p, 0, diags)
     for d in ld.diags { diags.push(d) }
     let none: List[diag.Fix] = List.new()
@@ -401,7 +401,7 @@ fn migration(entry: List[u8], esrc: List[u8], target: List[u8]) -> Migration use
     for d in ev.diags { diags.push(d) }
     let k = check.check_all(ev.p, false, false)
     for d in k.diags { diags.push(d) }
-    var real: List[diag.Diag] = List.new()
+    let mut real: List[diag.Diag] = List.new()
     for d in diags {
         if !(bytes.eq(sys.lit(d.code), sys.lit("E0112")) && d.line == 1 && d.col == 1) { real.push(d) }
     }
@@ -430,7 +430,7 @@ fn main() uses io, fs, net, clock {
     let src = match fs.read(a.file) {
         Ok(s) => s
         Err(e) => {
-            var m = String.from("eiderc: ")
+            let mut m = String.from("eiderc: ")
             m.append(e)
             print(m)
             env.exit(2)
@@ -447,7 +447,7 @@ fn main() uses io, fs, net, clock {
         if front.analyze(src).diags.len() > 0 { env.exit(1) }
         return
     }
-    var names = intern.new()
+    let mut names = intern.new()
     if is(a.cmd, "lex") {
         let r = lex.lex(src, inout names)
         match resolve.lex_diag(r) {
@@ -472,9 +472,9 @@ fn main() uses io, fs, net, clock {
     let p = pr.p
     let backend = is(a.cmd, "emit-c") || is(a.cmd, "emit-header") || is(a.cmd, "build") || is(a.cmd, "run") || is(a.cmd, "test")
     // every pass goes on after an error, with what it has (docs/compiler.md, "Several errors")
-    var ld = resolve.load_from(a.file, src, p, resolve.disk())
+    let mut ld = resolve.load_from(a.file, src, p, resolve.disk())
     resolve.note_syntax(inout ld.p, 0, fdiags)
-    var diags = fdiags
+    let mut diags = fdiags.copy()
     for d in ld.diags { diags.push(d) }
     if ld.fatal { fail(diags, a, src) }
     // what each package of the loaded program uses (docs/compiler.md, "C8.5"): what failed
@@ -508,7 +508,7 @@ fn main() uses io, fs, net, clock {
         let cprog = match lowered {
             Ok(text) => text
             Err(m) => {
-                var msg = sys.lit("eiderc: internal error: ")
+                let mut msg = sys.lit("eiderc: internal error: ")
                 bytes.append(inout msg, m)
                 io.errln(msg)
                 env.exit(3)

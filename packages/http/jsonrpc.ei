@@ -57,7 +57,7 @@ pub fn invalid_params(why: List[u8]) -> Error { Error(INVALID_PARAMS, sys.lit("I
 pub type Params = { doc: json.Doc, node: u32, present: bool }
 
 fn missing(i: u32, name: str) -> Error {
-    var m = sys.lit("missing parameter ")
+    let mut m = sys.lit("missing parameter ")
     bytes.append(inout m, sys.lit(name))
     bytes.append(inout m, sys.lit(" (position "))
     bytes.append(inout m, bytes.from_u64(i as u64))
@@ -66,7 +66,7 @@ fn missing(i: u32, name: str) -> Error {
 }
 
 fn wrong(name: str, what: str) -> Error {
-    var m = sys.lit("parameter ")
+    let mut m = sys.lit("parameter ")
     bytes.append(inout m, sys.lit(name))
     bytes.append(inout m, sys.lit(" must be "))
     bytes.append(inout m, sys.lit(what))
@@ -134,7 +134,7 @@ pub fn nothing() -> List[u8] { sys.lit("null") }
 
 /// An array of JSON texts.
 pub fn array(items: List[List[u8]]) -> List[u8] {
-    var out = sys.lit("[")
+    let mut out = sys.lit("[")
     bytes.append(inout out, bytes.join(items, sys.lit(",")))
     out.push(93)
     out
@@ -142,7 +142,7 @@ pub fn array(items: List[List[u8]]) -> List[u8] {
 
 /// An object from keys and JSON texts (the shorter list decides).
 pub fn object(keys: List[List[u8]], vals: List[List[u8]]) -> List[u8] {
-    var out = sys.lit("{")
+    let mut out = sys.lit("{")
     let n = if keys.len() < vals.len() { keys.len() } else { vals.len() }
     for i in 0..n {
         if i > 0 { out.push(44) }
@@ -205,7 +205,7 @@ impl Table {
         if (n as usize) > self.max_batch {
             return Some(error_reply(nothing(), error_data(INVALID_REQUEST, sys.lit("Invalid Request"), json.quote(sys.lit("batch too large")))))
         }
-        var outs: List[List[u8]] = List.new()
+        let mut outs: List[List[u8]] = List.new()
         for i in 0..n {
             match self.one(d, json.at(d, root, i).unwrap()) {
                 Some(r) => outs.push(r)
@@ -219,8 +219,8 @@ impl Table {
     fn one(self, d: json.Doc, node: u32) -> Option[List[u8]] {
         let bad = error(INVALID_REQUEST, "Invalid Request")
         if json.kind(d, node) != json.OBJECT { return Some(error_reply(nothing(), bad)) }
-        var id_text = nothing()
-        var id_ok = true
+        let mut id_text = nothing()
+        let mut id_ok = true
         let id = json.field(d, node, "id")
         match id {
             Some(i) => {
@@ -241,8 +241,8 @@ impl Table {
             Some(m) => json.as_str(d, m)
             None => None
         }
-        var params = Params(d, 0, false)
-        var params_ok = true
+        let mut params = Params(d, 0, false)
+        let mut params_ok = true
         match json.field(d, node, "params") {
             Some(p) => {
                 let k = json.kind(d, p)
@@ -264,7 +264,7 @@ impl Table {
         if notification { return None }
         match r {
             Ok(v) => {
-                var out = sys.lit("{\"jsonrpc\":\"2.0\",\"result\":")
+                let mut out = sys.lit("{\"jsonrpc\":\"2.0\",\"result\":")
                 bytes.append(inout out, v)
                 bytes.append(inout out, sys.lit(",\"id\":"))
                 bytes.append(inout out, id_text)
@@ -277,7 +277,7 @@ impl Table {
 }
 
 fn error_reply(id_text: List[u8], e: Error) -> List[u8] {
-    var out = sys.lit("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":")
+    let mut out = sys.lit("{\"jsonrpc\":\"2.0\",\"error\":{\"code\":")
     bytes.append(inout out, bytes.from_i64(e.code))
     bytes.append(inout out, sys.lit(",\"message\":"))
     json.quote_into(inout out, e.message)
@@ -304,7 +304,7 @@ fn media_type(v: List[u8]) -> List[u8] {
 pub fn handler(t: Table) -> fn(http.Request) -> http.Response {
     |req: http.Request| -> http.Response {
         if !bytes.eq(req.method, sys.lit("POST")) {
-            var r = http.error_response(405)
+            let mut r = http.error_response(405)
             r.set_header("Allow", sys.lit("POST"))
             return r
         }
@@ -328,7 +328,7 @@ pub type Reply = | Value(doc: json.Doc, node: u32) | Fault(e: Error)
 /// A request body: `params` is JSON text (an array or object; empty for none); `id` None
 /// makes it a notification.
 pub fn request_body(method: List[u8], params: List[u8], id: Option[i64]) -> List[u8] {
-    var out = sys.lit("{\"jsonrpc\":\"2.0\",\"method\":")
+    let mut out = sys.lit("{\"jsonrpc\":\"2.0\",\"method\":")
     json.quote_into(inout out, method)
     if params.len() > 0 {
         bytes.append(inout out, sys.lit(",\"params\":"))
@@ -350,7 +350,7 @@ pub fn parse_reply(body: List[u8], id: i64) -> Result[Reply, String] {
     let d = match json.parse(body) {
         Ok(x) => x
         Err(e) => {
-            var m = String.from("jsonrpc: response is not JSON: ")
+            let mut m = String.from("jsonrpc: response is not JSON: ")
             m.append(sys.to_string(json.error_text(e)))
             return Err(m)
         }
@@ -394,7 +394,7 @@ pub fn parse_reply(body: List[u8], id: i64) -> Result[Reply, String] {
 }
 
 fn post(inout c: client.Conn, target: List[u8], body: List[u8], dl: time.Deadline) -> Result[http.Response, String] uses net, io, clock {
-    var req = http.request("POST", target)
+    let mut req = http.request("POST", target)
     req.set_header("Content-Type", sys.lit("application/json"))
     req.body = body
     c.request(req, dl)
@@ -404,7 +404,7 @@ fn post(inout c: client.Conn, target: List[u8], body: List[u8], dl: time.Deadlin
 pub fn call(inout c: client.Conn, target: str, method: str, params: List[u8], id: i64, dl: time.Deadline) -> Result[Reply, String] uses net, io, clock {
     let resp = post(inout c, sys.lit(target), request_body(sys.lit(method), params, Some(id)), dl)?
     if resp.status != 200 {
-        var m = String.from("jsonrpc: HTTP status ")
+        let mut m = String.from("jsonrpc: HTTP status ")
         m.append(String.from_int(resp.status as i64))
         return Err(m)
     }
@@ -415,7 +415,7 @@ pub fn call(inout c: client.Conn, target: str, method: str, params: List[u8], id
 pub fn notify(inout c: client.Conn, target: str, method: str, params: List[u8], dl: time.Deadline) -> Result[bool, String] uses net, io, clock {
     let resp = post(inout c, sys.lit(target), request_body(sys.lit(method), params, None), dl)?
     if resp.status != 204 {
-        var m = String.from("jsonrpc: HTTP status ")
+        let mut m = String.from("jsonrpc: HTTP status ")
         m.append(String.from_int(resp.status as i64))
         return Err(m)
     }

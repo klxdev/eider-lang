@@ -25,7 +25,7 @@ pub fn start(argv: List[List[u8]], stdin: i32, stdout: i32, stderr: i32) -> Resu
     sys.send_all(argv)
     let n = os.spawn(stdin, stdout, stderr)
     if n < 0 {
-        var m = String.from("cannot run ")
+        let mut m = String.from("cannot run ")
         m.append(sys.to_string(argv[0]))
         m.push_str(": ")
         m.append(sys.error_text(n))
@@ -44,7 +44,7 @@ fn exit_of(n: i64) -> Exit {
 pub fn wait(pid: i32) -> Result[Exit, String] uses io, fs, net {
     let n = os.wait(pid, false)
     if n < 0 {
-        var m = String.from("wait: ")
+        let mut m = String.from("wait: ")
         m.append(sys.error_text(n))
         return Err(m)
     }
@@ -56,7 +56,7 @@ pub fn try_wait(pid: i32) -> Result[Option[Exit], String] uses io, fs, net {
     let n = os.wait(pid, true)
     if n < 0 {
         if os.err_kind(n) == 1 { return Ok(None) }
-        var m = String.from("wait: ")
+        let mut m = String.from("wait: ")
         m.append(sys.error_text(n))
         return Err(m)
     }
@@ -67,7 +67,7 @@ pub fn try_wait(pid: i32) -> Result[Option[Exit], String] uses io, fs, net {
 pub fn kill(pid: i32, sig: i32) -> Result[bool, String] uses io, fs, net {
     let n = os.kill(pid, sig)
     if n < 0 {
-        var m = String.from("kill: ")
+        let mut m = String.from("kill: ")
         m.append(sys.error_text(n))
         return Err(m)
     }

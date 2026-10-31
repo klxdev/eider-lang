@@ -9,7 +9,7 @@ import "std/time"
 
 /// Sends all of `data` before `dl`: false if the deadline passed or the peer is gone.
 pub fn send_by(c: i32, data: List[u8], dl: time.Deadline) -> bool uses net, io, clock {
-    var rest = data
+    let mut rest = data.copy()
     while rest.len() > 0 {
         // writable means the next send takes at least one byte (no other thread writes `c`)
         match fd.wait_ready(c, fd.READY_WRITE, dl) {
@@ -29,8 +29,8 @@ pub fn send_by(c: i32, data: List[u8], dl: time.Deadline) -> bool uses net, io, 
 /// then close: the peer reads our last response instead of a reset.
 pub fn linger_close(c: i32, dl: time.Deadline) uses net, io, clock {
     let z = net.shutdown(c, net.SHUT_WRITE)
-    var drained: usize = 0
-    var going = true
+    let mut drained: usize = 0
+    let mut going = true
     while going && drained < 65536 {
         match fd.wait_ready(c, fd.READY_READ, dl) {
             Ok(true) => {

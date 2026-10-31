@@ -17,10 +17,10 @@ fn pair(p: jsonrpc.Params) -> Result[Pair, jsonrpc.Error] {
 }
 
 fn methods() -> jsonrpc.Table {
-    var t = jsonrpc.table()
+    let mut t = jsonrpc.table()
     t.add_typed("subtract", pair, jsonrpc.int, |x: Pair| -> Result[i64, jsonrpc.Error] { Ok(x.a - x.b) })
     t.add("sum", |p: jsonrpc.Params| -> Result[List[u8], jsonrpc.Error] {
-        var s: i64 = 0
+        let mut s: i64 = 0
         for i in 0..p.count() { s += p.int(i, "")? }
         Ok(jsonrpc.int(s))
     })
@@ -30,7 +30,7 @@ fn methods() -> jsonrpc.Table {
     t.add("notify_sum", |p: jsonrpc.Params| -> Result[List[u8], jsonrpc.Error] { Ok(jsonrpc.nothing()) })
     t.add("get_data", |p: jsonrpc.Params| -> Result[List[u8], jsonrpc.Error] {
         p.none()?
-        var items: List[List[u8]] = List.new()
+        let mut items: List[List[u8]] = List.new()
         items.push(jsonrpc.string(sys.lit("hello")))
         items.push(jsonrpc.int(5))
         Ok(jsonrpc.array(items))
@@ -41,12 +41,12 @@ fn methods() -> jsonrpc.Table {
             Some(n) => p.bool(1, "loud")?
             None => false
         }
-        var g = sys.lit("hello, ")
+        let mut g = sys.lit("hello, ")
         bytes.append(inout g, name)
         if loud { g.push(33) }
-        var keys: List[List[u8]] = List.new()
+        let mut keys: List[List[u8]] = List.new()
         keys.push(sys.lit("greeting"))
-        var vals: List[List[u8]] = List.new()
+        let mut vals: List[List[u8]] = List.new()
         vals.push(jsonrpc.string(g))
         Ok(jsonrpc.object(keys, vals))
     })
@@ -65,7 +65,7 @@ fn ask(t: jsonrpc.Table, body: str) uses io {
 }
 
 fn show_http(r: http.Response) uses io {
-    var l = bytes.from_u64(r.status as u64)
+    let mut l = bytes.from_u64(r.status as u64)
     match r.header("allow") {
         Some(v) => {
             bytes.append(inout l, sys.lit(" allow="))
@@ -89,7 +89,7 @@ fn show_reply(r: Result[jsonrpc.Reply, String]) uses io {
     match r {
         Ok(jsonrpc.Value(d, n)) => io.outln(bytes.concat(sys.lit("value "), json.write(d, n)))
         Ok(jsonrpc.Fault(e)) => {
-            var l = sys.lit("fault ")
+            let mut l = sys.lit("fault ")
             bytes.append(inout l, bytes.from_i64(e.code))
             l.push(32)
             bytes.append(inout l, e.message)
@@ -134,16 +134,16 @@ fn main() uses io {
     ask(t, "{\"jsonrpc\": \"2.0\", \"method\": \"fail\", \"params\": {\"item\": {\"sku\": 12}}, \"id\": 11}")
     ask(t, "{\"jsonrpc\": \"2.0\", \"method\": \"fail\", \"params\": {\"item\": 1}}")
     ask(t, "  ")
-    var big = jsonrpc.table()
+    let mut big = jsonrpc.table()
     big.max_batch = 2
     big.add("x", |p: jsonrpc.Params| -> Result[List[u8], jsonrpc.Error] { Ok(jsonrpc.int(1)) })
     ask(big, "[{\"jsonrpc\":\"2.0\",\"method\":\"x\",\"id\":1},{\"jsonrpc\":\"2.0\",\"method\":\"x\",\"id\":2},{\"jsonrpc\":\"2.0\",\"method\":\"x\",\"id\":3}]")
 
     print("-- over HTTP")
     let h = jsonrpc.handler(t)
-    var get = http.request("GET", sys.lit("/rpc"))
+    let mut get = http.request("GET", sys.lit("/rpc"))
     show_http(h(get))
-    var post = http.request("POST", sys.lit("/rpc"))
+    let mut post = http.request("POST", sys.lit("/rpc"))
     post.body = sys.lit("{\"jsonrpc\":\"2.0\",\"method\":\"sum\",\"params\":[1,2],\"id\":1}")
     show_http(h(post))
     post.set_header("Content-Type", sys.lit("text/plain"))

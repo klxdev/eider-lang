@@ -23,14 +23,14 @@ fn words(s: str) -> List[List[u8]] { bytes.split(sys.lit(s), 126) }
 
 fn rand_token(inout r: fuzz.Rng) -> List[u8] {
     let alphabet = sys.lit("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&'*+-.^_`|~")
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     let n = 1 + fuzz.below(inout r, 12)
     for i in 0..n { out.push(alphabet[fuzz.below(inout r, alphabet.len())]) }
     out
 }
 
 fn rand_value(inout r: fuzz.Rng) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     let n = fuzz.below(inout r, 30)
     for i in 0..n {
         // visible ASCII, inner spaces and tabs, obs-text
@@ -50,7 +50,7 @@ fn rand_value(inout r: fuzz.Rng) -> List[u8] {
 
 fn rand_path(inout r: fuzz.Rng) -> List[u8] {
     let chars = sys.lit("abcxyz0129-._~%!$&'()*+,;=:@/")
-    var out = sys.lit("/")
+    let mut out = sys.lit("/")
     let n = fuzz.below(inout r, 20)
     for i in 0..n { out.push(chars[fuzz.below(inout r, chars.len())]) }
     if fuzz.below(inout r, 3) == 0 {
@@ -61,7 +61,7 @@ fn rand_path(inout r: fuzz.Rng) -> List[u8] {
 }
 
 fn rand_body(inout r: fuzz.Rng) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     let n: usize = if fuzz.below(inout r, 4) == 0 { 0 } else { fuzz.below(inout r, 300) }
     for i in 0..n { out.push(fuzz.below(inout r, 256) as u8) }
     out
@@ -72,7 +72,7 @@ fn is_framing(name: List[u8]) -> bool {
 }
 
 fn rand_headers(inout r: fuzz.Rng) -> List[http.Header] {
-    var hs: List[http.Header] = List.new()
+    let mut hs: List[http.Header] = List.new()
     for i in 0..fuzz.below(inout r, 6) {
         let name = rand_token(inout r)
         if !is_framing(name) && !http.eq_ci(name, sys.lit("expect")) { hs.push(http.Header(name, rand_value(inout r))) }
@@ -94,11 +94,11 @@ fn rand_request(inout r: fuzz.Rng) -> Case {
     let hs = rand_headers(inout r)
     let body = rand_body(inout r)
     let keep = fuzz.below(inout r, 4) != 0
-    var req = http.request("GET", target)
+    let mut req = http.request("GET", target)
     req.method = method
     req.headers = hs
     req.body = body
-    var w: List[u8] = List.new()
+    let mut w: List[u8] = List.new()
     if fuzz.below(inout r, 2) == 0 || body.len() == 0 {
         w = http.write_request(req, sys.lit("example.test"), keep).unwrap()
     } else {
@@ -120,10 +120,10 @@ fn rand_response(inout r: fuzz.Rng) -> Case {
     let statuses = [200, 201, 204, 304, 404, 500, 503, 299, 599]
     let st = statuses[fuzz.below(inout r, 9)] as i32
     let hs = rand_headers(inout r)
-    var body = rand_body(inout r)
+    let mut body = rand_body(inout r)
     if http.bodyless(st) { body = List.new() }
     let keep = fuzz.below(inout r, 4) != 0
-    var resp = http.response(st)
+    let mut resp = http.response(st)
     resp.headers = hs
     resp.body = body
     let w = http.write_response(resp, false, keep, List.new()).unwrap()
@@ -136,14 +136,14 @@ fn steps(response: bool, input: List[u8], inout r: fuzz.Rng, mode: usize) -> Lis
 fn tight() -> http.Limits { http.Limits(40, 6, 300, 200) }
 
 fn steps_with(lim: http.Limits, response: bool, input: List[u8], inout r: fuzz.Rng, mode: usize) -> List[parse.Step] {
-    var p = if response { parse.responses(lim) } else { parse.requests(lim) }
-    var out: List[parse.Step] = List.new()
-    var i: usize = 0
-    var stop = false
+    let mut p = if response { parse.responses(lim) } else { parse.requests(lim) }
+    let mut out: List[parse.Step] = List.new()
+    let mut i: usize = 0
+    let mut stop = false
     while !stop {
         if i < input.len() {
             // mode 0: all at once; 1: byte by byte; 2: random pieces
-            var n = input.len() - i
+            let mut n = input.len() - i
             if mode == 1 { n = 1 }
             if mode == 2 {
                 let k = 1 + fuzz.below(inout r, 16)
@@ -152,7 +152,7 @@ fn steps_with(lim: http.Limits, response: bool, input: List[u8], inout r: fuzz.R
             p.feed(bytes.slice(input, i, i + n))
             i += n
         }
-        var drained = false
+        let mut drained = false
         while !drained {
             let s = p.next()
             match s {
@@ -225,7 +225,7 @@ fn same_steps(a: List[parse.Step], b: List[parse.Step]) -> bool {
 
 /// The headers a message has, minus the ones the writer adds (lowercased names).
 fn program_headers(hs: List[http.Header]) -> List[http.Header] {
-    var out: List[http.Header] = List.new()
+    let mut out: List[http.Header] = List.new()
     for h in hs {
         if !is_framing(h.name) { out.push(h) }
     }
@@ -233,7 +233,7 @@ fn program_headers(hs: List[http.Header]) -> List[http.Header] {
 }
 
 fn lowered(hs: List[http.Header]) -> List[http.Header] {
-    var out: List[http.Header] = List.new()
+    let mut out: List[http.Header] = List.new()
     for h in hs { out.push(http.Header(http.lower(h.name), h.value)) }
     out
 }
@@ -266,7 +266,7 @@ fn invariant(m: parse.Msg, response: bool, lim: http.Limits) -> bool {
 }
 
 fn mutate(inout r: fuzz.Rng, src: List[u8]) -> List[u8] {
-    var s = src
+    let mut s = src.copy()
     let interesting = [13, 10, 32, 9, 58, 48, 97, 0, 127, 255, 44, 59, 45, 70]
     for k in 0..(1 + fuzz.below(inout r, 3)) {
         let op = fuzz.below(inout r, 7)
@@ -277,7 +277,7 @@ fn mutate(inout r: fuzz.Rng, src: List[u8]) -> List[u8] {
         } else if op == 1 {
             s[at] = fuzz.below(inout r, 256) as u8
         } else if op == 2 {
-            var t = bytes.slice(s, 0, at)
+            let mut t = bytes.slice(s, 0, at)
             t.push(interesting[fuzz.below(inout r, 14)] as u8)
             bytes.append(inout t, bytes.slice(s, at, s.len()))
             s = t
@@ -288,7 +288,7 @@ fn mutate(inout r: fuzz.Rng, src: List[u8]) -> List[u8] {
             match bytes.find_byte(s, 10, 0) {
                 Some(nl) => {
                     let hdrs = words("Content-Length: 0~Content-Length: 5~Content-Length: 99~Transfer-Encoding: chunked~Transfer-Encoding: identity~Host: other~Content-Length: 5, 5~Transfer-Encoding: chunked, chunked~ Folded: x")
-                    var t = bytes.slice(s, 0, nl + 1)
+                    let mut t = bytes.slice(s, 0, nl + 1)
                     bytes.append(inout t, pick_str(inout r, hdrs))
                     crlf(inout t)
                     bytes.append(inout t, bytes.slice(s, nl + 1, s.len()))
@@ -318,9 +318,9 @@ fn mutate(inout r: fuzz.Rng, src: List[u8]) -> List[u8] {
 }
 
 fn main() uses io {
-    var r = fuzz.rng(2026)
-    var roundtrip_bad = 0
-    var split_bad = 0
+    let mut r = fuzz.rng(2026)
+    let mut roundtrip_bad = 0
+    let mut split_bad = 0
     for round in 0..300 {
         let response = round % 2 == 1
         let a = if response { rand_response(inout r) } else { rand_request(inout r) }
@@ -328,7 +328,7 @@ fn main() uses io {
         let c = if response { rand_response(inout r) } else { rand_request(inout r) }
         // alone
         let whole = steps(response, a.wire, inout r, 0)
-        var ok = whole.len() == 1
+        let mut ok = whole.len() == 1
         if ok {
             match whole[0] {
                 parse.Done(m) => { ok = matches(a, m) }
@@ -344,11 +344,11 @@ fn main() uses io {
         if !same_steps(whole, steps(response, a.wire, inout r, 2)) { split_bad += 1 }
         // pipelined (a response read until close can't be followed by another)
         if !response && a.keep && b.keep {
-            var three = a.wire
+            let mut three = a.wire.copy()
             bytes.append(inout three, b.wire)
             bytes.append(inout three, c.wire)
             let got = steps(false, three, inout r, 2)
-            var pipe_ok = got.len() == 3
+            let mut pipe_ok = got.len() == 3
             if pipe_ok {
                 let cs = [a, b, c]
                 for k in 0..3 {
@@ -370,16 +370,16 @@ fn main() uses io {
     print(split_bad)
 
     // mutants
-    var accepted = 0
-    var refused = 0
-    var cut = 0
-    var violations = 0
-    var mismatches = 0
-    var by_status: Map[i32, i64] = Map.new()
+    let mut accepted = 0
+    let mut refused = 0
+    let mut cut = 0
+    let mut violations = 0
+    let mut mismatches = 0
+    let mut by_status: Map[i32, i64] = Map.new()
     for round in 0..1500 {
         let response = round % 4 == 3
         let base = if response { rand_response(inout r) } else { rand_request(inout r) }
-        var src = base.wire
+        let mut src = base.wire.copy()
         if !response && fuzz.below(inout r, 3) == 0 {
             let more = rand_request(inout r)
             bytes.append(inout src, more.wire)
@@ -410,7 +410,7 @@ fn main() uses io {
     print("mutants: 1500")
     print(accepted > 0 && refused > 0 && cut > 0)
     for st in [400, 413, 414, 431, 501] {
-        var l = bytes.from_u64(st as u64)
+        let mut l = bytes.from_u64(st as u64)
         l.push(32)
         let s = st as i32
         let mark: u8 = if by_status.get(s).unwrap_or(0) > 0 { 43 } else { 45 }

@@ -44,7 +44,7 @@ pub fn find(pkgs: List[Pkg], name: List[u8]) -> Option[Pkg] {
 }
 
 fn strs(items: List[List[u8]]) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     out.push(91)
     for i in 0..items.len() {
         if i > 0 {
@@ -68,10 +68,10 @@ fn line(inout out: List[u8], k: str, v: List[u8]) {
 pub fn relative(from: List[u8], to: List[u8]) -> List[u8] {
     let a = bytes.split(from, 47)
     let b = bytes.split(to, 47)
-    var i: usize = 0
+    let mut i: usize = 0
     while i < a.len() && i < b.len() && bytes.eq(a[i], b[i]) { i += 1 }
-    var parts: List[List[u8]] = List.new()
-    var j = i
+    let mut parts: List[List[u8]] = List.new()
+    let mut j = i.copy()
     while j < a.len() {
         if a[j].len() > 0 { parts.push(sys.lit("..")) }
         j += 1
@@ -86,10 +86,10 @@ pub fn relative(from: List[u8], to: List[u8]) -> List[u8] {
 
 /// Lockfile text; packages sorted by name so the file is stable.
 pub fn render(pkgs: List[Pkg], root: List[u8]) -> List[u8] {
-    var sorted: List[Pkg] = List.new()
+    let mut sorted: List[Pkg] = List.new()
     for p in pkgs {
         sorted.push(p)
-        var i = sorted.len() - 1
+        let mut i = sorted.len() - 1
         while i > 0 && bytes.compare(sorted[i - 1].name, sorted[i].name) > 0 {
             let t = sorted[i - 1].copy()
             sorted[i - 1] = sorted[i]
@@ -97,12 +97,12 @@ pub fn render(pkgs: List[Pkg], root: List[u8]) -> List[u8] {
             i -= 1
         }
     }
-    var out = sys.lit("# eider.lock: written by `eider-pkg`. Do not edit.\nversion = 1\n")
+    let mut out = sys.lit("# eider.lock: written by `eider-pkg`. Do not edit.\nversion = 1\n")
     for p in sorted {
         bytes.append(inout out, sys.lit("\n[[package]]\n"))
         line(inout out, "name", toml.quote(p.name))
         line(inout out, "version", toml.quote(p.version))
-        var src = if p.git { sys.lit("git+") } else { sys.lit("path+") }
+        let mut src = if p.git { sys.lit("git+") } else { sys.lit("path+") }
         if p.git {
             bytes.append(inout src, p.loc)
             src.push(35)
@@ -120,7 +120,7 @@ pub fn render(pkgs: List[Pkg], root: List[u8]) -> List[u8] {
 }
 
 fn field(doc: List[toml.Entry], prefix: List[u8], k: str) -> List[u8] {
-    var key = prefix
+    let mut key = prefix.copy()
     bytes.append(inout key, sys.lit(k))
     match toml.get(doc, key) {
         Some(e) => match e.val {
@@ -132,7 +132,7 @@ fn field(doc: List[toml.Entry], prefix: List[u8], k: str) -> List[u8] {
 }
 
 fn list_field(doc: List[toml.Entry], prefix: List[u8], k: str) -> List[List[u8]] {
-    var key = prefix
+    let mut key = prefix.copy()
     bytes.append(inout key, sys.lit(k))
     match toml.get(doc, key) {
         Some(e) => match e.val {
@@ -146,16 +146,16 @@ fn list_field(doc: List[toml.Entry], prefix: List[u8], k: str) -> List[List[u8]]
 /// Parse eider.lock in project `root`. A missing file is an empty lock.
 pub fn load(root: List[u8]) -> Result[List[Pkg], String] uses fs {
     let file = file_in(root)
-    var pkgs: List[Pkg] = List.new()
+    let mut pkgs: List[Pkg] = List.new()
     if !fs.exists(file) { return Ok(pkgs) }
     let src = fs.read(file)?
     let doc = match toml.parse(src) {
         Ok(d) => d
         Err(e) => { return Err(manifest.at(file, e.line, e.col, e.msg)) }
     }
-    var n: u64 = 0
+    let mut n: u64 = 0
     while true {
-        var prefix = sys.lit("package.")
+        let mut prefix = sys.lit("package.")
         bytes.append(inout prefix, bytes.from_u64(n))
         prefix.push(46)
         let name = field(doc, prefix, "name")

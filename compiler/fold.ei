@@ -93,7 +93,7 @@ pub fn wrap(a: Wide, bits: u32, signed: bool) -> Wide {
         if signed && low >= 9223372036854775808 { return of_neg(0 -% low) }
         return of_u64(low)
     }
-    var size: u64 = 256
+    let mut size: u64 = 256
     if bits == 32 { size = B32 }
     let m = low % size
     if signed && m >= size / 2 { return of_neg(size - m) }
@@ -114,12 +114,12 @@ pub fn from_bits(v: u64, signed: bool) -> Wide {
 
 /// Decimal text, with a leading `-` for negative values.
 pub fn text(a: Wide) -> List[u8] {
-    var limbs: [u64; 4] = [a.lo % B32, a.lo / B32, a.hi % B32, a.hi / B32]
-    var digits: List[u8] = List.new()
+    let mut limbs: [u64; 4] = [a.lo % B32, a.lo / B32, a.hi % B32, a.hi / B32]
+    let mut digits: List[u8] = List.new()
     while true {
-        var r: u64 = 0
-        var nonzero = false
-        var k: usize = 4
+        let mut r: u64 = 0
+        let mut nonzero = false
+        let mut k: usize = 4
         while k > 0 {
             k -= 1
             let cur = r * B32 + limbs[k]
@@ -130,9 +130,9 @@ pub fn text(a: Wide) -> List[u8] {
         digits.push(48 + r as u8)
         if !nonzero { break }
     }
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     if a.neg { out.push(45) }
-    var i = digits.len()
+    let mut i = digits.len()
     while i > 0 {
         i -= 1
         out.push(digits[i])
@@ -149,14 +149,14 @@ fn digit(c: u8) -> u64 {
 /// The value of an integer literal's source text (decimal or `0x` hex, `_` separators);
 /// the lexer has already rejected anything past i128.
 pub fn parse(src: List[u8], start: usize, end: usize) -> Wide {
-    var base: u64 = 10
-    var i = start
+    let mut base: u64 = 10
+    let mut i = start.copy()
     if end - start > 2 && src[start] == 48 && (src[start + 1] == 120 || src[start + 1] == 88) {
         base = 16
         i = start + 2
     }
-    var hi: u64 = 0
-    var lo: u64 = 0
+    let mut hi: u64 = 0
+    let mut lo: u64 = 0
     while i < end {
         let c = src[i]
         if c != 95 {
@@ -177,8 +177,8 @@ const MAX64: u64 = 18446744073709551615
 
 /// 2^n for n < 64.
 fn pow2(n: u64) -> u64 {
-    var r: u64 = 1
-    var i: u64 = 0
+    let mut r: u64 = 1
+    let mut i: u64 = 0
     while i < n {
         r = r * 2
         i += 1
@@ -188,14 +188,14 @@ fn pow2(n: u64) -> u64 {
 
 /// x & y (op 0), x | y (1) or x ^ y (2) on 64 bits.
 fn bits_op(op: u32, x: u64, y: u64) -> u64 {
-    var a = x
-    var b = y
-    var r: u64 = 0
-    var bit: u64 = 1
+    let mut a = x.copy()
+    let mut b = y.copy()
+    let mut r: u64 = 0
+    let mut bit: u64 = 1
     for i in 0..64 {
         let p = a % 2
         let q = b % 2
-        var on = false
+        let mut on = false
         if op == 0 { on = p == 1 && q == 1 }
         if op == 1 { on = p == 1 || q == 1 }
         if op == 2 { on = p != q }
@@ -213,7 +213,7 @@ fn bits_op(op: u32, x: u64, y: u64) -> u64 {
 /// operation on the two's-complement bits, as the runtime computes it.
 pub fn bitwise(op: u32, a: Wide, b: Wide, bits: u32, signed: bool) -> Wide {
     let x = bits64(a)
-    var r: u64 = 0
+    let mut r: u64 = 0
     if op <= 2 { r = bits_op(op, x, bits64(b)) }
     if op == 3 { r = x *% pow2(b.lo) }
     if op == 4 {

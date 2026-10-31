@@ -27,7 +27,7 @@ pub type Pats = { ps: List[Pat], args: List[u32] }
 pub type M = { w: u32, n: u32, cells: List[u32] }
 
 pub fn new() -> Pats {
-    var p = Pats(List.new(), List.new())
+    let mut p = Pats(List.new(), List.new())
     p.ps.push(Pat(true, 0, 0, 0, 0, 0))
     p
 }
@@ -62,7 +62,7 @@ type Sig = { ck: u32, ca: u32, fields: List[u32] }
 /// The constructors of `ty`, or None for types with infinitely many values.
 fn sig(t: types.Types, ty: u32) -> Option[List[Sig]] {
     let k = types.kind(t, ty)
-    var out: List[Sig] = List.new()
+    let mut out: List[Sig] = List.new()
     if k == types.T_BOOL {
         out.push(Sig(C_BOOL, 1, List.new()))
         out.push(Sig(C_BOOL, 0, List.new()))
@@ -72,7 +72,7 @@ fn sig(t: types.Types, ty: u32) -> Option[List[Sig]] {
         let d = types.def_of(t, ty)
         for i in 0..d.len {
             let v = types.variant(t, d, i)
-            var fs: List[u32] = List.new()
+            let mut fs: List[u32] = List.new()
             for j in 0..v.flen { fs.push(types.field(t, v.fstart, j).ty) }
             out.push(Sig(C_VARIANT, i, fs))
         }
@@ -84,7 +84,7 @@ fn sig(t: types.Types, ty: u32) -> Option[List[Sig]] {
     }
     if k == types.T_RECORD {
         let d = types.def_of(t, ty)
-        var fs: List[u32] = List.new()
+        let mut fs: List[u32] = List.new()
         for j in 0..d.len { fs.push(types.field(t, d.start, j).ty) }
         out.push(Sig(C_SINGLE, 0, fs))
         return Some(out)
@@ -94,11 +94,11 @@ fn sig(t: types.Types, ty: u32) -> Option[List[Sig]] {
 
 /// Distinct constructors heading the rows, in order of appearance (as pattern ids).
 fn heads(p: Pats, m: M) -> List[u32] {
-    var hs: List[u32] = List.new()
+    let mut hs: List[u32] = List.new()
     for r in 0..m.n {
         let x = cell(m, r, 0)
         if p.ps[x as usize].wild { continue }
-        var dup = false
+        let mut dup = false
         for h in hs {
             if same(p, h, x) { dup = true }
         }
@@ -118,10 +118,10 @@ fn heads_have(p: Pats, hs: List[u32], ck: u32, ca: u32) -> bool {
 /// Rows whose head is constructor `c` (its sub-patterns spliced in) or a wildcard (`arity`
 /// wildcards spliced in).
 fn specialize(p: Pats, m: M, c: Pat, arity: u32) -> M {
-    var out = empty(arity + m.w - 1)
+    let mut out = empty(arity + m.w - 1)
     for r in 0..m.n {
         let x = p.ps[cell(m, r, 0) as usize]
-        var row: List[u32] = List.new()
+        let mut row: List[u32] = List.new()
         if x.wild {
             for i in 0..arity { row.push(WILD) }
         } else if x.ck == c.ck && x.ca == c.ca && x.cv == c.cv {
@@ -136,10 +136,10 @@ fn specialize(p: Pats, m: M, c: Pat, arity: u32) -> M {
 }
 
 fn default_rows(p: Pats, m: M) -> M {
-    var out = empty(m.w - 1)
+    let mut out = empty(m.w - 1)
     for r in 0..m.n {
         if !p.ps[cell(m, r, 0) as usize].wild { continue }
-        var row: List[u32] = List.new()
+        let mut row: List[u32] = List.new()
         for j in 1..m.w { row.push(cell(m, r, j)) }
         add_row(inout out, row)
     }
@@ -147,19 +147,19 @@ fn default_rows(p: Pats, m: M) -> M {
 }
 
 fn tail(xs: List[u32]) -> List[u32] {
-    var out: List[u32] = List.new()
+    let mut out: List[u32] = List.new()
     for i in 1..xs.len() { out.push(xs[i]) }
     out
 }
 
 fn concat(a: List[u32], b: List[u32]) -> List[u32] {
-    var out = a
+    let mut out = a.copy()
     for x in b { out.push(x) }
     out
 }
 
 fn wilds(n: u32) -> List[u32] {
-    var out: List[u32] = List.new()
+    let mut out: List[u32] = List.new()
     for i in 0..n { out.push(WILD) }
     out
 }
@@ -170,7 +170,7 @@ pub fn useful(p: Pats, t: types.Types, m: M, v: List[u32], tys: List[u32]) -> bo
     let x = p.ps[v[0] as usize]
     if !x.wild {
         let r2 = specialize(p, m, x, x.len)
-        var v2: List[u32] = List.new()
+        let mut v2: List[u32] = List.new()
         for i in 0..x.len { v2.push(p.args[(x.start + i) as usize]) }
         let v3 = concat(v2, tail(v))
         let t2 = concat(field_tys(t, tys[0], x), tail(tys))
@@ -217,7 +217,7 @@ fn field_tys(t: types.Types, ty: u32, c: Pat) -> List[u32] {
 
 /// How a constructor prints in a witness.
 fn show(t: types.Types, names: intern.Interner, ty: u32, ck: u32, ca: u32, cv: u64, inner: List[List[u8]]) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     if ck == C_BOOL {
         let s = if ca == 1 { "true" } else { "false" }
         return sys.lit(s)
@@ -275,9 +275,9 @@ pub fn missing(p: Pats, t: types.Types, names: intern.Interner, m: M, tys: List[
                     let t2 = concat(s.fields, tail(tys))
                     match missing(p, t, names, r2, t2) {
                         Some(w) => {
-                            var inner: List[List[u8]] = List.new()
+                            let mut inner: List[List[u8]] = List.new()
                             for i in 0..n { inner.push(w[i as usize]) }
-                            var out: List[List[u8]] = List.new()
+                            let mut out: List[List[u8]] = List.new()
                             out.push(show(t, names, tys[0], s.ck, s.ca, 0, inner))
                             for i in n..w.len() as u32 { out.push(w[i as usize]) }
                             return Some(out)
@@ -291,12 +291,12 @@ pub fn missing(p: Pats, t: types.Types, names: intern.Interner, m: M, tys: List[
         None => {}
     }
     let w = missing(p, t, names, default_rows(p, m), tail(tys))?
-    var head = sys.lit("_")
+    let mut head = sys.lit("_")
     match s0 {
         Some(all) => {
             for s in all {
                 if !heads_have(p, hs, s.ck, s.ca) {
-                    var inner: List[List[u8]] = List.new()
+                    let mut inner: List[List[u8]] = List.new()
                     for i in 0..s.fields.len() { inner.push(sys.lit("_")) }
                     head = show(t, names, tys[0], s.ck, s.ca, 0, inner)
                     break
@@ -305,7 +305,7 @@ pub fn missing(p: Pats, t: types.Types, names: intern.Interner, m: M, tys: List[
         }
         None => {}
     }
-    var out: List[List[u8]] = List.new()
+    let mut out: List[List[u8]] = List.new()
     out.push(head)
     for x in w { out.push(x) }
     Some(out)

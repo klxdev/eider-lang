@@ -44,11 +44,11 @@ fn usage() -> String {
 
 fn parse_cli() -> Result[Cli, String] uses io, fs {
     let argv = env.args()
-    var dir = fs.cwd()?
-    var cmd: List[u8] = List.new()
-    var rest: List[List[u8]] = List.new()
-    var offline = false
-    var i: usize = 1
+    let mut dir = fs.cwd()?
+    let mut cmd: List[u8] = List.new()
+    let mut rest: List[List[u8]] = List.new()
+    let mut offline = false
+    let mut i: usize = 1
     while i < argv.len() {
         let a = argv[i]
         if is(a, "-C") && i + 1 < argv.len() {
@@ -99,7 +99,7 @@ fn sync_from(c: Cli, use_lock: bool, offline: bool, vendor: List[u8]) -> Result[
 }
 
 fn report(pkgs: List[lockfile.Pkg]) uses io {
-    var l = sys.lit("locked ")
+    let mut l = sys.lit("locked ")
     bytes.append(inout l, bytes.from_u64(pkgs.len() as u64))
     bytes.append(inout l, sys.lit(" package(s)"))
     io.outln(l)
@@ -113,7 +113,7 @@ fn vendor(c: Cli) -> Result[bool, String] uses io, fs, net {
     // drop what the graph no longer has
     if fs.is_dir(vdir) {
         for old in fs.list(vdir)? {
-            var keep = false
+            let mut keep = false
             for p in pkgs {
                 if p.git && bytes.eq(p.name, old) { keep = true }
             }
@@ -145,16 +145,16 @@ fn add(c: Cli) -> Result[bool, String] uses io, fs, net {
     let m = manifest.parse(before, file, c.dir)?
     for d in m.deps {
         if bytes.eq(d.name, name) {
-            var e = String.from("`")
+            let mut e = String.from("`")
             e.append(sys.to_string(name))
             e.push_str("` is already a dependency")
             return Err(e)
         }
     }
-    var table = sys.lit("\n[deps.")
+    let mut table = sys.lit("\n[deps.")
     bytes.append(inout table, name)
     bytes.append(inout table, sys.lit("]\n"))
-    var i: usize = 1
+    let mut i: usize = 1
     while i < c.args.len() {
         let flag = c.args[i]
         if i + 1 >= c.args.len() { return Err(usage()) }
@@ -175,7 +175,7 @@ fn add(c: Cli) -> Result[bool, String] uses io, fs, net {
         bytes.append(inout table, k)
         bytes.append(inout table, sys.lit(" = "))
         if is(flag, "--uses") {
-            var quoted: List[List[u8]] = List.new()
+            let mut quoted: List[List[u8]] = List.new()
             for cap in bytes.split(v, 44) {
                 let t = bytes.trim(cap)
                 if t.len() > 0 { quoted.push(manifest_quote(t)) }
@@ -189,7 +189,7 @@ fn add(c: Cli) -> Result[bool, String] uses io, fs, net {
         table.push(10)
         i += 2
     }
-    var after = before
+    let mut after = before.copy()
     if after.len() > 0 && after[after.len() - 1] != 10 { after.push(10) }
     bytes.append(inout after, table)
     manifest.parse(after, file, c.dir)?
@@ -207,7 +207,7 @@ fn add(c: Cli) -> Result[bool, String] uses io, fs, net {
 }
 
 fn manifest_quote(s: List[u8]) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     out.push(34)
     for c in s {
         if c == 34 || c == 92 { out.push(92) }
@@ -223,12 +223,12 @@ fn remove(c: Cli) -> Result[bool, String] uses io, fs, net {
     let name = c.args[0]
     let file = manifest.file_in(c.dir)
     let before = fs.read(file)?
-    var header = sys.lit("[deps.")
+    let mut header = sys.lit("[deps.")
     bytes.append(inout header, name)
     header.push(93)
-    var kept: List[List[u8]] = List.new()
-    var skipping = false
-    var found = false
+    let mut kept: List[List[u8]] = List.new()
+    let mut skipping = false
+    let mut found = false
     for line in bytes.lines(before) {
         let t = bytes.trim(line)
         if t.len() > 0 && t[0] == 91 { skipping = bytes.eq(t, header) }
@@ -239,13 +239,13 @@ fn remove(c: Cli) -> Result[bool, String] uses io, fs, net {
         }
     }
     if !found {
-        var e = String.from("no [deps.")
+        let mut e = String.from("no [deps.")
         e.append(sys.to_string(name))
         e.push_str("] table in eider.toml (inline `name = { ... }` entries must be removed by hand)")
         return Err(e)
     }
     while kept.len() > 0 && kept[kept.len() - 1].len() == 0 { kept.pop() }
-    var after = bytes.join(kept, sys.lit("\n"))
+    let mut after = bytes.join(kept, sys.lit("\n"))
     after.push(10)
     manifest.parse(after, file, c.dir)?
     fs.write(file, after)?
@@ -257,13 +257,13 @@ fn remove(c: Cli) -> Result[bool, String] uses io, fs, net {
 fn init(c: Cli) -> Result[bool, String] uses io, fs {
     let file = manifest.file_in(c.dir)
     if fs.exists(file) { return Err(String.from("eider.toml already exists")) }
-    var name = if c.args.len() > 0 { c.args[0] } else {
+    let mut name = if c.args.len() > 0 { c.args[0] } else {
         match bytes.rfind_byte(c.dir, 47) {
             Some(i) => bytes.slice(c.dir, i + 1, c.dir.len())
             None => c.dir
         }
     }
-    var clean: List[u8] = List.new()
+    let mut clean: List[u8] = List.new()
     for ch in name {
         if ch >= 65 && ch <= 90 {
             clean.push(ch + 32)
@@ -276,7 +276,7 @@ fn init(c: Cli) -> Result[bool, String] uses io, fs {
     if !manifest.valid_name(clean) {
         return Err(String.from("can't derive a package name from the directory; pass one: eider-pkg init <name>"))
     }
-    var t = sys.lit("[package]\nname = \"")
+    let mut t = sys.lit("[package]\nname = \"")
     bytes.append(inout t, clean)
     bytes.append(inout t, sys.lit("\"\nversion = \"0.1.0\"\nmain = \"main.ei\"\n"))
     fs.mkdir_all(c.dir)?
@@ -285,7 +285,7 @@ fn init(c: Cli) -> Result[bool, String] uses io, fs {
     if !fs.exists(main_file) {
         fs.write(main_file, sys.lit("import \"core/sys\"\nimport \"std/io\"\n\nfn main() uses io {\n    io.outln(sys.lit(\"hello from eider\"))\n}\n"))?
     }
-    var l = sys.lit("created package `")
+    let mut l = sys.lit("created package `")
     bytes.append(inout l, clean)
     l.push(96)
     io.outln(l)
@@ -295,17 +295,17 @@ fn init(c: Cli) -> Result[bool, String] uses io, fs {
 fn tree(c: Cli) -> Result[bool, String] uses io, fs {
     let root = manifest.load(c.dir)?
     let pkgs = lockfile.load(c.dir)?
-    var l = root.name
+    let mut l = root.name.copy()
     l.push(32)
     bytes.append(inout l, root.version)
     io.outln(l)
-    var seen: List[List[u8]] = List.new()
+    let mut seen: List[List[u8]] = List.new()
     for d in root.deps { tree_line(pkgs, d.name, 1, inout seen) }
     Ok(true)
 }
 
 fn tree_line(pkgs: List[lockfile.Pkg], name: List[u8], depth: usize, inout seen: List[List[u8]]) uses io {
-    var l: List[u8] = List.new()
+    let mut l: List[u8] = List.new()
     for i in 0..depth {
         bytes.append(inout l, sys.lit("  "))
     }
@@ -318,7 +318,7 @@ fn tree_line(pkgs: List[lockfile.Pkg], name: List[u8], depth: usize, inout seen:
                 bytes.append(inout l, sys.lit(" uses "))
                 bytes.append(inout l, bytes.join(p.grants, sys.lit(",")))
             }
-            var dup = false
+            let mut dup = false
             for s in seen {
                 if bytes.eq(s, name) { dup = true }
             }
@@ -370,7 +370,7 @@ fn main() uses io, fs, net {
         Err(e) => {
             // TODO(compiler): Strings can't reach stderr until they have byte access, so the
             // message goes to stdout. Exit status 1 still marks the failure.
-            var m = String.from("eider-pkg: ")
+            let mut m = String.from("eider-pkg: ")
             m.append(e)
             print(m)
             env.exit(1)

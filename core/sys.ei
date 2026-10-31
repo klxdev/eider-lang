@@ -35,9 +35,9 @@ extern "c" fn ec_exit(code: i32)
 
 /// The bytes of a string literal.
 pub fn lit(s: str) -> List[u8] uses ffi {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     let n = unsafe { ec_str_len(s) }
-    var i: i64 = 0
+    let mut i: i64 = 0
     while i < n {
         let b = unsafe { ec_str_byte(s, i) }
         out.push(b as u8)
@@ -79,9 +79,9 @@ pub fn send_all(parts: List[List[u8]]) uses ffi {
 
 /// The core's output buffer.
 pub fn take() -> List[u8] uses ffi {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     let n = unsafe { ec_out_len() }
-    var i: i64 = 0
+    let mut i: i64 = 0
     while i < n {
         let b = unsafe { ec_out_byte(i) }
         out.push(b as u8)
@@ -93,8 +93,8 @@ pub fn take() -> List[u8] uses ffi {
 /// The output buffer split at NUL bytes (a trailing NUL doesn't add an empty part).
 pub fn take_all() -> List[List[u8]] uses ffi {
     let raw = take()
-    var parts: List[List[u8]] = List.new()
-    var cur: List[u8] = List.new()
+    let mut parts: List[List[u8]] = List.new()
+    let mut cur: List[u8] = List.new()
     for b in raw {
         if b == 0 {
             parts.push(cur)

@@ -133,7 +133,7 @@ pub fn key_pre(k: u64) -> u32 { (k / 4294967296) as u32 }
 /// The spelling of a key: `stem__Name` for module items (diag demangles it).
 pub fn key_text(names: intern.Interner, k: u64) -> List[u8] {
     let pre = key_pre(k)
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     if pre > 0 {
         bytes.append(inout out, intern.name(names, pre - 1))
         bytes.append(inout out, sys.lit("__"))
@@ -155,7 +155,7 @@ fn owns(p: Program, m: u32, sym: u32) -> bool {
 /// The prefix that alias `sym` stands for at (line, col) in module m (the last import of
 /// that alias before the position, as if the parser mapped them while it reads).
 fn alias_pre(p: Program, m: u32, sym: u32, line: u32, col: u32) -> u32 {
-    var pre: u32 = 0
+    let mut pre: u32 = 0
     for a in p.mods[m as usize].aliases {
         if a.sym == sym && (a.line < line || (a.line == line && a.col < col)) { pre = a.pre }
     }
@@ -196,7 +196,7 @@ pub fn lex_diag(r: lex.Lex) -> Option[diag.Diag] {
         lex.Done(_) => None
         lex.Failed(e) => Some(diag.new("E0001", e.line, e.col, sys.lit(e.msg)))
         lex.BadChar(line, col, ch) => {
-            var m = sys.lit("unexpected character `")
+            let mut m = sys.lit("unexpected character `")
             bytes.append(inout m, ch)
             m.push(96)
             Some(diag.new("E0001", line, col, m))
@@ -205,7 +205,7 @@ pub fn lex_diag(r: lex.Lex) -> Option[diag.Diag] {
 }
 
 fn in_file(d: diag.Diag, path: List[u8]) -> diag.Diag {
-    var d2 = d
+    let mut d2 = d.copy()
     if d2.file.len() == 0 { d2.file = path }
     d2
 }
@@ -222,7 +222,7 @@ fn dir_of(path: List[u8]) -> List[u8] {
 /// `dir` joined with `rel`: an absolute `rel` replaces `dir`.
 fn join(dir: List[u8], rel: List[u8]) -> List[u8] {
     if dir.len() == 0 || (rel.len() > 0 && rel[0] == 47) { return rel }
-    var out = dir
+    let mut out = dir.copy()
     if out[out.len() - 1] != 47 { out.push(47) }
     bytes.append(inout out, rel)
     out
@@ -234,7 +234,7 @@ fn has_ext(path: List[u8]) -> bool {
         Some(i) => i + 1
         None => 0
     }
-    var i = start + 1
+    let mut i = start + 1
     while i < path.len() {
         if path[i] == 46 { return true }
         i += 1
@@ -253,7 +253,7 @@ fn stem(path: List[u8]) -> List[u8] {
         Some(i) => bytes.slice(base, 0, i)
         None => base
     }
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     for c in s {
         if bytes.is_ident(c) { out.push(c) } else { out.push(95) }
     }
@@ -294,7 +294,7 @@ pub fn disk() -> Files { Files(List.new(), List.new()) }
 
 /// Files with `texts[i]` in place of the file at `paths[i]`.
 pub fn overlay(paths: List[List[u8]], texts: List[List[u8]]) -> Files uses fs {
-    var f = disk()
+    let mut f = disk()
     for i in 0..paths.len() {
         if i < texts.len() {
             f.canon.push(canonical(paths[i]))
@@ -322,7 +322,7 @@ pub fn read_source(fp: Files, path: List[u8]) -> Option[List[u8]] uses fs {
 }
 
 fn add_module(inout p: Program, path: List[u8], pre: u32, pkg: u32, src: List[u8], q: parse.P) -> u32 {
-    var own: Map[u32, bool] = Map.new()
+    let mut own: Map[u32, bool] = Map.new()
     let m = Module(path, pre, pkg, src, q.ast, q.toks, q.strs, List.new(), own)
     p.mods.push(m)
     (p.mods.len() - 1) as u32
@@ -379,15 +379,15 @@ pub type Loaded = { p: Program, diags: List[diag.Diag], fatal: bool }
 
 /// `load`, reading sources through `fp`.
 pub fn load_from(file: List[u8], src: List[u8], q: parse.P, fp: Files) -> Loaded uses io, fs {
-    var p = Program(List.new(), List.new(), q.names, List.new(), List.new(), List.new(), NOMOD, List.new(), List.new(),
+    let mut p = Program(List.new(), List.new(), q.names, List.new(), List.new(), List.new(), NOMOD, List.new(), List.new(),
         List.new(), List.new(), List.new(), List.new())
     let canon = canonical(file)
     p.seen.push(canon)
     let pk = package_of(inout p, canon)
     add_module(inout p, file, 0, pk, src, q)
-    var diags: List[diag.Diag] = List.new()
+    let mut diags: List[diag.Diag] = List.new()
     load_imports(inout p, 0, fp, inout diags)
-    var fatal = false
+    let mut fatal = false
     match load_prelude(inout p, fp) {
         Ok(_) => {}
         Err(d) => {
@@ -425,11 +425,11 @@ fn load_prelude(inout p: Program, fp: Files) -> Result[bool, diag.Diag] uses io,
     let text = match read_source(fp, path) {
         Some(t) => t
         None => {
-            var msg = sys.lit("cannot read the prelude `")
+            let mut msg = sys.lit("cannot read the prelude `")
             bytes.append(inout msg, path)
             bytes.append(inout msg, sys.lit("`: "))
             bytes.append(inout msg, read_error(path))
-            var d = diag.new("E0804", 1, 1, msg)
+            let mut d = diag.new("E0804", 1, 1, msg)
             d.help = sys.lit("set EIDER_ROOT to the Eider toolchain (the directory that holds core/)")
             return Err(d)
         }
@@ -437,7 +437,7 @@ fn load_prelude(inout p: Program, fp: Files) -> Result[bool, diag.Diag] uses io,
     let q = parse_file(inout p, path, text)?
     let m = add_module(inout p, path, 0, NOPKG, text, q)
     p.prelude = m
-    var order: List[u32] = List.new()
+    let mut order: List[u32] = List.new()
     order.push(m)
     for x in p.order { order.push(x) }
     p.order = order
@@ -457,13 +457,13 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
         let st = stem(rel)
         let st_sym = intern.intern(inout p.names, st, 0, st.len())
         let alias = if n.b > 0 { n.b - 1 } else { st_sym }
-        var path: List[u8] = List.new()
+        let mut path: List[u8] = List.new()
         if is_package_import(rel) {
             match locate(inout p, m, rel, n) {
                 Ok(x) => { path = x }
                 Err(d) => {
                     // a prefix no module has, so what it qualifies is not reported as unknown
-                    var bad = st
+                    let mut bad = st.copy()
                     bytes.append(inout bad, sys.lit("__0"))
                     let bad_sym = intern.intern(inout p.names, bad, 0, bad.len())
                     p.mods[m as usize].aliases.push(Alias(alias, bad_sym + 1, n.line, n.col))
@@ -481,8 +481,8 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
         let mname = module_name(p, canon, pk, st)
         let pre_sym = intern.intern(inout p.names, mname, 0, mname.len())
         p.mods[m as usize].aliases.push(Alias(alias, pre_sym + 1, n.line, n.col))
-        var clash = false
-        var known = false
+        let mut clash = false
+        let mut known = false
         for j in 0..p.pre_syms.len() {
             if p.pre_syms[j] == pre_sym {
                 known = true
@@ -503,15 +503,15 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
         if contains(p.seen, canon) { continue }
         p.seen.push(canon)
         let found = read_file(fp, path, canon)
-        var text: List[u8] = List.new()
+        let mut text: List[u8] = List.new()
         match found {
             Some(t) => { text = t }
             None => {
-                var msg = sys.lit("cannot read module `")
+                let mut msg = sys.lit("cannot read module `")
                 bytes.append(inout msg, path)
                 bytes.append(inout msg, sys.lit("`: "))
                 bytes.append(inout msg, read_error(path))
-                var d = diag.new("E0804", n.line, n.col, msg)
+                let mut d = diag.new("E0804", n.line, n.col, msg)
                 if bytes.starts_with(rel, sys.lit("deps/")) || bytes.find(rel, sys.lit("/deps/"), 0).is_some() {
                     d.help = sys.lit("eider-pkg no longer links dependencies into deps/: import a package by name (`import \"json\"`, `import \"json/util\"`, `import \"std/fs\"`)")
                 }
@@ -530,7 +530,7 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
 
 /// E0808: two different files `a` and `b` (canonical) have one module identity.
 fn clash_diag(p: Program, n: ast.Node, pk: u32, st: List[u8], a: List[u8], b: List[u8]) -> diag.Diag {
-    var msg: List[u8] = List.new()
+    let mut msg: List[u8] = List.new()
     let in_pkg = pk != NOPKG && p.pkgs[pk as usize].name.len() > 0
     if !in_pkg {
         msg = sys.lit("two different modules are both named `")
@@ -546,7 +546,7 @@ fn clash_diag(p: Program, n: ast.Node, pk: u32, st: List[u8], a: List[u8], b: Li
     bytes.append(inout msg, sys.lit(" and "))
     bytes.append(inout msg, b)
     bytes.append(inout msg, sys.lit(")"))
-    var d = diag.new("E0808", n.line, n.col, msg)
+    let mut d = diag.new("E0808", n.line, n.col, msg)
     if !in_pkg {
         d.help = sys.lit("rename one of the files, or put them in packages (an eider.toml above each): outside a package a module is named by its file name")
     } else {
@@ -579,7 +579,7 @@ fn dir_lookup(p: Program, dir: List[u8]) -> u32 {
 /// Read the eider.toml `mf` of the package in `dir`.
 fn add_pkg(inout p: Program, dir: List[u8], mf: List[u8]) -> u32 uses fs {
     let none: List[u8] = List.new()
-    var pk = Pkg(dir, none, none, List.new(), none, List.new())
+    let mut pk = Pkg(dir, none, none, List.new(), none, List.new())
     match fs.read(mf) {
         Ok(t) => {
             match lock.manifest(t) {
@@ -599,7 +599,7 @@ fn add_pkg(inout p: Program, dir: List[u8], mf: List[u8]) -> u32 uses fs {
 }
 
 fn cannot(file: List[u8], why: List[u8]) -> List[u8] {
-    var m = sys.lit("cannot use `")
+    let mut m = sys.lit("cannot use `")
     bytes.append(inout m, file)
     bytes.append(inout m, sys.lit("`: "))
     bytes.append(inout m, why)
@@ -609,9 +609,9 @@ fn cannot(file: List[u8], why: List[u8]) -> List[u8] {
 /// The package of the file at canonical path `canon`: the nearest directory above it with
 /// an eider.toml, or NOPKG.
 pub fn package_of(inout p: Program, canon: List[u8]) -> u32 uses fs {
-    var dir = dir_of(canon)
-    var walked: List[List[u8]] = List.new()
-    var found = NOPKG
+    let mut dir = dir_of(canon)
+    let mut walked: List[List[u8]] = List.new()
+    let mut found = NOPKG
     while dir.len() > 0 {
         let c = dir_lookup(p, dir)
         if c != UNSEEN {
@@ -695,7 +695,7 @@ pub fn module_name(p: Program, canon: List[u8], pk: u32, st: List[u8]) -> List[u
     if pkg.name.len() == 0 || canon.len() <= pkg.dir.len() + 1 { return st }
     let rel = bytes.slice(canon, pkg.dir.len() + 1, canon.len())
     let inner = strip_ext(rel)
-    var out = stem(rel)
+    let mut out = stem(rel)
     let simple = bytes.eq(inner, out)
     bytes.append(inout out, sys.lit("__0"))
     escape(inout out, pkg.name)
@@ -709,8 +709,8 @@ pub fn module_name(p: Program, canon: List[u8], pk: u32, st: List[u8]) -> List[u
 /// A module name (or key text) as messages and programs show it: each `__0...` part (the
 /// package and path of a package module) dropped, so `util__0json__Point` is `util__Point`.
 pub fn shown(s: List[u8]) -> List[u8] {
-    var out: List[u8] = List.new()
-    var i: usize = 0
+    let mut out: List[u8] = List.new()
+    let mut i: usize = 0
     while i < s.len() {
         if s[i] == 95 && i + 2 < s.len() && i > 0 && s[i + 1] == 95 && s[i + 2] == 48 {
             i += 3
@@ -751,7 +751,7 @@ fn lock_at(inout p: Program, dir: List[u8]) -> u32 uses fs {
         if bytes.eq(p.locks[i].dir, dir) { return i as u32 }
     }
     let file = join(dir, sys.lit("eider.lock"))
-    var l = Lock(dir, false, List.new(), List.new())
+    let mut l = Lock(dir, false, List.new(), List.new())
     if !fs.exists(file) {
         l.missing = true
     } else {
@@ -770,13 +770,13 @@ fn lock_at(inout p: Program, dir: List[u8]) -> u32 uses fs {
 }
 
 fn pkg_diag(code: str, n: ast.Node, msg: List[u8], help: List[u8]) -> diag.Diag {
-    var d = diag.new(code, n.line, n.col, msg)
+    let mut d = diag.new(code, n.line, n.col, msg)
     d.help = help
     d
 }
 
 fn quoted(a: str, x: List[u8], b: str) -> List[u8] {
-    var m = sys.lit(a)
+    let mut m = sys.lit(a)
     bytes.append(inout m, x)
     bytes.append(inout m, sys.lit(b))
     m
@@ -786,7 +786,7 @@ fn quoted(a: str, x: List[u8], b: str) -> List[u8] {
 /// E0809 for a package the module may not import, E0810 for one that can't be located.
 fn locate(inout p: Program, m: u32, spec: List[u8], n: ast.Node) -> Result[List[u8], diag.Diag] uses io, fs {
     let parts = bytes.split(spec, 47)
-    var ok = lock.valid_name(parts[0])
+    let mut ok = lock.valid_name(parts[0])
     for x in parts {
         if x.len() == 0 { ok = false }
     }
@@ -795,19 +795,19 @@ fn locate(inout p: Program, m: u32, spec: List[u8], n: ast.Node) -> Result[List[
             sys.lit("a package import is `<package>` or `<package>/<module path>` (lowercase package name, no `.`); a path import names a file with its extension, like `\"util.ei\"`")))
     }
     let head = parts[0]
-    var rest: List[u8] = List.new()
+    let mut rest: List[u8] = List.new()
     for i in 1..parts.len() {
         if i > 1 { rest.push(47) }
         bytes.append(inout rest, parts[i])
     }
     if bytes.eq(head, sys.lit("std")) || bytes.eq(head, sys.lit("core")) {
         if rest.len() == 0 {
-            var h = sys.lit("import one of its modules, like `\"")
+            let mut h = sys.lit("import one of its modules, like `\"")
             bytes.append(inout h, head)
             if bytes.eq(head, sys.lit("std")) { bytes.append(inout h, sys.lit("/fs\"`")) } else { bytes.append(inout h, sys.lit("/sys\"`")) }
             return Err(pkg_diag("E0809", n, quoted("`", head, "` is part of the toolchain and has no entry module"), h))
         }
-        var f = head
+        let mut f = head.copy()
         f.push(47)
         bytes.append(inout f, rest)
         bytes.append(inout f, sys.lit(".ei"))
@@ -815,7 +815,7 @@ fn locate(inout p: Program, m: u32, spec: List[u8], n: ast.Node) -> Result[List[
     }
     let pk = p.mods[m as usize].pkg
     if pk == NOPKG {
-        var h = sys.lit("packages are imported from inside a package: create eider.toml with `eider-pkg init`, then `eider-pkg add ")
+        let mut h = sys.lit("packages are imported from inside a package: create eider.toml with `eider-pkg init`, then `eider-pkg add ")
         bytes.append(inout h, head)
         bytes.append(inout h, sys.lit(" ...`; a path import names a file with its extension, like `\""))
         bytes.append(inout h, spec)
@@ -824,15 +824,15 @@ fn locate(inout p: Program, m: u32, spec: List[u8], n: ast.Node) -> Result[List[
     }
     let own = p.pkgs[pk as usize].copy()
     if own.err.len() > 0 { return Err(pkg_diag("E0810", n, own.err, sys.lit("fix eider.toml (`eider-pkg fetch` checks it)"))) }
-    var dir = own.dir
+    let mut dir = own.dir.copy()
     if !bytes.eq(head, own.name) {
         if !contains(own.deps, head) {
-            var msg = quoted("package `", head, "` is not a dependency of `")
+            let mut msg = quoted("package `", head, "` is not a dependency of `")
             bytes.append(inout msg, own.name)
             bytes.append(inout msg, sys.lit("` ("))
             bytes.append(inout msg, join(own.dir, sys.lit("eider.toml")))
             bytes.append(inout msg, sys.lit(")"))
-            var h = sys.lit("add it with `eider-pkg add ")
+            let mut h = sys.lit("add it with `eider-pkg add ")
             bytes.append(inout h, head)
             bytes.append(inout h, sys.lit(" --path <dir>` or `eider-pkg add "))
             bytes.append(inout h, head)
@@ -847,11 +847,11 @@ fn locate(inout p: Program, m: u32, spec: List[u8], n: ast.Node) -> Result[List[
         let fetch = quoted("run `eider-pkg fetch` in ", ld, "")
         if lk.err.len() > 0 { return Err(pkg_diag("E0810", n, lk.err, fetch)) }
         if lk.missing {
-            var msg = quoted("can't locate package `", head, "`: there is no eider.lock in ")
+            let mut msg = quoted("can't locate package `", head, "`: there is no eider.lock in ")
             bytes.append(inout msg, ld)
             return Err(pkg_diag("E0810", n, msg, fetch))
         }
-        var found = false
+        let mut found = false
         for e in lk.pkgs {
             if bytes.eq(e.name, head) {
                 found = true
@@ -864,12 +864,12 @@ fn locate(inout p: Program, m: u32, spec: List[u8], n: ast.Node) -> Result[List[
             }
         }
         if !found {
-            var msg = quoted("package `", head, "` is not in ")
+            let mut msg = quoted("package `", head, "` is not in ")
             bytes.append(inout msg, join(ld, sys.lit("eider.lock")))
             return Err(pkg_diag("E0810", n, msg, fetch))
         }
         if !fs.is_dir(dir) {
-            var msg = quoted("package `", head, "` is locked, but its files are missing (")
+            let mut msg = quoted("package `", head, "` is locked, but its files are missing (")
             bytes.append(inout msg, dir)
             bytes.append(inout msg, sys.lit(")"))
             return Err(pkg_diag("E0810", n, msg, fetch))
@@ -892,7 +892,7 @@ fn locate(inout p: Program, m: u32, spec: List[u8], n: ast.Node) -> Result[List[
 /// other than `extern` fns and `main`.
 fn compute_own(inout p: Program, m: u32) {
     let a = p.mods[m as usize].ast
-    var own: Map[u32, bool] = Map.new()
+    let mut own: Map[u32, bool] = Map.new()
     for k in 0..a.items_len {
         let n = a.nodes[ast.at(a, a.items_start, k) as usize]
         match n.kind {
@@ -923,7 +923,7 @@ fn is_main(p: Program, sym: u32) -> bool {
 /// The names fn node `f` of module m binds: its parameters and every binder in its body
 /// (pattern names that are module items excluded).
 pub fn fn_locals(p: Program, m: u32, f: ast.Node) -> Map[u32, bool] {
-    var out: Map[u32, bool] = Map.new()
+    let mut out: Map[u32, bool] = Map.new()
     for i in 0..f.f { out.insert(node(p, m, at(p, m, f.e, i)).a, true) }
     if f.h > 0 { collect_block(p, m, f.h - 1, inout out) }
     out
@@ -1070,7 +1070,7 @@ type Holder = { id: u32, owner: u32 }
 /// holder i - 1's, up to its own.
 fn holders(p: Program, m: u32) -> List[Holder] {
     let a = p.mods[m as usize].ast
-    var out: List[Holder] = List.new()
+    let mut out: List[Holder] = List.new()
     for k in 0..a.items_len {
         let id = ast.at(a, a.items_start, k)
         let n = a.nodes[id as usize]
@@ -1097,16 +1097,16 @@ fn add_use(inout out: List[CapUse], u: CapUse) {
 /// order, then item order; for an `extern` fn, `ffi` before its own `uses`. The prelude uses
 /// none; the files in no package are package NOPKG.
 pub fn package_caps(p: Program) -> List[CapUse] {
-    var out: List[CapUse] = List.new()
+    let mut out: List[CapUse] = List.new()
     for mi in 0..p.mods.len() {
         let m = mi as u32
         if m == p.prelude { continue }
         let pk = p.mods[mi].pkg
         let a = p.mods[mi].ast
-        var lo: u32 = 0
+        let mut lo: u32 = 0
         for h in holders(p, m) {
             let n = a.nodes[h.id as usize]
-            var fname = NOSYM
+            let mut fname = NOSYM
             if n.kind == ast.IFn || n.kind == ast.IConst { fname = n.a }
             if n.kind == ast.IFn {
                 if ast.has(n.b, ast.FN_EXTERN) {
@@ -1122,7 +1122,7 @@ pub fn package_caps(p: Program) -> List[CapUse] {
             }
             // `unsafe` blocks in the item (test blocks, checked with every capability, count for none)
             if n.kind != ast.ITest {
-                var i = lo
+                let mut i = lo.copy()
                 while i < h.id {
                     let u = a.nodes[i as usize]
                     if u.kind == ast.EUnsafe { add_use(inout out, CapUse(pk, sys.lit("ffi"), USE_UNSAFE, h.owner, fname, m, u.line, u.col)) }
@@ -1137,7 +1137,7 @@ pub fn package_caps(p: Program) -> List[CapUse] {
 
 /// How messages name the function of a use: `name`, or `Type.name` for a method.
 pub fn use_name(p: Program, u: CapUse) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     if u.owner != NOSYM {
         bytes.append(inout out, intern.name(p.names, u.owner))
         out.push(46)
@@ -1151,7 +1151,7 @@ pub fn use_file(p: Program, u: CapUse) -> List[u8] uses fs {
     let path = p.mods[u.m as usize].path
     if u.pkg == NOPKG { return path }
     let canon = canonical(path)
-    var pre = p.pkgs[u.pkg as usize].dir
+    let mut pre = p.pkgs[u.pkg as usize].dir.copy()
     pre.push(47)
     if bytes.starts_with(canon, pre) { return bytes.slice(canon, pre.len(), canon.len()) }
     canon
@@ -1180,7 +1180,7 @@ fn grant_of(pk: Pkg, name: List[u8]) -> List[List[u8]] {
 /// E0204 at (line, col) of package d's import: dependency use u is outside `grant`.
 fn grant_diag(p: Program, u: CapUse, d: u32, grant: List[List[u8]], line: u32, col: u32) -> diag.Diag uses fs {
     let name = p.pkgs[u.pkg as usize].name
-    var msg = quoted("package `", name, "` uses capability `")
+    let mut msg = quoted("package `", name, "` uses capability `")
     bytes.append(inout msg, u.cap)
     bytes.append(inout msg, sys.lit("` in `"))
     bytes.append(inout msg, use_name(p, u))
@@ -1191,13 +1191,13 @@ fn grant_diag(p: Program, u: CapUse, d: u32, grant: List[List[u8]], line: u32, c
     bytes.append(inout msg, sys.lit(") but is only granted ["))
     bytes.append(inout msg, bytes.join(grant, sys.lit(", ")))
     msg.push(93)
-    var h = quoted("to allow it, add \"", u.cap, "\" to `uses` in [deps.")
+    let mut h = quoted("to allow it, add \"", u.cap, "\" to `uses` in [deps.")
     bytes.append(inout h, name)
     bytes.append(inout h, sys.lit("] of "))
     bytes.append(inout h, join(p.pkgs[d as usize].dir, sys.lit("eider.toml")))
     if u.kind == USE_EXTERN { bytes.append(inout h, sys.lit(" (it declares `extern` functions: unmanaged code)")) }
     if u.kind == USE_UNSAFE { bytes.append(inout h, sys.lit(" (it has `unsafe` code: unmanaged code)")) }
-    var dg = diag.new("E0204", line, col, msg)
+    let mut dg = diag.new("E0204", line, col, msg)
     dg.help = h
     dg
 }
@@ -1207,10 +1207,10 @@ fn grant_diag(p: Program, u: CapUse, d: u32, grant: List[List[u8]], line: u32, c
 /// Imports from files in no package, within a package, of the entry file's package and of
 /// core and std are not held to grants.
 pub fn grant_diags(p: Program) -> List[diag.Diag] uses fs {
-    var out: List[diag.Diag] = List.new()
+    let mut out: List[diag.Diag] = List.new()
     let cu = package_caps(p)
     let entry = p.mods[0].pkg
-    var edges: List[u64] = List.new()
+    let mut edges: List[u64] = List.new()
     for mi in 0..p.mods.len() {
         let d = p.mods[mi].pkg
         if mi as u32 == p.prelude || d == NOPKG { continue }
@@ -1237,7 +1237,7 @@ pub fn grant_diags(p: Program) -> List[diag.Diag] uses fs {
 
 /// `eiderc caps`: one JSON line per (package, capability) of package_caps.
 pub fn caps_json(p: Program) -> List[u8] uses fs {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     for u in package_caps(p) {
         let none: List[u8] = List.new()
         let name = if u.pkg == NOPKG { none } else { p.pkgs[u.pkg as usize].name }

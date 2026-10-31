@@ -12,7 +12,7 @@ import "std/bytes"
 pub type Rng = { state: u64 }
 
 pub fn rng(seed: u64) -> Rng {
-    var r = Rng(seed *% 6364136223846793005 +% 1442695040888963407)
+    let mut r = Rng(seed *% 6364136223846793005 +% 1442695040888963407)
     next(inout r)
     r
 }
@@ -105,8 +105,8 @@ pub fn is_ident_tok(t: List[u8]) -> bool {
 /// digit runs, the two-character operators, whitespace runs, and otherwise one character
 /// (a whole UTF-8 sequence). Same as scripts/fuzz-check.py's TOK regex.
 pub fn tokens(src: List[u8]) -> List[List[u8]] {
-    var out: List[List[u8]] = List.new()
-    var i: usize = 0
+    let mut out: List[List[u8]] = List.new()
+    let mut i: usize = 0
     while i < src.len() {
         let j = token_end(src, i)
         out.push(bytes.slice(src, i, j))
@@ -125,23 +125,23 @@ fn token_end(s: List[u8], i: usize) -> usize {
         }
     }
     if bytes.is_alpha(c) || c == 95 {
-        var j = i + 1
+        let mut j = i + 1
         while j < n && bytes.is_ident(s[j]) { j += 1 }
         return j
     }
     if bytes.is_digit(c) {
-        var j = i + 1
+        let mut j = i + 1
         while j < n && bytes.is_digit(s[j]) { j += 1 }
         return j
     }
     if i + 1 < n && is_pair(c, s[i + 1]) { return i + 2 }
     if is_ws(c) {
-        var j = i + 1
+        let mut j = i + 1
         while j < n && is_ws(s[j]) { j += 1 }
         return j
     }
     // one character: a lead byte and its continuation bytes
-    var j = i + 1
+    let mut j = i + 1
     if c >= 192 {
         while j < n && s[j] >= 128 && s[j] < 192 { j += 1 }
     }
@@ -150,7 +150,7 @@ fn token_end(s: List[u8], i: usize) -> usize {
 
 /// End of a terminated `"..."` literal starting at `i` (escapes may cover any byte).
 fn string_end(s: List[u8], i: usize) -> Option[usize] {
-    var j = i + 1
+    let mut j = i + 1
     while j < s.len() {
         if s[j] == 34 { return Some(j + 1) }
         if s[j] == 92 {
@@ -176,7 +176,7 @@ fn is_pair(a: u8, b: u8) -> bool {
 /// Identifier tokens that aren't keywords or type names, with repeats (so frequent names
 /// are picked more often).
 pub fn idents(t: Tables, toks: List[List[u8]]) -> List[List[u8]] {
-    var out: List[List[u8]] = List.new()
+    let mut out: List[List[u8]] = List.new()
     for x in toks {
         if is_ident_tok(x) && !member(t.kw, x) && !member(t.tynames, x) { out.push(x) }
     }
@@ -217,7 +217,7 @@ pub fn semantic(t: Tables, inout toks: List[List[u8]], inout r: Rng, ids: List[L
 
 /// Replace, delete, extend or prefix one random non-whitespace token.
 pub fn wild(t: Tables, inout toks: List[List[u8]], inout r: Rng, ids: List[List[u8]]) {
-    var idx: List[usize] = List.new()
+    let mut idx: List[usize] = List.new()
     for k in 0..toks.len() {
         if !is_space_tok(toks[k]) { idx.push(k) }
     }
@@ -238,7 +238,7 @@ pub fn wild(t: Tables, inout toks: List[List[u8]], inout r: Rng, ids: List[List[
         toks[i] = bytes.concat(toks[i], pick(inout r, t.suffix))
     } else {
         let ins = pick(inout r, t.inserts)
-        var out: List[List[u8]] = List.new()
+        let mut out: List[List[u8]] = List.new()
         for k in 0..toks.len() {
             if k == i { out.push(ins) }
             out.push(toks[k])
@@ -249,7 +249,7 @@ pub fn wild(t: Tables, inout toks: List[List[u8]], inout r: Rng, ids: List[List[
 
 /// One or two mutations of `src`.
 pub fn mutate(t: Tables, src: List[u8], inout r: Rng, wild_mode: bool) -> List[u8] {
-    var toks = tokens(src)
+    let mut toks = tokens(src)
     let ids = idents(t, toks)
     let rounds = 1 + below(inout r, 2)
     for _ in 0..rounds {

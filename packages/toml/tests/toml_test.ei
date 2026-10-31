@@ -7,7 +7,7 @@ fn dump(src: str) uses io {
     match toml.parse(sys.lit(src)) {
         Ok(doc) => {
             for e in doc {
-                var l = e.key
+                let mut l = e.key.copy()
                 bytes.append(inout l, sys.lit(" = "))
                 match e.val {
                     toml.Str(s) => bytes.append(inout l, toml.quote(s))
@@ -31,7 +31,7 @@ fn dump(src: str) uses io {
             }
         }
         Err(e) => {
-            var l = sys.lit("error ")
+            let mut l = sys.lit("error ")
             bytes.append(inout l, bytes.from_u64(e.line as u64))
             l.push(58)
             bytes.append(inout l, bytes.from_u64(e.col as u64))

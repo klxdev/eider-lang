@@ -65,9 +65,9 @@ pub type Evaluated = { p: resolve.Program, diags: List[diag.Diag] }
 /// fails is reported (the evaluator's first diagnostic) and becomes a constant of the error
 /// type (its `comptime` flag 2), which check.ei accepts silently, and the rest go on.
 pub fn eval_all(p: resolve.Program) -> Evaluated uses io, fs, net, clock {
-    var prog = p
-    var diags: List[diag.Diag] = List.new()
-    var r = Runner(List.new(), List.new(), false)
+    let mut prog = p.copy()
+    let mut diags: List[diag.Diag] = List.new()
+    let mut r = Runner(List.new(), List.new(), false)
     for m in p.order {
         let a = p.mods[m as usize].ast
         for k in 0..a.items_len {
@@ -78,8 +78,8 @@ pub fn eval_all(p: resolve.Program) -> Evaluated uses io, fs, net, clock {
                     Ok(_) => {}
                     Err(d) => {
                         diags.push(d)
-                        var md = prog.mods[m as usize]
-                        var cn = md.ast.nodes[id as usize]
+                        let mut md = prog.mods[m as usize].copy()
+                        let mut cn = md.ast.nodes[id as usize].copy()
                         cn.e = 2
                         md.ast.nodes[id as usize] = cn
                         prog.mods[m as usize] = md
@@ -93,7 +93,7 @@ pub fn eval_all(p: resolve.Program) -> Evaluated uses io, fs, net, clock {
 }
 
 fn e0807(p: resolve.Program, m: u32, n: ast.Node, msg: List[u8]) -> diag.Diag {
-    var d = diag.new("E0807", n.line, n.col, msg)
+    let mut d = diag.new("E0807", n.line, n.col, msg)
     d.file = p.mods[m as usize].path
     d
 }
@@ -122,7 +122,7 @@ fn eval_one(inout p: resolve.Program, inout r: Runner, m: u32, id: u32) -> Resul
     let out = match outcome {
         Printed(o) => o
         Failed(why) => {
-            var msg = s("comptime evaluation of `")
+            let mut msg = s("comptime evaluation of `")
             bytes.append(inout msg, name)
             bytes.append(inout msg, s("` failed: "))
             bytes.append(inout msg, why)
@@ -132,16 +132,16 @@ fn eval_one(inout p: resolve.Program, inout r: Runner, m: u32, id: u32) -> Resul
     }
     let ls = bytes.lines(out)
     if ls.len() > 1 { return Err(e0807(p, m, n, s("comptime evaluation can't perform I/O"))) }
-    var first: List[u8] = List.new()
+    let mut first: List[u8] = List.new()
     if ls.len() > 0 { first = bytes.trim(ls[0]) }
     let vn = p.mods[m as usize].ast.nodes[n.d as usize]
-    var md = p.mods[m as usize]
-    var lit = ast.node(ast.EBool, vn.line, vn.col)
+    let mut md = p.mods[m as usize].copy()
+    let mut lit = ast.node(ast.EBool, vn.line, vn.col)
     if kind == 2 {
         if bytes.eq(first, s("true")) { lit.a = 1 }
     } else {
-        var neg = false
-        var digits = first
+        let mut neg = false
+        let mut digits = first.copy()
         if first.len() > 0 && (first[0] == 45 || first[0] == 43) {
             neg = first[0] == 45
             digits = bytes.slice(first, 1, first.len())
@@ -149,7 +149,7 @@ fn eval_one(inout p: resolve.Program, inout r: Runner, m: u32, id: u32) -> Resul
         let v: u64 = match bytes.parse_u64(digits) {
             Some(x) => x
             None => {
-                var msg = s("unexpected comptime result `")
+                let mut msg = s("unexpected comptime result `")
                 bytes.append(inout msg, first)
                 bytes.append(inout msg, s("`"))
                 return Err(e0807(p, m, n, msg))
@@ -166,7 +166,7 @@ fn eval_one(inout p: resolve.Program, inout r: Runner, m: u32, id: u32) -> Resul
             lit.b = inner
         }
     }
-    var cn = n
+    let mut cn = n.copy()
     cn.d = ast.add(inout md.ast, lit)
     cn.e = 0
     md.ast.nodes[id as usize] = cn
@@ -186,10 +186,10 @@ fn evaluator(inout p: resolve.Program, m: u32, id: u32) -> resolve.Program {
     let s_main = sym(inout p, "main")
     let s_print = sym(inout p, "print")
     let s_io = sym(inout p, "io")
-    var ev = p
+    let mut ev = p.copy()
     for i in 0..ev.mods.len() {
-        var md = ev.mods[i]
-        var keep: List[u32] = List.new()
+        let mut md = ev.mods[i].copy()
+        let mut keep: List[u32] = List.new()
         for k in 0..md.ast.items_len {
             let it = ast.at(md.ast, md.ast.items_start, k)
             let n = md.ast.nodes[it as usize]
@@ -202,15 +202,15 @@ fn evaluator(inout p: resolve.Program, m: u32, id: u32) -> resolve.Program {
             let c = md.ast.nodes[id as usize].copy()
             let v = md.ast.nodes[c.d as usize].copy()
             // fn __ct() -> T { return expr }
-            var ret = ast.node(ast.SReturn, v.line, v.col)
+            let mut ret = ast.node(ast.SReturn, v.line, v.col)
             ret.a = c.d + 1
-            var rs: List[u32] = List.new()
+            let mut rs: List[u32] = List.new()
             rs.push(ast.add(inout md.ast, ret))
-            var body = ast.node(ast.Block, v.line, v.col)
+            let mut body = ast.node(ast.Block, v.line, v.col)
             body.c = ast.list(inout md.ast, rs)
             body.d = 1
             let empty: List[u32] = List.new()
-            var f = ast.node(ast.IFn, 1, 4)
+            let mut f = ast.node(ast.IFn, 1, 4)
             f.a = s_ct
             f.c = ast.list(inout md.ast, empty)
             f.e = f.c
@@ -220,31 +220,31 @@ fn evaluator(inout p: resolve.Program, m: u32, id: u32) -> resolve.Program {
             f.end_col = 17
             keep.push(ast.add(inout md.ast, f))
             // fn main() uses io { print(__ct()) }
-            var call = ast.node(ast.ECall, 2, 27)
+            let mut call = ast.node(ast.ECall, 2, 27)
             call.a = s_ct
             call.c = f.c
-            var arg = ast.node(ast.EArg, 2, 27)
+            let mut arg = ast.node(ast.EArg, 2, 27)
             arg.a = ast.add(inout md.ast, call)
-            var args: List[u32] = List.new()
+            let mut args: List[u32] = List.new()
             args.push(ast.add(inout md.ast, arg))
-            var pr = ast.node(ast.ECall, 2, 21)
+            let mut pr = ast.node(ast.ECall, 2, 21)
             pr.a = s_print
             pr.c = ast.list(inout md.ast, args)
             pr.d = 1
-            var st = ast.node(ast.SExpr, 2, 21)
+            let mut st = ast.node(ast.SExpr, 2, 21)
             st.a = ast.add(inout md.ast, pr)
-            var ss: List[u32] = List.new()
+            let mut ss: List[u32] = List.new()
             ss.push(ast.add(inout md.ast, st))
-            var mb = ast.node(ast.Block, 2, 19)
+            let mut mb = ast.node(ast.Block, 2, 19)
             mb.c = ast.list(inout md.ast, ss)
             mb.d = 1
             mb.end_line = 2
             mb.end_col = 35
-            var cap = ast.node(ast.Cap, 2, 16)
+            let mut cap = ast.node(ast.Cap, 2, 16)
             cap.a = s_io
-            var caps: List[u32] = List.new()
+            let mut caps: List[u32] = List.new()
             caps.push(ast.add(inout md.ast, cap))
-            var mf = ast.node(ast.IFn, 2, 4)
+            let mut mf = ast.node(ast.IFn, 2, 4)
             mf.a = s_main
             mf.c = f.c
             mf.e = f.c
@@ -270,7 +270,7 @@ fn checked(ev: resolve.Program) -> Result[check.C, diag.Diag] {
     match check.check_mode(ev, false) {
         Ok(c) => Ok(c)
         Err(d) => {
-            var d2 = d
+            let mut d2 = d.copy()
             let has_fix = match d.fix {
                 Some(_) => true
                 None => false
@@ -307,11 +307,11 @@ fn prepare(inout r: Runner) uses io, fs, net, clock {
     r.dir = driver.temp_dir()
     let core = fs.join(driver.root(), s("core"))
     for name in ["eider_rt", "eider_core"] {
-        var src = fs.join(core, s(name))
+        let mut src = fs.join(core, s(name))
         bytes.append(inout src, s(".c"))
-        var obj = fs.join(r.dir, s(name))
+        let mut obj = fs.join(r.dir, s(name))
         bytes.append(inout obj, s(".o"))
-        var argv = driver.cc_argv(core, false)
+        let mut argv = driver.cc_argv(core, false)
         argv.push(s("-c"))
         argv.push(s("-o"))
         argv.push(obj)
@@ -338,7 +338,7 @@ fn run_evaluator(inout r: Runner, c: check.C) -> Outcome uses io, fs, net, clock
             Some(x) => x
             None => { return NoBuild }
         }
-        var argv: List[List[u8]] = List.new()
+        let mut argv: List[List[u8]] = List.new()
         argv.push(e.path)
         let got = proc.run_with(argv, proc.captured())
         driver.discard(e)
@@ -352,18 +352,18 @@ fn run_evaluator(inout r: Runner, c: check.C) -> Outcome uses io, fs, net, clock
     let cfile = fs.join(r.dir, s("ct.c"))
     let exe = fs.join(r.dir, s("ct"))
     let core = fs.join(driver.root(), s("core"))
-    var argv = driver.cc_argv(core, false)
+    let mut argv = driver.cc_argv(core, false)
     argv.push(s("-o"))
     argv.push(exe)
     argv.push(cfile)
     for o in r.objs { argv.push(o) }
-    var built = false
+    let mut built = false
     match fs.write(cfile, text) {
         Ok(_) => { built = cc_ok(argv) }
         Err(_) => {}
     }
     if !built { return NoBuild }
-    var run: List[List[u8]] = List.new()
+    let mut run: List[List[u8]] = List.new()
     run.push(exe)
     match proc.run_with(run, proc.captured()) {
         Ok(o) => outcome(o)

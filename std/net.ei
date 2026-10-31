@@ -45,7 +45,7 @@ pub type Accepted = { fd: i32, peer: Addr }
 pub type Datagram = { from: Addr, data: List[u8] }
 
 pub fn ipv4(a: u8, b: u8, c: u8, d: u8, port: i32) -> Addr {
-    var ip: List[u8] = List.new()
+    let mut ip: List[u8] = List.new()
     ip.push(a)
     ip.push(b)
     ip.push(c)
@@ -58,7 +58,7 @@ pub fn ipv6(ip: List[u8], port: i32) -> Addr { Addr(IPV6, port, ip, 0, List.new(
 
 /// ::1
 pub fn ipv6_loopback(port: i32) -> Addr {
-    var ip: List[u8] = List.new()
+    let mut ip: List[u8] = List.new()
     for i in 0..16 {
         let b: u8 = if i == 15 { 1 } else { 0 }
         ip.push(b)
@@ -73,7 +73,7 @@ pub fn with_port(a: Addr, port: i32) -> Addr { Addr(a.family, port, a.ip, a.scop
 
 /// The core's byte layout (core/ABI.md "Addresses").
 pub fn encode(a: Addr) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     out.push(a.family as u8)
     out.push(((a.port >> 8) & 255) as u8)
     out.push((a.port & 255) as u8)
@@ -83,7 +83,7 @@ pub fn encode(a: Addr) -> List[u8] {
     }
     bytes.append(inout out, a.ip)
     if a.family == IPV6 {
-        var s = a.scope
+        let mut s = a.scope.copy()
         for i in 0..4 {
             out.push((s & 255) as u8)
             s = s >> 8
@@ -101,8 +101,8 @@ pub fn decode(raw: List[u8], at: usize, len: usize) -> Addr {
     if fam == UNIX { return Addr(UNIX, 0, List.new(), 0, bytes.slice(raw, at + 3, at + len)) }
     if fam == IPV4 { return Addr(IPV4, port, bytes.slice(raw, at + 3, at + 7), 0, none) }
     if fam == IPV6 {
-        var scope: u32 = 0
-        var i: usize = 4
+        let mut scope: u32 = 0
+        let mut i: usize = 4
         while i > 0 {
             i -= 1
             scope = scope * 256 + (raw[at + 19 + i] as u32)
@@ -119,7 +119,7 @@ fn take_addr() -> Addr {
 
 /// "127.0.0.1:80", "[::1]:80" (hex groups, no zero compression), "unix:/path".
 pub fn text(a: Addr) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     if a.family == UNIX {
         bytes.append(inout out, bytes.concat(lit_unix(), a.path))
         return out
@@ -131,7 +131,7 @@ pub fn text(a: Addr) -> List[u8] {
         }
     } else {
         out.push(91)
-        var i: usize = 0
+        let mut i: usize = 0
         while i < 16 {
             if i > 0 { out.push(58) }
             let g = (a.ip[i] as u64) * 256 + (a.ip[i + 1] as u64)
@@ -146,20 +146,20 @@ pub fn text(a: Addr) -> List[u8] {
 }
 
 fn lit_unix() -> List[u8] {
-    var u: List[u8] = List.new()
+    let mut u: List[u8] = List.new()
     for b in [117, 110, 105, 120, 58] { u.push(b as u8) }
     u
 }
 
 fn hex_group(g: u64) -> List[u8] {
     let digits = bytes.hex(bytes.slice(be16(g), 0, 2))
-    var start: usize = 0
+    let mut start: usize = 0
     while start < 3 && digits[start] == 48 { start += 1 }
     bytes.slice(digits, start, 4)
 }
 
 fn be16(g: u64) -> List[u8] {
-    var b: List[u8] = List.new()
+    let mut b: List[u8] = List.new()
     b.push((g / 256) as u8)
     b.push((g % 256) as u8)
     b
@@ -186,7 +186,7 @@ pub fn bind(s: i32, a: Addr) -> Result[bool, String] uses net {
     sys.send(encode(a))
     let n = os.sock_bind(s)
     if n < 0 {
-        var m = String.from("cannot bind ")
+        let mut m = String.from("cannot bind ")
         m.append(sys.to_string(text(a)))
         m.push_str(": ")
         m.append(sys.error_text(n))
@@ -227,7 +227,7 @@ pub fn connect(s: i32, a: Addr) -> Result[bool, String] uses net {
     let n = os.sock_connect(s)
     if n < 0 {
         if os.err_kind(n) == 2 { return Ok(false) }
-        var m = String.from("cannot connect to ")
+        let mut m = String.from("cannot connect to ")
         m.append(sys.to_string(text(a)))
         m.push_str(": ")
         m.append(sys.error_text(n))
@@ -259,7 +259,7 @@ pub fn send(s: i32, data: List[u8]) -> Result[i64, String] uses net {
 
 /// Send all of `data` (blocking sockets).
 pub fn send_all(s: i32, data: List[u8]) -> Result[bool, String] uses net {
-    var rest = data
+    let mut rest = data.copy()
     while rest.len() > 0 {
         let n = send(s, rest)?
         rest = bytes.slice(rest, n as usize, rest.len())
@@ -349,21 +349,21 @@ pub fn parse(host: List[u8], port: i32) -> Result[Addr, String] uses net {
 }
 
 fn resolve(host: List[u8], service: List[u8], family: i32, kind: i32, flags: i32) -> Result[List[Addr], String] uses net {
-    var p: List[List[u8]] = List.new()
+    let mut p: List[List[u8]] = List.new()
     p.push(host)
     p.push(service)
     sys.send_all(p)
     let n = os.dns_lookup(family, kind, flags)
     if n < 0 {
-        var m = String.from("cannot resolve ")
+        let mut m = String.from("cannot resolve ")
         m.append(sys.to_string(host))
         m.push_str(": ")
         m.append(sys.error_text(n))
         return Err(m)
     }
     let raw = sys.take()
-    var out: List[Addr] = List.new()
-    var at: usize = 0
+    let mut out: List[Addr] = List.new()
+    let mut at: usize = 0
     while at + 2 <= raw.len() {
         let len = raw[at + 1] as usize
         out.push(decode(raw, at + 2, len))
@@ -380,7 +380,7 @@ pub fn reverse(a: Addr, numeric: bool) -> Result[List[List[u8]], String] uses ne
     let n = os.dns_reverse(flags)
     if n < 0 { return Err(error("getnameinfo", n)) }
     let raw = sys.take()
-    var parts: List[List[u8]] = List.new()
+    let mut parts: List[List[u8]] = List.new()
     match bytes.find_byte(raw, 0, 0) {
         Some(i) => {
             parts.push(bytes.slice(raw, 0, i))

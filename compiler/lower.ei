@@ -200,21 +200,21 @@ pub fn str_lit(inout out: List[u8], s: List[u8]) {
 /// A 64-bit hash of `s` (FNV-style, written without bitwise operators). Only used to make
 /// short, stable C names; clashes are caught by `register`.
 fn h64(s: List[u8]) -> u64 {
-    var h: u64 = 14695981039346656037
+    let mut h: u64 = 14695981039346656037
     for b in s { h = (h +% (b as u64)) *% 1099511628211 }
     h
 }
 
 /// The top 32 bits of `h` as 8 lowercase hex digits.
 fn hex8(inout out: List[u8], h: u64) {
-    var x = h / 4294967296
-    var ds: List[u8] = List.new()
+    let mut x = h / 4294967296
+    let mut ds: List[u8] = List.new()
     for i in 0..8 {
         let d = (x % 16) as u8
         if d < 10 { ds.push(48 + d) } else { ds.push(87 + d) }
         x = x / 16
     }
-    var i: usize = 8
+    let mut i: usize = 8
     while i > 0 {
         i -= 1
         out.push(ds[i])
@@ -240,7 +240,7 @@ fn register(inout g: G, name: List[u8], from: List[u8]) -> bool {
 
 fn clash(inout g: G, name: List[u8], from: List[u8]) {
     if g.err.len() > 0 { return }
-    var m = sys.lit("C name clash: `")
+    let mut m = sys.lit("C name clash: `")
     bytes.append(inout m, name)
     bytes.append(inout m, sys.lit("` names both `"))
     let k = h64(name)
@@ -286,7 +286,7 @@ fn usable(p: P, ty: u32) -> bool {
 /// The C name of struct type `ty` (see the top of the file).
 fn type_name(p: P, ty: u32) -> List[u8] {
     let k = types.kind(p.t, ty)
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     let shown = types.show(p.t, p.names, ty)
     if k == types.T_ENUM || k == types.T_RECORD {
         let d = types.def_of(p.t, ty)
@@ -313,7 +313,7 @@ fn type_name(p: P, ty: u32) -> List[u8] {
 
 /// Where `.closure<digits>` starts at the end of `s` (a closure body's name), if it does.
 fn closure_at(s: List[u8]) -> Option[usize] {
-    var i = s.len()
+    let mut i = s.len()
     while i > 0 && bytes.is_digit(s[i - 1]) { i -= 1 }
     if i == s.len() || i < 8 { return None }
     let tail = bytes.slice(s, i - 8, i)
@@ -324,23 +324,23 @@ fn closure_at(s: List[u8]) -> Option[usize] {
 /// The name texts with closure bodies numbered per enclosing function (`main.closure1`,
 /// `main.closure2`, ...) instead of by the checker's program-wide counter.
 fn renumber(p: P) -> List[List[u8]] {
-    var out: List[List[u8]] = List.new()
-    var count: Map[u64, u32] = Map.new()
-    var byold: Map[u64, u32] = Map.new()
+    let mut out: List[List[u8]] = List.new()
+    let mut count: Map[u64, u32] = Map.new()
+    let mut byold: Map[u64, u32] = Map.new()
     for i in 0..p.ir.fns.len() {
         let fd = p.ir.fns[i]
-        var nt = fd.name
+        let mut nt = fd.name.copy()
         if !fd.is_test {
             match closure_at(fd.name) {
                 Some(at) => {
                     let parent = bytes.slice(fd.name, 0, at)
-                    var np = parent
+                    let mut np = parent.copy()
                     match byold.get(h64(parent)) {
                         Some(j) => { np = out[j as usize] }
                         None => {}
                     }
                     let ck = h64(np)
-                    var n: u32 = 1
+                    let mut n: u32 = 1
                     match count.get(ck) {
                         Some(c) => { n = c + 1 }
                         None => {}
@@ -361,9 +361,9 @@ fn renumber(p: P) -> List[List[u8]] {
 
 /// `f_<name>[_<h>]` for a function named `text` (see the top of the file).
 fn fn_cname(text: List[u8]) -> List[u8] {
-    var out = sys.lit("f_")
-    var depth: u32 = 0
-    var args = false
+    let mut out = sys.lit("f_")
+    let mut depth: u32 = 0
+    let mut args = false
     for b in text {
         if b == 91 {
             depth += 1
@@ -390,8 +390,8 @@ fn fn_cname(text: List[u8]) -> List[u8] {
 
 /// `x_<name>_<h>` for a test block named `text`.
 fn test_cname(text: List[u8]) -> List[u8] {
-    var out = sys.lit("x_")
-    var n: usize = 0
+    let mut out = sys.lit("x_")
+    let mut n: usize = 0
     for b in text {
         if n == 24 { break }
         if bytes.is_ident(b) { out.push(b) } else { out.push(95) }
@@ -413,7 +413,7 @@ fn is_instance(text: List[u8]) -> bool {
 /// The module a function belongs to: the `stem` of a leading `stem__name` ("" for the entry
 /// module).
 fn module_of(text: List[u8]) -> List[u8] {
-    var i: usize = 0
+    let mut i: usize = 0
     while i + 1 < text.len() && bytes.is_ident(text[i]) {
         if i > 0 && text[i] == 95 && text[i + 1] == 95 { return bytes.slice(text, 0, i) }
         i += 1
@@ -423,7 +423,7 @@ fn module_of(text: List[u8]) -> List[u8] {
 
 fn ncaptures(p: P, f: u32) -> u32 {
     let fd = p.ir.fns[f as usize]
-    var n: u32 = 0
+    let mut n: u32 = 0
     while n < fd.lcount && p.ir.locals[(fd.lstart + n) as usize].kind == ir.L_CAPTURE { n += 1 }
     n
 }
@@ -432,7 +432,7 @@ fn ncaptures(p: P, f: u32) -> u32 {
 fn name_all(inout g: G, p: P) {
     for ty in 0..p.t.tys.len() {
         let k = types.kind(p.t, ty as u32)
-        var n: List[u8] = List.new()
+        let mut n: List[u8] = List.new()
         if is_struct_kind(k) && usable(p, ty as u32) {
             n = type_name(p, ty as u32)
             let from = types.show(p.t, p.names, ty as u32)
@@ -444,12 +444,12 @@ fn name_all(inout g: G, p: P) {
     let texts = renumber(p)
     for f in 0..p.ir.fns.len() {
         let fd = p.ir.fns[f]
-        var n: List[u8] = List.new()
-        var is_clo = false
+        let mut n: List[u8] = List.new()
+        let mut is_clo = false
         if fd.body > 0 && fd.is_test {
             let base = test_cname(fd.name)
             n = base
-            var k: u64 = 2
+            let mut k: u64 = 2
             while !register(inout g, n, fd.name) {
                 n = base
                 n.push(95)
@@ -469,18 +469,18 @@ fn name_all(inout g: G, p: P) {
     // `extern "c"` functions (no body): `xc_<name>`, bound to their symbol by extern_protos
     for x in p.ir.externs {
         let name = p.ir.fns[x.f as usize].name
-        var n = sys.lit("xc_")
+        let mut n = sys.lit("xc_")
         ident_into(inout n, name)
-        var from = sys.lit("extern ")
+        let mut from = sys.lit("extern ")
         bytes.append(inout from, name)
         if !register(inout g, n, from) { clash(inout g, n, from) }
         g.fnn[x.f as usize] = n
     }
     // a library's entry points `eider_<name>` (export_wrappers)
     for x in p.ir.exports {
-        var n = sys.lit("eider_")
+        let mut n = sys.lit("eider_")
         ident_into(inout n, x.name)
-        var from = sys.lit("export ")
+        let mut from = sys.lit("export ")
         bytes.append(inout from, x.name)
         if !register(inout g, n, from) { clash(inout g, n, from) }
     }
@@ -543,7 +543,7 @@ fn owns(inout g: G, p: P, ty: u32) -> bool {
     if m > 0 { return m == 2 }
     let t = types.get(p.t, ty)
     let k = t.kind
-    var r = false
+    let mut r = false
     if k == types.T_STRING || k == types.T_LIST || k == types.T_MAP || k == types.T_BOX || k == types.T_FN || types.is_handle(k) {
         r = true
     } else if k == types.T_ARRAY {
@@ -750,7 +750,7 @@ fn gname(inout g: G, p: P, op: str, ty: u32) {
 }
 
 fn txt(a: str, n: u64, b: str) -> List[u8] {
-    var m = sys.lit(a)
+    let mut m = sys.lit(a)
     bytes.append(inout m, bytes.from_u64(n))
     bytes.append(inout m, sys.lit(b))
     m
@@ -980,9 +980,9 @@ fn eq_glue(inout g: G, p: P, ty: u32) {
         putn(inout g, i as u64)
         put(inout g, ") return true")
         for j in 0..v.flen {
-            var x = txt("a.u.v", i as u64, ".f")
+            let mut x = txt("a.u.v", i as u64, ".f")
             bytes.append(inout x, bytes.from_u64(j as u64))
-            var y = txt("b.u.v", i as u64, ".f")
+            let mut y = txt("b.u.v", i as u64, ".f")
             bytes.append(inout y, bytes.from_u64(j as u64))
             put(inout g, " && ")
             eq_expr(inout g, p, types.field(p.t, v.fstart, j).ty, x, y)
@@ -1024,7 +1024,7 @@ fn drop_glue(inout g: G, p: P, ty: u32) {
         put(inout g, "switch (x->tag) { ")
         for i in 0..d.len {
             let v = types.variant(p.t, d, i)
-            var any = false
+            let mut any = false
             for j in 0..v.flen {
                 if owns(inout g, p, types.field(p.t, v.fstart, j).ty) { any = true }
             }
@@ -1033,7 +1033,7 @@ fn drop_glue(inout g: G, p: P, ty: u32) {
             putn(inout g, i as u64)
             put(inout g, ": ")
             for j in 0..v.flen {
-                var x = txt("&x->u.v", i as u64, ".f")
+                let mut x = txt("&x->u.v", i as u64, ".f")
                 bytes.append(inout x, bytes.from_u64(j as u64))
                 drop_call(inout g, p, types.field(p.t, v.fstart, j).ty, x)
             }
@@ -1125,7 +1125,7 @@ fn clone_glue(inout g: G, p: P, ty: u32) {
         put(inout g, "switch (x->tag) { ")
         for i in 0..d.len {
             let v = types.variant(p.t, d, i)
-            var any = false
+            let mut any = false
             for j in 0..v.flen {
                 if owns(inout g, p, types.field(p.t, v.fstart, j).ty) { any = true }
             }
@@ -1136,9 +1136,9 @@ fn clone_glue(inout g: G, p: P, ty: u32) {
             for j in 0..v.flen {
                 let ft = types.field(p.t, v.fstart, j).ty
                 if !owns(inout g, p, ft) { continue }
-                var lhs = txt("r.u.v", i as u64, ".f")
+                let mut lhs = txt("r.u.v", i as u64, ".f")
                 bytes.append(inout lhs, bytes.from_u64(j as u64))
-                var x = txt("&x->u.v", i as u64, ".f")
+                let mut x = txt("&x->u.v", i as u64, ".f")
                 bytes.append(inout x, bytes.from_u64(j as u64))
                 putb(inout g, lhs)
                 put(inout g, " = ")
@@ -1277,7 +1277,7 @@ fn own_glue(inout g: G, p: P, ty: u32) {
             putn(inout g, i as u64)
             put(inout g, ": ")
             for j in 0..v.flen {
-                var x = txt("&x->u.v", i as u64, ".f")
+                let mut x = txt("&x->u.v", i as u64, ".f")
                 bytes.append(inout x, bytes.from_u64(j as u64))
                 own_call(inout g, p, types.field(p.t, v.fstart, j).ty, x)
             }
@@ -1371,7 +1371,7 @@ fn shared_name(inout g: G, p: P, ty: u32) {
 
 /// Field i of record value `base` (C text) of type ty: `base.f<i>`, or `base.p->f<i>`.
 fn rf(p: P, ty: u32, base: str, i: u32) -> List[u8] {
-    var out = sys.lit(base)
+    let mut out = sys.lit(base)
     if shared_rec(p, ty) { bytes.append(inout out, sys.lit(".p->f")) } else { bytes.append(inout out, sys.lit(".f")) }
     bytes.append(inout out, bytes.from_u64(i as u64))
     out
@@ -1582,7 +1582,7 @@ fn deep(p: P, ty: u32, inout seen: Map[u32, bool]) -> bool {
 
 /// `x.copy()` of the value of type ty at C pointer expression ptr: a clone, or copy_T.
 fn copy_expr(inout g: G, p: P, ty: u32, ptr: List[u8]) {
-    var seen: Map[u32, bool] = Map.new()
+    let mut seen: Map[u32, bool] = Map.new()
     if !deep(p, ty, inout seen) {
         clone_expr(inout g, p, ty, ptr)
         return
@@ -1682,9 +1682,9 @@ fn trait_glue(inout g: G, p: P, kind: u32, ty: u32) {
                 putn(inout g, i as u64)
                 put(inout g, ") {\n")
                 for j in 0..v.flen {
-                    var x = txt("a.u.v", i as u64, ".f")
+                    let mut x = txt("a.u.v", i as u64, ".f")
                     bytes.append(inout x, bytes.from_u64(j as u64))
-                    var y = txt("b.u.v", i as u64, ".f")
+                    let mut y = txt("b.u.v", i as u64, ".f")
                     bytes.append(inout y, bytes.from_u64(j as u64))
                     cmp_part(inout g, p, types.field(p.t, v.fstart, j).ty, x, y)
                 }
@@ -1734,7 +1734,7 @@ fn trait_glue(inout g: G, p: P, kind: u32, ty: u32) {
                 putn(inout g, i as u64)
                 put(inout g, ") { ")
                 for j in 0..v.flen {
-                    var x = txt("x.u.v", i as u64, ".f")
+                    let mut x = txt("x.u.v", i as u64, ".f")
                     bytes.append(inout x, bytes.from_u64(j as u64))
                     hash_part(inout g, p, types.field(p.t, v.fstart, j).ty, x)
                 }
@@ -1773,12 +1773,12 @@ fn trait_glue(inout g: G, p: P, kind: u32, ty: u32) {
         if k == types.T_RECORD {
             // `Name { a: 1, b: "x" }`
             let d = types.def_of(p.t, ty)
-            var head = resolve.key_shown(p.names, d.key)
+            let mut head = resolve.key_shown(p.names, d.key)
             if d.len == 0 { bytes.append(inout head, sys.lit(" {}")) } else { bytes.append(inout head, sys.lit(" { ")) }
             show_lit(inout g, head)
             for i in 0..d.len {
                 let fl = types.field(p.t, d.start, i)
-                var lab: List[u8] = List.new()
+                let mut lab: List[u8] = List.new()
                 if i > 0 { bytes.append(inout lab, sys.lit(", ")) }
                 bytes.append(inout lab, intern.name(p.names, fl.name))
                 bytes.append(inout lab, sys.lit(": "))
@@ -1807,12 +1807,12 @@ fn trait_glue(inout g: G, p: P, kind: u32, ty: u32) {
                 put(inout g, "case ")
                 putn(inout g, i as u64)
                 put(inout g, ": ")
-                var nmv = resolve.key_shown(p.names, v.key)
+                let mut nmv = resolve.key_shown(p.names, v.key)
                 if v.flen > 0 { nmv.push(40) }
                 show_lit(inout g, nmv)
                 for j in 0..v.flen {
                     if j > 0 { show_lit(inout g, sys.lit(", ")) }
-                    var x = txt("x.u.v", i as u64, ".f")
+                    let mut x = txt("x.u.v", i as u64, ".f")
                     bytes.append(inout x, bytes.from_u64(j as u64))
                     show_into(inout g, p, types.field(p.t, v.fstart, j).ty, sys.lit("o"), x, true)
                     put(inout g, "; ")
@@ -1895,9 +1895,9 @@ fn trait_glue(inout g: G, p: P, kind: u32, ty: u32) {
             putn(inout g, i as u64)
             put(inout g, ": ")
             for j in 0..v.flen {
-                var lhs = txt("r.u.v", i as u64, ".f")
+                let mut lhs = txt("r.u.v", i as u64, ".f")
                 bytes.append(inout lhs, bytes.from_u64(j as u64))
-                var src = txt("&x->u.v", i as u64, ".f")
+                let mut src = txt("&x->u.v", i as u64, ".f")
                 bytes.append(inout src, bytes.from_u64(j as u64))
                 copy_part(inout g, p, types.field(p.t, v.fstart, j).ty, lhs, src)
             }
@@ -1932,7 +1932,7 @@ fn trait_glue(inout g: G, p: P, kind: u32, ty: u32) {
         put(inout g, " v = ")
         gname(inout g, p, "get_", ty)
         put(inout g, "(*x);\n  ")
-        var seen: Map[u32, bool] = Map.new()
+        let mut seen: Map[u32, bool] = Map.new()
         if deep(p, t.a, inout seen) {
             cty(inout g, p, t.a)
             put(inout g, " w = ")
@@ -2403,7 +2403,7 @@ fn uniqs(inout g: G, p: P, id: u32, depth: u32) {
     uniqs(inout g, p, x.a, depth)
     let bty = p.ir.places[x.a as usize].ty
     if x.kind == ir.P_DEREF || (x.kind == ir.P_INDEX && ty_kind(p, bty) == types.T_LIST) || (x.kind == ir.P_FIELD && shared_rec(p, bty)) {
-        var ptr = sys.lit("&")
+        let mut ptr = sys.lit("&")
         bytes.append(inout ptr, place_text(inout g, p, x.a))
         ind(inout g, depth)
         uniq_call(inout g, p, bty, ptr)
@@ -2541,8 +2541,8 @@ fn fixed_cmp(p: P, opk: u32, a: u32, b: u32, ty: u32) -> u32 {
     let k = types.ik(p.t, ty)
     let xa = p.ir.ops[a as usize]
     let xb = p.ir.ops[b as usize]
-    var o = opk
-    var lit: u64 = 0
+    let mut o = opk.copy()
+    let mut lit: u64 = 0
     if xb.kind == ir.O_INT && xa.kind != ir.O_INT {
         lit = xb.v
     } else if xa.kind == ir.O_INT && xb.kind != ir.O_INT {
@@ -2752,7 +2752,7 @@ fn trait_builtin(inout g: G, p: P, s: ir.Stmt) {
     let b = s.a
     if b == ir.B_SHOW {
         let x = barg(p, s, 1)
-        var o = sys.lit("&")
+        let mut o = sys.lit("&")
         let mark = g.o.len()
         arg_val(inout g, p, barg(p, s, 0))
         bytes.append(inout o, cut(inout g, mark))
@@ -2779,14 +2779,14 @@ fn trait_builtin(inout g: G, p: P, s: ir.Stmt) {
         let d = cut(inout g, m2)
         putb(inout g, d)
         put(inout g, " = ei_str_from(\"\"); ")
-        var o = sys.lit("&")
+        let mut o = sys.lit("&")
         bytes.append(inout o, d)
         show_into(inout g, p, ty, o, v, false)
         return
     }
     bdst(inout g, p, s)
     if b == ir.B_COPY {
-        var ptr = sys.lit("&")
+        let mut ptr = sys.lit("&")
         bytes.append(inout ptr, v)
         copy_expr(inout g, p, ty, ptr)
     } else if b == ir.B_HASH {
@@ -2880,7 +2880,7 @@ fn builtin(inout g: G, p: P, s: ir.Stmt, depth: u32) {
         let mark = g.o.len()
         arg_val(inout g, p, barg(p, s, 0))
         let l = cut(inout g, mark)
-        var lp = sys.lit("&")
+        let mut lp = sys.lit("&")
         bytes.append(inout lp, l)
         uniq_call(inout g, p, arg_ty(p, barg(p, s, 0)), lp)
         put(inout g, ";\n")
@@ -2892,7 +2892,7 @@ fn builtin(inout g: G, p: P, s: ir.Stmt, depth: u32) {
         option_lit(inout g, p, s.ty, List.new())
         put(inout g, "; else ")
         bdst(inout g, p, s)
-        var v = l
+        let mut v = l.copy()
         bytes.append(inout v, sys.lit(".d[--"))
         bytes.append(inout v, l)
         bytes.append(inout v, sys.lit(".len]"))
@@ -3032,7 +3032,7 @@ fn stmt(inout g: G, p: P, id: u32, depth: u32) {
     }
     if k == ir.S_LOOP {
         // for (;;) { body; s<n>: ; step } with `continue` as `goto s<n>`
-        var label = NONE
+        let mut label = NONE
         let has_step = p.ir.blocks[s.b as usize].len > 0
         if has_step && has_continue(p, s.a) {
             label = g.nlabels
@@ -3085,14 +3085,14 @@ fn stmt(inout g: G, p: P, id: u32, depth: u32) {
         dst(inout g, p, s.dst)
         let cty0 = ir.op_ty(p.ir, s.a)
         if owns(inout g, p, cty0) {
-            var ptr = sys.lit("&")
+            let mut ptr = sys.lit("&")
             bytes.append(inout ptr, op_text(inout g, p, s.a))
             clone_expr(inout g, p, cty0, ptr)
         } else {
             op(inout g, p, s.a)
         }
     } else if k == ir.S_DROP {
-        var ptr = sys.lit("&")
+        let mut ptr = sys.lit("&")
         bytes.append(inout ptr, place_text(inout g, p, s.a))
         drop_call(inout g, p, s.ty, ptr)
         // drop_call ends in "; "
@@ -3406,16 +3406,16 @@ fn export_wrappers(inout g: G, p: P, wasm: bool) {
 type Order = { fns: List[u32], hdrs: List[u32], titles: List[List[u8]] }
 
 fn order(g: G, p: P) -> Order {
-    var mods: List[List[u8]] = List.new()
+    let mut mods: List[List[u8]] = List.new()
     mods.push(List.new())
-    var insts: List[u32] = List.new()
+    let mut insts: List[u32] = List.new()
     for f in 0..p.ir.fns.len() {
         let fd = p.ir.fns[f]
         if fd.body == 0 || fd.is_test { continue }
         if is_instance(fd.name) {
             // insertion by C name
             insts.push(f as u32)
-            var j = insts.len() - 1
+            let mut j = insts.len() - 1
             while j > 0 && bytes.compare(g.fnn[insts[j - 1] as usize], g.fnn[f]) > 0 {
                 insts[j] = insts[j - 1]
                 j -= 1
@@ -3424,16 +3424,16 @@ fn order(g: G, p: P) -> Order {
             continue
         }
         let m = module_of(fd.name)
-        var known = false
+        let mut known = false
         for x in mods {
             if bytes.eq(x, m) { known = true }
         }
         if !known { mods.push(m) }
     }
-    var o = Order(List.new(), List.new(), List.new())
+    let mut o = Order(List.new(), List.new(), List.new())
     for m in mods {
         o.hdrs.push(o.fns.len() as u32)
-        var t = sys.lit("module ")
+        let mut t = sys.lit("module ")
         if m.len() == 0 { bytes.append(inout t, sys.lit("(entry)")) } else { bytes.append(inout t, m) }
         o.titles.push(t)
         for f in 0..p.ir.fns.len() {
@@ -3531,12 +3531,12 @@ fn main_body(inout g: G, p: P, file: List[u8], f: u32) {
 }
 
 fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool) -> Result[List[u8], List[u8]] {
-    var g = G(List.new(), 0, List.new(), 0, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new())
+    let mut g = G(List.new(), 0, List.new(), 0, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new())
     name_all(inout g, p)
     if g.err.len() > 0 { return Err(g.err) }
     let ord = order(g, p)
     // functions first, so the glue they need is known
-    var main_fn = NONE
+    let mut main_fn = NONE
     for i in 0..ord.fns.len() {
         section(inout g, ord, i)
         let f = ord.fns[i]
@@ -3566,7 +3566,7 @@ fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool) -> Result[List
     let fns_text = g.o.copy()
     // shared glue, until nothing new is needed
     g.o = List.new()
-    var gi: usize = 0
+    let mut gi: usize = 0
     while gi < g.need.len() {
         let key = g.need[gi].copy()
         glue(inout g, p, key)
@@ -3599,7 +3599,7 @@ fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool) -> Result[List
         putb(inout g, n)
         put(inout g, ";\n")
     }
-    var done: Map[u32, bool] = Map.new()
+    let mut done: Map[u32, bool] = Map.new()
     for ty in 0..p.t.tys.len() { def_ty(inout g, p, ty as u32, inout done) }
     handle_bodies(inout g, p)
     let envs = g.envs.copy()
@@ -3669,7 +3669,7 @@ fn h_ty(inout out: List[u8], p: P, ty: u32) {
 fn h_def(inout out: List[u8], p: P, ty: u32, inout done: Map[u32, bool]) {
     if ty_kind(p, ty) != types.T_RECORD || done.contains(ty) { return }
     done.insert(ty, true)
-    var name: List[u8] = List.new()
+    let mut name: List[u8] = List.new()
     h_ty(inout name, p, ty)
     bytes.append(inout out, sys.lit("typedef struct "))
     bytes.append(inout out, name)
@@ -3695,9 +3695,9 @@ fn h_def(inout out: List[u8], p: P, ty: u32, inout done: Map[u32, bool]) {
 /// The C (and C++) header of a library: its records and an `eider_<name>` prototype per
 /// `export fn`, byte-identical to tests/oracle (`emit-header`, `build --lib`).
 pub fn header(p: P) -> List[u8] {
-    var out = sys.lit("/* generated by eider: C interface */\n#ifndef EIDER_EXPORTS_H\n#define EIDER_EXPORTS_H\n#include <stdint.h>\n#include <stdbool.h>\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n")
-    var done: Map[u32, bool] = Map.new()
-    var protos: List[u8] = List.new()
+    let mut out = sys.lit("/* generated by eider: C interface */\n#ifndef EIDER_EXPORTS_H\n#define EIDER_EXPORTS_H\n#include <stdint.h>\n#include <stdbool.h>\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n")
+    let mut done: Map[u32, bool] = Map.new()
+    let mut protos: List[u8] = List.new()
     for x in p.ir.exports {
         let fd = p.ir.fns[x.f as usize]
         let ls = fd.lstart as usize
@@ -3779,7 +3779,7 @@ fn task_fn(p: P, el: u32) -> u32 { types.find_comp(p.t, types.T_FN, types.EMPTY,
 
 /// `fn(T) -> T`, Mutex[T].update's closure type (the checker interns it).
 fn update_fn(p: P, el: u32) -> u32 {
-    var ps: List[u32] = List.new()
+    let mut ps: List[u32] = List.new()
     ps.push(el)
     let l = types.find_list(p.t, ps)
     if l == types.NOTY { return types.NOTY }

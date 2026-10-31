@@ -111,7 +111,7 @@ pub type Types = {
 }
 
 pub fn new() -> Types {
-    var t = Types(List.new(), Map.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new())
+    let mut t = Types(List.new(), Map.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new())
     for i in 0..6 { t.tys.push(Ty(T_INT, i as u32, 0)) }
     t.tys.push(Ty(T_BOOL, 0, 0))
     t.tys.push(Ty(T_STR, 0, 0))
@@ -131,7 +131,7 @@ pub fn list(inout t: Types, xs: List[u32]) -> u32 {
     for i in 0..t.lists.len() {
         let sp = t.lists[i]
         if sp.len != n { continue }
-        var same = true
+        let mut same = true
         for j in 0..n {
             if t.cells[(sp.start + j) as usize] != xs[j as usize] {
                 same = false
@@ -149,7 +149,7 @@ pub fn list(inout t: Types, xs: List[u32]) -> u32 {
 pub fn list_len(t: Types, l: u32) -> u32 { t.lists[l as usize].len }
 pub fn list_at(t: Types, l: u32, i: u32) -> u32 { t.cells[(t.lists[l as usize].start + i) as usize] }
 pub fn list_items(t: Types, l: u32) -> List[u32] {
-    var out: List[u32] = List.new()
+    let mut out: List[u32] = List.new()
     let sp = t.lists[l as usize]
     for i in 0..sp.len { out.push(t.cells[(sp.start + i) as usize]) }
     out
@@ -241,7 +241,7 @@ pub fn find_list(t: Types, xs: List[u32]) -> u32 {
     for i in 0..t.lists.len() {
         let sp = t.lists[i]
         if sp.len != n { continue }
-        var same = true
+        let mut same = true
         for j in 0..n {
             if t.cells[(sp.start + j) as usize] != xs[j as usize] {
                 same = false
@@ -288,7 +288,7 @@ pub fn add_def(inout t: Types, d: Def) -> u32 {
     let id = t.tys.len() as u32
     let k = if d.is_enum { T_ENUM } else { T_RECORD }
     t.tys.push(Ty(k, di, 0))
-    var d2 = d
+    let mut d2 = d.copy()
     d2.ty = id
     if d2.tmpl == NOTY { d2.tmpl = di }
     t.defs.push(d2)
@@ -347,7 +347,7 @@ pub fn bits(k: u32) -> u32 {
 // ---- display (type names as diagnostics print them; module names stay mangled, `diag` demangles)
 
 pub fn show(t: Types, names: intern.Interner, id: u32) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     show_into(inout out, t, names, id)
     out
 }

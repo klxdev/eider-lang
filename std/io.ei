@@ -14,13 +14,13 @@ pub fn err(b: List[u8]) uses io {
 }
 
 pub fn outln(b: List[u8]) uses io {
-    var l = b
+    let mut l = b.copy()
     l.push(10)
     out(l)
 }
 
 pub fn errln(b: List[u8]) uses io {
-    var l = b
+    let mut l = b.copy()
     l.push(10)
     err(l)
 }
@@ -36,7 +36,7 @@ pub fn read(max: i64) -> Result[List[u8], String] uses io {
 pub fn read_fd(fd: i32, max: i64) -> Result[List[u8], String] uses io {
     let n = sys.read_fd(fd, max)
     if n < 0 {
-        var m = String.from("cannot read: ")
+        let mut m = String.from("cannot read: ")
         m.append(sys.error_text(n))
         return Err(m)
     }
@@ -45,7 +45,7 @@ pub fn read_fd(fd: i32, max: i64) -> Result[List[u8], String] uses io {
 
 /// All of stdin until end of input.
 pub fn read_all() -> Result[List[u8], String] uses io {
-    var all: List[u8] = List.new()
+    let mut all: List[u8] = List.new()
     while true {
         let chunk = read(65536)?
         if chunk.len() == 0 { break }

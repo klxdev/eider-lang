@@ -17,7 +17,7 @@ import "dump.ei"
 pub type Front = { parsed: parse.Parsed, diags: List[diag.Diag] }
 
 pub fn analyze(src: List[u8]) -> Front {
-    var names = intern.new()
+    let mut names = intern.new()
     let lx = lex.lex_all(src, inout names)
     let parsed = parse.parse_all(lx.lexed, names)
     Front(parsed, merge(lx.diags, parsed.diags))
@@ -25,7 +25,7 @@ pub fn analyze(src: List[u8]) -> Front {
 
 /// The lexer's diagnostics, then the parser's that no lexer error explains.
 pub fn merge(lexd: List[diag.Diag], parsed: List[diag.Diag]) -> List[diag.Diag] {
-    var out = lexd
+    let mut out = lexd.copy()
     for d in parsed {
         if !explained(lexd, d) { out.push(d) }
     }
@@ -49,9 +49,9 @@ fn explained(lexd: List[diag.Diag], d: diag.Diag) -> bool {
 /// error nodes included).
 pub fn report(file: List[u8], src: List[u8]) -> List[u8] {
     let f = analyze(src)
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     for d in f.diags {
-        var d2 = d
+        let mut d2 = d.copy()
         d2.msg = diag.demangle(d.msg)
         bytes.append(inout out, diag.json(d2, file))
         out.push(10)

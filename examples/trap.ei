@@ -2,10 +2,10 @@ module trap
 
 // Overflow traps in every build; +% is the explicit opt-out.
 fn main() uses io {
-  var x: i32 = 2_147_483_000
+  let mut x: i32 = 2_147_483_000
   print(x +% 1_000)     // wraps: -2147483296
   let xs = [1, 2, 3]
-  var i: usize = 0
+  let mut i: usize = 0
   while i < 10 {
     print(xs[i])        // traps at i == 3: index out of bounds
     i += 1

@@ -99,8 +99,8 @@ fn s(x: str) -> List[u8] { sys.lit(x) }
 
 pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: List[List[u8]]) -> Analysis uses io, fs, net, clock {
     let fp = resolve.overlay(overlay_paths, overlay_texts)
-    var diags: List[diag.Diag] = List.new()
-    var files: List[List[u8]] = List.new()
+    let mut diags: List[diag.Diag] = List.new()
+    let mut files: List[List[u8]] = List.new()
     files.push(entry)
     let src: List[u8] = match resolve.read_source(fp, entry) {
         Some(t) => t
@@ -109,19 +109,19 @@ pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: Li
             return Analysis(diags, List.new(), List.new(), List.new(), files)
         }
     }
-    var names = intern.new()
+    let mut names = intern.new()
     // the front end recovers (front.ei): every syntax error, and the tree with error nodes
     let lx = lex.lex_all(src, inout names)
     let pr = parse.parse_all(lx.lexed, names)
-    var ld = resolve.load_from(entry, src, pr.p, fp)
-    var found = front.merge(lx.diags, pr.diags)
+    let mut ld = resolve.load_from(entry, src, pr.p, fp)
+    let mut found = front.merge(lx.diags, pr.diags)
     resolve.note_syntax(inout ld.p, 0, found)
     for d in ld.diags { found.push(d) }
     if ld.fatal { return build(ld.p, no_rec(), types.new(), finals(found, entry)) }
     if has_comptime(ld.p) {
         match toolchain_problem() {
             Some(d) => {
-                var ds = finals(found, entry)
+                let mut ds = finals(found, entry)
                 ds.push(d)
                 return build(ld.p, no_rec(), types.new(), ds)
             }
@@ -137,7 +137,7 @@ pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: Li
 
 /// The diagnostics as `eiderc check` prints them (each once, final_diag).
 fn finals(ds: List[diag.Diag], entry: List[u8]) -> List[diag.Diag] {
-    var out: List[diag.Diag] = List.new()
+    let mut out: List[diag.Diag] = List.new()
     for d in diag.dedup(ds) { out.push(final_diag(d, entry)) }
     out
 }
@@ -147,7 +147,7 @@ fn no_rec() -> check.Rec { check.Rec(false, List.new(), List.new()) }
 /// The diagnostic as `eiderc check` prints it (main.ei report: names demangled), naming
 /// its file.
 fn final_diag(d: diag.Diag, entry: List[u8]) -> diag.Diag {
-    var d2 = d
+    let mut d2 = d.copy()
     d2.msg = diag.demangle(d.msg)
     d2.help = diag.demangle(d.help)
     if d2.file.len() == 0 { d2.file = entry }
@@ -156,12 +156,12 @@ fn final_diag(d: diag.Diag, entry: List[u8]) -> diag.Diag {
 
 /// The entry file can't be read (`eiderc check` prints `eiderc: <error>` and exits 2).
 fn read_diag(entry: List[u8]) -> diag.Diag uses fs {
-    var m = s("cannot read `")
+    let mut m = s("cannot read `")
     bytes.append(inout m, entry)
     bytes.append(inout m, s("`"))
     bytes.append(inout m, s(": "))
     bytes.append(inout m, resolve.read_error(entry))
-    var d = diag.new("E0804", 1, 1, m)
+    let mut d = diag.new("E0804", 1, 1, m)
     d.file = entry
     d
 }
@@ -185,7 +185,7 @@ fn toolchain_problem() -> Option[diag.Diag] uses io, fs, clock {
     for f in ["core/eider_rt.h", "core/eider_rt.c", "core/eider_core.c"] {
         let path = fs.join(root, s(f))
         if !fs.exists(path) {
-            var m = s("cannot read ")
+            let mut m = s("cannot read ")
             bytes.append(inout m, path)
             return Some(diag.new("toolchain", 1, 1, m))
         }
@@ -215,15 +215,15 @@ type B = {
 
 /// A declaration or use position: module m, line, col.
 fn akey(m: u32, line: u32, col: u32) -> u64 {
-    var c = col
+    let mut c = col.copy()
     if c > 4194303 { c = 4194303 }
-    var l = line
+    let mut l = line.copy()
     if l > 4194303 { l = 4194303 }
     (m as u64) * 17592186044416 + (l as u64) * 4194304 + c as u64
 }
 
 fn build(p: resolve.Program, rec: check.Rec, t: types.Types, diags: List[diag.Diag]) -> Analysis {
-    var b = B(p, List.new(), Map.new(), List.new(), Map.new(), Map.new(), Map.new())
+    let mut b = B(p, List.new(), Map.new(), List.new(), Map.new(), Map.new(), Map.new())
     for r in rec.refs { b.used.insert(akey(r.m, r.line, r.col), true) }
     for x in rec.tys {
         if x.binding { b.bound.insert(akey(x.m, x.line, x.col), true) }
@@ -235,12 +235,12 @@ fn build(p: resolve.Program, rec: check.Rec, t: types.Types, diags: List[diag.Di
             if n.kind == ast.Variant { b.variants.insert(n.a, true) }
         }
     }
-    var files: List[List[u8]] = List.new()
+    let mut files: List[List[u8]] = List.new()
     for m in 0..p.mods.len() {
         files.push(p.mods[m].path)
         module_symbols(inout b, m as u32)
     }
-    var refs = Refs(List.new(), List.new(), Map.new())
+    let mut refs = Refs(List.new(), List.new(), Map.new())
     for m in 0..p.mods.len() { module_refs(inout b, m as u32, inout refs) }
     for r in rec.refs {
         let target = match b.anchors.get(akey(r.tm, r.tline, r.tcol)) {
@@ -252,13 +252,13 @@ fn build(p: resolve.Program, rec: check.Rec, t: types.Types, diags: List[diag.Di
         if ti == NONE { continue }
         add_ref(b, r.m, ti, target, inout refs)
     }
-    var tys: List[TypeAt] = List.new()
-    var tkeys: List[u64] = List.new()
-    var texts: Map[u32, List[u8]] = Map.new()
-    var tseen: Map[u64, List[u32]] = Map.new()
+    let mut tys: List[TypeAt] = List.new()
+    let mut tkeys: List[u64] = List.new()
+    let mut texts: Map[u32, List[u8]] = Map.new()
+    let mut tseen: Map[u64, List[u32]] = Map.new()
     for x in rec.tys {
-        var sp = Span(List.new(), 0, 0, 0, 0)
-        var si = NONE
+        let mut sp = Span(List.new(), 0, 0, 0, 0)
+        let mut si = NONE
         if x.binding {
             si = match b.anchors.get(akey(x.m, x.line, x.col)) {
                 Some(i) => i
@@ -272,7 +272,7 @@ fn build(p: resolve.Program, rec: check.Rec, t: types.Types, diags: List[diag.Di
             sp = tok_span(b, x.m, ti, ti)
         }
         let k = akey(x.m, sp.line, sp.col)
-        var had: List[u32] = match tseen.get(k) {
+        let mut had: List[u32] = match tseen.get(k) {
             Some(l) => l
             None => List.new()
         }
@@ -285,7 +285,7 @@ fn build(p: resolve.Program, rec: check.Rec, t: types.Types, diags: List[diag.Di
         }
         texts.insert(x.ty, text)
         if si != NONE {
-            var sym = b.syms[si as usize]
+            let mut sym = b.syms[si as usize].copy()
             if (sym.kind == SK_LOCAL || sym.kind == SK_PARAM) && sym.detail.len() == 0 {
                 sym.detail = text
                 b.syms[si as usize] = sym
@@ -295,9 +295,9 @@ fn build(p: resolve.Program, rec: check.Rec, t: types.Types, diags: List[diag.Di
         tkeys.push(k)
     }
     // refs and types in source order (module, line, column), else in the order recorded
-    var sorted_refs: List[Ref] = List.new()
+    let mut sorted_refs: List[Ref] = List.new()
     for i in order(refs.keys) { sorted_refs.push(refs.refs[i as usize]) }
-    var sorted_tys: List[TypeAt] = List.new()
+    let mut sorted_tys: List[TypeAt] = List.new()
     for i in order(tkeys) { sorted_tys.push(tys[i as usize]) }
     Analysis(diags, b.syms, sorted_refs, sorted_tys, files)
 }
@@ -321,19 +321,19 @@ fn add_ref(b: B, m: u32, ti: u32, target: u32, inout refs: Refs) {
 /// The indexes of `keys` in ascending order of the keys (a stable merge sort).
 fn order(keys: List[u64]) -> List[u32] {
     let n = keys.len()
-    var idx: List[u32] = List.new()
+    let mut idx: List[u32] = List.new()
     for i in 0..n { idx.push(i as u32) }
-    var width: usize = 1
+    let mut width: usize = 1
     while width < n {
-        var out: List[u32] = List.new()
-        var lo: usize = 0
+        let mut out: List[u32] = List.new()
+        let mut lo: usize = 0
         while lo < n {
-            var mid = lo + width
+            let mut mid = lo + width
             if mid > n { mid = n }
-            var hi = mid + width
+            let mut hi = mid + width
             if hi > n { hi = n }
-            var i = lo
-            var j = mid
+            let mut i = lo.copy()
+            let mut j = mid.copy()
             while i < mid || j < hi {
                 if j >= hi || (i < mid && keys[idx[i] as usize] <= keys[idx[j] as usize]) {
                     out.push(idx[i])
@@ -360,8 +360,8 @@ fn tkind(b: B, m: u32, i: u32) -> lex.Kind { b.p.mods[m as usize].toks[i as usiz
 /// The token of module m that starts at (line, col), or NONE.
 fn tok_at(b: B, m: u32, line: u32, col: u32) -> u32 {
     let n = ntoks(b, m)
-    var lo: u32 = 0
-    var hi = n
+    let mut lo: u32 = 0
+    let mut hi = n.copy()
     while lo < hi {
         let mid = lo + (hi - lo) / 2
         let t = tok(b, m, mid)
@@ -444,9 +444,9 @@ fn continues(k: lex.Kind) -> bool {
 /// an enclosing one.
 fn scan_end(b: B, m: u32, from: u32, pipe: bool) -> u32 {
     let n = ntoks(b, m)
-    var depth: u32 = 0
-    var last = from
-    var i = from
+    let mut depth: u32 = 0
+    let mut last = from.copy()
+    let mut i = from.copy()
     while i < n {
         let k = tkind(b, m, i)
         if k == lex.Eof { break }
@@ -468,7 +468,7 @@ fn scan_end(b: B, m: u32, from: u32, pipe: bool) -> u32 {
 
 /// The first token of the line-or-statement holding token i (items start a line).
 fn line_start(b: B, m: u32, i: u32) -> u32 {
-    var j = i
+    let mut j = i.copy()
     while j > 0 {
         let k = tkind(b, m, j - 1)
         if k == lex.Newline || k == lex.Semi || k == lex.LBrace || k == lex.RBrace { break }
@@ -479,10 +479,10 @@ fn line_start(b: B, m: u32, i: u32) -> u32 {
 
 /// Tokens first..last as source text on one line (any whitespace as one space).
 fn text(b: B, m: u32, first: u32, last: u32) -> List[u8] {
-    var out: List[u8] = List.new()
-    var prev_end: u32 = 0
-    var gap = false
-    var i = first
+    let mut out: List[u8] = List.new()
+    let mut prev_end: u32 = 0
+    let mut gap = false
+    let mut i = first.copy()
     while i <= last && i < ntoks(b, m) {
         let t = tok(b, m, i)
         i += 1
@@ -492,7 +492,7 @@ fn text(b: B, m: u32, first: u32, last: u32) -> List[u8] {
         }
         if out.len() > 0 && (gap || t.start > prev_end) { out.push(32) }
         gap = false
-        var k = t.start as usize
+        let mut k = t.start as usize
         while k < t.end as usize {
             out.push(b.p.mods[m as usize].src[k])
             k += 1
@@ -504,8 +504,8 @@ fn text(b: B, m: u32, first: u32, last: u32) -> List[u8] {
 
 /// The token after `from` at bracket depth 0 that has kind k (or NONE before `stop`).
 fn find_tok(b: B, m: u32, from: u32, k: lex.Kind, stop: u32) -> u32 {
-    var depth: u32 = 0
-    var i = from
+    let mut depth: u32 = 0
+    let mut i = from.copy()
     while i < stop {
         let x = tkind(b, m, i)
         if depth == 0 && x == k { return i }
@@ -554,19 +554,19 @@ fn module_symbols(inout b: B, m: u32) {
     let md = b.p.mods[m as usize].copy()
     let n = ntoks(b, m)
     let eof = tok(b, m, n - 1)
-    var name = module_name(md.path)
+    let mut name = module_name(md.path)
     if m == b.p.prelude { name = s("prelude") }
     let ms = add_sym(inout b, m, name, SK_MODULE, Span(md.path, 1, 1, 1, 1), Span(md.path, 1, 1, eof.line, eof.col), 0, md.path, 0, 0)
     b.modsym.push(ms)
     let a = md.ast.copy()
     // where each item starts: the end of an item is the token before the next one
-    var starts: List[u32] = List.new()
+    let mut starts: List[u32] = List.new()
     for k in 0..a.items_len {
         let it = a.nodes[ast.at(a, a.items_start, k) as usize]
         let ti = tok_at(b, m, it.line, it.col)
         if ti == NONE { starts.push(0) } else { starts.push(line_start(b, m, ti)) }
     }
-    var tys: Map[u32, u32] = Map.new()
+    let mut tys: Map[u32, u32] = Map.new()
     for pass in 0..2 {
         for k in 0..a.items_len {
             let id = ast.at(a, a.items_start, k)
@@ -576,7 +576,7 @@ fn module_symbols(inout b: B, m: u32) {
             let first = starts[k as usize]
             // from the next item's first token (or the end of the file) back to the last
             // token that isn't a separator
-            var last = n - 1
+            let mut last = n - 1
             if k + 1 < a.items_len { last = starts[(k + 1) as usize] }
             if last > first { last -= 1 }
             while last > first && is_sep(tkind(b, m, last)) { last -= 1 }
@@ -593,7 +593,7 @@ fn item_symbols(inout b: B, m: u32, id: u32, first: u32, last: u32, inout tys: M
     if ti == NONE { return }
     match n.kind {
         ast.IType => {
-            var dlast = find_tok(b, m, ti, lex.Eq, last + 1)
+            let mut dlast = find_tok(b, m, ti, lex.Eq, last + 1)
             if dlast == NONE { dlast = ti } else { dlast -= 1 }
             let name = nm(b, n.a)
             let detail = text(b, m, first, dlast)
@@ -633,7 +633,7 @@ fn item_symbols(inout b: B, m: u32, id: u32, first: u32, last: u32, inout tys: M
             sym_at(inout b, m, ti, name, SK_CONST, first, last, 0, detail, n)
         }
         ast.ITrait => {
-            var dlast = find_tok(b, m, ti, lex.LBrace, last + 1)
+            let mut dlast = find_tok(b, m, ti, lex.LBrace, last + 1)
             if dlast == NONE { dlast = ti } else { dlast -= 1 }
             let name = nm(b, n.a)
             let detail = text(b, m, first, dlast)
@@ -653,7 +653,7 @@ fn item_symbols(inout b: B, m: u32, id: u32, first: u32, last: u32, inout tys: M
             }
         }
         ast.IImpl => {
-            var container: u32 = 0
+            let mut container: u32 = 0
             let target = node(b, m, n.b)
             if (target.kind == ast.TName || target.kind == ast.TGeneric) && target.b == 0 {
                 match tys.get(target.a) {
@@ -676,7 +676,7 @@ fn method_symbols(inout b: B, m: u32, id: u32, container: u32) {
     let ti = tok_at(b, m, n.line, n.col)
     if ti == NONE { return }
     let first = line_start(b, m, ti)
-    var last = sig_end(b, m, ti, n)
+    let mut last = sig_end(b, m, ti, n)
     if n.h > 0 {
         let body = node(b, m, n.h - 1)
         let close = tok_at(b, m, body.end_line, body.end_col)
@@ -687,7 +687,7 @@ fn method_symbols(inout b: B, m: u32, id: u32, container: u32) {
 
 /// The last token of fn node n's signature (its end span), whose name is token ti.
 fn sig_end(b: B, m: u32, ti: u32, n: ast.Node) -> u32 {
-    var i = ti
+    let mut i = ti.copy()
     let total = ntoks(b, m)
     while i < total {
         let t = tok(b, m, i)
@@ -707,7 +707,7 @@ fn fn_symbols(inout b: B, m: u32, id: u32, ti: u32, first: u32, last: u32, kind:
         let pn = node(b, m, at(b, m, n.e, i))
         let pt = tok_at(b, m, pn.line, pn.col)
         if pt == NONE { continue }
-        var pf = pt
+        let mut pf = pt.copy()
         if pt > 0 {
             let prev = tok(b, m, pt - 1)
             if prev.kind == lex.Ident && prev.val == intern.K_INOUT as u64 { pf = pt - 1 }
@@ -858,7 +858,7 @@ fn locals_pat(inout b: B, m: u32, pat: u32, container: u32) {
     match n.kind {
         ast.PName => {
             let k = akey(m, n.line, n.col)
-            var binds = n.b == 0 && !b.variants.contains(n.a)
+            let mut binds = n.b == 0 && !b.variants.contains(n.a)
             if b.used.contains(k) { binds = false }
             if b.bound.contains(k) { binds = true }
             if binds {
@@ -887,7 +887,7 @@ fn locals_pat(inout b: B, m: u32, pat: u32, container: u32) {
 /// The module that alias `sym` names at (line, col) of module m (resolve.ei alias_pre), or
 /// NONE.
 fn alias_module(b: B, m: u32, sym: u32, line: u32, col: u32) -> u32 {
-    var pre: u32 = 0
+    let mut pre: u32 = 0
     for a in b.p.mods[m as usize].aliases {
         if a.sym == sym && (a.line < line || (a.line == line && a.col < col)) { pre = a.pre }
     }
@@ -905,7 +905,7 @@ fn module_of_pre(b: B, pre: u32) -> u32 {
 fn module_refs(inout b: B, m: u32, inout refs: Refs) {
     let a = b.p.mods[m as usize].ast
     // each import's path and alias (one Alias per import, in order)
-    var k: usize = 0
+    let mut k: usize = 0
     for j in 0..a.items_len {
         let n = a.nodes[ast.at(a, a.items_start, j) as usize]
         if n.kind != ast.IImport { continue }
@@ -974,8 +974,8 @@ fn place(inout out: List[u8], sp: Span, prelude: List[u8]) {
 /// prelude's own symbols and types are summarised in one line (they are the same for every
 /// program); refs into it name their target.
 pub fn dump(a: Analysis) -> List[u8] {
-    var out: List[u8] = List.new()
-    var prelude: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
+    let mut prelude: List[u8] = List.new()
     for x in a.symbols {
         if x.kind == SK_MODULE && bytes.eq(x.name, s("prelude")) { prelude = x.span.file }
     }
@@ -1005,7 +1005,7 @@ pub fn dump(a: Analysis) -> List[u8] {
         out.push(10)
     }
     put(inout out, "symbols\n")
-    var in_prelude: u32 = 0
+    let mut in_prelude: u32 = 0
     for i in 0..a.symbols.len() {
         let x = a.symbols[i]
         if prelude.len() > 0 && bytes.eq(x.span.file, prelude) {
@@ -1055,7 +1055,7 @@ pub fn dump(a: Analysis) -> List[u8] {
         out.push(10)
     }
     put(inout out, "types\n")
-    var tprelude: u32 = 0
+    let mut tprelude: u32 = 0
     for x in a.types {
         if prelude.len() > 0 && bytes.eq(x.span.file, prelude) {
             tprelude += 1

@@ -321,7 +321,7 @@ pub fn declare_fn(inout ir: Ir, name: List[u8], is_test: bool) -> u32 {
 pub fn begin_fn(inout ir: Ir, f: u32, ret: u32, caps: List[u8]) {
     ir.cur = f
     ir.building = List.new()
-    var fd = ir.fns[f as usize]
+    let mut fd = ir.fns[f as usize].copy()
     fd.ret = ret
     fd.caps = caps
     ir.fns[f as usize] = fd
@@ -329,7 +329,7 @@ pub fn begin_fn(inout ir: Ir, f: u32, ret: u32, caps: List[u8]) {
 
 /// Finish the function being built: its locals are stored and its body is block `body`.
 pub fn end_fn(inout ir: Ir, nparams: u32, body: u32) {
-    var fd = ir.fns[ir.cur as usize]
+    let mut fd = ir.fns[ir.cur as usize].copy()
     fd.lstart = ir.locals.len() as u32
     fd.lcount = ir.building.len() as u32
     for l in ir.building { ir.locals.push(l) }
@@ -359,7 +359,7 @@ pub fn end_nested(inout ir: Ir, nparams: u32, body: u32) {
 
 /// Set the return type of the function being built (a closure's is known at its end).
 pub fn set_ret(inout ir: Ir, ret: u32) {
-    var fd = ir.fns[ir.cur as usize]
+    let mut fd = ir.fns[ir.cur as usize].copy()
     fd.ret = ret
     ir.fns[ir.cur as usize] = fd
 }
@@ -400,7 +400,7 @@ pub fn op_is_local(ir: Ir, o: u32) -> bool { ir.ops[o as usize].kind == O_LOCAL 
 pub fn op_local_id(ir: Ir, o: u32) -> u32 { ir.ops[o as usize].a }
 
 pub fn set_local_ty(inout ir: Ir, l: u32, ty: u32) {
-    var x = ir.building[l as usize]
+    let mut x = ir.building[l as usize].copy()
     x.ty = ty
     ir.building[l as usize] = x
 }
@@ -441,7 +441,7 @@ pub fn open(ir: Ir) -> u32 { ir.pending.len() as u32 }
 /// Close the block opened at `mark`; returns the block id.
 pub fn close(inout ir: Ir, mark: u32) -> u32 {
     let start = ir.extra.len() as u32
-    var i = mark as usize
+    let mut i = mark as usize
     while i < ir.pending.len() {
         ir.extra.push(ir.pending[i])
         i += 1
@@ -465,7 +465,7 @@ pub fn add_const(inout ir: Ir, name: List[u8], ty: u32, o: u32) {
 /// Make function f (declared, never built) the `extern "c"` declaration of C symbol
 /// `symbol` with these parameter types and return type.
 pub fn add_extern(inout ir: Ir, f: u32, symbol: List[u8], params: List[u32], ret: u32) {
-    var fd = ir.fns[f as usize]
+    let mut fd = ir.fns[f as usize].copy()
     fd.ret = ret
     ir.fns[f as usize] = fd
     ir.externs.push(Extern(f, symbol, params))
@@ -770,7 +770,7 @@ fn kind_text(k: u32) -> str {
 
 /// The whole program as text.
 pub fn dump(ir: Ir, t: types.Types, names: intern.Interner) -> List[u8] {
-    var o = Out(List.new())
+    let mut o = Out(List.new())
     for c in ir.consts {
         put(inout o, "const ")
         putb(inout o, c.name)

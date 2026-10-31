@@ -81,7 +81,7 @@ impl Loop {
         self.next_id += 1
         self.live.insert(id, true)
         self.heap.push(Entry(dl.mono_ns(), id))
-        var i = self.heap.len() - 1
+        let mut i = self.heap.len() - 1
         while i > 0 {
             let up = (i - 1) / 2
             if !less(self.heap[i], self.heap[up]) { break }
@@ -124,11 +124,11 @@ impl Loop {
         self.heap[0] = self.heap[n - 1]
         self.heap.pop()
         let m = n - 1
-        var i: usize = 0
+        let mut i: usize = 0
         while true {
             let l = 2 * i + 1
             let r = l + 1
-            var s = i
+            let mut s = i.copy()
             if l < m && less(self.heap[l], self.heap[s]) { s = l }
             if r < m && less(self.heap[r], self.heap[s]) { s = r }
             if s == i { break }
@@ -149,8 +149,8 @@ impl Loop {
     /// One round (see the module comment): waits until something happens or `dl` passes;
     /// empty when `dl` passed with nothing to report.
     fn poll(inout self, dl: time.Deadline) -> Result[List[Event], String] uses io, clock {
-        var out: List[Event] = List.new()
-        var woken = false
+        let mut out: List[Event] = List.new()
+        let mut woken = false
         let until = dl.earlier(self.next_timer())
         let evs = poll.wait(self.p, 256, until.timeout_ms())?
         for e in evs {

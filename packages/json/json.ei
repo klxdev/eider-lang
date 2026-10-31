@@ -95,7 +95,7 @@ pub fn new_array(inout d: Doc, items: List[u32]) -> u32 {
 
 /// An object from its keys and values (same length; the shorter one decides).
 pub fn new_object(inout d: Doc, keys: List[List[u8]], vals: List[u32]) -> u32 {
-    var ids: List[u32] = List.new()
+    let mut ids: List[u32] = List.new()
     let n = if keys.len() < vals.len() { keys.len() } else { vals.len() }
     for i in 0..n { ids.push(new_string(inout d, keys[i])) }
     let start = d.extra.len() as u32
@@ -188,7 +188,7 @@ pub fn field(d: Doc, id: u32, key: str) -> Option[u32] { get(d, id, sys.lit(key)
 
 /// Follow a path of object keys from `id`.
 pub fn path(d: Doc, id: u32, keys: List[List[u8]]) -> Option[u32] {
-    var cur = id
+    let mut cur = id.copy()
     for k in keys {
         match get(d, cur, k) {
             Some(x) => { cur = x }
@@ -202,7 +202,7 @@ pub fn path(d: Doc, id: u32, keys: List[List[u8]]) -> Option[u32] {
 
 /// Parse one JSON text.
 pub fn parse(src: List[u8]) -> Result[Doc, Error] {
-    var p = P(src, 0, 0, new_doc(), List.new())
+    let mut p = P(src, 0, 0, new_doc(), List.new())
     // a UTF-8 byte order mark is not JSON (RFC 8259 8.1: MUST NOT add one; we may reject it)
     ws(inout p)
     let root = match value(inout p) {
@@ -211,16 +211,16 @@ pub fn parse(src: List[u8]) -> Result[Doc, Error] {
     }
     ws(inout p)
     if p.i < p.src.len() { return Err(error_at(p.src, p.i, sys.lit("unexpected text after the value"))) }
-    var d = p.doc
+    let mut d = p.doc.copy()
     d.root = root
     Ok(d)
 }
 
 /// The position of byte `at` in `src`.
 fn error_at(src: List[u8], at: usize, msg: List[u8]) -> Error {
-    var line: u32 = 1
-    var col: u32 = 1
-    var i: usize = 0
+    let mut line: u32 = 1
+    let mut col: u32 = 1
+    let mut i: usize = 0
     while i < at && i < src.len() {
         let b = src[i]
         if b == 10 {
@@ -236,7 +236,7 @@ fn error_at(src: List[u8], at: usize, msg: List[u8]) -> Error {
 
 /// "msg at line L, column C (byte N)"
 pub fn error_text(e: Error) -> List[u8] {
-    var m = e.msg
+    let mut m = e.msg.copy()
     bytes.append(inout m, sys.lit(" at line "))
     bytes.append(inout m, bytes.from_u64(e.line as u64))
     bytes.append(inout m, sys.lit(", column "))
@@ -305,7 +305,7 @@ fn enter(inout p: P) -> bool {
 fn arr(inout p: P) -> Option[u32] {
     if !enter(inout p) { return fail(inout p, "nested too deeply") }
     p.i += 1
-    var items: List[u32] = List.new()
+    let mut items: List[u32] = List.new()
     ws(inout p)
     if peek(p) == 93 {
         p.i += 1
@@ -338,8 +338,8 @@ fn arr(inout p: P) -> Option[u32] {
 fn obj(inout p: P) -> Option[u32] {
     if !enter(inout p) { return fail(inout p, "nested too deeply") }
     p.i += 1
-    var keys: List[u32] = List.new()
-    var vals: List[u32] = List.new()
+    let mut keys: List[u32] = List.new()
+    let mut vals: List[u32] = List.new()
     ws(inout p)
     if peek(p) == 125 {
         p.i += 1
@@ -398,7 +398,7 @@ fn hexval(c: u8) -> i32 {
 
 /// Four hex digits at the cursor (after `\u`); -1 if they aren't.
 fn hex4(inout p: P) -> i32 {
-    var v: i32 = 0
+    let mut v: i32 = 0
     for k in 0..4 {
         if p.i >= p.src.len() { return -1 }
         let h = hexval(p.src[p.i])
@@ -433,9 +433,9 @@ pub fn put_utf8(inout out: List[u8], c: u32) {
 pub fn utf8_len(s: List[u8], i: usize) -> usize {
     let b = s[i]
     if b < 128 { return 1 }
-    var n: usize = 0
-    var lo: u8 = 128
-    var hi: u8 = 191
+    let mut n: usize = 0
+    let mut lo: u8 = 128
+    let mut hi: u8 = 191
     if b >= 194 && b <= 223 {
         n = 2
     } else if b >= 224 && b <= 239 {
@@ -452,7 +452,7 @@ pub fn utf8_len(s: List[u8], i: usize) -> usize {
     if i + n > s.len() { return 0 }
     let c1 = s[i + 1]
     if c1 < lo || c1 > hi { return 0 }
-    var k: usize = 2
+    let mut k: usize = 2
     while k < n {
         let c = s[i + k]
         if c < 128 || c > 191 { return 0 }
@@ -464,7 +464,7 @@ pub fn utf8_len(s: List[u8], i: usize) -> usize {
 /// A string literal at the cursor (the opening quote); returns its decoded contents.
 fn str_lit(inout p: P) -> Option[List[u8]] {
     p.i += 1
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     while true {
         if p.i >= p.src.len() {
             p.err = sys.lit("unterminated string")
@@ -586,7 +586,7 @@ fn num(inout p: P) -> Option[u32] {
 /// The whole text is a JSON number.
 fn valid_number(text: List[u8]) -> bool {
     if text.len() == 0 { return false }
-    var p = P(text, 0, 0, new_doc(), List.new())
+    let mut p = P(text, 0, 0, new_doc(), List.new())
     match num(inout p) {
         Some(_) => p.i == text.len()
         None => false
@@ -595,15 +595,15 @@ fn valid_number(text: List[u8]) -> bool {
 
 /// The value of an integer literal (digits with an optional `-`) in i64's range.
 fn int_value(t: List[u8]) -> Option[i64] {
-    var i: usize = 0
-    var neg = false
+    let mut i: usize = 0
+    let mut neg = false
     if t.len() > 0 && t[0] == 45 {
         neg = true
         i = 1
     }
     if i >= t.len() { return None }
     // magnitude up to 2^63 (for i64's minimum)
-    var m: u64 = 0
+    let mut m: u64 = 0
     while i < t.len() {
         let c = t[i]
         if !bytes.is_digit(c) { return None }
@@ -631,7 +631,7 @@ fn hex_digit(n: u32) -> u8 {
 /// \b \f \n \r \t or \u00XX, everything else as UTF-8 (invalid UTF-8 becomes U+FFFD).
 pub fn quote_into(inout out: List[u8], s: List[u8]) {
     out.push(34)
-    var i: usize = 0
+    let mut i: usize = 0
     while i < s.len() {
         let c = s[i]
         if c == 34 || c == 92 {
@@ -676,14 +676,14 @@ pub fn quote_into(inout out: List[u8], s: List[u8]) {
 }
 
 pub fn quote(s: List[u8]) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     quote_into(inout out, s)
     out
 }
 
 /// Node `id` as compact JSON text.
 pub fn write(d: Doc, id: u32) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     write_into(inout out, d, id)
     out
 }
