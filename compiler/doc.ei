@@ -1,0 +1,1154 @@
+// doc: `eiderc doc`, the API description of a package or a program (docs/compiler.md,
+// "Documentation: `eiderc doc`"). The site generator (packages/doc, eider-doc) reads the
+// JSON; without `--json` the same description is printed as text, like `go doc`.
+//
+// What is documented. For a directory: every `.ei` file under it (skipping `tests`,
+// `examples`, `vendor`, `target`, `deps` and hidden directories), loaded as one program
+// through an entry that imports them all, so each module's imports resolve as in a build;
+// the modules shown are those files (for the toolchain's core, also the prelude). For a
+// file: the modules of the file's package that its program loads (or, in no package, the
+// modules in no package). Only resolution is needed (no checking, no C compiler): a
+// signature is rendered from the syntax tree, and a type named in it links to the item it
+// resolves to, in any loaded module.
+//
+// Doc comments. An item's doc is the run of `///` lines directly above its first line
+// (the text after `///` and one space, verbatim, joined with newlines); a field, variant or
+// method that starts its own line has one too. A module's doc is every `//!` line of the
+// file that starts in column 1 (runs separated by other lines are joined with a blank
+// line); they normally open the file. Items without `pub` are left out unless `--private`
+// (impls follow their type's visibility; everything in the prelude is public).
+//
+// Anchors are stable: a top-level item is its name; a field, variant or method is
+// `Owner.name`; an impl is `impl-<Trait>-for-<Type>` (`impl-<Type>` without a trait), its
+// methods `<impl anchor>.name` (inherent impls: `Type.name`). A name taken twice in one
+// module gets `-2`, `-3`, ... in item order, public items first. A link's target is
+// `<package>/<module path>#<anchor>` (the prelude is `core/prelude`; a module in no
+// package is its file's stem, with no package).
+
+import "core/sys"
+import "std/bytes"
+import "std/fs"
+import "intern.ei"
+import "lex.ei"
+import "ast.ei"
+import "parse.ei"
+import "diag.ei"
+import "resolve.ei"
+import "lock.ei"
+import "front.ei"
+
+/// A link from bytes start..end of a signature to an item (`pkg/path#anchor`).
+pub type Link = { start: u32, end: u32, to: List[u8] }
+
+/// A type parameter and its bounds, as source text.
+pub type Generic = { name: List[u8], bounds: List[List[u8]] }
+
+/// An item or a member of one (field, variant, method). `kids` index `Api.items`. `kind`:
+/// fn, record, enum, alias, trait, impl, const, field, variant, method. `extra` holds
+/// kind-specific string fields as (key, value) pairs: impl `trait`, `for`, `for_link`;
+/// const `type`; fn and method `flags` (space-separated extern, unsafe, export).
+pub type Item = {
+    kind: List[u8], name: List[u8], anchor: List[u8], sig: List[u8], links: List[Link],
+    doc: List[u8], line: u32, public: bool, generics: List[Generic], caps: List[List[u8]],
+    kids: List[u32], keys: List[List[u8]], vals: List[List[u8]],
+}
+
+/// A documented module: its package, its path in the package (no extension), its file
+/// (relative to the package directory; in no package, as loaded), its doc (from line
+/// `doc_line`, 0 without one) and its items.
+pub type Module = { package: List[u8], path: List[u8], file: List[u8], doc: List[u8], doc_line: u32, items: List[u32] }
+
+pub type Package = { name: List[u8], dir: List[u8], version: List[u8], description: List[u8] }
+
+pub type Api = { packages: List[Package], modules: List[Module], items: List[Item], warnings: List[diag.Diag] }
+
+const NONE: u32 = 4294967295
+
+fn s(x: str) -> List[u8] { sys.lit(x) }
+
+fn canon(path: List[u8]) -> List[u8] uses fs {
+    match fs.canonical(path) {
+        Ok(x) => x
+        Err(_) => path
+    }
+}
+
+// ---- loading
+
+/// The API of `target` (a directory or a .ei file); Err is a message for `eiderc doc:`.
+pub fn api(target: List[u8], private: bool) -> Result[Api, List[u8]] uses io, fs {
+    let dir_mode = fs.is_dir(target)
+    let mut entry = target.copy()
+    let mut src: List[u8] = List.new()
+    let mut wanted: List[List[u8]] = List.new()
+    if dir_mode {
+        let root = canon(target)
+        let prelude = canon(fs.join(resolve.toolchain_root(), s("core/prelude.ei")))
+        let skip = [s("tests"), s("examples"), s("vendor"), s("target"), s("deps"), s(".git"), s(".claude")]
+        let mut skips: List[List[u8]] = List.new()
+        for x in skip { skips.push(x) }
+        let files = match fs.walk(root, skips) {
+            Ok(f) => f
+            Err(e) => {
+                let mut m = s("cannot read ")
+                bytes.append(inout m, target)
+                bytes.append(inout m, s(": "))
+                bytes.append(inout m, e.bytes())
+                return Err(m)
+            }
+        }
+        let mut k: u64 = 0
+        for f in files {
+            if !bytes.ends_with(f, s(".ei")) || hidden(f) { continue }
+            let full = fs.join(root, f)
+            wanted.push(full.copy())
+            if bytes.eq(full, prelude) { continue }
+            bytes.append(inout src, s("import \""))
+            bytes.append(inout src, f)
+            bytes.append(inout src, s("\" as __doc"))
+            bytes.append(inout src, bytes.from_u64(k))
+            src.push(10)
+            k += 1
+        }
+        if wanted.len() == 0 {
+            let mut m = s("no .ei files in ")
+            bytes.append(inout m, target)
+            return Err(m)
+        }
+        entry = fs.join(root, s("__eiderc_doc__.ei"))
+    } else {
+        src = match fs.read(target) {
+            Ok(t) => t
+            Err(e) => {
+                let mut m = s("cannot read ")
+                bytes.append(inout m, target)
+                bytes.append(inout m, s(": "))
+                bytes.append(inout m, e.bytes())
+                return Err(m)
+            }
+        }
+    }
+    let mut names = intern.new()
+    let lx = lex.lex_all(src, inout names)
+    let pr = parse.parse_all(lx.lexed, names)
+    let mut ld = resolve.load_from(entry, src, pr.p, resolve.disk())
+    let fd = front.merge(lx.diags, pr.diags)
+    resolve.note_syntax(inout ld.p, 0, fd)
+    if ld.fatal {
+        let mut m = s("cannot load ")
+        bytes.append(inout m, target)
+        for d in ld.diags {
+            bytes.append(inout m, s(": "))
+            bytes.append(inout m, d.msg)
+        }
+        return Err(m)
+    }
+    let p = ld.p
+    // the modules to document
+    let mut mods: List[u32] = List.new()
+    if dir_mode {
+        for m in 0..p.mods.len() {
+            if m == 0 { continue }
+            let c = canon(p.mods[m].path)
+            for w in wanted {
+                if bytes.eq(w, c) {
+                    mods.push(m as u32)
+                    break
+                }
+            }
+        }
+    } else {
+        let pk = p.mods[0].pkg
+        for m in 0..p.mods.len() {
+            if m as u32 == p.prelude { continue }
+            if p.mods[m].pkg == pk { mods.push(m as u32) }
+        }
+    }
+    let mut warnings: List[diag.Diag] = List.new()
+    for d in fd {
+        if !dir_mode { warnings.push(d) }
+    }
+    for d in ld.diags {
+        for m in mods {
+            if bytes.eq(d.file, p.mods[m as usize].path) {
+                warnings.push(d)
+                break
+            }
+        }
+    }
+    let mut b = B(p, private, List.new(), List.new(), List.new(), List.new())
+    for m in 0..b.p.mods.len() { b.tables.push(type_table(b, m as u32)) }
+    for m in 0..b.p.mods.len() { b.idents.push(ident_of(b, m as u32)) }
+    // in order of package, then module path
+    let mut keys: List[List[u8]] = List.new()
+    for m in mods {
+        let id = b.idents[m as usize]
+        let mut k = id.package.copy()
+        k.push(1)
+        bytes.append(inout k, id.path)
+        keys.push(k)
+    }
+    let order = sorted(keys)
+    let mut out_mods: List[Module] = List.new()
+    let mut pkgs: List[Package] = List.new()
+    for i in order {
+        let m = mods[i as usize]
+        out_mods.push(module_api(inout b, m))
+        let id = b.idents[m as usize]
+        let mut known = false
+        for q in pkgs {
+            if bytes.eq(q.name, id.package) && bytes.eq(q.dir, id.dir) { known = true }
+        }
+        if !known { pkgs.push(package_info(id)) }
+    }
+    Ok(Api(pkgs, out_mods, b.items, warnings))
+}
+
+fn hidden(f: List[u8]) -> bool {
+    if f.len() > 0 && f[0] == 46 { return true }
+    match bytes.find(f, s("/."), 0) {
+        Some(_) => true
+        None => false
+    }
+}
+
+fn package_info(id: Ident) -> Package uses fs {
+    let mut version: List[u8] = List.new()
+    let mut description: List[u8] = List.new()
+    if id.dir.len() > 0 {
+        match fs.read(fs.join(id.dir, s("eider.toml"))) {
+            Ok(t) => {
+                match lock.parse(t) {
+                    Ok(doc) => {
+                        version = lock.text_at(doc, s("package.version"))
+                        description = lock.text_at(doc, s("package.description"))
+                    }
+                    Err(_) => {}
+                }
+            }
+            Err(_) => {}
+        }
+    }
+    Package(id.package, id.dir, version, description)
+}
+
+/// Indexes of `keys` in ascending byte order (insertion sort: a few hundred modules).
+fn sorted(keys: List[List[u8]]) -> List[u32] {
+    let mut idx: List[u32] = List.new()
+    for i in 0..keys.len() {
+        idx.push(i as u32)
+        let mut j = idx.len() - 1
+        while j > 0 && bytes.compare(keys[idx[j - 1] as usize], keys[i]) > 0 {
+            let t = idx[j - 1].copy()
+            idx[j - 1] = idx[j]
+            idx[j] = t
+            j -= 1
+        }
+    }
+    idx
+}
+
+// ---- module identity and anchors
+
+/// Where a module lives for links: package name and directory ("" in no package), path in
+/// the package without the extension, the file relative to the package directory.
+type Ident = { package: List[u8], dir: List[u8], path: List[u8], file: List[u8] }
+
+type B = {
+    p: resolve.Program,
+    private: bool,
+    items: List[Item],
+    /// per module: type and trait symbols -> anchor (public ones, or every one in the prelude)
+    tables: List[Map[u32, List[u8]]],
+    idents: List[Ident],
+    /// anchors taken in the module being documented
+    taken: List[List[u8]],
+}
+
+fn ident_of(b: B, m: u32) -> Ident uses io, fs {
+    let md = b.p.mods[m as usize]
+    if m == b.p.prelude {
+        let dir = canon(fs.join(resolve.toolchain_root(), s("core")))
+        return Ident(s("core"), dir, s("prelude"), s("prelude.ei"))
+    }
+    let c = canon(md.path)
+    if md.pkg != resolve.NOPKG {
+        let k = b.p.pkgs[md.pkg as usize]
+        let mut pre = k.dir.copy()
+        pre.push(47)
+        if bytes.starts_with(c, pre) {
+            let file = bytes.slice(c, pre.len(), c.len())
+            return Ident(k.name, k.dir, strip_ext(file), file)
+        }
+    }
+    let base = match bytes.rfind_byte(md.path, 47) {
+        Some(i) => bytes.slice(md.path, i + 1, md.path.len())
+        None => md.path
+    }
+    Ident(List.new(), List.new(), strip_ext(base), md.path)
+}
+
+fn strip_ext(f: List[u8]) -> List[u8] {
+    if bytes.ends_with(f, s(".ei")) { return bytes.slice(f, 0, f.len() - 3) }
+    f
+}
+
+fn node(b: B, m: u32, id: u32) -> ast.Node { b.p.mods[m as usize].ast.nodes[id as usize] }
+fn at(b: B, m: u32, start: u32, i: u32) -> u32 { b.p.mods[m as usize].ast.extra[(start + i) as usize] }
+fn nm(b: B, sym: u32) -> List[u8] { intern.name(b.p.names, sym) }
+
+fn items_of(b: B, m: u32) -> List[u32] {
+    let a = b.p.mods[m as usize].ast
+    let mut out: List[u32] = List.new()
+    for k in 0..a.items_len { out.push(ast.at(a, a.items_start, k)) }
+    out
+}
+
+/// Whether item n (top level) is public: `pub`, or anything in the prelude.
+fn is_pub(b: B, m: u32, n: ast.Node) -> bool {
+    if m == b.p.prelude { return true }
+    match n.kind {
+        ast.IFn => ast.has(n.b, ast.FN_PUBLIC)
+        ast.IType => n.b == 1
+        ast.ITrait => n.b == 1
+        ast.IConst => n.b == 1
+        _ => false
+    }
+}
+
+/// The top-level anchors of module m: node id -> anchor (public items claim names first).
+fn top_anchors(b: B, m: u32) -> Map[u32, List[u8]] {
+    let mut out: Map[u32, List[u8]] = Map.new()
+    let mut taken: List[List[u8]] = List.new()
+    for pass in 0..2 {
+        for id in items_of(b, m) {
+            let n = node(b, m, id)
+            let named = n.kind == ast.IFn || n.kind == ast.IType || n.kind == ast.ITrait || n.kind == ast.IConst
+            if !named || (is_pub(b, m, n) != (pass == 0)) { continue }
+            out.insert(id, claim(inout taken, nm(b, n.a)))
+        }
+    }
+    out
+}
+
+/// `want`, or `want-2`, `want-3`, ... when taken; marks it taken.
+fn claim(inout taken: List[List[u8]], want: List[u8]) -> List[u8] {
+    let mut a = want.copy()
+    let mut k: u64 = 2
+    while has_text(taken, a) {
+        a = want.copy()
+        a.push(45)
+        bytes.append(inout a, bytes.from_u64(k))
+        k += 1
+    }
+    taken.push(a.copy())
+    a
+}
+
+fn has_text(xs: List[List[u8]], x: List[u8]) -> bool {
+    for y in xs {
+        if bytes.eq(y, x) { return true }
+    }
+    false
+}
+
+fn type_table(b: B, m: u32) -> Map[u32, List[u8]] {
+    let anchors = top_anchors(b, m)
+    let mut out: Map[u32, List[u8]] = Map.new()
+    for id in items_of(b, m) {
+        let n = node(b, m, id)
+        if (n.kind == ast.IType || n.kind == ast.ITrait) && is_pub(b, m, n) {
+            match anchors.get(id) {
+                Some(a) => { out.insert(n.a, a) }
+                None => {}
+            }
+        }
+    }
+    out
+}
+
+/// The link target of type or trait name `sym` (qualifier `qual`, sym+1 or 0) written at
+/// (line, col) of module m, or empty.
+fn target(b: B, m: u32, sym: u32, qual: u32, line: u32, col: u32) -> List[u8] {
+    let mut tm = m.copy()
+    if qual > 0 {
+        tm = alias_module(b, m, qual - 1, line, col)
+        if tm == NONE { return List.new() }
+    }
+    match b.tables[tm as usize].get(sym) {
+        Some(a) => { return link_to(b, tm, a) }
+        None => {}
+    }
+    if qual == 0 && b.p.prelude != resolve.NOMOD {
+        match b.tables[b.p.prelude as usize].get(sym) {
+            Some(a) => { return link_to(b, b.p.prelude, a) }
+            None => {}
+        }
+    }
+    List.new()
+}
+
+fn link_to(b: B, m: u32, anchor: List[u8]) -> List[u8] {
+    let id = b.idents[m as usize]
+    let mut out: List[u8] = List.new()
+    if id.package.len() > 0 {
+        bytes.append(inout out, id.package)
+        out.push(47)
+    }
+    bytes.append(inout out, id.path)
+    out.push(35)
+    bytes.append(inout out, anchor)
+    out
+}
+
+/// The module that alias `sym` names at (line, col) of module m (as ide.ei), or NONE.
+fn alias_module(b: B, m: u32, sym: u32, line: u32, col: u32) -> u32 {
+    let mut pre: u32 = 0
+    for a in b.p.mods[m as usize].aliases {
+        if a.sym == sym && (a.line < line || (a.line == line && a.col < col)) { pre = a.pre }
+    }
+    if pre == 0 { return NONE }
+    for i in 0..b.p.mods.len() {
+        if b.p.mods[i].pre == pre { return i as u32 }
+    }
+    NONE
+}
+
+// ---- rendering signatures
+
+/// A signature being written, with its links.
+type Sig = { out: List[u8], links: List[Link] }
+
+fn sig() -> Sig { Sig(List.new(), List.new()) }
+
+fn put(inout g: Sig, x: str) { bytes.append(inout g.out, sys.lit(x)) }
+fn putb(inout g: Sig, x: List[u8]) { bytes.append(inout g.out, x) }
+
+/// Type node t of module m as source text.
+fn ty(b: B, m: u32, t: u32, inout g: Sig) {
+    let n = node(b, m, t)
+    match n.kind {
+        ast.TName => name_ref(b, m, n, inout g)
+        ast.TGeneric => {
+            name_ref(b, m, n, inout g)
+            put(inout g, "[")
+            for i in 0..n.d {
+                if i > 0 { put(inout g, ", ") }
+                ty(b, m, at(b, m, n.c, i), inout g)
+            }
+            put(inout g, "]")
+        }
+        ast.TArray => {
+            put(inout g, "[")
+            ty(b, m, n.a, inout g)
+            put(inout g, "; ")
+            putb(inout g, bytes.from_u64(n.b as u64))
+            put(inout g, "]")
+        }
+        ast.TTuple => {
+            put(inout g, "(")
+            for i in 0..n.d {
+                if i > 0 { put(inout g, ", ") }
+                ty(b, m, at(b, m, n.c, i), inout g)
+            }
+            if n.d == 1 { put(inout g, ",") }
+            put(inout g, ")")
+        }
+        ast.TUnit => put(inout g, "()")
+        ast.TFn => {
+            put(inout g, "fn(")
+            for i in 0..n.d {
+                if i > 0 { put(inout g, ", ") }
+                if bit_set(n.e, i) { put(inout g, "inout ") }
+                ty(b, m, at(b, m, n.c, i), inout g)
+            }
+            put(inout g, ")")
+            if n.g > 0 {
+                put(inout g, " -> ")
+                ty(b, m, n.g - 1, inout g)
+            }
+        }
+        _ => put(inout g, "?")
+    }
+}
+
+fn bit_set(bits: u32, i: u32) -> bool {
+    let mut x = bits.copy()
+    for k in 0..i { x = x / 2 }
+    x % 2 == 1
+}
+
+/// A (possibly qualified) type or trait name, linked when it resolves to an item.
+fn name_ref(b: B, m: u32, n: ast.Node, inout g: Sig) {
+    let start = g.out.len() as u32
+    if n.b > 0 {
+        putb(inout g, nm(b, n.b - 1))
+        put(inout g, ".")
+    }
+    putb(inout g, nm(b, n.a))
+    let to = target(b, m, n.a, n.b, n.line, n.col)
+    if to.len() > 0 { g.links.push(Link(start, g.out.len() as u32, to)) }
+}
+
+/// `[T: A + B, U]` of the GParam list start/len of module m; and the same as Generics.
+fn generics(b: B, m: u32, start: u32, len: u32, inout g: Sig) -> List[Generic] {
+    let mut out: List[Generic] = List.new()
+    if len == 0 { return out }
+    put(inout g, "[")
+    for i in 0..len {
+        if i > 0 { put(inout g, ", ") }
+        let gp = node(b, m, at(b, m, start, i))
+        putb(inout g, nm(b, gp.a))
+        let mut bounds: List[List[u8]] = List.new()
+        for j in 0..gp.d {
+            if j == 0 { put(inout g, ": ") } else { put(inout g, " + ") }
+            let from = g.out.len()
+            ty(b, m, at(b, m, gp.c, j), inout g)
+            bounds.push(bytes.slice(g.out, from, g.out.len()))
+        }
+        out.push(Generic(nm(b, gp.a), bounds))
+    }
+    put(inout g, "]")
+    out
+}
+
+/// A function's signature (without `pub` when `bare`), its generics and capabilities.
+type FnSig = { g: Sig, gens: List[Generic], caps: List[List[u8]], flags: List[u8] }
+
+fn fn_sig(b: B, m: u32, id: u32, bare: bool) -> FnSig {
+    let n = node(b, m, id)
+    let mut g = sig()
+    let mut flags: List[u8] = List.new()
+    if ast.has(n.b, ast.FN_EXPORT) {
+        put(inout g, "export ")
+        bytes.append(inout flags, s("export"))
+    } else {
+        if !bare && ast.has(n.b, ast.FN_PUBLIC) { put(inout g, "pub ") }
+        if ast.has(n.b, ast.FN_EXTERN) {
+            put(inout g, "extern \"c\" ")
+            bytes.append(inout flags, s("extern unsafe"))
+        } else if ast.has(n.b, ast.FN_UNSAFE) {
+            put(inout g, "unsafe ")
+            bytes.append(inout flags, s("unsafe"))
+        }
+    }
+    put(inout g, "fn ")
+    putb(inout g, nm(b, n.a))
+    let gens = generics(b, m, n.c, n.d, inout g)
+    put(inout g, "(")
+    for i in 0..n.f {
+        if i > 0 { put(inout g, ", ") }
+        let pn = node(b, m, at(b, m, n.e, i))
+        if pn.c == 1 { put(inout g, "inout ") }
+        putb(inout g, nm(b, pn.a))
+        let pt = node(b, m, pn.b)
+        let implicit_self = pn.a == intern.S_SELF && pt.kind == ast.TName && pt.a == intern.S_SELF_TYPE && pt.line == pn.line && pt.col == pn.col
+        if !implicit_self {
+            put(inout g, ": ")
+            ty(b, m, pn.b, inout g)
+        }
+    }
+    put(inout g, ")")
+    if n.g > 0 {
+        put(inout g, " -> ")
+        ty(b, m, n.g - 1, inout g)
+    }
+    let mut caps: List[List[u8]] = List.new()
+    for i in 0..n.j {
+        let c = node(b, m, at(b, m, n.i, i))
+        if i == 0 { put(inout g, " uses ") } else { put(inout g, ", ") }
+        putb(inout g, nm(b, c.a))
+        caps.push(nm(b, c.a))
+    }
+    FnSig(g, gens, caps, flags)
+}
+
+// ---- doc comments
+
+/// The source lines of module m (without their newlines).
+fn lines_of(b: B, m: u32) -> List[List[u8]] { bytes.split(b.p.mods[m as usize].src, 10) }
+
+/// The `///` block directly above line `line` (1-based).
+fn doc_above(lines: List[List[u8]], line: u32) -> List[u8] {
+    let mut got: List[List[u8]] = List.new()
+    let mut i = line as usize
+    // line is 1-based: lines[line - 1] is the item's; start at the one above it
+    while i >= 2 {
+        let l = lines[i - 2]
+        let t = trim_start(l)
+        if !bytes.starts_with(t, s("///")) || bytes.starts_with(t, s("////")) { break }
+        got.push(after_marker(t))
+        i -= 1
+    }
+    let mut out: List[u8] = List.new()
+    let mut k = got.len()
+    while k > 0 {
+        k -= 1
+        bytes.append(inout out, got[k])
+        if k > 0 { out.push(10) }
+    }
+    out
+}
+
+/// The text after a 3-byte comment marker and one space.
+fn after_marker(t: List[u8]) -> List[u8] {
+    let mut from: usize = 3
+    if t.len() > 3 && t[3] == 32 { from = 4 }
+    let mut x = bytes.slice(t, from, t.len())
+    if x.len() > 0 && x[x.len() - 1] == 13 { x = bytes.slice(x, 0, x.len() - 1) }
+    x
+}
+
+fn trim_start(l: List[u8]) -> List[u8] {
+    let mut i: usize = 0
+    while i < l.len() && (l[i] == 32 || l[i] == 9) { i += 1 }
+    bytes.slice(l, i, l.len())
+}
+
+/// The line of the first `//!` line (0: none), where the module doc starts.
+fn first_doc_line(lines: List[List[u8]]) -> u32 {
+    for i in 0..lines.len() {
+        if bytes.starts_with(lines[i], s("//!")) { return (i + 1) as u32 }
+    }
+    0
+}
+
+/// The module doc: every `//!` line starting in column 1, runs joined with a blank line.
+fn module_doc(lines: List[List[u8]]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut prev = false
+    for l in lines {
+        let is_doc = bytes.starts_with(l, s("//!"))
+        if is_doc {
+            if out.len() > 0 {
+                out.push(10)
+                if !prev { out.push(10) }
+            }
+            bytes.append(inout out, after_marker(l))
+        }
+        prev = is_doc
+    }
+    out
+}
+
+/// Whether the member at (line, col) starts its line (only blanks and `|` before it), so a
+/// `///` block above it is its own.
+fn starts_line(lines: List[List[u8]], line: u32, col: u32) -> bool {
+    if line == 0 || line as usize > lines.len() { return false }
+    let l = lines[(line - 1) as usize]
+    let mut i: usize = 0
+    while i + 1 < col as usize && i < l.len() {
+        let c = l[i]
+        if !(c == 32 || c == 9 || c == 124) { return false }
+        i += 1
+    }
+    true
+}
+
+/// The doc of member n (a field or variant, which must start its line so that a one-line
+/// record's fields don't take the record's doc; or a method) of the item on `parent_line`.
+fn member_doc(lines: List[List[u8]], parent_line: u32, n: ast.Node) -> List[u8] {
+    let field = n.kind == ast.Field || n.kind == ast.Variant
+    if n.line == parent_line || (field && !starts_line(lines, n.line, n.col)) { return List.new() }
+    doc_above(lines, n.line)
+}
+
+// ---- items
+
+fn item(kind: str, name: List[u8], anchor: List[u8], g: Sig, doc: List[u8], line: u32, public: bool) -> Item {
+    Item(s(kind), name, anchor, g.out, g.links, doc, line, public, List.new(), List.new(), List.new(), List.new(), List.new())
+}
+
+fn add(inout b: B, it: Item) -> u32 {
+    b.items.push(it)
+    (b.items.len() - 1) as u32
+}
+
+fn module_api(inout b: B, m: u32) -> Module {
+    let id = b.idents[m as usize].copy()
+    let lines = lines_of(b, m)
+    let anchors = top_anchors(b, m)
+    b.taken = List.new()
+    for (_, a) in anchors { b.taken.push(a) }
+    let mut out: List[u32] = List.new()
+    // the type of each top-level type name, for impls: sym -> (anchor, public)
+    let mut types: Map[u32, List[u8]] = Map.new()
+    let mut pubs: Map[u32, bool] = Map.new()
+    for id in items_of(b, m) {
+        let n = node(b, m, id)
+        if n.kind == ast.IType || n.kind == ast.ITrait {
+            match anchors.get(id) {
+                Some(a) => { types.insert(n.a, a) }
+                None => {}
+            }
+            pubs.insert(n.a, is_pub(b, m, n))
+        }
+    }
+    for iid in items_of(b, m) {
+        let n = node(b, m, iid)
+        let anchor: List[u8] = match anchors.get(iid) {
+            Some(a) => a
+            None => List.new()
+        }
+        let public = is_pub(b, m, n)
+        let shown = public || b.private
+        match n.kind {
+            ast.IFn => {
+                if !shown { continue }
+                let f = fn_sig(b, m, iid, false)
+                let mut it = item("fn", nm(b, n.a), anchor, f.g, doc_above(lines, n.line), n.line, public)
+                it.generics = f.gens
+                it.caps = f.caps
+                if f.flags.len() > 0 {
+                    it.keys.push(s("flags"))
+                    it.vals.push(f.flags)
+                }
+                out.push(add(inout b, it))
+            }
+            ast.IType => {
+                if !shown { continue }
+                out.push(type_item(inout b, m, iid, anchor, lines, public))
+            }
+            ast.ITrait => {
+                if !shown { continue }
+                let mut g = sig()
+                if m != b.p.prelude && public { put(inout g, "pub ") }
+                put(inout g, "trait ")
+                putb(inout g, nm(b, n.a))
+                let mut it = item("trait", nm(b, n.a), anchor.copy(), g, doc_above(lines, n.line), n.line, public)
+                for i in 0..n.d {
+                    let fid = at(b, m, n.c, i)
+                    let fnode = node(b, m, fid)
+                    let mut a = anchor.copy()
+                    a.push(46)
+                    bytes.append(inout a, nm(b, fnode.a))
+                    let a2 = claim(inout b.taken, a)
+                    let k = method(inout b, m, fid, a2, member_doc(lines, n.line, fnode), public)
+                    it.kids.push(k)
+                }
+                out.push(add(inout b, it))
+            }
+            ast.IConst => {
+                if !shown { continue }
+                let mut g = sig()
+                if m != b.p.prelude && public { put(inout g, "pub ") }
+                put(inout g, "const ")
+                putb(inout g, nm(b, n.a))
+                put(inout g, ": ")
+                let from = g.out.len()
+                ty(b, m, n.c, inout g)
+                let tytext = bytes.slice(g.out, from, g.out.len())
+                put(inout g, " = ")
+                putb(inout g, const_value(b, m, n))
+                let mut it = item("const", nm(b, n.a), anchor, g, doc_above(lines, n.line), n.line, public)
+                it.keys.push(s("type"))
+                it.vals.push(tytext)
+                out.push(add(inout b, it))
+            }
+            ast.IImpl => {
+                let r = impl_item(inout b, m, iid, lines, types, pubs)
+                if r != NONE { out.push(r) }
+            }
+            _ => {}
+        }
+    }
+    Module(id.package, id.path, id.file, module_doc(lines), first_doc_line(lines), out)
+}
+
+fn method(inout b: B, m: u32, fid: u32, anchor: List[u8], doc: List[u8], public: bool) -> u32 {
+    let fnode = node(b, m, fid)
+    let f = fn_sig(b, m, fid, true)
+    let mut it = item("method", nm(b, fnode.a), anchor, f.g, doc, fnode.line, public)
+    it.generics = f.gens
+    it.caps = f.caps
+    if f.flags.len() > 0 {
+        it.keys.push(s("flags"))
+        it.vals.push(f.flags)
+    }
+    add(inout b, it)
+}
+
+fn type_item(inout b: B, m: u32, id: u32, anchor: List[u8], lines: List[List[u8]], public: bool) -> u32 {
+    let n = node(b, m, id)
+    let mut g = sig()
+    if m != b.p.prelude && public { put(inout g, "pub ") }
+    put(inout g, "type ")
+    putb(inout g, nm(b, n.a))
+    let gens = generics(b, m, n.c, n.d, inout g)
+    let mut kind = "record"
+    if n.g > 0 {
+        kind = "alias"
+        put(inout g, " = ")
+        ty(b, m, n.g - 1, inout g)
+    } else {
+        for i in 0..n.f {
+            if node(b, m, at(b, m, n.e, i)).kind == ast.Variant { kind = "enum" }
+        }
+    }
+    let mut it = item(kind, nm(b, n.a), anchor.copy(), g, doc_above(lines, n.line), n.line, public)
+    it.generics = gens
+    for i in 0..n.f {
+        let mid = at(b, m, n.e, i)
+        let mn = node(b, m, mid)
+        let mut a = anchor.copy()
+        a.push(46)
+        bytes.append(inout a, nm(b, mn.a))
+        let doc = member_doc(lines, n.line, mn)
+        a = claim(inout b.taken, a)
+        let mut mg = sig()
+        if mn.kind == ast.Variant {
+            putb(inout mg, nm(b, mn.a))
+            if mn.d > 0 {
+                put(inout mg, "(")
+                for j in 0..mn.d {
+                    if j > 0 { put(inout mg, ", ") }
+                    let vf = node(b, m, at(b, m, mn.c, j))
+                    if vf.c == 1 {
+                        putb(inout mg, nm(b, vf.a))
+                        put(inout mg, ": ")
+                    }
+                    ty(b, m, vf.b, inout mg)
+                }
+                put(inout mg, ")")
+            }
+            let vname = nm(b, mn.a)
+            it.kids.push(add(inout b, item("variant", vname, a, mg, doc, mn.line, public)))
+        } else {
+            putb(inout mg, nm(b, mn.a))
+            put(inout mg, ": ")
+            ty(b, m, mn.b, inout mg)
+            let fname = nm(b, mn.a)
+            it.kids.push(add(inout b, item("field", fname, a, mg, doc, mn.line, public)))
+        }
+    }
+    add(inout b, it)
+}
+
+/// An impl, or NONE when it is hidden (its type, or its trait, is a private item of this
+/// module and `--private` is off).
+fn impl_item(inout b: B, m: u32, id: u32, lines: List[List[u8]], types: Map[u32, List[u8]], pubs: Map[u32, bool]) -> u32 {
+    let n = node(b, m, id)
+    let tnode = node(b, m, n.b)
+    let mut head: u32 = NONE
+    if (tnode.kind == ast.TName || tnode.kind == ast.TGeneric) && tnode.b == 0 { head = tnode.a }
+    let mut public = true
+    if head != NONE {
+        match pubs.get(head) {
+            Some(x) => { if !x { public = false } }
+            None => {}
+        }
+    }
+    let mut trait_text: List[u8] = List.new()
+    if n.a > 0 {
+        let tn = node(b, m, n.a - 1)
+        if tn.b == 0 {
+            match pubs.get(tn.a) {
+                Some(x) => { if !x { public = false } }
+                None => {}
+            }
+        }
+    }
+    if !public && !b.private { return NONE }
+    let mut g = sig()
+    put(inout g, "impl")
+    let gens = generics(b, m, n.c, n.d, inout g)
+    put(inout g, " ")
+    if n.a > 0 {
+        let from = g.out.len()
+        ty(b, m, n.a - 1, inout g)
+        trait_text = bytes.slice(g.out, from, g.out.len())
+        put(inout g, " for ")
+    }
+    let tfrom = g.out.len()
+    ty(b, m, n.b, inout g)
+    let for_text = bytes.slice(g.out, tfrom, g.out.len())
+    let mut for_name = for_text.copy()
+    if head != NONE { for_name = nm(b, head) }
+    let mut want = s("impl-")
+    if trait_text.len() > 0 {
+        bytes.append(inout want, slug(trait_text))
+        bytes.append(inout want, s("-for-"))
+    }
+    if head != NONE { bytes.append(inout want, for_name) } else { bytes.append(inout want, slug(for_text)) }
+    let anchor = claim(inout b.taken, want)
+    let mut for_link: List[u8] = List.new()
+    if head != NONE {
+        match types.get(head) {
+            Some(_) => { for_link = target(b, m, head, 0, tnode.line, tnode.col) }
+            None => {}
+        }
+    }
+    let mut it = item("impl", for_name.copy(), anchor.copy(), g, doc_above(lines, n.line), n.line, public)
+    it.generics = gens
+    it.keys.push(s("trait"))
+    it.vals.push(trait_text.copy())
+    it.keys.push(s("for"))
+    it.vals.push(for_name.copy())
+    it.keys.push(s("for_link"))
+    it.vals.push(for_link)
+    // inherent methods are the type's: `Type.name`
+    let base = if trait_text.len() == 0 && head != NONE { for_name.copy() } else { anchor.copy() }
+    for i in 0..n.f {
+        let fid = at(b, m, n.e, i)
+        let fnode = node(b, m, fid)
+        let mut a = base.copy()
+        a.push(46)
+        bytes.append(inout a, nm(b, fnode.a))
+        let a2 = claim(inout b.taken, a)
+        let k = method(inout b, m, fid, a2, member_doc(lines, n.line, fnode), public)
+        it.kids.push(k)
+    }
+    add(inout b, it)
+}
+
+/// Letters, digits and `_` kept, every other run as one `-`, none at the ends.
+fn slug(t: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut dash = false
+    for c in t {
+        if bytes.is_ident(c) {
+            if dash && out.len() > 0 { out.push(45) }
+            dash = false
+            out.push(c)
+        } else {
+            dash = true
+        }
+    }
+    out
+}
+
+/// A constant's value as written (tokens after `=` to the end of its line, spaced as in the
+/// source), cut at 100 bytes.
+fn const_value(b: B, m: u32, n: ast.Node) -> List[u8] {
+    let md = b.p.mods[m as usize]
+    let toks = md.toks
+    // the name token, then `:` type `=`
+    let mut i: usize = 0
+    while i < toks.len() && (toks[i].line < n.line || (toks[i].line == n.line && toks[i].col < n.col)) { i += 1 }
+    let mut depth: u32 = 0
+    while i < toks.len() {
+        let k = toks[i].kind
+        if k == lex.LParen || k == lex.LBracket || k == lex.LBrace { depth += 1 }
+        if (k == lex.RParen || k == lex.RBracket || k == lex.RBrace) && depth > 0 { depth -= 1 }
+        i += 1
+        if k == lex.Eq && depth == 0 { break }
+    }
+    let mut out: List[u8] = List.new()
+    let mut prev_end: u32 = 0
+    depth = 0
+    while i < toks.len() {
+        let t = toks[i]
+        if t.kind == lex.Eof || (t.kind == lex.Newline && depth == 0) { break }
+        if t.kind == lex.Semi && depth == 0 { break }
+        i += 1
+        if t.kind == lex.LParen || t.kind == lex.LBracket || t.kind == lex.LBrace { depth += 1 }
+        if (t.kind == lex.RParen || t.kind == lex.RBracket || t.kind == lex.RBrace) && depth > 0 { depth -= 1 }
+        if t.kind == lex.Newline {
+            if out.len() > 0 { prev_end = 0 }
+            continue
+        }
+        if out.len() > 0 && (prev_end == 0 || t.start > prev_end) {
+            let last = out[out.len() - 1]
+            if !(last == 40 || last == 91) && !(t.kind == lex.RParen || t.kind == lex.RBracket || t.kind == lex.Comma) { out.push(32) }
+        }
+        let mut k = t.start as usize
+        while k < t.end as usize {
+            out.push(md.src[k])
+            k += 1
+        }
+        prev_end = t.end
+        if out.len() > 100 {
+            bytes.append(inout out, s(" ..."))
+            break
+        }
+    }
+    out
+}
+
+// ---- output
+
+fn jkey(inout out: List[u8], k: str) {
+    out.push(34)
+    bytes.append(inout out, sys.lit(k))
+    bytes.append(inout out, s("\":"))
+}
+
+fn jfield(inout out: List[u8], k: str, v: List[u8]) {
+    out.push(44)
+    jkey(inout out, k)
+    diag.jstr(inout out, v)
+}
+
+fn jnum(inout out: List[u8], k: str, v: u32) {
+    out.push(44)
+    jkey(inout out, k)
+    bytes.append(inout out, bytes.from_u64(v as u64))
+}
+
+fn jlist(inout out: List[u8], xs: List[List[u8]]) {
+    out.push(91)
+    for i in 0..xs.len() {
+        if i > 0 { out.push(44) }
+        diag.jstr(inout out, xs[i])
+    }
+    out.push(93)
+}
+
+fn item_json(a: Api, i: u32, inout out: List[u8]) {
+    let it = a.items[i as usize]
+    bytes.append(inout out, s("{\"kind\":"))
+    diag.jstr(inout out, it.kind)
+    jfield(inout out, "name", it.name)
+    jfield(inout out, "anchor", it.anchor)
+    jfield(inout out, "sig", it.sig)
+    jnum(inout out, "line", it.line)
+    out.push(44)
+    jkey(inout out, "public")
+    if it.public { bytes.append(inout out, s("true")) } else { bytes.append(inout out, s("false")) }
+    jfield(inout out, "doc", it.doc)
+    for k in 0..it.keys.len() {
+        out.push(44)
+        diag.jstr(inout out, it.keys[k])
+        out.push(58)
+        diag.jstr(inout out, it.vals[k])
+    }
+    if it.generics.len() > 0 {
+        out.push(44)
+        jkey(inout out, "generics")
+        out.push(91)
+        for k in 0..it.generics.len() {
+            if k > 0 { out.push(44) }
+            bytes.append(inout out, s("{\"name\":"))
+            diag.jstr(inout out, it.generics[k].name)
+            out.push(44)
+            jkey(inout out, "bounds")
+            jlist(inout out, it.generics[k].bounds)
+            out.push(125)
+        }
+        out.push(93)
+    }
+    if it.caps.len() > 0 {
+        out.push(44)
+        jkey(inout out, "uses")
+        jlist(inout out, it.caps)
+    }
+    if it.links.len() > 0 {
+        out.push(44)
+        jkey(inout out, "links")
+        out.push(91)
+        for k in 0..it.links.len() {
+            if k > 0 { out.push(44) }
+            let l = it.links[k]
+            bytes.append(inout out, s("{\"start\":"))
+            bytes.append(inout out, bytes.from_u64(l.start as u64))
+            jnum(inout out, "end", l.end)
+            jfield(inout out, "to", l.to)
+            out.push(125)
+        }
+        out.push(93)
+    }
+    if it.kids.len() > 0 {
+        out.push(44)
+        jkey(inout out, "members")
+        out.push(91)
+        for k in 0..it.kids.len() {
+            if k > 0 { out.push(44) }
+            item_json(a, it.kids[k], inout out)
+        }
+        out.push(93)
+    }
+    out.push(125)
+}
+
+/// The API as one JSON document: `{"format":1,"packages":[...],"modules":[...]}`, one
+/// package, module header or item per line.
+pub fn json(a: Api) -> List[u8] {
+    let mut out = s("{\"format\":1,\n\"packages\":[")
+    for i in 0..a.packages.len() {
+        let k = a.packages[i]
+        if i > 0 { out.push(44) }
+        bytes.append(inout out, s("\n{\"name\":"))
+        diag.jstr(inout out, k.name)
+        jfield(inout out, "dir", k.dir)
+        jfield(inout out, "version", k.version)
+        jfield(inout out, "description", k.description)
+        out.push(125)
+    }
+    bytes.append(inout out, s("],\n\"modules\":["))
+    for i in 0..a.modules.len() {
+        let md = a.modules[i]
+        if i > 0 { out.push(44) }
+        bytes.append(inout out, s("\n{\"package\":"))
+        diag.jstr(inout out, md.package)
+        jfield(inout out, "path", md.path)
+        jfield(inout out, "file", md.file)
+        jfield(inout out, "doc", md.doc)
+        jnum(inout out, "doc_line", md.doc_line)
+        bytes.append(inout out, s(",\"items\":["))
+        for k in 0..md.items.len() {
+            if k > 0 { out.push(44) }
+            out.push(10)
+            item_json(a, md.items[k], inout out)
+        }
+        bytes.append(inout out, s("]}"))
+    }
+    bytes.append(inout out, s("]}\n"))
+    out
+}
+
+/// The first sentence of a doc (its first line's text up to `. `), for the text form.
+fn summary(doc: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut i: usize = 0
+    while i < doc.len() {
+        let c = doc[i]
+        if c == 10 {
+            if i + 1 < doc.len() && doc[i + 1] == 10 { break }
+            out.push(32)
+        } else {
+            out.push(c)
+        }
+        if c == 46 && (i + 1 >= doc.len() || doc[i + 1] == 32 || doc[i + 1] == 10) { break }
+        i += 1
+    }
+    out
+}
+
+fn item_text(a: Api, i: u32, indent: u32, inout out: List[u8]) {
+    let it = a.items[i as usize]
+    for k in 0..indent { out.push(32) }
+    bytes.append(inout out, it.sig)
+    out.push(10)
+    if it.doc.len() > 0 {
+        for k in 0..indent + 4 { out.push(32) }
+        bytes.append(inout out, summary(it.doc))
+        out.push(10)
+    }
+    for k in it.kids { item_text(a, k, indent + 4, inout out) }
+}
+
+/// The API as text: per module its name, the first paragraph of its doc, then each item's
+/// signature with the first sentence of its doc, members indented.
+pub fn text(a: Api) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    for md in a.modules {
+        if out.len() > 0 { out.push(10) }
+        bytes.append(inout out, s("module "))
+        if md.package.len() > 0 {
+            bytes.append(inout out, md.package)
+            out.push(47)
+        }
+        bytes.append(inout out, md.path)
+        bytes.append(inout out, s(" ("))
+        bytes.append(inout out, md.file)
+        bytes.append(inout out, s(")\n"))
+        if md.doc.len() > 0 {
+            bytes.append(inout out, s("    "))
+            bytes.append(inout out, summary(md.doc))
+            out.push(10)
+        }
+        out.push(10)
+        for i in md.items { item_text(a, i, 0, inout out) }
+    }
+    out
+}

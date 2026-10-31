@@ -1,24 +1,24 @@
-// json: RFC 8259 JSON. Pure Eider, no capabilities (except `ffi` for literals).
-//
-// A parsed document is an arena (Eider has value semantics, so a tree of owned nodes would be
-// copied on every read): `Doc.nodes` holds small integer-only records, a node is named by its
-// index (`u32` id), arrays and objects keep their children as a contiguous run of ids in
-// `Doc.extra` (objects as key-string id, value id pairs), and string contents and number texts
-// live in `Doc.strs`. Reading a node copies a few integers, never a subtree.
-//
-// Parsing is strict: one value with optional whitespace (space, tab, LF, CR) around it; no
-// trailing commas, comments, leading zeros, `+`, `.5`, `NaN`; control characters must be
-// escaped in strings; the input must be valid UTF-8; `\uXXXX` escapes are decoded to UTF-8 and
-// a surrogate pair to one scalar (an unpaired surrogate is an error); nesting is limited to
-// MAX_DEPTH. Errors carry the byte offset and the 1-based line and column (columns count
-// Unicode scalars) of the offending character.
-//
-// Numbers keep their exact text (`num_text`); an integer literal that fits in i64 is also
-// available as a value (`as_int`). Writing a document prints numbers as their exact text.
-//
-// Documents can also be built (`new_null`, `new_bool`, `new_int`, `new_number`, `new_string`,
-// `new_array`, `new_object`; children before parents) and written (`write`). `quote` writes one
-// JSON string and replaces invalid UTF-8 with U+FFFD, so the output is always valid JSON.
+//! json: RFC 8259 JSON. Pure Eider, no capabilities (except `ffi` for literals).
+//!
+//! A parsed document is an arena (Eider has value semantics, so a tree of owned nodes would be
+//! copied on every read): `Doc.nodes` holds small integer-only records, a node is named by its
+//! index (`u32` id), arrays and objects keep their children as a contiguous run of ids in
+//! `Doc.extra` (objects as key-string id, value id pairs), and string contents and number texts
+//! live in `Doc.strs`. Reading a node copies a few integers, never a subtree.
+//!
+//! Parsing is strict: one value with optional whitespace (space, tab, LF, CR) around it; no
+//! trailing commas, comments, leading zeros, `+`, `.5`, `NaN`; control characters must be
+//! escaped in strings; the input must be valid UTF-8; `\uXXXX` escapes are decoded to UTF-8 and
+//! a surrogate pair to one scalar (an unpaired surrogate is an error); nesting is limited to
+//! MAX_DEPTH. Errors carry the byte offset and the 1-based line and column (columns count
+//! Unicode scalars) of the offending character.
+//!
+//! Numbers keep their exact text (`num_text`); an integer literal that fits in i64 is also
+//! available as a value (`as_int`). Writing a document prints numbers as their exact text.
+//!
+//! Documents can also be built (`new_null`, `new_bool`, `new_int`, `new_number`, `new_string`,
+//! `new_array`, `new_object`; children before parents) and written (`write`). `quote` writes one
+//! JSON string and replaces invalid UTF-8 with U+FFFD, so the output is always valid JSON.
 
 import "core/sys"
 import "std/bytes"

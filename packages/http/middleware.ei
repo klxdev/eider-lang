@@ -1,37 +1,37 @@
-// http/middleware: handler wrappers. Each takes a handler (`fn(http.Request) ->
-// http.Response`) and returns one that does something before and after it, so they compose
-// by nesting, outermost first, and apply to a whole service (wrap the router's handler) or
-// to one route (wrap that route's handler):
-//
-//     let app = middleware.request_id(ids,
-//         middleware.access_log(log,
-//             m.wrap(
-//                 middleware.problems(
-//                     middleware.cors(cors, router.handler(r))))))
-//     r.post("/upload", middleware.body_limit(4096, upload))       // per route
-//
-// What is here:
-// - `request_id`: an id per request (the client's `X-Request-Id` when it is a short token,
-//   else `<prefix>-<n>`), in `req.get_ctx("request_id")` and the response's `X-Request-Id`.
-// - `access_log`: one JSON line per request to a `stream.Writer` held in a `sync.Lock`.
-// - `errors`: a handler that returns `Result[http.Response, problem.ApiError]` as an ordinary
-//   handler (an Err is its problem+json response): errors are values, never panics.
-// - `problems`: the package's plain-text error responses (`http.error_response`: the router's
-//   404 and 405, ...) as problem+json; other responses are untouched.
-// - `body_limit`: 413 for a body longer than a route accepts (the parser's `max_body` is the
-//   server-wide ceiling; this is per route, after the body has been read: bodies are not
-//   streams yet).
-// - `timeout`: the handler runs on a worker of a given `task.Pool` and must answer by the
-//   deadline, else 503; `req.deadline` tells it when that is.
-// - `cors`: CORS (preflights answered here, the allowed origin echoed on other responses).
-// - `bearer`, `basic`: authentication hooks: a check function says who a token or a user and
-//   password is; the principal goes in `req.get_ctx("principal")` for the handler and in the
-//   response's `ctx` for the layers outside (the access log), a failure is 401 with
-//   `WWW-Authenticate`.
-// Metrics (counters and latency histograms in the Prometheus text format) are http/metrics.
-//
-// None of this can contain a trap: a handler that panics or overflows still ends the
-// process (docs/services.md N5). `errors` is the way not to need one.
+//! http/middleware: handler wrappers. Each takes a handler (`fn(http.Request) ->
+//! http.Response`) and returns one that does something before and after it, so they compose
+//! by nesting, outermost first, and apply to a whole service (wrap the router's handler) or
+//! to one route (wrap that route's handler):
+//!
+//!     let app = middleware.request_id(ids,
+//!         middleware.access_log(log,
+//!             m.wrap(
+//!                 middleware.problems(
+//!                     middleware.cors(cors, router.handler(r))))))
+//!     r.post("/upload", middleware.body_limit(4096, upload))       // per route
+//!
+//! What is here:
+//! - `request_id`: an id per request (the client's `X-Request-Id` when it is a short token,
+//!   else `<prefix>-<n>`), in `req.get_ctx("request_id")` and the response's `X-Request-Id`.
+//! - `access_log`: one JSON line per request to a `stream.Writer` held in a `sync.Lock`.
+//! - `errors`: a handler that returns `Result[http.Response, problem.ApiError]` as an ordinary
+//!   handler (an Err is its problem+json response): errors are values, never panics.
+//! - `problems`: the package's plain-text error responses (`http.error_response`: the router's
+//!   404 and 405, ...) as problem+json; other responses are untouched.
+//! - `body_limit`: 413 for a body longer than a route accepts (the parser's `max_body` is the
+//!   server-wide ceiling; this is per route, after the body has been read: bodies are not
+//!   streams yet).
+//! - `timeout`: the handler runs on a worker of a given `task.Pool` and must answer by the
+//!   deadline, else 503; `req.deadline` tells it when that is.
+//! - `cors`: CORS (preflights answered here, the allowed origin echoed on other responses).
+//! - `bearer`, `basic`: authentication hooks: a check function says who a token or a user and
+//!   password is; the principal goes in `req.get_ctx("principal")` for the handler and in the
+//!   response's `ctx` for the layers outside (the access log), a failure is 401 with
+//!   `WWW-Authenticate`.
+//! Metrics (counters and latency histograms in the Prometheus text format) are http/metrics.
+//!
+//! None of this can contain a trap: a handler that panics or overflows still ends the
+//! process (docs/services.md N5). `errors` is the way not to need one.
 
 import "core/sys"
 import "std/bytes"

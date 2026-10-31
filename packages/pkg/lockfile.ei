@@ -1,16 +1,16 @@
-// lockfile: the resolved package graph, as written to eider.lock.
-//
-//   # eider.lock: written by `eider-pkg`. Do not edit.
-//   version = 1
-//
-//   [[package]]
-//   name = "json"
-//   version = "1.2.0"
-//   source = "git+https://example.com/json.git#<commit>"   # or "path+../geom"
-//   rev = "main"                                           # only for `rev` dependencies
-//   hash = "sha256-<hex>"                                  # git packages only
-//   deps = ["util"]
-//   grants = ["io"]
+//! lockfile: the resolved package graph, as written to eider.lock.
+//!
+//!   # eider.lock: written by `eider-pkg`. Do not edit.
+//!   version = 1
+//!
+//!   [[package]]
+//!   name = "json"
+//!   version = "1.2.0"
+//!   source = "git+https://example.com/json.git#<commit>"   # or "path+../geom"
+//!   rev = "main"                                           # only for `rev` dependencies
+//!   hash = "sha256-<hex>"                                  # git packages only
+//!   deps = ["util"]
+//!   grants = ["io"]
 
 import "core/sys"
 import "std/bytes"

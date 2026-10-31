@@ -1,8 +1,8 @@
-// fuzz: the mutation half of the differential fuzzer (main.ei runs the compilers).
-//
-// A deterministic PRNG, a tokenizer for Eider source over bytes, and the two mutation
-// strategies: `semantic` (type names, literals, identifiers, operators, let/var) and
-// `wild` (any token replaced, deleted, extended or prefixed). Pure apart from `sys.lit`.
+//! fuzz: the mutation half of the differential fuzzer (main.ei runs the compilers).
+//!
+//! A deterministic PRNG, a tokenizer for Eider source over bytes, and the two mutation
+//! strategies: `semantic` (type names, literals, identifiers, operators, let/var) and
+//! `wild` (any token replaced, deleted, extended or prefixed). Pure apart from `sys.lit`.
 
 import "core/sys"
 import "std/bytes"

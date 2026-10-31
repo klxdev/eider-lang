@@ -1,12 +1,12 @@
-// core/sys: the Eider half of the core, and the only module that talks to C (eider_core.c).
-// std/ and every package are plain Eider built on these functions. No pointers cross the
-// boundary: data moves a byte at a time through the core's `in` and `out` buffers.
-// Only core symbols (ec_*) are bound here, never libc names, so platform symbol rules stay
-// inside the C file (see core/ABI.md).
-// Each wrapper declares the real capability of what it does (fs, io, net) next to `ffi`, and
-// the buffer and text helpers only `ffi`: `ffi` doesn't leave its package, so a caller in std
-// or any other package needs only the real one (docs/compiler.md, "C8.5: capabilities per
-// package").
+//! core/sys: the Eider half of the core, and the only module that talks to C (eider_core.c).
+//! std/ and every package are plain Eider built on these functions. No pointers cross the
+//! boundary: data moves a byte at a time through the core's `in` and `out` buffers.
+//! Only core symbols (ec_*) are bound here, never libc names, so platform symbol rules stay
+//! inside the C file (see core/ABI.md).
+//! Each wrapper declares the real capability of what it does (fs, io, net) next to `ffi`, and
+//! the buffer and text helpers only `ffi`: `ffi` doesn't leave its package, so a caller in std
+//! or any other package needs only the real one (docs/compiler.md, "C8.5: capabilities per
+//! package").
 
 extern "c" fn ec_in_clear()
 extern "c" fn ec_in_push(b: i32)

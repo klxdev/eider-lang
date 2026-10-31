@@ -1,0 +1,108 @@
+// packages/markdown: each case prints its name and the HTML of its source (checked by hand),
+// then the queries (links, headings, code blocks, title, summary) with their source lines.
+import "std/bytes"
+import "std/io"
+import "../markdown.ei"
+
+fn case(name: str, src: str) uses io {
+    let mut h = "== ".bytes()
+    bytes.append(inout h, name.bytes())
+    io.outln(h)
+    io.out(markdown.to_html(src.bytes()))
+}
+
+fn line(parts: List[List[u8]]) uses io { io.outln(bytes.join(parts, " ".bytes())) }
+
+fn num(n: u32) -> List[u8] { bytes.from_u64(n as u64) }
+
+/// A code renderer that marks its output, to show `Options.code` is used.
+fn upper_code(info: List[u8], text: List[u8]) -> List[u8] {
+    let mut out = "[".bytes()
+    bytes.append(inout out, info)
+    bytes.append(inout out, "]".bytes())
+    bytes.append(inout out, markdown.escape(text))
+    out
+}
+
+fn main() uses io {
+    case("headings", "# Title\n## Sub *section*\n### Three ###\n#### Four\n#nospace\n####### seven\n")
+    case("setext", "Big\n===\nSmall\n---\n")
+    case("paragraphs", "one line\nlazy second\n\nnew para  \nwith hard break\\\nand backslash break\n")
+    case("emphasis", "*em* _em_ **strong** __strong__ ***both*** a * b\n")
+    case("emphasis tricky", "2 * 3 * 4 and snake_case_name and *\nand __init__ and *a **b** c* and **x*\n")
+    case("emphasis across a link", "*see [the docs](x.md) now*\n")
+    case("code spans", "`code` and `` a`b `` and ` `` ` and `unclosed and ``x``\n")
+    case("links", "[a](http://e.com) [t](u \"T\") [p](f(x).md) [not a link] [x] (y) <https://auto.example/a?b=c>\n")
+    case("images", "![alt *text*](img.png \"T\") ![](empty.png)\n")
+    case("escapes", "\\*not em\\* \\[x\\] \\` a\\\\b \\q\n")
+    case("raw html is text", "<script>alert(1)</script> <b>bold</b> & \"q\" 'a' &amp;\n\n<div>\nblock\n</div>\n")
+    case("dangerous links", "[x](javascript:alert(1)) [y](JAVA SCRIPT:x) [z](vbscript:x) ![i](data:image/png;base64,AA) [ok](https://e.com/\"q)\n")
+    case("lists", "- a\n- b\n  - c\n    - d\n- e\n\n1. one\n2. two\n\n3) three\n4) four\n")
+    case("nested ordered/bullet, 3 levels", "1. first\n   - bullet\n     1. deep\n     2. deeper\n2. second\n")
+    case("loose list", "- a\n\n- b\n- c\n")
+    case("item with paragraphs", "- para one\n\n  para two\n- next\n")
+    case("item with a fence", "- run this:\n\n  ```sh\n  # not a heading\n  - not an item\n  ```\n- done\n")
+    case("list markers", "* star\n+ plus\n- - -\n- after hr\n")
+    case("ordered start and interruption", "Text\n2. no list\n\n7. seven\n8. eight\n")
+    case("fences", "```eider\nfn main() {}\n# hash\n- dash\n```\n\n~~~\ntilde\n```\nstill code\n~~~\n\n````\n```\nfour\n````\n")
+    case("unclosed fence", "text\n```text\nruns\n\nto the end\n")
+    case("block quote", "> quoted\nlazy\n> - item\n>   - nested\n>\n> > deeper\n")
+    case("callouts", "> **Note:** a note.\n\n> **Warning:** careful.\n\n> **Tip:** try this.\n\n> **Other:** plain.\n")
+    case("thematic breaks", "a\n\n---\n***\n___\n- - -\n")
+    case("table", "| Left | Center | Right | None |\n|:-----|:------:|------:|------|\n| a | *b* | `c` | d |\n| e \\| f | short |\nnot | a | row? |\n\nafter\n")
+    case("table code pipe", "| op | meaning |\n|---|---|\n| `a \\| b` | or |\n| `x | y` | split |\n")
+    case("anchors", "# Hello, World!\n## Hello World\n## hello   world\n## Ünïcode & `code`\n## Hello World\n")
+    case("crlf and tabs", "-\tone\r\n-\ttwo\r\n")
+    case("more links", "[a](<dest with space.md>) [![img](i.png)](big.png) <javascript:alert(1)> [c](java\u{1}script:x) a__b__c\n")
+    case("lazy item and quote in item", "- first line\ncontinued lazily\n- > quoted in item\n  > more\n")
+    case("empty items", "-\n- b\n*\n")
+
+    // queries
+    let src = "# The Title\n\nSee [one](a.md) and\n![pic](p.png).\n\n## Usage\n\n- item [two](api:std/stream#BufReader)\n\n  ```eider\n  fn main() {}\n  ```\n\n> ```eider,fragment\n> print(1)\n> ```\n\n| a | b |\n|---|---|\n| [three](c.md) | x |\n\n```output\n1\n```\n\n## Usage\n"
+    let d = markdown.parse(src.bytes())
+    io.outln("== links".bytes())
+    for l in markdown.links(d) {
+        let mut parts: List[List[u8]] = List.new()
+        parts.push(num(l.line))
+        parts.push(l.href)
+        if l.image { parts.push("image".bytes()) }
+        line(parts)
+    }
+    io.outln("== headings".bytes())
+    for h in markdown.headings(d) {
+        let mut parts: List[List[u8]] = List.new()
+        parts.push(num(h.line))
+        parts.push(num(h.level))
+        parts.push(h.anchor)
+        parts.push(h.text)
+        line(parts)
+    }
+    io.outln("== code blocks".bytes())
+    for c in markdown.code_blocks(d) {
+        let mut parts: List[List[u8]] = List.new()
+        parts.push(num(c.line))
+        parts.push(c.info)
+        parts.push(c.text)
+        io.out(bytes.join(parts, "|".bytes()))
+    }
+    io.outln("== title".bytes())
+    io.outln(markdown.title(d))
+    io.outln("== summary".bytes())
+    io.outln(markdown.summary("Reads `a.b` and *more*. Then the rest.\nNo.".bytes()))
+    io.outln(markdown.summary("# Heading\n\nNo full stop here\nbut a second line".bytes()))
+    io.outln(markdown.summary("Version 1.2 is out. Yes.".bytes()))
+    io.outln("== options".bytes())
+    let mut o = markdown.options()
+    o.hrefs.insert("a.md".bytes(), "a.html".bytes())
+    o.hrefs.insert("api:std/stream#BufReader".bytes(), "../api/std/stream.html#BufReader".bytes())
+    o.hrefs.insert("p.png".bytes(), "img/p.png".bytes())
+    o.code = upper_code
+    o.anchors = false
+    io.out(markdown.html(d, o))
+    io.outln("== inline_html".bytes())
+    io.outln(markdown.inline_html("  *x* `y` [z](a.md) <b>  ".bytes(), o))
+    io.outln("== anchor".bytes())
+    io.outln(markdown.anchor("  A  b--C.d_e!  ".bytes()))
+    io.outln("== escape".bytes())
+    io.outln(markdown.escape("<a href=\"x\">&'</a>".bytes()))
+}

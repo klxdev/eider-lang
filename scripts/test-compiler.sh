@@ -84,6 +84,8 @@
 #             and the coverage summary is the recorded one.
 #   cache:    EIDER_CACHE=<dir>: hits, what the key covers, core objects built once per
 #             toolchain, concurrent runs on an empty cache, no work directories left over.
+#   doc:      `eiderc doc` of compiler/tests/doc/shapes (JSON, text, --private) and of one of
+#             its files equals the goldens there; core, std and packages/* document cleanly.
 #   usage:    `--help` lists every command; unknown options/commands and stray arguments
 #             exit 2.
 cd "$(dirname "$0")/.." || exit 1
@@ -648,12 +650,35 @@ done
 rm -rf $cdir
 [ $cache_ok = 1 ] && echo "ok   cache: hits, keys (flags, -O level), core objects once per toolchain, 12 concurrent runs, comptime evaluators, EIDER_CACHE=off"
 
+# doc: `eiderc doc` (doc.ei) of the fixture package compiler/tests/doc/shapes as JSON, as text,
+# with --private, and of one file, against the goldens (BLESS=1 rewrites them; review them by
+# hand); core (with the prelude), std and every package under packages/ give JSON with no
+# warning; an unreadable target exits 2
+d_ok=1
+for v in "json:--json" "txt:" "private.json:--json --private"; do
+  ext=${v%%:*}
+  $new doc ${v#*:} compiler/tests/doc/shapes 2>&1 | norm >$tmp/doc
+  [ -n "$BLESS" ] && cp $tmp/doc compiler/tests/doc/shapes.$ext
+  cmp -s $tmp/doc compiler/tests/doc/shapes.$ext || { echo "FAIL doc: eiderc doc ${v#*:} compiler/tests/doc/shapes"; diff compiler/tests/doc/shapes.$ext $tmp/doc | head -10; d_ok=0; }
+done
+$new doc --json compiler/tests/doc/shapes/util/geo.ei 2>&1 | norm >$tmp/doc
+[ -n "$BLESS" ] && cp $tmp/doc compiler/tests/doc/geo.json
+cmp -s $tmp/doc compiler/tests/doc/geo.json || { echo "FAIL doc: eiderc doc --json compiler/tests/doc/shapes/util/geo.ei"; diff compiler/tests/doc/geo.json $tmp/doc | head -10; d_ok=0; }
+for p in core std packages/*/; do
+  $new doc --json "$p" >$tmp/doc 2>$tmp/doc_err || { echo "FAIL doc: eiderc doc --json $p exits $?"; d_ok=0; }
+  [ -s $tmp/doc_err ] && { echo "FAIL doc: eiderc doc --json $p warns"; head -5 $tmp/doc_err; d_ok=0; }
+done
+$new doc --json core | grep -q '^{"package":"core","path":"prelude"' || { echo "FAIL doc: core has no prelude module"; d_ok=0; }
+$new doc compiler/tests/doc/no-such-dir >/dev/null 2>&1
+[ $? = 2 ] || { echo "FAIL doc: a missing target does not exit 2"; d_ok=0; }
+if [ $d_ok = 1 ]; then echo "ok   doc: eiderc doc of compiler/tests/doc (JSON, text, --private, one file) equals the goldens; core, std and packages/* document without warnings"; else fail=1; fi
+
 # usage: --help lists every command; unknown options and commands are errors
 $new --help >$tmp/o 2>&1
 code=$?
 uok=1
 [ $code = 0 ] || uok=0
-for c in check emit-c emit-header build "build --lib" "build --wasm" run test "test --compile-fail" lex parse ir caps ide help; do
+for c in check emit-c emit-header build "build --lib" "build --wasm" run test "test --compile-fail" lex parse ir caps ide doc help; do
   grep -q "^  eiderc $c " $tmp/o || { echo "FAIL usage: --help does not list \`$c\`"; uok=0; }
 done
 $new check --no-such-flag tests/run/adt.ei >/dev/null 2>&1

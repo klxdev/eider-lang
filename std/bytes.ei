@@ -1,4 +1,4 @@
-// std/bytes: text as List[u8]. Pure Eider, no capabilities.
+//! std/bytes: text as List[u8]. Pure Eider, no capabilities.
 
 pub fn eq(a: List[u8], b: List[u8]) -> bool {
     if a.len() != b.len() { return false }

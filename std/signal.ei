@@ -1,7 +1,7 @@
-// std/signal: signals as events. A watched signal is delivered as one byte (its number) on
-// the process's signal pipe, which a poller can watch like any descriptor (core/ABI.md
-// "Signals"). Graceful shutdown: watch TERM and INT, add `events_fd()` to the poller, and stop
-// when either arrives.
+//! std/signal: signals as events. A watched signal is delivered as one byte (its number) on
+//! the process's signal pipe, which a poller can watch like any descriptor (core/ABI.md
+//! "Signals"). Graceful shutdown: watch TERM and INT, add `events_fd()` to the poller, and stop
+//! when either arrives.
 
 import "core/sys"
 import "core/os"

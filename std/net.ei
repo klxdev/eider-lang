@@ -1,7 +1,7 @@
-// std/net: sockets (TCP, UDP, Unix domain) and name resolution. Thin wrappers over the core
-// (core/ABI.md "Addresses", "Sockets", "Name resolution"); a socket is a descriptor (i32), read
-// and closed with std/fd too. Non-blocking use goes with std/poll; connection and listener
-// types on tasks come later (layer/std, layer/runtime).
+//! std/net: sockets (TCP, UDP, Unix domain) and name resolution. Thin wrappers over the core
+//! (core/ABI.md "Addresses", "Sockets", "Name resolution"); a socket is a descriptor (i32), read
+//! and closed with std/fd too. Non-blocking use goes with std/poll; connection and listener
+//! types on tasks come later (layer/std, layer/runtime).
 
 import "core/sys"
 import "core/os"

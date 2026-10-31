@@ -1,0 +1,54 @@
+module shapes/shapes (shapes.ei)
+    Shapes and their areas.
+
+pub type Shape
+    A shape.
+    Circle(r: i64)
+        A circle of radius `r`.
+    Rect(w: i64, h: i64)
+    Empty
+        No payload.
+pub type Point
+    A point, on one line: its fields have no docs of their own.
+    x: i64
+    y: i64
+pub type Holder[T]
+    A record over several lines.
+    inner: T
+        What it holds.
+    stamp: time.Duration
+pub type Measure = fn(Shape) -> i64
+    A function type.
+pub const MAX_SIDE: i64 = 1000
+    The largest side a shape may have.
+pub trait Area
+    Things with an area.
+    fn area(self) -> i64
+        The area, rounded down.
+    fn scaled(self, k: i64) -> Self
+impl Area for Shape
+    fn area(self) -> i64
+    fn scaled(self, k: i64) -> Shape
+impl[T: Copy] Holder[T]
+    fn inner(self) -> T
+        The value inside (named like the field, so its anchor is `Holder.inner-2`).
+    fn set(inout self, v: T)
+impl Show for Point
+    fn show(self, inout out: String)
+pub fn biggest[T: Area + Copy, U](xs: List[T], f: fn(T) -> U) -> Option[T]
+    The biggest of `xs` by `f`; generic, with bounds.
+pub fn report(s: Shape, d: time.Duration) uses io, clock
+    Prints the shape, waiting `d` first.
+pub fn dist(a: Point, b: geo.Vec) -> i64
+    A distance through another module of the package.
+pub unsafe fn raw() -> i64
+
+module shapes/util/geo (util/geo.ei)
+    Vectors, in a module below the package directory (`shapes/util/geo`).
+
+pub type Vec
+    A vector.
+    dx: i64
+    dy: i64
+pub fn len(v: Vec) -> i64
+    The taxicab length of `v`.

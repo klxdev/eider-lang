@@ -1,17 +1,17 @@
-// manifest: read and validate eider.toml.
-//
-//   [package]
-//   name = "warehouse"          # [a-z][a-z0-9_]*, not `core` or `std`; what importers write
-//   version = "0.1.0"           # MAJOR.MINOR.PATCH
-//   entry = "warehouse.ei"      # what `import "warehouse"` loads (default <name>.ei);
-//                               # `import "warehouse/a/b"` loads a/b.ei
-//   main = "main.ei"            # program entry for run/build (optional)
-//
-//   [deps.json]                 # one table per dependency; the key must equal its package name
-//   git = "https://..."         #   either git + (version | rev) ...
-//   version = "1.2.0"           #   minimum version; tag v1.2.0 (or 1.2.0)
-//   path = "../geom"            #   ... or a local directory
-//   uses = ["io", "fs"]         #   capabilities granted to the dependency (default: none)
+//! manifest: read and validate eider.toml.
+//!
+//!   [package]
+//!   name = "warehouse"          # [a-z][a-z0-9_]*, not `core` or `std`; what importers write
+//!   version = "0.1.0"           # MAJOR.MINOR.PATCH
+//!   entry = "warehouse.ei"      # what `import "warehouse"` loads (default <name>.ei);
+//!                               # `import "warehouse/a/b"` loads a/b.ei
+//!   main = "main.ei"            # program entry for run/build (optional)
+//!
+//!   [deps.json]                 # one table per dependency; the key must equal its package name
+//!   git = "https://..."         #   either git + (version | rev) ...
+//!   version = "1.2.0"           #   minimum version; tag v1.2.0 (or 1.2.0)
+//!   path = "../geom"            #   ... or a local directory
+//!   uses = ["io", "fs"]         #   capabilities granted to the dependency (default: none)
 
 import "core/sys"
 import "std/bytes"

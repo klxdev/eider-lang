@@ -1,33 +1,33 @@
-// std/stream: byte streams. The `Reader` and `Writer` traits, typed errors (`Error`: a `Kind`
-// from the core's portable error kinds plus a message), buffered wrappers (`BufReader` with
-// `read_line`/`read_until`/`peek`, `BufWriter` with `flush`), and the streams themselves:
-// `Fd` for any descriptor (files, pipes, sockets, child streams, stdin/stdout/stderr),
-// `Bytes` (reading from memory) and `Buffer` (writing to memory). docs/std.md has the
-// overview; decisions C23-C27.
-//
-// Rules every stream here follows:
-//
-// - Every blocking operation has a deadline variant, named `..._by(..., dl: time.Deadline)`
-//   (decision C5). When the deadline passes it returns `Err` with kind `TimedOut`, so a
-//   handler can `?` it like any other error.
-// - Cancel-safety is stated per operation. `read_by` and `write_by` on a stream consume or
-//   write nothing when they time out. `BufReader`'s `_by` operations keep every byte they
-//   received in the buffer, so a timed-out `read_line_by` can simply be called again.
-//   `BufWriter.flush_by` keeps what it could not write. The free functions `read_exact_by`
-//   and `read_all_by` on an unbuffered stream lose what they read before the deadline (use a
-//   BufReader), and `write_all_by` says in its error how much it wrote.
-// - A read of `max` bytes returns between 1 and `max` bytes, or none at end of stream.
-//   `max` must be at least 1 (`InvalidInput` otherwise).
-// - Capabilities: reading and writing streams is `io` (and `clock` for a deadline), whatever
-//   is behind the descriptor; opening files is `fs`, connecting and accepting sockets `net`.
-//   The in-memory streams need nothing when called directly; through the generic code
-//   (`BufReader[Bytes]`, `read_all`) they need `io` too, because a generic body is checked
-//   with the capabilities of every stream it could be given (docs/std.md, "Needs the
-//   compiler": capability polymorphism).
-//
-// std/stream is the canonical place for streams; std/io stays the raw stdout/stderr/stdin
-// calls the compiler itself uses (its text is part of seed/eiderc.c, so it changes only with
-// a seed regeneration). docs/std.md, "Why std/stream and not std/io"; decision C101.
+//! std/stream: byte streams. The `Reader` and `Writer` traits, typed errors (`Error`: a `Kind`
+//! from the core's portable error kinds plus a message), buffered wrappers (`BufReader` with
+//! `read_line`/`read_until`/`peek`, `BufWriter` with `flush`), and the streams themselves:
+//! `Fd` for any descriptor (files, pipes, sockets, child streams, stdin/stdout/stderr),
+//! `Bytes` (reading from memory) and `Buffer` (writing to memory). docs/std.md has the
+//! overview; decisions C23-C27.
+//!
+//! Rules every stream here follows:
+//!
+//! - Every blocking operation has a deadline variant, named `..._by(..., dl: time.Deadline)`
+//!   (decision C5). When the deadline passes it returns `Err` with kind `TimedOut`, so a
+//!   handler can `?` it like any other error.
+//! - Cancel-safety is stated per operation. `read_by` and `write_by` on a stream consume or
+//!   write nothing when they time out. `BufReader`'s `_by` operations keep every byte they
+//!   received in the buffer, so a timed-out `read_line_by` can simply be called again.
+//!   `BufWriter.flush_by` keeps what it could not write. The free functions `read_exact_by`
+//!   and `read_all_by` on an unbuffered stream lose what they read before the deadline (use a
+//!   BufReader), and `write_all_by` says in its error how much it wrote.
+//! - A read of `max` bytes returns between 1 and `max` bytes, or none at end of stream.
+//!   `max` must be at least 1 (`InvalidInput` otherwise).
+//! - Capabilities: reading and writing streams is `io` (and `clock` for a deadline), whatever
+//!   is behind the descriptor; opening files is `fs`, connecting and accepting sockets `net`.
+//!   The in-memory streams need nothing when called directly; through the generic code
+//!   (`BufReader[Bytes]`, `read_all`) they need `io` too, because a generic body is checked
+//!   with the capabilities of every stream it could be given (docs/std.md, "Needs the
+//!   compiler": capability polymorphism).
+//!
+//! std/stream is the canonical place for streams; std/io stays the raw stdout/stderr/stdin
+//! calls the compiler itself uses (its text is part of seed/eiderc.c, so it changes only with
+//! a seed regeneration). docs/std.md, "Why std/stream and not std/io"; decision C101.
 
 import "core/sys"
 import "core/os"

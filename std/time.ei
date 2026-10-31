@@ -1,7 +1,7 @@
-// std/time: the monotonic clock (for durations and deadlines), the wall clock (for
-// timestamps) and sleeping (core/ABI.md "Time"); `Duration` and `Deadline` as values, which
-// every blocking operation in std takes (decision C5: timeouts on every blocking operation;
-// docs/runtime.md).
+//! std/time: the monotonic clock (for durations and deadlines), the wall clock (for
+//! timestamps) and sleeping (core/ABI.md "Time"); `Duration` and `Deadline` as values, which
+//! every blocking operation in std takes (decision C5: timeouts on every blocking operation;
+//! docs/runtime.md).
 
 import "core/os"
 

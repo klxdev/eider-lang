@@ -1,25 +1,25 @@
-// eider-pkg: the Eider package manager.
-//
-//   eider-pkg [-C dir] init [name]
-//   eider-pkg [-C dir] add <name> (--path P | --git URL (--version V | --rev R)) [--uses a,b]
-//   eider-pkg [-C dir] remove <name>
-//   eider-pkg [-C dir] fetch [--offline]      resolve (keeping eider.lock pins), write eider.lock
-//   eider-pkg [-C dir] update [--offline]     re-resolve ignoring eider.lock
-//   eider-pkg [-C dir] vendor                 copy git packages into vendor/ (offline builds)
-//   eider-pkg [-C dir] tree                   print the locked graph
-//   eider-pkg hash <dir>                      content hash of a directory
-//
-// Only fetch/update/add/remove/vendor may touch the network: fetch and friends only when a
-// commit isn't already in the local mirror, update always refreshes the mirrors (tags can
-// move). Paths in arguments are relative to -C. Needs EIDER_ROOT (the toolchain checkout
-// with core/ and std/), and asks the compiler (EIDERC, default $EIDER_ROOT/target/eiderc)
-// what each package uses, to hold it to its grant (caps.ei).
-//
-// The compiler finds dependencies itself: `import "json"` goes through eider.lock to the
-// package's directory (a path package's own, vendor/<name>, or the store's
-// pkg/<name>-<hash16>; docs/compiler.md, "C8.3: packages and modules"). So fetch writes
-// eider.lock and fills the store, and links nothing: the deps/ link farm of earlier versions
-// is gone (a deps/ an earlier eider-pkg made, recognisable by its deps/.all, is removed).
+//! eider-pkg: the Eider package manager.
+//!
+//!   eider-pkg [-C dir] init [name]
+//!   eider-pkg [-C dir] add <name> (--path P | --git URL (--version V | --rev R)) [--uses a,b]
+//!   eider-pkg [-C dir] remove <name>
+//!   eider-pkg [-C dir] fetch [--offline]      resolve (keeping eider.lock pins), write eider.lock
+//!   eider-pkg [-C dir] update [--offline]     re-resolve ignoring eider.lock
+//!   eider-pkg [-C dir] vendor                 copy git packages into vendor/ (offline builds)
+//!   eider-pkg [-C dir] tree                   print the locked graph
+//!   eider-pkg hash <dir>                      content hash of a directory
+//!
+//! Only fetch/update/add/remove/vendor may touch the network: fetch and friends only when a
+//! commit isn't already in the local mirror, update always refreshes the mirrors (tags can
+//! move). Paths in arguments are relative to -C. Needs EIDER_ROOT (the toolchain checkout
+//! with core/ and std/), and asks the compiler (EIDERC, default $EIDER_ROOT/target/eiderc)
+//! what each package uses, to hold it to its grant (caps.ei).
+//!
+//! The compiler finds dependencies itself: `import "json"` goes through eider.lock to the
+//! package's directory (a path package's own, vendor/<name>, or the store's
+//! pkg/<name>-<hash16>; docs/compiler.md, "C8.3: packages and modules"). So fetch writes
+//! eider.lock and fills the store, and links nothing: the deps/ link farm of earlier versions
+//! is gone (a deps/ an earlier eider-pkg made, recognisable by its deps/.all, is removed).
 
 import "core/sys"
 import "std/bytes"

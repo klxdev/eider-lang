@@ -1,8 +1,8 @@
-// std/heap: binary heaps. `Heap[T]` over any `T: Ord` gives the smallest element first
-// (`heap.min()`) or the largest (`heap.max()`): push and pop O(log n), peek O(1). `Queue[T]`
-// is a priority queue for any `T`: lowest priority number first, and first in, first out
-// among equal priorities (a plain heap is not stable), which is what schedulers and timers
-// want. Values like any other: copies don't share.
+//! std/heap: binary heaps. `Heap[T]` over any `T: Ord` gives the smallest element first
+//! (`heap.min()`) or the largest (`heap.max()`): push and pop O(log n), peek O(1). `Queue[T]`
+//! is a priority queue for any `T`: lowest priority number first, and first in, first out
+//! among equal priorities (a plain heap is not stable), which is what schedulers and timers
+//! want. Values like any other: copies don't share.
 
 pub type Heap[T] = { items: List[T], max: bool }
 

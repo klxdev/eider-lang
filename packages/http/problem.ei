@@ -1,15 +1,15 @@
-// http/problem: API errors as values, written as Problem Details (RFC 9457,
-// `application/problem+json`).
-//
-// An `ApiError` is what a handler returns instead of panicking: a status, a short `title` (by
-// default the status's reason phrase, as RFC 9457 asks when `type` is "about:blank"), a
-// `detail` for this occurrence, and `errors`, the extension member that says which parts of
-// the request were wrong (`{"in": "body", "pointer": "#/title", "detail": "..."}` for the
-// body, `{"in": "query", "name": "limit", "detail": "..."}` for a parameter). Typed handlers
-// (packages/openapi) return `Result[U, ApiError]`; `middleware.errors` turns a handler that
-// returns `Result[http.Response, ApiError]` into an ordinary one, and `middleware.problems`
-// rewrites the package's plain-text error responses (404, 405, 413, ...) the same way, so a
-// service answers every error in one format.
+//! http/problem: API errors as values, written as Problem Details (RFC 9457,
+//! `application/problem+json`).
+//!
+//! An `ApiError` is what a handler returns instead of panicking: a status, a short `title` (by
+//! default the status's reason phrase, as RFC 9457 asks when `type` is "about:blank"), a
+//! `detail` for this occurrence, and `errors`, the extension member that says which parts of
+//! the request were wrong (`{"in": "body", "pointer": "#/title", "detail": "..."}` for the
+//! body, `{"in": "query", "name": "limit", "detail": "..."}` for a parameter). Typed handlers
+//! (packages/openapi) return `Result[U, ApiError]`; `middleware.errors` turns a handler that
+//! returns `Result[http.Response, ApiError]` into an ordinary one, and `middleware.problems`
+//! rewrites the package's plain-text error responses (404, 405, 413, ...) the same way, so a
+//! service answers every error in one format.
 
 import "core/sys"
 import "std/bytes"

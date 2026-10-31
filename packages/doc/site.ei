@@ -1,0 +1,983 @@
+//! `eider-doc build`: the site. The Markdown pages SUMMARY.md lists, one page per API
+//! module (`api/<package>/<module>.html`), one per package, an index of packages, a page per
+//! source file (`src/<package>/<file>.html`, linked from every item), the navigation, a
+//! search index (`search-index.json`, and `search-index.js` for pages opened from disk) and
+//! one stylesheet. Every link is checked: an `api:` target that wasn't documented, a page
+//! link to a `.md` file that SUMMARY.md doesn't list, or a remote image fails the build.
+
+import "std/bytes"
+import "std/fs"
+import "std/path"
+import "json"
+import "markdown"
+import "model.ei"
+import "html.ei"
+import "summary.ei"
+import "assets.ei"
+
+/// What to build: the Markdown site (`site`: a directory with SUMMARY.md, or empty for an
+/// API-only site), the API, the output directory and the site's name.
+pub type Config = { site: List[u8], out: List[u8], title: List[u8] }
+
+/// A Markdown page: its file (relative to the site directory), its output path, its title
+/// (the first `#` heading, else the SUMMARY.md entry's) and its SUMMARY.md entry.
+type Page = { src: List[u8], out: List[u8], title: List[u8], entry: u32, text: List[u8] }
+
+/// The build: errors are `file:line: message`.
+type Cx = {
+    cfg: Config, api: model.Api, sum: summary.Summary, pages: List[Page], errs: List[List[u8]],
+    index: List[List[u8]], files: List[List[u8]], datas: List[List[u8]],
+}
+
+fn err(inout cx: Cx, file: List[u8], line: u32, msg: List[u8]) {
+    let mut m = file.copy()
+    m.push(58)
+    bytes.append(inout m, bytes.from_u64(line as u64))
+    bytes.append(inout m, ": ".bytes())
+    bytes.append(inout m, msg)
+    cx.errs.push(m)
+}
+
+fn cat(a: str, b: List[u8]) -> List[u8] {
+    let mut m = a.bytes()
+    bytes.append(inout m, b)
+    m
+}
+
+/// Builds the site into `cfg.out`; returns the errors (none: success).
+pub fn build(cfg: Config, api: model.Api) -> List[List[u8]] uses fs {
+    let mut cx = Cx(cfg.copy(), api, summary.Summary(List.new(), List.new()), List.new(), List.new(), List.new(), List.new(), List.new())
+    if cfg.site.len() > 0 { load_site(inout cx) }
+    for i in 0..cx.pages.len() { md_page(inout cx, i) }
+    for i in 0..cx.api.packages.len() { package_page(inout cx, i) }
+    for i in 0..cx.api.modules.len() {
+        module_page(inout cx, i)
+        source_page(inout cx, i)
+    }
+    api_index(inout cx)
+    home(inout cx)
+    emit(inout cx, "style.css".bytes(), assets.css())
+    let ix = search_index(cx)
+    emit(inout cx, "search-index.json".bytes(), ix.copy())
+    let mut js = "window.EIDER_INDEX=".bytes()
+    bytes.append(inout js, ix)
+    bytes.append(inout js, ";\n".bytes())
+    emit(inout cx, "search-index.js".bytes(), js)
+    if cx.errs.len() > 0 { return cx.errs }
+    for i in 0..cx.files.len() {
+        let p = fs.join(cfg.out, cx.files[i])
+        match fs.mkdir_all(fs.dirname(p)) {
+            Ok(_) => {}
+            Err(e) => { cx.errs.push(cat("cannot create the directory of ", p)) }
+        }
+        match fs.write(p, cx.datas[i]) {
+            Ok(_) => {}
+            Err(e) => {
+                let mut m = cat("cannot write ", p)
+                bytes.append(inout m, ": ".bytes())
+                bytes.append(inout m, e.bytes())
+                cx.errs.push(m)
+            }
+        }
+    }
+    cx.errs
+}
+
+fn emit(inout cx: Cx, path: List[u8], data: List[u8]) {
+    cx.files.push(path)
+    cx.datas.push(data)
+}
+
+// ---- the Markdown pages
+
+fn load_site(inout cx: Cx) uses fs {
+    let sp = fs.join(cx.cfg.site, "SUMMARY.md".bytes())
+    let src = match fs.read(sp.copy()) {
+        Ok(t) => t
+        Err(e) => {
+            err(inout cx, sp, 1, cat("cannot read: ", e.bytes()))
+            return
+        }
+    }
+    match summary.parse(src) {
+        Ok(s) => { cx.sum = s }
+        Err(es) => {
+            for e in es {
+                let mut m = sp.copy()
+                m.push(58)
+                bytes.append(inout m, bytes.slice(e, 5, e.len()))
+                cx.errs.push(m)
+            }
+            return
+        }
+    }
+    for i in 0..cx.sum.entries.len() {
+        let e = cx.sum.entries[i].copy()
+        if bytes.starts_with(e.href, "api:".bytes()) {
+            let target = bytes.slice(e.href, 4, e.href.len())
+            match model.resolve(cx.api, target) {
+                Ok(_) => {}
+                Err(m) => err(inout cx, sp.copy(), e.line, m)
+            }
+            continue
+        }
+        if !bytes.ends_with(e.href, ".md".bytes()) || has_scheme(e.href) {
+            err(inout cx, sp.copy(), e.line, "an entry links to a .md page or to api:<package>".bytes())
+            continue
+        }
+        let file = path.normalize(e.href)
+        let text = match fs.read(fs.join(cx.cfg.site, file.copy())) {
+            Ok(t) => t
+            Err(m) => {
+                err(inout cx, sp.copy(), e.line, cat("cannot read the page: ", m.bytes()))
+                continue
+            }
+        }
+        let out = html_of(file.copy())
+        cx.pages.push(Page(file, out, e.title, i as u32, text))
+    }
+}
+
+/// The Markdown files SUMMARY.md in `dir` lists (relative to `dir`), or the errors.
+pub fn pages(dir: List[u8]) -> Result[List[List[u8]], List[List[u8]]] uses fs {
+    let sp = fs.join(dir, "SUMMARY.md".bytes())
+    let mut errs: List[List[u8]] = List.new()
+    let src = match fs.read(sp.copy()) {
+        Ok(t) => t
+        Err(e) => {
+            let mut m = sp.copy()
+            bytes.append(inout m, ": cannot read: ".bytes())
+            bytes.append(inout m, e.bytes())
+            errs.push(m)
+            return Err(errs)
+        }
+    }
+    let s = match summary.parse(src) {
+        Ok(x) => x
+        Err(es) => {
+            for e in es {
+                let mut m = sp.copy()
+                m.push(58)
+                bytes.append(inout m, bytes.slice(e, 5, e.len()))
+                errs.push(m)
+            }
+            return Err(errs)
+        }
+    }
+    let mut out: List[List[u8]] = List.new()
+    for e in s.entries {
+        if bytes.ends_with(e.href, ".md".bytes()) && !has_scheme(e.href) { out.push(path.normalize(e.href)) }
+    }
+    Ok(out)
+}
+
+/// `a/b.md` as `a/b.html`.
+fn html_of(md: List[u8]) -> List[u8] {
+    let mut o = bytes.slice(md, 0, md.len() - 3)
+    bytes.append(inout o, ".html".bytes())
+    o
+}
+
+fn has_scheme(h: List[u8]) -> bool {
+    for i in 0..h.len() {
+        let c = h[i]
+        if c == 58 { return i > 0 }
+        if !(bytes.is_alpha(c) || bytes.is_digit(c) || c == 43 || c == 45 || c == 46) { return false }
+    }
+    false
+}
+
+fn page_index(cx: Cx, file: List[u8]) -> u32 {
+    for i in 0..cx.pages.len() {
+        if bytes.eq(cx.pages[i].src, file) { return i as u32 }
+    }
+    model.none()
+}
+
+/// The href map for the links of document `d`, which is shown on site page `page`: `api:`
+/// targets resolved, `.md` links (relative to `dir`, the Markdown file's directory, when
+/// `dir_ok`) turned into `.html`; problems reported against `file`, whose line 1 is the
+/// document's line `first`.
+fn hrefs(inout cx: Cx, d: markdown.Doc, page: List[u8], dir: List[u8], dir_ok: bool, file: List[u8], first: u32) -> Map[List[u8], List[u8]] uses fs {
+    let mut m: Map[List[u8], List[u8]] = Map.new()
+    for l in markdown.links(d) {
+        let line = first + l.line - 1
+        let h = l.href.copy()
+        if l.image {
+            if has_scheme(h) || bytes.starts_with(h, "//".bytes()) {
+                err(inout cx, file.copy(), line, cat("images must be local files: ", h))
+            } else if dir_ok && h.len() > 0 {
+                let src = path.normalize(path.join(dir, h.copy()))
+                match fs.read(fs.join(cx.cfg.site, src.copy())) {
+                    Ok(data) => emit(inout cx, src, data)
+                    Err(_) => err(inout cx, file.copy(), line, cat("no such image: ", h))
+                }
+            }
+            continue
+        }
+        if bytes.starts_with(h, "api:".bytes()) {
+            match model.resolve(cx.api, bytes.slice(h, 4, h.len())) {
+                Ok(to) => { m.insert(h.copy(), html.rel(page, to)) }
+                Err(e) => err(inout cx, file.copy(), line, cat("unknown api: target: ", e))
+            }
+            continue
+        }
+        if has_scheme(h) || h.len() == 0 || h[0] == 35 || !dir_ok { continue }
+        let mut target = h.copy()
+        let mut frag: List[u8] = List.new()
+        match bytes.find_byte(h, 35, 0) {
+            Some(i) => {
+                target = bytes.slice(h, 0, i)
+                frag = bytes.slice(h, i, h.len())
+            }
+            None => {}
+        }
+        if !bytes.ends_with(target, ".md".bytes()) { continue }
+        let file_md = path.normalize(path.join(dir, target.copy()))
+        let pi = page_index(cx, file_md.copy())
+        if pi == model.none() {
+            err(inout cx, file.copy(), line, cat("links to a page SUMMARY.md doesn't list: ", file_md))
+            continue
+        }
+        if frag.len() > 1 {
+            let want = bytes.slice(frag, 1, frag.len())
+            let mut found = false
+            for hd in markdown.headings(markdown.parse(cx.pages[pi as usize].text)) {
+                if bytes.eq(hd.anchor, want) { found = true }
+            }
+            if !found {
+                let mut msg = "no heading `".bytes()
+                bytes.append(inout msg, frag)
+                bytes.append(inout msg, "` in ".bytes())
+                bytes.append(inout msg, file_md)
+                err(inout cx, file.copy(), line, msg)
+            }
+        }
+        let mut out = bytes.slice(target, 0, target.len() - 3)
+        bytes.append(inout out, ".html".bytes())
+        bytes.append(inout out, frag)
+        m.insert(h.copy(), out)
+    }
+    m
+}
+
+fn md_options(m: Map[List[u8], List[u8]], anchors: bool) -> markdown.Options {
+    let mut o = markdown.options()
+    o.hrefs = m
+    o.code = html.code_block
+    o.anchors = anchors
+    o
+}
+
+fn md_page(inout cx: Cx, i: usize) uses fs {
+    let pg = cx.pages[i].copy()
+    let d = markdown.parse(pg.text)
+    let shown = fs.join(cx.cfg.site, pg.src.copy())
+    let m = hrefs(inout cx, d, pg.out, fs.dirname(pg.src), true, shown, 1)
+    let body = markdown.html(d, md_options(m, true))
+    let mut title = markdown.title(d)
+    if title.len() == 0 { title = pg.title.copy() }
+    let mut toc: List[u8] = List.new()
+    for h in markdown.headings(d) {
+        if h.level == 2 || h.level == 3 {
+            if h.level == 2 { html.put(inout toc, "<li class=\"l2\">") } else { html.put(inout toc, "<li class=\"l3\">") }
+            html.put(inout toc, "<a href=\"#")
+            html.text(inout toc, h.anchor)
+            html.put(inout toc, "\">")
+            html.text(inout toc, h.text)
+            html.put(inout toc, "</a></li>")
+        }
+    }
+    let mut ix = "[".bytes()
+    entry(inout ix, title.copy(), "page".bytes(), List.new(), List.new(), pg.out.copy())
+    ix.push(93)
+    cx.index.push(ix)
+    let out = layout(cx, pg.out.copy(), title, body, toc)
+    emit(inout cx, pg.out, out)
+}
+
+// ---- layout
+
+/// The whole page at site path `page`.
+fn layout(cx: Cx, page: List[u8], title: List[u8], body: List[u8], toc: List[u8]) -> List[u8] {
+    let root = html.root_of(page)
+    let mut o = "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n".bytes()
+    html.put(inout o, "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n<title>")
+    html.text(inout o, title)
+    if !bytes.eq(title, cx.cfg.title) {
+        html.put(inout o, " - ")
+        html.text(inout o, cx.cfg.title)
+    }
+    html.put(inout o, "</title>\n<link rel=\"stylesheet\" href=\"")
+    bytes.append(inout o, root.copy())
+    html.put(inout o, "style.css\">\n<script>")
+    bytes.append(inout o, assets.theme_js())
+    html.put(inout o, "</script>\n</head>\n<body data-root=\"")
+    bytes.append(inout o, root.copy())
+    html.put(inout o, "\">\n<header class=\"top\"><button class=\"menu\" type=\"button\" aria-label=\"Menu\">&#9776;</button>")
+    html.put(inout o, "<a class=\"brand\" href=\"")
+    bytes.append(inout o, root.copy())
+    html.put(inout o, "index.html\">")
+    html.text(inout o, cx.cfg.title)
+    html.put(inout o, "</a><div class=\"search\"><input id=\"q\" type=\"search\" placeholder=\"Search (press /)\" autocomplete=\"off\" aria-label=\"Search\"><ol id=\"results\"></ol></div>")
+    html.put(inout o, "<button class=\"theme\" type=\"button\" title=\"Light or dark\" aria-label=\"Toggle the dark theme\">&#9680;</button></header>\n")
+    html.put(inout o, "<div class=\"layout\">\n<nav class=\"side\">")
+    bytes.append(inout o, nav(cx, page.copy()))
+    html.put(inout o, "</nav>\n<main>\n")
+    bytes.append(inout o, body)
+    html.put(inout o, "</main>\n")
+    if toc.len() > 0 {
+        html.put(inout o, "<aside class=\"toc\"><h2>On this page</h2><ul>")
+        bytes.append(inout o, toc)
+        html.put(inout o, "</ul></aside>\n")
+    }
+    html.put(inout o, "</div>\n<footer>Generated by eider-doc</footer>\n<script src=\"")
+    bytes.append(inout o, root)
+    html.put(inout o, "search-index.js\"></script>\n<script>\n")
+    bytes.append(inout o, assets.page_js())
+    html.put(inout o, "</script>\n</body>\n</html>\n")
+    o
+}
+
+fn nav_link(inout o: List[u8], page: List[u8], to: List[u8], title: List[u8]) {
+    html.put(inout o, "<a href=\"")
+    html.text(inout o, html.rel(page.copy(), to.copy()))
+    html.put(inout o, "\"")
+    if bytes.eq(page, to) { html.put(inout o, " aria-current=\"page\"") }
+    html.put(inout o, ">")
+    html.text(inout o, title)
+    html.put(inout o, "</a>")
+}
+
+/// The site path an entry links to.
+fn entry_page(cx: Cx, e: summary.Entry) -> List[u8] {
+    if bytes.starts_with(e.href, "api:".bytes()) {
+        return match model.resolve(cx.api, bytes.slice(e.href, 4, e.href.len())) {
+            Ok(p) => p
+            Err(_) => List.new()
+        }
+    }
+    html_of(path.normalize(e.href))
+}
+
+/// The modules of package `pi` as a nested list (when `page` is one of its pages).
+fn package_nav(cx: Cx, inout o: List[u8], page: List[u8], pi: u32) {
+    let pk = cx.api.packages[pi as usize].copy()
+    let pp = model.package_page(pk.name.copy())
+    let mut inside = bytes.eq(page, pp)
+    for mi in pk.modules {
+        if bytes.eq(page, model.page_of(cx.api.modules[mi as usize])) { inside = true }
+    }
+    if !inside { return }
+    html.put(inout o, "<ul>")
+    for mi in pk.modules {
+        let md = cx.api.modules[mi as usize].copy()
+        html.put(inout o, "<li>")
+        nav_link(inout o, page.copy(), model.page_of(md.copy()), md.path)
+        html.put(inout o, "</li>")
+    }
+    html.put(inout o, "</ul>")
+}
+
+fn nav(cx: Cx, page: List[u8]) -> List[u8] {
+    let mut o: List[u8] = List.new()
+    let es = cx.sum.entries.copy()
+    let mut listed: List[u32] = List.new()
+    for s in 0..cx.sum.sections.len() {
+        if !section_used(cx, s as u32) { continue }
+        html.put(inout o, "<h2>")
+        html.text(inout o, cx.sum.sections[s])
+        html.put(inout o, "</h2>\n<ul>")
+        let mut depth: u32 = 0
+        let mut first = true
+        for e in es {
+            if e.section != s as u32 { continue }
+            if first {
+                first = false
+            } else if e.depth > depth {
+                html.put(inout o, "<ul>")
+            } else {
+                html.put(inout o, "</li>")
+                let mut d = depth.copy()
+                while d > e.depth {
+                    html.put(inout o, "</ul></li>")
+                    d -= 1
+                }
+            }
+            depth = e.depth.copy()
+            html.put(inout o, "<li>")
+            nav_link(inout o, page.copy(), entry_page(cx, e.copy()), e.title.copy())
+            if bytes.starts_with(e.href, "api:".bytes()) {
+                let pi = model.package_index(cx.api, bytes.slice(e.href, 4, e.href.len()))
+                if pi != model.none() {
+                    listed.push(pi)
+                    package_nav(cx, inout o, page.copy(), pi)
+                }
+            }
+        }
+        if !first {
+            html.put(inout o, "</li>")
+            while depth > 0 {
+                html.put(inout o, "</ul></li>")
+                depth -= 1
+            }
+        }
+        html.put(inout o, "</ul>\n")
+    }
+    // packages SUMMARY.md doesn't list (all of them for an API-only site)
+    let mut rest: List[u32] = List.new()
+    for i in 0..cx.api.packages.len() {
+        if !listed.contains(i as u32) { rest.push(i as u32) }
+    }
+    if rest.len() > 0 {
+        html.put(inout o, "<h2>API</h2>\n<ul><li>")
+        nav_link(inout o, page.copy(), "api/index.html".bytes(), "All packages".bytes())
+        html.put(inout o, "</li>")
+        for pi in rest {
+            let pk = cx.api.packages[pi as usize].copy()
+            html.put(inout o, "<li>")
+            nav_link(inout o, page.copy(), model.package_page(pk.name.copy()), shown_name(pk.name))
+            package_nav(cx, inout o, page.copy(), pi)
+            html.put(inout o, "</li>")
+        }
+        html.put(inout o, "</ul>\n")
+    }
+    o
+}
+
+/// Whether section `s` of SUMMARY.md has entries (empty ones are left out of the site).
+fn section_used(cx: Cx, s: u32) -> bool {
+    for e in cx.sum.entries {
+        if e.section == s { return true }
+    }
+    false
+}
+
+/// A module's doc without the `<package>/<module>: ` that opens many of them (the page's
+/// heading says it), the next letter capitalised.
+fn module_doc(md: model.Module) -> List[u8] {
+    let mut pre = model.key(md.copy())
+    bytes.append(inout pre, ": ".bytes())
+    if !bytes.starts_with(md.doc, pre.copy()) { return md.doc }
+    let mut rest = bytes.slice(md.doc, pre.len(), md.doc.len())
+    if rest.len() > 0 && rest[0] >= 97 && rest[0] <= 122 { rest[0] = rest[0] - 32 }
+    rest
+}
+
+fn shown_name(n: List[u8]) -> List[u8] {
+    if n.len() == 0 { return "(no package)".bytes() }
+    n
+}
+
+// ---- search index
+
+/// One entry `[name, kind, path, summary, url]` (appended with a leading comma unless `ix`
+/// is just the opening bracket).
+fn entry(inout ix: List[u8], name: List[u8], kind: List[u8], where_: List[u8], summ: List[u8], url: List[u8]) {
+    if ix.len() > 1 { ix.push(44) }
+    ix.push(91)
+    json.quote_into(inout ix, name)
+    ix.push(44)
+    json.quote_into(inout ix, kind)
+    ix.push(44)
+    json.quote_into(inout ix, where_)
+    ix.push(44)
+    json.quote_into(inout ix, summ)
+    ix.push(44)
+    json.quote_into(inout ix, url)
+    ix.push(93)
+}
+
+fn search_index(cx: Cx) -> List[u8] {
+    let mut out = "[".bytes()
+    for part in cx.index {
+        // each part is `[e1,e2,...]`
+        if part.len() <= 2 { continue }
+        if out.len() > 1 { out.push(44) }
+        bytes.append(inout out, bytes.slice(part, 1, part.len() - 1))
+    }
+    out.push(93)
+    out
+}
+
+// ---- API pages
+
+fn kind_label(k: List[u8]) -> List[u8] {
+    if bytes.eq(k, "record".bytes()) || bytes.eq(k, "enum".bytes()) || bytes.eq(k, "alias".bytes()) { return "type".bytes() }
+    k
+}
+
+/// A doc comment as HTML (its `api:` links resolved; problems reported at the source line).
+fn doc_html(inout cx: Cx, doc: List[u8], page: List[u8], file: List[u8], first: u32) -> List[u8] uses fs {
+    if doc.len() == 0 { return List.new() }
+    let d = markdown.parse(doc)
+    let m = hrefs(inout cx, d, page, List.new(), false, file, first)
+    markdown.html(d, md_options(m, false))
+}
+
+/// The first line of the doc of an item that starts on `line` (its `///` block is directly
+/// above it).
+fn doc_start(doc: List[u8], line: u32) -> u32 {
+    let n = bytes.split(doc, 10).len() as u32
+    if line > n { line - n } else { 1 as u32 }
+}
+
+fn sig_html(cx: Cx, page: List[u8], sig: List[u8], links: List[model.Link]) -> List[u8] {
+    let mut a: List[usize] = List.new()
+    let mut z: List[usize] = List.new()
+    let mut h: List[List[u8]] = List.new()
+    for l in links {
+        a.push(l.start)
+        z.push(l.end)
+        h.push(link_href(cx, page.copy(), l.to.copy()))
+    }
+    html.signature(sig, a, z, h)
+}
+
+/// A link target `pkg/path#anchor` as an href from `page`, or empty when that module isn't
+/// on the site.
+fn link_href(cx: Cx, page: List[u8], to: List[u8]) -> List[u8] {
+    match model.resolve(cx.api, to) {
+        Ok(p) => html.rel(page, p)
+        Err(_) => List.new()
+    }
+}
+
+/// A combined signature: the item's own text and links, then each member's on its own line.
+type Decl = { text: List[u8], links: List[model.Link] }
+
+fn decl_add(inout d: Decl, s: List[u8], links: List[model.Link]) {
+    let base = d.text.len()
+    bytes.append(inout d.text, s)
+    for l in links { d.links.push(model.Link(l.start + base, l.end + base, l.to)) }
+}
+
+fn declaration(cx: Cx, it: model.Item) -> Decl {
+    let mut d = Decl(List.new(), List.new())
+    decl_add(inout d, it.sig.copy(), it.links.copy())
+    let is_record = bytes.eq(it.kind, "record".bytes())
+    let is_enum = bytes.eq(it.kind, "enum".bytes())
+    if is_record {
+        if it.members.len() == 0 {
+            decl_add(inout d, " = {}".bytes(), List.new())
+        } else {
+            decl_add(inout d, " = {\n".bytes(), List.new())
+            for mi in it.members {
+                let m = cx.api.items[mi as usize].copy()
+                decl_add(inout d, "    ".bytes(), List.new())
+                decl_add(inout d, m.sig, m.links)
+                decl_add(inout d, ",\n".bytes(), List.new())
+            }
+            decl_add(inout d, "}".bytes(), List.new())
+        }
+    } else if is_enum {
+        decl_add(inout d, " =".bytes(), List.new())
+        for mi in it.members {
+            let m = cx.api.items[mi as usize].copy()
+            decl_add(inout d, "\n    | ".bytes(), List.new())
+            decl_add(inout d, m.sig, m.links)
+        }
+    }
+    d
+}
+
+fn src_link(inout o: List[u8], page: List[u8], md: model.Module, line: u32) {
+    html.put(inout o, "<a class=\"src\" href=\"")
+    html.text(inout o, html.rel(page, model.source_page(md)))
+    html.put(inout o, "#L")
+    bytes.append(inout o, bytes.from_u64(line as u64))
+    html.put(inout o, "\">source</a>")
+}
+
+fn caps_note(inout o: List[u8], caps: List[List[u8]]) {
+    if caps.len() == 0 { return }
+    html.put(inout o, "<p class=\"caps\">Capabilities: ")
+    for i in 0..caps.len() {
+        if i > 0 { html.put(inout o, ", ") }
+        html.put(inout o, "<code>")
+        html.text(inout o, caps[i])
+        html.put(inout o, "</code>")
+    }
+    html.put(inout o, "</p>")
+}
+
+/// A member (field, variant, method) as a block with its anchor.
+fn member_html(inout cx: Cx, inout o: List[u8], page: List[u8], md: model.Module, mi: u32, owner: List[u8], file: List[u8]) uses fs {
+    let m = cx.api.items[mi as usize].copy()
+    html.put(inout o, "<div class=\"member\" id=\"")
+    html.text(inout o, m.anchor)
+    html.put(inout o, "\"><h4><code class=\"sig\">")
+    bytes.append(inout o, sig_html(cx, page.copy(), m.sig.copy(), m.links.copy()))
+    html.put(inout o, "</code>")
+    src_link(inout o, page.copy(), md, m.line)
+    html.put(inout o, "</h4>")
+    let doc = doc_html(inout cx, m.doc.copy(), page.copy(), file, doc_start(m.doc, m.line))
+    if doc.len() > 0 {
+        html.put(inout o, "<div class=\"doc\">")
+        bytes.append(inout o, doc)
+        html.put(inout o, "</div>")
+    }
+    caps_note(inout o, m.caps.copy())
+    html.put(inout o, "</div>\n")
+    let mut ix = "[".bytes()
+    let mut nm = owner.copy()
+    nm.push(46)
+    bytes.append(inout nm, m.name.copy())
+    let mut url = page.copy()
+    url.push(35)
+    bytes.append(inout url, m.anchor)
+    entry(inout ix, nm, m.kind, model.key(md), markdown.summary(m.doc), url)
+    ix.push(93)
+    cx.index.push(ix)
+}
+
+fn item_html(inout cx: Cx, inout o: List[u8], page: List[u8], md: model.Module, ii: u32, impls: List[u32], file: List[u8]) uses fs {
+    let it = cx.api.items[ii as usize].copy()
+    html.put(inout o, "<section class=\"item\" id=\"")
+    html.text(inout o, it.anchor)
+    html.put(inout o, "\">\n<h3><code class=\"sig\">")
+    let d = declaration(cx, it.copy())
+    bytes.append(inout o, sig_html(cx, page.copy(), d.text, d.links))
+    html.put(inout o, "</code>")
+    src_link(inout o, page.copy(), md.copy(), it.line)
+    html.put(inout o, "</h3>\n")
+    let doc = doc_html(inout cx, it.doc.copy(), page.copy(), file.copy(), doc_start(it.doc, it.line))
+    if doc.len() > 0 {
+        html.put(inout o, "<div class=\"doc\">")
+        bytes.append(inout o, doc)
+        html.put(inout o, "</div>\n")
+    }
+    caps_note(inout o, it.caps.copy())
+    let mut url = page.copy()
+    url.push(35)
+    bytes.append(inout url, it.anchor.copy())
+    let mut ix = "[".bytes()
+    entry(inout ix, it.name.copy(), kind_label(it.kind.copy()), model.key(md), markdown.summary(it.doc), url)
+    ix.push(93)
+    cx.index.push(ix)
+    if it.members.len() > 0 {
+        let label = if bytes.eq(it.kind, "enum".bytes()) { "Variants" } else if bytes.eq(it.kind, "trait".bytes()) { "Methods" } else { "Fields" }
+        html.put(inout o, "<h4>")
+        html.put(inout o, label)
+        html.put(inout o, "</h4>\n")
+        for mi in it.members { member_html(inout cx, inout o, page.copy(), md.copy(), mi, it.name.copy(), file.copy()) }
+    }
+    // the impls for this type: inherent methods, then trait implementations
+    for k in impls {
+        let im = cx.api.items[k as usize].copy()
+        if im.trait_name.len() > 0 { continue }
+        html.put(inout o, "<h4 id=\"")
+        html.text(inout o, im.anchor)
+        html.put(inout o, "\">Methods <code>")
+        bytes.append(inout o, sig_html(cx, page.copy(), im.sig.copy(), im.links.copy()))
+        html.put(inout o, "</code></h4>\n")
+        let idoc = doc_html(inout cx, im.doc.copy(), page.copy(), file.copy(), doc_start(im.doc, im.line))
+        if idoc.len() > 0 {
+            html.put(inout o, "<div class=\"doc\">")
+            bytes.append(inout o, idoc)
+            html.put(inout o, "</div>")
+        }
+        for mi in im.members { member_html(inout cx, inout o, page.copy(), md.copy(), mi, it.name.copy(), file.copy()) }
+    }
+    let mut traits = false
+    for k in impls {
+        let im = cx.api.items[k as usize].copy()
+        if im.trait_name.len() == 0 { continue }
+        if !traits {
+            html.put(inout o, "<h4>Trait implementations</h4>\n")
+            traits = true
+        }
+        impl_html(inout cx, inout o, page.copy(), md.copy(), k, file.copy())
+    }
+    html.put(inout o, "</section>\n")
+}
+
+fn impl_html(inout cx: Cx, inout o: List[u8], page: List[u8], md: model.Module, k: u32, file: List[u8]) uses fs {
+    let im = cx.api.items[k as usize].copy()
+    html.put(inout o, "<details class=\"impl\" id=\"")
+    html.text(inout o, im.anchor)
+    html.put(inout o, "\"><summary><code>")
+    bytes.append(inout o, sig_html(cx, page.copy(), im.sig.copy(), im.links.copy()))
+    html.put(inout o, "</code></summary>\n")
+    let idoc = doc_html(inout cx, im.doc.copy(), page.copy(), file.copy(), doc_start(im.doc, im.line))
+    if idoc.len() > 0 {
+        html.put(inout o, "<div class=\"doc\">")
+        bytes.append(inout o, idoc)
+        html.put(inout o, "</div>")
+    }
+    for mi in im.members { member_html(inout cx, inout o, page.copy(), md.copy(), mi, im.for_name.copy(), file.copy()) }
+    html.put(inout o, "</details>\n")
+}
+
+fn group_of(k: List[u8]) -> u32 {
+    if bytes.eq(k, "record".bytes()) || bytes.eq(k, "enum".bytes()) || bytes.eq(k, "alias".bytes()) { return 0 }
+    if bytes.eq(k, "trait".bytes()) { return 1 }
+    if bytes.eq(k, "fn".bytes()) { return 2 }
+    if bytes.eq(k, "const".bytes()) { return 3 }
+    4
+}
+
+fn group_name(g: u32) -> str {
+    match g {
+        0 => "Types"
+        1 => "Traits"
+        2 => "Functions"
+        3 => "Constants"
+        _ => "Implementations"
+    }
+}
+
+fn module_page(inout cx: Cx, mi: usize) uses fs {
+    let md = cx.api.modules[mi].copy()
+    let page = model.page_of(md.copy())
+    let file = fs.join(md.dir.copy(), md.file.copy())
+    let key = model.key(md.copy())
+    // impls attached to a type of this module
+    let mut attached: List[u32] = List.new()
+    let mut owner: Map[u32, List[u32]] = Map.new()
+    for ii in md.items {
+        let it = cx.api.items[ii as usize].copy()
+        if !bytes.eq(it.kind, "impl".bytes()) || it.for_link.len() == 0 { continue }
+        let mut prefix = key.copy()
+        prefix.push(35)
+        if !bytes.starts_with(it.for_link, prefix.copy()) { continue }
+        let anchor = bytes.slice(it.for_link, prefix.len(), it.for_link.len())
+        for tj in md.items {
+            let t = cx.api.items[tj as usize].copy()
+            if bytes.eq(t.anchor, anchor) && group_of(t.kind.copy()) == 0 {
+                let mut l: List[u32] = match owner.get(tj) {
+                    Some(x) => x
+                    None => List.new()
+                }
+                l.push(ii)
+                owner.insert(tj, l)
+                attached.push(ii)
+            }
+        }
+    }
+    let mut o: List[u8] = List.new()
+    html.put(inout o, "<p class=\"crumbs\"><a href=\"")
+    html.text(inout o, html.rel(page.copy(), "api/index.html".bytes()))
+    html.put(inout o, "\">API</a> / <a href=\"")
+    html.text(inout o, html.rel(page.copy(), model.package_page(md.package.copy())))
+    html.put(inout o, "\">")
+    html.text(inout o, shown_name(md.package.copy()))
+    html.put(inout o, "</a></p>\n<h1>Module <code>")
+    html.text(inout o, key.copy())
+    html.put(inout o, "</code> ")
+    src_link(inout o, page.copy(), md.copy(), 1)
+    html.put(inout o, "</h1>\n")
+    let mut use_line = "<p class=\"summary\"><code>import \"".bytes()
+    html.text(inout use_line, key.copy())
+    html.put(inout use_line, "\"</code></p>\n")
+    if md.package.len() > 0 && !bytes.eq(key.copy(), "core/prelude".bytes()) { bytes.append(inout o, use_line) }
+    let first: u32 = if md.doc_line > 0 { md.doc_line } else { 1 as u32 }
+    let mdoc = doc_html(inout cx, module_doc(md.copy()), page.copy(), file.copy(), first)
+    if mdoc.len() > 0 {
+        html.put(inout o, "<div class=\"doc\">")
+        bytes.append(inout o, mdoc)
+        html.put(inout o, "</div>\n")
+    }
+    let mut toc: List[u8] = List.new()
+    // the contents: each group's items with their summaries
+    for gi in 0..5 {
+        let g = gi as u32
+        let mut any = false
+        for ii in md.items {
+            let it = cx.api.items[ii as usize].copy()
+            if group_of(it.kind.copy()) != g || attached.contains(ii) { continue }
+            if !any {
+                html.put(inout o, "<h2 id=\"")
+                html.put(inout o, group_name(g))
+                html.put(inout o, "\">")
+                html.put(inout o, group_name(g))
+                html.put(inout o, "</h2>\n<dl class=\"index\">")
+                html.put(inout toc, "<li class=\"l2\"><a href=\"#")
+                html.put(inout toc, group_name(g))
+                html.put(inout toc, "\">")
+                html.put(inout toc, group_name(g))
+                html.put(inout toc, "</a></li>")
+                any = true
+            }
+            html.put(inout o, "<dt><a href=\"#")
+            html.text(inout o, it.anchor.copy())
+            html.put(inout o, "\">")
+            if g == 4 { html.text(inout o, it.sig.copy()) } else { html.text(inout o, it.name.copy()) }
+            html.put(inout o, "</a></dt><dd>")
+            bytes.append(inout o, markdown.inline_html(markdown.summary(it.doc.copy()), markdown.options()))
+            html.put(inout o, "</dd>")
+        }
+        if any { html.put(inout o, "</dl>\n") }
+    }
+    for gi in 0..5 {
+        let g = gi as u32
+        let mut any = false
+        for ii in md.items {
+            let it = cx.api.items[ii as usize].copy()
+            if group_of(it.kind.copy()) != g || attached.contains(ii) { continue }
+            if !any {
+                html.put(inout o, "<h2>")
+                html.put(inout o, group_name(g))
+                html.put(inout o, " in detail</h2>\n")
+                any = true
+            }
+            if g == 4 {
+                impl_html(inout cx, inout o, page.copy(), md.copy(), ii, file.copy())
+            } else {
+                let impls: List[u32] = match owner.get(ii) {
+                    Some(x) => x
+                    None => List.new()
+                }
+                item_html(inout cx, inout o, page.copy(), md.copy(), ii, impls, file.copy())
+            }
+        }
+    }
+    let mut ix = "[".bytes()
+    entry(inout ix, md.path.copy(), "module".bytes(), md.package.copy(), markdown.summary(module_doc(md.copy())), page.copy())
+    ix.push(93)
+    cx.index.push(ix)
+    let mut title = "Module ".bytes()
+    bytes.append(inout title, key)
+    let out = layout(cx, page.copy(), title, o, toc)
+    emit(inout cx, page, out)
+}
+
+fn package_page(inout cx: Cx, pi: usize) {
+    let pk = cx.api.packages[pi].copy()
+    let page = model.package_page(pk.name.copy())
+    let mut o: List[u8] = List.new()
+    html.put(inout o, "<p class=\"crumbs\"><a href=\"")
+    html.text(inout o, html.rel(page.copy(), "api/index.html".bytes()))
+    html.put(inout o, "\">API</a></p>\n<h1>Package <code>")
+    html.text(inout o, shown_name(pk.name.copy()))
+    html.put(inout o, "</code></h1>\n")
+    if pk.description.len() > 0 {
+        html.put(inout o, "<p>")
+        bytes.append(inout o, markdown.inline_html(pk.description.copy(), markdown.options()))
+        html.put(inout o, "</p>\n")
+    }
+    if pk.version.len() > 0 {
+        html.put(inout o, "<p class=\"summary\">Version ")
+        html.text(inout o, pk.version.copy())
+        html.put(inout o, "</p>\n")
+    }
+    html.put(inout o, "<h2 id=\"modules\">Modules</h2>\n<dl class=\"index\">")
+    for mi in pk.modules {
+        let md = cx.api.modules[mi as usize].copy()
+        html.put(inout o, "<dt><a href=\"")
+        html.text(inout o, html.rel(page.copy(), model.page_of(md.copy())))
+        html.put(inout o, "\">")
+        html.text(inout o, model.key(md.copy()))
+        html.put(inout o, "</a></dt><dd>")
+        bytes.append(inout o, markdown.inline_html(markdown.summary(module_doc(md.copy())), markdown.options()))
+        html.put(inout o, "</dd>")
+    }
+    html.put(inout o, "</dl>\n")
+    let mut ix = "[".bytes()
+    entry(inout ix, shown_name(pk.name.copy()), "package".bytes(), List.new(), pk.description.copy(), page.copy())
+    ix.push(93)
+    cx.index.push(ix)
+    let mut title = "Package ".bytes()
+    bytes.append(inout title, shown_name(pk.name))
+    let out = layout(cx, page.copy(), title, o, List.new())
+    emit(inout cx, page, out)
+}
+
+fn api_index(inout cx: Cx) {
+    let page = "api/index.html".bytes()
+    let mut o = "<h1>API</h1>\n<dl class=\"index\">".bytes()
+    for pk in cx.api.packages.copy() {
+        html.put(inout o, "<dt><a href=\"")
+        html.text(inout o, html.rel(page.copy(), model.package_page(pk.name.copy())))
+        html.put(inout o, "\">")
+        html.text(inout o, shown_name(pk.name.copy()))
+        html.put(inout o, "</a></dt><dd>")
+        bytes.append(inout o, markdown.inline_html(pk.description.copy(), markdown.options()))
+        html.put(inout o, "</dd>")
+    }
+    html.put(inout o, "</dl>\n")
+    let out = layout(cx, page.copy(), "API".bytes(), o, List.new())
+    emit(inout cx, page, out)
+}
+
+fn home(inout cx: Cx) {
+    let page = "index.html".bytes()
+    let mut o = "<h1>".bytes()
+    html.text(inout o, cx.cfg.title.copy())
+    html.put(inout o, "</h1>\n<div class=\"cards\">\n")
+    let es = cx.sum.entries.copy()
+    for s in 0..cx.sum.sections.len() {
+        if !section_used(cx, s as u32) { continue }
+        html.put(inout o, "<div class=\"card\"><h3>")
+        html.text(inout o, cx.sum.sections[s].copy())
+        html.put(inout o, "</h3><ul>")
+        for e in es {
+            if e.section != s as u32 || e.depth > 0 { continue }
+            html.put(inout o, "<li>")
+            nav_link(inout o, page.copy(), entry_page(cx, e.copy()), e.title.copy())
+            html.put(inout o, "</li>")
+        }
+        html.put(inout o, "</ul></div>\n")
+    }
+    // the packages SUMMARY.md doesn't list
+    let mut rest: List[u8] = List.new()
+    for pk in cx.api.packages.copy() {
+        let mut listed = false
+        for e in es {
+            if bytes.eq(e.href, bytes.concat("api:".bytes(), pk.name.copy())) { listed = true }
+        }
+        if listed { continue }
+        html.put(inout rest, "<li>")
+        nav_link(inout rest, page.copy(), model.package_page(pk.name.copy()), shown_name(pk.name.copy()))
+        html.put(inout rest, "</li>")
+    }
+    if rest.len() > 0 {
+        html.put(inout o, "<div class=\"card\"><h3>API</h3><ul>")
+        bytes.append(inout o, rest)
+        html.put(inout o, "</ul></div>\n")
+    }
+    html.put(inout o, "</div>\n")
+    let title = cx.cfg.title.copy()
+    let out = layout(cx, page.copy(), title, o, List.new())
+    emit(inout cx, page, out)
+}
+
+// ---- source pages
+
+fn source_page(inout cx: Cx, mi: usize) uses fs {
+    let md = cx.api.modules[mi].copy()
+    let page = model.source_page(md.copy())
+    let file = fs.join(md.dir.copy(), md.file.copy())
+    let src = match fs.read(file.copy()) {
+        Ok(t) => t
+        Err(e) => {
+            err(inout cx, file, 1, cat("cannot read the source: ", e.bytes()))
+            return
+        }
+    }
+    let mut o = "<p class=\"crumbs\"><a href=\"".bytes()
+    html.text(inout o, html.rel(page.copy(), model.page_of(md.copy())))
+    html.put(inout o, "\">Module ")
+    html.text(inout o, model.key(md.copy()))
+    html.put(inout o, "</a></p>\n<h1><code>")
+    html.text(inout o, md.file.copy())
+    html.put(inout o, "</code></h1>\n<pre class=\"source\"><code>")
+    let ls = bytes.split(src, 10)
+    let mut n = ls.len()
+    if n > 0 && ls[n - 1].len() == 0 { n -= 1 }
+    for i in 0..n {
+        let num = bytes.from_u64((i + 1) as u64)
+        html.put(inout o, "<span class=\"line\" id=\"L")
+        bytes.append(inout o, num.copy())
+        html.put(inout o, "\"><a class=\"ln\" href=\"#L")
+        bytes.append(inout o, num.copy())
+        html.put(inout o, "\">")
+        bytes.append(inout o, num)
+        html.put(inout o, "</a>")
+        bytes.append(inout o, html.highlight(ls[i].copy()))
+        html.put(inout o, "</span>\n")
+    }
+    html.put(inout o, "</code></pre>\n")
+    let out = layout(cx, page.copy(), md.file.copy(), o, List.new())
+    emit(inout cx, page, out)
+}

@@ -1,14 +1,14 @@
-// std/atomic: 64-bit integers that several threads read and change without a lock, with
-// explicit memory orderings (C11's model). A cell lives in the core, not in an Eider value
-// (core/ABI.md "Atomic cells"), so an `Atomic` is a handle: copies of it (captured by a
-// spawned closure, sent through a channel, kept in a record) all name the same cell. That is
-// what makes it shareable before the language has a built-in atomic type; it also means the
-// cell is not freed by itself: call `free` once no thread uses it any more (as with a file
-// descriptor). Using a freed handle ends the program with a runtime error; it never reads or
-// changes another cell, and never touches freed memory (docs/runtime.md, "Atomics").
-//
-// No capability: like a Mutex, a cell is memory shared between threads, not the OS.
-// Cancel-safety: every operation is a single atomic step; none blocks.
+//! std/atomic: 64-bit integers that several threads read and change without a lock, with
+//! explicit memory orderings (C11's model). A cell lives in the core, not in an Eider value
+//! (core/ABI.md "Atomic cells"), so an `Atomic` is a handle: copies of it (captured by a
+//! spawned closure, sent through a channel, kept in a record) all name the same cell. That is
+//! what makes it shareable before the language has a built-in atomic type; it also means the
+//! cell is not freed by itself: call `free` once no thread uses it any more (as with a file
+//! descriptor). Using a freed handle ends the program with a runtime error; it never reads or
+//! changes another cell, and never touches freed memory (docs/runtime.md, "Atomics").
+//!
+//! No capability: like a Mutex, a cell is memory shared between threads, not the OS.
+//! Cancel-safety: every operation is a single atomic step; none blocks.
 
 import "core/os"
 

@@ -686,6 +686,67 @@ errors"). `eiderc ide <file.ei>
 - **Cost.** `eiderc ide compiler/main.ei` (the whole compiler, 27 files) takes about 0.25 s
   against 0.16 s for `check`.
 
+## Documentation: `eiderc doc`
+
+`eiderc doc <package dir | file.ei> [--json] [--private]` (`doc.ei`) describes an API. The
+JSON form is what eider-doc reads (packages/doc; docs/site/tooling/eider-doc.md documents the
+format for users). Without `--json` it prints a text listing like `go doc`.
+
+- **What is documented.** For a directory: every `.ei` file under it, skipping `tests`,
+  `examples`, `vendor`, `target`, `deps` and hidden directories. The files are loaded as one
+  program through an entry that exists only in memory (`<dir>/__eiderc_doc__.ei`, with one
+  `import "<file>" as __docN` per file, as migrate-var does). So every module's imports
+  resolve as in a build, and module identity is the usual (package, path). For the
+  toolchain's `core`, the prelude is one of the modules (`core/prelude`). For a file: the
+  modules of the file's package that its program loads.
+- **Only resolution.** It runs `resolve.load_from`, with no comptime and no checking. So no C
+  compiler is needed, code that doesn't type-check is still documented, and `eiderc doc std`
+  takes 20 ms.
+  - Signatures are rendered from the syntax tree as Eider source: one line, canonical
+    spacing, `self` without its implicit type, and `pub`, `unsafe`, `extern "c"` or `export`
+    from the flags.
+  - A type or trait name in a signature links to the item it resolves to. An unqualified
+    name resolves to the module's own public types and traits, then to the prelude's;
+    `alias.Name` resolves through the module's import aliases (as ide.ei resolves
+    qualifiers). Type parameters and built-in types don't link.
+  - A constant's value is its source text up to the end of its line, cut at 100 bytes.
+- **Docs.** An item's doc is the run of `///` lines directly above its first line, verbatim
+  after the marker and one space. A member (field, variant or method) has one when it starts
+  its own line. A module's doc is every `//!` line in column 1; separate runs are joined with
+  a blank line, and `doc_line` is the first line. Module docs use `//!` rather than a leading
+  `//` block, so a licence header or a commented-out line never becomes a module doc. The
+  file headers of std, core and the packages are now `//!` comments. The prelude's positions
+  are fixed, so it got its `//!` lines in place and at its end.
+- **Visibility and anchors.** Only `pub` items are documented (everything in the prelude),
+  unless `--private` is given. An impl is shown unless its type or trait is a private item of
+  the module.
+  - An anchor is the item's name, or `Owner.member` for a member.
+  - A trait impl is `impl-<Trait>-for-<Type>`, and an inherent impl is `impl-<Type>`, whose
+    methods are `Type.method`.
+  - A name taken twice in a module gets `-2`, `-3`, ... in item order. Public items come
+    first, so `--private` doesn't change public anchors.
+- **Problems** in the documented modules, such as syntax errors or imports that can't be
+  found, are warnings on stderr (`eiderc doc: warning: <file>:<line>:<col>: <code>
+  <message>`), and the rest is still documented. A target that can't be read or loaded exits
+  2.
+
+**Tests** (test-compiler.sh "doc"):
+
+- compiler/tests/doc/shapes is a package with two modules. It is compared with `shapes.json`,
+  `shapes.txt` and `shapes.private.json`, and one of its files with `geo.json`. It has:
+  - module docs in two runs;
+  - an enum with variant docs, a one-line record and a multi-line record, an alias, a const
+    and a trait;
+  - trait and inherent impls, and a method named like a field;
+  - generics with bounds, capabilities, and qualified links into std and into another module;
+  - an unsafe fn, private items and a test block.
+- core, std and every package under packages/ must document with no warning, and core must
+  have the prelude.
+
+**Seed.** `doc` is new in compiler/, and the seed doesn't have it until it is regenerated.
+Until then scripts/docs.sh uses compiler/ as the seed builds it (`target/eiderc-next`),
+whenever `target/eiderc doc` fails. Once the seed has `doc`, docs.sh uses `target/eiderc`.
+
 ## Front-end recovery
 
 The lexer and parser can go on after an error, so every syntax error of a file can be
@@ -2597,6 +2658,7 @@ compiler/
   lock.ei             eider.toml and eider.lock for package imports ("C8.3")
   ide.ei              the IDE analysis API (`eiderc ide`; "IDE analysis")
   front.ei            every syntax error at once ("Front-end recovery")
+  doc.ei              the API description (`eiderc doc`; "Documentation: `eiderc doc`")
   tests/              pass-level golden tests (lex, lex_ok, check, ir, run, wasm, export, ide, pkgs, ...)
 tests/oracle/         the recorded expected results (scripts/test-compiler.sh, BLESS=1)
 ```

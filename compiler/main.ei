@@ -37,11 +37,12 @@ import "wasm.ei"
 import "suite.ei"
 import "ide.ei"
 import "front.ei"
+import "doc.ei"
 
 type Args = {
     cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,
     lib: bool, libs: List[List[u8]], wasm: bool, compile_fail: bool, overlay: List[List[u8]],
-    max_errors: u64, all_errors: bool,
+    max_errors: u64, all_errors: bool, private: bool,
 }
 
 /// Comparisons go through a function so no owned temporary sits in an `else if` condition
@@ -74,6 +75,8 @@ fn usage_text() -> List[u8] {
         "                                             before C8.6), with the `.copy()` that keeps the old meaning",
         "  eiderc ide <file.ei> [--overlay <path> <text>]  print the IDE analysis (ide.ei): symbols, refs, types;",
         "                                             --overlay (repeatable) reads <path> from the file <text>",
+        "  eiderc doc <file.ei | dir> [--json] [--private]  the API of a package directory or a program's package:",
+        "                                             items, signatures, doc comments (doc.ei); --private: also non-pub items",
         "  eiderc help | --help | -h                  print this text",
         "",
         "errors: every independent error is reported, in the order found, then `error: N errors`",
@@ -116,7 +119,7 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] {
 }
 
 fn known_cmd(c: List[u8]) -> bool {
-    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "audit-refs")
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "audit-refs") || is(c, "doc")
 }
 
 fn parse_args() -> Args uses io {
@@ -134,6 +137,7 @@ fn parse_args() -> Args uses io {
     let mut overlay: List[List[u8]] = List.new()
     let mut max_errors = diag.MAX_ERRORS
     let mut all_errors = false
+    let mut private = false
     let mut i: usize = 1
     while i < argv.len() {
         let a = argv[i]
@@ -166,6 +170,8 @@ fn parse_args() -> Args uses io {
             if i >= argv.len() { usage_error(sys.lit("`-l` needs a library name")) }
             libs.push(argv[i])
             i += 1
+        } else if is(a, "--private") {
+            private = true
         } else if is(a, "--all-errors") {
             all_errors = true
         } else if is(a, "--max-errors") {
@@ -204,7 +210,7 @@ fn parse_args() -> Args uses io {
         wasm = false
     }
     if wasm { lib = true }
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay, max_errors, all_errors)
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay, max_errors, all_errors, private)
 }
 
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
@@ -303,6 +309,36 @@ fn run_ide(a: Args) uses io, fs, net, clock {
         k += 2
     }
     io.out(ide.dump(ide.analyze(a.file, paths, texts)))
+}
+
+/// `eiderc doc` (doc.ei): the API as JSON or text on stdout; problems in the documented
+/// modules (a syntax error, an import that can't be found) as warnings on stderr. Exit 2
+/// when the target can't be read or loaded.
+fn run_doc(a: Args) uses io, fs {
+    match doc.api(a.file, a.private) {
+        Ok(api) => {
+            for d in api.warnings {
+                let mut m = sys.lit("eiderc doc: warning: ")
+                bytes.append(inout m, d.file)
+                m.push(58)
+                bytes.append(inout m, bytes.from_u64(d.line as u64))
+                m.push(58)
+                bytes.append(inout m, bytes.from_u64(d.col as u64))
+                bytes.append(inout m, sys.lit(": "))
+                bytes.append(inout m, sys.lit(d.code))
+                m.push(32)
+                bytes.append(inout m, diag.demangle(d.msg))
+                io.errln(m)
+            }
+            if a.json { io.out(doc.json(api)) } else { io.out(doc.text(api)) }
+        }
+        Err(m) => {
+            let mut msg = sys.lit("eiderc doc: ")
+            bytes.append(inout msg, m)
+            io.errln(msg)
+            env.exit(2)
+        }
+    }
 }
 
 /// `eiderc migrate-var` (docs/compiler.md, "C8.6"): the file with every `var` the checker
@@ -425,6 +461,10 @@ fn main() uses io, fs, net, clock {
     if a.compile_fail { env.exit(suite.run(a.file)) }
     if is(a.cmd, "ide") {
         run_ide(a)
+        return
+    }
+    if is(a.cmd, "doc") {
+        run_doc(a)
         return
     }
     let src = match fs.read(a.file) {

@@ -1,4 +1,4 @@
-// semver: MAJOR.MINOR.PATCH versions (no pre-release or build metadata yet).
+//! semver: MAJOR.MINOR.PATCH versions (no pre-release or build metadata yet).
 
 import "std/bytes"
 

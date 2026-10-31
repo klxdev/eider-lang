@@ -1,31 +1,31 @@
-// http/jsonrpc: JSON-RPC 2.0 (https://www.jsonrpc.org/specification) over HTTP POST, on
-// packages/json: the first RPC milestone (decision C7).
-//
-// Server side: a `Table` maps method names to handlers. A handler gets the call's `Params`
-// (typed accessors: `p.int(0, "a")` reads positional parameter 0 or named parameter `a`) and
-// returns its result as JSON text or an `Error`. `add_typed` adds a method from a decoder, an
-// encoder and a typed function, so parameter and result conversions are written once per
-// type and a bad parameter becomes `-32602 Invalid params` by itself. `handle` answers a
-// request body (one call or a batch); `handler` makes a Table an HTTP handler: POST only
-// (405 otherwise), `Content-Type: application/json` (415 otherwise), 200 with the response,
-// or 204 when every call was a notification.
-//
-// What the spec asks, and how it is met:
-// - a body that isn't JSON: -32700 Parse error (id null); a request that isn't an object
-//   with `"jsonrpc": "2.0"`, a string `method`, `params` absent or an array or object, and
-//   an `id` absent or a string, number or null: -32600 Invalid Request (with the id when it
-//   could be read, else null);
-// - an unknown method: -32601; invalid parameters: -32602; a handler's own errors keep their
-//   code (-32000 to -32099 are for servers, other codes for applications);
-// - notifications (no `id`) get no response, also when they fail;
-// - a batch is an array of requests answered by an array of the responses that aren't for
-//   notifications (no response at all if there are none); an empty array is one -32600; a
-//   batch longer than `max_batch` (default 100) is one -32600.
-// Results are written in the order of the calls (the spec allows any order). Calls in a
-// batch run one after another on the connection's worker.
-//
-// Client side: `call` sends one request on a client.Conn and returns the result or the
-// error; `notify` sends a notification.
+//! http/jsonrpc: JSON-RPC 2.0 (https://www.jsonrpc.org/specification) over HTTP POST, on
+//! packages/json: the first RPC milestone (decision C7).
+//!
+//! Server side: a `Table` maps method names to handlers. A handler gets the call's `Params`
+//! (typed accessors: `p.int(0, "a")` reads positional parameter 0 or named parameter `a`) and
+//! returns its result as JSON text or an `Error`. `add_typed` adds a method from a decoder, an
+//! encoder and a typed function, so parameter and result conversions are written once per
+//! type and a bad parameter becomes `-32602 Invalid params` by itself. `handle` answers a
+//! request body (one call or a batch); `handler` makes a Table an HTTP handler: POST only
+//! (405 otherwise), `Content-Type: application/json` (415 otherwise), 200 with the response,
+//! or 204 when every call was a notification.
+//!
+//! What the spec asks, and how it is met:
+//! - a body that isn't JSON: -32700 Parse error (id null); a request that isn't an object
+//!   with `"jsonrpc": "2.0"`, a string `method`, `params` absent or an array or object, and
+//!   an `id` absent or a string, number or null: -32600 Invalid Request (with the id when it
+//!   could be read, else null);
+//! - an unknown method: -32601; invalid parameters: -32602; a handler's own errors keep their
+//!   code (-32000 to -32099 are for servers, other codes for applications);
+//! - notifications (no `id`) get no response, also when they fail;
+//! - a batch is an array of requests answered by an array of the responses that aren't for
+//!   notifications (no response at all if there are none); an empty array is one -32600; a
+//!   batch longer than `max_batch` (default 100) is one -32600.
+//! Results are written in the order of the calls (the spec allows any order). Calls in a
+//! batch run one after another on the connection's worker.
+//!
+//! Client side: `call` sends one request on a client.Conn and returns the result or the
+//! error; `notify` sends a notification.
 
 import "core/sys"
 import "std/bytes"

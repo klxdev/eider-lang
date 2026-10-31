@@ -1,15 +1,15 @@
-// http: HTTP/1.1 messages (RFC 9110, RFC 9112): requests, responses and headers as values,
-// the limits a parser enforces, writing messages to bytes, and the small text helpers both
-// sides need (case-insensitive header names, percent-decoding, query strings, IMF-fixdate).
-//
-// Pure Eider, no capabilities (`sys.lit` turns literals into bytes). The incremental parser
-// is `parse.ei`, the server `server.ei`, the client `client.ei`, routing `router.ei` and
-// JSON-RPC 2.0 `jsonrpc.ei` (docs/services.md).
-//
-// Header names in parsed messages are lowercased (field names are case-insensitive); names
-// a program sets are written as given. Framing headers (Content-Length, Transfer-Encoding,
-// Connection) belong to this package: whatever a program puts there is replaced when the
-// message is written, so a handler can't desynchronise the framing of a connection.
+//! http: HTTP/1.1 messages (RFC 9110, RFC 9112): requests, responses and headers as values,
+//! the limits a parser enforces, writing messages to bytes, and the small text helpers both
+//! sides need (case-insensitive header names, percent-decoding, query strings, IMF-fixdate).
+//!
+//! Pure Eider, no capabilities (`sys.lit` turns literals into bytes). The incremental parser
+//! is `parse.ei`, the server `server.ei`, the client `client.ei`, routing `router.ei` and
+//! JSON-RPC 2.0 `jsonrpc.ei` (docs/services.md).
+//!
+//! Header names in parsed messages are lowercased (field names are case-insensitive); names
+//! a program sets are written as given. Framing headers (Content-Length, Transfer-Encoding,
+//! Connection) belong to this package: whatever a program puts there is replaced when the
+//! message is written, so a handler can't desynchronise the framing of a connection.
 
 import "core/sys"
 import "std/bytes"

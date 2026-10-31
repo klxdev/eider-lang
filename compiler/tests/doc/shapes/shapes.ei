@@ -1,0 +1,92 @@
+//! Shapes and their areas.
+//!
+//! The second paragraph of the module doc.
+// an ordinary comment: not part of the doc
+
+import "std/time"
+import "util/geo.ei"
+
+//! A second run of `//!` lines, joined with a blank line.
+
+/// A shape. Every variant has an area.
+pub type Shape =
+    /// A circle of radius `r`.
+    | Circle(r: i64)
+    | Rect(w: i64, h: i64)
+    /// No payload.
+    | Empty
+
+/// A point, on one line: its fields have no docs of their own.
+pub type Point = { x: i64, y: i64 }
+
+/// A record over several lines.
+pub type Holder[T] = {
+    /// What it holds.
+    inner: T,
+    stamp: time.Duration,
+}
+
+/// A function type.
+pub type Measure = fn(Shape) -> i64
+
+/// The largest side a shape may have.
+pub const MAX_SIDE: i64 = 1000
+
+const SECRET: i64 = 7
+
+/// Things with an area.
+pub trait Area {
+    /// The area, rounded down.
+    fn area(self) -> i64
+    fn scaled(self, k: i64) -> Self
+}
+
+impl Area for Shape {
+    fn area(self) -> i64 {
+        match self {
+            Circle(r) => 3 * r * r
+            Rect(w, h) => w * h
+            Empty => 0
+        }
+    }
+    fn scaled(self, k: i64) -> Shape { self }
+}
+
+impl[T: Copy] Holder[T] {
+    /// The value inside (named like the field, so its anchor is `Holder.inner-2`).
+    fn inner(self) -> T { self.inner.copy() }
+
+    fn set(inout self, v: T) { self.inner = v }
+}
+
+impl Show for Point {
+    fn show(self, inout out: String) { out.push_str("point") }
+}
+
+/// The biggest of `xs` by `f`; generic, with bounds.
+pub fn biggest[T: Area + Copy, U](xs: List[T], f: fn(T) -> U) -> Option[T] {
+    if xs.len() == 0 { return None }
+    Some(xs[0].copy())
+}
+
+/// Prints the shape, waiting `d` first.
+pub fn report(s: Shape, d: time.Duration) uses io, clock {
+    print(s.area())
+}
+
+/// A distance through another module of the package.
+pub fn dist(a: Point, b: geo.Vec) -> i64 { geo.len(b) + a.x }
+
+pub unsafe fn raw() -> i64 { SECRET }
+
+fn helper() -> i64 { 1 }
+
+type Hidden = { n: i64 }
+
+impl Hidden {
+    fn get(self) -> i64 { self.n }
+}
+
+test "areas" {
+    assert Rect(2, 3).area() == 6
+}

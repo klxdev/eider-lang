@@ -1,11 +1,11 @@
-// std/utf8: UTF-8 over bytes (RFC 3629): validation, decoding one scalar value at a time,
-// iteration, encoding, and lossy conversion to a String. Pure, no capabilities.
-//
-// Valid means what String.from_bytes accepts, minus its NUL rule: no overlong forms, no
-// surrogates (U+D800..U+DFFF), nothing above U+10FFFF, no truncated sequence. Invalid input
-// decodes as U+FFFD, one replacement per *maximal subpart* (the longest prefix of a valid
-// sequence, or one byte), which is what the Unicode standard and WHATWG recommend, so every
-// decoder that follows them agrees on the count.
+//! std/utf8: UTF-8 over bytes (RFC 3629): validation, decoding one scalar value at a time,
+//! iteration, encoding, and lossy conversion to a String. Pure, no capabilities.
+//!
+//! Valid means what String.from_bytes accepts, minus its NUL rule: no overlong forms, no
+//! surrogates (U+D800..U+DFFF), nothing above U+10FFFF, no truncated sequence. Invalid input
+//! decodes as U+FFFD, one replacement per *maximal subpart* (the longest prefix of a valid
+//! sequence, or one byte), which is what the Unicode standard and WHATWG recommend, so every
+//! decoder that follows them agrees on the count.
 
 /// U+FFFD, what invalid input decodes to.
 pub const REPLACEMENT: u32 = 65533

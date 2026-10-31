@@ -33,7 +33,9 @@ for cc in gcc clang $S/asan.sh $S/tsan.sh; do
 done
 sh tests/core/run.sh | grep -q FAIL && { echo "FAIL core"; fail=1; } || echo "ok   core (eider_rt + eider_core, strict warnings, sanitizers when available)"
 sh tests/std/run.sh | grep -q FAIL && { echo "FAIL std"; fail=1; } || echo "ok   std (C core + Eider std)"
-sh tests/packages.sh | grep -q FAIL && { echo "FAIL packages"; fail=1; } || echo "ok   packages (toml, semver, sha256, json, fuzz, http, openapi; examples/kvstore and examples/todo end to end)"
+sh tests/packages.sh | grep -q FAIL && { echo "FAIL packages"; fail=1; } || echo "ok   packages (toml, semver, sha256, json, fuzz, http, openapi, markdown, doc; examples/kvstore and examples/todo end to end)"
+# the documentation site (target/site) and its doc tests: scripts/docs.sh, docs/site/CONTRACT.md
+if sh scripts/docs.sh >$S/docs.log 2>&1 && sh scripts/docs.sh test >>$S/docs.log 2>&1; then echo "ok   docs (the site in target/site; $(tail -1 $S/docs.log))"; else echo "FAIL docs: sh scripts/docs.sh; sh scripts/docs.sh test"; tail -20 $S/docs.log; fail=1; fi
 sh tests/pkg/run.sh | grep -q FAIL && { echo "FAIL pkg"; fail=1; } || echo "ok   pkg (eider-pkg end to end, local git repos)"
 sh scripts/test-compiler.sh | grep -q FAIL && { echo "FAIL compiler (eiderc)"; fail=1; } || echo "ok   compiler (eiderc vs the recorded oracle, tests/oracle)"
 sh scripts/selfhost.sh --from-seed >/dev/null 2>&1 && echo "ok   seed (seed/eiderc.c rebuilds itself with only a C compiler)" || { echo "FAIL seed: sh scripts/selfhost.sh --from-seed"; fail=1; }

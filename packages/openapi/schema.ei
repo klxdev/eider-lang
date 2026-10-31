@@ -1,23 +1,23 @@
-// openapi/schema: the JSON Schema subset (2020-12, the dialect of OpenAPI 3.1) that services
-// need, as values: build one, render it as JSON (packages/json), and validate JSON values and
-// parameter text against it.
-//
-//     let mut todo = schema.object().closed()                    // no other members
-//     todo = todo.field("id", schema.integer().format("int64"))   // required
-//     todo = todo.field("title", schema.string().min_length(1).max_length(200))
-//     todo = todo.prop("note", schema.string().nullable())        // optional
-//     todo = todo.prop("priority", schema.string().allow("low").allow("high"))
-//
-// Kinds: object (properties, required, additionalProperties false with `closed`), array
-// (items, minItems/maxItems), string (minLength/maxLength in Unicode scalars, enum, format),
-// integer (minimum/maximum; JSON integers in i64's range, so `1.0` and `1e3` are not
-// integers here), boolean, any (`{}`), and a reference to a named component (`ref`, rendered
-// as `{"$ref": "#/components/schemas/<name>"}`; it carries the schema it names, so
-// validating needs no lookup). `nullable` adds null as a valid value, written as
-// `{"anyOf": [<schema>, {"type": "null"}]}` (3.1 has no `nullable` keyword).
-//
-// Validation collects every error (up to MAX_ERRORS) as `problem.FieldError`s with a JSON
-// pointer, so a 400 can say everything that was wrong at once.
+//! openapi/schema: the JSON Schema subset (2020-12, the dialect of OpenAPI 3.1) that services
+//! need, as values: build one, render it as JSON (packages/json), and validate JSON values and
+//! parameter text against it.
+//!
+//!     let mut todo = schema.object().closed()                    // no other members
+//!     todo = todo.field("id", schema.integer().format("int64"))   // required
+//!     todo = todo.field("title", schema.string().min_length(1).max_length(200))
+//!     todo = todo.prop("note", schema.string().nullable())        // optional
+//!     todo = todo.prop("priority", schema.string().allow("low").allow("high"))
+//!
+//! Kinds: object (properties, required, additionalProperties false with `closed`), array
+//! (items, minItems/maxItems), string (minLength/maxLength in Unicode scalars, enum, format),
+//! integer (minimum/maximum; JSON integers in i64's range, so `1.0` and `1e3` are not
+//! integers here), boolean, any (`{}`), and a reference to a named component (`ref`, rendered
+//! as `{"$ref": "#/components/schemas/<name>"}`; it carries the schema it names, so
+//! validating needs no lookup). `nullable` adds null as a valid value, written as
+//! `{"anyOf": [<schema>, {"type": "null"}]}` (3.1 has no `nullable` keyword).
+//!
+//! Validation collects every error (up to MAX_ERRORS) as `problem.FieldError`s with a JSON
+//! pointer, so a 400 can say everything that was wrong at once.
 
 import "core/sys"
 import "std/bytes"

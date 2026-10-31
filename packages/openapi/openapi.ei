@@ -1,28 +1,28 @@
-// openapi: an OpenAPI 3.1 service builder over packages/http. A route is registered together
-// with its operation (summary, parameters, request and response schemas), and the one
-// description drives three things, so they can't drift apart:
-//   1. routing: the operation's path (`/todos/{id}`) becomes the router pattern (`/todos/:id`);
-//   2. validation: before the handler runs, path and query parameters and the JSON body are
-//      checked against their schemas, and a request that doesn't match is answered 400 with
-//      problem+json (RFC 9457) listing every error; a body that isn't `application/json` is
-//      415; the operation's `max_body` is 413; a `secured` operation runs behind the
-//      service's bearer check (401);
-//   3. the document: `GET /openapi.json` serves the OpenAPI 3.1 description of every
-//      operation, rendered with packages/json.
-//
-//     let mut svc = openapi.service("Todo API", "1.0.0")
-//     let todo = svc.component("Todo", todo_schema)            // a $ref to components
-//     let mut o = openapi.op("GET", "/todos/{id}").operation_id("getTodo")
-//     o = o.path_param("id", schema.integer()).returns(200, "The todo", todo).fails(404, "No such todo")
-//     svc.add(o, openapi.typed(decode_id, get_todo, encode_todo))
-//     let h = svc.handler()                                      // router + /openapi.json
-//
-// Handlers get an `Input`: the request after validation, with its body parsed. A typed
-// handler is three functions (`typed`): decode the Input into a T, a function from T to
-// `Result[U, problem.ApiError]`, and encode U as JSON text; it answers with the operation's
-// first 2xx status. This is the shape JSON derive (P0.10) or comptime reflection will
-// generate from T and U, together with their schemas (docs/openapi.md); until then the
-// decoder, the encoder and the schema are written by hand next to each other.
+//! openapi: an OpenAPI 3.1 service builder over packages/http. A route is registered together
+//! with its operation (summary, parameters, request and response schemas), and the one
+//! description drives three things, so they can't drift apart:
+//!   1. routing: the operation's path (`/todos/{id}`) becomes the router pattern (`/todos/:id`);
+//!   2. validation: before the handler runs, path and query parameters and the JSON body are
+//!      checked against their schemas, and a request that doesn't match is answered 400 with
+//!      problem+json (RFC 9457) listing every error; a body that isn't `application/json` is
+//!      415; the operation's `max_body` is 413; a `secured` operation runs behind the
+//!      service's bearer check (401);
+//!   3. the document: `GET /openapi.json` serves the OpenAPI 3.1 description of every
+//!      operation, rendered with packages/json.
+//!
+//!     let mut svc = openapi.service("Todo API", "1.0.0")
+//!     let todo = svc.component("Todo", todo_schema)            // a $ref to components
+//!     let mut o = openapi.op("GET", "/todos/{id}").operation_id("getTodo")
+//!     o = o.path_param("id", schema.integer()).returns(200, "The todo", todo).fails(404, "No such todo")
+//!     svc.add(o, openapi.typed(decode_id, get_todo, encode_todo))
+//!     let h = svc.handler()                                      // router + /openapi.json
+//!
+//! Handlers get an `Input`: the request after validation, with its body parsed. A typed
+//! handler is three functions (`typed`): decode the Input into a T, a function from T to
+//! `Result[U, problem.ApiError]`, and encode U as JSON text; it answers with the operation's
+//! first 2xx status. This is the shape JSON derive (P0.10) or comptime reflection will
+//! generate from T and U, together with their schemas (docs/openapi.md); until then the
+//! decoder, the encoder and the schema are written by hand next to each other.
 
 import "core/sys"
 import "std/bytes"

@@ -1,0 +1,1341 @@
+//! A CommonMark subset plus GFM tables, parsed into a block tree and rendered as HTML.
+//! Pure Eider, no capabilities.
+//!
+//! The subset is the one docs/site/CONTRACT.md fixes for the documentation site: ATX
+//! headings (`#` to `######`) and setext headings (`===`, `---` under a paragraph),
+//! paragraphs with lazy continuation, emphasis and strong emphasis (`*` and `_`, with
+//! CommonMark's flanking rules, so `snake_case` stays text), code spans with backtick runs,
+//! links `[text](dest "title")`, autolinks `<https://...>`, images `![alt](src)`, backslash
+//! escapes, hard breaks (two trailing spaces or a backslash), bullet and ordered lists
+//! (nested by indentation, tight or loose), block quotes (nested, lazy continuation),
+//! thematic breaks, fenced code blocks (backticks or tildes) and GFM tables with alignment.
+//! A block quote whose first paragraph starts with `**Note:**`, `**Warning:**` or
+//! `**Tip:**` is a callout.
+//!
+//! Not supported: raw HTML (always shown as text: every `<`, `>`, `&`, `"` and `'` of the
+//! source is escaped), reference links and definitions, indented code blocks (an indented
+//! line is paragraph text), entity and numeric character references (`&amp;` is shown as
+//! written), email autolinks and GFM's strikethrough, task lists and bare-URL autolinks.
+//! Links and images whose destination uses the `javascript:`, `vbscript:` or `data:` scheme
+//! are rendered as their text only.
+//!
+//! Use `to_html` for a whole document, or `parse` and then `html` with `Options` to rewrite
+//! link destinations (`hrefs`) or highlight code (`code`). `links`, `headings` and
+//! `code_blocks` list what a document contains, with source lines, for link checking,
+//! tables of contents and doc tests.
+
+import "std/bytes"
+
+const B_DOC: u32 = 0
+const B_PARA: u32 = 1
+const B_HEADING: u32 = 2
+const B_CODE: u32 = 3
+const B_QUOTE: u32 = 4
+const B_LIST: u32 = 5
+const B_ITEM: u32 = 6
+const B_HR: u32 = 7
+const B_TABLE: u32 = 8
+
+/// One block of a parsed document.
+///
+/// `kind` is the block kind; `line` the 1-based source line it starts on; `kids` the child
+/// blocks (document, quote, list, item). A paragraph or heading keeps its inline source in
+/// `text` (heading: `a` is the level). A code block has its content in `text` and its info
+/// string in `info`. A list has `a` 1 when ordered, `b` its start number and `c` 1 when
+/// loose. A table has `a` columns, one alignment byte per column in `info` (0 none, 1 left,
+/// 2 center, 3 right), the cells row by row (header first) in `cells` and each row's line in
+/// `rows`.
+pub type Block = {
+    kind: u32, a: u32, b: u32, c: u32, text: List[u8], info: List[u8], line: u32,
+    kids: List[u32], cells: List[List[u8]], rows: List[u32],
+}
+
+/// A parsed document: an arena of blocks with the document block at `root`.
+pub type Doc = { blocks: List[Block], root: u32 }
+
+/// How `html` renders: `hrefs` maps a link or image destination, exactly as written, to the
+/// one to output; `code(info, text)` gives the HTML inside `<pre><code>` for a code block;
+/// `anchors` adds an `id` to every heading.
+pub type Options = { hrefs: Map[List[u8], List[u8]], code: fn(List[u8], List[u8]) -> List[u8], anchors: bool }
+
+/// A link or image destination as written, with its 1-based source line.
+pub type Link = { href: List[u8], line: u32, image: bool }
+
+/// A heading: its level, its plain text (no markup), its anchor (unique in the document, as
+/// `html` writes it) and its 1-based source line.
+pub type Heading = { level: u32, text: List[u8], anchor: List[u8], line: u32 }
+
+/// A fenced code block: the whole info string (trimmed), the content (each line followed by
+/// a newline) and the 1-based line of its opening fence.
+pub type Code = { info: List[u8], text: List[u8], line: u32 }
+
+/// The default options: no destination rewrites, code escaped as is, heading anchors on.
+pub fn options() -> Options { Options(Map.new(), escape_code, true) }
+
+/// The code block renderer of `options()`: the text HTML-escaped (the info is ignored).
+pub fn escape_code(info: List[u8], text: List[u8]) -> List[u8] { escape(text) }
+
+/// `s` with `&`, `<`, `>`, `"` and `'` replaced by character references, safe in text and in
+/// quoted attributes.
+pub fn escape(s: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    esc_into(inout out, s)
+    out
+}
+
+fn esc_into(inout out: List[u8], s: List[u8]) {
+    for c in s {
+        if c == 38 {
+            bytes.append(inout out, "&amp;".bytes())
+        } else if c == 60 {
+            bytes.append(inout out, "&lt;".bytes())
+        } else if c == 62 {
+            bytes.append(inout out, "&gt;".bytes())
+        } else if c == 34 {
+            bytes.append(inout out, "&quot;".bytes())
+        } else if c == 39 {
+            bytes.append(inout out, "&#39;".bytes())
+        } else {
+            out.push(c)
+        }
+    }
+}
+
+/// The anchor of a heading text: ASCII letters lowercased, each run of whitespace one `-`,
+/// letters, digits, `_`, `-` and non-ASCII bytes kept, other punctuation dropped.
+pub fn anchor(text: List[u8]) -> List[u8] {
+    let t = bytes.trim(text)
+    let mut out: List[u8] = List.new()
+    let mut sp = false
+    for c in t {
+        if c == 32 || c == 9 || c == 10 || c == 13 {
+            sp = true
+            continue
+        }
+        let keep = (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || bytes.is_digit(c) || c == 95 || c == 45 || c >= 128
+        if !keep { continue }
+        if sp {
+            out.push(45)
+            sp = false
+        }
+        if c >= 65 && c <= 90 { out.push(c + 32) } else { out.push(c) }
+    }
+    out
+}
+
+// ---- lines
+
+type Ln = { t: List[u8], no: u32 }
+
+/// The source split into lines (no `\r`), leading tabs expanded to multiples of 4 columns.
+fn lines_of(src: List[u8]) -> List[Ln] {
+    let mut out: List[Ln] = List.new()
+    let mut cur: List[u8] = List.new()
+    let mut lead = true
+    let mut no: u32 = 1
+    for c in src {
+        if c == 10 {
+            out.push(Ln(cur, no))
+            cur = List.new()
+            lead = true
+            no += 1
+        } else if c == 13 {
+            continue
+        } else if c == 9 && lead {
+            cur.push(32)
+            while cur.len() % 4 != 0 { cur.push(32) }
+        } else {
+            if c != 32 { lead = false }
+            cur.push(c)
+        }
+    }
+    if cur.len() > 0 { out.push(Ln(cur, no)) }
+    out
+}
+
+fn indent_of(t: List[u8]) -> usize {
+    let mut i: usize = 0
+    while i < t.len() && t[i] == 32 { i += 1 }
+    i
+}
+
+fn is_blank(t: List[u8]) -> bool {
+    for c in t {
+        if c != 32 && c != 9 { return false }
+    }
+    true
+}
+
+/// `t` without up to `n` leading spaces.
+fn strip_n(t: List[u8], n: usize) -> List[u8] {
+    let mut i: usize = 0
+    while i < n && i < t.len() && t[i] == 32 { i += 1 }
+    bytes.slice(t, i, t.len())
+}
+
+fn trim_start(t: List[u8]) -> List[u8] {
+    let mut i: usize = 0
+    while i < t.len() && (t[i] == 32 || t[i] == 9) { i += 1 }
+    bytes.slice(t, i, t.len())
+}
+
+fn trim_end_sp(t: List[u8]) -> List[u8] {
+    let mut z = t.len()
+    while z > 0 && (t[z - 1] == 32 || t[z - 1] == 9) { z -= 1 }
+    bytes.slice(t, 0, z)
+}
+
+/// The length of the run of byte `c` at the start of `s`.
+fn run_of(s: List[u8], from: usize, c: u8) -> usize {
+    let mut i = from.copy()
+    while i < s.len() && s[i] == c { i += 1 }
+    i - from
+}
+
+/// A fence opening (or closing) `s`: its length (0 when it is none).
+fn fence_len(s: List[u8]) -> usize {
+    if s.len() < 3 || (s[0] != 96 && s[0] != 126) { return 0 }
+    let n = run_of(s, 0, s[0])
+    if n < 3 { return 0 }
+    if s[0] == 96 {
+        for k in n..s.len() {
+            if s[k] == 96 { return 0 }
+        }
+    }
+    n
+}
+
+fn heading_level(s: List[u8]) -> u32 {
+    let n = run_of(s, 0, 35)
+    if n == 0 || n > 6 { return 0 }
+    if n < s.len() && s[n] != 32 && s[n] != 9 { return 0 }
+    n as u32
+}
+
+fn is_hr(s: List[u8]) -> bool {
+    if s.len() == 0 { return false }
+    let c = s[0]
+    if c != 45 && c != 42 && c != 95 { return false }
+    let mut n: u32 = 0
+    for x in s {
+        if x == c {
+            n += 1
+        } else if x != 32 && x != 9 {
+            return false
+        }
+    }
+    n >= 3
+}
+
+/// A setext underline: only `=` or only `-` (then trailing spaces).
+fn setext_level(s: List[u8]) -> u32 {
+    let t = trim_end_sp(s)
+    if t.len() == 0 || (t[0] != 61 && t[0] != 45) { return 0 }
+    if run_of(t, 0, t[0]) != t.len() { return 0 }
+    if t[0] == 61 { 1 } else { 2 }
+}
+
+/// A list item marker: `ok`, ordered or not, the bullet or delimiter byte, the start
+/// number, the column where the content starts and whether the item is empty on that line.
+type Marker = { ok: bool, ordered: bool, ch: u8, start: u32, w: usize, empty: bool }
+
+fn marker(t: List[u8]) -> Marker {
+    let no = Marker(false, false, 0, 0, 0, false)
+    let ind = indent_of(t)
+    if ind >= 4 || ind >= t.len() { return no }
+    let c = t[ind]
+    let mut e = ind.copy()
+    let mut ordered = false
+    let mut ch = c.copy()
+    let mut start: u32 = 0
+    if c == 45 || c == 42 || c == 43 {
+        e = ind + 1
+    } else if bytes.is_digit(c) {
+        let mut k = ind.copy()
+        let mut v: u64 = 0
+        while k < t.len() && bytes.is_digit(t[k]) && k - ind < 9 {
+            v = v * 10 + (t[k] - 48) as u64
+            k += 1
+        }
+        if k >= t.len() || (t[k] != 46 && t[k] != 41) { return no }
+        ch = t[k]
+        ordered = true
+        start = v as u32
+        e = k + 1
+    } else {
+        return no
+    }
+    if e == t.len() { return Marker(true, ordered, ch, start, e + 1, true) }
+    // a tab after the marker counts as the one space before the content
+    if t[e] == 9 { return Marker(true, ordered, ch, start, e + 1, is_blank(bytes.slice(t, e, t.len()))) }
+    if t[e] != 32 { return no }
+    let sp = run_of(t, e, 32)
+    if e + sp == t.len() { return Marker(true, ordered, ch, start, e + 1, true) }
+    let w = if sp >= 5 { e + 1 } else { e + sp }
+    Marker(true, ordered, ch, start, w, false)
+}
+
+// ---- tables
+
+fn has_pipe(t: List[u8]) -> bool {
+    for i in 0..t.len() {
+        if t[i] == 124 && (i == 0 || t[i - 1] != 92) { return true }
+    }
+    false
+}
+
+/// The cells of a table row: split at unescaped `|` (outer pipes optional), trimmed; `\|`
+/// becomes `|` (also inside code spans, as in GFM).
+fn split_cells(row: List[u8]) -> List[List[u8]] {
+    let t = bytes.trim(row)
+    let mut a: usize = 0
+    let mut z = t.len()
+    if z > 0 && t[0] == 124 { a = 1 }
+    if z > a && t[z - 1] == 124 && (z < 2 || t[z - 2] != 92) { z -= 1 }
+    let mut cells: List[List[u8]] = List.new()
+    let mut cur: List[u8] = List.new()
+    let mut i = a.copy()
+    while i < z {
+        let c = t[i]
+        if c == 92 && i + 1 < z && t[i + 1] == 124 {
+            cur.push(124)
+            i += 2
+            continue
+        }
+        if c == 124 {
+            cells.push(bytes.trim(cur))
+            cur = List.new()
+        } else {
+            cur.push(c)
+        }
+        i += 1
+    }
+    cells.push(bytes.trim(cur))
+    cells
+}
+
+/// The alignments of a delimiter row (`| :--- | :---: | ---: |`), or None.
+fn aligns_of(row: List[u8]) -> Option[List[u8]] {
+    if !has_pipe(row) { return None }
+    let mut out: List[u8] = List.new()
+    for c in split_cells(row) {
+        if c.len() == 0 { return None }
+        let left = c[0] == 58
+        let right = c[c.len() - 1] == 58
+        let mut a: usize = 0
+        let mut z = c.len()
+        if left { a = 1 }
+        if right && z > a { z -= 1 }
+        if z <= a { return None }
+        for k in a..z {
+            if c[k] != 45 { return None }
+        }
+        if left && right {
+            out.push(2)
+        } else if right {
+            out.push(3)
+        } else if left {
+            out.push(1)
+        } else {
+            out.push(0)
+        }
+    }
+    Some(out)
+}
+
+/// Whether a table starts at line j: a row with a pipe, then a delimiter row with as many
+/// cells.
+fn table_at(ls: List[Ln], j: usize) -> bool {
+    if j + 1 >= ls.len() { return false }
+    let t = ls[j].t
+    if indent_of(t) >= 4 || !has_pipe(t) { return false }
+    match aligns_of(ls[j + 1].t) {
+        Some(al) => al.len() == split_cells(t).len()
+        None => false
+    }
+}
+
+// ---- blocks
+
+fn new_block(kind: u32, line: u32) -> Block {
+    Block(kind, 0, 0, 0, List.new(), List.new(), line, List.new(), List.new(), List.new())
+}
+
+fn add(inout d: Doc, b: Block) -> u32 {
+    d.blocks.push(b)
+    (d.blocks.len() - 1) as u32
+}
+
+/// Whether line j starts a block other than a paragraph continuation (`in_para`: it would
+/// interrupt a paragraph, so an empty item or an ordered one not starting at 1 doesn't).
+fn starts_block(ls: List[Ln], j: usize, in_para: bool) -> bool {
+    let t = ls[j].t
+    let ind = indent_of(t)
+    if ind >= 4 || ind >= t.len() { return false }
+    let s = bytes.slice(t, ind, t.len())
+    if fence_len(s) >= 3 || heading_level(s) > 0 || is_hr(s) || s[0] == 62 { return true }
+    let m = marker(t)
+    if m.ok {
+        if !in_para { return true }
+        if m.empty { return false }
+        return !m.ordered || m.start == 1
+    }
+    table_at(ls, j)
+}
+
+type Parsed = { ids: List[u32], gap: bool }
+
+/// Parse `ls` into blocks; `gap`: a blank line separates two of them.
+fn blocks(inout d: Doc, ls: List[Ln]) -> Parsed {
+    let mut ids: List[u32] = List.new()
+    let mut gap = false
+    let mut blank = false
+    let n = ls.len()
+    let mut i: usize = 0
+    while i < n {
+        let t = ls[i].t.copy()
+        let no = ls[i].no
+        if is_blank(t) {
+            blank = true
+            i += 1
+            continue
+        }
+        if blank && ids.len() > 0 { gap = true }
+        blank = false
+        let ind = indent_of(t)
+        let s = bytes.slice(t, ind, t.len())
+        if ind < 4 {
+            let fl = fence_len(s)
+            if fl >= 3 {
+                let ch = s[0]
+                let mut b = new_block(B_CODE, no)
+                b.info = bytes.trim(bytes.slice(s, fl, s.len()))
+                let mut j = i + 1
+                while j < n {
+                    let lt = ls[j].t
+                    let li = indent_of(lt)
+                    if li < 4 {
+                        let ls2 = bytes.slice(lt, li, lt.len())
+                        let cl = run_of(ls2, 0, ch)
+                        if cl >= fl && is_blank(bytes.slice(ls2, cl, ls2.len())) {
+                            j += 1
+                            break
+                        }
+                    }
+                    bytes.append(inout b.text, strip_n(lt, ind))
+                    b.text.push(10)
+                    j += 1
+                }
+                ids.push(add(inout d, b))
+                i = j
+                continue
+            }
+            let hl = heading_level(s)
+            if hl > 0 {
+                let mut b = new_block(B_HEADING, no)
+                b.a = hl
+                let mut h = bytes.trim(bytes.slice(s, hl as usize, s.len()))
+                // a closing run of `#` (preceded by a space, or the whole text)
+                let mut z = h.len()
+                while z > 0 && h[z - 1] == 35 { z -= 1 }
+                if z < h.len() && (z == 0 || h[z - 1] == 32) { h = bytes.trim(bytes.slice(h, 0, z)) }
+                b.text = h
+                ids.push(add(inout d, b))
+                i += 1
+                continue
+            }
+            if is_hr(s) {
+                ids.push(add(inout d, new_block(B_HR, no)))
+                i += 1
+                continue
+            }
+            if s[0] == 62 {
+                let mut inner: List[Ln] = List.new()
+                let mut last_blank = false
+                let mut j = i.copy()
+                while j < n {
+                    let lt = ls[j].t
+                    let li = indent_of(lt)
+                    if li < 4 && li < lt.len() && lt[li] == 62 {
+                        let mut rest = bytes.slice(lt, li + 1, lt.len())
+                        if rest.len() > 0 && rest[0] == 32 { rest = bytes.slice(rest, 1, rest.len()) }
+                        last_blank = is_blank(rest)
+                        inner.push(Ln(rest, ls[j].no))
+                        j += 1
+                    } else if !is_blank(lt) && !last_blank && !starts_block(ls, j, true) {
+                        inner.push(Ln(trim_start(lt), ls[j].no))
+                        j += 1
+                    } else {
+                        break
+                    }
+                }
+                let p = blocks(inout d, inner)
+                let mut b = new_block(B_QUOTE, no)
+                b.kids = p.ids
+                ids.push(add(inout d, b))
+                i = j
+                continue
+            }
+            let m = marker(t)
+            if m.ok {
+                let r = list(inout d, ls, i, m)
+                ids.push(r.id)
+                i = r.next
+                continue
+            }
+            if table_at(ls, i) {
+                let al = aligns_of(ls[i + 1].t).unwrap()
+                let cols = al.len()
+                let mut b = new_block(B_TABLE, no)
+                b.a = cols as u32
+                b.info = al
+                let mut j = i.copy()
+                while j < n {
+                    if j == i + 1 {
+                        j += 1
+                        continue
+                    }
+                    let lt = ls[j].t
+                    if j > i + 1 {
+                        if is_blank(lt) { break }
+                        let li = indent_of(lt)
+                        let s2 = bytes.slice(lt, li, lt.len())
+                        if li < 4 && (fence_len(s2) >= 3 || heading_level(s2) > 0 || is_hr(s2) || s2[0] == 62) { break }
+                    }
+                    let cs = split_cells(lt)
+                    for k in 0..cols {
+                        if k < cs.len() { b.cells.push(cs[k]) } else { b.cells.push(List.new()) }
+                    }
+                    b.rows.push(ls[j].no)
+                    j += 1
+                }
+                ids.push(add(inout d, b))
+                i = j
+                continue
+            }
+        }
+        // a paragraph (or a setext heading)
+        let mut text = trim_start(t)
+        let mut level: u32 = 0
+        let mut j = i + 1
+        while j < n {
+            let lt = ls[j].t
+            if is_blank(lt) { break }
+            let li = indent_of(lt)
+            if li < 4 {
+                let sl = setext_level(bytes.slice(lt, li, lt.len()))
+                if sl > 0 {
+                    level = sl
+                    j += 1
+                    break
+                }
+            }
+            if starts_block(ls, j, true) { break }
+            text.push(10)
+            bytes.append(inout text, trim_start(lt))
+            j += 1
+        }
+        let mut b = new_block(B_PARA, no)
+        if level > 0 {
+            b = new_block(B_HEADING, no)
+            b.a = level
+        }
+        b.text = trim_end_sp(text)
+        ids.push(add(inout d, b))
+        i = j
+    }
+    Parsed(ids, gap)
+}
+
+type Listed = { id: u32, next: usize }
+
+/// The list starting at line i (marker m): its items while the markers match.
+fn list(inout d: Doc, ls: List[Ln], i: usize, m: Marker) -> Listed {
+    let n = ls.len()
+    let mut b = new_block(B_LIST, ls[i].no)
+    if m.ordered { b.a = 1 }
+    b.b = m.start
+    b.info.push(m.ch)
+    let mut loose = false
+    let mut at = i.copy()
+    let mut cur = m.copy()
+    let mut next = i.copy()
+    while true {
+        let t = ls[at].t
+        let mut inner: List[Ln] = List.new()
+        let first: List[u8] = if cur.empty { List.new() } else { bytes.slice(t, cur.w, t.len()) }
+        inner.push(Ln(first, ls[at].no))
+        let mut end = at + 1
+        let mut j = at + 1
+        while j < n {
+            let lt = ls[j].t
+            if is_blank(lt) {
+                inner.push(Ln(List.new(), ls[j].no))
+                j += 1
+                continue
+            }
+            let li = indent_of(lt)
+            let last_blank = is_blank(inner[inner.len() - 1].t)
+            // a marker left of the content starts a sibling item (or ends the list)
+            if li < cur.w && marker(lt).ok { break }
+            if li >= cur.w {
+                inner.push(Ln(strip_n(lt, cur.w), ls[j].no))
+            } else if !last_blank && !starts_block(ls, j, true) {
+                inner.push(Ln(trim_start(lt), ls[j].no))
+            } else {
+                break
+            }
+            j += 1
+            end = j
+        }
+        // trailing blank lines belong after the item
+        let keep = end - at
+        let mut lines: List[Ln] = List.new()
+        for k in 0..keep { lines.push(inner[k]) }
+        let p = blocks(inout d, lines)
+        if p.gap { loose = true }
+        let mut it = new_block(B_ITEM, ls[at].no)
+        it.kids = p.ids
+        b.kids.push(add(inout d, it))
+        next = end
+        // the next item: after blank lines, a marker of the same kind
+        let mut k = end.copy()
+        while k < n && is_blank(ls[k].t) { k += 1 }
+        if k >= n { break }
+        let nt = ls[k].t
+        let nm = marker(nt)
+        let ni = indent_of(nt)
+        if !nm.ok || nm.ordered != m.ordered || nm.ch != m.ch || is_hr(bytes.slice(nt, ni, nt.len())) { break }
+        if k > end { loose = true }
+        at = k
+        cur = nm
+    }
+    if loose { b.c = 1 }
+    Listed(add(inout d, b), next)
+}
+
+/// Parse a document; never fails (anything that isn't another block is paragraph text).
+pub fn parse(src: List[u8]) -> Doc {
+    let mut d = Doc(List.new(), 0)
+    let ls = lines_of(src)
+    let p = blocks(inout d, ls)
+    let mut root = new_block(B_DOC, 1)
+    root.kids = p.ids
+    d.root = add(inout d, root)
+    d
+}
+
+/// Every block id in document order (pre-order from the root).
+fn order(d: Doc) -> List[u32] {
+    let mut out: List[u32] = List.new()
+    walk(d, d.root, inout out)
+    out
+}
+
+fn walk(d: Doc, id: u32, inout out: List[u32]) {
+    out.push(id)
+    for k in d.blocks[id as usize].kids { walk(d, k, inout out) }
+}
+
+// ---- inlines
+
+const E_TEXT: u32 = 0
+const E_CODE: u32 = 1
+const E_EM_O: u32 = 2
+const E_EM_C: u32 = 3
+const E_ST_O: u32 = 4
+const E_ST_C: u32 = 5
+const E_A_O: u32 = 6
+const E_A_C: u32 = 7
+const E_IMG: u32 = 8
+const E_BR: u32 = 9
+
+/// An inline event: text, a code span, an opening or closing tag, an image (alt text in
+/// `text`) or a hard break; `off` is the byte offset in the block's text (links, images).
+type Ev = { k: u32, text: List[u8], href: List[u8], title: List[u8], off: u32 }
+
+/// A run of events, or a run of `*`/`_` delimiters (`n` still unmatched) with the closing
+/// tags matched before it (`pre`) and the opening ones after it (`post`).
+type Piece = { evs: List[Ev], delim: bool, ch: u8, n: u32, open: bool, close: bool, pre: List[Ev], post: List[Ev] }
+
+fn ev(k: u32) -> Ev { Ev(k, List.new(), List.new(), List.new(), 0) }
+
+fn text_ev(t: List[u8]) -> Ev { Ev(E_TEXT, t, List.new(), List.new(), 0) }
+
+fn piece(evs: List[Ev]) -> Piece { Piece(evs, false, 0, 0, false, false, List.new(), List.new()) }
+
+fn one(e: Ev) -> List[Ev] {
+    let mut l: List[Ev] = List.new()
+    l.push(e)
+    l
+}
+
+fn is_punct(c: u8) -> bool { (c >= 33 && c <= 47) || (c >= 58 && c <= 64) || (c >= 91 && c <= 96) || (c >= 123 && c <= 126) }
+
+fn is_ws(c: u8) -> bool { c == 32 || c == 9 || c == 10 || c == 13 }
+
+fn flush(inout ps: List[Piece], inout cur: List[u8]) {
+    if cur.len() == 0 { return }
+    ps.push(piece(one(text_ev(cur))))
+    cur = List.new()
+}
+
+/// The end (just past the closing run) and content of the code span whose opening run of
+/// `n` backticks starts at i, or None.
+fn code_end(t: List[u8], i: usize, n: usize) -> Option[usize] {
+    let mut k = i + n
+    while k < t.len() {
+        if t[k] == 96 {
+            let r = run_of(t, k, 96)
+            if r == n { return Some(k + r) }
+            k += r
+        } else {
+            k += 1
+        }
+    }
+    None
+}
+
+fn code_text(t: List[u8], a: usize, z: usize) -> List[u8] {
+    let mut c: List[u8] = List.new()
+    for k in a..z {
+        if t[k] == 10 { c.push(32) } else { c.push(t[k]) }
+    }
+    if c.len() >= 2 && c[0] == 32 && c[c.len() - 1] == 32 && !is_blank(c) { c = bytes.slice(c, 1, c.len() - 1) }
+    c
+}
+
+/// `[text](dest "title")` at i: the text's range, destination, title and the end.
+type LinkAt = { a: usize, z: usize, href: List[u8], title: List[u8], end: usize }
+
+fn unescape(s: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut i: usize = 0
+    while i < s.len() {
+        if s[i] == 92 && i + 1 < s.len() && is_punct(s[i + 1]) {
+            out.push(s[i + 1])
+            i += 2
+        } else {
+            out.push(s[i])
+            i += 1
+        }
+    }
+    out
+}
+
+fn link_at(t: List[u8], i: usize) -> Option[LinkAt] {
+    let n = t.len()
+    // the matching `]` (escapes and code spans skipped)
+    let mut depth: u32 = 0
+    let mut k = i + 1
+    let mut close = n.copy()
+    while k < n {
+        let c = t[k]
+        if c == 92 {
+            k += 2
+            continue
+        }
+        if c == 96 {
+            let r = run_of(t, k, 96)
+            match code_end(t, k, r) {
+                Some(e) => { k = e }
+                None => { k += r }
+            }
+            continue
+        }
+        if c == 91 { depth += 1 }
+        if c == 93 {
+            if depth == 0 {
+                close = k
+                break
+            }
+            depth -= 1
+        }
+        k += 1
+    }
+    if close >= n || close + 1 >= n || t[close + 1] != 40 { return None }
+    let mut p = close + 2
+    while p < n && is_ws(t[p]) { p += 1 }
+    let mut dest: List[u8] = List.new()
+    if p < n && t[p] == 60 {
+        p += 1
+        while p < n && t[p] != 62 {
+            if t[p] == 10 || t[p] == 60 { return None }
+            dest.push(t[p])
+            p += 1
+        }
+        if p >= n { return None }
+        p += 1
+    } else {
+        let mut par: u32 = 0
+        while p < n {
+            let c = t[p]
+            if is_ws(c) { break }
+            if c == 92 && p + 1 < n {
+                dest.push(c)
+                dest.push(t[p + 1])
+                p += 2
+                continue
+            }
+            if c == 40 { par += 1 }
+            if c == 41 {
+                if par == 0 { break }
+                par -= 1
+            }
+            dest.push(c)
+            p += 1
+        }
+    }
+    while p < n && is_ws(t[p]) { p += 1 }
+    let mut title: List[u8] = List.new()
+    if p < n && (t[p] == 34 || t[p] == 39 || t[p] == 40) {
+        let q: u8 = if t[p] == 40 { 41 } else { t[p] }
+        p += 1
+        while p < n && t[p] != q {
+            if t[p] == 92 && p + 1 < n {
+                title.push(t[p])
+                p += 1
+            }
+            title.push(t[p])
+            p += 1
+        }
+        if p >= n { return None }
+        p += 1
+        while p < n && is_ws(t[p]) { p += 1 }
+    }
+    if p >= n || t[p] != 41 { return None }
+    Some(LinkAt(i + 1, close, unescape(dest), unescape(title), p + 1))
+}
+
+/// `<scheme:...>` at i: the index of the closing `>`, or None.
+fn autolink_at(t: List[u8], i: usize) -> Option[usize] {
+    let n = t.len()
+    let mut k = i + 1
+    while k < n && (bytes.is_alpha(t[k]) || bytes.is_digit(t[k]) || t[k] == 43 || t[k] == 46 || t[k] == 45) { k += 1 }
+    let sl = k - i - 1
+    if sl < 2 || sl > 32 || !bytes.is_alpha(t[i + 1]) || k >= n || t[k] != 58 { return None }
+    while k < n && t[k] != 62 {
+        if t[k] <= 32 || t[k] == 60 { return None }
+        k += 1
+    }
+    if k >= n { return None }
+    Some(k)
+}
+
+fn sub(t: List[u8], a: usize, z: usize) -> List[u8] { bytes.slice(t, a, z) }
+
+/// The inline events of `t`; `base` is added to the offsets of links and images.
+fn inline(t: List[u8], base: u32) -> List[Ev] {
+    let mut ps: List[Piece] = List.new()
+    let mut cur: List[u8] = List.new()
+    let n = t.len()
+    let mut i: usize = 0
+    while i < n {
+        let c = t[i]
+        if c == 92 && i + 1 < n {
+            let nx = t[i + 1]
+            if nx == 10 {
+                flush(inout ps, inout cur)
+                ps.push(piece(one(ev(E_BR))))
+                i += 2
+                continue
+            }
+            if is_punct(nx) {
+                cur.push(nx)
+                i += 2
+                continue
+            }
+        }
+        if c == 96 {
+            let r = run_of(t, i, 96)
+            match code_end(t, i, r) {
+                Some(e) => {
+                    flush(inout ps, inout cur)
+                    let mut x = ev(E_CODE)
+                    x.text = code_text(t, i + r, e - r)
+                    ps.push(piece(one(x)))
+                    i = e
+                }
+                None => {
+                    for k in 0..r { cur.push(96) }
+                    i += r
+                }
+            }
+            continue
+        }
+        if (c == 91 || (c == 33 && i + 1 < n && t[i + 1] == 91)) {
+            let img = c == 33
+            let at = if img { i + 1 } else { i }
+            match link_at(t, at) {
+                Some(l) => {
+                    flush(inout ps, inout cur)
+                    let inner = inline(sub(t, l.a, l.z), base + l.a as u32)
+                    if img {
+                        let x = Ev(E_IMG, plain(inner), l.href, l.title, base + i as u32)
+                        ps.push(piece(one(x)))
+                    } else {
+                        let mut evs = one(Ev(E_A_O, List.new(), l.href, l.title, base + i as u32))
+                        for e in inner { evs.push(e) }
+                        evs.push(ev(E_A_C))
+                        ps.push(piece(evs))
+                    }
+                    i = l.end
+                    continue
+                }
+                None => {}
+            }
+        }
+        if c == 60 {
+            match autolink_at(t, i) {
+                Some(e) => {
+                    flush(inout ps, inout cur)
+                    let url = sub(t, i + 1, e)
+                    let mut evs = one(Ev(E_A_O, List.new(), url, List.new(), base + i as u32))
+                    evs.push(text_ev(url))
+                    evs.push(ev(E_A_C))
+                    ps.push(piece(evs))
+                    i = e + 1
+                    continue
+                }
+                None => {}
+            }
+        }
+        if c == 42 || c == 95 {
+            flush(inout ps, inout cur)
+            let r = run_of(t, i, c)
+            let prev: u8 = if i == 0 { 32 } else { t[i - 1] }
+            let next: u8 = if i + r >= n { 32 } else { t[i + r] }
+            let left = !is_ws(next) && (!is_punct(next) || is_ws(prev) || is_punct(prev))
+            let right = !is_ws(prev) && (!is_punct(prev) || is_ws(next) || is_punct(next))
+            let mut open = left.copy()
+            let mut close = right.copy()
+            if c == 95 {
+                open = left && (!right || is_punct(prev))
+                close = right && (!left || is_punct(next))
+            }
+            ps.push(Piece(List.new(), true, c, r as u32, open, close, List.new(), List.new()))
+            i += r
+            continue
+        }
+        if c == 10 {
+            let mut sp: usize = 0
+            while cur.len() > 0 && cur[cur.len() - 1] == 32 {
+                cur.pop()
+                sp += 1
+            }
+            flush(inout ps, inout cur)
+            if sp >= 2 { ps.push(piece(one(ev(E_BR)))) } else { ps.push(piece(one(text_ev("\n".bytes())))) }
+            i += 1
+            continue
+        }
+        cur.push(c)
+        i += 1
+    }
+    flush(inout ps, inout cur)
+    emphasis(inout ps)
+    let mut out: List[Ev] = List.new()
+    for p in ps {
+        if p.delim {
+            for e in p.pre { out.push(e) }
+            if p.n > 0 {
+                let mut lit: List[u8] = List.new()
+                for k in 0..p.n { lit.push(p.ch) }
+                out.push(text_ev(lit))
+            }
+            for e in p.post { out.push(e) }
+        } else {
+            for e in p.evs { out.push(e) }
+        }
+    }
+    out
+}
+
+/// Match delimiter runs: each closer with the nearest opener of the same byte before it;
+/// two delimiters when both runs have two (strong), else one (emphasis).
+fn emphasis(inout ps: List[Piece]) {
+    let mut k: usize = 0
+    while k < ps.len() {
+        let pk = ps[k].copy()
+        if !(pk.delim && pk.close && pk.n > 0) {
+            k += 1
+            continue
+        }
+        let mut j = k.copy()
+        let mut found = false
+        while j > 0 {
+            j -= 1
+            let pj = ps[j]
+            if pj.delim && pj.open && pj.n > 0 && pj.ch == pk.ch {
+                found = true
+                break
+            }
+        }
+        if !found {
+            k += 1
+            continue
+        }
+        let mut op = ps[j].copy()
+        let mut cl = pk.copy()
+        let strong = op.n >= 2 && cl.n >= 2
+        let used: u32 = if strong { 2 } else { 1 }
+        op.n -= used
+        cl.n -= used
+        let ko = if strong { E_ST_O } else { E_EM_O }
+        let kc = if strong { E_ST_C } else { E_EM_C }
+        let mut post = one(ev(ko))
+        for e in op.post { post.push(e) }
+        op.post = post
+        cl.pre.push(ev(kc))
+        ps[j] = op
+        ps[k] = cl
+        // delimiters between the two can no longer match
+        for x in (j + 1)..k {
+            let mut px = ps[x].copy()
+            if px.delim {
+                px.open = false
+                px.close = false
+                ps[x] = px
+            }
+        }
+    }
+}
+
+/// The plain text of events: text, code and alt text, breaks as spaces.
+fn plain(evs: List[Ev]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    for e in evs {
+        if e.k == E_TEXT || e.k == E_CODE || e.k == E_IMG {
+            for c in e.text {
+                if c == 10 { out.push(32) } else { out.push(c) }
+            }
+        } else if e.k == E_BR {
+            out.push(32)
+        }
+    }
+    out
+}
+
+fn lower(s: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    for c in s {
+        if c <= 32 { continue }
+        if c >= 65 && c <= 90 { out.push(c + 32) } else { out.push(c) }
+    }
+    out
+}
+
+/// Whether a destination uses a scheme that runs code (javascript:, vbscript:, data:).
+fn dangerous(href: List[u8]) -> bool {
+    let l = lower(href)
+    bytes.starts_with(l, "javascript:".bytes()) || bytes.starts_with(l, "vbscript:".bytes()) || bytes.starts_with(l, "data:".bytes())
+}
+
+fn href_of(o: Options, h: List[u8]) -> List[u8] {
+    match o.hrefs.get(h) {
+        Some(x) => x
+        None => h
+    }
+}
+
+fn evs_html(inout out: List[u8], evs: List[Ev], o: Options) {
+    // for each open link: whether it was written (a refused one shows its text only)
+    let mut open: List[bool] = List.new()
+    for e in evs {
+        if e.k == E_TEXT {
+            esc_into(inout out, e.text)
+        } else if e.k == E_CODE {
+            bytes.append(inout out, "<code>".bytes())
+            esc_into(inout out, e.text)
+            bytes.append(inout out, "</code>".bytes())
+        } else if e.k == E_EM_O {
+            bytes.append(inout out, "<em>".bytes())
+        } else if e.k == E_EM_C {
+            bytes.append(inout out, "</em>".bytes())
+        } else if e.k == E_ST_O {
+            bytes.append(inout out, "<strong>".bytes())
+        } else if e.k == E_ST_C {
+            bytes.append(inout out, "</strong>".bytes())
+        } else if e.k == E_BR {
+            bytes.append(inout out, "<br>\n".bytes())
+        } else if e.k == E_A_O {
+            if dangerous(e.href) {
+                open.push(false)
+            } else {
+                open.push(true)
+                bytes.append(inout out, "<a href=\"".bytes())
+                esc_into(inout out, href_of(o, e.href))
+                out.push(34)
+                if e.title.len() > 0 {
+                    bytes.append(inout out, " title=\"".bytes())
+                    esc_into(inout out, e.title)
+                    out.push(34)
+                }
+                out.push(62)
+            }
+        } else if e.k == E_A_C {
+            let w = if open.len() > 0 { open.pop().unwrap() } else { false }
+            if w { bytes.append(inout out, "</a>".bytes()) }
+        } else if e.k == E_IMG {
+            if dangerous(e.href) {
+                esc_into(inout out, e.text)
+            } else {
+                bytes.append(inout out, "<img src=\"".bytes())
+                esc_into(inout out, href_of(o, e.href))
+                bytes.append(inout out, "\" alt=\"".bytes())
+                esc_into(inout out, e.text)
+                out.push(34)
+                if e.title.len() > 0 {
+                    bytes.append(inout out, " title=\"".bytes())
+                    esc_into(inout out, e.title)
+                    out.push(34)
+                }
+                out.push(62)
+            }
+        }
+    }
+}
+
+/// One line or paragraph of inline Markdown as HTML, without a `<p>`.
+pub fn inline_html(src: List[u8], o: Options) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    evs_html(inout out, inline(bytes.trim(src), 0), o)
+    out
+}
+
+// ---- queries
+
+fn line_at(t: List[u8], line: u32, off: u32) -> u32 {
+    let mut l = line.copy()
+    let mut k: usize = 0
+    while k < off as usize && k < t.len() {
+        if t[k] == 10 { l += 1 }
+        k += 1
+    }
+    l
+}
+
+fn links_in(inout out: List[Link], t: List[u8], line: u32) {
+    for e in inline(t, 0) {
+        if e.k == E_A_O || e.k == E_IMG { out.push(Link(e.href, line_at(t, line, e.off), e.k == E_IMG)) }
+    }
+}
+
+/// Every link and image destination, as written, in document order.
+pub fn links(d: Doc) -> List[Link] {
+    let mut out: List[Link] = List.new()
+    for id in order(d) {
+        let b = d.blocks[id as usize]
+        if b.kind == B_PARA || b.kind == B_HEADING {
+            links_in(inout out, b.text, b.line)
+        } else if b.kind == B_TABLE && b.a > 0 {
+            for k in 0..b.cells.len() { links_in(inout out, b.cells[k], b.rows[k / b.a as usize]) }
+        }
+    }
+    out
+}
+
+type HeadingAt = { id: u32, h: Heading }
+
+fn heading_list(d: Doc) -> List[HeadingAt] {
+    let mut out: List[HeadingAt] = List.new()
+    let mut seen: Map[List[u8], u32] = Map.new()
+    for id in order(d) {
+        let b = d.blocks[id as usize]
+        if b.kind != B_HEADING { continue }
+        let text = plain(inline(b.text, 0))
+        let base = anchor(text)
+        let mut a = base.copy()
+        match seen.get(base) {
+            Some(c) => {
+                bytes.append(inout a, "-".bytes())
+                bytes.append(inout a, bytes.from_u64(c as u64))
+                seen.insert(base, c + 1)
+            }
+            None => { seen.insert(base, 1) }
+        }
+        out.push(HeadingAt(id, Heading(b.a, text, a, b.line)))
+    }
+    out
+}
+
+/// Every heading in document order, with the anchors `html` gives them.
+pub fn headings(d: Doc) -> List[Heading] {
+    let mut out: List[Heading] = List.new()
+    for x in heading_list(d) { out.push(x.h) }
+    out
+}
+
+/// Every fenced code block in document order (also inside lists and quotes).
+pub fn code_blocks(d: Doc) -> List[Code] {
+    let mut out: List[Code] = List.new()
+    for id in order(d) {
+        let b = d.blocks[id as usize]
+        if b.kind == B_CODE { out.push(Code(b.info, b.text, b.line)) }
+    }
+    out
+}
+
+/// The plain text of the first level-1 heading, or empty.
+pub fn title(d: Doc) -> List[u8] {
+    for h in headings(d) {
+        if h.level == 1 { return h.text }
+    }
+    List.new()
+}
+
+/// The first sentence of the first paragraph as plain text: up to and including the first
+/// `.` followed by a space or the end, else the whole paragraph.
+pub fn summary(src: List[u8]) -> List[u8] {
+    let d = parse(src)
+    for id in order(d) {
+        let b = d.blocks[id as usize]
+        if b.kind != B_PARA { continue }
+        let p = plain(inline(b.text, 0))
+        for i in 0..p.len() {
+            if p[i] == 46 && (i + 1 == p.len() || p[i + 1] == 32) { return bytes.slice(p, 0, i + 1) }
+        }
+        return p
+    }
+    List.new()
+}
+
+// ---- HTML
+
+/// The document as HTML, one block element per line group.
+pub fn html(d: Doc, o: Options) -> List[u8] {
+    let mut ids: Map[u32, List[u8]] = Map.new()
+    for x in heading_list(d) { ids.insert(x.id, x.h.anchor) }
+    let mut out: List[u8] = List.new()
+    for k in d.blocks[d.root as usize].kids { block_html(inout out, d, k, o, false, ids) }
+    out
+}
+
+/// `html(parse(src), options())`.
+pub fn to_html(src: List[u8]) -> List[u8] { html(parse(src), options()) }
+
+fn callout(d: Doc, b: Block) -> List[u8] {
+    if b.kids.len() == 0 { return List.new() }
+    let f = d.blocks[b.kids[0] as usize]
+    if f.kind != B_PARA { return List.new() }
+    if bytes.starts_with(f.text, "**Note:**".bytes()) { return "note".bytes() }
+    if bytes.starts_with(f.text, "**Warning:**".bytes()) { return "warning".bytes() }
+    if bytes.starts_with(f.text, "**Tip:**".bytes()) { return "tip".bytes() }
+    List.new()
+}
+
+fn align_attr(inout out: List[u8], a: u8) {
+    if a == 1 { bytes.append(inout out, " style=\"text-align:left\"".bytes()) }
+    if a == 2 { bytes.append(inout out, " style=\"text-align:center\"".bytes()) }
+    if a == 3 { bytes.append(inout out, " style=\"text-align:right\"".bytes()) }
+}
+
+fn block_html(inout out: List[u8], d: Doc, id: u32, o: Options, tight: bool, ids: Map[u32, List[u8]]) {
+    let b = d.blocks[id as usize]
+    if b.kind == B_PARA {
+        if !tight { bytes.append(inout out, "<p>".bytes()) }
+        evs_html(inout out, inline(b.text, 0), o)
+        if !tight { bytes.append(inout out, "</p>".bytes()) }
+        out.push(10)
+    } else if b.kind == B_HEADING {
+        let lv = bytes.from_u64(b.a as u64)
+        bytes.append(inout out, "<h".bytes())
+        bytes.append(inout out, lv)
+        if o.anchors {
+            match ids.get(id) {
+                Some(a) => {
+                    bytes.append(inout out, " id=\"".bytes())
+                    esc_into(inout out, a)
+                    out.push(34)
+                }
+                None => {}
+            }
+        }
+        out.push(62)
+        evs_html(inout out, inline(b.text, 0), o)
+        bytes.append(inout out, "</h".bytes())
+        bytes.append(inout out, lv)
+        bytes.append(inout out, ">\n".bytes())
+    } else if b.kind == B_CODE {
+        bytes.append(inout out, "<pre><code".bytes())
+        if b.info.len() > 0 {
+            let mut w: List[u8] = List.new()
+            for c in b.info {
+                if c == 32 || c == 44 || c == 9 { break }
+                w.push(c)
+            }
+            bytes.append(inout out, " class=\"language-".bytes())
+            esc_into(inout out, w)
+            out.push(34)
+        }
+        out.push(62)
+        bytes.append(inout out, o.code(b.info, b.text))
+        bytes.append(inout out, "</code></pre>\n".bytes())
+    } else if b.kind == B_QUOTE {
+        let cl = callout(d, b)
+        if cl.len() > 0 {
+            bytes.append(inout out, "<blockquote class=\"callout ".bytes())
+            bytes.append(inout out, cl)
+            bytes.append(inout out, "\">\n".bytes())
+        } else {
+            bytes.append(inout out, "<blockquote>\n".bytes())
+        }
+        for k in b.kids { block_html(inout out, d, k, o, false, ids) }
+        bytes.append(inout out, "</blockquote>\n".bytes())
+    } else if b.kind == B_LIST {
+        let t = b.c == 0
+        if b.a == 1 {
+            bytes.append(inout out, "<ol".bytes())
+            if b.b != 1 {
+                bytes.append(inout out, " start=\"".bytes())
+                bytes.append(inout out, bytes.from_u64(b.b as u64))
+                out.push(34)
+            }
+            bytes.append(inout out, ">\n".bytes())
+        } else {
+            bytes.append(inout out, "<ul>\n".bytes())
+        }
+        for it in b.kids {
+            let item = d.blocks[it as usize]
+            bytes.append(inout out, "<li>".bytes())
+            let nk = item.kids.len()
+            for q in 0..nk {
+                let kid = item.kids[q]
+                let para = d.blocks[kid as usize].kind == B_PARA
+                if t && para {
+                    evs_html(inout out, inline(d.blocks[kid as usize].text, 0), o)
+                    if q + 1 < nk { out.push(10) }
+                } else {
+                    if q == 0 { out.push(10) }
+                    block_html(inout out, d, kid, o, false, ids)
+                }
+            }
+            bytes.append(inout out, "</li>\n".bytes())
+        }
+        if b.a == 1 { bytes.append(inout out, "</ol>\n".bytes()) } else { bytes.append(inout out, "</ul>\n".bytes()) }
+    } else if b.kind == B_HR {
+        bytes.append(inout out, "<hr>\n".bytes())
+    } else if b.kind == B_TABLE {
+        let cols = b.a as usize
+        bytes.append(inout out, "<table>\n<thead>\n".bytes())
+        let nrows = b.rows.len()
+        for r in 0..nrows {
+            if r == 1 { bytes.append(inout out, "<tbody>\n".bytes()) }
+            bytes.append(inout out, "<tr>".bytes())
+            for c in 0..cols {
+                let tag = if r == 0 { "th" } else { "td" }
+                out.push(60)
+                bytes.append(inout out, tag.bytes())
+                align_attr(inout out, b.info[c])
+                out.push(62)
+                evs_html(inout out, inline(b.cells[r * cols + c], 0), o)
+                bytes.append(inout out, "</".bytes())
+                bytes.append(inout out, tag.bytes())
+                out.push(62)
+            }
+            bytes.append(inout out, "</tr>\n".bytes())
+            if r == 0 { bytes.append(inout out, "</thead>\n".bytes()) }
+        }
+        if nrows > 1 { bytes.append(inout out, "</tbody>\n".bytes()) }
+        bytes.append(inout out, "</table>\n".bytes())
+    }
+}

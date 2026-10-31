@@ -1,9 +1,9 @@
-// std/strings: text operations on String (std/bytes has the same on raw bytes). Every
-// function takes its text arguments as any `Text` (a `str` literal or a `String`) and
-// returns Strings, which are always valid UTF-8; byte offsets in and out (a needle found in
-// valid UTF-8 always starts and ends on a character boundary). Case and whitespace are
-// ASCII only (Unicode case mapping and the White_Space property are P2, docs/std.md).
-// Integer parsing reports what was wrong (`ParseError`) instead of returning None.
+//! std/strings: text operations on String (std/bytes has the same on raw bytes). Every
+//! function takes its text arguments as any `Text` (a `str` literal or a `String`) and
+//! returns Strings, which are always valid UTF-8; byte offsets in and out (a needle found in
+//! valid UTF-8 always starts and ends on a character boundary). Case and whitespace are
+//! ASCII only (Unicode case mapping and the White_Space property are P2, docs/std.md).
+//! Integer parsing reports what was wrong (`ParseError`) instead of returning None.
 
 /// A text argument: `str` or `String`.
 pub trait Text {

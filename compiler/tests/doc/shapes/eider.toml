@@ -1,0 +1,4 @@
+[package]
+name = "shapes"
+version = "1.2.3"
+description = "The fixture of `eiderc doc` (compiler/tests/doc): \"shapes\" and their areas"

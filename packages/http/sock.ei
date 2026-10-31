@@ -1,6 +1,6 @@
-// http/sock: what the server and the client do on a connected socket: send everything
-// before a deadline, and close gracefully. A socket here is non-blocking and written by one
-// thread at a time.
+//! http/sock: what the server and the client do on a connected socket: send everything
+//! before a deadline, and close gracefully. A socket here is non-blocking and written by one
+//! thread at a time.
 
 import "std/bytes"
 import "std/fd"

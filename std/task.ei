@@ -1,19 +1,19 @@
-// std/task: structured concurrency on OS threads (decision C4; docs/runtime.md "Tasks").
-//
-// - `Token`: a cancellation token with an optional deadline. Tokens form a tree: cancelling a
-//   token cancels every token made from it, and a child's deadline is never later than its
-//   parent's. A token past its deadline counts as cancelled. Cancellation is cooperative:
-//   code checks `is_cancelled`/`check`, or waits with the token's deadline or a `cancel_case`
-//   in a select; nothing is interrupted from outside.
-// - `Group[T]`: a parent that starts children (each gets the group's token) and waits for
-//   all of them. The first child that fails cancels the others; `wait` always waits for
-//   every child (no child outlives its group), then gives every result in start order or
-//   the first error.
-// - `Pool`: a fixed set of worker threads taking jobs from a bounded queue (back-pressure:
-//   submitting waits while the queue is full, until a deadline).
-//
-// These run on OS threads; when the compiler makes stackless tasks from functions that use a
-// blocking capability (C4), the same API runs them on the pool's workers instead.
+//! std/task: structured concurrency on OS threads (decision C4; docs/runtime.md "Tasks").
+//!
+//! - `Token`: a cancellation token with an optional deadline. Tokens form a tree: cancelling a
+//!   token cancels every token made from it, and a child's deadline is never later than its
+//!   parent's. A token past its deadline counts as cancelled. Cancellation is cooperative:
+//!   code checks `is_cancelled`/`check`, or waits with the token's deadline or a `cancel_case`
+//!   in a select; nothing is interrupted from outside.
+//! - `Group[T]`: a parent that starts children (each gets the group's token) and waits for
+//!   all of them. The first child that fails cancels the others; `wait` always waits for
+//!   every child (no child outlives its group), then gives every result in start order or
+//!   the first error.
+//! - `Pool`: a fixed set of worker threads taking jobs from a bounded queue (back-pressure:
+//!   submitting waits while the queue is full, until a deadline).
+//!
+//! These run on OS threads; when the compiler makes stackless tasks from functions that use a
+//! blocking capability (C4), the same API runs them on the pool's workers instead.
 
 import "sync.ei"
 import "chan.ei"

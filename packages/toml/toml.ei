@@ -1,10 +1,10 @@
-// toml: the TOML subset Eider manifests and lockfiles use. Pure Eider, no capabilities.
-//
-// Supported: comments, `[a]` / `[a.b]` headers, `[[a]]` array-of-tables headers, bare and
-// quoted keys, dotted keys, basic strings (\n \t \r \" \\ escapes), integers, booleans,
-// arrays of strings (may span lines), and inline tables `{ k = v, ... }`.
-// The document is flattened: every value gets its full dotted key, and the n-th `[[a]]`
-// table (from 0) is the key prefix `a.<n>`.
+//! toml: the TOML subset Eider manifests and lockfiles use. Pure Eider, no capabilities.
+//!
+//! Supported: comments, `[a]` / `[a.b]` headers, `[[a]]` array-of-tables headers, bare and
+//! quoted keys, dotted keys, basic strings (\n \t \r \" \\ escapes), integers, booleans,
+//! arrays of strings (may span lines), and inline tables `{ k = v, ... }`.
+//! The document is flattened: every value gets its full dotted key, and the n-th `[[a]]`
+//! table (from 0) is the key prefix `a.<n>`.
 
 import "std/bytes"
 

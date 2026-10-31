@@ -1,22 +1,22 @@
-// std/sync: the two primitives the rest of the runtime layer is built from (docs/runtime.md).
-//
-// - `Lock[T]`: a value that one thread at a time holds, changed by a closure that also returns
-//   a result: an atomic read-modify-write of any state. It is a channel holding exactly one
-//   value: taking the lock receives the value (moved out, no copy), releasing it sends the new
-//   value back. (The built-in Mutex can't do this: `update` returns nothing, and `get` then
-//   `set` is not atomic.)
-// - `Parker`: a thread waits on its own Parker with a deadline; any other thread unparks it.
-//   It is an OS waker (core/ABI.md "Readiness"), waited on with `fd_wait`, so a wait ends on
-//   time without a timer thread.
-//
-// Blocking structures (std/chan, std/task) combine them the same way: a waiter puts its
-// Parker in a list inside the Lock's state and parks; whoever changes the state wakes the
-// Parkers in the list, under the lock. Two rules make that safe:
-//   1. Waking happens with the lock held, and a waiter takes its Parker out of every list
-//      (under each lock) before it closes it. So no thread ever wakes a closed Parker (its
-//      descriptor number could have been reused by then).
-//   2. A waiter checks the state and registers in the same critical section, and every change
-//      that could let it proceed wakes the list after it, so no wake-up is lost.
+//! std/sync: the two primitives the rest of the runtime layer is built from (docs/runtime.md).
+//!
+//! - `Lock[T]`: a value that one thread at a time holds, changed by a closure that also returns
+//!   a result: an atomic read-modify-write of any state. It is a channel holding exactly one
+//!   value: taking the lock receives the value (moved out, no copy), releasing it sends the new
+//!   value back. (The built-in Mutex can't do this: `update` returns nothing, and `get` then
+//!   `set` is not atomic.)
+//! - `Parker`: a thread waits on its own Parker with a deadline; any other thread unparks it.
+//!   It is an OS waker (core/ABI.md "Readiness"), waited on with `fd_wait`, so a wait ends on
+//!   time without a timer thread.
+//!
+//! Blocking structures (std/chan, std/task) combine them the same way: a waiter puts its
+//! Parker in a list inside the Lock's state and parks; whoever changes the state wakes the
+//! Parkers in the list, under the lock. Two rules make that safe:
+//!   1. Waking happens with the lock held, and a waiter takes its Parker out of every list
+//!      (under each lock) before it closes it. So no thread ever wakes a closed Parker (its
+//!      descriptor number could have been reused by then).
+//!   2. A waiter checks the state and registers in the same critical section, and every change
+//!      that could let it proceed wakes the list after it, so no wake-up is lost.
 
 import "core/os"
 import "poll.ei"

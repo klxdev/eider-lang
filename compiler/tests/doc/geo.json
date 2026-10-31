@@ -1,0 +1,7 @@
+{"format":1,
+"packages":[
+{"name":"shapes","dir":"<root>/compiler/tests/doc/shapes","version":"1.2.3","description":"The fixture of `eiderc doc` (compiler/tests/doc): \"shapes\" and their areas"}],
+"modules":[
+{"package":"shapes","path":"util/geo","file":"util/geo.ei","doc":"Vectors, in a module below the package directory (`shapes/util/geo`).","doc_line":1,"items":[
+{"kind":"record","name":"Vec","anchor":"Vec","sig":"pub type Vec","line":4,"public":true,"doc":"A vector.","members":[{"kind":"field","name":"dx","anchor":"Vec.dx","sig":"dx: i64","line":4,"public":true,"doc":""},{"kind":"field","name":"dy","anchor":"Vec.dy","sig":"dy: i64","line":4,"public":true,"doc":""}]},
+{"kind":"fn","name":"len","anchor":"len","sig":"pub fn len(v: Vec) -> i64","line":7,"public":true,"doc":"The taxicab length of `v`.","links":[{"start":14,"end":17,"to":"shapes/util/geo#Vec"}]}]}]}

@@ -1,8 +1,8 @@
-// sha256: SHA-256 (FIPS 180-4) in plain Eider.
-//
-// Eider has no bitwise operators yet, so: shifts are multiply/divide by powers of two,
-// rotations add two disjoint shifted halves, and AND goes through a 256x256 byte table
-// (XOR is a + b - 2*(a AND b)). Build a `Sha` once with `new()` and reuse it.
+//! sha256: SHA-256 (FIPS 180-4) in plain Eider.
+//!
+//! Eider has no bitwise operators yet, so: shifts are multiply/divide by powers of two,
+//! rotations add two disjoint shifted halves, and AND goes through a 256x256 byte table
+//! (XOR is a + b - 2*(a AND b)). Build a `Sha` once with `new()` and reuse it.
 
 pub type Sha = { and_t: List[u8], pow: List[u64], k: List[u32] }
 

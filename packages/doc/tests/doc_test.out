@@ -1,0 +1,73 @@
+-- summary
+sections: Start, API
+  0 depth 0 line 7 Intro -> guide/intro.md
+  0 depth 1 line 8 Deeper -> guide/deeper.md
+  0 depth 2 line 9 Deepest -> guide/deepest.md
+  0 depth 0 line 10 Back -> guide/back.md
+  1 depth 0 line 14 geo -> api:geo
+error: line 1: an entry before the first `## Section` heading
+error: line 3: expected `- [Title](path.md)` or `- [Title](api:package)`
+-- model
+packages 1 modules 2 items 3
+  ok   geo -> api/geo/index.html
+  ok   geo/shapes -> api/geo/shapes.html
+  ok   geo/shapes#Point -> api/geo/shapes.html#Point
+  ok   geo/shapes#Point.x -> api/geo/shapes.html#Point.x
+  ok   geo/util/vec -> api/geo/util/vec.html
+  err  geo/shapes#Nope: no item `Nope` in module geo/shapes
+  err  geo/nope: no module or package `geo/nope` was documented
+  err  geo#Point: no module or package `geo` was documented
+  err  std/stream: no module or package `std/stream` was documented
+source page: src/geo/util/vec.ei.html
+bad json: unexpected end of input in an object (expected a key) at line 1, column 13 (byte 12)
+-- paths
+rel: ../../src/std/stream.ei.html#L3
+rel: api/index.html
+root: ../../
+-- highlight
+<span class="kw">pub</span> <span class="kw">fn</span> f(x: <span class="ty">List</span>[u8]) -&gt; <span class="ty">Option</span>[i64] <span class="kw">uses</span> io { <span class="co">// &lt;b&gt;</span>
+    <span class="kw">let</span> s = <span class="st">&quot;a\&quot;&lt;&quot;</span> + <span class="nu">0x1f</span>
+
+<span class="kw">pub</span> <span class="kw">fn</span> origin(p: <a href="../geo/shapes.html#Point">geo.Point</a>) -&gt; <span class="ty">Point</span>
+-- doc tests
+  t.md:12 eider output=1
+  t.md:22 eider,compile_fail=E0401
+  t.md:32 eider,trap
+  target/doc-test/geo/shapes.ei:3 eider,fragment
+import "std/bytes"
+fn main() uses io {
+    let x = 1
+    print(x)
+}
+-- site
+error: target/doc-test/site/SUMMARY.md:5: cannot read the page: cannot read target/doc-test/site/gone.md: No such file or directory
+error: target/doc-test/site/SUMMARY.md:10: no module or package `nope` was documented
+error: target/doc-test/site/a.md:4: unknown api: target: no item `Missing` in module geo/shapes
+error: target/doc-test/site/a.md:4: links to a page SUMMARY.md doesn't list: c.md
+error: target/doc-test/site/a.md:5: no heading `#nope` in sub/b.md
+error: target/doc-test/site/a.md:5: images must be local files: https://example.com/x.png
+wrote index.html
+wrote a.html
+wrote sub/b.html
+wrote img/logo.txt
+wrote api/index.html
+wrote api/geo/index.html
+wrote api/geo/shapes.html
+wrote api/geo/util/vec.html
+wrote style.css
+wrote search-index.js
+wrote search-index.json
+a.html has href="sub/b.html#second"
+a.html has href="api/geo/shapes.html#Point"
+a.html has &lt;script&gt;alert(1)&lt;/script&gt;
+a.html has <a href="sub/b.html">B</a>
+a.html has aria-current="page"
+shapes.html has id="Point"
+shapes.html has id="Point.x"
+shapes.html has id="origin"
+shapes.html has <a href="#Point">Point</a>
+shapes.html has <p>Shapes. More.</p>
+shapes.html has Capabilities: <code>io</code>
+shapes.html has  = {
+    x: i64,
+}

@@ -1,9 +1,9 @@
-// resolve: from a root manifest to the full package graph (minimal version selection).
-//
-// Every requirement reachable from the root is visited, including the requirements of
-// versions that end up not selected (as in Go's MVS). Then, per package name, the highest
-// required version wins, and only packages reachable through the selected versions are
-// kept. A dependency's capability grant is the intersection of what every depender grants.
+//! resolve: from a root manifest to the full package graph (minimal version selection).
+//!
+//! Every requirement reachable from the root is visited, including the requirements of
+//! versions that end up not selected (as in Go's MVS). Then, per package name, the highest
+//! required version wins, and only packages reachable through the selected versions are
+//! kept. A dependency's capability grant is the intersection of what every depender grants.
 
 import "core/sys"
 import "std/bytes"

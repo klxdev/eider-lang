@@ -1,0 +1,284 @@
+== headings
+<h1 id="title">Title</h1>
+<h2 id="sub-section">Sub <em>section</em></h2>
+<h3 id="three">Three</h3>
+<h4 id="four">Four</h4>
+<p>#nospace
+####### seven</p>
+== setext
+<h1 id="big">Big</h1>
+<h2 id="small">Small</h2>
+== paragraphs
+<p>one line
+lazy second</p>
+<p>new para<br>
+with hard break<br>
+and backslash break</p>
+== emphasis
+<p><em>em</em> <em>em</em> <strong>strong</strong> <strong>strong</strong> <em><strong>both</strong></em> a * b</p>
+== emphasis tricky
+<p>2 * 3 * 4 and snake_case_name and *
+and <strong>init</strong> and <em>a <strong>b</strong> c</em> and *<em>x</em></p>
+== emphasis across a link
+<p><em>see <a href="x.md">the docs</a> now</em></p>
+== code spans
+<p><code>code</code> and <code>a`b</code> and <code>``</code> and `unclosed and <code>x</code></p>
+== links
+<p><a href="http://e.com">a</a> <a href="u" title="T">t</a> <a href="f(x).md">p</a> [not a link] [x] (y) <a href="https://auto.example/a?b=c">https://auto.example/a?b=c</a></p>
+== images
+<p><img src="img.png" alt="alt text" title="T"> <img src="empty.png" alt=""></p>
+== escapes
+<p>*not em* [x] ` a\b \q</p>
+== raw html is text
+<p>&lt;script&gt;alert(1)&lt;/script&gt; &lt;b&gt;bold&lt;/b&gt; &amp; &quot;q&quot; &#39;a&#39; &amp;amp;</p>
+<p>&lt;div&gt;
+block
+&lt;/div&gt;</p>
+== dangerous links
+<p>x [y](JAVA SCRIPT:x) z i <a href="https://e.com/&quot;q">ok</a></p>
+== lists
+<ul>
+<li>a</li>
+<li>b
+<ul>
+<li>c
+<ul>
+<li>d</li>
+</ul>
+</li>
+</ul>
+</li>
+<li>e</li>
+</ul>
+<ol>
+<li>one</li>
+<li>two</li>
+</ol>
+<ol start="3">
+<li>three</li>
+<li>four</li>
+</ol>
+== nested ordered/bullet, 3 levels
+<ol>
+<li>first
+<ul>
+<li>bullet
+<ol>
+<li>deep</li>
+<li>deeper</li>
+</ol>
+</li>
+</ul>
+</li>
+<li>second</li>
+</ol>
+== loose list
+<ul>
+<li>
+<p>a</p>
+</li>
+<li>
+<p>b</p>
+</li>
+<li>
+<p>c</p>
+</li>
+</ul>
+== item with paragraphs
+<ul>
+<li>
+<p>para one</p>
+<p>para two</p>
+</li>
+<li>
+<p>next</p>
+</li>
+</ul>
+== item with a fence
+<ul>
+<li>
+<p>run this:</p>
+<pre><code class="language-sh"># not a heading
+- not an item
+</code></pre>
+</li>
+<li>
+<p>done</p>
+</li>
+</ul>
+== list markers
+<ul>
+<li>star</li>
+</ul>
+<ul>
+<li>plus</li>
+</ul>
+<hr>
+<ul>
+<li>after hr</li>
+</ul>
+== ordered start and interruption
+<p>Text
+2. no list</p>
+<ol start="7">
+<li>seven</li>
+<li>eight</li>
+</ol>
+== fences
+<pre><code class="language-eider">fn main() {}
+# hash
+- dash
+</code></pre>
+<pre><code>tilde
+```
+still code
+</code></pre>
+<pre><code>```
+four
+</code></pre>
+== unclosed fence
+<p>text</p>
+<pre><code class="language-text">runs
+
+to the end
+</code></pre>
+== block quote
+<blockquote>
+<p>quoted
+lazy</p>
+<ul>
+<li>item
+<ul>
+<li>nested</li>
+</ul>
+</li>
+</ul>
+<blockquote>
+<p>deeper</p>
+</blockquote>
+</blockquote>
+== callouts
+<blockquote class="callout note">
+<p><strong>Note:</strong> a note.</p>
+</blockquote>
+<blockquote class="callout warning">
+<p><strong>Warning:</strong> careful.</p>
+</blockquote>
+<blockquote class="callout tip">
+<p><strong>Tip:</strong> try this.</p>
+</blockquote>
+<blockquote>
+<p><strong>Other:</strong> plain.</p>
+</blockquote>
+== thematic breaks
+<p>a</p>
+<hr>
+<hr>
+<hr>
+<hr>
+== table
+<table>
+<thead>
+<tr><th style="text-align:left">Left</th><th style="text-align:center">Center</th><th style="text-align:right">Right</th><th>None</th></tr>
+</thead>
+<tbody>
+<tr><td style="text-align:left">a</td><td style="text-align:center"><em>b</em></td><td style="text-align:right"><code>c</code></td><td>d</td></tr>
+<tr><td style="text-align:left">e | f</td><td style="text-align:center">short</td><td style="text-align:right"></td><td></td></tr>
+<tr><td style="text-align:left">not</td><td style="text-align:center">a</td><td style="text-align:right">row?</td><td></td></tr>
+</tbody>
+</table>
+<p>after</p>
+== table code pipe
+<table>
+<thead>
+<tr><th>op</th><th>meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>a | b</code></td><td>or</td></tr>
+<tr><td>`x</td><td>y`</td></tr>
+</tbody>
+</table>
+== anchors
+<h1 id="hello-world">Hello, World!</h1>
+<h2 id="hello-world-1">Hello World</h2>
+<h2 id="hello-world-2">hello   world</h2>
+<h2 id="Ünïcode-code">Ünïcode &amp; <code>code</code></h2>
+<h2 id="hello-world-3">Hello World</h2>
+== crlf and tabs
+<ul>
+<li>one</li>
+<li>two</li>
+</ul>
+== more links
+<p><a href="dest with space.md">a</a> <a href="big.png"><img src="i.png" alt="img"></a> javascript:alert(1) c a__b__c</p>
+== lazy item and quote in item
+<ul>
+<li>first line
+continued lazily</li>
+<li>
+<blockquote>
+<p>quoted in item
+more</p>
+</blockquote>
+</li>
+</ul>
+== empty items
+<ul>
+<li></li>
+<li>b</li>
+</ul>
+<ul>
+<li></li>
+</ul>
+== links
+3 a.md
+4 p.png image
+8 api:std/stream#BufReader
+20 c.md
+== headings
+1 1 the-title The Title
+6 2 usage Usage
+26 2 usage-1 Usage
+== code blocks
+10|eider|fn main() {}
+14|eider,fragment|print(1)
+22|output|1
+== title
+The Title
+== summary
+Reads a.b and more.
+No full stop here but a second line
+Version 1.2 is out.
+== options
+<h1>The Title</h1>
+<p>See <a href="a.html">one</a> and
+<img src="img/p.png" alt="pic">.</p>
+<h2>Usage</h2>
+<ul>
+<li>
+<p>item <a href="../api/std/stream.html#BufReader">two</a></p>
+<pre><code class="language-eider">[eider]fn main() {}
+</code></pre>
+</li>
+</ul>
+<blockquote>
+<pre><code class="language-eider">[eider,fragment]print(1)
+</code></pre>
+</blockquote>
+<table>
+<thead>
+<tr><th>a</th><th>b</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="c.md">three</a></td><td>x</td></tr>
+</tbody>
+</table>
+<pre><code class="language-output">[output]1
+</code></pre>
+<h2>Usage</h2>
+== inline_html
+<em>x</em> <code>y</code> <a href="a.html">z</a> &lt;b&gt;
+== anchor
+a-b--cd_e
+== escape
+&lt;a href=&quot;x&quot;&gt;&amp;&#39;&lt;/a&gt;

@@ -1,17 +1,17 @@
-// http/router: routes by method and path pattern to handlers, with path parameters.
-//
-// Patterns are `/`-separated segments: a literal (`users`), a parameter (`:id`, one
-// non-empty segment), or a rest parameter (`*path`, the last segment: everything after,
-// possibly empty). The request path is split at `/` first and each segment is then
-// percent-decoded, so an encoded slash (`%2F`) stays inside its segment and can't reach
-// another route; a malformed escape is 400. Trailing slashes are significant (`/a/` is not
-// `/a`).
-//
-// When several routes match a path, the most specific wins: comparing segment by segment, a
-// literal beats a parameter, which beats a rest parameter (then the earlier route). If routes
-// match the path but none has the method, the answer is 405 with `Allow`; if none match,
-// the router's not-found handler (404 by default). A HEAD request uses the GET route when
-// there is no HEAD route (the server leaves out the body).
+//! http/router: routes by method and path pattern to handlers, with path parameters.
+//!
+//! Patterns are `/`-separated segments: a literal (`users`), a parameter (`:id`, one
+//! non-empty segment), or a rest parameter (`*path`, the last segment: everything after,
+//! possibly empty). The request path is split at `/` first and each segment is then
+//! percent-decoded, so an encoded slash (`%2F`) stays inside its segment and can't reach
+//! another route; a malformed escape is 400. Trailing slashes are significant (`/a/` is not
+//! `/a`).
+//!
+//! When several routes match a path, the most specific wins: comparing segment by segment, a
+//! literal beats a parameter, which beats a rest parameter (then the earlier route). If routes
+//! match the path but none has the method, the answer is 405 with `Allow`; if none match,
+//! the router's not-found handler (404 by default). A HEAD request uses the GET route when
+//! there is no HEAD route (the server leaves out the body).
 
 import "core/sys"
 import "std/bytes"

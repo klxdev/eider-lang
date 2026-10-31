@@ -1,38 +1,38 @@
-// http/server: an HTTP/1.1 server over std/net, with deadlines on every wait and graceful
-// shutdown through a cancellation token (docs/services.md "Concurrency").
-//
-// Model: one accepting thread (the caller of `serve`) and a fixed pool of worker threads
-// (std/task.Pool). The acceptor hands each connection to the pool; a worker serves that
-// connection, request after request, with blocking-style code: it waits on the
-// connection's socket and the server's stop signal with a deadline, parses incrementally
-// (parse.ei), calls the handler, and writes the response before its write deadline. This is
-// the simplest sound model on today's runtime (OS threads, no stackless tasks yet, C4): no
-// shared mutable state except one Lock of counters, and the number of threads is fixed.
-// Its cost is one OS thread per connection being served, so `workers` is the number of
-// connections served at once.
-//
-// - Back-pressure: accepted connections wait in the pool's bounded queue (`queue`); when it
-//   is full the acceptor answers `503` and closes. While connections wait, a worker closes
-//   its keep-alive connection after the current response (`Connection: close`), so idle
-//   keep-alive clients can't starve new ones.
-// - Deadlines (per connection): `idle_timeout` while waiting for a request to start (a new
-//   connection, or between keep-alive requests; then the connection is just closed);
-//   `read_timeout` from a request's first byte to its last (then `408`); `write_timeout`
-//   for sending one response (then the connection is dropped). `max_requests` per
-//   connection, then `Connection: close`.
-// - Errors in a request are answered with the parser's status (400, 413, 414, 431, 501,
-//   505) and the connection is closed: after a framing error the next request can't be
-//   found safely. Closing after a response half-closes and drains what the client still
-//   sends for a moment (a lingering close), so the client reads the response instead of a
-//   reset.
-// - Shutdown: cancel the token given to `serve`. The acceptor takes the connections already
-//   in the listen backlog, then closes the listener; every worker finishes the request it
-//   is reading or handling (answering it with `Connection: close`), closes idle connections
-//   at once, and serves a queued connection only if its request has already arrived.
-//   `serve` returns when every worker is done.
-//
-// A handler runs on a worker thread and must not block forever (nothing can interrupt it).
-// A trap (panic, overflow) in a handler ends the whole process, as any trap does today.
+//! http/server: an HTTP/1.1 server over std/net, with deadlines on every wait and graceful
+//! shutdown through a cancellation token (docs/services.md "Concurrency").
+//!
+//! Model: one accepting thread (the caller of `serve`) and a fixed pool of worker threads
+//! (std/task.Pool). The acceptor hands each connection to the pool; a worker serves that
+//! connection, request after request, with blocking-style code: it waits on the
+//! connection's socket and the server's stop signal with a deadline, parses incrementally
+//! (parse.ei), calls the handler, and writes the response before its write deadline. This is
+//! the simplest sound model on today's runtime (OS threads, no stackless tasks yet, C4): no
+//! shared mutable state except one Lock of counters, and the number of threads is fixed.
+//! Its cost is one OS thread per connection being served, so `workers` is the number of
+//! connections served at once.
+//!
+//! - Back-pressure: accepted connections wait in the pool's bounded queue (`queue`); when it
+//!   is full the acceptor answers `503` and closes. While connections wait, a worker closes
+//!   its keep-alive connection after the current response (`Connection: close`), so idle
+//!   keep-alive clients can't starve new ones.
+//! - Deadlines (per connection): `idle_timeout` while waiting for a request to start (a new
+//!   connection, or between keep-alive requests; then the connection is just closed);
+//!   `read_timeout` from a request's first byte to its last (then `408`); `write_timeout`
+//!   for sending one response (then the connection is dropped). `max_requests` per
+//!   connection, then `Connection: close`.
+//! - Errors in a request are answered with the parser's status (400, 413, 414, 431, 501,
+//!   505) and the connection is closed: after a framing error the next request can't be
+//!   found safely. Closing after a response half-closes and drains what the client still
+//!   sends for a moment (a lingering close), so the client reads the response instead of a
+//!   reset.
+//! - Shutdown: cancel the token given to `serve`. The acceptor takes the connections already
+//!   in the listen backlog, then closes the listener; every worker finishes the request it
+//!   is reading or handling (answering it with `Connection: close`), closes idle connections
+//!   at once, and serves a queued connection only if its request has already arrived.
+//!   `serve` returns when every worker is done.
+//!
+//! A handler runs on a worker thread and must not block forever (nothing can interrupt it).
+//! A trap (panic, overflow) in a handler ends the whole process, as any trap does today.
 
 import "core/sys"
 import "std/bytes"

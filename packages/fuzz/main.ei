@@ -1,39 +1,39 @@
-// eider-fuzz: a crash and consistency fuzzer for eiderc, plus an optional differential check
-// against a reference compiler (docs/compiler.md, "Testing").
-//
-//   scripts/fuzz-check.sh [count] [seed files...]       (default 500 mutants)
-//   SEED=n                     PRNG seed (default 1)
-//   MODE=semantic|wild         mutation strategy (default semantic)
-//   EIDERC=path                compiler under test (default ./target/eiderc-next: compiler/
-//                              built by the seed)
-//   REF=path|none              reference for `check --json` (default ./target/eiderc: the seed
-//                              built by scripts/ei; `none` turns the comparison off)
-//
-// Run from the repository root (the wrapper does). Mutates v0 programs (identifiers,
-// literals, type names, operators, small insertions; fuzz.ei) and holds eiderc to invariants
-// that need no second compiler:
-//
-//   check   `check --json` ends within 30 s, with exit 0 and no output or exit 1 and one or
-//           more `{"error":"<code>",...}` lines (every independent error; at most 100, then
-//           a `{"note":...}` line), none repeated, and nothing on stderr (no internal error,
-//           no crash)
-//   emit-c  `emit-c` succeeds exactly when check does, and fails with check's first code
-//   build   a program check accepts builds (the C it lowers to compiles), unless it declares an
-//           `extern "c"` fn (which may name a symbol nothing defines; such programs are
-//           counted, not built)
-//   run     that program, run for at most 10 s, exits (0, 101 for a trap, or its own code);
-//           a signal is a failure, except SIGSEGV, which is counted separately: a stack
-//           overflow from unbounded recursion ends that way (no guard yet)
-//   ref     with REF, `check --json` exits as REF does and its first line (the first
-//           diagnostic) is exactly REF's. With compiler/ equal to the seed's source the two
-//           agree by construction; after a compiler change this shows every first diagnostic
-//           the change moved (intended or not). (A REF that stops at the first error prints
-//           only that line; further lines are the errors found after it.)
-//
-// A failing mutant is kept next to its seed (imports are relative) as fuzz_<n>.ei, so the
-// failing command replays it. Mutants eiderc calls `unsupported` are skipped. C warnings
-// (e.g. gcc's -Winfinite-recursion) are counted, not failures. Exit status 1 when any
-// mutant failed.
+//! eider-fuzz: a crash and consistency fuzzer for eiderc, plus an optional differential check
+//! against a reference compiler (docs/compiler.md, "Testing").
+//!
+//!   scripts/fuzz-check.sh [count] [seed files...]       (default 500 mutants)
+//!   SEED=n                     PRNG seed (default 1)
+//!   MODE=semantic|wild         mutation strategy (default semantic)
+//!   EIDERC=path                compiler under test (default ./target/eiderc-next: compiler/
+//!                              built by the seed)
+//!   REF=path|none              reference for `check --json` (default ./target/eiderc: the seed
+//!                              built by scripts/ei; `none` turns the comparison off)
+//!
+//! Run from the repository root (the wrapper does). Mutates v0 programs (identifiers,
+//! literals, type names, operators, small insertions; fuzz.ei) and holds eiderc to invariants
+//! that need no second compiler:
+//!
+//!   check   `check --json` ends within 30 s, with exit 0 and no output or exit 1 and one or
+//!           more `{"error":"<code>",...}` lines (every independent error; at most 100, then
+//!           a `{"note":...}` line), none repeated, and nothing on stderr (no internal error,
+//!           no crash)
+//!   emit-c  `emit-c` succeeds exactly when check does, and fails with check's first code
+//!   build   a program check accepts builds (the C it lowers to compiles), unless it declares an
+//!           `extern "c"` fn (which may name a symbol nothing defines; such programs are
+//!           counted, not built)
+//!   run     that program, run for at most 10 s, exits (0, 101 for a trap, or its own code);
+//!           a signal is a failure, except SIGSEGV, which is counted separately: a stack
+//!           overflow from unbounded recursion ends that way (no guard yet)
+//!   ref     with REF, `check --json` exits as REF does and its first line (the first
+//!           diagnostic) is exactly REF's. With compiler/ equal to the seed's source the two
+//!           agree by construction; after a compiler change this shows every first diagnostic
+//!           the change moved (intended or not). (A REF that stops at the first error prints
+//!           only that line; further lines are the errors found after it.)
+//!
+//! A failing mutant is kept next to its seed (imports are relative) as fuzz_<n>.ei, so the
+//! failing command replays it. Mutants eiderc calls `unsupported` are skipped. C warnings
+//! (e.g. gcc's -Winfinite-recursion) are counted, not failures. Exit status 1 when any
+//! mutant failed.
 
 import "core/sys"
 import "std/bytes"

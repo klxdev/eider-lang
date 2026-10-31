@@ -1,5 +1,5 @@
-// std/io: raw byte output to stdout/stderr (flushes `print` output first so order is kept),
-// and raw byte input from stdin.
+//! std/io: raw byte output to stdout/stderr (flushes `print` output first so order is kept),
+//! and raw byte input from stdin.
 
 import "core/sys"
 

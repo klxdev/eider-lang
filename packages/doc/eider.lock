@@ -1,0 +1,16 @@
+# eider.lock: written by `eider-pkg`. Do not edit.
+version = 1
+
+[[package]]
+name = "json"
+version = "0.1.0"
+source = "path+../json"
+deps = []
+grants = []
+
+[[package]]
+name = "markdown"
+version = "0.1.0"
+source = "path+../markdown"
+deps = []
+grants = []

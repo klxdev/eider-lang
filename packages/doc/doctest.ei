@@ -1,0 +1,289 @@
+//! `eider-doc test`: code blocks are tests (docs/site/CONTRACT.md, "Code blocks are tests").
+//! The info string of a fence says what is checked:
+//!
+//! | Info string | Test |
+//! |---|---|
+//! | `eider` | a whole program: it builds and runs; when the next code block is `output`, stdout must equal it, otherwise it must exit 0 |
+//! | `eider,fragment` | the lines go into `fn main() uses io { ... }` (`import` lines above it), then as `eider` |
+//! | `eider,compile_fail` or `eider,compile_fail=E0308` | `eiderc check` fails (with that code first) |
+//! | `eider,trap` | it builds, and running it traps (exit 101) |
+//! | `eider,ignore` | not tested |
+//!
+//! Each test is built and run in a fresh directory with the toolchain's compiler; a run is
+//! stopped after 30 seconds. The same fences in `///` and `//!` comments are tests too, at
+//! their source lines.
+
+import "std/bytes"
+import "std/fs"
+import "std/proc"
+import "markdown"
+import "model.ei"
+
+/// One test: where its fence starts, its info string and code, and the next block's text
+/// when that block is `output`.
+pub type Case = { file: List[u8], line: u32, info: List[u8], code: List[u8], has_output: bool, output: List[u8] }
+
+/// The tests in Markdown `text` from `file`, whose line 1 is the file's line `first`.
+pub fn cases(file: List[u8], text: List[u8], first: u32) -> List[Case] {
+    let mut out: List[Case] = List.new()
+    let cs = markdown.code_blocks(markdown.parse(text))
+    for i in 0..cs.len() {
+        let c = cs[i].copy()
+        if !(bytes.eq(c.info, "eider".bytes()) || bytes.starts_with(c.info, "eider,".bytes())) { continue }
+        let mut has = false
+        let mut want: List[u8] = List.new()
+        if i + 1 < cs.len() && bytes.eq(cs[i + 1].info, "output".bytes()) {
+            has = true
+            want = cs[i + 1].text.copy()
+        }
+        out.push(Case(file.copy(), first + c.line - 1, c.info, c.text, has, want))
+    }
+    out
+}
+
+/// The tests in the doc comments of the API (module docs from their `doc_line`, items from
+/// the line above their `///` block's first line).
+pub fn api_cases(api: model.Api) -> List[Case] {
+    let mut out: List[Case] = List.new()
+    for md in api.modules {
+        let file = fs.join(md.dir, md.file)
+        if md.doc.len() > 0 {
+            let first: u32 = if md.doc_line > 0 { md.doc_line } else { 1 as u32 }
+            for c in cases(file.copy(), md.doc.copy(), first) { out.push(c) }
+        }
+        for i in md.items { item_cases(api, i, file.copy(), inout out) }
+    }
+    out
+}
+
+fn item_cases(api: model.Api, i: u32, file: List[u8], inout out: List[Case]) {
+    let it = api.items[i as usize]
+    if it.doc.len() > 0 {
+        let n = bytes.split(it.doc, 10).len() as u32
+        let first: u32 = if it.line > n { it.line - n } else { 1 as u32 }
+        for c in cases(file.copy(), it.doc.copy(), first) { out.push(c) }
+    }
+    for m in it.members { item_cases(api, m, file.copy(), inout out) }
+}
+
+/// What a test expects, from its info string.
+type Mode = { kind: u32, fragment: bool, code: List[u8], bad: List[u8] }
+
+const RUN: u32 = 0
+const FAIL: u32 = 1
+const TRAP: u32 = 2
+const IGNORE: u32 = 3
+
+fn mode_of(info: List[u8]) -> Mode {
+    let mut m = Mode(RUN, false, List.new(), List.new())
+    let parts = bytes.split(info, 44)
+    for k in 1..parts.len() {
+        let p = bytes.trim(parts[k])
+        if bytes.eq(p, "fragment".bytes()) {
+            m.fragment = true
+        } else if bytes.eq(p, "compile_fail".bytes()) {
+            m.kind = FAIL
+        } else if bytes.starts_with(p, "compile_fail=".bytes()) {
+            m.kind = FAIL
+            m.code = bytes.slice(p, 13, p.len())
+        } else if bytes.eq(p, "trap".bytes()) {
+            m.kind = TRAP
+        } else if bytes.eq(p, "ignore".bytes()) {
+            m.kind = IGNORE
+        } else {
+            m.bad = p.copy()
+        }
+    }
+    m
+}
+
+/// A fragment as a program: its `import` lines first, the rest inside `main`.
+pub fn program(code: List[u8], fragment: bool) -> List[u8] {
+    if !fragment { return code }
+    let mut imports: List[u8] = List.new()
+    let mut body: List[u8] = List.new()
+    for l in bytes.lines(code) {
+        if bytes.starts_with(bytes.trim(l), "import ".bytes()) {
+            bytes.append(inout imports, l)
+            imports.push(10)
+        } else {
+            body.push(32)
+            body.push(32)
+            body.push(32)
+            body.push(32)
+            bytes.append(inout body, l)
+            body.push(10)
+        }
+    }
+    bytes.append(inout imports, "fn main() uses io {\n".bytes())
+    bytes.append(inout imports, body)
+    bytes.append(inout imports, "}\n".bytes())
+    imports
+}
+
+/// The totals and a report line per failure.
+pub type Outcome = { passed: u32, failed: u32, ignored: u32, report: List[List[u8]] }
+
+fn fail_line(c: Case, why: List[u8], detail: List[u8]) -> List[u8] {
+    let mut m = c.file.copy()
+    m.push(58)
+    bytes.append(inout m, bytes.from_u64(c.line as u64))
+    bytes.append(inout m, ": FAIL (".bytes())
+    bytes.append(inout m, c.info.copy())
+    bytes.append(inout m, "): ".bytes())
+    bytes.append(inout m, why)
+    let ls = bytes.lines(detail)
+    let mut k: usize = 0
+    for l in ls {
+        if k == 12 {
+            bytes.append(inout m, "\n    ...".bytes())
+            break
+        }
+        bytes.append(inout m, "\n    ".bytes())
+        bytes.append(inout m, l)
+        k += 1
+    }
+    m
+}
+
+fn both(o: proc.Output) -> List[u8] {
+    let mut t = o.err.copy()
+    bytes.append(inout t, o.out.copy())
+    t
+}
+
+/// Runs every case with compiler `eiderc`, each in its own directory under `tmp`.
+pub fn run(cases: List[Case], eiderc: List[u8], tmp: List[u8]) -> Outcome uses io, fs, net {
+    let mut res = Outcome(0, 0, 0, List.new())
+    for n in 0..cases.len() {
+        let c = cases[n].copy()
+        let m = mode_of(c.info.copy())
+        if m.kind == IGNORE {
+            res.ignored += 1
+            continue
+        }
+        if m.bad.len() > 0 {
+            let mut why = "unknown attribute `".bytes()
+            bytes.append(inout why, m.bad.copy())
+            bytes.append(inout why, "`".bytes())
+            res.report.push(fail_line(c, why, List.new()))
+            res.failed += 1
+            continue
+        }
+        let dir = fs.join(tmp.copy(), bytes.concat("t".bytes(), bytes.from_u64(n as u64)))
+        match fs.mkdir_all(dir.copy()) {
+            Ok(_) => {}
+            Err(e) => {
+                res.report.push(fail_line(c, "cannot create a directory".bytes(), e.bytes()))
+                res.failed += 1
+                continue
+            }
+        }
+        let src = fs.join(dir.copy(), "main.ei".bytes())
+        match fs.write(src.copy(), program(c.code.copy(), m.fragment)) {
+            Ok(_) => {}
+            Err(e) => {
+                res.report.push(fail_line(c, "cannot write the program".bytes(), e.bytes()))
+                res.failed += 1
+                continue
+            }
+        }
+        let why = one(c.copy(), m, eiderc.copy(), dir, src)
+        if why.len() == 0 {
+            res.passed += 1
+        } else {
+            res.report.push(why)
+            res.failed += 1
+        }
+    }
+    res
+}
+
+fn argv1(a: List[u8]) -> List[List[u8]] {
+    let mut l: List[List[u8]] = List.new()
+    l.push(a)
+    l
+}
+
+fn argv4(a: List[u8], b: List[u8], c: List[u8], d: List[u8]) -> List[List[u8]] {
+    let mut l = argv1(a)
+    l.push(b)
+    l.push(c)
+    l.push(d)
+    l
+}
+
+fn argv5(a: List[u8], b: List[u8], c: List[u8], d: List[u8], e: List[u8]) -> List[List[u8]] {
+    let mut l = argv4(a, b, c, d)
+    l.push(e)
+    l
+}
+
+fn start(argv: List[List[u8]]) -> Result[proc.Output, List[u8]] uses io, fs, net {
+    match proc.run_with(argv, proc.limited(30000)) {
+        Ok(o) => Ok(o)
+        Err(e) => Err(e.bytes())
+    }
+}
+
+/// One test: empty when it passes, else its report.
+fn one(c: Case, m: Mode, eiderc: List[u8], dir: List[u8], src: List[u8]) -> List[u8] uses io, fs, net {
+    if m.kind == FAIL {
+        let o = match start(argv4(eiderc, "check".bytes(), "--json".bytes(), src)) {
+            Ok(x) => x
+            Err(e) => { return fail_line(c, "cannot run the compiler".bytes(), e) }
+        }
+        if o.code == 0 { return fail_line(c, "it compiles".bytes(), List.new()) }
+        if o.code != 1 { return fail_line(c, "the compiler failed".bytes(), both(o)) }
+        if m.code.len() > 0 {
+            let mut want = "{\"error\":\"".bytes()
+            bytes.append(inout want, m.code.copy())
+            want.push(34)
+            if !bytes.starts_with(o.out, want) {
+                let mut why = "the first error isn't ".bytes()
+                bytes.append(inout why, m.code)
+                return fail_line(c, why, o.out)
+            }
+        }
+        return List.new()
+    }
+    let exe = fs.join(dir, "prog".bytes())
+    let b = match start(argv5(eiderc, "build".bytes(), src, "-o".bytes(), exe.copy())) {
+        Ok(x) => x
+        Err(e) => { return fail_line(c, "cannot run the compiler".bytes(), e) }
+    }
+    if b.code != 0 { return fail_line(c, "it doesn't compile".bytes(), both(b)) }
+    let r = match start(argv1(exe)) {
+        Ok(x) => x
+        Err(e) => { return fail_line(c, "cannot run the program".bytes(), e) }
+    }
+    if r.timed_out { return fail_line(c, "it ran for more than 30 s".bytes(), List.new()) }
+    if m.kind == TRAP {
+        if r.code != 101 {
+            let mut why = "it should trap (exit 101) but exits ".bytes()
+            bytes.append(inout why, bytes.from_i64(r.code as i64))
+            return fail_line(c, why, both(r))
+        }
+        return List.new()
+    }
+    if c.has_output {
+        if !bytes.eq(r.out, c.output) {
+            let mut d = "expected:\n".bytes()
+            bytes.append(inout d, c.output.copy())
+            bytes.append(inout d, "got:\n".bytes())
+            bytes.append(inout d, r.out.copy())
+            if r.err.len() > 0 {
+                bytes.append(inout d, "stderr:\n".bytes())
+                bytes.append(inout d, r.err.copy())
+            }
+            return fail_line(c, "its output differs".bytes(), d)
+        }
+        return List.new()
+    }
+    if r.code != 0 {
+        let mut why = "it exits ".bytes()
+        bytes.append(inout why, bytes.from_i64(r.code as i64))
+        return fail_line(c, why, both(r))
+    }
+    List.new()
+}

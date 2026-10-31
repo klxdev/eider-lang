@@ -1,6 +1,6 @@
-// std/fd: file descriptors: open files, pipes, positioned I/O, sync, locks, non-blocking mode.
-// Thin wrappers over the core (core/ABI.md "File descriptors"); buffered streams come later
-// (layer/std). A descriptor is an i32; close it with `close`.
+//! std/fd: file descriptors: open files, pipes, positioned I/O, sync, locks, non-blocking mode.
+//! Thin wrappers over the core (core/ABI.md "File descriptors"); buffered streams come later
+//! (layer/std). A descriptor is an i32; close it with `close`.
 
 import "core/sys"
 import "core/os"

@@ -1,19 +1,19 @@
-// http/metrics: request counters and a latency histogram, exposed in the Prometheus text
-// exposition format (version 0.0.4) for a scraper to read from `GET /metrics`.
-//
-//     let m = metrics.new()
-//     r.get("/metrics", m.handler())
-//     let app = m.wrap(router.handler(r))
-//
-// Series:
-//   http_requests_total{method, code}        counter: requests answered
-//   http_requests_in_flight                  gauge: requests being handled now
-//   http_request_duration_seconds{le}        histogram: time in the wrapped handler
-// `method` is one of GET HEAD POST PUT PATCH DELETE OPTIONS or OTHER (a client chooses the
-// method, so it can't be allowed to make new series); `code` is the status. Series are
-// written sorted by method, then code, so the output is stable. A `Metrics` is shared by its
-// copies (one Lock), so the handler that serves it and the wrapper that counts see the same
-// numbers from every worker thread.
+//! http/metrics: request counters and a latency histogram, exposed in the Prometheus text
+//! exposition format (version 0.0.4) for a scraper to read from `GET /metrics`.
+//!
+//!     let m = metrics.new()
+//!     r.get("/metrics", m.handler())
+//!     let app = m.wrap(router.handler(r))
+//!
+//! Series:
+//!   http_requests_total{method, code}        counter: requests answered
+//!   http_requests_in_flight                  gauge: requests being handled now
+//!   http_request_duration_seconds{le}        histogram: time in the wrapped handler
+//! `method` is one of GET HEAD POST PUT PATCH DELETE OPTIONS or OTHER (a client chooses the
+//! method, so it can't be allowed to make new series); `code` is the status. Series are
+//! written sorted by method, then code, so the output is stable. A `Metrics` is shared by its
+//! copies (one Lock), so the handler that serves it and the wrapper that counts see the same
+//! numbers from every worker thread.
 
 import "core/sys"
 import "std/bytes"

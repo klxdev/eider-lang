@@ -1,13 +1,13 @@
-// http/client: a minimal blocking HTTP/1.1 client with deadlines: for tests, tools and
-// calling other services. A `Conn` is one connection at a time to one address, kept alive
-// between requests while the server allows it; when the server (or `close`) ended it, the
-// next request connects again. Every call takes a time.Deadline that bounds the whole
-// exchange (connecting, sending, reading the response).
-//
-// Not here yet (docs/services.md "Next steps"): TLS (C3: use a proxy), connection pools,
-// redirects, automatic retries (a request on a reused connection that the server had
-// already closed fails with Err; send it again on a new Conn if it is idempotent), streaming
-// bodies, and name resolution with deadlines (std/net.lookup blocks; pass an Addr).
+//! http/client: a minimal blocking HTTP/1.1 client with deadlines: for tests, tools and
+//! calling other services. A `Conn` is one connection at a time to one address, kept alive
+//! between requests while the server allows it; when the server (or `close`) ended it, the
+//! next request connects again. Every call takes a time.Deadline that bounds the whole
+//! exchange (connecting, sending, reading the response).
+//!
+//! Not here yet (docs/services.md "Next steps"): TLS (C3: use a proxy), connection pools,
+//! redirects, automatic retries (a request on a reused connection that the server had
+//! already closed fails with Err; send it again on a new Conn if it is idempotent), streaming
+//! bodies, and name resolution with deadlines (std/net.lookup blocks; pass an Addr).
 
 import "core/sys"
 import "std/bytes"
