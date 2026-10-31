@@ -1,0 +1,13 @@
+// garbage between items
+fn a() {}
+
+this is ( not an item
+  at all }
+
+fn b() {}
+
+let x = 1
+
+] ) }
+
+pub fn c() -> i32 { 1 }

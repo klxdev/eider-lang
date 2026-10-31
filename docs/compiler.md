@@ -126,7 +126,7 @@ another back end) attaches.
 
 Diagnostics: one list of codes (`diag.all_codes()`), human and `--json` rendering,
 machine-applicable fixes. Every independent error is reported, the first exactly as a
-compiler stopping at the first error reports it ("Several errors").
+compiler stopping at the first error reports it ("Front-end recovery", "Several errors").
 
 ## Writing the compiler in today's Eider
 
@@ -674,6 +674,48 @@ errors"). `eiderc ide <file.ei>
 - **Cost.** `eiderc ide compiler/main.ei` (the whole compiler, 27 files) takes about 0.25 s
   against 0.16 s for `check`.
 
+## Front-end recovery
+
+The lexer and parser can go on after an error, so every syntax error of a file can be
+reported at once. The first-error APIs are unchanged: `lex.lex` and `parse.parse` report the
+same error, at the same position, as before (`parse.parse` is now `parse_all` returning its
+first diagnostic).
+
+- **`lex.lex_all(src, inout names) -> Lexed2`** (`{ lexed: Lexed, diags: List[diag.Diag] }`)
+  never stops. A bad character is reported and skipped (a run of adjacent ones once); an
+  unterminated string ends at the end of its line; an unknown escape is reported and dropped
+  (one error per string literal); an unterminated block comment runs to the end of the file;
+  a too-large literal lexes as 0 with `big` set, `0x` with no digits as 0. `lex` and
+  `lex_all` share one scanner (`run`), which `lex` stops at the first error.
+- **`parse.parse_all(lx, names) -> Parsed`** (`{ p: P, diags: List[diag.Diag] }`) never
+  stops. Errors still unwind with `?` to the nearest recovery point: a statement of a
+  block, an arm of a match, or an item. There the error is recorded, the nodes the failed
+  part added are dropped (the arena keeps no unreachable nodes), tokens are skipped to a
+  resynchronisation point and an error node takes the part's place: `SError` for a
+  statement, an `Arm` with no patterns and an `EError` body for an arm, `IError` (with the
+  item's keyword and name when they parsed) for an item (ast.ei). A statement resumes after
+  the next newline or `;` at its own bracket depth (tracked as a stack, so a stray `)` is
+  passed over), or at a statement keyword starting a line outside any `{`; an arm after the
+  next newline or `,`; both stop at the `}` that closes their block or match. An item
+  resumes at the next token that starts an item (`fn` before a name, `unsafe` before `fn`,
+  `type const trait impl import test pub extern export module`) at depth 0, or in column 1
+  at the start of a line past unbalanced brackets. A token starting an item at the start of
+  a line also ends every block and match being skipped through, so after an unclosed brace
+  the next item parses as an item.
+- **No cascades.** No two errors at one position (`note`); skipped tokens are never parsed,
+  so they report nothing. `front.merge` drops a parser error that a lexer error explains:
+  on the line of a lexer error, at or after it, or anywhere after an unterminated block
+  comment.
+- **`front.ei`**: `analyze(src)` runs both and returns the parse and the diagnostics (the
+  lexer's, then the parser's, so the first is the one `eiderc check` reports today);
+  `report(file, src)` prints them as JSON lines, then the AST dump. Until the CLI has a
+  flag for it, `compiler/tests/recover/front_all.ei <file>` runs it.
+- **Tests.** scripts/test-compiler.sh's `recover` section: compiler/tests/recover/*.src
+  (several independent errors each; `.src`, not `.ei`, so the front-end loop and the oracle
+  don't see them) against their `.recover` goldens (BLESS=1 rewrites them), and for every
+  `.ei` in the repository the first diagnostic of `front.report` equals `eiderc parse
+  --json`'s error, and without one the dump is `eiderc parse`'s.
+
 ## Several errors
 
 A run reports every independent error, not only the first. The rule that keeps this
@@ -949,6 +991,7 @@ compiler/
   source.ei  lex.ei  intern.ei  ast.ei  parse.ei  resolve.ei  types.ei  fold.ei  pats.ei
   check.ei  ir.ei  lower.ei  emit.ei  diag.ei  driver.ei  comptime.ei  suite.ei  sha256.ei
   ide.ei              the IDE analysis API (`eiderc ide`; "IDE analysis")
+  front.ei            every syntax error at once ("Front-end recovery")
   tests/              pass-level golden tests (lex, lex_ok, check, ir, run, wasm, export, ide, ...)
 tests/oracle/         the recorded expected results (scripts/test-compiler.sh, BLESS=1)
 ```

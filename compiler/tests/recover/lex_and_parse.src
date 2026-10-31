@@ -1,0 +1,22 @@
+// a bad character plus a parse error, and the other lexer recoveries
+fn a() -> i32 {
+    let x = 5 @ 3
+    let y = 2 * / x
+    x
+}
+
+fn b() {
+    let s = "unterminated
+    let t = "bad \q escape"
+    let n = 99999999999999999999999999999999999999999
+    let h = 0x
+    print(s)
+}
+
+fn c() -> i32 {
+    let z = ) 1
+    z
+}
+
+/* an unterminated comment runs to the end
+fn d() { let = }

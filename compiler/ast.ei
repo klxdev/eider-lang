@@ -34,6 +34,12 @@
 //            ITrait a=sym b=public [c/d]=IFn   IImpl a=trait TName+1 b=target type [c/d]=GParam [e/f]=IFn
 //            IConst a=sym b=public c=type d=value e=comptime
 //            ITest a=name str b=block      IImport a=path str b=alias sym+1
+// errors     (only from parse.parse_all, so never in a tree that parsed without errors; the
+//            span runs from the first skipped token to the end of the last one)
+//            EError: an expression that failed to parse; a match arm that failed is an Arm
+//                with no patterns and an EError body
+//            SError: a statement that failed, or what was skipped after one on its line
+//            IError a=item keyword sym+1 b=name sym+1 (0 when not reached): a skipped item
 
 pub type Kind =
     | TName | TGeneric | TArray | TTuple | TUnit | TFn
@@ -45,6 +51,7 @@ pub type Kind =
     | PWild | PName | PInt | PBool | PStr | PVariant | PTuple
     | IType | Variant | VField | Field | GParam | IFn | Param | Cap | ITrait | IImpl | IConst
     | ITest | IImport
+    | EError | SError | IError
 
 pub type Node = {
     kind: Kind,
@@ -181,5 +188,8 @@ pub fn kind_text(k: Kind) -> str {
         IConst => "IConst"
         ITest => "ITest"
         IImport => "IImport"
+        EError => "EError"
+        SError => "SError"
+        IError => "IError"
     }
 }

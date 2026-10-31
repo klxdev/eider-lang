@@ -1,0 +1,55 @@
+{"error":"E0001","span":{"file":"compiler/tests/recover/multi.src","line":4,"col":5},"message":"`let` is a keyword and can't be used as a name"}
+{"error":"E0001","span":{"file":"compiler/tests/recover/multi.src","line":11,"col":5},"message":"expected an expression"}
+{"error":"E0001","span":{"file":"compiler/tests/recover/multi.src","line":17,"col":1},"message":"expected `)`"}
+{"error":"E0001","span":{"file":"compiler/tests/recover/multi.src","line":21,"col":11},"message":"expected an expression"}
+{"error":"E0001","span":{"file":"compiler/tests/recover/multi.src","line":25,"col":13},"message":"expected a name"}
+(IFn 2:4 name=a end=2:14
+  ret (TName 2:11 name=i32)
+  body (Block 2:15 end=6:1
+    stmt (SError 3:5 end=3:16)
+    stmt (SLet 4:5 name=y
+      init (EInt 4:13 value=2))
+    stmt (SExpr 5:5
+      expr (EBinary 5:7 op=`+`
+        lhs (EIdent 5:5 name=x)
+        rhs (EIdent 5:9 name=y)))))
+(IFn 8:4 name=b end=8:20
+  param (Param 8:6 name=n
+    type (TName 8:9 name=i32))
+  ret (TName 8:17 name=i32)
+  body (Block 8:21 end=13:1
+    stmt (SExpr 9:5
+      expr (EIf 9:5
+        cond (EBinary 9:10 op=`>`
+          lhs (EIdent 9:8 name=n)
+          rhs (EInt 9:12 value=0))
+        then (Block 9:14 end=11:5
+          stmt (SError 10:9 end=10:19))))
+    stmt (SExpr 12:5
+      expr (EIdent 12:5 name=n))))
+(IError 15:1 item=const name=C end=15:21)
+(IType 17:6 name=Point
+  member (Field 17:16 name=x
+    type (TName 17:19 name=i32))
+  member (Field 17:24 name=y
+    type (TName 17:27 name=i32)))
+(IFn 19:4 name=c end=19:7
+  body (Block 19:8 end=23:1
+    stmt (SLet 20:5 name=p
+      init (ECall 20:13 name=Point
+        arg (EArg 20:19
+          expr (EInt 20:19 value=1))
+        arg (EArg 20:22
+          expr (EInt 20:22 value=2))))
+    stmt (SError 21:5 end=21:14)
+    stmt (SExpr 22:5
+      expr (ECall 22:5 name=print
+        arg (EArg 22:11
+          expr (EField 22:13 name=x
+            recv (EIdent 22:11 name=p)))))))
+(IError 25:1 item=fn name=d end=25:35)
+(IFn 27:4 name=ok end=27:15
+  ret (TName 27:12 name=i32)
+  body (Block 27:16 end=27:21
+    stmt (SExpr 27:18
+      expr (EInt 27:18 value=42))))

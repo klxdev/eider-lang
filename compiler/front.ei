@@ -1,0 +1,61 @@
+// front: every syntax error of a file at once, from the recovering lexer and parser
+// (lex.lex_all, parse.parse_all). `analyze` returns the tree and the diagnostics; `report`
+// prints them as compiler/tests/recover's goldens record them.
+
+import "deps/core/sys.ei"
+import "deps/std/bytes.ei"
+import "intern.ei"
+import "lex.ei"
+import "diag.ei"
+import "parse.ei"
+import "dump.ei"
+
+/// The parse (with error nodes where parts failed) and every lex and parse diagnostic:
+/// first the lexer's, then the parser's, each in the order found, so the first is the one
+/// `eiderc check` reports today. A parser error that a lexer error explains is left out
+/// (`explained`).
+pub type Front = { parsed: parse.Parsed, diags: List[diag.Diag] }
+
+pub fn analyze(src: List[u8]) -> Front uses ffi {
+    var names = intern.new()
+    let lx = lex.lex_all(src, inout names)
+    let parsed = parse.parse_all(lx.lexed, names)
+    Front(parsed, merge(lx.diags, parsed.diags))
+}
+
+/// The lexer's diagnostics, then the parser's that no lexer error explains.
+pub fn merge(lexd: List[diag.Diag], parsed: List[diag.Diag]) -> List[diag.Diag] uses ffi {
+    var out = lexd
+    for d in parsed {
+        if !explained(lexd, d) { out.push(d) }
+    }
+    out
+}
+
+/// Whether parser error `d` may come only from the lexer's recovery: it is on the line of a
+/// lexer error, at or after it (the skipped character, or the literal that lexed as 0), or
+/// anywhere after an unterminated block comment (which runs to the end of the file).
+fn explained(lexd: List[diag.Diag], d: diag.Diag) -> bool uses ffi {
+    let comment = sys.lit("unterminated block comment")
+    for e in lexd {
+        let after = d.line > e.line || (d.line == e.line && d.col >= e.col)
+        if d.line == e.line && d.col >= e.col { return true }
+        if after && bytes.eq(e.msg, comment) { return true }
+    }
+    false
+}
+
+/// Every diagnostic as a JSON line (diag.json, against `file`), then the AST dump (dump.ei,
+/// error nodes included).
+pub fn report(file: List[u8], src: List[u8]) -> List[u8] uses ffi {
+    let f = analyze(src)
+    var out: List[u8] = List.new()
+    for d in f.diags {
+        var d2 = d
+        d2.msg = diag.demangle(d.msg)
+        bytes.append(inout out, diag.json(d2, file))
+        out.push(10)
+    }
+    bytes.append(inout out, dump.program(f.parsed.p))
+    out
+}

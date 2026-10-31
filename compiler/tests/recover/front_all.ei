@@ -1,0 +1,24 @@
+// The recover tests' driver (scripts/test-compiler.sh, "recover"): `front_all <file>` prints
+// every lex and parse diagnostic of the file as JSON lines, then its AST dump with the error
+// nodes (front.report). Until `eiderc parse --all-errors` exists this is how the recovering
+// front end runs.
+import "../../front.ei"
+import "../../deps/std/env.ei"
+import "../../deps/std/fs.ei"
+import "../../deps/std/io.ei"
+
+fn main() uses io, fs, ffi {
+    let argv = env.args()
+    if argv.len() != 2 {
+        print("usage: front_all <file>")
+        env.exit(2)
+        return
+    }
+    match fs.read(argv[1]) {
+        Ok(src) => io.out(front.report(argv[1], src))
+        Err(e) => {
+            print(e)
+            env.exit(2)
+        }
+    }
+}
