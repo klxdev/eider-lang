@@ -43533,29 +43533,29 @@ static t_fold__0eiderc__Wide f_fold__0eiderc__parse(tl_752cb7b7 l0_src, uint64_t
   uint64_t l32 = 0;
   uint8_t l33 = 0;
   bool l34 = false;
-  uint8_t l35 = 0;
+  uint64_t l35 = 0;
   uint64_t l36 = 0;
-  uint64_t l37_d = 0;
-  uint64_t l38 = 0;
-  uint64_t l39 = 0;
-  uint64_t l40 = 0;
+  uint64_t l37 = 0;
+  bool l38 = false;
+  t_fold__0eiderc__Wide l39 = {0};
+  uint8_t l40 = 0;
   uint64_t l41 = 0;
-  uint64_t l42 = 0;
+  uint64_t l42_d = 0;
   uint64_t l43 = 0;
-  uint64_t l44_p0 = 0;
+  uint64_t l44 = 0;
   uint64_t l45 = 0;
   uint64_t l46 = 0;
   uint64_t l47 = 0;
   uint64_t l48 = 0;
-  uint64_t l49 = 0;
+  uint64_t l49_p0 = 0;
   uint64_t l50 = 0;
   uint64_t l51 = 0;
-  uint64_t l52_p1 = 0;
+  uint64_t l52 = 0;
   uint64_t l53 = 0;
   uint64_t l54 = 0;
   uint64_t l55 = 0;
   uint64_t l56 = 0;
-  uint64_t l57 = 0;
+  uint64_t l57_p1 = 0;
   uint64_t l58 = 0;
   uint64_t l59 = 0;
   uint64_t l60 = 0;
@@ -43567,19 +43567,24 @@ static t_fold__0eiderc__Wide f_fold__0eiderc__parse(tl_752cb7b7 l0_src, uint64_t
   uint64_t l66 = 0;
   uint64_t l67 = 0;
   uint64_t l68 = 0;
-  t_fold__0eiderc__Wide l69 = {0};
+  uint64_t l69 = 0;
+  uint64_t l70 = 0;
+  uint64_t l71 = 0;
+  uint64_t l72 = 0;
+  uint64_t l73 = 0;
+  t_fold__0eiderc__Wide l74 = {0};
   l3_base = UINT64_C(10);
   l4 = l1_start;
   l5 = (*&l4);
   l6_i = l5;
   l7 = l2_end;
   l8 = l1_start;
-  l9 = ei_sub_u64(l7, l8, 17825946);
+  l9 = ei_sub_u64(l7, l8, 17825948);
   l10 = (l9 > UINT64_C(2));
   l11 = l10;
   if (l11) {
     l12 = l1_start;
-    (void)ei_idx((uint64_t)l12, l0_src.len, 17825946);
+    (void)ei_idx((uint64_t)l12, l0_src.len, 17825948);
     l13 = l0_src.d[l12];
     l14 = (l13 == ((uint8_t)48));
     l11 = l14;
@@ -43587,16 +43592,16 @@ static t_fold__0eiderc__Wide f_fold__0eiderc__parse(tl_752cb7b7 l0_src, uint64_t
   l15 = l11;
   if (l15) {
     l16 = l1_start;
-    l17 = ei_add_u64(l16, UINT64_C(1), 17825946);
-    (void)ei_idx((uint64_t)l17, l0_src.len, 17825946);
+    l17 = ei_add_u64(l16, UINT64_C(1), 17825948);
+    (void)ei_idx((uint64_t)l17, l0_src.len, 17825948);
     l18 = l0_src.d[l17];
     l19 = (l18 == ((uint8_t)120));
     l20 = l19;
     if (l20) {
     } else {
       l21 = l1_start;
-      l22 = ei_add_u64(l21, UINT64_C(1), 17825946);
-      (void)ei_idx((uint64_t)l22, l0_src.len, 17825946);
+      l22 = ei_add_u64(l21, UINT64_C(1), 17825948);
+      (void)ei_idx((uint64_t)l22, l0_src.len, 17825948);
       l23 = l0_src.d[l22];
       l24 = (l23 == ((uint8_t)88));
       l20 = l24;
@@ -43606,7 +43611,7 @@ static t_fold__0eiderc__Wide f_fold__0eiderc__parse(tl_752cb7b7 l0_src, uint64_t
   if (l15) {
     l3_base = UINT64_C(16);
     l25 = l1_start;
-    l26 = ei_add_u64(l25, UINT64_C(2), 17825948);
+    l26 = ei_add_u64(l25, UINT64_C(2), 17825950);
     l6_i = l26;
   }
   l27_hi = UINT64_C(0);
@@ -43620,53 +43625,61 @@ static t_fold__0eiderc__Wide f_fold__0eiderc__parse(tl_752cb7b7 l0_src, uint64_t
       break;
     }
     l32 = l6_i;
-    (void)ei_idx((uint64_t)l32, l0_src.len, 17825953);
-    (void)ei_idx((uint64_t)l32, l0_src.len, 17825953);
+    (void)ei_idx((uint64_t)l32, l0_src.len, 17825955);
+    (void)ei_idx((uint64_t)l32, l0_src.len, 17825955);
     l33 = l0_src.d[l32];
     l34 = !(l33 == ((uint8_t)95));
     if (l34) {
-      (void)ei_idx((uint64_t)l32, l0_src.len, 17825953);
-      l35 = l0_src.d[l32];
-      l36 = f_fold__0eiderc__digit(l35);
-      l37_d = l36;
-      l38 = l28_lo;
-      l39 = ei_rem_u64(l38, UINT64_C(4294967296), 17825956);
-      l40 = l3_base;
-      l41 = ei_mul_u64(l39, l40, 17825956);
-      l42 = l37_d;
-      l43 = ei_add_u64(l41, l42, 17825956);
-      l44_p0 = l43;
-      l45 = l28_lo;
-      l46 = ei_div_u64(l45, UINT64_C(4294967296), 17825957);
-      l47 = l3_base;
-      l48 = ei_mul_u64(l46, l47, 17825957);
-      l49 = l44_p0;
-      l50 = ei_div_u64(l49, UINT64_C(4294967296), 17825957);
-      l51 = ei_add_u64(l48, l50, 17825957);
-      l52_p1 = l51;
-      l53 = l52_p1;
-      l54 = ei_rem_u64(l53, UINT64_C(4294967296), 17825958);
-      l55 = ei_mul_u64(l54, UINT64_C(4294967296), 17825958);
-      l56 = l44_p0;
-      l57 = ei_rem_u64(l56, UINT64_C(4294967296), 17825958);
-      l58 = ei_add_u64(l55, l57, 17825958);
-      l28_lo = l58;
-      l59 = l27_hi;
-      l60 = l3_base;
-      l61 = ei_mul_u64(l59, l60, 17825959);
-      l62 = l52_p1;
-      l63 = ei_div_u64(l62, UINT64_C(4294967296), 17825959);
-      l64 = ei_add_u64(l61, l63, 17825959);
-      l27_hi = l64;
+      l35 = l27_hi;
+      l36 = l3_base;
+      l37 = ei_div_u64(UINT64_C(18446744073709551599), l36, 17825958);
+      l38 = (l35 > l37);
+      if (l38) {
+        l39 = (t_fold__0eiderc__Wide){ .f0 = false, .f1 = UINT64_C(18446744073709551615), .f2 = UINT64_C(18446744073709551615) };
+        return l39;
+      }
+      (void)ei_idx((uint64_t)l32, l0_src.len, 17825955);
+      l40 = l0_src.d[l32];
+      l41 = f_fold__0eiderc__digit(l40);
+      l42_d = l41;
+      l43 = l28_lo;
+      l44 = ei_rem_u64(l43, UINT64_C(4294967296), 17825960);
+      l45 = l3_base;
+      l46 = ei_mul_u64(l44, l45, 17825960);
+      l47 = l42_d;
+      l48 = ei_add_u64(l46, l47, 17825960);
+      l49_p0 = l48;
+      l50 = l28_lo;
+      l51 = ei_div_u64(l50, UINT64_C(4294967296), 17825961);
+      l52 = l3_base;
+      l53 = ei_mul_u64(l51, l52, 17825961);
+      l54 = l49_p0;
+      l55 = ei_div_u64(l54, UINT64_C(4294967296), 17825961);
+      l56 = ei_add_u64(l53, l55, 17825961);
+      l57_p1 = l56;
+      l58 = l57_p1;
+      l59 = ei_rem_u64(l58, UINT64_C(4294967296), 17825962);
+      l60 = ei_mul_u64(l59, UINT64_C(4294967296), 17825962);
+      l61 = l49_p0;
+      l62 = ei_rem_u64(l61, UINT64_C(4294967296), 17825962);
+      l63 = ei_add_u64(l60, l62, 17825962);
+      l28_lo = l63;
+      l64 = l27_hi;
+      l65 = l3_base;
+      l66 = ei_mul_u64(l64, l65, 17825963);
+      l67 = l57_p1;
+      l68 = ei_div_u64(l67, UINT64_C(4294967296), 17825963);
+      l69 = ei_add_u64(l66, l68, 17825963);
+      l27_hi = l69;
     }
-    l65 = l6_i;
-    l66 = ei_add_u64(l65, UINT64_C(1), 17825961);
-    l6_i = l66;
+    l70 = l6_i;
+    l71 = ei_add_u64(l70, UINT64_C(1), 17825965);
+    l6_i = l71;
   }
-  l67 = l27_hi;
-  l68 = l28_lo;
-  l69 = (t_fold__0eiderc__Wide){ .f0 = false, .f1 = l67, .f2 = l68 };
-  return l69;
+  l72 = l27_hi;
+  l73 = l28_lo;
+  l74 = (t_fold__0eiderc__Wide){ .f0 = false, .f1 = l72, .f2 = l73 };
+  return l74;
   ei_unreachable();
 }
 
@@ -43692,10 +43705,10 @@ static uint64_t f_fold__0eiderc__pow2(uint64_t l0_n) {
       break;
     }
     l6 = l1_r;
-    l7 = ei_mul_u64(l6, UINT64_C(2), 17825975);
+    l7 = ei_mul_u64(l6, UINT64_C(2), 17825979);
     l1_r = l7;
     l8 = l2_i;
-    l9 = ei_add_u64(l8, UINT64_C(1), 17825976);
+    l9 = ei_add_u64(l8, UINT64_C(1), 17825980);
     l2_i = l9;
   }
   l10 = l1_r;
@@ -43777,10 +43790,10 @@ static uint64_t f_fold__0eiderc__bits_op(uint32_t l0_op, uint64_t l1_x, uint64_t
       break;
     }
     l16 = l5_a;
-    l17 = ei_rem_u64(l16, UINT64_C(2), 17825988);
+    l17 = ei_rem_u64(l16, UINT64_C(2), 17825992);
     l18_p = l17;
     l19 = l8_b;
-    l20 = ei_rem_u64(l19, UINT64_C(2), 17825989);
+    l20 = ei_rem_u64(l19, UINT64_C(2), 17825993);
     l21_q = l20;
     l22_on = false;
     l23 = l0_op;
@@ -43822,20 +43835,20 @@ static uint64_t f_fold__0eiderc__bits_op(uint32_t l0_op, uint64_t l1_x, uint64_t
     if (l42) {
       l43 = l9_r;
       l44 = l10_bit;
-      l45 = ei_add_u64(l43, l44, 17825994);
+      l45 = ei_add_u64(l43, l44, 17825998);
       l9_r = l45;
     }
     l46 = l5_a;
-    l47 = ei_div_u64(l46, UINT64_C(2), 17825995);
+    l47 = ei_div_u64(l46, UINT64_C(2), 17825999);
     l5_a = l47;
     l48 = l8_b;
-    l49 = ei_div_u64(l48, UINT64_C(2), 17825996);
+    l49 = ei_div_u64(l48, UINT64_C(2), 17826000);
     l8_b = l49;
     l50 = l12_i;
     l51 = (l50 < ((int32_t)63));
     if (l51) {
       l52 = l10_bit;
-      l53 = ei_mul_u64(l52, UINT64_C(2), 17825997);
+      l53 = ei_mul_u64(l52, UINT64_C(2), 17826001);
       l10_bit = l53;
     }
     l54 = l12_i;
@@ -43919,18 +43932,18 @@ static t_fold__0eiderc__Wide f_fold__0eiderc__bitwise(uint32_t l0_op, t_fold__0e
     l24 = l1_a.f0;
     if (l24) {
       l25 = l1_a.f2;
-      l26 = ei_sub_u64(l25, UINT64_C(1), 17826013);
+      l26 = ei_sub_u64(l25, UINT64_C(1), 17826017);
       l27 = l2_b.f2;
       l28 = f_fold__0eiderc__pow2(l27);
-      l29 = ei_div_u64(l26, l28, 17826013);
-      l30 = ei_add_u64(l29, UINT64_C(1), 17826013);
+      l29 = ei_div_u64(l26, l28, 17826017);
+      l30 = ei_add_u64(l29, UINT64_C(1), 17826017);
       l31 = f_fold__0eiderc__of_neg(l30);
       return l31;
     }
     l32 = l1_a.f2;
     l33 = l2_b.f2;
     l34 = f_fold__0eiderc__pow2(l33);
-    l35 = ei_div_u64(l32, l34, 17826014);
+    l35 = ei_div_u64(l32, l34, 17826018);
     l36 = f_fold__0eiderc__of_u64(l35);
     return l36;
   }
@@ -43938,7 +43951,7 @@ static t_fold__0eiderc__Wide f_fold__0eiderc__bitwise(uint32_t l0_op, t_fold__0e
   l38 = (l37 == UINT32_C(5));
   if (l38) {
     l39 = l7_x;
-    l40 = ei_sub_u64(UINT64_C(18446744073709551615), l39, 17826016);
+    l40 = ei_sub_u64(UINT64_C(18446744073709551615), l39, 17826020);
     l8_r = l40;
   }
   l41 = l8_r;
