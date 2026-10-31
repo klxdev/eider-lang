@@ -119,7 +119,7 @@ impl Parser {
     fn next(inout self) -> Step {
         let s = advance(inout self)
         if self.pos > 0 {
-            let n = self.pos
+            let n = self.pos.copy()
             self.buf = bytes.slice(self.buf, n, self.buf.len())
             self.pos = 0
             // (outside the head phase these two are behind `pos` and unused)
@@ -161,7 +161,7 @@ fn fail(inout p: Parser, status: i32, why: str) -> Step {
 }
 
 fn finish(inout p: Parser) -> Step {
-    let m = p.m
+    let m = p.m.copy()
     p.m = empty_msg()
     p.phase = HEAD
     p.scan = p.pos
@@ -315,7 +315,7 @@ fn hexval(c: u8) -> i32 {
 /// phase was entered.
 fn scan_head(inout p: Parser) -> Option[Step] {
     while p.scan < p.buf.len() {
-        let i = p.scan
+        let i = p.scan.copy()
         let c = p.buf[i]
         if c == 10 {
             if i == p.line_start || p.buf[i - 1] != 13 { return Some(fail(inout p, 400, "bare LF in the head")) }

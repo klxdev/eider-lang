@@ -1779,7 +1779,10 @@ record snapshot, a tuple pattern; a `.copy()` and a binding not used after the w
 reported), against its hand-checked refs.out. Run on the whole repository after the merge of
 layer/runtime (std/{time,atomic,sync,chan,task,event}.ei, std/fd, std/poll, tests/std,
 tests/core, examples/ and the rest): 4 sites, all in std/event.ei (the timer heap's two
-swaps and two ids read before `self` changes), which got `.copy()`; nothing else.
+swaps and two ids read before `self` changes); and after the merge of layer/services
+(packages/http, examples/kvstore): 3 sites in packages/http/parse.ei (`let m = p.m` before
+`p.m = empty_msg()`, and two positions read before the parser moves on). All got `.copy()`;
+nothing else, and nothing in examples/kvstore.
 
 **Codes.** New: E0307 (a mutable alias of a read-only place), E0308 (the protection rule).
 Changed: none of the existing messages; E0301 gains the two reference cases above.
