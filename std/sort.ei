@@ -1,0 +1,172 @@
+// std/sort: ordering Lists. `sort` is a stable merge sort (equal elements keep their order;
+// O(n log n) comparisons in every case, insertion sort on short runs), over any `T: Ord`
+// (integers, Strings, and records, enums and tuples by their derived or own order),
+// `sort_by` with a comparison function, and searching sorted Lists. Values in, new Lists
+// out, as everywhere in Eider (no sorting in place until references, 8.6).
+
+// Runs this short are sorted by insertion before merging.
+const RUN: usize = 16
+
+/// The elements in ascending order, stable.
+pub fn sort[T: Ord](xs: List[T]) -> List[T] { sort_by(xs, |a: T, b: T| -> Ordering a.compare(b)) }
+
+/// The elements in descending order, stable (equal elements keep their order).
+pub fn sort_desc[T: Ord](xs: List[T]) -> List[T] { sort_by(xs, |a: T, b: T| -> Ordering b.compare(a)) }
+
+/// The elements ordered by `cmp`, stable. `cmp` must be a consistent total order (if it
+/// isn't, the result is some permutation of the input; never a trap).
+pub fn sort_by[T](xs: List[T], cmp: fn(T, T) -> Ordering) -> List[T] {
+    let n = xs.len()
+    if n < 2 { return xs }
+    // insertion sort on each run of RUN elements
+    var a = xs
+    var lo: usize = 0
+    while lo < n {
+        let hi = if lo + RUN < n { lo + RUN } else { n }
+        var i = lo + 1
+        while i < hi {
+            var j = i
+            while j > lo && cmp(a[j], a[j - 1]) == Less {
+                let t = a[j]
+                a[j] = a[j - 1]
+                a[j - 1] = t
+                j -= 1
+            }
+            i += 1
+        }
+        lo = hi
+    }
+    // bottom-up merges of runs, doubling the width
+    var width = RUN
+    while width < n {
+        var out: List[T] = List.new()
+        var start: usize = 0
+        while start < n {
+            let mid = if start + width < n { start + width } else { n }
+            let end = if start + 2 * width < n { start + 2 * width } else { n }
+            var i = start
+            var j = mid
+            while i < mid && j < end {
+                // the right one only when strictly smaller: that keeps it stable
+                if cmp(a[j], a[i]) == Less {
+                    out.push(a[j])
+                    j += 1
+                } else {
+                    out.push(a[i])
+                    i += 1
+                }
+            }
+            while i < mid {
+                out.push(a[i])
+                i += 1
+            }
+            while j < end {
+                out.push(a[j])
+                j += 1
+            }
+            start = end
+        }
+        a = out
+        width = width * 2
+    }
+    a
+}
+
+/// The elements ordered by `key(x)`, stable.
+pub fn sort_by_key[T, K: Ord](xs: List[T], key: fn(T) -> K) -> List[T] {
+    sort_by(xs, |a: T, b: T| -> Ordering key(a).compare(key(b)))
+}
+
+/// Whether the List is in ascending order.
+pub fn is_sorted[T: Ord](xs: List[T]) -> bool {
+    var i: usize = 1
+    while i < xs.len() {
+        if xs[i] < xs[i - 1] { return false }
+        i += 1
+    }
+    true
+}
+
+/// The elements in reverse order.
+pub fn reverse[T](xs: List[T]) -> List[T] {
+    var out: List[T] = List.new()
+    var i = xs.len()
+    while i > 0 {
+        i -= 1
+        out.push(xs[i])
+    }
+    out
+}
+
+/// In a List sorted ascending: Ok(index of an element equal to `x`), or Err(the index where
+/// `x` would go to keep it sorted).
+pub fn binary_search[T: Ord](xs: List[T], x: T) -> Result[usize, usize] {
+    binary_search_by(xs, |e: T| -> Ordering e.compare(x))
+}
+
+/// `binary_search` with `f(element)` saying how the element compares to the target.
+pub fn binary_search_by[T](xs: List[T], f: fn(T) -> Ordering) -> Result[usize, usize] {
+    var lo: usize = 0
+    var hi = xs.len()
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2
+        match f(xs[mid]) {
+            Less => { lo = mid + 1 }
+            Greater => { hi = mid }
+            Equal => return Ok(mid)
+        }
+    }
+    Err(lo)
+}
+
+/// The first index whose element is not less than `x` (sorted ascending).
+pub fn lower_bound[T: Ord](xs: List[T], x: T) -> usize {
+    var lo: usize = 0
+    var hi = xs.len()
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2
+        if xs[mid] < x { lo = mid + 1 } else { hi = mid }
+    }
+    lo
+}
+
+/// The first index whose element is greater than `x` (sorted ascending).
+pub fn upper_bound[T: Ord](xs: List[T], x: T) -> usize {
+    var lo: usize = 0
+    var hi = xs.len()
+    while lo < hi {
+        let mid = lo + (hi - lo) / 2
+        if xs[mid] <= x { lo = mid + 1 } else { hi = mid }
+    }
+    lo
+}
+
+/// Without consecutive repeats (on a sorted List: without duplicates).
+pub fn dedup[T: Eq](xs: List[T]) -> List[T] {
+    var out: List[T] = List.new()
+    for x in xs {
+        let n = out.len()
+        if n == 0 || out[n - 1] != x { out.push(x) }
+    }
+    out
+}
+
+/// The smallest element (the first of equal ones).
+pub fn min[T: Ord](xs: List[T]) -> Option[T] {
+    if xs.len() == 0 { return None }
+    var m = xs[0]
+    for x in xs {
+        if x < m { m = x }
+    }
+    Some(m)
+}
+
+/// The largest element (the first of equal ones).
+pub fn max[T: Ord](xs: List[T]) -> Option[T] {
+    if xs.len() == 0 { return None }
+    var m = xs[0]
+    for x in xs {
+        if x > m { m = x }
+    }
+    Some(m)
+}

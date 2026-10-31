@@ -1,0 +1,82 @@
+// std/path: join, parent, file_name, extension, stem, with_extension, normalize,
+// components, relative_to, on edge cases (root, empty, trailing separators, dot files, ..).
+
+import "std/path"
+
+fn t(b: List[u8]) -> String {
+    match String.from_bytes(b) {
+        Ok(s) => {
+            var q = String.from("\"")
+            q.append(s)
+            q.push_str("\"")
+            q
+        }
+        Err(_) => String.from("<bytes>")
+    }
+}
+
+fn opt(o: Option[List[u8]]) -> String {
+    match o {
+        Some(b) => t(b)
+        None => String.from("None")
+    }
+}
+
+fn p(s: str) -> List[u8] { s.bytes() }
+
+fn main() uses io {
+    print("join")
+    print(t(path.join(p("a"), p("b"))))
+    print(t(path.join(p("a/"), p("b"))))
+    print(t(path.join(p("a"), p("/etc"))))
+    print(t(path.join(p(""), p("b"))))
+    print(t(path.join(p("/"), p("x"))))
+    var parts: List[List[u8]] = List.new()
+    parts.push(p("/srv"))
+    parts.push(p("www"))
+    parts.push(p("index.html"))
+    print(t(path.join_all(parts)))
+
+    print("parent")
+    for s in ["/a/b", "/a", "/", "a", "", "a/b/", "a//b", "../x"] {
+        print(opt(path.parent(p(s))))
+    }
+
+    print("file_name")
+    for s in ["/a/b.txt", "a/b/", "/", "", "a/..", ".", "x"] {
+        print(opt(path.file_name(p(s))))
+    }
+
+    print("extension, stem")
+    for s in ["a/b.tar.gz", "b", ".bashrc", "a.", "dir.d/file", "/"] {
+        print(opt(path.extension(p(s))))
+        print(opt(path.stem(p(s))))
+    }
+
+    print("with_extension")
+    print(t(path.with_extension(p("a/b.txt"), p("md"))))
+    print(t(path.with_extension(p("a/b"), p("md"))))
+    print(t(path.with_extension(p("a/b.txt"), p(""))))
+    print(t(path.with_extension(p("a/b.txt/"), p("gz"))))
+    print(t(path.with_extension(p("/"), p("gz"))))
+    print(t(path.with_file_name(p("/x/y.txt"), p("z.txt"))))
+
+    print("normalize")
+    for s in ["a/./b/../c//", "/../x", "../a/..", "", "a/..", "/a/b/../../..", "./", "//a//b/", "a/../../b"] {
+        print(t(path.normalize(p(s))))
+    }
+
+    print("components")
+    print(path.components(p("/usr//lib/./x")).len())
+    print(t(path.from_components(path.components(p("/usr//lib/./x")))))
+    print(path.is_absolute(p("/x")))
+    print(path.is_relative(p("x")))
+
+    print("relative_to")
+    print(opt(path.relative_to(p("/a/b/c"), p("/a"))))
+    print(opt(path.relative_to(p("/a/b"), p("/a/b/"))))
+    print(opt(path.relative_to(p("/a/bc"), p("/a/b"))))
+    print(opt(path.relative_to(p("a/b"), p("/a"))))
+    print(path.starts_with(p("/etc/passwd"), p("/etc")))
+    print(path.starts_with(p("/etcetera"), p("/etc")))
+}

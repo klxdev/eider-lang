@@ -1,0 +1,109 @@
+// std/utf8: decoding every sequence length, the RFC 3629 edge cases (overlong, surrogates,
+// past U+10FFFF, truncated), maximal-subpart replacement counts, encoding round trips,
+// iteration, lossy conversion, agreement with String.from_bytes.
+
+import "std/utf8"
+
+fn bs(xs: List[i32]) -> List[u8] {
+    var out: List[u8] = List.new()
+    for x in xs { out.push(x as u8) }
+    out
+}
+
+fn l1(a: i32) -> List[i32] {
+    var o: List[i32] = List.new()
+    o.push(a)
+    o
+}
+
+fn l2(a: i32, b: i32) -> List[i32] {
+    var o = l1(a)
+    o.push(b)
+    o
+}
+
+fn l3(a: i32, b: i32, c: i32) -> List[i32] {
+    var o = l2(a, b)
+    o.push(c)
+    o
+}
+
+fn l4(a: i32, b: i32, c: i32, d: i32) -> List[i32] {
+    var o = l3(a, b, c)
+    o.push(d)
+    o
+}
+
+fn show(name: str, b: List[u8]) uses io {
+    let d = utf8.decode(b, 0)
+    var line = String.from(name)
+    line.push_str(": cp=")
+    line.append(d.cp.to_string())
+    line.push_str(" len=")
+    line.append(d.len.to_string())
+    line.push_str(" ok=")
+    line.append(d.ok.to_string())
+    line.push_str(" valid=")
+    line.append(utf8.valid(b).to_string())
+    line.push_str(" count=")
+    line.append(utf8.count(b).to_string())
+    // agrees with the language's own check
+    let lang = String.from_bytes(b).is_ok()
+    if lang != utf8.valid(b) { line.push_str(" DISAGREES with String.from_bytes") }
+    print(line)
+}
+
+fn main() uses io {
+    show("ascii", bs(l1(65)))
+    show("2-byte e-acute", bs(l2(195, 169)))
+    show("3-byte euro", bs(l3(226, 130, 172)))
+    show("4-byte emoji", bs(l4(240, 159, 152, 128)))
+    show("max U+10FFFF", bs(l4(244, 143, 191, 191)))
+    show("past max", bs(l4(244, 144, 128, 128)))
+    show("overlong slash", bs(l2(192, 175)))
+    show("overlong 3", bs(l3(224, 128, 175)))
+    show("overlong 4", bs(l4(240, 128, 128, 175)))
+    show("surrogate D800", bs(l3(237, 160, 128)))
+    show("last before surrogates", bs(l3(237, 159, 191)))
+    show("truncated 3", bs(l2(226, 130)))
+    show("lone continuation", bs(l1(128)))
+    show("F5", bs(l1(245)))
+    show("FF", bs(l1(255)))
+    show("empty", List.new())
+
+    // maximal subparts: E2 82 then 'A' is two items (one replacement, 'A')
+    var mixed = bs(l3(226, 130, 65))
+    print(utf8.decode_all(mixed))
+    print(utf8.first_invalid(mixed))
+    print(utf8.first_invalid("ok".bytes()))
+
+    // encode round trips across the length boundaries
+    var all_ok = true
+    for cp in [0, 127, 128, 2047, 2048, 55295, 57344, 65535, 65536, 1114111] {
+        let e = utf8.encode(cp as u32)
+        let d = utf8.decode(e, 0)
+        if d.cp != cp as u32 || d.len != e.len() || !d.ok { all_ok = false }
+    }
+    print(all_ok)
+    print(utf8.encode(55296))
+    print(utf8.encode(1114112))
+    print(utf8.is_scalar(1114111))
+
+    // iteration
+    let text = "héllo €".bytes()
+    var cps: List[u32] = List.new()
+    for c in utf8.chars(text) { cps.push(c) }
+    print(cps)
+    print(utf8.count(text))
+    print(utf8.is_boundary(text, 1))
+    print(utf8.is_boundary(text, 2))
+    print(utf8.is_boundary(text, text.len()))
+
+    // lossy: invalid bytes and NUL become U+FFFD
+    var raw = "a".bytes()
+    raw.push(255)
+    raw.push(0)
+    for b in "z€".bytes() { raw.push(b) }
+    print(utf8.lossy(raw))
+    print(utf8.lossy(bs(l3(226, 130, 65))))
+}

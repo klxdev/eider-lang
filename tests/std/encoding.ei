@@ -1,0 +1,113 @@
+// std/encoding: hex both ways and its errors; base64 against the RFC 4648 section 10 test
+// vectors in both alphabets, padded and not, the strict decoder's rejections (padding,
+// length, bytes, non-canonical bits), a round trip over every byte value and length;
+// little/big-endian integers at the extremes and their bounds.
+
+import "std/encoding"
+
+fn show_dec(r: Result[List[u8], encoding.DecodeError]) -> String {
+    match r {
+        Ok(b) => {
+            match String.from_bytes(b) {
+                Ok(s) => {
+                    var o = String.from("ok \"")
+                    o.append(s)
+                    o.push_str("\"")
+                    o
+                }
+                Err(_) => String.from("ok <bytes>")
+            }
+        }
+        Err(e) => {
+            var o = String.from("err ")
+            o.append(e.to_string())
+            o
+        }
+    }
+}
+
+fn main() uses io {
+    var b: List[u8] = List.new()
+    for x in [0, 1, 127, 128, 254, 255] { b.push(x as u8) }
+    print(encoding.hex(b))
+    print(encoding.hex_upper(b))
+    print(encoding.unhex("00017f80FEff".bytes()) == Ok(b))
+    print(show_dec(encoding.unhex("abc".bytes())))
+    print(show_dec(encoding.unhex("zz".bytes())))
+    print(show_dec(encoding.unhex("0g".bytes())))
+    print(show_dec(encoding.unhex("".bytes())))
+
+    // RFC 4648 section 10
+    for v in ["", "f", "fo", "foo", "foob", "fooba", "foobar"] {
+        let e = encoding.base64(v.bytes())
+        var line = String.from(v)
+        line.push_str(" -> ")
+        line.append(e)
+        line.push_str(" | ")
+        line.append(encoding.base64_encode(v.bytes(), encoding.Standard, false))
+        line.push_str(" | back: ")
+        line.append(show_dec(encoding.unbase64(e.bytes())))
+        print(line)
+    }
+    var odd: List[u8] = List.new()
+    for x in [251, 255, 191] { odd.push(x as u8) }
+    print(encoding.base64(odd))
+    print(encoding.base64_url(odd))
+    print(encoding.unbase64_url("-_-_".bytes()) == Ok(odd))
+    print(encoding.unbase64("+/+/".bytes()) == Ok(odd))
+
+    print("rejections")
+    print(show_dec(encoding.unbase64("Zm9v YmFy".bytes())))
+    print(show_dec(encoding.unbase64("Zg".bytes())))
+    print(show_dec(encoding.unbase64("Zg=".bytes())))
+    print(show_dec(encoding.unbase64("Zm9v=".bytes())))
+    print(show_dec(encoding.unbase64("Z===".bytes())))
+    print(show_dec(encoding.unbase64("Zh==".bytes())))
+    print(show_dec(encoding.unbase64("-_-_".bytes())))
+    print(show_dec(encoding.base64_decode("Zg==".bytes(), encoding.Standard, encoding.Forbidden)))
+    print(show_dec(encoding.base64_decode("Zg".bytes(), encoding.Standard, encoding.Forbidden)))
+    print(show_dec(encoding.unbase64_url("Zg==".bytes())))
+    print(show_dec(encoding.unbase64_url("Zg".bytes())))
+    print(show_dec(encoding.unbase64_url("Zm9vY".bytes())))
+
+    // every byte, every length up to 20, both alphabets, padded and not
+    var all: List[u8] = List.new()
+    for i in 0..256 { all.push(i as u8) }
+    var ok = encoding.unbase64(encoding.base64(all).bytes()) == Ok(all)
+    for n in 0..20 {
+        var part: List[u8] = List.new()
+        for i in 0..n { part.push(((i * 37 + 11) % 256) as u8) }
+        if encoding.unbase64(encoding.base64(part).bytes()) != Ok(part) { ok = false }
+        if encoding.unbase64_url(encoding.base64_url(part).bytes()) != Ok(part) { ok = false }
+        let e = encoding.base64_encode(part, encoding.UrlSafe, true)
+        if encoding.base64_decode(e.bytes(), encoding.UrlSafe, encoding.Required) != Ok(part) { ok = false }
+        if encoding.unhex(encoding.hex(part).bytes()) != Ok(part) { ok = false }
+    }
+    print(ok)
+
+    print("integers")
+    var out: List[u8] = List.new()
+    encoding.push_u16_be(inout out, 258)
+    encoding.push_u16_le(inout out, 258)
+    encoding.push_u32_be(inout out, 4294967295)
+    encoding.push_u32_le(inout out, 16909060)
+    encoding.push_u64_be(inout out, 18446744073709551615)
+    encoding.push_i32_le(inout out, -2)
+    encoding.push_i64_be(inout out, -9223372036854775807 - 1)
+    encoding.push_i64_le(inout out, -1)
+    print(encoding.hex(out))
+    print(encoding.u16_be(out, 0))
+    print(encoding.u16_le(out, 2))
+    print(encoding.u32_be(out, 4))
+    print(encoding.u32_le(out, 8))
+    print(encoding.u64_be(out, 12))
+    print(encoding.i32_le(out, 20))
+    print(encoding.i64_be(out, 24))
+    print(encoding.i64_le(out, 32))
+    print(encoding.u32_le(out, 37))
+    print(encoding.u64_be(out, 33))
+    print(encoding.signed32(encoding.bits32(-2147483648)))
+    print(encoding.signed64(encoding.bits64(-9223372036854775807 - 1)))
+    print(encoding.bits64(-1))
+    print(encoding.signed32(2147483647))
+}

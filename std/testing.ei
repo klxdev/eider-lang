@@ -1,0 +1,421 @@
+// std/testing: helpers for tests and deterministic test doubles (decision C10).
+//
+// - `assert_eq(got, want)`: traps (exit 101, like `assert`) after printing both values and
+//   where their text first differs; `Suite` checks many things and reports every failure,
+//   for programs that compare their output with a recorded one. `diff_lines` shows which
+//   lines of two texts differ.
+// - `FakeClock`: a std/time Clock whose time moves only when the test advances it, or when
+//   the code under test sleeps on it.
+// - Streams: `script` is a Reader that plays back a list of events (data in chunks of a
+//   chosen size, a pause that times out a deadline read, an error, the end); `sink` is a
+//   Writer that takes at most n bytes per write and can fail or time out after so many
+//   bytes; `pipe` is an in-memory pipe whose ends are a Reader and a Writer. None of them
+//   waits for real time, so a test of timeouts, short reads and errors runs the same way
+//   every time.
+//
+// Printing needs `io`; the stream doubles need `io` through the generic stream code as
+// every stream does (std/stream), never when called directly.
+
+import "io.ei"
+import "time.ei"
+import "stream.ei"
+
+// ---- assertions
+
+// the first byte offset where two texts differ
+fn first_diff(a: String, b: String) -> usize {
+    let n = if a.len() < b.len() { a.len() } else { b.len() }
+    for i in 0..n {
+        if a.byte(i) != b.byte(i) { return i }
+    }
+    n
+}
+
+fn has_newline(s: String) -> bool {
+    for i in 0..s.len() {
+        if s.byte(i) == 10 { return true }
+    }
+    false
+}
+
+/// The message `assert_eq` prints: both values' text, where they first differ, and for
+/// multi-line text a line diff.
+pub fn difference[T: Show](what: String, got: T, want: T) -> String {
+    let g = got.to_string()
+    let w = want.to_string()
+    var m = what
+    m.push_str("\n   got: ")
+    m.append(g)
+    m.push_str("\n  want: ")
+    m.append(w)
+    m.push_str("\n  (first difference at byte ")
+    m.append(first_diff(g, w).to_string())
+    m.push_str(")")
+    if has_newline(g) || has_newline(w) {
+        m.push_str("\n  lines (- got, + want):\n")
+        m.append(diff_lines(g, w))
+    }
+    m
+}
+
+/// Traps (exit 101) unless `got == want`, after printing both to stderr.
+pub fn assert_eq[T: Eq + Show](got: T, want: T) uses io {
+    if got == want { return }
+    io.errln(difference(String.from("assertion failed: values differ"), got, want).bytes())
+    panic("assert_eq failed")
+}
+
+/// Traps unless `got != avoid`.
+pub fn assert_ne[T: Eq + Show](got: T, avoid: T) uses io {
+    if got != avoid { return }
+    var m = String.from("assertion failed: both are ")
+    m.append(got.to_string())
+    io.errln(m.bytes())
+    panic("assert_ne failed")
+}
+
+/// The value of an Ok; traps on an Err, printing the error.
+pub fn assert_ok[T, E: Show](r: Result[T, E]) -> T uses io {
+    match r {
+        Ok(v) => v
+        Err(e) => {
+            var m = String.from("assertion failed: got Err(")
+            m.append(e.to_string())
+            m.push_str(")")
+            io.errln(m.bytes())
+            panic("assert_ok failed")
+        }
+    }
+}
+
+/// Many checks that go on after a failure: `var t = testing.suite("parser")`, then
+/// `t.eq("one", got, want)` and `t.check("two", cond)`, and finally `t.done()`, the exit
+/// code for a `main` that returns i32 (0 when every check passed, 1 otherwise). Failures and
+/// the summary go to stderr, so stdout holds only what the program itself prints.
+pub type Suite = { name: String, checks: i32, failed: i32 }
+
+pub fn suite(name: str) -> Suite { Suite(String.from(name), 0, 0) }
+
+impl Suite {
+    fn eq[T: Eq + Show](inout self, what: str, got: T, want: T) -> bool uses io {
+        self.checks += 1
+        if got == want { return true }
+        self.failed += 1
+        var m = String.from("FAIL ")
+        m.append(self.name)
+        m.push_str(": ")
+        m.push_str(what)
+        io.errln(difference(m, got, want).bytes())
+        false
+    }
+
+    fn check(inout self, what: str, cond: bool) -> bool uses io {
+        self.checks += 1
+        if cond { return true }
+        self.failed += 1
+        var m = String.from("FAIL ")
+        m.append(self.name)
+        m.push_str(": ")
+        m.push_str(what)
+        io.errln(m.bytes())
+        false
+    }
+
+    fn passed(self) -> bool { self.failed == 0 }
+
+    /// Prints "<name>: N checks, M failed" to stderr; 0 when none failed, else 1.
+    fn done(self) -> i32 uses io {
+        var m = self.name
+        m.push_str(": ")
+        m.append(self.checks.to_string())
+        m.push_str(" checks, ")
+        m.append(self.failed.to_string())
+        m.push_str(" failed")
+        io.errln(m.bytes())
+        if self.failed == 0 { 0 } else { 1 }
+    }
+}
+
+// the lines of a text (a final newline doesn't add an empty one)
+fn split_lines(s: String) -> List[String] {
+    var out: List[String] = List.new()
+    var a: usize = 0
+    for i in 0..s.len() {
+        if s.byte(i) == 10 {
+            out.push(s.slice(a, i))
+            a = i + 1
+        }
+    }
+    if a < s.len() { out.push(s.slice(a, s.len())) }
+    out
+}
+
+/// The lines of `a` and `b` as a diff over their longest common subsequence: "  " same,
+/// "- " only in `a`, "+ " only in `b`, one per line. For test output, not huge texts (it is
+/// O(lines of a * lines of b)).
+pub fn diff_lines(a: String, b: String) -> String {
+    let x = split_lines(a)
+    let y = split_lines(b)
+    let n = x.len()
+    let m = y.len()
+    // lcs[i * (m + 1) + j]: the LCS length of x[i..] and y[j..]
+    var lcs: List[u32] = List.new()
+    for k in 0..(n + 1) * (m + 1) { lcs.push(0) }
+    var i = n
+    while i > 0 {
+        i -= 1
+        var j = m
+        while j > 0 {
+            j -= 1
+            let v = if x[i] == y[j] {
+                lcs[(i + 1) * (m + 1) + j + 1] + 1
+            } else {
+                let down = lcs[(i + 1) * (m + 1) + j]
+                let right = lcs[i * (m + 1) + j + 1]
+                if down >= right { down } else { right }
+            }
+            lcs[i * (m + 1) + j] = v
+        }
+    }
+    var out = String.from("")
+    var p: usize = 0
+    var q: usize = 0
+    while p < n || q < m {
+        if p < n && q < m && x[p] == y[q] {
+            out.push_str("  ")
+            out.append(x[p])
+            p += 1
+            q += 1
+        } else if p < n && (q == m || lcs[(p + 1) * (m + 1) + q] >= lcs[p * (m + 1) + q + 1]) {
+            out.push_str("- ")
+            out.append(x[p])
+            p += 1
+        } else {
+            out.push_str("+ ")
+            out.append(y[q])
+            q += 1
+        }
+        out.push_str("\n")
+    }
+    out
+}
+
+// ---- a fake clock
+
+/// A Clock for tests: it starts at the given instants and moves only by `advance`, `set`
+/// and `sleep` (which returns at once, having moved the clock on). Copies share their time,
+/// so the test and the code under test can each hold one.
+pub type FakeClock = { mono: Mutex[i64], wall: Mutex[i64] }
+
+/// A fake clock at monotonic time `mono_ns` and wall time `wall_ns`.
+pub fn fake_clock(mono_ns: i64, wall_ns: i64) -> FakeClock { FakeClock(Mutex.new(mono_ns), Mutex.new(wall_ns)) }
+
+impl FakeClock {
+    /// Moves both clocks on by `d`.
+    fn advance(self, d: time.Duration) {
+        let n = d.as_ns()
+        self.mono.update(|t: i64| -> i64 t + n)
+        self.wall.update(|t: i64| -> i64 t + n)
+    }
+
+    /// Sets the wall clock (the monotonic one never goes back).
+    fn set_wall(self, ns: i64) { self.wall.set(ns) }
+
+    fn now_ns(self) -> i64 { self.mono.get() }
+}
+
+impl time.Clock for FakeClock {
+    fn mono_ns(self) -> i64 uses clock { self.mono.get() }
+    fn wall_ns(self) -> i64 uses clock { self.wall.get() }
+    fn sleep(self, d: time.Duration) uses clock { self.advance(d) }
+}
+
+// ---- scripted streams
+
+/// One event of a scripted Reader: some bytes, a pause (a deadline read times out there; a
+/// plain read goes past it), an error, or the end of the stream (every read after it is
+/// empty).
+pub type Step = | Data(bytes: List[u8]) | Pause | Fail(kind: stream.Kind) | End
+
+/// A Reader that plays back `steps`, giving at most `chunk` bytes per read (short reads on
+/// purpose). After the last step the stream ends.
+pub type Script = { steps: List[Step], at: usize, off: usize, chunk: usize }
+
+/// A scripted Reader (`chunk` 0 means no limit beyond the reader's `max`).
+pub fn script(steps: List[Step], chunk: usize) -> Script { Script(steps, 0, 0, chunk) }
+
+/// A scripted Reader giving `data` `chunk` bytes at a time, then the end.
+pub fn chunks(data: List[u8], chunk: usize) -> Script {
+    var s: List[Step] = List.new()
+    s.push(Data(data))
+    script(s, chunk)
+}
+
+impl Script {
+    /// Whether every step has been played.
+    fn finished(self) -> bool { self.at >= self.steps.len() }
+
+    fn play(inout self, max: usize, timed: bool) -> Result[List[u8], stream.Error] {
+        if max == 0 { return Err(stream.error(stream.InvalidInput, "read: max must be at least 1")) }
+        while self.at < self.steps.len() {
+            let a = self.at
+            match self.steps[a] {
+                Data(b) => {
+                    let o = self.off
+                    if o >= b.len() {
+                        self.at += 1
+                        self.off = 0
+                    } else {
+                        var n = b.len() - o
+                        if n > max { n = max }
+                        if self.chunk > 0 && n > self.chunk { n = self.chunk }
+                        var out: List[u8] = List.new()
+                        for i in o..o + n { out.push(b[i]) }
+                        self.off += n
+                        return Ok(out)
+                    }
+                }
+                Pause => {
+                    self.at += 1
+                    if timed { return Err(stream.timed_out("read")) }
+                }
+                Fail(k) => {
+                    self.at += 1
+                    return Err(stream.error(k, "read: scripted failure"))
+                }
+                End => return Ok(List.new())
+            }
+        }
+        Ok(List.new())
+    }
+}
+
+impl stream.Reader for Script {
+    fn read(inout self, max: usize) -> Result[List[u8], stream.Error] uses io { self.play(max, false) }
+    fn read_by(inout self, max: usize, dl: time.Deadline) -> Result[List[u8], stream.Error] uses io, clock { self.play(max, true) }
+}
+
+/// A Writer for tests: it keeps what it was given, takes at most `per_write` bytes per write
+/// (0: no limit), and after `fail_at` bytes in total fails every write with `kind` (for a
+/// deadline write: TimedOut), until `heal`.
+pub type Sink = { data: List[u8], per_write: usize, fail_at: usize, kind: stream.Kind, flushes: i32 }
+
+/// A Sink that never fails.
+pub fn sink(per_write: usize) -> Sink { Sink(List.new(), per_write, 18446744073709551615, stream.Other, 0) }
+
+/// A Sink that fails with `kind` once it holds `fail_at` bytes.
+pub fn failing_sink(per_write: usize, fail_at: usize, kind: stream.Kind) -> Sink { Sink(List.new(), per_write, fail_at, kind, 0) }
+
+impl Sink {
+    fn bytes(self) -> List[u8] { self.data }
+    fn text(self) -> String {
+        match String.from_bytes(self.data) {
+            Ok(s) => s
+            Err(_) => String.from("<not utf-8>")
+        }
+    }
+    /// How many times `flush` was called.
+    fn flush_count(self) -> i32 { self.flushes }
+    /// No more failures.
+    fn heal(inout self) { self.fail_at = 18446744073709551615 }
+
+    fn take(inout self, data: List[u8], timed: bool) -> Result[usize, stream.Error] {
+        if data.len() == 0 { return Ok(0) }
+        if self.data.len() >= self.fail_at {
+            if timed { return Err(stream.timed_out("write")) }
+            return Err(stream.error(self.kind, "write: scripted failure"))
+        }
+        var n = data.len()
+        if self.per_write > 0 && n > self.per_write { n = self.per_write }
+        let room = self.fail_at - self.data.len()
+        if n > room { n = room }
+        for i in 0..n { self.data.push(data[i]) }
+        Ok(n)
+    }
+}
+
+impl stream.Writer for Sink {
+    fn write(inout self, data: List[u8]) -> Result[usize, stream.Error] uses io { self.take(data, false) }
+    fn write_by(inout self, data: List[u8], dl: time.Deadline) -> Result[usize, stream.Error] uses io, clock { self.take(data, true) }
+    fn flush(inout self) -> Result[(), stream.Error] uses io {
+        self.flushes += 1
+        Ok(())
+    }
+    fn flush_by(inout self, dl: time.Deadline) -> Result[(), stream.Error] uses io, clock {
+        self.flushes += 1
+        Ok(())
+    }
+}
+
+// ---- an in-memory pipe
+
+type PipeState = { data: List[u8], closed: bool, reader_gone: bool }
+
+/// The read end of an in-memory pipe. Reading an empty pipe whose writer is still open
+/// doesn't wait (nothing else will write in a single-threaded test): `read` fails with
+/// WouldBlock and `read_by` times out at once. Empty and closed: end of stream.
+pub type PipeReader = { st: Mutex[PipeState] }
+
+/// The write end of an in-memory pipe; `close` it to end the stream. Writing after the
+/// reader closed is BrokenPipe.
+pub type PipeWriter = { st: Mutex[PipeState] }
+
+pub type MemPipe = { r: PipeReader, w: PipeWriter }
+
+/// A connected pair: bytes written to `w` are read from `r`.
+pub fn pipe() -> MemPipe {
+    let m = Mutex.new(PipeState(List.new(), false, false))
+    MemPipe(PipeReader(m), PipeWriter(m))
+}
+
+impl PipeReader {
+    fn close(self) {
+        self.st.update(|s: PipeState| -> PipeState PipeState(s.data, s.closed, true))
+    }
+
+    fn pull(self, max: usize, timed: bool) -> Result[List[u8], stream.Error] {
+        if max == 0 { return Err(stream.error(stream.InvalidInput, "read: max must be at least 1")) }
+        let s = self.st.get()
+        if s.data.len() == 0 {
+            if s.closed { return Ok(List.new()) }
+            if timed { return Err(stream.timed_out("read")) }
+            return Err(stream.error(stream.WouldBlock, "read: the in-memory pipe is empty"))
+        }
+        let n = if max < s.data.len() { max } else { s.data.len() }
+        var out: List[u8] = List.new()
+        var rest: List[u8] = List.new()
+        for i in 0..s.data.len() {
+            if i < n { out.push(s.data[i]) } else { rest.push(s.data[i]) }
+        }
+        self.st.set(PipeState(rest, s.closed, s.reader_gone))
+        Ok(out)
+    }
+}
+
+impl stream.Reader for PipeReader {
+    fn read(inout self, max: usize) -> Result[List[u8], stream.Error] uses io { self.pull(max, false) }
+    fn read_by(inout self, max: usize, dl: time.Deadline) -> Result[List[u8], stream.Error] uses io, clock { self.pull(max, true) }
+}
+
+impl PipeWriter {
+    fn close(self) {
+        self.st.update(|s: PipeState| -> PipeState PipeState(s.data, true, s.reader_gone))
+    }
+
+    fn push(self, data: List[u8]) -> Result[usize, stream.Error] {
+        let s = self.st.get()
+        if s.reader_gone { return Err(stream.error(stream.BrokenPipe, "write: the in-memory pipe's reader is closed")) }
+        if s.closed { return Err(stream.error(stream.InvalidInput, "write: the in-memory pipe is closed")) }
+        var d = s.data
+        for b in data { d.push(b) }
+        self.st.set(PipeState(d, false, false))
+        Ok(data.len())
+    }
+}
+
+impl stream.Writer for PipeWriter {
+    fn write(inout self, data: List[u8]) -> Result[usize, stream.Error] uses io { self.push(data) }
+    fn write_by(inout self, data: List[u8], dl: time.Deadline) -> Result[usize, stream.Error] uses io, clock { self.push(data) }
+    fn flush(inout self) -> Result[(), stream.Error] uses io { Ok(()) }
+    fn flush_by(inout self, dl: time.Deadline) -> Result[(), stream.Error] uses io, clock { Ok(()) }
+}
