@@ -26,6 +26,14 @@ if [ ! -x $bin ] || [ -n "$(find packages/doc packages/markdown packages/json st
 fi
 if [ "$1" = test ]; then
   shift
+  # with the cache off (verify.sh) every test would compile the C core again: give the run
+  # a fresh cache of its own instead, removed afterwards
+  if [ "$EIDER_CACHE" = off ]; then
+    EIDER_CACHE=$(mktemp -d); export EIDER_CACHE
+    $bin test "$@"; code=$?
+    rm -rf "$EIDER_CACHE"
+    exit $code
+  fi
   exec $bin test "$@"
 fi
 exec $bin build --out target/site --repo-url "${EIDER_REPO_URL:-https://github.com/klxdev/eider-lang/blob/main}" "$@"
