@@ -1,0 +1,15 @@
+--- stderr
+error[E0204]: package `files` uses capability `io` in `Log.show` (files.ei:10) but is only granted []
+  --> compiler/tests/pkgs/app/grants_fs.ei:4:1
+  |
+4 | import "files"
+  | ^
+  help: to allow it, add "io" to `uses` in [deps.files] of <root>/compiler/tests/pkgs/app/eider.toml
+error[E0204]: package `files` uses capability `fs` in `here` (files.ei:14) but is only granted []
+  --> compiler/tests/pkgs/app/grants_fs.ei:4:1
+  |
+4 | import "files"
+  | ^
+  help: to allow it, add "fs" to `uses` in [deps.files] of <root>/compiler/tests/pkgs/app/eider.toml
+error: 2 errors
+--- exit 1

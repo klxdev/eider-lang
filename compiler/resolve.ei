@@ -74,9 +74,10 @@ pub type Module = {
 }
 
 /// A package: `dir` (canonical) holds its eider.toml, which names it and its direct
-/// dependencies; `err` says why that file can't be used (then the package has no name and
-/// its files are identified as files in no package).
-pub type Pkg = { dir: List[u8], name: List[u8], entry: List[u8], deps: List[List[u8]], err: List[u8] }
+/// dependencies with the capabilities each is granted (`grants`, parallel to `deps`); `err`
+/// says why that file can't be used (then the package has no name and its files are
+/// identified as files in no package).
+pub type Pkg = { dir: List[u8], name: List[u8], entry: List[u8], deps: List[List[u8]], err: List[u8], grants: List[List[List[u8]]] }
 
 /// eider.lock in `dir` (`missing`: there is none; `err`: it doesn't parse).
 pub type Lock = { dir: List[u8], missing: bool, err: List[u8], pkgs: List[lock.Locked] }
@@ -395,6 +396,7 @@ pub fn load_from(file: List[u8], src: List[u8], q: parse.P, fp: Files) -> Loaded
         }
     }
     for i in 0..p.mods.len() { compute_own(inout p, i as u32) }
+    for d in grant_diags(p) { diags.push(d) }
     Loaded(p, diags, fatal)
 }
 
@@ -577,7 +579,7 @@ fn dir_lookup(p: Program, dir: List[u8]) -> u32 {
 /// Read the eider.toml `mf` of the package in `dir`.
 fn add_pkg(inout p: Program, dir: List[u8], mf: List[u8]) -> u32 uses fs, ffi {
     let none: List[u8] = List.new()
-    var pk = Pkg(dir, none, none, List.new(), none)
+    var pk = Pkg(dir, none, none, List.new(), none, List.new())
     match fs.read(mf) {
         Ok(t) => {
             match lock.manifest(t) {
@@ -585,6 +587,7 @@ fn add_pkg(inout p: Program, dir: List[u8], mf: List[u8]) -> u32 uses fs, ffi {
                     pk.name = x.name
                     pk.entry = x.entry
                     pk.deps = x.deps
+                    pk.grants = x.grants
                 }
                 Err(e) => { pk.err = cannot(mf, e) }
             }
@@ -1030,4 +1033,239 @@ fn collect_pat(p: Program, m: u32, pat: u32, inout out: Map[u32, bool]) {
         ast.PTuple => { for i in 0..n.d { collect_pat(p, m, at(p, m, n.c, i), inout out) } }
         _ => {}
     }
+}
+
+// ---- capabilities per package (docs/compiler.md, "C8.5: capabilities per package")
+//
+// A package's capability use is what its loaded modules' functions declare (other than
+// `ffi`), plus `ffi` when it has unmanaged code (an `extern` function, an `unsafe fn` or an
+// `unsafe` block). Every package a package D imports must be granted what it uses in D's
+// eider.toml (`uses = [...]` under `[deps.<name>]`): E0204 otherwise. The entry file's
+// package is granted everything, core and std are the toolchain's.
+
+/// A capability package `pkg` uses, at its first use: `kind` USE_CLAUSE (in a function's
+/// `uses`), USE_EXTERN (an `extern` function, so `ffi`) or USE_UNSAFE (an `unsafe fn` or
+/// block, so `ffi`); the function is `fname` (NOSYM: none), a method of `owner` (the impl's
+/// type or the trait; NOSYM: a free function); (m, line, col) is where.
+pub type CapUse = { pkg: u32, cap: List[u8], kind: u32, owner: u32, fname: u32, m: u32, line: u32, col: u32 }
+
+pub const USE_CLAUSE: u32 = 0
+pub const USE_EXTERN: u32 = 1
+pub const USE_UNSAFE: u32 = 2
+pub const NOSYM: u32 = 4294967295
+
+/// The capabilities a `uses` clause can name, other than `ffi` (check.ei's list).
+fn real_cap(w: List[u8]) -> bool uses ffi {
+    for c in ["io", "clock", "fs", "net", "threads", "python", "js", "wasm"] {
+        if bytes.eq(w, sys.lit(c)) { return true }
+    }
+    false
+}
+
+/// An item, or a method of an impl or trait (`owner`: its type or trait, else NOSYM).
+type Holder = { id: u32, owner: u32 }
+
+/// Module m's items with the methods of its impls and traits before them, in node order:
+/// the parser adds a node after its children, so the nodes of holder i are those after
+/// holder i - 1's, up to its own.
+fn holders(p: Program, m: u32) -> List[Holder] {
+    let a = p.mods[m as usize].ast
+    var out: List[Holder] = List.new()
+    for k in 0..a.items_len {
+        let id = ast.at(a, a.items_start, k)
+        let n = a.nodes[id as usize]
+        if n.kind == ast.IImpl {
+            let t = a.nodes[n.b as usize]
+            let owner = if t.kind == ast.TName || t.kind == ast.TGeneric { t.a } else { NOSYM }
+            for j in 0..n.f { out.push(Holder(ast.at(a, n.e, j), owner)) }
+        } else if n.kind == ast.ITrait {
+            for j in 0..n.d { out.push(Holder(ast.at(a, n.c, j), n.a)) }
+        }
+        out.push(Holder(id, NOSYM))
+    }
+    out
+}
+
+fn add_use(inout out: List[CapUse], u: CapUse) {
+    for x in out {
+        if x.pkg == u.pkg && bytes.eq(x.cap, u.cap) { return }
+    }
+    out.push(u)
+}
+
+/// Every capability each package of the program uses, at its first use: in module load
+/// order, then item order; for an `extern` fn, `ffi` before its own `uses`. The prelude uses
+/// none; the files in no package are package NOPKG.
+pub fn package_caps(p: Program) -> List[CapUse] uses ffi {
+    var out: List[CapUse] = List.new()
+    for mi in 0..p.mods.len() {
+        let m = mi as u32
+        if m == p.prelude { continue }
+        let pk = p.mods[mi].pkg
+        let a = p.mods[mi].ast
+        var lo: u32 = 0
+        for h in holders(p, m) {
+            let n = a.nodes[h.id as usize]
+            var fname = NOSYM
+            if n.kind == ast.IFn || n.kind == ast.IConst { fname = n.a }
+            if n.kind == ast.IFn {
+                if ast.has(n.b, ast.FN_EXTERN) {
+                    add_use(inout out, CapUse(pk, sys.lit("ffi"), USE_EXTERN, h.owner, n.a, m, n.line, n.col))
+                } else if ast.has(n.b, ast.FN_UNSAFE) {
+                    add_use(inout out, CapUse(pk, sys.lit("ffi"), USE_UNSAFE, h.owner, n.a, m, n.line, n.col))
+                }
+                for i in 0..n.j {
+                    let cn = a.nodes[ast.at(a, n.i, i) as usize]
+                    let w = intern.name(p.names, cn.a)
+                    if real_cap(w) { add_use(inout out, CapUse(pk, w, USE_CLAUSE, h.owner, n.a, m, cn.line, cn.col)) }
+                }
+            }
+            // `unsafe` blocks in the item (test blocks, checked with every capability, count for none)
+            if n.kind != ast.ITest {
+                var i = lo
+                while i < h.id {
+                    let u = a.nodes[i as usize]
+                    if u.kind == ast.EUnsafe { add_use(inout out, CapUse(pk, sys.lit("ffi"), USE_UNSAFE, h.owner, fname, m, u.line, u.col)) }
+                    i += 1
+                }
+            }
+            lo = h.id + 1
+        }
+    }
+    out
+}
+
+/// How messages name the function of a use: `name`, or `Type.name` for a method.
+pub fn use_name(p: Program, u: CapUse) -> List[u8] {
+    var out: List[u8] = List.new()
+    if u.owner != NOSYM {
+        bytes.append(inout out, intern.name(p.names, u.owner))
+        out.push(46)
+    }
+    if u.fname != NOSYM { bytes.append(inout out, intern.name(p.names, u.fname)) }
+    out
+}
+
+/// The file of a use, relative to its package's directory (a file in no package: its path).
+pub fn use_file(p: Program, u: CapUse) -> List[u8] uses fs, ffi {
+    let path = p.mods[u.m as usize].path
+    if u.pkg == NOPKG { return path }
+    let canon = canonical(path)
+    var pre = p.pkgs[u.pkg as usize].dir
+    pre.push(47)
+    if bytes.starts_with(canon, pre) { return bytes.slice(canon, pre.len(), canon.len()) }
+    canon
+}
+
+fn module_with_pre(p: Program, pre: u32) -> u32 {
+    for i in 0..p.mods.len() {
+        if p.mods[i].pre == pre { return i as u32 }
+    }
+    NOMOD
+}
+
+fn toolchain_pkg(p: Program, pk: u32) -> bool uses ffi {
+    let n = p.pkgs[pk as usize].name
+    bytes.eq(n, sys.lit("core")) || bytes.eq(n, sys.lit("std"))
+}
+
+/// What package `pk` grants its dependency `name` (`[deps.<name>] uses`; none if absent).
+fn grant_of(pk: Pkg, name: List[u8]) -> List[List[u8]] {
+    for i in 0..pk.deps.len() {
+        if bytes.eq(pk.deps[i], name) && i < pk.grants.len() { return pk.grants[i] }
+    }
+    List.new()
+}
+
+/// E0204 at (line, col) of package d's import: dependency use u is outside `grant`.
+fn grant_diag(p: Program, u: CapUse, d: u32, grant: List[List[u8]], line: u32, col: u32) -> diag.Diag uses fs, ffi {
+    let name = p.pkgs[u.pkg as usize].name
+    var msg = quoted("package `", name, "` uses capability `")
+    bytes.append(inout msg, u.cap)
+    bytes.append(inout msg, sys.lit("` in `"))
+    bytes.append(inout msg, use_name(p, u))
+    bytes.append(inout msg, sys.lit("` ("))
+    bytes.append(inout msg, use_file(p, u))
+    msg.push(58)
+    bytes.append(inout msg, bytes.from_u64(u.line as u64))
+    bytes.append(inout msg, sys.lit(") but is only granted ["))
+    bytes.append(inout msg, bytes.join(grant, sys.lit(", ")))
+    msg.push(93)
+    var h = quoted("to allow it, add \"", u.cap, "\" to `uses` in [deps.")
+    bytes.append(inout h, name)
+    bytes.append(inout h, sys.lit("] of "))
+    bytes.append(inout h, join(p.pkgs[d as usize].dir, sys.lit("eider.toml")))
+    if u.kind == USE_EXTERN { bytes.append(inout h, sys.lit(" (it declares `extern` functions: unmanaged code)")) }
+    if u.kind == USE_UNSAFE { bytes.append(inout h, sys.lit(" (it has `unsafe` code: unmanaged code)")) }
+    var dg = diag.new("E0204", line, col, msg)
+    dg.help = h
+    dg
+}
+
+/// E0204 for every capability a package uses beyond what an importing package grants it:
+/// for each (importer D, imported package P), at D's first import of P, one per capability.
+/// Imports from files in no package, within a package, of the entry file's package and of
+/// core and std are not held to grants.
+pub fn grant_diags(p: Program) -> List[diag.Diag] uses fs, ffi {
+    var out: List[diag.Diag] = List.new()
+    let cu = package_caps(p)
+    let entry = p.mods[0].pkg
+    var edges: List[u64] = List.new()
+    for mi in 0..p.mods.len() {
+        let d = p.mods[mi].pkg
+        if mi as u32 == p.prelude || d == NOPKG { continue }
+        if p.pkgs[d as usize].err.len() > 0 { continue }
+        for al in p.mods[mi].aliases {
+            let t = module_with_pre(p, al.pre)
+            if t == NOMOD { continue }
+            let pk = p.mods[t as usize].pkg
+            if pk == NOPKG || pk == d || pk == entry { continue }
+            if toolchain_pkg(p, pk) { continue }
+            let e = (d as u64) * 4294967296 + pk as u64
+            if edges.contains(e) { continue }
+            edges.push(e)
+            let grant = grant_of(p.pkgs[d as usize], p.pkgs[pk as usize].name)
+            for u in cu {
+                if u.pkg == pk && !contains(grant, u.cap) {
+                    out.push(in_file(grant_diag(p, u, d, grant, al.line, al.col), p.mods[mi].path))
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `eiderc caps`: one JSON line per (package, capability) of package_caps.
+pub fn caps_json(p: Program) -> List[u8] uses fs, ffi {
+    var out: List[u8] = List.new()
+    for u in package_caps(p) {
+        let none: List[u8] = List.new()
+        let name = if u.pkg == NOPKG { none } else { p.pkgs[u.pkg as usize].name }
+        let dir = if u.pkg == NOPKG { none } else { p.pkgs[u.pkg as usize].dir }
+        bytes.append(inout out, sys.lit("{\"package\":"))
+        diag.jstr(inout out, name)
+        bytes.append(inout out, sys.lit(",\"dir\":"))
+        diag.jstr(inout out, dir)
+        bytes.append(inout out, sys.lit(",\"cap\":"))
+        diag.jstr(inout out, u.cap)
+        bytes.append(inout out, sys.lit(",\"kind\":"))
+        diag.jstr(inout out, kind_text(u.kind))
+        bytes.append(inout out, sys.lit(",\"fn\":"))
+        diag.jstr(inout out, use_name(p, u))
+        bytes.append(inout out, sys.lit(",\"file\":"))
+        diag.jstr(inout out, use_file(p, u))
+        bytes.append(inout out, sys.lit(",\"line\":"))
+        bytes.append(inout out, bytes.from_u64(u.line as u64))
+        bytes.append(inout out, sys.lit(",\"col\":"))
+        bytes.append(inout out, bytes.from_u64(u.col as u64))
+        out.push(125)
+        out.push(10)
+    }
+    out
+}
+
+fn kind_text(k: u32) -> List[u8] uses ffi {
+    if k == USE_EXTERN { return sys.lit("extern") }
+    if k == USE_UNSAFE { return sys.lit("unsafe") }
+    sys.lit("uses")
 }

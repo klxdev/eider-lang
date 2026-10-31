@@ -1,0 +1,13 @@
+{"package":"app","dir":"<root>/compiler/tests/pkgs/app","cap":"io","kind":"uses","fn":"main","file":"caps.ei","line":10,"col":16}
+{"package":"std","dir":"<root>/std","cap":"io","kind":"uses","fn":"out","file":"io.ei","line":6,"col":30}
+{"package":"core","dir":"<root>/core","cap":"ffi","kind":"extern","fn":"ec_in_clear","file":"sys.ei","line":11,"col":15}
+{"package":"core","dir":"<root>/core","cap":"fs","kind":"uses","fn":"read_file","file":"sys.ei","line":120,"col":32}
+{"package":"core","dir":"<root>/core","cap":"io","kind":"uses","fn":"getenv","file":"sys.ei","line":136,"col":30}
+{"package":"core","dir":"<root>/core","cap":"net","kind":"uses","fn":"run","file":"sys.ei","line":146,"col":87}
+{"package":"cffi","dir":"<root>/compiler/tests/pkgs/cffi","cap":"ffi","kind":"extern","fn":"abs","file":"cffi.ei","line":3,"col":15}
+{"package":"ublock","dir":"<root>/compiler/tests/pkgs/ublock","cap":"ffi","kind":"unsafe","fn":"twice","file":"ublock.ei","line":6,"col":13}
+{"package":"files","dir":"<root>/compiler/tests/pkgs/files","cap":"io","kind":"uses","fn":"Log.show","file":"files.ei","line":10,"col":24}
+{"package":"files","dir":"<root>/compiler/tests/pkgs/files","cap":"fs","kind":"uses","fn":"here","file":"files.ei","line":14,"col":10}
+{"package":"std","dir":"<root>/std","cap":"fs","kind":"uses","fn":"read","file":"fs.ei","line":24,"col":62}
+--- stderr
+--- exit 0

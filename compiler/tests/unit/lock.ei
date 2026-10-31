@@ -10,7 +10,16 @@ fn main() uses io, ffi {
         Ok(x) => {
             print(sys.to_string(x.name))
             print(sys.to_string(x.entry))
-            for d in x.deps { print(sys.to_string(d)) }
+            for i in 0..x.deps.len() {
+                var t = sys.to_string(x.deps[i])
+                t.push_str(" uses [")
+                for j in 0..x.grants[i].len() {
+                    if j > 0 { t.push_str(", ") }
+                    t.append(sys.to_string(x.grants[i][j]))
+                }
+                t.push_str("]")
+                print(t)
+            }
         }
         Err(e) => print(sys.to_string(e))
     }

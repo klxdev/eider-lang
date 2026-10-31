@@ -1,0 +1,12 @@
+[package]
+name = "granter"
+version = "0.1.0"
+
+# fsuser is granted io only; ublk nothing, though it has unsafe code (both are imported by
+# path: the compiler holds every import of another package to the grant)
+[deps.fsuser]
+path = "../fsuser"
+uses = ["io"]
+
+[deps.ublk]
+path = "../ublk"

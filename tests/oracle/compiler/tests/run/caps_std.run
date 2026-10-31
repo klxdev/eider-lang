@@ -1,0 +1,8 @@
+written without uses ffi
+appended
+true
+false
+a/c
+true
+--- stderr
+--- exit 0

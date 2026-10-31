@@ -1,0 +1,4 @@
+// helper package for e0204_ungranted_fs.ei: fsdep uses fs, and eider.toml grants it nothing
+import "fsdep"
+
+pub fn f() -> i64 { 0 }

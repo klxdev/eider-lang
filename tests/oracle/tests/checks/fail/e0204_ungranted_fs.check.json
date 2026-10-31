@@ -1,0 +1,1 @@
+{"error":"E0204","span":{"file":"tests/checks/fail/lib/grants/grantee/grantee.ei","line":2,"col":1},"message":"package `fsdep` uses capability `fs` in `here` (fsdep.ei:5) but is only granted []","help":"to allow it, add \"fs\" to `uses` in [deps.fsdep] of <root>/tests/checks/fail/lib/grants/grantee/eider.toml"}

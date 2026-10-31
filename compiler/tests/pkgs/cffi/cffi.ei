@@ -1,0 +1,8 @@
+// cffi: unmanaged code (an extern), so whoever depends on it grants it `ffi`; inside the
+// package `ffi` propagates (magnitude declares it), outside it doesn't
+extern "c" fn abs(x: i32) -> i32
+
+pub fn magnitude(x: i32) -> i32 uses ffi { unsafe { abs(x) } }
+
+/// Callers in other packages still need `unsafe` around it, but not `ffi`.
+pub unsafe fn raw(x: i32) -> i32 uses ffi { abs(x) }

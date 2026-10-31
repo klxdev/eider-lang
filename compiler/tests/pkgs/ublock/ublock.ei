@@ -1,0 +1,8 @@
+// ublock: no extern of its own, but an `unsafe` block (around cffi.raw) is unmanaged code
+// too, so it needs an `ffi` grant; it grants cffi `ffi` in its own eider.toml
+import "cffi"
+
+pub fn twice(x: i32) -> i32 {
+    let r = unsafe { cffi.raw(x) }
+    r * 2
+}

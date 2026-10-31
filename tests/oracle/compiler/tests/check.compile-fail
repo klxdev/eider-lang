@@ -163,6 +163,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0201_comptime_main.ei       E0201 at 2:25
   ok   e0201_comptime_mod_io.ei     E0201 at 6:29
   ok   e0201_comptime_other_fn.ei   E0201 at 3:5
+  ok   e0201_core_wrapper_needs_fs.ei E0201 at 7:13 (fix compiles)
   ok   e0201_ffi_extern_own_caps.ei E0201 at 4:22 (fix compiles)
   ok   e0201_ffi_no_unsafe_either.ei E0201 at 4:13 (fix resolves it; next: E0802)
   ok   e0201_ffi_other_caps.ei      E0201 at 4:22 (fix compiles)
@@ -176,12 +177,15 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0201_print_before_arity.ei  E0201 at 3:5 (fix resolves it; next: E0405)
   ok   e0201_print_in_test_fn_ok_but_main.ei E0201 at 3:13 (fix compiles)
   ok   e0201_second_capability.ei   E0201 at 4:5 (fix compiles)
+  ok   e0201_std_needs_fs_not_ffi.ei E0201 at 7:11 (fix compiles)
   ok   e0201_thr_calls_threads_fn.ei E0201 at 6:27 (fix compiles)
   ok   e0201_thr_spawn_in_closure.ei E0201 at 4:17 (fix compiles)
   ok   e0201_thr_spawn_in_method.ei E0201 at 5:17 (fix compiles)
   ok   e0201_thr_spawn_uses_io.ei   E0201 at 4:9 (fix compiles)
   ok   e0203_ffi_extern_unknown_cap.ei E0203 at 2:24
   ok   e0203_second_unknown.ei      E0203 at 2:17
+  ok   e0204_method_fs.ei           E0204 at 2:1
+  ok   e0204_unsafe_fn.ei           E0204 at 2:1
   ok   e0301_field_roots.ei         E0301 at 6:20
   ok   e0301_index_roots.ei         E0301 at 5:26
   ok   e0301_method_style_roots.ei  E0301 at 6:19
@@ -519,6 +523,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0810_no_lock.ei             E0810 at 2:1
 
 compile-pass tests (compiler/tests/check/pass)
+  ok   c85_std_without_ffi.ei
   ok   c8_bitwise_ok.ei
   ok   c8_gaps_ok.ei
   ok   comptime_chain.ei
@@ -583,6 +588,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-581 passed, 0 failed; error-code coverage 44/48
+586 passed, 0 failed; error-code coverage 45/49
 codes without a compile-fail test: E0302 E0402 E0806 E0808
 --- exit 0

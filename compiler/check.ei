@@ -29,7 +29,8 @@
 //
 // FFI: `extern "c"` declarations are functions without a body whose signatures
 // must be C-safe (E0803); calling one needs the `ffi` capability (E0201) and an `unsafe`
-// block or `unsafe fn` (E0802), like calling an `unsafe fn`. `export fn`s (E0805: not
+// block or `unsafe fn` (E0802), like calling an `unsafe fn`; a callee's `ffi` is not asked of
+// callers in another package (`needs_cap`; grants: resolve.ei). `export fn`s (E0805: not
 // generic) take C-safe parameters, records of them included; a library (`lib`) needs at
 // least one and no `main`. Both are recorded in the IR (ir.ei, Externs and Exports).
 // Checking for WebAssembly (`wasm`, check_wasm) is checking a library whose exports take and
@@ -3926,6 +3927,15 @@ fn cap_error(c: C, line: u32, col: u32, what: List[u8], cap: u32) -> diag.Diag u
     d
 }
 
+/// Whether calling a function of module `fm` that declares capability `cap` needs `cap` in
+/// the body being checked: always, except `ffi` across a package boundary, which stays
+/// inside the package that has the unmanaged code (docs/compiler.md, "C8.5: capabilities
+/// per package"). Files in no package (and the prelude) are one package.
+fn needs_cap(c: C, fm: u32, cap: u32) -> bool {
+    if cap != c.w.caps[5] { return true }
+    c.p.mods[fm as usize].pkg == c.p.mods[c.am as usize].pkg
+}
+
 /// A method call's receiver: its expression and place (`has` = false for none).
 type Recv = { has: bool, e: u32, pv: PV }
 
@@ -4109,6 +4119,7 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
     // a missing capability or `unsafe` is reported, and the call is otherwise fine
     for i in 0..fnode.j {
         let cap = ndm(c, fm, atm(c, fm, fnode.i, i)).a
+        if !needs_cap(c, fm, cap) { continue }
         if !has_sym(c.caps, cap) {
             let rd = cap_error(c, n.line, n.col, label, cap)
             record(inout c, rd)
@@ -4940,7 +4951,7 @@ fn fn_as_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag
     let inst = c.insts[ii as usize]
     for i in 0..inst.clen {
         let cap = c.capl[(inst.cstart + i) as usize]
-        if !has_sym(c.caps, cap) { return Err(cap_error(c, n.line, n.col, label, cap)) }
+        if needs_cap(c, f.md, cap) && !has_sym(c.caps, cap) { return Err(cap_error(c, n.line, n.col, label, cap)) }
     }
     // checking declared capabilities alone would pass these with neither `unsafe` nor `ffi`
     if f.unsafe_fn { return Err(unsup(n.line, n.col, "`extern` and `unsafe` functions as values")) }

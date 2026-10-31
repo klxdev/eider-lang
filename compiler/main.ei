@@ -4,7 +4,7 @@
 // variable; an unknown option or command, a missing source file or a stray argument is a
 // usage error (exit 2). `lex` dumps tokens (one per line: line:col kind [value]), `parse`
 // the AST (dump.ei), `ir` the typed IR (ir.ei); `build`, `run` and `test` go through
-// driver.ei, `test --compile-fail` through suite.ei.
+// driver.ei, `test --compile-fail` through suite.ei, `caps` through resolve.caps_json ("C8.5").
 // `--lib` checks (and emits) the file as a library: no `main`, at least one `export fn`.
 // `-l <lib>` (repeatable) links a C library into build, run, test and build --lib.
 // `--wasm` checks (and emits) the file as a WebAssembly module (a library whose exports take
@@ -64,6 +64,7 @@ fn usage_text() -> List[u8] uses ffi {
         "  eiderc parse <file.ei> [--all-errors]      dump the AST (--all-errors: every syntax error as JSON lines,",
         "                                             then the AST with its error nodes)",
         "  eiderc ir <file.ei>                        dump the typed IR",
+        "  eiderc caps <file.ei>                      each package's capability use, one JSON line per capability",
         "  eiderc ide <file.ei> [--overlay <path> <text>]  print the IDE analysis (ide.ei): symbols, refs, types;",
         "                                             --overlay (repeatable) reads <path> from the file <text>",
         "  eiderc help | --help | -h                  print this text",
@@ -108,7 +109,7 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] uses ffi {
 }
 
 fn known_cmd(c: List[u8]) -> bool uses ffi {
-    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide")
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps")
 }
 
 fn parse_args() -> Args uses io, ffi {
@@ -350,6 +351,12 @@ fn main() uses io, fs, net, clock, ffi {
     var diags = fdiags
     for d in ld.diags { diags.push(d) }
     if ld.fatal { fail(diags, a, src) }
+    // what each package of the loaded program uses (docs/compiler.md, "C8.5"): what failed
+    // to load is left out, and no error is reported
+    if is(a.cmd, "caps") {
+        io.out(resolve.caps_json(ld.p))
+        return
+    }
     // `comptime` constants are evaluated between loading and checking, as tests/oracle expects
     let ev = consteval.eval_all(ld.p)
     for d in ev.diags { diags.push(d) }

@@ -1,0 +1,4 @@
+// helper package for e0204_*: imports ublk by path (granted nothing, has an `unsafe fn`)
+import "../ublk/ublk.ei"
+
+pub fn g() -> i64 { 0 }

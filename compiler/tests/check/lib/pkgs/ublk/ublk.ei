@@ -1,0 +1,7 @@
+// helper package for e0204_*: no extern, but an `unsafe fn` is unmanaged code too
+unsafe fn danger() -> i32 { 7 }
+
+pub fn safe() -> i32 {
+    let x = unsafe { danger() }
+    x
+}

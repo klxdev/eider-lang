@@ -1,0 +1,4 @@
+// helper package for e0204_ungranted_ffi.ei: unmanaged code
+extern "c" fn abs(x: i32) -> i32
+
+pub fn magnitude(x: i32) -> i32 uses ffi { unsafe { abs(x) } }
