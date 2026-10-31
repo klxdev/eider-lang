@@ -1,0 +1,158 @@
+// std/heap: binary heaps. `Heap[T]` over any `T: Ord` gives the smallest element first
+// (`heap.min()`) or the largest (`heap.max()`): push and pop O(log n), peek O(1). `Queue[T]`
+// is a priority queue for any `T`: lowest priority number first, and first in, first out
+// among equal priorities (a plain heap is not stable), which is what schedulers and timers
+// want. Values like any other: copies don't share.
+
+pub type Heap[T] = { items: List[T], max: bool }
+
+/// An empty heap that pops the smallest element first.
+pub fn min[T: Ord]() -> Heap[T] { Heap(List.new(), false) }
+
+/// An empty heap that pops the largest element first.
+pub fn max[T: Ord]() -> Heap[T] { Heap(List.new(), true) }
+
+/// A min-heap of `xs`, built in O(n).
+pub fn min_of[T: Ord](xs: List[T]) -> Heap[T] { build(xs, false) }
+
+/// A max-heap of `xs`, built in O(n).
+pub fn max_of[T: Ord](xs: List[T]) -> Heap[T] { build(xs, true) }
+
+fn build[T: Ord](xs: List[T], mx: bool) -> Heap[T] {
+    var h = Heap(xs, mx)
+    var i = xs.len() / 2
+    while i > 0 {
+        i -= 1
+        h.down(i)
+    }
+    h
+}
+
+impl[T: Ord] Heap[T] {
+    fn len(self) -> usize { self.items.len() }
+    fn is_empty(self) -> bool { self.items.len() == 0 }
+
+    // Whether the element at a should be above the one at b.
+    fn above(self, a: usize, b: usize) -> bool {
+        if self.max { return self.items[a] > self.items[b] }
+        self.items[a] < self.items[b]
+    }
+
+    fn swap(inout self, a: usize, b: usize) {
+        let t = self.items[a]
+        self.items[a] = self.items[b]
+        self.items[b] = t
+    }
+
+    fn up(inout self, at: usize) {
+        var i = at
+        while i > 0 {
+            let p = (i - 1) / 2
+            if !self.above(i, p) { break }
+            self.swap(i, p)
+            i = p
+        }
+    }
+
+    fn down(inout self, at: usize) {
+        let n = self.items.len()
+        var i = at
+        while true {
+            let l = 2 * i + 1
+            if l >= n { break }
+            var c = l
+            if l + 1 < n && self.above(l + 1, l) { c = l + 1 }
+            if !self.above(c, i) { break }
+            self.swap(c, i)
+            i = c
+        }
+    }
+
+    fn push(inout self, x: T) {
+        self.items.push(x)
+        let n = self.items.len()
+        self.up(n - 1)
+    }
+
+    /// The top element (smallest for a min-heap), without removing it.
+    fn peek(self) -> Option[T] {
+        if self.items.len() == 0 { return None }
+        Some(self.items[0])
+    }
+
+    /// Removes and returns the top element.
+    fn pop(inout self) -> Option[T] {
+        let n = self.items.len()
+        if n == 0 { return None }
+        self.swap(0, n - 1)
+        let top = self.items.pop()
+        if n > 1 { self.down(0) }
+        top
+    }
+
+    /// The elements in heap order (not sorted).
+    fn to_list(self) -> List[T] { self.items }
+
+    /// The elements in the order `pop` would give them.
+    fn into_sorted(self) -> List[T] {
+        var h = self
+        var out: List[T] = List.new()
+        while true {
+            match h.pop() {
+                Some(x) => out.push(x)
+                None => break
+            }
+        }
+        out
+    }
+}
+
+// ---- priority queue
+
+/// A queued value with its priority and arrival number; ordered by (prio, seq).
+pub type Entry[T] = { prio: i64, seq: u64, value: T }
+
+impl[T] Eq for Entry[T] {
+    fn eq(self, o: Entry[T]) -> bool { self.prio == o.prio && self.seq == o.seq }
+}
+
+impl[T] Ord for Entry[T] {
+    fn compare(self, o: Entry[T]) -> Ordering {
+        if self.prio < o.prio { return Less }
+        if self.prio > o.prio { return Greater }
+        self.seq.compare(o.seq)
+    }
+}
+
+/// A priority queue: `pop` gives the value with the lowest priority number, and among equal
+/// priorities the one pushed first.
+pub type Queue[T] = { heap: Heap[Entry[T]], next: u64 }
+
+pub fn queue[T]() -> Queue[T] { Queue(min(), 0) }
+
+impl[T] Queue[T] {
+    fn len(self) -> usize { self.heap.len() }
+    fn is_empty(self) -> bool { self.heap.is_empty() }
+
+    fn push(inout self, prio: i64, value: T) {
+        let s = self.next
+        self.heap.push(Entry(prio, s, value))
+        self.next += 1
+    }
+
+    /// The next value and its priority, without removing it.
+    fn peek(self) -> Option[(i64, T)] {
+        match self.heap.peek() {
+            Some(e) => Some((e.prio, e.value))
+            None => None
+        }
+    }
+
+    /// Removes and returns the next value and its priority.
+    fn pop(inout self) -> Option[(i64, T)] {
+        match self.heap.pop() {
+            Some(e) => Some((e.prio, e.value))
+            None => None
+        }
+    }
+}

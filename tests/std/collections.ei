@@ -1,0 +1,245 @@
+// std/sort, std/deque, std/set, std/heap: sorting (stability, every size around the run
+// length, descending, by key, records), searching, dedup, min/max; a Deque under mixed
+// ends (checked against a List model), indexing; Set operations, removal order, equality;
+// min/max heaps, heapify, a stable priority queue. Sizes past the insertion-sort runs are
+// checked against a simple model, with a fixed pseudo-random sequence.
+
+import "std/sort"
+import "std/deque"
+import "std/set"
+import "std/heap"
+
+type Job = { name: String, prio: i32 }
+
+// a fixed xorshift sequence
+fn next(inout s: u64) -> u64 {
+    s ^= s << 13
+    s ^= s >> 7
+    s ^= s << 17
+    s
+}
+
+fn sorting() uses io {
+    var xs: List[i32] = List.new()
+    for x in [5, 3, 9, 1, 3, 7] { xs.push(x) }
+    print(sort.sort(xs))
+    print(sort.sort_desc(xs))
+    print(sort.is_sorted(xs))
+    print(sort.is_sorted(sort.sort(xs)))
+    print(sort.reverse(xs))
+    print(sort.dedup(sort.sort(xs)))
+    print(sort.min(xs))
+    print(sort.max(xs))
+    let none: List[i32] = List.new()
+    print(sort.min(none))
+    print(sort.sort(none))
+
+    // stability: equal priorities keep their input order, at every size up to past 4 runs
+    var seed: u64 = 88172645463325252
+    var ok = true
+    for n in 0..70 {
+        var js: List[Job] = List.new()
+        for i in 0..n {
+            let p = (next(inout seed) % 4) as i32
+            var name = String.from("j")
+            name.append(i.to_string())
+            js.push(Job(name, p))
+        }
+        let s = sort.sort_by(js, |a: Job, b: Job| -> Ordering a.prio.compare(b.prio))
+        if s.len() != js.len() { ok = false }
+        var i: usize = 1
+        while i < s.len() {
+            if s[i - 1].prio > s[i].prio { ok = false }
+            if s[i - 1].prio == s[i].prio {
+                // input order: the numeric suffix grows
+                let a = s[i - 1].name.slice(1, s[i - 1].name.len())
+                let b = s[i].name.slice(1, s[i].name.len())
+                if a.len() > b.len() || (a.len() == b.len() && a > b) { ok = false }
+            }
+            i += 1
+        }
+    }
+    print(ok)
+
+    // a big sort against counting
+    var big: List[u64] = List.new()
+    for i in 0..5000 { big.push(next(inout seed) % 1000) }
+    let sb = sort.sort(big)
+    var counts: Map[u64, i32] = Map.new()
+    for x in big { counts.insert(x, counts.get(x).unwrap_or(0) + 1) }
+    var after: Map[u64, i32] = Map.new()
+    for x in sb { after.insert(x, after.get(x).unwrap_or(0) + 1) }
+    print(sort.is_sorted(sb))
+    print(counts == after)
+
+    // records, Strings, by key
+    var words: List[String] = List.new()
+    for w in ["pear", "fig", "apple", "kiwi"] { words.push(String.from(w)) }
+    print(sort.sort(words))
+    print(sort.sort_by_key(words, |w: String| -> usize w.len()))
+
+    // searching
+    let sorted = sort.sort(xs)
+    print(sorted)
+    print(sort.binary_search(sorted, 7))
+    print(sort.binary_search(sorted, 4))
+    print(sort.binary_search(sorted, 0))
+    print(sort.binary_search(sorted, 10))
+    print(sort.lower_bound(sorted, 3))
+    print(sort.upper_bound(sorted, 3))
+    print(sort.binary_search_by(sorted, |e: i32| -> Ordering e.compare(9)))
+}
+
+fn deques() uses io {
+    var d: deque.Deque[i32] = deque.new()
+    print(d.pop_front())
+    print(d.pop_back())
+    d.push_back(2)
+    d.push_back(3)
+    d.push_front(1)
+    d.push_front(0)
+    print(d.to_list())
+    print(d.len())
+    print(d.get(0))
+    print(d.get(3))
+    print(d.get(4))
+    print(d.first())
+    print(d.last())
+    print(d.set(2, 20))
+    print(d.set(9, 9))
+    print(d.pop_back())
+    print(d.pop_front())
+    print(d.to_list())
+
+    // mixed ends against a List model
+    var seed: u64 = 2463534242
+    var m: List[i32] = List.new()
+    var q: deque.Deque[i32] = deque.new()
+    var ok = true
+    for i in 0..3000 {
+        let op = next(inout seed) % 4
+        let v = i as i32
+        if op == 0 {
+            q.push_back(v)
+            m.push(v)
+        } else if op == 1 {
+            q.push_front(v)
+            var nm: List[i32] = List.new()
+            nm.push(v)
+            for x in m { nm.push(x) }
+            m = nm
+        } else if op == 2 {
+            let got = q.pop_front()
+            if m.len() == 0 {
+                if got.is_some() { ok = false }
+            } else {
+                if got != Some(m[0]) { ok = false }
+                var nm: List[i32] = List.new()
+                for j in 1..m.len() { nm.push(m[j]) }
+                m = nm
+            }
+        } else {
+            let got = q.pop_back()
+            if got != m.pop() { ok = false }
+        }
+        if q.len() != m.len() { ok = false }
+    }
+    print(ok)
+    print(q.to_list() == m)
+    let fl = deque.from_list(m)
+    print(fl.len() == m.len())
+    q.clear()
+    print(q.is_empty())
+}
+
+fn sets() uses io {
+    var s: set.Set[String] = set.new()
+    print(s.insert(String.from("a")))
+    print(s.insert(String.from("b")))
+    print(s.insert(String.from("a")))
+    print(s.insert(String.from("c")))
+    print(s.len())
+    print(s.contains(String.from("b")))
+    print(s.remove(String.from("a")))
+    print(s.remove(String.from("a")))
+    print(s.items())
+    print(s.contains(String.from("a")))
+
+    var xs: List[i32] = List.new()
+    for x in [1, 2, 3, 2, 1, 4] { xs.push(x) }
+    let a = set.from_list(xs)
+    var ys: List[i32] = List.new()
+    for y in [3, 4, 5] { ys.push(y) }
+    let b = set.from_list(ys)
+    print(a.items())
+    print(a.union(b).items())
+    print(a.intersection(b).items())
+    print(a.difference(b).items())
+    print(b.is_subset(a))
+    print(a.intersection(b).is_subset(b))
+    // equality ignores order
+    var r1: List[i32] = List.new()
+    for x in [4, 3] { r1.push(x) }
+    print(a.intersection(b) == set.from_list(r1))
+    print(a == b)
+    // records as elements
+    var js: set.Set[Job] = set.new()
+    js.insert(Job(String.from("x"), 1))
+    print(js.contains(Job(String.from("x"), 1)))
+    print(js.contains(Job(String.from("x"), 2)))
+    var c = a
+    c.clear()
+    print(c.len())
+    print(a.len())
+}
+
+fn heaps() uses io {
+    var h: heap.Heap[i32] = heap.min()
+    for x in [5, 1, 8, 3, 9, 2] { h.push(x) }
+    print(h.peek())
+    print(h.len())
+    var out: List[i32] = List.new()
+    while true {
+        match h.pop() {
+            Some(x) => out.push(x)
+            None => break
+        }
+    }
+    print(out)
+    print(h.pop())
+    var mx: heap.Heap[i32] = heap.max()
+    for x in [5, 1, 8, 3, 9, 2] { mx.push(x) }
+    print(mx.into_sorted())
+    var seed: u64 = 362436069
+    var xs: List[u64] = List.new()
+    for i in 0..1000 { xs.push(next(inout seed) % 500) }
+    print(heap.min_of(xs).into_sorted() == sort.sort(xs))
+    print(heap.max_of(xs).into_sorted() == sort.sort_desc(xs))
+
+    var q: heap.Queue[String] = heap.queue()
+    q.push(2, String.from("later"))
+    q.push(1, String.from("first"))
+    q.push(2, String.from("later, second"))
+    q.push(1, String.from("first, second"))
+    q.push(-5, String.from("urgent"))
+    print(q.peek())
+    while true {
+        match q.pop() {
+            Some((p, v)) => {
+                var line = p.to_string()
+                line.push_str(" ")
+                line.append(v)
+                print(line)
+            }
+            None => break
+        }
+    }
+    print(q.is_empty())
+}
+
+fn main() uses io {
+    sorting()
+    deques()
+    sets()
+    heaps()
+}
