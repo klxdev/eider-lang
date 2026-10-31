@@ -255,11 +255,12 @@ void ei_print_s(const char *v) { printf("%s\n", v); }
 
 // ---- clock
 
+/* Milliseconds on the monotonic clock (from an arbitrary start; it does not jump with the
+   wall clock). Until layer/core-os this was processor time (clock()). */
 uint64_t ei_now_ms(void) {
-  clock_t c = clock();
-  if (c == (clock_t)-1) return 0; /* processor time unavailable */
-  double ms = (double)c * 1000.0 / (double)CLOCKS_PER_SEC;
-  return ms > 0 ? (uint64_t)ms : 0;
+  struct timespec t;
+  if (clock_gettime(CLOCK_MONOTONIC, &t) != 0) return 0;
+  return (uint64_t)t.tv_sec * 1000 + (uint64_t)t.tv_nsec / 1000000;
 }
 
 // ---- threads

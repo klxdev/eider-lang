@@ -483,6 +483,11 @@ static void test_clock(void) {
   for (uint64_t i = 0; i < 20000000; i++) spin = spin + i;
   uint64_t b = ei_now_ms();
   CHECK(b >= a);
+  /* a wall-clock (monotonic) measure: it advances while the program sleeps */
+  struct timespec t = {0, 60 * 1000000};
+  nanosleep(&t, NULL);
+  uint64_t c = ei_now_ms();
+  CHECK(c - b >= 50);
 }
 
 // ---- the exit path (no hook), in forked children

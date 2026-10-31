@@ -195,11 +195,13 @@ shared handles themselves (`ei_rc`) stay atomic.
 | `ei_print_i(int64_t)`, `ei_print_u(uint64_t)` | decimal, then `\n` |
 | `ei_print_b(bool)` | `true` / `false`, then `\n` |
 | `ei_print_s(const char *)` | the bytes up to the NUL, then `\n` |
-| `uint64_t ei_now_ms(void)` | processor time used by the process in ms (`clock()`); `0` if unavailable |
+| `uint64_t ei_now_ms(void)` | milliseconds on the monotonic clock (`CLOCK_MONOTONIC`) from an arbitrary start; `0` if unavailable |
 
-`now_ms` is CPU time, not wall-clock time: it does not advance while the program sleeps or
-blocks, and it sums over threads. Keeping it is a compatibility decision (the recorded behaviour); a monotonic
-wall clock belongs in `eider_core.c` if the language wants one.
+`now_ms` measures elapsed time: it advances while the program sleeps or blocks and never jumps
+when the system clock is set. It used to be processor time (`clock()`), which did neither; no
+test depended on that (`tests/` only checks `now_ms() >= 0`, and `eiderc` uses it as a unique
+stamp for temporary directories, which a monotonic clock serves better). Nanosecond monotonic
+and wall clocks for std are `ec_time_mono_ns` / `ec_time_wall_ns` (core/ABI.md, "Time").
 
 ## Threads
 

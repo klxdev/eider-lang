@@ -828,7 +828,7 @@ review the oracle diff, add a test, and regenerate the seed.
   breaks; `u32` results above the signed range come back as negative numbers and
   `u64`/`usize` results as negative BigInts, because the loader passes the raw wasm values
   through.
-- Runtime: `ei_now_ms` is processor time (`clock()`), not a wall clock (core/RUNTIME.md).
+- Runtime: `ei_now_ms` is the monotonic clock in ms (it was processor time, `clock()`, until layer/core-os; core/RUNTIME.md).
 - Answered `unsupported` where the recorded behaviour is wrong, waiting for a language
   decision: `?` in an expression-bodied closure (recorded: checked against the enclosing
   function's return type), and an `extern "c"` or `unsafe fn` used as a function value
