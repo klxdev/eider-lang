@@ -29,6 +29,7 @@
 
 import "core/sys"
 import "std/bytes"
+import "std/profile"
 import "std/time"
 import "json"
 import "http.ei"
@@ -260,7 +261,8 @@ impl Table {
         let r: Result[List[u8], Error] = match self.names.get(name) {
             Some(k) => {
                 let m = self.methods[k]
-                m(params)
+                // a profile can be split by method (std/profile; nothing without --profile)
+                profile.with_label_bytes(sys.lit("rpc"), name, || -> Result[List[u8], Error] { m(params) })
             }
             None => Err(error(METHOD_NOT_FOUND, "Method not found"))
         }

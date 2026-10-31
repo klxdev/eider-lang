@@ -426,6 +426,22 @@ passed it, acts on the freed cell, which is still valid memory (and, if a later
 `ec_atomic_new` has handed the slot out again in between, on that new cell's value: a logic
 error, never memory corruption).
 
+## Profiling
+
+One call, for std/profile (through core/prof.ei). The core does no profiling itself: a
+program built with `--profile` links the runtime's profiler (core/eider_prof.c,
+core/RUNTIME.md "Profiling"), which registers its control function in the core's
+`ec_prof_hook` when it starts; the core forwards the call and the input buffer to it.
+
+| Function | Meaning |
+|---|---|
+| `int64_t ec_prof(int32_t op, int64_t arg)` | without a profiler: `-ENOSYS`. Otherwise op 0: `1 + 2 * sampling`; 1 start sampling; 2 stop; 3 reset what was recorded; 4 write a snapshot to the path in `in` (empty: the profile path), 0 or `-errno`; 5 add the label `key NUL value` in `in` to this thread's labels, returning the previous label set's id; 6 restore label set `arg`; 7 this thread's label set. Unknown ops: `-EINVAL` |
+
+It is the one function here that isn't an OS call, and the exception is deliberate: Eider
+can't reach the runtime (eider_rt has no `ec_*` symbols and binds to nothing), and this is
+the smallest bridge that lets a program built with the profiler control it, while every
+other program links the same core and gets `-ENOSYS`.
+
 ## WebAssembly
 
 None of these functions exist in `core/wasm/`: a wasm module has no descriptors, sockets,

@@ -148,6 +148,34 @@ pub fn write_or_fail(path: List[u8], data: List[u8]) uses io, fs {
     }
 }
 
+/// The toolchain's version: the first line of <root>/VERSION ("" when there is none). A
+/// profile records it (docs/runtime.md "Profile format").
+pub fn version() -> List[u8] uses io, fs {
+    let r = find_root()
+    if r.len() == 0 { return List.new() }
+    match fs.read(fs.join(r, s("VERSION"))) {
+        Ok(t) => {
+            let mut v: List[u8] = List.new()
+            for b in t {
+                if b == 10 || b == 13 { break }
+                if b >= 32 && b < 127 && b != 34 && b != 92 { v.push(b) }
+            }
+            v
+        }
+        Err(_) => List.new()
+    }
+}
+
+/// `argv` for the C of a program built with `--profile` (it starts with `#define
+/// EI_RT_PROFILE`): plus -DEI_RT_PROFILE, so the core is compiled with the profiler
+/// (core/eider_prof.c) and cached apart. Any other C keeps `argv`.
+fn profiled(argv: List[List[u8]], c: List[u8]) -> List[List[u8]] {
+    if !bytes.starts_with(c, s("#define EI_RT_PROFILE 1\n")) { return argv }
+    let mut a = argv.copy()
+    a.push(s("-DEI_RT_PROFILE"))
+    a
+}
+
 /// The C compiler and the flags every compile uses (core = <root>/core).
 pub fn cc_argv(core: List[u8], release: bool) -> List[List[u8]] uses io {
     let mut cc = s("cc")
@@ -330,6 +358,10 @@ fn core_inputs(argv: List[List[u8]], id: List[List[u8]], core: List[u8], cache: 
     parts.push(s("core objects"))
     parts.push(read_or_fail(fs.join(core, s("eider_rt.h"))))
     for f in srcs { parts.push(read_or_fail(f)) }
+    // the profiling runtime is part of eider_rt.c when it is compiled in
+    for a in argv {
+        if bytes.eq(a, s("-DEI_RT_PROFILE")) { parts.push(read_or_fail(fs.join(core, s("eider_prof.c")))) }
+    }
     let objdir = fs.join(fs.join(cache, s("core")), key(parts))
     let mut objs: List[List[u8]] = List.new()
     objs.push(fs.join(objdir, s("eider_rt.o")))
@@ -412,7 +444,7 @@ pub type Exe = { path: List[u8], dir: List[u8] }
 /// captured and "" returned.
 fn compile(c: List[u8], dir: List[u8], exe: List[u8], release: bool, libs: List[List[u8]], quiet: bool) -> List[u8] uses io, fs, net {
     let core = fs.join(root(), s("core"))
-    let cc = cc_argv(core, release)
+    let cc = profiled(cc_argv(core, release), c)
     let cache = cache_dir()
     let mut id: List[List[u8]] = List.new()
     if cache.len() > 0 { id = toolchain_id(cc) }

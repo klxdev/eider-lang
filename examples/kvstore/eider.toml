@@ -4,10 +4,10 @@ version = "0.1.0"
 main = "main.ei"
 description = "An example JSON-RPC 2.0 service on packages/http: a key-value store and a calculator (docs/services.md)"
 
-# the server and client: sockets, deadlines, worker threads
+# the server and client: sockets, deadlines, worker threads; files for the profiler's /debug/profile (http/profiling)
 [deps.http]
 path = "../../packages/http"
-uses = ["net", "io", "clock", "threads"]
+uses = ["net", "io", "clock", "threads", "fs"]
 
 # reading results in the end-to-end test; pure
 [deps.json]

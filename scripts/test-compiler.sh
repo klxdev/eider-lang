@@ -82,6 +82,13 @@
 #             compiler/tests/suite (the runner's own failure cases); for tests/checks it
 #             reports 0 failed and every line but the `skip`s (features eiderc doesn't have)
 #             and the coverage summary is the recorded one.
+#   profile-off: without --profile, `emit-c` of every run test (also --test) and of the
+#             compiler is byte-identical to that of the compiler of $PROFILE_OFF_REF (default:
+#             the merge base with main) and has no profiler in it (zero cost).
+#   profile:  compiler/tests/profile/*.ei built with --profile write the profile they should:
+#             CPU samples under labels, allocation, copy-on-write, .copy(), growth, rehash and
+#             Drop sites, lock and channel waits, spawns, a Ref conflict's trap, EIDER_PROF=off;
+#             also under ASan+UBSan and TSan when they are installed.
 #   cache:    EIDER_CACHE=<dir>: hits, what the key covers, core objects built once per
 #             toolchain, concurrent runs on an empty cache, no work directories left over.
 #   usage:    `--help` lists every command; unknown options/commands and stray arguments
@@ -609,6 +616,106 @@ else
   diff $tmp/cf_w2 $tmp/cf_g2 | head -10
   fail=1
 fi
+
+# profile-off: without --profile the C is exactly what it was (docs/runtime.md "Profiler": zero
+# cost). The reference is the compiler of revision $PROFILE_OFF_REF (default: the merge base
+# with `main`, so on a branch it is the compiler before the branch's changes), extracted with
+# `git archive` and built by the seed: `emit-c` of every run test (also with --test) and of
+# the compiler itself must be byte-identical between the two, and contain nothing of the
+# profiler. Skipped, with the reason, without git or the revision.
+pref=${PROFILE_OFF_REF:-$(git merge-base HEAD main 2>/dev/null)}
+pref_dir=target/proforef
+rm -rf $pref_dir
+mkdir -p $pref_dir
+if [ -z "$pref" ] || ! git archive "$pref" compiler > $pref_dir/src.tar 2>/dev/null; then
+  echo "skip profile-off: no git revision to compare with (set PROFILE_OFF_REF)"
+elif ! (cd $pref_dir && tar -xf src.tar) || ! EIDER_CACHE=off scripts/ei build $pref_dir/compiler/main.ei -o $pref_dir/eiderc >$pref_dir/build.log 2>&1; then
+  echo "FAIL profile-off: cannot build the compiler of $pref"; cat $pref_dir/build.log | head -20; fail=1
+else
+  pototal=0
+  pook=0
+  for f in tests/run/*.ei compiler/tests/run/*.ei compiler/main.ei; do
+    case " $routside " in *" $(basename "$f") "*) continue ;; esac
+    for mode in "" --test; do
+      [ "$f" = compiler/main.ei ] && [ -n "$mode" ] && continue
+      pototal=$((pototal + 1))
+      $new emit-c "$f" $mode >$tmp/p1 2>&1
+      EIDER_ROOT=$(pwd) $pref_dir/eiderc emit-c "$f" $mode >$tmp/p2 2>&1
+      # (the compiler's own C has the profiler's names in its string literals)
+      if cmp -s $tmp/p1 $tmp/p2 && { [ "$f" = compiler/main.ei ] || ! grep -q 'ei_prof\|EI_RT_PROFILE' $tmp/p1; }; then
+        pook=$((pook + 1))
+      else
+        echo "FAIL profile-off: emit-c $f $mode differs from the compiler of $pref"
+        diff $tmp/p2 $tmp/p1 | head -10
+        fail=1
+      fi
+    done
+  done
+  if [ "$pook" = "$pototal" ]; then v="ok  "; else v="FAIL"; fi
+  echo "$v profile-off: $pook/$pototal emit-c outputs without --profile are byte-identical to those of the compiler of $(echo $pref | cut -c1-10), with no profiler in them"
+fi
+
+# profile: programs built with --profile write the profile they should
+# (compiler/tests/profile/*.ei; docs/runtime.md "Profile format"). `fnid NAME FILE` is the id of
+# function NAME in profile FILE, `at TEXT SRC` the line of TEXT in source SRC; a check is a
+# grep of the profile.
+pdir=$(pwd)/target/proftest
+rm -rf $pdir
+mkdir -p $pdir
+fnid() { sed -n "s/^{\"t\":\"fn\",\"id\":\([0-9]*\),\"name\":\"$1\",.*/\1/p" "$2" | head -1; }
+at() { grep -n -F "$1" "$2" | head -1 | cut -d: -f1; }
+pfail=0
+pcheck() { if ! grep -q -- "$1" "$2"; then echo "FAIL profile: $3 (no \`$1\` in $2)"; pfail=1; fi; }
+pbuild() { EIDER_CACHE=off $new build compiler/tests/profile/$1.ei --profile -o $pdir/$1 >$pdir/$1.build 2>&1 || { echo "FAIL profile: build $1"; cat $pdir/$1.build; pfail=1; }; }
+for t in cow conc cpu ref_trap; do pbuild $t; done
+# memory events
+(cd $pdir && EIDER_PROF=$pdir/cow.prof ./cow >cow.out 2>&1)
+src=compiler/tests/profile/cow.ei
+p=$pdir/cow.prof
+pcheck '"clean_exit":true' $p "cow: main returned"
+# (edit is straight-line code that calls nothing, so it has no frame of its own: its
+# unshares count for main, at the call)
+pcheck "\"kind\":\"cow\",\"fn\":$(fnid main $p),\"line\":$(at 'kept.push(edit(d))' $src),\"n\":50," $p "cow: 50 unshares by edit, at main's call"
+pcheck "\"kind\":\"copy\",\"fn\":$(fnid snap $p),\"line\":$(at 't += d.copy()' $src),\"n\":30," $p "cow: 30 .copy() in snap"
+pcheck "\"kind\":\"grow\",\"fn\":$(fnid fill $p),\"line\":$(at 'l.push(i)' $src)," $p "cow: List growth in fill"
+pcheck "\"kind\":\"rehash\",\"fn\":$(fnid index $p),\"line\":$(at 'm.insert(i' $src)," $p "cow: Map rehashes in index"
+pcheck "\"kind\":\"drop\",\"fn\":$(fnid guarded $p),\"line\":$(at 'let g = Guard(i)' $src),\"n\":20," $p "cow: 20 Drop calls in guarded"
+pcheck '"live":0,"live_n":0' $p "cow: nothing live at the end"
+# waits and labels on threads
+(cd $pdir && EIDER_PROF=$pdir/conc.prof ./conc >conc.out 2>&1)
+p=$pdir/conc.prof
+src=compiler/tests/profile/conc.ei
+pcheck "\"kind\":\"lock\",\"fn\":$(fnid bump $p),\"line\":$(at 'm.update(' $src)," $p "conc: lock waits in bump"
+pcheck "\"kind\":\"recv\",\"fn\":$(fnid main $p),\"line\":$(at 'c.recv()' $src)," $p "conc: receive waits in main"
+pcheck "\"kind\":\"spawn\",\"fn\":$(fnid main $p),\"line\":$(at 'ts.push(spawn(' $src),\"n\":8," $p "conc: 8 spawns"
+pcheck '"key":"work","value":"bump"' $p "conc: the label"
+pcheck '"threads_started":9,"threads_exited":8' $p "conc: threads"
+grep -q '^320$' $pdir/conc.out || { echo "FAIL profile: conc output"; pfail=1; }
+# cpu samples, labels, a snapshot and the file at exit
+(cd $pdir && EIDER_PROF=$pdir/cpu.prof EIDER_PROF_HZ=500 ./cpu >cpu.out 2>&1)
+p=$pdir/cpu.prof
+pcheck '"reason":"exit"' $p "cpu: the profile at exit"
+hot=$(fnid hot $p)
+pcheck "\"kind\":\"cpu\",\"label\":1,.*\[$hot,[0-9]*\]\]}" $p "cpu: samples in hot under its label"
+pcheck '"key":"phase","value":"hot"' $p "cpu: the label"
+grep -q '^snapshot$' $pdir/cpu.out || { echo "FAIL profile: cpu snapshot ($(cat $pdir/cpu.out))"; pfail=1; }
+# EIDER_PROF=off: no file
+(cd $pdir && EIDER_PROF=off ./cpu >off.out 2>&1)
+grep -q '^false$' $pdir/off.out || { echo "FAIL profile: EIDER_PROF=off still profiles"; pfail=1; }
+# a trap still writes the profile, with the Ref conflict
+(cd $pdir && EIDER_PROF=$pdir/ref.prof ./ref_trap >ref.out 2>&1)
+[ $? = 101 ] || { echo "FAIL profile: ref_trap exit"; pfail=1; }
+pcheck '"kind":"ref",' $pdir/ref.prof "ref_trap: the conflict"
+# under the sanitizers the toolchain has (ASan+UBSan, TSan), the waits program again
+for san in "address,undefined" thread; do
+  printf 'int main(void){return 0;}\n' > $pdir/probe.c
+  ${CC:-cc} -fsanitize=$san -o $pdir/probe $pdir/probe.c 2>/dev/null && $pdir/probe || { echo "skip profile: no -fsanitize=$san"; continue; }
+  for t in conc cow; do
+    EIDER_CACHE=off EIDER_CFLAGS="-fsanitize=$san -fno-sanitize-recover=all -g" $new build compiler/tests/profile/$t.ei --profile -o $pdir/$t.san >$pdir/san.log 2>&1 || { echo "FAIL profile: build $t (-fsanitize=$san)"; pfail=1; continue; }
+    (cd $pdir && TSAN_OPTIONS="halt_on_error=1 exitcode=66" EIDER_PROF=$pdir/$t.san.prof ./$t.san >$t.san.out 2>&1) || { echo "FAIL profile: $t under -fsanitize=$san"; head -20 $pdir/$t.san.out; pfail=1; }
+  done
+done
+if [ $pfail = 0 ]; then echo "ok   profile: --profile programs record CPU, labels, allocation, copy-on-write, .copy(), growth, Drop, lock, channel, thread and Ref events at their sites (also under the sanitizers)"; else fail=1; fi
 
 # cache: EIDER_CACHE=<dir> (driver.ei, "Cache")
 cdir=$(pwd)/target/cachetest

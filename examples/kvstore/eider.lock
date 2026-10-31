@@ -13,7 +13,7 @@ name = "http"
 version = "0.1.0"
 source = "path+../../packages/http"
 deps = ["json", "fuzz"]
-grants = ["net", "io", "clock", "threads"]
+grants = ["net", "io", "clock", "threads", "fs"]
 
 [[package]]
 name = "json"

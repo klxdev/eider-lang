@@ -1,0 +1,40 @@
+// --profile: waits (scripts/test-compiler.sh, "profile"). Eight threads take one Mutex in
+// turn, each holding it while it works (contention in `bump`); main waits on a channel for
+// their results (receive waits in `main`); each thread is labelled with its kind of work.
+import "std/profile"
+
+fn spin(n: i64) -> i64 {
+    let mut s: i64 = 0
+    for i in 0..n { s = (s + i * 7) % 1000003 }
+    s
+}
+
+fn bump(m: Mutex[i64], rounds: i64) -> i64 {
+    let mut t: i64 = 0
+    for r in 0..rounds {
+        m.update(|v: i64| -> i64 { v + spin(20000) % 2 + 1 })
+        t += 1
+    }
+    t
+}
+
+fn main() uses io, threads {
+    let m: Mutex[i64] = Mutex.new(0)
+    let c: Chan[i64] = Chan.new()
+    let mut ts: List[Task[()]] = List.new()
+    for k in 0..8 {
+        let mm = m
+        let cc = c
+        ts.push(spawn(|| profile.with_label("work", "bump", || cc.send(bump(mm, 40)))))
+    }
+    let mut got: i64 = 0
+    for k in 0..8 {
+        match c.recv() {
+            Some(v) => { got += v }
+            None => {}
+        }
+    }
+    for t in ts { t.join() }
+    print(got)
+    print(m.get())
+}

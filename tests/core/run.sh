@@ -5,7 +5,9 @@
 # mode needs no runtime library, so undefined behaviour is checked on every toolchain.
 # tests/core/core_test.c (ec_run, ec_read_fd) and tests/core/os_test.c (descriptors, sockets,
 # DNS, readiness, time, signals, randomness, processes) run against core/eider_core.c the same
-# way.
+# way. tests/core/prof_test.c runs against the profiling runtime (core/eider_prof.c, eider_rt.c
+# built with -DEI_RT_PROFILE) and eider_core.c, plain and under the same sanitizers; and the
+# runtime built without the flag must contain none of the profiler.
 cd "$(dirname "$0")/../.." || exit 1
 CC=${CC:-cc}
 STRICT="-std=c11 -pedantic -Wall -Wextra -Wconversion -Wshadow -Werror"
@@ -19,6 +21,9 @@ TSAN_OPTIONS="allocator_may_return_null=1 halt_on_error=1"; export TSAN_OPTIONS
 UBSAN_OPTIONS=halt_on_error=1; export UBSAN_OPTIONS
 
 if $CC $STRICT -DEI_RT_COUNT_ALLOCS -c core/eider_rt.c -o "$T/o.o" 2>"$T/log"; then echo "ok   strict core/eider_rt.c (-DEI_RT_COUNT_ALLOCS)"; else echo "FAIL strict core/eider_rt.c (-DEI_RT_COUNT_ALLOCS)"; cat "$T/log"; fail=1; fi
+if $CC $STRICT -DEI_RT_PROFILE -c core/eider_rt.c -o "$T/o.o" 2>"$T/log"; then echo "ok   strict core/eider_rt.c (-DEI_RT_PROFILE)"; else echo "FAIL strict core/eider_rt.c (-DEI_RT_PROFILE)"; cat "$T/log"; fail=1; fi
+# without the flag the profiler is not there at all (docs/runtime.md "Profiler": zero cost)
+if $CC -std=c11 -E -P core/eider_rt.c 2>/dev/null | grep -q 'prof_\|EI_PEV'; then echo "FAIL core/eider_rt.c without -DEI_RT_PROFILE still has profiler code"; fail=1; else echo "ok   core/eider_rt.c without -DEI_RT_PROFILE has no profiler code"; fi
 for f in core/eider_core.c core/eider_rt.c; do
   if $CC $STRICT -c "$f" -o "$T/o.o" 2>"$T/log"; then echo "ok   strict $f"; else echo "FAIL strict $f"; cat "$T/log"; fail=1; fi
 done
@@ -52,6 +57,19 @@ core() {
   done
 }
 
+# prof NAME FLAGS...: build prof_test with FLAGS against the profiling runtime and run it
+prof() {
+  name=$1; shift
+  if ! $CC $STRICT -DEI_RT_PROFILE "$@" -I core -o "$T/prof_$name" tests/core/prof_test.c core/eider_rt.c core/eider_core.c -pthread 2>"$T/log"; then
+    echo "FAIL prof ($name): build"; cat "$T/log"; fail=1; return
+  fi
+  if EIDER_PROF="$T/prof_$name.prof" EIDER_PROF_HZ=1000 "$T/prof_$name" "$T/prof_$name.snap" >"$T/out" 2>&1 && grep -q '"reason":"exit"' "$T/prof_$name.prof"; then
+    echo "ok   prof ($name): $(tail -1 "$T/out")"
+  else
+    echo "FAIL prof ($name)"; cat "$T/out"; fail=1
+  fi
+}
+
 # sanitizer NAME FLAGS...: run under FLAGS if a trivial program builds and runs with them
 sanitizer() {
   name=$1; shift
@@ -59,6 +77,7 @@ sanitizer() {
   if $CC "$@" -o "$T/probe" "$T/probe.c" -pthread >/dev/null 2>&1 && "$T/probe" >/dev/null 2>&1; then
     run "$name" -O1 -g "$@"
     core "$name" -O1 -g "$@"
+    prof "$name" -O1 -g "$@"
   else
     echo "skip rt ($name): $CC cannot build or run with $*"
   fi
@@ -68,6 +87,8 @@ run O2 -O2
 run portable -O0 -DEI_RT_PORTABLE
 run count-allocs -O0 -DEI_RT_COUNT_ALLOCS
 core O2 -O2
+prof O2 -O2
+prof count-allocs -O0 -DEI_RT_COUNT_ALLOCS
 sanitizer ubsan-trap -fsanitize=undefined -fsanitize-trap=undefined
 sanitizer ubsan-trap,portable -fsanitize=undefined -fsanitize-trap=undefined -DEI_RT_PORTABLE
 sanitizer asan+ubsan -fsanitize=address,undefined -fno-sanitize-recover=undefined

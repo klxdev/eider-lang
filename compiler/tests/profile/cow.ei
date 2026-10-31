@@ -1,0 +1,62 @@
+// --profile: the memory events (scripts/test-compiler.sh, "profile"). Each kind happens at a
+// line the test finds by its text: copy-on-write unshares by `edit` (straight-line code that
+// calls nothing has no shadow frame, so they count for main at the call), `.copy()` in
+// `snap`, List growth in `fill`, Map rehashes in `index`, Drop calls in `guarded`; main
+// drops everything, so nothing is live at the end (`clean_exit`, no leaks).
+type Doc = { lines: List[String], title: String }
+
+fn base(n: i64) -> Doc {
+    let mut d = Doc(List.new(), String.from("t"))
+    for i in 0..n { d.lines.push(String.from_int(i)) }
+    d
+}
+
+fn edit(d: Doc) -> Doc {
+    let mut e = d.copy()
+    e.lines[0] = String.from("changed")
+    e
+}
+
+fn snap(d: Doc, k: i64) -> i64 {
+    let mut t: i64 = 0
+    for i in 0..k { t += d.copy().lines.len() as i64 }
+    t
+}
+
+fn fill(n: i64) -> List[i64] {
+    let mut l: List[i64] = List.new()
+    for i in 0..n { l.push(i) }
+    l
+}
+
+fn index(n: i64) -> Map[i64, i64] {
+    let mut m: Map[i64, i64] = Map.new()
+    for i in 0..n { m.insert(i, i * 2) }
+    m
+}
+
+type Guard = { id: i64 }
+
+impl Drop for Guard {
+    fn drop(inout self) { self.id = 0 }
+}
+
+fn guarded(n: i64) -> i64 {
+    let mut t: i64 = 0
+    for i in 0..n {
+        let g = Guard(i)
+        t += g.id
+    }
+    t
+}
+
+fn main() uses io {
+    let d = base(200)
+    let mut kept: List[Doc] = List.new()
+    for i in 0..50 { kept.push(edit(d)) }
+    print(kept.len())
+    print(snap(d, 30))
+    print(fill(1000).len())
+    print(index(100).len())
+    print(guarded(20))
+}

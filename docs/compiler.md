@@ -918,6 +918,26 @@ end and lowering (`emit-c compiler/main.ei`, 16.6k lines of Eider -> 105k lines 
 String, List, Map or Box, or of a record holding them) used to be deep and is now a count
 increment. gcc still dominates a build of eiderc.
 
+Where eiderc's own time goes, from its profile (`sh scripts/profile-compiler.sh`: eiderc built
+with `--profile`, `emit-c compiler/main.ei`, 2026-10-31; docs/runtime.md "Profiler"). Of the 36
+CPU samples at 99 Hz (few: the shares are rough; EIDER_PROF_HZ=999 for more), about a third is checking (`check.check_all`), two fifths lowering
+(`lower.emit`), a fifth loading and parsing (`resolve.load_from`); the hottest single
+functions are `check.expr`, `lower.put` and `sys.lit` (about a tenth each). The memory profile
+is the more useful one, since its counts are exact and the same on every run (`--check` gates
+them): 2.13 M allocations and 145 MiB for one compile, peak heap 47.5 MiB.
+
+| Hot spot | Count | Why |
+|---|---|---|
+| `sys.lit` (core/sys.ei:43) | 1.36 M allocations, 27 MiB | every `str` literal turned into a `List[u8]` one byte at a time through the C core (the push loop also grows the List); lowering calls it for each piece of C text |
+| List growth of the big buffers (`parse.add`, `lex.run`, `bytes.append` for the output) | 21 MiB, 19 MiB, 27 MiB in a few hundred doublings each | arenas and the output grow by doubling with a copy each time; reserving from the input size would remove most |
+| `.copy()` | 1.7 M calls, 25 MiB | mostly the lexer's and parser's `let x = place.copy()` (lex.run:376, parse.bit_expr), each a shallow copy, plus `bytes.from_u64` |
+| `bytes.from_u64` | 441 k allocations | `putn` of numbers in the C text |
+| copy-on-write unshares | 4,515, 0.7 MiB | small: `intern.intern` (the interner's table, twice, 0.5 MiB) and the checker's `lv_loop`; C8.1 did its job |
+
+So the next compile-speed work is in the text output (a `str` append that doesn't go through
+`sys.lit`, and numbers written without a temporary) and in sizing the arenas, not in the
+checker's copies.
+
 Core objects and the binary cache (C7, "C7: driver"), measured 2026-10-30 on
 `tests/run/adt.ei` (84 lines; 16 cores, gcc; each the median of 4 runs, wall clock):
 
@@ -2536,6 +2556,44 @@ Tests: compiler/tests/run/chains.ei (builder methods over several lines with a b
 comment line between, fields and tuple fields, a chain as a block's value and inside call
 arguments, a line not starting with `.` ending the statement; hand-checked .out);
 compiler/tests/parse_ok/chains.ei (the AST: one chain).
+
+## Profiling: `--profile`
+
+`eiderc build|run|test <file> --profile[=cpu,mem,conc]` (main.ei: `profile`, parsed by
+`lower.prof_what`; a bare `--profile` is all three; with `--lib` or `--wasm` it is a usage
+error) lowers the program through `lower.program_prof`, which is `emit` with `G.prof` set.
+Everything below is emitted only then (`g.prof > 0`), so without the flag the C is byte for
+byte what it was (scripts/test-compiler.sh "profile-off" compares `emit-c` of every run test
+and of the compiler with the compiler of the merge base). The runtime side, the file format
+and the overhead are docs/runtime.md "Profiler"; decisions C200 to C206.
+
+- **The C asks for the runtime.** The output starts with `#define EI_RT_PROFILE 1`;
+  `driver.profiled` sees it and adds `-DEI_RT_PROFILE` to the cc argv, so eider_rt.c is
+  compiled with core/eider_prof.c (and the core objects are cached apart: the argv and
+  eider_prof.c's bytes are in the key).
+- **Shadow frames** (`function`, `framed`). A function whose body calls (S_CALL, S_CALLV) or
+  loops pushes `ei_prof_frame *ei_pf = ei_prof_enter(<index + 1>);` after its locals and pops
+  (`ei_prof_leave();`) before every `return` and at the end of a `()` function. Straight-line
+  code that calls nothing gets no frame: it counts for its caller, as if inlined.
+- **Lines** (`prof_marks`, `prof_line`): `ei_pf->line = <line>;` before a statement that calls,
+  runs a builtin, makes a closure, builds a record with its own Drop, drops an owned value or
+  prints, unless the same straight-line code already set that line (`G.pline`, reset at every
+  block boundary).
+- **Events** in glue (`prof_ev`): `EI_PEV_COW` in `uniq_` when the buffer is shared (bytes of
+  the buffer), `EI_PEV_GROW` in `push_` when it grows, `EI_PEV_REHASH` in `ins_` when it
+  rehashes, `EI_PEV_DROP` around a type's own Drop in `drop_`, and `EI_PEV_COPY` at each
+  `.copy()` (a comma expression, so the copy stays the assigned value).
+- **The name table** (`prof_table`, before `main`): `ei_prof_names` (every IR function's name,
+  index + 1), `ei_prof_file_of`, `ei_prof_files` (the entry file, then the module files as
+  `ir.files` names them), and `ei_prof_tab` with the selection, the program and the
+  toolchain version (`driver.version`: the first line of `<root>/VERSION`). Generated `main`
+  and test `main` call `ei_prof_init(&ei_prof_tab)` after `ei_set_file`; a failed test calls
+  `ei_prof_unwind(0)` (its longjmp skipped the pops).
+
+Tests: compiler/tests/profile (memory events at their lines, waits and labels on threads,
+CPU samples under labels with a snapshot, a Ref conflict's trap, `EIDER_PROF=off`; also under
+ASan+UBSan and TSan), tests/core/prof_test.c (the runtime alone), tests/std/profile.ei
+(std/profile without a profiler).
 
 ## Language work that lands in `eiderc` (after parity)
 

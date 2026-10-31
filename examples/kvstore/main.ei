@@ -18,6 +18,7 @@ import "std/signal"
 import "std/task"
 import "std/time"
 import "http/server"
+import "http/profiling"
 import "kv.ei"
 
 fn port_arg() -> i32 uses io {
@@ -39,7 +40,7 @@ fn port_arg() -> i32 uses io {
     }
 }
 
-fn main() uses io, net, clock, threads {
+fn main() uses io, fs, net, clock, threads {
     let srv = match server.listen(net.ipv4(127, 0, 0, 1, port_arg()), server.config()) {
         Ok(s) => s
         Err(e) => {
@@ -73,7 +74,13 @@ fn main() uses io, net, clock, threads {
         0
     })
 
-    match srv.serve(kv.app(kv.store()), tok) {
+    // the profiler's endpoints, only on request (a binary built with --profile; docs/runtime.md)
+    let mut prof = profiling.options()
+    match env.get(sys.lit("KVSTORE_PROFILING")) {
+        Some(v) => { prof.enabled = bytes.eq(v, sys.lit("1")) }
+        None => {}
+    }
+    match srv.serve(kv.app_with(kv.store(), prof), tok) {
         Ok(st) => {
             let mut m = String.from("kvstore: stopped after ")
             m.append(String.from_int(st.requests))

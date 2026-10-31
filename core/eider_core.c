@@ -1878,3 +1878,18 @@ EC_FN(int64_t, ec_atomic_cas, (int64_t h, int64_t expected, int64_t desired, int
   atomic_compare_exchange_strong_explicit(&cell_of(h)->v, &e, desired, cell_mo_rmw(order), cell_mo_fail(order));
   return e;
 }
+
+/* ---- profiling control (core/ABI.md "Profiling"). A program built with `--profile` links the
+   runtime's profiler (core/eider_prof.c), which registers itself here when it starts; any
+   other program has no profiler, and every call answers -ENOSYS. The core does no profiling
+   itself: it forwards the call and the input buffer (a path, a label's key and value). */
+typedef int64_t (*ec_prof_fn)(int32_t op, int64_t arg, const unsigned char *in, size_t len);
+_Atomic(ec_prof_fn) ec_prof_hook;
+
+EC_FN(int64_t, ec_prof, (int32_t op, int64_t arg)) {
+  ec_prof_fn h = atomic_load(&ec_prof_hook);
+  if (!h) return -ENOSYS;
+  reserve(&in_p, &in_cap, 1);
+  in_p[in_len] = 0;
+  return h(op, arg, in_p, in_len);
+}
