@@ -13,6 +13,7 @@
 
 import "core/sys"
 import "std/bytes"
+import "std/time"
 
 pub type Header = { name: List[u8], value: List[u8] }
 
@@ -20,7 +21,11 @@ pub type Header = { name: List[u8], value: List[u8] }
 /// and `query` (after `?`, empty when there is none) are split from it. `version` is 10 or
 /// 11. `params` are the path parameters a router matched (name, decoded value). `keep_alive`
 /// is what the client asked for (HTTP/1.1 unless `Connection: close`; HTTP/1.0 only with
-/// `Connection: keep-alive`).
+/// `Connection: keep-alive`). `peer` is the client's address as text ("127.0.0.1:50312"; empty
+/// when the request didn't come from a socket). `deadline` is when the answer is due (never,
+/// unless a middleware such as `middleware.timeout` set one): a handler that waits for
+/// something should wait no longer. `ctx` holds values middleware hands to the handlers it
+/// wraps (`request_id`, `principal`; see `get_ctx`).
 pub type Request = {
     method: List[u8],
     target: List[u8],
@@ -31,12 +36,17 @@ pub type Request = {
     body: List[u8],
     params: List[Header],
     keep_alive: bool,
+    peer: List[u8],
+    deadline: time.Deadline,
+    ctx: List[Header],
 }
 
 /// A response. `version` and `keep_alive` are filled in by the parser (what the server
 /// said). A handler's `version` is ignored; its `keep_alive` false makes the server close
-/// the connection after this response.
-pub type Response = { status: i32, headers: List[Header], body: List[u8], version: i32, keep_alive: bool }
+/// the connection after this response. `ctx` carries values back out to the middleware
+/// around a handler (the `principal` an authentication layer found, for the access log); it
+/// is never sent.
+pub type Response = { status: i32, headers: List[Header], body: List[u8], version: i32, keep_alive: bool, ctx: List[Header] }
 
 // A handler is a value of type `fn(Request) -> Response` (spelled out everywhere: the
 // language has no type aliases yet, docs/services.md "Needs").
@@ -115,6 +125,25 @@ pub fn list_items(v: List[u8]) -> List[List[u8]] {
     out
 }
 
+/// The media type of a Content-Type value, lowercased, without parameters
+/// ("Application/JSON; charset=utf-8" is "application/json").
+pub fn media_type(v: List[u8]) -> List[u8] {
+    let cut = match bytes.find_byte(v, 59, 0) {
+        Some(i) => i
+        None => v.len()
+    }
+    lower(trim_ows(bytes.slice(v, 0, cut)))
+}
+
+/// Equality that takes the same time wherever `a` and `b` differ (it still depends on their
+/// lengths): for comparing secrets such as tokens and passwords.
+pub fn eq_ct(a: List[u8], b: List[u8]) -> bool {
+    if a.len() != b.len() { return false }
+    let mut diff: u8 = 0
+    for i in 0..a.len() { diff = diff | (a[i] ^ b[i]) }
+    diff == 0
+}
+
 // ---- headers
 
 /// The value of the first header called `name` (case-insensitive).
@@ -165,38 +194,70 @@ impl Request {
 
     /// The first query parameter called `name`, decoded (`+` is a space); None when absent
     /// or badly encoded.
-    fn query_param(self, name: str) -> Option[List[u8]] {
-        let want = sys.lit(name)
-        for kv in bytes.split(self.query, 38) {
-            if kv.len() == 0 { continue }
-            let mut k = kv.copy()
-            let mut v: List[u8] = List.new()
-            match bytes.find_byte(kv, 61, 0) {
-                Some(i) => {
-                    k = bytes.slice(kv, 0, i)
-                    v = bytes.slice(kv, i + 1, kv.len())
-                }
-                None => {}
-            }
-            match pct_decode(k, true) {
-                Some(dk) => {
-                    if bytes.eq(dk, want) { return pct_decode(v, true) }
-                }
-                None => {}
-            }
-        }
-        None
-    }
+    fn query_param(self, name: str) -> Option[List[u8]] { query_value(self.query, sys.lit(name)) }
 
     /// Adds a header.
     fn set_header(inout self, name: str, value: List[u8]) { self.headers.push(Header(sys.lit(name), value)) }
+
+    /// The context value `name` a middleware set (`request_id`, `principal`, ...).
+    fn get_ctx(self, name: str) -> Option[List[u8]] { find(self.ctx, sys.lit(name)) }
+
+    /// Sets the context value `name` (replacing an earlier one).
+    fn set_ctx(inout self, name: str, value: List[u8]) {
+        let key = sys.lit(name)
+        self.ctx = without(self.ctx, key)
+        self.ctx.push(Header(key, value))
+    }
+
+    /// The media type of the body (Content-Type without parameters, lowercased; empty when
+    /// there is none).
+    fn content_type(self) -> List[u8] {
+        match find(self.headers, sys.lit("content-type")) {
+            Some(v) => media_type(v)
+            None => List.new()
+        }
+    }
 }
 
 impl Response {
     fn header(self, name: str) -> Option[List[u8]] { find(self.headers, sys.lit(name)) }
 
+    /// The context value `name` (see `ctx`).
+    fn get_ctx(self, name: str) -> Option[List[u8]] { find(self.ctx, sys.lit(name)) }
+
+    /// Sets the context value `name` (replacing an earlier one).
+    fn set_ctx(inout self, name: str, value: List[u8]) {
+        let key = sys.lit(name)
+        self.ctx = without(self.ctx, key)
+        self.ctx.push(Header(key, value))
+    }
+
     /// Adds a header (written as given; see the module comment for framing headers).
     fn set_header(inout self, name: str, value: List[u8]) { self.headers.push(Header(sys.lit(name), value)) }
+}
+
+/// The first parameter called `want` in a query string, decoded (`+` is a space); None when
+/// absent or badly encoded.
+pub fn query_value(query: List[u8], want: List[u8]) -> Option[List[u8]] {
+    for kv in bytes.split(query, 38) {
+        if kv.len() == 0 { continue }
+        let mut k = kv.copy()
+        let mut v: List[u8] = List.new()
+        match bytes.find_byte(kv, 61, 0) {
+            Some(i) => {
+                k = bytes.slice(kv, 0, i)
+                v = bytes.slice(kv, i + 1, kv.len())
+            }
+            None => {}
+        }
+        match pct_decode(k, true) {
+            Some(dk) => {
+                if bytes.eq(dk, want) { return pct_decode(v, true) }
+            }
+            None => {}
+        }
+    }
+    None
 }
 
 // ---- building messages
@@ -204,17 +265,17 @@ impl Response {
 /// A request for the client: `target` is the origin-form path and query ("/rpc?x=1").
 pub fn request(method: str, target: List[u8]) -> Request {
     let (p, q) = split_target(target)
-    Request(sys.lit(method), target, p, q, 11, List.new(), List.new(), List.new(), true)
+    Request(sys.lit(method), target, p, q, 11, List.new(), List.new(), List.new(), true, List.new(), time.never(), List.new())
 }
 
 /// A response with no headers and no body.
-pub fn response(status: i32) -> Response { Response(status, List.new(), List.new(), 11, true) }
+pub fn response(status: i32) -> Response { Response(status, List.new(), List.new(), 11, true, List.new()) }
 
 /// A response with a body and its Content-Type.
 pub fn respond(status: i32, content_type: str, body: List[u8]) -> Response {
     let mut hs: List[Header] = List.new()
     hs.push(Header(sys.lit("Content-Type"), sys.lit(content_type)))
-    Response(status, hs, body, 11, true)
+    Response(status, hs, body, 11, true, List.new())
 }
 
 /// A `text/plain` response.

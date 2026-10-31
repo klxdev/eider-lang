@@ -28,6 +28,7 @@
 
 import "core/sys"
 import "std/bytes"
+import "std/time"
 import "http.ei"
 
 const HEAD: i32 = 0
@@ -91,10 +92,10 @@ pub fn responses(lim: http.Limits) -> Parser { make(true, lim) }
 /// The request a message is (path and query split from the target).
 pub fn to_request(m: Msg) -> http.Request {
     let (p, q) = http.split_target(m.target)
-    http.Request(m.method, m.target, p, q, m.version, m.headers, m.body, List.new(), m.keep_alive)
+    http.Request(m.method, m.target, p, q, m.version, m.headers, m.body, List.new(), m.keep_alive, List.new(), time.never(), List.new())
 }
 
-pub fn to_response(m: Msg) -> http.Response { http.Response(m.status, m.headers, m.body, m.version, m.keep_alive) }
+pub fn to_response(m: Msg) -> http.Response { http.Response(m.status, m.headers, m.body, m.version, m.keep_alive, List.new()) }
 
 impl Parser {
     /// Adds bytes that arrived.

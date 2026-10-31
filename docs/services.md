@@ -2,8 +2,11 @@
 
 What a networked Eider service is built from today: HTTP/1.1 and JSON-RPC 2.0 in
 `packages/http`, on std's sockets, deadlines, tokens and thread pool (docs/runtime.md), and
-`packages/json`. This is the first piece of the services layer (roadmap.md, P0.12 and the
-first milestone of P1.1); decisions are C40 onwards in docs/decisions.md.
+`packages/json`, with middleware (request ids, access logs, metrics, CORS, authentication,
+limits and timeouts per route) in `packages/http` and OpenAPI 3.1 services in
+`packages/openapi` (docs/openapi.md). This is the first piece of the services layer
+(roadmap.md, P0.12 and the first milestone of P1.1); decisions are C40 to C51 and C80
+onwards in docs/decisions.md.
 
 ```
 import "std/net"
@@ -14,11 +17,11 @@ import "http/router"
 import "http/jsonrpc"
 
 fn main() uses io, net, clock, threads {
-    var rpc = jsonrpc.table()
+    let mut rpc = jsonrpc.table()
     rpc.add("math.add", |p: jsonrpc.Params| -> Result[List[u8], jsonrpc.Error] {
         Ok(jsonrpc.int(p.int(0, "a")? + p.int(1, "b")?))
     })
-    var r = router.new()
+    let mut r = router.new()
     r.post("/rpc", jsonrpc.handler(rpc))
     r.get("/users/:id", |q: http.Request| -> http.Response {
         http.respond(200, "text/plain", q.param("id").unwrap())
@@ -30,7 +33,10 @@ fn main() uses io, net, clock, threads {
 ```
 
 `examples/kvstore` is a complete service (a key-value store and a calculator over JSON-RPC,
-a REST route, graceful shutdown on SIGTERM), with an end-to-end test.
+a REST route, graceful shutdown on SIGTERM), with an end-to-end test. `examples/todo` is a
+REST service described by OpenAPI (CRUD, validation, bearer tokens, `/openapi.json`,
+`/metrics`, the middleware below), with an end-to-end test that also checks the served
+description against a recorded golden.
 
 ## Modules
 
@@ -42,10 +48,17 @@ a REST route, graceful shutdown on SIGTERM), with an end-to-end test.
 | `http/client` | `connect`, `Conn.request`, `fetch`, `get`, `post` | `net, io, clock` |
 | `http/router` | method + path patterns with parameters, 404/405 | none |
 | `http/jsonrpc` | JSON-RPC 2.0: a dispatch table, typed methods, the HTTP handler, a client call | none (`net, io, clock` for the client calls) |
+| `http/problem` | `ApiError`: errors as values, written as RFC 9457 problem+json | none |
+| `http/middleware` | `request_id`, `access_log`, `errors`, `problems`, `body_limit`, `timeout`, `cors`, `bearer`, `basic`, `chain` | none; `io, clock` for `access_log` and `timeout`, `io` for `random_ids` |
+| `http/metrics` | request counters, an in-flight gauge and a latency histogram, in the Prometheus text format | `clock` for `wrap` |
 | `http/sock` | sending before a deadline, lingering close | `net, io, clock` |
 
 A handler is a value of type `fn(http.Request) -> http.Response` (a closure takes the
-capabilities of the function that writes it, so a handler can do what its author can). The
+capabilities of the function that writes it, so a handler can do what its author can). Besides
+the message, a Request carries `peer` (the client's address, from the server), `deadline` (when
+the answer is due, set by `middleware.timeout`) and `ctx` (named values middleware hands
+inward: `request_id`, `principal`); a Response's `ctx` (never sent) carries values back out
+to the layers around the handler. The
 package's eider.toml grants its dependencies nothing (json and fuzz are pure); a program
 that uses it grants it `net, io, clock, threads` (examples/kvstore/eider.toml).
 
@@ -117,6 +130,66 @@ answered), batches (an empty one, all-notification ones, invalid members). Over 
 `client.Conn`, and `parse_reply`, which checks the version, the id and that there is exactly
 one of `result` and `error`.
 
+## Middleware (`http/middleware`, `http/metrics`, `http/problem`)
+
+A middleware is a function from a handler (and its configuration) to a handler (C80). Layers
+compose by nesting, outermost first. A layer applies to a whole service when it wraps the
+router's handler, and to one route when it wraps that route's handler:
+
+```eider
+let m = metrics.new()
+r.get("/metrics", m.handler())
+r.post("/upload", middleware.body_limit(4096, middleware.bearer("api", tokens, upload)))
+r.get("/report", middleware.timeout(time.seconds(2), report_pool, report))
+let inner = middleware.problems(middleware.cors(cors, router.handler(r)))
+let app = middleware.request_id(ids, middleware.access_log(log, m.wrap(inner)))
+```
+
+(`middleware.chain(h, layers)` applies a List of layers instead.) What each one does:
+
+- **Request ids** (C83). A client's `X-Request-Id` is kept when it is 1 to 128 bytes of
+  letters, digits and `-._:`; otherwise the id is `<prefix>-<n>`. `random_ids()` makes a
+  random 8-byte prefix; `ids("t")` makes a fixed one for tests. The id is in
+  `req.get_ctx("request_id")` and in the response's `X-Request-Id`.
+- **Access log** (C84). One JSON line per request, written after the response is made, to any
+  `stream.Writer` held in a `sync.Lock` (so lines from different workers stay whole). A line
+  holds `time` (RFC 3339 UTC, ms), `id`, `peer`, `method`, `path`, `query`, `status`, `bytes`,
+  `duration_us`, and `principal` when a layer inside authenticated the request. It never
+  holds headers or bodies, which can carry secrets. A line that can't be written is dropped.
+- **Errors as values** (C82). `errors(h)` takes a handler that returns
+  `Result[http.Response, problem.ApiError]` and answers an Err with its problem+json.
+  `problems(h)` rewrites exactly the package's plain-text error responses
+  (`http.error_response`, such as the router's 404 and 405) as problem+json and keeps their
+  headers (`Allow`, `Retry-After`). A handler's own text is left alone. Turning a *trap* into
+  a 500 still needs N5.
+- **Body limits per route** (C86). `body_limit(n, h)` answers 413 above `n` bytes. The
+  check comes after the server has read the body (up to `Limits.max_body`, the server-wide
+  ceiling), because bodies are not streams yet (N16).
+- **Timeouts per route** (C85). `timeout(d, pool, h)` runs `h` on a worker of `pool` and
+  sets `req.deadline`. If the answer isn't there by the deadline, the response is 503
+  (problem+json, `Connection: close`). A late handler can't be interrupted (N15): it runs
+  to its end on its worker and its answer is dropped. A pool of its own per slow route
+  bounds the threads such handlers hold, and a handler that waits on something should wait
+  only until `req.deadline`.
+- **CORS** (C87). Nothing is allowed by default: `cors_config().allow_origin(o)` or
+  `.allow_any_origin()`, `.allow_header`, `.expose_header`, `.with_credentials()`. A preflight
+  is answered by the layer before routing: 204 with the allowed methods, the requested
+  headers and `Max-Age` when the origin, the method and every requested header are allowed,
+  otherwise 403. Other responses to an allowed origin get `Access-Control-Allow-Origin`
+  (`*` only without credentials; otherwise the origin is echoed with `Vary: Origin`).
+- **Authentication hooks** (C88). `bearer(realm, check, h)` (RFC 6750): `check(token)` returns
+  the principal. `basic(realm, check, h)` (RFC 7617): `check(user, password)` returns a bool.
+  A failure is 401 with `WWW-Authenticate`, with `error="invalid_token"` for a token that was
+  refused. The principal is put in the request's `ctx` for the handler and in the response's
+  for the layers outside. `token_table` checks a fixed table with `http.eq_ct` (constant
+  time). Basic auth only belongs behind TLS (C51).
+- **Metrics** (C89). `Metrics.wrap(h)` counts `http_requests_total{method, code}` (methods
+  other than the seven standard ones are `OTHER`, so clients can't create series),
+  `http_requests_in_flight` and the histogram `http_request_duration_seconds`, with
+  Prometheus's default buckets (5 ms to 10 s) or `with_buckets`. `handler()` serves the text
+  format (0.0.4), sorted for stable output. Copies share one Lock, so every worker counts
+  into the same numbers.
+
 ## Limits and defaults
 
 | What | Default | Where | Over it |
@@ -162,11 +235,15 @@ one of `result` and `error`.
 - **Path handling.** Percent-decoding happens per segment after splitting (no `%2F` route
   confusion); the router does not resolve `..` (a handler serving files must). Fragments in
   a request-target are refused.
-- **What can still go wrong.** A handler that blocks forever holds a worker forever; a trap
-  in a handler (panic, overflow, out-of-bounds) ends the process, as any trap does today
-  (needs N5). The kvstore example checks arithmetic before doing it so a caller can't crash
-  it. There is no authentication or rate limiting in the package: both belong in handlers
-  or middleware (next steps).
+- **Authentication and CORS** are middleware (above): bearer tokens or Basic credentials
+  checked by a function the service gives, secrets compared in constant time, CORS refused
+  unless configured. packages/openapi applies the bearer check to the operations marked
+  `secured`.
+- **What can still go wrong.** A handler that blocks forever holds a worker forever
+  (`middleware.timeout` bounds the answer, not the thread). A trap in a handler (panic,
+  overflow, out-of-bounds) ends the process, as any trap does today (needs N5). The kvstore
+  example checks arithmetic before doing it so a caller can't crash it. There is no rate
+  limiting yet.
 
 ## Testing
 
@@ -188,10 +265,23 @@ one of `result` and `error`.
   deadlines, `max_requests`, back-pressure (503 and keep-alive given up), graceful shutdown
   with a request in flight.
 
+- `middleware_test`: every middleware called directly. The timeout case uses a handler
+  blocked on a channel that the test releases after the 503, so nothing sleeps. It also
+  covers problem+json and the Prometheus text from fixed observations.
+
+`packages/openapi/tests/openapi_test` covers schema rendering and validation (every keyword,
+pointers, i64 bounds, nullable, refs), parameter text, a service's 400, 401, 413 and 415
+answers, typed handlers, and the whole document, pretty-printed.
+
 `examples/kvstore/tests/e2e_test` starts the example service on an ephemeral port, calls it
 with the client (JSON-RPC on one connection, a batch, the REST route, four concurrent clients
-from a task group) and shuts it down with its token. The two networked tests are also run
-once under ThreadSanitizer by tests/packages.sh. They use only loopback, never a fixed port,
+from a task group) and shuts it down with its token. `examples/todo/tests/e2e_test` does the
+same for the OpenAPI service: CRUD, validation errors, 401, 413, 415, the router's 404 and
+405 as problem+json, CORS, request ids, four writers at once, `/metrics`, the served
+`/openapi.json` against `tests/openapi.golden.json` (`UPDATE_GOLDEN=1` rewrites it), and the
+access log (one line per request served, each with the peer). The threaded tests (http's
+server and middleware tests, both examples' end-to-end tests) are also run once under
+ThreadSanitizer by tests/packages.sh. They use only loopback, never a fixed port,
 and never sleep to synchronise: a server listens before its thread starts, each step waits
 (with a deadline) for the response it needs, and a timeout test waits for the server to act
 and then checks how long it took.
@@ -213,22 +303,30 @@ Recorded rather than worked around; none blocks the design.
 | N9 | Iterating a Map's keys | kvstore's `kv.keys` | a key list kept beside the Map |
 | N10 | Calling a function stored in a field (`(self.h)(x)`) | router | bind it to a local first |
 | N11 | Name resolution with a deadline | the client takes an `net.Addr` | `net.lookup` blocks; resolve first |
-| N12 | Connection information in the handler (peer address, TLS later) | logging, rate limiting | not passed yet (no language gap: a field on Request) |
+| N12 | Connection information in the handler (peer address, TLS later) | logging, rate limiting | done: `Request.peer` (TLS information later) |
+| N13 | A method chain continued on the next line (a line starting with `.field(...)`, or ending with `.`) | schema and operation builders | reassignments: `s = s.field(...)` |
+| N14 | Grants checked per imported module, not against everything the program loads of a package | packages/openapi is pure but programs load http/server | openapi grants http `net, io, clock, threads` |
+| N15 | Interrupting a handler (cancellation reaching blocked code; with N6) | `middleware.timeout` | 503 at the deadline; the handler finishes on its pool's worker, `req.deadline` for cooperation |
+| N16 | A per-route body limit before the body is read (the router consulted after the head) or streaming bodies | `middleware.body_limit` | checked after reading, up to the server's `max_body` |
+| N17 | A List literal (`["a", "b"]` is a fixed array) and `if` as a call argument (E0103) | builders, tests | `push` loops and `let`s |
 
 ## Next steps toward OpenAPI
 
-1. **Middleware and observability:** handler wrappers (logging as JSON lines with the peer
-   address, request ids, panics turned into 500 once traps can be contained), metrics
-   counters (P1.6), and a `Forwarded`-aware peer address behind a configured proxy.
+1. **Middleware and observability:** done in a first form (above). Still to do: panics
+   turned into 500 once traps can be contained (N5); a `Forwarded`-aware peer address behind
+   a configured proxy; metrics per route (the operation id as a label); rate limiting;
+   tracing (W3C `traceparent`, carried like the request id).
 2. **Streaming:** request and response bodies as readers and writers (P0.4) instead of
    whole Lists, chunked responses, and `Content-Length` checked against a stream.
 3. **Typed services (P1.1):** with JSON derive (P0.10) and `dyn Trait` (P0.7), a service is a
    trait whose methods become `add_typed` entries and a client stub, generated from the
    types instead of written by hand; then Connect (HTTP + JSON) as the second wire format.
-4. **OpenAPI (P1.2):** the router already knows each route's method, path pattern and
-   parameters; with reflection over handler request and response types it can emit an
-   OpenAPI 3.1 document at `/openapi.json` and validate requests from the same types. JSON-RPC
-   methods can be described the same way (OpenRPC).
+4. **OpenAPI (P1.2):** done in a first form in packages/openapi (docs/openapi.md). One
+   operation value drives the route, request validation and `/openapi.json`; typed handlers
+   are decode / `fn(T) -> Result[U, ApiError]` / encode, with schemas written by hand. Next:
+   derive the schemas, decoders and encoders from T and U (P0.9, P0.10), validate responses
+   in tests, generate clients from the document, and describe JSON-RPC methods the same way
+   (OpenRPC).
 5. **Concurrency:** move the worker loop onto stackless tasks over std/event when the
    compiler has them (C4), keeping `serve` and the handler type; per-connection pollers go
    away (N4).

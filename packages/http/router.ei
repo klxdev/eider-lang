@@ -33,8 +33,7 @@ pub fn new() -> Router {
 
 /// The segments of a pattern; panics on a malformed one (a programming error, found the
 /// first time the program starts).
-fn pattern(p: str) -> List[Seg] {
-    let s = sys.lit(p)
+fn pattern(s: List[u8]) -> List[Seg] {
     if s.len() == 0 || s[0] != 47 { panic("router: a pattern starts with /") }
     let parts = bytes.split(bytes.slice(s, 1, s.len()), 47)
     let mut out: List[Seg] = List.new()
@@ -104,7 +103,12 @@ fn more_specific(a: List[Seg], b: List[Seg]) -> bool {
 impl Router {
     /// Adds a route: `method` ("GET", ...), `pat` (see the module comment), handler `h`.
     fn route(inout self, method: str, pat: str, h: fn(http.Request) -> http.Response) {
-        self.routes.push(Route(sys.lit(method), pattern(pat), h))
+        self.routes.push(Route(sys.lit(method), pattern(sys.lit(pat)), h))
+    }
+
+    /// `route` with the method and pattern as bytes (for routes built by other packages).
+    fn route_bytes(inout self, method: List[u8], pat: List[u8], h: fn(http.Request) -> http.Response) {
+        self.routes.push(Route(method, pattern(pat), h))
     }
 
     fn get(inout self, pat: str, h: fn(http.Request) -> http.Response) { self.route("GET", pat, h) }

@@ -189,9 +189,10 @@ fn accept_some(ls: i32, stop: poll.Waker, h: fn(http.Request) -> http.Response, 
         match net.accept(ls, true) {
             Ok(Some(a)) => {
                 let c = a.fd
+                let peer = net.text(a.peer)
                 let nd = net.set_option(c, net.NODELAY, 1)
                 bump(sh, 5)
-                match pool.submit(|| serve_conn(c, h, cfg, stop, sh), time.now()) {
+                match pool.submit(|| serve_conn(c, peer, h, cfg, stop, sh), time.now()) {
                     Ok(b) => bump(sh, 0)
                     Err(e) => {
                         bump(sh, 6)
@@ -265,8 +266,9 @@ fn refuse(c: i32, status: i32, cfg: Config) uses net, io, clock {
 
 fn is_head(m: List[u8]) -> bool { m.len() == 4 && m[0] == 72 && m[1] == 69 && m[2] == 65 && m[3] == 68 }
 
-/// One connection, request after request (see the module comment). Owns `c`.
-fn serve_conn(c: i32, h: fn(http.Request) -> http.Response, cfg: Config, stop: poll.Waker, sh: sync.Lock[Shared]) uses net, io, clock {
+/// One connection, request after request (see the module comment). Owns `c`; `peer` is the
+/// client's address as text (it goes in every Request).
+fn serve_conn(c: i32, peer: List[u8], h: fn(http.Request) -> http.Response, cfg: Config, stop: poll.Waker, sh: sync.Lock[Shared]) uses net, io, clock {
     bump(sh, 6)
     let p = match poll.create() {
         Ok(x) => x
@@ -375,7 +377,8 @@ fn serve_conn(c: i32, h: fn(http.Request) -> http.Response, cfg: Config, stop: p
         // handle it
         served += 1
         bump(sh, 2)
-        let req = parse.to_request(m)
+        let mut req = parse.to_request(m)
+        req.peer = peer
         let head_only = is_head(req.method)
         let keep = req.keep_alive && served < cfg.max_requests && !stopping && waiting(sh) == 0
         let resp = h(req)

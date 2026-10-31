@@ -291,15 +291,6 @@ fn error_reply(id_text: List[u8], e: Error) -> List[u8] {
     out
 }
 
-/// The media type of a Content-Type value, lowercased, without parameters.
-fn media_type(v: List[u8]) -> List[u8] {
-    let cut = match bytes.find_byte(v, 59, 0) {
-        Some(i) => i
-        None => v.len()
-    }
-    http.lower(http.trim_ows(bytes.slice(v, 0, cut)))
-}
-
 /// The table as an HTTP handler (see the module comment).
 pub fn handler(t: Table) -> fn(http.Request) -> http.Response {
     |req: http.Request| -> http.Response {
@@ -308,11 +299,7 @@ pub fn handler(t: Table) -> fn(http.Request) -> http.Response {
             r.set_header("Allow", sys.lit("POST"))
             return r
         }
-        let ct: List[u8] = match http.find(req.headers, sys.lit("content-type")) {
-            Some(v) => media_type(v)
-            None => List.new()
-        }
-        if !bytes.eq(ct, sys.lit("application/json")) { return http.error_response(415) }
+        if !bytes.eq(req.content_type(), sys.lit("application/json")) { return http.error_response(415) }
         match t.handle(req.body) {
             Some(b) => http.json_response(200, b)
             None => http.response(204)

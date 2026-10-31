@@ -1,0 +1,103 @@
+-- problems
+400 Content-Type=application/problem+json | {"type":"about:blank","title":"Bad Request","status":400,"detail":"two fields are wrong","errors":[{"in":"body","pointer":"#/title","detail":"is required"},{"in":"query","name":"limit","detail":"must be an integer"}]}
+{"type":"https://example.com/probs/missing","title":"Missing","status":404,"detail":"no todo 7"}
+#/a~1b/m~0n/0
+Error
+-- request ids
+200 Content-Type=text/plain X-Request-Id=t-1 | hello id=t-1
+200 Content-Type=text/plain X-Request-Id=t-2 | hello id=t-2
+200 Content-Type=text/plain X-Request-Id=client-abc.1 | hello id=client-abc.1
+200 Content-Type=text/plain X-Request-Id=t-3 | hello id=t-3
+false
+t-4
+-- access log
+200 Content-Type=text/plain X-Request-Id=t-5 | hello id=t-5
+id="t-5"
+peer="127.0.0.1:4000"
+method="GET"
+path="/todos"
+query="done=true"
+status=200
+bytes=12
+true
+true
+1970-01-01T00:00:00.000Z
+2026-10-31T08:15:02.250Z
+2000-02-29T00:00:00.999Z
+-- errors and problems
+200 Content-Type=text/plain | 12
+400 Content-Type=application/problem+json | {"type":"about:blank","title":"Bad Request","status":400,"detail":"n is missing"}
+422 Content-Type=application/problem+json | {"type":"about:blank","title":"Unprocessable Content","status":422,"detail":"n is too long"}
+404 Content-Type=application/problem+json | {"type":"about:blank","title":"Not Found","status":404}
+405 Content-Type=application/problem+json Allow=GET, POST, HEAD | {"type":"about:blank","title":"Method Not Allowed","status":405}
+200 Content-Type=text/plain | hello
+404 Content-Type=text/plain; charset=utf-8 | my own words
+-- body limits
+200 Content-Type=text/plain | 12345
+413 Content-Type=application/problem+json | {"type":"about:blank","title":"Content Too Large","status":413,"detail":"the body is 6 bytes; this route takes at most 5"}
+-- timeouts
+200 Content-Type=text/plain | fast, deadline set: yes
+503 Content-Type=application/problem+json | {"type":"about:blank","title":"Service Unavailable","status":503,"detail":"the handler did not answer within 50 ms"}
+false
+true
+200 Content-Type=text/plain | fast, deadline set: yes
+-- cors
+200 Content-Type=text/plain | hello
+200 Content-Type=text/plain Access-Control-Allow-Origin=https://app.example Vary=Origin Access-Control-Expose-Headers=x-request-id | hello
+200 Content-Type=text/plain Vary=Origin | hello
+204 Access-Control-Allow-Origin=https://app.example Vary=Origin Access-Control-Allow-Methods=GET, HEAD, POST, PUT, PATCH, DELETE Access-Control-Max-Age=600 | 
+204 Access-Control-Allow-Origin=https://app.example Vary=Origin Access-Control-Allow-Methods=GET, HEAD, POST, PUT, PATCH, DELETE Access-Control-Allow-Headers=content-type, authorization Access-Control-Max-Age=600 | 
+403 Content-Type=application/problem+json | {"type":"about:blank","title":"Forbidden","status":403,"detail":"CORS preflight refused: origin, method or headers not allowed"}
+403 Content-Type=application/problem+json | {"type":"about:blank","title":"Forbidden","status":403,"detail":"CORS preflight refused: origin, method or headers not allowed"}
+200 Content-Type=text/plain Access-Control-Allow-Origin=* Access-Control-Expose-Headers=x-request-id | hello
+200 Content-Type=text/plain; charset=utf-8 Access-Control-Allow-Origin=https://x.example Vary=Accept, Origin Access-Control-Allow-Credentials=true Access-Control-Expose-Headers=x-request-id | v
+-- bearer
+401 Content-Type=application/problem+json WWW-Authenticate=Bearer realm="todo" | {"type":"about:blank","title":"Unauthorized","status":401,"detail":"this operation needs a bearer token"}
+200 Content-Type=text/plain | hello principal=alice
+200 Content-Type=text/plain | hello principal=bob
+401 Content-Type=application/problem+json WWW-Authenticate=Bearer realm="todo", error="invalid_token" | {"type":"about:blank","title":"Unauthorized","status":401,"detail":"the bearer token is not valid"}
+401 Content-Type=application/problem+json WWW-Authenticate=Bearer realm="todo" | {"type":"about:blank","title":"Unauthorized","status":401,"detail":"this operation needs a bearer token"}
+401 Content-Type=application/problem+json WWW-Authenticate=Bearer realm="todo" | {"type":"about:blank","title":"Unauthorized","status":401,"detail":"this operation needs a bearer token"}
+-- basic
+200 Content-Type=text/plain | hello principal=root
+401 Content-Type=application/problem+json WWW-Authenticate=Basic realm="admin", charset="UTF-8" | {"type":"about:blank","title":"Unauthorized","status":401,"detail":"wrong user or password"}
+401 Content-Type=application/problem+json WWW-Authenticate=Basic realm="admin", charset="UTF-8" | {"type":"about:blank","title":"Unauthorized","status":401,"detail":"malformed Basic credentials"}
+401 Content-Type=application/problem+json WWW-Authenticate=Basic realm="admin", charset="UTF-8" | {"type":"about:blank","title":"Unauthorized","status":401,"detail":"this operation needs a user and password"}
+true
+false
+false
+-- chain
+200 Content-Type=text/plain X-Request-Id=c-1 | hello id=c-1
+413 Content-Type=application/problem+json X-Request-Id=c-2 | {"type":"about:blank","title":"Content Too Large","status":413,"detail":"the body is 6 bytes; this route takes at most 3"}
+-- metrics
+# HELP http_requests_total Requests answered, by method and status code.
+# TYPE http_requests_total counter
+http_requests_total{method="DELETE",code="204"} 1
+http_requests_total{method="GET",code="200"} 2
+http_requests_total{method="GET",code="404"} 1
+http_requests_total{method="OTHER",code="418"} 1
+http_requests_total{method="POST",code="201"} 1
+# HELP http_requests_in_flight Requests being handled now.
+# TYPE http_requests_in_flight gauge
+http_requests_in_flight 0
+# HELP http_request_duration_seconds Time to answer a request.
+# TYPE http_request_duration_seconds histogram
+http_request_duration_seconds_bucket{le="0.001"} 3
+http_request_duration_seconds_bucket{le="0.25"} 4
+http_request_duration_seconds_bucket{le="2.5"} 5
+http_request_duration_seconds_bucket{le="+Inf"} 6
+http_request_duration_seconds_sum 3.303500001
+http_request_duration_seconds_count 6
+2
+0.005
+2.5
+10
+0.000001
+200 Content-Type=text/plain | hello
+200 Content-Type=text/plain | hello
+http_requests_total{method="GET",code="200"} 1
+http_requests_total{method="PUT",code="200"} 1
+http_requests_in_flight 0
+http_request_duration_seconds_bucket{le="+Inf"} 2
+http_request_duration_seconds_count 2
+text/plain; version=0.0.4; charset=utf-8
