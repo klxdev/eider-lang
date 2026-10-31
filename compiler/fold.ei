@@ -146,8 +146,10 @@ fn digit(c: u8) -> u64 {
     (c - 55) as u64
 }
 
-/// The value of an integer literal's source text (decimal or `0x` hex, `_` separators);
-/// the lexer has already rejected anything past i128.
+/// The value of an integer literal's source text (decimal or `0x` hex, `_` separators).
+/// The lexer reports anything past i128 (E0001), but checking goes on after syntax errors
+/// ("Several errors"), so such a literal still gets here: a value past 2^128 saturates to
+/// the largest Wide instead of overflowing `hi`, and nothing reported on that line is shown.
 pub fn parse(src: List[u8], start: usize, end: usize) -> Wide {
     let mut base: u64 = 10
     let mut i = start.copy()
@@ -160,6 +162,8 @@ pub fn parse(src: List[u8], start: usize, end: usize) -> Wide {
     while i < end {
         let c = src[i]
         if c != 95 {
+            // hi * base + carry (at most 16) would not fit in u64: the value is past 2^127
+            if hi > (18446744073709551615 - 16) / base { return Wide(false, 18446744073709551615, 18446744073709551615) }
             let d = digit(c)
             let p0 = (lo % B32) * base + d
             let p1 = (lo / B32) * base + p0 / B32

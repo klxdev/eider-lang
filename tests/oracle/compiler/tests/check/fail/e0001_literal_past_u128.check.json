@@ -1,0 +1,2 @@
+{"error":"E0001","span":{"file":"compiler/tests/check/fail/e0001_literal_past_u128.ei","line":5,"col":13},"message":"integer literal too large"}
+{"error":"E0001","span":{"file":"compiler/tests/check/fail/e0001_literal_past_u128.ei","line":6,"col":13},"message":"integer literal too large"}
