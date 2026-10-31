@@ -1988,6 +1988,12 @@ message and line; the oracle records them). Compile-fail (compiler/tests/check/f
 `e0401_ref_print`, `e0401_ref_update_type`, `e0401_ref_new_unit`, `e0401_ref_set_type`,
 `e0115_ref_unknown_method`, `e0601_ref_copy_chan`; tests/checks/fail/e0411_ref_in_mutex.
 
+**Benchmarks** (C8.7 to C8.25 together; `REPS=15 sh scripts/bench.sh target/eiderc-next
+target/eiderc:target/before`, before = the seed at be17f87 with its core, gcc -O2, median wall
+time): list_copies 3 / 3 ms, state 3 / 4 ms, str_append 4 / 4 ms (the generated C of every
+benchmark is byte-identical, so these differ by noise only), eiderc `emit-c
+compiler/main.ei` (22,356 lines) 200 / 197 ms.
+
 **Remaining.** A named function with `inout` parameters as a fn value; `Ref` across the C
 and WebAssembly export boundary (E0803/E0806 as for other handles); a cycle lint (8.15).
 
