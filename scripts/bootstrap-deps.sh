@@ -1,16 +1,13 @@
 #!/bin/sh
-# Link deps/core, deps/std and each `[deps.<name>] path = "..."` into every package under
-# packages/, so they build before the package manager exists. After bootstrap,
-# eider-pkg maintains deps/ itself.
+# Retired (docs/compiler.md, "C8.3: packages and modules"). This script used to link deps/core,
+# deps/std and each path dependency into every package under packages/ and into compiler/,
+# so they built before the package manager existed. Nothing needs that link farm any more:
+# compiler/ and packages/ import the toolchain and each other by relative path until the seed
+# knows bare imports (then scripts/migrate-imports.sh turns them into `import "std/fs"` and
+# `import "toml"`), and eider-pkg fetch no longer makes deps/. Kept so old callers keep
+# working; it removes the links it once made and does nothing else.
 root="$(cd "$(dirname "$0")/.." && pwd)"
-for p in "$root"/packages/*/ "$root"/compiler/; do
-  mkdir -p "$p/deps"
-  for l in core std; do
-    [ -e "$p/deps/$l" ] || ln -s "$root/$l" "$p/deps/$l"
-  done
-  # path dependencies: a `[deps.x]` header followed by `path = "..."`
-  awk '/^\[deps\./ { n = substr($0, 7, length($0) - 7) } /^path *= *"/ && n != "" { sub(/^path *= *"/, ""); sub(/".*/, ""); print n, $0; n = "" }' "$p/eider.toml" |
-  while read -r name rel; do
-    [ -e "$p/deps/$name" ] || ln -s "$(cd "$p" && cd "$rel" && pwd)" "$p/deps/$name"
-  done
+for d in "$root"/packages/*/deps "$root"/compiler/deps; do
+  [ -L "$d/core" ] && [ -L "$d/std" ] && rm -rf "$d"
 done
+exit 0

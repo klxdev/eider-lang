@@ -1,6 +1,6 @@
 // semver: MAJOR.MINOR.PATCH versions (no pre-release or build metadata yet).
 
-import "deps/std/bytes.ei"
+import "../../std/bytes.ei"
 
 pub type Version = { major: u64, minor: u64, patch: u64 }
 

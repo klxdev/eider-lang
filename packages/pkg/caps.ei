@@ -9,9 +9,9 @@
 // write `uses ffi`, so it only counts when the package declares `extern` functions itself,
 // i.e. when it brings its own unmanaged code.
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
-import "deps/std/fs.ei"
+import "../../core/sys.ei"
+import "../../std/bytes.ei"
+import "../../std/fs.ei"
 
 pub type Use = { cap: List[u8], file: List[u8], line: u32 }
 

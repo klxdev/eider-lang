@@ -1,6 +1,6 @@
-import "../deps/core/sys.ei"
-import "../deps/std/bytes.ei"
-import "../deps/std/io.ei"
+import "../../../core/sys.ei"
+import "../../../std/bytes.ei"
+import "../../../std/io.ei"
 import "../json.ei"
 
 /// `ok <compact text>` or `err <message and position>`.

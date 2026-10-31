@@ -5,10 +5,10 @@
 // required version wins, and only packages reachable through the selected versions are
 // kept. A dependency's capability grant is the intersection of what every depender grants.
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
-import "deps/std/fs.ei"
-import "deps/semver/semver.ei"
+import "../../core/sys.ei"
+import "../../std/bytes.ei"
+import "../../std/fs.ei"
+import "../semver/semver.ei"
 import "manifest.ei"
 import "lockfile.ei"
 import "store.ei"

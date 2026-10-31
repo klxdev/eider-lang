@@ -20,7 +20,7 @@ EIDER_ROOT=$root; export EIDER_ROOT
 EIDER_CACHE=off; export EIDER_CACHE
 CC=${CC:-cc}
 src=compiler/main.ei
-scripts/bootstrap-deps.sh
+mkdir -p target
 
 step() { printf '%-40s' "$1"; }
 die() { echo "FAIL"; [ -n "$2" ] && sed 's/^/    /' "$2" | head -40; echo "selfhost: $1"; exit 1; }

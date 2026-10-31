@@ -1,9 +1,10 @@
 // manifest: read and validate eider.toml.
 //
 //   [package]
-//   name = "warehouse"          # [a-z][a-z0-9_]*; also the module name importers use
+//   name = "warehouse"          # [a-z][a-z0-9_]*, not `core` or `std`; what importers write
 //   version = "0.1.0"           # MAJOR.MINOR.PATCH
-//   entry = "warehouse.ei"      # what `import "deps/<name>/<entry>"` loads (default <name>.ei)
+//   entry = "warehouse.ei"      # what `import "warehouse"` loads (default <name>.ei);
+//                               # `import "warehouse/a/b"` loads a/b.ei
 //   main = "main.ei"            # program entry for run/build (optional)
 //
 //   [deps.json]                 # one table per dependency; the key must equal its package name
@@ -12,11 +13,11 @@
 //   path = "../geom"            #   ... or a local directory
 //   uses = ["io", "fs"]         #   capabilities granted to the dependency (default: none)
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
-import "deps/std/fs.ei"
-import "deps/toml/toml.ei"
-import "deps/semver/semver.ei"
+import "../../core/sys.ei"
+import "../../std/bytes.ei"
+import "../../std/fs.ei"
+import "../toml/toml.ei"
+import "../semver/semver.ei"
 
 pub type Source = | Path(dir: List[u8]) | Git(url: List[u8], version: List[u8], rev: List[u8])
 
@@ -38,6 +39,11 @@ pub fn at(file: List[u8], line: u32, col: u32, m: String) -> String uses ffi {
 }
 
 fn bad(file: List[u8], line: u32, m: str) -> String uses ffi { at(file, line, 1, String.from(m)) }
+
+/// `core` and `std`: the toolchain's packages, which every file imports by name
+/// (`import "std/fs"`) and no manifest declares (their eider.toml files are the compiler's,
+/// never loaded here).
+pub fn toolchain_name(n: List[u8]) -> bool uses ffi { bytes.eq(n, sys.lit("core")) || bytes.eq(n, sys.lit("std")) }
 
 pub fn valid_name(n: List[u8]) -> bool {
     if n.len() == 0 { return false }
@@ -132,6 +138,9 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
         }
         return Err(bad(file, line, "package names are lowercase letters, digits and `_`, starting with a letter"))
     }
+    if toolchain_name(name) {
+        return Err(bad(file, line_of(doc, sys.lit("package.name"), 1), "`core` and `std` are the toolchain's packages; pick another name"))
+    }
     let version = match str_at(doc, file, sys.lit("package.version"))? {
         Some(v) => v
         None => { return Err(bad(file, 1, "missing `version` in [package]")) }
@@ -158,6 +167,14 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
             }
         }
         if !valid_name(dn) { return Err(bad(file, line, "dependency names are lowercase letters, digits and `_`")) }
+        if toolchain_name(dn) {
+            var m = String.from("`")
+            m.append(sys.to_string(dn))
+            m.push_str("` is part of the toolchain: import its modules (`import \"")
+            m.append(sys.to_string(dn))
+            m.push_str("/<module>\"`) without declaring it")
+            return Err(at(file, line, 1, m))
+        }
         if bytes.eq(dn, name) { return Err(bad(file, line, "a package can't depend on itself")) }
         let path = str_at(doc, file, key("deps.", dn, ".path"))?
         let git = str_at(doc, file, key("deps.", dn, ".git"))?

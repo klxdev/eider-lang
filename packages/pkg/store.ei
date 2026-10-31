@@ -1,4 +1,4 @@
-// store: the shared package store and the per-project deps/ link farm.
+// store: the shared package store.
 //
 //   $EIDER_HOME (default ~/.eider)
 //     git/<url-as-name>/       bare mirror of each git source (the only network use)
@@ -7,16 +7,16 @@
 //     index/<commit>           the full content hash of that commit's export
 //     tmp/                     staging for exports
 //
-// A project's deps/ holds `.all/<name>/` for every package in the graph: a directory of
-// symlinks to the package's files plus its own `deps/` with links to its direct
-// dependencies only. The project's own `deps/<name>` link only to its direct dependencies.
+// The compiler reads this layout too (compiler/lock.ei `store_leaf`): a git package of a
+// project is vendor/<name> when that exists, else pkg/<name>-<hash16> here, the hash being
+// the one eider.lock records.
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
-import "deps/std/fs.ei"
-import "deps/std/env.ei"
-import "deps/std/proc.ei"
-import "deps/sha256/sha256.ei"
+import "../../core/sys.ei"
+import "../../std/bytes.ei"
+import "../../std/fs.ei"
+import "../../std/env.ei"
+import "../../std/proc.ei"
+import "../sha256/sha256.ei"
 
 pub type Export = { dir: List[u8], hash: List[u8] }
 
@@ -264,31 +264,4 @@ pub fn store_dir(home: List[u8], name: List[u8], hash: List[u8]) -> List[u8] use
     // "sha256-" is 7 bytes; keep 16 hex digits
     bytes.append(inout leaf, bytes.slice(hash, 7, 23))
     fs.join(fs.join(home, sys.lit("pkg")), leaf)
-}
-
-/// One package's directory under deps/.all: links to its files plus deps/ for its own deps.
-pub fn link_package(all: List[u8], name: List[u8], src: List[u8], deps: List[List[u8]], toolchain: List[u8]) -> Result[bool, String] uses fs, ffi {
-    let here = fs.join(all, name)
-    fs.mkdir_all(here)?
-    let skip = skipped()
-    for entry in fs.list(src)? {
-        var keep = true
-        for s in skip {
-            if bytes.eq(s, entry) { keep = false }
-        }
-        if keep { fs.symlink(fs.join(src, entry), fs.join(here, entry))? }
-    }
-    let own = fs.join(here, sys.lit("deps"))
-    link_deps(own, deps, sys.lit("../.."), toolchain)
-}
-
-/// deps/<d> -> <up>/<d> for each dep, plus deps/core and deps/std from the toolchain.
-pub fn link_deps(dir: List[u8], deps: List[List[u8]], up: List[u8], toolchain: List[u8]) -> Result[bool, String] uses fs, ffi {
-    fs.mkdir_all(dir)?
-    fs.symlink(fs.join(toolchain, sys.lit("core")), fs.join(dir, sys.lit("core")))?
-    fs.symlink(fs.join(toolchain, sys.lit("std")), fs.join(dir, sys.lit("std")))?
-    for d in deps {
-        fs.symlink(fs.join(up, d), fs.join(dir, d))?
-    }
-    Ok(true)
 }

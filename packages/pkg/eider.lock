@@ -1,0 +1,23 @@
+# eider.lock: written by `eider-pkg`. Do not edit.
+version = 1
+
+[[package]]
+name = "semver"
+version = "0.1.0"
+source = "path+../semver"
+deps = []
+grants = ["io"]
+
+[[package]]
+name = "sha256"
+version = "0.1.0"
+source = "path+../sha256"
+deps = []
+grants = ["io"]
+
+[[package]]
+name = "toml"
+version = "0.1.0"
+source = "path+../toml"
+deps = []
+grants = ["io"]

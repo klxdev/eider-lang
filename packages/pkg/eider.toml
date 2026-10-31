@@ -4,11 +4,15 @@ version = "0.1.0"
 main = "main.ei"
 description = "eider-pkg: the Eider package manager"
 
+# (`io` only for their tests: eider-pkg scans every .ei file of a package)
 [deps.toml]
 path = "../toml"
+uses = ["io"]
 
 [deps.semver]
 path = "../semver"
+uses = ["io"]
 
 [deps.sha256]
 path = "../sha256"
+uses = ["io"]

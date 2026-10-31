@@ -1,7 +1,8 @@
 #!/bin/sh
 # End-to-end test of eider-pkg. Never touches the network: every git package is a local
 # repository under target/tmp/pkgtest/repos, fetched through file:// URLs, and the store
-# is a fresh $EIDER_HOME. Prints `ok   <step>` or `FAIL <step>` plus a diff per step.
+# is a fresh $EIDER_HOME. Programs are built by the compiler from compiler/ (bare imports
+# through eider.lock; no deps/ link farm). Prints `ok   <step>` or `FAIL <step>` plus a diff per step.
 cd "$(dirname "$0")/../.." || exit 1
 R=$(pwd)
 T="$R/target/tmp/pkgtest"
@@ -18,6 +19,19 @@ export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL G
 # build the tool once, up front, so compiler noise stays out of the comparisons
 scripts/eider-pkg >/dev/null 2>&1
 [ -x target/eider-pkg ] || { echo "FAIL build eider-pkg"; exit 1; }
+# the programs import their dependencies by name (`import "util"`), which the compiler
+# resolves through eider.lock (docs/compiler.md, "C8.3: packages and modules"): a compiler
+# newer than the seed, compiler/ as the seed builds it (EIDERC=<binary> to use another),
+# until the seed knows bare imports
+if [ -n "$EIDERC" ]; then
+  EC=$EIDERC
+else
+  EC="$R/target/eiderc-next"
+  newest=$(find "$R/compiler" "$R/std" "$R/core" -name '*.ei' -newer "$EC" 2>/dev/null | head -1)
+  if [ ! -x "$EC" ] || [ -n "$newest" ]; then
+    scripts/ei build compiler/main.ei -o "$EC" >/dev/null 2>"$T/eiderc.build.log" || { cat "$T/eiderc.build.log"; echo "FAIL build eiderc"; exit 1; }
+  fi
+fi
 
 fail=0
 # check <step> <expected> <got>: compare after replacing $T with <T>
@@ -27,8 +41,11 @@ check() {
 }
 # pkg <project> <args...>: run eider-pkg in a project; output plus `exit N`
 pkg() { p=$1; shift; scripts/eider-pkg -C "$T/$p" "$@" 2>&1; echo "exit $?"; }
-# run <project> [file]: build and run its main.ei (or file) through the deps/ link farm
-run() { (cd "$T/$1" && "$R/scripts/ei" run "${2:-main.ei}" >"$T/out" 2>&1; s=$?; cat "$T/out"; echo "exit $s"); }
+# run <project> [file]: build and run its main.ei (or file); imports go through eider.lock
+run() { (cd "$T/$1" && "$EC" run "${2:-main.ei}" >"$T/out" 2>&1; s=$?; cat "$T/out"; echo "exit $s"); }
+# store_dir <project> <name>: where the compiler finds a locked git package in the store
+# ($EIDER_HOME/pkg/<name>-<first 16 hex digits of its locked content hash>)
+store_dir() { h=$(grep -A4 "^name = \"$2\"" "$T/$1/eider.lock" | sed -n 's/^hash = "sha256-\(.\{16\}\).*/\1/p'); echo "$EIDER_HOME/pkg/$2-$h"; }
 # mask: hide commit ids and content hashes, which depend on where the checkout lives
 mask() { sed -e "s|$T|<T>|g" -e 's/sha256-[0-9a-f]\{64\}/sha256-<hash>/g' -e 's/[0-9a-f]\{40\}/<commit>/g' -e 's|pkg/\([a-z0-9_]*\)-[0-9a-f]\{16\}|pkg/\1-<hash16>|g'; }
 # tree_hash <dir>: the store's content hash, recomputed independently with sha256sum
@@ -78,7 +95,7 @@ manifest "$T/repos/alpha" alpha 1.0.0 "
 git = \"$U/util\"
 version = \"1.0.0\"
 "
-printf 'import "deps/util/util.ei"\n\npub fn value() -> i64 { util.level() * 10 }\n' > "$T/repos/alpha/alpha.ei"
+printf 'import "util"\n\npub fn value() -> i64 { util.level() * 10 }\n' > "$T/repos/alpha/alpha.ei"
 commit alpha v1.0.0
 
 newrepo beta
@@ -87,7 +104,7 @@ manifest "$T/repos/beta" beta 1.0.0 "
 git = \"$U/util\"
 version = \"1.2.0\"
 "
-printf 'import "deps/util/util.ei"\n\npub fn value() -> i64 { util.level() + 100 }\n' > "$T/repos/beta/beta.ei"
+printf 'import "util"\n\npub fn value() -> i64 { util.level() + 100 }\n' > "$T/repos/beta/beta.ei"
 commit beta v1.0.0
 
 # gamma is added by rev; its later commit must not be picked up
@@ -112,6 +129,8 @@ check "init writes eider.toml" '[package]
 name = "app"
 version = "0.1.0"
 main = "main.ei"' "$(cat "$T/app/eider.toml")"
+check "init writes a program with package imports" 'import "core/sys"
+import "std/io"' "$(head -2 "$T/app/main.ei")"
 check "init twice" "eider-pkg: eider.toml already exists
 exit 1" "$(pkg app init)"
 check "fetch with no deps" "locked 0 package(s)
@@ -197,7 +216,7 @@ check "eider.lock" "$LOCK" "$(mask < "$T/app/eider.lock")"
 UTIL12=$(git -C "$T/repos/util" rev-parse v1.2.0)
 check "locked commits are the tag and the rev" "gamma#$GAMMA
 util#$UTIL12" "$(grep -o -e "util#[0-9a-f]*" -e "gamma#[0-9a-f]*" "$T/app/eider.lock")"
-UTILDIR=$(readlink "$T/app/deps/.all/util/util.ei" | sed 's|/util.ei$||')
+UTILDIR=$(store_dir app util)
 check "locked hash is the content hash of the export" "hash = \"$(tree_hash "$UTILDIR")\"" "$(grep -A1 "repos/util#" "$T/app/eider.lock" | tail -1)"
 check "eider-pkg hash agrees" "$(tree_hash "$T/geom")
 exit 0" "$(pkg app hash ../geom)"
@@ -218,31 +237,25 @@ check "tree" "app 0.1.0
   gamma 0.3.0
 exit 0" "$(pkg app tree)"
 
-check "deps/ holds only direct deps" ".all
-alpha
-beta
-core
-gamma
-geom
-std" "$(ls -A "$T/app/deps")"
-check "deps/.all holds the whole graph" "alpha
-beta
-gamma
-geom
-util" "$(ls -A "$T/app/deps/.all")"
-check "each package links only its own deps" "core
-std
-util" "$(ls -A "$T/app/deps/.all/alpha/deps")"
+# no deps/ link farm: the compiler reads eider.lock and finds each git package in the store
+check "fetch makes no deps/" "no deps/" "$(ls -A "$T/app/deps" 2>/dev/null || echo "no deps/")"
+check "every locked git package is in the store" "alpha ok
+beta ok
+gamma ok
+util ok" "$(for n in alpha beta gamma util; do [ -f "$(store_dir app $n)/$n.ei" ] && echo "$n ok" || echo "$n missing"; done)"
+mkdir -p "$T/app/deps/.all/old"
+pkg app fetch >/dev/null
+check "fetch removes the link farm of an earlier eider-pkg" "no deps/" "$(ls -A "$T/app/deps" 2>/dev/null || echo "no deps/")"
 
-# ---- build and run through the link farm
+# ---- build and run: imports by package name, through eider.lock
 
 cat > "$T/app/main.ei" <<'EOF'
-import "deps/core/sys.ei"
-import "deps/std/io.ei"
-import "deps/geom/geom.ei"
-import "deps/alpha/alpha.ei"
-import "deps/beta/beta.ei"
-import "deps/gamma/gamma.ei"
+import "core/sys"
+import "std/io"
+import "geom"
+import "alpha"
+import "beta"
+import "gamma"
 
 fn main() uses io, ffi {
     io.outln(sys.lit("app"))
@@ -258,16 +271,21 @@ check "run the program" "app
 103
 7
 exit 0" "$(run app)"
-printf 'import "deps/util/util.ei"\n\nfn main() uses io { print(util.level()) }\n' > "$T/app/indirect.ei"
+printf 'import "util"\n\nfn main() uses io { print(util.level()) }\n' > "$T/app/indirect.ei"
 got=$(run app indirect.ei)
 check "the root can't import an indirect dep" "1
-exit 1" "$(printf '%s\n' "$got" | grep -c "E0804.*deps/util/util.ei"; printf '%s\n' "$got" | tail -1)"
+1
+exit 1" "$(printf '%s\n' "$got" | grep -c "E0809.*package \`util\` is not a dependency of \`app\`"; printf '%s\n' "$got" | grep -c "eider-pkg add util"; printf '%s\n' "$got" | tail -1)"
+printf 'import "deps/geom/geom.ei"\n\nfn main() uses io { print(geom.area(1, 1)) }\n' > "$T/app/old.ei"
+got=$(run app old.ei)
+check "an import through the old link farm says what changed" "1
+exit 1" "$(printf '%s\n' "$got" | grep -c "no longer links dependencies into deps/"; printf '%s\n' "$got" | tail -1)"
 
 # ---- a dependency can only import what it declared
 
 mkdir -p "$T/sneaky" "$T/sneakyapp"
 manifest "$T/sneaky" sneaky 0.1.0
-printf 'import "deps/geom/geom.ei"\n\npub fn value() -> i64 { geom.area(2, 3) }\n' > "$T/sneaky/sneaky.ei"
+printf 'import "geom"\n\npub fn value() -> i64 { geom.area(2, 3) }\n' > "$T/sneaky/sneaky.ei"
 manifest "$T/sneakyapp" sneakyapp 0.1.0 '
 [deps.geom]
 path = "../geom"
@@ -275,12 +293,12 @@ path = "../geom"
 [deps.sneaky]
 path = "../sneaky"
 '
-printf 'import "deps/sneaky/sneaky.ei"\n\nfn main() uses io { print(sneaky.value()) }\n' > "$T/sneakyapp/main.ei"
+printf 'import "sneaky"\n\nfn main() uses io { print(sneaky.value()) }\n' > "$T/sneakyapp/main.ei"
 check "fetch (sneaky)" "locked 2 package(s)
 exit 0" "$(pkg sneakyapp fetch)"
 got=$(run sneakyapp)
 check "an undeclared import fails to compile" "1
-exit 1" "$(printf '%s\n' "$got" | grep -c "E0804.*deps/geom/geom.ei"; printf '%s\n' "$got" | tail -1)"
+exit 1" "$(printf '%s\n' "$got" | grep -c "E0809.*package \`geom\` is not a dependency of \`sneaky\`"; printf '%s\n' "$got" | tail -1)"
 manifest "$T/sneaky" sneaky 0.1.0 '
 [deps.geom]
 path = "../geom"
@@ -288,6 +306,18 @@ path = "../geom"
 pkg sneakyapp fetch >/dev/null
 check "declared, it compiles" "6
 exit 0" "$(run sneakyapp)"
+# a dependency declared by hand is not locked until a fetch
+mkdir -p "$T/late"
+manifest "$T/late" late 0.1.0
+printf 'pub fn value() -> i64 { 9 }\n' > "$T/late/late.ei"
+printf '\n[deps.late]\npath = "../late"\n' >> "$T/sneakyapp/eider.toml"
+printf 'import "late"\n\nfn main() uses io { print(late.value()) }\n' > "$T/sneakyapp/late.ei"
+got=$(run sneakyapp late.ei)
+check "a dependency not in eider.lock fails to compile" "1
+exit 1" "$(printf '%s\n' "$got" | grep -c "E0810.*package \`late\` is not in .*/sneakyapp/eider.lock"; printf '%s\n' "$got" | tail -1)"
+pkg sneakyapp fetch >/dev/null
+check "fetched, it compiles" "9
+exit 0" "$(run sneakyapp late.ei)"
 
 # ---- capability grants
 
@@ -356,7 +386,7 @@ check "a rev stays put on update" "gamma#$GAMMA" "$(grep -o "gamma#[0-9a-f]*" "$
 
 # ---- content hashes: a modified store or vendor dir is detected
 
-UTILDIR=$(readlink "$T/app/deps/.all/util/util.ei" | sed 's|/util.ei$||')
+UTILDIR=$(store_dir app util)
 chmod -R u+w "$UTILDIR"
 cp "$UTILDIR/util.ei" "$T/util.ei.bak"
 printf 'pub fn level() -> i64 { 666 }\n' > "$UTILDIR/util.ei"
@@ -380,7 +410,7 @@ rm -rf "$EIDER_HOME"
 check "fetch --offline from vendor/" "locked 5 package(s)
 exit 0" "$(pkg app fetch --offline)"
 cmp -s "$T/lock3" "$T/app/eider.lock" && echo "ok   vendoring doesn't change eider.lock" || { echo "FAIL vendoring doesn't change eider.lock"; diff "$T/lock3" "$T/app/eider.lock"; fail=1; }
-check "deps/ points into vendor/" "<T>/app/vendor/util/util.ei" "$(readlink "$T/app/deps/.all/util/util.ei")"
+check "the store is gone" "no store" "$(ls "$EIDER_HOME/pkg" 2>/dev/null || echo "no store")"
 check "runs from vendor/" "app
 42
 40
@@ -414,7 +444,10 @@ printf 'pub fn level() -> i64 { 666 }\n' > "$T/app/vendor/util/util.ei"
 check "vendor repairs a modified vendor/" "vendored git packages into vendor/
 exit 0
 pub fn level() -> i64 { 4 }" "$(pkg app vendor; cat "$T/app/vendor/util/util.ei")"
-check "remove unlinks it" "alpha beta core geom std" "$(ls "$T/app/deps" | tr '\n' ' ' | sed 's/ $//')"
+check "remove drops it from eider.lock" "0" "$(grep -c gamma "$T/app/eider.lock")"
+got=$(run app)
+check "a removed dependency can't be imported" "1
+exit 1" "$(printf '%s\n' "$got" | grep -c "E0809.*package \`gamma\` is not a dependency of \`app\`"; printf '%s\n' "$got" | tail -1)"
 check "remove an unknown dep" "eider-pkg: no [deps.nope] table in eider.toml (inline \`name = { ... }\` entries must be removed by hand)
 exit 1" "$(pkg app remove nope)"
 
@@ -424,6 +457,15 @@ mkdir -p "$T/bad"
 manifest "$T/bad" bad 0.1.0 'verison = "1.0.0"
 '
 check "unknown key" "eider-pkg: <T>/bad/eider.toml:4:1: unknown key \`package.verison\`
+exit 1" "$(pkg bad fetch)"
+manifest "$T/bad" std 0.1.0
+check "std is the toolchain's" "eider-pkg: <T>/bad/eider.toml:2:1: \`core\` and \`std\` are the toolchain's packages; pick another name
+exit 1" "$(pkg bad fetch)"
+manifest "$T/bad" bad 0.1.0 '
+[deps.core]
+path = "../geom"
+'
+check "core can't be declared" "eider-pkg: <T>/bad/eider.toml:6:1: \`core\` is part of the toolchain: import its modules (\`import \"core/<module>\"\`) without declaring it
 exit 1" "$(pkg bad fetch)"
 manifest "$T/bad" bad 0.1.0
 cp "$T/bad/eider.toml" "$T/bad.toml"

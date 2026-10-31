@@ -12,10 +12,10 @@
 //   deps = ["util"]
 //   grants = ["io"]
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
-import "deps/std/fs.ei"
-import "deps/toml/toml.ei"
+import "../../core/sys.ei"
+import "../../std/bytes.ei"
+import "../../std/fs.ei"
+import "../toml/toml.ei"
 import "manifest.ei"
 
 /// One resolved package. `loc` is the git URL or the absolute directory of a path package;

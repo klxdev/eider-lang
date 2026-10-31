@@ -3,7 +3,7 @@
 //   eider-pkg [-C dir] init [name]
 //   eider-pkg [-C dir] add <name> (--path P | --git URL (--version V | --rev R)) [--uses a,b]
 //   eider-pkg [-C dir] remove <name>
-//   eider-pkg [-C dir] fetch [--offline]      resolve (keeping eider.lock pins), link deps/
+//   eider-pkg [-C dir] fetch [--offline]      resolve (keeping eider.lock pins), write eider.lock
 //   eider-pkg [-C dir] update [--offline]     re-resolve ignoring eider.lock
 //   eider-pkg [-C dir] vendor                 copy git packages into vendor/ (offline builds)
 //   eider-pkg [-C dir] tree                   print the locked graph
@@ -13,12 +13,18 @@
 // commit isn't already in the local mirror, update always refreshes the mirrors (tags can
 // move). Paths in arguments are relative to -C. Needs EIDER_ROOT (the toolchain checkout
 // with core/ and std/).
+//
+// The compiler finds dependencies itself: `import "json"` goes through eider.lock to the
+// package's directory (a path package's own, vendor/<name>, or the store's
+// pkg/<name>-<hash16>; docs/compiler.md, "C8.3: packages and modules"). So fetch writes
+// eider.lock and fills the store, and links nothing: the deps/ link farm of earlier versions
+// is gone (a deps/ an earlier eider-pkg made, recognisable by its deps/.all, is removed).
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
-import "deps/std/fs.ei"
-import "deps/std/io.ei"
-import "deps/std/env.ei"
+import "../../core/sys.ei"
+import "../../std/bytes.ei"
+import "../../std/fs.ei"
+import "../../std/io.ei"
+import "../../std/env.ei"
 import "manifest.ei"
 import "lockfile.ei"
 import "store.ei"
@@ -74,24 +80,19 @@ fn sync(c: Cli, use_lock: bool, offline: bool) -> Result[List[lockfile.Pkg], Str
     sync_from(c, use_lock, offline, fs.join(c.dir, sys.lit("vendor")))
 }
 
-/// Resolve, write eider.lock and relink deps/. Pinned git packages come from `vendor`
-/// when it holds them (an empty `vendor` means the store only).
+/// Resolve and write eider.lock. Pinned git packages come from `vendor` when it holds them
+/// (an empty `vendor` means the store only).
 fn sync_from(c: Cli, use_lock: bool, offline: bool, vendor: List[u8]) -> Result[List[lockfile.Pkg], String] uses io, fs, net, ffi {
     let root = manifest.load(c.dir)?
-    let tc = toolchain()?
+    toolchain()?
     let locked = lockfile.load(c.dir)?
     let o = resolve.Opts(store.home()?, offline, use_lock, locked, vendor)
     let pkgs = resolve.resolve(root, o)?
     resolve.check_grants(pkgs)?
     fs.write(lockfile.file_in(c.dir), lockfile.render(pkgs, c.dir))?
+    // compatibility: the link farm an earlier eider-pkg made
     let deps = fs.join(c.dir, sys.lit("deps"))
-    fs.remove_all(deps)?
-    let all = fs.join(deps, sys.lit(".all"))
-    fs.mkdir_all(all)?
-    for p in pkgs { store.link_package(all, p.name, p.dir, p.deps, tc)? }
-    var direct: List[List[u8]] = List.new()
-    for d in root.deps { direct.push(d.name) }
-    store.link_deps(deps, direct, sys.lit(".all"), tc)?
+    if fs.is_dir(fs.join(deps, sys.lit(".all"))) { fs.remove_all(deps)? }
     Ok(pkgs)
 }
 
@@ -126,7 +127,7 @@ fn vendor(c: Cli) -> Result[bool, String] uses io, fs, net, ffi {
             }
         }
     }
-    // relink so deps/ points into vendor/
+    // resolve again from vendor/ alone: it must match eider.lock (the compiler reads it there)
     sync(c, true, true)?
     say("vendored git packages into vendor/")
     Ok(true)
@@ -280,10 +281,8 @@ fn init(c: Cli) -> Result[bool, String] uses io, fs, ffi {
     fs.write(file, t)?
     let main_file = fs.join(c.dir, sys.lit("main.ei"))
     if !fs.exists(main_file) {
-        fs.write(main_file, sys.lit("import \"deps/core/sys.ei\"\nimport \"deps/std/io.ei\"\n\nfn main() uses io, ffi {\n    io.outln(sys.lit(\"hello from eider\"))\n}\n"))?
+        fs.write(main_file, sys.lit("import \"core/sys\"\nimport \"std/io\"\n\nfn main() uses io, ffi {\n    io.outln(sys.lit(\"hello from eider\"))\n}\n"))?
     }
-    let gi = fs.join(c.dir, sys.lit(".gitignore"))
-    if !fs.exists(gi) { fs.write(gi, sys.lit("deps/\n"))? }
     var l = sys.lit("created package `")
     bytes.append(inout l, clean)
     l.push(96)
