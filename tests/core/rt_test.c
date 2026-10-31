@@ -324,6 +324,52 @@ static void test_alloc(void) {
   TRAPS((void)ei_alloc_n(2, UINT64_MAX), "out of memory", 0);
 }
 
+static void test_buf(void) {
+  uint64_t *d = ei_buf_alloc(4, sizeof *d);
+  EQU(ei_buf_count(d), 1);
+  CHECK(!ei_buf_shared(d));
+  CHECK((uintptr_t)d % sizeof(uint64_t) == 0);
+  for (int i = 0; i < 4; i++) d[i] = (uint64_t)i * 10;
+  ei_buf_inc(d);
+  EQU(ei_buf_count(d), 2);
+  CHECK(ei_buf_shared(d));
+  CHECK(!ei_buf_dec(d));
+  CHECK(!ei_buf_shared(d));
+  d = ei_buf_grow(d, 1000, sizeof *d);
+  EQU(d[3], 30);
+  EQU(ei_buf_count(d), 1);
+  d[999] = 7;
+  CHECK(ei_buf_dec(d));
+  ei_buf_free(d);
+  /* NULL is an empty buffer: no holders, never shared */
+  ei_buf_inc(NULL);
+  CHECK(!ei_buf_dec(NULL));
+  CHECK(!ei_buf_shared(NULL));
+  EQU(ei_buf_count(NULL), 0);
+  ei_buf_free(NULL);
+  d = ei_buf_grow(NULL, 2, sizeof *d);
+  EQU(ei_buf_count(d), 1);
+  CHECK(ei_buf_dec(d));
+  ei_buf_free(d);
+  void *z = ei_buf_alloc(0, 8);
+  CHECK(z != NULL);
+  ei_buf_free(z);
+  TRAPS((void)ei_buf_alloc(UINT64_MAX / 8, 8), "out of memory", 0);
+  TRAPS((void)ei_buf_alloc(UINT64_MAX, 1), "out of memory", 0);
+  z = ei_buf_alloc(1, 1);
+  TRAPS((void)ei_buf_grow(z, UINT64_MAX / 2, 4), "out of memory", 0);
+  ei_buf_free(z);
+  /* amortised capacity */
+  EQU(ei_grow_cap(0, 0, 1, 4), 4);
+  EQU(ei_grow_cap(4, 4, 1, 4), 8);
+  EQU(ei_grow_cap(8, 8, 1, 8), 16);
+  EQU(ei_grow_cap(8, 5, 100, 4), 105);
+  EQU(ei_grow_cap(UINT64_MAX / 2 + 1, 10, 1, 4), UINT64_MAX); /* doubling saturates (and then cannot be allocated) */
+  EQU(ei_grow_cap(UINT64_MAX - 1, UINT64_MAX - 1, 1, 0), UINT64_MAX);
+  TRAPS((void)ei_grow_cap(0, UINT64_MAX, 1, 0), "out of memory", 0);
+  TRAPS((void)ei_grow_cap(0, 5, UINT64_MAX - 4, 0), "out of memory", 0);
+}
+
 static void test_string(void) {
   ei_String s = ei_str_from("");
   EQU(s.len, 0);
@@ -334,8 +380,13 @@ static void test_string(void) {
   EQU(s.len, 4);
   EQS(s.p, "abcd");
   ei_String t = ei_clone_String(&s);
+  CHECK(t.p == s.p); /* a copy shares the buffer */
+  EQU(ei_buf_count(s.p), 2);
+  ei_str_append(&t, &s); /* ...until one side changes */
   CHECK(t.p != s.p);
-  ei_str_append(&t, &s);
+  EQU(ei_buf_count(s.p), 1);
+  EQU(ei_buf_count(t.p), 1);
+  EQS(s.p, "abcd");
   EQS(t.p, "abcdabcd");
   EQU(t.len, 8);
   ei_str_append(&t, &t); /* self-append: the source is read before the old buffer is freed */
@@ -351,6 +402,37 @@ static void test_string(void) {
   EQS(s.p, "abcd"); /* unchanged by the failed appends */
   ei_drop_String(&s);
   ei_drop_String(&s); /* dropping twice is harmless (free(NULL)) */
+
+  /* appends grow the capacity geometrically: n appends of one byte move the text O(log n) times */
+  ei_String g = ei_str_from("");
+  uint64_t moves = 0;
+  for (int i = 0; i < 100000; i++) {
+    const char *before = g.p;
+    ei_str_push(&g, "x");
+    if (g.p != before) moves++;
+  }
+  EQU(g.len, 100000);
+  CHECK(g.cap >= g.len);
+  CHECK(moves < 20);
+  CHECK(g.p[g.len] == 0);
+  /* a shared String is copied on its first change, then changed in place */
+  ei_String h = ei_clone_String(&g);
+  ei_str_push(&h, "y");
+  EQU(g.len, 100000);
+  EQU(h.len, 100001);
+  CHECK(g.p[g.len] == 0 && h.p[h.len - 1] == 'y');
+  ei_String u = ei_clone_String(&h);
+  ei_str_unique(&u);
+  CHECK(u.p != h.p && strcmp(u.p, h.p) == 0);
+  ei_str_unique(&u); /* already its own: no copy */
+  EQU(ei_buf_count(u.p), 1);
+  ei_drop_String(&u);
+  ei_drop_String(&h);
+  ei_drop_String(&g);
+  /* appending to a dropped (empty) String allocates */
+  ei_str_push(&g, "");
+  EQS(g.p, "");
+  ei_drop_String(&g);
 
   const int64_t vals[] = {0, -1, 42, INT64_MAX, INT64_MIN};
   const char *want[] = {"0", "-1", "42", "9223372036854775807", "-9223372036854775808"};
@@ -668,6 +750,7 @@ int main(void) {
   test_idx();
   test_trap();
   test_alloc();
+  test_buf();
   test_string();
   test_hash();
   test_print();

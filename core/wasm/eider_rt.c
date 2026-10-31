@@ -69,14 +69,59 @@ void *ei_alloc_n(uint64_t n, uint64_t size) {
   return ei_alloc(n * size);
 }
 
+// ---- shared buffers (copy-on-write; the counts are in eider_rt.h)
+
+void *ei_buf_alloc(uint64_t n, uint64_t size) {
+  if (size != 0 && n > (UINT64_MAX - sizeof(ei_buf_hdr)) / size) ei_trap("out of memory", 0);
+  ei_buf_hdr *h = ei_alloc(sizeof *h + n * size);
+  h->n = 1;
+  h->unused = 0;
+  return h + 1;
+}
+
+void *ei_buf_grow(void *d, uint64_t n, uint64_t size) {
+  if (!d) return ei_buf_alloc(n, size);
+  if (size != 0 && n > (UINT64_MAX - sizeof(ei_buf_hdr)) / size) ei_trap("out of memory", 0);
+  uint64_t b = sizeof(ei_buf_hdr) + n * size;
+#if SIZE_MAX < UINT64_MAX
+  if (b > SIZE_MAX) ei_trap("out of memory", 0);
+#endif
+  /* still one allocation, so the allocation counter does not change */
+  ei_buf_hdr *h = realloc(ei_buf_h(d), b ? (size_t)b : 1);
+  if (!h) ei_trap("out of memory", 0);
+  return h + 1;
+}
+
+void ei_buf_free(void *d) {
+  if (d) ei_free(ei_buf_h(d));
+}
+
+uint64_t ei_grow_cap(uint64_t cap, uint64_t len, uint64_t extra, uint64_t min) {
+  if (extra > UINT64_MAX - len) ei_trap("out of memory", 0);
+  uint64_t need = len + extra;
+  uint64_t c = cap <= UINT64_MAX / 2 ? cap * 2 : UINT64_MAX;
+  if (c < need) c = need;
+  if (c < min) c = min;
+  return c;
+}
+
 // ---- String
 
-ei_String ei_str_from(const char *s) {
+/* A new String holding t[0..tl) with room for cap bytes (cap >= tl). */
+static ei_String str_new(const char *t, uint64_t tl, uint64_t cap) {
+  if (cap == UINT64_MAX) ei_trap("out of memory", 0);
   ei_String r;
-  r.len = (uint64_t)strlen(s);
-  r.p = ei_alloc(r.len + 1);
-  memcpy(r.p, s, (size_t)r.len + 1);
+  r.p = ei_buf_alloc(cap + 1, 1);
+  if (tl) memcpy(r.p, t, (size_t)tl);
+  r.p[tl] = 0;
+  r.len = tl;
+  r.cap = cap;
   return r;
+}
+
+ei_String ei_str_from(const char *s) {
+  uint64_t n = (uint64_t)strlen(s);
+  return str_new(s, n, n);
 }
 
 ei_String ei_str_from_i64(int64_t v) {
@@ -86,29 +131,39 @@ ei_String ei_str_from_i64(int64_t v) {
 }
 
 void ei_drop_String(ei_String *s) {
-  ei_free(s->p);
+  if (ei_buf_dec(s->p)) ei_buf_free(s->p);
   s->p = NULL;
   s->len = 0;
+  s->cap = 0;
 }
 
 ei_String ei_clone_String(const ei_String *s) {
-  ei_String r;
-  r.len = s->len;
-  r.p = ei_alloc(r.len + 1);
-  memcpy(r.p, s->p, (size_t)r.len + 1);
+  ei_String r = *s;
+  ei_buf_inc(r.p);
   return r;
 }
 
-/* Appends t[0..tl). Builds a new buffer before freeing the old one, so t may point into s. */
+void ei_str_unique(ei_String *s) {
+  if (!ei_buf_shared(s->p)) return;
+  ei_String n = str_new(s->p, s->len, s->cap);
+  ei_drop_String(s);
+  *s = n;
+}
+
+/* Appends t[0..tl): in place when s's buffer is its own and has room, otherwise into a new
+   buffer of amortised capacity, made before the old one is let go (so t may point into s). */
 void ei_str_cat(ei_String *s, const char *t, uint64_t tl) {
-  if (tl > UINT64_MAX - 1 - s->len) ei_trap("out of memory", 0);
-  char *n = ei_alloc(s->len + tl + 1);
-  if (s->len) memcpy(n, s->p, (size_t)s->len);
-  if (tl) memcpy(n + s->len, t, (size_t)tl);
-  n[s->len + tl] = 0;
-  ei_free(s->p);
-  s->p = n;
+  uint64_t cap = tl <= s->cap - s->len ? s->cap : ei_grow_cap(s->cap, s->len, tl, 15);
+  if (s->p && cap == s->cap && !ei_buf_shared(s->p)) {
+    if (tl) memmove(s->p + s->len, t, (size_t)tl);
+  } else {
+    ei_String n = str_new(s->p, s->len, cap);
+    if (tl) memcpy(n.p + s->len, t, (size_t)tl);
+    ei_drop_String(s);
+    *s = n;
+  }
   s->len += tl;
+  s->p[s->len] = 0;
 }
 
 void ei_str_push(ei_String *s, const char *t) { ei_str_cat(s, t, (uint64_t)strlen(t)); }
