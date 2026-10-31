@@ -1,0 +1,309 @@
+// std/stream: in-memory streams, BufReader (lines, limits, peek, exact, bypass), BufWriter
+// (buffering, flush, big writes), the generic helpers (read_all, read_exact, write_all,
+// copy, read_text), typed errors with kinds, files, pipes, deadlines (TimedOut, cancel-safe
+// line reads), sockets (connect_by / accept_by), and stdout ordering with print.
+
+import "std/stream"
+import "std/fd"
+import "std/net"
+import "std/time"
+import "std/fs"
+import "std/io"
+
+fn text(b: List[u8]) -> String {
+    match String.from_bytes(b) {
+        Ok(s) => s
+        Err(_) => String.from("<not utf-8>")
+    }
+}
+
+// "|" stands for a carriage return (string literals have no \r)
+fn crlf(s: str) -> List[u8] {
+    var out: List[u8] = List.new()
+    for b in s.bytes() {
+        let c: u8 = if b == 124 { 13 } else { b }
+        out.push(c)
+    }
+    out
+}
+
+fn bytes2(a: u8, b: u8) -> List[u8] {
+    var out: List[u8] = List.new()
+    out.push(a)
+    out.push(b)
+    out
+}
+
+fn memory() -> Result[(), stream.Error] uses io {
+    var r = stream.reader(crlf("one\ntwo|\nthree"))
+    var br = stream.buffered_with(r, 3)
+    while true {
+        match br.read_line(100)? {
+            Some(l) => print(text(l))
+            None => break
+        }
+    }
+    // the Bytes reader reads lines itself
+    var b = stream.reader_str("a\nb\n\nc")
+    var n = 0
+    while true {
+        match b.read_line() {
+            Some(l) => {
+                n += 1
+                print(text(l))
+            }
+            None => break
+        }
+    }
+    print(n)
+
+    // limits: a line longer than max is InvalidData, and the bytes stay buffered
+    var lim = stream.buffered_with(stream.reader_str("abcdefgh\nij\n"), 2)
+    match lim.read_line(4) {
+        Ok(_) => print("no limit")
+        Err(e) => {
+            print(e.kind)
+            print(e)
+        }
+    }
+    print(lim.available() >= 4)
+    print(text(lim.read_line(100)?.unwrap()))
+
+    // read_until keeps the delimiter; the last piece has none
+    var u = stream.buffered(stream.reader_str("k=v;x=y;tail"))
+    print(text(u.read_until(59, 100)?))
+    print(text(u.read_until(59, 100)?))
+    print(text(u.read_until(59, 100)?))
+    print(u.read_until(59, 100)?.len())
+
+    // peek doesn't consume; read_exact; UnexpectedEof
+    var p = stream.buffered_with(stream.reader_str("HTTP/1.1 200"), 4)
+    print(text(p.peek(6)?))
+    print(text(p.read_exact(9)?))
+    print(text(p.read_to_end()?))
+    match p.read_exact(1) {
+        Ok(_) => print("no eof")
+        Err(e) => print(e)
+    }
+
+    // generic helpers
+    var all = stream.reader("abc".bytes())
+    print(text(stream.read_all(inout all)?))
+    var ex = stream.reader_str("12345")
+    print(text(stream.read_exact(inout ex, 3)?))
+    match stream.read_exact(inout ex, 3) {
+        Ok(_) => print("no eof")
+        Err(e) => print(e.kind == stream.UnexpectedEof)
+    }
+    var bad = stream.reader(bytes2(104, 255))
+    match stream.read_text(inout bad) {
+        Ok(_) => print("valid?")
+        Err(e) => print(e)
+    }
+
+    // max 0 is an error
+    var z = stream.reader_str("x")
+    match z.read(0) {
+        Ok(_) => print("read 0?")
+        Err(e) => print(e.kind)
+    }
+
+    // writing: Buffer, BufWriter, Discard, copy
+    var w = stream.buffered_writer_with(stream.buffer(), 4)
+    stream.write_str(inout w, "ab")?
+    print(w.pending())
+    print(w.inner().len())
+    stream.write_str(inout w, "cde")?
+    print(w.pending())
+    print(w.inner().len())
+    stream.write_str(inout w, "a long write")?
+    w.flush()?
+    print(w.pending())
+    print(w.inner().text()?)
+
+    var src = stream.buffered_with(stream.reader_str("copy me through"), 5)
+    var dst = stream.buffer()
+    print(stream.copy(inout src, inout dst)?)
+    print(dst.text()?)
+    var d = stream.discard()
+    stream.write_all(inout d, "12345678".bytes())?
+    print(d.count)
+
+    // a BufReader over a BufReader
+    var nested = stream.buffered_with(stream.buffered_with(stream.reader_str("x\ny\n"), 1), 3)
+    print(text(nested.read_line(10)?.unwrap()))
+    print(text(nested.read_line(10)?.unwrap()))
+    print(nested.read_line(10)?.is_none())
+    Ok(())
+}
+
+fn files() -> Result[(), stream.Error] uses io, fs {
+    fs.mkdir_all("target/tmp".bytes())
+    let path = "target/tmp/stream_test.txt".bytes()
+    var f = stream.create(path)?
+    var bw = stream.buffered_writer(f)
+    for i in 0..1000 {
+        var line = String.from("line ")
+        line.append(i.to_string())
+        line.push_str("\n")
+        stream.write_string(inout bw, line)?
+    }
+    bw.flush()?
+    f.close()?
+    var g = stream.open_append(path)?
+    stream.write_str(inout g, "last")?
+    g.close()?
+
+    var r = stream.buffered(stream.open_read(path)?)
+    var count = 0
+    var last = String.from("")
+    while true {
+        match r.read_line(64)? {
+            Some(l) => {
+                count += 1
+                last = text(l)
+            }
+            None => break
+        }
+    }
+    print(count)
+    print(last)
+    r.inner().close()?
+    match stream.open_read("target/tmp/definitely-missing".bytes()) {
+        Ok(_) => print("opened?")
+        Err(e) => {
+            print(e.kind)
+            print(e)
+        }
+    }
+    Ok(())
+}
+
+fn pipes() -> Result[(), stream.Error] uses io, clock {
+    let p = stream.pipe()?
+    var r = stream.buffered(p.r)
+    var w = p.w
+    stream.write_str(inout w, "partial")?
+    // no newline yet: the deadline passes, and nothing is lost
+    match r.read_line_by(100, time.after_ms(20)) {
+        Ok(_) => print("line?")
+        Err(e) => {
+            print(e.kind)
+            print(e)
+        }
+    }
+    print(r.available())
+    stream.write_str(inout w, " line\nnext")?
+    print(text(r.read_line_by(100, time.after_ms(1000))?.unwrap()))
+    w.close()?
+    print(text(r.read_line_by(100, time.after_ms(1000))?.unwrap()))
+    print(r.read_line_by(100, time.after_ms(1000))?.is_none())
+    p.r.close()?
+
+    // a raw read with a deadline that has passed
+    let q = stream.pipe()?
+    var qr = q.r
+    match qr.read_by(10, time.now()) {
+        Ok(_) => print("data?")
+        Err(e) => print(e.kind == stream.TimedOut)
+    }
+    // a non-blocking pipe end behaves the same as a blocking one
+    q.r.set_nonblocking(true)?
+    var qw = q.w
+    stream.write_str(inout qw, "nb")?
+    print(text(qr.read(10)?))
+    // writes with a deadline: fill the pipe until it's full, then time out
+    q.w.set_nonblocking(true)?
+    var big: List[u8] = List.new()
+    for i in 0..300000 { big.push(120) }
+    match stream.write_all_by(inout qw, big, time.after_ms(30)) {
+        Ok(()) => print("no time-out")
+        Err(e) => {
+            print(e.kind)
+            print(stream.write_all_by(inout qw, big, time.now()).is_err())
+        }
+    }
+    q.r.close()?
+    q.w.close()?
+    Ok(())
+}
+
+fn sockets() -> Result[(), stream.Error] uses io, net, clock {
+    let lfd = match net.listener(net.ipv4(127, 0, 0, 1, 0), false) {
+        Ok(s) => s
+        Err(m) => {
+            print(m)
+            return Ok(())
+        }
+    }
+    let addr = match net.local_addr(lfd) {
+        Ok(a) => a
+        Err(m) => return Err(stream.error_text(stream.Other, m))
+    }
+    // nobody accepts yet: the connection still completes (the backlog takes it)
+    var c = stream.connect_by(addr, time.after_ms(2000))?
+    let acc = stream.accept_by(lfd, time.after_ms(2000))?
+    var s = acc.fd
+    print(acc.peer.family == net.IPV4)
+    stream.write_str(inout c, "ping\n")?
+    var sr = stream.buffered(s)
+    print(text(sr.read_line_by(100, time.after_ms(2000))?.unwrap()))
+    stream.write_all_by(inout s, "pong\n".bytes(), time.after_ms(2000))?
+    var cr = stream.buffered(c)
+    print(text(cr.read_line_by(100, time.after_ms(2000))?.unwrap()))
+    // nothing more: the read times out
+    match cr.read_line_by(100, time.after_ms(20)) {
+        Ok(_) => print("data?")
+        Err(e) => print(e.kind)
+    }
+    stream.shutdown_write(c)?
+    print(sr.read_line_by(100, time.after_ms(2000))?.is_none())
+    c.close()?
+    s.close()?
+    // accept with nothing pending times out
+    match stream.accept_by(lfd, time.after_ms(20)) {
+        Ok(_) => print("conn?")
+        Err(e) => print(e)
+    }
+    // a refused connection
+    stream.fd(lfd).close()?
+    match stream.connect_by(addr, time.after_ms(2000)) {
+        Ok(_) => print("connected?")
+        Err(e) => print(e.kind)
+    }
+    Ok(())
+}
+
+fn ordering() -> Result[(), stream.Error] uses io {
+    print("printed first")
+    var out = stream.stdout()
+    stream.write_str(inout out, "written second\n")?
+    print("printed third")
+    var bo = stream.buffered_writer(stream.stdout())
+    stream.write_str(inout bo, "buffered fourth\n")?
+    bo.flush()?
+    Ok(())
+}
+
+fn main() uses io, fs, net, clock {
+    match memory() {
+        Ok(()) => {}
+        Err(e) => print(e)
+    }
+    match files() {
+        Ok(()) => {}
+        Err(e) => print(e)
+    }
+    match pipes() {
+        Ok(()) => {}
+        Err(e) => print(e)
+    }
+    match sockets() {
+        Ok(()) => {}
+        Err(e) => print(e)
+    }
+    match ordering() {
+        Ok(()) => {}
+        Err(e) => print(e)
+    }
+}

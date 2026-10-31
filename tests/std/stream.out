@@ -1,0 +1,63 @@
+one
+two
+three
+a
+b
+
+c
+4
+InvalidData
+no delimiter within 4 bytes
+true
+abcdefgh
+k=v;
+x=y;
+tail
+0
+HTTP/1
+HTTP/1.1 
+200
+unexpected end of stream after 0 of 1 bytes
+abc
+123
+true
+not UTF-8 text at byte 1
+InvalidInput
+2
+0
+3
+2
+0
+abcdea long write
+15
+copy me through
+8
+x
+y
+true
+1001
+last
+NotFound
+cannot open target/tmp/definitely-missing: No such file or directory
+TimedOut
+read: timed out
+7
+partial line
+next
+true
+true
+nb
+TimedOut
+true
+true
+ping
+pong
+TimedOut
+true
+accept: timed out
+ConnectionRefused
+printed first
+written second
+printed third
+buffered fourth
+exit 0
