@@ -379,8 +379,12 @@ None of these functions exist in `core/wasm/`: a wasm module has no descriptors,
 clocks of its own beyond `eider_now_ms`, signals or processes. As for every `ec_*` function, a
 program built with `build --wasm` that reaches one through `std` imports it from the host
 (`env.ec_sock_open` ...); unless the host supplies them, instantiating the module fails with a
-link error naming the missing import (`WebAssembly.LinkError: import env.ec_... must be a
-callable`), before any code runs. That is the clean failure: no partial run.
+link error naming the missing import, before any code runs (Node:
+`LinkError: WebAssembly.instantiate(): Import #0 "env" "ec_time_mono_ns": function import
+requires a callable`, for a module whose export calls `time.mono_ns()`). That is the clean
+failure: no partial run, and the name says which primitive was wanted. A host that wants to
+offer one (say, a clock) passes it in the loader's `imports`. Mirroring them in `core/wasm/`
+would only be meaningful for the clocks, and `now_ms` already covers that.
 
 ## Backends
 
