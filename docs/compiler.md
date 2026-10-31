@@ -1791,11 +1791,18 @@ rule allows); several errors: compiler/tests/check/multi/refs.ei; parse:
 compiler/tests/parse_ok/refs.ei (`let mut`, `mut` patterns, a variable named `mut`);
 migration: compiler/tests/migrate/var.ei and test-compiler.sh's migration leg.
 
-**Benchmarks** (`REPS=7 sh scripts/bench.sh target/eiderc-before:... target/...`, before =
+**Benchmarks** (`REPS=15 sh scripts/bench.sh target/eiderc-before:target/before target/eiderc-after`, before =
 eiderc at b1aae4c, after = eiderc built by itself with C8.6, 16 cores, gcc -O2, median
-wall time): BENCH_TABLE
+wall time): list_copies 3 ms / 3 ms, state 4 ms / 4 ms, str_append 4 ms / 4 ms, eiderc
+`emit-c compiler/main.ei` (20,570 lines) 178 ms / 181 ms. The compiler is 1.7% slower on
+itself: compiler/ binds references almost everywhere, so the notes and the liveness pass run
+for nearly every function (programs without references skip the pass).
 
-The generated C of every benchmark and run test is the same or smaller: GEN_C_SUMMARY.
+The generated C is the same or smaller for every benchmark, tests/run program, example and
+the compiler (19 programs, 7 byte-identical: those with no `let` or `match` of an owned
+place): 137,817 to 137,518 lines in all, clone and drop call sites 7,750 to 7,486
+(compiler/main.ei: 131,152 to 131,073 lines, 7,253 to 7,024; tests/run/heap.ei 147 to 134;
+tests/bench/state.ei 76 to 74).
 
 **Remaining.** C pointer variables for references through heap memory (re-derived on each
 use today, choice 1): a pointer stays valid while the protection rule holds except across a
