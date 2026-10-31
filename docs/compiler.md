@@ -999,7 +999,7 @@ and leaves the analyzer building.
 | 4 | **8.19 Calling a fn field** (done: "C8.19: calling a function stored in a field") | `self.handler(req)`, with the rule for a clash with a method | — |
 | 4 | **8.20 Iterating a Map** (done: "C8.20: iterating a Map") | `for (k, v) in m`, `m.keys()`, `m.values()` in slot order | 8.4 |
 | 4 | **8.21 Error conversion for `?`** (P0.6; "C8.21: error conversion for `?`") | `From[E]` in the prelude; `?` converts `Err(e)` through an impl | 8.4 |
-| 4 | **8.22 `while let`, labeled loops** ("C8.22: `while let` and labeled loops") | `while let p = e`, `'outer: for`, `break 'outer`, `continue 'outer` | — |
+| 4 | **8.22 `while let`, labeled loops** (`while let` done: "C8.22: `while let`"; labeled loops not started) | `while let p = e`, `'outer: for`, `break 'outer`, `continue 'outer` | — |
 
 ## C8.3: packages and modules
 
@@ -2132,7 +2132,7 @@ per source (E0107 for a second). As for the operation traits (C8.4):
 returns `Err(E2.from(e))` when some impl converts E1 into E2 (its type parameters bound by
 both); the error value is moved out, borrowed by `from`, then dropped. Without one it stays
 E0401 "`?` can't convert the error type A into B", which now has the help "implement
-`From[A]` for B (in its package), or convert with `match`". Option's `?` is unchanged.
+`From[A]` for B (in its package), or convert with `match`" when B is a record or enum. Option's `?` is unchanged.
 
 **Calls.** `E2.from(x)` checks x first and picks the impl whose source fits x's type (and the
 expected type, for a generic target); none is E0401 "`E` has no `From` conversion from bool".
@@ -2149,6 +2149,33 @@ Compile-fail: `e0604_from_orphan`, `e0602_from_signature`, `e0602_from_caps`,
 `e0603_from_no_source`, `e0603_trait_type_args`, `e0107_from_twice`, `e0401_from_call_no_impl`,
 `e0401_try_no_from`. Oracle: the help on the existing "`?` can't convert" cases, and the IDE
 goldens' prelude symbols (the trait and its method).
+
+## C8.22: `while let`
+
+Wave 4, item 8.22, first half. `while let PAT = EXPR { body }` runs the body while EXPR (checked
+again before each iteration) matches PAT, with PAT's bindings in scope; `break` and
+`continue` are the loop's. Like `if let`, it is sugar the parser expands (parse.ei
+`while_let`): `while true { match EXPR { PAT => { body } _ => { break } } }`, so the checker,
+the protection rule, drops and lowering need nothing new, and a scrutinee that is a place
+binds references into it as `match` does (C8.6). A value that doesn't match is consumed
+like any match scrutinee (`while let Some((1, s)) = xs.pop()` drops the first pair that
+isn't `(1, _)`).
+
+**Syntax changes** (for the tree-sitter grammar): `while_statement` gains `'while' 'let'
+pattern '=' expression block`.
+
+Tests: compiler/tests/run/while_let.ei (popping a stack, `continue` and `break`, walking a
+linked list through a Box, a refutable tuple pattern inside Some; hand-checked .out,
+leak-free, sanitizers); parse: compiler/tests/parse_ok/while_let.ei (the expansion).
+
+**Not done: labeled loops** (`'outer: for ...`, `break 'outer`, `continue 'outer`). They need
+a label token in the lexer, a label slot on the three loop statements, a loop depth on
+S_BREAK/S_CONTINUE in the IR, the protection rule's liveness to route an outer `break` to
+that loop's exit (`lv_block` passes only the innermost loop's), and `goto`s in lowering
+(outer `break` past the inner `for (;;)`, outer `continue` to the outer step label, which
+`has_continue` must then find through nested loops). None is hard; together they touch
+lex, parse, check (loops, refs), ir and lower, and were left for a next item rather than
+squeezed in.
 
 ## Language work that lands in `eiderc` (after parity)
 

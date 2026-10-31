@@ -957,6 +957,7 @@ fn stmt(inout p: P) -> Result[u32, diag.Diag] {
         return Ok(add(inout p, n))
     }
     if eat_kw(inout p, intern.K_WHILE) {
+        if is_kw(p, intern.K_LET) { return while_let(inout p, t) }
         let mut n = mk(ast.SWhile, t.line, t.col)
         n.a = expr(inout p)?
         n.b = block(inout p)?
@@ -1458,6 +1459,77 @@ fn else_branch(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
     let mut n = mk(ast.EBlock, t.line, t.col)
     n.a = block(inout p)?
+    Ok(add(inout p, n))
+}
+
+/// `while let PAT = EXPR { A }` (docs/compiler.md, "C8.22") is
+/// `while true { match EXPR { PAT => { A } _ => { break } } }`, as `if let` is a match.
+fn while_let(inout p: P, t: lex.Tok) -> Result[u32, diag.Diag] {
+    expect_kw(inout p, intern.K_LET)?
+    let pat = pattern(inout p)?
+    expect(inout p, lex.Eq)?
+    let scrut = expr(inout p)?
+    let se = prev_end(p)
+    let body = block(inout p)?
+    let end = prev_end(p)
+    let mut then_e = mk(ast.EBlock, t.line, t.col)
+    then_e.a = body
+    let then_id = add(inout p, then_e)
+    let mut pats1: List[u32] = List.new()
+    pats1.push(pat)
+    let mut arm1 = mk(ast.Arm, t.line, t.col)
+    arm1.a = then_id
+    arm1.c = list(inout p, pats1)
+    arm1.d = 1
+    let a1 = add(inout p, arm1)
+    // `_ => { break }`
+    let brk = add(inout p, mk(ast.SBreak, t.line, t.col))
+    let mut stmts: List[u32] = List.new()
+    stmts.push(brk)
+    let mut bb = mk(ast.Block, t.line, t.col)
+    bb.c = list(inout p, stmts)
+    bb.d = 1
+    bb.end_line = end.line
+    bb.end_col = end.col
+    let bid = add(inout p, bb)
+    let mut eb = mk(ast.EBlock, t.line, t.col)
+    eb.a = bid
+    let els = add(inout p, eb)
+    let mut pats2: List[u32] = List.new()
+    pats2.push(add(inout p, mk(ast.PWild, t.line, t.col)))
+    let mut arm2 = mk(ast.Arm, t.line, t.col)
+    arm2.a = els
+    arm2.c = list(inout p, pats2)
+    arm2.d = 1
+    let a2 = add(inout p, arm2)
+    let mut arms: List[u32] = List.new()
+    arms.push(a1)
+    arms.push(a2)
+    let mut m = mk(ast.EMatch, t.line, t.col)
+    m.a = scrut
+    m.c = list(inout p, arms)
+    m.d = 2
+    m.e = se.line
+    m.f = se.col
+    m.end_line = end.line
+    m.end_col = end.col
+    let mid = add(inout p, m)
+    let mut st = mk(ast.SExpr, t.line, t.col)
+    st.a = mid
+    let sid = add(inout p, st)
+    let mut ls: List[u32] = List.new()
+    ls.push(sid)
+    let mut lb = mk(ast.Block, t.line, t.col)
+    lb.c = list(inout p, ls)
+    lb.d = 1
+    lb.end_line = end.line
+    lb.end_col = end.col
+    let lbid = add(inout p, lb)
+    let mut cond = mk(ast.EBool, t.line, t.col)
+    cond.a = 1
+    let mut n = mk(ast.SWhile, t.line, t.col)
+    n.a = add(inout p, cond)
+    n.b = lbid
     Ok(add(inout p, n))
 }
 

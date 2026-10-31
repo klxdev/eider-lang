@@ -5516,7 +5516,8 @@ fn try_op(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
             let hit = find_from(c, 0, rargs[1], args[1])
             if hit.ix == NONE {
                 let mut cd = err("E0401", n.line, n.col, q2("`?` can't convert the error type ", ts(c, args[1]), " into ", ts(c, rargs[1]), ""))
-                cd.help = q2("implement `From[", ts(c, args[1]), "]` for ", ts(c, rargs[1]), " (in its package), or convert with `match`")
+                let rk = types.kind(c.t, rargs[1])
+                if rk == types.T_RECORD || rk == types.T_ENUM { cd.help = q2("implement `From[", ts(c, args[1]), "]` for ", ts(c, rargs[1]), " (in its package), or convert with `match`") }
                 return Err(cd)
             }
             conv = from_instance(inout c, hit, n.line, n.col)?
