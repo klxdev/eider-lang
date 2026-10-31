@@ -1,6 +1,6 @@
-// Partial results when type checking fails midway: bodies are checked last first, so
-// `later` is checked (its refs and types are reported), then `broken` stops the checker
-// at its second statement; `early` is never reached, but its symbols are still there.
+// Results when type checking fails midway: bodies are checked last first, so `later` is
+// checked, then `broken`'s error is recorded and checking goes on (its later statements and
+// `early` are checked too: their refs and types are reported).
 
 type Cell = { v: i32 }
 

@@ -1,6 +1,6 @@
 // Partial results with a parse error in an imported module: the diagnostic names that
-// file; the entry file's symbols are still reported, but nothing is checked (and the
-// import's path refers to no module).
+// file; the module is loaded with what parsed (`fine`), and everything is checked, so
+// its symbols, refs and types are reported too.
 
 import "lib/broken_mod.txt" as bm
 

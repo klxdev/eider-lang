@@ -229,6 +229,14 @@ pub type C = {
     bad_fd: Map[u32, bool],
     /// a pattern of the `match`/`let` being lowered met the error type
     pat_bad: bool,
+    /// the parser skipped a statement of the body being checked (SError): its names are
+    /// unknown, so an unknown name in the body may be a consequence
+    body_err: bool,
+    /// modules with an item the parser skipped before its name (IError without a name):
+    /// any unknown name in them may be a consequence
+    mod_err: Map[u32, bool],
+    /// the names (as messages spell them) of the items the parser skipped after their name
+    failed: List[List[u8]],
 }
 
 /// Expected parameter types (NONE: unknown) and return type of a closure.
@@ -471,6 +479,49 @@ fn consequence(c: C, d: diag.Diag) -> bool uses ffi {
     false
 }
 
+/// Whether d may be explained by a syntax error: it is on the line of one, or it is an
+/// unknown name and the parser skipped a statement of the body (`body_err`), an item of the
+/// module before its name, or the item of that name (ast.ei, SError and IError).
+fn syntax_consequence(c: C, d: diag.Diag) -> bool uses ffi {
+    // anything on the line of a syntax error may come from how the parser recovered there
+    if c.err_mod != resolve.NOMOD && d.file.len() == 0 && resolve.syntax_in(c.p, c.err_mod, d.line, d.line) { return true }
+    let unknown = bytes.starts_with(d.msg, s("unknown name `")) || bytes.starts_with(d.msg, s("unknown function `")) || bytes.starts_with(d.msg, s("unknown type `")) || bytes.starts_with(d.msg, s("unknown trait `"))
+    if !unknown { return false }
+    if c.body_err || c.mod_err.contains(c.err_mod) { return true }
+    for f in c.failed {
+        var t = s("`")
+        bytes.append(inout t, f)
+        t.push(96)
+        if contains_text(d.msg, t) { return true }
+    }
+    false
+}
+
+/// Note the items the parser skipped (IError: a = keyword sym+1, b = name sym+1 or 0).
+fn note_failed_items(inout c: C) uses ffi {
+    for it in items(c.p) {
+        let n = ndm(c, it.m, it.node)
+        if n.kind != ast.IError { continue }
+        if n.b == 0 {
+            c.mod_err.insert(it.m, true)
+        } else {
+            let sym = n.b - 1
+            c.failed.push(nm(c, sym))
+            c.failed.push(kt(c, resolve.item_key(c.p, it.m, sym)))
+        }
+    }
+}
+
+/// Whether the parser skipped an item of the entry file (it may have been `main` or the
+/// export a library needs).
+fn entry_skipped(c: C) -> bool {
+    let a = c.p.mods[0].ast
+    for k in 0..a.items_len {
+        if a.nodes[ast.at(a, a.items_start, k) as usize].kind == ast.IError { return true }
+    }
+    false
+}
+
 /// What makes d one of the diagnostics reported once per body: the message of an unknown
 /// name, and the fix of a missing capability (one per capability). Empty for the others.
 fn once_key(d: diag.Diag) -> List[u8] uses ffi {
@@ -498,7 +549,7 @@ fn once_key(d: diag.Diag) -> List[u8] uses ffi {
 /// Record diagnostic d (naming the file of the module being checked, as the end of the
 /// run does) unless it is a consequence or a repetition.
 fn record(inout c: C, d: diag.Diag) uses ffi {
-    if c.mute || consequence(c, d) { return }
+    if c.mute || consequence(c, d) || syntax_consequence(c, d) { return }
     let k = once_key(d)
     if k.len() > 0 {
         for x in c.seen {
@@ -1470,7 +1521,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C uses ffi {
         List.new(), List.new(), List.new(),
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
         0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false, Rec(false, List.new(), List.new()),
-        List.new(), List.new(), false, Map.new(), false)
+        List.new(), List.new(), false, Map.new(), false, false, Map.new(), List.new())
 }
 
 /// Every item of the program in load order (resolve.ei), as (module, node) pairs.
@@ -1585,6 +1636,7 @@ fn begin_item(inout c: C, it: Item) {
 
 fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
     let its = items(c.p)
+    note_failed_items(inout c)
     // comptime constants are evaluated before checking
     for it in its {
         let n = ndm(c, it.m, it.node)
@@ -1813,9 +1865,12 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
     }
     c.err_mod = resolve.NOMOD
     c.seen = List.new()
+    c.body_err = false
+    // (an item the parser skipped may have been the missing one)
+    let skipped = entry_skipped(c)
     if c.lib {
-        if c.exports == 0 { record(inout c, err("E0805", 1, 1, s("a library needs at least one `export fn`"))) }
-    } else if !c.fns.contains(resolve.key(0, c.w.main)) {
+        if c.exports == 0 && !skipped { record(inout c, err("E0805", 1, 1, s("a library needs at least one `export fn`"))) }
+    } else if !c.fns.contains(resolve.key(0, c.w.main)) && !skipped {
         record(inout c, err("E0112", 1, 1, s("no `main` function")))
     }
     if c.wasm && uses_thread_types(c) { record(inout c, wasm_threads_error()) }
@@ -2237,6 +2292,7 @@ fn check_test(inout c: C, m: u32, n: ast.Node) -> Result[bool, diag.Diag] uses f
     ir.begin_fn(inout c.ir, f, types.UNIT, ctext)
     reset_frames(inout c)
     c.seen = List.new()
+    c.body_err = resolve.syntax_in(c.p, m, n.line, ndm(c, m, n.b).end_line)
     let mark = ir.open(c.ir)
     block_body(inout c, n.b, Dest(D_DISCARD, 0), NONE)?
     let b = ir.close(inout c.ir, mark)
@@ -2259,6 +2315,7 @@ fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] uses ffi {
     c.cur_mod = m
     c.err_mod = m
     c.seen = List.new()
+    c.body_err = false
     c.unsafe_depth = if f.unsafe_fn { 1 } else { 0 }
     c.locals = Map.new()
     if c.p.mods[m as usize].pre > 0 { c.locals = resolve.fn_locals(c.p, m, n) }
@@ -2279,10 +2336,12 @@ fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] uses ffi {
     }
     let dest = if inst.ret == types.UNIT { Dest(D_DISCARD, 0) } else { Dest(D_RETURN, 0) }
     let body = n.h - 1
+    // a syntax error in the body: what was skipped may have declared names or ended it
+    c.body_err = resolve.syntax_in(c.p, m, n.line, ndm(c, m, body).end_line)
     let mark = ir.open(c.ir)
     let t = block_body(inout c, body, dest, inst.ret)?
     let b = ir.close(inout c.ir, mark)
-    if inst.ret != types.UNIT && t != types.NEVER && !same(c, t, inst.ret) {
+    if inst.ret != types.UNIT && t != types.NEVER && !same(c, t, inst.ret) && !c.body_err {
         let bn = ndm(c, m, body)
         return Err(errh("E0401", bn.end_line, bn.end_col, q2("function `", kt(c, f.key), "` must return ", ts(c, inst.ret), ", but its body ends without producing one"), "add a `return` or end the body with an expression of that type"))
     }
@@ -2298,9 +2357,12 @@ fn block_body(inout c: C, b: u32, dest: Dest, exp: u32) -> Result[u32, diag.Diag
     push_scope(inout c)
     push_frame(inout c)
     var ty = types.UNIT
+    var saw_err = false
     for i in 0..n.d {
         let st = at(c, n.c, i)
         let sn = nd(c, st)
+        // a statement the parser skipped: the block may have lost its last expression
+        if sn.kind == ast.SError { saw_err = true }
         let tail = i + 1 == n.d && sn.kind == ast.SExpr
         // a recovery point: a failed statement is recorded and its names bound to the error type
         let sp = snap(c)
@@ -2319,6 +2381,7 @@ fn block_body(inout c: C, b: u32, dest: Dest, exp: u32) -> Result[u32, diag.Diag
             }
         }
     }
+    if saw_err && ty != types.NEVER { ty = poison(inout c) }
     pop_scope(inout c)
     pop_frame(inout c, ty != types.NEVER)
     Ok(ty)
@@ -2414,6 +2477,11 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] uses ffi {
         }
         ast.SBreak => loop_exit(inout c, n, ir.S_BREAK)
         ast.SContinue => loop_exit(inout c, n, ir.S_CONTINUE)
+        ast.SError => {
+            // reported by the parser; the names it would have declared are unknown
+            c.body_err = true
+            Ok(types.UNIT)
+        }
         _ => {
             // SAssert
             let cv = expr(inout c, n.a, types.BOOL)?
@@ -2886,7 +2954,8 @@ type Alt = { tests: List[Test] }
 fn compile_match(inout c: C, m: ast.Node, dest: Dest, exp: u32) -> Result[u32, diag.Diag] uses ffi {
     let sv = expr(inout c, m.a, NONE)?
     let sn = nd(c, m.a)
-    c.pat_bad = false
+    // a syntax error inside: an arm may have been skipped, so the match isn't judged
+    c.pat_bad = resolve.syntax_in(c.p, c.am, m.line, m.end_line)
     if sv.ty == types.UNIT || sv.ty == types.NEVER {
         return Err(err("E0401", sn.line, sn.col, q("cannot match on a value of type ", ts(c, sv.ty), "")))
     }
@@ -2904,6 +2973,11 @@ fn compile_match(inout c: C, m: ast.Node, dest: Dest, exp: u32) -> Result[u32, d
         var useful = false
         var binds: List[Bind] = List.new()
         alt_start.push(alts.len() as u32)
+        if arm.d == 0 {
+            // an arm the parser skipped (no patterns, an EError body): the match isn't judged
+            c.pat_bad = true
+            alts.push(Alt(List.new()))
+        }
         for j in 0..arm.d {
             let pid = at(c, arm.c, j)
             var lw = Lowered(List.new(), List.new())
@@ -3172,6 +3246,8 @@ fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
         ast.ETuple => tuple_lit(inout c, n, exp)
         ast.ETry => try_op(inout c, n)
         ast.ELambda => lambda(inout c, n, exp)
+        // reported by the parser: an error value
+        ast.EError => Err(quiet())
         _ => {
             // EIf, EMatch, EBlock, EUnsafe in expression position
             Err(errh("E0103", n.line, n.col, s("`if`, `match` and blocks can only be used as a statement, a function's final expression, or the right side of `let`, `=` or `return`"), "bind the result first: `let x = match ... { ... }`, then use `x`"))

@@ -708,8 +708,10 @@ first diagnostic).
   comment.
 - **`front.ei`**: `analyze(src)` runs both and returns the parse and the diagnostics (the
   lexer's, then the parser's, so the first is the one `eiderc check` reports today);
-  `report(file, src)` prints them as JSON lines, then the AST dump. Until the CLI has a
-  flag for it, `compiler/tests/recover/front_all.ei <file>` runs it.
+  `report(file, src)` prints them as JSON lines, then the AST dump: `eiderc parse
+  --all-errors <file>` (exit 1 when there is an error). `eiderc check` and the other
+  commands, `resolve.load_from` for imports and `ide.analyze` use the recovered tree, so
+  checking goes on after syntax errors ("Several errors").
 - **Tests.** scripts/test-compiler.sh's `recover` section: compiler/tests/recover/*.src
   (several independent errors each; `.src`, not `.ei`, so the front-end loop and the oracle
   don't see them) against their `.recover` goldens (BLESS=1 rewrites them), and for every
@@ -725,8 +727,19 @@ until an error has been found; the passes only go on afterwards, and what they f
 appended in the order found. The compile-fail runner (suite.ei) still judges a file by its
 first diagnostic, so its output, tests/checks' 74/74 and the 42/42 coverage are unchanged.
 
+- **Syntax errors** ("Front-end recovery"). The entry file and every import are lexed and
+  parsed with `lex_all`/`parse_all` (their diagnostics first, `front.merge`), and the
+  recovered tree is loaded and checked. Error nodes are skipped without a report: `EError`
+  has the error type, `SError` is no statement (and a block containing one has the error
+  type, since it may have lost its last expression), an arm without patterns keeps its
+  match from being judged. Nothing the checker finds on the line of a syntax error is
+  reported (the parser may have misread it), nor are a missing return value or a match's
+  exhaustiveness in a body or match with a syntax error, nor an unknown name in a body
+  with a syntax error or a skipped statement, in a module where an item was skipped before its name, or when it is the name
+  of a skipped item (`IError`'s b), nor a missing `main` or export when an entry item was
+  skipped.
 - **Loading** (`resolve.load_from` -> `Loaded { p, diags, fatal }`). An import that can't be
-  read or parsed, or that clashes with another module's name (E0804, E0001, E0808), is
+  read, or that clashes with another module's name (E0804, E0808), is
   reported and left out, and loading goes on; its prefix goes into `Program.broken`, and a
   diagnostic naming `alias.X` of such a module is a consequence (never reported). Only a
   missing prelude is fatal.

@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/check/multi/syntax.ei","line":6,"col":5},"message":"`let` is a keyword and can't be used as a name"}

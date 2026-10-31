@@ -1,0 +1,5 @@
+{"error":"E0001","span":{"file":"compiler/tests/check/multi/syntax.ei","line":6,"col":5},"message":"`let` is a keyword and can't be used as a name"}
+{"error":"E0001","span":{"file":"compiler/tests/check/multi/syntax.ei","line":11,"col":16},"message":"expected `,` or `)`"}
+{"error":"E0001","span":{"file":"compiler/tests/check/multi/syntax.ei","line":16,"col":14},"message":"expected a newline, `,` or `}` after match arm"}
+{"error":"E0401","span":{"file":"compiler/tests/check/multi/syntax.ei","line":24,"col":18},"message":"expected str, found i32"}
+{"error":"E0501","span":{"file":"compiler/tests/check/multi/syntax.ei","line":7,"col":17},"message":"literal 300 doesn't fit in u8 (max 255)"}

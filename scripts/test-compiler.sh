@@ -11,7 +11,7 @@
 #   lex_ok:   token dumps of compiler/tests/lex_ok/*.ei match their .tokens goldens
 #   parse_ok: AST dumps of compiler/tests/parse_ok/*.ei match their .ast goldens
 #   recover:  the recovering front end (lex.lex_all, parse.parse_all), run by
-#             compiler/tests/recover/front_all.ei: for compiler/tests/recover/*.src (programs
+#             `eiderc parse --all-errors`: for compiler/tests/recover/*.src (programs
 #             with several syntax errors; not .ei, so the front-end loop above skips them) every
 #             diagnostic as JSON lines, then the AST dump with its error nodes, matches the
 #             .recover golden; and for every file of the front-end loop its first diagnostic
@@ -136,34 +136,28 @@ for f in compiler/tests/parse_ok/*.ei; do
   if $new parse "$f" | cmp -s - "$g"; then echo "ok   parse_ok $f"; else echo "FAIL parse_ok $f"; $new parse "$f" | diff "$g" - | head -10; fail=1; fi
 done
 # recover: every syntax error at once (see the top)
-if $new build compiler/tests/recover/front_all.ei -o target/runtest/front_all >target/runtest/front_all.log 2>&1; then
-  for f in compiler/tests/recover/*.src; do
-    g="${f%.src}.recover"
-    target/runtest/front_all "$f" >target/runtest/recover 2>&1
-    if [ -n "$BLESS" ]; then cp target/runtest/recover "$g"; fi
-    if cmp -s target/runtest/recover "$g"; then echo "ok   recover $f"; else echo "FAIL recover $f"; diff "$g" target/runtest/recover | head -10; fail=1; fi
-  done
-  rn=0
-  rbad=""
-  for f in $(find . -name '*.ei' -not -path './target/*' -not -path './.claude/*' -not -path '*/deps/*' | sort); do
-    rn=$((rn + 1))
-    $new parse --json "$f" >target/runtest/rp 2>/dev/null
-    target/runtest/front_all "$f" >target/runtest/ra 2>&1
-    if head -1 target/runtest/rp | grep -q '^{"error"'; then
-      [ "$(head -1 target/runtest/rp)" = "$(head -1 target/runtest/ra)" ] || rbad="$rbad $f"
-    else
-      cmp -s target/runtest/rp target/runtest/ra || rbad="$rbad $f"
-    fi
-  done
-  if [ -z "$rbad" ]; then
-    echo "ok   recover: $rn files: the first of all the front-end errors is eiderc's, and without one the dump is eiderc's"
+for f in compiler/tests/recover/*.src; do
+  g="${f%.src}.recover"
+  $new parse --all-errors "$f" >target/runtest/recover 2>&1
+  if [ -n "$BLESS" ]; then cp target/runtest/recover "$g"; fi
+  if cmp -s target/runtest/recover "$g"; then echo "ok   recover $f"; else echo "FAIL recover $f"; diff "$g" target/runtest/recover | head -10; fail=1; fi
+done
+rn=0
+rbad=""
+for f in $(find . -name '*.ei' -not -path './target/*' -not -path './.claude/*' -not -path '*/deps/*' | sort); do
+  rn=$((rn + 1))
+  $new parse --json "$f" >target/runtest/rp 2>/dev/null
+  $new parse --all-errors "$f" >target/runtest/ra 2>&1
+  if head -1 target/runtest/rp | grep -q '^{"error"'; then
+    [ "$(head -1 target/runtest/rp)" = "$(head -1 target/runtest/ra)" ] || rbad="$rbad $f"
   else
-    echo "FAIL recover: first error or dump differs from eiderc parse:$rbad"
-    fail=1
+    cmp -s target/runtest/rp target/runtest/ra || rbad="$rbad $f"
   fi
+done
+if [ -z "$rbad" ]; then
+  echo "ok   recover: $rn files: the first of all the front-end errors is eiderc's, and without one the dump is eiderc's"
 else
-  cat target/runtest/front_all.log
-  echo "FAIL recover: build compiler/tests/recover/front_all.ei"
+  echo "FAIL recover: first error or dump differs from eiderc parse:$rbad"
   fail=1
 fi
 for f in compiler/tests/ir/*.ei; do

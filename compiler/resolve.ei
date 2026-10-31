@@ -30,6 +30,7 @@ import "lex.ei"
 import "ast.ei"
 import "parse.ei"
 import "diag.ei"
+import "front.ei"
 
 /// "no module": the prelude, or an error that belongs to no file.
 pub const NOMOD: u32 = 4294967295
@@ -64,6 +65,25 @@ pub type Program = {
     /// the prefixes (stem symbol + 1) of imports that failed to load (a missing or
     /// unparsable file, a clash): names qualified by them are not reported as unknown
     broken: List[u32],
+    /// where syntax errors are: module index * 2^32 + line (note_syntax); the checker
+    /// judges nothing a skipped part could have changed there
+    syntax: List[u64],
+}
+
+/// Note the syntax errors `ds` of module m (its lex and parse diagnostics).
+pub fn note_syntax(inout p: Program, m: u32, ds: List[diag.Diag]) {
+    for d in ds { p.syntax.push((m as u64) * 4294967296 + d.line as u64) }
+}
+
+/// Whether module m has a syntax error on a line in [from, to].
+pub fn syntax_in(p: Program, m: u32, from: u32, to: u32) -> bool {
+    for k in p.syntax {
+        if (k / 4294967296) as u32 == m {
+            let l = (k % 4294967296) as u32
+            if l >= from && l <= to { return true }
+        }
+    }
+    false
 }
 
 // ---- keys
@@ -290,6 +310,21 @@ fn parse_file(inout p: Program, path: List[u8], src: List[u8]) -> Result[parse.P
     }
 }
 
+/// Lex and parse `src` as module `path` recovering from errors (front.ei): the tree, with
+/// error nodes where parts failed; every lex and parse error goes into `diags`, naming the
+/// file.
+fn parse_module(inout p: Program, path: List[u8], src: List[u8], inout diags: List[diag.Diag]) -> parse.P uses ffi {
+    let lx = lex.lex_all(src, inout p.names)
+    let r = parse.parse_all(lx.lexed, p.names)
+    let ds = front.merge(lx.diags, r.diags)
+    for d in ds { diags.push(in_file(d, path)) }
+    // the module about to be added
+    let m = p.mods.len() as u32
+    note_syntax(inout p, m, ds)
+    p.names = r.p.names
+    r.p
+}
+
 /// Build the program from the parsed entry file `q` (path `file`), loading its imports; the
 /// first diagnostic, if there is one.
 pub fn load(file: List[u8], src: List[u8], q: parse.P) -> Result[Program, diag.Diag] uses io, fs, ffi {
@@ -306,7 +341,7 @@ pub type Loaded = { p: Program, diags: List[diag.Diag], fatal: bool }
 
 /// `load`, reading sources through `fp`.
 pub fn load_from(file: List[u8], src: List[u8], q: parse.P, fp: Files) -> Loaded uses io, fs, ffi {
-    var p = Program(List.new(), List.new(), q.names, List.new(), List.new(), List.new(), NOMOD, List.new())
+    var p = Program(List.new(), List.new(), q.names, List.new(), List.new(), List.new(), NOMOD, List.new(), List.new())
     p.seen.push(canonical(file))
     add_module(inout p, file, 0, src, q)
     var diags: List[diag.Diag] = List.new()
@@ -427,17 +462,10 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
                 continue
             }
         }
-        let parsed = parse_file(inout p, path, text)
-        match parsed {
-            Ok(q) => {
-                let mi = add_module(inout p, path, pre_sym + 1, text, q)
-                load_imports(inout p, mi, fp, inout diags)
-            }
-            Err(d) => {
-                diags.push(d)
-                p.broken.push(pre_sym + 1)
-            }
-        }
+        // a module with syntax errors is loaded with what parsed (its error nodes are skipped)
+        let q = parse_module(inout p, path, text, inout diags)
+        let mi = add_module(inout p, path, pre_sym + 1, text, q)
+        load_imports(inout p, mi, fp, inout diags)
     }
     p.order.push(m)
 }

@@ -26,9 +26,10 @@
 // check), so `diags` holds exactly the diagnostics `eiderc check` reports (all of them, in
 // the order found, each once and without the `--max-errors` cap: messages and help
 // demangled like the CLI prints them, `file` always set). The passes recover from errors,
-// so what they gather is returned also after one (a lex or parse error still ends them):
+// so what they gather is returned also after one (syntax errors included: the parts that
+// parsed are analysed):
 //
-// - symbols: from every module that was read and parsed (entry first, then imports in load
+// - symbols: from every module that was read (entry first, then imports in load
 //   order, the prelude last): one SK_MODULE per module (span 1:1-1:1, detail its path), its
 //   items, variants, named fields, functions, methods (container: the trait, or the impl's
 //   type when that is declared in the same module), parameters (closure parameters too),
@@ -65,6 +66,7 @@ import "types.ei"
 import "check.ei"
 import "driver.ei"
 import "comptime.ei" as consteval
+import "front.ei"
 
 pub type Span = { file: List[u8], line: u32, col: u32, end_line: u32, end_col: u32 }
 
@@ -107,27 +109,13 @@ pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: Li
         }
     }
     var names = intern.new()
-    let r = lex.lex(src, inout names)
-    match resolve.lex_diag(r) {
-        Some(d) => {
-            diags.push(final_diag(d, entry))
-            return Analysis(diags, List.new(), List.new(), List.new(), files)
-        }
-        None => {}
-    }
-    let lx = match r {
-        lex.Done(x) => x
-        _ => { return Analysis(diags, List.new(), List.new(), List.new(), files) }
-    }
-    let q = match parse.parse(lx, names) {
-        Ok(parsed) => parsed
-        Err(d) => {
-            diags.push(final_diag(d, entry))
-            return Analysis(diags, List.new(), List.new(), List.new(), files)
-        }
-    }
-    let ld = resolve.load_from(entry, src, q, fp)
-    var found = ld.diags
+    // the front end recovers (front.ei): every syntax error, and the tree with error nodes
+    let lx = lex.lex_all(src, inout names)
+    let pr = parse.parse_all(lx.lexed, names)
+    var ld = resolve.load_from(entry, src, pr.p, fp)
+    var found = front.merge(lx.diags, pr.diags)
+    resolve.note_syntax(inout ld.p, 0, found)
+    for d in ld.diags { found.push(d) }
     if ld.fatal { return build(ld.p, no_rec(), types.new(), finals(found, entry)) }
     if has_comptime(ld.p) {
         match toolchain_problem() {

@@ -1,0 +1,26 @@
+error[E0001]: `let` is a keyword and can't be used as a name
+  --> compiler/tests/check/multi/syntax.ei:6:5
+  |
+6 |     let z: bool = 3
+  |     ^
+error[E0001]: expected `,` or `)`
+  --> compiler/tests/check/multi/syntax.ei:11:16
+   |
+11 | fn lost(a: i32 -> i32 { a }
+   |                ^
+error[E0001]: expected a newline, `,` or `}` after match arm
+  --> compiler/tests/check/multi/syntax.ei:16:14
+   |
+16 |         None => 0
+   |              ^
+error[E0401]: expected str, found i32
+  --> compiler/tests/check/multi/syntax.ei:24:18
+   |
+24 |     let w: str = 4
+   |                  ^
+error[E0501]: literal 300 doesn't fit in u8 (max 255)
+  --> compiler/tests/check/multi/syntax.ei:7:17
+  |
+7 |     let t: u8 = 300
+  |                 ^
+error: 5 errors
