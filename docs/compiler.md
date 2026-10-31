@@ -145,6 +145,9 @@ seed supports:
   meaning of `let` (a copy) and by itself with the new one (a reference), so a `let` of a
   place whose place is written while the binding is used later takes `.copy()`, which means
   the same under both.
+- None of wave 4's language (C8.15 `take`/`replace`, C8.17 escapes, C8.18 aliases, C8.20 Map
+  iteration and `for` patterns, C8.21 `From`, C8.22 `while let`) until a seed has it; the
+  same holds for std and packages, which verify.sh builds with the seed.
 
 ## C3: checking
 
