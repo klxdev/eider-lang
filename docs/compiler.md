@@ -725,6 +725,8 @@ format for users). Without `--json` it prints a text listing like `go doc`.
     methods are `Type.method`.
   - A name taken twice in a module gets `-2`, `-3`, ... in item order. Public items come
     first, so `--private` doesn't change public anchors.
+- **Version.** The JSON's `toolchain` is the first line of `<toolchain root>/VERSION` (empty
+  without one), so a site can say which toolchain it documents.
 - **Problems** in the documented modules, such as syntax errors or imports that can't be
   found, are warnings on stderr (`eiderc doc: warning: <file>:<line>:<col>: <code>
   <message>`), and the rest is still documented. A target that can't be read or loaded exits

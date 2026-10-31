@@ -192,6 +192,7 @@ eider-doc test --site docs .
 | `--out <dir>` | where the site goes (default `target/site`) |
 | `--site <dir>` | the directory with `SUMMARY.md` and the pages (default `docs/site` when it has a `SUMMARY.md`; `--site ''` for an API-only site) |
 | `--title <name>` | the site's name (default: the first package's name) |
+| `--version` | print the toolchain's version (eider-doc ships with the toolchain; read from `$EIDER_ROOT/VERSION`), which the site's footer also shows |
 | `--repo-url <url>` | where links to files that aren't pages go: `<url>/<path from the current directory>` (for example `https://github.com/you/lib/blob/main`) |
 | `<package dirs...>` | the packages to document (default: the current directory; in the Eider repository, core, std and every package) |
 
@@ -225,7 +226,7 @@ syntax error or an import it can't find, are warnings on stderr.
 `eiderc doc --json` prints the same as one JSON document, which is what eider-doc reads:
 
 ```json
-{"format":1,
+{"format":1,"toolchain":"0.1.0",
 "packages":[{"name":"std","dir":"/path/to/std","version":"0.1.0","description":"..."}],
 "modules":[
 {"package":"std","path":"stream","file":"stream.ei","doc":"...","doc_line":1,"items":[
@@ -233,6 +234,8 @@ syntax error or an import it can't find, are warnings on stderr.
 ]}]}
 ```
 
+- **The document** has `format` (1) and `toolchain`, the version of the toolchain that wrote
+  it (its `VERSION` file).
 - **Packages** have `name`, `dir` (absolute), and `version` and `description` from
   `eider.toml`.
 - **Modules** have `package`, `path` (the module's path in its package, without `.ei`;

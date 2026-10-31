@@ -27,9 +27,10 @@ pub type Module = {
 /// A package and the indexes of its modules in `Api.modules`.
 pub type Package = { name: List[u8], dir: List[u8], version: List[u8], description: List[u8], modules: List[u32] }
 
-pub type Api = { packages: List[Package], modules: List[Module], items: List[Item] }
+/// `toolchain`: the version of the toolchain that described it (the first non-empty one).
+pub type Api = { toolchain: List[u8], packages: List[Package], modules: List[Module], items: List[Item] }
 
-pub fn empty() -> Api { Api(List.new(), List.new(), List.new()) }
+pub fn empty() -> Api { Api(List.new(), List.new(), List.new(), List.new()) }
 
 fn str_of(d: json.Doc, id: u32, key: str) -> List[u8] {
     match json.field(d, id, key) {
@@ -97,6 +98,7 @@ pub fn add_json(inout api: Api, src: List[u8]) -> Result[(), List[u8]] {
         Ok(x) => x
         Err(e) => { return Err(json.error_text(e)) }
     }
+    if api.toolchain.len() == 0 { api.toolchain = str_of(d, d.root, "toolchain") }
     let mut dirs: Map[List[u8], List[u8]] = Map.new()
     for p in arr_of(d, d.root, "packages") {
         let name = str_of(d, p, "name")

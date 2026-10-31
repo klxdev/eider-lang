@@ -60,7 +60,8 @@ pub type Module = { package: List[u8], path: List[u8], file: List[u8], doc: List
 
 pub type Package = { name: List[u8], dir: List[u8], version: List[u8], description: List[u8] }
 
-pub type Api = { packages: List[Package], modules: List[Module], items: List[Item], warnings: List[diag.Diag] }
+/// `toolchain`: the toolchain's version, the first line of `<toolchain root>/VERSION` (empty without one).
+pub type Api = { toolchain: List[u8], packages: List[Package], modules: List[Module], items: List[Item], warnings: List[diag.Diag] }
 
 const NONE: u32 = 4294967295
 
@@ -201,7 +202,15 @@ pub fn api(target: List[u8], private: bool) -> Result[Api, List[u8]] uses io, fs
         }
         if !known { pkgs.push(package_info(id)) }
     }
-    Ok(Api(pkgs, out_mods, b.items, warnings))
+    Ok(Api(toolchain_version(), pkgs, out_mods, b.items, warnings))
+}
+
+/// The toolchain's version: the first line of `<toolchain root>/VERSION`, or empty.
+fn toolchain_version() -> List[u8] uses io, fs {
+    match fs.read(fs.join(resolve.toolchain_root(), s("VERSION"))) {
+        Ok(t) => bytes.trim(bytes.split(t, 10)[0])
+        Err(_) => List.new()
+    }
 }
 
 fn hidden(f: List[u8]) -> bool {
@@ -1060,10 +1069,12 @@ fn item_json(a: Api, i: u32, inout out: List[u8]) {
     out.push(125)
 }
 
-/// The API as one JSON document: `{"format":1,"packages":[...],"modules":[...]}`, one
+/// The API as one JSON document: `{"format":1,"toolchain":"0.1.0","packages":[...],"modules":[...]}`, one
 /// package, module header or item per line.
 pub fn json(a: Api) -> List[u8] {
-    let mut out = s("{\"format\":1,\n\"packages\":[")
+    let mut out = s("{\"format\":1,\"toolchain\":")
+    diag.jstr(inout out, a.toolchain)
+    bytes.append(inout out, s(",\n\"packages\":["))
     for i in 0..a.packages.len() {
         let k = a.packages[i]
         if i > 0 { out.push(44) }
