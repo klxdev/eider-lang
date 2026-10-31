@@ -23,6 +23,8 @@ Simple like Go and Zig, with the memory-safety and correctness guarantees of Rus
 4. To share mutable state beyond a scope, use `Ref[T]`, or `Mutex[T]` across threads.
 5. Errors are `Result`, absence is `Option`, every case is handled in `match`, side effects
    are declared with `uses`.
+6. Every operation on values (copy, equality, ordering, hashing, printing, iteration, cleanup)
+   is a trait that any type can implement; ordinary types get it derived automatically.
 
 ## Guarantees and how they are met
 
@@ -71,25 +73,70 @@ total += 1
 - An invalidating write while any reference into the place is alive stays forbidden (the
   protection rule, below).
 
-### `x.copy()` ✅ (a full clone, for every type)
+### Pattern bindings ✅ (like `let` / `let mut`)
 
-`x.copy()` returns an independent clone of `x`: it never shares anything with `x`. It is built
-in on every type, with nothing to implement (so a user-defined method named `copy` is an
-error). `let mut o = orders[i].copy()` changes `o` only. With copy-on-write a value copy costs a
-reference-count increment until one side is written.
+```eider
+match orders[i] {                 // the scrutinee is a place
+    Pending(o) => print(o.qty)    // o: a read-only reference into the payload
+    Held(mut h) => h.days += 1    // h: a mutable alias into the payload
+}
+match load() {                    // the scrutinee is a fresh value
+    Some(cfg) => use(cfg)         // cfg owns it
+}
+```
+
+The protection rule covers the risky case: replacing `orders[i]` inside the arm while `o` is
+still used is rejected (type confusion).
+
+### `x.copy()` ✅ (a full clone, through the `Copy` trait)
+
+`x.copy()` returns an independent clone of `x`: it never shares anything with `x`. It is the
+method of the `Copy` trait (see "Operations are traits" below). `let mut o = orders[i].copy()`
+changes `o` only. With copy-on-write a value copy costs a reference-count increment until one
+side is written.
 
 Sharing is ordinary binding and passing: binding, passing or storing a handle gives another
 holder of the same value. `.copy()` is how you get your own.
 
-| Type | `x.copy()` |
+| Type | `Copy`? |
 |---|---|
-| Values (integers, records, enums, tuples, arrays, `String`, `List`, `Map`, `Box`) | An independent value (lazy, through copy-on-write) |
-| `Ref[T]` | A new `Ref` holding a copy of the contents |
-| `Mutex[T]` | Locks, copies the contents into a new `Mutex`, unlocks |
-| `Chan[T]`, `Task[T]` | ❓ Proposal: a compile error (a running thread can't be cloned; a cloned queue has no clear meaning) |
+| Integers, `bool`, `str`, records, enums, tuples, arrays, `String`, `List`, `Map`, `Box` | Yes, derived automatically when every part is `Copy` (a lazy copy through copy-on-write) |
+| `Ref[T]` | Yes when `T` is: a new `Ref` holding a copy of the contents |
+| `Mutex[T]` | Yes when `T` is: locks, copies the contents into a new `Mutex`, unlocks |
+| `Chan[T]`, `Task[T]` | No: a running thread can't be cloned and a cloned queue has no clear meaning, so `.copy()` on them, or on anything containing them, is a compile error |
 
 Implicit copies still happen at escapes (rule 3); `.copy()` is for when you want your own value
 inside the scope.
+
+## Operations are traits ✅
+
+Every operation the language performs on values of any type is a trait in the core prelude, so
+std and other libraries implement it for their own types exactly as the built-in types do.
+Nothing is special-cased in the compiler beyond calling the trait.
+
+- **Derived automatically.** A record, enum or tuple gets the trait when all its parts have it,
+  with no annotation, so ordinary types need no code (the Go/Zig feel). A type with a part that
+  lacks the trait doesn't get it, which is how `Chan`, `Task` and OS resources stay
+  non-copyable.
+- **Overridable by the type's owner.** `impl Copy for Image { fn copy(self) -> Image { ... } }`
+  replaces the derived version: for example a library type that must copy an external resource,
+  or one that keeps a cache it shouldn't copy. Only the package that defines the type may
+  implement a language trait for it (orphan rule), so behaviour can't change depending on
+  imports.
+- **Generic code states what it needs.** Calling `.copy()` on a `T` in a generic function needs
+  `T: Copy`; the compiler suggests the bound as a fix.
+
+| Operation | Trait | Status |
+|---|---|---|
+| `x.copy()` | `Copy` | ✅ |
+| `==`, `!=` | `Eq` | proposed (today built in for most types; Maps excluded) |
+| `<`, `<=`, `>`, `>=`, sorting | `Ord` | proposed |
+| Map keys, hashing | `Hash` | proposed (today Map keys are limited to ints, bool, `str`, `String`) |
+| `print`, string formatting | `Show` | proposed |
+| `for x in e` | `Iter` | proposed (today only ranges and `List`) |
+| Cleanup at end of life | `Drop` | proposed (resource types close files, sockets) |
+
+Arithmetic operators (`+`, `*`, ...) stay built in for numbers only: no operator overloading.
 
 ## The protection rule ✅ (revised for `let mut` aliases)
 
@@ -225,8 +272,12 @@ true?
 | Question | Decision |
 |---|---|
 | `let mut` | A mutable alias of the place (Reading A) |
-| Independent values | `x.copy()`, a full clone that never shares, built in on every type |
+| Independent values | `x.copy()`, a full clone that never shares |
 | `copy` of a handle | A clone of the contents (`r.copy()` is a new `Ref`); sharing is ordinary binding and passing |
+| Name | `copy` |
+| `.copy()` on `Chan`, `Task` | A compile error: they don't implement `Copy` |
+| Pattern bindings | Like `let` / `let mut`: a place gives a reference, `mut` an alias, a fresh scrutinee is owned |
+| Language operations | Traits in the core prelude, derived automatically, overridable by the type's own package |
 | Warn when an escape forces a real copy | No: silent; a lint later |
 | Name of the shared handle | `Ref[T]` |
 | `mut` parameters | Not now; `let mut x = x.copy()` |
@@ -234,8 +285,9 @@ true?
 
 ## Open questions
 
-1. Pattern bindings: copies (A, today); always read-only references (B); like `let` / `let mut`
-   (C, proposal: a place gives a reference, `Pending(mut o)` an alias into the payload, a fresh
-   scrutinee is owned); or references with explicit `.copy()` only (D)?
-2. `.copy()` on `Chan` and `Task`: a compile error (proposal)?
-3. Name: keep `copy` for the full clone (proposal) or call it `clone`?
+1. Which operation traits go in the first set: `Copy` alone, or with `Eq`, `Ord`, `Hash`, `Show`,
+   `Iter`, `Drop`?
+2. `Drop` with copy-on-write: does a shared buffer run its `Drop` once, when the last holder goes
+   (proposal)?
+3. Opting out of a derived trait without a non-copyable field: a marker (e.g. `impl !Copy for T`),
+   or not allowed (proposal: not allowed, to keep one way)?
