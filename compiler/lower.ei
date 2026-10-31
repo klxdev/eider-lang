@@ -162,6 +162,9 @@ type G = {
     /// per loop in `loops`: the label after it that a labeled `break` from a nested loop
     /// jumps to (NONE: none needed; docs/compiler.md, "C8.22")
     brks: List[u32],
+    /// the functions another backend emits (docs/compiler.md, "Backends"; empty: none): their
+    /// bodies are lowered only for the glue they need, and only their prototypes are kept
+    native: List[bool],
 }
 
 fn put(inout g: G, s: str) { bytes.append(inout g.o, sys.lit(s)) }
@@ -311,12 +314,12 @@ fn clash(inout g: G, name: List[u8], from: List[u8]) {
     g.err = m
 }
 
-fn is_struct_kind(k: u32) -> bool {
+pub fn is_struct_kind(k: u32) -> bool {
     k == types.T_ENUM || k == types.T_RECORD || k == types.T_ARRAY || k == types.T_TUPLE || k == types.T_LIST || k == types.T_MAP || k == types.T_BOX || k == types.T_FN || types.is_handle(k) || k == types.T_REF
 }
 
 /// Whether type `ty` is concrete (no generic template inside it).
-fn usable(p: P, ty: u32) -> bool {
+pub fn usable(p: P, ty: u32) -> bool {
     let t = types.get(p.t, ty)
     let k = t.kind
     if k == types.T_ENUM || k == types.T_RECORD {
@@ -634,7 +637,7 @@ fn owns(inout g: G, p: P, ty: u32) -> bool {
     r
 }
 
-fn any_payload(p: P, d: types.Def) -> bool {
+pub fn any_payload(p: P, d: types.Def) -> bool {
     for i in 0..d.len {
         if types.variant(p.t, d, i).flen > 0 { return true }
     }
@@ -642,7 +645,7 @@ fn any_payload(p: P, d: types.Def) -> bool {
 }
 
 /// The indices of Option's `Some` (the variant with a field) and `None`.
-fn some_idx(p: P, ty: u32) -> u32 {
+pub fn some_idx(p: P, ty: u32) -> u32 {
     let d = types.def_of(p.t, ty)
     for i in 0..d.len {
         if types.variant(p.t, d, i).flen > 0 { return i }
@@ -650,7 +653,7 @@ fn some_idx(p: P, ty: u32) -> u32 {
     0
 }
 
-fn none_idx(p: P, ty: u32) -> u32 {
+pub fn none_idx(p: P, ty: u32) -> u32 {
     let d = types.def_of(p.t, ty)
     for i in 0..d.len {
         if types.variant(p.t, d, i).flen == 0 { return i }
@@ -1434,7 +1437,7 @@ fn name_glue(inout g: G, p: P, ty: u32) {
 // through the type's Copy (uniq_), and its drop runs when the last holder goes.
 
 /// The function implementing trait tr's method for type ty, or NONE (derived).
-fn custom_fn(p: P, tr: u32, ty: u32) -> u32 {
+pub fn custom_fn(p: P, tr: u32, ty: u32) -> u32 {
     match p.ir.impls.get((tr as u64) * 4294967296 + ty as u64) {
         Some(f) => f
         None => NONE
@@ -1442,7 +1445,7 @@ fn custom_fn(p: P, tr: u32, ty: u32) -> u32 {
 }
 
 /// Whether ty is a record with its own Drop.
-fn shared_rec(p: P, ty: u32) -> bool { ty_kind(p, ty) == types.T_RECORD && custom_fn(p, TR_DROP, ty) != NONE }
+pub fn shared_rec(p: P, ty: u32) -> bool { ty_kind(p, ty) == types.T_RECORD && custom_fn(p, TR_DROP, ty) != NONE }
 
 /// The struct name of a shared record's buffer: `td_<name>`.
 fn shared_name(inout g: G, p: P, ty: u32) {
@@ -1551,7 +1554,7 @@ fn hash_part(inout g: G, p: P, ty: u32, v: List[u8]) {
 
 /// Whether ty is shown by print's own code (an integer, bool, str, String, or an enum
 /// without payloads that doesn't have its own Show): what `print` showed before C8.4.
-fn plain_show(p: P, ty: u32) -> bool {
+pub fn plain_show(p: P, ty: u32) -> bool {
     let k = ty_kind(p, ty)
     if k == types.T_INT || k == types.T_BOOL || k == types.T_STR || k == types.T_STRING { return true }
     k == types.T_ENUM && !types.def_of(p.t, ty).payload && custom_fn(p, TR_SHOW, ty) == NONE
@@ -1630,7 +1633,7 @@ fn show_lit(inout g: G, text: List[u8]) {
 
 /// Whether `.copy()` of ty is more than a clone: something inside is a Mutex (a copy gets a
 /// new one), has its own Copy, or is a record with its own Drop (a copy gets its own buffer).
-fn deep(p: P, ty: u32, inout seen: Map[u32, bool]) -> bool {
+pub fn deep(p: P, ty: u32, inout seen: Map[u32, bool]) -> bool {
     if seen.contains(ty) { return false }
     seen.insert(ty, true)
     let t = types.get(p.t, ty)
@@ -2620,7 +2623,7 @@ fn exits_to(p: P, b: u32, kind: u32, d: u32) -> bool {
 }
 
 /// The integer range of kind k as (min, max) in 64-bit two's complement.
-fn kmin(k: u32) -> u64 {
+pub fn kmin(k: u32) -> u64 {
     match k {
         0 => 18446744071562067968
         1 => 9223372036854775808
@@ -2628,7 +2631,7 @@ fn kmin(k: u32) -> u64 {
     }
 }
 
-fn kmax(k: u32) -> u64 {
+pub fn kmax(k: u32) -> u64 {
     match k {
         0 => 2147483647
         1 => 9223372036854775807
@@ -3646,11 +3649,44 @@ pub fn program(p: P, file: List[u8], tests: bool) -> Result[List[u8], List[u8]] 
 
 /// The C for `p` as a program, or (lib = true) as a library: no `main`, a C entry point per
 /// `export fn` (export_wrappers).
-pub fn program_for(p: P, file: List[u8], tests: bool, lib: bool) -> Result[List[u8], List[u8]] { emit(p, file, tests, lib, false) }
+pub fn program_for(p: P, file: List[u8], tests: bool, lib: bool) -> Result[List[u8], List[u8]] { emit(p, file, tests, lib, false, List.new()) }
+
+/// The C half of a program whose functions with `native[f]` are emitted by another backend
+/// (llvm.ei; docs/compiler.md, "Backends"): those have only a prototype, and every function
+/// and glue item has external linkage (no `static` at the start of a line), so the other
+/// half calls them and they call it through the C ABI.
+pub fn program_split(p: P, file: List[u8], tests: bool, lib: bool, native: List[bool]) -> Result[List[u8], List[u8]] {
+    let c = emit(p, file, tests, lib, false, native)?
+    let mut out: List[u8] = List.new()
+    let st = sys.lit("static ")
+    let mut i: usize = 0
+    while i < c.len() {
+        let line_start = i == 0 || c[i - 1] == 10
+        if line_start && i + 7 <= c.len() && bytes.eq(bytes.slice(c, i, i + 7), st) {
+            i += 7
+        } else {
+            out.push(c[i])
+            i += 1
+        }
+    }
+    Ok(out)
+}
+
+/// The C names lowering gives every type (`tys`; empty for types that are not C structs) and
+/// function (`fns`; `xc_<name>` for `extern "c"` ones), for another backend that links
+/// against program_split's C.
+pub type Names = { tys: List[List[u8]], fns: List[List[u8]] }
+
+pub fn c_names(p: P) -> Result[Names, List[u8]] {
+    let mut g = G(List.new(), 0, List.new(), 0, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new(), List.new())
+    name_all(inout g, p)
+    if g.err.len() > 0 { return Err(g.err) }
+    Ok(Names(g.tn, g.fnn))
+}
 
 /// The C for `p` as a WebAssembly module: a library whose entry points are the module's
 /// exports (compiled against core/wasm by wasm.ei).
-pub fn program_wasm(p: P, file: List[u8]) -> Result[List[u8], List[u8]] { emit(p, file, false, true, true) }
+pub fn program_wasm(p: P, file: List[u8]) -> Result[List[u8], List[u8]] { emit(p, file, false, true, true, List.new()) }
 
 /// C `main` for the Eider `main` (function f) by its result (docs/compiler.md, "C8.2: small
 /// language gaps"): () exits 0; an i32 is the exit code (outside 0..255 it traps at main's
@@ -3707,8 +3743,8 @@ fn main_body(inout g: G, p: P, file: List[u8], f: u32) {
     put(inout g, "\n    ei_check_leaks();\n    return 1;\n  }\n  ei_check_leaks();\n  return 0;\n}\n")
 }
 
-fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool) -> Result[List[u8], List[u8]] {
-    let mut g = G(List.new(), 0, List.new(), 0, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new())
+fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool, native: List[bool]) -> Result[List[u8], List[u8]] {
+    let mut g = G(List.new(), 0, List.new(), 0, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new(), native)
     name_all(inout g, p)
     if g.err.len() > 0 { return Err(g.err) }
     let ord = order(g, p)
@@ -3719,7 +3755,12 @@ fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool) -> Result[List
         let f = ord.fns[i]
         let fd = p.ir.fns[f as usize]
         if !fd.is_test && bytes.eq(fd.name, sys.lit("main")) { main_fn = f }
+        let mark = g.o.len()
         function(inout g, p, f)
+        // another backend's function: lowered for its glue and trap files, then dropped
+        if (f as usize) < g.native.len() && g.native[f as usize] {
+            while g.o.len() > mark { g.o.pop() }
+        }
     }
     g.file = 0
     if lib {

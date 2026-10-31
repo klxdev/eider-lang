@@ -47,6 +47,19 @@ elif [ "$nok" -gt 0 ]; then
 fi
 sh tests/pkg/run.sh | grep -q FAIL && { echo "FAIL pkg"; fail=1; } || echo "ok   pkg (eider-pkg end to end, local git repos)"
 sh scripts/test-compiler.sh | grep -q FAIL && { echo "FAIL compiler (eiderc)"; fail=1; } || echo "ok   compiler (eiderc vs the recorded oracle, tests/oracle)"
+# llvm: the experimental LLVM backend (`--backend=llvm`, docs/compiler.md "Backends") against
+# the C backend on every run test (scripts/llvm-diff.sh) and the C ABI test; it needs clang 17+
+# (a skipped leg otherwise) and the compiler built from compiler/ (the seed has no LLVM backend).
+sh scripts/llvm-diff.sh > $S/llvm 2>&1; lrc=$?
+if [ $lrc = 2 ]; then
+  skip "llvm (--backend=llvm): $(sed -n 's/^skip: //p' $S/llvm | head -1)"
+elif [ $lrc != 0 ]; then
+  echo "FAIL llvm (--backend=llvm): sh scripts/llvm-diff.sh"; grep "^FAIL" $S/llvm | head -5; fail=1
+elif sh compiler/tests/llvm/run.sh target/eiderc-next > $S/llvmabi 2>&1; then
+  echo "ok   llvm (--backend=llvm): $(tail -1 $S/llvm | sed 's/^ok   llvm differential: //'); $(sed 's/^ok   llvm abi: //' $S/llvmabi)"
+else
+  echo "FAIL llvm (--backend=llvm): sh compiler/tests/llvm/run.sh"; tail -5 $S/llvmabi; fail=1
+fi
 sh scripts/selfhost.sh --from-seed >/dev/null 2>&1 && echo "ok   seed (seed/eiderc.c rebuilds itself with only a C compiler)" || { echo "FAIL seed: sh scripts/selfhost.sh --from-seed"; fail=1; }
 bash tests/export/run.sh | tail -1 | grep -q "^ok" && echo "ok   export (C and C++ consumers)" || { echo "FAIL export"; fail=1; }
 # tools: eider-analyzer and tree-sitter-eider, the editor tooling in their own repositories

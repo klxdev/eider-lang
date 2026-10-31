@@ -33,6 +33,7 @@ import "ir.ei"
 import "lower.ei"
 import "driver.ei"
 import "comptime.ei" as consteval
+import "llvm.ei"
 import "wasm.ei"
 import "suite.ei"
 import "ide.ei"
@@ -42,6 +43,9 @@ type Args = {
     cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,
     lib: bool, libs: List[List[u8]], wasm: bool, compile_fail: bool, overlay: List[List[u8]],
     max_errors: u64, all_errors: bool,
+    /// `--backend=llvm` (llvm.ei; docs/compiler.md, "Backends"), `-g` (its debug info),
+    /// `--coverage` (emit-llvm: the native/fallback report instead of the IR)
+    llvm: bool, debug: bool, coverage: bool,
 }
 
 /// Comparisons go through a function so no owned temporary sits in an `else if` condition
@@ -68,6 +72,8 @@ fn usage_text() -> List[u8] {
         "  eiderc parse <file.ei> [--all-errors]      dump the AST (--all-errors: every syntax error as JSON lines,",
         "                                             then the AST with its error nodes)",
         "  eiderc ir <file.ei>                        dump the typed IR",
+        "  eiderc emit-llvm <file.ei> [--test] [--coverage]  print the LLVM IR half of --backend=llvm (--coverage: which",
+        "                                             functions are native and why the others fall back to C)",
         "  eiderc caps <file.ei>                      each package's capability use, one JSON line per capability",
         "  eiderc migrate-var <file.ei>               print the file with its `var`s rewritten as `let mut` (deprecated `var`)",
         "  eiderc audit-refs <file.ei> [--json]       every write that changes what a `let` reference sees (it was a copy",
@@ -75,6 +81,10 @@ fn usage_text() -> List[u8] {
         "  eiderc ide <file.ei> [--overlay <path> <text>]  print the IDE analysis (ide.ei): symbols, refs, types;",
         "                                             --overlay (repeatable) reads <path> from the file <text>",
         "  eiderc help | --help | -h                  print this text",
+        "",
+        "--backend=llvm (build, run, test, emit-c; experimental): functions are emitted as LLVM IR where",
+        "the LLVM backend supports them (the rest as C) and built with clang 17 or newer ($EIDER_LLVM_CC);",
+        "-g adds DWARF line info for the .ei sources.",
         "",
         "errors: every independent error is reported, in the order found, then `error: N errors`",
         "(stderr); with --json one JSON object per line (stdout). --max-errors N shows at most N",
@@ -116,7 +126,7 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] {
 }
 
 fn known_cmd(c: List[u8]) -> bool {
-    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "audit-refs")
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "audit-refs") || is(c, "emit-llvm")
 }
 
 fn parse_args() -> Args uses io {
@@ -134,6 +144,9 @@ fn parse_args() -> Args uses io {
     let mut overlay: List[List[u8]] = List.new()
     let mut max_errors = diag.MAX_ERRORS
     let mut all_errors = false
+    let mut llvm = false
+    let mut debug = false
+    let mut coverage = false
     let mut i: usize = 1
     while i < argv.len() {
         let a = argv[i]
@@ -166,6 +179,14 @@ fn parse_args() -> Args uses io {
             if i >= argv.len() { usage_error(sys.lit("`-l` needs a library name")) }
             libs.push(argv[i])
             i += 1
+        } else if is(a, "--backend=llvm") {
+            llvm = true
+        } else if is(a, "--backend=c") {
+            llvm = false
+        } else if is(a, "-g") {
+            debug = true
+        } else if is(a, "--coverage") {
+            coverage = true
         } else if is(a, "--all-errors") {
             all_errors = true
         } else if is(a, "--max-errors") {
@@ -204,7 +225,9 @@ fn parse_args() -> Args uses io {
         wasm = false
     }
     if wasm { lib = true }
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay, max_errors, all_errors)
+    if is(cmd, "emit-llvm") { llvm = true }
+    if llvm && wasm { usage_error(sys.lit("`--backend=llvm` does not build WebAssembly")) }
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay, max_errors, all_errors, llvm, debug, coverage)
 }
 
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
@@ -470,7 +493,7 @@ fn main() uses io, fs, net, clock {
         return
     }
     let p = pr.p
-    let backend = is(a.cmd, "emit-c") || is(a.cmd, "emit-header") || is(a.cmd, "build") || is(a.cmd, "run") || is(a.cmd, "test")
+    let backend = is(a.cmd, "emit-llvm") || is(a.cmd, "emit-c") || is(a.cmd, "emit-header") || is(a.cmd, "build") || is(a.cmd, "run") || is(a.cmd, "test")
     // every pass goes on after an error, with what it has (docs/compiler.md, "Several errors")
     let mut ld = resolve.load_from(a.file, src, p, resolve.disk())
     resolve.note_syntax(inout ld.p, 0, fdiags)
@@ -502,6 +525,36 @@ fn main() uses io, fs, net, clock {
         let lp = lower.P(c.ir, c.t, c.p.names)
         if is(a.cmd, "emit-header") {
             if a.wasm { io.out(wasm.header(lp)) } else { io.out(lower.header(lp)) }
+            return
+        }
+        if a.llvm && !is(a.cmd, "emit-header") {
+            let mut paths: List[List[u8]] = List.new()
+            for m in c.p.mods { paths.push(m.path) }
+            let here: List[u8] = match fs.cwd() {
+                Ok(x) => x
+                Err(_) => sys.lit(".")
+            }
+            let out = match llvm.program(lp, a.file, tests, a.lib, paths, here, a.debug) {
+                Ok(o) => o
+                Err(m) => {
+                    let mut msg = sys.lit("eiderc: internal error: ")
+                    bytes.append(inout msg, m)
+                    io.errln(msg)
+                    env.exit(3)
+                    return
+                }
+            }
+            if is(a.cmd, "emit-llvm") {
+                if a.coverage { io.out(llvm.coverage(out)) } else { io.out(out.ll) }
+            } else if is(a.cmd, "emit-c") {
+                io.out(out.c)
+            } else if a.lib {
+                driver.build_lib_llvm(out.c, out.ll, lower.header(lp), a.file, a.out, a.libs, a.debug)
+            } else if is(a.cmd, "build") {
+                driver.build_llvm(out.c, out.ll, a.file, a.out, a.libs, a.debug)
+            } else {
+                driver.run_llvm(out.c, out.ll, a.file, a.release, a.libs, a.debug)
+            }
             return
         }
         let lowered = if a.wasm { lower.program_wasm(lp, a.file) } else { lower.program_for(lp, a.file, tests, a.lib) }
