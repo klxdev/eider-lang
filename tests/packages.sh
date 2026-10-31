@@ -12,8 +12,13 @@ for f in packages/*/tests/*.ei examples/*/tests/*.ei; do
   if [ "$got" = "$(cat "${f%.ei}.out")" ]; then echo "ok   $f"; else echo "FAIL $f"; echo "$got" | diff "${f%.ei}.out" - | head -10; fail=1; fi
 done
 
+# packages/crypto needs a crypto backend linked in, so its tests live in tests/crypto and run
+# through scripts/ei-crypto: here on the default backend (verify.sh's crypto leg runs every
+# backend and the cross-backend checks); `skip` when it isn't available (AWS-LC not fetched).
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
+sh tests/crypto/run.sh "${EIDER_CRYPTO:-awslc}" > "$T/crypto" 2>&1 || fail=1
+cat "$T/crypto"
 printf 'int main(void) { return 0; }\n' > "$T/probe.c"
 if ${CC:-cc} -fsanitize=thread -o "$T/probe" "$T/probe.c" 2>/dev/null && "$T/probe"; then
   for f in packages/http/tests/server_test.ei packages/http/tests/middleware_test.ei examples/kvstore/tests/e2e_test.ei examples/todo/tests/e2e_test.ei; do

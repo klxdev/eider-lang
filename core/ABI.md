@@ -439,6 +439,34 @@ failure: no partial run, and the name says which primitive was wanted. A host th
 offer one (say, a clock) passes it in the loader's `imports`. Mirroring them in `core/wasm/`
 would only be meaningful for the clocks, and `now_ms` already covers that.
 
+## Core extensions
+
+C that is linked into the same program and implements more of this ABI over the same buffers
+(today only `core/crypto/eider_crypto.c`) reaches them through `core/eider_core_ext.h`:
+`ec_ext_in` (the bytes and length of `in`), `ec_ext_out(n)` (make `out` n bytes and write
+them), `ec_ext_out_truncate`, `ec_ext_in_wipe` and `ec_ext_wipe`. They hand out pointers, so
+Eider never binds them; they are not `ec_*` operations.
+
+Because `in` and `out` can hold keys and plaintext, the core zeroes a buffer's old block when
+it grows (malloc, copy, wipe, free: never `realloc`), zeroes both when a thread's buffers are
+freed, and the `ec_ext_*wipe` calls zero everything written since the last wipe (a high-water
+mark, so a wipe costs what was written, not the capacity). The zeroing goes through a
+volatile function pointer to `memset`, so it is not removed as a dead store.
+
+## Crypto
+
+`core/crypto/eider_crypto.h` is the crypto half of the ABI: `ec_crypto_*` operations
+(hashes, HMAC, HKDF, AEAD, X25519, Ed25519, P-256, constant-time compare, randomness, and a
+capability query), one call sequence into an OpenSSL-compatible libcrypto each, in the one
+file `core/crypto/eider_crypto.c`. The rules above hold: fixed-width arguments, inputs
+concatenated in `in` (every part's length but the last passed as an argument), results in
+`out`, status codes `< 0` (`EC_CRYPTO_E*`, -5001..-5005, disjoint from `-errno`). In
+addition every operation zeroes `in` before it returns and empties `out` when it fails;
+`ec_crypto_wipe` zeroes both once Eider has copied a result. Eider binds them in
+`core/crypto.ei` (core's second module with `extern`, binding only `ec_crypto_*`). The
+backend library is chosen at link time; a program that doesn't import `core/crypto` links
+none. Contract, backends, the API subset and tests: `core/crypto/README.md`.
+
 ## Backends
 
 | Target | Status |

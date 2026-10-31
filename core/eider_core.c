@@ -93,17 +93,26 @@ static pthread_key_t buf_key;
 static pthread_once_t buf_once = PTHREAD_ONCE_INIT;
 static _Thread_local int buf_registered;
 
-/* Zero n bytes so the compiler can't drop it as a dead store before free (the buffers can
-   hold keys and plaintext: core/crypto). */
+/* How far each buffer has been written since it was last wiped: the buffers can hold keys
+   and plaintext (core/crypto), and wiping only the written part keeps that cheap. */
+static _Thread_local size_t in_hw, out_hw;
+
+/* Zero n bytes. memset through a volatile pointer, so the compiler can't drop it as a dead
+   store before free (C11 has no memset_s everywhere). */
+static void *(*const volatile memset_v)(void *, int, size_t) = memset;
 static void wipe(unsigned char *p, size_t n) {
-  volatile unsigned char *v = p;
-  while (n--) *v++ = 0;
+  if (p && n) memset_v(p, 0, n);
+}
+
+static size_t written(size_t len, size_t hw, size_t cap) {
+  size_t n = (len > hw ? len : hw) + 1;
+  return n < cap ? n : cap;
 }
 
 static void free_bufs(void *unused) {
   (void)unused;
-  if (in_p) wipe(in_p, in_cap);
-  if (out_p) wipe(out_p, out_cap);
+  wipe(in_p, in_cap);
+  wipe(out_p, out_cap);
   free(in_p);
   free(out_p);
   in_p = out_p = NULL;
@@ -148,6 +157,7 @@ static void out_put(const void *d, size_t n) {
   if (n) memcpy(out_p + out_len, d, n);
   out_len += n;
   out_p[out_len] = 0;
+  if (out_len > out_hw) out_hw = out_len;
 }
 
 /* in[k]: the k-th NUL-separated argument, or NULL past the last one. */
@@ -278,6 +288,7 @@ EC_FN(void, ec_in_clear, (void)) {
 EC_FN(void, ec_in_push, (int32_t b)) {
   reserve(&in_p, &in_cap, in_len + 2);
   in_p[in_len++] = (unsigned char)b;
+  if (in_len > in_hw) in_hw = in_len;
   in_p[in_len] = 0;
 }
 
@@ -305,11 +316,11 @@ const unsigned char *ec_ext_in(size_t *len) {
 }
 
 unsigned char *ec_ext_out(size_t n) {
-  if (out_p) wipe(out_p, out_len);
-  out_len = 0;
+  wipe(out_p, written(out_len, out_hw, out_cap));
+  out_len = out_hw = 0;
   if (n > SIZE_MAX - 1) { fputs("eider_core: buffer too large\n", stderr); exit(101); }
   reserve(&out_p, &out_cap, n + 1);
-  out_len = n;
+  out_len = out_hw = n;
   out_p[n] = 0;
   return out_p;
 }
@@ -321,14 +332,14 @@ void ec_ext_out_truncate(size_t n) {
 }
 
 void ec_ext_in_wipe(void) {
-  if (in_p) wipe(in_p, in_cap);
-  in_len = 0;
+  wipe(in_p, written(in_len, in_hw, in_cap));
+  in_len = in_hw = 0;
 }
 
 void ec_ext_wipe(void) {
-  if (in_p) wipe(in_p, in_cap);
-  if (out_p) wipe(out_p, out_cap);
-  in_len = out_len = 0;
+  wipe(in_p, written(in_len, in_hw, in_cap));
+  wipe(out_p, written(out_len, out_hw, out_cap));
+  in_len = in_hw = out_len = out_hw = 0;
 }
 
 /* Length and bytes of a string literal (Eider bounds-checks i against ec_str_len). */

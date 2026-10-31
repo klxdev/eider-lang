@@ -1,0 +1,50 @@
+// End-to-end throughput from Eider (scripts/crypto-bench.sh --eider): the package call with
+// the byte-at-a-time crossing of the core buffers, as a program sees it today.
+
+import "std/bytes"
+import "std/io"
+import "std/time"
+import "vec.ei"
+import "../../packages/crypto/crypto.ei"
+
+fn report(name: str, n: u64, ns: i64, unit_bytes: u64) uses io {
+    let mut m = name.bytes()
+    m.push(32)
+    if unit_bytes > 0 {
+        bytes.append(inout m, bytes.from_u64((n * unit_bytes * 1000) / (ns as u64)))
+        bytes.append(inout m, " MB/s".bytes())
+    } else {
+        bytes.append(inout m, bytes.from_u64((n * 1000000000) / (ns as u64)))
+        bytes.append(inout m, " ops/s".bytes())
+    }
+    io.outln(m)
+}
+
+fn main() uses io, clock {
+    let msg = vec.rep(7, 1048576)
+    let start = time.mono_ns()
+    let mut i: u64 = 0
+    while i < 8 {
+        let _ = crypto.sha256(msg.copy())
+        i += 1
+    }
+    report("eider SHA-256 (1 MiB messages)", 8, time.mono_ns() - start, 1048576)
+    let k = crypto.aead_key(crypto.ChaCha20Poly1305, vec.rep(1, 32)).unwrap()
+    let n = crypto.nonce(vec.rep(2, 12)).unwrap()
+    let s2 = time.mono_ns()
+    i = 0
+    while i < 8 {
+        let _ = crypto.seal(k, n, List.new(), msg.copy())
+        i += 1
+    }
+    report("eider ChaCha20-Poly1305 seal (1 MiB)", 8, time.mono_ns() - s2, 1048576)
+    let sk = crypto.x25519_secret(vec.rep(3, 32)).unwrap()
+    let pk = crypto.x25519_public(sk).unwrap()
+    let s3 = time.mono_ns()
+    i = 0
+    while i < 2000 {
+        let _ = crypto.x25519_agree(sk, pk)
+        i += 1
+    }
+    report("eider X25519", 2000, time.mono_ns() - s3, 0)
+}

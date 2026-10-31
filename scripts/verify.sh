@@ -34,6 +34,17 @@ done
 sh tests/core/run.sh | grep -q FAIL && { echo "FAIL core"; fail=1; } || echo "ok   core (eider_rt + eider_core, strict warnings, sanitizers when available)"
 sh tests/std/run.sh | grep -q FAIL && { echo "FAIL std"; fail=1; } || echo "ok   std (C core + Eider std)"
 sh tests/packages.sh | grep -q FAIL && { echo "FAIL packages"; fail=1; } || echo "ok   packages (toml, semver, sha256, json, fuzz, http, openapi; examples/kvstore and examples/todo end to end)"
+# crypto: the vectors on every backend available here (and the RFC vectors under ASan+UBSan),
+# then the cross-backend checks. Each backend that isn't fetched or built is a skipped leg:
+# a plain checkout has none (sh scripts/fetch-awslc.sh fetches the default; core/crypto/README.md).
+sh tests/crypto/run.sh --san > $S/crypto 2>&1; crc=$?
+while IFS= read -r l; do case $l in "skip "*) skip "${l#skip }" ;; esac; done < $S/crypto
+nok=$(grep -c "^ok" $S/crypto)
+if [ $crc != 0 ]; then
+  echo "FAIL crypto: sh tests/crypto/run.sh"; grep "^FAIL" $S/crypto | head -5; fail=1
+elif [ "$nok" -gt 0 ]; then
+  echo "ok   crypto ($(grep -c '^ok   crypto rfc (' $S/crypto) backend(s): RFC/CAVP/Wycheproof vectors, ASan+UBSan, $(grep -c '^ok   crypto cross' $S/crypto) cross-backend checks)"
+fi
 sh tests/pkg/run.sh | grep -q FAIL && { echo "FAIL pkg"; fail=1; } || echo "ok   pkg (eider-pkg end to end, local git repos)"
 sh scripts/test-compiler.sh | grep -q FAIL && { echo "FAIL compiler (eiderc)"; fail=1; } || echo "ok   compiler (eiderc vs the recorded oracle, tests/oracle)"
 sh scripts/selfhost.sh --from-seed >/dev/null 2>&1 && echo "ok   seed (seed/eiderc.c rebuilds itself with only a C compiler)" || { echo "FAIL seed: sh scripts/selfhost.sh --from-seed"; fail=1; }

@@ -17,10 +17,10 @@ unsigned char *ec_ext_out(size_t n);
 /* Shorten `out` to n bytes (no-op if it is already shorter); the dropped bytes are zeroed. */
 void ec_ext_out_truncate(size_t n);
 
-/* Zero the whole capacity of `in` and empty it (`out` is untouched). */
+/* Zero everything written to `in` since its last wipe and empty it (`out` is untouched). */
 void ec_ext_in_wipe(void);
 
-/* Zero the whole capacity of `in` and `out` and empty both. */
+/* Zero everything written to `in` and `out` since their last wipe and empty both. */
 void ec_ext_wipe(void);
 
 #endif
