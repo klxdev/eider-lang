@@ -30,7 +30,8 @@
 //   S_BINARY  dst := b (op a = ast.OP_*) c; ty = operand type. + - * / % trap on overflow
 //             and division by zero; +% -% *% wrap; & | ^ on the bits; << >> trap on a
 //             count outside 0..width-1 (>> is arithmetic on signed types); == != compare
-//             structurally for any type; < <= > >= on integers, String and str (bytes).
+//             through Eq for any type that has it; < <= > >= through Ord (integers, bool
+//             and text inline, the rest through cmp_ glue; C8.4).
 //             (&& and || are lowered to S_IF.)
 //   S_CAST    dst := a as ty (traps when out of range)
 //   S_CALL    dst := fn a (args [b/c]); dst = NONE for a () result
@@ -100,6 +101,12 @@
 //   B_SPAWN(f) -> Task[T]    B_TASK_JOIN(t) -> T
 //   B_MUTEX_NEW(v) -> ty    B_MUTEX_GET(m) -> T    B_MUTEX_SET(m, v)    B_MUTEX_UPDATE(m, f)
 //   B_CHAN_NEW -> ty    B_CHAN_SEND(c, v)    B_CHAN_RECV(c) -> Option[T]    B_CHAN_CLOSE(c)
+// Operation traits (C8.4; x borrowed): B_COPY(x) -> ty (`x.copy()`: a clone, except that a
+//   Mutex inside gets a new Mutex with a copy, a part with its own Copy is copied by it, and
+//   a record with its own Drop gets a buffer of its own)    B_COMPARE(a, b) -> ty = Ordering
+//   B_HASH(x) -> u64    B_SHOW(inout out, x) (appends x's text)    B_TO_STRING(x) -> String
+//   (S_BINARY's == and <, S_PRINT and Map keys go through the same glue; a type in
+//   Ir.impls uses its own function there)
 
 import "core/sys"
 import "std/bytes"
@@ -197,6 +204,11 @@ pub const B_STR_SLICE: u32 = 29
 pub const B_STR_BYTES: u32 = 30
 pub const B_STR_FROM_BYTES: u32 = 31
 pub const B_STR_PUSH_BYTE: u32 = 32
+pub const B_COPY: u32 = 33
+pub const B_COMPARE: u32 = 34
+pub const B_HASH: u32 = 35
+pub const B_SHOW: u32 = 36
+pub const B_TO_STRING: u32 = 37
 
 pub fn builtin_name(b: u32) -> str {
     match b {
@@ -232,7 +244,12 @@ pub fn builtin_name(b: u32) -> str {
         29 => "slice"
         30 => "bytes"
         31 => "from_bytes"
-        _ => "push_byte"
+        32 => "push_byte"
+        33 => "copy"
+        34 => "compare"
+        35 => "hash"
+        36 => "show"
+        _ => "to_string"
     }
 }
 
@@ -271,12 +288,17 @@ pub type Ir = {
     outer: List[Outer],
     /// the line of `main` (its exit code's range check traps there)
     main_line: u32,
+    /// Operation traits (docs/compiler.md, "C8.4: operation traits"): for a type with its own
+    /// impl of a language trait, trait (TR_* in check.ei: 0 Copy, 1 Eq, 2 Ord, 3 Hash, 4 Show,
+    /// 5 Iter, 6 Drop) * 2^32 + type -> the function implementing its method; lowering's glue
+    /// calls it instead of the derived operation
+    impls: Map[u64, u32],
 }
 
 type Outer = { cur: u32, building: List[Local] }
 
 pub fn new() -> Ir {
-    Ir(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new(), 0)
+    Ir(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new(), 0, Map.new())
 }
 
 // ---- building

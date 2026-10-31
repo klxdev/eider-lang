@@ -1,0 +1,1 @@
+{"error":"E0604","span":{"file":"compiler/tests/check/fail/e0604_orphan_builtin.ei","line":2,"col":1},"message":"only the package that defines `i32` can implement `Show` for it (it is defined by the language core)","help":"implement the trait in the type's own package, or wrap the type in a record of your own"}

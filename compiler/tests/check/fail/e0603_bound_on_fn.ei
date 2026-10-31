@@ -1,3 +1,3 @@
 // expect: E0603 2:6
-fn f[T: Show + Eq](x: T) {}
+fn f[T: Display + Order](x: T) {}
 fn main() {}

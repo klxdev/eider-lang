@@ -1,0 +1,1 @@
+{"error":"E0605","span":{"file":"compiler/tests/check/fail/e0605_map_key_param.ei","line":3,"col":12},"message":"a key of K needs `K: Hash + Eq`","help":"a generic body can only use what its type parameters' bounds promise; add the bound","fix":{"at":{"line":2,"col":11},"delete":0,"insert":": Hash + Eq"}}

@@ -1,0 +1,1 @@
+{"error":"E0606","span":{"file":"compiler/tests/check/fail/e0606_drop_caps.ei","line":4,"col":8},"message":"`drop` can't declare capabilities: it runs wherever the value's last holder goes","help":"do the work that needs a capability in a method the program calls before the value goes"}

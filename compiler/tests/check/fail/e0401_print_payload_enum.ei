@@ -1,5 +1,5 @@
 // expect: E0401 4:13
-type S = | A(n: i32) | B
+type S = | A(f: fn()) | B
 fn main() uses io {
     print(S.B)
 }

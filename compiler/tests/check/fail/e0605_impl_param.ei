@@ -1,0 +1,6 @@
+// expect: E0605 4:67
+type W[T] = { v: T }
+impl[T] Show for W[T] {
+    fn show(self, inout out: String) { out.push_str("w:"); self.v.show(inout out) }
+}
+fn main() uses io { print(W(1)) }

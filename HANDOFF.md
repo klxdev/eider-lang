@@ -41,7 +41,7 @@ Tests: `tests/checks/{fail,pass}` (header `// expect: CODE LINE:COL`, header cou
 
 - Every independent error is reported (at most `--max-errors`, default 100; docs/compiler.md, "Several errors"); the first is the one a first-error compiler would report.
 - Closures can't mutate captured variables; recursion needs `Box`; values are cloned on read from a place (no references).
-- No `dyn` traits; Map keys are ints/bool/str/String.
+- No `dyn` traits. Map keys are any `Hash + Eq` type (docs/compiler.md, "C8.4: operation traits").
 - WASM exports are ints/bool only, no threads.
 - `comptime` is ints/bool only and re-runs the front end per constant.
 - Front end is whole-program; the cache only skips the C compiler.

@@ -1,1 +1,1 @@
-{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_list_lt.ei","line":3,"col":15},"message":"operator < is not supported for List[i32]"}
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_list_lt.ei","line":3,"col":15},"message":"`<` needs `Ord`, which List[Map[i32, i32]] doesn't implement (its part Map[i32, i32] doesn't)"}

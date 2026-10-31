@@ -1,0 +1,55 @@
+// C8.4's operation traits check: derived traits on records, enums, tuples and generic types;
+// own impls in the type's package (also generic ones, with bounds); bounds in generic code
+// met by derived and own traits; a Drop record; an Iter type; Map keys of any Hash + Eq type.
+type P = { x: i32, y: i32 }
+type Tree = | Leaf | Node(l: Box[Tree], v: i32, r: Box[Tree])
+type W[T] = { v: T }
+
+impl[T: Eq] Eq for W[T] {
+    fn eq(self, other: W[T]) -> bool { self.v == other.v }
+}
+
+impl[T: Hash + Eq] Hash for W[T] {
+    fn hash(self) -> u64 { self.v.hash() }
+}
+
+type Handle = { id: i32 }
+
+impl Drop for Handle {
+    fn drop(inout self) { self.id = 0 }
+}
+
+type Steps = { left: u8 }
+
+impl Iter for Steps {
+    fn next(inout self) -> Option[u8] {
+        if self.left == 0 { return None }
+        self.left -= 1
+        Some(self.left)
+    }
+}
+
+fn biggest[T: Ord + Copy](a: T, b: T) -> T {
+    if a.compare(b) == Greater { return a.copy() }
+    b
+}
+
+fn keys[K: Hash + Eq, V](m: Map[K, V], k: K) -> bool { m.contains(k) }
+
+fn main() uses io {
+    let t = Node(Box.new(Leaf), 1, Box.new(Leaf))
+    let same = t == t.copy()
+    let o: Ordering = P(1, 2).compare(P(2, 1))
+    var m: Map[W[String], Tree] = Map.new()
+    m.insert(W(String.from("k")), t)
+    var tm: Map[(P, bool), i32] = Map.new()
+    tm.insert((P(0, 0), true), 1)
+    print(keys(tm, (P(0, 0), true)))
+    print(biggest(P(1, 1), P(0, 9)))
+    print(biggest(String.from("a"), String.from("b")))
+    let h = Handle(1)
+    for s in Steps(3) { print(s) }
+    print(same)
+    print(o)
+    print(h.id)
+}

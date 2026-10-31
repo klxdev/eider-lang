@@ -243,6 +243,8 @@ pub type C = {
     mod_err: Map[u32, bool],
     /// the names (as messages spell them) of the items the parser skipped after their name
     failed: List[List[u8]],
+    /// the operation traits ("Operation traits" below)
+    lt: Lang,
 }
 
 /// Expected parameter types (NONE: unknown) and return type of a closure.
@@ -536,10 +538,12 @@ fn once_key(d: diag.Diag) -> List[u8] uses ffi {
         bytes.append(inout k, d.msg)
         return k
     }
-    if is_code(d, "E0201") {
+    // a missing capability, or a missing bound (one per fix)
+    if is_code(d, "E0201") || is_code(d, "E0605") {
         match d.fix {
             Some(f) => {
-                var k = s("E0201 ")
+                var k = sys.lit(d.code)
+                k.push(32)
                 bytes.append(inout k, num(f.line as u64))
                 k.push(58)
                 bytes.append(inout k, num(f.col as u64))
@@ -779,6 +783,8 @@ fn owns(c: C, ty: u32) -> bool {
         return false
     }
     if t.kind != types.T_ENUM && t.kind != types.T_RECORD { return false }
+    // a record with its own Drop lives in a shared buffer ("Operation traits")
+    if has_drop(c, ty) { return true }
     let d = c.t.defs[t.a as usize]
     if d.is_enum {
         for i in 0..d.len {
@@ -1077,10 +1083,70 @@ fn resolve_with(inout c: C, am: u32, tn: u32, sb: Subst) -> Result[u32, diag.Dia
     r
 }
 
+/// A Map key type has Hash and Eq ("Operation traits"); a part with its own `==` needs its own
+/// hash too, since equal keys must hash alike.
 fn check_map_key(c: C, k: u32, line: u32, col: u32) -> Result[bool, diag.Diag] uses ffi {
-    let tk = types.kind(c.t, k)
-    if tk == types.T_INT || tk == types.T_BOOL || tk == types.T_STRING || tk == types.T_STR { return Ok(true) }
-    Err(err("E0701", line, col, q("", ts(c, k), " can't be a Map key; keys must be integers, bool, str or String")))
+    for tr in [TR_HASH, TR_EQ] {
+        var seen: Map[u32, bool] = Map.new()
+        let part = lacks(c, tr, k, inout seen)
+        if part != NONE && types.kind(c.t, part) == types.T_PARAM {
+            // generic code: the key's type parameter needs both bounds
+            var trs: List[u32] = List.new()
+            if !has_trait(c, TR_HASH, part) { trs.push(TR_HASH) }
+            if !has_trait(c, TR_EQ, part) || !has_trait(c, TR_HASH, part) { trs.push(TR_EQ) }
+            return Err(bound_err(c, line, col, q("a key of ", ts(c, k), ""), trait_names(c, trs), part))
+        }
+        if part != NONE {
+            var m = q2("", ts(c, k), " can't be a Map key: it doesn't implement `", trait_name(c, tr), "`")
+            if part != k { bytes.append(inout m, q(" (its part ", ts(c, part), " doesn't)")) }
+            let h = lack_help(c, tr, part)
+            if s(h).len() == 0 { return Err(err("E0701", line, col, m)) }
+            return Err(errh("E0701", line, col, m, h))
+        }
+    }
+    var seen2: Map[u32, bool] = Map.new()
+    let odd = eq_without_hash(c, k, inout seen2)
+    if odd != NONE {
+        return Err(errh("E0701", line, col, q2("", ts(c, k), " can't be a Map key: ", ts(c, odd), " has its own `Eq` but a derived `Hash`"), "equal keys must hash alike: implement `Hash` for it too"))
+    }
+    Ok(true)
+}
+
+/// A part of ty with its own Eq and a derived Hash, or NONE.
+fn eq_without_hash(c: C, ty: u32, inout seen: Map[u32, bool]) -> u32 {
+    if seen.contains(ty) || poisoned(c, ty) { return NONE }
+    seen.insert(ty, true)
+    let t = types.get(c.t, ty)
+    let k = t.kind
+    if k == types.T_RECORD || k == types.T_ENUM {
+        let hc = custom(c, TR_HASH, ty)
+        if custom(c, TR_EQ, ty) && !hc { return ty }
+        if hc { return NONE }
+        let d = types.def_of(c.t, ty)
+        if d.is_enum {
+            for i in 0..d.len {
+                let v = types.variant(c.t, d, i)
+                for j in 0..v.flen {
+                    let x = eq_without_hash(c, types.field(c.t, v.fstart, j).ty, inout seen)
+                    if x != NONE { return x }
+                }
+            }
+            return NONE
+        }
+        for j in 0..d.len {
+            let x = eq_without_hash(c, types.field(c.t, d.start, j).ty, inout seen)
+            if x != NONE { return x }
+        }
+        return NONE
+    }
+    if k == types.T_ARRAY || k == types.T_LIST || k == types.T_BOX { return eq_without_hash(c, t.a, inout seen) }
+    if k == types.T_TUPLE {
+        for x in types.elems(c.t, ty) {
+            let y = eq_without_hash(c, x, inout seen)
+            if y != NONE { return y }
+        }
+    }
+    NONE
 }
 
 /// The type of template di applied to `args`, resolving its fields the first time
@@ -1485,6 +1551,10 @@ fn head_text(c: C, h: u64) -> List[u8] uses ffi {
 
 /// Does `ty` implement trait `tk`? (yes when the target of some impl unifies with it)
 fn implements(c: C, tk: u64, ty: u32) -> bool {
+    // a language trait: derived, or the type's own impl ("Operation traits")
+    let tr = lang_of_key(c, tk)
+    if tr != NONE { return has_trait(c, tr, ty) }
+    if types.kind(c.t, ty) == types.T_PARAM { return param_has(c, ty, tk) }
     for im in c.timpls {
         if im.tkey != tk { continue }
         let n = ndm(c, im.md, im.node)
@@ -1493,6 +1563,524 @@ fn implements(c: C, tk: u64, ty: u32) -> bool {
         if unify_ast(c, im.md, n.b, ty, inout sb, gs) { return true }
     }
     false
+}
+
+// ---- Operation traits (docs/compiler.md, "C8.4: operation traits")
+//
+// The prelude's Copy, Eq, Ord, Hash, Show, Iter and Drop are the operations the language
+// performs on values: `.copy()`, `==`/`!=`, `<` ... and `compare`, Map keys and `hash`,
+// `print` and `show`/`to_string`, `for x in e`, cleanup. A type has one when its own package
+// implements it (a "custom" impl; `heads` has a bit per trait for each impl target's head,
+// collected before any type is resolved), or, for every type but Iter and Drop, when all its
+// parts have it (derived; `lacks` decides, and names the part that lacks it). Derived
+// operations are lowering's glue, as before (so they cost what they cost); the method
+// instance of a custom impl is recorded in ir.Ir.impls for every concrete type it applies to
+// (`scan_impls`), and the glue calls it there, also inside derived glue (a List of a type
+// with its own `==`). A trait the entry module defines with a language trait's name shadows
+// that trait in the program's names (the language goes on using the prelude's). Only the
+// package that defines a type may implement a language trait for it (E0604).
+
+const TR_COPY: u32 = 0
+const TR_EQ: u32 = 1
+const TR_ORD: u32 = 2
+const TR_HASH: u32 = 3
+const TR_SHOW: u32 = 4
+const TR_ITER: u32 = 5
+const TR_DROP: u32 = 6
+const NTR: u32 = 7
+
+/// `names`/`meths`: each trait's symbol and its method's (copy, eq, compare, hash, show,
+/// next, drop); `shadow`: the entry module defines a trait of that name; `heads`: per method
+/// head (head_key), the bits (bit(TR_*)) of the traits some impl implements for it;
+/// `registered`: impls are registered (pass 5), so an impl's target and bounds are checked;
+/// `ordering`: the prelude's Ordering (a def; NONE until seen); `scanned`: the defs scan_impls
+/// has looked at. `abs`: checking generic bodies against their bounds ("Bounds of generic
+/// code"), where `pty`, `pm`, `pn` are the type parameters (T_PARAM types) with their
+/// module and GParam node.
+type Lang = {
+    names: List[u32], meths: List[u32], shadow: List[bool], heads: Map[u64, u32], registered: bool,
+    ordering: u32, scanned: u32, to_string: u32, s_ordering: u32,
+    abs: bool, pty: List[u32], pm: List[u32], pn: List[u32],
+}
+
+fn new_lang(inout names: intern.Interner) -> Lang uses ffi {
+    var ns: List[u32] = List.new()
+    for w in ["Copy", "Eq", "Ord", "Hash", "Show", "Iter", "Drop"] { ns.push(sym(inout names, w)) }
+    var ms: List[u32] = List.new()
+    for w in ["copy", "eq", "compare", "hash", "show", "next", "drop"] { ms.push(sym(inout names, w)) }
+    var sh: List[bool] = List.new()
+    for i in 0..NTR { sh.push(false) }
+    Lang(ns, ms, sh, Map.new(), false, NONE, 0, sym(inout names, "to_string"), sym(inout names, "Ordering"),
+        false, List.new(), List.new(), List.new())
+}
+
+fn bit(i: u32) -> u32 {
+    var b: u32 = 1
+    for k in 0..i { b = b * 2 }
+    b
+}
+
+fn has_bit(bits: u32, i: u32) -> bool { (bits / bit(i)) % 2 == 1 }
+
+fn trait_name(c: C, tr: u32) -> List[u8] { nm(c, c.lt.names[tr as usize]) }
+
+/// The language trait trait key k names (NONE: another trait, or a shadowed one).
+fn lang_of_key(c: C, k: u64) -> u32 {
+    for i in 0..NTR {
+        if k == resolve.key(0, c.lt.names[i as usize]) && !c.lt.shadow[i as usize] { return i }
+    }
+    NONE
+}
+
+/// The language trait whose method is `name` (a derived one can be called as a method), or
+/// NTR for `to_string`, or NONE.
+fn lang_method(c: C, name: u32) -> u32 {
+    if name == c.lt.to_string { return NTR }
+    for i in 0..NTR {
+        if name == c.lt.meths[i as usize] { return i }
+    }
+    NONE
+}
+
+/// Which language traits the entry module shadows, and which heads have impls of each (before
+/// any type is resolved, so a Map key type with its own Hash is known while fields resolve).
+fn lang_prepass(inout c: C, its: List[Item]) {
+    for it in its {
+        let n = ndm(c, it.m, it.node)
+        if n.kind != ast.ITrait || it.m == c.p.prelude { continue }
+        let k = resolve.item_key(c.p, it.m, n.a)
+        for i in 0..NTR {
+            if k == resolve.key(0, c.lt.names[i as usize]) { c.lt.shadow[i as usize] = true }
+        }
+    }
+    for it in its {
+        let n = ndm(c, it.m, it.node)
+        if n.kind != ast.IImpl || n.a == 0 { continue }
+        let tn = ndm(c, it.m, n.a - 1)
+        let tr = lang_of_key(c, resolve.name_key(c.p, it.m, tn.a, tn.b, tn.line, tn.col))
+        if tr == NONE { continue }
+        let h = head_key(c, it.m, n.b, gparams(c, it.m, n.c, n.d))
+        var bits: u32 = 0
+        let old = mget(c.lt.heads, h)
+        if old != NONE { bits = old }
+        if !has_bit(bits, tr) { bits += bit(tr) }
+        c.lt.heads.insert(h, bits)
+    }
+}
+
+/// The impl (index in timpls) of language trait tr that applies to record or enum ty: its
+/// target has ty's head and unifies with it, and its type parameters meet their bounds.
+fn custom_impl(c: C, tr: u32, ty: u32) -> u32 {
+    if c.lt.shadow[tr as usize] { return NONE }
+    let tk = resolve.key(0, c.lt.names[tr as usize])
+    let h = head_of(c, ty)
+    for i in 0..c.timpls.len() {
+        let im = c.timpls[i]
+        if im.tkey != tk { continue }
+        let n = ndm(c, im.md, im.node)
+        let gs = gparams(c, im.md, n.c, n.d)
+        if head_key(c, im.md, n.b, gs) != h { continue }
+        var sb = no_subst()
+        if !unify_ast(c, im.md, n.b, ty, inout sb, gs) { continue }
+        if impl_bounds_hold(c, im.md, n, sb) { return i as u32 }
+    }
+    NONE
+}
+
+/// Whether the type parameters of impl node n (module m), bound by sb, meet their bounds.
+fn impl_bounds_hold(c: C, m: u32, n: ast.Node, sb: Subst) -> bool {
+    for i in 0..n.d {
+        let g = ndm(c, m, atm(c, m, n.c, i))
+        let ty = subst_get(sb, g.a)
+        if ty == NONE { continue }
+        for j in 0..g.d {
+            let b = ndm(c, m, atm(c, m, g.c, j))
+            if !implements(c, resolve.name_key(c.p, m, b.a, b.b, b.line, b.col), ty) { return false }
+        }
+    }
+    true
+}
+
+/// Whether record or enum ty has its own impl of language trait tr. Before impls are
+/// registered, an impl for its head is enough.
+fn custom(c: C, tr: u32, ty: u32) -> bool {
+    let bits = mget(c.lt.heads, head_of(c, ty))
+    if bits == NONE || !has_bit(bits, tr) { return false }
+    if !c.lt.registered { return true }
+    custom_impl(c, tr, ty) != NONE
+}
+
+/// Whether record ty has a Drop impl (they are for every instance, so the head says it).
+fn has_drop(c: C, ty: u32) -> bool {
+    if types.kind(c.t, ty) != types.T_RECORD { return false }
+    let bits = mget(c.lt.heads, head_of(c, ty))
+    bits != NONE && has_bit(bits, TR_DROP)
+}
+
+/// Whether ty has language trait tr.
+fn has_trait(c: C, tr: u32, ty: u32) -> bool {
+    var seen: Map[u32, bool] = Map.new()
+    lacks(c, tr, ty, inout seen) == NONE
+}
+
+/// The part of ty that lacks language trait tr: ty itself, or the innermost part that keeps
+/// it from being derived; NONE when ty has it. (A type met again while deciding, through a
+/// List or Box, has it as far as that part is concerned.)
+fn lacks(c: C, tr: u32, ty: u32, inout seen: Map[u32, bool]) -> u32 {
+    if ty == NONE || poisoned(c, ty) || seen.contains(ty) { return NONE }
+    let t = types.get(c.t, ty)
+    let k = t.kind
+    // a type parameter has what its bounds say (Ord and Hash promise Eq too)
+    if k == types.T_PARAM {
+        if param_has(c, ty, resolve.key(0, c.lt.names[tr as usize])) { return NONE }
+        if tr == TR_EQ && (param_has(c, ty, resolve.key(0, c.lt.names[TR_ORD as usize])) || param_has(c, ty, resolve.key(0, c.lt.names[TR_HASH as usize]))) { return NONE }
+        return ty
+    }
+    if k == types.T_RECORD || k == types.T_ENUM {
+        if custom(c, tr, ty) { return NONE }
+        if tr == TR_ITER || tr == TR_DROP { return ty }
+        seen.insert(ty, true)
+        let d = types.def_of(c.t, ty)
+        if d.is_enum {
+            for i in 0..d.len {
+                let v = types.variant(c.t, d, i)
+                for j in 0..v.flen {
+                    let x = lacks(c, tr, types.field(c.t, v.fstart, j).ty, inout seen)
+                    if x != NONE { return x }
+                }
+            }
+            return NONE
+        }
+        for j in 0..d.len {
+            let x = lacks(c, tr, types.field(c.t, d.start, j).ty, inout seen)
+            if x != NONE { return x }
+        }
+        return NONE
+    }
+    if tr == TR_DROP { return ty }
+    if tr == TR_ITER {
+        if k == types.T_LIST || k == types.T_ARRAY { return NONE }
+        return ty
+    }
+    // (`()` too, as a part: `Ok(()) == r`, `print(Ok(()))`; comparing two ()s is E0401)
+    if k == types.T_INT || k == types.T_BOOL || k == types.T_STR || k == types.T_STRING || k == types.T_UNIT { return NONE }
+    if k == types.T_ARRAY || k == types.T_LIST || k == types.T_BOX { return lacks(c, tr, t.a, inout seen) }
+    if k == types.T_TUPLE {
+        for x in types.elems(c.t, ty) {
+            let y = lacks(c, tr, x, inout seen)
+            if y != NONE { return y }
+        }
+        return NONE
+    }
+    if k == types.T_MAP {
+        // Maps have no order and no hash (their slots' order is not part of their value)
+        if tr == TR_ORD || tr == TR_HASH { return ty }
+        let x = lacks(c, tr, t.a, inout seen)
+        if x != NONE { return x }
+        return lacks(c, tr, t.b, inout seen)
+    }
+    // a fn value copies its environment; a Mutex copies its contents into a new Mutex
+    if k == types.T_FN && tr == TR_COPY { return NONE }
+    if k == types.T_MUTEX && tr == TR_COPY { return lacks(c, tr, t.a, inout seen) }
+    // !, Task and Chan have none; fn values and Mutexes only Copy
+    ty
+}
+
+/// The error when `what` needs language trait tr of ty, which it lacks (`part`: lacks' answer).
+fn lack_msg(c: C, what: List[u8], tr: u32, ty: u32, part: u32) -> List[u8] uses ffi {
+    var m = q2("", what, " needs `", trait_name(c, tr), "`, which ")
+    bytes.append(inout m, ts(c, ty))
+    bytes.append(inout m, s(" doesn't implement"))
+    if part != ty && part != NONE { bytes.append(inout m, q(" (its part ", ts(c, part), " doesn't)")) }
+    m
+}
+
+/// The help for a type that lacks trait tr because of `part`.
+fn lack_help(c: C, tr: u32, part: u32) -> str {
+    let k = types.kind(c.t, part)
+    if k == types.T_TASK || k == types.T_CHAN {
+        if tr == TR_COPY { return "a running thread can't be cloned and a copied queue has no clear meaning; share the handle instead" }
+        return "Task, Mutex and Chan values are shared handles: they have no equality, order, hash or text"
+    }
+    if k == types.T_MUTEX { return "Task, Mutex and Chan values are shared handles: they have no equality, order, hash or text" }
+    if k == types.T_FN { return "fn values have no equality, order, hash or text" }
+    ""
+}
+
+fn lack_err(c: C, code: str, line: u32, col: u32, what: List[u8], tr: u32, ty: u32) -> diag.Diag uses ffi {
+    match param_lack(c, line, col, what, tr, ty) {
+        Some(d) => { return d }
+        None => {}
+    }
+    var seen: Map[u32, bool] = Map.new()
+    let part = lacks(c, tr, ty, inout seen)
+    if part == NONE { return err(code, line, col, lack_msg(c, what, tr, ty, part)) }
+    let h = lack_help(c, tr, part)
+    if s(h).len() == 0 { return err(code, line, col, lack_msg(c, what, tr, ty, part)) }
+    errh(code, line, col, lack_msg(c, what, tr, ty, part), h)
+}
+
+/// The type of the prelude's Ordering.
+fn ordering_ty(inout c: C, line: u32, col: u32) -> Result[u32, diag.Diag] uses ffi {
+    if c.lt.ordering == NONE { return Err(unsup(line, col, "a prelude without `Ordering`")) }
+    let od = c.lt.ordering
+    inst_type(inout c, od, List.new(), line, col)
+}
+
+/// The method instance of impl ix (timpls) of language trait tr for type ty, recorded for
+/// lowering in ir.Ir.impls.
+fn impl_instance(inout c: C, tr: u32, ix: u32, ty: u32) -> Result[u32, diag.Diag] uses ffi {
+    let im = c.timpls[ix as usize]
+    let n = ndm(c, im.md, im.node)
+    let gs = gparams(c, im.md, n.c, n.d)
+    var fd = NONE
+    for m in c.meths {
+        let f = c.fdefs[m.fd as usize]
+        if f.inode == im.node && f.md == im.md && m.name == c.lt.meths[tr as usize] { fd = m.fd }
+    }
+    if fd == NONE { return Ok(NONE) }
+    var sb = no_subst()
+    unify_ast(c, im.md, n.b, ty, inout sb, gs)
+    subst_set(inout sb, intern.S_SELF_TYPE, ty)
+    let ii = instantiate(inout c, fd, sb)?
+    let key = (tr as u64) * 4294967296 + ty as u64
+    c.ir.impls.insert(key, c.insts[ii as usize].ir)
+    Ok(ii)
+}
+
+/// Instantiate the language-trait impls of every concrete record and enum that has one, so
+/// lowering's glue can call them; again for the types and bodies that brings in.
+fn scan_impls(inout c: C) uses ffi {
+    while (c.lt.scanned as usize) < c.t.defs.len() {
+        let d = c.t.defs[c.lt.scanned as usize]
+        c.lt.scanned += 1
+        if d.generic > 0 || !d.filled || poisoned(c, d.ty) { continue }
+        let bits = mget(c.lt.heads, head_of(c, d.ty))
+        if bits == NONE { continue }
+        for tr in 0..NTR {
+            if !has_bit(bits, tr) { continue }
+            let ix = custom_impl(c, tr, d.ty)
+            if ix == NONE { continue }
+            match impl_instance(inout c, tr, ix, d.ty) {
+                Ok(_) => {}
+                Err(e) => record(inout c, e)
+            }
+        }
+    }
+}
+
+/// Check impl node im (module m) of language trait tr: the orphan rule (E0604) and what
+/// Drop, Ord and Hash need (E0606, E0601). False: it is left out (its methods aren't
+/// registered).
+fn check_lang_impl(inout c: C, m: u32, im: ast.Node, tr: u32, igens: List[u32]) -> bool uses ffi {
+    let tn = ndm(c, m, im.b)
+    let tname = show_ast(c, m, im.b, igens)
+    let h = head_key(c, m, im.b, igens)
+    let di = mget(c.tmpl, h)
+    var owner = s("the language core")
+    var ok = false
+    let named = tn.kind == ast.TName || tn.kind == ast.TGeneric
+    if named && tn.b == 0 && has_sym(igens, tn.a) {
+        owner = s("no package: a type parameter stands for every type")
+    } else if named && di != NONE {
+        let dm = c.t.defs[di as usize].md
+        let dpk = c.p.mods[dm as usize].pkg
+        if dm != c.p.prelude && dpk == c.p.mods[m as usize].pkg { ok = true }
+        if dpk != resolve.NOPKG {
+            owner = q("package `", c.p.pkgs[dpk as usize].name, "`")
+        } else {
+            owner = q("`", c.p.mods[dm as usize].path, "`, which is in no package")
+        }
+        if dm == c.p.prelude { owner = s("the language core") }
+    }
+    if !ok {
+        let msg = q3("only the package that defines `", tname, "` can implement `", trait_name(c, tr), "` for it (it is defined by ", owner, ")")
+        record(inout c, errh("E0604", im.line, im.col, msg, "implement the trait in the type's own package, or wrap the type in a record of your own"))
+        return false
+    }
+    let d = c.t.defs[di as usize]
+    if tr == TR_DROP {
+        // a Drop impl is for a record, for each of its instances: `impl[T] Drop for R[T]`
+        var whole = !d.is_enum && tn.d == im.d
+        if tn.kind == ast.TGeneric {
+            for i in 0..tn.d {
+                let a = ndm(c, m, atm(c, m, tn.c, i))
+                if !(a.kind == ast.TName && a.b == 0 && i < igens.len() as u32 && a.a == igens[i as usize]) { whole = false }
+            }
+        }
+        for i in 0..im.d {
+            if ndm(c, m, atm(c, m, im.c, i)).d > 0 { whole = false }
+        }
+        if !whole {
+            record(inout c, errh("E0606", im.line, im.col, q("`Drop` can only be implemented for a record, for all its instances: `impl Drop for ", tname, "` doesn't qualify"), "write `impl[T] Drop for R[T]` for a generic record; an enum that needs cleanup can hold a record that has it"))
+            return false
+        }
+        for i in 0..im.f {
+            let mn = ndm(c, m, atm(c, m, im.e, i))
+            if mn.a == c.lt.meths[TR_DROP as usize] && mn.j > 0 {
+                record(inout c, errh("E0606", mn.line, mn.col, s("`drop` can't declare capabilities: it runs wherever the value's last holder goes"), "do the work that needs a capability in a method the program calls before the value goes"))
+                return false
+            }
+        }
+    }
+    if (tr == TR_ORD || tr == TR_HASH) && im.d == 0 {
+        // `Ord` and `Hash` need `Eq` (derived, or its own)
+        let ty = d.ty
+        if d.generic == 0 && d.filled && !has_trait(c, TR_EQ, ty) {
+            let rd = err("E0601", im.line, im.col, q2("type ", ts(c, ty), " doesn't implement trait `Eq` (required by `", trait_name(c, tr), "`)"))
+            record(inout c, rd)
+            return false
+        }
+    }
+    true
+}
+
+// ---- Bounds of generic code (docs/compiler.md, "C8.4: operation traits")
+//
+// A generic body may use an operation on a type parameter only when the parameter's bounds
+// promise it (`T: Eq` for `==` on T). Instances are checked with concrete types, which
+// can't tell a T from the type it stands for, so after every body is checked each generic
+// declaration that has an instance is checked once more with its type parameters as
+// T_PARAM types, which have only what their bounds say (`abstract_bodies`). That pass
+// throws its work away (the checker's state is put back) and keeps only E0605, the missing
+// bound, with a fix that adds it; everything else it would find, the instances found or
+// will find with real types.
+
+/// The index of type parameter type ty in the registry (NONE).
+fn param_ix(c: C, ty: u32) -> u32 {
+    for i in 0..c.lt.pty.len() {
+        if c.lt.pty[i] == ty { return i as u32 }
+    }
+    NONE
+}
+
+/// Whether type parameter ty has trait key tk among its bounds.
+fn param_has(c: C, ty: u32, tk: u64) -> bool {
+    let i = param_ix(c, ty)
+    if i == NONE { return false }
+    let m = c.lt.pm[i as usize]
+    let g = ndm(c, m, c.lt.pn[i as usize])
+    for j in 0..g.d {
+        let b = ndm(c, m, atm(c, m, g.c, j))
+        if resolve.name_key(c.p, m, b.a, b.b, b.line, b.col) == tk { return true }
+    }
+    false
+}
+
+/// The names of language traits `trs`.
+/// [TR_ITER] (for_each has a local named `one`).
+fn iter_only() -> List[u32] {
+    var out: List[u32] = List.new()
+    out.push(TR_ITER)
+    out
+}
+
+fn trait_names(c: C, trs: List[u32]) -> List[List[u8]] {
+    var out: List[List[u8]] = List.new()
+    for tr in trs { out.push(trait_name(c, tr)) }
+    out
+}
+
+/// E0605: `what` needs type parameter ty to have the traits named `trs`; the fix adds them
+/// to its bounds.
+fn bound_err(c: C, line: u32, col: u32, what: List[u8], trs: List[List[u8]], ty: u32) -> diag.Diag uses ffi {
+    let name = nm(c, types.get(c.t, ty).a)
+    var bounds: List[u8] = List.new()
+    for i in 0..trs.len() {
+        if i > 0 { bytes.append(inout bounds, s(" + ")) }
+        bytes.append(inout bounds, trs[i])
+    }
+    var want = name
+    bytes.append(inout want, s(": "))
+    bytes.append(inout want, bounds)
+    var d = errh("E0605", line, col, q2("", what, " needs `", want, "`"), "a generic body can only use what its type parameters' bounds promise; add the bound")
+    let i = param_ix(c, ty)
+    if i == NONE { return d }
+    let m = c.lt.pm[i as usize]
+    let g = ndm(c, m, c.lt.pn[i as usize])
+    // after the parameter's name, or after its last bound
+    var at_line = g.line
+    var at_col = g.col + name.len() as u32
+    var ins = s(": ")
+    if g.d > 0 {
+        let b = ndm(c, m, atm(c, m, g.c, g.d - 1))
+        at_line = b.line
+        at_col = b.col + nm(c, b.a).len() as u32
+        if b.b > 0 { at_col += nm(c, b.b - 1).len() as u32 + 1 }
+        ins = s(" + ")
+    }
+    bytes.append(inout ins, bounds)
+    d.fix = Some(diag.Fix(at_line, at_col, 0, ins))
+    d
+}
+
+/// lack_err's E0605 when the part lacking trait tr is a type parameter (else NONE-coded: the
+/// caller reports its own error).
+fn param_lack(c: C, line: u32, col: u32, what: List[u8], tr: u32, ty: u32) -> Option[diag.Diag] uses ffi {
+    var seen: Map[u32, bool] = Map.new()
+    let part = lacks(c, tr, ty, inout seen)
+    if part == NONE || types.kind(c.t, part) != types.T_PARAM { return None }
+    Some(bound_err(c, line, col, what, trait_names(c, one(tr)), part))
+}
+
+/// Check every generic declaration with an instance against its bounds (see above); the
+/// E0605s found are appended.
+fn abstract_bodies(inout c: C) uses ffi {
+    var fds: List[u32] = List.new()
+    for inst in c.insts {
+        if inst.slen == 0 || has_sym(fds, inst.fd) { continue }
+        let f = c.fdefs[inst.fd as usize]
+        if f.md == c.p.prelude || all_gparam_nodes(c, inst.fd).len() == 0 { continue }
+        fds.push(inst.fd)
+    }
+    if fds.len() == 0 { return }
+    let saved = c
+    c.lt.abs = true
+    var found: List[diag.Diag] = List.new()
+    for fd in fds {
+        let f = c.fdefs[fd as usize]
+        var sb = no_subst()
+        for gn in all_gparam_nodes(c, fd) {
+            let g = ndm(c, f.md, gn)
+            let ty = types.param(inout c.t, g.a, fd)
+            if param_ix(c, ty) == NONE {
+                c.lt.pty.push(ty)
+                c.lt.pm.push(f.md)
+                c.lt.pn.push(gn)
+            }
+            subst_set(inout sb, g.a, ty)
+        }
+        if f.inode != NONE {
+            let im = ndm(c, f.md, f.inode)
+            c.cur_mod = f.md
+            c.cur_all = false
+            let st = resolve_with(inout c, f.md, im.b, sb)
+            c.cur_mod = resolve.NOMOD
+            c.cur_all = true
+            match st {
+                Ok(t) => subst_set(inout sb, intern.S_SELF_TYPE, t)
+                Err(_) => { continue }
+            }
+        }
+        c.diags = List.new()
+        c.mute = false
+        c.seen = List.new()
+        c.err_mod = f.md
+        match instantiate(inout c, fd, sb) {
+            Ok(ii) => {
+                match check_fn(inout c, ii) {
+                    Ok(_) => {}
+                    Err(d) => record(inout c, d)
+                }
+            }
+            Err(d) => record(inout c, d)
+        }
+        for d in c.diags {
+            if is_code(d, "E0605") { found.push(d) }
+        }
+    }
+    c = saved
+    for d in found { c.diags.push(d) }
 }
 
 // ---- program
@@ -1523,12 +2111,13 @@ fn sym(inout names: intern.Interner, w: str) -> u32 uses ffi {
 fn new_checker(p: resolve.Program, lib: bool) -> C uses ffi {
     var p2 = p
     let w = well_known(inout p2.names)
+    let lt = new_lang(inout p2.names)
     C(p2, types.new(), ir.new(), pats.new(), w, Map.new(), Map.new(), Map.new(), Map.new(), Map.new(),
         List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new(),
         List.new(), List.new(), List.new(),
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
         0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false, Rec(false, List.new(), List.new()),
-        List.new(), List.new(), false, Map.new(), false, false, Map.new(), List.new())
+        List.new(), List.new(), false, Map.new(), false, false, Map.new(), List.new(), lt)
 }
 
 /// Every item of the program in load order (resolve.ei), as (module, node) pairs.
@@ -1644,6 +2233,7 @@ fn begin_item(inout c: C, it: Item) {
 fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
     let its = items(c.p)
     note_failed_items(inout c)
+    lang_prepass(inout c, its)
     // comptime constants are evaluated before checking
     for it in its {
         let n = ndm(c, it.m, it.node)
@@ -1683,11 +2273,15 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
             }
         }
         c.tmpl.insert(k, di)
+        if it.m == c.p.prelude && n.a == c.lt.s_ordering { c.lt.ordering = di }
     }
     // 2. non-generic types
     for it in its {
         let n = ndm(c, it.m, it.node)
         if n.kind != ast.IType || n.d > 0 { continue }
+        // the prelude's Ordering is resolved when a program uses it (so a program that
+        // doesn't has the types, and the C, it had before)
+        if it.m == c.p.prelude { continue }
         begin_item(inout c, it)
         let di = mget(c.tmpl, resolve.item_key(c.p, it.m, n.a))
         // a definition left out in pass 1
@@ -1707,7 +2301,10 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
         if n.kind != ast.ITrait { continue }
         begin_item(inout c, it)
         let k = resolve.item_key(c.p, it.m, n.a)
-        if c.traits.contains(k) || c.tmpl.contains(k) {
+        // a trait named like one of the prelude's shadows it in the program's names
+        let prior = mget(c.traits, k)
+        let shadows = prior != NONE && c.trs[prior as usize].m == c.p.prelude && it.m != c.p.prelude
+        if (c.traits.contains(k) && !shadows) || c.tmpl.contains(k) {
             let rd = err("E0107", n.line, n.col, q("`", kt(c, k), "` is already defined"))
             record(inout c, rd)
             continue
@@ -1751,6 +2348,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
         begin_item(inout c, it)
         register_impl(inout c, it.m, it.node, inout concrete)?
     }
+    c.lt.registered = true
     // constants and other code outside functions build into a scratch IR function
     let scratch = ir.declare_fn(inout c.ir, s("<const>"), false)
     ir.begin_fn(inout c.ir, scratch, types.UNIT, List.new())
@@ -1873,7 +2471,11 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
         }
         c.mute = false
         if c.diags.len() > before { c.bad_fd.insert(fd, true) }
+        // then the language-trait impls of the types made so far, whose bodies may make more
+        if c.pending.len() == 0 { scan_impls(inout c) }
     }
+    // generic bodies against their bounds (E0605)
+    abstract_bodies(inout c)
     c.err_mod = resolve.NOMOD
     c.seen = List.new()
     c.body_err = false
@@ -1953,7 +2555,8 @@ fn ffi_safe(c: C, ty: u32, is_ret: bool, records: bool) -> bool {
     let k = types.kind(c.t, ty)
     if k == types.T_INT || k == types.T_BOOL || k == types.T_STR { return true }
     if k == types.T_UNIT { return is_ret }
-    if k != types.T_RECORD || !records { return false }
+    // (a record with its own Drop lives in a shared buffer)
+    if k != types.T_RECORD || !records || has_drop(c, ty) { return false }
     let d = types.def_of(c.t, ty)
     for i in 0..d.len {
         if !ffi_safe(c, types.field(c.t, d.start, i).ty, false, true) { return false }
@@ -2037,6 +2640,13 @@ fn concat_syms(a: List[u32], b: List[u32]) -> List[u32] {
     out
 }
 
+/// Whether method node mn (module m) returns `Option[...]`.
+fn option_ret(c: C, m: u32, mn: ast.Node) -> bool {
+    if mn.g == 0 { return false }
+    let r = ndm(c, m, mn.g - 1)
+    r.kind == ast.TGeneric && r.d == 1 && resolve.name_key(c.p, m, r.a, r.b, r.line, r.col) == resolve.key(0, c.w.option)
+}
+
 /// Register the methods of impl node `id` of module m. Its errors are recorded as they are
 /// found; its methods are registered (an unknown trait's as inherent ones) unless the impl
 /// repeats another, each name once.
@@ -2066,6 +2676,9 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
             let tr = c.trs[ti as usize]
             let trn = ndm(c, tr.m, tr.node)
             note_ref(inout c, m, tn, tr.m, trn.line, trn.col)
+            // a language trait: the orphan rule and what each needs ("Operation traits")
+            let lang = lang_of_key(c, tk)
+            if lang != NONE && !check_lang_impl(inout c, m, im, lang, igens) { return Ok(true) }
             for i in 0..trn.d {
                 let tm = ndm(c, tr.m, atm(c, tr.m, trn.c, i))
                 let mid = find_method(c, m, im.e, im.f, tm.a)
@@ -2078,6 +2691,8 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
                 let mgens = concat_syms(igens, gparams(c, m, mn.c, mn.d))
                 let tgens = gparams(c, tr.m, tm.c, tm.d)
                 var differs = !bytes.eq(norm(c, m, mn.g, mgens, target), norm(c, tr.m, tm.g, tgens, target))
+                // Iter's `next` returns `Option[Item]` for the item type the impl chooses
+                if lang == TR_ITER { differs = !option_ret(c, m, mn) }
                 var k: u32 = 1
                 while k < mn.f && k < tm.f {
                     let a = ndm(c, m, atm(c, m, mn.e, k))
@@ -2649,14 +3264,20 @@ fn for_range(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
 fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
     let pv = place_expr(inout c, n.b)?
     let t = types.get(c.t, pv.ty)
-    let err_seq = t.kind == types.T_POISON
+    // (over a type parameter, with the bound, the body is checked as over an error value)
+    let err_seq = t.kind == types.T_POISON || (t.kind == types.T_PARAM && has_trait(c, TR_ITER, pv.ty))
+    if t.kind == types.T_PARAM && !err_seq {
+        let itn = nd(c, n.b)
+        return Err(bound_err(c, itn.line, itn.col, s("`for`"), trait_names(c, iter_only()), pv.ty))
+    }
+    if (t.kind == types.T_RECORD || t.kind == types.T_ENUM) && custom(c, TR_ITER, pv.ty) { return for_iter(inout c, n, pv) }
     if t.kind != types.T_ARRAY && t.kind != types.T_LIST && !err_seq {
         let itn = nd(c, n.b)
-        return Err(errh("E0401", itn.line, itn.col, q("can't iterate over a value of type ", ts(c, pv.ty), ""), "iterate over a List or an array, or use a range: `for i in 0..n`"))
+        return Err(errh("E0401", itn.line, itn.col, q("can't iterate over a value of type ", ts(c, pv.ty), ""), "iterate over a List, an array, a range (`for i in 0..n`) or a type that implements `Iter`"))
     }
     let is_list = t.kind == types.T_LIST
     // over an error value the body is still checked, with the variable of the error type
-    let et = if err_seq { pv.ty } else { t.a }
+    let et = if err_seq { poison(inout c) } else { t.a }
     // arrays are copied first; a List is iterated in place, its length read every time:
     // i := 0; loop { if !(i < len) break; x := clone(seq[i]); body } step { i = i +% 1 }
     var seq = pv.place
@@ -2703,6 +3324,72 @@ fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
     let next = emit_val(inout c, ir.S_BINARY, ast.OP_WADD, cur, one, types.USIZE, types.USIZE, 0)
     emit(inout c, ir.S_STORE, 0, ip, next, 0, types.USIZE, 0)
     let step = ir.close(inout c.ir, sm)
+    emit(inout c, ir.S_LOOP, 0, body, step, 0, 0, n.line)
+    Ok(types.UNIT)
+}
+
+/// `for x in e` over a type with its own Iter ("Operation traits"): the loop runs on a copy
+/// of e, owned by the loop and dropped after it:
+/// it := e; loop { r := it.next(); if !(r is Some) break; x := r's item; body }
+fn for_iter(inout c: C, n: ast.Node, pv: PV) -> Result[u32, diag.Diag] uses ffi {
+    let ty = pv.ty
+    let ix = custom_impl(c, TR_ITER, ty)
+    let ii = impl_instance(inout c, TR_ITER, ix, ty)?
+    // (an impl without `next` was reported)
+    if ii == NONE { return Err(quiet()) }
+    let inst = c.insts[ii as usize]
+    let fnode = ndm(c, c.fdefs[inst.fd as usize].md, c.fdefs[inst.fd as usize].node)
+    for i in 0..fnode.j {
+        let cap = ndm(c, c.fdefs[inst.fd as usize].md, atm(c, c.fdefs[inst.fd as usize].md, fnode.i, i)).a
+        if !has_sym(c.caps, cap) {
+            let rd = cap_error(c, n.line, n.col, label_of(c, ts(c, ty), c.lt.meths[TR_ITER as usize]), cap)
+            record(inout c, rd)
+            break
+        }
+    }
+    let oty = inst.ret
+    var et = poison(inout c)
+    var si: u32 = 0
+    if types.kind(c.t, oty) == types.T_ENUM && !poisoned(c, oty) {
+        let od = types.def_of(c.t, oty)
+        for i in 0..od.len {
+            let v = types.variant(c.t, od, i)
+            if v.flen == 1 {
+                si = i
+                et = types.field(c.t, v.fstart, 0).ty
+            }
+        }
+    }
+    var o = pv.op
+    if o == NONE { o = read(inout c, pv.place, ty, 0) }
+    let owned = take(inout c, v_of(ty, o), n.line)
+    let itl = tmp(inout c, ty, n.line)
+    emit(inout c, ir.S_COPY, itl, owned, 0, 0, ty, n.line)
+    register(inout c, itl, ty)
+    let itp = ir.place_local(inout c.ir, itl, ty)
+    let lm = ir.open(c.ir)
+    let base = c.fmarks.len() as u32
+    push_frame(inout c)
+    let st = ir.list(inout c.ir, one(itp + ir.ARG_PLACE))
+    let r = emit_val(inout c, ir.S_CALL, inst.ir, st, 1, oty, oty, n.line)
+    let rv = mk_fresh(inout c, v_of(oty, r), n.line)
+    let rp = place_of_op(inout c, rv.op, oty, n.line)
+    let cond = emit_val(inout c, ir.S_TAG, rp, si, 0, oty, types.BOOL, n.line)
+    emit_exit_unless(inout c, cond, base, n.line)
+    c.loops += 1
+    c.loop_bases.push(base)
+    push_scope(inout c)
+    let l = ir.local(inout c.ir, n.a, et, ir.L_LET, n.line)
+    let ep = ir.place_payload(inout c.ir, rp, si, 0, et)
+    bind_value(inout c, l, et, ep)
+    declare(inout c, local_plain(resolve.key(0, n.a), et, false, n.line, n.col, l))?
+    block_body(inout c, n.d, Dest(D_DISCARD, 0), NONE)?
+    pop_scope(inout c)
+    pop_frame(inout c, true)
+    c.loop_bases.pop()
+    c.loops -= 1
+    let body = ir.close(inout c.ir, lm)
+    let step = ir.empty_block(inout c.ir)
     emit(inout c, ir.S_LOOP, 0, body, step, 0, 0, n.line)
     Ok(types.UNIT)
 }
@@ -3479,36 +4166,6 @@ fn bit_not(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
     Ok(v_of(v.ty, emit_val(inout c, ir.S_UNARY, ir.U_BNOT, v.op, 0, v.ty, v.ty, n.line)))
 }
 
-/// Does `==` work on this type? (Maps have no structural equality)
-fn eq_supported(c: C, ty: u32, shallow: bool) -> bool {
-    let t = types.get(c.t, ty)
-    if t.kind == types.T_MAP || t.kind == types.T_FN || types.is_handle(t.kind) { return false }
-    if t.kind == types.T_ENUM || t.kind == types.T_RECORD {
-        if shallow { return true }
-        let d = c.t.defs[t.a as usize]
-        if d.is_enum {
-            for i in 0..d.len {
-                let v = types.variant(c.t, d, i)
-                for j in 0..v.flen {
-                    if !eq_supported(c, types.field(c.t, v.fstart, j).ty, true) { return false }
-                }
-            }
-            return true
-        }
-        for j in 0..d.len {
-            if !eq_supported(c, types.field(c.t, d.start, j).ty, true) { return false }
-        }
-        return true
-    }
-    if t.kind == types.T_ARRAY || t.kind == types.T_LIST || t.kind == types.T_BOX { return eq_supported(c, t.a, true) }
-    if t.kind == types.T_TUPLE {
-        for x in types.elems(c.t, ty) {
-            if !eq_supported(c, x, true) { return false }
-        }
-    }
-    true
-}
-
 fn binary(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
     let op = n.a
     let ln = nd(c, n.b)
@@ -3568,17 +4225,16 @@ fn binary(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
         }
         return Ok(v_of(ty, emit_val(inout c, ir.S_BINARY, op, vl.op, vr.op, ty, ty, n.line)))
     }
-    if (op == ast.OP_EQ || op == ast.OP_NE) && !eq_supported(c, ty, false) {
-        return Err(err("E0401", n.line, n.col, q("`==` is not supported for ", ts(c, ty), " (Maps have no structural equality)")))
-    }
     let tk = types.kind(c.t, ty)
     if tk == types.T_UNIT || tk == types.T_NEVER {
         return Err(err("E0401", n.line, n.col, q("cannot compare values of type ", ts(c, ty), "")))
     }
-    // < <= > >= order integers, and String and str by their bytes (Unicode scalar order)
-    let ordered = tk == types.T_INT || tk == types.T_STRING || tk == types.T_STR
-    if !ordered && op != ast.OP_EQ && op != ast.OP_NE {
-        return Err(err("E0401", n.line, n.col, q2("operator ", s(ast.op_text(op)), " is not supported for ", ts(c, ty), "")))
+    // == != through Eq, < <= > >= through Ord ("Operation traits"): integers, bool, and
+    // String and str by their bytes (Unicode scalar order) are built in, the rest derived
+    // or the type's own
+    let tr = if op == ast.OP_EQ || op == ast.OP_NE { TR_EQ } else { TR_ORD }
+    if !has_trait(c, tr, ty) {
+        return Err(lack_err(c, "E0401", n.line, n.col, q("`", s(ast.op_text(op)), "`"), tr, ty))
     }
     Ok(v_of(types.BOOL, emit_val(inout c, ir.S_BINARY, op, vl.op, vr.op, ty, types.BOOL, n.line)))
 }
@@ -4112,6 +4768,16 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
             let bk = resolve.name_key(c.p, fm, b.a, b.b, b.line, b.col)
             if !c.traits.contains(bk) { return Err(err("E0603", gn.line, gn.col, q("unknown trait `", kt(c, bk), "`"))) }
             if !implements(c, bk, ty) {
+                // in generic code, a type parameter's bound (or a part's) is what's missing
+                var seen: Map[u32, bool] = Map.new()
+                let tr = lang_of_key(c, bk)
+                var part = ty
+                if tr != NONE { part = lacks(c, tr, ty, inout seen) }
+                if part != NONE && types.kind(c.t, part) == types.T_PARAM {
+                    var names: List[List[u8]] = List.new()
+                    names.push(kt(c, bk))
+                    return Err(bound_err(c, n.line, n.col, q("`", label, "`"), names, part))
+                }
                 return Err(err("E0601", n.line, n.col, q3("type ", ts(c, ty), " doesn't implement trait `", kt(c, bk), "` (required by `", label, "`)")))
             }
         }
@@ -4171,12 +4837,10 @@ fn builtin(inout c: C, n: ast.Node, which: u32) -> Result[V, diag.Diag] uses ffi
         }
         let ae = arg_expr(c, at(c, n.c, 0))
         let v = expr(inout c, ae, NONE)?
-        let tk = types.kind(c.t, v.ty)
-        var ok = tk == types.T_INT || tk == types.T_BOOL || tk == types.T_STR || tk == types.T_STRING || tk == types.T_POISON
-        if tk == types.T_ENUM && !types.def_of(c.t, v.ty).payload { ok = true }
-        if !ok {
+        // through Show ("Operation traits")
+        if !has_trait(c, TR_SHOW, v.ty) {
             let x = nd(c, ae)
-            return Err(err("E0401", x.line, x.col, q("cannot print a value of type ", ts(c, v.ty), " yet")))
+            return Err(lack_err(c, "E0401", x.line, x.col, s("`print`"), TR_SHOW, v.ty))
         }
         emit(inout c, ir.S_PRINT, 0, v.op, 0, 0, v.ty, n.line)
         return Ok(v_of(types.UNIT, ir.op_unit(inout c.ir)))
@@ -4288,6 +4952,10 @@ fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses f
         return heap_method(inout c, n, pv)
     }
     let head = head_of(c, pv.ty)
+    if n.b == c.lt.meths[TR_DROP as usize] && has_drop(c, pv.ty) {
+        let fd = errh("E0115", n.line, n.col, q("`drop` of ", ts(c, pv.ty), " can't be called"), "it runs by itself, once, when the value's last holder goes")
+        return fail_call(inout c, fd, n.c, n.d)
+    }
     var any = false
     for m in c.meths {
         if m.head != head || m.name != n.b { continue }
@@ -4302,7 +4970,7 @@ fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses f
         return call_decl(inout c, n, label, m.fd, sb, Recv(true, n.a, pv), exp, true)
     }
     // a handle's unknown method: thread_method's message
-    if !any && types.is_handle(tk) { return thread_method(inout c, n, pv) }
+    if !any && types.is_handle(tk) && lang_method(c, n.b) == NONE { return thread_method(inout c, n, pv) }
     if !any && tk == types.T_RECORD {
         let d = types.def_of(c.t, pv.ty)
         match types.find_field(c.t, d, n.b) {
@@ -4318,8 +4986,70 @@ fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses f
             None => {}
         }
     }
+    // a language trait's method, derived ("Operation traits")
+    let li = lang_method(c, n.b)
+    if li != NONE && li != TR_ITER && li != TR_DROP { return trait_method(inout c, n, pv, li) }
     let fd = err("E0115", n.line, n.col, q2("type ", ts(c, pv.ty), " has no method `", nm(c, n.b), "`"))
     fail_call(inout c, fd, n.c, n.d)
+}
+
+/// `x.copy()`, `x.eq(y)`, `x.compare(y)`, `x.hash()`, `x.show(inout out)` and `x.to_string()`
+/// (tr = NTR) of a type that derives the trait (a type with its own impl has the method).
+fn trait_method(inout c: C, n: ast.Node, pv: PV, tr: u32) -> Result[V, diag.Diag] uses ffi {
+    let ty = pv.ty
+    let label = label_of(c, ts(c, ty), n.b)
+    let need = if tr == NTR { TR_SHOW } else { tr }
+    if !has_trait(c, need, ty) {
+        var what = s("`.")
+        bytes.append(inout what, nm(c, n.b))
+        bytes.append(inout what, s("()`"))
+        var seen: Map[u32, bool] = Map.new()
+        let part = lacks(c, need, ty, inout seen)
+        if part != NONE && types.kind(c.t, part) == types.T_PARAM {
+            let bd = bound_err(c, n.line, n.col, what, trait_names(c, one(need)), part)
+            return fail_call(inout c, bd, n.c, n.d)
+        }
+        var m = q3("type ", ts(c, ty), " doesn't implement trait `", trait_name(c, need), "` (required by ", what, ")")
+        if part != ty && part != NONE { bytes.append(inout m, q(": its part ", ts(c, part), " doesn't")) }
+        let h = lack_help(c, need, part)
+        let fd = if s(h).len() == 0 { err("E0601", n.line, n.col, m) } else { errh("E0601", n.line, n.col, m, h) }
+        return fail_call(inout c, fd, n.c, n.d)
+    }
+    if tr == TR_SHOW {
+        if n.d != 1 { return Err(err("E0405", n.line, n.col, q("`", label, "` takes 1 argument(s): `inout out: String`"))) }
+        let a = nd(c, at(c, n.c, 0))
+        let x = nd(c, a.a)
+        if a.b != 1 {
+            var d = err("E0304", x.line, x.col, s("parameter `out` is `inout`; pass the argument as `inout ...`"))
+            d.fix = Some(diag.Fix(x.line, x.col, 0, s("inout ")))
+            return Err(d)
+        }
+        let rr = root(c, n.a)
+        let ar = root(c, a.a)
+        if rr.ok && ar.ok && rr.key == ar.key {
+            let r = nd(c, n.a)
+            return Err(err("E0301", r.line, r.col, q("`", kt(c, rr.key), "` is borrowed mutably by another argument of this call and can't be read here")))
+        }
+        assignable_or_record(inout c, a.a, "borrow as inout")
+        let ro = recv_op(inout c, pv)
+        let opv = place_expr(inout c, a.a)?
+        if !same(c, opv.ty, types.STRING) { return Err(mismatch(c, x.line, x.col, types.STRING, opv.ty)) }
+        builtin_op(inout c, ir.B_SHOW, two(opv.place + ir.ARG_PLACE, ro), types.UNIT, n.line)
+        return Ok(v_of(types.UNIT, ir.op_unit(inout c.ir)))
+    }
+    if tr == TR_EQ || tr == TR_ORD {
+        let ro = recv_op(inout c, pv)
+        let vs = eval_args(inout c, n, one(ty), label)?
+        let o = vs[0]
+        if tr == TR_EQ { return Ok(v_of(types.BOOL, emit_val(inout c, ir.S_BINARY, ast.OP_EQ, ro, o.op, ty, types.BOOL, n.line))) }
+        let oty = ordering_ty(inout c, n.line, n.col)?
+        return Ok(v_of(oty, builtin_op(inout c, ir.B_COMPARE, two(ro, o.op), oty, n.line)))
+    }
+    let ro = recv_op(inout c, pv)
+    eval_args(inout c, n, List.new(), label)?
+    if tr == TR_COPY { return Ok(v_of(ty, builtin_op(inout c, ir.B_COPY, one(ro), ty, n.line))) }
+    if tr == TR_HASH { return Ok(v_of(types.U64, builtin_op(inout c, ir.B_HASH, one(ro), types.U64, n.line))) }
+    Ok(v_of(types.STRING, builtin_op(inout c, ir.B_TO_STRING, one(ro), types.STRING, n.line)))
 }
 
 /// The built-in methods of type kind tk (heap_method, thread_method): an impl on the type
@@ -4517,6 +5247,7 @@ fn heap_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] uses ffi
         if mi == M_CONTAINS {
             let ro = recv_op(inout c, pv)
             let vs = eval_args(inout c, n, one(el), label)?
+            if !has_trait(c, TR_EQ, el) { return Err(lack_err(c, "E0401", n.line, n.col, q("`", label, "`"), TR_EQ, el)) }
             return Ok(v_of(types.BOOL, builtin_op(inout c, ir.B_LIST_CONTAINS, two(ro, vs[0].op), types.BOOL, n.line)))
         }
         if mi == M_MAP || mi == M_FILTER || mi == M_FOR_EACH || mi == M_ANY || mi == M_ALL {

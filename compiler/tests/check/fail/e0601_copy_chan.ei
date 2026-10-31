@@ -1,0 +1,5 @@
+// expect: E0601 4:15
+fn main() {
+    let c: Chan[i32] = Chan.new()
+    let d = c.copy()
+}

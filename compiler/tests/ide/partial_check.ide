@@ -17,7 +17,7 @@ symbols
   10 fn later compiler/tests/ide/partial_check.ei:18:4-18:9 full 18:1-18:50 :: fn later(c: Cell) -> i32
   11 param c compiler/tests/ide/partial_check.ei:18:10-18:11 full 18:10-18:17 in 10 :: c: Cell
   12 fn main compiler/tests/ide/partial_check.ei:20:4-20:8 full 20:1-20:44 :: fn main() uses io
-  (62 symbols in <prelude>)
+  (90 symbols in <prelude>)
 refs
   compiler/tests/ide/partial_check.ei:7:13-7:17 -> 1 type Cell
   compiler/tests/ide/partial_check.ei:8:13-8:14 -> 4 param c

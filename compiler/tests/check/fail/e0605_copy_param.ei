@@ -1,0 +1,4 @@
+// expect: E0605 2:34
+fn dup[T](x: T) -> T { let y = x.copy()
+    y }
+fn main() uses io { print(dup(3)) }

@@ -1,0 +1,16 @@
+Some(1)
+None
+Some(P { x: 3, y: 1 })
+[P { x: 1, y: 1 }, P { x: 1, y: 2 }, P { x: 3, y: 1 }]
+[ByY { x: 2, y: 3 }, ByY { x: 3, y: 5 }, ByY { x: 1, y: 9 }]
+Some(ByY { x: 1, y: 9 })
+2
+3
+P { x: 3, y: 1 } | P { x: 1, y: 2 } | P { x: 1, y: 1 }
+b | a | b
+(P { x: 5, y: 6 }, P { x: 5, y: 6 })
+("s", "s")
+7
+true
+--- stderr
+--- exit 0
