@@ -1601,3 +1601,35 @@ error[E0810]: can't locate package `json`: there is no eider.lock in <dir>/lib/n
 
 Fix: run `eider-pkg fetch` in the package's directory, which resolves the dependencies,
 writes `eider.lock` and puts each package where the lock says.
+
+## E0811
+
+**A package written for another toolchain**: a package's `eider.toml` says
+`eider = "X.Y"`, the toolchain MAJOR.MINOR it needs, and that isn't this compiler's
+(`eiderc --version`), or the value is not a MAJOR.MINOR (`"0.1.0"`, `"latest"`). Before 1.0
+a MINOR release may break compatibility, so every build checks it. Reported at 1:1 of the
+entry file for the entry file's own package, and at the first import that loads a module of
+any other package; each package once. A package without `eider` is not checked. See
+[`tests/checks/fail/e0811_toolchain_series.ei`](../../../tests/checks/fail/e0811_toolchain_series.ei),
+which imports [`tests/checks/fail/lib/newer/`](../../../tests/checks/fail/lib/newer/), a package
+that says `eider = "9.9"`.
+
+```toml
+[package]
+name = "newer"
+version = "0.1.0"
+eider = "9.9"
+```
+
+```text
+error[E0811]: package `newer` needs Eider 9.9 (`eider = "9.9"` in <dir>/lib/newer/eider.toml), but this toolchain is 0.1
+  --> e0811_toolchain_series.ei:3:1
+  |
+3 | import "lib/newer/newer.ei"
+  | ^
+  help: build it with an Eider 9.9.x toolchain, or port it to 0.1 and set `eider = "0.1"` in <dir>/lib/newer/eider.toml
+```
+
+Fix: build with a toolchain of the MAJOR.MINOR the package names (a release bundle has
+matching versions of everything; see [Releases](../tooling/releases.md)), or update the
+package for this toolchain and change its `eider`.

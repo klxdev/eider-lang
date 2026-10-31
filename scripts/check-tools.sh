@@ -14,6 +14,12 @@
 # $EIDER_SIBLINGS/<repository> (EIDER_SIBLINGS: default .., the directory holding this
 # checkout). One that is absent is `skip`, so a plain checkout stays green.
 #
+# - versions: the tools ship with the toolchain (docs/site/tooling/releases.md), and before
+#   1.0 the libraries keep its MAJOR.MINOR too: each sibling's VERSION must have
+#   eider-lang's MAJOR.MINOR (VERSION) and agree with its own files (its scripts/version.sh
+#   check, when it has one); `scripts/version.sh check-siblings`. One line, `ok   versions:
+#   <each component's version>`, naming the repositories that are absent, or `FAIL ...` per
+#   sibling that differs.
 # - eider-analyzer: a copy of the repository (its sources, without target/) whose eider.toml
 #   points at this checkout is fetched (`eider-pkg fetch`), built (its scripts/build.sh, which
 #   builds the compiler from this checkout's compiler/) and tested (tests/run.sh: the scripted
@@ -53,6 +59,19 @@ repo_dir() {
   [ -f "$d/eider.toml" ] || [ -f "$d/grammar.js" ] || return 1
   (cd "$d" && pwd -P)
 }
+
+# ---- versions
+sh "$here/scripts/version.sh" check-siblings > "$T/versions" 2>&1
+vrc=$?
+if [ $vrc = 0 ]; then
+  have="eider-lang $(tr -d ' \n' < "$here/VERSION")"
+  for c in $(sed -n 's/^ok   \([a-z-]*\) \([^ ]*\) .*/\1:\2/p' "$T/versions"); do have="$have, ${c%%:*} ${c#*:}"; done
+  absent=$(sed -n 's/^skip: \([a-z-]*\):.*/\1/p' "$T/versions" | paste -sd, - | sed 's/,/, /g')
+  if [ -n "$absent" ]; then echo "ok   versions: $have (same MAJOR.MINOR; absent: $absent)"; else echo "ok   versions: $have (same MAJOR.MINOR)"; fi
+else
+  grep -v '^ok\|^skip' "$T/versions"
+  fail=1
+fi
 
 # The libraries' checkouts, exported as the EIDER_<NAME> their scripts/env.sh reads (json
 # falls back to vendor/json, the release this checkout pins).

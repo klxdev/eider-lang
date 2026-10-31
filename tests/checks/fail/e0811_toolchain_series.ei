@@ -1,0 +1,5 @@
+// expect: E0811 3:1
+// the imported package says `eider = "9.9"` in its eider.toml; this toolchain is 0.1
+import "lib/newer/newer.ei"
+
+fn main() {}

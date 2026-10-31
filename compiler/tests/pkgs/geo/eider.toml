@@ -1,6 +1,7 @@
 [package]
 name = "geo"
 version = "0.1.0"
+eider = "0.1"
 
 [deps.base]
 path = "../base"

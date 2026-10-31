@@ -66,6 +66,7 @@
 - [Editors](tooling/editors.md)
 - [The documentation generator: eider-doc](tooling/eider-doc.md)
 - [The profiler: eider-profiler](tooling/profiler.md)
+- [Versions and releases](tooling/releases.md)
 
 ## Design notes
 

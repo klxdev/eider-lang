@@ -21,6 +21,7 @@ eider-pkg [-C dir] update [--offline]
 eider-pkg [-C dir] vendor
 eider-pkg [-C dir] tree
 eider-pkg hash <dir>
+eider-pkg --version
 ```
 
 `-C dir` runs the command in `dir` (default: the working directory); paths in other
@@ -28,7 +29,7 @@ arguments are relative to it.
 
 | Command | What it does |
 |---|---|
-| `init [name]` | Write `eider.toml` (name from the argument or the directory, version `0.1.0`, `main = "main.ei"`) and, if there is none, a `main.ei` that prints a line. Refuses if `eider.toml` exists. |
+| `init [name]` | Write `eider.toml` (name from the argument or the directory, version `0.1.0`, `main = "main.ei"`, `eider` the toolchain's MAJOR.MINOR) and, if there is none, a `main.ei` that prints a line. Refuses if `eider.toml` exists. |
 | `add <name> ...` | Append a `[deps.<name>]` table, resolve, check grants and write `eider.lock`. If resolution or a grant check fails, `eider.toml` is restored. `--uses io,fs` writes the grant. |
 | `remove <name>` | Delete the `[deps.<name>]` table (an inline `name = { ... }` entry must be removed by hand) and re-resolve. |
 | `fetch` | Resolve, keeping the commits `eider.lock` pins, fetch what is missing into the store, check grants and write `eider.lock`. |
@@ -36,6 +37,7 @@ arguments are relative to it.
 | `vendor` | Copy every git package into `vendor/<name>`, drop vendored packages the graph no longer has, and check that resolving from `vendor/` alone gives the same lock. The compiler then reads `vendor/` before the store, so the project builds offline with no store. |
 | `tree` | Print the locked graph, each package with its version and grants; a package seen before is marked `(*)`. |
 | `hash <dir>` | Print the content hash of a directory, as the lock records it. |
+| `--version` | Print `eider-pkg <version>`: the toolchain's version (VERSION; see [Releases](releases.md)). Only before a command: `add --version` is a dependency's version. |
 
 `--offline` makes `fetch` and `update` fail instead of touching the network. Only `add`,
 `remove`, `fetch`, `update` and `vendor` ever do, and `fetch` only when a pinned commit
@@ -50,6 +52,7 @@ name = "warehouse"          # lowercase letters, digits and `_`, starting with a
 version = "0.1.0"           # MAJOR.MINOR.PATCH
 entry = "warehouse.ei"      # what `import "warehouse"` loads (default: <name>.ei)
 main = "main.ei"            # the program, for packages that are one (optional)
+eider = "0.1"               # the toolchain MAJOR.MINOR it needs (optional; the compiler checks it, E0811)
 description = "What it is"  # optional
 
 [deps.json]                 # one table per dependency; the key is the package's own name
@@ -67,7 +70,9 @@ rev = "main"                # a branch, tag or commit instead of a version
 
 Unknown keys are errors (a typo like `verison` is caught). A dependency needs exactly one of
 `path` and `git`; a git dependency exactly one of `version` and `rev`; a path dependency
-neither. `uses` takes `io`, `fs`, `net`, `clock`, `threads` and `ffi`.
+neither. `uses` takes `io`, `fs`, `net`, `clock`, `threads` and `ffi`. `eider` must be a
+MAJOR.MINOR (`"0.1"`, not `"0.1.0"`); eider-pkg checks its form, the compiler checks it
+against the toolchain on every build.
 
 A package's modules import their own files by relative path (`import "util.ei"`), and the
 toolchain and their direct dependencies by name: `import "json"` loads the entry module,

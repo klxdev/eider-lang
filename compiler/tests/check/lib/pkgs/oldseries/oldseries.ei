@@ -1,0 +1,2 @@
+// helper package for e0811_series_import.ei: written for Eider 0.0
+pub fn f() -> i64 { 1 }

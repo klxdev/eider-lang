@@ -37,6 +37,7 @@
 // `stem__Name` strings would hit.
 
 import "core/sys"
+import "core/version"
 import "std/bytes"
 import "std/fs"
 import "std/env"
@@ -76,8 +77,9 @@ pub type Module = {
 /// A package: `dir` (canonical) holds its eider.toml, which names it and its direct
 /// dependencies with the capabilities each is granted (`grants`, parallel to `deps`); `err`
 /// says why that file can't be used (then the package has no name and its files are
-/// identified as files in no package).
-pub type Pkg = { dir: List[u8], name: List[u8], entry: List[u8], deps: List[List[u8]], err: List[u8], grants: List[List[List[u8]]] }
+/// identified as files in no package). `eider` is the toolchain MAJOR.MINOR it needs (""
+/// when it doesn't say), `vchecked` whether that was checked yet (E0811, `series_diag`).
+pub type Pkg = { dir: List[u8], name: List[u8], entry: List[u8], deps: List[List[u8]], err: List[u8], grants: List[List[List[u8]]], eider: List[u8], vchecked: bool }
 
 /// eider.lock in `dir` (`missing`: there is none; `err`: it doesn't parse).
 pub type Lock = { dir: List[u8], missing: bool, err: List[u8], pkgs: List[lock.Locked] }
@@ -388,6 +390,7 @@ pub fn load_from(file: List[u8], src: List[u8], q: parse.P, fp: Files) -> Loaded
     let pk = package_of(inout p, canon)
     add_module(inout p, file, 0, pk, src, q)
     let mut diags: List[diag.Diag] = List.new()
+    check_series(inout p, pk, 1, 1, file, inout diags)
     load_imports(inout p, 0, fp, inout diags)
     let mut fatal = false
     match load_prelude(inout p, fp) {
@@ -507,6 +510,7 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
         }
         let canon = canonical(path)
         let pk = package_of(inout p, canon)
+        check_series(inout p, pk, n.line, n.col, file, inout diags)
         let mname = module_name(p, canon, pk, st)
         let pre_sym = intern.intern(inout p.names, mname, 0, mname.len())
         p.mods[m as usize].aliases.push(Alias(alias, pre_sym + 1, n.line, n.col))
@@ -555,6 +559,81 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
         load_imports(inout p, mi, fp, inout diags)
     }
     p.order.push(m)
+}
+
+// ---- the toolchain series (docs/site/tooling/releases.md)
+//
+// A package's eider.toml may say which toolchain MAJOR.MINOR it needs: `eider = "0.1"`
+// under [package]. Before 1.0 a MINOR bump may break compatibility, so any other value
+// than this compiler's (core/version.ei's SERIES, which scripts/version.sh holds equal to
+// VERSION) is E0811: at 1:1 of the entry file for the entry file's own package, else at
+// the first import that loads a module of the package. Each package is checked once.
+
+/// Check package pk's `eider` (once) and report E0811 at (line, col) of `file` when it isn't
+/// this toolchain's MAJOR.MINOR.
+fn check_series(inout p: Program, pk: u32, line: u32, col: u32, file: List[u8], inout diags: List[diag.Diag]) {
+    if pk == NOPKG { return }
+    if p.pkgs[pk as usize].vchecked { return }
+    p.pkgs[pk as usize].vchecked = true
+    let k = p.pkgs[pk as usize].copy()
+    if k.eider.len() == 0 { return }
+    let want = sys.lit(version.SERIES)
+    if bytes.eq(k.eider, want) { return }
+    let mf = join(k.dir, sys.lit("eider.toml"))
+    let mut d = diag.new("E0811", line, col, series_msg(k, mf))
+    let mut h = sys.lit("")
+    if valid_series(k.eider) {
+        h = quoted("build it with an Eider ", k.eider, ".x toolchain, or port it to ")
+        bytes.append(inout h, want)
+        bytes.append(inout h, sys.lit(" and set `eider = \""))
+        bytes.append(inout h, want)
+        bytes.append(inout h, sys.lit("\"` in "))
+        bytes.append(inout h, mf)
+    } else {
+        h = quoted("write the toolchain MAJOR.MINOR the package needs, like `eider = \"", want, "\"`")
+    }
+    d.help = h
+    diags.push(in_file(d, file))
+}
+
+fn series_msg(k: Pkg, mf: List[u8]) -> List[u8] {
+    let mut m = sys.lit("package `")
+    bytes.append(inout m, k.name)
+    if !valid_series(k.eider) {
+        bytes.append(inout m, sys.lit("` has `eider = \""))
+        bytes.append(inout m, k.eider)
+        bytes.append(inout m, sys.lit("\"` ("))
+        bytes.append(inout m, mf)
+        bytes.append(inout m, sys.lit("), which is not a toolchain MAJOR.MINOR"))
+        return m
+    }
+    bytes.append(inout m, sys.lit("` needs Eider "))
+    bytes.append(inout m, k.eider)
+    bytes.append(inout m, sys.lit(" (`eider = \""))
+    bytes.append(inout m, k.eider)
+    bytes.append(inout m, sys.lit("\"` in "))
+    bytes.append(inout m, mf)
+    bytes.append(inout m, sys.lit("), but this toolchain is "))
+    bytes.append(inout m, sys.lit(version.SERIES))
+    m
+}
+
+/// MAJOR.MINOR: two runs of digits joined by one `.`.
+fn valid_series(v: List[u8]) -> bool {
+    let mut dots = 0
+    let mut run = 0
+    for c in v {
+        if c == 46 {
+            if run == 0 { return false }
+            dots += 1
+            run = 0
+        } else if bytes.is_digit(c) {
+            run += 1
+        } else {
+            return false
+        }
+    }
+    dots == 1 && run > 0
 }
 
 /// E0808: two different files `a` and `b` (canonical) have one module identity.
@@ -608,7 +687,7 @@ fn dir_lookup(p: Program, dir: List[u8]) -> u32 {
 /// Read the eider.toml `mf` of the package in `dir`.
 fn add_pkg(inout p: Program, dir: List[u8], mf: List[u8]) -> u32 uses fs {
     let none: List[u8] = List.new()
-    let mut pk = Pkg(dir, none, none, List.new(), none, List.new())
+    let mut pk = Pkg(dir, none, none, List.new(), none, List.new(), none, false)
     match fs.read(mf) {
         Ok(t) => {
             match lock.manifest(t) {
@@ -617,6 +696,7 @@ fn add_pkg(inout p: Program, dir: List[u8], mf: List[u8]) -> u32 uses fs {
                     pk.entry = x.entry
                     pk.deps = x.deps
                     pk.grants = x.grants
+                    pk.eider = x.eider
                 }
                 Err(e) => { pk.err = cannot(mf, e) }
             }
