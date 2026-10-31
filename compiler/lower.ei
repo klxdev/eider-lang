@@ -25,9 +25,10 @@
 //                  numbered per enclosing function), `[...]` is dropped and `_<h>` appended
 //   x_<name>_<h>   test block (`_2`, `_3`... for repeated names)
 //   <op>_<type>    glue: eq_ drop_ clone_ name_ push_ has_ find_ get_ ins_ rem_ new_
+//                  uniq_ own_ (copy-on-write)
 //                  threads: spawn_ run_ join_ (Task), new_ get_ set_ upd_ (Mutex),
 //                  new_ send_ recv_ (Chan)
-//   env_<f> edrop_<f> eclone_<f> k_<f>   closure environment and its glue; thunk of a
+//   env_<f> edrop_<f> eclone_<f> eown_<f> k_<f>   closure environment and its glue; thunk of a
 //                  function used as a value
 //   l<i>[_<name>]  local i of the function being lowered (parameters first)
 //   s<n>           the n-th loop's `continue` label (only when its step block is not empty)
@@ -40,10 +41,17 @@
 // runtime's `ei_String`; List[T] `{ T *d; uint64_t len, cap; }`; Map[K, V] an open
 // addressing table `{ K *k; V *v; uint8_t *s; uint64_t len, cap, used; }` (s: 0 empty, 1 used,
 // 2 deleted; hashing and probing fixed by tests/oracle); Box[T] `{ T *p; }`; a fn value
-// `{ void *env; R (*call)(void *, ...); void (*drop)(void *); void *(*clone)(void *); }`;
+// `{ void *env; R (*call)(void *, ...); void (*drop)(void *); void *(*clone)(void *);
+// void (*own)(void *); }`;
 // Task[T], Mutex[T] and Chan[T] `{ struct <name>_c *p; }`, a pointer to a shared object that
 // starts with the runtime's `ei_rc` count and embeds the runtime's thread, mutex or channel
 // (see "threads" below). Copying a handle shares the object; the last drop frees it.
+// Copy-on-write (docs/compiler.md, "C8.1: copy-on-write"): the String bytes, the List `d`,
+// the Map arrays (counted on `s`) and the Box `p` are the runtime's shared buffers
+// (core/eider_rt.h `ei_buf_*`). A clone counts one more holder; a write first makes the
+// buffer its own (`uniq_` glue on every List and Box on the path to the written place, and
+// inside the List/Map/String operations); the last drop drops the elements. Counts are not
+// atomic: values are made unique (`own_` glue) before another thread can see them.
 // Every struct type is forward-declared, then defined after the types it contains by value.
 // `inout` parameters are pointers. Every local is declared at the top of its function with a
 // zero initializer, so no path reads an uninitialized variable (and gcc -O2 has nothing to
@@ -90,6 +98,10 @@ const GK_MXUPD: u32 = 19
 const GK_CHNEW: u32 = 20
 const GK_CHSEND: u32 = 21
 const GK_CHRECV: u32 = 22
+// copy-on-write (keyed by the type): give a List, Map or Box a buffer of its own (uniq_),
+// make every buffer a value reaches its own before it crosses to another thread (own_)
+const GK_UNIQ: u32 = 23
+const GK_OWN: u32 = 24
 
 /// Output and lowering state. `o` is the text being written; `pr` collects glue prototypes
 /// and `envs` closure environment structs while glue is generated. Per type: its C name
@@ -640,7 +652,7 @@ fn def_ty(inout g: G, p: P, ty: u32, inout done: Map[u32, bool]) uses ffi {
             put(inout g, ", ")
             cty(inout g, p, x)
         }
-        put(inout g, "); void (*drop)(void *); void *(*clone)(void *); };\n")
+        put(inout g, "); void (*drop)(void *); void *(*clone)(void *); void (*own)(void *); };\n")
         return
     }
     let d = types.def_of(p.t, ty)
@@ -764,7 +776,7 @@ fn clone_expr(inout g: G, p: P, ty: u32, ptr: List[u8]) uses ffi {
         return
     }
     if ty_kind(p, ty) == types.T_STRING {
-        put(inout g, "ei_clone_String(")
+        put(inout g, "ei_share_String(")
     } else {
         need(inout g, GK_CLONE, ty)
         gname(inout g, p, "clone_", ty)
@@ -772,6 +784,41 @@ fn clone_expr(inout g: G, p: P, ty: u32, ptr: List[u8]) uses ffi {
     }
     putb(inout g, ptr)
     put(inout g, ")")
+}
+
+/// `uniq(ptr)` (no `;`) for the String, List, Map or Box of type ty at C pointer expression
+/// ptr: it gets a buffer of its own, copied only when the buffer is shared (copy-on-write),
+/// before it is changed. Nothing for other types.
+fn uniq_call(inout g: G, p: P, ty: u32, ptr: List[u8]) uses ffi {
+    let k = ty_kind(p, ty)
+    if k == types.T_STRING {
+        put(inout g, "ei_str_unique(")
+    } else if k == types.T_LIST || k == types.T_MAP || k == types.T_BOX {
+        need(inout g, GK_UNIQ, ty)
+        gname(inout g, p, "uniq_", ty)
+        put(inout g, "(")
+    } else {
+        return
+    }
+    putb(inout g, ptr)
+    put(inout g, ")")
+}
+
+/// `own(ptr); ` for a value of type ty at C pointer expression ptr that is about to be seen
+/// by another thread: every buffer it reaches becomes its own (counts are not atomic, so no
+/// buffer may be shared across threads). Handles (Task, Mutex, Chan) are shared on purpose
+/// and synchronise themselves, so nothing is done inside them.
+fn own_call(inout g: G, p: P, ty: u32, ptr: List[u8]) uses ffi {
+    if !owns(inout g, p, ty) || types.is_handle(ty_kind(p, ty)) { return }
+    if ty_kind(p, ty) == types.T_STRING {
+        put(inout g, "ei_str_unique(")
+    } else {
+        need(inout g, GK_OWN, ty)
+        gname(inout g, p, "own_", ty)
+        put(inout g, "(")
+    }
+    putb(inout g, ptr)
+    put(inout g, "); ")
 }
 
 /// The hash of Map key expression v of type kty (ei_hash_str for String and str keys, else ei_hash_u64).
@@ -819,6 +866,10 @@ fn glue(inout g: G, p: P, key: u64) uses ffi {
         env_glue(inout g, p, id)
     } else if kind == GK_THUNK {
         thunk_glue(inout g, p, id)
+    } else if kind == GK_UNIQ {
+        uniq_glue(inout g, p, id)
+    } else if kind == GK_OWN {
+        own_glue(inout g, p, id)
     } else if kind >= GK_SPAWN {
         thread_glue(inout g, p, kind, id)
     } else {
@@ -957,36 +1008,38 @@ fn drop_glue(inout g: G, p: P, ty: u32) uses ffi {
             put(inout g, "}")
         }
     } else if k == types.T_LIST {
+        // the last holder of the shared buffer drops the elements, once
+        put(inout g, "if (ei_buf_dec(x->d)) {\n    ")
         if owns(inout g, p, t.a) {
             put(inout g, "for (uint64_t i = 0; i < x->len; i++) { ")
             drop_call(inout g, p, t.a, sys.lit("&x->d[i]"))
-            put(inout g, "}\n  ")
+            put(inout g, "}\n    ")
         }
-        put(inout g, "ei_free(x->d); x->d = NULL; x->len = 0; x->cap = 0;")
+        put(inout g, "ei_buf_free(x->d);\n  }\n  x->d = NULL; x->len = 0; x->cap = 0;")
     } else if k == types.T_MAP {
+        // the count is on the slot states `s`; k and v go with it
+        put(inout g, "if (ei_buf_dec(x->s)) {\n    ")
         if owns(inout g, p, t.a) || owns(inout g, p, t.b) {
             put(inout g, "for (uint64_t i = 0; i < x->cap; i++) if (x->s[i] == 1) { ")
             drop_call(inout g, p, t.a, sys.lit("&x->k[i]"))
             drop_call(inout g, p, t.b, sys.lit("&x->v[i]"))
-            put(inout g, "}\n  ")
+            put(inout g, "}\n    ")
         }
-        put(inout g, "ei_free(x->k); ei_free(x->v); ei_free(x->s); x->k = NULL; x->v = NULL; x->s = NULL; x->len = 0; x->cap = 0; x->used = 0;")
+        put(inout g, "ei_free(x->k); ei_free(x->v); ei_buf_free(x->s);\n  }\n  x->k = NULL; x->v = NULL; x->s = NULL; x->len = 0; x->cap = 0; x->used = 0;")
     } else if k == types.T_BOX {
-        if owns(inout g, p, t.a) {
-            put(inout g, "if (x->p) { ")
-            drop_call(inout g, p, t.a, sys.lit("x->p"))
-            put(inout g, "}\n  ")
-        }
-        put(inout g, "ei_free(x->p); x->p = NULL;")
+        put(inout g, "if (ei_buf_dec(x->p)) {\n    ")
+        drop_call(inout g, p, t.a, sys.lit("x->p"))
+        put(inout g, "ei_buf_free(x->p);\n  }\n  x->p = NULL;")
     } else if k == types.T_FN {
-        put(inout g, "if (x->drop) { x->drop(x->env); }\n  x->env = NULL; x->drop = NULL; x->clone = NULL;")
+        put(inout g, "if (x->drop) { x->drop(x->env); }\n  x->env = NULL; x->drop = NULL; x->clone = NULL; x->own = NULL;")
     } else if types.is_handle(k) {
         handle_drop(inout g, p, ty)
     }
     put(inout g, "\n}\n")
 }
 
-/// `static T clone_T(const T *x)`: a deep copy.
+/// `static T clone_T(const T *x)`: a copy. Lists, Maps, Boxes and Strings share their buffer
+/// (copy-on-write), so this copies no heap data: it counts one more holder of each buffer.
 fn clone_glue(inout g: G, p: P, ty: u32) uses ffi {
     let mark = g.o.len()
     put(inout g, "static ")
@@ -1060,19 +1113,12 @@ fn clone_glue(inout g: G, p: P, ty: u32) uses ffi {
             put(inout g, ";")
         }
     } else if k == types.T_LIST {
-        put(inout g, "r.cap = x->len;\n  r.d = x->len ? ei_alloc_n(x->len, sizeof *r.d) : NULL;\n  for (uint64_t i = 0; i < x->len; i++) r.d[i] = ")
-        clone_expr(inout g, p, t.a, sys.lit("&x->d[i]"))
-        put(inout g, ";")
+        // copy-on-write: the copy shares the buffer
+        put(inout g, "ei_buf_inc(r.d);")
     } else if k == types.T_MAP {
-        put(inout g, "r.k = ei_alloc_n(x->cap, sizeof *r.k);\n  r.v = ei_alloc_n(x->cap, sizeof *r.v);\n  r.s = ei_alloc(x->cap);\n  for (uint64_t i = 0; i < x->cap; i++) {\n    r.s[i] = x->s[i];\n    if (x->s[i] == 1) { r.k[i] = ")
-        clone_expr(inout g, p, t.a, sys.lit("&x->k[i]"))
-        put(inout g, "; r.v[i] = ")
-        clone_expr(inout g, p, t.b, sys.lit("&x->v[i]"))
-        put(inout g, "; }\n  }")
+        put(inout g, "ei_buf_inc(r.s);")
     } else if k == types.T_BOX {
-        put(inout g, "r.p = ei_alloc(sizeof *r.p);\n  *r.p = ")
-        clone_expr(inout g, p, t.a, sys.lit("x->p"))
-        put(inout g, ";")
+        put(inout g, "ei_buf_inc(r.p);")
     } else if k == types.T_FN {
         put(inout g, "if (x->clone) { r.env = x->clone(x->env); }")
     } else if types.is_handle(k) {
@@ -1080,6 +1126,126 @@ fn clone_glue(inout g: G, p: P, ty: u32) uses ffi {
         put(inout g, "if (r.p) ei_rc_inc(&r.p->rc);")
     }
     put(inout g, "\n  return r;\n}\n")
+}
+
+/// `static void uniq_T(T *x)` for a List, Map or Box: when x's buffer is shared, x gets a
+/// copy (of the elements: each is a copy, so it shares its own buffers in turn) and lets go
+/// of the shared one, which stays with its other holders.
+fn uniq_glue(inout g: G, p: P, ty: u32) uses ffi {
+    let mark = g.o.len()
+    put(inout g, "static void ")
+    gname(inout g, p, "uniq_", ty)
+    put(inout g, "(")
+    cty(inout g, p, ty)
+    put(inout g, " *x)")
+    proto(inout g, mark)
+    need(inout g, GK_DROP, ty)
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_LIST {
+        put(inout g, " {\n  if (!ei_buf_shared(x->d)) return;\n  ")
+        cty(inout g, p, ty)
+        put(inout g, " old = *x;\n  x->d = ei_buf_alloc(x->cap, sizeof *x->d);\n  ")
+        if owns(inout g, p, t.a) {
+            put(inout g, "for (uint64_t i = 0; i < x->len; i++) x->d[i] = ")
+            clone_expr(inout g, p, t.a, sys.lit("&old.d[i]"))
+            put(inout g, ";\n  ")
+        } else {
+            put(inout g, "if (x->len) memcpy(x->d, old.d, (size_t)x->len * sizeof *x->d);\n  ")
+        }
+    } else if k == types.T_MAP {
+        put(inout g, " {\n  if (!ei_buf_shared(x->s)) return;\n  ")
+        cty(inout g, p, ty)
+        put(inout g, " old = *x;\n  x->k = ei_alloc_n(x->cap, sizeof *x->k);\n  x->v = ei_alloc_n(x->cap, sizeof *x->v);\n  x->s = ei_buf_alloc(x->cap, 1);\n  for (uint64_t i = 0; i < x->cap; i++) {\n    x->s[i] = old.s[i];\n    if (old.s[i] == 1) { x->k[i] = ")
+        clone_expr(inout g, p, t.a, sys.lit("&old.k[i]"))
+        put(inout g, "; x->v[i] = ")
+        clone_expr(inout g, p, t.b, sys.lit("&old.v[i]"))
+        put(inout g, "; }\n  }\n  ")
+    } else {
+        put(inout g, " {\n  if (!ei_buf_shared(x->p)) return;\n  ")
+        cty(inout g, p, ty)
+        put(inout g, " old = *x;\n  x->p = ei_buf_alloc(1, sizeof *x->p);\n  *x->p = ")
+        clone_expr(inout g, p, t.a, sys.lit("old.p"))
+        put(inout g, ";\n  ")
+    }
+    // one holder fewer of the shared buffer (never the last: it was shared)
+    gname(inout g, p, "drop_", ty)
+    put(inout g, "(&old);\n}\n")
+}
+
+/// `static void own_T(T *x)`: every buffer x reaches becomes its own (B_SPAWN's closure,
+/// values going into a Mutex or a channel, and the copies Mutex.get and Task.join hand out),
+/// so no buffer is reachable from two threads.
+fn own_glue(inout g: G, p: P, ty: u32) uses ffi {
+    let mark = g.o.len()
+    put(inout g, "static void ")
+    gname(inout g, p, "own_", ty)
+    put(inout g, "(")
+    cty(inout g, p, ty)
+    put(inout g, " *x)")
+    proto(inout g, mark)
+    put(inout g, " {\n  (void)x;\n  ")
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_RECORD {
+        let d = types.def_of(p.t, ty)
+        for i in 0..d.len { own_call(inout g, p, types.field(p.t, d.start, i).ty, txt("&x->f", i as u64, "")) }
+    } else if k == types.T_TUPLE {
+        let es = types.elems(p.t, ty)
+        for i in 0..es.len() { own_call(inout g, p, es[i], txt("&x->f", i as u64, "")) }
+    } else if k == types.T_ENUM {
+        let d = types.def_of(p.t, ty)
+        put(inout g, "switch (x->tag) { ")
+        for i in 0..d.len {
+            let v = types.variant(p.t, d, i)
+            put(inout g, "case ")
+            putn(inout g, i as u64)
+            put(inout g, ": ")
+            for j in 0..v.flen {
+                var x = txt("&x->u.v", i as u64, ".f")
+                bytes.append(inout x, bytes.from_u64(j as u64))
+                own_call(inout g, p, types.field(p.t, v.fstart, j).ty, x)
+            }
+            put(inout g, "break; ")
+        }
+        put(inout g, "default: break; }")
+    } else if k == types.T_ARRAY {
+        if t.b > 0 {
+            put(inout g, "for (uint64_t i = 0; i < ")
+            putn(inout g, t.b as u64)
+            put(inout g, "; i++) { ")
+            own_call(inout g, p, t.a, sys.lit("&x->a[i]"))
+            put(inout g, "}")
+        }
+    } else if k == types.T_LIST {
+        uniq_call(inout g, p, ty, sys.lit("x"))
+        put(inout g, ";")
+        if owns(inout g, p, t.a) {
+            put(inout g, "\n  for (uint64_t i = 0; i < x->len; i++) { ")
+            own_call(inout g, p, t.a, sys.lit("&x->d[i]"))
+            put(inout g, "}")
+        }
+    } else if k == types.T_MAP {
+        uniq_call(inout g, p, ty, sys.lit("x"))
+        put(inout g, ";")
+        if owns(inout g, p, t.a) || owns(inout g, p, t.b) {
+            put(inout g, "\n  for (uint64_t i = 0; i < x->cap; i++) if (x->s[i] == 1) { ")
+            own_call(inout g, p, t.a, sys.lit("&x->k[i]"))
+            own_call(inout g, p, t.b, sys.lit("&x->v[i]"))
+            put(inout g, "}")
+        }
+    } else if k == types.T_BOX {
+        uniq_call(inout g, p, ty, sys.lit("x"))
+        put(inout g, ";")
+        if owns(inout g, p, t.a) {
+            put(inout g, "\n  if (x->p) { ")
+            own_call(inout g, p, t.a, sys.lit("x->p"))
+            put(inout g, "}")
+        }
+    } else if k == types.T_FN {
+        put(inout g, "if (x->own) { x->own(x->env); }")
+    }
+    put(inout g, "\n}\n")
 }
 
 /// Variant names, for `print` (the variant's mangled name is printed, as tests/oracle expects).
@@ -1112,9 +1278,9 @@ fn list_glue(inout g: G, p: P, kind: u32, ty: u32) uses ffi {
         cty(inout g, p, el)
         put(inout g, " x)")
         proto(inout g, mark)
-        put(inout g, " {\n  if (l->len == l->cap) {\n    uint64_t nc = l->cap ? l->cap * 2 : 4;\n    ")
-        cty(inout g, p, el)
-        put(inout g, " *nd = ei_alloc_n(nc, sizeof *nd);\n    if (l->len) memcpy(nd, l->d, (size_t)l->len * sizeof *nd);\n    ei_free(l->d);\n    l->d = nd;\n    l->cap = nc;\n  }\n  l->d[l->len++] = x;\n}\n")
+        put(inout g, " {\n  ")
+        uniq_call(inout g, p, ty, sys.lit("l"))
+        put(inout g, ";\n  if (l->len == l->cap) {\n    uint64_t nc = ei_grow_cap(l->cap, l->len, 1, 4);\n    l->d = ei_buf_grow(l->d, nc, sizeof *l->d);\n    l->cap = nc;\n  }\n  l->d[l->len++] = x;\n}\n")
         return
     }
     put(inout g, "static bool ")
@@ -1144,7 +1310,7 @@ fn box_glue(inout g: G, p: P, ty: u32) uses ffi {
     proto(inout g, mark)
     put(inout g, " {\n  ")
     cty(inout g, p, ty)
-    put(inout g, " b;\n  b.p = ei_alloc(sizeof *b.p);\n  *b.p = v;\n  return b;\n}\n")
+    put(inout g, " b;\n  b.p = ei_buf_alloc(1, sizeof *b.p);\n  *b.p = v;\n  return b;\n}\n")
 }
 
 /// The Map operations: `find_M` (slot or -1), `get_M` (pointer to
@@ -1200,6 +1366,9 @@ fn map_glue(inout g: G, p: P, kind: u32, ty: u32) uses ffi {
         put(inout g, " {\n  int64_t f = ")
         gname(inout g, p, "find_", ty)
         put(inout g, "(m, key);\n  if (f < 0) return false;\n  ")
+        // a copy keeps the slots, so f stays valid
+        uniq_call(inout g, p, ty, sys.lit("m"))
+        put(inout g, ";\n  ")
         drop_call(inout g, p, kt, sys.lit("&m->k[f]"))
         drop_call(inout g, p, vt, sys.lit("&m->v[f]"))
         put(inout g, "m->s[f] = 2;\n  m->len--;\n  return true;\n}\n")
@@ -1217,22 +1386,24 @@ fn map_glue(inout g: G, p: P, kind: u32, ty: u32) uses ffi {
     proto(inout g, mark)
     put(inout g, " {\n  int64_t f = ")
     gname(inout g, p, "find_", ty)
-    put(inout g, "(m, key);\n  if (f >= 0) {\n    ")
+    put(inout g, "(m, key);\n  ")
+    uniq_call(inout g, p, ty, sys.lit("m"))
+    put(inout g, ";\n  if (f >= 0) {\n    ")
     drop_call(inout g, p, vt, sys.lit("&m->v[f]"))
     drop_call(inout g, p, kt, sys.lit("&key"))
-    put(inout g, "m->v[f] = val;\n    return;\n  }\n  if ((m->used + 1) * 4 > m->cap * 3) {\n    uint64_t nc = m->cap ? m->cap * 2 : 8;\n    ")
+    put(inout g, "m->v[f] = val;\n    return;\n  }\n  if ((m->used + 1) * 4 > m->cap * 3) {\n    uint64_t nc = ei_grow_cap(m->cap, m->cap, 1, 8);\n    ")
     cty(inout g, p, kt)
     put(inout g, " *nk = ei_alloc_n(nc, sizeof *nk);\n    ")
     cty(inout g, p, vt)
-    put(inout g, " *nv = ei_alloc_n(nc, sizeof *nv);\n    uint8_t *ns = ei_alloc(nc);\n    memset(ns, 0, (size_t)nc);\n    for (uint64_t j = 0; j < m->cap; j++) if (m->s[j] == 1) {\n      uint64_t i = ")
+    put(inout g, " *nv = ei_alloc_n(nc, sizeof *nv);\n    uint8_t *ns = ei_buf_alloc(nc, 1);\n    memset(ns, 0, (size_t)nc);\n    for (uint64_t j = 0; j < m->cap; j++) if (m->s[j] == 1) {\n      uint64_t i = ")
     hash_expr(inout g, p, kt, "m->k[j]")
-    put(inout g, " & (nc - 1);\n      while (ns[i]) i = (i + 1) & (nc - 1);\n      nk[i] = m->k[j];\n      nv[i] = m->v[j];\n      ns[i] = 1;\n    }\n    ei_free(m->k);\n    ei_free(m->v);\n    ei_free(m->s);\n    m->k = nk;\n    m->v = nv;\n    m->s = ns;\n    m->cap = nc;\n    m->used = m->len;\n  }\n  uint64_t i = ")
+    put(inout g, " & (nc - 1);\n      while (ns[i]) i = (i + 1) & (nc - 1);\n      nk[i] = m->k[j];\n      nv[i] = m->v[j];\n      ns[i] = 1;\n    }\n    ei_free(m->k);\n    ei_free(m->v);\n    ei_buf_free(m->s);\n    m->k = nk;\n    m->v = nv;\n    m->s = ns;\n    m->cap = nc;\n    m->used = m->len;\n  }\n  uint64_t i = ")
     hash_expr(inout g, p, kt, "key")
     put(inout g, " & (m->cap - 1);\n  while (m->s[i] == 1) i = (i + 1) & (m->cap - 1);\n  if (m->s[i] == 0) m->used++;\n  m->k[i] = key;\n  m->v[i] = val;\n  m->s[i] = 1;\n  m->len++;\n}\n")
 }
 
 /// The environment of closure body f: `struct env_F { ... c<i>; }` (in `envs`) and its
-/// drop (`edrop_F`) and clone (`eclone_F`), which the closure value points to.
+/// drop (`edrop_F`), clone (`eclone_F`) and own (`eown_F`), which the closure value points to.
 fn env_glue(inout g: G, p: P, f: u32) uses ffi {
     let fd = p.ir.fns[f as usize]
     let n = g.ncap[f as usize]
@@ -1285,6 +1456,17 @@ fn env_glue(inout g: G, p: P, f: u32) uses ffi {
         put(inout g, "; ")
     }
     put(inout g, "return r;\n}\n")
+    // before the closure runs on (or is handed to) another thread
+    let mark3 = g.o.len()
+    put(inout g, "static void eown_")
+    putb(inout g, fname)
+    put(inout g, "(void *q)")
+    proto(inout g, mark3)
+    put(inout g, " {\n  env_")
+    putb(inout g, fname)
+    put(inout g, " *e = q;\n  (void)e;\n  ")
+    for i in 0..n { own_call(inout g, p, p.ir.locals[(fd.lstart + i) as usize].ty, txt("&e->c", i as u64, "")) }
+    put(inout g, "\n}\n")
 }
 
 /// `k_F`: function f called through a fn value (no environment).
@@ -1440,6 +1622,37 @@ fn checks(inout g: G, p: P, id: u32, depth: u32) uses ffi {
     put(inout g, ", ")
     putn(inout g, x.line as u64)
     put(inout g, ");\n")
+}
+
+/// Copy-on-write before a statement writes into place `id` (stores to it, drops or moves
+/// it, passes it `inout` or to a mutating builtin): every List and Box on the path to it
+/// gets a buffer of its own, outermost first, so the write is not seen through another copy
+/// of a container. (The place itself, when it is a container, is made unique by whatever
+/// changes it: the glue, ei_str_cat, a callee's own writes.)
+fn uniqs(inout g: G, p: P, id: u32, depth: u32) uses ffi {
+    let x = p.ir.places[id as usize]
+    if x.kind == ir.P_LOCAL { return }
+    uniqs(inout g, p, x.a, depth)
+    let bty = p.ir.places[x.a as usize].ty
+    if x.kind == ir.P_DEREF || (x.kind == ir.P_INDEX && ty_kind(p, bty) == types.T_LIST) {
+        var ptr = sys.lit("&")
+        bytes.append(inout ptr, place_text(inout g, p, x.a))
+        ind(inout g, depth)
+        uniq_call(inout g, p, bty, ptr)
+        put(inout g, ";\n")
+    }
+}
+
+fn arg_uniqs(inout g: G, p: P, start: u32, n: u32, depth: u32) uses ffi {
+    for i in 0..n {
+        let a = p.ir.extra[(start + i) as usize]
+        if a >= ir.ARG_PLACE { uniqs(inout g, p, a - ir.ARG_PLACE, depth) }
+    }
+}
+
+/// Whether builtin b changes its first argument (a place).
+fn mutates(b: u32) -> bool {
+    b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE
 }
 
 /// A place as a C lvalue (its indices are checked already).
@@ -1768,10 +1981,15 @@ fn builtin(inout g: G, p: P, s: ir.Stmt, depth: u32) uses ffi {
         arg_val(inout g, p, barg(p, s, 1))
         put(inout g, ")")
     } else if b == ir.B_LIST_POP {
-        // if (l.len == 0) dst = None; else dst = Some(l.d[--l.len])
+        // uniq(&l); if (l.len == 0) dst = None; else dst = Some(l.d[--l.len])
         let mark = g.o.len()
         arg_val(inout g, p, barg(p, s, 0))
         let l = cut(inout g, mark)
+        var lp = sys.lit("&")
+        bytes.append(inout lp, l)
+        uniq_call(inout g, p, arg_ty(p, barg(p, s, 0)), lp)
+        put(inout g, ";\n")
+        ind(inout g, depth)
         put(inout g, "if (")
         putb(inout g, l)
         put(inout g, ".len == 0) ")
@@ -1861,7 +2079,7 @@ fn builtin(inout g: G, p: P, s: ir.Stmt, depth: u32) uses ffi {
 }
 
 /// S_CLOSURE: `{ env_F *e = ei_alloc(sizeof *e); e->c0 = ...; dst = (T){ e, F, edrop_F,
-/// eclone_F }; }` (no environment when nothing is captured).
+/// eclone_F, eown_F }; }` (no environment when nothing is captured).
 fn closure(inout g: G, p: P, s: ir.Stmt) uses ffi {
     let fname = g.fnn[s.a as usize]
     if s.c == 0 {
@@ -1870,7 +2088,7 @@ fn closure(inout g: G, p: P, s: ir.Stmt) uses ffi {
         cty(inout g, p, s.ty)
         put(inout g, "){ NULL, ")
         putb(inout g, fname)
-        put(inout g, ", NULL, NULL }")
+        put(inout g, ", NULL, NULL, NULL }")
         return
     }
     need(inout g, GK_ENV, s.a)
@@ -1893,6 +2111,8 @@ fn closure(inout g: G, p: P, s: ir.Stmt) uses ffi {
     put(inout g, ", edrop_")
     putb(inout g, fname)
     put(inout g, ", eclone_")
+    putb(inout g, fname)
+    put(inout g, ", eown_")
     putb(inout g, fname)
     put(inout g, " }; }")
 }
@@ -1946,6 +2166,10 @@ fn stmt(inout g: G, p: P, id: u32, depth: u32) uses ffi {
     // bounds checks of the places this statement uses
     if k == ir.S_READ || k == ir.S_STORE || k == ir.S_TAG || k == ir.S_MOVE || k == ir.S_DROP { checks(inout g, p, s.a, depth) }
     if k == ir.S_CALL || k == ir.S_BUILTIN { arg_checks(inout g, p, s.b, s.c, depth) }
+    // copy-on-write: the containers on the path to a place written into
+    if k == ir.S_STORE || k == ir.S_MOVE || k == ir.S_DROP { uniqs(inout g, p, s.a, depth) }
+    if k == ir.S_CALL || k == ir.S_CALLV { arg_uniqs(inout g, p, s.b, s.c, depth) }
+    if k == ir.S_BUILTIN && mutates(s.a) && s.c > 0 { arg_uniqs(inout g, p, s.b, 1, depth) }
     ind(inout g, depth)
     if k == ir.S_COPY {
         dst(inout g, p, s.dst)
@@ -2090,7 +2314,7 @@ fn stmt(inout g: G, p: P, id: u32, depth: u32) uses ffi {
         cty(inout g, p, s.ty)
         put(inout g, "){ NULL, k_")
         fn_name(inout g, p, s.a)
-        put(inout g, ", NULL, NULL }")
+        put(inout g, ", NULL, NULL, NULL }")
     } else if k == ir.S_CALLV {
         if s.dst != ir.NONE { dst(inout g, p, s.dst) }
         let f = op_text(inout g, p, s.a)
@@ -2551,6 +2775,10 @@ pub fn header(p: P) -> List[u8] uses ffi {
 // values still queued. Values cross threads only by move (spawn's closure, send) or by
 // copy under the lock (Mutex.get); old values a Mutex replaces are dropped after the lock
 // is released, so a drop that joins a thread (a Task in a Mutex) never runs under it.
+// Every value that crosses (the closure's captures, values put into a Mutex or a channel,
+// the result of an update closure, the copies get and join hand out) is owned first
+// (own_call), so no copy-on-write buffer is reachable from two threads; join makes its copy
+// under the Task's own lock (`mu`, only when T owns heap data).
 
 /// The shared objects' structs, after every type is complete.
 fn handle_bodies(inout g: G, p: P) uses ffi {
@@ -2568,6 +2796,7 @@ fn handle_bodies(inout g: G, p: P) uses ffi {
                 cty(inout g, p, t.a)
                 put(inout g, " r; ")
             }
+            if task_locked(inout g, p, t.a) { put(inout g, "ei_mutex mu; ") }
         } else if t.kind == types.T_MUTEX {
             put(inout g, "ei_mutex mu; ")
             cty(inout g, p, t.a)
@@ -2578,6 +2807,10 @@ fn handle_bodies(inout g: G, p: P) uses ffi {
         put(inout g, "};\n")
     }
 }
+
+/// Whether a Task[T]'s object has a lock for copying its result out: when T owns heap data,
+/// a join counts holders of the result's buffers, and joins may run on several threads.
+fn task_locked(inout g: G, p: P, el: u32) -> bool { !is_void(p, el) && owns(inout g, p, el) }
 
 /// `fn() -> T`, the closure type a Task[T] runs (types.task_of interns it).
 fn task_fn(p: P, el: u32) -> u32 { types.find_comp(p.t, types.T_FN, types.EMPTY, el) }
@@ -2599,6 +2832,7 @@ fn handle_drop(inout g: G, p: P, ty: u32) uses ffi {
         put(inout g, "ei_thread_destroy(&x->p->th);\n    ")
         drop_call(inout g, p, task_fn(p, t.a), sys.lit("&x->p->f"))
         if !is_void(p, t.a) { drop_call(inout g, p, t.a, sys.lit("&x->p->r")) }
+        if task_locked(inout g, p, t.a) { put(inout g, "ei_mutex_destroy(&x->p->mu);") }
     } else if t.kind == types.T_MUTEX {
         drop_call(inout g, p, t.a, sys.lit("&x->p->v"))
         put(inout g, "ei_mutex_destroy(&x->p->mu);")
@@ -2664,7 +2898,12 @@ fn thread_glue(inout g: G, p: P, kind: u32, ty: u32) uses ffi {
         proto(inout g, m2)
         put(inout g, " {\n  ")
         cty(inout g, p, ty)
-        put(inout g, " t;\n  t.p = ei_alloc(sizeof *t.p);\n  ei_rc_init(&t.p->rc);\n  t.p->f = f;\n  ei_thread_start(&t.p->th, ")
+        put(inout g, " t;\n  ")
+        // the closure runs on the new thread: nothing it captured may share a buffer here
+        own_call(inout g, p, task_fn(p, el), sys.lit("&f"))
+        put(inout g, "t.p = ei_alloc(sizeof *t.p);\n  ei_rc_init(&t.p->rc);\n  ")
+        if task_locked(inout g, p, el) { put(inout g, "ei_mutex_init(&t.p->mu);\n  ") }
+        put(inout g, "t.p->f = f;\n  ei_thread_start(&t.p->th, ")
         gname(inout g, p, "run_", ty)
         put(inout g, ", t.p);\n  return t;\n}\n")
     } else if kind == GK_JOIN {
@@ -2672,10 +2911,17 @@ fn thread_glue(inout g: G, p: P, kind: u32, ty: u32) uses ffi {
         handle_sig(inout g, p, el, "join_", ty, "t)")
         proto(inout g, mark)
         put(inout g, " {\n  ei_thread_join(&t.p->th);\n")
-        if !unit_r {
-            put(inout g, "  return ")
+        if task_locked(inout g, p, el) {
+            // a copy of its own, made under the Task's lock (other threads may be joining)
+            put(inout g, "  ei_mutex_lock(&t.p->mu);\n  ")
+            cty(inout g, p, el)
+            put(inout g, " r = ")
             clone_expr(inout g, p, el, sys.lit("&t.p->r"))
-            put(inout g, ";\n")
+            put(inout g, ";\n  ")
+            own_call(inout g, p, el, sys.lit("&r"))
+            put(inout g, "\n  ei_mutex_unlock(&t.p->mu);\n  return r;\n")
+        } else if !unit_r {
+            put(inout g, "  return t.p->r;\n")
         }
         put(inout g, "}\n")
     } else if kind == GK_MXNEW {
@@ -2689,7 +2935,9 @@ fn thread_glue(inout g: G, p: P, kind: u32, ty: u32) uses ffi {
         proto(inout g, mark)
         put(inout g, " {\n  ")
         cty(inout g, p, ty)
-        put(inout g, " m;\n  m.p = ei_alloc(sizeof *m.p);\n  ei_rc_init(&m.p->rc);\n  ei_mutex_init(&m.p->mu);\n  m.p->v = v;\n  return m;\n}\n")
+        put(inout g, " m;\n  ")
+        own_call(inout g, p, el, sys.lit("&v"))
+        put(inout g, "m.p = ei_alloc(sizeof *m.p);\n  ei_rc_init(&m.p->rc);\n  ei_mutex_init(&m.p->mu);\n  m.p->v = v;\n  return m;\n}\n")
     } else if kind == GK_MXGET {
         handle_sig(inout g, p, el, "get_", ty, "m)")
         proto(inout g, mark)
@@ -2697,13 +2945,17 @@ fn thread_glue(inout g: G, p: P, kind: u32, ty: u32) uses ffi {
         cty(inout g, p, el)
         put(inout g, " r = ")
         clone_expr(inout g, p, el, sys.lit("&m.p->v"))
-        put(inout g, ";\n  ei_mutex_unlock(&m.p->mu);\n  return r;\n}\n")
+        put(inout g, ";\n  ")
+        own_call(inout g, p, el, sys.lit("&r"))
+        put(inout g, "ei_mutex_unlock(&m.p->mu);\n  return r;\n}\n")
     } else if kind == GK_MXSET {
         handle_sig(inout g, p, types.UNIT, "set_", ty, "m, ")
         cty(inout g, p, el)
         put(inout g, " v)")
         proto(inout g, mark)
-        put(inout g, " {\n  ei_mutex_lock(&m.p->mu);\n  ")
+        put(inout g, " {\n  ")
+        own_call(inout g, p, el, sys.lit("&v"))
+        put(inout g, "ei_mutex_lock(&m.p->mu);\n  ")
         old_save(inout g, p, el)
         put(inout g, "m.p->v = v;\n  ei_mutex_unlock(&m.p->mu);")
         old_drop(inout g, p, el)
@@ -2717,6 +2969,8 @@ fn thread_glue(inout g: G, p: P, kind: u32, ty: u32) uses ffi {
         put(inout g, " {\n  ei_mutex_lock(&m.p->mu);\n  ")
         cty(inout g, p, el)
         put(inout g, " nv = f.call(f.env, m.p->v);\n  ")
+        // the result may share buffers with the old value or the closure's captures
+        own_call(inout g, p, el, sys.lit("&nv"))
         old_save(inout g, p, el)
         put(inout g, "m.p->v = nv;\n  ei_mutex_unlock(&m.p->mu);")
         old_drop(inout g, p, el)
@@ -2739,7 +2993,9 @@ fn thread_glue(inout g: G, p: P, kind: u32, ty: u32) uses ffi {
         cty(inout g, p, el)
         put(inout g, " v)")
         proto(inout g, mark)
-        put(inout g, " {\n  ei_chan_send(&c.p->ch, &v);\n}\n")
+        put(inout g, " {\n  ")
+        own_call(inout g, p, el, sys.lit("&v"))
+        put(inout g, "ei_chan_send(&c.p->ch, &v);\n}\n")
     } else {
         handle_sig(inout g, p, types.BOOL, "recv_", ty, "c, ")
         cty(inout g, p, el)

@@ -1,0 +1,35 @@
+// Benchmark (scripts/bench.sh): state threaded through functions by value, the way the
+// compiler passes its tables around: a record of a Map and Lists copied, a counter changed,
+// returned. Copy-on-write keeps the tables shared; only the record is copied.
+
+type State = { names: Map[i32, String], log: List[String], rows: List[List[i32]], steps: i32 }
+
+fn step(s: State, i: i32) -> State {
+    var t = s
+    t.steps += 1
+    if i % 1000 == 0 { t.log.push(String.from_int(i as i64)) }
+    t
+}
+
+fn main() uses io {
+    var names: Map[i32, String] = Map.new()
+    for i in 0..2000 { names.insert(i, String.from_int(i as i64)) }
+    var rows: List[List[i32]] = List.new()
+    for i in 0..200 {
+        var row: List[i32] = List.new()
+        for j in 0..50 { row.push(i * j) }
+        rows.push(row)
+    }
+    var s = State(names, List.new(), rows, 0)
+    var keep: List[State] = List.new()
+    for i in 0..20000 {
+        s = step(s, i)
+        if i % 100 == 0 { keep.push(s) }
+    }
+    print(s.steps)
+    print(s.log.len())
+    print(keep.len())
+    print(keep[3].steps)
+    print(s.names.get(1999).unwrap())
+    print(s.rows[199][49])
+}

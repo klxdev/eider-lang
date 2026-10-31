@@ -1,0 +1,227 @@
+// Copy-on-write (docs/compiler.md, "C8.1: copy-on-write"): String, List, Map and Box share
+// their buffer between copies, and every copy still behaves as a value: changing one side
+// after a copy never shows through the other, at any depth. Expected output: cow.out.
+
+type Item = { name: String, tags: List[String], score: i32 }
+type Tree = | Leaf(v: i32) | Node(l: Box[Tree], r: Box[Tree])
+
+fn shout(s: String) -> String {
+    var t = s
+    t.push_str("!")
+    t
+}
+
+fn bump(inout l: List[i32]) {
+    l.push(99)
+    l[0] = l[0] + 1
+}
+
+fn rename(inout it: Item, n: str) {
+    it.name = String.from(n)
+    it.tags[0].push_str("+")
+}
+
+fn sum_tree(t: Tree) -> i32 {
+    match t {
+        Leaf(v) => v
+        Node(l, r) => sum_tree(l.get()) + sum_tree(r.get())
+    }
+}
+
+fn join(l: List[String]) -> String {
+    var s = String.from("")
+    for x in l {
+        s.append(x)
+        s.push_str(",")
+    }
+    s
+}
+
+fn main() uses io {
+    // String: copy then change either side
+    let a = String.from("abc")
+    var b = a
+    b.push_str("d")
+    print(a)
+    print(b)
+    var c = b
+    b.push_str("e")
+    c.push_str("X")
+    print(b)
+    print(c)
+    print(shout(a))
+    print(a)
+    // self-append of a shared String
+    var d = a
+    let e = d
+    d.append(e)
+    print(d)
+    print(e)
+
+    // List[i32]: copy, then change through index, push, pop, inout, clear
+    var l1: List[i32] = List.new()
+    for i in 0..5 { l1.push(i) }
+    var l2 = l1
+    l2[0] = 100
+    l2.push(5)
+    print(l1[0])
+    print(l1.len())
+    print(l2[0])
+    print(l2.len())
+    var l3 = l1
+    let popped = l3.pop().unwrap()
+    print(popped)
+    print(l3.len())
+    print(l1.len())
+    var l4 = l1
+    bump(inout l4)
+    print(l1[0])
+    print(l4[0])
+    print(l4[5])
+    var l5 = l1
+    l5.clear()
+    print(l5.len())
+    print(l1.len())
+
+    // a List of Strings shared, then one element changed (in place and replaced)
+    var names: List[String] = List.new()
+    names.push(String.from("ann"))
+    names.push(String.from("bob"))
+    names.push(String.from("cy"))
+    var copy = names
+    copy[1].push_str("by")
+    print(join(names))
+    print(join(copy))
+    var copy2 = copy
+    copy2[2] = String.from("dee")
+    print(join(copy))
+    print(join(copy2))
+    let one = names[0]
+    var held = one
+    held.push_str("e")
+    print(names[0])
+    print(held)
+
+    // nested containers: a List of Lists, changed two levels down
+    var grid: List[List[i32]] = List.new()
+    for i in 0..3 {
+        var row: List[i32] = List.new()
+        for j in 0..3 { row.push(i * 3 + j) }
+        grid.push(row)
+    }
+    var g2 = grid
+    g2[1][2] = -1
+    g2[2].push(42)
+    print(grid[1][2])
+    print(grid[2].len())
+    print(g2[1][2])
+    print(g2[2].len())
+    let row0 = grid[0]
+    var r0 = row0
+    r0[0] = 7
+    print(grid[0][0])
+    print(r0[0])
+
+    // records holding owned fields, copied and changed through inout
+    var tags: List[String] = List.new()
+    tags.push(String.from("t"))
+    let it = Item(String.from("first"), tags, 1)
+    var it2 = it
+    rename(inout it2, "second")
+    it2.score = 2
+    print(it.name)
+    print(it.tags[0])
+    print(it.score)
+    print(it2.name)
+    print(it2.tags[0])
+    print(it2.score)
+    var items: List[Item] = List.new()
+    items.push(it)
+    var items2 = items
+    items2[0].tags.push(String.from("u"))
+    items2[0].name.push_str("!")
+    print(items[0].tags.len())
+    print(items[0].name)
+    print(items2[0].tags.len())
+    print(items2[0].name)
+
+    // Map values: copy, then insert, overwrite, remove, and change a value's String
+    var m: Map[String, List[String]] = Map.new()
+    var v: List[String] = List.new()
+    v.push(String.from("x"))
+    m.insert(String.from("k"), v)
+    var m2 = m
+    var got = m2.get(String.from("k")).unwrap()
+    got.push(String.from("y"))
+    m2.insert(String.from("k"), got)
+    m2.insert(String.from("j"), List.new())
+    print(m.get(String.from("k")).unwrap().len())
+    print(m2.get(String.from("k")).unwrap().len())
+    print(m.contains(String.from("j")))
+    print(m2.contains(String.from("j")))
+    var m3 = m2
+    let gone = m3.remove(String.from("k"))
+    print(gone)
+    print(m2.contains(String.from("k")))
+    print(m3.contains(String.from("k")))
+    var counts: Map[i32, i32] = Map.new()
+    for i in 0..100 { counts.insert(i, i) }
+    var counts2 = counts
+    for i in 0..100 { counts2.insert(i, i * 2) }
+    for i in 100..200 { counts2.insert(i, 1) }
+    print(counts.get(50).unwrap())
+    print(counts2.get(50).unwrap())
+    print(counts.len())
+    print(counts2.len())
+
+    // Box: copy then set either side; a shared tree
+    let bx = Box.new(String.from("boxed"))
+    var bx2 = bx
+    bx2.set(String.from("reboxed"))
+    print(bx.get())
+    print(bx2.get())
+    let t = Node(Box.new(Leaf(1)), Box.new(Node(Box.new(Leaf(2)), Box.new(Leaf(3)))))
+    let t2 = t
+    print(sum_tree(t))
+    print(sum_tree(t2))
+    var bl = Box.new(names)
+    var bl2 = bl
+    let inner = bl2.get()
+    var changed = inner
+    changed.push(String.from("zed"))
+    bl2.set(changed)
+    print(bl.get().len())
+    print(bl2.get().len())
+
+    // Option and tuples holding owned values
+    let o: Option[String] = Some(String.from("opt"))
+    let o2 = o
+    match o2 {
+        Some(s) => print(shout(s))
+        None => print("none")
+    }
+    print(o.unwrap())
+    let pair = (String.from("p"), names)
+    var pair2 = pair
+    pair2.0.push_str("q")
+    pair2.1.pop()
+    print(pair.0)
+    print(pair.1.len())
+    print(pair2.0)
+    print(pair2.1.len())
+
+    // closures capture snapshots
+    var cap = String.from("cap")
+    let f = || cap.len()
+    cap.push_str("tured")
+    print(f())
+    print(cap)
+
+    // a long String built by appends (amortised growth)
+    var long = String.from("")
+    for i in 0..10000 { long.push_str("ab") }
+    let snapshot = long
+    long.push_str("c")
+    print(long.len())
+    print(snapshot.len())
+}

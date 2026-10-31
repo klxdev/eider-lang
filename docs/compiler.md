@@ -232,7 +232,7 @@ replaced by stubs (and, since "C7: FFI", without stubs).
 `lower.ei` lowers every IR node of S1–S3. The checker already placed every clone, move and
 drop (ir.ei, "Ownership"), so lowering only prints them: S_READ is a bitwise copy (a borrow
 of owned data), S_CLONE calls the type's clone, S_DROP its drop, S_MOVE is a bitwise copy
-whose source is dead.
+whose source is dead. (Since C8.1 a clone of a String, List, Map or Box shares its buffer; see "C8.1: copy-on-write".)
 
 - **Layout** (fixed where it is observable; Map behaviour is what tests/oracle records): tuples are structs `f<n>`; String is the
   runtime's `ei_String`; List[T] `{ T *d; uint64_t len, cap; }` (grows by doubling from 4);
@@ -462,7 +462,7 @@ constant it is handed, so a caller that skips `eval` finds out).
 ## C7: threads
 
 Task, Mutex, Chan and `spawn`. Threads share data only through
-these handles: everything else a closure captures is a snapshot (a deep copy), and values
+these handles: everything else a closure captures is a snapshot (a copy; since C8.1 a copy-on-write one, made unique before the thread starts), and values
 cross threads only by move (the spawned closure, `send`) or by copy under the lock
 (`Mutex.get`, `Task.join`).
 
@@ -904,6 +904,12 @@ check.ei takes 17 ms). End to end the C compiler dominates: building eiderc itse
 of Eider -> 17.4k lines of C) is 0.23 s front end + ~5 s gcc -O2 (1.2 s at -O0); `eiderc
 build` of a 76-line program takes 313 ms (with the core compiled into every program; see below).
 
+Since C8.1 (copy-on-write, measured 2026-10-30 with `scripts/bench.sh`): eiderc's own front
+end and lowering (`emit-c compiler/main.ei`, 16.6k lines of Eider -> 105k lines of C) take
+144 ms instead of 212 ms, a third less: every copy the checker places (an S_CLONE of a
+String, List, Map or Box, or of a record holding them) used to be deep and is now a count
+increment. gcc still dominates a build of eiderc.
+
 Core objects and the binary cache (C7, "C7: driver"), measured 2026-10-30 on
 `tests/run/adt.ei` (84 lines; 16 cores, gcc; each the median of 4 runs, wall clock):
 
@@ -964,7 +970,7 @@ and leaves the analyzer building.
 
 | Wave | Item | Scope | Depends on |
 |---|---|---|---|
-| 1 | **8.1 Copy-on-write** | heap types share buffers with a refcount, copy on first write; non-atomic, atomic once sent to a thread; drops once at the last holder; quadratic `String` append fixed (capacity) | — |
+| 1 | **8.1 Copy-on-write** | heap types share buffers with a refcount, copy on first write; non-atomic counts, values made unique before they cross threads; drops once at the last holder; quadratic `String` append fixed (capacity) | — |
 | 1 | **8.2 Small language gaps** | bitwise operators `& \| ^ << >> ~` (checked shifts); `String`/`str` byte access, slicing, building from bytes; `()` values (`Ok(())`); `main` returning an exit code; `impl` on built-in types | — |
 | 1 | **8.3 Package-qualified modules** (done: "C8.3: packages and modules"; package imports in compiler/, std/, packages/ after the next seed) | module identity = (package, path) instead of file stem (no more E0808 for two packages' `util.ei`); bare `import "json"` resolved through `eider.lock`; the `deps/` link farm retired | — |
 | 2 | **8.4 Operation traits** | `Copy`, `Eq`, `Ord`, `Hash`, `Show`, `Iter`, `Drop` in the core prelude; automatic derive; orphan rule; generic bounds with suggested fixes; Map keys any `Hash + Eq`; `for` over any `Iter` | 8.1, 8.2 |
@@ -1106,6 +1112,91 @@ for package imports), files are told apart by canonical path as before, and modu
 from `Module.aliases` (one per import, also for one that failed). eider-analyzer imports the
 compiler as `"eiderc/ide"` (a path dependency on compiler/) and json as `"json"`, finds them
 through its eider.lock, and builds with a compiler that knows package imports.
+
+## C8.1: copy-on-write
+
+`String`, `List[T]`, `Map[K, V]` and `Box[T]` share their heap buffer between copies
+(docs/design/memory-model.md, "Copy-on-write values"). Semantics are unchanged: values are
+still values, and every test and oracle file behaves byte for byte as before. The checker
+already decided every clone, move and drop (ir.ei, "Ownership"); only what they cost changed.
+
+- **Layout.** The core's shared buffer (core/RUNTIME.md, "Shared buffers"): a 16-byte header
+  `{ uint64_t n; uint64_t unused; }` (the count of holders) before the data, and values point
+  at the data, so a NULL pointer is the empty buffer. The value layouts are the same as before
+  except String, which gains a capacity: `ei_String { char *p; uint64_t len, cap; }`. The
+  buffers are the String bytes, a List's `d`, a Box's `p`, and a Map's three arrays, counted
+  together on the slot states `s` (the keys and values are freed with it).
+- **Clone, drop, write.** A clone (S_CLONE, and so every copy inside a record, enum, tuple,
+  array, closure environment) is `ei_buf_inc` / `ei_share_String`: O(1). A drop is
+  `ei_buf_dec`; the last holder drops the elements once and frees. A write makes the buffer
+  its own first: `uniq_<T>` (List, Map, Box; generated, since copying the elements is per
+  type) and `ei_str_unique` copy only when the count is above one, cloning the elements, so
+  they in turn share their own buffers, and let go of the shared one. Lowering calls it
+  (`uniqs`) for every List and Box on the path to a place that a statement stores to, drops,
+  moves out of, passes `inout` (S_CALL/S_CALLV place arguments) or hands to a mutating
+  builtin (push, pop, clear, insert, remove, push_str, append), outermost first and after the
+  bounds checks: `a.items[i].tags[j] = s` makes `a.items`, then `a.items[i].tags`, unique. The
+  place itself is made unique by whatever changes it: `push_`, `ins_`, `rem_` glue,
+  `ei_str_cat`, inline `pop`, or the callee's own writes through its `inout` pointer (`clear`
+  is a drop, so it needs nothing). Borrows (S_READ) stay bitwise copies; they stay valid
+  because a write never frees a buffer another holder still counts, and the checker already
+  keeps a place unchanged while a borrow of it is used.
+- **Growth.** Every growth is amortised through the core's checked `ei_grow_cap`: String
+  appends double the capacity (at least 15 bytes; in place when the buffer is its own and has
+  room), which fixes the quadratic `push_str`; List push (doubling from 4, `ei_buf_grow` =
+  realloc) and Map rehash (powers of two from 8, so probing is unchanged) as before, now with
+  overflow checks. All sizes go through `ei_buf_alloc`/`ei_alloc_n`.
+- **Threads: counts are not atomic.** A buffer is reachable from one thread at a time: before
+  a value can be seen by another thread, `own_<T>` glue makes every buffer it reaches its own
+  (uniq at every level; handles are skipped, since `ei_rc` is atomic and their contents are
+  behind their own locks). That is done to `spawn`'s closure (a fn value gained a fifth member,
+  `own`, the environment's `eown_<f>`, which owns the captures), the values given to
+  `Mutex.new`, `Mutex.set` and `Chan.send`, the result of a `Mutex.update` closure (under the
+  lock: it may share with the old value or with the closure's captures), and the copies
+  `Mutex.get` hands out (cloned and owned under the lock). `Task.join` may run on several
+  threads at once, so a Task whose result owns heap data has a lock of its own (`mu`) and
+  each join clones and owns its copy under it. The old value a Mutex replaces then shares
+  nothing with the new one, and is dropped after the unlock, as before.
+
+  Why not atomic counts: they need nothing at the crossings, but every clone and drop pays an
+  atomic read-modify-write, while crossings are rare and already copied (deeply) before C8.1.
+  Measured with the same compiler and the counts made atomic (`__atomic_fetch_add`/
+  `__atomic_sub_fetch` in the header; not committed): eiderc's own `emit-c` 149 ms vs 144 ms
+  (+3.5%), the benchmarks below unchanged within noise. Making values unique costs only at the
+  crossings, where the old deep copies were.
+- **Old generated code.** `ei_clone_String` stays a copy with a buffer of its own and the
+  copy-on-write glue is all generated, so a program generated by an eiderc from before C8.1
+  (the seed until it is regenerated) never shares a buffer and stays correct against this
+  core, threads included.
+- **Tests.** `compiler/tests/run/cow` (hand-written expected output, also produced by the
+  pre-C8.1 compiler): copies of Strings, Lists, Maps, Boxes, records, tuples, Options and
+  closure captures changed on either side; a List of Strings shared then one element changed
+  in place and replaced; Lists of Lists changed two levels down; a record changed through
+  `inout`; Map values replaced, inserted and removed in a copy; pop, clear and push on copies;
+  self-append of a shared String; a 20,000-byte String built by appends.
+  `compiler/tests/run/cow_threads`: 8 threads capturing one shared List of Strings and changing
+  their copies; a Mutex of a List of Strings with `get`/`update`/`set` from 8 threads, with
+  update results shared with captures; 4 producers sending values they keep changing; one
+  Task joined from 8 threads at once. In the suite (gcc and clang, -O2): 45/45 run tests,
+  159/159 sanitizer runs (UBSan, ASan, TSan), 53/53 leak-free. `cow_threads` also ran 20 times
+  each under gcc TSan, clang TSan, clang ASan+UBSan, UBSan (trap) and the allocation counter
+  with no report, and with the `own_` calls deleted from its C TSan reports races on the
+  counts at once (`ei_buf_dec`), so the test does catch a missing crossing. tests/core: the
+  buffer primitives, `ei_grow_cap` limits and traps, sharing and unsharing of Strings, and
+  100,000 one-byte appends moving the text fewer than 20 times.
+- **Benchmarks** (`sh scripts/bench.sh target/eiderc-before:target/before target/eiderc-cow`,
+  2026-10-30, 16 cores, gcc -O2, median of 5 runs, wall time; before = eiderc and core at
+  a9d1d77, after = eiderc built by itself with C8.1; `tests/bench/`):
+
+  | Benchmark | Before | After |
+  |---|---|---|
+  | `list_copies`: 3,000 copies of a List of 3,000 Strings, every 500th changed | 691 ms | 3 ms |
+  | `state`: a record of a Map (2,000 Strings) and Lists threaded through 20,000 calls by value, 200 snapshots kept | 3,269 ms | 4 ms |
+  | `str_append`: a String built by 200,000 `push_str` (was quadratic) | 3,889 ms | 4 ms |
+  | eiderc `emit-c compiler/main.ei` (16.6k lines of Eider) | 212 ms | 144 ms |
+
+  The generated C for eiderc grew from 104,523 to 105,023 lines (the `uniq_`/`own_` glue
+  and the calls before writes).
 
 ## Language work that lands in `eiderc` (after parity)
 
