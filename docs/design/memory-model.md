@@ -17,7 +17,7 @@ Simple like Go and Zig, with the memory-safety and correctness guarantees of Rus
 1. Everything is a value. Binding or passing something does not copy it: `let x = place`
    refers to the place.
 2. To change something through a binding, declare it `let mut` (a mutable alias of the place)
-   or pass it `inout`. To get an independent value, `copy` it.
+   or pass it `inout`. To get an independent value, call `.copy()`.
 3. A reference lives inside its scope. When it escapes (returned, stored, sent to a thread),
    it becomes a value: cheap, because large values are copy-on-write.
 4. To share mutable state beyond a scope, use `Ref[T]`, or `Mutex[T]` across threads.
@@ -67,29 +67,35 @@ total += 1
 
 - `let mut` of a fresh value owns it (an ordinary mutable local).
 - `let mut` of a read-only place (a parameter, a `let` binding) is an error: an alias can't add
-  write access. Take a `copy` instead.
+  write access. Take a `.copy()` instead.
 - An invalidating write while any reference into the place is alive stays forbidden (the
   protection rule, below).
 
-### `copy` ✅ (for every type)
+### `x.copy()` ✅ (a full clone, for every type)
 
-`copy(x)` returns an independent value equal to `x`, for every type, with no trait to
-implement: `let mut o = copy(orders[i])` changes `o` only. With copy-on-write it costs a
+`x.copy()` returns an independent clone of `x`: it never shares anything with `x`. It is built
+in on every type, with nothing to implement (so a user-defined method named `copy` is an
+error). `let mut o = orders[i].copy()` changes `o` only. With copy-on-write a value copy costs a
 reference-count increment until one side is written.
 
-- Values (integers, records, enums, tuples, arrays, `String`, `List`, `Map`, `Box`): a value
-  copy, made lazily by copy-on-write.
-- Handles (`Ref`, `Mutex`, `Chan`, `Task`): ❓ proposal: copying a handle gives another handle to
-  the same shared value, since that is what a handle is; to copy the contents,
-  `r.read(|v| copy(v))`.
-- Implicit copies still happen at escapes (rule 3); `copy` is for when you want your own value
-  inside the scope.
+Sharing is ordinary binding and passing: binding, passing or storing a handle gives another
+holder of the same value. `.copy()` is how you get your own.
+
+| Type | `x.copy()` |
+|---|---|
+| Values (integers, records, enums, tuples, arrays, `String`, `List`, `Map`, `Box`) | An independent value (lazy, through copy-on-write) |
+| `Ref[T]` | A new `Ref` holding a copy of the contents |
+| `Mutex[T]` | Locks, copies the contents into a new `Mutex`, unlocks |
+| `Chan[T]`, `Task[T]` | ❓ Proposal: a compile error (a running thread can't be cloned; a cloned queue has no clear meaning) |
+
+Implicit copies still happen at escapes (rule 3); `.copy()` is for when you want your own value
+inside the scope.
 
 ## The protection rule ✅ (revised for `let mut` aliases)
 
 While a reference is alive (until its last use), no write may free, move or reinterpret memory
 it points into. Plain writes are allowed; invalidating writes are compile errors with a
-machine-applicable fix ("take a `copy` first", or "use the reference before the change").
+machine-applicable fix ("take a `.copy()` first", or "use the reference before the change").
 
 - **Allowed** while references into a place are alive: writing a scalar field or element,
   writing through `let mut` aliases, calling methods that don't resize or replace.
@@ -155,7 +161,8 @@ fn remember(ctx: Ctx, key: String, a: Answer) {
 }
 ```
 
-- Copying a `Ref` shares the same value (handle semantics, like `Mutex` today).
+- Binding, passing or storing a `Ref` shares the same value (handle semantics, like `Mutex`
+  today); `r.copy()` makes a new `Ref` with a copy of the contents.
 - Access is scoped (`read`, `update`), so no reference to the inside escapes.
 - Overlapping access (an `update` inside a `read` of the same `Ref`) traps at run time, like
   Rust's `RefCell`.
@@ -174,7 +181,7 @@ fn remember(ctx: Ctx, key: String, a: Answer) {
 - Parameters are read-only references; `inout` parameters are mutable references with
   exclusivity (both as today).
 - No `mut` parameters for now. `let mut x = x` on a read-only parameter is an error (an alias
-  can't add write access); write `let mut x = copy(x)`.
+  can't add write access); write `let mut x = x.copy()`.
 - Return values are always values (owned). Returning a reference into an argument is not
   possible; accessors that return a reference ("projections") are a later, std-only feature.
 - Non-escaping closures (passed straight to `map`, `filter`, `fold`, `read`, `update`) capture
@@ -204,10 +211,10 @@ true?
 ## Build order
 
 1. Copy-on-write for heap types: runtime and lowering only, no semantic change.
-2. References by default, `let mut` aliases, `copy` and the protection rule: checker analysis on
+2. References by default, `let mut` aliases, `.copy()` and the protection rule: checker analysis on
    place paths, new errors with fixes, lowering (a reference is a C pointer: no clone, no drop).
    `var` keeps working as a deprecated spelling with an automatic fix: `var x = place` becomes
-   `let mut x = copy(place)` (today's `var` makes its own value), `var x = fresh` becomes
+   `let mut x = place.copy()` (today's `var` makes its own value), `var x = fresh` becomes
    `let mut x = fresh`, so existing code migrates mechanically with unchanged meaning.
 3. `Ref[T]` on the existing handle machinery.
 4. Non-escaping closures capture by reference.
@@ -217,17 +224,18 @@ true?
 
 | Question | Decision |
 |---|---|
-| `let mut` | A mutable alias of the place (Reading A), plus `copy` for every type |
+| `let mut` | A mutable alias of the place (Reading A) |
+| Independent values | `x.copy()`, a full clone that never shares, built in on every type |
+| `copy` of a handle | A clone of the contents (`r.copy()` is a new `Ref`); sharing is ordinary binding and passing |
 | Warn when an escape forces a real copy | No: silent; a lint later |
 | Name of the shared handle | `Ref[T]` |
-| `mut` parameters | Not now; `let mut x = copy(x)` |
+| `mut` parameters | Not now; `let mut x = x.copy()` |
 | Closure captures | Non-escaping by reference, escaping by value |
 
 ## Open questions
 
-1. `copy` of a handle (`Ref`, `Mutex`, `Chan`, `Task`): another handle to the same value
-   (proposal), or a copy of the contents?
-2. Spelling: a built-in `copy(x)` (proposal: works for every type with nothing to implement) or
-   a method `x.copy()`?
-3. Pattern bindings in `match` and `if let`: read-only references like `let` (proposal), with
-   `mut` in a pattern making an alias?
+1. Pattern bindings: copies (A, today); always read-only references (B); like `let` / `let mut`
+   (C, proposal: a place gives a reference, `Pending(mut o)` an alias into the payload, a fresh
+   scrutinee is owned); or references with explicit `.copy()` only (D)?
+2. `.copy()` on `Chan` and `Task`: a compile error (proposal)?
+3. Name: keep `copy` for the full clone (proposal) or call it `clone`?
