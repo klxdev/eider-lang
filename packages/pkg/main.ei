@@ -31,6 +31,7 @@ import "lockfile.ei"
 import "store.ei"
 import "resolve.ei"
 import "caps.ei"
+import "override.ei"
 
 type Cli = { dir: List[u8], cmd: List[u8], args: List[List[u8]], offline: bool }
 
@@ -88,7 +89,7 @@ fn sync_from(c: Cli, use_lock: bool, offline: bool, vendor: List[u8]) -> Result[
     let root = manifest.load(c.dir)?
     toolchain()?
     let locked = lockfile.load(c.dir)?
-    let o = resolve.Opts(store.home()?, offline, use_lock, locked, vendor)
+    let o = resolve.Opts(store.home()?, offline, use_lock, locked, vendor, override.from_env()?)
     let pkgs = resolve.resolve(root, o)?
     resolve.check_grants(pkgs, caps.compiler(toolchain()?))?
     fs.write(lockfile.file_in(c.dir), lockfile.render(pkgs, c.dir))?

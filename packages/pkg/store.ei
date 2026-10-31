@@ -16,7 +16,7 @@ import "std/bytes"
 import "std/fs"
 import "std/env"
 import "std/proc"
-import "sha256"
+import "sha256.ei"
 
 pub type Export = { dir: List[u8], hash: List[u8] }
 

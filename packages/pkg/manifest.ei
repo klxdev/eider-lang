@@ -17,7 +17,7 @@ import "core/sys"
 import "std/bytes"
 import "std/fs"
 import "toml"
-import "semver"
+import "semver.ei"
 
 pub type Source = | Path(dir: List[u8]) | Git(url: List[u8], version: List[u8], rev: List[u8])
 
