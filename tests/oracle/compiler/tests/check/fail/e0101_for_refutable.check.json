@@ -1,0 +1,1 @@
+{"error":"E0101","span":{"file":"compiler/tests/check/fail/e0101_for_refutable.ei","line":5,"col":9},"message":"refutable pattern in `for`: `(_, true)` is not matched","help":"match on each element inside the loop instead"}

@@ -1,0 +1,6 @@
+// expect: E0101 5:9
+// a `for` pattern can't fail (docs/compiler.md, "C8.20")
+fn main() {
+    let mut ps: List[(i32, bool)] = List.new()
+    for (1, b) in ps {}
+}

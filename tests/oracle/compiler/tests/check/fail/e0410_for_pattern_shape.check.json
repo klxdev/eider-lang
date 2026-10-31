@@ -1,0 +1,1 @@
+{"error":"E0410","span":{"file":"compiler/tests/check/fail/e0410_for_pattern_shape.ei","line":5,"col":9},"message":"tuple pattern has 3 elements, but the value has 2"}

@@ -12,6 +12,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0002_shift_sub.ei           E0002 at 3:7 (fix compiles)
   ok   e0101_array_scrutinee.ei     E0101 at 8:13
   ok   e0101_bool_missing.ei        E0101 at 3:5
+  ok   e0101_for_refutable.ei       E0101 at 5:9
   ok   e0101_mod_witness.ei         E0101 at 4:5
   ok   e0101_negative_patterns.ei   E0101 at 3:5
   ok   e0101_nested_pat.ei          E0101 at 5:5
@@ -159,6 +160,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0115_thr_mutex_len.ei       E0115 at 4:13
   ok   e0115_thr_task_new.ei        E0115 at 3:18
   ok   e0115_unwrap_unknown_method.ei E0115 at 3:15
+  ok   e0116_impl_map_keys.ei       E0116 at 4:8
   ok   e0116_list_static.ei         E0116 at 3:8
   ok   e0116_str_slice.ei           E0116 at 4:8
   ok   e0116_string_from_bytes.ei   E0116 at 3:8
@@ -307,7 +309,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_heap_box_hint.ei       E0401 at 2:40
   ok   e0401_heap_box_unit.ei       E0401 at 3:29
   ok   e0401_heap_cast_string.ei    E0401 at 3:15
-  ok   e0401_heap_for_map.ei        E0401 at 3:14
+  ok   e0401_heap_for_box.ei        E0401 at 3:14
   ok   e0401_heap_index_list_bad.ei E0401 at 3:15
   ok   e0401_heap_index_str.ei      E0401 at 3:14
   ok   e0401_heap_len_bool.ei       E0401 at 2:25
@@ -405,6 +407,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0405_heap_map_insert_arity.ei E0405 at 3:7
   ok   e0405_len_arity.ei           E0405 at 3:13
   ok   e0405_local_named_print_is_still_builtin.ei E0405 at 4:5
+  ok   e0405_map_keys_args.ei       E0405 at 5:15
   ok   e0405_method_arity.ei        E0405 at 5:15
   ok   e0405_now_ms_arity.ei        E0405 at 3:13
   ok   e0405_panic_arity.ei         E0405 at 3:5
@@ -435,6 +438,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0409_none_infer.ei          E0409 at 2:21
   ok   e0409_thr_chan_list_hint.ei  E0409 at 3:29
   ok   e0409_thr_spawn_no_ret.ei    E0409 at 3:22
+  ok   e0410_for_pattern_shape.ei   E0410 at 5:9
   ok   e0410_payload_variant_without_args.ei E0410 at 5:9
   ok   e0410_record_pattern_arity.ei E0410 at 5:9
   ok   e0410_tup_pat_len.ei         E0410 at 3:9
@@ -650,6 +654,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-648 passed, 0 failed; error-code coverage 50/54
+652 passed, 0 failed; error-code coverage 50/54
 codes without a compile-fail test: E0302 E0402 E0806 E0808
 --- exit 0

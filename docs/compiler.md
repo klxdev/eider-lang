@@ -2023,6 +2023,48 @@ Test: compiler/tests/run/fn_fields.ei (a handler field of an alias type called f
 and through a List element, a generic record's fn field, a field and a method of one name, a
 field named like the derived `copy`; hand-checked .out).
 
+## C8.20: iterating a Map
+
+Wave 4, item 8.20 (docs/std.md "Iterating a Map", docs/services.md N9). Code: check.ei
+(`for_each`, `for_pat`, `map_list_type`, `heap_method`'s Map part), parse.ei (`for (...)`),
+ir.ei (B_MAP_KEYS, B_MAP_VALUES, B_MAP_ENTRIES), lower.ei (`map_lists`).
+
+- `m.keys() -> List[K]`, `m.values() -> List[V]` and `m.entries() -> List[(K, V)]` are built-in
+  Map methods: new Lists of copies (copy-on-write shares for heap data, so O(n) small copies).
+- `for (k, v) in m` and `for e in m` (e a `(K, V)` tuple) iterate the pairs. The loop runs over
+  `m.entries()` taken before it starts (owned by the loop, dropped after it, on every exit),
+  so the body may insert into or remove from `m` and the loop still sees each pair from
+  before exactly once (value semantics; a live view would make every resize during the loop
+  an E0308).
+- `for` takes any irrefutable pattern, over every sequence (`for (n, (name, on)) in pairs`,
+  `for (mut n, _) in ps`): each binding owns a copy of its part, as a `for` variable does
+  (C8.6); a pattern that can fail is **E0101** "refutable pattern in `for`", a wrong shape
+  the pattern errors `let` gives (E0410 ...).
+
+**Order.** All four walk the slots in index order, so they agree with each other and with
+`print` of the Map. The slot of a key depends only on its hash and the Map's insertion and
+removal history, and hashing is unseeded today (`ei_hash_u64`, FNV-1a for text; C8.4), so the
+order is the same on every run, build and platform for the same history (tests can pin it). It
+is not sorted, and it is not insertion order. When Maps get a per-process random seed (the
+C6 hardening, seeded SipHash: docs/std.md "Next"), the order will differ from run to run:
+code that needs a stable order sorts the keys (std/sort), as compiler/tests/run/map_iter.ei
+does, and nothing in the language promises more than "each pair once, in one order shared by
+keys/values/entries/for/print of the same Map value" (decision C64).
+
+`keys`, `values` and `entries` become built-in names, so an `impl Map[...]` method with one of
+those names is E0116, as for `len` or `get` (no program in the repository has one).
+
+**Syntax changes** (for the tree-sitter grammar): `for_statement` takes a pattern in
+parentheses where it took a name: `'for' (identifier | tuple_pattern) 'in' expression block`.
+
+**Tests.** Run: compiler/tests/run/map_iter.ei (`for (k, v)`, `for e`, the three methods and
+their common order, a body that removes and inserts, an empty Map, Maps of records, tuple
+patterns over a List, nested and with `mut`; hand-checked .out, leak-free, sanitizers).
+Compile-fail: `e0101_for_refutable`, `e0410_for_pattern_shape`, `e0405_map_keys_args`,
+`e0116_impl_map_keys`; e0401_heap_for_map (a Map wasn't iterable) became
+`e0401_heap_for_box`. The `for` E0401 help now lists a Map: "iterate over a List, an array, a
+Map, a range ..." (oracle: the three cases with that help).
+
 ## Language work that lands in `eiderc` (after parity)
 
 Each with a design note, compile-fail tests and new codes:

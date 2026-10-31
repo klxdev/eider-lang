@@ -2804,6 +2804,48 @@ fn option_lit(inout g: G, p: P, oty: u32, val: List[u8]) {
     put(inout g, " }")
 }
 
+/// B_MAP_KEYS, B_MAP_VALUES and B_MAP_ENTRIES: a new List of copies of the keys, values or
+/// (key, value) pairs, in slot order (docs/compiler.md, "C8.20"):
+/// `{ const M *m_ = &m; L l_ = {0}; for (i < cap) if (slot i used) push_L(&l_, copy); dst = l_; }`
+fn map_lists(inout g: G, p: P, s: ir.Stmt) {
+    let b = s.a
+    let x = barg(p, s, 0)
+    let mt = arg_ty(p, x)
+    let t = types.get(p.t, mt)
+    let el = types.get(p.t, s.ty).a
+    need(inout g, GK_PUSH, s.ty)
+    put(inout g, "{ const ")
+    cty(inout g, p, mt)
+    put(inout g, " *m_ = ")
+    arg_ptr(inout g, p, x)
+    put(inout g, "; ")
+    cty(inout g, p, s.ty)
+    put(inout g, " l_ = {0}; for (uint64_t i_ = 0; i_ < m_->cap; i_++) if (m_->s[i_] == 1) ")
+    gname(inout g, p, "push_", s.ty)
+    put(inout g, "(&l_, ")
+    if b == ir.B_MAP_KEYS {
+        clone_expr(inout g, p, t.a, sys.lit("&m_->k[i_]"))
+    } else if b == ir.B_MAP_VALUES {
+        clone_expr(inout g, p, t.b, sys.lit("&m_->v[i_]"))
+    } else {
+        put(inout g, "(")
+        cty(inout g, p, el)
+        put(inout g, "){ .f0 = ")
+        clone_expr(inout g, p, t.a, sys.lit("&m_->k[i_]"))
+        put(inout g, ", .f1 = ")
+        clone_expr(inout g, p, t.b, sys.lit("&m_->v[i_]"))
+        put(inout g, " }")
+    }
+    put(inout g, "); ")
+    if s.dst != NONE {
+        bdst(inout g, p, s)
+        put(inout g, "l_; }")
+    } else {
+        drop_call(inout g, p, s.ty, sys.lit("&l_"))
+        put(inout g, "}")
+    }
+}
+
 /// B_COPY, B_COMPARE, B_HASH, B_SHOW and B_TO_STRING ("operation traits").
 fn trait_builtin(inout g: G, p: P, s: ir.Stmt) {
     let b = s.a
@@ -2882,6 +2924,8 @@ fn builtin(inout g: G, p: P, s: ir.Stmt, depth: u32) {
         if b == ir.B_LEN { put(inout g, "(uint64_t)strlen(") } else { put(inout g, "(*(") }
         arg_val(inout g, p, barg(p, s, 0))
         if b == ir.B_LEN { put(inout g, ")") } else { put(inout g, ") == 0)") }
+    } else if b >= ir.B_MAP_KEYS {
+        map_lists(inout g, p, s)
     } else if b >= ir.B_COPY {
         trait_builtin(inout g, p, s)
     } else if b >= ir.B_STR_BYTE {

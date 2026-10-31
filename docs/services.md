@@ -210,7 +210,7 @@ Recorded rather than worked around; none blocks the design.
 | N6 | Stackless tasks (C4) | thread per connection being served | a fixed pool; `serve` keeps its API when tasks arrive |
 | N7 | References (8.6): reading a List out of a record copies it | the request path copies heads and bodies a few times | fine at these sizes, measured nothing yet |
 | N8 | Comptime reflection and derive (P0.9, P0.10) | typed JSON-RPC parameters and results | decoder and encoder functions per type (`add_typed`) |
-| N9 | Iterating a Map's keys | kvstore's `kv.keys` | a key list kept beside the Map |
+| N9 | Iterating a Map's keys | kvstore's `kv.keys` | a key list kept beside the Map (`for (k, v) in m`, `m.keys()` in compiler/: docs/compiler.md "C8.20"; usable after the next seed) |
 | N10 | Calling a function stored in a field (`(self.h)(x)`) | router | bind it to a local first (`self.h(x)` works, also with the seed; a method of the same name wins: docs/compiler.md "C8.19") |
 | N11 | Name resolution with a deadline | the client takes an `net.Addr` | `net.lookup` blocks; resolve first |
 | N12 | Connection information in the handler (peer address, TLS later) | logging, rate limiting | not passed yet (no language gap: a field on Request) |

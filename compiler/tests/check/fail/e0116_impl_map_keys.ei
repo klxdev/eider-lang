@@ -1,0 +1,6 @@
+// expect: E0116 4:8
+// `keys` is now a built-in Map method (docs/compiler.md, "C8.20")
+impl Map[i32, i32] {
+    fn keys(self) -> i32 { 1 }
+}
+fn main() {}

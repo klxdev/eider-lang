@@ -24,6 +24,7 @@
 //                the initializer      SLetPat a=pat c=init d e f as SLet
 //            SAssign a=target b=op+1 (0 plain) c=value   SExpr a
 //            SWhile a=cond b=block   SFor a=var sym b=lo c=hi d=block   SForEach a=var b=iter d=block
+//                e=pattern+1 (`for (k, v) in e`; a is then 0)
 //            SReturn a=expr+1   SBreak   SContinue   SAssert a=cond b=message str+1
 // patterns   PWild  PName a=sym b=qual+1 c=1 for `mut x`  PInt a=tok b=negated  PBool a  PStr a=str
 //            PVariant a=sym b=qual+1 [c/d]=subpatterns   PTuple [c/d]

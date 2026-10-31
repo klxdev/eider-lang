@@ -217,6 +217,11 @@ pub const B_COMPARE: u32 = 34
 pub const B_HASH: u32 = 35
 pub const B_SHOW: u32 = 36
 pub const B_TO_STRING: u32 = 37
+/// B_MAP_KEYS(m) -> List[K], B_MAP_VALUES(m) -> List[V], B_MAP_ENTRIES(m) -> List[(K, V)]:
+/// owned Lists of copies, in slot order (docs/compiler.md, "C8.20")
+pub const B_MAP_KEYS: u32 = 38
+pub const B_MAP_VALUES: u32 = 39
+pub const B_MAP_ENTRIES: u32 = 40
 
 pub fn builtin_name(b: u32) -> str {
     match b {
@@ -257,7 +262,10 @@ pub fn builtin_name(b: u32) -> str {
         34 => "compare"
         35 => "hash"
         36 => "show"
-        _ => "to_string"
+        37 => "to_string"
+        38 => "keys"
+        39 => "values"
+        _ => "entries"
     }
 }
 

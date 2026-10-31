@@ -961,6 +961,16 @@ fn stmt(inout p: P) -> Result[u32, diag.Diag] {
         return Ok(add(inout p, n))
     }
     if eat_kw(inout p, intern.K_FOR) {
+        if is(p, lex.LParen) {
+            // `for (k, v) in e` (docs/compiler.md, "C8.20"): a pattern, not a range
+            let pat = pattern(inout p)?
+            expect_kw(inout p, intern.K_IN)?
+            let mut n = mk(ast.SForEach, t.line, t.col)
+            n.b = expr(inout p)?
+            n.d = block(inout p)?
+            n.e = pat + 1
+            return Ok(add(inout p, n))
+        }
         let v = ident(inout p)?
         expect_kw(inout p, intern.K_IN)?
         let lo = expr(inout p)?

@@ -1,0 +1,6 @@
+// expect: E0410 5:9
+// a `for` pattern must fit the element type (docs/compiler.md, "C8.20")
+fn main() {
+    let mut m: Map[i32, String] = Map.new()
+    for (k, v, w) in m {}
+}

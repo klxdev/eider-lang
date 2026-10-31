@@ -991,7 +991,7 @@ fn collect_stmt(p: Program, m: u32, s: u32, inout out: Map[u32, bool]) {
             collect_block(p, m, n.d, inout out)
         }
         ast.SForEach => {
-            out.insert(n.a, true)
+            if n.e > 0 { collect_pat(p, m, n.e - 1, inout out) } else { out.insert(n.a, true) }
             collect_expr(p, m, n.b, inout out)
             collect_block(p, m, n.d, inout out)
         }

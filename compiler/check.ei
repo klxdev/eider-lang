@@ -134,6 +134,18 @@ const H_UNIT: u64 = 18446744073709551614
 const H_NEVER: u64 = 18446744073709551613
 const H_FN: u64 = 18446744073709551612
 
+/// The List type `keys()` (mi = M_KEYS), `values()` or `entries()` of Map type mt returns.
+fn map_list_type(inout c: C, mt: u32, mi: u32) -> u32 {
+    let t = types.get(c.t, mt)
+    if mi == M_KEYS { return types.list_of(inout c.t, t.a) }
+    if mi == M_VALUES { return types.list_of(inout c.t, t.b) }
+    let mut es: List[u32] = List.new()
+    es.push(t.a)
+    es.push(t.b)
+    let tt = types.tuple(inout c.t, es)
+    types.list_of(inout c.t, tt)
+}
+
 /// Built-in method and associated function names (indexes into W.hm).
 const M_LEN: u32 = 0
 const M_IS_EMPTY: u32 = 1
@@ -162,6 +174,9 @@ const M_SLICE: u32 = 23
 const M_BYTES: u32 = 24
 const M_PUSH_BYTE: u32 = 25
 const M_FROM_BYTES: u32 = 26
+const M_KEYS: u32 = 27
+const M_VALUES: u32 = 28
+const M_ENTRIES: u32 = 29
 
 /// Well-known symbols.
 type W = {
@@ -2715,7 +2730,7 @@ fn well_known(inout names: intern.Interner) -> W {
     let mut hm: List[u32] = List.new()
     for w in ["len", "is_empty", "push_str", "append", "push", "pop", "clear", "get", "contains", "insert", "remove",
         "map", "filter", "for_each", "any", "all", "fold", "sum", "set", "from", "from_int", "new",
-        "byte", "slice", "bytes", "push_byte", "from_bytes"] { hm.push(sym(inout names, w)) }
+        "byte", "slice", "bytes", "push_byte", "from_bytes", "keys", "values", "entries"] { hm.push(sym(inout names, w)) }
     W(ints, sym(inout names, "bool"), sym(inout names, "str"), sym(inout names, "Self"), sym(inout names, "String"), heap,
         sym(inout names, "print"), sym(inout names, "len"), sym(inout names, "now_ms"), sym(inout names, "panic"),
         sym(inout names, "spawn"), sym(inout names, "main"), sym(inout names, "Option"), sym(inout names, "Result"),
@@ -4108,7 +4123,22 @@ fn for_range(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
 }
 
 fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
-    let pv = place_expr(inout c, n.b)?
+    let mut pv = place_expr(inout c, n.b)?
+    let mut snapshot = false
+    if types.kind(c.t, pv.ty) == types.T_MAP {
+        // over a Map: its (key, value) pairs, a List of copies made before the loop, so the
+        // body may change the Map (docs/compiler.md, "C8.20")
+        let ro = recv_op(inout c, pv)
+        let lt = map_list_type(inout c, pv.ty, M_ENTRIES)
+        let mut eargs: List[u32] = List.new()
+        eargs.push(ro)
+        let o = builtin_op(inout c, ir.B_MAP_ENTRIES, eargs, lt, n.line)
+        let tl = tmp(inout c, lt, n.line)
+        emit(inout c, ir.S_COPY, tl, o, 0, 0, lt, n.line)
+        register(inout c, tl, lt)
+        pv = PV(ir.place_local(inout c.ir, tl, lt), lt, NONE)
+        snapshot = true
+    }
     let t = types.get(c.t, pv.ty)
     // (over a type parameter, with the bound, the body is checked as over an error value)
     let err_seq = t.kind == types.T_POISON || (t.kind == types.T_PARAM && has_trait(c, TR_ITER, pv.ty))
@@ -4119,7 +4149,7 @@ fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     if (t.kind == types.T_RECORD || t.kind == types.T_ENUM) && custom(c, TR_ITER, pv.ty) { return for_iter(inout c, n, pv) }
     if t.kind != types.T_ARRAY && t.kind != types.T_LIST && !err_seq {
         let itn = nd(c, n.b)
-        return Err(errh("E0401", itn.line, itn.col, q("can't iterate over a value of type ", ts(c, pv.ty), ""), "iterate over a List, an array, a range (`for i in 0..n`) or a type that implements `Iter`"))
+        return Err(errh("E0401", itn.line, itn.col, q("can't iterate over a value of type ", ts(c, pv.ty), ""), "iterate over a List, an array, a Map, a range (`for i in 0..n`) or a type that implements `Iter`"))
     }
     let is_list = t.kind == types.T_LIST
     // over an error value the body is still checked, with the variable of the error type
@@ -4139,7 +4169,7 @@ fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     let lm = ir.open(c.ir)
     // a List is read again every iteration: the references it is named through stay alive
     // for the whole loop ("References")
-    if is_list && c.rf.any { note_uses(inout c, n.b) }
+    if is_list && c.rf.any && !snapshot { note_uses(inout c, n.b) }
     let iv = read(inout c, ip, types.USIZE, 0)
     let mut lim = ir.op_int(inout c.ir, types.USIZE, t.b as u64)
     if is_list {
@@ -4160,7 +4190,12 @@ fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     if is_list { eline = n.line }
     let ep = ir.place_index(inout c.ir, seq, iv, et, eline)
     bind_value(inout c, l, et, ep)
-    declare(inout c, local_plain(resolve.key(0, n.a), et, false, n.line, n.col, l))?
+    if n.e > 0 {
+        let lp = ir.place_local(inout c.ir, l, et)
+        for_pat(inout c, n, et, lp)?
+    } else {
+        declare(inout c, local_plain(resolve.key(0, n.a), et, false, n.line, n.col, l))?
+    }
     block_body(inout c, n.d, Dest(D_DISCARD, 0), NONE)?
     pop_scope(inout c)
     pop_frame(inout c, true)
@@ -4175,6 +4210,40 @@ fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     let step = ir.close(inout c.ir, sm)
     emit(inout c, ir.S_LOOP, 0, body, step, 0, 0, n.line)
     Ok(types.UNIT)
+}
+
+/// The bindings of `for (pattern) in e` (n.e) from the element held at place `acc` (an
+/// unnamed loop local of type et): each binding owns a copy of its part, as a `for`
+/// variable does (C8.6), and the pattern must not be refutable (E0101).
+fn for_pat(inout c: C, n: ast.Node, et: u32, acc: u32) -> Result[bool, diag.Diag] {
+    if poisoned(c, et) {
+        bind_pat_poison(inout c, n.e - 1)
+        return Ok(true)
+    }
+    let mut lw = Lowered(List.new(), List.new())
+    c.pat_bad = false
+    let pir = lower_pat(inout c, n.e - 1, et, acc, inout lw)?
+    let mut rows = pats.empty(1)
+    let mut row: List[u32] = List.new()
+    row.push(pir)
+    pats.add_row(inout rows, row)
+    let mut tys: List[u32] = List.new()
+    tys.push(et)
+    let missing: Option[List[List[u8]]] = if c.pat_bad { None } else { pats.missing(c.pt, c.t, c.p.names, rows, tys) }
+    match missing {
+        Some(w) => {
+            let pn = nd(c, n.e - 1)
+            return Err(errh("E0101", pn.line, pn.col, q("refutable pattern in `for`: `", w[0], "` is not matched"), "match on each element inside the loop instead"))
+        }
+        None => {}
+    }
+    for b in lw.binds {
+        let kind = if b.mutable { ir.L_VAR } else { ir.L_LET }
+        let l = ir.local(inout c.ir, resolve.key_sym(b.key), b.ty, kind, b.line)
+        bind_value(inout c, l, b.ty, b.place)
+        declare(inout c, Local(b.key, b.ty, b.mutable, false, true, b.line, b.col, l, n.line, n.col, b.line, b.col, NONE, NONE, 0))?
+    }
+    Ok(true)
 }
 
 /// `for x in e` over a type with its own Iter ("Operation traits"): the loop runs on a copy
@@ -4231,7 +4300,12 @@ fn for_iter(inout c: C, n: ast.Node, pv: PV) -> Result[u32, diag.Diag] {
     let l = ir.local(inout c.ir, n.a, et, ir.L_LET, n.line)
     let ep = ir.place_payload(inout c.ir, rp, si, 0, et)
     bind_value(inout c, l, et, ep)
-    declare(inout c, local_plain(resolve.key(0, n.a), et, false, n.line, n.col, l))?
+    if n.e > 0 {
+        let lp = ir.place_local(inout c.ir, l, et)
+        for_pat(inout c, n, et, lp)?
+    } else {
+        declare(inout c, local_plain(resolve.key(0, n.a), et, false, n.line, n.col, l))?
+    }
     block_body(inout c, n.d, Dest(D_DISCARD, 0), NONE)?
     pop_scope(inout c)
     pop_frame(inout c, true)
@@ -5987,7 +6061,7 @@ fn builtin_method(c: C, tk: u32, name: u32) -> bool {
     }
     if tk == types.T_STR { return mi == M_LEN || mi == M_IS_EMPTY || mi == M_BYTE || mi == M_SLICE || mi == M_BYTES }
     if tk == types.T_LIST { return mi == M_LEN || mi == M_IS_EMPTY || (mi >= M_PUSH && mi <= M_CONTAINS) || (mi >= M_MAP && mi <= M_SUM) }
-    if tk == types.T_MAP { return mi == M_LEN || mi == M_IS_EMPTY || mi == M_GET || mi == M_CONTAINS || mi == M_INSERT || mi == M_REMOVE }
+    if tk == types.T_MAP { return mi == M_LEN || mi == M_IS_EMPTY || mi == M_GET || mi == M_CONTAINS || mi == M_INSERT || mi == M_REMOVE || (mi >= M_KEYS && mi <= M_ENTRIES) }
     if tk == types.T_BOX { return mi == M_GET || mi == M_SET }
     if tk == types.T_TASK { return is_word(c, name, "join") }
     if tk == types.T_MUTEX { return mi == M_GET || mi == M_SET || is_word(c, name, "update") }
@@ -6214,6 +6288,14 @@ fn heap_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
             assignable_or_record(inout c, n.a, "modify")
             let vs = eval_args(inout c, n, one(kty), label)?
             return Ok(v_of(types.BOOL, builtin_op(inout c, ir.B_MAP_REMOVE, two(place, vs[0].op), types.BOOL, n.line)))
+        }
+        if mi >= M_KEYS && mi <= M_ENTRIES {
+            // copies in slot order (docs/compiler.md, "C8.20")
+            let ro = recv_op(inout c, pv)
+            eval_args(inout c, n, List.new(), label)?
+            let lt = map_list_type(inout c, ty, mi)
+            let b = if mi == M_KEYS { ir.B_MAP_KEYS } else if mi == M_VALUES { ir.B_MAP_VALUES } else { ir.B_MAP_ENTRIES }
+            return Ok(v_of(lt, builtin_op(inout c, b, one(ro), lt, n.line)))
         }
         if mi == M_GET {
             let ro = recv_op(inout c, pv)

@@ -1,0 +1,1 @@
+{"error":"E0116","span":{"file":"compiler/tests/check/fail/e0116_impl_map_keys.ei","line":4,"col":8},"message":"`Map[i32, i32]` already has a built-in `keys`","help":"built-in methods can't be replaced; give this method another name"}
