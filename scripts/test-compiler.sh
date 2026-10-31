@@ -773,6 +773,7 @@ $new doc --json compiler/tests/doc/shapes/util/geo.ei 2>&1 | norm >$tmp/doc
 [ -n "$BLESS" ] && cp $tmp/doc compiler/tests/doc/geo.json
 cmp -s $tmp/doc compiler/tests/doc/geo.json || { echo "FAIL doc: eiderc doc --json compiler/tests/doc/shapes/util/geo.ei"; diff compiler/tests/doc/geo.json $tmp/doc | head -10; d_ok=0; }
 for p in core std packages/*/; do
+  case $p in packages/*) [ -f "${p}eider.toml" ] || continue ;; esac  # leftovers of removed packages
   $new doc --json "$p" >$tmp/doc 2>$tmp/doc_err || { echo "FAIL doc: eiderc doc --json $p exits $?"; d_ok=0; }
   [ -s $tmp/doc_err ] && { echo "FAIL doc: eiderc doc --json $p warns"; head -5 $tmp/doc_err; d_ok=0; }
 done
