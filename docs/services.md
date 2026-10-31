@@ -203,7 +203,7 @@ Recorded rather than worked around; none blocks the design.
 | # | Need | Where it showed | Today |
 |---|---|---|---|
 | N1 | Type aliases (`type Handler = fn(Request) -> Response`) | every handler signature | the fn type is spelled out |
-| N2 | `\r`, `\xNN` and `\u{...}` string escapes, and literal concatenation | CRLF in messages, test corpora | bytes pushed by hand; tests map `\n` to CRLF and marker characters to control bytes |
+| N2 | `\r`, `\xNN` and `\u{...}` string escapes, and literal concatenation | CRLF in messages, test corpora | bytes pushed by hand; tests map `\n` to CRLF and marker characters to control bytes (done in compiler/: docs/compiler.md "C8.17", same-line concatenation; usable after the next seed) |
 | N3 | `std/net`: a send that reports would-block (`try_send`, like `try_recv`) | sock.send_by | wait for writability before every send (correct: one writer per socket) |
 | N4 | Waiting on two descriptors with a deadline without a poller per connection (e.g. `fd.wait_any`, or one event.Loop per worker thread) | each connection waits on its socket and the stop signal | one epoll descriptor per connection (four system calls more per connection) |
 | N5 | Containing a trap: a handler's panic or overflow ends the process | server | documented; validate input before arithmetic |

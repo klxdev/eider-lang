@@ -1,0 +1,21 @@
+// String escapes (docs/compiler.md, "C8.17"): `\r`, `\xNN` (ASCII), `\u{...}` (UTF-8
+// encoded), and adjacent literals on one line joined into one. Expected output: escapes.out.
+fn codes(s: str) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    for i in 0..s.len() { out.push(s.byte(i)) }
+    out
+}
+
+fn main() uses io {
+    print(codes("a\r\nb"))
+    print(codes("\x41\x7f\x1b[0m\x09"))
+    print(codes("\u{41}\u{e9}\u{20AC}\u{1F600}\u{10FFFF}"))
+    print("caf\u{e9} \u{2603}")
+    print(codes("ab" "cd"  "\x21"))
+    let joined = "one, " "two, " "three"
+    print(joined)
+    print(joined.len())
+    let crlf = String.from("GET / HTTP/1.1\r\n" "Host: x\r\n\r\n")
+    print(crlf.len())
+    print(codes("\\x41 \"\u{22}\""))
+}

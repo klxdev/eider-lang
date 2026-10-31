@@ -1,0 +1,4 @@
+let a = "x\r\n\x41\u{e9}\u{1F600}"
+let b = "ab" "cd"   "ef"
+let c = "g"
+    "h"

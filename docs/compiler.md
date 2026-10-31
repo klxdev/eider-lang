@@ -1920,6 +1920,45 @@ ct_trap.ei:2)`, was `(program:2)`) and a trap in the prelude names it (e0807_com
 `Foot`, `Edge` (was `base__High` ...); the compile-fail runner output follows the renamed,
 added and removed cases above. Nothing else changed.
 
+## C8.17: string escapes
+
+Wave 4, item 8.17 (docs/std.md "Needs the compiler", docs/services.md N2). Code: lex.ei
+(`string`, `hex_escape`, `unicode_escape`, `utf8_push`, and the join in `run`).
+
+**Escapes** in string literals, besides `\n`, `\t`, `\"` and `\\`:
+
+| Escape | Means | Refused (E0001, at the backslash) |
+|---|---|---|
+| `\r` | carriage return (13) | |
+| `\xNN` | the ASCII character NN: exactly two hex digits, either case, 01 to 7f | fewer than two digits; 80 to ff ("write a non-ASCII character as `\u{...}`"); 00 |
+| `\u{H...}` | the Unicode scalar value H (one to six hex digits), UTF-8 encoded | no braces, no or more than six digits, a surrogate (d800 to dfff), above 10ffff, 0 |
+| `\0` | | always: "a string can't contain NUL" |
+
+NUL is refused in every spelling (`\0`, `\x00`, `\u{0}`) because a `str` is a NUL-terminated
+C string (its length is `strlen`) and a String is UTF-8 text without NUL (std/strings and
+`String.from_bytes` rely on it): a NUL would silently cut the text. Bytes that include 0
+belong in a `List[u8]` (decision C60). `\xNN` stops at 7f for the same reason a String is
+always valid UTF-8: a lone byte above 7f isn't (Rust's rule too).
+
+**Adjacent literals** separated only by spaces on one line are one literal (`"GET / HTTP/1.1\r\n"
+"Host: x\r\n"` is one token): it was a syntax error before, so no program changes meaning.
+Literals on different lines are not joined: a string literal statement followed by another
+on the next line is valid today (the last is the block's value), so joining across lines
+would change programs; a continuation rule (inside parentheses, or a leading operator) is
+left for a later decision.
+
+**Syntax changes** (for the tree-sitter grammar, a separate repository): in the string
+token, the escape alternatives become `\\[nrt"\\]`, `\\x[0-7][0-9a-fA-F]` and
+`\\u\{[0-9a-fA-F]{1,6}\}` (`\0` stays an error); the grammar's string node may repeat
+(`string: $ => repeat1($._string_literal)` on one line), or keep one literal per node and
+leave joining to the compiler.
+
+**Tests.** Run: compiler/tests/run/escapes.ei (`\r\n`, `\x41\x7f\x1b`, `\u{...}` of one to four
+UTF-8 bytes up to 10FFFF, joined literals, a String built from joined literals, escaped
+backslashes; hand-checked .out); lexer: compiler/tests/lex/escape_*.ei (each refusal, with
+its position; the oracle records them) and compiler/tests/lex_ok/escapes.ei (the tokens: one
+literal for three joined ones, two for literals on two lines). No oracle file changed.
+
 ## Language work that lands in `eiderc` (after parity)
 
 Each with a design note, compile-fail tests and new codes:

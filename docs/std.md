@@ -189,7 +189,7 @@ around in core.
 | **Iterating a Map** | `Set` keeps its elements in a List beside the Map | `for (k, v) in map`, or `keys()` |
 | **In-place List operations and views** (`insert`/`remove` at an index, `truncate`, `extend`, `swap`, slices) | stream buffers copy their unread tail when compacting, `bytes.slice`-style copies everywhere; merge sort builds new Lists | the built-ins, and zero-copy views with 8.6 references |
 | **16-bit integers** | `encoding.u16_le` returns a u32 | `u16`/`i16` |
-| **String literal escapes** `\r`, `\0`, `\xNN`, `\u{...}` | tests build CRLF input from bytes | the escapes |
+| **String literal escapes** `\r`, `\0`, `\xNN`, `\u{...}` | tests build CRLF input from bytes | the escapes (in compiler/ since docs/compiler.md "C8.17", `\0` refused: strings hold no NUL; usable in std after the next seed) |
 | **`panic` with a computed message** (`panic` takes only a `str`) | `assert_eq` prints its diff to stderr, then panics with a fixed text | `panic(String)` |
 | **`if`/`match` as a call argument** (E0103) | values are bound to a `let` first | expression-position `if` |
 | **Floats** (C9) | no float formatting or parsing in `fmt`/`strings` | f64 |

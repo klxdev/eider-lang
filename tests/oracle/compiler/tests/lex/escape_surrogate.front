@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex/escape_surrogate.ei","line":2,"col":14},"message":"`\\u{...}` can't be a surrogate (d800 to dfff): it must be a Unicode scalar value"}

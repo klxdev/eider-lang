@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex/escape_hex_digits.ei","line":2,"col":16},"message":"`\\x` needs two hex digits, like `\\x1b`"}
