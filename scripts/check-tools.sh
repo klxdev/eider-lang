@@ -7,9 +7,14 @@
 #
 #   scripts/check-tools.sh
 #
-# EIDER_ANALYZER and TREE_SITTER_EIDER name the repositories (default: ../eider-analyzer and
-# ../tree-sitter-eider next to this checkout).
+# EIDER_ANALYZER, TREE_SITTER_EIDER and EIDER_PROFILER name the repositories (default:
+# ../eider-analyzer, ../tree-sitter-eider and ../eider-profiler next to this checkout).
 #
+# - versions: the tools ship with the toolchain (docs/site/tooling/releases.md): each
+#   sibling's VERSION must have eider-lang's MAJOR.MINOR (VERSION) and agree with its own
+#   files (its scripts/version.sh check, when it has one); `scripts/version.sh
+#   check-siblings`. One line, `ok   versions: <each component's version>`, naming the
+#   repositories that are absent, or `FAIL ...` per sibling that differs.
 # - eider-analyzer: a copy of the repository (its sources, without target/) whose eider.toml
 #   points at this checkout is fetched (`eider-pkg fetch`), built (its scripts/build.sh, which
 #   builds the compiler from this checkout's compiler/) and tested (tests/run.sh: the scripted
@@ -19,12 +24,25 @@
 #   without ERROR or MISSING nodes, apart from the fixtures meant not to parse).
 #
 # Each half prints `ok   ...`, `FAIL ...` (with the failures under it) or `skip: <reason>` when
-# its repository or a tool it needs is missing. Exits 1 if a half fails, else 0.
+# its repository or a tool it needs is missing. Exits 1 if a part fails, else 0.
 cd "$(dirname "$0")/.." || exit 1
 here=$(pwd -P)
 fail=0
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
+
+# ---- versions
+sh "$here/scripts/version.sh" check-siblings > "$T/versions" 2>&1
+vrc=$?
+if [ $vrc = 0 ]; then
+  have="eider-lang $(tr -d ' \n' < "$here/VERSION")"
+  for c in $(sed -n 's/^ok   \([a-z-]*\) \([^ ]*\) .*/\1:\2/p' "$T/versions"); do have="$have, ${c%%:*} ${c#*:}"; done
+  absent=$(sed -n 's/^skip: \([a-z-]*\):.*/\1/p' "$T/versions" | paste -sd, - | sed 's/,/, /g')
+  if [ -n "$absent" ]; then echo "ok   versions: $have (same MAJOR.MINOR; absent: $absent)"; else echo "ok   versions: $have (same MAJOR.MINOR)"; fi
+else
+  grep -v '^ok\|^skip' "$T/versions"
+  fail=1
+fi
 
 # ---- eider-analyzer
 an=${EIDER_ANALYZER:-$here/../eider-analyzer}

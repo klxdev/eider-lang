@@ -6,6 +6,8 @@
 //   entry = "warehouse.ei"      # what `import "warehouse"` loads (default <name>.ei);
 //                               # `import "warehouse/a/b"` loads a/b.ei
 //   main = "main.ei"            # program entry for run/build (optional)
+//   eider = "0.1"               # the toolchain MAJOR.MINOR it needs (optional; the
+//                               # compiler refuses another one, E0811)
 //
 //   [deps.json]                 # one table per dependency; the key must equal its package name
 //   git = "https://..."         #   either git + (version | rev) ...
@@ -52,6 +54,24 @@ pub fn valid_name(n: List[u8]) -> bool {
         if !((c >= 97 && c <= 122) || bytes.is_digit(c) || c == 95) { return false }
     }
     true
+}
+
+/// MAJOR.MINOR (`eider = "0.1"`): two runs of digits joined by one `.`.
+pub fn valid_series(v: List[u8]) -> bool {
+    let mut dots = 0
+    let mut run = 0
+    for c in v {
+        if c == 46 {
+            if run == 0 { return false }
+            dots += 1
+            run = 0
+        } else if bytes.is_digit(c) {
+            run += 1
+        } else {
+            return false
+        }
+    }
+    dots == 1 && run > 0
 }
 
 pub fn known_cap(c: List[u8]) -> bool {
@@ -101,11 +121,11 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
         Err(e) => { return Err(at(file, e.line, e.col, e.msg)) }
     }
     // every key must be one we know: catches typos like `verison`
-    let top_ok = ["package.name", "package.version", "package.entry", "package.main", "package.description"]
+    let top_ok = ["package.name", "package.version", "package.entry", "package.main", "package.description", "package.eider"]
     let dep_ok = ["path", "git", "version", "rev", "uses"]
     for e in doc {
         let mut ok = false
-        for i in 0..5 {
+        for i in 0..6 {
             if bytes.eq(e.key, sys.lit(top_ok[i as usize])) { ok = true }
         }
         if !ok && bytes.starts_with(e.key, sys.lit("deps.")) {
@@ -147,6 +167,14 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
     }
     if semver.parse(version).is_none() {
         return Err(bad(file, line_of(doc, sys.lit("package.version"), 1), "`version` must be MAJOR.MINOR.PATCH, e.g. \"0.1.0\""))
+    }
+    match str_at(doc, file, sys.lit("package.eider"))? {
+        Some(v) => {
+            if !valid_series(v) {
+                return Err(bad(file, line_of(doc, sys.lit("package.eider"), 1), "`eider` is the toolchain MAJOR.MINOR the package needs, e.g. \"0.1\""))
+            }
+        }
+        None => {}
     }
     let entry = match str_at(doc, file, sys.lit("package.entry"))? {
         Some(e) => e

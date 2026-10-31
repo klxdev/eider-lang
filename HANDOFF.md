@@ -14,6 +14,7 @@ scripts/selfhost.sh        # seed -> stage1 -> stage2 -> stage3; must print SELF
 ```
 
 Commands: `check [--json]`, `emit-c`, `emit-header`, `build [--lib|--wasm] [-o name] [-l lib]`, `run [--release]`, `test`, `test --compile-fail <dir>`, `lex`, `parse`, `ir` (`scripts/ei --help`).
+Version: `VERSION` (`scripts/ei --version`, `scripts/version.sh`); the sibling tools share its MAJOR.MINOR and ship with it (docs/site/tooling/releases.md, `scripts/release.sh`).
 Env: `CC`, `WASM_CC`, `EIDER_CFLAGS`, `EIDER_CACHE` (dir or `off`), `EIDER_ROOT`.
 
 ## What is built

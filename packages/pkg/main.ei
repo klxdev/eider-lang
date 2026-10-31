@@ -8,6 +8,7 @@
 //   eider-pkg [-C dir] vendor                 copy git packages into vendor/ (offline builds)
 //   eider-pkg [-C dir] tree                   print the locked graph
 //   eider-pkg hash <dir>                      content hash of a directory
+//   eider-pkg --version                       `eider-pkg <version>` (the toolchain's, VERSION)
 //
 // Only fetch/update/add/remove/vendor may touch the network: fetch and friends only when a
 // commit isn't already in the local mirror, update always refreshes the mirrors (tags can
@@ -22,6 +23,7 @@
 // is gone (a deps/ an earlier eider-pkg made, recognisable by its deps/.all, is removed).
 
 import "core/sys"
+import "core/version"
 import "std/bytes"
 import "std/fs"
 import "std/io"
@@ -39,7 +41,7 @@ fn is(a: List[u8], s: str) -> bool { bytes.eq(a, sys.lit(s)) }
 fn say(s: str) uses io { io.outln(sys.lit(s)) }
 
 fn usage() -> String {
-    String.from("usage: eider-pkg [-C dir] (init [name] | add <name> --path P | add <name> --git URL --version V|--rev R [--uses a,b] | remove <name> | fetch [--offline] | update [--offline] | vendor | tree | hash <dir>)")
+    String.from("usage: eider-pkg [-C dir] (init [name] | add <name> --path P | add <name> --git URL --version V|--rev R [--uses a,b] | remove <name> | fetch [--offline] | update [--offline] | vendor | tree | hash <dir> | --version)")
 }
 
 fn parse_cli() -> Result[Cli, String] uses io, fs {
@@ -55,6 +57,13 @@ fn parse_cli() -> Result[Cli, String] uses io, fs {
             dir = fs.absolute(argv[i + 1])?
             i += 2
             continue
+        }
+        // before a command only: `add --version V` is the dependency's version
+        if is(a, "--version") && cmd.len() == 0 {
+            let mut l = sys.lit("eider-pkg ")
+            bytes.append(inout l, sys.lit(version.VERSION))
+            io.outln(l)
+            env.exit(0)
         }
         if is(a, "--offline") {
             offline = true
@@ -278,7 +287,9 @@ fn init(c: Cli) -> Result[bool, String] uses io, fs {
     }
     let mut t = sys.lit("[package]\nname = \"")
     bytes.append(inout t, clean)
-    bytes.append(inout t, sys.lit("\"\nversion = \"0.1.0\"\nmain = \"main.ei\"\n"))
+    bytes.append(inout t, sys.lit("\"\nversion = \"0.1.0\"\nmain = \"main.ei\"\neider = \""))
+    bytes.append(inout t, sys.lit(version.SERIES))
+    bytes.append(inout t, sys.lit("\"\n"))
     fs.mkdir_all(c.dir)?
     fs.write(file, t)?
     let main_file = fs.join(c.dir, sys.lit("main.ei"))

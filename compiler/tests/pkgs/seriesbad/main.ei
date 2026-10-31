@@ -1,0 +1,3 @@
+// pkgtest: check
+// `eider` is a MAJOR.MINOR, not a full version: E0811
+fn main() {}

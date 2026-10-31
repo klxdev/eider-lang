@@ -1,0 +1,4 @@
+[package]
+name = "oldseries"
+version = "2.3.0"
+eider = "0.0"

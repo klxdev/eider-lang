@@ -1073,6 +1073,15 @@ letter, the path one or more non-empty segments. (So a path import without its e
   package, a directory that doesn't exist, or an eider.toml or eider.lock that doesn't parse
   is **E0810**, with the fix `run eider-pkg fetch in <dir>`. The compiler does not re-hash
   store directories: eider-pkg checks the hash whenever it fetches.
+- The toolchain series (C220, docs/site/tooling/releases.md). `eider = "0.1"` under
+  [package] names the toolchain MAJOR.MINOR a package needs (lock.ei `Manifest.eider`).
+  resolve.ei `check_series` compares it with core/version.ei's `SERIES` (the compiler's
+  own, from when it was built) once per package: another value, or one that isn't a
+  MAJOR.MINOR, is **E0811**, at 1:1 of the entry file for the entry file's package and at
+  the first import that loads a module of any other package; absent, nothing is checked.
+  `eiderc --version` (and `eiderc version`) prints `eiderc <core/version.ei VERSION>`; that
+  file is the Eider copy of VERSION (scripts/version.sh check), so the seed embeds the
+  version and a bump is a source change plus a seed regeneration.
 - So visibility is per package: app sees its dependencies, each dependency sees its own
   (from its own eider.toml, read in the store or vendor copy), and the lock, written for the
   whole graph by `eider-pkg fetch`, says where each one is.
@@ -1123,7 +1132,9 @@ an entry that isn't `<name>.ei`, self-import by package name, std and core, then
 an undeclared package, an indirect one, one missing from eider.lock, a locked directory that
 is gone, no eider.lock, malformed imports, two copies of a package, and a file in no package;
 plus the same C from a copy of the layout at another path. compiler/tests/check/fail has
-E0809 and E0810 cases, compiler/tests/unit/lock.ei the reader. tests/pkg/run.sh builds and
+E0809 and E0810 cases, compiler/tests/unit/lock.ei the reader; compiler/tests/pkgs/series
+and seriesbad E0811 at 1:1 (another MAJOR.MINOR, a full version), app and geo a matching
+`eider`, tests/checks/fail/e0811_toolchain_series.ei E0811 at an import. tests/pkg/run.sh builds and
 runs its projects through eider.lock: no `deps/` after fetch, the locked git packages in the
 store, an indirect or undeclared or removed dependency is E0809, one added by hand before a
 fetch E0810, a run from vendor/ with the store deleted, and `core`/`std` refused as names.

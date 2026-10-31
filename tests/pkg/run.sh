@@ -130,7 +130,8 @@ exit 0" "$(pkg app init)"
 check "init writes eider.toml" '[package]
 name = "app"
 version = "0.1.0"
-main = "main.ei"' "$(cat "$T/app/eider.toml")"
+main = "main.ei"
+eider = "0.1"' "$(cat "$T/app/eider.toml")"
 check "init writes a program with package imports" 'import "core/sys"
 import "std/io"' "$(head -2 "$T/app/main.ei")"
 check "init twice" "eider-pkg: eider.toml already exists
@@ -154,6 +155,7 @@ check "eider.toml after add" "[package]
 name = \"app\"
 version = \"0.1.0\"
 main = \"main.ei\"
+eider = \"0.1\"
 
 [deps.geom]
 path = \"../geom\"
@@ -361,7 +363,7 @@ check "grants in the tree" "capsapp 0.1.0
   ffidep 0.1.0 uses clock,ffi,net
   plain 0.1.0
 exit 0" "$(pkg capsapp tree)"
-check "unknown capability" "eider-pkg: <T>/capsapp/eider.toml:19:1: unknown capability \`disk\` (known: io, clock, fs, net, threads, ffi)
+check "unknown capability" "eider-pkg: <T>/capsapp/eider.toml:20:1: unknown capability \`disk\` (known: io, clock, fs, net, threads, ffi)
 exit 1" "$(pkg capsapp add other --path ../plain --uses disk)"
 # the program calls them without `uses ffi` (it stays inside ffidep and core), but with the
 # real capabilities they declare (magnitude: clock)
@@ -502,5 +504,14 @@ cmp -s "$T/bad.toml" "$T/bad/eider.toml" && echo "ok   failed adds leave eider.t
 manifest "$T/bad" bad 1.0
 check "bad package version" "eider-pkg: <T>/bad/eider.toml:3:1: \`version\` must be MAJOR.MINOR.PATCH, e.g. \"0.1.0\"
 exit 1" "$(pkg bad fetch)"
+manifest "$T/bad" bad 0.1.0 'eider = "0.1.0"
+'
+check "eider is a MAJOR.MINOR" "eider-pkg: <T>/bad/eider.toml:4:1: \`eider\` is the toolchain MAJOR.MINOR the package needs, e.g. \"0.1\"
+exit 1" "$(pkg bad fetch)"
+
+# ---- the version (VERSION, docs/site/tooling/releases.md)
+
+check "--version" "eider-pkg $(cat VERSION)
+exit 0" "$(scripts/eider-pkg --version 2>&1; echo "exit $?")"
 
 exit $fail

@@ -49,6 +49,7 @@
 - [The compiler: eiderc](tooling/compiler.md)
 - [The package manager: eider-pkg](tooling/eider-pkg.md)
 - [Editors](tooling/editors.md)
+- [Versions and releases](tooling/releases.md)
 
 ## Design notes
 
