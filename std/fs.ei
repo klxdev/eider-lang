@@ -1,4 +1,4 @@
-// std/fs: files and directories. Paths are bytes; errors are human-readable Strings.
+//! std/fs: files and directories. Paths are bytes; errors are human-readable Strings.
 
 import "core/sys"
 import "bytes.ei"

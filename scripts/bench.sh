@@ -9,6 +9,13 @@
 #                      lowering, the part of a build that is Eider code), median of REPS
 #
 #   sh scripts/bench.sh [eiderc[:root] ...]        REPS=5 by default
+#   PROFILE=1 sh scripts/bench.sh [...]             also one profile per benchmark and compiler
+#
+# PROFILE=1 builds each benchmark (and the compiler, for `self`) again with `--profile`
+# (docs/runtime.md "Profiler"), runs it once and writes $PROFILE_DIR/<benchmark>.<n>.prof
+# (default target/bench-prof; n is the compiler's position in the arguments), for
+# `eider-profiler report` and, with a baseline compiler first, `eider-profiler diff`. The
+# times above are of the unprofiled builds. A compiler without --profile (the seed) is skipped.
 #
 # `root` is the toolchain directory the compiler takes its core from (EIDER_ROOT; default
 # the checkout), so a baseline compiler is measured with the core it was built for, e.g.
@@ -84,4 +91,21 @@ done
 echo
 lines=$(ec "$1" emit-c compiler/main.ei | wc -l)
 echo "(self: $(cat compiler/*.ei | wc -l) lines of Eider -> $lines lines of C; $REPS runs each, median wall time)"
+if [ -n "$PROFILE" ]; then
+  pdir=${PROFILE_DIR:-target/bench-prof}
+  mkdir -p "$pdir"
+  i=0
+  for c in "$@"; do
+    i=$((i + 1))
+    if ! ec "$c" build "$(ls tests/bench/*.ei | head -1)" --profile -o "$tmp/probe" > "$tmp/build.log" 2>&1; then
+      echo "profile: $(bin "$c") can't build with --profile, skipped"; continue
+    fi
+    for f in tests/bench/*.ei; do
+      n=$(basename "$f" .ei)
+      ec "$c" build "$f" --profile -o "$tmp/$n.p$i" > "$tmp/build.log" 2>&1 && EIDER_PROF="$pdir/$n.$i.prof" "$tmp/$n.p$i" > /dev/null 2>&1 || { echo "profile: $n failed with $(bin "$c")"; fail=1; }
+    done
+    ec "$c" build compiler/main.ei --profile -o "$tmp/eiderc.p$i" > "$tmp/build.log" 2>&1 && EIDER_ROOT=$(root "$c") EIDER_PROF="$pdir/self.$i.prof" "$tmp/eiderc.p$i" emit-c compiler/main.ei > /dev/null 2>&1 || { echo "profile: self failed with $(bin "$c")"; fail=1; }
+  done
+  echo "profiles: $pdir/<benchmark>.<n>.prof (eider-profiler report <file>; eider-profiler diff <a> <b>)"
+fi
 exit $fail

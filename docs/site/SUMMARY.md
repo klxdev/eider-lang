@@ -15,7 +15,7 @@
 - [Capabilities](guide/capabilities.md)
 - [Concurrency](guide/concurrency.md)
 - [Testing](guide/testing.md)
-- [Services](guide/services.md)
+- [Building services](guide/services.md)
 - [Calling C, and calling Eider from C](guide/ffi.md)
 - [WebAssembly](guide/wasm.md)
 - [Coming from another language](guide/coming-from.md)
@@ -42,13 +42,24 @@
 
 ## Standard library
 
+- [core](api:core)
+- [std](api:std)
+
 ## Packages
+
+- [crypto](api:crypto)
+- [pkg (eider-pkg)](api:pkg)
+- [doc (eider-doc)](api:doc)
+- [fuzz](api:fuzz)
 
 ## Tooling
 
 - [The compiler: eiderc](tooling/compiler.md)
 - [The package manager: eider-pkg](tooling/eider-pkg.md)
 - [Editors](tooling/editors.md)
+- [The documentation generator: eider-doc](tooling/eider-doc.md)
+- [The profiler: eider-profiler](tooling/profiler.md)
+- [Versions and releases](tooling/releases.md)
 - [The LLVM backend (experimental)](tooling/llvm.md)
 
 ## Design notes

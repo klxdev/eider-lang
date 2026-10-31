@@ -332,5 +332,5 @@ fn main() uses io {
 
 `eider: runtime error: index out of bounds (main.ei:4)`. A trap can't be caught. In a
 service that means one bad request could stop the process, so validate input before
-arithmetic or indexing (examples/kvstore checks for overflow before adding); containing
-traps is planned.
+arithmetic or indexing (eider-rpc's examples/kvstore checks for overflow before adding);
+containing traps is planned.

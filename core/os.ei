@@ -1,21 +1,21 @@
-// core/os: the Layer 0 OS primitives (core/ABI.md, from "OS primitives: common rules" on):
-// descriptors, sockets, name resolution, readiness, time, signals, randomness, processes,
-// and the atomic cells (ABI "Atomic cells") std/atomic holds by handle.
-// Like core/sys (whose buffer functions it uses for arguments and results), it binds only
-// ec_* core symbols. It is a module of its own so that programs that don't use these
-// primitives, the compiler among them, don't carry their bindings (seed/eiderc.c stays as
-// it is). std/fd, net, poll, time, random, signal and child are built on it.
-//
-// Each function is one core call. Data arguments go through the input buffer first
-// (sys.send / sys.send_all); multi-value results come back in `out` as little-endian fields:
-// take them with sys.take and read them with le_u32 / le_u64 / le_fd.
-//
-// Each wrapper declares the real capability of what it does next to `ffi`, as core/sys.ei's
-// do (`ffi` doesn't leave its package, docs/compiler.md "C8.5"): `fs` for what touches files
-// as such (open, stat, chmod, truncate, flock, sync), `io` for descriptor I/O, pipes,
-// pollers, wakers, signals, randomness and getpid, `net` for sockets and the resolver,
-// `clock` for the clocks and sleep, and `io, fs, net` for spawn, wait and kill (a child can
-// do anything, as with sys.run). err_kind only `ffi`; the le_* readers nothing.
+//! core/os: the Layer 0 OS primitives (core/ABI.md, from "OS primitives: common rules" on):
+//! descriptors, sockets, name resolution, readiness, time, signals, randomness, processes,
+//! and the atomic cells (ABI "Atomic cells") std/atomic holds by handle.
+//! Like core/sys (whose buffer functions it uses for arguments and results), it binds only
+//! ec_* core symbols. It is a module of its own so that programs that don't use these
+//! primitives, the compiler among them, don't carry their bindings (seed/eiderc.c stays as
+//! it is). std/fd, net, poll, time, random, signal and child are built on it.
+//!
+//! Each function is one core call. Data arguments go through the input buffer first
+//! (sys.send / sys.send_all); multi-value results come back in `out` as little-endian fields:
+//! take them with sys.take and read them with le_u32 / le_u64 / le_fd.
+//!
+//! Each wrapper declares the real capability of what it does next to `ffi`, as core/sys.ei's
+//! do (`ffi` doesn't leave its package, docs/compiler.md "C8.5"): `fs` for what touches files
+//! as such (open, stat, chmod, truncate, flock, sync), `io` for descriptor I/O, pipes,
+//! pollers, wakers, signals, randomness and getpid, `net` for sockets and the resolver,
+//! `clock` for the clocks and sleep, and `io, fs, net` for spawn, wait and kill (a child can
+//! do anything, as with sys.run). err_kind only `ffi`; the le_* readers nothing.
 
 extern "c" fn ec_err_kind(e: i64) -> i32
 extern "c" fn ec_fd_open(flags: i32, mode: i32) -> i64

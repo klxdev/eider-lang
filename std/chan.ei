@@ -1,21 +1,21 @@
-// std/chan: bounded channels with deadlines, and `select` over channels, timers and
-// cancellation (decision C5: bounded by default, unbounded only by name, a deadline on every
-// blocking operation; docs/runtime.md "Channels and select").
-//
-// A Channel[T] is a FIFO queue shared by every copy of it (any number of senders and
-// receivers). Its values sit in a built-in Chan[T]; its state (how many, closed, who waits)
-// sits in a sync.Lock. A send first reserves a place under the lock and then moves the value
-// into the queue; a receive reserves a value and then takes it. So the queue is only touched
-// for values already counted, and its own blocking `recv` never waits for more than a send
-// that is already under way.
-//
-// Cancel-safety (what happens when an operation gives up at its deadline, or a select picks
-// another case): `send` and `try_send` either queue the value or hand it back (`Full`,
-// `Rejected`), never lose it; `recv`, `try_recv` and a select's channel case either take
-// exactly one value or none. So every operation here can be abandoned at its deadline
-// without losing data.
-//
-// Capabilities: `io` (wakers are descriptors) and `clock` (deadlines), as declared on each.
+//! std/chan: bounded channels with deadlines, and `select` over channels, timers and
+//! cancellation (decision C5: bounded by default, unbounded only by name, a deadline on every
+//! blocking operation; docs/runtime.md "Channels and select").
+//!
+//! A Channel[T] is a FIFO queue shared by every copy of it (any number of senders and
+//! receivers). Its values sit in a built-in Chan[T]; its state (how many, closed, who waits)
+//! sits in a sync.Lock. A send first reserves a place under the lock and then moves the value
+//! into the queue; a receive reserves a value and then takes it. So the queue is only touched
+//! for values already counted, and its own blocking `recv` never waits for more than a send
+//! that is already under way.
+//!
+//! Cancel-safety (what happens when an operation gives up at its deadline, or a select picks
+//! another case): `send` and `try_send` either queue the value or hand it back (`Full`,
+//! `Rejected`), never lose it; `recv`, `try_recv` and a select's channel case either take
+//! exactly one value or none. So every operation here can be abandoned at its deadline
+//! without losing data.
+//!
+//! Capabilities: `io` (wakers are descriptors) and `clock` (deadlines), as declared on each.
 
 import "sync.ei"
 import "time.ei"

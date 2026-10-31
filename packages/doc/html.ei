@@ -1,0 +1,141 @@
+//! HTML helpers for eider-doc: escaping, relative paths between pages, and syntax
+//! highlighting for Eider code (keywords, types, strings, numbers, comments).
+
+import "std/bytes"
+import "markdown"
+
+/// Appends the bytes of `s`.
+pub fn put(inout out: List[u8], s: str) { bytes.append(inout out, s.bytes()) }
+
+/// Appends `s` HTML-escaped.
+pub fn text(inout out: List[u8], s: List[u8]) { bytes.append(inout out, markdown.escape(s)) }
+
+/// How many directories deep a site path is (`api/std/stream.html` is 2).
+pub fn depth(page: List[u8]) -> usize {
+    let mut n: usize = 0
+    for c in page {
+        if c == 47 { n += 1 }
+    }
+    n
+}
+
+/// The prefix from `page` back to the site root (`../../` for `api/std/stream.html`).
+pub fn root_of(page: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    for i in 0..depth(page) { bytes.append(inout out, "../".bytes()) }
+    out
+}
+
+/// A link from `page` to the site path `to` (both relative to the site root).
+pub fn rel(page: List[u8], to: List[u8]) -> List[u8] {
+    // on the same page, just the fragment
+    if to.len() > page.len() && to[page.len()] == 35 && bytes.starts_with(to, page.copy()) { return bytes.slice(to, page.len(), to.len()) }
+    let mut out = root_of(page)
+    bytes.append(inout out, to)
+    out
+}
+
+fn is_keyword(w: List[u8]) -> bool {
+    for k in [
+        "fn", "let", "mut", "var", "if", "else", "while", "for", "in", "return", "match", "true",
+        "false", "uses", "test", "assert", "inout", "as", "const", "import", "break", "continue",
+        "trait", "impl", "pub", "comptime", "extern", "export", "unsafe", "type", "self", "Self", "spawn",
+    ] {
+        if bytes.eq(w, k.bytes()) { return true }
+    }
+    false
+}
+
+fn span(inout out: List[u8], class: str, s: List[u8]) {
+    put(inout out, "<span class=\"")
+    put(inout out, class)
+    put(inout out, "\">")
+    text(inout out, s)
+    put(inout out, "</span>")
+}
+
+/// Eider source as HTML with `<span class="kw|ty|st|nu|co">` around keywords, capitalised
+/// names, string literals, numbers and comments. Everything is escaped.
+pub fn highlight(src: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let n = src.len()
+    let mut i: usize = 0
+    while i < n {
+        let c = src[i]
+        if c == 47 && i + 1 < n && src[i + 1] == 47 {
+            let mut j = i.copy()
+            while j < n && src[j] != 10 { j += 1 }
+            span(inout out, "co", bytes.slice(src, i, j))
+            i = j
+        } else if c == 34 {
+            let mut j = i + 1
+            while j < n && src[j] != 34 && src[j] != 10 {
+                if src[j] == 92 { j += 1 }
+                j += 1
+            }
+            if j < n && src[j] == 34 { j += 1 }
+            if j > n { j = n }
+            span(inout out, "st", bytes.slice(src, i, j))
+            i = j
+        } else if bytes.is_digit(c) {
+            let mut j = i.copy()
+            while j < n && (bytes.is_ident(src[j]) || (src[j] == 46 && j + 1 < n && bytes.is_digit(src[j + 1]))) { j += 1 }
+            span(inout out, "nu", bytes.slice(src, i, j))
+            i = j
+        } else if bytes.is_alpha(c) || c == 95 {
+            let mut j = i.copy()
+            while j < n && bytes.is_ident(src[j]) { j += 1 }
+            let w = bytes.slice(src, i, j)
+            if is_keyword(w) {
+                span(inout out, "kw", w)
+            } else if c >= 65 && c <= 90 {
+                span(inout out, "ty", w)
+            } else {
+                text(inout out, w)
+            }
+            i = j
+        } else {
+            let mut j = i + 1
+            while j < n && !(bytes.is_ident(src[j]) || src[j] == 34 || src[j] == 47) { j += 1 }
+            text(inout out, bytes.slice(src, i, j))
+            i = j
+        }
+    }
+    out
+}
+
+/// Whether a fence's info string is Eider code (`eider`, `eider,fragment`, ...).
+pub fn is_eider(info: List[u8]) -> bool {
+    bytes.eq(info, "eider".bytes()) || bytes.starts_with(info, "eider,".bytes()) || bytes.starts_with(info, "eider ".bytes())
+}
+
+/// The code-block hook for markdown.Options: Eider is highlighted, the rest escaped.
+pub fn code_block(info: List[u8], src: List[u8]) -> List[u8] {
+    if is_eider(info) { return highlight(src) }
+    markdown.escape(src)
+}
+
+/// A signature with its links: each link's bytes become `<a href="...">` (the target
+/// resolved by `href`, empty: no link), the rest highlighted.
+pub fn signature(sig: List[u8], starts: List[usize], ends: List[usize], hrefs: List[List[u8]]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut at: usize = 0
+    for k in 0..starts.len() {
+        let a = starts[k]
+        let z = ends[k]
+        if a < at || z > sig.len() || a >= z { continue }
+        bytes.append(inout out, highlight(bytes.slice(sig, at, a)))
+        if hrefs[k].len() > 0 {
+            put(inout out, "<a href=\"")
+            text(inout out, hrefs[k])
+            put(inout out, "\">")
+            text(inout out, bytes.slice(sig, a, z))
+            put(inout out, "</a>")
+        } else {
+            bytes.append(inout out, highlight(bytes.slice(sig, a, z)))
+        }
+        at = z
+    }
+    bytes.append(inout out, highlight(bytes.slice(sig, at, sig.len())))
+    out
+}

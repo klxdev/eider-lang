@@ -1,0 +1,234 @@
+//! The API as eider-doc sees it: what `eiderc doc --json` prints for each package
+//! (docs/site/tooling/eider-doc.md has the format), merged into one arena, with lookups for
+//! `api:` links.
+
+import "std/bytes"
+import "json"
+
+/// Bytes `start..end` of a signature name the item `to` (`<package>/<module>#<anchor>`).
+pub type Link = { start: usize, end: usize, to: List[u8] }
+
+/// An item or a member of one; `members` index `Api.items`. Impls carry their trait's text
+/// (`trait_name`, empty for an inherent impl) and the type they are for (`for_name`, and
+/// `for_link` when it is a type of the same module).
+pub type Item = {
+    kind: List[u8], name: List[u8], anchor: List[u8], sig: List[u8], line: u32, doc: List[u8],
+    links: List[Link], trait_name: List[u8], for_name: List[u8], for_link: List[u8],
+    caps: List[List[u8]], members: List[u32],
+}
+
+/// A module: `package` and `path` name it (`std` and `stream`), `file` is relative to the
+/// package's `dir`; its doc starts on `doc_line` (0: none).
+pub type Module = {
+    package: List[u8], path: List[u8], file: List[u8], dir: List[u8], doc: List[u8], doc_line: u32,
+    items: List[u32],
+}
+
+/// A package and the indexes of its modules in `Api.modules`.
+pub type Package = { name: List[u8], dir: List[u8], version: List[u8], description: List[u8], modules: List[u32] }
+
+/// `toolchain`: the version of the toolchain that described it (the first non-empty one).
+pub type Api = { toolchain: List[u8], packages: List[Package], modules: List[Module], items: List[Item] }
+
+pub fn empty() -> Api { Api(List.new(), List.new(), List.new(), List.new()) }
+
+fn str_of(d: json.Doc, id: u32, key: str) -> List[u8] {
+    match json.field(d, id, key) {
+        Some(v) => {
+            match json.as_str(d, v) {
+                Some(s) => s
+                None => List.new()
+            }
+        }
+        None => List.new()
+    }
+}
+
+fn int_of(d: json.Doc, id: u32, key: str) -> u32 {
+    match json.field(d, id, key) {
+        Some(v) => {
+            match json.as_int(d, v) {
+                Some(n) => n as u32
+                None => 0
+            }
+        }
+        None => 0
+    }
+}
+
+fn arr_of(d: json.Doc, id: u32, key: str) -> List[u32] {
+    let mut out: List[u32] = List.new()
+    match json.field(d, id, key) {
+        Some(v) => {
+            for i in 0..json.len(d, v) {
+                match json.at(d, v, i) {
+                    Some(x) => out.push(x)
+                    None => {}
+                }
+            }
+        }
+        None => {}
+    }
+    out
+}
+
+fn item_of(inout api: Api, d: json.Doc, id: u32) -> u32 {
+    let mut links: List[Link] = List.new()
+    for l in arr_of(d, id, "links") { links.push(Link(int_of(d, l, "start") as usize, int_of(d, l, "end") as usize, str_of(d, l, "to"))) }
+    let mut caps: List[List[u8]] = List.new()
+    for c in arr_of(d, id, "uses") {
+        match json.as_str(d, c) {
+            Some(s) => caps.push(s)
+            None => {}
+        }
+    }
+    let mut members: List[u32] = List.new()
+    for m in arr_of(d, id, "members") { members.push(item_of(inout api, d, m)) }
+    let it = Item(str_of(d, id, "kind"), str_of(d, id, "name"), str_of(d, id, "anchor"), str_of(d, id, "sig"),
+        int_of(d, id, "line"), str_of(d, id, "doc"), links, str_of(d, id, "trait"), str_of(d, id, "for"),
+        str_of(d, id, "for_link"), caps, members)
+    api.items.push(it)
+    (api.items.len() - 1) as u32
+}
+
+/// Adds the packages and modules of one `eiderc doc --json` document; a module already
+/// present (same package and path) is kept once. Err: the JSON doesn't parse.
+pub fn add_json(inout api: Api, src: List[u8]) -> Result[(), List[u8]] {
+    let d = match json.parse(src) {
+        Ok(x) => x
+        Err(e) => { return Err(json.error_text(e)) }
+    }
+    if api.toolchain.len() == 0 { api.toolchain = str_of(d, d.root, "toolchain") }
+    let mut dirs: Map[List[u8], List[u8]] = Map.new()
+    for p in arr_of(d, d.root, "packages") {
+        let name = str_of(d, p, "name")
+        dirs.insert(name.copy(), str_of(d, p, "dir"))
+        if package_index(api, name) == none() {
+            api.packages.push(Package(name, str_of(d, p, "dir"), str_of(d, p, "version"), str_of(d, p, "description"), List.new()))
+        }
+    }
+    for m in arr_of(d, d.root, "modules") {
+        let pkg = str_of(d, m, "package")
+        let path = str_of(d, m, "path")
+        if module_index(api, key_of(pkg, path)) != none() { continue }
+        let mut items: List[u32] = List.new()
+        for it in arr_of(d, m, "items") { items.push(item_of(inout api, d, it)) }
+        let dir: List[u8] = match dirs.get(pkg.copy()) {
+            Some(x) => x
+            None => List.new()
+        }
+        api.modules.push(Module(pkg.copy(), path, str_of(d, m, "file"), dir, str_of(d, m, "doc"), int_of(d, m, "doc_line"), items))
+        let mi = (api.modules.len() - 1) as u32
+        let pi = package_index(api, pkg)
+        if pi != none() { api.packages[pi as usize].modules.push(mi) }
+    }
+    Ok(())
+}
+
+pub fn none() -> u32 { 4294967295 }
+
+/// `<package>/<path>`, or the path for a module in no package.
+pub fn key_of(package: List[u8], path: List[u8]) -> List[u8] {
+    if package.len() == 0 { return path }
+    let mut k = package.copy()
+    k.push(47)
+    bytes.append(inout k, path)
+    k
+}
+
+pub fn key(m: Module) -> List[u8] { key_of(m.package, m.path) }
+
+pub fn package_index(api: Api, name: List[u8]) -> u32 {
+    for i in 0..api.packages.len() {
+        if bytes.eq(api.packages[i].name, name) { return i as u32 }
+    }
+    none()
+}
+
+pub fn module_index(api: Api, k: List[u8]) -> u32 {
+    for i in 0..api.modules.len() {
+        if bytes.eq(key(api.modules[i]), k) { return i as u32 }
+    }
+    none()
+}
+
+/// Whether module `mi` has an item or member with this anchor.
+pub fn has_anchor(api: Api, mi: u32, anchor: List[u8]) -> bool {
+    for i in api.modules[mi as usize].items {
+        if item_has(api, i, anchor) { return true }
+    }
+    false
+}
+
+fn item_has(api: Api, i: u32, anchor: List[u8]) -> bool {
+    let it = api.items[i as usize]
+    if bytes.eq(it.anchor, anchor) { return true }
+    for m in it.members {
+        if item_has(api, m, anchor) { return true }
+    }
+    false
+}
+
+/// The site path of a module's page: `api/<package>/<path>.html` (`api/_/<path>.html` in no
+/// package).
+pub fn page_of(m: Module) -> List[u8] {
+    let mut p = "api/".bytes()
+    if m.package.len() == 0 { bytes.append(inout p, "_".bytes()) } else { bytes.append(inout p, m.package) }
+    p.push(47)
+    bytes.append(inout p, m.path)
+    bytes.append(inout p, ".html".bytes())
+    p
+}
+
+/// The site path of a package's page.
+pub fn package_page(name: List[u8]) -> List[u8] {
+    let mut p = "api/".bytes()
+    if name.len() == 0 { bytes.append(inout p, "_".bytes()) } else { bytes.append(inout p, name) }
+    bytes.append(inout p, "/index.html".bytes())
+    p
+}
+
+/// The site path of a module's source page.
+pub fn source_page(m: Module) -> List[u8] {
+    let mut p = "src/".bytes()
+    if m.package.len() == 0 { bytes.append(inout p, "_".bytes()) } else { bytes.append(inout p, m.package) }
+    p.push(47)
+    bytes.append(inout p, m.file)
+    bytes.append(inout p, ".html".bytes())
+    p
+}
+
+/// Resolves an `api:` target (`std`, `std/stream`, `std/stream#BufReader`) to a site path
+/// with its fragment, or Err with why it is unknown.
+pub fn resolve(api: Api, target: List[u8]) -> Result[List[u8], List[u8]] {
+    let mut what = target.copy()
+    let mut frag: List[u8] = List.new()
+    match bytes.find_byte(target, 35, 0) {
+        Some(i) => {
+            what = bytes.slice(target, 0, i)
+            frag = bytes.slice(target, i + 1, target.len())
+        }
+        None => {}
+    }
+    let mi = module_index(api, what)
+    if mi != none() {
+        let mut p = page_of(api.modules[mi as usize])
+        if frag.len() > 0 {
+            if !has_anchor(api, mi, frag) {
+                let mut e = "no item `".bytes()
+                bytes.append(inout e, frag)
+                bytes.append(inout e, "` in module ".bytes())
+                bytes.append(inout e, what)
+                return Err(e)
+            }
+            p.push(35)
+            bytes.append(inout p, frag)
+        }
+        return Ok(p)
+    }
+    if package_index(api, what) != none() && frag.len() == 0 { return Ok(package_page(what)) }
+    let mut e = "no module or package `".bytes()
+    bytes.append(inout e, what)
+    bytes.append(inout e, "` was documented".bytes())
+    Err(e)
+}

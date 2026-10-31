@@ -1,0 +1,116 @@
+// std/profile: the profiler, from inside the program (docs/runtime.md "Profiler").
+//
+// A program built with `eiderc build|run --profile` samples itself and counts allocations,
+// copies and waits from the start (unless `EIDER_PROF_START=0`), and writes its profile
+// (`eider.prof`, or the path in `EIDER_PROF`) when it exits and on SIGUSR2. This module is
+// what a long-running program adds on top: turn sampling on and off, forget what was
+// recorded, write a snapshot whenever it wants (a service's `/debug/profile` endpoint:
+// eider-http's http/profiling), and tag what it does with labels so a report can be split by
+// request route, job kind or tenant.
+//
+// In a program built without --profile every call does nothing: `enabled()` is false,
+// `snapshot` and `capture` return an error, labels are not recorded and `with_label` just
+// runs its closure. So library code can label its work unconditionally.
+//
+// Labels are (key, value) pairs that nest: `with_label("route", "/todos/:id", f)` runs `f`
+// with that label added to the ones already set on this thread, and every sample, sampled
+// allocation and wait recorded meanwhile carries the set. They are per thread (a pool
+// worker labels the request it is serving). Each distinct set is kept for the life of the
+// process (at most 65,535), so a value should come from a small set (a route pattern, not a
+// path with ids in it).
+
+import "core/sys"
+import "core/prof"
+import "core/os"
+import "fs.ei"
+import "env.ei"
+
+/// Whether this program has a profiler (built with --profile, and EIDER_PROF isn't `off`).
+pub fn enabled() -> bool { prof.state() > 0 }
+
+/// Whether it is sampling now (`start`ed, or from the beginning).
+pub fn running() -> bool {
+    let s = prof.state()
+    s > 0 && (s / 2) % 2 == 1
+}
+
+/// Start sampling (counting goes on whatever this says: allocations and copies are counted
+/// from the start, so live heap and leaks stay exact).
+pub fn start() { prof.start() }
+
+/// Stop sampling.
+pub fn stop() { prof.stop() }
+
+/// Forget the samples, counts and timeline recorded so far (the live heap stays: it is the
+/// state of the program, not a count); the next snapshot covers only what comes after.
+pub fn reset() { prof.reset() }
+
+fn failure(what: str, r: i64) -> String {
+    let mut m = String.from(what)
+    if r == -38 {
+        m.append(String.from("not built with --profile"))
+    } else {
+        m.append(sys.error_text(r))
+    }
+    m
+}
+
+/// Write the profile as it is now to `path` (empty: the profile path, EIDER_PROF or
+/// eider.prof). The file is complete or absent (written aside and renamed).
+pub fn snapshot(path: List[u8]) -> Result[(), String] uses fs {
+    sys.send(path)
+    let r = prof.snapshot()
+    if r < 0 { return Err(failure("profile: cannot write a snapshot: ", r)) }
+    Ok(())
+}
+
+/// The profile as it is now, as the bytes of a profile file (written to a temporary file in
+/// $TMPDIR, else /tmp, read back and removed).
+pub fn capture() -> Result[List[u8], String] uses fs, io, clock {
+    let mut path = sys.lit("/tmp")
+    match env.get(sys.lit("TMPDIR")) {
+        Some(t) => { if t.len() > 0 { path = t } }
+        None => {}
+    }
+    path.push(47)
+    let mut name = String.from("eider-prof-")
+    name.append(String.from_int(os.getpid()))
+    name.append(String.from("-"))
+    name.append(String.from_int(os.time_mono_ns()))
+    name.append(String.from(".prof"))
+    for b in name.bytes() { path.push(b) }
+    snapshot(path)?
+    let data = fs.read(path)
+    fs.remove_all(path)
+    data
+}
+
+/// Run `f` with the label (key, value) added to this thread's labels; its result. Without a
+/// profiler this is one call and `f()`.
+pub fn with_label[T](key: str, value: str, f: fn() -> T) -> T {
+    if prof.state() <= 0 { f() } else { labelled(sys.lit(key), sys.lit(value), f) }
+}
+
+/// `with_label` for a key and value that are bytes (a route pattern, a method).
+pub fn with_label_bytes[T](key: List[u8], value: List[u8], f: fn() -> T) -> T {
+    if prof.state() <= 0 { f() } else { labelled(key, value, f) }
+}
+
+fn labelled[T](key: List[u8], value: List[u8], f: fn() -> T) -> T {
+    let mut parts: List[List[u8]] = List.new()
+    parts.push(key)
+    parts.push(value)
+    sys.send_all(parts)
+    let back = Restore(prof.label_push())
+    f()
+}
+
+/// Puts back the labels a `with_label` found when it ends (its drop runs after the closure's
+/// result is made, on every way out, and needs no variable of type T, which may be `()`).
+type Restore = { prev: i64 }
+
+impl Drop for Restore {
+    fn drop(inout self) {
+        if self.prev >= 0 { prof.label_set(self.prev) }
+    }
+}

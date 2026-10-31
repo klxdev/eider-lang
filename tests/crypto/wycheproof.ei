@@ -11,7 +11,7 @@ import "std/bytes"
 import "std/io"
 import "vec.ei"
 import "../../packages/crypto/crypto.ei"
-import "../../packages/json/json.ei"
+import "../../vendor/json/json.ei"
 
 fn eqb(a: List[u8], b: List[u8]) -> bool { bytes.eq(a, b) }
 

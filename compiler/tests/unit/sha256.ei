@@ -1,5 +1,5 @@
 // compiler/sha256.ei (the driver's cache keys): the FIPS 180-4 vectors, the padding edges
-// (55, 56, 63, 64 and 119 bytes) and a multi-block input; same vectors as packages/sha256.
+// (55, 56, 63, 64 and 119 bytes) and a multi-block input; same vectors as packages/pkg/sha256.ei.
 import "../../sha256.ei"
 
 fn show(d: List[u8]) uses io {

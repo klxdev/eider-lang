@@ -1,5 +1,5 @@
-// std/proc: run other programs. A child process can do anything, so callers need every
-// capability it might use (io, fs, net). (`ffi` stays inside core: docs/compiler.md, "C8.5".)
+//! std/proc: run other programs. A child process can do anything, so callers need every
+//! capability it might use (io, fs, net). (`ffi` stays inside core: docs/compiler.md, "C8.5".)
 
 import "core/sys"
 import "bytes.ei"

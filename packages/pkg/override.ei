@@ -1,0 +1,165 @@
+//! override: local checkouts standing in for git packages (`EIDER_PKG_OVERRIDE`).
+//!
+//!   EIDER_PKG_OVERRIDE="json=../eider-json,http=/src/eider-http"
+//!
+//! A git dependency whose name is listed (anywhere in the graph) is taken from that directory
+//! instead of its repository: no network, no tag needed, and uncommitted edits count. The
+//! files are the ones git would commit (`git ls-files --cached --others --exclude-standard`,
+//! when that lists the package's eider.toml, so target/ and other ignored files stay out;
+//! every file but .git, deps, vendor and target otherwise). They are copied into the store at their
+//! content hash, pkg/<name>-<hash16>, where the compiler finds them through eider.lock, as for
+//! any git package. So eider.lock keeps the git source: when the checkout holds exactly the
+//! locked release, the lock is the one a fetch from the network writes. The commit recorded
+//! is the locked one when the content hash is unchanged, else the checkout's HEAD.
+//! Entries are separated by commas or white space; a relative directory is relative to the
+//! current directory. The checkout's version must be at least the one required.
+
+import "core/sys"
+import "std/bytes"
+import "std/env"
+import "std/fs"
+import "std/proc"
+import "store.ei"
+
+pub type Override = { name: List[u8], dir: List[u8] }
+
+fn text(b: List[u8]) -> String { sys.to_string(b) }
+
+/// The overrides `EIDER_PKG_OVERRIDE` names (none when it is unset or empty).
+pub fn from_env() -> Result[List[Override], String] uses io, fs {
+    let mut out: List[Override] = List.new()
+    let v = match env.get(sys.lit("EIDER_PKG_OVERRIDE")) {
+        Some(v) => v
+        None => { return Ok(out) }
+    }
+    let mut items: List[List[u8]] = List.new()
+    let mut cur: List[u8] = List.new()
+    for c in v {
+        if c == 44 || bytes.is_space(c) {
+            if cur.len() > 0 {
+                items.push(cur)
+                cur = List.new()
+            }
+        } else {
+            cur.push(c)
+        }
+    }
+    if cur.len() > 0 { items.push(cur) }
+    for it in items {
+        let eq = match bytes.find_byte(it, 61, 0) {
+            Some(i) => i
+            None => {
+                let mut m = String.from("EIDER_PKG_OVERRIDE: `")
+                m.append(text(it))
+                m.push_str("` is not <name>=<dir>")
+                return Err(m)
+            }
+        }
+        let name = bytes.slice(it, 0, eq)
+        let dir = bytes.slice(it, eq + 1, it.len())
+        if name.len() == 0 || dir.len() == 0 {
+            let mut m = String.from("EIDER_PKG_OVERRIDE: `")
+            m.append(text(it))
+            m.push_str("` is not <name>=<dir>")
+            return Err(m)
+        }
+        out.push(Override(name, fs.normalize(fs.absolute(dir)?)))
+    }
+    Ok(out)
+}
+
+/// The directory overriding package `name`, if any.
+pub fn find(os: List[Override], name: List[u8]) -> Option[List[u8]] {
+    for o in os {
+        if bytes.eq(o.name, name) { return Some(o.dir) }
+    }
+    None
+}
+
+/// Run git in `dir` with the space-separated `args`; its stdout when it succeeds.
+fn git_out(dir: List[u8], args: str) -> Option[List[u8]] uses io, fs, net {
+    let mut argv: List[List[u8]] = List.new()
+    argv.push(sys.lit("git"))
+    argv.push(sys.lit("-C"))
+    argv.push(dir)
+    for a in bytes.split(sys.lit(args), 32) { argv.push(a) }
+    match proc.output(argv) {
+        Ok(o) => {
+            if o.code != 0 { return None }
+            Some(o.out)
+        }
+        Err(_) => None
+    }
+}
+
+/// The files git would commit in `dir` (relative to it), when git knows the package: the
+/// listing has its eider.toml. (A directory git ignores, or one outside any work tree, has no
+/// listing.)
+fn git_files(dir: List[u8]) -> Option[List[List[u8]]] uses io, fs, net {
+    let listing = git_out(dir, "ls-files -z --cached --others --exclude-standard")?
+    let mut out: List[List[u8]] = List.new()
+    let mut has_manifest = false
+    for f in bytes.split(listing, 0) {
+        // a tracked file deleted in the work tree is gone; a submodule is a directory
+        if f.len() > 0 && fs.exists(fs.join(dir, f)) && !fs.is_dir(fs.join(dir, f)) {
+            if bytes.eq(f, sys.lit("eider.toml")) { has_manifest = true }
+            out.push(f)
+        }
+    }
+    if !has_manifest { return None }
+    Some(out)
+}
+
+/// The checkout's HEAD commit, or nothing when git doesn't know the package.
+pub fn head(dir: List[u8]) -> List[u8] uses io, fs, net {
+    if git_files(dir).is_none() { return List.new() }
+    match git_out(dir, "rev-parse --verify --quiet HEAD") {
+        Some(c) => bytes.trim(c)
+        None => List.new()
+    }
+}
+
+/// The files of the package at `dir`, relative to it: git's, else every file but .git,
+/// deps, vendor and target.
+fn files(dir: List[u8]) -> Result[List[List[u8]], String] uses io, fs, net {
+    match git_files(dir) {
+        Some(listed) => Ok(listed)
+        None => {
+            let mut skip = store.skipped()
+            skip.push(sys.lit("target"))
+            fs.walk(dir, skip)
+        }
+    }
+}
+
+/// Copy the package at `src` into the store under its content hash.
+pub fn copy_in(home: List[u8], name: List[u8], src: List[u8]) -> Result[store.Export, String] uses io, fs, net {
+    if !fs.is_dir(src) {
+        let mut m = String.from("EIDER_PKG_OVERRIDE: `")
+        m.append(text(name))
+        m.push_str("` points at ")
+        m.append(text(src))
+        m.push_str(", which is not a directory")
+        return Err(m)
+    }
+    let mut leaf = sys.lit("override-")
+    bytes.append(inout leaf, name)
+    let tmp = fs.join(fs.join(home, sys.lit("tmp")), leaf)
+    fs.remove_all(tmp)?
+    fs.mkdir_all(tmp)?
+    for f in files(src)? {
+        let to = fs.join(tmp, f)
+        fs.mkdir_all(fs.dirname(to))?
+        fs.write(to, fs.read(fs.join(src, f))?)?
+    }
+    let h = store.tree_hash(tmp)?
+    let dir = store.store_dir(home, name, h)
+    if fs.is_dir(dir) && bytes.eq(store.tree_hash(dir)?, h) {
+        fs.remove_all(tmp)?
+    } else {
+        fs.remove_all(dir)?
+        fs.mkdir_all(fs.dirname(dir))?
+        fs.rename(tmp, dir)?
+    }
+    Ok(store.Export(dir, h))
+}

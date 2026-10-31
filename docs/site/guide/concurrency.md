@@ -91,8 +91,8 @@ Stats { requests: 1000, errors: 20 }
 - An `update` closure that locks the same mutex again traps (`cannot lock a mutex`) instead
   of deadlocking.
 - `std/sync`'s `Lock[T]` adds `with(f)`, which returns a result along with the new value:
-  "change the state and tell me what happened" in one critical section. The services in
-  `examples/kvstore` and `examples/todo` keep their state in one.
+  "change the state and tell me what happened" in one critical section. The example services
+  of eider-rpc and eider-openapi ([Building services](services.md)) keep their state in one.
 
 ## `Chan[T]`: sending values
 

@@ -13,8 +13,9 @@ import "std/bytes"
 /// What the compiler needs of eider.toml: the package name, its entry module (`entry`,
 /// default `<name>.ei`), the names of its direct dependencies (`[deps.<name>]`) and, for
 /// each, the capabilities it is granted (`uses = [...]`; none when absent;
-/// docs/compiler.md, "C8.5: capabilities per package").
-pub type Manifest = { name: List[u8], entry: List[u8], deps: List[List[u8]], grants: List[List[List[u8]]] }
+/// docs/compiler.md, "C8.5: capabilities per package"), and the toolchain MAJOR.MINOR it
+/// needs (`eider = "0.1"` under [package]; "" when absent; resolve.ei checks it, E0811).
+pub type Manifest = { name: List[u8], entry: List[u8], deps: List[List[u8]], grants: List[List[List[u8]]], eider: List[u8] }
 
 /// One `[[package]]` of eider.lock: `path` is the directory of a `path+<dir>` source
 /// (relative to the lock's directory unless absolute), `hash` the content hash of a git one.
@@ -46,7 +47,7 @@ pub fn manifest(src: List[u8]) -> Result[Manifest, List[u8]] {
         bytes.append(inout k, sys.lit(".uses"))
         grants.push(items_at(doc, k))
     }
-    Ok(Manifest(name, entry, deps, grants))
+    Ok(Manifest(name, entry, deps, grants, text_at(doc, sys.lit("package.eider"))))
 }
 
 /// eider.lock text: its packages in file order.

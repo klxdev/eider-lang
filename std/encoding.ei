@@ -1,9 +1,9 @@
-// std/encoding: hex, base64 (RFC 4648: the standard and the URL-safe alphabet, with or
-// without padding) and fixed-width integers in little- and big-endian byte order. Pure, no
-// capabilities. Decoders are strict: they reject whitespace, wrong padding and
-// non-canonical trailing bits (RFC 4648 section 3.5), and say where (`DecodeError`), so a
-// value has exactly one encoding, which matters for signatures and cache keys.
-// (Integers are 8, 32 or 64 bits wide in Eider; 16-bit values travel in a u32.)
+//! std/encoding: hex, base64 (RFC 4648: the standard and the URL-safe alphabet, with or
+//! without padding) and fixed-width integers in little- and big-endian byte order. Pure, no
+//! capabilities. Decoders are strict: they reject whitespace, wrong padding and
+//! non-canonical trailing bits (RFC 4648 section 3.5), and say where (`DecodeError`), so a
+//! value has exactly one encoding, which matters for signatures and cache keys.
+//! (Integers are 8, 32 or 64 bits wide in Eider; 16-bit values travel in a u32.)
 
 // ---- errors
 

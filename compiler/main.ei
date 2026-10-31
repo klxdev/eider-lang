@@ -1,5 +1,6 @@
 // eiderc: the Eider compiler, written in Eider. See docs/compiler.md.
 //
+// `eiderc --version` prints `eiderc <core/version.ei VERSION>` (docs/site/tooling/releases.md).
 // `eiderc --help` (usage_text below) lists every command, option and environment
 // variable; an unknown option or command, a missing source file or a stray argument is a
 // usage error (exit 2). `lex` dumps tokens (one per line: line:col kind [value]), `parse`
@@ -18,6 +19,7 @@
 // ignores it, as it ignores `--lib`.
 
 import "core/sys"
+import "core/version"
 import "std/bytes"
 import "std/fs"
 import "std/io"
@@ -38,11 +40,12 @@ import "wasm.ei"
 import "suite.ei"
 import "ide.ei"
 import "front.ei"
+import "doc.ei"
 
 type Args = {
     cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,
     lib: bool, libs: List[List[u8]], wasm: bool, compile_fail: bool, overlay: List[List[u8]],
-    max_errors: u64, all_errors: bool,
+    max_errors: u64, all_errors: bool, private: bool, profile: u32,
     /// `--backend=llvm` (llvm.ei; docs/compiler.md, "Backends"), `-g` (its debug info),
     /// `--coverage` (emit-llvm: the native/fallback report instead of the IR)
     llvm: bool, debug: bool, coverage: bool,
@@ -52,11 +55,19 @@ type Args = {
 /// (compiler/ avoids that pattern: such temporaries were once dropped too late, LEARNINGS.md).
 fn is(a: List[u8], s: str) -> bool { bytes.eq(a, sys.lit(s)) }
 
+/// `eiderc --version`: `eiderc <VERSION>` (core/version.ei; docs/site/tooling/releases.md).
+fn version_line() -> List[u8] {
+    let mut t = sys.lit("eiderc ")
+    bytes.append(inout t, sys.lit(version.VERSION))
+    t
+}
+
 /// `eiderc --help`: every command, option and environment variable.
 fn usage_text() -> List[u8] {
-    let mut t: List[u8] = List.new()
+    let mut t = version_line()
+    bytes.append(inout t, sys.lit(" (the Eider compiler, written in Eider: Eider -> C11)"))
+    t.push(10)
     for l in [
-        "eiderc 0.1.0 (the Eider compiler, written in Eider: Eider -> C11)",
         "",
         "usage:",
         "  eiderc check <file.ei> [--json] [--lib] [--wasm]  type-check only: `ok` or the errors",
@@ -66,6 +77,7 @@ fn usage_text() -> List[u8] {
         "  eiderc build --lib <file.ei> [-o name]     build lib<name>.a, lib<name>.so and <name>.h from `export fn`s",
         "  eiderc build --wasm <file.ei> [-o name]    build <name>.wasm, <name>.d.ts and <name>.js (needs clang for wasm32 and wasm-ld)",
         "  eiderc run <file.ei> [--release] [-l lib]  build and run (-O0 unless --release)",
+        "  eiderc build|run|test <file.ei> --profile[=cpu,mem,conc]  with the profiler (docs/runtime.md \"Profiler\")",
         "  eiderc test <file.ei> [-l lib]             run the `test` blocks",
         "  eiderc test --compile-fail [<dir>]         run the compile-fail suite (<dir>/fail, <dir>/pass; default tests/checks)",
         "  eiderc lex <file.ei>                       dump the tokens",
@@ -80,7 +92,10 @@ fn usage_text() -> List[u8] {
         "                                             before C8.6), with the `.copy()` that keeps the old meaning",
         "  eiderc ide <file.ei> [--overlay <path> <text>]  print the IDE analysis (ide.ei): symbols, refs, types;",
         "                                             --overlay (repeatable) reads <path> from the file <text>",
+        "  eiderc doc <file.ei | dir> [--json] [--private]  the API of a package directory or a program's package:",
+        "                                             items, signatures, doc comments (doc.ei); --private: also non-pub items",
         "  eiderc help | --help | -h                  print this text",
+        "  eiderc version | --version                 print `eiderc <version>` (VERSION; docs/site/tooling/releases.md)",
         "",
         "--backend=llvm (build, run, test, emit-c; experimental): functions are emitted as LLVM IR where",
         "the LLVM backend supports them (the rest as C) and built with clang 17 or newer ($EIDER_LLVM_CC);",
@@ -95,6 +110,7 @@ fn usage_text() -> List[u8] {
         "  EIDER_CFLAGS  extra C compiler flags, split at spaces",
         "  EIDER_CACHE   `off`, or the cache directory (default $XDG_CACHE_HOME/eider, else ~/.cache/eider)",
         "  EIDER_ROOT    the toolchain, the directory holding core/ (default: found above the eiderc binary)",
+        "  EIDER_PROF    a --profile program's profile file (default eider.prof; `off`: none)",
     ] {
         bytes.append(inout t, sys.lit(l))
         t.push(10)
@@ -126,7 +142,7 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] {
 }
 
 fn known_cmd(c: List[u8]) -> bool {
-    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "audit-refs") || is(c, "emit-llvm")
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "audit-refs") || is(c, "doc") || is(c, "emit-llvm")
 }
 
 fn parse_args() -> Args uses io {
@@ -144,6 +160,8 @@ fn parse_args() -> Args uses io {
     let mut overlay: List[List[u8]] = List.new()
     let mut max_errors = diag.MAX_ERRORS
     let mut all_errors = false
+    let mut private = false
+    let mut profile: u32 = 0
     let mut llvm = false
     let mut debug = false
     let mut coverage = false
@@ -153,6 +171,9 @@ fn parse_args() -> Args uses io {
         i += 1
         if is(a, "--help") || is(a, "-h") {
             io.out(usage_text())
+            env.exit(0)
+        } else if is(a, "--version") {
+            io.outln(version_line())
             env.exit(0)
         } else if is(a, "--json") {
             json = true
@@ -187,6 +208,8 @@ fn parse_args() -> Args uses io {
             debug = true
         } else if is(a, "--coverage") {
             coverage = true
+        } else if is(a, "--private") {
+            private = true
         } else if is(a, "--all-errors") {
             all_errors = true
         } else if is(a, "--max-errors") {
@@ -196,6 +219,9 @@ fn parse_args() -> Args uses io {
                 None => usage_error(quoted("`--max-errors` needs a number, not ", argv[i]))
             }
             i += 1
+        } else if bytes.starts_with(a, sys.lit("--profile")) {
+            profile = lower.prof_what(a)
+            if profile == 0 { usage_error(quoted("`--profile=` takes cpu, mem and conc, not ", a)) }
         } else if a.len() > 1 && a[0] == 45 {
             usage_error(quoted("unknown option ", a))
         } else if cmd.len() == 0 {
@@ -209,6 +235,10 @@ fn parse_args() -> Args uses io {
     if cmd.len() == 0 { usage() }
     if is(cmd, "help") {
         io.out(usage_text())
+        env.exit(0)
+    }
+    if is(cmd, "version") {
+        io.outln(version_line())
         env.exit(0)
     }
     if !known_cmd(cmd) { usage_error(quoted("unknown command ", cmd)) }
@@ -225,9 +255,11 @@ fn parse_args() -> Args uses io {
         wasm = false
     }
     if wasm { lib = true }
+    if profile > 0 && (lib || !(is(cmd, "build") || is(cmd, "run") || is(cmd, "test") || is(cmd, "emit-c"))) { usage_error(sys.lit("`--profile` goes with build, run, test or emit-c, without --lib or --wasm")) }
     if is(cmd, "emit-llvm") { llvm = true }
     if llvm && wasm { usage_error(sys.lit("`--backend=llvm` does not build WebAssembly")) }
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay, max_errors, all_errors, llvm, debug, coverage)
+    if llvm && profile > 0 { usage_error(sys.lit("`--profile` goes with the C backend (not `--backend=llvm` yet)")) }
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay, max_errors, all_errors, private, profile, llvm, debug, coverage)
 }
 
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
@@ -326,6 +358,36 @@ fn run_ide(a: Args) uses io, fs, net, clock {
         k += 2
     }
     io.out(ide.dump(ide.analyze(a.file, paths, texts)))
+}
+
+/// `eiderc doc` (doc.ei): the API as JSON or text on stdout; problems in the documented
+/// modules (a syntax error, an import that can't be found) as warnings on stderr. Exit 2
+/// when the target can't be read or loaded.
+fn run_doc(a: Args) uses io, fs {
+    match doc.api(a.file, a.private) {
+        Ok(api) => {
+            for d in api.warnings {
+                let mut m = sys.lit("eiderc doc: warning: ")
+                bytes.append(inout m, d.file)
+                m.push(58)
+                bytes.append(inout m, bytes.from_u64(d.line as u64))
+                m.push(58)
+                bytes.append(inout m, bytes.from_u64(d.col as u64))
+                bytes.append(inout m, sys.lit(": "))
+                bytes.append(inout m, sys.lit(d.code))
+                m.push(32)
+                bytes.append(inout m, diag.demangle(d.msg))
+                io.errln(m)
+            }
+            if a.json { io.out(doc.json(api)) } else { io.out(doc.text(api)) }
+        }
+        Err(m) => {
+            let mut msg = sys.lit("eiderc doc: ")
+            bytes.append(inout msg, m)
+            io.errln(msg)
+            env.exit(2)
+        }
+    }
 }
 
 /// `eiderc migrate-var` (docs/compiler.md, "C8.6"): the file with every `var` the checker
@@ -450,6 +512,10 @@ fn main() uses io, fs, net, clock {
         run_ide(a)
         return
     }
+    if is(a.cmd, "doc") {
+        run_doc(a)
+        return
+    }
     let src = match fs.read(a.file) {
         Ok(s) => s
         Err(e) => {
@@ -557,7 +623,7 @@ fn main() uses io, fs, net, clock {
             }
             return
         }
-        let lowered = if a.wasm { lower.program_wasm(lp, a.file) } else { lower.program_for(lp, a.file, tests, a.lib) }
+        let lowered = if a.wasm { lower.program_wasm(lp, a.file) } else if a.profile > 0 { lower.program_prof(lp, a.file, tests, a.profile, driver.version()) } else { lower.program_for(lp, a.file, tests, a.lib) }
         let cprog = match lowered {
             Ok(text) => text
             Err(m) => {

@@ -1,20 +1,20 @@
-// std/testing: helpers for tests and deterministic test doubles (decision C10).
-//
-// - `assert_eq(got, want)`: traps (exit 101, like `assert`) after printing both values and
-//   where their text first differs; `Suite` checks many things and reports every failure,
-//   for programs that compare their output with a recorded one. `diff_lines` shows which
-//   lines of two texts differ.
-// - `FakeClock`: a std/time Clock whose time moves only when the test advances it, or when
-//   the code under test sleeps on it.
-// - Streams: `script` is a Reader that plays back a list of events (data in chunks of a
-//   chosen size, a pause that times out a deadline read, an error, the end); `sink` is a
-//   Writer that takes at most n bytes per write and can fail or time out after so many
-//   bytes; `pipe` is an in-memory pipe whose ends are a Reader and a Writer. None of them
-//   waits for real time, so a test of timeouts, short reads and errors runs the same way
-//   every time.
-//
-// Printing needs `io`; the stream doubles need `io` through the generic stream code as
-// every stream does (std/stream), never when called directly.
+//! std/testing: helpers for tests and deterministic test doubles (decision C10).
+//!
+//! - `assert_eq(got, want)`: traps (exit 101, like `assert`) after printing both values and
+//!   where their text first differs; `Suite` checks many things and reports every failure,
+//!   for programs that compare their output with a recorded one. `diff_lines` shows which
+//!   lines of two texts differ.
+//! - `FakeClock`: a std/time Clock whose time moves only when the test advances it, or when
+//!   the code under test sleeps on it.
+//! - Streams: `script` is a Reader that plays back a list of events (data in chunks of a
+//!   chosen size, a pause that times out a deadline read, an error, the end); `sink` is a
+//!   Writer that takes at most n bytes per write and can fail or time out after so many
+//!   bytes; `pipe` is an in-memory pipe whose ends are a Reader and a Writer. None of them
+//!   waits for real time, so a test of timeouts, short reads and errors runs the same way
+//!   every time.
+//!
+//! Printing needs `io`; the stream doubles need `io` through the generic stream code as
+//! every stream does (std/stream), never when called directly.
 
 import "io.ei"
 import "time.ei"

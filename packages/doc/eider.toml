@@ -1,0 +1,13 @@
+[package]
+name = "doc"
+version = "0.1.0"
+eider = "0.1"
+main = "main.ei"
+description = "eider-doc: documentation sites from Markdown pages and `eiderc doc --json`, and doc tests"
+
+# both pure: granted nothing
+[deps.json]
+path = "../../vendor/json"
+
+[deps.markdown]
+path = "../../vendor/markdown"

@@ -1,0 +1,29 @@
+// core/version: the toolchain's version, the Eider copy of VERSION at the root of eider-lang
+// (docs/site/tooling/releases.md).
+//
+// One version covers the language, the compiler (`eiderc --version`), core, std, eider-pkg
+// and eider-doc; the sibling tools (eider-analyzer, tree-sitter-eider, eider-profiler) share
+// its MAJOR.MINOR and have their own PATCH. Before 1.0 a MINOR bump may break compatibility,
+// so a package names the MAJOR.MINOR it needs (`eider = "0.1"` under [package] in its
+// eider.toml) and the compiler refuses any other (E0811).
+//
+// The constants are Eider source, so building the compiler (and the seed) reads no other
+// file: `scripts/version.sh check` (run by scripts/verify.sh) holds them equal to VERSION,
+// and `scripts/version.sh bump` rewrites both; a bump is then a seed regeneration. Programs
+// can use them too:
+//
+//     import "core/version"
+//     print(version.VERSION)
+
+// Constants only: a function here would need `uses ffi` to turn a `str` into bytes
+// (core/sys), which scripts/migrate-caps.sh would strip. A toolchain program's `--version`
+// line is `<tool> <VERSION>` (`eiderc 0.1.0`): `sys.lit("eiderc ")` + `sys.lit(VERSION)`.
+
+/// The toolchain version, MAJOR.MINOR.PATCH.
+pub const VERSION: str = "0.1.0"
+pub const MAJOR: u64 = 0
+pub const MINOR: u64 = 1
+pub const PATCH: u64 = 0
+
+/// MAJOR.MINOR: what a package's `eider = "..."` must equal.
+pub const SERIES: str = "0.1"

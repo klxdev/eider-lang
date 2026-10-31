@@ -1,8 +1,8 @@
-// std/path: POSIX paths as bytes (List[u8], like std/fs), purely textual: nothing here
-// looks at the file system (std/fs.canonical does). The separator is `/`; a path is
-// absolute when it starts with one. Components are the parts between separators; empty
-// ones (`a//b`) and `.` are not components, except that a path made only of `.` is ".".
-// Trailing separators don't change what a path names ("a/b/" is "a/b").
+//! std/path: POSIX paths as bytes (List[u8], like std/fs), purely textual: nothing here
+//! looks at the file system (std/fs.canonical does). The separator is `/`; a path is
+//! absolute when it starts with one. Components are the parts between separators; empty
+//! ones (`a//b`) and `.` are not components, except that a path made only of `.` is ".".
+//! Trailing separators don't change what a path names ("a/b/" is "a/b").
 
 /// The separator, `/`.
 pub const SEP: u8 = 47

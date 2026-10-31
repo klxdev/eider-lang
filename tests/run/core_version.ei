@@ -1,0 +1,24 @@
+// core/version (docs/site/tooling/releases.md): its constants agree with each other. The
+// output doesn't name the version, so a bump changes nothing here (scripts/version.sh check
+// compares the constants with VERSION).
+import "core/sys"
+import "core/version"
+import "std/bytes"
+import "std/io"
+
+fn dotted(a: u64, b: u64) -> List[u8] {
+    let mut out = bytes.from_u64(a)
+    out.push(46)
+    bytes.append(inout out, bytes.from_u64(b))
+    out
+}
+
+fn main() uses io {
+    let v = sys.lit(version.VERSION)
+    let series = dotted(version.MAJOR, version.MINOR)
+    let mut full = series.copy()
+    full.push(46)
+    bytes.append(inout full, bytes.from_u64(version.PATCH))
+    print(bytes.eq(v, full))
+    print(bytes.eq(sys.lit(version.SERIES), series))
+}

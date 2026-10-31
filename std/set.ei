@@ -1,10 +1,10 @@
-// std/set: `Set[T]`, a set of distinct values of any `T: Hash + Eq`, over the built-in Map.
-// Insert, remove and lookup are O(1) on average. The elements also live in a List, so
-// `items()` lists them in insertion order until something is removed, after which the last
-// element takes the removed one's place (removal is a swap, to stay O(1)); iterating the
-// Map would give its slot order instead, which follows the hashes (docs/compiler.md
-// "C8.20"), so the List stays (decision C102). Two Sets are equal when they
-// hold the same elements, in any order. A value like any other: copies don't share.
+//! std/set: `Set[T]`, a set of distinct values of any `T: Hash + Eq`, over the built-in Map.
+//! Insert, remove and lookup are O(1) on average. The elements also live in a List, so
+//! `items()` lists them in insertion order until something is removed, after which the last
+//! element takes the removed one's place (removal is a swap, to stay O(1)); iterating the
+//! Map would give its slot order instead, which follows the hashes (docs/compiler.md
+//! "C8.20"), so the List stays (decision C102). Two Sets are equal when they
+//! hold the same elements, in any order. A value like any other: copies don't share.
 
 pub type Set[T] = { index: Map[T, usize], elems: List[T] }
 

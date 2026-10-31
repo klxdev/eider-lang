@@ -1,20 +1,21 @@
-// resolve: from a root manifest to the full package graph (minimal version selection).
-//
-// Every requirement reachable from the root is visited, including the requirements of
-// versions that end up not selected (as in Go's MVS). Then, per package name, the highest
-// required version wins, and only packages reachable through the selected versions are
-// kept. A dependency's capability grant is the intersection of what every depender grants.
+//! resolve: from a root manifest to the full package graph (minimal version selection).
+//!
+//! Every requirement reachable from the root is visited, including the requirements of
+//! versions that end up not selected (as in Go's MVS). Then, per package name, the highest
+//! required version wins, and only packages reachable through the selected versions are
+//! kept. A dependency's capability grant is the intersection of what every depender grants.
 
 import "core/sys"
 import "std/bytes"
 import "std/fs"
-import "semver"
+import "semver.ei"
 import "manifest.ei"
 import "lockfile.ei"
 import "store.ei"
 import "caps.ei"
+import "override.ei"
 
-pub type Opts = { home: List[u8], offline: bool, use_lock: bool, locked: List[lockfile.Pkg], vendor: List[u8] }
+pub type Opts = { home: List[u8], offline: bool, use_lock: bool, locked: List[lockfile.Pkg], vendor: List[u8], overrides: List[override.Override] }
 
 type Req = { name: List[u8], git: bool, loc: List[u8], want: List[u8], is_rev: bool, grants: List[List[u8]], by: List[u8] }
 
@@ -71,6 +72,8 @@ fn locked_commit(o: Opts, r: Req) -> Option[lockfile.Pkg] {
 /// selected versions.
 fn settle(o: Opts, r: Req) -> Req {
     if !(o.use_lock && o.offline && r.git && !r.is_rev) { return r }
+    // an overridden package is whatever its checkout holds
+    if override.find(o.overrides, r.name).is_some() { return r }
     if locked_commit(o, r).is_some() { return r }
     for p in o.locked {
         if p.git && !p.is_rev && bytes.eq(p.name, r.name) && bytes.eq(p.loc, r.loc) {
@@ -106,7 +109,20 @@ fn visit(o: Opts, r: Req) -> Result[lockfile.Pkg, String] uses io, fs, net {
     let mut dir = r.loc.copy()
     let mut commit = none.copy()
     let mut hash = none.copy()
-    if r.git {
+    let mut overridden = false
+    if r.git && override.find(o.overrides, r.name).is_some() {
+        // a local checkout stands in for the repository (override.ei)
+        let src = override.find(o.overrides, r.name).unwrap()
+        let ex = override.copy_in(o.home, r.name, src)?
+        dir = ex.dir
+        hash = ex.hash
+        commit = override.head(src)
+        for p in o.locked {
+            if p.git && bytes.eq(p.name, r.name) && bytes.eq(p.loc, r.loc) && bytes.eq(p.hash, hash) { commit = p.commit }
+        }
+        if commit.len() == 0 { commit = sys.lit("override") }
+        overridden = true
+    } else if r.git {
         let pinned = locked_commit(o, r)
         commit = match pinned {
             Some(p) => p.commit
@@ -148,7 +164,22 @@ fn visit(o: Opts, r: Req) -> Result[lockfile.Pkg, String] uses io, fs, net {
         e.push_str("` (the [deps.<name>] key must be the package's own name)")
         return Err(e)
     }
-    if r.git && !r.is_rev && !bytes.eq(m.version, r.want) {
+    if overridden && !r.is_rev {
+        let older = match (semver.parse(m.version), semver.parse(r.want)) {
+            (Some(a), Some(b)) => semver.compare(a, b) < 0
+            _ => true
+        }
+        if older {
+            let mut e = String.from("EIDER_PKG_OVERRIDE: the checkout of `")
+            e.append(text(r.name))
+            e.push_str("` has version ")
+            e.append(text(m.version))
+            e.push_str(", but ")
+            e.append(text(r.want))
+            e.push_str(" or later is required")
+            return Err(e)
+        }
+    } else if r.git && !r.is_rev && !bytes.eq(m.version, r.want) {
         return Err(mismatch("the tag's eider.toml has a different version for", r.name, r.want, m.version))
     }
     let mut deps: List[List[u8]] = List.new()

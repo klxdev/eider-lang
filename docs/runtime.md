@@ -12,6 +12,7 @@ core/RUNTIME.md):
 | atomic cells `ec_atomic_*` | core/eider_core.c (ABI "Atomic cells") | Eider can't name shared memory; the core owns the cells, Eider holds handles |
 | `ei_atomic_*` | core/eider_rt.h (RUNTIME "Atomics") | the same operations for generated code (the compiler's built-in atomic type, next) |
 | guarded thread stacks | core/eider_rt.c (RUNTIME "Stack overflow") | mappings, a guard and a fault handler on an alternate signal stack |
+| the profiler (`--profile` builds only) | core/eider_prof.c (RUNTIME "Profiling"), `ec_prof` (ABI "Profiling") | a SIGPROF handler, per-thread timers and rings, allocation and wait hooks ("Profiler" below) |
 
 The std modules, bottom up:
 
@@ -24,6 +25,7 @@ The std modules, bottom up:
 | `std/task` | `Token` (cancellation and deadlines), `Group[T]` (structured task groups), `Pool` (worker threads) | `threads` to start threads; `io, clock` to wait |
 | `std/event` | `Loop`: a poller, a waker and a timer heap | `io`, `clock` |
 | `std/fd` | `wait_ready`, `read_by`: one descriptor with a deadline | `io, clock` |
+| `std/profile` | the profiler from inside the program: start, stop, reset, snapshots, labels ("Profiler") | `fs` to write a snapshot, `io, clock` to capture one |
 
 Each function declares exactly the capabilities it reaches (C8.5): atomics and Locks need
 none (they are memory, like the built-in Mutex), waiting needs `clock` (a deadline) and `io`
@@ -179,6 +181,144 @@ id): add and fire O(log n), cancel O(1) (a cancelled timer is dropped when it re
 top). Resolution is the poller's millisecond: a timer fires at its deadline or up to 1 ms
 later, never early. Cancel-safe: a round consumes only what it returns (descriptors are
 level-triggered unless watched with `poll.EDGE`; a due timer stays due).
+
+## Profiler
+
+`eiderc build|run|test <file.ei> --profile[=cpu,mem,conc]` builds the program with the
+profiler: where its time goes (sampled), what it allocates and copies (counted), and where its
+threads wait (timed). A bare `--profile` is all three. The program writes its profile when it
+ends; the tool that reads it is eider-profiler (a separate repository, written in Eider:
+`report`, `flame`, `folded`, `diff`, `record`; docs/site/tooling/profiler.md). Without the
+flag nothing changes: the generated C is byte-identical to a build by a compiler without the
+profiler, and the runtime is compiled without its profiling part (scripts/test-compiler.sh
+"profile-off", tests/core/run.sh).
+
+### What is recorded
+
+| Kind | What | Where it comes from |
+|---|---|---|
+| `cpu` stacks | a sample of every thread's shadow stack at 99 Hz of CPU time (or wall time) | SIGPROF, per-thread timers |
+| `alloc` sites | allocations and bytes per position, the live ones (heap snapshot, leaks at exit) | `ei_alloc`/`ei_free`/`ei_buf_grow` |
+| `alloc` stacks | one stack per 512 KiB allocated (`EIDER_PROF_MEM_RATE`), weighted by the bytes | the same |
+| `cow` sites and stacks | copy-on-write unshares: a shared String/List/Map/Box copied before a write, with the bytes copied | generated `uniq_` glue, `ei_str_unique`, `ei_str_cat` |
+| `copy` sites | `.copy()` calls (and the size of what was copied) | generated code at each `.copy()` |
+| `grow`, `rehash` sites | List growth and Map rehashes, with the new size | generated `push_`/`ins_` glue, `ei_str_cat` |
+| `drop` sites | calls of a type's own `Drop` | generated `drop_` glue |
+| `lock` sites and stacks | waits for a contended lock (built-in `Mutex`, and the runtime's locks under Chan and Task), in ns | `ei_mutex_lock` |
+| `recv` sites and stacks | waits in `Chan.recv` (so `sync.Lock`, which is a one-value channel), in ns | `ei_chan_recv` |
+| `ref` sites | Ref access conflicts (each one traps; the profile is still written) | `ei_ref_*_begin` |
+| `spawn` sites, threads | spawns per position; each runtime thread's start and end | `ei_thread_start` |
+| heap timeline | live and peak heap, allocations, threads, every 100 ms | the collector thread |
+| labels | the (key, value) pairs std/profile set on the thread, on every stack | `std/profile.with_label` |
+
+A position is a function and a line. Each Eider function that calls a function or loops
+pushes a frame (its id and the line of its current call or allocation) on a per-thread shadow
+stack when it starts and pops it on every return, so stacks are Eider names, files and lines,
+portable, and need no frame pointers or unwinding. Straight-line code that calls nothing gets
+no frame (as if the C compiler inlined it): its time and events count for its caller, at the
+line of the call. Lines are set before the statements that call or allocate, so time in code
+between calls counts at the line of the last call. The site of an allocation or a copy is the
+innermost frame's position: the statement that allocates, in its function.
+
+### Using it
+
+| Environment | Meaning |
+|---|---|
+| `EIDER_PROF` | the profile file (default `eider.prof` in the working directory); `off` turns the profiler off at run time (no samples, no counts, no file) |
+| `EIDER_PROF_HZ` | samples per second (default 99) |
+| `EIDER_PROF_CLOCK` | `cpu` (default: CPU time; a thread that waits isn't sampled) or `wall` (every thread at that rate whether it runs or waits; on Linux a blocking system call can return early with EINTR when the sample arrives, which the core retries) |
+| `EIDER_PROF_START` | `0`: start with sampling off, for `std/profile.start()` (counting is always on, so the live heap stays exact) |
+| `EIDER_PROF_MEM_RATE` | bytes between allocation and copy-on-write stack samples (default 524288) |
+
+The file is written at exit (also after a trap and after `env.exit`), on `SIGUSR2` (by the
+collector thread, not in the signal handler), and whenever the program calls
+`profile.snapshot(path)`. It is written aside and renamed, so a reader never sees half a file.
+
+`std/profile` (in every program; it does nothing without `--profile`):
+
+| Function | What |
+|---|---|
+| `enabled()`, `running()` | whether there is a profiler, whether it samples now |
+| `start()`, `stop()` | sampling on and off |
+| `reset()` | forget what was recorded so far (not the live heap) |
+| `snapshot(path)` | write the profile now (`""`: the profile path) |
+| `capture()` | the profile as bytes (written to a temporary file and read back) |
+| `with_label(key, value, f)`, `with_label_bytes` | run `f` with a label added to the thread's labels |
+
+eider-http has the service side (`http/profiling`): `label_routes(inout router)` runs every
+route under the labels `method` and `route` (the pattern, `/kv/:key`), so a report or flame
+graph can be split per endpoint, on any worker thread of the server's pool; eider-rpc's `jsonrpc` labels
+each call with `rpc` (the method); and `mount(inout router, opts)` adds `GET
+/debug/profile?seconds=N` (reset, sample for N seconds, answer the profile) and `GET
+/debug/heap` (the profile as it is now: live heap by site), only when `opts.enabled`, only for
+the local host unless `opts.remote`, 501 in a program built without `--profile`, 409 while a
+recording runs. eider-rpc's examples/kvstore turns them on with `KVSTORE_PROFILING=1`.
+
+### Profile format
+
+Version 1, JSON lines (one object per line, UTF-8). The first line is the header; then records
+whose `"t"` says what they are, in this order: `file`, `fn`, `label`, `thread`, `stack`,
+`site`, `heap`, `summary`. A reader ignores record kinds and fields it doesn't know; a header
+with a higher `eider_prof` is a format it can't read. Times are nanoseconds from the start of
+the profile (or its last reset), sizes bytes.
+
+| Record | Fields |
+|---|---|
+| header | `eider_prof` (1), `program` (the entry file), `pid`, `reason` (`exit`, `signal`, `snapshot`), `what` (`cpu,mem,conc`), `clock` (`cpu`/`wall`), `hz`, `period_ns`, `mem_rate`, `duration_ns`, `running`, `clean_exit` (main returned normally: what is live is a leak) |
+| `file` | `id`, `path` (as trap messages name files: `std/bytes.ei`, `json/json.ei`, the entry's path) |
+| `fn` | `id` (from 1), `name` (the compiler's: `bytes__0std__append`; `module.name` for people), `file` |
+| `label` | `id` (from 1), `parent` (0: none), `key`, `value`: a label set is a node and its ancestors |
+| `thread` | `id`, `start_ns`, `end_ns` (-1: still running), `samples`, `dropped` (a full ring) |
+| `stack` | `kind` (`cpu`, `alloc`, `cow`, `lock`, `recv`), `label`, `n` (samples or events), `w` (ns of CPU or wait, or bytes), `frames`: `[[fn, line], ...]` outermost first; fn 4294967295 first means the stack was deeper than 128 frames and only the innermost are kept; fn 0 is "no Eider frame" |
+| `site` | `kind` (`alloc`, `cow`, `copy`, `grow`, `rehash`, `drop`, `lock`, `recv`, `ref`, `spawn`), `fn`, `line`, `n`, `w` (bytes; ns for `lock`/`recv`), and for `alloc` `live_n`, `live_w` |
+| `heap` | `ns`, `live`, `peak`, `allocs`, `threads` |
+| `summary` | `samples`, `dropped`, `stacks_lost`, `sites_lost` (tables full), `allocs`, `alloc_bytes`, `frees`, `live`, `live_n`, `peak`, `threads_started`, `threads_exited` |
+
+### How it works
+
+| Piece | Where | Why |
+|---|---|---|
+| shadow stack: `ei_prof_enter`/`leave`, `ei_pf->line = N` | generated C, inline in core/eider_rt.h | portable stacks with Eider names and lines; volatile float stores (alias nothing the program has) |
+| signal handler, per-thread rings | core/eider_prof.c | async-signal-safe: atomics and plain stores only; one ring per thread (single producer: the handler on that thread; single consumer: the collector) |
+| per-thread timers | core/eider_prof.c | Linux: `timer_create` on the thread's CPU clock (or the monotonic clock) with `SIGEV_THREAD_ID`, so each thread is sampled for its own time; elsewhere one `ITIMER_PROF`, whose SIGPROF lands on a running thread |
+| collector thread | core/eider_prof.c | drains the rings every 20 ms into the stack table, samples the heap every 100 ms, writes the file on SIGUSR2; it blocks every signal |
+| stack table | core/eider_prof.c | aggregated stacks (one entry per distinct stack, kind and label), under a mutex never taken in a signal handler |
+| site table | core/eider_prof.c | 65,536 (kind, fn, line) counters, lock-free (a CAS claims a slot), relaxed atomic counts |
+| allocation prefix | core/eider_prof.c | 16 bytes before each block (its site and size), so a free knows what it frees: live heap per site, peak, leaks |
+| control | `ec_prof` in core/eider_core.c (ABI "Profiling"), core/prof.ei, std/profile | the profiler registers itself with the core at start; without it every call is -ENOSYS |
+| analysis | eider-profiler (Eider) | names, self/total, labels, flame graphs and diffs are not the runtime's business |
+
+### Overhead
+
+Measured 2026-10-31 (16 cores, gcc -O2) on eiderc itself (`emit-c compiler/main.ei`, 22.5k
+lines of Eider: the worst case, very many small functions; median of 9 runs) and on
+eider-rpc's examples/kvstore under eider-loadgen (8 keep-alive connections, a mix of JSON-RPC and GET
+requests, 4 s, three runs each, mean):
+
+| Program | Build | Result | Cost |
+|---|---|---|---|
+| eiderc `emit-c` | plain | 213 ms | |
+| | `--profile=cpu` | 307 ms; 306 ms with sampling off (`EIDER_PROF_START=0`) | +44%, of which sampling at 99 Hz < 1% |
+| | `--profile=cpu,mem` and `--profile` | 367 ms | +72% (2.1 M allocations, 1.7 M `.copy()`, 2.1 M growths counted) |
+| | `--profile`, `EIDER_PROF=off` | 291 ms | +37% (the shadow stack alone) |
+| kvstore | plain | 22,080 req/s; p50 408 us, p99 888 us | |
+| | `--profile=cpu` | 21,290 req/s; p50 434 us, p99 938 us | -3.6% throughput |
+| | `--profile=cpu,mem` | 14,300 req/s; p50 657 us | -35% (16 M allocations a second: ~1,600 per request, see below) |
+| | `--profile` | 13,980 req/s; p50 668 us | -37% |
+
+So `--profile=cpu` (and `cpu,conc`) is the setting to leave on in a service; `mem` counts
+every allocation and copy exactly, and costs in proportion to how many there are (kvstore
+allocates ~1,600 blocks per request because its store is copied on every call: the profile's
+own top finding). Memory: 16 bytes per live block (with `mem`), per thread a 4 KiB shadow
+stack, a 132 KiB sample ring (with `cpu`) and a 40 KiB counting cache (with `mem` or `conc`),
+and per process a 2.6 MiB site table plus the stack table (about 0.5 KiB per distinct stack).
+
+The cost is the shadow stack, not the sampling: a frame push and pop per call and a store per
+call statement, plus with `mem` a 16-byte prefix and a few relaxed atomic adds per allocation
+(and a contended cache line on the global live-heap counter when many threads allocate). The
+signal handler copies at most 128 frames 99 times a second per busy thread, and the collector
+wakes 50 times a second. A service that does I/O pays little; a compiler-like program of tiny
+calls pays most. `EIDER_PROF=off` leaves only the shadow stack.
 
 ## Design choices (for review)
 

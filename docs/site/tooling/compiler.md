@@ -51,9 +51,13 @@ and exit code 2. With no arguments at all, eiderc prints its usage to stderr and
 | `migrate-var <file>` | Print the file with each deprecated `var` rewritten as `let mut` (with `.copy()` where `var` copied a place), leaving the few cases where that would change the meaning. `scripts/migrate-var.sh` runs it over directories. |
 | `audit-refs <file> [--json]` | For code written when `let` copied: every write that changes what a live `let` or pattern reference sees, as a `note[audit]` with the `.copy()` that keeps the old meaning (with `--json`, a JSON object per line with `"audit":"reference"`); then `audit-refs: N write(s) change what a reference sees`. Exits 1 if the program has errors. |
 
-### Help
+### Help and version
 
-`help`, `--help` and `-h` print the usage to stdout and exit 0.
+`help`, `--help` and `-h` print the usage to stdout and exit 0. `version` and `--version`
+print `eiderc <version>` (`eiderc 0.1.0`) and exit 0: the toolchain's version, from
+`VERSION` at the root of eider-lang, which also versions core, std, eider-pkg and eider-doc
+(see [Releases](releases.md)). Programs can read it too: `import "core/version"` has
+`version.VERSION` (`"0.1.0"`), `MAJOR`, `MINOR`, `PATCH` and `SERIES` (`"0.1"`).
 
 ## Options
 
@@ -74,11 +78,12 @@ and exit code 2. With no arguments at all, eiderc prints its usage to stderr and
 | `-g` | `build`, `run`, `test` with `--backend=llvm` | DWARF line information for the `.ei` files |
 | `--coverage` | `emit-llvm` | the native/fallback report instead of the IR |
 | `--help`, `-h` | | print the usage and exit |
+| `--version` | | print `eiderc <version>` and exit |
 
 ## Diagnostics
 
 The compiler reports every independent error it finds, in the order found, each with a
-stable code (`E0001` to `E0810`), its position (line and column, columns counting Unicode
+stable code (`E0001` to `E0811`), its position (line and column, columns counting Unicode
 scalar values), a message, often a `help:` line and often a machine-applicable `fix:`:
 
 ```text

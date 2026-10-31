@@ -1,6 +1,6 @@
-// std/random: bytes from the operating system's CSPRNG (getrandom on Linux, arc4random_buf on
-// macOS and the BSDs; core/ABI.md "Randomness"). Suitable for keys, nonces and hash seeds.
-// There is no time-based fallback: no OS source is an error.
+//! std/random: bytes from the operating system's CSPRNG (getrandom on Linux, arc4random_buf on
+//! macOS and the BSDs; core/ABI.md "Randomness"). Suitable for keys, nonces and hash seeds.
+//! There is no time-based fallback: no OS source is an error.
 
 import "core/sys"
 import "core/os"

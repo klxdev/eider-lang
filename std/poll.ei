@@ -1,6 +1,6 @@
-// std/poll: readiness events (epoll on Linux, kqueue on macOS and the BSDs) and a cross-thread
-// waker. Thin wrappers over the core (core/ABI.md "Readiness"); the event loop and task
-// scheduler built on them are layer/runtime's.
+//! std/poll: readiness events (epoll on Linux, kqueue on macOS and the BSDs) and a cross-thread
+//! waker. Thin wrappers over the core (core/ABI.md "Readiness"); the event loop and task
+//! scheduler built on them are layer/runtime's.
 
 import "core/sys"
 import "core/os"

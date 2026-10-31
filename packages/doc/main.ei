@@ -1,0 +1,277 @@
+//! eider-doc: documentation for Eider code (docs/site/tooling/eider-doc.md).
+//!
+//! - `eider-doc build [--out dir] [--site dir] [--title name] [package dirs...]` asks the
+//!   compiler for each package's API (`eiderc doc --json <dir>`) and writes a static site:
+//!   the Markdown pages the site's SUMMARY.md lists and an API page per module.
+//! - `eider-doc test [--site dir] [package dirs...]` runs the code blocks of those pages and
+//!   of the packages' doc comments as tests.
+//!
+//! With no package directories it documents the toolchain (core, std and every package
+//! under packages/) when run from the toolchain's root, else the package in the current
+//! directory. The site defaults to `docs/site` when that has a SUMMARY.md. `$EIDERC` is the
+//! compiler (default `eiderc`, found on PATH).
+
+import "core/version"
+import "std/bytes"
+import "std/env"
+import "std/fs"
+import "std/io"
+import "std/proc"
+import "std/random"
+import "model.ei"
+import "site.ei"
+import "doctest.ei"
+
+type Args = { cmd: List[u8], out: List[u8], site: List[u8], site_set: bool, title: List[u8], repo_url: List[u8], dirs: List[List[u8]] }
+
+fn usage() -> List[u8] {
+    let mut t: List[u8] = List.new()
+    for l in [
+        "eider-doc: documentation sites and doc tests for Eider packages",
+        "",
+        "usage:",
+        "  eider-doc build [--out dir] [--site dir] [--title name] [--repo-url url] [package dirs...]",
+        "      write the site into --out (default target/site): the Markdown pages listed in the",
+        "      site's SUMMARY.md (default docs/site, when it exists; --site '' for none) and the",
+        "      API of each package (eiderc doc --json <dir>); links from pages to other files go to",
+        "      <url>/<path from the current directory> with --repo-url, else stay as written",
+        "  eider-doc test [--site dir] [package dirs...]",
+        "      run the code blocks of the site's pages and of the packages' doc comments as tests",
+        "  eider-doc --version                print the toolchain's version",
+        "  eider-doc help",
+        "",
+        "Without package directories: core, std and packages/* from the toolchain's root, else the",
+        "package in the current directory. EIDERC names the compiler (default: eiderc on PATH).",
+    ] {
+        bytes.append(inout t, l.bytes())
+        t.push(10)
+    }
+    t
+}
+
+/// The toolchain's version: eider-doc ships with it (VERSION, through core/version).
+fn toolchain_version() -> List[u8] { version.VERSION.bytes() }
+
+fn die(msg: List[u8]) uses io {
+    let mut m = "eider-doc: ".bytes()
+    bytes.append(inout m, msg)
+    io.errln(m)
+    env.exit(2)
+}
+
+fn parse_args() -> Args uses io, fs {
+    let argv = env.args()
+    let mut a = Args(List.new(), "target/site".bytes(), List.new(), false, List.new(), List.new(), List.new())
+    let mut i: usize = 1
+    while i < argv.len() {
+        let x = argv[i].copy()
+        i += 1
+        if bytes.eq(x, "--version".bytes()) || bytes.eq(x, "version".bytes()) {
+            let mut m = "eider-doc ".bytes()
+            bytes.append(inout m, toolchain_version())
+            io.outln(m)
+            env.exit(0)
+        } else if bytes.eq(x, "--help".bytes()) || bytes.eq(x, "-h".bytes()) || bytes.eq(x, "help".bytes()) {
+            io.out(usage())
+            env.exit(0)
+        } else if bytes.eq(x, "--out".bytes()) || bytes.eq(x, "--site".bytes()) || bytes.eq(x, "--title".bytes()) || bytes.eq(x, "--repo-url".bytes()) {
+            if i >= argv.len() {
+                let mut m = x.copy()
+                bytes.append(inout m, " needs a value".bytes())
+                die(m)
+            }
+            let v = argv[i].copy()
+            i += 1
+            if bytes.eq(x, "--out".bytes()) {
+                a.out = v
+            } else if bytes.eq(x, "--site".bytes()) {
+                a.site = v
+                a.site_set = true
+            } else if bytes.eq(x, "--repo-url".bytes()) {
+                a.repo_url = v
+            } else {
+                a.title = v
+            }
+        } else if x.len() > 1 && x[0] == 45 {
+            let mut m = "unknown option ".bytes()
+            bytes.append(inout m, x)
+            die(m)
+        } else if a.cmd.len() == 0 {
+            a.cmd = x
+        } else {
+            a.dirs.push(x)
+        }
+    }
+    if !(bytes.eq(a.cmd, "build".bytes()) || bytes.eq(a.cmd, "test".bytes())) {
+        io.err(usage())
+        env.exit(2)
+    }
+    a
+}
+
+/// Whether the current directory is the toolchain's root.
+fn in_toolchain() -> bool uses fs { fs.exists("core/prelude.ei".bytes()) && fs.exists("std/eider.toml".bytes()) }
+
+/// The package directories to document when none are named.
+fn default_dirs() -> List[List[u8]] uses fs {
+    let mut out: List[List[u8]] = List.new()
+    if !in_toolchain() {
+        out.push(".".bytes())
+        return out
+    }
+    out.push("core".bytes())
+    out.push("std".bytes())
+    match fs.list("packages".bytes()) {
+        Ok(names) => {
+            for n in fs.sort(names) {
+                let d = fs.join("packages".bytes(), n)
+                if fs.exists(fs.join(d.copy(), "eider.toml".bytes())) { out.push(d) }
+            }
+        }
+        Err(_) => {}
+    }
+    out
+}
+
+fn compiler() -> List[u8] uses io {
+    match env.get("EIDERC".bytes()) {
+        Some(c) => { if c.len() > 0 { return c } }
+        None => {}
+    }
+    "eiderc".bytes()
+}
+
+/// The API of every directory (warnings from the compiler are passed on).
+fn load_api(dirs: List[List[u8]]) -> model.Api uses io, fs, net {
+    let mut api = model.empty()
+    let cc = compiler()
+    for d in dirs {
+        let mut argv: List[List[u8]] = List.new()
+        argv.push(cc.copy())
+        argv.push("doc".bytes())
+        argv.push("--json".bytes())
+        argv.push(d.copy())
+        let o = match proc.run_with(argv, proc.captured()) {
+            Ok(x) => x
+            Err(e) => {
+                let mut m = "cannot run the compiler: ".bytes()
+                bytes.append(inout m, e.bytes())
+                bytes.append(inout m, " (set EIDERC)".bytes())
+                die(m)
+                return api
+            }
+        }
+        if o.err.len() > 0 { io.err(o.err.copy()) }
+        if o.code != 0 {
+            let mut m = "`eiderc doc --json ".bytes()
+            bytes.append(inout m, d.copy())
+            bytes.append(inout m, "` failed".bytes())
+            die(m)
+        }
+        match model.add_json(inout api, o.out) {
+            Ok(_) => {}
+            Err(e) => {
+                let mut m = "the compiler's JSON for ".bytes()
+                bytes.append(inout m, d.copy())
+                bytes.append(inout m, " doesn't parse: ".bytes())
+                bytes.append(inout m, e)
+                die(m)
+            }
+        }
+    }
+    api
+}
+
+fn site_dir(a: Args) -> List[u8] uses fs {
+    if a.site_set { return a.site.copy() }
+    if fs.exists("docs/site/SUMMARY.md".bytes()) { return "docs/site".bytes() }
+    List.new()
+}
+
+fn build(a: Args) uses io, fs, net {
+    let dirs = if a.dirs.len() > 0 { a.dirs.copy() } else { default_dirs() }
+    let api = load_api(dirs)
+    let mut title = a.title.copy()
+    if title.len() == 0 {
+        if in_toolchain() || api.packages.len() == 0 { title = "Eider".bytes() } else { title = api.packages[0].name.copy() }
+    }
+    let cfg = site.Config(site_dir(a), a.out.copy(), title, a.repo_url.copy())
+    let errs = site.build(cfg, api)
+    for e in errs {
+        let m = e.copy()
+        io.errln(m)
+    }
+    if errs.len() > 0 {
+        let mut m = "eider-doc: ".bytes()
+        bytes.append(inout m, bytes.from_u64(errs.len() as u64))
+        bytes.append(inout m, " error(s); the site is incomplete".bytes())
+        io.errln(m)
+        env.exit(1)
+    }
+    let mut m = "eider-doc: wrote ".bytes()
+    bytes.append(inout m, a.out.copy())
+    bytes.append(inout m, "/index.html".bytes())
+    io.outln(m)
+}
+
+fn run_tests(a: Args) uses io, fs, net {
+    let dirs = if a.dirs.len() > 0 { a.dirs.copy() } else { default_dirs() }
+    let api = load_api(dirs)
+    let mut cases: List[doctest.Case] = List.new()
+    let sd = site_dir(a)
+    if sd.len() > 0 {
+        let pages = match site.pages(sd.copy()) {
+            Ok(p) => p
+            Err(es) => {
+                for e in es { io.errln(e) }
+                env.exit(1)
+                return
+            }
+        }
+        for p in pages {
+            // pages beside the site (docs/design: notes, not written to the contract) are shown, not tested
+            if bytes.starts_with(p, "../".bytes()) { continue }
+            match fs.read(fs.join(sd.copy(), p.copy())) {
+                Ok(t) => {
+                    for c in doctest.cases(fs.join(sd.copy(), p.copy()), t, 1) { cases.push(c) }
+                }
+                Err(e) => {
+                    let mut m = "cannot read ".bytes()
+                    bytes.append(inout m, p.copy())
+                    die(m)
+                }
+            }
+        }
+    }
+    for c in doctest.api_cases(api) { cases.push(c) }
+    let mut base = match env.get("TMPDIR".bytes()) {
+        Some(t) => t
+        None => "/tmp".bytes()
+    }
+    if base.len() == 0 { base = "/tmp".bytes() }
+    let tag = match random.bytes(6) {
+        Ok(r) => bytes.hex(r)
+        Err(_) => "0".bytes()
+    }
+    let tmp = fs.join(base, bytes.concat("eider-doc-test-".bytes(), tag))
+    let res = doctest.run(cases, compiler(), tmp.copy())
+    match fs.remove_all(tmp) {
+        Ok(_) => {}
+        Err(_) => {}
+    }
+    for l in res.report { io.errln(l) }
+    let mut m = "doc tests: ".bytes()
+    bytes.append(inout m, bytes.from_u64(res.passed as u64))
+    bytes.append(inout m, " passed, ".bytes())
+    bytes.append(inout m, bytes.from_u64(res.failed as u64))
+    bytes.append(inout m, " failed, ".bytes())
+    bytes.append(inout m, bytes.from_u64(res.ignored as u64))
+    bytes.append(inout m, " ignored".bytes())
+    io.outln(m)
+    if res.failed > 0 { env.exit(1) }
+}
+
+fn main() uses io, fs, net, clock {
+    let a = parse_args()
+    if bytes.eq(a.cmd, "build".bytes()) { build(a) } else { run_tests(a) }
+}

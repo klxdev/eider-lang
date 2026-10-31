@@ -1,0 +1,722 @@
+//! json: RFC 8259 JSON. Pure Eider, no capabilities (except `ffi` for literals).
+//!
+//! A parsed document is an arena (Eider has value semantics, so a tree of owned nodes would be
+//! copied on every read): `Doc.nodes` holds small integer-only records, a node is named by its
+//! index (`u32` id), arrays and objects keep their children as a contiguous run of ids in
+//! `Doc.extra` (objects as key-string id, value id pairs), and string contents and number texts
+//! live in `Doc.strs`. Reading a node copies a few integers, never a subtree.
+//!
+//! Parsing is strict: one value with optional whitespace (space, tab, LF, CR) around it; no
+//! trailing commas, comments, leading zeros, `+`, `.5`, `NaN`; control characters must be
+//! escaped in strings; the input must be valid UTF-8; `\uXXXX` escapes are decoded to UTF-8 and
+//! a surrogate pair to one scalar (an unpaired surrogate is an error); nesting is limited to
+//! MAX_DEPTH. Errors carry the byte offset and the 1-based line and column (columns count
+//! Unicode scalars) of the offending character.
+//!
+//! Numbers keep their exact text (`num_text`); an integer literal that fits in i64 is also
+//! available as a value (`as_int`). Writing a document prints numbers as their exact text.
+//!
+//! Documents can also be built (`new_null`, `new_bool`, `new_int`, `new_number`, `new_string`,
+//! `new_array`, `new_object`; children before parents) and written (`write`). `quote` writes one
+//! JSON string and replaces invalid UTF-8 with U+FFFD, so the output is always valid JSON.
+
+import "core/sys"
+import "std/bytes"
+
+pub const NULL: u32 = 1
+pub const BOOL: u32 = 2
+pub const NUMBER: u32 = 3
+pub const STRING: u32 = 4
+pub const ARRAY: u32 = 5
+pub const OBJECT: u32 = 6
+
+/// Containers deeper than this are an error (the parser is recursive).
+pub const MAX_DEPTH: u32 = 512
+
+/// `kind` is one of the constants above. BOOL: `a` is 0 or 1. NUMBER: `a` indexes `strs`
+/// (the exact text), `b` is 1 when `n` holds its value (an integer literal in i64's range).
+/// STRING: `a` indexes `strs`. ARRAY: `a` is the start in `extra`, `b` the element count.
+/// OBJECT: `a` is the start in `extra`, `b` the member count (2 * b ids: key, value).
+pub type Node = { kind: u32, a: u32, b: u32, n: i64 }
+
+pub type Doc = { nodes: List[Node], extra: List[u32], strs: List[List[u8]], root: u32 }
+
+pub type Error = { msg: List[u8], offset: u64, line: u32, col: u32 }
+
+type P = { src: List[u8], i: usize, depth: u32, doc: Doc, err: List[u8] }
+
+// ---- building
+
+pub fn new_doc() -> Doc { Doc(List.new(), List.new(), List.new(), 0) }
+
+fn add(inout d: Doc, k: u32, a: u32, b: u32, n: i64) -> u32 {
+    d.nodes.push(Node(k, a, b, n))
+    (d.nodes.len() - 1) as u32
+}
+
+fn add_str(inout d: Doc, s: List[u8]) -> u32 {
+    d.strs.push(s)
+    (d.strs.len() - 1) as u32
+}
+
+pub fn new_null(inout d: Doc) -> u32 { add(inout d, NULL, 0, 0, 0) }
+
+pub fn new_bool(inout d: Doc, v: bool) -> u32 {
+    let a: u32 = if v { 1 } else { 0 }
+    add(inout d, BOOL, a, 0, 0)
+}
+
+pub fn new_int(inout d: Doc, v: i64) -> u32 {
+    let t = add_str(inout d, bytes.from_i64(v))
+    add(inout d, NUMBER, t, 1, v)
+}
+
+/// A number from its text, which must be a valid JSON number (it is written as is).
+pub fn new_number(inout d: Doc, text: List[u8]) -> Option[u32] {
+    if !valid_number(text) { return None }
+    let v = int_value(text)
+    let t = add_str(inout d, text)
+    match v {
+        Some(x) => Some(add(inout d, NUMBER, t, 1, x))
+        None => Some(add(inout d, NUMBER, t, 0, 0))
+    }
+}
+
+pub fn new_string(inout d: Doc, s: List[u8]) -> u32 {
+    let t = add_str(inout d, s)
+    add(inout d, STRING, t, 0, 0)
+}
+
+pub fn new_array(inout d: Doc, items: List[u32]) -> u32 {
+    let start = d.extra.len() as u32
+    for x in items { d.extra.push(x) }
+    add(inout d, ARRAY, start, items.len() as u32, 0)
+}
+
+/// An object from its keys and values (same length; the shorter one decides).
+pub fn new_object(inout d: Doc, keys: List[List[u8]], vals: List[u32]) -> u32 {
+    let mut ids: List[u32] = List.new()
+    let n = if keys.len() < vals.len() { keys.len() } else { vals.len() }
+    for i in 0..n { ids.push(new_string(inout d, keys[i])) }
+    let start = d.extra.len() as u32
+    for i in 0..n {
+        d.extra.push(ids[i])
+        d.extra.push(vals[i])
+    }
+    add(inout d, OBJECT, start, n as u32, 0)
+}
+
+// ---- reading
+
+pub fn kind(d: Doc, id: u32) -> u32 {
+    if (id as usize) >= d.nodes.len() { return 0 }
+    d.nodes[id as usize].kind
+}
+
+pub fn is_null(d: Doc, id: u32) -> bool { kind(d, id) == NULL }
+
+/// The value of a BOOL node.
+pub fn as_bool(d: Doc, id: u32) -> Option[bool] {
+    if kind(d, id) != BOOL { return None }
+    Some(d.nodes[id as usize].a == 1)
+}
+
+/// The value of a NUMBER node written as an integer in i64's range.
+pub fn as_int(d: Doc, id: u32) -> Option[i64] {
+    if kind(d, id) != NUMBER { return None }
+    let n = d.nodes[id as usize]
+    if n.b != 1 { return None }
+    Some(n.n)
+}
+
+/// The exact text of a NUMBER node.
+pub fn num_text(d: Doc, id: u32) -> Option[List[u8]] {
+    if kind(d, id) != NUMBER { return None }
+    Some(d.strs[d.nodes[id as usize].a as usize])
+}
+
+/// The contents (UTF-8, escapes decoded) of a STRING node.
+pub fn as_str(d: Doc, id: u32) -> Option[List[u8]] {
+    if kind(d, id) != STRING { return None }
+    Some(d.strs[d.nodes[id as usize].a as usize])
+}
+
+/// Elements of an ARRAY, members of an OBJECT; 0 for anything else.
+pub fn len(d: Doc, id: u32) -> u32 {
+    let k = kind(d, id)
+    if k == ARRAY || k == OBJECT { return d.nodes[id as usize].b }
+    0
+}
+
+/// Element i of an ARRAY.
+pub fn at(d: Doc, id: u32, i: u32) -> Option[u32] {
+    if kind(d, id) != ARRAY { return None }
+    let n = d.nodes[id as usize]
+    if i >= n.b { return None }
+    Some(d.extra[(n.a + i) as usize])
+}
+
+/// The key (a STRING node) of member i of an OBJECT.
+pub fn key_at(d: Doc, id: u32, i: u32) -> Option[u32] {
+    if kind(d, id) != OBJECT { return None }
+    let n = d.nodes[id as usize]
+    if i >= n.b { return None }
+    Some(d.extra[(n.a + 2 * i) as usize])
+}
+
+/// The value of member i of an OBJECT.
+pub fn val_at(d: Doc, id: u32, i: u32) -> Option[u32] {
+    if kind(d, id) != OBJECT { return None }
+    let n = d.nodes[id as usize]
+    if i >= n.b { return None }
+    Some(d.extra[(n.a + 2 * i + 1) as usize])
+}
+
+/// The value of the first member named `key` of an OBJECT.
+pub fn get(d: Doc, id: u32, key: List[u8]) -> Option[u32] {
+    if kind(d, id) != OBJECT { return None }
+    let n = d.nodes[id as usize]
+    for i in 0..n.b {
+        let k = d.extra[(n.a + 2 * i) as usize]
+        if bytes.eq(d.strs[d.nodes[k as usize].a as usize], key) { return Some(d.extra[(n.a + 2 * i + 1) as usize]) }
+    }
+    None
+}
+
+/// `get` with a literal key.
+pub fn field(d: Doc, id: u32, key: str) -> Option[u32] { get(d, id, sys.lit(key)) }
+
+/// Follow a path of object keys from `id`.
+pub fn path(d: Doc, id: u32, keys: List[List[u8]]) -> Option[u32] {
+    let mut cur = id.copy()
+    for k in keys {
+        match get(d, cur, k) {
+            Some(x) => { cur = x }
+            None => { return None }
+        }
+    }
+    Some(cur)
+}
+
+// ---- parsing
+
+/// Parse one JSON text.
+pub fn parse(src: List[u8]) -> Result[Doc, Error] {
+    let mut p = P(src, 0, 0, new_doc(), List.new())
+    // a UTF-8 byte order mark is not JSON (RFC 8259 8.1: MUST NOT add one; we may reject it)
+    ws(inout p)
+    let root = match value(inout p) {
+        Some(r) => r
+        None => { return Err(error_at(p.src, p.i, p.err)) }
+    }
+    ws(inout p)
+    if p.i < p.src.len() { return Err(error_at(p.src, p.i, sys.lit("unexpected text after the value"))) }
+    let mut d = p.doc.copy()
+    d.root = root
+    Ok(d)
+}
+
+/// The position of byte `at` in `src`.
+fn error_at(src: List[u8], at: usize, msg: List[u8]) -> Error {
+    let mut line: u32 = 1
+    let mut col: u32 = 1
+    let mut i: usize = 0
+    while i < at && i < src.len() {
+        let b = src[i]
+        if b == 10 {
+            line += 1
+            col = 1
+        } else if b < 128 || b >= 192 {
+            col += 1
+        }
+        i += 1
+    }
+    Error(msg, at as u64, line, col)
+}
+
+/// "msg at line L, column C (byte N)"
+pub fn error_text(e: Error) -> List[u8] {
+    let mut m = e.msg.copy()
+    bytes.append(inout m, sys.lit(" at line "))
+    bytes.append(inout m, bytes.from_u64(e.line as u64))
+    bytes.append(inout m, sys.lit(", column "))
+    bytes.append(inout m, bytes.from_u64(e.col as u64))
+    bytes.append(inout m, sys.lit(" (byte "))
+    bytes.append(inout m, bytes.from_u64(e.offset))
+    m.push(41)
+    m
+}
+
+fn peek(p: P) -> u8 {
+    if p.i < p.src.len() { return p.src[p.i] }
+    0
+}
+
+fn fail(inout p: P, m: str) -> Option[u32] {
+    p.err = sys.lit(m)
+    None
+}
+
+fn ws(inout p: P) {
+    while p.i < p.src.len() {
+        let c = p.src[p.i]
+        if c == 32 || c == 9 || c == 10 || c == 13 {
+            p.i += 1
+        } else {
+            return
+        }
+    }
+}
+
+fn value(inout p: P) -> Option[u32] {
+    if p.i >= p.src.len() { return fail(inout p, "unexpected end of input, expected a value") }
+    let c = p.src[p.i]
+    if c == 123 { return obj(inout p) }
+    if c == 91 { return arr(inout p) }
+    if c == 34 {
+        let s = str_lit(inout p)?
+        return Some(new_string(inout p.doc, s))
+    }
+    if c == 116 { return word(inout p, "true", BOOL, 1) }
+    if c == 102 { return word(inout p, "false", BOOL, 0) }
+    if c == 110 { return word(inout p, "null", NULL, 0) }
+    if c == 45 || bytes.is_digit(c) { return num(inout p) }
+    if c == 93 || c == 125 || c == 44 { return fail(inout p, "expected a value") }
+    if c == 239 && p.i == 0 { return fail(inout p, "a byte order mark is not allowed") }
+    fail(inout p, "unexpected character, expected a value")
+}
+
+fn word(inout p: P, w: str, k: u32, a: u32) -> Option[u32] {
+    let t = sys.lit(w)
+    for x in t {
+        if peek(p) != x {
+            return fail(inout p, "invalid literal (expected true, false or null)")
+        }
+        p.i += 1
+    }
+    Some(add(inout p.doc, k, a, 0, 0))
+}
+
+fn enter(inout p: P) -> bool {
+    p.depth += 1
+    p.depth <= MAX_DEPTH
+}
+
+fn arr(inout p: P) -> Option[u32] {
+    if !enter(inout p) { return fail(inout p, "nested too deeply") }
+    p.i += 1
+    let mut items: List[u32] = List.new()
+    ws(inout p)
+    if peek(p) == 93 {
+        p.i += 1
+        p.depth -= 1
+        return Some(new_array(inout p.doc, items))
+    }
+    while true {
+        ws(inout p)
+        let v = value(inout p)?
+        items.push(v)
+        ws(inout p)
+        let c = peek(p)
+        if c == 44 {
+            p.i += 1
+            ws(inout p)
+            if peek(p) == 93 { return fail(inout p, "trailing comma in an array") }
+        } else if c == 93 {
+            p.i += 1
+            break
+        } else if p.i >= p.src.len() {
+            return fail(inout p, "unexpected end of input in an array (expected `,` or `]`)")
+        } else {
+            return fail(inout p, "expected `,` or `]` in an array")
+        }
+    }
+    p.depth -= 1
+    Some(new_array(inout p.doc, items))
+}
+
+fn obj(inout p: P) -> Option[u32] {
+    if !enter(inout p) { return fail(inout p, "nested too deeply") }
+    p.i += 1
+    let mut keys: List[u32] = List.new()
+    let mut vals: List[u32] = List.new()
+    ws(inout p)
+    if peek(p) == 125 {
+        p.i += 1
+        p.depth -= 1
+        return Some(pairs(inout p.doc, keys, vals))
+    }
+    while true {
+        ws(inout p)
+        if p.i >= p.src.len() { return fail(inout p, "unexpected end of input in an object (expected a key)") }
+        if peek(p) != 34 { return fail(inout p, "expected a string key in an object") }
+        let k = str_lit(inout p)?
+        keys.push(new_string(inout p.doc, k))
+        ws(inout p)
+        if peek(p) != 58 {
+            if p.i >= p.src.len() { return fail(inout p, "unexpected end of input in an object (expected `:`)") }
+            return fail(inout p, "expected `:` after an object key")
+        }
+        p.i += 1
+        ws(inout p)
+        let v = value(inout p)?
+        vals.push(v)
+        ws(inout p)
+        let c = peek(p)
+        if c == 44 {
+            p.i += 1
+            ws(inout p)
+            if peek(p) == 125 { return fail(inout p, "trailing comma in an object") }
+        } else if c == 125 {
+            p.i += 1
+            break
+        } else if p.i >= p.src.len() {
+            return fail(inout p, "unexpected end of input in an object (expected `,` or `}`)")
+        } else {
+            return fail(inout p, "expected `,` or `}` in an object")
+        }
+    }
+    p.depth -= 1
+    Some(pairs(inout p.doc, keys, vals))
+}
+
+fn pairs(inout d: Doc, keys: List[u32], vals: List[u32]) -> u32 {
+    let start = d.extra.len() as u32
+    for i in 0..keys.len() {
+        d.extra.push(keys[i])
+        d.extra.push(vals[i])
+    }
+    add(inout d, OBJECT, start, keys.len() as u32, 0)
+}
+
+fn hexval(c: u8) -> i32 {
+    if c >= 48 && c <= 57 { return (c - 48) as i32 }
+    if c >= 97 && c <= 102 { return (c - 87) as i32 }
+    if c >= 65 && c <= 70 { return (c - 55) as i32 }
+    -1
+}
+
+/// Four hex digits at the cursor (after `\u`); -1 if they aren't.
+fn hex4(inout p: P) -> i32 {
+    let mut v: i32 = 0
+    for k in 0..4 {
+        if p.i >= p.src.len() { return -1 }
+        let h = hexval(p.src[p.i])
+        if h < 0 { return -1 }
+        v = v * 16 + h
+        p.i += 1
+    }
+    v
+}
+
+/// Append scalar `c` as UTF-8.
+pub fn put_utf8(inout out: List[u8], c: u32) {
+    if c < 128 {
+        out.push(c as u8)
+    } else if c < 2048 {
+        out.push((192 + c / 64) as u8)
+        out.push((128 + c % 64) as u8)
+    } else if c < 65536 {
+        out.push((224 + c / 4096) as u8)
+        out.push((128 + (c / 64) % 64) as u8)
+        out.push((128 + c % 64) as u8)
+    } else {
+        out.push((240 + c / 262144) as u8)
+        out.push((128 + (c / 4096) % 64) as u8)
+        out.push((128 + (c / 64) % 64) as u8)
+        out.push((128 + c % 64) as u8)
+    }
+}
+
+/// The length of the valid UTF-8 sequence at s[i] (1 to 4), or 0 if it isn't one (overlong
+/// forms, surrogates and values above U+10FFFF are invalid).
+pub fn utf8_len(s: List[u8], i: usize) -> usize {
+    let b = s[i]
+    if b < 128 { return 1 }
+    let mut n: usize = 0
+    let mut lo: u8 = 128
+    let mut hi: u8 = 191
+    if b >= 194 && b <= 223 {
+        n = 2
+    } else if b >= 224 && b <= 239 {
+        n = 3
+        if b == 224 { lo = 160 }
+        if b == 237 { hi = 159 }
+    } else if b >= 240 && b <= 244 {
+        n = 4
+        if b == 240 { lo = 144 }
+        if b == 244 { hi = 143 }
+    } else {
+        return 0
+    }
+    if i + n > s.len() { return 0 }
+    let c1 = s[i + 1]
+    if c1 < lo || c1 > hi { return 0 }
+    let mut k: usize = 2
+    while k < n {
+        let c = s[i + k]
+        if c < 128 || c > 191 { return 0 }
+        k += 1
+    }
+    n
+}
+
+/// A string literal at the cursor (the opening quote); returns its decoded contents.
+fn str_lit(inout p: P) -> Option[List[u8]] {
+    p.i += 1
+    let mut out: List[u8] = List.new()
+    while true {
+        if p.i >= p.src.len() {
+            p.err = sys.lit("unterminated string")
+            return None
+        }
+        let c = p.src[p.i]
+        if c == 34 {
+            p.i += 1
+            break
+        }
+        if c < 32 {
+            p.err = sys.lit("control character in a string (must be escaped)")
+            return None
+        }
+        if c == 92 {
+            p.i += 1
+            if p.i >= p.src.len() {
+                p.err = sys.lit("unterminated string")
+                return None
+            }
+            let e = p.src[p.i]
+            p.i += 1
+            if e == 34 || e == 92 || e == 47 {
+                out.push(e)
+            } else if e == 98 {
+                out.push(8)
+            } else if e == 102 {
+                out.push(12)
+            } else if e == 110 {
+                out.push(10)
+            } else if e == 114 {
+                out.push(13)
+            } else if e == 116 {
+                out.push(9)
+            } else if e == 117 {
+                let at = p.i - 2
+                let u = hex4(inout p)
+                if u < 0 {
+                    p.i = at
+                    p.err = sys.lit("invalid \\u escape (expected four hex digits)")
+                    return None
+                }
+                if u >= 56320 && u <= 57343 {
+                    p.i = at
+                    p.err = sys.lit("unpaired low surrogate in a \\u escape")
+                    return None
+                }
+                if u >= 55296 && u <= 56319 {
+                    if p.i + 1 < p.src.len() && p.src[p.i] == 92 && p.src[p.i + 1] == 117 {
+                        p.i += 2
+                        let lo = hex4(inout p)
+                        if lo < 56320 || lo > 57343 {
+                            p.i = at
+                            p.err = sys.lit("high surrogate not followed by a low surrogate")
+                            return None
+                        }
+                        let cp = 65536 + ((u - 55296) as u32) * 1024 + ((lo - 56320) as u32)
+                        put_utf8(inout out, cp)
+                    } else {
+                        p.i = at
+                        p.err = sys.lit("high surrogate not followed by a low surrogate")
+                        return None
+                    }
+                } else {
+                    put_utf8(inout out, u as u32)
+                }
+            } else {
+                p.i -= 2
+                p.err = sys.lit("invalid escape in a string")
+                return None
+            }
+        } else if c < 128 {
+            out.push(c)
+            p.i += 1
+        } else {
+            let n = utf8_len(p.src, p.i)
+            if n == 0 {
+                p.err = sys.lit("invalid UTF-8 in a string")
+                return None
+            }
+            for k in 0..n { out.push(p.src[p.i + (k as usize)]) }
+            p.i += n
+        }
+    }
+    Some(out)
+}
+
+/// A number at the cursor: -?(0|[1-9][0-9]*)(.[0-9]+)?([eE][+-]?[0-9]+)?
+fn num(inout p: P) -> Option[u32] {
+    let start = p.i.copy()
+    if peek(p) == 45 { p.i += 1 }
+    if !bytes.is_digit(peek(p)) { return fail(inout p, "expected a digit") }
+    if peek(p) == 48 {
+        p.i += 1
+        if bytes.is_digit(peek(p)) { return fail(inout p, "leading zeros are not allowed") }
+    } else {
+        while bytes.is_digit(peek(p)) { p.i += 1 }
+    }
+    if peek(p) == 46 {
+        p.i += 1
+        if !bytes.is_digit(peek(p)) { return fail(inout p, "expected a digit after the decimal point") }
+        while bytes.is_digit(peek(p)) { p.i += 1 }
+    }
+    if peek(p) == 101 || peek(p) == 69 {
+        p.i += 1
+        if peek(p) == 43 || peek(p) == 45 { p.i += 1 }
+        if !bytes.is_digit(peek(p)) { return fail(inout p, "expected a digit in the exponent") }
+        while bytes.is_digit(peek(p)) { p.i += 1 }
+    }
+    let text = bytes.slice(p.src, start, p.i)
+    let v = int_value(text)
+    let t = add_str(inout p.doc, text)
+    match v {
+        Some(x) => Some(add(inout p.doc, NUMBER, t, 1, x))
+        None => Some(add(inout p.doc, NUMBER, t, 0, 0))
+    }
+}
+
+/// The whole text is a JSON number.
+fn valid_number(text: List[u8]) -> bool {
+    if text.len() == 0 { return false }
+    let mut p = P(text, 0, 0, new_doc(), List.new())
+    match num(inout p) {
+        Some(_) => p.i == text.len()
+        None => false
+    }
+}
+
+/// The value of an integer literal (digits with an optional `-`) in i64's range.
+fn int_value(t: List[u8]) -> Option[i64] {
+    let mut i: usize = 0
+    let mut neg = false
+    if t.len() > 0 && t[0] == 45 {
+        neg = true
+        i = 1
+    }
+    if i >= t.len() { return None }
+    // magnitude up to 2^63 (for i64's minimum)
+    let mut m: u64 = 0
+    while i < t.len() {
+        let c = t[i]
+        if !bytes.is_digit(c) { return None }
+        let dg = (c - 48) as u64
+        if m > (9223372036854775808 - dg) / 10 { return None }
+        m = m * 10 + dg
+        i += 1
+    }
+    if neg {
+        if m == 9223372036854775808 { return Some(-9223372036854775807 - 1) }
+        return Some(0 - (m as i64))
+    }
+    if m > 9223372036854775807 { return None }
+    Some(m as i64)
+}
+
+// ---- writing
+
+fn hex_digit(n: u32) -> u8 {
+    if n < 10 { return (48 + n) as u8 }
+    (87 + n) as u8
+}
+
+/// `s` as a JSON string literal appended to `out`: `"` and `\` escaped, control characters as
+/// \b \f \n \r \t or \u00XX, everything else as UTF-8 (invalid UTF-8 becomes U+FFFD).
+pub fn quote_into(inout out: List[u8], s: List[u8]) {
+    out.push(34)
+    let mut i: usize = 0
+    while i < s.len() {
+        let c = s[i]
+        if c == 34 || c == 92 {
+            out.push(92)
+            out.push(c)
+            i += 1
+        } else if c >= 32 && c < 128 {
+            out.push(c)
+            i += 1
+        } else if c < 32 {
+            out.push(92)
+            if c == 8 {
+                out.push(98)
+            } else if c == 12 {
+                out.push(102)
+            } else if c == 10 {
+                out.push(110)
+            } else if c == 13 {
+                out.push(114)
+            } else if c == 9 {
+                out.push(116)
+            } else {
+                out.push(117)
+                out.push(48)
+                out.push(48)
+                out.push(hex_digit((c / 16) as u32))
+                out.push(hex_digit((c % 16) as u32))
+            }
+            i += 1
+        } else {
+            let n = utf8_len(s, i)
+            if n == 0 {
+                put_utf8(inout out, 65533)
+                i += 1
+            } else {
+                for k in 0..n { out.push(s[i + (k as usize)]) }
+                i += n
+            }
+        }
+    }
+    out.push(34)
+}
+
+pub fn quote(s: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    quote_into(inout out, s)
+    out
+}
+
+/// Node `id` as compact JSON text.
+pub fn write(d: Doc, id: u32) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    write_into(inout out, d, id)
+    out
+}
+
+pub fn write_into(inout out: List[u8], d: Doc, id: u32) {
+    let k = kind(d, id)
+    if k == NULL || k == 0 {
+        bytes.append(inout out, sys.lit("null"))
+        return
+    }
+    let n = d.nodes[id as usize]
+    if k == BOOL {
+        let w = if n.a == 1 { sys.lit("true") } else { sys.lit("false") }
+        bytes.append(inout out, w)
+    } else if k == NUMBER {
+        bytes.append(inout out, d.strs[n.a as usize])
+    } else if k == STRING {
+        quote_into(inout out, d.strs[n.a as usize])
+    } else if k == ARRAY {
+        out.push(91)
+        for i in 0..n.b {
+            if i > 0 { out.push(44) }
+            write_into(inout out, d, d.extra[(n.a + i) as usize])
+        }
+        out.push(93)
+    } else {
+        out.push(123)
+        for i in 0..n.b {
+            if i > 0 { out.push(44) }
+            write_into(inout out, d, d.extra[(n.a + 2 * i) as usize])
+            out.push(58)
+            write_into(inout out, d, d.extra[(n.a + 2 * i + 1) as usize])
+        }
+        out.push(125)
+    }
+}

@@ -1,18 +1,11 @@
 [package]
 name = "pkg"
 version = "0.1.0"
+eider = "0.1"
 main = "main.ei"
 description = "eider-pkg: the Eider package manager"
 
-# (`io` only for their tests: eider-pkg scans every .ei file of a package)
+# eider.toml and eider.lock: the vendored release of eider-toml (vendor/vendor.lock,
+# scripts/vendor.sh); pure, granted nothing
 [deps.toml]
-path = "../toml"
-uses = ["io"]
-
-[deps.semver]
-path = "../semver"
-uses = ["io"]
-
-[deps.sha256]
-path = "../sha256"
-uses = ["io"]
+path = "../../vendor/toml"

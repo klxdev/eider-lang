@@ -1,0 +1,244 @@
+// eider-doc's parts: SUMMARY.md, the API model and `api:` targets, paths between pages,
+// highlighting, doc-test extraction, and a whole build of a small site whose broken links
+// must all be reported (in target/doc-test, which it removes).
+
+import "std/bytes"
+import "std/fs"
+import "std/io"
+import "../model.ei"
+import "../summary.ei"
+import "../html.ei"
+import "../doctest.ei"
+import "../site.ei"
+
+fn say(s: List[u8]) uses io { io.outln(s) }
+
+fn label(a: str, b: List[u8]) -> List[u8] {
+    let mut m = a.bytes()
+    bytes.append(inout m, b)
+    m
+}
+
+fn num(n: u32) -> List[u8] { bytes.from_u64(n as u64) }
+
+/// A canned `eiderc doc --json` document: package `geo` with module `shapes` (a record with
+/// a field and a method, an impl) and module `util/vec`.
+fn canned(dir: str) -> List[u8] {
+    let mut j: List[u8] = List.new()
+    for l in [
+        "{\"format\":1,\"toolchain\":\"9.9.1\",\"packages\":[{\"name\":\"geo\",\"dir\":\"", dir, "\",\"version\":\"0.2.0\",\"description\":\"Shapes.\"}],",
+        "\"modules\":[",
+        "{\"package\":\"geo\",\"path\":\"shapes\",\"file\":\"shapes.ei\",\"doc\":\"geo/shapes: shapes. More.\",\"doc_line\":1,\"items\":[",
+        "{\"kind\":\"record\",\"name\":\"Point\",\"anchor\":\"Point\",\"sig\":\"pub type Point\",\"line\":5,\"public\":true,\"doc\":\"A point.\\n\\n```eider,fragment\\nprint(1)\\n```\\n```output\\n1\\n```\",",
+        "\"members\":[{\"kind\":\"field\",\"name\":\"x\",\"anchor\":\"Point.x\",\"sig\":\"x: i64\",\"line\":5,\"public\":true,\"doc\":\"\"}]},",
+        "{\"kind\":\"fn\",\"name\":\"origin\",\"anchor\":\"origin\",\"sig\":\"pub fn origin() -> Point uses io\",\"line\":9,\"public\":true,\"doc\":\"The origin.\",\"uses\":[\"io\"],",
+        "\"links\":[{\"start\":19,\"end\":24,\"to\":\"geo/shapes#Point\"}]}]},",
+        "{\"package\":\"geo\",\"path\":\"util/vec\",\"file\":\"util/vec.ei\",\"doc\":\"\",\"doc_line\":0,\"items\":[]}",
+        "]}",
+    ] { bytes.append(inout j, l.bytes()) }
+    j
+}
+
+fn summaries() uses io {
+    say("-- summary".bytes())
+    let src = "# Summary\n\nprose is ignored\n\n## Start\n\n- [Intro](guide/intro.md)\n  - [Deeper](guide/deeper.md)\n    - [Deepest](guide/deepest.md)\n- [Back](guide/back.md)\n\n## API\n\n* [geo](api:geo)\n".bytes()
+    match summary.parse(src) {
+        Ok(s) => {
+            say(label("sections: ", bytes.join(s.sections, ", ".bytes())))
+            for e in s.entries {
+                let mut l = label("  ", num(e.section))
+                bytes.append(inout l, " depth ".bytes())
+                bytes.append(inout l, num(e.depth))
+                bytes.append(inout l, " line ".bytes())
+                bytes.append(inout l, num(e.line))
+                bytes.append(inout l, " ".bytes())
+                bytes.append(inout l, e.title)
+                bytes.append(inout l, " -> ".bytes())
+                bytes.append(inout l, e.href)
+                say(l)
+            }
+        }
+        Err(es) => { for e in es { say(e) } }
+    }
+    match summary.parse("- [Early](a.md)\n## S\n- [no link]\n- [Ok](b.md)\n".bytes()) {
+        Ok(_) => say("unexpected: ok".bytes())
+        Err(es) => { for e in es { say(label("error: ", e)) } }
+    }
+}
+
+fn models() uses io {
+    say("-- model".bytes())
+    let mut api = model.empty()
+    match model.add_json(inout api, canned("target/doc-test/geo")) {
+        Ok(_) => {}
+        Err(e) => say(label("add_json: ", e))
+    }
+    // the same document again adds nothing
+    match model.add_json(inout api, canned("target/doc-test/geo")) {
+        Ok(_) => {}
+        Err(e) => say(label("add_json: ", e))
+    }
+    let mut l = label("packages ", num(api.packages.len() as u32))
+    bytes.append(inout l, " modules ".bytes())
+    bytes.append(inout l, num(api.modules.len() as u32))
+    bytes.append(inout l, " items ".bytes())
+    bytes.append(inout l, num(api.items.len() as u32))
+    say(l)
+    for t in ["geo", "geo/shapes", "geo/shapes#Point", "geo/shapes#Point.x", "geo/util/vec", "geo/shapes#Nope", "geo/nope", "geo#Point", "std/stream"] {
+        match model.resolve(api, t.bytes()) {
+            Ok(p) => say(label("  ok   ", label(t, label(" -> ", p))))
+            Err(e) => say(label("  err  ", label(t, label(": ", e))))
+        }
+    }
+    say(label("source page: ", model.source_page(api.modules[1])))
+    match model.add_json(inout api, "{\"format\":1,".bytes()) {
+        Ok(_) => say("unexpected: ok".bytes())
+        Err(e) => say(label("bad json: ", e))
+    }
+}
+
+fn paths() uses io {
+    say("-- paths".bytes())
+    say(label("rel: ", html.rel("api/std/stream.html".bytes(), "src/std/stream.ei.html#L3".bytes())))
+    say(label("rel: ", html.rel("index.html".bytes(), "api/index.html".bytes())))
+    say(label("root: ", html.root_of("guide/a/b.html".bytes())))
+}
+
+fn highlighting() uses io {
+    say("-- highlight".bytes())
+    say(html.highlight("pub fn f(x: List[u8]) -> Option[i64] uses io { // <b>\n    let s = \"a\\\"<\" + 0x1f\n".bytes()))
+    let sig = "pub fn origin(p: geo.Point) -> Point".bytes()
+    let mut a: List[usize] = List.new()
+    let mut z: List[usize] = List.new()
+    let mut h: List[List[u8]] = List.new()
+    a.push(17)
+    z.push(26)
+    h.push("../geo/shapes.html#Point".bytes())
+    a.push(31)
+    z.push(36)
+    h.push(List.new())
+    // out of order or out of range: skipped
+    a.push(2)
+    z.push(99)
+    h.push("x".bytes())
+    say(html.signature(sig, a, z, h))
+}
+
+fn doctests() uses io {
+    say("-- doc tests".bytes())
+    let md = "# T\n\n```eider\nfn main() uses io { print(1) }\n```\n\ntext\n\n```output\n1\n```\n\n```eider,compile_fail=E0401\nfn main() {}\n```\n\n```sh\nls\n```\n\n- item\n\n  ```eider,trap\n  fn main() { assert false }\n  ```\n".bytes()
+    for c in doctest.cases("t.md".bytes(), md, 10) {
+        let mut l = label("  ", c.file)
+        l.push(58)
+        bytes.append(inout l, num(c.line))
+        bytes.append(inout l, " ".bytes())
+        bytes.append(inout l, c.info)
+        if c.has_output { bytes.append(inout l, label(" output=", bytes.trim(c.output))) }
+        say(l)
+    }
+    let mut api = model.empty()
+    match model.add_json(inout api, canned("target/doc-test/geo")) {
+        Ok(_) => {}
+        Err(e) => say(e)
+    }
+    for c in doctest.api_cases(api) {
+        let mut l = label("  ", c.file)
+        l.push(58)
+        bytes.append(inout l, num(c.line))
+        bytes.append(inout l, " ".bytes())
+        bytes.append(inout l, c.info)
+        say(l)
+    }
+    io.out(doctest.program("import \"std/bytes\"\nlet x = 1\nprint(x)\n".bytes(), true))
+}
+
+fn put_file(dir: List[u8], name: str, text: str) uses fs {
+    let p = fs.join(dir, name.bytes())
+    match fs.mkdir_all(fs.dirname(p.copy())) {
+        Ok(_) => {}
+        Err(_) => {}
+    }
+    match fs.write(p, text.bytes()) {
+        Ok(_) => {}
+        Err(_) => {}
+    }
+}
+
+fn site_build() uses io, fs {
+    say("-- site".bytes())
+    let root = "target/doc-test".bytes()
+    match fs.remove_all(root.copy()) {
+        Ok(_) => {}
+        Err(_) => {}
+    }
+    let sd = fs.join(root.copy(), "site".bytes())
+    put_file(sd.copy(), "SUMMARY.md", "## Guide\n\n- [A](a.md)\n- [B](sub/b.md)\n- [Gone](gone.md)\n\n## API\n\n- [geo](api:geo)\n- [nope](api:nope)\n")
+    put_file(sd.copy(), "a.md", "# Page A\n\nSee [B](sub/b.md#second), [B's top](sub/b.md), [the point](api:geo/shapes#Point),\n[x](api:geo/shapes#Point.x), [missing](api:geo/shapes#Missing), [unlisted](c.md),\n[no heading](sub/b.md#nope), [web](https://example.com/), ![logo](img/logo.txt), ![remote](https://example.com/x.png).\n\n## Section two\n\n<script>alert(1)</script>\n")
+    put_file(sd.copy(), "sub/b.md", "# Page B\n\n## Second\n\nBack to [A](../a.md#section-two).\n")
+    put_file(sd.copy(), "img/logo.txt", "logo")
+    put_file(root.copy(), "geo/shapes.ei", "//! geo/shapes: shapes. More.\n\npub type Point = { x: i64 }\n")
+    put_file(root.copy(), "geo/util/vec.ei", "pub fn zero() -> i64 { 0 }\n")
+    let mut api = model.empty()
+    match model.add_json(inout api, canned("target/doc-test/geo")) {
+        Ok(_) => {}
+        Err(e) => say(e)
+    }
+    let out = fs.join(root.copy(), "out".bytes())
+    let errs = site.build(site.Config(sd.copy(), out.copy(), "Test".bytes(), "https://example.com/repo".bytes()), api.copy())
+    for e in errs { say(label("error: ", e)) }
+    // without the broken entries and links it builds; the sources aren't there, so the
+    // source pages are the only errors
+    put_file(sd.copy(), "SUMMARY.md", "## Guide\n\n- [A](a.md)\n  - [B](sub/b.md)\n\n## Notes\n\n- [Note](../notes/n.md)\n\n## API\n\n- [geo](api:geo)\n")
+    put_file(root.copy(), "notes/n.md", "# Note\n\nBack to [A](../site/a.md#section-two); [the source](../geo/shapes.ei), [a directory](../geo/util/), [the package](../geo/).\n")
+    put_file(sd.copy(), "a.md", "# Page A\n\nSee [B](sub/b.md#second) and [the point](api:geo/shapes#Point). ![logo](img/logo.txt)\n\n## Section two\n\n<script>alert(1)</script>\n")
+    let errs2 = site.build(site.Config(sd.copy(), out.copy(), "Test".bytes(), "https://example.com/repo".bytes()), api)
+    for e in errs2 { say(label("error: ", e)) }
+    for f in ["index.html", "notes/n.html", "a.html", "sub/b.html", "img/logo.txt", "api/index.html", "api/geo/index.html", "api/geo/shapes.html", "api/geo/util/vec.html", "style.css", "search-index.js", "search-index.json"] {
+        let there = fs.exists(fs.join(out.copy(), f.bytes()))
+        if there { say(label("wrote ", f.bytes())) } else { say(label("MISSING ", f.bytes())) }
+    }
+    let a: List[u8] = match fs.read(fs.join(out.copy(), "a.html".bytes())) {
+        Ok(t) => t
+        Err(_) => List.new()
+    }
+    for want in ["href=\"sub/b.html#second\"", "href=\"api/geo/shapes.html#Point\"", "&lt;script&gt;alert(1)&lt;/script&gt;", "<a href=\"sub/b.html\">B</a>", "aria-current=\"page\"", "<footer>Eider 9.9.1 &middot; generated by eider-doc</footer>"] {
+        match bytes.find(a, want.bytes(), 0) {
+            Some(_) => say(label("a.html has ", want.bytes()))
+            None => say(label("a.html LACKS ", want.bytes()))
+        }
+    }
+    // a page beside the site, with links back into it and to files of the repository
+    let n: List[u8] = match fs.read(fs.join(out.copy(), "notes/n.html".bytes())) {
+        Ok(t) => t
+        Err(_) => List.new()
+    }
+    for want in ["href=\"../a.html#section-two\"", "href=\"https://example.com/repo/target/doc-test/geo/shapes.ei\"", "href=\"https://example.com/repo/target/doc-test/geo/util/\"", "<a href=\"../notes/n.html\" aria-current=\"page\">Note</a>"] {
+        match bytes.find(n, want.bytes(), 0) {
+            Some(_) => say(label("n.html has ", want.bytes()))
+            None => say(label("n.html LACKS ", want.bytes()))
+        }
+    }
+    let s: List[u8] = match fs.read(fs.join(out.copy(), "api/geo/shapes.html".bytes())) {
+        Ok(t) => t
+        Err(_) => List.new()
+    }
+    for want in ["id=\"Point\"", "id=\"Point.x\"", "id=\"origin\"", "<a href=\"#Point\">Point</a>", "<p>Shapes. More.</p>", "Capabilities: <code>io</code>", " = {\n    x: i64,\n}"] {
+        match bytes.find(s, want.bytes(), 0) {
+            Some(_) => say(label("shapes.html has ", want.bytes()))
+            None => say(label("shapes.html LACKS ", want.bytes()))
+        }
+    }
+    match fs.remove_all(root) {
+        Ok(_) => {}
+        Err(_) => {}
+    }
+}
+
+fn main() uses io, fs {
+    summaries()
+    models()
+    paths()
+    highlighting()
+    doctests()
+    site_build()
+}

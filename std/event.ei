@@ -1,20 +1,20 @@
-// std/event: an event loop over core's poller and waker (core/ABI.md "Readiness"), with
-// timers in a binary heap (docs/runtime.md "Event loop and timers").
-//
-// A Loop is owned by one thread, which calls `poll` in a loop. Each round waits until a
-// watched descriptor is ready, the earliest timer is due, another thread wakes the loop, or
-// the round's deadline passes, whichever is first, and returns what happened: descriptor
-// events (the poller's, by token), then the timers that are due, earliest first, then
-// `Woken` if the waker was used. A round is cancel-safe: it never consumes an event it
-// doesn't return (descriptors are level-triggered unless watched with poll.EDGE; a due timer
-// stays due until a round returns it).
-//
-// Timers have millisecond resolution (the poller's timeout): one fires at its deadline or up
-// to 1 ms after it, never before. Cancelling is O(1) (a timer is skipped when it reaches the
-// top of the heap); adding and firing are O(log n).
-//
-// This is the reactor the stackless task scheduler of decision C4 will park tasks on; it is
-// usable on its own today for single-threaded servers.
+//! std/event: an event loop over core's poller and waker (core/ABI.md "Readiness"), with
+//! timers in a binary heap (docs/runtime.md "Event loop and timers").
+//!
+//! A Loop is owned by one thread, which calls `poll` in a loop. Each round waits until a
+//! watched descriptor is ready, the earliest timer is due, another thread wakes the loop, or
+//! the round's deadline passes, whichever is first, and returns what happened: descriptor
+//! events (the poller's, by token), then the timers that are due, earliest first, then
+//! `Woken` if the waker was used. A round is cancel-safe: it never consumes an event it
+//! doesn't return (descriptors are level-triggered unless watched with poll.EDGE; a due timer
+//! stays due until a round returns it).
+//!
+//! Timers have millisecond resolution (the poller's timeout): one fires at its deadline or up
+//! to 1 ms after it, never before. Cancelling is O(1) (a timer is skipped when it reaches the
+//! top of the heap); adding and firing are O(log n).
+//!
+//! This is the reactor the stackless task scheduler of decision C4 will park tasks on; it is
+//! usable on its own today for single-threaded servers.
 
 import "poll.ei"
 import "time.ei"

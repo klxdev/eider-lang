@@ -1,8 +1,8 @@
-// std/deque: a double-ended queue. `Deque[T]` pushes and pops at both ends in amortized
-// O(1) and reads any position in O(1). It is two Lists back to back: the front half
-// reversed (its end is the deque's first element) and the back half in order; when one
-// side runs dry, half of the other moves over, which keeps every operation amortized O(1)
-// even when a program alternates ends. A value like any other: copies don't share.
+//! std/deque: a double-ended queue. `Deque[T]` pushes and pops at both ends in amortized
+//! O(1) and reads any position in O(1). It is two Lists back to back: the front half
+//! reversed (its end is the deque's first element) and the back half in order; when one
+//! side runs dry, half of the other moves over, which keeps every operation amortized O(1)
+//! even when a program alternates ends. A value like any other: copies don't share.
 
 pub type Deque[T] = { front: List[T], back: List[T] }
 

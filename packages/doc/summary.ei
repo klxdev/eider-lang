@@ -1,0 +1,74 @@
+//! SUMMARY.md, the site's navigation (docs/site/CONTRACT.md "Layout"): `## Section`
+//! headings, each followed by a nested list of links, `- [Title](path.md)` for a page or
+//! `- [Title](api:<package>)` for a package's generated API. Nesting is by indentation (two
+//! spaces or more per level). Other lines (the `# Summary` title, blank lines, prose) are
+//! ignored.
+
+import "std/bytes"
+
+/// A navigation entry: its title, the link as written, the section it is in (index into
+/// `Summary.sections`), its nesting depth (0: top) and its line in SUMMARY.md.
+pub type Entry = { title: List[u8], href: List[u8], section: u32, depth: u32, line: u32 }
+
+pub type Summary = { sections: List[List[u8]], entries: List[Entry] }
+
+/// The parsed summary; Err lists `line N: message` for each malformed entry.
+pub fn parse(src: List[u8]) -> Result[Summary, List[List[u8]]] {
+    let mut sections: List[List[u8]] = List.new()
+    let mut entries: List[Entry] = List.new()
+    let mut errs: List[List[u8]] = List.new()
+    let mut indents: List[usize] = List.new()
+    let ls = bytes.lines(src)
+    for i in 0..ls.len() {
+        let l = ls[i]
+        let line = (i + 1) as u32
+        let mut ind: usize = 0
+        while ind < l.len() && l[ind] == 32 { ind += 1 }
+        let t = bytes.slice(l, ind, l.len())
+        if bytes.starts_with(t, "## ".bytes()) {
+            sections.push(bytes.trim(bytes.slice(t, 3, t.len())))
+            indents.clear()
+            continue
+        }
+        if !(bytes.starts_with(t, "- ".bytes()) || bytes.starts_with(t, "* ".bytes())) { continue }
+        let body = bytes.trim(bytes.slice(t, 2, t.len()))
+        match link(body) {
+            Some(x) => {
+                if sections.len() == 0 {
+                    errs.push(at(line, "an entry before the first `## Section` heading"))
+                    continue
+                }
+                // the depth: how many open indents are shallower than this one
+                while indents.len() > 0 && indents[indents.len() - 1] >= ind { indents.pop() }
+                let depth = indents.len() as u32
+                indents.push(ind)
+                entries.push(Entry(x.0, x.1, (sections.len() - 1) as u32, depth, line))
+            }
+            None => errs.push(at(line, "expected `- [Title](path.md)` or `- [Title](api:package)`"))
+        }
+    }
+    if errs.len() > 0 { return Err(errs) }
+    Ok(Summary(sections, entries))
+}
+
+fn at(line: u32, msg: str) -> List[u8] {
+    let mut m = "line ".bytes()
+    bytes.append(inout m, bytes.from_u64(line as u64))
+    bytes.append(inout m, ": ".bytes())
+    bytes.append(inout m, msg.bytes())
+    m
+}
+
+/// `[title](href)` as (title, href).
+fn link(s: List[u8]) -> Option[(List[u8], List[u8])] {
+    if s.len() < 4 || s[0] != 91 { return None }
+    let close = match bytes.find(s, "](".bytes(), 1) {
+        Some(i) => i
+        None => { return None }
+    }
+    if s[s.len() - 1] != 41 { return None }
+    let title = bytes.slice(s, 1, close)
+    let href = bytes.trim(bytes.slice(s, close + 2, s.len() - 1))
+    if title.len() == 0 || href.len() == 0 { return None }
+    Some((title, href))
+}

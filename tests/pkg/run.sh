@@ -130,7 +130,8 @@ exit 0" "$(pkg app init)"
 check "init writes eider.toml" '[package]
 name = "app"
 version = "0.1.0"
-main = "main.ei"' "$(cat "$T/app/eider.toml")"
+main = "main.ei"
+eider = "0.1"' "$(cat "$T/app/eider.toml")"
 check "init writes a program with package imports" 'import "core/sys"
 import "std/io"' "$(head -2 "$T/app/main.ei")"
 check "init twice" "eider-pkg: eider.toml already exists
@@ -154,6 +155,7 @@ check "eider.toml after add" "[package]
 name = \"app\"
 version = \"0.1.0\"
 main = \"main.ei\"
+eider = \"0.1\"
 
 [deps.geom]
 path = \"../geom\"
@@ -361,7 +363,7 @@ check "grants in the tree" "capsapp 0.1.0
   ffidep 0.1.0 uses clock,ffi,net
   plain 0.1.0
 exit 0" "$(pkg capsapp tree)"
-check "unknown capability" "eider-pkg: <T>/capsapp/eider.toml:19:1: unknown capability \`disk\` (known: io, clock, fs, net, threads, ffi)
+check "unknown capability" "eider-pkg: <T>/capsapp/eider.toml:20:1: unknown capability \`disk\` (known: io, clock, fs, net, threads, ffi)
 exit 1" "$(pkg capsapp add other --path ../plain --uses disk)"
 # the program calls them without `uses ffi` (it stays inside ffidep and core), but with the
 # real capabilities they declare (magnitude: clock)
@@ -472,6 +474,71 @@ exit 1" "$(printf '%s\n' "$got" | grep -c "E0809.*package \`gamma\` is not a dep
 check "remove an unknown dep" "eider-pkg: no [deps.nope] table in eider.toml (inline \`name = { ... }\` entries must be removed by hand)
 exit 1" "$(pkg app remove nope)"
 
+# ---- EIDER_PKG_OVERRIDE: a local checkout stands in for a git package (override.ei)
+
+# a project on a repository that doesn't exist: only the override can satisfy it
+mkdir -p "$T/ov" "$T/ovutil/target"
+manifest "$T/ov" ov 0.1.0 "main = \"main.ei\"
+
+[deps.util]
+git = \"file://$T/repos/no-such-util\"
+version = \"1.2.0\"
+"
+printf 'import "util"\n\nfn main() uses io { print(util.level()) }\n' > "$T/ov/main.ei"
+manifest "$T/ovutil" util 1.3.0
+printf 'pub fn level() -> i64 { 13 }\n' > "$T/ovutil/util.ei"
+printf 'build output\n' > "$T/ovutil/target/junk"
+check "without the override the repository is needed" "eider-pkg: offline: file://<T>/repos/no-such-util has no local copy of 1.2.0
+exit 1" "$(pkg ov fetch --offline)"
+check "override: fetch offline from a plain directory" "locked 1 package(s)
+exit 0" "$(EIDER_PKG_OVERRIDE="util=$T/ovutil" pkg ov fetch --offline)"
+check "override: the lock keeps the git source" "version = \"1.3.0\"
+source = \"git+file://<T>/repos/no-such-util#override\"" "$(grep -E '^(source|version) = "' "$T/ov/eider.lock" | mask)"
+check "override: the program runs on the checkout" "13
+exit 0" "$(run ov)"
+check "override: target/ stays out of the store" "util.ei" "$(cd "$(store_dir ov util)" && find . -type f ! -name eider.toml | sed 's|^\./||')"
+printf 'pub fn level() -> i64 { 14 }\n' > "$T/ovutil/util.ei"
+check "override: an edit is picked up by the next fetch" "14
+exit 0" "$(EIDER_PKG_OVERRIDE="util=$T/ovutil" pkg ov fetch --offline >/dev/null; run ov)"
+manifest "$T/ovutil" util 1.1.0
+check "override: an older checkout is refused" "eider-pkg: EIDER_PKG_OVERRIDE: the checkout of \`util\` has version 1.1.0, but 1.2.0 or later is required
+exit 1" "$(EIDER_PKG_OVERRIDE="util=$T/ovutil" pkg ov fetch --offline)"
+check "override: a malformed entry" "eider-pkg: EIDER_PKG_OVERRIDE: \`util\` is not <name>=<dir>
+exit 1" "$(EIDER_PKG_OVERRIDE="util" pkg ov fetch --offline)"
+
+# a git checkout at the locked release gives the lock a network fetch gives; only what git
+# would commit is taken (not ignored files), and uncommitted edits count
+newrepo ovgit
+manifest "$T/repos/ovgit" ovgit 0.4.0
+printf 'pub fn value() -> i64 { 40 }\n' > "$T/repos/ovgit/ovgit.ei"
+printf 'target/\n' > "$T/repos/ovgit/.gitignore"
+commit ovgit v0.4.0
+mkdir -p "$T/repos/ovgit/target" && printf 'x\n' > "$T/repos/ovgit/target/junk"
+mkdir -p "$T/ov2"
+manifest "$T/ov2" ov2 0.1.0 "main = \"main.ei\"
+
+[deps.ovgit]
+git = \"$U/ovgit\"
+version = \"0.4.0\"
+"
+printf 'import "ovgit"\n\nfn main() uses io { print(ovgit.value()) }\n' > "$T/ov2/main.ei"
+pkg ov2 fetch > /dev/null
+cp "$T/ov2/eider.lock" "$T/ov2.lock"
+rm -rf "$EIDER_HOME/pkg"/ovgit-* "$EIDER_HOME/index"
+check "override: a clean checkout of the release" "locked 1 package(s)
+exit 0" "$(EIDER_PKG_OVERRIDE="ovgit=$T/repos/ovgit" pkg ov2 update --offline)"
+cmp -s "$T/ov2.lock" "$T/ov2/eider.lock" && echo "ok   override: the lock is the network fetch's" || { echo "FAIL override: the lock is the network fetch's"; diff "$T/ov2.lock" "$T/ov2/eider.lock"; fail=1; }
+check "override: runs from the store copy" "40
+exit 0" "$(run ov2)"
+printf 'pub fn value() -> i64 { 41 }\n' > "$T/repos/ovgit/ovgit.ei"
+check "override: an uncommitted edit counts" "41
+exit 0" "$(EIDER_PKG_OVERRIDE="ovgit=$T/repos/ovgit" pkg ov2 fetch --offline >/dev/null; run ov2)"
+git -C "$T/repos/ovgit" checkout -q -- ovgit.ei
+check "override off again: back to the locked release" "locked 1 package(s)
+exit 0
+40
+exit 0" "$(cp "$T/ov2.lock" "$T/ov2/eider.lock"; pkg ov2 fetch; run ov2)"
+
 # ---- errors
 
 mkdir -p "$T/bad"
@@ -502,5 +569,14 @@ cmp -s "$T/bad.toml" "$T/bad/eider.toml" && echo "ok   failed adds leave eider.t
 manifest "$T/bad" bad 1.0
 check "bad package version" "eider-pkg: <T>/bad/eider.toml:3:1: \`version\` must be MAJOR.MINOR.PATCH, e.g. \"0.1.0\"
 exit 1" "$(pkg bad fetch)"
+manifest "$T/bad" bad 0.1.0 'eider = "0.1.0"
+'
+check "eider is a MAJOR.MINOR" "eider-pkg: <T>/bad/eider.toml:4:1: \`eider\` is the toolchain MAJOR.MINOR the package needs, e.g. \"0.1\"
+exit 1" "$(pkg bad fetch)"
+
+# ---- the version (VERSION, docs/site/tooling/releases.md)
+
+check "--version" "eider-pkg $(cat VERSION)
+exit 0" "$(scripts/eider-pkg --version 2>&1; echo "exit $?")"
 
 exit $fail

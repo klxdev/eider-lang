@@ -1,12 +1,12 @@
-// std/fmt: formatting numbers and padding text into Strings, locale-free. A `Spec` says how
-// (width, fill, alignment, radix, case, sign, prefix, zero padding) and is built by
-// chaining: `fmt.int_with(-5, fmt.spec().width(4).zero())` is "-005",
-// `fmt.uint_with(255, fmt.spec().hex().prefix())` is "0xff". Each `x_with` function has a
-// `put_x` form that appends to a String instead, and `Builder` collects several pieces.
-// Widths count characters (Unicode scalar values), not bytes. Negative numbers in other
-// radixes are sign and magnitude ("-ff"), not two's complement.
-//
-// Floats wait for the language's f64 (decision C9).
+//! std/fmt: formatting numbers and padding text into Strings, locale-free. A `Spec` says how
+//! (width, fill, alignment, radix, case, sign, prefix, zero padding) and is built by
+//! chaining: `fmt.int_with(-5, fmt.spec().width(4).zero())` is "-005",
+//! `fmt.uint_with(255, fmt.spec().hex().prefix())` is "0xff". Each `x_with` function has a
+//! `put_x` form that appends to a String instead, and `Builder` collects several pieces.
+//! Widths count characters (Unicode scalar values), not bytes. Negative numbers in other
+//! radixes are sign and magnitude ("-ff"), not two's complement.
+//!
+//! Floats wait for the language's f64 (decision C9).
 
 /// Where text goes inside a wider field.
 pub type Align = | Left | Right | Center

@@ -686,6 +686,69 @@ errors"). `eiderc ide <file.ei>
 - **Cost.** `eiderc ide compiler/main.ei` (the whole compiler, 27 files) takes about 0.25 s
   against 0.16 s for `check`.
 
+## Documentation: `eiderc doc`
+
+`eiderc doc <package dir | file.ei> [--json] [--private]` (`doc.ei`) describes an API. The
+JSON form is what eider-doc reads (packages/doc; docs/site/tooling/eider-doc.md documents the
+format for users). Without `--json` it prints a text listing like `go doc`.
+
+- **What is documented.** For a directory: every `.ei` file under it, skipping `tests`,
+  `examples`, `vendor`, `target`, `deps` and hidden directories. The files are loaded as one
+  program through an entry that exists only in memory (`<dir>/__eiderc_doc__.ei`, with one
+  `import "<file>" as __docN` per file, as migrate-var does). So every module's imports
+  resolve as in a build, and module identity is the usual (package, path). For the
+  toolchain's `core`, the prelude is one of the modules (`core/prelude`). For a file: the
+  modules of the file's package that its program loads.
+- **Only resolution.** It runs `resolve.load_from`, with no comptime and no checking. So no C
+  compiler is needed, code that doesn't type-check is still documented, and `eiderc doc std`
+  takes 20 ms.
+  - Signatures are rendered from the syntax tree as Eider source: one line, canonical
+    spacing, `self` without its implicit type, and `pub`, `unsafe`, `extern "c"` or `export`
+    from the flags.
+  - A type or trait name in a signature links to the item it resolves to. An unqualified
+    name resolves to the module's own public types and traits, then to the prelude's;
+    `alias.Name` resolves through the module's import aliases (as ide.ei resolves
+    qualifiers). Type parameters and built-in types don't link.
+  - A constant's value is its source text up to the end of its line, cut at 100 bytes.
+- **Docs.** An item's doc is the run of `///` lines directly above its first line, verbatim
+  after the marker and one space. A member (field, variant or method) has one when it starts
+  its own line. A module's doc is every `//!` line in column 1; separate runs are joined with
+  a blank line, and `doc_line` is the first line. Module docs use `//!` rather than a leading
+  `//` block, so a licence header or a commented-out line never becomes a module doc. The
+  file headers of std, core and the packages are now `//!` comments. The prelude's positions
+  are fixed, so it got its `//!` lines in place and at its end.
+- **Visibility and anchors.** Only `pub` items are documented (everything in the prelude),
+  unless `--private` is given. An impl is shown unless its type or trait is a private item of
+  the module.
+  - An anchor is the item's name, or `Owner.member` for a member.
+  - A trait impl is `impl-<Trait>-for-<Type>`, and an inherent impl is `impl-<Type>`, whose
+    methods are `Type.method`.
+  - A name taken twice in a module gets `-2`, `-3`, ... in item order. Public items come
+    first, so `--private` doesn't change public anchors.
+- **Version.** The JSON's `toolchain` is the first line of `<toolchain root>/VERSION` (empty
+  without one), so a site can say which toolchain it documents.
+- **Problems** in the documented modules, such as syntax errors or imports that can't be
+  found, are warnings on stderr (`eiderc doc: warning: <file>:<line>:<col>: <code>
+  <message>`), and the rest is still documented. A target that can't be read or loaded exits
+  2.
+
+**Tests** (test-compiler.sh "doc"):
+
+- compiler/tests/doc/shapes is a package with two modules. It is compared with `shapes.json`,
+  `shapes.txt` and `shapes.private.json`, and one of its files with `geo.json`. It has:
+  - module docs in two runs;
+  - an enum with variant docs, a one-line record and a multi-line record, an alias, a const
+    and a trait;
+  - trait and inherent impls, and a method named like a field;
+  - generics with bounds, capabilities, and qualified links into std and into another module;
+  - an unsafe fn, private items and a test block.
+- core, std and every package under packages/ must document with no warning, and core must
+  have the prelude.
+
+**Seed.** The seed was regenerated with `doc`, so scripts/docs.sh uses `target/eiderc`. When
+a compiler change hasn't reached the seed yet and `target/eiderc doc` fails, docs.sh falls
+back to compiler/ as the seed builds it (`target/eiderc-next`).
+
 ## Front-end recovery
 
 The lexer and parser can go on after an error, so every syntax error of a file can be
@@ -918,6 +981,26 @@ end and lowering (`emit-c compiler/main.ei`, 16.6k lines of Eider -> 105k lines 
 String, List, Map or Box, or of a record holding them) used to be deep and is now a count
 increment. gcc still dominates a build of eiderc.
 
+Where eiderc's own time goes, from its profile (`sh scripts/profile-compiler.sh`: eiderc built
+with `--profile`, `emit-c compiler/main.ei`, 2026-10-31; docs/runtime.md "Profiler"). Of the 36
+CPU samples at 99 Hz (few: the shares are rough; EIDER_PROF_HZ=999 for more), about a third is checking (`check.check_all`), two fifths lowering
+(`lower.emit`), a fifth loading and parsing (`resolve.load_from`); the hottest single
+functions are `check.expr`, `lower.put` and `sys.lit` (about a tenth each). The memory profile
+is the more useful one, since its counts are exact and the same on every run (`--check` gates
+them): 2.13 M allocations and 145 MiB for one compile, peak heap 47.5 MiB.
+
+| Hot spot | Count | Why |
+|---|---|---|
+| `sys.lit` (core/sys.ei:43) | 1.36 M allocations, 27 MiB | every `str` literal turned into a `List[u8]` one byte at a time through the C core (the push loop also grows the List); lowering calls it for each piece of C text |
+| List growth of the big buffers (`parse.add`, `lex.run`, `bytes.append` for the output) | 21 MiB, 19 MiB, 27 MiB in a few hundred doublings each | arenas and the output grow by doubling with a copy each time; reserving from the input size would remove most |
+| `.copy()` | 1.7 M calls, 25 MiB | mostly the lexer's and parser's `let x = place.copy()` (lex.run:376, parse.bit_expr), each a shallow copy, plus `bytes.from_u64` |
+| `bytes.from_u64` | 441 k allocations | `putn` of numbers in the C text |
+| copy-on-write unshares | 4,515, 0.7 MiB | small: `intern.intern` (the interner's table, twice, 0.5 MiB) and the checker's `lv_loop`; C8.1 did its job |
+
+So the next compile-speed work is in the text output (a `str` append that doesn't go through
+`sys.lit`, and numbers written without a temporary) and in sizing the arenas, not in the
+checker's copies.
+
 Core objects and the binary cache (C7, "C7: driver"), measured 2026-10-30 on
 `tests/run/adt.ei` (84 lines; 16 cores, gcc; each the median of 4 runs, wall clock):
 
@@ -1073,6 +1156,15 @@ letter, the path one or more non-empty segments. (So a path import without its e
   package, a directory that doesn't exist, or an eider.toml or eider.lock that doesn't parse
   is **E0810**, with the fix `run eider-pkg fetch in <dir>`. The compiler does not re-hash
   store directories: eider-pkg checks the hash whenever it fetches.
+- The toolchain series (C220, docs/site/tooling/releases.md). `eider = "0.1"` under
+  [package] names the toolchain MAJOR.MINOR a package needs (lock.ei `Manifest.eider`).
+  resolve.ei `check_series` compares it with core/version.ei's `SERIES` (the compiler's
+  own, from when it was built) once per package: another value, or one that isn't a
+  MAJOR.MINOR, is **E0811**, at 1:1 of the entry file for the entry file's package and at
+  the first import that loads a module of any other package; absent, nothing is checked.
+  `eiderc --version` (and `eiderc version`) prints `eiderc <core/version.ei VERSION>`; that
+  file is the Eider copy of VERSION (scripts/version.sh check), so the seed embeds the
+  version and a bump is a source change plus a seed regeneration.
 - So visibility is per package: app sees its dependencies, each dependency sees its own
   (from its own eider.toml, read in the store or vendor copy), and the lock, written for the
   whole graph by `eider-pkg fetch`, says where each one is.
@@ -1123,7 +1215,9 @@ an entry that isn't `<name>.ei`, self-import by package name, std and core, then
 an undeclared package, an indirect one, one missing from eider.lock, a locked directory that
 is gone, no eider.lock, malformed imports, two copies of a package, and a file in no package;
 plus the same C from a copy of the layout at another path. compiler/tests/check/fail has
-E0809 and E0810 cases, compiler/tests/unit/lock.ei the reader. tests/pkg/run.sh builds and
+E0809 and E0810 cases, compiler/tests/unit/lock.ei the reader; compiler/tests/pkgs/series
+and seriesbad E0811 at 1:1 (another MAJOR.MINOR, a full version), app and geo a matching
+`eider`, tests/checks/fail/e0811_toolchain_series.ei E0811 at an import. tests/pkg/run.sh builds and
 runs its projects through eider.lock: no `deps/` after fetch, the locked git packages in the
 store, an indirect or undeclared or removed dependency is E0809, one added by hand before a
 fetch E0810, a run from vendor/ with the store deleted, and `core`/`std` refused as names.
@@ -2537,6 +2631,44 @@ comment line between, fields and tuple fields, a chain as a block's value and in
 arguments, a line not starting with `.` ending the statement; hand-checked .out);
 compiler/tests/parse_ok/chains.ei (the AST: one chain).
 
+## Profiling: `--profile`
+
+`eiderc build|run|test <file> --profile[=cpu,mem,conc]` (main.ei: `profile`, parsed by
+`lower.prof_what`; a bare `--profile` is all three; with `--lib` or `--wasm` it is a usage
+error) lowers the program through `lower.program_prof`, which is `emit` with `G.prof` set.
+Everything below is emitted only then (`g.prof > 0`), so without the flag the C is byte for
+byte what it was (scripts/test-compiler.sh "profile-off" compares `emit-c` of every run test
+and of the compiler with the compiler of the merge base). The runtime side, the file format
+and the overhead are docs/runtime.md "Profiler"; decisions C200 to C206.
+
+- **The C asks for the runtime.** The output starts with `#define EI_RT_PROFILE 1`;
+  `driver.profiled` sees it and adds `-DEI_RT_PROFILE` to the cc argv, so eider_rt.c is
+  compiled with core/eider_prof.c (and the core objects are cached apart: the argv and
+  eider_prof.c's bytes are in the key).
+- **Shadow frames** (`function`, `framed`). A function whose body calls (S_CALL, S_CALLV) or
+  loops pushes `ei_prof_frame *ei_pf = ei_prof_enter(<index + 1>);` after its locals and pops
+  (`ei_prof_leave();`) before every `return` and at the end of a `()` function. Straight-line
+  code that calls nothing gets no frame: it counts for its caller, as if inlined.
+- **Lines** (`prof_marks`, `prof_line`): `ei_pf->line = <line>;` before a statement that calls,
+  runs a builtin, makes a closure, builds a record with its own Drop, drops an owned value or
+  prints, unless the same straight-line code already set that line (`G.pline`, reset at every
+  block boundary).
+- **Events** in glue (`prof_ev`): `EI_PEV_COW` in `uniq_` when the buffer is shared (bytes of
+  the buffer), `EI_PEV_GROW` in `push_` when it grows, `EI_PEV_REHASH` in `ins_` when it
+  rehashes, `EI_PEV_DROP` around a type's own Drop in `drop_`, and `EI_PEV_COPY` at each
+  `.copy()` (a comma expression, so the copy stays the assigned value).
+- **The name table** (`prof_table`, before `main`): `ei_prof_names` (every IR function's name,
+  index + 1), `ei_prof_file_of`, `ei_prof_files` (the entry file, then the module files as
+  `ir.files` names them), and `ei_prof_tab` with the selection, the program and the
+  toolchain version (`driver.version`: the first line of `<root>/VERSION`). Generated `main`
+  and test `main` call `ei_prof_init(&ei_prof_tab)` after `ei_set_file`; a failed test calls
+  `ei_prof_unwind(0)` (its longjmp skipped the pops).
+
+Tests: compiler/tests/profile (memory events at their lines, waits and labels on threads,
+CPU samples under labels with a snapshot, a Ref conflict's trap, `EIDER_PROF=off`; also under
+ASan+UBSan and TSan), tests/core/prof_test.c (the runtime alone), tests/std/profile.ei
+(std/profile without a profiler).
+
 ## Language work that lands in `eiderc` (after parity)
 
 Each with a design note, compile-fail tests and new codes:
@@ -2597,6 +2729,7 @@ compiler/
   lock.ei             eider.toml and eider.lock for package imports ("C8.3")
   ide.ei              the IDE analysis API (`eiderc ide`; "IDE analysis")
   front.ei            every syntax error at once ("Front-end recovery")
+  doc.ei              the API description (`eiderc doc`; "Documentation: `eiderc doc`")
   tests/              pass-level golden tests (lex, lex_ok, check, ir, run, wasm, export, ide, pkgs, ...)
 tests/oracle/         the recorded expected results (scripts/test-compiler.sh, BLESS=1)
 ```

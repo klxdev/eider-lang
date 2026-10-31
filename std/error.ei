@@ -1,17 +1,17 @@
-// std/error: errors that report themselves and say what they were in the middle of
-// (docs/compiler.md, "C8.24"; roadmap P0.6). An error type implements `Error`: its message,
-// and the error under it if there is one. `Failure` is an error as a chain of messages,
-// outermost first; `.context("...")` on a Result (or an Option) wraps any Error into a
-// Failure, and `?` converts any Error into a Failure through `From`, so a function returning
-// `Result[T, error.Failure]` can use `?` on every kind of error:
-//
-//     fn settings(text: String) -> Result[Config, error.Failure] {
-//         let port = parse_port(text)?                     // a ParseError, through From
-//         parse(text, port).context("parsing the config")  // any Error, with context
-//     }
-//
-// It costs nothing in a program that doesn't import it, and nothing on the success path
-// in one that does (`with_context` makes its message only on an error).
+//! std/error: errors that report themselves and say what they were in the middle of
+//! (docs/compiler.md, "C8.24"; roadmap P0.6). An error type implements `Error`: its message,
+//! and the error under it if there is one. `Failure` is an error as a chain of messages,
+//! outermost first; `.context("...")` on a Result (or an Option) wraps any Error into a
+//! Failure, and `?` converts any Error into a Failure through `From`, so a function returning
+//! `Result[T, error.Failure]` can use `?` on every kind of error:
+//!
+//!     fn settings(text: String) -> Result[Config, error.Failure] {
+//!         let port = parse_port(text)?                     // a ParseError, through From
+//!         parse(text, port).context("parsing the config")  // any Error, with context
+//!     }
+//!
+//! It costs nothing in a program that doesn't import it, and nothing on the success path
+//! in one that does (`with_context` makes its message only on an error).
 
 /// An error: what to tell people, and the error that caused it, if any (as a Failure, the
 /// one shape every error's cause can take without dynamic types).

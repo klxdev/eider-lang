@@ -1,0 +1,8 @@
+false
+false
+profile: cannot write a snapshot: not built with --profile
+profile: cannot write a snapshot: not built with --profile
+42
+nested
+bytes
+exit 0

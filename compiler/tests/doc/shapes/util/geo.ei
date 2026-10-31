@@ -1,0 +1,7 @@
+//! Vectors, in a module below the package directory (`shapes/util/geo`).
+
+/// A vector.
+pub type Vec = { dx: i64, dy: i64 }
+
+/// The taxicab length of `v`.
+pub fn len(v: Vec) -> i64 { v.dx + v.dy }

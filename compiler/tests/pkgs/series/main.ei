@@ -1,0 +1,3 @@
+// pkgtest: check
+// the entry file's own package needs another toolchain MAJOR.MINOR: E0811 at 1:1
+fn main() {}

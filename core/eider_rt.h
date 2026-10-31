@@ -333,6 +333,75 @@ static inline bool ei_buf_shared(const void *d) { return d && ((const ei_buf_hdr
 /* d's count (tests). */
 static inline uint64_t ei_buf_count(const void *d) { return d ? ((const ei_buf_hdr *)d - 1)->n : 0; }
 
+// ---- profiling (core/RUNTIME.md "Profiling"; docs/runtime.md "Profiler"). Only in programs
+// built with `eiderc build|run --profile`: their C starts with `#define EI_RT_PROFILE 1`, and
+// the driver then compiles the runtime with -DEI_RT_PROFILE too. Nothing below exists
+// otherwise, so a program built without the flag gets exactly the runtime it had.
+#ifdef EI_RT_PROFILE
+/* One frame of the shadow stack: the Eider function (an index into the program's name table,
+   from 1; 0 is "no Eider frame") and the line of the statement it is running (the line within
+   the function's file). Generated code keeps the stack: each Eider function pushes a frame on
+   entry, sets its line before the statements that call or allocate, and pops it on every
+   return.
+   The fields are volatile, so the stores happen where they are written and in order
+   (volatile accesses are not reordered with each other): the signal handler reads the stack
+   of the thread it interrupts. They are floats, which is odd but deliberate: no Eider value
+   is a float, so the C compiler knows these stores change none of the program's data
+   (type-based alias analysis) and keeps that in registers; a store of a 32-bit integer, or a
+   fence, makes it reload (eiderc: +50% instead of +15%), and a 16-bit store of a constant
+   stalls x86 decoders. Every id and line below 2^24 is exact in a float. */
+typedef struct { volatile float fn, line; } ei_prof_frame;
+#define EI_PROF_DEPTH 512
+extern _Thread_local ei_prof_frame ei_prof_stack[EI_PROF_DEPTH];
+/* the frames in use (modulo 2^16: deeper recursion than that shows wrong stacks until it
+   unwinds, and is then right again) */
+extern _Thread_local volatile uint16_t ei_prof_depth;
+/* where frames deeper than EI_PROF_DEPTH write (a sample keeps the outermost frames) */
+extern _Thread_local ei_prof_frame ei_prof_spill;
+static inline ei_prof_frame *ei_prof_enter(uint32_t fn) {
+  uint16_t d = ei_prof_depth;
+  ei_prof_frame *f = d < EI_PROF_DEPTH ? &ei_prof_stack[d] : &ei_prof_spill;
+  f->fn = (float)fn;
+  f->line = 0.0f;
+  ei_prof_depth = (uint16_t)(d + 1);
+  return f;
+}
+static inline void ei_prof_leave(void) { ei_prof_depth = (uint16_t)(ei_prof_depth - 1); }
+/* The program's name table, from generated main: names[i] and files[file_of[i]] for fn i
+   (names[0] is unused); `what` is the --profile selection (EI_PROF_CPU | ...). */
+typedef struct {
+  const char *const *names;
+  const uint32_t *file_of;
+  uint32_t nfns;
+  const char *const *files;
+  uint32_t nfiles;
+  uint32_t what;
+  const char *program;
+  const char *version; /* the toolchain's (its VERSION file), recorded in the profile */
+} ei_prof_table;
+#define EI_PROF_CPU 1u
+#define EI_PROF_MEM 2u
+#define EI_PROF_CONC 4u
+/* Starts the profiler (generated main, before the Eider main); idempotent. */
+void ei_prof_init(const ei_prof_table *t);
+/* An event at the current Eider position (the top frame): `n` is bytes, or nanoseconds for
+   the waits. Generated glue reports the copy-on-write and growth events. */
+#define EI_PEV_COW 1
+#define EI_PEV_COPY 2
+#define EI_PEV_DROP 3
+#define EI_PEV_GROW 4
+#define EI_PEV_REHASH 5
+#define EI_PEV_REF 6
+#define EI_PEV_ALLOC 7
+#define EI_PEV_LOCK 8
+#define EI_PEV_RECV 9
+#define EI_PEV_SPAWN 10
+#define EI_PEV_KINDS 11
+void ei_prof_ev(int32_t kind, uint64_t n);
+/* After a test's longjmp: the frames above `depth` are gone. */
+static inline void ei_prof_unwind(uint32_t depth) { ei_prof_depth = (uint16_t)depth; }
+#endif
+
 // ---- Ref[T] (docs/compiler.md, "C8.7"): a shared buffer (the count above, not atomic: a
 // Ref never crosses threads) holding an access state `st` and the value. st counts the
 // `read`s in progress (> 0), or is -1 while an `update` runs; an access that overlaps an
@@ -340,12 +409,18 @@ static inline uint64_t ei_buf_count(const void *d) { return d ? ((const ei_buf_h
 
 /* A read of the value (read, get): traps while an update runs. */
 static inline void ei_ref_read_begin(int64_t *st, int32_t line) {
+#ifdef EI_RT_PROFILE
+  if (*st < 0) ei_prof_ev(EI_PEV_REF, 0);
+#endif
   if (*st < 0) ei_trap("Ref read while it is being updated", line);
   ++*st;
 }
 static inline void ei_ref_read_end(int64_t *st) { --*st; }
 /* An update of the value (update, set): traps while any read or update runs. */
 static inline void ei_ref_update_begin(int64_t *st, int32_t line) {
+#ifdef EI_RT_PROFILE
+  if (*st != 0) ei_prof_ev(EI_PEV_REF, 0);
+#endif
   if (*st < 0) ei_trap("Ref updated while it is already being updated", line);
   if (*st > 0) ei_trap("Ref updated while it is being read", line);
   *st = -1;
@@ -504,5 +579,6 @@ uint64_t ei_chan_len(const ei_chan *c);
 void *ei_chan_at(ei_chan *c, uint64_t i);
 /* Frees the queue (queued elements are not dropped: use ei_chan_at first). */
 void ei_chan_destroy(ei_chan *c);
+
 
 #endif

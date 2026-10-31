@@ -217,10 +217,11 @@ can also `cd greet` and leave it out. The examples below run inside `greet/`, wi
 
 ### Add a dependency
 
-Add the JSON package from the checkout as a path dependency:
+Add [eider-json](https://github.com/klxdev/eider-json) as a git dependency (its release
+0.1.0, the tag `v0.1.0`):
 
 ```sh
-$EIDER/scripts/eider-pkg add json --path $EIDER/packages/json
+$EIDER/scripts/eider-pkg add json --git https://github.com/klxdev/eider-json.git --version 0.1.0
 ```
 
 ```text
@@ -252,8 +253,11 @@ Eider
 (This block isn't run by the docs' tests, which have no package directory; it was run in
 the `greet` package above.) The compiler finds `json` through `eider.lock`; `import
 "json/a/b"` would load the package's file `a/b.ei`. Git dependencies take a URL and a
-minimum version or a commit: `eider-pkg add json --git <url> --version 1.2.0` (the tag
-`v1.2.0`). Only `add`, `remove`, `fetch`, `update` and `vendor` touch the network.
+minimum version or a commit (`--rev <commit>`); a local directory is a path dependency,
+`eider-pkg add geom --path ../geom`. Only `add`, `remove`, `fetch`, `update` and `vendor`
+touch the network; to work offline, or on a checkout of a dependency with your own changes,
+name it in `EIDER_PKG_OVERRIDE` (`EIDER_PKG_OVERRIDE=json=../eider-json eider-pkg fetch`;
+[eider-pkg](../tooling/eider-pkg.md#overriding-a-git-dependency)).
 
 ### Capability grants
 
@@ -310,7 +314,7 @@ toolchain and dependencies by name (`import "std/fs"`, `import "json"`). Commit
 - [Memory](memory.md): references, `let mut`, `.copy()` and the errors you will meet first.
 - [Errors](errors.md), [Capabilities](capabilities.md), [Concurrency](concurrency.md),
   [Testing](testing.md).
-- [Services](services.md): JSON-RPC and REST + OpenAPI services, after `examples/kvstore`
-  and `examples/todo`.
+- [Building services](services.md): HTTP, JSON-RPC and OpenAPI services with the
+  libraries in their own repositories (eider-http, eider-rpc, eider-openapi).
 - [Coming from another language](coming-from.md): Rust, Go, Zig, C and TypeScript.
 - [Editors](../tooling/editors.md): the language server and tree-sitter grammar.

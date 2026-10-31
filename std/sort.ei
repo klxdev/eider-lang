@@ -1,8 +1,8 @@
-// std/sort: ordering Lists. `sort` is a stable merge sort (equal elements keep their order;
-// O(n log n) comparisons in every case, insertion sort on short runs), over any `T: Ord`
-// (integers, Strings, and records, enums and tuples by their derived or own order),
-// `sort_by` with a comparison function, and searching sorted Lists. Values in, new Lists
-// out, as everywhere in Eider (no sorting in place until references, 8.6).
+//! std/sort: ordering Lists. `sort` is a stable merge sort (equal elements keep their order;
+//! O(n log n) comparisons in every case, insertion sort on short runs), over any `T: Ord`
+//! (integers, Strings, and records, enums and tuples by their derived or own order),
+//! `sort_by` with a comparison function, and searching sorted Lists. Values in, new Lists
+//! out, as everywhere in Eider (no sorting in place until references, 8.6).
 
 // Runs this short are sorted by insertion before merging.
 const RUN: usize = 16

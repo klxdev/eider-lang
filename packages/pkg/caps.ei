@@ -1,18 +1,18 @@
-// caps: which capabilities a package uses, as the compiler reports them, so a dependency
-// can be held to the `uses = [...]` it was granted in the depender's eider.toml.
-//
-// `eiderc caps <file>` loads the program at <file> and prints, per package it loads, every
-// capability the package uses with its first use, one JSON line each (docs/compiler.md,
-// "C8.5: capabilities per package"): the `uses` clauses of its functions, plus `ffi` when it
-// has unmanaged code (an `extern` function, an `unsafe fn` or block). A function's `uses`
-// clause is a sound over-approximation of what it can do, since the compiler rejects calls
-// needing a capability the caller didn't declare; and `ffi` doesn't propagate across
-// packages, so `uses ffi` written only to call std counts for nothing.
-//
-// What is checked is the package's entry module and the modules it reaches, as the compiler
-// loads them (not test programs or comments). The compiler checks every import against its
-// grant again when it builds (E0204), so a package with neither its entry module nor a `main`
-// program is left to it.
+//! caps: which capabilities a package uses, as the compiler reports them, so a dependency
+//! can be held to the `uses = [...]` it was granted in the depender's eider.toml.
+//!
+//! `eiderc caps <file>` loads the program at <file> and prints, per package it loads, every
+//! capability the package uses with its first use, one JSON line each (docs/compiler.md,
+//! "C8.5: capabilities per package"): the `uses` clauses of its functions, plus `ffi` when it
+//! has unmanaged code (an `extern` function, an `unsafe fn` or block). A function's `uses`
+//! clause is a sound over-approximation of what it can do, since the compiler rejects calls
+//! needing a capability the caller didn't declare; and `ffi` doesn't propagate across
+//! packages, so `uses ffi` written only to call std counts for nothing.
+//!
+//! What is checked is the package's entry module and the modules it reaches, as the compiler
+//! loads them (not test programs or comments). The compiler checks every import against its
+//! grant again when it builds (E0204), so a package with neither its entry module nor a `main`
+//! program is left to it.
 
 import "core/sys"
 import "std/bytes"

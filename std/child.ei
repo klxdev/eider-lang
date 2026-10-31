@@ -1,7 +1,7 @@
-// std/child: start programs without waiting, with each of stdin/stdout/stderr inherited,
-// /dev/null or a pipe, so they can become streams; wait (blocking or not), kill
-// (core/ABI.md "Processes"). std/proc runs a program to completion instead. A child can do
-// anything, so starting, waiting for and killing one needs io, fs and net.
+//! std/child: start programs without waiting, with each of stdin/stdout/stderr inherited,
+//! /dev/null or a pipe, so they can become streams; wait (blocking or not), kill
+//! (core/ABI.md "Processes"). std/proc runs a program to completion instead. A child can do
+//! anything, so starting, waiting for and killing one needs io, fs and net.
 
 import "core/sys"
 import "core/os"
