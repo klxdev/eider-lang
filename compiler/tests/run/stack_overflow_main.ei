@@ -3,6 +3,8 @@
 // code 101, as on a spawned thread, not a bare segmentation fault. What was printed before
 // is flushed first. A deep but bounded recursion is fine.
 // nosan: thread
+// llvm-nosan: how deep the bounded recursion gets before ASan's larger frames overflow the
+// stack depends on each backend's frame sizes (scripts/llvm-diff.sh skips its ASan leg)
 
 fn deep(n: i64, stop: i64) -> i64 {
     if n == stop { return 0 }

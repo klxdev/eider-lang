@@ -4,7 +4,8 @@
 # `--backend=llvm` must give byte-identical stdout, stderr and exit code, under `run` and,
 # when the file has test blocks, under `test`; the LLVM build at -O0 and at -O2 (`--release`),
 # with the runtime's allocation count (-DEI_RT_COUNT_ALLOCS: the same leak report), and again
-# under ASan+UBSan (both halves built by clang) when clang has their runtimes.
+# under ASan+UBSan (both halves built by clang) when clang has their runtimes (not for a test
+# marked `// llvm-nosan: <why>`, whose outcome under ASan depends on the frames' sizes).
 # Then the coverage: functions emitted as LLVM IR vs. falling back to C, per test and overall.
 #
 #   sh scripts/llvm-diff.sh [files...]       default: every run test
@@ -70,6 +71,8 @@ for f in $files; do
         cmp -s $T/want_leaks $T/out; same=$?
       elif [ $mode = san ]; then
         [ -n "$san" ] || continue
+        # `// llvm-nosan: <why>`: the outcome under ASan depends on frame sizes (stack depth)
+        grep -q "^// llvm-nosan:" "$f" && continue
         outcome env CC="$LCC" EIDER_CFLAGS="$san" $E $cmd "$f"; cp $T/out $T/want_san
         outcome env CC="$LCC" EIDER_CFLAGS="$san" EIDER_LLVM_CC="$LCC" $E $cmd --backend=llvm "$f"
         cmp -s $T/want_san $T/out; same=$?
