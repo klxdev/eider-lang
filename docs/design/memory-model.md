@@ -241,7 +241,7 @@ fn remember(ctx: Ctx, key: String, a: Answer) {
 
 Lifetimes; raw pointers above the core; garbage collection; inheritance; exceptions; null;
 implicit conversions; macros (`comptime` covers code generation); multiple ways to do one
-thing. Test for any new feature: would Go or Zig add this, and does it keep the five rules
+thing. Test for any new feature: would Go or Zig add this, and does it keep the six rules
 true?
 
 ## What it costs, honestly
