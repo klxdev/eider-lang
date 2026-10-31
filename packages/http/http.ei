@@ -48,8 +48,14 @@ pub type Request = {
 /// is never sent.
 pub type Response = { status: i32, headers: List[Header], body: List[u8], version: i32, keep_alive: bool, ctx: List[Header] }
 
-// A handler is a value of type `fn(Request) -> Response` (spelled out everywhere: the
-// language has no type aliases yet, docs/services.md "Needs").
+/// What answers requests: the router's routes, `server.serve`'s argument, what every
+/// middleware takes and returns. A closure takes the capabilities of the function that
+/// writes it, so a handler can do what its author can.
+pub type Handler = fn(Request) -> Response
+
+/// A layer around a handler (packages/http/middleware.ei): `middleware.chain` applies a
+/// List of them.
+pub type Middleware = fn(Handler) -> Handler
 
 /// Parser limits. A message over a limit is refused (with 414 for a long request line, 431
 /// for headers, 413 for a body): `max_line` bytes per line (request line, status line,
@@ -470,11 +476,9 @@ fn is_framing(name: List[u8]) -> bool {
 
 fn put_header(inout out: List[u8], name: List[u8], value: List[u8]) {
     bytes.append(inout out, name)
-    out.push(58)
-    out.push(32)
+    bytes.append(inout out, sys.lit(": "))
     bytes.append(inout out, value)
-    out.push(13)
-    out.push(10)
+    bytes.append(inout out, sys.lit("\r\n"))
 }
 
 /// A response as bytes: the status line, the program's headers (minus framing headers),
@@ -489,8 +493,7 @@ pub fn write_response(r: Response, head_only: bool, keep_alive: bool, date: List
     bytes.append(inout out, bytes.from_u64(r.status as u64))
     out.push(32)
     bytes.append(inout out, reason(r.status))
-    out.push(13)
-    out.push(10)
+    bytes.append(inout out, sys.lit("\r\n"))
     for h in r.headers {
         if !is_framing(h.name) { put_header(inout out, h.name, h.value) }
     }
@@ -499,8 +502,7 @@ pub fn write_response(r: Response, head_only: bool, keep_alive: bool, date: List
         put_header(inout out, sys.lit("Content-Length"), bytes.from_u64(r.body.len() as u64))
     }
     if !keep_alive { put_header(inout out, sys.lit("Connection"), sys.lit("close")) }
-    out.push(13)
-    out.push(10)
+    bytes.append(inout out, sys.lit("\r\n"))
     if !head_only && !bodyless(r.status) { bytes.append(inout out, r.body) }
     Ok(out)
 }
@@ -519,9 +521,7 @@ pub fn write_request(r: Request, host: List[u8], keep_alive: bool) -> Result[Lis
     let mut out = r.method.copy()
     out.push(32)
     bytes.append(inout out, r.target)
-    bytes.append(inout out, sys.lit(" HTTP/1.1"))
-    out.push(13)
-    out.push(10)
+    bytes.append(inout out, sys.lit(" HTTP/1.1\r\n"))
     if count(r.headers, sys.lit("host")) == 0 { put_header(inout out, sys.lit("Host"), host) }
     for h in r.headers {
         if !is_framing(h.name) { put_header(inout out, h.name, h.value) }
@@ -531,8 +531,7 @@ pub fn write_request(r: Request, host: List[u8], keep_alive: bool) -> Result[Lis
         put_header(inout out, sys.lit("Content-Length"), bytes.from_u64(r.body.len() as u64))
     }
     if !keep_alive { put_header(inout out, sys.lit("Connection"), sys.lit("close")) }
-    out.push(13)
-    out.push(10)
+    bytes.append(inout out, sys.lit("\r\n"))
     bytes.append(inout out, r.body)
     Ok(out)
 }
@@ -564,18 +563,12 @@ pub fn chunked(body: List[u8], size: usize) -> List[u8] {
     while i < body.len() {
         let end = if i + step < body.len() { i + step } else { body.len() }
         bytes.append(inout out, hex_lower(end - i))
-        out.push(13)
-        out.push(10)
+        bytes.append(inout out, sys.lit("\r\n"))
         bytes.append(inout out, bytes.slice(body, i, end))
-        out.push(13)
-        out.push(10)
+        bytes.append(inout out, sys.lit("\r\n"))
         i = end
     }
-    out.push(48)
-    for k in 0..2 {
-        out.push(13)
-        out.push(10)
-    }
+    bytes.append(inout out, sys.lit("0\r\n\r\n"))
     out
 }
 

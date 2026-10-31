@@ -198,7 +198,7 @@ pub fn grouped(n: i64, sep: str) -> String {
     out
 }
 
-/// A String built piece by piece: `var b = fmt.builder()`, `b.add("n=")`, `b.add_int(5)`,
+/// A String built piece by piece: `let mut b = fmt.builder()`, `b.add("n=")`, `b.add_int(5)`,
 /// then `b.text()`. (The language has no string interpolation yet: roadmap P0.5.)
 pub type Builder = { s: String }
 

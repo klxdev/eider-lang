@@ -109,8 +109,8 @@ impl[T] Channel[T] {
     /// Sends `v`, waiting while the channel is full until `dl`. Cancel-safe: the value is
     /// queued (`Sent`) or returned (`Full`, `Rejected`).
     fn send(self, v: T, dl: time.Deadline) -> Send[T] uses io, clock {
-        var me = sync.no_parker()
-        var have = false
+        let mut me = sync.no_parker()
+        let mut have = false
         while true {
             let r = reserve_send(self.st, me, have)
             if r == 0 {
@@ -153,8 +153,8 @@ impl[T] Channel[T] {
 
     /// Receives the oldest value, waiting until `dl`. Cancel-safe: one value or none.
     fn recv(self, dl: time.Deadline) -> Recv[T] uses io, clock {
-        var me = sync.no_parker()
-        var have = false
+        let mut me = sync.no_parker()
+        let mut have = false
         while true {
             let r = reserve_recv(self.st, me, have)
             if r == 0 {
@@ -194,7 +194,7 @@ impl[T] Channel[T] {
     /// `Closed`. Wakes everyone waiting. Closing twice is harmless.
     fn close(self) uses io {
         self.st.update(|s: St| -> St {
-            var t = s
+            let mut t = s.copy()
             t.closed = true
             sync.wake_all(t.rx)
             sync.wake_all(t.tx)
@@ -257,7 +257,7 @@ pub fn select[U](cases: List[Case[U]], dl: time.Deadline) -> Option[U] uses io, 
         return None
     }
     let start = ((time.mono_ns() / 1000) as u64 % (n as u64)) as usize
-    var wake = dl
+    let mut wake = dl.copy()
     for c in cases { wake = wake.earlier(time.at_mono_ns(c.at_ns)) }
     // first without registering: no Parker when something is ready
     for k in 0..n {
@@ -270,10 +270,10 @@ pub fn select[U](cases: List[Case[U]], dl: time.Deadline) -> Option[U] uses io, 
     }
     if dl.expired() { return None }
     let me = sync.parker()
-    var out: Option[U] = None
-    var going = true
+    let mut out: Option[U] = None
+    let mut going = true
     while going {
-        var reg: usize = 0
+        let mut reg: usize = 0
         for k in 0..n {
             if out.is_none() {
                 let c = cases[(start + k) % n]

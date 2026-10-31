@@ -22,13 +22,13 @@ impl[T] Deque[T] {
     fn refill_front(inout self) {
         let n = self.back.len()
         let k = (n + 1) / 2
-        var f: List[T] = List.new()
-        var i = k
+        let mut f: List[T] = List.new()
+        let mut i = k.copy()
         while i > 0 {
             i -= 1
             f.push(self.back[i])
         }
-        var b: List[T] = List.new()
+        let mut b: List[T] = List.new()
         for j in k..n { b.push(self.back[j]) }
         self.front = f
         self.back = b
@@ -38,13 +38,13 @@ impl[T] Deque[T] {
     fn refill_back(inout self) {
         let n = self.front.len()
         let k = (n + 1) / 2
-        var b: List[T] = List.new()
-        var i = k
+        let mut b: List[T] = List.new()
+        let mut i = k.copy()
         while i > 0 {
             i -= 1
             b.push(self.front[i])
         }
-        var f: List[T] = List.new()
+        let mut f: List[T] = List.new()
         for j in k..n { f.push(self.front[j]) }
         self.front = f
         self.back = b
@@ -103,8 +103,8 @@ impl[T] Deque[T] {
 
     /// The elements, first to last.
     fn to_list(self) -> List[T] {
-        var out: List[T] = List.new()
-        var i = self.front.len()
+        let mut out: List[T] = List.new()
+        let mut i = self.front.len()
         while i > 0 {
             i -= 1
             out.push(self.front[i])

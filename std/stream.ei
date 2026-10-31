@@ -25,8 +25,9 @@
 //   with the capabilities of every stream it could be given (docs/std.md, "Needs the
 //   compiler": capability polymorphism).
 //
-// Why a new module and not std/io: the compiler imports std/io, so its text is part of
-// seed/eiderc.c; the stream layer moves into std/io when the seed is next regenerated (8.9).
+// std/stream is the canonical place for streams; std/io stays the raw stdout/stderr/stdin
+// calls the compiler itself uses (its text is part of seed/eiderc.c, so it changes only with
+// a seed regeneration). docs/std.md, "Why std/stream and not std/io"; decision C101.
 
 import "core/sys"
 import "core/os"
@@ -61,44 +62,14 @@ pub type Kind =
     | InvalidData
     | WriteZero
 
+// (Kind shows as its name, "TimedOut": derived.)
+
 /// An I/O error: its kind, to act on (`e.kind == stream.TimedOut`), and a message for people
 /// ("read: Connection reset by peer"). Shows as its message.
 pub type Error = { kind: Kind, message: String }
 
 impl Show for Error {
     fn show(self, inout out: String) { out.append(self.message) }
-}
-
-/// The kind's name ("TimedOut"). (A derived Show would print the module-qualified name.)
-pub fn kind_name(k: Kind) -> str {
-    match k {
-        Other => "Other"
-        WouldBlock => "WouldBlock"
-        InProgress => "InProgress"
-        Interrupted => "Interrupted"
-        NotFound => "NotFound"
-        AlreadyExists => "AlreadyExists"
-        BrokenPipe => "BrokenPipe"
-        ConnectionReset => "ConnectionReset"
-        ConnectionRefused => "ConnectionRefused"
-        TimedOut => "TimedOut"
-        PermissionDenied => "PermissionDenied"
-        AddrInUse => "AddrInUse"
-        AddrNotAvailable => "AddrNotAvailable"
-        NotConnected => "NotConnected"
-        InvalidInput => "InvalidInput"
-        NoChild => "NoChild"
-        Unsupported => "Unsupported"
-        ResolverRetry => "ResolverRetry"
-        ResolverFailure => "ResolverFailure"
-        UnexpectedEof => "UnexpectedEof"
-        InvalidData => "InvalidData"
-        WriteZero => "WriteZero"
-    }
-}
-
-impl Show for Kind {
-    fn show(self, inout out: String) { out.push_str(kind_name(self)) }
 }
 
 /// The kind for core kind number `k` (core/ABI.md "Error kinds").
@@ -145,13 +116,12 @@ pub fn timed_out(what: str) -> Error {
     Error(TimedOut, m)
 }
 
-/// The same result with the error as its message, for code that reports errors as Strings
-/// (there is no conversion for `?` yet: docs/std.md, "Needs the compiler").
-pub fn plain[T](r: Result[T, Error]) -> Result[T, String] {
-    match r {
-        Ok(v) => Ok(v)
-        Err(e) => Err(e.message)
-    }
+/// A String error (std/fs, std/net, ... report errors as Strings) as an Error of kind
+/// Other, so `?` passes it on in a function that returns `stream.Error`. The other way, an
+/// application's own error type converts from `stream.Error` with its own `impl From`
+/// (docs/std.md, "Errors").
+impl From[String] for Error {
+    fn from(value: String) -> Error { Error(Other, value) }
 }
 
 fn bad_max() -> Error { error(InvalidInput, "read: max must be at least 1") }
@@ -182,7 +152,7 @@ pub trait Writer {
 
 /// Everything up to end of stream.
 pub fn read_all[R: Reader](inout r: R) -> Result[List[u8], Error] uses io {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     while true {
         let chunk = r.read(65536)?
         if chunk.len() == 0 { break }
@@ -194,7 +164,7 @@ pub fn read_all[R: Reader](inout r: R) -> Result[List[u8], Error] uses io {
 /// `read_all` with a deadline. Not cancel-safe: on `TimedOut` what was read is lost (wrap
 /// the stream in a BufReader and use `read_to_end_by` to keep it).
 pub fn read_all_by[R: Reader](inout r: R, dl: time.Deadline) -> Result[List[u8], Error] uses io, clock {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     while true {
         let chunk = r.read_by(65536, dl)?
         if chunk.len() == 0 { break }
@@ -222,7 +192,7 @@ fn text_of(b: List[u8]) -> Result[String, Error] {
 
 /// Exactly `n` bytes: `UnexpectedEof` if the stream ends first.
 pub fn read_exact[R: Reader](inout r: R, n: usize) -> Result[List[u8], Error] uses io {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     while out.len() < n {
         let chunk = r.read(n - out.len())?
         if chunk.len() == 0 { return Err(eof(n, out.len())) }
@@ -234,7 +204,7 @@ pub fn read_exact[R: Reader](inout r: R, n: usize) -> Result[List[u8], Error] us
 /// `read_exact` with a deadline. Not cancel-safe on an unbuffered stream (see `read_all_by`);
 /// `BufReader.read_exact_by` is.
 pub fn read_exact_by[R: Reader](inout r: R, n: usize, dl: time.Deadline) -> Result[List[u8], Error] uses io, clock {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     while out.len() < n {
         let chunk = r.read_by(n - out.len(), dl)?
         if chunk.len() == 0 { return Err(eof(n, out.len())) }
@@ -254,7 +224,7 @@ fn eof(want: usize, got: usize) -> Error {
 
 /// All of `data`: `WriteZero` if the stream stops taking bytes.
 pub fn write_all[W: Writer](inout w: W, data: List[u8]) -> Result[(), Error] uses io {
-    var at: usize = 0
+    let mut at: usize = 0
     while at < data.len() {
         let rest = if at == 0 { data } else { tail(data, at) }
         let n = w.write(rest)?
@@ -267,7 +237,7 @@ pub fn write_all[W: Writer](inout w: W, data: List[u8]) -> Result[(), Error] use
 /// `write_all` with a deadline. On `TimedOut` the message says how many bytes were written
 /// ("write: timed out after 4096 of 10000 bytes"); the rest was not.
 pub fn write_all_by[W: Writer](inout w: W, data: List[u8], dl: time.Deadline) -> Result[(), Error] uses io, clock {
-    var at: usize = 0
+    let mut at: usize = 0
     while at < data.len() {
         let rest = if at == 0 { data } else { tail(data, at) }
         match w.write_by(rest, dl) {
@@ -277,7 +247,7 @@ pub fn write_all_by[W: Writer](inout w: W, data: List[u8], dl: time.Deadline) ->
             }
             Err(e) => {
                 if e.kind == TimedOut {
-                    var m = String.from("write: timed out after ")
+                    let mut m = String.from("write: timed out after ")
                     m.append(at.to_string())
                     m.push_str(" of ")
                     m.append(data.len().to_string())
@@ -299,7 +269,7 @@ pub fn write_string[W: Writer](inout w: W, s: String) -> Result[(), Error] uses 
 
 /// Everything from `r` into `w`, up to end of stream (not flushed): the byte count.
 pub fn copy[R: Reader, W: Writer](inout r: R, inout w: W) -> Result[u64, Error] uses io {
-    var total: u64 = 0
+    let mut total: u64 = 0
     while true {
         let chunk = r.read(65536)?
         if chunk.len() == 0 { break }
@@ -311,7 +281,7 @@ pub fn copy[R: Reader, W: Writer](inout r: R, inout w: W) -> Result[u64, Error] 
 
 /// `copy` with one deadline for the whole transfer.
 pub fn copy_by[R: Reader, W: Writer](inout r: R, inout w: W, dl: time.Deadline) -> Result[u64, Error] uses io, clock {
-    var total: u64 = 0
+    let mut total: u64 = 0
     while true {
         let chunk = r.read_by(65536, dl)?
         if chunk.len() == 0 { break }
@@ -781,7 +751,7 @@ impl[R: Reader] BufReader[R] {
 
     // Where `delim` is in the buffer, scanning from `from`; also the scan position to resume.
     fn find(self, delim: u8, from: usize) -> Option[usize] {
-        var i = from
+        let mut i = from.copy()
         while i < self.buf.len() {
             if self.buf[i] == delim { return Some(i) }
             i += 1
@@ -790,7 +760,7 @@ impl[R: Reader] BufReader[R] {
     }
 
     fn too_long(self, max: usize) -> Error {
-        var m = String.from("no delimiter within ")
+        let mut m = String.from("no delimiter within ")
         m.append(max.to_string())
         m.push_str(" bytes")
         Error(InvalidData, m)
@@ -800,7 +770,7 @@ impl[R: Reader] BufReader[R] {
     /// delimiter), and empty when nothing is. InvalidData when `max` bytes pass with no
     /// delimiter (they stay buffered).
     fn read_until(inout self, delim: u8, max: usize) -> Result[List[u8], Error] uses io {
-        var scan = self.pos
+        let mut scan = self.pos.copy()
         while true {
             match self.find(delim, scan) {
                 Some(i) => {
@@ -823,7 +793,7 @@ impl[R: Reader] BufReader[R] {
 
     /// `read_until` with a deadline (cancel-safe).
     fn read_until_by(inout self, delim: u8, max: usize, dl: time.Deadline) -> Result[List[u8], Error] uses io, clock {
-        var scan = self.pos
+        let mut scan = self.pos.copy()
         while true {
             match self.find(delim, scan) {
                 Some(i) => {
@@ -924,7 +894,7 @@ impl[W: Writer] BufWriter[W] {
 
     // Writes the buffer underneath; what isn't written (on an error) stays.
     fn drain(inout self) -> Result[(), Error] uses io {
-        var at: usize = 0
+        let mut at: usize = 0
         while at < self.buf.len() {
             let rest = tail(self.buf, at)
             match self.inner.write(rest) {
@@ -946,7 +916,7 @@ impl[W: Writer] BufWriter[W] {
     }
 
     fn drain_by(inout self, dl: time.Deadline) -> Result[(), Error] uses io, clock {
-        var at: usize = 0
+        let mut at: usize = 0
         while at < self.buf.len() {
             let rest = tail(self.buf, at)
             match self.inner.write_by(rest, dl) {

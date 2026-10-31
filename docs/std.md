@@ -34,8 +34,8 @@ import "std/net"
 import "std/time"
 
 fn handle(conn: stream.Fd) -> Result[(), stream.Error] uses io, clock {
-    var r = stream.buffered(conn)
-    var w = stream.buffered_writer(conn)
+    let mut r = stream.buffered(conn)
+    let mut w = stream.buffered_writer(conn)
     let dl = time.after_ms(5000)                    // one budget for the whole exchange
     while true {
         let line = match r.read_line_by(8192, dl)? { // limit and deadline, both explicit
@@ -59,8 +59,10 @@ form), because traits have no default methods yet.
 core's portable error kinds (core/ABI.md "Error kinds": WouldBlock, NotFound,
 ConnectionReset, TimedOut, ...) plus the stream layer's own: UnexpectedEof, InvalidData,
 WriteZero. Code acts on the kind (`e.kind == stream.TimedOut`) and shows the message
-(`print(e)`: "read: Connection reset by peer"). `stream.plain(r)` turns a result into one
-with a String error, for code written against the String-error APIs of `fs`, `net`, ...
+(`print(e)`: "read: Connection reset by peer"); a Kind shows as its name (`TimedOut`).
+`impl From[String] for stream.Error` (kind Other) lets `?` pass on the String errors of `fs`,
+`net`, ... in a function that returns `stream.Error`; going the other way, an application
+gives its own error type an `impl From[stream.Error]` (decision C103).
 
 **Deadlines (C5).** Every blocking operation has a `_by(..., dl: time.Deadline)` form, and
 when the deadline passes it returns `Err` with kind `TimedOut`, so it composes with `?`
@@ -137,9 +139,10 @@ need (docs/compiler.md "C8.4"): `sort[T: Ord]`, `Set[T: Hash + Eq]`, `Heap[T: Or
 is a stable bottom-up merge sort (insertion sort on runs of 16) that returns a new List;
 `sort_by` takes a comparison closure, `sort_by_key` a key closure. `Deque` is two Lists back
 to back (amortized O(1) at both ends, O(1) indexing). `Set` keeps a Map from element to
-position plus a List of elements, so it can list them (`items()`); removal swaps the last
-element in. `Heap` pops the smallest (`heap.min()`) or largest (`heap.max()`) first;
-`Queue[T]` is a priority queue for any `T`, FIFO among equal priorities.
+position plus a List of elements, so it lists them (`items()`) in insertion order (iterating
+the Map would give its hash order: decision C102); removal swaps the last element in.
+`Heap` pops the smallest (`heap.min()`) or largest (`heap.max()`) first; `Queue[T]` is a
+priority queue for any `T`, FIFO among equal priorities.
 
 ## Encoding (`std/encoding`)
 
@@ -184,12 +187,12 @@ around in core.
 |---|---|---|
 | **Capability polymorphism.** A generic body is checked per instance, so it must declare the union of the capabilities of every type it may be given | `BufReader[Bytes]` and `read_all` on memory need `uses io`; a user Reader that needs `net` can't go through std's generic code (so std's own streams use `io` only: sockets are read with read(2)) | capabilities that follow type parameters (`uses io + R`), or checking a generic body against its bounds' declared capabilities |
 | **Default methods in traits** | `stream.read_all(inout r)` rather than `r.read_all()` | trait methods with bodies |
-| **Error conversions for `?`** (roadmap P0.6) | `?` can't turn a `stream.Error` into a String or another error type; `stream.plain(r)` converts by hand | `From`, or an `Error` trait (`impl From[E1] for E2` and `?` through it in compiler/ since docs/compiler.md "C8.21"; usable after the next seed; the `Error` trait is next) |
+| ~~**Error conversions for `?`**~~ (roadmap P0.6) | done (docs/compiler.md "C8.21"): `impl From[String] for stream.Error`, and applications convert `stream.Error` with their own impl; `stream.plain` is gone (C103) | the `Error` trait with context chains is next |
 | **`Drop` that may do I/O** (E0606 forbids capabilities in `drop`) | `BufWriter` can't flush on drop and `Fd` can't close on drop: call `flush`/`close` | a scoped `defer` (P0.3) or a drop with checked capabilities |
-| **Iterating a Map** | `Set` keeps its elements in a List beside the Map | `for (k, v) in map`, or `keys()` (in compiler/ since docs/compiler.md "C8.20"; usable after the next seed) |
+| ~~**Iterating a Map**~~ | done (docs/compiler.md "C8.20"): http/metrics and examples/todo iterate their Maps; `Set` keeps its List on purpose, for insertion order (C102) | an insertion-ordered Map, if more code wants that order |
 | **In-place List operations and views** (`insert`/`remove` at an index, `truncate`, `extend`, `swap`, slices) | stream buffers copy their unread tail when compacting, `bytes.slice`-style copies everywhere; merge sort builds new Lists | the built-ins, and zero-copy views with 8.6 references |
 | **16-bit integers** | `encoding.u16_le` returns a u32 | `u16`/`i16` |
-| **String literal escapes** `\r`, `\0`, `\xNN`, `\u{...}` | tests build CRLF input from bytes | the escapes (in compiler/ since docs/compiler.md "C8.17", `\0` refused: strings hold no NUL; usable in std after the next seed) |
+| ~~**String literal escapes**~~ `\r`, `\xNN`, `\u{...}` | done (docs/compiler.md "C8.17"; `\0` refused: strings hold no NUL); http writes `\r\n` literals | |
 | **`panic` with a computed message** (`panic` takes only a `str`) | `assert_eq` prints its diff to stderr, then panics with a fixed text | `panic(String)` |
 | **`if`/`match` as a call argument** (E0103) | values are bound to a `let` first | expression-position `if` |
 | **Floats** (C9) | no float formatting or parsing in `fmt`/`strings` | f64 |
@@ -197,10 +200,8 @@ around in core.
 
 ### Compiler bugs found (seed eiderc)
 
-Reproductions are small enough to inline; none is worked around in std beyond avoiding
-the construct. All four are fixed in compiler/ (docs/compiler.md, "C8.16"), so they go
-away for std with the next seed; until then std keeps avoiding them (verify.sh builds std
-with the seed).
+All four are fixed (docs/compiler.md, "C8.16") and the seed has the fixes; std no longer
+works around any of them (`stream.Kind` lost its own Show, `stream.plain` is gone).
 
 1. **A generic `T` instantiated with `()` inside a match arm produces C that doesn't
    compile** (`'l4' undeclared`):
@@ -217,7 +218,7 @@ with the seed).
        print(plain(a).is_ok())
    }
    ```
-   So `stream.plain` can't be used on a `Result[(), stream.Error]` yet.
+   (`stream.plain` couldn't be used on a `Result[(), stream.Error]`.)
 2. **A record name in a generic signature unifies with any type** (the known "a name that
    isn't a type parameter matches any type" quirk, LEARNINGS.md), and the result is C that
    doesn't compile rather than E0401: `plain` above accepts a `Result[i32, String]`.
@@ -225,16 +226,18 @@ with the seed).
    calls `testing.assert_eq(1, 2)` reports `assert_eq failed (p.ei:65)`, line 65 being
    std/testing.ei's `panic`. (tests/std/testing.ei avoids pinning a trap's location.)
 4. **A derived Show of another module's enum prints the mangled name** (`stream__TimedOut`);
-   `stream.Kind` has its own Show to print `TimedOut`.
+   `stream.Kind` had its own Show to print `TimedOut`; it is derived now.
 
 ## Why std/stream and not std/io
 
-The compiler imports `std/bytes`, `fs`, `io`, `env` and `proc`, so their text is compiled
-into `seed/eiderc.c`: adding even an unused type to std/io makes `selfhost.sh --from-seed`
-fail (the seed is stale). Layer branches don't regenerate the seed (the integrator does), so
-the stream layer is a new module, and those five modules are unchanged. When the seed is
-next regenerated (8.9, "std on the new base"), `stream`'s Reader/Writer and `Error` can move
-into std/io and the String-error functions of fs/io can return `stream.Error`.
+std/stream is the canonical place for streams (decision C101). The compiler imports
+`std/bytes`, `fs`, `io`, `env` and `proc`, so their text is compiled into `seed/eiderc.c`:
+any change to them, even an unused type, makes `selfhost.sh --from-seed` fail until the seed
+is regenerated. The earlier plan moved Reader/Writer and `Error` into std/io at a seed
+regeneration; it was dropped, because it would tie every change of the stream layer (large
+and still evolving) to the compiler's bootstrap while giving programs nothing but another
+import path. std/io stays the raw stdout/stderr/stdin calls the compiler uses, fs/io keep
+their String errors, and `impl From[String] for stream.Error` lets `?` bridge the two.
 
 ## Next
 
@@ -243,4 +246,6 @@ into std/io and the String-error functions of fs/io can return `stream.Error`.
 - After P0.2 (lightweight tasks): `Fd` waits park the task instead of the thread; the API
   stays.
 - P0.6: `stream.Error` implements the error trait, with context chains.
+- `var` is gone from std except six shares of generic or Copy-less values out of read-only
+  parameters (decision C100), which wait for a way to copy those (a `Copy`-free share).
 - Seeded SipHash Map (C6), `BTreeMap`, RwLock/Once, logging and config (roadmap layer/std).

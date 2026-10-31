@@ -116,7 +116,7 @@ impl Server {
     /// Serves connections with `h` until `tok` is cancelled (or expires), then shuts down
     /// gracefully (see the module comment) and returns the counts. Closes the listener.
     /// Err only when the server can't start (no poller, waker or threads).
-    fn serve(self, h: fn(http.Request) -> http.Response, tok: task.Token) -> Result[Stats, String] uses net, io, clock, threads {
+    fn serve(self, h: http.Handler, tok: task.Token) -> Result[Stats, String] uses net, io, clock, threads {
         let cfg = self.cfg
         let ls = self.ls
         let stop = match poll.waker() {
@@ -184,7 +184,7 @@ impl Server {
 }
 
 /// Accepts what is pending (at most 64 at a time, so a flood can't starve the stop check).
-fn accept_some(ls: i32, stop: poll.Waker, h: fn(http.Request) -> http.Response, cfg: Config, sh: sync.Lock[Shared], pool: task.Pool) uses net, io, clock {
+fn accept_some(ls: i32, stop: poll.Waker, h: http.Handler, cfg: Config, sh: sync.Lock[Shared], pool: task.Pool) uses net, io, clock {
     for k in 0..64 {
         match net.accept(ls, true) {
             Ok(Some(a)) => {
@@ -273,7 +273,7 @@ fn is_head(m: List[u8]) -> bool { m.len() == 4 && m[0] == 72 && m[1] == 69 && m[
 
 /// One connection, request after request (see the module comment). Owns `c`; `peer` is the
 /// client's address as text (it goes in every Request).
-fn serve_conn(c: i32, peer: List[u8], h: fn(http.Request) -> http.Response, cfg: Config, stop: poll.Waker, sh: sync.Lock[Shared]) uses net, io, clock {
+fn serve_conn(c: i32, peer: List[u8], h: http.Handler, cfg: Config, stop: poll.Waker, sh: sync.Lock[Shared]) uses net, io, clock {
     bump(sh, 6)
     let p = match poll.create() {
         Ok(x) => x
@@ -306,11 +306,7 @@ fn serve_conn(c: i32, peer: List[u8], h: fn(http.Request) -> http.Response, cfg:
                 parse.More => {
                     if parser.wants_continue() {
                         parser.continue_sent()
-                        let mut cont = sys.lit("HTTP/1.1 100 Continue")
-                        for k in 0..2 {
-                            cont.push(13)
-                            cont.push(10)
-                        }
+                        let cont = sys.lit("HTTP/1.1 100 Continue\r\n\r\n")
                         if !sock.send_by(c, cont, time.after(cfg.write_timeout)) { end = 2 }
                     }
                     if end == 0 && stopping && parser.idle() {

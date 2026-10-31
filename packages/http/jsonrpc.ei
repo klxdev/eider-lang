@@ -156,9 +156,12 @@ pub fn object(keys: List[List[u8]], vals: List[List[u8]]) -> List[u8] {
 
 // ---- the dispatch table
 
+/// A method: its parameters to its result as JSON text, or an error.
+pub type Method = fn(Params) -> Result[List[u8], Error]
+
 pub type Table = {
     names: Map[List[u8], usize],
-    methods: List[fn(Params) -> Result[List[u8], Error]],
+    methods: List[Method],
     max_batch: usize,
 }
 
@@ -166,7 +169,7 @@ pub fn table() -> Table { Table(Map.new(), List.new(), 100) }
 
 /// A method from a decoder for its parameters, an encoder for its result and the typed
 /// function between them.
-pub fn typed[P, R](decode: fn(Params) -> Result[P, Error], encode: fn(R) -> List[u8], f: fn(P) -> Result[R, Error]) -> fn(Params) -> Result[List[u8], Error] {
+pub fn typed[P, R](decode: fn(Params) -> Result[P, Error], encode: fn(R) -> List[u8], f: fn(P) -> Result[R, Error]) -> Method {
     |p: Params| -> Result[List[u8], Error] {
         let args = decode(p)?
         let r = f(args)?
@@ -176,7 +179,7 @@ pub fn typed[P, R](decode: fn(Params) -> Result[P, Error], encode: fn(R) -> List
 
 impl Table {
     /// Adds method `name` (a second method with one name is a programming error: panic).
-    fn add(inout self, name: str, m: fn(Params) -> Result[List[u8], Error]) {
+    fn add(inout self, name: str, m: Method) {
         let key = sys.lit(name)
         if self.names.contains(key) { panic("jsonrpc: a method is added twice") }
         self.names.insert(key, self.methods.len())
@@ -292,7 +295,7 @@ fn error_reply(id_text: List[u8], e: Error) -> List[u8] {
 }
 
 /// The table as an HTTP handler (see the module comment).
-pub fn handler(t: Table) -> fn(http.Request) -> http.Response {
+pub fn handler(t: Table) -> http.Handler {
     |req: http.Request| -> http.Response {
         if !bytes.eq(req.method, sys.lit("POST")) {
             let mut r = http.error_response(405)

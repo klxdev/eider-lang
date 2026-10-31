@@ -24,7 +24,7 @@ import "http.ei"
 
 type Key = { method: List[u8], code: i32 }
 
-type St = { keys: List[Key], counts: Map[Key, i64], buckets: List[i64], sum_ns: i64, count: i64, in_flight: i64 }
+type St = { counts: Map[Key, i64], buckets: List[i64], sum_ns: i64, count: i64, in_flight: i64 }
 
 /// Counters shared by copies (see the module comment). `bounds_us`: the histogram's upper
 /// bounds in microseconds, ascending.
@@ -41,7 +41,7 @@ pub fn new() -> Metrics {
 pub fn with_buckets(bounds_us: List[i64]) -> Metrics {
     let mut zero: List[i64] = List.new()
     for k in 0..bounds_us.len() { zero.push(0) }
-    Metrics(sync.lock(St(List.new(), Map.new(), zero, 0, 0, 0)), bounds_us)
+    Metrics(sync.lock(St(Map.new(), zero, 0, 0, 0)), bounds_us)
 }
 
 /// The method as a label value (see the module comment).
@@ -103,13 +103,7 @@ impl Metrics {
         let bs = self.bounds_us
         self.st.update(|s: St| -> St {
             let mut t = s.copy()
-            match t.counts.get(k) {
-                Some(n) => t.counts.insert(k, n + 1)
-                None => {
-                    t.keys.push(k)
-                    t.counts.insert(k, 1)
-                }
-            }
+            t.counts.insert(k, t.counts.get(k).unwrap_or(0) + 1)
             for i in 0..bs.len() {
                 if us <= bs[i] { t.buckets[i] += 1 }
             }
@@ -132,7 +126,7 @@ impl Metrics {
     }) }
 
     /// Counts every request `h` answers, and how long it took.
-    fn wrap(self, h: fn(http.Request) -> http.Response) -> fn(http.Request) -> http.Response uses clock {
+    fn wrap(self, h: http.Handler) -> http.Handler uses clock {
         let m = self
         |req: http.Request| -> http.Response {
             m.enter()
@@ -149,8 +143,8 @@ impl Metrics {
     fn total(self, status: i32) -> i64 {
         let s = self.st.get()
         let mut n: i64 = 0
-        for k in s.keys {
-            if k.code == status { n += s.counts.get(k).unwrap_or(0) }
+        for (k, c) in s.counts {
+            if k.code == status { n += c }
         }
         n
     }
@@ -158,7 +152,7 @@ impl Metrics {
     /// The exposition text (see the module comment).
     fn render(self) -> List[u8] {
         let s = self.st.get()
-        let keys = sort.sort_by(s.keys, |a: Key, b: Key| -> Ordering {
+        let keys = sort.sort_by(s.counts.keys(), |a: Key, b: Key| -> Ordering {
             let c = bytes.compare(a.method, b.method)
             if c < 0 { return Less }
             if c > 0 { return Greater }
@@ -203,7 +197,7 @@ impl Metrics {
     }
 
     /// A handler answering with `render()` (`text/plain; version=0.0.4`).
-    fn handler(self) -> fn(http.Request) -> http.Response {
+    fn handler(self) -> http.Handler {
         let m = self
         |req: http.Request| -> http.Response { http.respond(200, "text/plain; version=0.0.4; charset=utf-8", m.render()) }
     }

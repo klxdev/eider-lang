@@ -19,8 +19,8 @@ pub fn min_of[T: Ord](xs: List[T]) -> Heap[T] { build(xs, false) }
 pub fn max_of[T: Ord](xs: List[T]) -> Heap[T] { build(xs, true) }
 
 fn build[T: Ord](xs: List[T], mx: bool) -> Heap[T] {
-    var h = Heap(xs, mx)
-    var i = xs.len() / 2
+    let mut h = Heap(xs, mx)
+    let mut i = xs.len() / 2
     while i > 0 {
         i -= 1
         h.down(i)
@@ -39,13 +39,12 @@ impl[T: Ord] Heap[T] {
     }
 
     fn swap(inout self, a: usize, b: usize) {
-        var t = self.items[a]
-        self.items[a] = self.items[b]
+        let t = self.items[a].replace(self.items[b])
         self.items[b] = t
     }
 
     fn up(inout self, at: usize) {
-        var i = at
+        let mut i = at.copy()
         while i > 0 {
             let p = (i - 1) / 2
             if !self.above(i, p) { break }
@@ -56,11 +55,11 @@ impl[T: Ord] Heap[T] {
 
     fn down(inout self, at: usize) {
         let n = self.items.len()
-        var i = at
+        let mut i = at.copy()
         while true {
             let l = 2 * i + 1
             if l >= n { break }
-            var c = l
+            let mut c = l.copy()
             if l + 1 < n && self.above(l + 1, l) { c = l + 1 }
             if !self.above(c, i) { break }
             self.swap(c, i)
@@ -95,8 +94,8 @@ impl[T: Ord] Heap[T] {
 
     /// The elements in the order `pop` would give them.
     fn into_sorted(self) -> List[T] {
-        var h = self
-        var out: List[T] = List.new()
+        let mut h = Heap(self.items, self.max)
+        let mut out: List[T] = List.new()
         while true {
             match h.pop() {
                 Some(x) => out.push(x)

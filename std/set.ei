@@ -1,8 +1,9 @@
 // std/set: `Set[T]`, a set of distinct values of any `T: Hash + Eq`, over the built-in Map.
 // Insert, remove and lookup are O(1) on average. The elements also live in a List, so
-// `items()` lists them (a Map can't be iterated yet: docs/std.md, "Needs the compiler"):
-// in insertion order until something is removed, after which the last element takes the
-// removed one's place (removal is a swap, to stay O(1)). Two Sets are equal when they
+// `items()` lists them in insertion order until something is removed, after which the last
+// element takes the removed one's place (removal is a swap, to stay O(1)); iterating the
+// Map would give its slot order instead, which follows the hashes (docs/compiler.md
+// "C8.20"), so the List stays (decision C102). Two Sets are equal when they
 // hold the same elements, in any order. A value like any other: copies don't share.
 
 pub type Set[T] = { index: Map[T, usize], elems: List[T] }
@@ -11,7 +12,7 @@ pub fn new[T: Hash + Eq]() -> Set[T] { Set(Map.new(), List.new()) }
 
 /// A Set of the distinct elements of `xs` (first occurrences, in order).
 pub fn from_list[T: Hash + Eq](xs: List[T]) -> Set[T] {
-    var s: Set[T] = new()
+    let mut s: Set[T] = new()
     for x in xs { s.insert(x) }
     s
 }
@@ -37,13 +38,12 @@ impl[T: Hash + Eq] Set[T] {
             None => return false
         }
         self.index.remove(x)
-        let last = self.elems.len() - 1
-        if i != last {
-            var moved = self.elems[last]
-            self.elems[i] = moved
+        // the last element takes the removed one's place
+        let moved = self.elems.pop().unwrap()
+        if i < self.elems.len() {
             self.index.insert(moved, i)
+            self.elems[i] = moved
         }
-        self.elems.pop()
         true
     }
 
@@ -57,14 +57,14 @@ impl[T: Hash + Eq] Set[T] {
 
     /// Elements in either set.
     fn union(self, o: Set[T]) -> Set[T] {
-        var out = self
+        let mut out = Set(self.index, self.elems)
         for x in o.elems { out.insert(x) }
         out
     }
 
     /// Elements in both sets.
     fn intersection(self, o: Set[T]) -> Set[T] {
-        var out: Set[T] = new()
+        let mut out: Set[T] = new()
         for x in self.elems {
             if o.contains(x) { out.insert(x) }
         }
@@ -73,7 +73,7 @@ impl[T: Hash + Eq] Set[T] {
 
     /// Elements of this set that aren't in `o`.
     fn difference(self, o: Set[T]) -> Set[T] {
-        var out: Set[T] = new()
+        let mut out: Set[T] = new()
         for x in self.elems {
             if !o.contains(x) { out.insert(x) }
         }

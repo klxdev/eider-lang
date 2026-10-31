@@ -2096,10 +2096,10 @@ successor of `var` for values without Copy). Code: check.ei (`take_replace`, rea
   so taking from a copy-on-write share leaves the other holder intact.
 
 The pattern `let k = t.kids; t.kids = List.new()` that needed `var` (a copy) is now `let k =
-t.kids.take()`. std and packages keep their `var`s until the next seed (they are built by
-the seed, which lacks take/replace); what is left there (106 `var`s, all in generic bodies or
-of values without Copy: std/chan, deque, heap, set, sort, stream, strings, task, testing)
-moves to `let mut` with `take`/`replace` or `.copy()` case by case then.
+t.kids.take()`. After the seed learned take/replace, std's 106 `var`s (none were left in
+packages/ or examples/) moved to `let mut` with `take`/`replace` or `.copy()` case by case
+(decision C100); 6 remain, shares of generic or Copy-less values out of read-only parameters
+(std/sort's `var a = xs`, std/task's `var t = s` in its Lock closures).
 
 Tests: compiler/tests/run/take_replace.ei (a List field of a recursive record, a String, a
 Chan inside a List element, an `inout self` method, Option, Map, an integer, an own `take`

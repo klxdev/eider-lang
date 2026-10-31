@@ -43,7 +43,7 @@ fn has_newline(s: String) -> bool {
 pub fn difference[T: Show](what: String, got: T, want: T) -> String {
     let g = got.to_string()
     let w = want.to_string()
-    var m = what
+    let mut m = what.copy()
     m.push_str("\n   got: ")
     m.append(g)
     m.push_str("\n  want: ")
@@ -68,7 +68,7 @@ pub fn assert_eq[T: Eq + Show](got: T, want: T) uses io {
 /// Traps unless `got != avoid`.
 pub fn assert_ne[T: Eq + Show](got: T, avoid: T) uses io {
     if got != avoid { return }
-    var m = String.from("assertion failed: both are ")
+    let mut m = String.from("assertion failed: both are ")
     m.append(got.to_string())
     io.errln(m.bytes())
     panic("assert_ne failed")
@@ -79,7 +79,7 @@ pub fn assert_ok[T, E: Show](r: Result[T, E]) -> T uses io {
     match r {
         Ok(v) => v
         Err(e) => {
-            var m = String.from("assertion failed: got Err(")
+            let mut m = String.from("assertion failed: got Err(")
             m.append(e.to_string())
             m.push_str(")")
             io.errln(m.bytes())
@@ -88,7 +88,7 @@ pub fn assert_ok[T, E: Show](r: Result[T, E]) -> T uses io {
     }
 }
 
-/// Many checks that go on after a failure: `var t = testing.suite("parser")`, then
+/// Many checks that go on after a failure: `let mut t = testing.suite("parser")`, then
 /// `t.eq("one", got, want)` and `t.check("two", cond)`, and finally `t.done()`, the exit
 /// code for a `main` that returns i32 (0 when every check passed, 1 otherwise). Failures and
 /// the summary go to stderr, so stdout holds only what the program itself prints.
@@ -101,7 +101,7 @@ impl Suite {
         self.checks += 1
         if got == want { return true }
         self.failed += 1
-        var m = String.from("FAIL ")
+        let mut m = String.from("FAIL ")
         m.append(self.name)
         m.push_str(": ")
         m.push_str(what)

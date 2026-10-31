@@ -53,7 +53,8 @@ description against a recorded golden.
 | `http/metrics` | request counters, an in-flight gauge and a latency histogram, in the Prometheus text format | `clock` for `wrap` |
 | `http/sock` | sending before a deadline, lingering close | `net, io, clock` |
 
-A handler is a value of type `fn(http.Request) -> http.Response` (a closure takes the
+A handler is a value of type `http.Handler`, `fn(http.Request) -> http.Response`, and a
+middleware an `http.Middleware`, `fn(Handler) -> Handler` (a closure takes the
 capabilities of the function that writes it, so a handler can do what its author can). Besides
 the message, a Request carries `peer` (the client's address, from the server), `deadline` (when
 the answer is due, set by `middleware.timeout`) and `ctx` (named values middleware hands
@@ -99,7 +100,9 @@ keeps its signature and the worker loop runs as a task per connection on the eve
   the token wakes a waker that is never drained, so every poller watching it (the
   acceptor's and each connection's) sees the stop from then on. The acceptor takes what is
   already in the listen backlog and closes the listener; every worker finishes the request
-  it is reading or handling and answers it with `Connection: close`; idle connections close
+  it is reading or handling and answers it with `Connection: close` (the stop is checked
+  again when the response is written, so a request whose last bytes came after it is
+  included: C105); idle connections close
   at once; a queued connection is served only if its request has already arrived. `serve`
   returns the counts when every worker is done. There is no overall drain deadline: each
   connection is bounded by its own deadlines (and handlers must not block forever).
@@ -292,16 +295,16 @@ Recorded rather than worked around; none blocks the design.
 
 | # | Need | Where it showed | Today |
 |---|---|---|---|
-| N1 | Type aliases (`type Handler = fn(Request) -> Response`) | every handler signature | the fn type is spelled out (done in compiler/: docs/compiler.md "C8.18"; usable after the next seed) |
-| N2 | `\r`, `\xNN` and `\u{...}` string escapes, and literal concatenation | CRLF in messages, test corpora | bytes pushed by hand; tests map `\n` to CRLF and marker characters to control bytes (done in compiler/: docs/compiler.md "C8.17", same-line concatenation; usable after the next seed) |
+| ~~N1~~ | Type aliases (`type Handler = fn(Request) -> Response`) | every handler signature | done: `http.Handler`, `http.Middleware`, `jsonrpc.Method` (docs/compiler.md "C8.18"; C104) |
+| ~~N2~~ | `\r`, `\xNN` and `\u{...}` string escapes, and literal concatenation | CRLF in messages, test corpora | done: messages are written with `\r\n` literals (docs/compiler.md "C8.17"); the tests keep `wire()`, where `\n` is CRLF, by choice (C104) |
 | N3 | `std/net`: a send that reports would-block (`try_send`, like `try_recv`) | sock.send_by | wait for writability before every send (correct: one writer per socket) |
 | N4 | Waiting on two descriptors with a deadline without a poller per connection (e.g. `fd.wait_any`, or one event.Loop per worker thread) | each connection waits on its socket and the stop signal | one epoll descriptor per connection (four system calls more per connection) |
 | N5 | Containing a trap: a handler's panic or overflow ends the process | server | documented; validate input before arithmetic |
 | N6 | Stackless tasks (C4) | thread per connection being served | a fixed pool; `serve` keeps its API when tasks arrive |
 | N7 | References (8.6): reading a List out of a record copies it | the request path copies heads and bodies a few times | fine at these sizes, measured nothing yet |
 | N8 | Comptime reflection and derive (P0.9, P0.10) | typed JSON-RPC parameters and results | decoder and encoder functions per type (`add_typed`) |
-| N9 | Iterating a Map's keys | kvstore's `kv.keys` | a key list kept beside the Map (`for (k, v) in m`, `m.keys()` in compiler/: docs/compiler.md "C8.20"; usable after the next seed) |
-| N10 | Calling a function stored in a field (`(self.h)(x)`) | router | bind it to a local first (`self.h(x)` works, also with the seed; a method of the same name wins: docs/compiler.md "C8.19") |
+| ~~N9~~ | Iterating a Map's keys | kvstore's `kv.keys` | done (docs/compiler.md "C8.20"): http/metrics and examples/todo iterate their Maps; kvstore keeps its key list, since `kv.keys` promises insertion order (C102) |
+| ~~N10~~ | Calling a function stored in a field (`(self.h)(x)`) | router | done: `self.h(x)`; a method of the same name wins (docs/compiler.md "C8.19") |
 | N11 | Name resolution with a deadline | the client takes an `net.Addr` | `net.lookup` blocks; resolve first |
 | N12 | Connection information in the handler (peer address, TLS later) | logging, rate limiting | done: `Request.peer` (TLS information later) |
 | N13 | A method chain continued on the next line (a line starting with `.field(...)`, or ending with `.`) | schema and operation builders | reassignments: `s = s.field(...)` |

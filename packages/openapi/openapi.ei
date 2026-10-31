@@ -387,7 +387,7 @@ pub fn validate(o: Op, req: http.Request) -> Result[Input, problem.ApiError] {
 }
 
 /// The handler of an operation: `h` behind validation.
-pub fn validated(o: Op, h: fn(Input) -> http.Response) -> fn(http.Request) -> http.Response {
+pub fn validated(o: Op, h: fn(Input) -> http.Response) -> http.Handler {
     |req: http.Request| -> http.Response {
         match validate(o, req) {
             Ok(i) => h(i)
@@ -542,11 +542,11 @@ impl Service {
 
     /// Adds operation `o`, answered by `h` after validation (see the module comment).
     fn add(inout self, o: Op, h: fn(Input) -> http.Response) {
-        self.add_with(o, |x: fn(http.Request) -> http.Response| -> fn(http.Request) -> http.Response { x }, h)
+        self.add_with(o, |x: http.Handler| -> http.Handler { x }, h)
     }
 
     /// `add`, with `layer` around the whole route (a timeout, a log for this route, ...).
-    fn add_with(inout self, o: Op, layer: fn(fn(http.Request) -> http.Response) -> fn(http.Request) -> http.Response, h: fn(Input) -> http.Response) {
+    fn add_with(inout self, o: Op, layer: http.Middleware, h: fn(Input) -> http.Response) {
         check_op(o)
         for x in self.ops {
             if bytes.eq(x.method, o.method) && bytes.eq(pattern(x.path), pattern(o.path)) { panic("openapi: an operation is added twice") }
@@ -576,7 +576,7 @@ impl Service {
     }
 
     /// Adds a route that is not part of the description (`/metrics`, `/health`).
-    fn raw(inout self, method: str, pat: str, h: fn(http.Request) -> http.Response) { self.r.route(method, pat, h) }
+    fn raw(inout self, method: str, pat: str, h: http.Handler) { self.r.route(method, pat, h) }
 
     /// The OpenAPI 3.1 document as a json.Doc.
     fn document(self) -> json.Doc {
@@ -665,7 +665,7 @@ impl Service {
 
     /// The service as a handler: its routes and `GET /openapi.json` (rendered now: add
     /// every operation first).
-    fn handler(self) -> fn(http.Request) -> http.Response {
+    fn handler(self) -> http.Handler {
         let doc = self.document_json()
         let mut r = self.r.copy()
         r.route_bytes(sys.lit("GET"), self.doc_path, |q: http.Request| -> http.Response { http.json_response(200, doc) })

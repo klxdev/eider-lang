@@ -47,7 +47,7 @@ import "http.ei"
 import "problem.ei"
 
 /// Applies `layers` to `h`, the first one outermost: `chain(h, [a, b])` is `a(b(h))`.
-pub fn chain(h: fn(http.Request) -> http.Response, layers: List[fn(fn(http.Request) -> http.Response) -> fn(http.Request) -> http.Response]) -> fn(http.Request) -> http.Response {
+pub fn chain(h: http.Handler, layers: List[http.Middleware]) -> http.Handler {
     let mut out = h.copy()
     let mut i = layers.len()
     while i > 0 {
@@ -94,7 +94,7 @@ pub fn valid_id(s: List[u8]) -> bool {
 }
 
 /// Gives every request an id (see the module comment).
-pub fn request_id(ids: Ids, h: fn(http.Request) -> http.Response) -> fn(http.Request) -> http.Response {
+pub fn request_id(ids: Ids, h: http.Handler) -> http.Handler {
     |req: http.Request| -> http.Response {
         let id = match req.header("x-request-id") {
             Some(v) => if valid_id(v) { v } else { ids.next() }
@@ -203,7 +203,7 @@ pub fn log_line(unix_ns: i64, req: http.Request, resp: http.Response, dur_ns: i6
 /// response is made. The Lock makes lines from different workers whole; a write that fails
 /// is dropped (a request doesn't fail because its log line couldn't be written). Put it
 /// inside `request_id` to log the id.
-pub fn access_log[W: stream.Writer + Copy](out: sync.Lock[W], h: fn(http.Request) -> http.Response) -> fn(http.Request) -> http.Response uses io, clock {
+pub fn access_log[W: stream.Writer + Copy](out: sync.Lock[W], h: http.Handler) -> http.Handler uses io, clock {
     |req: http.Request| -> http.Response {
         let t0 = time.mono_ns()
         let resp = h(req)
@@ -227,7 +227,7 @@ pub fn access_log[W: stream.Writer + Copy](out: sync.Lock[W], h: fn(http.Request
 
 /// A handler that returns an ApiError instead of failing, as an ordinary handler: an Err is
 /// answered with its problem+json response.
-pub fn errors(h: fn(http.Request) -> Result[http.Response, problem.ApiError]) -> fn(http.Request) -> http.Response {
+pub fn errors(h: fn(http.Request) -> Result[http.Response, problem.ApiError]) -> http.Handler {
     |req: http.Request| -> http.Response {
         match h(req) {
             Ok(r) => r
@@ -245,7 +245,7 @@ fn is_plain_error(r: http.Response) -> bool {
 
 /// The package's plain-text error responses as problem+json (headers such as `Allow` and
 /// `Retry-After` kept); every other response unchanged.
-pub fn problems(h: fn(http.Request) -> http.Response) -> fn(http.Request) -> http.Response {
+pub fn problems(h: http.Handler) -> http.Handler {
     |req: http.Request| -> http.Response {
         let r = h(req)
         if !is_plain_error(r) { return r }
@@ -262,7 +262,7 @@ pub fn problems(h: fn(http.Request) -> http.Response) -> fn(http.Request) -> htt
 // ---- limits per route
 
 /// 413 (problem+json) when the body is longer than `max` bytes.
-pub fn body_limit(max: usize, h: fn(http.Request) -> http.Response) -> fn(http.Request) -> http.Response {
+pub fn body_limit(max: usize, h: http.Handler) -> http.Handler {
     |req: http.Request| -> http.Response {
         if req.body.len() <= max { return h(req) }
         let mut d = sys.lit("the body is ")
@@ -280,7 +280,7 @@ pub fn body_limit(max: usize, h: fn(http.Request) -> http.Response) -> fn(http.R
 /// stackless tasks: docs/services.md N5, N6): it runs to its end on its worker and its
 /// answer is dropped, so a pool of its own per route bounds how many threads slow
 /// handlers can hold; a handler that waits on something should wait until `req.deadline`.
-pub fn timeout(d: time.Duration, pool: task.Pool, h: fn(http.Request) -> http.Response) -> fn(http.Request) -> http.Response uses io, clock {
+pub fn timeout(d: time.Duration, pool: task.Pool, h: http.Handler) -> http.Handler uses io, clock {
     |req: http.Request| -> http.Response {
         let dl = time.after(d).earlier(req.deadline)
         let mut r = req.copy()
@@ -422,7 +422,7 @@ fn add_vary(inout r: http.Response, v: List[u8]) {
 /// header are allowed, else 403 (problem+json). Any other request from an allowed origin gets
 /// `Access-Control-Allow-Origin` (and `-Expose-Headers`, `-Allow-Credentials`, `Vary: Origin`)
 /// on its response; from another origin it gets none, so the browser hides the response.
-pub fn cors(c: Cors, h: fn(http.Request) -> http.Response) -> fn(http.Request) -> http.Response {
+pub fn cors(c: Cors, h: http.Handler) -> http.Handler {
     |req: http.Request| -> http.Response {
         let origin = match req.header("origin") {
             Some(o) => o
@@ -490,12 +490,12 @@ pub fn credentials(req: http.Request, scheme: str) -> Option[List[u8]] {
 /// valid token, None otherwise. No or another kind of credentials: 401 with
 /// `WWW-Authenticate: Bearer realm="<realm>"`; a token `check` refuses: 401 with
 /// `error="invalid_token"`. Otherwise the principal is `req.get_ctx("principal")`.
-pub fn bearer(realm: str, check: fn(List[u8]) -> Option[List[u8]], h: fn(http.Request) -> http.Response) -> fn(http.Request) -> http.Response {
+pub fn bearer(realm: str, check: fn(List[u8]) -> Option[List[u8]], h: http.Handler) -> http.Handler {
     bearer_in(sys.lit(realm), check, h)
 }
 
 /// `bearer` with the realm as bytes.
-pub fn bearer_in(rl: List[u8], check: fn(List[u8]) -> Option[List[u8]], h: fn(http.Request) -> http.Response) -> fn(http.Request) -> http.Response {
+pub fn bearer_in(rl: List[u8], check: fn(List[u8]) -> Option[List[u8]], h: http.Handler) -> http.Handler {
     |req: http.Request| -> http.Response {
         let tok = match credentials(req, "Bearer") {
             Some(t) => t
@@ -531,7 +531,7 @@ pub fn token_table(entries: List[(List[u8], List[u8])]) -> fn(List[u8]) -> Optio
 /// the user is then the principal. Otherwise 401 with `WWW-Authenticate: Basic
 /// realm="<realm>", charset="UTF-8"`. Only over TLS (a proxy's, C51): the password travels in
 /// the clear.
-pub fn basic(realm: str, check: fn(List[u8], List[u8]) -> bool, h: fn(http.Request) -> http.Response) -> fn(http.Request) -> http.Response {
+pub fn basic(realm: str, check: fn(List[u8], List[u8]) -> bool, h: http.Handler) -> http.Handler {
     let rl = sys.lit(realm)
     |req: http.Request| -> http.Response {
         let raw = match credentials(req, "Basic") {

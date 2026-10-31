@@ -19,6 +19,7 @@
 
 import "core/sys"
 import "std/bytes"
+import "std/sort"
 import "std/stream"
 import "std/sync"
 import "std/task"
@@ -32,12 +33,13 @@ import "openapi/schema"
 
 pub type Todo = { id: i64, title: List[u8], done: bool, priority: List[u8], note: Option[List[u8]] }
 
-type Db = { next: i64, ids: List[i64], items: Map[i64, Todo] }
+// ids grow with every create, so sorted ids are creation order
+type Db = { next: i64, items: Map[i64, Todo] }
 
 /// The service's state; copies share it.
 pub type Store = { st: sync.Lock[Db] }
 
-pub fn store() -> Store { Store(sync.lock(Db(1, List.new(), Map.new()))) }
+pub fn store() -> Store { Store(sync.lock(Db(1, Map.new()))) }
 
 pub type NewTodo = { title: List[u8], priority: List[u8], note: Option[List[u8]] }
 
@@ -52,7 +54,6 @@ impl Store {
             let mut t = d.copy()
             let todo = Todo(t.next, n.title, false, n.priority, n.note)
             t.items.insert(t.next, todo)
-            t.ids.push(t.next)
             t.next += 1
             (t, todo)
         })
@@ -63,7 +64,7 @@ impl Store {
     fn list(self, f: Filter) -> List[Todo] {
         self.st.with(|d: Db| -> (Db, List[Todo]) {
             let mut out: List[Todo] = List.new()
-            for id in d.ids {
+            for id in sort.sort(d.items.keys()) {
                 if (out.len() as i64) < f.limit {
                     let t = d.items.get(id).unwrap()
                     let done_ok = match f.done {
@@ -114,11 +115,6 @@ impl Store {
             let mut t = d.copy()
             if !t.items.contains(id) { return (t, false) }
             t.items.remove(id)
-            let mut keep: List[i64] = List.new()
-            for x in t.ids {
-                if x != id { keep.push(x) }
-            }
-            t.ids = keep
             (t, true)
         })
     }
@@ -198,7 +194,7 @@ pub fn service(s: Store, tokens: fn(List[u8]) -> Option[List[u8]], list_pool: ta
     list = list.query("priority", priority(), "Only todos with this priority")
     list = list.query("limit", schema.integer().min(1).max(100), "At most this many (default 50)")
     list = list.returns(200, "The todos, oldest first", schema.array(todo)).fails(503, "The list took too long")
-    let slow = |h: fn(http.Request) -> http.Response| -> fn(http.Request) -> http.Response { middleware.timeout(time.seconds(2), list_pool, h) }
+    let slow = |h: http.Handler| -> http.Handler { middleware.timeout(time.seconds(2), list_pool, h) }
     svc.add_with(list, slow, openapi.typed(decode_filter, |f: Filter| -> Result[List[Todo], problem.ApiError] { Ok(s.list(f)) }, todos_json))
 
     let mut create = openapi.op("POST", "/todos").operation_id("createTodo").summary("Create a todo").tag("todos")
@@ -234,7 +230,7 @@ pub type Parts[W] = { log: sync.Lock[W], metrics: metrics.Metrics, ids: middlewa
 
 /// The application: the service, `/metrics`, and the middleware around them (outermost
 /// first: request id, access log, metrics, problem+json errors, CORS).
-pub fn app[W: stream.Writer + Copy](s: Store, tokens: fn(List[u8]) -> Option[List[u8]], p: Parts[W]) -> fn(http.Request) -> http.Response uses io, clock {
+pub fn app[W: stream.Writer + Copy](s: Store, tokens: fn(List[u8]) -> Option[List[u8]], p: Parts[W]) -> http.Handler uses io, clock {
     let mut svc = service(s, tokens, p.list_pool)
     svc.raw("GET", "/metrics", p.metrics.handler())
     let inner = middleware.cors(p.cors, svc.handler())

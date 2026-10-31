@@ -1,8 +1,8 @@
 // std/stream: in-memory streams, BufReader (lines, limits, peek, exact, bypass), BufWriter
 // (buffering, flush, big writes), the generic helpers (read_all, read_exact, write_all,
 // copy, read_text), typed errors with kinds, files, pipes, deadlines (TimedOut, cancel-safe
-// line reads), sockets (connect_by / accept_by), a child's stdin and stdout, and stdout
-// ordering with print.
+// line reads), sockets (connect_by / accept_by), a child's stdin and stdout, `?` from a String
+// error, and stdout ordering with print.
 
 import "std/stream"
 import "std/fd"
@@ -314,10 +314,29 @@ fn ordering() -> Result[(), stream.Error] uses io {
     Ok(())
 }
 
+// `?` passes a String error on as a stream.Error of kind Other (`impl From[String]`)
+fn string_result(fail: bool) -> Result[i32, String] {
+    if fail { return Err(String.from("no such thing")) }
+    Ok(7)
+}
+
+fn conversions() -> Result[i32, stream.Error] {
+    let a = string_result(false)?
+    let b = string_result(true)?
+    Ok(a + b)
+}
+
 fn main() uses io, fs, net, clock {
     match memory() {
         Ok(()) => {}
         Err(e) => print(e)
+    }
+    match conversions() {
+        Ok(n) => print(n)
+        Err(e) => {
+            print(e.kind)
+            print(e)
+        }
     }
     match files() {
         Ok(()) => {}

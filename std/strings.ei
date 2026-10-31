@@ -55,7 +55,7 @@ pub fn rfind[A: Text, B: Text](s: A, needle: B) -> Option[usize] {
     let t = s.text()
     let n = needle.text()
     if n.len() > t.len() { return None }
-    var i = t.len() - n.len() + 1
+    let mut i = t.len() - n.len() + 1
     while i > 0 {
         i -= 1
         if at(t, n, i) { return Some(i) }
@@ -76,8 +76,8 @@ pub fn count[A: Text, B: Text](s: A, needle: B) -> usize {
     let t = s.text()
     let n = needle.text()
     if n.len() == 0 { return chars(t) + 1 }
-    var c: usize = 0
-    var i: usize = 0
+    let mut c: usize = 0
+    let mut i: usize = 0
     while true {
         match find_in(t, n, i) {
             Some(j) => {
@@ -122,22 +122,22 @@ pub fn split[A: Text, B: Text](s: A, sep: B) -> List[String] { split_n(s, sep, 0
 pub fn split_n[A: Text, B: Text](s: A, sep: B, n: usize) -> List[String] {
     let t = s.text()
     let p = sep.text()
-    var out: List[String] = List.new()
+    let mut out: List[String] = List.new()
     if p.len() == 0 {
-        var i: usize = 0
+        let mut i: usize = 0
         while i < t.len() {
             if n > 0 && out.len() + 1 == n {
                 out.push(cut(t, i, t.len()))
                 return out
             }
-            var j = i + 1
+            let mut j = i + 1
             while j < t.len() && t.byte(j) >= 128 && t.byte(j) < 192 { j += 1 }
             out.push(cut(t, i, j))
             i = j
         }
         return out
     }
-    var start: usize = 0
+    let mut start: usize = 0
     while true {
         if n > 0 && out.len() + 1 == n { break }
         match find_in(t, p, start) {
@@ -165,8 +165,8 @@ pub fn split_once[A: Text, B: Text](s: A, sep: B) -> Option[(String, String)] {
 /// The words between runs of ASCII whitespace (no empty words): Go's Fields.
 pub fn fields[A: Text](s: A) -> List[String] {
     let t = s.text()
-    var out: List[String] = List.new()
-    var i: usize = 0
+    let mut out: List[String] = List.new()
+    let mut i: usize = 0
     while i < t.len() {
         while i < t.len() && is_space(t.byte(i)) { i += 1 }
         let a = i.copy()
@@ -179,12 +179,12 @@ pub fn fields[A: Text](s: A) -> List[String] {
 /// The lines without their `\n` (or `\r\n`); a final newline doesn't add an empty line.
 pub fn lines[A: Text](s: A) -> List[String] {
     let t = s.text()
-    var out: List[String] = List.new()
-    var a: usize = 0
-    var i: usize = 0
+    let mut out: List[String] = List.new()
+    let mut a: usize = 0
+    let mut i: usize = 0
     while i < t.len() {
         if t.byte(i) == 10 {
-            var z = i
+            let mut z = i.copy()
             if z > a && t.byte(z - 1) == 13 { z -= 1 }
             out.push(cut(t, a, z))
             a = i + 1
@@ -192,7 +192,7 @@ pub fn lines[A: Text](s: A) -> List[String] {
         i += 1
     }
     if a < t.len() {
-        var z = t.len()
+        let mut z = t.len()
         if t.byte(z - 1) == 13 { z -= 1 }
         out.push(cut(t, a, z))
     }
@@ -202,7 +202,7 @@ pub fn lines[A: Text](s: A) -> List[String] {
 /// The parts with `sep` between them.
 pub fn join[B: Text](parts: List[String], sep: B) -> String {
     let p = sep.text()
-    var out = empty()
+    let mut out = empty()
     for i in 0..parts.len() {
         if i > 0 { out.append(p) }
         out.append(parts[i])
@@ -217,8 +217,8 @@ pub fn is_space(b: u8) -> bool { b == 32 || b == 9 || b == 10 || b == 13 || b ==
 /// Without leading and trailing ASCII whitespace.
 pub fn trim[A: Text](s: A) -> String {
     let t = s.text()
-    var a: usize = 0
-    var z = t.len()
+    let mut a: usize = 0
+    let mut z = t.len()
     while a < z && is_space(t.byte(a)) { a += 1 }
     while z > a && is_space(t.byte(z - 1)) { z -= 1 }
     cut(t, a, z)
@@ -226,14 +226,14 @@ pub fn trim[A: Text](s: A) -> String {
 
 pub fn trim_start[A: Text](s: A) -> String {
     let t = s.text()
-    var a: usize = 0
+    let mut a: usize = 0
     while a < t.len() && is_space(t.byte(a)) { a += 1 }
     cut(t, a, t.len())
 }
 
 pub fn trim_end[A: Text](s: A) -> String {
     let t = s.text()
-    var z = t.len()
+    let mut z = t.len()
     while z > 0 && is_space(t.byte(z - 1)) { z -= 1 }
     cut(t, 0, z)
 }
@@ -282,9 +282,9 @@ pub fn replace_n[A: Text, B: Text, C: Text](s: A, from: B, to: C, n: usize) -> S
     let f = from.text()
     let r = to.text()
     if f.len() == 0 { return t }
-    var out = empty()
-    var start: usize = 0
-    var done: usize = 0
+    let mut out = empty()
+    let mut start: usize = 0
+    let mut done: usize = 0
     while n == 0 || done < n {
         match find_in(t, f, start) {
             Some(j) => {
@@ -303,7 +303,7 @@ pub fn replace_n[A: Text, B: Text, C: Text](s: A, from: B, to: C, n: usize) -> S
 /// `s` `n` times.
 pub fn repeat[A: Text](s: A, n: usize) -> String {
     let t = s.text()
-    var out = empty()
+    let mut out = empty()
     for i in 0..n { out.append(t) }
     out
 }
@@ -311,7 +311,7 @@ pub fn repeat[A: Text](s: A, n: usize) -> String {
 /// ASCII letters in upper case; everything else unchanged.
 pub fn to_upper[A: Text](s: A) -> String {
     let t = s.text()
-    var b = t.bytes()
+    let mut b = t.bytes()
     for i in 0..b.len() {
         if b[i] >= 97 && b[i] <= 122 { b[i] = b[i] - 32 }
     }
@@ -321,7 +321,7 @@ pub fn to_upper[A: Text](s: A) -> String {
 /// ASCII letters in lower case; everything else unchanged.
 pub fn to_lower[A: Text](s: A) -> String {
     let t = s.text()
-    var b = t.bytes()
+    let mut b = t.bytes()
     for i in 0..b.len() {
         if b[i] >= 65 && b[i] <= 90 { b[i] = b[i] + 32 }
     }

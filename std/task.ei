@@ -70,9 +70,7 @@ impl Token {
             t.cancelled = true
             sync.wake_all(t.waiters)
             t.waiters = List.new()
-            // (`var`: a share of the handles, as `let` made before C8.6; List[Token] has no Copy)
-            var k = t.kids
-            t.kids = List.new()
+            let k = t.kids.take()
             (t, k)
         })
         for k in kids { k.cancel() }
@@ -180,16 +178,15 @@ pub fn group_until[T](parent: Token, dl: time.Deadline) -> Group[T] {
 /// What a child runs: `f` with the token (unless it is cancelled already), recording an
 /// error and cancelling the siblings when it fails.
 fn run_child[T](f: fn(Token) -> Result[T, String], tok: Token, errs: sync.Lock[List[String]], out: chan.Channel[Result[T, String]]) uses io, clock {
-    var r: Result[T, String] = Err(String.from("cancelled"))
-    match tok.reason() {
-        Some(why) => { r = Err(why) }
-        None => { r = f(tok) }
+    let r: Result[T, String] = match tok.reason() {
+        Some(why) => Err(why)
+        None => f(tok)
     }
     match r {
         Ok(v) => {}
         Err(e) => {
             errs.update(|l: List[String]| -> List[String] {
-                var m = l
+                let mut m = l.copy()
                 m.push(e)
                 m
             })
@@ -229,7 +226,7 @@ impl[T] Group[T] {
             Ok(b) => {}
             Err(e) => {
                 errs.update(|l: List[String]| -> List[String] {
-                    var m = l
+                    let mut m = l.copy()
                     m.push(e)
                     m
                 })
@@ -247,7 +244,7 @@ impl[T] Group[T] {
     /// child that ignores its token keeps the group waiting (cancellation is cooperative).
     /// Then the group's token is detached from its parent.
     fn wait(self) -> Result[List[T], String] uses io, clock {
-        var vals: List[T] = List.new()
+        let mut vals: List[T] = List.new()
         for c in self.results {
             match c.recv(time.never()) {
                 chan.Value(r) => {

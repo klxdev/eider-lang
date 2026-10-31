@@ -19,6 +19,7 @@ import "http"
 import "http/router"
 import "http/jsonrpc"
 
+// `keys` keeps insertion order for kv.keys (iterating the Map gives its slot order)
 type Kv = { keys: List[List[u8]], vals: Map[List[u8], List[u8]] }
 
 /// The service's state; copies share it.
@@ -115,7 +116,7 @@ pub fn rpc(s: Store) -> jsonrpc.Table {
 }
 
 /// The whole service: /rpc, /health and /kv/:key.
-pub fn app(s: Store) -> fn(http.Request) -> http.Response {
+pub fn app(s: Store) -> http.Handler {
     let mut r = router.new()
     r.post("/rpc", jsonrpc.handler(rpc(s)))
     r.get("/health", |q: http.Request| -> http.Response { http.text(200, "ok") })
