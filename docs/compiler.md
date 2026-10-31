@@ -1959,6 +1959,70 @@ backslashes; hand-checked .out); lexer: compiler/tests/lex/escape_*.ei (each ref
 its position; the oracle records them) and compiler/tests/lex_ok/escapes.ei (the tokens: one
 literal for three joined ones, two for literals on two lines). No oracle file changed.
 
+## C8.18: type aliases
+
+Wave 4, item 8.18 (docs/services.md N1). Code: parse.ei (`type_decl`), ast.ei (IType's `g`),
+check.ei's "Type aliases" section (`alias_ty`, `alias_of`, `unify_alias`; pass 1 and 2 of
+`run`, `resolve_ty`, `unify_ast`, `register_impl`), dump.ei.
+
+`type Name = <type>` and `type Name[T, ...] = <type>` (any type but a record body `{...}`
+or variants `| ...`, which keep their meaning) declare an alias: another name for the type,
+not a new type. It is **transparent**: `type Id = u64` makes `Id` and `u64` the same type
+everywhere (assignable both ways, the same methods, the same C), and a mismatch names the
+type itself ("expected i32, found u64"). A generic alias is resolved at each use with its
+parameters bound to the use's arguments (`type Table[T] = List[(String, T)]`); in a generic
+signature its arguments take part in inference like any type's (`fn second[T](p: Pair[T])`
+infers T from a `(i32, i32)`). `pub type` exports an alias like any type (E0801 for a
+private one used from another module); it may name private types of its module (as a pub
+function's signature may). Rules, each the simplest sound one (decision C62):
+
+- An alias names a type only: it is not a constructor (`Pt(1)` for `type Pt = Point` is
+  "unknown function"), it brings no variant names, and an `impl` can't name it (**E0111**
+  "`Pt` is a type alias; an impl names the type itself": methods belong to the type).
+- A non-generic alias's type is checked at its declaration (an unknown type in it is E0111
+  there, in its own file); a generic one where it is used, like a generic type's fields.
+- An alias can't refer to itself, directly or through other aliases (`type A = List[A]`,
+  E0111 "type alias `A` refers to itself", with the help that a recursive type needs a record
+  or an enum); recursion through a record or enum is fine.
+- Type declarations still take no bounds, so `type M[K, V] = Map[K, List[V]]` is checked where
+  it is applied (a key type parameter of a generic function needs `K: Hash + Eq` as for
+  `Map` itself, E0605).
+
+**Syntax changes** (for the tree-sitter grammar): `type_item` gains an alternative
+`'type' name generics? '=' type` where `type` doesn't start with `{` or `|`. `type A = X | Y`
+(an enum missing its first `|`) stays the E0001 "expected `|`" it was.
+
+**Tests.** Run: compiler/tests/run/aliases.ei with lib/handlers.ei (scalar, tuple, List,
+fn and Option aliases, generic aliases with one and two parameters, an alias inside a record
+field, pub aliases and a generic alias of another module, a private alias in a pub
+signature; hand-checked .out). Compile-fail (compiler/tests/check/fail): `e0111_alias_cycle`,
+`e0111_alias_mutual_cycle`, `e0111_alias_needs_args`, `e0111_alias_unknown_target`,
+`e0111_alias_impl_target`, `e0107_alias_duplicate`, `e0801_alias_private` (with
+lib/alias_lib.ei), `e0401_alias_transparent`, `e0401_alias_generic_arg`. Parse:
+compiler/tests/parse_ok/aliases.ei. compiler/tests/parse/enum_missing_pipe.ei became
+`type A = X | Y` (same error, same position; `type A = X` is now an alias).
+
+## C8.19: calling a function stored in a field
+
+Wave 4, item 8.19 (docs/services.md N10). `x.f(args)` where x's type has a field `f` holding a
+function calls it; this was already accepted (since S3, `method_call_in`), so the item is the
+rule for a name that is both a field and a method, now stated and made consistent:
+
+**A method wins.** `x.f(...)` is the method f when x's type has one: its own (an `impl`,
+inherent or of a trait, that applies to the type), a built-in method, or a method of a
+language trait the type has, derived ones included (`copy`, `eq`, `compare`, `hash`, `show`,
+`to_string`). Only when there is none is a field f of function type called. The field of a
+clashing name is called through a binding: `let h = x.f; h(args)` (decision C63). Before,
+a derived trait method lost to a field of its name (`x.copy()` called a field `copy`), the
+one inconsistency, now fixed; nothing in the repository relied on it. A field that isn't a
+function stays E0115 ("type R has no method `v`"). Methods winning keeps every existing call
+meaning what it meant (fields could already be named like methods, e.g. a `len` field with a
+`len()` method), and a field never changes what a method call resolves to.
+
+Test: compiler/tests/run/fn_fields.ei (a handler field of an alias type called from a method
+and through a List element, a generic record's fn field, a field and a method of one name, a
+field named like the derived `copy`; hand-checked .out).
+
 ## Language work that lands in `eiderc` (after parity)
 
 Each with a design note, compile-fail tests and new codes:

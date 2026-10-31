@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_alias_duplicate.ei","line":4,"col":6},"message":"`P` is already defined"}

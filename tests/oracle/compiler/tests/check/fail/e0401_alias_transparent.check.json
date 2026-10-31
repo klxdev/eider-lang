@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_alias_transparent.ei","line":6,"col":18},"message":"expected i32, found u64","help":"there are no implicit conversions; use an explicit cast: `value as i32`"}

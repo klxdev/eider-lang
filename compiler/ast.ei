@@ -28,6 +28,7 @@
 // patterns   PWild  PName a=sym b=qual+1 c=1 for `mut x`  PInt a=tok b=negated  PBool a  PStr a=str
 //            PVariant a=sym b=qual+1 [c/d]=subpatterns   PTuple [c/d]
 // items      IType a=sym b=public [c/d]=GParam [e/f]=Variant or Field (a record when no Variant)
+//                g=aliased type+1 (a type alias, with no members; 0 otherwise)
 //            Variant a=sym [c/d]=VField   VField a=name sym, or position for unnamed, b=type c=named
 //            Field a=sym b=type             GParam a=sym [c/d]=bounds (TName)
 //            IFn a=sym b=flags (FN_*) [c/d]=GParam [e/f]=Param g=ret+1 h=body+1 [i/j]=Cap,

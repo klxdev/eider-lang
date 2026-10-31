@@ -1,0 +1,19 @@
+// Aliases exported for aliases.ei (docs/compiler.md, "C8.18").
+pub type Request = { path: String, n: i32 }
+pub type Response = { code: i32, body: String }
+pub type Handler = fn(Request) -> Response
+pub type Table[T] = List[(String, T)]
+type Hidden = i32
+
+pub fn ok(body: String) -> Response { Response(200, body) }
+
+pub fn run(h: Handler, r: Request) -> Response { h(r) }
+
+pub fn lookup[T](t: Table[T], key: String) -> Option[T] {
+    for e in t {
+        if e.0 == key { return Some(e.1) }
+    }
+    None
+}
+
+pub fn hidden() -> Hidden { 7 }

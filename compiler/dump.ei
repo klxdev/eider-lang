@@ -291,6 +291,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             flag(inout out, "pub", n.b == 1)
             kids(inout out, p, "generic", n.c, n.d, d)
             kids(inout out, p, "member", n.e, n.f, d)
+            opt(inout out, p, "alias", n.g, d)
         }
         ast.Variant => {
             sym(inout out, p, "name", n.a)

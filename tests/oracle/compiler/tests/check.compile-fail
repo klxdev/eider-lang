@@ -33,6 +33,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0103_block_in_binary.ei     E0103 at 3:17
   ok   e0103_ffi_unsafe_as_argument.ei E0103 at 4:11
   ok   e0103_if_as_argument.ei      E0103 at 4:7
+  ok   e0107_alias_duplicate.ei     E0107 at 4:6
   ok   e0107_builtin_fn_name.ei     E0107 at 2:4
   ok   e0107_builtin_type_name.ei   E0107 at 2:6
   ok   e0107_comptime_ct_name.ei    E0107 at 1:4
@@ -79,6 +80,11 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0110_type_name_as_value.ei  E0110 at 4:13
   ok   e0110_unicode_column.ei      E0110 at 3:28
   ok   e0110_unknown_assign_target.ei E0110 at 3:5
+  ok   e0111_alias_cycle.ei         E0111 at 3:15
+  ok   e0111_alias_impl_target.ei   E0111 at 5:6
+  ok   e0111_alias_mutual_cycle.ei  E0111 at 4:16
+  ok   e0111_alias_needs_args.ei    E0111 at 4:9
+  ok   e0111_alias_unknown_target.ei E0111 at 3:13
   ok   e0111_empty_record.ei        E0111 at 2:6
   ok   e0111_ffi_extern_unit_param.ei E0111 at 2:17
   ok   e0111_fn_type_unknown.ei     E0111 at 2:12
@@ -249,6 +255,8 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0308_push.ei                E0308 at 7:12 (fix compiles)
   ok   e0308_through_alias.ei       E0308 at 7:9 (fix compiles)
   ok   e0401_add_bools.ei           E0401 at 3:18
+  ok   e0401_alias_generic_arg.ei   E0401 at 7:20
+  ok   e0401_alias_transparent.ei   E0401 at 6:18
   ok   e0401_arg_mismatch.ei        E0401 at 4:7
   ok   e0401_array_equality_types.ei E0401 at 3:23
   ok   e0401_array_hint.ei          E0401 at 3:30
@@ -522,6 +530,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0701_heap_map_key.ei        E0701 at 2:20
   ok   e0701_heap_map_key_rec.ei    E0701 at 3:20
   ok   e0701_thr_map_key.ei         E0701 at 3:12
+  ok   e0801_alias_private.ei       E0801 at 5:12
   ok   e0801_mod_private_const.ei   E0801 at 4:11
   ok   e0801_mod_private_fn.ei      E0801 at 3:21
   ok   e0801_mod_private_fn_via_alias.ei E0801 at 4:13
@@ -641,6 +650,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-639 passed, 0 failed; error-code coverage 50/54
+648 passed, 0 failed; error-code coverage 50/54
 codes without a compile-fail test: E0302 E0402 E0806 E0808
 --- exit 0

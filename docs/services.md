@@ -202,7 +202,7 @@ Recorded rather than worked around; none blocks the design.
 
 | # | Need | Where it showed | Today |
 |---|---|---|---|
-| N1 | Type aliases (`type Handler = fn(Request) -> Response`) | every handler signature | the fn type is spelled out |
+| N1 | Type aliases (`type Handler = fn(Request) -> Response`) | every handler signature | the fn type is spelled out (done in compiler/: docs/compiler.md "C8.18"; usable after the next seed) |
 | N2 | `\r`, `\xNN` and `\u{...}` string escapes, and literal concatenation | CRLF in messages, test corpora | bytes pushed by hand; tests map `\n` to CRLF and marker characters to control bytes (done in compiler/: docs/compiler.md "C8.17", same-line concatenation; usable after the next seed) |
 | N3 | `std/net`: a send that reports would-block (`try_send`, like `try_recv`) | sock.send_by | wait for writability before every send (correct: one writer per socket) |
 | N4 | Waiting on two descriptors with a deadline without a poller per connection (e.g. `fd.wait_any`, or one event.Loop per worker thread) | each connection waits on its socket and the stop signal | one epoll descriptor per connection (four system calls more per connection) |
@@ -211,7 +211,7 @@ Recorded rather than worked around; none blocks the design.
 | N7 | References (8.6): reading a List out of a record copies it | the request path copies heads and bodies a few times | fine at these sizes, measured nothing yet |
 | N8 | Comptime reflection and derive (P0.9, P0.10) | typed JSON-RPC parameters and results | decoder and encoder functions per type (`add_typed`) |
 | N9 | Iterating a Map's keys | kvstore's `kv.keys` | a key list kept beside the Map |
-| N10 | Calling a function stored in a field (`(self.h)(x)`) | router | bind it to a local first |
+| N10 | Calling a function stored in a field (`(self.h)(x)`) | router | bind it to a local first (`self.h(x)` works, also with the seed; a method of the same name wins: docs/compiler.md "C8.19") |
 | N11 | Name resolution with a deadline | the client takes an `net.Addr` | `net.lookup` blocks; resolve first |
 | N12 | Connection information in the handler (peer address, TLS later) | logging, rate limiting | not passed yet (no language gap: a field on Request) |
 

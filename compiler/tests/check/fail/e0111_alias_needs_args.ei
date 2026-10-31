@@ -1,0 +1,5 @@
+// expect: E0111 4:9
+// a generic alias needs its type arguments (docs/compiler.md, "C8.18")
+type Pair[T] = (T, T)
+fn f(p: Pair) -> i32 { 1 }
+fn main() {}

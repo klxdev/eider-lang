@@ -520,6 +520,21 @@ fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
     expect(inout p, lex.Eq)?
     skip_nl(inout p)
     let mut members: List[u32] = List.new()
+    if !is(p, lex.LBrace) && !is(p, lex.Pipe) {
+        // a type alias (docs/compiler.md, "C8.18"): `type Handler = fn(Request) -> Response`
+        let at = cur(p)
+        let target = ty(inout p)?
+        // `type A = X | Y` is an enum missing its leading `|`, as before aliases
+        if is(p, lex.Pipe) && p.ast.nodes[target as usize].kind == ast.TName { return Err(err_at(at.line, at.col, sys.lit("expected `|`"))) }
+        let mut n = mk(ast.IType, name.line, name.col)
+        n.a = name.sym
+        n.b = public
+        n.c = list(inout p, gs)
+        n.d = gs.len() as u32
+        n.e = list(inout p, members)
+        n.g = target + 1
+        return Ok(add(inout p, n))
+    }
     if is(p, lex.LBrace) {
         adv(inout p)
         while true {
