@@ -1,0 +1,1 @@
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_alias_impl_target.ei","line":5,"col":6},"message":"`Pt` is a type alias; an impl names the type itself","help":"write the impl for the type the alias stands for"}

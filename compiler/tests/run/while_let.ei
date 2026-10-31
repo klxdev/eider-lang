@@ -1,0 +1,41 @@
+// `while let PAT = EXPR { body }` (docs/compiler.md, "C8.22"): runs the body while EXPR
+// matches PAT; `break` and `continue` work as in any loop. Expected output: while_let.out.
+type Node = | Leaf | Cons(v: i32, next: Box[Node])
+
+fn main() uses io {
+    let mut stack: List[String] = List.new()
+    stack.push(String.from("a"))
+    stack.push(String.from("b"))
+    stack.push(String.from("c"))
+    while let Some(top) = stack.pop() {
+        print(top)
+    }
+    print(stack.len())
+    // continue and break
+    let mut xs: List[i32] = List.new()
+    for i in 0..10 { xs.push(i) }
+    let mut sum = 0
+    while let Some(x) = xs.pop() {
+        if x % 2 == 0 { continue }
+        if x < 4 { break }
+        sum += x
+    }
+    print(sum)
+    print(xs.len())
+    // a linked list
+    let mut cur = Cons(1, Box.new(Cons(2, Box.new(Cons(3, Box.new(Leaf))))))
+    let mut total = 0
+    while let Cons(v, next) = cur {
+        total += v
+        let n = next.get()
+        cur = n
+    }
+    print(total)
+    // a pattern with a literal stops at the first mismatch
+    let mut pairs: List[(i32, String)] = List.new()
+    pairs.push((0, String.from("z")))
+    pairs.push((1, String.from("y")))
+    pairs.push((1, String.from("x")))
+    while let Some((1, s)) = pairs.pop() { print(s) }
+    print(pairs.len())
+}

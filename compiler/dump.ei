@@ -257,7 +257,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             child(inout out, p, "body", n.d, d)
         }
         ast.SForEach => {
-            sym(inout out, p, "var", n.a)
+            if n.e > 0 { child(inout out, p, "pat", n.e - 1, d) } else { sym(inout out, p, "var", n.a) }
             child(inout out, p, "iter", n.b, d)
             child(inout out, p, "body", n.d, d)
         }
@@ -291,6 +291,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             flag(inout out, "pub", n.b == 1)
             kids(inout out, p, "generic", n.c, n.d, d)
             kids(inout out, p, "member", n.e, n.f, d)
+            opt(inout out, p, "alias", n.g, d)
         }
         ast.Variant => {
             sym(inout out, p, "name", n.a)

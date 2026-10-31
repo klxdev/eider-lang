@@ -1,0 +1,63 @@
+// Type aliases (docs/compiler.md, "C8.18"): another name for a type, the same type wherever
+// it is written; generic aliases; pub aliases from another module. Expected output:
+// aliases.out.
+import "lib/handlers.ei" as h
+
+type Id = u64
+type Pair[T] = (T, T)
+type Grid = List[List[i32]]
+type Fold[A, B] = fn(A, B) -> A
+type Route = { path: String, run: h.Handler }
+type MaybeId = Option[Id]
+
+fn swap[T](p: Pair[T]) -> Pair[T] { (p.1, p.0) }
+
+fn fold[A: Copy, B](xs: List[B], init: A, f: Fold[A, B]) -> A {
+    let mut acc = init.copy()
+    for x in xs { acc = f(acc, x) }
+    acc
+}
+
+fn hello(r: h.Request) -> h.Response {
+    let mut s = String.from("hello ")
+    s.append(r.path)
+    h.ok(s)
+}
+
+fn first(g: Grid) -> i32 { g[0][0] }
+
+fn next_id(i: Id) -> MaybeId { if i < 3 { Some(i + 1) } else { None } }
+
+fn main() uses io {
+    let i: Id = 41
+    let j: u64 = i + 1
+    print(j)
+    print(swap((1, 2)))
+    let p: Pair[String] = (String.from("a"), String.from("b"))
+    print(swap(p))
+    let mut row: List[i32] = List.new()
+    row.push(5)
+    let mut g: Grid = List.new()
+    g.push(row)
+    print(first(g))
+    let mut xs: List[i32] = List.new()
+    for k in 1..4 { xs.push(k) }
+    print(fold(xs, 10, |a: i32, b: i32| -> i32 { a + b }))
+    let f: h.Handler = hello
+    let mut routes: List[Route] = List.new()
+    routes.push(Route(String.from("/hi"), f))
+    let r = h.Request(String.from("/hi"), 1)
+    for rt in routes {
+        let run: h.Handler = rt.run
+        print(run(r).body)
+        print(h.run(rt.run, r).code)
+    }
+    let mut t: h.Table[i32] = List.new()
+    t.push((String.from("x"), 1))
+    t.push((String.from("y"), 2))
+    let same: List[(String, i32)] = t
+    print(h.lookup(same, String.from("y")))
+    print(next_id(1))
+    print(next_id(3))
+    print(h.hidden())
+}

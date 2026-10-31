@@ -1,0 +1,4 @@
+// expect: E0111 3:13
+// an alias of an unknown type is reported at its declaration (docs/compiler.md, "C8.18")
+type H = fn(Req) -> i32
+fn main() {}

@@ -111,3 +111,8 @@ trait Hash { fn hash(self) -> u64 }
 trait Show { fn show(self, inout out: String) }
 trait Iter { fn next(inout self) -> Option[Item] }
 trait Drop { fn drop(inout self) }
+
+// Error conversion for `?` (docs/compiler.md, "C8.21"): with `impl From[E1] for E2 { fn
+// from(value: E1) -> E2 { ... } }` in E2's package, `?` on a Result[_, E1] in a function
+// returning Result[_, E2] returns Err(E2.from(e)). `Source` is the impl's type argument.
+trait From { fn from(value: Source) -> Self }

@@ -1,0 +1,56 @@
+// Calling a function stored in a field (docs/compiler.md, "C8.19"): `x.f(args)` calls the
+// field f when x's type has no method f; a method of that name (its own, built-in or a
+// language trait's, derived too) wins, and the field is then called through a binding.
+// Expected output: fn_fields.out.
+type Request = { path: String }
+type Response = { code: i32 }
+type Handler = fn(Request) -> Response
+
+type Server = { handler: Handler, hits: i32, label: fn(i32) -> String }
+
+impl Server {
+    fn serve(self, r: Request) -> Response { self.handler(r) }
+}
+
+type Box2[T] = { f: fn(T) -> T, v: T }
+
+impl[T] Box2[T] {
+    fn apply(self) -> T { self.f(self.v) }
+}
+
+// a field named like a method: the method wins
+type Clash = { get: fn() -> i32, copy: fn() -> i32 }
+
+impl Clash {
+    fn get(self) -> i32 { 100 }
+}
+
+fn ok(r: Request) -> Response {
+    if r.path.len() == 1 { Response(200) } else { Response(404) }
+}
+
+fn name(n: i32) -> String { String.from_int(n as i64) }
+fn one() -> i32 { 1 }
+fn two() -> i32 { 2 }
+fn inc(x: i32) -> i32 { x + 1 }
+
+fn main() uses io {
+    let s = Server(ok, 0, name)
+    print(s.handler(Request(String.from("/"))).code)
+    print(s.serve(Request(String.from("/x"))).code)
+    print(s.label(42))
+    let mut servers: List[Server] = List.new()
+    servers.push(s)
+    print(servers[0].handler(Request(String.from("/"))).code)
+    let fi: fn(i32) -> i32 = inc
+    let b = Box2(fi, 41)
+    print(b.apply())
+    print(b.f(1))
+    let c = Clash(one, two)
+    print(c.get())
+    let g = c.get
+    print(g())
+    let d = c.copy()
+    let h = d.copy
+    print(h())
+}

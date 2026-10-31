@@ -1,0 +1,15 @@
+// expect: E0601 14:13
+// a bound naming a non-generic impl target is met only by that type (a name that isn't a
+// type parameter used to match any type, and the error came from the instance's body as
+// E0115; docs/compiler.md, "C8.16")
+trait Area {
+    fn area(self) -> u32
+}
+type Sq = { s: u32 }
+impl Area for Sq {
+    fn area(self) -> u32 { self.s }
+}
+fn total[T: Area](a: T) -> u32 { a.area() }
+fn main() {
+    let x = total(5)
+}

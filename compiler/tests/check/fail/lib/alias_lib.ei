@@ -1,0 +1,2 @@
+type Secret = i32
+pub type Open = i32

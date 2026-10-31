@@ -1,0 +1,7 @@
+// expect: E0115 6:15
+// `take()` needs a type with an empty value (docs/compiler.md, "C8.15: take and replace")
+type P = { x: i32 }
+fn main() {
+    let mut p = P(1)
+    let q = p.take()
+}

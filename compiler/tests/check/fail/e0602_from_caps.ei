@@ -1,0 +1,10 @@
+// expect: E0602 5:8
+// `from` can't declare capabilities (docs/compiler.md, "C8.21")
+type E = { m: i32 }
+impl From[i32] for E {
+    fn from(value: i32) -> E uses io {
+        print(value)
+        E(value)
+    }
+}
+fn main() {}

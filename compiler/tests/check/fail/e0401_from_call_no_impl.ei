@@ -1,0 +1,9 @@
+// expect: E0401 8:20
+// `E.from(x)` needs an impl for x's type (docs/compiler.md, "C8.21")
+type E = { m: i32 }
+impl From[i32] for E {
+    fn from(value: i32) -> E { E(value) }
+}
+fn main() {
+    let e = E.from(true)
+}

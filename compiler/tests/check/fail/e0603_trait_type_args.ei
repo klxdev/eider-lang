@@ -1,0 +1,7 @@
+// expect: E0603 4:6
+// only `From` takes a type argument (docs/compiler.md, "C8.21")
+type E = { m: i32 }
+impl Show[i32] for E {
+    fn show(self, inout out: String) {}
+}
+fn main() {}

@@ -1,0 +1,82 @@
+// Iterating a Map (docs/compiler.md, "C8.20"): `for (k, v) in m`, `for e in m` (a (key,
+// value) tuple), `m.keys()`, `m.values()`, `m.entries()`; all in slot order, which is fixed
+// for a given insertion history; the loop runs over copies made before it, so the body may
+// change the Map. Also tuple patterns in `for` over a List. Expected output: map_iter.out.
+type Item = { name: String, qty: i32 }
+
+fn total(m: Map[String, Item]) -> i32 {
+    let mut n = 0
+    for (_, it) in m { n += it.qty }
+    n
+}
+
+fn sorted(xs: List[String]) -> List[String] {
+    // insertion sort, to print keys in a fixed order whatever the slots
+    let mut out: List[String] = List.new()
+    for x in xs {
+        let mut i: usize = 0
+        while i < out.len() && out[i] < x { i += 1 }
+        let mut next: List[String] = List.new()
+        for j in 0..i { next.push(out[j]) }
+        next.push(x)
+        for j in i..out.len() { next.push(out[j]) }
+        out = next
+    }
+    out
+}
+
+fn main() uses io {
+    let mut m: Map[i32, String] = Map.new()
+    for i in 0..5 { m.insert(i * 7, String.from_int((i * 10) as i64)) }
+    let mut ks = 0
+    for (k, v) in m {
+        ks += k
+        print(v.len())
+    }
+    print(ks)
+    print(m.keys().len())
+    let mut sum = 0
+    for k in m.keys() { sum += k }
+    print(sum)
+    print(m.values().len())
+    // the same order everywhere
+    let es = m.entries()
+    let mut same = true
+    let keys = m.keys()
+    let vals = m.values()
+    for i in 0..es.len() {
+        if es[i].0 != keys[i] || es[i].1 != vals[i] { same = false }
+    }
+    print(same)
+    for e in m {
+        if e.0 == 14 { print(e.1) }
+    }
+    // the body may change the Map: the loop sees the pairs from before
+    for (k, _) in m {
+        m.remove(k)
+        m.insert(k + 1000, String.from("moved"))
+    }
+    print(m.len())
+    print(m.contains(1000))
+    print(m.contains(0))
+    let mut inv: Map[String, Item] = Map.new()
+    inv.insert(String.from("b"), Item(String.from("bolt"), 3))
+    inv.insert(String.from("a"), Item(String.from("axle"), 4))
+    inv.insert(String.from("c"), Item(String.from("cog"), 5))
+    print(total(inv))
+    print(sorted(inv.keys()))
+    let empty: Map[u8, bool] = Map.new()
+    for (k, v) in empty { print(k) }
+    print(empty.keys().len())
+    // tuple patterns over a List, nested
+    let mut ps: List[(i32, (String, bool))] = List.new()
+    ps.push((1, (String.from("one"), true)))
+    ps.push((2, (String.from("two"), false)))
+    for (n, (name, on)) in ps {
+        if on { print(name) } else { print(n) }
+    }
+    for (mut n, _) in ps {
+        n += 100
+        print(n)
+    }
+}

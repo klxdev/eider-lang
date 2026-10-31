@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_alias_generic_arg.ei","line":7,"col":20},"message":"argument of type (i32, bool) doesn't match parameter type `Pair[T]`"}

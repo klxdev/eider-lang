@@ -184,12 +184,12 @@ around in core.
 |---|---|---|
 | **Capability polymorphism.** A generic body is checked per instance, so it must declare the union of the capabilities of every type it may be given | `BufReader[Bytes]` and `read_all` on memory need `uses io`; a user Reader that needs `net` can't go through std's generic code (so std's own streams use `io` only: sockets are read with read(2)) | capabilities that follow type parameters (`uses io + R`), or checking a generic body against its bounds' declared capabilities |
 | **Default methods in traits** | `stream.read_all(inout r)` rather than `r.read_all()` | trait methods with bodies |
-| **Error conversions for `?`** (roadmap P0.6) | `?` can't turn a `stream.Error` into a String or another error type; `stream.plain(r)` converts by hand | `From`, or an `Error` trait |
+| **Error conversions for `?`** (roadmap P0.6) | `?` can't turn a `stream.Error` into a String or another error type; `stream.plain(r)` converts by hand | `From`, or an `Error` trait (`impl From[E1] for E2` and `?` through it in compiler/ since docs/compiler.md "C8.21"; usable after the next seed; the `Error` trait is next) |
 | **`Drop` that may do I/O** (E0606 forbids capabilities in `drop`) | `BufWriter` can't flush on drop and `Fd` can't close on drop: call `flush`/`close` | a scoped `defer` (P0.3) or a drop with checked capabilities |
-| **Iterating a Map** | `Set` keeps its elements in a List beside the Map | `for (k, v) in map`, or `keys()` |
+| **Iterating a Map** | `Set` keeps its elements in a List beside the Map | `for (k, v) in map`, or `keys()` (in compiler/ since docs/compiler.md "C8.20"; usable after the next seed) |
 | **In-place List operations and views** (`insert`/`remove` at an index, `truncate`, `extend`, `swap`, slices) | stream buffers copy their unread tail when compacting, `bytes.slice`-style copies everywhere; merge sort builds new Lists | the built-ins, and zero-copy views with 8.6 references |
 | **16-bit integers** | `encoding.u16_le` returns a u32 | `u16`/`i16` |
-| **String literal escapes** `\r`, `\0`, `\xNN`, `\u{...}` | tests build CRLF input from bytes | the escapes |
+| **String literal escapes** `\r`, `\0`, `\xNN`, `\u{...}` | tests build CRLF input from bytes | the escapes (in compiler/ since docs/compiler.md "C8.17", `\0` refused: strings hold no NUL; usable in std after the next seed) |
 | **`panic` with a computed message** (`panic` takes only a `str`) | `assert_eq` prints its diff to stderr, then panics with a fixed text | `panic(String)` |
 | **`if`/`match` as a call argument** (E0103) | values are bound to a `let` first | expression-position `if` |
 | **Floats** (C9) | no float formatting or parsing in `fmt`/`strings` | f64 |
@@ -198,7 +198,9 @@ around in core.
 ### Compiler bugs found (seed eiderc)
 
 Reproductions are small enough to inline; none is worked around in std beyond avoiding
-the construct.
+the construct. All four are fixed in compiler/ (docs/compiler.md, "C8.16"), so they go
+away for std with the next seed; until then std keeps avoiding them (verify.sh builds std
+with the seed).
 
 1. **A generic `T` instantiated with `()` inside a match arm produces C that doesn't
    compile** (`'l4' undeclared`):

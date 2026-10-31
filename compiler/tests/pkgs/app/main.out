@@ -5,8 +5,8 @@ shapes util
 3
 80
 3
-base__High
-util__Foot
-util__Edge
+High
+Foot
+Edge
 --- stderr
 --- exit 0

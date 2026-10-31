@@ -1,0 +1,22 @@
+(IFn 1:4 name=main end=1:10
+  body (Block 1:11 end=3:1
+    stmt (SWhile 2:5
+      cond (EBool 2:5 value=true)
+      body (Block 2:5 end=2:37
+        stmt (SExpr 2:5
+          expr (EMatch 2:5 end=2:37
+            scrutinee (ECall 2:25 name=f)
+            arm (Arm 2:5
+              pat (PVariant 2:15 name=Some
+                sub (PName 2:20 name=x))
+              body (EBlock 2:5
+                block (Block 2:29 end=2:36
+                  stmt (SExpr 2:31
+                    expr (ECall 2:31 name=g
+                      arg (EArg 2:33
+                        expr (EIdent 2:33 name=x)))))))
+            arm (Arm 2:5
+              pat (PWild 2:5)
+              body (EBlock 2:5
+                block (Block 2:5 end=2:37
+                  stmt (SBreak 2:5))))))))))

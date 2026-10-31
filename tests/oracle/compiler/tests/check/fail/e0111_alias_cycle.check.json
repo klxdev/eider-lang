@@ -1,0 +1,1 @@
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_alias_cycle.ei","line":3,"col":15},"message":"type alias `A` refers to itself","help":"an alias is another name for a type; a recursive type needs a record or an enum (`type Tree = { kids: List[Tree] }`)"}

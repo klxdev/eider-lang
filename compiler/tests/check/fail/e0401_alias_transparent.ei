@@ -1,0 +1,7 @@
+// expect: E0401 6:18
+// an alias is the type it names: a mismatch says so (docs/compiler.md, "C8.18")
+type Id = u64
+fn main() {
+    let a: Id = 1
+    let b: i32 = a
+}

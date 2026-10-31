@@ -1,0 +1,4 @@
+// expect: E0111 3:15
+// a type alias can't refer to itself (docs/compiler.md, "C8.18")
+type A = List[A]
+fn main() {}

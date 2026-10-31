@@ -1,0 +1,6 @@
+// expect: E0801 5:12
+// a private alias of another module (docs/compiler.md, "C8.18")
+import "lib/alias_lib.ei"
+fn main() {
+    let x: alias_lib.Secret = 1
+}

@@ -1,0 +1,9 @@
+TimedOut
+Other(3)
+Rec { k: TimedOut, n: 2 }
+[TimedOut, Other(1)]
+Wrap(TimedOut)
+Empty
+TimedOut
+Some(Rec { k: Other(-1), n: 0 })
+Err(TimedOut)

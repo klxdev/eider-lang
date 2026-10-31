@@ -145,6 +145,9 @@ seed supports:
   meaning of `let` (a copy) and by itself with the new one (a reference), so a `let` of a
   place whose place is written while the binding is used later takes `.copy()`, which means
   the same under both.
+- None of wave 4's language (C8.15 `take`/`replace`, C8.17 escapes, C8.18 aliases, C8.20 Map
+  iteration and `for` patterns, C8.21 `From`, C8.22 `while let`) until a seed has it; the
+  same holds for std and packages, which verify.sh builds with the seed.
 
 ## C3: checking
 
@@ -814,17 +817,15 @@ review the oracle diff, add a test, and regenerate the seed.
   the constructing module; in a module's test block a local named like one of the module's
   items is shadowed by the item; `x /= 0` is not a compile error although `x / 0` is
   ("C3: checking").
-- Checker (S1–S3): a name in an impl target that isn't a type parameter matches every type
-  (`impl Area for Sq` meets `T: Area` for any T; `impl W[i32]`'s methods apply to every `W`);
-  registering an impl replaces `Self` textually, also inside `MySelf`; impls on fn types never
-  match a receiver (`compiler/tests/check/fail/e0115_quirk_bound_name_target.ei`).
+- Checker (S1–S3): registering an impl replaces `Self` textually, also inside `MySelf`;
+  impls on fn types never match a receiver. (A name in an impl target or a generic signature
+  that isn't a type parameter no longer matches every type: "C8.16".)
 - Comptime: an evaluator lacks every comptime constant not yet evaluated, so a plain `const`
   naming a comptime constant always fails (E0110) and so does any function naming a later
   one; any error in the rest of the program is found by the first evaluator, and an E0201
-  there loses its fix; traps during evaluation name the file `program` ("C7: comptime").
-- Lowering: an imported module's unit enum prints its mangled name (`geo__South`); trap
-  messages always name the entry file, even for a trap in an imported module ("C4:
-  lowering").
+  there loses its fix; traps during evaluation in the evaluated file name the file
+  `program` ("C7: comptime"; a trap in an imported module or the prelude names its file
+  since "C8.16").
 - Threads: `contains` on a List of handles compares them as equal ("C7: threads").
 - Library header: every header has the include guard `EIDER_EXPORTS_H`, so two libraries'
   headers can't be included together (compiler/tests/export/consumer.c declares by hand);
@@ -994,7 +995,14 @@ and leaves the analyzer building.
 | 5 | **8.12 Performance** | smaller generated C, one C file per module compiled in parallel, incremental front end keyed by module hash | 8.3 |
 | 5 | **8.13 Tooling** | `eiderc fmt` (formatter); analyzer: rename, workspace symbols, signature help, inlay hints, formatting; tree-sitter grammar generated from the compiler grammar | 8.9 |
 | 5 | **8.14 Package manager on bare imports** | eider-pkg reworked for 8.3/8.5 (no link farm, compiler-reported grants), registry design | 8.3, 8.5 |
-| later | 8.15 Projections, lints | std accessors returning references; lints for real copies at escapes and `Ref` cycles | 8.6, 8.7 |
+| later | 8.15 Projections, lints (`take`/`replace` done: "C8.15: take and replace") | std accessors returning references; lints for real copies at escapes and `Ref` cycles | 8.6, 8.7 |
+| 4 | **8.16 Seed bugs from std** (done: "C8.16: the seed bugs std found") | the four bugs of docs/std.md "Compiler bugs found": `()` in a generic match arm, a type name in a generic signature matching any type, traps naming the entry file, derived Show printing C names | — |
+| 4 | **8.17 String escapes** (done: "C8.17: string escapes") | `\r`, `\0` (refused), `\xNN`, `\u{...}`, adjacent literals | — |
+| 4 | **8.18 Type aliases** (done: "C8.18: type aliases") | `type Handler = fn(Request) -> Response`, generic aliases, `pub` across modules | — |
+| 4 | **8.19 Calling a fn field** (done: "C8.19: calling a function stored in a field") | `self.handler(req)`, with the rule for a clash with a method | — |
+| 4 | **8.20 Iterating a Map** (done: "C8.20: iterating a Map") | `for (k, v) in m`, `m.keys()`, `m.values()` in slot order | 8.4 |
+| 4 | **8.21 Error conversion for `?`** (P0.6; "C8.21: error conversion for `?`") | `From[E]` in the prelude; `?` converts `Err(e)` through an impl | 8.4 |
+| 4 | **8.22 `while let`, labeled loops** (`while let` done: "C8.22: `while let`"; labeled loops not started) | `while let p = e`, `'outer: for`, `break 'outer`, `continue 'outer` | — |
 
 ## C8.3: packages and modules
 
@@ -1849,6 +1857,332 @@ it is alive (liveness in lowering), or a deep copy at the clones that share that
 it is alive. Then, after the next seed: run scripts/migrate-var.sh on compiler/, std/,
 core/, packages/, tests/ and examples/, drop `var` from "Writing the compiler in today's
 Eider", and decide when `var` becomes an error.
+
+## C8.16: the seed bugs std found
+
+Wave 4, item 8.16: the four bugs docs/std.md ("Compiler bugs found") reported against the
+seed, each with a regression test. Code: lower.ei (`op`, `put_line`, `files_table`,
+`shown_name`), check.ei (`name_fits`, `trap_file`), resolve.ei (`shown_path`), ir.ei
+(`Fn.file`, `Ir.files`), core/eider_rt.{h,c} and core/wasm/eider_rt.c (`ei_set_files`).
+
+1. **`()` read out of a payload.** A `()` local has no C variable (it is never declared or
+   assigned), but an operand naming one was still printed as the variable, so a generic
+   `T = ()` read out of a payload in a match arm (`Ok(v) => Ok(v)`) referred to an undeclared
+   `lN`. An operand of type `()` or `!` now lowers to `0`, as the `()` literal does.
+   Test: compiler/tests/run/bug_unit_generic.ei (generic match arms, `if let`, nested
+   instances with `()` in either parameter).
+2. **A type name in a generic signature matches only its type.** When a call's argument was
+   unified with a parameter type written with type parameters (`Result[T, E]`), a name that
+   isn't a type parameter (`E`) matched any type, so `plain(Ok(1): Result[i32, String])` was
+   accepted and the C didn't compile. `unify_ast` now asks `name_fits`: a built-in type name
+   must be that type, a non-generic record or enum must be that record or enum; a name that
+   names nothing concrete there (`Self`, an unknown name, reported elsewhere) still fits
+   anything. The error is the existing **E0401** "argument of type Result[i32, String] doesn't
+   match parameter type `Result[T, E]`" (no new code: it is the mismatch E0401 already
+   reports for the other shapes). The same function matches impl targets, so the parity
+   quirk "a name in an impl target matches every type" is fixed with it: `impl Area for Sq`
+   meets `T: Area` only for Sq (a call `total(5)` is now E0601 "type i32 doesn't implement
+   trait `Area`" at the call, where it was E0115 inside the instance), and `impl W[i32]`'s
+   methods apply to W[i32] only (E0115 on `W(true).twice()`). Tests:
+   `e0401_generic_record_name`, `e0601_bound_name_target`, `e0601_bound_unmet_impl` (was
+   e0115_bound_unmet_impl), `e0115_impl_args_name`; the two compile-pass tests that
+   recorded the quirk (`s1_quirk_impl_concrete_args`, `s1_trait_quirk_name_target`) are gone.
+3. **Traps name their own file.** The runtime knew one file (`ei_set_file`, the entry's), so
+   a trap in an imported module named the entry file with the module's line. Every IR
+   function now records its module (`ir.Fn.file`, set from the checker's module), and in a
+   function of an imported module lowering passes the runtime `f * 2^20 + line` instead of
+   the line (`put_line`), where f is the module's index. Generated `main` (and test `main`,
+   and each exported library entry point) hands the runtime a table of file names after
+   `ei_set_file` (`static const char *const ei_files[] = { 0, "lib/geo.ei", ... }`,
+   `ei_set_files(ei_files, n)`), emitted only when some imported module has a trap line, so
+   single-file programs get the C they had. `ei_trap` decodes the index; a line without one
+   (and anything a program built by an older compiler passes) names the entry file as before,
+   so core stays compatible with the seed. Names (`resolve.shown_path`) carry no machine
+   path: a module of a package, found under the package's directory, is `<package>/<path in
+   it>` (`std/testing.ei`, `core/prelude.ei`, `geo/util.ei`: std and core are packages), else
+   a file under the toolchain root is relative to it, and anything else is the path
+   diagnostics use (relative to the entry's directory). Limits:
+   2047 modules and 2^20 lines per module; past them a trap names the entry file. Tests:
+   compiler/tests/run/trap_module.ei (run: the module's panic), modules.ei's test of a
+   module's failing test block (`lib/geo.ei:46`), tests/std/atomic_overflow (an overflow in
+   std/atomic.ei; its seed output stays in .out, this compiler's is the new .next.out, which
+   test-compiler.sh's meaning leg reads until the next seed), and the comptime cases below.
+4. **Printing spells Eider names.** Derived Show (and `print` of a unit enum, `main`'s `Err`)
+   printed a type or variant of an imported module by its C-level key (`stream__TimedOut`,
+   `geo__South`). It now prints the name as its own module writes it (`TimedOut`, `South`;
+   `shown_name`), as it always did for the entry module's types: printing is the value, not
+   where it was declared (decision C61). Test: compiler/tests/run/bug_show_module.ei
+   (variants with and without payloads, records, Lists, generics, Option and Result of them,
+   `to_string`).
+
+**Oracle changes** (`BLESS=1`, reviewed): compiler/tests/run/modules.run prints `South`,
+`West`, `North`, `East` (was `geo__South` ...); modules.test names `compiler/tests/run/lib/
+geo.ei:46` (was the entry's `modules.ei:46`); the comptime evaluator's trap in an imported
+module names that module (e0807_comptime_mod_trap: `(compiler/tests/check/fail/../lib/
+ct_trap.ei:2)`, was `(program:2)`) and a trap in the prelude names it (e0807_comptime_unwrap:
+`(core/prelude.ei:26)`, was `(program:26)`); compiler/tests/pkgs/app/main.out prints `High`,
+`Foot`, `Edge` (was `base__High` ...); the compile-fail runner output follows the renamed,
+added and removed cases above. Nothing else changed.
+
+## C8.17: string escapes
+
+Wave 4, item 8.17 (docs/std.md "Needs the compiler", docs/services.md N2). Code: lex.ei
+(`string`, `hex_escape`, `unicode_escape`, `utf8_push`, and the join in `run`).
+
+**Escapes** in string literals, besides `\n`, `\t`, `\"` and `\\`:
+
+| Escape | Means | Refused (E0001, at the backslash) |
+|---|---|---|
+| `\r` | carriage return (13) | |
+| `\xNN` | the ASCII character NN: exactly two hex digits, either case, 01 to 7f | fewer than two digits; 80 to ff ("write a non-ASCII character as `\u{...}`"); 00 |
+| `\u{H...}` | the Unicode scalar value H (one to six hex digits), UTF-8 encoded | no braces, no or more than six digits, a surrogate (d800 to dfff), above 10ffff, 0 |
+| `\0` | | always: "a string can't contain NUL" |
+
+NUL is refused in every spelling (`\0`, `\x00`, `\u{0}`) because a `str` is a NUL-terminated
+C string (its length is `strlen`) and a String is UTF-8 text without NUL (std/strings and
+`String.from_bytes` rely on it): a NUL would silently cut the text. Bytes that include 0
+belong in a `List[u8]` (decision C60). `\xNN` stops at 7f for the same reason a String is
+always valid UTF-8: a lone byte above 7f isn't (Rust's rule too).
+
+**Adjacent literals** separated only by spaces on one line are one literal (`"GET / HTTP/1.1\r\n"
+"Host: x\r\n"` is one token): it was a syntax error before, so no program changes meaning.
+Literals on different lines are not joined: a string literal statement followed by another
+on the next line is valid today (the last is the block's value), so joining across lines
+would change programs; a continuation rule (inside parentheses, or a leading operator) is
+left for a later decision.
+
+**Syntax changes** (for the tree-sitter grammar, a separate repository): in the string
+token, the escape alternatives become `\\[nrt"\\]`, `\\x[0-7][0-9a-fA-F]` and
+`\\u\{[0-9a-fA-F]{1,6}\}` (`\0` stays an error); the grammar's string node may repeat
+(`string: $ => repeat1($._string_literal)` on one line), or keep one literal per node and
+leave joining to the compiler.
+
+**Tests.** Run: compiler/tests/run/escapes.ei (`\r\n`, `\x41\x7f\x1b`, `\u{...}` of one to four
+UTF-8 bytes up to 10FFFF, joined literals, a String built from joined literals, escaped
+backslashes; hand-checked .out); lexer: compiler/tests/lex/escape_*.ei (each refusal, with
+its position; the oracle records them) and compiler/tests/lex_ok/escapes.ei (the tokens: one
+literal for three joined ones, two for literals on two lines). No oracle file changed.
+
+## C8.18: type aliases
+
+Wave 4, item 8.18 (docs/services.md N1). Code: parse.ei (`type_decl`), ast.ei (IType's `g`),
+check.ei's "Type aliases" section (`alias_ty`, `alias_of`, `unify_alias`; pass 1 and 2 of
+`run`, `resolve_ty`, `unify_ast`, `register_impl`), dump.ei.
+
+`type Name = <type>` and `type Name[T, ...] = <type>` (any type but a record body `{...}`
+or variants `| ...`, which keep their meaning) declare an alias: another name for the type,
+not a new type. It is **transparent**: `type Id = u64` makes `Id` and `u64` the same type
+everywhere (assignable both ways, the same methods, the same C), and a mismatch names the
+type itself ("expected i32, found u64"). A generic alias is resolved at each use with its
+parameters bound to the use's arguments (`type Table[T] = List[(String, T)]`); in a generic
+signature its arguments take part in inference like any type's (`fn second[T](p: Pair[T])`
+infers T from a `(i32, i32)`). `pub type` exports an alias like any type (E0801 for a
+private one used from another module); it may name private types of its module (as a pub
+function's signature may). Rules, each the simplest sound one (decision C62):
+
+- An alias names a type only: it is not a constructor (`Pt(1)` for `type Pt = Point` is
+  "unknown function"), it brings no variant names, and an `impl` can't name it (**E0111**
+  "`Pt` is a type alias; an impl names the type itself": methods belong to the type).
+- A non-generic alias's type is checked at its declaration (an unknown type in it is E0111
+  there, in its own file); a generic one where it is used, like a generic type's fields.
+- An alias can't refer to itself, directly or through other aliases (`type A = List[A]`,
+  E0111 "type alias `A` refers to itself", with the help that a recursive type needs a record
+  or an enum); recursion through a record or enum is fine.
+- Type declarations still take no bounds, so `type M[K, V] = Map[K, List[V]]` is checked where
+  it is applied (a key type parameter of a generic function needs `K: Hash + Eq` as for
+  `Map` itself, E0605).
+
+**Syntax changes** (for the tree-sitter grammar): `type_item` gains an alternative
+`'type' name generics? '=' type` where `type` doesn't start with `{` or `|`. `type A = X | Y`
+(an enum missing its first `|`) stays the E0001 "expected `|`" it was.
+
+**Tests.** Run: compiler/tests/run/aliases.ei with lib/handlers.ei (scalar, tuple, List,
+fn and Option aliases, generic aliases with one and two parameters, an alias inside a record
+field, pub aliases and a generic alias of another module, a private alias in a pub
+signature; hand-checked .out). Compile-fail (compiler/tests/check/fail): `e0111_alias_cycle`,
+`e0111_alias_mutual_cycle`, `e0111_alias_needs_args`, `e0111_alias_unknown_target`,
+`e0111_alias_impl_target`, `e0107_alias_duplicate`, `e0801_alias_private` (with
+lib/alias_lib.ei), `e0401_alias_transparent`, `e0401_alias_generic_arg`. Parse:
+compiler/tests/parse_ok/aliases.ei. compiler/tests/parse/enum_missing_pipe.ei became
+`type A = X | Y` (same error, same position; `type A = X` is now an alias).
+
+## C8.19: calling a function stored in a field
+
+Wave 4, item 8.19 (docs/services.md N10). `x.f(args)` where x's type has a field `f` holding a
+function calls it; this was already accepted (since S3, `method_call_in`), so the item is the
+rule for a name that is both a field and a method, now stated and made consistent:
+
+**A method wins.** `x.f(...)` is the method f when x's type has one: its own (an `impl`,
+inherent or of a trait, that applies to the type), a built-in method, or a method of a
+language trait the type has, derived ones included (`copy`, `eq`, `compare`, `hash`, `show`,
+`to_string`). Only when there is none is a field f of function type called. The field of a
+clashing name is called through a binding: `let h = x.f; h(args)` (decision C63). Before,
+a derived trait method lost to a field of its name (`x.copy()` called a field `copy`), the
+one inconsistency, now fixed; nothing in the repository relied on it. A field that isn't a
+function stays E0115 ("type R has no method `v`"). Methods winning keeps every existing call
+meaning what it meant (fields could already be named like methods, e.g. a `len` field with a
+`len()` method), and a field never changes what a method call resolves to.
+
+Test: compiler/tests/run/fn_fields.ei (a handler field of an alias type called from a method
+and through a List element, a generic record's fn field, a field and a method of one name, a
+field named like the derived `copy`; hand-checked .out).
+
+## C8.20: iterating a Map
+
+Wave 4, item 8.20 (docs/std.md "Iterating a Map", docs/services.md N9). Code: check.ei
+(`for_each`, `for_pat`, `map_list_type`, `heap_method`'s Map part), parse.ei (`for (...)`),
+ir.ei (B_MAP_KEYS, B_MAP_VALUES, B_MAP_ENTRIES), lower.ei (`map_lists`).
+
+- `m.keys() -> List[K]`, `m.values() -> List[V]` and `m.entries() -> List[(K, V)]` are built-in
+  Map methods: new Lists of copies (copy-on-write shares for heap data, so O(n) small copies).
+- `for (k, v) in m` and `for e in m` (e a `(K, V)` tuple) iterate the pairs. The loop runs over
+  `m.entries()` taken before it starts (owned by the loop, dropped after it, on every exit),
+  so the body may insert into or remove from `m` and the loop still sees each pair from
+  before exactly once (value semantics; a live view would make every resize during the loop
+  an E0308).
+- `for` takes any irrefutable pattern, over every sequence (`for (n, (name, on)) in pairs`,
+  `for (mut n, _) in ps`): each binding owns a copy of its part, as a `for` variable does
+  (C8.6); a pattern that can fail is **E0101** "refutable pattern in `for`", a wrong shape
+  the pattern errors `let` gives (E0410 ...).
+
+**Order.** All four walk the slots in index order, so they agree with each other and with
+`print` of the Map. The slot of a key depends only on its hash and the Map's insertion and
+removal history, and hashing is unseeded today (`ei_hash_u64`, FNV-1a for text; C8.4), so the
+order is the same on every run, build and platform for the same history (tests can pin it). It
+is not sorted, and it is not insertion order. When Maps get a per-process random seed (the
+C6 hardening, seeded SipHash: docs/std.md "Next"), the order will differ from run to run:
+code that needs a stable order sorts the keys (std/sort), as compiler/tests/run/map_iter.ei
+does, and nothing in the language promises more than "each pair once, in one order shared by
+keys/values/entries/for/print of the same Map value" (decision C64).
+
+`keys`, `values` and `entries` become built-in names, so an `impl Map[...]` method with one of
+those names is E0116, as for `len` or `get` (no program in the repository has one).
+
+**Syntax changes** (for the tree-sitter grammar): `for_statement` takes a pattern in
+parentheses where it took a name: `'for' (identifier | tuple_pattern) 'in' expression block`.
+
+**Tests.** Run: compiler/tests/run/map_iter.ei (`for (k, v)`, `for e`, the three methods and
+their common order, a body that removes and inserts, an empty Map, Maps of records, tuple
+patterns over a List, nested and with `mut`; hand-checked .out, leak-free, sanitizers).
+Compile-fail: `e0101_for_refutable`, `e0410_for_pattern_shape`, `e0405_map_keys_args`,
+`e0116_impl_map_keys`; e0401_heap_for_map (a Map wasn't iterable) became
+`e0401_heap_for_box`. The `for` E0401 help now lists a Map: "iterate over a List, an array, a
+Map, a range ..." (oracle: the three cases with that help).
+
+## C8.15: take and replace
+
+Wave 4, the `take`/`replace` part of item 8.15 (C8.6 "Choices the charter left open": the
+successor of `var` for values without Copy). Code: check.ei (`take_replace`, reached from
+`method_call_in`).
+
+- `x.replace(v) -> T` moves the value out of the place x (a variable, field or element: no
+  copy, not even a copy-on-write share) and moves v in; the result is the old value. Any
+  type, including types without Copy (a record holding a Chan or a Task) and type parameters
+  (`fn swap_out[T](inout slot: T, v: T) -> T { slot.replace(v) }`).
+- `x.take() -> T` is `x.replace(empty)` for the types with an empty value: String (`""`),
+  List and Map (empty), Option (`None`). On any other type it is E0115 "type P has no method
+  `take`", with the help that names the four and `replace`.
+- They are methods of every type that has no method of that name: a type's own `take` or
+  `replace` (std/stream's BufReader has a `take`) wins, as C8.19 decides for every method
+  name. They are not free functions, because `take` and `replace` are common function names
+  (compiler/tests name functions `take` in entry files, where a built-in function name is
+  reserved).
+- x must be a writable place: a read-only binding is E0303 as for any write (`cannot modify
+  `s``), a fresh value is E0303 "`List[i32].take` needs a place to move the value out of".
+  The write is an assignment for the protection rule (E0308 while a reference points into
+  x, compiler/tests/check/fail/e0308_take_while_referenced.ei).
+- IR: `old := S_MOVE x; S_STORE x := new` (no S_DROP: the old value moved out, so nothing is
+  dropped or copied); lowering un-shares the containers on x's path first, as for any write,
+  so taking from a copy-on-write share leaves the other holder intact.
+
+The pattern `let k = t.kids; t.kids = List.new()` that needed `var` (a copy) is now `let k =
+t.kids.take()`. std and packages keep their `var`s until the next seed (they are built by
+the seed, which lacks take/replace); what is left there (106 `var`s, all in generic bodies or
+of values without Copy: std/chan, deque, heap, set, sort, stream, strings, task, testing)
+moves to `let mut` with `take`/`replace` or `.copy()` case by case then.
+
+Tests: compiler/tests/run/take_replace.ei (a List field of a recursive record, a String, a
+Chan inside a List element, an `inout self` method, Option, Map, an integer, an own `take`
+winning, a generic `replace` through `inout`, copy-on-write independence; hand-checked .out,
+leak-free, sanitizers); compile-fail `e0115_take_no_empty`, `e0303_take_fresh`,
+`e0303_replace_read_only`, `e0401_replace_type`, `e0308_take_while_referenced`.
+
+## C8.21: error conversion for `?`
+
+Wave 4, item 8.21 (roadmap P0.6, its compiler part; docs/std.md "Error conversions for `?`").
+Code: core/prelude.ei (`trait From`), parse.ei (`impl_decl`), check.ei's "Error conversion"
+section (`register_from`, `find_from`, `from_instance`, `from_call`) and `try_op`,
+`instantiate` (instance names).
+
+**The trait.** The prelude ends with `trait From { fn from(value: Source) -> Self }` (after
+the operation traits, so no recorded prelude position moves; `Source` is a placeholder read
+off each impl, as `Iter`'s `Item` is). It is the one trait that takes a type argument in an
+impl: `impl From[E1] for E2 { fn from(value: E1) -> E2 { ... } }` (`-> Self` too; generic:
+`impl[T] From[T] for Tagged[T]`). A target may convert from any number of sources, one impl
+per source (E0107 for a second). As for the operation traits (C8.4):
+
+- the orphan rule: only the package that defines the target implements `From` for it
+  (**E0604**, "only the package that defines `String` can implement `From` for it"); the
+  source may be any type;
+- the method is exactly `fn from(value: Source) -> Target` (**E0602** otherwise, saying the
+  expected signature), and it declares no capabilities (E0602 "`from` can't declare
+  capabilities": `?` converts wherever it is written, as C8.4's `drop` runs wherever its
+  value goes);
+- `impl From for X` without the source is **E0603**; type arguments on any other trait are
+  E0603 "trait `Show` takes no type arguments";
+- a program whose entry module defines its own `From` trait shadows the prelude's (C8.4).
+
+**`?`.** In a function returning `Result[T2, E2]`, `x?` on a `Result[T1, E1]` with E1 not E2
+returns `Err(E2.from(e))` when some impl converts E1 into E2 (its type parameters bound by
+both); the error value is moved out, borrowed by `from`, then dropped. Without one it stays
+E0401 "`?` can't convert the error type A into B", which now has the help "implement
+`From[A]` for B (in its package), or convert with `match`" when B is a record or enum (no
+recorded case has one). Option's `?` is unchanged.
+
+**Calls.** `E2.from(x)` checks x first and picks the impl whose source fits x's type (and the
+expected type, for a generic target); none is E0401 "`E` has no `From` conversion from bool".
+`from` is not an ordinary method of E2 (it isn't in the method table, so several impls never
+clash), and its instances are named by source (`AppError.from[IoError]`).
+
+No `Into`, no blanket conversions (`impl[T] From[T] for T`), no `Error` trait or context
+chains yet: those are the std half of P0.6 (decision C66).
+
+**Tests.** Run: compiler/tests/run/from_try.ei (two sources into one enum, `?` through both in
+one function, no conversion when the types agree, explicit `AppError.from(...)` choosing by
+argument, a generic target `Tagged[T]`; hand-checked .out, leak-free, sanitizers).
+Compile-fail: `e0604_from_orphan`, `e0602_from_signature`, `e0602_from_caps`,
+`e0603_from_no_source`, `e0603_trait_type_args`, `e0107_from_twice`, `e0401_from_call_no_impl`,
+`e0401_try_no_from`. Oracle: the IDE goldens' prelude symbol count (90 to 93: the trait, its
+method and its parameter), and compiler/tests/parse/impl_trait_not_name.ei, which named
+`List[i32]` as a trait and now uses a tuple (`impl (i32, i32) for A`; same error, column 21)
+since a generic trait name parses.
+
+## C8.22: `while let`
+
+Wave 4, item 8.22, first half. `while let PAT = EXPR { body }` runs the body while EXPR (checked
+again before each iteration) matches PAT, with PAT's bindings in scope; `break` and
+`continue` are the loop's. Like `if let`, it is sugar the parser expands (parse.ei
+`while_let`): `while true { match EXPR { PAT => { body } _ => { break } } }`, so the checker,
+the protection rule, drops and lowering need nothing new, and a scrutinee that is a place
+binds references into it as `match` does (C8.6). A value that doesn't match is consumed
+like any match scrutinee (`while let Some((1, s)) = xs.pop()` drops the first pair that
+isn't `(1, _)`).
+
+**Syntax changes** (for the tree-sitter grammar): `while_statement` gains `'while' 'let'
+pattern '=' expression block`.
+
+Tests: compiler/tests/run/while_let.ei (popping a stack, `continue` and `break`, walking a
+linked list through a Box, a refutable tuple pattern inside Some; hand-checked .out,
+leak-free, sanitizers); parse: compiler/tests/parse_ok/while_let.ei (the expansion).
+
+**Not done: labeled loops** (`'outer: for ...`, `break 'outer`, `continue 'outer`). They need
+a label token in the lexer, a label slot on the three loop statements, a loop depth on
+S_BREAK/S_CONTINUE in the IR, the protection rule's liveness to route an outer `break` to
+that loop's exit (`lv_block` passes only the innermost loop's), and `goto`s in lowering
+(outer `break` past the inner `for (;;)`, outer `continue` to the outer step label, which
+`has_continue` must then find through nested loops). None is hard; together they touch
+lex, parse, check (loops, refs), ir and lower, and were left for a next item rather than
+squeezed in.
 
 ## Language work that lands in `eiderc` (after parity)
 

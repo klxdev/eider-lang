@@ -106,6 +106,8 @@ pub type Program = {
     pdirs: List[List[u8]],
     pdir_pkg: List[u32],
     locks: List[Lock],
+    /// each module's file as a trap names it (shown_path)
+    shown: List[List[u8]],
 }
 
 /// Note the syntax errors `ds` of module m (its lex and parse diagnostics).
@@ -380,7 +382,7 @@ pub type Loaded = { p: Program, diags: List[diag.Diag], fatal: bool }
 /// `load`, reading sources through `fp`.
 pub fn load_from(file: List[u8], src: List[u8], q: parse.P, fp: Files) -> Loaded uses io, fs {
     let mut p = Program(List.new(), List.new(), q.names, List.new(), List.new(), List.new(), NOMOD, List.new(), List.new(),
-        List.new(), List.new(), List.new(), List.new())
+        List.new(), List.new(), List.new(), List.new(), List.new())
     let canon = canonical(file)
     p.seen.push(canon)
     let pk = package_of(inout p, canon)
@@ -396,8 +398,35 @@ pub fn load_from(file: List[u8], src: List[u8], q: parse.P, fp: Files) -> Loaded
         }
     }
     for i in 0..p.mods.len() { compute_own(inout p, i as u32) }
+    for i in 0..p.mods.len() { p.shown.push(shown_path(p, i as u32)) }
     for d in grant_diags(p) { diags.push(d) }
     Loaded(p, diags, fatal)
+}
+
+/// Module m's file as a runtime trap names it (docs/compiler.md, "C8.16"): a file of a
+/// package found under the package's directory as `<package>/<path in the package>`, a
+/// toolchain file relative to the toolchain root (`std/testing.ei`, `core/prelude.ei`),
+/// any other file by the path it was loaded from
+/// (relative to the entry file's directory, as diagnostics name it). So the generated C
+/// holds no path that depends on where the toolchain or the store is.
+fn shown_path(p: Program, m: u32) -> List[u8] uses io {
+    let path = p.mods[m as usize].path
+    let pk = p.mods[m as usize].pkg
+    if pk != NOPKG {
+        let k = p.pkgs[pk as usize]
+        let mut dir = k.dir.copy()
+        dir.push(47)
+        if k.name.len() > 0 && bytes.starts_with(path, dir) {
+            let mut out = k.name.copy()
+            out.push(47)
+            bytes.append(inout out, bytes.slice(path, dir.len(), path.len()))
+            return out
+        }
+    }
+    let mut root = toolchain_root()
+    root.push(47)
+    if bytes.starts_with(path, root) { return bytes.slice(path, root.len(), path.len()) }
+    path
 }
 
 /// The toolchain root (see the top of this file).
@@ -962,7 +991,7 @@ fn collect_stmt(p: Program, m: u32, s: u32, inout out: Map[u32, bool]) {
             collect_block(p, m, n.d, inout out)
         }
         ast.SForEach => {
-            out.insert(n.a, true)
+            if n.e > 0 { collect_pat(p, m, n.e - 1, inout out) } else { out.insert(n.a, true) }
             collect_expr(p, m, n.b, inout out)
             collect_block(p, m, n.d, inout out)
         }

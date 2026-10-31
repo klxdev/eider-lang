@@ -1,0 +1,5 @@
+// expect: E0111 4:16
+// aliases that refer to each other (docs/compiler.md, "C8.18")
+type A = Option[B]
+type B = (i32, A)
+fn main() {}

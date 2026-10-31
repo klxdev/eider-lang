@@ -1,0 +1,1 @@
+{"error":"E0602","span":{"file":"compiler/tests/check/fail/e0602_from_caps.ei","line":5,"col":8},"message":"`from` can't declare capabilities","help":"`?` converts errors wherever it is written; do the work that needs a capability before returning the error"}

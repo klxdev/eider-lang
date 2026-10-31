@@ -1,0 +1,3 @@
+fn main() {
+    while let Some(x) = f() { g(x) }
+}

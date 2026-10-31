@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex/escape_too_big.ei","line":2,"col":14},"message":"`\\u{...}` is at most 10ffff, the largest Unicode scalar value"}

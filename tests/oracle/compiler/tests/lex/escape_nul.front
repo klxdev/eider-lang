@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex/escape_nul.ei","line":2,"col":15},"message":"a string can't contain NUL (`\\0`): str and String are UTF-8 text without NUL; put the byte 0 in a List[u8]"}

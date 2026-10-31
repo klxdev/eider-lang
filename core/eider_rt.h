@@ -46,6 +46,10 @@
 _Noreturn void ei_trap(const char *msg, int32_t line);
 /* The source file named in trap messages (a string literal; process-wide). */
 void ei_set_file(const char *file);
+/* The files of imported modules (process-wide): a trap line of f * 2^20 + l with
+   0 < f < n and files[f] set names files[f], line l; anything else names the file of
+   ei_set_file and the line as given. */
+void ei_set_files(const char *const *files, int32_t n);
 /* This thread's test hook: traps longjmp(*jb, 1) instead of exiting. NULL clears it. */
 void ei_set_trap_jmp(jmp_buf *jb);
 
