@@ -1,0 +1,168 @@
+// NIST CAVP vectors (tests/crypto/vectors/cavp_*.rsp): SHA-2, SHA-3, HMAC, AES-GCM,
+// ECDSA P-256 (key pairs, signature verification, generated signatures), ECDH P-256.
+
+import "std/bytes"
+import "std/io"
+import "vec.ei"
+import "../../packages/crypto/crypto.ei"
+
+fn eqb(a: List[u8], b: List[u8]) -> bool { bytes.eq(a, b) }
+
+// the value, or a panic that names the call and the error (the vector file or the backend is broken)
+fn must[T](r: Result[T, crypto.Error], what: str) -> T uses io {
+    match r {
+        Ok(v) => v
+        Err(e) => {
+            let mut m = what.bytes()
+            bytes.append(inout m, ": ".bytes())
+            bytes.append(inout m, crypto.error_text(e).bytes())
+            io.errln(m)
+            panic("cavp: unexpected error")
+        }
+    }
+}
+
+// the message of a SHA record: Len is in bits, and Len = 0 prints Msg = 00
+fn sha_msg(r: vec.Rec) -> List[u8] {
+    let n = (vec.get_int(r, "Len") / 8) as usize
+    bytes.slice(vec.get_hex(r, "Msg"), 0, n)
+}
+
+fn sha_file(inout t: vec.Tally, file: str, h: crypto.Hash, name: str) uses io, fs {
+    if !crypto.supports(crypto.Hashing(h)) {
+        io.outln(vec.label("skip", name.bytes()))
+        vec.skip(inout t, 1)
+        return
+    }
+    for r in vec.records(vec.read_vectors(file)) {
+        if !vec.has(r, "MD") { continue }
+        let d = must(crypto.digest(h, sha_msg(r)), "digest")
+        vec.check(inout t, eqb(d, vec.get_hex(r, "MD")), vec.label(name, vec.get(r, "Len")))
+    }
+}
+
+fn hmac_file(inout t: vec.Tally) uses io, fs {
+    for r in vec.records(vec.read_vectors("cavp_HMAC_sha2.rsp")) {
+        let l = vec.section_int(r, "L")
+        let h = if l == 32 { crypto.Sha256 } else if l == 48 { crypto.Sha384 } else { crypto.Sha512 }
+        let tlen = vec.get_int(r, "Tlen") as usize
+        let k = crypto.hmac_key(h, vec.get_hex(r, "Key"))
+        let tag = must(crypto.hmac(k, vec.get_hex(r, "Msg")), "hmac")
+        vec.check(inout t, eqb(bytes.slice(tag.bytes, 0, tlen), vec.get_hex(r, "Mac")), vec.label("hmac (CAVP)", vec.get(r, "Count")))
+    }
+}
+
+fn gcm_file(inout t: vec.Tally, file: str, a: crypto.Aead, decrypt: bool) uses io, fs {
+    for r in vec.records(vec.read_vectors(file)) {
+        if !vec.has(r, "Key") { continue }
+        let key = must(crypto.aead_key(a, vec.get_hex(r, "Key")), "aead_key")
+        let n = must(crypto.nonce(vec.get_hex(r, "IV")), "nonce")
+        let aad = vec.get_hex(r, "AAD")
+        let mut sealed = vec.get_hex(r, "CT")
+        bytes.append(inout sealed, vec.get_hex(r, "Tag"))
+        let what = vec.label(file, vec.get(r, "Count"))
+        if decrypt {
+            let got = crypto.open(key, n, aad, sealed)
+            if vec.has(r, "FAIL") {
+                vec.check(inout t, got.is_err(), what)
+            } else {
+                match got {
+                    Ok(p) => vec.check(inout t, eqb(p, vec.get_hex(r, "PT")), what)
+                    Err(_) => vec.check(inout t, false, what)
+                }
+            }
+        } else {
+            match crypto.seal(key, n, aad, vec.get_hex(r, "PT")) {
+                Ok(c) => vec.check(inout t, eqb(c, sealed), what)
+                Err(_) => vec.check(inout t, false, what)
+            }
+        }
+    }
+}
+
+fn point(r: vec.Rec, x: str, y: str) -> List[u8] {
+    let mut p: List[u8] = List.new()
+    p.push(4)
+    bytes.append(inout p, vec.get_hex(r, x))
+    bytes.append(inout p, vec.get_hex(r, y))
+    p
+}
+
+fn ecdsa(inout t: vec.Tally) uses io, fs {
+    for r in vec.records(vec.read_vectors("cavp_ecdsa_KeyPair_P256.rsp")) {
+        if !vec.has(r, "d") { continue }
+        let sk = must(crypto.p256_secret(vec.get_hex(r, "d")), "p256_secret")
+        let pk = must(crypto.p256_public(sk), "p256_public")
+        vec.check(inout t, eqb(pk.bytes, point(r, "Qx", "Qy")), "p256 key pair (CAVP KeyPair)".bytes())
+    }
+    for r in vec.records(vec.read_vectors("cavp_ecdsa_SigVer_P256_SHA256.rsp")) {
+        if !vec.has(r, "Msg") { continue }
+        let mut rs = vec.get_hex(r, "R")
+        bytes.append(inout rs, vec.get_hex(r, "S"))
+        let sig = must(crypto.p256_signature_raw(rs), "p256_signature_raw")
+        let want = bytes.starts_with(vec.get(r, "Result"), "P".bytes())
+        let got = match crypto.p256_public_key(point(r, "Qx", "Qy")) {
+            Ok(pk) => crypto.p256_verify(pk, vec.get_hex(r, "Msg"), sig)
+            Err(_) => false
+        }
+        vec.check(inout t, got == want, vec.label("ecdsa p256 SigVer", vec.get(r, "Result")))
+    }
+    for r in vec.records(vec.read_vectors("cavp_ecdsa_SigGen_P256_SHA256.rsp")) {
+        if !vec.has(r, "Msg") { continue }
+        // SigGen.rsp records the signature and the public key (d and k are not in it)
+        let msg = vec.get_hex(r, "Msg")
+        let pk = must(crypto.p256_public_key(point(r, "Qx", "Qy")), "p256_public_key")
+        let mut rs = vec.get_hex(r, "R")
+        bytes.append(inout rs, vec.get_hex(r, "S"))
+        let sig = must(crypto.p256_signature_raw(rs), "p256_signature_raw")
+        vec.check(inout t, crypto.p256_verify(pk, msg.copy(), sig), "ecdsa p256 SigGen: recorded signature".bytes())
+        let mut m2 = msg.copy()
+        m2[0] = m2[0] ^ 1
+        vec.check(inout t, !crypto.p256_verify(pk, m2, sig), "ecdsa p256 SigGen: altered message".bytes())
+    }
+    // signing (random k) with the KeyPair keys: the signature verifies and is strict DER
+    for r in vec.records(vec.read_vectors("cavp_ecdsa_KeyPair_P256.rsp")) {
+        if !vec.has(r, "d") { continue }
+        let sk = must(crypto.p256_secret(vec.get_hex(r, "d")), "p256_secret")
+        let pk = must(crypto.p256_public_key(point(r, "Qx", "Qy")), "p256_public_key")
+        let msg = vec.get_hex(r, "Qx")
+        let sig = must(crypto.p256_sign(sk, msg.copy()), "p256_sign")
+        vec.check(inout t, crypto.p256_verify(pk, msg.copy(), sig) && sig.raw().is_ok(), "ecdsa p256 sign then verify".bytes())
+        let mut m2 = msg.copy()
+        m2[0] = m2[0] ^ 1
+        vec.check(inout t, !crypto.p256_verify(pk, m2, sig), "ecdsa p256: altered message".bytes())
+    }
+}
+
+fn ecdh(inout t: vec.Tally) uses io, fs {
+    for r in vec.records(vec.read_vectors("cavp_ecdh_P256.rsp")) {
+        if !vec.has(r, "dIUT") { continue }
+        let sk = must(crypto.p256_secret(vec.get_hex(r, "dIUT")), "p256_secret")
+        let mine = must(crypto.p256_public(sk), "p256_public")
+        vec.check(inout t, eqb(mine.bytes, point(r, "QIUTx", "QIUTy")), "ecdh p256: our public key".bytes())
+        let peer = must(crypto.p256_public_key(point(r, "QCAVSx", "QCAVSy")), "p256_public_key")
+        match crypto.p256_agree(sk, peer) {
+            Ok(z) => vec.check(inout t, eqb(z.bytes, vec.get_hex(r, "ZIUT")), vec.label("ecdh p256", vec.get(r, "COUNT")))
+            Err(_) => vec.check(inout t, false, vec.label("ecdh p256", vec.get(r, "COUNT")))
+        }
+    }
+}
+
+fn main() uses io, fs {
+    let mut t = vec.tally()
+    sha_file(inout t, "cavp_SHA256ShortMsg.rsp", crypto.Sha256, "sha256")
+    sha_file(inout t, "cavp_SHA256LongMsg_first3.rsp", crypto.Sha256, "sha256 long")
+    sha_file(inout t, "cavp_SHA384ShortMsg.rsp", crypto.Sha384, "sha384")
+    sha_file(inout t, "cavp_SHA512ShortMsg.rsp", crypto.Sha512, "sha512")
+    sha_file(inout t, "cavp_SHA3_256ShortMsg.rsp", crypto.Sha3_256, "sha3-256")
+    sha_file(inout t, "cavp_SHA3_384ShortMsg.rsp", crypto.Sha3_384, "sha3-384")
+    sha_file(inout t, "cavp_SHA3_512ShortMsg.rsp", crypto.Sha3_512, "sha3-512")
+    hmac_file(inout t)
+    gcm_file(inout t, "cavp_gcmEncryptExtIV128_iv96_tag128.rsp", crypto.Aes128Gcm, false)
+    gcm_file(inout t, "cavp_gcmEncryptExtIV256_iv96_tag128.rsp", crypto.Aes256Gcm, false)
+    gcm_file(inout t, "cavp_gcmDecrypt128_iv96_tag128.rsp", crypto.Aes128Gcm, true)
+    gcm_file(inout t, "cavp_gcmDecrypt256_iv96_tag128.rsp", crypto.Aes256Gcm, true)
+    ecdsa(inout t)
+    ecdh(inout t)
+    vec.finish(t, "cavp")
+}

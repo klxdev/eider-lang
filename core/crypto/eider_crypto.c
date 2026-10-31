@@ -159,26 +159,26 @@ static int64_t op_hmac(int32_t hash, const unsigned char *k, size_t kn, const un
   return (int64_t)len;
 }
 
-/* HKDF through the EVP_PKEY_HKDF interface: mode extract-only (salt, ikm -> PRK) or
-   expand-only (PRK, info -> okm). */
+/* HKDF (RFC 5869): extract (a = salt, b = IKM -> PRK) or expand (a = PRK, b = info -> outn
+   bytes of OKM, through EVP_PKEY_HKDF in expand-only mode). */
 static int64_t op_hkdf(int extract, int32_t hash, const unsigned char *a, size_t an, const unsigned char *b, size_t bn, unsigned char *out, size_t outn) {
   const EVP_MD *md = mac_md(hash);
   if (!md) return EC_CRYPTO_EUNSUPPORTED;
+  /* Extract is HMAC-Hash(salt, IKM) by definition (RFC 5869 2.2; an empty salt is HashLen
+     zero bytes, which HMAC's key padding makes the same thing). It goes through HMAC()
+     rather than EVP_PKEY_HKDF because the libraries disagree on an empty IKM there:
+     OpenSSL 3 accepts it, AWS-LC and LibreSSL refuse it (found by tests/crypto/cross.ei). */
+  if (extract) return op_hmac(hash, a, an, b, bn, out);
   size_t hl = (size_t)EVP_MD_size(md);
-  if (extract) outn = hl;
-  else if (outn == 0 || outn > 255 * hl || an < hl) return EC_CRYPTO_ELENGTH;
+  if (outn == 0 || outn > 255 * hl || an < hl) return EC_CRYPTO_ELENGTH;
   int64_t r = EC_CRYPTO_EBACKEND;
   EVP_PKEY_CTX *c = EVP_PKEY_CTX_new_id(EVP_PKEY_HKDF, NULL);
   if (!c) return r;
   size_t got = outn;
   if (EVP_PKEY_derive_init(c) == 1 &&
-      EVP_PKEY_CTX_hkdf_mode(c, extract ? EVP_PKEY_HKDEF_MODE_EXTRACT_ONLY : EVP_PKEY_HKDEF_MODE_EXPAND_ONLY) == 1 &&
+      EVP_PKEY_CTX_hkdf_mode(c, EVP_PKEY_HKDEF_MODE_EXPAND_ONLY) == 1 &&
       EVP_PKEY_CTX_set_hkdf_md(c, md) == 1) {
-    int ok;
-    if (extract) /* a = salt, b = ikm */
-      ok = EVP_PKEY_CTX_set1_hkdf_salt(c, nz(a), (int)an) == 1 && EVP_PKEY_CTX_set1_hkdf_key(c, nz(b), (int)bn) == 1;
-    else /* a = PRK, b = info */
-      ok = EVP_PKEY_CTX_set1_hkdf_key(c, nz(a), (int)an) == 1 && (bn == 0 || EVP_PKEY_CTX_add1_hkdf_info(c, b, (int)bn) == 1);
+    int ok = EVP_PKEY_CTX_set1_hkdf_key(c, nz(a), (int)an) == 1 && (bn == 0 || EVP_PKEY_CTX_add1_hkdf_info(c, b, (int)bn) == 1);
     if (ok && EVP_PKEY_derive(c, out, &got) == 1 && got == outn) r = (int64_t)outn;
   }
   EVP_PKEY_CTX_free(c);

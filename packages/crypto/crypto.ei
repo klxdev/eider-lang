@@ -56,7 +56,7 @@ pub fn error_text(e: Error) -> String {
 /// The OpenSSL-compatible library family this program was linked with.
 pub type Backend = | OpenSsl | AwsLc | BoringSsl | LibreSsl
 
-pub fn backend() -> Backend uses ffi {
+pub fn backend() -> Backend {
     let b = abi.backend()
     if b == abi.AWSLC { return AwsLc }
     if b == abi.BORINGSSL { return BoringSsl }
@@ -65,7 +65,7 @@ pub fn backend() -> Backend uses ffi {
 }
 
 /// The library's name and version, e.g. "aws-lc: AWS-LC 5.12.0".
-pub fn provider() -> List[u8] uses ffi { abi.provider() }
+pub fn provider() -> List[u8] { abi.provider() }
 
 /// Every algorithm, for `supports`. HMAC and HKDF exist with SHA-256, SHA-384 and SHA-512.
 pub type Alg = | Hashing(h: Hash) | Hmac(h: Hash) | Hkdf(h: Hash) | Sealing(a: Aead) | X25519Agreement | Ed25519Signing | P256Signing | P256Agreement | Randomness
@@ -95,12 +95,12 @@ fn alg_id(a: Alg) -> i32 {
 }
 
 /// Whether the linked backend provides `a` (the core ran it once to find out).
-pub fn supports(a: Alg) -> bool uses ffi { abi.supports(alg_id(a)) }
+pub fn supports(a: Alg) -> bool { abi.supports(alg_id(a)) }
 
 // ------------------------------------------------------------------ randomness
 
 /// `n` bytes from the backend's CSPRNG (seeded by the operating system), n <= 1 MiB.
-pub fn random_bytes(n: usize) -> Result[List[u8], Error] uses ffi { lift(abi.random(n as i64)) }
+pub fn random_bytes(n: usize) -> Result[List[u8], Error] uses io { lift(abi.random(n as i64)) }
 
 // ------------------------------------------------------------------ hashing
 
@@ -133,10 +133,10 @@ pub fn hash_len(h: Hash) -> usize {
     }
 }
 
-pub fn digest(h: Hash, msg: List[u8]) -> Result[List[u8], Error] uses ffi { lift(abi.hash(hash_id(h), msg)) }
+pub fn digest(h: Hash, msg: List[u8]) -> Result[List[u8], Error] { lift(abi.hash(hash_id(h), msg)) }
 
 /// SHA-256, which every backend provides (a backend without it is broken: this panics).
-pub fn sha256(msg: List[u8]) -> List[u8] uses ffi {
+pub fn sha256(msg: List[u8]) -> List[u8] {
     match digest(Sha256, msg) {
         Ok(d) => d
         Err(_) => panic("crypto: SHA-256 failed")
@@ -159,16 +159,16 @@ pub type Tag = { bytes: List[u8] }
 
 impl Tag {
     /// Constant-time comparison with a received tag (a different length is no match).
-    fn matches(self, other: List[u8]) -> bool uses ffi { abi.ct_equal(self.bytes, other) }
+    fn matches(self, other: List[u8]) -> bool { abi.ct_equal(self.bytes, other) }
 }
 
-pub fn hmac(k: HmacKey, msg: List[u8]) -> Result[Tag, Error] uses ffi {
+pub fn hmac(k: HmacKey, msg: List[u8]) -> Result[Tag, Error] {
     let t = lift(abi.hmac(hash_id(k.hash), k.bytes, msg))?
     Ok(Tag(t))
 }
 
 /// Recompute the tag over `msg` and compare it with `tag` in constant time.
-pub fn hmac_verify(k: HmacKey, msg: List[u8], tag: List[u8]) -> Result[bool, Error] uses ffi {
+pub fn hmac_verify(k: HmacKey, msg: List[u8], tag: List[u8]) -> Result[bool, Error] {
     let t = hmac(k, msg)?
     Ok(t.matches(tag))
 }
@@ -182,13 +182,13 @@ pub fn prk(h: Hash, b: List[u8]) -> Result[Prk, Error] {
     Ok(Prk(h, b))
 }
 
-pub fn hkdf_extract(h: Hash, salt: List[u8], ikm: List[u8]) -> Result[Prk, Error] uses ffi {
+pub fn hkdf_extract(h: Hash, salt: List[u8], ikm: List[u8]) -> Result[Prk, Error] {
     let b = lift(abi.hkdf_extract(hash_id(h), salt, ikm))?
     Ok(Prk(h, b))
 }
 
 /// `len` bytes of output keying material, 1 <= len <= 255 * hash length.
-pub fn hkdf_expand(p: Prk, info: List[u8], len: usize) -> Result[List[u8], Error] uses ffi {
+pub fn hkdf_expand(p: Prk, info: List[u8], len: usize) -> Result[List[u8], Error] {
     if len == 0 || len > 255 * hash_len(p.hash) { return Err(BadLength) }
     lift(abi.hkdf_expand(hash_id(p.hash), p.bytes, info, len as i64))
 }
@@ -227,7 +227,7 @@ pub fn aead_key(a: Aead, b: List[u8]) -> Result[AeadKey, Error] {
     Ok(AeadKey(a, b))
 }
 
-pub fn aead_generate(a: Aead) -> Result[AeadKey, Error] uses ffi {
+pub fn aead_generate(a: Aead) -> Result[AeadKey, Error] uses io {
     let b = random_bytes(aead_key_len(a))?
     Ok(AeadKey(a, b))
 }
@@ -238,7 +238,7 @@ pub fn nonce(b: List[u8]) -> Result[Nonce, Error] {
 }
 
 /// A random nonce (fine for up to about 2^32 messages per key).
-pub fn random_nonce() -> Result[Nonce, Error] uses ffi {
+pub fn random_nonce() -> Result[Nonce, Error] uses io {
     let b = random_bytes(NONCE_LEN)?
     Ok(Nonce(b))
 }
@@ -246,9 +246,9 @@ pub fn random_nonce() -> Result[Nonce, Error] uses ffi {
 /// The TLS 1.3 per-record nonce (RFC 8446 section 5.3): `iv` XOR the 64-bit big-endian
 /// sequence number, left-padded to 12 bytes.
 pub fn nonce_for_sequence(iv: Nonce, seq: u64) -> Nonce {
-    var b = iv.bytes
-    var s = seq
-    var i: usize = NONCE_LEN
+    let mut b = iv.bytes.copy()
+    let mut s = seq.copy()
+    let mut i: usize = NONCE_LEN
     while i > NONCE_LEN - 8 {
         i -= 1
         b[i] = b[i] ^ ((s % 256) as u8)
@@ -258,13 +258,13 @@ pub fn nonce_for_sequence(iv: Nonce, seq: u64) -> Nonce {
 }
 
 /// ciphertext || 16-byte tag.
-pub fn seal(k: AeadKey, n: Nonce, aad: List[u8], plaintext: List[u8]) -> Result[List[u8], Error] uses ffi {
+pub fn seal(k: AeadKey, n: Nonce, aad: List[u8], plaintext: List[u8]) -> Result[List[u8], Error] {
     lift(abi.aead_seal(aead_id(k.alg), k.bytes, n.bytes, aad, plaintext))
 }
 
 /// The plaintext, or Err(AuthFailed) and nothing else when the ciphertext, the tag, the
 /// nonce or the associated data was altered.
-pub fn open(k: AeadKey, n: Nonce, aad: List[u8], sealed: List[u8]) -> Result[List[u8], Error] uses ffi {
+pub fn open(k: AeadKey, n: Nonce, aad: List[u8], sealed: List[u8]) -> Result[List[u8], Error] {
     if sealed.len() < TAG_LEN { return Err(AuthFailed) }
     lift(abi.aead_open(aead_id(k.alg), k.bytes, n.bytes, aad, sealed))
 }
@@ -281,7 +281,7 @@ pub fn x25519_secret(b: List[u8]) -> Result[X25519Secret, Error] {
     Ok(X25519Secret(b))
 }
 
-pub fn x25519_generate() -> Result[X25519Secret, Error] uses ffi {
+pub fn x25519_generate() -> Result[X25519Secret, Error] uses io {
     let b = random_bytes(32)?
     Ok(X25519Secret(b))
 }
@@ -291,13 +291,13 @@ pub fn x25519_public_key(b: List[u8]) -> Result[X25519Public, Error] {
     Ok(X25519Public(b))
 }
 
-pub fn x25519_public(sk: X25519Secret) -> Result[X25519Public, Error] uses ffi {
+pub fn x25519_public(sk: X25519Secret) -> Result[X25519Public, Error] {
     let b = lift(abi.x25519_public(sk.bytes))?
     Ok(X25519Public(b))
 }
 
 /// Err(InvalidKey) when the result is all zero (a small-order peer key, RFC 7748 6.1).
-pub fn x25519_agree(sk: X25519Secret, peer: X25519Public) -> Result[SharedSecret, Error] uses ffi {
+pub fn x25519_agree(sk: X25519Secret, peer: X25519Public) -> Result[SharedSecret, Error] {
     let b = lift(abi.x25519(sk.bytes, peer.bytes))?
     Ok(SharedSecret(b))
 }
@@ -313,7 +313,7 @@ pub fn ed25519_seed(b: List[u8]) -> Result[Ed25519Seed, Error] {
     Ok(Ed25519Seed(b))
 }
 
-pub fn ed25519_generate() -> Result[Ed25519Seed, Error] uses ffi {
+pub fn ed25519_generate() -> Result[Ed25519Seed, Error] uses io {
     let b = random_bytes(32)?
     Ok(Ed25519Seed(b))
 }
@@ -328,18 +328,18 @@ pub fn ed25519_signature(b: List[u8]) -> Result[Ed25519Signature, Error] {
     Ok(Ed25519Signature(b))
 }
 
-pub fn ed25519_public(s: Ed25519Seed) -> Result[Ed25519Public, Error] uses ffi {
+pub fn ed25519_public(s: Ed25519Seed) -> Result[Ed25519Public, Error] {
     let b = lift(abi.ed25519_public(s.bytes))?
     Ok(Ed25519Public(b))
 }
 
-pub fn ed25519_sign(s: Ed25519Seed, msg: List[u8]) -> Result[Ed25519Signature, Error] uses ffi {
+pub fn ed25519_sign(s: Ed25519Seed, msg: List[u8]) -> Result[Ed25519Signature, Error] {
     let b = lift(abi.ed25519_sign(s.bytes, msg))?
     Ok(Ed25519Signature(b))
 }
 
 /// True only for a valid signature by `pk` over `msg`.
-pub fn ed25519_verify(pk: Ed25519Public, msg: List[u8], sig: Ed25519Signature) -> bool uses ffi {
+pub fn ed25519_verify(pk: Ed25519Public, msg: List[u8], sig: Ed25519Signature) -> bool {
     abi.ed25519_verify(pk.bytes, sig.bytes, msg).unwrap_or(false)
 }
 
@@ -353,7 +353,7 @@ pub type P256Public = { bytes: List[u8] }
 pub type P256Signature = { der: List[u8] }
 
 /// Checks the length and the range (via the backend, which computes the public key).
-pub fn p256_secret(b: List[u8]) -> Result[P256Secret, Error] uses ffi {
+pub fn p256_secret(b: List[u8]) -> Result[P256Secret, Error] {
     if b.len() != 32 { return Err(BadLength) }
     let _ = lift(abi.p256_public(b))?
     Ok(P256Secret(b))
@@ -361,8 +361,8 @@ pub fn p256_secret(b: List[u8]) -> Result[P256Secret, Error] uses ffi {
 
 /// A random scalar in range (a 32-byte draw is out of range with probability < 2^-32; then
 /// it draws again).
-pub fn p256_generate() -> Result[P256Secret, Error] uses ffi {
-    var tries = 0
+pub fn p256_generate() -> Result[P256Secret, Error] uses io {
+    let mut tries = 0
     while tries < 16 {
         let b = random_bytes(32)?
         match p256_secret(b) {
@@ -386,24 +386,24 @@ pub fn p256_public_key(b: List[u8]) -> Result[P256Public, Error] {
     Ok(P256Public(b))
 }
 
-pub fn p256_public(s: P256Secret) -> Result[P256Public, Error] uses ffi {
+pub fn p256_public(s: P256Secret) -> Result[P256Public, Error] {
     let b = lift(abi.p256_public(s.bytes))?
     Ok(P256Public(b))
 }
 
 /// ECDSA over SHA-256(msg), with a fresh random nonce from the backend.
-pub fn p256_sign(s: P256Secret, msg: List[u8]) -> Result[P256Signature, Error] uses ffi {
+pub fn p256_sign(s: P256Secret, msg: List[u8]) -> Result[P256Signature, Error] uses io {
     let b = lift(abi.p256_sign(s.bytes, msg))?
     Ok(P256Signature(b))
 }
 
 /// True only for a valid signature by `pk` over SHA-256(msg).
-pub fn p256_verify(pk: P256Public, msg: List[u8], sig: P256Signature) -> bool uses ffi {
+pub fn p256_verify(pk: P256Public, msg: List[u8], sig: P256Signature) -> bool {
     abi.p256_verify(pk.bytes, sig.der, msg).unwrap_or(false)
 }
 
 /// ECDH: the x-coordinate of d * peer (32 bytes). Err(InvalidKey) if `peer` is not on the curve.
-pub fn p256_agree(s: P256Secret, peer: P256Public) -> Result[SharedSecret, Error] uses ffi {
+pub fn p256_agree(s: P256Secret, peer: P256Public) -> Result[SharedSecret, Error] {
     let b = lift(abi.p256_ecdh(s.bytes, peer.bytes))?
     Ok(SharedSecret(b))
 }
@@ -413,10 +413,10 @@ pub fn p256_signature_der(der: List[u8]) -> P256Signature { P256Signature(der) }
 
 // DER INTEGER for a 32-byte unsigned big-endian value: minimal, positive
 fn der_int(v: List[u8], at: usize) -> List[u8] {
-    var i = at
+    let mut i = at.copy()
     let end = at + 32
     while i < end - 1 && v[i] == 0 { i += 1 }
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     out.push(2)
     let n = end - i
     if v[i] >= 128 {
@@ -437,7 +437,7 @@ pub fn p256_signature_raw(rs: List[u8]) -> Result[P256Signature, Error] {
     if rs.len() != 64 { return Err(BadLength) }
     let r = der_int(rs, 0)
     let s = der_int(rs, 32)
-    var der: List[u8] = List.new()
+    let mut der: List[u8] = List.new()
     der.push(48)
     der.push((r.len() + s.len()) as u8)
     for x in r { der.push(x) }
@@ -454,11 +454,11 @@ fn der_read_int(d: List[u8], at: usize, inout out: List[u8]) -> Option[usize] {
     // positive and minimal
     if d[start] >= 128 { return None }
     if n > 1 && d[start] == 0 && d[start + 1] < 128 { return None }
-    var i = start
+    let mut i = start.copy()
     if d[i] == 0 && n > 1 { i += 1 }
     let len = start + n - i
     if len > 32 { return None }
-    var pad = 32 - len
+    let mut pad = 32 - len
     while pad > 0 {
         out.push(0)
         pad -= 1
@@ -475,7 +475,7 @@ impl P256Signature {
     fn raw(self) -> Result[List[u8], Error] {
         let d = self.der
         if d.len() < 8 || d[0] != 48 || (d[1] as usize) != d.len() - 2 { return Err(BadLength) }
-        var out: List[u8] = List.new()
+        let mut out: List[u8] = List.new()
         let next = match der_read_int(d, 2, inout out) {
             Some(n) => n
             None => return Err(BadLength)
@@ -492,4 +492,4 @@ impl P256Signature {
 // ------------------------------------------------------------------ constant time
 
 /// Equality in time that depends only on the length (which is not treated as secret).
-pub fn ct_equal(a: List[u8], b: List[u8]) -> bool uses ffi { abi.ct_equal(a, b) }
+pub fn ct_equal(a: List[u8], b: List[u8]) -> bool { abi.ct_equal(a, b) }

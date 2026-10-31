@@ -1,0 +1,163 @@
+// Cross-backend check (tests/crypto/run.sh). Two modes, chosen by $CRYPTO_CROSS:
+//   emit (default): print "name hex" for every deterministic operation on fixed inputs (or
+//     "name unsupported"), then "p256sig <public> <message> <der>" lines: fresh ECDSA
+//     signatures (random k) for another backend to check;
+//   verify: read such a file from $CRYPTO_CROSS_FILE and verify each p256sig line and
+//     each Ed25519 signature with this backend.
+// run.sh compares the deterministic lines of every pair of backends byte for byte.
+
+import "std/bytes"
+import "std/env"
+import "std/fs"
+import "std/io"
+import "vec.ei"
+import "../../packages/crypto/crypto.ei"
+import "../../packages/json/json.ei"
+
+fn msg(n: usize, seed: u32) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut i: usize = 0
+    let mut x = seed as u64
+    while i < n {
+        x = (x * 1103515245 + 12345) % 2147483648
+        out.push((x / 65536 % 256) as u8)
+        i += 1
+    }
+    out
+}
+
+fn line(name: List[u8], value: Result[List[u8], crypto.Error]) uses io {
+    let mut m = name.copy()
+    m.push(32)
+    match value {
+        Ok(v) => bytes.append(inout m, bytes.hex(v))
+        Err(e) => {
+            let what = match e {
+                crypto.Unsupported => "unsupported"
+                _ => "error"
+            }
+            bytes.append(inout m, what.bytes())
+        }
+    }
+    io.outln(m)
+}
+
+fn named(a: str, n: usize) -> List[u8] {
+    let mut m = a.bytes()
+    m.push(95)
+    bytes.append(inout m, bytes.from_u64(n as u64))
+    m
+}
+
+fn named2(a: str, b: str, n: usize) -> List[u8] {
+    let mut m = a.bytes()
+    m.push(95)
+    bytes.append(inout m, named(b, n))
+    m
+}
+
+fn emit() uses io {
+    let sizes: [usize; 7] = [0, 1, 55, 64, 129, 1000, 16384]
+    let hashes = [crypto.Sha256, crypto.Sha384, crypto.Sha512, crypto.Sha3_256, crypto.Sha3_384, crypto.Sha3_512, crypto.Blake2b256, crypto.Blake2b512]
+    let hnames = ["sha256", "sha384", "sha512", "sha3_256", "sha3_384", "sha3_512", "blake2b256", "blake2b512"]
+    let aeads = [crypto.Aes128Gcm, crypto.Aes256Gcm, crypto.ChaCha20Poly1305]
+    let anames = ["aes128gcm", "aes256gcm", "chacha20poly1305"]
+    for n in sizes {
+        let m = msg(n, n as u32)
+        let mut i: usize = 0
+        while i < 8 {
+            line(named(hnames[i], n), crypto.digest(hashes[i], m.copy()))
+            i += 1
+        }
+        i = 0
+        while i < 3 {
+            let k = crypto.hmac_key(hashes[i], msg(37, 5))
+            line(named2("hmac", hnames[i], n), crypto.hmac(k, m.copy()).map(|t| t.bytes))
+            let prk = crypto.hkdf_extract(hashes[i], msg(13, 6), m.copy())
+            match prk {
+                Ok(p) => line(named2("hkdf", hnames[i], n), crypto.hkdf_expand(p, msg(10, 7), 100))
+                Err(e) => line(named2("hkdf", hnames[i], n), Err(e))
+            }
+            let key = crypto.aead_key(aeads[i], msg(crypto.aead_key_len(aeads[i]), 8)).unwrap()
+            let nonce = crypto.nonce(msg(12, 9)).unwrap()
+            line(named(anames[i], n), crypto.seal(key, nonce, msg(n % 40, 10), m.copy()))
+            i += 1
+        }
+        let seed = crypto.ed25519_seed(msg(32, n as u32 + 11)).unwrap()
+        line(named("ed25519_public", n), crypto.ed25519_public(seed).map(|p| p.bytes))
+        line(named("ed25519_sign", n), crypto.ed25519_sign(seed, m.copy()).map(|s| s.bytes))
+        let xa = crypto.x25519_secret(msg(32, n as u32 + 12)).unwrap()
+        let xb = crypto.x25519_secret(msg(32, n as u32 + 13)).unwrap()
+        let xbp = crypto.x25519_public(xb).unwrap()
+        line(named("x25519_public", n), crypto.x25519_public(xa).map(|p| p.bytes))
+        line(named("x25519_agree", n), crypto.x25519_agree(xa, xbp).map(|s| s.bytes))
+        // P-256 scalars from a hash (always in range for these inputs)
+        let pa = crypto.p256_secret(crypto.sha256(msg(40, n as u32 + 14))).unwrap()
+        let pb = crypto.p256_secret(crypto.sha256(msg(40, n as u32 + 15))).unwrap()
+        let pbp = crypto.p256_public(pb).unwrap()
+        line(named("p256_public", n), crypto.p256_public(pa).map(|p| p.bytes))
+        line(named("p256_agree", n), crypto.p256_agree(pa, pbp).map(|s| s.bytes))
+    }
+    // fresh signatures, random k (and a random key) for the other backends to verify
+    let mut j: u32 = 0
+    while j < 8 {
+        let sk = crypto.p256_generate().unwrap()
+        let pk = crypto.p256_public(sk).unwrap()
+        let m = msg((j * 17) as usize, j + 100)
+        let sig = crypto.p256_sign(sk, m.copy()).unwrap()
+        let mut l = "p256sig ".bytes()
+        bytes.append(inout l, bytes.hex(pk.bytes))
+        l.push(32)
+        bytes.append(inout l, bytes.hex(m))
+        l.push(32)
+        bytes.append(inout l, bytes.hex(sig.der))
+        io.outln(l)
+        let seed = crypto.ed25519_generate().unwrap()
+        let epk = crypto.ed25519_public(seed).unwrap()
+        let esig = crypto.ed25519_sign(seed, m.copy()).unwrap()
+        let mut e = "ed25519sig ".bytes()
+        bytes.append(inout e, bytes.hex(epk.bytes))
+        e.push(32)
+        bytes.append(inout e, bytes.hex(m))
+        e.push(32)
+        bytes.append(inout e, bytes.hex(esig.bytes))
+        io.outln(e)
+        j += 1
+    }
+}
+
+fn verify(path: List[u8]) uses io, fs {
+    let mut t = vec.tally()
+    let text = match fs.read(path) {
+        Ok(b) => b
+        Err(_) => panic("cross: cannot read the other backend's output")
+    }
+    for l in bytes.lines(text) {
+        let parts = bytes.split(l, 32)
+        if parts.len() != 4 { continue }
+        let m = vec.unhex(parts[2])
+        if bytes.eq(parts[0], "p256sig".bytes()) {
+            let pk = crypto.p256_public_key(vec.unhex(parts[1])).unwrap()
+            let sig = crypto.p256_signature_der(vec.unhex(parts[3]))
+            vec.check(inout t, crypto.p256_verify(pk, m.copy(), sig), "p256 signature from another backend".bytes())
+            let mut m2 = m.copy()
+            m2.push(1)
+            vec.check(inout t, !crypto.p256_verify(pk, m2, sig), "p256 signature from another backend, altered message".bytes())
+        }
+        if bytes.eq(parts[0], "ed25519sig".bytes()) {
+            let pk = crypto.ed25519_public_key(vec.unhex(parts[1])).unwrap()
+            let sig = crypto.ed25519_signature(vec.unhex(parts[3])).unwrap()
+            vec.check(inout t, crypto.ed25519_verify(pk, m, sig), "ed25519 signature from another backend".bytes())
+        }
+    }
+    vec.finish(t, "cross-verify")
+}
+
+fn main() uses io, fs {
+    let mode = env.get("CRYPTO_CROSS".bytes()).unwrap_or("emit".bytes())
+    if bytes.eq(mode, "verify".bytes()) {
+        verify(env.get("CRYPTO_CROSS_FILE".bytes()).unwrap_or(List.new()))
+    } else {
+        emit()
+    }
+}

@@ -1,0 +1,208 @@
+// Helpers for the crypto vector tests (tests/crypto/run.sh): hex, NIST .rsp records, tallies.
+
+import "std/bytes"
+import "std/io"
+import "std/env"
+import "std/fs"
+
+/// passed / failed / skipped checks of one test program
+pub type Tally = { pass: u64, fail: u64, skip: u64 }
+
+pub fn tally() -> Tally { Tally(0, 0, 0) }
+
+pub fn check(inout t: Tally, ok: bool, what: List[u8]) uses io {
+    if ok {
+        t.pass += 1
+    } else {
+        t.fail += 1
+        let mut m = "FAIL ".bytes()
+        bytes.append(inout m, what)
+        io.outln(m)
+    }
+}
+
+pub fn skip(inout t: Tally, n: u64) { t.skip += n }
+
+/// One summary line; exit 1 if anything failed.
+pub fn finish(t: Tally, name: str) uses io {
+    let mut m = name.bytes()
+    bytes.append(inout m, ": ".bytes())
+    bytes.append(inout m, bytes.from_u64(t.pass))
+    bytes.append(inout m, " passed, ".bytes())
+    bytes.append(inout m, bytes.from_u64(t.fail))
+    bytes.append(inout m, " failed, ".bytes())
+    bytes.append(inout m, bytes.from_u64(t.skip))
+    bytes.append(inout m, " skipped".bytes())
+    io.outln(m)
+    if t.fail > 0 { env.exit(1) }
+}
+
+/// "what (detail)"
+pub fn label(what: str, detail: List[u8]) -> List[u8] {
+    let mut m = what.bytes()
+    bytes.append(inout m, " (".bytes())
+    bytes.append(inout m, detail)
+    bytes.append(inout m, ")".bytes())
+    m
+}
+
+fn nibble(c: u8) -> u8 {
+    if c >= 48 && c <= 57 { return c - 48 }
+    if c >= 97 && c <= 102 { return c - 87 }
+    if c >= 65 && c <= 70 { return c - 55 }
+    panic("vec: not a hex digit")
+}
+
+/// Hex text to bytes (an odd length or a non-digit panics: the vector file is broken).
+pub fn unhex(s: List[u8]) -> List[u8] {
+    if s.len() % 2 != 0 { panic("vec: odd-length hex") }
+    let mut out: List[u8] = List.new()
+    let mut i: usize = 0
+    while i < s.len() {
+        out.push(nibble(s[i]) * 16 + nibble(s[i + 1]))
+        i += 2
+    }
+    out
+}
+
+pub fn h(s: str) -> List[u8] { unhex(s.bytes()) }
+
+/// `n` copies of `b`
+pub fn rep(b: u8, n: usize) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut i: usize = 0
+    while i < n {
+        out.push(b)
+        i += 1
+    }
+    out
+}
+
+pub fn read(path: str) -> List[u8] uses fs {
+    match fs.read(path.bytes()) {
+        Ok(b) => b
+        Err(_) => panic("vec: cannot read a vector file")
+    }
+}
+
+/// The directory holding the vector files: $CRYPTO_VECTORS, else tests/crypto/vectors.
+pub fn vector_path(name: str) -> List[u8] uses io {
+    let mut p = env.get("CRYPTO_VECTORS".bytes()).unwrap_or("tests/crypto/vectors".bytes())
+    p.push(47)
+    bytes.append(inout p, name.bytes())
+    p
+}
+
+pub fn read_vectors(name: str) -> List[u8] uses io, fs {
+    match fs.read(vector_path(name)) {
+        Ok(b) => b
+        Err(e) => {
+            let mut m = "vec: cannot read ".bytes()
+            bytes.append(inout m, vector_path(name))
+            io.errln(m)
+            panic("vec: missing vector file")
+        }
+    }
+}
+
+// ---------------------------------------------------------------- NIST CAVP .rsp files
+
+/// One record: its section (the [..] header lines, joined) and its `key = value` fields. A
+/// bare word (as `FAIL` in gcmDecrypt) is a field with an empty value.
+pub type Rec = { section: List[u8], keys: List[List[u8]], vals: List[List[u8]] }
+
+pub fn get(r: Rec, key: str) -> List[u8] {
+    let k = key.bytes()
+    let mut i: usize = 0
+    while i < r.keys.len() {
+        if bytes.eq(r.keys[i], k) { return r.vals[i] }
+        i += 1
+    }
+    List.new()
+}
+
+pub fn has(r: Rec, key: str) -> bool {
+    let k = key.bytes()
+    for x in r.keys {
+        if bytes.eq(x, k) { return true }
+    }
+    false
+}
+
+pub fn get_hex(r: Rec, key: str) -> List[u8] { unhex(get(r, key)) }
+
+pub fn get_int(r: Rec, key: str) -> u64 { bytes.parse_u64(get(r, key)).unwrap_or(0) }
+
+fn has_key(keys: List[List[u8]], k: List[u8]) -> bool {
+    for x in keys {
+        if bytes.eq(x, k) { return true }
+    }
+    false
+}
+
+/// The records of an .rsp file. A record ends at a blank line or when a key repeats (KeyPair
+/// and SigGen records have no blank line between them after selection).
+pub fn records(text: List[u8]) -> List[Rec] {
+    let mut out: List[Rec] = List.new()
+    let mut section: List[u8] = List.new()
+    let mut in_header = false
+    let mut keys: List[List[u8]] = List.new()
+    let mut vals: List[List[u8]] = List.new()
+    for line0 in bytes.lines(text) {
+        let line = bytes.trim(line0)
+        let blank = line.len() == 0
+        let comment = !blank && line[0] == 35
+        let header = !blank && line[0] == 91
+        if blank || comment || header {
+            if keys.len() > 0 {
+                out.push(Rec(section.copy(), keys, vals))
+                keys = List.new()
+                vals = List.new()
+            }
+            if header {
+                if !in_header { section = List.new() }
+                bytes.append(inout section, line)
+                in_header = true
+            }
+            continue
+        }
+        in_header = false
+        let mut k: List[u8] = List.new()
+        let mut v: List[u8] = List.new()
+        match bytes.find_byte(line, 61, 0) {
+            Some(eq) => {
+                k = bytes.trim(bytes.slice(line, 0, eq))
+                v = bytes.trim(bytes.slice(line, eq + 1, line.len()))
+            }
+            None => { k = line }
+        }
+        if has_key(keys, k) {
+            out.push(Rec(section.copy(), keys, vals))
+            keys = List.new()
+            vals = List.new()
+        }
+        keys.push(k)
+        vals.push(v)
+    }
+    if keys.len() > 0 { out.push(Rec(section, keys, vals)) }
+    out
+}
+
+/// The section's value for `name` in a header like "[Keylen = 128]" or "[L=32]".
+pub fn section_int(r: Rec, name: str) -> u64 {
+    let s = r.section
+    let n = name.bytes()
+    match bytes.find(s, n, 0) {
+        Some(at) => {
+            let mut i = at + n.len()
+            while i < s.len() && (s[i] == 32 || s[i] == 61) { i += 1 }
+            let mut v: u64 = 0
+            while i < s.len() && bytes.is_digit(s[i]) {
+                v = v * 10 + ((s[i] - 48) as u64)
+                i += 1
+            }
+            v
+        }
+        None => 0
+    }
+}

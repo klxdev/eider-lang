@@ -8,6 +8,7 @@
 # Usage: sh scripts/crypto-build.sh [options] [backend]
 #   backend    awslc (default): AWS-LC (pinned sources fetched by scripts/fetch-awslc.sh into target/crypto/awslc-src, or $EIDER_AWSLC_SRC), compiled with $CC only
 #              awslc-noasm: the same without assembly (OPENSSL_NO_ASM; the portable build)
+#              awslc-aead: awslc with the glue's EVP_AEAD path for ChaCha20-Poly1305 (BoringSSL's)
 #              openssl: the system's OpenSSL 3 libcrypto (pkg-config, $EIDER_OPENSSL_INCLUDE,
 #                       or headers from `fetch-openssl-headers`)
 #              libressl: a pinned LibreSSL release fetched into target/ (needs make)
@@ -56,7 +57,12 @@ awslc() {
   lists=universal
   defs=$AWSLC_DEFS
   arch=portable
-  if [ "$backend" = awslc ] && [ "$(uname -s)" = Linux ]; then
+  # libcrypto's objects: awslc-aead (the glue's EVP_AEAD path, the one BoringSSL takes for
+  # ChaCha20-Poly1305) reuses awslc's
+  lc=$out
+  if [ "$backend" = awslc-aead ]; then lc=$root/target/crypto/awslc$suffix; GLUE_FLAGS="$GLUE_FLAGS -DEIDER_CRYPTO_EVP_AEAD=1"; fi
+  mkdir -p "$lc"
+  if [ "$backend" != awslc-noasm ] && [ "$(uname -s)" = Linux ]; then
     case $(uname -m) in
       x86_64|amd64) lists="universal linux_x86_64"; arch=x86_64 ;;
       aarch64|arm64) lists="universal linux_aarch64"; arch=aarch64 ;;
@@ -64,12 +70,12 @@ awslc() {
   fi
   [ $arch = portable ] && defs="$defs -DOPENSSL_NO_ASM=1"
   # the feature probes aws-lc-sys's cc builder runs
-  defs="$defs$(awslc_probes "$CC" "$out/probe")"
+  defs="$defs$(awslc_probes "$CC" "$lc/probe")"
   flags="-std=c11 -O2 -fPIC -pthread -Wno-unused-parameter $defs $(awslc_includes "$v")"
   # rebuild libcrypto's objects only when the sources, the flags or the compiler changed
   key=$( { cat "$root/core/crypto/awslc/files.sha256"; echo "$flags $lists"; $CC --version 2>/dev/null | head -1; } | cksum)
-  if [ ! -f "$out/libcrypto.a" ] || [ "$(cat "$out/key" 2>/dev/null)" != "$key" ]; then
-    rm -rf "$out/obj"; mkdir -p "$out/obj"
+  if [ ! -f "$lc/libcrypto.a" ] || [ "$(cat "$lc/key" 2>/dev/null)" != "$key" ]; then
+    rm -rf "$lc/obj"; mkdir -p "$lc/obj"
     start=$(date +%s)
     for l in $lists; do cat "$root/core/crypto/awslc/sources/$l.txt"; done |
       # $1 = output dir, $2 = cc, $3 = flags, $4 = source dir, $5 = the file (from xargs)
@@ -78,14 +84,14 @@ awslc() {
         case $f in third_party/s2n-bignum/*) extra=-DS2N_BN_HIDE_SYMBOLS=1 ;; esac
         case $f in *.S) extra="$extra -Wa,--noexecstack" ;; esac
         $2 $3 $extra -c "$4/$f" -o "$o" || { echo "crypto-build: failed to compile $f" >&2; exit 255; }
-      ' sh "$out" "$CC" "$flags" "$v" 2>"$out/build.log" ||
-      { cat "$out/build.log" >&2; echo "crypto-build: AWS-LC did not build (log: $out/build.log)" >&2; exit 1; }
-    rm -f "$out/libcrypto.a"
-    ar rcs "$out/libcrypto.a" "$out"/obj/*.o
-    echo "$key" > "$out/key"
+      ' sh "$lc" "$CC" "$flags" "$v" 2>"$lc/build.log" ||
+      { cat "$lc/build.log" >&2; echo "crypto-build: AWS-LC did not build (log: $lc/build.log)" >&2; exit 1; }
+    rm -f "$lc/libcrypto.a"
+    ar rcs "$lc/libcrypto.a" "$lc"/obj/*.o
+    echo "$key" > "$lc/key"
     echo "crypto-build: AWS-LC $(sed -n 's/^TAG=//p' "$root/core/crypto/awslc/PIN") ($arch) compiled in $(($(date +%s) - start)) s with $jobs jobs" >&2
   fi
-  glue "$(awslc_includes "$v")" "$out/libcrypto.a"
+  glue "$(awslc_includes "$v")" "$lc/libcrypto.a"
   echo "-l eider_crypto" > "$out/libs"
 }
 
@@ -176,7 +182,7 @@ glue() {
 }
 
 case $backend in
-  awslc|awslc-noasm) step=awslc ;;
+  awslc|awslc-noasm|awslc-aead) step=awslc ;;
   openssl) step=openssl ;;
   libressl) step=libressl ;;
   fetch-openssl-headers) fetch_openssl_headers; exit 0 ;;
