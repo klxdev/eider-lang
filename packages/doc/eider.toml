@@ -7,7 +7,7 @@ description = "eider-doc: documentation sites from Markdown pages and `eiderc do
 
 # both pure: granted nothing
 [deps.json]
-path = "../json"
+path = "../../vendor/json"
 
 [deps.markdown]
-path = "../markdown"
+path = "../../vendor/markdown"

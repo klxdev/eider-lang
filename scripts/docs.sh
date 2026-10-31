@@ -21,7 +21,7 @@ else
 fi
 export EIDERC
 bin=target/eider-doc
-if [ ! -x $bin ] || [ -n "$(find packages/doc packages/markdown packages/json std core -name '*.ei' -newer $bin 2>/dev/null | head -1)" ]; then
+if [ ! -x $bin ] || [ -n "$(find packages/doc vendor/markdown vendor/json std core -name '*.ei' -newer $bin 2>/dev/null | head -1)" ]; then
   scripts/ei build packages/doc/main.ei -o $bin >target/eider-doc.log 2>&1 || { cat target/eider-doc.log; echo "docs: cannot build eider-doc"; exit 3; }
 fi
 if [ "$1" = test ]; then

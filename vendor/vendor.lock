@@ -1,0 +1,20 @@
+# vendor/vendor.lock: the pinned copies in vendor/, written by scripts/vendor.sh. Do not edit.
+version = 1
+
+[[package]]
+name = "json"
+version = "0.1.0"
+source = "git+https://github.com/klxdev/eider-json.git#4dca9d5cec634b74ae1597240da0645ce4b30d57"
+hash = "sha256-874c1971e236461f236e9c11691c23a9744bf0f25abb22ce74bdc41f3eb26355"
+
+[[package]]
+name = "markdown"
+version = "0.1.0"
+source = "git+https://github.com/klxdev/eider-markdown.git#5343c0a99f98b65702f4428e1902dc9fca42a69f"
+hash = "sha256-15df81031496de470884a3d34a699ad12c07e932a5557b66f058ea9e7fde8105"
+
+[[package]]
+name = "toml"
+version = "0.1.0"
+source = "git+https://github.com/klxdev/eider-toml.git#a27db6620a40fda56016894730ed990fce909a31"
+hash = "sha256-7165a701b4b194dbd20685926aff28e9e29336f36fc59f80f82302797e44348f"
