@@ -1,0 +1,5 @@
+// pkgtest: check
+// gone is locked, but its directory does not exist
+import "gone"
+
+fn main() {}

@@ -1,0 +1,9 @@
+--- stderr
+error[E0808]: two different copies of package `base` have module `base` (<root>/compiler/tests/pkgs/base/base.ei and <root>/compiler/tests/pkgs/base2/base.ei)
+  --> compiler/tests/pkgs/app/dup.ei:4:1
+  |
+4 | import "../base2/base.ei"
+  | ^
+  help: a program loads each package from one directory: import the package by name (`eider-pkg fetch` locks one copy for the whole graph)
+error: 1 error
+--- exit 1

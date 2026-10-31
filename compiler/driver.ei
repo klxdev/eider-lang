@@ -45,12 +45,12 @@
 // core/eider_rt.h, so target/eiderc in a checkout finds the checkout; otherwise the same
 // search from the working directory.
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
-import "deps/std/fs.ei"
-import "deps/std/io.ei"
-import "deps/std/env.ei"
-import "deps/std/proc.ei"
+import "../core/sys.ei"
+import "../std/bytes.ei"
+import "../std/fs.ei"
+import "../std/io.ei"
+import "../std/env.ei"
+import "../std/proc.ei"
 import "sha256.ei"
 
 fn s(x: str) -> List[u8] uses ffi { sys.lit(x) }

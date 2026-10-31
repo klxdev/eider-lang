@@ -1,0 +1,4 @@
+// shapes: an entry module that is not <name>.ei, and a util.ei in a subdirectory
+import "util.ei"
+
+pub fn sides(n: i64) -> i64 { n + util.offset() }

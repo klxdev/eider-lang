@@ -482,6 +482,8 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0807_comptime_sub_u32.ei    E0807 at 3:7
   ok   e0807_comptime_type_first.ei E0807 at 2:7
   ok   e0807_comptime_unwrap.ei     E0807 at 10:7
+  ok   e0809_not_a_dependency.ei    E0809 at 3:1
+  ok   e0810_no_lock.ei             E0810 at 2:1
 
 compile-pass tests (compiler/tests/check/pass)
   ok   comptime_chain.ei
@@ -546,6 +548,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-544 passed, 0 failed; error-code coverage 38/42
+546 passed, 0 failed; error-code coverage 40/44
 codes without a compile-fail test: E0302 E0402 E0806 E0808
 --- exit 0

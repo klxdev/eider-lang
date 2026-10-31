@@ -1,0 +1,9 @@
+--- stderr
+error[E0810]: package `gone` is locked, but its files are missing (<root>/compiler/tests/pkgs/gone)
+  --> compiler/tests/pkgs/app/missing.ei:3:1
+  |
+3 | import "gone"
+  | ^
+  help: run `eider-pkg fetch` in <root>/compiler/tests/pkgs/app
+error: 1 error
+--- exit 1

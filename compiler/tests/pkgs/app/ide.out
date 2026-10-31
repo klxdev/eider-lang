@@ -1,0 +1,67 @@
+files
+  compiler/tests/pkgs/app/ide.ei
+  <root>/compiler/tests/pkgs/geo/geo.ei
+  <root>/compiler/tests/pkgs/base/base.ei
+  <root>/compiler/tests/pkgs/geo/util.ei
+  <prelude>
+diags
+symbols
+  0 module ide compiler/tests/pkgs/app/ide.ei:1:1-1:1 full 1:1-10:1 :: compiler/tests/pkgs/app/ide.ei
+  1 fn main compiler/tests/pkgs/app/ide.ei:6:4-6:8 full 6:1-9:2 :: fn main() uses io
+  2 module geo <root>/compiler/tests/pkgs/geo/geo.ei:1:1-1:1 full 1:1-8:1 :: <root>/compiler/tests/pkgs/geo/geo.ei
+  3 fn area <root>/compiler/tests/pkgs/geo/geo.ei:5:8-5:12 full 5:1-5:73 :: pub fn area(w: i64, h: i64) -> i64
+  4 param w <root>/compiler/tests/pkgs/geo/geo.ei:5:13-5:14 full 5:13-5:19 in 3 :: w: i64
+  5 param h <root>/compiler/tests/pkgs/geo/geo.ei:5:21-5:22 full 5:21-5:27 in 3 :: h: i64
+  6 fn kind <root>/compiler/tests/pkgs/geo/geo.ei:7:8-7:12 full 7:1-7:41 :: pub fn kind() -> base.Kind
+  7 module base <root>/compiler/tests/pkgs/base/base.ei:1:1-1:1 full 1:1-5:1 :: <root>/compiler/tests/pkgs/base/base.ei
+  8 type Kind <root>/compiler/tests/pkgs/base/base.ei:2:10-2:14 full 2:1-2:29 :: pub type Kind
+  9 variant Low <root>/compiler/tests/pkgs/base/base.ei:2:19-2:22 full 2:19-2:22 in 8 :: Low
+  10 variant High <root>/compiler/tests/pkgs/base/base.ei:2:25-2:29 full 2:25-2:29 in 8 :: High
+  11 fn level <root>/compiler/tests/pkgs/base/base.ei:4:8-4:13 full 4:1-4:28 :: pub fn level() -> i64
+  12 module util <root>/compiler/tests/pkgs/geo/util.ei:1:1-1:1 full 1:1-7:1 :: <root>/compiler/tests/pkgs/geo/util.ei
+  13 type Unit <root>/compiler/tests/pkgs/geo/util.ei:2:10-2:14 full 2:1-2:31 :: pub type Unit
+  14 variant Metre <root>/compiler/tests/pkgs/geo/util.ei:2:19-2:24 full 2:19-2:24 in 13 :: Metre
+  15 variant Foot <root>/compiler/tests/pkgs/geo/util.ei:2:27-2:31 full 2:27-2:31 in 13 :: Foot
+  16 fn mul <root>/compiler/tests/pkgs/geo/util.ei:4:8-4:11 full 4:1-4:44 :: pub fn mul(a: i64, b: i64) -> i64
+  17 param a <root>/compiler/tests/pkgs/geo/util.ei:4:12-4:13 full 4:12-4:18 in 16 :: a: i64
+  18 param b <root>/compiler/tests/pkgs/geo/util.ei:4:20-4:21 full 4:20-4:26 in 16 :: b: i64
+  19 fn name <root>/compiler/tests/pkgs/geo/util.ei:6:8-6:12 full 6:1-6:36 :: pub fn name() -> str
+  (62 symbols in <prelude>)
+refs
+  compiler/tests/pkgs/app/ide.ei:3:8-3:13 -> 2 module geo
+  compiler/tests/pkgs/app/ide.ei:4:8-4:18 -> 12 module util
+  compiler/tests/pkgs/app/ide.ei:4:22-4:24 -> 12 module util
+  compiler/tests/pkgs/app/ide.ei:7:11-7:14 -> 2 module geo
+  compiler/tests/pkgs/app/ide.ei:7:15-7:19 -> 3 fn area
+  compiler/tests/pkgs/app/ide.ei:8:11-8:13 -> 12 module util
+  compiler/tests/pkgs/app/ide.ei:8:14-8:18 -> 19 fn name
+  <root>/compiler/tests/pkgs/geo/geo.ei:2:8-2:14 -> 7 module base
+  <root>/compiler/tests/pkgs/geo/geo.ei:3:8-3:17 -> 12 module util
+  <root>/compiler/tests/pkgs/geo/geo.ei:5:38-5:42 -> 12 module util
+  <root>/compiler/tests/pkgs/geo/geo.ei:5:43-5:46 -> 16 fn mul
+  <root>/compiler/tests/pkgs/geo/geo.ei:5:47-5:48 -> 4 param w
+  <root>/compiler/tests/pkgs/geo/geo.ei:5:50-5:51 -> 5 param h
+  <root>/compiler/tests/pkgs/geo/geo.ei:5:55-5:59 -> 7 module base
+  <root>/compiler/tests/pkgs/geo/geo.ei:5:60-5:65 -> 11 fn level
+  <root>/compiler/tests/pkgs/geo/geo.ei:7:18-7:22 -> 7 module base
+  <root>/compiler/tests/pkgs/geo/geo.ei:7:23-7:27 -> 8 type Kind
+  <root>/compiler/tests/pkgs/geo/geo.ei:7:30-7:34 -> 7 module base
+  <root>/compiler/tests/pkgs/geo/geo.ei:7:35-7:39 -> 10 variant High
+  <root>/compiler/tests/pkgs/geo/util.ei:4:37-4:38 -> 17 param a
+  <root>/compiler/tests/pkgs/geo/util.ei:4:41-4:42 -> 18 param b
+types
+  compiler/tests/pkgs/app/ide.ei:7:5-7:10 : ()
+  compiler/tests/pkgs/app/ide.ei:7:15-7:19 : i64
+  compiler/tests/pkgs/app/ide.ei:8:5-8:10 : ()
+  compiler/tests/pkgs/app/ide.ei:8:14-8:18 : str
+  <root>/compiler/tests/pkgs/geo/geo.ei:5:13-5:14 : i64
+  <root>/compiler/tests/pkgs/geo/geo.ei:5:21-5:22 : i64
+  <root>/compiler/tests/pkgs/geo/geo.ei:5:43-5:46 : i64
+  <root>/compiler/tests/pkgs/geo/geo.ei:5:47-5:48 : i64
+  <root>/compiler/tests/pkgs/geo/geo.ei:5:50-5:51 : i64
+  <root>/compiler/tests/pkgs/geo/geo.ei:5:60-5:65 : i64
+  <root>/compiler/tests/pkgs/geo/geo.ei:7:35-7:39 : base.Kind
+  <root>/compiler/tests/pkgs/geo/util.ei:4:12-4:13 : i64
+  <root>/compiler/tests/pkgs/geo/util.ei:4:20-4:21 : i64
+  <root>/compiler/tests/pkgs/geo/util.ei:4:37-4:38 : i64
+  <root>/compiler/tests/pkgs/geo/util.ei:4:41-4:42 : i64

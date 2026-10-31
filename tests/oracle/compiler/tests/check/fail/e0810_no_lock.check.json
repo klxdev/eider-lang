@@ -1,0 +1,1 @@
+{"error":"E0810","span":{"file":"compiler/tests/check/fail/../lib/pkgs/nolock/nolock.ei","line":2,"col":1},"message":"can't locate package `json`: there is no eider.lock in <root>/compiler","help":"run `eider-pkg fetch` in <root>/compiler"}

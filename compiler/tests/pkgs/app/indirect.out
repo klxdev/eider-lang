@@ -1,0 +1,9 @@
+--- stderr
+error[E0809]: package `base` is not a dependency of `app` (<root>/compiler/tests/pkgs/app/eider.toml)
+  --> compiler/tests/pkgs/app/indirect.ei:4:1
+  |
+4 | import "base"
+  | ^
+  help: add it with `eider-pkg add base --path <dir>` or `eider-pkg add base --git <url> --version <v>`: a package imports only its own dependencies
+error: 1 error
+--- exit 1

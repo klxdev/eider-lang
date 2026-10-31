@@ -46,8 +46,8 @@
 // diagnostic at the point where handling them would start, so everything reported
 // before is exact.
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
+import "../core/sys.ei"
+import "../std/bytes.ei"
 import "intern.ei"
 import "lex.ei"
 import "ast.ei"
@@ -1909,7 +1909,8 @@ fn record_ffi(inout c: C, ii: u32) uses ffi {
         let sym = nm(c, n.a)
         ir.add_extern(inout c.ir, inst.ir, sym, ps, inst.ret)
     } else {
-        let name = kt(c, f.key)
+        // the C interface shows the stem, as programs do (resolve.ei `shown`)
+        let name = resolve.key_shown(c.p.names, f.key)
         ir.add_export(inout c.ir, inst.ir, name)
         c.exports += 1
     }

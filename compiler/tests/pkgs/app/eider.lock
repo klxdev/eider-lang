@@ -1,0 +1,46 @@
+# eider.lock: written by `eider-pkg`. Do not edit.
+version = 1
+
+[[package]]
+name = "base"
+version = "0.1.0"
+source = "path+../base"
+deps = []
+grants = []
+
+[[package]]
+name = "cache"
+version = "2.0.0"
+source = "git+file:///nonexistent/cache#0123456789abcdef0123456789abcdef01234567"
+hash = "sha256-00112233445566ffeeddccbbaa99887766554433221100ffeeddccbbaa998877"
+deps = []
+grants = []
+
+[[package]]
+name = "geo"
+version = "0.1.0"
+source = "path+../geo"
+deps = ["base"]
+grants = []
+
+[[package]]
+name = "gone"
+version = "0.1.0"
+source = "path+../gone"
+deps = []
+grants = []
+
+[[package]]
+name = "net"
+version = "1.0.0"
+source = "git+file:///nonexistent/net#89abcdef0123456789abcdef0123456789abcdef"
+hash = "sha256-aaaabbbbccccddddeeeeffff00001111222233334444555566667777888899990"
+deps = []
+grants = []
+
+[[package]]
+name = "shapes"
+version = "0.1.0"
+source = "path+../shapes"
+deps = []
+grants = []

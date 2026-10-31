@@ -1,0 +1,2 @@
+// cache, as eider-pkg exports it into the store ($EIDER_HOME/pkg/<name>-<hash16>)
+pub fn hits() -> i64 { 3 }

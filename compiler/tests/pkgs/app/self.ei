@@ -1,0 +1,9 @@
+// pkgtest: run
+// a package imports its own modules by name too; `"app/util"` and `"util.ei"` are one module
+import "app/util" as mine
+import "util.ei"
+
+fn main() uses io {
+    print(mine.name())
+    print(util.name())
+}

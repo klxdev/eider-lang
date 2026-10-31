@@ -94,8 +94,8 @@
 //   B_MUTEX_NEW(v) -> ty    B_MUTEX_GET(m) -> T    B_MUTEX_SET(m, v)    B_MUTEX_UPDATE(m, f)
 //   B_CHAN_NEW -> ty    B_CHAN_SEND(c, v)    B_CHAN_RECV(c) -> Option[T]    B_CHAN_CLOSE(c)
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
+import "../core/sys.ei"
+import "../std/bytes.ei"
 import "ast.ei"
 import "intern.ei"
 import "types.ei"

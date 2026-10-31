@@ -1,8 +1,8 @@
 // diag: diagnostics, rendered exactly as tests/oracle records them (human and --json).
 // Messages are bytes so they can go to stderr.
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
+import "../core/sys.ei"
+import "../std/bytes.ei"
 
 pub type Fix = { line: u32, col: u32, delete: u64, insert: List[u8] }
 
@@ -83,6 +83,7 @@ pub fn all_codes() -> List[List[u8]] uses ffi {
         "E0114", "E0115", "E0201", "E0203", "E0301", "E0302", "E0303", "E0304", "E0305", "E0306", "E0401",
         "E0402", "E0405", "E0406", "E0409", "E0410", "E0501", "E0502", "E0503", "E0504", "E0601", "E0602", "E0603",
         "E0701", "E0801", "E0802", "E0803", "E0804", "E0805", "E0806", "E0807", "E0808",
+        "E0809", "E0810",
     ] { out.push(sys.lit(c)) }
     out
 }
@@ -124,12 +125,17 @@ fn alnum(c: u8) -> bool { (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 
 fn alpha(c: u8) -> bool { (c >= 65 && c <= 90) || (c >= 97 && c <= 122) }
 
 /// `a__B` -> `a.B` (module-prefixed names in messages, shown as `module.Name`): a
-/// double underscore between an alphanumeric and a letter.
+/// double underscore between an alphanumeric and a letter. A package module's name
+/// `util__0json` shows as its stem `util` (resolve.ei module_name): from `__0` to the
+/// next `__` is dropped.
 pub fn demangle(s: List[u8]) -> List[u8] {
     var out: List[u8] = List.new()
     var i: usize = 0
     while i < s.len() {
-        if s[i] == 95 && i + 2 < s.len() && s[i + 1] == 95 && i > 0 && alnum(s[i - 1]) && alpha(s[i + 2]) {
+        if s[i] == 95 && i + 2 < s.len() && s[i + 1] == 95 && i > 0 && s[i + 2] == 48 {
+            i += 3
+            while i < s.len() && !(s[i] == 95 && i + 1 < s.len() && s[i + 1] == 95) { i += 1 }
+        } else if s[i] == 95 && i + 2 < s.len() && s[i + 1] == 95 && i > 0 && alnum(s[i - 1]) && alpha(s[i + 2]) {
             out.push(46)
             i += 2
         } else {

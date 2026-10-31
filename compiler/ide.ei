@@ -1,5 +1,5 @@
 // ide: the analysis API for editors and language servers. eider-analyzer imports this file
-// as `deps/eiderc/ide.ei` (a path dependency on compiler/, package `eiderc`); `eiderc ide`
+// as `import "eiderc/ide"` (a path dependency on compiler/, package `eiderc`); `eiderc ide`
 // prints an Analysis (`dump`) for the tests in compiler/tests/ide.
 //
 // The contract (the server depends on these names):
@@ -7,7 +7,8 @@
 //   pub type Span = { file: List[u8], line: u32, col: u32, end_line: u32, end_col: u32 }
 //       1-based; columns count Unicode scalar values (as in diagnostics); the end is
 //       exclusive. `file` is the module's path as the compiler names it (the entry path as
-//       given, an import joined to its importer's directory), like Diag.file.
+//       given, a path import joined to its importer's directory, a package import its package's
+//       directory joined with the module path), like Diag.file.
 //   pub const SK_MODULE = 1, SK_TYPE 2, SK_VARIANT 3, SK_FIELD 4, SK_FN 5, SK_METHOD 6,
 //       SK_CONST 7, SK_TRAIT 8, SK_PARAM 9, SK_LOCAL 10, SK_TEST 11
 //   pub type Symbol = { name: List[u8], kind: u32, span: Span, full: Span, container: u32, detail: List[u8] }
@@ -53,9 +54,9 @@
 // toolchain or a work directory is missing (where `check` would exit), that is a
 // `toolchain` diagnostic instead.
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
-import "deps/std/fs.ei"
+import "../core/sys.ei"
+import "../std/bytes.ei"
+import "../std/fs.ei"
 import "intern.ei"
 import "lex.ei"
 import "ast.ei"

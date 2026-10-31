@@ -1,0 +1,5 @@
+// pkgtest: check
+// a dependency is located through eider.lock, and there is none
+import "json"
+
+fn main() {}

@@ -1,0 +1,6 @@
+// in no package (the test copies it to target/pkgloose/loose.ei, with no eider.toml above):
+// only std and core can be imported by name
+import "json"
+import "std/bytes"
+
+fn main() {}

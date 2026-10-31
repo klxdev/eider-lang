@@ -13,11 +13,11 @@
 // `build --wasm` / `run --wasm` (<name>.wasm, <name>.d.ts, <name>.js; wasm.ei). `test`
 // ignores it, as it ignores `--lib`.
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
-import "deps/std/fs.ei"
-import "deps/std/io.ei"
-import "deps/std/env.ei"
+import "../core/sys.ei"
+import "../std/bytes.ei"
+import "../std/fs.ei"
+import "../std/io.ei"
+import "../std/env.ei"
 import "intern.ei"
 import "lex.ei"
 import "diag.ei"

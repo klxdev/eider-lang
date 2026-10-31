@@ -1,0 +1,4 @@
+// base: the end of the chain app -> geo -> base
+pub type Kind = | Low | High
+
+pub fn level() -> i64 { 1 }

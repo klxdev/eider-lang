@@ -1,0 +1,5 @@
+// pkgtest: check
+// legacy is not a dependency of app
+import "legacy"
+
+fn main() {}

@@ -2,8 +2,8 @@
 // (lex.lex_all, parse.parse_all). `analyze` returns the tree and the diagnostics; `report`
 // prints them as compiler/tests/recover's goldens record them.
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
+import "../core/sys.ei"
+import "../std/bytes.ei"
 import "intern.ei"
 import "lex.ei"
 import "diag.ei"

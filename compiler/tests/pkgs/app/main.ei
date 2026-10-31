@@ -1,0 +1,31 @@
+// pkgtest: run
+// Package-qualified modules (docs/compiler.md, "C8.3: packages and modules"): geo, shapes
+// and the app each have a util module (one name, three identities: no E0808); a dependency
+// chain (app -> geo -> base); a package whose entry is not <name>.ei (shapes); a git
+// dependency vendored into vendor/ (net) and one from the store (cache, with
+// EIDER_HOME=compiler/tests/pkgs/home); the toolchain's std and core. Variant names print
+// with the module's stem.
+import "std/io"
+import "core/sys"
+import "geo"
+import "geo/util" as gu
+import "shapes"
+import "shapes/src/util" as su
+import "util.ei"
+import "net"
+import "cache"
+
+fn main() uses io, ffi {
+    io.outln(sys.lit(util.name()))
+    print(gu.name())
+    print(su.name())
+    print(geo.area(6, 7))
+    print(shapes.sides(3))
+    print(net.port())
+    print(cache.hits())
+    print(geo.kind())
+    let a: gu.Unit = gu.Foot
+    let b: su.Unit = su.Edge
+    print(a)
+    print(b)
+}

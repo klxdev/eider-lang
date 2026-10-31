@@ -1,0 +1,5 @@
+// pkgtest: check
+// ghost is declared in eider.toml but eider.lock was not refreshed
+import "ghost"
+
+fn main() {}

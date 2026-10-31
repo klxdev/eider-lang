@@ -1,0 +1,6 @@
+// geo/util.ei: one of three util modules in app/main.ei's program
+pub type Unit = | Metre | Foot
+
+pub fn mul(a: i64, b: i64) -> i64 { a * b }
+
+pub fn name() -> str { "geo util" }

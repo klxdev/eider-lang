@@ -1,0 +1,1 @@
+{"error":"E0809","span":{"file":"compiler/tests/check/fail/e0809_not_a_dependency.ei","line":3,"col":1},"message":"package `json` is not a dependency of `eiderc` (<root>/compiler/eider.toml)","help":"add it with `eider-pkg add json --path <dir>` or `eider-pkg add json --git <url> --version <v>`: a package imports only its own dependencies"}

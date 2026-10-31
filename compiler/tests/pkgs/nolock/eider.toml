@@ -1,0 +1,6 @@
+[package]
+name = "nolock"
+version = "0.1.0"
+
+[deps.json]
+path = "../json"

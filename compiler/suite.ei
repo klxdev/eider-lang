@@ -12,10 +12,10 @@
 // Where eiderc answers `unsupported` (a feature it doesn't implement yet) the file is
 // reported as `skip` and counted on its own line, neither passed nor failed.
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
-import "deps/std/fs.ei"
-import "deps/std/io.ei"
+import "../core/sys.ei"
+import "../std/bytes.ei"
+import "../std/fs.ei"
+import "../std/io.ei"
 import "intern.ei"
 import "lex.ei"
 import "diag.ei"
@@ -231,7 +231,7 @@ pub fn run(dir: List[u8]) -> i32 uses io, fs, net, clock, ffi {
                     bytes.append(inout l, s(" at "))
                     bytes.append(inout l, got_at)
                     bytes.append(inout l, s(": "))
-                    bytes.append(inout l, d.msg)
+                    bytes.append(inout l, resolve.shown(d.msg))
                     io.outln(l)
                     failed += 1
                     continue
@@ -310,7 +310,7 @@ pub fn run(dir: List[u8]) -> i32 uses io, fs, net, clock, ffi {
                 bytes.append(inout l, s(" rejected valid code: "))
                 bytes.append(inout l, sys.lit(d.code))
                 l.push(32)
-                bytes.append(inout l, d.msg)
+                bytes.append(inout l, resolve.shown(d.msg))
                 io.outln(l)
                 failed += 1
             }

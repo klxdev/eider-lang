@@ -24,8 +24,8 @@
 // Type lists (tuple elements, fn parameters, instance arguments) are interned too: equal
 // lists have equal ids, so composite types are compared as integers as well.
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
+import "../core/sys.ei"
+import "../std/bytes.ei"
 import "intern.ei"
 import "resolve.ei"
 

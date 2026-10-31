@@ -1,0 +1,4 @@
+// expect: E0810 2:1
+import "../lib/pkgs/nolock/nolock.ei"
+
+fn main() {}

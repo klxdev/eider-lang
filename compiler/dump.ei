@@ -5,8 +5,8 @@
 // strings escaped, operators in backticks, flags as bare words when set. The closing parens
 // follow the last child. An optional child or empty list prints nothing.
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
+import "../core/sys.ei"
+import "../std/bytes.ei"
 import "intern.ei"
 import "ast.ei"
 import "diag.ei"

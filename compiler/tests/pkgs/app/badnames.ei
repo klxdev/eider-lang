@@ -1,0 +1,7 @@
+// pkgtest: check
+// malformed package imports, and std, which has no entry module
+import "Geo"
+import "geo//util"
+import "std"
+
+fn main() {}

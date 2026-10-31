@@ -1,0 +1,28 @@
+[package]
+name = "app"
+version = "0.1.0"
+main = "main.ei"
+
+[deps.geo]
+path = "../geo"
+
+[deps.shapes]
+path = "../shapes"
+
+# git dependencies: net is vendored (vendor/net), cache comes from the store
+# (EIDER_HOME=compiler/tests/pkgs/home)
+[deps.net]
+git = "file:///nonexistent/net"
+version = "1.0.0"
+
+[deps.cache]
+git = "file:///nonexistent/cache"
+version = "2.0.0"
+
+# locked, but its directory is gone
+[deps.gone]
+path = "../gone"
+
+# declared after the last `eider-pkg fetch`: not in eider.lock
+[deps.ghost]
+path = "../ghost"

@@ -26,10 +26,10 @@
 // `comptime` is a keyword, so importers name this module with an alias
 // (`import "comptime.ei" as consteval`).
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
-import "deps/std/fs.ei"
-import "deps/std/proc.ei"
+import "../core/sys.ei"
+import "../std/bytes.ei"
+import "../std/fs.ei"
+import "../std/proc.ei"
 import "intern.ei"
 import "lex.ei"
 import "ast.ei"

@@ -1,0 +1,9 @@
+--- stderr
+error[E0810]: package `ghost` is not in <root>/compiler/tests/pkgs/app/eider.lock
+  --> compiler/tests/pkgs/app/unlocked.ei:3:1
+  |
+3 | import "ghost"
+  | ^
+  help: run `eider-pkg fetch` in <root>/compiler/tests/pkgs/app
+error: 1 error
+--- exit 1

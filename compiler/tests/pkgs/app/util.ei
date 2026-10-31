@@ -1,0 +1,2 @@
+// app/util.ei: the app's own util module
+pub fn name() -> str { "app util" }

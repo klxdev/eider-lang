@@ -1,0 +1,9 @@
+--- stderr
+error[E0809]: unknown package `json`: this file is in no package (no eider.toml above it)
+  --> target/pkgloose/loose.ei:3:1
+  |
+3 | import "json"
+  | ^
+  help: packages are imported from inside a package: create eider.toml with `eider-pkg init`, then `eider-pkg add json ...`; a path import names a file with its extension, like `"json.ei"`
+error: 1 error
+--- exit 1

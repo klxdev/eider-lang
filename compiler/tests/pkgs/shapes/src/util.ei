@@ -1,0 +1,6 @@
+// shapes/src/util.ei
+pub type Unit = | Corner | Edge
+
+pub fn offset() -> i64 { 0 }
+
+pub fn name() -> str { "shapes util" }

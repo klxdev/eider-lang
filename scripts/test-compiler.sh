@@ -57,6 +57,11 @@
 #             node: WebAssembly is optional).
 #   unit:     programs in compiler/tests/unit that drive a compiler module (sha256.ei) must
 #             print their .out.
+#   packages: compiler/tests/pkgs, packages with eider.toml and eider.lock (two packages
+#             with a util.ei, a dependency chain, vendored and store dependencies, the
+#             package-import errors E0808/E0809/E0810): each `// pkgtest: <cmd>` file's
+#             `eiderc <cmd>` output equals its X.out (BLESS=1 rewrites them; review by
+#             hand), and the C of the app is the same from a copy at another path.
 #   ide:      `eiderc ide` (ide.ei, the analysis API for language servers) of
 #             compiler/tests/ide/*.ei matches the .ide goldens (BLESS=1 rewrites them; review
 #             them by hand); a `// overlay: <path> <text file>` line in the file adds
@@ -71,7 +76,7 @@
 #   usage:    `--help` lists every command; unknown options/commands and stray arguments
 #             exit 2.
 cd "$(dirname "$0")/.." || exit 1
-scripts/bootstrap-deps.sh
+mkdir -p target
 # EIDERC=<binary> tests that compiler instead of target/eiderc-next, compiler/ as built by
 # the seed's eiderc (scripts/ei); scripts/selfhost.sh uses it for its stage 3.
 if [ -n "$EIDERC" ]; then
@@ -343,9 +348,11 @@ echo "$v leaks: $rleak_ok/$rleak runs end with no outstanding allocation (-DEI_R
 # determinism: the same input gives byte-identical C, also from another directory
 det=target/determinism
 rm -rf $det
-mkdir -p $det/a $det/b
+mkdir -p $det/a $det/b/tests
 cp -R tests/run $det/a/run
-cp -R compiler/tests/run $det/b/run
+# compiler/tests/run is in package eiderc: the copy is too (module names come from the package)
+cp compiler/eider.toml $det/b/eider.toml
+cp -R compiler/tests/run $det/b/tests/run
 dtotal=0
 dok=0
 # the compiler by absolute path, so it runs from the test directories
@@ -354,7 +361,7 @@ for f in tests/run/*.ei compiler/tests/run/*.ei; do
   case " $routside " in *" $(basename "$f") "*) continue ;; esac
   dtotal=$((dtotal + 1))
   case "$f" in tests/*) dir=tests ;; *) dir=compiler/tests ;; esac
-  case "$f" in tests/*) copy=$det/a ;; *) copy=$det/b ;; esac
+  case "$f" in tests/*) copy=$det/a ;; *) copy=$det/b/tests ;; esac
   rel="run/$(basename "$f")"
   (cd $dir && "$anew" emit-c "$rel" --test) >$tmp/c1 2>&1
   (cd $dir && "$anew" emit-c "$rel" --test) >$tmp/c2 2>&1
@@ -453,6 +460,61 @@ for f in compiler/tests/ide/*.ei; do
   if [ -n "$BLESS" ]; then cp $tmp/ide "$g"; fi
   if cmp -s $tmp/ide "$g"; then echo "ok   ide $f"; else echo "FAIL ide $f"; diff "$g" $tmp/ide | head -10; fail=1; fi
 done
+
+# packages: package-qualified modules and bare imports in the multi-package layout of
+# compiler/tests/pkgs (docs/compiler.md, "C8.3: packages and modules"). Each file starting
+# `// pkgtest: <run|check|ide>` gives X.out (stdout, stderr, exit; `ide`: its dump), with
+# git dependencies from the store compiler/tests/pkgs/home. The program's C is the same
+# from a copy of the layout at another path.
+pk_total=0
+pk_ok=0
+for f in $(grep -rl '^// pkgtest: ' compiler/tests/pkgs --include='*.ei' | sort); do
+  pk_total=$((pk_total + 1))
+  how=$(sed -n '1s|^// pkgtest: ||p' "$f")
+  if [ "$how" = ide ]; then
+    EIDER_HOME=$(pwd)/compiler/tests/pkgs/home $new ide "$f" 2>&1 | norm >$tmp/out
+  else
+    outcome env EIDER_HOME=$(pwd)/compiler/tests/pkgs/home EIDER_CFLAGS=-Werror $new $how "$f"
+  fi
+  g="${f%.ei}.out"
+  if [ -n "$BLESS" ]; then cp $tmp/out "$g"; fi
+  if cmp -s $tmp/out "$g"; then pk_ok=$((pk_ok + 1)); else echo "FAIL packages $f"; diff "$g" $tmp/out | head -10; fail=1; fi
+done
+# a file in no package (copied out of compiler/, which is package eiderc)
+mkdir -p target/pkgloose
+cp compiler/tests/pkgs/loose.src target/pkgloose/loose.ei
+pk_total=$((pk_total + 1))
+outcome $new check target/pkgloose/loose.ei
+if [ -n "$BLESS" ]; then cp $tmp/out compiler/tests/pkgs/loose.out; fi
+if cmp -s $tmp/out compiler/tests/pkgs/loose.out; then pk_ok=$((pk_ok + 1)); else echo "FAIL packages compiler/tests/pkgs/loose.src"; diff compiler/tests/pkgs/loose.out $tmp/out | head -10; fail=1; fi
+pkc=target/pkgcopy
+rm -rf $pkc
+mkdir -p $pkc
+cp -R compiler/tests/pkgs $pkc/pkgs
+(cd compiler/tests/pkgs/app && EIDER_HOME=$(pwd)/../home "$anew" emit-c main.ei) >$tmp/c1 2>&1
+(cd $pkc/pkgs/app && EIDER_HOME=$(pwd)/../home "$anew" emit-c main.ei) >$tmp/c2 2>&1
+if cmp -s $tmp/c1 $tmp/c2 && grep -q 'f_util__0geo__name' $tmp/c1; then pk_ok=$((pk_ok + 1)); else echo "FAIL packages: emit-c of compiler/tests/pkgs/app/main.ei differs from a copy's (or lacks the package C names)"; diff $tmp/c1 $tmp/c2 | head -10; fail=1; fi
+pk_total=$((pk_total + 1))
+if [ "$pk_ok" = "$pk_total" ]; then v="ok  "; else v="FAIL"; fi
+echo "$v packages: $pk_ok/$pk_total multi-package cases (compiler/tests/pkgs) give their .out, and the same C from a copy"
+# migration: the staged rewrite to package imports (scripts/migrate-imports.sh), on a copy of
+# core, std, packages and compiler, gives a toolchain this compiler checks, whose package
+# tests pass (what the next seed makes possible in the checkout itself)
+mig=$(pwd)/target/migrate
+rm -rf $mig
+mkdir -p $mig
+cp -R core std packages compiler $mig/
+sh scripts/migrate-imports.sh $mig/core $mig/std $mig/packages $mig/compiler >$tmp/mig 2>&1
+mig_ok=1
+grep -q '^import "\.\./' $mig/compiler/main.ei $mig/packages/pkg/manifest.ei && { echo "FAIL migration: path imports into other packages are left"; mig_ok=0; }
+for f in compiler/main.ei packages/pkg/main.ei packages/fuzz/main.ei; do
+  EIDER_ROOT=$mig $new check $mig/$f >$tmp/mo 2>&1 || { echo "FAIL migration: check $f"; head -10 $tmp/mo; mig_ok=0; }
+done
+for f in packages/*/tests/*.ei; do
+  EIDER_ROOT=$mig $new run $mig/$f >$tmp/mo 2>&1
+  cmp -s $tmp/mo "${f%.ei}.out" || { echo "FAIL migration: run $f"; diff "${f%.ei}.out" $tmp/mo | head -10; mig_ok=0; }
+done
+if [ $mig_ok = 1 ]; then echo "ok   migration: $(wc -l <$tmp/mig) files rewritten to package imports check and pass their package tests"; else fail=1; fi
 
 # compile-fail: `eiderc test --compile-fail` against the recorded runner output (the oracle's
 # <dir>.compile-fail: the output, then `--- exit <code>`)

@@ -1,0 +1,9 @@
+// pkgtest: ide
+// what an editor sees: package modules by their paths, refs into them
+import "geo"
+import "geo/util" as gu
+
+fn main() uses io {
+    print(geo.area(2, 3))
+    print(gu.name())
+}

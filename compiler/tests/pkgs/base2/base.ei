@@ -1,0 +1,2 @@
+// a second copy of package base (app/dup.ei)
+pub fn level() -> i64 { 2 }

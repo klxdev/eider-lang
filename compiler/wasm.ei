@@ -21,12 +21,12 @@
 // to what tests/oracle records. `emit-header --wasm` prints both the way the oracle
 // records them: the declarations, a \x01 byte, then the loader naming the module `@WASM@`.
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
-import "deps/std/fs.ei"
-import "deps/std/io.ei"
-import "deps/std/env.ei"
-import "deps/std/proc.ei"
+import "../core/sys.ei"
+import "../std/bytes.ei"
+import "../std/fs.ei"
+import "../std/io.ei"
+import "../std/env.ei"
+import "../std/proc.ei"
 import "intern.ei"
 import "types.ei"
 import "ir.ei"

@@ -1,0 +1,49 @@
+// compiler/lock.ei (bare imports: eider.toml and eider.lock as the compiler reads them):
+// comments, multi-line arrays, empty and inline dependency tables, path and git sources,
+// the store directory name, and a file that doesn't parse.
+import "../../lock.ei"
+import "../../../core/sys.ei"
+
+fn main() uses io, ffi {
+    let m = lock.manifest(sys.lit("[package]\nname = \"app\" # c\nversion = \"0.1.0\"\n\n[deps.json]\npath = \"../json\"\nuses = [\n  \"io\",\n]\n[deps.util]\n[deps]\ngeo = { path = \"../geo\", uses = [\"fs\"] }\n"))
+    match m {
+        Ok(x) => {
+            print(sys.to_string(x.name))
+            print(sys.to_string(x.entry))
+            for d in x.deps { print(sys.to_string(d)) }
+        }
+        Err(e) => print(sys.to_string(e))
+    }
+    let custom = lock.manifest(sys.lit("[package]\nname = \"lib\"\nentry = \"src/main.ei\"\n"))
+    match custom {
+        Ok(x) => print(sys.to_string(x.entry))
+        Err(e) => print(sys.to_string(e))
+    }
+    let l = lock.lockfile(sys.lit("# eider.lock\nversion = 1\n\n[[package]]\nname = \"a\"\nversion = \"0.1.0\"\nsource = \"path+../a\"\ndeps = []\ngrants = []\n\n[[package]]\nname = \"b\"\nsource = \"git+file:///r#c0ffee\"\nhash = \"sha256-0123456789abcdef0123\"\ndeps = [\"a\"]\n"))
+    match l {
+        Ok(ps) => {
+            for p in ps {
+                var t = sys.to_string(p.name)
+                if p.git {
+                    t.push_str(" git ")
+                    t.append(sys.to_string(lock.store_leaf(p.name, p.hash)))
+                } else {
+                    t.push_str(" path ")
+                    t.append(sys.to_string(p.path))
+                }
+                print(t)
+            }
+        }
+        Err(e) => print(sys.to_string(e))
+    }
+    match lock.lockfile(sys.lit("[[package]]\nname = \"a\n")) {
+        Ok(_) => print("parsed")
+        Err(e) => print(sys.to_string(e))
+    }
+    match lock.manifest(sys.lit("[package]\nname = \"Bad\"\n")) {
+        Ok(_) => print("parsed")
+        Err(e) => print(sys.to_string(e))
+    }
+    print(lock.valid_name(sys.lit("json_2")))
+    print(lock.valid_name(sys.lit("2json")))
+}

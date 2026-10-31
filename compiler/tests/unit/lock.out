@@ -1,0 +1,12 @@
+app
+app.ei
+json
+util
+geo
+src/main.ei
+a path ../a
+b git b-0123456789abcdef
+line 2: unterminated string
+the package name must be lowercase letters, digits and `_`, starting with a letter
+true
+false

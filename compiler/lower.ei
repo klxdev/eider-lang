@@ -12,10 +12,12 @@
 //
 // C names depend only on what they name (module identity, symbol, and for instances the type
 // arguments), never on arena indexes or declaration order, so editing one module renames
-// nothing elsewhere. The module identity is today's module prefix (the file stem, unique per
-// program by E0808; the entry module has none), which the checker already spells into every
-// name as `stem__name`. <h> below is 8 hex digits of a 64-bit hash of the spelled name or
-// type (`swap[i32, bool]`, `Pair[i32, bool]`, `List[String]`):
+// nothing elsewhere. The module identity is the module name (resolve.ei: the file stem
+// outside packages, `<stem>__0<package>[_s<path>]` inside one; unique per program by E0808;
+// the entry module has none), which the checker already spells into every name as
+// `<module name>__name`; what a program prints (variant names) and a C interface's names
+// show only the stem (resolve.shown). <h> below is 8 hex digits of a 64-bit hash of the
+// spelled name or type (`swap[i32, bool]`, `Pair[i32, bool]`, `List[String]`):
 //   t_<key>[_<h>]  record or enum (`_<h>` for instances of generic types)
 //   ta_<h> tt_<h> tl_<h> tm_<h> tb_<h> tf_<h>   array, tuple, List, Map, Box, fn type
 //   tk_<h> tx_<h> tc_<h>   Task, Mutex, Chan handles (`struct <name>_c` is the shared object)
@@ -51,8 +53,8 @@
 // shared glue, then the functions per module (the entry module first, then the others in
 // order of first appearance), generic instances (sorted by C name), tests, and `main`.
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
+import "../core/sys.ei"
+import "../std/bytes.ei"
 import "intern.ei"
 import "types.ei"
 import "resolve.ei"
@@ -1092,7 +1094,7 @@ fn name_glue(inout g: G, p: P, ty: u32) uses ffi {
     for i in 0..d.len {
         if i > 0 { put(inout g, ",") }
         put(inout g, " ")
-        str_lit(inout g.o, resolve.key_text(p.names, types.variant(p.t, d, i).key))
+        str_lit(inout g.o, resolve.key_shown(p.names, types.variant(p.t, d, i).key))
     }
     put(inout g, " };\n  return n[tag];\n}\n")
 }
@@ -2469,7 +2471,7 @@ fn h_ty(inout out: List[u8], p: P, ty: u32) uses ffi {
         bytes.append(inout out, sys.lit("const char*"))
     } else if k == types.T_RECORD {
         bytes.append(inout out, sys.lit("R_"))
-        mangle(inout out, types.show(p.t, p.names, ty))
+        mangle(inout out, resolve.shown(types.show(p.t, p.names, ty)))
     } else {
         bytes.append(inout out, sys.lit("void"))
     }

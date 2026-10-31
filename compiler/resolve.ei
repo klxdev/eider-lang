@@ -1,36 +1,52 @@
 // resolve: the module graph and name keys.
 //
-// Loading (held to tests/oracle): imports are read
-// relative to the importing file, depth first in source order; a module already loaded (by
-// canonical path) is merged once; two different files with the same stem clash (E0808).
-// Items come out in a fixed order: the prelude first, then each module's imports
-// before its own items, so the entry file is last (`Program.order`).
+// Loading (held to tests/oracle): imports are read depth first in source order; a module
+// already loaded (by canonical path) is merged once; two different files with one module
+// identity clash (E0808). Items come out in a fixed order: the prelude first, then each
+// module's imports before its own items, so the entry file is last (`Program.order`).
 //
-// The prelude (Option, Result and their methods) is Eider source that belongs to the
-// language core: `core/prelude.ei` under the toolchain root, which is $EIDER_ROOT, or else
-// the parent of the directory holding the eiderc executable (argv[0]; `target/eiderc` in a
-// checkout gives the checkout), or else the current directory. It is loaded like a module
-// whose names have no prefix (parsed before user items).
+// Imports (docs/compiler.md, "C8.3: packages and modules"). A *path import* (the string
+// has a `.` or starts with `/`: `"util.ei"`, `"../lib/geo.ei"`) names a file relative to the
+// importing file. A *package import* (no `.`, no leading `/`: `"json"`, `"json/util"`,
+// `"std/fs"`) starts with a package name: `std` and `core` are the toolchain's (beside the
+// prelude), any other must be the importing package's own name or one of its direct
+// dependencies (`[deps.<name>]` in its eider.toml; E0809 otherwise), found through
+// eider.lock (lock.ei; E0810 when it can't be). `"json"` loads the package's entry module,
+// `"json/a/b"` its file `a/b.ei`. The default alias is the last segment.
 //
-// Names. The language gives every top-level name of an imported module the prefix of its
-// file stem (`geo__Point`) and rewrites references inside that module to match, unless a
-// local of the same function shadows them. The checker then sees one flat
-// table. We keep that table but key it by integers: a name key is (prefix, symbol) packed in
-// a u64, prefix 0 for the entry file, the prelude, `extern` fns and `main`, and stem symbol
-// + 1 for an imported module. `alias.Name` (kept structurally by the parser) becomes the key
-// of the alias's module. The `*_key` functions below reproduce that renaming's rules, so
-// lookups hit exactly what the mangled `stem__Name` strings would hit.
+// Module identity. A file's package is the nearest eider.toml above its canonical path
+// (`[package] name`); its identity is (package, its path inside the package without the
+// extension). A file in no package is identified by its canonical path, as before
+// packages. The prelude (Option, Result and their methods) is Eider source that belongs to
+// the language core: `core/prelude.ei` under the toolchain root, which is $EIDER_ROOT, or
+// else the parent of the directory holding the eiderc executable (argv[0]; `target/eiderc`
+// in a checkout gives the checkout), or else the current directory. It is loaded like a
+// module whose names have no prefix (parsed before user items).
+//
+// Names. The language gives every top-level name of an imported module the module's prefix
+// (`geo__Point`) and rewrites references inside that module to match, unless a local of
+// the same function shadows them. The checker then sees one flat table. We keep that table
+// but key it by integers: a name key is (prefix, symbol) packed in a u64, prefix 0 for the
+// entry file, the prelude, `extern` fns and `main`, and the module name's symbol + 1 for an
+// imported module. A module name is its file stem outside packages (so two such files with
+// one stem clash) and `<stem>__0<package>[_s<path>]` inside one (`module_name`: unique per
+// identity, and only identifier bytes, so C names derived from it are too); messages and
+// what a program prints show only the stem (`diag.demangle`, `shown`). `alias.Name` (kept
+// structurally by the parser) becomes the key of the alias's module. The `*_key` functions
+// below reproduce that renaming's rules, so lookups hit exactly what the mangled
+// `stem__Name` strings would hit.
 
-import "deps/core/sys.ei"
-import "deps/std/bytes.ei"
-import "deps/std/fs.ei"
-import "deps/std/env.ei"
+import "../core/sys.ei"
+import "../std/bytes.ei"
+import "../std/fs.ei"
+import "../std/env.ei"
 import "intern.ei"
 import "lex.ei"
 import "ast.ei"
 import "parse.ei"
 import "diag.ei"
 import "front.ei"
+import "lock.ei"
 
 /// "no module": the prelude, or an error that belongs to no file.
 pub const NOMOD: u32 = 4294967295
@@ -38,11 +54,17 @@ pub const NOMOD: u32 = 4294967295
 /// An import of a module: `alias` refers to the module with prefix `pre` from (line, col) on.
 pub type Alias = { sym: u32, pre: u32, line: u32, col: u32 }
 
+/// "no package": a file with no eider.toml above it.
+pub const NOPKG: u32 = 4294967295
+
 /// One source file. `path` is the name diagnostics use for it (the importer's directory joined
-/// with the import path); `pre` is 0 for the entry file, else the stem symbol + 1.
+/// with the import path, or a package's directory joined with the module's path in it);
+/// `pre` is 0 for the entry file, else the module name's symbol + 1; `pkg` indexes
+/// `Program.pkgs` (NOPKG: in no package).
 pub type Module = {
     path: List[u8],
     pre: u32,
+    pkg: u32,
     src: List[u8],
     ast: ast.Ast,
     toks: List[lex.Tok],
@@ -50,6 +72,14 @@ pub type Module = {
     aliases: List[Alias],
     own: Map[u32, bool],
 }
+
+/// A package: `dir` (canonical) holds its eider.toml, which names it and its direct
+/// dependencies; `err` says why that file can't be used (then the package has no name and
+/// its files are identified as files in no package).
+pub type Pkg = { dir: List[u8], name: List[u8], entry: List[u8], deps: List[List[u8]], err: List[u8] }
+
+/// eider.lock in `dir` (`missing`: there is none; `err`: it doesn't parse).
+pub type Lock = { dir: List[u8], missing: bool, err: List[u8], pkgs: List[lock.Locked] }
 
 pub type Program = {
     mods: List[Module],
@@ -62,12 +92,19 @@ pub type Program = {
     pre_paths: List[List[u8]],
     /// the prelude's module index
     prelude: u32,
-    /// the prefixes (stem symbol + 1) of imports that failed to load (a missing or
-    /// unparsable file, a clash): names qualified by them are not reported as unknown
+    /// the prefixes (module name symbol + 1) of imports that failed to load (a missing or
+    /// unparsable file, a clash, a package that can't be found): names qualified by them are
+    /// not reported as unknown
     broken: List[u32],
     /// where syntax errors are: module index * 2^32 + line (note_syntax); the checker
     /// judges nothing a skipped part could have changed there
     syntax: List[u64],
+    /// the packages seen, the directories probed for an eider.toml (each with its package,
+    /// or NOPKG) and the lock files read
+    pkgs: List[Pkg],
+    pdirs: List[List[u8]],
+    pdir_pkg: List[u32],
+    locks: List[Lock],
 }
 
 /// Note the syntax errors `ds` of module m (its lex and parse diagnostics).
@@ -222,8 +259,8 @@ fn stem(path: List[u8]) -> List[u8] {
     out
 }
 
-/// The canonical path (symlinks resolved, so the deps/ link farm's paths to one file
-/// agree), or the path itself when it can't be resolved.
+/// The canonical path (symlinks resolved, so every path to one file agrees: module identity,
+/// the deps/ farm of old), or the path itself when it can't be resolved.
 fn canonical(path: List[u8]) -> List[u8] uses fs, ffi {
     match fs.canonical(path) {
         Ok(a) => a
@@ -283,9 +320,9 @@ pub fn read_source(fp: Files, path: List[u8]) -> Option[List[u8]] uses fs, ffi {
     read_file(fp, path, canonical(path))
 }
 
-fn add_module(inout p: Program, path: List[u8], pre: u32, src: List[u8], q: parse.P) -> u32 {
+fn add_module(inout p: Program, path: List[u8], pre: u32, pkg: u32, src: List[u8], q: parse.P) -> u32 {
     var own: Map[u32, bool] = Map.new()
-    let m = Module(path, pre, src, q.ast, q.toks, q.strs, List.new(), own)
+    let m = Module(path, pre, pkg, src, q.ast, q.toks, q.strs, List.new(), own)
     p.mods.push(m)
     (p.mods.len() - 1) as u32
 }
@@ -341,9 +378,12 @@ pub type Loaded = { p: Program, diags: List[diag.Diag], fatal: bool }
 
 /// `load`, reading sources through `fp`.
 pub fn load_from(file: List[u8], src: List[u8], q: parse.P, fp: Files) -> Loaded uses io, fs, ffi {
-    var p = Program(List.new(), List.new(), q.names, List.new(), List.new(), List.new(), NOMOD, List.new(), List.new())
-    p.seen.push(canonical(file))
-    add_module(inout p, file, 0, src, q)
+    var p = Program(List.new(), List.new(), q.names, List.new(), List.new(), List.new(), NOMOD, List.new(), List.new(),
+        List.new(), List.new(), List.new(), List.new())
+    let canon = canonical(file)
+    p.seen.push(canon)
+    let pk = package_of(inout p, canon)
+    add_module(inout p, file, 0, pk, src, q)
     var diags: List[diag.Diag] = List.new()
     load_imports(inout p, 0, fp, inout diags)
     var fatal = false
@@ -393,7 +433,7 @@ fn load_prelude(inout p: Program, fp: Files) -> Result[bool, diag.Diag] uses io,
         }
     }
     let q = parse_file(inout p, path, text)?
-    let m = add_module(inout p, path, 0, text, q)
+    let m = add_module(inout p, path, 0, NOPKG, text, q)
     p.prelude = m
     var order: List[u32] = List.new()
     order.push(m)
@@ -403,7 +443,7 @@ fn load_prelude(inout p: Program, fp: Files) -> Result[bool, diag.Diag] uses io,
 }
 
 /// Load module m's imports (and theirs, depth first), recording what fails in `diags`.
-fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag]) uses fs, ffi {
+fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag]) uses io, fs, ffi {
     let a = p.mods[m as usize].ast
     let dir = dir_of(p.mods[m as usize].path)
     let file = p.mods[m as usize].path
@@ -411,12 +451,33 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
         let n = a.nodes[ast.at(a, a.items_start, k) as usize]
         if n.kind != ast.IImport { continue }
         let rel = p.mods[m as usize].strs[n.a as usize]
-        var path = join(dir, rel)
-        if !has_ext(path) { bytes.append(inout path, sys.lit(".ei")) }
-        let canon = canonical(path)
+        // the default alias: the file stem, or a package import's last segment
         let st = stem(rel)
-        let pre_sym = intern.intern(inout p.names, st, 0, st.len())
-        let alias = if n.b > 0 { n.b - 1 } else { pre_sym }
+        let st_sym = intern.intern(inout p.names, st, 0, st.len())
+        let alias = if n.b > 0 { n.b - 1 } else { st_sym }
+        var path: List[u8] = List.new()
+        if is_package_import(rel) {
+            match locate(inout p, m, rel, n) {
+                Ok(x) => { path = x }
+                Err(d) => {
+                    // a prefix no module has, so what it qualifies is not reported as unknown
+                    var bad = st
+                    bytes.append(inout bad, sys.lit("__0"))
+                    let bad_sym = intern.intern(inout p.names, bad, 0, bad.len())
+                    p.mods[m as usize].aliases.push(Alias(alias, bad_sym + 1, n.line, n.col))
+                    diags.push(in_file(d, file))
+                    p.broken.push(bad_sym + 1)
+                    continue
+                }
+            }
+        } else {
+            path = join(dir, rel)
+            if !has_ext(path) { bytes.append(inout path, sys.lit(".ei")) }
+        }
+        let canon = canonical(path)
+        let pk = package_of(inout p, canon)
+        let mname = module_name(p, canon, pk, st)
+        let pre_sym = intern.intern(inout p.names, mname, 0, mname.len())
         p.mods[m as usize].aliases.push(Alias(alias, pre_sym + 1, n.line, n.col))
         var clash = false
         var known = false
@@ -424,16 +485,7 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
             if p.pre_syms[j] == pre_sym {
                 known = true
                 if !bytes.eq(p.pre_paths[j], canon) {
-                    var msg = sys.lit("two different modules are both named `")
-                    bytes.append(inout msg, st)
-                    bytes.append(inout msg, sys.lit("` ("))
-                    bytes.append(inout msg, p.pre_paths[j])
-                    bytes.append(inout msg, sys.lit(" and "))
-                    bytes.append(inout msg, canon)
-                    bytes.append(inout msg, sys.lit(")"))
-                    var d = diag.new("E0808", n.line, n.col, msg)
-                    d.help = sys.lit("rename one of the files; a module's name is its file name")
-                    diags.push(in_file(d, file))
+                    diags.push(in_file(clash_diag(p, n, pk, st, p.pre_paths[j], canon), file))
                     clash = true
                 }
             }
@@ -457,17 +509,380 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
                 bytes.append(inout msg, path)
                 bytes.append(inout msg, sys.lit("`: "))
                 bytes.append(inout msg, read_error(path))
-                diags.push(in_file(diag.new("E0804", n.line, n.col, msg), file))
+                var d = diag.new("E0804", n.line, n.col, msg)
+                if bytes.starts_with(rel, sys.lit("deps/")) || bytes.find(rel, sys.lit("/deps/"), 0).is_some() {
+                    d.help = sys.lit("eider-pkg no longer links dependencies into deps/: import a package by name (`import \"json\"`, `import \"json/util\"`, `import \"std/fs\"`)")
+                }
+                diags.push(in_file(d, file))
                 p.broken.push(pre_sym + 1)
                 continue
             }
         }
         // a module with syntax errors is loaded with what parsed (its error nodes are skipped)
         let q = parse_module(inout p, path, text, inout diags)
-        let mi = add_module(inout p, path, pre_sym + 1, text, q)
+        let mi = add_module(inout p, path, pre_sym + 1, pk, text, q)
         load_imports(inout p, mi, fp, inout diags)
     }
     p.order.push(m)
+}
+
+/// E0808: two different files `a` and `b` (canonical) have one module identity.
+fn clash_diag(p: Program, n: ast.Node, pk: u32, st: List[u8], a: List[u8], b: List[u8]) -> diag.Diag uses ffi {
+    var msg: List[u8] = List.new()
+    let in_pkg = pk != NOPKG && p.pkgs[pk as usize].name.len() > 0
+    if !in_pkg {
+        msg = sys.lit("two different modules are both named `")
+        bytes.append(inout msg, st)
+    } else {
+        msg = sys.lit("two different copies of package `")
+        bytes.append(inout msg, p.pkgs[pk as usize].name)
+        bytes.append(inout msg, sys.lit("` have module `"))
+        bytes.append(inout msg, st)
+    }
+    bytes.append(inout msg, sys.lit("` ("))
+    bytes.append(inout msg, a)
+    bytes.append(inout msg, sys.lit(" and "))
+    bytes.append(inout msg, b)
+    bytes.append(inout msg, sys.lit(")"))
+    var d = diag.new("E0808", n.line, n.col, msg)
+    if !in_pkg {
+        d.help = sys.lit("rename one of the files, or put them in packages (an eider.toml above each): outside a package a module is named by its file name")
+    } else {
+        d.help = sys.lit("a program loads each package from one directory: import the package by name (`eider-pkg fetch` locks one copy for the whole graph)")
+    }
+    d
+}
+
+// ---- packages (docs/compiler.md, "C8.3: packages and modules")
+
+/// A package import: no `.` anywhere and no leading `/` (`json`, `json/util`, `std/fs`).
+pub fn is_package_import(spec: List[u8]) -> bool {
+    if spec.len() == 0 || spec[0] == 47 { return false }
+    for c in spec {
+        if c == 46 { return false }
+    }
+    true
+}
+
+/// "not yet probed" (package_of's cache).
+const UNSEEN: u32 = 4294967294
+
+fn dir_lookup(p: Program, dir: List[u8]) -> u32 {
+    for i in 0..p.pdirs.len() {
+        if bytes.eq(p.pdirs[i], dir) { return p.pdir_pkg[i] }
+    }
+    UNSEEN
+}
+
+/// Read the eider.toml `mf` of the package in `dir`.
+fn add_pkg(inout p: Program, dir: List[u8], mf: List[u8]) -> u32 uses fs, ffi {
+    let none: List[u8] = List.new()
+    var pk = Pkg(dir, none, none, List.new(), none)
+    match fs.read(mf) {
+        Ok(t) => {
+            match lock.manifest(t) {
+                Ok(x) => {
+                    pk.name = x.name
+                    pk.entry = x.entry
+                    pk.deps = x.deps
+                }
+                Err(e) => { pk.err = cannot(mf, e) }
+            }
+        }
+        Err(_) => { pk.err = cannot(mf, read_error(mf)) }
+    }
+    p.pkgs.push(pk)
+    (p.pkgs.len() - 1) as u32
+}
+
+fn cannot(file: List[u8], why: List[u8]) -> List[u8] uses ffi {
+    var m = sys.lit("cannot use `")
+    bytes.append(inout m, file)
+    bytes.append(inout m, sys.lit("`: "))
+    bytes.append(inout m, why)
+    m
+}
+
+/// The package of the file at canonical path `canon`: the nearest directory above it with
+/// an eider.toml, or NOPKG.
+pub fn package_of(inout p: Program, canon: List[u8]) -> u32 uses fs, ffi {
+    var dir = dir_of(canon)
+    var walked: List[List[u8]] = List.new()
+    var found = NOPKG
+    while dir.len() > 0 {
+        let c = dir_lookup(p, dir)
+        if c != UNSEEN {
+            found = c
+            break
+        }
+        walked.push(dir)
+        let mf = join(dir, sys.lit("eider.toml"))
+        if fs.exists(mf) {
+            found = add_pkg(inout p, dir, mf)
+            break
+        }
+        if dir.len() == 1 && dir[0] == 47 { break }
+        dir = dir_of(dir)
+    }
+    for d in walked {
+        p.pdirs.push(d)
+        p.pdir_pkg.push(found)
+    }
+    found
+}
+
+/// The package whose eider.toml is in `dir` (NOPKG if there is none).
+fn package_in(inout p: Program, dir: List[u8]) -> u32 uses fs, ffi {
+    let canon = canonical(dir)
+    let c = dir_lookup(p, canon)
+    if c != UNSEEN {
+        if c != NOPKG && bytes.eq(p.pkgs[c as usize].dir, canon) { return c }
+    }
+    let mf = join(canon, sys.lit("eider.toml"))
+    if !fs.exists(mf) { return NOPKG }
+    let pk = add_pkg(inout p, canon, mf)
+    p.pdirs.push(canon)
+    p.pdir_pkg.push(pk)
+    pk
+}
+
+/// `b` with each byte that isn't a letter or digit escaped (`_` `_u`, `/` `_s`, `-` `_d`,
+/// `.` `_p`, others `_x` and two hex digits), so the result has no `__` and decodes back.
+fn escape(inout out: List[u8], b: List[u8]) uses ffi {
+    for c in b {
+        if bytes.is_alpha(c) || bytes.is_digit(c) {
+            out.push(c)
+        } else if c == 95 {
+            bytes.append(inout out, sys.lit("_u"))
+        } else if c == 47 {
+            bytes.append(inout out, sys.lit("_s"))
+        } else if c == 45 {
+            bytes.append(inout out, sys.lit("_d"))
+        } else if c == 46 {
+            bytes.append(inout out, sys.lit("_p"))
+        } else {
+            bytes.append(inout out, sys.lit("_x"))
+            let hex = sys.lit("0123456789abcdef")
+            out.push(hex[(c / 16) as usize])
+            out.push(hex[(c % 16) as usize])
+        }
+    }
+}
+
+/// `path` without the extension of its last component.
+fn strip_ext(path: List[u8]) -> List[u8] {
+    let start: usize = match bytes.rfind_byte(path, 47) {
+        Some(i) => i + 1
+        None => 0
+    }
+    let base = bytes.slice(path, start, path.len())
+    match bytes.rfind_byte(base, 46) {
+        Some(0) => path
+        Some(i) => bytes.slice(path, 0, start + i)
+        None => path
+    }
+}
+
+/// The module name of the file at canonical path `canon` in package `pk`, imported with
+/// stem `st`: the stem outside packages; `<stem>__0<package>` for a file at the package's
+/// top whose name is an identifier, else `<stem>__0<package>_s<path>` (escaped; see the top).
+pub fn module_name(p: Program, canon: List[u8], pk: u32, st: List[u8]) -> List[u8] uses ffi {
+    if pk == NOPKG { return st }
+    let pkg = p.pkgs[pk as usize]
+    if pkg.name.len() == 0 || canon.len() <= pkg.dir.len() + 1 { return st }
+    let rel = bytes.slice(canon, pkg.dir.len() + 1, canon.len())
+    let inner = strip_ext(rel)
+    var out = stem(rel)
+    let simple = bytes.eq(inner, out)
+    bytes.append(inout out, sys.lit("__0"))
+    escape(inout out, pkg.name)
+    if !simple {
+        bytes.append(inout out, sys.lit("_s"))
+        escape(inout out, inner)
+    }
+    out
+}
+
+/// A module name (or key text) as messages and programs show it: each `__0...` part (the
+/// package and path of a package module) dropped, so `util__0json__Point` is `util__Point`.
+pub fn shown(s: List[u8]) -> List[u8] {
+    var out: List[u8] = List.new()
+    var i: usize = 0
+    while i < s.len() {
+        if s[i] == 95 && i + 2 < s.len() && i > 0 && s[i + 1] == 95 && s[i + 2] == 48 {
+            i += 3
+            while i < s.len() && !(s[i] == 95 && i + 1 < s.len() && s[i + 1] == 95) { i += 1 }
+        } else {
+            out.push(s[i])
+            i += 1
+        }
+    }
+    out
+}
+
+/// key_text as programs and C interfaces show it (`shown`).
+pub fn key_shown(names: intern.Interner, k: u64) -> List[u8] uses ffi { shown(key_text(names, k)) }
+
+fn eider_home() -> List[u8] uses io, fs, ffi {
+    match env.get(sys.lit("EIDER_HOME")) {
+        Some(h) => {
+            if h.len() > 0 {
+                let a = match fs.absolute(h) {
+                    Ok(x) => x
+                    Err(_) => h
+                }
+                return a
+            }
+        }
+        None => {}
+    }
+    match env.get(sys.lit("HOME")) {
+        Some(h) => join(h, sys.lit(".eider"))
+        None => sys.lit(".eider")
+    }
+}
+
+/// The lock file in `dir`, read once.
+fn lock_at(inout p: Program, dir: List[u8]) -> u32 uses fs, ffi {
+    for i in 0..p.locks.len() {
+        if bytes.eq(p.locks[i].dir, dir) { return i as u32 }
+    }
+    let file = join(dir, sys.lit("eider.lock"))
+    var l = Lock(dir, false, List.new(), List.new())
+    if !fs.exists(file) {
+        l.missing = true
+    } else {
+        match fs.read(file) {
+            Ok(t) => {
+                match lock.lockfile(t) {
+                    Ok(ps) => { l.pkgs = ps }
+                    Err(e) => { l.err = cannot(file, e) }
+                }
+            }
+            Err(_) => { l.err = cannot(file, read_error(file)) }
+        }
+    }
+    p.locks.push(l)
+    (p.locks.len() - 1) as u32
+}
+
+fn pkg_diag(code: str, n: ast.Node, msg: List[u8], help: List[u8]) -> diag.Diag {
+    var d = diag.new(code, n.line, n.col, msg)
+    d.help = help
+    d
+}
+
+fn quoted(a: str, x: List[u8], b: str) -> List[u8] uses ffi {
+    var m = sys.lit(a)
+    bytes.append(inout m, x)
+    bytes.append(inout m, sys.lit(b))
+    m
+}
+
+/// The file that package import `spec` in module m names, or why it can't be found:
+/// E0809 for a package the module may not import, E0810 for one that can't be located.
+fn locate(inout p: Program, m: u32, spec: List[u8], n: ast.Node) -> Result[List[u8], diag.Diag] uses io, fs, ffi {
+    let parts = bytes.split(spec, 47)
+    var ok = lock.valid_name(parts[0])
+    for x in parts {
+        if x.len() == 0 { ok = false }
+    }
+    if !ok {
+        return Err(pkg_diag("E0809", n, quoted("`", spec, "` is not a valid import"),
+            sys.lit("a package import is `<package>` or `<package>/<module path>` (lowercase package name, no `.`); a path import names a file with its extension, like `\"util.ei\"`")))
+    }
+    let head = parts[0]
+    var rest: List[u8] = List.new()
+    for i in 1..parts.len() {
+        if i > 1 { rest.push(47) }
+        bytes.append(inout rest, parts[i])
+    }
+    if bytes.eq(head, sys.lit("std")) || bytes.eq(head, sys.lit("core")) {
+        if rest.len() == 0 {
+            var h = sys.lit("import one of its modules, like `\"")
+            bytes.append(inout h, head)
+            if bytes.eq(head, sys.lit("std")) { bytes.append(inout h, sys.lit("/fs\"`")) } else { bytes.append(inout h, sys.lit("/sys\"`")) }
+            return Err(pkg_diag("E0809", n, quoted("`", head, "` is part of the toolchain and has no entry module"), h))
+        }
+        var f = head
+        f.push(47)
+        bytes.append(inout f, rest)
+        bytes.append(inout f, sys.lit(".ei"))
+        return Ok(join(toolchain_root(), f))
+    }
+    let pk = p.mods[m as usize].pkg
+    if pk == NOPKG {
+        var h = sys.lit("packages are imported from inside a package: create eider.toml with `eider-pkg init`, then `eider-pkg add ")
+        bytes.append(inout h, head)
+        bytes.append(inout h, sys.lit(" ...`; a path import names a file with its extension, like `\""))
+        bytes.append(inout h, spec)
+        bytes.append(inout h, sys.lit(".ei\"`"))
+        return Err(pkg_diag("E0809", n, quoted("unknown package `", head, "`: this file is in no package (no eider.toml above it)"), h))
+    }
+    let own = p.pkgs[pk as usize]
+    if own.err.len() > 0 { return Err(pkg_diag("E0810", n, own.err, sys.lit("fix eider.toml (`eider-pkg fetch` checks it)"))) }
+    var dir = own.dir
+    if !bytes.eq(head, own.name) {
+        if !contains(own.deps, head) {
+            var msg = quoted("package `", head, "` is not a dependency of `")
+            bytes.append(inout msg, own.name)
+            bytes.append(inout msg, sys.lit("` ("))
+            bytes.append(inout msg, join(own.dir, sys.lit("eider.toml")))
+            bytes.append(inout msg, sys.lit(")"))
+            var h = sys.lit("add it with `eider-pkg add ")
+            bytes.append(inout h, head)
+            bytes.append(inout h, sys.lit(" --path <dir>` or `eider-pkg add "))
+            bytes.append(inout h, head)
+            bytes.append(inout h, sys.lit(" --git <url> --version <v>`: a package imports only its own dependencies"))
+            return Err(pkg_diag("E0809", n, msg, h))
+        }
+        // the lock of the program's root package (the entry file's), else the importer's own
+        let root = p.mods[0].pkg
+        let ld = if root != NOPKG && p.pkgs[root as usize].err.len() == 0 { p.pkgs[root as usize].dir } else { own.dir }
+        let li = lock_at(inout p, ld)
+        let lk = p.locks[li as usize]
+        let fetch = quoted("run `eider-pkg fetch` in ", ld, "")
+        if lk.err.len() > 0 { return Err(pkg_diag("E0810", n, lk.err, fetch)) }
+        if lk.missing {
+            var msg = quoted("can't locate package `", head, "`: there is no eider.lock in ")
+            bytes.append(inout msg, ld)
+            return Err(pkg_diag("E0810", n, msg, fetch))
+        }
+        var found = false
+        for e in lk.pkgs {
+            if bytes.eq(e.name, head) {
+                found = true
+                if e.git {
+                    let vendored = join(join(ld, sys.lit("vendor")), head)
+                    dir = if fs.is_dir(vendored) { vendored } else { join(join(eider_home(), sys.lit("pkg")), lock.store_leaf(head, e.hash)) }
+                } else {
+                    dir = fs.normalize(join(ld, e.path))
+                }
+            }
+        }
+        if !found {
+            var msg = quoted("package `", head, "` is not in ")
+            bytes.append(inout msg, join(ld, sys.lit("eider.lock")))
+            return Err(pkg_diag("E0810", n, msg, fetch))
+        }
+        if !fs.is_dir(dir) {
+            var msg = quoted("package `", head, "` is locked, but its files are missing (")
+            bytes.append(inout msg, dir)
+            bytes.append(inout msg, sys.lit(")"))
+            return Err(pkg_diag("E0810", n, msg, fetch))
+        }
+    }
+    if rest.len() > 0 {
+        bytes.append(inout rest, sys.lit(".ei"))
+        return Ok(join(dir, rest))
+    }
+    // the package's entry module
+    if bytes.eq(head, own.name) { return Ok(join(dir, own.entry)) }
+    let dp = package_in(inout p, dir)
+    if dp == NOPKG { return Ok(join(dir, bytes.concat(head, sys.lit(".ei")))) }
+    let dk = p.pkgs[dp as usize]
+    if dk.err.len() > 0 { return Err(pkg_diag("E0810", n, dk.err, sys.lit("fix eider.toml (`eider-pkg fetch` checks it)"))) }
+    Ok(join(dir, dk.entry))
 }
 
 /// The module's own top-level names: types, variants, consts, traits and fns
