@@ -1,0 +1,8 @@
+// expect: E0201 7:13
+import "core/sys"
+
+// core/sys.ei's wrappers declare their real capability next to `ffi`, so calling one
+// directly from another package needs it (and not `ffi`)
+fn main() {
+    let n = sys.cwd()
+}

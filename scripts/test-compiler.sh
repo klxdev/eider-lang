@@ -59,7 +59,8 @@
 #             print their .out.
 #   packages: compiler/tests/pkgs, packages with eider.toml and eider.lock (two packages
 #             with a util.ei, a dependency chain, vendored and store dependencies, the
-#             package-import errors E0808/E0809/E0810): each `// pkgtest: <cmd>` file's
+#             package-import errors E0808/E0809/E0810, capability grants and E0204, `eiderc
+#             caps`): each `// pkgtest: <cmd>` file's
 #             `eiderc <cmd>` output equals its X.out (BLESS=1 rewrites them; review by
 #             hand), and the C of the app is the same from a copy at another path.
 #   ide:      `eiderc ide` (ide.ei, the analysis API for language servers) of
@@ -497,16 +498,21 @@ if cmp -s $tmp/c1 $tmp/c2 && grep -q 'f_util__0geo__name' $tmp/c1; then pk_ok=$(
 pk_total=$((pk_total + 1))
 if [ "$pk_ok" = "$pk_total" ]; then v="ok  "; else v="FAIL"; fi
 echo "$v packages: $pk_ok/$pk_total multi-package cases (compiler/tests/pkgs) give their .out, and the same C from a copy"
-# migration: the staged rewrite to package imports (scripts/migrate-imports.sh), on a copy of
-# core, std, packages and compiler, gives a toolchain this compiler checks, whose package
-# tests pass (what the next seed makes possible in the checkout itself)
+# migration: the staged rewrites to package imports (scripts/migrate-imports.sh) and away
+# from `uses ffi` outside core (scripts/migrate-caps.sh), on a copy of core, std, packages
+# and compiler, give a toolchain this compiler checks, whose package tests pass (what the
+# next seed makes possible in the checkout itself)
 mig=$(pwd)/target/migrate
 rm -rf $mig
 mkdir -p $mig
 cp -R core std packages compiler $mig/
 sh scripts/migrate-imports.sh $mig/core $mig/std $mig/packages $mig/compiler >$tmp/mig 2>&1
+# and the staged removal of `uses ffi` (scripts/migrate-caps.sh, docs/compiler.md "C8.5")
+sh scripts/migrate-caps.sh $mig/core $mig/std $mig/packages $mig/compiler >$tmp/migc 2>&1
 mig_ok=1
 grep -q '^import "\.\./' $mig/compiler/main.ei $mig/packages/pkg/manifest.ei && { echo "FAIL migration: path imports into other packages are left"; mig_ok=0; }
+grep -l '^[[:space:]]*[^/[:space:]][^/]*uses [^/]*ffi' $mig/std/*.ei $mig/compiler/*.ei $mig/packages/*/*.ei >$tmp/migl && { echo "FAIL migration: \`uses ffi\` is left in $(sed "s|$mig/||" $tmp/migl | tr '\n' ' ')"; mig_ok=0; }
+grep -q 'uses .*ffi' $mig/core/sys.ei || { echo "FAIL migration: core/sys.ei lost its \`uses ffi\`"; mig_ok=0; }
 for f in compiler/main.ei packages/pkg/main.ei packages/fuzz/main.ei; do
   EIDER_ROOT=$mig $new check $mig/$f >$tmp/mo 2>&1 || { echo "FAIL migration: check $f"; head -10 $tmp/mo; mig_ok=0; }
 done
@@ -514,7 +520,7 @@ for f in packages/*/tests/*.ei; do
   EIDER_ROOT=$mig $new run $mig/$f >$tmp/mo 2>&1
   cmp -s $tmp/mo "${f%.ei}.out" || { echo "FAIL migration: run $f"; diff "${f%.ei}.out" $tmp/mo | head -10; mig_ok=0; }
 done
-if [ $mig_ok = 1 ]; then echo "ok   migration: $(wc -l <$tmp/mig) files rewritten to package imports check and pass their package tests"; else fail=1; fi
+if [ $mig_ok = 1 ]; then echo "ok   migration: $(wc -l <$tmp/mig) files rewritten to package imports and $(wc -l <$tmp/migc) without \`uses ffi\` check and pass their package tests"; else fail=1; fi
 
 # compile-fail: `eiderc test --compile-fail` against the recorded runner output (the oracle's
 # <dir>.compile-fail: the output, then `--- exit <code>`)
@@ -597,7 +603,7 @@ $new --help >$tmp/o 2>&1
 code=$?
 uok=1
 [ $code = 0 ] || uok=0
-for c in check emit-c emit-header build "build --lib" "build --wasm" run test "test --compile-fail" lex parse ir ide help; do
+for c in check emit-c emit-header build "build --lib" "build --wasm" run test "test --compile-fail" lex parse ir caps ide help; do
   grep -q "^  eiderc $c " $tmp/o || { echo "FAIL usage: --help does not list \`$c\`"; uok=0; }
 done
 $new check --no-such-flag tests/run/adt.ei >/dev/null 2>&1

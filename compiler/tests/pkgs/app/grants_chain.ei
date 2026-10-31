@@ -1,0 +1,8 @@
+// pkgtest: check
+// E0204 in a dependency: app grants wrap fs, but wrap's own eider.toml grants files
+// nothing, so the error is at wrap's import of files and points at wrap's eider.toml
+import "wrap"
+
+fn main() uses io, fs {
+    print(wrap.ready())
+}

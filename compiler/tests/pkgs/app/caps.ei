@@ -1,0 +1,12 @@
+// pkgtest: caps
+// `eiderc caps`: each package's capability use, one JSON line per (package, capability) at
+// its first use (docs/compiler.md, "C8.5: capabilities per package"): the app's own, cffi's
+// extern, ublock's `unsafe` block, files' fs and its method's io, and core's and std's
+import "std/io"
+import "cffi"
+import "ublock"
+import "files"
+
+fn main() uses io {
+    print(cffi.magnitude(ublock.twice(1)))
+}

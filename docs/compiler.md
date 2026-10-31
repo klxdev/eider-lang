@@ -137,7 +137,9 @@ seed supports:
 - No owned data in hot loops' reads: index into arenas, keep records small and flat.
 - `Map` keys are integers (symbol ids, type ids). No `Map[List[u8], _]`.
 - No threads, no closures in hot paths (closures copy their captures).
-- `uses ffi` everywhere is accepted in the compiler for now (it sits on std).
+- `uses ffi` everywhere stays in the compiler until the next seed: the seed asks for `ffi`
+  along call chains, the compiler it builds no longer does ("C8.5: capabilities per
+  package"; scripts/migrate-caps.sh removes it then).
 
 ## C3: checking
 
@@ -322,8 +324,8 @@ an absolute path.
 
 Done ahead of the rest of C7 because eiderc's own source reaches the OS only through
 core/sys.ei's `extern "c"` functions. Externs, exports, `unsafe` and the library header;
-capability encapsulation ("Language work" item 5) is not
-started, so callers of std still write `uses ffi`.
+capability encapsulation ("Language work" item 5) came with
+"C8.5: capabilities per package": `ffi` no longer crosses a package boundary.
 
 - **Checking.** An `extern "c" fn` is a free function without a body, named globally
   (never module-prefixed), and `unsafe` (the parser marks it). When its signature is
@@ -977,11 +979,11 @@ and leaves the analyzer building.
 | 1 | **8.2 Small language gaps** | bitwise operators `& \| ^ << >> ~` (checked shifts); `String`/`str` byte access, slicing, building from bytes; `()` values (`Ok(())`); `main` returning an exit code; `impl` on built-in types | — |
 | 1 | **8.3 Package-qualified modules** (done: "C8.3: packages and modules"; package imports in compiler/, std/, packages/ after the next seed) | module identity = (package, path) instead of file stem (no more E0808 for two packages' `util.ei`); bare `import "json"` resolved through `eider.lock`; the `deps/` link farm retired | — |
 | 2 | **8.4 Operation traits** | `Copy`, `Eq`, `Ord`, `Hash`, `Show`, `Iter`, `Drop` in the core prelude; automatic derive; orphan rule; generic bounds with suggested fixes; Map keys any `Hash + Eq`; `for` over any `Iter` | 8.1, 8.2 |
-| 2 | **8.5 Capability encapsulation** | `ffi` becomes a property of a package (granted in eider.toml); std callers stop writing `uses ffi`; the compiler reports each package's real capability use and eider-pkg checks grants from that instead of scanning text | 8.3 |
+| 2 | **8.5 Capability encapsulation** (done: "C8.5: capabilities per package"; `uses ffi` removed from the repository after the next seed) | `ffi` becomes a property of a package (granted in eider.toml); std callers stop writing `uses ffi`; the compiler reports each package's real capability use and eider-pkg checks grants from that instead of scanning text | 8.3 |
 | 3 | **8.6 References by default** | `let` binds a read-only reference to a place, `let mut` a mutable alias, fresh values are owned; `.copy()`; pattern bindings the same; the protection rule (no invalidating write while a reference is alive) with fixes; references are C pointers; `var` deprecated with a mechanical fix | 8.1, 8.4 |
 | 3 | **8.7 `Ref[T]`** | shared mutable handle with scoped `read`/`update`, run-time conflict check, not sendable | 8.4 |
 | 4 | **8.8 Closures by reference** | non-escaping closures capture by reference | 8.6 |
-| 4 | **8.9 Std on the new base** | std speaks `String`, uses traits and references; `List[u8]` workarounds and `sys.lit` byte loops go; std callers need no `uses ffi` | 8.2, 8.4, 8.5, 8.6 |
+| 4 | **8.9 Std on the new base** | std speaks `String`, uses traits and references; `List[u8]` workarounds and `sys.lit` byte loops go | 8.2, 8.4, 8.5, 8.6 |
 | 4 | **8.10 Parity quirks** | fix each item in "C8 candidates" deliberately (wasm loader bugs, checker quirks), re-blessing the oracle per item | — |
 | 5 | **8.11 Comptime interpreter** | evaluate `comptime` by interpreting the IR: no C compiler at compile time, no capabilities by construction | — |
 | 5 | **8.12 Performance** | smaller generated C, one C file per module compiled in parallel, incremental front end keyed by module hash | 8.3 |
@@ -1289,6 +1291,137 @@ E0401/E0115/E0303/E0405 cases in `compiler/tests/check/fail`, `c8_*_ok.ei` in
   comparisons and `+ -`; prefix `~` with `-` and `!`; the compound assignments with the
   others; `()` as an expression and a pattern.
 
+## C8.5: capabilities per package
+
+Wave 2, item 8.5 ("Language work" item 5): `ffi` stops being a property of call chains and
+becomes one of packages, so std callers write `uses fs`, never `uses ffi`, and the package
+manager learns what a package can do from the compiler instead of scanning its text. Code:
+check.ei (`needs_cap`, used by the capability checks of `call_decl` and `fn_as_value`),
+resolve.ei ("capabilities per package": `package_caps`, `grant_diags`, `caps_json`), lock.ei
+(`Manifest.grants`), main.ei (`eiderc caps`), core/sys.ei; eider-pkg's `caps.ei`.
+
+**`ffi` stays inside its package.** A package is a module's package as resolve.ei knows it
+(`Module.pkg`, "C8.3"); the files in no package and the prelude count as one package.
+
+- Calling an `extern` function needs `ffi` in the caller's `uses` (E0201) and an `unsafe`
+  block or `unsafe fn` (E0802), as before ("C7: FFI"): the function that crosses into C says
+  so. Inside a package `ffi` propagates like any capability: a wrapper with `uses ffi` asks
+  its callers in the same package for it (compiler/tests/check/fail/e0201_ffi_via_wrapper.ei
+  is unchanged).
+- Across a package boundary it doesn't: calling a function of another package (or using it
+  as a value) needs the callee's capabilities **except** `ffi`. `unsafe` stays local: an
+  `unsafe fn` of another package still needs `unsafe` at the call (E0802).
+- The real capabilities (`io`, `fs`, `net`, `clock`, `threads`, ...) propagate across
+  packages as before. So every function that reaches the OS declares what it does, down to
+  core: core/sys.ei's wrappers declare their real capability next to `ffi` (`read_file`,
+  `write_file`, `list_dir`, `kind`, `mkdir`, `remove`, `rename`, `symlink`, `cwd`,
+  `realpath`: `fs`; `write_fd`, `read_fd`, `args`, `getenv`, `exit_now`: `io`; `run`: `io, fs,
+  net`), and the buffer and text helpers (`lit`, `to_string`, `send`, `send_all`, `take`,
+  `take_all`, `error_text`) only `ffi`, so they cost their callers nothing (without the real
+  ones, `sys.read_file()` would have become callable with no capability at all). std was
+  reviewed function by function and already declared the real ones: `fs` for files, `io` for
+  the standard streams, the environment, the arguments and exiting, `io, fs, net` for running
+  a program (a child can do anything); `bytes`, `fs.join`, `fs.normalize`, `fs.sort`,
+  `proc.captured` and the like declare nothing.
+- A `uses ffi` on a function of a package with no unmanaged code is accepted and means
+  nothing outside its package (code written for the earlier rule; the migration below
+  removes it). `comptime` may now call core's text helpers (`sys.lit`), which ask for nothing;
+  the wrappers that reach the OS still need a capability, which comptime never has.
+
+**A package's capability use** (`resolve.package_caps`), computed from the loaded program
+after resolution (no checking needed, so it works on programs with errors): over the modules
+of the package that the program loads, every capability named in the `uses` clause of a
+function (free functions, methods, trait methods; not `test` blocks, which are checked with
+every capability) other than `ffi`, plus `ffi` when the package has unmanaged code: an
+`extern` function, an `unsafe fn` or an `unsafe` block. A word that isn't a capability is
+E0203 where it is written and adds nothing. Each capability is kept with its first use
+(function, file, line, column), in module load order, then item order (a method before its
+impl); for an extern, `ffi` comes before the extern's own `uses`.
+
+**Grants** (`resolve.grant_diags`, at the end of loading, after the import errors, so they
+come before any checking error). The entry file's package is granted everything; `core` and
+`std` are the toolchain's and need no grant (core is the one package the toolchain grants
+`ffi`; std has no unmanaged code, and its real capabilities reach every caller through its
+functions' `uses`). For every other package P that a module of package D imports (by name or
+by path; D's first import of P in load order; D a package other than P), each capability P
+uses must be in D's grant to P, the `uses = [...]` of `[deps.P]` in D's eider.toml (absent:
+none). Otherwise **E0204**, at that import in D's file, once per (D, P, capability):
+
+```
+error[E0204]: package `fsdep` uses capability `fs` in `save` (fsdep.ei:5) but is only granted []
+  --> app/main.ei:2:1
+  help: to allow it, add "fs" to `uses` in [deps.fsdep] of <dir>/eider.toml
+```
+
+For `ffi` the message names the extern, the `unsafe fn` or the function holding the `unsafe`
+block, and the help adds "(it declares `extern` functions: unmanaged code)" or "(it has
+`unsafe` code: unmanaged code)". The help is text, not a machine-applicable fix: the edit is
+in another file. Grants are per edge, so a dependency's dependency is held to the grant its
+own eider.toml gives (in the store or vendor copy). Imports from files in no package are not
+held to grants (such a file is a program of its own; it can import packages only by path).
+
+**`eiderc caps <file>`** loads the program as `check` does (an import that can't be loaded,
+such as a dependency of a package checked on its own without a lock, is left out and not
+reported: the command answers for what it can see) and prints one JSON line per (package,
+capability) in the order above:
+`{"package":"fsdep","dir":"<dir>","cap":"fs","kind":"uses","fn":"save","file":"fsdep.ei","line":5,"col":5}`,
+where `kind` is `uses`, `extern` or `unsafe`, `fn` is `name` or `Type.name`, `file` is
+relative to the package's directory, and a file in no package has `"package":""` and
+`"dir":""` (and its path as `file`). It exits 0, or 2 when the file can't be read.
+
+**eider-pkg** (`packages/pkg/caps.ei`) no longer scans text. After resolving, for every
+locked package it runs `$EIDERC caps <dir>/<entry>` (its `main` when it has no entry module,
+like the compiler's package; `EIDERC` defaults to `$EIDER_ROOT/target/eiderc`) and holds that
+package's lines to its grant, with the messages it had (`package \`fsdep\` uses capability
+\`fs\` (fsdep.ei:5) but is only granted []; to allow it, add "fs" to \`uses\` in its
+[deps.fsdep] table`, plus the unmanaged-code note for `ffi`, now also for `unsafe`). What it
+checks is what the compiler loads from that module, not every file in the directory: a
+`tests/` program, a comment or a stray word no longer counts, and a module the entry imports
+does. A package with neither file is left to the compiler, which checks every import at build
+time anyway. Until the next seed `scripts/eider-pkg` sets `EIDERC` to compiler/ built by the
+seed (`target/eiderc-next`), since the seed has no `caps`.
+
+**Migration, staged.** The seed still asks for `ffi` along call chains, and it builds
+compiler/, std/, core/ and everything verify.sh builds with it (packages/, eider-pkg,
+tests/run, tests/std, tests/checks). So:
+
+1. Now (this item): the compiler has the rule, `eiderc caps` and E0204; core/sys.ei's
+   wrappers declare their real capabilities (every caller already did, so the seed builds
+   everything as before); the package fixtures grant what they use; eider-pkg asks the
+   compiler. compiler/, std/, packages/, tests/ and examples/ keep their `uses ffi`, which the
+   new compiler accepts. What only the new compiler builds is written without it: the new
+   tests (compiler/tests/{check,run,pkgs}, tests/pkg/run.sh's programs) and eider-analyzer
+   (built by compiler/ as the seed builds it), whose grants are now what the compiler reports
+   (eiderc `io, fs, net, clock`, json nothing).
+2. After the next seed: run `sh scripts/migrate-caps.sh compiler std packages tests` (it
+   removes `ffi` from every `uses` clause of files without `extern` or `unsafe` and without a
+   path import of such a file; core/sys.ei and the FFI tests keep theirs), fix the comments
+   that quote a signature (ide.ei's `analyze`), BLESS the diagnostics whose fix columns move,
+   change eider-pkg's `init` template to `uses io`, drop the `EIDERC` default from
+   scripts/eider-pkg, the "`uses ffi` everywhere" rule from "Writing the compiler in today's
+   Eider" and the known limit from LAYERS.md. test-compiler.sh ("migration") already runs the
+   script on a copy of core, std, packages and compiler and holds the result to checking
+   (compiler/main.ei, eider-pkg, the fuzzer) and to the package tests. The three tests/checks
+   cases below need that seed to pass verify.sh's compile-fail leg: the seed doesn't check
+   grants and asks for `ffi` where they have none.
+
+**Tests.** compiler/tests/check/fail: `e0204_method_fs` (a grant of `io` to a package whose
+method uses `fs`), `e0204_unsafe_fn` (an `unsafe fn` without an `ffi` grant),
+`e0201_std_needs_fs_not_ffi` and `e0201_core_wrapper_needs_fs` (the fix adds the real
+capability and then compiles); compiler/tests/check/pass/c85_std_without_ffi.ei (std's
+bytes, env, fs, io and proc with the real capabilities only); tests/checks/fail:
+`e0204_ungranted_fs`, `e0204_ungranted_ffi` (an extern granted only `io`) and
+`e0802_unsafe_fn_other_package`; compiler/tests/run/caps_std.ei (files, streams and
+arguments with `uses io, fs`); compiler/tests/pkgs: `grants_ok` (an extern package and an
+`unsafe`-block package granted `ffi`, called without `uses ffi`), `grants_fs` (one E0204 per
+capability, a method named `Log.show`), `grants_chain` (E0204 in a dependency, against its own
+eider.toml) and `caps` (`eiderc caps` of a program); compiler/tests/unit/lock.ei (grants read
+from eider.toml); tests/pkg/run.sh ("capability grants": an ungranted `fs` dependency is
+refused by `add`, an extern package needs `ffi`, a module the entry imports counts and a test
+program doesn't, `uses ffi` without unmanaged code and core need no grant, the granted
+packages run without `uses ffi`, and a grant removed from eider.toml after the fetch is E0204
+when building).
+
 ## Language work that lands in `eiderc` (after parity)
 
 Each with a design note, compile-fail tests and new codes:
@@ -1305,7 +1438,7 @@ Each with a design note, compile-fail tests and new codes:
    declare and propagate the real capabilities (`fs`, `io`, ...). `core` is the one package
    granted `ffi` by the toolchain. Result: std callers write `uses fs`, never `uses ffi`, and
    the package manager's text scan is replaced by the compiler reporting each package's
-   capability use.
+   capability use. Done ("C8.5: capabilities per package").
 6. Multiple diagnostics per run.
 
 ## Milestones

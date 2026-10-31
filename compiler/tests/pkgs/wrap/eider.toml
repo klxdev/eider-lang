@@ -1,0 +1,7 @@
+[package]
+name = "wrap"
+version = "0.1.0"
+
+# granted nothing: files uses fs and io, so importing it is E0204 here
+[deps.files]
+path = "../files"

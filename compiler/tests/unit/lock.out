@@ -1,8 +1,8 @@
 app
 app.ei
-json
-util
-geo
+json uses [io]
+util uses []
+geo uses [fs]
 src/main.ei
 a path ../a
 b git b-0123456789abcdef

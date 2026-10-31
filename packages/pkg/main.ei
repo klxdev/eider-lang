@@ -12,7 +12,8 @@
 // Only fetch/update/add/remove/vendor may touch the network: fetch and friends only when a
 // commit isn't already in the local mirror, update always refreshes the mirrors (tags can
 // move). Paths in arguments are relative to -C. Needs EIDER_ROOT (the toolchain checkout
-// with core/ and std/).
+// with core/ and std/), and asks the compiler (EIDERC, default $EIDER_ROOT/target/eiderc)
+// what each package uses, to hold it to its grant (caps.ei).
 //
 // The compiler finds dependencies itself: `import "json"` goes through eider.lock to the
 // package's directory (a path package's own, vendor/<name>, or the store's
@@ -29,6 +30,7 @@ import "manifest.ei"
 import "lockfile.ei"
 import "store.ei"
 import "resolve.ei"
+import "caps.ei"
 
 type Cli = { dir: List[u8], cmd: List[u8], args: List[List[u8]], offline: bool }
 
@@ -88,7 +90,7 @@ fn sync_from(c: Cli, use_lock: bool, offline: bool, vendor: List[u8]) -> Result[
     let locked = lockfile.load(c.dir)?
     let o = resolve.Opts(store.home()?, offline, use_lock, locked, vendor)
     let pkgs = resolve.resolve(root, o)?
-    resolve.check_grants(pkgs)?
+    resolve.check_grants(pkgs, caps.compiler(toolchain()?))?
     fs.write(lockfile.file_in(c.dir), lockfile.render(pkgs, c.dir))?
     // compatibility: the link farm an earlier eider-pkg made
     let deps = fs.join(c.dir, sys.lit("deps"))
@@ -173,13 +175,13 @@ fn add(c: Cli) -> Result[bool, String] uses io, fs, net, ffi {
         bytes.append(inout table, k)
         bytes.append(inout table, sys.lit(" = "))
         if is(flag, "--uses") {
-            var caps: List[List[u8]] = List.new()
+            var quoted: List[List[u8]] = List.new()
             for cap in bytes.split(v, 44) {
                 let t = bytes.trim(cap)
-                if t.len() > 0 { caps.push(manifest_quote(t)) }
+                if t.len() > 0 { quoted.push(manifest_quote(t)) }
             }
             table.push(91)
-            bytes.append(inout table, bytes.join(caps, sys.lit(", ")))
+            bytes.append(inout table, bytes.join(quoted, sys.lit(", ")))
             table.push(93)
         } else {
             bytes.append(inout table, manifest_quote(v))

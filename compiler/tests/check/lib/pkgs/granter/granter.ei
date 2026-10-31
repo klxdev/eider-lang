@@ -1,0 +1,4 @@
+// helper package for e0204_*: imports fsuser by path (granted io, uses io and fs)
+import "../fsuser/fsuser.ei"
+
+pub fn f() -> i64 { 0 }
