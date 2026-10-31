@@ -1,1 +1,1 @@
-{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_thr_eq_list_of_chan.ei","line":5,"col":13},"message":"`==` is not supported for List[Chan[i32]] (Maps have no structural equality)"}
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_thr_eq_list_of_chan.ei","line":5,"col":13},"message":"`==` needs `Eq`, which List[Chan[i32]] doesn't implement (its part Chan[i32] doesn't)","help":"Task, Mutex and Chan values are shared handles: they have no equality, order, hash or text"}

@@ -1,1 +1,1 @@
-{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_opt_print.ei","line":2,"col":27},"message":"cannot print a value of type Option[i32] yet"}
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_opt_print.ei","line":2,"col":27},"message":"`print` needs `Show`, which Option[Mutex[i32]] doesn't implement (its part Mutex[i32] doesn't)","help":"Task, Mutex and Chan values are shared handles: they have no equality, order, hash or text"}

@@ -1,0 +1,19 @@
+// A trait the entry module defines with a language trait's name shadows it in the
+// program's names (C8.4): `Show` here is this program's own trait, implemented for bool and
+// used as a bound; `print` goes on using the language's Show.
+trait Show {
+    fn show(self) -> str
+}
+
+impl Show for bool {
+    fn show(self) -> str { if self { "yes" } else { "no" } }
+}
+
+fn say[T: Show](x: T) uses io { print(x.show()) }
+
+type P = { x: i32 }
+
+fn main() uses io {
+    say(true)
+    print(P(1))
+}

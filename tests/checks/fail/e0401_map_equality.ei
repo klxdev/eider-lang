@@ -1,6 +1,6 @@
 // expect: E0401 5:18
 fn main() {
-    let a: Map[i32, i32] = Map.new()
-    let b: Map[i32, i32] = Map.new()
+    let a: Map[i32, Mutex[i32]] = Map.new()
+    let b: Map[i32, Mutex[i32]] = Map.new()
     let same = a == b
 }

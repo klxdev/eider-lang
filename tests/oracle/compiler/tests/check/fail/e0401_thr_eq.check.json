@@ -1,1 +1,1 @@
-{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_thr_eq.ei","line":5,"col":13},"message":"`==` is not supported for Mutex[i32] (Maps have no structural equality)"}
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_thr_eq.ei","line":5,"col":13},"message":"`==` needs `Eq`, which Mutex[i32] doesn't implement","help":"Task, Mutex and Chan values are shared handles: they have no equality, order, hash or text"}

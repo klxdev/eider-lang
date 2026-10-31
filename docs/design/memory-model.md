@@ -110,6 +110,10 @@ inside the scope.
 
 ## Operations are traits ✅
 
+Implemented by C8.4 (docs/compiler.md, "C8.4: operation traits", which records the details
+decided there: `Show` appends to a String and `to_string` builds one, Map equality ignores slot
+order, `Drop` is for records and copies a shared value through `Copy` when it is written).
+
 Every operation the language performs on values of any type is a trait in the core prelude, so
 std and other libraries implement it for their own types exactly as the built-in types do.
 Nothing is special-cased in the compiler beyond calling the trait.

@@ -1,0 +1,8 @@
+// expect: E0701 7:12
+type Name = { s: String }
+impl Eq for Name {
+    fn eq(self, other: Name) -> bool { self.s.len() == other.s.len() }
+}
+fn main() {
+    let m: Map[Name, i32] = Map.new()
+}

@@ -289,10 +289,16 @@ pub fn resolve(root: manifest.Manifest, o: Opts) -> Result[List[lockfile.Pkg], S
     Ok(out)
 }
 
-/// Every package must stay within its grants (see caps.ei).
-pub fn check_grants(pkgs: List[lockfile.Pkg]) -> Result[bool, String] uses fs, ffi {
+/// Every package must stay within its grants, as the compiler `eiderc` reports its
+/// capability use (see caps.ei).
+pub fn check_grants(pkgs: List[lockfile.Pkg], eiderc: List[u8]) -> Result[bool, String] uses io, fs, net, ffi {
     for p in pkgs {
-        for u in caps.scan_dir(p.dir, store.skipped())? {
+        let mf = manifest.load(p.dir)?
+        // a package without its entry module may still have a program (`main`) reaching
+        // its modules, like the compiler's
+        var entry = mf.entry
+        if !fs.exists(fs.join(p.dir, entry)) && mf.main.len() > 0 { entry = mf.main }
+        for u in caps.of_package(eiderc, p.dir, entry, p.name)? {
             if !contains(p.grants, u.cap) {
                 var m = String.from("package `")
                 m.append(text(p.name))
@@ -309,7 +315,8 @@ pub fn check_grants(pkgs: List[lockfile.Pkg]) -> Result[bool, String] uses fs, f
                 m.push_str("\" to `uses` in its [deps.")
                 m.append(text(p.name))
                 m.push_str("] table")
-                if bytes.eq(u.cap, sys.lit("ffi")) { m.push_str(" (it declares `extern` functions: unmanaged code)") }
+                if bytes.eq(u.kind, sys.lit("extern")) { m.push_str(" (it declares `extern` functions: unmanaged code)") }
+                if bytes.eq(u.kind, sys.lit("unsafe")) { m.push_str(" (it has `unsafe` code: unmanaged code)") }
                 return Err(m)
             }
         }

@@ -1,5 +1,5 @@
 // expect: E0401 4:11
-type P = { x: i32 }
+type P = { x: Mutex[i32] }
 fn main() uses io {
-    print(P(1))
+    print(P(Mutex.new(1)))
 }

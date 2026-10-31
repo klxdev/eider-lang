@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_drop_call.ei","line":6,"col":7},"message":"`drop` of R can't be called","help":"it runs by itself, once, when the value's last holder goes"}

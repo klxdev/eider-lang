@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_std_needs_fs_not_ffi.ei","line":7,"col":11},"message":"call to `fs.exists` requires capability `fs`","fix":{"at":{"line":6,"col":18},"delete":0,"insert":", fs"}}

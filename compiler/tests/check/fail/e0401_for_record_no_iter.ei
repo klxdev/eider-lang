@@ -1,0 +1,3 @@
+// expect: E0401 3:22
+type R = { n: i32 }
+fn main() { for x in R(1) {} }

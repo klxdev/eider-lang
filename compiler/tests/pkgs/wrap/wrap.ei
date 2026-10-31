@@ -1,0 +1,4 @@
+// wrap: app grants it fs, but its own grant to files is empty
+import "files"
+
+pub fn ready() -> bool uses fs { files.here() }

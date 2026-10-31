@@ -1,0 +1,32 @@
+// std called with the real capabilities only, never `uses ffi` (docs/compiler.md, "C8.5:
+// capabilities per package"): `ffi` stays inside core, so files need `fs`, standard streams
+// and arguments `io`, and bytes and paths nothing.
+import "std/bytes"
+import "std/env"
+import "std/fs"
+import "std/io"
+import "core/sys"
+
+fn roundtrip(dir: List[u8]) -> Result[List[u8], String] uses fs {
+    fs.mkdir_all(dir)?
+    let p = fs.join(dir, sys.lit("caps.txt"))
+    fs.write(p, sys.lit("written without uses ffi\n"))?
+    fs.append(p, sys.lit("appended\n"))?
+    let b = fs.read(p)?
+    fs.remove_all(dir)?
+    Ok(b)
+}
+
+/// Pure: no capability at all.
+fn tidy(p: str) -> List[u8] { fs.normalize(sys.lit(p)) }
+
+fn main() uses io, fs {
+    match roundtrip(sys.lit("target/caps_std")) {
+        Ok(b) => io.out(b)
+        Err(e) => print(e)
+    }
+    print(env.args().len() > 0)
+    print(fs.exists(sys.lit("target/caps_std")))
+    io.outln(tidy("a/./b/../c"))
+    print(bytes.eq(tidy("x//y/"), sys.lit("x/y")))
+}

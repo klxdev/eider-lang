@@ -1,0 +1,6 @@
+// expect: E0606 3:1
+type Res = | Open(fd: i32) | Closed
+impl Drop for Res {
+    fn drop(inout self) {}
+}
+fn main() {}

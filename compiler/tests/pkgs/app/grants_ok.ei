@@ -1,0 +1,16 @@
+// pkgtest: run
+// Packages with unmanaged code, granted ffi in eider.toml (docs/compiler.md, "C8.5:
+// capabilities per package"): cffi declares an extern, ublock has an `unsafe` block. Calling
+// them needs no `uses ffi` here (ffi stays inside its package), and std needs only `io`.
+import "std/io"
+import "core/sys"
+import "cffi"
+import "ublock"
+
+fn main() uses io {
+    io.outln(sys.lit("granted"))
+    print(cffi.magnitude(-3))
+    print(ublock.twice(-4))
+    let r = unsafe { cffi.raw(-5) }
+    print(r)
+}

@@ -26,3 +26,22 @@ path = "../gone"
 # declared after the last `eider-pkg fetch`: not in eider.lock
 [deps.ghost]
 path = "../ghost"
+
+# capabilities per package (docs/compiler.md, "C8.5"): files uses fs and io and is granted
+# nothing (grants_fs.ei: E0204); cffi has an extern and ublock an `unsafe` block, both
+# granted ffi (grants_ok.ei); wrap is granted fs, but its own grant to files is empty
+# (grants_chain.ei)
+[deps.files]
+path = "../files"
+
+[deps.cffi]
+path = "../cffi"
+uses = ["ffi"]
+
+[deps.ublock]
+path = "../ublock"
+uses = ["ffi"]
+
+[deps.wrap]
+path = "../wrap"
+uses = ["fs"]

@@ -73,7 +73,7 @@ symbols
   66 local b compiler/tests/ide/lib/shapes.ei:20:21-20:22 full 20:21-20:22 in 62 :: shapes.Point
   67 method sum compiler/tests/ide/lib/shapes.ei:27:8-27:11 full 27:5-27:44 in 47 :: fn sum(self) -> i32
   68 param self compiler/tests/ide/lib/shapes.ei:27:12-27:16 full 27:12-27:16 in 67 :: self
-  (62 symbols in <prelude>)
+  (90 symbols in <prelude>)
 refs
   compiler/tests/ide/kinds.ei:4:8-4:23 -> 46 module shapes
   compiler/tests/ide/kinds.ei:4:27-4:29 -> 46 module shapes

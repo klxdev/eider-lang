@@ -1,0 +1,5 @@
+// expect: E0604 2:1
+impl Ord for Option[i32] {
+    fn compare(self, other: Option[i32]) -> Ordering { Equal }
+}
+fn main() {}

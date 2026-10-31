@@ -1,0 +1,2 @@
+{"error":"E0605","span":{"file":"tests/checks/fail/e0605_missing_bound.ei","line":2,"col":36},"message":"`==` needs `T: Eq`","help":"a generic body can only use what its type parameters' bounds promise; add the bound","fix":{"at":{"line":2,"col":10},"delete":0,"insert":": Eq"}}
+{"error":"E0605","span":{"file":"tests/checks/fail/e0605_missing_bound.ei","line":2,"col":46},"message":"`<` needs `T: Ord`","help":"a generic body can only use what its type parameters' bounds promise; add the bound","fix":{"at":{"line":2,"col":10},"delete":0,"insert":": Ord"}}

@@ -1,0 +1,45 @@
+error[E0604]: only the package that defines `u8` can implement `Show` for it (it is defined by the language core)
+  --> compiler/tests/check/multi/traits.ei:5:1
+  |
+5 | impl Show for u8 {
+  | ^
+  help: implement the trait in the type's own package, or wrap the type in a record of your own
+error[E0601]: type H doesn't implement trait `Copy` (required by `.copy()`): its part Task[i32] doesn't
+  --> compiler/tests/check/multi/traits.ei:20:15
+   |
+20 |     let c = h.copy()
+   |               ^
+  help: a running thread can't be cloned and a copied queue has no clear meaning; share the handle instead
+error[E0401]: `print` needs `Show`, which H doesn't implement (its part Task[i32] doesn't)
+  --> compiler/tests/check/multi/traits.ei:21:11
+   |
+21 |     print(h)
+   |           ^
+  help: Task, Mutex and Chan values are shared handles: they have no equality, order, hash or text
+error[E0701]: fn() can't be a Map key: it doesn't implement `Hash`
+  --> compiler/tests/check/multi/traits.ei:22:12
+   |
+22 |     let m: Map[fn(), i32] = Map.new()
+   |            ^
+  help: fn values have no equality, order, hash or text
+error[E0401]: `==` needs `Eq`, which H doesn't implement (its part Task[i32] doesn't)
+  --> compiler/tests/check/multi/traits.ei:11:36
+   |
+11 | fn same[T](a: T, b: T) -> bool { a == b }
+   |                                    ^
+  help: Task, Mutex and Chan values are shared handles: they have no equality, order, hash or text
+error[E0605]: `==` needs `T: Eq`
+  --> compiler/tests/check/multi/traits.ei:11:36
+   |
+11 | fn same[T](a: T, b: T) -> bool { a == b }
+   |                                    ^
+  help: a generic body can only use what its type parameters' bounds promise; add the bound
+  fix: at 11:10 delete 0 insert ": Eq"
+error[E0605]: `print` needs `T: Show`
+  --> compiler/tests/check/multi/traits.ei:14:11
+   |
+14 |     print(x)
+   |           ^
+  help: a generic body can only use what its type parameters' bounds promise; add the bound
+  fix: at 13:11 delete 0 insert ": Show"
+error: 7 errors

@@ -44,3 +44,31 @@ version = "0.1.0"
 source = "path+../shapes"
 deps = []
 grants = []
+
+[[package]]
+name = "files"
+version = "0.1.0"
+source = "path+../files"
+deps = []
+grants = []
+
+[[package]]
+name = "cffi"
+version = "0.1.0"
+source = "path+../cffi"
+deps = []
+grants = ["ffi"]
+
+[[package]]
+name = "ublock"
+version = "0.1.0"
+source = "path+../ublock"
+deps = ["cffi"]
+grants = ["ffi"]
+
+[[package]]
+name = "wrap"
+version = "0.1.0"
+source = "path+../wrap"
+deps = ["files"]
+grants = ["fs"]

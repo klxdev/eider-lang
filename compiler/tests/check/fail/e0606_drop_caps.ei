@@ -1,0 +1,6 @@
+// expect: E0606 4:8
+type R = { n: i32 }
+impl Drop for R {
+    fn drop(inout self) uses io { print(self.n) }
+}
+fn main() {}

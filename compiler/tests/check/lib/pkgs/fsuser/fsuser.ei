@@ -1,0 +1,12 @@
+// helper package for e0204_*: io (granted), then fs (not granted) in a method
+import "std/fs"
+import "std/io"
+import "core/sys"
+
+pub fn say() uses io { io.outln(sys.lit("hi")) }
+
+pub type Dir = { path: List[u8] }
+
+impl Dir {
+    fn exists(self) -> bool uses io, fs { fs.exists(self.path) }
+}

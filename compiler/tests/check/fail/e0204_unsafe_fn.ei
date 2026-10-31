@@ -1,0 +1,5 @@
+// expect: E0204 2:1
+import "../lib/pkgs/granter/unsafe_user.ei"
+
+// ublk has no extern but an `unsafe fn` (unmanaged code), and granter grants it nothing
+fn main() {}

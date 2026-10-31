@@ -106,6 +106,24 @@ const GK_OWN: u32 = 24
 // Result[String, usize])
 const GK_BYTES: u32 = 25
 const GK_UTF8: u32 = 26
+// operation traits (C8.4; "Operation traits" below): `cmp_T` (Ord), `hash_T` (Map keys and
+// `hash` of other types than integers, bool and text), `show_T` (text), `copy_T`
+// (`.copy()` where it is more than a clone), `rnew_R` (a record with its own Drop), and the
+// text helpers `showq_` (quoted text) and `showi_`/`showu_` (numbers), keyed by type 0
+const GK_CMP: u32 = 27
+const GK_HASH: u32 = 28
+const GK_SHOW: u32 = 29
+const GK_SHOWQ: u32 = 30
+const GK_SHOWN: u32 = 31
+const GK_COPY: u32 = 32
+const GK_RNEW: u32 = 33
+// the traits, as check.ei numbers them in ir.Ir.impls
+const TR_COPY: u32 = 0
+const TR_EQ: u32 = 1
+const TR_ORD: u32 = 2
+const TR_HASH: u32 = 3
+const TR_SHOW: u32 = 4
+const TR_DROP: u32 = 6
 
 /// Output and lowering state. `o` is the text being written; `pr` collects glue prototypes
 /// and `envs` closure environment structs while glue is generated. Per type: its C name
@@ -539,6 +557,7 @@ fn owns(inout g: G, p: P, ty: u32) -> bool {
         for j in 0..d.len {
             if owns(inout g, p, types.field(p.t, d.start, j).ty) { r = true }
         }
+        if shared_rec(p, ty) { r = true }
     } else if k == types.T_ENUM {
         let d = types.def_of(p.t, ty)
         for i in 0..d.len {
@@ -663,7 +682,9 @@ fn def_ty(inout g: G, p: P, ty: u32, inout done: Map[u32, bool]) uses ffi {
     if k == types.T_RECORD {
         for i in 0..d.len { def_ty(inout g, p, types.field(p.t, d.start, i).ty, inout done) }
         put(inout g, "struct ")
-        cty(inout g, p, ty)
+        // a record with its own Drop is a pointer to a shared buffer holding its fields
+        let shared = shared_rec(p, ty)
+        if shared { shared_name(inout g, p, ty) } else { cty(inout g, p, ty) }
         put(inout g, " {")
         if d.len == 0 { put(inout g, " uint8_t unused;") }
         for i in 0..d.len {
@@ -674,6 +695,13 @@ fn def_ty(inout g: G, p: P, ty: u32, inout done: Map[u32, bool]) uses ffi {
             put(inout g, ";")
         }
         put(inout g, " };\n")
+        if shared {
+            put(inout g, "struct ")
+            cty(inout g, p, ty)
+            put(inout g, " { struct ")
+            shared_name(inout g, p, ty)
+            put(inout g, " *p; };\n")
+        }
         return
     }
     for i in 0..d.len {
@@ -797,7 +825,7 @@ fn uniq_call(inout g: G, p: P, ty: u32, ptr: List[u8]) uses ffi {
     let k = ty_kind(p, ty)
     if k == types.T_STRING {
         put(inout g, "ei_str_unique(")
-    } else if k == types.T_LIST || k == types.T_MAP || k == types.T_BOX {
+    } else if k == types.T_LIST || k == types.T_MAP || k == types.T_BOX || shared_rec(p, ty) {
         need(inout g, GK_UNIQ, ty)
         gname(inout g, p, "uniq_", ty)
         put(inout g, "(")
@@ -825,23 +853,8 @@ fn own_call(inout g: G, p: P, ty: u32, ptr: List[u8]) uses ffi {
     put(inout g, "); ")
 }
 
-/// The hash of Map key expression v of type kty (ei_hash_str for String and str keys, else ei_hash_u64).
-fn hash_expr(inout g: G, p: P, kty: u32, v: str) uses ffi {
-    let k = ty_kind(p, kty)
-    if k == types.T_STRING {
-        put(inout g, "ei_hash_str((")
-        put(inout g, v)
-        put(inout g, ").p)")
-    } else if k == types.T_STR {
-        put(inout g, "ei_hash_str(")
-        put(inout g, v)
-        put(inout g, ")")
-    } else {
-        put(inout g, "ei_hash_u64((uint64_t)(")
-        put(inout g, v)
-        put(inout g, "))")
-    }
-}
+/// The hash of Map key expression v of type kty (hash_text).
+fn hash_expr(inout g: G, p: P, kty: u32, v: str) uses ffi { hash_text(inout g, p, kty, sys.lit(v)) }
 
 /// Copy the signature written since `mark` into the prototypes.
 fn proto(inout g: G, mark: usize) {
@@ -876,6 +889,8 @@ fn glue(inout g: G, p: P, key: u64) uses ffi {
         own_glue(inout g, p, id)
     } else if kind == GK_BYTES || kind == GK_UTF8 {
         text_glue(inout g, p, kind, id)
+    } else if kind >= GK_CMP {
+        trait_glue(inout g, p, kind, id)
     } else if kind >= GK_SPAWN {
         thread_glue(inout g, p, kind, id)
     } else {
@@ -895,8 +910,19 @@ fn eq_glue(inout g: G, p: P, ty: u32) uses ffi {
     put(inout g, " b)")
     proto(inout g, mark)
     put(inout g, " {\n")
+    if custom_call(inout g, p, TR_EQ, ty, "(a, b)") { return }
     let t = types.get(p.t, ty)
     let k = t.kind
+    if k == types.T_MAP {
+        // the same keys, each with an equal value (slot order is not part of the value)
+        need(inout g, GK_FIND, ty)
+        put(inout g, "  if (a.len != b.len) return false;\n  for (uint64_t i = 0; i < a.cap; i++) if (a.s[i] == 1) {\n    int64_t f = ")
+        gname(inout g, p, "find_", ty)
+        put(inout g, "(&b, a.k[i]);\n    if (f < 0 || !")
+        eq_expr(inout g, p, t.b, sys.lit("a.v[i]"), sys.lit("b.v[f]"))
+        put(inout g, ") return false;\n  }\n  return true;\n}\n")
+        return
+    }
     if k == types.T_ARRAY {
         if t.b == 0 {
             put(inout g, "  return true;\n}\n")
@@ -941,7 +967,7 @@ fn eq_glue(inout g: G, p: P, ty: u32) uses ffi {
         put(inout g, "  return true")
         for i in 0..d.len {
             put(inout g, " && ")
-            eq_expr(inout g, p, types.field(p.t, d.start, i).ty, txt("a.f", i as u64, ""), txt("b.f", i as u64, ""))
+            eq_expr(inout g, p, types.field(p.t, d.start, i).ty, rf(p, ty, "a", i), rf(p, ty, "b", i))
         }
         put(inout g, ";\n}\n")
         return
@@ -978,7 +1004,16 @@ fn drop_glue(inout g: G, p: P, ty: u32) uses ffi {
     put(inout g, " {\n  ")
     let t = types.get(p.t, ty)
     let k = t.kind
-    if k == types.T_RECORD {
+    if k == types.T_RECORD && shared_rec(p, ty) {
+        // its own drop runs once, when the last holder goes, before the fields are dropped
+        // (in order); a holder that drop gives the value to keeps it alive
+        let d = types.def_of(p.t, ty)
+        put(inout g, "if (!x->p) return;\n  if (ei_buf_count(x->p) == 1) ")
+        fn_name(inout g, p, custom_fn(p, TR_DROP, ty))
+        put(inout g, "(x);\n  if (ei_buf_dec(x->p)) {\n    ")
+        for i in 0..d.len { drop_call(inout g, p, types.field(p.t, d.start, i).ty, rfp(p, ty, i)) }
+        put(inout g, "ei_buf_free(x->p);\n  }\n  x->p = NULL;")
+    } else if k == types.T_RECORD {
         let d = types.def_of(p.t, ty)
         for i in 0..d.len { drop_call(inout g, p, types.field(p.t, d.start, i).ty, txt("&x->f", i as u64, "")) }
     } else if k == types.T_TUPLE {
@@ -1061,7 +1096,10 @@ fn clone_glue(inout g: G, p: P, ty: u32) uses ffi {
     put(inout g, " r = *x;\n  ")
     let t = types.get(p.t, ty)
     let k = t.kind
-    if k == types.T_RECORD {
+    if k == types.T_RECORD && shared_rec(p, ty) {
+        // a record with its own Drop: the copy shares the buffer
+        put(inout g, "ei_buf_inc(r.p);")
+    } else if k == types.T_RECORD {
         let d = types.def_of(p.t, ty)
         for i in 0..d.len {
             let ft = types.field(p.t, d.start, i).ty
@@ -1145,9 +1183,35 @@ fn uniq_glue(inout g: G, p: P, ty: u32) uses ffi {
     cty(inout g, p, ty)
     put(inout g, " *x)")
     proto(inout g, mark)
-    need(inout g, GK_DROP, ty)
     let t = types.get(p.t, ty)
     let k = t.kind
+    if k == types.T_RECORD {
+        // a record with its own Drop: a copy through its own Copy, else of its fields as any
+        // copy makes them (both values are dropped, each once)
+        put(inout g, " {\n  if (!ei_buf_shared(x->p)) return;\n  ")
+        cty(inout g, p, ty)
+        let f = custom_fn(p, TR_COPY, ty)
+        if f != NONE {
+            put(inout g, " n = ")
+            fn_name(inout g, p, f)
+            put(inout g, "(*x);\n  ")
+        } else {
+            put(inout g, " n;\n  n.p = ei_buf_alloc(1, sizeof *n.p);\n  *n.p = *x->p;\n  ")
+            let d = types.def_of(p.t, ty)
+            for i in 0..d.len {
+                let ft = types.field(p.t, d.start, i).ty
+                if !owns(inout g, p, ft) { continue }
+                put(inout g, "n.p->f")
+                putn(inout g, i as u64)
+                put(inout g, " = ")
+                clone_expr(inout g, p, ft, txt("&x->p->f", i as u64, ""))
+                put(inout g, ";\n  ")
+            }
+        }
+        put(inout g, "(void)ei_buf_dec(x->p);\n  *x = n;\n}\n")
+        return
+    }
+    need(inout g, GK_DROP, ty)
     if k == types.T_LIST {
         put(inout g, " {\n  if (!ei_buf_shared(x->d)) return;\n  ")
         cty(inout g, p, ty)
@@ -1193,7 +1257,12 @@ fn own_glue(inout g: G, p: P, ty: u32) uses ffi {
     put(inout g, " {\n  (void)x;\n  ")
     let t = types.get(p.t, ty)
     let k = t.kind
-    if k == types.T_RECORD {
+    if k == types.T_RECORD && shared_rec(p, ty) {
+        uniq_call(inout g, p, ty, sys.lit("x"))
+        put(inout g, ";\n  ")
+        let d = types.def_of(p.t, ty)
+        for i in 0..d.len { own_call(inout g, p, types.field(p.t, d.start, i).ty, rfp(p, ty, i)) }
+    } else if k == types.T_RECORD {
         let d = types.def_of(p.t, ty)
         for i in 0..d.len { own_call(inout g, p, types.field(p.t, d.start, i).ty, txt("&x->f", i as u64, "")) }
     } else if k == types.T_TUPLE {
@@ -1269,6 +1338,614 @@ fn name_glue(inout g: G, p: P, ty: u32) uses ffi {
         str_lit(inout g.o, resolve.key_shown(p.names, types.variant(p.t, d, i).key))
     }
     put(inout g, " };\n  return n[tag];\n}\n")
+}
+
+// ---- operation traits (docs/compiler.md, "C8.4: operation traits")
+//
+// `==` (eq_), Map keys (hash_ and eq_), `<` and `compare` (cmp_), printing and text (show_),
+// `.copy()` (copy_) and cleanup (drop_) are glue per type, derived from the type's parts,
+// except for a type with its own impl of the trait (ir.Ir.impls), whose glue calls that
+// function: so a derived operation of a List of such a type uses it too. Integers, bool, str
+// and String are written inline (and so, unchanged, are everything `==`, Map keys and
+// `print` did before). A record with its own Drop is a pointer to a shared buffer holding
+// its fields (`td_<name>`): copies share it, a write to a shared one first makes a copy
+// through the type's Copy (uniq_), and its drop runs when the last holder goes.
+
+/// The function implementing trait tr's method for type ty, or NONE (derived).
+fn custom_fn(p: P, tr: u32, ty: u32) -> u32 {
+    match p.ir.impls.get((tr as u64) * 4294967296 + ty as u64) {
+        Some(f) => f
+        None => NONE
+    }
+}
+
+/// Whether ty is a record with its own Drop.
+fn shared_rec(p: P, ty: u32) -> bool { ty_kind(p, ty) == types.T_RECORD && custom_fn(p, TR_DROP, ty) != NONE }
+
+/// The struct name of a shared record's buffer: `td_<name>`.
+fn shared_name(inout g: G, p: P, ty: u32) uses ffi {
+    let n = g.tn[ty as usize]
+    put(inout g, "td_")
+    putb(inout g, bytes.slice(n, 2, n.len()))
+}
+
+/// Field i of record value `base` (C text) of type ty: `base.f<i>`, or `base.p->f<i>`.
+fn rf(p: P, ty: u32, base: str, i: u32) -> List[u8] uses ffi {
+    var out = sys.lit(base)
+    if shared_rec(p, ty) { bytes.append(inout out, sys.lit(".p->f")) } else { bytes.append(inout out, sys.lit(".f")) }
+    bytes.append(inout out, bytes.from_u64(i as u64))
+    out
+}
+
+/// A pointer to field i of the shared record at pointer `x`: `&x->p->f<i>`.
+fn rfp(p: P, ty: u32, i: u32) -> List[u8] uses ffi {
+    if shared_rec(p, ty) { return txt("&x->p->f", i as u64, "") }
+    txt("&x->f", i as u64, "")
+}
+
+/// When ty has its own impl of tr, the glue body `  return <f><args>;` (true).
+fn custom_call(inout g: G, p: P, tr: u32, ty: u32, args: str) -> bool uses ffi {
+    let f = custom_fn(p, tr, ty)
+    if f == NONE { return false }
+    put(inout g, "  return ")
+    if tr == TR_ORD { put(inout g, "(int)") }
+    fn_name(inout g, p, f)
+    put(inout g, args)
+    if tr == TR_ORD { put(inout g, ".tag - 1") }
+    put(inout g, ";\n}\n")
+    true
+}
+
+/// The order of C expressions a and b of type ty as an int whose sign is the order.
+fn cmp_expr(inout g: G, p: P, ty: u32, a: List[u8], b: List[u8]) uses ffi {
+    let k = ty_kind(p, ty)
+    if k == types.T_STR || k == types.T_STRING {
+        put(inout g, "strcmp(")
+        putb(inout g, a)
+        if k == types.T_STRING { put(inout g, ".p") }
+        put(inout g, ", ")
+        putb(inout g, b)
+        if k == types.T_STRING { put(inout g, ".p") }
+        put(inout g, ")")
+    } else if is_struct_kind(k) {
+        need(inout g, GK_CMP, ty)
+        gname(inout g, p, "cmp_", ty)
+        put(inout g, "(")
+        putb(inout g, a)
+        put(inout g, ", ")
+        putb(inout g, b)
+        put(inout g, ")")
+    } else {
+        put(inout g, "((")
+        putb(inout g, a)
+        put(inout g, " > ")
+        putb(inout g, b)
+        put(inout g, ") - (")
+        putb(inout g, a)
+        put(inout g, " < ")
+        putb(inout g, b)
+        put(inout g, "))")
+    }
+}
+
+/// `{ int r = <a vs b>; if (r) return r < 0 ? -1 : 1; }`: one part of a lexicographic order.
+fn cmp_part(inout g: G, p: P, ty: u32, a: List[u8], b: List[u8]) uses ffi {
+    put(inout g, "  { int r = ")
+    cmp_expr(inout g, p, ty, a, b)
+    put(inout g, "; if (r) return r < 0 ? -1 : 1; }\n")
+}
+
+/// The hash of C expression v of type ty (integers, bool, str and String as Map keys always
+/// hashed them).
+fn hash_text(inout g: G, p: P, ty: u32, v: List[u8]) uses ffi {
+    let k = ty_kind(p, ty)
+    if k == types.T_STRING {
+        put(inout g, "ei_hash_str((")
+        putb(inout g, v)
+        put(inout g, ").p)")
+    } else if k == types.T_STR {
+        put(inout g, "ei_hash_str(")
+        putb(inout g, v)
+        put(inout g, ")")
+    } else if is_struct_kind(k) {
+        need(inout g, GK_HASH, ty)
+        gname(inout g, p, "hash_", ty)
+        put(inout g, "(")
+        putb(inout g, v)
+        put(inout g, ")")
+    } else {
+        put(inout g, "ei_hash_u64((uint64_t)(")
+        putb(inout g, v)
+        put(inout g, "))")
+    }
+}
+
+/// `h = ei_hash_u64(h ^ <hash of v>); `
+fn hash_part(inout g: G, p: P, ty: u32, v: List[u8]) uses ffi {
+    put(inout g, "h = ei_hash_u64(h ^ ")
+    hash_text(inout g, p, ty, v)
+    put(inout g, "); ")
+}
+
+/// Whether ty is shown by print's own code (an integer, bool, str, String, or an enum
+/// without payloads that doesn't have its own Show): what `print` showed before C8.4.
+fn plain_show(p: P, ty: u32) -> bool {
+    let k = ty_kind(p, ty)
+    if k == types.T_INT || k == types.T_BOOL || k == types.T_STR || k == types.T_STRING { return true }
+    k == types.T_ENUM && !types.def_of(p.t, ty).payload && custom_fn(p, TR_SHOW, ty) == NONE
+}
+
+/// The statement (without `;`) appending the text of C expression v of type ty to the
+/// String at pointer o. `quoted`: text inside another value is quoted.
+fn show_into(inout g: G, p: P, ty: u32, o: List[u8], v: List[u8], quoted: bool) uses ffi {
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_UNIT {
+        put(inout g, "ei_str_push(")
+        putb(inout g, o)
+        put(inout g, ", \"()\")")
+    } else if k == types.T_INT {
+        need(inout g, GK_SHOWN, 0)
+        if types.signed(t.a) { put(inout g, "showi_(") } else { put(inout g, "showu_(") }
+        putb(inout g, o)
+        if types.signed(t.a) { put(inout g, ", (int64_t)(") } else { put(inout g, ", (uint64_t)(") }
+        putb(inout g, v)
+        put(inout g, "))")
+    } else if k == types.T_BOOL {
+        put(inout g, "ei_str_push(")
+        putb(inout g, o)
+        put(inout g, ", (")
+        putb(inout g, v)
+        put(inout g, ") ? \"true\" : \"false\")")
+    } else if (k == types.T_STR || k == types.T_STRING) && quoted {
+        need(inout g, GK_SHOWQ, 0)
+        put(inout g, "showq_(")
+        putb(inout g, o)
+        put(inout g, ", ")
+        putb(inout g, v)
+        if k == types.T_STRING { put(inout g, ".p") }
+        put(inout g, ")")
+    } else if k == types.T_STR {
+        put(inout g, "ei_str_push(")
+        putb(inout g, o)
+        put(inout g, ", ")
+        putb(inout g, v)
+        put(inout g, ")")
+    } else if k == types.T_STRING {
+        put(inout g, "ei_str_cat(")
+        putb(inout g, o)
+        put(inout g, ", (")
+        putb(inout g, v)
+        put(inout g, ").p, (")
+        putb(inout g, v)
+        put(inout g, ").len)")
+    } else if plain_show(p, ty) {
+        need(inout g, GK_NAME, ty)
+        put(inout g, "ei_str_push(")
+        putb(inout g, o)
+        put(inout g, ", ")
+        gname(inout g, p, "name_", ty)
+        put(inout g, "((")
+        putb(inout g, v)
+        put(inout g, ").tag))")
+    } else {
+        need(inout g, GK_SHOW, ty)
+        gname(inout g, p, "show_", ty)
+        put(inout g, "(")
+        putb(inout g, o)
+        put(inout g, ", ")
+        putb(inout g, v)
+        put(inout g, ")")
+    }
+}
+
+/// `ei_str_push(o, "<text>"); `
+fn show_lit(inout g: G, text: List[u8]) uses ffi {
+    put(inout g, "ei_str_push(o, ")
+    str_lit(inout g.o, text)
+    put(inout g, "); ")
+}
+
+/// Whether `.copy()` of ty is more than a clone: something inside is a Mutex (a copy gets a
+/// new one), has its own Copy, or is a record with its own Drop (a copy gets its own buffer).
+fn deep(p: P, ty: u32, inout seen: Map[u32, bool]) -> bool {
+    if seen.contains(ty) { return false }
+    seen.insert(ty, true)
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_MUTEX || custom_fn(p, TR_COPY, ty) != NONE || shared_rec(p, ty) { return true }
+    if k == types.T_ARRAY || k == types.T_LIST || k == types.T_BOX { return deep(p, t.a, inout seen) }
+    if k == types.T_MAP { return deep(p, t.a, inout seen) || deep(p, t.b, inout seen) }
+    if k == types.T_TUPLE {
+        for x in types.elems(p.t, ty) {
+            if deep(p, x, inout seen) { return true }
+        }
+        return false
+    }
+    if k == types.T_RECORD || k == types.T_ENUM {
+        let d = types.def_of(p.t, ty)
+        if d.is_enum {
+            for i in 0..d.len {
+                let v = types.variant(p.t, d, i)
+                for j in 0..v.flen {
+                    if deep(p, types.field(p.t, v.fstart, j).ty, inout seen) { return true }
+                }
+            }
+            return false
+        }
+        for j in 0..d.len {
+            if deep(p, types.field(p.t, d.start, j).ty, inout seen) { return true }
+        }
+    }
+    false
+}
+
+/// `x.copy()` of the value of type ty at C pointer expression ptr: a clone, or copy_T.
+fn copy_expr(inout g: G, p: P, ty: u32, ptr: List[u8]) uses ffi {
+    var seen: Map[u32, bool] = Map.new()
+    if !deep(p, ty, inout seen) {
+        clone_expr(inout g, p, ty, ptr)
+        return
+    }
+    need(inout g, GK_COPY, ty)
+    gname(inout g, p, "copy_", ty)
+    put(inout g, "(")
+    putb(inout g, ptr)
+    put(inout g, ")")
+}
+
+/// `r.<lhs> = copy of x-><lhs>; ` for a part of type ty (nothing for a part that owns nothing:
+/// `r = *x` copied it).
+fn copy_part(inout g: G, p: P, ty: u32, lhs: List[u8], src: List[u8]) uses ffi {
+    if !owns(inout g, p, ty) { return }
+    putb(inout g, lhs)
+    put(inout g, " = ")
+    copy_expr(inout g, p, ty, src)
+    put(inout g, "; ")
+}
+
+fn trait_glue(inout g: G, p: P, kind: u32, ty: u32) uses ffi {
+    let mark = g.o.len()
+    if kind == GK_SHOWQ {
+        put(inout g, "static void showq_(ei_String *o, const char *s)")
+        proto(inout g, mark)
+        put(inout g, " {\n  char e[2];\n  e[0] = 34; ei_str_cat(o, e, 1);\n  for (; *s; s++) {\n    unsigned char ch = (unsigned char)*s;\n    e[0] = 92;\n    if (ch == 34 || ch == 92) { e[1] = (char)ch; ei_str_cat(o, e, 2); }\n    else if (ch == 10) { e[1] = 110; ei_str_cat(o, e, 2); }\n    else if (ch == 9) { e[1] = 116; ei_str_cat(o, e, 2); }\n    else if (ch == 13) { e[1] = 114; ei_str_cat(o, e, 2); }\n    else ei_str_cat(o, s, 1);\n  }\n  e[0] = 34; ei_str_cat(o, e, 1);\n}\n")
+        return
+    }
+    if kind == GK_SHOWN {
+        put(inout g, "static void showu_(ei_String *o, uint64_t v)")
+        proto(inout g, mark)
+        put(inout g, " {\n  char b[24];\n  int i = 23;\n  b[23] = 0;\n  do { b[--i] = (char)(48 + v % 10); v /= 10; } while (v);\n  ei_str_cat(o, b + i, (uint64_t)(23 - i));\n}\n")
+        let m2 = g.o.len()
+        put(inout g, "static void showi_(ei_String *o, int64_t v)")
+        proto(inout g, m2)
+        put(inout g, " {\n  if (v < 0) {\n    char m = 45;\n    ei_str_cat(o, &m, 1);\n    showu_(o, (uint64_t)0 - (uint64_t)v);\n  } else {\n    showu_(o, (uint64_t)v);\n  }\n}\n")
+        return
+    }
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if kind == GK_RNEW {
+        let d = types.def_of(p.t, ty)
+        put(inout g, "static ")
+        cty(inout g, p, ty)
+        put(inout g, " ")
+        gname(inout g, p, "rnew_", ty)
+        put(inout g, "(")
+        if d.len == 0 { put(inout g, "void") }
+        for i in 0..d.len {
+            if i > 0 { put(inout g, ", ") }
+            cty(inout g, p, types.field(p.t, d.start, i).ty)
+            put(inout g, " a")
+            putn(inout g, i as u64)
+        }
+        put(inout g, ")")
+        proto(inout g, mark)
+        put(inout g, " {\n  ")
+        cty(inout g, p, ty)
+        put(inout g, " r;\n  r.p = ei_buf_alloc(1, sizeof *r.p);\n  ")
+        if d.len == 0 { put(inout g, "r.p->unused = 0;\n  ") }
+        for i in 0..d.len {
+            put(inout g, "r.p->f")
+            putn(inout g, i as u64)
+            put(inout g, " = a")
+            putn(inout g, i as u64)
+            put(inout g, ";\n  ")
+        }
+        put(inout g, "return r;\n}\n")
+        return
+    }
+    if kind == GK_CMP {
+        put(inout g, "static int ")
+        gname(inout g, p, "cmp_", ty)
+        put(inout g, "(")
+        cty(inout g, p, ty)
+        put(inout g, " a, ")
+        cty(inout g, p, ty)
+        put(inout g, " b)")
+        proto(inout g, mark)
+        put(inout g, " {\n")
+        if custom_call(inout g, p, TR_ORD, ty, "(a, b)") { return }
+        if k == types.T_RECORD {
+            let d = types.def_of(p.t, ty)
+            for i in 0..d.len { cmp_part(inout g, p, types.field(p.t, d.start, i).ty, rf(p, ty, "a", i), rf(p, ty, "b", i)) }
+        } else if k == types.T_TUPLE {
+            let es = types.elems(p.t, ty)
+            for i in 0..es.len() { cmp_part(inout g, p, es[i], txt("a.f", i as u64, ""), txt("b.f", i as u64, "")) }
+        } else if k == types.T_ENUM {
+            // by variant order, then by the payload
+            let d = types.def_of(p.t, ty)
+            put(inout g, "  if (a.tag != b.tag) return a.tag < b.tag ? -1 : 1;\n")
+            for i in 0..d.len {
+                let v = types.variant(p.t, d, i)
+                if v.flen == 0 { continue }
+                put(inout g, "  if (a.tag == ")
+                putn(inout g, i as u64)
+                put(inout g, ") {\n")
+                for j in 0..v.flen {
+                    var x = txt("a.u.v", i as u64, ".f")
+                    bytes.append(inout x, bytes.from_u64(j as u64))
+                    var y = txt("b.u.v", i as u64, ".f")
+                    bytes.append(inout y, bytes.from_u64(j as u64))
+                    cmp_part(inout g, p, types.field(p.t, v.fstart, j).ty, x, y)
+                }
+                put(inout g, "  }\n")
+            }
+        } else if k == types.T_ARRAY {
+            if t.b > 0 {
+                put(inout g, "  for (uint64_t i = 0; i < ")
+                putn(inout g, t.b as u64)
+                put(inout g, "; i++)")
+                cmp_part(inout g, p, t.a, sys.lit("a.a[i]"), sys.lit("b.a[i]"))
+            }
+        } else if k == types.T_LIST {
+            put(inout g, "  for (uint64_t i = 0; i < a.len && i < b.len; i++)")
+            cmp_part(inout g, p, t.a, sys.lit("a.d[i]"), sys.lit("b.d[i]"))
+            put(inout g, "  return (a.len > b.len) - (a.len < b.len);\n}\n")
+            return
+        } else if k == types.T_BOX {
+            cmp_part(inout g, p, t.a, sys.lit("(*a.p)"), sys.lit("(*b.p)"))
+        }
+        put(inout g, "  return 0;\n}\n")
+        return
+    }
+    if kind == GK_HASH {
+        put(inout g, "static uint64_t ")
+        gname(inout g, p, "hash_", ty)
+        put(inout g, "(")
+        cty(inout g, p, ty)
+        put(inout g, " x)")
+        proto(inout g, mark)
+        put(inout g, " {\n")
+        if custom_call(inout g, p, TR_HASH, ty, "(x)") { return }
+        put(inout g, "  uint64_t h = UINT64_C(0x9e3779b97f4a7c15);\n  ")
+        if k == types.T_RECORD {
+            let d = types.def_of(p.t, ty)
+            for i in 0..d.len { hash_part(inout g, p, types.field(p.t, d.start, i).ty, rf(p, ty, "x", i)) }
+        } else if k == types.T_TUPLE {
+            let es = types.elems(p.t, ty)
+            for i in 0..es.len() { hash_part(inout g, p, es[i], txt("x.f", i as u64, "")) }
+        } else if k == types.T_ENUM {
+            let d = types.def_of(p.t, ty)
+            put(inout g, "h = ei_hash_u64(h ^ x.tag);\n  ")
+            for i in 0..d.len {
+                let v = types.variant(p.t, d, i)
+                if v.flen == 0 { continue }
+                put(inout g, "if (x.tag == ")
+                putn(inout g, i as u64)
+                put(inout g, ") { ")
+                for j in 0..v.flen {
+                    var x = txt("x.u.v", i as u64, ".f")
+                    bytes.append(inout x, bytes.from_u64(j as u64))
+                    hash_part(inout g, p, types.field(p.t, v.fstart, j).ty, x)
+                }
+                put(inout g, "}\n  ")
+            }
+        } else if k == types.T_ARRAY {
+            put(inout g, "for (uint64_t i = 0; i < ")
+            putn(inout g, t.b as u64)
+            put(inout g, "; i++) { ")
+            hash_part(inout g, p, t.a, sys.lit("x.a[i]"))
+            put(inout g, "}\n  ")
+        } else if k == types.T_LIST {
+            put(inout g, "h = ei_hash_u64(h ^ x.len);\n  for (uint64_t i = 0; i < x.len; i++) { ")
+            hash_part(inout g, p, t.a, sys.lit("x.d[i]"))
+            put(inout g, "}\n  ")
+        } else if k == types.T_BOX {
+            hash_part(inout g, p, t.a, sys.lit("(*x.p)"))
+        }
+        put(inout g, "return h;\n}\n")
+        return
+    }
+    if kind == GK_SHOW {
+        put(inout g, "static void ")
+        gname(inout g, p, "show_", ty)
+        put(inout g, "(ei_String *o, ")
+        cty(inout g, p, ty)
+        put(inout g, " x)")
+        proto(inout g, mark)
+        put(inout g, " {\n  ")
+        let f = custom_fn(p, TR_SHOW, ty)
+        if f != NONE {
+            fn_name(inout g, p, f)
+            put(inout g, "(x, o);\n}\n")
+            return
+        }
+        if k == types.T_RECORD {
+            // `Name { a: 1, b: "x" }`
+            let d = types.def_of(p.t, ty)
+            var head = resolve.key_shown(p.names, d.key)
+            if d.len == 0 { bytes.append(inout head, sys.lit(" {}")) } else { bytes.append(inout head, sys.lit(" { ")) }
+            show_lit(inout g, head)
+            for i in 0..d.len {
+                let fl = types.field(p.t, d.start, i)
+                var lab: List[u8] = List.new()
+                if i > 0 { bytes.append(inout lab, sys.lit(", ")) }
+                bytes.append(inout lab, intern.name(p.names, fl.name))
+                bytes.append(inout lab, sys.lit(": "))
+                show_lit(inout g, lab)
+                show_into(inout g, p, fl.ty, sys.lit("o"), rf(p, ty, "x", i), true)
+                put(inout g, "; ")
+            }
+            if d.len > 0 { show_lit(inout g, sys.lit(" }")) }
+        } else if k == types.T_TUPLE {
+            // `(1, "x")`, `(1,)`
+            let es = types.elems(p.t, ty)
+            show_lit(inout g, sys.lit("("))
+            for i in 0..es.len() {
+                if i > 0 { show_lit(inout g, sys.lit(", ")) }
+                show_into(inout g, p, es[i], sys.lit("o"), txt("x.f", i as u64, ""), true)
+                put(inout g, "; ")
+            }
+            if es.len() == 1 { show_lit(inout g, sys.lit(",")) }
+            show_lit(inout g, sys.lit(")"))
+        } else if k == types.T_ENUM {
+            // `Some(1)`, `None`: the variant's name as `print` writes it, then the payload
+            let d = types.def_of(p.t, ty)
+            put(inout g, "switch (x.tag) {\n  ")
+            for i in 0..d.len {
+                let v = types.variant(p.t, d, i)
+                put(inout g, "case ")
+                putn(inout g, i as u64)
+                put(inout g, ": ")
+                var nmv = resolve.key_shown(p.names, v.key)
+                if v.flen > 0 { nmv.push(40) }
+                show_lit(inout g, nmv)
+                for j in 0..v.flen {
+                    if j > 0 { show_lit(inout g, sys.lit(", ")) }
+                    var x = txt("x.u.v", i as u64, ".f")
+                    bytes.append(inout x, bytes.from_u64(j as u64))
+                    show_into(inout g, p, types.field(p.t, v.fstart, j).ty, sys.lit("o"), x, true)
+                    put(inout g, "; ")
+                }
+                if v.flen > 0 { show_lit(inout g, sys.lit(")")) }
+                put(inout g, "break;\n  ")
+            }
+            put(inout g, "default: break;\n  }")
+        } else if k == types.T_ARRAY || k == types.T_LIST {
+            // `[1, 2]`
+            show_lit(inout g, sys.lit("["))
+            put(inout g, "for (uint64_t i = 0; i < ")
+            if k == types.T_LIST { put(inout g, "x.len") } else { putn(inout g, t.b as u64) }
+            put(inout g, "; i++) {\n    if (i) { ")
+            show_lit(inout g, sys.lit(", "))
+            put(inout g, "}\n    ")
+            if k == types.T_LIST {
+                show_into(inout g, p, t.a, sys.lit("o"), sys.lit("x.d[i]"), true)
+            } else {
+                show_into(inout g, p, t.a, sys.lit("o"), sys.lit("x.a[i]"), true)
+            }
+            put(inout g, "; }\n  ")
+            show_lit(inout g, sys.lit("]"))
+        } else if k == types.T_MAP {
+            // `{1: "a", 2: "b"}`, in slot order
+            show_lit(inout g, sys.lit("{"))
+            put(inout g, "bool first = true;\n  for (uint64_t i = 0; i < x.cap; i++) if (x.s[i] == 1) {\n    if (!first) { ")
+            show_lit(inout g, sys.lit(", "))
+            put(inout g, "}\n    first = false;\n    ")
+            show_into(inout g, p, t.a, sys.lit("o"), sys.lit("x.k[i]"), true)
+            put(inout g, "; ")
+            show_lit(inout g, sys.lit(": "))
+            show_into(inout g, p, t.b, sys.lit("o"), sys.lit("x.v[i]"), true)
+            put(inout g, ";\n  }\n  ")
+            show_lit(inout g, sys.lit("}"))
+        } else if k == types.T_BOX {
+            show_lit(inout g, sys.lit("Box("))
+            show_into(inout g, p, t.a, sys.lit("o"), sys.lit("(*x.p)"), true)
+            put(inout g, "; ")
+            show_lit(inout g, sys.lit(")"))
+        }
+        put(inout g, "\n}\n")
+        return
+    }
+    // GK_COPY: `static T copy_T(const T *x)`
+    put(inout g, "static ")
+    cty(inout g, p, ty)
+    put(inout g, " ")
+    gname(inout g, p, "copy_", ty)
+    put(inout g, "(const ")
+    cty(inout g, p, ty)
+    put(inout g, " *x)")
+    proto(inout g, mark)
+    put(inout g, " {\n  ")
+    let f = custom_fn(p, TR_COPY, ty)
+    if f != NONE {
+        put(inout g, "return ")
+        fn_name(inout g, p, f)
+        put(inout g, "(*x);\n}\n")
+        return
+    }
+    cty(inout g, p, ty)
+    put(inout g, " r = *x;\n  ")
+    if k == types.T_RECORD && shared_rec(p, ty) {
+        let d = types.def_of(p.t, ty)
+        put(inout g, "r.p = ei_buf_alloc(1, sizeof *r.p);\n  *r.p = *x->p;\n  ")
+        for i in 0..d.len { copy_part(inout g, p, types.field(p.t, d.start, i).ty, txt("r.p->f", i as u64, ""), rfp(p, ty, i)) }
+    } else if k == types.T_RECORD {
+        let d = types.def_of(p.t, ty)
+        for i in 0..d.len { copy_part(inout g, p, types.field(p.t, d.start, i).ty, txt("r.f", i as u64, ""), txt("&x->f", i as u64, "")) }
+    } else if k == types.T_TUPLE {
+        let es = types.elems(p.t, ty)
+        for i in 0..es.len() { copy_part(inout g, p, es[i], txt("r.f", i as u64, ""), txt("&x->f", i as u64, "")) }
+    } else if k == types.T_ENUM {
+        let d = types.def_of(p.t, ty)
+        put(inout g, "switch (x->tag) { ")
+        for i in 0..d.len {
+            let v = types.variant(p.t, d, i)
+            put(inout g, "case ")
+            putn(inout g, i as u64)
+            put(inout g, ": ")
+            for j in 0..v.flen {
+                var lhs = txt("r.u.v", i as u64, ".f")
+                bytes.append(inout lhs, bytes.from_u64(j as u64))
+                var src = txt("&x->u.v", i as u64, ".f")
+                bytes.append(inout src, bytes.from_u64(j as u64))
+                copy_part(inout g, p, types.field(p.t, v.fstart, j).ty, lhs, src)
+            }
+            put(inout g, "break; ")
+        }
+        put(inout g, "default: break; }")
+    } else if k == types.T_ARRAY {
+        put(inout g, "for (uint64_t i = 0; i < ")
+        putn(inout g, t.b as u64)
+        put(inout g, "; i++) { ")
+        copy_part(inout g, p, t.a, sys.lit("r.a[i]"), sys.lit("&x->a[i]"))
+        put(inout g, "}")
+    } else if k == types.T_LIST {
+        put(inout g, "if (x->cap) {\n    r.d = ei_buf_alloc(x->cap, sizeof *r.d);\n    for (uint64_t i = 0; i < x->len; i++) r.d[i] = ")
+        copy_expr(inout g, p, t.a, sys.lit("&x->d[i]"))
+        put(inout g, ";\n  }")
+    } else if k == types.T_MAP {
+        put(inout g, "if (x->cap) {\n    r.k = ei_alloc_n(x->cap, sizeof *r.k);\n    r.v = ei_alloc_n(x->cap, sizeof *r.v);\n    r.s = ei_buf_alloc(x->cap, 1);\n    for (uint64_t i = 0; i < x->cap; i++) {\n      r.s[i] = x->s[i];\n      if (x->s[i] == 1) { r.k[i] = ")
+        copy_expr(inout g, p, t.a, sys.lit("&x->k[i]"))
+        put(inout g, "; r.v[i] = ")
+        copy_expr(inout g, p, t.b, sys.lit("&x->v[i]"))
+        put(inout g, "; }\n    }\n  }")
+    } else if k == types.T_BOX {
+        put(inout g, "r.p = ei_buf_alloc(1, sizeof *r.p);\n  *r.p = ")
+        copy_expr(inout g, p, t.a, sys.lit("x->p"))
+        put(inout g, ";")
+    } else if k == types.T_MUTEX {
+        // locks, copies the contents into a new Mutex, unlocks
+        need(inout g, GK_MXGET, ty)
+        need(inout g, GK_MXNEW, ty)
+        cty(inout g, p, t.a)
+        put(inout g, " v = ")
+        gname(inout g, p, "get_", ty)
+        put(inout g, "(*x);\n  ")
+        var seen: Map[u32, bool] = Map.new()
+        if deep(p, t.a, inout seen) {
+            cty(inout g, p, t.a)
+            put(inout g, " w = ")
+            copy_expr(inout g, p, t.a, sys.lit("&v"))
+            put(inout g, ";\n  ")
+            drop_call(inout g, p, t.a, sys.lit("&v"))
+            put(inout g, "\n  v = w;\n  ")
+        }
+        put(inout g, "r = ")
+        gname(inout g, p, "new_", ty)
+        put(inout g, "(v);")
+    }
+    put(inout g, "\n  return r;\n}\n")
 }
 
 /// `push_L` (B_LIST_PUSH: moves x in) and `has_L` (B_LIST_CONTAINS) for List type ty.
@@ -1725,7 +2402,7 @@ fn uniqs(inout g: G, p: P, id: u32, depth: u32) uses ffi {
     if x.kind == ir.P_LOCAL { return }
     uniqs(inout g, p, x.a, depth)
     let bty = p.ir.places[x.a as usize].ty
-    if x.kind == ir.P_DEREF || (x.kind == ir.P_INDEX && ty_kind(p, bty) == types.T_LIST) {
+    if x.kind == ir.P_DEREF || (x.kind == ir.P_INDEX && ty_kind(p, bty) == types.T_LIST) || (x.kind == ir.P_FIELD && shared_rec(p, bty)) {
         var ptr = sys.lit("&")
         bytes.append(inout ptr, place_text(inout g, p, x.a))
         ind(inout g, depth)
@@ -1743,7 +2420,7 @@ fn arg_uniqs(inout g: G, p: P, start: u32, n: u32, depth: u32) uses ffi {
 
 /// Whether builtin b changes its first argument (a place).
 fn mutates(b: u32) -> bool {
-    b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_STR_PUSH_BYTE || b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE
+    b == ir.B_SHOW || b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_STR_PUSH_BYTE || b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE
 }
 
 /// A place as a C lvalue (its indices are checked already).
@@ -1753,7 +2430,7 @@ fn place(inout g: G, p: P, id: u32) uses ffi {
         local_ref(inout g, p, x.a)
     } else if x.kind == ir.P_FIELD {
         place(inout g, p, x.a)
-        put(inout g, ".f")
+        if shared_rec(p, p.ir.places[x.a as usize].ty) { put(inout g, ".p->f") } else { put(inout g, ".f") }
         putn(inout g, x.b as u64)
     } else if x.kind == ir.P_INDEX {
         place(inout g, p, x.a)
@@ -1946,6 +2623,17 @@ fn binary(inout g: G, p: P, s: ir.Stmt) uses ffi {
         put(inout g, " 0)")
         return
     }
+    if is_struct_kind(tk) {
+        // Ord: derived lexicographically, or the type's own
+        put(inout g, "(")
+        let a = op_text(inout g, p, s.b)
+        let b = op_text(inout g, p, s.c)
+        cmp_expr(inout g, p, s.ty, a, b)
+        put(inout g, " ")
+        put(inout g, ast.op_text(o))
+        put(inout g, " 0)")
+        return
+    }
     let fixed = fixed_cmp(p, o, s.b, s.c, s.ty)
     if fixed == 1 {
         put(inout g, "false")
@@ -1998,6 +2686,14 @@ fn cast(inout g: G, p: P, s: ir.Stmt) uses ffi {
 
 fn print(inout g: G, p: P, s: ir.Stmt) uses ffi {
     let t = types.get(p.t, s.ty)
+    if !plain_show(p, s.ty) {
+        // through Show: the text, then the line
+        put(inout g, "{ ei_String s_ = ei_str_from(\"\"); ")
+        let v = op_text(inout g, p, s.a)
+        show_into(inout g, p, s.ty, sys.lit("&s_"), v, false)
+        put(inout g, "; ei_print_s(s_.p); ei_drop_String(&s_); }")
+        return
+    }
     if t.kind == types.T_INT && types.signed(t.a) {
         put(inout g, "ei_print_i((int64_t)")
     } else if t.kind == types.T_INT {
@@ -2051,6 +2747,72 @@ fn option_lit(inout g: G, p: P, oty: u32, val: List[u8]) uses ffi {
     put(inout g, " }")
 }
 
+/// B_COPY, B_COMPARE, B_HASH, B_SHOW and B_TO_STRING ("operation traits").
+fn trait_builtin(inout g: G, p: P, s: ir.Stmt) uses ffi {
+    let b = s.a
+    if b == ir.B_SHOW {
+        let x = barg(p, s, 1)
+        var o = sys.lit("&")
+        let mark = g.o.len()
+        arg_val(inout g, p, barg(p, s, 0))
+        bytes.append(inout o, cut(inout g, mark))
+        let m2 = g.o.len()
+        arg_val(inout g, p, x)
+        let v = cut(inout g, m2)
+        show_into(inout g, p, arg_ty(p, x), o, v, false)
+        return
+    }
+    let x = barg(p, s, 0)
+    let ty = arg_ty(p, x)
+    let mark = g.o.len()
+    arg_val(inout g, p, x)
+    let v = cut(inout g, mark)
+    if b == ir.B_TO_STRING {
+        if s.dst == NONE {
+            put(inout g, "{ ei_String s_ = ei_str_from(\"\"); ")
+            show_into(inout g, p, ty, sys.lit("&s_"), v, false)
+            put(inout g, "; ei_drop_String(&s_); }")
+            return
+        }
+        let m2 = g.o.len()
+        local_ref(inout g, p, s.dst)
+        let d = cut(inout g, m2)
+        putb(inout g, d)
+        put(inout g, " = ei_str_from(\"\"); ")
+        var o = sys.lit("&")
+        bytes.append(inout o, d)
+        show_into(inout g, p, ty, o, v, false)
+        return
+    }
+    bdst(inout g, p, s)
+    if b == ir.B_COPY {
+        var ptr = sys.lit("&")
+        bytes.append(inout ptr, v)
+        copy_expr(inout g, p, ty, ptr)
+    } else if b == ir.B_HASH {
+        hash_text(inout g, p, ty, v)
+    } else {
+        // compare: Ordering's Less, Equal, Greater are tags 0, 1, 2
+        let m3 = g.o.len()
+        arg_val(inout g, p, barg(p, s, 1))
+        let w = cut(inout g, m3)
+        put(inout g, "(")
+        cty(inout g, p, s.ty)
+        put(inout g, "){ .tag = (uint32_t)(")
+        let k = ty_kind(p, ty)
+        if k == types.T_STR || k == types.T_STRING {
+            put(inout g, "(")
+            cmp_expr(inout g, p, ty, v, w)
+            put(inout g, " > 0) - (")
+            cmp_expr(inout g, p, ty, v, w)
+            put(inout g, " < 0)")
+        } else {
+            cmp_expr(inout g, p, ty, v, w)
+        }
+        put(inout g, " + 1) }")
+    }
+}
+
 fn builtin(inout g: G, p: P, s: ir.Stmt, depth: u32) uses ffi {
     let b = s.a
     if b == ir.B_STR_FROM || b == ir.B_STR_FROM_INT {
@@ -2063,6 +2825,8 @@ fn builtin(inout g: G, p: P, s: ir.Stmt, depth: u32) uses ffi {
         if b == ir.B_LEN { put(inout g, "(uint64_t)strlen(") } else { put(inout g, "(*(") }
         arg_val(inout g, p, barg(p, s, 0))
         if b == ir.B_LEN { put(inout g, ")") } else { put(inout g, ") == 0)") }
+    } else if b >= ir.B_COPY {
+        trait_builtin(inout g, p, s)
     } else if b >= ir.B_STR_BYTE {
         text_builtin(inout g, p, s)
     } else if b == ir.B_LEN || b == ir.B_IS_EMPTY {
@@ -2358,6 +3122,13 @@ fn stmt(inout g: G, p: P, id: u32, depth: u32) uses ffi {
     } else if k == ir.S_CALL {
         if s.dst != ir.NONE { dst(inout g, p, s.dst) }
         fn_name(inout g, p, s.a)
+        put(inout g, "(")
+        args(inout g, p, s.b, s.c)
+        put(inout g, ")")
+    } else if k == ir.S_RECORD && shared_rec(p, s.ty) {
+        need(inout g, GK_RNEW, s.ty)
+        dst(inout g, p, s.dst)
+        gname(inout g, p, "rnew_", s.ty)
         put(inout g, "(")
         args(inout g, p, s.b, s.c)
         put(inout g, ")")
