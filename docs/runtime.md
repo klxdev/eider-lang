@@ -245,14 +245,14 @@ collector thread, not in the signal handler), and whenever the program calls
 | `capture()` | the profile as bytes (written to a temporary file and read back) |
 | `with_label(key, value, f)`, `with_label_bytes` | run `f` with a label added to the thread's labels |
 
-packages/http has the service side (`http/profiling`): `label_routes(inout router)` runs every
+eider-http has the service side (`http/profiling`): `label_routes(inout router)` runs every
 route under the labels `method` and `route` (the pattern, `/kv/:key`), so a report or flame
-graph can be split per endpoint, on any worker thread of the server's pool; `jsonrpc` labels
+graph can be split per endpoint, on any worker thread of the server's pool; eider-rpc's `jsonrpc` labels
 each call with `rpc` (the method); and `mount(inout router, opts)` adds `GET
 /debug/profile?seconds=N` (reset, sample for N seconds, answer the profile) and `GET
 /debug/heap` (the profile as it is now: live heap by site), only when `opts.enabled`, only for
 the local host unless `opts.remote`, 501 in a program built without `--profile`, 409 while a
-recording runs. examples/kvstore turns them on with `KVSTORE_PROFILING=1`.
+recording runs. eider-rpc's examples/kvstore turns them on with `KVSTORE_PROFILING=1`.
 
 ### Profile format
 
@@ -292,7 +292,7 @@ the profile (or its last reset), sizes bytes.
 
 Measured 2026-10-31 (16 cores, gcc -O2) on eiderc itself (`emit-c compiler/main.ei`, 22.5k
 lines of Eider: the worst case, very many small functions; median of 9 runs) and on
-examples/kvstore under eider-loadgen (8 keep-alive connections, a mix of JSON-RPC and GET
+eider-rpc's examples/kvstore under eider-loadgen (8 keep-alive connections, a mix of JSON-RPC and GET
 requests, 4 s, three runs each, mean):
 
 | Program | Build | Result | Cost |

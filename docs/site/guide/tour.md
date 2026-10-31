@@ -607,8 +607,9 @@ fn main() uses io {
 
 (Two files, so the docs' tests don't run it; it prints `7`.) The toolchain's modules are imported by
 name, `import "std/strings"`, and so are a package's dependencies, `import "json"`,
-located through `eider.lock`. `examples/kvstore` and `examples/todo` are complete
-multi-module packages; [Getting started](getting-started.md) shows eider-pkg.
+located through `eider.lock`. The examples of eider-rpc and eider-openapi
+([Building services](services.md)) are complete multi-module packages;
+[Getting started](getting-started.md) shows eider-pkg.
 
 ## Tests
 

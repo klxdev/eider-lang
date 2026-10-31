@@ -52,13 +52,15 @@ allocation exactly and costs more) and leave it on. Then capture when you need t
 - `kill -USR2 <pid>`: the profile so far, while it keeps running;
 - from the program: `profile.snapshot(path)`, `profile.reset()`, `profile.start()` and
   `profile.stop()` in [std/profile](api:std/profile);
-- over HTTP, if you turn it on: packages/http's `profiling.mount(inout router, opts)` with
+- over HTTP, if you turn it on: [eider-http](https://github.com/klxdev/eider-http)'s
+  `http/profiling`, `profiling.mount(inout router, opts)` with
   `opts.enabled = true` serves `GET /debug/profile?seconds=N` and `GET /debug/heap`, to the
   local host only unless `opts.remote` is set.
 
 Labels split a profile by request. `profiling.label_routes(inout router)` runs each route
 under the labels `method` and `route` (the pattern, such as `/todos/:id`), on whichever pool
-worker serves it; JSON-RPC calls get `rpc` with the method name. Your own code can add labels:
+worker serves it; JSON-RPC calls ([eider-rpc](https://github.com/klxdev/eider-rpc)) get `rpc`
+with the method name. Your own code can add labels:
 
 ```eider,ignore
 // needs a program built with --profile to record anything; without it this just runs the closure
@@ -67,8 +69,8 @@ let n = profile.with_label("job", "resize", || -> i64 { resize_all(images) })
 
 Then `eider-profiler report svc.prof --by route` shows CPU per endpoint, and
 `eider-profiler flame svc.prof --label route=/todos/:id -o todos.html` draws one endpoint.
-`examples/kvstore` does all of this (`KVSTORE_PROFILING=1` turns the endpoints on), and
-eider-profiler's `eider-loadgen` puts it under load.
+eider-rpc's `examples/kvstore` does all of this (`KVSTORE_PROFILING=1` turns the endpoints
+on), and eider-profiler's `eider-loadgen` puts it under load.
 
 > **Warning:** a profile names every function and file of the program. Keep the debug
 > endpoints on the local host or behind authentication.

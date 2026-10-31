@@ -24,9 +24,12 @@ and a `0.2` toolchain needs `0.2` tools.
 | the tree-sitter grammar | tree-sitter-eider | its `VERSION` | (no binary) |
 | the profiler | eider-profiler | its `VERSION` | `eider-profiler 0.1.0` |
 
-Library packages (`packages/json`, `packages/http`, and every package you write) are not
-part of this: each keeps its own `version` in its `eider.toml`, and eider-pkg selects them
-by that version.
+Library packages keep their own `version` in their `eider.toml`, and eider-pkg selects them
+by that version. The libraries and frameworks in repositories of their own (eider-toml,
+eider-json, eider-markdown, eider-http, eider-rpc, eider-openapi) follow the tools' rule
+until 1.0: their MAJOR.MINOR is the toolchain's, their PATCH their own, so `scripts/version.sh
+check-siblings` and `bump` treat them as siblings. A package you write needs only
+`eider = "<MAJOR.MINOR>"`.
 
 ## The version in code
 

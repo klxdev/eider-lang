@@ -189,7 +189,7 @@ around in core.
 | **Default methods in traits** | `stream.read_all(inout r)` rather than `r.read_all()` | trait methods with bodies |
 | ~~**Error conversions for `?`**~~ (roadmap P0.6) | done (docs/compiler.md "C8.21"): `impl From[String] for stream.Error`, and applications convert `stream.Error` with their own impl; `stream.plain` is gone (C103) | the `Error` trait with context chains is next |
 | **`Drop` that may do I/O** (E0606 forbids capabilities in `drop`) | `BufWriter` can't flush on drop and `Fd` can't close on drop: call `flush`/`close` | a scoped `defer` (P0.3) or a drop with checked capabilities |
-| ~~**Iterating a Map**~~ | done (docs/compiler.md "C8.20"): http/metrics and examples/todo iterate their Maps; `Set` keeps its List on purpose, for insertion order (C102) | an insertion-ordered Map, if more code wants that order |
+| ~~**Iterating a Map**~~ | done (docs/compiler.md "C8.20"): eider-http's http/metrics and eider-openapi's examples/todo iterate their Maps; `Set` keeps its List on purpose, for insertion order (C102) | an insertion-ordered Map, if more code wants that order |
 | **In-place List operations and views** (`insert`/`remove` at an index, `truncate`, `extend`, `swap`, slices) | stream buffers copy their unread tail when compacting, `bytes.slice`-style copies everywhere; merge sort builds new Lists | the built-ins, and zero-copy views with 8.6 references |
 | **16-bit integers** | `encoding.u16_le` returns a u32 | `u16`/`i16` |
 | ~~**String literal escapes**~~ `\r`, `\xNN`, `\u{...}` | done (docs/compiler.md "C8.17"; `\0` refused: strings hold no NUL); http writes `\r\n` literals | |

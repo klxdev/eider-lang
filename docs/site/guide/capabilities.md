@@ -103,11 +103,13 @@ A dependency is granted capabilities in the depender's `eider.toml`:
 
 ```toml
 [deps.http]
-path = "../../packages/http"
+git = "https://github.com/klxdev/eider-http.git"
+version = "0.1.0"
 uses = ["net", "io", "clock", "threads"]
 
 [deps.json]
-path = "../../packages/json"     # no `uses`: granted nothing
+git = "https://github.com/klxdev/eider-json.git"
+version = "0.1.0"                # no `uses`: granted nothing
 ```
 
 The rules:
@@ -171,7 +173,7 @@ checks is exactly what the compiler loads, not a text search.
 ## Known limits
 
 - A grant is checked against everything the program loads of a package, not per imported
-  module: packages/openapi, which is pure, grants http `net, io, clock, threads` because
+  module: eider-openapi, which is pure, grants http `net, io, clock, threads` because
   programs that use it load http's server too.
 - Capabilities don't follow type parameters (see "Inside a program" above).
 - Capabilities say *which kind* of effect, not *which* file or host. Narrower grants

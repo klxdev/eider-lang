@@ -11,3 +11,5 @@ release in `vendor/toml` for its own tools.
 
 - `VERSION`, `eider = "0.1"`, `scripts/build.sh` and `scripts/test.sh` against an eider-lang
   checkout (`EIDER_ROOT`), refusing a toolchain of another MAJOR.MINOR.
+- `scripts/version.sh` (`check`, `sync`): eider.toml agrees with VERSION; eider-lang's
+  `scripts/version.sh check-siblings` and `bump` drive it.

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Full verification matrix: compile-fail suite, run tests on gcc/clang/ASan+UBSan/TSan, std, export, wasm, and the editor tooling (eider-analyzer, tree-sitter-eider) when their repositories are next to this one.
+# Full verification matrix: compile-fail suite, run tests on gcc/clang/ASan+UBSan/TSan, std, export, wasm, the vendored libraries, and the sibling repositories (the editor tooling, eider-analyzer and tree-sitter-eider, and the libraries and frameworks, eider-json, eider-http, ...) when they are next to this one.
 # The compiler is target/eiderc, built from the seed by scripts/ei (only a C compiler).
 cd "$(dirname "$0")/.." || exit 1
 EIDER_CACHE=off; export EIDER_CACHE
@@ -33,7 +33,14 @@ for cc in gcc clang $S/asan.sh $S/tsan.sh; do
 done
 sh tests/core/run.sh | grep -q FAIL && { echo "FAIL core"; fail=1; } || echo "ok   core (eider_rt + eider_core, strict warnings, sanitizers when available)"
 sh tests/std/run.sh | grep -q FAIL && { echo "FAIL std"; fail=1; } || echo "ok   std (C core + Eider std)"
-sh tests/packages.sh | grep -q FAIL && { echo "FAIL packages"; fail=1; } || echo "ok   packages (toml, semver, sha256, json, fuzz, http, openapi, markdown, doc; examples/kvstore and examples/todo end to end)"
+sh tests/packages.sh | grep -q FAIL && { echo "FAIL packages"; fail=1; } || echo "ok   packages (pkg with semver and sha256, doc, fuzz; the vendored toml, json, markdown)"
+# vendor: each vendor/<name> is the release vendor/vendor.lock pins (content hash), and is
+# byte-identical to that commit of its repository when the checkout is there (else that
+# comparison is a skipped leg): scripts/vendor.sh check
+sh scripts/vendor.sh check > $S/vendor 2>&1; vrc=$?
+while IFS= read -r l; do case $l in "skip "*) skip "${l#skip }" ;; esac; done < $S/vendor
+if [ $vrc != 0 ]; then echo "FAIL vendor: sh scripts/vendor.sh check"; grep -A4 "^FAIL" $S/vendor | head -20; fail=1
+else echo "ok   vendor ($(grep -c '^ok' $S/vendor) pinned libraries: $(sed -n 's/^ok   vendor\/\([a-z0-9_]*\): \([^,(]*\).*/\2/p' $S/vendor | sed 's/ *$//' | paste -sd, - | sed 's/,/, /g'); $(grep -c 'byte-identical to' $S/vendor) compared with their repositories)"; fi
 # the documentation site (target/site) and its doc tests: scripts/docs.sh, docs/site/CONTRACT.md
 if sh scripts/docs.sh >$S/docs.log 2>&1 && sh scripts/docs.sh test >>$S/docs.log 2>&1; then echo "ok   docs (the site in target/site; $(tail -1 $S/docs.log))"; else echo "FAIL docs: sh scripts/docs.sh; sh scripts/docs.sh test"; tail -20 $S/docs.log; fail=1; fi
 # crypto: the vectors on every backend available here (and the RFC vectors under ASan+UBSan),
@@ -52,18 +59,19 @@ sh scripts/version.sh check > $S/version 2>&1 && cat $S/version || { echo "FAIL 
 sh scripts/test-compiler.sh | grep -q FAIL && { echo "FAIL compiler (eiderc)"; fail=1; } || echo "ok   compiler (eiderc vs the recorded oracle, tests/oracle)"
 sh scripts/selfhost.sh --from-seed >/dev/null 2>&1 && echo "ok   seed (seed/eiderc.c rebuilds itself with only a C compiler)" || { echo "FAIL seed: sh scripts/selfhost.sh --from-seed"; fail=1; }
 bash tests/export/run.sh | tail -1 | grep -q "^ok" && echo "ok   export (C and C++ consumers)" || { echo "FAIL export"; fail=1; }
-# tools: eider-analyzer and tree-sitter-eider, the editor tooling in their own repositories
-# (scripts/check-tools.sh; EIDER_ANALYZER, TREE_SITTER_EIDER, default ../<name>), built and
-# tested against this checkout, and every sibling tool's VERSION has this MAJOR.MINOR (the
-# `ok   versions:` line). A half whose repository or tool is missing is a skipped leg, so a
-# plain checkout stays green.
+# tools: the sibling repositories (scripts/check-tools.sh; EIDER_<NAME>, else
+# $EIDER_SIBLINGS/<name>, default ../<name>): the editor tooling (eider-analyzer,
+# tree-sitter-eider) and the libraries and frameworks (eider-toml, eider-json,
+# eider-markdown, eider-http, eider-rpc, eider-openapi), built and tested against this
+# checkout, and every sibling's VERSION has this MAJOR.MINOR (the `ok   versions:` line). A
+# part whose repository or tool is missing is a skipped leg, so a plain checkout stays green.
 sh scripts/check-tools.sh > $S/tools 2>&1; trc=$?
-while IFS= read -r l; do case $l in "skip: "*) skip "tools (eider-analyzer, tree-sitter-eider): ${l#skip: }" ;; esac; done < $S/tools
+while IFS= read -r l; do case $l in "skip: "*) skip "tools: ${l#skip: }" ;; esac; done < $S/tools
 if [ $trc != 0 ]; then
-  echo "FAIL tools (eider-analyzer, tree-sitter-eider): sh scripts/check-tools.sh"; grep -A6 "^FAIL" $S/tools | head -20; fail=1
+  echo "FAIL tools: sh scripts/check-tools.sh"; grep -A6 "^FAIL" $S/tools | head -20; fail=1
 elif grep -q "^ok" $S/tools; then
   built=$(grep "^ok" $S/tools | grep -v "^ok   versions:" | sed -E 's/^ok +([a-z-]+).*/\1/' | paste -sd, - | sed 's/,/, /g')
-  [ -n "$built" ] && echo "ok   tools (eider-analyzer, tree-sitter-eider): $built against this checkout"
+  [ -n "$built" ] && echo "ok   tools: $built against this checkout"
   grep "^ok   versions:" $S/tools
 fi
 printf 'int x;\n' > $S/wasm.c

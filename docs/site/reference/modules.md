@@ -211,9 +211,7 @@ manifest, resolves versions and fills the store. Only `add`, `remove`, `fetch`, 
 After resolving, eider-pkg asks the compiler what each package uses (`eiderc caps`) and
 refuses a dependency whose use exceeds its grant.
 
-The package examples are runnable from the repository: `examples/kvstore` and
-`examples/todo` are packages with dependencies, and `compiler/tests/pkgs` covers every rule
-above (three `util` modules in one program, a vendored and a stored git package, and every
+`compiler/tests/pkgs` in the repository covers every rule above (three `util` modules in one program, a vendored and a stored git package, and every
 error).
 
 > **Note:** A package registry, `eider api-diff` for semantic versioning and per-module

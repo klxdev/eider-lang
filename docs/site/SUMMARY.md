@@ -15,7 +15,7 @@
 - [Capabilities](guide/capabilities.md)
 - [Concurrency](guide/concurrency.md)
 - [Testing](guide/testing.md)
-- [Services](guide/services.md)
+- [Building services](guide/services.md)
 - [Calling C, and calling Eider from C](guide/ffi.md)
 - [WebAssembly](guide/wasm.md)
 - [Coming from another language](guide/coming-from.md)
@@ -47,14 +47,7 @@
 
 ## Packages
 
-- [json](api:json)
-- [toml](api:toml)
-- [semver](api:semver)
-- [sha256](api:sha256)
 - [crypto](api:crypto)
-- [markdown](api:markdown)
-- [http](api:http)
-- [openapi](api:openapi)
 - [pkg (eider-pkg)](api:pkg)
 - [doc (eider-doc)](api:doc)
 - [fuzz](api:fuzz)

@@ -51,9 +51,9 @@ write_lock() {
   {
     echo "# vendor/vendor.lock: the pinned copies in vendor/, written by scripts/vendor.sh. Do not edit."
     echo "version = 1"
-    for n in $(names_with "$1" | sort -u); do
-      if [ "$n" = "$1" ]; then v=$2; c=$3; h=$4; else v=$(field "$n" version); s=$(field "$n" source); c=${s##*#}; h=$(field "$n" hash); fi
-      printf '\n[[package]]\nname = "%s"\nversion = "%s"\nsource = "git+%s%s.git#%s"\nhash = "%s"\n' "$n" "$v" "$URL_BASE" "$n" "$c" "$h"
+    for wn in $(names_with "$1" | sort -u); do
+      if [ "$wn" = "$1" ]; then wv=$2; wc=$3; wh=$4; else wv=$(field "$wn" version); ws=$(field "$wn" source); wc=${ws##*#}; wh=$(field "$wn" hash); fi
+      printf '\n[[package]]\nname = "%s"\nversion = "%s"\nsource = "git+%s%s.git#%s"\nhash = "%s"\n' "$wn" "$wv" "$URL_BASE" "$wn" "$wc" "$wh"
     done
   } > "$LOCK.tmp" && mv "$LOCK.tmp" "$LOCK"
 }

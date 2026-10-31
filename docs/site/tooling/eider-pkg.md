@@ -88,11 +88,11 @@ Written by eider-pkg; commit it, and don't edit it:
 version = 1
 
 [[package]]
-name = "http"
-version = "0.1.0"
-source = "path+../../packages/http"
-deps = ["json", "fuzz"]
-grants = ["net", "io", "clock", "threads"]
+name = "geom"
+version = "0.2.0"
+source = "path+../geom"
+deps = []
+grants = []
 
 [[package]]
 name = "json"
@@ -153,8 +153,35 @@ exists, else in `pkg/<name>-<first 16 hex digits of its hash>`.
 | `EIDER_ROOT` | the toolchain checkout (with `core/` and `std/`); `scripts/eider-pkg` sets it |
 | `EIDERC` | the compiler eider-pkg asks about capabilities (default `$EIDER_ROOT/target/eiderc`) |
 | `EIDER_HOME` | the store (default `~/.eider`) |
+| `EIDER_PKG_OVERRIDE` | local checkouts standing in for git dependencies (below) |
 
 `git` must be on the `PATH` for git dependencies.
+
+## Overriding a git dependency
+
+`EIDER_PKG_OVERRIDE` names local directories that stand in for git dependencies, for
+working offline or on a checkout of a dependency with changes of your own:
+
+```sh
+EIDER_PKG_OVERRIDE=json=../eider-json,http=/src/eider-http eider-pkg fetch
+```
+
+Each entry is `<name>=<dir>` (separated by commas or spaces; a relative directory is relative
+to the current directory). A git dependency with that name, anywhere in the graph, is taken
+from the directory instead of its repository: no network, no tag needed, and uncommitted
+edits count. The files are the ones git would commit (`git ls-files --cached --others
+--exclude-standard`, so `target/` and other ignored files stay out) when git knows the
+directory's `eider.toml`, else every file but `.git`, `deps`, `vendor` and `target`. They are
+copied into the store under their content hash, where the compiler finds them through
+`eider.lock` as for any git package, so the lock keeps the git source: with a checkout of
+exactly the locked release, the lock is the one a fetch from the network writes (the same
+commit and hash). Otherwise the lock records the checkout's `HEAD` and the new hash; fetch
+again without the override before committing it. The checkout's `version` must be at least
+the one required.
+
+The library repositories' `scripts/build.sh` set it for the sibling checkouts next to them
+(eider-lang's `scripts/check-tools.sh` builds them that way), and fall back to the
+toolchain's pinned copies in `vendor/` (`scripts/vendor.sh`).
 
 ## Not yet
 

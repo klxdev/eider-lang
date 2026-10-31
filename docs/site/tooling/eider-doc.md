@@ -171,7 +171,7 @@ Such pages are shown but not doc-tested: they are notes, not written for the tes
 
 Links between pages are written to the `.md` files (`[the tour](../guide/tour.md#modules)`)
 and become links to the `.html` pages. A link to any other file that exists, such as
-`[the example](../../../examples/todo/todo.ei)`, goes to `<repo url>/<its path>` when
+`[the example](../../../examples/fib.ei)`, goes to `<repo url>/<its path>` when
 `--repo-url` is given (`scripts/docs.sh` gives the GitHub repository), and stays as written
 otherwise. These links fail the build:
 

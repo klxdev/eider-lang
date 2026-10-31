@@ -5,7 +5,7 @@
 // (`eider.prof`, or the path in `EIDER_PROF`) when it exits and on SIGUSR2. This module is
 // what a long-running program adds on top: turn sampling on and off, forget what was
 // recorded, write a snapshot whenever it wants (a service's `/debug/profile` endpoint:
-// packages/http/profiling.ei), and tag what it does with labels so a report can be split by
+// eider-http's http/profiling), and tag what it does with labels so a report can be split by
 // request route, job kind or tenant.
 //
 // In a program built without --profile every call does nothing: `enabled()` is false,
