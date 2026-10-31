@@ -1734,7 +1734,7 @@ removed from the IR before checking ends; S_CHECK lowers to the place's bounds c
     (`.copy()` when e is a place). Not rewritten (left as `var`, which still works): a place
     whose `.copy()` differs from the implicit copy `var` made (a Mutex inside: `.copy()`
     makes a new one; a record with its own Drop: `.copy()` gives it a buffer of its own; an
-    own Copy: `.copy()` runs it), a `var` in a generic body (`.copy()` could need a bound),
+    own Copy: `.copy()` runs it), a `var` of a place in a generic body (`.copy()` could need a bound; a fresh value there is rewritten),
     and code no concrete body checks.
 
 **Migration of `var`.** `eiderc migrate-var <file>` prints the file with its rewrites; the

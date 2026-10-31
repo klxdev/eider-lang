@@ -19,7 +19,7 @@ impl P {
 }
 
 fn count[T](xs: List[T]) -> usize {
-    var n = xs.len()
+    let mut n = xs.len()
     if n > 0 { var first = xs[0] }
     n += 1
     n

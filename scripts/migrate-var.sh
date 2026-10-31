@@ -10,7 +10,7 @@
 # own value; a `let mut` of a place is an alias), `var (a, b) = e` becomes
 # `let (mut a, mut b) = e` (with `.copy()` when e is a place). Meaning is unchanged. A `var`
 # is left as it is where `.copy()` would differ from the copy `var` made (a type holding a
-# Mutex, a record with its own Drop, an own Copy) or could need a bound (a generic body),
+# Mutex, a record with its own Drop, an own Copy) or could need a bound (a place in a generic body),
 # and in code no concrete body checks (an unused generic function). A file that doesn't
 # check is left alone and named on stderr. Prints each rewritten file.
 #
