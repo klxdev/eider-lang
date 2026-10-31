@@ -1,0 +1,16 @@
+reading the config: cannot read /nonexistent/eider/app.toml: No such file or directory
+cannot read /nonexistent/eider/data: No such file or directory
+loading the settings: cannot read /nonexistent/eider/data: No such file or directory
+2
+cannot read /nonexistent/eider/data: No such file or directory
+the port: invalid digit at byte 2
+ok
+cannot read /nonexistent/eider/data: No such file or directory
+listing the plugins: cannot list /nonexistent/eider: No such file or directory
+making the cache: cannot create directory /dev/null: File exists
+running the tool: cannot run /nonexistent/eider/tool: No such file or directory
+opening the log: cannot open /nonexistent/eider/log: No such file or directory
+decoding the key: invalid byte at offset 3
+plain text error
+true
+exit 0

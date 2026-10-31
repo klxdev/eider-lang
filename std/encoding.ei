@@ -5,6 +5,8 @@
 //! value has exactly one encoding, which matters for signatures and cache keys.
 //! (Integers are 8, 32 or 64 bits wide in Eider; 16-bit values travel in a u32.)
 
+import "error.ei"
+
 // ---- errors
 
 /// What was wrong with encoded input.
@@ -24,6 +26,12 @@ impl Show for DecodeError {
         out.push_str(" at offset ")
         out.append(self.at.to_string())
     }
+}
+
+/// A DecodeError is an `error.Error` (its text, no source).
+impl error.Error for DecodeError {
+    fn message(self) -> String { self.to_string() }
+    fn source(self) -> Option[error.Failure] { None }
 }
 
 fn text(b: List[u8]) -> String {

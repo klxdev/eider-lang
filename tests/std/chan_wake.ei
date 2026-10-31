@@ -1,0 +1,220 @@
+// std/chan's wake-ups (decision C321): a value wakes one receiver and a freed place one
+// sender, and a woken waiter that doesn't use its wake-up hands it on. Each case would stall
+// on a lost wake-up, so every wait has a long deadline and a stall shows as a count of
+// waits that ran out (`stalls`), which must be 0: many receivers blocked on one channel,
+// receivers that give up and come back, receivers in selects over two channels and a timer
+// (a select that takes another case, or times out, leaves its other cases), many senders
+// blocked on a full channel with capacity 1, and senders that give up and retry.
+
+import "std/chan"
+import "std/time"
+import "std/atomic"
+
+fn sum_to(n: i64) -> i64 { n * (n - 1) / 2 }
+
+fn main() uses io, clock, threads {
+    // 16 receivers blocked on one channel, one sender
+    let c: chan.Channel[i64] = chan.bounded(4)
+    let stalls = atomic.new(0)
+    let mut rs: List[Task[i64]] = List.new()
+    for i in 0..16 {
+        let cc = c
+        let st = stalls
+        rs.push(spawn(|| -> i64 {
+            let mut sum: i64 = 0
+            let mut going = true
+            while going {
+                match cc.recv(time.after_ms(20000)) {
+                    chan.Value(v) => { sum += v }
+                    chan.Empty => { st.add(1, atomic.SeqCst) }
+                    chan.Closed => { going = false }
+                }
+            }
+            sum
+        }))
+    }
+    for v in 0..20000 { c.send(v as i64, time.never()) }
+    c.close()
+    let mut total: i64 = 0
+    for t in rs { total += t.join() }
+    print(total == sum_to(20000))
+    print(stalls.load(atomic.SeqCst))
+
+    // receivers that give up every millisecond and come back, a slow sender
+    let d: chan.Channel[i64] = chan.bounded(2)
+    let mut qs: List[Task[i64]] = List.new()
+    for i in 0..8 {
+        let dd = d
+        qs.push(spawn(|| -> i64 {
+            let mut sum: i64 = 0
+            let mut going = true
+            while going {
+                match dd.recv(time.after_ms(1)) {
+                    chan.Value(v) => { sum += v }
+                    chan.Empty => {}
+                    chan.Closed => { going = false }
+                }
+            }
+            sum
+        }))
+    }
+    for v in 0..2000 {
+        d.send(v as i64, time.never())
+        if v % 100 == 0 { time.sleep_until(time.after_ms(2)) }
+    }
+    d.close()
+    let mut t2: i64 = 0
+    for t in qs { t2 += t.join() }
+    print(t2 == sum_to(2000))
+
+    // receivers in a select over two channels and a short timer; senders on both
+    let a: chan.Channel[i64] = chan.bounded(3)
+    let b: chan.Channel[i64] = chan.bounded(3)
+    let done = atomic.new(0)
+    let mut ss: List[Task[i64]] = List.new()
+    for i in 0..8 {
+        let aa = a
+        let bb = b
+        let st = stalls
+        let dn = done
+        ss.push(spawn(|| -> i64 {
+            // a value v >= 0, -1: a is closed and drained, -2: b is, -3: the timer
+            let mut sum: i64 = 0
+            let mut a_open = true
+            let mut b_open = true
+            while a_open || b_open {
+                let mut cases: List[chan.Case[i64]] = List.new()
+                if a_open { cases.push(aa.recv_case(|v: Option[i64]| -> i64 v.unwrap_or(-1))) }
+                if b_open { cases.push(bb.recv_case(|v: Option[i64]| -> i64 v.unwrap_or(-2))) }
+                cases.push(chan.timer_case(time.after_ms(1), -3))
+                match chan.select(cases, time.after_ms(20000)) {
+                    Some(v) => {
+                        if v >= 0 { sum += v }
+                        if v == -1 { a_open = false }
+                        if v == -2 { b_open = false }
+                    }
+                    None => { st.add(1, atomic.SeqCst) }
+                }
+            }
+            dn.add(1, atomic.SeqCst)
+            sum
+        }))
+    }
+    let a2 = a
+    let b2 = b
+    let pa = spawn(|| -> i32 {
+        for v in 0..5000 { a2.send(v as i64, time.never()) }
+        0
+    })
+    let pb = spawn(|| -> i32 {
+        for v in 5000..10000 { b2.send(v as i64, time.never()) }
+        0
+    })
+    pa.join()
+    pb.join()
+    a.close()
+    b.close()
+    let mut t3: i64 = 0
+    for t in ss { t3 += t.join() }
+    print(t3 == sum_to(10000))
+    print(done.load(atomic.SeqCst))
+
+    // 8 senders blocked on a channel of capacity 1, one receiver
+    let one: chan.Channel[i64] = chan.bounded(1)
+    let mut ps: List[Task[i32]] = List.new()
+    for i in 0..8 {
+        let o = one
+        let st = stalls
+        ps.push(spawn(|| -> i32 {
+            for j in 0..500 {
+                let v = (i * 500 + j) as i64
+                match o.send(v, time.after_ms(20000)) {
+                    chan.Sent => {}
+                    chan.Full(x) => { st.add(1, atomic.SeqCst) }
+                    chan.Rejected(x) => { st.add(1, atomic.SeqCst) }
+                }
+            }
+            0
+        }))
+    }
+    let mut t4: i64 = 0
+    for k in 0..4000 {
+        match one.recv(time.after_ms(20000)) {
+            chan.Value(v) => { t4 += v }
+            chan.Empty => { stalls.add(1, atomic.SeqCst) }
+            chan.Closed => {}
+        }
+    }
+    for t in ps { t.join() }
+    print(t4 == sum_to(4000))
+
+    // senders that give up every millisecond and retry, a slow receiver
+    let slow: chan.Channel[i64] = chan.bounded(1)
+    let mut us: List[Task[i32]] = List.new()
+    for i in 0..4 {
+        let o = slow
+        us.push(spawn(|| -> i32 {
+            for j in 0..100 {
+                let mut sent = false
+                while !sent {
+                    match o.send((i * 100 + j) as i64, time.after_ms(1)) {
+                        chan.Sent => { sent = true }
+                        chan.Full(x) => {}
+                        chan.Rejected(x) => { sent = true }
+                    }
+                }
+            }
+            0
+        }))
+    }
+    let mut t5: i64 = 0
+    for k in 0..400 {
+        match slow.recv(time.after_ms(20000)) {
+            chan.Value(v) => { t5 += v }
+            chan.Empty => { stalls.add(1, atomic.SeqCst) }
+            chan.Closed => {}
+        }
+        if k % 50 == 0 { time.sleep_until(time.after_ms(2)) }
+    }
+    for t in us { t.join() }
+    print(t5 == sum_to(400))
+
+    // a woken receiver that takes another case hands its wake-up on: A waits in a select on
+    // c and d, B (registered after A) on c alone; d then c get a value at once, so both
+    // wake-ups go to A, and when A's select takes d's, B must still get c's
+    let mut handed = 0
+    for round in 0..20 {
+        let c6: chan.Channel[i64] = chan.bounded(1)
+        let d6: chan.Channel[i64] = chan.bounded(1)
+        let ca = c6
+        let da = d6
+        let ta = spawn(|| -> i64 {
+            let mut cases: List[chan.Case[i64]] = List.new()
+            cases.push(ca.recv_case(|v: Option[i64]| -> i64 v.unwrap_or(-1)))
+            cases.push(da.recv_case(|v: Option[i64]| -> i64 v.unwrap_or(-1)))
+            chan.select(cases, time.after_ms(20000)).unwrap_or(-9)
+        })
+        time.sleep_until(time.after_ms(20))
+        let cb = c6
+        let tb = spawn(|| -> i64 {
+            match cb.recv(time.after_ms(3000)) {
+                chan.Value(v) => v
+                chan.Empty => -9
+                chan.Closed => 0
+            }
+        })
+        time.sleep_until(time.after_ms(20))
+        d6.send(1, time.never())
+        c6.send(2, time.never())
+        let x = ta.join()
+        if x == 1 { handed += 1 }
+        if x == 2 { c6.close() }
+        let y = tb.join()
+        if y == -9 { stalls.add(1, atomic.SeqCst) }
+        if x + y != 3 && !(x == 2 && y == 0) { print("lost a value") }
+    }
+    print(handed > 0)
+    print(stalls.load(atomic.SeqCst))
+    stalls.free()
+    done.free()
+}

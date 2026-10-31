@@ -1,10 +1,11 @@
 //! std/sync: the two primitives the rest of the runtime layer is built from (docs/runtime.md).
 //!
-//! - `Lock[T]`: a value that one thread at a time holds, changed by a closure that also returns
-//!   a result: an atomic read-modify-write of any state. It is a channel holding exactly one
-//!   value: taking the lock receives the value (moved out, no copy), releasing it sends the new
-//!   value back. (The built-in Mutex can't do this: `update` returns nothing, and `get` then
-//!   `set` is not atomic.)
+//! - `Lock[T]`: a value that one thread at a time holds, changed in place by a closure that
+//!   also returns a result: an atomic read-modify-write of any state. It is a channel holding
+//!   exactly one value: taking the lock receives the value, releasing it sends it back, with
+//!   no other holder, so crossing threads copies nothing of it ("No copies" below). (The
+//!   built-in Mutex can't do this: `update` returns nothing, and `get` then `set` is not
+//!   atomic.)
 //! - `Parker`: a thread waits on its own Parker with a deadline; any other thread unparks it.
 //!   It is an OS waker (core/ABI.md "Readiness"), waited on with `fd_wait`, so a wait ends on
 //!   time without a timer thread.
@@ -17,44 +18,91 @@
 //!      descriptor number could have been reused by then).
 //!   2. A waiter checks the state and registers in the same critical section, and every change
 //!      that could let it proceed wakes the list after it, so no wake-up is lost.
+//!
+//! No copies (decision C320, issue #90). A value given to a channel is first made unique
+//! (every buffer it reaches its own: values cross threads only that way, docs/compiler.md
+//! "C8.1"), so whatever the sender still shares is copied. Arguments are borrows, and a
+//! variable given to `send` is shared, not moved: `send(s)` with `s` alive copies all of
+//! `s`, and so did the old `with`, whose closure's `(s, r)` shared all of `s`. So the channel
+//! holds an `Option[T]`: `modify` lets the closure change the payload in place, and sends
+//! `o.take()`, which moves the Option out of its variable, so what is sent has exactly one
+//! holder and making it unique visits each of its buffers once and copies none. `with` and
+//! `update` drop the value they lent their closure before sending what it returned, for the
+//! same reason. What is still copied is only what really is shared: a part of the value that
+//! the result also holds (a String returned from it), a captured value put into it, and what
+//! a closure changes after sharing it (`let mut t = s.copy()` in `with`), which is why
+//! changes go through `modify`.
 
 import "core/os"
 import "poll.ei"
 import "time.ei"
 
 /// A value one thread at a time holds (see the module comment). Copies of a Lock share it.
-pub type Lock[T] = { ch: Chan[T] }
+/// The channel holds `Some(value)` while nobody holds the lock.
+pub type Lock[T] = { ch: Chan[Option[T]] }
 
 pub fn lock[T](v: T) -> Lock[T] {
-    let c: Chan[T] = Chan.new()
-    c.send(v)
+    let c: Chan[Option[T]] = Chan.new()
+    c.send(Some(v))
     Lock(c)
 }
 
+/// What the channel holds, with no other holder (the Option the receive made is dropped on
+/// return).
+fn take[T](ch: Chan[Option[T]]) -> Option[T] { ch.recv().unwrap() }
+
+/// `with`'s step: `f` on a borrow of `v`, whose new value replaces `v` (once this returns,
+/// nothing else holds it), and `f`'s result.
+fn apply[T, R](inout v: T, f: fn(T) -> (T, R)) -> R {
+    let (s2, r) = f(v)
+    v = s2
+    r
+}
+
 impl[T] Lock[T] {
-    /// Runs `f` on the value with the lock held; `f` returns the new value and a result.
-    /// Other threads calling `with` wait meanwhile, so `f` should be short and must not use
-    /// the same Lock (that waits for itself forever). Not cancellable (it never waits for
-    /// anything but the lock).
-    fn with[R](self, f: fn(T) -> (T, R)) -> R {
-        let s = self.ch.recv().unwrap()
-        let (s2, r) = f(s)
-        self.ch.send(s2)
-        r
+    /// Runs `f` on the value itself with the lock held and returns `f`'s result: `f` changes
+    /// the value in place, and nothing of it is copied ("No copies" above). Other threads
+    /// using the Lock wait meanwhile, so `f` should be short and must not use the same Lock
+    /// (that waits for itself forever). Not cancellable (it never waits for anything but the
+    /// lock).
+    fn modify[R](self, f: fn(inout T) -> R) -> R {
+        let mut o = take(self.ch)
+        // an Option, since R may be () (which can't be bound)
+        let r: Option[R] = match o {
+            Some(mut v) => Some(f(inout v))
+            None => None
+        }
+        self.ch.send(o.take())
+        r.unwrap()
     }
 
-    /// Replaces the value with `f(value)`.
+    /// Runs `f` on the value with the lock held; `f` returns the new value and a result.
+    /// Returning the value unchanged copies nothing, but `f` gets a borrow, so a change it
+    /// makes copies what it changes: use `modify` for changes. The rules of `modify` apply.
+    fn with[R](self, f: fn(T) -> (T, R)) -> R {
+        let mut o = take(self.ch)
+        let r: Option[R] = match o {
+            Some(mut v) => Some(apply(inout v, f))
+            None => None
+        }
+        self.ch.send(o.take())
+        r.unwrap()
+    }
+
+    /// Replaces the value with `f(value)` (prefer `modify` for changes, as for `with`).
     fn update(self, f: fn(T) -> T) {
-        let s = self.ch.recv().unwrap()
-        self.ch.send(f(s))
+        let mut o = take(self.ch)
+        let mut n: Option[T] = match o {
+            Some(v) => Some(f(v))
+            None => None
+        }
+        o = None
+        self.ch.send(n.take())
     }
 
     /// A copy of the value.
     fn get(self) -> T {
-        let s = self.ch.recv().unwrap()
-        let r = s
-        self.ch.send(s)
-        r
+        self.modify(|inout s: T| -> T s)
     }
 }
 
@@ -105,6 +153,16 @@ pub fn no_parker() -> Parker { Parker(poll.Waker(-1, -1)) }
 /// Unparks every Parker in `ws` (call it with the lock that guards `ws` held).
 pub fn wake_all(ws: List[Parker]) uses io {
     for p in ws { p.unpark() }
+}
+
+/// Unparks the first Parker of `ws` and takes it out of the list (call it with the lock that
+/// guards `ws` held). Nothing when `ws` is empty.
+pub fn wake_one(inout ws: List[Parker]) uses io {
+    if ws.len() == 0 { return }
+    ws[0].unpark()
+    let mut rest: List[Parker] = List.new()
+    for i in 1..ws.len() { rest.push(ws[i]) }
+    ws = rest
 }
 
 /// `ws` without `p`.

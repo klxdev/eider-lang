@@ -70,9 +70,49 @@ the program with a runtime error (core/ABI.md "Atomic cells").
 ## Waiting: `Lock` and `Parker` (`std/sync`)
 
 The built-in `Mutex[T]` can't express "change the state and tell me what happened" (`update`
-returns nothing; `get` then `set` isn't atomic). `sync.Lock[T]` can: it is a `Chan[T]` that
-always holds exactly one value. Taking the lock receives the value (moved, not copied);
-`with(f)` runs `f(value) -> (new value, result)` and sends the new value back.
+returns nothing; `get` then `set` isn't atomic). `sync.Lock[T]` can: it is a channel that
+always holds exactly one value (`Chan[Option[T]]`). Taking the lock receives the value;
+`modify(f)` runs `f(inout value) -> result`, which changes the value in place, and sends it
+back. `with(f)` (`f(value) -> (new value, result)`), `update(f)` (`f(value) -> new value`)
+and `get()` (a copy) are kept for code that builds a new value.
+
+```
+let old = store.modify(|inout s: Kv| -> Option[List[u8]] {
+    let old = s.vals.get(k)
+    s.vals.insert(k, v)               // in place: nothing of s is copied
+    old
+})
+```
+
+**No copies** (decision C320, issue #90). A value that crosses to another thread is first
+made unique: every buffer it reaches that is still shared is copied (C8.1: counts aren't
+atomic). Arguments are borrows, and a variable passed to `send` is shared, not moved, so the
+first Lock, which received the value into a variable, passed it to the closure and sent back
+what the closure returned (sharing all of it with that variable), copied the whole guarded
+value on every call: in eider-rpc's kvstore under load that was 52 M copy-on-write unshares
+and 2.4 GiB copied in 4.5 s, half the CPU. Now the value sent back has exactly one holder:
+`modify` keeps the received `Option` in a variable, the closure changes its payload in place,
+and the send gets `o.take()`, which moves the Option out (C8.15). Making it unique then
+visits each buffer once and copies none. What is still copied is what really is shared: a
+part of the value that the result also holds (a key list returned by `keys()`, a String
+returned by `get`: the result needs its own, since the two will be on different threads), a
+captured value put into the state (the caller still has it), and in `with`/`update` whatever
+the closure changes, since it gets a borrow (`let mut t = s.copy(); t.push(x)` copies what
+it pushes to): use `modify` for changes. `with` and `update` still don't copy the value
+itself: they drop their borrow before sending what the closure returned.
+
+Measured on eider-rpc's examples/kvstore with eider-profiler's `record`-style build
+(`--profile`) and eider-loadgen (8 threads, 4 s, 300 keys, `kv.put`, `kv.get`, `kv.keys`,
+`GET /kv/:key`, `GET /health`), before and after this change and C321 (below), on the same
+machine:
+
+| | before | after |
+|---|---|---|
+| requests in 4 s | 89,865 | 220,293 (2.5x) |
+| latency p50 / p99 | 371 / 850 us | 111 / 380 us |
+| CPU per request | 157 us | 96 us |
+| copy-on-write unshares in std/sync | 64.3 M, 2.9 GiB | 13.3 M, 566 MiB, all of them `kv.keys` results (one per key returned); `kv.get` about 1 per call |
+| top site | `sync.Lock[kv.Kv].with` (44% of CPU) | `os.sock_send` (13.3%); `Lock.modify` 8% |
 
 `sync.Parker` is a thread's wake-up handle: an OS waker. `park(dl)` waits on it with
 `ec_fd_wait` until another thread calls `unpark` or the deadline passes; an unpark that came
@@ -104,8 +144,9 @@ match jobs.recv(tok.deadline()) {
 ```
 
 Also `try_send`, `try_recv` (no waiting), `close` (idempotent; wakes everyone), `len`,
-`is_closed`. Any number of senders and receivers, FIFO. Values are moved, never copied. A
-value sent before `close` is still received.
+`is_closed`. Any number of senders and receivers, FIFO. Values are moved into the queue (a
+part the sender still shares is copied as it crosses, "Known limits"). A value sent before
+`close` is still received.
 
 `select(cases, dl) -> Option[U]` waits for the first ready case and returns what it
 produces, or None at the deadline. Cases (`chan.Case[U]`) come from `ch.recv_case(f)` (ready
@@ -124,6 +165,20 @@ How: a channel is a built-in `Chan[T]` for the values and a `Lock` for the count
 capacity, the closed flag and the waiting Parkers. A send reserves a place under the lock,
 then moves the value into the queue; a receive reserves a value, then takes it. So the queue
 is touched only for values already counted.
+
+**Wake-ups** (decision C321). A new value wakes one waiting receiver and a freed place one
+waiting sender, the longest-waiting first (each taken out of its list), and `close` wakes
+everyone. No wake-up is lost, because a woken waiter that doesn't use what it was woken for
+hands the wake-up on: one that reserves wakes the next waiter of its side while values
+(places) are left, one that leaves (its deadline passed, or its select took another case)
+wakes the next while values (places) are left, and one that finds nothing (another thread was
+first) registers again. A select registers its cases once and leaves them once, when it
+returns, so its own rounds hand nothing on. Waking every waiter of the side, as before,
+was correct but made each value on a channel with n idle receivers cost n wake-ups and n
+trips through its lock: a `task.Pool` of 16 workers ran 100,000 empty jobs in 2.9 s (7.8 s
+of system time) and runs them in 1.6 s (3.9 s) now, and the herd is what kvstore's CPU went
+to once its store stopped copying (22 s of CPU for 220 k requests with it, 14 s for 90 k
+before either change).
 
 ## Tasks (`std/task`)
 
@@ -308,8 +363,8 @@ requests, 4 s, three runs each, mean):
 
 So `--profile=cpu` (and `cpu,conc`) is the setting to leave on in a service; `mem` counts
 every allocation and copy exactly, and costs in proportion to how many there are (kvstore
-allocates ~1,600 blocks per request because its store is copied on every call: the profile's
-own top finding). Memory: 16 bytes per live block (with `mem`), per thread a 4 KiB shadow
+allocated ~1,600 blocks per request because its store was copied on every call: the
+profile's own top finding, fixed by C320, "No copies" above; these numbers are from before). Memory: 16 bytes per live block (with `mem`), per thread a 4 KiB shadow
 stack, a 132 KiB sample ring (with `cpu`) and a 40 KiB counting cache (with `mem` or `conc`),
 and per process a 2.6 MiB site table plus the stack table (about 0.5 KiB per distinct stack).
 
@@ -327,8 +382,8 @@ calls pays most. `EIDER_PROF=off` leaves only the shadow stack.
 | Atomics for Eider as handles to core-owned cells, freed explicitly | the language has no shared memory outside its handles, and a copied record would be a second atomic; handles are safe (generation-checked, cells never freed) and need no compiler change | a built-in `Atomic` handle type (the next step: reference-counted, no `free`); atomics on Mutex (not atomics) |
 | Checked `add`/`sub` by compare-and-swap; `wrapping_add` separately | Eider arithmetic traps on overflow; hardware fetch-add wraps | wrapping only (Rust's choice) |
 | A thread waits on an OS waker with `poll(2)` (`ec_fd_wait`), not a condition variable | the waker already exists (ABI "Readiness"), works with a deadline on the monotonic clock, and is what tasks will park on in an event loop | `pthread_cond_timedwait` in the runtime with a per-thread condvar (needs thread-locals or a new handle type) |
-| `Lock[T]` as a one-value channel | atomic read-modify-write of any state with a result and no copy, on the existing seed | a compiler change to `Mutex.update` |
-| Wake every waiter of a channel side on a change | always correct with select and deadlines (a woken waiter may take another case or have timed out) | wake one and hand the wake on when unused (fewer wake-ups; later) |
+| `Lock[T]` as a one-value channel of `Option[T]`, changed in place by `modify(f: fn(inout T) -> R)`, the value sent back with no other holder (C320) | atomic read-modify-write of any state with a result, copying none of it, on the existing seed (std/sync builds with the seed and with eiderc) | `Mutex.update(fn(inout T) -> R)` making the closure's captures and its result unique instead of the value (O(1) for any value, not one visit per buffer; a compiler change, so std could use it only after a seed regeneration, and a captured Ref would have to trap); a runtime primitive (the core can't walk Eider values); handing the value over without making it unique (unsound: the result and the captures may share its buffers) |
+| Wake one waiter of a channel side per value or place, handed on by a woken waiter that doesn't use it (C321) | n idle receivers cost one wake-up per value, not n; correct with select and deadlines because every way out of a wait that doesn't take hands the wake-up on | wake every waiter (correct, simpler, a thundering herd: what it was until C321) |
 | Bounded channels need capacity >= 1 | rendezvous channels need a different protocol | capacity 0 later |
 | Deadlines fixed in tokens at creation, no timer thread | every wait is bounded by the token's deadline anyway | a timer thread cancelling tokens |
 | Pool: one shared bounded queue | simplest correct back-pressure on OS threads | per-worker deques with stealing (with stackless tasks, where spawn-from-task makes local queues pay off) |
@@ -353,16 +408,24 @@ calls pays most. `EIDER_PROF=off` leaves only the shadow stack.
    thread, and a pool job that waits for other jobs of the same pool can deadlock it once
    every worker waits (as with any fixed thread pool).
 4. Optional, smaller: `Chan.try_recv` and a timed `recv` on the built-in channel would let
-   std/chan drop the reserve-then-move indirection; `Mutex.update` returning a value would
-   let `Lock` be a Mutex.
+   std/chan drop the reserve-then-move indirection. `Mutex.update(f: fn(inout T) -> R)`
+   returning `f`'s result, with the glue making `f`'s captures and its result unique (not
+   the value), would let `Lock` be a Mutex and make a call O(1) for any value (today
+   `modify` copies nothing but still visits each buffer of the value once, to make it
+   unique); after the next seed.
 
 ## Known limits
 
 - An `Atomic` must be freed by hand; a forgotten `free` leaks one cell (16 bytes).
 - A `Pool` must be shut down: its workers hold the queue open, and the last drop of a worker
   Task joins it, so a program that drops a running pool waits forever at the end.
-- Blocking on a Lock (`with`) has no deadline: critical sections are short and never wait
-  for anything else.
-- Channel wake-ups wake every waiter of the side that can proceed (a thundering herd with
-  many idle receivers); each wait makes one OS waker (an eventfd on Linux) for its duration.
+- Blocking on a Lock (`modify`, `with`) has no deadline: critical sections are short and
+  never wait for anything else.
+- A Lock call visits every buffer of the value once (to make it unique before it is sent
+  back; it copies none): O(size of the value) pointer checks, no copying ("Next" 4).
+- A value given to `Channel.send` (or `Pool.submit`) is a borrow, so the parts the caller
+  still shares are copied when it crosses (a job closure's captures, for instance); moving a
+  caller's temporary needs the compiler.
+- Each wait makes one OS waker (an eventfd on Linux) for its duration, and a woken waiter
+  that finds nothing (another thread was first) waits again.
 - Timers have millisecond resolution.
