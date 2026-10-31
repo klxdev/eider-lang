@@ -89,6 +89,13 @@ type E = {
     fmd: Map[u64, u32],
     paths: List[List[u8]],
     dir: List[u8],
+    /// per function: its internal and C conventions (memoized), and whether `@<name>.i` is
+    /// called (a fallback function then needs its shim)
+    isigs: List[abi.Sig],
+    isok: List[bool],
+    csigs: List[abi.Sig],
+    csok: List[bool],
+    iused: List[bool],
 }
 
 // ---- text
@@ -480,12 +487,14 @@ fn ret_text(inout e: E, p: lower.P, s: abi.Sig) -> List[u8] {
 }
 
 /// The parameter types of a signature (for a declare or define; `names` names them).
-fn params_text(inout e: E, p: lower.P, s: abi.Sig, names: List[List[u8]]) -> List[u8] {
+/// `internal`: the internal convention's define, with the attributes the language
+/// guarantees (see `param_attrs`).
+fn params_text(inout e: E, p: lower.P, s: abi.Sig, names: List[List[u8]], internal: bool) -> List[u8] {
     let mut o: List[u8] = List.new()
     let mut first = true
     let mut ni: usize = 0
     if s.ret.kind == abi.A_SRET {
-        bytes.append(inout o, sys.lit("ptr sret("))
+        if internal { bytes.append(inout o, sys.lit("ptr noalias sret(")) } else { bytes.append(inout o, sys.lit("ptr sret(")) }
         bytes.append(inout o, mty(inout e, p, s.ret.ty))
         bytes.append(inout o, sys.lit(") align "))
         bytes.append(inout o, bytes.from_u64(align(inout e, p, s.ret.ty)))
@@ -502,6 +511,17 @@ fn params_text(inout e: E, p: lower.P, s: abi.Sig, names: List[List[u8]]) -> Lis
             first = false
             bytes.append(inout o, vty(inout e, p, a.ty))
             bytes.append(inout o, sys.lit(ext_attr(p, a.ty)))
+            if internal { param_attrs(inout e, p, inout o, a) }
+            if names.len() > 0 {
+                bytes.append(inout o, sys.lit(" "))
+                bytes.append(inout o, names[ni])
+                ni += 1
+            }
+        } else if a.kind == A_REF {
+            if !first { bytes.append(inout o, sys.lit(", ")) }
+            first = false
+            bytes.append(inout o, sys.lit("ptr"))
+            param_attrs(inout e, p, inout o, a)
             if names.len() > 0 {
                 bytes.append(inout o, sys.lit(" "))
                 bytes.append(inout o, names[ni])
@@ -535,6 +555,28 @@ fn params_text(inout e: E, p: lower.P, s: abi.Sig, names: List[List[u8]]) -> Lis
     o
 }
 
+/// The attributes of an internal-convention parameter, each a language guarantee:
+/// - every scalar is `noundef`: locals are written before they are read (zeroed otherwise),
+///   so no value is ever undefined;
+/// - an `inout` pointer is `noalias` (C8.6: an inout argument is exclusive, E0301, and the
+///   caller makes its path unique before the call), `noundef`, and points to a whole value
+///   of its type: `align`, `dereferenceable`;
+/// - an A_REF pointer is the caller's value, not written by the callee and not reachable from
+///   the call's other arguments (call_internal): `noalias nocapture readonly`, aligned and
+///   dereferenceable.
+fn param_attrs(inout e: E, p: lower.P, inout o: List[u8], a: abi.Arg) {
+    if a.kind == A_REF || a.ty >= PTR {
+        let t = if a.ty >= PTR { a.ty - PTR } else { a.ty }
+        if a.kind == A_REF { bytes.append(inout o, sys.lit(" noalias nocapture readonly noundef align ")) } else { bytes.append(inout o, sys.lit(" noalias noundef align ")) }
+        bytes.append(inout o, bytes.from_u64(align(inout e, p, t)))
+        bytes.append(inout o, sys.lit(" dereferenceable("))
+        bytes.append(inout o, bytes.from_u64(size(inout e, p, t)))
+        bytes.append(inout o, sys.lit(")"))
+        return
+    }
+    bytes.append(inout o, sys.lit(" noundef"))
+}
+
 fn declare_sig(inout e: E, p: lower.P, name: List[u8], s: abi.Sig, noreturn: bool) {
     if e.didx.contains(h64(name)) { return }
     let mut d = sys.lit("declare ")
@@ -543,7 +585,7 @@ fn declare_sig(inout e: E, p: lower.P, name: List[u8], s: abi.Sig, noreturn: boo
     bytes.append(inout d, name)
     bytes.append(inout d, sys.lit("("))
     let none: List[List[u8]] = List.new()
-    bytes.append(inout d, params_text(inout e, p, s, none))
+    bytes.append(inout d, params_text(inout e, p, s, none, false))
     bytes.append(inout d, sys.lit(")"))
     if noreturn { bytes.append(inout d, sys.lit(" noreturn")) }
     declare(inout e, name, d)
@@ -619,6 +661,8 @@ fn call_sig(inout e: E, p: lower.P, callee: List[u8], s: abi.Sig, args: List[Lis
                 let v1 = load_piece(inout e, args[i], 8, a.b1)
                 parts.push(catb(num("i", a.b1 as u64), catb(sys.lit(" "), v1)))
             }
+        } else if a.kind == A_REF {
+            parts.push(catb(sys.lit("ptr "), args[i]))
         } else {
             let mut x = sys.lit("ptr byval(")
             bytes.append(inout x, mty(inout e, p, a.ty))
@@ -1740,6 +1784,104 @@ fn fn_ptys(e: E, p: lower.P, f: u32) -> List[u32] {
     out
 }
 
+/// An argument passed by reference between Eider functions (the internal convention): a
+/// pointer to the caller's value, which the callee never writes (`noalias readonly`).
+const A_REF: u32 = 5
+
+/// The internal convention of function f (calls from Eider to Eider, `@<name>.i`): the C
+/// convention's classification of each parameter, except that an aggregate the C ABI passes
+/// in memory (byval: a copy on the stack) is passed by reference (A_REF), and registers are
+/// not counted (an aggregate of up to 16 bytes is always two integers). The result is
+/// returned as in C. Memoized per function.
+fn isig(inout e: E, p: lower.P, f: u32) -> abi.Sig {
+    if e.isok[f as usize] { return e.isigs[f as usize].copy() }
+    let fd = p.ir.fns[f as usize]
+    let ptys = fn_ptys(e, p, f)
+    let r = abi.arg_of(inout e.lay, p, fd.ret, true)
+    let mut args: List[abi.Arg] = List.new()
+    for t in ptys {
+        let a = abi.arg_of(inout e.lay, p, t, false)
+        if a.kind == abi.A_BYVAL { args.push(abi.Arg(A_REF, t, 0, 0, 0, 0, 0)) } else { args.push(a) }
+    }
+    let s = abi.Sig(r, args)
+    e.isigs[f as usize] = s.copy()
+    e.isok[f as usize] = true
+    s
+}
+
+/// The C convention of function f (its exported symbol `@<name>`), memoized.
+fn csig(inout e: E, p: lower.P, f: u32) -> abi.Sig {
+    if e.csok[f as usize] { return e.csigs[f as usize].copy() }
+    let ptys = fn_ptys(e, p, f)
+    let s = abi.sig(inout e.lay, p, ptys, p.ir.fns[f as usize].ret)
+    e.csigs[f as usize] = s.copy()
+    e.csok[f as usize] = true
+    s
+}
+
+/// Whether function f is called through the internal convention: every function with a
+/// body except closure bodies (only ever called through a fn value, with the C convention).
+fn internal_fn(e: E, p: lower.P, f: u32) -> bool { p.ir.fns[f as usize].body > 0 && !e.clo[f as usize] }
+
+fn iname(e: E, f: u32) -> List[u8] { cat(e.fnn[f as usize], ".i") }
+
+/// Whether local l of the current function is the root of a place among s's arguments.
+fn arg_root_is(p: lower.P, s: ir.Stmt, l: u32) -> bool {
+    for i in 0..s.c {
+        let a = p.ir.extra[(s.b + i) as usize]
+        if a >= ir.ARG_PLACE && place_root(p, a - ir.ARG_PLACE) == l { return true }
+    }
+    false
+}
+
+fn place_root(p: lower.P, id: u32) -> u32 {
+    let x = p.ir.places[id as usize]
+    if x.kind == ir.P_LOCAL { return x.a }
+    place_root(p, x.a)
+}
+
+/// A call of function f with the internal convention (s: an S_CALL, or None-like for a call
+/// without arguments when `s.c` is 0); the result goes to `dst` (an address; a fresh
+/// temporary when empty and the result is an aggregate), a scalar result is returned.
+///
+/// `noalias` holds by construction: an A_REF argument is the address of a local temporary
+/// (operands are locals) that no other argument of the call can reach, except when that
+/// local is also the root of an `inout` place among the arguments or is the destination, and
+/// then it is first copied to a temporary of its own; the same goes for the destination (the
+/// callee's `noalias sret`). `inout` places are exclusive (E0301, C8.6) and made unique
+/// (copy-on-write) before the call.
+fn call_internal(inout e: E, p: lower.P, f: u32, s: ir.Stmt, dst: List[u8], dstl: u32) -> List[u8] {
+    let sg = isig(inout e, p, f)
+    e.iused[f as usize] = true
+    let mut args: List[List[u8]] = List.new()
+    for i in 0..s.c {
+        let a = p.ir.extra[(s.b + i) as usize]
+        if a >= ir.ARG_PLACE {
+            args.push(paddr(inout e, p, a - ir.ARG_PLACE))
+            continue
+        }
+        let x = p.ir.ops[a as usize]
+        let mut v = oparg(inout e, p, a)
+        if sg.args[i as usize].kind == A_REF && x.kind == ir.O_LOCAL && (x.a == dstl || arg_root_is(p, s, x.a)) {
+            let ty = ir.op_ty(p.ir, a)
+            let t = temp(inout e, p, ty)
+            memcpy(inout e, p, ty, t, v)
+            v = t
+        }
+        args.push(v)
+    }
+    let mut d = dst.copy()
+    let mut via: List[u8] = List.new()
+    if sg.ret.kind == abi.A_SRET && dstl != NONE && arg_root_is(p, s, dstl) {
+        via = d.copy()
+        d = temp(inout e, p, sg.ret.ty)
+    }
+    let callee = catb(sys.lit("@"), iname(e, f))
+    let r = call_sig(inout e, p, callee, sg, args, d)
+    if via.len() > 0 { memcpy(inout e, p, sg.ret.ty, via, d) }
+    r
+}
+
 fn extern_of(p: lower.P, f: u32) -> u32 {
     for i in 0..p.ir.externs.len() {
         if p.ir.externs[i].f == f { return i as u32 }
@@ -1749,6 +1891,13 @@ fn extern_of(p: lower.P, f: u32) -> u32 {
 
 fn call_fn(inout e: E, p: lower.P, s: ir.Stmt) {
     let fd = p.ir.fns[s.a as usize]
+    if internal_fn(e, p, s.a) {
+        let mut d: List[u8] = List.new()
+        if s.dst != NONE { d = dst_addr(s.dst) }
+        let r = call_internal(inout e, p, s.a, s, d, s.dst)
+        if s.dst != NONE && is_scalar(p, fd.ret) && !is_void(fd.ret) { store(inout e, p, fd.ret, r, d) }
+        return
+    }
     let mut name = e.fnn[s.a as usize].copy()
     let mut ptys: List[u32] = List.new()
     let x = extern_of(p, s.a)
@@ -1864,16 +2013,22 @@ fn ret(inout e: E, p: lower.P, s: ir.Stmt) {
         stmt_text(inout e, sys.lit("ret void"))
     } else {
         let a = opa(inout e, p, o)
-        let v0 = load_piece(inout e, a, 0, r.b0)
-        if r.n == 1 {
-            stmt_text(inout e, catb(num("ret i", r.b0 as u64), catb(sys.lit(" "), v0)))
-        } else {
-            let v1 = load_piece(inout e, a, 8, r.b1)
-            let ct = coerce_ty(r)
-            let x = val(inout e, catb(sys.lit("insertvalue "), catb(ct, catb(sys.lit(" poison, i"), catb(bytes.from_u64(r.b0 as u64), catb(sys.lit(" "), cat(v0, ", 0")))))))
-            let y = val(inout e, catb(sys.lit("insertvalue "), catb(ct, catb(sys.lit(" "), catb(x, catb(sys.lit(", i"), catb(bytes.from_u64(r.b1 as u64), catb(sys.lit(" "), cat(v1, ", 1")))))))))
-            stmt_text(inout e, catb(sys.lit("ret "), catb(ct, catb(sys.lit(" "), y))))
-        }
+        ret_pieces(inout e, r, a)
+    }
+    e.term = true
+}
+
+/// Return the aggregate at address a in the registers of its coerced result r.
+fn ret_pieces(inout e: E, r: abi.Arg, a: List[u8]) {
+    let v0 = load_piece(inout e, a, 0, r.b0)
+    if r.n == 1 {
+        stmt_text(inout e, catb(num("ret i", r.b0 as u64), catb(sys.lit(" "), v0)))
+    } else {
+        let v1 = load_piece(inout e, a, 8, r.b1)
+        let ct = coerce_ty(r)
+        let x = val(inout e, catb(sys.lit("insertvalue "), catb(ct, catb(sys.lit(" poison, i"), catb(bytes.from_u64(r.b0 as u64), catb(sys.lit(" "), cat(v0, ", 0")))))))
+        let y = val(inout e, catb(sys.lit("insertvalue "), catb(ct, catb(sys.lit(" "), catb(x, catb(sys.lit(", i"), catb(bytes.from_u64(r.b1 as u64), catb(sys.lit(" "), cat(v1, ", 1")))))))))
+        stmt_text(inout e, catb(sys.lit("ret "), catb(ct, catb(sys.lit(" "), y))))
     }
     e.term = true
 }
@@ -2437,9 +2592,13 @@ fn default_to(inout e: E, p: lower.P, ty: u32, d: List[u8]) {
     let k = kind(p, ty)
     let f = lower.custom_fn(p, 7, ty)
     if f != NONE {
-        let fname = e.fnn[f as usize].copy()
-        call(inout e, p, fname, List.new(), List.new(), ty, d)
-        if is_scalar(p, ty) { unsupported(inout e, "a scalar custom Default") }
+        if is_scalar(p, ty) {
+            unsupported(inout e, "a scalar custom Default")
+            return
+        }
+        // no arguments: the statement only gives call_internal an empty argument list
+        let s0 = ir.Stmt(ir.S_CALL, NONE, f, 0, 0, ty, 0)
+        call_internal(inout e, p, f, s0, d, NONE)
     } else if k == types.T_INT || k == types.T_UNIT || k == types.T_BOOL || k == types.T_LIST || k == types.T_MAP {
         zero(inout e, p, ty, d)
     } else if k == types.T_STR {
@@ -2533,10 +2692,222 @@ fn thread_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
     if is_scalar(p, s.ty) { bset(inout e, p, s, r) }
 }
 
+// ---- what a function does to its locals (before it is emitted)
+//
+// Two facts per local, from one walk over the body in evaluation order:
+//
+// `nz` (needs zero): some statement may read the local before every path to it has
+// assigned the whole local. Only those are zeroed at entry (C's `= {0}`); any other local
+// is written before it is read on every path, so its alloca starts uninitialized and is
+// never read so. Definite assignment over the structured IR: a statement's operands and
+// places are uses (any place rooted at the local, including a field store or a drop, which
+// read or keep the rest of it); a statement with a destination, and a store to the local
+// itself, assign the whole local (every such statement writes all of its bytes). After an
+// `if`, what both branches assigned (a branch that left through return, break, continue or
+// a panic assigns everything); a loop's blocks start from what was assigned before the loop
+// and nothing they assign counts after it (both may run zero times as far as this walk
+// knows). Code after a return, break, continue or panic is unreachable and reads nothing.
+//
+// `wr` (written): some statement may write the local or anything rooted at it (a
+// destination, a store, move or drop, an `inout` or mutating builtin argument, which also
+// makes the place unique first). A parameter passed by reference (A_REF) that is never
+// written is used where the caller's value lies; one that is written gets its own copy.
+
+type Scan = { da: List[bool], nz: List[bool], wr: List[bool], log: List[u32], tmp: List[bool], dead: bool }
+
+fn sc_use(inout sc: Scan, l: u32) {
+    if !sc.dead && !sc.da[l as usize] { sc.nz[l as usize] = true }
+}
+
+fn sc_def(inout sc: Scan, l: u32) {
+    sc.wr[l as usize] = true
+    if sc.dead || sc.da[l as usize] { return }
+    sc.da[l as usize] = true
+    sc.log.push(l)
+}
+
+/// Forget the assignments logged since `mark`; returns them.
+fn sc_undo(inout sc: Scan, mark: usize) -> List[u32] {
+    let mut out: List[u32] = List.new()
+    while sc.log.len() > mark {
+        let l = sc.log.pop().unwrap()
+        sc.da[l as usize] = false
+        out.push(l)
+    }
+    out
+}
+
+fn sc_redef(inout sc: Scan, ls: List[u32]) {
+    for l in ls {
+        if !sc.da[l as usize] {
+            sc.da[l as usize] = true
+            sc.log.push(l)
+        }
+    }
+}
+
+fn sc_op(p: lower.P, inout sc: Scan, o: u32) {
+    let x = p.ir.ops[o as usize]
+    if x.kind == ir.O_LOCAL { sc_use(inout sc, x.a) }
+}
+
+/// The local a place is rooted at (its index operands are uses).
+fn sc_place(p: lower.P, inout sc: Scan, id: u32) -> u32 {
+    let x = p.ir.places[id as usize]
+    if x.kind == ir.P_LOCAL {
+        sc_use(inout sc, x.a)
+        return x.a
+    }
+    if x.kind == ir.P_INDEX { sc_op(p, inout sc, x.b) }
+    sc_place(p, inout sc, x.a)
+}
+
+/// The arguments [b/c] of s: operands, or places (+ARG_PLACE; written when `writes`).
+fn sc_args(p: lower.P, inout sc: Scan, s: ir.Stmt, writes: bool) {
+    for i in 0..s.c {
+        let a = p.ir.extra[(s.b + i) as usize]
+        if a >= ir.ARG_PLACE {
+            let r = sc_place(p, inout sc, a - ir.ARG_PLACE)
+            if writes { sc.wr[r as usize] = true }
+        } else {
+            sc_op(p, inout sc, a)
+        }
+    }
+}
+
+fn sc_block(p: lower.P, inout sc: Scan, b: u32) {
+    let bl = p.ir.blocks[b as usize]
+    for i in 0..bl.len { sc_stmt(p, inout sc, p.ir.extra[(bl.start + i) as usize]) }
+}
+
+fn sc_stmt(p: lower.P, inout sc: Scan, id: u32) {
+    let s = p.ir.stmts[id as usize]
+    let k = s.kind
+    if k == ir.S_IF {
+        sc_op(p, inout sc, s.a)
+        let mark = sc.log.len()
+        let dead0 = sc.dead
+        sc_block(p, inout sc, s.b)
+        let tdead = sc.dead
+        let tl = sc_undo(inout sc, mark)
+        sc.dead = dead0
+        sc_block(p, inout sc, s.c)
+        let edead = sc.dead
+        let el = sc_undo(inout sc, mark)
+        sc.dead = dead0
+        if dead0 { return }
+        if tdead && edead {
+            sc.dead = true
+        } else if tdead {
+            sc_redef(inout sc, el)
+        } else if edead {
+            sc_redef(inout sc, tl)
+        } else {
+            for l in tl { sc.tmp[l as usize] = true }
+            let mut both: List[u32] = List.new()
+            for l in el {
+                if sc.tmp[l as usize] { both.push(l) }
+            }
+            for l in tl { sc.tmp[l as usize] = false }
+            sc_redef(inout sc, both)
+        }
+        return
+    }
+    if k == ir.S_LOOP {
+        let mark = sc.log.len()
+        let dead0 = sc.dead
+        sc_block(p, inout sc, s.a)
+        sc_undo(inout sc, mark)
+        sc.dead = dead0
+        sc_block(p, inout sc, s.b)
+        sc_undo(inout sc, mark)
+        sc.dead = dead0
+        return
+    }
+    if k == ir.S_BREAK || k == ir.S_CONTINUE {
+        sc.dead = true
+        return
+    }
+    if k == ir.S_RETURN {
+        if s.a > 0 { sc_op(p, inout sc, s.a - 1) }
+        sc.dead = true
+        return
+    }
+    if k == ir.S_PANIC {
+        sc_op(p, inout sc, s.a)
+        sc.dead = true
+        return
+    }
+    // uses
+    if k == ir.S_COPY || k == ir.S_CAST || k == ir.S_REPEAT || k == ir.S_PRINT || k == ir.S_ASSERT || k == ir.S_CLONE {
+        sc_op(p, inout sc, s.a)
+    } else if k == ir.S_UNARY {
+        sc_op(p, inout sc, s.b)
+    } else if k == ir.S_BINARY {
+        sc_op(p, inout sc, s.b)
+        sc_op(p, inout sc, s.c)
+    } else if k == ir.S_READ || k == ir.S_TAG || k == ir.S_CHECK {
+        sc_place(p, inout sc, s.a)
+    } else if k == ir.S_MOVE || k == ir.S_DROP {
+        let r = sc_place(p, inout sc, s.a)
+        sc.wr[r as usize] = true
+    } else if k == ir.S_STORE {
+        sc_op(p, inout sc, s.b)
+        let pl = p.ir.places[s.a as usize]
+        if pl.kind == ir.P_LOCAL {
+            sc_def(inout sc, pl.a)
+        } else {
+            let r = sc_place(p, inout sc, s.a)
+            sc.wr[r as usize] = true
+        }
+    } else if k == ir.S_CALL || k == ir.S_RECORD || k == ir.S_VARIANT || k == ir.S_ARRAY || k == ir.S_TUPLE || k == ir.S_CLOSURE {
+        sc_args(p, inout sc, s, k == ir.S_CALL)
+    } else if k == ir.S_CALLV {
+        sc_op(p, inout sc, s.a)
+        sc_args(p, inout sc, s, true)
+    } else if k == ir.S_BUILTIN {
+        sc_args(p, inout sc, s, true)
+        if mutates(s.a) && s.c > 0 {
+            let a = p.ir.extra[s.b as usize]
+            if a < ir.ARG_PLACE && p.ir.ops[a as usize].kind == ir.O_LOCAL { sc.wr[p.ir.ops[a as usize].a as usize] = true }
+        }
+    } else if k == ir.S_NOWMS || k == ir.S_FNREF || k == ir.S_NOTE {
+    } else {
+        // a statement this walk doesn't know: everything it might touch needs zeroing
+        for i in 0..sc.nz.len() {
+            sc.nz[i] = true
+            sc.wr[i] = true
+        }
+    }
+    // the destination, assigned whole
+    let has_dst = k == ir.S_COPY || k == ir.S_READ || k == ir.S_UNARY || k == ir.S_BINARY || k == ir.S_CAST || k == ir.S_CALL || k == ir.S_RECORD || k == ir.S_VARIANT || k == ir.S_ARRAY || k == ir.S_REPEAT || k == ir.S_TAG || k == ir.S_NOWMS || k == ir.S_TUPLE || k == ir.S_CLONE || k == ir.S_MOVE || k == ir.S_BUILTIN || k == ir.S_CLOSURE || k == ir.S_FNREF || k == ir.S_CALLV
+    if has_dst && s.dst != NONE {
+        if k != ir.S_REPEAT || s.b > 0 { sc_def(inout sc, s.dst) } else { sc.wr[s.dst as usize] = true }
+    }
+}
+
+/// The walk over function f: parameters and captures start assigned.
+fn scan(p: lower.P, f: u32) -> Scan {
+    let fd = p.ir.fns[f as usize]
+    let n = fd.lcount as usize
+    let mut sc = Scan(List.new(), List.new(), List.new(), List.new(), List.new(), false)
+    for i in 0..n {
+        sc.da.push(false)
+        sc.nz.push(false)
+        sc.wr.push(false)
+        sc.tmp.push(false)
+    }
+    let mut np: u32 = 0
+    while np < fd.lcount && p.ir.locals[(fd.lstart + np) as usize].kind == ir.L_CAPTURE { np += 1 }
+    for i in 0..(np + fd.nparams) { sc.da[i as usize] = true }
+    sc_block(p, inout sc, fd.body - 1)
+    sc
+}
+
 // ---- functions
 
-fn signature_params(inout e: E, p: lower.P, f: u32, sg: abi.Sig) -> List[u8] {
-    // parameter names: %sret, then per argument %a<i> (direct, byval) or %a<i>.0/.1
+fn sig_names(sg: abi.Sig) -> List[List[u8]] {
+    // parameter names: %sret, then per argument %a<i> (direct, byval, ref) or %a<i>.0/.1
     let mut names: List[List[u8]] = List.new()
     if sg.ret.kind == abi.A_SRET { names.push(sys.lit("%sret")) }
     for i in 0..sg.args.len() {
@@ -2548,11 +2919,18 @@ fn signature_params(inout e: E, p: lower.P, f: u32, sg: abi.Sig) -> List[u8] {
             names.push(num("%a", i as u64))
         }
     }
-    params_text(inout e, p, sg, names)
+    names
+}
+
+fn signature_params(inout e: E, p: lower.P, sg: abi.Sig, internal: bool) -> List[u8] {
+    let names = sig_names(sg)
+    params_text(inout e, p, sg, names, internal)
 }
 
 /// One function as LLVM IR into e.fns, or nothing (and e.fail set) when it needs something
-/// this backend doesn't lower yet.
+/// this backend doesn't lower yet. A function called from Eider is `internal` with the
+/// internal convention (`@<name>.i`); its C-convention symbol, when the C half needs one, is
+/// a wrapper emitted at the end (c_wrapper). A closure body keeps the C convention.
 fn function(inout e: E, p: lower.P, f: u32) -> bool {
     let fd = p.ir.fns[f as usize]
     e.ent = List.new()
@@ -2571,9 +2949,10 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
     e.dlines = Map.new()
     let md_mark = e.md.len()
     let nmd_mark = e.nmd
-    let ptys = fn_ptys(e, p, f)
-    let sg = abi.sig(inout e.lay, p, ptys, fd.ret)
+    let internal = internal_fn(e, p, f)
+    let sg = if internal { isig(inout e, p, f) } else { csig(inout e, p, f) }
     e.rsig = sg.ret
+    let sc = scan(p, f)
     let first_line = first_line_of(p, fd)
     if e.dbg { subprogram(inout e, p, f, first_line) }
     set_line(inout e, first_line)
@@ -2592,19 +2971,23 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
             continue
         }
         if is_void(l.ty) { continue }
-        if a.kind == abi.A_BYVAL {
+        if a.kind == abi.A_BYVAL || (a.kind == A_REF && !sc.wr[li as usize]) {
             stmt_text(inout e, catb(laddr(li), catb(sys.lit(" = getelementptr i8, ptr "), cat(an, ", i64 0"))))
             continue
         }
         alloca(inout e, p, li, l.ty)
-        if a.kind == abi.A_DIRECT {
+        if a.kind == A_REF {
+            // written: a copy of its own (the caller's value is read-only)
+            memcpy(inout e, p, l.ty, laddr(li), an)
+        } else if a.kind == abi.A_DIRECT {
             store(inout e, p, l.ty, an, laddr(li))
         } else {
             store_piece(inout e, cat(an, ".0"), laddr(li), 0, a.b0)
             if a.n > 1 { store_piece(inout e, cat(an, ".1"), laddr(li), 8, a.b1) }
         }
     }
-    // captures: copies (borrows) of the environment's values; every other local zeroed
+    // captures: copies (borrows) of the environment's values; every other local is
+    // zeroed only when it may be read before it is assigned (scan)
     if e.nc > 0 {
         let mut cts: List[u32] = List.new()
         for i in 0..e.nc { cts.push(loc(p, e, i).ty) }
@@ -2622,7 +3005,7 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
         let l = loc(p, e, i)
         if is_void(l.ty) { continue }
         alloca(inout e, p, i, l.ty)
-        zero(inout e, p, l.ty, laddr(i))
+        if sc.nz[i as usize] { zero(inout e, p, l.ty, laddr(i)) }
     }
     block(inout e, p, fd.body - 1)
     if !e.term {
@@ -2635,21 +3018,133 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
         return false
     }
     let mut h = sys.lit("define ")
+    if internal {
+        bytes.append(inout h, sys.lit("internal "))
+        if sg.ret.kind == abi.A_DIRECT { bytes.append(inout h, sys.lit("noundef ")) }
+    }
     bytes.append(inout h, ret_text(inout e, p, sg))
+    bytes.append(inout h, sys.lit(" @"))
+    if internal { bytes.append(inout h, iname(e, f)) } else { bytes.append(inout h, e.fnn[f as usize]) }
+    bytes.append(inout h, sys.lit("("))
+    bytes.append(inout h, signature_params(inout e, p, sg, internal))
+    if internal { bytes.append(inout h, sys.lit(") unnamed_addr nounwind")) } else { bytes.append(inout h, sys.lit(") nounwind")) }
+    if e.dbg { bytes.append(inout h, num(" !dbg !", e.sp as u64)) }
+    bytes.append(inout h, sys.lit(" {\nentry:\n"))
+    flush_fn(inout e, h)
+    true
+}
+
+/// `@<name>`, the C-convention entry of internal function f, for the C half (main, the test
+/// driver, exports, thunks, fallback functions): its arguments passed on to `@<name>.i` (a
+/// byval copy by reference; a pair of integers, or a byval copy of one that ran out of
+/// registers, reloaded as the pair), the result returned as the C ABI returns it.
+fn c_wrapper(inout e: E, p: lower.P, f: u32) {
+    let cs = csig(inout e, p, f)
+    let is = isig(inout e, p, f)
+    e.o = List.new()
+    e.ent = List.new()
+    e.nreg = 0
+    e.term = false
+    e.dloc = 0
+    let mut args: List[List[u8]] = List.new()
+    for i in 0..is.args.len() {
+        let c = cs.args[i]
+        let a = is.args[i]
+        let an = num("%a", i as u64)
+        if a.kind == abi.A_COERCE && c.kind == abi.A_COERCE {
+            let t = temp(inout e, p, a.ty)
+            store_piece(inout e, cat(an, ".0"), t, 0, c.b0)
+            if c.n > 1 { store_piece(inout e, cat(an, ".1"), t, 8, c.b1) }
+            args.push(t)
+        } else {
+            // direct, by reference to the byval copy, or pieces reloaded from it
+            args.push(an)
+        }
+    }
+    let mut d: List[u8] = List.new()
+    if is.ret.kind == abi.A_SRET { d = sys.lit("%sret") }
+    if is.ret.kind == abi.A_COERCE { d = temp(inout e, p, is.ret.ty) }
+    let callee = catb(sys.lit("@"), iname(e, f))
+    let r = call_sig(inout e, p, callee, is, args, d)
+    if is.ret.kind == abi.A_DIRECT {
+        let mut t = sys.lit("ret ")
+        bytes.append(inout t, vty(inout e, p, is.ret.ty))
+        bytes.append(inout t, sys.lit(" "))
+        bytes.append(inout t, r)
+        stmt_text(inout e, t)
+    } else if is.ret.kind == abi.A_COERCE {
+        ret_pieces(inout e, is.ret, d)
+    } else {
+        stmt_text(inout e, sys.lit("ret void"))
+    }
+    let mut h = sys.lit("define ")
+    bytes.append(inout h, ret_text(inout e, p, cs))
     bytes.append(inout h, sys.lit(" @"))
     bytes.append(inout h, e.fnn[f as usize])
     bytes.append(inout h, sys.lit("("))
-    bytes.append(inout h, signature_params(inout e, p, f, sg))
-    bytes.append(inout h, sys.lit(") nounwind"))
-    if e.dbg { bytes.append(inout h, num(" !dbg !", e.sp as u64)) }
-    bytes.append(inout h, sys.lit(" {\nentry:\n"))
+    bytes.append(inout h, signature_params(inout e, p, cs, false))
+    bytes.append(inout h, sys.lit(") nounwind {\nentry:\n"))
+    flush_fn(inout e, h)
+}
+
+/// `@<name>.i` for a function f that fell back to C: the internal convention's call passed
+/// on to the C half's `@<name>` (a reference argument copied byval by the call).
+fn c_shim(inout e: E, p: lower.P, f: u32) {
+    let cs = csig(inout e, p, f)
+    let is = isig(inout e, p, f)
+    e.o = List.new()
+    e.ent = List.new()
+    e.nreg = 0
+    e.term = false
+    e.dloc = 0
+    let mut args: List[List[u8]] = List.new()
+    for i in 0..is.args.len() {
+        let a = is.args[i]
+        let an = num("%a", i as u64)
+        if a.kind == abi.A_COERCE {
+            let t = temp(inout e, p, a.ty)
+            store_piece(inout e, cat(an, ".0"), t, 0, a.b0)
+            if a.n > 1 { store_piece(inout e, cat(an, ".1"), t, 8, a.b1) }
+            args.push(t)
+        } else {
+            args.push(an)
+        }
+    }
+    let mut d: List[u8] = List.new()
+    if cs.ret.kind == abi.A_SRET { d = sys.lit("%sret") }
+    if cs.ret.kind == abi.A_COERCE { d = temp(inout e, p, cs.ret.ty) }
+    let cn = e.fnn[f as usize].copy()
+    declare_sig(inout e, p, cn, cs, false)
+    let r = call_sig(inout e, p, catb(sys.lit("@"), cn), cs, args, d)
+    if cs.ret.kind == abi.A_DIRECT {
+        let mut t = sys.lit("ret ")
+        bytes.append(inout t, vty(inout e, p, cs.ret.ty))
+        bytes.append(inout t, sys.lit(" "))
+        bytes.append(inout t, r)
+        stmt_text(inout e, t)
+    } else if cs.ret.kind == abi.A_COERCE {
+        ret_pieces(inout e, cs.ret, d)
+    } else {
+        stmt_text(inout e, sys.lit("ret void"))
+    }
+    let mut h = sys.lit("define internal ")
+    bytes.append(inout h, ret_text(inout e, p, is))
+    bytes.append(inout h, sys.lit(" @"))
+    bytes.append(inout h, iname(e, f))
+    bytes.append(inout h, sys.lit("("))
+    bytes.append(inout h, signature_params(inout e, p, is, false))
+    bytes.append(inout h, sys.lit(") nounwind {\nentry:\n"))
+    flush_fn(inout e, h)
+}
+
+/// The function in e.ent and e.o, with header h, onto the module.
+fn flush_fn(inout e: E, h: List[u8]) {
     let ent = e.ent.copy()
     let body = e.o.copy()
     bytes.append(inout e.fns, h)
     bytes.append(inout e.fns, ent)
     bytes.append(inout e.fns, body)
     bytes.append(inout e.fns, sys.lit("}\n\n"))
-    true
 }
 
 fn alloca(inout e: E, p: lower.P, l: u32, ty: u32) {
@@ -2746,7 +3241,15 @@ pub const MIN_LLVM: u64 = 17
 /// (debug info), `dir` the working directory, `debug` whether to emit debug info.
 pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[List[u8]], dir: List[u8], debug: bool) -> Result[Out, List[u8]] {
     let names = lower.c_names(p)?
-    let mut e = E(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), abi.new_lay(p), List.new(), names.tys, names.fns, List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), Map.new(), 0, 0, 0, false, List.new(), 0, 0, 0, List.new(), List.new(), false, abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new(), debug, List.new(), 4, 0, 0, Map.new(), Map.new(), paths, dir)
+    let mut e = E(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), abi.new_lay(p), List.new(), names.tys, names.fns, List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), Map.new(), 0, 0, 0, false, List.new(), 0, 0, 0, List.new(), List.new(), false, abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new(), debug, List.new(), 4, 0, 0, Map.new(), Map.new(), paths, dir, List.new(), List.new(), List.new(), List.new(), List.new())
+    let nosig = abi.Sig(abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new())
+    for f in 0..p.ir.fns.len() {
+        e.isigs.push(nosig.copy())
+        e.isok.push(false)
+        e.csigs.push(nosig.copy())
+        e.csok.push(false)
+        e.iused.push(false)
+    }
     for i in 0..p.t.tys.len() {
         e.tdone.push(false)
         e.own.push(0)
@@ -2792,6 +3295,23 @@ pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[L
         }
     }
     let c = lower.program_split(p, file, tests, lib, native)?
+    // the C half's entries into this one: C-convention wrappers of the internal functions
+    // it names (beyond their prototypes), and shims for calls into its fallback functions
+    let refs = c_idents(c)
+    for f in 0..p.ir.fns.len() {
+        if !internal_fn(e, p, f as u32) { continue }
+        if native[f] {
+            let k = h64(e.fnn[f])
+            let mut n: u32 = 0
+            match refs.get(k) {
+                Some(x) => { n = x }
+                None => {}
+            }
+            if n > 1 || p.ir.fns[f].is_test { c_wrapper(inout e, p, f as u32) } else { defined.remove(k) }
+        } else if e.iused[f] {
+            c_shim(inout e, p, f as u32)
+        }
+    }
     let mut ll = sys.lit("; generated by eiderc --backend=llvm from ")
     for b in file {
         if b >= 32 && b < 127 { ll.push(b) }
@@ -2827,6 +3347,30 @@ pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[L
         bytes.append(inout ll, e.md)
     }
     Ok(Out(ll, c, native, nfns, nnat, report))
+}
+
+/// How often each C identifier (by h64) occurs in the C text c.
+fn c_idents(c: List[u8]) -> Map[u64, u32] {
+    let mut m: Map[u64, u32] = Map.new()
+    let mut h: u64 = 14695981039346656037
+    let mut inid = false
+    for b in c {
+        let idc = (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57) || b == 95
+        if idc {
+            if !inid { h = 14695981039346656037 }
+            h = (h ^ (b as u64)) *% 1099511628211
+            inid = true
+        } else if inid {
+            inid = false
+            let mut n: u32 = 0
+            match m.get(h) {
+                Some(x) => { n = x }
+                None => {}
+            }
+            m.insert(h, n + 1)
+        }
+    }
+    m
 }
 
 fn is_closure_name(s: List[u8]) -> bool {
