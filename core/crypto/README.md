@@ -195,9 +195,10 @@ aws-lc-sys's cc builder sets them for a default, non-FIPS, unprefixed build:
 `-D_XOPEN_SOURCE=700 -DDISABLE_CPU_JITTER_ENTROPY=1 -DAWS_LC_STDALIGN_AVAILABLE=1`, the
 `__builtin_bswap` and `<linux/random.h>` probes, `-DS2N_BN_HIDE_SYMBOLS=1` for s2n-bignum,
 `-Wa,--noexecstack` for assembly): 387 files (250 portable C, 137 x86-64 assembly), no CMake,
-Go or Perl, no warnings. Time on this machine (Ryzen 7 PRO 6850U, gcc 15, -O2): **11 s with
-16 parallel jobs, 66 s with one**. `libcrypto.a` is 5.7 MB (text 3.48 MB, data 73 KB, bss 50 KB);
-a program linking it grows by what it uses (the linker takes only the needed members).
+Go or Perl, no warnings. Time on this machine (Ryzen 7 PRO 6850U, gcc 15, -O2): **11-12 s with
+16 parallel jobs, 34 s with one** (`EIDER_CRYPTO_JOBS=1`). `libcrypto.a` is 5.7 MB (text
+3.47 MB, data 73 KB, bss 50 KB). Linked statically, a program takes the members it reaches:
+tests/crypto/rfc.ei builds to 3.1 MB with AWS-LC (150 KB against the shared system OpenSSL).
 Rebuilt only when the sources, flags or compiler change.
 
 **Assembly on x86-64 Linux** (`sources/linux_x86_64.txt`, AWS-LC's pre-generated perlasm in
@@ -243,7 +244,21 @@ under ASan+UBSan.
 the ABI (16 KiB messages; the timed part is the `ec_crypto_*` call: unpacking, the library,
 packing, wiping), and end to end from Eider (`tests/crypto/bench.ei`, 1 MiB messages).
 
-THROUGHPUT_TABLE
+| Operation | AWS-LC | AWS-LC no asm | OpenSSL 3.5.8 | LibreSSL 4.4.0 |
+|---|---|---|---|---|
+| SHA-256 | 2055 MB/s | 360 MB/s | 2000 MB/s | 2026 MB/s |
+| ChaCha20-Poly1305 seal | 1998 MB/s | 453 MB/s | 2533 MB/s | 540 MB/s |
+| AES-128-GCM seal | 4897 MB/s | 201 MB/s | 4498 MB/s | 3172 MB/s |
+| AES-256-GCM seal | 4354 MB/s | 159 MB/s | 3983 MB/s | 2712 MB/s |
+| X25519 | 36 859 ops/s | 12 445 | 17 255 | 7 136 |
+| Ed25519 sign | 74 988 ops/s | 22 810 | 15 948 | 16 604 |
+| Ed25519 verify | 32 143 ops/s | 13 896 | 11 313 | 10 774 |
+| ECDSA P-256 sign | 51 151 ops/s | 10 204 | 25 361 | 1 273 |
+| ECDSA P-256 verify | 23 161 ops/s | 6 372 | 14 353 | 1 509 |
+| ECDH P-256 | 22 463 ops/s | 5 356 | 12 751 | 899 |
+| from Eider: SHA-256, 1 MiB | 316 MB/s | 187 MB/s | 314 MB/s | 321 MB/s |
+| from Eider: ChaCha20-Poly1305, 1 MiB | 72 MB/s | 65 MB/s | 73 MB/s | 64 MB/s |
+| from Eider: X25519 | 36 466 ops/s | 12 669 | 16 587 | 7 012 |
 
 From Eider, small operations (key agreement, signatures) run at the library's speed; bulk
 data is limited by the byte-at-a-time crossing of the core buffers (one `ec_in_push` /

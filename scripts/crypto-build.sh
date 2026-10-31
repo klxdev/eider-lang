@@ -40,7 +40,7 @@ if [ -z "$backend" ] && [ -f eider.toml ]; then
   backend=$(sed -n '/^\[crypto\]/,/^\[/s/^provider *= *"\([a-z0-9-]*\)".*/\1/p' eider.toml | head -1)
 fi
 backend=${backend:-awslc}
-jobs=$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)
+jobs=${EIDER_CRYPTO_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}
 unavailable() { echo "crypto-build: backend $backend not available: $1" >&2; exit 2; }
 
 suffix=; [ $san = 1 ] && suffix=-san
