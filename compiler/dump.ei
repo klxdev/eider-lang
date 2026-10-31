@@ -352,6 +352,13 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) uses ffi {
             str_slot(inout out, p, "path", n.a)
             if n.b > 0 { sym(inout out, p, "alias", n.b - 1) }
         }
+        ast.EError => end(inout out, n)
+        ast.SError => end(inout out, n)
+        ast.IError => {
+            if n.a > 0 { sym(inout out, p, "item", n.a - 1) }
+            if n.b > 0 { sym(inout out, p, "name", n.b - 1) }
+            end(inout out, n)
+        }
     }
     out.push(41)
 }
