@@ -957,6 +957,9 @@ and the core sources (sha256.ei at -O2: ~40 ms per MB; a small program's C is ~1
 
 ## C8 plan: the backlog
 
+The services roadmap (P0: a first JSON/HTTP service, P1: production RPC and OpenAPI) that
+follows these waves is in docs/design/roadmap.md.
+
 Goal: the easiest, most secure and most performant language for systems, services and general
 development (docs/design/memory-model.md is the charter for the memory model). Work runs in
 waves. Within a wave, items touch different files and run in parallel; a wave starts when the
