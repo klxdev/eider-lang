@@ -1895,9 +1895,10 @@ seed, each with a regression test. Code: lower.ei (`op`, `put_line`, `files_tabl
    single-file programs get the C they had. `ei_trap` decodes the index; a line without one
    (and anything a program built by an older compiler passes) names the entry file as before,
    so core stays compatible with the seed. Names (`resolve.shown_path`) carry no machine
-   path: a toolchain module is relative to the toolchain root (`std/testing.ei`,
-   `core/prelude.ei`), a package dependency found by an absolute path is `<package>/<path in
-   it>`, anything else is the path diagnostics use (relative to the entry's directory). Limits:
+   path: a module of a package, found under the package's directory, is `<package>/<path in
+   it>` (`std/testing.ei`, `core/prelude.ei`, `geo/util.ei`: std and core are packages), else
+   a file under the toolchain root is relative to it, and anything else is the path
+   diagnostics use (relative to the entry's directory). Limits:
    2047 modules and 2^20 lines per module; past them a trap names the entry file. Tests:
    compiler/tests/run/trap_module.ei (run: the module's panic), modules.ei's test of a
    module's failing test block (`lib/geo.ei:46`), tests/std/atomic_overflow (an overflow in
@@ -2132,7 +2133,8 @@ per source (E0107 for a second). As for the operation traits (C8.4):
 returns `Err(E2.from(e))` when some impl converts E1 into E2 (its type parameters bound by
 both); the error value is moved out, borrowed by `from`, then dropped. Without one it stays
 E0401 "`?` can't convert the error type A into B", which now has the help "implement
-`From[A]` for B (in its package), or convert with `match`" when B is a record or enum. Option's `?` is unchanged.
+`From[A]` for B (in its package), or convert with `match`" when B is a record or enum (no
+recorded case has one). Option's `?` is unchanged.
 
 **Calls.** `E2.from(x)` checks x first and picks the impl whose source fits x's type (and the
 expected type, for a generic target); none is E0401 "`E` has no `From` conversion from bool".
@@ -2147,8 +2149,10 @@ one function, no conversion when the types agree, explicit `AppError.from(...)` 
 argument, a generic target `Tagged[T]`; hand-checked .out, leak-free, sanitizers).
 Compile-fail: `e0604_from_orphan`, `e0602_from_signature`, `e0602_from_caps`,
 `e0603_from_no_source`, `e0603_trait_type_args`, `e0107_from_twice`, `e0401_from_call_no_impl`,
-`e0401_try_no_from`. Oracle: the help on the existing "`?` can't convert" cases, and the IDE
-goldens' prelude symbols (the trait and its method).
+`e0401_try_no_from`. Oracle: the IDE goldens' prelude symbol count (90 to 93: the trait, its
+method and its parameter), and compiler/tests/parse/impl_trait_not_name.ei, which named
+`List[i32]` as a trait and now uses a tuple (`impl (i32, i32) for A`; same error, column 21)
+since a generic trait name parses.
 
 ## C8.22: `while let`
 

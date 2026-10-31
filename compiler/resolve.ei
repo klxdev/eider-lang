@@ -403,19 +403,16 @@ pub fn load_from(file: List[u8], src: List[u8], q: parse.P, fp: Files) -> Loaded
     Loaded(p, diags, fatal)
 }
 
-/// Module m's file as a runtime trap names it (docs/compiler.md, "C8.16"): a toolchain file
-/// relative to the toolchain root (`std/testing.ei`, `core/prelude.ei`), a file of a package
-/// found by an absolute path (a dependency in the store or a vendor directory) as
-/// `<package>/<path in the package>`, any other file by the path it was loaded from
+/// Module m's file as a runtime trap names it (docs/compiler.md, "C8.16"): a file of a
+/// package found under the package's directory as `<package>/<path in the package>`, a
+/// toolchain file relative to the toolchain root (`std/testing.ei`, `core/prelude.ei`),
+/// any other file by the path it was loaded from
 /// (relative to the entry file's directory, as diagnostics name it). So the generated C
 /// holds no path that depends on where the toolchain or the store is.
 fn shown_path(p: Program, m: u32) -> List[u8] uses io {
     let path = p.mods[m as usize].path
-    let mut root = toolchain_root()
-    root.push(47)
-    if bytes.starts_with(path, root) { return bytes.slice(path, root.len(), path.len()) }
     let pk = p.mods[m as usize].pkg
-    if path.len() > 0 && path[0] == 47 && pk != NOPKG {
+    if pk != NOPKG {
         let k = p.pkgs[pk as usize]
         let mut dir = k.dir.copy()
         dir.push(47)
@@ -426,6 +423,9 @@ fn shown_path(p: Program, m: u32) -> List[u8] uses io {
             return out
         }
     }
+    let mut root = toolchain_root()
+    root.push(47)
+    if bytes.starts_with(path, root) { return bytes.slice(path, root.len(), path.len()) }
     path
 }
 
