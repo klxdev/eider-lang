@@ -29,10 +29,11 @@
 //! calls the compiler itself uses (its text is part of seed/eiderc.c, so it changes only with
 //! a seed regeneration). docs/std.md, "Why std/stream and not std/io"; decision C101.
 
-import "core/sys"
-import "core/os"
-import "time.ei"
-import "net.ei"
+import core.sys
+import core.os
+import std.error
+import std.time
+import std.net
 
 // ---- errors
 
@@ -70,6 +71,13 @@ pub type Error = { kind: Kind, message: String }
 
 impl Show for Error {
     fn show(self, inout out: String) { out.append(self.message) }
+}
+
+/// An I/O error is an `error.Error` (its message, no source): `.context` and `?` into a
+/// Failure. The kind stays with the stream.Error; a Failure keeps the text only.
+impl error.Error for Error {
+    fn message(self) -> String { self.message.copy() }
+    fn source(self) -> Option[error.Failure] { None }
 }
 
 /// The kind for core kind number `k` (core/ABI.md "Error kinds").

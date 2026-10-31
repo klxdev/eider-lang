@@ -312,14 +312,63 @@ The stack is unmapped when the thread is joined. Mapping or protecting fails: `c
 a thread`, as before. A system without anonymous mappings or `SA_ONSTACK` (none that the core
 targets) starts threads with the C library's default stack and no handler.
 
-Not covered yet: **the main thread**. Its stack is the kernel's (Linux leaves a guard gap
-below it), and the runtime has no hook at program start; an overflow there is still a bare
-`SIGSEGV`. The next step is a compiler change: generated `main` calls a runtime entry
-(`ei_main(run)`) that runs the Eider `main` on a runtime thread like the others, which also
-makes the main stack size the runtime's. Sanitizers: under ASan and TSan the handler sees
-overflows in instrumented C (tests/core), but TSan can itself run out of stack inside its own
-runtime, which then dies of `SIGSEGV` first (so tests/std doesn't run its overflow test under
-TSan).
+### The main thread: `ei_main`
+
+| Function | Contract |
+|---|---|
+| `int ei_main(int (*body)(void))` | the program entry: generated C `main` is `return ei_main(ei_main_body);`, where `ei_main_body` is what `main` used to be (`ei_set_file`, the file and profiler tables, the Eider `main` or the test driver, the leak check, the exit code). Runs `body` on a runtime thread with a guarded stack and returns its result |
+
+The Eider `main` runs on a runtime thread like every spawned one: the same mapping
+(alternate stack, guard, 8 MiB stack) and the same fault handler, so overflowing it is the
+trap `eider: runtime error: stack overflow (<file>:0)`, exit 101, with what `print`
+buffered flushed first (compiler/tests/run/stack_overflow_main.ei; tests/core's
+`test_main_entry`). Before, the Eider `main` ran on the kernel's stack, which has no guard
+the runtime knows, and an overflow was a bare `SIGSEGV` (exit 139). `ei_main`:
+
+1. blocks every signal on the C main thread (`pthread_sigmask`), keeping the old mask;
+2. installs the fault handler (once, as `ei_thread_start` does) and starts the thread; the
+   thread inherits the full mask and restores the old one before it calls `body`;
+3. joins it, releases its mapping, restores the mask and returns `body`'s result, which
+   C `main` returns, so `exit` and the `atexit` handlers (the profiler's writer) run on the C
+   main thread as before. A `body` that ends the process itself (`env.exit`, a trap) does so
+   from its thread, as any thread can.
+
+Where no guarded thread can be started (no anonymous mappings or `SA_ONSTACK`, or the
+system refuses the mapping or the thread), `body` runs on the C main thread itself, as
+before: correct, but an overflow there is again a bare `SIGSEGV`.
+
+Why a thread rather than a guard and alternate stack on the kernel's main stack (C305):
+
+- **Soundness of the guard.** A thread stack is the runtime's own mapping, so the guard is
+  a known range and "the fault address is in this thread's guard" is exact. The kernel's
+  main stack grows on demand up to `RLIMIT_STACK` (possibly unlimited) with a gap below it
+  whose size is the kernel's (`stack_guard_gap`), and POSIX has no call that says where it
+  ends: the handler would have to guess from the fault address and the stack pointer
+  (architecture-specific), and could take an unrelated fault near the stack for an overflow.
+- **Signals.** With the C main thread blocking every signal, a process-directed signal
+  (`kill`, Ctrl-C, `SIGTERM`) is delivered to a thread that doesn't block it: the Eider main
+  thread or one it spawned, exactly the threads that could receive it before. A signal the
+  Eider `main` blocks with `ec_signal_mask` stays pending as before; core's signal pipe
+  (core/ABI.md "Signals") works from any thread anyway. The thread starts with the caller's
+  mask, so a program started with signals blocked keeps them blocked.
+- **The profiler's per-thread timers.** `ei_prof_init` runs inside `body`, so it registers
+  the Eider main thread (thread 0, with its `timer_create` timer on Linux), and the idle C
+  main thread is never registered: it takes no samples (it also blocks `SIGPROF`, so the
+  `ITIMER_PROF` fallback never lands there). When `body` returns, the thread unregisters
+  like any runtime thread, then `exit` writes the profile.
+- **Exit codes.** Unchanged: `body`'s result (0, an i32 from `main`, 1 for an `Err`, the test
+  driver's 1 for a failure) is `main`'s; traps exit 101 from whichever thread traps.
+- **WebAssembly.** One thread and no signals: core/wasm's `ei_main` calls `body` directly
+  (modules are libraries and have no generated `main` today), so nothing changes there.
+- **Cost.** One `mmap`, one thread start and one join per program run (tens of
+  microseconds); the stack is the runtime's 8 MiB instead of the kernel's `ulimit -s`
+  (8 MiB by default on Linux), so a program that relied on a larger `ulimit -s` for deep
+  recursion on the main thread now traps at 8 MiB, like a spawned thread.
+
+Sanitizers: under ASan and TSan the handler sees overflows in instrumented C (tests/core,
+the main entry too), but TSan can itself run out of stack inside its own runtime when Eider
+code overflows, which then dies of `SIGSEGV` first (so tests/std doesn't run its overflow test
+under TSan, and compiler/tests/run/stack_overflow_main.ei says `// nosan: thread`).
 
 ## Profiling
 

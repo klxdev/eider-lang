@@ -24,7 +24,7 @@
 //! `code_blocks` list what a document contains, with source lines, for link checking,
 //! tables of contents and doc tests.
 
-import "std/bytes"
+import std.bytes
 
 const B_DOC: u32 = 0
 const B_PARA: u32 = 1

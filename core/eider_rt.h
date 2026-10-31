@@ -558,6 +558,12 @@ void ei_thread_start(ei_thread *t, void *(*run)(void *), void *arg);
 void ei_thread_join(ei_thread *t);
 /* Joins if needed, then releases the handle. Only the last owner calls it. */
 void ei_thread_destroy(ei_thread *t);
+/* The program entry (generated `main` is `return ei_main(body);`): runs body() on a runtime
+   thread with a guarded stack, like every spawned thread, so a stack overflow in the Eider
+   `main` is reported as a trap; the C main thread blocks every signal and waits, so signals
+   go where they went before; body's result is the exit code. Where no guarded thread can be
+   started, body runs on the main thread itself (core/RUNTIME.md "Stack overflow"). */
+int ei_main(int (*body)(void));
 
 /* Unbounded FIFO of fixed-size elements, copied in and out by value (memcpy). */
 typedef struct {

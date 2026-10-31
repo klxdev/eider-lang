@@ -9,31 +9,41 @@ packages too.
 ## Imports
 
 ```text
-import = "import" string ["as" name]
+import = "import" path ["as" name]
+       | "import" path "." "{" member {"," member} [","] "}"
+       | "import" string ["as" name]                      (deprecated)
+member = path ["as" name]
+path   = name {"." name}
 ```
 
-An import names a module by a string:
+An import names a module by its *path*: identifiers joined by `.`. Paths name modules, never
+files:
 
-- A **path import** contains a `.` or starts with `/`: `"util.ei"`, `"../lib/geo.ei"`,
-  `"sub/shapes.ei"`. The path is relative to the importing file.
-- A **package import** is anything else: `"std/fs"`, `"core/sys"`, `"json"`,
-  `"json/encode"`. The first segment names a package (lowercase letters, digits and `_`,
-  starting with a letter); the rest, if any, is a path inside it without `.ei`.
+| Import | Names |
+|---|---|
+| `import std.fs`, `import core.sys` | a module of the toolchain's `std` or `core` |
+| `import json` | the entry module of the package `json` (a dependency, or this package) |
+| `import json.stream` | the module `stream.ei` of the package `json` (`a.b.c`: its file `b/c.ei`) |
+| `import app.util` | in the package `app`: its own module `util.ei`, by the package's name |
+| `import util`, `import lib.geo` | in a file that is in no package: the file `util.ei` (`lib/geo.ei`) beside it |
+| `import std` | the package namespace (below) |
 
-The module is then named by its *alias*: the name after `as`, or by default the file's stem
-(`util` for `"lib/util.ei"`) or the last segment of a package import (`fs` for
-`"std/fs"`, `json` for `"json"`). A module's public items are used as `alias.Name`:
-`fs.read(path)`, `geo.Point(1, 2)`, `geo.North`, and in types and patterns
-(`geo.Shape`, `geo.Circle(r) => ...`). A local variable may have an alias's name; inside its
-scope `x.f` then means the variable's field.
+The module is then named by its *alias*: the name after `as`, or by default the path's last
+segment (`fs` for `std.fs`, `json` for `json`, `stream` for `json.stream`). A module's public
+items are used as `alias.Name`: `fs.read(path)`, `geo.Point(1, 2)`, `geo.North`, and in
+types and patterns (`geo.Shape`, `geo.Circle(r) => ...`). A local variable may have an
+alias's name; inside its scope `x.f` then means the variable's field. Use sites always stay
+qualified: no import brings a module's names in unqualified, so no import can make two
+names collide.
 
-Imports may appear anywhere among the items of a file and may form cycles: two modules may
-import each other. A module imported several times, by different files or paths, is loaded
-once.
+A group imports several modules that share a prefix, each with its own alias; it may span
+lines:
 
 ```eider
-import "std/strings"
-import "std/fs" as files
+import std.{
+    strings,
+    fs as files,
+}
 
 fn main() uses io, fs {
     print(strings.repeat("ab", 3))
@@ -46,13 +56,61 @@ ababab
 false
 ```
 
-A path import that can't be read, or a toolchain module that doesn't exist, is E0804:
+Imports may appear anywhere among the items of a file and may form cycles: two modules may
+import each other. A module imported several times, by different files, paths or aliases,
+is loaded once. Package and module names are identifiers (and not keywords).
+
+**The package namespace.** `import std` (or `import core`) binds one name, `std`, to the
+whole package: `std.strings.repeat(...)`, `std.time.Duration` in a type. A module behind the
+namespace is loaded on its first use, so a program loads, and `eiderc caps` and the editor
+report, only the modules it actually uses. Importing `std` and `std.strings` both is fine:
+they name the same module. A namespace use names exactly one module, then an item of it.
+
+```eider
+import std
+
+fn main() uses io {
+    print(std.strings.repeat("-", 5))
+}
+```
+
+```output
+-----
+```
+
+**Style.** Import the modules a file uses heavily directly (`import std.{bytes, fs}`, then
+`bytes.eq(...)`), and reach occasional ones through the namespace (`std.time.mono_ms()`), so the
+import list stays a short, honest inventory.
+
+**Errors.** A module that doesn't exist is E0804 ("unknown module `std.nope`"), also when
+the namespace names it; a first segment that is neither this package nor one of its
+dependencies is E0809 (its help says `import app.util` when you meant one of your own
+modules); a package that names itself as a dependency is E0812; an alias that already names
+another module is E0813:
 
 ```eider,compile_fail=E0804
-import "missing.ei"
+import std.nope
 
 fn main() {}
 ```
+
+```eider,compile_fail=E0813
+import std.fs
+import std.io as fs
+
+fn main() {}
+```
+
+There are no wildcard imports (`import std.*`) and no `from` forms (`import bytes from
+std`): name the modules, group them, or import the namespace (E0001, whose help says so).
+
+**The quoted form** `import "std/fs"`, `import "lib/geo.ei"` still works, deprecated
+silently: a string with a `.` or a leading `/` is a file relative to the importing file;
+anything else is a package path (`"json/stream"`), with the default alias the file's stem.
+`eiderc migrate-imports <file>` prints the file with each quoted import rewritten in the
+dotted form that loads the same module (`--json`: the fixes), and
+`scripts/migrate-imports-dotted.sh` applies it to whole directories. An import with no
+dotted form (`"../lib/geo.ei"` from a file in no package) stays quoted.
 
 ## Visibility
 
@@ -69,7 +127,7 @@ A public function's signature may mention private types of its module, and a pub
 may name private types.
 
 ```eider,compile_fail=E0801
-import "std/strings"
+import std.strings
 
 fn main() uses io {
     print(strings.empty())
@@ -95,8 +153,8 @@ Every module of a program has one identity, and two different files may not shar
 (E0808):
 
 - A file in a package is identified by (package name, path inside the package without
-  `.ei`): `json/encode` and `app/encode` are different modules, so two packages may each
-  have a `util.ei`.
+  `.ei`), which is also how it is imported: `json.encode` and `app.encode` are different
+  modules, so two packages may each have a `util.ei`.
 - A file in no package is identified by its file stem. Two such files with one stem in a
   program, `a/util.ei` and `b/util.ei`, are E0808 (rename one, or put them in packages).
 
@@ -112,7 +170,7 @@ manifest names the package and its dependencies:
 [package]
 name = "warehouse"        # lowercase letters, digits, _; not `core` or `std`
 version = "0.1.0"         # MAJOR.MINOR.PATCH
-entry = "warehouse.ei"    # what `import "warehouse"` loads (default: <name>.ei)
+entry = "warehouse.ei"    # what `import warehouse` loads (default: <name>.ei)
 main = "main.ei"          # the program entry for eider-pkg (optional)
 eider = "0.1"             # the toolchain MAJOR.MINOR it needs (optional)
 
@@ -126,20 +184,16 @@ version = "1.2.0"                      # minimum version (tag v1.2.0 or 1.2.0), 
 uses = ["net", "io"]
 ```
 
-A package import `"P"` or `"P/path"` is allowed when P is the importing file's own package
-or a direct dependency of it (`[deps.P]` in its `eider.toml`); otherwise, and for any
-package import from a file in no package, it is E0809, whose help gives the `eider-pkg
-add` command:
+An import `P` or `P.path` is allowed when P is the importing file's own package or a direct
+dependency of it (`[deps.P]` in its `eider.toml`); otherwise it is E0809, whose help gives
+the `eider-pkg add` command (or `import P.<module>` when you named one of your own modules
+without the package's name). A file in no package imports no packages but `std` and
+`core`: there `import json` is the file `json.ei` beside it. A first segment that is both
+the package's own name and a dependency's is E0812.
 
-```eider,compile_fail=E0809
-import "json"
-
-fn main() {}
-```
-
-`"std/..."` and `"core/..."` are always available: they are the toolchain's own modules
-(found through `EIDER_ROOT` or next to the compiler). `"std"` alone has no entry module
-(E0809).
+`std.*` and `core.*` are always available: they are the toolchain's own modules (found
+through `EIDER_ROOT` or next to the compiler); `std` and `core` alone are their
+namespaces.
 
 Visibility is per package: a program sees its own dependencies, and each dependency sees
 its own (from its own `eider.toml`). The capability grants in `uses` are checked at each

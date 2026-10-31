@@ -522,7 +522,7 @@ environment, arguments, exit), `fs` (files), `net` (sockets), `clock` (time, sle
 use, all the way up to `main`:
 
 ```eider
-import "std/time"
+import std.time
 
 fn elapsed_ms(start: i64) -> i64 uses clock {
     time.mono_ms() - start
@@ -587,8 +587,9 @@ thread pool ([Concurrency](concurrency.md)). Lightweight stackless tasks are pla
 
 ## Modules and packages
 
-A file is a module. `import "geometry.ei"` loads a file next to the importer and its
-public names are reached through the module's name: `geometry.Point`, `geometry.area(s)`.
+A file is a module. `import geometry` loads the file `geometry.ei` next to the importer
+(in a package, its modules are `<package>.geometry`) and its public names are reached
+through the module's name: `geometry.Point`, `geometry.area(s)`.
 Items are private unless marked `pub`:
 
 ```eider,ignore
@@ -598,16 +599,19 @@ pub fn norm1(p: Point) -> i32 { abs(p.x) + abs(p.y) }
 fn abs(n: i32) -> i32 { if n < 0 { -n } else { n } }
 
 // main.ei
-import "geometry.ei" as geo
+import geometry as geo
 
 fn main() uses io {
     print(geo.norm1(geo.Point(3, -4)))
 }
 ```
 
-(Two files, so the docs' tests don't run it; it prints `7`.) The toolchain's modules are imported by
-name, `import "std/strings"`, and so are a package's dependencies, `import "json"`,
-located through `eider.lock`. The examples of eider-rpc and eider-openapi
+(Two files, so the docs' tests don't run it; it prints `7`.) The toolchain's modules are
+`std.*` and `core.*`: `import std.strings`, or several at once, `import std.{bytes, fs}`;
+a package's dependencies are imported by name, `import json`, `import json.stream`,
+located through `eider.lock`. `import std` imports the whole namespace: `std.time.mono_ms()`
+loads std's time module where it is first used. Import the modules a file uses a lot
+directly and reach the occasional one through the namespace. The examples of eider-rpc and eider-openapi
 ([Building services](services.md)) are complete multi-module packages;
 [Getting started](getting-started.md) shows eider-pkg.
 

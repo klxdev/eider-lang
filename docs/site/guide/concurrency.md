@@ -90,8 +90,10 @@ Stats { requests: 1000, errors: 20 }
   `f(old) -> new` under the lock.
 - An `update` closure that locks the same mutex again traps (`cannot lock a mutex`) instead
   of deadlocking.
-- `std/sync`'s `Lock[T]` adds `with(f)`, which returns a result along with the new value:
-  "change the state and tell me what happened" in one critical section. The example services
+- `std/sync`'s `Lock[T]` adds `modify(f)`, whose closure changes the value in place
+  (`|inout s: T| -> R`) and returns a result: "change the state and tell me what happened"
+  in one critical section, without copying the state. (`with(f)`, whose closure returns the
+  new value and the result, is kept for code that builds a new value.) The example services
   of eider-rpc and eider-openapi ([Building services](services.md)) keep their state in one.
 
 ## `Chan[T]`: sending values
@@ -133,7 +135,7 @@ rather than a timeout. A deadline can be handed down a chain of calls unchanged,
 whole chain shares one budget:
 
 ```eider
-import "std/time"
+import std.time
 
 fn main() uses io, clock {
     let dl = time.after_ms(50)
@@ -166,8 +168,8 @@ full, which pushes back on a producer that is faster than its consumers. Every s
 receive takes a deadline and says what happened:
 
 ```eider
-import "std/chan"
-import "std/time"
+import std.chan
+import std.time
 
 fn main() uses io, clock {
     let ch: chan.Channel[String] = chan.bounded(1)
@@ -218,8 +220,8 @@ v)` and a token's `cancel_case(v)`; channels of different types meet in one sele
 mapping to a common type, usually an enum:
 
 ```eider
-import "std/chan"
-import "std/time"
+import std.chan
+import std.time
 
 type Event = | Job(n: i64) | Note(text: String) | Tick | Stopped
 
@@ -266,8 +268,8 @@ Tokens form a tree. Cancelling one cancels every token made from it, never its p
 a child's deadline is never later than its parent's:
 
 ```eider
-import "std/task"
-import "std/time"
+import std.task
+import std.time
 
 fn main() uses io, clock {
     let root = task.root()
@@ -304,8 +306,8 @@ all their results in start order, or the first error. The first child to fail ca
 group, so its siblings can stop early:
 
 ```eider
-import "std/task"
-import "std/time"
+import std.task
+import std.time
 
 fn lookup(id: i64, tok: task.Token) -> Result[String, String] uses clock {
     if id == 3 { return Err(String.from("backend 3 is down")) }
@@ -355,8 +357,8 @@ jobs. `run(f, dl)` queues a job and returns a `Future`; `fut.get(dl)` waits for 
 result. Shut a pool down when you are done with it: its workers keep it alive.
 
 ```eider
-import "std/task"
-import "std/time"
+import std.task
+import std.time
 
 fn main() uses io, clock, threads {
     let pool = task.pool(2, 16)

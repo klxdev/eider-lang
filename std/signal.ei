@@ -3,9 +3,9 @@
 //! "Signals"). Graceful shutdown: watch TERM and INT, add `events_fd()` to the poller, and stop
 //! when either arrives.
 
-import "core/sys"
-import "core/os"
-import "fd.ei"
+import core.sys
+import core.os
+import std.fd
 
 /// Signal numbers (the same on every system; the core translates).
 pub const HUP: i32 = 1

@@ -2,9 +2,9 @@
 //! waker. Thin wrappers over the core (core/ABI.md "Readiness"); the event loop and task
 //! scheduler built on them are layer/runtime's.
 
-import "core/sys"
-import "core/os"
-import "fd.ei"
+import core.sys
+import core.os
+import std.fd
 
 /// Interest: wake for reading, for writing; edge-triggered; one-shot (re-arm with `modify`).
 pub const READ: i32 = 1

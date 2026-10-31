@@ -2,7 +2,7 @@
 // deadlines from now, never, expiry, the time left as a poll timeout (rounded up), sleeping
 // until a deadline.
 
-import "std/time"
+import std.time
 
 fn main() uses io, clock {
     let d = time.millis(1500)

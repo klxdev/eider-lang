@@ -2,8 +2,8 @@
 //! (docs/site/tooling/eider-doc.md has the format), merged into one arena, with lookups for
 //! `api:` links.
 
-import "std/bytes"
-import "json"
+import std.bytes
+import json
 
 /// Bytes `start..end` of a signature name the item `to` (`<package>/<module>#<anchor>`).
 pub type Link = { start: usize, end: usize, to: List[u8] }

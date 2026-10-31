@@ -1,6 +1,6 @@
-import "ns/a.ei"
-import "ns/b.ei" as other
-import "ns/util.ei"
+import ns.a
+import ns.b as other
+import ns.util
 
 fn area(n: i32) -> i32 { n + 1000 }
 

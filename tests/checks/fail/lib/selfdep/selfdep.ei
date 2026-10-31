@@ -1,0 +1,4 @@
+// helper package for e0812: its name is also one of its dependencies
+import selfdep.util
+
+pub fn f() -> i64 { 0 }

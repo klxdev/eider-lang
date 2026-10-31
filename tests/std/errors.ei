@@ -1,0 +1,78 @@
+// std's own errors and std/error (issue #70, decision C322): the String errors of std/fs,
+// std/io and std/proc take `.context` and `?` into a Failure as they are (String is an
+// error.Error), and so do std/stream's Error, std/strings' ParseError and std/encoding's
+// DecodeError (each implements it); `.with_context`, chains and roots; a String error stays
+// a String where a function returns one.
+
+import core.sys
+import std.error
+import std.fs
+import std.proc
+import std.stream
+import std.strings
+import std.encoding
+import std.fd
+
+fn config(path: str) -> Result[List[u8], error.Failure] uses fs {
+    let text = fs.read(sys.lit(path)).context("reading the config")?
+    Ok(text)
+}
+
+// `?` alone: the String error becomes a Failure with its text
+fn size(path: str) -> Result[usize, error.Failure] uses fs {
+    let text = fs.read(sys.lit(path))?
+    Ok(text.len())
+}
+
+fn port(text: str) -> Result[i64, error.Failure] {
+    let n = strings.parse_i64(text).context("the port")?
+    Ok(n)
+}
+
+fn layered(path: str) -> Result[usize, error.Failure] uses fs {
+    let n = size(path).context("loading the settings")?
+    Ok(n)
+}
+
+// a function that returns String errors is unchanged: `?` passes them through
+fn plain(path: str) -> Result[usize, String] uses fs {
+    let text = fs.read(sys.lit(path))?
+    Ok(text.len())
+}
+
+fn show[T](r: Result[T, error.Failure]) uses io {
+    match r {
+        Ok(v) => print("ok")
+        Err(e) => print(e)
+    }
+}
+
+fn main() uses io, fs, net {
+    show(config("/nonexistent/eider/app.toml"))
+    show(size("/nonexistent/eider/data"))
+    show(layered("/nonexistent/eider/data"))
+    match layered("/nonexistent/eider/data") {
+        Ok(n) => print(n)
+        Err(e) => {
+            print(e.chain().len())
+            print(e.root())
+        }
+    }
+    show(port("80x"))
+    show(port("8080"))
+    match plain("/nonexistent/eider/data") {
+        Ok(n) => print(n)
+        Err(e) => print(e)
+    }
+    show(fs.list(sys.lit("/nonexistent/eider")).with_context(|| -> String { String.from("listing the plugins") }))
+    show(fs.mkdir_all(sys.lit("/dev/null/eider-cache")).context("making the cache"))
+    let mut argv: List[List[u8]] = List.new()
+    argv.push(sys.lit("/nonexistent/eider/tool"))
+    show(proc.run(argv).context("running the tool"))
+    show(stream.open(sys.lit("/nonexistent/eider/log"), fd.READ, 0).context("opening the log"))
+    show(encoding.base64_decode(sys.lit("abc!"), encoding.Standard, encoding.Required).context("decoding the key"))
+    // the String impl: message is the text, no source
+    let e = String.from("plain text error")
+    print(error.Failure.of(e))
+    print(error.Failure.of(e).source().is_none())
+}

@@ -10,7 +10,7 @@
 //       given, a path import joined to its importer's directory, a package import its package's
 //       directory joined with the module path), like Diag.file.
 //   pub const SK_MODULE = 1, SK_TYPE 2, SK_VARIANT 3, SK_FIELD 4, SK_FN 5, SK_METHOD 6,
-//       SK_CONST 7, SK_TRAIT 8, SK_PARAM 9, SK_LOCAL 10, SK_TEST 11
+//       SK_CONST 7, SK_TRAIT 8, SK_PARAM 9, SK_LOCAL 10, SK_TEST 11, SK_LABEL 12
 //   pub type Symbol = { name: List[u8], kind: u32, span: Span, full: Span, container: u32, detail: List[u8] }
 //       span: the name at the definition; full: the whole item or declaration (outline,
 //       folding); container: index+1 of the enclosing symbol (0: top level); detail: the
@@ -35,13 +35,17 @@
 //   items, variants, named fields, functions, methods (container: the trait, or the impl's
 //   type when that is declared in the same module), parameters (closure parameters too),
 //   constants, traits, tests, and the locals of every body (`let`/`var`, `for` variables,
-//   pattern bindings). A pattern name counts as a binding unless it is a variant name (or
-//   the checker resolved it as one). Generic parameters are not symbols.
+//   pattern bindings), and loop labels (SK_LABEL: `outer: for ...`, span the label's name,
+//   container the enclosing function, detail `outer: for` or `outer: while`). A pattern
+//   name counts as a binding unless it is a variant name (or the checker resolved it as one).
+//   Generic parameters are not symbols.
 // - refs: every name use the checker resolved (resolve.ei keys, check.ei's "IDE
 //   recording"): locals and parameters, functions and methods, types (in signatures and
 //   bodies), record constructors, variants (expressions and patterns), fields, constants,
 //   traits named by impls; plus module refs, which need no checker: each import's path and
-//   alias, and each `alias.` qualifier. A generic function's body is checked once per
+//   alias, and each `alias.` qualifier; and label refs, from the syntax tree: the label of
+//   each `break name` / `continue name` to the nearest enclosing loop with that label (an
+//   unknown label, E0306, has none). A generic function's body is checked once per
 //   instance; uses in a generic body never instantiated are not resolved. Duplicates are
 //   dropped.
 // - types: of each binding (at its name) and of each identifier, field access, call and
@@ -82,6 +86,7 @@ pub const SK_TRAIT: u32 = 8
 pub const SK_PARAM: u32 = 9
 pub const SK_LOCAL: u32 = 10
 pub const SK_TEST: u32 = 11
+pub const SK_LABEL: u32 = 12
 
 pub type Symbol = { name: List[u8], kind: u32, span: Span, full: Span, container: u32, detail: List[u8] }
 
@@ -211,7 +216,15 @@ type B = {
     /// what the checker recorded: binding declarations and use positions (akey)
     bound: Map[u64, bool],
     used: Map[u64, bool],
+    /// the labeled loops enclosing the statement being walked, innermost last: label
+    /// symbol (intern) * 2^32 + its SK_LABEL symbol
+    labels: List[u64],
+    /// the uses of labels (`break outer`), resolved to their SK_LABEL symbols
+    lrefs: List[LabelUse],
 }
+
+/// A label used by `break`/`continue`: token ti of module m, naming symbol `target`.
+type LabelUse = { m: u32, ti: u32, target: u32 }
 
 /// A declaration or use position: module m, line, col.
 fn akey(m: u32, line: u32, col: u32) -> u64 {
@@ -223,7 +236,7 @@ fn akey(m: u32, line: u32, col: u32) -> u64 {
 }
 
 fn build(p: resolve.Program, rec: check.Rec, t: types.Types, diags: List[diag.Diag]) -> Analysis {
-    let mut b = B(p, List.new(), Map.new(), List.new(), Map.new(), Map.new(), Map.new())
+    let mut b = B(p, List.new(), Map.new(), List.new(), Map.new(), Map.new(), Map.new(), List.new(), List.new())
     for r in rec.refs { b.used.insert(akey(r.m, r.line, r.col), true) }
     for x in rec.tys {
         if x.binding { b.bound.insert(akey(x.m, x.line, x.col), true) }
@@ -242,6 +255,7 @@ fn build(p: resolve.Program, rec: check.Rec, t: types.Types, diags: List[diag.Di
     }
     let mut refs = Refs(List.new(), List.new(), Map.new())
     for m in 0..p.mods.len() { module_refs(inout b, m as u32, inout refs) }
+    for u in b.lrefs { add_ref(b, u.m, u.ti, u.target, inout refs) }
     for r in rec.refs {
         let target = match b.anchors.get(akey(r.tm, r.tline, r.tcol)) {
             Some(i) => i
@@ -378,12 +392,25 @@ fn tok_at(b: B, m: u32, line: u32, col: u32) -> u32 {
     NONE
 }
 
-/// The name token of a use node at (line, col): after `alias .` when it is qualified.
+/// The name token of a use node at (line, col): after `alias .` when it is qualified, after
+/// `ns . module .` when it is qualified through a package namespace (`std.bytes.eq`).
 fn use_tok(b: B, m: u32, line: u32, col: u32, qual: bool) -> u32 {
     let i = tok_at(b, m, line, col)
     if i == NONE || !qual { return i }
+    if ns_at(b, m, i) && i + 4 < ntoks(b, m) && tkind(b, m, i + 4) == lex.Ident { return i + 4 }
     if i + 2 < ntoks(b, m) && tkind(b, m, i + 2) == lex.Ident { return i + 2 }
     i
+}
+
+/// Whether token i of module m is a package namespace's alias (`std` of `import std`: its
+/// Alias has no module) followed by `. module .`.
+fn ns_at(b: B, m: u32, i: u32) -> bool {
+    if i + 3 >= ntoks(b, m) || tkind(b, m, i) != lex.Ident || tkind(b, m, i + 1) != lex.Dot || tkind(b, m, i + 3) != lex.Dot { return false }
+    let sym = tok(b, m, i).val as u32
+    for a in b.p.mods[m as usize].aliases {
+        if a.sym == sym && a.pre == 0 { return true }
+    }
+    false
 }
 
 fn tok_span(b: B, m: u32, first: u32, last: u32) -> Span {
@@ -564,7 +591,10 @@ fn module_symbols(inout b: B, m: u32) {
     for k in 0..a.items_len {
         let it = a.nodes[ast.at(a, a.items_start, k) as usize]
         let ti = tok_at(b, m, it.line, it.col)
-        if ti == NONE { starts.push(0) } else { starts.push(line_start(b, m, ti)) }
+        // an implied import (a namespace use, after the items but at the use) ends nothing
+        if it.kind == ast.IImport && it.c == parse.IMPORT_IMPLIED {
+            starts.push(n)
+        } else if ti == NONE { starts.push(0) } else { starts.push(line_start(b, m, ti)) }
     }
     let mut tys: Map[u32, u32] = Map.new()
     for pass in 0..2 {
@@ -573,6 +603,7 @@ fn module_symbols(inout b: B, m: u32) {
             let it = a.nodes[id as usize]
             let is_impl = it.kind == ast.IImpl
             if (pass == 0) == is_impl { continue }
+            if it.kind == ast.IImport && it.c == parse.IMPORT_IMPLIED { continue }
             let first = starts[k as usize]
             // from the next item's first token (or the end of the file) back to the last
             // token that isn't a separator
@@ -761,14 +792,18 @@ fn locals_stmt(inout b: B, m: u32, st: u32, container: u32) {
         ast.SAssert => locals_expr(inout b, m, n.a, container)
         ast.SWhile => {
             locals_expr(inout b, m, n.a, container)
+            let lb = label_open(inout b, m, n, "while", container)
             locals_block(inout b, m, n.b, container)
+            if lb { b.labels.pop() }
         }
         ast.SFor => {
             let kw = tok_at(b, m, n.line, n.col)
             if kw != NONE { local_sym(inout b, m, kw + 1, n.a, SK_LOCAL, kw + 1, kw + 1, container, n) }
             locals_expr(inout b, m, n.b, container)
             locals_expr(inout b, m, n.c, container)
+            let lb = label_open(inout b, m, n, "for", container)
             locals_block(inout b, m, n.d, container)
+            if lb { b.labels.pop() }
         }
         ast.SForEach => {
             let kw = tok_at(b, m, n.line, n.col)
@@ -778,10 +813,49 @@ fn locals_stmt(inout b: B, m: u32, st: u32, container: u32) {
                 local_sym(inout b, m, kw + 1, n.a, SK_LOCAL, kw + 1, kw + 1, container, n)
             }
             locals_expr(inout b, m, n.b, container)
+            let lb = label_open(inout b, m, n, "for", container)
             locals_block(inout b, m, n.d, container)
+            if lb { b.labels.pop() }
         }
+        ast.SBreak => label_use(inout b, m, n)
+        ast.SContinue => label_use(inout b, m, n)
         ast.SReturn => { if n.a > 0 { locals_expr(inout b, m, n.a - 1, container) } }
         _ => {}
+    }
+}
+
+/// The label of loop n (`outer: for ...`; parse.ei keeps it in h, i, j), if it has one: an
+/// SK_LABEL symbol, pushed on b.labels for the loop's body (the caller pops it after).
+/// Whether there was one.
+fn label_open(inout b: B, m: u32, n: ast.Node, kw: str, container: u32) -> bool {
+    if n.h == 0 { return false }
+    let lt = tok_at(b, m, n.i, n.j)
+    if lt == NONE || tkind(b, m, lt) != lex.Ident { return false }
+    let name = nm(b, n.h - 1)
+    let mut detail = name.copy()
+    bytes.append(inout detail, s(": "))
+    bytes.append(inout detail, s(kw))
+    // anchored at the label's own position: the loop's node position is its variable's
+    let sp = tok_span(b, m, lt, lt)
+    let si = add_sym(inout b, m, name, SK_LABEL, sp, sp, container, detail, n.i, n.j)
+    b.labels.push((n.h - 1) as u64 * 4294967296 + si as u64)
+    true
+}
+
+/// `break name` / `continue name` (n.a = label sym + 1 at n.b:n.c): a ref to the nearest
+/// enclosing loop with that label.
+fn label_use(inout b: B, m: u32, n: ast.Node) {
+    if n.a == 0 { return }
+    let lt = tok_at(b, m, n.b, n.c)
+    if lt == NONE { return }
+    let mut i = b.labels.len()
+    while i > 0 {
+        i -= 1
+        let e = b.labels[i]
+        if e / 4294967296 == (n.a - 1) as u64 {
+            b.lrefs.push(LabelUse(m, lt, (e % 4294967296) as u32))
+            return
+        }
     }
 }
 
@@ -916,10 +990,22 @@ fn module_refs(inout b: B, m: u32, inout refs: Refs) {
         if k >= b.p.mods[m as usize].aliases.len() { break }
         let al = b.p.mods[m as usize].aliases[k]
         k += 1
+        // a namespace names no module; an implied import has no text of its own
+        if n.c == parse.IMPORT_NAMESPACE || n.c == parse.IMPORT_IMPLIED { continue }
         let mi = module_of_pre(b, al.pre)
-        let ti = tok_at(b, m, n.line, n.col)
-        if mi == NONE || ti == NONE { continue }
+        if mi == NONE { continue }
         let target = b.modsym[mi as usize]
+        if n.c == parse.IMPORT_DOTTED {
+            // `a.b.c [as x]` from (d, e): the last segment and the alias
+            let mut ti = tok_at(b, m, n.d, n.e)
+            if ti == NONE { continue }
+            while ti + 2 < ntoks(b, m) && tkind(b, m, ti + 1) == lex.Dot && tkind(b, m, ti + 2) == lex.Ident { ti += 2 }
+            add_ref(b, m, ti, target, inout refs)
+            if n.b > 0 && ti + 2 < ntoks(b, m) && tkind(b, m, ti + 2) == lex.Ident { add_ref(b, m, ti + 2, target, inout refs) }
+            continue
+        }
+        let ti = tok_at(b, m, n.line, n.col)
+        if ti == NONE { continue }
         if ti + 1 < ntoks(b, m) && tkind(b, m, ti + 1) == lex.Str { add_ref(b, m, ti + 1, target, inout refs) }
         if n.b > 0 && ti + 3 < ntoks(b, m) && tkind(b, m, ti + 3) == lex.Ident { add_ref(b, m, ti + 3, target, inout refs) }
     }
@@ -932,6 +1018,11 @@ fn module_refs(inout b: B, m: u32, inout refs: Refs) {
         if mi == NONE { continue }
         let ti = tok_at(b, m, n.line, n.col)
         if ti == NONE { continue }
+        // through a namespace, the module's segment: `bytes` of `std.bytes.eq`
+        if ns_at(b, m, ti) {
+            add_ref(b, m, ti + 2, b.modsym[mi as usize], inout refs)
+            continue
+        }
         add_ref(b, m, ti, b.modsym[mi as usize], inout refs)
     }
 }
@@ -953,6 +1044,7 @@ fn kind_name(k: u32) -> str {
         8 => "trait"
         9 => "param"
         10 => "local"
+        12 => "label"
         _ => "test"
     }
 }

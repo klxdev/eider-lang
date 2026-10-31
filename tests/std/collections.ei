@@ -4,10 +4,10 @@
 // min/max heaps, heapify, a stable priority queue. Sizes past the insertion-sort runs are
 // checked against a simple model, with a fixed pseudo-random sequence.
 
-import "std/sort"
-import "std/deque"
-import "std/set"
-import "std/heap"
+import std.sort
+import std.deque
+import std.set
+import std.heap
 
 type Job = { name: String, prio: i32 }
 

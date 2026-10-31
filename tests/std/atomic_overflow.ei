@@ -1,6 +1,6 @@
 // std/atomic: add is checked like `+`: an overflow traps and leaves the cell as it was.
 
-import "std/atomic"
+import std.atomic
 
 fn main() uses io {
     let a = atomic.new(9223372036854775806)

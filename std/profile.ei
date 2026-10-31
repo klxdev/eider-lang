@@ -19,11 +19,11 @@
 // process (at most 65,535), so a value should come from a small set (a route pattern, not a
 // path with ids in it).
 
-import "core/sys"
-import "core/prof"
-import "core/os"
-import "fs.ei"
-import "env.ei"
+import core.sys
+import core.prof
+import core.os
+import std.fs
+import std.env
 
 /// Whether this program has a profiler (built with --profile, and EIDER_PROF isn't `off`).
 pub fn enabled() -> bool { prof.state() > 0 }

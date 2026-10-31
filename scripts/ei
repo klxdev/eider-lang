@@ -2,7 +2,7 @@
 # Run the eider compiler: target/eiderc, built from the seed (seed/eiderc.c) with only $CC
 # whenever it is missing or older than the seed or anything in core/. eiderc links the C core
 # into every program itself.
-# Usage: scripts/ei run prog.ei [args]   (any eiderc command; `scripts/ei --help`)
+# Usage: scripts/ei run prog.ei [--] [args...]   (any eiderc command; `scripts/ei --help`)
 root="$(cd "$(dirname "$0")/.." && pwd)"
 bin="$root/target/eiderc"
 if [ ! -x "$bin" ] || [ -n "$(find "$root/seed/eiderc.c" "$root/core" -newer "$bin" 2>/dev/null | head -1)" ]; then

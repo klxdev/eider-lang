@@ -23,7 +23,7 @@ version = "0.1.0"
 # pure: granted nothing (no `uses`)
 ```
 
-then `eider-pkg fetch` (eider-lang's `scripts/eider-pkg`) and `import "toml"`.
+then `eider-pkg fetch` (eider-lang's `scripts/eider-pkg`) and `import toml`.
 
 ## Developing
 

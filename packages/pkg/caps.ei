@@ -14,11 +14,11 @@
 //! grant again when it builds (E0204), so a package with neither its entry module nor a `main`
 //! program is left to it.
 
-import "core/sys"
-import "std/bytes"
-import "std/env"
-import "std/fs"
-import "std/proc"
+import core.sys
+import std.bytes
+import std.env
+import std.fs
+import std.proc
 
 /// A capability the package uses, at its first use: the file (relative to the package's
 /// directory) and line, and `kind`: `uses`, `extern` or `unsafe`.

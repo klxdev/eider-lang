@@ -15,9 +15,9 @@
 //! These run on OS threads; when the compiler makes stackless tasks from functions that use a
 //! blocking capability (C4), the same API runs them on the pool's workers instead.
 
-import "sync.ei"
-import "chan.ei"
-import "time.ei"
+import std.sync
+import std.chan
+import std.time
 
 const NEVER: i64 = 9223372036854775807
 
@@ -49,14 +49,13 @@ impl Token {
     /// and this token's.
     fn child_until(self, dl: time.Deadline) -> Token {
         let parent = self
-        let made = self.st.with(|s: TokSt| -> (TokSt, Token) {
-            var t = s
+        let made = self.st.modify(|inout t: TokSt| -> Token {
             let mut at = dl.mono_ns()
             if t.deadline_ns < at { at = t.deadline_ns }
             let kid = Token(sync.lock(TokSt(t.cancelled, at, List.new(), 1, List.new())), t.next_id)
             t.next_id += 1
             if !t.cancelled { t.kids.push(kid) }
-            (t, kid)
+            kid
         })
         made
     }
@@ -64,27 +63,25 @@ impl Token {
     /// Cancels this token and every token made from it, and wakes whoever waits on them.
     /// Cancelling twice is harmless.
     fn cancel(self) uses io {
-        let kids = self.st.with(|s: TokSt| -> (TokSt, List[Token]) {
-            var t = s
-            if t.cancelled { return (t, List.new()) }
+        let kids = self.st.modify(|inout t: TokSt| -> List[Token] {
+            if t.cancelled { return List.new() }
             t.cancelled = true
             sync.wake_all(t.waiters)
             t.waiters = List.new()
-            let k = t.kids.take()
-            (t, k)
+            t.kids.take()
         })
         for k in kids { k.cancel() }
     }
 
     /// Whether the token is cancelled or past its deadline.
     fn is_cancelled(self) -> bool uses clock {
-        let (c, at) = self.st.with(|s: TokSt| -> (TokSt, (bool, i64)) (s, (s.cancelled, s.deadline_ns)))
+        let (c, at) = self.st.modify(|inout s: TokSt| -> (bool, i64) (s.cancelled, s.deadline_ns))
         c || time.at_mono_ns(at).expired()
     }
 
     /// Why the token is cancelled, or None: "cancelled" or "deadline exceeded".
     fn reason(self) -> Option[String] uses clock {
-        let (c, at) = self.st.with(|s: TokSt| -> (TokSt, (bool, i64)) (s, (s.cancelled, s.deadline_ns)))
+        let (c, at) = self.st.modify(|inout s: TokSt| -> (bool, i64) (s.cancelled, s.deadline_ns))
         if c { return Some(String.from("cancelled")) }
         if time.at_mono_ns(at).expired() { return Some(String.from("deadline exceeded")) }
         None
@@ -100,7 +97,7 @@ impl Token {
 
     /// The token's deadline (`never()` if it has none): pass it to blocking calls.
     fn deadline(self) -> time.Deadline {
-        time.at_mono_ns(self.st.with(|s: TokSt| -> (TokSt, i64) (s, s.deadline_ns)))
+        time.at_mono_ns(self.st.modify(|inout s: TokSt| -> i64 s.deadline_ns))
     }
 
     /// The earlier of `dl` and the token's deadline.
@@ -121,21 +118,15 @@ impl Token {
         chan.Case(|me: sync.Parker, reg: bool| -> Option[U] {
             // ready cases leave no registration behind (select only leaves the others)
             if time.at_mono_ns(at).expired() { return Some(u) }
-            let c = st.with(|s: TokSt| -> (TokSt, bool) {
-                var t = s
+            let c = st.modify(|inout t: TokSt| -> bool {
                 t.waiters = sync.without(t.waiters, me)
                 if !t.cancelled && reg { t.waiters.push(me) }
-                let was = t.cancelled
-                (t, was)
+                t.cancelled
             })
             if c { return Some(u) }
             None
         }, |me: sync.Parker| {
-            st.update(|s: TokSt| -> TokSt {
-                var t = s
-                t.waiters = sync.without(t.waiters, me)
-                t
-            })
+            st.modify(|inout t: TokSt| -> () { t.waiters = sync.without(t.waiters, me) })
         }, at)
     }
 
@@ -143,14 +134,12 @@ impl Token {
     /// does this in `wait`, so a long-lived parent doesn't collect dead children).
     fn detach(self, kid: Token) {
         let id = kid.id
-        self.st.update(|s: TokSt| -> TokSt {
-            var t = s
+        self.st.modify(|inout t: TokSt| -> () {
             let mut keep: List[Token] = List.new()
             for k in t.kids {
                 if k.id != id { keep.push(k) }
             }
             t.kids = keep
-            t
         })
     }
 }
@@ -185,11 +174,7 @@ fn run_child[T](f: fn(Token) -> Result[T, String], tok: Token, errs: sync.Lock[L
     match r {
         Ok(v) => {}
         Err(e) => {
-            errs.update(|l: List[String]| -> List[String] {
-                let mut m = l.copy()
-                m.push(e)
-                m
-            })
+            errs.modify(|inout l: List[String]| -> () { l.push(e) })
             tok.cancel()
         }
     }
@@ -225,11 +210,7 @@ impl[T] Group[T] {
         match p.submit(|| run_child(f, tok, errs, o), tok.deadline()) {
             Ok(b) => {}
             Err(e) => {
-                errs.update(|l: List[String]| -> List[String] {
-                    let mut m = l.copy()
-                    m.push(e)
-                    m
-                })
+                errs.modify(|inout l: List[String]| -> () { l.push(e) })
                 tok.cancel()
                 let z = out.try_send(Err(e))
             }

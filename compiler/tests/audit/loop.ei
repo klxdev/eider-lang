@@ -1,6 +1,7 @@
-// `eiderc audit-refs --json`: a `for` over a reference reads its List again every
-// iteration, so a push to that List in the body changes what the loop sees (it used to run
-// over a copy). Expected: loop.out.
+// `eiderc audit-refs --json`: a `for` over a reference reads it once, when the loop starts,
+// and runs over that snapshot (C303), so a push to the List in the body changes neither what
+// the loop walks nor what the reference meant before C8.6 (a copy): no finding.
+// Expected: loop.out (empty).
 fn main() uses io {
     var xs: List[i32] = List.new()
     xs.push(1)

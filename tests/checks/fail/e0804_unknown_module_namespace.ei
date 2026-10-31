@@ -1,0 +1,7 @@
+// expect: E0804 6:5
+// through the package namespace, the first use of a module imports it: std.nope is unknown
+import std
+
+fn main() {
+    std.nope.f()
+}

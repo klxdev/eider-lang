@@ -1,9 +1,9 @@
-import "core/sys"
-import "std/bytes"
-import "std/fs"
-import "std/io"
-import "std/env"
-import "std/proc"
+import core.sys
+import std.bytes
+import std.fs
+import std.io
+import std.env
+import std.proc
 
 fn show(b: List[u8]) uses io { io.outln(b) }
 

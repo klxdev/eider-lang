@@ -1661,13 +1661,32 @@ fn fn_param_inout(n: ast.Node, i: u32) -> bool {
 // parameters bound to the use's arguments. An alias is a type name only: it isn't a
 // constructor, and its variants (for an alias of an enum) keep their own names.
 
+/// Module m as E0801 names it: a toolchain or package module by its name as a package import
+/// spells it (`std.strings`, `json.parse`: resolve's shown path without `.ei`, dotted), so the text
+/// doesn't depend on where the toolchain or the store is; any other file by the path it was
+/// loaded from (relative to the entry file's directory, as diagnostics name files).
+fn mod_shown(c: C, m: u32) -> List[u8] {
+    let path = c.p.mods[m as usize].path
+    if m as usize >= c.p.shown.len() { return path }
+    let sh = c.p.shown[m as usize]
+    if bytes.eq(sh, path) { return path }
+    let mut out = sh.copy()
+    if bytes.ends_with(sh, s(".ei")) { out = bytes.slice(sh, 0, sh.len() - 3) }
+    // as a dotted import spells it (docs/compiler.md, "C8.26"): std.strings, geo.util
+    let mut d: List[u8] = List.new()
+    for ch in out {
+        if ch == 47 { d.push(46) } else { d.push(ch) }
+    }
+    d
+}
+
 /// The type alias ai stands for, applied to `args` (at line, col of the use).
 fn alias_ty(inout c: C, ai: u32, args: List[u32], line: u32, col: u32) -> Result[u32, diag.Diag] {
     let a = c.al.defs[ai as usize].copy()
     let n = ndm(c, a.m, a.node)
     let k = resolve.item_key(c.p, a.m, n.a)
     if !visible(c, a.m, n.b == 1) {
-        let path = c.p.mods[a.m as usize].path
+        let path = mod_shown(c, a.m)
         return Err(errh("E0801", line, col, q2("type `", kt(c, k), "` is private to module `", path, "`"), "mark it `pub` in its own file to use it from other modules"))
     }
     if args.len() as u32 != n.d {
@@ -1796,7 +1815,7 @@ fn eq_without_hash(c: C, ty: u32, inout seen: Map[u32, bool]) -> u32 {
 fn inst_type(inout c: C, di: u32, args: List[u32], line: u32, col: u32) -> Result[u32, diag.Diag] {
     let d = c.t.defs[di as usize].copy()
     if !visible(c, d.md, d.public) {
-        let path = c.p.mods[d.md as usize].path
+        let path = mod_shown(c, d.md)
         return Err(errh("E0801", line, col, q2("type `", kt(c, d.key), "` is private to module `", path, "`"), "mark it `pub` in its own file to use it from other modules"))
     }
     if args.len() as u32 != d.generic {
@@ -4446,9 +4465,21 @@ fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     let is_list = t.kind == types.T_LIST
     // over an error value the body is still checked, with the variable of the error type
     let et = if err_seq { poison(inout c) } else { t.a }
-    // arrays are copied first; a List is iterated in place, its length read every time:
-    // i := 0; loop { if !(i < len) break; x := clone(seq[i]); body } step { i = i +% 1 }
+    // the loop runs over a snapshot taken before it starts (docs/compiler.md, "C8.20", C303):
+    // an array is copied; a List is shared (copy-on-write: a count, and a write to the List
+    // in the body makes its own buffer), owned by the loop and dropped after it on every exit:
+    // seq := e; i := 0; loop { if !(i < len(seq)) break; x := clone(seq[i]); body } step { i = i +% 1 }
     let mut seq = pv.place.copy()
+    if is_list && !snapshot {
+        let mut o = pv.op.copy()
+        if o == NONE { o = read(inout c, pv.place, pv.ty, 0) }
+        let owned = take(inout c, v_of(pv.ty, o), n.line)
+        let sl = tmp(inout c, pv.ty, n.line)
+        emit(inout c, ir.S_COPY, sl, owned, 0, 0, pv.ty, n.line)
+        register(inout c, sl, pv.ty)
+        seq = ir.place_local(inout c.ir, sl, pv.ty)
+        snapshot = true
+    }
     if !is_list {
         let mut o = pv.op.copy()
         if o == NONE { o = read(inout c, pv.place, pv.ty, 0) }
@@ -4459,9 +4490,8 @@ fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     emit(inout c, ir.S_COPY, idx, zero, 0, 0, types.USIZE, n.line)
     let ip = ir.place_local(inout c.ir, idx, types.USIZE)
     let lm = ir.open(c.ir)
-    // a List is read again every iteration: the references it is named through stay alive
-    // for the whole loop ("References")
-    if is_list && c.rf.any && !snapshot { note_uses(inout c, n.b) }
+    // (the snapshot is read every iteration, not the place: a reference the List is named
+    // through is used once, at the start, so the body may write or resize what it refers to)
     let iv = read(inout c, ip, types.USIZE, 0)
     let mut lim = ir.op_int(inout c.ir, types.USIZE, t.b as u64)
     if is_list {
@@ -5258,7 +5288,7 @@ fn ident_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag
         let cd = c.cdefs[ci as usize].copy()
         if !visible(c, cd.md, cd.public) {
             // reported, then used as if it were visible
-            let rd = err("E0801", n.line, n.col, q2("constant `", kt(c, k), "` is private to module `", c.p.mods[cd.md as usize].path, "`"))
+            let rd = err("E0801", n.line, n.col, q2("constant `", kt(c, k), "` is private to module `", mod_shown(c, cd.md), "`"))
             record(inout c, rd)
         }
         if c.rec.on {
@@ -5742,7 +5772,7 @@ fn call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let f = c.fdefs[fi as usize]
     if !visible(c, f.md, f.public) {
         // reported, then called as if it were visible
-        let rd = errh("E0801", n.line, n.col, q2("function `", kt(c, k), "` is private to module `", c.p.mods[f.md as usize].path, "`"), "mark it `pub` in its own file to use it from other modules")
+        let rd = errh("E0801", n.line, n.col, q2("function `", kt(c, k), "` is private to module `", mod_shown(c, f.md), "`"),"mark it `pub` in its own file to use it from other modules")
         record(inout c, rd)
     }
     let label = kt(c, k)

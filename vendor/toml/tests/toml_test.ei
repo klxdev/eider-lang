@@ -1,7 +1,7 @@
-import "core/sys"
-import "std/bytes"
-import "std/io"
-import "../toml.ei"
+import core.sys
+import std.bytes
+import std.io
+import toml
 
 fn dump(src: str) uses io {
     match toml.parse(sys.lit(src)) {

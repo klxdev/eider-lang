@@ -1,1 +1,0 @@
-{"audit":"reference","span":{"file":"compiler/tests/audit/loop.ei","line":9,"col":23},"message":"this write changes what `all` sees (`xs`): `all` is a reference since C8.6, it used to be a copy (line 7)","help":"bind a copy to keep the old meaning: `.copy()`","fix":{"at":{"line":7,"col":17},"delete":0,"insert":".copy()"}}

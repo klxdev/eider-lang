@@ -2,10 +2,10 @@
 // round with nothing to do ends at its deadline, descriptor readiness by token (level
 // triggered), a wake from another thread, many timers; and std/fd's deadline waits.
 
-import "std/event"
-import "std/time"
-import "std/fd"
-import "std/poll"
+import std.event
+import std.time
+import std.fd
+import std.poll
 
 fn name(e: event.Event, a: i64, b: i64, c: i64) -> String {
     match e {

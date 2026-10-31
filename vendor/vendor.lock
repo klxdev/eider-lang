@@ -3,18 +3,18 @@ version = 1
 
 [[package]]
 name = "json"
-version = "0.1.0"
-source = "git+https://github.com/klxdev/eider-json.git#7233c1f77b4426fe5ae5d9c62ac0b3f77f0d37f4"
-hash = "sha256-e67bad5434344a9e1d737e08aaa030506b05f18cdc7a04571c60850f6b10f863"
+version = "0.1.1"
+source = "git+https://github.com/klxdev/eider-json.git#61c05b2af8ec3b5307d02c13ef51d7994d08c256"
+hash = "sha256-4e5aca62179c01755878a94319c0063741843273ef6a70aca0ee69fc7e7bb44e"
 
 [[package]]
 name = "markdown"
-version = "0.1.0"
-source = "git+https://github.com/klxdev/eider-markdown.git#0fcd89c140f0972108921671237c656813f5278a"
-hash = "sha256-0fec5776d6acc2774076cce114de2aa1d20b530ca80d4f4f2cbfb89b80a75361"
+version = "0.1.1"
+source = "git+https://github.com/klxdev/eider-markdown.git#726bc8f6dd7f770b471d259114e523ff3f00ced4"
+hash = "sha256-9516a16abe3db9424fc61dc2a551405af257576b1e9d40f85d80fedda6b917a6"
 
 [[package]]
 name = "toml"
-version = "0.1.0"
-source = "git+https://github.com/klxdev/eider-toml.git#8678ab4719ba2fe124f7c3ccd241e973f1449702"
-hash = "sha256-e9fd005a44926c6a4df58fcb3cd4bfb482aa1d5e56970b8e6d40a958b4a6326b"
+version = "0.1.1"
+source = "git+https://github.com/klxdev/eider-toml.git#bf80480839241c9faf912fc30bb10ba8dba18188"
+hash = "sha256-1caea87461d23cc048a0d610600b0186248fabb52ad6f833f08b4b71288fb873"

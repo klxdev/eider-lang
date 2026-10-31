@@ -10,7 +10,7 @@
 //! No capability: like a Mutex, a cell is memory shared between threads, not the OS.
 //! Cancel-safety: every operation is a single atomic step; none blocks.
 
-import "core/os"
+import core.os
 
 /// Memory orderings. `Relaxed`: atomic, no ordering of other memory. `Acquire` (loads and
 /// read-modify-writes): what the thread that released this value wrote before is visible

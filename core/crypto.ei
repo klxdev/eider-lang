@@ -10,7 +10,7 @@
 // codes below (or -errno). Inputs that are secret (keys, seeds, plaintext) are zeroed in the
 // core's buffers before the call returns; the copies in Eider lists are ordinary values.
 
-import "core/sys"
+import core.sys
 
 extern "c" fn ec_crypto_backend() -> i32
 extern "c" fn ec_crypto_provider() -> i64

@@ -1,0 +1,5 @@
+// expect: E0001 3:12
+// no wildcard imports: name the modules (`import std.{bytes, fs}`) or use the namespace (`import std`)
+import std.*
+
+fn main() {}

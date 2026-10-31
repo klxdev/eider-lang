@@ -6,7 +6,7 @@
 // usage error (exit 2). `lex` dumps tokens (one per line: line:col kind [value]), `parse`
 // the AST (dump.ei), `ir` the typed IR (ir.ei); `build`, `run` and `test` go through
 // driver.ei, `test --compile-fail` through suite.ei, `caps` through resolve.caps_json ("C8.5"),
-// `migrate-var` through check.var_fixes ("C8.6": the file with every `var` it can rewrite as
+// `migrate-imports` through resolve.import_fixes ("C8.26"), `migrate-var` through check.var_fixes ("C8.6": the file with every `var` it can rewrite as
 // `let mut`, on stdout; the file must check, apart from having no `main`), `audit-refs`
 // through check.check_audit (every write that changes what a `let` or pattern reference
 // sees, which code written when `let` copied didn't mean; then the errors, if any).
@@ -45,7 +45,7 @@ import "doc.ei"
 type Args = {
     cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,
     lib: bool, libs: List[List[u8]], wasm: bool, compile_fail: bool, overlay: List[List[u8]],
-    max_errors: u64, all_errors: bool, private: bool, profile: u32,
+    max_errors: u64, all_errors: bool, private: bool, profile: u32, pargs: List[List[u8]],
     /// `--backend=llvm` (llvm.ei; docs/compiler.md, "Backends"), `-g` (its debug info),
     /// `--coverage` (emit-llvm: the native/fallback report instead of the IR)
     llvm: bool, debug: bool, coverage: bool,
@@ -76,7 +76,8 @@ fn usage_text() -> List[u8] {
         "  eiderc build <file.ei> [-o out] [-l lib]   compile to a native binary (-O2) via $CC (default: cc)",
         "  eiderc build --lib <file.ei> [-o name]     build lib<name>.a, lib<name>.so and <name>.h from `export fn`s",
         "  eiderc build --wasm <file.ei> [-o name]    build <name>.wasm, <name>.d.ts and <name>.js (needs clang for wasm32 and wasm-ld)",
-        "  eiderc run <file.ei> [--release] [-l lib]  build and run (-O0 unless --release)",
+        "  eiderc run <file.ei> [--release] [-l lib] [--] [args...]  build and run (-O0 unless --release);",
+        "                                             the arguments after the file (every one after `--`) go to the program",
         "  eiderc build|run|test <file.ei> --profile[=cpu,mem,conc]  with the profiler (docs/runtime.md \"Profiler\")",
         "  eiderc test <file.ei> [-l lib]             run the `test` blocks",
         "  eiderc test --compile-fail [<dir>]         run the compile-fail suite (<dir>/fail, <dir>/pass; default tests/checks)",
@@ -88,6 +89,8 @@ fn usage_text() -> List[u8] {
         "                                             functions are native and why the others fall back to C)",
         "  eiderc caps <file.ei>                      each package's capability use, one JSON line per capability",
         "  eiderc migrate-var <file.ei>               print the file with its `var`s rewritten as `let mut` (deprecated `var`)",
+        "  eiderc migrate-imports <file.ei> [--json]  print the file with its quoted imports in the dotted form",
+        "                                             (--json: the fixes, one JSON line each)",
         "  eiderc audit-refs <file.ei> [--json]       every write that changes what a `let` reference sees (it was a copy",
         "                                             before C8.6), with the `.copy()` that keeps the old meaning",
         "  eiderc ide <file.ei> [--overlay <path> <text>]  print the IDE analysis (ide.ei): symbols, refs, types;",
@@ -107,6 +110,7 @@ fn usage_text() -> List[u8] {
         "",
         "environment:",
         "  CC            the C compiler (default cc)",
+        "  WASM_CC       the C compiler of `build --wasm` (default clang; it needs the wasm32 target, and wasm-ld)",
         "  EIDER_CFLAGS  extra C compiler flags, split at spaces",
         "  EIDER_CACHE   `off`, or the cache directory (default $XDG_CACHE_HOME/eider, else ~/.cache/eider)",
         "  EIDER_ROOT    the toolchain, the directory holding core/ (default: found above the eiderc binary)",
@@ -142,7 +146,7 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] {
 }
 
 fn known_cmd(c: List[u8]) -> bool {
-    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "audit-refs") || is(c, "doc") || is(c, "emit-llvm")
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "migrate-imports") || is(c, "audit-refs") || is(c, "doc") || is(c, "emit-llvm")
 }
 
 fn parse_args() -> Args uses io {
@@ -165,11 +169,18 @@ fn parse_args() -> Args uses io {
     let mut llvm = false
     let mut debug = false
     let mut coverage = false
+    let mut pargs: List[List[u8]] = List.new()
+    let mut dashes = false
     let mut i: usize = 1
     while i < argv.len() {
         let a = argv[i]
         i += 1
-        if is(a, "--help") || is(a, "-h") {
+        if dashes {
+            // after `--`: the program's arguments, whatever they look like
+            pargs.push(a)
+        } else if is(a, "--") {
+            dashes = true
+        } else if is(a, "--help") || is(a, "-h") {
             io.out(usage_text())
             env.exit(0)
         } else if is(a, "--version") {
@@ -228,6 +239,8 @@ fn parse_args() -> Args uses io {
             cmd = a
         } else if file.len() == 0 {
             file = a
+        } else if is(cmd, "run") {
+            pargs.push(a)
         } else {
             usage_error(quoted("unexpected argument ", a))
         }
@@ -248,6 +261,7 @@ fn parse_args() -> Args uses io {
         if file.len() == 0 { file = sys.lit("tests/checks") }
     }
     if file.len() == 0 { usage_error(quoted("missing the source file for ", cmd)) }
+    if (dashes || pargs.len() > 0) && !is(cmd, "run") { usage_error(sys.lit("program arguments (and `--`) go with `run`")) }
     if is(cmd, "emit-header") { lib = true }
     // `test` checks the test driver, never a library (the recorded mode order)
     if is(cmd, "test") {
@@ -259,7 +273,7 @@ fn parse_args() -> Args uses io {
     if is(cmd, "emit-llvm") { llvm = true }
     if llvm && wasm { usage_error(sys.lit("`--backend=llvm` does not build WebAssembly")) }
     if llvm && profile > 0 { usage_error(sys.lit("`--profile` goes with the C backend (not `--backend=llvm` yet)")) }
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay, max_errors, all_errors, private, profile, llvm, debug, coverage)
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, llvm, debug, coverage)
 }
 
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
@@ -530,6 +544,11 @@ fn main() uses io, fs, net, clock {
         migrate_var(a, src)
         return
     }
+    if is(a.cmd, "migrate-imports") {
+        // docs/compiler.md, "C8.26: dotted imports"
+        io.out(resolve.migrate_imports(a.file, src, a.json))
+        return
+    }
     if is(a.cmd, "parse") && a.all_errors {
         // every syntax error as JSON lines, then the tree with its error nodes
         io.out(front.report(a.file, src))
@@ -590,7 +609,7 @@ fn main() uses io, fs, net, clock {
         let tests = a.tests || is(a.cmd, "test")
         let lp = lower.P(c.ir, c.t, c.p.names)
         if is(a.cmd, "emit-header") {
-            if a.wasm { io.out(wasm.header(lp)) } else { io.out(lower.header(lp)) }
+            if a.wasm { io.out(wasm.header(lp)) } else { io.out(lower.header(lp, driver.lib_name(a.file, a.out))) }
             return
         }
         if a.llvm && !is(a.cmd, "emit-header") {
@@ -620,11 +639,11 @@ fn main() uses io, fs, net, clock {
             } else if is(a.cmd, "emit-c") {
                 io.out(out.c)
             } else if a.lib {
-                driver.build_lib_llvm(out.c, llvm.whole(out), lower.header(lp), a.file, a.out, a.libs, a.debug)
+                driver.build_lib_llvm(out.c, llvm.whole(out), lower.header(lp, driver.lib_name(a.file, a.out)), a.file, a.out, a.libs, a.debug)
             } else if is(a.cmd, "build") {
                 driver.build_llvm(out.c, llvm.whole(out), a.file, a.out, a.libs, a.debug)
             } else {
-                driver.run_llvm(out.c, llvm.whole(out), a.file, a.release, a.libs, a.debug)
+                driver.run_llvm(out.c, llvm.whole(out), a.file, a.release, a.libs, a.debug, a.pargs)
             }
             return
         }
@@ -646,11 +665,11 @@ fn main() uses io, fs, net, clock {
             wasm.build(cprog, lp, a.file, a.out)
         } else if a.lib {
             // as recorded: `build --lib` and `run --lib` both build the library
-            driver.build_lib(cprog, lower.header(lp), a.file, a.out, a.libs)
+            driver.build_lib(cprog, lower.header(lp, driver.lib_name(a.file, a.out)), a.file, a.out, a.libs)
         } else if is(a.cmd, "build") {
             driver.build(cprog, a.file, a.out, a.libs)
         } else {
-            driver.run(cprog, a.file, a.release, a.libs)
+            driver.run(cprog, a.file, a.release, a.libs, a.pargs)
         }
     } else if is(a.cmd, "ir") {
         io.out(ir.dump(c.ir, c.t, c.p.names))

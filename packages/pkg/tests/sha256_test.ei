@@ -1,7 +1,7 @@
-import "core/sys"
-import "std/bytes"
-import "std/io"
-import "../sha256.ei"
+import core.sys
+import std.bytes
+import std.io
+import pkg.sha256
 
 fn main() uses io {
     let s = sha256.new()

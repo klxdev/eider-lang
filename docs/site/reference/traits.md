@@ -676,10 +676,13 @@ Io(7)
 There is no `Into` and no blanket conversion. The standard library's
 [std/error](api:std/error) builds error chains on this: a type implements `error.Error`
 (`message` and `source`), `.context("...")` wraps any such error into an `error.Failure`,
-and `?` converts every `Error` into a `Failure`:
+and `?` converts every `Error` into a `Failure`. The standard library's own errors are
+`Error`s: `String` (std/error implements the trait for it, so the `Result[T, String]` of
+std/fs, std/io and std/proc take `.context` as they are), `stream.Error`,
+`strings.ParseError` and `encoding.DecodeError`.
 
 ```eider
-import "std/error"
+import std.error
 
 type ParseError = { line: u32, what: String }
 

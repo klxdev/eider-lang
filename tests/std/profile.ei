@@ -1,7 +1,7 @@
 // std/profile in a program built without --profile: every call does nothing, and says so.
 // (The profiler itself is tested by tests/core/prof_test.c, and programs built with
 // --profile by scripts/test-compiler.sh's "profile" leg.)
-import "std/profile"
+import std.profile
 
 fn twice(x: i64) -> i64 { x * 2 }
 

@@ -1,10 +1,10 @@
 // End-to-end throughput from Eider (scripts/crypto-bench.sh --eider): the package call with
 // the byte-at-a-time crossing of the core buffers, as a program sees it today.
 
-import "std/bytes"
-import "std/io"
-import "std/time"
-import "vec.ei"
+import std.bytes
+import std.io
+import std.time
+import vec
 import "../../packages/crypto/crypto.ei"
 
 fn report(name: str, n: u64, ns: i64, unit_bytes: u64) uses io {

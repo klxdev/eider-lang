@@ -22,18 +22,18 @@
 //! eider.lock and fills the store, and links nothing: the deps/ link farm of earlier versions
 //! is gone (a deps/ an earlier eider-pkg made, recognisable by its deps/.all, is removed).
 
-import "core/sys"
-import "core/version"
-import "std/bytes"
-import "std/fs"
-import "std/io"
-import "std/env"
-import "manifest.ei"
-import "lockfile.ei"
-import "store.ei"
-import "resolve.ei"
-import "caps.ei"
-import "override.ei"
+import core.sys
+import core.version
+import std.bytes
+import std.fs
+import std.io
+import std.env
+import pkg.manifest
+import pkg.lockfile
+import pkg.store
+import pkg.resolve
+import pkg.caps
+import pkg.override
 
 type Cli = { dir: List[u8], cmd: List[u8], args: List[List[u8]], offline: bool }
 
@@ -295,7 +295,7 @@ fn init(c: Cli) -> Result[bool, String] uses io, fs {
     fs.write(file, t)?
     let main_file = fs.join(c.dir, sys.lit("main.ei"))
     if !fs.exists(main_file) {
-        fs.write(main_file, sys.lit("import \"core/sys\"\nimport \"std/io\"\n\nfn main() uses io {\n    io.outln(sys.lit(\"hello from eider\"))\n}\n"))?
+        fs.write(main_file, sys.lit("import core.sys\nimport std.io\n\nfn main() uses io {\n    io.outln(sys.lit(\"hello from eider\"))\n}\n"))?
     }
     let mut l = sys.lit("created package `")
     bytes.append(inout l, clean)
@@ -380,11 +380,11 @@ fn main() uses io, fs, net {
     match r {
         Ok(_) => {}
         Err(e) => {
-            // TODO(compiler): Strings can't reach stderr until they have byte access, so the
-            // message goes to stdout. Exit status 1 still marks the failure.
+            // every error (usage, manifest, resolution, fetch) is one line on stderr, exit 1;
+            // stdout carries only what a command reports when it succeeds
             let mut m = String.from("eider-pkg: ")
             m.append(e)
-            print(m)
+            io.errln(m.bytes())
             env.exit(1)
         }
     }

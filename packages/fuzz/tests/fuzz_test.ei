@@ -1,7 +1,7 @@
-import "core/sys"
-import "std/bytes"
-import "std/io"
-import "../fuzz.ei"
+import core.sys
+import std.bytes
+import std.io
+import fuzz
 
 fn show_tokens(s: str) uses io {
     let mut parts: List[List[u8]] = List.new()

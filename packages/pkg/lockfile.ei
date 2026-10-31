@@ -12,11 +12,11 @@
 //!   deps = ["util"]
 //!   grants = ["io"]
 
-import "core/sys"
-import "std/bytes"
-import "std/fs"
-import "toml"
-import "manifest.ei"
+import core.sys
+import std.bytes
+import std.fs
+import toml
+import pkg.manifest
 
 /// One resolved package. `loc` is the git URL or the absolute directory of a path package;
 /// `want` is the version or rev that was asked for; `dir` is where its files are.

@@ -1,5 +1,5 @@
 // helper package for e0204_ungranted_fs.ei: uses fs (through std, without `uses ffi`)
-import "std/fs"
-import "core/sys"
+import std.fs
+import core.sys
 
 pub fn here() -> bool uses fs { fs.exists(sys.lit(".")) }

@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./tests/checks/fail/e0001_import_from.ei","line":3,"col":14},"message":"`from` imports are not supported: an import names a module by its path, like `import std.bytes`","help":"name each module, or group them: `import std.{bytes, fs}`; or import the package namespace, `import std`, and write `std.bytes.eq(...)`"}

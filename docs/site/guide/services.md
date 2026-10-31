@@ -46,8 +46,8 @@ uses = ["net", "io", "clock"]
 ```
 
 `eider-pkg fetch` resolves them (eider-json comes along as their dependency) and writes
-`eider.lock`; the code imports them by name, `import "http/server"`,
-`import "rpc/jsonrpc"`. Before 1.0 each library's MAJOR.MINOR is the toolchain's (here
+`eider.lock`; the code imports them by name, `import http.server`,
+`import rpc.jsonrpc`. Before 1.0 each library's MAJOR.MINOR is the toolchain's (here
 0.1), so a release of the library goes with a release of Eider.
 
 To work offline, or on a checkout of a library with your own changes, name the checkouts in

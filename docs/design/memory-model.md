@@ -1,8 +1,21 @@
-# Eider memory model (draft for iteration)
+# Eider memory model
 
-Status: **draft**. Shared doc for iterating: https://claude.ai/artifact/92bM8TX24tgdviTuHrNJ6L (this file is the source of truth; synced from it). Decisions marked ✅ are agreed; ❓ are open. Nothing here is implemented
-yet beyond what Eider already does (value semantics, `inout`, `Mutex`/`Chan`). Iterate on
-this file; when a section settles, it becomes a C8 work item (docs/compiler.md).
+Status: **the charter, mostly implemented**. Shared doc for iterating:
+https://claude.ai/artifact/92bM8TX24tgdviTuHrNJ6L (this file is the source of truth; synced
+from it). Decisions marked ✅ are agreed; ❓ are open. Each section says what is implemented
+and where (docs/compiler.md's C8 sections); what is not yet is listed in
+[Open items](#open-items), each with its issue.
+
+| Part | State |
+|---|---|
+| Copy-on-write heap values | implemented (C8.1) |
+| Operation traits | implemented (C8.4; `Default` added as an eighth, C8.23) |
+| `let` references, `let mut` aliases, `.copy()`, the protection rule | implemented (C8.6), with references re-derived places rather than C pointers ([#1](https://github.com/klxdev/eider-lang/issues/1)); `var` deprecated, not yet retired ([#2](https://github.com/klxdev/eider-lang/issues/2)) |
+| `Ref[T]` | implemented (C8.7; inout fn values at the export boundary: [#3](https://github.com/klxdev/eider-lang/issues/3)) |
+| `for` over a List, an array or a Map | implemented: a snapshot taken before the loop (C8.20, C303) |
+| Closures | implemented with **snapshot** captures (by value, copy-on-write); capture by reference for non-escaping closures is open ([#4](https://github.com/klxdev/eider-lang/issues/4)) |
+| Threads: `Mutex`, `Chan`, `select` | implemented (C7 threads; std/chan's channels with deadlines and `select`, docs/runtime.md) |
+| Projections, copy and cycle lints | open ([#11](https://github.com/klxdev/eider-lang/issues/11)) |
 
 ## Goal ✅
 
@@ -45,9 +58,17 @@ Simple like Go and Zig, with the memory-safety and correctness guarantees of Rus
 ### `let` ✅
 
 Implemented by C8.6 (docs/compiler.md, "C8.6: references by default", which records the
-details decided there: a reference is its place re-derived at each use, the protection rule
-is E0308 with a `.copy()` fix, a mutable alias of a read-only place is E0307, `var` is
-rewritten by `eiderc migrate-var`).
+details decided there: the protection rule is E0308 with a `.copy()` fix, a mutable alias of
+a read-only place is E0307, `var` is rewritten by `eiderc migrate-var`, and `eiderc
+audit-refs` lists the writes whose meaning changed when `let` stopped copying).
+
+**What a reference is.** Not a C pointer: a reference is its *place* (root variable, fields,
+element indices, payloads), re-derived at each use, with every index evaluated once at the
+binding (and bounds-checked there). So nothing can dangle even across a copy-on-write
+un-share of the root, and the protection rule is what keeps the place meaning the same thing.
+Caching the address in a C pointer is an optimisation still open
+([#1](https://github.com/klxdev/eider-lang/issues/1)): it needs a refresh after each write to
+the root while the reference is alive.
 
 ```eider
 let o = orders[i]      // a read-only reference to orders[i]; nothing is copied
@@ -142,10 +163,11 @@ Nothing is special-cased in the compiler beyond calling the trait.
 | `<`, `<=`, `>`, `>=`, sorting | `Ord` | Needs `Eq` |
 | Map keys, hashing | `Hash` | Lifts today's limit to ints, `bool`, `str`, `String`; needs `Eq` |
 | `print`, string formatting | `Show` | |
-| `for x in e` | `Iter` | Ranges and `List` today; any type that implements it after |
+| `for x in e` | `Iter` | Ranges, `List`, arrays and `Map` built in; any type that implements it (the loop runs on its own copy of `e`); see [Iteration](#iteration) |
 | Cleanup at end of life | `Drop` | Resource types close files and sockets; runs once, when the last holder of a shared buffer goes |
 
-All seven ship together as the first set, since they share the derive and orphan-rule machinery.
+All seven shipped together as the first set, since they share the derive and orphan-rule
+machinery; `Default` (C8.23) is the eighth.
 A type can't opt out of a derived trait: it lacks one only when one of its parts does, so there is
 one way to make a type non-copyable.
 
@@ -175,6 +197,33 @@ The check works on place paths (root, fields, elements) and needs no lifetimes, 
 references never outlive their scope; it generalises today's `inout` exclusivity check (E0301).
 Element indices are not tracked one by one: a reference into `orders[i]` and a resize of
 `orders` conflict whatever `i` is.
+
+## Iteration ✅
+
+Implemented: C8.20 for Maps, C303 for Lists (docs/compiler.md, "C8.20: iterating a Map").
+
+`for x in e` runs over a **snapshot** of `e` taken when the loop starts, whatever `e` is: a
+List, an array, a Map (its entries) or a type with its own `Iter` (the loop's own copy of the
+iterator). The body may write, push to or clear the sequence it walks; the loop still sees
+each element from before the loop exactly once, and its writes are in the sequence
+afterwards.
+
+```eider
+for x in xs {
+    if x == 1 { xs[2] = 30 }   // xs changes; the loop still sees the old xs[2]
+    xs.push(x)                 // and it doesn't walk the new elements
+}
+```
+
+With copy-on-write the snapshot is a reference count: the loop shares the buffer, and only
+a write to the sequence inside the body makes the real copy (one per loop, the first write).
+The alternative, a protection rule for loops (no invalidating write to the sequence while it
+is walked), was rejected: it would make every worklist-style push an E0308, and it would
+treat a List differently from an array and a Map, which already iterated a copy (C303).
+A worklist that grows while it is walked is written with an index: `while i < xs.len()`.
+
+Each loop variable owns a copy of its element (not a reference into the sequence), as
+before.
 
 ## Crossing boundaries
 
@@ -236,24 +285,40 @@ fn remember(ctx: Ctx, key: String, a: Answer) {
 
 ### Threads ✅
 
-- Values sent to a thread (`spawn` captures, `Chan.send`) are moved, or shared read-only via
-  copy-on-write.
-- Mutable state crosses threads only inside `Mutex[T]` / `Chan[T]`.
-- References never cross threads (rule 3).
+- Values sent to a thread (`spawn` captures, `Chan.send`) are moved, or made unique before
+  they cross (every copy-on-write buffer they reach their own, C8.1), so no reference count
+  is shared by two threads.
+- Mutable state crosses threads only inside `Mutex[T]` / `Chan[T]` (the built-in handles,
+  C7 threads) and std's layer above them (docs/runtime.md): std/chan's bounded channels with
+  deadlines and **`select`** over channel cases, timers and deadlines (cancel-safe: a case
+  that isn't chosen never loses a value), std/sync's `Lock` and `Parker`, std/atomic, and
+  std/task's tasks, groups and cancellation.
+- References never cross threads (rule 3), and neither does a `Ref` (E0411).
 
-## Functions and closures ✅
+## Functions and closures
+
+✅ Implemented:
 
 - Parameters are read-only references; `inout` parameters are mutable references with
-  exclusivity (both as today).
-- No `mut` parameters for now. `let mut x = x` on a read-only parameter is an error (an alias
-  can't add write access); write `let mut x = x.copy()`.
+  exclusivity (E0301).
+- No `mut` parameters for now. `let mut x = x` on a read-only parameter is an error (E0307:
+  an alias can't add write access); write `let mut x = x.copy()`.
 - Return values are always values (owned). Returning a reference into an argument is not
-  possible; accessors that return a reference ("projections") are a later, std-only feature.
-- Non-escaping closures (passed straight to `map`, `filter`, `fold`, `read`, `update`) capture
-  by reference, so they cost nothing and see current values; escaping closures (stored,
-  returned, spawned) capture by value, cheap with copy-on-write.
-- Closures change captured state only through their own `inout` parameters or a `Ref`; no
-  implicit mutable captures.
+  possible; accessors that return a reference ("projections") are a later, std-only feature
+  ([#11](https://github.com/klxdev/eider-lang/issues/11)).
+- **Closures capture by snapshot**: when the closure is made, each captured variable is
+  copied into its environment (a copy-on-write share, so a count, not a deep copy), and the
+  body sees that value however the variable changes afterwards. That holds for every
+  closure, escaping or not, today.
+- Closures change captured state only through their own `inout` parameters (`|inout m|`,
+  C8.7) or a `Ref`; no implicit mutable captures.
+
+❓ Not implemented yet: non-escaping closures (passed straight to `map`, `filter`, `fold`,
+`read`, `update`) capturing by reference, so they cost nothing and see current values,
+while escaping closures (stored, returned, spawned) keep capturing by value
+([#4](https://github.com/klxdev/eider-lang/issues/4), C8 item 8.8). The visible difference is
+a non-escaping closure that reads a variable the enclosing code writes between the
+closure's creation and its call, which no closure can do today.
 
 ## What we will not add ✅
 
@@ -275,15 +340,19 @@ true?
 
 ## Build order
 
-1. Copy-on-write for heap types: runtime and lowering only, no semantic change.
-2. References by default, `let mut` aliases, `.copy()` and the protection rule: checker analysis on
-   place paths, new errors with fixes, lowering (a reference is a C pointer: no clone, no drop).
-   `var` keeps working as a deprecated spelling with an automatic fix: `var x = place` becomes
-   `let mut x = place.copy()` (today's `var` makes its own value), `var x = fresh` becomes
-   `let mut x = fresh`, so existing code migrates mechanically with unchanged meaning.
-3. `Ref[T]` on the existing handle machinery.
-4. Non-escaping closures capture by reference.
-5. Later: projections for std accessors; lints for real copies and `Ref` cycles.
+1. ✅ Copy-on-write for heap types: runtime and lowering only, no semantic change (C8.1).
+2. ✅ References by default, `let mut` aliases, `.copy()` and the protection rule: checker
+   analysis on place paths, new errors with fixes, lowering (a reference is its place,
+   re-derived at each use: no clone, no drop; C8.6). `var` keeps working as a deprecated
+   spelling with an automatic fix: `var x = place` becomes `let mut x = place.copy()`,
+   `var x = fresh` becomes `let mut x = fresh` (`eiderc migrate-var`). Open: C pointers for
+   references ([#1](https://github.com/klxdev/eider-lang/issues/1)), migrating the repository
+   off `var` and retiring it ([#2](https://github.com/klxdev/eider-lang/issues/2)).
+3. ✅ `Ref[T]` on the existing handle machinery (C8.7).
+4. ❓ Non-escaping closures capture by reference
+   ([#4](https://github.com/klxdev/eider-lang/issues/4)).
+5. ❓ Later: projections for std accessors; lints for real copies and `Ref` cycles
+   ([#11](https://github.com/klxdev/eider-lang/issues/11)).
 
 ## Decisions
 
@@ -302,9 +371,17 @@ true?
 | Warn when an escape forces a real copy | No: silent; a lint later |
 | Name of the shared handle | `Ref[T]` |
 | `mut` parameters | Not now; `let mut x = x.copy()` |
-| Closure captures | Non-escaping by reference, escaping by value |
+| Closure captures | Non-escaping by reference, escaping by value (implemented: every closure captures by snapshot; by reference is [#4](https://github.com/klxdev/eider-lang/issues/4)) |
+| What a reference is | Its place, re-derived at each use (C8.6); C pointers are an optimisation ([#1](https://github.com/klxdev/eider-lang/issues/1)) |
+| `for` over a sequence | A snapshot taken before the loop, for Lists as for arrays and Maps (C303) |
 
-## Open questions
+## Open items
 
-None open. Next: turn the design into C8 work items (docs/compiler.md), starting with
-copy-on-write.
+No design question is open. Work still to do on the model:
+
+- [#1](https://github.com/klxdev/eider-lang/issues/1) C pointer variables for references.
+- [#2](https://github.com/klxdev/eider-lang/issues/2) Retire `var`.
+- [#3](https://github.com/klxdev/eider-lang/issues/3) `Ref[T]`: inout fn values and the export boundary.
+- [#4](https://github.com/klxdev/eider-lang/issues/4) Closures capture by reference (non-escaping ones).
+- [#11](https://github.com/klxdev/eider-lang/issues/11) Projections and copy/cycle lints.
+- [#90](https://github.com/klxdev/eider-lang/issues/90) std/sync's `Lock` copies the whole guarded value on every use.

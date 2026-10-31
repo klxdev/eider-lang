@@ -1,7 +1,7 @@
-import "core/sys"
-import "std/bytes"
-import "std/io"
-import "../json.ei"
+import core.sys
+import std.bytes
+import std.io
+import json
 
 /// `ok <compact text>` or `err <message and position>`.
 fn rt_bytes(src: List[u8]) uses io {

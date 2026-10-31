@@ -1,8 +1,8 @@
 //! HTML helpers for eider-doc: escaping, relative paths between pages, and syntax
 //! highlighting for Eider code (keywords, types, strings, numbers, comments).
 
-import "std/bytes"
-import "markdown"
+import std.bytes
+import markdown
 
 /// Appends the bytes of `s`.
 pub fn put(inout out: List[u8], s: str) { bytes.append(inout out, s.bytes()) }

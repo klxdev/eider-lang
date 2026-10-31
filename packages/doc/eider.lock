@@ -3,14 +3,14 @@ version = 1
 
 [[package]]
 name = "json"
-version = "0.1.0"
+version = "0.1.1"
 source = "path+../../vendor/json"
 deps = []
 grants = []
 
 [[package]]
 name = "markdown"
-version = "0.1.0"
+version = "0.1.1"
 source = "path+../../vendor/markdown"
 deps = []
 grants = []

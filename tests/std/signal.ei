@@ -1,12 +1,12 @@
 // std/signal: TERM, INT, HUP and CHLD delivered as events on the signal pipe, seen by a
 // poller; blocking holds a signal back until unblocked; a graceful-shutdown loop.
 
-import "core/sys"
-import "std/fd"
-import "std/io"
-import "std/poll"
-import "std/child"
-import "std/signal"
+import core.sys
+import std.fd
+import std.io
+import std.poll
+import std.child
+import std.signal
 
 /// Wait (about 2 s at most) until the signal pipe has something, then what it holds. A wait
 /// can end with no events (the signal interrupted it), so loop.

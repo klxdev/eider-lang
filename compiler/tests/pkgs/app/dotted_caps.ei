@@ -1,0 +1,8 @@
+// pkgtest: caps
+// `eiderc caps` through the std namespace: only the modules a use names are loaded, so std's
+// fs (and its `fs` use) is reported, and nothing of a std module the program doesn't use
+import std
+
+fn main() uses fs {
+    if std.fs.exists("x".bytes()) { return }
+}

@@ -2,9 +2,9 @@
 //! Thin wrappers over the core (core/ABI.md "File descriptors"); buffered streams come later
 //! (layer/std). A descriptor is an i32; close it with `close`.
 
-import "core/sys"
-import "core/os"
-import "time.ei"
+import core.sys
+import core.os
+import std.time
 
 /// Open flags: one access mode, plus any of the others.
 pub const READ: i32 = 0

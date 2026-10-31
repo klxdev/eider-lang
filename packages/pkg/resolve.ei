@@ -5,15 +5,15 @@
 //! required version wins, and only packages reachable through the selected versions are
 //! kept. A dependency's capability grant is the intersection of what every depender grants.
 
-import "core/sys"
-import "std/bytes"
-import "std/fs"
-import "semver.ei"
-import "manifest.ei"
-import "lockfile.ei"
-import "store.ei"
-import "caps.ei"
-import "override.ei"
+import core.sys
+import std.bytes
+import std.fs
+import pkg.semver
+import pkg.manifest
+import pkg.lockfile
+import pkg.store
+import pkg.caps
+import pkg.override
 
 pub type Opts = { home: List[u8], offline: bool, use_lock: bool, locked: List[lockfile.Pkg], vendor: List[u8], overrides: List[override.Override] }
 

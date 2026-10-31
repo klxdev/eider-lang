@@ -16,9 +16,9 @@
 //! Printing needs `io`; the stream doubles need `io` through the generic stream code as
 //! every stream does (std/stream), never when called directly.
 
-import "io.ei"
-import "time.ei"
-import "stream.ei"
+import std.io
+import std.time
+import std.stream
 
 // ---- assertions
 

@@ -1,8 +1,8 @@
 // eider-markdown: each case prints its name and the HTML of its source (checked by hand),
 // then the queries (links, headings, code blocks, title, summary) with their source lines.
-import "std/bytes"
-import "std/io"
-import "../markdown.ei"
+import std.bytes
+import std.io
+import markdown
 
 fn case(name: str, src: str) uses io {
     let mut h = "== ".bytes()

@@ -17,8 +17,8 @@
 //!
 //! Capabilities: `io` (wakers are descriptors) and `clock` (deadlines), as declared on each.
 
-import "sync.ei"
-import "time.ei"
+import std.sync
+import std.time
 
 /// The result of a receive.
 /// - `Value(v)`: the oldest value.
@@ -56,52 +56,58 @@ pub fn unbounded[T]() -> Channel[T] {
 // Reservations, each one critical section of the state. `me` is the caller's Parker, taken
 // out of the list it may still be in; `reg` registers it when the caller will wait.
 // Results: 0 reserved, 1 must wait, 2 closed.
+//
+// Wake-ups (decision C321): a new value wakes one waiting receiver and a freed place one
+// waiting sender, each taken out of its list (FIFO), not every waiter of the side. No
+// wake-up is lost because every woken waiter that does not use what it was woken for hands
+// the wake-up on: a waiter that reserves wakes the next one of its side while values (places)
+// are left, and one that leaves (its deadline passed, or a select took another case) wakes
+// the next one while values (places) are left. A woken waiter that finds nothing (another
+// thread took it first) registers again. `close` still wakes everyone.
 
 fn reserve_send(st: sync.Lock[St], me: sync.Parker, reg: bool) -> i32 uses io {
-    st.with(|s: St| -> (St, i32) {
-        let mut t = s.copy()
+    st.modify(|inout t: St| -> i32 {
         t.tx = sync.without(t.tx, me)
-        if t.closed { return (t, 2) }
+        if t.closed { return 2 }
         if t.len < t.cap {
             t.len += 1
-            sync.wake_all(t.rx)
-            t.rx = List.new()
-            return (t, 0)
+            sync.wake_one(inout t.rx)
+            if t.len < t.cap { sync.wake_one(inout t.tx) }
+            return 0
         }
         if reg { t.tx.push(me) }
-        (t, 1)
+        1
     })
 }
 
 fn reserve_recv(st: sync.Lock[St], me: sync.Parker, reg: bool) -> i32 uses io {
-    st.with(|s: St| -> (St, i32) {
-        let mut t = s.copy()
+    st.modify(|inout t: St| -> i32 {
         t.rx = sync.without(t.rx, me)
         if t.len > 0 {
             t.len -= 1
-            sync.wake_all(t.tx)
-            t.tx = List.new()
-            return (t, 0)
+            sync.wake_one(inout t.tx)
+            if t.len > 0 { sync.wake_one(inout t.rx) }
+            return 0
         }
-        if t.closed { return (t, 2) }
+        if t.closed { return 2 }
         if reg { t.rx.push(me) }
-        (t, 1)
+        1
     })
 }
 
-fn leave_rx(st: sync.Lock[St], me: sync.Parker) {
-    st.update(|s: St| -> St {
-        let mut t = s.copy()
+// Leaving hands a wake-up on: the caller may have been the receiver (sender) woken for a
+// value (a place) that it now won't take.
+fn leave_rx(st: sync.Lock[St], me: sync.Parker) uses io {
+    st.modify(|inout t: St| -> () {
         t.rx = sync.without(t.rx, me)
-        t
+        if t.len > 0 { sync.wake_one(inout t.rx) }
     })
 }
 
-fn leave_tx(st: sync.Lock[St], me: sync.Parker) {
-    st.update(|s: St| -> St {
-        let mut t = s.copy()
+fn leave_tx(st: sync.Lock[St], me: sync.Parker) uses io {
+    st.modify(|inout t: St| -> () {
         t.tx = sync.without(t.tx, me)
-        t
+        if t.len < t.cap && !t.closed { sync.wake_one(inout t.tx) }
     })
 }
 
@@ -193,21 +199,19 @@ impl[T] Channel[T] {
     /// Closes the channel: sends are rejected from now on; receivers get what is queued, then
     /// `Closed`. Wakes everyone waiting. Closing twice is harmless.
     fn close(self) uses io {
-        self.st.update(|s: St| -> St {
-            let mut t = s.copy()
+        self.st.modify(|inout t: St| -> () {
             t.closed = true
             sync.wake_all(t.rx)
             sync.wake_all(t.tx)
             t.rx = List.new()
             t.tx = List.new()
-            t
         })
     }
 
     /// Values queued (or being queued) now.
-    fn len(self) -> usize { self.st.with(|s: St| -> (St, usize) (s, s.len)) }
+    fn len(self) -> usize { self.st.modify(|inout s: St| -> usize s.len) }
 
-    fn is_closed(self) -> bool { self.st.with(|s: St| -> (St, bool) (s, s.closed)) }
+    fn is_closed(self) -> bool { self.st.modify(|inout s: St| -> bool s.closed) }
 
     /// A select case that is ready when a value can be received (`f(Some(v))`) or the
     /// channel is closed and drained (`f(None)`). Cancel-safe: a value is taken only by the
@@ -272,15 +276,18 @@ pub fn select[U](cases: List[Case[U]], dl: time.Deadline) -> Option[U] uses io, 
     let me = sync.parker()
     let mut out: Option[U] = None
     let mut going = true
+    // the cases polled with `me` registered, in any round (a poll that registers again
+    // replaces the old registration, so `me` stays registered between rounds and leaves once,
+    // at the end: a leave hands on a wake-up, which a select that goes on waiting must not)
+    let mut reg: usize = 0
     while going {
-        let mut reg: usize = 0
         for k in 0..n {
             if out.is_none() {
                 let c = cases[(start + k) % n]
                 let poll = c.poll
                 match poll(me, true) {
                     Some(u) => { out = Some(u) }
-                    None => { reg = k + 1 }
+                    None => { if k + 1 > reg { reg = k + 1 } }
                 }
             }
         }
@@ -289,11 +296,11 @@ pub fn select[U](cases: List[Case[U]], dl: time.Deadline) -> Option[U] uses io, 
         } else {
             me.park(wake)
         }
-        for k in 0..reg {
-            let c = cases[(start + k) % n]
-            let leave = c.leave
-            leave(me)
-        }
+    }
+    for k in 0..reg {
+        let c = cases[(start + k) % n]
+        let leave = c.leave
+        leave(me)
     }
     me.close()
     out

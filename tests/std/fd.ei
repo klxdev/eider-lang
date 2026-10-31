@@ -1,10 +1,10 @@
 // std/fd: open, read/write, positioned I/O, seek, stat, truncate, sync, chmod, flock, dup,
 // pipes and non-blocking reads.
 
-import "core/sys"
-import "std/fs"
-import "std/fd"
-import "std/io"
+import core.sys
+import std.fs
+import std.fd
+import std.io
 
 fn show(b: List[u8]) uses io, ffi { io.outln(b) }
 

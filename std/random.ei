@@ -2,8 +2,8 @@
 //! macOS and the BSDs; core/ABI.md "Randomness"). Suitable for keys, nonces and hash seeds.
 //! There is no time-based fallback: no OS source is an error.
 
-import "core/sys"
-import "core/os"
+import core.sys
+import core.os
 
 /// `n` random bytes (at most 1 MiB per call). On Linux this waits, once per boot, until the
 /// kernel's pool is seeded.

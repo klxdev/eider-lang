@@ -36,7 +36,11 @@ item        = import | module_line
             | impl_item
             | test_item
 
-import      = "import" string ["as" IDENT]
+import      = "import" mpath ["as" IDENT]
+            | "import" mpath "." "{" member { "," member } [","] "}"
+            | "import" string ["as" IDENT]                    (deprecated)
+member      = mpath ["as" IDENT]
+mpath       = IDENT { "." IDENT }
 module_line = "module" IDENT { "." IDENT }
 
 generics    = "[" gparam { "," gparam } "]"
@@ -181,8 +185,10 @@ arm        = pattern { "|" pattern } "=>"
   E0001 "only named functions can be called". After `.`, a name followed by `(` is a
   method call; otherwise a field. An `INT` after `.` is a tuple element (`t.0`).
 - In a postfix chain, a newline followed by a line starting with `.` continues the chain.
-- `path` is `IDENT` or `alias.IDENT` when `alias` is an import alias of the file; any other
-  `a.b` is a field access. `null` in an expression is E0402.
+- `path` is `IDENT`, `alias.IDENT` when `alias` is an import alias of the file, or
+  `ns.module.IDENT` when `ns` is a package namespace the file imports (`import std`); any
+  other `a.b` is a field access. Inside an import's `{ }`, newlines are skipped. `import
+  std.*` and `from` after an import path are E0001 (no wildcard or `from` imports). `null` in an expression is E0402.
 - `[x; N]` needs an integer literal N of at least 1.
 - `if let P = e { A } else { B }` is parsed as `match e { P => { A } _ => { B } }` (with an
   empty `B` when there is no `else`).
