@@ -4,10 +4,10 @@
 // parent reaches the group), and the pool (results through futures, back-pressure with a
 // deadline, shutdown that finishes the queue, submitting after shutdown).
 
-import "std/task"
-import "std/time"
-import "std/chan"
-import "std/atomic"
+import std.task
+import std.time
+import std.chan
+import std.atomic
 
 fn err_of[T](r: Result[T, String]) -> String {
     match r {

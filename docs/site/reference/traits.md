@@ -679,7 +679,7 @@ There is no `Into` and no blanket conversion. The standard library's
 and `?` converts every `Error` into a `Failure`:
 
 ```eider
-import "std/error"
+import std.error
 
 type ParseError = { line: u32, what: String }
 

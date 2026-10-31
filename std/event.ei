@@ -16,9 +16,9 @@
 //! This is the reactor the stackless task scheduler of decision C4 will park tasks on; it is
 //! usable on its own today for single-threaded servers.
 
-import "poll.ei"
-import "time.ei"
-import "fd.ei"
+import std.poll
+import std.time
+import std.fd
 
 /// What a round of `poll` returns.
 /// - `Ready(token, ev)`: a watched descriptor is ready (`ev` says how).

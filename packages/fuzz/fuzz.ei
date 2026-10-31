@@ -4,8 +4,8 @@
 //! strategies: `semantic` (type names, literals, identifiers, operators, let/var) and
 //! `wild` (any token replaced, deleted, extended or prefixed). Pure apart from `sys.lit`.
 
-import "core/sys"
-import "std/bytes"
+import core.sys
+import std.bytes
 
 // ---- PRNG: a 64-bit LCG (Knuth's MMIX constants), wrapping arithmetic only
 

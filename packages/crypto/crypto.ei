@@ -21,7 +21,7 @@
 // Programs using it need `uses ffi` (like every std caller today) and a linked backend:
 // scripts/ei-crypto run prog.ei.
 
-import "core/crypto" as abi
+import core.crypto as abi
 
 /// Why an operation failed.
 pub type Error = | Unsupported | BadLength | InvalidKey | AuthFailed | Failed

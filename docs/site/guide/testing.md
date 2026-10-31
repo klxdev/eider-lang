@@ -65,7 +65,7 @@ test pop on an empty stack is None ... ok
 when they differ, prints both and where their text first differs before failing:
 
 ```eider
-import "std/testing"
+import std.testing
 
 fn slugify(title: String) -> String {
     let mut out = String.from("")
@@ -121,7 +121,7 @@ That is how std, the packages and the examples in this repository are tested
 failure (not just the first) on stderr, and gives `main` its exit code:
 
 ```eider
-import "std/testing"
+import std.testing
 
 fn main() -> i32 uses io {
     let mut t = testing.suite("arithmetic")
@@ -157,8 +157,8 @@ goes through the `std/stream` traits `Reader` and `Writer`, and time through the
 A rate limiter that takes its clock as a type parameter, tested on a fake clock:
 
 ```eider
-import "std/time"
-import "std/testing"
+import std.time
+import std.testing
 
 type Limiter[C] = { clock: C, every_ns: i64, last_ns: i64 }
 
@@ -199,8 +199,8 @@ A writer that accepts two bytes per call checks that the code under test copes w
 writes:
 
 ```eider
-import "std/stream"
-import "std/testing"
+import std.stream
+import std.testing
 
 fn main() uses io {
     let mut w = testing.sink(2)

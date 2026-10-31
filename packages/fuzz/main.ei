@@ -35,13 +35,13 @@
 //! (e.g. gcc's -Winfinite-recursion) are counted, not failures. Exit status 1 when any
 //! mutant failed.
 
-import "core/sys"
-import "std/bytes"
-import "std/fs"
-import "std/io"
-import "std/env"
-import "std/proc"
-import "fuzz.ei"
+import core.sys
+import std.bytes
+import std.fs
+import std.io
+import std.env
+import std.proc
+import fuzz
 
 type Opts = { count: u64, seeds: List[List[u8]], seed: u64, wild: bool, eiderc: List[u8], reference: List[u8] }
 

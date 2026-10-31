@@ -1,4 +1,4 @@
 // expect: E0810 2:1
-import "lib/nolock/nolock.ei"
+import lib.nolock.nolock
 
 fn main() {}

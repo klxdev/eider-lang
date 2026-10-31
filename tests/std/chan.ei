@@ -3,8 +3,8 @@
 // senders and receivers woken by the other side or by close, an unbounded channel, owned
 // values, and select over channels of different types, timers and closed channels.
 
-import "std/chan"
-import "std/time"
+import std.chan
+import std.time
 
 type Msg = | Num(n: i64) | Word(w: String) | Tick | Shut
 

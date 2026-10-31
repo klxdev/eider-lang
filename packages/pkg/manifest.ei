@@ -15,11 +15,11 @@
 //!   path = "../geom"            #   ... or a local directory
 //!   uses = ["io", "fs"]         #   capabilities granted to the dependency (default: none)
 
-import "core/sys"
-import "std/bytes"
-import "std/fs"
-import "toml"
-import "semver.ei"
+import core.sys
+import std.bytes
+import std.fs
+import toml
+import pkg.semver
 
 pub type Source = | Path(dir: List[u8]) | Git(url: List[u8], version: List[u8], rev: List[u8])
 
@@ -198,9 +198,9 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
         if toolchain_name(dn) {
             let mut m = String.from("`")
             m.append(sys.to_string(dn))
-            m.push_str("` is part of the toolchain: import its modules (`import \"")
+            m.push_str("` is part of the toolchain: import its modules (`import ")
             m.append(sys.to_string(dn))
-            m.push_str("/<module>\"`) without declaring it")
+            m.push_str(".<module>`) without declaring it")
             return Err(at(file, line, 1, m))
         }
         if bytes.eq(dn, name) { return Err(bad(file, line, "a package can't depend on itself")) }

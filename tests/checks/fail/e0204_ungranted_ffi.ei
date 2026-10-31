@@ -1,5 +1,5 @@
 // expect: E0204 2:1
-import "lib/grants/ffigrantee/ffigrantee.ei"
+import lib.grants.ffigrantee.ffigrantee
 
 // ffidep declares an `extern` function (unmanaged code), so the package importing it must
 // grant it `ffi`; ffigrantee grants it only `io`

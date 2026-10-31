@@ -6,11 +6,11 @@
 //     each Ed25519 signature with this backend.
 // run.sh compares the deterministic lines of every pair of backends byte for byte.
 
-import "std/bytes"
-import "std/env"
-import "std/fs"
-import "std/io"
-import "vec.ei"
+import std.bytes
+import std.env
+import std.fs
+import std.io
+import vec
 import "../../packages/crypto/crypto.ei"
 import "../../vendor/json/json.ei"
 

@@ -1,4 +1,4 @@
-import "mods/geometry.ei"
+import mods.geometry
 
 fn main() uses io {
     let p = geometry.Point(3, 4)

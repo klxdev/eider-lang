@@ -1,6 +1,6 @@
-import "core/sys"
-import "std/io"
-import "../semver.ei"
+import core.sys
+import std.io
+import pkg.semver
 
 fn show(s: str) uses io {
     match semver.parse(sys.lit(s)) {

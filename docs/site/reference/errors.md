@@ -534,7 +534,7 @@ in a single file; see [`tests/checks/fail/e0204_ungranted_fs.ei`](../../../tests
 error[E0204]: package `fsdep` uses capability `fs` in `here` (fsdep.ei:5) but is only granted []
   --> lib/grants/grantee/grantee.ei:2:1
   |
-2 | import "fsdep"
+2 | import fsdep
   | ^
   help: to allow it, add "fs" to `uses` in [deps.fsdep] of <dir>/lib/grants/grantee/eider.toml
 ```
@@ -1390,7 +1390,7 @@ private to their module unless declared `pub`. The help says to mark it `pub` in
 file.
 
 ```eider,compile_fail=E0801
-import "std/strings"
+import std.strings
 fn main() uses io {
     print(strings.empty())
 }
@@ -1462,17 +1462,18 @@ from C
 
 ## E0804
 
-A **module that can't be loaded**: a path import (`import "util.ei"`, relative to the
-importing file) of a file that doesn't exist or can't be read, a toolchain module that
-doesn't exist (`import "std/nothing"`), and the old `deps/` spelling of a package import
+A **module that can't be loaded**: an unknown module (`import std.nothing`, or a use
+`std.nothing.f()` through the namespace; in a file in no package, `import util` when there is
+no `util.ei` beside it), a file that can't be read, and, in the deprecated quoted form, a
+path that doesn't exist (`import "util.ei"`) or the old `deps/` spelling of a package import
 (the help says to import the package by name).
 
 ```eider,compile_fail=E0804
-import "util.ei"
+import std.nothing
 fn main() {}
 ```
 
-Fix: create the file next to the importing one, or correct the path.
+Fix: correct the module path, or create the module.
 
 ## E0805
 
@@ -1548,8 +1549,8 @@ directories. Reported at the second import. It needs several files; see
 `lib2/geometry.ei`.
 
 ```eider,ignore
-import "lib/geometry.ei"
-import "lib2/geometry.ei"
+import lib.geometry as g1
+import lib2.geometry as g2
 
 fn main() {}
 ```
@@ -1559,19 +1560,21 @@ of one name; see [Modules and packages](modules.md)).
 
 ## E0809
 
-**Not a dependency**: a package import (`import "json"`, `import "json/util"`) of a package
-that isn't the importing file's own package or a direct dependency declared in its
-`eider.toml`, an import from a file in no package of anything but `core` and `std`, a
-malformed import string (`"Geo"`, `"geo//util"`), and `import "std"` or `import "core"`
-alone (they have no entry module). The help gives the `eider-pkg add` command.
+**Not a dependency**: in a package, an import (`import json`, `import json.util`) whose first
+segment is neither the package itself nor a direct dependency declared in its
+`eider.toml`. The help gives the `eider-pkg add` command, or, when the path names one of the
+package's own modules without the package's name (`import util` for its `util.ei`), the
+import to write (`import app.util`). In the deprecated quoted form, also a package import
+from a file in no package (`import "json"`), a malformed import string (`"Geo"`,
+`"geo//util"`), and `"std"` or `"core"` alone.
 
 ```eider,compile_fail=E0809
 import "json"
 fn main() {}
 ```
 
-Fix: declare the dependency (`eider-pkg add json --path <dir>`, from inside a package), or
-import a toolchain module (`import "std/fs"`).
+Fix: declare the dependency (`eider-pkg add json --path <dir>`, from inside a package),
+import your own module by the package's name, or import a toolchain module (`import std.fs`).
 
 ## E0810
 
@@ -1594,7 +1597,7 @@ path = "../json"
 error[E0810]: can't locate package `json`: there is no eider.lock in <dir>/lib/nolock
   --> lib/nolock/nolock.ei:2:1
   |
-2 | import "json"
+2 | import json
   | ^
   help: run `eider-pkg fetch` in <dir>/lib/nolock
 ```
@@ -1625,7 +1628,7 @@ eider = "9.9"
 error[E0811]: package `newer` needs Eider 9.9 (`eider = "9.9"` in <dir>/lib/newer/eider.toml), but this toolchain is 0.1
   --> e0811_toolchain_series.ei:3:1
   |
-3 | import "lib/newer/newer.ei"
+3 | import lib.newer.newer
   | ^
   help: build it with an Eider 9.9.x toolchain, or port it to 0.1 and set `eider = "0.1"` in <dir>/lib/newer/eider.toml
 ```
@@ -1633,3 +1636,47 @@ error[E0811]: package `newer` needs Eider 9.9 (`eider = "9.9"` in <dir>/lib/newe
 Fix: build with a toolchain of the MAJOR.MINOR the package names (a release bundle has
 matching versions of everything; see [Releases](../tooling/releases.md)), or update the
 package for this toolchain and change its `eider`.
+
+## E0812
+
+**An ambiguous package name**: a package whose `eider.toml` declares a dependency with the
+package's own name, so an import's first segment (`import selfdep.util`) could mean either.
+Reported at the import. It needs a package; see
+[`tests/checks/fail/e0812_ambiguous_package.ei`](../../../tests/checks/fail/e0812_ambiguous_package.ei)
+and [`tests/checks/fail/lib/selfdep/`](../../../tests/checks/fail/lib/selfdep/).
+
+```text
+error[E0812]: `selfdep` is both this package and one of its dependencies (<dir>/lib/selfdep/eider.toml)
+  --> lib/selfdep/selfdep.ei:2:1
+  |
+2 | import selfdep.util
+  | ^
+  help: an import's first segment names one package, and a package can't depend on one with its own name: rename this package (`[package] name`) or drop the dependency
+```
+
+Fix: rename the package or drop the dependency.
+
+## E0813
+
+**An alias that already names another module**: two imports of one file with one alias
+(`import std.fs` and `import std.io as fs`, or `std` for a namespace and a module).
+Reported at the second import (the quoted form keeps its old meaning: the later import
+wins).
+
+```eider,compile_fail=E0813
+import std.fs
+import std.io as fs
+fn main() {}
+```
+
+Fix: give one of them another name with `as`:
+
+```eider
+import std.fs
+import std.io as out
+fn main() uses io, fs { out.outln(fs.join("a".bytes(), "b".bytes())) }
+```
+
+```output
+a/b
+```

@@ -18,9 +18,9 @@
 //!   2. A waiter checks the state and registers in the same critical section, and every change
 //!      that could let it proceed wakes the list after it, so no wake-up is lost.
 
-import "core/os"
-import "poll.ei"
-import "time.ei"
+import core.os
+import std.poll
+import std.time
 
 /// A value one thread at a time holds (see the module comment). Copies of a Lock share it.
 pub type Lock[T] = { ch: Chan[T] }

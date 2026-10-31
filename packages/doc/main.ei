@@ -11,16 +11,16 @@
 //! directory. The site defaults to `docs/site` when that has a SUMMARY.md. `$EIDERC` is the
 //! compiler (default `eiderc`, found on PATH).
 
-import "core/version"
-import "std/bytes"
-import "std/env"
-import "std/fs"
-import "std/io"
-import "std/proc"
-import "std/random"
-import "model.ei"
-import "site.ei"
-import "doctest.ei"
+import core.version
+import std.bytes
+import std.env
+import std.fs
+import std.io
+import std.proc
+import std.random
+import doc.model
+import doc.site
+import doc.doctest
 
 type Args = { cmd: List[u8], out: List[u8], site: List[u8], site_set: bool, title: List[u8], repo_url: List[u8], dirs: List[List[u8]] }
 

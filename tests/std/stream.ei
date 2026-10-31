@@ -4,13 +4,13 @@
 // line reads), sockets (connect_by / accept_by), a child's stdin and stdout, `?` from a String
 // error, and stdout ordering with print.
 
-import "std/stream"
-import "std/fd"
-import "std/net"
-import "std/time"
-import "std/fs"
-import "std/io"
-import "std/child"
+import std.stream
+import std.fd
+import std.net
+import std.time
+import std.fs
+import std.io
+import std.child
 
 fn text(b: List[u8]) -> String {
     match String.from_bytes(b) {

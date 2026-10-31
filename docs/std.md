@@ -29,9 +29,9 @@ scripts/verify.sh), and each passes under gcc, clang and ASan+UBSan.
 ## Streams (`std/stream`)
 
 ```eider
-import "std/stream"
-import "std/net"
-import "std/time"
+import std.stream
+import std.net
+import std.time
 
 fn handle(conn: stream.Fd) -> Result[(), stream.Error] uses io, clock {
     let mut r = stream.buffered(conn)

@@ -17,7 +17,7 @@ and a `0.2` toolchain needs `0.2` tools.
 | Component | Repository | Version | `--version` prints |
 |---|---|---|---|
 | the language, the compiler `eiderc` | eider-lang | `VERSION` | `eiderc 0.1.0` |
-| core and std | eider-lang | `VERSION` | (programs: `import "core/version"`) |
+| core and std | eider-lang | `VERSION` | (programs: `import core.version`) |
 | `eider-pkg`, the package manager | eider-lang (`packages/pkg`) | `VERSION` | `eider-pkg 0.1.0` |
 | `eider-doc`, the docs generator | eider-lang (`packages/doc`) | `VERSION` | `eider-doc 0.1.0` |
 | the language server | eider-analyzer | its `VERSION` | `eider-analyzer 0.1.0 (eider 0.1.0)` |
@@ -41,7 +41,7 @@ regeneration, and the seed stays reproducible.
 Programs can use it too:
 
 ```eider
-import "core/version"
+import core.version
 
 fn main() uses io {
     print(version.VERSION)
@@ -74,7 +74,7 @@ toolchain's MAJOR.MINOR is error E0811:
 error[E0811]: package `newer` needs Eider 9.9 (`eider = "9.9"` in <dir>/lib/newer/eider.toml), but this toolchain is 0.1
   --> e0811_toolchain_series.ei:3:1
   |
-3 | import "lib/newer/newer.ei"
+3 | import lib.newer.newer
   | ^
   help: build it with an Eider 9.9.x toolchain, or port it to 0.1 and set `eider = "0.1"` in <dir>/lib/newer/eider.toml
 ```
@@ -213,10 +213,10 @@ its own: `packages/doc/eider.toml` says `version = "<VERSION>"` and `eider = "<M
 eider-pkg do:
 
 ```eider,ignore
-import "core/sys"
-import "core/version"
-import "std/bytes"
-import "std/io"
+import core.sys
+import core.version
+import std.bytes
+import std.io
 
 // in the argument loop, before the commands
 if is(a, "--version") {

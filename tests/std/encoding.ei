@@ -3,7 +3,7 @@
 // length, bytes, non-canonical bits), a round trip over every byte value and length;
 // little/big-endian integers at the extremes and their bounds.
 
-import "std/encoding"
+import std.encoding
 
 fn show_dec(r: Result[List[u8], encoding.DecodeError]) -> String {
     match r {

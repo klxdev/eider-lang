@@ -213,7 +213,7 @@ read *because* it doesn't exist. `std/error` represents that as a chain of messa
   returns `Result[T, error.Failure]`, `?` works on all of them.
 
 ```eider
-import "std/error"
+import std.error
 
 type ParseError = { line: u32, what: String }
 
@@ -273,8 +273,8 @@ true
 > kind (`e.kind == stream.TimedOut`).
 
 ```eider
-import "std/error"
-import "std/fs"
+import std.error
+import std.fs
 
 fn load(path: str) -> Result[List[u8], error.Failure] uses fs {
     let r = fs.read(String.from(path).bytes())

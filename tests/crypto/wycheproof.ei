@@ -7,9 +7,9 @@
 // Groups with parameters the package doesn't offer (nonces other than 96 bits, tags other
 // than 128 bits, AES-192) are counted as skipped.
 
-import "std/bytes"
-import "std/io"
-import "vec.ei"
+import std.bytes
+import std.io
+import vec
 import "../../packages/crypto/crypto.ei"
 import "../../vendor/json/json.ei"
 

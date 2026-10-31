@@ -5,15 +5,15 @@
 //! one stylesheet. Every link is checked: an `api:` target that wasn't documented, a page
 //! link to a `.md` file that SUMMARY.md doesn't list, or a remote image fails the build.
 
-import "std/bytes"
-import "std/fs"
-import "std/path"
-import "json"
-import "markdown"
-import "model.ei"
-import "html.ei"
-import "summary.ei"
-import "assets.ei"
+import std.bytes
+import std.fs
+import std.path
+import json
+import markdown
+import doc.model
+import doc.html
+import doc.summary
+import doc.assets
 
 /// What to build: the Markdown site (`site`: a directory with SUMMARY.md, or empty for an
 /// API-only site), the output directory, the site's name, and the URL that links to other
@@ -849,9 +849,14 @@ fn module_page(inout cx: Cx, mi: usize) uses fs {
     html.put(inout o, "</code> ")
     src_link(inout o, page.copy(), md.copy(), 1)
     html.put(inout o, "</h1>\n")
-    let mut use_line = "<p class=\"summary\"><code>import \"".bytes()
-    html.text(inout use_line, key.copy())
-    html.put(inout use_line, "\"</code></p>\n")
+    // the module's import, in the dotted form (docs/compiler.md, "C8.26")
+    let mut use_line = "<p class=\"summary\"><code>import ".bytes()
+    let mut dotted: List[u8] = List.new()
+    for c in key.copy() {
+        if c == 47 { dotted.push(46) } else { dotted.push(c) }
+    }
+    html.text(inout use_line, dotted)
+    html.put(inout use_line, "</code></p>\n")
     if md.package.len() > 0 && !bytes.eq(key.copy(), "core/prelude".bytes()) { bytes.append(inout o, use_line) }
     let first: u32 = if md.doc_line > 0 { md.doc_line } else { 1 as u32 }
     let mdoc = doc_html(inout cx, module_doc(md.copy()), page.copy(), file.copy(), first)

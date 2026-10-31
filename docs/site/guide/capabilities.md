@@ -36,7 +36,7 @@ rule is simple: **a call needs the callee's capabilities**. If `save` uses `fs`,
 function that calls `save` must declare `fs` too, up to `main`:
 
 ```eider,compile_fail=E0201
-import "std/fs"
+import std.fs
 
 fn save(path: String, data: String) -> Result[bool, String] uses fs {
     fs.write(path.bytes(), data.bytes())
@@ -133,7 +133,7 @@ The rules:
 error[E0204]: package `notes` uses capability `fs` in `save` (notes.ei:4) but is only granted []
   --> main.ei:1:1
   |
-1 | import "notes"
+1 | import notes
   | ^
   help: to allow it, add "fs" to `uses` in [deps.notes] of <dir>/eider.toml
 ```

@@ -77,7 +77,9 @@ fn main() uses io {
 
 An identifier starts with an ASCII letter or `_` and continues with ASCII letters, digits
 and `_`: `count`, `_tmp`, `Point3`, `max_len`. Identifiers are case-sensitive. Types,
-functions, variables, fields, variants, modules and labels are all identifiers.
+functions, variables, fields, variants, modules and labels are all identifiers, and so are
+the segments of a module path (`import std.encoding`): a module whose file name is a keyword
+or not an identifier (`comptime.ei`, `my-mod.ei`) has no dotted path.
 
 `_` alone is not a name: in a pattern or a `let` it discards the value (`let _ = f()`), and
 it can't be read.
@@ -107,6 +109,8 @@ Some words have a meaning only in one position and are ordinary identifiers else
 | `_` | the wildcard pattern |
 | capability names | `io`, `fs`, `net`, `clock`, `threads`, `ffi`, ... after `uses` (see [Capabilities](capabilities.md)) |
 | type names | `i32`, `String`, `List`, `Option`, ... are names, not keywords |
+| `from` | an ordinary name; after an import path it is E0001 ("`from` imports are not supported") |
+| `std`, `core` | ordinary names, but `import std` and `import core` import the toolchain's package namespaces |
 
 ## Integer literals
 

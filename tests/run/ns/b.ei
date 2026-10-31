@@ -1,4 +1,4 @@
-import "util.ei"
+import util
 
 pub type Shape = | Circle(r: i32) | Tri(w: i32, h: i32)
 pub const SIDES: i32 = 3

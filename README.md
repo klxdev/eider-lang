@@ -28,7 +28,7 @@ scripts/selfhost.sh                       # seed -> stage1 -> stage2 -> stage3, 
 | Heap | `String`, `List[T]`, `Map[K,V]`, `Box[T]` with value semantics; drops on every exit path; no GC, no borrow annotations |
 | Control | `match` with nested patterns + exhaustiveness/reachability, `if let`, `Option`/`Result` and `?`, `for x in list`, `panic` |
 | Closures | `\|a, b\| -> T body`, `fn(A) -> R` types, capture by snapshot, named fns as values, `map/filter/fold/any/all/sum` |
-| Modules | `import "x.ei" [as y]` with namespaced access (`y.Name`), `pub` visibility (E0801), name clashes caught (E0808) |
+| Modules | dotted imports (`import std.fs`, `import std.{bytes, fs as f}`, `import json.stream`, the `import std` namespace) with qualified access (`fs.Name`), `pub` visibility (E0801), name clashes caught (E0808, E0813) |
 | Interop | `extern "c" fn` (needs `unsafe` + `uses ffi`), `export fn` -> C/C++-safe header, `build --lib` (.a/.so/.h), `build --wasm` (.wasm + .d.ts + JS loader) |
 | Concurrency | `spawn`, `Task[T].join`, `Mutex[T]` (`get/set/update`), `Chan[T]` (`send/recv/close`); `uses threads`; no shared mutable state except through these |
 | Comptime | `const X: T = comptime expr` (ints/bool; evaluator runs with no capabilities) |

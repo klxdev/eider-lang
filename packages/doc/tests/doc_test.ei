@@ -2,14 +2,14 @@
 // highlighting, doc-test extraction, and a whole build of a small site whose broken links
 // must all be reported (in target/doc-test, which it removes).
 
-import "std/bytes"
-import "std/fs"
-import "std/io"
-import "../model.ei"
-import "../summary.ei"
-import "../html.ei"
-import "../doctest.ei"
-import "../site.ei"
+import std.bytes
+import std.fs
+import std.io
+import doc.model
+import doc.summary
+import doc.html
+import doc.doctest
+import doc.site
 
 fn say(s: List[u8]) uses io { io.outln(s) }
 
