@@ -150,12 +150,14 @@ seed supports:
   order (popped from a stack). This order decides which error (and which file) comes first
   in a program with several errors, as tests/oracle records it, and the order of the rest
   ("Several errors").
-- **Names.** An imported module's items are named `stem__Name`, and the checker sees one
+- **Names.** An imported module's items are named `<module name>__Name` (the stem, or since
+  C8.3 `<stem>__0<package>...` for a module in a package: "C8.3: packages and modules"), and the checker sees one
   flat table. `resolve.ei` keys every name as (module prefix, symbol) in a u64 and applies
   the renaming rules (own items, function locals, patterns, tests), so a lookup hits exactly
   what the mangled name would; messages spell keys mangled and `diag.demangle` turns `a__B`
-  into `a.B` for the report. Modules are identified by real path (`fs.canonical`, i.e. the
-  core's `ec_realpath`), so the deps/ link farm's paths to one file are one module.
+  into `a.B` for the report. Files are told apart by real path (`fs.canonical`, i.e. the
+  core's `ec_realpath`), so every path to one file is one module; a module's identity is
+  (package, path) ("C8.3: packages and modules").
 - **Folding** (`fold.ei`) computes in a sign + 128-bit magnitude, enough for every value an
   i128 computation over in-range operands gives (E0501 messages print them).
 - **Out of scope** (nothing language-level since C7; earlier, threads, comptime, WebAssembly and FFI until their C7 sections) ends checking
@@ -650,7 +652,7 @@ moved to the seed alone ("History"), in three steps.
 ## IDE analysis (`ide.ei`)
 
 `ide.analyze(entry, overlay_paths, overlay_texts)` is the API a language server
-(eider-analyzer, which imports `deps/eiderc/ide.ei` through a path dependency on
+(eider-analyzer, which imports `"eiderc/ide"` through a path dependency on
 `compiler/`) builds on; the contract is at the top of `ide.ei`. It runs the passes of
 `eiderc check` and returns the diagnostic `check` reports, plus symbols, refs (use ->
 symbol) and types gathered, also after errors (every diagnostic `check` reports, "Several
@@ -667,7 +669,7 @@ errors"). `eiderc ide <file.ei>
   ASTs and `Module.aliases`.
 - **Overlays.** `resolve.load_from` reads sources through `resolve.Files`: fs.read, except
   for files whose canonical path is an overlay's (`resolve.disk()` has none). Module
-  identity (canonical paths, stems) is unchanged.
+  identity (packages, paths in them) is unchanged by an overlay.
 - **Never exits.** Comptime constants are evaluated as in `check`; where the driver would
   exit (no toolchain, no work directory) `analyze` reports a `toolchain` diagnostic instead
   (`driver.find_root`, `driver.try_work_dir`).
@@ -964,7 +966,7 @@ and leaves the analyzer building.
 |---|---|---|---|
 | 1 | **8.1 Copy-on-write** | heap types share buffers with a refcount, copy on first write; non-atomic, atomic once sent to a thread; drops once at the last holder; quadratic `String` append fixed (capacity) | — |
 | 1 | **8.2 Small language gaps** | bitwise operators `& \| ^ << >> ~` (checked shifts); `String`/`str` byte access, slicing, building from bytes; `()` values (`Ok(())`); `main` returning an exit code; `impl` on built-in types | — |
-| 1 | **8.3 Package-qualified modules** | module identity = (package, path) instead of file stem (no more E0808 for two packages' `util.ei`); bare `import "json"` resolved through `eider.lock`; the `deps/` link farm retired | — |
+| 1 | **8.3 Package-qualified modules** (done: "C8.3: packages and modules"; package imports in compiler/, std/, packages/ after the next seed) | module identity = (package, path) instead of file stem (no more E0808 for two packages' `util.ei`); bare `import "json"` resolved through `eider.lock`; the `deps/` link farm retired | — |
 | 2 | **8.4 Operation traits** | `Copy`, `Eq`, `Ord`, `Hash`, `Show`, `Iter`, `Drop` in the core prelude; automatic derive; orphan rule; generic bounds with suggested fixes; Map keys any `Hash + Eq`; `for` over any `Iter` | 8.1, 8.2 |
 | 2 | **8.5 Capability encapsulation** | `ffi` becomes a property of a package (granted in eider.toml); std callers stop writing `uses ffi`; the compiler reports each package's real capability use and eider-pkg checks grants from that instead of scanning text | 8.3 |
 | 3 | **8.6 References by default** | `let` binds a read-only reference to a place, `let mut` a mutable alias, fresh values are owned; `.copy()`; pattern bindings the same; the protection rule (no invalidating write while a reference is alive) with fixes; references are C pointers; `var` deprecated with a mechanical fix | 8.1, 8.4 |
@@ -978,6 +980,133 @@ and leaves the analyzer building.
 | 5 | **8.14 Package manager on bare imports** | eider-pkg reworked for 8.3/8.5 (no link farm, compiler-reported grants), registry design | 8.3, 8.5 |
 | later | 8.15 Projections, lints | std accessors returning references; lints for real copies at escapes and `Ref` cycles | 8.6, 8.7 |
 
+## C8.3: packages and modules
+
+Backlog item 8.3 (wave 1): module identity is (package, path) instead of the file stem, a
+package is imported by name through `eider.lock`, and the `deps/` link farm is gone. Code:
+`resolve.ei` (loading, identity, module names), `lock.ei` (eider.toml and eider.lock as the
+compiler reads them), `diag.demangle`; eider-pkg in `packages/pkg`.
+
+**Packages.** A file's package is the nearest `eider.toml` above its canonical path (symlinks
+resolved); its `[package] name` names it. A file with no `eider.toml` above it is in no
+package. The toolchain's `core/` and `std/` are the packages `core` and `std` (each has an
+`eider.toml`); the names are reserved (eider-pkg rejects a package or a dependency called
+either).
+
+**Module identity** is (package, the file's path inside the package without its
+extension): `compiler/lex.ei` is (eiderc, lex), `packages/json/json.ei` (json, json). A file in
+no package keeps the identity it always had, its canonical path, and two such files with one
+stem still clash (E0808), so every existing program means what it meant. Two different files
+with one identity are E0808 too: outside packages, the same stem (message unchanged, new
+help: "rename one of the files, or put them in packages"); inside packages, two copies of one
+package loaded from different directories ("two different copies of package `base` have
+module `base` (A and B)"), which only a path import of a second copy can cause, since a
+program locates each package once, through one eider.lock. Two packages may each have a
+`util.ei`; a package and a file in no package may share a stem.
+
+**Module names, C names.** A module's items are keyed by its *module name*, the prefix the
+checker spells into every name (`<module name>__Name`) and lowering into every C name
+(`t_`, `f_`, ...; "C4: lowering"). Outside packages it is the stem (so the C for every
+existing test is unchanged); inside a package it is `<stem>__0<package>`, or
+`<stem>__0<package>_s<path>` when the path is not just the stem (a directory, or bytes that
+are not identifier bytes): `lex__0eiderc`, `util__0shapes_ssrc_sutil`. The package and path
+are escaped (letters and digits as is, `_` `_u`, `/` `_s`, `-` `_d`, `.` `_p`, others `_x`
+and two hex digits), so module names are identifier bytes, contain no `__` after the
+marker, and decode back to (package, path): distinct identities give distinct C names.
+They depend only on the package's name and the path inside it, never on where the package
+sits on disk, so the C is byte-identical from another checkout (test-compiler.sh,
+"packages"). What users see shows the stem only: `diag.demangle` drops `__0...` (messages
+say `util.Point`, as before), and so does `resolve.shown` where text reaches a program or a C
+interface (the variant names a program prints, `geo__South`; `export fn` symbols,
+`eider_units__twice`; header record names). A known corner: a file in no package whose name
+contains `__0` displays oddly.
+
+**Imports.** An import string is a *path import* if it contains a `.` or starts with `/`
+(`"util.ei"`, `"../lib/geo.ei"`, `"lib/broken_mod.txt"`): a file relative to the importing
+file, as before. Otherwise it is a *package import*: `"<package>"` or
+`"<package>/<path>"`, the package name lowercase letters, digits and `_` starting with a
+letter, the path one or more non-empty segments. (So a path import without its extension,
+`"lib/geometry"`, which nothing in the repository used, is now a package import.)
+
+- `"std/fs"`, `"core/sys"`: the toolchain's, `<toolchain root>/std/fs.ei` (the root that holds
+  the prelude, resolve.ei `toolchain_root`), from any file. `"std"` alone is E0809 (no entry).
+- `"json"`: package json's entry module (`entry` in its eider.toml, default `json.ei`);
+  `"json/a/b"`: its file `a/b.ei`. Allowed when json is the importing file's own package or a
+  direct dependency of it (`[deps.json]` in its eider.toml). Anything else is **E0809**
+  ("package `util` is not a dependency of `app` (<dir>/eider.toml)", help: `eider-pkg add util
+  --path <dir>` or `--git <url> --version <v>`), also for a file in no package and for a
+  malformed import (`"Geo"`, `"geo//util"`).
+- The default alias is the last segment: `json`, `util` for `"json/util"`, `fs` for `"std/fs"`.
+- A dependency's directory comes from **eider.lock**: the lock of the program's root package
+  (the entry file's; when the entry file is in no package, the importing package's own). A
+  `path+<dir>` source is `<dir>` relative to the lock; a `git+` source is `vendor/<name>`
+  beside the lock when that directory exists, else the store's `$EIDER_HOME/pkg/<name>-<the
+  first 16 hex digits of the locked content hash>` (`EIDER_HOME` defaults to `~/.eider`):
+  exactly where `eider-pkg fetch` and `eider-pkg vendor` put it. No lock, no entry for the
+  package, a directory that doesn't exist, or an eider.toml or eider.lock that doesn't parse
+  is **E0810**, with the fix `run eider-pkg fetch in <dir>`. The compiler does not re-hash
+  store directories: eider-pkg checks the hash whenever it fetches.
+- So visibility is per package: app sees its dependencies, each dependency sees its own
+  (from its own eider.toml, read in the store or vendor copy), and the lock, written for the
+  whole graph by `eider-pkg fetch`, says where each one is.
+- A module's `path` (Diag.file, ide Span.file) is the package's directory joined with the
+  module's path: absolute for a package import, since the directory comes from canonical
+  paths and the lock. Relative imports inside a package go on from there.
+- The old link-farm spelling `import "deps/json/json.ei"` is a path import that now fails with
+  E0804; when the path has a `deps/` segment the help says to import the package by name.
+
+`lock.ei` is the compiler's own reader (the compiler depends only on core and std, LAYERS.md):
+the TOML subset packages/toml reads, flattened the same way, keeping what the compiler needs
+(the package name, entry and dependency names; per lock entry the name, path or git source
+and hash).
+
+**eider-pkg.** `fetch` (and `add`, `remove`, `update`, `vendor`) resolves and writes
+eider.lock and fills the store or vendor/; it no longer makes `deps/` (compatibility: a
+`deps/` holding the `.all` directory an earlier eider-pkg made is removed). `init` writes a
+program that imports `"core/sys"` and `"std/io"`, and no `.gitignore`. The lock format is
+unchanged. `scripts/bootstrap-deps.sh` is retired (a no-op that removes old links; nothing
+calls it).
+
+**Migration, staged.** compiler/ must build with the current seed, which knows only path
+imports, and so must std/ and core/ (which compiler/ imports) and everything verify.sh builds
+with the seed (packages/, eider-pkg, the tests). So:
+
+1. Now (this item): nothing in the repository needs `deps/`. compiler/ imports
+   `../core/sys.ei` and `../std/fs.ei`, packages/ import `../../std/fs.ei` and each other as
+   `../toml/toml.ei`, std/ already imported `../core/sys.ei`: path imports, which every
+   compiler understands, and module identity comes from the packages either way.
+   packages/pkg declares its dependencies with the grants their tests need and has a
+   committed eider.lock (path sources, so it is the same on every machine). Package imports
+   are used where only the new compiler builds: compiler/tests/pkgs, tests/pkg/run.sh (which
+   builds its programs with `target/eiderc-next`, or `EIDERC`), and eider-analyzer.
+2. After the next seed: `scripts/migrate-imports.sh compiler std core packages tests` rewrites
+   every path import that crosses into another package (core and std, or a declared
+   dependency) into a package import, keeping aliases (`as <old alias>` where the default
+   would change); imports within a package stay relative. test-compiler.sh ("migration")
+   already runs it on a copy of core, std, packages and compiler and holds the result to
+   checking and to the package tests, so stage 2 is the mechanical rewrite plus a BLESS for
+   the tests whose diagnostics quote an import line, and the new codes' cases join
+   tests/checks (until then they are in compiler/tests/check, which only the new compiler
+   runs: the seed would report E0804 for them).
+
+**Tests.** compiler/tests/pkgs: app, geo, shapes and base packages with eider.lock, a
+vendored git package and one in a store (`home/`), in `// pkgtest: run|check|ide` files with
+hand-checked `X.out`: three `util` modules in one program, a chain (app -> geo -> base),
+an entry that isn't `<name>.ei`, self-import by package name, std and core, then the errors:
+an undeclared package, an indirect one, one missing from eider.lock, a locked directory that
+is gone, no eider.lock, malformed imports, two copies of a package, and a file in no package;
+plus the same C from a copy of the layout at another path. compiler/tests/check/fail has
+E0809 and E0810 cases, compiler/tests/unit/lock.ei the reader. tests/pkg/run.sh builds and
+runs its projects through eider.lock: no `deps/` after fetch, the locked git packages in the
+store, an indirect or undeclared or removed dependency is E0809, one added by hand before a
+fetch E0810, a run from vendor/ with the store deleted, and `core`/`std` refused as names.
+
+**IDE.** ide.analyze is unchanged in shape: Span.file is a module's path as above (absolute
+for package imports), files are told apart by canonical path as before, and module refs come
+from `Module.aliases` (one per import, also for one that failed). eider-analyzer imports the
+compiler as `"eiderc/ide"` (a path dependency on compiler/) and json as `"json"`, finds them
+through its eider.lock, and builds with a compiler that knows package imports.
+
 ## Language work that lands in `eiderc` (after parity)
 
 Each with a design note, compile-fail tests and new codes:
@@ -986,7 +1115,8 @@ Each with a design note, compile-fail tests and new codes:
 2. Bitwise operators `& | ^ << >> ~` (checked shifts).
 3. Unit values `()` / `Ok(())`; `main` returning an exit code; `impl` on built-in types.
 4. Package-qualified modules: identity (package, path) instead of file stem; bare imports
-   resolved from `eider.lock`; the `deps/` link farm goes away.
+   resolved from `eider.lock`; the `deps/` link farm goes away. Done ("C8.3: packages and
+   modules").
 5. Capability encapsulation. Proposal: `ffi` becomes a property of a *package*, not of call
    chains. A package that declares `extern` functions must be granted `ffi` by its dependers
    in `eider.toml`. Its functions don't propagate `uses ffi` to callers, but they still
@@ -1034,9 +1164,10 @@ compiler/
   main.ei             CLI (`eiderc --help`)
   source.ei  lex.ei  intern.ei  ast.ei  parse.ei  resolve.ei  types.ei  fold.ei  pats.ei
   check.ei  ir.ei  lower.ei  emit.ei  diag.ei  driver.ei  comptime.ei  suite.ei  sha256.ei
+  lock.ei             eider.toml and eider.lock for package imports ("C8.3")
   ide.ei              the IDE analysis API (`eiderc ide`; "IDE analysis")
   front.ei            every syntax error at once ("Front-end recovery")
-  tests/              pass-level golden tests (lex, lex_ok, check, ir, run, wasm, export, ide, ...)
+  tests/              pass-level golden tests (lex, lex_ok, check, ir, run, wasm, export, ide, pkgs, ...)
 tests/oracle/         the recorded expected results (scripts/test-compiler.sh, BLESS=1)
 ```
 

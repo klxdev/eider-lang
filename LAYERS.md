@@ -10,18 +10,19 @@ Eider code is partitioned into three layers. Dependencies only point down.
 |---|---|---|---|
 | core | `core/` | C (`eider_core.c`, `eider_rt.{h,c}`; `wasm/`, the runtime's optional WebAssembly backend) + Eider (`sys.ei`, `prelude.ei`) | `eider_rt` is the language runtime generated C calls (traps, checked arithmetic, allocation, String, print, thread primitives; `core/RUNTIME.md`). `prelude.ei` is the language's own Eider source that every program sees (Option, Result and their methods; its text is fixed, since positions recorded in `tests/oracle/` depend on it); it stays that tiny. Otherwise the OS interop boundary and nothing else, specified in `core/ABI.md` so each OS or architecture is one backend file. One OS call per C function, errors as `-errno`, no logic, no pointers exposed to Eider (data crosses a byte at a time through the core's buffers). `sys.ei` is the only module allowed to use `extern`/`unsafe`, and it binds only `ec_*` core symbols. |
 | std | `std/` | Eider | What almost every program needs: `bytes` (text as `List[u8]`), `fs`, `io`, `env`, `proc`. Imports only core and other std modules. |
-| packages | `packages/<name>/` | Eider | Everything else, as ordinary packages with an `eider.toml`: `toml`, `semver`, `sha256`, `json`, the package manager itself, and `fuzz` (the compiler's crash and consistency fuzzer, `scripts/fuzz-check.sh`). They import `deps/core/...`, `deps/std/...` and `deps/<dep>/...`. |
+| packages | `packages/<name>/` | Eider | Everything else, as ordinary packages with an `eider.toml`: `toml`, `semver`, `sha256`, `json`, the package manager itself, and `fuzz` (the compiler's crash and consistency fuzzer, `scripts/fuzz-check.sh`). A package imports `"core/<module>"`, `"std/<module>"` and its declared dependencies by name (`"toml"`, `"json/<module>"`), located through its eider.lock (docs/compiler.md, "C8.3: packages and modules"). Until the seed knows package imports, the packages in this repository import the toolchain and each other by relative path (`"../../std/fs.ei"`, `"../toml/toml.ei"`). |
 
 The compiler (`compiler/`, docs/compiler.md) is a program on top of these layers, but it may
 depend only on core and std: it builds itself from the seed with nothing else, and packages
 are resolved by a package manager that the compiler builds. So when the compiler needs an
 algorithm that lives in a package, it carries a small module of its own rather than pulling
-the algorithm into std. The one such case is `compiler/sha256.ei`, the hash of the driver's
+the algorithm into std. Such cases are `compiler/lock.ei` (the compiler's reader for
+eider.toml and eider.lock, the TOML subset of packages/toml) and `compiler/sha256.ei`, the hash of the driver's
 binary and core-object cache (a copy of `packages/sha256`, made faster with an XOR table and
 by not copying the input). Moving sha256 into std was rejected: std is for what most
-programs need, and a hash is a package by the rule below. The copy goes away when
-package-qualified modules land (docs/compiler.md, "Language work" item 4) and the compiler
-can take a pinned package from the repository.
+programs need, and a hash is a package by the rule below. The copy can go once the seed
+knows package imports (docs/compiler.md, "C8.3: packages and modules"): then the compiler
+can take a pinned package from the repository as a path dependency.
 
 ## Dependencies
 
@@ -54,7 +55,7 @@ Rules of thumb:
 Tooling:
 
 - `scripts/ei <eiderc args>`: the compiler, `target/eiderc`, built from `seed/eiderc.c` with `$CC` when it is missing or older than the seed or `core/` (eiderc links the C core into every program itself).
-- `scripts/bootstrap-deps.sh`: links `deps/core` and `deps/std` into each package so the package manager can be built before it exists.
+- `scripts/migrate-imports.sh <dirs>`: rewrites path imports that cross into another package (core, std, a declared dependency) into package imports; run on compiler/, std/, core/, packages/ and tests/ once the seed knows package imports (docs/compiler.md, "C8.3"). (`scripts/bootstrap-deps.sh`, which linked a `deps/` farm into each package, is retired: nothing needs it.)
 - `tests/std/run.sh`, `tests/packages.sh`: suites for std and packages (both run by `scripts/verify.sh`).
 - `tests/pkg/run.sh`: eider-pkg end to end against local git repositories under `target/tmp/pkgtest/` (no network; also run by `scripts/verify.sh`).
 
@@ -62,7 +63,6 @@ Known limits of this arrangement (all need compiler work):
 
 - Every caller of std needs `uses ffi`, because capabilities propagate and std sits on `extern` calls.
 - `str` has no byte access, so literals become bytes through `sys.lit` (an ffi call).
-- Module names are file stems, so two packages can't both contain `util.ei` (E0808).
 - No bitwise operators: `sha256` uses arithmetic and a byte table.
 
 Known gaps in core/std (fix in core, not by working around them in packages):
