@@ -1,0 +1,5 @@
+// expect: E0601 4:17
+type Job = { id: i32, done: Chan[i32] }
+fn main() {
+    let j = Job.default()
+}

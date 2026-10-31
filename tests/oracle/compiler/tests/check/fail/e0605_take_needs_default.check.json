@@ -1,0 +1,1 @@
+{"error":"E0605","span":{"file":"compiler/tests/check/fail/e0605_take_needs_default.ei","line":3,"col":40},"message":"`T.take` needs `T: Default`","help":"a generic body can only use what its type parameters' bounds promise; add the bound","fix":{"at":{"line":3,"col":11},"delete":0,"insert":": Default"}}

@@ -1,0 +1,95 @@
+// std/error (docs/compiler.md, "C8.24"): an `Error` impl, `.context(...)` and
+// `.with_context(...)` on Results and Options, `?` converting any Error into a Failure
+// through `From`, the chain, the root, and a Failure converted on into an application's own
+// error. Expected output: errors_context.out.
+import "std/error"
+
+type ParseError = { at: usize, what: String }
+
+impl error.Error for ParseError {
+    fn message(self) -> String {
+        let mut m = String.from("bad ")
+        m.append(self.what.copy())
+        m.push_str(" at ")
+        m.append(String.from_int(self.at as i64))
+        m
+    }
+    fn source(self) -> Option[error.Failure] { None }
+}
+
+// an error with a cause of its own
+type IoError = { path: String, inner: ParseError }
+
+impl error.Error for IoError {
+    fn message(self) -> String {
+        let mut m = String.from("cannot use ")
+        m.append(self.path.copy())
+        m
+    }
+    fn source(self) -> Option[error.Failure] { Some(error.Failure.of(self.inner)) }
+}
+
+fn parse(s: str) -> Result[i32, ParseError] {
+    if s.len() == 0 { return Err(ParseError(0, String.from("empty input"))) }
+    if s.byte(0) < 48 || s.byte(0) > 57 { return Err(ParseError(0, String.from("digit"))) }
+    Ok((s.byte(0) - 48) as i32)
+}
+
+// `?` converts ParseError into Failure (From), `.context` wraps it
+fn load(s: str) -> Result[i32, error.Failure] {
+    let a = parse(s)?
+    let b = parse(s).context("parsing the second value")?
+    Ok(a + b)
+}
+
+fn settings(name: str) -> Result[i32, error.Failure] {
+    let n = load(name).with_context(|| {
+        let mut m = String.from("loading ")
+        m.push_str(name)
+        m
+    })?
+    Ok(n * 10)
+}
+
+fn open(path: str) -> Result[i32, IoError] { Err(IoError(String.from(path), ParseError(3, String.from("header")))) }
+
+// an application's own error, from a Failure
+type AppError = | Config(String) | Other
+
+impl From[error.Failure] for AppError {
+    fn from(value: error.Failure) -> AppError { Config(value.to_string()) }
+}
+
+fn run(name: str) -> Result[i32, AppError] {
+    let n = settings(name)?
+    Ok(n + 1)
+}
+
+fn main() uses io {
+    print(load("4"))
+    print(load(""))
+    print(settings("x"))
+    match settings("") {
+        Ok(_) => print(String.from("no error"))
+        Err(f) => {
+            print(f.chain())
+            print(f.root())
+            print(f.source())
+        }
+    }
+    let r = open("app.toml").context("starting")
+    match r {
+        Ok(_) => {}
+        Err(f) => {
+            print(f)
+            print(f.chain().len())
+        }
+    }
+    let none: Option[i32] = None
+    print(none.context("no port given"))
+    let some = Some(3)
+    print(some.context("unused"))
+    print(run("7"))
+    print(run("q"))
+    print(error.Failure.new("plain"))
+}

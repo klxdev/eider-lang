@@ -1,0 +1,6 @@
+Spec { name: "user", fields: ["id", "name"], strict: true }
+0
+2
+1
+["w"]
+["a"]

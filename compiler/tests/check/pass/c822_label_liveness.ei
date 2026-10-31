@@ -1,0 +1,24 @@
+// The protection rule follows a labeled exit to its own loop (docs/compiler.md, "C8.22"):
+// after `xs.clear()` only `break outer` / `continue outer` run, which skip the use of `r`
+// after the inner loop, so no reference into xs is alive at the clear.
+fn main() {
+    let mut xs: List[List[i32]] = List.new()
+    xs.push(List.new())
+    outer: for i in 0..2 {
+        let r = xs[0]
+        for j in 0..2 {
+            xs.clear()
+            break outer
+        }
+        let n = r.len()
+    }
+    again: for i in 0..2 {
+        xs.push(List.new())
+        let r = xs[0]
+        for j in 0..2 {
+            xs.clear()
+            continue again
+        }
+        let n = r.len()
+    }
+}

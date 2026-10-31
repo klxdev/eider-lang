@@ -1,0 +1,7 @@
+// expect: E0306 4:45
+fn main() {
+    outer: for i in 0..3 {
+        let f = |x: i32| -> () { if x > 1 { break outer } }
+        f(i as i32)
+    }
+}

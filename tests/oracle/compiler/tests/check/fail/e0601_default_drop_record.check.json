@@ -1,0 +1,1 @@
+{"error":"E0601","span":{"file":"compiler/tests/check/fail/e0601_default_drop_record.ei","line":7,"col":17},"message":"type Res doesn't implement trait `Default`","help":"a record has `Default` when every field has one; give an enum (or any record or enum) its own `impl Default for ...`"}

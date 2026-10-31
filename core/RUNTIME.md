@@ -82,6 +82,8 @@ Messages generated code relies on, all byte-identical to the recorded expectatio
 | any `panic` / `assert` text | generated code calls `ei_trap` directly |
 
 | `stack overflow` (line 0) | the fault handler of a runtime thread ("Stack overflow") |
+| `Ref read while it is being updated`, `Ref updated while it is being read`, `Ref updated while it is already being updated` | `ei_ref_read_begin`, `ei_ref_update_begin` ("Ref") |
+| `a Ref can't be sent to another thread` (line 0) | generated `own_` glue meeting a Ref (a closure capturing one sent to a thread) |
 
 Also reported (failures the recorded expectations never exercise): `cannot create a mutex`,
 `cannot lock a mutex`, `cannot unlock a mutex`, `cannot join a thread`,
@@ -196,6 +198,19 @@ reaches its own (`own_` glue: `uniq` at every level). That happens to `spawn`'s 
 lock), and to the copies `Mutex.get` and `Task.join` hand out (made and owned under the
 Mutex's lock, or the Task's own lock, since joins may run on several threads at once). The
 shared handles themselves (`ei_rc`) stay atomic.
+
+### Ref
+
+A `Ref[T]` (docs/compiler.md, "C8.7") is a shared buffer of one `{ int64_t st; T v; }`
+(generated struct): the buffer's count is the number of holders (not atomic: a Ref never
+crosses threads; the checker rejects it, E0411, and `own_` glue traps if one is reached),
+and `st` is the access state, `> 0` reads in progress, `-1` an update. Generated code
+brackets each access with the inline functions below (no call when inlined):
+
+| Function | Contract |
+|---|---|
+| `ei_ref_read_begin(int64_t *st, int32_t line)`, `ei_ref_read_end(int64_t *st)` | around `read`, `get` and `.copy()`; traps `Ref read while it is being updated` (line) when `*st < 0`, else counts one more read |
+| `ei_ref_update_begin(int64_t *st, int32_t line)`, `ei_ref_update_end(int64_t *st)` | around `update` and `set`; traps `Ref updated while it is already being updated` when `*st < 0`, `Ref updated while it is being read` when `*st > 0`, else sets `-1`; the end sets `0` |
 
 ## Print and clock
 
@@ -320,6 +335,7 @@ walks or is parameterised by a concrete type stays compiler output.
 | index checks, integer conversions | `ei_idx`, `ei_s2s/s2u/u2s/u2u` |
 | allocation | `ei_alloc`, plus `ei_alloc_n` for the `n * sizeof(T)` call sites |
 | shared buffers (copy-on-write) | `ei_buf_hdr`, `ei_buf_alloc/grow/free`, `ei_buf_inc/dec/shared/count`, `ei_grow_cap` |
+| `Ref` access checks | `ei_ref_read_begin/end`, `ei_ref_update_begin/end` |
 | `String` | `ei_String`, `ei_str_from`, `ei_str_from_i64`, `ei_drop_String`, `ei_share_String`, `ei_clone_String`, `ei_str_unique`, `ei_str_cat/push/append` |
 | Map key hashes | `ei_hash_u64`, `ei_hash_str` |
 | `print` | `ei_print_i/u/b/s` (`int64_t`/`uint64_t`) |

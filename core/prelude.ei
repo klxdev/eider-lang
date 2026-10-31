@@ -116,3 +116,9 @@ trait Drop { fn drop(inout self) }
 // from(value: E1) -> E2 { ... } }` in E2's package, `?` on a Result[_, E1] in a function
 // returning Result[_, E2] returns Err(E2.from(e)). `Source` is the impl's type argument.
 trait From { fn from(value: Source) -> Self }
+
+// Default values (docs/compiler.md, "C8.23"): `T.default()`, and what `x.take()` leaves
+// behind. Integers are 0, bool false, str and String "", List and Map empty, Option None, `()`
+// itself; a record, tuple, array or Box has one when every part has one (derived); an enum
+// (but Option) or a record with its own Drop only through its own impl.
+trait Default { fn default() -> Self }

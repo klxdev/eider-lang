@@ -304,7 +304,7 @@ Recorded rather than worked around; none blocks the design.
 | N10 | Calling a function stored in a field (`(self.h)(x)`) | router | bind it to a local first (`self.h(x)` works, also with the seed; a method of the same name wins: docs/compiler.md "C8.19") |
 | N11 | Name resolution with a deadline | the client takes an `net.Addr` | `net.lookup` blocks; resolve first |
 | N12 | Connection information in the handler (peer address, TLS later) | logging, rate limiting | done: `Request.peer` (TLS information later) |
-| N13 | A method chain continued on the next line (a line starting with `.field(...)`, or ending with `.`) | schema and operation builders | reassignments: `s = s.field(...)` |
+| N13 | A method chain continued on the next line (a line starting with `.field(...)`, or ending with `.`; the first is done: docs/compiler.md "C8.25", usable after the next seed) | schema and operation builders | reassignments: `s = s.field(...)` |
 | N14 | Grants checked per imported module, not against everything the program loads of a package | packages/openapi is pure but programs load http/server | openapi grants http `net, io, clock, threads` |
 | N15 | Interrupting a handler (cancellation reaching blocked code; with N6) | `middleware.timeout` | 503 at the deadline; the handler finishes on its pool's worker, `req.deadline` for cooperation |
 | N16 | A per-route body limit before the body is read (the router consulted after the head) or streaming bodies | `middleware.body_limit` | checked after reading, up to the server's `max_body` |

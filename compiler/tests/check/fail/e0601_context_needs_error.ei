@@ -1,0 +1,6 @@
+// expect: E0601 5:15
+import "std/error"
+fn main() {
+    let r: Result[i32, bool] = Err(true)
+    let f = r.context("reading")
+}

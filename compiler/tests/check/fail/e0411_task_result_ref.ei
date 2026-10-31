@@ -1,0 +1,4 @@
+// expect: E0411 3:19
+fn main() uses threads {
+    let t = spawn(|| Ref.new(1))
+}

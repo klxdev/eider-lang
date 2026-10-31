@@ -117,6 +117,10 @@ const GK_SHOWQ: u32 = 30
 const GK_SHOWN: u32 = 31
 const GK_COPY: u32 = 32
 const GK_RNEW: u32 = 33
+// Ref[T] (C8.7): `new_R`, a new Ref holding a value
+const GK_REFNEW: u32 = 34
+// Default (C8.23): `default_T`, the derived Default of a record, tuple, array or Box
+const GK_DEFAULT: u32 = 35
 // the traits, as check.ei numbers them in ir.Ir.impls
 const TR_COPY: u32 = 0
 const TR_EQ: u32 = 1
@@ -124,6 +128,7 @@ const TR_ORD: u32 = 2
 const TR_HASH: u32 = 3
 const TR_SHOW: u32 = 4
 const TR_DROP: u32 = 6
+const TR_DEFAULT: u32 = 7
 
 /// Output and lowering state. `o` is the text being written; `pr` collects glue prototypes
 /// and `envs` closure environment structs while glue is generated. Per type: its C name
@@ -154,6 +159,9 @@ type G = {
     /// names the trap table needs (put_line)
     file: u32,
     files: List[u32],
+    /// per loop in `loops`: the label after it that a labeled `break` from a nested loop
+    /// jumps to (NONE: none needed; docs/compiler.md, "C8.22")
+    brks: List[u32],
 }
 
 fn put(inout g: G, s: str) { bytes.append(inout g.o, sys.lit(s)) }
@@ -304,7 +312,7 @@ fn clash(inout g: G, name: List[u8], from: List[u8]) {
 }
 
 fn is_struct_kind(k: u32) -> bool {
-    k == types.T_ENUM || k == types.T_RECORD || k == types.T_ARRAY || k == types.T_TUPLE || k == types.T_LIST || k == types.T_MAP || k == types.T_BOX || k == types.T_FN || types.is_handle(k)
+    k == types.T_ENUM || k == types.T_RECORD || k == types.T_ARRAY || k == types.T_TUPLE || k == types.T_LIST || k == types.T_MAP || k == types.T_BOX || k == types.T_FN || types.is_handle(k) || k == types.T_REF
 }
 
 /// Whether type `ty` is concrete (no generic template inside it).
@@ -315,7 +323,7 @@ fn usable(p: P, ty: u32) -> bool {
         let d = types.def_of(p.t, ty)
         return d.generic == 0 && d.filled
     }
-    if k == types.T_ARRAY || k == types.T_LIST || k == types.T_BOX || types.is_handle(k) { return usable(p, t.a) }
+    if k == types.T_ARRAY || k == types.T_LIST || k == types.T_BOX || types.is_handle(k) || k == types.T_REF || k == types.T_INOUT { return usable(p, t.a) }
     if k == types.T_MAP { return usable(p, t.a) && usable(p, t.b) }
     if k == types.T_TUPLE {
         for x in types.elems(p.t, ty) {
@@ -356,6 +364,7 @@ fn type_name(p: P, ty: u32) -> List[u8] {
     if k == types.T_TASK { bytes.append(inout out, sys.lit("tk_")) }
     if k == types.T_MUTEX { bytes.append(inout out, sys.lit("tx_")) }
     if k == types.T_CHAN { bytes.append(inout out, sys.lit("tc_")) }
+    if k == types.T_REF { bytes.append(inout out, sys.lit("tr_")) }
     hex8(inout out, h64(shown))
     out
 }
@@ -575,6 +584,10 @@ fn cty(inout g: G, p: P, ty: u32) {
         put(inout g, "uint8_t")
     } else if k == types.T_STRING {
         put(inout g, "ei_String")
+    } else if k == types.T_INOUT {
+        // an `inout` parameter of a fn value: a pointer to the place (docs/compiler.md, "C8.7")
+        cty(inout g, p, t.a)
+        put(inout g, " *")
     } else {
         let n = g.tn[ty as usize].copy()
         putb(inout g, n)
@@ -593,7 +606,7 @@ fn owns(inout g: G, p: P, ty: u32) -> bool {
     let t = types.get(p.t, ty)
     let k = t.kind
     let mut r = false
-    if k == types.T_STRING || k == types.T_LIST || k == types.T_MAP || k == types.T_BOX || k == types.T_FN || types.is_handle(k) {
+    if k == types.T_STRING || k == types.T_LIST || k == types.T_MAP || k == types.T_BOX || k == types.T_FN || types.is_handle(k) || k == types.T_REF {
         r = true
     } else if k == types.T_ARRAY {
         r = owns(inout g, p, t.a)
@@ -705,7 +718,7 @@ fn def_ty(inout g: G, p: P, ty: u32, inout done: Map[u32, bool]) {
         put(inout g, " *p; };\n")
         return
     }
-    if types.is_handle(k) {
+    if types.is_handle(k) || k == types.T_REF {
         // the shared object's struct is defined after every type (handle_bodies)
         put(inout g, "struct ")
         cty(inout g, p, ty)
@@ -938,6 +951,10 @@ fn glue(inout g: G, p: P, key: u64) {
         own_glue(inout g, p, id)
     } else if kind == GK_BYTES || kind == GK_UTF8 {
         text_glue(inout g, p, kind, id)
+    } else if kind == GK_REFNEW {
+        ref_new_glue(inout g, p, id)
+    } else if kind == GK_DEFAULT {
+        default_glue(inout g, p, id)
     } else if kind >= GK_CMP {
         trait_glue(inout g, p, kind, id)
     } else if kind >= GK_SPAWN {
@@ -1122,6 +1139,11 @@ fn drop_glue(inout g: G, p: P, ty: u32) {
         put(inout g, "ei_buf_free(x->p);\n  }\n  x->p = NULL;")
     } else if k == types.T_FN {
         put(inout g, "if (x->drop) { x->drop(x->env); }\n  x->env = NULL; x->drop = NULL; x->clone = NULL; x->own = NULL;")
+    } else if k == types.T_REF {
+        // the last holder drops the value, once
+        put(inout g, "if (ei_buf_dec(x->p)) {\n    ")
+        drop_call(inout g, p, t.a, sys.lit("&x->p->v"))
+        put(inout g, "ei_buf_free(x->p);\n  }\n  x->p = NULL;")
     } else if types.is_handle(k) {
         handle_drop(inout g, p, ty)
     }
@@ -1214,6 +1236,9 @@ fn clone_glue(inout g: G, p: P, ty: u32) {
         put(inout g, "ei_buf_inc(r.p);")
     } else if k == types.T_FN {
         put(inout g, "if (x->clone) { r.env = x->clone(x->env); }")
+    } else if k == types.T_REF {
+        // shares the cell (a count that isn't atomic: a Ref stays on its thread)
+        put(inout g, "ei_buf_inc(r.p);")
     } else if types.is_handle(k) {
         // shares the object
         put(inout g, "if (r.p) ei_rc_inc(&r.p->rc);")
@@ -1368,6 +1393,10 @@ fn own_glue(inout g: G, p: P, ty: u32) {
         }
     } else if k == types.T_FN {
         put(inout g, "if (x->own) { x->own(x->env); }")
+    } else if k == types.T_REF {
+        // the checker keeps every Ref it can see on its thread (E0411); this catches one
+        // inside a closure's environment, which no type shows
+        put(inout g, "if (x->p) ei_trap(\"a Ref can't be sent to another thread\", 0);")
     }
     put(inout g, "\n}\n")
 }
@@ -1606,7 +1635,7 @@ fn deep(p: P, ty: u32, inout seen: Map[u32, bool]) -> bool {
     seen.insert(ty, true)
     let t = types.get(p.t, ty)
     let k = t.kind
-    if k == types.T_MUTEX || custom_fn(p, TR_COPY, ty) != NONE || shared_rec(p, ty) { return true }
+    if k == types.T_MUTEX || k == types.T_REF || custom_fn(p, TR_COPY, ty) != NONE || shared_rec(p, ty) { return true }
     if k == types.T_ARRAY || k == types.T_LIST || k == types.T_BOX { return deep(p, t.a, inout seen) }
     if k == types.T_MAP { return deep(p, t.a, inout seen) || deep(p, t.b, inout seen) }
     if k == types.T_TUPLE {
@@ -1997,6 +2026,11 @@ fn trait_glue(inout g: G, p: P, kind: u32, ty: u32) {
         put(inout g, "r = ")
         gname(inout g, p, "new_", ty)
         put(inout g, "(v);")
+    } else if k == types.T_REF {
+        // a new Ref holding a copy of the value (a read of it)
+        put(inout g, "ei_ref_read_begin(&x->p->st, 0);\n  r.p = ei_buf_alloc(1, sizeof *r.p);\n  r.p->st = 0;\n  r.p->v = ")
+        copy_expr(inout g, p, t.a, sys.lit("&x->p->v"))
+        put(inout g, ";\n  ei_ref_read_end(&x->p->st);")
     }
     put(inout g, "\n  return r;\n}\n")
 }
@@ -2566,8 +2600,21 @@ fn has_continue(p: P, b: u32) -> bool {
     let bl = p.ir.blocks[b as usize]
     for i in 0..bl.len {
         let s = p.ir.stmts[p.ir.extra[(bl.start + i) as usize] as usize]
-        if s.kind == ir.S_CONTINUE { return true }
+        if s.kind == ir.S_CONTINUE && s.a == 0 { return true }
         if s.kind == ir.S_IF && (has_continue(p, s.b) || has_continue(p, s.c)) { return true }
+    }
+    false
+}
+
+/// Whether block b, `d` loops inside a loop L, has a labeled exit of `kind` (S_BREAK or
+/// S_CONTINUE) out of a nested loop to L (docs/compiler.md, "C8.22"): one with a == d > 0.
+fn exits_to(p: P, b: u32, kind: u32, d: u32) -> bool {
+    let bl = p.ir.blocks[b as usize]
+    for i in 0..bl.len {
+        let s = p.ir.stmts[p.ir.extra[(bl.start + i) as usize] as usize]
+        if s.kind == kind && d > 0 && s.a == d { return true }
+        if s.kind == ir.S_IF && (exits_to(p, s.b, kind, d) || exits_to(p, s.c, kind, d)) { return true }
+        if s.kind == ir.S_LOOP && exits_to(p, s.a, kind, d + 1) { return true }
     }
     false
 }
@@ -2924,6 +2971,11 @@ fn builtin(inout g: G, p: P, s: ir.Stmt, depth: u32) {
         if b == ir.B_LEN { put(inout g, "(uint64_t)strlen(") } else { put(inout g, "(*(") }
         arg_val(inout g, p, barg(p, s, 0))
         if b == ir.B_LEN { put(inout g, ")") } else { put(inout g, ") == 0)") }
+    } else if b == ir.B_DEFAULT {
+        bdst(inout g, p, s)
+        default_expr(inout g, p, s.ty)
+    } else if b >= ir.B_REF_NEW {
+        ref_builtin(inout g, p, s)
     } else if b >= ir.B_MAP_KEYS {
         map_lists(inout g, p, s)
     } else if b >= ir.B_COPY {
@@ -3132,15 +3184,23 @@ fn stmt(inout g: G, p: P, id: u32, depth: u32) {
         return
     }
     if k == ir.S_LOOP {
-        // for (;;) { body; s<n>: ; step } with `continue` as `goto s<n>`
+        // for (;;) { body; s<n>: ; step } with `continue` as `goto s<n>`; a labeled
+        // `continue` from a nested loop also goes to s<n>, a labeled `break` from one to
+        // `b<m>:` after the loop
         let mut label = NONE
         let has_step = p.ir.blocks[s.b as usize].len > 0
-        if has_step && has_continue(p, s.a) {
+        if (has_step && has_continue(p, s.a)) || exits_to(p, s.a, ir.S_CONTINUE, 0) {
             label = g.nlabels
             g.nlabels += 1
         }
-        let target = if has_step { label } else { NONE }
+        let mut blabel = NONE
+        if exits_to(p, s.a, ir.S_BREAK, 0) {
+            blabel = g.nlabels
+            g.nlabels += 1
+        }
+        let target = if has_step || label != NONE { label } else { NONE }
         g.loops.push(target)
+        g.brks.push(blabel)
         ind(inout g, depth)
         put(inout g, "for (;;) {\n")
         block(inout g, p, s.a, depth + 1)
@@ -3153,7 +3213,14 @@ fn stmt(inout g: G, p: P, id: u32, depth: u32) {
         block(inout g, p, s.b, depth + 1)
         ind(inout g, depth)
         put(inout g, "}\n")
+        if blabel != NONE {
+            ind(inout g, depth)
+            put(inout g, "b")
+            putn(inout g, blabel as u64)
+            put(inout g, ":;\n")
+        }
         g.loops.pop()
+        g.brks.pop()
         return
     }
     let copies = k == ir.S_COPY || k == ir.S_READ || k == ir.S_MOVE || k == ir.S_CLONE
@@ -3339,10 +3406,14 @@ fn stmt(inout g: G, p: P, id: u32, depth: u32) {
         if s.c > 0 { put(inout g, ", ") }
         args(inout g, p, s.b, s.c)
         put(inout g, ")")
+    } else if k == ir.S_BREAK && s.a > 0 {
+        put(inout g, "goto b")
+        let bl = g.brks[g.brks.len() - 1 - s.a as usize].copy()
+        putn(inout g, bl as u64)
     } else if k == ir.S_BREAK {
         put(inout g, "break")
     } else if k == ir.S_CONTINUE {
-        let label = g.loops[g.loops.len() - 1].copy()
+        let label = g.loops[g.loops.len() - 1 - s.a as usize].copy()
         if label == NONE {
             put(inout g, "continue")
         } else {
@@ -3400,6 +3471,7 @@ fn function(inout g: G, p: P, f: u32) {
     g.file = fd.file
     g.lbase = fd.lstart
     g.loops = List.new()
+    g.brks = List.new()
     g.nlabels = 0
     if nc > 0 { need(inout g, GK_ENV, f) }
     for i in 0..fd.lcount {
@@ -3636,7 +3708,7 @@ fn main_body(inout g: G, p: P, file: List[u8], f: u32) {
 }
 
 fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool) -> Result[List[u8], List[u8]] {
-    let mut g = G(List.new(), 0, List.new(), 0, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new(), 0, List.new())
+    let mut g = G(List.new(), 0, List.new(), 0, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new())
     name_all(inout g, p)
     if g.err.len() > 0 { return Err(g.err) }
     let ord = order(g, p)
@@ -3859,6 +3931,15 @@ pub fn header(p: P) -> List[u8] {
 fn handle_bodies(inout g: G, p: P) {
     for ty in 0..p.t.tys.len() {
         let t = types.get(p.t, ty as u32)
+        if t.kind == types.T_REF && g.tn[ty].len() > 0 {
+            // a Ref's cell: a shared buffer (its count is the buffer's) with the access state
+            put(inout g, "struct ")
+            cty(inout g, p, ty as u32)
+            put(inout g, "_c { int64_t st; ")
+            cty(inout g, p, t.a)
+            put(inout g, " v; };\n")
+            continue
+        }
         if !types.is_handle(t.kind) || g.tn[ty].len() == 0 { continue }
         put(inout g, "struct ")
         cty(inout g, p, ty as u32)
@@ -4078,6 +4159,179 @@ fn thread_glue(inout g: G, p: P, kind: u32, ty: u32) {
         proto(inout g, mark)
         put(inout g, " {\n  return ei_chan_recv(&c.p->ch, out);\n}\n")
     }
+}
+
+// ---- Ref[T] (docs/compiler.md, "C8.7")
+//
+// A Ref[T] is `{ struct <name>_c *p; }`, p a shared buffer (core/RUNTIME.md, "Shared
+// buffers": the count of holders before the data, not atomic) holding `{ int64_t st; T v; }`.
+// A copy is ei_buf_inc, the last drop drops v and frees. Each access is inline C around the
+// value: ei_ref_read_begin/end around a read or get (st counts reads), ei_ref_update_begin/
+// end around an update or set (st = -1), which trap when they overlap an update (or, for an
+// update, any access).
+
+/// `p` of the Ref operand of statement s (its argument 0).
+fn ref_p(inout g: G, p: P, s: ir.Stmt) {
+    put(inout g, "(")
+    arg_val(inout g, p, barg(p, s, 0))
+    put(inout g, ").p")
+}
+
+fn ref_builtin(inout g: G, p: P, s: ir.Stmt) {
+    let b = s.a
+    if b == ir.B_REF_NEW {
+        need(inout g, GK_REFNEW, s.ty)
+        bdst(inout g, p, s)
+        gname(inout g, p, "new_", s.ty)
+        put(inout g, "(")
+        arg_val(inout g, p, barg(p, s, 0))
+        put(inout g, ")")
+        return
+    }
+    let rt = arg_ty(p, barg(p, s, 0))
+    let el = types.get(p.t, rt).a
+    let upd = b == ir.B_REF_UPDATE || b == ir.B_REF_SET
+    put(inout g, "{ ")
+    if upd { put(inout g, "ei_ref_update_begin(&") } else { put(inout g, "ei_ref_read_begin(&") }
+    ref_p(inout g, p, s)
+    put(inout g, "->st, ")
+    put_line(inout g, s.line)
+    put(inout g, "); ")
+    if b == ir.B_REF_GET {
+        bdst(inout g, p, s)
+        let mut ptr = sys.lit("&")
+        bytes.append(inout ptr, op_text(inout g, p, barg(p, s, 0)))
+        bytes.append(inout ptr, sys.lit(".p->v"))
+        clone_expr(inout g, p, el, ptr)
+        put(inout g, "; ")
+    } else if b == ir.B_REF_SET {
+        // the old value is dropped after the access ends (its drop may use the Ref)
+        if owns(inout g, p, el) {
+            cty(inout g, p, el)
+            put(inout g, " old = ")
+            ref_p(inout g, p, s)
+            put(inout g, "->v; ")
+        }
+        ref_p(inout g, p, s)
+        put(inout g, "->v = ")
+        arg_val(inout g, p, barg(p, s, 1))
+        put(inout g, "; ")
+    } else {
+        // read: f(v) on a borrow of the value; update: f(&v)
+        let f = op_text(inout g, p, barg(p, s, 1))
+        bdst(inout g, p, s)
+        putb(inout g, f)
+        put(inout g, ".call(")
+        putb(inout g, f)
+        put(inout g, ".env, ")
+        if upd { put(inout g, "&") }
+        ref_p(inout g, p, s)
+        put(inout g, "->v); ")
+    }
+    if upd { put(inout g, "ei_ref_update_end(&") } else { put(inout g, "ei_ref_read_end(&") }
+    ref_p(inout g, p, s)
+    put(inout g, "->st);")
+    if b == ir.B_REF_SET && owns(inout g, p, el) {
+        put(inout g, " ")
+        drop_call(inout g, p, el, sys.lit("&old"))
+    }
+    put(inout g, " }")
+}
+
+// ---- Default (docs/compiler.md, "C8.23")
+
+/// The Default value of ty as a C expression: inline for the built-in types, the type's own
+/// `default` when it has one, else `default_T()` glue (derived).
+fn default_expr(inout g: G, p: P, ty: u32) {
+    let k = ty_kind(p, ty)
+    let f = custom_fn(p, TR_DEFAULT, ty)
+    if f != NONE {
+        fn_name(inout g, p, f)
+        put(inout g, "()")
+    } else if k == types.T_INT || k == types.T_UNIT {
+        put(inout g, "0")
+    } else if k == types.T_BOOL {
+        put(inout g, "false")
+    } else if k == types.T_STR {
+        put(inout g, "\"\"")
+    } else if k == types.T_STRING {
+        put(inout g, "ei_str_from(\"\")")
+    } else if k == types.T_LIST || k == types.T_MAP {
+        put(inout g, "(")
+        cty(inout g, p, ty)
+        put(inout g, "){0}")
+    } else if k == types.T_ENUM {
+        // Option: None (the only enum with a derived Default)
+        option_lit(inout g, p, ty, List.new())
+    } else {
+        need(inout g, GK_DEFAULT, ty)
+        gname(inout g, p, "default_", ty)
+        put(inout g, "()")
+    }
+}
+
+/// `static T default_T(void)`: each part's Default (a record, tuple, array or Box).
+fn default_glue(inout g: G, p: P, ty: u32) {
+    let mark = g.o.len()
+    put(inout g, "static ")
+    cty(inout g, p, ty)
+    put(inout g, " ")
+    gname(inout g, p, "default_", ty)
+    put(inout g, "(void)")
+    proto(inout g, mark)
+    put(inout g, " {\n  ")
+    cty(inout g, p, ty)
+    put(inout g, " r = {0};\n")
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_RECORD {
+        let d = types.def_of(p.t, ty)
+        for i in 0..d.len {
+            put(inout g, "  r.f")
+            putn(inout g, i as u64)
+            put(inout g, " = ")
+            default_expr(inout g, p, types.field(p.t, d.start, i).ty)
+            put(inout g, ";\n")
+        }
+    } else if k == types.T_TUPLE {
+        let es = types.elems(p.t, ty)
+        for i in 0..es.len() {
+            put(inout g, "  r.f")
+            putn(inout g, i as u64)
+            put(inout g, " = ")
+            default_expr(inout g, p, es[i])
+            put(inout g, ";\n")
+        }
+    } else if k == types.T_ARRAY {
+        if t.b > 0 {
+            put(inout g, "  for (uint64_t i = 0; i < ")
+            putn(inout g, t.b as u64)
+            put(inout g, "; i++) r.a[i] = ")
+            default_expr(inout g, p, t.a)
+            put(inout g, ";\n")
+        }
+    } else if k == types.T_BOX {
+        put(inout g, "  r.p = ei_buf_alloc(1, sizeof *r.p);\n  *r.p = ")
+        default_expr(inout g, p, t.a)
+        put(inout g, ";\n")
+    }
+    put(inout g, "  return r;\n}\n")
+}
+
+/// `static R new_R(T v)`: a new Ref holding v (moved in).
+fn ref_new_glue(inout g: G, p: P, ty: u32) {
+    let mark = g.o.len()
+    put(inout g, "static ")
+    cty(inout g, p, ty)
+    put(inout g, " ")
+    gname(inout g, p, "new_", ty)
+    put(inout g, "(")
+    cty(inout g, p, types.get(p.t, ty).a)
+    put(inout g, " v)")
+    proto(inout g, mark)
+    put(inout g, " {\n  ")
+    cty(inout g, p, ty)
+    put(inout g, " r;\n  r.p = ei_buf_alloc(1, sizeof *r.p);\n  r.p->st = 0;\n  r.p->v = v;\n  return r;\n}\n")
 }
 
 /// `<op><handle>(args)` with glue kind gk for handle type ty.

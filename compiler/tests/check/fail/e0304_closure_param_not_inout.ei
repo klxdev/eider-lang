@@ -1,0 +1,5 @@
+// expect: E0304 4:27
+fn main() {
+    let r = Ref.new(1)
+    let v = r.read(|inout x| x + 1)
+}

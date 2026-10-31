@@ -1,0 +1,20 @@
+(IFn 1:4 name=main end=1:10
+  body (Block 1:11 end=12:1
+    stmt (SLet 2:5 name=s
+      init (EMethod 6:10 name=closed
+        recv (EMethod 3:10 name=field
+          recv (EMethod 2:18 name=new
+            recv (EIdent 2:13 name=Spec)
+            arg (EArg 2:22
+              expr (EStr 2:22 value="user")))
+          arg (EArg 3:16
+            expr (EStr 3:16 value="id")))))
+    stmt (SLet 7:5 name=t
+      init (EField 9:10 name=1
+        recv (EField 8:10 name=a
+          recv (EIdent 7:13 name=p))))
+    stmt (SExpr 10:5
+      expr (ECall 10:5 name=f
+        arg (EArg 10:7
+          expr (EField 11:10 name=y
+            recv (EIdent 10:7 name=x)))))))

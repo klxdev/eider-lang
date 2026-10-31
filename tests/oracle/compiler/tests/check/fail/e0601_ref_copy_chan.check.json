@@ -1,0 +1,1 @@
+{"error":"E0601","span":{"file":"compiler/tests/check/fail/e0601_ref_copy_chan.ei","line":5,"col":16},"message":"type Ref[Chan[i32]] doesn't implement trait `Copy` (required by `.copy()`): its part Chan[i32] doesn't","help":"a running thread can't be cloned and a copied queue has no clear meaning; share the handle instead"}

@@ -1,0 +1,6 @@
+// expect: E0602 4:8
+type P = { x: i32 }
+impl Default for P {
+    fn default(self) -> P { P(0) }
+}
+fn main() {}

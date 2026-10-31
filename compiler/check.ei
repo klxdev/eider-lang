@@ -270,6 +270,9 @@ pub type C = {
     al: Aliases,
     /// impls of the prelude's `From` ("Error conversion" below)
     froms: List[FromImpl],
+    /// the label of each loop in loop_bases (sym + 1; 0: none), in step with it
+    /// (docs/compiler.md, "C8.22")
+    loop_labels: List[u32],
 }
 
 /// `impl From[Source] for Target` (module md, IImpl node) and its `from` method (FnDef fd).
@@ -465,6 +468,7 @@ fn restore(inout c: C, sp: Snap) {
     while c.fmarks.len() > sp.fmarks { c.fmarks.pop() }
     while c.firs.len() > sp.firs { c.firs.pop() }
     while c.loop_bases.len() > sp.loop_bases { c.loop_bases.pop() }
+    while c.loop_labels.len() > c.loop_bases.len() { c.loop_labels.pop() }
     while c.ir.pending.len() > sp.pending { c.ir.pending.pop() }
     while c.ir.outer.len() > sp.outer { ir.end_nested(inout c.ir, 0, 0) }
     c.loops = sp.loops
@@ -760,7 +764,7 @@ fn tmp(inout c: C, ty: u32, line: u32) -> u32 { ir.temp(inout c.ir, ty, line) }
 
 fn emit(inout c: C, kind: u32, dst: u32, a: u32, b: u32, x: u32, ty: u32, line: u32) {
     // a write that may invalidate a reference is noted for the protection rule ("References")
-    if c.rf.any && (kind == ir.S_STORE || kind == ir.S_CALL || kind == ir.S_BUILTIN) { note_writes(inout c, kind, a, b, x) }
+    if c.rf.any && (kind == ir.S_STORE || kind == ir.S_CALL || kind == ir.S_CALLV || kind == ir.S_BUILTIN) { note_writes(inout c, kind, a, b, x) }
     ir.emit(inout c.ir, kind, dst, a, b, x, ty, line)
 }
 
@@ -808,7 +812,7 @@ fn builtin_op(inout c: C, b: u32, args: List[u32], rty: u32, line: u32) -> u32 {
 fn owns(c: C, ty: u32) -> bool {
     let t = types.get(c.t, ty)
     if t.kind == types.T_STRING || t.kind == types.T_LIST || t.kind == types.T_MAP || t.kind == types.T_BOX || t.kind == types.T_FN { return true }
-    if types.is_handle(t.kind) { return true }
+    if types.is_handle(t.kind) || t.kind == types.T_REF { return true }
     if t.kind == types.T_ARRAY { return owns(c, t.a) }
     if t.kind == types.T_TUPLE {
         for x in types.elems(c.t, ty) {
@@ -1255,8 +1259,9 @@ fn protect(inout c: C) {
         let body = c.ir.fns[f].body.copy()
         if body == 0 { continue }
         let none: List[u32] = List.new()
+        let nones: List[List[u32]] = List.new()
         let mut found: List[Found] = List.new()
-        lv_block(inout c, f as u32, body - 1, none, none, none, true, inout seen, inout found)
+        lv_block(inout c, f as u32, body - 1, none, nones, nones, true, inout seen, inout found)
         // a function's errors in source order (the pass found them backwards)
         let mut sorted: List[Found] = List.new()
         for x in found {
@@ -1283,7 +1288,7 @@ type Found = { d: diag.Diag, m: u32 }
 /// Liveness of references, backwards through block b of function f: the references live
 /// before it, given those live after it (`after`), at a `break` (`brk`) and at a `continue`
 /// (`cont`). With `report`, every noted write is checked against those live after it.
-fn lv_block(inout c: C, f: u32, b: u32, after: List[u32], brk: List[u32], cont: List[u32], report: bool, inout seen: List[u64], inout found: List[Found]) -> List[u32] {
+fn lv_block(inout c: C, f: u32, b: u32, after: List[u32], brk: List[List[u32]], cont: List[List[u32]], report: bool, inout seen: List[u64], inout found: List[Found]) -> List[u32] {
     let bl = c.ir.blocks[b as usize].copy()
     let mut live = after.copy()
     let mut i = bl.len.copy()
@@ -1304,11 +1309,12 @@ fn lv_block(inout c: C, f: u32, b: u32, after: List[u32], brk: List[u32], cont: 
             let e = lv_block(inout c, f, st.c, live, brk, cont, report, inout seen, inout found)
             live = union(t, e)
         } else if k == ir.S_LOOP {
-            live = lv_loop(inout c, f, st.a, st.b, live, report, inout seen, inout found)
+            live = lv_loop(inout c, f, st.a, st.b, live, brk, cont, report, inout seen, inout found)
         } else if k == ir.S_BREAK {
-            live = brk
+            // (a labeled exit leaves st.a more loops: docs/compiler.md, "C8.22")
+            live = brk[brk.len() - 1 - st.a as usize]
         } else if k == ir.S_CONTINUE {
-            live = cont
+            live = cont[cont.len() - 1 - st.a as usize]
         } else if k == ir.S_RETURN || k == ir.S_PANIC {
             live = List.new()
         }
@@ -1318,20 +1324,27 @@ fn lv_block(inout c: C, f: u32, b: u32, after: List[u32], brk: List[u32], cont: 
 
 /// A loop: its body falls through, and `continue` goes, to the step, then the body again;
 /// `break` leaves it to `after`. The references live at its head, to a fixed point.
-fn lv_loop(inout c: C, f: u32, body: u32, step: u32, after: List[u32], report: bool, inout seen: List[u64], inout found: List[Found]) -> List[u32] {
+fn lv_loop(inout c: C, f: u32, body: u32, step: u32, after: List[u32], brk: List[List[u32]], cont: List[List[u32]], report: bool, inout seen: List[u64], inout found: List[Found]) -> List[u32] {
     let mut head: List[u32] = List.new()
     while true {
-        let sin = lv_block(inout c, f, step, head, after, head, false, inout seen, inout found)
-        let bin = lv_block(inout c, f, body, sin, after, sin, false, inout seen, inout found)
+        let sin = lv_block(inout c, f, step, head, pushed(brk, after), pushed(cont, head), false, inout seen, inout found)
+        let bin = lv_block(inout c, f, body, sin, pushed(brk, after), pushed(cont, sin), false, inout seen, inout found)
         let nh = union(head, bin)
         if nh.len() == head.len() { break }
         head = nh
     }
     if report {
-        let sin = lv_block(inout c, f, step, head, after, head, true, inout seen, inout found)
-        lv_block(inout c, f, body, sin, after, sin, true, inout seen, inout found)
+        let sin = lv_block(inout c, f, step, head, pushed(brk, after), pushed(cont, head), true, inout seen, inout found)
+        lv_block(inout c, f, body, sin, pushed(brk, after), pushed(cont, sin), true, inout seen, inout found)
     }
     head
+}
+
+/// The stack of live sets `st` with `top` on it (lv_loop: the exits of one more loop).
+fn pushed(st: List[List[u32]], top: List[u32]) -> List[List[u32]] {
+    let mut out = st.copy()
+    out.push(top.copy())
+    out
 }
 
 /// E0308 when write w (of function f) invalidates a reference in `live` (the earliest one).
@@ -1596,6 +1609,9 @@ fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] {
                     check_map_key(c, args[0], n.line, n.col)?
                     return Ok(types.map_of(inout c.t, args[0], args[1]))
                 }
+                if n.a == c.w.heap[6] { return Ok(types.ref_of(inout c.t, args[0])) }
+                // a Ref can't cross threads (docs/compiler.md, "C8.7")
+                not_sent(c, args[0], kt(c, k), n.line, n.col)?
                 if is_task { return Ok(types.task_of(inout c.t, args[0])) }
                 if n.a == c.w.heap[4] { return Ok(types.mutex_of(inout c.t, args[0])) }
                 return Ok(types.chan_of(inout c.t, args[0]))
@@ -1619,13 +1635,23 @@ fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] {
             let mut ps: List[u32] = List.new()
             for i in 0..n.d {
                 let x = atm(c, am, n.c, i)
-                ps.push(resolve_ty(inout c, am, x)?)
+                let pt = resolve_ty(inout c, am, x)?
+                if fn_param_inout(n, i) { ps.push(types.inout_of(inout c.t, pt)) } else { ps.push(pt) }
             }
             let mut r = types.UNIT
             if n.g > 0 { r = resolve_ty(inout c, am, n.g - 1)? }
             Ok(types.fn_of(inout c.t, ps, r))
         }
     }
+}
+
+/// Whether parameter i of fn type node n is `inout` (`fn(inout T) -> R`; docs/compiler.md,
+/// "C8.7"): bit i of its `e` slot.
+fn fn_param_inout(n: ast.Node, i: u32) -> bool {
+    if i >= 31 { return false }
+    let mut b: u32 = 1
+    for _ in 0..i { b *= 2 }
+    (n.e / b) % 2 == 1
 }
 
 // ---- Type aliases
@@ -1988,7 +2014,7 @@ fn heap_parts(c: C, sym: u32, t: types.Ty) -> Option[List[u32]] {
         parts.push(t.b)
         return Some(parts)
     }
-    if (t.kind == types.T_TASK && sym == c.w.heap[3]) || (t.kind == types.T_MUTEX && sym == c.w.heap[4]) || (t.kind == types.T_CHAN && sym == c.w.heap[5]) {
+    if (t.kind == types.T_TASK && sym == c.w.heap[3]) || (t.kind == types.T_MUTEX && sym == c.w.heap[4]) || (t.kind == types.T_CHAN && sym == c.w.heap[5]) || (t.kind == types.T_REF && sym == c.w.heap[6]) {
         parts.push(t.a)
         return Some(parts)
     }
@@ -2069,7 +2095,11 @@ fn unify_ast(c: C, m: u32, tn: u32, actual: u32, inout sb: Subst, gs: List[u32])
             let ps = types.elems(c.t, actual)
             if ps.len() as u32 != n.d { return false }
             for i in 0..n.d {
-                if !unify_ast(c, m, atm(c, m, n.c, i), ps[i as usize], inout sb, gs) { return false }
+                let mut pt = ps[i as usize].copy()
+                let pin = types.kind(c.t, pt) == types.T_INOUT
+                if pin != fn_param_inout(n, i) { return false }
+                if pin { pt = types.get(c.t, pt).a }
+                if !unify_ast(c, m, atm(c, m, n.c, i), pt, inout sb, gs) { return false }
             }
             if n.g > 0 { return unify_ast(c, m, n.g - 1, t.b, inout sb, gs) }
             t.b == types.UNIT
@@ -2105,7 +2135,11 @@ fn show_ast(c: C, m: u32, tn: u32, gens: List[u32]) -> List[u8] {
         }
         ast.TFn => {
             bytes.append(inout out, s("fn("))
-            show_list(c, m, n.c, n.d, gens, inout out)
+            for i in 0..n.d {
+                if i > 0 { bytes.append(inout out, s(", ")) }
+                if fn_param_inout(n, i) { bytes.append(inout out, s("inout ")) }
+                bytes.append(inout out, show_ast(c, m, atm(c, m, n.c, i), gens))
+            }
             out.push(41)
             if n.g > 0 {
                 bytes.append(inout out, s(" -> "))
@@ -2227,7 +2261,10 @@ const TR_HASH: u32 = 3
 const TR_SHOW: u32 = 4
 const TR_ITER: u32 = 5
 const TR_DROP: u32 = 6
-const NTR: u32 = 7
+/// `T.default()` and `x.take()` (docs/compiler.md, "C8.23"); an associated function, not a
+/// method, so `x.default()` is no call
+const TR_DEFAULT: u32 = 7
+const NTR: u32 = 8
 
 /// `names`/`meths`: each trait's symbol and its method's (copy, eq, compare, hash, show,
 /// next, drop); `shadow`: the entry module defines a trait of that name; `heads`: per method
@@ -2245,9 +2282,9 @@ type Lang = {
 
 fn new_lang(inout names: intern.Interner) -> Lang {
     let mut ns: List[u32] = List.new()
-    for w in ["Copy", "Eq", "Ord", "Hash", "Show", "Iter", "Drop"] { ns.push(sym(inout names, w)) }
+    for w in ["Copy", "Eq", "Ord", "Hash", "Show", "Iter", "Drop", "Default"] { ns.push(sym(inout names, w)) }
     let mut ms: List[u32] = List.new()
-    for w in ["copy", "eq", "compare", "hash", "show", "next", "drop"] { ms.push(sym(inout names, w)) }
+    for w in ["copy", "eq", "compare", "hash", "show", "next", "drop", "default"] { ms.push(sym(inout names, w)) }
     let mut sh: List[bool] = List.new()
     for i in 0..NTR { sh.push(false) }
     Lang(ns, ms, sh, Map.new(), false, NONE, 0, sym(inout names, "to_string"), sym(inout names, "Ordering"),
@@ -2514,6 +2551,7 @@ fn has_trait(c: C, tr: u32, ty: u32) -> bool {
 /// List or Box, has it as far as that part is concerned.)
 fn lacks(c: C, tr: u32, ty: u32, inout seen: Map[u32, bool]) -> u32 {
     if ty == NONE || poisoned(c, ty) || seen.contains(ty) { return NONE }
+    if tr == TR_DEFAULT { return lacks_default(c, ty, inout seen) }
     let t = types.get(c.t, ty)
     let k = t.kind
     // a type parameter has what its bounds say (Ord and Hash promise Eq too)
@@ -2568,7 +2606,49 @@ fn lacks(c: C, tr: u32, ty: u32, inout seen: Map[u32, bool]) -> u32 {
     // a fn value copies its environment; a Mutex copies its contents into a new Mutex
     if k == types.T_FN && tr == TR_COPY { return NONE }
     if k == types.T_MUTEX && tr == TR_COPY { return lacks(c, tr, t.a, inout seen) }
-    // !, Task and Chan have none; fn values and Mutexes only Copy
+    // a Ref copies its contents into a new Ref (docs/compiler.md, "C8.7")
+    if k == types.T_REF && tr == TR_COPY { return lacks(c, tr, t.a, inout seen) }
+    // !, Task and Chan have none; fn values, Mutexes and Refs only Copy
+    ty
+}
+
+/// lacks for Default (docs/compiler.md, "C8.23"): integers (0), bool (false), str and String
+/// (""), `()`, List and Map (empty) and Option (None) have it whatever they hold; a record,
+/// tuple, array or Box when every part has it (derived); an enum other than Option, a record
+/// with its own Drop, fn values, handles and Refs only through their own impl (enums, records)
+/// or not at all.
+fn lacks_default(c: C, ty: u32, inout seen: Map[u32, bool]) -> u32 {
+    let t = types.get(c.t, ty)
+    let k = t.kind
+    if k == types.T_PARAM {
+        if param_has(c, ty, resolve.key(0, c.lt.names[TR_DEFAULT as usize])) { return NONE }
+        return ty
+    }
+    if k == types.T_INT || k == types.T_BOOL || k == types.T_STR || k == types.T_STRING || k == types.T_UNIT { return NONE }
+    if k == types.T_LIST || k == types.T_MAP { return NONE }
+    if k == types.T_RECORD || k == types.T_ENUM {
+        if custom(c, TR_DEFAULT, ty) { return NONE }
+        if is_option(c, ty) { return NONE }
+        if k == types.T_ENUM || has_drop(c, ty) { return ty }
+        seen.insert(ty, true)
+        let d = types.def_of(c.t, ty)
+        for j in 0..d.len {
+            let x = lacks_default(c, types.field(c.t, d.start, j).ty, inout seen)
+            if x != NONE { return x }
+        }
+        return NONE
+    }
+    if k == types.T_ARRAY || k == types.T_BOX {
+        seen.insert(ty, true)
+        return lacks_default(c, t.a, inout seen)
+    }
+    if k == types.T_TUPLE {
+        for x in types.elems(c.t, ty) {
+            let y = lacks_default(c, x, inout seen)
+            if y != NONE { return y }
+        }
+        return NONE
+    }
     ty
 }
 
@@ -2589,6 +2669,7 @@ fn lack_help(c: C, tr: u32, part: u32) -> str {
         return "Task, Mutex and Chan values are shared handles: they have no equality, order, hash or text"
     }
     if k == types.T_MUTEX { return "Task, Mutex and Chan values are shared handles: they have no equality, order, hash or text" }
+    if k == types.T_REF { return "a Ref is a shared handle: it has no equality, order, hash or text; compare or print what it holds, inside `read`" }
     if k == types.T_FN { return "fn values have no equality, order, hash or text" }
     ""
 }
@@ -2882,6 +2963,8 @@ fn well_known(inout names: intern.Interner) -> W {
     for w in ["len", "is_empty", "push_str", "append", "push", "pop", "clear", "get", "contains", "insert", "remove",
         "map", "filter", "for_each", "any", "all", "fold", "sum", "set", "from", "from_int", "new",
         "byte", "slice", "bytes", "push_byte", "from_bytes", "keys", "values", "entries"] { hm.push(sym(inout names, w)) }
+    // heap[6]: Ref (docs/compiler.md, "C8.7"), interned last so no earlier symbol moves
+    heap.push(sym(inout names, "Ref"))
     W(ints, sym(inout names, "bool"), sym(inout names, "str"), sym(inout names, "Self"), sym(inout names, "String"), heap,
         sym(inout names, "print"), sym(inout names, "len"), sym(inout names, "now_ms"), sym(inout names, "panic"),
         sym(inout names, "spawn"), sym(inout names, "main"), sym(inout names, "Option"), sym(inout names, "Result"),
@@ -2904,7 +2987,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C {
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
         0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false, Rec(false, List.new(), List.new()),
         List.new(), List.new(), false, Map.new(), false, false, Map.new(), List.new(), lt, no_refs(),
-        Aliases(Map.new(), List.new(), List.new()), List.new())
+        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new())
 }
 
 /// Every item of the program in load order (resolve.ei), as (module, node) pairs.
@@ -3956,13 +4039,11 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] {
                 let cn = nd(c, n.a)
                 return Err(mismatch(c, cn.line, cn.col, types.BOOL, cv.ty))
             }
-            c.loops += 1
-            c.loop_bases.push(base)
+            enter_loop(inout c, base, n)?
             emit_exit_unless(inout c, cv.op, base, n.line)
             block_body(inout c, n.b, Dest(D_DISCARD, 0), NONE)?
             pop_frame(inout c, true)
-            c.loop_bases.pop()
-            c.loops -= 1
+            leave_loop(inout c)
             let body = ir.close(inout c.ir, lm)
             let step = ir.empty_block(inout c.ir)
             emit(inout c, ir.S_LOOP, 0, body, step, 0, 0, n.line)
@@ -4167,7 +4248,7 @@ fn copy_differs(c: C, ty: u32, inout seen: Map[u32, bool]) -> bool {
     seen.insert(ty, true)
     let t = types.get(c.t, ty)
     let k = t.kind
-    if k == types.T_MUTEX { return true }
+    if k == types.T_MUTEX || k == types.T_REF { return true }
     if k == types.T_LIST || k == types.T_BOX || k == types.T_ARRAY { return copy_differs(c, t.a, inout seen) }
     if k == types.T_MAP { return copy_differs(c, t.a, inout seen) || copy_differs(c, t.b, inout seen) }
     if k == types.T_TUPLE {
@@ -4222,11 +4303,58 @@ pub fn var_fixes(c: C, m: u32) -> List[diag.Fix] {
     out
 }
 
+/// A loop of statement n begins (its frames from `base`): its label, if any, must not be
+/// one of an enclosing loop's (E0107).
+fn enter_loop(inout c: C, base: u32, n: ast.Node) -> Result[bool, diag.Diag] {
+    if n.h > 0 {
+        let lo = c.loop_labels.len() - c.loops as usize
+        for i in lo..c.loop_labels.len() {
+            if c.loop_labels[i] == n.h {
+                return Err(err("E0107", n.i, n.j, q("label `", nm(c, n.h - 1), "` is already the label of an enclosing loop")))
+            }
+        }
+    }
+    c.loops += 1
+    c.loop_bases.push(base)
+    c.loop_labels.push(n.h)
+    Ok(true)
+}
+
+fn leave_loop(inout c: C) {
+    c.loop_bases.pop()
+    c.loop_labels.pop()
+    c.loops -= 1
+}
+
+/// `break` / `continue`, of the innermost loop or of the enclosing loop with the label
+/// (`break outer`; docs/compiler.md, "C8.22"): drops what the exit leaves, then S_BREAK or
+/// S_CONTINUE with a = how many loops it leaves besides its own.
 fn loop_exit(inout c: C, n: ast.Node, kind: u32) -> Result[u32, diag.Diag] {
     if c.loops == 0 { return Err(err("E0306", n.line, n.col, s("`break`/`continue` outside of a loop"))) }
-    let base: u32 = if c.loop_bases.len() > 0 { c.loop_bases[c.loop_bases.len() - 1] } else { 0 }
+    let mut depth: u32 = 0
+    let mut at = c.loop_bases.len() - 1
+    if n.a > 0 {
+        let lo = c.loop_labels.len() - c.loops as usize
+        let mut found = false
+        let mut i = c.loop_labels.len()
+        while i > lo {
+            i -= 1
+            if c.loop_labels[i] == n.a {
+                found = true
+                at = i
+                break
+            }
+            depth += 1
+        }
+        if !found {
+            let mut d = err("E0306", n.b, n.c, q("no enclosing loop is labeled `", nm(c, n.a - 1), "`"))
+            d.help = s("label the loop: `name: for ...` or `name: while ...`")
+            return Err(d)
+        }
+    }
+    let base: u32 = if c.loop_bases.len() > 0 { c.loop_bases[at] } else { 0 }
     drop_frames_from(inout c, base)
-    emit(inout c, kind, 0, 0, 0, 0, 0, n.line)
+    emit(inout c, kind, 0, depth, 0, 0, 0, n.line)
     Ok(types.NEVER)
 }
 
@@ -4269,14 +4397,12 @@ fn for_range(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     let cond = emit_val(inout c, ir.S_BINARY, ast.OP_LT, iv, ev, it, types.BOOL, 0)
     let base = c.fmarks.len() as u32
     emit_exit_unless(inout c, cond, base, n.line)
-    c.loops += 1
-    c.loop_bases.push(base)
+    enter_loop(inout c, base, n)?
     push_scope(inout c)
     declare(inout c, local_plain(resolve.key(0, n.a), it, false, n.line, n.col, l))?
     block_body(inout c, n.d, Dest(D_DISCARD, 0), NONE)?
     pop_scope(inout c)
-    c.loop_bases.pop()
-    c.loops -= 1
+    leave_loop(inout c)
     let body = ir.close(inout c.ir, lm)
     let sm = ir.open(c.ir)
     let cur = read(inout c, pl, it, 0)
@@ -4347,8 +4473,7 @@ fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     let cond = emit_val(inout c, ir.S_BINARY, ast.OP_LT, iv, lim, types.USIZE, types.BOOL, 0)
     let base = c.fmarks.len() as u32
     emit_exit_unless(inout c, cond, base, n.line)
-    c.loops += 1
-    c.loop_bases.push(base)
+    enter_loop(inout c, base, n)?
     push_frame(inout c)
     push_scope(inout c)
     let l = ir.local(inout c.ir, n.a, et, ir.L_LET, n.line)
@@ -4365,8 +4490,7 @@ fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     block_body(inout c, n.d, Dest(D_DISCARD, 0), NONE)?
     pop_scope(inout c)
     pop_frame(inout c, true)
-    c.loop_bases.pop()
-    c.loops -= 1
+    leave_loop(inout c)
     let body = ir.close(inout c.ir, lm)
     let sm = ir.open(c.ir)
     let cur = read(inout c, ip, types.USIZE, 0)
@@ -4460,8 +4584,7 @@ fn for_iter(inout c: C, n: ast.Node, pv: PV) -> Result[u32, diag.Diag] {
     let rp = place_of_op(inout c, rv.op, oty, n.line)
     let cond = emit_val(inout c, ir.S_TAG, rp, si, 0, oty, types.BOOL, n.line)
     emit_exit_unless(inout c, cond, base, n.line)
-    c.loops += 1
-    c.loop_bases.push(base)
+    enter_loop(inout c, base, n)?
     push_scope(inout c)
     let l = ir.local(inout c.ir, n.a, et, ir.L_LET, n.line)
     let ep = ir.place_payload(inout c.ir, rp, si, 0, et)
@@ -4475,8 +4598,7 @@ fn for_iter(inout c: C, n: ast.Node, pv: PV) -> Result[u32, diag.Diag] {
     block_body(inout c, n.d, Dest(D_DISCARD, 0), NONE)?
     pop_scope(inout c)
     pop_frame(inout c, true)
-    c.loop_bases.pop()
-    c.loops -= 1
+    leave_loop(inout c)
     let body = ir.close(inout c.ir, lm)
     let step = ir.empty_block(inout c.ir)
     emit(inout c, ir.S_LOOP, 0, body, step, 0, 0, n.line)
@@ -5871,7 +5993,12 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
             let mut hp: List[u32] = List.new()
             for j in 0..ptn.d {
                 let pt = atm(c, fm, ptn.c, j)
-                if has_unbound(c, fm, pt, sb, gs) { hp.push(NONE) } else { hp.push(resolve_with(inout c, fm, pt, sb)?) }
+                if has_unbound(c, fm, pt, sb, gs) {
+                    hp.push(NONE)
+                } else {
+                    let ht = resolve_with(inout c, fm, pt, sb)?
+                    if fn_param_inout(ptn, j) { hp.push(types.inout_of(inout c.t, ht)) } else { hp.push(ht) }
+                }
             }
             let mut hr = types.UNIT
             if ptn.g > 0 {
@@ -6104,6 +6231,24 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
             static_head = k
         }
     }
+    // `T.f(...)` on a type parameter T of the generic body (docs/compiler.md, "C8.23"):
+    // the associated function of the type T stands for (`T.default()` needs `T: Default`)
+    if r.kind == ast.EIdent && r.b == 0 && lookup(c, ekey(c, r)) == NONE && subst_get(c.tsubst, r.a) != NONE {
+        let pt = subst_get(c.tsubst, r.a)
+        if n.b == c.lt.meths[TR_DEFAULT as usize] && !c.lt.shadow[TR_DEFAULT as usize] { return default_call(inout c, n, pt) }
+        if types.kind(c.t, pt) == types.T_PARAM { return fail_call(inout c, quiet(), n.c, n.d) }
+        let ph = head_of(c, pt)
+        for m in c.meths {
+            if m.head == ph && m.name == n.b {
+                let label = label_of(c, ts(c, pt), n.b)
+                let mut sb = no_subst()
+                subst_set(inout sb, intern.S_SELF_TYPE, pt)
+                return call_decl(inout c, n, label, m.fd, sb, no_recv(), exp, true)
+            }
+        }
+        let fd = err("E0115", n.line, n.col, q2("type ", ts(c, pt), " has no associated function `", nm(c, n.b), "`"))
+        return fail_call(inout c, fd, n.c, n.d)
+    }
     if is_static {
         if c.rec.on {
             let tdi = mget(c.tmpl, static_head)
@@ -6120,6 +6265,14 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
                 return call_decl(inout c, n, label, m.fd, no_subst(), no_recv(), exp, true)
             }
         }
+        // a derived or built-in Default (docs/compiler.md, "C8.23")
+        if n.b == c.lt.meths[TR_DEFAULT as usize] && !c.lt.shadow[TR_DEFAULT as usize] {
+            let dt = static_head_ty(inout c, static_head, exp)
+            if dt == NONE {
+                return Err(errh("E0409", n.line, n.col, q("cannot infer the type arguments of `", kt(c, static_head), "`"), "annotate the binding that receives it, e.g. `let xs: List[i32] = List.default()`"))
+            }
+            return default_call(inout c, n, dt)
+        }
         if heap_head { return heap_static(inout c, n, x, exp) }
         let fd = err("E0115", n.line, n.col, q2("type ", kt(c, static_head), " has no method `", nm(c, n.b), "`"))
         return fail_call(inout c, fd, n.c, n.d)
@@ -6130,6 +6283,7 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     if tk == types.T_POISON { return fail_call(inout c, quiet(), n.c, n.d) }
     if builtin_method(c, tk, n.b) {
         if types.is_handle(tk) { return thread_method(inout c, n, pv) }
+        if tk == types.T_REF { return ref_method(inout c, n, pv, exp) }
         return heap_method(inout c, n, pv)
     }
     let head = head_of(c, pv.ty)
@@ -6152,12 +6306,13 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     }
     // a handle's unknown method: thread_method's message
     if !any && types.is_handle(tk) && lang_method(c, n.b) == NONE { return thread_method(inout c, n, pv) }
+    if !any && tk == types.T_REF && lang_method(c, n.b) == NONE { return ref_method(inout c, n, pv, exp) }
     // a field holding a function is called when the type has no method of that name: its
     // own, built-in and language-trait methods (derived ones too) win (docs/compiler.md,
     // "C8.19")
     let lm = lang_method(c, n.b)
     let lneed = if lm == NTR { TR_SHOW } else { lm }
-    if lm != NONE && lm != TR_ITER && lm != TR_DROP && has_trait(c, lneed, pv.ty) { return trait_method(inout c, n, pv, lm) }
+    if lm != NONE && lm != TR_ITER && lm != TR_DROP && lm != TR_DEFAULT && has_trait(c, lneed, pv.ty) { return trait_method(inout c, n, pv, lm) }
     if !any && tk == types.T_RECORD {
         let d = types.def_of(c.t, pv.ty)
         match types.find_field(c.t, d, n.b) {
@@ -6175,7 +6330,7 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     }
     // a language trait's method, derived ("Operation traits")
     let li = lang_method(c, n.b)
-    if li != NONE && li != TR_ITER && li != TR_DROP { return trait_method(inout c, n, pv, li) }
+    if li != NONE && li != TR_ITER && li != TR_DROP && li != TR_DEFAULT { return trait_method(inout c, n, pv, li) }
     if is_word(c, n.b, "take") || is_word(c, n.b, "replace") { return take_replace(inout c, n, pv) }
     let fd = err("E0115", n.line, n.col, q2("type ", ts(c, pv.ty), " has no method `", nm(c, n.b), "`"))
     fail_call(inout c, fd, n.c, n.d)
@@ -6190,8 +6345,13 @@ fn take_replace(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
     let label = label_of(c, ts(c, ty), n.b)
     let is_take = is_word(c, n.b, "take")
     let tk = types.kind(c.t, ty)
-    if is_take && tk != types.T_STRING && tk != types.T_LIST && tk != types.T_MAP && !is_option(c, ty) {
-        let fd = errh("E0115", n.line, n.col, q2("type ", ts(c, ty), " has no method `", nm(c, n.b), "`"), "`take()` leaves an empty value behind, so it is for String, List, Map and Option; `x.replace(v)` takes any value out and leaves v")
+    // `take()` leaves the type's Default behind (docs/compiler.md, "C8.23")
+    if is_take && !has_trait(c, TR_DEFAULT, ty) {
+        match param_lack(c, n.line, n.col, q("`", label, "`"), TR_DEFAULT, ty) {
+            Some(d) => { return fail_call(inout c, d, n.c, n.d) }
+            None => {}
+        }
+        let fd = errh("E0115", n.line, n.col, q2("type ", ts(c, ty), " has no method `", nm(c, n.b), "`"), "`take()` leaves the type's `Default` value behind (\"\", empty, None, 0, false, or derived for a record whose fields all have one), and this type has none; implement `Default` for it, or use `x.replace(v)`, which leaves v")
         return fail_call(inout c, fd, n.c, n.d)
     }
     if pv.op != NONE {
@@ -6210,10 +6370,12 @@ fn take_replace(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
             newv = builtin_op(inout c, ir.B_LIST_NEW, List.new(), ty, n.line)
         } else if tk == types.T_MAP {
             newv = builtin_op(inout c, ir.B_MAP_NEW, List.new(), ty, n.line)
-        } else {
+        } else if is_option(c, ty) {
             let st = ir.list(inout c.ir, List.new())
             let ni = variant_index(c, ty, c.w.none)
             newv = emit_val(inout c, ir.S_VARIANT, ni, st, 0, ty, ty, n.line)
+        } else {
+            newv = default_op(inout c, ty, n.line)
         }
     } else {
         let mut tys: List[u32] = List.new()
@@ -6224,6 +6386,72 @@ fn take_replace(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
     let old = emit_val(inout c, ir.S_MOVE, pv.place, 0, 0, ty, ty, n.line)
     emit(inout c, ir.S_STORE, 0, pv.place, newv, 0, ty, n.line)
     Ok(v_of(ty, old))
+}
+
+/// The Default value of ty (which has the trait): the call of its own `default` (an impl in
+/// ir.Ir.impls), or B_DEFAULT, which lowering derives.
+fn default_op(inout c: C, ty: u32, line: u32) -> u32 {
+    if ty == types.UNIT { return ir.op_unit(inout c.ir) }
+    if types.kind(c.t, ty) == types.T_RECORD || types.kind(c.t, ty) == types.T_ENUM {
+        let ix = custom_impl(c, TR_DEFAULT, ty)
+        if ix != NONE {
+            match impl_instance(inout c, TR_DEFAULT, ix, ty) {
+                Ok(ii) => {
+                    if ii != NONE {
+                        let inst = c.insts[ii as usize].copy()
+                        let st = ir.list(inout c.ir, List.new())
+                        return emit_val(inout c, ir.S_CALL, inst.ir, st, 0, ty, ty, line)
+                    }
+                }
+                Err(e) => record(inout c, e)
+            }
+        }
+    }
+    builtin_op(inout c, ir.B_DEFAULT, List.new(), ty, line)
+}
+
+/// `T.default()` for a type T (a type parameter's type in a generic body, or a type named
+/// statically): its Default, E0605 for a type parameter without the bound, E0601 for a type
+/// without one.
+fn default_call(inout c: C, n: ast.Node, ty: u32) -> Result[V, diag.Diag] {
+    let label = label_of(c, ts(c, ty), n.b)
+    if n.d > 0 { return Err(err("E0405", n.line, n.col, q("`", label, "` takes no arguments"))) }
+    if poisoned(c, ty) { return Ok(poison_v(inout c)) }
+    if !has_trait(c, TR_DEFAULT, ty) {
+        match param_lack(c, n.line, n.col, q("`", label, "`"), TR_DEFAULT, ty) {
+            Some(d) => { return Err(d) }
+            None => {}
+        }
+        let mut seen: Map[u32, bool] = Map.new()
+        let part = lacks(c, TR_DEFAULT, ty, inout seen)
+        let mut m = q2("type ", ts(c, ty), " doesn't implement trait `Default`", List.new(), "")
+        if part != ty && part != NONE { bytes.append(inout m, q(": its part ", ts(c, part), " doesn't")) }
+        return Err(errh("E0601", n.line, n.col, m, "a record has `Default` when every field has one; give an enum (or any record or enum) its own `impl Default for ...`"))
+    }
+    if types.kind(c.t, ty) == types.T_PARAM { return Ok(v_of(ty, ir.op_unit(inout c.ir))) }
+    Ok(v_of(ty, default_op(inout c, ty, n.line)))
+}
+
+/// The type a static call's head names for `default` (docs/compiler.md, "C8.23"): a type
+/// without type parameters, or a generic one the expected type gives the arguments of; NONE
+/// when neither.
+fn static_head_ty(inout c: C, head: u64, exp: u32) -> u32 {
+    if exp != NONE && !poisoned(c, exp) && head_of(c, exp) == head { return exp }
+    let x = resolve.key_sym(head)
+    if resolve.key_pre(head) == 0 {
+        for i in 0..c.w.ints.len() {
+            if c.w.ints[i] == x { return i as u32 }
+        }
+        if x == c.w.s_bool { return types.BOOL }
+        if x == c.w.s_str { return types.STR }
+        if x == c.w.s_string { return types.STRING }
+    }
+    let di = mget(c.tmpl, head)
+    if di == NONE || c.t.defs[di as usize].generic > 0 { return NONE }
+    match inst_type(inout c, di, List.new(), 0, 0) {
+        Ok(t) => t
+        Err(_) => NONE
+    }
 }
 
 fn is_option(c: C, ty: u32) -> bool {
@@ -6305,6 +6533,7 @@ fn builtin_method(c: C, tk: u32, name: u32) -> bool {
     if tk == types.T_TASK { return is_word(c, name, "join") }
     if tk == types.T_MUTEX { return mi == M_GET || mi == M_SET || is_word(c, name, "update") }
     if tk == types.T_CHAN { return is_word(c, name, "send") || is_word(c, name, "recv") || is_word(c, name, "close") }
+    if tk == types.T_REF { return mi == M_GET || mi == M_SET || is_word(c, name, "read") || is_word(c, name, "update") }
     false
 }
 
@@ -6328,6 +6557,7 @@ fn builtin_head_kind(c: C, head: u64) -> u32 {
     if x == c.w.heap[3] { return types.T_TASK }
     if x == c.w.heap[4] { return types.T_MUTEX }
     if x == c.w.heap[5] { return types.T_CHAN }
+    if x == c.w.heap[6] { return types.T_REF }
     NONE
 }
 
@@ -6411,6 +6641,7 @@ fn heap_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag.D
         return Ok(v_of(ty, builtin_op(inout c, ir.B_BOX_NEW, one(o), ty, n.line)))
     }
     if (head == c.w.heap[4] || head == c.w.heap[5]) && mi == M_NEW { return thread_static(inout c, n, head, exp) }
+    if head == c.w.heap[6] && mi == M_NEW { return ref_new(inout c, n, exp) }
     Err(err("E0115", n.line, n.col, q2("`", nm(c, head), "` has no associated function `", nm(c, n.b), "`")))
 }
 
@@ -6728,6 +6959,19 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
         let lp = nd(c, at(c, n.c, i))
         let mut hinted = NONE
         if (i as usize) < hp.len() { hinted = hp[i as usize] }
+        // an `inout` parameter (docs/compiler.md, "C8.7"): written `|inout x|` exactly when the
+        // expected fn type says `inout`; its local has the parameter's own type
+        let hin = hinted != NONE && types.kind(c.t, hinted) == types.T_INOUT
+        if hinted != NONE && !poisoned(c, hinted) && hin != (lp.c == 1) {
+            let pn = nm(c, lp.a)
+            if hin {
+                let mut d = err("E0304", lp.line, lp.col, q("closure parameter `", pn, "` is `inout` here; write `|inout ...|`"))
+                d.fix = Some(diag.Fix(lp.line, lp.col, 0, s("inout ")))
+                return Err(d)
+            }
+            return Err(err("E0304", lp.line, lp.col, q("closure parameter `", pn, "` is not `inout` here; remove the `inout`")))
+        }
+        if hin { hinted = types.get(c.t, hinted).a }
         let mut ty = hinted.copy()
         if lp.b > 0 {
             let am = c.am.copy()
@@ -6797,12 +7041,17 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     c.ret = saved.ret
     c.loops = saved.loops
     c.loop_bases = saved.loop_bases
+    while c.loop_labels.len() > c.loop_bases.len() { c.loop_labels.pop() }
     c.lam_expr = saved.lam_expr
     match r {
         Ok(_) => {}
         Err(d) => { return Err(d) }
     }
-    let fty = types.fn_of(inout c.t, ptys, rty)
+    let mut fps: List[u32] = List.new()
+    for i in 0..n.d {
+        if nd(c, at(c, n.c, i)).c == 1 { fps.push(types.inout_of(inout c.t, ptys[i as usize])) } else { fps.push(ptys[i as usize]) }
+    }
+    let fty = types.fn_of(inout c.t, fps, rty)
     // the environment: a snapshot of each captured variable
     let mut ops: List[u32] = List.new()
     for cp in caps {
@@ -6831,8 +7080,10 @@ fn lambda_in(inout c: C, n: ast.Node, caps: List[Capture], ptys: List[u32], pkey
     }
     for i in 0..n.d {
         let lp = nd(c, at(c, n.c, i))
-        let l = ir.local(inout c.ir, lp.a, ptys[i as usize], ir.L_PARAM, lp.line)
-        declare(inout c, local_plain(pkeys[i as usize], ptys[i as usize], false, lp.line, lp.col, l))?
+        let io = lp.c == 1
+        let kind = if io { ir.L_INOUT } else { ir.L_PARAM }
+        let l = ir.local(inout c.ir, lp.a, ptys[i as usize], kind, lp.line)
+        declare(inout c, local_plain(pkeys[i as usize], ptys[i as usize], io, lp.line, lp.col, l))?
     }
     lambda_body(inout c, n.a, ret_hint)
 }
@@ -6883,12 +7134,46 @@ fn call_value(inout c: C, n: ast.Node, label: List[u8], fv: V) -> Result[V, diag
         let fd = err("E0405", n.line, n.col, q3("`", label, "` takes ", num(ps.len() as u64), " argument(s), but ", num(n.d as u64), " were given"))
         return fail_call(inout c, fd, n.c, n.d)
     }
+    // exclusivity of the inout arguments (as for a named function's)
+    let mut roots: List[u64] = List.new()
+    for i in 0..n.d {
+        let a = nd(c, at(c, n.c, i))
+        if a.b == 1 && types.kind(c.t, ps[i as usize]) == types.T_INOUT {
+            let r = root(c, a.a)
+            if r.ok {
+                let rk = canon(c, r.key)
+                if roots.contains(rk) { return Err(err("E0301", r.line, r.col, q("`", kt(c, r.key), "` is borrowed mutably more than once in this call"))) }
+                roots.push(rk)
+            }
+        }
+    }
     let mut args: List[u32] = List.new()
     for i in 0..n.d {
         let a = nd(c, at(c, n.c, i))
         let x = nd(c, a.a)
-        if a.b == 1 { return Err(err("E0304", x.line, x.col, s("closures can't take `inout` arguments"))) }
         let t = ps[i as usize]
+        let pin = types.kind(c.t, t) == types.T_INOUT
+        if a.b == 1 && !pin { return Err(err("E0304", x.line, x.col, s("closures can't take `inout` arguments"))) }
+        if pin && a.b == 0 {
+            let mut d = err("E0304", x.line, x.col, s("this parameter of the closure is `inout`; pass the argument as `inout ...`"))
+            d.fix = Some(diag.Fix(x.line, x.col, 0, s("inout ")))
+            return Err(d)
+        }
+        if pin {
+            let pt = types.get(c.t, t).a
+            assignable_or_record(inout c, a.a, "borrow as inout")
+            let pv = place_expr(inout c, a.a)?
+            if !same(c, pv.ty, pt) { return Err(mismatch(c, x.line, x.col, pt, pv.ty)) }
+            args.push(pv.place + ir.ARG_PLACE)
+            continue
+        }
+        let mut ids: List[u64] = List.new()
+        idents(c, a.a, inout ids)
+        for rk in roots {
+            for k in ids {
+                if canon(c, k) == rk { return Err(err("E0301", x.line, x.col, q("`", kt(c, rk), "` is borrowed mutably by another argument of this call and can't be read here"))) }
+            }
+        }
         let v = expr(inout c, a.a, t)?
         if !same(c, v.ty, t) { return Err(mismatch(c, x.line, x.col, t, v.ty)) }
         args.push(v.op)
@@ -7113,6 +7398,25 @@ fn spawn(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
     if n.d != 1 { return Err(err("E0405", n.line, n.col, s("`spawn` takes exactly one closure"))) }
     let ae = arg_expr(c, at(c, n.c, 0))
     let x = nd(c, ae)
+    // a closure written here: what it captures goes to the new thread, so no Ref
+    if x.kind == ast.ELambda {
+        let mut names: List[u64] = List.new()
+        walk_expr(c, x.a, inout names)
+        for k in names {
+            let li = lookup(c, k)
+            if li == NONE { continue }
+            let v = c.scopes[li as usize].copy()
+            let mut seen: Map[u32, bool] = Map.new()
+            let r = ref_in(c, v.ty, inout seen)
+            if r != NONE {
+                let held = if r == v.ty { "`, a " } else { "`, which holds a " }
+                let mut d = err("E0411", x.line, x.col, q2("this closure captures `", kt(c, k), held, ts(c, r), ""))
+                bytes.append(inout d.msg, s(", and a Ref can't be sent to another thread"))
+                d.help = s("share the value through a `Mutex[T]` (or send a copy of what the Ref holds) instead")
+                return Err(d)
+            }
+        }
+    }
     c.lam = no_hint()
     let fv = expr(inout c, ae, NONE)?
     if poisoned(c, fv.ty) { return Ok(poison_v(inout c)) }
@@ -7121,6 +7425,7 @@ fn spawn(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
         return Err(err("E0401", x.line, x.col, q("`spawn` needs a closure with no parameters, found ", ts(c, fv.ty), "")))
     }
     if ft.b == types.NEVER { return Err(err("E0401", x.line, x.col, s("the closure never returns a value"))) }
+    not_sent(c, ft.b, s("Task"), x.line, x.col)?
     let ty = types.task_of(inout c.t, ft.b)
     let o = take(inout c, fv, n.line)
     Ok(v_of(ty, builtin_op(inout c, ir.B_SPAWN, one(o), ty, n.line)))
@@ -7137,6 +7442,7 @@ fn thread_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag
         let v = expr(inout c, ae, hint)?
         if hint != NONE && !same(c, v.ty, hint) { return Err(mismatch(c, x.line, x.col, hint, v.ty)) }
         if v.ty == types.UNIT || v.ty == types.NEVER { return Err(err("E0401", x.line, x.col, s("can't put () in a Mutex"))) }
+        not_sent(c, v.ty, s("Mutex"), x.line, x.col)?
         let ty = types.mutex_of(inout c.t, v.ty)
         let o = take(inout c, v, n.line)
         return Ok(v_of(ty, builtin_op(inout c, ir.B_MUTEX_NEW, one(o), ty, n.line)))
@@ -7147,6 +7453,137 @@ fn thread_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag
     }
     if n.d > 0 { return Err(err("E0405", n.line, n.col, s("`Chan.new` takes no arguments"))) }
     Ok(v_of(exp, builtin_op(inout c, ir.B_CHAN_NEW, List.new(), exp, n.line)))
+}
+
+// ---- Ref[T] (docs/compiler.md, "C8.7")
+//
+// A shared mutable cell for one thread: copying a Ref shares it (a non-atomic count), and
+// the value inside is reached only for the length of a call: `read(f)` runs f on a borrow
+// of it, `update(f)` runs f on the value itself (`fn(inout T) -> R`), `get()` copies it out
+// and `set(v)` replaces it. An access that overlaps an update traps at run time. A Ref
+// can't cross threads (E0411): a Task, Mutex or Chan can't hold one, and a spawned closure
+// can't capture one.
+
+/// The Ref type somewhere inside ty (its parts, as far as the type shows them; fn values
+/// don't show what they capture), or NONE.
+fn ref_in(c: C, ty: u32, inout seen: Map[u32, bool]) -> u32 {
+    if seen.contains(ty) { return NONE }
+    seen.insert(ty, true)
+    let t = types.get(c.t, ty)
+    let k = t.kind
+    if k == types.T_REF { return ty }
+    if k == types.T_ARRAY || k == types.T_LIST || k == types.T_BOX || types.is_handle(k) { return ref_in(c, t.a, inout seen) }
+    if k == types.T_MAP {
+        let x = ref_in(c, t.a, inout seen)
+        if x != NONE { return x }
+        return ref_in(c, t.b, inout seen)
+    }
+    if k == types.T_TUPLE {
+        for x in types.elems(c.t, ty) {
+            let y = ref_in(c, x, inout seen)
+            if y != NONE { return y }
+        }
+        return NONE
+    }
+    if k == types.T_RECORD || k == types.T_ENUM {
+        let d = c.t.defs[t.a as usize]
+        if d.is_enum {
+            for i in 0..d.len {
+                let v = types.variant(c.t, d, i)
+                for j in 0..v.flen {
+                    let x = ref_in(c, types.field(c.t, v.fstart, j).ty, inout seen)
+                    if x != NONE { return x }
+                }
+            }
+            return NONE
+        }
+        for j in 0..d.len {
+            let x = ref_in(c, types.field(c.t, d.start, j).ty, inout seen)
+            if x != NONE { return x }
+        }
+    }
+    NONE
+}
+
+/// E0411 when a value of type ty, going into `what` (a Task, Mutex or Chan), holds a Ref.
+fn not_sent(c: C, ty: u32, what: List[u8], line: u32, col: u32) -> Result[bool, diag.Diag] {
+    let mut seen: Map[u32, bool] = Map.new()
+    let r = ref_in(c, ty, inout seen)
+    if r == NONE || poisoned(c, ty) { return Ok(true) }
+    let mut m = q2("", what, " can't hold ", ts(c, ty), "")
+    if r != ty { bytes.append(inout m, q(" (its part ", ts(c, r), ")")) }
+    bytes.append(inout m, s(": a Ref is shared without a lock, so it can't cross to another thread"))
+    let mut d = err("E0411", line, col, m)
+    d.help = s("state that threads share goes in a `Mutex[T]` holding the value itself, not a Ref of it")
+    Err(d)
+}
+
+/// `Ref.new(v)`.
+fn ref_new(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
+    if n.d != 1 { return Err(err("E0405", n.line, n.col, s("`Ref.new` takes exactly one argument"))) }
+    let mut hint = NONE
+    if exp != NONE && types.kind(c.t, exp) == types.T_REF { hint = types.get(c.t, exp).a }
+    let ae = arg_expr(c, at(c, n.c, 0))
+    let x = nd(c, ae)
+    let v = expr(inout c, ae, hint)?
+    if hint != NONE && !same(c, v.ty, hint) { return Err(mismatch(c, x.line, x.col, hint, v.ty)) }
+    if v.ty == types.UNIT || v.ty == types.NEVER { return Err(err("E0401", x.line, x.col, s("can't put () in a Ref"))) }
+    let ty = types.ref_of(inout c.t, v.ty)
+    let o = take(inout c, v, n.line)
+    Ok(v_of(ty, builtin_op(inout c, ir.B_REF_NEW, one(o), ty, n.line)))
+}
+
+/// `get`, `set`, `read` and `update` of a Ref.
+fn ref_method(inout c: C, n: ast.Node, pv: PV, exp: u32) -> Result[V, diag.Diag] {
+    let ty = pv.ty
+    let el = types.get(c.t, ty).a
+    let label = label_of(c, ts(c, ty), n.b)
+    if is_word(c, n.b, "get") {
+        let ro = recv_op(inout c, pv)
+        eval_args(inout c, n, List.new(), label)?
+        return Ok(v_of(el, builtin_op(inout c, ir.B_REF_GET, one(ro), el, n.line)))
+    }
+    if is_word(c, n.b, "set") {
+        let ro = recv_op(inout c, pv)
+        let vs = eval_args(inout c, n, one(el), label)?
+        let x = take(inout c, vs[0], n.line)
+        return Ok(v_of(types.UNIT, builtin_op(inout c, ir.B_REF_SET, two(ro, x), types.UNIT, n.line)))
+    }
+    let upd = is_word(c, n.b, "update")
+    if upd || is_word(c, n.b, "read") {
+        if n.d != 1 { return Err(err("E0405", n.line, n.col, q("`", label, "` takes exactly one closure"))) }
+        let ro = recv_op(inout c, pv)
+        let pt = if upd { types.inout_of(inout c.t, el) } else { el }
+        // the result is the call's: its expected type, else a block-bodied closure's is ()
+        let mut rh = exp.copy()
+        let ae0 = arg_expr(c, at(c, n.c, 0))
+        let a0 = nd(c, ae0)
+        if rh == NONE && a0.kind == ast.ELambda && a0.g == 0 && is_value_form(c, a0.a) { rh = types.UNIT }
+        let fv = closure_arg(inout c, n, 0, one(pt), rh)?
+        let ae = nd(c, arg_expr(c, at(c, n.c, 0)))
+        if poisoned(c, fv.ty) || poisoned(c, el) { return Ok(poison_v(inout c)) }
+        let ft = types.get(c.t, fv.ty)
+        let mut ok = ft.kind == types.T_FN
+        if ok {
+            let ps = types.elems(c.t, fv.ty)
+            ok = ps.len() == 1 && ps[0] == pt
+        }
+        if !ok {
+            let want = if upd { "fn(inout " } else { "fn(" }
+            let mut m = q2("`", label, "` needs a closure of type ", s(want), "")
+            bytes.append(inout m, ts(c, el))
+            bytes.append(inout m, q(") -> R, found ", ts(c, fv.ty), ""))
+            return Err(err("E0401", ae.line, ae.col, m))
+        }
+        let r = ft.b
+        if r == types.NEVER { return Err(err("E0401", ae.line, ae.col, s("the closure never returns a value"))) }
+        // the closure is borrowed: its owner (a fresh temporary or a variable) drops it
+        let b = if upd { ir.B_REF_UPDATE } else { ir.B_REF_READ }
+        return Ok(v_of(r, builtin_op(inout c, b, two(ro, fv.op), r, n.line)))
+    }
+    let mut d = err("E0115", n.line, n.col, q2("type ", ts(c, ty), " has no method `", nm(c, n.b), "`"))
+    d.help = s("a Ref has `read(f)`, `update(f)`, `get()` and `set(v)`")
+    Err(d)
 }
 
 /// Methods of Task, Mutex and Chan.

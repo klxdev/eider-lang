@@ -1,0 +1,4 @@
+2
+--- stderr
+eider: runtime error: Ref updated while it is already being updated (compiler/tests/run/refs_conflict_update.ei:8)
+--- exit 101

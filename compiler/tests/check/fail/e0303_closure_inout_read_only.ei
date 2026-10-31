@@ -1,0 +1,6 @@
+// expect: E0303 5:13
+fn main() {
+    let f = |inout x: i32| -> () { x += 1 }
+    let n = 1
+    f(inout n)
+}

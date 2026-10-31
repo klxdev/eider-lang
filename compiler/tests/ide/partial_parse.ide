@@ -12,7 +12,7 @@ symbols
   4 local u compiler/tests/ide/partial_parse.ei:10:9-10:10 full 10:5-10:28 in 3 :: Unit
   5 module broken_mod compiler/tests/ide/lib/broken_mod.txt:1:1-1:1 full 1:1-7:1 :: compiler/tests/ide/lib/broken_mod.txt
   6 fn fine compiler/tests/ide/lib/broken_mod.txt:4:8-4:12 full 4:1-4:27 :: pub fn fine() -> i32
-  (93 symbols in <prelude>)
+  (95 symbols in <prelude>)
 refs
   compiler/tests/ide/partial_parse.ei:5:8-5:28 -> 5 module broken_mod
   compiler/tests/ide/partial_parse.ei:5:32-5:34 -> 5 module broken_mod

@@ -1,0 +1,6 @@
+// expect: E0301 5:22
+fn main() {
+    let f = |inout a: i32, inout b: i32| -> () { a += b }
+    let mut n = 1
+    f(inout n, inout n)
+}

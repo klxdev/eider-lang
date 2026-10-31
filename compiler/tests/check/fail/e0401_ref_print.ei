@@ -1,0 +1,5 @@
+// expect: E0401 4:11
+fn main() uses io {
+    let a = Ref.new(String.from("x"))
+    print(a)
+}

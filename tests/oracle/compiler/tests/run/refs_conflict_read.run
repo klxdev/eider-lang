@@ -1,0 +1,3 @@
+--- stderr
+eider: runtime error: Ref read while it is being updated (compiler/tests/run/refs_conflict_read.ei:7)
+--- exit 101

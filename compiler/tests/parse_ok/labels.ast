@@ -1,0 +1,46 @@
+(IFn 1:4 name=main end=1:10
+  body (Block 1:11 end=10:1
+    stmt (SFor 2:12 label=outer var=i
+      lo (EInt 2:21 value=0)
+      hi (EInt 2:24 value=3)
+      body (Block 2:26 end=8:5
+        stmt (SWhile 3:16 label=inner
+          cond (EBinary 3:24 op=`<`
+            lhs (EIdent 3:22 name=i)
+            rhs (EInt 3:26 value=2))
+          body (Block 3:28 end=6:9
+            stmt (SExpr 4:13
+              expr (EIf 4:13
+                cond (EBinary 4:18 op=`==`
+                  lhs (EIdent 4:16 name=i)
+                  rhs (EInt 4:21 value=1))
+                then (Block 4:23 end=4:37
+                  stmt (SBreak 4:25 label=outer))))
+            stmt (SContinue 5:13 label=inner)))
+        stmt (SForEach 7:9
+          pat (PTuple 7:13
+            sub (PName 7:14 name=a)
+            sub (PName 7:17 name=b))
+          iter (EArray 7:23
+            elem (ETuple 7:24
+              elem (EInt 7:25 value=1)
+              elem (EInt 7:28 value=2)))
+          body (Block 7:32 end=7:40
+            stmt (SBreak 7:34)))))
+    stmt (SWhile 9:11 label=next
+      cond (EBool 9:11 value=true)
+      body (Block 9:11 end=9:52
+        stmt (SExpr 9:11
+          expr (EMatch 9:11 end=9:52
+            scrutinee (ECall 9:31 name=f)
+            arm (Arm 9:11
+              pat (PVariant 9:21 name=Some
+                sub (PName 9:26 name=x))
+              body (EBlock 9:11
+                block (Block 9:35 end=9:51
+                  stmt (SContinue 9:37 label=next))))
+            arm (Arm 9:11
+              pat (PWild 9:11)
+              body (EBlock 9:11
+                block (Block 9:11 end=9:52
+                  stmt (SBreak 9:11))))))))))

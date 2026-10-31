@@ -1,0 +1,5 @@
+// expect: E0601 4:24
+fn fresh[T: Default]() -> T { T.default() }
+fn main() {
+    let c: Chan[i32] = fresh()
+}

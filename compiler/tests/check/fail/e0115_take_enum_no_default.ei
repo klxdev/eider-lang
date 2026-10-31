@@ -1,0 +1,6 @@
+// expect: E0115 5:15
+type Level = | Low | High
+fn main() {
+    let mut l = High
+    let m = l.take()
+}

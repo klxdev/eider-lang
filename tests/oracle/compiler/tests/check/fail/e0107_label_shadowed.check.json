@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_label_shadowed.ei","line":4,"col":9},"message":"label `outer` is already the label of an enclosing loop"}

@@ -333,6 +333,25 @@ static inline bool ei_buf_shared(const void *d) { return d && ((const ei_buf_hdr
 /* d's count (tests). */
 static inline uint64_t ei_buf_count(const void *d) { return d ? ((const ei_buf_hdr *)d - 1)->n : 0; }
 
+// ---- Ref[T] (docs/compiler.md, "C8.7"): a shared buffer (the count above, not atomic: a
+// Ref never crosses threads) holding an access state `st` and the value. st counts the
+// `read`s in progress (> 0), or is -1 while an `update` runs; an access that overlaps an
+// update, or an update that overlaps any access, traps (core/RUNTIME.md, "Ref").
+
+/* A read of the value (read, get): traps while an update runs. */
+static inline void ei_ref_read_begin(int64_t *st, int32_t line) {
+  if (*st < 0) ei_trap("Ref read while it is being updated", line);
+  ++*st;
+}
+static inline void ei_ref_read_end(int64_t *st) { --*st; }
+/* An update of the value (update, set): traps while any read or update runs. */
+static inline void ei_ref_update_begin(int64_t *st, int32_t line) {
+  if (*st < 0) ei_trap("Ref updated while it is already being updated", line);
+  if (*st > 0) ei_trap("Ref updated while it is being read", line);
+  *st = -1;
+}
+static inline void ei_ref_update_end(int64_t *st) { *st = 0; }
+
 // ---- String: NUL-terminated, `len` excludes the NUL, `cap` is the room for bytes before
 // the NUL (the buffer holds cap + 1). p is a shared buffer and never NULL for a live String
 // (ei_drop_String sets it to NULL).

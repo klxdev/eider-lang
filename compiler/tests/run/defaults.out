@@ -1,0 +1,26 @@
+0
+false
+0
+Point { x: 0, y: 0, on: false }
+Config { name: "", tags: [], limits: {}, parent: None, at: Point { x: 0, y: 0, on: false }, pair: (0, ""), grid: [0, 0, 0], boxed: Box(Point { x: 0, y: 0, on: false }) }
+Mid
+Server { port: Port { n: 8080 }, level: Mid, name: "" }
+0
+None
+0
+Point { x: 0, y: 0, on: false }
+Wrap { inner: Port { n: 8080 }, count: 0 }
+High(3)
+Mid
+[Mid, Mid]
+Point { x: 1, y: 2, on: true }
+Point { x: 0, y: 0, on: false }
+Server { port: Port { n: 1 }, level: High(9), name: "api" }
+Server { port: Port { n: 8080 }, level: Mid, name: "" }
+41
+0
+("a", 7)
+("", 0)
+Point { x: 4, y: 8, on: true }
+x
+0
