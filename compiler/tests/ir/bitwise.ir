@@ -1,0 +1,79 @@
+const K: u8 = 240u8
+
+fn bits -> i32
+  %0 param a: i32
+  %1 param n: i32
+  %2 temp: i32
+  %3 temp: i32
+  %4 var x: i32
+  %5 temp: i32
+  %6 temp: i32
+  %7 temp: i32
+  %8 temp: i32
+  %9 temp: i32
+  %10 temp: i32
+  %11 temp: i32
+  %12 temp: i32
+  %13 temp: i32
+  %14 temp: i32
+  %15 temp: i32
+  {
+    %2 = read %0
+    %3 = %2 & 255i32
+    %4 = %3
+    %5 = read %0
+    %6 = read %1
+    %7 = %5 ^ %6
+    %8 = read %4
+    %9 = %8 | %7
+    store %4 = %9
+    %10 = read %4
+    %11 = %10 << 2i32  @9
+    store %4 = %11
+    %12 = read %4
+    %13 = bnot %12
+    %14 = read %1
+    %15 = %13 >> %14  @10
+    return %15
+  }
+
+fn text -> Result[String, usize]
+  %0 param s: String
+  %1 param t: str
+  %2 temp: String
+  %3 temp: String
+  %4 temp: usize
+  %5 temp: String
+  %6 var b: String
+  %7 temp: str
+  %8 temp: u8
+  %9 temp: String
+  %10 temp: List[u8]
+  %11 temp: Result[String, usize]
+  {
+    %2 = read %0
+    %3 = read %0
+    %4 = len(%3)
+    %5 = slice(%2, 0usize, %4)  @14
+    %6 = %5
+    %7 = read %1
+    %8 = byte(%7, 0usize)  @15
+    push_byte(inout %6, %8)  @15
+    %9 = read %6
+    %10 = bytes(%9)
+    %11 = from_bytes(%10)
+    drop %10: List[u8]
+    drop %6: String
+    return %11
+  }
+
+fn unit -> Result[(), u8]
+  %0 temp: Result[(), u8]
+  {
+    %0 = Result[(), u8].<0>(())
+    return %0
+  }
+
+fn main -> ()
+  {
+  }

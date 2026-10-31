@@ -11,7 +11,8 @@ export fn text_sum() -> u32 {
     let t = s.slice(1, 3)
     match String.from_bytes(t.bytes()) {
         Ok(u) => { sum += u.len() as u32 }
-        Err(at) => { sum += 1000 }
+        Err(at) => { sum += at as u32 }
     }
-    return sum + "xyz".byte(2) as u32
+    let z = "xyz"
+    return sum + z.byte(2) as u32
 }

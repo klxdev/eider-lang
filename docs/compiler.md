@@ -1073,7 +1073,7 @@ already decided every clone, move and drop (ir.ei, "Ownership"); only what they 
 
 Wave 1, item 8.2: five small features the rest of the backlog (std on `String`, traits, the
 `sha256` copy) needs. `compiler/` doesn't use any of them until a seed that has them is
-committed. Tests: `compiler/tests/run/{bitwise,traps_bits,text_bytes,units,impl_builtin,main_*}.ei`,
+committed. Tests: `compiler/tests/run/{bitwise,traps_bits,text_bytes,text_cow,trap_text,trap_push_byte,units,impl_builtin,main_*}.ei`, `compiler/tests/wasm/bits.ei`, the `bitwise` lex/parse/IR goldens, `tests/checks` cases for each new code,
 compile-fail cases `e0002_*`, `e0505_*`, `e0506_*`, `e0116_*`, `e0111_main_*` and the new
 E0401/E0115/E0303/E0405 cases in `compiler/tests/check/fail`, `c8_*_ok.ei` in
 `compiler/tests/check/pass`, and `compiler/tests/check/multi/bitwise.ei`.

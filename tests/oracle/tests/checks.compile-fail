@@ -1,5 +1,6 @@
 compile-fail tests (tests/checks/fail)
   ok   e0001_missing_brace.ei       E0001 at 5:1
+  ok   e0002_bitwise_needs_parens.ei E0002 at 3:11 (fix compiles)
   ok   e0101_enum_missing.ei        E0101 at 4:3
   ok   e0101_int_no_wildcard.ei     E0101 at 3:3
   ok   e0102_duplicate_arm.ei       E0102 at 6:5
@@ -13,6 +14,7 @@ compile-fail tests (tests/checks/fail)
   ok   e0113_unknown_field.ei       E0113 at 4:12
   ok   e0114_unknown_variant.ei     E0114 at 4:12
   ok   e0115_no_method.ei           E0115 at 4:7
+  ok   e0116_builtin_method_name.ei E0116 at 3:8
   ok   e0201_comptime_io.ei         E0201 at 4:25
   ok   e0201_ffi_capability.ei      E0201 at 4:22 (fix compiles)
   ok   e0201_missing_capability.ei  E0201 at 3:3 (fix compiles)
@@ -51,6 +53,8 @@ compile-fail tests (tests/checks/fail)
   ok   e0503_constant_index_oob.ei  E0503 at 4:11
   ok   e0504_nonconst_initializer.ei E0504 at 3:16
   ok   e0504_owned_const.ei         E0504 at 2:29
+  ok   e0505_constant_shift_count.ei E0505 at 3:10
+  ok   e0506_push_byte_not_ascii.ei E0506 at 4:17
   ok   e0601_bound_unmet.ei         E0601 at 9:5
   ok   e0602_impl_mismatch.ei       E0602 at 7:8
   ok   e0603_unknown_trait.ei       E0603 at 2:6
@@ -68,6 +72,7 @@ compile-fail tests (tests/checks/fail)
   ok   e0808_module_name_clash.ei   E0808 at 3:1
 
 compile-pass tests (tests/checks/pass)
+  ok   pass_bitwise_units_bytes.ei
   ok   pass_capabilities.ei
   ok   pass_import_and_ffi.ei
   ok   pass_inout_and_var.ei
@@ -76,6 +81,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-74 passed, 0 failed; error-code coverage 42/46
-codes without a compile-fail test: E0002 E0116 E0505 E0506
+79 passed, 0 failed; error-code coverage 46/46
 --- exit 0

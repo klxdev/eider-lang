@@ -1,0 +1,1 @@
+{"error":"E0116","span":{"file":"tests/checks/fail/e0116_builtin_method_name.ei","line":3,"col":8},"message":"`String` already has a built-in `len`","help":"built-in methods can't be replaced; give this method another name"}

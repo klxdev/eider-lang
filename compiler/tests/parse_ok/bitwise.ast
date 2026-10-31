@@ -1,0 +1,74 @@
+(IFn 4:4 name=f end=4:29
+  param (Param 4:6 name=a
+    type (TName 4:9 name=u32))
+  param (Param 4:14 name=b
+    type (TName 4:17 name=u32))
+  ret (TName 4:25 name=bool)
+  body (Block 4:30 end=12:1
+    stmt (SLet 5:5 name=x
+      init (EBinary 5:20 op=`&`
+        lhs (EBinary 5:15 op=`>>`
+          lhs (EIdent 5:13 name=a)
+          rhs (EInt 5:18 value=4))
+        rhs (EInt 5:22 value=15)))
+    stmt (SLet 6:5 name=y
+      init (EBinary 6:21 op=`^`
+        lhs (EBinary 6:16 op=`|`
+          lhs (EIdent 6:14 name=a)
+          rhs (EIdent 6:18 name=b))
+        rhs (EBinary 6:27 op=`&`
+          lhs (EUnary 6:24 op=`~`
+            operand (EIdent 6:25 name=a))
+          rhs (EBinary 6:32 op=`<<`
+            lhs (EIdent 6:30 name=b)
+            rhs (EInt 6:35 value=2)))))
+    stmt (SLet 7:5 name=z
+      init (EBinary 7:19 op=`|`
+        lhs (EBinary 7:15 op=`|`
+          lhs (EIdent 7:13 name=a)
+          rhs (EIdent 7:17 name=b))
+        rhs (EIdent 7:21 name=x)))
+    stmt (SLet 8:5 name=w mut
+      init (EIdent 8:13 name=a))
+    stmt (SAssign 9:5 op=`<<=`
+      target (EIdent 9:5 name=w)
+      value (EInt 9:11 value=3))
+    stmt (SAssign 10:5 op=`^=`
+      target (EIdent 10:5 name=w)
+      value (EIdent 10:10 name=x))
+    stmt (SExpr 11:5
+      expr (EBinary 11:18 op=`&&`
+        lhs (EBinary 11:13 op=`==`
+          lhs (EBinary 11:8 op=`&`
+            lhs (EIdent 11:6 name=y)
+            rhs (EInt 11:10 value=1))
+          rhs (EInt 11:16 value=0))
+        rhs (EBinary 11:28 op=`>`
+          lhs (EBinary 11:23 op=`<<`
+            lhs (EIdent 11:21 name=a)
+            rhs (EInt 11:26 value=1))
+          rhs (EIdent 11:30 name=z))))))
+(IFn 14:4 name=g end=14:26
+  ret (TGeneric 14:11 name=Result
+    arg (TUnit 14:18)
+    arg (TName 14:22 name=str))
+  body (Block 14:27 end=20:1
+    stmt (SExpr 15:5
+      expr (EMatch 15:5 end=18:5
+        scrutinee (ECall 15:11 name=Ok
+          arg (EArg 15:14
+            expr (ETuple 15:14)))
+        arm (Arm 16:9
+          pat (PVariant 16:9 name=Ok
+            sub (PTuple 16:12))
+          body (EBlock 16:19
+            block (Block 16:19 end=16:20)))
+        arm (Arm 17:9
+          pat (PVariant 17:9 name=Err
+            sub (PWild 17:13))
+          body (EBlock 17:19
+            block (Block 17:19 end=17:20)))))
+    stmt (SExpr 19:5
+      expr (ECall 19:5 name=Ok
+        arg (EArg 19:8
+          expr (ETuple 19:8))))))
