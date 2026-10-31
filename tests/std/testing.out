@@ -1,0 +1,28 @@
+  a
+- b
++ x
+  c
++ d
+
+std/testing: 26 checks, 0 failed
+0
+FAIL demo: text
+   got: line one
+line 2
+
+  want: line one
+line two
+
+  (first difference at byte 14)
+  lines (- got, + want):
+  line one
+- line 2
++ line two
+
+false
+FAIL demo: cond
+false
+false
+demo: 2 checks, 2 failed
+1
+exit 0

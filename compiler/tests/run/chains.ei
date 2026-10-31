@@ -1,0 +1,52 @@
+// A method chain continued on the next line (docs/compiler.md, "C8.25"): a line that starts
+// with `.` continues the expression of the line before (blank and comment lines between are
+// skipped), for method calls, fields and tuple fields alike. Expected output: chains.out.
+type Spec = { name: String, fields: List[String], strict: bool }
+
+impl Spec {
+    fn new(name: str) -> Spec { Spec(String.from(name), List.new(), false) }
+    fn field(self, f: str) -> Spec {
+        let mut s = self.copy()
+        s.fields.push(String.from(f))
+        s
+    }
+    fn closed(self) -> Spec {
+        let mut s = self.copy()
+        s.strict = true
+        s
+    }
+}
+
+type Pair = { a: (i32, i32), b: i32 }
+
+fn main() uses io {
+    let s = Spec.new("user")
+        .field("id")
+        .field("name")
+
+        // a comment between the lines of a chain
+        .closed()
+    print(s)
+    let xs: List[i32] = List.new()
+    let total = xs
+        .len()
+    print(total)
+    let p = Pair((1, 2), 3)
+    let v = p
+        .a
+        .1
+    print(v)
+    // a chain as the value of a block, and inside a call
+    let k = {
+        Spec.new("x")
+            .field("y")
+    }
+    print(k.fields.len())
+    print(Spec.new("z")
+        .field("w")
+        .fields)
+    // a line that doesn't start with `.` still ends the statement
+    let mut m = Spec.new("m")
+    m = m.field("a")
+    print(m.fields)
+}

@@ -51,16 +51,16 @@ type Res = { code: i32, out: List[u8], err: List[u8] }
 /// The counters of a campaign.
 type Stats = { ok: u64, unsup: u64, failed: u64, foreign: u64, built: u64, warned: u64, ran: u64, segv: u64, slow: u64 }
 
-fn is(a: List[u8], s: str) -> bool uses ffi { bytes.eq(a, sys.lit(s)) }
+fn is(a: List[u8], s: str) -> bool { bytes.eq(a, sys.lit(s)) }
 
-fn has(hay: List[u8], s: str) -> bool uses ffi {
+fn has(hay: List[u8], s: str) -> bool {
     match bytes.find(hay, sys.lit(s), 0) {
         Some(_) => true
         None => false
     }
 }
 
-fn line(parts: List[List[u8]]) uses io, ffi {
+fn line(parts: List[List[u8]]) uses io {
     let none: List[u8] = List.new()
     io.outln(bytes.join(parts, none))
 }
@@ -70,7 +70,7 @@ fn num(n: u64) -> List[u8] { bytes.from_u64(n) }
 fn int(n: i32) -> List[u8] { bytes.from_i64(n as i64) }
 
 /// The `.ei` files directly in `dir` (leftover fuzz_*.ei mutants excluded), as paths.
-fn ei_files(dir: str, inout out: List[List[u8]]) -> Result[bool, String] uses fs, ffi {
+fn ei_files(dir: str, inout out: List[List[u8]]) -> Result[bool, String] uses fs {
     let d = sys.lit(dir)
     for n in fs.list(d)? {
         if bytes.ends_with(n, sys.lit(".ei")) && !bytes.starts_with(n, sys.lit("fuzz_")) {
@@ -80,8 +80,8 @@ fn ei_files(dir: str, inout out: List[List[u8]]) -> Result[bool, String] uses fs
     Ok(true)
 }
 
-fn default_seeds() -> Result[List[List[u8]], String] uses fs, ffi {
-    var s: List[List[u8]] = List.new()
+fn default_seeds() -> Result[List[List[u8]], String] uses fs {
+    let mut s: List[List[u8]] = List.new()
     ei_files("compiler/tests/check/pass", inout s)?
     ei_files("compiler/tests/check/fail", inout s)?
     ei_files("compiler/tests/ir", inout s)?
@@ -92,55 +92,55 @@ fn default_seeds() -> Result[List[List[u8]], String] uses fs, ffi {
     Ok(fs.sort(s))
 }
 
-fn env_or(name: str, dflt: str) -> List[u8] uses io, ffi {
+fn env_or(name: str, dflt: str) -> List[u8] uses io {
     match env.get(sys.lit(name)) {
         Some(v) => v
         None => sys.lit(dflt)
     }
 }
 
-fn parse_opts() -> Result[Opts, String] uses io, fs, ffi {
+fn parse_opts() -> Result[Opts, String] uses io, fs {
     let argv = env.args()
-    var count: u64 = 500
-    var seeds: List[List[u8]] = List.new()
+    let mut count: u64 = 500
+    let mut seeds: List[List[u8]] = List.new()
     if argv.len() > 1 {
         match bytes.parse_u64(argv[1]) {
             Some(n) => { count = n }
             None => {
-                var m = String.from("count must be a number: ")
+                let mut m = String.from("count must be a number: ")
                 m.append(sys.to_string(argv[1]))
                 return Err(m)
             }
         }
     }
-    var i: usize = 2
+    let mut i: usize = 2
     while i < argv.len() {
         seeds.push(argv[i])
         i += 1
     }
     if seeds.len() == 0 { seeds = default_seeds()? }
-    var seed: u64 = 1
+    let mut seed: u64 = 1
     match bytes.parse_u64(env_or("SEED", "1")) {
         Some(n) => { seed = n }
         None => { return Err(String.from("SEED must be a number")) }
     }
     let mode = env_or("MODE", "semantic")
     if !is(mode, "semantic") && !is(mode, "wild") { return Err(String.from("MODE must be semantic or wild")) }
-    var reference = env_or("REF", "./target/eiderc")
+    let mut reference = env_or("REF", "./target/eiderc")
     if is(reference, "none") { reference = List.new() }
     Ok(Opts(count, seeds, seed, is(mode, "wild"), env_or("EIDERC", "./target/eiderc-next"), reference))
 }
 
 /// Run argv for at most `ms` milliseconds.
-fn exec(argv: List[List[u8]], ms: i64) -> Result[Res, String] uses io, fs, net, ffi {
+fn exec(argv: List[List[u8]], ms: i64) -> Result[Res, String] uses io, fs, net {
     let o = proc.run_with(argv, proc.limited(ms))?
     let code = if o.timed_out { -1 } else { o.code }
     Ok(Res(code, bytes.trim(o.out), bytes.trim(o.err)))
 }
 
 /// `<compiler> <cmd> [--json] <path> [-o <out>]`, killed after 30 s.
-fn compile(compiler: List[u8], cmd: str, json: bool, path: List[u8], out: List[u8]) -> Result[Res, String] uses io, fs, net, ffi {
-    var a: List[List[u8]] = List.new()
+fn compile(compiler: List[u8], cmd: str, json: bool, path: List[u8], out: List[u8]) -> Result[Res, String] uses io, fs, net {
+    let mut a: List[List[u8]] = List.new()
     a.push(compiler)
     a.push(sys.lit(cmd))
     if json { a.push(sys.lit("--json")) }
@@ -162,7 +162,7 @@ fn first_line(out: List[u8]) -> List[u8] {
 
 /// Whether every line of `check --json` output is a diagnostic, none repeated, except a last
 /// `{"note":...}` line.
-fn well_formed(out: List[u8]) -> bool uses ffi {
+fn well_formed(out: List[u8]) -> bool {
     let ls = bytes.lines(out)
     for i in 0..ls.len() {
         let l = ls[i]
@@ -177,7 +177,7 @@ fn well_formed(out: List[u8]) -> bool uses ffi {
 }
 
 /// The code of a `check --json` diagnostic (`{"error":"E0101",...}`), or "" if `out` isn't one.
-fn json_code(out: List[u8]) -> List[u8] uses ffi {
+fn json_code(out: List[u8]) -> List[u8] {
     let none: List[u8] = List.new()
     if !bytes.starts_with(out, sys.lit("{\"error\":\"")) { return none }
     match bytes.find_byte(out, 34, 10) {
@@ -187,8 +187,8 @@ fn json_code(out: List[u8]) -> List[u8] uses ffi {
 }
 
 /// Whether `err` (human-readable diagnostics) reports `error[<code>]`.
-fn reports(err: List[u8], code: List[u8]) -> bool uses ffi {
-    var want = sys.lit("error[")
+fn reports(err: List[u8], code: List[u8]) -> bool {
+    let mut want = sys.lit("error[")
     bytes.append(inout want, code)
     want.push(93)
     match bytes.find(err, want, 0) {
@@ -207,12 +207,12 @@ fn tally(inout keys: List[List[u8]], inout counts: List[u64], code: List[u8]) {
     }
     keys.push(code)
     counts.push(1)
-    var i = keys.len() - 1
+    let mut i = keys.len() - 1
     while i > 0 && bytes.compare(keys[i - 1], keys[i]) > 0 {
-        let k = keys[i - 1]
+        let k = keys[i - 1].copy()
         keys[i - 1] = keys[i]
         keys[i] = k
-        let c = counts[i - 1]
+        let c = counts[i - 1].copy()
         counts[i - 1] = counts[i]
         counts[i] = c
         i -= 1
@@ -220,14 +220,14 @@ fn tally(inout keys: List[List[u8]], inout counts: List[u64], code: List[u8]) {
 }
 
 /// `FAIL <what> <kept mutant>` and the evidence, one line each.
-fn report(what: List[u8], keep: List[u8], r: Res, detail: List[u8]) uses io, ffi {
-    var l1: List[List[u8]] = List.new()
+fn report(what: List[u8], keep: List[u8], r: Res, detail: List[u8]) uses io {
+    let mut l1: List[List[u8]] = List.new()
     l1.push(sys.lit("FAIL "))
     l1.push(what)
     l1.push(sys.lit(" "))
     l1.push(keep)
     line(l1)
-    var l2: List[List[u8]] = List.new()
+    let mut l2: List[List[u8]] = List.new()
     l2.push(sys.lit("  exit "))
     l2.push(int(r.code))
     l2.push(sys.lit(": "))
@@ -236,7 +236,7 @@ fn report(what: List[u8], keep: List[u8], r: Res, detail: List[u8]) uses io, ffi
     l2.push(bytes.slice(r.err, 0, 300))
     line(l2)
     if detail.len() > 0 {
-        var l3: List[List[u8]] = List.new()
+        let mut l3: List[List[u8]] = List.new()
         l3.push(sys.lit("  "))
         l3.push(bytes.slice(detail, 0, 300))
         line(l3)
@@ -247,13 +247,13 @@ fn report(what: List[u8], keep: List[u8], r: Res, detail: List[u8]) uses io, ffi
 /// detail line, or, when it breaks none, its diagnostic code (`ok`, `unsupported`, `E0101`...).
 type Verdict = { what: List[u8], res: Res, detail: List[u8], code: List[u8] }
 
-fn verdict(what: str, r: Res, detail: List[u8]) -> Verdict uses ffi {
+fn verdict(what: str, r: Res, detail: List[u8]) -> Verdict {
     let none: List[u8] = List.new()
     Verdict(sys.lit(what), r, detail, none)
 }
 
 /// Hold mutant `path` to the invariants (top of file); counts what it built and ran in `st`.
-fn judge(o: Opts, path: List[u8], src: List[u8], bin: List[u8], inout st: Stats) -> Result[Verdict, String] uses io, fs, net, ffi {
+fn judge(o: Opts, path: List[u8], src: List[u8], bin: List[u8], inout st: Stats) -> Result[Verdict, String] uses io, fs, net {
     let none: List[u8] = List.new()
     let c = compile(o.eiderc, "check", true, path, none)?
     if c.code == -1 { return Ok(verdict("check (timeout)", c, none)) }
@@ -263,14 +263,14 @@ fn judge(o: Opts, path: List[u8], src: List[u8], bin: List[u8], inout st: Stats)
     if c.code == 1 && code.len() == 0 { return Ok(verdict("check (no diagnostic)", c, none)) }
     if c.code == 1 && !well_formed(c.out) { return Ok(verdict("check (a line that is no diagnostic, or a repeated one)", c, none)) }
     if is(code, "unsupported") {
-        var v = verdict("", c, none)
+        let mut v = verdict("", c, none)
         v.code = code
         return Ok(v)
     }
     if o.reference.len() > 0 {
         let w = compile(o.reference, "check", true, path, none)?
         if !bytes.eq(first_line(w.out), first_line(c.out)) || w.code != c.code {
-            var d = sys.lit("REF: ")
+            let mut d = sys.lit("REF: ")
             bytes.append(inout d, w.out)
             return Ok(verdict("ref (check --json differs)", c, d))
         }
@@ -280,7 +280,7 @@ fn judge(o: Opts, path: List[u8], src: List[u8], bin: List[u8], inout st: Stats)
         if e.code != 0 { return Ok(verdict("emit-c (fails where check succeeds)", e, none)) }
     } else {
         if e.code != 1 || !reports(e.err, code) {
-            var d = sys.lit("check: ")
+            let mut d = sys.lit("check: ")
             bytes.append(inout d, c.out)
             return Ok(verdict("emit-c (does not fail like check)", e, d))
         }
@@ -292,7 +292,7 @@ fn judge(o: Opts, path: List[u8], src: List[u8], bin: List[u8], inout st: Stats)
         if b.code != 0 { return Ok(verdict("build (a checked program does not build)", b, none)) }
         st.built += 1
         if b.err.len() > 0 { st.warned += 1 }
-        var a: List[List[u8]] = List.new()
+        let mut a: List[List[u8]] = List.new()
         a.push(bin)
         let r = exec(a, 10000)?
         if r.code == -1 {
@@ -305,20 +305,20 @@ fn judge(o: Opts, path: List[u8], src: List[u8], bin: List[u8], inout st: Stats)
             st.ran += 1
         }
     }
-    var v = verdict("", c, none)
+    let mut v = verdict("", c, none)
     v.code = if code.len() == 0 { sys.lit("ok") } else { code }
     Ok(v)
 }
 
-fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net, ffi {
+fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net {
     let t = fuzz.tables()
-    var r = fuzz.rng(o.seed)
-    var st = Stats(0, 0, 0, 0, 0, 0, 0, 0, 0)
-    var keys: List[List[u8]] = List.new()
-    var counts: List[u64] = List.new()
+    let mut r = fuzz.rng(o.seed)
+    let mut st = Stats(0, 0, 0, 0, 0, 0, 0, 0, 0)
+    let mut keys: List[List[u8]] = List.new()
+    let mut counts: List[u64] = List.new()
     fs.mkdir_all(sys.lit("target/fuzz"))?
     let bin = sys.lit("target/fuzz/prog")
-    var k: u64 = 0
+    let mut k: u64 = 0
     while k < o.count {
         let seed = fuzz.pick(inout r, o.seeds)
         let mutant = fuzz.mutate(t, fs.read(seed)?, inout r, o.wild)
@@ -328,7 +328,7 @@ fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net, ffi {
         let v = judge(o, path, mutant, bin, inout st)?
         if v.what.len() > 0 {
             st.failed += 1
-            var name = sys.lit("fuzz_")
+            let mut name = sys.lit("fuzz_")
             bytes.append(inout name, num(k))
             bytes.append(inout name, sys.lit(".ei"))
             let keep = fs.join(dir, name)
@@ -343,7 +343,7 @@ fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net, ffi {
         fs.remove_all(path)?
         k += 1
     }
-    var s: List[List[u8]] = List.new()
+    let mut s: List[List[u8]] = List.new()
     s.push(sys.lit("{'ok': "))
     s.push(num(st.ok))
     s.push(sys.lit(", 'unsupported': "))
@@ -364,9 +364,9 @@ fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net, ffi {
     s.push(num(st.slow))
     s.push(sys.lit("}"))
     line(s)
-    var c: List[List[u8]] = List.new()
+    let mut c: List[List[u8]] = List.new()
     for i in 0..keys.len() {
-        var kv = keys[i]
+        let mut kv = keys[i].copy()
         kv.push(58)
         bytes.append(inout kv, num(counts[i]))
         c.push(kv)
@@ -376,7 +376,7 @@ fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net, ffi {
     Ok(st.failed == 0)
 }
 
-fn main() uses io, fs, net, ffi {
+fn main() uses io, fs, net {
     let r: Result[bool, String] = match parse_opts() {
         Ok(o) => campaign(o)
         Err(e) => Err(e)
@@ -386,7 +386,7 @@ fn main() uses io, fs, net, ffi {
         Ok(false) => { env.exit(1) }
         Err(e) => {
             // TODO(compiler): Strings can't reach stderr until they have byte access.
-            var m = String.from("fuzz-check: ")
+            let mut m = String.from("fuzz-check: ")
             m.append(e)
             print(m)
             env.exit(2)

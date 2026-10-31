@@ -1,0 +1,1 @@
+{"error":"E0308","span":{"file":"compiler/tests/check/fail/e0308_if_let_payload.ei","line":5,"col":9},"message":"can't assign to `o` while `v` refers into it","help":"`v` is used after this change, which may free, move or replace what it refers to; use it before the change, or bind a copy with `.copy()`","fix":{"at":{"line":4,"col":23},"delete":0,"insert":".copy()"}}

@@ -1,0 +1,1 @@
+{"error":"E0411","span":{"file":"compiler/tests/check/fail/e0411_task_result_ref.ei","line":3,"col":19},"message":"Task can't hold Ref[i32]: a Ref is shared without a lock, so it can't cross to another thread","help":"state that threads share goes in a `Mutex[T]` holding the value itself, not a Ref of it"}

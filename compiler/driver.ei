@@ -53,20 +53,20 @@ import "std/env"
 import "std/proc"
 import "sha256.ei"
 
-fn s(x: str) -> List[u8] uses ffi { sys.lit(x) }
+fn s(x: str) -> List[u8] { sys.lit(x) }
 
-pub fn fail(msg: List[u8], code: i32) uses io, ffi {
-    var m = s("eiderc: ")
+pub fn fail(msg: List[u8], code: i32) uses io {
+    let mut m = s("eiderc: ")
     bytes.append(inout m, msg)
     io.errln(m)
     env.exit(code)
 }
 
-fn has_core(dir: List[u8]) -> bool uses fs, ffi { fs.exists(fs.join(dir, s("core/eider_rt.h"))) }
+fn has_core(dir: List[u8]) -> bool uses fs { fs.exists(fs.join(dir, s("core/eider_rt.h"))) }
 
 /// The nearest of `dir` and its parents that contains core/eider_rt.h ("" if none).
-fn search_up(dir: List[u8]) -> List[u8] uses fs, ffi {
-    var d = dir
+fn search_up(dir: List[u8]) -> List[u8] uses fs {
+    let mut d = dir.copy()
     while d.len() > 0 {
         if has_core(d) { return d }
         let up = fs.dirname(d)
@@ -77,14 +77,14 @@ fn search_up(dir: List[u8]) -> List[u8] uses fs, ffi {
 }
 
 /// The toolchain root (see the top of this file).
-pub fn root() -> List[u8] uses io, fs, ffi {
+pub fn root() -> List[u8] uses io, fs {
     let r = find_root()
     if r.len() == 0 { fail(s("cannot find the toolchain (a directory with core/eider_rt.h); set EIDER_ROOT"), 2) }
     r
 }
 
 /// `root`, or "" when there is none (instead of exiting).
-pub fn find_root() -> List[u8] uses io, fs, ffi {
+pub fn find_root() -> List[u8] uses io, fs {
     match env.get(s("EIDER_ROOT")) {
         Some(r) => { if r.len() > 0 { return r } }
         None => {}
@@ -109,16 +109,16 @@ pub fn find_root() -> List[u8] uses io, fs, ffi {
 
 /// A new work directory of our own (`work_dir`: under the cache or target/, never shared
 /// with another process); the caller removes it.
-pub fn temp_dir() -> List[u8] uses io, fs, clock, ffi { work_dir() }
+pub fn temp_dir() -> List[u8] uses io, fs, clock { work_dir() }
 
 /// The file name of `path` without directories and without its extension.
 pub fn stem(path: List[u8]) -> List[u8] {
-    var start: usize = 0
+    let mut start: usize = 0
     match bytes.rfind_byte(path, 47) {
         Some(i) => { start = i + 1 }
         None => {}
     }
-    var end = path.len()
+    let mut end = path.len()
     match bytes.rfind_byte(path, 46) {
         Some(i) => { if i > start { end = i } }
         None => {}
@@ -126,7 +126,7 @@ pub fn stem(path: List[u8]) -> List[u8] {
     bytes.slice(path, start, end)
 }
 
-fn extra_flags(inout argv: List[List[u8]]) uses io, ffi {
+fn extra_flags(inout argv: List[List[u8]]) uses io {
     match env.get(s("EIDER_CFLAGS")) {
         Some(f) => {
             for x in bytes.split(f, 32) {
@@ -137,11 +137,11 @@ fn extra_flags(inout argv: List[List[u8]]) uses io, ffi {
     }
 }
 
-pub fn write_or_fail(path: List[u8], data: List[u8]) uses io, fs, ffi {
+pub fn write_or_fail(path: List[u8], data: List[u8]) uses io, fs {
     match fs.write(path, data) {
         Ok(_) => {}
         Err(_) => {
-            var m = s("cannot write ")
+            let mut m = s("cannot write ")
             bytes.append(inout m, path)
             fail(m, 3)
         }
@@ -149,13 +149,13 @@ pub fn write_or_fail(path: List[u8], data: List[u8]) uses io, fs, ffi {
 }
 
 /// The C compiler and the flags every compile uses (core = <root>/core).
-pub fn cc_argv(core: List[u8], release: bool) -> List[List[u8]] uses io, ffi {
-    var cc = s("cc")
+pub fn cc_argv(core: List[u8], release: bool) -> List[List[u8]] uses io {
+    let mut cc = s("cc")
     match env.get(s("CC")) {
         Some(x) => { if x.len() > 0 { cc = x } }
         None => {}
     }
-    var argv: List[List[u8]] = List.new()
+    let mut argv: List[List[u8]] = List.new()
     argv.push(cc)
     argv.push(s("-std=c11"))
     argv.push(s("-pedantic"))
@@ -173,20 +173,20 @@ pub fn cc_argv(core: List[u8], release: bool) -> List[List[u8]] uses io, ffi {
     argv
 }
 
-fn add_libs(inout argv: List[List[u8]], libs: List[List[u8]]) uses ffi {
+fn add_libs(inout argv: List[List[u8]], libs: List[List[u8]]) {
     for l in libs {
-        var a = s("-l")
+        let mut a = s("-l")
         bytes.append(inout a, l)
         argv.push(a)
     }
 }
 
 /// Run a toolchain command; exit 3 when it can't be started or fails (`what` names it).
-fn tool(argv: List[List[u8]], what: str) uses io, fs, net, ffi {
+fn tool(argv: List[List[u8]], what: str) uses io, fs, net {
     let code = match proc.run(argv) {
         Ok(n) => n
         Err(_) => {
-            var m = s("cannot run `")
+            let mut m = s("cannot run `")
             bytes.append(inout m, argv[0])
             bytes.append(inout m, s("`"))
             fail(m, 3)
@@ -199,7 +199,7 @@ fn tool(argv: List[List[u8]], what: str) uses io, fs, net, ffi {
 // ------------------------------------------------------------------ cache and work dirs
 
 /// The cache directory (see the top of this file), or "" when the cache is off.
-pub fn cache_dir() -> List[u8] uses io, ffi {
+pub fn cache_dir() -> List[u8] uses io {
     match env.get(s("EIDER_CACHE")) {
         Some(d) => {
             if bytes.eq(d, s("off")) { return List.new() }
@@ -221,7 +221,7 @@ pub fn cache_dir() -> List[u8] uses io, ffi {
 /// Lowercase hex SHA-256 of `parts`, each prefixed with its length so no two lists of parts
 /// hash the same bytes.
 pub fn key(parts: List[List[u8]]) -> List[u8] {
-    var m: List[u8] = List.new()
+    let mut m: List[u8] = List.new()
     for p in parts {
         bytes.append(inout m, bytes.from_u64(p.len() as u64))
         m.push(58)
@@ -231,14 +231,14 @@ pub fn key(parts: List[List[u8]]) -> List[u8] {
 }
 
 /// A new, empty directory of our own under `base` ("" if it can't be made).
-fn fresh_dir(base: List[u8]) -> List[u8] uses fs, clock, ffi {
+fn fresh_dir(base: List[u8]) -> List[u8] uses fs, clock {
     match fs.mkdir_all(base) {
         Ok(_) => {}
         Err(_) => { return List.new() }
     }
     let stamp = now_ms()
     for k in 0..10000 {
-        var name = s("eiderc-")
+        let mut name = s("eiderc-")
         bytes.append(inout name, bytes.from_u64(stamp))
         name.push(45)
         bytes.append(inout name, bytes.from_u64(k as u64))
@@ -253,7 +253,7 @@ fn fresh_dir(base: List[u8]) -> List[u8] uses fs, clock, ffi {
 
 /// The work directory for one compile: under <cache>/tmp/, else <root>/target/tmp/, else
 /// $TMPDIR (or /tmp), whichever is writable first.
-fn work_dir() -> List[u8] uses io, fs, clock, ffi {
+fn work_dir() -> List[u8] uses io, fs, clock {
     // without a toolchain, exit 2 for that first (as before try_work_dir existed)
     root()
     let d = try_work_dir()
@@ -262,13 +262,13 @@ fn work_dir() -> List[u8] uses io, fs, clock, ffi {
 }
 
 /// `work_dir`, or "" when none can be made (instead of exiting).
-pub fn try_work_dir() -> List[u8] uses io, fs, clock, ffi {
-    var bases: List[List[u8]] = List.new()
+pub fn try_work_dir() -> List[u8] uses io, fs, clock {
+    let mut bases: List[List[u8]] = List.new()
     let cache = cache_dir()
     if cache.len() > 0 { bases.push(fs.join(cache, s("tmp"))) }
     let r = find_root()
     if r.len() > 0 { bases.push(fs.join(r, s("target/tmp"))) }
-    var t = s("/tmp")
+    let mut t = s("/tmp")
     match env.get(s("TMPDIR")) {
         Some(x) => { if x.len() > 0 { t = x } }
         None => {}
@@ -283,12 +283,12 @@ pub fn try_work_dir() -> List[u8] uses io, fs, clock, ffi {
 
 /// What identifies the C toolchain for the cache: the cc argv, `<cc> --version`, and the
 /// environment variables that change what cc finds.
-fn toolchain_id(argv: List[List[u8]]) -> List[List[u8]] uses io, fs, net, ffi {
-    var id: List[List[u8]] = List.new()
+fn toolchain_id(argv: List[List[u8]]) -> List[List[u8]] uses io, fs, net {
+    let mut id: List[List[u8]] = List.new()
     id.push(s("eiderc cache 1"))
     id.push(bytes.from_u64(argv.len() as u64))
     for a in argv { id.push(a) }
-    var v: List[List[u8]] = List.new()
+    let mut v: List[List[u8]] = List.new()
     v.push(argv[0])
     v.push(s("--version"))
     let ver: List[u8] = match proc.run_with(v, proc.captured()) {
@@ -305,11 +305,11 @@ fn toolchain_id(argv: List[List[u8]]) -> List[List[u8]] uses io, fs, net, ffi {
     id
 }
 
-fn read_or_fail(path: List[u8]) -> List[u8] uses io, fs, ffi {
+fn read_or_fail(path: List[u8]) -> List[u8] uses io, fs {
     match fs.read(path) {
         Ok(t) => t
         Err(_) => {
-            var m = s("cannot read ")
+            let mut m = s("cannot read ")
             bytes.append(inout m, path)
             fail(m, 3)
             List.new()
@@ -321,17 +321,17 @@ fn read_or_fail(path: List[u8]) -> List[u8] uses io, fs, ffi {
 /// objects from <cache>/core/ (compiled into `dir` and renamed into place first if missing;
 /// `id` is toolchain_id(argv)), else its two sources. `quiet`: a failure returns no inputs
 /// instead of being reported (and exiting).
-fn core_inputs(argv: List[List[u8]], id: List[List[u8]], core: List[u8], cache: List[u8], dir: List[u8], quiet: bool) -> List[List[u8]] uses io, fs, net, ffi {
-    var srcs: List[List[u8]] = List.new()
+fn core_inputs(argv: List[List[u8]], id: List[List[u8]], core: List[u8], cache: List[u8], dir: List[u8], quiet: bool) -> List[List[u8]] uses io, fs, net {
+    let mut srcs: List[List[u8]] = List.new()
     srcs.push(fs.join(core, s("eider_rt.c")))
     srcs.push(fs.join(core, s("eider_core.c")))
     if cache.len() == 0 { return srcs }
-    var parts = id
+    let mut parts = id.copy()
     parts.push(s("core objects"))
     parts.push(read_or_fail(fs.join(core, s("eider_rt.h"))))
     for f in srcs { parts.push(read_or_fail(f)) }
     let objdir = fs.join(fs.join(cache, s("core")), key(parts))
-    var objs: List[List[u8]] = List.new()
+    let mut objs: List[List[u8]] = List.new()
     objs.push(fs.join(objdir, s("eider_rt.o")))
     objs.push(fs.join(objdir, s("eider_core.o")))
     // the directory is renamed into place whole, so it exists only when both objects do
@@ -342,11 +342,11 @@ fn core_inputs(argv: List[List[u8]], id: List[List[u8]], core: List[u8], cache: 
         if quiet { return List.new() }
         fail(s("cannot create a work directory"), 3)
     }
-    var made: List[List[u8]] = List.new()
+    let mut made: List[List[u8]] = List.new()
     made.push(fs.join(tmp, s("eider_rt.o")))
     made.push(fs.join(tmp, s("eider_core.o")))
     for i in 0..2 {
-        var a = argv
+        let mut a = argv.copy()
         a.push(s("-c"))
         a.push(s("-o"))
         a.push(made[i as usize])
@@ -373,7 +373,7 @@ fn core_inputs(argv: List[List[u8]], id: List[List[u8]], core: List[u8], cache: 
 }
 
 /// Run a command with its output captured; whether it succeeded.
-fn quiet_ok(argv: List[List[u8]]) -> bool uses io, fs, net, ffi {
+fn quiet_ok(argv: List[List[u8]]) -> bool uses io, fs, net {
     match proc.run_with(argv, proc.captured()) {
         Ok(o) => o.code == 0
         Err(_) => false
@@ -382,11 +382,11 @@ fn quiet_ok(argv: List[List[u8]]) -> bool uses io, fs, net, ffi {
 
 /// Run the C compiler on the generated C `cfile` with inherited stdio; exit 3 if it can't
 /// start or fails (the C is kept).
-fn cc_or_fail(argv: List[List[u8]], cfile: List[u8]) uses io, fs, net, ffi {
+fn cc_or_fail(argv: List[List[u8]], cfile: List[u8]) uses io, fs, net {
     let code = match proc.run(argv) {
         Ok(n) => n
         Err(_) => {
-            var m = s("cannot run the C compiler `")
+            let mut m = s("cannot run the C compiler `")
             bytes.append(inout m, argv[0])
             bytes.append(inout m, s("` (set $CC)"))
             fail(m, 3)
@@ -394,7 +394,7 @@ fn cc_or_fail(argv: List[List[u8]], cfile: List[u8]) uses io, fs, net, ffi {
         }
     }
     if code != 0 {
-        var m = s("internal error: generated C failed to compile (kept at ")
+        let mut m = s("internal error: generated C failed to compile (kept at ")
         bytes.append(inout m, cfile)
         m.push(41)
         fail(m, 3)
@@ -410,17 +410,17 @@ pub type Exe = { path: List[u8], dir: List[u8] }
 /// Returns the executable's path. The C file goes to `dir`; on failure the C is kept and
 /// the process exits with 3 (the recorded exit code), or with `quiet` the C compiler's output is
 /// captured and "" returned.
-fn compile(c: List[u8], dir: List[u8], exe: List[u8], release: bool, libs: List[List[u8]], quiet: bool) -> List[u8] uses io, fs, net, ffi {
+fn compile(c: List[u8], dir: List[u8], exe: List[u8], release: bool, libs: List[List[u8]], quiet: bool) -> List[u8] uses io, fs, net {
     let core = fs.join(root(), s("core"))
     let cc = cc_argv(core, release)
     let cache = cache_dir()
-    var id: List[List[u8]] = List.new()
+    let mut id: List[List[u8]] = List.new()
     if cache.len() > 0 { id = toolchain_id(cc) }
     let inputs = core_inputs(cc, id, core, cache, dir, quiet)
     if inputs.len() == 0 { return List.new() }
-    var bin: List[u8] = List.new()
+    let mut bin: List[u8] = List.new()
     if cache.len() > 0 {
-        var parts = id
+        let mut parts = id.copy()
         parts.push(s("executable"))
         parts.push(bytes.from_u64(inputs.len() as u64))
         for x in inputs { parts.push(x) }
@@ -439,7 +439,7 @@ fn compile(c: List[u8], dir: List[u8], exe: List[u8], release: bool, libs: List[
     } else {
         write_or_fail(cfile, c)
     }
-    var argv = cc
+    let mut argv = cc.copy()
     argv.push(s("-o"))
     argv.push(exe)
     argv.push(cfile)
@@ -468,7 +468,7 @@ fn compile(c: List[u8], dir: List[u8], exe: List[u8], release: bool, libs: List[
 
 /// Build C text `c` (from source `file`) into a program for the caller to run; `release`
 /// picks -O2. Remove its work directory with `discard` when done.
-pub fn executable(c: List[u8], file: List[u8], release: bool, libs: List[List[u8]]) -> Exe uses io, fs, net, clock, ffi {
+pub fn executable(c: List[u8], file: List[u8], release: bool, libs: List[List[u8]]) -> Exe uses io, fs, net, clock {
     let dir = work_dir()
     let path = compile(c, dir, fs.join(dir, stem(file)), release, libs, false)
     Exe(path, dir)
@@ -476,7 +476,7 @@ pub fn executable(c: List[u8], file: List[u8], release: bool, libs: List[List[u8
 
 /// `executable` for C that may not compile (comptime evaluators): the C compiler's output is
 /// captured, and on any failure the work directory is removed and the result is None.
-pub fn try_executable(c: List[u8], file: List[u8], release: bool, libs: List[List[u8]]) -> Option[Exe] uses io, fs, net, clock, ffi {
+pub fn try_executable(c: List[u8], file: List[u8], release: bool, libs: List[List[u8]]) -> Option[Exe] uses io, fs, net, clock {
     let dir = work_dir()
     let path = compile(c, dir, fs.join(dir, stem(file)), release, libs, true)
     if path.len() == 0 {
@@ -486,11 +486,11 @@ pub fn try_executable(c: List[u8], file: List[u8], release: bool, libs: List[Lis
     Some(Exe(path, dir))
 }
 
-pub fn discard(e: Exe) uses fs, ffi { fs.remove_all(e.dir) }
+pub fn discard(e: Exe) uses fs { fs.remove_all(e.dir) }
 
 /// `eiderc build`: an -O2 executable at `out` (default: the source file's stem).
-pub fn build(c: List[u8], file: List[u8], out: List[u8], libs: List[List[u8]]) uses io, fs, net, clock, ffi {
-    var dest = out
+pub fn build(c: List[u8], file: List[u8], out: List[u8], libs: List[List[u8]]) uses io, fs, net, clock {
+    let mut dest = out.copy()
     if dest.len() == 0 { dest = stem(file) }
     let dir = work_dir()
     if cache_dir().len() == 0 {
@@ -499,7 +499,7 @@ pub fn build(c: List[u8], file: List[u8], out: List[u8], libs: List[List[u8]]) u
         let path = compile(c, dir, fs.join(dir, stem(file)), true, libs, false)
         // a new file rather than a rewrite of the old one, which may be running
         fs.remove_all(dest)
-        var cp: List[List[u8]] = List.new()
+        let mut cp: List[List[u8]] = List.new()
         cp.push(s("cp"))
         cp.push(path)
         cp.push(dest)
@@ -510,11 +510,11 @@ pub fn build(c: List[u8], file: List[u8], out: List[u8], libs: List[List[u8]]) u
 
 /// `eiderc build --lib`: lib<name>.a, lib<name>.so and <name>.h (see the top of this file)
 /// from the library C `c` and its header `h`.
-pub fn build_lib(c: List[u8], h: List[u8], file: List[u8], out: List[u8], libs: List[List[u8]]) uses io, fs, net, clock, ffi {
-    var base = out
+pub fn build_lib(c: List[u8], h: List[u8], file: List[u8], out: List[u8], libs: List[List[u8]]) uses io, fs, net, clock {
+    let mut base = out.copy()
     if base.len() == 0 { base = stem(file) }
-    var name = base
-    var odir: List[u8] = List.new()
+    let mut name = base.copy()
+    let mut odir: List[u8] = List.new()
     match bytes.rfind_byte(base, 47) {
         Some(i) => {
             name = bytes.slice(base, i + 1, base.len())
@@ -522,36 +522,36 @@ pub fn build_lib(c: List[u8], h: List[u8], file: List[u8], out: List[u8], libs: 
         }
         None => {}
     }
-    var hfile = base
+    let mut hfile = base.copy()
     bytes.append(inout hfile, s(".h"))
-    var afile = odir
+    let mut afile = odir.copy()
     bytes.append(inout afile, s("lib"))
     bytes.append(inout afile, name)
-    var sofile = afile
+    let mut sofile = afile.copy()
     bytes.append(inout afile, s(".a"))
     bytes.append(inout sofile, s(".so"))
     let dir = work_dir()
     let core = fs.join(root(), s("core"))
-    var cc = cc_argv(core, true)
+    let mut cc = cc_argv(core, true)
     cc.push(s("-fPIC"))
     let cache = cache_dir()
-    var id: List[List[u8]] = List.new()
+    let mut id: List[List[u8]] = List.new()
     if cache.len() > 0 { id = toolchain_id(cc) }
     let cfile = fs.join(dir, s("lib.c"))
     write_or_fail(cfile, c)
-    var srcs: List[List[u8]] = List.new()
+    let mut srcs: List[List[u8]] = List.new()
     srcs.push(cfile)
     for x in core_inputs(cc, id, core, cache, dir, false) { srcs.push(x) }
-    var objs: List[List[u8]] = List.new()
+    let mut objs: List[List[u8]] = List.new()
     for i in 0..srcs.len() {
         if bytes.ends_with(srcs[i], s(".o")) {
             objs.push(srcs[i])
             continue
         }
-        var o = fs.join(dir, s("o"))
+        let mut o = fs.join(dir, s("o"))
         bytes.append(inout o, bytes.from_u64(i as u64))
         bytes.append(inout o, s(".o"))
-        var argv = cc
+        let mut argv = cc.copy()
         argv.push(s("-c"))
         argv.push(s("-o"))
         argv.push(o)
@@ -561,13 +561,13 @@ pub fn build_lib(c: List[u8], h: List[u8], file: List[u8], out: List[u8], libs: 
         objs.push(o)
     }
     fs.remove_all(afile)
-    var ar: List[List[u8]] = List.new()
+    let mut ar: List[List[u8]] = List.new()
     ar.push(s("ar"))
     ar.push(s("rcs"))
     ar.push(afile)
     for o in objs { ar.push(o) }
     tool(ar, "`ar` failed")
-    var so: List[List[u8]] = List.new()
+    let mut so: List[List[u8]] = List.new()
     so.push(cc[0])
     so.push(s("-shared"))
     so.push(s("-pthread"))
@@ -578,7 +578,7 @@ pub fn build_lib(c: List[u8], h: List[u8], file: List[u8], out: List[u8], libs: 
     tool(so, "linking the shared library failed")
     write_or_fail(hfile, h)
     fs.remove_all(dir)
-    var m = s("built ")
+    let mut m = s("built ")
     bytes.append(inout m, afile)
     bytes.append(inout m, s(", "))
     bytes.append(inout m, sofile)
@@ -589,9 +589,9 @@ pub fn build_lib(c: List[u8], h: List[u8], file: List[u8], out: List[u8], libs: 
 
 /// `eiderc run` / `eiderc test`: build (or take from the cache), run, exit with the
 /// program's exit code (a program killed by signal n exits 128 + n).
-pub fn run(c: List[u8], file: List[u8], release: bool, libs: List[List[u8]]) uses io, fs, net, clock, ffi {
+pub fn run(c: List[u8], file: List[u8], release: bool, libs: List[List[u8]]) uses io, fs, net, clock {
     let e = executable(c, file, release, libs)
-    var argv: List[List[u8]] = List.new()
+    let mut argv: List[List[u8]] = List.new()
     argv.push(e.path)
     let code = match proc.run(argv) {
         Ok(n) => n

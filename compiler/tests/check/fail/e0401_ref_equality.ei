@@ -1,0 +1,6 @@
+// expect: E0401 5:15
+fn main() {
+    let a = Ref.new(1)
+    let b = a
+    let s = a == b
+}

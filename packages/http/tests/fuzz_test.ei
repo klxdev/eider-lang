@@ -1,0 +1,422 @@
+// http/parse under random input, with packages/fuzz's deterministic PRNG (the same seed
+// gives the same run, so the output is fixed):
+// 1. round trips: random valid requests and responses (Content-Length or chunked framing,
+//    random headers, binary bodies), written by http.write_* and parsed back whole, byte by
+//    byte and in random pieces, alone and pipelined three at a time, come back unchanged;
+// 2. mutants: valid messages with bytes flipped, inserted or deleted, framing headers
+//    duplicated or added (the smuggling shapes), or cut short. Every mutant must parse to the
+//    same steps however it is split, and every message the parser accepts must satisfy the
+//    framing invariants (one Content-Length or one Transfer-Encoding, never both; a body of
+//    exactly the declared length; one Host on HTTP/1.1; no control characters in values;
+//    token names; the body limit).
+
+import "core/sys"
+import "std/bytes"
+import "std/io"
+import "fuzz"
+import "../http.ei"
+import "../parse.ei"
+
+fn pick_str(inout r: fuzz.Rng, xs: List[List[u8]]) -> List[u8] { fuzz.pick(inout r, xs) }
+
+fn words(s: str) -> List[List[u8]] { bytes.split(sys.lit(s), 126) }
+
+fn rand_token(inout r: fuzz.Rng) -> List[u8] {
+    let alphabet = sys.lit("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!#$%&'*+-.^_`|~")
+    let mut out: List[u8] = List.new()
+    let n = 1 + fuzz.below(inout r, 12)
+    for i in 0..n { out.push(alphabet[fuzz.below(inout r, alphabet.len())]) }
+    out
+}
+
+fn rand_value(inout r: fuzz.Rng) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let n = fuzz.below(inout r, 30)
+    for i in 0..n {
+        // visible ASCII, inner spaces and tabs, obs-text
+        let k = fuzz.below(inout r, 20)
+        if k == 0 {
+            out.push(32)
+        } else if k == 1 {
+            out.push(9)
+        } else if k == 2 {
+            out.push((128 + fuzz.below(inout r, 128)) as u8)
+        } else {
+            out.push((33 + fuzz.below(inout r, 94)) as u8)
+        }
+    }
+    http.trim_ows(out)
+}
+
+fn rand_path(inout r: fuzz.Rng) -> List[u8] {
+    let chars = sys.lit("abcxyz0129-._~%!$&'()*+,;=:@/")
+    let mut out = sys.lit("/")
+    let n = fuzz.below(inout r, 20)
+    for i in 0..n { out.push(chars[fuzz.below(inout r, chars.len())]) }
+    if fuzz.below(inout r, 3) == 0 {
+        out.push(63)
+        for i in 0..fuzz.below(inout r, 10) { out.push(chars[fuzz.below(inout r, chars.len())]) }
+    }
+    out
+}
+
+fn rand_body(inout r: fuzz.Rng) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let n: usize = if fuzz.below(inout r, 4) == 0 { 0 } else { fuzz.below(inout r, 300) }
+    for i in 0..n { out.push(fuzz.below(inout r, 256) as u8) }
+    out
+}
+
+fn is_framing(name: List[u8]) -> bool {
+    http.eq_ci(name, sys.lit("content-length")) || http.eq_ci(name, sys.lit("transfer-encoding")) || http.eq_ci(name, sys.lit("connection")) || http.eq_ci(name, sys.lit("host"))
+}
+
+fn rand_headers(inout r: fuzz.Rng) -> List[http.Header] {
+    let mut hs: List[http.Header] = List.new()
+    for i in 0..fuzz.below(inout r, 6) {
+        let name = rand_token(inout r)
+        if !is_framing(name) && !http.eq_ci(name, sys.lit("expect")) { hs.push(http.Header(name, rand_value(inout r))) }
+    }
+    hs
+}
+
+type Case = { wire: List[u8], method: List[u8], target: List[u8], status: i32, headers: List[http.Header], body: List[u8], keep: bool }
+
+fn crlf(inout out: List[u8]) {
+    out.push(13)
+    out.push(10)
+}
+
+/// A random valid request, as written (`write_request`, or by hand with chunked framing).
+fn rand_request(inout r: fuzz.Rng) -> Case {
+    let method = pick_str(inout r, words("GET~POST~PUT~DELETE~PATCH~X-Custom.Method"))
+    let target = rand_path(inout r)
+    let hs = rand_headers(inout r)
+    let body = rand_body(inout r)
+    let keep = fuzz.below(inout r, 4) != 0
+    let mut req = http.request("GET", target)
+    req.method = method
+    req.headers = hs
+    req.body = body
+    let mut w: List[u8] = List.new()
+    if fuzz.below(inout r, 2) == 0 || body.len() == 0 {
+        w = http.write_request(req, sys.lit("example.test"), keep).unwrap()
+    } else {
+        // chunked, by hand: the head of write_request without its Content-Length
+        req.body = List.new()
+        req.method = sys.lit("GET")
+        let head = http.write_request(req, sys.lit("example.test"), keep).unwrap()
+        w = bytes.slice(head, 3, head.len() - 2)
+        w = bytes.concat(method, w)
+        bytes.append(inout w, sys.lit("Transfer-Encoding: chunked"))
+        crlf(inout w)
+        crlf(inout w)
+        bytes.append(inout w, http.chunked(body, 1 + fuzz.below(inout r, 40)))
+    }
+    Case(w, method, target, 0, hs, body, keep)
+}
+
+fn rand_response(inout r: fuzz.Rng) -> Case {
+    let statuses = [200, 201, 204, 304, 404, 500, 503, 299, 599]
+    let st = statuses[fuzz.below(inout r, 9)] as i32
+    let hs = rand_headers(inout r)
+    let mut body = rand_body(inout r)
+    if http.bodyless(st) { body = List.new() }
+    let keep = fuzz.below(inout r, 4) != 0
+    let mut resp = http.response(st)
+    resp.headers = hs
+    resp.body = body
+    let w = http.write_response(resp, false, keep, List.new()).unwrap()
+    Case(w, List.new(), List.new(), st, hs, body, keep)
+}
+
+fn steps(response: bool, input: List[u8], inout r: fuzz.Rng, mode: usize) -> List[parse.Step] { steps_with(http.limits(), response, input, inout r, mode) }
+
+/// Tight limits for the mutants, so that every limit is hit now and then.
+fn tight() -> http.Limits { http.Limits(40, 6, 300, 200) }
+
+fn steps_with(lim: http.Limits, response: bool, input: List[u8], inout r: fuzz.Rng, mode: usize) -> List[parse.Step] {
+    let mut p = if response { parse.responses(lim) } else { parse.requests(lim) }
+    let mut out: List[parse.Step] = List.new()
+    let mut i: usize = 0
+    let mut stop = false
+    while !stop {
+        if i < input.len() {
+            // mode 0: all at once; 1: byte by byte; 2: random pieces
+            let mut n = input.len() - i
+            if mode == 1 { n = 1 }
+            if mode == 2 {
+                let k = 1 + fuzz.below(inout r, 16)
+                if k < n { n = k }
+            }
+            p.feed(bytes.slice(input, i, i + n))
+            i += n
+        }
+        let mut drained = false
+        while !drained {
+            let s = p.next()
+            match s {
+                parse.More => { drained = true }
+                parse.Done(m) => out.push(s)
+                parse.Bad(a, b) => {
+                    out.push(s)
+                    drained = true
+                    stop = true
+                }
+            }
+        }
+        if i >= input.len() && !stop {
+            if response {
+                match p.eof() {
+                    parse.More => {}
+                    parse.Done(m) => out.push(parse.Done(m))
+                    parse.Bad(a, b) => out.push(parse.Bad(a, b))
+                }
+            } else if !p.idle() {
+                out.push(parse.More)
+            }
+            stop = true
+        }
+    }
+    out
+}
+
+fn same_headers(a: List[http.Header], b: List[http.Header]) -> bool {
+    if a.len() != b.len() { return false }
+    for i in 0..a.len() {
+        if !bytes.eq(a[i].name, b[i].name) || !bytes.eq(a[i].value, b[i].value) { return false }
+    }
+    true
+}
+
+fn same_step(a: parse.Step, b: parse.Step) -> bool {
+    match a {
+        parse.More => {
+            match b {
+                parse.More => true
+                parse.Done(m) => false
+                parse.Bad(s, w) => false
+            }
+        }
+        parse.Done(m) => {
+            match b {
+                parse.Done(n) => bytes.eq(m.method, n.method) && bytes.eq(m.target, n.target) && m.status == n.status && m.version == n.version && m.keep_alive == n.keep_alive && same_headers(m.headers, n.headers) && bytes.eq(m.body, n.body)
+                parse.More => false
+                parse.Bad(s, w) => false
+            }
+        }
+        parse.Bad(s, w) => {
+            match b {
+                parse.Bad(t, x) => s == t && bytes.eq(w, x)
+                parse.More => false
+                parse.Done(n) => false
+            }
+        }
+    }
+}
+
+fn same_steps(a: List[parse.Step], b: List[parse.Step]) -> bool {
+    if a.len() != b.len() { return false }
+    for i in 0..a.len() {
+        if !same_step(a[i], b[i]) { return false }
+    }
+    true
+}
+
+/// The headers a message has, minus the ones the writer adds (lowercased names).
+fn program_headers(hs: List[http.Header]) -> List[http.Header] {
+    let mut out: List[http.Header] = List.new()
+    for h in hs {
+        if !is_framing(h.name) { out.push(h) }
+    }
+    out
+}
+
+fn lowered(hs: List[http.Header]) -> List[http.Header] {
+    let mut out: List[http.Header] = List.new()
+    for h in hs { out.push(http.Header(http.lower(h.name), h.value)) }
+    out
+}
+
+fn matches(c: Case, m: parse.Msg) -> bool {
+    bytes.eq(c.method, m.method) && bytes.eq(c.target, m.target) && c.status == m.status && c.keep == m.keep_alive && same_headers(lowered(c.headers), program_headers(m.headers)) && bytes.eq(c.body, m.body)
+}
+
+/// What every accepted message must satisfy (the smuggling invariants).
+fn invariant(m: parse.Msg, response: bool, lim: http.Limits) -> bool {
+    let hs = m.headers
+    let cl = http.count(hs, sys.lit("content-length"))
+    let te = http.count(hs, sys.lit("transfer-encoding"))
+    if cl > 1 || te > 1 || (cl == 1 && te == 1) { return false }
+    if cl == 1 && !(response && http.bodyless(m.status)) {
+        match bytes.parse_u64(http.find(hs, sys.lit("content-length")).unwrap()) {
+            Some(n) => {
+                if n != (m.body.len() as u64) { return false }
+            }
+            None => { return false }
+        }
+    }
+    if !response && m.version == 11 && http.count(hs, sys.lit("host")) != 1 { return false }
+    for h in hs {
+        if !http.is_token(h.name) || !http.valid_value(h.value) { return false }
+    }
+    if !response && (!http.is_token(m.method) || m.target.len() == 0) { return false }
+    if m.headers.len() > lim.max_headers { return false }
+    m.body.len() <= lim.max_body
+}
+
+fn mutate(inout r: fuzz.Rng, src: List[u8]) -> List[u8] {
+    let mut s = src.copy()
+    let interesting = [13, 10, 32, 9, 58, 48, 97, 0, 127, 255, 44, 59, 45, 70]
+    for k in 0..(1 + fuzz.below(inout r, 3)) {
+        let op = fuzz.below(inout r, 7)
+        if s.len() == 0 { break }
+        let at = fuzz.below(inout r, s.len())
+        if op == 0 {
+            s[at] = interesting[fuzz.below(inout r, 14)] as u8
+        } else if op == 1 {
+            s[at] = fuzz.below(inout r, 256) as u8
+        } else if op == 2 {
+            let mut t = bytes.slice(s, 0, at)
+            t.push(interesting[fuzz.below(inout r, 14)] as u8)
+            bytes.append(inout t, bytes.slice(s, at, s.len()))
+            s = t
+        } else if op == 3 {
+            s = bytes.concat(bytes.slice(s, 0, at), bytes.slice(s, at + 1, s.len()))
+        } else if op == 4 {
+            // a framing header inserted after the first line
+            match bytes.find_byte(s, 10, 0) {
+                Some(nl) => {
+                    let hdrs = words("Content-Length: 0~Content-Length: 5~Content-Length: 99~Transfer-Encoding: chunked~Transfer-Encoding: identity~Host: other~Content-Length: 5, 5~Transfer-Encoding: chunked, chunked~ Folded: x")
+                    let mut t = bytes.slice(s, 0, nl + 1)
+                    bytes.append(inout t, pick_str(inout r, hdrs))
+                    crlf(inout t)
+                    bytes.append(inout t, bytes.slice(s, nl + 1, s.len()))
+                    s = t
+                }
+                None => {}
+            }
+        } else if op == 5 {
+            s = bytes.slice(s, 0, at)
+        } else {
+            // a CRLF turned into a bare LF or CR
+            match bytes.find(s, sys.lit("\n"), at) {
+                Some(i) => {
+                    if i > 0 && s[i - 1] == 13 {
+                        if fuzz.below(inout r, 2) == 0 {
+                            s = bytes.concat(bytes.slice(s, 0, i - 1), bytes.slice(s, i, s.len()))
+                        } else {
+                            s = bytes.concat(bytes.slice(s, 0, i), bytes.slice(s, i + 1, s.len()))
+                        }
+                    }
+                }
+                None => {}
+            }
+        }
+    }
+    s
+}
+
+fn main() uses io {
+    let mut r = fuzz.rng(2026)
+    let mut roundtrip_bad = 0
+    let mut split_bad = 0
+    for round in 0..300 {
+        let response = round % 2 == 1
+        let a = if response { rand_response(inout r) } else { rand_request(inout r) }
+        let b = if response { rand_response(inout r) } else { rand_request(inout r) }
+        let c = if response { rand_response(inout r) } else { rand_request(inout r) }
+        // alone
+        let whole = steps(response, a.wire, inout r, 0)
+        let mut ok = whole.len() == 1
+        if ok {
+            match whole[0] {
+                parse.Done(m) => { ok = matches(a, m) }
+                parse.More => { ok = false }
+                parse.Bad(s, w) => {
+                    io.outln(w)
+                    ok = false
+                }
+            }
+        }
+        if !ok { roundtrip_bad += 1 }
+        if !same_steps(whole, steps(response, a.wire, inout r, 1)) { split_bad += 1 }
+        if !same_steps(whole, steps(response, a.wire, inout r, 2)) { split_bad += 1 }
+        // pipelined (a response read until close can't be followed by another)
+        if !response && a.keep && b.keep {
+            let mut three = a.wire.copy()
+            bytes.append(inout three, b.wire)
+            bytes.append(inout three, c.wire)
+            let got = steps(false, three, inout r, 2)
+            let mut pipe_ok = got.len() == 3
+            if pipe_ok {
+                let cs = [a, b, c]
+                for k in 0..3 {
+                    let i = k as usize
+                    match got[i] {
+                        parse.Done(m) => {
+                            if !matches(cs[i], m) { pipe_ok = false }
+                        }
+                        parse.More => { pipe_ok = false }
+                        parse.Bad(s, w) => { pipe_ok = false }
+                    }
+                }
+            }
+            if !pipe_ok { roundtrip_bad += 1 }
+        }
+    }
+    print("round trips: 300 messages")
+    print(roundtrip_bad)
+    print(split_bad)
+
+    // mutants
+    let mut accepted = 0
+    let mut refused = 0
+    let mut cut = 0
+    let mut violations = 0
+    let mut mismatches = 0
+    let mut by_status: Map[i32, i64] = Map.new()
+    for round in 0..1500 {
+        let response = round % 4 == 3
+        let base = if response { rand_response(inout r) } else { rand_request(inout r) }
+        let mut src = base.wire.copy()
+        if !response && fuzz.below(inout r, 3) == 0 {
+            let more = rand_request(inout r)
+            bytes.append(inout src, more.wire)
+        }
+        let m = mutate(inout r, src)
+        let lim = if round % 3 == 0 { tight() } else { http.limits() }
+        let whole = steps_with(lim, response, m, inout r, 0)
+        if !same_steps(whole, steps_with(lim, response, m, inout r, 1)) { mismatches += 1 }
+        if !same_steps(whole, steps_with(lim, response, m, inout r, 2)) { mismatches += 1 }
+        for s in whole {
+            match s {
+                parse.Done(msg) => {
+                    accepted += 1
+                    if !invariant(msg, response, lim) {
+                        violations += 1
+                        io.outln(m)
+                    }
+                }
+                parse.Bad(st, w) => {
+                    refused += 1
+                    let n = by_status.get(st).unwrap_or(0)
+                    by_status.insert(st, n + 1)
+                }
+                parse.More => { cut += 1 }
+            }
+        }
+    }
+    print("mutants: 1500")
+    print(accepted > 0 && refused > 0 && cut > 0)
+    for st in [400, 413, 414, 431, 501] {
+        let mut l = bytes.from_u64(st as u64)
+        l.push(32)
+        let s = st as i32
+        let mark: u8 = if by_status.get(s).unwrap_or(0) > 0 { 43 } else { 45 }
+        l.push(mark)
+        io.outln(l)
+    }
+    print(violations)
+    print(mismatches)
+}

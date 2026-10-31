@@ -11,7 +11,7 @@ because the language contract tests compare program output.
 
 | File | Role | Called by | Contract |
 |---|---|---|---|
-| `eider_core.c` | OS ABI: one OS operation per function, errors as `-errno`, data through byte buffers | Eider code, through `extern "c"` bindings in `core/sys.ei` | `core/ABI.md` |
+| `eider_core.c` | OS ABI: one OS operation per function, errors as `-errno`, data through byte buffers | Eider code, through `extern "c"` bindings in `core/sys.ei` and `core/os.ei` | `core/ABI.md` |
 | `eider_rt.h` / `eider_rt.c` | Language runtime: what the semantics of the language need | generated C only, never Eider source | this file |
 
 They are independent (neither includes the other) and share only the process's `stdout`:
@@ -25,7 +25,9 @@ pinning (`EC_SYM`) that the OS ABI uses for `extern "c"`.
 
 1. **Only what the semantics need.** Each function is one language operation (a checked add,
    a bounds check, a String append, a channel send). No policy, no formatting beyond the
-   fixed `print` formats, no OS interop beyond stdio, `malloc`, `clock` and POSIX threads.
+   fixed `print` formats, no OS interop beyond stdio, `malloc`, `clock`, POSIX threads, and
+   the thread stacks (anonymous `mmap`/`mprotect`/`munmap`, `sigaltstack`, `sigaction`;
+   "Stack overflow" below), each of those in a function of its own.
 2. **Per-type code stays generated.** Anything that depends on a concrete Eider type is
    compiler output (see the inventory below). The runtime offers type-independent pieces
    (allocation with overflow checks, a byte-sized channel queue, a reference count) that the
@@ -55,6 +57,11 @@ runtime error. It flushes `stdout`, then:
 `<file>` is set by `void ei_set_file(const char *)` (generated `main`, and every exported
 library entry point; an atomic pointer, so concurrent entries are not a data race). It is
 `""` until set. Line `0` means "no source line" (allocation and thread failures).
+A trap in an imported module passes `f * 2^20 + line` (0 < f < 2048): after `ei_set_file`,
+generated code calls `void ei_set_files(const char *const *files, int32_t n)` with a table
+of file names by index, and `ei_trap` reports `files[f]` and the line for such a value
+(f < n, `files[f]` not NULL); any other value is the entry file's line, so programs built by
+compilers before docs/compiler.md "C8.16" (which never set the table) trap as they did.
 
 Messages generated code relies on, all byte-identical to the recorded expectations:
 
@@ -73,6 +80,10 @@ Messages generated code relies on, all byte-identical to the recorded expectatio
 | `send on a closed channel` (line 0) | `ei_chan_send` |
 | `cannot create a thread` (line 0) | `ei_thread_start` |
 | any `panic` / `assert` text | generated code calls `ei_trap` directly |
+
+| `stack overflow` (line 0) | the fault handler of a runtime thread ("Stack overflow") |
+| `Ref read while it is being updated`, `Ref updated while it is being read`, `Ref updated while it is already being updated` | `ei_ref_read_begin`, `ei_ref_update_begin` ("Ref") |
+| `a Ref can't be sent to another thread` (line 0) | generated `own_` glue meeting a Ref (a closure capturing one sent to a thread) |
 
 Also reported (failures the recorded expectations never exercise): `cannot create a mutex`,
 `cannot lock a mutex`, `cannot unlock a mutex`, `cannot join a thread`,
@@ -105,7 +116,7 @@ trap inside a `Mutex.update` closure). Tests after it that use the same Mutex de
 
 | In `eider_rt.h`, `static inline` | In `eider_rt.c` |
 |---|---|
-| `ei_idx`, all checked/wrapping arithmetic, `ei_bits_*`, conversions, `ei_hash_u64`, the buffer counts (`ei_buf_h/inc/dec/shared/count`), `ei_unreachable()` (macro) | `ei_trap`, `ei_set_file`, `ei_set_trap_jmp`, allocation (`ei_alloc`, `ei_alloc_n`, `ei_free`, `ei_check_leaks`, `ei_buf_alloc/grow/free`, `ei_grow_cap`), `String`, `ei_hash_str`, print, clock, threads |
+| `ei_idx`, all checked/wrapping arithmetic, `ei_bits_*`, conversions, `ei_hash_u64`, the buffer counts (`ei_buf_h/inc/dec/shared/count`), the atomics (`ei_atomic_*`, `ei_mo_*`), `ei_unreachable()` (macro) | `ei_trap`, `ei_set_file`, `ei_set_trap_jmp`, allocation (`ei_alloc`, `ei_alloc_n`, `ei_free`, `ei_check_leaks`, `ei_buf_alloc/grow/free`, `ei_grow_cap`), `String`, `ei_hash_str`, print, clock, threads |
 
 The inline set is what sits on every arithmetic expression and index. Each takes the
 fast path in a compare and a branch to the out-of-line `ei_trap`.
@@ -188,6 +199,19 @@ lock), and to the copies `Mutex.get` and `Task.join` hand out (made and owned un
 Mutex's lock, or the Task's own lock, since joins may run on several threads at once). The
 shared handles themselves (`ei_rc`) stay atomic.
 
+### Ref
+
+A `Ref[T]` (docs/compiler.md, "C8.7") is a shared buffer of one `{ int64_t st; T v; }`
+(generated struct): the buffer's count is the number of holders (not atomic: a Ref never
+crosses threads; the checker rejects it, E0411, and `own_` glue traps if one is reached),
+and `st` is the access state, `> 0` reads in progress, `-1` an update. Generated code
+brackets each access with the inline functions below (no call when inlined):
+
+| Function | Contract |
+|---|---|
+| `ei_ref_read_begin(int64_t *st, int32_t line)`, `ei_ref_read_end(int64_t *st)` | around `read`, `get` and `.copy()`; traps `Ref read while it is being updated` (line) when `*st < 0`, else counts one more read |
+| `ei_ref_update_begin(int64_t *st, int32_t line)`, `ei_ref_update_end(int64_t *st)` | around `update` and `set`; traps `Ref updated while it is already being updated` when `*st < 0`, `Ref updated while it is being read` when `*st > 0`, else sets `-1`; the end sets `0` |
+
 ## Print and clock
 
 | Function | Output on stdout |
@@ -195,11 +219,13 @@ shared handles themselves (`ei_rc`) stay atomic.
 | `ei_print_i(int64_t)`, `ei_print_u(uint64_t)` | decimal, then `\n` |
 | `ei_print_b(bool)` | `true` / `false`, then `\n` |
 | `ei_print_s(const char *)` | the bytes up to the NUL, then `\n` |
-| `uint64_t ei_now_ms(void)` | processor time used by the process in ms (`clock()`); `0` if unavailable |
+| `uint64_t ei_now_ms(void)` | milliseconds on the monotonic clock (`CLOCK_MONOTONIC`) from an arbitrary start; `0` if unavailable |
 
-`now_ms` is CPU time, not wall-clock time: it does not advance while the program sleeps or
-blocks, and it sums over threads. Keeping it is a compatibility decision (the recorded behaviour); a monotonic
-wall clock belongs in `eider_core.c` if the language wants one.
+`now_ms` measures elapsed time: it advances while the program sleeps or blocks and never jumps
+when the system clock is set. It used to be processor time (`clock()`), which did neither; no
+test depended on that (`tests/` only checks `now_ms() >= 0`, and `eiderc` uses it as a unique
+stamp for temporary directories, which a monotonic clock serves better). Nanosecond monotonic
+and wall clocks for std are `ec_time_mono_ns` / `ec_time_wall_ns` (core/ABI.md, "Time").
 
 ## Threads
 
@@ -210,8 +236,8 @@ failure of the underlying primitive.
 |---|---|
 | `ei_rc` (`atomic_uint_least64_t`), `ei_rc_init` (=1), `ei_rc_inc`, `bool ei_rc_dec` | shared-handle count (`Task`, `Mutex`, `Chan`); `ei_rc_dec` returns `true` for the last reference, and only that caller frees. Sequentially consistent. |
 | `ei_mutex`, `ei_mutex_init/lock/unlock/destroy` | an error-checking `pthread_mutex_t`: locking it again on the thread that holds it (a `Mutex.update` closure using the same Mutex) traps `cannot lock a mutex` instead of being undefined (a plain mutex would deadlock) |
-| `ei_thread`, `ei_thread_start(t, run, arg)` | starts `run(arg)` |
-| `ei_thread_join(t)` | waits once; safe from several threads at once and repeatedly (`Task.join` on shared handles) |
+| `ei_thread`, `ei_thread_start(t, run, arg)` | starts `run(arg)` on a guarded stack of its own ("Stack overflow"); `t` must stay where it is until `ei_thread_destroy` (it is the new thread's argument) |
+| `ei_thread_join(t)` | waits once; safe from several threads at once and repeatedly (`Task.join` on shared handles); frees the thread's stack |
 | `ei_thread_destroy(t)` | joins if needed, then releases; last owner only |
 | `ei_chan`, `ei_chan_init(c, elem_size)` | unbounded FIFO of `elem_size`-byte values (0 is allowed) |
 | `ei_chan_send(c, const void *elem)` | copies the element in and wakes a receiver; traps `send on a closed channel` (the lock is released first) |
@@ -232,6 +258,69 @@ void ei_chsend_T(const CH_T *c, T v) { ei_chan_send(&c->p->ch, &v); }
 void ei_drop_CH_T(CH_T *x) { if (x->p && ei_rc_dec(&x->p->rc)) { for (uint64_t i = 0; i < ei_chan_len(&x->p->ch); i++) ei_drop_T(ei_chan_at(&x->p->ch, i)); ei_chan_destroy(&x->p->ch); free(x->p); } x->p = NULL; }
 ```
 
+## Atomics
+
+`ei_atomic_i64` (`_Atomic(int64_t)`) and inline operations on it, for generated code (the
+built-in atomic type that is the compiler's next step, and the runtime's own pieces of the
+task scheduler). `order` is a number: `0` relaxed, `1` acquire, `2` release, `3`
+acquire-release, `4` sequentially consistent.
+
+| Function | Result |
+|---|---|
+| `ei_atomic_init(a, v)` | initializes (not atomic: before the value is shared) |
+| `int64_t ei_atomic_load(a, order)` | the value |
+| `ei_atomic_store(a, v, order)` | stores `v` |
+| `int64_t ei_atomic_swap(a, v, order)` | the previous value; stores `v` |
+| `int64_t ei_atomic_add(a, n, order)` | the previous value; adds `n`, wrapping (C11 defines atomic signed arithmetic as two's complement; checked addition is a compare-and-swap loop in the caller) |
+| `int64_t ei_atomic_cas(a, expected, desired, order)` | the previous value; stores `desired` if it was `expected` (strong) |
+
+No combination of operation and number is undefined: an ordering that doesn't apply (release
+on a load, acquire on a store) or an unknown number is strengthened to sequentially consistent
+(`ei_mo_load`, `ei_mo_store`, `ei_mo_rmw`), and a failed compare-and-swap uses the success
+ordering without its release half (`ei_mo_fail`). A checker that knows the orderings
+statically rejects the inapplicable ones instead (std/atomic does at run time).
+
+Eider code reaches atomics today through **atomic cells** in eider_core.c (core/ABI.md
+"Atomic cells"): integer handles to cells the core owns, which every copy of a handle shares
+across threads, freed explicitly. The two halves are kept separate because eider_rt and
+eider_core don't include each other; the cells repeat the four ordering functions.
+
+## Stack overflow
+
+Every thread `ei_thread_start` starts (each `spawn`) runs on one anonymous mapping of the
+runtime's own, lowest address first: a 64 KiB alternate signal stack (or `SIGSTKSZ` if that
+is larger), a 64 KiB guard with no access, then an 8 MiB stack (`EI_THREAD_STACK`,
+`EI_THREAD_GUARD`, `EI_THREAD_ALTSTACK` in eider_rt.h; sizes rounded up to whole pages). The
+stack grows down into the guard, so an overflow, even by a frame larger than a page, faults
+there rather than in some other mapping. (Before, threads had the C library's default stack,
+whose guard on glibc is one page.)
+
+On the first thread start the runtime installs, once, a handler for `SIGSEGV` and `SIGBUS`
+that runs on the alternate stack (`SA_ONSTACK`), keeping the handlers that were there before.
+Each runtime thread sets its alternate stack and records its guard range (thread-local)
+before running its function. The handler:
+
+- fault address inside this thread's guard: flushes stdout if no other thread is in stdio
+  (`ftrylockfile`: it never waits), writes `eider: runtime error: stack overflow (<file>:0)`
+  to stderr with `write(2)` and ends the process with `_exit(101)`, like a trap. The test hook
+  doesn't apply (spawned threads never have one).
+- anywhere else: not ours. It calls the previous handler (a sanitizer's, which then reports
+  as usual), or restores the default action and returns, so the faulting access repeats and
+  the process ends with `SIGSEGV` exactly as without the runtime.
+
+The stack is unmapped when the thread is joined. Mapping or protecting fails: `cannot create
+a thread`, as before. A system without anonymous mappings or `SA_ONSTACK` (none that the core
+targets) starts threads with the C library's default stack and no handler.
+
+Not covered yet: **the main thread**. Its stack is the kernel's (Linux leaves a guard gap
+below it), and the runtime has no hook at program start; an overflow there is still a bare
+`SIGSEGV`. The next step is a compiler change: generated `main` calls a runtime entry
+(`ei_main(run)`) that runs the Eider `main` on a runtime thread like the others, which also
+makes the main stack size the runtime's. Sanitizers: under ASan and TSan the handler sees
+overflows in instrumented C (tests/core), but TSan can itself run out of stack inside its own
+runtime, which then dies of `SIGSEGV` first (so tests/std doesn't run its overflow test under
+TSan).
+
 ## What is core and what is generated
 
 The rule: anything that does not depend on a concrete type is in the core; anything that
@@ -241,11 +330,12 @@ walks or is parameterised by a concrete type stays compiler output.
 
 | Piece | Core |
 |---|---|
-| traps, the test hook, the source file name | `ei_trap`, `ei_set_trap_jmp`, `ei_set_file` |
+| traps, the test hook, the source file names | `ei_trap`, `ei_set_trap_jmp`, `ei_set_file`, `ei_set_files` |
 | unreachable code | the `ei_unreachable` macro |
 | index checks, integer conversions | `ei_idx`, `ei_s2s/s2u/u2s/u2u` |
 | allocation | `ei_alloc`, plus `ei_alloc_n` for the `n * sizeof(T)` call sites |
 | shared buffers (copy-on-write) | `ei_buf_hdr`, `ei_buf_alloc/grow/free`, `ei_buf_inc/dec/shared/count`, `ei_grow_cap` |
+| `Ref` access checks | `ei_ref_read_begin/end`, `ei_ref_update_begin/end` |
 | `String` | `ei_String`, `ei_str_from`, `ei_str_from_i64`, `ei_drop_String`, `ei_share_String`, `ei_clone_String`, `ei_str_unique`, `ei_str_cat/push/append` |
 | Map key hashes | `ei_hash_u64`, `ei_hash_str` |
 | `print` | `ei_print_i/u/b/s` (`int64_t`/`uint64_t`) |
@@ -253,7 +343,8 @@ walks or is parameterised by a concrete type stays compiler output.
 | checked arithmetic | written out per integer type; usize uses the u64 functions |
 | reference counts (Mutex, Task, Chan handles) | `ei_rc` |
 | locks in Mutex/Task/Chan | `ei_mutex` |
-| Task thread start/join-once/destroy | `ei_thread` |
+| Task thread start/join-once/destroy, guarded stacks | `ei_thread` |
+| atomics on 64-bit integers | `ei_atomic_i64`, `ei_atomic_*` |
 | Chan queue: ring buffer, cond var, closed flag, send/recv/close | `ei_chan` (type-erased by element size) |
 
 ### Generated (stays compiler output)

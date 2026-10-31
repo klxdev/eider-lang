@@ -1,0 +1,94 @@
+// Labeled loops (docs/compiler.md, "C8.22"): `name: for ...` / `name: while ...`, and
+// `break name` / `continue name` leave or continue an enclosing loop, dropping what the
+// loops they leave own. Expected output: labels.out.
+type Cell = { name: String, n: i32 }
+
+fn find(grid: List[List[i32]], want: i32) -> Option[(usize, usize)] {
+    let mut found: Option[(usize, usize)] = None
+    rows: for i in 0..grid.len() {
+        for j in 0..grid[i].len() {
+            if grid[i][j] == want {
+                found = Some((i, j))
+                break rows
+            }
+        }
+    }
+    found
+}
+
+fn main() uses io {
+    let mut grid: List[List[i32]] = List.new()
+    for i in 0..4 {
+        let mut row: List[i32] = List.new()
+        for j in 0..4 { row.push((i * 4 + j) as i32) }
+        grid.push(row)
+    }
+    print(find(grid, 6))
+    print(find(grid, 99))
+    // continue outer: skip the rest of a row (a range loop has a step)
+    let mut sum = 0
+    outer: for i in 0..4 {
+        for j in 0..4 {
+            if j > i { continue outer }
+            sum += i * 10 + j
+        }
+    }
+    print(sum)
+    // a while loop (no step) continued from a nested loop
+    let mut k = 0
+    let mut hits = 0
+    scan: while k < 5 {
+        k += 1
+        for x in [1, 2, 3] {
+            if x == k { continue scan }
+        }
+        hits += 1
+    }
+    print(hits)
+    // owned values in the loops left are dropped (leak-checked)
+    let mut names: List[String] = List.new()
+    every: for c in [Cell(String.from("a"), 1), Cell(String.from("b"), 2), Cell(String.from("c"), 3)] {
+        let tag = String.from("tag")
+        for s in [String.from("x"), String.from("y")] {
+            let label = s.copy()
+            if c.n == 2 { continue every }
+            if c.n == 3 && label.len() == 1 { break every }
+            names.push(label)
+        }
+        names.push(tag)
+    }
+    print(names)
+    // three levels; break and continue to the middle loop, and an unlabeled break
+    let mut log: List[i32] = List.new()
+    top: for a in 0..3 {
+        mid: for b in 0..3 {
+            for c in 0..3 {
+                if c == 1 && b == 0 { continue mid }
+                if c == 2 { break mid }
+                if a == 2 { break top }
+                log.push(a * 100 + b * 10 + c)
+            }
+        }
+    }
+    print(log)
+    // `while let`, labeled; `break` without a label leaves the innermost loop
+    let mut work: List[List[i32]] = List.new()
+    let mut a: List[i32] = List.new()
+    a.push(1)
+    a.push(-1)
+    a.push(2)
+    work.push(a)
+    let mut b: List[i32] = List.new()
+    b.push(3)
+    work.push(b)
+    let mut out: List[i32] = List.new()
+    jobs: while let Some(job) = work.pop() {
+        for x in job {
+            if x < 0 { continue jobs }
+            if x > 2 { break }
+            out.push(x)
+        }
+        out.push(0)
+    }
+    print(out)
+}

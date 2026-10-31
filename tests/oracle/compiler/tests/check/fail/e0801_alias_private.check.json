@@ -1,0 +1,1 @@
+{"error":"E0801","span":{"file":"compiler/tests/check/fail/e0801_alias_private.ei","line":5,"col":12},"message":"type `alias_lib.Secret` is private to module `compiler/tests/check/fail/lib/alias_lib.ei`","help":"mark it `pub` in its own file to use it from other modules"}

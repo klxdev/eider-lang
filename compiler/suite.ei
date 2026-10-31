@@ -29,15 +29,15 @@ pub const BUILD: i32 = 0
 pub const TEST: i32 = 1
 pub const WASM: i32 = 2
 
-fn s(x: str) -> List[u8] uses ffi { sys.lit(x) }
+fn s(x: str) -> List[u8] { sys.lit(x) }
 
-fn is(a: List[u8], x: str) -> bool uses ffi { bytes.eq(a, sys.lit(x)) }
+fn is(a: List[u8], x: str) -> bool { bytes.eq(a, sys.lit(x)) }
 
 /// Lex, parse, load, evaluate comptime constants and check `src` as the file `file` in
 /// `mode`: Ok when it compiles, else the first diagnostic (the passes recover and find
 /// more, as `eiderc check` reports them; the runner judges a file by its first).
-pub fn compile(file: List[u8], src: List[u8], mode: i32) -> Result[bool, diag.Diag] uses io, fs, net, clock, ffi {
-    var names = intern.new()
+pub fn compile(file: List[u8], src: List[u8], mode: i32) -> Result[bool, diag.Diag] uses io, fs, net, clock {
+    let mut names = intern.new()
     let r = lex.lex(src, inout names)
     match resolve.lex_diag(r) {
         Some(d) => { return Err(d) }
@@ -63,13 +63,13 @@ pub fn compile(file: List[u8], src: List[u8], mode: i32) -> Result[bool, diag.Di
     Err(d)
 }
 
-fn no_main(d: diag.Diag) -> bool uses ffi {
+fn no_main(d: diag.Diag) -> bool {
     is(sys.lit(d.code), "E0112") && d.line == 1 && d.col == 1 && is(d.msg, "no `main` function")
 }
 
 /// The `.ei` files in `dir`, sorted, as `dir/name` (none if it can't be listed).
-fn ei_files(dir: List[u8]) -> List[List[u8]] uses fs, ffi {
-    var out: List[List[u8]] = List.new()
+fn ei_files(dir: List[u8]) -> List[List[u8]] uses fs {
+    let mut out: List[List[u8]] = List.new()
     let names: List[List[u8]] = match fs.list(dir) {
         Ok(xs) => xs
         Err(_) => List.new()
@@ -80,7 +80,7 @@ fn ei_files(dir: List[u8]) -> List[List[u8]] uses fs, ffi {
     out
 }
 
-fn mode_of(src: List[u8]) -> i32 uses ffi {
+fn mode_of(src: List[u8]) -> i32 {
     match bytes.find(src, s("// mode: test"), 0) {
         Some(_) => { return TEST }
         None => {}
@@ -93,12 +93,12 @@ fn mode_of(src: List[u8]) -> i32 uses ffi {
 }
 
 /// `  <tag> <name padded to 28>` (left-aligned, padded with spaces to at least 28).
-fn head(tag: str, name: List[u8]) -> List[u8] uses ffi {
-    var out = s("  ")
+fn head(tag: str, name: List[u8]) -> List[u8] {
+    let mut out = s("  ")
     bytes.append(inout out, s(tag))
     out.push(32)
     bytes.append(inout out, name)
-    var n = name.len()
+    let mut n = name.len()
     while n < 28 {
         out.push(32)
         n += 1
@@ -107,7 +107,7 @@ fn head(tag: str, name: List[u8]) -> List[u8] uses ffi {
 }
 
 fn pos(line: u32, col: u32) -> List[u8] {
-    var out = bytes.from_u64(line as u64)
+    let mut out = bytes.from_u64(line as u64)
     out.push(58)
     bytes.append(inout out, bytes.from_u64(col as u64))
     out
@@ -122,8 +122,8 @@ fn base(path: List[u8]) -> List[u8] {
 
 /// The words of `t` (split at spaces and tabs).
 fn words(t: List[u8]) -> List[List[u8]] {
-    var out: List[List[u8]] = List.new()
-    var cur: List[u8] = List.new()
+    let mut out: List[List[u8]] = List.new()
+    let mut cur: List[u8] = List.new()
     for b in t {
         if b == 32 || b == 9 {
             if cur.len() > 0 { out.push(cur) }
@@ -137,8 +137,8 @@ fn words(t: List[u8]) -> List[List[u8]] {
 }
 
 /// The `// expect:` header's words (empty without a header).
-fn expect(src: List[u8]) -> List[List[u8]] uses ffi {
-    var first: List[u8] = List.new()
+fn expect(src: List[u8]) -> List[List[u8]] {
+    let mut first: List[u8] = List.new()
     for b in src {
         if b == 10 { break }
         first.push(b)
@@ -151,8 +151,8 @@ fn expect(src: List[u8]) -> List[List[u8]] uses ffi {
 
 /// The skip line for a file eiderc can't check yet: `why` is the unsupported diagnostic's
 /// message, or a note.
-fn skip(name: List[u8], why: List[u8]) uses io, ffi {
-    var m = head("skip", name)
+fn skip(name: List[u8], why: List[u8]) uses io {
+    let mut m = head("skip", name)
     m.push(32)
     bytes.append(inout m, why)
     io.outln(m)
@@ -166,12 +166,12 @@ fn has(xs: List[List[u8]], x: List[u8]) -> bool {
 }
 
 /// Run the suite in `dir`; returns the exit code (1 if anything failed).
-pub fn run(dir: List[u8]) -> i32 uses io, fs, net, clock, ffi {
-    var pass: u64 = 0
-    var failed: u64 = 0
-    var skipped: u64 = 0
-    var seen: List[List[u8]] = List.new()
-    var m = s("compile-fail tests (")
+pub fn run(dir: List[u8]) -> i32 uses io, fs, net, clock {
+    let mut pass: u64 = 0
+    let mut failed: u64 = 0
+    let mut skipped: u64 = 0
+    let mut seen: List[List[u8]] = List.new()
+    let mut m = s("compile-fail tests (")
     bytes.append(inout m, dir)
     bytes.append(inout m, s("/fail)"))
     io.outln(m)
@@ -183,7 +183,7 @@ pub fn run(dir: List[u8]) -> i32 uses io, fs, net, clock, ffi {
         }
         let ws = expect(src)
         if ws.len() != 2 {
-            var l = head("FAIL", name)
+            let mut l = head("FAIL", name)
             bytes.append(inout l, s(" missing `// expect: CODE LINE:COL` header"))
             io.outln(l)
             failed += 1
@@ -199,7 +199,7 @@ pub fn run(dir: List[u8]) -> i32 uses io, fs, net, clock, ffi {
                     skipped += 1
                     continue
                 }
-                var l = head("FAIL", name)
+                let mut l = head("FAIL", name)
                 bytes.append(inout l, s(" compiled, expected "))
                 bytes.append(inout l, code)
                 bytes.append(inout l, s(" at "))
@@ -221,7 +221,7 @@ pub fn run(dir: List[u8]) -> i32 uses io, fs, net, clock, ffi {
                         skipped += 1
                         continue
                     }
-                    var l = head("FAIL", name)
+                    let mut l = head("FAIL", name)
                     bytes.append(inout l, s(" expected "))
                     bytes.append(inout l, code)
                     bytes.append(inout l, s(" at "))
@@ -238,8 +238,8 @@ pub fn run(dir: List[u8]) -> i32 uses io, fs, net, clock, ffi {
                 }
                 if !has(seen, code) { seen.push(code) }
                 // the fix round trip: applying the suggested fix must remove this exact error
-                var note: List[u8] = List.new()
-                var bad = false
+                let mut note: List[u8] = List.new()
+                let mut bad = false
                 match d.fix {
                     Some(fx) => {
                         let fixed = diag.apply_fix(src, fx)
@@ -259,14 +259,14 @@ pub fn run(dir: List[u8]) -> i32 uses io, fs, net, clock, ffi {
                     None => {}
                 }
                 if bad {
-                    var l = head("FAIL", name)
+                    let mut l = head("FAIL", name)
                     bytes.append(inout l, s(" suggested fix does not resolve "))
                     bytes.append(inout l, code)
                     io.outln(l)
                     failed += 1
                     continue
                 }
-                var l = head("ok  ", name)
+                let mut l = head("ok  ", name)
                 l.push(32)
                 bytes.append(inout l, code)
                 bytes.append(inout l, s(" at "))
@@ -277,7 +277,7 @@ pub fn run(dir: List[u8]) -> i32 uses io, fs, net, clock, ffi {
             }
         }
     }
-    var m2 = s("\ncompile-pass tests (")
+    let mut m2 = s("\ncompile-pass tests (")
     bytes.append(inout m2, dir)
     bytes.append(inout m2, s("/pass)"))
     io.outln(m2)
@@ -290,7 +290,7 @@ pub fn run(dir: List[u8]) -> i32 uses io, fs, net, clock, ffi {
         let mode = mode_of(src)
         match compile(f, src, mode) {
             Ok(_) => {
-                var l = s("  ok   ")
+                let mut l = s("  ok   ")
                 bytes.append(inout l, name)
                 io.outln(l)
                 pass += 1
@@ -306,7 +306,7 @@ pub fn run(dir: List[u8]) -> i32 uses io, fs, net, clock, ffi {
                     skipped += 1
                     continue
                 }
-                var l = head("FAIL", name)
+                let mut l = head("FAIL", name)
                 bytes.append(inout l, s(" rejected valid code: "))
                 bytes.append(inout l, sys.lit(d.code))
                 l.push(32)
@@ -317,17 +317,17 @@ pub fn run(dir: List[u8]) -> i32 uses io, fs, net, clock, ffi {
         }
     }
     let all = diag.all_codes()
-    var missing: List[List[u8]] = List.new()
+    let mut missing: List[List[u8]] = List.new()
     for c in all {
         if !has(seen, c) { missing.push(c) }
     }
     if skipped > 0 {
-        var l = s("\n")
+        let mut l = s("\n")
         bytes.append(inout l, bytes.from_u64(skipped))
         bytes.append(inout l, s(" skipped (not yet supported by eiderc)"))
         io.outln(l)
     }
-    var sum = s("\n")
+    let mut sum = s("\n")
     bytes.append(inout sum, bytes.from_u64(pass))
     bytes.append(inout sum, s(" passed, "))
     bytes.append(inout sum, bytes.from_u64(failed))
@@ -337,8 +337,8 @@ pub fn run(dir: List[u8]) -> i32 uses io, fs, net, clock, ffi {
     bytes.append(inout sum, bytes.from_u64(all.len() as u64))
     io.outln(sum)
     if missing.len() > 0 {
-        var l = s("codes without a compile-fail test: ")
-        var sp: List[u8] = List.new()
+        let mut l = s("codes without a compile-fail test: ")
+        let mut sp: List[u8] = List.new()
         sp.push(32)
         bytes.append(inout l, bytes.join(missing, sp))
         io.outln(l)

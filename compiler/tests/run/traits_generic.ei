@@ -1,0 +1,119 @@
+// Generic code states the operations it needs (docs/compiler.md, "C8.4: operation traits"):
+// `T: Eq` for `==`, `T: Ord` for `<` and sorting (Ord promises Eq), `K: Hash + Eq` for Map
+// keys, `T: Show` for printing, `T: Copy` for `.copy()`, `I: Iter` for `for`; the bounds are
+// met by derived traits and by a type's own impls alike.
+
+type P = { x: i32, y: i32 }
+
+/// Ordered by y only.
+type ByY = { x: i32, y: i32 }
+
+impl Ord for ByY {
+    fn compare(self, other: ByY) -> Ordering { self.y.compare(other.y) }
+}
+
+type Count = { at: i32, end: i32 }
+
+impl Iter for Count {
+    fn next(inout self) -> Option[i32] {
+        if self.at >= self.end { return None }
+        self.at += 1
+        Some(self.at)
+    }
+}
+
+fn index_of[T: Eq](xs: List[T], x: T) -> Option[usize] {
+    var i: usize = 0
+    for y in xs {
+        if y == x { return Some(i) }
+        i += 1
+    }
+    None
+}
+
+fn max_of[T: Ord](xs: List[T]) -> Option[T] {
+    if xs.is_empty() { return None }
+    var best = xs[0]
+    for x in xs {
+        if x > best { best = x }
+    }
+    Some(best)
+}
+
+fn sorted[T: Ord + Copy](xs: List[T]) -> List[T] {
+    var out = xs
+    var i: usize = 1
+    while i < out.len() {
+        var j = i
+        while j > 0 && out[j].compare(out[j - 1]) == Less {
+            let t = out[j].copy()
+            out[j] = out[j - 1]
+            out[j - 1] = t
+            j -= 1
+        }
+        i += 1
+    }
+    out
+}
+
+fn distinct[K: Hash + Eq](xs: List[K]) -> usize {
+    var seen: Map[K, bool] = Map.new()
+    for x in xs { seen.insert(x, true) }
+    seen.len()
+}
+
+fn show_all[T: Show](xs: List[T]) -> String {
+    var out = String.from("")
+    for x in xs {
+        if !out.is_empty() { out.push_str(" | ") }
+        x.show(inout out)
+    }
+    out
+}
+
+fn both[T: Copy + Show](x: T) uses io {
+    let y = x.copy()
+    print((x, y))
+}
+
+fn total[I: Iter](it: I) -> i32 {
+    var n = 0
+    for x in it { n += 1 }
+    n
+}
+
+type Stack[T] = { items: List[T] }
+
+impl[T: Eq] Stack[T] {
+    fn has(self, x: T) -> bool { self.items.contains(x) }
+}
+
+fn main() uses io {
+    var ps: List[P] = List.new()
+    ps.push(P(3, 1))
+    ps.push(P(1, 2))
+    ps.push(P(1, 1))
+    print(index_of(ps, P(1, 2)))
+    print(index_of(ps, P(9, 9)))
+    print(max_of(ps))
+    print(sorted(ps))
+    var ys: List[ByY] = List.new()
+    ys.push(ByY(1, 9))
+    ys.push(ByY(2, 3))
+    ys.push(ByY(3, 5))
+    print(sorted(ys))
+    print(max_of(ys))
+    var ws: List[String] = List.new()
+    ws.push(String.from("b"))
+    ws.push(String.from("a"))
+    ws.push(String.from("b"))
+    print(distinct(ws))
+    print(distinct(ps))
+    print(show_all(ps))
+    print(show_all(ws))
+    both(P(5, 6))
+    both(String.from("s"))
+    print(total(Count(0, 7)))
+    let st = Stack(ps)
+    print(st.has(P(1, 1)))
+}

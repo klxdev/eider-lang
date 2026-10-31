@@ -1,0 +1,4 @@
+7000
+--- stderr
+eider: runtime error: too big (compiler/tests/run/lib/kinds.ei:7)
+--- exit 101

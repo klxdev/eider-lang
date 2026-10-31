@@ -2,21 +2,21 @@ import "core/sys"
 import "std/io"
 import "../semver.ei"
 
-fn show(s: str) uses io, ffi {
+fn show(s: str) uses io {
     match semver.parse(sys.lit(s)) {
         Some(v) => io.outln(semver.text(v))
         None => print("invalid")
     }
 }
 
-fn cmp(a: str, b: str) uses io, ffi {
+fn cmp(a: str, b: str) uses io {
     match (semver.parse(sys.lit(a)), semver.parse(sys.lit(b))) {
         (Some(x), Some(y)) => print(semver.compare(x, y))
         _ => print("invalid")
     }
 }
 
-fn main() uses io, ffi {
+fn main() uses io {
     show("1.2.3")
     show("0.10.0")
     show("1.2")

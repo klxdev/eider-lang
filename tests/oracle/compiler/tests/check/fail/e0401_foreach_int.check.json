@@ -1,1 +1,1 @@
-{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_foreach_int.ei","line":3,"col":14},"message":"can't iterate over a value of type i32","help":"iterate over a List or an array, or use a range: `for i in 0..n`"}
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_foreach_int.ei","line":3,"col":14},"message":"can't iterate over a value of type i32","help":"iterate over a List, an array, a Map, a range (`for i in 0..n`) or a type that implements `Iter`"}

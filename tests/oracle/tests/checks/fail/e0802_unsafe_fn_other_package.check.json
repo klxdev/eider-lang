@@ -1,0 +1,1 @@
+{"error":"E0802","span":{"file":"tests/checks/fail/e0802_unsafe_fn_other_package.ei","line":7,"col":13},"message":"call to unsafe function `unsafepkg.raw` is only allowed in an `unsafe` block or `unsafe fn`","help":"wrap the call: `unsafe { ... }`"}

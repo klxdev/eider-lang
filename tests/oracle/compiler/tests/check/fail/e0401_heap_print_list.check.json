@@ -1,1 +1,1 @@
-{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_print_list.ei","line":3,"col":11},"message":"cannot print a value of type List[i32] yet"}
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_print_list.ei","line":3,"col":11},"message":"`print` needs `Show`, which List[Mutex[i32]] doesn't implement (its part Mutex[i32] doesn't)","help":"Task, Mutex and Chan values are shared handles: they have no equality, order, hash or text"}

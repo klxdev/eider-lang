@@ -1,1 +1,1 @@
-{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_print_record.ei","line":4,"col":11},"message":"cannot print a value of type P yet"}
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_print_record.ei","line":4,"col":11},"message":"`print` needs `Show`, which P doesn't implement (its part Mutex[i32] doesn't)","help":"Task, Mutex and Chan values are shared handles: they have no equality, order, hash or text"}

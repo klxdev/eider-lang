@@ -1,1 +1,1 @@
-type A = X
+type A = X | Y

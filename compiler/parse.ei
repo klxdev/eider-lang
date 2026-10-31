@@ -78,7 +78,7 @@ fn skip_seps(inout p: P) {
 
 /// The kind of the next token that isn't a newline.
 fn peek_nonnl(p: P) -> lex.Tok {
-    var j = p.i
+    let mut j = p.i.copy()
     while p.toks[j].kind == lex.Newline && j + 1 < p.toks.len() { j += 1 }
     p.toks[j]
 }
@@ -100,32 +100,32 @@ fn prev_end(p: P) -> Name {
 
 fn err_at(line: u32, col: u32, m: List[u8]) -> diag.Diag { diag.new("E0001", line, col, m) }
 
-fn err(p: P, m: str) -> diag.Diag uses ffi {
+fn err(p: P, m: str) -> diag.Diag {
     let t = cur(p)
     err_at(t.line, t.col, sys.lit(m))
 }
 
-fn quoted(pre: str, mid: List[u8], post: str) -> List[u8] uses ffi {
-    var m = sys.lit(pre)
+fn quoted(pre: str, mid: List[u8], post: str) -> List[u8] {
+    let mut m = sys.lit(pre)
     bytes.append(inout m, mid)
     bytes.append(inout m, sys.lit(post))
     m
 }
 
-fn expect(inout p: P, k: lex.Kind) -> Result[Name, diag.Diag] uses ffi {
+fn expect(inout p: P, k: lex.Kind) -> Result[Name, diag.Diag] {
     let t = cur(p)
     if eat(inout p, k) { return Ok(Name(0, t.line, t.col)) }
     Err(err_at(t.line, t.col, quoted("expected `", sys.lit(lex.kind_text(k)), "`")))
 }
 
-fn expect_kw(inout p: P, kw: u32) -> Result[Name, diag.Diag] uses ffi {
+fn expect_kw(inout p: P, kw: u32) -> Result[Name, diag.Diag] {
     let t = cur(p)
     if eat_kw(inout p, kw) { return Ok(Name(0, t.line, t.col)) }
     Err(err_at(t.line, t.col, quoted("expected `", intern.name(p.names, kw), "`")))
 }
 
 /// A non-keyword identifier.
-fn ident(inout p: P) -> Result[Name, diag.Diag] uses ffi {
+fn ident(inout p: P) -> Result[Name, diag.Diag] {
     let t = cur(p)
     if t.kind == lex.Ident {
         if t.val > intern.LAST_KEYWORD as u64 {
@@ -143,7 +143,7 @@ fn qualified(inout p: P, first: u32) -> Option[Name] {
     if !p.aliases.contains(first) || !is(p, lex.Dot) { return None }
     let n = p.i + 1
     if n < p.toks.len() && p.toks[n].kind == lex.Ident && p.toks[n].val > intern.LAST_KEYWORD as u64 {
-        let t = p.toks[n]
+        let t = p.toks[n].copy()
         adv(inout p)
         adv(inout p)
         return Some(Name(t.val as u32, t.line, t.col))
@@ -166,7 +166,7 @@ fn qualified(inout p: P, first: u32) -> Option[Name] {
 
 /// Record `d`, unless an error was recorded at its position already.
 fn note(inout p: P, d: diag.Diag) {
-    var k: usize = 0
+    let mut k: usize = 0
     while k < p.errs.len() {
         if p.errs[k].line == d.line && p.errs[k].col == d.col { return }
         k += 1
@@ -175,7 +175,7 @@ fn note(inout p: P, d: diag.Diag) {
 }
 
 /// Record error `m` at the cursor.
-fn note_here(inout p: P, m: str) uses ffi {
+fn note_here(inout p: P, m: str) {
     let d = err(p, m)
     note(inout p, d)
 }
@@ -248,7 +248,7 @@ fn nest(inout st: List[u32], k: lex.Kind) -> bool {
     if c == 0 { return true }
     if !st.contains(c) { return c != 3 }
     while st.len() > 0 {
-        let top = st[st.len() - 1]
+        let top = st[st.len() - 1].copy()
         st.pop()
         if top == c { break }
     }
@@ -257,8 +257,8 @@ fn nest(inout st: List[u32], k: lex.Kind) -> bool {
 
 /// The nesting of the tokens from `s0` up to the cursor.
 fn nesting(p: P, s0: usize) -> List[u32] {
-    var st: List[u32] = List.new()
-    var j = s0
+    let mut st: List[u32] = List.new()
+    let mut j = s0.copy()
     while j < p.i {
         if !nest(inout st, p.toks[j].kind) { st = List.new() }
         j += 1
@@ -278,7 +278,7 @@ const AT_EOF: u32 = 3
 /// starts an item at the start of a line (AT_ITEM) and at the end of the file (AT_EOF). The
 /// token it stops at is not consumed.
 fn sync(inout p: P, s0: usize, arm: bool) -> u32 {
-    var st = nesting(p, s0)
+    let mut st = nesting(p, s0)
     while true {
         let k = kind(p)
         if k == lex.Eof { return AT_EOF }
@@ -297,7 +297,7 @@ fn sync(inout p: P, s0: usize, arm: bool) -> u32 {
 /// token that starts an item at depth 0 (or, past unbalanced brackets, one at the start of a
 /// line in column 1), or the end of the file.
 fn sync_item(inout p: P, s0: usize) {
-    var st = nesting(p, s0)
+    let mut st = nesting(p, s0)
     if p.i == s0 && !is_eof(p) {
         if !nest(inout st, kind(p)) { st = List.new() }
         adv(inout p)
@@ -318,8 +318,8 @@ fn err_node(inout p: P, k: ast.Kind, s0: usize) -> u32 {
 
 fn err_span(p: P, k: ast.Kind, s0: usize) -> ast.Node {
     let t = p.toks[s0]
-    var n = mk(k, t.line, t.col)
-    var e = p.i
+    let mut n = mk(k, t.line, t.col)
+    let mut e = p.i.copy()
     while e > s0 + 1 && p.toks[e - 1].kind == lex.Newline { e -= 1 }
     if e > s0 {
         n.end_line = p.toks[e - 1].line
@@ -331,17 +331,17 @@ fn err_span(p: P, k: ast.Kind, s0: usize) -> ast.Node {
 /// The IError for a failed item that began at `s0`, with its keyword and name when they
 /// came before the cursor (past `pub`, `extern "c"`, `export` and `unsafe`).
 fn item_error(inout p: P, s0: usize) -> u32 {
-    var j = s0
+    let mut j = s0.copy()
     while j < p.i && (kw_at(p, j, intern.K_PUB) || kw_at(p, j, intern.K_EXTERN) || kw_at(p, j, intern.K_EXPORT) || kw_at(p, j, intern.K_UNSAFE) || p.toks[j].kind == lex.Str) { j += 1 }
-    var kw: u32 = 0
-    var name: u32 = 0
+    let mut kw: u32 = 0
+    let mut name: u32 = 0
     if j < p.i && p.toks[j].kind == lex.Ident && item_kw(p.toks[j].val) {
         let v = p.toks[j].val
         kw = v as u32 + 1
         let named = v == intern.K_FN as u64 || v == intern.K_TYPE as u64 || v == intern.K_CONST as u64 || v == intern.K_TRAIT as u64
         if named && j + 1 < p.i && p.toks[j + 1].kind == lex.Ident && p.toks[j + 1].val > intern.LAST_KEYWORD as u64 { name = p.toks[j + 1].val as u32 + 1 }
     }
-    var n = err_span(p, ast.IError, s0)
+    let mut n = err_span(p, ast.IError, s0)
     n.a = kw
     n.b = name
     add(inout p, n)
@@ -365,7 +365,7 @@ fn stem(path: List[u8]) -> List[u8] {
         None => base
     }
     // one `_` per non-identifier character, so a multi-byte UTF-8 scalar gives one `_`
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     for c in s {
         if bytes.is_ident(c) {
             out.push(c)
@@ -380,11 +380,11 @@ fn stem(path: List[u8]) -> List[u8] {
 
 /// The file's items. An item that fails is recorded, skipped (`sync_item`) and kept as an
 /// IError.
-pub fn program(inout p: P) uses ffi {
-    var items: List[u32] = List.new()
+pub fn program(inout p: P) {
+    let mut items: List[u32] = List.new()
     skip_seps(inout p)
     while !is_eof(p) {
-        let s0 = p.i
+        let s0 = p.i.copy()
         let m = mark(p)
         match item(inout p, inout items) {
             Ok(_) => {}
@@ -402,7 +402,7 @@ pub fn program(inout p: P) uses ffi {
 }
 
 /// One item (or `module` line), appended to `items`.
-fn item(inout p: P, inout items: List[u32]) -> Result[bool, diag.Diag] uses ffi {
+fn item(inout p: P, inout items: List[u32]) -> Result[bool, diag.Diag] {
     if is_kw(p, intern.K_MODULE) {
         adv(inout p)
         ident(inout p)?
@@ -415,7 +415,7 @@ fn item(inout p: P, inout items: List[u32]) -> Result[bool, diag.Diag] uses ffi 
         if !is(p, lex.Str) { return Err(err(p, "expected a file path string after `import`, e.g. `import \"util.ei\"`")) }
         let si = cur(p).val as u32
         adv(inout p)
-        var n = mk(ast.IImport, t.line, t.col)
+        let mut n = mk(ast.IImport, t.line, t.col)
         n.a = si
         if eat_kw(inout p, intern.K_AS) {
             let al = ident(inout p)?
@@ -436,7 +436,7 @@ fn item(inout p: P, inout items: List[u32]) -> Result[bool, diag.Diag] uses ffi 
         items.push(id)
     } else if is_kw(p, intern.K_EXTERN) {
         adv(inout p)
-        var abi_ok = false
+        let mut abi_ok = false
         if is(p, lex.Str) {
             let s = p.strs[cur(p).val as usize]
             abi_ok = s.len() == 1 && s[0] == 99
@@ -472,17 +472,17 @@ fn item(inout p: P, inout items: List[u32]) -> Result[bool, diag.Diag] uses ffi 
 }
 
 /// `[T, U: Bound + Other]`; returns (start, len) of GParam nodes.
-fn generics(inout p: P) -> Result[List[u32], diag.Diag] uses ffi {
-    var gs: List[u32] = List.new()
+fn generics(inout p: P) -> Result[List[u32], diag.Diag] {
+    let mut gs: List[u32] = List.new()
     if !eat(inout p, lex.LBracket) { return Ok(gs) }
     while true {
         skip_nl(inout p)
         let g = ident(inout p)?
-        var bounds: List[u32] = List.new()
+        let mut bounds: List[u32] = List.new()
         if eat(inout p, lex.Colon) {
             while true {
                 let b = ident(inout p)?
-                var tn = mk(ast.TName, b.line, b.col)
+                let mut tn = mk(ast.TName, b.line, b.col)
                 tn.a = b.sym
                 match qualified(inout p, b.sym) {
                     Some(q) => {
@@ -495,7 +495,7 @@ fn generics(inout p: P) -> Result[List[u32], diag.Diag] uses ffi {
                 if !eat(inout p, lex.Plus) { break }
             }
         }
-        var gn = mk(ast.GParam, g.line, g.col)
+        let mut gn = mk(ast.GParam, g.line, g.col)
         gn.a = g.sym
         gn.c = list(inout p, bounds)
         gn.d = bounds.len() as u32
@@ -507,7 +507,7 @@ fn generics(inout p: P) -> Result[List[u32], diag.Diag] uses ffi {
     Ok(gs)
 }
 
-fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
+fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
     expect_kw(inout p, intern.K_TYPE)?
     let name = ident(inout p)?
     let gs = generics(inout p)?
@@ -519,7 +519,22 @@ fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
     }
     expect(inout p, lex.Eq)?
     skip_nl(inout p)
-    var members: List[u32] = List.new()
+    let mut members: List[u32] = List.new()
+    if !is(p, lex.LBrace) && !is(p, lex.Pipe) {
+        // a type alias (docs/compiler.md, "C8.18"): `type Handler = fn(Request) -> Response`
+        let at = cur(p)
+        let target = ty(inout p)?
+        // `type A = X | Y` is an enum missing its leading `|`, as before aliases
+        if is(p, lex.Pipe) && p.ast.nodes[target as usize].kind == ast.TName { return Err(err_at(at.line, at.col, sys.lit("expected `|`"))) }
+        let mut n = mk(ast.IType, name.line, name.col)
+        n.a = name.sym
+        n.b = public
+        n.c = list(inout p, gs)
+        n.d = gs.len() as u32
+        n.e = list(inout p, members)
+        n.g = target + 1
+        return Ok(add(inout p, n))
+    }
     if is(p, lex.LBrace) {
         adv(inout p)
         while true {
@@ -528,7 +543,7 @@ fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
             let f = ident(inout p)?
             expect(inout p, lex.Colon)?
             let t = ty(inout p)?
-            var fnode = mk(ast.Field, f.line, f.col)
+            let mut fnode = mk(ast.Field, f.line, f.col)
             fnode.a = f.sym
             fnode.b = t
             members.push(add(inout p, fnode))
@@ -540,14 +555,14 @@ fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
             expect(inout p, lex.Pipe)?
             skip_nl(inout p)
             let v = ident(inout p)?
-            var fields: List[u32] = List.new()
+            let mut fields: List[u32] = List.new()
             if eat(inout p, lex.LParen) {
                 while true {
                     skip_nl(inout p)
                     if eat(inout p, lex.RParen) { break }
                     let named = is(p, lex.Ident) && kind_at(p, p.i + 1) == lex.Colon
                     let t0 = cur(p)
-                    var vf = mk(ast.VField, t0.line, t0.col)
+                    let mut vf = mk(ast.VField, t0.line, t0.col)
                     if named {
                         let f = ident(inout p)?
                         expect(inout p, lex.Colon)?
@@ -562,7 +577,7 @@ fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
                     if !eat(inout p, lex.Comma) && !is(p, lex.RParen) { return Err(err(p, "expected `,` or `)`")) }
                 }
             }
-            var vn = mk(ast.Variant, v.line, v.col)
+            let mut vn = mk(ast.Variant, v.line, v.col)
             vn.a = v.sym
             vn.c = list(inout p, fields)
             vn.d = fields.len() as u32
@@ -574,7 +589,7 @@ fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
             }
         }
     }
-    var n = mk(ast.IType, name.line, name.col)
+    let mut n = mk(ast.IType, name.line, name.col)
     n.a = name.sym
     n.b = public
     n.c = list(inout p, gs)
@@ -585,8 +600,8 @@ fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
 }
 
 /// Comma-separated items of `f` until `close`, with newlines allowed around them.
-fn ty_list(inout p: P, close: lex.Kind) -> Result[List[u32], diag.Diag] uses ffi {
-    var ts: List[u32] = List.new()
+fn ty_list(inout p: P, close: lex.Kind) -> Result[List[u32], diag.Diag] {
+    let mut ts: List[u32] = List.new()
     while true {
         skip_nl(inout p)
         if eat(inout p, close) { break }
@@ -597,20 +612,37 @@ fn ty_list(inout p: P, close: lex.Kind) -> Result[List[u32], diag.Diag] uses ffi
     Ok(ts)
 }
 
-pub fn ty(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+pub fn ty(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
     if is_kw(p, intern.K_INOUT) {
-        var d = diag.new("E0302", t.line, t.col, sys.lit("`inout` is only valid on function parameters; types can't hold references"))
+        let mut d = diag.new("E0302", t.line, t.col, sys.lit("`inout` is only valid on function parameters; types can't hold references"))
         d.help = sys.lit("store the value itself, or an index into a List, or Shared[Mutex[T]]")
         return Err(d)
     }
     if is_kw(p, intern.K_FN) {
         adv(inout p)
         expect(inout p, lex.LParen)?
-        let ps = ty_list(inout p, lex.RParen)?
-        var n = mk(ast.TFn, t.line, t.col)
+        // `fn(inout T) -> R`: bit i of `e` marks parameter i `inout` (docs/compiler.md, "C8.7")
+        let mut ps: List[u32] = List.new()
+        let mut io: u32 = 0
+        let mut bit: u32 = 1
+        while true {
+            skip_nl(inout p)
+            if eat(inout p, lex.RParen) { break }
+            if is_kw(p, intern.K_INOUT) {
+                if ps.len() >= 31 { return Err(err(p, "at most 31 parameters of a fn type can be `inout`")) }
+                adv(inout p)
+                io += bit
+            }
+            ps.push(ty(inout p)?)
+            if ps.len() < 31 { bit *= 2 }
+            skip_nl(inout p)
+            if !eat(inout p, lex.Comma) && !is(p, lex.RParen) { return Err(err(p, "expected `,` or `)`")) }
+        }
+        let mut n = mk(ast.TFn, t.line, t.col)
         n.c = list(inout p, ps)
         n.d = ps.len() as u32
+        n.e = io
         if eat(inout p, lex.Arrow) { n.g = ty(inout p)? + 1 }
         return Ok(add(inout p, n))
     }
@@ -621,16 +653,16 @@ pub fn ty(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         if !(lt.kind == lex.Int && !lt.big && lt.val <= 4294967295) { return Err(err(p, "expected array length (integer literal)")) }
         adv(inout p)
         expect(inout p, lex.RBracket)?
-        var n = mk(ast.TArray, t.line, t.col)
+        let mut n = mk(ast.TArray, t.line, t.col)
         n.a = el
         n.b = lt.val as u32
         return Ok(add(inout p, n))
     }
     if eat(inout p, lex.LParen) {
         if eat(inout p, lex.RParen) { return Ok(add(inout p, mk(ast.TUnit, t.line, t.col))) }
-        var ts: List[u32] = List.new()
+        let mut ts: List[u32] = List.new()
         ts.push(ty(inout p)?)
-        var trailing = false
+        let mut trailing = false
         while eat(inout p, lex.Comma) {
             if is(p, lex.RParen) {
                 trailing = true
@@ -640,15 +672,15 @@ pub fn ty(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         }
         expect(inout p, lex.RParen)?
         if ts.len() == 1 && !trailing { return Ok(ts[0]) }
-        var n = mk(ast.TTuple, t.line, t.col)
+        let mut n = mk(ast.TTuple, t.line, t.col)
         n.c = list(inout p, ts)
         n.d = ts.len() as u32
         return Ok(add(inout p, n))
     }
     if t.kind == lex.Ident && t.val > intern.LAST_KEYWORD as u64 {
         adv(inout p)
-        var sym = t.val as u32
-        var qual: u32 = 0
+        let mut sym = t.val as u32
+        let mut qual: u32 = 0
         match qualified(inout p, sym) {
             Some(q) => {
                 qual = sym + 1
@@ -658,7 +690,7 @@ pub fn ty(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         }
         if is(p, lex.LBracket) {
             adv(inout p)
-            var args: List[u32] = List.new()
+            let mut args: List[u32] = List.new()
             while true {
                 skip_nl(inout p)
                 args.push(ty(inout p)?)
@@ -666,14 +698,14 @@ pub fn ty(inout p: P) -> Result[u32, diag.Diag] uses ffi {
                 if eat(inout p, lex.RBracket) { break }
                 expect(inout p, lex.Comma)?
             }
-            var n = mk(ast.TGeneric, t.line, t.col)
+            let mut n = mk(ast.TGeneric, t.line, t.col)
             n.a = sym
             n.b = qual
             n.c = list(inout p, args)
             n.d = args.len() as u32
             return Ok(add(inout p, n))
         }
-        var n = mk(ast.TName, t.line, t.col)
+        let mut n = mk(ast.TName, t.line, t.col)
         n.a = sym
         n.b = qual
         return Ok(add(inout p, n))
@@ -681,22 +713,22 @@ pub fn ty(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     Err(err(p, "expected a type"))
 }
 
-fn fn_decl(inout p: P, allow_no_body: bool, flags: u32) -> Result[u32, diag.Diag] uses ffi {
+fn fn_decl(inout p: P, allow_no_body: bool, flags: u32) -> Result[u32, diag.Diag] {
     expect_kw(inout p, intern.K_FN)?
     let name = ident(inout p)?
     let gs = generics(inout p)?
     expect(inout p, lex.LParen)?
-    var params: List[u32] = List.new()
+    let mut params: List[u32] = List.new()
     while true {
         skip_nl(inout p)
         if eat(inout p, lex.RParen) { break }
         let inout_flag = eat_kw(inout p, intern.K_INOUT)
         let n = ident(inout p)?
-        var pn = mk(ast.Param, n.line, n.col)
+        let mut pn = mk(ast.Param, n.line, n.col)
         pn.a = n.sym
         pn.c = if inout_flag { 1 } else { 0 }
         if n.sym == intern.S_SELF && !is(p, lex.Colon) {
-            var st = mk(ast.TName, n.line, n.col)
+            let mut st = mk(ast.TName, n.line, n.col)
             st.a = intern.S_SELF_TYPE
             pn.b = add(inout p, st)
         } else {
@@ -707,28 +739,28 @@ fn fn_decl(inout p: P, allow_no_body: bool, flags: u32) -> Result[u32, diag.Diag
         skip_nl(inout p)
         if !eat(inout p, lex.Comma) && !is(p, lex.RParen) { return Err(err(p, "expected `,` or `)`")) }
     }
-    var sig_end = prev_end(p)
-    var ret: u32 = 0
+    let mut sig_end = prev_end(p)
+    let mut ret: u32 = 0
     if peek_nonnl_is(p, lex.Arrow) {
         skip_nl(inout p)
         adv(inout p)
         ret = ty(inout p)? + 1
         sig_end = prev_end(p)
     }
-    var caps: List[u32] = List.new()
+    let mut caps: List[u32] = List.new()
     if peek_nonnl_kw(p, intern.K_USES) {
         skip_nl(inout p)
         adv(inout p)
         while true {
             let c = ident(inout p)?
-            var cn = mk(ast.Cap, c.line, c.col)
+            let mut cn = mk(ast.Cap, c.line, c.col)
             cn.a = c.sym
             caps.push(add(inout p, cn))
             if !eat(inout p, lex.Comma) { break }
         }
         sig_end = prev_end(p)
     }
-    var n = mk(ast.IFn, name.line, name.col)
+    let mut n = mk(ast.IFn, name.line, name.col)
     n.a = name.sym
     n.b = flags
     n.c = list(inout p, gs)
@@ -747,18 +779,18 @@ fn fn_decl(inout p: P, allow_no_body: bool, flags: u32) -> Result[u32, diag.Diag
     Ok(add(inout p, n))
 }
 
-fn trait_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
+fn trait_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
     expect_kw(inout p, intern.K_TRAIT)?
     let name = ident(inout p)?
     skip_nl(inout p)
     expect(inout p, lex.LBrace)?
-    var methods: List[u32] = List.new()
+    let mut methods: List[u32] = List.new()
     while true {
         skip_seps(inout p)
         if eat(inout p, lex.RBrace) { break }
         methods.push(fn_decl(inout p, true, 0)?)
     }
-    var n = mk(ast.ITrait, name.line, name.col)
+    let mut n = mk(ast.ITrait, name.line, name.col)
     n.a = name.sym
     n.b = public
     n.c = list(inout p, methods)
@@ -766,13 +798,15 @@ fn trait_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
     Ok(add(inout p, n))
 }
 
-fn impl_decl(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn impl_decl(inout p: P) -> Result[u32, diag.Diag] {
     let pos = expect_kw(inout p, intern.K_IMPL)?
     let gs = generics(inout p)?
     let first = ty(inout p)?
-    var n = mk(ast.IImpl, pos.line, pos.col)
+    let mut n = mk(ast.IImpl, pos.line, pos.col)
     if eat_kw(inout p, intern.K_FOR) {
-        if !(p.ast.nodes[first as usize].kind == ast.TName) { return Err(err(p, "expected a trait name before `for`")) }
+        // a trait name, or one with type arguments (`From[E]`: docs/compiler.md, "C8.21")
+        let fk = p.ast.nodes[first as usize].kind
+        if !(fk == ast.TName || fk == ast.TGeneric) { return Err(err(p, "expected a trait name before `for`")) }
         n.a = first + 1
         n.b = ty(inout p)?
     } else {
@@ -780,7 +814,7 @@ fn impl_decl(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     }
     skip_nl(inout p)
     expect(inout p, lex.LBrace)?
-    var methods: List[u32] = List.new()
+    let mut methods: List[u32] = List.new()
     while true {
         skip_seps(inout p)
         if eat(inout p, lex.RBrace) { break }
@@ -793,7 +827,7 @@ fn impl_decl(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     Ok(add(inout p, n))
 }
 
-fn const_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
+fn const_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
     expect_kw(inout p, intern.K_CONST)?
     let name = ident(inout p)?
     expect(inout p, lex.Colon)?
@@ -801,7 +835,7 @@ fn const_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
     expect(inout p, lex.Eq)?
     let is_comptime = eat_kw(inout p, intern.K_COMPTIME)
     let v = expr(inout p)?
-    var n = mk(ast.IConst, name.line, name.col)
+    let mut n = mk(ast.IConst, name.line, name.col)
     n.a = name.sym
     n.b = public
     n.c = t
@@ -810,13 +844,13 @@ fn const_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
     Ok(add(inout p, n))
 }
 
-fn test_decl(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn test_decl(inout p: P) -> Result[u32, diag.Diag] {
     let pos = expect_kw(inout p, intern.K_TEST)?
     if !is(p, lex.Str) { return Err(err(p, "expected test name string")) }
     let si = cur(p).val as u32
     adv(inout p)
     skip_nl(inout p)
-    var n = mk(ast.ITest, pos.line, pos.col)
+    let mut n = mk(ast.ITest, pos.line, pos.col)
     n.a = si
     n.b = block(inout p)?
     Ok(add(inout p, n))
@@ -824,15 +858,15 @@ fn test_decl(inout p: P) -> Result[u32, diag.Diag] uses ffi {
 
 // ---- statements
 
-pub fn block(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+pub fn block(inout p: P) -> Result[u32, diag.Diag] {
     let open = expect(inout p, lex.LBrace)?
-    var stmts: List[u32] = List.new()
+    let mut stmts: List[u32] = List.new()
     while true {
         skip_seps(inout p)
         if is(p, lex.RBrace) {
             let t = cur(p)
             adv(inout p)
-            var n = mk(ast.Block, open.line, open.col)
+            let mut n = mk(ast.Block, open.line, open.col)
             n.c = list(inout p, stmts)
             n.d = stmts.len() as u32
             n.end_line = t.line
@@ -844,15 +878,15 @@ pub fn block(inout p: P) -> Result[u32, diag.Diag] uses ffi {
             break
         }
         // a statement that fails is recorded, skipped (`sync`) and kept as an SError
-        let s0 = p.i
+        let s0 = p.i.copy()
         let m = mark(p)
-        var stop = AT_SEP
+        let mut stop = AT_SEP
         match stmt(inout p) {
             Ok(st) => {
                 stmts.push(st)
                 if !(is_nl(p) || is(p, lex.Semi) || is(p, lex.RBrace)) {
                     note_here(inout p, "expected a newline or `;` after statement")
-                    let s1 = p.i
+                    let s1 = p.i.copy()
                     stop = sync(inout p, s1, false)
                     if p.i > s1 { stmts.push(err_node(inout p, ast.SError, s1)) }
                 }
@@ -868,7 +902,7 @@ pub fn block(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     }
     // unclosed (only after an error): the block ends before the end of the file or the item
     let e = prev_end(p)
-    var n = mk(ast.Block, open.line, open.col)
+    let mut n = mk(ast.Block, open.line, open.col)
     n.c = list(inout p, stmts)
     n.d = stmts.len() as u32
     n.end_line = e.line
@@ -893,64 +927,133 @@ fn assign_op(k: lex.Kind) -> u32 {
     }
 }
 
-fn stmt(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+/// Whether the current token is the contextual word `mut` followed by a name (`let mut x`,
+/// a pattern binding `mut x`; docs/compiler.md, "C8.6"). `mut` is not a keyword: `let mut = 1`
+/// still declares a variable named `mut`.
+fn at_mut(p: P) -> bool {
+    if !is(p, lex.Ident) || kind_at(p, p.i + 1) != lex.Ident { return false }
     let t = cur(p)
-    if is_kw(p, intern.K_LET) || is_kw(p, intern.K_VAR) {
-        let mutable: u32 = if is_kw(p, intern.K_VAR) { 1 } else { 0 }
+    if t.val <= intern.LAST_KEYWORD as u64 { return false }
+    bytes.eq(intern.name(p.names, t.val as u32), sys.lit("mut"))
+}
+
+/// `name: for ...` / `name: while ...`: a loop label (docs/compiler.md, "C8.22").
+fn at_label(p: P) -> bool {
+    if !is(p, lex.Ident) || cur(p).val <= intern.LAST_KEYWORD as u64 { return false }
+    if kind_at(p, p.i + 1) != lex.Colon || kind_at(p, p.i + 2) != lex.Ident { return false }
+    let v = p.toks[p.i + 2].val
+    v == intern.K_FOR as u64 || v == intern.K_WHILE as u64
+}
+
+/// The label after `break` or `continue` on the same line, as sym + 1 (0: none), with its
+/// position in b and c.
+fn exit_label(inout p: P, inout n: ast.Node) {
+    if !is(p, lex.Ident) || cur(p).val <= intern.LAST_KEYWORD as u64 { return }
+    let lt = cur(p)
+    n.a = lt.val as u32 + 1
+    n.b = lt.line
+    n.c = lt.col
+    adv(inout p)
+}
+
+fn stmt(inout p: P) -> Result[u32, diag.Diag] {
+    let t = cur(p)
+    if at_label(p) {
+        // the loop keeps its label in h (sym + 1) and the label's position in i, j
         adv(inout p)
+        adv(inout p)
+        let s = stmt(inout p)?
+        p.ast.nodes[s as usize].h = t.val as u32 + 1
+        p.ast.nodes[s as usize].i = t.line
+        p.ast.nodes[s as usize].j = t.col
+        return Ok(s)
+    }
+    if is_kw(p, intern.K_LET) || is_kw(p, intern.K_VAR) {
+        // d: 0 `let`, 1 `var` (deprecated), 2 `let mut`
+        let mut mutable: u32 = if is_kw(p, intern.K_VAR) { 1 } else { 0 }
+        adv(inout p)
+        if mutable == 0 && at_mut(p) {
+            mutable = 2
+            adv(inout p)
+        }
         if is(p, lex.LParen) {
             let pat = pattern(inout p)?
             expect(inout p, lex.Eq)?
             skip_nl(inout p)
-            var n = mk(ast.SLetPat, t.line, t.col)
+            let mut n = mk(ast.SLetPat, t.line, t.col)
             n.a = pat
             n.c = expr(inout p)?
             n.d = mutable
+            let ie = prev_end(p)
+            n.e = ie.line
+            n.f = ie.col
             return Ok(add(inout p, n))
         }
         let name = ident(inout p)?
-        var n = mk(ast.SLet, t.line, t.col)
+        let mut n = mk(ast.SLet, t.line, t.col)
         n.a = name.sym
         n.d = mutable
         if eat(inout p, lex.Colon) { n.b = ty(inout p)? + 1 }
         expect(inout p, lex.Eq)?
         skip_nl(inout p)
         n.c = expr(inout p)?
+        let ie = prev_end(p)
+        n.e = ie.line
+        n.f = ie.col
         return Ok(add(inout p, n))
     }
     if eat_kw(inout p, intern.K_WHILE) {
-        var n = mk(ast.SWhile, t.line, t.col)
+        if is_kw(p, intern.K_LET) { return while_let(inout p, t) }
+        let mut n = mk(ast.SWhile, t.line, t.col)
         n.a = expr(inout p)?
         n.b = block(inout p)?
         return Ok(add(inout p, n))
     }
     if eat_kw(inout p, intern.K_FOR) {
+        if is(p, lex.LParen) {
+            // `for (k, v) in e` (docs/compiler.md, "C8.20"): a pattern, not a range
+            let pat = pattern(inout p)?
+            expect_kw(inout p, intern.K_IN)?
+            let mut n = mk(ast.SForEach, t.line, t.col)
+            n.b = expr(inout p)?
+            n.d = block(inout p)?
+            n.e = pat + 1
+            return Ok(add(inout p, n))
+        }
         let v = ident(inout p)?
         expect_kw(inout p, intern.K_IN)?
         let lo = expr(inout p)?
         if eat(inout p, lex.DotDot) {
-            var n = mk(ast.SFor, t.line, t.col)
+            let mut n = mk(ast.SFor, t.line, t.col)
             n.a = v.sym
             n.b = lo
             n.c = expr(inout p)?
             n.d = block(inout p)?
             return Ok(add(inout p, n))
         }
-        var n = mk(ast.SForEach, t.line, t.col)
+        let mut n = mk(ast.SForEach, t.line, t.col)
         n.a = v.sym
         n.b = lo
         n.d = block(inout p)?
         return Ok(add(inout p, n))
     }
     if eat_kw(inout p, intern.K_RETURN) {
-        var n = mk(ast.SReturn, t.line, t.col)
+        let mut n = mk(ast.SReturn, t.line, t.col)
         if !(is_nl(p) || is_eof(p) || is(p, lex.Semi) || is(p, lex.RBrace)) { n.a = expr(inout p)? + 1 }
         return Ok(add(inout p, n))
     }
-    if eat_kw(inout p, intern.K_BREAK) { return Ok(add(inout p, mk(ast.SBreak, t.line, t.col))) }
-    if eat_kw(inout p, intern.K_CONTINUE) { return Ok(add(inout p, mk(ast.SContinue, t.line, t.col))) }
+    if eat_kw(inout p, intern.K_BREAK) {
+        let mut n = mk(ast.SBreak, t.line, t.col)
+        exit_label(inout p, inout n)
+        return Ok(add(inout p, n))
+    }
+    if eat_kw(inout p, intern.K_CONTINUE) {
+        let mut n = mk(ast.SContinue, t.line, t.col)
+        exit_label(inout p, inout n)
+        return Ok(add(inout p, n))
+    }
     if eat_kw(inout p, intern.K_ASSERT) {
-        var n = mk(ast.SAssert, t.line, t.col)
+        let mut n = mk(ast.SAssert, t.line, t.col)
         n.a = expr(inout p)?
         if eat(inout p, lex.Comma) {
             if !is(p, lex.Str) { return Err(err(p, "expected message string")) }
@@ -964,31 +1067,31 @@ fn stmt(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     if op > 0 {
         adv(inout p)
         skip_nl(inout p)
-        var n = mk(ast.SAssign, t.line, t.col)
+        let mut n = mk(ast.SAssign, t.line, t.col)
         n.a = e
         n.b = op - 1
         n.c = expr(inout p)?
         return Ok(add(inout p, n))
     }
-    var n = mk(ast.SExpr, t.line, t.col)
+    let mut n = mk(ast.SExpr, t.line, t.col)
     n.a = e
     Ok(add(inout p, n))
 }
 
 // ---- expressions
 
-pub fn expr(inout p: P) -> Result[u32, diag.Diag] uses ffi { or_expr(inout p) }
+pub fn expr(inout p: P) -> Result[u32, diag.Diag] { or_expr(inout p) }
 
 fn bin(inout p: P, op: u32, l: u32, r: u32, line: u32, col: u32) -> u32 {
-    var n = mk(ast.EBinary, line, col)
+    let mut n = mk(ast.EBinary, line, col)
     n.a = op
     n.b = l
     n.c = r
     add(inout p, n)
 }
 
-fn or_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
-    var l = and_expr(inout p)?
+fn or_expr(inout p: P) -> Result[u32, diag.Diag] {
+    let mut l = and_expr(inout p)?
     while is(p, lex.OrOr) {
         let t = cur(p)
         adv(inout p)
@@ -999,8 +1102,8 @@ fn or_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     Ok(l)
 }
 
-fn and_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
-    var l = cmp_expr(inout p)?
+fn and_expr(inout p: P) -> Result[u32, diag.Diag] {
+    let mut l = cmp_expr(inout p)?
     while is(p, lex.AndAnd) {
         let t = cur(p)
         adv(inout p)
@@ -1067,26 +1170,26 @@ fn term(p: P, node: u32, cls: u32, t0: usize) -> Term {
 }
 
 /// E0002 at operator token `t`: operand x (an operation of another group) needs parentheses.
-fn mixed(inout p: P, t: lex.Tok, x: Term) uses ffi {
+fn mixed(inout p: P, t: lex.Tok, x: Term) {
     let inner = ast.op_text(p.ast.nodes[x.node as usize].a)
-    var m = quoted("`", sys.lit(lex.kind_text(t.kind)), "` and `")
+    let mut m = quoted("`", sys.lit(lex.kind_text(t.kind)), "` and `")
     bytes.append(inout m, sys.lit(inner))
     bytes.append(inout m, sys.lit("` can't be mixed without parentheses"))
-    var d = diag.new("E0002", t.line, t.col, m)
+    let mut d = diag.new("E0002", t.line, t.col, m)
     d.help = sys.lit("Eider doesn't rank bitwise operators against comparisons, arithmetic or each other; parenthesize the operation that comes first")
     let a = p.toks[x.t0]
     let b = p.toks[x.t1]
-    var ins = sys.lit("(")
+    let mut ins = sys.lit("(")
     bytes.append(inout ins, bytes.slice(p.src, a.start as usize, b.end as usize))
     ins.push(41)
     d.fix = Some(diag.Fix(a.line, a.col, (b.end - a.start) as u64, ins))
     note(inout p, d)
 }
 
-fn cmp_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn cmp_expr(inout p: P) -> Result[u32, diag.Diag] {
     let first = bit_expr(inout p, CL_OR)?
-    var l = first.node
-    var n: u32 = 0
+    let mut l = first.node.copy()
+    let mut n: u32 = 0
     while cmp_op(kind(p)) > 0 {
         let t = cur(p)
         let op = cmp_op(t.kind) - 1
@@ -1116,10 +1219,10 @@ fn bit_op(cls: u32, k: lex.Kind) -> u32 {
 fn fits_group(cls: u32, x: Term) -> bool { x.cls == CL_NONE || x.cls == CL_SHIFT || x.cls == cls }
 
 /// One level of the bitwise groups (CL_OR down to CL_SHIFT; under it the arithmetic ones).
-fn bit_expr(inout p: P, cls: u32) -> Result[Term, diag.Diag] uses ffi {
-    let t0 = p.i
-    var l = if cls == CL_SHIFT { add_expr(inout p)? } else { bit_expr(inout p, cls - 1)? }
-    var n: u32 = 0
+fn bit_expr(inout p: P, cls: u32) -> Result[Term, diag.Diag] {
+    let t0 = p.i.copy()
+    let mut l = if cls == CL_SHIFT { add_expr(inout p)? } else { bit_expr(inout p, cls - 1)? }
+    let mut n: u32 = 0
     while bit_op(cls, kind(p)) > 0 {
         let t = cur(p)
         let op = bit_op(cls, t.kind) - 1
@@ -1135,9 +1238,9 @@ fn bit_expr(inout p: P, cls: u32) -> Result[Term, diag.Diag] uses ffi {
     Ok(l)
 }
 
-fn add_expr(inout p: P) -> Result[Term, diag.Diag] uses ffi {
-    let t0 = p.i
-    var l = mul_expr(inout p)?
+fn add_expr(inout p: P) -> Result[Term, diag.Diag] {
+    let t0 = p.i.copy()
+    let mut l = mul_expr(inout p)?
     while add_op(kind(p)) > 0 {
         let t = cur(p)
         let op = add_op(t.kind) - 1
@@ -1150,10 +1253,10 @@ fn add_expr(inout p: P) -> Result[Term, diag.Diag] uses ffi {
     Ok(l)
 }
 
-fn mul_expr(inout p: P) -> Result[Term, diag.Diag] uses ffi {
-    let t0 = p.i
+fn mul_expr(inout p: P) -> Result[Term, diag.Diag] {
+    let t0 = p.i.copy()
     let first = cast_expr(inout p)?
-    var l = term(p, first, CL_NONE, t0)
+    let mut l = term(p, first, CL_NONE, t0)
     while mul_op(kind(p)) > 0 {
         let t = cur(p)
         let op = mul_op(t.kind) - 1
@@ -1166,12 +1269,12 @@ fn mul_expr(inout p: P) -> Result[Term, diag.Diag] uses ffi {
     Ok(l)
 }
 
-fn cast_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
-    var l = unary(inout p)?
+fn cast_expr(inout p: P) -> Result[u32, diag.Diag] {
+    let mut l = unary(inout p)?
     while is_kw(p, intern.K_AS) {
         let t = cur(p)
         adv(inout p)
-        var n = mk(ast.ECast, t.line, t.col)
+        let mut n = mk(ast.ECast, t.line, t.col)
         n.a = l
         n.b = ty(inout p)?
         l = add(inout p, n)
@@ -1179,10 +1282,10 @@ fn cast_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     Ok(l)
 }
 
-fn unary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn unary(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
     if eat(inout p, lex.Minus) || eat(inout p, lex.Bang) || eat(inout p, lex.Tilde) {
-        var n = mk(ast.EUnary, t.line, t.col)
+        let mut n = mk(ast.EUnary, t.line, t.col)
         n.a = if t.kind == lex.Minus { 0 } else if t.kind == lex.Bang { 1 } else { 2 }
         n.b = unary(inout p)?
         return Ok(add(inout p, n))
@@ -1191,14 +1294,14 @@ fn unary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
 }
 
 /// Call arguments after `(`.
-fn args(inout p: P) -> Result[List[u32], diag.Diag] uses ffi {
-    var out: List[u32] = List.new()
+fn args(inout p: P) -> Result[List[u32], diag.Diag] {
+    let mut out: List[u32] = List.new()
     while true {
         skip_nl(inout p)
         if eat(inout p, lex.RParen) { return Ok(out) }
         let t = cur(p)
         let io = eat_kw(inout p, intern.K_INOUT)
-        var n = mk(ast.EArg, t.line, t.col)
+        let mut n = mk(ast.EArg, t.line, t.col)
         n.a = expr(inout p)?
         n.b = if io { 1 } else { 0 }
         out.push(add(inout p, n))
@@ -1208,16 +1311,27 @@ fn args(inout p: P) -> Result[List[u32], diag.Diag] uses ffi {
     Ok(out)
 }
 
-fn postfix(inout p: P) -> Result[u32, diag.Diag] uses ffi {
-    var e = primary(inout p)?
+/// Whether the line breaks at the current token end before a line that starts with `.`: a
+/// method chain continued on the next line (docs/compiler.md, "C8.25"). No line could start
+/// with `.` before, so this changes no valid program.
+fn at_chain_line(p: P) -> bool {
+    if !is_nl(p) { return false }
+    let mut j = p.i.copy()
+    while kind_at(p, j) == lex.Newline { j += 1 }
+    kind_at(p, j) == lex.Dot
+}
+
+fn postfix(inout p: P) -> Result[u32, diag.Diag] {
+    let mut e = primary(inout p)?
     while true {
+        if at_chain_line(p) { skip_nl(inout p) }
         let t = cur(p)
         if is(p, lex.LParen) {
-            let en = p.ast.nodes[e as usize]
+            let en = p.ast.nodes[e as usize].copy()
             if !(en.kind == ast.EIdent) { return Err(err(p, "only named functions can be called")) }
             adv(inout p)
             let a = args(inout p)?
-            var n = mk(ast.ECall, en.line, en.col)
+            let mut n = mk(ast.ECall, en.line, en.col)
             n.a = en.a
             n.b = en.b
             n.c = list(inout p, a)
@@ -1226,7 +1340,7 @@ fn postfix(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         } else if is(p, lex.Dot) {
             adv(inout p)
             let ft = cur(p)
-            var fsym: u32 = 0
+            let mut fsym: u32 = 0
             if ft.kind == lex.Int {
                 adv(inout p)
                 let digits = bytes.from_u64(ft.val)
@@ -1237,14 +1351,14 @@ fn postfix(inout p: P) -> Result[u32, diag.Diag] uses ffi {
             if is(p, lex.LParen) {
                 adv(inout p)
                 let a = args(inout p)?
-                var n = mk(ast.EMethod, ft.line, ft.col)
+                let mut n = mk(ast.EMethod, ft.line, ft.col)
                 n.a = e
                 n.b = fsym
                 n.c = list(inout p, a)
                 n.d = a.len() as u32
                 e = add(inout p, n)
             } else {
-                var n = mk(ast.EField, ft.line, ft.col)
+                let mut n = mk(ast.EField, ft.line, ft.col)
                 n.a = e
                 n.b = fsym
                 e = add(inout p, n)
@@ -1255,13 +1369,13 @@ fn postfix(inout p: P) -> Result[u32, diag.Diag] uses ffi {
             let i = expr(inout p)?
             skip_nl(inout p)
             expect(inout p, lex.RBracket)?
-            var n = mk(ast.EIndex, t.line, t.col)
+            let mut n = mk(ast.EIndex, t.line, t.col)
             n.a = e
             n.b = i
             e = add(inout p, n)
         } else if is(p, lex.Question) {
             adv(inout p)
-            var n = mk(ast.ETry, t.line, t.col)
+            let mut n = mk(ast.ETry, t.line, t.col)
             n.a = e
             e = add(inout p, n)
         } else {
@@ -1271,17 +1385,17 @@ fn postfix(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     Ok(e)
 }
 
-fn primary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn primary(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
     if t.kind == lex.Int {
-        var n = mk(ast.EInt, t.line, t.col)
+        let mut n = mk(ast.EInt, t.line, t.col)
         n.a = p.i as u32
         adv(inout p)
         return Ok(add(inout p, n))
     }
     if t.kind == lex.Str {
         adv(inout p)
-        var n = mk(ast.EStr, t.line, t.col)
+        let mut n = mk(ast.EStr, t.line, t.col)
         n.a = t.val as u32
         return Ok(add(inout p, n))
     }
@@ -1293,7 +1407,7 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         let first = expr(inout p)?
         skip_nl(inout p)
         if is(p, lex.Comma) {
-            var es: List[u32] = List.new()
+            let mut es: List[u32] = List.new()
             es.push(first)
             while eat(inout p, lex.Comma) {
                 skip_nl(inout p)
@@ -1302,7 +1416,7 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
                 skip_nl(inout p)
             }
             expect(inout p, lex.RParen)?
-            var n = mk(ast.ETuple, t.line, t.col)
+            let mut n = mk(ast.ETuple, t.line, t.col)
             n.c = list(inout p, es)
             n.d = es.len() as u32
             return Ok(add(inout p, n))
@@ -1311,32 +1425,35 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         return Ok(first)
     }
     if t.kind == lex.LBrace {
-        var n = mk(ast.EBlock, t.line, t.col)
+        let mut n = mk(ast.EBlock, t.line, t.col)
         n.a = block(inout p)?
         return Ok(add(inout p, n))
     }
     if is_kw(p, intern.K_UNSAFE) {
         adv(inout p)
         skip_nl(inout p)
-        var n = mk(ast.EUnsafe, t.line, t.col)
+        let mut n = mk(ast.EUnsafe, t.line, t.col)
         n.a = block(inout p)?
         return Ok(add(inout p, n))
     }
     if t.kind == lex.Pipe || t.kind == lex.OrOr {
-        var params: List[u32] = List.new()
+        let mut params: List[u32] = List.new()
         adv(inout p)
         if t.kind == lex.Pipe {
             while true {
                 if eat(inout p, lex.Pipe) { break }
+                // `|inout x| ...`: a parameter the closure may change (docs/compiler.md, "C8.7")
+                let io = eat_kw(inout p, intern.K_INOUT)
                 let n = ident(inout p)?
-                var lp = mk(ast.LParam, n.line, n.col)
+                let mut lp = mk(ast.LParam, n.line, n.col)
                 lp.a = n.sym
+                if io { lp.c = 1 }
                 if eat(inout p, lex.Colon) { lp.b = ty(inout p)? + 1 }
                 params.push(add(inout p, lp))
                 if !eat(inout p, lex.Comma) && !is(p, lex.Pipe) { return Err(err(p, "expected `,` or `|` in closure parameters")) }
             }
         }
-        var n = mk(ast.ELambda, t.line, t.col)
+        let mut n = mk(ast.ELambda, t.line, t.col)
         if eat(inout p, lex.Arrow) { n.g = ty(inout p)? + 1 }
         skip_nl(inout p)
         n.a = expr(inout p)?
@@ -1357,12 +1474,12 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
             }
             adv(inout p)
             expect(inout p, lex.RBracket)?
-            var n = mk(ast.ERepeat, t.line, t.col)
+            let mut n = mk(ast.ERepeat, t.line, t.col)
             n.a = first
             n.b = lt.val as u32
             return Ok(add(inout p, n))
         }
-        var es: List[u32] = List.new()
+        let mut es: List[u32] = List.new()
         es.push(first)
         while true {
             skip_nl(inout p)
@@ -1372,7 +1489,7 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
             if eat(inout p, lex.RBracket) { break }
             es.push(expr(inout p)?)
         }
-        var n = mk(ast.EArray, t.line, t.col)
+        let mut n = mk(ast.EArray, t.line, t.col)
         n.c = list(inout p, es)
         n.d = es.len() as u32
         return Ok(add(inout p, n))
@@ -1380,7 +1497,7 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     if t.kind == lex.Ident {
         if t.val == intern.K_TRUE as u64 || t.val == intern.K_FALSE as u64 {
             adv(inout p)
-            var n = mk(ast.EBool, t.line, t.col)
+            let mut n = mk(ast.EBool, t.line, t.col)
             n.a = if t.val == intern.K_TRUE as u64 { 1 } else { 0 }
             return Ok(add(inout p, n))
         }
@@ -1390,7 +1507,7 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         if t.val == intern.K_IF as u64 { return if_expr(inout p) }
         if t.val == intern.K_MATCH as u64 { return match_expr(inout p) }
         let n = ident(inout p)?
-        var node = mk(ast.EIdent, n.line, n.col)
+        let mut node = mk(ast.EIdent, n.line, n.col)
         node.a = n.sym
         match qualified(inout p, n.sym) {
             Some(q) => {
@@ -1405,66 +1522,140 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     Err(err(p, "expected an expression"))
 }
 
-fn else_branch(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn else_branch(inout p: P) -> Result[u32, diag.Diag] {
     if is_kw(p, intern.K_IF) { return if_expr(inout p) }
     let t = cur(p)
-    var n = mk(ast.EBlock, t.line, t.col)
+    let mut n = mk(ast.EBlock, t.line, t.col)
     n.a = block(inout p)?
     Ok(add(inout p, n))
 }
 
-fn if_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+/// `while let PAT = EXPR { A }` (docs/compiler.md, "C8.22") is
+/// `while true { match EXPR { PAT => { A } _ => { break } } }`, as `if let` is a match.
+fn while_let(inout p: P, t: lex.Tok) -> Result[u32, diag.Diag] {
+    expect_kw(inout p, intern.K_LET)?
+    let pat = pattern(inout p)?
+    expect(inout p, lex.Eq)?
+    let scrut = expr(inout p)?
+    let se = prev_end(p)
+    let body = block(inout p)?
+    let end = prev_end(p)
+    let mut then_e = mk(ast.EBlock, t.line, t.col)
+    then_e.a = body
+    let then_id = add(inout p, then_e)
+    let mut pats1: List[u32] = List.new()
+    pats1.push(pat)
+    let mut arm1 = mk(ast.Arm, t.line, t.col)
+    arm1.a = then_id
+    arm1.c = list(inout p, pats1)
+    arm1.d = 1
+    let a1 = add(inout p, arm1)
+    // `_ => { break }`
+    let brk = add(inout p, mk(ast.SBreak, t.line, t.col))
+    let mut stmts: List[u32] = List.new()
+    stmts.push(brk)
+    let mut bb = mk(ast.Block, t.line, t.col)
+    bb.c = list(inout p, stmts)
+    bb.d = 1
+    bb.end_line = end.line
+    bb.end_col = end.col
+    let bid = add(inout p, bb)
+    let mut eb = mk(ast.EBlock, t.line, t.col)
+    eb.a = bid
+    let els = add(inout p, eb)
+    let mut pats2: List[u32] = List.new()
+    pats2.push(add(inout p, mk(ast.PWild, t.line, t.col)))
+    let mut arm2 = mk(ast.Arm, t.line, t.col)
+    arm2.a = els
+    arm2.c = list(inout p, pats2)
+    arm2.d = 1
+    let a2 = add(inout p, arm2)
+    let mut arms: List[u32] = List.new()
+    arms.push(a1)
+    arms.push(a2)
+    let mut m = mk(ast.EMatch, t.line, t.col)
+    m.a = scrut
+    m.c = list(inout p, arms)
+    m.d = 2
+    m.e = se.line
+    m.f = se.col
+    m.end_line = end.line
+    m.end_col = end.col
+    let mid = add(inout p, m)
+    let mut st = mk(ast.SExpr, t.line, t.col)
+    st.a = mid
+    let sid = add(inout p, st)
+    let mut ls: List[u32] = List.new()
+    ls.push(sid)
+    let mut lb = mk(ast.Block, t.line, t.col)
+    lb.c = list(inout p, ls)
+    lb.d = 1
+    lb.end_line = end.line
+    lb.end_col = end.col
+    let lbid = add(inout p, lb)
+    let mut cond = mk(ast.EBool, t.line, t.col)
+    cond.a = 1
+    let mut n = mk(ast.SWhile, t.line, t.col)
+    n.a = add(inout p, cond)
+    n.b = lbid
+    Ok(add(inout p, n))
+}
+
+fn if_expr(inout p: P) -> Result[u32, diag.Diag] {
     let pos = expect_kw(inout p, intern.K_IF)?
     if eat_kw(inout p, intern.K_LET) {
         // `if let PAT = EXPR { A } else { B }` is a two-arm match
         let pat = pattern(inout p)?
         expect(inout p, lex.Eq)?
         let scrut = expr(inout p)?
+        let se = prev_end(p)
         let then = block(inout p)?
         let end = prev_end(p)
-        var els: u32 = 0
+        let mut els: u32 = 0
         if peek_nonnl_kw(p, intern.K_ELSE) {
             skip_nl(inout p)
             adv(inout p)
             els = else_branch(inout p)?
         } else {
-            var b = mk(ast.Block, end.line, end.col)
+            let mut b = mk(ast.Block, end.line, end.col)
             b.end_line = end.line
             b.end_col = end.col
             let bid = add(inout p, b)
-            var eb = mk(ast.EBlock, pos.line, pos.col)
+            let mut eb = mk(ast.EBlock, pos.line, pos.col)
             eb.a = bid
             els = add(inout p, eb)
         }
-        var then_e = mk(ast.EBlock, pos.line, pos.col)
+        let mut then_e = mk(ast.EBlock, pos.line, pos.col)
         then_e.a = then
         let then_id = add(inout p, then_e)
-        var pats1: List[u32] = List.new()
+        let mut pats1: List[u32] = List.new()
         pats1.push(pat)
-        var arm1 = mk(ast.Arm, pos.line, pos.col)
+        let mut arm1 = mk(ast.Arm, pos.line, pos.col)
         arm1.a = then_id
         arm1.c = list(inout p, pats1)
         arm1.d = 1
         let a1 = add(inout p, arm1)
-        var pats2: List[u32] = List.new()
+        let mut pats2: List[u32] = List.new()
         pats2.push(add(inout p, mk(ast.PWild, pos.line, pos.col)))
-        var arm2 = mk(ast.Arm, pos.line, pos.col)
+        let mut arm2 = mk(ast.Arm, pos.line, pos.col)
         arm2.a = els
         arm2.c = list(inout p, pats2)
         arm2.d = 1
         let a2 = add(inout p, arm2)
-        var arms: List[u32] = List.new()
+        let mut arms: List[u32] = List.new()
         arms.push(a1)
         arms.push(a2)
-        var m = mk(ast.EMatch, pos.line, pos.col)
+        let mut m = mk(ast.EMatch, pos.line, pos.col)
         m.a = scrut
         m.c = list(inout p, arms)
         m.d = 2
+        m.e = se.line
+        m.f = se.col
         m.end_line = end.line
         m.end_col = end.col
         return Ok(add(inout p, m))
     }
-    var n = mk(ast.EIf, pos.line, pos.col)
+    let mut n = mk(ast.EIf, pos.line, pos.col)
     n.a = expr(inout p)?
     n.b = block(inout p)?
     if peek_nonnl_kw(p, intern.K_ELSE) {
@@ -1475,35 +1666,38 @@ fn if_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     Ok(add(inout p, n))
 }
 
-fn match_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn match_expr(inout p: P) -> Result[u32, diag.Diag] {
     let pos = expect_kw(inout p, intern.K_MATCH)?
     let s = expr(inout p)?
+    let se = prev_end(p)
     expect(inout p, lex.LBrace)?
-    var arms: List[u32] = List.new()
+    let mut arms: List[u32] = List.new()
     while true {
         while is_nl(p) || is(p, lex.Comma) { adv(inout p) }
         if is(p, lex.RBrace) {
             let t = cur(p)
             adv(inout p)
-            var n = mk(ast.EMatch, pos.line, pos.col)
+            let mut n = mk(ast.EMatch, pos.line, pos.col)
             n.a = s
             n.c = list(inout p, arms)
             n.d = arms.len() as u32
+            n.e = se.line
+            n.f = se.col
             n.end_line = t.line
             n.end_col = t.col
             return Ok(add(inout p, n))
         }
         // an arm that fails is recorded, skipped (`sync`) and kept as an Arm with no patterns
         // and an EError body
-        let s0 = p.i
+        let s0 = p.i.copy()
         let m = mark(p)
-        var stop = AT_SEP
+        let mut stop = AT_SEP
         match arm(inout p) {
             Ok(a) => {
                 arms.push(a)
                 if !(is_nl(p) || is(p, lex.Comma) || is(p, lex.RBrace)) {
                     note_here(inout p, "expected a newline, `,` or `}` after match arm")
-                    let s1 = p.i
+                    let s1 = p.i.copy()
                     stop = sync(inout p, s1, true)
                 }
             }
@@ -1513,8 +1707,8 @@ fn match_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
                 stop = sync(inout p, s0, true)
                 let body = err_node(inout p, ast.EError, s0)
                 let t0 = p.toks[s0]
-                var none: List[u32] = List.new()
-                var bad = mk(ast.Arm, t0.line, t0.col)
+                let mut none: List[u32] = List.new()
+                let mut bad = mk(ast.Arm, t0.line, t0.col)
                 bad.a = body
                 bad.c = list(inout p, none)
                 arms.push(add(inout p, bad))
@@ -1523,10 +1717,12 @@ fn match_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         if stop == AT_ITEM || stop == AT_EOF {
             // unclosed (only after an error): the match ends here
             let e = prev_end(p)
-            var n = mk(ast.EMatch, pos.line, pos.col)
+            let mut n = mk(ast.EMatch, pos.line, pos.col)
             n.a = s
             n.c = list(inout p, arms)
             n.d = arms.len() as u32
+            n.e = se.line
+            n.f = se.col
             n.end_line = e.line
             n.end_col = e.col
             return Ok(add(inout p, n))
@@ -1536,9 +1732,9 @@ fn match_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
 }
 
 /// One match arm: patterns, `=>` and the body.
-fn arm(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn arm(inout p: P) -> Result[u32, diag.Diag] {
     let at = cur(p)
-    var pats: List[u32] = List.new()
+    let mut pats: List[u32] = List.new()
     pats.push(pattern(inout p)?)
     while eat(inout p, lex.Pipe) {
         skip_nl(inout p)
@@ -1546,7 +1742,7 @@ fn arm(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     }
     expect(inout p, lex.FatArrow)?
     skip_nl(inout p)
-    var n = mk(ast.Arm, at.line, at.col)
+    let mut n = mk(ast.Arm, at.line, at.col)
     if is_kw(p, intern.K_RETURN) || is_kw(p, intern.K_BREAK) || is_kw(p, intern.K_CONTINUE) || is_kw(p, intern.K_ASSERT) {
         n.a = stmt(inout p)?
         n.b = 1
@@ -1559,8 +1755,8 @@ fn arm(inout p: P) -> Result[u32, diag.Diag] uses ffi {
 }
 
 /// Sub-patterns after `(`, up to `)`.
-fn pat_list(inout p: P) -> Result[List[u32], diag.Diag] uses ffi {
-    var ps: List[u32] = List.new()
+fn pat_list(inout p: P) -> Result[List[u32], diag.Diag] {
+    let mut ps: List[u32] = List.new()
     while true {
         skip_nl(inout p)
         if eat(inout p, lex.RParen) { break }
@@ -1571,18 +1767,18 @@ fn pat_list(inout p: P) -> Result[List[u32], diag.Diag] uses ffi {
     Ok(ps)
 }
 
-pub fn pattern(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+pub fn pattern(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
     if t.kind == lex.Int {
         let ti = p.i as u32
         adv(inout p)
-        var n = mk(ast.PInt, t.line, t.col)
+        let mut n = mk(ast.PInt, t.line, t.col)
         n.a = ti
         return Ok(add(inout p, n))
     }
     if t.kind == lex.Str {
         adv(inout p)
-        var n = mk(ast.PStr, t.line, t.col)
+        let mut n = mk(ast.PStr, t.line, t.col)
         n.a = t.val as u32
         return Ok(add(inout p, n))
     }
@@ -1591,7 +1787,7 @@ pub fn pattern(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         if !is(p, lex.Int) { return Err(err(p, "expected integer after `-` in pattern")) }
         let ti = p.i as u32
         adv(inout p)
-        var n = mk(ast.PInt, t.line, t.col)
+        let mut n = mk(ast.PInt, t.line, t.col)
         n.a = ti
         n.b = 1
         return Ok(add(inout p, n))
@@ -1600,7 +1796,7 @@ pub fn pattern(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         adv(inout p)
         let ps = pat_list(inout p)?
         if ps.len() == 1 { return Ok(ps[0]) }
-        var n = mk(ast.PTuple, t.line, t.col)
+        let mut n = mk(ast.PTuple, t.line, t.col)
         n.c = list(inout p, ps)
         n.d = ps.len() as u32
         return Ok(add(inout p, n))
@@ -1609,15 +1805,24 @@ pub fn pattern(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         adv(inout p)
         return Ok(add(inout p, mk(ast.PWild, t.line, t.col)))
     }
+    if at_mut(p) {
+        // `mut x`: a binding that is a mutable alias (or owns a fresh value's part)
+        adv(inout p)
+        let mn = ident(inout p)?
+        let mut n = mk(ast.PName, mn.line, mn.col)
+        n.a = mn.sym
+        n.c = 1
+        return Ok(add(inout p, n))
+    }
     if t.kind == lex.Ident && (t.val == intern.K_TRUE as u64 || t.val == intern.K_FALSE as u64) {
         adv(inout p)
-        var n = mk(ast.PBool, t.line, t.col)
+        let mut n = mk(ast.PBool, t.line, t.col)
         n.a = if t.val == intern.K_TRUE as u64 { 1 } else { 0 }
         return Ok(add(inout p, n))
     }
     if t.kind == lex.Ident {
-        var nm = ident(inout p)?
-        var qual: u32 = 0
+        let mut nm = ident(inout p)?
+        let mut qual: u32 = 0
         match qualified(inout p, nm.sym) {
             Some(q) => {
                 // the position stays at the qualifier, as tests/oracle expects
@@ -1634,14 +1839,14 @@ pub fn pattern(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         }
         if eat(inout p, lex.LParen) {
             let ps = pat_list(inout p)?
-            var n = mk(ast.PVariant, nm.line, nm.col)
+            let mut n = mk(ast.PVariant, nm.line, nm.col)
             n.a = nm.sym
             n.b = qual
             n.c = list(inout p, ps)
             n.d = ps.len() as u32
             return Ok(add(inout p, n))
         }
-        var n = mk(ast.PName, nm.line, nm.col)
+        let mut n = mk(ast.PName, nm.line, nm.col)
         n.a = nm.sym
         n.b = qual
         return Ok(add(inout p, n))
@@ -1650,7 +1855,7 @@ pub fn pattern(inout p: P) -> Result[u32, diag.Diag] uses ffi {
 }
 
 /// Parse a lexed file: the tree, or the first error.
-pub fn parse(lx: lex.Lexed, names: intern.Interner) -> Result[P, diag.Diag] uses ffi {
+pub fn parse(lx: lex.Lexed, names: intern.Interner) -> Result[P, diag.Diag] {
     let r = parse_all(lx, names)
     if r.diags.len() > 0 { return Err(r.diags[0]) }
     Ok(r.p)
@@ -1658,8 +1863,8 @@ pub fn parse(lx: lex.Lexed, names: intern.Interner) -> Result[P, diag.Diag] uses
 
 /// Parse a lexed file (from `lex.lex` or `lex.lex_all`) to the end, recovering from each
 /// error ("recovery"): Parsed.
-pub fn parse_all(lx: lex.Lexed, names: intern.Interner) -> Parsed uses ffi {
-    var p = P(lx.toks, lx.strs, 0, ast.new(), names, List.new(), List.new(), lx.src)
+pub fn parse_all(lx: lex.Lexed, names: intern.Interner) -> Parsed {
+    let mut p = P(lx.toks, lx.strs, 0, ast.new(), names, List.new(), List.new(), lx.src)
     program(inout p)
     let ds = p.errs
     Parsed(p, ds)

@@ -12,6 +12,10 @@
 //   T_MUTEX   a = element type             T_CHAN  a = element type
 //             (shared, reference-counted handles: copying one shares the same object)
 //   T_POISON  the type of an expression whose checking failed (see `poison` below)
+//   T_INOUT   a = parameter type: an `inout` parameter of a fn type (`fn(inout T) -> R`);
+//             only ever an element of a T_FN's parameter list (docs/compiler.md, "C8.7")
+//   T_REF     a = element type: `Ref[T]`, a shared mutable cell (single-threaded, counted
+//             without atomics; copying one shares it)
 //
 // The primitive types have fixed ids (I32 .. STRING below). Enums and records are named
 // definitions (`Def`) with their fields or variants in the shared `fields` / `variants`
@@ -47,6 +51,12 @@ pub const T_TASK: u32 = 14
 pub const T_MUTEX: u32 = 15
 pub const T_CHAN: u32 = 16
 pub const T_POISON: u32 = 17
+/// A type parameter of a generic declaration, as its body is checked against the bounds
+/// (check.ei, "Bounds of generic code"): a = its symbol, b = the declaration + 1. Only the
+/// checker's throw-away pass makes them, so lowering never sees one.
+pub const T_PARAM: u32 = 18
+pub const T_INOUT: u32 = 19
+pub const T_REF: u32 = 20
 
 /// Int kinds, in a fixed order.
 pub const IK_I32: u32 = 0
@@ -107,7 +117,7 @@ pub type Types = {
 }
 
 pub fn new() -> Types {
-    var t = Types(List.new(), Map.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new())
+    let mut t = Types(List.new(), Map.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new())
     for i in 0..6 { t.tys.push(Ty(T_INT, i as u32, 0)) }
     t.tys.push(Ty(T_BOOL, 0, 0))
     t.tys.push(Ty(T_STR, 0, 0))
@@ -127,7 +137,7 @@ pub fn list(inout t: Types, xs: List[u32]) -> u32 {
     for i in 0..t.lists.len() {
         let sp = t.lists[i]
         if sp.len != n { continue }
-        var same = true
+        let mut same = true
         for j in 0..n {
             if t.cells[(sp.start + j) as usize] != xs[j as usize] {
                 same = false
@@ -145,7 +155,7 @@ pub fn list(inout t: Types, xs: List[u32]) -> u32 {
 pub fn list_len(t: Types, l: u32) -> u32 { t.lists[l as usize].len }
 pub fn list_at(t: Types, l: u32, i: u32) -> u32 { t.cells[(t.lists[l as usize].start + i) as usize] }
 pub fn list_items(t: Types, l: u32) -> List[u32] {
-    var out: List[u32] = List.new()
+    let mut out: List[u32] = List.new()
     let sp = t.lists[l as usize]
     for i in 0..sp.len { out.push(t.cells[(sp.start + i) as usize]) }
     out
@@ -181,6 +191,8 @@ pub fn task_of(inout t: Types, elem: u32) -> u32 {
 }
 pub fn mutex_of(inout t: Types, elem: u32) -> u32 { comp(inout t, T_MUTEX, elem, 0) }
 pub fn chan_of(inout t: Types, elem: u32) -> u32 { comp(inout t, T_CHAN, elem, 0) }
+pub fn inout_of(inout t: Types, elem: u32) -> u32 { comp(inout t, T_INOUT, elem, 0) }
+pub fn ref_of(inout t: Types, elem: u32) -> u32 { comp(inout t, T_REF, elem, 0) }
 
 /// The error type ("poison"): the type of an expression, binding, field or signature part
 /// whose checking failed after a diagnostic was recorded. It is compatible with every type,
@@ -190,6 +202,9 @@ pub fn chan_of(inout t: Types, elem: u32) -> u32 { comp(inout t, T_CHAN, elem, 0
 /// so a program without errors never has it (lowering never sees it).
 pub fn poison(inout t: Types) -> u32 { comp(inout t, T_POISON, 0, 0) }
 
+/// Type parameter `sym` of declaration `owner` (T_PARAM).
+pub fn param(inout t: Types, sym: u32, owner: u32) -> u32 { comp(inout t, T_PARAM, sym, owner + 1) }
+
 /// Whether type `id` is the error type or is built from it (`List[{error}]`, `(i32, {error})`,
 /// `Option[{error}]`, ...). NOTY is not.
 pub fn has_poison(t: Types, id: u32) -> bool {
@@ -197,7 +212,7 @@ pub fn has_poison(t: Types, id: u32) -> bool {
     let ty = t.tys[id as usize]
     let k = ty.kind
     if k == T_POISON { return true }
-    if k == T_ARRAY || k == T_LIST || k == T_BOX || is_handle(k) { return has_poison(t, ty.a) }
+    if k == T_ARRAY || k == T_LIST || k == T_BOX || is_handle(k) || k == T_INOUT || k == T_REF { return has_poison(t, ty.a) }
     if k == T_MAP { return has_poison(t, ty.a) || has_poison(t, ty.b) }
     if k == T_TUPLE || k == T_FN {
         for x in list_items(t, ty.a) {
@@ -234,7 +249,7 @@ pub fn find_list(t: Types, xs: List[u32]) -> u32 {
     for i in 0..t.lists.len() {
         let sp = t.lists[i]
         if sp.len != n { continue }
-        var same = true
+        let mut same = true
         for j in 0..n {
             if t.cells[(sp.start + j) as usize] != xs[j as usize] {
                 same = false
@@ -281,7 +296,7 @@ pub fn add_def(inout t: Types, d: Def) -> u32 {
     let id = t.tys.len() as u32
     let k = if d.is_enum { T_ENUM } else { T_RECORD }
     t.tys.push(Ty(k, di, 0))
-    var d2 = d
+    let mut d2 = d.copy()
     d2.ty = id
     if d2.tmpl == NOTY { d2.tmpl = di }
     t.defs.push(d2)
@@ -339,13 +354,13 @@ pub fn bits(k: u32) -> u32 {
 
 // ---- display (type names as diagnostics print them; module names stay mangled, `diag` demangles)
 
-pub fn show(t: Types, names: intern.Interner, id: u32) -> List[u8] uses ffi {
-    var out: List[u8] = List.new()
+pub fn show(t: Types, names: intern.Interner, id: u32) -> List[u8] {
+    let mut out: List[u8] = List.new()
     show_into(inout out, t, names, id)
     out
 }
 
-pub fn show_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32) uses ffi {
+pub fn show_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32) {
     let ty = t.tys[id as usize]
     match ty.kind {
         0 => bytes.append(inout out, sys.lit(int_name(ty.a)))
@@ -399,6 +414,16 @@ pub fn show_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32)
             out.push(93)
         }
         17 => bytes.append(inout out, sys.lit("{error}"))
+        19 => {
+            bytes.append(inout out, sys.lit("inout "))
+            show_into(inout out, t, names, ty.a)
+        }
+        20 => {
+            bytes.append(inout out, sys.lit("Ref["))
+            show_into(inout out, t, names, ty.a)
+            out.push(93)
+        }
+        18 => bytes.append(inout out, intern.name(names, ty.a))
         13 => {
             bytes.append(inout out, sys.lit("fn("))
             show_list(inout out, t, names, ty.a)
@@ -420,7 +445,7 @@ pub fn show_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32)
     }
 }
 
-fn show_list(inout out: List[u8], t: Types, names: intern.Interner, l: u32) uses ffi {
+fn show_list(inout out: List[u8], t: Types, names: intern.Interner, l: u32) {
     for i in 0..list_len(t, l) {
         if i > 0 { bytes.append(inout out, sys.lit(", ")) }
         show_into(inout out, t, names, list_at(t, l, i))

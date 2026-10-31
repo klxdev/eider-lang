@@ -57,9 +57,20 @@
 #             node: WebAssembly is optional).
 #   unit:     programs in compiler/tests/unit that drive a compiler module (sha256.ei) must
 #             print their .out.
+#   migration: the staged rewrites (scripts/migrate-imports.sh, migrate-caps.sh,
+#             migrate-var.sh) on a copy of core, std, packages and compiler check, pass the
+#             package tests, and (`var` -> `let mut`) give a compiler that emits the same C;
+#             `eiderc migrate-var` of compiler/tests/migrate/*.ei equals the hand-checked .out.
+#   meaning:  tests/std, packages/*/tests and examples/*/tests give their .out when built by this
+#             compiler (references by default) as well as by the seed (verify.sh); an
+#             X.next.out is this compiler's expected output where it deliberately differs
+#             from the seed's (it replaces X.out with the next seed).
+#   audit-refs: `eiderc audit-refs --json` of compiler/tests/audit/*.ei equals the hand-checked
+#             .out (the writes that change what a `let` reference sees).
 #   packages: compiler/tests/pkgs, packages with eider.toml and eider.lock (two packages
 #             with a util.ei, a dependency chain, vendored and store dependencies, the
-#             package-import errors E0808/E0809/E0810): each `// pkgtest: <cmd>` file's
+#             package-import errors E0808/E0809/E0810, capability grants and E0204, `eiderc
+#             caps`): each `// pkgtest: <cmd>` file's
 #             `eiderc <cmd>` output equals its X.out (BLESS=1 rewrites them; review by
 #             hand), and the C of the app is the same from a copy at another path.
 #   ide:      `eiderc ide` (ide.ei, the analysis API for language servers) of
@@ -497,16 +508,31 @@ if cmp -s $tmp/c1 $tmp/c2 && grep -q 'f_util__0geo__name' $tmp/c1; then pk_ok=$(
 pk_total=$((pk_total + 1))
 if [ "$pk_ok" = "$pk_total" ]; then v="ok  "; else v="FAIL"; fi
 echo "$v packages: $pk_ok/$pk_total multi-package cases (compiler/tests/pkgs) give their .out, and the same C from a copy"
-# migration: the staged rewrite to package imports (scripts/migrate-imports.sh), on a copy of
-# core, std, packages and compiler, gives a toolchain this compiler checks, whose package
-# tests pass (what the next seed makes possible in the checkout itself)
+# migration: the staged rewrites to package imports (scripts/migrate-imports.sh) and away
+# from `uses ffi` outside core (scripts/migrate-caps.sh), on a copy of core, std, packages
+# and compiler, give a toolchain this compiler checks, whose package tests pass (what the
+# next seed makes possible in the checkout itself)
 mig=$(pwd)/target/migrate
 rm -rf $mig
 mkdir -p $mig
 cp -R core std packages compiler $mig/
 sh scripts/migrate-imports.sh $mig/core $mig/std $mig/packages $mig/compiler >$tmp/mig 2>&1
+# and the staged removal of `uses ffi` (scripts/migrate-caps.sh, docs/compiler.md "C8.5")
+sh scripts/migrate-caps.sh $mig/core $mig/std $mig/packages $mig/compiler >$tmp/migc 2>&1
+# and the deprecated `var` rewritten as `let mut` (scripts/migrate-var.sh, docs/compiler.md
+# "C8.6"): none is left in core or the compiler (std and the packages keep the `var`s of
+# places in generic bodies, which `.copy()` could need a bound for), and the migrated
+# compiler, built by this one, emits the same C for compiler/ as this one (meaning unchanged)
+EIDER_ROOT=$mig EIDERC=$new sh scripts/migrate-var.sh $mig/core $mig/std $mig/packages $mig/compiler/*.ei >$tmp/migv 2>&1
 mig_ok=1
+grep -n '^[[:space:]]*var[[:space:]]' $mig/core/*.ei $mig/compiler/*.ei >$tmp/migvl && { echo "FAIL migration: \`var\` is left in"; sed "s|$mig/||" $tmp/migvl | head -10; cat $tmp/migv | grep -v '^migrated' | head -5; mig_ok=0; }
+EIDER_CACHE=off EIDER_ROOT=$mig $new build $mig/compiler/main.ei -o $tmp/eiderc-mig >$tmp/mo 2>&1 || { echo "FAIL migration: build the migrated compiler"; head -10 $tmp/mo; mig_ok=0; }
+$new emit-c compiler/main.ei >$tmp/mc1 2>&1
+[ -x $tmp/eiderc-mig ] && EIDER_ROOT=$(pwd) $tmp/eiderc-mig emit-c compiler/main.ei >$tmp/mc2 2>&1
+cmp -s $tmp/mc1 $tmp/mc2 || { echo "FAIL migration: the migrated compiler's C for compiler/ differs"; mig_ok=0; }
 grep -q '^import "\.\./' $mig/compiler/main.ei $mig/packages/pkg/manifest.ei && { echo "FAIL migration: path imports into other packages are left"; mig_ok=0; }
+grep -l '^[[:space:]]*[^/[:space:]][^/]*uses [^/]*ffi' $mig/std/*.ei $mig/compiler/*.ei $mig/packages/*/*.ei >$tmp/migl && { echo "FAIL migration: \`uses ffi\` is left in $(sed "s|$mig/||" $tmp/migl | tr '\n' ' ')"; mig_ok=0; }
+grep -q 'uses .*ffi' $mig/core/sys.ei || { echo "FAIL migration: core/sys.ei lost its \`uses ffi\`"; mig_ok=0; }
 for f in compiler/main.ei packages/pkg/main.ei packages/fuzz/main.ei; do
   EIDER_ROOT=$mig $new check $mig/$f >$tmp/mo 2>&1 || { echo "FAIL migration: check $f"; head -10 $tmp/mo; mig_ok=0; }
 done
@@ -514,7 +540,37 @@ for f in packages/*/tests/*.ei; do
   EIDER_ROOT=$mig $new run $mig/$f >$tmp/mo 2>&1
   cmp -s $tmp/mo "${f%.ei}.out" || { echo "FAIL migration: run $f"; diff "${f%.ei}.out" $tmp/mo | head -10; mig_ok=0; }
 done
-if [ $mig_ok = 1 ]; then echo "ok   migration: $(wc -l <$tmp/mig) files rewritten to package imports check and pass their package tests"; else fail=1; fi
+if [ $mig_ok = 1 ]; then echo "ok   migration: $(wc -l <$tmp/mig) files rewritten to package imports, $(wc -l <$tmp/migc) without \`uses ffi\` and $(grep -c '^migrated' $tmp/migv) without \`var\` ($(cat $mig/std/*.ei $mig/packages/*/*.ei | grep -c '^[[:space:]]*var[[:space:]]') generic ones left) check and pass their package tests; the migrated compiler emits the same C"; else fail=1; fi
+# meaning: std's, the packages' and the examples' tests (run by verify.sh with the seed, where
+# `let` copies) give their .out with this compiler too, where `let` of a place is a reference
+# (docs/compiler.md, "C8.6"); a difference is code that relied on the copy (`eiderc audit-refs`)
+m_ok=0; m_n=0
+for f in tests/std/*.ei packages/*/tests/*.ei examples/*/tests/*.ei; do
+  [ -f "${f%.ei}.out" ] || continue
+  m_n=$((m_n + 1))
+  in="${f%.ei}.in"; [ -f "$in" ] || in=/dev/null
+  case $f in
+    tests/std/*) got=$(EIDER_STD_TEST=set $new run "$f" <"$in" 2>&1; echo "exit $?") ;;
+    *) got=$($new run "$f" </dev/null 2>&1) ;;
+  esac
+  # X.next.out: what this compiler prints where it deliberately differs from the seed (a
+  # fix the seed doesn't have yet; it replaces X.out when the seed is regenerated)
+  want="${f%.ei}.out"; [ -f "${f%.ei}.next.out" ] && want="${f%.ei}.next.out"
+  if [ "$got" = "$(cat "$want")" ]; then m_ok=$((m_ok + 1)); else echo "FAIL meaning: $f"; echo "$got" | diff "$want" - | head -10; fail=1; fi
+done
+[ "$m_ok" = "$m_n" ] && echo "ok   meaning: $m_ok/$m_n std, package and example tests give their .out with references by default"
+# audit-refs: `eiderc audit-refs --json` of compiler/tests/audit/*.ei gives the hand-checked .out
+for f in compiler/tests/audit/*.ei; do
+  $new audit-refs --json "$f" >$tmp/ar 2>&1
+  if cmp -s $tmp/ar "${f%.ei}.out"; then echo "ok   audit-refs $f"; else echo "FAIL audit-refs $f"; diff "${f%.ei}.out" $tmp/ar | head -10; fail=1; fi
+done
+# migrate-var: `eiderc migrate-var` of compiler/tests/migrate/*.ei gives the hand-checked .out,
+# which checks
+for f in compiler/tests/migrate/*.ei; do
+  $new migrate-var "$f" >$tmp/mv 2>&1
+  cp $tmp/mv $tmp/migrated.ei
+  if cmp -s $tmp/mv "${f%.ei}.out" && $new check $tmp/migrated.ei >/dev/null 2>&1; then echo "ok   migrate-var $f"; else echo "FAIL migrate-var $f"; diff "${f%.ei}.out" $tmp/mv | head -10; fail=1; fi
+done
 
 # compile-fail: `eiderc test --compile-fail` against the recorded runner output (the oracle's
 # <dir>.compile-fail: the output, then `--- exit <code>`)
@@ -597,7 +653,7 @@ $new --help >$tmp/o 2>&1
 code=$?
 uok=1
 [ $code = 0 ] || uok=0
-for c in check emit-c emit-header build "build --lib" "build --wasm" run test "test --compile-fail" lex parse ir ide help; do
+for c in check emit-c emit-header build "build --lib" "build --wasm" run test "test --compile-fail" lex parse ir caps ide help; do
   grep -q "^  eiderc $c " $tmp/o || { echo "FAIL usage: --help does not list \`$c\`"; uok=0; }
 done
 $new check --no-such-flag tests/run/adt.ei >/dev/null 2>&1

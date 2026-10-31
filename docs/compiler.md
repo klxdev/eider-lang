@@ -137,7 +137,17 @@ seed supports:
 - No owned data in hot loops' reads: index into arenas, keep records small and flat.
 - `Map` keys are integers (symbol ids, type ids). No `Map[List[u8], _]`.
 - No threads, no closures in hot paths (closures copy their captures).
-- `uses ffi` everywhere is accepted in the compiler for now (it sits on std).
+- `uses ffi` everywhere stays in the compiler until the next seed: the seed asks for `ffi`
+  along call chains, the compiler it builds no longer does ("C8.5: capabilities per
+  package"; scripts/migrate-caps.sh removes it then).
+- `var`, not `let mut`, until a seed has 8.6 ("C8.6: references by default";
+  scripts/migrate-var.sh rewrites it then). compiler/ is built by the seed with the old
+  meaning of `let` (a copy) and by itself with the new one (a reference), so a `let` of a
+  place whose place is written while the binding is used later takes `.copy()`, which means
+  the same under both.
+- None of wave 4's language (C8.15 `take`/`replace`, C8.17 escapes, C8.18 aliases, C8.20 Map
+  iteration and `for` patterns, C8.21 `From`, C8.22 `while let`) until a seed has it; the
+  same holds for std and packages, which verify.sh builds with the seed.
 
 ## C3: checking
 
@@ -322,8 +332,8 @@ an absolute path.
 
 Done ahead of the rest of C7 because eiderc's own source reaches the OS only through
 core/sys.ei's `extern "c"` functions. Externs, exports, `unsafe` and the library header;
-capability encapsulation ("Language work" item 5) is not
-started, so callers of std still write `uses ffi`.
+capability encapsulation ("Language work" item 5) came with
+"C8.5: capabilities per package": `ffi` no longer crosses a package boundary.
 
 - **Checking.** An `extern "c" fn` is a free function without a body, named globally
   (never module-prefixed), and `unsafe` (the parser marks it). When its signature is
@@ -807,17 +817,15 @@ review the oracle diff, add a test, and regenerate the seed.
   the constructing module; in a module's test block a local named like one of the module's
   items is shadowed by the item; `x /= 0` is not a compile error although `x / 0` is
   ("C3: checking").
-- Checker (S1–S3): a name in an impl target that isn't a type parameter matches every type
-  (`impl Area for Sq` meets `T: Area` for any T; `impl W[i32]`'s methods apply to every `W`);
-  registering an impl replaces `Self` textually, also inside `MySelf`; impls on fn types never
-  match a receiver (`compiler/tests/check/fail/e0115_quirk_bound_name_target.ei`).
+- Checker (S1–S3): registering an impl replaces `Self` textually, also inside `MySelf`;
+  impls on fn types never match a receiver. (A name in an impl target or a generic signature
+  that isn't a type parameter no longer matches every type: "C8.16".)
 - Comptime: an evaluator lacks every comptime constant not yet evaluated, so a plain `const`
   naming a comptime constant always fails (E0110) and so does any function naming a later
   one; any error in the rest of the program is found by the first evaluator, and an E0201
-  there loses its fix; traps during evaluation name the file `program` ("C7: comptime").
-- Lowering: an imported module's unit enum prints its mangled name (`geo__South`); trap
-  messages always name the entry file, even for a trap in an imported module ("C4:
-  lowering").
+  there loses its fix; traps during evaluation in the evaluated file name the file
+  `program` ("C7: comptime"; a trap in an imported module or the prelude names its file
+  since "C8.16").
 - Threads: `contains` on a List of handles compares them as equal ("C7: threads").
 - Library header: every header has the include guard `EIDER_EXPORTS_H`, so two libraries'
   headers can't be included together (compiler/tests/export/consumer.c declares by hand);
@@ -828,7 +836,7 @@ review the oracle diff, add a test, and regenerate the seed.
   breaks; `u32` results above the signed range come back as negative numbers and
   `u64`/`usize` results as negative BigInts, because the loader passes the raw wasm values
   through.
-- Runtime: `ei_now_ms` is processor time (`clock()`), not a wall clock (core/RUNTIME.md).
+- Runtime: `ei_now_ms` is the monotonic clock in ms (it was processor time, `clock()`, until layer/core-os; core/RUNTIME.md).
 - Answered `unsupported` where the recorded behaviour is wrong, waiting for a language
   decision: `?` in an expression-bodied closure (recorded: checked against the enclosing
   function's return type), and an `extern "c"` or `unsafe fn` used as a function value
@@ -976,18 +984,28 @@ and leaves the analyzer building.
 | 1 | **8.1 Copy-on-write** | heap types share buffers with a refcount, copy on first write; non-atomic counts, values made unique before they cross threads; drops once at the last holder; quadratic `String` append fixed (capacity) | — |
 | 1 | **8.2 Small language gaps** | bitwise operators `& \| ^ << >> ~` (checked shifts); `String`/`str` byte access, slicing, building from bytes; `()` values (`Ok(())`); `main` returning an exit code; `impl` on built-in types | — |
 | 1 | **8.3 Package-qualified modules** (done: "C8.3: packages and modules"; package imports in compiler/, std/, packages/ after the next seed) | module identity = (package, path) instead of file stem (no more E0808 for two packages' `util.ei`); bare `import "json"` resolved through `eider.lock`; the `deps/` link farm retired | — |
-| 2 | **8.4 Operation traits** | `Copy`, `Eq`, `Ord`, `Hash`, `Show`, `Iter`, `Drop` in the core prelude; automatic derive; orphan rule; generic bounds with suggested fixes; Map keys any `Hash + Eq`; `for` over any `Iter` | 8.1, 8.2 |
-| 2 | **8.5 Capability encapsulation** | `ffi` becomes a property of a package (granted in eider.toml); std callers stop writing `uses ffi`; the compiler reports each package's real capability use and eider-pkg checks grants from that instead of scanning text | 8.3 |
-| 3 | **8.6 References by default** | `let` binds a read-only reference to a place, `let mut` a mutable alias, fresh values are owned; `.copy()`; pattern bindings the same; the protection rule (no invalidating write while a reference is alive) with fixes; references are C pointers; `var` deprecated with a mechanical fix | 8.1, 8.4 |
-| 3 | **8.7 `Ref[T]`** | shared mutable handle with scoped `read`/`update`, run-time conflict check, not sendable | 8.4 |
+| 2 | **8.4 Operation traits** (done: "C8.4: operation traits") | `Copy`, `Eq`, `Ord`, `Hash`, `Show`, `Iter`, `Drop` in the core prelude; automatic derive; orphan rule; generic bounds with suggested fixes; Map keys any `Hash + Eq`; `for` over any `Iter` | 8.1, 8.2 |
+| 2 | **8.5 Capability encapsulation** (done: "C8.5: capabilities per package"; `uses ffi` removed from the repository after the next seed) | `ffi` becomes a property of a package (granted in eider.toml); std callers stop writing `uses ffi`; the compiler reports each package's real capability use and eider-pkg checks grants from that instead of scanning text | 8.3 |
+| 3 | **8.6 References by default** (done but for C pointer variables: "C8.6: references by default"; `var` migrated after the next seed) | `let` binds a read-only reference to a place, `let mut` a mutable alias, fresh values are owned; `.copy()`; pattern bindings the same; the protection rule (no invalidating write while a reference is alive) with fixes; references are C pointers; `var` deprecated with a mechanical fix | 8.1, 8.4 |
+| 3 | **8.7 `Ref[T]`** (done: "C8.7: `Ref[T]`") | shared mutable handle with scoped `read`/`update`, run-time conflict check, not sendable | 8.4 |
 | 4 | **8.8 Closures by reference** | non-escaping closures capture by reference | 8.6 |
-| 4 | **8.9 Std on the new base** | std speaks `String`, uses traits and references; `List[u8]` workarounds and `sys.lit` byte loops go; std callers need no `uses ffi` | 8.2, 8.4, 8.5, 8.6 |
+| 4 | **8.9 Std on the new base** | std speaks `String`, uses traits and references; `List[u8]` workarounds and `sys.lit` byte loops go | 8.2, 8.4, 8.5, 8.6 |
 | 4 | **8.10 Parity quirks** | fix each item in "C8 candidates" deliberately (wasm loader bugs, checker quirks), re-blessing the oracle per item | — |
 | 5 | **8.11 Comptime interpreter** | evaluate `comptime` by interpreting the IR: no C compiler at compile time, no capabilities by construction | — |
 | 5 | **8.12 Performance** | smaller generated C, one C file per module compiled in parallel, incremental front end keyed by module hash | 8.3 |
 | 5 | **8.13 Tooling** | `eiderc fmt` (formatter); analyzer: rename, workspace symbols, signature help, inlay hints, formatting; tree-sitter grammar generated from the compiler grammar | 8.9 |
 | 5 | **8.14 Package manager on bare imports** | eider-pkg reworked for 8.3/8.5 (no link farm, compiler-reported grants), registry design | 8.3, 8.5 |
-| later | 8.15 Projections, lints | std accessors returning references; lints for real copies at escapes and `Ref` cycles | 8.6, 8.7 |
+| later | 8.15 Projections, lints (`take`/`replace` done: "C8.15: take and replace") | std accessors returning references; lints for real copies at escapes and `Ref` cycles | 8.6, 8.7 |
+| 4 | **8.16 Seed bugs from std** (done: "C8.16: the seed bugs std found") | the four bugs of docs/std.md "Compiler bugs found": `()` in a generic match arm, a type name in a generic signature matching any type, traps naming the entry file, derived Show printing C names | — |
+| 4 | **8.17 String escapes** (done: "C8.17: string escapes") | `\r`, `\0` (refused), `\xNN`, `\u{...}`, adjacent literals | — |
+| 4 | **8.18 Type aliases** (done: "C8.18: type aliases") | `type Handler = fn(Request) -> Response`, generic aliases, `pub` across modules | — |
+| 4 | **8.19 Calling a fn field** (done: "C8.19: calling a function stored in a field") | `self.handler(req)`, with the rule for a clash with a method | — |
+| 4 | **8.20 Iterating a Map** (done: "C8.20: iterating a Map") | `for (k, v) in m`, `m.keys()`, `m.values()` in slot order | 8.4 |
+| 4 | **8.21 Error conversion for `?`** (P0.6; "C8.21: error conversion for `?`") | `From[E]` in the prelude; `?` converts `Err(e)` through an impl | 8.4 |
+| 4 | **8.22 `while let`, labeled loops** (done: "C8.22: `while let` and labeled loops") | `while let p = e`, `outer: for`, `break outer`, `continue outer` | — |
+| 5 | **8.23 `Default`** (done: "C8.23: `Default`") | the eighth operation trait: derived for records, built in for scalars, text, containers and Option; `T.default()`; `take()` for every `T: Default` | 8.4, 8.15 |
+| 5 | **8.24 `Error` and context** (P0.6; done: "C8.24: `Error`, `Failure` and context (std/error)") | `error.Error` (message, source), `error.Failure` (a chain), `.context`/`.with_context` on Result and Option, `?` into a Failure through `From` | 8.21 |
+| 5 | **8.25 Method chains across lines** (N13; done: "C8.25: method chains across lines") | a line starting with `.` continues the expression before it | — |
 
 ## C8.3: packages and modules
 
@@ -1289,6 +1307,1236 @@ E0401/E0115/E0303/E0405 cases in `compiler/tests/check/fail`, `c8_*_ok.ei` in
   comparisons and `+ -`; prefix `~` with `-` and `!`; the compound assignments with the
   others; `()` as an expression and a pattern.
 
+## C8.4: operation traits
+
+Wave 2, item 8.4 (docs/design/memory-model.md, "Operations are traits"): every operation the
+language performs on values is a trait of the core prelude, derived when a type's parts have
+it, and implementable by the type's own package. Code: check.ei's "Operation traits" and
+"Bounds of generic code" sections, lower.ei's "operation traits" glue, ir.Ir.impls. `compiler/`
+uses none of it until the next seed.
+
+**The prelude** gains, after Option and Result (so every position tests/oracle records for
+prelude items is unchanged):
+
+```eider
+type Ordering = | Less | Equal | Greater
+trait Copy { fn copy(self) -> Self }
+trait Eq { fn eq(self, other: Self) -> bool }
+trait Ord { fn compare(self, other: Self) -> Ordering }
+trait Hash { fn hash(self) -> u64 }
+trait Show { fn show(self, inout out: String) }
+trait Iter { fn next(inout self) -> Option[Item] }
+trait Drop { fn drop(inout self) }
+```
+
+`Ordering`, `Less`, `Equal` and `Greater` are prelude names like `Some`. `Iter`'s `next` returns
+`Option[...]` of whatever item type the impl chooses (the language has no associated types;
+the item type is read off the impl, and an impl whose `next` returns anything else is E0602).
+A trait the entry module defines with one of these names **shadows** it in the program's names
+(`trait Show` in compiler/tests/run/generics.ei is that program's own trait, and `impl Show
+for bool` implements it); the language goes on using the prelude's, which that program then
+can't implement. `Ordering` is resolved when a program first uses it, so a program that
+doesn't has the types, and the C, it had before.
+
+**Which types have which trait.** A record, enum, tuple, array, List, Box (and Map, where
+noted) has a trait when every part has it ("derived"; no annotation and no opt-out: a type
+lacks a trait only when a part does). A record or enum may instead implement one itself,
+which replaces the derived one everywhere: in the operator, and inside the derived operations
+of every type that contains it (`==` on a `List[Name]` uses Name's own `eq`).
+
+| | Copy | Eq | Ord | Hash | Show | Iter | Drop |
+|---|---|---|---|---|---|---|---|
+| integers, bool, str, String | yes | yes | yes | yes | yes | | |
+| `()` (as a part: `Ok(())`) | yes | yes | yes | yes | yes | | |
+| records, enums, tuples, arrays, List, Box | derived | derived | derived | derived | derived | List, arrays | |
+| Map[K, V] | derived | K, V | no | no | K, V | | |
+| fn values | yes | no | no | no | no | | |
+| Mutex[T] | if T | no | no | no | no | | |
+| Task, Chan, `!` | no | no | no | no | no | | |
+| own impl (records, enums) | any of the seven; Drop for records only | | | | | | |
+
+`Ord` and `Hash` promise `Eq` (an own `Ord` or `Hash` on a type without `Eq` is E0601). Comparing
+two `()`s directly stays E0401 ("cannot compare values of type ()").
+
+**The operations.**
+
+- **Copy**: `x.copy()` is a full clone: heap buffers are shared copy-on-write as by every copy,
+  a Mutex inside gets a new Mutex holding a copy of the contents (locked while it is read), a
+  part with its own `copy` is copied by it, and a record with its own Drop gets a buffer of its
+  own. Task and Chan have no Copy, so `.copy()` on them or on anything holding them is E0601
+  ("a running thread can't be cloned and a copied queue has no clear meaning; share the
+  handle instead"). Implicit copies (binding, passing, storing: value semantics) stay the
+  copy-on-write share and never run user code.
+- **Eq**: `==`, `!=`, `x.eq(y)` and `List.contains`. Derived structurally. **Map equality**:
+  two Maps are equal when they have the same keys, each with an equal value; the slots' order
+  (which depends on the insertion history) is not part of the value. So Map[K, V] has Eq when V
+  has it (K always does).
+- **Ord**: `<` `<=` `>` `>=` and `x.compare(y) -> Ordering`. Integers by value, `false < true`,
+  str and String by bytes (Unicode scalar order), records and tuples lexicographically by
+  field, arrays and Lists lexicographically then by length, Box by contents, enums by variant
+  order then payload. Maps have no order. Sorting is ordinary code over `T: Ord`
+  (compiler/tests/run/traits_derived.ei sorts Strings, records and enums).
+- **Hash**: Map keys are any type with Hash and Eq (E0701 says which part lacks which). The key
+  types of before (integers, bool, str, String) hash bit for bit as before (`ei_hash_u64`,
+  `ei_hash_str`), so lookups and probing are unchanged; other keys hash by combining their parts'
+  hashes (`h = ei_hash_u64(h ^ part)`, from a fixed seed, with the tag for enums and the length
+  for Lists). A key type with a part that has its own `==` but a derived hash is E0701 (equal
+  keys must hash alike). `x.hash() -> u64`. Maps have no hash.
+- **Show**: `fn show(self, inout out: String)` appends a value's text; `x.to_string() ->
+  String` and `print(x)` go through it. Everything that printed before prints exactly as
+  before (integers, bool, str, String, enums without payloads: same C, same text); the rest is
+  derived: `P { x: 1, y: -2 }`, `Circle(3)`, `Dot`, `Some(Pair { a: 1, b: "x" })`, `(1, "one",
+  true)`, `(5,)`, `[1, 2]`, `{"k": 1}` (slot order), `Box(...)`, `Ok(())`. Text inside another
+  value is quoted, with `\"`, `\\`, `\n`, `\t`, `\r` escaped; on its own it is printed raw. Type
+  and variant names are spelled as `print` spells variants (resolve.shown). An own Show is
+  used wherever the value appears (`[#2!9, #1!5]` for a List of Jobs).
+- **Iter**: `for x in e` over a type with its own Iter runs on a copy of e, owned by the loop
+  (`it := e; loop { r := it.next(); if r is None break; x := r's item; body }`), so the
+  original is unchanged; break, continue, return and `?` drop what they leave. Ranges, Lists
+  and arrays keep their own loops (same IR, same C). `I: Iter` is met by List, arrays and own
+  impls.
+- **Drop**: a record's own `drop` runs exactly once per value, when its last holder goes. A
+  record with its own Drop is laid out as a pointer to a shared buffer holding its fields
+  (`struct t_R { struct td_R *p; }`, made by `rnew_R`): every copy shares it (a count, as for
+  Box), and the last drop runs `drop` and then drops the fields in declaration order (a holder
+  that `drop` hands the value to keeps it alive; values in one scope go in reverse order of
+  creation, as before). A write to a shared value first makes a copy of its own, through the
+  type's own Copy if it has one (a resource type can make a new resource there), else field by
+  field as any copy makes them; from then on there are two values, each dropped once. Across
+  threads, every buffer a value reaches is made unique when it crosses (C8.1), so a value
+  captured by a spawned closure, sent while still held, or handed out by `Mutex.get` crosses
+  as a value of its own; a value created on a thread, sent without being kept, or kept in a
+  Mutex is one value, dropped once. Drop is for records only, for all of their instances
+  (`impl[T] Drop for R[T]`, no bounds), and `drop` can't declare capabilities, because it
+  runs wherever the last holder goes (a closure's environment, another thread, a container's
+  glue), where no `uses` could be checked (E0606); calling `.drop()` is E0115; such records
+  can't cross the C boundary (E0803).
+
+**Own impls and the orphan rule.** `impl Eq for Name { ... }` (or any of the seven) is allowed
+only in the package that defines the type; a file in no package counts as the program's own
+(so the tests' single files and their lib/ modules can). Anything else is **E0604**: a built-in
+type ("defined by the language core"), a prelude type (Option, Result, Ordering), a type of
+another package ("defined by package `geo`"), or a type parameter (`impl[T] Eq for T`). The
+impl is then left out. A generic impl may have bounds (`impl[T: Show] Show for Tagged[T]`); it
+applies to the instances that meet them. Lowering finds an own impl through ir.Ir.impls: after
+every pending body, `scan_impls` instantiates the impl's method for every concrete record and
+enum type the program made that has one (and the bodies that brings in), and the glue
+(`eq_`, `cmp_`, `hash_`, `show_`, `copy_`, `drop_`, `uniq_`) calls it.
+
+**Bounds in generic code.** A generic body may use an operation on a type parameter only when
+its bounds promise it: `==` needs `T: Eq`, `<` and `compare` `T: Ord`, `print`/`show` `T:
+Show`, `.copy()` `T: Copy`, `for` `T: Iter`, `List[T].contains` `T: Eq`, and `Map[K, V]`, also
+in a signature, `K: Hash + Eq`; a call to a function with bounds passes them on. Otherwise
+**E0605** "`==` needs `T: Eq`", with a fix that adds the bound (`: Eq` after the parameter, or ` +
+Eq` after its last bound; the compile-fail runner holds every fix to compile). Instances are
+checked with concrete types, which can't tell a T from the type it stands for, so the check is
+a pass of its own (`abstract_bodies`): after every body, each generic declaration that has an
+instance (prelude ones aside) is checked once more with its type parameters as `T_PARAM`
+types, which have exactly what their bounds say (Ord and Hash promise Eq). The pass works on
+a copy of the checker (a copy-on-write share of its state), keeps only its E0605s (everything
+else it could find, the instances found, or will find, with real types) and is skipped
+entirely in a program without generic instances (compiler/ itself). So E0605s come after
+every other diagnostic of the program, each bound once per body, and a generic declaration
+that is never used is still not checked.
+
+**Codes.** New: E0604 (orphan rule), E0605 (missing bound, with a fix), E0606 (a Drop impl
+that doesn't qualify). Changed messages (E0401, E0601, E0701): an operation on a type that
+lacks the trait says which trait and which part, e.g. "`==` needs `Eq`, which List[Chan[i32]]
+doesn't implement (its part Chan[i32] doesn't)", with a help for handles and fn values;
+"Map[...] can't be a Map key: it doesn't implement `Hash`"; `for` over a type without Iter keeps
+its message and its help now mentions Iter.
+
+**Zero cost.** Derived operations are the glue there was (eq_, drop_, clone_, the Map glue,
+print's own code), plus glue for what had none (cmp_, hash_ for new key types, show_, copy_).
+The C of every program that compiled before is byte for byte the C it had: all 65 run tests,
+examples and benchmarks, and eiderc's own (123,423 lines), compared against the seed with the
+old prelude. Map equality, ordering, printing and copying of other types is new code; own
+impls are calls. Benchmarks (`REPS=11 sh scripts/bench.sh target/eiderc-before:target/before
+target/eiderc-next`, before = eiderc at 722b20e, 16 cores, gcc -O2, median wall time):
+list_copies 3 ms / 3 ms, state 4 ms / 4 ms, str_append 4 ms / 4 ms, eiderc `emit-c
+compiler/main.ei` (19,456 lines) 179 ms / 179 ms. The bounds pass costs nothing there (eiderc
+has no generic instances); in a program with them it rechecks each used generic body once.
+
+**Known limits.** A program that shadows a language trait can't implement that trait. Drop
+and threads: a shared value that crosses to another thread becomes a copy (above), so a
+resource meant to be shared across threads belongs in a Mutex. The order of a Map's printed
+entries follows its slots (fixed for a given insertion history, not sorted). `main`'s `Err` is still printed only for the types C8.2 lists.
+
+**Oracle changes** (`BLESS=1`, reviewed): only messages, positions unchanged. Tests whose
+program became valid were changed to keep failing with the same code at the same place,
+with a type that still lacks the trait (a Mutex, Chan, Task or fn value inside): e0401_*
+for `==` on Maps, Lists of Maps and records holding Maps, `<` on Lists, tuples and bools,
+printing records, payload enums, Lists and Options; e0701_* for List and record keys;
+tests/checks' e0401_map_equality and e0701_list_as_key. e0603_bound_on_fn names traits that
+don't exist (`Display`, `Order`), since `Show` and `Eq` now do; the pass test
+s2_heap_generic_map_unify adds the `K: Hash + Eq` its `Map[K, V]` parameter now needs. The
+IDE goldens count 28 more prelude symbols. The compile-fail coverage lines count 51 codes.
+
+**Tests.** Run (compiler/tests/run, recorded output checked by hand): `traits_derived`
+(printing, `==`, Map equality, ordering, sorting, `compare`, Map keys of records, enums,
+tuples and Lists, hashing, `to_string`/`show`, `.copy()` with a Mutex inside), `traits_custom`
+(own Eq + Hash as Map keys, own Ord sorting, own Show inside derived text, own Copy, a
+generic impl with a bound), `traits_iter` (user iterators, owned items, break, continue,
+return and `?` in the loop, nested loops, a generic iterator), `traits_drop` (once under
+sharing, reverse order, `drop` before fields, copy on write with and without an own Copy, in
+Lists, Maps, Boxes and Options, `?`/return/break/continue, threads: created there, sent
+through a channel, replaced in a shared Mutex, captured), `traits_generic` (bounds met by
+derived and own impls); every run is also leak-checked and run under the sanitizers.
+Compile-fail: `e0604_*`, `e0605_*` (each fix compiles), `e0606_*`, `e0601_copy_*`,
+`e0601_ord_without_eq`, `e0701_custom_eq_no_hash`, `e0115_drop_call`,
+`e0602_iter_next_not_option`, `e0401_contains_no_eq`, `e0401_for_record_no_iter` in
+compiler/tests/check/fail and one per new code in tests/checks; pass: `c84_traits_ok`,
+`c84_shadow_ok`; several errors: compiler/tests/check/multi/traits.ei; packages:
+compiler/tests/pkgs/app/orphan.ei (an impl for another package's type).
+
+## C8.5: capabilities per package
+
+Wave 2, item 8.5 ("Language work" item 5): `ffi` stops being a property of call chains and
+becomes one of packages, so std callers write `uses fs`, never `uses ffi`, and the package
+manager learns what a package can do from the compiler instead of scanning its text. Code:
+check.ei (`needs_cap`, used by the capability checks of `call_decl` and `fn_as_value`),
+resolve.ei ("capabilities per package": `package_caps`, `grant_diags`, `caps_json`), lock.ei
+(`Manifest.grants`), main.ei (`eiderc caps`), core/sys.ei; eider-pkg's `caps.ei`.
+
+**`ffi` stays inside its package.** A package is a module's package as resolve.ei knows it
+(`Module.pkg`, "C8.3"); the files in no package and the prelude count as one package.
+
+- Calling an `extern` function needs `ffi` in the caller's `uses` (E0201) and an `unsafe`
+  block or `unsafe fn` (E0802), as before ("C7: FFI"): the function that crosses into C says
+  so. Inside a package `ffi` propagates like any capability: a wrapper with `uses ffi` asks
+  its callers in the same package for it (compiler/tests/check/fail/e0201_ffi_via_wrapper.ei
+  is unchanged).
+- Across a package boundary it doesn't: calling a function of another package (or using it
+  as a value) needs the callee's capabilities **except** `ffi`. `unsafe` stays local: an
+  `unsafe fn` of another package still needs `unsafe` at the call (E0802).
+- The real capabilities (`io`, `fs`, `net`, `clock`, `threads`, ...) propagate across
+  packages as before. So every function that reaches the OS declares what it does, down to
+  core: core/sys.ei's wrappers declare their real capability next to `ffi` (`read_file`,
+  `write_file`, `list_dir`, `kind`, `mkdir`, `remove`, `rename`, `symlink`, `cwd`,
+  `realpath`: `fs`; `write_fd`, `read_fd`, `args`, `getenv`, `exit_now`: `io`; `run`: `io, fs,
+  net`), and the buffer and text helpers (`lit`, `to_string`, `send`, `send_all`, `take`,
+  `take_all`, `error_text`) only `ffi`, so they cost their callers nothing (without the real
+  ones, `sys.read_file()` would have become callable with no capability at all). std was
+  reviewed function by function and already declared the real ones: `fs` for files, `io` for
+  the standard streams, the environment, the arguments and exiting, `io, fs, net` for running
+  a program (a child can do anything); `bytes`, `fs.join`, `fs.normalize`, `fs.sort`,
+  `proc.captured` and the like declare nothing.
+- A `uses ffi` on a function of a package with no unmanaged code is accepted and means
+  nothing outside its package (code written for the earlier rule; the migration below
+  removes it). `comptime` may now call core's text helpers (`sys.lit`), which ask for nothing;
+  the wrappers that reach the OS still need a capability, which comptime never has.
+
+**A package's capability use** (`resolve.package_caps`), computed from the loaded program
+after resolution (no checking needed, so it works on programs with errors): over the modules
+of the package that the program loads, every capability named in the `uses` clause of a
+function (free functions, methods, trait methods; not `test` blocks, which are checked with
+every capability) other than `ffi`, plus `ffi` when the package has unmanaged code: an
+`extern` function, an `unsafe fn` or an `unsafe` block. A word that isn't a capability is
+E0203 where it is written and adds nothing. Each capability is kept with its first use
+(function, file, line, column), in module load order, then item order (a method before its
+impl); for an extern, `ffi` comes before the extern's own `uses`.
+
+**Grants** (`resolve.grant_diags`, at the end of loading, after the import errors, so they
+come before any checking error). The entry file's package is granted everything; `core` and
+`std` are the toolchain's and need no grant (core is the one package the toolchain grants
+`ffi`; std has no unmanaged code, and its real capabilities reach every caller through its
+functions' `uses`). For every other package P that a module of package D imports (by name or
+by path; D's first import of P in load order; D a package other than P), each capability P
+uses must be in D's grant to P, the `uses = [...]` of `[deps.P]` in D's eider.toml (absent:
+none). Otherwise **E0204**, at that import in D's file, once per (D, P, capability):
+
+```
+error[E0204]: package `fsdep` uses capability `fs` in `save` (fsdep.ei:5) but is only granted []
+  --> app/main.ei:2:1
+  help: to allow it, add "fs" to `uses` in [deps.fsdep] of <dir>/eider.toml
+```
+
+For `ffi` the message names the extern, the `unsafe fn` or the function holding the `unsafe`
+block, and the help adds "(it declares `extern` functions: unmanaged code)" or "(it has
+`unsafe` code: unmanaged code)". The help is text, not a machine-applicable fix: the edit is
+in another file. Grants are per edge, so a dependency's dependency is held to the grant its
+own eider.toml gives (in the store or vendor copy). Imports from files in no package are not
+held to grants (such a file is a program of its own; it can import packages only by path).
+
+**`eiderc caps <file>`** loads the program as `check` does (an import that can't be loaded,
+such as a dependency of a package checked on its own without a lock, is left out and not
+reported: the command answers for what it can see) and prints one JSON line per (package,
+capability) in the order above:
+`{"package":"fsdep","dir":"<dir>","cap":"fs","kind":"uses","fn":"save","file":"fsdep.ei","line":5,"col":5}`,
+where `kind` is `uses`, `extern` or `unsafe`, `fn` is `name` or `Type.name`, `file` is
+relative to the package's directory, and a file in no package has `"package":""` and
+`"dir":""` (and its path as `file`). It exits 0, or 2 when the file can't be read.
+
+**eider-pkg** (`packages/pkg/caps.ei`) no longer scans text. After resolving, for every
+locked package it runs `$EIDERC caps <dir>/<entry>` (its `main` when it has no entry module,
+like the compiler's package; `EIDERC` defaults to `$EIDER_ROOT/target/eiderc`) and holds that
+package's lines to its grant, with the messages it had (`package \`fsdep\` uses capability
+\`fs\` (fsdep.ei:5) but is only granted []; to allow it, add "fs" to \`uses\` in its
+[deps.fsdep] table`, plus the unmanaged-code note for `ffi`, now also for `unsafe`). What it
+checks is what the compiler loads from that module, not every file in the directory: a
+`tests/` program, a comment or a stray word no longer counts, and a module the entry imports
+does. A package with neither file is left to the compiler, which checks every import at build
+time anyway. Until the next seed `scripts/eider-pkg` sets `EIDERC` to compiler/ built by the
+seed (`target/eiderc-next`), since the seed has no `caps`.
+
+**Migration, staged.** The seed still asks for `ffi` along call chains, and it builds
+compiler/, std/, core/ and everything verify.sh builds with it (packages/, eider-pkg,
+tests/run, tests/std, tests/checks). So:
+
+1. Now (this item): the compiler has the rule, `eiderc caps` and E0204; core/sys.ei's
+   wrappers declare their real capabilities (every caller already did, so the seed builds
+   everything as before); the package fixtures grant what they use; eider-pkg asks the
+   compiler. compiler/, std/, packages/, tests/ and examples/ keep their `uses ffi`, which the
+   new compiler accepts. What only the new compiler builds is written without it: the new
+   tests (compiler/tests/{check,run,pkgs}, tests/pkg/run.sh's programs) and eider-analyzer
+   (built by compiler/ as the seed builds it), whose grants are now what the compiler reports
+   (eiderc `io, fs, net, clock`, json nothing).
+2. After the next seed: run `sh scripts/migrate-caps.sh compiler std packages tests` (it
+   removes `ffi` from every `uses` clause of files without `extern` or `unsafe` and without a
+   path import of such a file; core/sys.ei and the FFI tests keep theirs), fix the comments
+   that quote a signature (ide.ei's `analyze`), BLESS the diagnostics whose fix columns move,
+   change eider-pkg's `init` template to `uses io`, drop the `EIDERC` default from
+   scripts/eider-pkg, the "`uses ffi` everywhere" rule from "Writing the compiler in today's
+   Eider" and the known limit from LAYERS.md. test-compiler.sh ("migration") already runs the
+   script on a copy of core, std, packages and compiler and holds the result to checking
+   (compiler/main.ei, eider-pkg, the fuzzer) and to the package tests. The three tests/checks
+   cases below need that seed to pass verify.sh's compile-fail leg: the seed doesn't check
+   grants and asks for `ffi` where they have none.
+
+**Tests.** compiler/tests/check/fail: `e0204_method_fs` (a grant of `io` to a package whose
+method uses `fs`), `e0204_unsafe_fn` (an `unsafe fn` without an `ffi` grant),
+`e0201_std_needs_fs_not_ffi`, `e0201_core_wrapper_needs_fs` and `e0201_core_os_needs_net`
+(core/os.ei's `sock_open` from another package needs `net`; the fix adds the real
+capability and then compiles); compiler/tests/check/pass/c85_std_without_ffi.ei (std's
+bytes, env, fs, io and proc with the real capabilities only); tests/checks/fail:
+`e0204_ungranted_fs`, `e0204_ungranted_ffi` (an extern granted only `io`) and
+`e0802_unsafe_fn_other_package`; compiler/tests/run/caps_std.ei (files, streams and
+arguments with `uses io, fs`); compiler/tests/pkgs: `grants_ok` (an extern package and an
+`unsafe`-block package granted `ffi`, called without `uses ffi`), `grants_fs` (one E0204 per
+capability, a method named `Log.show`), `grants_chain` (E0204 in a dependency, against its own
+eider.toml) and `caps` (`eiderc caps` of a program); compiler/tests/unit/lock.ei (grants read
+from eider.toml); tests/pkg/run.sh ("capability grants": an ungranted `fs` dependency is
+refused by `add`, an extern package needs `ffi`, a module the entry imports counts and a test
+program doesn't, `uses ffi` without unmanaged code and core need no grant, the granted
+packages run without `uses ffi`, and a grant removed from eider.toml after the fetch is E0204
+when building).
+
+## C8.6: references by default
+
+Wave 3, item 8.6 (docs/design/memory-model.md, "Bindings", "The protection rule", "Build
+order" 2): `let` of a place refers to it, `let mut` is a mutable alias, fresh values are
+owned, pattern bindings do the same, invalidating writes while a reference is alive are
+errors with a fix, and `var` is deprecated with a mechanical rewrite. Code: check.ei's
+"References" and "Migration of `var`" sections (and `let_ref`, `let_pat`, `compile_match`,
+`arm_body`, `call_decl`'s exclusivity), parse.ei (`at_mut`), ir.ei (S_NOTE, S_CHECK),
+lower.ei (S_CHECK), main.ei (`eiderc migrate-var`), scripts/migrate-var.sh. `compiler/`
+uses none of the new syntax until the next seed.
+
+**Bindings.**
+
+- `let x = e` where e is a place rooted at a variable in scope (a variable, a field, an
+  element, any chain of them: `orders[i].items[j]`) binds a read-only reference: x has no
+  storage of its own; it names that place, whose indices are evaluated once, when x is bound
+  (and bounds-checked then: S_CHECK). Every use of x reads the place as it is at that use,
+  so x sees every write to it. Anything else (a call, a literal, a constructor, an
+  operation, `if`/`match`/block, a field of a call's result) is fresh and owned, as before.
+- `let mut x = place` is a mutable alias (Reading A): writes through x write the place, and
+  writes to the place are seen through x. The place's variable must be writable (`var`,
+  `let mut`, an `inout` parameter, a mutable alias); otherwise **E0307** "`let mut x` would
+  be a mutable alias of `p`, which is read-only", with the fix `.copy()` after the
+  initializer (when the type has Copy), and checking goes on as if the fix were there.
+  `let mut x = fresh` is an ordinary mutable local.
+- Pattern bindings: a `match`/`if let`/`let (..)` whose scrutinee is such a place binds
+  references into it (into the payload of an enum: `Pending(o)`); `mut x` (a new pattern
+  form: the contextual word `mut` before a binding) is a mutable alias into it, with E0307
+  when the scrutinee's variable is read-only (fix: `.copy()` after the scrutinee). A fresh
+  scrutinee's bindings own their parts, as before; `mut` makes them mutable.
+- `mut` is a contextual word, not a keyword: it means `let mut` or `mut x` only when a name
+  follows it, so `let mut = 1` still declares a variable named `mut`.
+- Escapes are values: storing, returning, capturing (closures, `spawn`) or passing a
+  reference into an owned position clones what it refers to, through the ordinary `take`
+  (a copy-on-write share), silently. Passing a reference as an ordinary argument is a borrow
+  as for any place.
+- `for x in xs` keeps its own copy of each element (unchanged: the charter names `let` and
+  pattern bindings only, and the loop runs over a List that its body may still push to).
+- `var` (deprecated) keeps making its own copy, so every existing `var` means what it did.
+- Exclusivity (E0301) counts a reference as the variable its place is rooted at: `f(inout
+  xs, o)` with `o = xs[0]` is E0301 "`o` refers into `xs`, which is borrowed mutably by
+  another argument of this call" (fix: `.copy()` at o's binding), and `f(inout ys, inout
+  xs)` with `ys` an alias of `xs` is E0301 too.
+- Assigning to a `let` reference is E0303 as for any `let` (message, help and fix unchanged:
+  the fix still says `var`, whose copy is what the old program meant).
+
+**The protection rule** (E0308). While a reference is alive, until its last use on any
+path, no write may free, move or reinterpret memory it points into. The checker notes in
+the IR (S_NOTE, a checker-only statement) every reference's binding and use, and every
+write that may invalidate one: an assignment (S_STORE), an `inout` argument (of a call, of
+a method's `inout self`, of `show`), a resizing builtin (`push`, `pop`, `clear`, `insert`,
+`remove`, `push_str`, `append`, `push_byte`); writes are noted only while a reference is in
+scope, and never for temporaries. After every body, `protect` runs a backward liveness pass
+over each function that has references (structured: both branches of an `if`, loops to a
+fixed point, `break`/`continue`/`return`/`panic` cut the paths) and checks each noted write
+against the references live after it. A write to place P invalidates a live reference to R
+when P is a prefix of R, comparing any two indices as equal (the charter: `orders[i]` and a
+resize of `orders` conflict whatever `i` is), and the rest of R's path goes through heap
+memory (a List element, the fields of a record with its own Drop) or an enum payload. So:
+
+- allowed: plain writes to scalar fields and elements, writes through aliases, a write that
+  replaces the referenced value itself (`orders[0] = o2` while `o = orders[0]`: o then sees
+  o2), a resize of a container a reference names rather than points into (`let all =
+  orders; orders.push(x)`: all sees it), any write after the last use, a write on a path
+  that never reaches a use (`if ... { xs.clear(); return }`), a loop body binding a new
+  reference each iteration;
+- errors: `xs.push` while a reference into `xs[..]` is alive; `xs = ...` or `inv = ...`
+  while one points into their elements; `j = Done` while a binding refers into j's payload;
+  `f(inout xs)` while one points into xs's elements.
+
+E0308 "can't call `push` on `orders` while `o` refers into it" / "can't assign to `j`
+while `name` refers into it" / "can't pass `xs` as `inout` while `a` refers into it", at the
+write; help: "`o` is used after this change, which may free, move or replace what it refers
+to; use it before the change, or bind a copy with `.copy()`"; fix: `.copy()` after the
+reference's initializer (or its pattern's scrutinee), which makes the binding own a value.
+No fix when the type lacks Copy (a Chan inside) or in a generic body (`.copy()` would also
+need a `Copy` bound; the help says so). The E0308s come after every other diagnostic of the
+program (they need every body), in source order per function, once per write.
+
+**Lowering.** A reference is its place: lowering emits the place's C lvalue
+(`orders.d[t3].qty`) at each use, with the index temporaries computed at the binding, and
+copy-on-write uniqueness on the path before each write through an alias, exactly as for a
+write to the place itself. No clone, no drop, no storage. A `let` of a place, a pattern
+binding of a place and a `match` on a place no longer copy anything, so programs that used
+`let` and `match` on places get smaller C with fewer clones and drops (below). Notes are
+removed from the IR before checking ends; S_CHECK lowers to the place's bounds checks only.
+
+**Choices the charter left open** (the simplest sound one each time):
+
+1. A reference is the place re-derived at each use, not a C pointer variable. A pointer into
+   a List's buffer would go stale when a plain write elsewhere on the path makes a shared
+   buffer unique (copy-on-write moves it; the charter allows plain writes while references
+   live), and refreshing pointers after every such write needs liveness in lowering. The
+   re-derived place has the same cost as a pointer for paths through locals, fields and
+   arrays (the C compiler computes the same address), and costs a bounds check per use
+   through a List (one that never fails: the protection rule forbids the resize). C pointer
+   variables for heap paths are the remaining step (below).
+2. "Place" is syntactic: a variable, field or element chain rooted at a variable in scope.
+   A field or element of a fresh value (`f().x`, `make()[0]`) is fresh.
+3. The liveness is flow-sensitive but path-insensitive per structured block: a use on any
+   path after the write counts; loops iterate to a fixed point.
+4. A reference *to* a container (not into it) is not invalidated by resizing it, and a
+   write that replaces exactly the referenced place is plain: the reference sees the new
+   value. Only a heap or payload step between the write's place and the reference counts.
+5. Records with their own Drop live in a shared buffer (C8.4), so their fields count as
+   heap memory for the rule.
+6. Fixes: always `.copy()` at the binding (the charter's "take a `.copy()` first"); never a
+   fix in generic bodies or for types without Copy. For a mutable alias the help adds that
+   writes then change only the copy.
+7. E0303 keeps its message, help and fix (`var`) byte for byte (first-diagnostic rule; the
+   fix keeps the old meaning).
+8. `mut` is contextual, and per binding in patterns (`let (mut a, b)`), with no `let mut
+   (a, b)` form (one way to do one thing).
+9. `for` loop variables stay copies; Map values are never places (`get` returns a value),
+   so nothing refers into a Map; Box contents are reached only through methods, so nothing
+   refers into a Box either.
+10. `var` is deprecated without a diagnostic: a warning would change the output of every
+    program that uses it (and the first-diagnostic contract). The deprecation is the
+    documented rewrite, `eiderc migrate-var` and scripts/migrate-var.sh.
+11. Migration: `var x = place` becomes `let mut x = place.copy()` and `var x = fresh`
+    `let mut x = fresh` (the charter), `var (a, b) = e` becomes `let (mut a, mut b) = e`
+    (`.copy()` when e is a place). Not rewritten (left as `var`, which still works): a place
+    whose `.copy()` differs from the implicit copy `var` made (a Mutex inside: `.copy()`
+    makes a new one; a record with its own Drop: `.copy()` gives it a buffer of its own; an
+    own Copy: `.copy()` runs it), a `var` of a place in a generic body (`.copy()` could need a bound; a fresh value there is rewritten),
+    and code no concrete body checks.
+
+**Migration of `var`.** `eiderc migrate-var <file>` prints the file with its rewrites; the
+file is checked as the entry (a module without `main` is fine), else as the module a
+one-line entry in its directory imports (a module whose names clash with the entry's
+builtins, like compiler/lower.ei's `fn print`). scripts/migrate-var.sh runs it over files
+and directories (EIDER_ROOT, EIDERC as for the other migrations). compiler/ keeps `var`
+until the seed has 8.6 (the seed must build compiler/); test-compiler.sh ("migration")
+runs the script on a copy of core, std, packages and compiler: no `var` is left in them,
+compiler/main.ei, eider-pkg and the fuzzer check, the package tests pass, and the migrated
+compiler, built by this one, emits byte-identical C for compiler/ (its meaning is
+unchanged). compiler/tests/migrate/var.ei has the hand-checked expected rewrite (var.out).
+
+**Existing code under the new meaning.** A `let` of a place whose place is written while the
+binding is still used later now sees the write; under the old meaning it kept its copy. The
+audit (`eiderc audit-refs`, below; first a throwaway build of the same check) found every
+such site in the repository:
+in compiler/ (114 bindings: `let start = l` before `step(inout l)`, `let d = c.t.defs[i]`
+before `f(inout c, d)`, ...), std/fs.ei, packages (json, toml, pkg, fuzz) and the tests
+(compiler/tests/run/{closures2,cow,inout,lists,maps,owned,text_cow,traits_*}.ei,
+compiler/tests/check/pass/v0_language.ei, tests/run/order.ei). Each got `.copy()` at the
+binding, which the seed also understands (8.4), so those programs mean what they meant under
+both compilers; the sorts in compiler/tests/run/traits_{custom,derived,generic}.ei, whose
+`let t = xs[j]` swap is generic, got the `+ Copy` bound E0605 asks for, and
+compiler/tests/run/traits_drop.ei's "written while shared" cases use `var` (their point is
+the implicit share, which `.copy()` of a record with its own Drop doesn't make). The recorded
+outputs are unchanged. After that the audit reports only the new tests.
+
+**Audit: `eiderc audit-refs <file> [--json]`.** For code written when `let` copied (other
+branches, old packages): every write that changes what a live `let` or pattern reference
+sees without invalidating it (an invalidating one is E0308), where the binding used to keep
+its own copy and now sees the change. A write overlaps a reference when they have the same
+root and one's path is a prefix of the other's (indices compared as equal); `let mut` and
+`mut` aliases are left out (new code means the alias). Each finding is a `note[audit]`
+(stderr, rendered like a diagnostic, then `audit-refs: N write(s) change what a reference
+sees`) or, with `--json`, a JSON object per line on stdout like a diagnostic's, with
+`"audit":"reference"` in place of `"error"` and the machine-applicable `.copy()` fix at
+the binding (none in a generic body or for a type without Copy). The program's errors
+follow (exit 1); findings alone exit 0. Applying every fix gives the old meaning back, under
+both the seed and the new compiler. Test: compiler/tests/audit/refs.ei (a swap, a counter, a
+record snapshot, a tuple pattern; a `.copy()` and a binding not used after the write are not
+reported), and loop.ei (a push to the List a `for` runs over through a reference), against their hand-checked .out. Run on the whole repository after the merge of
+layer/runtime (std/{time,atomic,sync,chan,task,event}.ei, std/fd, std/poll, tests/std,
+tests/core, examples/ and the rest): 4 sites, all in std/event.ei (the timer heap's two
+swaps and two ids read before `self` changes); and after the merge of layer/services
+(packages/http, examples/kvstore): 3 sites in packages/http/parse.ei (`let m = p.m` before
+`p.m = empty_msg()`, and two positions read before the parser moves on). All got `.copy()`;
+nothing else, and nothing in examples/kvstore. After the merge of layer/std (stream, path,
+strings, utf8, fmt, sort, deque, set, heap, encoding, testing): 4 findings and 3 E0301s in
+generic code, which has no machine-applicable fix (`.copy()` of a `T` would need a bound):
+swaps in std/heap.ei and std/sort.ei and a moved element in std/set.ei now bind with `var`
+(the implicit share `let` made, no bound needed), and integer positions in std/heap.ei,
+std/strings.ei and std/stream.ei got `.copy()`. One finding had no fix because the type has
+no Copy: std/task.ei's `let k = t.kids` before `t.kids = List.new()` (a List of Tokens,
+which hold a Chan) silently became the empty list, so cancelling a token no longer cancelled
+its children and http's server test hung under this compiler; it binds with `var` now, and
+the audit's help says to for such types. That finding was missed by the first sweep, which
+only applied fixes, and is the reason for test-compiler.sh's "meaning" leg: tests/std, the
+packages' and the examples' tests must give their .out under this compiler as well as the
+seed. The `for x in r` over a reference r to a List keeps r alive for the whole loop now (the
+List is read again each iteration), so a push to it in the body is reported too.
+
+There is no way in 8.6 other than the deprecated `var` to take a share of a value without
+Copy out of a place before replacing the place (`let k = t.kids; t.kids = List.new()`): a
+`take`/`replace` accessor (8.15, projections) is the natural successor.
+
+**Codes.** New: E0307 (a mutable alias of a read-only place), E0308 (the protection rule).
+Changed: none of the existing messages; E0301 gains the two reference cases above.
+
+**Oracle changes** (`BLESS=1`, reviewed): only additions: the new compile-fail cases and the
+pass case in the runner outputs (tests/checks, compiler/tests/check), the coverage lines
+(52 to 54 codes), the new cases' check.json and the multi case refs.check.{json,err}. No
+recorded output of an existing program changed. The IR goldens (compiler/tests/ir: forms,
+generics, heap, threads) lost the copies and drops of `let` and `match` on places (for
+example `label` in heap.ir: one clone instead of two and a drop).
+
+**Tests.** Run (hand-checked expected output, leak-free, sanitizers): compiler/tests/run/
+refs.ei (references seeing writes, an index evaluated once, `let mut` aliases both ways,
+fresh `let mut`, `.copy()` independence, escapes by return, push, closure capture, a
+reference to the list itself, nested places through `inout`, `mut` payload aliases in
+`match`, `if let`, tuple patterns of a place and of a fresh tuple, references bound again in
+a loop that grows the list, `var` still copying); compiler/tests/run/traps.ei now also traps
+an out-of-bounds reference that is never read (S_CHECK). Compile-fail (compiler/tests/check/
+fail): `e0307_*` (parameter, `let` binding, reference, pattern binding, `let` pattern,
+closure capture, `for` variable; every fix compiles), `e0308_*` (push, clear, pop,
+assigning the list and the enclosing record, an enum payload in `match` and `if let`, an
+`inout` argument and `inout self`, the next loop iteration, a mutable alias, a record with
+its own Drop, through an alias of the list, no fix for a Chan and in a generic body),
+`e0301_alias_read`, `e0301_alias_two_inout`, `e0303_assign_ref`; tests/checks:
+`e0307_mut_alias_of_param`, `e0308_push_while_referenced`; pass: `c86_refs_ok` (what the
+rule allows); several errors: compiler/tests/check/multi/refs.ei; parse:
+compiler/tests/parse_ok/refs.ei (`let mut`, `mut` patterns, a variable named `mut`);
+migration: compiler/tests/migrate/var.ei and test-compiler.sh's migration leg.
+
+**Benchmarks** (`REPS=15 sh scripts/bench.sh target/eiderc-before:target/before target/eiderc-after`, before =
+eiderc at b1aae4c, after = eiderc built by itself with C8.6, 16 cores, gcc -O2, median
+wall time): list_copies 3 ms / 3 ms, state 4 ms / 4 ms, str_append 4 ms / 4 ms, eiderc
+`emit-c compiler/main.ei` (20,570 lines) 178 ms / 181 ms. The compiler is 1.7% slower on
+itself: compiler/ binds references almost everywhere, so the notes and the liveness pass run
+for nearly every function (programs without references skip the pass).
+
+The generated C is the same or smaller for every benchmark, tests/run program, example and
+the compiler (19 programs, 7 byte-identical: those with no `let` or `match` of an owned
+place): 137,817 to 137,518 lines in all, clone and drop call sites 7,750 to 7,486
+(compiler/main.ei: 131,152 to 131,073 lines, 7,253 to 7,024; tests/run/heap.ei 147 to 134;
+tests/bench/state.ei 76 to 74).
+
+**Remaining.** C pointer variables for references through heap memory (re-derived on each
+use today, choice 1): a pointer stays valid while the protection rule holds except across a
+copy-on-write un-share, so it needs a refresh after each write on the reference's root while
+it is alive (liveness in lowering), or a deep copy at the clones that share that root while
+it is alive. Then, after the next seed: run scripts/migrate-var.sh on compiler/, std/,
+core/, packages/, tests/ and examples/, drop `var` from "Writing the compiler in today's
+Eider", and decide when `var` becomes an error.
+
+## C8.7: `Ref[T]`
+
+Item 8.7 (docs/design/memory-model.md, "Shared mutable state: `Ref[T]`", rule 4):
+the shared mutable handle for one thread. Code: types.ei (T_REF, T_INOUT), check.ei's
+"Ref[T]" section (`ref_new`, `ref_method`, `ref_in`, `not_sent`) and `lambda`/`call_value`
+(closures with `inout` parameters), parse.ei (`fn(inout T)`, `|inout x|`), ir.ei
+(B_REF_*), lower.ei's "Ref[T]" section (`ref_builtin`, `ref_new_glue`, and the Ref cases of
+the drop, clone, copy and own glue), core/eider_rt.h (`ei_ref_*`). `compiler/` uses none of
+it until the next seed.
+
+**The API** (decision C120):
+
+| Call | Type | Does |
+|---|---|---|
+| `Ref.new(v)` | `Ref[T]` | a new cell holding v (moved in); the type comes from v or the expected type |
+| `r.read(f)` | `f: fn(T) -> R`, result R | runs f on a borrow of the value (no copy) |
+| `r.update(f)` | `f: fn(inout T) -> R`, result R | runs f on the value itself; every holder sees the change |
+| `r.get()` | T | a copy of the value (copy-on-write: a count, not a deep copy) |
+| `r.set(v)` | () | replaces the value (v moved in; the old one dropped) |
+
+```eider
+type Ctx = { cache: Ref[Map[String, Answer]], rows: List[Row] }
+
+fn lookup(ctx: Ctx, key: String) -> Option[Answer] { ctx.cache.read(|m| m.get(key)) }
+fn remember(ctx: Ctx, key: String, a: Answer) { ctx.cache.update(|inout m| m.insert(key, a)) }
+```
+
+R is the closure's result type: from an expression body, or the call's expected type, or
+`-> R` written on the closure; a block body with none of those is `()` (so
+`r.update(|inout n| { n += 1 })` needs no annotation). `read` and `update` are the charter's
+scoped access: nothing the closure is given outlives the call, so no reference into the cell
+escapes. `get` and `set` are the two scoped accesses everyone writes by hand
+(`read(|v| v)`, `update(|inout v| { v = x })`); they cost the same.
+
+**Sharing.** Binding, passing, storing and capturing a Ref share it: the copies are holders
+of one cell, and a change through any is seen by all. `r.copy()` (the `Copy` trait) is a new
+Ref holding a copy of the value, when T has Copy (the charter's table: E0601 for a
+`Ref[Chan[i32]]`). The value is dropped exactly once, when the last holder goes (a record
+with its own Drop inside runs its `drop` then). A Ref has no `==`, order, hash or text (E0401
+"`==` needs `Eq`, which Ref[i32] doesn't implement", with a help that says to compare what it
+holds inside `read`). Cycles of Refs leak, as the charter says; a lint is 8.15's.
+
+**Run-time conflict check.** A cell keeps an access state: the number of `read`s/`get`s in
+progress, or "being updated" while an `update` or `set` runs. Overlaps trap (exit 101, the
+usual `eider: runtime error: ... (file:line)`, line = the access that conflicts):
+
+| In progress | `read`, `get`, `.copy()` | `update`, `set` |
+|---|---|---|
+| nothing | ok | ok |
+| reads | ok (nested reads of one Ref are fine) | `Ref updated while it is being read` |
+| an update | `Ref read while it is being updated` | `Ref updated while it is already being updated` |
+
+This is Rust's `RefCell` rule, and the only one that keeps `update`'s `inout T` exclusive: a
+read during an update would see the value half-changed, an update during a read would
+change (or free, `l.clear()`) what the reader is looking at. Different Refs never conflict,
+so `p.update(|inout x| { x += q.read(|y| y) })` is fine. A trap inside a test block leaves
+the state set, as it leaves a Mutex locked (core/RUNTIME.md, "The test hook").
+
+**Not sendable** (**E0411**, new): a Ref is counted without atomics and accessed without a
+lock, so it can't reach another thread. The checker rejects, wherever the type is written
+or inferred, a `Task[T]`, `Mutex[T]` or `Chan[T]` whose T holds a Ref anywhere in its parts
+(records, enums, tuples, arrays, List, Map, Box: "Mutex can't hold State (its part
+Ref[List[i32]]): a Ref is shared without a lock, so it can't cross to another thread", help:
+"state that threads share goes in a `Mutex[T]` holding the value itself, not a Ref of it"), a
+`Mutex.new` of such a value, a spawned closure returning one, and a closure written at
+`spawn(...)` that captures a variable holding one. A fn value's type doesn't show its
+captures, so a closure stored first and spawned later, or put in a `Mutex[fn() -> T]`, is
+caught at run time instead: the glue that makes a value its own before it crosses a thread
+(`own_`, C8.1) traps "a Ref can't be sent to another thread" when it meets a Ref. Mutex is the
+cross-thread tool, with the same scoped shape.
+
+**Closures with `inout` parameters.** `update` needs a closure that changes its argument, so
+fn types and closures gain `inout` parameters (the charter's "closures change captured state
+only through their own `inout` parameters or a `Ref`"):
+
+- `fn(inout T, U) -> R` is a fn type whose first parameter is passed by reference
+  (types.ei T_INOUT wraps the parameter type in the fn type's parameter list only);
+  `|inout x| ...` and `|inout x: T| ...` declare such a parameter. Where the expected fn type
+  is known, the closure must say `inout` exactly where it does (**E0304** "closure parameter
+  `x` is `inout` here; write `|inout ...|`", with a fix, and the reverse).
+- Calling a fn value with an `inout` parameter takes `inout place` there, as a named
+  function does: E0304 with the fix when it is missing, E0303 for a read-only place, E0301
+  for the same variable twice or read by another argument. The write counts for the
+  protection rule (S_CALLV now notes its place arguments).
+- In C the parameter is a pointer (`T *`), in the fn value's `call` and in the closure body,
+  which accesses it like a named function's `inout` parameter.
+- A named function with `inout` parameters still can't be used as a value (E0304, as
+  before): only closures make such fn values for now.
+
+**Lowering.** `Ref[T]` is `struct tr_<h> { struct tr_<h>_c *p; }`; p points at a shared
+buffer of the core (core/RUNTIME.md, "Shared buffers": the holder count in the header, not
+atomic) holding `struct tr_<h>_c { int64_t st; T v; }`. A copy is `ei_buf_inc`, a drop
+`ei_buf_dec` and, at zero, the value's drop and `ei_buf_free`: the same cost as a Box, and no
+atomics. Each access is inline C, no call:
+
+```c
+{ ei_ref_update_begin(&(r).p->st, 7); f.call(f.env, &(r).p->v); ei_ref_update_end(&(r).p->st); }
+```
+
+with `ei_ref_read_begin/end` (st counts reads) and `ei_ref_update_begin/end` (st = -1)
+inline in eider_rt.h: one compare and an increment around the closure call. `set` drops
+the old value after the access ends (its drop may use the Ref). `.copy()` is a `copy_` glue
+that reads the value into a new cell. Nothing changes for a program without a Ref: no glue,
+no runtime code is reached, and the C of every existing test, example and benchmark and of
+eiderc itself is byte-identical (only the tests that print the error-code list change).
+
+**Codes.** New: E0411. Messages of existing codes: E0304 (closure parameters and arguments,
+above), E0306 (labels, "C8.22"), E0115 for an unknown method of a Ref lists its four.
+
+**Syntax changes** (for the tree-sitter grammar): `function_type` parameters may start with
+`inout`; `closure_parameter` may start with `inout`. `Ref` is a built-in generic type name
+like `Box`.
+
+**Tests.** Run: compiler/tests/run/refs_shared.ei (sharing, read/update/get/set, update's
+result, `.copy()`, a record of Refs threaded by value, Lists and Strings in Refs, Drop once
+at the last holder through a Ref log, nested access of different Refs and nested reads of
+one, a graph of Refs, a List of Refs, closures with `inout` parameters called directly,
+through a fn type and through a function; hand-checked .out, leak-free, sanitizers);
+refs_conflict.ei and refs_conflict_{update,set,get,read}.ei (each overlap traps with its
+message and line; the oracle records them). Compile-fail (compiler/tests/check/fail):
+`e0411_mutex_of_ref`, `e0411_mutex_new_ref`, `e0411_chan_record_ref`,
+`e0411_task_result_ref`, `e0411_spawn_captures_ref`, `e0304_closure_param_inout`,
+`e0304_closure_param_not_inout`, `e0304_closure_arg_needs_inout`,
+`e0303_closure_inout_read_only`, `e0301_closure_inout_twice`, `e0401_ref_equality`,
+`e0401_ref_print`, `e0401_ref_update_type`, `e0401_ref_new_unit`, `e0401_ref_set_type`,
+`e0115_ref_unknown_method`, `e0601_ref_copy_chan`; tests/checks/fail/e0411_ref_in_mutex.
+
+**Benchmarks** (C8.7 to C8.25 together; `REPS=15 sh scripts/bench.sh target/eiderc-next
+target/eiderc:target/before`, before = the seed at be17f87 with its core, gcc -O2, median wall
+time): list_copies 3 / 3 ms, state 3 / 4 ms, str_append 4 / 4 ms (the generated C of every
+benchmark is byte-identical, so these differ by noise only), eiderc `emit-c
+compiler/main.ei` (22,356 lines) 200 / 197 ms.
+
+**Remaining.** A named function with `inout` parameters as a fn value; `Ref` across the C
+and WebAssembly export boundary (E0803/E0806 as for other handles); a cycle lint (8.15).
+
+## C8.16: the seed bugs std found
+
+Wave 4, item 8.16: the four bugs docs/std.md ("Compiler bugs found") reported against the
+seed, each with a regression test. Code: lower.ei (`op`, `put_line`, `files_table`,
+`shown_name`), check.ei (`name_fits`, `trap_file`), resolve.ei (`shown_path`), ir.ei
+(`Fn.file`, `Ir.files`), core/eider_rt.{h,c} and core/wasm/eider_rt.c (`ei_set_files`).
+
+1. **`()` read out of a payload.** A `()` local has no C variable (it is never declared or
+   assigned), but an operand naming one was still printed as the variable, so a generic
+   `T = ()` read out of a payload in a match arm (`Ok(v) => Ok(v)`) referred to an undeclared
+   `lN`. An operand of type `()` or `!` now lowers to `0`, as the `()` literal does.
+   Test: compiler/tests/run/bug_unit_generic.ei (generic match arms, `if let`, nested
+   instances with `()` in either parameter).
+2. **A type name in a generic signature matches only its type.** When a call's argument was
+   unified with a parameter type written with type parameters (`Result[T, E]`), a name that
+   isn't a type parameter (`E`) matched any type, so `plain(Ok(1): Result[i32, String])` was
+   accepted and the C didn't compile. `unify_ast` now asks `name_fits`: a built-in type name
+   must be that type, a non-generic record or enum must be that record or enum; a name that
+   names nothing concrete there (`Self`, an unknown name, reported elsewhere) still fits
+   anything. The error is the existing **E0401** "argument of type Result[i32, String] doesn't
+   match parameter type `Result[T, E]`" (no new code: it is the mismatch E0401 already
+   reports for the other shapes). The same function matches impl targets, so the parity
+   quirk "a name in an impl target matches every type" is fixed with it: `impl Area for Sq`
+   meets `T: Area` only for Sq (a call `total(5)` is now E0601 "type i32 doesn't implement
+   trait `Area`" at the call, where it was E0115 inside the instance), and `impl W[i32]`'s
+   methods apply to W[i32] only (E0115 on `W(true).twice()`). Tests:
+   `e0401_generic_record_name`, `e0601_bound_name_target`, `e0601_bound_unmet_impl` (was
+   e0115_bound_unmet_impl), `e0115_impl_args_name`; the two compile-pass tests that
+   recorded the quirk (`s1_quirk_impl_concrete_args`, `s1_trait_quirk_name_target`) are gone.
+3. **Traps name their own file.** The runtime knew one file (`ei_set_file`, the entry's), so
+   a trap in an imported module named the entry file with the module's line. Every IR
+   function now records its module (`ir.Fn.file`, set from the checker's module), and in a
+   function of an imported module lowering passes the runtime `f * 2^20 + line` instead of
+   the line (`put_line`), where f is the module's index. Generated `main` (and test `main`,
+   and each exported library entry point) hands the runtime a table of file names after
+   `ei_set_file` (`static const char *const ei_files[] = { 0, "lib/geo.ei", ... }`,
+   `ei_set_files(ei_files, n)`), emitted only when some imported module has a trap line, so
+   single-file programs get the C they had. `ei_trap` decodes the index; a line without one
+   (and anything a program built by an older compiler passes) names the entry file as before,
+   so core stays compatible with the seed. Names (`resolve.shown_path`) carry no machine
+   path: a module of a package, found under the package's directory, is `<package>/<path in
+   it>` (`std/testing.ei`, `core/prelude.ei`, `geo/util.ei`: std and core are packages), else
+   a file under the toolchain root is relative to it, and anything else is the path
+   diagnostics use (relative to the entry's directory). Limits:
+   2047 modules and 2^20 lines per module; past them a trap names the entry file. Tests:
+   compiler/tests/run/trap_module.ei (run: the module's panic), modules.ei's test of a
+   module's failing test block (`lib/geo.ei:46`), tests/std/atomic_overflow (an overflow in
+   std/atomic.ei; its seed output stays in .out, this compiler's is the new .next.out, which
+   test-compiler.sh's meaning leg reads until the next seed), and the comptime cases below.
+4. **Printing spells Eider names.** Derived Show (and `print` of a unit enum, `main`'s `Err`)
+   printed a type or variant of an imported module by its C-level key (`stream__TimedOut`,
+   `geo__South`). It now prints the name as its own module writes it (`TimedOut`, `South`;
+   `shown_name`), as it always did for the entry module's types: printing is the value, not
+   where it was declared (decision C61). Test: compiler/tests/run/bug_show_module.ei
+   (variants with and without payloads, records, Lists, generics, Option and Result of them,
+   `to_string`).
+
+**Oracle changes** (`BLESS=1`, reviewed): compiler/tests/run/modules.run prints `South`,
+`West`, `North`, `East` (was `geo__South` ...); modules.test names `compiler/tests/run/lib/
+geo.ei:46` (was the entry's `modules.ei:46`); the comptime evaluator's trap in an imported
+module names that module (e0807_comptime_mod_trap: `(compiler/tests/check/fail/../lib/
+ct_trap.ei:2)`, was `(program:2)`) and a trap in the prelude names it (e0807_comptime_unwrap:
+`(core/prelude.ei:26)`, was `(program:26)`); compiler/tests/pkgs/app/main.out prints `High`,
+`Foot`, `Edge` (was `base__High` ...); the compile-fail runner output follows the renamed,
+added and removed cases above. Nothing else changed.
+
+## C8.17: string escapes
+
+Wave 4, item 8.17 (docs/std.md "Needs the compiler", docs/services.md N2). Code: lex.ei
+(`string`, `hex_escape`, `unicode_escape`, `utf8_push`, and the join in `run`).
+
+**Escapes** in string literals, besides `\n`, `\t`, `\"` and `\\`:
+
+| Escape | Means | Refused (E0001, at the backslash) |
+|---|---|---|
+| `\r` | carriage return (13) | |
+| `\xNN` | the ASCII character NN: exactly two hex digits, either case, 01 to 7f | fewer than two digits; 80 to ff ("write a non-ASCII character as `\u{...}`"); 00 |
+| `\u{H...}` | the Unicode scalar value H (one to six hex digits), UTF-8 encoded | no braces, no or more than six digits, a surrogate (d800 to dfff), above 10ffff, 0 |
+| `\0` | | always: "a string can't contain NUL" |
+
+NUL is refused in every spelling (`\0`, `\x00`, `\u{0}`) because a `str` is a NUL-terminated
+C string (its length is `strlen`) and a String is UTF-8 text without NUL (std/strings and
+`String.from_bytes` rely on it): a NUL would silently cut the text. Bytes that include 0
+belong in a `List[u8]` (decision C60). `\xNN` stops at 7f for the same reason a String is
+always valid UTF-8: a lone byte above 7f isn't (Rust's rule too).
+
+**Adjacent literals** separated only by spaces on one line are one literal (`"GET / HTTP/1.1\r\n"
+"Host: x\r\n"` is one token): it was a syntax error before, so no program changes meaning.
+Literals on different lines are not joined: a string literal statement followed by another
+on the next line is valid today (the last is the block's value), so joining across lines
+would change programs; a continuation rule (inside parentheses, or a leading operator) is
+left for a later decision.
+
+**Syntax changes** (for the tree-sitter grammar, a separate repository): in the string
+token, the escape alternatives become `\\[nrt"\\]`, `\\x[0-7][0-9a-fA-F]` and
+`\\u\{[0-9a-fA-F]{1,6}\}` (`\0` stays an error); the grammar's string node may repeat
+(`string: $ => repeat1($._string_literal)` on one line), or keep one literal per node and
+leave joining to the compiler.
+
+**Tests.** Run: compiler/tests/run/escapes.ei (`\r\n`, `\x41\x7f\x1b`, `\u{...}` of one to four
+UTF-8 bytes up to 10FFFF, joined literals, a String built from joined literals, escaped
+backslashes; hand-checked .out); lexer: compiler/tests/lex/escape_*.ei (each refusal, with
+its position; the oracle records them) and compiler/tests/lex_ok/escapes.ei (the tokens: one
+literal for three joined ones, two for literals on two lines). No oracle file changed.
+
+## C8.18: type aliases
+
+Wave 4, item 8.18 (docs/services.md N1). Code: parse.ei (`type_decl`), ast.ei (IType's `g`),
+check.ei's "Type aliases" section (`alias_ty`, `alias_of`, `unify_alias`; pass 1 and 2 of
+`run`, `resolve_ty`, `unify_ast`, `register_impl`), dump.ei.
+
+`type Name = <type>` and `type Name[T, ...] = <type>` (any type but a record body `{...}`
+or variants `| ...`, which keep their meaning) declare an alias: another name for the type,
+not a new type. It is **transparent**: `type Id = u64` makes `Id` and `u64` the same type
+everywhere (assignable both ways, the same methods, the same C), and a mismatch names the
+type itself ("expected i32, found u64"). A generic alias is resolved at each use with its
+parameters bound to the use's arguments (`type Table[T] = List[(String, T)]`); in a generic
+signature its arguments take part in inference like any type's (`fn second[T](p: Pair[T])`
+infers T from a `(i32, i32)`). `pub type` exports an alias like any type (E0801 for a
+private one used from another module); it may name private types of its module (as a pub
+function's signature may). Rules, each the simplest sound one (decision C62):
+
+- An alias names a type only: it is not a constructor (`Pt(1)` for `type Pt = Point` is
+  "unknown function"), it brings no variant names, and an `impl` can't name it (**E0111**
+  "`Pt` is a type alias; an impl names the type itself": methods belong to the type).
+- A non-generic alias's type is checked at its declaration (an unknown type in it is E0111
+  there, in its own file); a generic one where it is used, like a generic type's fields.
+- An alias can't refer to itself, directly or through other aliases (`type A = List[A]`,
+  E0111 "type alias `A` refers to itself", with the help that a recursive type needs a record
+  or an enum); recursion through a record or enum is fine.
+- Type declarations still take no bounds, so `type M[K, V] = Map[K, List[V]]` is checked where
+  it is applied (a key type parameter of a generic function needs `K: Hash + Eq` as for
+  `Map` itself, E0605).
+
+**Syntax changes** (for the tree-sitter grammar): `type_item` gains an alternative
+`'type' name generics? '=' type` where `type` doesn't start with `{` or `|`. `type A = X | Y`
+(an enum missing its first `|`) stays the E0001 "expected `|`" it was.
+
+**Tests.** Run: compiler/tests/run/aliases.ei with lib/handlers.ei (scalar, tuple, List,
+fn and Option aliases, generic aliases with one and two parameters, an alias inside a record
+field, pub aliases and a generic alias of another module, a private alias in a pub
+signature; hand-checked .out). Compile-fail (compiler/tests/check/fail): `e0111_alias_cycle`,
+`e0111_alias_mutual_cycle`, `e0111_alias_needs_args`, `e0111_alias_unknown_target`,
+`e0111_alias_impl_target`, `e0107_alias_duplicate`, `e0801_alias_private` (with
+lib/alias_lib.ei), `e0401_alias_transparent`, `e0401_alias_generic_arg`. Parse:
+compiler/tests/parse_ok/aliases.ei. compiler/tests/parse/enum_missing_pipe.ei became
+`type A = X | Y` (same error, same position; `type A = X` is now an alias).
+
+## C8.19: calling a function stored in a field
+
+Wave 4, item 8.19 (docs/services.md N10). `x.f(args)` where x's type has a field `f` holding a
+function calls it; this was already accepted (since S3, `method_call_in`), so the item is the
+rule for a name that is both a field and a method, now stated and made consistent:
+
+**A method wins.** `x.f(...)` is the method f when x's type has one: its own (an `impl`,
+inherent or of a trait, that applies to the type), a built-in method, or a method of a
+language trait the type has, derived ones included (`copy`, `eq`, `compare`, `hash`, `show`,
+`to_string`). Only when there is none is a field f of function type called. The field of a
+clashing name is called through a binding: `let h = x.f; h(args)` (decision C63). Before,
+a derived trait method lost to a field of its name (`x.copy()` called a field `copy`), the
+one inconsistency, now fixed; nothing in the repository relied on it. A field that isn't a
+function stays E0115 ("type R has no method `v`"). Methods winning keeps every existing call
+meaning what it meant (fields could already be named like methods, e.g. a `len` field with a
+`len()` method), and a field never changes what a method call resolves to.
+
+Test: compiler/tests/run/fn_fields.ei (a handler field of an alias type called from a method
+and through a List element, a generic record's fn field, a field and a method of one name, a
+field named like the derived `copy`; hand-checked .out).
+
+## C8.20: iterating a Map
+
+Wave 4, item 8.20 (docs/std.md "Iterating a Map", docs/services.md N9). Code: check.ei
+(`for_each`, `for_pat`, `map_list_type`, `heap_method`'s Map part), parse.ei (`for (...)`),
+ir.ei (B_MAP_KEYS, B_MAP_VALUES, B_MAP_ENTRIES), lower.ei (`map_lists`).
+
+- `m.keys() -> List[K]`, `m.values() -> List[V]` and `m.entries() -> List[(K, V)]` are built-in
+  Map methods: new Lists of copies (copy-on-write shares for heap data, so O(n) small copies).
+- `for (k, v) in m` and `for e in m` (e a `(K, V)` tuple) iterate the pairs. The loop runs over
+  `m.entries()` taken before it starts (owned by the loop, dropped after it, on every exit),
+  so the body may insert into or remove from `m` and the loop still sees each pair from
+  before exactly once (value semantics; a live view would make every resize during the loop
+  an E0308).
+- `for` takes any irrefutable pattern, over every sequence (`for (n, (name, on)) in pairs`,
+  `for (mut n, _) in ps`): each binding owns a copy of its part, as a `for` variable does
+  (C8.6); a pattern that can fail is **E0101** "refutable pattern in `for`", a wrong shape
+  the pattern errors `let` gives (E0410 ...).
+
+**Order.** All four walk the slots in index order, so they agree with each other and with
+`print` of the Map. The slot of a key depends only on its hash and the Map's insertion and
+removal history, and hashing is unseeded today (`ei_hash_u64`, FNV-1a for text; C8.4), so the
+order is the same on every run, build and platform for the same history (tests can pin it). It
+is not sorted, and it is not insertion order. When Maps get a per-process random seed (the
+C6 hardening, seeded SipHash: docs/std.md "Next"), the order will differ from run to run:
+code that needs a stable order sorts the keys (std/sort), as compiler/tests/run/map_iter.ei
+does, and nothing in the language promises more than "each pair once, in one order shared by
+keys/values/entries/for/print of the same Map value" (decision C64).
+
+`keys`, `values` and `entries` become built-in names, so an `impl Map[...]` method with one of
+those names is E0116, as for `len` or `get` (no program in the repository has one).
+
+**Syntax changes** (for the tree-sitter grammar): `for_statement` takes a pattern in
+parentheses where it took a name: `'for' (identifier | tuple_pattern) 'in' expression block`.
+
+**Tests.** Run: compiler/tests/run/map_iter.ei (`for (k, v)`, `for e`, the three methods and
+their common order, a body that removes and inserts, an empty Map, Maps of records, tuple
+patterns over a List, nested and with `mut`; hand-checked .out, leak-free, sanitizers).
+Compile-fail: `e0101_for_refutable`, `e0410_for_pattern_shape`, `e0405_map_keys_args`,
+`e0116_impl_map_keys`; e0401_heap_for_map (a Map wasn't iterable) became
+`e0401_heap_for_box`. The `for` E0401 help now lists a Map: "iterate over a List, an array, a
+Map, a range ..." (oracle: the three cases with that help).
+
+## C8.15: take and replace
+
+Wave 4, the `take`/`replace` part of item 8.15 (C8.6 "Choices the charter left open": the
+successor of `var` for values without Copy). Code: check.ei (`take_replace`, reached from
+`method_call_in`).
+
+- `x.replace(v) -> T` moves the value out of the place x (a variable, field or element: no
+  copy, not even a copy-on-write share) and moves v in; the result is the old value. Any
+  type, including types without Copy (a record holding a Chan or a Task) and type parameters
+  (`fn swap_out[T](inout slot: T, v: T) -> T { slot.replace(v) }`).
+- `x.take() -> T` is `x.replace(empty)` for the types with an empty value: String (`""`),
+  List and Map (empty), Option (`None`). On any other type it is E0115 "type P has no method
+  `take`", with the help that names the four and `replace`. (C8.23 widened it to every type
+  with a `Default`; on a type parameter it needs `T: Default`.)
+- They are methods of every type that has no method of that name: a type's own `take` or
+  `replace` (std/stream's BufReader has a `take`) wins, as C8.19 decides for every method
+  name. They are not free functions, because `take` and `replace` are common function names
+  (compiler/tests name functions `take` in entry files, where a built-in function name is
+  reserved).
+- x must be a writable place: a read-only binding is E0303 as for any write (`cannot modify
+  `s``), a fresh value is E0303 "`List[i32].take` needs a place to move the value out of".
+  The write is an assignment for the protection rule (E0308 while a reference points into
+  x, compiler/tests/check/fail/e0308_take_while_referenced.ei).
+- IR: `old := S_MOVE x; S_STORE x := new` (no S_DROP: the old value moved out, so nothing is
+  dropped or copied); lowering un-shares the containers on x's path first, as for any write,
+  so taking from a copy-on-write share leaves the other holder intact.
+
+The pattern `let k = t.kids; t.kids = List.new()` that needed `var` (a copy) is now `let k =
+t.kids.take()`. After the seed learned take/replace, std's 106 `var`s (none were left in
+packages/ or examples/) moved to `let mut` with `take`/`replace` or `.copy()` case by case
+(decision C100); 6 remain, shares of generic or Copy-less values out of read-only parameters
+(std/sort's `var a = xs`, std/task's `var t = s` in its Lock closures).
+
+Tests: compiler/tests/run/take_replace.ei (a List field of a recursive record, a String, a
+Chan inside a List element, an `inout self` method, Option, Map, an integer, an own `take`
+winning, a generic `replace` through `inout`, copy-on-write independence; hand-checked .out,
+leak-free, sanitizers); compile-fail `e0115_take_no_empty`, `e0303_take_fresh`,
+`e0303_replace_read_only`, `e0401_replace_type`, `e0308_take_while_referenced`.
+
+## C8.21: error conversion for `?`
+
+Wave 4, item 8.21 (roadmap P0.6, its compiler part; docs/std.md "Error conversions for `?`").
+Code: core/prelude.ei (`trait From`), parse.ei (`impl_decl`), check.ei's "Error conversion"
+section (`register_from`, `find_from`, `from_instance`, `from_call`) and `try_op`,
+`instantiate` (instance names).
+
+**The trait.** The prelude ends with `trait From { fn from(value: Source) -> Self }` (after
+the operation traits, so no recorded prelude position moves; `Source` is a placeholder read
+off each impl, as `Iter`'s `Item` is). It is the one trait that takes a type argument in an
+impl: `impl From[E1] for E2 { fn from(value: E1) -> E2 { ... } }` (`-> Self` too; generic:
+`impl[T] From[T] for Tagged[T]`). A target may convert from any number of sources, one impl
+per source (E0107 for a second). As for the operation traits (C8.4):
+
+- the orphan rule: only the package that defines the target implements `From` for it
+  (**E0604**, "only the package that defines `String` can implement `From` for it"); the
+  source may be any type;
+- the method is exactly `fn from(value: Source) -> Target` (**E0602** otherwise, saying the
+  expected signature), and it declares no capabilities (E0602 "`from` can't declare
+  capabilities": `?` converts wherever it is written, as C8.4's `drop` runs wherever its
+  value goes);
+- `impl From for X` without the source is **E0603**; type arguments on any other trait are
+  E0603 "trait `Show` takes no type arguments";
+- a program whose entry module defines its own `From` trait shadows the prelude's (C8.4).
+
+**`?`.** In a function returning `Result[T2, E2]`, `x?` on a `Result[T1, E1]` with E1 not E2
+returns `Err(E2.from(e))` when some impl converts E1 into E2 (its type parameters bound by
+both); the error value is moved out, borrowed by `from`, then dropped. Without one it stays
+E0401 "`?` can't convert the error type A into B", which now has the help "implement
+`From[A]` for B (in its package), or convert with `match`" when B is a record or enum (no
+recorded case has one). Option's `?` is unchanged.
+
+**Calls.** `E2.from(x)` checks x first and picks the impl whose source fits x's type (and the
+expected type, for a generic target); none is E0401 "`E` has no `From` conversion from bool".
+`from` is not an ordinary method of E2 (it isn't in the method table, so several impls never
+clash), and its instances are named by source (`AppError.from[IoError]`).
+
+No `Into`, no blanket conversions (`impl[T] From[T] for T`), no `Error` trait or context
+chains yet: those are the std half of P0.6 (decision C66).
+
+**Tests.** Run: compiler/tests/run/from_try.ei (two sources into one enum, `?` through both in
+one function, no conversion when the types agree, explicit `AppError.from(...)` choosing by
+argument, a generic target `Tagged[T]`; hand-checked .out, leak-free, sanitizers).
+Compile-fail: `e0604_from_orphan`, `e0602_from_signature`, `e0602_from_caps`,
+`e0603_from_no_source`, `e0603_trait_type_args`, `e0107_from_twice`, `e0401_from_call_no_impl`,
+`e0401_try_no_from`. Oracle: the IDE goldens' prelude symbol count (90 to 93: the trait, its
+method and its parameter), and compiler/tests/parse/impl_trait_not_name.ei, which named
+`List[i32]` as a trait and now uses a tuple (`impl (i32, i32) for A`; same error, column 21)
+since a generic trait name parses.
+
+## C8.22: `while let` and labeled loops
+
+Wave 4, item 8.22, first half (labeled loops below). `while let PAT = EXPR { body }` runs the body while EXPR (checked
+again before each iteration) matches PAT, with PAT's bindings in scope; `break` and
+`continue` are the loop's. Like `if let`, it is sugar the parser expands (parse.ei
+`while_let`): `while true { match EXPR { PAT => { body } _ => { break } } }`, so the checker,
+the protection rule, drops and lowering need nothing new, and a scrutinee that is a place
+binds references into it as `match` does (C8.6). A value that doesn't match is consumed
+like any match scrutinee (`while let Some((1, s)) = xs.pop()` drops the first pair that
+isn't `(1, _)`).
+
+**Syntax changes** (for the tree-sitter grammar): `while_statement` gains `'while' 'let'
+pattern '=' expression block`.
+
+Tests: compiler/tests/run/while_let.ei (popping a stack, `continue` and `break`, walking a
+linked list through a Box, a refutable tuple pattern inside Some; hand-checked .out,
+leak-free, sanitizers); parse: compiler/tests/parse_ok/while_let.ei (the expansion).
+
+**Labeled loops** (the second half; decision C124). A `for` or `while` (also `while let`)
+may be labeled with a name and a colon before its keyword; `break name` and `continue name`
+leave or continue that loop from anywhere inside it, nested loops included:
+
+```eider
+rows: for i in 0..grid.len() {
+    for j in 0..grid[i].len() {
+        if grid[i][j] == want {
+            found = Some((i, j))
+            break rows
+        }
+        if grid[i][j] < 0 { continue rows }
+    }
+}
+```
+
+- **Syntax.** Go's and Zig's shape, not Rust's `'outer`: a label is an ordinary identifier, so
+  the lexer needs no new token. `name: for` / `name: while` at the start of a statement is a
+  label exactly when an identifier, a `:` and the keyword `for` or `while` follow each other
+  (no statement could start that way before, so every valid program keeps its meaning);
+  `break name` / `continue name` take the identifier on the same line (before, an
+  identifier after `break` was a syntax error). Labels are their own namespace: a variable
+  may have a label's name.
+- **Rules.** The label must be one of an enclosing loop of the same function: otherwise
+  E0306 "no enclosing loop is labeled `x`" (at the label; a closure is a function, so a
+  closure's body can't leave a loop around the closure: E0306 as for a plain `break` there).
+  A loop can't reuse the label of a loop around it (E0107 "label `outer` is already the label
+  of an enclosing loop"); loops that don't enclose each other may share one. An unused label
+  is fine. Without a label, `break`/`continue` are the innermost loop's, as before.
+- **Drops.** A labeled exit drops everything the loops it leaves own, innermost first (the
+  frames from the target loop's base), as `return` does for the function.
+- **Checker.** `loop_labels` runs in step with `loop_bases`; `loop_exit` finds the target
+  and emits S_BREAK/S_CONTINUE with `a` = how many loops it leaves besides the innermost
+  (0 for every unlabeled exit and for a label naming the innermost loop, so the IR of every
+  existing program is unchanged). The protection rule's liveness (`lv_block`, `lv_loop`)
+  carries a stack of the live sets at each enclosing loop's `break` and `continue`, so a
+  labeled exit continues where it really goes (compiler/tests/check/pass/
+  c822_label_liveness.ei is accepted only because of that).
+- **Lowering.** A loop that a nested loop continues gets the step label it already had for
+  `continue` (`s<n>:` before its step; also when its step is empty), and the nested
+  `continue name` is `goto s<n>`; a loop that a nested loop breaks out of gets a label right
+  after it (`b<n>:;`) and the nested `break name` is `goto b<n>`. Labels are numbered per
+  function; loops without labeled exits are emitted as before (`exits_to`).
+
+**Syntax changes** (for the tree-sitter grammar): `labeled_statement: identifier ':'
+(for_statement | while_statement)`; `break_statement` and `continue_statement` take an
+optional `identifier`.
+
+Tests: compiler/tests/run/labels.ei (`break` out of two loops in a search, `continue` of a
+range loop and of a `while` (no step) from a nested loop, three levels with exits to the
+middle and outer loops, a labeled `while let`, owned values in the loops left; hand-checked
+.out, leak-free, sanitizers); compile-fail `e0306_unknown_label`, `e0306_label_of_sibling`,
+`e0306_label_across_closure`, `e0107_label_shadowed`, `e0308_label_continue_inner`
+(compiler/tests/check/fail) and tests/checks/fail/e0306_unknown_label; pass
+`c822_label_reused`, `c822_label_liveness`; parse: compiler/tests/parse_ok/labels.ei.
+
+## C8.23: `Default`
+
+Wave 5 (roadmap "Default/From/Into/Error"; the successor C8.15 left for `take`). Code:
+core/prelude.ei (`trait Default`), check.ei's "Operation traits" (TR_DEFAULT,
+`lacks_default`), `take_replace`, `default_op`, `default_call`, `static_head_ty` and the
+type-parameter branch of `method_call_in`; ir.ei (B_DEFAULT); lower.ei's "Default" section
+(`default_expr`, `default_glue`).
+
+**The trait.** The prelude ends with `trait Default { fn default() -> Self }` (after
+`From`, so no recorded prelude position moves). It is the eighth operation trait (C8.4's
+machinery: derived when the parts have it, an own impl replaces the derived one everywhere,
+the orphan rule E0604, the exact signature E0602, a program's own `trait Default` shadows
+it), and the only one whose method is an associated function (no `self`):
+
+| Type | Default |
+|---|---|
+| integers, bool | `0`, `false` |
+| str, String | `""` |
+| `()` | `()` |
+| List, Map | empty, whatever they hold |
+| Option | `None`, whatever it holds |
+| records | derived when every field has one: each field's default |
+| tuples, arrays, Box | derived from the parts |
+| other enums, Result | only an own `impl Default for E` (which variant is the default is a choice) |
+| a record with its own Drop | only an own impl (a resource isn't made from nothing) |
+| fn values, Task, Mutex, Chan, Ref | none |
+
+**Calls.** `T.default()` with `T` a type name: `Config.default()`, `i32.default()`,
+`Level.default()` (an own impl), and a generic type when the expected type gives its
+arguments (`let xs: List[i32] = List.default()`; E0409 otherwise). In a generic body,
+`T.default()` on a type parameter T needs `T: Default` (E0605 with the fix that adds the
+bound), and a call of a function with that bound needs a type that has it (E0601 "type
+Chan[i32] doesn't implement trait `Default` (required by `fresh`)"). A type without it is
+E0601 at the call, naming the part that lacks it. `x.default()` is no call (E0115), as for
+any associated function. This also makes associated functions of type parameters callable in
+general: `T.make()` in a body generic over T calls the `make` of the type T stands for
+(found the way `Type.make()` is), where it was E0110 "unknown name `T`" before.
+
+**`take`.** `x.take()` is `x.replace(T.default())` for every type with a Default (decision
+C126): it was String, List, Map and Option only. Those four keep exactly the IR and C they
+had; the other types get their default from B_DEFAULT or their own `default`. On a type
+without one it stays E0115, with the help "`take()` leaves the type's `Default` value
+behind (...), and this type has none; implement `Default` for it, or use `x.replace(v)`".
+On a type parameter it needs `T: Default` (E0605): before, `take` in a generic body
+compiled for the instances whose type had an empty value and failed inside the others (the
+hole C8.15 noted); now the body states the bound.
+
+**Lowering.** `default_expr` writes the built-in defaults inline (`0`, `false`, `""`,
+`ei_str_from("")`, `(T){0}` for an empty List or Map, the None literal), calls an own impl,
+and otherwise a `default_T()` glue that fills each part (`T r = {0}; r.f0 = ...`). Nothing
+changes for a program that doesn't call `default` or `take` on a new type: no glue, the same
+C (checked for every run test, benchmark, example and eiderc itself).
+
+**Oracle changes** (`BLESS=1`, reviewed): the IDE goldens' prelude symbol count (two more:
+the trait and its method); compiler/tests/check/fail/e0115_take_no_empty.ei used a record of
+an i32, which has a Default now, so it holds a Chan instead (same error, same position), and
+its help is the new one.
+
+**Tests.** Run: compiler/tests/run/defaults.ei (every built-in default, a derived record of
+all of them, an own impl for an enum and for a record used inside a derived one, generic
+`T.default()`, `take` in generic code with the bound, `take` of records, enums, integers and
+tuples, the four of before; hand-checked .out, leak-free, sanitizers). Compile-fail
+(compiler/tests/check/fail): `e0605_take_needs_default`, `e0605_default_needs_bound`,
+`e0601_default_enum`, `e0601_default_part`, `e0601_default_bound_unmet`,
+`e0601_default_drop_record`, `e0115_default_as_method`, `e0115_take_enum_no_default`,
+`e0604_default_orphan`, `e0602_default_signature`, `e0409_default_generic_head`;
+tests/checks/fail/e0605_take_type_param.
+
+## C8.24: `Error`, `Failure` and context (std/error)
+
+Roadmap P0.6, the language half after C8.21's `From` for `?`: an `Error` trait with a
+message and a cause, error values that print their chain, and `.context(...)` that works
+with `?` and `From`. Code: std/error.ei (new module); no compiler change.
+
+```eider
+import "std/error"
+
+type ParseError = { line: u32, what: String }
+
+impl error.Error for ParseError {
+    fn message(self) -> String { self.what.copy() }
+    fn source(self) -> Option[error.Failure] { None }
+}
+
+fn settings(text: String) -> Result[Config, error.Failure] {
+    let port = parse_port(text)?                          // From: ParseError -> Failure
+    let cfg = parse(text).context("parsing the config")?  // context around any Error
+    Ok(cfg)
+}
+// an Err prints as `parsing the config: expected a number`
+```
+
+- **`trait Error { fn message(self) -> String  fn source(self) -> Option[Failure] }`**: what
+  an error type implements to be reported and wrapped. `source` is the error under it, as a
+  Failure: without dynamic types (P0.7) a cause can't be "any Error", so a chain is a chain
+  of Failures, and `Failure.of(e)` turns any Error (with its sources) into one.
+- **`type Failure = { message: String, cause: Option[Box[Failure]] }`**: an error as a chain
+  of messages, outermost first. `Failure.new(msg)`, `f.wrap(msg)` (a new outer message),
+  `f.chain()` (every message), `f.root()` (the innermost), `f.source()`; it implements
+  Error itself, and Show prints `outer: inner: root`.
+- **Context.** `r.context("...")` on a `Result[T, E]` with `E: Error` (E0601 "type bool
+  doesn't implement trait `error.Error` (required by `Result.context`)" otherwise) is
+  `Result[T, Failure]` with the message around the error; `r.with_context(|| ...)` makes
+  the message only on an error (nothing runs on success); `o.context("...")` on an Option
+  makes None a Failure. Wrapping a Failure in context keeps its chain (it is an Error).
+- **`?` and From.** `impl[E: Error] From[E] for Failure`, so in a function returning
+  `Result[T, Failure]` every `x?` on a `Result[_, E: Error]` converts (C8.21; a Failure
+  passes unchanged). An application error converts from a Failure with its own
+  `impl From[error.Failure] for AppError`, and then `?` goes on working across layers.
+
+**Why std, not the prelude** (decision C127). (1) The prelude is compiled by the seed
+whenever anything is built (scripts/ei builds the compiler with it), and the impls a
+prelude Failure needs (its Show, its `From`) are impls of language traits for a prelude
+type, which the orphan rule rejects in the prelude itself, so the prelude can't hold them
+until a seed that exempts it; std/error compiles with the seed as it is (tests: it builds
+with both). (2) Layering (LAYERS.md): the language part of P0.6, `?` converting through
+`From`, is in the prelude (C8.21); how an error is reported (a chain of messages, the `: `
+text) is library policy, which std owns and can change without a compiler release. (3) Zero
+cost: a program that doesn't import std/error doesn't parse it, and one that does pays only
+for what it calls (generic methods are instantiated on use; `with_context` builds nothing on
+success).
+
+Tests: compiler/tests/run/errors_context.ei (an Error impl with and without a source, `?`
+through `From`, `.context` and `.with_context` on Results, `.context` on Options, the
+chain, the root, a Failure into an application error by `From`, printing; hand-checked .out,
+leak-free, sanitizers); compile-fail `e0601_context_needs_error`, `e0401_failure_no_from`.
+
+**Remaining.** `dyn Error` causes (P0.7); `main` returning `Result[(), Failure]` printing
+the chain (C8.2's list of printable `Err`s); std/stream's `Error` and the other std errors
+implementing `error.Error` (8.9, std's owners).
+
+## C8.25: method chains across lines
+
+docs/services.md N13. Code: parse.ei (`at_chain_line`, `postfix`).
+
+A line whose first token is `.` continues the expression of the line before it: the
+newline (and any blank or comment-only lines between) is not a separator there.
+
+```eider
+let op = openapi.op("GET", "/users/:id")
+    .summary("Get a user")
+    .param(openapi.path("id", openapi.string()))
+    // the success response
+    .response(200, "the user", user_schema)
+```
+
+**The rule, precisely** (decision C128): in a postfix chain (after an operand, a call, an
+index, a field or a method call), when the next token is a newline and the first token
+after the run of newlines is `.`, the newlines are skipped and the chain goes on with that
+`.`. Nothing else changes: a line ending with `.` is still an error (the field name must
+follow on the same line), operators at the start of a line still start a new statement (a
+line starting with `-` or `+` is a statement of its own today, so continuing there would
+change programs), and `..` (a range) is another token. **No valid program changes
+meaning**: no statement or expression can start with `.`, so before this a line starting
+with `.` was always E0001 "expected an expression" (the seed reports exactly that for
+compiler/tests/run/chains.ei).
+
+**Syntax changes** (for the tree-sitter grammar): the newline is an extra (skipped) before
+a `.` that continues a `field_expression`/`call_expression`, e.g. with an external scanner
+that drops a newline whose next non-blank line starts with `.`.
+
+Tests: compiler/tests/run/chains.ei (builder methods over several lines with a blank and a
+comment line between, fields and tuple fields, a chain as a block's value and inside call
+arguments, a line not starting with `.` ending the statement; hand-checked .out);
+compiler/tests/parse_ok/chains.ei (the AST: one chain).
+
 ## Language work that lands in `eiderc` (after parity)
 
 Each with a design note, compile-fail tests and new codes:
@@ -1305,7 +2553,7 @@ Each with a design note, compile-fail tests and new codes:
    declare and propagate the real capabilities (`fs`, `io`, ...). `core` is the one package
    granted `ffi` by the toolchain. Result: std callers write `uses fs`, never `uses ffi`, and
    the package manager's text scan is replaced by the compiler reporting each package's
-   capability use.
+   capability use. Done ("C8.5: capabilities per package").
 6. Multiple diagnostics per run.
 
 ## Milestones

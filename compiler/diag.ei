@@ -24,17 +24,17 @@ pub const MAX_ERRORS: u64 = 100
 
 /// Whether two diagnostics report the same error: code, place and message (the help and
 /// the fix can differ: a comptime evaluator reports a missing capability without its fix).
-pub fn same(a: Diag, b: Diag) -> bool uses ffi {
+pub fn same(a: Diag, b: Diag) -> bool {
     a.line == b.line && a.col == b.col && bytes.eq(sys.lit(a.code), sys.lit(b.code)) && bytes.eq(a.file, b.file) &&
         bytes.eq(a.msg, b.msg)
 }
 
 /// `ds` without repetitions (a later report of an earlier error is dropped; passes can find
 /// one error twice, e.g. a comptime evaluator and the checker).
-pub fn dedup(ds: List[Diag]) -> List[Diag] uses ffi {
-    var out: List[Diag] = List.new()
+pub fn dedup(ds: List[Diag]) -> List[Diag] {
+    let mut out: List[Diag] = List.new()
     for d in ds {
-        var dup = false
+        let mut dup = false
         for x in out {
             if same(x, d) {
                 dup = true
@@ -47,16 +47,16 @@ pub fn dedup(ds: List[Diag]) -> List[Diag] uses ffi {
 }
 
 /// The summary after the diagnostics (human output): `error: 1 error`, `error: 3 errors`.
-pub fn summary(n: u64) -> List[u8] uses ffi {
-    var s = sys.lit("error: ")
+pub fn summary(n: u64) -> List[u8] {
+    let mut s = sys.lit("error: ")
     num(inout s, n)
     if n == 1 { bytes.append(inout s, sys.lit(" error")) } else { bytes.append(inout s, sys.lit(" errors")) }
     s
 }
 
 /// The note when only `shown` of `total` diagnostics are shown (`--max-errors`).
-pub fn capped_note(shown: u64, total: u64) -> List[u8] uses ffi {
-    var s = sys.lit("only the first ")
+pub fn capped_note(shown: u64, total: u64) -> List[u8] {
+    let mut s = sys.lit("only the first ")
     num(inout s, shown)
     bytes.append(inout s, sys.lit(" of "))
     num(inout s, total)
@@ -65,8 +65,8 @@ pub fn capped_note(shown: u64, total: u64) -> List[u8] uses ffi {
 }
 
 /// capped_note as a JSON line (`--json`).
-pub fn capped_json(shown: u64, total: u64) -> List[u8] uses ffi {
-    var s = sys.lit("{\"note\":")
+pub fn capped_json(shown: u64, total: u64) -> List[u8] {
+    let mut s = sys.lit("{\"note\":")
     jstr(inout s, capped_note(shown, total))
     s.push(125)
     s
@@ -76,12 +76,13 @@ pub fn capped_json(shown: u64, total: u64) -> List[u8] uses ffi {
 /// one list: `eiderc test --compile-fail` measures its coverage line against it, so a new
 /// code is added here together with its compile-fail test. (`unsupported` is eiderc's
 /// marker for a feature it doesn't implement yet, not a code of the language.)
-pub fn all_codes() -> List[List[u8]] uses ffi {
-    var out: List[List[u8]] = List.new()
+pub fn all_codes() -> List[List[u8]] {
+    let mut out: List[List[u8]] = List.new()
     for c in [
         "E0001", "E0002", "E0101", "E0102", "E0103", "E0107", "E0108", "E0110", "E0111", "E0112", "E0113",
-        "E0114", "E0115", "E0116", "E0201", "E0203", "E0301", "E0302", "E0303", "E0304", "E0305", "E0306", "E0401",
-        "E0402", "E0405", "E0406", "E0409", "E0410", "E0501", "E0502", "E0503", "E0504", "E0505", "E0506", "E0601", "E0602", "E0603",
+        "E0114", "E0115", "E0116", "E0201", "E0203", "E0204", "E0301", "E0302", "E0303", "E0304", "E0305", "E0306", "E0307", "E0308", "E0401",
+        "E0402", "E0405", "E0406", "E0409", "E0410", "E0411", "E0501", "E0502", "E0503", "E0504", "E0505", "E0506", "E0601", "E0602", "E0603",
+        "E0604", "E0605", "E0606",
         "E0701", "E0801", "E0802", "E0803", "E0804", "E0805", "E0806", "E0807", "E0808",
         "E0809", "E0810",
     ] { out.push(sys.lit(c)) }
@@ -92,10 +93,10 @@ pub fn all_codes() -> List[List[u8]] uses ffi {
 /// Unicode scalar values; past the end means the end), delete `f.delete` bytes and insert
 /// `f.insert`.
 pub fn apply_fix(src: List[u8], f: Fix) -> List[u8] {
-    var line: u32 = 1
-    var col: u32 = 1
-    var idx = src.len()
-    var i: usize = 0
+    let mut line: u32 = 1
+    let mut col: u32 = 1
+    let mut idx = src.len()
+    let mut i: usize = 0
     while i < src.len() {
         let b = src[i]
         // UTF-8 continuation bytes are part of the character before them
@@ -113,9 +114,9 @@ pub fn apply_fix(src: List[u8], f: Fix) -> List[u8] {
         }
         i += 1
     }
-    var end = src.len()
+    let mut end = src.len()
     if (f.delete as usize) < src.len() - idx { end = idx + (f.delete as usize) }
-    var out = bytes.slice(src, 0, idx)
+    let mut out = bytes.slice(src, 0, idx)
     bytes.append(inout out, f.insert)
     bytes.append(inout out, bytes.slice(src, end, src.len()))
     out
@@ -129,8 +130,8 @@ fn alpha(c: u8) -> bool { (c >= 65 && c <= 90) || (c >= 97 && c <= 122) }
 /// `util__0json` shows as its stem `util` (resolve.ei module_name): from `__0` to the
 /// next `__` is dropped.
 pub fn demangle(s: List[u8]) -> List[u8] {
-    var out: List[u8] = List.new()
-    var i: usize = 0
+    let mut out: List[u8] = List.new()
+    let mut i: usize = 0
     while i < s.len() {
         if s[i] == 95 && i + 2 < s.len() && s[i + 1] == 95 && i > 0 && s[i + 2] == 48 {
             i += 3
@@ -149,7 +150,7 @@ pub fn demangle(s: List[u8]) -> List[u8] {
 fn num(inout out: List[u8], n: u64) { bytes.append(inout out, bytes.from_u64(n)) }
 
 /// Debug-style quoting of a string (used for fixes, and by dumps): quotes plus \" \\ \n \t \r and \u{..} for other controls.
-pub fn debug_str(inout out: List[u8], s: List[u8]) uses ffi {
+pub fn debug_str(inout out: List[u8], s: List[u8]) {
     out.push(34)
     for c in s {
         if c == 34 || c == 92 {
@@ -173,7 +174,7 @@ pub fn debug_str(inout out: List[u8], s: List[u8]) uses ffi {
 }
 
 fn hex_min(c: u8) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     let hi = c / 16
     let lo = c % 16
     if hi > 0 { out.push(hex_digit(hi)) }
@@ -187,15 +188,15 @@ fn hex_digit(n: u8) -> u8 {
 }
 
 fn line_of(src: List[u8], n: u32) -> Option[List[u8]] {
-    var line: u32 = 1
-    var start: usize = 0
-    var i: usize = 0
+    let mut line: u32 = 1
+    let mut start: usize = 0
+    let mut i: usize = 0
     while i <= src.len() {
         if i == src.len() || src[i] == 10 {
             if line == n {
                 if i == src.len() && start == i { return None }
                 // lines end at \n, and a trailing \r is part of the line ending (\r\n)
-                var end = i
+                let mut end = i.copy()
                 if end > start && src[end - 1] == 13 { end -= 1 }
                 return Some(bytes.slice(src, start, end))
             }
@@ -208,8 +209,8 @@ fn line_of(src: List[u8], n: u32) -> Option[List[u8]] {
 }
 
 /// error[CODE]: msg / --> file:L:C / source line with a caret / help / fix
-pub fn render(d: Diag, file: List[u8], src: List[u8]) -> List[u8] uses ffi {
-    var s = sys.lit("error[")
+pub fn render(d: Diag, file: List[u8], src: List[u8]) -> List[u8] {
+    let mut s = sys.lit("error[")
     bytes.append(inout s, sys.lit(d.code))
     bytes.append(inout s, sys.lit("]: "))
     bytes.append(inout s, d.msg)
@@ -224,7 +225,7 @@ pub fn render(d: Diag, file: List[u8], src: List[u8]) -> List[u8] uses ffi {
     match line_of(src, ln + 1) {
         Some(text) => {
             let n = bytes.from_u64((ln + 1) as u64)
-            var pad: List[u8] = List.new()
+            let mut pad: List[u8] = List.new()
             for i in 0..n.len() { pad.push(32) }
             bytes.append(inout s, pad)
             bytes.append(inout s, sys.lit(" |\n"))
@@ -234,7 +235,7 @@ pub fn render(d: Diag, file: List[u8], src: List[u8]) -> List[u8] uses ffi {
             s.push(10)
             bytes.append(inout s, pad)
             bytes.append(inout s, sys.lit(" | "))
-            var k: u32 = 1
+            let mut k: u32 = 1
             while k < d.col {
                 s.push(32)
                 k += 1
@@ -266,7 +267,7 @@ pub fn render(d: Diag, file: List[u8], src: List[u8]) -> List[u8] uses ffi {
 }
 
 /// A JSON string literal.
-fn jstr(inout out: List[u8], s: List[u8]) uses ffi {
+pub fn jstr(inout out: List[u8], s: List[u8]) {
     out.push(34)
     for c in s {
         if c == 34 {
@@ -288,9 +289,9 @@ fn jstr(inout out: List[u8], s: List[u8]) uses ffi {
     out.push(34)
 }
 
-pub fn json(d: Diag, file: List[u8]) -> List[u8] uses ffi {
+pub fn json(d: Diag, file: List[u8]) -> List[u8] {
     let f = if d.file.len() > 0 { d.file } else { file }
-    var s = sys.lit("{\"error\":\"")
+    let mut s = sys.lit("{\"error\":\"")
     bytes.append(inout s, sys.lit(d.code))
     bytes.append(inout s, sys.lit("\",\"span\":{\"file\":"))
     jstr(inout s, f)

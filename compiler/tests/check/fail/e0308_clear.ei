@@ -1,0 +1,8 @@
+// expect: E0308 6:8
+fn main() uses io {
+    var xs: List[String] = List.new()
+    xs.push(String.from("a"))
+    let s = xs[0]
+    xs.clear()
+    print(s)
+}

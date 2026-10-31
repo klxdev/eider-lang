@@ -1,0 +1,1 @@
+{"error":"E0307","span":{"file":"compiler/tests/check/fail/e0307_let_mut_of_ref.ei","line":7,"col":17},"message":"`let mut q` would be a mutable alias of `r`, which is read-only","help":"an alias can't add write access; take an independent value with `.copy()`","fix":{"at":{"line":7,"col":20},"delete":0,"insert":".copy()"}}

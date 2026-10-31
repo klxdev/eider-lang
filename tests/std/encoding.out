@@ -1,0 +1,49 @@
+00017f80feff
+00017F80FEFF
+true
+err bad length at offset 3
+err invalid byte at offset 0
+err invalid byte at offset 1
+ok ""
+ ->  |  | back: ok ""
+f -> Zg== | Zg | back: ok "f"
+fo -> Zm8= | Zm8 | back: ok "fo"
+foo -> Zm9v | Zm9v | back: ok "foo"
+foob -> Zm9vYg== | Zm9vYg | back: ok "foob"
+fooba -> Zm9vYmE= | Zm9vYmE | back: ok "fooba"
+foobar -> Zm9vYmFy | Zm9vYmFy | back: ok "foobar"
++/+/
+-_-_
+true
+true
+rejections
+err invalid byte at offset 4
+err bad padding at offset 2
+err bad padding at offset 2
+err bad padding at offset 4
+err invalid byte at offset 1
+err non-canonical trailing bits at offset 1
+err invalid byte at offset 0
+err bad padding at offset 2
+ok "f"
+ok "f"
+ok "f"
+err bad length at offset 5
+true
+integers
+01020201ffffffff04030201fffffffffffffffffeffffff8000000000000000ffffffffffffffff
+Some(258)
+Some(258)
+Some(4294967295)
+Some(16909060)
+Some(18446744073709551615)
+Some(-2)
+Some(-9223372036854775808)
+Some(-1)
+None
+None
+-2147483648
+-9223372036854775808
+18446744073709551615
+2147483647
+exit 0

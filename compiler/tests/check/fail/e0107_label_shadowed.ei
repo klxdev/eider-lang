@@ -1,0 +1,6 @@
+// expect: E0107 4:9
+fn main() {
+    outer: for i in 0..3 {
+        outer: while true { break outer }
+    }
+}

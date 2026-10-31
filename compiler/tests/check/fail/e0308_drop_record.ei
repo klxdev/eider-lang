@@ -1,0 +1,11 @@
+// expect: E0308 9:5
+type R = { xs: List[i32] }
+impl Drop for R {
+    fn drop(inout self) {}
+}
+fn main() uses io {
+    var r = R(List.new())
+    let xs = r.xs
+    r = R(List.new())
+    print(xs.len())
+}

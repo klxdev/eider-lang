@@ -1,0 +1,8 @@
+// A label may be reused by loops that don't enclose each other (docs/compiler.md, "C8.22").
+fn main() {
+    rows: for i in 0..3 { if i == 1 { break rows } }
+    rows: for j in 0..3 { if j == 2 { continue rows } }
+    // a variable may share a label's name
+    let rows = 1
+    let x = rows + 1
+}

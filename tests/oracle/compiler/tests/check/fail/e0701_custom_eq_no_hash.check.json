@@ -1,0 +1,1 @@
+{"error":"E0701","span":{"file":"compiler/tests/check/fail/e0701_custom_eq_no_hash.ei","line":7,"col":12},"message":"Name can't be a Map key: Name has its own `Eq` but a derived `Hash`","help":"equal keys must hash alike: implement `Hash` for it too"}

@@ -1,0 +1,9 @@
+// expect: E0308 7:8
+fn main() uses io {
+    var xs: List[List[i32]] = List.new()
+    xs.push(List.new())
+    xs[0].push(1)
+    let n = xs[0][0]
+    xs.pop()
+    print(n)
+}

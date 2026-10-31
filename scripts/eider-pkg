@@ -7,4 +7,8 @@ if [ ! -x "$bin" ] || [ -n "$newest" ]; then
   mkdir -p "$root/target"
   EIDER_CACHE=off "$root/scripts/ei" build "$root/packages/pkg/main.ei" -o "$bin" || exit 3
 fi
+# eider-pkg asks the compiler what each package uses (`eiderc caps`, docs/compiler.md "C8.5:
+# capabilities per package"): $EIDERC, else $EIDER_ROOT/target/eiderc, which scripts/ei
+# (re)builds from the seed.
+[ -n "$EIDERC" ] || "$root/scripts/ei" --help >/dev/null || exit 3
 EIDER_ROOT="${EIDER_ROOT:-$root}" exec "$bin" "$@"

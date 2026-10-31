@@ -18,7 +18,7 @@ fn add_twice(inout a: Acc, v: i32) {
 }
 
 fn swap(inout x: i32, inout y: i32) {
-    let t = x
+    let t = x.copy()
     x = y
     y = t
 }
@@ -28,7 +28,7 @@ fn fill(inout row: [u8; 3], v: u8) {
 }
 
 fn rename(inout g: Grid, n: str) -> str {
-    let old = g.name
+    let old = g.name.copy()
     g.name = n
     old
 }
@@ -65,7 +65,7 @@ fn main() uses io {
     fill(inout g.cells[1], 10)
     fill(inout g.cells[0], 20)
     print(g.cells[1][2] as u32 + g.cells[0][0] as u32)
-    let copy = g
+    let copy = g.copy()
     print(rename(inout g, "second"))
     print(g.name)
     print(copy.name)

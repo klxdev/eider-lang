@@ -1,0 +1,27 @@
+error[E0401]: expected bool, found i32
+  --> compiler/tests/check/multi/refs.ei:14:19
+   |
+14 |     let b: bool = 3
+   |                   ^
+error[E0307]: `let mut p` would be a mutable alias of `o`, which is read-only
+  --> compiler/tests/check/multi/refs.ei:5:17
+  |
+5 |     let mut p = o
+  |                 ^
+  help: an alias can't add write access; take an independent value with `.copy()`
+  fix: at 5:18 delete 0 insert ".copy()"
+error[E0308]: can't call `push` on `xs` while `a` refers into it
+  --> compiler/tests/check/multi/refs.ei:13:8
+   |
+13 |     xs.push(Order(2))
+   |        ^
+  help: `a` is used after this change, which may free, move or replace what it refers to; use it before the change, or bind a copy with `.copy()`
+  fix: at 12:18 delete 0 insert ".copy()"
+error[E0308]: can't assign to `xs` while `a` refers into it
+  --> compiler/tests/check/multi/refs.ei:16:5
+   |
+16 |     xs = List.new()
+   |     ^
+  help: `a` is used after this change, which may free, move or replace what it refers to; use it before the change, or bind a copy with `.copy()`
+  fix: at 12:18 delete 0 insert ".copy()"
+error: 4 errors

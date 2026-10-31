@@ -129,7 +129,7 @@ fn hex_val(c: u8) -> Option[u64] {
 
 /// value * base + digit in four 32-bit limbs; false once the value exceeds i128's maximum.
 fn acc(inout limbs: [u64; 4], base: u64, digit: u64) -> bool {
-    var carry = digit
+    let mut carry = digit.copy()
     for k in 0..4 {
         let j = k as usize
         let t = limbs[j] * base + carry
@@ -142,13 +142,13 @@ fn acc(inout limbs: [u64; 4], base: u64, digit: u64) -> bool {
 /// An integer literal at the cursor (a digit). Underscores are allowed after the first digit.
 /// A malformed or too-large literal is reported in `bad` and lexes as 0 (too large: with `big`).
 fn number(src: List[u8], inout l: L, inout bad: List[Bad]) -> Tok {
-    let start = l
-    var limbs: [u64; 4] = [0; 4]
-    var ok = true
+    let start = l.copy()
+    let mut limbs: [u64; 4] = [0; 4]
+    let mut ok = true
     if at(src, l.i) == 48 && (at(src, l.i + 1) == 120 || at(src, l.i + 1) == 88) {
         step(src, inout l)
         step(src, inout l)
-        let first = l.i
+        let first = l.i.copy()
         while l.i < src.len() && (hex_val(src[l.i]).is_some() || src[l.i] == 95) {
             match hex_val(src[l.i]) {
                 Some(d) => { if !acc(inout limbs, 16, d) { ok = false } }
@@ -170,11 +170,11 @@ fn number(src: List[u8], inout l: L, inout bad: List[Bad]) -> Tok {
     }
     if !ok {
         bad.push(fail(start, "integer literal too large"))
-        var big = tok(Int, start, l, 0)
+        let mut big = tok(Int, start, l, 0)
         big.big = true
         return big
     }
-    var t = tok(Int, start, l, limbs[0] + limbs[1] * 4294967296)
+    let mut t = tok(Int, start, l, limbs[0] + limbs[1] * 4294967296)
     t.big = limbs[2] != 0 || limbs[3] != 0
     t
 }
@@ -183,10 +183,10 @@ fn number(src: List[u8], inout l: L, inout bad: List[Bad]) -> Tok {
 /// escape is reported and skipped; an unterminated string ends at the end of its line. At
 /// most one error is reported per literal.
 fn string(src: List[u8], inout l: L, inout strs: List[List[u8]], inout bad: List[Bad]) -> Tok {
-    let start = l
+    let start = l.copy()
     step(src, inout l)
-    var s: List[u8] = List.new()
-    var reported = false
+    let mut s: List[u8] = List.new()
+    let mut reported = false
     while true {
         if l.i >= src.len() || src[l.i] == 10 {
             if !reported { bad.push(fail(start, "unterminated string literal")) }
@@ -199,12 +199,31 @@ fn string(src: List[u8], inout l: L, inout strs: List[List[u8]], inout bad: List
         }
         if c == 92 {
             let e = at(src, l.i + 1)
+            if e == 120 || e == 117 {
+                // `\xNN` and `\u{...}` (docs/compiler.md, "C8.17")
+                let r = if e == 120 { hex_escape(src, l.i + 2) } else { unicode_escape(src, l.i + 2) }
+                if r.msg.len() > 0 {
+                    if !reported { bad.push(fail(l, r.msg)) }
+                    reported = true
+                    step(src, inout l)
+                    step(src, inout l)
+                    continue
+                }
+                utf8_push(inout s, r.v)
+                while l.i < r.end { step(src, inout l) }
+                continue
+            }
             if e == 110 {
                 s.push(10)
             } else if e == 116 {
                 s.push(9)
+            } else if e == 114 {
+                s.push(13)
             } else if e == 34 || e == 92 {
                 s.push(e)
+            } else if e == 48 {
+                if !reported { bad.push(fail(l, "a string can't contain NUL (`\\0`): str and String are UTF-8 text without NUL; put the byte 0 in a List[u8]")) }
+                reported = true
             } else {
                 if !reported { bad.push(fail(l, "unknown escape sequence")) }
                 reported = true
@@ -225,11 +244,73 @@ fn string(src: List[u8], inout l: L, inout strs: List[List[u8]], inout bad: List
     tok(Str, start, l, (strs.len() - 1) as u64)
 }
 
+/// A decoded `\x` or `\u` escape: the scalar value and the offset just past it, or `msg`
+/// saying what is wrong with it.
+type Esc = { v: u32, end: usize, msg: str }
+
+fn hex_digit(b: u8) -> u32 {
+    if b >= 48 && b <= 57 { return (b - 48) as u32 }
+    if b >= 97 && b <= 102 { return (b - 87) as u32 }
+    if b >= 65 && b <= 70 { return (b - 55) as u32 }
+    16
+}
+
+/// `\xNN` after the `x` at i: exactly two hex digits, an ASCII character other than NUL
+/// (a String is valid UTF-8, so a byte above 7F alone can't be in one).
+fn hex_escape(src: List[u8], i: usize) -> Esc {
+    let a = hex_digit(at(src, i))
+    let b = hex_digit(at(src, i + 1))
+    if a > 15 || b > 15 { return Esc(0, i, "`\\x` needs two hex digits, like `\\x1b`") }
+    let v = a * 16 + b
+    if v == 0 { return Esc(0, i, "a string can't contain NUL (`\\x00`): str and String are UTF-8 text without NUL; put the byte 0 in a List[u8]") }
+    if v > 127 { return Esc(0, i, "`\\xNN` is an ASCII character (01 to 7f); write a non-ASCII character as `\\u{...}`") }
+    Esc(v, i + 2, "")
+}
+
+/// `\u{H...}` after the `u` at i: one to six hex digits in braces, a Unicode scalar value
+/// other than NUL (not a surrogate, at most 10FFFF).
+fn unicode_escape(src: List[u8], i: usize) -> Esc {
+    let shape = "`\\u` needs one to six hex digits in braces, like `\\u{e9}`"
+    if at(src, i) != 123 { return Esc(0, i, shape) }
+    let mut j = i + 1
+    let mut v: u32 = 0
+    let mut n: u32 = 0
+    while j < src.len() && hex_digit(src[j]) < 16 {
+        if n < 6 { v = v * 16 + hex_digit(src[j]) }
+        n += 1
+        j += 1
+    }
+    if n == 0 || n > 6 || at(src, j) != 125 { return Esc(0, i, shape) }
+    if v == 0 { return Esc(0, i, "a string can't contain NUL (`\\u{0}`): str and String are UTF-8 text without NUL; put the byte 0 in a List[u8]") }
+    if v >= 55296 && v <= 57343 { return Esc(0, i, "`\\u{...}` can't be a surrogate (d800 to dfff): it must be a Unicode scalar value") }
+    if v > 1114111 { return Esc(0, i, "`\\u{...}` is at most 10ffff, the largest Unicode scalar value") }
+    Esc(v, j + 1, "")
+}
+
+/// Append scalar value v as UTF-8.
+fn utf8_push(inout s: List[u8], v: u32) {
+    if v < 128 {
+        s.push(v as u8)
+    } else if v < 2048 {
+        s.push((192 + v / 64) as u8)
+        s.push((128 + v % 64) as u8)
+    } else if v < 65536 {
+        s.push((224 + v / 4096) as u8)
+        s.push((128 + (v / 64) % 64) as u8)
+        s.push((128 + v % 64) as u8)
+    } else {
+        s.push((240 + v / 262144) as u8)
+        s.push((128 + (v / 4096) % 64) as u8)
+        s.push((128 + (v / 64) % 64) as u8)
+        s.push((128 + v % 64) as u8)
+    }
+}
+
 /// The UTF-8 sequence starting at `i`, for "unexpected character" messages.
 fn scalar_at(src: List[u8], i: usize) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     out.push(src[i])
-    var j = i + 1
+    let mut j = i + 1
     while j < src.len() && src[j] >= 128 && src[j] < 192 {
         out.push(src[j])
         j += 1
@@ -264,12 +345,12 @@ pub fn lex(src: List[u8], inout names: intern.Interner) -> Lex {
 
 /// Every lexing error, and the tokens of the rest (Lexed2). The messages are the ones
 /// `resolve.lex_diag` makes of `lex`'s result.
-pub fn lex_all(src: List[u8], inout names: intern.Interner) -> Lexed2 uses ffi {
+pub fn lex_all(src: List[u8], inout names: intern.Interner) -> Lexed2 {
     let r = run(src, inout names, true)
-    var ds: List[diag.Diag] = List.new()
+    let mut ds: List[diag.Diag] = List.new()
     for b in r.bad {
         if b.ch.len() > 0 {
-            var m = sys.lit("unexpected character `")
+            let mut m = sys.lit("unexpected character `")
             bytes.append(inout m, b.ch)
             m.push(96)
             ds.push(diag.new("E0001", b.line, b.col, m))
@@ -283,19 +364,19 @@ pub fn lex_all(src: List[u8], inout names: intern.Interner) -> Lexed2 uses ffi {
 /// The lexer: stops at the first error (`lex`), or with `all` records each one and goes on.
 /// A run of adjacent bad characters is reported once, at its first.
 fn run(src: List[u8], inout names: intern.Interner, all: bool) -> Run {
-    var toks: List[Tok] = List.new()
-    var strs: List[List[u8]] = List.new()
-    var bad: List[Bad] = List.new()
-    var l = L(0, 1, 1)
+    let mut toks: List[Tok] = List.new()
+    let mut strs: List[List[u8]] = List.new()
+    let mut bad: List[Bad] = List.new()
+    let mut l = L(0, 1, 1)
     // the offset just past the last bad character (0: none yet)
-    var bad_end: usize = 0
+    let mut bad_end: usize = 0
     while l.i < src.len() {
         if !all && bad.len() > 0 { return Run(Lexed(toks, strs, src), bad) }
         let c = src[l.i]
-        let start = l
+        let start = l.copy()
         if c == 10 {
             let n = toks.len()
-            var dup = false
+            let mut dup = false
             if n > 0 {
                 dup = match toks[n - 1].kind {
                     Newline => true
@@ -331,7 +412,20 @@ fn run(src: List[u8], inout names: intern.Interner, all: bool) -> Run {
             let id = intern.intern(inout names, src, start.i, l.i)
             toks.push(tok(Ident, start, l, id as u64))
         } else if c == 34 {
-            toks.push(string(src, inout l, inout strs, inout bad))
+            let t = string(src, inout l, inout strs, inout bad)
+            let n = toks.len()
+            if n > 0 && toks[n - 1].kind == Str && toks[n - 1].line == t.line {
+                // adjacent literals on one line are one literal (docs/compiler.md, "C8.17")
+                let mut prev = toks[n - 1]
+                let more = strs[t.val as usize].copy()
+                strs.pop()
+                bytes.append(inout strs[prev.val as usize], more)
+                prev.end = t.end
+                prev.end_col = t.end_col
+                toks[n - 1] = prev
+            } else {
+                toks.push(t)
+            }
         } else if sym3(c, at(src, l.i + 1), at(src, l.i + 2)).is_some() {
             let k3 = sym3(c, at(src, l.i + 1), at(src, l.i + 2)).unwrap()
             step(src, inout l)

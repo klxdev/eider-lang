@@ -44,6 +44,11 @@ Simple like Go and Zig, with the memory-safety and correctness guarantees of Rus
 
 ### `let` ✅
 
+Implemented by C8.6 (docs/compiler.md, "C8.6: references by default", which records the
+details decided there: a reference is its place re-derived at each use, the protection rule
+is E0308 with a `.copy()` fix, a mutable alias of a read-only place is E0307, `var` is
+rewritten by `eiderc migrate-var`).
+
 ```eider
 let o = orders[i]      // a read-only reference to orders[i]; nothing is copied
 let n = count(xs)      // a fresh value: owned by n, nothing is copied either
@@ -109,6 +114,10 @@ Implicit copies still happen at escapes (rule 3); `.copy()` is for when you want
 inside the scope.
 
 ## Operations are traits ✅
+
+Implemented by C8.4 (docs/compiler.md, "C8.4: operation traits", which records the details
+decided there: `Show` appends to a String and `to_string` builds one, Map equality ignores slot
+order, `Drop` is for records and copies a shared value through `Copy` when it is written).
 
 Every operation the language performs on values of any type is a trait in the core prelude, so
 std and other libraries implement it for their own types exactly as the built-in types do.
@@ -196,7 +205,11 @@ docs/compiler.md, "C8.1: copy-on-write", has the scheme and why it beat atomic c
 This is what makes large lists, parsed files and configuration cheap to pass, store and
 return.
 
-### Shared mutable state: `Ref[T]` ✅ (API to refine)
+### Shared mutable state: `Ref[T]` ✅
+
+Implemented by C8.7 (docs/compiler.md, "C8.7: `Ref[T]`", which records the details decided
+there: `Ref.new`, `read`, `update`, `get`, `set`; closures with `inout` parameters for
+`update`; the trap messages; E0411 for a Ref that would cross threads).
 
 For state several owners must see change: caches, memo tables, graphs, observer lists. (A
 plain reference is a binding inside a scope; a `Ref[T]` is the handle that outlives scopes.)

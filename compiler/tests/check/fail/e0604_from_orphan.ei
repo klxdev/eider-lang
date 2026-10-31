@@ -1,0 +1,6 @@
+// expect: E0604 3:1
+// `From` is implemented in the target's package (docs/compiler.md, "C8.21")
+impl From[i32] for String {
+    fn from(value: i32) -> String { String.from_int(value as i64) }
+}
+fn main() {}

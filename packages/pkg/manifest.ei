@@ -25,10 +25,10 @@ pub type Dep = { name: List[u8], source: Source, grants: List[List[u8]], line: u
 
 pub type Manifest = { name: List[u8], version: List[u8], entry: List[u8], main: List[u8], deps: List[Dep], dir: List[u8] }
 
-pub fn file_in(dir: List[u8]) -> List[u8] uses ffi { fs.join(dir, sys.lit("eider.toml")) }
+pub fn file_in(dir: List[u8]) -> List[u8] { fs.join(dir, sys.lit("eider.toml")) }
 
-pub fn at(file: List[u8], line: u32, col: u32, m: String) -> String uses ffi {
-    var s = sys.to_string(file)
+pub fn at(file: List[u8], line: u32, col: u32, m: String) -> String {
+    let mut s = sys.to_string(file)
     s.push_str(":")
     s.append(String.from_int(line as i64))
     s.push_str(":")
@@ -38,12 +38,12 @@ pub fn at(file: List[u8], line: u32, col: u32, m: String) -> String uses ffi {
     s
 }
 
-fn bad(file: List[u8], line: u32, m: str) -> String uses ffi { at(file, line, 1, String.from(m)) }
+fn bad(file: List[u8], line: u32, m: str) -> String { at(file, line, 1, String.from(m)) }
 
 /// `core` and `std`: the toolchain's packages, which every file imports by name
 /// (`import "std/fs"`) and no manifest declares (their eider.toml files are the compiler's,
 /// never loaded here).
-pub fn toolchain_name(n: List[u8]) -> bool uses ffi { bytes.eq(n, sys.lit("core")) || bytes.eq(n, sys.lit("std")) }
+pub fn toolchain_name(n: List[u8]) -> bool { bytes.eq(n, sys.lit("core")) || bytes.eq(n, sys.lit("std")) }
 
 pub fn valid_name(n: List[u8]) -> bool {
     if n.len() == 0 { return false }
@@ -54,7 +54,7 @@ pub fn valid_name(n: List[u8]) -> bool {
     true
 }
 
-pub fn known_cap(c: List[u8]) -> bool uses ffi {
+pub fn known_cap(c: List[u8]) -> bool {
     let caps = ["io", "clock", "fs", "net", "threads", "ffi"]
     for i in 0..6 {
         if bytes.eq(c, sys.lit(caps[i as usize])) { return true }
@@ -62,13 +62,13 @@ pub fn known_cap(c: List[u8]) -> bool uses ffi {
     false
 }
 
-fn str_at(doc: List[toml.Entry], file: List[u8], k: List[u8]) -> Result[Option[List[u8]], String] uses ffi {
+fn str_at(doc: List[toml.Entry], file: List[u8], k: List[u8]) -> Result[Option[List[u8]], String] {
     match toml.get(doc, k) {
         Some(e) => {
             match e.val {
                 toml.Str(s) => Ok(Some(s))
                 _ => {
-                    var m = String.from("`")
+                    let mut m = String.from("`")
                     m.append(sys.to_string(k))
                     m.push_str("` must be a string")
                     Err(at(file, e.line, 1, m))
@@ -87,15 +87,15 @@ fn line_of(doc: List[toml.Entry], k: List[u8], dflt: u32) -> u32 {
     }
 }
 
-fn key(a: str, b: List[u8], c: str) -> List[u8] uses ffi {
-    var k = sys.lit(a)
+fn key(a: str, b: List[u8], c: str) -> List[u8] {
+    let mut k = sys.lit(a)
     bytes.append(inout k, b)
     bytes.append(inout k, sys.lit(c))
     k
 }
 
 /// Parse eider.toml text. `file` is used in messages, `dir` is the manifest's directory.
-pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, String] uses ffi {
+pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, String] {
     let doc = match toml.parse(src) {
         Ok(d) => d
         Err(e) => { return Err(at(file, e.line, e.col, e.msg)) }
@@ -104,7 +104,7 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
     let top_ok = ["package.name", "package.version", "package.entry", "package.main", "package.description"]
     let dep_ok = ["path", "git", "version", "rev", "uses"]
     for e in doc {
-        var ok = false
+        let mut ok = false
         for i in 0..5 {
             if bytes.eq(e.key, sys.lit(top_ok[i as usize])) { ok = true }
         }
@@ -121,7 +121,7 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
             }
         }
         if !ok {
-            var m = String.from("unknown key `")
+            let mut m = String.from("unknown key `")
             m.append(sys.to_string(e.key))
             m.push_str("`")
             return Err(at(file, e.line, 1, m))
@@ -157,7 +157,7 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
         Some(m) => m
         None => none
     }
-    var deps: List[Dep] = List.new()
+    let mut deps: List[Dep] = List.new()
     for dn in toml.children(doc, sys.lit("deps")) {
         let line = match toml.get(doc, key("deps.", dn, ".path")) {
             Some(e) => e.line
@@ -168,7 +168,7 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
         }
         if !valid_name(dn) { return Err(bad(file, line, "dependency names are lowercase letters, digits and `_`")) }
         if toolchain_name(dn) {
-            var m = String.from("`")
+            let mut m = String.from("`")
             m.append(sys.to_string(dn))
             m.push_str("` is part of the toolchain: import its modules (`import \"")
             m.append(sys.to_string(dn))
@@ -180,14 +180,14 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
         let git = str_at(doc, file, key("deps.", dn, ".git"))?
         let ver = str_at(doc, file, key("deps.", dn, ".version"))?
         let rev = str_at(doc, file, key("deps.", dn, ".rev"))?
-        var grants: List[List[u8]] = List.new()
+        let mut grants: List[List[u8]] = List.new()
         match toml.get(doc, key("deps.", dn, ".uses")) {
             Some(e) => {
                 match e.val {
                     toml.Strs(items) => {
                         for c in items {
                             if !known_cap(c) {
-                                var m = String.from("unknown capability `")
+                                let mut m = String.from("unknown capability `")
                                 m.append(sys.to_string(c))
                                 m.push_str("` (known: io, clock, fs, net, threads, ffi)")
                                 return Err(at(file, e.line, 1, m))
@@ -224,7 +224,7 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
     Ok(Manifest(name, version, entry, main, deps, dir))
 }
 
-pub fn load(dir: List[u8]) -> Result[Manifest, String] uses fs, ffi {
+pub fn load(dir: List[u8]) -> Result[Manifest, String] uses fs {
     let file = file_in(dir)
     let src = fs.read(file)?
     parse(src, file, dir)

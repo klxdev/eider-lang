@@ -1,0 +1,8 @@
+// expect: E0303 6:5
+type P = { x: i32 }
+fn main() uses io {
+    var ps: List[P] = List.new()
+    let p = ps
+    p = List.new()
+    print(p.len())
+}

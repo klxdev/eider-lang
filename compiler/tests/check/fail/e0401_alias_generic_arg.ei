@@ -1,0 +1,8 @@
+// expect: E0401 7:20
+// a generic alias's arguments are matched against the actual type (docs/compiler.md, "C8.18")
+type Pair[T] = (T, T)
+fn second[T](p: Pair[T]) -> T { p.1 }
+fn main() {
+    let t: (i32, bool) = (1, true)
+    let x = second(t)
+}

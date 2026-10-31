@@ -1,0 +1,10 @@
+// `get` (a read) while the same Ref is being updated traps (docs/compiler.md, "C8.7").
+type Counter = { hits: Ref[i32] }
+
+fn current(c: Counter) -> i32 { c.hits.get() }
+
+fn main() uses io {
+    let c = Counter(Ref.new(1))
+    c.hits.update(|inout x| { x += current(c) })
+    print(c.hits.get())
+}

@@ -1,0 +1,14 @@
+// expect: E0308 12:7
+type Stack = { items: List[i32] }
+impl Stack {
+    fn push(inout self, x: i32) { self.items.push(x) }
+}
+fn main() uses io {
+    var s = Stack(List.new())
+    s.push(1)
+    let top = s.items[0]
+    print(top)
+    let again = s.items[0]
+    s.push(2)
+    print(again)
+}

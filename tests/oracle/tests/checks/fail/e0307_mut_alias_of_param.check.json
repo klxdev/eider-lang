@@ -1,0 +1,1 @@
+{"error":"E0307","span":{"file":"tests/checks/fail/e0307_mut_alias_of_param.ei","line":4,"col":17},"message":"`let mut q` would be a mutable alias of `p`, which is read-only","help":"an alias can't add write access; take an independent value with `.copy()`","fix":{"at":{"line":4,"col":18},"delete":0,"insert":".copy()"}}

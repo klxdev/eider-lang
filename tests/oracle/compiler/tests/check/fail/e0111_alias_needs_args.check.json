@@ -1,0 +1,1 @@
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_alias_needs_args.ei","line":4,"col":9},"message":"type `Pair` needs 1 type argument(s): `Pair[...]`"}

@@ -1,0 +1,53 @@
+// `eiderc migrate-var` (docs/compiler.md, "C8.6"): every `var` it can rewrite becomes
+// `let mut`, with `.copy()` after a place; the rest stay `var`. Expected: var.out.
+type P = { x: i32, names: List[String] }
+type R = { n: i32 }
+impl Drop for R {
+    fn drop(inout self) {}
+}
+type C = { n: i32 }
+impl Copy for C {
+    fn copy(self) -> C { C(self.n + 1) }
+}
+
+impl P {
+    fn bump(inout self) {
+        let mut n = self.x.copy()
+        n += 1
+        self.x = n
+    }
+}
+
+fn count[T](xs: List[T]) -> usize {
+    let mut n = xs.len()
+    if n > 0 { var first = xs[0] }
+    n += 1
+    n
+}
+
+fn main() uses io, threads {
+    let mut p = P(1, List.new())
+    let mut q = p.copy()
+    let (mut a, mut b) = (1, 2)
+    let mut t = (3, 4)
+    let (mut c, mut d) = t.copy()
+    let mut s: String = String.from("x")
+    let mut k = if a > 1 { 1 } else { 2 }
+    let mut r = R(1)
+    var r2 = r
+    let mut cc = C(1)
+    var cc2 = cc
+    let mut m = Mutex.new(1)
+    var m2 = m
+    q.x = 5
+    a += b + c + d
+    p.bump()
+    s.push_str("y")
+    k += count(p.names) as i32
+    r2.n = 2
+    cc2.n = 3
+    m2.set(4)
+    m = Mutex.new(0)
+    print(p.x + q.x + a + k + r.n + cc.n + m.get())
+    print(s)
+}

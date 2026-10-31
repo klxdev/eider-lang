@@ -1,0 +1,62 @@
+// References by default (docs/compiler.md, "C8.6"): what the protection rule allows.
+type Order = { qty: i32, name: String, tags: List[String] }
+type Job = | Pending(Order) | Held(i32) | Done
+
+fn total(orders: List[Order]) -> i32 {
+    var t = 0
+    for i in 0..orders.len() {
+        let o = orders[i]
+        t += o.qty
+    }
+    t
+}
+
+fn main() uses io {
+    var orders: List[Order] = List.new()
+    orders.push(Order(1, String.from("a"), List.new()))
+    // plain writes while a reference is alive
+    let o = orders[0]
+    orders[0].qty = 5
+    orders[0].name.push_str("!")
+    orders[0].tags.push(String.from("t"))
+    print(o.qty)
+    // a resize after the last use
+    orders.push(Order(2, String.from("b"), List.new()))
+    // a reference to the container itself is not into it
+    let all = orders
+    orders.push(Order(3, String.from("c"), List.new()))
+    print(all.len())
+    // a reference used only on paths that don't reach the change
+    let p = orders[1]
+    if p.qty > 100 {
+        orders.clear()
+        return
+    }
+    print(p.qty)
+    // a fresh reference each iteration
+    for i in 0..2 {
+        let q = orders[0]
+        print(q.qty)
+        orders.push(Order(i as i32, String.from("d"), List.new()))
+    }
+    // a mutable alias writes the place; replacing the enum after its payload's last use
+    var jobs: List[Job] = List.new()
+    jobs.push(Held(1))
+    match jobs[0] {
+        Held(mut d) => {
+            d += 1
+            jobs[0] = Done
+        }
+        _ => {}
+    }
+    // a copy is independent of the place
+    let c = orders[0].copy()
+    orders.clear()
+    print(c.qty)
+    // `let mut` of a fresh value is an ordinary mutable variable
+    let mut n = total(orders)
+    n += 1
+    let (mut a, b) = (1, 2)
+    a += b
+    print(n + a)
+}

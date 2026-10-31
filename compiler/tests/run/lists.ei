@@ -56,7 +56,7 @@ fn main() uses io {
         for v in row { n += v as usize }
     }
     print(n)
-    let first = grid[0]
+    let first = grid[0].copy()
     grid[0].push(9)
     print(first.len())
     print(grid[0].len())

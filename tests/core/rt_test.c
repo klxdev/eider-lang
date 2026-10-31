@@ -5,6 +5,7 @@
 
 #include "../../core/eider_rt.h"
 
+#include <signal.h>
 #include <stdio.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -301,6 +302,19 @@ static void test_trap(void) {
   }
   ei_set_trap_jmp(NULL);
   EQS(cap_end(), "partial FAILED\n    boom (rt_test:1)\n");
+  /* a module's file index in the line (docs/compiler.md, "C8.16") */
+  static const char *const files[3] = {0, "lib/m.ei", 0};
+  ei_set_files(files, 3);
+  cap_begin();
+  ei_set_trap_jmp(&jb);
+  if (setjmp(jb) == 0) ei_trap("in m", 1 * 1048576 + 12);
+  ei_set_trap_jmp(NULL);
+  EQS(cap_end(), "FAILED\n    in m (lib/m.ei:12)\n");
+  /* no name for index 2, an index past the table, a plain line: the entry file as given */
+  TRAPS(ei_trap("unnamed", 2 * 1048576 + 5), "unnamed", 2 * 1048576 + 5);
+  TRAPS(ei_trap("past", 3 * 1048576 + 5), "past", 3 * 1048576 + 5);
+  TRAPS(ei_trap("plain", 9), "plain", 9);
+  ei_set_files(NULL, 0);
 }
 
 // ---- allocation and String
@@ -483,6 +497,11 @@ static void test_clock(void) {
   for (uint64_t i = 0; i < 20000000; i++) spin = spin + i;
   uint64_t b = ei_now_ms();
   CHECK(b >= a);
+  /* a wall-clock (monotonic) measure: it advances while the program sleeps */
+  struct timespec t = {0, 60 * 1000000};
+  nanosleep(&t, NULL);
+  uint64_t c = ei_now_ms();
+  CHECK(c - b >= 50);
 }
 
 // ---- the exit path (no hook), in forked children
@@ -744,6 +763,169 @@ static void test_chan_single(void) {
   ei_chan_destroy(&d);
 }
 
+// ---- atomics
+
+static ei_atomic_i64 counter;
+
+static void *adder(void *arg) {
+  int32_t order = *(int32_t *)arg;
+  for (int i = 0; i < 20000; i++) ei_atomic_add(&counter, 1, order);
+  return NULL;
+}
+
+/* counts with compare-and-swap only: every failure returns the value seen, retried */
+static void *cas_adder(void *arg) {
+  (void)arg;
+  for (int i = 0; i < 20000; i++) {
+    int64_t seen = ei_atomic_load(&counter, 0);
+    for (;;) {
+      int64_t got = ei_atomic_cas(&counter, seen, seen + 1, 3);
+      if (got == seen) break;
+      seen = got;
+    }
+  }
+  return NULL;
+}
+
+/* message passing: the release store publishes `payload`, the acquire load sees it */
+static ei_atomic_i64 flag;
+static int64_t payload;
+
+static void *publisher(void *arg) {
+  (void)arg;
+  payload = 42;
+  ei_atomic_store(&flag, 1, 2);
+  return NULL;
+}
+
+static void test_atomics(void) {
+  ei_atomic_i64 a;
+  ei_atomic_init(&a, 5);
+  for (int32_t o = -1; o <= 6; o++) EQI(ei_atomic_load(&a, o), 5); /* every number is valid */
+  ei_atomic_store(&a, -7, 2);
+  EQI(ei_atomic_load(&a, 1), -7);
+  ei_atomic_store(&a, 9, 1); /* acquire on a store: strengthened, not undefined */
+  EQI(ei_atomic_swap(&a, 11, 4), 9);
+  EQI(ei_atomic_add(&a, 4, 0), 11);
+  EQI(ei_atomic_add(&a, -20, 3), 15);
+  EQI(ei_atomic_load(&a, 4), -5);
+  EQI(ei_atomic_cas(&a, -5, 100, 4), -5); /* success: returns expected */
+  EQI(ei_atomic_load(&a, 4), 100);
+  EQI(ei_atomic_cas(&a, -5, 200, 1), 100); /* failure: returns what was there, no change */
+  EQI(ei_atomic_load(&a, 4), 100);
+  ei_atomic_store(&a, INT64_MAX, 4);
+  EQI(ei_atomic_add(&a, 1, 4), INT64_MAX); /* wraps (defined for atomic types) */
+  EQI(ei_atomic_load(&a, 4), INT64_MIN);
+
+  for (int32_t order = 0; order <= 4; order++) {
+    ei_atomic_init(&counter, 0);
+    int32_t ords[8];
+    ei_thread th[8];
+    for (int i = 0; i < 8; i++) {
+      ords[i] = order;
+      ei_thread_start(&th[i], i % 2 ? adder : cas_adder, &ords[i]);
+    }
+    for (int i = 0; i < 8; i++) ei_thread_destroy(&th[i]);
+    EQI(ei_atomic_load(&counter, 4), 8 * 20000);
+  }
+  for (int round = 0; round < 50; round++) {
+    ei_atomic_init(&flag, 0);
+    payload = 0;
+    ei_thread p;
+    ei_thread_start(&p, publisher, NULL);
+    while (ei_atomic_load(&flag, 1) == 0) {}
+    EQI(payload, 42);
+    ei_thread_destroy(&p);
+  }
+}
+
+// ---- stack overflow on a runtime thread
+
+static volatile int64_t sink;
+static volatile int64_t depth_limit = INT64_MAX;
+
+/* recursion that no compiler turns into a loop: each frame keeps a buffer alive */
+static int64_t deep(int64_t n) {
+  volatile char buf[512];
+  if (n >= depth_limit) return 0;
+  buf[n % 512] = (char)n;
+  int64_t r = deep(n + 1) + buf[(n + 1) % 512];
+  sink = r;
+  return r;
+}
+
+static void *overflow_worker(void *arg) {
+  (void)arg;
+  sink = deep(0);
+  return NULL;
+}
+
+static void child_stack_overflow(void) {
+  printf("before\n"); /* buffered (stdout is a pipe): the handler flushes it */
+  ei_thread t;
+  ei_thread_start(&t, overflow_worker, NULL);
+  ei_thread_join(&t);
+}
+
+static void *small_frames(void *arg) {
+  /* half a megabyte of frames is well within the stack */
+  int64_t *n = arg;
+  volatile char buf[4096];
+  buf[0] = (char)*n;
+  if (*n > 0) {
+    int64_t m = *n - 1;
+    small_frames(&m);
+  }
+  sink = buf[0];
+  return NULL;
+}
+
+/* a segfault that is not a stack overflow is left alone: the handler that was there before
+   (a sanitizer's), else the default action, SIGSEGV. Address 16, not NULL: UBSan would
+   catch a null write itself. */
+static void *bad_write(void *arg) {
+  (void)arg;
+  volatile int *volatile p = (volatile int *)(uintptr_t)16;
+  *p = 1;
+  return NULL;
+}
+
+static void child_bad_write(void) {
+  ei_thread t;
+  ei_thread_start(&t, bad_write, NULL);
+  ei_thread_join(&t);
+}
+
+static void test_stack_overflow(void) {
+  /* deep but bounded recursion works, and a thread's stack is released at the join */
+  for (int i = 0; i < 20; i++) {
+    int64_t n = 120;
+    ei_thread t;
+    ei_thread_start(&t, small_frames, &n);
+    ei_thread_destroy(&t);
+    CHECK(t.map == NULL);
+  }
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
+#define EI_TEST_SANITIZED 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+#define EI_TEST_SANITIZED 1
+#endif
+#endif
+  /* the overflow is ours even under the sanitizers (their SIGSEGV handler was installed
+     first, so it is the one a foreign fault is passed on to) */
+  char buf[8192];
+  EQI(in_child(child_stack_overflow, buf, sizeof buf), 101);
+  EQS(buf, "before\neider: runtime error: stack overflow (rt_test:0)\n");
+  int st = in_child(child_bad_write, buf, sizeof buf);
+#if defined(EI_TEST_SANITIZED)
+  CHECK(st != 0 && st != 101 && strstr(buf, "SEGV") != NULL); /* the sanitizer's report */
+#else
+  EQI(st, 128 + SIGSEGV);
+  EQS(buf, "");
+#endif
+}
+
 int main(void) {
   ei_set_file("rt_test");
   test_bits();
@@ -767,6 +949,8 @@ int main(void) {
   test_concurrent_join();
   test_chan_threads();
   test_chan_single();
+  test_atomics();
+  test_stack_overflow();
   printf("%d checks, %d failed\n", checks, failures);
   return failures ? 1 : 0;
 }

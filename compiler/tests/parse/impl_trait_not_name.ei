@@ -1,1 +1,1 @@
-impl List[i32] for A {}
+impl (i32, i32) for A {}

@@ -1,0 +1,204 @@
+// http/metrics: request counters and a latency histogram, exposed in the Prometheus text
+// exposition format (version 0.0.4) for a scraper to read from `GET /metrics`.
+//
+//     let m = metrics.new()
+//     r.get("/metrics", m.handler())
+//     let app = m.wrap(router.handler(r))
+//
+// Series:
+//   http_requests_total{method, code}        counter: requests answered
+//   http_requests_in_flight                  gauge: requests being handled now
+//   http_request_duration_seconds{le}        histogram: time in the wrapped handler
+// `method` is one of GET HEAD POST PUT PATCH DELETE OPTIONS or OTHER (a client chooses the
+// method, so it can't be allowed to make new series); `code` is the status. Series are
+// written sorted by method, then code, so the output is stable. A `Metrics` is shared by its
+// copies (one Lock), so the handler that serves it and the wrapper that counts see the same
+// numbers from every worker thread.
+
+import "core/sys"
+import "std/bytes"
+import "std/sort"
+import "std/sync"
+import "std/time"
+import "http.ei"
+
+type Key = { method: List[u8], code: i32 }
+
+type St = { counts: Map[Key, i64], buckets: List[i64], sum_ns: i64, count: i64, in_flight: i64 }
+
+/// Counters shared by copies (see the module comment). `bounds_us`: the histogram's upper
+/// bounds in microseconds, ascending.
+pub type Metrics = { st: sync.Lock[St], bounds_us: List[i64] }
+
+/// Prometheus's default buckets: 5 ms to 10 s.
+pub fn new() -> Metrics {
+    let mut b: List[i64] = List.new()
+    for x in [5000, 10000, 25000, 50000, 100000, 250000, 500000, 1000000, 2500000, 5000000, 10000000] { b.push(x as i64) }
+    with_buckets(b)
+}
+
+/// A histogram with these upper bounds (microseconds, ascending; `+Inf` is added).
+pub fn with_buckets(bounds_us: List[i64]) -> Metrics {
+    let mut zero: List[i64] = List.new()
+    for k in 0..bounds_us.len() { zero.push(0) }
+    Metrics(sync.lock(St(Map.new(), zero, 0, 0, 0)), bounds_us)
+}
+
+/// The method as a label value (see the module comment).
+pub fn method_label(m: List[u8]) -> List[u8] {
+    for k in ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"] {
+        if bytes.eq(m, sys.lit(k)) { return m }
+    }
+    sys.lit("OTHER")
+}
+
+/// Microseconds as seconds in decimal ("0.005", "2.5", "10").
+pub fn seconds_text(us: i64) -> List[u8] {
+    let mut out = bytes.from_i64(us / 1000000)
+    let mut frac = us % 1000000
+    if frac == 0 { return out }
+    out.push(46)
+    let mut digits: List[u8] = List.new()
+    let mut div: i64 = 100000
+    while div > 0 {
+        digits.push((48 + frac / div) as u8)
+        frac = frac % div
+        div = div / 10
+    }
+    let mut n = digits.len()
+    while n > 0 && digits[n - 1] == 48 { n -= 1 }
+    bytes.append(inout out, bytes.slice(digits, 0, n))
+    out
+}
+
+/// Nanoseconds as seconds with nine decimals trimmed ("0.000123").
+fn ns_seconds(ns: i64) -> List[u8] {
+    let mut out = bytes.from_i64(ns / 1000000000)
+    let mut frac = ns % 1000000000
+    if frac == 0 { return out }
+    out.push(46)
+    let mut digits: List[u8] = List.new()
+    let mut div: i64 = 100000000
+    while div > 0 {
+        digits.push((48 + frac / div) as u8)
+        frac = frac % div
+        div = div / 10
+    }
+    let mut n = digits.len()
+    while n > 0 && digits[n - 1] == 48 { n -= 1 }
+    bytes.append(inout out, bytes.slice(digits, 0, n))
+    out
+}
+
+fn line(inout out: List[u8], s: str) {
+    bytes.append(inout out, sys.lit(s))
+    out.push(10)
+}
+
+impl Metrics {
+    /// Counts one answered request that took `dur_ns`.
+    fn observe(self, method: List[u8], status: i32, dur_ns: i64) {
+        let k = Key(method_label(method), status)
+        let us = dur_ns / 1000
+        let bs = self.bounds_us
+        self.st.update(|s: St| -> St {
+            let mut t = s.copy()
+            t.counts.insert(k, t.counts.get(k).unwrap_or(0) + 1)
+            for i in 0..bs.len() {
+                if us <= bs[i] { t.buckets[i] += 1 }
+            }
+            t.sum_ns += dur_ns
+            t.count += 1
+            t
+        })
+    }
+
+    fn enter(self) { self.st.update(|s: St| -> St {
+        let mut t = s.copy()
+        t.in_flight += 1
+        t
+    }) }
+
+    fn leave(self) { self.st.update(|s: St| -> St {
+        let mut t = s.copy()
+        t.in_flight -= 1
+        t
+    }) }
+
+    /// Counts every request `h` answers, and how long it took.
+    fn wrap(self, h: http.Handler) -> http.Handler uses clock {
+        let m = self
+        |req: http.Request| -> http.Response {
+            m.enter()
+            let t0 = time.mono_ns()
+            let resp = h(req)
+            let d = time.mono_ns() - t0
+            m.leave()
+            m.observe(req.method, resp.status, d)
+            resp
+        }
+    }
+
+    /// Requests answered with `status` (any method).
+    fn total(self, status: i32) -> i64 {
+        let s = self.st.get()
+        let mut n: i64 = 0
+        for (k, c) in s.counts {
+            if k.code == status { n += c }
+        }
+        n
+    }
+
+    /// The exposition text (see the module comment).
+    fn render(self) -> List[u8] {
+        let s = self.st.get()
+        let keys = sort.sort_by(s.counts.keys(), |a: Key, b: Key| -> Ordering {
+            let c = bytes.compare(a.method, b.method)
+            if c < 0 { return Less }
+            if c > 0 { return Greater }
+            a.code.compare(b.code)
+        })
+        let mut out: List[u8] = List.new()
+        line(inout out, "# HELP http_requests_total Requests answered, by method and status code.")
+        line(inout out, "# TYPE http_requests_total counter")
+        for k in keys {
+            bytes.append(inout out, sys.lit("http_requests_total{method=\""))
+            bytes.append(inout out, k.method)
+            bytes.append(inout out, sys.lit("\",code=\""))
+            bytes.append(inout out, bytes.from_i64(k.code as i64))
+            bytes.append(inout out, sys.lit("\"} "))
+            bytes.append(inout out, bytes.from_i64(s.counts.get(k).unwrap_or(0)))
+            out.push(10)
+        }
+        line(inout out, "# HELP http_requests_in_flight Requests being handled now.")
+        line(inout out, "# TYPE http_requests_in_flight gauge")
+        bytes.append(inout out, sys.lit("http_requests_in_flight "))
+        bytes.append(inout out, bytes.from_i64(s.in_flight))
+        out.push(10)
+        line(inout out, "# HELP http_request_duration_seconds Time to answer a request.")
+        line(inout out, "# TYPE http_request_duration_seconds histogram")
+        for i in 0..self.bounds_us.len() {
+            bytes.append(inout out, sys.lit("http_request_duration_seconds_bucket{le=\""))
+            bytes.append(inout out, seconds_text(self.bounds_us[i]))
+            bytes.append(inout out, sys.lit("\"} "))
+            bytes.append(inout out, bytes.from_i64(s.buckets[i]))
+            out.push(10)
+        }
+        bytes.append(inout out, sys.lit("http_request_duration_seconds_bucket{le=\"+Inf\"} "))
+        bytes.append(inout out, bytes.from_i64(s.count))
+        out.push(10)
+        bytes.append(inout out, sys.lit("http_request_duration_seconds_sum "))
+        bytes.append(inout out, ns_seconds(s.sum_ns))
+        out.push(10)
+        bytes.append(inout out, sys.lit("http_request_duration_seconds_count "))
+        bytes.append(inout out, bytes.from_i64(s.count))
+        out.push(10)
+        out
+    }
+
+    /// A handler answering with `render()` (`text/plain; version=0.0.4`).
+    fn handler(self) -> http.Handler {
+        let m = self
+        |req: http.Request| -> http.Response { http.respond(200, "text/plain; version=0.0.4; charset=utf-8", m.render()) }
+    }
+}

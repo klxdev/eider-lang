@@ -1,0 +1,1 @@
+{"error":"E0306","span":{"file":"tests/checks/fail/e0306_unknown_label.ei","line":3,"col":42},"message":"no enclosing loop is labeled `outer`","help":"label the loop: `name: for ...` or `name: while ...`"}

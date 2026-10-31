@@ -1,0 +1,223 @@
+// std/fmt: formatting numbers and padding text into Strings, locale-free. A `Spec` says how
+// (width, fill, alignment, radix, case, sign, prefix, zero padding) and is built by
+// chaining: `fmt.int_with(-5, fmt.spec().width(4).zero())` is "-005",
+// `fmt.uint_with(255, fmt.spec().hex().prefix())` is "0xff". Each `x_with` function has a
+// `put_x` form that appends to a String instead, and `Builder` collects several pieces.
+// Widths count characters (Unicode scalar values), not bytes. Negative numbers in other
+// radixes are sign and magnitude ("-ff"), not two's complement.
+//
+// Floats wait for the language's f64 (decision C9).
+
+/// Where text goes inside a wider field.
+pub type Align = | Left | Right | Center
+
+/// How to format: `wid` minimum width, `fil` the ASCII fill byte, `al` alignment, `base` the
+/// radix (2 to 36), `up` upper-case digits, `sign` a `+` on non-negative numbers, `pre` a
+/// radix prefix (0x, 0b, 0o), `zpad` zeros between the sign or prefix and the digits.
+/// Build one with `spec()` and the methods below.
+pub type Spec = { wid: usize, fil: u8, al: Align, base: u32, up: bool, sign: bool, pre: bool, zpad: bool }
+
+/// Decimal, no width, right-aligned, space fill.
+pub fn spec() -> Spec { Spec(0, 32, Right, 10, false, false, false, false) }
+
+impl Spec {
+    fn width(self, w: usize) -> Spec { Spec(w, self.fil, self.al, self.base, self.up, self.sign, self.pre, self.zpad) }
+    /// The fill byte (ASCII; anything else traps when used).
+    fn fill(self, b: u8) -> Spec { Spec(self.wid, b, self.al, self.base, self.up, self.sign, self.pre, self.zpad) }
+    fn left(self) -> Spec { Spec(self.wid, self.fil, Left, self.base, self.up, self.sign, self.pre, self.zpad) }
+    fn right(self) -> Spec { Spec(self.wid, self.fil, Right, self.base, self.up, self.sign, self.pre, self.zpad) }
+    fn center(self) -> Spec { Spec(self.wid, self.fil, Center, self.base, self.up, self.sign, self.pre, self.zpad) }
+    /// Radix `r`, 2 to 36 (anything else is decimal).
+    fn radix(self, r: u32) -> Spec {
+        let b: u32 = if r >= 2 && r <= 36 { r } else { 10 }
+        Spec(self.wid, self.fil, self.al, b, self.up, self.sign, self.pre, self.zpad)
+    }
+    fn hex(self) -> Spec { self.radix(16) }
+    fn bin(self) -> Spec { self.radix(2) }
+    fn oct(self) -> Spec { self.radix(8) }
+    /// Upper-case digits above 9 (and an upper-case prefix: 0X).
+    fn upper(self) -> Spec { Spec(self.wid, self.fil, self.al, self.base, true, self.sign, self.pre, self.zpad) }
+    /// A `+` before non-negative numbers too.
+    fn plus(self) -> Spec { Spec(self.wid, self.fil, self.al, self.base, self.up, true, self.pre, self.zpad) }
+    /// `0x`, `0b` or `0o` before hex, binary and octal digits.
+    fn prefix(self) -> Spec { Spec(self.wid, self.fil, self.al, self.base, self.up, self.sign, true, self.zpad) }
+    /// Pad with zeros after the sign and prefix ("-0x00ff"), instead of the fill.
+    fn zero(self) -> Spec { Spec(self.wid, self.fil, self.al, self.base, self.up, self.sign, self.pre, true) }
+}
+
+fn digit(d: u32, up: bool) -> u8 {
+    if d < 10 { return (48 + d) as u8 }
+    if up { return (55 + d) as u8 }
+    (87 + d) as u8
+}
+
+/// The digits of `n` in `radix` (2 to 36), no sign or prefix.
+pub fn digits(n: u64, radix: u32, up: bool) -> String {
+    let r: u64 = if radix >= 2 && radix <= 36 { radix as u64 } else { 10 }
+    let mut rev: List[u8] = List.new()
+    let mut v = n.copy()
+    while true {
+        rev.push(digit((v % r) as u32, up))
+        v = v / r
+        if v == 0 { break }
+    }
+    let mut out = String.from("")
+    let mut i = rev.len()
+    while i > 0 {
+        i -= 1
+        out.push_byte(rev[i])
+    }
+    out
+}
+
+pub fn int(n: i64) -> String { int_with(n, spec()) }
+pub fn uint(n: u64) -> String { uint_with(n, spec()) }
+/// Lower-case hex digits, no prefix: 255 is "ff".
+pub fn hex(n: u64) -> String { digits(n, 16, false) }
+pub fn hex_upper(n: u64) -> String { digits(n, 16, true) }
+pub fn bin(n: u64) -> String { digits(n, 2, false) }
+pub fn oct(n: u64) -> String { digits(n, 8, false) }
+
+// |n| without overflowing on i64's minimum
+fn magnitude(n: i64) -> u64 {
+    if n >= 0 { return n as u64 }
+    ((0 - (n + 1)) as u64) + 1
+}
+
+pub fn int_with(n: i64, sp: Spec) -> String {
+    let mut out = String.from("")
+    put_int(inout out, n, sp)
+    out
+}
+
+pub fn uint_with(n: u64, sp: Spec) -> String {
+    let mut out = String.from("")
+    put_uint(inout out, n, sp)
+    out
+}
+
+/// Appends `n` formatted by `sp`.
+pub fn put_int(inout out: String, n: i64, sp: Spec) { number(inout out, n < 0, magnitude(n), sp) }
+
+pub fn put_uint(inout out: String, n: u64, sp: Spec) { number(inout out, false, n, sp) }
+
+fn number(inout out: String, neg: bool, mag: u64, sp: Spec) {
+    let mut head = String.from("")
+    if neg {
+        head.push_str("-")
+    } else if sp.sign {
+        head.push_str("+")
+    }
+    if sp.pre {
+        let mut p: str = ""
+        if sp.base == 16 { p = if sp.up { "0X" } else { "0x" } }
+        if sp.base == 2 { p = if sp.up { "0B" } else { "0b" } }
+        if sp.base == 8 { p = if sp.up { "0O" } else { "0o" } }
+        head.push_str(p)
+    }
+    let ds = digits(mag, sp.base, sp.up)
+    if sp.zpad {
+        out.append(head)
+        let used = out_len(head) + ds.len()
+        let mut k = used.copy()
+        while k < sp.wid {
+            out.push_str("0")
+            k += 1
+        }
+        out.append(ds)
+        return
+    }
+    let mut body = head.copy()
+    body.append(ds)
+    put_pad(inout out, body, sp)
+}
+
+fn out_len(s: String) -> usize { s.len() }
+
+// characters (scalar values) of a String
+fn chars(s: String) -> usize {
+    let mut n: usize = 0
+    for i in 0..s.len() {
+        let b = s.byte(i)
+        if b < 128 || b >= 192 { n += 1 }
+    }
+    n
+}
+
+fn fill_n(inout out: String, b: u8, n: usize) {
+    for i in 0..n { out.push_byte(b) }
+}
+
+/// Appends `s` padded to `sp`'s width with its fill and alignment.
+pub fn put_pad(inout out: String, s: String, sp: Spec) {
+    let n = chars(s)
+    if n >= sp.wid {
+        out.append(s)
+        return
+    }
+    let gap = sp.wid - n
+    match sp.al {
+        Left => {
+            out.append(s)
+            fill_n(inout out, sp.fil, gap)
+        }
+        Right => {
+            fill_n(inout out, sp.fil, gap)
+            out.append(s)
+        }
+        Center => {
+            fill_n(inout out, sp.fil, gap / 2)
+            out.append(s)
+            fill_n(inout out, sp.fil, gap - gap / 2)
+        }
+    }
+}
+
+/// `s` padded to `sp`'s width.
+pub fn pad(s: String, sp: Spec) -> String {
+    let mut out = String.from("")
+    put_pad(inout out, s, sp)
+    out
+}
+
+/// `s` right-aligned in `width` characters (filled with spaces).
+pub fn pad_left(s: String, width: usize) -> String { pad(s, spec().width(width)) }
+
+/// `s` left-aligned in `width` characters (filled with spaces).
+pub fn pad_right(s: String, width: usize) -> String { pad(s, spec().width(width).left()) }
+
+/// Decimal digits in groups of three: `grouped(-1234567, ",")` is "-1,234,567".
+pub fn grouped(n: i64, sep: str) -> String {
+    let ds = digits(magnitude(n), 10, false)
+    let mut out = String.from("")
+    if n < 0 { out.push_str("-") }
+    for i in 0..ds.len() {
+        if i > 0 && (ds.len() - i) % 3 == 0 { out.push_str(sep) }
+        out.push_byte(ds.byte(i))
+    }
+    out
+}
+
+/// A String built piece by piece: `let mut b = fmt.builder()`, `b.add("n=")`, `b.add_int(5)`,
+/// then `b.text()`. (The language has no string interpolation yet: roadmap P0.5.)
+pub type Builder = { s: String }
+
+pub fn builder() -> Builder { Builder(String.from("")) }
+
+impl Builder {
+    fn add(inout self, s: str) { self.s.push_str(s) }
+    fn add_string(inout self, s: String) { self.s.append(s) }
+    fn add_int(inout self, n: i64) { put_int(inout self.s, n, spec()) }
+    fn add_uint(inout self, n: u64) { put_uint(inout self.s, n, spec()) }
+    fn add_int_with(inout self, n: i64, sp: Spec) { put_int(inout self.s, n, sp) }
+    fn add_uint_with(inout self, n: u64, sp: Spec) { put_uint(inout self.s, n, sp) }
+    /// `s` padded to `sp`.
+    fn add_pad(inout self, s: String, sp: Spec) { put_pad(inout self.s, s, sp) }
+    /// Any value, as it prints.
+    fn add_show[T: Show](inout self, v: T) { v.show(inout self.s) }
+    /// An ASCII byte (anything else traps: use `add` for text).
+    fn add_byte(inout self, b: u8) { self.s.push_byte(b) }
+    fn len(self) -> usize { self.s.len() }
+    /// What was built.
+    fn text(self) -> String { self.s }
+}

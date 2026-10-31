@@ -1,0 +1,77 @@
+(IType 3:6 name=Job
+  member (Variant 3:14 name=Held
+    field (VField 3:19 index=0
+      type (TName 3:19 name=i32)))
+  member (Variant 3:26 name=Done))
+(IFn 5:4 name=refs end=5:38
+  param (Param 5:9 name=xs
+    type (TGeneric 5:13 name=List
+      arg (TName 5:18 name=i32)))
+  param (Param 5:24 name=j
+    type (TName 5:27 name=Job))
+  ret (TName 5:35 name=i32)
+  body (Block 5:39 end=18:1
+    stmt (SLet 6:5 name=ys mut
+      init (EIdent 6:14 name=xs))
+    stmt (SLet 7:5 name=a let_mut
+      init (EIndex 7:19
+        recv (EIdent 7:17 name=ys)
+        index (EInt 7:20 value=0)))
+    stmt (SLet 8:5 name=b let_mut
+      type (TName 8:16 name=i32)
+      init (EInt 8:22 value=2))
+    stmt (SLetPat 9:5
+      pat (PTuple 9:9
+        sub (PName 9:14 name=c mut)
+        sub (PName 9:17 name=d))
+      init (ETuple 9:22
+        elem (EInt 9:23 value=3)
+        elem (EInt 9:26 value=4)))
+    stmt (SLet 10:5 name=mut
+      init (EInt 10:15 value=5))
+    stmt (SLet 11:5 name=mut2 mut
+      init (EIdent 11:16 name=mut))
+    stmt (SExpr 12:5
+      expr (EMatch 12:5 end=15:5
+        scrutinee (EMethod 12:13 name=copy
+          recv (EIdent 12:11 name=j))
+        arm (Arm 13:9
+          pat (PVariant 13:9 name=Held
+            sub (PName 13:18 name=n mut))
+          body (EBlock 13:24
+            block (Block 13:24 end=13:33
+              stmt (SAssign 13:26 op=`+=`
+                target (EIdent 13:26 name=n)
+                value (EInt 13:31 value=1)))))
+        arm (Arm 14:9
+          pat (PName 14:9 name=Done)
+          body (EBlock 14:17
+            block (Block 14:17 end=14:18)))))
+    stmt (SExpr 16:5
+      expr (EMatch 16:5 end=16:45
+        scrutinee (EMethod 16:28 name=copy
+          recv (EIdent 16:26 name=j))
+        arm (Arm 16:5
+          pat (PVariant 16:12 name=Held
+            sub (PName 16:21 name=k mut))
+          body (EBlock 16:5
+            block (Block 16:35 end=16:44
+              stmt (SAssign 16:37 op=`+=`
+                target (EIdent 16:37 name=k)
+                value (EInt 16:42 value=1)))))
+        arm (Arm 16:5
+          pat (PWild 16:5)
+          body (EBlock 16:5
+            block (Block 16:45 end=16:45)))))
+    stmt (SExpr 17:5
+      expr (EBinary 17:19 op=`+`
+        lhs (EBinary 17:15 op=`+`
+          lhs (EBinary 17:11 op=`+`
+            lhs (EBinary 17:7 op=`+`
+              lhs (EIdent 17:5 name=a)
+              rhs (EIdent 17:9 name=b))
+            rhs (EIdent 17:13 name=c))
+          rhs (EIdent 17:17 name=d))
+        rhs (EIdent 17:21 name=mut2)))))
+(IFn 20:4 name=main end=20:10
+  body (Block 20:11 end=20:12))

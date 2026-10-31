@@ -1,1 +1,1 @@
-{"error":"E0701","span":{"file":"compiler/tests/check/fail/e0701_heap_map_key.ei","line":2,"col":20},"message":"List[i32] can't be a Map key; keys must be integers, bool, str or String"}
+{"error":"E0701","span":{"file":"compiler/tests/check/fail/e0701_heap_map_key.ei","line":2,"col":20},"message":"List[Chan[i32]] can't be a Map key: it doesn't implement `Hash` (its part Chan[i32] doesn't)","help":"Task, Mutex and Chan values are shared handles: they have no equality, order, hash or text"}

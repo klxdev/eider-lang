@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_try_no_from.ei","line":7,"col":16},"message":"`?` can't convert the error type A into B","help":"implement `From[A]` for B (in its package), or convert with `match`"}

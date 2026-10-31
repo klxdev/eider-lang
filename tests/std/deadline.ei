@@ -1,0 +1,47 @@
+// std/time: Duration and Deadline values. Constructors, arithmetic (saturating at the ends),
+// deadlines from now, never, expiry, the time left as a poll timeout (rounded up), sleeping
+// until a deadline.
+
+import "std/time"
+
+fn main() uses io, clock {
+    let d = time.millis(1500)
+    print(d.as_ns())
+    print(d.as_ms())
+    print(time.seconds(2).plus(time.millis(5)).as_ms())
+    print(time.micros(1).as_ms_ceil())
+    print(time.nanos(2000001).as_ms_ceil())
+    print(time.zero().as_ms_ceil())
+    print(time.millis(3).minus(time.millis(5)).is_zero())
+    print(time.millis(9).minus(time.millis(5)).as_ms())
+    print(time.millis(4).times(3).as_ms())
+    print(time.millis(4).shorter(time.millis(2)).as_ms())
+    // saturating: forever plus anything stays forever
+    let big = time.nanos(9223372036854775000)
+    print(big.plus(big).as_ns())
+
+    let nv = time.never()
+    print(nv.is_never())
+    print(nv.expired())
+    print(nv.timeout_ms())
+    print(time.after(big).is_never())
+    print(nv.earlier(time.after_ms(10)).is_never())
+
+    let past = time.now()
+    print(past.expired())
+    print(past.timeout_ms())
+    print(past.remaining().is_zero())
+
+    let dl = time.after_ms(40)
+    print(dl.expired())
+    let t = dl.timeout_ms()
+    print(t > 30 && t <= 40)
+    let t0 = time.mono_ns()
+    time.sleep_until(dl)
+    print(dl.expired())
+    print(time.mono_ns() - t0 >= 30000000)
+    print(dl.earlier(time.never()).mono_ns() == dl.mono_ns())
+    print(time.at_mono_ns(5).mono_ns())
+    time.sleep(time.millis(1))
+    time.sleep_until(time.at_mono_ns(0))
+}

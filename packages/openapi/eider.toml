@@ -1,0 +1,15 @@
+[package]
+name = "openapi"
+version = "0.1.0"
+description = "OpenAPI 3.1 services on packages/http: operations registered with their routes, JSON Schema validation with problem+json errors, typed handlers, /openapi.json (docs/openapi.md)"
+
+# the router, problem+json and middleware (body limits, bearer auth). openapi's own code is
+# pure, but a grant is checked against everything the program loads of http (its server
+# included), so it grants what http's modules use (docs/openapi.md "Gaps")
+[deps.http]
+path = "../http"
+uses = ["net", "io", "clock", "threads"]
+
+# rendering and parsing documents and bodies; pure
+[deps.json]
+path = "../json"

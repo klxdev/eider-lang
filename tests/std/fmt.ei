@@ -1,0 +1,66 @@
+// std/fmt: integers in every radix, signs, prefixes, zero padding, alignment and fill,
+// widths in characters, the extremes of i64/u64, grouping, the Builder.
+
+import "std/fmt"
+
+fn q(s: String) -> String {
+    var o = String.from("[")
+    o.append(s)
+    o.push_str("]")
+    o
+}
+
+fn main() uses io {
+    print(fmt.int(-9223372036854775807 - 1))
+    print(fmt.uint(18446744073709551615))
+    print(fmt.hex(255))
+    print(fmt.hex_upper(48879))
+    print(fmt.bin(10))
+    print(fmt.oct(8))
+    print(fmt.digits(35, 36, false))
+    print(fmt.hex(0))
+
+    let s = fmt.spec()
+    print(q(fmt.int_with(42, s.width(6))))
+    print(q(fmt.int_with(42, s.width(6).left())))
+    print(q(fmt.int_with(42, s.width(6).center())))
+    print(q(fmt.int_with(42, s.width(7).center().fill(42))))
+    print(q(fmt.int_with(-5, s.width(4).zero())))
+    print(q(fmt.int_with(5, s.width(4).zero().plus())))
+    print(q(fmt.int_with(-255, s.hex().prefix())))
+    print(q(fmt.uint_with(255, s.hex().prefix().width(8).zero())))
+    print(q(fmt.uint_with(255, s.hex().prefix().upper())))
+    print(q(fmt.uint_with(5, s.bin().prefix().width(10).zero())))
+    print(q(fmt.uint_with(8, s.oct().prefix())))
+    print(q(fmt.int_with(7, s.plus())))
+    print(q(fmt.int_with(0, s.plus())))
+    print(q(fmt.int_with(123456, s.width(3))))
+    print(q(fmt.int_with(-9223372036854775807 - 1, s.hex())))
+    print(q(fmt.uint_with(10, s.radix(99))))
+
+    print(q(fmt.pad_left(String.from("é€"), 4)))
+    print(q(fmt.pad_right(String.from("ab"), 4)))
+    print(q(fmt.pad(String.from("mid"), s.width(9).center().fill(46))))
+
+    print(fmt.grouped(-1234567, ","))
+    print(fmt.grouped(123, ","))
+    print(fmt.grouped(1000, "_"))
+    print(fmt.grouped(0, ","))
+
+    var out = String.from("x=")
+    fmt.put_int(inout out, -3, s.width(3))
+    print(q(out))
+
+    var b = fmt.builder()
+    b.add("status ")
+    b.add_int(200)
+    b.add_byte(32)
+    b.add_uint_with(48879, s.hex().prefix())
+    b.add(" ")
+    b.add_show(Some(3))
+    b.add(" ")
+    b.add_pad(String.from("end"), s.width(5).left().fill(45))
+    b.add_string(String.from("|"))
+    print(b.text())
+    print(b.len())
+}

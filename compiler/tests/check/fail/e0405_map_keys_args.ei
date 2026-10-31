@@ -1,0 +1,6 @@
+// expect: E0405 5:15
+// `keys()` takes no arguments (docs/compiler.md, "C8.20")
+fn main() {
+    let m: Map[i32, i32] = Map.new()
+    let k = m.keys(1)
+}

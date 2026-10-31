@@ -6,8 +6,8 @@ import "bytes.ei"
 /// What is at a path, without following a final symlink.
 pub type Kind = | Missing | File | Dir | Link | Other
 
-fn fail(what: str, path: List[u8], status: i64) -> String uses ffi {
-    var m = String.from(what)
+fn fail(what: str, path: List[u8], status: i64) -> String {
+    let mut m = String.from(what)
     m.push_str(" ")
     m.append(sys.to_string(path))
     m.push_str(": ")
@@ -15,21 +15,21 @@ fn fail(what: str, path: List[u8], status: i64) -> String uses ffi {
     m
 }
 
-fn one(path: List[u8]) uses ffi {
-    var p: List[List[u8]] = List.new()
+fn one(path: List[u8]) {
+    let mut p: List[List[u8]] = List.new()
     p.push(path)
     sys.send_all(p)
 }
 
-pub fn read(path: List[u8]) -> Result[List[u8], String] uses fs, ffi {
+pub fn read(path: List[u8]) -> Result[List[u8], String] uses fs {
     one(path)
     let n = sys.read_file()
     if n < 0 { return Err(fail("cannot read", path, n)) }
     Ok(sys.take())
 }
 
-fn put(path: List[u8], data: List[u8], append: bool) -> Result[bool, String] uses fs, ffi {
-    var p: List[List[u8]] = List.new()
+fn put(path: List[u8], data: List[u8], append: bool) -> Result[bool, String] uses fs {
+    let mut p: List[List[u8]] = List.new()
     p.push(path)
     p.push(data)
     sys.send_all(p)
@@ -38,10 +38,10 @@ fn put(path: List[u8], data: List[u8], append: bool) -> Result[bool, String] use
     Ok(true)
 }
 
-pub fn write(path: List[u8], data: List[u8]) -> Result[bool, String] uses fs, ffi { put(path, data, false) }
-pub fn append(path: List[u8], data: List[u8]) -> Result[bool, String] uses fs, ffi { put(path, data, true) }
+pub fn write(path: List[u8], data: List[u8]) -> Result[bool, String] uses fs { put(path, data, false) }
+pub fn append(path: List[u8], data: List[u8]) -> Result[bool, String] uses fs { put(path, data, true) }
 
-pub fn kind(path: List[u8]) -> Kind uses fs, ffi {
+pub fn kind(path: List[u8]) -> Kind uses fs {
     one(path)
     match sys.kind(false) {
         0 => Missing
@@ -52,7 +52,7 @@ pub fn kind(path: List[u8]) -> Kind uses fs, ffi {
     }
 }
 
-pub fn exists(path: List[u8]) -> bool uses fs, ffi {
+pub fn exists(path: List[u8]) -> bool uses fs {
     match kind(path) {
         Missing => false
         _ => true
@@ -60,13 +60,13 @@ pub fn exists(path: List[u8]) -> bool uses fs, ffi {
 }
 
 /// True for a directory or a symlink to one.
-pub fn is_dir(path: List[u8]) -> bool uses fs, ffi {
+pub fn is_dir(path: List[u8]) -> bool uses fs {
     one(path)
     sys.kind(true) == 2
 }
 
 /// Entry names (not full paths), sorted.
-pub fn list(path: List[u8]) -> Result[List[List[u8]], String] uses fs, ffi {
+pub fn list(path: List[u8]) -> Result[List[List[u8]], String] uses fs {
     one(path)
     let n = sys.list_dir()
     if n < 0 { return Err(fail("cannot list", path, n)) }
@@ -75,12 +75,12 @@ pub fn list(path: List[u8]) -> Result[List[List[u8]], String] uses fs, ffi {
 
 /// Insertion sort: directory listings are small.
 pub fn sort(xs: List[List[u8]]) -> List[List[u8]] {
-    var out: List[List[u8]] = List.new()
+    let mut out: List[List[u8]] = List.new()
     for x in xs {
         out.push(x)
-        var i = out.len() - 1
+        let mut i = out.len() - 1
         while i > 0 && bytes.compare(out[i - 1], out[i]) > 0 {
-            let a = out[i - 1]
+            let a = out[i - 1].copy()
             out[i - 1] = out[i]
             out[i] = a
             i -= 1
@@ -90,7 +90,7 @@ pub fn sort(xs: List[List[u8]]) -> List[List[u8]] {
 }
 
 /// Create `path` and any missing parents. Fine if it already exists as a directory.
-pub fn mkdir_all(path: List[u8]) -> Result[bool, String] uses fs, ffi {
+pub fn mkdir_all(path: List[u8]) -> Result[bool, String] uses fs {
     if is_dir(path) { return Ok(true) }
     match bytes.rfind_byte(path, 47) {
         Some(i) => {
@@ -106,7 +106,7 @@ pub fn mkdir_all(path: List[u8]) -> Result[bool, String] uses fs, ffi {
 
 /// Remove a file, or a directory and everything in it. Fine if it doesn't exist.
 /// Symlinks are removed, never followed.
-pub fn remove_all(path: List[u8]) -> Result[bool, String] uses fs, ffi {
+pub fn remove_all(path: List[u8]) -> Result[bool, String] uses fs {
     match kind(path) {
         Missing => { return Ok(true) }
         Dir => {
@@ -124,8 +124,8 @@ pub fn remove_all(path: List[u8]) -> Result[bool, String] uses fs, ffi {
 }
 
 /// Create a symlink at `link` pointing to `target`.
-pub fn symlink(target: List[u8], link: List[u8]) -> Result[bool, String] uses fs, ffi {
-    var p: List[List[u8]] = List.new()
+pub fn symlink(target: List[u8], link: List[u8]) -> Result[bool, String] uses fs {
+    let mut p: List[List[u8]] = List.new()
     p.push(target)
     p.push(link)
     sys.send_all(p)
@@ -134,20 +134,20 @@ pub fn symlink(target: List[u8], link: List[u8]) -> Result[bool, String] uses fs
     Ok(true)
 }
 
-pub fn cwd() -> Result[List[u8], String] uses fs, ffi {
+pub fn cwd() -> Result[List[u8], String] uses fs {
     let n = sys.cwd()
     if n < 0 { return Err(sys.error_text(n)) }
     Ok(sys.take())
 }
 
 /// Make `p` absolute (against the current directory) and fold `.` and `..` segments.
-pub fn absolute(p: List[u8]) -> Result[List[u8], String] uses fs, ffi {
+pub fn absolute(p: List[u8]) -> Result[List[u8], String] uses fs {
     let full = if p.len() > 0 && p[0] == 47 { p } else { join(cwd()?, p) }
     Ok(normalize(full))
 }
 
 /// The canonical absolute form of an existing path, with every symlink resolved.
-pub fn canonical(p: List[u8]) -> Result[List[u8], String] uses fs, ffi {
+pub fn canonical(p: List[u8]) -> Result[List[u8], String] uses fs {
     one(p)
     let n = sys.realpath()
     if n < 0 { return Err(fail("cannot resolve", p, n)) }
@@ -157,7 +157,7 @@ pub fn canonical(p: List[u8]) -> Result[List[u8], String] uses fs, ffi {
 /// Fold `.`, `..` and repeated slashes (purely textual; `..` above the root stays at the root).
 pub fn normalize(p: List[u8]) -> List[u8] {
     let abs = p.len() > 0 && p[0] == 47
-    var keep: List[List[u8]] = List.new()
+    let mut keep: List[List[u8]] = List.new()
     for seg in bytes.split(p, 47) {
         if seg.len() == 0 || (seg.len() == 1 && seg[0] == 46) {
             // skip
@@ -171,17 +171,17 @@ pub fn normalize(p: List[u8]) -> List[u8] {
             keep.push(seg)
         }
     }
-    var sep: List[u8] = List.new()
+    let mut sep: List[u8] = List.new()
     sep.push(47)
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     if abs { out.push(47) }
     bytes.append(inout out, bytes.join(keep, sep))
     if out.len() == 0 { out.push(46) }
     out
 }
 
-pub fn rename(from: List[u8], to: List[u8]) -> Result[bool, String] uses fs, ffi {
-    var p: List[List[u8]] = List.new()
+pub fn rename(from: List[u8], to: List[u8]) -> Result[bool, String] uses fs {
+    let mut p: List[List[u8]] = List.new()
     p.push(from)
     p.push(to)
     sys.send_all(p)
@@ -191,12 +191,12 @@ pub fn rename(from: List[u8], to: List[u8]) -> Result[bool, String] uses fs, ffi
 }
 
 /// Copy a file or directory tree. `skip` names (e.g. `.git`) are left out at every level.
-pub fn copy_all(from: List[u8], to: List[u8], skip: List[List[u8]]) -> Result[bool, String] uses fs, ffi {
+pub fn copy_all(from: List[u8], to: List[u8], skip: List[List[u8]]) -> Result[bool, String] uses fs {
     if is_dir(from) {
         mkdir_all(to)?
         let names = list(from)?
         for n in names {
-            var skipped = false
+            let mut skipped = false
             for s in skip {
                 if bytes.eq(s, n) { skipped = true }
             }
@@ -209,18 +209,18 @@ pub fn copy_all(from: List[u8], to: List[u8], skip: List[List[u8]]) -> Result[bo
 }
 
 /// Every file under `root` as a path relative to it, sorted, skipping `skip` names.
-pub fn walk(root: List[u8], skip: List[List[u8]]) -> Result[List[List[u8]], String] uses fs, ffi {
-    var out: List[List[u8]] = List.new()
+pub fn walk(root: List[u8], skip: List[List[u8]]) -> Result[List[List[u8]], String] uses fs {
+    let mut out: List[List[u8]] = List.new()
     let top: List[u8] = List.new()
     walk_into(root, top, skip, inout out)?
     Ok(out)
 }
 
-fn walk_into(root: List[u8], rel: List[u8], skip: List[List[u8]], inout out: List[List[u8]]) -> Result[bool, String] uses fs, ffi {
+fn walk_into(root: List[u8], rel: List[u8], skip: List[List[u8]], inout out: List[List[u8]]) -> Result[bool, String] uses fs {
     let here = if rel.len() == 0 { root } else { join(root, rel) }
     let names = list(here)?
     for n in names {
-        var skipped = false
+        let mut skipped = false
         for s in skip {
             if bytes.eq(s, n) { skipped = true }
         }
@@ -239,7 +239,7 @@ fn walk_into(root: List[u8], rel: List[u8], skip: List[List[u8]], inout out: Lis
 /// `a/b`, without doubling a slash.
 pub fn join(a: List[u8], b: List[u8]) -> List[u8] {
     if a.len() == 0 { return b }
-    var out = a
+    let mut out = a.copy()
     if out[out.len() - 1] != 47 { out.push(47) }
     bytes.append(inout out, b)
     out
@@ -249,13 +249,13 @@ pub fn join(a: List[u8], b: List[u8]) -> List[u8] {
 pub fn dirname(p: List[u8]) -> List[u8] {
     match bytes.rfind_byte(p, 47) {
         Some(0) => {
-            var r: List[u8] = List.new()
+            let mut r: List[u8] = List.new()
             r.push(47)
             return r
         }
         Some(i) => { return bytes.slice(p, 0, i) }
         None => {
-            var d: List[u8] = List.new()
+            let mut d: List[u8] = List.new()
             d.push(46)
             return d
         }

@@ -1,0 +1,7 @@
+// expect: E0307 3:18
+fn twice(xs: List[i32]) -> List[i32] {
+    let mut ys = xs
+    ys.push(1)
+    ys
+}
+fn main() uses io { print(twice(List.new()).len()) }

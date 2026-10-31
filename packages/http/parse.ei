@@ -1,0 +1,520 @@
+// http/parse: an incremental, strict HTTP/1.1 message parser (RFC 9112) for requests (the
+// server) and responses (the client).
+//
+// Feed it bytes as they arrive (`feed`), then ask for the next message (`next`): `More`
+// (feed more), `Done(msg)`, or `Bad(status, why)`. A parser keeps bytes after a message for
+// the next one, so pipelined requests come out one per `next`. Work is incremental: the head
+// is scanned once (each byte is looked at when it arrives, so limits are enforced before a
+// head is complete), and body bytes are consumed as they come. `eof` tells the parser the
+// peer closed (a response read until close ends there).
+//
+// Strictness, all of it on purpose (docs/services.md "Security posture"):
+// - lines end in CRLF; a bare LF or a bare CR anywhere in the head or a chunk line is an
+//   error; a line folded onto the previous one (obs-fold) is an error;
+// - the request line is exactly `method SP request-target SP HTTP/1.x`; the method is a
+//   token; the target has visible ASCII only and no `#`; another HTTP version is 505;
+// - a field name is a token directly followed by `:`; a value has no control characters;
+// - request smuggling: Content-Length together with Transfer-Encoding, two Content-Length
+//   fields (even equal ones), two Transfer-Encoding fields, a Content-Length that isn't
+//   only digits, Transfer-Encoding in HTTP/1.0, or a final coding other than chunked are
+//   400; codings besides chunked are 501; an HTTP/1.1 request needs exactly one Host;
+// - chunk sizes are hex with no sign or space (at most 15 digits), chunk extensions are
+//   checked for control characters, a chunk must end in CRLF, and trailers are checked
+//   like headers (and then dropped);
+// - limits (http.Limits): line length (414 for the request line, else 431), header count
+//   and head size (431), body size after decoding (413). Up to a few empty lines before a
+//   request line are skipped (RFC 9112 2.2).
+// After `Bad`, the parser stays failed: the connection must be closed (its framing is lost).
+
+import "core/sys"
+import "std/bytes"
+import "std/time"
+import "http.ei"
+
+const HEAD: i32 = 0
+const LENGTH: i32 = 1
+const CHUNK_SIZE: i32 = 2
+const CHUNK_DATA: i32 = 3
+const CHUNK_END: i32 = 4
+const TRAILER: i32 = 5
+const UNTIL_EOF: i32 = 6
+const FAILED: i32 = 7
+
+/// A parsed message: a request (`method`, `target`) or a response (`status`).
+pub type Msg = {
+    method: List[u8],
+    target: List[u8],
+    status: i32,
+    version: i32,
+    headers: List[http.Header],
+    body: List[u8],
+    keep_alive: bool,
+}
+
+/// What `next` found.
+/// - `More`: the message isn't complete; feed more bytes.
+/// - `Done(m)`: one complete message.
+/// - `Bad(status, why)`: the input is not acceptable HTTP; `status` is the response a
+///   server should send (400, 413, 414, 431, 501, 505).
+pub type Step = | More | Done(m: Msg) | Bad(status: i32, why: List[u8])
+
+pub type Parser = {
+    response: bool,
+    lim: http.Limits,
+    buf: List[u8],
+    pos: usize,
+    scan: usize,
+    line_start: usize,
+    lines: usize,
+    skipped: usize,
+    phase: i32,
+    m: Msg,
+    left: usize,
+    no_body: bool,
+    continue_wanted: bool,
+    trailers: usize,
+    bad_status: i32,
+    bad_why: List[u8],
+}
+
+fn empty_msg() -> Msg { Msg(List.new(), List.new(), 0, 11, List.new(), List.new(), true) }
+
+fn make(response: bool, lim: http.Limits) -> Parser {
+    Parser(response, lim, List.new(), 0, 0, 0, 0, 0, HEAD, empty_msg(), 0, false, false, 0, 0, List.new())
+}
+
+/// A parser for requests (a server's).
+pub fn requests(lim: http.Limits) -> Parser { make(false, lim) }
+
+/// A parser for responses (a client's).
+pub fn responses(lim: http.Limits) -> Parser { make(true, lim) }
+
+/// The request a message is (path and query split from the target).
+pub fn to_request(m: Msg) -> http.Request {
+    let (p, q) = http.split_target(m.target)
+    http.Request(m.method, m.target, p, q, m.version, m.headers, m.body, List.new(), m.keep_alive, List.new(), time.never(), List.new())
+}
+
+pub fn to_response(m: Msg) -> http.Response { http.Response(m.status, m.headers, m.body, m.version, m.keep_alive, List.new()) }
+
+impl Parser {
+    /// Adds bytes that arrived.
+    fn feed(inout self, data: List[u8]) { bytes.append(inout self.buf, data) }
+
+    /// Bytes fed but not yet consumed by a message.
+    fn buffered(self) -> usize { self.buf.len() - self.pos }
+
+    /// No message is under way: nothing buffered, between messages (a close here is clean).
+    fn idle(self) -> bool { self.phase == HEAD && self.buf.len() == self.pos }
+
+    /// A request's head asked for `Expect: 100-continue` and its body hasn't arrived yet: a
+    /// server may send `100 Continue` now (once; `continue_sent` clears it).
+    fn wants_continue(self) -> bool { self.continue_wanted }
+
+    fn continue_sent(inout self) { self.continue_wanted = false }
+
+    /// The next response answers a HEAD request (it has no body whatever its headers say).
+    fn expect_no_body(inout self) { self.no_body = true }
+
+    /// The next message, if the bytes fed so far complete it (see Step).
+    fn next(inout self) -> Step {
+        let s = advance(inout self)
+        if self.pos > 0 {
+            let n = self.pos.copy()
+            self.buf = bytes.slice(self.buf, n, self.buf.len())
+            self.pos = 0
+            // (outside the head phase these two are behind `pos` and unused)
+            self.scan = if self.scan > n { self.scan - n } else { 0 }
+            self.line_start = if self.line_start > n { self.line_start - n } else { 0 }
+        }
+        s
+    }
+
+    /// The peer closed the connection: a message read until close is done; More when
+    /// nothing was under way (a clean close); Bad when a message was cut short.
+    fn eof(inout self) -> Step {
+        if self.phase == FAILED { return Bad(self.bad_status, self.bad_why) }
+        if self.phase == UNTIL_EOF {
+            let rest = bytes.slice(self.buf, self.pos, self.buf.len())
+            bytes.append(inout self.m.body, rest)
+            self.pos = self.buf.len()
+            if self.m.body.len() > self.lim.max_body { return fail(inout self, 413, "body too large") }
+            self.m.keep_alive = false
+            return finish(inout self)
+        }
+        if self.idle() { return More }
+        // a step may still complete a message from what is buffered
+        let s = self.next()
+        match s {
+            Done(m) => { return Done(m) }
+            Bad(st, w) => { return Bad(st, w) }
+            More => {}
+        }
+        fail(inout self, 400, "connection closed in the middle of a message")
+    }
+}
+
+fn fail(inout p: Parser, status: i32, why: str) -> Step {
+    p.phase = FAILED
+    p.bad_status = status
+    p.bad_why = sys.lit(why)
+    Bad(status, p.bad_why)
+}
+
+fn finish(inout p: Parser) -> Step {
+    let m = p.m.copy()
+    p.m = empty_msg()
+    p.phase = HEAD
+    p.scan = p.pos
+    p.line_start = p.pos
+    p.lines = 0
+    p.skipped = 0
+    p.left = 0
+    p.no_body = false
+    p.continue_wanted = false
+    p.trailers = 0
+    Done(m)
+}
+
+fn advance(inout p: Parser) -> Step {
+    while true {
+        let ph = p.phase
+        if ph == FAILED { return Bad(p.bad_status, p.bad_why) }
+        if ph == HEAD {
+            match scan_head(inout p) {
+                Some(s) => { return s }
+                None => {}
+            }
+        } else if ph == LENGTH || ph == CHUNK_DATA {
+            let avail = p.buf.len() - p.pos
+            if avail == 0 { return More }
+            let n = if avail < p.left { avail } else { p.left }
+            let start = p.pos
+            for i in start..start + n { p.m.body.push(p.buf[i]) }
+            p.pos += n
+            p.left -= n
+            if p.left == 0 {
+                if ph == LENGTH { return finish(inout p) }
+                p.phase = CHUNK_END
+            } else {
+                return More
+            }
+        } else if ph == CHUNK_END {
+            if p.buf.len() - p.pos < 2 { return More }
+            if p.buf[p.pos] != 13 || p.buf[p.pos + 1] != 10 { return fail(inout p, 400, "chunk data not followed by CRLF") }
+            p.pos += 2
+            p.phase = CHUNK_SIZE
+        } else if ph == CHUNK_SIZE {
+            match chunk_line(inout p) {
+                Some(s) => { return s }
+                None => {}
+            }
+        } else if ph == TRAILER {
+            match trailer_line(inout p) {
+                Some(s) => { return s }
+                None => {}
+            }
+        } else {
+            // UNTIL_EOF: everything until the peer closes
+            let start = p.pos
+            for i in start..p.buf.len() { p.m.body.push(p.buf[i]) }
+            p.pos = p.buf.len()
+            if p.m.body.len() > p.lim.max_body { return fail(inout p, 413, "body too large") }
+            return More
+        }
+    }
+    More
+}
+
+/// The end of the line starting at `p.pos`: Ok(Some(index of its LF)), Ok(None) when not
+/// complete yet, Err(why) for a bare CR or LF. Used for chunk and trailer lines.
+fn line_end(p: Parser) -> Result[Option[usize], str] {
+    let mut i = p.pos.copy()
+    while i < p.buf.len() {
+        let c = p.buf[i]
+        if c == 10 {
+            if i == p.pos || p.buf[i - 1] != 13 { return Err("bare LF") }
+            return Ok(Some(i))
+        }
+        if i > p.pos && p.buf[i - 1] == 13 { return Err("bare CR") }
+        if i - p.pos >= p.lim.max_line { return Err("line too long") }
+        i += 1
+    }
+    Ok(None)
+}
+
+fn chunk_line(inout p: Parser) -> Option[Step] {
+    let end = match line_end(p) {
+        Ok(Some(e)) => e
+        Ok(None) => { return Some(More) }
+        Err(w) => { return Some(fail(inout p, 400, w)) }
+    }
+    // 1*HEXDIG [ chunk-ext ] CRLF
+    let mut i = p.pos.copy()
+    let mut size: usize = 0
+    let mut digits = 0
+    while i < end - 1 {
+        let h = hexval(p.buf[i])
+        if h < 0 { break }
+        digits += 1
+        if digits > 15 { return Some(fail(inout p, 400, "chunk size too large")) }
+        size = size * 16 + (h as usize)
+        i += 1
+    }
+    if digits == 0 { return Some(fail(inout p, 400, "invalid chunk size")) }
+    if i < end - 1 {
+        // chunk-ext: BWS ";" ... with no control characters
+        let mut j = i.copy()
+        while j < end - 1 && (p.buf[j] == 32 || p.buf[j] == 9) { j += 1 }
+        if j >= end - 1 || p.buf[j] != 59 { return Some(fail(inout p, 400, "invalid chunk size")) }
+        while j < end - 1 {
+            if !http.is_value_byte(p.buf[j]) { return Some(fail(inout p, 400, "invalid chunk extension")) }
+            j += 1
+        }
+    }
+    p.pos = end + 1
+    if size == 0 {
+        p.phase = TRAILER
+        return None
+    }
+    if p.m.body.len() + size > p.lim.max_body { return Some(fail(inout p, 413, "body too large")) }
+    p.left = size
+    p.phase = CHUNK_DATA
+    None
+}
+
+fn trailer_line(inout p: Parser) -> Option[Step] {
+    let end = match line_end(p) {
+        Ok(Some(e)) => e
+        Ok(None) => { return Some(More) }
+        Err(w) => { return Some(fail(inout p, 400, w)) }
+    }
+    if end == p.pos + 1 {
+        p.pos = end + 1
+        return Some(finish(inout p))
+    }
+    let line = bytes.slice(p.buf, p.pos, end - 1)
+    p.pos = end + 1
+    p.trailers += 1
+    if p.m.headers.len() + p.trailers > p.lim.max_headers { return Some(fail(inout p, 431, "too many header fields")) }
+    match field(line) {
+        Ok(h) => {}
+        Err(w) => { return Some(fail(inout p, 400, w)) }
+    }
+    None
+}
+
+fn hexval(c: u8) -> i32 {
+    if c >= 48 && c <= 57 { return (c - 48) as i32 }
+    if c >= 97 && c <= 102 { return (c - 87) as i32 }
+    if c >= 65 && c <= 70 { return (c - 55) as i32 }
+    -1
+}
+
+/// Looks at the head bytes that arrived since the last call: Some(step) to return (More,
+/// Bad, or Done for a message without a body), None when the head is complete and a body
+/// phase was entered.
+fn scan_head(inout p: Parser) -> Option[Step] {
+    while p.scan < p.buf.len() {
+        let i = p.scan.copy()
+        let c = p.buf[i]
+        if c == 10 {
+            if i == p.line_start || p.buf[i - 1] != 13 { return Some(fail(inout p, 400, "bare LF in the head")) }
+            if i == p.line_start + 1 {
+                // an empty line
+                if p.lines == 0 {
+                    p.skipped += 1
+                    if p.skipped > 4 { return Some(fail(inout p, 400, "empty lines before the start line")) }
+                    p.pos = i + 1
+                    p.line_start = i + 1
+                    p.scan = i + 1
+                    continue
+                }
+                p.scan = i + 1
+                return head_done(inout p, i)
+            }
+            p.lines += 1
+            if p.lines > p.lim.max_headers + 1 { return Some(fail(inout p, 431, "too many header fields")) }
+            p.line_start = i + 1
+        } else {
+            if i > p.line_start && p.buf[i - 1] == 13 { return Some(fail(inout p, 400, "bare CR in the head")) }
+            if i - p.line_start >= p.lim.max_line {
+                if p.lines == 0 && !p.response { return Some(fail(inout p, 414, "request line too long")) }
+                return Some(fail(inout p, 431, "header line too long"))
+            }
+        }
+        if i + 1 - p.pos > p.lim.max_head { return Some(fail(inout p, 431, "head too large")) }
+        p.scan = i + 1
+    }
+    Some(More)
+}
+
+/// The head is buf[pos..=end] (end is the LF of its empty line): parse it and choose the
+/// framing.
+fn head_done(inout p: Parser, end: usize) -> Option[Step] {
+    let mut lines: List[List[u8]] = List.new()
+    let mut s = p.pos.copy()
+    let mut i = p.pos.copy()
+    while i < end - 1 {
+        if p.buf[i] == 10 {
+            lines.push(bytes.slice(p.buf, s, i - 1))
+            s = i + 1
+        }
+        i += 1
+    }
+    p.pos = end + 1
+    if p.response {
+        match status_line(inout p, lines[0]) {
+            Some(st) => { return Some(st) }
+            None => {}
+        }
+    } else {
+        match request_line(inout p, lines[0]) {
+            Some(st) => { return Some(st) }
+            None => {}
+        }
+    }
+    for k in 1..lines.len() {
+        match field(lines[k]) {
+            Ok(h) => p.m.headers.push(h)
+            Err(w) => { return Some(fail(inout p, 400, w)) }
+        }
+    }
+    framing(inout p)
+}
+
+/// `name: value` (name lowercased, value without surrounding whitespace).
+fn field(line: List[u8]) -> Result[http.Header, str] {
+    if line[0] == 32 || line[0] == 9 { return Err("obsolete line folding") }
+    let colon = match bytes.find_byte(line, 58, 0) {
+        Some(c) => c
+        None => { return Err("header field without a colon") }
+    }
+    let name = bytes.slice(line, 0, colon)
+    if !http.is_token(name) { return Err("invalid header field name") }
+    let value = http.trim_ows(bytes.slice(line, colon + 1, line.len()))
+    if !http.valid_value(value) { return Err("invalid character in a header value") }
+    Ok(http.Header(http.lower(name), value))
+}
+
+/// 11 for "HTTP/1.1", 10 for "HTTP/1.0", 0 for another "HTTP/d.d", -1 for anything else.
+fn version(v: List[u8]) -> i32 {
+    if v.len() != 8 || !bytes.starts_with(v, sys.lit("HTTP/")) || v[6] != 46 { return -1 }
+    if !bytes.is_digit(v[5]) || !bytes.is_digit(v[7]) { return -1 }
+    if v[5] == 49 && v[7] == 49 { return 11 }
+    if v[5] == 49 && v[7] == 48 { return 10 }
+    0
+}
+
+fn request_line(inout p: Parser, line: List[u8]) -> Option[Step] {
+    let sp1 = match bytes.find_byte(line, 32, 0) {
+        Some(x) => x
+        None => { return Some(fail(inout p, 400, "invalid request line")) }
+    }
+    let sp2 = match bytes.find_byte(line, 32, sp1 + 1) {
+        Some(x) => x
+        None => { return Some(fail(inout p, 400, "invalid request line")) }
+    }
+    let method = bytes.slice(line, 0, sp1)
+    let target = bytes.slice(line, sp1 + 1, sp2)
+    let v = version(bytes.slice(line, sp2 + 1, line.len()))
+    if !http.is_token(method) { return Some(fail(inout p, 400, "invalid method")) }
+    if target.len() == 0 { return Some(fail(inout p, 400, "invalid request line")) }
+    for c in target {
+        if c <= 32 || c >= 127 || c == 35 { return Some(fail(inout p, 400, "invalid request target")) }
+    }
+    if v < 0 { return Some(fail(inout p, 400, "invalid HTTP version")) }
+    if v == 0 { return Some(fail(inout p, 505, "unsupported HTTP version")) }
+    p.m.method = method
+    p.m.target = target
+    p.m.version = v
+    None
+}
+
+fn status_line(inout p: Parser, line: List[u8]) -> Option[Step] {
+    // HTTP-version SP 3DIGIT SP reason-phrase (the SP and reason may be missing)
+    if line.len() < 12 || line[8] != 32 { return Some(fail(inout p, 400, "invalid status line")) }
+    let v = version(bytes.slice(line, 0, 8))
+    if v <= 0 { return Some(fail(inout p, 400, "invalid HTTP version")) }
+    let mut st: i32 = 0
+    for k in 9..12 {
+        let c = line[k as usize]
+        if !bytes.is_digit(c) { return Some(fail(inout p, 400, "invalid status code")) }
+        st = st * 10 + ((c - 48) as i32)
+    }
+    if st < 100 { return Some(fail(inout p, 400, "invalid status code")) }
+    if line.len() > 12 {
+        if line[12] != 32 { return Some(fail(inout p, 400, "invalid status line")) }
+        for k in 13..line.len() {
+            if !http.is_value_byte(line[k]) { return Some(fail(inout p, 400, "invalid reason phrase")) }
+        }
+    }
+    p.m.status = st
+    p.m.version = v
+    None
+}
+
+fn framing(inout p: Parser) -> Option[Step] {
+    let hs = p.m.headers
+    let te_n = http.count(hs, sys.lit("transfer-encoding"))
+    let cl_n = http.count(hs, sys.lit("content-length"))
+    let v = p.m.version
+    if v == 11 {
+        p.m.keep_alive = !http.has_token(hs, sys.lit("connection"), sys.lit("close"))
+    } else {
+        p.m.keep_alive = http.has_token(hs, sys.lit("connection"), sys.lit("keep-alive")) && !http.has_token(hs, sys.lit("connection"), sys.lit("close"))
+    }
+    if !p.response {
+        let hosts = http.count(hs, sys.lit("host"))
+        if v == 11 && hosts != 1 { return Some(fail(inout p, 400, "an HTTP/1.1 request needs exactly one Host")) }
+        if hosts > 1 { return Some(fail(inout p, 400, "more than one Host")) }
+    }
+    // conflicting framing is refused in every message, also where it wouldn't be used (a
+    // response to HEAD, a 304): a peer that sends it is broken or attacking
+    if te_n > 0 && cl_n > 0 { return Some(fail(inout p, 400, "both Content-Length and Transfer-Encoding")) }
+    if te_n > 1 { return Some(fail(inout p, 400, "more than one Transfer-Encoding")) }
+    if cl_n > 1 { return Some(fail(inout p, 400, "more than one Content-Length")) }
+    if cl_n == 1 && bytes.parse_u64(http.find(hs, sys.lit("content-length")).unwrap()).is_none() {
+        return Some(fail(inout p, 400, "invalid Content-Length"))
+    }
+    if p.response && (p.no_body || http.bodyless(p.m.status)) { return Some(finish(inout p)) }
+    if te_n > 0 {
+        if v == 10 && !p.response { return Some(fail(inout p, 400, "Transfer-Encoding in an HTTP/1.0 request")) }
+        let codings = http.list_items(http.find(hs, sys.lit("transfer-encoding")).unwrap())
+        let n = codings.len()
+        let chunked_last = n > 0 && http.eq_ci(codings[n - 1], sys.lit("chunked"))
+        if !chunked_last {
+            if p.response {
+                p.phase = UNTIL_EOF
+                p.m.keep_alive = false
+                return None
+            }
+            return Some(fail(inout p, 400, "the final transfer coding is not chunked"))
+        }
+        if n > 1 { return Some(fail(inout p, 501, "transfer codings other than chunked are not supported")) }
+        p.phase = CHUNK_SIZE
+        expect(inout p)
+        return None
+    }
+    if cl_n > 0 {
+        let len = bytes.parse_u64(http.find(hs, sys.lit("content-length")).unwrap()).unwrap()
+        if len > (p.lim.max_body as u64) { return Some(fail(inout p, 413, "body too large")) }
+        if len == 0 { return Some(finish(inout p)) }
+        p.left = len as usize
+        p.phase = LENGTH
+        expect(inout p)
+        return None
+    }
+    if p.response {
+        p.phase = UNTIL_EOF
+        p.m.keep_alive = false
+        return None
+    }
+    Some(finish(inout p))
+}
+
+fn expect(inout p: Parser) {
+    if !p.response && p.m.version == 11 && http.has_token(p.m.headers, sys.lit("expect"), sys.lit("100-continue")) {
+        p.continue_wanted = p.pos >= p.buf.len()
+    }
+}

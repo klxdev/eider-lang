@@ -1,0 +1,203 @@
+-- requests
+> GET / HTTP/1.1\nHost: a\n\n
+done GET / v11 keep [host=a] body=
+> GET /x?y=1&z HTTP/1.0\n\n
+done GET /x?y=1&z v10 close body=
+> GET / HTTP/1.0\nConnection: keep-alive\n\n
+done GET / v10 keep [connection=keep-alive] body=
+> GET / HTTP/1.1\nHost: a\nConnection: Close\n\n
+done GET / v11 close [host=a] [connection=Close] body=
+> GET / HTTP/1.1\nHost: a\nConnection: foo, close\n\n
+done GET / v11 close [host=a] [connection=foo, close] body=
+> POST /p HTTP/1.1\nHost: a\nContent-Length: 5\n\nhello
+done POST /p v11 keep [host=a] [content-length=5] body=hello
+> POST /p HTTP/1.1\nHost: a\nContent-Length: 0\n\n
+done POST /p v11 keep [host=a] [content-length=0] body=
+> POST /p HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\n\n5\nhello\n6;ext=1\n world\n0\n\n
+done POST /p v11 keep [host=a] [transfer-encoding=chunked] body=hello world
+> POST /p HTTP/1.1\nHost: a\nTransfer-Encoding: Chunked\n\nA\n0123456789\n0\nTrailer-Field: x\n\n
+done POST /p v11 keep [host=a] [transfer-encoding=Chunked] body=0123456789
+> PUT /p HTTP/1.1\nHost:   spaced	 \nX-Empty:\n\n
+done PUT /p v11 keep [host=spaced] [x-empty=] body=
+> OPTIONS * HTTP/1.1\nHost: a\n\n
+done OPTIONS * v11 keep [host=a] body=
+> GET http://example.com/abs/path?q HTTP/1.1\nHost: example.com\n\n
+done GET http://example.com/abs/path?q v11 keep [host=example.com] body=
+> \n\nGET /after-empty-lines HTTP/1.1\nHost: a\n\n
+done GET /after-empty-lines v11 keep [host=a] body=
+-- pipelining
+> GET /1 HTTP/1.1\nHost: a\n\nPOST /2 HTTP/1.1\nHost: a\nContent-Length: 3\n\nabcGET /3 HTTP/1.1\nHost: a\n\n
+done GET /1 v11 keep [host=a] body=
+done POST /2 v11 keep [host=a] [content-length=3] body=abc
+done GET /3 v11 keep [host=a] body=
+> POST /c HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\n\n3\nabc\n0\n\nGET /next HTTP/1.1\nHost: a\n\n
+done POST /c v11 keep [host=a] [transfer-encoding=chunked] body=abc
+done GET /next v11 keep [host=a] body=
+-- incomplete
+> GET / HTTP/1.1\nHost: a\n
+more
+> POST / HTTP/1.1\nHost: a\nContent-Length: 10\n\nabc
+more
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\n\n5\nab
+more
+-- responses
+< HTTP/1.1 200 OK\nContent-Length: 2\n\nhi
+done 200 v11 keep [content-length=2] body=hi
+< HTTP/1.1 204 No Content\n\n
+done 204 v11 keep body=
+< HTTP/1.1 304 Not Modified\nContent-Length: 99\n\n
+done 304 v11 keep [content-length=99] body=
+< HTTP/1.1 100 Continue\n\nHTTP/1.1 200 OK\nContent-Length: 1\n\nx
+done 100 v11 keep body=
+done 200 v11 keep [content-length=1] body=x
+< HTTP/1.1 200 OK\nTransfer-Encoding: chunked\n\n2\nab\n0\n\n
+done 200 v11 keep [transfer-encoding=chunked] body=ab
+< HTTP/1.1 200 OK\n\nuntil the end
+done 200 v11 close body=until the end
+< HTTP/1.0 200\nConnection: keep-alive\nContent-Length: 0\n\n
+done 200 v10 keep [connection=keep-alive] [content-length=0] body=
+< HTTP/1.1 404 \nContent-Length: 0\n\n
+done 404 v11 keep [content-length=0] body=
+< HTTP/1.1 200 OK\nContent-Length: 5\n\nab
+bad 400 connection closed in the middle of a message
+< HTTP/1.1 200 OK\nTransfer-Encoding: gzip\n\nraw
+done 200 v11 close [transfer-encoding=gzip] body=raw
+done 200 v11 keep [content-length=10] body=
+-- malformed and smuggling
+> GET / HTTP/1.1~Host: a~~
+bad 400 bare LF in the head
+> GET / HTTP/1.1\nHost: a~\n
+bad 400 bare LF in the head
+> GET / HTTP/1.1^Host: a\n\n
+bad 400 bare CR in the head
+> GET / HTTP/1.1\nHost: a^\n\n
+bad 400 bare CR in the head
+> GET / HTTP/1.1\nHost: a\nX: 1\n folded\n\n
+bad 400 obsolete line folding
+> GET / HTTP/1.1\nHost: a\n	X: tab-folded\n\n
+bad 400 obsolete line folding
+> GET / HTTP/1.1\n Host: a\n\n
+bad 400 obsolete line folding
+> GET / HTTP/1.1\nHost : a\n\n
+bad 400 invalid header field name
+> GET / HTTP/1.1\nHo st: a\n\n
+bad 400 invalid header field name
+> GET / HTTP/1.1\n: novalue\n\n
+bad 400 invalid header field name
+> GET / HTTP/1.1\nHost a\n\n
+bad 400 header field without a colon
+> GET / HTTP/1.1\nHost: a\nX: a`b\n\n
+bad 400 invalid character in a header value
+> GET / HTTP/1.1\nHost: a\nX: a@\n\n
+bad 400 invalid character in a header value
+> GET / HTTP/1.1\n\n
+bad 400 an HTTP/1.1 request needs exactly one Host
+> GET / HTTP/1.1\nHost: a\nHost: b\n\n
+bad 400 an HTTP/1.1 request needs exactly one Host
+> GET / HTTP/1.0\nHost: a\nHost: b\n\n
+bad 400 more than one Host
+> GET  / HTTP/1.1\nHost: a\n\n
+bad 400 invalid request line
+> GET / HTTP/1.1 \nHost: a\n\n
+bad 400 invalid HTTP version
+> GET /a b HTTP/1.1\nHost: a\n\n
+bad 400 invalid HTTP version
+> GET /#frag HTTP/1.1\nHost: a\n\n
+bad 400 invalid request target
+> GET /$ HTTP/1.1\nHost: a\n\n
+bad 400 invalid request target
+> G(T / HTTP/1.1\nHost: a\n\n
+bad 400 invalid method
+> GET / HTTP/1.2\nHost: a\n\n
+bad 505 unsupported HTTP version
+> GET / HTTP/2.0\nHost: a\n\n
+bad 505 unsupported HTTP version
+> GET / http/1.1\nHost: a\n\n
+bad 400 invalid HTTP version
+> GET / HTTP/1.10\nHost: a\n\n
+bad 400 invalid HTTP version
+> GET /\n\n
+bad 400 invalid request line
+> GET\n\n
+bad 400 invalid request line
+> \n\n\n\n\n\nGET / HTTP/1.1\nHost: a\n\n
+bad 400 empty lines before the start line
+> POST / HTTP/1.1\nHost: a\nContent-Length: 3\nContent-Length: 3\n\nabc
+bad 400 more than one Content-Length
+> POST / HTTP/1.1\nHost: a\nContent-Length: 3, 3\n\nabc
+bad 400 invalid Content-Length
+> POST / HTTP/1.1\nHost: a\nContent-Length: +3\n\nabc
+bad 400 invalid Content-Length
+> POST / HTTP/1.1\nHost: a\nContent-Length: -1\n\n
+bad 400 invalid Content-Length
+> POST / HTTP/1.1\nHost: a\nContent-Length: 0x3\n\nabc
+bad 400 invalid Content-Length
+> POST / HTTP/1.1\nHost: a\nContent-Length: 99999999999999999999999\n\n
+bad 400 invalid Content-Length
+> POST / HTTP/1.1\nHost: a\nContent-Length:\n\n
+bad 400 invalid Content-Length
+> POST / HTTP/1.1\nHost: a\nContent-Length: 3\nTransfer-Encoding: chunked\n\n0\n\n
+bad 400 both Content-Length and Transfer-Encoding
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\nContent-Length: 3\n\n0\n\n
+bad 400 both Content-Length and Transfer-Encoding
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\nTransfer-Encoding: chunked\n\n0\n\n
+bad 400 more than one Transfer-Encoding
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: gzip\n\nabc
+bad 400 the final transfer coding is not chunked
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: chunked, gzip\n\n0\n\n
+bad 400 the final transfer coding is not chunked
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: gzip, chunked\n\n0\n\n
+bad 501 transfer codings other than chunked are not supported
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: xchunked\n\n0\n\n
+bad 400 the final transfer coding is not chunked
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding:\n\n0\n\n
+bad 400 the final transfer coding is not chunked
+> POST / HTTP/1.0\nTransfer-Encoding: chunked\n\n0\n\n
+bad 400 Transfer-Encoding in an HTTP/1.0 request
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\n\nzz\n\n
+bad 400 invalid chunk size
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\n\n-1\n\n
+bad 400 invalid chunk size
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\n\n 5\nhello\n0\n\n
+bad 400 invalid chunk size
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\n\n5 x\nhello\n0\n\n
+bad 400 invalid chunk size
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\n\n5~hello\n0\n\n
+bad 400 bare LF
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\n\n5\nhelloX\n0\n\n
+bad 400 chunk data not followed by CRLF
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\n\n5\nhello~0\n\n
+bad 400 chunk data not followed by CRLF
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\n\n1000000000000000\n
+bad 400 chunk size too large
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\n\n5;e=`\nhello\n0\n\n
+bad 400 invalid chunk extension
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\n\n0\nbad trailer\n\n
+bad 400 header field without a colon
+> POST / HTTP/1.1\nHost: a\nTransfer-Encoding: chunked\n\n0\n folded: trailer\n\n
+bad 400 obsolete line folding
+-- limits
+bad 414 request line too long
+bad 431 header line too long
+bad 431 too many header fields
+bad 431 head too large
+bad 413 body too large
+bad 413 body too large
+done POST / v11 keep [host=a] [transfer-encoding=chunked] body=12345678
+bad 431 too many header fields
+bad 414 request line too long
+bad 414 request line too long
+-- expect 100-continue
+more
+true
+false
+done POST / v11 keep [host=a] [expect=100-continue] [content-length=2] body=ok
+-- requests become Request values
+/users/42
+name=a%20b&x=y+z&bad=%zz
+v
+v
+a b
+y z
+true
+true

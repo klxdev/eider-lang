@@ -30,7 +30,8 @@
 //   S_BINARY  dst := b (op a = ast.OP_*) c; ty = operand type. + - * / % trap on overflow
 //             and division by zero; +% -% *% wrap; & | ^ on the bits; << >> trap on a
 //             count outside 0..width-1 (>> is arithmetic on signed types); == != compare
-//             structurally for any type; < <= > >= on integers, String and str (bytes).
+//             through Eq for any type that has it; < <= > >= through Ord (integers, bool
+//             and text inline, the rest through cmp_ glue; C8.4).
 //             (&& and || are lowered to S_IF.)
 //   S_CAST    dst := a as ty (traps when out of range)
 //   S_CALL    dst := fn a (args [b/c]); dst = NONE for a () result
@@ -41,7 +42,9 @@
 //   S_PANIC   trap with message op a       S_ASSERT  trap unless op a; b = message string+1
 //   S_IF      if op a then block b else block c
 //   S_LOOP    loop { block a }; `continue` runs block b (the step) and loops again
-//   S_BREAK   S_CONTINUE   S_RETURN a = op+1 (0: no value)
+//   S_BREAK   S_CONTINUE   a = how many enclosing loops it leaves besides the innermost (a
+//             labeled exit, docs/compiler.md "C8.22"; 0: the innermost loop's)
+//   S_RETURN a = op+1 (0: no value)
 //   S_TUPLE   dst := (args [b/c]) : ty
 //   S_CLONE   dst := deep copy of op a (of type ty)
 //   S_DROP    drop the value in place a (of type ty)
@@ -52,6 +55,10 @@
 //             into its environment; the function's L_CAPTURE locals read them)
 //   S_FNREF   dst := function a as a closure value of type ty (no environment)
 //   S_CALLV   dst := call closure op a with args [b/c] (borrowed); dst = NONE for ()
+//   S_NOTE    the checker's own note for the protection rule (a = kind, b = index; check.ei,
+//             "References"); removed before checking ends, so no IR that is used has one
+//   S_CHECK   the bounds checks of place a, and nothing else (a reference is bound to it:
+//             its indices are checked once, then)
 // Functions  {name text, def, ret, locals [lstart/lcount], nparams, body block+1 (0 = none),
 //             caps, is_test}; generic functions and methods appear once per instance
 //             (`name[i32]`, `Option[i32].unwrap`), each closure body is a function of its
@@ -76,7 +83,9 @@
 // dropped right before the store. Builtin argument conventions: the receiver of a mutating
 // builtin is a place (+ARG_PLACE); B_LIST_PUSH's element and B_MAP_INSERT's key and value
 // are moved in; every other argument is borrowed. B_LIST_POP's result is owned; B_MAP_GET's
-// Option borrows its payload from the map (the checker clones it).
+// Option borrows its payload from the map (the checker clones it). A reference (a `let` or
+// pattern binding of a place, docs/compiler.md "C8.6") has no local: the IR uses the place it
+// names wherever the source uses it, so it is never cloned or dropped.
 //
 // Builtins     B_STR_FROM(str) -> String          B_STR_FROM_INT(i64) -> String
 //   B_LEN(x) -> usize, B_IS_EMPTY(x) -> bool, x a String, List or Map
@@ -100,6 +109,12 @@
 //   B_SPAWN(f) -> Task[T]    B_TASK_JOIN(t) -> T
 //   B_MUTEX_NEW(v) -> ty    B_MUTEX_GET(m) -> T    B_MUTEX_SET(m, v)    B_MUTEX_UPDATE(m, f)
 //   B_CHAN_NEW -> ty    B_CHAN_SEND(c, v)    B_CHAN_RECV(c) -> Option[T]    B_CHAN_CLOSE(c)
+// Operation traits (C8.4; x borrowed): B_COPY(x) -> ty (`x.copy()`: a clone, except that a
+//   Mutex inside gets a new Mutex with a copy, a part with its own Copy is copied by it, and
+//   a record with its own Drop gets a buffer of its own)    B_COMPARE(a, b) -> ty = Ordering
+//   B_HASH(x) -> u64    B_SHOW(inout out, x) (appends x's text)    B_TO_STRING(x) -> String
+//   (S_BINARY's == and <, S_PRINT and Map keys go through the same glue; a type in
+//   Ir.impls uses its own function there)
 
 import "core/sys"
 import "std/bytes"
@@ -163,6 +178,8 @@ pub const S_BUILTIN: u32 = 25
 pub const S_CLOSURE: u32 = 26
 pub const S_FNREF: u32 = 27
 pub const S_CALLV: u32 = 28
+pub const S_NOTE: u32 = 29
+pub const S_CHECK: u32 = 30
 
 pub const B_STR_FROM: u32 = 0
 pub const B_STR_FROM_INT: u32 = 1
@@ -197,6 +214,30 @@ pub const B_STR_SLICE: u32 = 29
 pub const B_STR_BYTES: u32 = 30
 pub const B_STR_FROM_BYTES: u32 = 31
 pub const B_STR_PUSH_BYTE: u32 = 32
+pub const B_COPY: u32 = 33
+pub const B_COMPARE: u32 = 34
+pub const B_HASH: u32 = 35
+pub const B_SHOW: u32 = 36
+pub const B_TO_STRING: u32 = 37
+/// B_MAP_KEYS(m) -> List[K], B_MAP_VALUES(m) -> List[V], B_MAP_ENTRIES(m) -> List[(K, V)]:
+/// owned Lists of copies, in slot order (docs/compiler.md, "C8.20")
+pub const B_MAP_KEYS: u32 = 38
+pub const B_MAP_VALUES: u32 = 39
+pub const B_MAP_ENTRIES: u32 = 40
+/// Ref[T] (docs/compiler.md, "C8.7"; the receiver is a borrowed operand): B_REF_NEW(v) -> ty
+/// (v moved in), B_REF_GET(r) -> T (a copy), B_REF_SET(r, v) (v moved in, the old value
+/// dropped), B_REF_READ(r, f) -> R (f: fn(T) -> R, borrowed, called on a borrow of the
+/// value), B_REF_UPDATE(r, f) -> R (f: fn(inout T) -> R, called on the value itself); each
+/// traps on an overlapping access (line)
+pub const B_REF_NEW: u32 = 41
+pub const B_REF_GET: u32 = 42
+pub const B_REF_SET: u32 = 43
+pub const B_REF_READ: u32 = 44
+pub const B_REF_UPDATE: u32 = 45
+/// B_DEFAULT -> ty: the derived or built-in Default of ty (docs/compiler.md, "C8.23"; a type
+/// with its own impl is an S_CALL of it instead): 0, false, "", empty List/Map, None, and a
+/// record, tuple, array or Box of its parts' defaults
+pub const B_DEFAULT: u32 = 46
 
 pub fn builtin_name(b: u32) -> str {
     match b {
@@ -232,7 +273,21 @@ pub fn builtin_name(b: u32) -> str {
         29 => "slice"
         30 => "bytes"
         31 => "from_bytes"
-        _ => "push_byte"
+        32 => "push_byte"
+        33 => "copy"
+        34 => "compare"
+        35 => "hash"
+        36 => "show"
+        37 => "to_string"
+        38 => "keys"
+        39 => "values"
+        40 => "entries"
+        41 => "ref_new"
+        42 => "ref_get"
+        43 => "ref_set"
+        44 => "read"
+        45 => "update"
+        _ => "default"
     }
 }
 
@@ -244,6 +299,8 @@ pub type Block = { start: u32, len: u32 }
 pub type Fn = {
     name: List[u8], ret: u32, lstart: u32, lcount: u32, nparams: u32, body: u32,
     caps: List[u8], is_test: bool,
+    /// the module whose source the body comes from (index into Ir.files; 0: the entry file)
+    file: u32,
 }
 pub type Const = { name: List[u8], ty: u32, op: u32 }
 pub type Extern = { f: u32, symbol: List[u8], params: List[u32] }
@@ -271,19 +328,29 @@ pub type Ir = {
     outer: List[Outer],
     /// the line of `main` (its exit code's range check traps there)
     main_line: u32,
+    /// Operation traits (docs/compiler.md, "C8.4: operation traits"): for a type with its own
+    /// impl of a language trait, trait (TR_* in check.ei: 0 Copy, 1 Eq, 2 Ord, 3 Hash, 4 Show,
+    /// 5 Iter, 6 Drop) * 2^32 + type -> the function implementing its method; lowering's glue
+    /// calls it instead of the derived operation
+    impls: Map[u64, u32],
+    /// file names for traps, by module index (0: the entry file, named by ei_set_file);
+    /// empty for modules whose names aren't needed
+    files: List[List[u8]],
+    /// the module of the functions begun from now on (begin_fn)
+    cur_file: u32,
 }
 
 type Outer = { cur: u32, building: List[Local] }
 
 pub fn new() -> Ir {
-    Ir(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new(), 0)
+    Ir(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new(), 0, Map.new(), List.new(), 0)
 }
 
 // ---- building
 
 /// Declare function `i` (functions are declared in index order before any body is built).
 pub fn declare_fn(inout ir: Ir, name: List[u8], is_test: bool) -> u32 {
-    ir.fns.push(Fn(name, types.UNIT, 0, 0, 0, 0, List.new(), is_test))
+    ir.fns.push(Fn(name, types.UNIT, 0, 0, 0, 0, List.new(), is_test, 0))
     (ir.fns.len() - 1) as u32
 }
 
@@ -291,15 +358,16 @@ pub fn declare_fn(inout ir: Ir, name: List[u8], is_test: bool) -> u32 {
 pub fn begin_fn(inout ir: Ir, f: u32, ret: u32, caps: List[u8]) {
     ir.cur = f
     ir.building = List.new()
-    var fd = ir.fns[f as usize]
+    let mut fd = ir.fns[f as usize].copy()
     fd.ret = ret
     fd.caps = caps
+    fd.file = ir.cur_file
     ir.fns[f as usize] = fd
 }
 
 /// Finish the function being built: its locals are stored and its body is block `body`.
 pub fn end_fn(inout ir: Ir, nparams: u32, body: u32) {
-    var fd = ir.fns[ir.cur as usize]
+    let mut fd = ir.fns[ir.cur as usize].copy()
     fd.lstart = ir.locals.len() as u32
     fd.lcount = ir.building.len() as u32
     for l in ir.building { ir.locals.push(l) }
@@ -329,7 +397,7 @@ pub fn end_nested(inout ir: Ir, nparams: u32, body: u32) {
 
 /// Set the return type of the function being built (a closure's is known at its end).
 pub fn set_ret(inout ir: Ir, ret: u32) {
-    var fd = ir.fns[ir.cur as usize]
+    let mut fd = ir.fns[ir.cur as usize].copy()
     fd.ret = ret
     ir.fns[ir.cur as usize] = fd
 }
@@ -370,7 +438,7 @@ pub fn op_is_local(ir: Ir, o: u32) -> bool { ir.ops[o as usize].kind == O_LOCAL 
 pub fn op_local_id(ir: Ir, o: u32) -> u32 { ir.ops[o as usize].a }
 
 pub fn set_local_ty(inout ir: Ir, l: u32, ty: u32) {
-    var x = ir.building[l as usize]
+    let mut x = ir.building[l as usize].copy()
     x.ty = ty
     ir.building[l as usize] = x
 }
@@ -411,7 +479,7 @@ pub fn open(ir: Ir) -> u32 { ir.pending.len() as u32 }
 /// Close the block opened at `mark`; returns the block id.
 pub fn close(inout ir: Ir, mark: u32) -> u32 {
     let start = ir.extra.len() as u32
-    var i = mark as usize
+    let mut i = mark as usize
     while i < ir.pending.len() {
         ir.extra.push(ir.pending[i])
         i += 1
@@ -435,7 +503,7 @@ pub fn add_const(inout ir: Ir, name: List[u8], ty: u32, o: u32) {
 /// Make function f (declared, never built) the `extern "c"` declaration of C symbol
 /// `symbol` with these parameter types and return type.
 pub fn add_extern(inout ir: Ir, f: u32, symbol: List[u8], params: List[u32], ret: u32) {
-    var fd = ir.fns[f as usize]
+    let mut fd = ir.fns[f as usize].copy()
     fd.ret = ret
     ir.fns[f as usize] = fd
     ir.externs.push(Extern(f, symbol, params))
@@ -450,21 +518,21 @@ pub fn add_export(inout ir: Ir, f: u32, name: List[u8]) {
 
 type Out = { b: List[u8] }
 
-fn put(inout o: Out, s: str) uses ffi { bytes.append(inout o.b, sys.lit(s)) }
+fn put(inout o: Out, s: str) { bytes.append(inout o.b, sys.lit(s)) }
 fn putb(inout o: Out, s: List[u8]) { bytes.append(inout o.b, s) }
 fn putn(inout o: Out, n: u64) { bytes.append(inout o.b, bytes.from_u64(n)) }
-fn putty(inout o: Out, t: types.Types, names: intern.Interner, ty: u32) uses ffi { types.show_into(inout o.b, t, names, ty) }
+fn putty(inout o: Out, t: types.Types, names: intern.Interner, ty: u32) { types.show_into(inout o.b, t, names, ty) }
 
-fn ind(inout o: Out, depth: u32) uses ffi {
+fn ind(inout o: Out, depth: u32) {
     for i in 0..depth { put(inout o, "  ") }
 }
 
-fn put_local(inout o: Out, l: u32) uses ffi {
+fn put_local(inout o: Out, l: u32) {
     put(inout o, "%")
     putn(inout o, l as u64)
 }
 
-fn put_op(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u32) uses ffi {
+fn put_op(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u32) {
     let x = ir.ops[id as usize]
     match x.kind {
         0 => {
@@ -484,7 +552,7 @@ fn put_op(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u32)
     }
 }
 
-fn put_place(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u32) uses ffi {
+fn put_place(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u32) {
     let x = ir.places[id as usize]
     match x.kind {
         0 => put_local(inout o, x.a)
@@ -514,7 +582,7 @@ fn put_place(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u
     }
 }
 
-fn put_args(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, start: u32, n: u32) uses ffi {
+fn put_args(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, start: u32, n: u32) {
     put(inout o, "(")
     for i in 0..n {
         if i > 0 { put(inout o, ", ") }
@@ -529,19 +597,19 @@ fn put_args(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, start:
     put(inout o, ")")
 }
 
-fn put_dst(inout o: Out, dst: u32) uses ffi {
+fn put_dst(inout o: Out, dst: u32) {
     put_local(inout o, dst)
     put(inout o, " = ")
 }
 
-fn put_block(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, b: u32, depth: u32) uses ffi {
+fn put_block(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, b: u32, depth: u32) {
     let bl = ir.blocks[b as usize]
     for i in 0..bl.len {
         put_stmt(inout o, ir, t, names, ir.extra[(bl.start + i) as usize], depth)
     }
 }
 
-fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u32, depth: u32) uses ffi {
+fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u32, depth: u32) {
     let s = ir.stmts[id as usize]
     ind(inout o, depth)
     match s.kind {
@@ -660,8 +728,20 @@ fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u3
             ind(inout o, depth)
             put(inout o, "}")
         }
-        18 => put(inout o, "break")
-        19 => put(inout o, "continue")
+        18 => {
+            put(inout o, "break")
+            if s.a > 0 {
+                put(inout o, " outer ")
+                putn(inout o, s.a as u64)
+            }
+        }
+        19 => {
+            put(inout o, "continue")
+            if s.a > 0 {
+                put(inout o, " outer ")
+                putn(inout o, s.a as u64)
+            }
+        }
         21 => {
             put_dst(inout o, s.dst)
             put(inout o, "tuple ")
@@ -706,6 +786,10 @@ fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u3
             put_op(inout o, ir, t, names, s.a)
             put_args(inout o, ir, t, names, s.b, s.c)
         }
+        30 => {
+            put(inout o, "check ")
+            put_place(inout o, ir, t, names, s.a)
+        }
         _ => {
             put(inout o, "return")
             if s.a > 0 {
@@ -735,8 +819,8 @@ fn kind_text(k: u32) -> str {
 }
 
 /// The whole program as text.
-pub fn dump(ir: Ir, t: types.Types, names: intern.Interner) -> List[u8] uses ffi {
-    var o = Out(List.new())
+pub fn dump(ir: Ir, t: types.Types, names: intern.Interner) -> List[u8] {
+    let mut o = Out(List.new())
     for c in ir.consts {
         put(inout o, "const ")
         putb(inout o, c.name)

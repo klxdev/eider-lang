@@ -1,0 +1,4 @@
+// expect: E0401 3:21
+fn main() {
+    let r = Ref.new(())
+}

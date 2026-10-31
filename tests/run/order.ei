@@ -50,7 +50,7 @@ fn main() uses io {
 
   // nested arrays, records, value semantics
   var g = Grid([[1, 2, 3], [4, 5, 6]], "grid")
-  let copy = g
+  let copy = g.copy()
   g.cells[1][2] = 60
   print(g.cells[1][2])      // 60
   print(copy.cells[1][2])   // 6

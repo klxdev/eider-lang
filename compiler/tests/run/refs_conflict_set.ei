@@ -1,0 +1,9 @@
+// `set` while the same Ref is being read traps (docs/compiler.md, "C8.7").
+fn main() uses io {
+    let r = Ref.new(String.from("a"))
+    let n = r.read(|s| -> usize {
+        r.set(String.from("b"))
+        s.len()
+    })
+    print(n)
+}

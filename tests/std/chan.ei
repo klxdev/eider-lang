@@ -1,0 +1,222 @@
+// std/chan: bounded channels (FIFO, capacity, values handed back when not queued), deadlines
+// on send and receive, close, many producers and consumers with exact totals, blocked
+// senders and receivers woken by the other side or by close, an unbounded channel, owned
+// values, and select over channels of different types, timers and closed channels.
+
+import "std/chan"
+import "std/time"
+
+type Msg = | Num(n: i64) | Word(w: String) | Tick | Shut
+
+fn show(m: Msg) -> String {
+    match m {
+        Num(n) => String.from_int(n)
+        Word(w) => w
+        Tick => String.from("tick")
+        Shut => String.from("shut")
+    }
+}
+
+fn sent(s: chan.Send[i64]) -> String {
+    match s {
+        chan.Sent => String.from("sent")
+        chan.Full(v) => { var o = String.from("full "); o.append(String.from_int(v)); o }
+        chan.Rejected(v) => { var o = String.from("rejected "); o.append(String.from_int(v)); o }
+    }
+}
+
+fn got(r: chan.Recv[i64]) -> String {
+    match r {
+        chan.Value(v) => String.from_int(v)
+        chan.Empty => String.from("empty")
+        chan.Closed => String.from("closed")
+    }
+}
+
+fn main() uses io, clock, threads {
+    // capacity, order, values handed back
+    let c: chan.Channel[i64] = chan.bounded(2)
+    print(sent(c.try_send(1)))
+    print(sent(c.try_send(2)))
+    print(sent(c.try_send(3)))
+    print(c.len())
+    print(got(c.try_recv()))
+    print(sent(c.try_send(4)))
+    print(got(c.recv(time.never())))
+    print(got(c.recv(time.never())))
+    print(got(c.try_recv()))
+
+    // deadlines: an empty receive and a full send give up on time
+    let t0 = time.mono_ns()
+    print(got(c.recv(time.after_ms(30))))
+    print(time.mono_ns() - t0 >= 30000000)
+    c.try_send(5)
+    c.try_send(6)
+    let t1 = time.mono_ns()
+    print(sent(c.send(7, time.after_ms(30))))
+    print(time.mono_ns() - t1 >= 30000000)
+    print(sent(c.send(8, time.now())))
+
+    // close: sends rejected, the queue drained, then Closed (also for a waiting receive)
+    c.close()
+    c.close()
+    print(c.is_closed())
+    print(sent(c.try_send(9)))
+    print(sent(c.send(9, time.never())))
+    print(got(c.recv(time.never())))
+    print(got(c.recv(time.never())))
+    print(got(c.recv(time.never())))
+    print(got(c.try_recv()))
+
+    // 4 producers x 2000 values through capacity 8 into 4 consumers: nothing lost or doubled
+    let q: chan.Channel[i64] = chan.bounded(8)
+    let done: chan.Channel[i64] = chan.bounded(8)
+    var ps: List[Task[i32]] = List.new()
+    for p in 0..4 {
+        let qq = q
+        let base = p as i64 * 100000
+        ps.push(spawn(|| -> i32 {
+            for i in 0..2000 { qq.send(base + i as i64, time.never()) }
+            0
+        }))
+    }
+    var cs: List[Task[i64]] = List.new()
+    for k in 0..4 {
+        let qq = q
+        cs.push(spawn(|| -> i64 {
+            var sum: i64 = 0
+            var going = true
+            while going {
+                match qq.recv(time.never()) {
+                    chan.Value(v) => { sum += v }
+                    chan.Empty => {}
+                    chan.Closed => { going = false }
+                }
+            }
+            sum
+        }))
+    }
+    for p in ps { let z = p.join() }
+    q.close()
+    var total: i64 = 0
+    for k in cs { total += k.join() }
+    // sum of base + i over 4 producers: 4 * (0..2000 sum) + 2000 * (0+1+2+3) * 100000
+    print(total == 4 * 1999000 + 2000 * 600000)
+
+    // a blocked receiver is woken by a send; a blocked sender by a receive; both by close
+    let w: chan.Channel[i64] = chan.bounded(1)
+    let ww = w
+    let r = spawn(|| -> i64 {
+        match ww.recv(time.after_ms(5000)) {
+            chan.Value(v) => v
+            chan.Empty => -1
+            chan.Closed => -2
+        }
+    })
+    time.sleep_ms(20)
+    w.send(42, time.never())
+    print(r.join())
+    w.try_send(1)
+    let ww2 = w
+    let s = spawn(|| -> String { sent(ww2.send(2, time.after_ms(5000))) })
+    time.sleep_ms(20)
+    print(got(w.recv(time.never())))
+    print(s.join())
+    print(got(w.recv(time.never())))
+    let ww3 = w
+    let r2 = spawn(|| -> String { got(ww3.recv(time.after_ms(5000))) })
+    time.sleep_ms(20)
+    w.close()
+    print(r2.join())
+
+    // unbounded: never full
+    let u: chan.Channel[i64] = chan.unbounded()
+    for i in 0..10000 { u.try_send(i as i64) }
+    print(u.len())
+    var us: i64 = 0
+    for i in 0..10000 {
+        match u.try_recv() {
+            chan.Value(v) => { us += v }
+            chan.Empty => {}
+            chan.Closed => {}
+        }
+    }
+    print(us)
+
+    // owned values: strings and lists move through; what is left queued is dropped with it
+    let sc: chan.Channel[List[String]] = chan.bounded(4)
+    var l: List[String] = List.new()
+    l.push(String.from("a"))
+    l.push(String.from("b"))
+    sc.try_send(l)
+    sc.try_send(List.new())
+    match sc.try_recv() {
+        chan.Value(v) => print(v.len())
+        chan.Empty => print("empty")
+        chan.Closed => print("closed")
+    }
+
+    // select: channels of different types, a timer, a deadline, a closed channel
+    let nums: chan.Channel[i64] = chan.bounded(4)
+    let words: chan.Channel[String] = chan.bounded(4)
+    var cases: List[chan.Case[Msg]] = List.new()
+    cases.push(nums.recv_case(|o: Option[i64]| -> Msg {
+        match o {
+            Some(n) => Num(n)
+            None => Shut
+        }
+    }))
+    cases.push(words.recv_case(|o: Option[String]| -> Msg {
+        match o {
+            Some(w) => Word(w)
+            None => Shut
+        }
+    }))
+    print(chan.select(cases, time.now()).is_none())
+    let t2 = time.mono_ns()
+    print(chan.select(cases, time.after_ms(30)).is_none())
+    print(time.mono_ns() - t2 >= 30000000)
+    words.try_send(String.from("hello"))
+    print(show(chan.select(cases, time.never()).unwrap()))
+    // woken by a send from another thread
+    let nn = nums
+    let sender = spawn(|| -> i32 {
+        time.sleep_ms(20)
+        nn.send(7, time.never())
+        0
+    })
+    print(show(chan.select(cases, time.after_ms(5000)).unwrap()))
+    let z = sender.join()
+    // a timer case wins when nothing else comes
+    var with_timer = cases
+    with_timer.push(chan.timer_case(time.after_ms(20), Tick))
+    print(show(chan.select(with_timer, time.after_ms(5000)).unwrap()))
+    // both ready many times: each is picked sometimes, and nothing is lost
+    var a = 0
+    var b = 0
+    for i in 0..200 {
+        nums.try_send(1)
+        words.try_send(String.from("w"))
+        match chan.select(cases, time.never()).unwrap() {
+            Num(n) => { a += 1 }
+            Word(w) => { b += 1 }
+            Tick => {}
+            Shut => {}
+        }
+        time.sleep_ns(1000)
+        match chan.select(cases, time.never()).unwrap() {
+            Num(n) => { a += 1 }
+            Word(w) => { b += 1 }
+            Tick => {}
+            Shut => {}
+        }
+    }
+    print(a == 200 && b == 200)
+    print(nums.len() + words.len())
+    // a closed channel's case is ready with None
+    words.close()
+    print(show(chan.select(cases, time.never()).unwrap()))
+    // no cases: just the deadline
+    let none: List[chan.Case[Msg]] = List.new()
+    print(chan.select(none, time.after_ms(5)).is_none())
+}

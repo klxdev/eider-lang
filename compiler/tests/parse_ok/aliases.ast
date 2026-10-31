@@ -1,0 +1,18 @@
+(IType 1:6 name=Id
+  alias (TName 1:11 name=u64))
+(IType 2:10 name=Handler pub
+  alias (TFn 2:20
+    param (TName 2:23 name=Request)
+    ret (TName 2:35 name=Response)))
+(IType 3:6 name=Pair
+  generic (GParam 3:11 name=T)
+  alias (TTuple 4:5
+    elem (TName 4:6 name=T)
+    elem (TName 4:9 name=T)))
+(IType 5:6 name=M
+  generic (GParam 5:8 name=K)
+  generic (GParam 5:11 name=V)
+  alias (TGeneric 5:16 name=Map
+    arg (TName 5:20 name=K)
+    arg (TGeneric 5:23 name=List
+      arg (TName 5:28 name=V))))

@@ -1,0 +1,1 @@
+{"error":"E0605","span":{"file":"compiler/tests/check/fail/e0605_copy_param.ei","line":2,"col":34},"message":"`.copy()` needs `T: Copy`","help":"a generic body can only use what its type parameters' bounds promise; add the bound","fix":{"at":{"line":2,"col":9},"delete":0,"insert":": Copy"}}

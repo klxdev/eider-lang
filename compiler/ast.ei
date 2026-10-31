@@ -7,7 +7,7 @@
 //
 // types      TName a=sym b=qualifier sym+1        TGeneric a=sym b=qual+1 [c/d]=args
 //            TArray a=elem b=len                  TTuple [c/d]                TUnit
-//            TFn [c/d]=params g=ret+1
+//            TFn [c/d]=params g=ret+1 e=inout params (bit i: parameter i is `inout`)
 // exprs      EInt a=tok   EStr a=str   EBool a=0/1   EIdent a=sym b=qual+1
 //            EUnary a=op (0 neg, 1 not, 2 bitwise not `~`) b=operand  EBinary a=op (OP_*) b=lhs c=rhs
 //            ECall a=callee sym b=qual+1 [c/d]=args  EMethod a=recv b=name sym [c/d]=args
@@ -15,23 +15,31 @@
 //            ECast a=expr b=type                   EArray [c/d]   ERepeat a=elem b=count
 //            ETuple [c/d]   ETry a   EUnsafe a=block   EBlock a=block
 //            ELambda a=body g=ret+1 [c/d]=LParam   EIf a=cond b=then c=else+1
-//            EMatch a=scrutinee [c/d]=Arm, end span = closing brace
-//            EArg a=expr b=inout (call arguments)  LParam a=sym b=type+1
+//            EMatch a=scrutinee [c/d]=Arm e/f=line/col just past the scrutinee, end span =
+//                closing brace
+//            EArg a=expr b=inout (call arguments)  LParam a=sym b=type+1 c=1 for `inout x`
 //            Arm [c/d]=pats a=body b=1 if body is a statement
 // stmts      Block [c/d]=stmts, end span = closing brace
-//            SLet a=sym b=type+1 c=init d=mutable  SLetPat a=pat c=init d=mutable
+//            SLet a=sym b=type+1 c=init d=0 `let`, 1 `var`, 2 `let mut` e/f=line/col just past
+//                the initializer      SLetPat a=pat c=init d e f as SLet
 //            SAssign a=target b=op+1 (0 plain) c=value   SExpr a
 //            SWhile a=cond b=block   SFor a=var sym b=lo c=hi d=block   SForEach a=var b=iter d=block
-//            SReturn a=expr+1   SBreak   SContinue   SAssert a=cond b=message str+1
-// patterns   PWild  PName a=sym b=qual+1  PInt a=tok b=negated  PBool a  PStr a=str
+//                e=pattern+1 (`for (k, v) in e`; a is then 0)
+//            SReturn a=expr+1   SBreak, SContinue a=label sym+1 (0: none) b/c=its line/col
+//            SAssert a=cond b=message str+1
+//            SWhile, SFor, SForEach also: h=label sym+1 (`outer: for ...`; 0: none) i/j=its
+//                line/col (docs/compiler.md, "C8.22")
+// patterns   PWild  PName a=sym b=qual+1 c=1 for `mut x`  PInt a=tok b=negated  PBool a  PStr a=str
 //            PVariant a=sym b=qual+1 [c/d]=subpatterns   PTuple [c/d]
 // items      IType a=sym b=public [c/d]=GParam [e/f]=Variant or Field (a record when no Variant)
+//                g=aliased type+1 (a type alias, with no members; 0 otherwise)
 //            Variant a=sym [c/d]=VField   VField a=name sym, or position for unnamed, b=type c=named
 //            Field a=sym b=type             GParam a=sym [c/d]=bounds (TName)
 //            IFn a=sym b=flags (FN_*) [c/d]=GParam [e/f]=Param g=ret+1 h=body+1 [i/j]=Cap,
 //                end span = end of the signature (where `uses` goes)
 //            Param a=sym b=type c=inout   Cap a=sym
 //            ITrait a=sym b=public [c/d]=IFn   IImpl a=trait TName+1 b=target type [c/d]=GParam [e/f]=IFn
+//                (the trait is a TGeneric for `impl From[E] for T`)
 //            IConst a=sym b=public c=type d=value e=comptime
 //            ITest a=name str b=block      IImport a=path str b=alias sym+1
 // errors     (only from parse.parse_all, so never in a tree that parsed without errors; the

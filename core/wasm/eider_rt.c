@@ -19,11 +19,23 @@
 static const char *trap_file;
 static jmp_buf *trap_jmp;
 
+static const char *const *trap_files;
+static int32_t trap_nfiles;
+
 void ei_set_file(const char *file) { trap_file = file; }
+void ei_set_files(const char *const *files, int32_t n) {
+  trap_files = files;
+  trap_nfiles = n;
+}
 void ei_set_trap_jmp(jmp_buf *jb) { trap_jmp = jb; }
 
 _Noreturn void ei_trap(const char *msg, int32_t line) {
   const char *file = trap_file ? trap_file : "";
+  int32_t f = line > 0 ? line >> 20 : 0;
+  if (f > 0 && f < trap_nfiles && trap_files && trap_files[f]) {
+    file = trap_files[f];
+    line &= 0xFFFFF;
+  }
   if (trap_jmp) {
     printf("FAILED\n    %s (%s:%" PRId32 ")\n", msg, file, line);
     longjmp(*trap_jmp, 1);

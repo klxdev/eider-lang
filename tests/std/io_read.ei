@@ -4,7 +4,7 @@ import "core/sys"
 import "std/bytes"
 import "std/io"
 
-fn main() uses io, ffi {
+fn main() uses io {
     // small reads: never more than asked for
     let first = match io.read(5) {
         Ok(b) => b

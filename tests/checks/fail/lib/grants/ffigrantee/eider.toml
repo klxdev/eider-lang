@@ -1,0 +1,8 @@
+[package]
+name = "ffigrantee"
+version = "0.1.0"
+
+# granted io, but ffidep declares an extern: it needs ffi
+[deps.ffidep]
+path = "../ffidep"
+uses = ["io"]

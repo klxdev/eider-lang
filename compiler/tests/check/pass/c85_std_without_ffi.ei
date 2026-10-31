@@ -1,0 +1,40 @@
+// std and core called with the real capabilities only, never `ffi` (docs/compiler.md,
+// "C8.5: capabilities per package"): `ffi` stays inside core, the one package with
+// unmanaged code; each function says what it does
+import "std/bytes"
+import "std/env"
+import "std/fs"
+import "std/io"
+import "std/proc"
+import "core/sys"
+
+/// Pure: bytes and the core's text helpers need nothing.
+fn label(n: u64) -> List[u8] {
+    var t = sys.lit("n=")
+    bytes.append(inout t, bytes.from_u64(n))
+    t
+}
+
+fn files() -> bool uses fs { fs.is_dir(fs.join(sys.lit("."), sys.lit("compiler"))) }
+
+fn streams() uses io {
+    io.outln(label(env.args().len() as u64))
+    match env.get(sys.lit("HOME")) {
+        Some(_) => io.errln(sys.lit("home"))
+        None => {}
+    }
+}
+
+fn programs() -> bool uses io, fs, net {
+    match proc.run(bytes.split(sys.lit("true"), 32)) {
+        Ok(code) => code == 0
+        Err(_) => false
+    }
+}
+
+fn main() uses io, fs, net {
+    streams()
+    print(files())
+    print(programs())
+    print(sys.to_string(label(3)))
+}

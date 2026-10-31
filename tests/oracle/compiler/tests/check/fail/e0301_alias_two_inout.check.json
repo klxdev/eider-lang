@@ -1,0 +1,1 @@
+{"error":"E0301","span":{"file":"compiler/tests/check/fail/e0301_alias_two_inout.ei","line":6,"col":26},"message":"`ys` is an alias of `xs`, which is borrowed mutably more than once in this call"}

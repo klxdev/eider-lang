@@ -6,6 +6,6 @@ diags
 symbols
   0 module overlay_entry compiler/tests/ide/overlay_entry.ei:1:1-1:1 full 1:1-6:1 :: compiler/tests/ide/overlay_entry.ei
   1 fn main compiler/tests/ide/overlay_entry.ei:3:4-3:8 full 3:1-5:2 :: fn main() uses io
-  (62 symbols in <prelude>)
+  (95 symbols in <prelude>)
 refs
 types

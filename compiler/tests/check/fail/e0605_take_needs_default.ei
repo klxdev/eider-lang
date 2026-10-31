@@ -1,0 +1,7 @@
+// expect: E0605 3:40
+// `take()` on a type parameter needs `T: Default` (docs/compiler.md, "C8.23")
+fn reset[T](inout slot: T) -> T { slot.take() }
+fn main() {
+    let mut s = String.from("a")
+    let t = reset(inout s)
+}

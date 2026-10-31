@@ -1,0 +1,1 @@
+{"error":"E0204","span":{"file":"tests/checks/fail/lib/grants/ffigrantee/ffigrantee.ei","line":2,"col":1},"message":"package `ffidep` uses capability `ffi` in `abs` (ffidep.ei:2) but is only granted [io]","help":"to allow it, add \"ffi\" to `uses` in [deps.ffidep] of <root>/tests/checks/fail/lib/grants/ffigrantee/eider.toml (it declares `extern` functions: unmanaged code)"}

@@ -1,0 +1,973 @@
+// std/stream: byte streams. The `Reader` and `Writer` traits, typed errors (`Error`: a `Kind`
+// from the core's portable error kinds plus a message), buffered wrappers (`BufReader` with
+// `read_line`/`read_until`/`peek`, `BufWriter` with `flush`), and the streams themselves:
+// `Fd` for any descriptor (files, pipes, sockets, child streams, stdin/stdout/stderr),
+// `Bytes` (reading from memory) and `Buffer` (writing to memory). docs/std.md has the
+// overview; decisions C23-C27.
+//
+// Rules every stream here follows:
+//
+// - Every blocking operation has a deadline variant, named `..._by(..., dl: time.Deadline)`
+//   (decision C5). When the deadline passes it returns `Err` with kind `TimedOut`, so a
+//   handler can `?` it like any other error.
+// - Cancel-safety is stated per operation. `read_by` and `write_by` on a stream consume or
+//   write nothing when they time out. `BufReader`'s `_by` operations keep every byte they
+//   received in the buffer, so a timed-out `read_line_by` can simply be called again.
+//   `BufWriter.flush_by` keeps what it could not write. The free functions `read_exact_by`
+//   and `read_all_by` on an unbuffered stream lose what they read before the deadline (use a
+//   BufReader), and `write_all_by` says in its error how much it wrote.
+// - A read of `max` bytes returns between 1 and `max` bytes, or none at end of stream.
+//   `max` must be at least 1 (`InvalidInput` otherwise).
+// - Capabilities: reading and writing streams is `io` (and `clock` for a deadline), whatever
+//   is behind the descriptor; opening files is `fs`, connecting and accepting sockets `net`.
+//   The in-memory streams need nothing when called directly; through the generic code
+//   (`BufReader[Bytes]`, `read_all`) they need `io` too, because a generic body is checked
+//   with the capabilities of every stream it could be given (docs/std.md, "Needs the
+//   compiler": capability polymorphism).
+//
+// std/stream is the canonical place for streams; std/io stays the raw stdout/stderr/stdin
+// calls the compiler itself uses (its text is part of seed/eiderc.c, so it changes only with
+// a seed regeneration). docs/std.md, "Why std/stream and not std/io"; decision C101.
+
+import "core/sys"
+import "core/os"
+import "time.ei"
+import "net.ei"
+
+// ---- errors
+
+/// What went wrong. The first group are the core's portable error kinds (core/ABI.md "Error
+/// kinds", in that order); the rest are the stream layer's own.
+pub type Kind =
+    | Other
+    | WouldBlock
+    | InProgress
+    | Interrupted
+    | NotFound
+    | AlreadyExists
+    | BrokenPipe
+    | ConnectionReset
+    | ConnectionRefused
+    | TimedOut
+    | PermissionDenied
+    | AddrInUse
+    | AddrNotAvailable
+    | NotConnected
+    | InvalidInput
+    | NoChild
+    | Unsupported
+    | ResolverRetry
+    | ResolverFailure
+    | UnexpectedEof
+    | InvalidData
+    | WriteZero
+
+// (Kind shows as its name, "TimedOut": derived.)
+
+/// An I/O error: its kind, to act on (`e.kind == stream.TimedOut`), and a message for people
+/// ("read: Connection reset by peer"). Shows as its message.
+pub type Error = { kind: Kind, message: String }
+
+impl Show for Error {
+    fn show(self, inout out: String) { out.append(self.message) }
+}
+
+/// The kind for core kind number `k` (core/ABI.md "Error kinds").
+pub fn kind_of(k: i32) -> Kind {
+    match k {
+        1 => WouldBlock
+        2 => InProgress
+        3 => Interrupted
+        4 => NotFound
+        5 => AlreadyExists
+        6 => BrokenPipe
+        7 => ConnectionReset
+        8 => ConnectionRefused
+        9 => TimedOut
+        10 => PermissionDenied
+        11 => AddrInUse
+        12 => AddrNotAvailable
+        13 => NotConnected
+        14 => InvalidInput
+        15 => NoChild
+        16 => Unsupported
+        17 => ResolverRetry
+        18 => ResolverFailure
+        _ => Other
+    }
+}
+
+pub fn error(kind: Kind, message: str) -> Error { Error(kind, String.from(message)) }
+
+pub fn error_text(kind: Kind, message: String) -> Error { Error(kind, message) }
+
+/// The error for a negative core status: its kind, and "<what>: <the system's message>".
+pub fn os_error(what: str, status: i64) -> Error {
+    let mut m = String.from(what)
+    m.push_str(": ")
+    m.append(sys.error_text(status))
+    Error(kind_of(os.err_kind(status)), m)
+}
+
+/// "<what>: timed out", kind TimedOut.
+pub fn timed_out(what: str) -> Error {
+    let mut m = String.from(what)
+    m.push_str(": timed out")
+    Error(TimedOut, m)
+}
+
+/// A String error (std/fs, std/net, ... report errors as Strings) as an Error of kind
+/// Other, so `?` passes it on in a function that returns `stream.Error`. The other way, an
+/// application's own error type converts from `stream.Error` with its own `impl From`
+/// (docs/std.md, "Errors").
+impl From[String] for Error {
+    fn from(value: String) -> Error { Error(Other, value) }
+}
+
+fn bad_max() -> Error { error(InvalidInput, "read: max must be at least 1") }
+
+// ---- the traits
+
+/// A source of bytes.
+pub trait Reader {
+    /// Between 1 and `max` bytes, or none at end of stream; waits until some are available.
+    fn read(inout self, max: usize) -> Result[List[u8], Error] uses io
+    /// `read`, or `TimedOut` once `dl` passes with nothing read (nothing is consumed then).
+    fn read_by(inout self, max: usize, dl: time.Deadline) -> Result[List[u8], Error] uses io, clock
+}
+
+/// A sink for bytes.
+pub trait Writer {
+    /// Writes some of `data` (at least 1 byte of a non-empty `data`); the count written.
+    fn write(inout self, data: List[u8]) -> Result[usize, Error] uses io
+    /// `write`, or `TimedOut` once `dl` passes with nothing written.
+    fn write_by(inout self, data: List[u8], dl: time.Deadline) -> Result[usize, Error] uses io, clock
+    /// Pushes out anything buffered on the way (a no-op for unbuffered streams).
+    fn flush(inout self) -> Result[(), Error] uses io
+    /// `flush`, or `TimedOut` once `dl` passes; what wasn't written stays buffered.
+    fn flush_by(inout self, dl: time.Deadline) -> Result[(), Error] uses io, clock
+}
+
+// ---- operations on any stream
+
+/// Everything up to end of stream.
+pub fn read_all[R: Reader](inout r: R) -> Result[List[u8], Error] uses io {
+    let mut out: List[u8] = List.new()
+    while true {
+        let chunk = r.read(65536)?
+        if chunk.len() == 0 { break }
+        for b in chunk { out.push(b) }
+    }
+    Ok(out)
+}
+
+/// `read_all` with a deadline. Not cancel-safe: on `TimedOut` what was read is lost (wrap
+/// the stream in a BufReader and use `read_to_end_by` to keep it).
+pub fn read_all_by[R: Reader](inout r: R, dl: time.Deadline) -> Result[List[u8], Error] uses io, clock {
+    let mut out: List[u8] = List.new()
+    while true {
+        let chunk = r.read_by(65536, dl)?
+        if chunk.len() == 0 { break }
+        for b in chunk { out.push(b) }
+    }
+    Ok(out)
+}
+
+/// All of the stream as text: `InvalidData` if it isn't UTF-8 (or holds a NUL byte).
+pub fn read_text[R: Reader](inout r: R) -> Result[String, Error] uses io {
+    let all = read_all(inout r)?
+    text_of(all)
+}
+
+fn text_of(b: List[u8]) -> Result[String, Error] {
+    match String.from_bytes(b) {
+        Ok(s) => Ok(s)
+        Err(at) => {
+            let mut m = String.from("not UTF-8 text at byte ")
+            m.append(at.to_string())
+            Err(Error(InvalidData, m))
+        }
+    }
+}
+
+/// Exactly `n` bytes: `UnexpectedEof` if the stream ends first.
+pub fn read_exact[R: Reader](inout r: R, n: usize) -> Result[List[u8], Error] uses io {
+    let mut out: List[u8] = List.new()
+    while out.len() < n {
+        let chunk = r.read(n - out.len())?
+        if chunk.len() == 0 { return Err(eof(n, out.len())) }
+        for b in chunk { out.push(b) }
+    }
+    Ok(out)
+}
+
+/// `read_exact` with a deadline. Not cancel-safe on an unbuffered stream (see `read_all_by`);
+/// `BufReader.read_exact_by` is.
+pub fn read_exact_by[R: Reader](inout r: R, n: usize, dl: time.Deadline) -> Result[List[u8], Error] uses io, clock {
+    let mut out: List[u8] = List.new()
+    while out.len() < n {
+        let chunk = r.read_by(n - out.len(), dl)?
+        if chunk.len() == 0 { return Err(eof(n, out.len())) }
+        for b in chunk { out.push(b) }
+    }
+    Ok(out)
+}
+
+fn eof(want: usize, got: usize) -> Error {
+    let mut m = String.from("unexpected end of stream after ")
+    m.append(got.to_string())
+    m.push_str(" of ")
+    m.append(want.to_string())
+    m.push_str(" bytes")
+    Error(UnexpectedEof, m)
+}
+
+/// All of `data`: `WriteZero` if the stream stops taking bytes.
+pub fn write_all[W: Writer](inout w: W, data: List[u8]) -> Result[(), Error] uses io {
+    let mut at: usize = 0
+    while at < data.len() {
+        let rest = if at == 0 { data } else { tail(data, at) }
+        let n = w.write(rest)?
+        if n == 0 { return Err(error(WriteZero, "write: the stream took no bytes")) }
+        at += n
+    }
+    Ok(())
+}
+
+/// `write_all` with a deadline. On `TimedOut` the message says how many bytes were written
+/// ("write: timed out after 4096 of 10000 bytes"); the rest was not.
+pub fn write_all_by[W: Writer](inout w: W, data: List[u8], dl: time.Deadline) -> Result[(), Error] uses io, clock {
+    let mut at: usize = 0
+    while at < data.len() {
+        let rest = if at == 0 { data } else { tail(data, at) }
+        match w.write_by(rest, dl) {
+            Ok(n) => {
+                if n == 0 { return Err(error(WriteZero, "write: the stream took no bytes")) }
+                at += n
+            }
+            Err(e) => {
+                if e.kind == TimedOut {
+                    let mut m = String.from("write: timed out after ")
+                    m.append(at.to_string())
+                    m.push_str(" of ")
+                    m.append(data.len().to_string())
+                    m.push_str(" bytes")
+                    return Err(Error(TimedOut, m))
+                }
+                return Err(e)
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The text's bytes, all of them.
+pub fn write_str[W: Writer](inout w: W, s: str) -> Result[(), Error] uses io { write_all(inout w, s.bytes()) }
+
+/// A String's bytes, all of them.
+pub fn write_string[W: Writer](inout w: W, s: String) -> Result[(), Error] uses io { write_all(inout w, s.bytes()) }
+
+/// Everything from `r` into `w`, up to end of stream (not flushed): the byte count.
+pub fn copy[R: Reader, W: Writer](inout r: R, inout w: W) -> Result[u64, Error] uses io {
+    let mut total: u64 = 0
+    while true {
+        let chunk = r.read(65536)?
+        if chunk.len() == 0 { break }
+        total += chunk.len() as u64
+        write_all(inout w, chunk)?
+    }
+    Ok(total)
+}
+
+/// `copy` with one deadline for the whole transfer.
+pub fn copy_by[R: Reader, W: Writer](inout r: R, inout w: W, dl: time.Deadline) -> Result[u64, Error] uses io, clock {
+    let mut total: u64 = 0
+    while true {
+        let chunk = r.read_by(65536, dl)?
+        if chunk.len() == 0 { break }
+        total += chunk.len() as u64
+        write_all_by(inout w, chunk, dl)?
+    }
+    Ok(total)
+}
+
+/// data[at..]
+fn tail(data: List[u8], at: usize) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut i = at.copy()
+    while i < data.len() {
+        out.push(data[i])
+        i += 1
+    }
+    out
+}
+
+/// data[a..b]
+fn part(data: List[u8], a: usize, b: usize) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut i = a.copy()
+    while i < b {
+        out.push(data[i])
+        i += 1
+    }
+    out
+}
+
+// ---- descriptors
+
+/// A descriptor as a stream: a file, a pipe end, a socket, a child's stream, or stdin,
+/// stdout and stderr. It works in either mode: on a non-blocking descriptor `read` and
+/// `write` wait for readiness instead of failing with WouldBlock, so the deadline variants
+/// are exact. On a blocking descriptor they wait for readiness too, but one `write` of more
+/// than the kernel has room for can then block past the deadline (make the descriptor
+/// non-blocking, as `connect_by` and `accept_by` do, when that matters). Writes to stdout and
+/// stderr flush `print`'s buffer first, so the two stay in order. A copy of an Fd is the same
+/// descriptor; close it once.
+pub type Fd = { fd: i32 }
+
+/// Descriptor `n` as a stream.
+pub fn fd(n: i32) -> Fd { Fd(n) }
+pub fn stdin() -> Fd { Fd(0) }
+pub fn stdout() -> Fd { Fd(1) }
+pub fn stderr() -> Fd { Fd(2) }
+
+/// Open `path` with std/fd's flags (`fd.READ`, `fd.WRITE | fd.CREATE | fd.TRUNCATE`, ...) and
+/// permission bits `mode` for a created file.
+pub fn open(path: List[u8], flags: i32, mode: i32) -> Result[Fd, Error] uses fs {
+    let mut p: List[List[u8]] = List.new()
+    p.push(path)
+    sys.send_all(p)
+    let n = os.fd_open(flags, mode)
+    if n < 0 {
+        let mut m = String.from("cannot open ")
+        m.append(sys.to_string(path))
+        m.push_str(": ")
+        m.append(sys.error_text(n))
+        return Err(Error(kind_of(os.err_kind(n)), m))
+    }
+    Ok(Fd(n as i32))
+}
+
+/// Open an existing file for reading.
+pub fn open_read(path: List[u8]) -> Result[Fd, Error] uses fs { open(path, 0, 0) }
+
+/// Create a file for writing, or empty an existing one (mode 0644 before the umask).
+pub fn create(path: List[u8]) -> Result[Fd, Error] uses fs { open(path, 1 | 4 | 16, 420) }
+
+/// Open a file for appending, creating it if needed (mode 0644 before the umask).
+pub fn open_append(path: List[u8]) -> Result[Fd, Error] uses fs { open(path, 1 | 4 | 32, 420) }
+
+/// Both ends of a pipe: bytes written to `w` are read from `r`.
+pub type Pipe = { r: Fd, w: Fd }
+
+pub fn pipe() -> Result[Pipe, Error] uses io {
+    let n = os.pipe()
+    if n < 0 { return Err(os_error("pipe", n)) }
+    let raw = sys.take()
+    Ok(Pipe(Fd(os.le_fd(raw, 0)), Fd(os.le_fd(raw, 4))))
+}
+
+const READY_READ: i32 = 1
+const READY_WRITE: i32 = 2
+
+impl Fd {
+    /// The descriptor number (for std/fd, std/net, std/poll).
+    fn raw(self) -> i32 { self.fd }
+
+    fn close(self) -> Result[(), Error] uses io {
+        let n = os.fd_close(self.fd)
+        if n < 0 { return Err(os_error("close", n)) }
+        Ok(())
+    }
+
+    fn set_nonblocking(self, on: bool) -> Result[(), Error] uses io {
+        let n = os.fd_nonblock(self.fd, on)
+        if n < 0 { return Err(os_error("set non-blocking", n)) }
+        Ok(())
+    }
+
+    /// Waits until the descriptor is ready for `interest` (1 read, 2 write) or `dl` passes
+    /// (TimedOut).
+    fn wait(self, interest: i32, dl: time.Deadline, what: str) -> Result[(), Error] uses io, clock {
+        while true {
+            let n = os.fd_wait(self.fd, interest, dl.timeout_ms())
+            if n < 0 { return Err(os_error(what, n)) }
+            if n > 0 { return Ok(()) }
+            if dl.expired() { return Err(timed_out(what)) }
+        }
+        Ok(())
+    }
+}
+
+impl Reader for Fd {
+    fn read(inout self, max: usize) -> Result[List[u8], Error] uses io {
+        if max == 0 { return Err(bad_max()) }
+        while true {
+            let n = sys.read_fd(self.fd, max as i64)
+            if n >= 0 { return Ok(sys.take()) }
+            if os.err_kind(n) != 1 { return Err(os_error("read", n)) }
+            let w = os.fd_wait(self.fd, READY_READ, -1)
+            if w < 0 { return Err(os_error("read", w)) }
+        }
+        Ok(List.new())
+    }
+
+    fn read_by(inout self, max: usize, dl: time.Deadline) -> Result[List[u8], Error] uses io, clock {
+        if max == 0 { return Err(bad_max()) }
+        while true {
+            self.wait(READY_READ, dl, "read")?
+            let n = sys.read_fd(self.fd, max as i64)
+            if n >= 0 { return Ok(sys.take()) }
+            if os.err_kind(n) != 1 { return Err(os_error("read", n)) }
+        }
+        Ok(List.new())
+    }
+}
+
+impl Writer for Fd {
+    fn write(inout self, data: List[u8]) -> Result[usize, Error] uses io {
+        if data.len() == 0 { return Ok(0) }
+        if self.fd == 1 || self.fd == 2 { return std_write(self.fd, data) }
+        while true {
+            sys.send(data)
+            let n = os.fd_write(self.fd)
+            if n >= 0 { return Ok(n as usize) }
+            if os.err_kind(n) != 1 { return Err(os_error("write", n)) }
+            let w = os.fd_wait(self.fd, READY_WRITE, -1)
+            if w < 0 { return Err(os_error("write", w)) }
+        }
+        Ok(0)
+    }
+
+    fn write_by(inout self, data: List[u8], dl: time.Deadline) -> Result[usize, Error] uses io, clock {
+        if data.len() == 0 { return Ok(0) }
+        while true {
+            self.wait(READY_WRITE, dl, "write")?
+            if self.fd == 1 || self.fd == 2 { return std_write(self.fd, data) }
+            sys.send(data)
+            let n = os.fd_write(self.fd)
+            if n >= 0 { return Ok(n as usize) }
+            if os.err_kind(n) != 1 { return Err(os_error("write", n)) }
+        }
+        Ok(0)
+    }
+
+    fn flush(inout self) -> Result[(), Error] uses io { Ok(()) }
+
+    fn flush_by(inout self, dl: time.Deadline) -> Result[(), Error] uses io, clock { Ok(()) }
+}
+
+// stdout and stderr: through the core's write, which flushes `print` output first.
+fn std_write(f: i32, data: List[u8]) -> Result[usize, Error] uses io {
+    sys.send(data)
+    let n = sys.write_fd(f)
+    if n < 0 { return Err(os_error("write", n)) }
+    Ok(data.len())
+}
+
+// ---- sockets
+
+/// A connected TCP (or Unix stream) socket to `a`, connected before `dl` (TimedOut, and the
+/// socket closed, otherwise). The socket is non-blocking, which Fd hides, so every deadline
+/// on it is exact. Close it with `close`; std/net's functions take `.raw()`.
+pub fn connect_by(a: net.Addr, dl: time.Deadline) -> Result[Fd, Error] uses net, io, clock {
+    let n = os.sock_open(a.family, 1, true)
+    if n < 0 { return Err(os_error("socket", n)) }
+    let s = Fd(n as i32)
+    sys.send(net.encode(a))
+    let c = os.sock_connect(s.fd)
+    if c < 0 {
+        if os.err_kind(c) != 2 {
+            s.close()
+            let mut m = String.from("cannot connect to ")
+            m.append(sys.to_string(net.text(a)))
+            m.push_str(": ")
+            m.append(sys.error_text(c))
+            return Err(Error(kind_of(os.err_kind(c)), m))
+        }
+        match s.wait(READY_WRITE, dl, "connect") {
+            Ok(()) => {}
+            Err(e) => {
+                s.close()
+                return Err(e)
+            }
+        }
+        let r = os.sock_error(s.fd)
+        if r < 0 {
+            s.close()
+            let mut m = String.from("cannot connect to ")
+            m.append(sys.to_string(net.text(a)))
+            m.push_str(": ")
+            m.append(sys.error_text(r))
+            return Err(Error(kind_of(os.err_kind(r)), m))
+        }
+    }
+    Ok(s)
+}
+
+/// A connection accepted on `listener` (a std/net listening socket), with its peer.
+pub type Conn = { fd: Fd, peer: net.Addr }
+
+/// The next connection on `listener`, waiting until `dl` (TimedOut). The connection is
+/// non-blocking, as from `connect_by`. Works with a blocking or non-blocking listener; a
+/// connection reset before it was accepted is skipped.
+pub fn accept_by(listener: i32, dl: time.Deadline) -> Result[Conn, Error] uses net, io, clock {
+    let l = Fd(listener)
+    while true {
+        l.wait(READY_READ, dl, "accept")?
+        let n = os.sock_accept(listener, true)
+        if n >= 0 {
+            let raw = sys.take()
+            return Ok(Conn(Fd(n as i32), net.decode(raw, 0, raw.len())))
+        }
+        let k = os.err_kind(n)
+        // another thread took it (would block), or it was reset before we got it
+        if k != 1 && k != 7 { return Err(os_error("accept", n)) }
+    }
+    Err(timed_out("accept"))
+}
+
+/// No more writing on socket `s`: the peer reads end of stream (reading goes on).
+pub fn shutdown_write(s: Fd) -> Result[(), Error] uses net {
+    let n = os.sock_shutdown(s.fd, 1)
+    if n < 0 { return Err(os_error("shutdown", n)) }
+    Ok(())
+}
+
+// ---- in memory
+
+/// A Reader over bytes in memory. It never waits, so deadlines don't matter to it; it also
+/// reads lines itself (`read_line`), so it needs no BufReader.
+pub type Bytes = { data: List[u8], pos: usize }
+
+pub fn reader(data: List[u8]) -> Bytes { Bytes(data, 0) }
+
+/// A Reader over the bytes of a text.
+pub fn reader_str(s: str) -> Bytes { Bytes(s.bytes(), 0) }
+
+impl Bytes {
+    /// Bytes not read yet.
+    fn remaining(self) -> usize { self.data.len() - self.pos }
+    /// Bytes read so far.
+    fn position(self) -> usize { self.pos }
+    /// The unread bytes, without consuming them.
+    fn rest(self) -> List[u8] { tail(self.data, self.pos) }
+    /// The next line without its `\n` (or `\r\n`); None at end of input.
+    fn read_line(inout self) -> Option[List[u8]] {
+        if self.pos >= self.data.len() { return None }
+        let mut end = self.pos.copy()
+        while end < self.data.len() && self.data[end] != 10 { end += 1 }
+        let stop = if end < self.data.len() { end + 1 } else { end }
+        let line = strip_eol(part(self.data, self.pos, stop))
+        self.pos = stop
+        Some(line)
+    }
+}
+
+impl Reader for Bytes {
+    fn read(inout self, max: usize) -> Result[List[u8], Error] uses io {
+        if max == 0 { return Err(bad_max()) }
+        let left = self.data.len() - self.pos
+        let n = if max < left { max } else { left }
+        let out = part(self.data, self.pos, self.pos + n)
+        self.pos += n
+        Ok(out)
+    }
+
+    fn read_by(inout self, max: usize, dl: time.Deadline) -> Result[List[u8], Error] uses io, clock { self.read(max) }
+}
+
+/// A Writer that keeps everything written to it in memory.
+pub type Buffer = { data: List[u8] }
+
+pub fn buffer() -> Buffer { Buffer(List.new()) }
+
+impl Buffer {
+    /// What was written.
+    fn bytes(self) -> List[u8] { self.data }
+    fn len(self) -> usize { self.data.len() }
+    /// What was written, as text (InvalidData if it isn't UTF-8).
+    fn text(self) -> Result[String, Error] { text_of(self.data) }
+    fn clear(inout self) { self.data.clear() }
+}
+
+impl Writer for Buffer {
+    fn write(inout self, data: List[u8]) -> Result[usize, Error] uses io {
+        for b in data { self.data.push(b) }
+        Ok(data.len())
+    }
+    fn write_by(inout self, data: List[u8], dl: time.Deadline) -> Result[usize, Error] uses io, clock { self.write(data) }
+    fn flush(inout self) -> Result[(), Error] uses io { Ok(()) }
+    fn flush_by(inout self, dl: time.Deadline) -> Result[(), Error] uses io, clock { Ok(()) }
+}
+
+/// A Writer that throws everything away, counting the bytes.
+pub type Discard = { count: u64 }
+
+pub fn discard() -> Discard { Discard(0) }
+
+impl Writer for Discard {
+    fn write(inout self, data: List[u8]) -> Result[usize, Error] uses io {
+        self.count += data.len() as u64
+        Ok(data.len())
+    }
+    fn write_by(inout self, data: List[u8], dl: time.Deadline) -> Result[usize, Error] uses io, clock { self.write(data) }
+    fn flush(inout self) -> Result[(), Error] uses io { Ok(()) }
+    fn flush_by(inout self, dl: time.Deadline) -> Result[(), Error] uses io, clock { Ok(()) }
+}
+
+fn strip_eol(l: List[u8]) -> List[u8] {
+    let mut n = l.len()
+    if n > 0 && l[n - 1] == 10 { n -= 1 }
+    if n > 0 && l[n - 1] == 13 { n -= 1 }
+    if n == l.len() { return l }
+    part(l, 0, n)
+}
+
+// ---- buffered reading
+
+/// The default buffer size of BufReader and BufWriter.
+pub const BUFFER_SIZE: usize = 16384
+
+/// No limit, for `read_line` / `read_until` (only for input you trust).
+pub const UNLIMITED: usize = 18446744073709551615
+
+/// A Reader with a buffer: fewer, larger reads underneath, and `read_line`, `read_until`,
+/// `peek` and `read_exact_by` on top. Every `_by` operation is cancel-safe: on TimedOut the
+/// bytes received so far stay buffered, and the next call starts from them. `max` limits
+/// how much a line may hold before it is an `InvalidData` error (servers: always set one).
+pub type BufReader[R] = { inner: R, buf: List[u8], pos: usize, cap: usize, eof: bool }
+
+pub fn buffered[R: Reader](r: R) -> BufReader[R] { BufReader(r, List.new(), 0, BUFFER_SIZE, false) }
+
+/// A BufReader that reads `cap` bytes at a time (at least 1).
+pub fn buffered_with[R: Reader](r: R, cap: usize) -> BufReader[R] {
+    let c: usize = if cap == 0 { 1 } else { cap }
+    BufReader(r, List.new(), 0, c, false)
+}
+
+impl[R: Reader] BufReader[R] {
+    /// Bytes buffered and not read yet.
+    fn available(self) -> usize { self.buf.len() - self.pos }
+
+    /// The buffered bytes, without consuming them.
+    fn buffered(self) -> List[u8] { tail(self.buf, self.pos) }
+
+    /// Drop `n` buffered bytes (at most what is buffered).
+    fn consume(inout self, n: usize) {
+        let a = self.buf.len() - self.pos
+        self.pos += if n < a { n } else { a }
+    }
+
+    /// The stream underneath (what is buffered stays here).
+    fn inner(self) -> R { self.inner }
+
+    // Moves the unread bytes to the front once they are less than half the buffer.
+    fn compact(inout self) {
+        if self.pos == 0 { return }
+        if self.pos == self.buf.len() {
+            self.buf.clear()
+            self.pos = 0
+            return
+        }
+        if self.pos * 2 >= self.buf.len() {
+            self.buf = tail(self.buf, self.pos)
+            self.pos = 0
+        }
+    }
+
+    // One read underneath, appended to the buffer: false at end of stream.
+    fn more(inout self) -> Result[bool, Error] uses io {
+        if self.eof { return Ok(false) }
+        self.compact()
+        let c = self.cap.copy()
+        let chunk = self.inner.read(c)?
+        if chunk.len() == 0 {
+            self.eof = true
+            return Ok(false)
+        }
+        for b in chunk { self.buf.push(b) }
+        Ok(true)
+    }
+
+    fn more_by(inout self, dl: time.Deadline) -> Result[bool, Error] uses io, clock {
+        if self.eof { return Ok(false) }
+        self.compact()
+        let c = self.cap.copy()
+        let chunk = self.inner.read_by(c, dl)?
+        if chunk.len() == 0 {
+            self.eof = true
+            return Ok(false)
+        }
+        for b in chunk { self.buf.push(b) }
+        Ok(true)
+    }
+
+    // Takes `n` buffered bytes (n <= available).
+    fn take(inout self, n: usize) -> List[u8] {
+        let p = self.pos
+        let out = part(self.buf, p, p + n)
+        self.pos += n
+        out
+    }
+
+    /// Up to `n` bytes without consuming them: fewer only at end of stream.
+    fn peek(inout self, n: usize) -> Result[List[u8], Error] uses io {
+        while self.buf.len() - self.pos < n {
+            if !self.more()? { break }
+        }
+        let a = self.buf.len() - self.pos
+        let p = self.pos
+        let k = if n < a { n } else { a }
+        Ok(part(self.buf, p, p + k))
+    }
+
+    /// `peek` with a deadline (cancel-safe).
+    fn peek_by(inout self, n: usize, dl: time.Deadline) -> Result[List[u8], Error] uses io, clock {
+        while self.buf.len() - self.pos < n {
+            if !self.more_by(dl)? { break }
+        }
+        let a = self.buf.len() - self.pos
+        let p = self.pos
+        let k = if n < a { n } else { a }
+        Ok(part(self.buf, p, p + k))
+    }
+
+    /// Exactly `n` bytes: UnexpectedEof if the stream ends first (the bytes stay buffered).
+    fn read_exact(inout self, n: usize) -> Result[List[u8], Error] uses io {
+        while self.buf.len() - self.pos < n {
+            if !self.more()? { return Err(eof(n, self.buf.len() - self.pos)) }
+        }
+        Ok(self.take(n))
+    }
+
+    /// `read_exact` with a deadline (cancel-safe).
+    fn read_exact_by(inout self, n: usize, dl: time.Deadline) -> Result[List[u8], Error] uses io, clock {
+        while self.buf.len() - self.pos < n {
+            if !self.more_by(dl)? { return Err(eof(n, self.buf.len() - self.pos)) }
+        }
+        Ok(self.take(n))
+    }
+
+    // Where `delim` is in the buffer, scanning from `from`; also the scan position to resume.
+    fn find(self, delim: u8, from: usize) -> Option[usize] {
+        let mut i = from.copy()
+        while i < self.buf.len() {
+            if self.buf[i] == delim { return Some(i) }
+            i += 1
+        }
+        None
+    }
+
+    fn too_long(self, max: usize) -> Error {
+        let mut m = String.from("no delimiter within ")
+        m.append(max.to_string())
+        m.push_str(" bytes")
+        Error(InvalidData, m)
+    }
+
+    /// The bytes up to and including the next `delim`; at end of stream what is left (no
+    /// delimiter), and empty when nothing is. InvalidData when `max` bytes pass with no
+    /// delimiter (they stay buffered).
+    fn read_until(inout self, delim: u8, max: usize) -> Result[List[u8], Error] uses io {
+        let mut scan = self.pos.copy()
+        while true {
+            match self.find(delim, scan) {
+                Some(i) => {
+                    let k = i + 1 - self.pos
+                    if k > max { return Err(self.too_long(max)) }
+                    return Ok(self.take(k))
+                }
+                None => {}
+            }
+            if self.buf.len() - self.pos >= max { return Err(self.too_long(max)) }
+            let off = self.buf.len() - self.pos
+            if !self.more()? {
+                let a = self.buf.len() - self.pos
+                return Ok(self.take(a))
+            }
+            scan = self.pos + off
+        }
+        Ok(List.new())
+    }
+
+    /// `read_until` with a deadline (cancel-safe).
+    fn read_until_by(inout self, delim: u8, max: usize, dl: time.Deadline) -> Result[List[u8], Error] uses io, clock {
+        let mut scan = self.pos.copy()
+        while true {
+            match self.find(delim, scan) {
+                Some(i) => {
+                    let k = i + 1 - self.pos
+                    if k > max { return Err(self.too_long(max)) }
+                    return Ok(self.take(k))
+                }
+                None => {}
+            }
+            if self.buf.len() - self.pos >= max { return Err(self.too_long(max)) }
+            let off = self.buf.len() - self.pos
+            if !self.more_by(dl)? {
+                let a = self.buf.len() - self.pos
+                return Ok(self.take(a))
+            }
+            scan = self.pos + off
+        }
+        Ok(List.new())
+    }
+
+    /// The next line without its `\n` (or `\r\n`); None at end of stream. A last line
+    /// without a newline counts. `max` limits the line, newline included.
+    fn read_line(inout self, max: usize) -> Result[Option[List[u8]], Error] uses io {
+        let l = self.read_until(10, max)?
+        if l.len() == 0 { return Ok(None) }
+        Ok(Some(strip_eol(l)))
+    }
+
+    /// `read_line` with a deadline (cancel-safe).
+    fn read_line_by(inout self, max: usize, dl: time.Deadline) -> Result[Option[List[u8]], Error] uses io, clock {
+        let l = self.read_until_by(10, max, dl)?
+        if l.len() == 0 { return Ok(None) }
+        Ok(Some(strip_eol(l)))
+    }
+
+    /// The rest of the stream, buffered bytes first.
+    fn read_to_end(inout self) -> Result[List[u8], Error] uses io {
+        while self.more()? {}
+        let a = self.buf.len() - self.pos
+        Ok(self.take(a))
+    }
+
+    /// `read_to_end` with a deadline (cancel-safe: on TimedOut everything stays buffered).
+    fn read_to_end_by(inout self, dl: time.Deadline) -> Result[List[u8], Error] uses io, clock {
+        while self.more_by(dl)? {}
+        let a = self.buf.len() - self.pos
+        Ok(self.take(a))
+    }
+}
+
+impl[R: Reader] Reader for BufReader[R] {
+    fn read(inout self, max: usize) -> Result[List[u8], Error] uses io {
+        if max == 0 { return Err(bad_max()) }
+        if self.buf.len() == self.pos {
+            // a big read bypasses the buffer
+            if max >= self.cap && !self.eof { return self.inner.read(max) }
+            if !self.more()? { return Ok(List.new()) }
+        }
+        let a = self.buf.len() - self.pos
+        let k = if max < a { max } else { a }
+        Ok(self.take(k))
+    }
+
+    fn read_by(inout self, max: usize, dl: time.Deadline) -> Result[List[u8], Error] uses io, clock {
+        if max == 0 { return Err(bad_max()) }
+        if self.buf.len() == self.pos {
+            if max >= self.cap && !self.eof { return self.inner.read_by(max, dl) }
+            if !self.more_by(dl)? { return Ok(List.new()) }
+        }
+        let a = self.buf.len() - self.pos
+        let k = if max < a { max } else { a }
+        Ok(self.take(k))
+    }
+}
+
+// ---- buffered writing
+
+/// A Writer with a buffer: small writes are collected and written underneath `cap` bytes at
+/// a time. Call `flush` when done: nothing flushes a BufWriter when it goes away, because a
+/// drop can't do I/O (decision C26). A failed or timed-out flush keeps what it could not
+/// write, so it can be retried.
+pub type BufWriter[W] = { inner: W, buf: List[u8], cap: usize }
+
+pub fn buffered_writer[W: Writer](w: W) -> BufWriter[W] { BufWriter(w, List.new(), BUFFER_SIZE) }
+
+/// A BufWriter that writes `cap` bytes at a time (at least 1).
+pub fn buffered_writer_with[W: Writer](w: W, cap: usize) -> BufWriter[W] {
+    let c: usize = if cap == 0 { 1 } else { cap }
+    BufWriter(w, List.new(), c)
+}
+
+impl[W: Writer] BufWriter[W] {
+    /// Bytes written to the BufWriter and not yet underneath.
+    fn pending(self) -> usize { self.buf.len() }
+
+    /// The stream underneath (flush first: the buffer stays here).
+    fn inner(self) -> W { self.inner }
+
+    // Writes the buffer underneath; what isn't written (on an error) stays.
+    fn drain(inout self) -> Result[(), Error] uses io {
+        let mut at: usize = 0
+        while at < self.buf.len() {
+            let rest = tail(self.buf, at)
+            match self.inner.write(rest) {
+                Ok(n) => {
+                    if n == 0 {
+                        self.buf = tail(self.buf, at)
+                        return Err(error(WriteZero, "write: the stream took no bytes"))
+                    }
+                    at += n
+                }
+                Err(e) => {
+                    self.buf = tail(self.buf, at)
+                    return Err(e)
+                }
+            }
+        }
+        self.buf.clear()
+        Ok(())
+    }
+
+    fn drain_by(inout self, dl: time.Deadline) -> Result[(), Error] uses io, clock {
+        let mut at: usize = 0
+        while at < self.buf.len() {
+            let rest = tail(self.buf, at)
+            match self.inner.write_by(rest, dl) {
+                Ok(n) => {
+                    if n == 0 {
+                        self.buf = tail(self.buf, at)
+                        return Err(error(WriteZero, "write: the stream took no bytes"))
+                    }
+                    at += n
+                }
+                Err(e) => {
+                    self.buf = tail(self.buf, at)
+                    return Err(e)
+                }
+            }
+        }
+        self.buf.clear()
+        Ok(())
+    }
+}
+
+impl[W: Writer] Writer for BufWriter[W] {
+    /// Takes all of `data` (buffered, or written underneath once the buffer is full).
+    fn write(inout self, data: List[u8]) -> Result[usize, Error] uses io {
+        if self.buf.len() + data.len() > self.cap { self.drain()? }
+        if data.len() >= self.cap {
+            write_all(inout self.inner, data)?
+        } else {
+            for b in data { self.buf.push(b) }
+        }
+        Ok(data.len())
+    }
+
+    fn write_by(inout self, data: List[u8], dl: time.Deadline) -> Result[usize, Error] uses io, clock {
+        if self.buf.len() + data.len() > self.cap { self.drain_by(dl)? }
+        if data.len() >= self.cap {
+            // as much as goes before the deadline; the count says how much that was
+            let n = self.inner.write_by(data, dl)?
+            return Ok(n)
+        }
+        for b in data { self.buf.push(b) }
+        Ok(data.len())
+    }
+
+    fn flush(inout self) -> Result[(), Error] uses io {
+        self.drain()?
+        self.inner.flush()
+    }
+
+    fn flush_by(inout self, dl: time.Deadline) -> Result[(), Error] uses io, clock {
+        self.drain_by(dl)?
+        self.inner.flush_by(dl)
+    }
+}

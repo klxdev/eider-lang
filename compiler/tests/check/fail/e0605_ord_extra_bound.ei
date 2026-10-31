@@ -1,0 +1,3 @@
+// expect: E0605 2:40
+fn lt[T: Show](a: T, b: T) -> bool { a < b }
+fn main() uses io { print(lt(1, 2)) }

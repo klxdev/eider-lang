@@ -1,0 +1,8 @@
+// expect: E0601 7:17
+type Res = { id: i32 }
+impl Drop for Res {
+    fn drop(inout self) {}
+}
+fn main() {
+    let r = Res.default()
+}

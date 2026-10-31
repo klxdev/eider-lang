@@ -1,0 +1,28 @@
+// std/time: the monotonic clock never goes backwards and advances across a sleep; the wall
+// clock is after 2020; now_ms (the language's clock) is monotonic too.
+
+import "std/time"
+
+fn main() uses io, clock, ffi {
+    var prev = time.mono_ns()
+    var forward = true
+    for i in 0..10000 {
+        let t = time.mono_ns()
+        if t < prev { forward = false }
+        prev = t
+    }
+    print(forward)
+    let t0 = time.mono_ns()
+    let m0 = now_ms()
+    time.sleep_ms(30)
+    let dt = time.mono_ns() - t0
+    print(dt >= 30000000)
+    print(dt < 2000000000)
+    // now_ms advances while the program sleeps (it used to be processor time)
+    print(now_ms() - m0 >= 25)
+    time.sleep_ns(0)
+    time.sleep_ns(-1)
+    print(time.unix_seconds() > 1577836800)
+    print(time.wall_ns() / 1000000000 >= time.unix_seconds() - 1)
+    print(time.mono_ms() >= 0)
+}

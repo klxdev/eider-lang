@@ -1,0 +1,1 @@
+{"error":"E0411","span":{"file":"tests/checks/fail/e0411_ref_in_mutex.ei","line":4,"col":23},"message":"Mutex can't hold Ref[i32]: a Ref is shared without a lock, so it can't cross to another thread","help":"state that threads share goes in a `Mutex[T]` holding the value itself, not a Ref of it"}

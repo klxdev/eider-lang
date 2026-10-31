@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_take_no_empty.ei","line":6,"col":15},"message":"type P has no method `take`","help":"`take()` leaves the type's `Default` value behind (\"\", empty, None, 0, false, or derived for a record whose fields all have one), and this type has none; implement `Default` for it, or use `x.replace(v)`, which leaves v"}

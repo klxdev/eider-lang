@@ -1,0 +1,7 @@
+[package]
+name = "grantee"
+version = "0.1.0"
+
+# granted nothing, though fsdep uses fs
+[deps.fsdep]
+path = "../fsdep"

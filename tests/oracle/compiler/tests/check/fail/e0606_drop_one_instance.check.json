@@ -1,0 +1,1 @@
+{"error":"E0606","span":{"file":"compiler/tests/check/fail/e0606_drop_one_instance.ei","line":3,"col":1},"message":"`Drop` can only be implemented for a record, for all its instances: `impl Drop for W[i32]` doesn't qualify","help":"write `impl[T] Drop for R[T]` for a generic record; an enum that needs cleanup can hold a record that has it"}

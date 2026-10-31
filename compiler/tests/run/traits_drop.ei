@@ -1,0 +1,192 @@
+// Drop (docs/compiler.md, "C8.4: operation traits"): a record's own cleanup runs exactly once
+// per value, when the value's last holder goes. Copies share the value (copy-on-write); a
+// write to a shared one makes a copy first (through the type's Copy), and then each value is
+// dropped once. `drop` runs before the fields are dropped. Each drop appends its id to a
+// shared log (a Mutex), so the order is visible.
+
+type Log = { m: Mutex[List[i32]] }
+
+fn new_log() -> Log { Log(Mutex.new(List.new())) }
+
+fn note(log: Log, id: i32) {
+    log.m.update(|l| {
+        var x = l
+        x.push(id)
+        x
+    })
+}
+
+fn dump(log: Log, what: str) uses io {
+    var s = String.from(what)
+    s.push_str(":")
+    for x in log.m.get() {
+        s.push_str(" ")
+        s.append(String.from_int(x as i64))
+    }
+    print(s)
+    log.m.set(List.new())
+}
+
+type Guard = { id: i32, log: Log }
+
+impl Drop for Guard {
+    fn drop(inout self) { note(self.log, self.id) }
+}
+
+/// Its drop runs first, then its fields' (the inner Guard's).
+type Outer = { id: i32, inner: Guard, log: Log }
+
+impl Drop for Outer {
+    fn drop(inout self) { note(self.log, self.id) }
+}
+
+/// A Drop type with its own Copy: a copy is a new resource (id + 100).
+type Res = { id: i32, log: Log }
+
+impl Drop for Res {
+    fn drop(inout self) { note(self.log, self.id) }
+}
+
+impl Copy for Res {
+    fn copy(self) -> Res { Res(self.id + 100, self.log) }
+}
+
+type Gen[T] = { v: T, id: i32, log: Log }
+
+impl[T] Drop for Gen[T] {
+    fn drop(inout self) { note(self.log, self.id) }
+}
+
+fn g(id: i32, log: Log) -> Guard { Guard(id, log) }
+
+fn pass_through(x: Guard) -> Guard { x }
+
+fn early(log: Log, stop: bool) -> i32 {
+    let a = g(30, log)
+    if stop { return a.id }
+    let b = g(31, log)
+    b.id
+}
+
+fn main() uses io, threads {
+    let log = new_log()
+    {
+        let a = g(1, log)
+        let b = a
+        let c = b
+        print(c.id)
+    }
+    dump(log, "shared, dropped once")
+    {
+        let a = g(1, log)
+        let b = g(2, log)
+        print(a.id + b.id)
+    }
+    dump(log, "reverse order")
+    {
+        var a = g(3, log)
+        var b = a
+        a.id = 4
+        print(b.id)
+    }
+    dump(log, "written while shared")
+    {
+        var r = Res(5, log)
+        var s = r
+        r.id = 6
+        print(s.id)
+        print(r.id)
+    }
+    dump(log, "own copy")
+    {
+        let o = Outer(7, g(8, log), log)
+        print(o.inner.id)
+    }
+    dump(log, "drop before fields")
+    {
+        var l: List[Guard] = List.new()
+        l.push(g(9, log))
+        l.push(g(10, log))
+        let l2 = l
+        var m: Map[i32, Guard] = Map.new()
+        m.insert(1, g(11, log))
+        m.insert(1, g(12, log))
+        print(l2.len() + m.len())
+        let b = Box.new(g(13, log))
+        print(b.get().id)
+        let o: Option[Guard] = Some(g(14, log))
+        print(o.is_some())
+    }
+    dump(log, "in containers")
+    // `.copy()` is a full copy: y's log is a new Mutex holding a copy of the List, so y's
+    // drop (15) lands there
+    {
+        let x = pass_through(g(15, log))
+        let y = x.copy()
+        print(y.id)
+        let gen = Gen(String.from("v"), 16, log)
+        print(gen.v)
+    }
+    dump(log, "copies and generics")
+    print(early(log, true))
+    print(early(log, false))
+    dump(log, "return")
+    {
+        var i = 0
+        while i < 3 {
+            let t = g(40 + i, log)
+            i += 1
+            if t.id == 41 { continue }
+            if t.id == 42 { break }
+        }
+    }
+    dump(log, "loops")
+    // threads: a value made on a thread is dropped there, once (60..63); one sent through a
+    // channel by its receiver, once (70, 71); the values in a Mutex that threads share, once
+    // each, when `set` replaces them or the last handle goes (80, 90..93). A spawned
+    // closure's captures cross to the new thread as values of their own (every buffer a
+    // value reaches is made unique when it crosses), and so does each copy `Mutex.get`
+    // hands out: `copied`, captured by four closures, is five values, each dropped once (50).
+    {
+        let copied = g(50, log)
+        let one: Mutex[Guard] = Mutex.new(g(80, log))
+        var ts: List[Task[i32]] = List.new()
+        for k in 0..4 {
+            ts.push(spawn(|| -> i32 {
+                let mine = g(60 + k, log)
+                one.set(g(90 + k, log))
+                copied.id + mine.id
+            }))
+        }
+        var sum = 0
+        for t in ts { sum += t.join() }
+        print(sum)
+        let ch: Chan[Guard] = Chan.new()
+        let prod = spawn(|| -> i32 {
+            ch.send(g(70, log))
+            ch.send(g(71, log))
+            ch.close()
+            0
+        })
+        prod.join()
+        var got = 0
+        while true {
+            match ch.recv() {
+                Some(x) => { got += x.id }
+                None => { break }
+            }
+        }
+        print(got)
+    }
+    var all = log.m.get()
+    var sorted: List[i32] = List.new()
+    for want in [50, 60, 61, 62, 63, 70, 71, 80, 90, 91, 92, 93] {
+        var n = 0
+        for x in all {
+            if x == want { n += 1 }
+        }
+        if n > 0 { sorted.push(want * 10 + n) }
+    }
+    print(sorted)
+    print(all.len())
+}

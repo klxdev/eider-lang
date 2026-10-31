@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_from_call_no_impl.ei","line":8,"col":20},"message":"`E` has no `From` conversion from bool","help":"implement `From[...]` for it with that source type"}

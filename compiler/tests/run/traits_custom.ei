@@ -1,0 +1,142 @@
+// Operation traits implemented by the type's own package (docs/compiler.md, "C8.4:
+// operation traits"): a custom impl replaces the derived operation everywhere the language
+// performs it: in `==`, `<`, Map keys, `print`, `.copy()`, and inside the derived operations
+// of types that contain it (a List of them, a record field, an Option).
+
+/// Text compared without case: equal Names hash alike.
+type Name = { text: String }
+
+fn lower(b: u8) -> u8 {
+    if b >= 65 && b <= 90 { return b + 32 }
+    b
+}
+
+impl Eq for Name {
+    fn eq(self, other: Name) -> bool {
+        if self.text.len() != other.text.len() { return false }
+        var i: usize = 0
+        while i < self.text.len() {
+            if lower(self.text.byte(i)) != lower(other.text.byte(i)) { return false }
+            i += 1
+        }
+        true
+    }
+}
+
+impl Hash for Name {
+    fn hash(self) -> u64 {
+        var h: u64 = 7
+        var i: usize = 0
+        while i < self.text.len() {
+            h = h *% 31 +% lower(self.text.byte(i)) as u64
+            i += 1
+        }
+        h
+    }
+}
+
+/// Ordered by priority, highest first; shown as `#<id>!<prio>`.
+type Job = { id: i32, prio: i32 }
+
+impl Ord for Job {
+    fn compare(self, other: Job) -> Ordering {
+        if self.prio > other.prio { return Less }
+        if self.prio < other.prio { return Greater }
+        self.id.compare(other.id)
+    }
+}
+
+impl Show for Job {
+    fn show(self, inout out: String) {
+        out.push_str("#")
+        out.append(String.from_int(self.id as i64))
+        out.push_str("!")
+        out.append(String.from_int(self.prio as i64))
+    }
+}
+
+/// A copy that counts how often it was copied.
+type Doc = { title: String, copies: i32 }
+
+impl Copy for Doc {
+    fn copy(self) -> Doc { Doc(self.title, self.copies + 1) }
+}
+
+/// A generic wrapper whose text needs its contents' text.
+type Tagged[T] = { tag: str, v: T }
+
+impl[T: Show] Show for Tagged[T] {
+    fn show(self, inout out: String) {
+        out.push_str(self.tag)
+        out.push_str("=")
+        self.v.show(inout out)
+    }
+}
+
+type Queue = { jobs: List[Job], name: Name }
+
+fn sort[T: Ord + Copy](inout xs: List[T]) {
+    var i: usize = 1
+    while i < xs.len() {
+        var j = i
+        while j > 0 && xs[j] < xs[j - 1] {
+            let t = xs[j].copy()
+            xs[j] = xs[j - 1]
+            xs[j - 1] = t
+            j -= 1
+        }
+        i += 1
+    }
+}
+
+fn main() uses io {
+    let a = Name(String.from("Ada"))
+    let b = Name(String.from("aDA"))
+    print(a == b)
+    print(a != Name(String.from("Bob")))
+    print(a.eq(b))
+    print(a.hash() == b.hash())
+    var ages: Map[Name, i32] = Map.new()
+    ages.insert(a, 36)
+    ages.insert(b, 37)
+    print(ages.len())
+    print(ages.get(Name(String.from("ADA"))).unwrap_or(0))
+    var names: List[Name] = List.new()
+    names.push(Name(String.from("x")))
+    print(names.contains(Name(String.from("X"))))
+    print(Some(a) == Some(b))
+
+    var jobs: List[Job] = List.new()
+    jobs.push(Job(1, 5))
+    jobs.push(Job(2, 9))
+    jobs.push(Job(3, 5))
+    jobs.push(Job(4, 1))
+    sort(inout jobs)
+    print(jobs)
+    print(Job(1, 1) < Job(2, 9))
+    print(Job(7, 3).compare(Job(8, 3)))
+    print(Job(5, 5))
+    print(Job(5, 5).to_string().len())
+    print(Some(Job(6, 2)))
+    let q = Queue(jobs, Name(String.from("main")))
+    print(q)
+    var by_job: Map[Job, str] = Map.new()
+    by_job.insert(Job(1, 1), "one")
+    print(by_job.get(Job(1, 1)).unwrap_or("?"))
+
+    let d = Doc(String.from("draft"), 0)
+    let d2 = d.copy()
+    let d3 = d2.copy()
+    print(d3.copies)
+    var docs: List[Doc] = List.new()
+    docs.push(d3)
+    let docs2 = docs.copy()
+    print(docs2[0].copies)
+    print(d.copies)
+
+    print(Tagged("n", 5))
+    print(Tagged("job", Job(9, 9)))
+    var line = String.from("> ")
+    Tagged("p", (1, "two")).show(inout line)
+    print(line)
+}

@@ -3,24 +3,24 @@
 
 import "core/sys"
 
-pub fn out(b: List[u8]) uses io, ffi {
+pub fn out(b: List[u8]) uses io {
     sys.send(b)
     sys.write_fd(1)
 }
 
-pub fn err(b: List[u8]) uses io, ffi {
+pub fn err(b: List[u8]) uses io {
     sys.send(b)
     sys.write_fd(2)
 }
 
-pub fn outln(b: List[u8]) uses io, ffi {
-    var l = b
+pub fn outln(b: List[u8]) uses io {
+    let mut l = b.copy()
     l.push(10)
     out(l)
 }
 
-pub fn errln(b: List[u8]) uses io, ffi {
-    var l = b
+pub fn errln(b: List[u8]) uses io {
+    let mut l = b.copy()
     l.push(10)
     err(l)
 }
@@ -28,15 +28,15 @@ pub fn errln(b: List[u8]) uses io, ffi {
 
 /// Up to `max` bytes from stdin (one read: it returns as soon as some input is available,
 /// at most 1 MiB). Empty at end of input. Err for `max <= 0` or a failed read.
-pub fn read(max: i64) -> Result[List[u8], String] uses io, ffi {
+pub fn read(max: i64) -> Result[List[u8], String] uses io {
     read_fd(0, max)
 }
 
 /// Up to `max` bytes from file descriptor `fd` (see `read`).
-pub fn read_fd(fd: i32, max: i64) -> Result[List[u8], String] uses io, ffi {
+pub fn read_fd(fd: i32, max: i64) -> Result[List[u8], String] uses io {
     let n = sys.read_fd(fd, max)
     if n < 0 {
-        var m = String.from("cannot read: ")
+        let mut m = String.from("cannot read: ")
         m.append(sys.error_text(n))
         return Err(m)
     }
@@ -44,8 +44,8 @@ pub fn read_fd(fd: i32, max: i64) -> Result[List[u8], String] uses io, ffi {
 }
 
 /// All of stdin until end of input.
-pub fn read_all() -> Result[List[u8], String] uses io, ffi {
-    var all: List[u8] = List.new()
+pub fn read_all() -> Result[List[u8], String] uses io {
+    let mut all: List[u8] = List.new()
     while true {
         let chunk = read(65536)?
         if chunk.len() == 0 { break }

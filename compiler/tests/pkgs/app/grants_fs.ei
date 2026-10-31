@@ -1,0 +1,8 @@
+// pkgtest: check
+// E0204: files uses fs (in `here`) and io (in the method `Log.show`), and app's
+// [deps.files] grants it neither: one error per capability, at the import
+import "files"
+
+fn main() uses io, fs {
+    print(files.here())
+}

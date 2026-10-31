@@ -1,0 +1,5 @@
+// expect: E0411 4:23
+fn main() {
+    let r = Ref.new(1)
+    let m = Mutex.new(r)
+}

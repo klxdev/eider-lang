@@ -1,0 +1,9 @@
+// expect: E0802 7:13
+import "lib/grants/unsafepkg/unsafepkg.ei"
+
+// `ffi` stays inside unsafepkg (no `uses ffi` here), but `unsafe` stays local: calling its
+// `unsafe fn` still needs an `unsafe` block
+fn main() uses io {
+    let a = unsafepkg.raw(-3)
+    print(a)
+}

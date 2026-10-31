@@ -5,9 +5,9 @@ import "std/io"
 import "std/env"
 import "std/proc"
 
-fn show(b: List[u8]) uses io, ffi { io.outln(b) }
+fn show(b: List[u8]) uses io { io.outln(b) }
 
-fn files() -> Result[bool, String] uses io, fs, ffi {
+fn files() -> Result[bool, String] uses io, fs {
     let root = sys.lit("target/tmp/std_test")
     fs.remove_all(root)?
     let d = fs.join(root, sys.lit("a/b"))
@@ -43,7 +43,7 @@ fn files() -> Result[bool, String] uses io, fs, ffi {
     Ok(true)
 }
 
-fn text() uses io, ffi {
+fn text() uses io {
     show(bytes.trim(sys.lit("  padded \t")))
     show(bytes.join(bytes.split(sys.lit("a,b,,c"), 44), sys.lit("|")))
     show(bytes.from_i64(-9223372036854775807 - 1))
@@ -64,7 +64,7 @@ fn text() uses io, ffi {
     show(fs.dirname(sys.lit("main.ei")))
 }
 
-fn procs() uses io, fs, net, ffi {
+fn procs() uses io, fs, net {
     var argv: List[List[u8]] = List.new()
     argv.push(sys.lit("sh"))
     argv.push(sys.lit("-c"))
@@ -110,7 +110,7 @@ fn procs() uses io, fs, net, ffi {
     show_output(proc.run_with(sh("printf quick"), proc.limited(10000)))
 }
 
-fn sh(script: str) -> List[List[u8]] uses ffi {
+fn sh(script: str) -> List[List[u8]] {
     var a: List[List[u8]] = List.new()
     a.push(sys.lit("sh"))
     a.push(sys.lit("-c"))
@@ -118,7 +118,7 @@ fn sh(script: str) -> List[List[u8]] uses ffi {
     a
 }
 
-fn show_output(r: Result[proc.Output, String]) uses io, ffi {
+fn show_output(r: Result[proc.Output, String]) uses io {
     match r {
         Ok(o) => {
             var l: List[List[u8]] = List.new()
@@ -133,7 +133,7 @@ fn show_output(r: Result[proc.Output, String]) uses io, ffi {
     }
 }
 
-fn main() uses io, fs, net, ffi {
+fn main() uses io, fs, net {
     text()
     match files() {
         Ok(_) => {}

@@ -1,0 +1,101 @@
+// `for x in e` over a type with its own Iter (docs/compiler.md, "C8.4: operation traits"):
+// the loop runs on a copy of e and calls `next` until it returns None. Owned items, break,
+// continue, return and `?` inside the loop, nested loops, a generic iterator, and ranges and
+// Lists, which keep their own loops.
+
+type Count = { at: i32, end: i32 }
+
+impl Iter for Count {
+    fn next(inout self) -> Option[i32] {
+        if self.at >= self.end { return None }
+        self.at += 1
+        Some(self.at)
+    }
+}
+
+/// The words of a text, as Strings.
+type Words = { text: String, pos: usize }
+
+impl Iter for Words {
+    fn next(inout self) -> Option[String] {
+        while self.pos < self.text.len() && self.text.byte(self.pos) == 32 { self.pos += 1 }
+        if self.pos >= self.text.len() { return None }
+        let start = self.pos.copy()
+        while self.pos < self.text.len() && self.text.byte(self.pos) != 32 { self.pos += 1 }
+        Some(self.text.slice(start, self.pos))
+    }
+}
+
+/// A List walked backwards.
+type Back[T] = { items: List[T], i: usize }
+
+impl[T] Iter for Back[T] {
+    fn next(inout self) -> Option[T] {
+        if self.i == 0 { return None }
+        self.i -= 1
+        Some(self.items[self.i])
+    }
+}
+
+fn back[T](xs: List[T]) -> Back[T] { Back(xs, xs.len()) }
+
+fn first_long(text: String) -> Option[String] {
+    for w in Words(text, 0) {
+        if w.len() > 4 { return Some(w) }
+    }
+    None
+}
+
+fn parse(n: i32) -> Result[i32, str] {
+    if n == 3 { return Err("three") }
+    Ok(n * 10)
+}
+
+fn total_until_three(c: Count) -> Result[i32, str] {
+    var t = 0
+    for i in c { t += parse(i)? }
+    Ok(t)
+}
+
+fn main() uses io {
+    var sum = 0
+    for i in Count(0, 5) { sum += i }
+    print(sum)
+    let c = Count(10, 13)
+    for i in c { print(i) }
+    // the loop ran on a copy
+    print(c.at)
+    for i in Count(0, 10) {
+        if i % 2 == 0 { continue }
+        if i > 7 { break }
+        print(i)
+    }
+    var pairs = 0
+    for i in Count(0, 3) {
+        for j in Count(0, i) { pairs += j }
+    }
+    print(pairs)
+    for w in Words(String.from("  the quick  brown fox "), 0) { print(w) }
+    print(first_long(String.from("a tiny example here")).unwrap_or(String.from("-")))
+    print(first_long(String.from("no")).is_none())
+    match total_until_three(Count(0, 2)) {
+        Ok(v) => print(v)
+        Err(e) => print(e)
+    }
+    match total_until_three(Count(0, 9)) {
+        Ok(v) => print(v)
+        Err(e) => print(e)
+    }
+    var names: List[String] = List.new()
+    names.push(String.from("a"))
+    names.push(String.from("b"))
+    names.push(String.from("c"))
+    var rev = String.from("")
+    for s in back(names) { rev.append(s) }
+    print(rev)
+    var nums: List[i32] = List.new()
+    nums.push(1)
+    nums.push(2)
+    for x in back(nums) { print(x) }
+    for i in 0..3 { print(i) }
+}

@@ -1,0 +1,9 @@
+// expect: E0308 7:5
+type Inv = { items: List[i32], n: i32 }
+fn main() uses io {
+    var inv = Inv(List.new(), 0)
+    inv.items.push(4)
+    let it = inv.items[0]
+    inv = Inv(List.new(), 1)
+    print(it)
+}

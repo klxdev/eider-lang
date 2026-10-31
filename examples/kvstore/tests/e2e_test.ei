@@ -1,0 +1,116 @@
+// kvstore end to end: the service starts on 127.0.0.1 on an ephemeral port, is called over
+// loopback with packages/http's client (JSON-RPC on one keep-alive connection, a batch, the
+// REST route, four clients at once from a task group), and is shut down through its token.
+// No fixed ports, no sleeps: the server listens before its thread starts, and each call
+// waits (with a deadline) for its own response.
+
+import "core/sys"
+import "std/bytes"
+import "std/io"
+import "std/net"
+import "std/task"
+import "std/time"
+import "json"
+import "http"
+import "http/server"
+import "http/client"
+import "http/jsonrpc"
+import "../kv.ei"
+
+fn show(r: Result[jsonrpc.Reply, String]) uses io {
+    match r {
+        Ok(jsonrpc.Value(d, n)) => io.outln(bytes.concat(sys.lit("= "), json.write(d, n)))
+        Ok(jsonrpc.Fault(e)) => {
+            let mut l = sys.lit("! ")
+            bytes.append(inout l, bytes.from_i64(e.code))
+            l.push(32)
+            bytes.append(inout l, e.message)
+            io.outln(l)
+        }
+        Err(e) => print(e)
+    }
+}
+
+fn main() uses io, net, clock, threads {
+    let dl = time.after_ms(20000)
+    let mut cfg = server.config()
+    cfg.workers = 4
+    let srv = server.listen(net.ipv4(127, 0, 0, 1, 0), cfg).unwrap()
+    let addr = srv.addr()
+    print(addr.port > 0)
+    let tok = task.root()
+    let t = tok
+    let h = kv.app(kv.store())
+    let running = spawn(|| -> server.Stats { srv.serve(h, t).unwrap() })
+
+    print("-- calls on one connection")
+    let mut c = client.connect(addr, dl).unwrap()
+    show(jsonrpc.call(inout c, "/rpc", "kv.put", sys.lit("[\"lang\", \"eider\"]"), 1, dl))
+    show(jsonrpc.call(inout c, "/rpc", "kv.put", sys.lit("{\"key\": \"lang\", \"value\": \"Eider\"}"), 2, dl))
+    show(jsonrpc.call(inout c, "/rpc", "kv.get", sys.lit("[\"lang\"]"), 3, dl))
+    show(jsonrpc.call(inout c, "/rpc", "kv.get", sys.lit("[\"missing\"]"), 4, dl))
+    show(jsonrpc.call(inout c, "/rpc", "kv.put", sys.lit("[\"tmp\", \"x\"]"), 5, dl))
+    show(jsonrpc.call(inout c, "/rpc", "kv.keys", List.new(), 6, dl))
+    show(jsonrpc.call(inout c, "/rpc", "kv.delete", sys.lit("[\"tmp\"]"), 7, dl))
+    show(jsonrpc.call(inout c, "/rpc", "kv.delete", sys.lit("[\"tmp\"]"), 8, dl))
+    show(jsonrpc.call(inout c, "/rpc", "math.add", sys.lit("[40, 2]"), 9, dl))
+    show(jsonrpc.call(inout c, "/rpc", "math.div", sys.lit("{\"a\": 7, \"b\": 0}"), 10, dl))
+    show(jsonrpc.call(inout c, "/rpc", "math.add", sys.lit("[9223372036854775807, 1]"), 11, dl))
+    show(jsonrpc.call(inout c, "/rpc", "kv.get", sys.lit("[1]"), 12, dl))
+    show(jsonrpc.call(inout c, "/rpc", "no.such", List.new(), 13, dl))
+    print(jsonrpc.notify(inout c, "/rpc", "kv.put", sys.lit("[\"quiet\", \"yes\"]"), dl).unwrap())
+    show(jsonrpc.call(inout c, "/rpc", "kv.get", sys.lit("[\"quiet\"]"), 14, dl))
+    print(c.open)
+
+    print("-- a batch, and the REST side")
+    let batch = sys.lit("[{\"jsonrpc\":\"2.0\",\"method\":\"math.add\",\"params\":[1,2],\"id\":\"a\"},{\"jsonrpc\":\"2.0\",\"method\":\"kv.put\",\"params\":[\"n\",\"1\"]},{\"jsonrpc\":\"2.0\",\"method\":\"kv.get\",\"params\":[\"n\"],\"id\":\"b\"}]")
+    let br = client.post(addr, "/rpc", "application/json", batch, dl).unwrap()
+    print(br.status)
+    io.outln(br.body)
+    io.outln(client.get(addr, "/kv/lang", dl).unwrap().body)
+    print(client.get(addr, "/kv/nope", dl).unwrap().status)
+    print(client.get(addr, "/rpc", dl).unwrap().status)
+    print(client.post(addr, "/rpc", "text/plain", batch, dl).unwrap().status)
+    io.outln(client.get(addr, "/health", dl).unwrap().body)
+
+    print("-- four clients at once")
+    let mut g: task.Group[i64] = task.group(tok.child())
+    for w in 0..4 {
+        let who = w as i64
+        g.spawn(|tk: task.Token| -> Result[i64, String] {
+            let mut cc = client.connect(addr, tk.bound(dl))?
+            let mut stored: i64 = 0
+            for i in 0..25 {
+                let mut key = sys.lit("w")
+                bytes.append(inout key, bytes.from_i64(who))
+                key.push(45)
+                bytes.append(inout key, bytes.from_i64(i as i64))
+                let mut params = sys.lit("[")
+                json.quote_into(inout params, key)
+                bytes.append(inout params, sys.lit(", \"v\"]"))
+                match jsonrpc.call(inout cc, "/rpc", "kv.put", params, i as i64, tk.bound(dl))? {
+                    jsonrpc.Value(d, n) => { stored += 1 }
+                    jsonrpc.Fault(e) => { return Err(sys.to_string(e.message)) }
+                }
+            }
+            cc.close()
+            Ok(stored)
+        })
+    }
+    let mut total: i64 = 0
+    for n in g.wait().unwrap() { total += n }
+    print(total)
+    match jsonrpc.call(inout c, "/rpc", "kv.keys", List.new(), 15, dl).unwrap() {
+        jsonrpc.Value(d, n) => print(json.len(d, n))
+        jsonrpc.Fault(e) => print("fault")
+    }
+    c.close()
+
+    print("-- shutdown")
+    tok.cancel()
+    let st = running.join()
+    print(st.requests)
+    print(st.rejected)
+    print(st.bad)
+    print(client.get(addr, "/health", dl).is_err())
+}

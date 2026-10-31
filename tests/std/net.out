@@ -1,0 +1,30 @@
+true
+accept would block
+true
+127.0.0.1:
+true
+hello over tcp
+true
+0
+true
+ping
+true
+pong
+unix:target/tmp/std_net/s
+unix:
+over a unix socket
+unix:target/tmp/std_net/s
+send failed
+pair
+true
+10.1.2.3:8080
+[0:0:0:0:0:0:0:1]:443
+[2001:db8:0:0:0:ff00:42:8329]:1
+not numeric
+127.0.0.1 22
+0
+0
+1
+9
+0
+exit 0

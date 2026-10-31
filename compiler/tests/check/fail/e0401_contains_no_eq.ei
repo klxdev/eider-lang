@@ -1,0 +1,3 @@
+// expect: E0401 3:7
+fn main() { let l: List[fn()] = List.new()
+    l.contains(|| {}) }

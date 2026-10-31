@@ -1,0 +1,1 @@
+{"error":"E0411","span":{"file":"compiler/tests/check/fail/e0411_chan_record_ref.ei","line":4,"col":12},"message":"Chan can't hold Job (its part Ref[String]): a Ref is shared without a lock, so it can't cross to another thread","help":"state that threads share goes in a `Mutex[T]` holding the value itself, not a Ref of it"}

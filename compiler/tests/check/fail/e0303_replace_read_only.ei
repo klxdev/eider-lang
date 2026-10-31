@@ -1,0 +1,6 @@
+// expect: E0303 5:13
+// `replace` writes its place, which must be writable (docs/compiler.md, "C8.15: take and replace")
+fn main() {
+    let s = String.from("a")
+    let t = s.replace(String.from("b"))
+}

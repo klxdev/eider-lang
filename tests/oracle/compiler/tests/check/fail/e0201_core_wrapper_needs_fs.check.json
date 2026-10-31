@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_core_wrapper_needs_fs.ei","line":7,"col":13},"message":"call to `sys.cwd` requires capability `fs`","fix":{"at":{"line":6,"col":10},"delete":0,"insert":" uses fs"}}

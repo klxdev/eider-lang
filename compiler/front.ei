@@ -16,16 +16,16 @@ import "dump.ei"
 /// (`explained`).
 pub type Front = { parsed: parse.Parsed, diags: List[diag.Diag] }
 
-pub fn analyze(src: List[u8]) -> Front uses ffi {
-    var names = intern.new()
+pub fn analyze(src: List[u8]) -> Front {
+    let mut names = intern.new()
     let lx = lex.lex_all(src, inout names)
     let parsed = parse.parse_all(lx.lexed, names)
     Front(parsed, merge(lx.diags, parsed.diags))
 }
 
 /// The lexer's diagnostics, then the parser's that no lexer error explains.
-pub fn merge(lexd: List[diag.Diag], parsed: List[diag.Diag]) -> List[diag.Diag] uses ffi {
-    var out = lexd
+pub fn merge(lexd: List[diag.Diag], parsed: List[diag.Diag]) -> List[diag.Diag] {
+    let mut out = lexd.copy()
     for d in parsed {
         if !explained(lexd, d) { out.push(d) }
     }
@@ -35,7 +35,7 @@ pub fn merge(lexd: List[diag.Diag], parsed: List[diag.Diag]) -> List[diag.Diag] 
 /// Whether parser error `d` may come only from the lexer's recovery: it is on the line of a
 /// lexer error, at or after it (the skipped character, or the literal that lexed as 0), or
 /// anywhere after an unterminated block comment (which runs to the end of the file).
-fn explained(lexd: List[diag.Diag], d: diag.Diag) -> bool uses ffi {
+fn explained(lexd: List[diag.Diag], d: diag.Diag) -> bool {
     let comment = sys.lit("unterminated block comment")
     for e in lexd {
         let after = d.line > e.line || (d.line == e.line && d.col >= e.col)
@@ -47,11 +47,11 @@ fn explained(lexd: List[diag.Diag], d: diag.Diag) -> bool uses ffi {
 
 /// Every diagnostic as a JSON line (diag.json, against `file`), then the AST dump (dump.ei,
 /// error nodes included).
-pub fn report(file: List[u8], src: List[u8]) -> List[u8] uses ffi {
+pub fn report(file: List[u8], src: List[u8]) -> List[u8] {
     let f = analyze(src)
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     for d in f.diags {
-        var d2 = d
+        let mut d2 = d.copy()
         d2.msg = diag.demangle(d.msg)
         bytes.append(inout out, diag.json(d2, file))
         out.push(10)

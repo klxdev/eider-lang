@@ -96,3 +96,29 @@ impl[T, E] Result[T, E] {
         }
     }
 }
+
+// The operation traits (docs/compiler.md, "C8.4: operation traits"). The language performs
+// `.copy()`, `==`, ordering, hashing, printing, `for` and cleanup through them. A record,
+// enum or tuple has a trait when all its parts do (derived, no annotation); the package
+// that defines a type may implement one for it instead. `Iter`'s `next` returns
+// `Option[Item]` for the item type the impl chooses.
+type Ordering = | Less | Equal | Greater
+
+trait Copy { fn copy(self) -> Self }
+trait Eq { fn eq(self, other: Self) -> bool }
+trait Ord { fn compare(self, other: Self) -> Ordering }
+trait Hash { fn hash(self) -> u64 }
+trait Show { fn show(self, inout out: String) }
+trait Iter { fn next(inout self) -> Option[Item] }
+trait Drop { fn drop(inout self) }
+
+// Error conversion for `?` (docs/compiler.md, "C8.21"): with `impl From[E1] for E2 { fn
+// from(value: E1) -> E2 { ... } }` in E2's package, `?` on a Result[_, E1] in a function
+// returning Result[_, E2] returns Err(E2.from(e)). `Source` is the impl's type argument.
+trait From { fn from(value: Source) -> Self }
+
+// Default values (docs/compiler.md, "C8.23"): `T.default()`, and what `x.take()` leaves
+// behind. Integers are 0, bool false, str and String "", List and Map empty, Option None, `()`
+// itself; a record, tuple, array or Box has one when every part has one (derived); an enum
+// (but Option) or a record with its own Drop only through its own impl.
+trait Default { fn default() -> Self }

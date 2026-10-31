@@ -12,7 +12,7 @@ import "ast.ei"
 import "diag.ei"
 import "parse.ei"
 
-fn put(inout out: List[u8], s: str) uses ffi { bytes.append(inout out, sys.lit(s)) }
+fn put(inout out: List[u8], s: str) { bytes.append(inout out, sys.lit(s)) }
 
 fn num(inout out: List[u8], n: u64) { bytes.append(inout out, bytes.from_u64(n)) }
 
@@ -23,7 +23,7 @@ fn pos(inout out: List[u8], line: u32, col: u32) {
 }
 
 /// ` label=name` for a symbol.
-fn sym(inout out: List[u8], p: parse.P, label: str, s: u32) uses ffi {
+fn sym(inout out: List[u8], p: parse.P, label: str, s: u32) {
     out.push(32)
     put(inout out, label)
     out.push(61)
@@ -31,26 +31,26 @@ fn sym(inout out: List[u8], p: parse.P, label: str, s: u32) uses ffi {
 }
 
 /// ` qual=alias` when the optional qualifier (sym+1) is present.
-fn qual(inout out: List[u8], p: parse.P, q: u32) uses ffi {
+fn qual(inout out: List[u8], p: parse.P, q: u32) {
     if q > 0 { sym(inout out, p, "qual", q - 1) }
 }
 
 /// ` label` when `on`.
-fn flag(inout out: List[u8], label: str, on: bool) uses ffi {
+fn flag(inout out: List[u8], label: str, on: bool) {
     if on {
         out.push(32)
         put(inout out, label)
     }
 }
 
-fn str_slot(inout out: List[u8], p: parse.P, label: str, si: u32) uses ffi {
+fn str_slot(inout out: List[u8], p: parse.P, label: str, si: u32) {
     out.push(32)
     put(inout out, label)
     out.push(61)
     diag.debug_str(inout out, p.strs[si as usize])
 }
 
-fn int_slot(inout out: List[u8], p: parse.P, tok: u32, negated: bool) uses ffi {
+fn int_slot(inout out: List[u8], p: parse.P, tok: u32, negated: bool) {
     let t = p.toks[tok as usize]
     put(inout out, " value=")
     if negated { out.push(45) }
@@ -62,17 +62,17 @@ fn int_slot(inout out: List[u8], p: parse.P, tok: u32, negated: bool) uses ffi {
     }
 }
 
-fn end(inout out: List[u8], n: ast.Node) uses ffi {
+fn end(inout out: List[u8], n: ast.Node) {
     put(inout out, " end=")
     pos(inout out, n.end_line, n.end_col)
 }
 
-fn fn_flags(inout out: List[u8], f: u32) uses ffi {
+fn fn_flags(inout out: List[u8], f: u32) {
     if f == 0 { return }
     put(inout out, " flags=")
-    var first = true
+    let mut first = true
     let names = ["pub", "extern", "unsafe", "export"]
-    var bit: u32 = 1
+    let mut bit: u32 = 1
     for i in 0..4 {
         if ast.has(f, bit) {
             if !first { out.push(44) }
@@ -84,9 +84,9 @@ fn fn_flags(inout out: List[u8], f: u32) uses ffi {
 }
 
 /// A child on its own line: newline, indent, role, node.
-fn child(inout out: List[u8], p: parse.P, label: str, id: u32, depth: u32) uses ffi {
+fn child(inout out: List[u8], p: parse.P, label: str, id: u32, depth: u32) {
     out.push(10)
-    var k: u32 = 0
+    let mut k: u32 = 0
     while k < depth {
         out.push(32)
         out.push(32)
@@ -98,20 +98,20 @@ fn child(inout out: List[u8], p: parse.P, label: str, id: u32, depth: u32) uses 
 }
 
 /// An optional child stored as id+1.
-fn opt(inout out: List[u8], p: parse.P, label: str, id1: u32, depth: u32) uses ffi {
+fn opt(inout out: List[u8], p: parse.P, label: str, id1: u32, depth: u32) {
     if id1 > 0 { child(inout out, p, label, id1 - 1, depth) }
 }
 
 /// The child list [start/len] in `extra`.
-fn kids(inout out: List[u8], p: parse.P, label: str, start: u32, len: u32, depth: u32) uses ffi {
-    var i: u32 = 0
+fn kids(inout out: List[u8], p: parse.P, label: str, start: u32, len: u32, depth: u32) {
+    let mut i: u32 = 0
     while i < len {
         child(inout out, p, label, ast.at(p.ast, start, i), depth)
         i += 1
     }
 }
 
-pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) uses ffi {
+pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
     let n = p.ast.nodes[id as usize]
     let d = depth + 1
     out.push(40)
@@ -136,6 +136,10 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) uses ffi {
         ast.TTuple => kids(inout out, p, "elem", n.c, n.d, d)
         ast.TUnit => {}
         ast.TFn => {
+            if n.e != 0 {
+                put(inout out, " inout=")
+                num(inout out, n.e as u64)
+            }
             kids(inout out, p, "param", n.c, n.d, d)
             opt(inout out, p, "ret", n.g, d)
         }
@@ -213,6 +217,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) uses ffi {
             child(inout out, p, "expr", n.a, d)
         }
         ast.LParam => {
+            flag(inout out, "inout", n.c == 1)
             sym(inout out, p, "name", n.a)
             opt(inout out, p, "type", n.b, d)
         }
@@ -228,11 +233,13 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) uses ffi {
         ast.SLet => {
             sym(inout out, p, "name", n.a)
             flag(inout out, "mut", n.d == 1)
+            flag(inout out, "let_mut", n.d == 2)
             opt(inout out, p, "type", n.b, d)
             child(inout out, p, "init", n.c, d)
         }
         ast.SLetPat => {
             flag(inout out, "mut", n.d == 1)
+            flag(inout out, "let_mut", n.d == 2)
             child(inout out, p, "pat", n.a, d)
             child(inout out, p, "init", n.c, d)
         }
@@ -245,23 +252,26 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) uses ffi {
         }
         ast.SExpr => child(inout out, p, "expr", n.a, d)
         ast.SWhile => {
+            if n.h > 0 { sym(inout out, p, "label", n.h - 1) }
             child(inout out, p, "cond", n.a, d)
             child(inout out, p, "body", n.b, d)
         }
         ast.SFor => {
+            if n.h > 0 { sym(inout out, p, "label", n.h - 1) }
             sym(inout out, p, "var", n.a)
             child(inout out, p, "lo", n.b, d)
             child(inout out, p, "hi", n.c, d)
             child(inout out, p, "body", n.d, d)
         }
         ast.SForEach => {
-            sym(inout out, p, "var", n.a)
+            if n.h > 0 { sym(inout out, p, "label", n.h - 1) }
+            if n.e > 0 { child(inout out, p, "pat", n.e - 1, d) } else { sym(inout out, p, "var", n.a) }
             child(inout out, p, "iter", n.b, d)
             child(inout out, p, "body", n.d, d)
         }
         ast.SReturn => opt(inout out, p, "value", n.a, d)
-        ast.SBreak => {}
-        ast.SContinue => {}
+        ast.SBreak => { if n.a > 0 { sym(inout out, p, "label", n.a - 1) } }
+        ast.SContinue => { if n.a > 0 { sym(inout out, p, "label", n.a - 1) } }
         ast.SAssert => {
             if n.b > 0 { str_slot(inout out, p, "message", n.b - 1) }
             child(inout out, p, "cond", n.a, d)
@@ -270,6 +280,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) uses ffi {
         ast.PName => {
             sym(inout out, p, "name", n.a)
             qual(inout out, p, n.b)
+            flag(inout out, "mut", n.c == 1)
         }
         ast.PInt => int_slot(inout out, p, n.a, n.b == 1)
         ast.PBool => {
@@ -288,6 +299,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) uses ffi {
             flag(inout out, "pub", n.b == 1)
             kids(inout out, p, "generic", n.c, n.d, d)
             kids(inout out, p, "member", n.e, n.f, d)
+            opt(inout out, p, "alias", n.g, d)
         }
         ast.Variant => {
             sym(inout out, p, "name", n.a)
@@ -364,9 +376,9 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) uses ffi {
 }
 
 /// The whole file: each top-level item from column 0.
-pub fn program(p: parse.P) -> List[u8] uses ffi {
-    var out: List[u8] = List.new()
-    var i: u32 = 0
+pub fn program(p: parse.P) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut i: u32 = 0
     while i < p.ast.items_len {
         node(inout out, p, ast.at(p.ast, p.ast.items_start, i), 0)
         out.push(10)

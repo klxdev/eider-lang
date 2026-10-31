@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_ref_print.ei","line":4,"col":11},"message":"`print` needs `Show`, which Ref[String] doesn't implement","help":"a Ref is a shared handle: it has no equality, order, hash or text; compare or print what it holds, inside `read`"}

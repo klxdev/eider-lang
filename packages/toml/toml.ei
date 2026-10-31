@@ -76,7 +76,7 @@ fn is_bare(c: u8) -> bool { bytes.is_ident(c) || c == 45 }
 /// "..." with the opening quote at the cursor.
 fn string(inout p: P) -> Result[List[u8], ParseError] {
     bump(inout p)
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     while true {
         if at_end(p) || peek(p) == 10 { return Err(fail(p, "unterminated string")) }
         let c = peek(p)
@@ -110,7 +110,7 @@ fn string(inout p: P) -> Result[List[u8], ParseError] {
 /// One key segment: bare or quoted.
 fn key_part(inout p: P) -> Result[List[u8], ParseError] {
     if peek(p) == 34 { return string(inout p) }
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     while is_bare(peek(p)) {
         out.push(peek(p))
         bump(inout p)
@@ -121,7 +121,7 @@ fn key_part(inout p: P) -> Result[List[u8], ParseError] {
 
 /// a.b."c d" -> `a.b.c d`
 fn key(inout p: P) -> Result[List[u8], ParseError] {
-    var k = key_part(inout p)?
+    let mut k = key_part(inout p)?
     blank(inout p)
     while peek(p) == 46 {
         bump(inout p)
@@ -136,7 +136,7 @@ fn key(inout p: P) -> Result[List[u8], ParseError] {
 
 fn join_key(prefix: List[u8], k: List[u8]) -> List[u8] {
     if prefix.len() == 0 { return k }
-    var out = prefix
+    let mut out = prefix.copy()
     out.push(46)
     bytes.append(inout out, k)
     out
@@ -151,12 +151,12 @@ fn add(inout out: List[Entry], k: List[u8], v: Val, line: u32) -> Result[bool, P
 }
 
 fn integer(inout p: P) -> Result[i64, ParseError] {
-    var neg = false
+    let mut neg = false
     if peek(p) == 45 || peek(p) == 43 {
         neg = peek(p) == 45
         bump(inout p)
     }
-    var digits: List[u8] = List.new()
+    let mut digits: List[u8] = List.new()
     while bytes.is_digit(peek(p)) || peek(p) == 95 {
         if peek(p) != 95 { digits.push(peek(p)) }
         bump(inout p)
@@ -178,7 +178,7 @@ fn integer(inout p: P) -> Result[i64, ParseError] {
 /// [ "a", "b", ] (strings only; may span lines and hold comments)
 fn array(inout p: P) -> Result[List[List[u8]], ParseError] {
     bump(inout p)
-    var items: List[List[u8]] = List.new()
+    let mut items: List[List[u8]] = List.new()
     while true {
         space(inout p)
         if peek(p) == 93 {
@@ -200,7 +200,7 @@ fn array(inout p: P) -> Result[List[List[u8]], ParseError] {
 
 /// Parse the value for key `k` (already prefixed); inline tables add several entries.
 fn value(inout p: P, k: List[u8], inout out: List[Entry]) -> Result[bool, ParseError] {
-    let line = p.line
+    let line = p.line.copy()
     let c = peek(p)
     if c == 34 {
         let s = string(inout p)?
@@ -234,7 +234,7 @@ fn value(inout p: P, k: List[u8], inout out: List[Entry]) -> Result[bool, ParseE
         }
     }
     if c == 116 || c == 102 {
-        var word: List[u8] = List.new()
+        let mut word: List[u8] = List.new()
         while bytes.is_alpha(peek(p)) {
             word.push(peek(p))
             bump(inout p)
@@ -255,7 +255,7 @@ fn value(inout p: P, k: List[u8], inout out: List[Entry]) -> Result[bool, ParseE
 fn next_index(inout counts: List[Count], name: List[u8]) -> u64 {
     for i in 0..counts.len() {
         if bytes.eq(counts[i].name, name) {
-            let n = counts[i].n
+            let n = counts[i].n.copy()
             counts[i] = Count(name, n + 1)
             return n
         }
@@ -265,10 +265,10 @@ fn next_index(inout counts: List[Count], name: List[u8]) -> u64 {
 }
 
 pub fn parse(src: List[u8]) -> Result[List[Entry], ParseError] {
-    var p = P(src, 0, 1, 1)
-    var out: List[Entry] = List.new()
-    var prefix: List[u8] = List.new()
-    var counts: List[Count] = List.new()
+    let mut p = P(src, 0, 1, 1)
+    let mut out: List[Entry] = List.new()
+    let mut prefix: List[u8] = List.new()
+    let mut counts: List[Count] = List.new()
     while true {
         space(inout p)
         if at_end(p) { return Ok(out) }
@@ -312,9 +312,9 @@ pub fn get(doc: List[Entry], k: List[u8]) -> Option[Entry] {
 
 /// Distinct next segments of keys under `prefix.` (e.g. dependency names under `deps`).
 pub fn children(doc: List[Entry], prefix: List[u8]) -> List[List[u8]] {
-    var want = prefix
+    let mut want = prefix.copy()
     want.push(46)
-    var out: List[List[u8]] = List.new()
+    let mut out: List[List[u8]] = List.new()
     for e in doc {
         if bytes.starts_with(e.key, want) {
             let rest = bytes.slice(e.key, want.len(), e.key.len())
@@ -322,7 +322,7 @@ pub fn children(doc: List[Entry], prefix: List[u8]) -> List[List[u8]] {
                 Some(i) => bytes.slice(rest, 0, i)
                 None => rest
             }
-            var seen = false
+            let mut seen = false
             for o in out {
                 if bytes.eq(o, seg) { seen = true }
             }
@@ -334,7 +334,7 @@ pub fn children(doc: List[Entry], prefix: List[u8]) -> List[List[u8]] {
 
 /// A basic string, quoted and escaped for output.
 pub fn quote(s: List[u8]) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     out.push(34)
     for c in s {
         if c == 34 || c == 92 {

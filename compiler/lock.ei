@@ -11,8 +11,10 @@ import "core/sys"
 import "std/bytes"
 
 /// What the compiler needs of eider.toml: the package name, its entry module (`entry`,
-/// default `<name>.ei`) and the names of its direct dependencies (`[deps.<name>]`).
-pub type Manifest = { name: List[u8], entry: List[u8], deps: List[List[u8]] }
+/// default `<name>.ei`), the names of its direct dependencies (`[deps.<name>]`) and, for
+/// each, the capabilities it is granted (`uses = [...]`; none when absent;
+/// docs/compiler.md, "C8.5: capabilities per package").
+pub type Manifest = { name: List[u8], entry: List[u8], deps: List[List[u8]], grants: List[List[List[u8]]] }
 
 /// One `[[package]]` of eider.lock: `path` is the directory of a `path+<dir>` source
 /// (relative to the lock's directory unless absolute), `hash` the content hash of a git one.
@@ -29,23 +31,31 @@ pub fn valid_name(n: List[u8]) -> bool {
 }
 
 /// eider.toml text; Err is a message (`line N: ...`).
-pub fn manifest(src: List[u8]) -> Result[Manifest, List[u8]] uses ffi {
+pub fn manifest(src: List[u8]) -> Result[Manifest, List[u8]] {
     let doc = parse(src)?
     let name = text_at(doc, sys.lit("package.name"))
     if name.len() == 0 { return Err(sys.lit("no `name` in [package]")) }
     if !valid_name(name) { return Err(sys.lit("the package name must be lowercase letters, digits and `_`, starting with a letter")) }
-    var entry = text_at(doc, sys.lit("package.entry"))
+    let mut entry = text_at(doc, sys.lit("package.entry"))
     if entry.len() == 0 { entry = bytes.concat(name, sys.lit(".ei")) }
-    Ok(Manifest(name, entry, children(doc, sys.lit("deps"))))
+    let deps = children(doc, sys.lit("deps"))
+    let mut grants: List[List[List[u8]]] = List.new()
+    for d in deps {
+        let mut k = sys.lit("deps.")
+        bytes.append(inout k, d)
+        bytes.append(inout k, sys.lit(".uses"))
+        grants.push(items_at(doc, k))
+    }
+    Ok(Manifest(name, entry, deps, grants))
 }
 
 /// eider.lock text: its packages in file order.
-pub fn lockfile(src: List[u8]) -> Result[List[Locked], List[u8]] uses ffi {
+pub fn lockfile(src: List[u8]) -> Result[List[Locked], List[u8]] {
     let doc = parse(src)?
-    var out: List[Locked] = List.new()
-    var n: u64 = 0
+    let mut out: List[Locked] = List.new()
+    let mut n: u64 = 0
     while true {
-        var pre = sys.lit("package.")
+        let mut pre = sys.lit("package.")
         bytes.append(inout pre, bytes.from_u64(n))
         pre.push(46)
         let name = text_at(doc, bytes.concat(pre, sys.lit("name")))
@@ -57,7 +67,7 @@ pub fn lockfile(src: List[u8]) -> Result[List[Locked], List[u8]] uses ffi {
         } else if bytes.starts_with(source, sys.lit("git+")) {
             out.push(Locked(name, true, none, text_at(doc, bytes.concat(pre, sys.lit("hash")))))
         } else {
-            var m = sys.lit("package `")
+            let mut m = sys.lit("package `")
             bytes.append(inout m, name)
             bytes.append(inout m, sys.lit("` has no `path+` or `git+` source"))
             return Err(m)
@@ -69,8 +79,8 @@ pub fn lockfile(src: List[u8]) -> Result[List[Locked], List[u8]] uses ffi {
 
 /// The store directory name of a git package (eider-pkg's store.ei `store_dir`):
 /// `<name>-<the first 16 hex digits of its content hash>`.
-pub fn store_leaf(name: List[u8], hash: List[u8]) -> List[u8] uses ffi {
-    var leaf = name
+pub fn store_leaf(name: List[u8], hash: List[u8]) -> List[u8] {
+    let mut leaf = name.copy()
     leaf.push(45)
     // "sha256-" is 7 bytes
     if hash.len() >= 23 { bytes.append(inout leaf, bytes.slice(hash, 7, 23)) }
@@ -85,8 +95,8 @@ type P = { src: List[u8], i: usize, line: u32 }
 
 type Count = { name: List[u8], n: u64 }
 
-fn fail(p: P, m: str) -> List[u8] uses ffi {
-    var out = sys.lit("line ")
+fn fail(p: P, m: str) -> List[u8] {
+    let mut out = sys.lit("line ")
     bytes.append(inout out, bytes.from_u64(p.line as u64))
     bytes.append(inout out, sys.lit(": "))
     bytes.append(inout out, sys.lit(m))
@@ -125,7 +135,7 @@ fn space(inout p: P) {
     }
 }
 
-fn end_line(inout p: P) -> Result[bool, List[u8]] uses ffi {
+fn end_line(inout p: P) -> Result[bool, List[u8]] {
     blank(inout p)
     if peek(p) == 35 {
         while !at_end(p) && peek(p) != 10 { bump(inout p) }
@@ -137,9 +147,9 @@ fn end_line(inout p: P) -> Result[bool, List[u8]] uses ffi {
     Ok(true)
 }
 
-fn string(inout p: P) -> Result[List[u8], List[u8]] uses ffi {
+fn string(inout p: P) -> Result[List[u8], List[u8]] {
     bump(inout p)
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     while true {
         if at_end(p) || peek(p) == 10 { return Err(fail(p, "unterminated string")) }
         let c = peek(p)
@@ -166,9 +176,9 @@ fn string(inout p: P) -> Result[List[u8], List[u8]] uses ffi {
     Ok(out)
 }
 
-fn key_part(inout p: P) -> Result[List[u8], List[u8]] uses ffi {
+fn key_part(inout p: P) -> Result[List[u8], List[u8]] {
     if peek(p) == 34 { return string(inout p) }
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     while bytes.is_ident(peek(p)) || peek(p) == 45 {
         out.push(peek(p))
         bump(inout p)
@@ -177,8 +187,8 @@ fn key_part(inout p: P) -> Result[List[u8], List[u8]] uses ffi {
     Ok(out)
 }
 
-fn key(inout p: P) -> Result[List[u8], List[u8]] uses ffi {
-    var k = key_part(inout p)?
+fn key(inout p: P) -> Result[List[u8], List[u8]] {
+    let mut k = key_part(inout p)?
     blank(inout p)
     while peek(p) == 46 {
         bump(inout p)
@@ -193,7 +203,7 @@ fn key(inout p: P) -> Result[List[u8], List[u8]] uses ffi {
 
 fn join_key(prefix: List[u8], k: List[u8]) -> List[u8] {
     if prefix.len() == 0 { return k }
-    var out = prefix
+    let mut out = prefix.copy()
     out.push(46)
     bytes.append(inout out, k)
     out
@@ -201,7 +211,7 @@ fn join_key(prefix: List[u8], k: List[u8]) -> List[u8] {
 
 /// A value for key `k`: strings and string arrays are kept, integers and booleans skipped,
 /// inline tables flattened.
-fn value(inout p: P, k: List[u8], inout out: List[Entry]) -> Result[bool, List[u8]] uses ffi {
+fn value(inout p: P, k: List[u8], inout out: List[Entry]) -> Result[bool, List[u8]] {
     let none: List[List[u8]] = List.new()
     let c = peek(p)
     if c == 34 {
@@ -211,7 +221,7 @@ fn value(inout p: P, k: List[u8], inout out: List[Entry]) -> Result[bool, List[u
     }
     if c == 91 {
         bump(inout p)
-        var items: List[List[u8]] = List.new()
+        let mut items: List[List[u8]] = List.new()
         while true {
             space(inout p)
             if peek(p) == 93 {
@@ -248,7 +258,7 @@ fn value(inout p: P, k: List[u8], inout out: List[Entry]) -> Result[bool, List[u
         }
     }
     // an integer or a boolean
-    var any = false
+    let mut any = false
     while bytes.is_ident(peek(p)) || peek(p) == 45 || peek(p) == 43 {
         any = true
         bump(inout p)
@@ -260,7 +270,7 @@ fn value(inout p: P, k: List[u8], inout out: List[Entry]) -> Result[bool, List[u
 fn next_index(inout counts: List[Count], name: List[u8]) -> u64 {
     for i in 0..counts.len() {
         if bytes.eq(counts[i].name, name) {
-            let n = counts[i].n
+            let n = counts[i].n.copy()
             counts[i] = Count(name, n + 1)
             return n
         }
@@ -270,11 +280,11 @@ fn next_index(inout counts: List[Count], name: List[u8]) -> u64 {
 }
 
 /// The document flattened to dotted keys.
-pub fn parse(src: List[u8]) -> Result[List[Entry], List[u8]] uses ffi {
-    var p = P(src, 0, 1)
-    var out: List[Entry] = List.new()
-    var prefix: List[u8] = List.new()
-    var counts: List[Count] = List.new()
+pub fn parse(src: List[u8]) -> Result[List[Entry], List[u8]] {
+    let mut p = P(src, 0, 1)
+    let mut out: List[Entry] = List.new()
+    let mut prefix: List[u8] = List.new()
+    let mut counts: List[Count] = List.new()
     while true {
         space(inout p)
         if at_end(p) { return Ok(out) }
@@ -317,11 +327,19 @@ pub fn text_at(doc: List[Entry], k: List[u8]) -> List[u8] {
     List.new()
 }
 
+/// The strings of the array at key `k` (none when absent).
+pub fn items_at(doc: List[Entry], k: List[u8]) -> List[List[u8]] {
+    for e in doc {
+        if bytes.eq(e.key, k) { return e.items }
+    }
+    List.new()
+}
+
 /// Distinct next segments of keys under `prefix.` (dependency names under `deps`).
 pub fn children(doc: List[Entry], prefix: List[u8]) -> List[List[u8]] {
-    var want = prefix
+    let mut want = prefix.copy()
     want.push(46)
-    var out: List[List[u8]] = List.new()
+    let mut out: List[List[u8]] = List.new()
     for e in doc {
         if bytes.starts_with(e.key, want) {
             let rest = bytes.slice(e.key, want.len(), e.key.len())
@@ -329,7 +347,7 @@ pub fn children(doc: List[Entry], prefix: List[u8]) -> List[List[u8]] {
                 Some(i) => bytes.slice(rest, 0, i)
                 None => rest
             }
-            var seen = false
+            let mut seen = false
             for o in out {
                 if bytes.eq(o, seg) { seen = true }
             }

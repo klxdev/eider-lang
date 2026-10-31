@@ -1,0 +1,1 @@
+{"error":"E0603","span":{"file":"compiler/tests/check/fail/e0603_trait_type_args.ei","line":4,"col":6},"message":"trait `Show` takes no type arguments"}

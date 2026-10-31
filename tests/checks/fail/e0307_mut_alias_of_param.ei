@@ -1,0 +1,8 @@
+// expect: E0307 4:17
+type P = { x: i32 }
+fn bump(p: P) -> i32 {
+    let mut q = p
+    q.x += 1
+    q.x
+}
+fn main() uses io { print(bump(P(1))) }

@@ -1,0 +1,5 @@
+// expect: E0604 2:1
+impl[T] Eq for T {
+    fn eq(self, other: T) -> bool { true }
+}
+fn main() {}

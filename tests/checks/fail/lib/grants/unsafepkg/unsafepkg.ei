@@ -1,0 +1,4 @@
+// helper package for e0802_unsafe_fn_other_package.ei: an `unsafe fn` another package calls
+extern "c" fn abs(x: i32) -> i32
+
+pub unsafe fn raw(x: i32) -> i32 uses ffi { abs(x) }

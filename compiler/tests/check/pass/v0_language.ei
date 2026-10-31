@@ -49,7 +49,7 @@ fn word(s: str) -> u8 {
 fn bump(inout c: Card) { c.rank += 1 }
 
 fn swap_first(inout h: Hand, inout other: Hand) {
-    let t = h.cards[0]
+    let t = h.cards[0].copy()
     h.cards[0] = other.cards[0]
     other.cards[0] = t
 }

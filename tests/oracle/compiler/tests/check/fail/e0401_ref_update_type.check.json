@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_ref_update_type.ei","line":5,"col":14},"message":"`Ref[i32].update` needs a closure of type fn(inout i32) -> R, found fn(i32) -> i32"}

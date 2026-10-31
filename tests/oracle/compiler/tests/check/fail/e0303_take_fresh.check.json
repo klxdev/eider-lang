@@ -1,0 +1,1 @@
+{"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_take_fresh.ei","line":5,"col":21},"message":"`List[i32].take` needs a place to move the value out of","help":"call it on a variable, a field or an element"}

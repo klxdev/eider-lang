@@ -1,0 +1,9 @@
+# eider.lock: written by `eider-pkg`. Do not edit.
+version = 1
+
+[[package]]
+name = "ffidep"
+version = "0.1.0"
+source = "path+../ffidep"
+deps = []
+grants = ["io"]

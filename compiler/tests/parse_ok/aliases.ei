@@ -1,0 +1,5 @@
+type Id = u64
+pub type Handler = fn(Request) -> Response
+type Pair[T] =
+    (T, T)
+type M[K, V] = Map[K, List[V]]

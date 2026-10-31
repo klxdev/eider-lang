@@ -1,0 +1,95 @@
+// The prelude's `Default` (docs/compiler.md, "C8.23"): built-in defaults, derived ones for
+// records, tuples, arrays and Boxes, own impls (records and enums), `T.default()` in generic
+// code with `T: Default`, and `x.take()` for every type with a Default. Expected output:
+// defaults.out.
+type Point = { x: i32, y: i64, on: bool }
+
+type Config = { name: String, tags: List[String], limits: Map[String, i32], parent: Option[String], at: Point, pair: (u8, str), grid: [i32; 3], boxed: Box[Point] }
+
+// an enum has no derived Default: its own impl chooses the variant
+type Level = | Low | Mid | High(i32)
+
+impl Default for Level {
+    fn default() -> Level { Mid }
+}
+
+// an own impl replaces the derived one, also inside derived ones
+type Port = { n: u32 }
+
+impl Default for Port {
+    fn default() -> Port { Port(8080) }
+}
+
+type Server = { port: Port, level: Level, name: String }
+
+// generic code states the bound
+fn fresh[T: Default]() -> T { T.default() }
+
+fn reset[T: Default](inout slot: T) -> T { slot.take() }
+
+fn fill[T: Default + Copy](n: usize) -> List[T] {
+    let mut out: List[T] = List.new()
+    for i in 0..n { out.push(T.default()) }
+    out
+}
+
+type Wrap[T] = { inner: T, count: i32 }
+
+// any associated function of a type parameter: `T.make()` is the `make` of the type T stands for
+trait Make { fn make(n: i32) -> Self }
+
+impl Make for Point {
+    fn make(n: i32) -> Point { Point(n, n as i64 * 2, n > 0) }
+}
+
+fn made[T: Make](n: i32) -> T { T.make(n) }
+
+fn main() uses io {
+    print(i32.default())
+    print(bool.default())
+    print(String.default().len())
+    let p = Point.default()
+    print(p)
+    let c = Config.default()
+    print(c)
+    print(Level.default())
+    let s = Server.default()
+    print(s)
+    let xs: List[i32] = List.default()
+    print(xs.len())
+    let o: Option[i32] = Option.default()
+    print(o)
+    let n: u64 = fresh()
+    print(n)
+    let pt: Point = fresh()
+    print(pt)
+    let w: Wrap[Port] = fresh()
+    print(w)
+    let mut lv = High(3)
+    let old = reset(inout lv)
+    print(old)
+    print(lv)
+    let ls: List[Level] = fill(2)
+    print(ls)
+    // take() now works for every type with a Default
+    let mut q = Point(1, 2, true)
+    let was = q.take()
+    print(was)
+    print(q)
+    let mut srv = Server(Port(1), High(9), String.from("api"))
+    let prev = srv.take()
+    print(prev)
+    print(srv)
+    let mut count = 41
+    print(count.take())
+    print(count)
+    let mut t = (String.from("a"), 7)
+    print(t.take())
+    print(t)
+    let mp: Point = made(4)
+    print(mp)
+    // the four of before are unchanged
+    let mut name = String.from("x")
+    print(name.take())
+    print(name.len())
+}

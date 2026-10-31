@@ -1,0 +1,5 @@
+// expect: E0604 2:1
+impl Show for i32 {
+    fn show(self, inout out: String) { out.push_str("int") }
+}
+fn main() {}

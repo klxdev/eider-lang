@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_impl_args_name.ei","line":11,"col":21},"message":"type W[bool] has no method `twice`"}

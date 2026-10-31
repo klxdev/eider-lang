@@ -1,0 +1,78 @@
+// std/child: start programs without waiting, with each of stdin/stdout/stderr inherited,
+// /dev/null or a pipe, so they can become streams; wait (blocking or not), kill
+// (core/ABI.md "Processes"). std/proc runs a program to completion instead. A child can do
+// anything, so starting, waiting for and killing one needs io, fs and net.
+
+import "core/sys"
+import "core/os"
+
+/// What a started child's stdin/stdout/stderr is: ours, /dev/null, or a pipe to us.
+pub const INHERIT: i32 = 0
+pub const NULL: i32 = 1
+pub const PIPE: i32 = 2
+
+/// A started child: its pid and our ends of its piped streams (-1 where not a pipe). Read
+/// and write them with std/fd (they can be made non-blocking and polled); close them when
+/// done, and always `wait` for the child.
+pub type Child = { pid: i32, stdin: i32, stdout: i32, stderr: i32 }
+
+/// How a child ended: `code` if it exited (`signal` 0), else the signal that killed it.
+pub type Exit = { code: i32, signal: i32 }
+
+/// Start `argv` (searched on PATH) without waiting for it. Err if it could not be started.
+pub fn start(argv: List[List[u8]], stdin: i32, stdout: i32, stderr: i32) -> Result[Child, String] uses io, fs, net {
+    if argv.len() == 0 { return Err(String.from("proc: empty command")) }
+    sys.send_all(argv)
+    let n = os.spawn(stdin, stdout, stderr)
+    if n < 0 {
+        let mut m = String.from("cannot run ")
+        m.append(sys.to_string(argv[0]))
+        m.push_str(": ")
+        m.append(sys.error_text(n))
+        return Err(m)
+    }
+    let r = sys.take()
+    Ok(Child(n as i32, os.le_fd(r, 0), os.le_fd(r, 4), os.le_fd(r, 8)))
+}
+
+fn exit_of(n: i64) -> Exit {
+    if n >= 256 { return Exit(-1, (n - 256) as i32) }
+    Exit(n as i32, 0)
+}
+
+/// Wait for child `pid` to end.
+pub fn wait(pid: i32) -> Result[Exit, String] uses io, fs, net {
+    let n = os.wait(pid, false)
+    if n < 0 {
+        let mut m = String.from("wait: ")
+        m.append(sys.error_text(n))
+        return Err(m)
+    }
+    Ok(exit_of(n))
+}
+
+/// None while child `pid` is still running.
+pub fn try_wait(pid: i32) -> Result[Option[Exit], String] uses io, fs, net {
+    let n = os.wait(pid, true)
+    if n < 0 {
+        if os.err_kind(n) == 1 { return Ok(None) }
+        let mut m = String.from("wait: ")
+        m.append(sys.error_text(n))
+        return Err(m)
+    }
+    Ok(Some(exit_of(n)))
+}
+
+/// Send signal `sig` (std/signal numbers) to process `pid`.
+pub fn kill(pid: i32, sig: i32) -> Result[bool, String] uses io, fs, net {
+    let n = os.kill(pid, sig)
+    if n < 0 {
+        let mut m = String.from("kill: ")
+        m.append(sys.error_text(n))
+        return Err(m)
+    }
+    Ok(true)
+}
+
+/// This process's id.
+pub fn id() -> i32 uses io { os.getpid() as i32 }

@@ -37,7 +37,10 @@ both; a host that instantiates the module itself must too.
 Every other function the module calls but does not define (an `extern "c"` function, or a
 native core function `ec_*` reached through `std`) is also an import from `env`
 (`--allow-undefined`), to be passed in the loader's `imports`. There is no wasm backend of
-`core/ABI.md`: a module has no files, processes or environment of its own.
+`core/ABI.md`: a module has no files, processes or environment of its own, nor sockets,
+pollers, signals, OS randomness or clocks beyond `eider_now_ms`. A module that reaches one
+fails to instantiate with a `LinkError` naming the `env.ec_*` import (core/ABI.md,
+"WebAssembly").
 
 Exports: `memory`, and `eider_<name>` for each `export fn`, whose parameters and result are
 integers or `bool` (E0806). `i64`/`u64`/`usize` cross as `i64` (JavaScript `BigInt`), the

@@ -1,0 +1,9 @@
+// expect: E0308 7:18
+// `take()` replaces what a reference points into (docs/compiler.md, "C8.15: take and replace")
+fn main() uses io {
+    let mut xs: List[List[i32]] = List.new()
+    xs.push(List.new())
+    let first = xs[0]
+    let all = xs.take()
+    print(first.len())
+}

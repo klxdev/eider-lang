@@ -1,1 +1,1 @@
-{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_tup_lt.ei","line":3,"col":15},"message":"operator < is not supported for (i32, i32)"}
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_tup_lt.ei","line":3,"col":15},"message":"`<` needs `Ord`, which (i32, Mutex[i32]) doesn't implement (its part Mutex[i32] doesn't)","help":"Task, Mutex and Chan values are shared handles: they have no equality, order, hash or text"}

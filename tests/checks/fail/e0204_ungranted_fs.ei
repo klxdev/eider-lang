@@ -1,0 +1,6 @@
+// expect: E0204 2:1
+import "lib/grants/grantee/grantee.ei"
+
+// the package grantee imports fsdep, which uses `fs` (docs/compiler.md, "C8.5:
+// capabilities per package"), and its eider.toml grants fsdep nothing
+fn main() {}

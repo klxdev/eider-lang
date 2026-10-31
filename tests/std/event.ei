@@ -1,0 +1,142 @@
+// std/event: timers fire in deadline order and never early, cancelled timers don't fire, a
+// round with nothing to do ends at its deadline, descriptor readiness by token (level
+// triggered), a wake from another thread, many timers; and std/fd's deadline waits.
+
+import "std/event"
+import "std/time"
+import "std/fd"
+import "std/poll"
+
+fn name(e: event.Event, a: i64, b: i64, c: i64) -> String {
+    match e {
+        event.Ready(t, ev) => {
+            var s = String.from("ready ")
+            s.append(String.from_int(t))
+            if ev.readable { s.push_str(" r") }
+            s
+        }
+        event.Timer(id) => {
+            if id == a { return String.from("timer a") }
+            if id == b { return String.from("timer b") }
+            if id == c { return String.from("timer c") }
+            String.from("timer ?")
+        }
+        event.Woken => String.from("woken")
+    }
+}
+
+fn main() uses io, clock, threads {
+    var lp = event.new().unwrap()
+    print(lp.next_timer().is_never())
+    let t0 = time.mono_ns()
+    let a = lp.timer_after(time.millis(30))
+    let b = lp.timer_after(time.millis(10))
+    let c = lp.timer_after(time.millis(20))
+    let x = lp.timer_after(time.millis(15))
+    print(lp.timers())
+    print(lp.cancel_timer(x))
+    print(lp.cancel_timer(x))
+    print(lp.timers())
+    var fired = 0
+    var early = false
+    while fired < 3 {
+        for e in lp.poll(time.after_ms(5000)).unwrap() {
+            let s = name(e, a, b, c)
+            let dt = time.mono_ns() - t0
+            if s == String.from("timer a") && dt < 30000000 { early = true }
+            if s == String.from("timer b") && dt < 10000000 { early = true }
+            if s == String.from("timer c") && dt < 20000000 { early = true }
+            print(s)
+            fired += 1
+        }
+    }
+    print(early)
+    print(lp.timers())
+    print(lp.cancel_timer(a))
+
+    // nothing to do: the round ends at its deadline, empty
+    let t1 = time.mono_ns()
+    print(lp.poll(time.after_ms(25)).unwrap().len())
+    print(time.mono_ns() - t1 >= 25000000)
+
+    // a pipe: readable once written, and again on the next round until drained
+    let p = fd.pipe().unwrap()
+    lp.watch(p.r, poll.READ, 7).unwrap()
+    print(lp.poll(time.now()).unwrap().len())
+    fd.write(p.w, "hi".bytes()).unwrap()
+    for e in lp.poll(time.after_ms(5000)).unwrap() { print(name(e, a, b, c)) }
+    for e in lp.poll(time.now()).unwrap() { print(name(e, a, b, c)) }
+    print(fd.read(p.r, 16).unwrap().len())
+    print(lp.poll(time.now()).unwrap().len())
+    print(lp.watch(p.r, poll.READ, -3).is_err())
+    lp.unwatch(p.r).unwrap()
+
+    // woken from another thread, while waiting with no deadline
+    let w = lp.waker()
+    let waker = spawn(|| -> i32 {
+        time.sleep_ms(20)
+        poll.wake(w)
+        poll.wake(w)
+        0
+    })
+    for e in lp.poll(time.never()).unwrap() { print(name(e, a, b, c)) }
+    let z = waker.join()
+    print(lp.poll(time.now()).unwrap().len())
+
+    // a timer and a descriptor in the same round; then 500 timers, in order
+    let tm = lp.timer_at(time.now())
+    fd.write(p.w, "x".bytes()).unwrap()
+    lp.watch(p.r, poll.READ, 9).unwrap()
+    for e in lp.poll(time.after_ms(5000)).unwrap() { print(name(e, a, b, tm)) }
+    lp.unwatch(p.r).unwrap()
+    var ids: List[i64] = List.new()
+    let base = time.after_ms(5)
+    for i in 0..500 {
+        // deadlines in a scrambled order
+        let k = (i * 7919) % 500
+        ids.push(lp.timer_at(time.at_mono_ns(base.mono_ns() + k as i64 * 10000)))
+    }
+    var last: i64 = -1
+    var in_order = true
+    var n = 0
+    while n < 500 {
+        for e in lp.poll(time.after_ms(5000)).unwrap() {
+            match e {
+                event.Timer(id) => {
+                    // ids[i] is due at k(i) * 10 us; ordered by due time
+                    var i: usize = 0
+                    while ids[i] != id { i += 1 }
+                    let k = ((i * 7919) % 500) as i64
+                    if k < last { in_order = false }
+                    last = k
+                    n += 1
+                }
+                event.Ready(t, ev) => {}
+                event.Woken => {}
+            }
+        }
+    }
+    print(in_order)
+    lp.close()
+
+    // std/fd: waiting for one descriptor with a deadline
+    print(fd.read(p.r, 16).unwrap().len())
+    print(fd.wait_ready(p.r, fd.READY_READ, time.after_ms(20)).unwrap())
+    print(fd.wait_ready(p.w, fd.READY_WRITE, time.now()).unwrap())
+    match fd.read_by(p.r, 16, time.after_ms(20)).unwrap() {
+        Some(d) => print(d.len())
+        None => print("timed out")
+    }
+    fd.write(p.w, "abc".bytes()).unwrap()
+    match fd.read_by(p.r, 16, time.after_ms(5000)).unwrap() {
+        Some(d) => print(d.len())
+        None => print("timed out")
+    }
+    fd.close(p.w).unwrap()
+    match fd.read_by(p.r, 16, time.after_ms(5000)).unwrap() {
+        Some(d) => print(d.len())
+        None => print("timed out")
+    }
+    fd.close(p.r).unwrap()
+    print(fd.wait_ready(p.r, fd.READY_READ, time.now()).is_err())
+}

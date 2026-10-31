@@ -1,0 +1,1 @@
+{"error":"E0308","span":{"file":"compiler/tests/check/fail/e0308_through_alias.ei","line":7,"col":9},"message":"can't call `push` on `xs` while `one` refers into it","help":"`one` is used after this change, which may free, move or replace what it refers to; use it before the change, or bind a copy with `.copy()`","fix":{"at":{"line":6,"col":20},"delete":0,"insert":".copy()"}}

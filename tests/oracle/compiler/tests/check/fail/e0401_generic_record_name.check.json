@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_generic_record_name.ei","line":13,"col":17},"message":"argument of type Result[i32, String] doesn't match parameter type `Result[T, E]`"}

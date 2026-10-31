@@ -25,7 +25,7 @@ pub fn compare(a: Version, b: Version) -> i32 {
 }
 
 pub fn text(v: Version) -> List[u8] {
-    var out = bytes.from_u64(v.major)
+    let mut out = bytes.from_u64(v.major)
     out.push(46)
     bytes.append(inout out, bytes.from_u64(v.minor))
     out.push(46)

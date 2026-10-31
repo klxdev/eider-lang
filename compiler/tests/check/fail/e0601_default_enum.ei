@@ -1,0 +1,5 @@
+// expect: E0601 4:19
+type Level = | Low | High
+fn main() {
+    let l = Level.default()
+}

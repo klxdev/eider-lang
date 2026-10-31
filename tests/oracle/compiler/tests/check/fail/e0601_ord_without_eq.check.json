@@ -1,0 +1,1 @@
+{"error":"E0601","span":{"file":"compiler/tests/check/fail/e0601_ord_without_eq.ei","line":3,"col":1},"message":"type F doesn't implement trait `Eq` (required by `Ord`)"}

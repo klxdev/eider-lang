@@ -46,6 +46,10 @@
 _Noreturn void ei_trap(const char *msg, int32_t line);
 /* The source file named in trap messages (a string literal; process-wide). */
 void ei_set_file(const char *file);
+/* The files of imported modules (process-wide): a trap line of f * 2^20 + l with
+   0 < f < n and files[f] set names files[f], line l; anything else names the file of
+   ei_set_file and the line as given. */
+void ei_set_files(const char *const *files, int32_t n);
 /* This thread's test hook: traps longjmp(*jb, 1) instead of exiting. NULL clears it. */
 void ei_set_trap_jmp(jmp_buf *jb);
 
@@ -329,6 +333,25 @@ static inline bool ei_buf_shared(const void *d) { return d && ((const ei_buf_hdr
 /* d's count (tests). */
 static inline uint64_t ei_buf_count(const void *d) { return d ? ((const ei_buf_hdr *)d - 1)->n : 0; }
 
+// ---- Ref[T] (docs/compiler.md, "C8.7"): a shared buffer (the count above, not atomic: a
+// Ref never crosses threads) holding an access state `st` and the value. st counts the
+// `read`s in progress (> 0), or is -1 while an `update` runs; an access that overlaps an
+// update, or an update that overlaps any access, traps (core/RUNTIME.md, "Ref").
+
+/* A read of the value (read, get): traps while an update runs. */
+static inline void ei_ref_read_begin(int64_t *st, int32_t line) {
+  if (*st < 0) ei_trap("Ref read while it is being updated", line);
+  ++*st;
+}
+static inline void ei_ref_read_end(int64_t *st) { --*st; }
+/* An update of the value (update, set): traps while any read or update runs. */
+static inline void ei_ref_update_begin(int64_t *st, int32_t line) {
+  if (*st < 0) ei_trap("Ref updated while it is already being updated", line);
+  if (*st > 0) ei_trap("Ref updated while it is being read", line);
+  *st = -1;
+}
+static inline void ei_ref_update_end(int64_t *st) { *st = 0; }
+
 // ---- String: NUL-terminated, `len` excludes the NUL, `cap` is the room for bytes before
 // the NUL (the buffer holds cap + 1). p is a shared buffer and never NULL for a live String
 // (ei_drop_String sets it to NULL).
@@ -381,9 +404,45 @@ void ei_print_u(uint64_t v);
 void ei_print_b(bool v);
 void ei_print_s(const char *v);
 
-// ---- clock: processor time used by the program, in milliseconds (C clock()).
+// ---- clock: milliseconds on the monotonic clock (CLOCK_MONOTONIC), from an arbitrary start.
 
 uint64_t ei_now_ms(void);
+
+// ---- atomics on 64-bit integers (core/RUNTIME.md "Atomics"). `order` is the memory
+// ordering as a number: 0 relaxed, 1 acquire, 2 release, 3 acquire-release, 4 sequentially
+// consistent. An ordering that is not valid for the operation (release on a load, acquire on
+// a store) or not a known number is strengthened to sequentially consistent, so no
+// combination is undefined. Read-modify-writes wrap (two's complement), as C11 defines for
+// atomic types; checked arithmetic on top is a compare-and-swap loop (std/atomic).
+
+typedef _Atomic(int64_t) ei_atomic_i64;
+static inline memory_order ei_mo_rmw(int32_t o) {
+  return o == 0 ? memory_order_relaxed : o == 1 ? memory_order_acquire : o == 2 ? memory_order_release
+       : o == 3 ? memory_order_acq_rel : memory_order_seq_cst;
+}
+static inline memory_order ei_mo_load(int32_t o) {
+  return o == 0 ? memory_order_relaxed : o == 1 ? memory_order_acquire : memory_order_seq_cst;
+}
+static inline memory_order ei_mo_store(int32_t o) {
+  return o == 0 ? memory_order_relaxed : o == 2 ? memory_order_release : memory_order_seq_cst;
+}
+/* A failed compare-and-swap is a load: the success ordering without its release half. */
+static inline memory_order ei_mo_fail(int32_t o) {
+  return o == 0 || o == 2 ? memory_order_relaxed : o == 1 || o == 3 ? memory_order_acquire : memory_order_seq_cst;
+}
+static inline void ei_atomic_init(ei_atomic_i64 *a, int64_t v) { atomic_init(a, v); }
+static inline int64_t ei_atomic_load(ei_atomic_i64 *a, int32_t o) { return atomic_load_explicit(a, ei_mo_load(o)); }
+static inline void ei_atomic_store(ei_atomic_i64 *a, int64_t v, int32_t o) { atomic_store_explicit(a, v, ei_mo_store(o)); }
+/* The previous value; *a becomes v. */
+static inline int64_t ei_atomic_swap(ei_atomic_i64 *a, int64_t v, int32_t o) { return atomic_exchange_explicit(a, v, ei_mo_rmw(o)); }
+/* The previous value; *a becomes previous + n, wrapping. */
+static inline int64_t ei_atomic_add(ei_atomic_i64 *a, int64_t n, int32_t o) { return atomic_fetch_add_explicit(a, n, ei_mo_rmw(o)); }
+/* If *a == expected, *a becomes desired. Returns the value *a had (== expected on success). */
+static inline int64_t ei_atomic_cas(ei_atomic_i64 *a, int64_t expected, int64_t desired, int32_t o) {
+  int64_t e = expected;
+  atomic_compare_exchange_strong_explicit(a, &e, desired, ei_mo_rmw(o), ei_mo_fail(o));
+  return e;
+}
 
 // ---- threads. Every failure of the underlying primitive traps.
 
@@ -400,9 +459,25 @@ void ei_mutex_lock(ei_mutex *m);
 void ei_mutex_unlock(ei_mutex *m);
 void ei_mutex_destroy(ei_mutex *m);
 
-/* A started thread, joined at most once. */
-typedef struct { pthread_t th; ei_mutex mu; bool joined; } ei_thread;
-/* Starts run(arg); traps "cannot create a thread". */
+/* A started thread, joined at most once. Its stack is the runtime's own mapping (`map`,
+   `map_len`: an alternate signal stack, a guard and the stack; NULL where the system has no
+   anonymous mappings), so a stack overflow is reported, not a bare SIGSEGV (core/RUNTIME.md
+   "Stack overflow"). `run`/`arg` are what the thread runs. */
+typedef struct {
+  pthread_t th;
+  ei_mutex mu;
+  bool joined;
+  void *(*run)(void *);
+  void *arg;
+  unsigned char *map;
+  size_t map_len;
+} ei_thread;
+/* The stack of a thread ei_thread_start starts, and its guard (bytes; the guard is rounded up
+   to whole pages). */
+#define EI_THREAD_STACK ((size_t)8 << 20)
+#define EI_THREAD_GUARD ((size_t)64 << 10)
+#define EI_THREAD_ALTSTACK ((size_t)64 << 10)
+/* Starts run(arg) on a guarded stack; traps "cannot create a thread". */
 void ei_thread_start(ei_thread *t, void *(*run)(void *), void *arg);
 /* Waits for the thread; safe to call from several threads and more than once. */
 void ei_thread_join(ei_thread *t);

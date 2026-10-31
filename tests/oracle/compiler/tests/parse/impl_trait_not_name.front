@@ -1,1 +1,1 @@
-{"error":"E0001","span":{"file":"./compiler/tests/parse/impl_trait_not_name.ei","line":1,"col":20},"message":"expected a trait name before `for`"}
+{"error":"E0001","span":{"file":"./compiler/tests/parse/impl_trait_not_name.ei","line":1,"col":21},"message":"expected a trait name before `for`"}

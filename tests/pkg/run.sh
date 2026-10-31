@@ -20,9 +20,10 @@ export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL G
 scripts/eider-pkg >/dev/null 2>&1
 [ -x target/eider-pkg ] || { echo "FAIL build eider-pkg"; exit 1; }
 # the programs import their dependencies by name (`import "util"`), which the compiler
-# resolves through eider.lock (docs/compiler.md, "C8.3: packages and modules"): a compiler
-# newer than the seed, compiler/ as the seed builds it (EIDERC=<binary> to use another),
-# until the seed knows bare imports
+# resolves through eider.lock (docs/compiler.md, "C8.3: packages and modules"), and eider-pkg
+# asks it what each package uses (`eiderc caps`, "C8.5"): a compiler newer than the seed,
+# compiler/ as the seed builds it (EIDERC=<binary> to use another), until the seed knows
+# `caps` and the per-package `ffi`
 if [ -n "$EIDERC" ]; then
   EC=$EIDERC
 else
@@ -32,6 +33,7 @@ else
     scripts/ei build compiler/main.ei -o "$EC" >/dev/null 2>"$T/eiderc.build.log" || { cat "$T/eiderc.build.log"; echo "FAIL build eiderc"; exit 1; }
   fi
 fi
+EIDERC=$EC; export EIDERC
 
 fail=0
 # check <step> <expected> <got>: compare after replacing $T with <T>
@@ -257,7 +259,7 @@ import "alpha"
 import "beta"
 import "gamma"
 
-fn main() uses io, ffi {
+fn main() uses io {
     io.outln(sys.lit("app"))
     print(geom.area(6, 7))
     print(alpha.value())
@@ -319,20 +321,25 @@ pkg sneakyapp fetch >/dev/null
 check "fetched, it compiles" "9
 exit 0" "$(run sneakyapp late.ei)"
 
-# ---- capability grants
+# ---- capability grants: eider-pkg asks the compiler what each package uses (`eiderc caps`,
+# docs/compiler.md "C8.5: capabilities per package"), and the compiler checks the grants
+# again when it builds (E0204)
 
 mkdir -p "$T/fsdep" "$T/ffidep" "$T/plain" "$T/capsapp"
 manifest "$T/fsdep" fsdep 0.1.0
 printf '// uses net (in a comment: ignored)\npub fn noop() -> i64 { 0 }\n\npub fn save()\n    uses fs {\n}\n' > "$T/fsdep/fsdep.ei"
 manifest "$T/ffidep" ffidep 0.1.0
-printf 'extern "c" fn abs(x: i32) -> i32 uses clock\npub fn noop() -> i64 { 0 }\n' > "$T/ffidep/ffidep.ei"
-# a `uses` clause ends with its line (unless it ends in a comma); words that aren't
-# capabilities of the language are compile errors, not grants (compile-fail tests have them)
+printf 'extern "c" fn abs(x: i32) -> i32 uses clock\nimport "helper.ei"\n\npub fn magnitude(x: i32) -> i32 uses clock, ffi { unsafe { abs(x) } }\n' > "$T/ffidep/ffidep.ei"
+# what the entry module reaches counts: helper.ei's `uses net`
+printf 'pub fn f()\n    uses net {\n}\n' > "$T/ffidep/helper.ei"
+# a test program is not part of the package (nor are words that aren't capabilities, which
+# are compile errors: compile-fail tests have them)
 mkdir -p "$T/ffidep/tests"
-printf 'fn f() uses fs,\n    net {\n}\nfn g() uses telepathy {\n}\n' > "$T/ffidep/tests/bad.ei"
-# `uses ffi` alone only means "calls std", so it needs no grant
+printf 'fn f() uses fs {\n}\nfn g() uses telepathy {\n}\n' > "$T/ffidep/tests/bad.ei"
+# `uses ffi` with no unmanaged code means nothing outside the package, and core (whose
+# externs back sys.lit) is the toolchain's: plain needs no grant
 manifest "$T/plain" plain 0.1.0
-printf 'pub fn hello() uses ffi {\n}\n' > "$T/plain/plain.ei"
+printf 'import "core/sys"\n\npub fn hello() -> u64 uses ffi { sys.lit("hi").len() as u64 }\n' > "$T/plain/plain.ei"
 check "init (caps)" "created package \`capsapp\`
 exit 0" "$(pkg capsapp init)"
 cp "$T/capsapp/eider.toml" "$T/caps.toml"
@@ -343,19 +350,33 @@ check "granted fs is accepted" "locked 1 package(s)
 exit 0" "$(pkg capsapp add fsdep --path ../fsdep --uses fs)"
 check "extern needs ffi" "eider-pkg: package \`ffidep\` uses capability \`ffi\` (ffidep.ei:1) but is only granted [io]; to allow it, add \"ffi\" to \`uses\` in its [deps.ffidep] table (it declares \`extern\` functions: unmanaged code)
 exit 1" "$(pkg capsapp add ffidep --path ../ffidep --uses io)"
-check "a clause continues after a comma" "eider-pkg: package \`ffidep\` uses capability \`net\` (tests/bad.ei:2) but is only granted [clock, ffi, fs]; to allow it, add \"net\" to \`uses\` in its [deps.ffidep] table
-exit 1" "$(pkg capsapp add ffidep --path ../ffidep --uses clock,ffi,fs)"
+check "a module the entry imports counts, a test program doesn't" "eider-pkg: package \`ffidep\` uses capability \`net\` (helper.ei:2) but is only granted [clock, ffi]; to allow it, add \"net\" to \`uses\` in its [deps.ffidep] table
+exit 1" "$(pkg capsapp add ffidep --path ../ffidep --uses clock,ffi)"
 check "granted ffi is accepted" "locked 2 package(s)
-exit 0" "$(pkg capsapp add ffidep --path ../ffidep --uses clock,ffi,fs,net)"
-check "uses ffi without extern needs no grant" "locked 3 package(s)
+exit 0" "$(pkg capsapp add ffidep --path ../ffidep --uses clock,ffi,net)"
+check "uses ffi without extern, and core, need no grant" "locked 3 package(s)
 exit 0" "$(pkg capsapp add plain --path ../plain)"
 check "grants in the tree" "capsapp 0.1.0
   fsdep 0.1.0 uses fs
-  ffidep 0.1.0 uses clock,ffi,fs,net
+  ffidep 0.1.0 uses clock,ffi,net
   plain 0.1.0
 exit 0" "$(pkg capsapp tree)"
 check "unknown capability" "eider-pkg: <T>/capsapp/eider.toml:19:1: unknown capability \`disk\` (known: io, clock, fs, net, threads, ffi)
 exit 1" "$(pkg capsapp add other --path ../plain --uses disk)"
+# the program calls them without `uses ffi` (it stays inside ffidep and core), but with the
+# real capabilities they declare (magnitude: clock)
+printf 'import "std/io"\nimport "fsdep"\nimport "ffidep"\nimport "plain"\n\nfn main() uses io, clock {\n    print(fsdep.noop())\n    print(ffidep.magnitude(-7))\n    print(plain.hello())\n}\n' > "$T/capsapp/use.ei"
+check "granted packages run without \`uses ffi\`" "0
+7
+2
+exit 0" "$(run capsapp use.ei)"
+# a grant taken away after the fetch: the compiler holds the import to eider.toml (E0204)
+sed -i.bak '/^uses = \["fs"\]$/d' "$T/capsapp/eider.toml"
+got=$(run capsapp use.ei)
+check "the compiler rejects an ungranted capability (E0204)" "error[E0204]: package \`fsdep\` uses capability \`fs\` in \`save\` (fsdep.ei:5) but is only granted []
+  help: to allow it, add \"fs\" to \`uses\` in [deps.fsdep] of <T>/capsapp/eider.toml
+exit 1" "$(printf '%s\n' "$got" | grep -e '^error\[E0204\]' -e '^  help:'; printf '%s\n' "$got" | tail -1)"
+mv "$T/capsapp/eider.toml.bak" "$T/capsapp/eider.toml"
 
 # ---- lockfile pinning: a moved tag doesn't move a locked package
 

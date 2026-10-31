@@ -1,0 +1,5 @@
+// expect: E0411 4:12
+type Job = { id: i32, out: Option[Ref[String]] }
+fn main() {
+    let c: Chan[Job] = Chan.new()
+}

@@ -1,0 +1,4 @@
+// expect: E0306 3:42
+fn main() {
+    for i in 0..3 { if i == 1 { continue outer } }
+}

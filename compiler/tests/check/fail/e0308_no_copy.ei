@@ -1,0 +1,8 @@
+// expect: E0308 6:8
+fn main() uses io, threads {
+    var cs: List[Chan[i32]] = List.new()
+    cs.push(Chan.new())
+    let c = cs[0]
+    cs.clear()
+    c.close()
+}

@@ -1,0 +1,406 @@
+// http/server: an HTTP/1.1 server over std/net, with deadlines on every wait and graceful
+// shutdown through a cancellation token (docs/services.md "Concurrency").
+//
+// Model: one accepting thread (the caller of `serve`) and a fixed pool of worker threads
+// (std/task.Pool). The acceptor hands each connection to the pool; a worker serves that
+// connection, request after request, with blocking-style code: it waits on the
+// connection's socket and the server's stop signal with a deadline, parses incrementally
+// (parse.ei), calls the handler, and writes the response before its write deadline. This is
+// the simplest sound model on today's runtime (OS threads, no stackless tasks yet, C4): no
+// shared mutable state except one Lock of counters, and the number of threads is fixed.
+// Its cost is one OS thread per connection being served, so `workers` is the number of
+// connections served at once.
+//
+// - Back-pressure: accepted connections wait in the pool's bounded queue (`queue`); when it
+//   is full the acceptor answers `503` and closes. While connections wait, a worker closes
+//   its keep-alive connection after the current response (`Connection: close`), so idle
+//   keep-alive clients can't starve new ones.
+// - Deadlines (per connection): `idle_timeout` while waiting for a request to start (a new
+//   connection, or between keep-alive requests; then the connection is just closed);
+//   `read_timeout` from a request's first byte to its last (then `408`); `write_timeout`
+//   for sending one response (then the connection is dropped). `max_requests` per
+//   connection, then `Connection: close`.
+// - Errors in a request are answered with the parser's status (400, 413, 414, 431, 501,
+//   505) and the connection is closed: after a framing error the next request can't be
+//   found safely. Closing after a response half-closes and drains what the client still
+//   sends for a moment (a lingering close), so the client reads the response instead of a
+//   reset.
+// - Shutdown: cancel the token given to `serve`. The acceptor takes the connections already
+//   in the listen backlog, then closes the listener; every worker finishes the request it
+//   is reading or handling (answering it with `Connection: close`), closes idle connections
+//   at once, and serves a queued connection only if its request has already arrived.
+//   `serve` returns when every worker is done.
+//
+// A handler runs on a worker thread and must not block forever (nothing can interrupt it).
+// A trap (panic, overflow) in a handler ends the whole process, as any trap does today.
+
+import "core/sys"
+import "std/bytes"
+import "std/fd"
+import "std/net"
+import "std/poll"
+import "std/time"
+import "std/task"
+import "std/sync"
+import "http.ei"
+import "parse.ei"
+import "sock.ei"
+
+pub type Config = {
+    workers: usize,
+    queue: usize,
+    idle_timeout: time.Duration,
+    read_timeout: time.Duration,
+    write_timeout: time.Duration,
+    max_requests: u32,
+    limits: http.Limits,
+    date: bool,
+}
+
+/// 16 workers, a queue of 64 connections, 5 s idle, 10 s to read a request, 10 s to write a
+/// response, 1000 requests per connection, the default parser limits, `Date` headers.
+pub fn config() -> Config {
+    Config(16, 64, time.seconds(5), time.seconds(10), time.seconds(10), 1000, http.limits(), true)
+}
+
+/// What a server did, counted over its life.
+/// `connections`: accepted and handed to a worker; `rejected`: answered 503 because the
+/// queue was full; `requests`: handled; `bad`: refused by the parser; `timeouts`: a request
+/// that didn't arrive in time (408) or a response that couldn't be written in time.
+pub type Stats = { connections: i64, rejected: i64, requests: i64, bad: i64, timeouts: i64 }
+
+type Shared = { stats: Stats, waiting: i64 }
+
+/// A listening server (bound, not yet serving).
+pub type Server = { ls: i32, addr: net.Addr, cfg: Config }
+
+/// Binds and listens on `a` (port 0: any free port; `addr()` says which).
+pub fn listen(a: net.Addr, cfg: Config) -> Result[Server, String] uses net, io {
+    if cfg.workers == 0 || cfg.queue == 0 { return Err(String.from("server: workers and queue must be at least 1")) }
+    let ls = net.listener(a, true)?
+    match net.local_addr(ls) {
+        Ok(la) => Ok(Server(ls, la, cfg))
+        Err(e) => {
+            fd.close(ls)
+            Err(e)
+        }
+    }
+}
+
+const LISTENER: i64 = 1
+const STOP: i64 = 2
+const CONN: i64 = 3
+
+fn bump(sh: sync.Lock[Shared], what: i32) {
+    sh.update(|s: Shared| -> Shared {
+        let mut t = s.copy()
+        if what == 0 { t.stats.connections += 1 }
+        if what == 1 { t.stats.rejected += 1 }
+        if what == 2 { t.stats.requests += 1 }
+        if what == 3 { t.stats.bad += 1 }
+        if what == 4 { t.stats.timeouts += 1 }
+        if what == 5 { t.waiting += 1 }
+        if what == 6 { t.waiting -= 1 }
+        t
+    })
+}
+
+fn waiting(sh: sync.Lock[Shared]) -> i64 { sh.with(|s: Shared| -> (Shared, i64) (s, s.waiting)) }
+
+impl Server {
+    /// The address the server listens on (with the real port when it was 0).
+    fn addr(self) -> net.Addr { self.addr }
+
+    fn port(self) -> i32 { self.addr.port }
+
+    /// Serves connections with `h` until `tok` is cancelled (or expires), then shuts down
+    /// gracefully (see the module comment) and returns the counts. Closes the listener.
+    /// Err only when the server can't start (no poller, waker or threads).
+    fn serve(self, h: http.Handler, tok: task.Token) -> Result[Stats, String] uses net, io, clock, threads {
+        let cfg = self.cfg
+        let ls = self.ls
+        let stop = match poll.waker() {
+            Ok(w) => w
+            Err(e) => {
+                fd.close(ls)
+                return Err(e)
+            }
+        }
+        let p = match poll.create() {
+            Ok(x) => x
+            Err(e) => {
+                poll.close_waker(stop)
+                fd.close(ls)
+                return Err(e)
+            }
+        }
+        // the stop signal: a waker that is woken once and never drained, so every poller
+        // watching it (the acceptor's and each connection's) sees it from then on
+        let stopper = tok.child()
+        let st = stopper
+        let sw = stop
+        let watcher = spawn(|| -> i32 {
+            st.wait(time.never())
+            poll.wake(sw)
+            0
+        })
+        let sh = sync.lock(Shared(Stats(0, 0, 0, 0, 0), 0))
+        let pool = task.pool(cfg.workers, cfg.queue)
+        let mut running = true
+        match poll.add(p, ls, poll.READ, LISTENER) {
+            Ok(b) => {}
+            Err(e) => { running = false }
+        }
+        match poll.add(p, stop.r, poll.READ, STOP) {
+            Ok(b) => {}
+            Err(e) => { running = false }
+        }
+        while running {
+            let mut evs: List[poll.Event] = List.new()
+            match poll.wait(p, 8, -1) {
+                Ok(v) => { evs = v }
+                Err(e) => { running = false }
+            }
+            let mut accept_now = false
+            for e in evs {
+                if e.token == STOP { running = false }
+                if e.token == LISTENER { accept_now = true }
+            }
+            // on the stop, connections already in the backlog are still taken: they are
+            // served if their request has arrived (and not reset by closing the listener)
+            if accept_now || !running { accept_some(ls, stop, h, cfg, sh, pool) }
+        }
+        poll.remove(p, ls)
+        fd.close(ls)
+        fd.close(p)
+        // every queued connection still runs (and sees the stop); then the workers end
+        pool.shutdown()
+        stopper.cancel()
+        let z = watcher.join()
+        tok.detach(stopper)
+        poll.close_waker(stop)
+        Ok(sh.get().stats)
+    }
+}
+
+/// Accepts what is pending (at most 64 at a time, so a flood can't starve the stop check).
+fn accept_some(ls: i32, stop: poll.Waker, h: http.Handler, cfg: Config, sh: sync.Lock[Shared], pool: task.Pool) uses net, io, clock {
+    for k in 0..64 {
+        match net.accept(ls, true) {
+            Ok(Some(a)) => {
+                let c = a.fd
+                let peer = net.text(a.peer)
+                let nd = net.set_option(c, net.NODELAY, 1)
+                bump(sh, 5)
+                match pool.submit(|| serve_conn(c, peer, h, cfg, stop, sh), time.now()) {
+                    Ok(b) => bump(sh, 0)
+                    Err(e) => {
+                        bump(sh, 6)
+                        bump(sh, 1)
+                        reject(c, cfg)
+                    }
+                }
+            }
+            Ok(None) => { return }
+            Err(e) => {
+                // ECONNABORTED and friends: the next one may be fine; EMFILE: back off a
+                // little (the stop signal ends the wait early)
+                let z = fd.wait_ready(stop.r, fd.READY_READ, time.after_ms(20))
+                return
+            }
+        }
+    }
+}
+
+/// 503 without reading anything (best effort: the socket's send buffer is empty).
+fn reject(c: i32, cfg: Config) uses net, io, clock {
+    let mut r = http.error_response(503)
+    r.set_header("Retry-After", sys.lit("1"))
+    match http.write_response(r, false, false, date_of(cfg)) {
+        Ok(b) => {
+            let z = net.send(c, b)
+        }
+        Err(e) => {}
+    }
+    sock.linger_close(c, time.after_ms(100))
+}
+
+fn date_of(cfg: Config) -> List[u8] uses clock {
+    if !cfg.date { return List.new() }
+    http.imf_date(time.unix_seconds())
+}
+
+/// Whether the stop signal has come (its waker is readable, and stays so), without waiting.
+fn stop_signalled(stop: poll.Waker) -> bool uses io, clock {
+    fd.wait_ready(stop.r, fd.READY_READ, time.now()).unwrap_or(false)
+}
+
+/// What a wait on a connection ended with.
+type Wake = | Readable | TimedOut | Stopped | Failed
+
+fn wait_conn(p: i32, dl: time.Deadline) -> Wake uses io, clock {
+    while true {
+        match poll.wait(p, 4, dl.timeout_ms()) {
+            Ok(evs) => {
+                let mut stop = false
+                let mut ready = false
+                for e in evs {
+                    if e.token == STOP { stop = true }
+                    if e.token == CONN { ready = true }
+                }
+                // the stop comes first: the caller then reads with stopping set
+                if stop { return Stopped }
+                if ready { return Readable }
+                if dl.expired() { return TimedOut }
+            }
+            Err(e) => { return Failed }
+        }
+    }
+    Failed
+}
+
+/// Answers a refused request (the connection is closed after it).
+fn refuse(c: i32, status: i32, cfg: Config) uses net, io, clock {
+    match http.write_response(http.error_response(status), false, false, date_of(cfg)) {
+        Ok(b) => {
+            let sent = sock.send_by(c, b, time.after(cfg.write_timeout))
+        }
+        Err(e) => {}
+    }
+}
+
+fn is_head(m: List[u8]) -> bool { m.len() == 4 && m[0] == 72 && m[1] == 69 && m[2] == 65 && m[3] == 68 }
+
+/// One connection, request after request (see the module comment). Owns `c`; `peer` is the
+/// client's address as text (it goes in every Request).
+fn serve_conn(c: i32, peer: List[u8], h: http.Handler, cfg: Config, stop: poll.Waker, sh: sync.Lock[Shared]) uses net, io, clock {
+    bump(sh, 6)
+    let p = match poll.create() {
+        Ok(x) => x
+        Err(e) => {
+            fd.close(c)
+            return
+        }
+    }
+    let mut ok = poll.add(p, c, poll.READ, CONN).is_ok() && poll.add(p, stop.r, poll.READ, STOP).is_ok()
+    let mut stopping = false
+    let mut parser = parse.requests(cfg.limits)
+    let mut served: u32 = 0
+    // what ends the connection: 0 keep going, 1 close after a response (a lingering
+    // close), 2 close now
+    let mut end = 0
+    if !ok { end = 2 }
+    while end == 0 {
+        // read one request
+        let mut started = !parser.idle()
+        let mut dl = if started { time.after(cfg.read_timeout) } else { time.after(cfg.idle_timeout) }
+        let mut got: Option[parse.Msg] = None
+        while end == 0 && got.is_none() {
+            match parser.next() {
+                parse.Done(m) => { got = Some(m) }
+                parse.Bad(status, why) => {
+                    bump(sh, 3)
+                    refuse(c, status, cfg)
+                    end = 1
+                }
+                parse.More => {
+                    if parser.wants_continue() {
+                        parser.continue_sent()
+                        let cont = sys.lit("HTTP/1.1 100 Continue\r\n\r\n")
+                        if !sock.send_by(c, cont, time.after(cfg.write_timeout)) { end = 2 }
+                    }
+                    if end == 0 && stopping && parser.idle() {
+                        // shutting down: serve a request only if it has already arrived
+                        match net.try_recv(c, 65536) {
+                            Ok(Some(b)) => {
+                                if b.len() == 0 { end = 2 } else { parser.feed(b) }
+                            }
+                            Ok(None) => { end = 2 }
+                            Err(e) => { end = 2 }
+                        }
+                        if end == 0 && !started {
+                            started = true
+                            dl = time.after(cfg.read_timeout)
+                        }
+                    } else if end == 0 {
+                        match wait_conn(p, dl) {
+                            Readable => {
+                                match net.try_recv(c, 65536) {
+                                    Ok(Some(b)) => {
+                                        if b.len() == 0 {
+                                            // the peer closed (or half-closed) its side
+                                            if parser.idle() {
+                                                end = 2
+                                            } else {
+                                                match parser.eof() {
+                                                    parse.Done(m) => { got = Some(m) }
+                                                    parse.Bad(status, why) => {
+                                                        bump(sh, 3)
+                                                        refuse(c, status, cfg)
+                                                        end = 1
+                                                    }
+                                                    parse.More => { end = 2 }
+                                                }
+                                            }
+                                        } else {
+                                            parser.feed(b)
+                                            if !started {
+                                                started = true
+                                                dl = time.after(cfg.read_timeout)
+                                            }
+                                        }
+                                    }
+                                    Ok(None) => {}
+                                    Err(e) => { end = 2 }
+                                }
+                            }
+                            TimedOut => {
+                                if started {
+                                    bump(sh, 4)
+                                    refuse(c, 408, cfg)
+                                    end = 1
+                                } else {
+                                    end = 2
+                                }
+                            }
+                            Stopped => {
+                                stopping = true
+                                let z = poll.remove(p, stop.r)
+                            }
+                            Failed => { end = 2 }
+                        }
+                    }
+                }
+            }
+        }
+        if end != 0 { break }
+        let m = got.unwrap()
+        // handle it
+        served += 1
+        bump(sh, 2)
+        let mut req = parse.to_request(m)
+        req.peer = peer
+        let head_only = is_head(req.method)
+        // `stopping` is what the last wait saw; the stop may have come after it, while the
+        // rest of this request was read (a wait that saw only data, then a read that got the
+        // bytes sent after the stop too), so the signal is checked again here: a request in
+        // flight at the stop is answered with `Connection: close`
+        if !stopping && stop_signalled(stop) { stopping = true }
+        let keep = req.keep_alive && served < cfg.max_requests && !stopping && waiting(sh) == 0
+        let resp = h(req)
+        let out = match http.write_response(resp, head_only, keep, date_of(cfg)) {
+            Ok(b) => b
+            Err(e) => http.write_response(http.error_response(500), head_only, false, date_of(cfg)).unwrap()
+        }
+        if !sock.send_by(c, out, time.after(cfg.write_timeout)) {
+            bump(sh, 4)
+            end = 2
+        } else if !keep || !resp.keep_alive {
+            end = 1
+        }
+    }
+    poll.remove(p, c)
+    fd.close(p)
+    if end == 1 { sock.linger_close(c, time.after_ms(1000)) }
+    if end == 2 { fd.close(c) }
+}

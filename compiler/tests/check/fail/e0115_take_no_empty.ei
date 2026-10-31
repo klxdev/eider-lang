@@ -1,0 +1,7 @@
+// expect: E0115 6:15
+// `take()` needs a type with a `Default` (docs/compiler.md, "C8.15", "C8.23"): a Chan has none
+type P = { x: Chan[i32] }
+fn main() {
+    let mut p = P(Chan.new())
+    let q = p.take()
+}

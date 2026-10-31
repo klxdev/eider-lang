@@ -1,0 +1,456 @@
+// std/strings: text operations on String (std/bytes has the same on raw bytes). Every
+// function takes its text arguments as any `Text` (a `str` literal or a `String`) and
+// returns Strings, which are always valid UTF-8; byte offsets in and out (a needle found in
+// valid UTF-8 always starts and ends on a character boundary). Case and whitespace are
+// ASCII only (Unicode case mapping and the White_Space property are P2, docs/std.md).
+// Integer parsing reports what was wrong (`ParseError`) instead of returning None.
+
+/// A text argument: `str` or `String`.
+pub trait Text {
+    fn text(self) -> String
+}
+
+impl Text for str {
+    fn text(self) -> String { String.from(self) }
+}
+
+impl Text for String {
+    fn text(self) -> String { self }
+}
+
+fn empty() -> String { String.from("") }
+
+// s[a..b] (on character boundaries)
+fn cut(s: String, a: usize, b: usize) -> String { s.slice(a, b) }
+
+fn at(s: String, n: String, i: usize) -> bool {
+    if i + n.len() > s.len() { return false }
+    for j in 0..n.len() {
+        if s.byte(i + j) != n.byte(j) { return false }
+    }
+    true
+}
+
+fn find_in(s: String, n: String, from: usize) -> Option[usize] {
+    if n.len() > s.len() { return None }
+    let last = s.len() - n.len()
+    if n.len() == 0 { return if from <= s.len() { Some(from) } else { None } }
+    let first = n.byte(0)
+    let mut i = from.copy()
+    while i <= last {
+        if s.byte(i) == first && at(s, n, i) { return Some(i) }
+        i += 1
+    }
+    None
+}
+
+/// The byte offset of the first `needle` (0 for an empty needle).
+pub fn find[A: Text, B: Text](s: A, needle: B) -> Option[usize] { find_in(s.text(), needle.text(), 0) }
+
+/// `find`, starting at byte `from`.
+pub fn find_from[A: Text, B: Text](s: A, needle: B, from: usize) -> Option[usize] { find_in(s.text(), needle.text(), from) }
+
+/// The byte offset of the last `needle`.
+pub fn rfind[A: Text, B: Text](s: A, needle: B) -> Option[usize] {
+    let t = s.text()
+    let n = needle.text()
+    if n.len() > t.len() { return None }
+    let mut i = t.len() - n.len() + 1
+    while i > 0 {
+        i -= 1
+        if at(t, n, i) { return Some(i) }
+    }
+    None
+}
+
+pub fn contains[A: Text, B: Text](s: A, needle: B) -> bool {
+    match find(s, needle) {
+        Some(_) => true
+        None => false
+    }
+}
+
+/// Non-overlapping occurrences of a non-empty `needle` (an empty one counts the character
+/// boundaries, as Go does: characters + 1).
+pub fn count[A: Text, B: Text](s: A, needle: B) -> usize {
+    let t = s.text()
+    let n = needle.text()
+    if n.len() == 0 { return chars(t) + 1 }
+    let mut c: usize = 0
+    let mut i: usize = 0
+    while true {
+        match find_in(t, n, i) {
+            Some(j) => {
+                c += 1
+                i = j + n.len()
+            }
+            None => break
+        }
+    }
+    c
+}
+
+pub fn starts_with[A: Text, B: Text](s: A, prefix: B) -> bool { at(s.text(), prefix.text(), 0) }
+
+pub fn ends_with[A: Text, B: Text](s: A, suffix: B) -> bool {
+    let t = s.text()
+    let x = suffix.text()
+    if x.len() > t.len() { return false }
+    at(t, x, t.len() - x.len())
+}
+
+// the number of characters (scalar values) of valid UTF-8
+fn chars(s: String) -> usize {
+    let mut n: usize = 0
+    for i in 0..s.len() {
+        let b = s.byte(i)
+        if b < 128 || b >= 192 { n += 1 }
+    }
+    n
+}
+
+/// The number of characters (Unicode scalar values), not bytes.
+pub fn char_count[A: Text](s: A) -> usize { chars(s.text()) }
+
+// ---- splitting
+
+/// The parts between each `sep`: "a,b,,c" by "," is ["a", "b", "", "c"]; always at least
+/// one part. An empty `sep` splits into characters.
+pub fn split[A: Text, B: Text](s: A, sep: B) -> List[String] { split_n(s, sep, 0) }
+
+/// `split` into at most `n` parts (0: no limit); the last part holds the rest.
+pub fn split_n[A: Text, B: Text](s: A, sep: B, n: usize) -> List[String] {
+    let t = s.text()
+    let p = sep.text()
+    let mut out: List[String] = List.new()
+    if p.len() == 0 {
+        let mut i: usize = 0
+        while i < t.len() {
+            if n > 0 && out.len() + 1 == n {
+                out.push(cut(t, i, t.len()))
+                return out
+            }
+            let mut j = i + 1
+            while j < t.len() && t.byte(j) >= 128 && t.byte(j) < 192 { j += 1 }
+            out.push(cut(t, i, j))
+            i = j
+        }
+        return out
+    }
+    let mut start: usize = 0
+    while true {
+        if n > 0 && out.len() + 1 == n { break }
+        match find_in(t, p, start) {
+            Some(j) => {
+                out.push(cut(t, start, j))
+                start = j + p.len()
+            }
+            None => break
+        }
+    }
+    out.push(cut(t, start, t.len()))
+    out
+}
+
+/// The text before and after the first `sep`; None when there is none.
+pub fn split_once[A: Text, B: Text](s: A, sep: B) -> Option[(String, String)] {
+    let t = s.text()
+    let p = sep.text()
+    match find_in(t, p, 0) {
+        Some(j) => Some((cut(t, 0, j), cut(t, j + p.len(), t.len())))
+        None => None
+    }
+}
+
+/// The words between runs of ASCII whitespace (no empty words): Go's Fields.
+pub fn fields[A: Text](s: A) -> List[String] {
+    let t = s.text()
+    let mut out: List[String] = List.new()
+    let mut i: usize = 0
+    while i < t.len() {
+        while i < t.len() && is_space(t.byte(i)) { i += 1 }
+        let a = i.copy()
+        while i < t.len() && !is_space(t.byte(i)) { i += 1 }
+        if i > a { out.push(cut(t, a, i)) }
+    }
+    out
+}
+
+/// The lines without their `\n` (or `\r\n`); a final newline doesn't add an empty line.
+pub fn lines[A: Text](s: A) -> List[String] {
+    let t = s.text()
+    let mut out: List[String] = List.new()
+    let mut a: usize = 0
+    let mut i: usize = 0
+    while i < t.len() {
+        if t.byte(i) == 10 {
+            let mut z = i.copy()
+            if z > a && t.byte(z - 1) == 13 { z -= 1 }
+            out.push(cut(t, a, z))
+            a = i + 1
+        }
+        i += 1
+    }
+    if a < t.len() {
+        let mut z = t.len()
+        if t.byte(z - 1) == 13 { z -= 1 }
+        out.push(cut(t, a, z))
+    }
+    out
+}
+
+/// The parts with `sep` between them.
+pub fn join[B: Text](parts: List[String], sep: B) -> String {
+    let p = sep.text()
+    let mut out = empty()
+    for i in 0..parts.len() {
+        if i > 0 { out.append(p) }
+        out.append(parts[i])
+    }
+    out
+}
+
+// ---- trimming
+
+pub fn is_space(b: u8) -> bool { b == 32 || b == 9 || b == 10 || b == 13 || b == 11 || b == 12 }
+
+/// Without leading and trailing ASCII whitespace.
+pub fn trim[A: Text](s: A) -> String {
+    let t = s.text()
+    let mut a: usize = 0
+    let mut z = t.len()
+    while a < z && is_space(t.byte(a)) { a += 1 }
+    while z > a && is_space(t.byte(z - 1)) { z -= 1 }
+    cut(t, a, z)
+}
+
+pub fn trim_start[A: Text](s: A) -> String {
+    let t = s.text()
+    let mut a: usize = 0
+    while a < t.len() && is_space(t.byte(a)) { a += 1 }
+    cut(t, a, t.len())
+}
+
+pub fn trim_end[A: Text](s: A) -> String {
+    let t = s.text()
+    let mut z = t.len()
+    while z > 0 && is_space(t.byte(z - 1)) { z -= 1 }
+    cut(t, 0, z)
+}
+
+/// Without `prefix` if it starts with it (once), else unchanged.
+pub fn trim_prefix[A: Text, B: Text](s: A, prefix: B) -> String {
+    let t = s.text()
+    let p = prefix.text()
+    if at(t, p, 0) { return cut(t, p.len(), t.len()) }
+    t
+}
+
+/// Without `suffix` if it ends with it (once), else unchanged.
+pub fn trim_suffix[A: Text, B: Text](s: A, suffix: B) -> String {
+    let t = s.text()
+    let x = suffix.text()
+    if x.len() <= t.len() && at(t, x, t.len() - x.len()) { return cut(t, 0, t.len() - x.len()) }
+    t
+}
+
+/// The text after `prefix`, or None if it doesn't start with it.
+pub fn strip_prefix[A: Text, B: Text](s: A, prefix: B) -> Option[String] {
+    let t = s.text()
+    let p = prefix.text()
+    if at(t, p, 0) { return Some(cut(t, p.len(), t.len())) }
+    None
+}
+
+/// The text before `suffix`, or None if it doesn't end with it.
+pub fn strip_suffix[A: Text, B: Text](s: A, suffix: B) -> Option[String] {
+    let t = s.text()
+    let x = suffix.text()
+    if x.len() <= t.len() && at(t, x, t.len() - x.len()) { return Some(cut(t, 0, t.len() - x.len())) }
+    None
+}
+
+// ---- building
+
+/// Every `from` replaced by `to`, left to right, non-overlapping (an empty `from` returns
+/// the text unchanged).
+pub fn replace[A: Text, B: Text, C: Text](s: A, from: B, to: C) -> String { replace_n(s, from, to, 0) }
+
+/// `replace` of the first `n` occurrences (0: all).
+pub fn replace_n[A: Text, B: Text, C: Text](s: A, from: B, to: C, n: usize) -> String {
+    let t = s.text()
+    let f = from.text()
+    let r = to.text()
+    if f.len() == 0 { return t }
+    let mut out = empty()
+    let mut start: usize = 0
+    let mut done: usize = 0
+    while n == 0 || done < n {
+        match find_in(t, f, start) {
+            Some(j) => {
+                out.append(cut(t, start, j))
+                out.append(r)
+                start = j + f.len()
+                done += 1
+            }
+            None => break
+        }
+    }
+    out.append(cut(t, start, t.len()))
+    out
+}
+
+/// `s` `n` times.
+pub fn repeat[A: Text](s: A, n: usize) -> String {
+    let t = s.text()
+    let mut out = empty()
+    for i in 0..n { out.append(t) }
+    out
+}
+
+/// ASCII letters in upper case; everything else unchanged.
+pub fn to_upper[A: Text](s: A) -> String {
+    let t = s.text()
+    let mut b = t.bytes()
+    for i in 0..b.len() {
+        if b[i] >= 97 && b[i] <= 122 { b[i] = b[i] - 32 }
+    }
+    from_valid(b)
+}
+
+/// ASCII letters in lower case; everything else unchanged.
+pub fn to_lower[A: Text](s: A) -> String {
+    let t = s.text()
+    let mut b = t.bytes()
+    for i in 0..b.len() {
+        if b[i] >= 65 && b[i] <= 90 { b[i] = b[i] + 32 }
+    }
+    from_valid(b)
+}
+
+/// Equal when ASCII letters are compared without case.
+pub fn eq_ignore_case[A: Text, B: Text](a: A, b: B) -> bool {
+    let x = a.text()
+    let y = b.text()
+    if x.len() != y.len() { return false }
+    for i in 0..x.len() {
+        if lower(x.byte(i)) != lower(y.byte(i)) { return false }
+    }
+    true
+}
+
+fn lower(b: u8) -> u8 { if b >= 65 && b <= 90 { b + 32 } else { b } }
+
+// bytes known to be valid UTF-8 without NUL (case mapping of a String keeps both)
+fn from_valid(b: List[u8]) -> String {
+    match String.from_bytes(b) {
+        Ok(s) => s
+        Err(_) => empty()
+    }
+}
+
+// ---- parsing integers
+
+/// What was wrong with a number: no digits, a byte that isn't a digit (at byte offset
+/// `at`), or a value out of the type's range.
+pub type ParseKind = | Empty | InvalidDigit | OutOfRange
+
+/// A failed parse: the kind, and the byte offset of the offending digit (InvalidDigit).
+pub type ParseError = { kind: ParseKind, at: usize }
+
+impl Show for ParseError {
+    fn show(self, inout out: String) {
+        match self.kind {
+            Empty => out.push_str("no digits")
+            InvalidDigit => {
+                out.push_str("invalid digit at byte ")
+                out.append(self.at.to_string())
+            }
+            OutOfRange => out.push_str("number out of range")
+        }
+    }
+}
+
+fn digit(b: u8, radix: u32) -> Option[u32] {
+    let mut d: u32 = 99
+    if b >= 48 && b <= 57 { d = (b - 48) as u32 }
+    if b >= 97 && b <= 122 { d = (b - 87) as u32 }
+    if b >= 65 && b <= 90 { d = (b - 55) as u32 }
+    if d < radix { return Some(d) }
+    None
+}
+
+// the magnitude of digits t[from..], at most `limit`
+fn magnitude(t: String, from: usize, radix: u32, limit: u64) -> Result[u64, ParseError] {
+    if from >= t.len() { return Err(ParseError(Empty, from)) }
+    let r = radix as u64
+    let mut v: u64 = 0
+    for i in from..t.len() {
+        let d = match digit(t.byte(i), radix) {
+            Some(x) => x as u64
+            None => return Err(ParseError(InvalidDigit, i))
+        }
+        if d > limit || v > (limit - d) / r { return Err(ParseError(OutOfRange, i)) }
+        v = v * r + d
+    }
+    Ok(v)
+}
+
+/// An unsigned integer in base `radix` (2 to 36; letters either case), with an optional `+`
+/// and no other text (no spaces, underscores or `0x`). At most `max`.
+pub fn parse_uint_radix[A: Text](s: A, radix: u32, max: u64) -> Result[u64, ParseError] {
+    if radix < 2 || radix > 36 { return Err(ParseError(InvalidDigit, 0)) }
+    let t = s.text()
+    let from: usize = if t.len() > 0 && t.byte(0) == 43 { 1 } else { 0 }
+    magnitude(t, from, radix, max)
+}
+
+/// A signed integer in base `radix` (2 to 36), with an optional `+` or `-`, between `min` and
+/// `max` (min <= 0 <= max).
+pub fn parse_int_radix[A: Text](s: A, radix: u32, min: i64, max: i64) -> Result[i64, ParseError] {
+    if radix < 2 || radix > 36 { return Err(ParseError(InvalidDigit, 0)) }
+    if min > 0 || max < 0 { return Err(ParseError(OutOfRange, 0)) }
+    let t = s.text()
+    let neg = t.len() > 0 && t.byte(0) == 45
+    let from: usize = if t.len() > 0 && (t.byte(0) == 45 || t.byte(0) == 43) { 1 } else { 0 }
+    if neg {
+        // |min| as a u64 without overflowing on i64's minimum
+        let lim = ((0 - (min + 1)) as u64) + 1
+        let m = magnitude(t, from, radix, lim)?
+        if m == 0 { return Ok(0) }
+        return Ok(0 - ((m - 1) as i64) - 1)
+    }
+    let m = magnitude(t, from, radix, max as u64)?
+    Ok(m as i64)
+}
+
+pub fn parse_i64[A: Text](s: A) -> Result[i64, ParseError] { parse_int_radix(s, 10, -9223372036854775807 - 1, 9223372036854775807) }
+pub fn parse_u64[A: Text](s: A) -> Result[u64, ParseError] { parse_uint_radix(s, 10, 18446744073709551615) }
+
+pub fn parse_i32[A: Text](s: A) -> Result[i32, ParseError] {
+    let v = parse_int_radix(s, 10, -2147483648, 2147483647)?
+    Ok(v as i32)
+}
+
+pub fn parse_u32[A: Text](s: A) -> Result[u32, ParseError] {
+    let v = parse_uint_radix(s, 10, 4294967295)?
+    Ok(v as u32)
+}
+
+pub fn parse_u8[A: Text](s: A) -> Result[u8, ParseError] {
+    let v = parse_uint_radix(s, 10, 255)?
+    Ok(v as u8)
+}
+
+pub fn parse_usize[A: Text](s: A) -> Result[usize, ParseError] {
+    let v = parse_uint_radix(s, 10, 18446744073709551615)?
+    Ok(v as usize)
+}
+
+/// "true" or "false", exactly.
+pub fn parse_bool[A: Text](s: A) -> Option[bool] {
+    let t = s.text()
+    if t == String.from("true") { return Some(true) }
+    if t == String.from("false") { return Some(false) }
+    None
+}

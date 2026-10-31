@@ -1,0 +1,5 @@
+// expect: E0204 2:1
+import "../lib/pkgs/granter/granter.ei"
+
+// granter grants fsuser only io; fsuser uses fs too, in the method `Dir.exists`
+fn main() {}

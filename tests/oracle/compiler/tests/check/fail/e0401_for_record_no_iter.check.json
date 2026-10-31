@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_for_record_no_iter.ei","line":3,"col":22},"message":"can't iterate over a value of type R","help":"iterate over a List, an array, a Map, a range (`for i in 0..n`) or a type that implements `Iter`"}

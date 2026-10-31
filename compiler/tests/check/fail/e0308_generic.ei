@@ -1,0 +1,14 @@
+// expect: E0308 5:8
+fn last_then_clear[T](inout xs: List[T]) -> usize {
+    let n = xs.len()
+    let first = xs[0]
+    xs.clear()
+    let k = Some(first)
+    if k.is_some() { return n }
+    0
+}
+fn main() uses io {
+    var xs: List[i32] = List.new()
+    xs.push(3)
+    print(last_then_clear(inout xs))
+}

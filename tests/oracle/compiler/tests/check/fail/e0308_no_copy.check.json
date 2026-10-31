@@ -1,0 +1,1 @@
+{"error":"E0308","span":{"file":"compiler/tests/check/fail/e0308_no_copy.ei","line":6,"col":8},"message":"can't call `clear` on `cs` while `c` refers into it","help":"`c` is used after this change, which may free, move or replace what it refers to; use it before the change"}

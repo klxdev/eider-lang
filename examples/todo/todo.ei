@@ -1,0 +1,238 @@
+// todo: an example REST service with an OpenAPI 3.1 description, on packages/http and
+// packages/openapi (docs/openapi.md).
+//
+//   GET    /todos             list (query: done, priority, limit)
+//   POST   /todos             create (bearer token; body NewTodo)          -> 201 Todo
+//   GET    /todos/{id}        one todo                                     -> 200 / 404
+//   PATCH  /todos/{id}        change some fields (bearer token; TodoPatch)  -> 200 / 404
+//   DELETE /todos/{id}        delete (bearer token)                        -> 204 / 404
+//   GET    /openapi.json      the description; GET /metrics (Prometheus); GET /health
+//
+// Every route is registered with its operation, so routing, validation (400 problem+json),
+// authentication (401) and the served document come from one description. Errors are
+// problem+json (RFC 9457) throughout, including the router's 404 and 405. Around the
+// service: request ids, a JSON access log, metrics, CORS for one origin; the list route has a
+// 2 s timeout on a pool of its own, and the write routes take bodies up to 4 KiB.
+//
+// The store is a Map behind a sync.Lock shared by every worker: each operation is one
+// critical section.
+
+import "core/sys"
+import "std/bytes"
+import "std/sort"
+import "std/stream"
+import "std/sync"
+import "std/task"
+import "std/time"
+import "http"
+import "http/problem"
+import "http/middleware"
+import "http/metrics"
+import "openapi"
+import "openapi/schema"
+
+pub type Todo = { id: i64, title: List[u8], done: bool, priority: List[u8], note: Option[List[u8]] }
+
+// ids grow with every create, so sorted ids are creation order
+type Db = { next: i64, items: Map[i64, Todo] }
+
+/// The service's state; copies share it.
+pub type Store = { st: sync.Lock[Db] }
+
+pub fn store() -> Store { Store(sync.lock(Db(1, Map.new()))) }
+
+pub type NewTodo = { title: List[u8], priority: List[u8], note: Option[List[u8]] }
+
+/// A change: None leaves a field as it is; `note` is Some(None) to clear it.
+pub type Patch = { title: Option[List[u8]], done: Option[bool], priority: Option[List[u8]], note: Option[Option[List[u8]]] }
+
+pub type Filter = { done: Option[bool], priority: Option[List[u8]], limit: i64 }
+
+impl Store {
+    fn create(self, n: NewTodo) -> Todo {
+        self.st.with(|d: Db| -> (Db, Todo) {
+            let mut t = d.copy()
+            let todo = Todo(t.next, n.title, false, n.priority, n.note)
+            t.items.insert(t.next, todo)
+            t.next += 1
+            (t, todo)
+        })
+    }
+
+    fn get(self, id: i64) -> Option[Todo] { self.st.with(|d: Db| -> (Db, Option[Todo]) (d, d.items.get(id))) }
+
+    fn list(self, f: Filter) -> List[Todo] {
+        self.st.with(|d: Db| -> (Db, List[Todo]) {
+            let mut out: List[Todo] = List.new()
+            for id in sort.sort(d.items.keys()) {
+                if (out.len() as i64) < f.limit {
+                    let t = d.items.get(id).unwrap()
+                    let done_ok = match f.done {
+                        Some(want) => t.done == want
+                        None => true
+                    }
+                    let prio_ok = match f.priority {
+                        Some(p) => bytes.eq(p, t.priority)
+                        None => true
+                    }
+                    if done_ok && prio_ok { out.push(t) }
+                }
+            }
+            (d, out)
+        })
+    }
+
+    fn update(self, id: i64, p: Patch) -> Option[Todo] {
+        self.st.with(|d: Db| -> (Db, Option[Todo]) {
+            let mut t = d.copy()
+            let mut todo = match t.items.get(id) {
+                Some(x) => x
+                None => { return (t, None) }
+            }
+            match p.title {
+                Some(v) => { todo.title = v }
+                None => {}
+            }
+            match p.done {
+                Some(v) => { todo.done = v }
+                None => {}
+            }
+            match p.priority {
+                Some(v) => { todo.priority = v }
+                None => {}
+            }
+            match p.note {
+                Some(v) => { todo.note = v }
+                None => {}
+            }
+            t.items.insert(id, todo)
+            (t, Some(todo))
+        })
+    }
+
+    fn delete(self, id: i64) -> bool {
+        self.st.with(|d: Db| -> (Db, bool) {
+            let mut t = d.copy()
+            if !t.items.contains(id) { return (t, false) }
+            t.items.remove(id)
+            (t, true)
+        })
+    }
+}
+
+// ---- schemas, decoders and encoders (what JSON derive will generate: docs/openapi.md)
+
+fn priority() -> schema.Schema { schema.string().allow("low").allow("normal").allow("high") }
+
+fn title() -> schema.Schema { schema.string().min_length(1).max_length(200) }
+
+fn note() -> schema.Schema { schema.string().max_length(1000).nullable() }
+
+fn todo_schema() -> schema.Schema {
+    let mut s = schema.object().describe("A thing to do").closed()
+    s = s.field("id", schema.integer().format("int64").min(1))
+    s = s.field("title", title())
+    s = s.field("done", schema.boolean())
+    s = s.field("priority", priority())
+    s.field("note", note())
+}
+
+fn new_todo_schema() -> schema.Schema {
+    let mut s = schema.object().describe("A new todo (priority defaults to normal)").closed()
+    s = s.field("title", title())
+    s.prop("priority", priority()).prop("note", note())
+}
+
+fn patch_schema() -> schema.Schema {
+    let mut s = schema.object().describe("The fields to change; a null note removes it").closed()
+    s = s.prop("title", title()).prop("done", schema.boolean())
+    s.prop("priority", priority()).prop("note", note())
+}
+
+pub fn todo_json(t: Todo) -> List[u8] {
+    openapi.obj().int("id", t.id).str("title", t.title).bool("done", t.done).str("priority", t.priority).opt_str("note", t.note).done()
+}
+
+fn todos_json(ts: List[Todo]) -> List[u8] {
+    let mut items: List[List[u8]] = List.new()
+    for t in ts { items.push(todo_json(t)) }
+    openapi.arr(items)
+}
+
+fn decode_new(i: openapi.Input) -> Result[NewTodo, problem.ApiError] {
+    Ok(NewTodo(i.str("title")?, i.opt_str("priority").unwrap_or(sys.lit("normal")), i.opt_str("note")))
+}
+
+fn decode_patch(i: openapi.Input) -> Result[(i64, Patch), problem.ApiError] {
+    let id = i.path_int("id")?
+    let note: Option[Option[List[u8]]] = if i.is_null("note") { Some(None) } else { if i.member("note").is_some() { Some(i.opt_str("note")) } else { None } }
+    Ok((id, Patch(i.opt_str("title"), i.opt_bool("done"), i.opt_str("priority"), note)))
+}
+
+fn decode_filter(i: openapi.Input) -> Result[Filter, problem.ApiError] {
+    Ok(Filter(i.query_bool("done")?, i.query("priority"), i.query_int("limit")?.unwrap_or(50)))
+}
+
+fn decode_id(i: openapi.Input) -> Result[i64, problem.ApiError] { i.path_int("id") }
+
+fn no_todo(id: i64) -> problem.ApiError {
+    let mut d = sys.lit("there is no todo ")
+    bytes.append(inout d, bytes.from_i64(id))
+    problem.with_detail(404, d)
+}
+
+/// The described service over `s`: write operations need a token `tokens` knows.
+pub fn service(s: Store, tokens: fn(List[u8]) -> Option[List[u8]], list_pool: task.Pool) -> openapi.Service uses io, clock {
+    let mut svc = openapi.service("Todo API", "1.0.0")
+    svc.describe("An example REST service on packages/http and packages/openapi")
+    svc.bearer_auth("bearerAuth", tokens)
+    let todo = svc.component("Todo", todo_schema())
+    let id = schema.integer().format("int64").min(1)
+
+    let mut list = openapi.op("GET", "/todos").operation_id("listTodos").summary("List todos").tag("todos")
+    list = list.query("done", schema.boolean(), "Only todos that are (or aren't) done")
+    list = list.query("priority", priority(), "Only todos with this priority")
+    list = list.query("limit", schema.integer().min(1).max(100), "At most this many (default 50)")
+    list = list.returns(200, "The todos, oldest first", schema.array(todo)).fails(503, "The list took too long")
+    let slow = |h: http.Handler| -> http.Handler { middleware.timeout(time.seconds(2), list_pool, h) }
+    svc.add_with(list, slow, openapi.typed(decode_filter, |f: Filter| -> Result[List[Todo], problem.ApiError] { Ok(s.list(f)) }, todos_json))
+
+    let mut create = openapi.op("POST", "/todos").operation_id("createTodo").summary("Create a todo").tag("todos")
+    create = create.secured("bearerAuth").max_body(4096).body(new_todo_schema(), "The todo to create")
+    create = create.returns(201, "The new todo", todo)
+    svc.add(create, openapi.typed(decode_new, |n: NewTodo| -> Result[Todo, problem.ApiError] { Ok(s.create(n)) }, todo_json))
+
+    let mut get = openapi.op("GET", "/todos/{id}").operation_id("getTodo").summary("Get a todo").tag("todos")
+    get = get.path_param("id", id).returns(200, "The todo", todo).fails(404, "No such todo")
+    svc.add(get, openapi.typed(decode_id, |n: i64| -> Result[Todo, problem.ApiError] { s.get(n).ok_or(no_todo(n)) }, todo_json))
+
+    let mut patch = openapi.op("PATCH", "/todos/{id}").operation_id("updateTodo").summary("Change a todo").tag("todos")
+    patch = patch.secured("bearerAuth").max_body(4096).path_param("id", id).body(patch_schema(), "The fields to change")
+    patch = patch.returns(200, "The changed todo", todo).fails(404, "No such todo")
+    svc.add(patch, openapi.typed(decode_patch, |a: (i64, Patch)| -> Result[Todo, problem.ApiError] {
+        let (n, p) = a
+        s.update(n, p).ok_or(no_todo(n))
+    }, todo_json))
+
+    let mut del = openapi.op("DELETE", "/todos/{id}").operation_id("deleteTodo").summary("Delete a todo").tag("todos")
+    del = del.secured("bearerAuth").path_param("id", id).returns_empty(204, "Deleted").fails(404, "No such todo")
+    svc.add(del, openapi.typed(decode_id, |n: i64| -> Result[bool, problem.ApiError] {
+        if s.delete(n) { return Ok(true) }
+        Err(no_todo(n))
+    }, openapi.no_output))
+
+    svc.raw("GET", "/health", |q: http.Request| -> http.Response { http.text(200, "ok") })
+    svc
+}
+
+/// What the whole application is made of besides the store.
+pub type Parts[W] = { log: sync.Lock[W], metrics: metrics.Metrics, ids: middleware.Ids, cors: middleware.Cors, list_pool: task.Pool }
+
+/// The application: the service, `/metrics`, and the middleware around them (outermost
+/// first: request id, access log, metrics, problem+json errors, CORS).
+pub fn app[W: stream.Writer + Copy](s: Store, tokens: fn(List[u8]) -> Option[List[u8]], p: Parts[W]) -> http.Handler uses io, clock {
+    let mut svc = service(s, tokens, p.list_pool)
+    svc.raw("GET", "/metrics", p.metrics.handler())
+    let inner = middleware.cors(p.cors, svc.handler())
+    middleware.request_id(p.ids, middleware.access_log(p.log, p.metrics.wrap(middleware.problems(inner))))
+}

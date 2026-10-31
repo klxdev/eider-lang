@@ -1,0 +1,5 @@
+// expect: E0107 4:6
+// an alias and a record can't share a name (docs/compiler.md, "C8.18")
+type P = { x: i32 }
+type P = i32
+fn main() {}

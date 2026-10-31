@@ -1,0 +1,1 @@
+{"error":"E0405","span":{"file":"compiler/tests/check/fail/e0405_map_keys_args.ei","line":5,"col":15},"message":"`Map[i32, i32].keys` takes 0 argument(s), but 1 were given"}

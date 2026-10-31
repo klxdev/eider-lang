@@ -1,3 +1,0 @@
-// expect: E0401 3:14
-fn main() { let m: Map[i32, i32] = Map.new()
-    for x in m {} }

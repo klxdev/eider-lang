@@ -1,0 +1,4 @@
+// expect: E0605 3:29
+fn need_eq[T: Eq](x: T) -> bool { x == x }
+fn calls[T](x: T) -> bool { need_eq(x) }
+fn main() uses io { print(calls(1)) }

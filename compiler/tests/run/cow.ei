@@ -53,7 +53,7 @@ fn main() uses io {
     print(a)
     // self-append of a shared String
     var d = a
-    let e = d
+    let e = d.copy()
     d.append(e)
     print(d)
     print(e)
@@ -220,7 +220,7 @@ fn main() uses io {
     // a long String built by appends (amortised growth)
     var long = String.from("")
     for i in 0..10000 { long.push_str("ab") }
-    let snapshot = long
+    let snapshot = long.copy()
     long.push_str("c")
     print(long.len())
     print(snapshot.len())

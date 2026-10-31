@@ -34,7 +34,7 @@ fn reserve(inout inv: Inventory, sku: usize, qty: u32) -> bool {
 }
 
 fn total_stock(inv: Inventory) -> u32 {
-  var sum: u32 = 0
+  let mut sum: u32 = 0
   for i in 0..SKU_COUNT {
     sum += inv.stock[i]
   }
@@ -50,7 +50,7 @@ fn label(b: BoxSize) -> str {
 }
 
 fn main() uses io {
-  var inv = Inventory([10, 5, 0, 7], 0)
+  let mut inv = Inventory([10, 5, 0, 7], 0)
 
   print(reserve(inout inv, 0, 3))   // true
   print(reserve(inout inv, 2, 1))   // false: out of stock
@@ -65,7 +65,7 @@ fn main() uses io {
 }
 
 test "reserve rolls forward and refuses shortage" {
-  var inv = Inventory([5, 1, 0, 0], 0)
+  let mut inv = Inventory([5, 1, 0, 0], 0)
   assert reserve(inout inv, 0, 3)
   assert !reserve(inout inv, 1, 2), "should refuse: only 1 in stock"
   assert inv.stock[0] == 2

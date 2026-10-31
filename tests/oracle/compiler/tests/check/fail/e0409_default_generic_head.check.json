@@ -1,0 +1,1 @@
+{"error":"E0409","span":{"file":"compiler/tests/check/fail/e0409_default_generic_head.ei","line":3,"col":18},"message":"cannot infer the type arguments of `List`","help":"annotate the binding that receives it, e.g. `let xs: List[i32] = List.default()`"}

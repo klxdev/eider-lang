@@ -1,0 +1,4 @@
+// expect: E0411 3:12
+type State = { counts: Ref[List[i32]] }
+fn hold(m: Mutex[State]) -> i32 { 0 }
+fn main() {}

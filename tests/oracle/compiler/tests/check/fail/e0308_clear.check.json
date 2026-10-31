@@ -1,0 +1,1 @@
+{"error":"E0308","span":{"file":"compiler/tests/check/fail/e0308_clear.ei","line":6,"col":8},"message":"can't call `clear` on `xs` while `s` refers into it","help":"`s` is used after this change, which may free, move or replace what it refers to; use it before the change, or bind a copy with `.copy()`","fix":{"at":{"line":5,"col":18},"delete":0,"insert":".copy()"}}

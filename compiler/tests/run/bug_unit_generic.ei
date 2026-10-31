@@ -1,0 +1,31 @@
+// A generic T = () read out of a payload in a match arm (docs/std.md, seed bug 1): the
+// arm's () local has no C variable, so it is read as 0 (docs/compiler.md, "C8.16").
+type E = { m: String }
+fn plain[T](r: Result[T, E]) -> Result[T, String] {
+    match r {
+        Ok(v) => Ok(v)
+        Err(e) => Err(e.m)
+    }
+}
+fn swap[A, B](r: Result[A, B]) -> Result[B, A] {
+    if let Ok(a) = r { return Err(a) }
+    match r {
+        Err(b) => Ok(b)
+        Ok(a) => Err(a)
+    }
+}
+fn main() uses io {
+    let a: Result[(), E] = Ok(())
+    print(plain(a).is_ok())
+    let e = E(String.from("bad"))
+    let b: Result[(), E] = Err(e)
+    match plain(b) {
+        Ok(_) => print("ok")
+        Err(m) => print(m)
+    }
+    let s: Result[(), i32] = Ok(())
+    print(swap(s).is_err())
+    print(swap(swap(s)).is_ok())
+    let t: Result[i32, ()] = Err(())
+    print(swap(t).is_ok())
+}

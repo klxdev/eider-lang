@@ -1,0 +1,115 @@
+// std/deque: a double-ended queue. `Deque[T]` pushes and pops at both ends in amortized
+// O(1) and reads any position in O(1). It is two Lists back to back: the front half
+// reversed (its end is the deque's first element) and the back half in order; when one
+// side runs dry, half of the other moves over, which keeps every operation amortized O(1)
+// even when a program alternates ends. A value like any other: copies don't share.
+
+pub type Deque[T] = { front: List[T], back: List[T] }
+
+pub fn new[T]() -> Deque[T] { Deque(List.new(), List.new()) }
+
+/// A Deque holding `xs`, first element first.
+pub fn from_list[T](xs: List[T]) -> Deque[T] { Deque(List.new(), xs) }
+
+impl[T] Deque[T] {
+    fn len(self) -> usize { self.front.len() + self.back.len() }
+    fn is_empty(self) -> bool { self.front.len() == 0 && self.back.len() == 0 }
+
+    fn push_back(inout self, x: T) { self.back.push(x) }
+    fn push_front(inout self, x: T) { self.front.push(x) }
+
+    // Moves the older half of `back` to `front` (reversed), when `front` is empty.
+    fn refill_front(inout self) {
+        let n = self.back.len()
+        let k = (n + 1) / 2
+        let mut f: List[T] = List.new()
+        let mut i = k.copy()
+        while i > 0 {
+            i -= 1
+            f.push(self.back[i])
+        }
+        let mut b: List[T] = List.new()
+        for j in k..n { b.push(self.back[j]) }
+        self.front = f
+        self.back = b
+    }
+
+    // Moves the newer half of `front` to `back`, when `back` is empty.
+    fn refill_back(inout self) {
+        let n = self.front.len()
+        let k = (n + 1) / 2
+        let mut b: List[T] = List.new()
+        let mut i = k.copy()
+        while i > 0 {
+            i -= 1
+            b.push(self.front[i])
+        }
+        let mut f: List[T] = List.new()
+        for j in k..n { f.push(self.front[j]) }
+        self.front = f
+        self.back = b
+    }
+
+    fn pop_front(inout self) -> Option[T] {
+        if self.front.len() == 0 {
+            if self.back.len() == 0 { return None }
+            self.refill_front()
+        }
+        self.front.pop()
+    }
+
+    fn pop_back(inout self) -> Option[T] {
+        if self.back.len() == 0 {
+            if self.front.len() == 0 { return None }
+            self.refill_back()
+        }
+        self.back.pop()
+    }
+
+    /// The element at position `i` from the front.
+    fn get(self, i: usize) -> Option[T] {
+        let f = self.front.len()
+        if i < f { return Some(self.front[f - 1 - i]) }
+        if i - f < self.back.len() { return Some(self.back[i - f]) }
+        None
+    }
+
+    /// Replaces the element at `i`: false (and nothing changed) when there is none.
+    fn set(inout self, i: usize, x: T) -> bool {
+        let f = self.front.len()
+        if i < f {
+            self.front[f - 1 - i] = x
+            return true
+        }
+        if i - f < self.back.len() {
+            self.back[i - f] = x
+            return true
+        }
+        false
+    }
+
+    fn first(self) -> Option[T] { self.get(0) }
+
+    fn last(self) -> Option[T] {
+        let n = self.len()
+        if n == 0 { return None }
+        self.get(n - 1)
+    }
+
+    fn clear(inout self) {
+        self.front.clear()
+        self.back.clear()
+    }
+
+    /// The elements, first to last.
+    fn to_list(self) -> List[T] {
+        let mut out: List[T] = List.new()
+        let mut i = self.front.len()
+        while i > 0 {
+            i -= 1
+            out.push(self.front[i])
+        }
+        for x in self.back { out.push(x) }
+        out
+    }
+}

@@ -1,0 +1,5 @@
+// expect: E0605 2:39
+fn sum_all[T](t: T) -> i32 { for x in t {}
+    0 }
+fn main() uses io { var l: List[i32] = List.new()
+    print(sum_all(l)) }

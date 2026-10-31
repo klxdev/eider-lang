@@ -1,0 +1,75 @@
+// `x.take()` and `x.replace(v)` (docs/compiler.md, "C8.15: take and replace"): move a value
+// out of a place without copying it, leaving an empty value (take) or v (replace) behind;
+// the successor of `var` for values without Copy. Expected output: take_replace.out.
+type Tree = { name: String, kids: List[Tree] }
+
+type Worker = { id: i32, inbox: Chan[i32] }
+
+type Buf = { data: List[u8], label: Option[String] }
+
+impl Buf {
+    fn flush(inout self) -> List[u8] { self.data.take() }
+}
+
+// a type's own `take` wins
+type Counter = { n: i32 }
+
+impl Counter {
+    fn take(inout self) -> i32 {
+        self.n -= 1
+        self.n
+    }
+}
+
+fn swap_out[T](inout slot: T, v: T) -> T { slot.replace(v) }
+
+fn main() uses io, threads {
+    let mut t = Tree(String.from("root"), List.new())
+    t.kids.push(Tree(String.from("a"), List.new()))
+    t.kids.push(Tree(String.from("b"), List.new()))
+    let kids = t.kids.take()
+    print(kids.len())
+    print(t.kids.len())
+    let old = t.name.replace(String.from("new"))
+    print(old)
+    print(t.name)
+    // values without Copy: a Chan inside
+    let mut ws: List[Worker] = List.new()
+    let c1: Chan[i32] = Chan.new()
+    let c2: Chan[i32] = Chan.new()
+    ws.push(Worker(1, c1))
+    let w = ws[0].replace(Worker(2, c2))
+    w.inbox.send(7)
+    print(w.inbox.recv())
+    print(ws[0].id)
+    let mut b = Buf(List.new(), Some(String.from("x")))
+    b.data.push(1)
+    b.data.push(2)
+    print(b.flush())
+    print(b.data.len())
+    print(b.label.take())
+    print(b.label)
+    let mut m: Map[i32, String] = Map.new()
+    m.insert(1, String.from("one"))
+    let m2 = m.take()
+    print(m.len())
+    print(m2.len())
+    let mut s = String.from("abc")
+    print(s.take())
+    print(s.len())
+    let mut n = 5
+    print(n.replace(6))
+    print(n)
+    let mut cnt = Counter(10)
+    print(cnt.take())
+    let mut xs: List[String] = List.new()
+    xs.push(String.from("p"))
+    print(swap_out(inout xs[0], String.from("q")))
+    print(xs)
+    // a copy shares the buffer; taking from one leaves the other intact
+    let mut ys = xs.copy()
+    let taken = ys.take()
+    print(taken)
+    print(xs)
+    print(ys.len())
+}

@@ -7,13 +7,13 @@
 pub type Sha = { and_t: List[u8], pow: List[u64], k: List[u32] }
 
 pub fn new() -> Sha {
-    var t: List[u8] = List.new()
+    let mut t: List[u8] = List.new()
     for a in 0..256 {
         for b in 0..256 {
-            var r: u32 = 0
-            var x = a as u32
-            var y = b as u32
-            var bit: u32 = 1
+            let mut r: u32 = 0
+            let mut x = a as u32
+            let mut y = b as u32
+            let mut bit: u32 = 1
             for i in 0..8 {
                 if x % 2 == 1 && y % 2 == 1 { r += bit }
                 x = x / 2
@@ -23,8 +23,8 @@ pub fn new() -> Sha {
             t.push(r as u8)
         }
     }
-    var pow: List[u64] = List.new()
-    var p: u64 = 1
+    let mut pow: List[u64] = List.new()
+    let mut p: u64 = 1
     for i in 0..33 {
         pow.push(p)
         if i < 32 { p = p * 2 }
@@ -39,16 +39,16 @@ pub fn new() -> Sha {
         0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
         0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
     ]
-    var kl: List[u32] = List.new()
+    let mut kl: List[u32] = List.new()
     for i in 0..64 { kl.push(k[i as usize]) }
     Sha(t, pow, kl)
 }
 
 fn and32(s: Sha, a: u32, b: u32) -> u32 {
-    var r: u32 = 0
-    var x = a
-    var y = b
-    var place: u32 = 1
+    let mut r: u32 = 0
+    let mut x = a.copy()
+    let mut y = b.copy()
+    let mut place: u32 = 1
     for i in 0..4 {
         let v = s.and_t[((x % 256) * 256 + y % 256) as usize] as u32
         r += v * place
@@ -75,21 +75,21 @@ fn not32(x: u32) -> u32 { 4294967295 - x }
 
 /// The 32-byte digest of `data`.
 pub fn digest(s: Sha, data: List[u8]) -> List[u8] {
-    var msg = data
+    let mut msg = data.copy()
     let bits = (data.len() as u64) * 8
     msg.push(128)
     while msg.len() % 64 != 56 { msg.push(0) }
     // message length in bits, big-endian
-    var len_le: [u8; 8] = [0; 8]
-    var v = bits
+    let mut len_le: [u8; 8] = [0; 8]
+    let mut v = bits.copy()
     for j in 0..8 {
         len_le[j as usize] = (v % 256) as u8
         v = v / 256
     }
     for j in 0..8 { msg.push(len_le[(7 - j) as usize]) }
-    var h: [u32; 8] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]
-    var w: [u32; 64] = [0; 64]
-    var off: usize = 0
+    let mut h: [u32; 8] = [0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19]
+    let mut w: [u32; 64] = [0; 64]
+    let mut off: usize = 0
     while off < msg.len() {
         for t16 in 0..16 {
             let t = t16 as usize
@@ -104,14 +104,14 @@ pub fn digest(s: Sha, data: List[u8]) -> List[u8] {
             let s1 = xor32(s, xor32(s, rotr(s, y, 17), rotr(s, y, 19)), shr(s, y, 10))
             w[t] = w[t - 16] +% s0 +% w[t - 7] +% s1
         }
-        var a = h[0]
-        var b = h[1]
-        var c = h[2]
-        var d = h[3]
-        var e = h[4]
-        var f = h[5]
-        var g = h[6]
-        var hh = h[7]
+        let mut a = h[0].copy()
+        let mut b = h[1].copy()
+        let mut c = h[2].copy()
+        let mut d = h[3].copy()
+        let mut e = h[4].copy()
+        let mut f = h[5].copy()
+        let mut g = h[6].copy()
+        let mut hh = h[7].copy()
         for t64 in 0..64 {
             let t = t64 as usize
             let S1 = xor32(s, xor32(s, rotr(s, e, 6), rotr(s, e, 11)), rotr(s, e, 25))
@@ -139,7 +139,7 @@ pub fn digest(s: Sha, data: List[u8]) -> List[u8] {
         h[7] = h[7] +% hh
         off += 64
     }
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     for j8 in 0..8 {
         let j = j8 as usize
         out.push((h[j] / 16777216) as u8)

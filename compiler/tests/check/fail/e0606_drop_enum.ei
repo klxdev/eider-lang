@@ -1,0 +1,6 @@
+// expect: E0606 3:1
+type E = | A(n: i32) | B
+impl Drop for E {
+    fn drop(inout self) {}
+}
+fn main() {}

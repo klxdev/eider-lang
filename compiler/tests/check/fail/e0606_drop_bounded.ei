@@ -1,0 +1,6 @@
+// expect: E0606 3:1
+type W[T] = { v: T }
+impl[T: Eq] Drop for W[T] {
+    fn drop(inout self) {}
+}
+fn main() {}

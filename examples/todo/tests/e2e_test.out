@@ -1,0 +1,79 @@
+true
+-- create
+200 content-type=text/plain; charset=utf-8 | ok
+401 content-type=application/problem+json www-authenticate=Bearer realm="Todo API" | {"type":"about:blank","title":"Unauthorized","status":401,"detail":"this operation needs a bearer token"}
+201 content-type=application/json | {"id":1,"title":"write docs","done":false,"priority":"normal","note":null}
+201 content-type=application/json | {"id":2,"title":"ship it","done":false,"priority":"high","note":"after the docs"}
+201 content-type=application/json | {"id":3,"title":"tidy up","done":false,"priority":"low","note":null}
+-- refused
+400 content-type=application/problem+json | {"type":"about:blank","title":"Bad Request","status":400,"detail":"the request does not match the API description","errors":[{"in":"body","pointer":"#/title","detail":"must not be empty"},{"in":"body","pointer":"#/priority","detail":"must be one of \"low\", \"normal\", \"high\""},{"in":"body","pointer":"#/done","detail":"is not allowed here"}]}
+400 content-type=application/problem+json | {"type":"about:blank","title":"Bad Request","status":400,"detail":"the request does not match the API description","errors":[{"in":"body","pointer":"#","detail":"is not JSON: unexpected end of input in an object (expected `,` or `}`) at line 1, column 12 (byte 11)"}]}
+400 content-type=application/problem+json | {"type":"about:blank","title":"Bad Request","status":400,"detail":"the request does not match the API description","errors":[{"in":"body","pointer":"#","detail":"a JSON body is required"}]}
+415 content-type=application/problem+json | {"type":"about:blank","title":"Unsupported Media Type","status":415,"detail":"the body must be application/json"}
+413
+{"type":"about:blank","title":"Content Too Large","status":413,"detail":"the body is 5013 bytes; this route takes at most 4096"}
+401 content-type=application/problem+json www-authenticate=Bearer realm="Todo API", error="invalid_token" | {"type":"about:blank","title":"Unauthorized","status":401,"detail":"the bearer token is not valid"}
+-- read
+200 content-type=application/json | [{"id":1,"title":"write docs","done":false,"priority":"normal","note":null},{"id":2,"title":"ship it","done":false,"priority":"high","note":"after the docs"},{"id":3,"title":"tidy up","done":false,"priority":"low","note":null}]
+200 content-type=application/json | [{"id":1,"title":"write docs","done":false,"priority":"normal","note":null},{"id":2,"title":"ship it","done":false,"priority":"high","note":"after the docs"}]
+200 content-type=application/json | [{"id":2,"title":"ship it","done":false,"priority":"high","note":"after the docs"}]
+400 content-type=application/problem+json | {"type":"about:blank","title":"Bad Request","status":400,"detail":"the request does not match the API description","errors":[{"in":"query","name":"done","detail":"must be true or false"},{"in":"query","name":"priority","detail":"must be one of \"low\", \"normal\", \"high\""},{"in":"query","name":"limit","detail":"must be at least 1"}]}
+200 content-type=application/json | {"id":1,"title":"write docs","done":false,"priority":"normal","note":null}
+404 content-type=application/problem+json | {"type":"about:blank","title":"Not Found","status":404,"detail":"there is no todo 99"}
+400 content-type=application/problem+json | {"type":"about:blank","title":"Bad Request","status":400,"detail":"the request does not match the API description","errors":[{"in":"path","name":"id","detail":"must be an integer"}]}
+-- update and delete
+200 content-type=application/json | {"id":2,"title":"ship it","done":true,"priority":"high","note":null}
+400 content-type=application/problem+json | {"type":"about:blank","title":"Bad Request","status":400,"detail":"the request does not match the API description","errors":[{"in":"body","pointer":"#/done","detail":"must be true or false"},{"in":"body","pointer":"#/colour","detail":"is not allowed here"}]}
+200 content-type=application/json | {"id":1,"title":"write the docs","done":false,"priority":"normal","note":"today"}
+404 content-type=application/problem+json | {"type":"about:blank","title":"Not Found","status":404,"detail":"there is no todo 42"}
+401 content-type=application/problem+json www-authenticate=Bearer realm="Todo API" | {"type":"about:blank","title":"Unauthorized","status":401,"detail":"this operation needs a bearer token"}
+204 | 
+404 content-type=application/problem+json | {"type":"about:blank","title":"Not Found","status":404,"detail":"there is no todo 3"}
+200 content-type=application/json | [{"id":2,"title":"ship it","done":true,"priority":"high","note":null}]
+-- routing errors
+404 content-type=application/problem+json | {"type":"about:blank","title":"Not Found","status":404}
+405 content-type=application/problem+json allow=GET, POST, HEAD | {"type":"about:blank","title":"Method Not Allowed","status":405}
+-- cors and request ids
+204 access-control-allow-origin=https://app.example access-control-allow-methods=GET, HEAD, POST, PUT, PATCH, DELETE access-control-allow-headers=content-type, authorization vary=Origin | 
+200 content-type=application/json access-control-allow-origin=https://app.example vary=Origin | {"id":1,"title":"write the docs","done":false,"priority":"normal","note":"today"}
+trace-42
+true
+-- four clients at once
+40
+42
+-- metrics
+text/plain; version=0.0.4; charset=utf-8
+# TYPE http_requests_total counter
+http_requests_total{method="DELETE",code="204"} 1
+http_requests_total{method="DELETE",code="401"} 1
+http_requests_total{method="DELETE",code="404"} 1
+http_requests_total{method="GET",code="200"} 9
+http_requests_total{method="GET",code="400"} 2
+http_requests_total{method="GET",code="404"} 2
+http_requests_total{method="OPTIONS",code="204"} 1
+http_requests_total{method="PATCH",code="200"} 2
+http_requests_total{method="PATCH",code="400"} 1
+http_requests_total{method="PATCH",code="404"} 1
+http_requests_total{method="POST",code="201"} 43
+http_requests_total{method="POST",code="400"} 3
+http_requests_total{method="POST",code="401"} 2
+http_requests_total{method="POST",code="413"} 1
+http_requests_total{method="POST",code="415"} 1
+http_requests_total{method="PUT",code="405"} 1
+# TYPE http_requests_in_flight gauge
+# TYPE http_request_duration_seconds histogram
+http_request_duration_seconds_count 72
+-- openapi.json
+200
+served /openapi.json matches tests/openapi.golden.json
+-- shutdown
+74
+0
+true
+-- access log
+true
+id="req-1"
+method="GET"
+path="/health"
+status=200
+53

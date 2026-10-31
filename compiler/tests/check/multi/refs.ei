@@ -1,0 +1,18 @@
+// Several errors around references (docs/compiler.md, "C8.6"): the type error first, then
+// the E0307, then the protection rule's E0308s (found after every body), in source order.
+type Order = { qty: i32 }
+fn read_only(o: Order) -> i32 {
+    let mut p = o
+    p.qty += 1
+    p.qty
+}
+fn main() uses io {
+    var xs: List[Order] = List.new()
+    xs.push(Order(1))
+    let a = xs[0]
+    xs.push(Order(2))
+    let b: bool = 3
+    let c = xs[1]
+    xs = List.new()
+    print(a.qty + c.qty)
+}

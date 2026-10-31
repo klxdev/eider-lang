@@ -4,13 +4,22 @@
 import "../../lock.ei"
 import "core/sys"
 
-fn main() uses io, ffi {
+fn main() uses io {
     let m = lock.manifest(sys.lit("[package]\nname = \"app\" # c\nversion = \"0.1.0\"\n\n[deps.json]\npath = \"../json\"\nuses = [\n  \"io\",\n]\n[deps.util]\n[deps]\ngeo = { path = \"../geo\", uses = [\"fs\"] }\n"))
     match m {
         Ok(x) => {
             print(sys.to_string(x.name))
             print(sys.to_string(x.entry))
-            for d in x.deps { print(sys.to_string(d)) }
+            for i in 0..x.deps.len() {
+                var t = sys.to_string(x.deps[i])
+                t.push_str(" uses [")
+                for j in 0..x.grants[i].len() {
+                    if j > 0 { t.push_str(", ") }
+                    t.append(sys.to_string(x.grants[i][j]))
+                }
+                t.push_str("]")
+                print(t)
+            }
         }
         Err(e) => print(sys.to_string(e))
     }

@@ -1,0 +1,300 @@
+// std/chan: bounded channels with deadlines, and `select` over channels, timers and
+// cancellation (decision C5: bounded by default, unbounded only by name, a deadline on every
+// blocking operation; docs/runtime.md "Channels and select").
+//
+// A Channel[T] is a FIFO queue shared by every copy of it (any number of senders and
+// receivers). Its values sit in a built-in Chan[T]; its state (how many, closed, who waits)
+// sits in a sync.Lock. A send first reserves a place under the lock and then moves the value
+// into the queue; a receive reserves a value and then takes it. So the queue is only touched
+// for values already counted, and its own blocking `recv` never waits for more than a send
+// that is already under way.
+//
+// Cancel-safety (what happens when an operation gives up at its deadline, or a select picks
+// another case): `send` and `try_send` either queue the value or hand it back (`Full`,
+// `Rejected`), never lose it; `recv`, `try_recv` and a select's channel case either take
+// exactly one value or none. So every operation here can be abandoned at its deadline
+// without losing data.
+//
+// Capabilities: `io` (wakers are descriptors) and `clock` (deadlines), as declared on each.
+
+import "sync.ei"
+import "time.ei"
+
+/// The result of a receive.
+/// - `Value(v)`: the oldest value.
+/// - `Empty`: nothing came before the deadline (try_recv: nothing is queued).
+/// - `Closed`: the channel is closed and every value sent before has been received.
+pub type Recv[T] = | Value(v: T) | Empty | Closed
+
+/// The result of a send. The value comes back whenever it was not queued.
+/// - `Sent`: queued.
+/// - `Full(v)`: still full at the deadline (try_send: full now).
+/// - `Rejected(v)`: the channel is closed.
+pub type Send[T] = | Sent | Full(v: T) | Rejected(v: T)
+
+type St = { len: usize, cap: usize, closed: bool, rx: List[sync.Parker], tx: List[sync.Parker] }
+
+/// A channel; copies share it.
+pub type Channel[T] = { data: Chan[T], st: sync.Lock[St] }
+
+const UNBOUNDED: usize = 18446744073709551615
+
+/// A channel holding at most `cap` values (at least 1): a send waits while it is full.
+pub fn bounded[T](cap: usize) -> Channel[T] {
+    if cap == 0 { panic("chan.bounded: the capacity must be at least 1") }
+    let d: Chan[T] = Chan.new()
+    Channel(d, sync.lock(St(0, cap, false, List.new(), List.new())))
+}
+
+/// A channel with no limit: a send never waits, and memory is the only bound. Prefer
+/// `bounded`, which pushes back on a producer that is faster than its consumers.
+pub fn unbounded[T]() -> Channel[T] {
+    let d: Chan[T] = Chan.new()
+    Channel(d, sync.lock(St(0, UNBOUNDED, false, List.new(), List.new())))
+}
+
+// Reservations, each one critical section of the state. `me` is the caller's Parker, taken
+// out of the list it may still be in; `reg` registers it when the caller will wait.
+// Results: 0 reserved, 1 must wait, 2 closed.
+
+fn reserve_send(st: sync.Lock[St], me: sync.Parker, reg: bool) -> i32 uses io {
+    st.with(|s: St| -> (St, i32) {
+        let mut t = s.copy()
+        t.tx = sync.without(t.tx, me)
+        if t.closed { return (t, 2) }
+        if t.len < t.cap {
+            t.len += 1
+            sync.wake_all(t.rx)
+            t.rx = List.new()
+            return (t, 0)
+        }
+        if reg { t.tx.push(me) }
+        (t, 1)
+    })
+}
+
+fn reserve_recv(st: sync.Lock[St], me: sync.Parker, reg: bool) -> i32 uses io {
+    st.with(|s: St| -> (St, i32) {
+        let mut t = s.copy()
+        t.rx = sync.without(t.rx, me)
+        if t.len > 0 {
+            t.len -= 1
+            sync.wake_all(t.tx)
+            t.tx = List.new()
+            return (t, 0)
+        }
+        if t.closed { return (t, 2) }
+        if reg { t.rx.push(me) }
+        (t, 1)
+    })
+}
+
+fn leave_rx(st: sync.Lock[St], me: sync.Parker) {
+    st.update(|s: St| -> St {
+        let mut t = s.copy()
+        t.rx = sync.without(t.rx, me)
+        t
+    })
+}
+
+fn leave_tx(st: sync.Lock[St], me: sync.Parker) {
+    st.update(|s: St| -> St {
+        let mut t = s.copy()
+        t.tx = sync.without(t.tx, me)
+        t
+    })
+}
+
+impl[T] Channel[T] {
+    /// Sends `v`, waiting while the channel is full until `dl`. Cancel-safe: the value is
+    /// queued (`Sent`) or returned (`Full`, `Rejected`).
+    fn send(self, v: T, dl: time.Deadline) -> Send[T] uses io, clock {
+        let mut me = sync.no_parker()
+        let mut have = false
+        while true {
+            let r = reserve_send(self.st, me, have)
+            if r == 0 {
+                if have { me.close() }
+                self.data.send(v)
+                return Sent
+            }
+            if r == 2 {
+                if have { me.close() }
+                return Rejected(v)
+            }
+            if dl.expired() {
+                if have {
+                    leave_tx(self.st, me)
+                    me.close()
+                }
+                return Full(v)
+            }
+            if !have {
+                // register before waiting: the next round re-checks under the lock
+                me = sync.parker()
+                have = true
+            } else {
+                me.park(dl)
+            }
+        }
+        Full(v)
+    }
+
+    /// Sends `v` if there is room now.
+    fn try_send(self, v: T) -> Send[T] uses io {
+        let r = reserve_send(self.st, sync.no_parker(), false)
+        if r == 0 {
+            self.data.send(v)
+            return Sent
+        }
+        if r == 2 { return Rejected(v) }
+        Full(v)
+    }
+
+    /// Receives the oldest value, waiting until `dl`. Cancel-safe: one value or none.
+    fn recv(self, dl: time.Deadline) -> Recv[T] uses io, clock {
+        let mut me = sync.no_parker()
+        let mut have = false
+        while true {
+            let r = reserve_recv(self.st, me, have)
+            if r == 0 {
+                if have { me.close() }
+                return Value(self.data.recv().unwrap())
+            }
+            if r == 2 {
+                if have { me.close() }
+                return Closed
+            }
+            if dl.expired() {
+                if have {
+                    leave_rx(self.st, me)
+                    me.close()
+                }
+                return Empty
+            }
+            if !have {
+                me = sync.parker()
+                have = true
+            } else {
+                me.park(dl)
+            }
+        }
+        Empty
+    }
+
+    /// Receives a value if one is queued now.
+    fn try_recv(self) -> Recv[T] uses io {
+        let r = reserve_recv(self.st, sync.no_parker(), false)
+        if r == 0 { return Value(self.data.recv().unwrap()) }
+        if r == 2 { return Closed }
+        Empty
+    }
+
+    /// Closes the channel: sends are rejected from now on; receivers get what is queued, then
+    /// `Closed`. Wakes everyone waiting. Closing twice is harmless.
+    fn close(self) uses io {
+        self.st.update(|s: St| -> St {
+            let mut t = s.copy()
+            t.closed = true
+            sync.wake_all(t.rx)
+            sync.wake_all(t.tx)
+            t.rx = List.new()
+            t.tx = List.new()
+            t
+        })
+    }
+
+    /// Values queued (or being queued) now.
+    fn len(self) -> usize { self.st.with(|s: St| -> (St, usize) (s, s.len)) }
+
+    fn is_closed(self) -> bool { self.st.with(|s: St| -> (St, bool) (s, s.closed)) }
+
+    /// A select case that is ready when a value can be received (`f(Some(v))`) or the
+    /// channel is closed and drained (`f(None)`). Cancel-safe: a value is taken only by the
+    /// case that the select returns.
+    fn recv_case[U](self, f: fn(Option[T]) -> U) -> Case[U] uses io {
+        let st = self.st
+        let data = self.data
+        Case(|me: sync.Parker, reg: bool| -> Option[U] {
+            let r = reserve_recv(st, me, reg)
+            if r == 0 { return Some(f(data.recv())) }
+            if r == 2 { return Some(f(None)) }
+            None
+        }, |me: sync.Parker| leave_rx(st, me), NEVER)
+    }
+}
+
+// ---- select
+
+const NEVER: i64 = 9223372036854775807
+
+/// One alternative of a `select`, producing a U when it is chosen. Made by
+/// `Channel.recv_case`, `timer_case`, `task.Token.cancel_case`, or by hand:
+/// - `poll(me, reg)`: take the case's event if it is ready (`Some`, and then `me` must not
+///   be left in any list), else `None`, and when `reg` is set leave `me` in the case's
+///   waiter list, all in one critical section;
+/// - `leave(me)`: take `me` out of that list;
+/// - `at_ns`: when the case becomes ready by itself (a timer), on the monotonic clock, or
+///   the largest i64 for never.
+pub type Case[U] = { poll: fn(sync.Parker, bool) -> Option[U], leave: fn(sync.Parker), at_ns: i64 }
+
+/// A case that is ready once `dl` has passed, producing `u`.
+pub fn timer_case[U](dl: time.Deadline, u: U) -> Case[U] uses clock {
+    Case(|me: sync.Parker, reg: bool| -> Option[U] {
+        if dl.expired() { return Some(u) }
+        None
+    }, |me: sync.Parker| {}, dl.mono_ns())
+}
+
+/// Waits until one of `cases` is ready and returns what it produces, or None when `dl`
+/// passes first. If several are ready, which one wins rotates (no case starves another).
+/// Exactly one case's event is taken: the others are left as they were (each case is
+/// cancel-safe, see above), so a select can be abandoned at its deadline.
+pub fn select[U](cases: List[Case[U]], dl: time.Deadline) -> Option[U] uses io, clock {
+    let n = cases.len()
+    if n == 0 {
+        time.sleep_until(dl)
+        return None
+    }
+    let start = ((time.mono_ns() / 1000) as u64 % (n as u64)) as usize
+    let mut wake = dl.copy()
+    for c in cases { wake = wake.earlier(time.at_mono_ns(c.at_ns)) }
+    // first without registering: no Parker when something is ready
+    for k in 0..n {
+        let c = cases[(start + k) % n]
+        let poll = c.poll
+        match poll(sync.no_parker(), false) {
+            Some(u) => { return Some(u) }
+            None => {}
+        }
+    }
+    if dl.expired() { return None }
+    let me = sync.parker()
+    let mut out: Option[U] = None
+    let mut going = true
+    while going {
+        let mut reg: usize = 0
+        for k in 0..n {
+            if out.is_none() {
+                let c = cases[(start + k) % n]
+                let poll = c.poll
+                match poll(me, true) {
+                    Some(u) => { out = Some(u) }
+                    None => { reg = k + 1 }
+                }
+            }
+        }
+        if out.is_some() || dl.expired() {
+            going = false
+        } else {
+            me.park(wake)
+        }
+        for k in 0..reg {
+            let c = cases[(start + k) % n]
+            let leave = c.leave
+            leave(me)
+        }
+    }
+    me.close()
+    out
+}
