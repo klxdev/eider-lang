@@ -1782,7 +1782,24 @@ tests/core, examples/ and the rest): 4 sites, all in std/event.ei (the timer hea
 swaps and two ids read before `self` changes); and after the merge of layer/services
 (packages/http, examples/kvstore): 3 sites in packages/http/parse.ei (`let m = p.m` before
 `p.m = empty_msg()`, and two positions read before the parser moves on). All got `.copy()`;
-nothing else, and nothing in examples/kvstore.
+nothing else, and nothing in examples/kvstore. After the merge of layer/std (stream, path,
+strings, utf8, fmt, sort, deque, set, heap, encoding, testing): 4 findings and 3 E0301s in
+generic code, which has no machine-applicable fix (`.copy()` of a `T` would need a bound):
+swaps in std/heap.ei and std/sort.ei and a moved element in std/set.ei now bind with `var`
+(the implicit share `let` made, no bound needed), and integer positions in std/heap.ei,
+std/strings.ei and std/stream.ei got `.copy()`. One finding had no fix because the type has
+no Copy: std/task.ei's `let k = t.kids` before `t.kids = List.new()` (a List of Tokens,
+which hold a Chan) silently became the empty list, so cancelling a token no longer cancelled
+its children and http's server test hung under this compiler; it binds with `var` now, and
+the audit's help says to for such types. That finding was missed by the first sweep, which
+only applied fixes, and is the reason for test-compiler.sh's "meaning" leg: tests/std, the
+packages' and the examples' tests must give their .out under this compiler as well as the
+seed. The `for x in r` over a reference r to a List keeps r alive for the whole loop now (the
+List is read again each iteration), so a push to it in the body is reported too.
+
+There is no way in 8.6 other than the deprecated `var` to take a share of a value without
+Copy out of a place before replacing the place (`let k = t.kids; t.kids = List.new()`): a
+`take`/`replace` accessor (8.15, projections) is the natural successor.
 
 **Codes.** New: E0307 (a mutable alias of a read-only place), E0308 (the protection rule).
 Changed: none of the existing messages; E0301 gains the two reference cases above.

@@ -169,7 +169,7 @@ pub fn fields[A: Text](s: A) -> List[String] {
     var i: usize = 0
     while i < t.len() {
         while i < t.len() && is_space(t.byte(i)) { i += 1 }
-        let a = i
+        let a = i.copy()
         while i < t.len() && !is_space(t.byte(i)) { i += 1 }
         if i > a { out.push(cut(t, a, i)) }
     }

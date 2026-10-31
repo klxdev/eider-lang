@@ -39,7 +39,7 @@ impl[T: Ord] Heap[T] {
     }
 
     fn swap(inout self, a: usize, b: usize) {
-        let t = self.items[a]
+        var t = self.items[a]
         self.items[a] = self.items[b]
         self.items[b] = t
     }
@@ -135,7 +135,7 @@ impl[T] Queue[T] {
     fn is_empty(self) -> bool { self.heap.is_empty() }
 
     fn push(inout self, prio: i64, value: T) {
-        let s = self.next
+        let s = self.next.copy()
         self.heap.push(Entry(prio, s, value))
         self.next += 1
     }

@@ -61,6 +61,8 @@
 #             migrate-var.sh) on a copy of core, std, packages and compiler check, pass the
 #             package tests, and (`var` -> `let mut`) give a compiler that emits the same C;
 #             `eiderc migrate-var` of compiler/tests/migrate/*.ei equals the hand-checked .out.
+#   meaning:  tests/std, packages/*/tests and examples/*/tests give their .out when built by this
+#             compiler (references by default) as well as by the seed (verify.sh).
 #   audit-refs: `eiderc audit-refs --json` of compiler/tests/audit/*.ei equals the hand-checked
 #             .out (the writes that change what a `let` reference sees).
 #   packages: compiler/tests/pkgs, packages with eider.toml and eider.lock (two packages
@@ -537,6 +539,21 @@ for f in packages/*/tests/*.ei; do
   cmp -s $tmp/mo "${f%.ei}.out" || { echo "FAIL migration: run $f"; diff "${f%.ei}.out" $tmp/mo | head -10; mig_ok=0; }
 done
 if [ $mig_ok = 1 ]; then echo "ok   migration: $(wc -l <$tmp/mig) files rewritten to package imports, $(wc -l <$tmp/migc) without \`uses ffi\` and $(grep -c '^migrated' $tmp/migv) without \`var\` ($(cat $mig/std/*.ei $mig/packages/*/*.ei | grep -c '^[[:space:]]*var[[:space:]]') generic ones left) check and pass their package tests; the migrated compiler emits the same C"; else fail=1; fi
+# meaning: std's, the packages' and the examples' tests (run by verify.sh with the seed, where
+# `let` copies) give their .out with this compiler too, where `let` of a place is a reference
+# (docs/compiler.md, "C8.6"); a difference is code that relied on the copy (`eiderc audit-refs`)
+m_ok=0; m_n=0
+for f in tests/std/*.ei packages/*/tests/*.ei examples/*/tests/*.ei; do
+  [ -f "${f%.ei}.out" ] || continue
+  m_n=$((m_n + 1))
+  in="${f%.ei}.in"; [ -f "$in" ] || in=/dev/null
+  case $f in
+    tests/std/*) got=$(EIDER_STD_TEST=set $new run "$f" <"$in" 2>&1; echo "exit $?") ;;
+    *) got=$($new run "$f" </dev/null 2>&1) ;;
+  esac
+  if [ "$got" = "$(cat "${f%.ei}.out")" ]; then m_ok=$((m_ok + 1)); else echo "FAIL meaning: $f"; echo "$got" | diff "${f%.ei}.out" - | head -10; fail=1; fi
+done
+[ "$m_ok" = "$m_n" ] && echo "ok   meaning: $m_ok/$m_n std, package and example tests give their .out with references by default"
 # audit-refs: `eiderc audit-refs --json` of compiler/tests/audit/*.ei gives the hand-checked .out
 for f in compiler/tests/audit/*.ei; do
   $new audit-refs --json "$f" >$tmp/ar 2>&1

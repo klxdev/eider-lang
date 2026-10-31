@@ -39,7 +39,7 @@ impl[T: Hash + Eq] Set[T] {
         self.index.remove(x)
         let last = self.elems.len() - 1
         if i != last {
-            let moved = self.elems[last]
+            var moved = self.elems[last]
             self.elems[i] = moved
             self.index.insert(moved, i)
         }

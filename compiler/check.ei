@@ -1060,6 +1060,19 @@ fn new_ref(inout c: C, key: u64, ty: u32, place: u32, mutable: bool, rk: u64, li
     Local(key, ty, mutable, false, true, line, col, NONE, line, col, line, col, place, rid, canon(c, rk))
 }
 
+/// A use of every reference expression e names (e is read again where this is noted).
+fn note_uses(inout c: C, e: u32) {
+    var ks: List[u64] = List.new()
+    idents(c, e, inout ks)
+    for k in ks {
+        let li = lookup(c, k)
+        if li != NONE && c.scopes[li as usize].alias != NONE {
+            let rid = c.scopes[li as usize].refid.copy()
+            ref_note(inout c, N_USE, rid)
+        }
+    }
+}
+
 /// Whether a reference is in scope (only then can a write invalidate one).
 fn refs_in_scope(c: C) -> bool {
     var i = c.scopes.len()
@@ -1370,6 +1383,12 @@ fn audit_write(inout c: C, f: u32, wi: WriteInfo, live: List[u32]) {
         bytes.append(inout msg, s(")"))
         var d = err("audit", wi.line, wi.col, msg)
         d.help = s("bind a copy to keep the old meaning: `.copy()`")
+        let fixed = match rf.fix {
+            Some(_) => true
+            None => false
+        }
+        if !fixed && rf.generic { d.help = s("bind a copy to keep the old meaning: `.copy()`, with a `Copy` bound on the type parameter") }
+        if !fixed && !rf.generic { d.help = s("its type has no Copy: bind it with `var` (deprecated, but a share of the value, as `let` made before C8.6)") }
         d.fix = rf.fix
         c.rf.hits.push(in_file(c, d, wi.m))
     }
@@ -3983,6 +4002,9 @@ fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     emit(inout c, ir.S_COPY, idx, zero, 0, 0, types.USIZE, n.line)
     let ip = ir.place_local(inout c.ir, idx, types.USIZE)
     let lm = ir.open(c.ir)
+    // a List is read again every iteration: the references it is named through stay alive
+    // for the whole loop ("References")
+    if is_list && c.rf.any { note_uses(inout c, n.b) }
     let iv = read(inout c, ip, types.USIZE, 0)
     var lim = ir.op_int(inout c.ir, types.USIZE, t.b as u64)
     if is_list {

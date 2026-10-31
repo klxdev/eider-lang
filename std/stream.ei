@@ -710,7 +710,7 @@ impl[R: Reader] BufReader[R] {
     fn more(inout self) -> Result[bool, Error] uses io {
         if self.eof { return Ok(false) }
         self.compact()
-        let c = self.cap
+        let c = self.cap.copy()
         let chunk = self.inner.read(c)?
         if chunk.len() == 0 {
             self.eof = true
@@ -723,7 +723,7 @@ impl[R: Reader] BufReader[R] {
     fn more_by(inout self, dl: time.Deadline) -> Result[bool, Error] uses io, clock {
         if self.eof { return Ok(false) }
         self.compact()
-        let c = self.cap
+        let c = self.cap.copy()
         let chunk = self.inner.read_by(c, dl)?
         if chunk.len() == 0 {
             self.eof = true

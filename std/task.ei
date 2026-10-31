@@ -70,7 +70,8 @@ impl Token {
             t.cancelled = true
             sync.wake_all(t.waiters)
             t.waiters = List.new()
-            let k = t.kids
+            // (`var`: a share of the handles, as `let` made before C8.6; List[Token] has no Copy)
+            var k = t.kids
             t.kids = List.new()
             (t, k)
         })

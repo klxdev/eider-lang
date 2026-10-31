@@ -27,7 +27,7 @@ pub fn sort_by[T](xs: List[T], cmp: fn(T, T) -> Ordering) -> List[T] {
         while i < hi {
             var j = i
             while j > lo && cmp(a[j], a[j - 1]) == Less {
-                let t = a[j]
+                var t = a[j]
                 a[j] = a[j - 1]
                 a[j - 1] = t
                 j -= 1
