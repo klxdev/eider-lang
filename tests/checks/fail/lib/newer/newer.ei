@@ -1,0 +1,2 @@
+// helper package for e0811_toolchain_series.ei: it needs a toolchain this one is not
+pub fn f() -> i64 { 0 }

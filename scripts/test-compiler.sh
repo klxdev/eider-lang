@@ -94,7 +94,7 @@
 #   doc:      `eiderc doc` of compiler/tests/doc/shapes (JSON, text, --private) and of one of
 #             its files equals the goldens there; core, std and packages/* document cleanly.
 #   usage:    `--help` lists every command; unknown options/commands and stray arguments
-#             exit 2.
+#             exit 2; `--version` and `version` print `eiderc <VERSION>`.
 cd "$(dirname "$0")/.." || exit 1
 mkdir -p target
 # EIDERC=<binary> tests that compiler instead of target/eiderc-next, compiler/ as built by
@@ -785,7 +785,7 @@ $new --help >$tmp/o 2>&1
 code=$?
 uok=1
 [ $code = 0 ] || uok=0
-for c in check emit-c emit-header build "build --lib" "build --wasm" run test "test --compile-fail" lex parse ir caps ide doc help; do
+for c in check emit-c emit-header build "build --lib" "build --wasm" run test "test --compile-fail" lex parse ir caps ide doc help version; do
   grep -q "^  eiderc $c " $tmp/o || { echo "FAIL usage: --help does not list \`$c\`"; uok=0; }
 done
 $new check --no-such-flag tests/run/adt.ei >/dev/null 2>&1
@@ -794,5 +794,12 @@ $new frobnicate tests/run/adt.ei >/dev/null 2>&1
 [ $? = 2 ] || { echo "FAIL usage: an unknown command is not an error"; uok=0; }
 $new check tests/run/adt.ei extra.ei >/dev/null 2>&1
 [ $? = 2 ] || { echo "FAIL usage: a stray argument is not an error"; uok=0; }
-if [ $uok = 1 ]; then echo "ok   usage: --help lists every command; unknown options, commands and stray arguments exit 2"; else fail=1; fi
+# the version (docs/site/tooling/releases.md): VERSION, through core/version.ei
+want="eiderc $(tr -d ' \n' < VERSION)"
+for v in --version version; do
+  got=$($new $v 2>&1)
+  [ $? = 0 ] && [ "$got" = "$want" ] || { echo "FAIL usage: \`eiderc $v\` prints \`$got\`, not \`$want\`"; uok=0; }
+done
+head -1 $tmp/o | grep -q "^$want " || { echo "FAIL usage: --help does not start with \`$want\`"; uok=0; }
+if [ $uok = 1 ]; then echo "ok   usage: --help lists every command; unknown options, commands and stray arguments exit 2; --version is VERSION"; else fail=1; fi
 exit $fail

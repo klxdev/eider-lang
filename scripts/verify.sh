@@ -48,19 +48,23 @@ elif [ "$nok" -gt 0 ]; then
   echo "ok   crypto ($(grep -c '^ok   crypto rfc (' $S/crypto) backend(s): RFC/CAVP/Wycheproof vectors, ASan+UBSan, $(grep -c '^ok   crypto cross' $S/crypto) cross-backend checks)"
 fi
 sh tests/pkg/run.sh | grep -q FAIL && { echo "FAIL pkg"; fail=1; } || echo "ok   pkg (eider-pkg end to end, local git repos)"
+sh scripts/version.sh check > $S/version 2>&1 && cat $S/version || { echo "FAIL version: sh scripts/version.sh check"; sed 's/^/  /' $S/version; fail=1; }
 sh scripts/test-compiler.sh | grep -q FAIL && { echo "FAIL compiler (eiderc)"; fail=1; } || echo "ok   compiler (eiderc vs the recorded oracle, tests/oracle)"
 sh scripts/selfhost.sh --from-seed >/dev/null 2>&1 && echo "ok   seed (seed/eiderc.c rebuilds itself with only a C compiler)" || { echo "FAIL seed: sh scripts/selfhost.sh --from-seed"; fail=1; }
 bash tests/export/run.sh | tail -1 | grep -q "^ok" && echo "ok   export (C and C++ consumers)" || { echo "FAIL export"; fail=1; }
 # tools: eider-analyzer and tree-sitter-eider, the editor tooling in their own repositories
 # (scripts/check-tools.sh; EIDER_ANALYZER, TREE_SITTER_EIDER, default ../<name>), built and
-# tested against this checkout. A half whose repository or tool is missing is a skipped leg,
-# so a plain checkout stays green.
+# tested against this checkout, and every sibling tool's VERSION has this MAJOR.MINOR (the
+# `ok   versions:` line). A half whose repository or tool is missing is a skipped leg, so a
+# plain checkout stays green.
 sh scripts/check-tools.sh > $S/tools 2>&1; trc=$?
 while IFS= read -r l; do case $l in "skip: "*) skip "tools (eider-analyzer, tree-sitter-eider): ${l#skip: }" ;; esac; done < $S/tools
 if [ $trc != 0 ]; then
   echo "FAIL tools (eider-analyzer, tree-sitter-eider): sh scripts/check-tools.sh"; grep -A6 "^FAIL" $S/tools | head -20; fail=1
 elif grep -q "^ok" $S/tools; then
-  echo "ok   tools (eider-analyzer, tree-sitter-eider): $(grep "^ok" $S/tools | sed -E 's/^ok +([a-z-]+).*/\1/' | paste -sd, - | sed 's/,/, /g') against this checkout"
+  built=$(grep "^ok" $S/tools | grep -v "^ok   versions:" | sed -E 's/^ok +([a-z-]+).*/\1/' | paste -sd, - | sed 's/,/, /g')
+  [ -n "$built" ] && echo "ok   tools (eider-analyzer, tree-sitter-eider): $built against this checkout"
+  grep "^ok   versions:" $S/tools
 fi
 printf 'int x;\n' > $S/wasm.c
 if "${WASM_CC:-clang}" --target=wasm32 -c -o $S/wasm.o $S/wasm.c 2>/dev/null && command -v wasm-ld >/dev/null && command -v node >/dev/null; then

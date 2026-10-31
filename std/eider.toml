@@ -1,4 +1,5 @@
 [package]
 name = "std"
 version = "0.1.0"
+eider = "0.1"
 description = "The standard library: part of the toolchain, imported as `std/<module>` (docs/compiler.md, \"C8.3: packages and modules\")"

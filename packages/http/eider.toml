@@ -1,6 +1,7 @@
 [package]
 name = "http"
 version = "0.1.0"
+eider = "0.1"
 description = "HTTP/1.1: a strict incremental parser, a server with deadlines and graceful shutdown, a blocking client, a router, and JSON-RPC 2.0 over HTTP (docs/services.md)"
 
 # JSON-RPC bodies (jsonrpc.ei); json is pure, so it is granted nothing

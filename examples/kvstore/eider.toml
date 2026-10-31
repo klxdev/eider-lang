@@ -1,6 +1,7 @@
 [package]
 name = "kvstore"
 version = "0.1.0"
+eider = "0.1"
 main = "main.ei"
 description = "An example JSON-RPC 2.0 service on packages/http: a key-value store and a calculator (docs/services.md)"
 

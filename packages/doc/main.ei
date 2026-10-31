@@ -11,6 +11,7 @@
 //! directory. The site defaults to `docs/site` when that has a SUMMARY.md. `$EIDERC` is the
 //! compiler (default `eiderc`, found on PATH).
 
+import "core/version"
 import "std/bytes"
 import "std/env"
 import "std/fs"
@@ -48,19 +49,8 @@ fn usage() -> List[u8] {
     t
 }
 
-/// The toolchain's version (eider-doc ships with it): the first line of `VERSION` in
-/// `$EIDER_ROOT`, else in the current directory when that is the toolchain's root.
-fn version() -> List[u8] uses io, fs {
-    let mut root = ".".bytes()
-    match env.get("EIDER_ROOT".bytes()) {
-        Some(r) => { if r.len() > 0 { root = r } }
-        None => {}
-    }
-    match fs.read(fs.join(root, "VERSION".bytes())) {
-        Ok(t) => bytes.trim(bytes.split(t, 10)[0])
-        Err(_) => "(unknown: set EIDER_ROOT to the toolchain)".bytes()
-    }
-}
+/// The toolchain's version: eider-doc ships with it (VERSION, through core/version).
+fn toolchain_version() -> List[u8] { version.VERSION.bytes() }
 
 fn die(msg: List[u8]) uses io {
     let mut m = "eider-doc: ".bytes()
@@ -78,7 +68,7 @@ fn parse_args() -> Args uses io, fs {
         i += 1
         if bytes.eq(x, "--version".bytes()) || bytes.eq(x, "version".bytes()) {
             let mut m = "eider-doc ".bytes()
-            bytes.append(inout m, version())
+            bytes.append(inout m, toolchain_version())
             io.outln(m)
             env.exit(0)
         } else if bytes.eq(x, "--help".bytes()) || bytes.eq(x, "-h".bytes()) || bytes.eq(x, "help".bytes()) {

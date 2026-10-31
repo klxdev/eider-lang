@@ -1,0 +1,7 @@
+// expect: E0811 4:1
+// a package for another toolchain MAJOR.MINOR, reported at the import that loads it, once
+import "core/sys"
+import "../lib/pkgs/oldseries/oldseries.ei"
+import "../lib/pkgs/oldseries/oldseries.ei" as again
+
+fn main() {}

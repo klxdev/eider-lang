@@ -635,6 +635,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0807_comptime_unwrap.ei     E0807 at 10:7
   ok   e0809_not_a_dependency.ei    E0809 at 3:1
   ok   e0810_no_lock.ei             E0810 at 2:1
+  ok   e0811_series_import.ei       E0811 at 4:1
 
 compile-pass tests (compiler/tests/check/pass)
   ok   c822_label_liveness.ei
@@ -705,6 +706,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-703 passed, 0 failed; error-code coverage 51/55
+704 passed, 0 failed; error-code coverage 52/56
 codes without a compile-fail test: E0302 E0402 E0806 E0808
 --- exit 0
