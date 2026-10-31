@@ -1,0 +1,7 @@
+// expect: E0115 6:7
+type R = { n: i32 }
+impl Drop for R { fn drop(inout self) {} }
+fn main() {
+    var r = R(1)
+    r.drop()
+}

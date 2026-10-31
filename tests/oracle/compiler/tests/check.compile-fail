@@ -135,6 +135,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0115_assoc_with_value.ei    E0115 at 5:15
   ok   e0115_bound_unmet_impl.ei    E0115 at 5:36
   ok   e0115_clo_field_noncallable.ei E0115 at 4:15
+  ok   e0115_drop_call.ei           E0115 at 6:7
   ok   e0115_heap_unknown_assoc.ei  E0115 at 2:28
   ok   e0115_heap_unknown_method.ei E0115 at 3:15
   ok   e0115_int_method.ei          E0115 at 2:23
@@ -249,6 +250,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_comptime_wrong_int.ei  E0401 at 3:25
   ok   e0401_const_shadowed_by_local.ei E0401 at 5:18
   ok   e0401_const_type_mismatch.ei E0401 at 2:15
+  ok   e0401_contains_no_eq.ei      E0401 at 3:7
   ok   e0401_empty_array.ei         E0401 at 3:13
   ok   e0401_field_mismatch.ei      E0401 at 4:18
   ok   e0401_filter_wrong_ret.ei    E0401 at 3:28
@@ -256,6 +258,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_fold_wrong.ei          E0401 at 3:30
   ok   e0401_fold_wrong2.ei         E0401 at 3:27
   ok   e0401_for_each_ret.ei        E0401 at 3:20
+  ok   e0401_for_record_no_iter.ei  E0401 at 3:22
   ok   e0401_foreach_int.ei         E0401 at 3:14
   ok   e0401_from_bytes_arg.ei      E0401 at 3:23
   ok   e0401_gen_body_error_twice.ei E0401 at 2:26
@@ -308,7 +311,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_opt_print.ei           E0401 at 2:27
   ok   e0401_order_module_test_stale_file.ei E0401 at 5:18
   ok   e0401_order_test_before_bodies.ei E0401 at 6:17
-  ok   e0401_ordering_bools.ei      E0401 at 3:18
+  ok   e0401_ordering_bools.ei      E0401 at 4:15
   ok   e0401_panic_non_str.ei       E0401 at 3:11
   ok   e0401_prelude_variant_on_enum.ei E0401 at 5:9
   ok   e0401_prelude_variant_pattern.ei E0401 at 4:9
@@ -453,6 +456,10 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0506_push_byte_nul.ei       E0506 at 4:17
   ok   e0601_bound_second_param.ei  E0601 at 11:15
   ok   e0601_bound_unmet_generic_impl.ei E0601 at 12:15
+  ok   e0601_copy_chan.ei           E0601 at 4:15
+  ok   e0601_copy_task_in_record.ei E0601 at 5:15
+  ok   e0601_ord_without_eq.ei      E0601 at 3:1
+  ok   e0602_iter_next_not_option.ei E0602 at 4:8
   ok   e0602_mod_trait_impl_bad.ei  E0602 at 4:29
   ok   e0602_quirk_self_in_name.ei  E0602 at 9:8
   ok   e0602_trait_extra_method.ei  E0602 at 5:8
@@ -463,6 +470,23 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0603_bound_on_fn.ei         E0603 at 2:6
   ok   e0603_bound_unknown_fn.ei    E0603 at 2:6
   ok   e0603_trait_unknown.ei       E0603 at 3:6
+  ok   e0604_orphan_builtin.ei      E0604 at 2:1
+  ok   e0604_orphan_list.ei         E0604 at 3:1
+  ok   e0604_orphan_param.ei        E0604 at 2:1
+  ok   e0604_orphan_prelude.ei      E0604 at 2:1
+  ok   e0605_call_bound.ei          E0605 at 3:29 (fix compiles)
+  ok   e0605_copy_param.ei          E0605 at 2:34 (fix compiles)
+  ok   e0605_eq_on_param.ei         E0605 at 2:36 (fix compiles)
+  ok   e0605_for_param.ei           E0605 at 2:39 (fix compiles)
+  ok   e0605_impl_param.ei          E0605 at 4:67 (fix compiles)
+  ok   e0605_map_key_param.ei       E0605 at 3:12 (fix compiles)
+  ok   e0605_ord_extra_bound.ei     E0605 at 2:40 (fix compiles)
+  ok   e0605_print_param.ei         E0605 at 2:41 (fix compiles)
+  ok   e0606_drop_bounded.ei        E0606 at 3:1
+  ok   e0606_drop_caps.ei           E0606 at 4:8
+  ok   e0606_drop_enum.ei           E0606 at 3:1
+  ok   e0606_drop_one_instance.ei   E0606 at 3:1
+  ok   e0701_custom_eq_no_hash.ei   E0701 at 7:12
   ok   e0701_heap_map_key.ei        E0701 at 2:20
   ok   e0701_heap_map_key_rec.ei    E0701 at 3:20
   ok   e0701_thr_map_key.ei         E0701 at 3:12
@@ -519,6 +543,8 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0810_no_lock.ei             E0810 at 2:1
 
 compile-pass tests (compiler/tests/check/pass)
+  ok   c84_shadow_ok.ei
+  ok   c84_traits_ok.ei
   ok   c8_bitwise_ok.ei
   ok   c8_gaps_ok.ei
   ok   comptime_chain.ei
@@ -583,6 +609,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-581 passed, 0 failed; error-code coverage 44/48
+607 passed, 0 failed; error-code coverage 47/51
 codes without a compile-fail test: E0302 E0402 E0806 E0808
 --- exit 0

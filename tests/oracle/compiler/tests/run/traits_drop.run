@@ -1,0 +1,28 @@
+1
+shared, dropped once: 1
+3
+reverse order: 2 1
+3
+written while shared: 3 4
+5
+6
+own copy: 5 6
+8
+drop before fields: 7 8
+3
+13
+true
+in containers: 11 14 13 12 9 10
+15
+v
+copies and generics: 16 15
+30
+31
+return: 30 31 30
+loops: 40 41 42
+446
+141
+[505, 601, 611, 621, 631, 701, 711, 801, 901, 911, 921, 931]
+16
+--- stderr
+--- exit 0

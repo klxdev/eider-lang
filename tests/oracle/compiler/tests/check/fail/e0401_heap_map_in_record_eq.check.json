@@ -1,1 +1,1 @@
-{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_map_in_record_eq.ei","line":5,"col":15},"message":"`==` is not supported for R (Maps have no structural equality)"}
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_map_in_record_eq.ei","line":5,"col":15},"message":"`==` needs `Eq`, which R doesn't implement (its part Mutex[i32] doesn't)","help":"Task, Mutex and Chan values are shared handles: they have no equality, order, hash or text"}

@@ -1,4 +1,5 @@
-// expect: E0401 3:18
+// expect: E0401 4:15
 fn main() {
-    let x = true < false
+    let m = Mutex.new(true)
+    let x = m < m
 }

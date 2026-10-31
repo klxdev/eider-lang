@@ -1,0 +1,26 @@
+// Operation-trait errors with recovery (C8.4): an impl of another package's type is left
+// out (E0604) and checking goes on; a type that lacks a trait (E0401, E0601, E0701) is
+// reported where it is used; missing bounds in generic bodies (E0605) come last, each bound
+// once per body, after every instance was checked, even when an instance also has an error.
+impl Show for u8 {
+    fn show(self, inout out: String) {}
+}
+
+type H = { t: Task[i32] }
+
+fn same[T](a: T, b: T) -> bool { a == b }
+
+fn twice[T](x: T) uses io {
+    print(x)
+    print(x)
+}
+
+fn main() uses io, threads {
+    let h = H(spawn(|| -> i32 1))
+    let c = h.copy()
+    print(h)
+    let m: Map[fn(), i32] = Map.new()
+    print(same(1, 2))
+    print(same(h, h))
+    twice(5)
+}

@@ -1,0 +1,65 @@
+-7
+true
+plain str
+plain String
+Dot
+P { x: 1, y: -2 }
+Circle(3)
+Rect(4, 5)
+Person { name: "Ada \"Countess\" \\ of tab\there", tags: [], age: 36 }
+Person { name: "Ada", tags: ["math", "line\nbreak"], age: 36 }
+(1, "one", true)
+(5,)
+[1, 2, 3]
+Some(Pair { a: 1, b: "x" })
+None
+Ok(())
+Box(P { x: 0, y: 0 })
+{"k": 1}
+[]
+[P { x: 1, y: 2 }, P { x: 3, y: 4 }]
+10
+[P { x: 9, y: 9 }] 7
+true
+true
+true
+false
+true
+false
+true
+false
+true
+true
+true
+false
+true
+true
+true
+true
+true
+Equal
+Greater
+Less
+Greater
+["apple", "fig", "pear"]
+[P { x: 1, y: -1 }, P { x: 1, y: 5 }, P { x: 2, y: 1 }]
+[Circle(5), Rect(1, 9), Rect(2, 2), Dot]
+2
+still origin
+false
+2
+true
+2
+true
+false
+10
+4950
+true
+false
+Q
+Q2
+3
+2
+true
+--- stderr
+--- exit 0

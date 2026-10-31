@@ -1,0 +1,6 @@
+// expect: E0601 3:1
+type F = { f: fn(i32) -> i32 }
+impl Ord for F {
+    fn compare(self, other: F) -> Ordering { Equal }
+}
+fn main() {}

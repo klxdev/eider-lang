@@ -1,0 +1,1 @@
+{"error":"E0601","span":{"file":"compiler/tests/check/fail/e0601_copy_task_in_record.ei","line":5,"col":15},"message":"type Job doesn't implement trait `Copy` (required by `.copy()`): its part Task[i32] doesn't","help":"a running thread can't be cloned and a copied queue has no clear meaning; share the handle instead"}

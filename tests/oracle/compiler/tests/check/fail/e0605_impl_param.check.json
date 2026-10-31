@@ -1,0 +1,1 @@
+{"error":"E0605","span":{"file":"compiler/tests/check/fail/e0605_impl_param.ei","line":4,"col":67},"message":"`.show()` needs `T: Show`","help":"a generic body can only use what its type parameters' bounds promise; add the bound","fix":{"at":{"line":3,"col":7},"delete":0,"insert":": Show"}}
