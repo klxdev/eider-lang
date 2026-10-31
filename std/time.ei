@@ -1,6 +1,7 @@
 // std/time: the monotonic clock (for durations and deadlines), the wall clock (for
-// timestamps) and sleeping (core/ABI.md "Time"). Duration and Instant types come later
-// (layer/std).
+// timestamps) and sleeping (core/ABI.md "Time"); `Duration` and `Deadline` as values, which
+// every blocking operation in std takes (decision C5: timeouts on every blocking operation;
+// docs/runtime.md).
 
 import "core/os"
 
@@ -21,3 +22,107 @@ pub fn unix_seconds() -> i64 uses clock { os.time_wall_ns() / 1000000000 }
 pub fn sleep_ns(ns: i64) uses clock { os.sleep_ns(ns) }
 
 pub fn sleep_ms(ms: i64) uses clock { os.sleep_ns(ms * 1000000) }
+
+const MAX: i64 = 9223372036854775807
+
+// ---- Duration: a span of time in nanoseconds (never negative from the constructors below;
+// `sub` stops at zero). Up to about 292 years; the constructors trap on overflow, like any
+// arithmetic.
+
+pub type Duration = { ns: i64 }
+
+pub fn nanos(n: i64) -> Duration { Duration(n) }
+pub fn micros(n: i64) -> Duration { Duration(n * 1000) }
+pub fn millis(n: i64) -> Duration { Duration(n * 1000000) }
+pub fn seconds(n: i64) -> Duration { Duration(n * 1000000000) }
+pub fn zero() -> Duration { Duration(0) }
+
+impl Duration {
+    fn as_ns(self) -> i64 { self.ns }
+    /// Whole milliseconds, rounded down.
+    fn as_ms(self) -> i64 { self.ns / 1000000 }
+    /// Whole milliseconds, rounded up: what to wait so as not to wake early.
+    fn as_ms_ceil(self) -> i64 {
+        if self.ns <= 0 { return 0 }
+        (self.ns - 1) / 1000000 + 1
+    }
+    fn is_zero(self) -> bool { self.ns <= 0 }
+    /// The sum, saturating at the largest Duration (so "forever" plus anything stays forever).
+    fn plus(self, o: Duration) -> Duration {
+        if o.ns > 0 && self.ns > MAX - o.ns { return Duration(MAX) }
+        Duration(self.ns + o.ns)
+    }
+    /// The difference, or zero if `o` is longer.
+    fn minus(self, o: Duration) -> Duration {
+        if o.ns >= self.ns { return Duration(0) }
+        Duration(self.ns - o.ns)
+    }
+    fn times(self, k: i64) -> Duration { Duration(self.ns * k) }
+    fn shorter(self, o: Duration) -> Duration {
+        if o.ns < self.ns { return o }
+        self
+    }
+}
+
+// ---- Deadline: a point on the monotonic clock, or never. A deadline is what crosses API
+// boundaries (not a timeout), so a chain of calls shares one budget: each call waits at most
+// until the same instant.
+
+pub type Deadline = { at_ns: i64 }
+
+/// No deadline: waits are unbounded.
+pub fn never() -> Deadline { Deadline(MAX) }
+
+/// The deadline `d` from now (saturating: a huge `d` is `never()`).
+pub fn after(d: Duration) -> Deadline uses clock {
+    let now = os.time_mono_ns()
+    if d.ns >= MAX - now { return Deadline(MAX) }
+    if d.ns <= 0 { return Deadline(now) }
+    Deadline(now + d.ns)
+}
+
+/// The deadline `ms` milliseconds from now.
+pub fn after_ms(ms: i64) -> Deadline uses clock { after(millis(ms)) }
+
+/// A deadline that has already passed: an operation given it doesn't wait at all.
+pub fn now() -> Deadline uses clock { Deadline(os.time_mono_ns()) }
+
+/// The deadline at `ns` on the monotonic clock (`mono_ns`).
+pub fn at_mono_ns(ns: i64) -> Deadline { Deadline(ns) }
+
+impl Deadline {
+    fn is_never(self) -> bool { self.at_ns == MAX }
+    fn mono_ns(self) -> i64 { self.at_ns }
+    /// Whether the deadline has passed (never for `never()`).
+    fn expired(self) -> bool uses clock {
+        if self.at_ns == MAX { return false }
+        os.time_mono_ns() >= self.at_ns
+    }
+    /// The time left (zero once passed; the largest Duration for `never()`).
+    fn remaining(self) -> Duration uses clock {
+        if self.at_ns == MAX { return Duration(MAX) }
+        let now = os.time_mono_ns()
+        if now >= self.at_ns { return Duration(0) }
+        Duration(self.at_ns - now)
+    }
+    /// The time left as a poll timeout: -1 for never, else whole milliseconds rounded up (a
+    /// wait never ends before the deadline; 0 once it has passed).
+    fn timeout_ms(self) -> i64 uses clock {
+        if self.at_ns == MAX { return -1 }
+        self.remaining().as_ms_ceil()
+    }
+    /// The earlier of two deadlines.
+    fn earlier(self, o: Deadline) -> Deadline {
+        if o.at_ns < self.at_ns { return o }
+        self
+    }
+}
+
+/// Sleep for `d`.
+pub fn sleep(d: Duration) uses clock { os.sleep_ns(d.ns) }
+
+/// Sleep until `dl` has passed (forever for `never()`: don't).
+pub fn sleep_until(dl: Deadline) uses clock {
+    let left = dl.remaining()
+    if left.ns > 0 { os.sleep_ns(left.ns) }
+}

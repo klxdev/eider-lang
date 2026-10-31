@@ -79,6 +79,14 @@ int64_t ec_spawn(int32_t in_mode, int32_t out_mode, int32_t err_mode);
 int64_t ec_wait(int32_t pid, int32_t nohang);
 int64_t ec_kill(int32_t pid, int32_t sig);
 int64_t ec_getpid(void);
+int64_t ec_fd_wait(int32_t fd, int32_t interest, int64_t timeout_ms);
+int64_t ec_atomic_new(int64_t v);
+int64_t ec_atomic_free(int64_t h);
+int64_t ec_atomic_load(int64_t h, int32_t order);
+int64_t ec_atomic_store(int64_t h, int64_t v, int32_t order);
+int64_t ec_atomic_swap(int64_t h, int64_t v, int32_t order);
+int64_t ec_atomic_add(int64_t h, int64_t n, int32_t order);
+int64_t ec_atomic_cas(int64_t h, int64_t expected, int64_t desired, int32_t order);
 
 static int failures, checks;
 static char self[4096], tmpdir[4096];
@@ -210,6 +218,13 @@ static int child(const char *mode) {
     for (;;) pause();
   }
   if (!strcmp(mode, "exit3")) return 3;
+  if (!strcmp(mode, "badcell")) { /* an operation on a freed cell ends the process */
+    int64_t h = ec_atomic_new(1);
+    ec_atomic_free(h);
+    printf("before");
+    ec_atomic_add(h, 1, 4);
+    return 0;
+  }
   return 99;
 }
 
@@ -927,6 +942,147 @@ static void test_spawn(void) {
   CHECK(ec_getpid() == (int64_t)getpid());
 }
 
+// ---- one descriptor's readiness
+
+static int late_fd;
+static void *late_writer(void *p) {
+  (void)p;
+  ec_sleep_ns(30 * 1000000);
+  set_data("x");
+  ec_fd_write(late_fd);
+  return NULL;
+}
+
+static void test_fd_wait(void) {
+  EQI(ec_pipe(), 0);
+  int r = out_i32(0), w = out_i32(4);
+  EQI(ec_fd_wait(r, 1, 0), 0);  /* nothing to read yet */
+  EQI(ec_fd_wait(w, 2, 0), 2);  /* an empty pipe is writable */
+  EQI(ec_fd_wait(w, 3, 0), 2);
+  int64_t t0 = ec_time_mono_ns();
+  EQI(ec_fd_wait(r, 1, 50), 0); /* the time runs out */
+  int64_t dt = ec_time_mono_ns() - t0;
+  CHECK(dt >= 49 * 1000000 && dt < 2000 * (int64_t)1000000);
+  late_fd = w;
+  pthread_t t;
+  pthread_create(&t, NULL, late_writer, NULL);
+  t0 = ec_time_mono_ns();
+  EQI(ec_fd_wait(r, 1, -1), 1); /* forever: until the write */
+  dt = ec_time_mono_ns() - t0;
+  pthread_join(t, NULL);
+  CHECK(dt >= 20 * 1000000);
+  EQI(ec_read_fd(r, 16), 1);
+  ec_fd_close(w);
+  CHECK(ec_fd_wait(r, 1, 1000) & 8); /* the writer has gone: hang-up */
+  EQI(ec_fd_wait(r, 0, 0), -EINVAL);
+  EQI(ec_fd_wait(r, 4, 0), -EINVAL);
+  ec_fd_close(r);
+  EQI(ec_fd_wait(r, 1, 0), -EBADF);
+}
+
+// ---- atomic cells
+
+static int64_t shared_cell;
+
+static void *cell_adder(void *p) {
+  int32_t order = *(int32_t *)p;
+  for (int i = 0; i < 20000; i++) ec_atomic_add(shared_cell, 1, order);
+  return NULL;
+}
+
+static void *cell_casser(void *p) {
+  (void)p;
+  for (int i = 0; i < 20000; i++) {
+    int64_t seen = ec_atomic_load(shared_cell, 0);
+    for (;;) {
+      int64_t got = ec_atomic_cas(shared_cell, seen, seen + 1, 3);
+      if (got == seen) break;
+      seen = got;
+    }
+  }
+  return NULL;
+}
+
+/* cells made and freed from many threads at once: every handle is distinct while in use */
+static void *cell_churn(void *p) {
+  (void)p;
+  int64_t mine[64];
+  int ok = 1;
+  for (int round = 0; round < 200; round++) {
+    for (int i = 0; i < 64; i++) mine[i] = ec_atomic_new(round * 64 + i);
+    for (int i = 0; i < 64; i++) ok &= ec_atomic_load(mine[i], 1) == round * 64 + i;
+    for (int i = 0; i < 64; i++) ok &= ec_atomic_free(mine[i]) == 0;
+  }
+  return ok ? (void *)1 : NULL;
+}
+
+static void test_atomic_cells(void) {
+  int64_t a = ec_atomic_new(5), b = ec_atomic_new(-1);
+  CHECK(a > 0 && b > 0 && a != b);
+  EQI(ec_atomic_load(a, 4), 5);
+  EQI(ec_atomic_load(b, 0), -1);
+  EQI(ec_atomic_store(a, 7, 2), 0);
+  EQI(ec_atomic_load(a, 1), 7);
+  EQI(ec_atomic_swap(a, 9, 3), 7);
+  EQI(ec_atomic_add(a, -10, 4), 9);
+  EQI(ec_atomic_load(a, 4), -1);
+  EQI(ec_atomic_cas(a, -1, 3, 4), -1);
+  EQI(ec_atomic_cas(a, -1, 4, 1), 3); /* failed: what was there */
+  EQI(ec_atomic_load(a, 99), 3);      /* an unknown ordering is sequentially consistent */
+  EQI(ec_atomic_store(a, INT64_MAX, 1), 0);
+  EQI(ec_atomic_add(a, 1, 0), INT64_MAX); /* wraps */
+  EQI(ec_atomic_load(a, 4), INT64_MIN);
+  EQI(ec_atomic_load(b, 0), -1); /* the other cell is untouched */
+  EQI(ec_atomic_free(a), 0);
+  EQI(ec_atomic_free(a), -EINVAL); /* twice */
+  EQI(ec_atomic_free(0), -EINVAL);
+  EQI(ec_atomic_free(-5), -EINVAL);
+  EQI(ec_atomic_free((int64_t)1 << 40 | 3), -EINVAL);
+  int64_t c = ec_atomic_new(0);
+  CHECK(c != a && (c & 0xffffffff) == (a & 0xffffffff)); /* the slot is reused, the handle isn't */
+  EQI(ec_atomic_free(c), 0);
+  EQI(ec_atomic_free(b), 0);
+  for (int32_t order = 0; order <= 4; order++) {
+    shared_cell = ec_atomic_new(0);
+    int32_t ords[8];
+    pthread_t th[8];
+    for (int i = 0; i < 8; i++) {
+      ords[i] = order;
+      pthread_create(&th[i], NULL, i % 2 ? cell_adder : cell_casser, &ords[i]);
+    }
+    for (int i = 0; i < 8; i++) pthread_join(th[i], NULL);
+    EQI(ec_atomic_load(shared_cell, 4), 8 * 20000);
+    EQI(ec_atomic_free(shared_cell), 0);
+  }
+  pthread_t th[8];
+  for (int i = 0; i < 8; i++) pthread_create(&th[i], NULL, cell_churn, NULL);
+  int all = 1;
+  for (int i = 0; i < 8; i++) {
+    void *ok = NULL;
+    pthread_join(th[i], &ok);
+    all &= ok != NULL;
+  }
+  CHECK(all);
+  /* a freed handle ends the process with a runtime error (exit 101), after flushing stdout */
+  set_child("badcell");
+  int64_t pid = ec_spawn(1, 2, 2);
+  CHECK(pid > 0);
+  int out = out_i32(4), err = out_i32(8);
+  EQI(ec_read_fd(out, 64), 6);
+  CHECK(out_is("before"));
+  char msg[256] = {0};
+  size_t at = 0;
+  for (;;) {
+    int64_t k = ec_read_fd(err, 64);
+    if (k <= 0) break;
+    for (int64_t i = 0; i < k && at < sizeof msg - 1; i++) msg[at++] = (char)ec_out_byte(i);
+  }
+  CHECK(!strcmp(msg, "eider: runtime error: invalid atomic handle (freed, or not made by atomic.new)\n"));
+  ec_fd_close(out);
+  ec_fd_close(err);
+  EQI(ec_wait((int32_t)pid, 0), 101);
+}
+
 int main(int argc, char **argv) {
   if (argc >= 3 && !strcmp(argv[1], "child")) return child(argv[2]);
   snprintf(self, sizeof self, "%s", argv[0]);
@@ -951,6 +1107,8 @@ int main(int argc, char **argv) {
   test_random();
   test_signals();
   test_spawn();
+  test_fd_wait();
+  test_atomic_cells();
   rmdir(tmpdir);
   printf("%d checks, %d failed\n", checks, failures);
   return failures ? 1 : 0;

@@ -42,6 +42,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <stddef.h>
+#include <stdatomic.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1470,6 +1471,45 @@ EC_FN(int64_t, ec_waker_wake, (int32_t wfd)) {
   return 0;
 }
 
+/* Milliseconds on the monotonic clock (for ec_fd_wait's deadline). */
+static int64_t mono_ms(void) {
+  struct timespec t;
+  if (clock_gettime(CLOCK_MONOTONIC, &t) != 0) return 0;
+  return (int64_t)t.tv_sec * 1000 + (int64_t)t.tv_nsec / 1000000;
+}
+
+/* One descriptor's readiness: poll(2) on fd for interest (1 readable, 2 writable), waiting at
+   most timeout_ms (< 0 forever, 0 not at all). The flags that are set (1 readable,
+   2 writable, 4 error, 8 hang-up), or 0 when the time ran out. A signal doesn't end the
+   wait: it is resumed with the time that is left. */
+EC_FN(int64_t, ec_fd_wait, (int32_t fd, int32_t interest, int64_t timeout_ms)) {
+  if ((interest & 3) == 0 || (interest & ~3) != 0) return -EINVAL;
+  struct pollfd p;
+  p.fd = fd;
+  p.events = (short)(((interest & 1) ? POLLIN : 0) | ((interest & 2) ? POLLOUT : 0));
+  int64_t end = timeout_ms > 0 ? mono_ms() + timeout_ms : 0;
+  for (;;) {
+    int64_t left = timeout_ms < 0 ? -1 : timeout_ms == 0 ? 0 : end - mono_ms();
+    if (timeout_ms > 0 && left < 0) left = 0;
+    int t = left > INT_MAX ? INT_MAX : (int)left;
+    p.revents = 0;
+    int n = poll(&p, 1, t);
+    if (n < 0 && errno == EINTR) continue;
+    if (n < 0) return fail();
+    if (n == 0) {
+      if (left > INT_MAX) continue; /* only the first INT_MAX ms of a longer wait */
+      return 0;
+    }
+    if (p.revents & POLLNVAL) return -EBADF;
+    int64_t f = 0;
+    if (p.revents & POLLIN) f |= 1;
+    if (p.revents & POLLOUT) f |= 2;
+    if (p.revents & POLLERR) f |= 4;
+    if (p.revents & POLLHUP) f |= 8;
+    return f;
+  }
+}
+
 // ---- time (ABI.md "Time")
 
 /* Nanoseconds on a clock that never goes backwards or jumps (not counting suspend), from an
@@ -1692,3 +1732,149 @@ EC_FN(int64_t, ec_kill, (int32_t pid, int32_t sig)) {
 }
 
 EC_FN(int64_t, ec_getpid, (void)) { return (int64_t)getpid(); }
+
+// ---- atomic cells (ABI.md "Atomic cells")
+//
+// A cell is a 64-bit integer that every thread may read and change with atomic operations.
+// Eider holds it by a handle, never a pointer: (generation << 32) | index, always > 0. Cells
+// live in chunks that are allocated once and never freed or moved, so an operation on any
+// handle touches valid memory; a handle whose generation doesn't match its cell (freed, or
+// never made) ends the process with a runtime error rather than reading another cell.
+// The generation is odd while the cell is in use and even while it is free; a slot whose
+// generation would no longer fit 31 bits is retired instead of reused.
+
+#define EC_CELL_CHUNK 4096
+#define EC_CELL_CHUNKS 4096 /* at most 16M cells at once */
+
+typedef struct {
+  _Atomic(int64_t) v;
+  _Atomic(uint32_t) gen;
+  uint32_t next_free; /* under cell_mu, while free */
+} ec_cell;
+
+static ec_cell *_Atomic cell_chunks[EC_CELL_CHUNKS];
+static pthread_mutex_t cell_mu = PTHREAD_MUTEX_INITIALIZER;
+static uint32_t cell_used;           /* slots handed out so far (under cell_mu) */
+static uint32_t cell_free = UINT32_MAX; /* free list head (under cell_mu) */
+
+static memory_order cell_mo_rmw(int32_t o) {
+  return o == 0 ? memory_order_relaxed : o == 1 ? memory_order_acquire : o == 2 ? memory_order_release
+       : o == 3 ? memory_order_acq_rel : memory_order_seq_cst;
+}
+static memory_order cell_mo_load(int32_t o) {
+  return o == 0 ? memory_order_relaxed : o == 1 ? memory_order_acquire : memory_order_seq_cst;
+}
+static memory_order cell_mo_store(int32_t o) {
+  return o == 0 ? memory_order_relaxed : o == 2 ? memory_order_release : memory_order_seq_cst;
+}
+static memory_order cell_mo_fail(int32_t o) {
+  return o == 0 || o == 2 ? memory_order_relaxed : o == 1 || o == 3 ? memory_order_acquire : memory_order_seq_cst;
+}
+
+static ec_cell *cell_slot(uint32_t i) {
+  ec_cell *c = atomic_load_explicit(&cell_chunks[i / EC_CELL_CHUNK], memory_order_acquire);
+  return c ? &c[i % EC_CELL_CHUNK] : NULL;
+}
+
+/* The cell of handle h, or the end of the process. */
+static ec_cell *cell_of(int64_t h) {
+  ec_cell *c = NULL;
+  if (h > 0) {
+    uint32_t i = (uint32_t)(h & 0xffffffff), g = (uint32_t)(h >> 32);
+    if (i / EC_CELL_CHUNK < EC_CELL_CHUNKS) c = cell_slot(i);
+    if (c && atomic_load_explicit(&c->gen, memory_order_acquire) != g) c = NULL;
+  }
+  if (!c) {
+    fflush(stdout);
+    fputs("eider: runtime error: invalid atomic handle (freed, or not made by atomic.new)\n", stderr);
+    exit(101);
+  }
+  return c;
+}
+
+/* A new cell holding v: its handle (> 0), or -ENOMEM. */
+EC_FN(int64_t, ec_atomic_new, (int64_t v)) {
+  pthread_mutex_lock(&cell_mu);
+  uint32_t i;
+  ec_cell *c;
+  if (cell_free != UINT32_MAX) {
+    i = cell_free;
+    c = cell_slot(i);
+    cell_free = c->next_free;
+  } else {
+    if (cell_used == (uint32_t)EC_CELL_CHUNK * EC_CELL_CHUNKS) {
+      pthread_mutex_unlock(&cell_mu);
+      return -ENOMEM;
+    }
+    i = cell_used;
+    c = cell_slot(i);
+    if (!c) {
+      ec_cell *chunk = calloc(EC_CELL_CHUNK, sizeof *chunk);
+      if (!chunk) {
+        pthread_mutex_unlock(&cell_mu);
+        return -ENOMEM;
+      }
+      for (uint32_t k = 0; k < EC_CELL_CHUNK; k++) {
+        atomic_init(&chunk[k].v, 0);
+        atomic_init(&chunk[k].gen, 0);
+      }
+      atomic_store_explicit(&cell_chunks[i / EC_CELL_CHUNK], chunk, memory_order_release);
+      c = &chunk[i % EC_CELL_CHUNK];
+    }
+    cell_used++;
+  }
+  atomic_store_explicit(&c->v, v, memory_order_relaxed);
+  uint32_t g = atomic_load_explicit(&c->gen, memory_order_relaxed) + 1; /* even -> odd: in use */
+  atomic_store_explicit(&c->gen, g, memory_order_release);
+  pthread_mutex_unlock(&cell_mu);
+  return (int64_t)((uint64_t)g << 32 | i);
+}
+
+/* Frees the cell of h: 0, or -EINVAL if h is not a cell in use (nothing changes). */
+EC_FN(int64_t, ec_atomic_free, (int64_t h)) {
+  if (h <= 0) return -EINVAL;
+  uint32_t i = (uint32_t)(h & 0xffffffff), g = (uint32_t)(h >> 32);
+  if (i / EC_CELL_CHUNK >= EC_CELL_CHUNKS) return -EINVAL;
+  pthread_mutex_lock(&cell_mu);
+  ec_cell *c = i < cell_used ? cell_slot(i) : NULL;
+  if (!c || atomic_load_explicit(&c->gen, memory_order_relaxed) != g) {
+    pthread_mutex_unlock(&cell_mu);
+    return -EINVAL;
+  }
+  atomic_store_explicit(&c->gen, g + 1, memory_order_release); /* odd -> even: free */
+  if (g + 1 < 0x7ffffffe) {                                   /* else retired */
+    c->next_free = cell_free;
+    cell_free = i;
+  }
+  pthread_mutex_unlock(&cell_mu);
+  return 0;
+}
+
+/* order (here and below): 0 relaxed, 1 acquire, 2 release, 3 acquire-release, 4 sequentially
+   consistent; one that doesn't apply to the operation, or an unknown number, is sequentially
+   consistent. */
+EC_FN(int64_t, ec_atomic_load, (int64_t h, int32_t order)) {
+  return atomic_load_explicit(&cell_of(h)->v, cell_mo_load(order));
+}
+
+EC_FN(int64_t, ec_atomic_store, (int64_t h, int64_t v, int32_t order)) {
+  atomic_store_explicit(&cell_of(h)->v, v, cell_mo_store(order));
+  return 0;
+}
+
+/* The previous value; the cell becomes v. */
+EC_FN(int64_t, ec_atomic_swap, (int64_t h, int64_t v, int32_t order)) {
+  return atomic_exchange_explicit(&cell_of(h)->v, v, cell_mo_rmw(order));
+}
+
+/* The previous value; the cell becomes previous + n, wrapping (two's complement). */
+EC_FN(int64_t, ec_atomic_add, (int64_t h, int64_t n, int32_t order)) {
+  return atomic_fetch_add_explicit(&cell_of(h)->v, n, cell_mo_rmw(order));
+}
+
+/* If the cell holds expected it becomes desired. The value it held (== expected: done). */
+EC_FN(int64_t, ec_atomic_cas, (int64_t h, int64_t expected, int64_t desired, int32_t order)) {
+  int64_t e = expected;
+  atomic_compare_exchange_strong_explicit(&cell_of(h)->v, &e, desired, cell_mo_rmw(order), cell_mo_fail(order));
+  return e;
+}

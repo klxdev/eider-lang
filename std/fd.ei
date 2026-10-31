@@ -4,6 +4,7 @@
 
 import "core/sys"
 import "core/os"
+import "time.ei"
 
 /// Open flags: one access mode, plus any of the others.
 pub const READ: i32 = 0
@@ -84,6 +85,37 @@ pub fn read(fd: i32, max: i64) -> Result[List[u8], String] uses io {
 
 /// `read` on a non-blocking descriptor: None when nothing is available yet.
 pub fn try_read(fd: i32, max: i64) -> Result[Option[List[u8]], String] uses io {
+    let n = sys.read_fd(fd, max)
+    if n < 0 {
+        if would_block(n) { return Ok(None) }
+        return Err(error("read", n))
+    }
+    Ok(Some(sys.take()))
+}
+
+/// Readiness to wait for: `READY_READ`, `READY_WRITE`, or both (the same numbers as poll.READ
+/// and poll.WRITE).
+pub const READY_READ: i32 = 1
+pub const READY_WRITE: i32 = 2
+
+/// Waits until `fd` is ready for `interest` or `dl` passes: Ok(true) when ready (also when
+/// the next read or write would report an error or end of file), Ok(false) at the deadline.
+/// The descriptor's own mode doesn't matter. Cancel-safe: it only waits.
+pub fn wait_ready(fd: i32, interest: i32, dl: time.Deadline) -> Result[bool, String] uses io, clock {
+    while true {
+        let n = os.fd_wait(fd, interest, dl.timeout_ms())
+        if n < 0 { return Err(error("wait", n)) }
+        if n > 0 { return Ok(true) }
+        if dl.expired() { return Ok(false) }
+    }
+    Ok(false)
+}
+
+/// `read` with a deadline: Ok(None) when nothing arrived before `dl`, else as `read` (empty
+/// at end of file). Waits first, so it works on blocking descriptors too, provided nobody
+/// else reads `fd` between the wait and the read. Cancel-safe: nothing is consumed on time-out.
+pub fn read_by(fd: i32, max: i64, dl: time.Deadline) -> Result[Option[List[u8]], String] uses io, clock {
+    if !wait_ready(fd, READY_READ, dl)? { return Ok(None) }
     let n = sys.read_fd(fd, max)
     if n < 0 {
         if would_block(n) { return Ok(None) }
