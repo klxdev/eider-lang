@@ -25,6 +25,7 @@ reviewed. Each entry: what, why, where it is recorded in detail.
 | U15 | 2026-10-31 | A docs site (getting started, tour, guides, full language reference) and a doc generator for any Eider codebase as a language feature | docs/site/ |
 | U16 | 2026-10-31 | GitHub: private repos under klxdev (eider-lang, eider-analyzer, tree-sitter-eider; eider-bootstrap stays local); merge and push only after verify is green | this file |
 | U17 | 2026-10-31 | Add eider-profiler: performance, memory and other behaviour of Eider programs in real-world use | ~/workplace/eider-profiler, docs/site/tooling/profiler.md |
+| U20 | 2026-10-31 | Imports use dotted module paths (`import std.bytes`), grouping (`import std.{bytes, fs}`), `as` aliases, and package namespaces (`import std` then `std.bytes.x`, loaded lazily); own-package modules as `pkg.module`; no wildcards and no `from` forms | issue #91 |
 
 ## Taken on Claude's recommendation (review these)
 
