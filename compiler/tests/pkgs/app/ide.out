@@ -26,7 +26,7 @@ symbols
   17 param a <root>/compiler/tests/pkgs/geo/util.ei:4:12-4:13 full 4:12-4:18 in 16 :: a: i64
   18 param b <root>/compiler/tests/pkgs/geo/util.ei:4:20-4:21 full 4:20-4:26 in 16 :: b: i64
   19 fn name <root>/compiler/tests/pkgs/geo/util.ei:6:8-6:12 full 6:1-6:36 :: pub fn name() -> str
-  (93 symbols in <prelude>)
+  (95 symbols in <prelude>)
 refs
   compiler/tests/pkgs/app/ide.ei:3:8-3:13 -> 2 module geo
   compiler/tests/pkgs/app/ide.ei:4:8-4:18 -> 12 module util

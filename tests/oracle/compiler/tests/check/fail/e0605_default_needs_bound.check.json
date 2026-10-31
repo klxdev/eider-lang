@@ -1,0 +1,1 @@
+{"error":"E0605","span":{"file":"compiler/tests/check/fail/e0605_default_needs_bound.ei","line":2,"col":30},"message":"`T.default` needs `T: Default`","help":"a generic body can only use what its type parameters' bounds promise; add the bound","fix":{"at":{"line":2,"col":17},"delete":0,"insert":" + Default"}}

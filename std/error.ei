@@ -1,0 +1,119 @@
+// std/error: errors that report themselves and say what they were in the middle of
+// (docs/compiler.md, "C8.24"; roadmap P0.6). An error type implements `Error`: its message,
+// and the error under it if there is one. `Failure` is an error as a chain of messages,
+// outermost first; `.context("...")` on a Result (or an Option) wraps any Error into a
+// Failure, and `?` converts any Error into a Failure through `From`, so a function returning
+// `Result[T, error.Failure]` can use `?` on every kind of error:
+//
+//     fn settings(text: String) -> Result[Config, error.Failure] {
+//         let port = parse_port(text)?                     // a ParseError, through From
+//         parse(text, port).context("parsing the config")  // any Error, with context
+//     }
+//
+// It costs nothing in a program that doesn't import it, and nothing on the success path
+// in one that does (`with_context` makes its message only on an error).
+
+/// An error: what to tell people, and the error that caused it, if any (as a Failure, the
+/// one shape every error's cause can take without dynamic types).
+pub trait Error {
+    fn message(self) -> String
+    fn source(self) -> Option[Failure]
+}
+
+/// An error as a chain of messages: `message`, then the cause's, outermost first. Shows as
+/// `outer: inner: root`.
+pub type Failure = { message: String, cause: Option[Box[Failure]] }
+
+impl Failure {
+    /// A Failure with this message and no cause.
+    fn new(message: str) -> Failure { Failure(String.from(message), None) }
+
+    /// Any Error as a Failure: its message, then its sources'.
+    fn of[E: Error](e: E) -> Failure {
+        let mut cause: Option[Box[Failure]] = None
+        match e.source() {
+            Some(s) => { cause = Some(Box.new(s)) }
+            None => {}
+        }
+        Failure(e.message(), cause)
+    }
+
+    /// This failure with `message` around it.
+    fn wrap(self, message: String) -> Failure { Failure(message, Some(Box.new(self))) }
+
+    /// Every message of the chain, outermost first.
+    fn chain(self) -> List[String] {
+        let mut out: List[String] = List.new()
+        out.push(self.message.copy())
+        let mut at = self.cause.copy()
+        while let Some(b) = at.take() {
+            let f = b.get()
+            out.push(f.message.copy())
+            at = f.cause.copy()
+        }
+        out
+    }
+
+    /// The innermost failure: the one with no cause.
+    fn root(self) -> Failure {
+        let mut f = self.copy()
+        while let Some(b) = f.cause.take() { f = b.get() }
+        f
+    }
+}
+
+impl Error for Failure {
+    fn message(self) -> String { self.message.copy() }
+    fn source(self) -> Option[Failure] {
+        match self.cause {
+            Some(b) => Some(b.get())
+            None => None
+        }
+    }
+}
+
+impl Show for Failure {
+    fn show(self, inout out: String) {
+        out.append(self.message.copy())
+        match self.cause {
+            Some(b) => {
+                out.push_str(": ")
+                b.get().show(inout out)
+            }
+            None => {}
+        }
+    }
+}
+
+// `?` turns any Error into a Failure (an Err already of type Failure passes unchanged)
+impl[E: Error] From[E] for Failure {
+    fn from(value: E) -> Failure { Failure.of(value) }
+}
+
+impl[T, E: Error] Result[T, E] {
+    /// The error, if any, as a Failure with `message` around it.
+    fn context(self, message: str) -> Result[T, Failure] {
+        match self {
+            Ok(v) => Ok(v)
+            Err(e) => Err(Failure.of(e).wrap(String.from(message)))
+        }
+    }
+
+    /// `context` whose message is made only when there is an error.
+    fn with_context(self, f: fn() -> String) -> Result[T, Failure] {
+        match self {
+            Ok(v) => Ok(v)
+            Err(e) => Err(Failure.of(e).wrap(f()))
+        }
+    }
+}
+
+impl[T] Option[T] {
+    /// None as a Failure with this message.
+    fn context(self, message: str) -> Result[T, Failure] {
+        match self {
+            Some(v) => Ok(v)
+            None => Err(Failure.new(message))
+        }
+    }
+}

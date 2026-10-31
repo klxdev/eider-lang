@@ -1,0 +1,1 @@
+{"error":"E0601","span":{"file":"compiler/tests/check/fail/e0601_context_needs_error.ei","line":5,"col":15},"message":"type bool doesn't implement trait `error.Error` (required by `Result.context`)"}

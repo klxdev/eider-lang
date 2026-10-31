@@ -42,7 +42,9 @@
 //   S_PANIC   trap with message op a       S_ASSERT  trap unless op a; b = message string+1
 //   S_IF      if op a then block b else block c
 //   S_LOOP    loop { block a }; `continue` runs block b (the step) and loops again
-//   S_BREAK   S_CONTINUE   S_RETURN a = op+1 (0: no value)
+//   S_BREAK   S_CONTINUE   a = how many enclosing loops it leaves besides the innermost (a
+//             labeled exit, docs/compiler.md "C8.22"; 0: the innermost loop's)
+//   S_RETURN a = op+1 (0: no value)
 //   S_TUPLE   dst := (args [b/c]) : ty
 //   S_CLONE   dst := deep copy of op a (of type ty)
 //   S_DROP    drop the value in place a (of type ty)
@@ -222,6 +224,20 @@ pub const B_TO_STRING: u32 = 37
 pub const B_MAP_KEYS: u32 = 38
 pub const B_MAP_VALUES: u32 = 39
 pub const B_MAP_ENTRIES: u32 = 40
+/// Ref[T] (docs/compiler.md, "C8.7"; the receiver is a borrowed operand): B_REF_NEW(v) -> ty
+/// (v moved in), B_REF_GET(r) -> T (a copy), B_REF_SET(r, v) (v moved in, the old value
+/// dropped), B_REF_READ(r, f) -> R (f: fn(T) -> R, borrowed, called on a borrow of the
+/// value), B_REF_UPDATE(r, f) -> R (f: fn(inout T) -> R, called on the value itself); each
+/// traps on an overlapping access (line)
+pub const B_REF_NEW: u32 = 41
+pub const B_REF_GET: u32 = 42
+pub const B_REF_SET: u32 = 43
+pub const B_REF_READ: u32 = 44
+pub const B_REF_UPDATE: u32 = 45
+/// B_DEFAULT -> ty: the derived or built-in Default of ty (docs/compiler.md, "C8.23"; a type
+/// with its own impl is an S_CALL of it instead): 0, false, "", empty List/Map, None, and a
+/// record, tuple, array or Box of its parts' defaults
+pub const B_DEFAULT: u32 = 46
 
 pub fn builtin_name(b: u32) -> str {
     match b {
@@ -265,7 +281,13 @@ pub fn builtin_name(b: u32) -> str {
         37 => "to_string"
         38 => "keys"
         39 => "values"
-        _ => "entries"
+        40 => "entries"
+        41 => "ref_new"
+        42 => "ref_get"
+        43 => "ref_set"
+        44 => "read"
+        45 => "update"
+        _ => "default"
     }
 }
 
@@ -706,8 +728,20 @@ fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u3
             ind(inout o, depth)
             put(inout o, "}")
         }
-        18 => put(inout o, "break")
-        19 => put(inout o, "continue")
+        18 => {
+            put(inout o, "break")
+            if s.a > 0 {
+                put(inout o, " outer ")
+                putn(inout o, s.a as u64)
+            }
+        }
+        19 => {
+            put(inout o, "continue")
+            if s.a > 0 {
+                put(inout o, " outer ")
+                putn(inout o, s.a as u64)
+            }
+        }
         21 => {
             put_dst(inout o, s.dst)
             put(inout o, "tuple ")

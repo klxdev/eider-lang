@@ -1,0 +1,6 @@
+// expect: E0115 5:15
+type P = { x: i32 }
+fn main() {
+    let p = P(1)
+    let q = p.default()
+}

@@ -1,0 +1,1 @@
+{"error":"E0301","span":{"file":"compiler/tests/check/fail/e0301_closure_inout_twice.ei","line":5,"col":22},"message":"`n` is borrowed mutably more than once in this call"}

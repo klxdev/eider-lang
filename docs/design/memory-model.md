@@ -205,7 +205,11 @@ docs/compiler.md, "C8.1: copy-on-write", has the scheme and why it beat atomic c
 This is what makes large lists, parsed files and configuration cheap to pass, store and
 return.
 
-### Shared mutable state: `Ref[T]` ✅ (API to refine)
+### Shared mutable state: `Ref[T]` ✅
+
+Implemented by C8.7 (docs/compiler.md, "C8.7: `Ref[T]`", which records the details decided
+there: `Ref.new`, `read`, `update`, `get`, `set`; closures with `inout` parameters for
+`update`; the trap messages; E0411 for a Ref that would cross threads).
 
 For state several owners must see change: caches, memo tables, graphs, observer lists. (A
 plain reference is a binding inside a scope; a `Ref[T]` is the handle that outlives scopes.)

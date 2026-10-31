@@ -1,0 +1,10 @@
+// An update inside an update of the same Ref traps (docs/compiler.md, "C8.7").
+fn main() uses io {
+    let r = Ref.new(1)
+    let alias = r
+    r.update(|inout x| {
+        x += 1
+        print(x)
+        alias.update(|inout y| { y += 1 })
+    })
+}

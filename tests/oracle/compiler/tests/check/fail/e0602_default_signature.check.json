@@ -1,0 +1,1 @@
+{"error":"E0602","span":{"file":"compiler/tests/check/fail/e0602_default_signature.ei","line":4,"col":8},"message":"method `default` doesn't match the signature in trait `Default`"}

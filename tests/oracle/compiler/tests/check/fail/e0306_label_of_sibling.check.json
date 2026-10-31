@@ -1,0 +1,1 @@
+{"error":"E0306","span":{"file":"compiler/tests/check/fail/e0306_label_of_sibling.ei","line":5,"col":30},"message":"no enclosing loop is labeled `first`","help":"label the loop: `name: for ...` or `name: while ...`"}

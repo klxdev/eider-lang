@@ -1,0 +1,6 @@
+// expect: E0401 5:14
+fn main() {
+    let r = Ref.new(1)
+    let f = |x: i32| x + 1
+    r.update(f)
+}

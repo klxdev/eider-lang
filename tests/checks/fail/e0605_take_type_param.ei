@@ -1,0 +1,6 @@
+// expect: E0605 2:42
+fn swap_in[T](inout slot: T) -> T { slot.take() }
+fn main() {
+    let mut xs: List[i32] = List.new()
+    let ys = swap_in(inout xs)
+}

@@ -1,0 +1,124 @@
+// `Ref[T]` (docs/compiler.md, "C8.7"): a shared mutable cell for one thread. Copies of a
+// Ref share it; `read(f)` runs f on a borrow of the value, `update(f)` on the value itself
+// (`fn(inout T) -> R`), `get()` copies it out, `set(v)` replaces it; `.copy()` makes a new
+// Ref holding a copy. Also closures with `inout` parameters. Expected output: refs_shared.out.
+type Ctx = { cache: Ref[Map[String, i32]], rows: List[i32] }
+
+fn lookup(ctx: Ctx, key: String) -> Option[i32] { ctx.cache.read(|m| m.get(key)) }
+
+fn remember(ctx: Ctx, key: String, v: i32) { ctx.cache.update(|inout m| m.insert(key, v)) }
+
+// a record whose drop notes, in a shared log, when its last holder goes
+type Noisy = { name: String, log: Ref[List[String]] }
+
+impl Drop for Noisy {
+    fn drop(inout self) {
+        let name = self.name.copy()
+        self.log.update(|inout l| l.push(name))
+    }
+}
+
+// a node of a graph: neighbours shared through Refs
+type Node = { id: i32, next: List[Ref[Node]] }
+
+fn bump(inout x: i32, by: i32) { x += by }
+
+fn apply(f: fn(inout i32) -> bool, inout v: i32) -> bool { f(inout v) }
+
+fn total(r: Ref[List[i32]]) -> i32 { r.read(|xs| xs.fold(0, |a, x| a + x)) }
+
+fn main() uses io {
+    // sharing: every copy sees a change
+    let a = Ref.new(1)
+    let b = a
+    a.update(|inout n| { n += 41 })
+    print(b.get())
+    b.set(7)
+    print(a.get())
+    let n = a.read(|v| v * 3)
+    print(n)
+    // update returns the closure's result
+    let old = a.update(|inout v| v.replace(100))
+    print(old)
+    print(b.get())
+    // a record of Refs threaded by value
+    let ctx = Ctx(Ref.new(Map.new()), List.new())
+    remember(ctx, String.from("x"), 5)
+    remember(ctx, String.from("y"), 6)
+    let ctx2 = ctx
+    print(lookup(ctx2, String.from("x")))
+    print(lookup(ctx2, String.from("z")))
+    print(ctx.cache.read(|m| m.len()))
+    // `.copy()` is a new Ref with a copy of the value
+    let c = a.copy()
+    c.set(5)
+    print(a.get())
+    print(c.get())
+    // Lists in Refs: update in place, read without copying
+    let xs: Ref[List[i32]] = Ref.new(List.new())
+    for i in 0..5 { xs.update(|inout l| l.push(i)) }
+    print(total(xs))
+    let ys = xs
+    ys.update(|inout l| {
+        l.push(10)
+        l[0] = 100
+    })
+    print(xs.get())
+    // Strings: get copies, set replaces
+    let s = Ref.new(String.from("hello"))
+    let t = s.get()
+    s.update(|inout v| v.push_str(" world"))
+    print(t)
+    print(s.get())
+    // Drop runs once, at the last holder
+    let log: Ref[List[String]] = Ref.new(List.new())
+    let d1 = Ref.new(Noisy(String.from("one"), log))
+    let d2 = d1
+    let d3 = d2
+    print(d3.read(|v| v.name.len()))
+    d1.set(Noisy(String.from("two"), log))
+    print(log.get())
+    if true {
+        let d4 = Ref.new(Noisy(String.from("three"), log))
+        let d5 = d4
+        print(d5.read(|v| v.name.len()))
+    }
+    print(log.get())
+    // nested access of different Refs is fine
+    let p = Ref.new(1)
+    let q = Ref.new(2)
+    p.update(|inout x| { x += q.read(|y| y * 10) })
+    print(p.get())
+    // reads inside reads of the same Ref are fine
+    print(p.read(|x| x + p.read(|y| y)))
+    // a graph through Refs
+    let n1 = Ref.new(Node(1, List.new()))
+    let n2 = Ref.new(Node(2, List.new()))
+    n1.update(|inout v| v.next.push(n2))
+    n2.update(|inout v| { v.id = 20 })
+    print(n1.read(|v| v.next[0].read(|w| w.id)))
+    // a List of Refs: elements share with the originals
+    let mut refs: List[Ref[i32]] = List.new()
+    refs.push(p)
+    refs.push(q)
+    refs[1].update(|inout v| { v += 1 })
+    print(q.get())
+    // closures with inout parameters
+    let inc = |inout x: i32| -> () { x += 1 }
+    let mut k = 1
+    inc(inout k)
+    inc(inout k)
+    print(k)
+    let f: fn(inout i32, i32) = |inout x, by| bump(inout x, by)
+    f(inout k, 10)
+    print(k)
+    print(apply(|inout v| {
+        v *= 2
+        v > 20
+    }, inout k))
+    print(k)
+    let mut pts = [1, 2, 3]
+    let dbl = |inout x: i32| -> () { x *= 2 }
+    dbl(inout pts[1])
+    print(pts[1])
+}

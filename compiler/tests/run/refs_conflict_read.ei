@@ -1,0 +1,8 @@
+// `read` while the same Ref is being updated traps (docs/compiler.md, "C8.7"), also through
+// a copy of the Ref held in a List.
+fn main() uses io {
+    let r = Ref.new(1)
+    let mut all: List[Ref[i32]] = List.new()
+    all.push(r)
+    r.update(|inout x| { x += all[0].read(|y| y) })
+}

@@ -1,0 +1,1 @@
+{"error":"E0601","span":{"file":"compiler/tests/check/fail/e0601_default_bound_unmet.ei","line":4,"col":24},"message":"type Chan[i32] doesn't implement trait `Default` (required by `fresh`)"}

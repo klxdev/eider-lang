@@ -1,0 +1,1 @@
+{"error":"E0411","span":{"file":"compiler/tests/check/fail/e0411_spawn_captures_ref.ei","line":4,"col":19},"message":"this closure captures `r`, a Ref[i32], and a Ref can't be sent to another thread","help":"share the value through a `Mutex[T]` (or send a copy of what the Ref holds) instead"}

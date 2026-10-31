@@ -622,10 +622,27 @@ pub fn ty(inout p: P) -> Result[u32, diag.Diag] {
     if is_kw(p, intern.K_FN) {
         adv(inout p)
         expect(inout p, lex.LParen)?
-        let ps = ty_list(inout p, lex.RParen)?
+        // `fn(inout T) -> R`: bit i of `e` marks parameter i `inout` (docs/compiler.md, "C8.7")
+        let mut ps: List[u32] = List.new()
+        let mut io: u32 = 0
+        let mut bit: u32 = 1
+        while true {
+            skip_nl(inout p)
+            if eat(inout p, lex.RParen) { break }
+            if is_kw(p, intern.K_INOUT) {
+                if ps.len() >= 31 { return Err(err(p, "at most 31 parameters of a fn type can be `inout`")) }
+                adv(inout p)
+                io += bit
+            }
+            ps.push(ty(inout p)?)
+            if ps.len() < 31 { bit *= 2 }
+            skip_nl(inout p)
+            if !eat(inout p, lex.Comma) && !is(p, lex.RParen) { return Err(err(p, "expected `,` or `)`")) }
+        }
         let mut n = mk(ast.TFn, t.line, t.col)
         n.c = list(inout p, ps)
         n.d = ps.len() as u32
+        n.e = io
         if eat(inout p, lex.Arrow) { n.g = ty(inout p)? + 1 }
         return Ok(add(inout p, n))
     }
@@ -920,8 +937,37 @@ fn at_mut(p: P) -> bool {
     bytes.eq(intern.name(p.names, t.val as u32), sys.lit("mut"))
 }
 
+/// `name: for ...` / `name: while ...`: a loop label (docs/compiler.md, "C8.22").
+fn at_label(p: P) -> bool {
+    if !is(p, lex.Ident) || cur(p).val <= intern.LAST_KEYWORD as u64 { return false }
+    if kind_at(p, p.i + 1) != lex.Colon || kind_at(p, p.i + 2) != lex.Ident { return false }
+    let v = p.toks[p.i + 2].val
+    v == intern.K_FOR as u64 || v == intern.K_WHILE as u64
+}
+
+/// The label after `break` or `continue` on the same line, as sym + 1 (0: none), with its
+/// position in b and c.
+fn exit_label(inout p: P, inout n: ast.Node) {
+    if !is(p, lex.Ident) || cur(p).val <= intern.LAST_KEYWORD as u64 { return }
+    let lt = cur(p)
+    n.a = lt.val as u32 + 1
+    n.b = lt.line
+    n.c = lt.col
+    adv(inout p)
+}
+
 fn stmt(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
+    if at_label(p) {
+        // the loop keeps its label in h (sym + 1) and the label's position in i, j
+        adv(inout p)
+        adv(inout p)
+        let s = stmt(inout p)?
+        p.ast.nodes[s as usize].h = t.val as u32 + 1
+        p.ast.nodes[s as usize].i = t.line
+        p.ast.nodes[s as usize].j = t.col
+        return Ok(s)
+    }
     if is_kw(p, intern.K_LET) || is_kw(p, intern.K_VAR) {
         // d: 0 `let`, 1 `var` (deprecated), 2 `let mut`
         let mut mutable: u32 = if is_kw(p, intern.K_VAR) { 1 } else { 0 }
@@ -996,8 +1042,16 @@ fn stmt(inout p: P) -> Result[u32, diag.Diag] {
         if !(is_nl(p) || is_eof(p) || is(p, lex.Semi) || is(p, lex.RBrace)) { n.a = expr(inout p)? + 1 }
         return Ok(add(inout p, n))
     }
-    if eat_kw(inout p, intern.K_BREAK) { return Ok(add(inout p, mk(ast.SBreak, t.line, t.col))) }
-    if eat_kw(inout p, intern.K_CONTINUE) { return Ok(add(inout p, mk(ast.SContinue, t.line, t.col))) }
+    if eat_kw(inout p, intern.K_BREAK) {
+        let mut n = mk(ast.SBreak, t.line, t.col)
+        exit_label(inout p, inout n)
+        return Ok(add(inout p, n))
+    }
+    if eat_kw(inout p, intern.K_CONTINUE) {
+        let mut n = mk(ast.SContinue, t.line, t.col)
+        exit_label(inout p, inout n)
+        return Ok(add(inout p, n))
+    }
     if eat_kw(inout p, intern.K_ASSERT) {
         let mut n = mk(ast.SAssert, t.line, t.col)
         n.a = expr(inout p)?
@@ -1257,9 +1311,20 @@ fn args(inout p: P) -> Result[List[u32], diag.Diag] {
     Ok(out)
 }
 
+/// Whether the line breaks at the current token end before a line that starts with `.`: a
+/// method chain continued on the next line (docs/compiler.md, "C8.25"). No line could start
+/// with `.` before, so this changes no valid program.
+fn at_chain_line(p: P) -> bool {
+    if !is_nl(p) { return false }
+    let mut j = p.i.copy()
+    while kind_at(p, j) == lex.Newline { j += 1 }
+    kind_at(p, j) == lex.Dot
+}
+
 fn postfix(inout p: P) -> Result[u32, diag.Diag] {
     let mut e = primary(inout p)?
     while true {
+        if at_chain_line(p) { skip_nl(inout p) }
         let t = cur(p)
         if is(p, lex.LParen) {
             let en = p.ast.nodes[e as usize].copy()
@@ -1377,9 +1442,12 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] {
         if t.kind == lex.Pipe {
             while true {
                 if eat(inout p, lex.Pipe) { break }
+                // `|inout x| ...`: a parameter the closure may change (docs/compiler.md, "C8.7")
+                let io = eat_kw(inout p, intern.K_INOUT)
                 let n = ident(inout p)?
                 let mut lp = mk(ast.LParam, n.line, n.col)
                 lp.a = n.sym
+                if io { lp.c = 1 }
                 if eat(inout p, lex.Colon) { lp.b = ty(inout p)? + 1 }
                 params.push(add(inout p, lp))
                 if !eat(inout p, lex.Comma) && !is(p, lex.Pipe) { return Err(err(p, "expected `,` or `|` in closure parameters")) }

@@ -1,0 +1,26 @@
+// Overlapping access to one Ref traps (docs/compiler.md, "C8.7"): here an update while
+// the Ref is being read (refs_conflict_*.ei have the other overlaps, one per program, since
+// a failed test leaks what it owned).
+type Graph = { nodes: Ref[List[i32]] }
+
+fn add(g: Graph, n: i32) { g.nodes.update(|inout l| l.push(n)) }
+
+fn main() uses io {
+    let g = Graph(Ref.new(List.new()))
+    add(g, 1)
+    print(g.nodes.get())
+    // the read is in progress while `add` updates the same Ref
+    g.nodes.read(|l| {
+        print(l.len())
+        add(g, l.len() as i32)
+    })
+    print(String.from("not reached"))
+}
+
+test "accesses that don't overlap" {
+    let r = Ref.new(1)
+    r.update(|inout x| { x += 1 })
+    let a = r.read(|x| x + r.read(|y| y))
+    r.set(a)
+    assert r.get() == 4
+}

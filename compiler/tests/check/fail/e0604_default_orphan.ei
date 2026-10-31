@@ -1,0 +1,5 @@
+// expect: E0604 2:1
+impl Default for i32 {
+    fn default() -> i32 { 1 }
+}
+fn main() {}

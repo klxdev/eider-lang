@@ -1,0 +1,13 @@
+// expect: E0308 8:16
+fn main() {
+    let mut xs: List[List[i32]] = List.new()
+    xs.push(List.new())
+    outer: for i in 0..2 {
+        let r = xs[0]
+        inner: for j in 0..2 {
+            xs.clear()
+            continue inner
+        }
+        let n = r.len()
+    }
+}

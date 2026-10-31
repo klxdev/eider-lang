@@ -1,0 +1,5 @@
+// expect: E0304 4:15
+fn main() {
+    let r = Ref.new(1)
+    r.update(|x| x + 1)
+}

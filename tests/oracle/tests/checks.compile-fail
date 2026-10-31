@@ -34,6 +34,7 @@ compile-fail tests (tests/checks/fail)
   ok   e0304_unexpected_inout.ei    E0304 at 5:14
   ok   e0305_redeclared.ei          E0305 at 4:3
   ok   e0306_break_outside_loop.ei  E0306 at 3:3
+  ok   e0306_unknown_label.ei       E0306 at 3:42
   ok   e0307_mut_alias_of_param.ei  E0307 at 4:17 (fix compiles)
   ok   e0308_push_while_referenced.ei E0308 at 7:12 (fix compiles)
   ok   e0401_closure_wrong_return.ei E0401 at 4:28
@@ -51,6 +52,7 @@ compile-fail tests (tests/checks/fail)
   ok   e0409_closure_param_untyped.ei E0409 at 3:14
   ok   e0409_list_new_uninferred.ei E0409 at 3:18
   ok   e0410_pattern_arity.ei       E0410 at 5:9
+  ok   e0411_ref_in_mutex.ei        E0411 at 4:23
   ok   e0501_constant_overflow.ei   E0501 at 2:21
   ok   e0501_literal_out_of_range.ei E0501 at 3:15
   ok   e0502_constant_div_zero.ei   E0502 at 3:14
@@ -64,6 +66,7 @@ compile-fail tests (tests/checks/fail)
   ok   e0603_unknown_trait.ei       E0603 at 2:6
   ok   e0604_orphan_impl.ei         E0604 at 2:1
   ok   e0605_missing_bound.ei       E0605 at 2:36 (fix resolves it; next: E0605)
+  ok   e0605_take_type_param.ei     E0605 at 2:42 (fix compiles)
   ok   e0606_drop_on_enum.ei        E0606 at 3:1
   ok   e0701_list_as_key.ei         E0701 at 3:12
   ok   e0801_private_fn.ei          E0801 at 5:11
@@ -91,5 +94,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-89 passed, 0 failed; error-code coverage 54/54
+92 passed, 0 failed; error-code coverage 55/55
 --- exit 0

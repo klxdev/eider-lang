@@ -1,0 +1,1 @@
+{"error":"E0304","span":{"file":"compiler/tests/check/fail/e0304_closure_param_not_inout.ei","line":4,"col":27},"message":"closure parameter `x` is not `inout` here; remove the `inout`"}

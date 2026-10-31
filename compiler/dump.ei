@@ -136,6 +136,10 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
         ast.TTuple => kids(inout out, p, "elem", n.c, n.d, d)
         ast.TUnit => {}
         ast.TFn => {
+            if n.e != 0 {
+                put(inout out, " inout=")
+                num(inout out, n.e as u64)
+            }
             kids(inout out, p, "param", n.c, n.d, d)
             opt(inout out, p, "ret", n.g, d)
         }
@@ -213,6 +217,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             child(inout out, p, "expr", n.a, d)
         }
         ast.LParam => {
+            flag(inout out, "inout", n.c == 1)
             sym(inout out, p, "name", n.a)
             opt(inout out, p, "type", n.b, d)
         }
@@ -247,23 +252,26 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
         }
         ast.SExpr => child(inout out, p, "expr", n.a, d)
         ast.SWhile => {
+            if n.h > 0 { sym(inout out, p, "label", n.h - 1) }
             child(inout out, p, "cond", n.a, d)
             child(inout out, p, "body", n.b, d)
         }
         ast.SFor => {
+            if n.h > 0 { sym(inout out, p, "label", n.h - 1) }
             sym(inout out, p, "var", n.a)
             child(inout out, p, "lo", n.b, d)
             child(inout out, p, "hi", n.c, d)
             child(inout out, p, "body", n.d, d)
         }
         ast.SForEach => {
+            if n.h > 0 { sym(inout out, p, "label", n.h - 1) }
             if n.e > 0 { child(inout out, p, "pat", n.e - 1, d) } else { sym(inout out, p, "var", n.a) }
             child(inout out, p, "iter", n.b, d)
             child(inout out, p, "body", n.d, d)
         }
         ast.SReturn => opt(inout out, p, "value", n.a, d)
-        ast.SBreak => {}
-        ast.SContinue => {}
+        ast.SBreak => { if n.a > 0 { sym(inout out, p, "label", n.a - 1) } }
+        ast.SContinue => { if n.a > 0 { sym(inout out, p, "label", n.a - 1) } }
         ast.SAssert => {
             if n.b > 0 { str_slot(inout out, p, "message", n.b - 1) }
             child(inout out, p, "cond", n.a, d)

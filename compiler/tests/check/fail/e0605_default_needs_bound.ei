@@ -1,0 +1,5 @@
+// expect: E0605 2:30
+fn fresh[T: Copy]() -> T { T.default() }
+fn main() {
+    let n: i32 = fresh()
+}

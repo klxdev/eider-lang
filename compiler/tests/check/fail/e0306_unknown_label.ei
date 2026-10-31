@@ -1,0 +1,6 @@
+// expect: E0306 4:43
+fn main() {
+    outer: for i in 0..3 {
+        for j in 0..3 { if j == i { break inner } }
+    }
+}

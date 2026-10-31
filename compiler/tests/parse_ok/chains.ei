@@ -1,0 +1,12 @@
+fn main() {
+    let s = Spec.new("user")
+        .field("id")
+
+        // comment
+        .closed()
+    let t = p
+        .a
+        .1
+    f(x
+        .y)
+}

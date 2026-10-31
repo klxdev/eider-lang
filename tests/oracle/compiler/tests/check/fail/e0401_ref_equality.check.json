@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_ref_equality.ei","line":5,"col":15},"message":"`==` needs `Eq`, which Ref[i32] doesn't implement","help":"a Ref is a shared handle: it has no equality, order, hash or text; compare or print what it holds, inside `read`"}

@@ -12,6 +12,10 @@
 //   T_MUTEX   a = element type             T_CHAN  a = element type
 //             (shared, reference-counted handles: copying one shares the same object)
 //   T_POISON  the type of an expression whose checking failed (see `poison` below)
+//   T_INOUT   a = parameter type: an `inout` parameter of a fn type (`fn(inout T) -> R`);
+//             only ever an element of a T_FN's parameter list (docs/compiler.md, "C8.7")
+//   T_REF     a = element type: `Ref[T]`, a shared mutable cell (single-threaded, counted
+//             without atomics; copying one shares it)
 //
 // The primitive types have fixed ids (I32 .. STRING below). Enums and records are named
 // definitions (`Def`) with their fields or variants in the shared `fields` / `variants`
@@ -51,6 +55,8 @@ pub const T_POISON: u32 = 17
 /// (check.ei, "Bounds of generic code"): a = its symbol, b = the declaration + 1. Only the
 /// checker's throw-away pass makes them, so lowering never sees one.
 pub const T_PARAM: u32 = 18
+pub const T_INOUT: u32 = 19
+pub const T_REF: u32 = 20
 
 /// Int kinds, in a fixed order.
 pub const IK_I32: u32 = 0
@@ -185,6 +191,8 @@ pub fn task_of(inout t: Types, elem: u32) -> u32 {
 }
 pub fn mutex_of(inout t: Types, elem: u32) -> u32 { comp(inout t, T_MUTEX, elem, 0) }
 pub fn chan_of(inout t: Types, elem: u32) -> u32 { comp(inout t, T_CHAN, elem, 0) }
+pub fn inout_of(inout t: Types, elem: u32) -> u32 { comp(inout t, T_INOUT, elem, 0) }
+pub fn ref_of(inout t: Types, elem: u32) -> u32 { comp(inout t, T_REF, elem, 0) }
 
 /// The error type ("poison"): the type of an expression, binding, field or signature part
 /// whose checking failed after a diagnostic was recorded. It is compatible with every type,
@@ -204,7 +212,7 @@ pub fn has_poison(t: Types, id: u32) -> bool {
     let ty = t.tys[id as usize]
     let k = ty.kind
     if k == T_POISON { return true }
-    if k == T_ARRAY || k == T_LIST || k == T_BOX || is_handle(k) { return has_poison(t, ty.a) }
+    if k == T_ARRAY || k == T_LIST || k == T_BOX || is_handle(k) || k == T_INOUT || k == T_REF { return has_poison(t, ty.a) }
     if k == T_MAP { return has_poison(t, ty.a) || has_poison(t, ty.b) }
     if k == T_TUPLE || k == T_FN {
         for x in list_items(t, ty.a) {
@@ -406,6 +414,15 @@ pub fn show_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32)
             out.push(93)
         }
         17 => bytes.append(inout out, sys.lit("{error}"))
+        19 => {
+            bytes.append(inout out, sys.lit("inout "))
+            show_into(inout out, t, names, ty.a)
+        }
+        20 => {
+            bytes.append(inout out, sys.lit("Ref["))
+            show_into(inout out, t, names, ty.a)
+            out.push(93)
+        }
         18 => bytes.append(inout out, intern.name(names, ty.a))
         13 => {
             bytes.append(inout out, sys.lit("fn("))
