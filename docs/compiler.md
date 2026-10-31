@@ -140,6 +140,11 @@ seed supports:
 - `uses ffi` everywhere stays in the compiler until the next seed: the seed asks for `ffi`
   along call chains, the compiler it builds no longer does ("C8.5: capabilities per
   package"; scripts/migrate-caps.sh removes it then).
+- `var`, not `let mut`, until a seed has 8.6 ("C8.6: references by default";
+  scripts/migrate-var.sh rewrites it then). compiler/ is built by the seed with the old
+  meaning of `let` (a copy) and by itself with the new one (a reference), so a `let` of a
+  place whose place is written while the binding is used later takes `.copy()`, which means
+  the same under both.
 
 ## C3: checking
 
@@ -980,7 +985,7 @@ and leaves the analyzer building.
 | 1 | **8.3 Package-qualified modules** (done: "C8.3: packages and modules"; package imports in compiler/, std/, packages/ after the next seed) | module identity = (package, path) instead of file stem (no more E0808 for two packages' `util.ei`); bare `import "json"` resolved through `eider.lock`; the `deps/` link farm retired | — |
 | 2 | **8.4 Operation traits** (done: "C8.4: operation traits") | `Copy`, `Eq`, `Ord`, `Hash`, `Show`, `Iter`, `Drop` in the core prelude; automatic derive; orphan rule; generic bounds with suggested fixes; Map keys any `Hash + Eq`; `for` over any `Iter` | 8.1, 8.2 |
 | 2 | **8.5 Capability encapsulation** (done: "C8.5: capabilities per package"; `uses ffi` removed from the repository after the next seed) | `ffi` becomes a property of a package (granted in eider.toml); std callers stop writing `uses ffi`; the compiler reports each package's real capability use and eider-pkg checks grants from that instead of scanning text | 8.3 |
-| 3 | **8.6 References by default** | `let` binds a read-only reference to a place, `let mut` a mutable alias, fresh values are owned; `.copy()`; pattern bindings the same; the protection rule (no invalidating write while a reference is alive) with fixes; references are C pointers; `var` deprecated with a mechanical fix | 8.1, 8.4 |
+| 3 | **8.6 References by default** (done but for C pointer variables: "C8.6: references by default"; `var` migrated after the next seed) | `let` binds a read-only reference to a place, `let mut` a mutable alias, fresh values are owned; `.copy()`; pattern bindings the same; the protection rule (no invalidating write while a reference is alive) with fixes; references are C pointers; `var` deprecated with a mechanical fix | 8.1, 8.4 |
 | 3 | **8.7 `Ref[T]`** | shared mutable handle with scoped `read`/`update`, run-time conflict check, not sendable | 8.4 |
 | 4 | **8.8 Closures by reference** | non-escaping closures capture by reference | 8.6 |
 | 4 | **8.9 Std on the new base** | std speaks `String`, uses traits and references; `List[u8]` workarounds and `sys.lit` byte loops go | 8.2, 8.4, 8.5, 8.6 |
@@ -1604,6 +1609,201 @@ refused by `add`, an extern package needs `ffi`, a module the entry imports coun
 program doesn't, `uses ffi` without unmanaged code and core need no grant, the granted
 packages run without `uses ffi`, and a grant removed from eider.toml after the fetch is E0204
 when building).
+
+## C8.6: references by default
+
+Wave 3, item 8.6 (docs/design/memory-model.md, "Bindings", "The protection rule", "Build
+order" 2): `let` of a place refers to it, `let mut` is a mutable alias, fresh values are
+owned, pattern bindings do the same, invalidating writes while a reference is alive are
+errors with a fix, and `var` is deprecated with a mechanical rewrite. Code: check.ei's
+"References" and "Migration of `var`" sections (and `let_ref`, `let_pat`, `compile_match`,
+`arm_body`, `call_decl`'s exclusivity), parse.ei (`at_mut`), ir.ei (S_NOTE, S_CHECK),
+lower.ei (S_CHECK), main.ei (`eiderc migrate-var`), scripts/migrate-var.sh. `compiler/`
+uses none of the new syntax until the next seed.
+
+**Bindings.**
+
+- `let x = e` where e is a place rooted at a variable in scope (a variable, a field, an
+  element, any chain of them: `orders[i].items[j]`) binds a read-only reference: x has no
+  storage of its own; it names that place, whose indices are evaluated once, when x is bound
+  (and bounds-checked then: S_CHECK). Every use of x reads the place as it is at that use,
+  so x sees every write to it. Anything else (a call, a literal, a constructor, an
+  operation, `if`/`match`/block, a field of a call's result) is fresh and owned, as before.
+- `let mut x = place` is a mutable alias (Reading A): writes through x write the place, and
+  writes to the place are seen through x. The place's variable must be writable (`var`,
+  `let mut`, an `inout` parameter, a mutable alias); otherwise **E0307** "`let mut x` would
+  be a mutable alias of `p`, which is read-only", with the fix `.copy()` after the
+  initializer (when the type has Copy), and checking goes on as if the fix were there.
+  `let mut x = fresh` is an ordinary mutable local.
+- Pattern bindings: a `match`/`if let`/`let (..)` whose scrutinee is such a place binds
+  references into it (into the payload of an enum: `Pending(o)`); `mut x` (a new pattern
+  form: the contextual word `mut` before a binding) is a mutable alias into it, with E0307
+  when the scrutinee's variable is read-only (fix: `.copy()` after the scrutinee). A fresh
+  scrutinee's bindings own their parts, as before; `mut` makes them mutable.
+- `mut` is a contextual word, not a keyword: it means `let mut` or `mut x` only when a name
+  follows it, so `let mut = 1` still declares a variable named `mut`.
+- Escapes are values: storing, returning, capturing (closures, `spawn`) or passing a
+  reference into an owned position clones what it refers to, through the ordinary `take`
+  (a copy-on-write share), silently. Passing a reference as an ordinary argument is a borrow
+  as for any place.
+- `for x in xs` keeps its own copy of each element (unchanged: the charter names `let` and
+  pattern bindings only, and the loop runs over a List that its body may still push to).
+- `var` (deprecated) keeps making its own copy, so every existing `var` means what it did.
+- Exclusivity (E0301) counts a reference as the variable its place is rooted at: `f(inout
+  xs, o)` with `o = xs[0]` is E0301 "`o` refers into `xs`, which is borrowed mutably by
+  another argument of this call" (fix: `.copy()` at o's binding), and `f(inout ys, inout
+  xs)` with `ys` an alias of `xs` is E0301 too.
+- Assigning to a `let` reference is E0303 as for any `let` (message, help and fix unchanged:
+  the fix still says `var`, whose copy is what the old program meant).
+
+**The protection rule** (E0308). While a reference is alive, until its last use on any
+path, no write may free, move or reinterpret memory it points into. The checker notes in
+the IR (S_NOTE, a checker-only statement) every reference's binding and use, and every
+write that may invalidate one: an assignment (S_STORE), an `inout` argument (of a call, of
+a method's `inout self`, of `show`), a resizing builtin (`push`, `pop`, `clear`, `insert`,
+`remove`, `push_str`, `append`, `push_byte`); writes are noted only while a reference is in
+scope, and never for temporaries. After every body, `protect` runs a backward liveness pass
+over each function that has references (structured: both branches of an `if`, loops to a
+fixed point, `break`/`continue`/`return`/`panic` cut the paths) and checks each noted write
+against the references live after it. A write to place P invalidates a live reference to R
+when P is a prefix of R, comparing any two indices as equal (the charter: `orders[i]` and a
+resize of `orders` conflict whatever `i` is), and the rest of R's path goes through heap
+memory (a List element, the fields of a record with its own Drop) or an enum payload. So:
+
+- allowed: plain writes to scalar fields and elements, writes through aliases, a write that
+  replaces the referenced value itself (`orders[0] = o2` while `o = orders[0]`: o then sees
+  o2), a resize of a container a reference names rather than points into (`let all =
+  orders; orders.push(x)`: all sees it), any write after the last use, a write on a path
+  that never reaches a use (`if ... { xs.clear(); return }`), a loop body binding a new
+  reference each iteration;
+- errors: `xs.push` while a reference into `xs[..]` is alive; `xs = ...` or `inv = ...`
+  while one points into their elements; `j = Done` while a binding refers into j's payload;
+  `f(inout xs)` while one points into xs's elements.
+
+E0308 "can't call `push` on `orders` while `o` refers into it" / "can't assign to `j`
+while `name` refers into it" / "can't pass `xs` as `inout` while `a` refers into it", at the
+write; help: "`o` is used after this change, which may free, move or replace what it refers
+to; use it before the change, or bind a copy with `.copy()`"; fix: `.copy()` after the
+reference's initializer (or its pattern's scrutinee), which makes the binding own a value.
+No fix when the type lacks Copy (a Chan inside) or in a generic body (`.copy()` would also
+need a `Copy` bound; the help says so). The E0308s come after every other diagnostic of the
+program (they need every body), in source order per function, once per write.
+
+**Lowering.** A reference is its place: lowering emits the place's C lvalue
+(`orders.d[t3].qty`) at each use, with the index temporaries computed at the binding, and
+copy-on-write uniqueness on the path before each write through an alias, exactly as for a
+write to the place itself. No clone, no drop, no storage. A `let` of a place, a pattern
+binding of a place and a `match` on a place no longer copy anything, so programs that used
+`let` and `match` on places get smaller C with fewer clones and drops (below). Notes are
+removed from the IR before checking ends; S_CHECK lowers to the place's bounds checks only.
+
+**Choices the charter left open** (the simplest sound one each time):
+
+1. A reference is the place re-derived at each use, not a C pointer variable. A pointer into
+   a List's buffer would go stale when a plain write elsewhere on the path makes a shared
+   buffer unique (copy-on-write moves it; the charter allows plain writes while references
+   live), and refreshing pointers after every such write needs liveness in lowering. The
+   re-derived place has the same cost as a pointer for paths through locals, fields and
+   arrays (the C compiler computes the same address), and costs a bounds check per use
+   through a List (one that never fails: the protection rule forbids the resize). C pointer
+   variables for heap paths are the remaining step (below).
+2. "Place" is syntactic: a variable, field or element chain rooted at a variable in scope.
+   A field or element of a fresh value (`f().x`, `make()[0]`) is fresh.
+3. The liveness is flow-sensitive but path-insensitive per structured block: a use on any
+   path after the write counts; loops iterate to a fixed point.
+4. A reference *to* a container (not into it) is not invalidated by resizing it, and a
+   write that replaces exactly the referenced place is plain: the reference sees the new
+   value. Only a heap or payload step between the write's place and the reference counts.
+5. Records with their own Drop live in a shared buffer (C8.4), so their fields count as
+   heap memory for the rule.
+6. Fixes: always `.copy()` at the binding (the charter's "take a `.copy()` first"); never a
+   fix in generic bodies or for types without Copy. For a mutable alias the help adds that
+   writes then change only the copy.
+7. E0303 keeps its message, help and fix (`var`) byte for byte (first-diagnostic rule; the
+   fix keeps the old meaning).
+8. `mut` is contextual, and per binding in patterns (`let (mut a, b)`), with no `let mut
+   (a, b)` form (one way to do one thing).
+9. `for` loop variables stay copies; Map values are never places (`get` returns a value),
+   so nothing refers into a Map; Box contents are reached only through methods, so nothing
+   refers into a Box either.
+10. `var` is deprecated without a diagnostic: a warning would change the output of every
+    program that uses it (and the first-diagnostic contract). The deprecation is the
+    documented rewrite, `eiderc migrate-var` and scripts/migrate-var.sh.
+11. Migration: `var x = place` becomes `let mut x = place.copy()` and `var x = fresh`
+    `let mut x = fresh` (the charter), `var (a, b) = e` becomes `let (mut a, mut b) = e`
+    (`.copy()` when e is a place). Not rewritten (left as `var`, which still works): a place
+    whose `.copy()` differs from the implicit copy `var` made (a Mutex inside: `.copy()`
+    makes a new one; a record with its own Drop: `.copy()` gives it a buffer of its own; an
+    own Copy: `.copy()` runs it), a `var` in a generic body (`.copy()` could need a bound),
+    and code no concrete body checks.
+
+**Migration of `var`.** `eiderc migrate-var <file>` prints the file with its rewrites; the
+file is checked as the entry (a module without `main` is fine), else as the module a
+one-line entry in its directory imports (a module whose names clash with the entry's
+builtins, like compiler/lower.ei's `fn print`). scripts/migrate-var.sh runs it over files
+and directories (EIDER_ROOT, EIDERC as for the other migrations). compiler/ keeps `var`
+until the seed has 8.6 (the seed must build compiler/); test-compiler.sh ("migration")
+runs the script on a copy of core, std, packages and compiler: no `var` is left in them,
+compiler/main.ei, eider-pkg and the fuzzer check, the package tests pass, and the migrated
+compiler, built by this one, emits byte-identical C for compiler/ (its meaning is
+unchanged). compiler/tests/migrate/var.ei has the hand-checked expected rewrite (var.out).
+
+**Existing code under the new meaning.** A `let` of a place whose place is written while the
+binding is still used later now sees the write; under the old meaning it kept its copy. An
+audit build of the checker (not committed: it reported every write to a place that overlaps
+a live reference, whether or not it invalidates) found every such site in the repository:
+in compiler/ (114 bindings: `let start = l` before `step(inout l)`, `let d = c.t.defs[i]`
+before `f(inout c, d)`, ...), std/fs.ei, packages (json, toml, pkg, fuzz) and the tests
+(compiler/tests/run/{closures2,cow,inout,lists,maps,owned,text_cow,traits_*}.ei,
+compiler/tests/check/pass/v0_language.ei, tests/run/order.ei). Each got `.copy()` at the
+binding, which the seed also understands (8.4), so those programs mean what they meant under
+both compilers; the sorts in compiler/tests/run/traits_{custom,derived,generic}.ei, whose
+`let t = xs[j]` swap is generic, got the `+ Copy` bound E0605 asks for, and
+compiler/tests/run/traits_drop.ei's "written while shared" cases use `var` (their point is
+the implicit share, which `.copy()` of a record with its own Drop doesn't make). The recorded
+outputs are unchanged. After that the audit build reports only the new tests.
+
+**Codes.** New: E0307 (a mutable alias of a read-only place), E0308 (the protection rule).
+Changed: none of the existing messages; E0301 gains the two reference cases above.
+
+**Oracle changes** (`BLESS=1`, reviewed): only additions: the new compile-fail cases and the
+pass case in the runner outputs (tests/checks, compiler/tests/check), the coverage lines
+(52 to 54 codes), the new cases' check.json and the multi case refs.check.{json,err}. No
+recorded output of an existing program changed. The IR goldens (compiler/tests/ir: forms,
+generics, heap, threads) lost the copies and drops of `let` and `match` on places (for
+example `label` in heap.ir: one clone instead of two and a drop).
+
+**Tests.** Run (hand-checked expected output, leak-free, sanitizers): compiler/tests/run/
+refs.ei (references seeing writes, an index evaluated once, `let mut` aliases both ways,
+fresh `let mut`, `.copy()` independence, escapes by return, push, closure capture, a
+reference to the list itself, nested places through `inout`, `mut` payload aliases in
+`match`, `if let`, tuple patterns of a place and of a fresh tuple, references bound again in
+a loop that grows the list, `var` still copying); compiler/tests/run/traps.ei now also traps
+an out-of-bounds reference that is never read (S_CHECK). Compile-fail (compiler/tests/check/
+fail): `e0307_*` (parameter, `let` binding, reference, pattern binding, `let` pattern,
+closure capture, `for` variable; every fix compiles), `e0308_*` (push, clear, pop,
+assigning the list and the enclosing record, an enum payload in `match` and `if let`, an
+`inout` argument and `inout self`, the next loop iteration, a mutable alias, a record with
+its own Drop, through an alias of the list, no fix for a Chan and in a generic body),
+`e0301_alias_read`, `e0301_alias_two_inout`, `e0303_assign_ref`; tests/checks:
+`e0307_mut_alias_of_param`, `e0308_push_while_referenced`; pass: `c86_refs_ok` (what the
+rule allows); several errors: compiler/tests/check/multi/refs.ei; parse:
+compiler/tests/parse_ok/refs.ei (`let mut`, `mut` patterns, a variable named `mut`);
+migration: compiler/tests/migrate/var.ei and test-compiler.sh's migration leg.
+
+**Benchmarks** (`REPS=7 sh scripts/bench.sh target/eiderc-before:... target/...`, before =
+eiderc at b1aae4c, after = eiderc built by itself with C8.6, 16 cores, gcc -O2, median
+wall time): BENCH_TABLE
+
+The generated C of every benchmark and run test is the same or smaller: GEN_C_SUMMARY.
+
+**Remaining.** C pointer variables for references through heap memory (re-derived on each
+use today, choice 1): a pointer stays valid while the protection rule holds except across a
+copy-on-write un-share, so it needs a refresh after each write on the reference's root while
+it is alive (liveness in lowering), or a deep copy at the clones that share that root while
+it is alive. Then, after the next seed: run scripts/migrate-var.sh on compiler/, std/,
+core/, packages/, tests/ and examples/, drop `var` from "Writing the compiler in today's
+Eider", and decide when `var` becomes an error.
 
 ## Language work that lands in `eiderc` (after parity)
 

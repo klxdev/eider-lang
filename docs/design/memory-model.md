@@ -44,6 +44,11 @@ Simple like Go and Zig, with the memory-safety and correctness guarantees of Rus
 
 ### `let` ✅
 
+Implemented by C8.6 (docs/compiler.md, "C8.6: references by default", which records the
+details decided there: a reference is its place re-derived at each use, the protection rule
+is E0308 with a `.copy()` fix, a mutable alias of a read-only place is E0307, `var` is
+rewritten by `eiderc migrate-var`).
+
 ```eider
 let o = orders[i]      // a read-only reference to orders[i]; nothing is copied
 let n = count(xs)      // a fresh value: owned by n, nothing is copied either

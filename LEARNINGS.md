@@ -19,6 +19,7 @@
 - Top-level `uses` is not valid; capabilities are per-fn. `for i in 0..4` with literal bounds gives i32 (cast to index).
 - Type decl variants need a leading `|`. Prelude (Option/Result) is Eider source in `core/prelude.ei`, parsed before user items.
 - Stripping redundant parentheses from generated C must be string-literal aware; clang warns on `if ((a == b))`.
+- References (C8.6): `let` of a place no longer copies, so code that read a place into a `let` and then wrote the place silently changes meaning. An audit build of the checker that reports every write overlapping a live reference (not only invalidating ones) found all such sites in the repository; `.copy()` at the binding keeps the old meaning under both the seed and the new compiler. Run it again before a change of binding semantics.
 - Ownership model (S2): value semantics. Reading owned data out of a place clones; fresh rvalues (temporaries) move. Params are borrowed. Frames = per-block drop lists; return/break/continue/`?` drop outer frames. Pattern bindings clone (no aliasing).
 - A mutating method receiver (push/insert/...) must stay a place; never hoist it into a by-value temp while ordering operands (that leaked a List in the first draft).
 - Closures capture a snapshot (clone) in a heap env; can't mutate captured vars. Value-form closure bodies (`if`/`match`/block) need a return type from context or `-> T`.

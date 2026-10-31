@@ -57,6 +57,7 @@ Tooling:
 - `scripts/ei <eiderc args>`: the compiler, `target/eiderc`, built from `seed/eiderc.c` with `$CC` when it is missing or older than the seed or `core/` (eiderc links the C core into every program itself).
 - `scripts/migrate-imports.sh <dirs>`: rewrites path imports that cross into another package (core, std, a declared dependency) into package imports; run on compiler/, std/, core/, packages/ and tests/ once the seed knows package imports (docs/compiler.md, "C8.3"). (`scripts/bootstrap-deps.sh`, which linked a `deps/` farm into each package, is retired: nothing needs it.)
 - `scripts/migrate-caps.sh <dirs>`: removes the `ffi` that `uses` clauses carried only to call another package (`ffi` stays inside the package with the unmanaged code since C8.5); already run on compiler/, std/, packages/, tests/ and examples/, and kept for code written before C8.5 (docs/compiler.md, "C8.5: capabilities per package").
+- `scripts/migrate-var.sh <dirs>`: rewrites the deprecated `var` as `let mut` (`.copy()` after a place) through `eiderc migrate-var`, leaving the cases where that would change the meaning; run on compiler/, std/, core/, packages/, tests/ and examples/ once the seed knows `let mut` (docs/compiler.md, "C8.6: references by default").
 - `tests/std/run.sh`, `tests/packages.sh`: suites for std and packages (both run by `scripts/verify.sh`).
 - `tests/pkg/run.sh`: eider-pkg end to end against local git repositories under `target/tmp/pkgtest/` (no network; also run by `scripts/verify.sh`).
 
