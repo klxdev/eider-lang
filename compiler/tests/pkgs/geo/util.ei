@@ -4,3 +4,6 @@ pub type Unit = | Metre | Foot
 pub fn mul(a: i64, b: i64) -> i64 { a * b }
 
 pub fn name() -> str { "geo util" }
+
+// private: E0801 from another package names the module `geo/util` (app/private.ei)
+fn secret() -> i64 { 7 }

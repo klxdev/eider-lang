@@ -1,0 +1,29 @@
+// eiderc ide: loop labels are symbols (SK_LABEL, in the enclosing function), and `break
+// name` / `continue name` refer to the nearest enclosing loop with that label; sibling loops
+// may share a label (docs/compiler.md, "C8.22").
+fn find(xs: List[i64], want: i64) -> bool {
+    let mut found = false
+    rows: for x in xs {
+        let mut i: i64 = 0
+        cols: while i < 3 {
+            i += 1
+            if x == want {
+                found = true
+                break rows
+            }
+            if i == 2 { continue cols }
+            if x < 0 { continue rows }
+        }
+    }
+    rows: for k in 0..2 {
+        if k == 1 { break rows }
+        break
+    }
+    found
+}
+
+fn main() {
+    let mut xs: List[i64] = List.new()
+    xs.push(1)
+    let f = find(xs, 1)
+}

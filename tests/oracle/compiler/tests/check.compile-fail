@@ -589,6 +589,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0801_mod_private_fn_via_alias.ei E0801 at 4:13
   ok   e0801_mod_private_type_annotation.ei E0801 at 4:12
   ok   e0801_mod_private_type_in_public_field.ei E0801 at 3:27
+  ok   e0801_std_private_fn.ei      E0801 at 3:21
   ok   e0802_ffi_in_if_cond.ei      E0802 at 4:8
   ok   e0802_ffi_in_test_block.ei   E0802 at 5:13
   ok   e0802_ffi_mod_wrapper.ei     E0802 at 6:11
@@ -706,6 +707,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-704 passed, 0 failed; error-code coverage 52/56
+705 passed, 0 failed; error-code coverage 52/56
 codes without a compile-fail test: E0302 E0402 E0806 E0808
 --- exit 0

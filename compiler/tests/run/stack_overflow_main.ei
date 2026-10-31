@@ -1,0 +1,17 @@
+// The runtime (core/RUNTIME.md "Stack overflow"): the Eider `main` runs on a guarded runtime
+// thread (ei_main), so overflowing its stack ends the program with a runtime error and exit
+// code 101, as on a spawned thread, not a bare segmentation fault. What was printed before
+// is flushed first. A deep but bounded recursion is fine.
+// nosan: thread
+
+fn deep(n: i64, stop: i64) -> i64 {
+    if n == stop { return 0 }
+    let mut pad: [i64; 32] = [0; 32]
+    pad[(n % 32) as usize] = n
+    deep(n + 1, stop) + pad[(n % 32) as usize] - n + 1
+}
+
+fn main() uses io {
+    print(deep(0, 10000))
+    print(deep(0, -1))
+}

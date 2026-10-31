@@ -380,11 +380,11 @@ fn main() uses io, fs, net {
     match r {
         Ok(_) => {}
         Err(e) => {
-            // TODO(compiler): Strings can't reach stderr until they have byte access, so the
-            // message goes to stdout. Exit status 1 still marks the failure.
+            // every error (usage, manifest, resolution, fetch) is one line on stderr, exit 1;
+            // stdout carries only what a command reports when it succeeds
             let mut m = String.from("eider-pkg: ")
             m.append(e)
-            print(m)
+            io.errln(m.bytes())
             env.exit(1)
         }
     }

@@ -1,0 +1,17 @@
+// `eiderc run args.ei [--] args...` (scripts/test-compiler.sh, "usage"): prints each of its
+// arguments on a line of its own, between brackets, then how many there were.
+import "std/env"
+import "std/io"
+import "std/bytes"
+
+fn main() uses io {
+    let a = env.args()
+    for i in 1..a.len() {
+        let mut l = bytes.from_u64(i as u64)
+        bytes.append(inout l, ": [".bytes())
+        bytes.append(inout l, a[i])
+        l.push(93)
+        io.outln(l)
+    }
+    io.outln(bytes.from_u64((a.len() - 1) as u64))
+}

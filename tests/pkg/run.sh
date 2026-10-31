@@ -136,8 +136,23 @@ check "init writes a program with package imports" 'import "core/sys"
 import "std/io"' "$(head -2 "$T/app/main.ei")"
 check "init twice" "eider-pkg: eider.toml already exists
 exit 1" "$(pkg app init)"
+# streams: an error is one line on stderr and nothing on stdout, exit 1; a usage error the
+# same; what a command reports when it succeeds goes to stdout, nothing to stderr, exit 0
+streams() { p=$1; shift; scripts/eider-pkg -C "$T/$p" "$@" >"$T/so" 2>"$T/se"; s=$?; printf 'stdout: [%s]\nstderr: [%s]\nexit %s\n' "$(cat "$T/so")" "$(cat "$T/se")" $s; }
+check "an error goes to stderr" "stdout: []
+stderr: [eider-pkg: eider.toml already exists]
+exit 1" "$(streams app init)"
+check "a usage error goes to stderr" "stdout: []
+stderr: [eider-pkg: usage: eider-pkg [-C dir] (init [name] | add <name> --path P | add <name> --git URL --version V|--rev R [--uses a,b] | remove <name> | fetch [--offline] | update [--offline] | vendor | tree | hash <dir> | --version)]
+exit 1" "$(streams app frobnicate)"
+check "a missing eider.toml goes to stderr" "stdout: []
+stderr: [eider-pkg: cannot read <T>/nowhere/eider.toml: No such file or directory]
+exit 1" "$(mkdir -p "$T/nowhere" && streams nowhere tree)"
 check "fetch with no deps" "locked 0 package(s)
 exit 0" "$(pkg app fetch)"
+check "success goes to stdout" "stdout: [locked 0 package(s)]
+stderr: []
+exit 0" "$(streams app fetch)"
 check "run the init program" "hello from eider
 exit 0" "$(run app)"
 

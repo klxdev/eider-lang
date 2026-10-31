@@ -1,0 +1,51 @@
+// toolchain: where the toolchain is (the directory holding core/ and std/), the one lookup
+// the driver (C and the core objects) and resolve (the prelude, `std/...` and `core/...`
+// imports) share (docs/compiler.md, "C4: lowering", Toolchain root).
+//
+// $EIDER_ROOT if set; otherwise the nearest directory above the eiderc binary (argv[0],
+// symlinks resolved) that contains core/eider_rt.h, so target/eiderc in a checkout finds the
+// checkout and an installed <root>/bin/<anything>/eiderc finds <root>; otherwise the same
+// search from the working directory; otherwise "" (none).
+
+import "core/sys"
+import "std/bytes"
+import "std/fs"
+import "std/env"
+
+fn has_core(dir: List[u8]) -> bool uses fs { fs.exists(fs.join(dir, sys.lit("core/eider_rt.h"))) }
+
+/// The nearest of `dir` and its parents that contains core/eider_rt.h ("" if none).
+fn search_up(dir: List[u8]) -> List[u8] uses fs {
+    let mut d = dir.copy()
+    while d.len() > 0 {
+        if has_core(d) { return d }
+        let up = fs.dirname(d)
+        if bytes.eq(up, d) { break }
+        d = up
+    }
+    List.new()
+}
+
+/// The toolchain root (see the top of this file), or "" when there is none.
+pub fn find() -> List[u8] uses io, fs {
+    match env.get(sys.lit("EIDER_ROOT")) {
+        Some(r) => { if r.len() > 0 { return r } }
+        None => {}
+    }
+    let argv = env.args()
+    if argv.len() > 0 {
+        let exe: List[u8] = match fs.canonical(argv[0]) {
+            Ok(x) => x
+            Err(_) => List.new()
+        }
+        if exe.len() > 0 {
+            let r = search_up(fs.dirname(exe))
+            if r.len() > 0 { return r }
+        }
+    }
+    let here: List[u8] = match fs.cwd() {
+        Ok(x) => x
+        Err(_) => List.new()
+    }
+    search_up(here)
+}

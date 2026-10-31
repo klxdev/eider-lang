@@ -44,7 +44,7 @@ import "doc.ei"
 type Args = {
     cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,
     lib: bool, libs: List[List[u8]], wasm: bool, compile_fail: bool, overlay: List[List[u8]],
-    max_errors: u64, all_errors: bool, private: bool, profile: u32,
+    max_errors: u64, all_errors: bool, private: bool, profile: u32, pargs: List[List[u8]],
 }
 
 /// Comparisons go through a function so no owned temporary sits in an `else if` condition
@@ -72,7 +72,8 @@ fn usage_text() -> List[u8] {
         "  eiderc build <file.ei> [-o out] [-l lib]   compile to a native binary (-O2) via $CC (default: cc)",
         "  eiderc build --lib <file.ei> [-o name]     build lib<name>.a, lib<name>.so and <name>.h from `export fn`s",
         "  eiderc build --wasm <file.ei> [-o name]    build <name>.wasm, <name>.d.ts and <name>.js (needs clang for wasm32 and wasm-ld)",
-        "  eiderc run <file.ei> [--release] [-l lib]  build and run (-O0 unless --release)",
+        "  eiderc run <file.ei> [--release] [-l lib] [--] [args...]  build and run (-O0 unless --release);",
+        "                                             the arguments after the file (every one after `--`) go to the program",
         "  eiderc build|run|test <file.ei> --profile[=cpu,mem,conc]  with the profiler (docs/runtime.md \"Profiler\")",
         "  eiderc test <file.ei> [-l lib]             run the `test` blocks",
         "  eiderc test --compile-fail [<dir>]         run the compile-fail suite (<dir>/fail, <dir>/pass; default tests/checks)",
@@ -97,6 +98,7 @@ fn usage_text() -> List[u8] {
         "",
         "environment:",
         "  CC            the C compiler (default cc)",
+        "  WASM_CC       the C compiler of `build --wasm` (default clang; it needs the wasm32 target, and wasm-ld)",
         "  EIDER_CFLAGS  extra C compiler flags, split at spaces",
         "  EIDER_CACHE   `off`, or the cache directory (default $XDG_CACHE_HOME/eider, else ~/.cache/eider)",
         "  EIDER_ROOT    the toolchain, the directory holding core/ (default: found above the eiderc binary)",
@@ -152,11 +154,18 @@ fn parse_args() -> Args uses io {
     let mut all_errors = false
     let mut private = false
     let mut profile: u32 = 0
+    let mut pargs: List[List[u8]] = List.new()
+    let mut dashes = false
     let mut i: usize = 1
     while i < argv.len() {
         let a = argv[i]
         i += 1
-        if is(a, "--help") || is(a, "-h") {
+        if dashes {
+            // after `--`: the program's arguments, whatever they look like
+            pargs.push(a)
+        } else if is(a, "--") {
+            dashes = true
+        } else if is(a, "--help") || is(a, "-h") {
             io.out(usage_text())
             env.exit(0)
         } else if is(a, "--version") {
@@ -207,6 +216,8 @@ fn parse_args() -> Args uses io {
             cmd = a
         } else if file.len() == 0 {
             file = a
+        } else if is(cmd, "run") {
+            pargs.push(a)
         } else {
             usage_error(quoted("unexpected argument ", a))
         }
@@ -227,6 +238,7 @@ fn parse_args() -> Args uses io {
         if file.len() == 0 { file = sys.lit("tests/checks") }
     }
     if file.len() == 0 { usage_error(quoted("missing the source file for ", cmd)) }
+    if (dashes || pargs.len() > 0) && !is(cmd, "run") { usage_error(sys.lit("program arguments (and `--`) go with `run`")) }
     if is(cmd, "emit-header") { lib = true }
     // `test` checks the test driver, never a library (the recorded mode order)
     if is(cmd, "test") {
@@ -235,7 +247,7 @@ fn parse_args() -> Args uses io {
     }
     if wasm { lib = true }
     if profile > 0 && (lib || !(is(cmd, "build") || is(cmd, "run") || is(cmd, "test") || is(cmd, "emit-c"))) { usage_error(sys.lit("`--profile` goes with build, run, test or emit-c, without --lib or --wasm")) }
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay, max_errors, all_errors, private, profile)
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay, max_errors, all_errors, private, profile, pargs)
 }
 
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
@@ -566,7 +578,7 @@ fn main() uses io, fs, net, clock {
         let tests = a.tests || is(a.cmd, "test")
         let lp = lower.P(c.ir, c.t, c.p.names)
         if is(a.cmd, "emit-header") {
-            if a.wasm { io.out(wasm.header(lp)) } else { io.out(lower.header(lp)) }
+            if a.wasm { io.out(wasm.header(lp)) } else { io.out(lower.header(lp, driver.lib_name(a.file, a.out))) }
             return
         }
         let lowered = if a.wasm { lower.program_wasm(lp, a.file) } else if a.profile > 0 { lower.program_prof(lp, a.file, tests, a.profile, driver.version()) } else { lower.program_for(lp, a.file, tests, a.lib) }
@@ -587,11 +599,11 @@ fn main() uses io, fs, net, clock {
             wasm.build(cprog, lp, a.file, a.out)
         } else if a.lib {
             // as recorded: `build --lib` and `run --lib` both build the library
-            driver.build_lib(cprog, lower.header(lp), a.file, a.out, a.libs)
+            driver.build_lib(cprog, lower.header(lp, driver.lib_name(a.file, a.out)), a.file, a.out, a.libs)
         } else if is(a.cmd, "build") {
             driver.build(cprog, a.file, a.out, a.libs)
         } else {
-            driver.run(cprog, a.file, a.release, a.libs)
+            driver.run(cprog, a.file, a.release, a.libs, a.pargs)
         }
     } else if is(a.cmd, "ir") {
         io.out(ir.dump(c.ir, c.t, c.p.names))

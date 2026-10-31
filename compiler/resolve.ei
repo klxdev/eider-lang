@@ -18,9 +18,9 @@
 // (`[package] name`); its identity is (package, its path inside the package without the
 // extension). A file in no package is identified by its canonical path, as before
 // packages. The prelude (Option, Result and their methods) is Eider source that belongs to
-// the language core: `core/prelude.ei` under the toolchain root, which is $EIDER_ROOT, or
-// else the parent of the directory holding the eiderc executable (argv[0]; `target/eiderc`
-// in a checkout gives the checkout), or else the current directory. It is loaded like a
+// the language core: `core/prelude.ei` under the toolchain root (toolchain.ei, the driver's
+// lookup: $EIDER_ROOT, or else the nearest directory above the eiderc executable holding
+// core/eider_rt.h, or else that search from the current directory; `.` when none). It is loaded like a
 // module whose names have no prefix (parsed before user items).
 //
 // Names. The language gives every top-level name of an imported module the module's prefix
@@ -48,6 +48,7 @@ import "parse.ei"
 import "diag.ei"
 import "front.ei"
 import "lock.ei"
+import "toolchain.ei"
 
 /// "no module": the prelude, or an error that belongs to no file.
 pub const NOMOD: u32 = 4294967295
@@ -412,7 +413,7 @@ pub fn load_from(file: List[u8], src: List[u8], q: parse.P, fp: Files) -> Loaded
 /// any other file by the path it was loaded from
 /// (relative to the entry file's directory, as diagnostics name it). So the generated C
 /// holds no path that depends on where the toolchain or the store is.
-fn shown_path(p: Program, m: u32) -> List[u8] uses io {
+fn shown_path(p: Program, m: u32) -> List[u8] uses io, fs {
     let path = p.mods[m as usize].path
     let pk = p.mods[m as usize].pkg
     if pk != NOPKG {
@@ -432,24 +433,11 @@ fn shown_path(p: Program, m: u32) -> List[u8] uses io {
     path
 }
 
-/// The toolchain root (see the top of this file).
-pub fn toolchain_root() -> List[u8] uses io {
-    match env.get(sys.lit("EIDER_ROOT")) {
-        Some(r) => { if r.len() > 0 { return r } }
-        None => {}
-    }
-    let argv = env.args()
-    if argv.len() > 0 {
-        let exe = argv[0]
-        match bytes.rfind_byte(exe, 47) {
-            Some(_) => {
-                let up = dir_of(dir_of(exe))
-                if up.len() > 0 { return up }
-            }
-            None => {}
-        }
-    }
-    sys.lit(".")
+/// The toolchain root (see the top of this file): the driver's (toolchain.find), else `.`.
+pub fn toolchain_root() -> List[u8] uses io, fs {
+    let r = toolchain.find()
+    if r.len() == 0 { return sys.lit(".") }
+    r
 }
 
 fn load_prelude(inout p: Program, fp: Files) -> Result[bool, diag.Diag] uses io, fs {

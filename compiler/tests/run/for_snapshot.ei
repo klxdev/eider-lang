@@ -1,0 +1,112 @@
+// `for` over a List runs over a snapshot taken before the loop (docs/compiler.md, "C8.20",
+// decision C303), as over an array or a Map: writes, pushes, pops and clears of the List in
+// the body change the List, not what the loop walks. The snapshot is a copy-on-write share,
+// so the List is copied once, at the body's first write. Expected: for_snapshot.out.
+
+type Item = { name: String, n: i64 }
+
+fn show(xs: List[i64]) -> String {
+    let mut s = String.from("[")
+    for i in 0..xs.len() {
+        if i > 0 { s.push_str(", ") }
+        s.append(String.from_int(xs[i]))
+    }
+    s.push_str("]")
+    s
+}
+
+fn grow(inout xs: List[i64], x: i64) { xs.push(x * 10) }
+
+fn main() uses io {
+    // an element written ahead of the loop is seen afterwards, not by the loop
+    let mut xs: List[i64] = List.new()
+    xs.push(1)
+    xs.push(2)
+    xs.push(3)
+    for x in xs {
+        if x == 1 { xs[2] = 30 }
+        print(x)
+    }
+    print(show(xs))
+    // pushes in the body don't extend the loop (a worklist uses an index instead)
+    for x in xs {
+        xs.push(x + 100)
+    }
+    print(show(xs))
+    // clear and pop
+    let mut ys: List[i64] = List.new()
+    ys.push(7)
+    ys.push(8)
+    for y in ys {
+        ys.clear()
+        print(y)
+    }
+    print(ys.len())
+    ys.push(5)
+    ys.push(6)
+    for y in ys {
+        match ys.pop() {
+            Some(v) => print(v)
+            None => print(-1)
+        }
+        print(y)
+    }
+    // an inout argument writing the list
+    let mut zs: List[i64] = List.new()
+    zs.push(1)
+    zs.push(2)
+    for z in zs { grow(inout zs, z) }
+    print(show(zs))
+    // through a reference to the list: used once, when the loop starts
+    let mut ws: List[i64] = List.new()
+    ws.push(1)
+    let all = ws
+    for w in all {
+        if w < 3 { ws.push(w + 1) }
+    }
+    print(ws.len())
+    // through a mutable alias
+    let mut vs: List[i64] = List.new()
+    vs.push(4)
+    vs.push(5)
+    let mut alias = vs
+    for v in vs {
+        alias[1] = 50
+        alias.push(v)
+        print(v)
+    }
+    print(show(vs))
+    // a field of a record, a List of heap values, break and continue
+    let mut items: List[Item] = List.new()
+    items.push(Item(String.from("a"), 1))
+    items.push(Item(String.from("b"), 2))
+    items.push(Item(String.from("c"), 3))
+    for it in items {
+        items[0].name = String.from("changed")
+        items.push(Item(String.from("new"), 9))
+        if it.n == 2 { continue }
+        print(it.name)
+        if it.n == 3 { break }
+    }
+    print(items[0].name)
+    print(items.len())
+    // a fresh List is iterated as before
+    for x in show_list() { print(x) }
+    // nested loops over the same List
+    let mut ns: List[i64] = List.new()
+    ns.push(1)
+    ns.push(2)
+    for a in ns {
+        for b in ns {
+            ns.push(a * b)
+        }
+    }
+    print(show(ns))
+}
+
+fn show_list() -> List[i64] {
+    let mut l: List[i64] = List.new()
+    l.push(41)
+    l.push(42)
+    l
+}

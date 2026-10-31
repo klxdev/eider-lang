@@ -1,6 +1,7 @@
 #!/bin/sh
 # eiderc's library tests (scripts/test-compiler.sh, "export"): `eiderc build --lib` of
-# shapes.ei and nested.ei, linked statically into consumer.c; both headers compile as C11
+# shapes.ei and nested.ei, linked statically into consumer.c, which includes both headers
+# (each has its own include guard); both headers compile as C11
 # and as C++; a trap inside a library exits 101; and the headers' prototypes agree with
 # the functions the libraries define. usage: run.sh <eiderc>
 cd "$(dirname "$0")/../../.." || exit 1
@@ -37,4 +38,4 @@ code=$?
 [ $code -eq 101 ] || { echo "FAIL trap exit code $code"; exit 1; }
 grep -q 'division by zero (lib:' $T/trap.err || { echo "FAIL trap message: $(cat $T/trap.err)"; exit 1; }
 rm -rf $T
-echo "ok   export: eiderc build --lib (records, nested records, an imported module's export, externs inside exports; C and C++ headers; static + shared; traps exit 101)"
+echo "ok   export: eiderc build --lib (records, nested records, an imported module's export, externs inside exports; C and C++ headers, two in one C file; static + shared; traps exit 101)"

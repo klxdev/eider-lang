@@ -896,6 +896,42 @@ static void child_bad_write(void) {
   ei_thread_join(&t);
 }
 
+/* ei_main, the program entry: the body runs on a guarded runtime thread, with the signal
+   mask of the caller, and its result is the exit code; an overflow there is a trap too. */
+static sigset_t main_mask;
+static int main_body_ok(void) {
+  sigset_t now;
+  pthread_sigmask(SIG_SETMASK, NULL, &now);
+  /* the caller blocked SIGUSR1 (and nothing else): the body has the same mask */
+  if (sigismember(&now, SIGUSR1) != 1 || sigismember(&now, SIGUSR2) != 0) return 1;
+  int64_t n = 120;
+  small_frames(&n);
+  return 42;
+}
+static int main_body_deep(void) {
+  printf("before\n");
+  sink = deep(0);
+  return 0;
+}
+static void child_main_overflow(void) { exit(ei_main(main_body_deep)); }
+
+static void test_main_entry(void) {
+  sigset_t one;
+  sigemptyset(&one);
+  sigaddset(&one, SIGUSR1);
+  pthread_sigmask(SIG_BLOCK, &one, &main_mask);
+  EQI(ei_main(main_body_ok), 42);
+  /* and the caller's mask is back */
+  sigset_t now;
+  pthread_sigmask(SIG_SETMASK, NULL, &now);
+  EQI(sigismember(&now, SIGUSR1), 1);
+  EQI(sigismember(&now, SIGUSR2), 0);
+  pthread_sigmask(SIG_SETMASK, &main_mask, NULL);
+  char buf[8192];
+  EQI(in_child(child_main_overflow, buf, sizeof buf), 101);
+  EQS(buf, "before\neider: runtime error: stack overflow (rt_test:0)\n");
+}
+
 static void test_stack_overflow(void) {
   /* deep but bounded recursion works, and a thread's stack is released at the join */
   for (int i = 0; i < 20; i++) {
@@ -951,6 +987,7 @@ int main(void) {
   test_chan_single();
   test_atomics();
   test_stack_overflow();
+  test_main_entry();
   printf("%d checks, %d failed\n", checks, failures);
   return failures ? 1 : 0;
 }
