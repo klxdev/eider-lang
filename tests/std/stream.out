@@ -56,6 +56,9 @@ TimedOut
 true
 accept: timed out
 ConnectionRefused
+through
+a child
+0
 printed first
 written second
 printed third

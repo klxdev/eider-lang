@@ -9,6 +9,7 @@ import "std/net"
 import "std/time"
 import "std/fs"
 import "std/io"
+import "std/child"
 
 fn text(b: List[u8]) -> String {
     match String.from_bytes(b) {
@@ -274,6 +275,33 @@ fn sockets() -> Result[(), stream.Error] uses io, net, clock {
     Ok(())
 }
 
+// a child's stdout and stdin as streams
+fn children() -> Result[(), stream.Error] uses io, fs, net, clock {
+    var argv: List[List[u8]] = List.new()
+    argv.push("cat".bytes())
+    let c = match child.start(argv, child.PIPE, child.PIPE, child.INHERIT) {
+        Ok(c) => c
+        Err(m) => return Err(stream.error_text(stream.Other, m))
+    }
+    var to = stream.buffered_writer(stream.fd(c.stdin))
+    stream.write_str(inout to, "through\na child\n")?
+    to.flush()?
+    to.inner().close()?
+    var from = stream.buffered(stream.fd(c.stdout))
+    while true {
+        match from.read_line_by(100, time.after_ms(5000))? {
+            Some(l) => print(text(l))
+            None => break
+        }
+    }
+    from.inner().close()?
+    match child.wait(c.pid) {
+        Ok(e) => print(e.code)
+        Err(m) => print(m)
+    }
+    Ok(())
+}
+
 fn ordering() -> Result[(), stream.Error] uses io {
     print("printed first")
     var out = stream.stdout()
@@ -299,6 +327,10 @@ fn main() uses io, fs, net, clock {
         Err(e) => print(e)
     }
     match sockets() {
+        Ok(()) => {}
+        Err(e) => print(e)
+    }
+    match children() {
         Ok(()) => {}
         Err(e) => print(e)
     }
