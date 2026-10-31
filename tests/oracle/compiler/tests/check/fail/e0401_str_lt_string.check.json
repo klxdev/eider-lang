@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_str_lt_string.ei","line":3,"col":9},"message":"expected str, found String"}

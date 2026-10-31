@@ -1,0 +1,4 @@
+ok!
+--- stderr
+eider: runtime error: push_byte needs an ASCII byte (1 to 127) (compiler/tests/run/trap_push_byte.ei:4)
+--- exit 101

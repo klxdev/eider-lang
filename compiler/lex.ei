@@ -20,12 +20,14 @@ pub type Kind =
     | Question | LParen | RParen | LBrace | RBrace | LBracket | RBracket
     | Comma | Colon | Semi | Dot | Plus | Minus | Star | Slash | Percent
     | Lt | Gt | Eq | Bang | Pipe
+    | Amp | Caret | Tilde | Shl | Shr | AmpEq | PipeEq | CaretEq | ShlEq | ShrEq
 
 /// `start`/`end` are byte offsets; `line`/`col` the start position; `end_col` is the column
 /// just past the token (tokens never span lines).
 pub type Tok = { kind: Kind, start: u32, end: u32, line: u32, col: u32, end_col: u32, val: u64, big: bool }
 
-pub type Lexed = { toks: List[Tok], strs: List[List[u8]] }
+/// `src` is the source text, for fixes that quote it (parse.ei, E0002).
+pub type Lexed = { toks: List[Tok], strs: List[List[u8]], src: List[u8] }
 
 pub type LexError = { line: u32, col: u32, msg: str }
 
@@ -54,6 +56,13 @@ fn tok(k: Kind, start: L, l: L, val: u64) -> Tok {
     Tok(k, start.i as u32, l.i as u32, start.line, start.col, l.col, val, false)
 }
 
+/// Three-byte symbols: `<<=` and `>>=`.
+fn sym3(a: u8, b: u8, c: u8) -> Option[Kind] {
+    if a == 60 && b == 60 && c == 61 { return Some(ShlEq) }     // <<=
+    if a == 62 && b == 62 && c == 61 { return Some(ShrEq) }     // >>=
+    None
+}
+
 /// Two-byte symbols, longest first.
 fn sym2(a: u8, b: u8) -> Option[Kind] {
     if a == 45 && b == 62 { return Some(Arrow) }        // ->
@@ -73,6 +82,11 @@ fn sym2(a: u8, b: u8) -> Option[Kind] {
     if a == 47 && b == 61 { return Some(SlashEq) }      // /=
     if a == 37 && b == 61 { return Some(PercentEq) }    // %=
     if a == 46 && b == 46 { return Some(DotDot) }       // ..
+    if a == 60 && b == 60 { return Some(Shl) }          // <<
+    if a == 62 && b == 62 { return Some(Shr) }          // >>
+    if a == 38 && b == 61 { return Some(AmpEq) }        // &=
+    if a == 124 && b == 61 { return Some(PipeEq) }      // |=
+    if a == 94 && b == 61 { return Some(CaretEq) }      // ^=
     None
 }
 
@@ -99,6 +113,9 @@ fn sym1(a: u8) -> Option[Kind] {
         61 => Some(Eq)
         33 => Some(Bang)
         124 => Some(Pipe)
+        38 => Some(Amp)
+        94 => Some(Caret)
+        126 => Some(Tilde)
         _ => None
     }
 }
@@ -273,7 +290,7 @@ fn run(src: List[u8], inout names: intern.Interner, all: bool) -> Run {
     // the offset just past the last bad character (0: none yet)
     var bad_end: usize = 0
     while l.i < src.len() {
-        if !all && bad.len() > 0 { return Run(Lexed(toks, strs), bad) }
+        if !all && bad.len() > 0 { return Run(Lexed(toks, strs, src), bad) }
         let c = src[l.i]
         let start = l
         if c == 10 {
@@ -315,6 +332,12 @@ fn run(src: List[u8], inout names: intern.Interner, all: bool) -> Run {
             toks.push(tok(Ident, start, l, id as u64))
         } else if c == 34 {
             toks.push(string(src, inout l, inout strs, inout bad))
+        } else if sym3(c, at(src, l.i + 1), at(src, l.i + 2)).is_some() {
+            let k3 = sym3(c, at(src, l.i + 1), at(src, l.i + 2)).unwrap()
+            step(src, inout l)
+            step(src, inout l)
+            step(src, inout l)
+            toks.push(tok(k3, start, l, 0))
         } else {
             match sym2(c, at(src, l.i + 1)) {
                 Some(k) => {
@@ -341,7 +364,7 @@ fn run(src: List[u8], inout names: intern.Interner, all: bool) -> Run {
         }
     }
     toks.push(Tok(Eof, l.i as u32, l.i as u32, l.line, l.col, l.col, 0, false))
-    Run(Lexed(toks, strs), bad)
+    Run(Lexed(toks, strs, src), bad)
 }
 
 /// Display name of a token kind, as used in dumps and messages.
@@ -390,5 +413,15 @@ pub fn kind_text(k: Kind) -> str {
         Eq => "="
         Bang => "!"
         Pipe => "|"
+        Amp => "&"
+        Caret => "^"
+        Tilde => "~"
+        Shl => "<<"
+        Shr => ">>"
+        AmpEq => "&="
+        PipeEq => "|="
+        CaretEq => "^="
+        ShlEq => "<<="
+        ShrEq => ">>="
     }
 }

@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_bit_bool.ei","line":3,"col":7},"message":"operator & needs integers, found bool"}

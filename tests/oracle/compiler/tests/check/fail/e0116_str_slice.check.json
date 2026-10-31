@@ -1,0 +1,1 @@
+{"error":"E0116","span":{"file":"compiler/tests/check/fail/e0116_str_slice.ei","line":4,"col":8},"message":"`str` already has a built-in `slice`","help":"built-in methods can't be replaced; give this method another name"}

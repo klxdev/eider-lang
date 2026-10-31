@@ -1,0 +1,5 @@
+// expect: E0401 3:12
+fn f(s: str, i: u32) -> u8 {
+    s.byte(i)
+}
+fn main() {}

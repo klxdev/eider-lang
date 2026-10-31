@@ -1,2 +1,2 @@
 // expect: E0111 2:4
-fn main() -> i32 { 0 }
+fn main() -> bool { true }

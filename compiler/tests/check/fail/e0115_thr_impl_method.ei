@@ -1,6 +1,6 @@
 // expect: E0115 6:13
 trait Size { fn size(self) -> i32 }
-impl Size for Mutex[i32] { fn size(self) -> i32 { self.get() } }
+impl Size for Box[i32] { fn size(self) -> i32 { 1 } }
 fn main() uses io {
     let m = Mutex.new(1)
     print(m.size())

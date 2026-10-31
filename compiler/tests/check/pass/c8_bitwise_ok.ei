@@ -1,0 +1,35 @@
+// What C8.2's bitwise operators accept without parentheses: chains of one operator, shifts
+// as operands of & | ^, comparisons of shifts, unary ~, casts and calls as operands, and
+// every compound assignment on every integer type.
+fn ops(a: u32, b: u32) -> u32 {
+    let x = a & b & 15
+    let y = a | b | (x ^ 1)
+    let z = a >> 4 & 15
+    let w = ~a ^ b ^ 3
+    let v = (a + 1) & (b - 1)
+    let s = a << 2 << 1
+    x + y + z + w + v + s
+}
+
+fn cmp(a: i64) -> bool { a << 1 == 4 && (a & 1) == 0 && -a >> 1 < 0 }
+
+fn casts(b: u8) -> u32 { b as u32 << 8 | 255 }
+
+fn compound() {
+    var a: i32 = 1
+    a &= 3
+    a |= 4
+    a ^= 5
+    a <<= 6
+    a >>= 7
+    var b: u8 = 1
+    b <<= 7
+    var c: usize = 1
+    c <<= 63
+    var d: i64 = -1
+    d >>= 63
+    var e: u64 = 0
+    e |= ~e
+}
+
+fn main() {}

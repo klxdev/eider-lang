@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_shift_widths.ei","line":3,"col":10},"message":"expected u64, found u32","help":"there are no implicit conversions; use an explicit cast: `value as u64`"}

@@ -1,1 +1,1 @@
-{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_main_with_params.ei","line":2,"col":4},"message":"`main` takes no parameters and returns ()"}
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_main_with_params.ei","line":2,"col":4},"message":"`main` takes no parameters and returns (), i32 or Result[(), E]","help":"an i32 is the exit code (0 to 255); an Err is printed and exits with 1"}

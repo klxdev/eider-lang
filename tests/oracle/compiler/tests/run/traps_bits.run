@@ -1,0 +1,3 @@
+--- stderr
+eider: runtime error: shift count out of range (compiler/tests/run/traps_bits.ei:100)
+--- exit 101

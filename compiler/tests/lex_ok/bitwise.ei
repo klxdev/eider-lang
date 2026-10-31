@@ -1,0 +1,10 @@
+// C8.2's tokens: longest match first (`<<=` before `<<` before `<=` before `<`), and `|`
+// next to `||` and `|=`.
+a & b | c ^ ~d << 1 >> 2
+a &= 1; a |= 2; a ^= 3; a <<= 4; a >>= 5
+a && b || c
+a <= b >= c < d > e
+let f = |x| x | 1
+let g = || 0
+a<<=b>>=c<<d>>e
+match () { () => 0 }

@@ -1,0 +1,21 @@
+// The IR of C8.2's operations: bitwise S_BINARY/S_UNARY (shifts carry the line they trap
+// at), folded constants, unit values, and the text builtins (byte, slice, bytes, from_bytes,
+// push_byte) with their borrows and owned results.
+const K: u8 = ~0x0F & 0xFC
+
+fn bits(a: i32, n: i32) -> i32 {
+    var x = a & 255
+    x |= a ^ n
+    x <<= 2
+    ~x >> n
+}
+
+fn text(s: String, t: str) -> Result[String, usize] {
+    var b = s.slice(0, s.len())
+    b.push_byte(t.byte(0))
+    String.from_bytes(b.bytes())
+}
+
+fn unit() -> Result[(), u8] { Ok(()) }
+
+fn main() {}

@@ -1,0 +1,1 @@
+{"error":"E0002","span":{"file":"./compiler/tests/check/fail/e0002_in_let.ei","line":3,"col":19},"message":"`^` and `&` can't be mixed without parentheses","help":"Eider doesn't rank bitwise operators against comparisons, arithmetic or each other; parenthesize the operation that comes first","fix":{"at":{"line":3,"col":21},"delete":5,"insert":"(2 & 3)"}}

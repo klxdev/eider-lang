@@ -1,0 +1,9 @@
+// `main` returning an exit code (docs/compiler.md, "C8.2: small language gaps"): the
+// process exits with it (0 to 255).
+
+fn code(n: i32) -> i32 { n * 7 }
+
+fn main() -> i32 uses io {
+    print("exiting with 42")
+    code(6)
+}

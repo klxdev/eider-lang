@@ -1,0 +1,27 @@
+// C8.2: bitwise operators with explicit grouping, unit values, byte access on text, an impl
+// on a built-in type, and `main` returning Result[(), E].
+impl String {
+    fn last_byte(self) -> u8 { self.byte(self.len() - 1) }
+}
+
+fn low_nibble(x: u8) -> u8 { x & 0x0F }
+
+fn is_even(x: u32) -> bool { (x & 1) == 0 }
+
+fn check(s: str) -> Result[(), str] {
+    if s.len() == 0 { return Err("empty") }
+    Ok(())
+}
+
+fn main() -> Result[(), str] uses io {
+    check("abc")?
+    let s = String.from("abc")
+    print(s.last_byte() >> 1 | 1)
+    print(low_nibble(0xAB))
+    print(is_even(4))
+    match String.from_bytes(s.bytes()) {
+        Ok(t) => print(t.slice(0, 1))
+        Err(at) => print(at)
+    }
+    Ok(())
+}

@@ -24,6 +24,8 @@ pub type P = {
     aliases: List[u32],
     // the errors recorded so far ("recovery")
     errs: List[diag.Diag],
+    // the source text (E0002's fix quotes an operand)
+    src: List[u8],
 }
 
 /// The result of `parse_all`: the tree, with error nodes (ast.ei) where parts failed, and
@@ -882,6 +884,11 @@ fn assign_op(k: lex.Kind) -> u32 {
         lex.StarEq => ast.OP_MUL + 2
         lex.SlashEq => ast.OP_DIV + 2
         lex.PercentEq => ast.OP_REM + 2
+        lex.AmpEq => ast.OP_BAND + 2
+        lex.PipeEq => ast.OP_BOR + 2
+        lex.CaretEq => ast.OP_BXOR + 2
+        lex.ShlEq => ast.OP_SHL + 2
+        lex.ShrEq => ast.OP_SHR + 2
         _ => 0
     }
 }
@@ -1036,20 +1043,100 @@ fn mul_op(k: lex.Kind) -> u32 {
     }
 }
 
+// Binary operators below `&&`, loosest first: comparisons, `|`, `^`, `&`, shifts, `+ -`,
+// `* / %`. Bitwise operators aren't ranked against comparisons, arithmetic or each other
+// (C reads `a & b == c` as `a & (b == c)`, Go reads `a + b & c` as `a + (b & c)`): an
+// operand of one of them that is an unparenthesized operation of another group is E0002,
+// with a fix adding the parentheses the levels above imply (C's and Rust's grouping). A
+// shift may be an operand of `& | ^`, and a comparison may compare shifts. Each level
+// returns a Term: the node, the group of its outermost unparenthesized operator (CL_*), and
+// its first and last token.
+
+const CL_NONE: u32 = 0
+const CL_ARITH: u32 = 1
+const CL_SHIFT: u32 = 2
+const CL_AND: u32 = 3
+const CL_XOR: u32 = 4
+const CL_OR: u32 = 5
+
+type Term = { node: u32, cls: u32, t0: usize, t1: usize }
+
+fn term(p: P, node: u32, cls: u32, t0: usize) -> Term {
+    let t1: usize = if p.i > t0 { p.i - 1 } else { t0 }
+    Term(node, cls, t0, t1)
+}
+
+/// E0002 at operator token `t`: operand x (an operation of another group) needs parentheses.
+fn mixed(inout p: P, t: lex.Tok, x: Term) uses ffi {
+    let inner = ast.op_text(p.ast.nodes[x.node as usize].a)
+    var m = quoted("`", sys.lit(lex.kind_text(t.kind)), "` and `")
+    bytes.append(inout m, sys.lit(inner))
+    bytes.append(inout m, sys.lit("` can't be mixed without parentheses"))
+    var d = diag.new("E0002", t.line, t.col, m)
+    d.help = sys.lit("Eider doesn't rank bitwise operators against comparisons, arithmetic or each other; parenthesize the operation that comes first")
+    let a = p.toks[x.t0]
+    let b = p.toks[x.t1]
+    var ins = sys.lit("(")
+    bytes.append(inout ins, bytes.slice(p.src, a.start as usize, b.end as usize))
+    ins.push(41)
+    d.fix = Some(diag.Fix(a.line, a.col, (b.end - a.start) as u64, ins))
+    note(inout p, d)
+}
+
 fn cmp_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
-    var l = add_expr(inout p)?
+    let first = bit_expr(inout p, CL_OR)?
+    var l = first.node
+    var n: u32 = 0
     while cmp_op(kind(p)) > 0 {
         let t = cur(p)
         let op = cmp_op(t.kind) - 1
+        if n == 0 && first.cls >= CL_AND { mixed(inout p, t, first) }
         adv(inout p)
         skip_nl(inout p)
-        let r = add_expr(inout p)?
-        l = bin(inout p, op, l, r, t.line, t.col)
+        let r = bit_expr(inout p, CL_OR)?
+        if r.cls >= CL_AND { mixed(inout p, t, r) }
+        l = bin(inout p, op, l, r.node, t.line, t.col)
+        n += 1
     }
     Ok(l)
 }
 
-fn add_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+/// The operator of bitwise group `cls` at token kind k (OP_* + 1), or 0.
+fn bit_op(cls: u32, k: lex.Kind) -> u32 {
+    if cls == CL_OR && k == lex.Pipe { return ast.OP_BOR + 1 }
+    if cls == CL_XOR && k == lex.Caret { return ast.OP_BXOR + 1 }
+    if cls == CL_AND && k == lex.Amp { return ast.OP_BAND + 1 }
+    if cls == CL_SHIFT && k == lex.Shl { return ast.OP_SHL + 1 }
+    if cls == CL_SHIFT && k == lex.Shr { return ast.OP_SHR + 1 }
+    0
+}
+
+/// Whether x may be an operand of group `cls`: an atom, a shift, or (on the left) the same
+/// group.
+fn fits_group(cls: u32, x: Term) -> bool { x.cls == CL_NONE || x.cls == CL_SHIFT || x.cls == cls }
+
+/// One level of the bitwise groups (CL_OR down to CL_SHIFT; under it the arithmetic ones).
+fn bit_expr(inout p: P, cls: u32) -> Result[Term, diag.Diag] uses ffi {
+    let t0 = p.i
+    var l = if cls == CL_SHIFT { add_expr(inout p)? } else { bit_expr(inout p, cls - 1)? }
+    var n: u32 = 0
+    while bit_op(cls, kind(p)) > 0 {
+        let t = cur(p)
+        let op = bit_op(cls, t.kind) - 1
+        if n == 0 && !fits_group(cls, l) { mixed(inout p, t, l) }
+        adv(inout p)
+        skip_nl(inout p)
+        let r = if cls == CL_SHIFT { add_expr(inout p)? } else { bit_expr(inout p, cls - 1)? }
+        if !fits_group(cls, r) { mixed(inout p, t, r) }
+        let node = bin(inout p, op, l.node, r.node, t.line, t.col)
+        l = term(p, node, cls, t0)
+        n += 1
+    }
+    Ok(l)
+}
+
+fn add_expr(inout p: P) -> Result[Term, diag.Diag] uses ffi {
+    let t0 = p.i
     var l = mul_expr(inout p)?
     while add_op(kind(p)) > 0 {
         let t = cur(p)
@@ -1057,20 +1144,24 @@ fn add_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
         adv(inout p)
         skip_nl(inout p)
         let r = mul_expr(inout p)?
-        l = bin(inout p, op, l, r, t.line, t.col)
+        let node = bin(inout p, op, l.node, r.node, t.line, t.col)
+        l = term(p, node, CL_ARITH, t0)
     }
     Ok(l)
 }
 
-fn mul_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
-    var l = cast_expr(inout p)?
+fn mul_expr(inout p: P) -> Result[Term, diag.Diag] uses ffi {
+    let t0 = p.i
+    let first = cast_expr(inout p)?
+    var l = term(p, first, CL_NONE, t0)
     while mul_op(kind(p)) > 0 {
         let t = cur(p)
         let op = mul_op(t.kind) - 1
         adv(inout p)
         skip_nl(inout p)
         let r = cast_expr(inout p)?
-        l = bin(inout p, op, l, r, t.line, t.col)
+        let node = bin(inout p, op, l.node, r, t.line, t.col)
+        l = term(p, node, CL_ARITH, t0)
     }
     Ok(l)
 }
@@ -1090,9 +1181,9 @@ fn cast_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
 
 fn unary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     let t = cur(p)
-    if eat(inout p, lex.Minus) || eat(inout p, lex.Bang) {
+    if eat(inout p, lex.Minus) || eat(inout p, lex.Bang) || eat(inout p, lex.Tilde) {
         var n = mk(ast.EUnary, t.line, t.col)
-        n.a = if t.kind == lex.Minus { 0 } else { 1 }
+        n.a = if t.kind == lex.Minus { 0 } else if t.kind == lex.Bang { 1 } else { 2 }
         n.b = unary(inout p)?
         return Ok(add(inout p, n))
     }
@@ -1197,6 +1288,8 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     if t.kind == lex.LParen {
         adv(inout p)
         skip_nl(inout p)
+        // `()`: the unit value, an empty tuple in the tree
+        if eat(inout p, lex.RParen) { return Ok(add(inout p, mk(ast.ETuple, t.line, t.col))) }
         let first = expr(inout p)?
         skip_nl(inout p)
         if is(p, lex.Comma) {
@@ -1566,7 +1659,7 @@ pub fn parse(lx: lex.Lexed, names: intern.Interner) -> Result[P, diag.Diag] uses
 /// Parse a lexed file (from `lex.lex` or `lex.lex_all`) to the end, recovering from each
 /// error ("recovery"): Parsed.
 pub fn parse_all(lx: lex.Lexed, names: intern.Interner) -> Parsed uses ffi {
-    var p = P(lx.toks, lx.strs, 0, ast.new(), names, List.new(), List.new())
+    var p = P(lx.toks, lx.strs, 0, ast.new(), names, List.new(), List.new(), lx.src)
     program(inout p)
     let ds = p.errs
     Parsed(p, ds)

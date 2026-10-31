@@ -415,6 +415,15 @@ fn continues(k: lex.Kind) -> bool {
         lex.StarEq => true
         lex.SlashEq => true
         lex.PercentEq => true
+        lex.Amp => true
+        lex.Caret => true
+        lex.Shl => true
+        lex.Shr => true
+        lex.AmpEq => true
+        lex.PipeEq => true
+        lex.CaretEq => true
+        lex.ShlEq => true
+        lex.ShrEq => true
         lex.DotDot => true
         lex.Colon => true
         lex.Dot => true

@@ -1,0 +1,4 @@
+before
+--- stderr
+eider: runtime error: exit code out of range (compiler/tests/run/main_exit_range.ei:4)
+--- exit 101

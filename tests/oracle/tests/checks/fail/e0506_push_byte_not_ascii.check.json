@@ -1,0 +1,1 @@
+{"error":"E0506","span":{"file":"tests/checks/fail/e0506_push_byte_not_ascii.ei","line":4,"col":17},"message":"`push_byte` takes an ASCII byte (1 to 127), not 200","help":"a String is always valid UTF-8: build other text with `push_str`, `append` or `String.from_bytes`"}

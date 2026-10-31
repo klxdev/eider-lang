@@ -102,6 +102,10 @@ const GK_CHRECV: u32 = 22
 // make every buffer a value reaches its own before it crosses to another thread (own_)
 const GK_UNIQ: u32 = 23
 const GK_OWN: u32 = 24
+// bytes of text (C8.2): `bytes_L` (List[u8] L from bytes), `utf8_R` (String.from_bytes, R its
+// Result[String, usize])
+const GK_BYTES: u32 = 25
+const GK_UTF8: u32 = 26
 
 /// Output and lowering state. `o` is the text being written; `pr` collects glue prototypes
 /// and `envs` closure environment structs while glue is generated. Per type: its C name
@@ -870,6 +874,8 @@ fn glue(inout g: G, p: P, key: u64) uses ffi {
         uniq_glue(inout g, p, id)
     } else if kind == GK_OWN {
         own_glue(inout g, p, id)
+    } else if kind == GK_BYTES || kind == GK_UTF8 {
+        text_glue(inout g, p, kind, id)
     } else if kind >= GK_SPAWN {
         thread_glue(inout g, p, kind, id)
     } else {
@@ -1296,6 +1302,91 @@ fn list_glue(inout g: G, p: P, kind: u32, ty: u32) uses ffi {
     put(inout g, ") return true;\n  return false;\n}\n")
 }
 
+/// `bytes_L(s, n)`: a List[u8] (type ty) holding bytes s[0..n); `utf8_R(d, n)`: Ok(the
+/// String of bytes d[0..n)) when they are valid UTF-8 without NUL, else Err(offset of the
+/// first bad byte), for R = Result[String, usize] (ty).
+fn text_glue(inout g: G, p: P, kind: u32, ty: u32) uses ffi {
+    let mark = g.o.len()
+    put(inout g, "static ")
+    cty(inout g, p, ty)
+    put(inout g, " ")
+    if kind == GK_BYTES {
+        gname(inout g, p, "bytes_", ty)
+        put(inout g, "(const char *s, uint64_t n)")
+        proto(inout g, mark)
+        put(inout g, " {\n  ")
+        cty(inout g, p, ty)
+        put(inout g, " l = {0};\n  if (n) {\n    l.d = ei_buf_alloc(n, 1);\n    memcpy(l.d, s, (size_t)n);\n    l.len = l.cap = n;\n  }\n  return l;\n}\n")
+        return
+    }
+    gname(inout g, p, "utf8_", ty)
+    put(inout g, "(const uint8_t *d, uint64_t n)")
+    proto(inout g, mark)
+    put(inout g, " {\n  ")
+    cty(inout g, p, ty)
+    put(inout g, " r = {0};\n  uint64_t bad = ei_utf8_check(d, n);\n  if (bad == n) {\n    r.tag = 0;\n    r.u.v0.f0 = ei_str_from_n((const char *)d, n);\n  } else {\n    r.tag = 1;\n    r.u.v1.f0 = bad;\n  }\n  return r;\n}\n")
+}
+
+/// The pointer and length of text operand a (String or str), as runtime arguments.
+fn text_arg(inout g: G, p: P, a: u32) uses ffi {
+    if ty_kind(p, arg_ty(p, a)) == types.T_STRING {
+        arg_val(inout g, p, a)
+        put(inout g, ".p, ")
+        arg_val(inout g, p, a)
+        put(inout g, ".len")
+    } else {
+        arg_val(inout g, p, a)
+        put(inout g, ", (uint64_t)strlen(")
+        arg_val(inout g, p, a)
+        put(inout g, ")")
+    }
+}
+
+/// The byte builtins of String and str (C8.2; ir.ei, "Bytes of text").
+fn text_builtin(inout g: G, p: P, s: ir.Stmt) uses ffi {
+    let b = s.a
+    if b == ir.B_STR_PUSH_BYTE {
+        put(inout g, "ei_str_push_byte(")
+        arg_ptr(inout g, p, barg(p, s, 0))
+        put(inout g, ", ")
+        arg_val(inout g, p, barg(p, s, 1))
+        put(inout g, ", ")
+        putn(inout g, s.line as u64)
+        put(inout g, ")")
+        return
+    }
+    bdst(inout g, p, s)
+    if b == ir.B_STR_FROM_BYTES {
+        need(inout g, GK_UTF8, s.ty)
+        gname(inout g, p, "utf8_", s.ty)
+        put(inout g, "(")
+        arg_val(inout g, p, barg(p, s, 0))
+        put(inout g, ".d, ")
+        arg_val(inout g, p, barg(p, s, 0))
+        put(inout g, ".len)")
+        return
+    }
+    if b == ir.B_STR_BYTES {
+        need(inout g, GK_BYTES, s.ty)
+        gname(inout g, p, "bytes_", s.ty)
+        put(inout g, "(")
+        text_arg(inout g, p, barg(p, s, 0))
+        put(inout g, ")")
+        return
+    }
+    if b == ir.B_STR_BYTE { put(inout g, "ei_str_byte(") } else { put(inout g, "ei_str_slice(") }
+    text_arg(inout g, p, barg(p, s, 0))
+    put(inout g, ", ")
+    arg_val(inout g, p, barg(p, s, 1))
+    if b == ir.B_STR_SLICE {
+        put(inout g, ", ")
+        arg_val(inout g, p, barg(p, s, 2))
+    }
+    put(inout g, ", ")
+    putn(inout g, s.line as u64)
+    put(inout g, ")")
+}
+
 /// `new_B` (B_BOX_NEW: moves v in) for Box type ty.
 fn box_glue(inout g: G, p: P, ty: u32) uses ffi {
     let el = types.get(p.t, ty).a
@@ -1652,7 +1743,7 @@ fn arg_uniqs(inout g: G, p: P, start: u32, n: u32, depth: u32) uses ffi {
 
 /// Whether builtin b changes its first argument (a place).
 fn mutates(b: u32) -> bool {
-    b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE
+    b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_STR_PUSH_BYTE || b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE
 }
 
 /// A place as a C lvalue (its indices are checked already).
@@ -1815,11 +1906,44 @@ fn binary(inout g: G, p: P, s: ir.Stmt) uses ffi {
         put(inout g, ")")
         return
     }
+    if ast.is_bitwise(o) {
+        let k = types.ik(p.t, s.ty)
+        if o == ast.OP_BAND { put(inout g, "ei_band_") }
+        if o == ast.OP_BOR { put(inout g, "ei_bor_") }
+        if o == ast.OP_BXOR { put(inout g, "ei_bxor_") }
+        if o == ast.OP_SHL { put(inout g, "ei_shl_") }
+        if o == ast.OP_SHR { put(inout g, "ei_shr_") }
+        put(inout g, suffix(k))
+        put(inout g, "(")
+        op(inout g, p, s.b)
+        put(inout g, ", ")
+        op(inout g, p, s.c)
+        if o == ast.OP_SHL || o == ast.OP_SHR {
+            put(inout g, ", ")
+            putn(inout g, s.line as u64)
+        }
+        put(inout g, ")")
+        return
+    }
     if o == ast.OP_EQ || o == ast.OP_NE {
         if o == ast.OP_NE { put(inout g, "!") }
         let a = op_text(inout g, p, s.b)
         let b = op_text(inout g, p, s.c)
         eq_expr(inout g, p, s.ty, a, b)
+        return
+    }
+    let tk = ty_kind(p, s.ty)
+    if tk == types.T_STRING || tk == types.T_STR {
+        // byte order, which is Unicode scalar order for UTF-8
+        put(inout g, "(strcmp(")
+        op(inout g, p, s.b)
+        if tk == types.T_STRING { put(inout g, ".p") }
+        put(inout g, ", ")
+        op(inout g, p, s.c)
+        if tk == types.T_STRING { put(inout g, ".p") }
+        put(inout g, ") ")
+        put(inout g, ast.op_text(o))
+        put(inout g, " 0)")
         return
     }
     let fixed = fixed_cmp(p, o, s.b, s.c, s.ty)
@@ -1934,6 +2058,13 @@ fn builtin(inout g: G, p: P, s: ir.Stmt, depth: u32) uses ffi {
         if b == ir.B_STR_FROM { put(inout g, "ei_str_from(") } else { put(inout g, "ei_str_from_i64(") }
         arg_val(inout g, p, barg(p, s, 0))
         put(inout g, ")")
+    } else if (b == ir.B_LEN || b == ir.B_IS_EMPTY) && ty_kind(p, arg_ty(p, barg(p, s, 0))) == types.T_STR {
+        bdst(inout g, p, s)
+        if b == ir.B_LEN { put(inout g, "(uint64_t)strlen(") } else { put(inout g, "(*(") }
+        arg_val(inout g, p, barg(p, s, 0))
+        if b == ir.B_LEN { put(inout g, ")") } else { put(inout g, ") == 0)") }
+    } else if b >= ir.B_STR_BYTE {
+        text_builtin(inout g, p, s)
     } else if b == ir.B_LEN || b == ir.B_IS_EMPTY {
         bdst(inout g, p, s)
         put(inout g, "(")
@@ -2203,6 +2334,12 @@ fn stmt(inout g: G, p: P, id: u32, depth: u32) uses ffi {
         if s.a == ir.U_NOT {
             put(inout g, "!")
             op(inout g, p, s.b)
+        } else if s.a == ir.U_BNOT {
+            put(inout g, "ei_bnot_")
+            put(inout g, suffix(types.ik(p.t, s.ty)))
+            put(inout g, "(")
+            op(inout g, p, s.b)
+            put(inout g, ")")
         } else {
             put(inout g, "ei_neg_")
             put(inout g, suffix(types.ik(p.t, s.ty)))
@@ -2564,6 +2701,59 @@ pub fn program_for(p: P, file: List[u8], tests: bool, lib: bool) -> Result[List[
 /// exports (compiled against core/wasm by wasm.ei).
 pub fn program_wasm(p: P, file: List[u8]) -> Result[List[u8], List[u8]] uses ffi { emit(p, file, false, true, true) }
 
+/// C `main` for the Eider `main` (function f) by its result (docs/compiler.md, "C8.2: small
+/// language gaps"): () exits 0; an i32 is the exit code (outside 0..255 it traps at main's
+/// line); a Result[(), E]'s Err prints `error: <the error>` (or `error: main returned Err`
+/// when E can't be printed) to stderr, is dropped, and exits 1.
+fn main_body(inout g: G, p: P, file: List[u8], f: u32) uses ffi {
+    put(inout g, "int main(void) {\n  ei_set_file(")
+    str_lit(inout g.o, file)
+    put(inout g, ");\n  ")
+    let rt = p.ir.fns[f as usize].ret
+    let rk = ty_kind(p, rt)
+    if rk == types.T_INT {
+        put(inout g, "int32_t code = ")
+        fn_name(inout g, p, f)
+        put(inout g, "();\n  if (code < 0 || code > 255) ei_trap(\"exit code out of range\", ")
+        putn(inout g, p.ir.main_line as u64)
+        put(inout g, ");\n  ei_check_leaks();\n  return (int)code;\n}\n")
+        return
+    }
+    if rk != types.T_ENUM {
+        fn_name(inout g, p, f)
+        put(inout g, "();\n  ei_check_leaks();\n  return 0;\n}\n")
+        return
+    }
+    cty(inout g, p, rt)
+    put(inout g, " r = ")
+    fn_name(inout g, p, f)
+    put(inout g, "();\n  if (r.tag == 1) {\n    fflush(stdout);\n    ")
+    let d = types.def_of(p.t, rt)
+    let et = types.field(p.t, types.variant(p.t, d, 1).fstart, 0).ty
+    let e = types.get(p.t, et)
+    if e.kind == types.T_INT && types.signed(e.a) {
+        put(inout g, "fprintf(stderr, \"error: %\" PRId64 \"\\n\", (int64_t)r.u.v1.f0);")
+    } else if e.kind == types.T_INT {
+        put(inout g, "fprintf(stderr, \"error: %\" PRIu64 \"\\n\", (uint64_t)r.u.v1.f0);")
+    } else if e.kind == types.T_BOOL {
+        put(inout g, "fprintf(stderr, \"error: %s\\n\", r.u.v1.f0 ? \"true\" : \"false\");")
+    } else if e.kind == types.T_STR {
+        put(inout g, "fprintf(stderr, \"error: %s\\n\", r.u.v1.f0);")
+    } else if e.kind == types.T_STRING {
+        put(inout g, "fprintf(stderr, \"error: %s\\n\", r.u.v1.f0.p);")
+    } else if e.kind == types.T_ENUM && !types.def_of(p.t, et).payload {
+        need(inout g, GK_NAME, et)
+        put(inout g, "fprintf(stderr, \"error: %s\\n\", ")
+        gname(inout g, p, "name_", et)
+        put(inout g, "(r.u.v1.f0.tag));")
+    } else {
+        put(inout g, "fprintf(stderr, \"error: main returned Err\\n\");")
+    }
+    put(inout g, "\n    ")
+    drop_call(inout g, p, rt, sys.lit("&r"))
+    put(inout g, "\n    ei_check_leaks();\n    return 1;\n  }\n  ei_check_leaks();\n  return 0;\n}\n")
+}
+
 fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool) -> Result[List[u8], List[u8]] uses ffi {
     var g = G(List.new(), 0, List.new(), 0, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new())
     name_all(inout g, p)
@@ -2595,11 +2785,7 @@ fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool) -> Result[List
         }
         put(inout g, "  printf(\"\\n%d tests, %d failed\\n\", total, failed);\n  if (!failed) ei_check_leaks();\n  return failed ? 1 : 0;\n}\n")
     } else {
-        put(inout g, "int main(void) {\n  ei_set_file(")
-        str_lit(inout g.o, file)
-        put(inout g, ");\n  ")
-        fn_name(inout g, p, main_fn)
-        put(inout g, "();\n  ei_check_leaks();\n  return 0;\n}\n")
+        main_body(inout g, p, file, main_fn)
     }
     let fns_text = g.o
     // shared glue, until nothing new is needed

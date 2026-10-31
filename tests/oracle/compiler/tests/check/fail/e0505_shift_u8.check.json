@@ -1,0 +1,1 @@
+{"error":"E0505","span":{"file":"compiler/tests/check/fail/e0505_shift_u8.ei","line":3,"col":22},"message":"shift count 8 is out of range for u8 (0 to 7)","help":"a shift count must be at least 0 and less than the type's width in bits"}

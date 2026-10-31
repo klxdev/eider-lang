@@ -1,0 +1,2 @@
+// expect: E0111 2:4
+fn main() -> Result[i32, str] { Ok(1) }

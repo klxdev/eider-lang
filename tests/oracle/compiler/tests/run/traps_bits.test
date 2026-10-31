@@ -1,0 +1,32 @@
+test the widest shifts pass ... ok
+test u8 shift by 8 ... FAILED
+    shift count out of range (compiler/tests/run/traps_bits.ei:25)
+test u32 shift by 32 ... FAILED
+    shift count out of range (compiler/tests/run/traps_bits.ei:30)
+test u64 shift by 64 ... FAILED
+    shift count out of range (compiler/tests/run/traps_bits.ei:35)
+test usize shift by 200 ... FAILED
+    shift count out of range (compiler/tests/run/traps_bits.ei:40)
+test i32 shift by 32 ... FAILED
+    shift count out of range (compiler/tests/run/traps_bits.ei:45)
+test i32 shift by a negative count ... FAILED
+    shift count out of range (compiler/tests/run/traps_bits.ei:50)
+test i64 shift by a negative count ... FAILED
+    shift count out of range (compiler/tests/run/traps_bits.ei:55)
+test i64 shift by 64 in a compound assignment ... FAILED
+    shift count out of range (compiler/tests/run/traps_bits.ei:61)
+test String bytes in range pass ... ok
+test str byte out of bounds ... FAILED
+    index out of bounds (compiler/tests/run/traps_bits.ei:75)
+test str slice past the end ... FAILED
+    slice out of bounds (compiler/tests/run/traps_bits.ei:80)
+test str slice backwards ... FAILED
+    slice out of bounds (compiler/tests/run/traps_bits.ei:85)
+test str slice starting inside a character ... FAILED
+    slice not on a character boundary (compiler/tests/run/traps_bits.ei:90)
+test str slice ending inside a character ... FAILED
+    slice not on a character boundary (compiler/tests/run/traps_bits.ei:95)
+
+15 tests, 13 failed
+--- stderr
+--- exit 1

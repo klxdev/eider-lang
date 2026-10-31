@@ -1,0 +1,7 @@
+// An exit code outside 0..255 traps at `main`'s line: the OS would keep only its low
+// byte (256 would read as success).
+
+fn main() -> i32 uses io {
+    print("before")
+    256
+}

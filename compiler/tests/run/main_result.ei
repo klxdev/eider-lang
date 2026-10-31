@@ -1,0 +1,17 @@
+// `main` returning Result[(), E]: an Err is printed to stderr as `error: <the error>`,
+// dropped, and the program exits with 1 (docs/compiler.md, "C8.2: small language gaps").
+
+fn parse(s: str) -> Result[i32, String] {
+    if s == "7" { return Ok(7) }
+    var m = String.from("not a number: ")
+    m.push_str(s)
+    Err(m)
+}
+
+fn main() -> Result[(), String] uses io {
+    let a = parse("7")?
+    print(a)
+    let b = parse("x")?
+    print(b)
+    Ok(())
+}

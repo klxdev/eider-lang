@@ -1,0 +1,90 @@
+// `impl` blocks on built-in types (docs/compiler.md, "C8.2: small language gaps"): methods
+// and associated functions on String, str, integers, bool, List, Map, Box and Mutex, generic
+// impls, trait impls; built-in methods are found first.
+
+trait Describe {
+    fn describe(self) -> String
+}
+
+impl String {
+    fn twice(self) -> usize { self.len() * 2 }
+    fn shout(self) -> String {
+        var s = self
+        s.push_str("!")
+        s
+    }
+    fn make() -> String { String.from("made") }
+}
+
+impl str {
+    fn first(self) -> u8 { self.byte(0) }
+    fn greet() -> str { "hi" }
+}
+
+impl i32 {
+    fn dbl(self) -> i32 { self * 2 }
+}
+
+impl bool {
+    fn flip(self) -> bool { !self }
+}
+
+impl[T] List[T] {
+    fn second(self) -> T { self[1] }
+}
+
+impl Map[i32, i32] {
+    fn size2(self) -> usize { self.len() * 2 }
+}
+
+impl Box[u8] {
+    fn plus(self, n: u8) -> u8 { self.get() + n }
+}
+
+impl Describe for Mutex[i32] {
+    fn describe(self) -> String {
+        var s = String.from("mutex ")
+        s.append(String.from_int(self.get() as i64))
+        s
+    }
+}
+
+impl Describe for String {
+    fn describe(self) -> String {
+        var s = String.from("string ")
+        s.append(self)
+        s
+    }
+}
+
+fn show[T: Describe](x: T) uses io { print(x.describe()) }
+
+fn main() uses io {
+    let s = String.from("ab")
+    print(s.twice())          // 4
+    print(s.len())            // 2 (the built-in len)
+    print(s.shout())          // ab!
+    print(String.make())      // made
+    print(String.from("x"))   // x (the built-in from)
+    print("xyz".first())      // 120
+    print(str.greet())        // hi
+    let x: i32 = 4
+    print(x.dbl())            // 8
+    print(true.flip())        // false
+    var l: List[u32] = List.new()
+    l.push(5)
+    l.push(6)
+    print(l.second())         // 6
+    var names: List[String] = List.new()
+    names.push(String.from("a"))
+    names.push(String.from("b"))
+    print(names.second())     // b
+    var m: Map[i32, i32] = Map.new()
+    m.insert(1, 2)
+    print(m.size2())          // 2
+    let b = Box.new(40 as u8)
+    print(b.plus(2))          // 42
+    let mx = Mutex.new(7)
+    show(mx)                  // mutex 7
+    show(String.from("s"))    // string s
+}

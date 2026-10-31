@@ -1,0 +1,1 @@
+{"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_push_byte_let.ei","line":4,"col":5},"message":"cannot modify `s`: it is not mutable","help":"declare `s` with `var`","fix":{"at":{"line":3,"col":5},"delete":3,"insert":"var"}}

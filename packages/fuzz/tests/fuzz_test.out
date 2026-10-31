@@ -57,7 +57,7 @@ fn f(a: i32) -> i32 {
 }
 
 fn b(a: i32) -> i32 {
-    let as usize b = a * 2 + 1
+    let[0] b = a * 2 + 1
     if b > 3 && true { return b }
     0
 }

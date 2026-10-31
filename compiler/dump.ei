@@ -150,7 +150,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) uses ffi {
             qual(inout out, p, n.b)
         }
         ast.EUnary => {
-            let op = if n.a == 0 { " op=`-`" } else { " op=`!`" }
+            let op = if n.a == 0 { " op=`-`" } else if n.a == 1 { " op=`!`" } else { " op=`~`" }
             put(inout out, op)
             child(inout out, p, "operand", n.b, d)
         }

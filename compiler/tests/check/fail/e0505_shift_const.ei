@@ -1,0 +1,3 @@
+// expect: E0505 2:23
+const BIG: i64 = 1 << 70
+fn main() {}

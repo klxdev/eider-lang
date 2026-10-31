@@ -1198,6 +1198,94 @@ already decided every clone, move and drop (ir.ei, "Ownership"); only what they 
   The generated C for eiderc grew from 104,523 to 105,023 lines (the `uniq_`/`own_` glue
   and the calls before writes).
 
+## C8.2: small language gaps
+
+Wave 1, item 8.2: five small features the rest of the backlog (std on `String`, traits, the
+`sha256` copy) needs. `compiler/` doesn't use any of them until a seed that has them is
+committed. Tests: `compiler/tests/run/{bitwise,traps_bits,text_bytes,text_cow,trap_text,trap_push_byte,units,impl_builtin,main_*}.ei`, `compiler/tests/wasm/bits.ei`, the `bitwise` lex/parse/IR goldens, `tests/checks` cases for each new code,
+compile-fail cases `e0002_*`, `e0505_*`, `e0506_*`, `e0116_*`, `e0111_main_*` and the new
+E0401/E0115/E0303/E0405 cases in `compiler/tests/check/fail`, `c8_*_ok.ei` in
+`compiler/tests/check/pass`, and `compiler/tests/check/multi/bitwise.ei`.
+
+- **Bitwise operators** `&` `|` `^` `<<` `>>`, unary `~`, and `&=` `|=` `^=` `<<=` `>>=`, on
+  every integer type. As with the other operators both operands have one type (no implicit
+  widening, so the shift count has the operand's type too: `x << n` with `x: u64` needs
+  `n: u64`; E0401 otherwise), and literals take the other operand's type. `& | ^ ~` act on the
+  two's-complement bits and never trap. `>>` is arithmetic on signed types (it copies the
+  sign bit, so `-7 >> 1 == -4`) and logical on unsigned ones. `<<` drops the bits shifted out
+  and doesn't trap on them: it is an operation on bits, not on numbers (use `*` for a checked
+  multiplication by a power of two). A shift count that is negative or not below the type's
+  width traps (`shift count out of range`, exit 101), and is E0505 when it is a constant
+  (also in `<<=`/`>>=`, unlike the `x /= 0` quirk). Constants fold (fold.ei `bitwise`, written
+  with arithmetic because the seed has no bitwise operators); the runtime does the rest
+  (`ei_band_N` ... `ei_shr_N`, computed on unsigned types so no C shift or conversion is
+  undefined or implementation-defined).
+- **Precedence.** From loosest: `||`, `&&`, comparisons, `|`, `^`, `&`, shifts, `+ -`,
+  `* / %`, `as`, unary `- ! ~`. Those levels are C's and Rust's, but the bitwise operators
+  are not *ranked* against comparisons, arithmetic or each other: an operand of `&`, `|`, `^`,
+  `<<` or `>>` can't be an unparenthesized operation of another group, and an operand of a
+  comparison can't be an unparenthesized `&`, `|` or `^`. Exceptions, where every language
+  agrees: a shift may be an operand of `& | ^` (`x >> 4 & 15`), a comparison may compare
+  shifts (`1 << n == m`), and chains of one operator (`a | b | c`, `a << 1 << 2`) are
+  fine. So C's trap `a & b == c` (C: `a & (b == c)`), Go's `a + b & c` (Go: `a + (b & c)`)
+  and `1 << n - 1` are E0002, a syntax error that names both operators and carries a fix
+  adding the parentheses the levels above imply (`(a & b) == c`); E0002 is recorded and
+  parsing goes on, since the tree is whole. The lexer knows `& ^ ~ << >> &= |= ^= <<= >>=`;
+  `&&`, `||` and `|` keep their meaning (`|` starts a closure in an operand position and
+  separates patterns in a match arm; as an operator it only appears between operands).
+- **Bytes of text.** `String` and `str` both have `len() -> usize` (`len(x)` too),
+  `is_empty()`, `byte(i: usize) -> u8` (`index out of bounds` past the end), `slice(a: usize,
+  b: usize) -> String` (byte offsets; traps `slice out of bounds` unless `a <= b <= len`, and
+  `slice not on a character boundary` if `a` or `b` falls inside a UTF-8 sequence) and
+  `bytes() -> List[u8]`; `String` also has `push_byte(b: u8)` and `String.from_bytes(bytes:
+  List[u8]) -> Result[String, usize]`. `<`, `<=`, `>` and `>=` compare two Strings or two
+  strs by their bytes, which for UTF-8 is Unicode scalar order. **A String is always valid
+  UTF-8 and has no NUL byte** (the runtime ends it with one, and `==`, hashing and `print`
+  rely on that): `from_bytes` checks the bytes (RFC 3629: no overlong forms, surrogates or
+  values past U+10FFFF) and its Err is the offset of the first byte that isn't valid or is
+  NUL; `slice` cuts only at character boundaries; `push_byte` appends only ASCII (1 to 127;
+  anything else traps `push_byte needs an ASCII byte (1 to 127)`, and is E0506 when it is a
+  constant), since a lone byte of a longer sequence would leave the String invalid; longer
+  text goes in with `push_str`, `append` or `from_bytes`. `str.slice` returns a `String`, not
+  a `str` view: a `str` is a NUL-terminated C string (`const char *`), which has no room for
+  a length, so a view could only be a suffix; an owned copy is what both types can give,
+  and when references land (8.6) `String.slice` can become a view. On a `str`, `len`, `byte`
+  and `slice` find its end first (O(n), `strlen`); convert to a `String` (or take `bytes()`)
+  once before a loop over a long `str`. Lowering: builtins B_STR_BYTE, B_STR_SLICE,
+  B_STR_BYTES, B_STR_FROM_BYTES, B_STR_PUSH_BYTE (ir.ei, "Bytes of text"), calling
+  `ei_str_byte`, `ei_str_slice`, `ei_utf8_check` + `ei_str_from_n` and `ei_str_push_byte`
+  (core/RUNTIME.md) and glue `bytes_<List[u8]>` and `utf8_<Result>`.
+- **Unit values.** `()` is an expression (the unit value) and a pattern (matching it; it is
+  irrefutable), so `Ok(())`, `Some(())`, `Result[(), E]` with `?`, `match r { Ok(()) => ... }`
+  and `return ()` (the same as `return`) work. In the tree `()` is an empty ETuple/PTuple.
+  The other rules about `()` are unchanged: a `let` can't bind it, a parameter or tuple
+  element can't have type `()`.
+- **`main`'s result.** `main` takes no parameters and returns `()`, `i32` or `Result[(), E]`
+  for any `E` (anything else is E0111, now reported where the signature is resolved). With
+  `()` the program exits 0 (as before). An `i32` is the exit code: the generated C `main`
+  returns it after the leak check; outside 0..255 it traps `exit code out of range` at
+  `main`'s line (exit 101), because the OS keeps only the low byte and 256 would read as
+  success. With `Result[(), E]`, `Ok(())` exits 0; an `Err(e)` flushes stdout, prints
+  `error: <e>` to stderr when `E` is printable by `print` (an integer, `bool`, `str`, `String`
+  or an enum without payloads; its variant name), else `error: main returned Err`, drops the
+  Result, and exits 1. Traps still exit 101 and `eiderc run` passes every exit code on.
+- **`impl` on built-in types**: `impl String`, `impl str`, `impl i32` (any integer), `impl
+  bool`, `impl[T] List[T]`, `impl Map[K, V]`, `impl Box[T]`, `impl Mutex[T]` and so on, with
+  methods, associated functions (`String.make()`, `str.greet()`) and trait impls (`impl Show
+  for String`, so a String meets `T: Show`). A method call on a built-in type looks for the
+  built-in method first and then for impls; a method or associated function in such an impl
+  that has a built-in one's name (`len` on String, `new` on List, `from_bytes` on String) is
+  E0116, since it could never be called. Handles (Task, Mutex, Chan) used to ignore impls;
+  they now follow the same rule. Before this, `impl String` was accepted but its methods
+  were never found (E0115 at the call).
+- **Codes**: E0002 (bitwise operators mixed without parentheses, with a fix), E0116 (an impl
+  method named like a built-in one), E0505 (a constant shift count out of range), E0506
+  (`push_byte` of a constant that isn't ASCII); E0111's message now lists `main`'s results.
+- **Syntax changes** (for the tree-sitter grammar): new tokens `&`, `^`, `~`, `<<`, `>>`,
+  `&=`, `|=`, `^=`, `<<=`, `>>=`; binary `|` `^` `&` `<<` `>>` at the levels above, between
+  comparisons and `+ -`; prefix `~` with `-` and `!`; the compound assignments with the
+  others; `()` as an expression and a pattern.
+
 ## Language work that lands in `eiderc` (after parity)
 
 Each with a design note, compile-fail tests and new codes:

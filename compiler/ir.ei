@@ -26,10 +26,12 @@
 //   S_COPY    dst := op a
 //   S_READ    dst := place a
 //   S_STORE   place a := op b
-//   S_UNARY   dst := a (U_NEG checked, U_NOT) b=operand
+//   S_UNARY   dst := a (U_NEG checked, U_NOT, U_BNOT `~`) b=operand
 //   S_BINARY  dst := b (op a = ast.OP_*) c; ty = operand type. + - * / % trap on overflow
-//             and division by zero; +% -% *% wrap; == != compare structurally for any type;
-//             < <= > >= on integers. (&& and || are lowered to S_IF.)
+//             and division by zero; +% -% *% wrap; & | ^ on the bits; << >> trap on a
+//             count outside 0..width-1 (>> is arithmetic on signed types); == != compare
+//             structurally for any type; < <= > >= on integers, String and str (bytes).
+//             (&& and || are lowered to S_IF.)
 //   S_CAST    dst := a as ty (traps when out of range)
 //   S_CALL    dst := fn a (args [b/c]); dst = NONE for a () result
 //   S_RECORD  dst := ty(args [b/c])        S_VARIANT dst := variant a of enum ty (args [b/c])
@@ -84,6 +86,11 @@
 //   B_LIST_CONTAINS(l, x) -> bool    B_LIST_SUM(l) -> T
 //   B_MAP_INSERT(inout m, k, v)    B_MAP_CONTAINS(m, k) -> bool    B_MAP_REMOVE(inout m, k) -> bool
 //   B_MAP_GET(m, k) -> Option[V]
+// Bytes of text (C8.2; x a String or str, borrowed; B_LEN and B_IS_EMPTY take a str too):
+//   B_STR_BYTE(x, i) -> u8 (traps out of bounds)    B_STR_SLICE(x, a, b) -> String (traps
+//   unless a <= b <= len on character boundaries)    B_STR_BYTES(x) -> List[u8]
+//   B_STR_FROM_BYTES(l) -> ty = Result[String, usize] (Err: offset of the first byte that
+//   isn't valid UTF-8, or a NUL)    B_STR_PUSH_BYTE(inout s, b) (traps unless b is 1..=127)
 // Threads (C7; Task, Mutex and Chan are shared handles, see types.ei). Every receiver is
 // a borrowed operand. Moved in: B_SPAWN's closure (the Task owns it and runs it on a new
 // thread), B_MUTEX_NEW's and B_MUTEX_SET's value, B_CHAN_SEND's value (the channel owns
@@ -125,6 +132,7 @@ pub const P_DEREF: u32 = 4
 
 pub const U_NEG: u32 = 0
 pub const U_NOT: u32 = 1
+pub const U_BNOT: u32 = 2
 
 pub const S_COPY: u32 = 0
 pub const S_READ: u32 = 1
@@ -184,6 +192,11 @@ pub const B_CHAN_NEW: u32 = 24
 pub const B_CHAN_SEND: u32 = 25
 pub const B_CHAN_RECV: u32 = 26
 pub const B_CHAN_CLOSE: u32 = 27
+pub const B_STR_BYTE: u32 = 28
+pub const B_STR_SLICE: u32 = 29
+pub const B_STR_BYTES: u32 = 30
+pub const B_STR_FROM_BYTES: u32 = 31
+pub const B_STR_PUSH_BYTE: u32 = 32
 
 pub fn builtin_name(b: u32) -> str {
     match b {
@@ -214,7 +227,12 @@ pub fn builtin_name(b: u32) -> str {
         24 => "chan_new"
         25 => "send"
         26 => "recv"
-        _ => "close"
+        27 => "close"
+        28 => "byte"
+        29 => "slice"
+        30 => "bytes"
+        31 => "from_bytes"
+        _ => "push_byte"
     }
 }
 
@@ -251,12 +269,14 @@ pub type Ir = {
     cur: u32,
     building: List[Local],
     outer: List[Outer],
+    /// the line of `main` (its exit code's range check traps there)
+    main_line: u32,
 }
 
 type Outer = { cur: u32, building: List[Local] }
 
 pub fn new() -> Ir {
-    Ir(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new())
+    Ir(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new(), 0)
 }
 
 // ---- building
@@ -542,7 +562,7 @@ fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u3
         }
         3 => {
             put_dst(inout o, s.dst)
-            if s.a == U_NEG { put(inout o, "neg ") } else { put(inout o, "not ") }
+            if s.a == U_NEG { put(inout o, "neg ") } else if s.a == U_NOT { put(inout o, "not ") } else { put(inout o, "bnot ") }
             put_op(inout o, ir, t, names, s.b)
         }
         4 => {
@@ -695,7 +715,7 @@ fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u3
         }
     }
     // the source line of operations that can trap (index places print their own)
-    let traps = (s.kind == S_UNARY && s.a == U_NEG) || (s.kind == S_BINARY && s.a <= ast.OP_REM) || s.kind == S_CAST || s.kind == S_PANIC || s.kind == S_ASSERT || (s.kind == S_BUILTIN && s.a == B_LIST_SUM)
+    let traps = (s.kind == S_UNARY && s.a == U_NEG) || (s.kind == S_BINARY && (s.a <= ast.OP_REM || s.a == ast.OP_SHL || s.a == ast.OP_SHR)) || s.kind == S_CAST || s.kind == S_PANIC || s.kind == S_ASSERT || (s.kind == S_BUILTIN && (s.a == B_LIST_SUM || s.a == B_STR_BYTE || s.a == B_STR_SLICE || s.a == B_STR_PUSH_BYTE))
     if s.line > 0 && traps {
         put(inout o, "  @")
         putn(inout o, s.line as u64)

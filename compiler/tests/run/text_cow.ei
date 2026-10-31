@@ -1,0 +1,24 @@
+// C8.2's String writes under copy-on-write (C8.1): push_byte on a copy, and on a String in a
+// List that shares its buffer, changes only that copy; bytes() and slice() are new buffers.
+
+fn main() uses io {
+    let a = String.from("ab")
+    var b = a
+    b.push_byte(99)
+    print(a)          // ab
+    print(b)          // abc
+    var xs: List[String] = List.new()
+    xs.push(String.from("x"))
+    let ys = xs
+    xs[0].push_byte(33)
+    print(xs[0])      // x!
+    print(ys[0])      // x
+    var bs = b.bytes()
+    bs.push(100)
+    print(b.len())    // 3
+    print(bs.len())   // 4
+    var c = b.slice(0, 2)
+    c.push_byte(122)
+    print(b)          // abc
+    print(c)          // abz
+}
