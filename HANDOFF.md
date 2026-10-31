@@ -39,7 +39,7 @@ Tests: `tests/checks/{fail,pass}` (header `// expect: CODE LINE:COL`, header cou
 
 ## Known limits
 
-- Only the first error is reported.
+- Every independent error is reported (at most `--max-errors`, default 100; docs/compiler.md, "Several errors"); the first is the one a first-error compiler would report.
 - Closures can't mutate captured variables; recursion needs `Box`; values are cloned on read from a place (no references).
 - No `dyn` traits; Map keys are ints/bool/str/String.
 - WASM exports are ints/bool only, no threads.

@@ -41,7 +41,7 @@ scripts/selfhost.sh                       # seed -> stage1 -> stage2 -> stage3, 
 
 ## Known limits
 
-- Only the first error is reported; `test` stops at a test's first failed assert.
+- `test` stops at a test's first failed assert. (Compile errors: every independent one is reported, at most `--max-errors N`, default 100.)
 - Closures can't mutate captured variables; recursion needs `Box`; no references, so no zero-copy views (values are cloned on read from a place).
 - Map keys are ints, bool, `str`, `String`. Trait dispatch is static only (no `dyn`).
 - WASM exports are scalars only (no strings/records across the boundary yet); no threads on WASM. FFI to `extern "c"` uses an ELF `asm` label (Mach-O would need a prefix).
