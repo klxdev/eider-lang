@@ -220,6 +220,48 @@ static inline uint64_t ei_wadd_u64(uint64_t a, uint64_t b) { return a + b; }
 static inline uint64_t ei_wsub_u64(uint64_t a, uint64_t b) { return a - b; }
 static inline uint64_t ei_wmul_u64(uint64_t a, uint64_t b) { return a * b; }
 
+// ---- bitwise operators: on the two's-complement bits (computed unsigned, so no signed
+// overflow or implementation-defined shift). The shift count has the operand's type; a count
+// that is negative or not below the width traps. `>>` on signed types is arithmetic (copies
+// the sign bit); `<<` drops the bits shifted out, like `&` it is an operation on bits, not
+// on numbers.
+
+#define EI_SHIFT "shift count out of range"
+#define EI_BITS_SIGNED(N, T, U, W)                                                              \
+  static inline T ei_band_##N(T a, T b) { return ei_bits_##N((U)a & (U)b); }                    \
+  static inline T ei_bor_##N(T a, T b) { return ei_bits_##N((U)a | (U)b); }                     \
+  static inline T ei_bxor_##N(T a, T b) { return ei_bits_##N((U)a ^ (U)b); }                    \
+  static inline T ei_bnot_##N(T a) { return ei_bits_##N(~(U)a); }                               \
+  static inline T ei_shl_##N(T a, T n, int32_t l) {                                             \
+    if (n < 0 || n >= W) ei_trap(EI_SHIFT, l);                                                  \
+    return ei_bits_##N((U)((U)a << n));                                                         \
+  }                                                                                             \
+  static inline T ei_shr_##N(T a, T n, int32_t l) {                                             \
+    if (n < 0 || n >= W) ei_trap(EI_SHIFT, l);                                                  \
+    return ei_bits_##N(a < 0 ? (U) ~(~(U)a >> n) : (U)a >> n);                                  \
+  }
+EI_BITS_SIGNED(i32, int32_t, uint32_t, 32)
+EI_BITS_SIGNED(i64, int64_t, uint64_t, 64)
+#undef EI_BITS_SIGNED
+/* Unsigned: computed in at least 32 bits, then truncated back. */
+#define EI_BITS_UNSIGNED(N, T, W)                                                               \
+  static inline T ei_band_##N(T a, T b) { return (T)(a & b); }                                  \
+  static inline T ei_bor_##N(T a, T b) { return (T)(a | b); }                                   \
+  static inline T ei_bxor_##N(T a, T b) { return (T)(a ^ b); }                                  \
+  static inline T ei_bnot_##N(T a) { return (T)~(uint64_t)a; }                                  \
+  static inline T ei_shl_##N(T a, T n, int32_t l) {                                             \
+    if (n >= W) ei_trap(EI_SHIFT, l);                                                           \
+    return (T)((uint64_t)a << n);                                                               \
+  }                                                                                             \
+  static inline T ei_shr_##N(T a, T n, int32_t l) {                                             \
+    if (n >= W) ei_trap(EI_SHIFT, l);                                                           \
+    return (T)(a >> n);                                                                         \
+  }
+EI_BITS_UNSIGNED(u8, uint8_t, 8)
+EI_BITS_UNSIGNED(u32, uint32_t, 32)
+EI_BITS_UNSIGNED(u64, uint64_t, 64)
+#undef EI_BITS_UNSIGNED
+
 // ---- checked conversions: the source is widened to 64 bits, the target range is [lo, hi].
 // hi >= 0 always (it is the target type's maximum). Generated code casts the (in-range)
 // result to the target type.
@@ -265,6 +307,20 @@ ei_String ei_clone_String(const ei_String *s);
 void ei_str_cat(ei_String *s, const char *t, uint64_t tl);
 void ei_str_push(ei_String *s, const char *t);
 void ei_str_append(ei_String *s, const ei_String *t);
+/* Bytes of text (String or str: pointer and length). A String is always valid UTF-8 without
+   NUL bytes; these keep it so. */
+/* s[i]; traps "index out of bounds" unless i < n. */
+uint8_t ei_str_byte(const char *s, uint64_t n, uint64_t i, int32_t line);
+/* A new String of s[a..b); traps "slice out of bounds" unless a <= b <= n, and "slice not on
+   a character boundary" if a or b is inside a UTF-8 sequence. */
+ei_String ei_str_slice(const char *s, uint64_t n, uint64_t a, uint64_t b, int32_t line);
+/* The offset of the first byte of d[0..n) that isn't part of valid UTF-8 (RFC 3629: no
+   overlong forms, surrogates or values past U+10FFFF) or is NUL; n if there is none. */
+uint64_t ei_utf8_check(const uint8_t *d, uint64_t n);
+/* A new String of s[0..n) (the caller has checked it with ei_utf8_check). */
+ei_String ei_str_from_n(const char *s, uint64_t n);
+/* Appends byte b; traps "push_byte needs an ASCII byte (1 to 127)" otherwise. */
+void ei_str_push_byte(ei_String *s, uint8_t b, int32_t line);
 
 // ---- hashing (Map keys): integer keys widen to uint64_t, string keys hash up to the NUL.
 

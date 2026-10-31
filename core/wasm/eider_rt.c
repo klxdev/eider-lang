@@ -124,6 +124,72 @@ uint64_t ei_hash_str(const char *s) {
   return ei_hash_u64(h);
 }
 
+// ---- String bytes (String.byte/slice/from_bytes/push_byte, str.byte/slice)
+
+uint8_t ei_str_byte(const char *s, uint64_t n, uint64_t i, int32_t line) {
+  if (i >= n) ei_trap("index out of bounds", line);
+  return (uint8_t)s[i];
+}
+
+/* A UTF-8 continuation byte (10xxxxxx): not the start of a character. */
+static bool ei_cont(const char *s, uint64_t n, uint64_t i) {
+  return i < n && ((uint8_t)s[i] & 0xC0) == 0x80;
+}
+
+ei_String ei_str_slice(const char *s, uint64_t n, uint64_t a, uint64_t b, int32_t line) {
+  if (a > b || b > n) ei_trap("slice out of bounds", line);
+  if (ei_cont(s, n, a) || ei_cont(s, n, b)) ei_trap("slice not on a character boundary", line);
+  return ei_str_from_n(s + a, b - a);
+}
+
+uint64_t ei_utf8_check(const uint8_t *d, uint64_t n) {
+  uint64_t i = 0;
+  while (i < n) {
+    uint8_t c = d[i];
+    if (c == 0) return i;
+    if (c < 0x80) {
+      i++;
+      continue;
+    }
+    uint64_t len;
+    uint8_t lo = 0x80, hi = 0xBF; /* the range of the second byte */
+    if (c >= 0xC2 && c <= 0xDF) {
+      len = 2;
+    } else if (c >= 0xE0 && c <= 0xEF) {
+      len = 3;
+      if (c == 0xE0) lo = 0xA0; /* no overlong forms */
+      if (c == 0xED) hi = 0x9F; /* no surrogates */
+    } else if (c >= 0xF0 && c <= 0xF4) {
+      len = 4;
+      if (c == 0xF0) lo = 0x90; /* no overlong forms */
+      if (c == 0xF4) hi = 0x8F; /* nothing past U+10FFFF */
+    } else {
+      return i;
+    }
+    if (n - i < len || d[i + 1] < lo || d[i + 1] > hi) return i;
+    for (uint64_t k = 2; k < len; k++)
+      if ((d[i + k] & 0xC0) != 0x80) return i;
+    i += len;
+  }
+  return n;
+}
+
+ei_String ei_str_from_n(const char *s, uint64_t n) {
+  ei_String r;
+  if (n > UINT64_MAX - 1) ei_trap("out of memory", 0);
+  r.len = n;
+  r.p = ei_alloc(n + 1);
+  if (n) memcpy(r.p, s, (size_t)n);
+  r.p[n] = 0;
+  return r;
+}
+
+void ei_str_push_byte(ei_String *s, uint8_t b, int32_t line) {
+  if (b == 0 || b > 127) ei_trap("push_byte needs an ASCII byte (1 to 127)", line);
+  char c = (char)b;
+  ei_str_cat(s, &c, 1);
+}
+
 // ---- print
 
 void ei_print_i(int64_t v) { printf("%" PRId64 "\n", v); }

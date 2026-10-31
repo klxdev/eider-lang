@@ -64,7 +64,11 @@ Messages generated code relies on, all byte-identical to the recorded expectatio
 | `integer overflow in negation` | `ei_neg_*` |
 | `division by zero`, `remainder by zero` | `ei_div_*`, `ei_rem_*` |
 | `integer conversion out of range` | `ei_s2s`, `ei_s2u`, `ei_u2s`, `ei_u2u` |
-| `index out of bounds` | `ei_idx` |
+| `index out of bounds` | `ei_idx`, `ei_str_byte` |
+| `shift count out of range` | `ei_shl_*`, `ei_shr_*` |
+| `slice out of bounds`, `slice not on a character boundary` | `ei_str_slice` |
+| `push_byte needs an ASCII byte (1 to 127)` | `ei_str_push_byte` |
+| `exit code out of range` | generated `main` when the Eider `main` returns an i32 outside 0..255 |
 | `out of memory` (line 0) | `ei_alloc`, `ei_alloc_n`, `ei_str_*`, `ei_chan_send` |
 | `send on a closed channel` (line 0) | `ei_chan_send` |
 | `cannot create a thread` (line 0) | `ei_thread_start` |
@@ -117,6 +121,8 @@ For `N` in `i32 i64 u8 u32 u64` (Eider `usize` uses the `u64` functions), with `
 | `T ei_rem_N(T a, T b, int32_t line)` | `a % b` (sign of `a`); traps on `b == 0`, and on `MIN % -1` for signed |
 | `T ei_neg_N(T a, int32_t line)` (signed only) | `-a`, traps on `MIN` |
 | `T ei_wadd_N(T a, T b)`, `ei_wsub_N`, `ei_wmul_N` | result modulo 2^bits, two's complement for signed |
+| `T ei_band_N(T a, T b)`, `ei_bor_N`, `ei_bxor_N`, `T ei_bnot_N(T a)` | `& \| ^ ~` on the two's-complement bits |
+| `T ei_shl_N(T a, T n, int32_t line)`, `ei_shr_N` | `a << n` (bits shifted out are dropped), `a >> n` (arithmetic for signed `N`); trap `shift count out of range` unless `0 <= n < bits` |
 | `int32_t ei_bits_i32(uint32_t)`, `int64_t ei_bits_i64(uint64_t)` | two's-complement reinterpretation, defined for every input |
 
 i32, u8 and u32 compute exactly in 64 bits and range-check. i64 and u64 use the overflow
@@ -147,10 +153,16 @@ in-range result: `(uint8_t)ei_s2u((int64_t)x, UINT8_MAX, 12)`.
 | `ei_str_from(const char *)`, `ei_str_from_i64(int64_t)` | new String (decimal, `-` for negatives) |
 | `ei_clone_String(const ei_String *)`, `ei_drop_String(ei_String *)` | deep copy; free (sets `p = NULL`, `len = 0`; a second drop is harmless) |
 | `ei_str_cat(s, t, tl)`, `ei_str_push(s, cstr)`, `ei_str_append(s, const ei_String *)` | append; `t` may point into `s` (self-append works); traps if the length overflows |
+| `uint8_t ei_str_byte(s, n, i, line)` | byte `i` of text `s` of length `n` (a String's `p, len` or a str and its `strlen`); traps `index out of bounds` |
+| `ei_String ei_str_slice(s, n, a, b, line)` | new String of bytes `[a, b)`; traps `slice out of bounds` unless `a <= b <= n`, `slice not on a character boundary` if `a` or `b` is a UTF-8 continuation byte |
+| `uint64_t ei_utf8_check(const uint8_t *d, uint64_t n)` | offset of the first byte that isn't valid UTF-8 (RFC 3629) or is NUL, `n` if none (`String.from_bytes`) |
+| `ei_String ei_str_from_n(const char *s, uint64_t n)` | new String of `s[0..n)` (checked by the caller) |
+| `void ei_str_push_byte(ei_String *s, uint8_t b, int32_t line)` | appends `b`; traps `push_byte needs an ASCII byte (1 to 127)` otherwise |
 | `uint64_t ei_hash_u64(uint64_t)`, `uint64_t ei_hash_str(const char *)` | Map key hashes: murmur3 finalizer; FNV-1a up to the NUL, then the finalizer. Bit-identical to the recorded expectations. |
 
-Strings never contain NUL (they are built from literals and decimal numbers), so `print`,
-`==` (`strcmp`) and `ei_hash_str` all agree on where a String ends.
+Strings never contain NUL and are always valid UTF-8 (they are built from literals, decimal
+numbers, checked bytes and ASCII `push_byte`), so `print`, `==` and `<` (`strcmp`) and
+`ei_hash_str` all agree on where a String ends.
 
 ## Print and clock
 
