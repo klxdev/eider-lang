@@ -967,6 +967,111 @@ review the oracle diff, add a test, and regenerate the seed.
   (`geo__South`), and trap messages always name the entry file, even for a trap in an
   imported module.
 
+## Backends
+
+The C backend (`lower.ei`, "C4: lowering") is the default and the bootstrap path. Beside it,
+on the `experiment/llvm-backend` branch, is an experimental LLVM backend (issue #92, U21,
+C260-C269): `llvm.ei` lowers the same typed IR to textual LLVM IR, which clang builds
+(`eiderc build|run|test --backend=llvm`, `build --lib --backend=llvm`, `emit-llvm`; user
+documentation in docs/site/tooling/llvm.md). It is ordinary compiler code built by the seed,
+so building eiderc needs no LLVM. eiderc runs clang only when the flag is given, and checks
+first that it is LLVM 17 or newer (`driver.llvm_cc`; exit 3 with a message otherwise).
+
+**Split.** The backend works one function at a time. `llvm.program` tries every function
+with a body. A function whose statements it can lower becomes a `define` in the module
+(native). Any other function falls back to C, and `emit-llvm --coverage` names the
+construct that made it fall back. `lower.program_split` then writes the C half: the
+fallback functions, all the per-type glue, the trap file table, `main` and the test
+driver. Each native function keeps only its prototype in the C half. Its body is still
+lowered into a buffer that is thrown away, so the glue it calls is requested exactly as the
+C backend requests it, and the two halves agree on which glue exists. Every `static` at the
+start of a line is dropped, so each half can call the other's functions. `lower.c_names`
+gives the LLVM half the C names of types and functions. The halves are compiled
+separately: clang compiles `prog.ll` to an object (`-O0`/`-O2`, `-g`, and the sanitizer and
+`-O` flags of `EIDER_CFLAGS`), and `$CC` compiles and links the C half as usual. There is no
+binary cache in this mode; the core objects are still cached. Today no construct falls
+back: every function of the run tests, and every function of the compiler, is native.
+
+**ABI.** Every call follows the C calling convention, including calls between two native
+functions. A function can then move between the halves without thunks, at the cost of
+coercing small aggregates into registers, which LLVM optimises. `llvm_abi.ei` holds the C
+layout of every type, the same layout `lower.ei` declares: records and tuples are structs,
+an enum is `{ i32 tag, [n x iA] }` with a struct per variant, String/List/Map/Box/fn
+values/handles are the C structs. It also holds the System V x86-64 classifier. A type is
+flattened into scalar leaves, and anything over 16 bytes is MEMORY. Each eightbyte gets
+the merge of its leaves' classes (the general psABI merge, unit-tested with SSE leaves,
+although Eider has no floating-point type yet). An INTEGER eightbyte is passed as an
+integer of its bytes (`i64`, or `i8`..`i56` for the last one, as clang does). MEMORY
+arguments go `byval`, and MEMORY results go through `sret`. An aggregate that needs more of
+the six integer registers than are left goes `byval` as a whole. bool and u8 are
+`zeroext`. compiler/tests/llvm checks this against the C compiler: records of 2 to 24
+bytes with padding, nesting, a str, register exhaustion, and both directions (C export
+wrappers into LLVM IR, LLVM IR into the C half's `eq_` glue). AAPCS64 (arm64) is a later
+step, and `abi.sig` is the one place it goes.
+
+**Semantics.** One IR statement lowers to the same operations the C backend performs, in the
+same order: bounds checks first (outermost index first), then copy-on-write `uniq_` calls,
+then the operation. Every local is an `alloca` zeroed at entry, as C's `= {0}`. Scalars are
+SSA values between statements (bool is `i1` in registers and `i8` in memory), aggregates
+are copied with `llvm.memcpy`, and the IR's structured S_IF and S_LOOP become labelled
+blocks. Nothing is undefined behaviour. Checked `+ - *` use `llvm.{s,u}{add,sub,mul}.with.
+overflow`, and `/ %` check zero and MIN / -1. Shifts check the count with one unsigned
+compare, conversions check the source widened to 64 bits, and indices are an `icmp uge`.
+Each check branches to a call of the runtime's `ei_trap` with the C runtime's message and
+the same encoded line (file index * 2^20 + line, "C8.16"), so traps print, exit 101 and
+longjmp under `test` exactly as in C. No instruction carries `nsw`, `nuw`, `exact` or
+`inbounds`, because nothing is proven yet. Per-type operations call the C half's glue where
+`lower.ei` calls it. The hot helpers are inline IR: `ei_idx`, checked arithmetic, the
+conversions and shifts, `ei_hash_u64`, and the Ref access checks.
+
+**Debug info** (`-g`): a DICompileUnit (`DW_LANG_C11`, since DWARF has no code for Eider;
+line tables only), a DIFile per module, a DISubprogram per native function (its Eider name,
+and its C name as the linkage name), and a DILocation per statement from the IR's line.
+The line table names the `.ei` files, so a debugger can break on an Eider line
+(`readelf --debug-dump=decodedline` shows it; gdb and lldb are not installed here). Local
+variables and types are a later step.
+
+**Tests.** `scripts/llvm-diff.sh` runs every run test (tests/run, compiler/tests/run) under
+`run`, and under `test` when it has test blocks, through both backends. Stdout, stderr and
+the exit code must be byte-identical with the LLVM build at -O0, at -O2, with
+`-DEI_RT_COUNT_ALLOCS` (the same leak report), and under ASan+UBSan, with clang building
+both halves. The script also prints the coverage per test and overall. It is the
+"llvm (--backend=llvm)" leg of scripts/verify.sh, together with compiler/tests/llvm/run.sh,
+and the leg is skipped with the reason when clang 17+ is missing. The compiler built by the
+LLVM backend emits byte-identical C and LLVM IR for compiler/main.ei.
+
+**Measurements** (`scripts/llvm-bench.sh`, 2026-10-31, x86-64, clang 22.1.8 for both
+backends, median of 5 runs, EIDER_CACHE=off):
+
+Compile time in ms. `emit` is the front end plus lowering. `build` adds clang on the `.ll`
+and `$CC` on the C, or `$CC` on the whole C.
+
+| program | emit-c | emit-llvm | C -O0 | LLVM -O0 | C -O2 | LLVM -O2 |
+|---|---|---|---|---|---|---|
+| tests/bench/list_copies | 3 | 3 | 195 | 233 | 449 | 492 |
+| tests/bench/state | 3 | 4 | 196 | 237 | 514 | 528 |
+| tests/bench/str_append | 3 | 3 | 193 | 235 | 427 | 471 |
+| compiler/main.ei (1350 functions) | 265 | 892 | 2183 | 2688 | 25034 | 14526 |
+
+Run time of the -O2 binaries in ms. `self` is the built compiler running `emit-c
+compiler/main.ei`. The three bench programs finish in a few ms, too fast to compare.
+
+| program | C | LLVM | LLVM/C |
+|---|---|---|---|
+| list_copies | 3 | 3 | 1.00 |
+| state | 2 | 3 | 1.50 |
+| str_append | 4 | 4 | 1.00 |
+| self | 258 | 369 | 1.43 |
+
+The same compiler built with `-flto` and lld, so the C half's glue can inline into the IR
+half (done by hand, not part of the driver): C 222 ms, LLVM 304 ms (1.37). So far the LLVM
+build costs run time. Each glue call crosses into the other object file, every local is
+zeroed at entry, and aggregates go through memcpy and register coercion. It also emits 3.4x
+slower (434 K lines of IR against 166 K of C for the compiler) and builds -O0 about 20%
+slower. A large program builds faster at -O2 (the compiler: 14.5 s against 25.0 s, because
+clang -O2 on one 166 K-line C file is the slowest step of a C build). The decision on
+graduating (C269) waits until these costs are removed.
+
 ## Compile speed
 
 Measured 2026-10-30 (16 cores, gcc, one run each). The front end is cheap: about 1 ms per 100
@@ -2730,6 +2835,7 @@ compiler/
   ide.ei              the IDE analysis API (`eiderc ide`; "IDE analysis")
   front.ei            every syntax error at once ("Front-end recovery")
   doc.ei              the API description (`eiderc doc`; "Documentation: `eiderc doc`")
+  llvm.ei llvm_abi.ei the experimental LLVM backend and its C layouts and System V classifier ("Backends")
   tests/              pass-level golden tests (lex, lex_ok, check, ir, run, wasm, export, ide, pkgs, ...)
 tests/oracle/         the recorded expected results (scripts/test-compiler.sh, BLESS=1)
 ```

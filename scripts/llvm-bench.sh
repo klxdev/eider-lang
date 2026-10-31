@@ -16,6 +16,7 @@ cd "$(dirname "$0")/.." || exit 1
 REPS=${REPS:-5}
 E=${EIDERC:-target/eiderc-next}
 EIDER_CACHE=off; export EIDER_CACHE
+EIDER_ROOT=$(pwd); export EIDER_ROOT
 CC=${LLVM_BENCH_CC:-clang}; export CC
 tmp=target/tmp/llvm-bench
 rm -rf "$tmp"; mkdir -p "$tmp"
