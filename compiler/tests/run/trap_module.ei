@@ -1,0 +1,9 @@
+// A trap in an imported module names that module's file and line, not the entry file's
+// (docs/std.md, seed bug 3; docs/compiler.md, "C8.16"): its test block's failure (`eiderc
+// test`), and its panic when main calls it (`eiderc run`).
+import "lib/kinds.ei"
+
+fn main() uses io {
+    print(kinds.checked(7))
+    print(kinds.checked(700))
+}

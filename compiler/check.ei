@@ -1903,8 +1903,27 @@ fn heap_parts(c: C, sym: u32, t: types.Ty) -> Option[List[u32]] {
     None
 }
 
+/// Whether the type name n (not a type parameter) of module m names `actual`: a built-in
+/// type, or a non-generic record or enum. A name that names nothing concrete here (`Self`, an
+/// unknown name, a generic type without arguments: reported elsewhere) fits anything
+/// (docs/compiler.md, "C8.16").
+fn name_fits(c: C, m: u32, n: ast.Node, actual: u32) -> bool {
+    if n.b == 0 && n.a == intern.S_SELF_TYPE { return true }
+    let k = resolve.name_key(c.p, m, n.a, n.b, n.line, n.col)
+    let ik = int_kind(c, k)
+    if ik != NONE { return actual == ik }
+    if is_root(k, c.w.s_bool) { return actual == types.BOOL }
+    if is_root(k, c.w.s_str) { return actual == types.STR }
+    if is_root(k, c.w.s_string) { return actual == types.STRING }
+    let di = mget(c.tmpl, k)
+    if di == NONE || c.t.defs[di as usize].generic > 0 { return true }
+    let t = types.get(c.t, actual)
+    if t.kind != types.T_ENUM && t.kind != types.T_RECORD { return false }
+    c.t.defs[types.def_of(c.t, actual).tmpl as usize].key == k
+}
+
 /// Bind the type parameters `gs` in type node tn by matching it against `actual`. False on
-/// a conflict. A name that isn't a type parameter matches anything (a C8 candidate).
+/// a conflict. A name that isn't a type parameter must name `actual` (name_fits).
 fn unify_ast(c: C, m: u32, tn: u32, actual: u32, inout sb: Subst, gs: List[u32]) -> bool {
     // an error type fits anything and binds nothing
     if poisoned(c, actual) { return true }
@@ -1916,8 +1935,9 @@ fn unify_ast(c: C, m: u32, tn: u32, actual: u32, inout sb: Subst, gs: List[u32])
                 let bound = subst_get(sb, n.a)
                 if bound != NONE { return bound == actual }
                 subst_set(inout sb, n.a, actual)
+                return true
             }
-            true
+            name_fits(c, m, n, actual)
         }
         ast.TGeneric => {
             let mut parts: List[u32] = List.new()
@@ -3458,6 +3478,16 @@ fn begin_body(inout c: C, m: u32, ret: u32, caps: List[u32], line: u32, col: u32
     push_scope(inout c)
 }
 
+/// The file index lowering encodes in the trap lines of a body from module m (docs/
+/// compiler.md, "C8.16"): 0 for the entry file (and past 2047 modules), else m, whose name
+/// goes into ir.files.
+fn trap_file(inout c: C, m: u32) -> u32 {
+    if m == 0 || m == resolve.NOMOD || m >= 2048 || m as usize >= c.p.shown.len() { return 0 }
+    while c.ir.files.len() as u32 <= m { c.ir.files.push(List.new()) }
+    if c.ir.files[m as usize].len() == 0 { c.ir.files[m as usize] = c.p.shown[m as usize].copy() }
+    m
+}
+
 fn check_test(inout c: C, m: u32, n: ast.Node) -> Result[bool, diag.Diag] {
     c.tsubst = no_subst()
     c.cur_all = true
@@ -3469,6 +3499,7 @@ fn check_test(inout c: C, m: u32, n: ast.Node) -> Result[bool, diag.Diag] {
     let tname = c.p.mods[m as usize].strs[n.a as usize].copy()
     let f = ir.declare_fn(inout c.ir, tname, true)
     let ctext = caps_text(c, caps)
+    c.ir.cur_file = trap_file(inout c, m)
     ir.begin_fn(inout c.ir, f, types.UNIT, ctext)
     reset_frames(inout c)
     c.seen = List.new()
@@ -3503,6 +3534,7 @@ fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] {
     for i in 0..inst.clen { caps.push(c.capl[(inst.cstart + i) as usize]) }
     begin_body(inout c, m, inst.ret, caps, n.end_line, n.end_col)
     let ctext = caps_text(c, caps)
+    c.ir.cur_file = trap_file(inout c, m)
     ir.begin_fn(inout c.ir, inst.ir, inst.ret, ctext)
     reset_frames(inout c)
     for i in 0..n.f {

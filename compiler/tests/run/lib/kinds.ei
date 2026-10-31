@@ -1,0 +1,14 @@
+// Types for bug_show_module.ei and trap_module.ei: printed and trapping from another module.
+pub type Kind = | TimedOut | Other(code: i32)
+pub type Rec = { k: Kind, n: i32 }
+pub type Gen[T] = | Wrap(v: T) | Empty
+
+pub fn checked(x: i32) -> i32 {
+    if x > 100 { panic("too big") }
+    x * 1000
+}
+
+test "kinds traps" {
+    assert checked(5) == 5000
+    assert checked(500) == 0
+}

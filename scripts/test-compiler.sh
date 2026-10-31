@@ -62,7 +62,9 @@
 #             package tests, and (`var` -> `let mut`) give a compiler that emits the same C;
 #             `eiderc migrate-var` of compiler/tests/migrate/*.ei equals the hand-checked .out.
 #   meaning:  tests/std, packages/*/tests and examples/*/tests give their .out when built by this
-#             compiler (references by default) as well as by the seed (verify.sh).
+#             compiler (references by default) as well as by the seed (verify.sh); an
+#             X.next.out is this compiler's expected output where it deliberately differs
+#             from the seed's (it replaces X.out with the next seed).
 #   audit-refs: `eiderc audit-refs --json` of compiler/tests/audit/*.ei equals the hand-checked
 #             .out (the writes that change what a `let` reference sees).
 #   packages: compiler/tests/pkgs, packages with eider.toml and eider.lock (two packages
@@ -551,7 +553,10 @@ for f in tests/std/*.ei packages/*/tests/*.ei examples/*/tests/*.ei; do
     tests/std/*) got=$(EIDER_STD_TEST=set $new run "$f" <"$in" 2>&1; echo "exit $?") ;;
     *) got=$($new run "$f" </dev/null 2>&1) ;;
   esac
-  if [ "$got" = "$(cat "${f%.ei}.out")" ]; then m_ok=$((m_ok + 1)); else echo "FAIL meaning: $f"; echo "$got" | diff "${f%.ei}.out" - | head -10; fail=1; fi
+  # X.next.out: what this compiler prints where it deliberately differs from the seed (a
+  # fix the seed doesn't have yet; it replaces X.out when the seed is regenerated)
+  want="${f%.ei}.out"; [ -f "${f%.ei}.next.out" ] && want="${f%.ei}.next.out"
+  if [ "$got" = "$(cat "$want")" ]; then m_ok=$((m_ok + 1)); else echo "FAIL meaning: $f"; echo "$got" | diff "$want" - | head -10; fail=1; fi
 done
 [ "$m_ok" = "$m_n" ] && echo "ok   meaning: $m_ok/$m_n std, package and example tests give their .out with references by default"
 # audit-refs: `eiderc audit-refs --json` of compiler/tests/audit/*.ei gives the hand-checked .out

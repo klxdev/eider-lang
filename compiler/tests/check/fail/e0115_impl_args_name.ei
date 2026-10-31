@@ -1,0 +1,12 @@
+// expect: E0115 11:21
+// `impl W[i32]`'s methods apply to W[i32] only (a type name in an impl target used to match
+// any type; docs/compiler.md, "C8.16")
+type W[T] = { v: T }
+impl W[i32] {
+    fn twice(self) -> i32 { self.v * 2 }
+}
+fn main() {
+    let a = W(3)
+    let n = a.twice()
+    let b = W(true).twice()
+}

@@ -1,0 +1,14 @@
+// expect: E0401 13:17
+// a record name in a generic signature names that record, not any type (docs/std.md, seed
+// bug 2: this was C that didn't compile; docs/compiler.md, "C8.16")
+type E = { m: String }
+fn plain[T](r: Result[T, E]) -> Result[T, String] {
+    match r {
+        Ok(v) => Ok(v)
+        Err(e) => Err(e.m)
+    }
+}
+fn main() uses io {
+    let a: Result[i32, String] = Ok(1)
+    print(plain(a).is_ok())
+}

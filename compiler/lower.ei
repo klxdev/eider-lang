@@ -150,11 +150,60 @@ type G = {
     reg_name: List[List[u8]],
     reg_from: List[List[u8]],
     err: List[u8],
+    /// the file index of the function being emitted (ir.Fn.file) and the indices whose
+    /// names the trap table needs (put_line)
+    file: u32,
+    files: List[u32],
 }
 
 fn put(inout g: G, s: str) { bytes.append(inout g.o, sys.lit(s)) }
 fn putb(inout g: G, s: List[u8]) { bytes.append(inout g.o, s) }
 fn putn(inout g: G, n: u64) { bytes.append(inout g.o, bytes.from_u64(n)) }
+
+/// A source line for the runtime (ei_trap and the checked helpers): in a function from an
+/// imported module, the module's file index times 2^20 plus the line, which ei_trap
+/// decodes through the table that files_table emits (docs/compiler.md, "C8.16"). Lines from
+/// 2^20 on are emitted as they are (and name the entry file).
+fn put_line(inout g: G, line: u32) {
+    if g.file == 0 || line >= 1048576 {
+        putn(inout g, line as u64)
+        return
+    }
+    if !g.files.contains(g.file) { g.files.push(g.file) }
+    let v = (g.file as u64) * 1048576 + line as u64
+    putn(inout g, v)
+}
+
+/// The trap file table, if a function from an imported module has a trap line: a static
+/// array of file names by index (`call`: false), or the call after `ei_set_file` that
+/// hands it to the runtime (`call`: true).
+fn files_table(inout g: G, p: P, call: bool) {
+    if g.files.len() == 0 { return }
+    let mut n: u32 = 0
+    for f in g.files {
+        if f + 1 > n { n = f + 1 }
+    }
+    if call {
+        put(inout g, "ei_set_files(ei_files, ")
+        putn(inout g, n as u64)
+        put(inout g, ");\n  ")
+        return
+    }
+    put(inout g, "static const char *const ei_files[")
+    putn(inout g, n as u64)
+    put(inout g, "] = {")
+    for i in 0..n {
+        if i > 0 { put(inout g, ",") }
+        if g.files.contains(i) {
+            put(inout g, " ")
+            let name = p.ir.files[i as usize].copy()
+            str_lit(inout g.o, name)
+        } else {
+            put(inout g, " 0")
+        }
+    }
+    put(inout g, " };\n\n")
+}
 
 fn ind(inout g: G, depth: u32) {
     for i in 0..depth { put(inout g, "  ") }
@@ -1324,6 +1373,10 @@ fn own_glue(inout g: G, p: P, ty: u32) {
 }
 
 /// Variant names, for `print` (the variant's mangled name is printed, as tests/oracle expects).
+/// A type or variant name as printing (derived Show) spells it: as written in its own module,
+/// without the module's prefix (`TimedOut`, not `stream__TimedOut`; docs/compiler.md, "C8.16").
+fn shown_name(p: P, key: u64) -> List[u8] { intern.name(p.names, resolve.key_sym(key)) }
+
 fn name_glue(inout g: G, p: P, ty: u32) {
     let mark = g.o.len()
     put(inout g, "static const char *")
@@ -1335,7 +1388,7 @@ fn name_glue(inout g: G, p: P, ty: u32) {
     for i in 0..d.len {
         if i > 0 { put(inout g, ",") }
         put(inout g, " ")
-        str_lit(inout g.o, resolve.key_shown(p.names, types.variant(p.t, d, i).key))
+        str_lit(inout g.o, shown_name(p, types.variant(p.t, d, i).key))
     }
     put(inout g, " };\n  return n[tag];\n}\n")
 }
@@ -1773,7 +1826,7 @@ fn trait_glue(inout g: G, p: P, kind: u32, ty: u32) {
         if k == types.T_RECORD {
             // `Name { a: 1, b: "x" }`
             let d = types.def_of(p.t, ty)
-            let mut head = resolve.key_shown(p.names, d.key)
+            let mut head = shown_name(p, d.key)
             if d.len == 0 { bytes.append(inout head, sys.lit(" {}")) } else { bytes.append(inout head, sys.lit(" { ")) }
             show_lit(inout g, head)
             for i in 0..d.len {
@@ -1807,7 +1860,7 @@ fn trait_glue(inout g: G, p: P, kind: u32, ty: u32) {
                 put(inout g, "case ")
                 putn(inout g, i as u64)
                 put(inout g, ": ")
-                let mut nmv = resolve.key_shown(p.names, v.key)
+                let mut nmv = shown_name(p, v.key)
                 if v.flen > 0 { nmv.push(40) }
                 show_lit(inout g, nmv)
                 for j in 0..v.flen {
@@ -2028,7 +2081,7 @@ fn text_builtin(inout g: G, p: P, s: ir.Stmt) {
         put(inout g, ", ")
         arg_val(inout g, p, barg(p, s, 1))
         put(inout g, ", ")
-        putn(inout g, s.line as u64)
+        put_line(inout g, s.line)
         put(inout g, ")")
         return
     }
@@ -2060,7 +2113,7 @@ fn text_builtin(inout g: G, p: P, s: ir.Stmt) {
         arg_val(inout g, p, barg(p, s, 2))
     }
     put(inout g, ", ")
-    putn(inout g, s.line as u64)
+    put_line(inout g, s.line)
     put(inout g, ")")
 }
 
@@ -2344,6 +2397,10 @@ fn op(inout g: G, p: P, id: u32) {
         str_lit(inout g.o, p.ir.strs[x.a as usize])
     } else if x.kind == ir.O_UNIT {
         put(inout g, "0")
+    } else if is_void(p, loc(p, g, x.a).ty) {
+        // a `()` local has no C variable (it is never declared or assigned), e.g. a generic
+        // T = () read out of a payload in a match arm (docs/compiler.md, "C8.16")
+        put(inout g, "0")
     } else {
         local_ref(inout g, p, x.a)
     }
@@ -2388,7 +2445,7 @@ fn checks(inout g: G, p: P, id: u32, depth: u32) {
         putn(inout g, bt.b as u64)
     }
     put(inout g, ", ")
-    putn(inout g, x.line as u64)
+    put_line(inout g, x.line)
     put(inout g, ");\n")
 }
 
@@ -2578,7 +2635,7 @@ fn binary(inout g: G, p: P, s: ir.Stmt) {
         op(inout g, p, s.c)
         if o <= ast.OP_REM {
             put(inout g, ", ")
-            putn(inout g, s.line as u64)
+            put_line(inout g, s.line)
         }
         put(inout g, ")")
         return
@@ -2597,7 +2654,7 @@ fn binary(inout g: G, p: P, s: ir.Stmt) {
         op(inout g, p, s.c)
         if o == ast.OP_SHL || o == ast.OP_SHR {
             put(inout g, ", ")
-            putn(inout g, s.line as u64)
+            put_line(inout g, s.line)
         }
         put(inout g, ")")
         return
@@ -2680,7 +2737,7 @@ fn cast(inout g: G, p: P, s: ir.Stmt) {
         int_lit(inout g, types.IK_U64, kmax(to))
         put(inout g, ", ")
     }
-    putn(inout g, s.line as u64)
+    put_line(inout g, s.line)
     put(inout g, ")")
 }
 
@@ -2923,7 +2980,7 @@ fn builtin(inout g: G, p: P, s: ir.Stmt, depth: u32) {
         put(inout g, ", ")
         putb(inout g, l)
         put(inout g, ".d[i], ")
-        putn(inout g, s.line as u64)
+        put_line(inout g, s.line)
         put(inout g, ")")
     } else if b == ir.B_MAP_GET {
         // { V *q = get_M(&m, k); if (q) dst = Some(*q); else dst = None; }
@@ -3115,7 +3172,7 @@ fn stmt(inout g: G, p: P, id: u32, depth: u32) {
             put(inout g, "(")
             op(inout g, p, s.b)
             put(inout g, ", ")
-            putn(inout g, s.line as u64)
+            put_line(inout g, s.line)
             put(inout g, ")")
         }
     } else if k == ir.S_BINARY {
@@ -3202,7 +3259,7 @@ fn stmt(inout g: G, p: P, id: u32, depth: u32) {
         put(inout g, "ei_trap(")
         op(inout g, p, s.a)
         put(inout g, ", ")
-        putn(inout g, s.line as u64)
+        put_line(inout g, s.line)
         put(inout g, ")")
     } else if k == ir.S_ASSERT {
         put(inout g, "if (!")
@@ -3214,7 +3271,7 @@ fn stmt(inout g: G, p: P, id: u32, depth: u32) {
             put(inout g, "\"assertion failed\"")
         }
         put(inout g, ", ")
-        putn(inout g, s.line as u64)
+        put_line(inout g, s.line)
         put(inout g, ")")
     } else if k == ir.S_BUILTIN {
         builtin(inout g, p, s, depth)
@@ -3296,6 +3353,7 @@ fn function(inout g: G, p: P, f: u32) {
     let nc = g.ncap[f as usize].copy()
     signature(inout g, p, f)
     put(inout g, " {\n")
+    g.file = fd.file
     g.lbase = fd.lstart
     g.loops = List.new()
     g.nlabels = 0
@@ -3390,6 +3448,7 @@ fn export_wrappers(inout g: G, p: P, wasm: bool) {
         }
         export_sig(inout g, p, x.f, x.name)
         put(inout g, " {\n  ei_set_file(\"lib\");\n  ")
+        files_table(inout g, p, true)
         if !is_void(p, fd.ret) { put(inout g, "return ") }
         fn_name(inout g, p, x.f)
         put(inout g, "(")
@@ -3482,9 +3541,11 @@ pub fn program_wasm(p: P, file: List[u8]) -> Result[List[u8], List[u8]] { emit(p
 /// line); a Result[(), E]'s Err prints `error: <the error>` (or `error: main returned Err`
 /// when E can't be printed) to stderr, is dropped, and exits 1.
 fn main_body(inout g: G, p: P, file: List[u8], f: u32) {
+    files_table(inout g, p, false)
     put(inout g, "int main(void) {\n  ei_set_file(")
     str_lit(inout g.o, file)
     put(inout g, ");\n  ")
+    files_table(inout g, p, true)
     let rt = p.ir.fns[f as usize].ret
     let rk = ty_kind(p, rt)
     if rk == types.T_INT {
@@ -3531,7 +3592,7 @@ fn main_body(inout g: G, p: P, file: List[u8], f: u32) {
 }
 
 fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool) -> Result[List[u8], List[u8]] {
-    let mut g = G(List.new(), 0, List.new(), 0, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new())
+    let mut g = G(List.new(), 0, List.new(), 0, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new(), 0, List.new())
     name_all(inout g, p)
     if g.err.len() > 0 { return Err(g.err) }
     let ord = order(g, p)
@@ -3544,12 +3605,20 @@ fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool) -> Result[List
         if !fd.is_test && bytes.eq(fd.name, sys.lit("main")) { main_fn = f }
         function(inout g, p, f)
     }
+    g.file = 0
     if lib {
+        files_table(inout g, p, false)
         export_wrappers(inout g, p, wasm)
     } else if tests {
+        files_table(inout g, p, false)
         put(inout g, "int main(void) {\n  volatile int total = 0, failed = 0;\n  jmp_buf jb;\n  ei_set_trap_jmp(&jb);\n  ei_set_file(")
         str_lit(inout g.o, file)
         put(inout g, ");\n")
+        if g.files.len() > 0 {
+            put(inout g, "  ")
+            files_table(inout g, p, true)
+            put(inout g, "\n")
+        }
         for f in ord.fns {
             let fd = p.ir.fns[f as usize]
             if !fd.is_test { continue }

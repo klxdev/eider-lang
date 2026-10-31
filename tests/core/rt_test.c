@@ -302,6 +302,19 @@ static void test_trap(void) {
   }
   ei_set_trap_jmp(NULL);
   EQS(cap_end(), "partial FAILED\n    boom (rt_test:1)\n");
+  /* a module's file index in the line (docs/compiler.md, "C8.16") */
+  static const char *const files[3] = {0, "lib/m.ei", 0};
+  ei_set_files(files, 3);
+  cap_begin();
+  ei_set_trap_jmp(&jb);
+  if (setjmp(jb) == 0) ei_trap("in m", 1 * 1048576 + 12);
+  ei_set_trap_jmp(NULL);
+  EQS(cap_end(), "FAILED\n    in m (lib/m.ei:12)\n");
+  /* no name for index 2, an index past the table, a plain line: the entry file as given */
+  TRAPS(ei_trap("unnamed", 2 * 1048576 + 5), "unnamed", 2 * 1048576 + 5);
+  TRAPS(ei_trap("past", 3 * 1048576 + 5), "past", 3 * 1048576 + 5);
+  TRAPS(ei_trap("plain", 9), "plain", 9);
+  ei_set_files(NULL, 0);
 }
 
 // ---- allocation and String

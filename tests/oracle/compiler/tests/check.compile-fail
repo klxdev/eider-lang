@@ -133,17 +133,16 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0114_static_variant_missing.ei E0114 at 4:15
   ok   e0114_unknown_constructor_pattern.ei E0114 at 5:9
   ok   e0115_assoc_with_value.ei    E0115 at 5:15
-  ok   e0115_bound_unmet_impl.ei    E0115 at 5:36
   ok   e0115_clo_field_noncallable.ei E0115 at 4:15
   ok   e0115_drop_call.ei           E0115 at 6:7
   ok   e0115_heap_unknown_assoc.ei  E0115 at 2:28
   ok   e0115_heap_unknown_method.ei E0115 at 3:15
+  ok   e0115_impl_args_name.ei      E0115 at 11:21
   ok   e0115_int_method.ei          E0115 at 2:23
   ok   e0115_method_not_found.ei    E0115 at 4:15
   ok   e0115_method_on_array.ei     E0115 at 4:15
   ok   e0115_method_on_int_type.ei  E0115 at 3:17
   ok   e0115_method_on_record.ei    E0115 at 5:15
-  ok   e0115_quirk_bound_name_target.ei E0115 at 12:36
   ok   e0115_self_static.ei         E0115 at 4:24
   ok   e0115_static_method.ei       E0115 at 4:15
   ok   e0115_static_not_found.ei    E0115 at 3:24
@@ -296,6 +295,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_gen_display.ei         E0401 at 4:22
   ok   e0401_gen_field_mismatch.ei  E0401 at 3:29
   ok   e0401_gen_hint_mismatch.ei   E0401 at 3:38
+  ok   e0401_generic_record_name.ei E0401 at 13:17
   ok   e0401_heap_box_hint.ei       E0401 at 2:40
   ok   e0401_heap_box_unit.ei       E0401 at 3:29
   ok   e0401_heap_cast_string.ei    E0401 at 3:15
@@ -484,8 +484,10 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0505_shift_width.ei         E0505 at 3:10
   ok   e0506_push_byte.ei           E0506 at 4:17
   ok   e0506_push_byte_nul.ei       E0506 at 4:17
+  ok   e0601_bound_name_target.ei   E0601 at 14:13
   ok   e0601_bound_second_param.ei  E0601 at 11:15
   ok   e0601_bound_unmet_generic_impl.ei E0601 at 12:15
+  ok   e0601_bound_unmet_impl.ei    E0601 at 6:21
   ok   e0601_copy_chan.ei           E0601 at 4:15
   ok   e0601_copy_task_in_record.ei E0601 at 5:15
   ok   e0601_ord_without_eq.ei      E0601 at 3:1
@@ -604,11 +606,9 @@ compile-pass tests (compiler/tests/check/pass)
   ok   s1_option_methods.ei
   ok   s1_panic_ok.ei
   ok   s1_prelude_unwrap_in_generic.ei
-  ok   s1_quirk_impl_concrete_args.ei
   ok   s1_record_generic_pattern.ei
   ok   s1_trait_generic_bound_ok.ei
   ok   s1_trait_ok.ei
-  ok   s1_trait_quirk_name_target.ei
   ok   s1_trait_self_ret.ei
   ok   s1_try_ok.ei
   ok   s1_tup_eq.ei

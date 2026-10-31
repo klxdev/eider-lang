@@ -1,0 +1,20 @@
+// A derived Show of another module's types printed their C names (`kinds__TimedOut`; docs/
+// std.md, seed bug 4). Printing spells types and variants as their module writes them
+// (docs/compiler.md, "C8.16"). Expected output: bug_show_module.out.
+import "lib/kinds.ei"
+import "lib/kinds.ei" as kk
+
+fn main() uses io {
+    print(kinds.TimedOut)
+    print(kinds.Other(3))
+    print(kinds.Rec(kinds.TimedOut, 2))
+    let xs = [kinds.TimedOut, kk.Other(1)]
+    print(xs)
+    print(kinds.Wrap(kinds.TimedOut))
+    let e: kinds.Gen[i32] = kinds.Empty
+    print(e)
+    print(kinds.TimedOut.to_string())
+    print(Some(kk.Rec(kk.Other(-1), 0)))
+    let r: Result[i32, kinds.Kind] = Err(kinds.TimedOut)
+    print(r)
+}

@@ -41,17 +41,32 @@
 // ---- traps
 
 static _Atomic(const char *) trap_file;
+static _Atomic(const char *const *) trap_files;
+static atomic_int trap_nfiles;
 static _Thread_local jmp_buf *trap_jmp;
 /* Taken by the first thread that traps without a hook and never released: a second
    trapping thread waits here while the first reports and exits (exit must not race). */
 static pthread_mutex_t dying = PTHREAD_MUTEX_INITIALIZER;
 
 void ei_set_file(const char *file) { atomic_store(&trap_file, file); }
+void ei_set_files(const char *const *files, int32_t n) {
+  atomic_store(&trap_nfiles, 0);
+  atomic_store(&trap_files, files);
+  atomic_store(&trap_nfiles, n);
+}
 void ei_set_trap_jmp(jmp_buf *jb) { trap_jmp = jb; }
 
 _Noreturn void ei_trap(const char *msg, int32_t line) {
   const char *file = atomic_load(&trap_file);
   if (!file) file = "";
+  int32_t f = line > 0 ? line >> 20 : 0;
+  if (f > 0 && f < atomic_load(&trap_nfiles)) {
+    const char *const *files = atomic_load(&trap_files);
+    if (files && files[f]) {
+      file = files[f];
+      line &= 0xFFFFF;
+    }
+  }
   fflush(stdout);
   if (trap_jmp) {
     printf("FAILED\n    %s (%s:%" PRId32 ")\n", msg, file, line);

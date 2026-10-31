@@ -198,7 +198,9 @@ around in core.
 ### Compiler bugs found (seed eiderc)
 
 Reproductions are small enough to inline; none is worked around in std beyond avoiding
-the construct.
+the construct. All four are fixed in compiler/ (docs/compiler.md, "C8.16"), so they go
+away for std with the next seed; until then std keeps avoiding them (verify.sh builds std
+with the seed).
 
 1. **A generic `T` instantiated with `()` inside a match arm produces C that doesn't
    compile** (`'l4' undeclared`):

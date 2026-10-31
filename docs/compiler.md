@@ -814,17 +814,15 @@ review the oracle diff, add a test, and regenerate the seed.
   the constructing module; in a module's test block a local named like one of the module's
   items is shadowed by the item; `x /= 0` is not a compile error although `x / 0` is
   ("C3: checking").
-- Checker (S1–S3): a name in an impl target that isn't a type parameter matches every type
-  (`impl Area for Sq` meets `T: Area` for any T; `impl W[i32]`'s methods apply to every `W`);
-  registering an impl replaces `Self` textually, also inside `MySelf`; impls on fn types never
-  match a receiver (`compiler/tests/check/fail/e0115_quirk_bound_name_target.ei`).
+- Checker (S1–S3): registering an impl replaces `Self` textually, also inside `MySelf`;
+  impls on fn types never match a receiver. (A name in an impl target or a generic signature
+  that isn't a type parameter no longer matches every type: "C8.16".)
 - Comptime: an evaluator lacks every comptime constant not yet evaluated, so a plain `const`
   naming a comptime constant always fails (E0110) and so does any function naming a later
   one; any error in the rest of the program is found by the first evaluator, and an E0201
-  there loses its fix; traps during evaluation name the file `program` ("C7: comptime").
-- Lowering: an imported module's unit enum prints its mangled name (`geo__South`); trap
-  messages always name the entry file, even for a trap in an imported module ("C4:
-  lowering").
+  there loses its fix; traps during evaluation in the evaluated file name the file
+  `program` ("C7: comptime"; a trap in an imported module or the prelude names its file
+  since "C8.16").
 - Threads: `contains` on a List of handles compares them as equal ("C7: threads").
 - Library header: every header has the include guard `EIDER_EXPORTS_H`, so two libraries'
   headers can't be included together (compiler/tests/export/consumer.c declares by hand);
@@ -994,7 +992,14 @@ and leaves the analyzer building.
 | 5 | **8.12 Performance** | smaller generated C, one C file per module compiled in parallel, incremental front end keyed by module hash | 8.3 |
 | 5 | **8.13 Tooling** | `eiderc fmt` (formatter); analyzer: rename, workspace symbols, signature help, inlay hints, formatting; tree-sitter grammar generated from the compiler grammar | 8.9 |
 | 5 | **8.14 Package manager on bare imports** | eider-pkg reworked for 8.3/8.5 (no link farm, compiler-reported grants), registry design | 8.3, 8.5 |
-| later | 8.15 Projections, lints | std accessors returning references; lints for real copies at escapes and `Ref` cycles | 8.6, 8.7 |
+| later | 8.15 Projections, lints (`take`/`replace` done: "C8.15: take and replace") | std accessors returning references; lints for real copies at escapes and `Ref` cycles | 8.6, 8.7 |
+| 4 | **8.16 Seed bugs from std** (done: "C8.16: the seed bugs std found") | the four bugs of docs/std.md "Compiler bugs found": `()` in a generic match arm, a type name in a generic signature matching any type, traps naming the entry file, derived Show printing C names | — |
+| 4 | **8.17 String escapes** (done: "C8.17: string escapes") | `\r`, `\0` (refused), `\xNN`, `\u{...}`, adjacent literals | — |
+| 4 | **8.18 Type aliases** (done: "C8.18: type aliases") | `type Handler = fn(Request) -> Response`, generic aliases, `pub` across modules | — |
+| 4 | **8.19 Calling a fn field** (done: "C8.19: calling a function stored in a field") | `self.handler(req)`, with the rule for a clash with a method | — |
+| 4 | **8.20 Iterating a Map** (done: "C8.20: iterating a Map") | `for (k, v) in m`, `m.keys()`, `m.values()` in slot order | 8.4 |
+| 4 | **8.21 Error conversion for `?`** (P0.6; "C8.21: error conversion for `?`") | `From[E]` in the prelude; `?` converts `Err(e)` through an impl | 8.4 |
+| 4 | **8.22 `while let`, labeled loops** ("C8.22: `while let` and labeled loops") | `while let p = e`, `'outer: for`, `break 'outer`, `continue 'outer` | — |
 
 ## C8.3: packages and modules
 
@@ -1849,6 +1854,71 @@ it is alive (liveness in lowering), or a deep copy at the clones that share that
 it is alive. Then, after the next seed: run scripts/migrate-var.sh on compiler/, std/,
 core/, packages/, tests/ and examples/, drop `var` from "Writing the compiler in today's
 Eider", and decide when `var` becomes an error.
+
+## C8.16: the seed bugs std found
+
+Wave 4, item 8.16: the four bugs docs/std.md ("Compiler bugs found") reported against the
+seed, each with a regression test. Code: lower.ei (`op`, `put_line`, `files_table`,
+`shown_name`), check.ei (`name_fits`, `trap_file`), resolve.ei (`shown_path`), ir.ei
+(`Fn.file`, `Ir.files`), core/eider_rt.{h,c} and core/wasm/eider_rt.c (`ei_set_files`).
+
+1. **`()` read out of a payload.** A `()` local has no C variable (it is never declared or
+   assigned), but an operand naming one was still printed as the variable, so a generic
+   `T = ()` read out of a payload in a match arm (`Ok(v) => Ok(v)`) referred to an undeclared
+   `lN`. An operand of type `()` or `!` now lowers to `0`, as the `()` literal does.
+   Test: compiler/tests/run/bug_unit_generic.ei (generic match arms, `if let`, nested
+   instances with `()` in either parameter).
+2. **A type name in a generic signature matches only its type.** When a call's argument was
+   unified with a parameter type written with type parameters (`Result[T, E]`), a name that
+   isn't a type parameter (`E`) matched any type, so `plain(Ok(1): Result[i32, String])` was
+   accepted and the C didn't compile. `unify_ast` now asks `name_fits`: a built-in type name
+   must be that type, a non-generic record or enum must be that record or enum; a name that
+   names nothing concrete there (`Self`, an unknown name, reported elsewhere) still fits
+   anything. The error is the existing **E0401** "argument of type Result[i32, String] doesn't
+   match parameter type `Result[T, E]`" (no new code: it is the mismatch E0401 already
+   reports for the other shapes). The same function matches impl targets, so the parity
+   quirk "a name in an impl target matches every type" is fixed with it: `impl Area for Sq`
+   meets `T: Area` only for Sq (a call `total(5)` is now E0601 "type i32 doesn't implement
+   trait `Area`" at the call, where it was E0115 inside the instance), and `impl W[i32]`'s
+   methods apply to W[i32] only (E0115 on `W(true).twice()`). Tests:
+   `e0401_generic_record_name`, `e0601_bound_name_target`, `e0601_bound_unmet_impl` (was
+   e0115_bound_unmet_impl), `e0115_impl_args_name`; the two compile-pass tests that
+   recorded the quirk (`s1_quirk_impl_concrete_args`, `s1_trait_quirk_name_target`) are gone.
+3. **Traps name their own file.** The runtime knew one file (`ei_set_file`, the entry's), so
+   a trap in an imported module named the entry file with the module's line. Every IR
+   function now records its module (`ir.Fn.file`, set from the checker's module), and in a
+   function of an imported module lowering passes the runtime `f * 2^20 + line` instead of
+   the line (`put_line`), where f is the module's index. Generated `main` (and test `main`,
+   and each exported library entry point) hands the runtime a table of file names after
+   `ei_set_file` (`static const char *const ei_files[] = { 0, "lib/geo.ei", ... }`,
+   `ei_set_files(ei_files, n)`), emitted only when some imported module has a trap line, so
+   single-file programs get the C they had. `ei_trap` decodes the index; a line without one
+   (and anything a program built by an older compiler passes) names the entry file as before,
+   so core stays compatible with the seed. Names (`resolve.shown_path`) carry no machine
+   path: a toolchain module is relative to the toolchain root (`std/testing.ei`,
+   `core/prelude.ei`), a package dependency found by an absolute path is `<package>/<path in
+   it>`, anything else is the path diagnostics use (relative to the entry's directory). Limits:
+   2047 modules and 2^20 lines per module; past them a trap names the entry file. Tests:
+   compiler/tests/run/trap_module.ei (run: the module's panic), modules.ei's test of a
+   module's failing test block (`lib/geo.ei:46`), tests/std/atomic_overflow (an overflow in
+   std/atomic.ei; its seed output stays in .out, this compiler's is the new .next.out, which
+   test-compiler.sh's meaning leg reads until the next seed), and the comptime cases below.
+4. **Printing spells Eider names.** Derived Show (and `print` of a unit enum, `main`'s `Err`)
+   printed a type or variant of an imported module by its C-level key (`stream__TimedOut`,
+   `geo__South`). It now prints the name as its own module writes it (`TimedOut`, `South`;
+   `shown_name`), as it always did for the entry module's types: printing is the value, not
+   where it was declared (decision C61). Test: compiler/tests/run/bug_show_module.ei
+   (variants with and without payloads, records, Lists, generics, Option and Result of them,
+   `to_string`).
+
+**Oracle changes** (`BLESS=1`, reviewed): compiler/tests/run/modules.run prints `South`,
+`West`, `North`, `East` (was `geo__South` ...); modules.test names `compiler/tests/run/lib/
+geo.ei:46` (was the entry's `modules.ei:46`); the comptime evaluator's trap in an imported
+module names that module (e0807_comptime_mod_trap: `(compiler/tests/check/fail/../lib/
+ct_trap.ei:2)`, was `(program:2)`) and a trap in the prelude names it (e0807_comptime_unwrap:
+`(core/prelude.ei:26)`, was `(program:26)`); compiler/tests/pkgs/app/main.out prints `High`,
+`Foot`, `Edge` (was `base__High` ...); the compile-fail runner output follows the renamed,
+added and removed cases above. Nothing else changed.
 
 ## Language work that lands in `eiderc` (after parity)
 

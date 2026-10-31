@@ -57,6 +57,11 @@ runtime error. It flushes `stdout`, then:
 `<file>` is set by `void ei_set_file(const char *)` (generated `main`, and every exported
 library entry point; an atomic pointer, so concurrent entries are not a data race). It is
 `""` until set. Line `0` means "no source line" (allocation and thread failures).
+A trap in an imported module passes `f * 2^20 + line` (0 < f < 2048): after `ei_set_file`,
+generated code calls `void ei_set_files(const char *const *files, int32_t n)` with a table
+of file names by index, and `ei_trap` reports `files[f]` and the line for such a value
+(f < n, `files[f]` not NULL); any other value is the entry file's line, so programs built by
+compilers before docs/compiler.md "C8.16" (which never set the table) trap as they did.
 
 Messages generated code relies on, all byte-identical to the recorded expectations:
 
@@ -310,7 +315,7 @@ walks or is parameterised by a concrete type stays compiler output.
 
 | Piece | Core |
 |---|---|
-| traps, the test hook, the source file name | `ei_trap`, `ei_set_trap_jmp`, `ei_set_file` |
+| traps, the test hook, the source file names | `ei_trap`, `ei_set_trap_jmp`, `ei_set_file`, `ei_set_files` |
 | unreachable code | the `ei_unreachable` macro |
 | index checks, integer conversions | `ei_idx`, `ei_s2s/s2u/u2s/u2u` |
 | allocation | `ei_alloc`, plus `ei_alloc_n` for the `n * sizeof(T)` call sites |

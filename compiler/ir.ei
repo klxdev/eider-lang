@@ -269,6 +269,8 @@ pub type Block = { start: u32, len: u32 }
 pub type Fn = {
     name: List[u8], ret: u32, lstart: u32, lcount: u32, nparams: u32, body: u32,
     caps: List[u8], is_test: bool,
+    /// the module whose source the body comes from (index into Ir.files; 0: the entry file)
+    file: u32,
 }
 pub type Const = { name: List[u8], ty: u32, op: u32 }
 pub type Extern = { f: u32, symbol: List[u8], params: List[u32] }
@@ -301,19 +303,24 @@ pub type Ir = {
     /// 5 Iter, 6 Drop) * 2^32 + type -> the function implementing its method; lowering's glue
     /// calls it instead of the derived operation
     impls: Map[u64, u32],
+    /// file names for traps, by module index (0: the entry file, named by ei_set_file);
+    /// empty for modules whose names aren't needed
+    files: List[List[u8]],
+    /// the module of the functions begun from now on (begin_fn)
+    cur_file: u32,
 }
 
 type Outer = { cur: u32, building: List[Local] }
 
 pub fn new() -> Ir {
-    Ir(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new(), 0, Map.new())
+    Ir(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new(), 0, Map.new(), List.new(), 0)
 }
 
 // ---- building
 
 /// Declare function `i` (functions are declared in index order before any body is built).
 pub fn declare_fn(inout ir: Ir, name: List[u8], is_test: bool) -> u32 {
-    ir.fns.push(Fn(name, types.UNIT, 0, 0, 0, 0, List.new(), is_test))
+    ir.fns.push(Fn(name, types.UNIT, 0, 0, 0, 0, List.new(), is_test, 0))
     (ir.fns.len() - 1) as u32
 }
 
@@ -324,6 +331,7 @@ pub fn begin_fn(inout ir: Ir, f: u32, ret: u32, caps: List[u8]) {
     let mut fd = ir.fns[f as usize].copy()
     fd.ret = ret
     fd.caps = caps
+    fd.file = ir.cur_file
     ir.fns[f as usize] = fd
 }
 
