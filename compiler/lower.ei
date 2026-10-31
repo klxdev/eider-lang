@@ -75,52 +75,52 @@ const NONE: u32 = 4294967295
 pub type P = { ir: ir.Ir, t: types.Types, names: intern.Interner }
 
 // glue kinds (a glue item is kind * 2^32 + type id, or + function id for env/thunk)
-const GK_EQ: u32 = 1
-const GK_DROP: u32 = 2
-const GK_CLONE: u32 = 3
-const GK_NAME: u32 = 4
-const GK_PUSH: u32 = 5
-const GK_HAS: u32 = 6
-const GK_FIND: u32 = 7
-const GK_GET: u32 = 8
-const GK_INS: u32 = 9
-const GK_REM: u32 = 10
-const GK_NEW: u32 = 11
-const GK_ENV: u32 = 12
-const GK_THUNK: u32 = 13
+pub const GK_EQ: u32 = 1
+pub const GK_DROP: u32 = 2
+pub const GK_CLONE: u32 = 3
+pub const GK_NAME: u32 = 4
+pub const GK_PUSH: u32 = 5
+pub const GK_HAS: u32 = 6
+pub const GK_FIND: u32 = 7
+pub const GK_GET: u32 = 8
+pub const GK_INS: u32 = 9
+pub const GK_REM: u32 = 10
+pub const GK_NEW: u32 = 11
+pub const GK_ENV: u32 = 12
+pub const GK_THUNK: u32 = 13
 // threads (keyed by the handle type)
-const GK_SPAWN: u32 = 14
-const GK_JOIN: u32 = 15
-const GK_MXNEW: u32 = 16
-const GK_MXGET: u32 = 17
-const GK_MXSET: u32 = 18
-const GK_MXUPD: u32 = 19
-const GK_CHNEW: u32 = 20
-const GK_CHSEND: u32 = 21
-const GK_CHRECV: u32 = 22
+pub const GK_SPAWN: u32 = 14
+pub const GK_JOIN: u32 = 15
+pub const GK_MXNEW: u32 = 16
+pub const GK_MXGET: u32 = 17
+pub const GK_MXSET: u32 = 18
+pub const GK_MXUPD: u32 = 19
+pub const GK_CHNEW: u32 = 20
+pub const GK_CHSEND: u32 = 21
+pub const GK_CHRECV: u32 = 22
 // copy-on-write (keyed by the type): give a List, Map or Box a buffer of its own (uniq_),
 // make every buffer a value reaches its own before it crosses to another thread (own_)
-const GK_UNIQ: u32 = 23
-const GK_OWN: u32 = 24
+pub const GK_UNIQ: u32 = 23
+pub const GK_OWN: u32 = 24
 // bytes of text (C8.2): `bytes_L` (List[u8] L from bytes), `utf8_R` (String.from_bytes, R its
 // Result[String, usize])
-const GK_BYTES: u32 = 25
-const GK_UTF8: u32 = 26
+pub const GK_BYTES: u32 = 25
+pub const GK_UTF8: u32 = 26
 // operation traits (C8.4; "Operation traits" below): `cmp_T` (Ord), `hash_T` (Map keys and
 // `hash` of other types than integers, bool and text), `show_T` (text), `copy_T`
 // (`.copy()` where it is more than a clone), `rnew_R` (a record with its own Drop), and the
 // text helpers `showq_` (quoted text) and `showi_`/`showu_` (numbers), keyed by type 0
-const GK_CMP: u32 = 27
-const GK_HASH: u32 = 28
-const GK_SHOW: u32 = 29
-const GK_SHOWQ: u32 = 30
-const GK_SHOWN: u32 = 31
-const GK_COPY: u32 = 32
-const GK_RNEW: u32 = 33
+pub const GK_CMP: u32 = 27
+pub const GK_HASH: u32 = 28
+pub const GK_SHOW: u32 = 29
+pub const GK_SHOWQ: u32 = 30
+pub const GK_SHOWN: u32 = 31
+pub const GK_COPY: u32 = 32
+pub const GK_RNEW: u32 = 33
 // Ref[T] (C8.7): `new_R`, a new Ref holding a value
-const GK_REFNEW: u32 = 34
+pub const GK_REFNEW: u32 = 34
 // Default (C8.23): `default_T`, the derived Default of a record, tuple, array or Box
-const GK_DEFAULT: u32 = 35
+pub const GK_DEFAULT: u32 = 35
 // the traits, as check.ei numbers them in ir.Ir.impls
 const TR_COPY: u32 = 0
 const TR_EQ: u32 = 1
@@ -3819,9 +3819,11 @@ pub fn program_wasm(p: P, file: List[u8]) -> Result[List[u8], List[u8]] { emit(p
 /// The C half of a program whose functions with `native[f]` are emitted by another backend
 /// (llvm.ei; docs/compiler.md, "Backends"): those have only a prototype, and every function
 /// and glue item has external linkage (no `static` at the start of a line), so the other
-/// half calls them and they call it through the C ABI.
-pub fn program_split(p: P, file: List[u8], tests: bool, lib: bool, native: List[bool]) -> Result[List[u8], List[u8]] {
-    let c = emit(p, file, tests, lib, false, 0, List.new(), native)?
+/// half calls them and they call it through the C ABI. The other backend names the glue
+/// its functions call (`needs`: glue keys, GK_* * 2^32 + id) and the modules whose trap
+/// lines they encode (`files`), so their bodies aren't lowered here at all.
+pub fn program_split(p: P, file: List[u8], tests: bool, lib: bool, native: List[bool], needs: List[u64], files: List[u32]) -> Result[List[u8], List[u8]] {
+    let c = emit_split(p, file, tests, lib, native, needs, files)?
     let mut out: List[u8] = List.new()
     let st = sys.lit("static ")
     let mut i: usize = 0
@@ -3908,6 +3910,14 @@ fn main_body(inout g: G, p: P, file: List[u8], f: u32) {
 }
 
 fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool, what: u32, version: List[u8], native: List[bool]) -> Result[List[u8], List[u8]] {
+    emit_with(p, file, tests, lib, wasm, what, version, native, List.new(), List.new())
+}
+
+fn emit_split(p: P, file: List[u8], tests: bool, lib: bool, native: List[bool], needs: List[u64], files: List[u32]) -> Result[List[u8], List[u8]] {
+    emit_with(p, file, tests, lib, false, 0, List.new(), native, needs, files)
+}
+
+fn emit_with(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool, what: u32, version: List[u8], native: List[bool], needs: List[u64], files: List[u32]) -> Result[List[u8], List[u8]] {
     let mut g = G(List.new(), 0, List.new(), 0, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new(), what, NONE, false, version, native)
     name_all(inout g, p)
     if g.err.len() > 0 { return Err(g.err) }
@@ -3919,12 +3929,18 @@ fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool, what: u32, ver
         let f = ord.fns[i]
         let fd = p.ir.fns[f as usize]
         if !fd.is_test && bytes.eq(fd.name, sys.lit("main")) { main_fn = f }
-        let mark = g.o.len()
+        // another backend's function: only its prototype (below); the glue it calls and the
+        // trap files it uses come from that backend (`needs`, `files`)
+        if (f as usize) < g.native.len() && g.native[f as usize] { continue }
         function(inout g, p, f)
-        // another backend's function: lowered for its glue and trap files, then dropped
-        if (f as usize) < g.native.len() && g.native[f as usize] {
-            while g.o.len() > mark { g.o.pop() }
-        }
+    }
+    for k in needs {
+        if g.seen.contains(k) { continue }
+        g.seen.insert(k, true)
+        g.need.push(k)
+    }
+    for fi in files {
+        if !g.files.contains(fi) { g.files.push(fi) }
     }
     g.file = 0
     if lib {

@@ -50,14 +50,20 @@ pub type Sig = { ret: Arg, args: List[Arg] }
 /// One scalar leaf of a flattened aggregate.
 pub type Leaf = { off: u64, size: u64, cls: u32 }
 
-/// Layout memo: size and alignment per type id (0: not computed yet).
-pub type Lay = { size: List[u64], align: List[u64] }
+/// Layout memo: size and alignment per type id (0: not computed yet), and how a value of
+/// the type crosses as an argument and as a result (arg_of; `known` bit 1: as an argument,
+/// bit 2: as a result).
+pub type Lay = { size: List[u64], align: List[u64], arg: List[Arg], res: List[Arg], known: List[u8] }
 
 pub fn new_lay(p: lower.P) -> Lay {
-    let mut l = Lay(List.new(), List.new())
+    let mut l = Lay(List.new(), List.new(), List.new(), List.new(), List.new())
+    let none = Arg(A_VOID, 0, 0, 0, 0, 0, 0)
     for i in 0..p.t.tys.len() {
         l.size.push(0)
         l.align.push(0)
+        l.arg.push(none.copy())
+        l.res.push(none.copy())
+        l.known.push(0)
     }
     l
 }
@@ -289,8 +295,21 @@ fn bits_of(sz: u64, i: u64) -> u32 {
     (rest * 8) as u32
 }
 
-/// How a value of type ty crosses on its own, ignoring register pressure.
+/// How a value of type ty crosses on its own, ignoring register pressure (memoized per type).
 pub fn arg_of(inout l: Lay, p: lower.P, ty: u32, is_ret: bool) -> Arg {
+    if ty >= PTR_TO { return classify_arg(inout l, p, ty, is_ret) }
+    let bit: u8 = if is_ret { 2 } else { 1 }
+    if (l.known[ty as usize] & bit) != 0 {
+        if is_ret { return l.res[ty as usize].copy() }
+        return l.arg[ty as usize].copy()
+    }
+    let a = classify_arg(inout l, p, ty, is_ret)
+    if is_ret { l.res[ty as usize] = a.copy() } else { l.arg[ty as usize] = a.copy() }
+    l.known[ty as usize] = l.known[ty as usize] | bit
+    a
+}
+
+fn classify_arg(inout l: Lay, p: lower.P, ty: u32, is_ret: bool) -> Arg {
     if ty < PTR_TO && (ty == types.UNIT || ty == types.NEVER) && is_ret { return Arg(A_VOID, ty, 0, 0, 0, 0, 0) }
     if scalar(p, ty) { return Arg(A_DIRECT, ty, 1, 0, 0, C_INTEGER, 0) }
     let sz = size(inout l, p, ty)

@@ -44,13 +44,24 @@ const PTR: u32 = 2147483648
 /// The two halves: `ll` the LLVM module, `c` the C (lower.program_split), and per function
 /// whether it is native (functions without a body are never native). `report` names each
 /// fallback with the first construct it needed (one line each).
-pub type Out = { ll: List[u8], c: List[u8], native: List[bool], nfns: u32, nnative: u32, report: List[u8] }
+/// The module is `head` (a comment and the type definitions, which must precede their uses)
+/// followed by the parts in `ll` (each function's header, entry allocas and body, then the
+/// constants and declarations they use): parts, so a function's text is written once and
+/// never copied to join it to the others (`whole` joins them for a file).
+pub type Out = { head: List[u8], ll: List[List[u8]], c: List[u8], native: List[bool], nfns: u32, nnative: u32, report: List[u8] }
+
+/// The whole module.
+pub fn whole(o: Out) -> List[u8] {
+    let mut m = o.head.copy()
+    for x in o.ll { bytes.append(inout m, x) }
+    m
+}
 
 type E = {
     /// the function being emitted: its entry allocas, its body, and the module so far
     ent: List[u8],
     o: List[u8],
-    fns: List[u8],
+    fns: List[List[u8]],
     tdefs: List[u8],
     tdone: List[bool],
     gl: List[u8],
@@ -83,6 +94,10 @@ type E = {
     dbg: bool,
     /// the statement being emitted addresses places whose indices it doesn't check (gep_kw)
     unchecked: bool,
+    /// per local of the function being emitted: whether it is an SSA value (scan), and its
+    /// value once assigned
+    ssa: List[bool],
+    vals: List[List[u8]],
     md: List[u8],
     nmd: u32,
     sp: u32,
@@ -98,17 +113,52 @@ type E = {
     csigs: List[abi.Sig],
     csok: List[bool],
     iused: List[bool],
+    /// the C half's glue this half calls (lower.GK_* * 2^32 + id; `nseen` dedupes) and the
+    /// modules whose trap lines it encodes: lower.program_split emits that glue and file
+    /// table without lowering the native functions' bodies
+    needs: List[u64],
+    nseen: Map[u64, bool],
+    tfiles: List[u32],
+    /// C conventions by signature (csig_of)
+    sigs: List[abi.Sig],
+    sigmemo: Map[u64, u32],
 }
 
 // ---- text
 
-fn w(inout e: E, s: str) { bytes.append(inout e.o, sys.lit(s)) }
+/// The bytes of a literal (one copy, where sys.lit reads them one by one).
+fn lit(s: str) -> List[u8] { s.bytes() }
+
+fn w(inout e: E, s: str) { bytes.append(inout e.o, lit(s)) }
 fn wb(inout e: E, s: List[u8]) { bytes.append(inout e.o, s) }
-fn wn(inout e: E, n: u64) { bytes.append(inout e.o, bytes.from_u64(n)) }
+fn wn(inout e: E, n: u64) { wd(inout e.o, n) }
+
+/// Append n in decimal to o, in place (no list of its own).
+fn wd(inout o: List[u8], n: u64) {
+    if n == 0 {
+        o.push(48)
+        return
+    }
+    let start = o.len()
+    let mut v = n.copy()
+    while v > 0 {
+        o.push((v % 10) as u8 + 48)
+        v = v / 10
+    }
+    let mut i = start.copy()
+    let mut j = o.len() - 1
+    while i < j {
+        let t = o[i].copy()
+        o[i] = o[j].copy()
+        o[j] = t
+        i += 1
+        j -= 1
+    }
+}
 
 fn cat(a: List[u8], s: str) -> List[u8] {
     let mut o = a.copy()
-    bytes.append(inout o, sys.lit(s))
+    bytes.append(inout o, lit(s))
     o
 }
 
@@ -119,8 +169,8 @@ fn catb(a: List[u8], b: List[u8]) -> List[u8] {
 }
 
 fn num(s: str, n: u64) -> List[u8] {
-    let mut o = sys.lit(s)
-    bytes.append(inout o, bytes.from_u64(n))
+    let mut o = lit(s)
+    wd(inout o, n)
     o
 }
 
@@ -146,7 +196,8 @@ fn ins(inout e: E) {
         e.cur = num("%L", n as u64)
         e.term = false
     }
-    w(inout e, "  ")
+    e.o.push(32)
+    e.o.push(32)
 }
 
 /// End an instruction line (with its source location).
@@ -156,13 +207,16 @@ fn fin(inout e: E) {
         let d = e.dloc.copy()
         wn(inout e, d as u64)
     }
-    w(inout e, "\n")
+    e.o.push(10)
 }
 
 fn reg(inout e: E) -> List[u8] {
-    let n = e.nreg
     e.nreg += 1
-    num("%r", n as u64)
+    let mut r: List[u8] = List.new()
+    r.push(37)
+    r.push(114)
+    wd(inout r, e.nreg as u64)
+    r
 }
 
 /// Make sure there is an open block (so e.cur names the block the next instruction is in).
@@ -213,6 +267,15 @@ fn condbr(inout e: E, c: List[u8], t: u32, f: u32) {
     e.term = true
 }
 
+/// Begin an instruction `  %r<n> = ` (its text follows, then `fin`); returns the register.
+fn begin(inout e: E) -> List[u8] {
+    let r = reg(inout e)
+    ins(inout e)
+    wb(inout e, r)
+    w(inout e, " = ")
+    r
+}
+
 /// `<dst> = <text>` as one instruction; returns dst.
 fn val(inout e: E, text: List[u8]) -> List[u8] {
     let r = reg(inout e)
@@ -231,7 +294,7 @@ fn stmt_text(inout e: E, text: List[u8]) {
 }
 
 fn unsupported(inout e: E, what: str) {
-    if e.fail.len() == 0 { e.fail = sys.lit(what) }
+    if e.fail.len() == 0 { e.fail = lit(what) }
 }
 
 // ---- types
@@ -262,39 +325,39 @@ fn int_bits(k: u32) -> u32 {
 
 /// The LLVM type of a value of type ty in memory.
 fn mty(inout e: E, p: lower.P, ty: u32) -> List[u8] {
-    if ty >= PTR { return sys.lit("ptr") }
+    if ty >= PTR { return lit("ptr") }
     let t = types.get(p.t, ty)
     let k = t.kind
-    if k == types.T_INT { return sys.lit(int_ty(t.a)) }
-    if k == types.T_BOOL || k == types.T_UNIT || k == types.T_NEVER { return sys.lit("i8") }
-    if k == types.T_STR { return sys.lit("ptr") }
-    if k == types.T_STRING { return sys.lit("%ei.String") }
+    if k == types.T_INT { return lit(int_ty(t.a)) }
+    if k == types.T_BOOL || k == types.T_UNIT || k == types.T_NEVER { return lit("i8") }
+    if k == types.T_STR { return lit("ptr") }
+    if k == types.T_STRING { return lit("%ei.String") }
     def_ty(inout e, p, ty)
     num("%t", ty as u64)
 }
 
 /// The LLVM type of a scalar value in a register (bool: i1).
 fn vty(inout e: E, p: lower.P, ty: u32) -> List[u8] {
-    if ty < PTR && kind(p, ty) == types.T_BOOL { return sys.lit("i1") }
+    if ty < PTR && kind(p, ty) == types.T_BOOL { return lit("i1") }
     mty(inout e, p, ty)
 }
 
 fn is_scalar(p: lower.P, ty: u32) -> bool { abi.scalar(p, ty) }
 
 fn members(inout e: E, p: lower.P, ms: List[u32]) -> List[u8] {
-    let mut o = sys.lit("{ ")
-    if ms.len() == 0 { bytes.append(inout o, sys.lit("i8")) }
+    let mut o = lit("{ ")
+    if ms.len() == 0 { bytes.append(inout o, lit("i8")) }
     for i in 0..ms.len() {
-        if i > 0 { bytes.append(inout o, sys.lit(", ")) }
+        if i > 0 { bytes.append(inout o, lit(", ")) }
         bytes.append(inout o, mty(inout e, p, ms[i]))
     }
-    bytes.append(inout o, sys.lit(" }"))
+    bytes.append(inout o, lit(" }"))
     o
 }
 
 fn tdef(inout e: E, name: List[u8], body: List[u8]) {
     bytes.append(inout e.tdefs, name)
-    bytes.append(inout e.tdefs, sys.lit(" = type "))
+    bytes.append(inout e.tdefs, lit(" = type "))
     bytes.append(inout e.tdefs, body)
     e.tdefs.push(10)
 }
@@ -309,9 +372,9 @@ fn def_ty(inout e: E, p: lower.P, ty: u32) {
     if k == types.T_ARRAY {
         let n: u64 = if t.b == 0 { 1 } else { t.b as u64 }
         let mut b = num("{ [", n)
-        bytes.append(inout b, sys.lit(" x "))
+        bytes.append(inout b, lit(" x "))
         bytes.append(inout b, mty(inout e, p, t.a))
-        bytes.append(inout b, sys.lit("] }"))
+        bytes.append(inout b, lit("] }"))
         tdef(inout e, name, b)
     } else if k == types.T_TUPLE || (k == types.T_RECORD && !lower.shared_rec(p, ty)) {
         let b = members(inout e, p, abi.parts(p, ty, NONE))
@@ -319,25 +382,25 @@ fn def_ty(inout e: E, p: lower.P, ty: u32) {
     } else if k == types.T_RECORD {
         let b = members(inout e, p, abi.parts(p, ty, NONE))
         tdef(inout e, cat(name, ".d"), b)
-        tdef(inout e, name, sys.lit("{ ptr }"))
+        tdef(inout e, name, lit("{ ptr }"))
     } else if k == types.T_LIST {
-        tdef(inout e, name, sys.lit("{ ptr, i64, i64 }"))
+        tdef(inout e, name, lit("{ ptr, i64, i64 }"))
     } else if k == types.T_MAP {
-        tdef(inout e, name, sys.lit("{ ptr, ptr, ptr, i64, i64, i64 }"))
+        tdef(inout e, name, lit("{ ptr, ptr, ptr, i64, i64, i64 }"))
     } else if k == types.T_FN {
-        tdef(inout e, name, sys.lit("{ ptr, ptr, ptr, ptr, ptr }"))
+        tdef(inout e, name, lit("{ ptr, ptr, ptr, ptr, ptr }"))
     } else if k == types.T_ENUM {
         let d = types.def_of(p.t, ty)
         if !lower.any_payload(p, d) {
-            tdef(inout e, name, sys.lit("{ i32 }"))
+            tdef(inout e, name, lit("{ i32 }"))
             return
         }
         let u = abi.union_of(inout e.lay, p, ty)
         let el = if u[1] == 1 { "i8" } else if u[1] == 2 { "i16" } else if u[1] == 4 { "i32" } else { "i64" }
         let mut b = num("{ i32, [", u[0] / u[1])
-        bytes.append(inout b, sys.lit(" x "))
-        bytes.append(inout b, sys.lit(el))
-        bytes.append(inout b, sys.lit("] }"))
+        bytes.append(inout b, lit(" x "))
+        bytes.append(inout b, lit(el))
+        bytes.append(inout b, lit("] }"))
         tdef(inout e, name, b)
         for i in 0..d.len {
             if types.variant(p.t, d, i).flen == 0 { continue }
@@ -348,7 +411,7 @@ fn def_ty(inout e: E, p: lower.P, ty: u32) {
         }
     } else {
         // Box, Task, Mutex, Chan, Ref: one pointer
-        tdef(inout e, name, sys.lit("{ ptr }"))
+        tdef(inout e, name, lit("{ ptr }"))
     }
 }
 
@@ -391,14 +454,22 @@ fn owns(inout e: E, p: lower.P, ty: u32) -> bool {
 }
 
 /// The glue name `<op><C type name>` (lower.ei's gname).
-fn gname(e: E, op: str, ty: u32) -> List[u8] { catb(sys.lit(op), e.tn[ty as usize]) }
+fn gname(e: E, op: str, ty: u32) -> List[u8] { catb(lit(op), e.tn[ty as usize]) }
+
+/// Ask the C half for glue item (kind, id), as lower.ei's `need` does where it calls it.
+fn gneed(inout e: E, kind: u32, id: u32) {
+    let key = (kind as u64) * 4294967296 + id as u64
+    if e.nseen.contains(key) { return }
+    e.nseen.insert(key, true)
+    e.needs.push(key)
+}
 
 // ---- constants
 
 /// An integer constant of kind k as LLVM text (signed kinds as signed decimals).
 fn int_text(k: u32, v: u64) -> List[u8] {
     if types.signed(k) && v >= 9223372036854775808 {
-        let mut o = sys.lit("-")
+        let mut o = lit("-")
         bytes.append(inout o, bytes.from_u64(0 -% v))
         return o
     }
@@ -415,17 +486,17 @@ fn c_string(inout out: List[u8], s: List[u8]) {
             out.push(b)
         } else {
             out.push(92)
-            let hx = sys.lit("0123456789ABCDEF")
+            let hx = lit("0123456789ABCDEF")
             out.push(hx[(b / 16) as usize])
             out.push(hx[(b % 16) as usize])
         }
     }
-    bytes.append(inout out, sys.lit("\\00\""))
+    bytes.append(inout out, lit("\\00\""))
 }
 
 /// A private constant for a runtime message (the same text the C runtime prints).
 fn msg(inout e: E, text: str) -> List[u8] {
-    let s = sys.lit(text)
+    let s = lit(text)
     let k = h64(s)
     match e.msgs.get(k) {
         Some(i) => { return num("@.m", i as u64) }
@@ -436,17 +507,18 @@ fn msg(inout e: E, text: str) -> List[u8] {
     e.msgs.insert(k, i)
     let name = num("@.m", i as u64)
     bytes.append(inout e.gl, name)
-    bytes.append(inout e.gl, sys.lit(" = private unnamed_addr constant ["))
+    bytes.append(inout e.gl, lit(" = private unnamed_addr constant ["))
     bytes.append(inout e.gl, bytes.from_u64((s.len() + 1) as u64))
-    bytes.append(inout e.gl, sys.lit(" x i8] "))
+    bytes.append(inout e.gl, lit(" x i8] "))
     c_string(inout e.gl, s)
     e.gl.push(10)
     name
 }
 
 /// The source line for the runtime (lower.ei's put_line).
-fn line_of(e: E, line: u32) -> List[u8] {
+fn line_of(inout e: E, line: u32) -> List[u8] {
     if e.file == 0 || line >= 1048576 { return bytes.from_u64(line as u64) }
+    if !e.tfiles.contains(e.file) { e.tfiles.push(e.file) }
     bytes.from_u64((e.file as u64) * 1048576 + line as u64)
 }
 
@@ -470,18 +542,18 @@ fn ext_attr(p: lower.P, ty: u32) -> str {
 fn coerce_ty(a: abi.Arg) -> List[u8] {
     if a.n == 1 { return num("i", a.b0 as u64) }
     let mut o = num("{ i", a.b0 as u64)
-    bytes.append(inout o, sys.lit(", i"))
+    bytes.append(inout o, lit(", i"))
     bytes.append(inout o, bytes.from_u64(a.b1 as u64))
-    bytes.append(inout o, sys.lit(" }"))
+    bytes.append(inout o, lit(" }"))
     o
 }
 
 fn ret_text(inout e: E, p: lower.P, s: abi.Sig) -> List[u8] {
     let r = s.ret
-    if r.kind == abi.A_VOID || r.kind == abi.A_SRET { return sys.lit("void") }
+    if r.kind == abi.A_VOID || r.kind == abi.A_SRET { return lit("void") }
     if r.kind == abi.A_DIRECT {
-        let mut o = sys.lit(ext_attr(p, r.ty))
-        if o.len() > 0 { o = sys.lit("zeroext ") }
+        let mut o = lit(ext_attr(p, r.ty))
+        if o.len() > 0 { o = lit("zeroext ") }
         bytes.append(inout o, vty(inout e, p, r.ty))
         return o
     }
@@ -496,12 +568,12 @@ fn params_text(inout e: E, p: lower.P, s: abi.Sig, names: List[List[u8]], intern
     let mut first = true
     let mut ni: usize = 0
     if s.ret.kind == abi.A_SRET {
-        if internal { bytes.append(inout o, sys.lit("ptr noalias sret(")) } else { bytes.append(inout o, sys.lit("ptr sret(")) }
+        if internal { bytes.append(inout o, lit("ptr noalias sret(")) } else { bytes.append(inout o, lit("ptr sret(")) }
         bytes.append(inout o, mty(inout e, p, s.ret.ty))
-        bytes.append(inout o, sys.lit(") align "))
+        bytes.append(inout o, lit(") align "))
         bytes.append(inout o, bytes.from_u64(align(inout e, p, s.ret.ty)))
         if names.len() > 0 {
-            bytes.append(inout o, sys.lit(" "))
+            bytes.append(inout o, lit(" "))
             bytes.append(inout o, names[ni])
             ni += 1
         }
@@ -509,46 +581,46 @@ fn params_text(inout e: E, p: lower.P, s: abi.Sig, names: List[List[u8]], intern
     }
     for a in s.args {
         if a.kind == abi.A_DIRECT {
-            if !first { bytes.append(inout o, sys.lit(", ")) }
+            if !first { bytes.append(inout o, lit(", ")) }
             first = false
             bytes.append(inout o, vty(inout e, p, a.ty))
-            bytes.append(inout o, sys.lit(ext_attr(p, a.ty)))
+            bytes.append(inout o, lit(ext_attr(p, a.ty)))
             if internal { param_attrs(inout e, p, inout o, a) }
             if names.len() > 0 {
-                bytes.append(inout o, sys.lit(" "))
+                bytes.append(inout o, lit(" "))
                 bytes.append(inout o, names[ni])
                 ni += 1
             }
         } else if a.kind == A_REF {
-            if !first { bytes.append(inout o, sys.lit(", ")) }
+            if !first { bytes.append(inout o, lit(", ")) }
             first = false
-            bytes.append(inout o, sys.lit("ptr"))
+            bytes.append(inout o, lit("ptr"))
             param_attrs(inout e, p, inout o, a)
             if names.len() > 0 {
-                bytes.append(inout o, sys.lit(" "))
+                bytes.append(inout o, lit(" "))
                 bytes.append(inout o, names[ni])
                 ni += 1
             }
         } else if a.kind == abi.A_COERCE {
             for i in 0..a.n {
-                if !first { bytes.append(inout o, sys.lit(", ")) }
+                if !first { bytes.append(inout o, lit(", ")) }
                 first = false
                 let bits = if i == 0 { a.b0 } else { a.b1 }
                 bytes.append(inout o, num("i", bits as u64))
                 if names.len() > 0 {
-                    bytes.append(inout o, sys.lit(" "))
+                    bytes.append(inout o, lit(" "))
                     bytes.append(inout o, names[ni])
                     ni += 1
                 }
             }
         } else {
-            if !first { bytes.append(inout o, sys.lit(", ")) }
+            if !first { bytes.append(inout o, lit(", ")) }
             first = false
-            bytes.append(inout o, sys.lit("ptr byval("))
+            bytes.append(inout o, lit("ptr byval("))
             bytes.append(inout o, mty(inout e, p, a.ty))
-            bytes.append(inout o, sys.lit(") align 8"))
+            bytes.append(inout o, lit(") align 8"))
             if names.len() > 0 {
-                bytes.append(inout o, sys.lit(" "))
+                bytes.append(inout o, lit(" "))
                 bytes.append(inout o, names[ni])
                 ni += 1
             }
@@ -569,27 +641,27 @@ fn params_text(inout e: E, p: lower.P, s: abi.Sig, names: List[List[u8]], intern
 fn param_attrs(inout e: E, p: lower.P, inout o: List[u8], a: abi.Arg) {
     if a.kind == A_REF || a.ty >= PTR {
         let t = if a.ty >= PTR { a.ty - PTR } else { a.ty }
-        if a.kind == A_REF { bytes.append(inout o, sys.lit(" noalias nocapture readonly noundef align ")) } else { bytes.append(inout o, sys.lit(" noalias noundef align ")) }
+        if a.kind == A_REF { bytes.append(inout o, lit(" noalias nocapture readonly noundef align ")) } else { bytes.append(inout o, lit(" noalias noundef align ")) }
         bytes.append(inout o, bytes.from_u64(align(inout e, p, t)))
-        bytes.append(inout o, sys.lit(" dereferenceable("))
+        bytes.append(inout o, lit(" dereferenceable("))
         bytes.append(inout o, bytes.from_u64(size(inout e, p, t)))
-        bytes.append(inout o, sys.lit(")"))
+        bytes.append(inout o, lit(")"))
         return
     }
-    bytes.append(inout o, sys.lit(" noundef"))
+    bytes.append(inout o, lit(" noundef"))
 }
 
 fn declare_sig(inout e: E, p: lower.P, name: List[u8], s: abi.Sig, noreturn: bool) {
     if e.didx.contains(h64(name)) { return }
-    let mut d = sys.lit("declare ")
+    let mut d = lit("declare ")
     bytes.append(inout d, ret_text(inout e, p, s))
-    bytes.append(inout d, sys.lit(" @"))
+    bytes.append(inout d, lit(" @"))
     bytes.append(inout d, name)
-    bytes.append(inout d, sys.lit("("))
+    bytes.append(inout d, lit("("))
     let none: List[List[u8]] = List.new()
     bytes.append(inout d, params_text(inout e, p, s, none, false))
-    bytes.append(inout d, sys.lit(")"))
-    if noreturn { bytes.append(inout d, sys.lit(" noreturn")) }
+    bytes.append(inout d, lit(")"))
+    if noreturn { bytes.append(inout d, lit(" noreturn")) }
     declare(inout e, name, d)
 }
 
@@ -597,14 +669,14 @@ fn declare_sig(inout e: E, p: lower.P, name: List[u8], s: abi.Sig, noreturn: boo
 fn load_piece(inout e: E, a: List[u8], off: u64, bits: u32) -> List[u8] {
     let mut at = a.copy()
     if off > 0 {
-        let mut g = sys.lit("getelementptr inbounds i8, ptr ")
+        let mut g = lit("getelementptr inbounds i8, ptr ")
         bytes.append(inout g, a)
-        bytes.append(inout g, sys.lit(", i64 "))
+        bytes.append(inout g, lit(", i64 "))
         bytes.append(inout g, bytes.from_u64(off))
         at = val(inout e, g)
     }
     let mut t = num("load i", bits as u64)
-    bytes.append(inout t, sys.lit(", ptr "))
+    bytes.append(inout t, lit(", ptr "))
     bytes.append(inout t, at)
     val(inout e, t)
 }
@@ -612,16 +684,16 @@ fn load_piece(inout e: E, a: List[u8], off: u64, bits: u32) -> List[u8] {
 fn store_piece(inout e: E, v: List[u8], a: List[u8], off: u64, bits: u32) {
     let mut at = a.copy()
     if off > 0 {
-        let mut g = sys.lit("getelementptr inbounds i8, ptr ")
+        let mut g = lit("getelementptr inbounds i8, ptr ")
         bytes.append(inout g, a)
-        bytes.append(inout g, sys.lit(", i64 "))
+        bytes.append(inout g, lit(", i64 "))
         bytes.append(inout g, bytes.from_u64(off))
         at = val(inout e, g)
     }
     let mut t = num("store i", bits as u64)
-    bytes.append(inout t, sys.lit(" "))
+    bytes.append(inout t, lit(" "))
     bytes.append(inout t, v)
-    bytes.append(inout t, sys.lit(", ptr "))
+    bytes.append(inout t, lit(", ptr "))
     bytes.append(inout t, at)
     stmt_text(inout e, t)
 }
@@ -630,87 +702,137 @@ fn store_piece(inout e: E, v: List[u8], a: List[u8], off: u64, bits: u32) {
 /// or an aggregate's address. An aggregate result is written to `dst` (an address; a fresh
 /// temporary when empty); a scalar result is returned.
 fn call(inout e: E, p: lower.P, name: List[u8], ptys: List[u32], args: List[List[u8]], ret: u32, dst: List[u8]) -> List[u8] {
-    let s = abi.sig(inout e.lay, p, ptys, ret)
+    let s = csig_of(inout e, p, ptys, ret)
     declare_sig(inout e, p, name, s, false)
-    call_sig(inout e, p, catb(sys.lit("@"), name), s, args, dst)
+    call_sig(inout e, p, catb(lit("@"), name), s, args, dst)
+}
+
+/// The C convention of (ptys) -> ret, memoized (glue and runtime calls repeat a few
+/// hundred signatures many thousand times).
+fn csig_of(inout e: E, p: lower.P, ptys: List[u32], ret: u32) -> abi.Sig {
+    let mut h: u64 = 14695981039346656037
+    for t in ptys { h = (h ^ (t as u64)) *% 1099511628211 }
+    h = (h ^ (ret as u64 + 4294967296)) *% 1099511628211
+    let mut hit = NONE
+    match e.sigmemo.get(h) {
+        Some(i) => { hit = i }
+        None => {}
+    }
+    if hit != NONE {
+        // the same types (a hash collision computes it afresh)
+        let c = e.sigs[hit as usize].copy()
+        let mut same = c.ret.ty == ret && c.args.len() == ptys.len()
+        if same {
+            for i in 0..ptys.len() {
+                if c.args[i].ty != ptys[i] { same = false }
+            }
+        }
+        if same { return c }
+        return abi.sig(inout e.lay, p, ptys, ret)
+    }
+    let s = abi.sig(inout e.lay, p, ptys, ret)
+    e.sigmemo.insert(h, e.sigs.len() as u32)
+    e.sigs.push(s.copy())
+    s
 }
 
 fn call_sig(inout e: E, p: lower.P, callee: List[u8], s: abi.Sig, args: List[List[u8]], dst: List[u8]) -> List[u8] {
     let mut d = dst.copy()
     if (s.ret.kind == abi.A_SRET || s.ret.kind == abi.A_COERCE) && d.len() == 0 { d = temp(inout e, p, s.ret.ty) }
-    let mut parts: List[List[u8]] = List.new()
-    if s.ret.kind == abi.A_SRET {
-        let mut x = sys.lit("ptr sret(")
-        bytes.append(inout x, mty(inout e, p, s.ret.ty))
-        bytes.append(inout x, sys.lit(") align "))
-        bytes.append(inout x, bytes.from_u64(align(inout e, p, s.ret.ty)))
-        bytes.append(inout x, sys.lit(" "))
-        bytes.append(inout x, d)
-        parts.push(x)
-    }
+    // the pieces of coerced arguments, loaded before the call
+    let mut pieces: List[List[u8]] = List.new()
     for i in 0..s.args.len() {
         let a = s.args[i]
-        if a.kind == abi.A_DIRECT {
-            let mut x = vty(inout e, p, a.ty)
-            bytes.append(inout x, sys.lit(ext_attr(p, a.ty)))
-            bytes.append(inout x, sys.lit(" "))
-            bytes.append(inout x, args[i])
-            parts.push(x)
-        } else if a.kind == abi.A_COERCE {
-            let v0 = load_piece(inout e, args[i], 0, a.b0)
-            parts.push(catb(num("i", a.b0 as u64), catb(sys.lit(" "), v0)))
-            if a.n > 1 {
-                let v1 = load_piece(inout e, args[i], 8, a.b1)
-                parts.push(catb(num("i", a.b1 as u64), catb(sys.lit(" "), v1)))
-            }
-        } else if a.kind == A_REF {
-            parts.push(catb(sys.lit("ptr "), args[i]))
-        } else {
-            let mut x = sys.lit("ptr byval(")
-            bytes.append(inout x, mty(inout e, p, a.ty))
-            bytes.append(inout x, sys.lit(") align 8 "))
-            bytes.append(inout x, args[i])
-            parts.push(x)
+        if a.kind == abi.A_COERCE {
+            pieces.push(load_piece(inout e, args[i], 0, a.b0))
+            if a.n > 1 { pieces.push(load_piece(inout e, args[i], 8, a.b1)) }
         }
     }
-    let mut t = sys.lit("call ")
-    bytes.append(inout t, ret_text(inout e, p, s))
-    bytes.append(inout t, sys.lit(" "))
-    bytes.append(inout t, callee)
-    bytes.append(inout t, sys.lit("("))
-    bytes.append(inout t, bytes.join(parts, sys.lit(", ")))
-    bytes.append(inout t, sys.lit(")"))
-    if s.ret.kind == abi.A_DIRECT { return val(inout e, t) }
+    let rt = ret_text(inout e, p, s)
+    let mut r: List[u8] = List.new()
+    if s.ret.kind == abi.A_DIRECT || s.ret.kind == abi.A_COERCE { r = begin(inout e) } else { ins(inout e) }
+    w(inout e, "call ")
+    wb(inout e, rt)
+    w(inout e, " ")
+    wb(inout e, callee)
+    w(inout e, "(")
+    let mut first = true
+    if s.ret.kind == abi.A_SRET {
+        let mt = mty(inout e, p, s.ret.ty)
+        let al = align(inout e, p, s.ret.ty)
+        w(inout e, "ptr sret(")
+        wb(inout e, mt)
+        w(inout e, ") align ")
+        wn(inout e, al)
+        w(inout e, " ")
+        wb(inout e, d)
+        first = false
+    }
+    let mut pi: usize = 0
+    for i in 0..s.args.len() {
+        let a = s.args[i]
+        if !first { w(inout e, ", ") }
+        first = false
+        if a.kind == abi.A_DIRECT {
+            let vt = vty(inout e, p, a.ty)
+            wb(inout e, vt)
+            w(inout e, ext_attr(p, a.ty))
+            w(inout e, " ")
+            wb(inout e, args[i])
+        } else if a.kind == abi.A_COERCE {
+            w(inout e, "i")
+            wn(inout e, a.b0 as u64)
+            w(inout e, " ")
+            wb(inout e, pieces[pi])
+            pi += 1
+            if a.n > 1 {
+                w(inout e, ", i")
+                wn(inout e, a.b1 as u64)
+                w(inout e, " ")
+                wb(inout e, pieces[pi])
+                pi += 1
+            }
+        } else if a.kind == A_REF {
+            w(inout e, "ptr ")
+            wb(inout e, args[i])
+        } else {
+            let mt = mty(inout e, p, a.ty)
+            w(inout e, "ptr byval(")
+            wb(inout e, mt)
+            w(inout e, ") align 8 ")
+            wb(inout e, args[i])
+        }
+    }
+    w(inout e, ")")
+    fin(inout e)
+    if s.ret.kind == abi.A_DIRECT { return r }
     if s.ret.kind == abi.A_COERCE {
-        let r = val(inout e, t)
         if s.ret.n == 1 {
             store_piece(inout e, r, d, 0, s.ret.b0)
         } else {
-            let mut x0 = sys.lit("extractvalue ")
+            let mut x0 = lit("extractvalue ")
             bytes.append(inout x0, coerce_ty(s.ret))
-            bytes.append(inout x0, sys.lit(" "))
+            bytes.append(inout x0, lit(" "))
             bytes.append(inout x0, r)
             let v0 = val(inout e, cat(x0, ", 0"))
             let v1 = val(inout e, cat(x0, ", 1"))
             store_piece(inout e, v0, d, 0, s.ret.b0)
             store_piece(inout e, v1, d, 8, s.ret.b1)
         }
-        return List.new()
     }
-    stmt_text(inout e, t)
     List.new()
 }
 
 /// A fresh temporary of type ty in the entry block; returns its address.
 fn temp(inout e: E, p: lower.P, ty: u32) -> List[u8] {
     let r = reg(inout e)
-    bytes.append(inout e.ent, sys.lit("  "))
+    bytes.append(inout e.ent, lit("  "))
     bytes.append(inout e.ent, r)
-    bytes.append(inout e.ent, sys.lit(" = alloca "))
+    bytes.append(inout e.ent, lit(" = alloca "))
     let mt = mty(inout e, p, ty)
     let al = align(inout e, p, ty)
     bytes.append(inout e.ent, mt)
-    bytes.append(inout e.ent, sys.lit(", align "))
+    bytes.append(inout e.ent, lit(", align "))
     bytes.append(inout e.ent, bytes.from_u64(al))
     e.ent.push(10)
     r
@@ -718,7 +840,7 @@ fn temp(inout e: E, p: lower.P, ty: u32) -> List[u8] {
 
 fn rt_call(inout e: E, p: lower.P, name: str, ptys: List[u32], args: List[List[u8]], ret: u32) -> List[u8] {
     let none: List[u8] = List.new()
-    call(inout e, p, sys.lit(name), ptys, args, ret, none)
+    call(inout e, p, lit(name), ptys, args, ret, none)
 }
 
 fn tys1(a: u32) -> List[u32] {
@@ -770,69 +892,102 @@ fn trap_if(inout e: E, c: List[u8], text: str, line: u32) {
 
 /// `call ei_trap(m, line); unreachable` (m: a pointer value).
 fn trap_with(inout e: E, m: List[u8], line: u32) {
-    declare(inout e, sys.lit("ei_trap"), sys.lit("declare void @ei_trap(ptr, i32) noreturn"))
-    let mut t = sys.lit("call void @ei_trap(ptr ")
+    declare(inout e, lit("ei_trap"), lit("declare void @ei_trap(ptr, i32) noreturn"))
+    let mut t = lit("call void @ei_trap(ptr ")
     bytes.append(inout t, m)
-    bytes.append(inout t, sys.lit(", i32 "))
-    bytes.append(inout t, line_of(e, line))
-    bytes.append(inout t, sys.lit(")"))
+    bytes.append(inout t, lit(", i32 "))
+    bytes.append(inout t, line_of(inout e, line))
+    bytes.append(inout t, lit(")"))
     stmt_text(inout e, t)
-    stmt_text(inout e, sys.lit("unreachable"))
+    stmt_text(inout e, lit("unreachable"))
     e.term = true
 }
 
 // ---- memory
 
+/// The local whose address text is a (`%l<n>`), when it is an SSA value; else NONE.
+fn ssa_slot(e: E, a: List[u8]) -> u32 {
+    if a.len() < 3 || a[0] != 37 || a[1] != 108 { return NONE }
+    let mut n: u32 = 0
+    for i in 2..a.len() {
+        let c = a[i]
+        if c < 48 || c > 57 { return NONE }
+        n = n * 10 + (c - 48) as u32
+    }
+    if (n as usize) < e.ssa.len() && e.ssa[n as usize] { return n }
+    NONE
+}
+
 fn load(inout e: E, p: lower.P, ty: u32, a: List[u8]) -> List[u8] {
-    let mut t = sys.lit("load ")
-    bytes.append(inout t, mty(inout e, p, ty))
-    bytes.append(inout t, sys.lit(", ptr "))
-    bytes.append(inout t, a)
-    let r = val(inout e, t)
+    let sl = ssa_slot(e, a)
+    if sl != NONE {
+        if e.vals[sl as usize].len() == 0 {
+            // scan proved every read follows the one assignment; this one doesn't
+            unsupported(inout e, "an SSA value read before it is assigned")
+            return lit("poison")
+        }
+        return e.vals[sl as usize].copy()
+    }
+    let mt = mty(inout e, p, ty)
+    let r = begin(inout e)
+    w(inout e, "load ")
+    wb(inout e, mt)
+    w(inout e, ", ptr ")
+    wb(inout e, a)
+    fin(inout e)
     if ty < PTR && kind(p, ty) == types.T_BOOL {
-        return val(inout e, catb(sys.lit("trunc i8 "), cat(r, " to i1")))
+        return val(inout e, catb(lit("trunc i8 "), cat(r, " to i1")))
     }
     r
 }
 
 fn store(inout e: E, p: lower.P, ty: u32, v: List[u8], a: List[u8]) {
+    let sl = ssa_slot(e, a)
+    if sl != NONE {
+        e.vals[sl as usize] = v.copy()
+        return
+    }
     let mut x = v.copy()
     if ty < PTR && kind(p, ty) == types.T_BOOL {
-        x = val(inout e, catb(sys.lit("zext i1 "), cat(v, " to i8")))
+        x = val(inout e, catb(lit("zext i1 "), cat(v, " to i8")))
     }
-    let mut t = sys.lit("store ")
-    bytes.append(inout t, mty(inout e, p, ty))
-    bytes.append(inout t, sys.lit(" "))
-    bytes.append(inout t, x)
-    bytes.append(inout t, sys.lit(", ptr "))
-    bytes.append(inout t, a)
-    stmt_text(inout e, t)
+    let mt = mty(inout e, p, ty)
+    ins(inout e)
+    w(inout e, "store ")
+    wb(inout e, mt)
+    w(inout e, " ")
+    wb(inout e, x)
+    w(inout e, ", ptr ")
+    wb(inout e, a)
+    fin(inout e)
 }
 
 fn memcpy(inout e: E, p: lower.P, ty: u32, dst: List[u8], src: List[u8]) {
-    declare(inout e, sys.lit("llvm.memcpy.p0.p0.i64"), sys.lit("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)"))
-    let mut t = sys.lit("call void @llvm.memcpy.p0.p0.i64(ptr ")
-    bytes.append(inout t, dst)
-    bytes.append(inout t, sys.lit(", ptr "))
-    bytes.append(inout t, src)
-    bytes.append(inout t, sys.lit(", i64 "))
-    bytes.append(inout t, bytes.from_u64(size(inout e, p, ty)))
-    bytes.append(inout t, sys.lit(", i1 false)"))
-    stmt_text(inout e, t)
+    declare(inout e, lit("llvm.memcpy.p0.p0.i64"), lit("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)"))
+    let n = size(inout e, p, ty)
+    ins(inout e)
+    w(inout e, "call void @llvm.memcpy.p0.p0.i64(ptr ")
+    wb(inout e, dst)
+    w(inout e, ", ptr ")
+    wb(inout e, src)
+    w(inout e, ", i64 ")
+    wn(inout e, n)
+    w(inout e, ", i1 false)")
+    fin(inout e)
 }
 
 fn zero(inout e: E, p: lower.P, ty: u32, a: List[u8]) {
     if is_scalar(p, ty) {
         let z = if ty < PTR && kind(p, ty) == types.T_STR { "null" } else if ty < PTR && kind(p, ty) == types.T_BOOL { "false" } else { "0" }
-        store(inout e, p, ty, sys.lit(z), a)
+        store(inout e, p, ty, lit(z), a)
         return
     }
-    declare(inout e, sys.lit("llvm.memset.p0.i64"), sys.lit("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)"))
-    let mut t = sys.lit("call void @llvm.memset.p0.i64(ptr ")
+    declare(inout e, lit("llvm.memset.p0.i64"), lit("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)"))
+    let mut t = lit("call void @llvm.memset.p0.i64(ptr ")
     bytes.append(inout t, a)
-    bytes.append(inout t, sys.lit(", i8 0, i64 "))
+    bytes.append(inout t, lit(", i8 0, i64 "))
     bytes.append(inout t, bytes.from_u64(size(inout e, p, ty)))
-    bytes.append(inout t, sys.lit(", i1 false)"))
+    bytes.append(inout t, lit(", i1 false)"))
     stmt_text(inout e, t)
 }
 
@@ -848,13 +1003,17 @@ fn copy_mem(inout e: E, p: lower.P, ty: u32, dst: List[u8], src: List[u8]) {
 
 /// The address of member i of the struct %t<ty> (or a variant/buffer struct named by sfx).
 fn gep(inout e: E, p: lower.P, sty: List[u8], a: List[u8], i: u32) -> List[u8] {
-    let mut t = sys.lit("getelementptr inbounds ")
-    bytes.append(inout t, sty)
-    bytes.append(inout t, sys.lit(", ptr "))
-    bytes.append(inout t, a)
-    bytes.append(inout t, sys.lit(", i32 0, i32 "))
-    bytes.append(inout t, bytes.from_u64(i as u64))
-    val(inout e, t)
+    // a struct's first member is at its own address
+    if i == 0 { return a.copy() }
+    let r = begin(inout e)
+    w(inout e, "getelementptr inbounds ")
+    wb(inout e, sty)
+    w(inout e, ", ptr ")
+    wb(inout e, a)
+    w(inout e, ", i32 0, i32 ")
+    wn(inout e, i as u64)
+    fin(inout e)
+    r
 }
 
 fn field_addr(inout e: E, p: lower.P, ty: u32, a: List[u8], i: u32) -> List[u8] {
@@ -865,19 +1024,19 @@ fn field_addr(inout e: E, p: lower.P, ty: u32, a: List[u8], i: u32) -> List[u8] 
 /// A pointer member i of the aggregate at a, loaded.
 fn load_ptr_field(inout e: E, p: lower.P, ty: u32, a: List[u8], i: u32) -> List[u8] {
     let f = field_addr(inout e, p, ty, a, i)
-    val(inout e, catb(sys.lit("load ptr, ptr "), f))
+    val(inout e, catb(lit("load ptr, ptr "), f))
 }
 
 fn load_i64_field(inout e: E, p: lower.P, ty: u32, a: List[u8], i: u32) -> List[u8] {
     let f = field_addr(inout e, p, ty, a, i)
-    val(inout e, catb(sys.lit("load i64, ptr "), f))
+    val(inout e, catb(lit("load i64, ptr "), f))
 }
 
 /// The address of variant v's field f of the enum at a.
 fn payload_addr(inout e: E, p: lower.P, ty: u32, a: List[u8], v: u32, f: u32) -> List[u8] {
     let u = field_addr(inout e, p, ty, a, 1)
     let mut vn = num("%t", ty as u64)
-    bytes.append(inout vn, sys.lit(".v"))
+    bytes.append(inout vn, lit(".v"))
     bytes.append(inout vn, bytes.from_u64(v as u64))
     gep(inout e, p, vn, u, f)
 }
@@ -893,16 +1052,16 @@ fn opv(inout e: E, p: lower.P, id: u32) -> List[u8] {
     let x = p.ir.ops[id as usize]
     if x.kind == ir.O_INT { return int_text(types.ik(p.t, x.ty), x.v) }
     if x.kind == ir.O_BOOL {
-        if x.v == 1 { return sys.lit("true") }
-        return sys.lit("false")
+        if x.v == 1 { return lit("true") }
+        return lit("false")
     }
     if x.kind == ir.O_STR {
         e.sused[x.a as usize] = true
         return num("@.s", x.a as u64)
     }
-    if x.kind == ir.O_UNIT { return sys.lit("0") }
+    if x.kind == ir.O_UNIT { return lit("0") }
     let lt = loc(p, e, x.a).ty
-    if is_void(lt) { return sys.lit("0") }
+    if is_void(lt) { return lit("0") }
     load(inout e, p, lt, laddr(x.a))
 }
 
@@ -911,7 +1070,7 @@ fn opa(inout e: E, p: lower.P, id: u32) -> List[u8] {
     let x = p.ir.ops[id as usize]
     if x.kind != ir.O_LOCAL {
         unsupported(inout e, "an aggregate constant")
-        return sys.lit("null")
+        return lit("null")
     }
     laddr(x.a)
 }
@@ -941,11 +1100,11 @@ fn idx64(inout e: E, p: lower.P, id: u32) -> List[u8] {
     let k = types.ik(p.t, ty)
     if int_bits(k) == 64 { return v }
     let op = if types.signed(k) { "sext " } else { "zext " }
-    let mut t = sys.lit(op)
-    bytes.append(inout t, sys.lit(int_ty(k)))
-    bytes.append(inout t, sys.lit(" "))
+    let mut t = lit(op)
+    bytes.append(inout t, lit(int_ty(k)))
+    bytes.append(inout t, lit(" "))
     bytes.append(inout t, v)
-    bytes.append(inout t, sys.lit(" to i64"))
+    bytes.append(inout t, lit(" to i64"))
     val(inout e, t)
 }
 
@@ -976,19 +1135,19 @@ fn paddr(inout e: E, p: lower.P, id: u32) -> List[u8] {
         let et = types.get(p.t, bty).a
         if kind(p, bty) == types.T_LIST {
             let d = load_ptr_field(inout e, p, bty, b, 0)
-            let mut t = sys.lit(gep_kw(e))
+            let mut t = lit(gep_kw(e))
             bytes.append(inout t, mty(inout e, p, et))
-            bytes.append(inout t, sys.lit(", ptr "))
+            bytes.append(inout t, lit(", ptr "))
             bytes.append(inout t, d)
-            bytes.append(inout t, sys.lit(", i64 "))
+            bytes.append(inout t, lit(", i64 "))
             bytes.append(inout t, i)
             return val(inout e, t)
         }
-        let mut t = sys.lit(gep_kw(e))
+        let mut t = lit(gep_kw(e))
         bytes.append(inout t, mty(inout e, p, bty))
-        bytes.append(inout t, sys.lit(", ptr "))
+        bytes.append(inout t, lit(", ptr "))
         bytes.append(inout t, b)
-        bytes.append(inout t, sys.lit(", i32 0, i32 0, i64 "))
+        bytes.append(inout t, lit(", i32 0, i32 0, i64 "))
         bytes.append(inout t, i)
         return val(inout e, t)
     }
@@ -1010,9 +1169,9 @@ fn checks(inout e: E, p: lower.P, id: u32) {
         let b = paddr(inout e, p, x.a)
         n = load_i64_field(inout e, p, bty, b, 1)
     }
-    let mut c = sys.lit("icmp uge i64 ")
+    let mut c = lit("icmp uge i64 ")
     bytes.append(inout c, i)
-    bytes.append(inout c, sys.lit(", "))
+    bytes.append(inout c, lit(", "))
     bytes.append(inout c, n)
     let r = val(inout e, c)
     trap_if(inout e, r, "index out of bounds", x.line)
@@ -1023,8 +1182,9 @@ fn uniq_call(inout e: E, p: lower.P, ty: u32, a: List[u8]) {
     let k = kind(p, ty)
     let none: List[u8] = List.new()
     if k == types.T_STRING {
-        call(inout e, p, sys.lit("ei_str_unique"), tys1(PTR + ty), args1(a), types.UNIT, none)
+        call(inout e, p, lit("ei_str_unique"), tys1(PTR + ty), args1(a), types.UNIT, none)
     } else if k == types.T_LIST || k == types.T_MAP || k == types.T_BOX || lower.shared_rec(p, ty) {
+        gneed(inout e, lower.GK_UNIQ, ty)
         let gn_ = gname(e, "uniq_", ty)
         call(inout e, p, gn_, tys1(PTR + ty), args1(a), types.UNIT, none)
     }
@@ -1056,7 +1216,7 @@ fn argval(inout e: E, p: lower.P, a: u32) -> List[u8] {
     if a >= ir.ARG_PLACE {
         let ad = paddr(inout e, p, a - ir.ARG_PLACE)
         if is_scalar(p, ty) {
-            if is_void(ty) { return sys.lit("0") }
+            if is_void(ty) { return lit("0") }
             return load(inout e, p, ty, ad)
         }
         return ad
@@ -1068,8 +1228,8 @@ fn argval(inout e: E, p: lower.P, a: u32) -> List[u8] {
 fn argptr(inout e: E, p: lower.P, a: u32) -> List[u8] {
     if a >= ir.ARG_PLACE { return paddr(inout e, p, a - ir.ARG_PLACE) }
     let x = p.ir.ops[a as usize]
-    if x.kind == ir.O_LOCAL { return laddr(x.a) }
-    // a constant's address: a temporary holding it
+    if x.kind == ir.O_LOCAL && !e.ssa[x.a as usize] { return laddr(x.a) }
+    // a constant's (or an SSA value's) address: a temporary holding it
     let ty = ir.op_ty(p.ir, a)
     let t = temp(inout e, p, ty)
     put_op(inout e, p, ty, a, t)
@@ -1082,8 +1242,9 @@ fn drop_at(inout e: E, p: lower.P, ty: u32, a: List[u8]) {
     if !owns(inout e, p, ty) { return }
     let none: List[u8] = List.new()
     if kind(p, ty) == types.T_STRING {
-        call(inout e, p, sys.lit("ei_drop_String"), tys1(PTR + ty), args1(a), types.UNIT, none)
+        call(inout e, p, lit("ei_drop_String"), tys1(PTR + ty), args1(a), types.UNIT, none)
     } else {
+        gneed(inout e, lower.GK_DROP, ty)
         let gn_ = gname(e, "drop_", ty)
         call(inout e, p, gn_, tys1(PTR + ty), args1(a), types.UNIT, none)
     }
@@ -1096,8 +1257,9 @@ fn clone_to(inout e: E, p: lower.P, ty: u32, src: List[u8], dst: List[u8]) {
         return
     }
     if kind(p, ty) == types.T_STRING {
-        call(inout e, p, sys.lit("ei_share_String"), tys1(PTR + ty), args1(src), ty, dst)
+        call(inout e, p, lit("ei_share_String"), tys1(PTR + ty), args1(src), ty, dst)
     } else {
+        gneed(inout e, lower.GK_CLONE, ty)
         let gn_ = gname(e, "clone_", ty)
         call(inout e, p, gn_, tys1(PTR + ty), args1(src), ty, dst)
     }
@@ -1109,6 +1271,7 @@ fn copy_to(inout e: E, p: lower.P, ty: u32, src: List[u8], dst: List[u8]) {
         clone_to(inout e, p, ty, src, dst)
         return
     }
+    gneed(inout e, lower.GK_COPY, ty)
     let gn_ = gname(e, "copy_", ty)
     call(inout e, p, gn_, tys1(PTR + ty), args1(src), ty, dst)
 }
@@ -1129,18 +1292,19 @@ fn eq_val(inout e: E, p: lower.P, ty: u32, a: List[u8], b: List[u8]) -> List[u8]
     let k = kind(p, ty)
     if k == types.T_STR || k == types.T_STRING {
         let c = strcmp(inout e, p, ty, a, b)
-        return val(inout e, catb(sys.lit("icmp eq i32 "), cat(c, ", 0")))
+        return val(inout e, catb(lit("icmp eq i32 "), cat(c, ", 0")))
     }
     if lower.is_struct_kind(k) {
+        gneed(inout e, lower.GK_EQ, ty)
         let gn_ = gname(e, "eq_", ty)
         return rt_call_b(inout e, p, gn_, tys2(ty, ty), args2(a, b), types.BOOL)
     }
-    if k == types.T_UNIT || k == types.T_NEVER { return sys.lit("true") }
-    let mut t = sys.lit("icmp eq ")
+    if k == types.T_UNIT || k == types.T_NEVER { return lit("true") }
+    let mut t = lit("icmp eq ")
     bytes.append(inout t, vty(inout e, p, ty))
-    bytes.append(inout t, sys.lit(" "))
+    bytes.append(inout t, lit(" "))
     bytes.append(inout t, a)
-    bytes.append(inout t, sys.lit(", "))
+    bytes.append(inout t, lit(", "))
     bytes.append(inout t, b)
     val(inout e, t)
 }
@@ -1155,37 +1319,40 @@ fn cmp_val(inout e: E, p: lower.P, ty: u32, a: List[u8], b: List[u8]) -> List[u8
     let k = kind(p, ty)
     if k == types.T_STR || k == types.T_STRING { return strcmp(inout e, p, ty, a, b) }
     let gn_ = gname(e, "cmp_", ty)
+    if lower.is_struct_kind(k) { gneed(inout e, lower.GK_CMP, ty) }
     if lower.is_struct_kind(k) { return rt_call_b(inout e, p, gn_, tys2(ty, ty), args2(a, b), types.I32) }
-    if k == types.T_UNIT || k == types.T_NEVER { return sys.lit("0") }
+    if k == types.T_UNIT || k == types.T_NEVER { return lit("0") }
     let vt = vty(inout e, p, ty)
     let sg = k == types.T_INT && types.signed(types.ik(p.t, ty))
     let gt = icmp(inout e, pick(sg, "sgt", "ugt"), vt, a, b)
     let lt = icmp(inout e, pick(sg, "slt", "ult"), vt, a, b)
-    let g32 = val(inout e, catb(sys.lit("zext i1 "), cat(gt, " to i32")))
-    let l32 = val(inout e, catb(sys.lit("zext i1 "), cat(lt, " to i32")))
-    val(inout e, catb(sys.lit("sub i32 "), catb(g32, catb(sys.lit(", "), l32))))
+    let g32 = val(inout e, catb(lit("zext i1 "), cat(gt, " to i32")))
+    let l32 = val(inout e, catb(lit("zext i1 "), cat(lt, " to i32")))
+    val(inout e, catb(lit("sub i32 "), catb(g32, catb(lit(", "), l32))))
 }
 
 fn icmp(inout e: E, op: str, t: List[u8], a: List[u8], b: List[u8]) -> List[u8] {
-    let mut x = sys.lit("icmp ")
-    bytes.append(inout x, sys.lit(op))
-    bytes.append(inout x, sys.lit(" "))
-    bytes.append(inout x, t)
-    bytes.append(inout x, sys.lit(" "))
-    bytes.append(inout x, a)
-    bytes.append(inout x, sys.lit(", "))
-    bytes.append(inout x, b)
-    val(inout e, x)
+    let r = begin(inout e)
+    w(inout e, "icmp ")
+    w(inout e, op)
+    w(inout e, " ")
+    wb(inout e, t)
+    w(inout e, " ")
+    wb(inout e, a)
+    w(inout e, ", ")
+    wb(inout e, b)
+    fin(inout e)
+    r
 }
 
 /// ei_hash_u64 inline (core/eider_rt.h).
 fn mix64(inout e: E, x: List[u8]) -> List[u8] {
     let mut v = x.copy()
     for i in 0..3 {
-        let s = val(inout e, catb(sys.lit("lshr i64 "), cat(v, ", 33")))
-        v = val(inout e, catb(sys.lit("xor i64 "), catb(v, catb(sys.lit(", "), s))))
-        if i == 0 { v = val(inout e, catb(sys.lit("mul i64 "), cat(v, ", -49064778989728563"))) }
-        if i == 1 { v = val(inout e, catb(sys.lit("mul i64 "), cat(v, ", -4265267296055464877"))) }
+        let s = val(inout e, catb(lit("lshr i64 "), cat(v, ", 33")))
+        v = val(inout e, catb(lit("xor i64 "), catb(v, catb(lit(", "), s))))
+        if i == 0 { v = val(inout e, catb(lit("mul i64 "), cat(v, ", -49064778989728563"))) }
+        if i == 1 { v = val(inout e, catb(lit("mul i64 "), cat(v, ", -4265267296055464877"))) }
     }
     v
 }
@@ -1198,18 +1365,19 @@ fn hash_val(inout e: E, p: lower.P, ty: u32, v: List[u8]) -> List[u8] {
         return rt_call(inout e, p, "ei_hash_str", tys1(types.STR), args1(s), types.U64)
     }
     let gn_ = gname(e, "hash_", ty)
+    if lower.is_struct_kind(k) { gneed(inout e, lower.GK_HASH, ty) }
     if lower.is_struct_kind(k) { return rt_call_b(inout e, p, gn_, tys1(ty), args1(v), types.U64) }
     // (uint64_t)(v): integers widen by their signedness, bool and () are 0 or 1
     let mut x = v.copy()
     if k == types.T_UNIT || k == types.T_NEVER {
-        x = sys.lit("0")
+        x = lit("0")
     } else if k == types.T_BOOL {
-        x = val(inout e, catb(sys.lit("zext i1 "), cat(v, " to i64")))
+        x = val(inout e, catb(lit("zext i1 "), cat(v, " to i64")))
     } else {
         let ik = types.ik(p.t, ty)
         if int_bits(ik) < 64 {
             let op = if types.signed(ik) { "sext " } else { "zext " }
-            x = val(inout e, catb(sys.lit(op), catb(sys.lit(int_ty(ik)), catb(sys.lit(" "), cat(v, " to i64")))))
+            x = val(inout e, catb(lit(op), catb(lit(int_ty(ik)), catb(lit(" "), cat(v, " to i64")))))
         }
     }
     mix64(inout e, x)
@@ -1223,37 +1391,40 @@ fn show_into(inout e: E, p: lower.P, ty: u32, o: List[u8], v: List[u8]) {
     let sp = PTR + types.STRING
     if k == types.T_UNIT {
         let m = msg(inout e, "()")
-        call(inout e, p, sys.lit("ei_str_push"), tys2(sp, types.STR), args2(o, m), types.UNIT, none)
+        call(inout e, p, lit("ei_str_push"), tys2(sp, types.STR), args2(o, m), types.UNIT, none)
     } else if k == types.T_INT {
-        let x = if int_bits(t.a) == 64 { v.copy() } else if types.signed(t.a) { val(inout e, catb(sys.lit("sext "), catb(sys.lit(int_ty(t.a)), catb(sys.lit(" "), cat(v, " to i64"))))) } else { val(inout e, catb(sys.lit("zext "), catb(sys.lit(int_ty(t.a)), catb(sys.lit(" "), cat(v, " to i64"))))) }
+        let x = if int_bits(t.a) == 64 { v.copy() } else if types.signed(t.a) { val(inout e, catb(lit("sext "), catb(lit(int_ty(t.a)), catb(lit(" "), cat(v, " to i64"))))) } else { val(inout e, catb(lit("zext "), catb(lit(int_ty(t.a)), catb(lit(" "), cat(v, " to i64"))))) }
+        gneed(inout e, lower.GK_SHOWN, 0)
         if types.signed(t.a) {
-            call(inout e, p, sys.lit("showi_"), tys2(sp, types.I64), args2(o, x), types.UNIT, none)
+            call(inout e, p, lit("showi_"), tys2(sp, types.I64), args2(o, x), types.UNIT, none)
         } else {
-            call(inout e, p, sys.lit("showu_"), tys2(sp, types.U64), args2(o, x), types.UNIT, none)
+            call(inout e, p, lit("showu_"), tys2(sp, types.U64), args2(o, x), types.UNIT, none)
         }
     } else if k == types.T_BOOL {
         let tr = msg(inout e, "true")
         let fa = msg(inout e, "false")
-        let mut sel = sys.lit("select i1 ")
+        let mut sel = lit("select i1 ")
         bytes.append(inout sel, v)
-        bytes.append(inout sel, sys.lit(", ptr "))
+        bytes.append(inout sel, lit(", ptr "))
         bytes.append(inout sel, tr)
-        bytes.append(inout sel, sys.lit(", ptr "))
+        bytes.append(inout sel, lit(", ptr "))
         bytes.append(inout sel, fa)
         let s = val(inout e, sel)
-        call(inout e, p, sys.lit("ei_str_push"), tys2(sp, types.STR), args2(o, s), types.UNIT, none)
+        call(inout e, p, lit("ei_str_push"), tys2(sp, types.STR), args2(o, s), types.UNIT, none)
     } else if k == types.T_STR {
-        call(inout e, p, sys.lit("ei_str_push"), tys2(sp, types.STR), args2(o, v), types.UNIT, none)
+        call(inout e, p, lit("ei_str_push"), tys2(sp, types.STR), args2(o, v), types.UNIT, none)
     } else if k == types.T_STRING {
         let q = load_ptr_field(inout e, p, ty, v, 0)
         let n = load_i64_field(inout e, p, ty, v, 1)
-        call(inout e, p, sys.lit("ei_str_cat"), tys3(sp, types.STR, types.U64), args3(o, q, n), types.UNIT, none)
+        call(inout e, p, lit("ei_str_cat"), tys3(sp, types.STR, types.U64), args3(o, q, n), types.UNIT, none)
     } else if lower.plain_show(p, ty) {
+        gneed(inout e, lower.GK_NAME, ty)
         let tag = load_tag(inout e, p, ty, v)
         let gn_ = gname(e, "name_", ty)
         let nm = rt_call_b(inout e, p, gn_, tys1(types.U32), args1(tag), types.STR)
-        call(inout e, p, sys.lit("ei_str_push"), tys2(sp, types.STR), args2(o, nm), types.UNIT, none)
+        call(inout e, p, lit("ei_str_push"), tys2(sp, types.STR), args2(o, nm), types.UNIT, none)
     } else {
+        gneed(inout e, lower.GK_SHOW, ty)
         let gn_ = gname(e, "show_", ty)
         call(inout e, p, gn_, tys2(sp, ty), args2(o, v), types.UNIT, none)
     }
@@ -1261,13 +1432,13 @@ fn show_into(inout e: E, p: lower.P, ty: u32, o: List[u8], v: List[u8]) {
 
 fn load_tag(inout e: E, p: lower.P, ty: u32, a: List[u8]) -> List[u8] {
     let f = field_addr(inout e, p, ty, a, 0)
-    val(inout e, catb(sys.lit("load i32, ptr "), f))
+    val(inout e, catb(lit("load i32, ptr "), f))
 }
 
 fn store_tag(inout e: E, p: lower.P, ty: u32, a: List[u8], tag: u32) {
     let f = field_addr(inout e, p, ty, a, 0)
     let mut t = num("store i32 ", tag as u64)
-    bytes.append(inout t, sys.lit(", ptr "))
+    bytes.append(inout t, lit(", ptr "))
     bytes.append(inout t, f)
     stmt_text(inout e, t)
 }
@@ -1295,12 +1466,12 @@ fn set_line(inout e: E, line: u32) {
     let id = e.nmd.copy()
     e.nmd += 1
     bytes.append(inout e.md, num("!", id as u64))
-    bytes.append(inout e.md, sys.lit(" = !DILocation(line: "))
+    bytes.append(inout e.md, lit(" = !DILocation(line: "))
     bytes.append(inout e.md, bytes.from_u64(k))
-    bytes.append(inout e.md, sys.lit(", scope: !"))
+    bytes.append(inout e.md, lit(", scope: !"))
     let sp = e.sp.copy()
     bytes.append(inout e.md, bytes.from_u64(sp as u64))
-    bytes.append(inout e.md, sys.lit(")\n"))
+    bytes.append(inout e.md, lit(")\n"))
     e.dlines.insert(k, id)
     e.dloc = id
 }
@@ -1379,7 +1550,7 @@ fn stmt(inout e: E, p: lower.P, id: u32) {
         if pl.kind == ir.P_LOCAL && is_void(loc(p, e, pl.a).ty) { return }
         let a = paddr(inout e, p, s.a)
         if is_void(pl.ty) {
-            store(inout e, p, pl.ty, sys.lit("0"), a)
+            store(inout e, p, pl.ty, lit("0"), a)
         } else {
             put_op(inout e, p, pl.ty, s.b, a)
         }
@@ -1410,6 +1581,7 @@ fn stmt(inout e: E, p: lower.P, id: u32) {
             ptys.push(ir.op_ty(p.ir, a))
             args.push(oparg(inout e, p, a))
         }
+        gneed(inout e, lower.GK_RNEW, s.ty)
         let gn_ = gname(e, "rnew_", s.ty)
         call(inout e, p, gn_, ptys, args, s.ty, dst_addr(s.dst))
     } else if k == ir.S_RECORD || k == ir.S_TUPLE {
@@ -1435,11 +1607,11 @@ fn stmt(inout e: E, p: lower.P, id: u32) {
         let d = dst_addr(s.dst)
         let et = types.get(p.t, s.ty).a
         for i in 0..s.c {
-            let mut t = sys.lit("getelementptr inbounds ")
+            let mut t = lit("getelementptr inbounds ")
             bytes.append(inout t, mty(inout e, p, s.ty))
-            bytes.append(inout t, sys.lit(", ptr "))
+            bytes.append(inout t, lit(", ptr "))
             bytes.append(inout t, d)
-            bytes.append(inout t, sys.lit(", i32 0, i32 0, i64 "))
+            bytes.append(inout t, lit(", i32 0, i32 0, i64 "))
             bytes.append(inout t, bytes.from_u64(i as u64))
             let f = val(inout e, t)
             put_op(inout e, p, et, p.ir.extra[(s.b + i) as usize], f)
@@ -1449,7 +1621,7 @@ fn stmt(inout e: E, p: lower.P, id: u32) {
     } else if k == ir.S_TAG {
         let a = paddr(inout e, p, s.a)
         let tag = load_tag(inout e, p, p.ir.places[s.a as usize].ty, a)
-        let r = val(inout e, catb(sys.lit("icmp eq i32 "), catb(tag, num(", ", s.b as u64))))
+        let r = val(inout e, catb(lit("icmp eq i32 "), catb(tag, num(", ", s.b as u64))))
         store(inout e, p, types.BOOL, r, dst_addr(s.dst))
     } else if k == ir.S_PRINT {
         print(inout e, p, s)
@@ -1480,12 +1652,13 @@ fn stmt(inout e: E, p: lower.P, id: u32) {
         let d = dst_addr(s.dst)
         zero(inout e, p, s.ty, d)
         let f = field_addr(inout e, p, s.ty, d, 1)
-        let tk = catb(sys.lit("k_"), e.fnn[s.a as usize])
+        gneed(inout e, lower.GK_THUNK, s.a)
+        let tk = catb(lit("k_"), e.fnn[s.a as usize])
         // the thunk's prototype comes from the C half; its address is all that is needed
         declare_thunk(inout e, p, s.a, tk)
-        let mut t = sys.lit("store ptr @")
+        let mut t = lit("store ptr @")
         bytes.append(inout t, tk)
-        bytes.append(inout t, sys.lit(", ptr "))
+        bytes.append(inout t, lit(", ptr "))
         bytes.append(inout t, f)
         stmt_text(inout e, t)
     } else if k == ir.S_CALLV {
@@ -1521,23 +1694,23 @@ fn repeat(inout e: E, p: lower.P, s: ir.Stmt) {
     label(inout e, lh)
     let i = reg(inout e)
     let nx = reg(inout e)
-    let mut ph = sys.lit("phi i64 [ 0, ")
+    let mut ph = lit("phi i64 [ 0, ")
     bytes.append(inout ph, pre)
-    bytes.append(inout ph, sys.lit(" ], [ "))
+    bytes.append(inout ph, lit(" ], [ "))
     bytes.append(inout ph, nx)
-    bytes.append(inout ph, sys.lit(", "))
+    bytes.append(inout ph, lit(", "))
     bytes.append(inout ph, num("%L", lh as u64))
-    bytes.append(inout ph, sys.lit(" ]"))
+    bytes.append(inout ph, lit(" ]"))
     ins(inout e)
     wb(inout e, i)
     w(inout e, " = ")
     wb(inout e, ph)
     fin(inout e)
-    let mut t = sys.lit("getelementptr inbounds ")
+    let mut t = lit("getelementptr inbounds ")
     bytes.append(inout t, mty(inout e, p, s.ty))
-    bytes.append(inout t, sys.lit(", ptr "))
+    bytes.append(inout t, lit(", ptr "))
     bytes.append(inout t, d)
-    bytes.append(inout t, sys.lit(", i32 0, i32 0, i64 "))
+    bytes.append(inout t, lit(", i32 0, i32 0, i64 "))
     bytes.append(inout t, i)
     let f = val(inout e, t)
     put_op(inout e, p, et, s.a, f)
@@ -1547,7 +1720,7 @@ fn repeat(inout e: E, p: lower.P, s: ir.Stmt) {
     wb(inout e, i)
     w(inout e, ", 1")
     fin(inout e)
-    let c = val(inout e, catb(sys.lit("icmp ult i64 "), catb(nx, num(", ", s.b as u64))))
+    let c = val(inout e, catb(lit("icmp ult i64 "), catb(nx, num(", ", s.b as u64))))
     condbr(inout e, c, lh, lx)
     label(inout e, lx)
 }
@@ -1556,14 +1729,14 @@ fn unary(inout e: E, p: lower.P, s: ir.Stmt) {
     let v = opv(inout e, p, s.b)
     let d = dst_addr(s.dst)
     if s.a == ir.U_NOT {
-        let r = val(inout e, catb(sys.lit("xor i1 "), cat(v, ", true")))
+        let r = val(inout e, catb(lit("xor i1 "), cat(v, ", true")))
         store(inout e, p, types.BOOL, r, d)
         return
     }
     let ik = types.ik(p.t, s.ty)
-    let it = sys.lit(int_ty(ik))
+    let it = lit(int_ty(ik))
     if s.a == ir.U_BNOT {
-        let r = val(inout e, catb(sys.lit("xor "), catb(it, catb(sys.lit(" "), cat(v, ", -1")))))
+        let r = val(inout e, catb(lit("xor "), catb(it, catb(lit(" "), cat(v, ", -1")))))
         store(inout e, p, s.ty, r, d)
         return
     }
@@ -1571,67 +1744,69 @@ fn unary(inout e: E, p: lower.P, s: ir.Stmt) {
     let c = icmp(inout e, "eq", it, v, mn)
     trap_if(inout e, c, "integer overflow in negation", s.line)
     // v is not the minimum (checked): `nsw`
-    let r = val(inout e, catb(sys.lit("sub nsw "), catb(it, catb(sys.lit(" 0, "), v))))
+    let r = val(inout e, catb(lit("sub nsw "), catb(it, catb(lit(" 0, "), v))))
     store(inout e, p, s.ty, r, d)
 }
 
 fn arith2(inout e: E, op: str, it: List[u8], a: List[u8], b: List[u8]) -> List[u8] {
-    let mut t = sys.lit(op)
-    bytes.append(inout t, sys.lit(" "))
-    bytes.append(inout t, it)
-    bytes.append(inout t, sys.lit(" "))
-    bytes.append(inout t, a)
-    bytes.append(inout t, sys.lit(", "))
-    bytes.append(inout t, b)
-    val(inout e, t)
+    let r = begin(inout e)
+    w(inout e, op)
+    w(inout e, " ")
+    wb(inout e, it)
+    w(inout e, " ")
+    wb(inout e, a)
+    w(inout e, ", ")
+    wb(inout e, b)
+    fin(inout e)
+    r
 }
 
 fn checked(inout e: E, intr: str, it: List[u8], a: List[u8], b: List[u8], text: str, line: u32) -> List[u8] {
-    let mut name = sys.lit("llvm.")
-    bytes.append(inout name, sys.lit(intr))
-    bytes.append(inout name, sys.lit(".with.overflow."))
+    let mut name = lit("llvm.")
+    bytes.append(inout name, lit(intr))
+    bytes.append(inout name, lit(".with.overflow."))
     bytes.append(inout name, it)
-    let mut d = sys.lit("declare { ")
+    let mut d = lit("declare { ")
     bytes.append(inout d, it)
-    bytes.append(inout d, sys.lit(", i1 } @"))
+    bytes.append(inout d, lit(", i1 } @"))
     bytes.append(inout d, name)
-    bytes.append(inout d, sys.lit("("))
+    bytes.append(inout d, lit("("))
     bytes.append(inout d, it)
-    bytes.append(inout d, sys.lit(", "))
+    bytes.append(inout d, lit(", "))
     bytes.append(inout d, it)
-    bytes.append(inout d, sys.lit(")"))
+    bytes.append(inout d, lit(")"))
     declare(inout e, name, d)
-    let mut t = sys.lit("call { ")
+    let mut t = lit("call { ")
     bytes.append(inout t, it)
-    bytes.append(inout t, sys.lit(", i1 } @"))
+    bytes.append(inout t, lit(", i1 } @"))
     bytes.append(inout t, name)
-    bytes.append(inout t, sys.lit("("))
+    bytes.append(inout t, lit("("))
     bytes.append(inout t, it)
-    bytes.append(inout t, sys.lit(" "))
+    bytes.append(inout t, lit(" "))
     bytes.append(inout t, a)
-    bytes.append(inout t, sys.lit(", "))
+    bytes.append(inout t, lit(", "))
     bytes.append(inout t, it)
-    bytes.append(inout t, sys.lit(" "))
+    bytes.append(inout t, lit(" "))
     bytes.append(inout t, b)
-    bytes.append(inout t, sys.lit(")"))
+    bytes.append(inout t, lit(")"))
     let r = val(inout e, t)
-    let mut x = sys.lit("extractvalue { ")
+    let mut x = lit("extractvalue { ")
     bytes.append(inout x, it)
-    bytes.append(inout x, sys.lit(", i1 } "))
+    bytes.append(inout x, lit(", i1 } "))
     bytes.append(inout x, r)
     let ov = val(inout e, cat(x, ", 1"))
     trap_if(inout e, ov, text, line)
     // past the check the operation doesn't overflow: the same operation with its flag
     // (`nsw` signed, `nuw` unsigned), which tells the optimizer so (loops, ranges)
-    let ip = sys.lit(intr)
+    let ip = lit(intr)
     let op = if ip[1] == 97 { "add" } else if ip[1] == 115 { "sub" } else { "mul" }
     let fl = if ip[0] == 115 { " nsw " } else { " nuw " }
-    let mut t2 = sys.lit(op)
-    bytes.append(inout t2, sys.lit(fl))
+    let mut t2 = lit(op)
+    bytes.append(inout t2, lit(fl))
     bytes.append(inout t2, it)
-    bytes.append(inout t2, sys.lit(" "))
+    bytes.append(inout t2, lit(" "))
     bytes.append(inout t2, a)
-    bytes.append(inout t2, sys.lit(", "))
+    bytes.append(inout t2, lit(", "))
     bytes.append(inout t2, b)
     val(inout e, t2)
 }
@@ -1644,7 +1819,7 @@ fn binary(inout e: E, p: lower.P, s: ir.Stmt) {
         let a = oparg(inout e, p, s.b)
         let b = oparg(inout e, p, s.c)
         let mut r = eq_val(inout e, p, s.ty, a, b)
-        if o == ast.OP_NE { r = val(inout e, catb(sys.lit("xor i1 "), cat(r, ", true"))) }
+        if o == ast.OP_NE { r = val(inout e, catb(lit("xor i1 "), cat(r, ", true"))) }
         store(inout e, p, types.BOOL, r, d)
         return
     }
@@ -1660,7 +1835,7 @@ fn binary(inout e: E, p: lower.P, s: ir.Stmt) {
         } else {
             let c = cmp_val(inout e, p, s.ty, a, b)
             let cc = if o == ast.OP_LT { "slt" } else if o == ast.OP_LE { "sle" } else if o == ast.OP_GT { "sgt" } else { "sge" }
-            r = icmp(inout e, cc, sys.lit("i32"), c, sys.lit("0"))
+            r = icmp(inout e, cc, lit("i32"), c, lit("0"))
         }
         store(inout e, p, types.BOOL, r, d)
         return
@@ -1670,7 +1845,7 @@ fn binary(inout e: E, p: lower.P, s: ir.Stmt) {
         return
     }
     let ik = types.ik(p.t, s.ty)
-    let it = sys.lit(int_ty(ik))
+    let it = lit(int_ty(ik))
     let sg = types.signed(ik)
     let a = opv(inout e, p, s.b)
     let b = opv(inout e, p, s.c)
@@ -1682,12 +1857,12 @@ fn binary(inout e: E, p: lower.P, s: ir.Stmt) {
     } else if o == ast.OP_MUL {
         r = checked(inout e, pick(sg, "smul", "umul"), it, a, b, "integer overflow in *", s.line)
     } else if o == ast.OP_DIV || o == ast.OP_REM {
-        let z = icmp(inout e, "eq", it, b, sys.lit("0"))
+        let z = icmp(inout e, "eq", it, b, lit("0"))
         trap_if(inout e, z, pick(o == ast.OP_DIV, "division by zero", "remainder by zero"), s.line)
         if sg {
             let c1 = icmp(inout e, "eq", it, a, int_text(ik, lower.kmin(ik)))
-            let c2 = icmp(inout e, "eq", it, b, sys.lit("-1"))
-            let c = val(inout e, catb(sys.lit("and i1 "), catb(c1, catb(sys.lit(", "), c2))))
+            let c2 = icmp(inout e, "eq", it, b, lit("-1"))
+            let c = val(inout e, catb(lit("and i1 "), catb(c1, catb(lit(", "), c2))))
             trap_if(inout e, c, pick(o == ast.OP_DIV, "integer overflow in /", "integer overflow in %"), s.line)
         }
         let op = if o == ast.OP_DIV { if sg { "sdiv" } else { "udiv" } } else { if sg { "srem" } else { "urem" } }
@@ -1726,20 +1901,20 @@ fn cast(inout e: E, p: lower.P, s: ir.Stmt) {
     let mut w64 = v.copy()
     if int_bits(from) < 64 {
         let op = if types.signed(from) { "sext " } else { "zext " }
-        w64 = val(inout e, catb(sys.lit(op), catb(sys.lit(int_ty(from)), catb(sys.lit(" "), cat(v, " to i64")))))
+        w64 = val(inout e, catb(lit(op), catb(lit(int_ty(from)), catb(lit(" "), cat(v, " to i64")))))
     }
     let hi = bytes.from_u64(lower.kmax(to))
-    let i64t = sys.lit("i64")
+    let i64t = lit("i64")
     if types.signed(from) && types.signed(to) {
         let lo = int_text(types.IK_I64, lower.kmin(to))
         let c1 = icmp(inout e, "slt", i64t, w64, lo)
         let c2 = icmp(inout e, "sgt", i64t, w64, hi)
-        let c = val(inout e, catb(sys.lit("or i1 "), catb(c1, catb(sys.lit(", "), c2))))
+        let c = val(inout e, catb(lit("or i1 "), catb(c1, catb(lit(", "), c2))))
         trap_if(inout e, c, "integer conversion out of range", s.line)
     } else if types.signed(from) {
-        let c1 = icmp(inout e, "slt", i64t, w64, sys.lit("0"))
+        let c1 = icmp(inout e, "slt", i64t, w64, lit("0"))
         let c2 = icmp(inout e, "ugt", i64t, w64, int_text(types.IK_U64, lower.kmax(to)))
-        let c = val(inout e, catb(sys.lit("or i1 "), catb(c1, catb(sys.lit(", "), c2))))
+        let c = val(inout e, catb(lit("or i1 "), catb(c1, catb(lit(", "), c2))))
         trap_if(inout e, c, "integer conversion out of range", s.line)
     } else {
         let lim = if types.signed(to) { hi.copy() } else { int_text(types.IK_U64, lower.kmax(to)) }
@@ -1747,7 +1922,7 @@ fn cast(inout e: E, p: lower.P, s: ir.Stmt) {
         trap_if(inout e, c, "integer conversion out of range", s.line)
     }
     let mut r = w64.copy()
-    if int_bits(to) < 64 { r = val(inout e, catb(sys.lit("trunc i64 "), catb(w64, catb(sys.lit(" to "), sys.lit(int_ty(to)))))) }
+    if int_bits(to) < 64 { r = val(inout e, catb(lit("trunc i64 "), catb(w64, catb(lit(" to "), lit(int_ty(to)))))) }
     store(inout e, p, s.ty, r, dst_addr(s.dst))
 }
 
@@ -1757,12 +1932,12 @@ fn print(inout e: E, p: lower.P, s: ir.Stmt) {
     if !lower.plain_show(p, s.ty) {
         let o = temp(inout e, p, types.STRING)
         let em = msg(inout e, "")
-        call(inout e, p, sys.lit("ei_str_from"), tys1(types.STR), args1(em), types.STRING, o)
+        call(inout e, p, lit("ei_str_from"), tys1(types.STR), args1(em), types.STRING, o)
         let v = oparg(inout e, p, s.a)
         show_into(inout e, p, s.ty, o, v)
         let q = load_ptr_field(inout e, p, types.STRING, o, 0)
         rt_call(inout e, p, "ei_print_s", tys1(types.STR), args1(q), types.UNIT)
-        call(inout e, p, sys.lit("ei_drop_String"), tys1(PTR + types.STRING), args1(o), types.UNIT, none)
+        call(inout e, p, lit("ei_drop_String"), tys1(PTR + types.STRING), args1(o), types.UNIT, none)
         return
     }
     if t.kind == types.T_INT {
@@ -1770,7 +1945,7 @@ fn print(inout e: E, p: lower.P, s: ir.Stmt) {
         let mut x = v.copy()
         if int_bits(t.a) < 64 {
             let op = if types.signed(t.a) { "sext " } else { "zext " }
-            x = val(inout e, catb(sys.lit(op), catb(sys.lit(int_ty(t.a)), catb(sys.lit(" "), cat(v, " to i64")))))
+            x = val(inout e, catb(lit(op), catb(lit(int_ty(t.a)), catb(lit(" "), cat(v, " to i64")))))
         }
         if types.signed(t.a) {
             rt_call(inout e, p, "ei_print_i", tys1(types.I64), args1(x), types.UNIT)
@@ -1789,6 +1964,7 @@ fn print(inout e: E, p: lower.P, s: ir.Stmt) {
         rt_call(inout e, p, "ei_print_s", tys1(types.STR), args1(q), types.UNIT)
     } else {
         let a = opa(inout e, p, s.a)
+        gneed(inout e, lower.GK_NAME, s.ty)
         let tag = load_tag(inout e, p, s.ty, a)
         let gn_ = gname(e, "name_", s.ty)
         let nm = rt_call_b(inout e, p, gn_, tys1(types.U32), args1(tag), types.STR)
@@ -1902,7 +2078,7 @@ fn call_internal(inout e: E, p: lower.P, f: u32, s: ir.Stmt, dst: List[u8], dstl
         via = d.copy()
         d = temp(inout e, p, sg.ret.ty)
     }
-    let callee = catb(sys.lit("@"), iname(e, f))
+    let callee = catb(lit("@"), iname(e, f))
     let r = call_sig(inout e, p, callee, sg, args, d)
     if via.len() > 0 { memcpy(inout e, p, sg.ret.ty, via, d) }
     r
@@ -1994,8 +2170,9 @@ fn closure(inout e: E, p: lower.P, s: ir.Stmt) {
     let bs = abi.sig(inout e.lay, p, bp, fd.ret)
     declare_sig(inout e, p, fname, bs, false)
     let f1 = field_addr(inout e, p, s.ty, d, 1)
-    stmt_text(inout e, catb(sys.lit("store ptr @"), catb(fname, catb(sys.lit(", ptr "), f1))))
+    stmt_text(inout e, catb(lit("store ptr @"), catb(fname, catb(lit(", ptr "), f1))))
     if s.c == 0 { return }
+    gneed(inout e, lower.GK_ENV, s.a)
     let mut cts: List[u32] = List.new()
     for i in 0..s.c { cts.push(p.ir.locals[(fd.lstart + i) as usize].ty) }
     let sz = abi.struct_of(inout e.lay, p, cts)
@@ -2006,37 +2183,37 @@ fn closure(inout e: E, p: lower.P, s: ir.Stmt) {
         put_op(inout e, p, cts[i as usize], p.ir.extra[(s.b + i) as usize], f)
     }
     let f0 = field_addr(inout e, p, s.ty, d, 0)
-    stmt_text(inout e, catb(sys.lit("store ptr "), catb(envp, catb(sys.lit(", ptr "), f0))))
+    stmt_text(inout e, catb(lit("store ptr "), catb(envp, catb(lit(", ptr "), f0))))
     let glue = ["edrop_", "eclone_", "eown_"]
     for j in 0..3 {
-        let gn = catb(sys.lit(glue[j as usize]), fname)
+        let gn = catb(lit(glue[j as usize]), fname)
         let rty = if j == 1 { types.STR } else { types.UNIT }
         let gs = abi.sig(inout e.lay, p, tys1(types.STR), rty)
         declare_sig(inout e, p, gn, gs, false)
         let fj = field_addr(inout e, p, s.ty, d, (j + 2) as u32)
-        stmt_text(inout e, catb(sys.lit("store ptr @"), catb(gn, catb(sys.lit(", ptr "), fj))))
+        stmt_text(inout e, catb(lit("store ptr @"), catb(gn, catb(lit(", ptr "), fj))))
     }
 }
 
 fn ret(inout e: E, p: lower.P, s: ir.Stmt) {
     let r = e.rsig.copy()
     if s.a == 0 || r.kind == abi.A_VOID {
-        stmt_text(inout e, sys.lit("ret void"))
+        stmt_text(inout e, lit("ret void"))
         e.term = true
         return
     }
     let o = s.a - 1
     if r.kind == abi.A_DIRECT {
         let v = opv(inout e, p, o)
-        let mut t = sys.lit("ret ")
+        let mut t = lit("ret ")
         bytes.append(inout t, vty(inout e, p, r.ty))
-        bytes.append(inout t, sys.lit(" "))
+        bytes.append(inout t, lit(" "))
         bytes.append(inout t, v)
         stmt_text(inout e, t)
     } else if r.kind == abi.A_SRET {
         let a = opa(inout e, p, o)
-        memcpy(inout e, p, r.ty, sys.lit("%sret"), a)
-        stmt_text(inout e, sys.lit("ret void"))
+        memcpy(inout e, p, r.ty, lit("%sret"), a)
+        stmt_text(inout e, lit("ret void"))
     } else {
         let a = opa(inout e, p, o)
         ret_pieces(inout e, r, a)
@@ -2048,13 +2225,13 @@ fn ret(inout e: E, p: lower.P, s: ir.Stmt) {
 fn ret_pieces(inout e: E, r: abi.Arg, a: List[u8]) {
     let v0 = load_piece(inout e, a, 0, r.b0)
     if r.n == 1 {
-        stmt_text(inout e, catb(num("ret i", r.b0 as u64), catb(sys.lit(" "), v0)))
+        stmt_text(inout e, catb(num("ret i", r.b0 as u64), catb(lit(" "), v0)))
     } else {
         let v1 = load_piece(inout e, a, 8, r.b1)
         let ct = coerce_ty(r)
-        let x = val(inout e, catb(sys.lit("insertvalue "), catb(ct, catb(sys.lit(" poison, i"), catb(bytes.from_u64(r.b0 as u64), catb(sys.lit(" "), cat(v0, ", 0")))))))
-        let y = val(inout e, catb(sys.lit("insertvalue "), catb(ct, catb(sys.lit(" "), catb(x, catb(sys.lit(", i"), catb(bytes.from_u64(r.b1 as u64), catb(sys.lit(" "), cat(v1, ", 1")))))))))
-        stmt_text(inout e, catb(sys.lit("ret "), catb(ct, catb(sys.lit(" "), y))))
+        let x = val(inout e, catb(lit("insertvalue "), catb(ct, catb(lit(" poison, i"), catb(bytes.from_u64(r.b0 as u64), catb(lit(" "), cat(v0, ", 0")))))))
+        let y = val(inout e, catb(lit("insertvalue "), catb(ct, catb(lit(" "), catb(x, catb(lit(", i"), catb(bytes.from_u64(r.b1 as u64), catb(lit(" "), cat(v1, ", 1")))))))))
+        stmt_text(inout e, catb(lit("ret "), catb(ct, catb(lit(" "), y))))
     }
     e.term = true
 }
@@ -2099,9 +2276,9 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         let v = argval(inout e, p, barg(p, s, 0))
         let d = bdst(inout e, p, s)
         if b == ir.B_STR_FROM {
-            call(inout e, p, sys.lit("ei_str_from"), tys1(types.STR), args1(v), types.STRING, d)
+            call(inout e, p, lit("ei_str_from"), tys1(types.STR), args1(v), types.STRING, d)
         } else {
-            call(inout e, p, sys.lit("ei_str_from_i64"), tys1(types.I64), args1(v), types.STRING, d)
+            call(inout e, p, lit("ei_str_from_i64"), tys1(types.I64), args1(v), types.STRING, d)
         }
         return
     }
@@ -2111,8 +2288,8 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
             let r = rt_call(inout e, p, "strlen", tys1(types.STR), args1(v), types.U64)
             bset(inout e, p, s, r)
         } else {
-            let c = val(inout e, catb(sys.lit("load i8, ptr "), v))
-            let r = val(inout e, catb(sys.lit("icmp eq i8 "), cat(c, ", 0")))
+            let c = val(inout e, catb(lit("load i8, ptr "), v))
+            let r = val(inout e, catb(lit("icmp eq i8 "), cat(c, ", 0")))
             bset(inout e, p, s, r)
         }
         return
@@ -2125,7 +2302,7 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         if b == ir.B_LEN {
             bset(inout e, p, s, n)
         } else {
-            let r = val(inout e, catb(sys.lit("icmp eq i64 "), cat(n, ", 0")))
+            let r = val(inout e, catb(lit("icmp eq i64 "), cat(n, ", 0")))
             bset(inout e, p, s, r)
         }
         return
@@ -2138,13 +2315,13 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
     if b == ir.B_STR_PUSH {
         let o = argptr(inout e, p, barg(p, s, 0))
         let v = argval(inout e, p, barg(p, s, 1))
-        call(inout e, p, sys.lit("ei_str_push"), tys2(PTR + types.STRING, types.STR), args2(o, v), types.UNIT, none)
+        call(inout e, p, lit("ei_str_push"), tys2(PTR + types.STRING, types.STR), args2(o, v), types.UNIT, none)
         return
     }
     if b == ir.B_STR_APPEND {
         let o = argptr(inout e, p, barg(p, s, 0))
         let v = argptr(inout e, p, barg(p, s, 1))
-        call(inout e, p, sys.lit("ei_str_append"), tys2(PTR + types.STRING, PTR + types.STRING), args2(o, v), types.UNIT, none)
+        call(inout e, p, lit("ei_str_append"), tys2(PTR + types.STRING, PTR + types.STRING), args2(o, v), types.UNIT, none)
         return
     }
     if b == ir.B_LIST_NEW || b == ir.B_MAP_NEW {
@@ -2155,6 +2332,7 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
     if b == ir.B_BOX_NEW {
         let a = barg(p, s, 0)
         let v = argval(inout e, p, a)
+        gneed(inout e, lower.GK_NEW, s.ty)
         let gn_ = gname(e, "new_", s.ty)
         let bd_ = bdst(inout e, p, s)
         call(inout e, p, gn_, tys1(arg_ty(p, a)), args1(v), s.ty, bd_)
@@ -2168,9 +2346,11 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         let xv = argval(inout e, p, x)
         let et = types.get(p.t, lt).a
         if b == ir.B_LIST_PUSH {
+            gneed(inout e, lower.GK_PUSH, lt)
             let gn_ = gname(e, "push_", lt)
             call(inout e, p, gn_, tys2(PTR + lt, et), args2(lp, xv), types.UNIT, none)
         } else {
+            gneed(inout e, lower.GK_HAS, lt)
             let gn_ = gname(e, "has_", lt)
             let r = rt_call_b(inout e, p, gn_, tys2(PTR + lt, et), args2(lp, xv), types.BOOL)
             bset(inout e, p, s, r)
@@ -2184,7 +2364,7 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         uniq_call(inout e, p, lt, lp)
         let d = bdst(inout e, p, s)
         let n = load_i64_field(inout e, p, lt, lp, 1)
-        let z = val(inout e, catb(sys.lit("icmp eq i64 "), cat(n, ", 0")))
+        let z = val(inout e, catb(lit("icmp eq i64 "), cat(n, ", 0")))
         let ln = new_label(inout e)
         let ls = new_label(inout e)
         let lj = new_label(inout e)
@@ -2193,16 +2373,16 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         option_none(inout e, p, s.ty, d)
         br(inout e, lj)
         label(inout e, ls)
-        let m = val(inout e, catb(sys.lit("sub i64 "), cat(n, ", 1")))
+        let m = val(inout e, catb(lit("sub i64 "), cat(n, ", 1")))
         let lf = field_addr(inout e, p, lt, lp, 1)
-        stmt_text(inout e, catb(sys.lit("store i64 "), catb(m, catb(sys.lit(", ptr "), lf))))
+        stmt_text(inout e, catb(lit("store i64 "), catb(m, catb(lit(", ptr "), lf))))
         let dp = load_ptr_field(inout e, p, lt, lp, 0)
         let et = types.get(p.t, lt).a
-        let mut g = sys.lit("getelementptr inbounds ")
+        let mut g = lit("getelementptr inbounds ")
         bytes.append(inout g, mty(inout e, p, et))
-        bytes.append(inout g, sys.lit(", ptr "))
+        bytes.append(inout g, lit(", ptr "))
         bytes.append(inout g, dp)
-        bytes.append(inout g, sys.lit(", i64 "))
+        bytes.append(inout g, lit(", i64 "))
         bytes.append(inout g, m)
         let ep = val(inout e, g)
         option_some_from(inout e, p, s.ty, d, ep)
@@ -2213,6 +2393,7 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         let l = barg(p, s, 0)
         let lt0 = arg_ty(p, l)
         let lp = argptr(inout e, p, l)
+        gneed(inout e, lower.GK_DROP, lt0)
         let gn_ = gname(e, "drop_", lt0)
         call(inout e, p, gn_, tys1(PTR + lt0), args1(lp), types.UNIT, none)
         return
@@ -2227,10 +2408,11 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         let mp = argptr(inout e, p, m)
         let kv = argval(inout e, p, barg(p, s, 1))
         let kt = types.get(p.t, mt).a
+        gneed(inout e, lower.GK_GET, mt)
         let gn_ = gname(e, "get_", mt)
         let q = rt_call_b(inout e, p, gn_, tys2(PTR + mt, kt), args2(mp, kv), types.STR)
         let d = bdst(inout e, p, s)
-        let nul = val(inout e, catb(sys.lit("icmp eq ptr "), cat(q, ", null")))
+        let nul = val(inout e, catb(lit("icmp eq ptr "), cat(q, ", null")))
         let ln = new_label(inout e)
         let ls = new_label(inout e)
         let lj = new_label(inout e)
@@ -2252,16 +2434,19 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         let kv = argval(inout e, p, barg(p, s, 1))
         if b == ir.B_MAP_INSERT {
             let vv = argval(inout e, p, barg(p, s, 2))
+            gneed(inout e, lower.GK_INS, mt)
             let gn_ = gname(e, "ins_", mt)
             call(inout e, p, gn_, tys3(PTR + mt, kt, vt), args3(mp, kv, vv), types.UNIT, none)
         } else if b == ir.B_MAP_REMOVE {
+            gneed(inout e, lower.GK_REM, mt)
             let gn_ = gname(e, "rem_", mt)
             let r = rt_call_b(inout e, p, gn_, tys2(PTR + mt, kt), args2(mp, kv), types.BOOL)
             bset(inout e, p, s, r)
         } else {
+            gneed(inout e, lower.GK_FIND, mt)
             let gn_ = gname(e, "find_", mt)
             let f = rt_call_b(inout e, p, gn_, tys2(PTR + mt, kt), args2(mp, kv), types.I64)
-            let r = val(inout e, catb(sys.lit("icmp sge i64 "), cat(f, ", 0")))
+            let r = val(inout e, catb(lit("icmp sge i64 "), cat(f, ", 0")))
             bset(inout e, p, s, r)
         }
         return
@@ -2278,6 +2463,7 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         let lp = argptr(inout e, p, a)
         let dp = load_ptr_field(inout e, p, lt, lp, 0)
         let n = load_i64_field(inout e, p, lt, lp, 1)
+        gneed(inout e, lower.GK_UTF8, s.ty)
         let gn_ = gname(e, "utf8_", s.ty)
         let bd_ = bdst(inout e, p, s)
         call(inout e, p, gn_, tys2(types.STR, types.U64), args2(dp, n), s.ty, bd_)
@@ -2297,13 +2483,14 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
             n = rt_call(inout e, p, "strlen", tys1(types.STR), args1(sp), types.U64)
         }
         if b == ir.B_STR_BYTES {
+            gneed(inout e, lower.GK_BYTES, s.ty)
             let gn_ = gname(e, "bytes_", s.ty)
             let bd_ = bdst(inout e, p, s)
             call(inout e, p, gn_, tys2(types.STR, types.U64), args2(sp, n), s.ty, bd_)
             return
         }
         let i = argval(inout e, p, barg(p, s, 1))
-        let ln = line_of(e, s.line)
+        let ln = line_of(inout e, s.line)
         if b == ir.B_STR_BYTE {
             let mut ps = tys3(types.STR, types.U64, types.U64)
             ps.push(types.I32)
@@ -2321,7 +2508,7 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         xs.push(j)
         xs.push(ln)
         let bd_ = bdst(inout e, p, s)
-        call(inout e, p, sys.lit("ei_str_slice"), ps, xs, types.STRING, bd_)
+        call(inout e, p, lit("ei_str_slice"), ps, xs, types.STRING, bd_)
         return
     }
     if b >= ir.B_COPY && b <= ir.B_TO_STRING {
@@ -2345,7 +2532,7 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         let ct = arg_ty(p, barg(p, s, 0))
         let q = load_ptr_field(inout e, p, ct, c, 0)
         // `struct <chan>_c { ei_rc rc; ei_chan ch; }`: ch follows the 8-byte count
-        let ch = val(inout e, catb(sys.lit("getelementptr inbounds i8, ptr "), cat(q, ", i64 8")))
+        let ch = val(inout e, catb(lit("getelementptr inbounds i8, ptr "), cat(q, ", i64 8")))
         rt_call(inout e, p, "ei_chan_close", tys1(types.STR), args1(ch), types.UNIT)
         return
     }
@@ -2355,6 +2542,7 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         let el = types.get(p.t, ct).a
         let cv = argval(inout e, p, a)
         let v = temp(inout e, p, el)
+        gneed(inout e, lower.GK_CHRECV, ct)
         let gn_ = gname(e, "recv_", ct)
         let r = rt_call_b(inout e, p, gn_, tys2(ct, PTR + el), args2(cv, v), types.BOOL)
         let d = bdst(inout e, p, s)
@@ -2408,13 +2596,13 @@ fn map_lists(inout e: E, p: lower.P, s: ir.Stmt) {
     w(inout e, " ]")
     fin(inout e)
     let cap = load_i64_field(inout e, p, mt, mp, 4)
-    let c = val(inout e, catb(sys.lit("icmp ult i64 "), catb(i, catb(sys.lit(", "), cap))))
+    let c = val(inout e, catb(lit("icmp ult i64 "), catb(i, catb(lit(", "), cap))))
     condbr(inout e, c, lb, lx)
     label(inout e, lb)
     let sp = load_ptr_field(inout e, p, mt, mp, 2)
-    let sa = val(inout e, catb(sys.lit("getelementptr inbounds i8, ptr "), catb(sp, catb(sys.lit(", i64 "), i))))
-    let sv = val(inout e, catb(sys.lit("load i8, ptr "), sa))
-    let used = val(inout e, catb(sys.lit("icmp eq i8 "), cat(sv, ", 1")))
+    let sa = val(inout e, catb(lit("getelementptr inbounds i8, ptr "), catb(sp, catb(lit(", i64 "), i))))
+    let sv = val(inout e, catb(lit("load i8, ptr "), sa))
+    let used = val(inout e, catb(lit("icmp eq i8 "), cat(sv, ", 1")))
     condbr(inout e, used, lu, lnx)
     label(inout e, lu)
     let ka = elem_addr(inout e, p, mt, mp, 0, kt, i)
@@ -2432,6 +2620,7 @@ fn map_lists(inout e: E, p: lower.P, s: ir.Stmt) {
     }
     let mut iv = item.copy()
     if is_scalar(p, el) { iv = load(inout e, p, el, item) }
+    gneed(inout e, lower.GK_PUSH, s.ty)
     let gn_ = gname(e, "push_", s.ty)
     let none: List[u8] = List.new()
     call(inout e, p, gn_, tys2(PTR + s.ty, el), args2(l, iv), types.UNIT, none)
@@ -2455,11 +2644,11 @@ fn map_lists(inout e: E, p: lower.P, s: ir.Stmt) {
 /// &m.k[i] (field 0) or &m.v[i] (field 1) of the Map at mp.
 fn elem_addr(inout e: E, p: lower.P, mt: u32, mp: List[u8], fi: u32, et: u32, i: List[u8]) -> List[u8] {
     let base = load_ptr_field(inout e, p, mt, mp, fi)
-    let mut g = sys.lit("getelementptr inbounds ")
+    let mut g = lit("getelementptr inbounds ")
     bytes.append(inout g, mty(inout e, p, et))
-    bytes.append(inout g, sys.lit(", ptr "))
+    bytes.append(inout g, lit(", ptr "))
     bytes.append(inout g, base)
-    bytes.append(inout g, sys.lit(", i64 "))
+    bytes.append(inout g, lit(", i64 "))
     bytes.append(inout g, i)
     val(inout e, g)
 }
@@ -2471,6 +2660,7 @@ fn ref_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
     if b == ir.B_REF_NEW {
         let a = barg(p, s, 0)
         let v = argval(inout e, p, a)
+        gneed(inout e, lower.GK_REFNEW, s.ty)
         let gn_ = gname(e, "new_", s.ty)
         let bd_ = bdst(inout e, p, s)
         call(inout e, p, gn_, tys1(arg_ty(p, a)), args1(v), s.ty, bd_)
@@ -2486,19 +2676,19 @@ fn ref_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
     ms.push(types.I64)
     ms.push(el)
     let voff = abi.offset_of(inout e.lay, p, ms, 1)
-    let va = val(inout e, catb(sys.lit("getelementptr inbounds i8, ptr "), catb(q, num(", i64 ", voff))))
-    let st = val(inout e, catb(sys.lit("load i64, ptr "), q))
+    let va = val(inout e, catb(lit("getelementptr inbounds i8, ptr "), catb(q, num(", i64 ", voff))))
+    let st = val(inout e, catb(lit("load i64, ptr "), q))
     if upd {
-        let c1 = icmp(inout e, "slt", sys.lit("i64"), st, sys.lit("0"))
+        let c1 = icmp(inout e, "slt", lit("i64"), st, lit("0"))
         trap_if(inout e, c1, "Ref updated while it is already being updated", s.line)
-        let c2 = icmp(inout e, "sgt", sys.lit("i64"), st, sys.lit("0"))
+        let c2 = icmp(inout e, "sgt", lit("i64"), st, lit("0"))
         trap_if(inout e, c2, "Ref updated while it is being read", s.line)
-        stmt_text(inout e, catb(sys.lit("store i64 -1, ptr "), q))
+        stmt_text(inout e, catb(lit("store i64 -1, ptr "), q))
     } else {
-        let c = icmp(inout e, "slt", sys.lit("i64"), st, sys.lit("0"))
+        let c = icmp(inout e, "slt", lit("i64"), st, lit("0"))
         trap_if(inout e, c, "Ref read while it is being updated", s.line)
-        let n = val(inout e, catb(sys.lit("add i64 "), cat(st, ", 1")))
-        stmt_text(inout e, catb(sys.lit("store i64 "), catb(n, catb(sys.lit(", ptr "), q))))
+        let n = val(inout e, catb(lit("add i64 "), cat(st, ", 1")))
+        stmt_text(inout e, catb(lit("store i64 "), catb(n, catb(lit(", ptr "), q))))
     }
     let mut old: List[u8] = List.new()
     if b == ir.B_REF_GET {
@@ -2514,7 +2704,7 @@ fn ref_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
             let src = paddr(inout e, p, a - ir.ARG_PLACE)
             copy_mem(inout e, p, el, va, src)
         } else if is_void(el) {
-            store(inout e, p, el, sys.lit("0"), va)
+            store(inout e, p, el, lit("0"), va)
         } else {
             put_op(inout e, p, el, a, va)
         }
@@ -2530,7 +2720,7 @@ fn ref_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         if upd || !is_scalar(p, el) {
             args.push(va)
         } else if is_void(el) {
-            args.push(sys.lit("0"))
+            args.push(lit("0"))
         } else {
             args.push(load(inout e, p, el, va))
         }
@@ -2541,17 +2731,17 @@ fn ref_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         if is_scalar(p, r_ty) && !is_void(r_ty) { bset(inout e, p, s, r) }
     }
     if upd {
-        stmt_text(inout e, catb(sys.lit("store i64 0, ptr "), q))
+        stmt_text(inout e, catb(lit("store i64 0, ptr "), q))
     } else {
-        let st2 = val(inout e, catb(sys.lit("load i64, ptr "), q))
-        let n2 = val(inout e, catb(sys.lit("sub i64 "), cat(st2, ", 1")))
-        stmt_text(inout e, catb(sys.lit("store i64 "), catb(n2, catb(sys.lit(", ptr "), q))))
+        let st2 = val(inout e, catb(lit("load i64, ptr "), q))
+        let n2 = val(inout e, catb(lit("sub i64 "), cat(st2, ", 1")))
+        stmt_text(inout e, catb(lit("store i64 "), catb(n2, catb(lit(", ptr "), q))))
     }
     if old.len() > 0 { drop_at(inout e, p, el, old) }
 }
 
 fn rt_call3_line(inout e: E, p: lower.P, o: List[u8], v: List[u8], line: u32) {
-    let ln = line_of(e, line)
+    let ln = line_of(inout e, line)
     rt_call(inout e, p, "ei_str_push_byte", tys3(PTR + types.STRING, types.U8, types.I32), args3(o, v, ln), types.UNIT)
 }
 
@@ -2560,9 +2750,9 @@ fn list_sum(inout e: E, p: lower.P, s: ir.Stmt) {
     let lt = arg_ty(p, l)
     let lp = argptr(inout e, p, l)
     let ik = types.ik(p.t, s.ty)
-    let it = sys.lit(int_ty(ik))
+    let it = lit(int_ty(ik))
     let d = dst_addr(s.dst)
-    store(inout e, p, s.ty, sys.lit("0"), d)
+    store(inout e, p, s.ty, lit("0"), d)
     live(inout e)
     let pre = e.cur.copy()
     let lh = new_label(inout e)
@@ -2577,24 +2767,24 @@ fn list_sum(inout e: E, p: lower.P, s: ir.Stmt) {
     w(inout e, " = ")
     // the back edge comes from the block after the add's trap check (named below)
     let back = new_label(inout e)
-    let mut ph2 = sys.lit("phi i64 [ 0, ")
+    let mut ph2 = lit("phi i64 [ 0, ")
     bytes.append(inout ph2, pre)
-    bytes.append(inout ph2, sys.lit(" ], [ "))
+    bytes.append(inout ph2, lit(" ], [ "))
     bytes.append(inout ph2, nx)
     bytes.append(inout ph2, num(", %L", back as u64))
-    bytes.append(inout ph2, sys.lit(" ]"))
+    bytes.append(inout ph2, lit(" ]"))
     wb(inout e, ph2)
     fin(inout e)
     let n = load_i64_field(inout e, p, lt, lp, 1)
-    let c = val(inout e, catb(sys.lit("icmp ult i64 "), catb(i, catb(sys.lit(", "), n))))
+    let c = val(inout e, catb(lit("icmp ult i64 "), catb(i, catb(lit(", "), n))))
     condbr(inout e, c, lb, lx)
     label(inout e, lb)
     let dp = load_ptr_field(inout e, p, lt, lp, 0)
-    let mut g = sys.lit("getelementptr inbounds ")
+    let mut g = lit("getelementptr inbounds ")
     bytes.append(inout g, it)
-    bytes.append(inout g, sys.lit(", ptr "))
+    bytes.append(inout g, lit(", ptr "))
     bytes.append(inout g, dp)
-    bytes.append(inout g, sys.lit(", i64 "))
+    bytes.append(inout g, lit(", i64 "))
     bytes.append(inout g, i)
     let ep = val(inout e, g)
     let x = load(inout e, p, s.ty, ep)
@@ -2632,10 +2822,11 @@ fn default_to(inout e: E, p: lower.P, ty: u32, d: List[u8]) {
         store(inout e, p, ty, m, d)
     } else if k == types.T_STRING {
         let m = msg(inout e, "")
-        call(inout e, p, sys.lit("ei_str_from"), tys1(types.STR), args1(m), types.STRING, d)
+        call(inout e, p, lit("ei_str_from"), tys1(types.STR), args1(m), types.STRING, d)
     } else if k == types.T_ENUM {
         option_none(inout e, p, ty, d)
     } else {
+        gneed(inout e, lower.GK_DEFAULT, ty)
         let gn_ = gname(e, "default_", ty)
         call(inout e, p, gn_, List.new(), List.new(), ty, d)
     }
@@ -2656,7 +2847,7 @@ fn trait_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         let v = argval(inout e, p, x)
         let d = bdst(inout e, p, s)
         let em = msg(inout e, "")
-        call(inout e, p, sys.lit("ei_str_from"), tys1(types.STR), args1(em), types.STRING, d)
+        call(inout e, p, lit("ei_str_from"), tys1(types.STR), args1(em), types.STRING, d)
         show_into(inout e, p, ty, d, v)
         if s.dst == NONE { drop_at(inout e, p, types.STRING, d) }
         return
@@ -2680,16 +2871,16 @@ fn trait_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
     let k = kind(p, ty)
     let mut t = c.copy()
     if k == types.T_STR || k == types.T_STRING {
-        let g = icmp(inout e, "sgt", sys.lit("i32"), c, sys.lit("0"))
-        let l = icmp(inout e, "slt", sys.lit("i32"), c, sys.lit("0"))
-        let g32 = val(inout e, catb(sys.lit("zext i1 "), cat(g, " to i32")))
-        let l32 = val(inout e, catb(sys.lit("zext i1 "), cat(l, " to i32")))
-        t = val(inout e, catb(sys.lit("sub i32 "), catb(g32, catb(sys.lit(", "), l32))))
+        let g = icmp(inout e, "sgt", lit("i32"), c, lit("0"))
+        let l = icmp(inout e, "slt", lit("i32"), c, lit("0"))
+        let g32 = val(inout e, catb(lit("zext i1 "), cat(g, " to i32")))
+        let l32 = val(inout e, catb(lit("zext i1 "), cat(l, " to i32")))
+        t = val(inout e, catb(lit("sub i32 "), catb(g32, catb(lit(", "), l32))))
     }
-    let tag = val(inout e, catb(sys.lit("add i32 "), cat(t, ", 1")))
+    let tag = val(inout e, catb(lit("add i32 "), cat(t, ", 1")))
     let d = bdst(inout e, p, s)
     let f = field_addr(inout e, p, s.ty, d, 0)
-    stmt_text(inout e, catb(sys.lit("store i32 "), catb(tag, catb(sys.lit(", ptr "), f))))
+    stmt_text(inout e, catb(lit("store i32 "), catb(tag, catb(lit(", ptr "), f))))
 }
 
 /// Task, Mutex and Chan operations: the C half's glue, called with every argument by value.
@@ -2713,6 +2904,8 @@ fn thread_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
     }
     let mut d: List[u8] = List.new()
     if !is_scalar(p, s.ty) { d = bdst(inout e, p, s) }
+    let gk = if b == ir.B_SPAWN { lower.GK_SPAWN } else if b == ir.B_MUTEX_NEW { lower.GK_MXNEW } else if b == ir.B_CHAN_NEW { lower.GK_CHNEW } else if b == ir.B_TASK_JOIN { lower.GK_JOIN } else if b == ir.B_MUTEX_GET { lower.GK_MXGET } else if b == ir.B_MUTEX_SET { lower.GK_MXSET } else if b == ir.B_MUTEX_UPDATE { lower.GK_MXUPD } else { lower.GK_CHSEND }
+    gneed(inout e, gk, gty)
     let gn_ = gname(e, op, gty)
     let r = call(inout e, p, gn_, ptys, args, s.ty, d)
     if is_scalar(p, s.ty) { bset(inout e, p, s, r) }
@@ -2739,14 +2932,23 @@ fn thread_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
 // makes the place unique first). A parameter passed by reference (A_REF) that is never
 // written is used where the caller's value lies; one that is written gets its own copy.
 
-type Scan = { da: List[bool], nz: List[bool], wr: List[bool], log: List[u32], tmp: List[bool], dead: bool }
+//
+// `ndef`, `placed`, `deaduse`: how many statements assign the local, whether a place is
+// rooted at it, and whether unreachable code reads it. A scalar local assigned by exactly
+// one statement, never a place, never read before it is assigned (not `nz`, so that one
+// assignment dominates every read) and not read by unreachable code, is an SSA value: it
+// has no alloca, its assignment records the value and its reads use it (`ssa_slot`).
+
+type Scan = { da: List[bool], nz: List[bool], wr: List[bool], log: List[u32], tmp: List[bool], dead: bool, ndef: List[u32], placed: List[bool], deaduse: List[bool] }
 
 fn sc_use(inout sc: Scan, l: u32) {
+    if sc.dead { sc.deaduse[l as usize] = true }
     if !sc.dead && !sc.da[l as usize] { sc.nz[l as usize] = true }
 }
 
 fn sc_def(inout sc: Scan, l: u32) {
     sc.wr[l as usize] = true
+    sc.ndef[l as usize] += 1
     if sc.dead || sc.da[l as usize] { return }
     sc.da[l as usize] = true
     sc.log.push(l)
@@ -2782,6 +2984,7 @@ fn sc_place(p: lower.P, inout sc: Scan, id: u32) -> u32 {
     let x = p.ir.places[id as usize]
     if x.kind == ir.P_LOCAL {
         sc_use(inout sc, x.a)
+        sc.placed[x.a as usize] = true
         return x.a
     }
     if x.kind == ir.P_INDEX { sc_op(p, inout sc, x.b) }
@@ -2812,13 +3015,13 @@ fn sc_stmt(p: lower.P, inout sc: Scan, id: u32) {
     if k == ir.S_IF {
         sc_op(p, inout sc, s.a)
         let mark = sc.log.len()
-        let dead0 = sc.dead
+        let dead0 = sc.dead.copy()
         sc_block(p, inout sc, s.b)
-        let tdead = sc.dead
+        let tdead = sc.dead.copy()
         let tl = sc_undo(inout sc, mark)
         sc.dead = dead0
         sc_block(p, inout sc, s.c)
-        let edead = sc.dead
+        let edead = sc.dead.copy()
         let el = sc_undo(inout sc, mark)
         sc.dead = dead0
         if dead0 { return }
@@ -2841,7 +3044,7 @@ fn sc_stmt(p: lower.P, inout sc: Scan, id: u32) {
     }
     if k == ir.S_LOOP {
         let mark = sc.log.len()
-        let dead0 = sc.dead
+        let dead0 = sc.dead.copy()
         sc_block(p, inout sc, s.a)
         sc_undo(inout sc, mark)
         sc.dead = dead0
@@ -2882,6 +3085,7 @@ fn sc_stmt(p: lower.P, inout sc: Scan, id: u32) {
         let pl = p.ir.places[s.a as usize]
         if pl.kind == ir.P_LOCAL {
             sc_def(inout sc, pl.a)
+            sc.placed[pl.a as usize] = true
         } else {
             let r = sc_place(p, inout sc, s.a)
             sc.wr[r as usize] = true
@@ -2909,6 +3113,8 @@ fn sc_stmt(p: lower.P, inout sc: Scan, id: u32) {
     let has_dst = k == ir.S_COPY || k == ir.S_READ || k == ir.S_UNARY || k == ir.S_BINARY || k == ir.S_CAST || k == ir.S_CALL || k == ir.S_RECORD || k == ir.S_VARIANT || k == ir.S_ARRAY || k == ir.S_REPEAT || k == ir.S_TAG || k == ir.S_NOWMS || k == ir.S_TUPLE || k == ir.S_CLONE || k == ir.S_MOVE || k == ir.S_BUILTIN || k == ir.S_CLOSURE || k == ir.S_FNREF || k == ir.S_CALLV
     if has_dst && s.dst != NONE {
         if k != ir.S_REPEAT || s.b > 0 { sc_def(inout sc, s.dst) } else { sc.wr[s.dst as usize] = true }
+        // List.sum accumulates in its destination: never an SSA value
+        if k == ir.S_BUILTIN && s.a == ir.B_LIST_SUM { sc.placed[s.dst as usize] = true }
     }
 }
 
@@ -2916,12 +3122,15 @@ fn sc_stmt(p: lower.P, inout sc: Scan, id: u32) {
 fn scan(p: lower.P, f: u32) -> Scan {
     let fd = p.ir.fns[f as usize]
     let n = fd.lcount as usize
-    let mut sc = Scan(List.new(), List.new(), List.new(), List.new(), List.new(), false)
+    let mut sc = Scan(List.new(), List.new(), List.new(), List.new(), List.new(), false, List.new(), List.new(), List.new())
     for i in 0..n {
         sc.da.push(false)
         sc.nz.push(false)
         sc.wr.push(false)
         sc.tmp.push(false)
+        sc.ndef.push(0)
+        sc.placed.push(false)
+        sc.deaduse.push(false)
     }
     let mut np: u32 = 0
     while np < fd.lcount && p.ir.locals[(fd.lstart + np) as usize].kind == ir.L_CAPTURE { np += 1 }
@@ -2935,7 +3144,7 @@ fn scan(p: lower.P, f: u32) -> Scan {
 fn sig_names(sg: abi.Sig) -> List[List[u8]] {
     // parameter names: %sret, then per argument %a<i> (direct, byval, ref) or %a<i>.0/.1
     let mut names: List[List[u8]] = List.new()
-    if sg.ret.kind == abi.A_SRET { names.push(sys.lit("%sret")) }
+    if sg.ret.kind == abi.A_SRET { names.push(lit("%sret")) }
     for i in 0..sg.args.len() {
         let a = sg.args[i]
         if a.kind == abi.A_COERCE {
@@ -2965,7 +3174,7 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
     e.nreg = 0
     e.nlbl = 0
     e.term = false
-    e.cur = sys.lit("%entry")
+    e.cur = lit("%entry")
     e.lbase = fd.lstart
     e.nc = e.ncap[f as usize]
     e.file = fd.file
@@ -2974,15 +3183,24 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
     e.dloc = 0
     e.dlines = Map.new()
     let md_mark = e.md.len()
-    let nmd_mark = e.nmd
+    let nmd_mark = e.nmd.copy()
     let internal = internal_fn(e, p, f)
     let sg = if internal { isig(inout e, p, f) } else { csig(inout e, p, f) }
     e.rsig = sg.ret
     let sc = scan(p, f)
+    e.ssa = List.new()
+    e.vals = List.new()
+    for i in 0..fd.lcount {
+        let l = loc(p, e, i)
+        let ok = i >= e.nc + fd.nparams && !is_void(l.ty) && is_scalar(p, l.ty) && sc.ndef[i as usize] == 1 && !sc.nz[i as usize] && !sc.placed[i as usize] && !sc.deaduse[i as usize]
+        e.ssa.push(ok)
+        e.vals.push(List.new())
+    }
     let first_line = first_line_of(p, fd)
     if e.dbg { subprogram(inout e, p, f, first_line) }
     set_line(inout e, first_line)
-    let clo = e.clo[f as usize]
+    let clo = e.clo[f as usize].copy()
+    if e.nc > 0 { gneed(inout e, lower.GK_ENV, f) }
     // parameters into their locals
     let mut ai: usize = 0
     if clo { ai = 1 }
@@ -2993,12 +3211,12 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
         let an = num("%a", ai as u64)
         ai += 1
         if l.kind == ir.L_INOUT {
-            stmt_text(inout e, catb(laddr(li), catb(sys.lit(" = getelementptr inbounds i8, ptr "), cat(an, ", i64 0"))))
+            stmt_text(inout e, catb(laddr(li), catb(lit(" = getelementptr inbounds i8, ptr "), cat(an, ", i64 0"))))
             continue
         }
         if is_void(l.ty) { continue }
         if a.kind == abi.A_BYVAL || (a.kind == A_REF && !sc.wr[li as usize]) {
-            stmt_text(inout e, catb(laddr(li), catb(sys.lit(" = getelementptr inbounds i8, ptr "), cat(an, ", i64 0"))))
+            stmt_text(inout e, catb(laddr(li), catb(lit(" = getelementptr inbounds i8, ptr "), cat(an, ", i64 0"))))
             continue
         }
         alloca(inout e, p, li, l.ty)
@@ -3022,20 +3240,20 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
             let ct = loc(p, e, i).ty
             if is_void(ct) { continue }
             alloca(inout e, p, i, ct)
-            let fa = gep(inout e, p, est, sys.lit("%a0"), i)
+            let fa = gep(inout e, p, est, lit("%a0"), i)
             copy_mem(inout e, p, ct, laddr(i), fa)
         }
     }
     for i in 0..fd.lcount {
         if i < e.nc + fd.nparams { continue }
         let l = loc(p, e, i)
-        if is_void(l.ty) { continue }
+        if is_void(l.ty) || e.ssa[i as usize] { continue }
         alloca(inout e, p, i, l.ty)
         if sc.nz[i as usize] { zero(inout e, p, l.ty, laddr(i)) }
     }
     block(inout e, p, fd.body - 1)
     if !e.term {
-        if sg.ret.kind == abi.A_VOID || sg.ret.kind == abi.A_SRET { stmt_text(inout e, sys.lit("ret void")) } else { stmt_text(inout e, sys.lit("unreachable")) }
+        if sg.ret.kind == abi.A_VOID || sg.ret.kind == abi.A_SRET { stmt_text(inout e, lit("ret void")) } else { stmt_text(inout e, lit("unreachable")) }
     }
     if e.fail.len() > 0 {
         // roll back this function's metadata
@@ -3043,19 +3261,19 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
         e.nmd = nmd_mark
         return false
     }
-    let mut h = sys.lit("define ")
+    let mut h = lit("define ")
     if internal {
-        bytes.append(inout h, sys.lit("internal "))
-        if sg.ret.kind == abi.A_DIRECT { bytes.append(inout h, sys.lit("noundef ")) }
+        bytes.append(inout h, lit("internal "))
+        if sg.ret.kind == abi.A_DIRECT { bytes.append(inout h, lit("noundef ")) }
     }
     bytes.append(inout h, ret_text(inout e, p, sg))
-    bytes.append(inout h, sys.lit(" @"))
+    bytes.append(inout h, lit(" @"))
     if internal { bytes.append(inout h, iname(e, f)) } else { bytes.append(inout h, e.fnn[f as usize]) }
-    bytes.append(inout h, sys.lit("("))
+    bytes.append(inout h, lit("("))
     bytes.append(inout h, signature_params(inout e, p, sg, internal))
-    if internal { bytes.append(inout h, sys.lit(") unnamed_addr nounwind")) } else { bytes.append(inout h, sys.lit(") nounwind")) }
+    if internal { bytes.append(inout h, lit(") unnamed_addr nounwind")) } else { bytes.append(inout h, lit(") nounwind")) }
     if e.dbg { bytes.append(inout h, num(" !dbg !", e.sp as u64)) }
-    bytes.append(inout h, sys.lit(" {\nentry:\n"))
+    bytes.append(inout h, lit(" {\nentry:\n"))
     flush_fn(inout e, h)
     true
 }
@@ -3088,28 +3306,28 @@ fn c_wrapper(inout e: E, p: lower.P, f: u32) {
         }
     }
     let mut d: List[u8] = List.new()
-    if is.ret.kind == abi.A_SRET { d = sys.lit("%sret") }
+    if is.ret.kind == abi.A_SRET { d = lit("%sret") }
     if is.ret.kind == abi.A_COERCE { d = temp(inout e, p, is.ret.ty) }
-    let callee = catb(sys.lit("@"), iname(e, f))
+    let callee = catb(lit("@"), iname(e, f))
     let r = call_sig(inout e, p, callee, is, args, d)
     if is.ret.kind == abi.A_DIRECT {
-        let mut t = sys.lit("ret ")
+        let mut t = lit("ret ")
         bytes.append(inout t, vty(inout e, p, is.ret.ty))
-        bytes.append(inout t, sys.lit(" "))
+        bytes.append(inout t, lit(" "))
         bytes.append(inout t, r)
         stmt_text(inout e, t)
     } else if is.ret.kind == abi.A_COERCE {
         ret_pieces(inout e, is.ret, d)
     } else {
-        stmt_text(inout e, sys.lit("ret void"))
+        stmt_text(inout e, lit("ret void"))
     }
-    let mut h = sys.lit("define ")
+    let mut h = lit("define ")
     bytes.append(inout h, ret_text(inout e, p, cs))
-    bytes.append(inout h, sys.lit(" @"))
+    bytes.append(inout h, lit(" @"))
     bytes.append(inout h, e.fnn[f as usize])
-    bytes.append(inout h, sys.lit("("))
+    bytes.append(inout h, lit("("))
     bytes.append(inout h, signature_params(inout e, p, cs, false))
-    bytes.append(inout h, sys.lit(") nounwind {\nentry:\n"))
+    bytes.append(inout h, lit(") nounwind {\nentry:\n"))
     flush_fn(inout e, h)
 }
 
@@ -3137,29 +3355,29 @@ fn c_shim(inout e: E, p: lower.P, f: u32) {
         }
     }
     let mut d: List[u8] = List.new()
-    if cs.ret.kind == abi.A_SRET { d = sys.lit("%sret") }
+    if cs.ret.kind == abi.A_SRET { d = lit("%sret") }
     if cs.ret.kind == abi.A_COERCE { d = temp(inout e, p, cs.ret.ty) }
     let cn = e.fnn[f as usize].copy()
     declare_sig(inout e, p, cn, cs, false)
-    let r = call_sig(inout e, p, catb(sys.lit("@"), cn), cs, args, d)
+    let r = call_sig(inout e, p, catb(lit("@"), cn), cs, args, d)
     if cs.ret.kind == abi.A_DIRECT {
-        let mut t = sys.lit("ret ")
+        let mut t = lit("ret ")
         bytes.append(inout t, vty(inout e, p, cs.ret.ty))
-        bytes.append(inout t, sys.lit(" "))
+        bytes.append(inout t, lit(" "))
         bytes.append(inout t, r)
         stmt_text(inout e, t)
     } else if cs.ret.kind == abi.A_COERCE {
         ret_pieces(inout e, cs.ret, d)
     } else {
-        stmt_text(inout e, sys.lit("ret void"))
+        stmt_text(inout e, lit("ret void"))
     }
-    let mut h = sys.lit("define internal ")
+    let mut h = lit("define internal ")
     bytes.append(inout h, ret_text(inout e, p, is))
-    bytes.append(inout h, sys.lit(" @"))
+    bytes.append(inout h, lit(" @"))
     bytes.append(inout h, iname(e, f))
-    bytes.append(inout h, sys.lit("("))
+    bytes.append(inout h, lit("("))
     bytes.append(inout h, signature_params(inout e, p, is, false))
-    bytes.append(inout h, sys.lit(") nounwind {\nentry:\n"))
+    bytes.append(inout h, lit(") nounwind {\nentry:\n"))
     flush_fn(inout e, h)
 }
 
@@ -3167,21 +3385,21 @@ fn c_shim(inout e: E, p: lower.P, f: u32) {
 fn flush_fn(inout e: E, h: List[u8]) {
     let ent = e.ent.copy()
     let body = e.o.copy()
-    bytes.append(inout e.fns, h)
-    bytes.append(inout e.fns, ent)
-    bytes.append(inout e.fns, body)
-    bytes.append(inout e.fns, sys.lit("}\n\n"))
+    let mut h2 = h.copy()
+    // the entry block's allocas, then the body (shared, not copied: e.ent and e.o start
+    // afresh with the next function)
+    bytes.append(inout h2, ent)
+    e.fns.push(h2)
+    e.fns.push(body)
+    e.fns.push(lit("}\n\n"))
 }
 
 fn alloca(inout e: E, p: lower.P, l: u32, ty: u32) {
-    bytes.append(inout e.ent, sys.lit("  "))
-    bytes.append(inout e.ent, laddr(l))
-    bytes.append(inout e.ent, sys.lit(" = alloca "))
     let mt = mty(inout e, p, ty)
-    let al = align(inout e, p, ty)
+    bytes.append(inout e.ent, lit("  %l"))
+    wd(inout e.ent, l as u64)
+    bytes.append(inout e.ent, lit(" = alloca "))
     bytes.append(inout e.ent, mt)
-    bytes.append(inout e.ent, sys.lit(", align "))
-    bytes.append(inout e.ent, bytes.from_u64(al))
     e.ent.push(10)
 }
 
@@ -3207,18 +3425,18 @@ fn file_md(inout e: E, m: u32) -> u32 {
         Some(id) => { return id }
         None => {}
     }
-    let mut path = sys.lit("?")
+    let mut path = lit("?")
     if (m as usize) < e.paths.len() { path = e.paths[m as usize].copy() }
     let id = e.nmd.copy()
     e.nmd += 1
     e.fmd.insert(k, id)
     bytes.append(inout e.md, num("!", id as u64))
-    bytes.append(inout e.md, sys.lit(" = !DIFile(filename: "))
+    bytes.append(inout e.md, lit(" = !DIFile(filename: "))
     md_string(inout e.md, path)
-    bytes.append(inout e.md, sys.lit(", directory: "))
+    bytes.append(inout e.md, lit(", directory: "))
     let dir = e.dir.copy()
     md_string(inout e.md, dir)
-    bytes.append(inout e.md, sys.lit(")\n"))
+    bytes.append(inout e.md, lit(")\n"))
     id
 }
 
@@ -3229,7 +3447,7 @@ fn md_string(inout out: List[u8], s: List[u8]) {
             out.push(b)
         } else {
             out.push(92)
-            let hx = sys.lit("0123456789ABCDEF")
+            let hx = lit("0123456789ABCDEF")
             out.push(hx[(b / 16) as usize])
             out.push(hx[(b % 16) as usize])
         }
@@ -3244,17 +3462,17 @@ fn subprogram(inout e: E, p: lower.P, f: u32, line: u32) {
     e.nmd += 1
     e.sp = id
     bytes.append(inout e.md, num("!", id as u64))
-    bytes.append(inout e.md, sys.lit(" = distinct !DISubprogram(name: "))
+    bytes.append(inout e.md, lit(" = distinct !DISubprogram(name: "))
     md_string(inout e.md, fd.name)
-    bytes.append(inout e.md, sys.lit(", linkageName: "))
+    bytes.append(inout e.md, lit(", linkageName: "))
     let ln = e.fnn[f as usize].copy()
     md_string(inout e.md, ln)
     bytes.append(inout e.md, num(", scope: !", fm as u64))
     bytes.append(inout e.md, num(", file: !", fm as u64))
     bytes.append(inout e.md, num(", line: ", line as u64))
-    bytes.append(inout e.md, sys.lit(", type: !3"))
+    bytes.append(inout e.md, lit(", type: !3"))
     bytes.append(inout e.md, num(", scopeLine: ", line as u64))
-    bytes.append(inout e.md, sys.lit(", spFlags: DISPFlagDefinition, unit: !0)\n"))
+    bytes.append(inout e.md, lit(", spFlags: DISPFlagDefinition, unit: !0)\n"))
 }
 
 // ---- the program
@@ -3267,7 +3485,7 @@ pub const MIN_LLVM: u64 = 17
 /// (debug info), `dir` the working directory, `debug` whether to emit debug info.
 pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[List[u8]], dir: List[u8], debug: bool) -> Result[Out, List[u8]] {
     let names = lower.c_names(p)?
-    let mut e = E(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), abi.new_lay(p), List.new(), names.tys, names.fns, List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), Map.new(), 0, 0, 0, false, List.new(), 0, 0, 0, List.new(), List.new(), false, abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new(), debug, false, List.new(), 4, 0, 0, Map.new(), Map.new(), paths, dir, List.new(), List.new(), List.new(), List.new(), List.new())
+    let mut e = E(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), abi.new_lay(p), List.new(), names.tys, names.fns, List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), Map.new(), 0, 0, 0, false, List.new(), 0, 0, 0, List.new(), List.new(), false, abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new(), debug, false, List.new(), List.new(), List.new(), 4, 0, 0, Map.new(), Map.new(), paths, dir, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new())
     let nosig = abi.Sig(abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new())
     for f in 0..p.ir.fns.len() {
         e.isigs.push(nosig.copy())
@@ -3313,14 +3531,14 @@ pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[L
             let fname = e.fnn[f].copy()
             defined.insert(h64(fname), true)
         } else {
-            bytes.append(inout report, sys.lit("fallback "))
+            bytes.append(inout report, lit("fallback "))
             bytes.append(inout report, fd.name)
-            bytes.append(inout report, sys.lit(": "))
+            bytes.append(inout report, lit(": "))
             bytes.append(inout report, e.fail)
             report.push(10)
         }
     }
-    let c = lower.program_split(p, file, tests, lib, native)?
+    let c = lower.program_split(p, file, tests, lib, native, e.needs, e.tfiles)?
     // the C half's entries into this one: C-convention wrappers of the internal functions
     // it names (beyond their prototypes), and shims for calls into its fallback functions
     let refs = c_idents(c)
@@ -3338,19 +3556,23 @@ pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[L
             c_shim(inout e, p, f as u32)
         }
     }
-    let mut ll = sys.lit("; generated by eiderc --backend=llvm from ")
+    let mut head = lit("; generated by eiderc --backend=llvm from ")
     for b in file {
-        if b >= 32 && b < 127 { ll.push(b) }
+        if b >= 32 && b < 127 { head.push(b) }
     }
-    bytes.append(inout ll, sys.lit("\n\n%ei.String = type { ptr, i64, i64 }\n"))
-    bytes.append(inout ll, e.tdefs)
+    bytes.append(inout head, lit("\n\n%ei.String = type { ptr, i64, i64 }\n"))
+    bytes.append(inout head, e.tdefs)
+    head.push(10)
+    // after the functions (e.fns): the constants and declarations they use (LLVM IR may
+    // name them before they are defined)
+    let mut ll: List[u8] = List.new()
     ll.push(10)
     for i in 0..p.ir.strs.len() {
         if !e.sused[i] { continue }
         bytes.append(inout ll, num("@.s", i as u64))
-        bytes.append(inout ll, sys.lit(" = private unnamed_addr constant ["))
+        bytes.append(inout ll, lit(" = private unnamed_addr constant ["))
         bytes.append(inout ll, bytes.from_u64((p.ir.strs[i].len() + 1) as u64))
-        bytes.append(inout ll, sys.lit(" x i8] "))
+        bytes.append(inout ll, lit(" x i8] "))
         c_string(inout ll, p.ir.strs[i])
         ll.push(10)
     }
@@ -3361,18 +3583,17 @@ pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[L
         bytes.append(inout ll, e.dtext[i])
         ll.push(10)
     }
-    ll.push(10)
-    bytes.append(inout ll, e.fns)
     if debug {
-        bytes.append(inout ll, sys.lit("!llvm.dbg.cu = !{!0}\n!llvm.module.flags = !{!1, !2}\n"))
-        bytes.append(inout ll, sys.lit("!0 = distinct !DICompileUnit(language: DW_LANG_C11, file: !"))
+        bytes.append(inout ll, lit("!llvm.dbg.cu = !{!0}\n!llvm.module.flags = !{!1, !2}\n"))
+        bytes.append(inout ll, lit("!0 = distinct !DICompileUnit(language: DW_LANG_C11, file: !"))
         let f0 = file_md(inout e, 0)
         bytes.append(inout ll, bytes.from_u64(f0 as u64))
-        bytes.append(inout ll, sys.lit(", producer: \"eiderc (llvm backend)\", isOptimized: false, runtimeVersion: 0, emissionKind: LineTablesOnly)\n"))
-        bytes.append(inout ll, sys.lit("!1 = !{i32 7, !\"Dwarf Version\", i32 5}\n!2 = !{i32 2, !\"Debug Info Version\", i32 3}\n!3 = !DISubroutineType(types: !{})\n"))
+        bytes.append(inout ll, lit(", producer: \"eiderc (llvm backend)\", isOptimized: false, runtimeVersion: 0, emissionKind: LineTablesOnly)\n"))
+        bytes.append(inout ll, lit("!1 = !{i32 7, !\"Dwarf Version\", i32 5}\n!2 = !{i32 2, !\"Debug Info Version\", i32 3}\n!3 = !DISubroutineType(types: !{})\n"))
         bytes.append(inout ll, e.md)
     }
-    Ok(Out(ll, c, native, nfns, nnat, report))
+    e.fns.push(ll)
+    Ok(Out(head, e.fns, c, native, nfns, nnat, report))
 }
 
 /// How often each C identifier (by h64) occurs in the C text c.
@@ -3403,16 +3624,16 @@ fn is_closure_name(s: List[u8]) -> bool {
     let mut i = s.len()
     while i > 0 && bytes.is_digit(s[i - 1]) { i -= 1 }
     if i == s.len() || i < 8 { return false }
-    bytes.eq(bytes.slice(s, i - 8, i), sys.lit(".closure"))
+    bytes.eq(bytes.slice(s, i - 8, i), lit(".closure"))
 }
 
 /// `emit-llvm --coverage`: how many functions are native, then each fallback and why.
 pub fn coverage(o: Out) -> List[u8] {
-    let mut r = sys.lit("native ")
+    let mut r = lit("native ")
     bytes.append(inout r, bytes.from_u64(o.nnative as u64))
     r.push(47)
     bytes.append(inout r, bytes.from_u64(o.nfns as u64))
-    bytes.append(inout r, sys.lit(" functions\n"))
+    bytes.append(inout r, lit(" functions\n"))
     bytes.append(inout r, o.report)
     r
 }

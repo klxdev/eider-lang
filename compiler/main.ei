@@ -611,15 +611,20 @@ fn main() uses io, fs, net, clock {
                 }
             }
             if is(a.cmd, "emit-llvm") {
-                if a.coverage { io.out(llvm.coverage(out)) } else { io.out(out.ll) }
+                if a.coverage {
+                    io.out(llvm.coverage(out))
+                } else {
+                    io.out(out.head)
+                    for x in out.ll { io.out(x) }
+                }
             } else if is(a.cmd, "emit-c") {
                 io.out(out.c)
             } else if a.lib {
-                driver.build_lib_llvm(out.c, out.ll, lower.header(lp), a.file, a.out, a.libs, a.debug)
+                driver.build_lib_llvm(out.c, llvm.whole(out), lower.header(lp), a.file, a.out, a.libs, a.debug)
             } else if is(a.cmd, "build") {
-                driver.build_llvm(out.c, out.ll, a.file, a.out, a.libs, a.debug)
+                driver.build_llvm(out.c, llvm.whole(out), a.file, a.out, a.libs, a.debug)
             } else {
-                driver.run_llvm(out.c, out.ll, a.file, a.release, a.libs, a.debug)
+                driver.run_llvm(out.c, llvm.whole(out), a.file, a.release, a.libs, a.debug)
             }
             return
         }
