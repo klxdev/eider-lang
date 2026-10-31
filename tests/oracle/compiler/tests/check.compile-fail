@@ -188,6 +188,8 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0203_second_unknown.ei      E0203 at 2:17
   ok   e0204_method_fs.ei           E0204 at 2:1
   ok   e0204_unsafe_fn.ei           E0204 at 2:1
+  ok   e0301_alias_read.ei          E0301 at 7:18 (fix compiles)
+  ok   e0301_alias_two_inout.ei     E0301 at 6:26
   ok   e0301_field_roots.ei         E0301 at 6:20
   ok   e0301_index_roots.ei         E0301 at 5:26
   ok   e0301_method_style_roots.ei  E0301 at 6:19
@@ -198,6 +200,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0303_assign_for_var.ei      E0303 at 4:9
   ok   e0303_assign_in_test.ei      E0303 at 4:5 (fix compiles)
   ok   e0303_assign_match_binding.ei E0303 at 4:16
+  ok   e0303_assign_ref.ei          E0303 at 6:5 (fix compiles)
   ok   e0303_assign_to_param_field.ei E0303 at 4:5
   ok   e0303_compound_on_let.ei     E0303 at 4:5 (fix compiles)
   ok   e0303_heap_field_push.ei     E0303 at 5:5 (fix compiles)
@@ -224,6 +227,28 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0305_let_after_var.ei       E0305 at 4:5
   ok   e0306_break_in_match_arm.ei  E0306 at 4:14
   ok   e0306_continue_in_fn.ei      E0306 at 3:15
+  ok   e0307_let_mut_of_let.ei      E0307 at 5:17 (fix compiles)
+  ok   e0307_let_mut_of_ref.ei      E0307 at 7:17 (fix compiles)
+  ok   e0307_let_mut_param.ei       E0307 at 3:18 (fix compiles)
+  ok   e0307_let_pattern_mut.ei     E0307 at 3:14 (fix compiles)
+  ok   e0307_mut_binding_param.ei   E0307 at 5:18 (fix compiles)
+  ok   e0307_mut_capture.ei         E0307 at 5:21 (fix compiles)
+  ok   e0307_mut_for_var.ei         E0307 at 4:21 (fix compiles)
+  ok   e0308_assign_list.ei         E0308 at 6:5 (fix compiles)
+  ok   e0308_assign_outer_record.ei E0308 at 7:5 (fix compiles)
+  ok   e0308_clear.ei               E0308 at 6:8 (fix compiles)
+  ok   e0308_drop_record.ei         E0308 at 9:5 (fix compiles)
+  ok   e0308_enum_payload.ei        E0308 at 7:13 (fix compiles)
+  ok   e0308_generic.ei             E0308 at 5:8
+  ok   e0308_if_let_payload.ei      E0308 at 5:9 (fix compiles)
+  ok   e0308_inout.ei               E0308 at 7:5 (fix compiles)
+  ok   e0308_loop_next_iteration.ei E0308 at 9:12 (fix compiles)
+  ok   e0308_method_inout_self.ei   E0308 at 12:7 (fix compiles)
+  ok   e0308_mut_alias.ei           E0308 at 7:8 (fix compiles)
+  ok   e0308_no_copy.ei             E0308 at 6:8
+  ok   e0308_pop.ei                 E0308 at 7:8 (fix compiles)
+  ok   e0308_push.ei                E0308 at 7:12 (fix compiles)
+  ok   e0308_through_alias.ei       E0308 at 7:9 (fix compiles)
   ok   e0401_add_bools.ei           E0401 at 3:18
   ok   e0401_arg_mismatch.ei        E0401 at 4:7
   ok   e0401_array_equality_types.ei E0401 at 3:23
@@ -551,6 +576,7 @@ compile-pass tests (compiler/tests/check/pass)
   ok   c84_shadow_ok.ei
   ok   c84_traits_ok.ei
   ok   c85_std_without_ffi.ei
+  ok   c86_refs_ok.ei
   ok   c8_bitwise_ok.ei
   ok   c8_gaps_ok.ei
   ok   comptime_chain.ei
@@ -615,6 +641,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-613 passed, 0 failed; error-code coverage 48/52
+639 passed, 0 failed; error-code coverage 50/54
 codes without a compile-fail test: E0302 E0402 E0806 E0808
 --- exit 0

@@ -245,7 +245,7 @@ pub fn resolve(root: manifest.Manifest, o: Opts) -> Result[List[lockfile.Pkg], S
     frontier.push(none)
     var fi: usize = 0
     while fi < frontier.len() {
-        let from = frontier[fi]
+        let from = frontier[fi].copy()
         fi += 1
         for e in edges {
             if bytes.eq(e.from, from) {

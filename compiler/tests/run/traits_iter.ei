@@ -20,7 +20,7 @@ impl Iter for Words {
     fn next(inout self) -> Option[String] {
         while self.pos < self.text.len() && self.text.byte(self.pos) == 32 { self.pos += 1 }
         if self.pos >= self.text.len() { return None }
-        let start = self.pos
+        let start = self.pos.copy()
         while self.pos < self.text.len() && self.text.byte(self.pos) != 32 { self.pos += 1 }
         Some(self.text.slice(start, self.pos))
     }

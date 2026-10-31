@@ -78,7 +78,7 @@ fn main() uses io {
         Some(s) => print(s)
         None => print("none")
     }
-    let copy = owners
+    let copy = owners.copy()
     owners.remove(2)
     print(owners.len())
     print(copy.len())

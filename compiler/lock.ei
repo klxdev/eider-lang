@@ -270,7 +270,7 @@ fn value(inout p: P, k: List[u8], inout out: List[Entry]) -> Result[bool, List[u
 fn next_index(inout counts: List[Count], name: List[u8]) -> u64 {
     for i in 0..counts.len() {
         if bytes.eq(counts[i].name, name) {
-            let n = counts[i].n
+            let n = counts[i].n.copy()
             counts[i] = Count(name, n + 1)
             return n
         }

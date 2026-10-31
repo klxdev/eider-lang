@@ -22,7 +22,8 @@
 // value clones it (`take`); a fresh owned value (call result, constructor, ...) lives in a
 // temporary registered in the innermost frame (one per block) until it is moved out; every
 // frame's owned values are dropped when it ends or is left by return/break/continue/`?`.
-// The IR spells all of it out (ir.ei, "Ownership").
+// The IR spells all of it out (ir.ei, "Ownership"). A `let` or pattern binding of a place is a
+// reference: no storage, no copy, no drop; the place itself stands for it ("References").
 //
 // Closures are IR functions of their own, built while their enclosing function
 // is (ir.begin_nested), with a snapshot of the locals they mention as their environment.
@@ -91,10 +92,13 @@ type ConstDef = { key: u64, md: u32, public: bool, ty: u32, has_k: bool, k: fold
 /// A local variable in scope. `key` is its name key (pattern bindings can carry a module
 /// prefix, see resolve.ei); (line, col) is where it is declared (E0305) and (dline, dcol)
 /// the `let`/`var` it comes from, for the E0303 fix. (aline, acol) is the declaration the
-/// IDE recording names (a closure's captured copy keeps its original's).
+/// IDE recording names (a closure's captured copy keeps its original's). A reference (C8.6:
+/// a `let` or pattern binding of a place, or a `let mut` / `mut` one) has no storage of its
+/// own: `alias` is the place it names (else NONE), `refid` its RefInfo and `aroot` the key of
+/// the variable that place is rooted at (inout exclusivity, E0301).
 type Local = {
     key: u64, ty: u32, mutable: bool, byref: bool, has_decl: bool, line: u32, col: u32,
-    ir: u32, dline: u32, dcol: u32, aline: u32, acol: u32,
+    ir: u32, dline: u32, dcol: u32, aline: u32, acol: u32, alias: u32, refid: u32, aroot: u64,
 }
 
 /// A checked expression: its type, the IR operand holding its value, and its value when it
@@ -118,7 +122,7 @@ const T_INT: u32 = 1
 const T_BOOL: u32 = 2
 const T_STR: u32 = 3
 type Test = { kind: u32, place: u32, ty: u32, a: u32, w: fold.Wide, s: List[u8] }
-type Bind = { key: u64, place: u32, ty: u32, line: u32, col: u32 }
+type Bind = { key: u64, place: u32, ty: u32, line: u32, col: u32, mutable: bool }
 type Lowered = { tests: List[Test], binds: List[Bind] }
 
 /// An owned value in a frame (`l` = NONE once it moved out).
@@ -245,6 +249,8 @@ pub type C = {
     failed: List[List[u8]],
     /// the operation traits ("Operation traits" below)
     lt: Lang,
+    /// references and the protection rule ("References" below)
+    rf: Refs,
 }
 
 /// Expected parameter types (NONE: unknown) and return type of a closure.
@@ -286,7 +292,7 @@ fn note_ref(inout c: C, m: u32, n: ast.Node, tm: u32, tline: u32, tcol: u32) {
 /// A use of the type (template) di.
 fn note_def(inout c: C, m: u32, n: ast.Node, di: u32) {
     if !c.rec.on { return }
-    let d = c.t.defs[di as usize]
+    let d = c.t.defs[di as usize].copy()
     let tn = ndm(c, d.md, d.node)
     note_ref(inout c, m, n, d.md, tn.line, tn.col)
 }
@@ -294,12 +300,12 @@ fn note_def(inout c: C, m: u32, n: ast.Node, di: u32) {
 /// A use of variant `vkey` of enum di.
 fn note_variant(inout c: C, n: ast.Node, di: u32, vkey: u64) {
     if !c.rec.on { return }
-    let d = c.t.defs[di as usize]
+    let d = c.t.defs[di as usize].copy()
     let tn = ndm(c, d.md, d.node)
     for i in 0..tn.f {
         let vn = ndm(c, d.md, atm(c, d.md, tn.e, i))
         if resolve.item_key(c.p, d.md, vn.a) == vkey {
-            let am = c.am
+            let am = c.am.copy()
             note_ref(inout c, am, n, d.md, vn.line, vn.col)
             return
         }
@@ -308,14 +314,14 @@ fn note_variant(inout c: C, n: ast.Node, di: u32, vkey: u64) {
 
 fn note_fn(inout c: C, n: ast.Node, fi: u32) {
     if !c.rec.on { return }
-    let f = c.fdefs[fi as usize]
+    let f = c.fdefs[fi as usize].copy()
     let fnode = ndm(c, f.md, f.node)
-    let am = c.am
+    let am = c.am.copy()
     note_ref(inout c, am, n, f.md, fnode.line, fnode.col)
 }
 
 fn note_local(inout c: C, n: ast.Node, v: Local) {
-    let am = c.am
+    let am = c.am.copy()
     if c.rec.on { note_ref(inout c, am, n, am, v.aline, v.acol) }
 }
 
@@ -323,7 +329,7 @@ fn note_local(inout c: C, n: ast.Node, v: Local) {
 fn note_field(inout c: C, n: ast.Node, d: types.Def, i: u32) {
     if !c.rec.on { return }
     let f = types.field(c.t, d.start, i)
-    let am = c.am
+    let am = c.am.copy()
     note_ref(inout c, am, n, d.md, f.line, f.col)
 }
 
@@ -727,6 +733,8 @@ fn ekey(c: C, n: ast.Node) -> u64 { resolve.expr_key(c.p, c.am, n.a, n.b, n.line
 fn tmp(inout c: C, ty: u32, line: u32) -> u32 { ir.temp(inout c.ir, ty, line) }
 
 fn emit(inout c: C, kind: u32, dst: u32, a: u32, b: u32, x: u32, ty: u32, line: u32) {
+    // a write that may invalidate a reference is noted for the protection rule ("References")
+    if c.rf.any && (kind == ir.S_STORE || kind == ir.S_CALL || kind == ir.S_BUILTIN) { note_writes(inout c, kind, a, b, x) }
     ir.emit(inout c.ir, kind, dst, a, b, x, ty, line)
 }
 
@@ -832,7 +840,7 @@ fn pop_frame(inout c: C, drops: bool) {
         var i = c.frames.len()
         while i > m as usize {
             i -= 1
-            let o = c.frames[i]
+            let o = c.frames[i].copy()
             if o.l != NONE { drop_local(inout c, o) }
         }
     }
@@ -846,7 +854,7 @@ fn drop_frames_from(inout c: C, base: u32) {
     var i = c.frames.len()
     while i > from {
         i -= 1
-        let o = c.frames[i]
+        let o = c.frames[i].copy()
         if o.l != NONE { drop_local(inout c, o) }
     }
 }
@@ -913,6 +921,430 @@ fn bind_value(inout c: C, l: u32, ty: u32, place: u32) {
     }
 }
 
+// ---- References (docs/compiler.md, "C8.6: references by default")
+//
+// `let x = place` (a variable, field or element, rooted at a variable in scope) binds a
+// read-only reference: x has no storage; it names the place, whose indices are evaluated
+// once, when x is bound, and every use of x reads (or, for `let mut x = place`, a mutable
+// alias, writes) that place. So a reference costs no copy and no drop, always sees the
+// place's current value, and becomes a value only where it escapes (stored, returned,
+// captured), through the ordinary `take` clone. Pattern bindings of a place scrutinee are
+// references the same way (`mut x`: an alias). A fresh value (a call, a literal, a
+// constructor, an operation) is owned, as before; `var` keeps making its own copy
+// (deprecated: `eiderc migrate-var` rewrites it, "Migration of var" below).
+//
+// The protection rule: while a reference is alive (until its last use, on any path), no
+// write may free, move or reinterpret memory it points into. Every binding (N_DEF), use
+// (N_USE) and possibly invalidating write (N_WRITE: an assignment, an `inout` argument, a
+// resizing builtin) is noted in the IR as an S_NOTE; `protect` runs a backward liveness
+// pass over each function with references and reports E0308 for a write to a place P while
+// a live reference R points into it: P is a prefix of R (indices compared as equal, whatever
+// they are) and the rest of R's path goes through heap memory (a List element, a Box, a
+// record with its own Drop) or an enum payload. Then the notes are removed, so lowering and
+// the IR dump never see them.
+
+const N_DEF: u32 = 0
+const N_USE: u32 = 1
+const N_WRITE: u32 = 2
+
+const W_ASSIGN: u32 = 0
+const W_RESIZE: u32 = 1
+const W_INOUT: u32 = 2
+
+/// A reference: the place it names, its binding (key, line, col, module m), whether it is
+/// a mutable alias, and the fix that makes it own a copy instead (`.copy()` after its
+/// initializer or scrutinee; none when its type lacks Copy, or in a generic body: `generic`).
+type RefInfo = { place: u32, key: u64, line: u32, col: u32, mutable: bool, fix: Option[diag.Fix], m: u32, generic: bool }
+
+/// A write that may invalidate a reference: of `place`, an assignment, an `inout` argument
+/// or a resizing builtin (`what`), at (line, col) of module m.
+type WriteInfo = { place: u32, kind: u32, what: List[u8], line: u32, col: u32, m: u32 }
+
+/// The edits that rewrite one `var` (module m) as `let mut` ("Migration of var").
+type VarSite = { m: u32, fixes: List[diag.Fix] }
+
+/// The checker's reference state: every reference and noted write of the program, the IR
+/// functions that have references, the stack of source positions writes are reported at
+/// (the innermost assignment or call being checked), the `var` rewrites, and whether the
+/// body being checked has a reference (so other bodies note no writes).
+type Refs = {
+    refs: List[RefInfo], writes: List[WriteInfo], fns: Map[u32, bool], wpos: List[u64], vars: List[VarSite], any: bool,
+}
+
+fn no_refs() -> Refs { Refs(List.new(), List.new(), Map.new(), List.new(), List.new(), false) }
+
+fn ref_note(inout c: C, kind: u32, i: u32) { ir.emit(inout c.ir, ir.S_NOTE, 0, kind, i, 0, 0, 0) }
+
+/// The place a local names: its own storage, or for a reference the place it refers to.
+fn local_place(inout c: C, v: Local) -> u32 {
+    if v.alias == NONE { return ir.place_local(inout c.ir, v.ir, v.ty) }
+    ref_note(inout c, N_USE, v.refid)
+    v.alias
+}
+
+/// Whether expression e is a place rooted at a variable in scope (so `let` binds a
+/// reference to it rather than owning a value).
+fn ref_init(c: C, e: u32) -> bool {
+    if !is_place(c, e) { return false }
+    let r = root(c, e)
+    r.ok && lookup(c, r.key) != NONE
+}
+
+/// The key of the variable the place named by key k is rooted at (k itself unless k is a
+/// reference).
+fn canon(c: C, k: u64) -> u64 {
+    let li = lookup(c, k)
+    if li == NONE { return k }
+    let v = c.scopes[li as usize]
+    if v.alias == NONE { return k }
+    v.aroot
+}
+
+/// Whether the variable key k may be written through (a `var`, a `let mut`, an `inout`
+/// parameter, a mutable alias).
+fn writable(c: C, k: u64) -> bool {
+    let li = lookup(c, k)
+    if li == NONE { return false }
+    let v = c.scopes[li as usize]
+    v.mutable || v.byref
+}
+
+/// `.copy()` inserted at (line, col), when ty has Copy (the fix that makes a binding own a
+/// copy instead of referring to a place).
+fn copy_fix(c: C, ty: u32, line: u32, col: u32) -> Option[diag.Fix] {
+    // (in a generic body `.copy()` may need a bound the fix can't add as well: no fix there)
+    if line == 0 || generic_body(c) || poisoned(c, ty) || !has_trait(c, TR_COPY, ty) { return None }
+    Some(diag.Fix(line, col, 0, s(".copy()")))
+}
+
+/// Whether the body being checked is an instance of a generic one (its type parameters
+/// other than a concrete impl's `Self` are substituted).
+fn generic_body(c: C) -> bool {
+    for x in c.tsubst.syms {
+        if x != intern.S_SELF_TYPE { return true }
+    }
+    false
+}
+
+/// E0307: a mutable alias of a place that can't be written (`let mut x = p` with p a
+/// parameter, a `let` binding, a capture...).
+fn alias_error(c: C, line: u32, col: u32, what: List[u8], rk: u64, fix: Option[diag.Fix]) -> diag.Diag {
+    var d = err("E0307", line, col, q2("", what, " would be a mutable alias of `", kt(c, rk), "`, which is read-only"))
+    d.help = s("an alias can't add write access; take an independent value with `.copy()`")
+    d.fix = fix
+    d
+}
+
+/// E0301 for a reference k into variable r, read by a call that also borrows r mutably.
+fn alias_read_error(c: C, line: u32, col: u32, k: u64, r: u64) -> diag.Diag {
+    var d = err("E0301", line, col, q2("`", kt(c, k), "` refers into `", kt(c, r), "`, which is borrowed mutably by another argument of this call"))
+    d.help = q("bind a copy instead of a reference: `.copy()` (the call may change `", kt(c, r), "`)")
+    let li = lookup(c, k)
+    if li != NONE && c.scopes[li as usize].refid != NONE { d.fix = c.rf.refs[c.scopes[li as usize].refid as usize].fix }
+    d
+}
+
+/// A new reference named key (declared at line:col) to `place` of type ty, rooted at the
+/// variable rk: noted, and the local that stands for it.
+fn new_ref(inout c: C, key: u64, ty: u32, place: u32, mutable: bool, rk: u64, line: u32, col: u32, fix: Option[diag.Fix]) -> Local {
+    let rid = c.rf.refs.len() as u32
+    c.rf.refs.push(RefInfo(place, key, line, col, mutable, fix, c.am, generic_body(c)))
+    c.rf.fns.insert(c.ir.cur, true)
+    c.rf.any = true
+    ref_note(inout c, N_DEF, rid)
+    // its indices are checked now, as reading the place would
+    if has_index(c, place) { emit(inout c, ir.S_CHECK, 0, place, 0, 0, ty, line) }
+    Local(key, ty, mutable, false, true, line, col, NONE, line, col, line, col, place, rid, canon(c, rk))
+}
+
+/// Whether a reference is in scope (only then can a write invalidate one).
+fn refs_in_scope(c: C) -> bool {
+    var i = c.scopes.len()
+    while i > 0 {
+        i -= 1
+        if c.scopes[i].alias != NONE { return true }
+    }
+    false
+}
+
+/// The position writes are reported at while checking an assignment or call at line:col.
+fn at_pos(inout c: C, line: u32, col: u32) { c.rf.wpos.push((line as u64) * 4294967296 + col as u64) }
+
+fn end_pos(inout c: C) { c.rf.wpos.pop() }
+
+/// Whether builtin b may resize or replace the buffer of its place argument.
+fn resizes(b: u32) -> bool {
+    b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE || b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_STR_PUSH_BYTE
+}
+
+/// Whether place p has an element on its path (a bounds check).
+fn has_index(c: C, p: u32) -> bool {
+    let x = c.ir.places[p as usize]
+    if x.kind == ir.P_LOCAL { return false }
+    x.kind == ir.P_INDEX || has_index(c, x.a)
+}
+
+/// The local a place is rooted at.
+fn place_root(c: C, p: u32) -> u32 {
+    let x = c.ir.places[p as usize]
+    if x.kind == ir.P_LOCAL { return x.a }
+    place_root(c, x.a)
+}
+
+/// Note the writes of statement (kind, a, b, x) that may invalidate a reference in scope.
+fn note_writes(inout c: C, kind: u32, a: u32, b: u32, x: u32) {
+    if !refs_in_scope(c) { return }
+    if kind == ir.S_STORE {
+        write_note(inout c, a, W_ASSIGN, List.new())
+        return
+    }
+    var wk = W_INOUT
+    var what: List[u8] = List.new()
+    if kind == ir.S_BUILTIN && resizes(a) {
+        wk = W_RESIZE
+        what = s(ir.builtin_name(a))
+    }
+    for i in 0..x {
+        let arg = c.ir.extra[(b + i) as usize].copy()
+        if arg >= ir.ARG_PLACE { write_note(inout c, arg - ir.ARG_PLACE, wk, what) }
+    }
+}
+
+fn write_note(inout c: C, place: u32, kind: u32, what: List[u8]) {
+    // temporaries are never referred to
+    if c.ir.building[place_root(c, place) as usize].kind == ir.L_TEMP { return }
+    var line: u32 = 0
+    var col: u32 = 0
+    if c.rf.wpos.len() > 0 {
+        let pos = c.rf.wpos[c.rf.wpos.len() - 1]
+        line = (pos / 4294967296) as u32
+        col = (pos % 4294967296) as u32
+    }
+    c.rf.writes.push(WriteInfo(place, kind, what, line, col, c.am))
+    let wi = (c.rf.writes.len() - 1) as u32
+    ref_note(inout c, N_WRITE, wi)
+}
+
+/// One step of a place's path from its root variable: a field (a = index; through heap
+/// memory when the record has its own Drop), an element (of a List: heap memory), an enum
+/// payload (a = variant * 65536 + field) or a Box's contents.
+type Step = { kind: u32, a: u32, heap: bool }
+
+fn path(c: C, p: u32, inout out: List[Step]) {
+    let x = c.ir.places[p as usize]
+    if x.kind == ir.P_LOCAL { return }
+    path(c, x.a, inout out)
+    let bty = c.ir.places[x.a as usize].ty
+    if x.kind == ir.P_FIELD {
+        let shared = types.kind(c.t, bty) == types.T_RECORD && has_drop(c, bty)
+        out.push(Step(ir.P_FIELD, x.b, shared))
+    } else if x.kind == ir.P_INDEX {
+        out.push(Step(ir.P_INDEX, 0, types.kind(c.t, bty) == types.T_LIST))
+    } else if x.kind == ir.P_PAYLOAD {
+        out.push(Step(ir.P_PAYLOAD, x.b * 65536 + x.c, true))
+    } else {
+        out.push(Step(ir.P_DEREF, 0, true))
+    }
+}
+
+/// Whether a write to place w invalidates reference place r: same root, w's path a prefix of
+/// r's (any two indices count as equal), and the rest of r's path goes through heap memory
+/// or a payload.
+fn invalidates(c: C, r: u32, w: u32) -> bool {
+    if place_root(c, r) != place_root(c, w) { return false }
+    var rs: List[Step] = List.new()
+    var ws: List[Step] = List.new()
+    path(c, r, inout rs)
+    path(c, w, inout ws)
+    if ws.len() > rs.len() { return false }
+    for i in 0..ws.len() {
+        if rs[i].kind != ws[i].kind || rs[i].a != ws[i].a { return false }
+    }
+    for i in ws.len()..rs.len() {
+        if rs[i].heap { return true }
+    }
+    false
+}
+
+/// A place as the message names it: `orders[..].qty` (payloads and Box contents are named
+/// by their enum or Box).
+fn place_name(c: C, f: u32, p: u32) -> List[u8] {
+    let x = c.ir.places[p as usize]
+    if x.kind == ir.P_LOCAL { return nm(c, c.ir.locals[(c.ir.fns[f as usize].lstart + x.a) as usize].name) }
+    var t = place_name(c, f, x.a)
+    if x.kind == ir.P_FIELD {
+        let bty = c.ir.places[x.a as usize].ty
+        t.push(46)
+        if types.kind(c.t, bty) == types.T_RECORD {
+            let d = types.def_of(c.t, bty)
+            bytes.append(inout t, nm(c, types.field(c.t, d.start, x.b).name))
+        } else {
+            bytes.append(inout t, num(x.b as u64))
+        }
+    } else if x.kind == ir.P_INDEX {
+        bytes.append(inout t, s("[..]"))
+    }
+    t
+}
+
+fn union(a: List[u32], b: List[u32]) -> List[u32] {
+    var out = a
+    for x in b {
+        if !out.contains(x) { out.push(x) }
+    }
+    out
+}
+
+fn without(a: List[u32], x: u32) -> List[u32] {
+    var out: List[u32] = List.new()
+    for y in a {
+        if y != x { out.push(y) }
+    }
+    out
+}
+
+/// The protection rule over every function with references (see the top of this section),
+/// then the notes are removed from the IR.
+fn protect(inout c: C) {
+    if c.rf.refs.len() == 0 { return }
+    var seen: List[u64] = List.new()
+    for f in 0..c.ir.fns.len() {
+        if !c.rf.fns.contains(f as u32) { continue }
+        let body = c.ir.fns[f].body.copy()
+        if body == 0 { continue }
+        let none: List[u32] = List.new()
+        var found: List[Found] = List.new()
+        lv_block(inout c, f as u32, body - 1, none, none, none, true, inout seen, inout found)
+        // a function's errors in source order (the pass found them backwards)
+        var sorted: List[Found] = List.new()
+        for x in found {
+            var i: usize = 0
+            while i < sorted.len() && (sorted[i].d.line < x.d.line || (sorted[i].d.line == x.d.line && sorted[i].d.col <= x.d.col)) { i += 1 }
+            var next: List[Found] = List.new()
+            for j in 0..i { next.push(sorted[j]) }
+            next.push(x)
+            for j in i..sorted.len() { next.push(sorted[j]) }
+            sorted = next
+        }
+        for x in sorted {
+            c.err_mod = x.m
+            record(inout c, x.d)
+        }
+    }
+    c.err_mod = resolve.NOMOD
+    strip_notes(inout c)
+}
+
+/// An E0308 found in module m.
+type Found = { d: diag.Diag, m: u32 }
+
+/// Liveness of references, backwards through block b of function f: the references live
+/// before it, given those live after it (`after`), at a `break` (`brk`) and at a `continue`
+/// (`cont`). With `report`, every noted write is checked against those live after it.
+fn lv_block(inout c: C, f: u32, b: u32, after: List[u32], brk: List[u32], cont: List[u32], report: bool, inout seen: List[u64], inout found: List[Found]) -> List[u32] {
+    let bl = c.ir.blocks[b as usize].copy()
+    var live = after
+    var i = bl.len
+    while i > 0 {
+        i -= 1
+        let st = c.ir.stmts[c.ir.extra[(bl.start + i) as usize] as usize].copy()
+        let k = st.kind
+        if k == ir.S_NOTE {
+            if st.a == N_USE {
+                if !live.contains(st.b) { live.push(st.b) }
+            } else if st.a == N_DEF {
+                live = without(live, st.b)
+            } else if report {
+                check_write(inout c, f, st.b, live, inout seen, inout found)
+            }
+        } else if k == ir.S_IF {
+            let t = lv_block(inout c, f, st.b, live, brk, cont, report, inout seen, inout found)
+            let e = lv_block(inout c, f, st.c, live, brk, cont, report, inout seen, inout found)
+            live = union(t, e)
+        } else if k == ir.S_LOOP {
+            live = lv_loop(inout c, f, st.a, st.b, live, report, inout seen, inout found)
+        } else if k == ir.S_BREAK {
+            live = brk
+        } else if k == ir.S_CONTINUE {
+            live = cont
+        } else if k == ir.S_RETURN || k == ir.S_PANIC {
+            live = List.new()
+        }
+    }
+    live
+}
+
+/// A loop: its body falls through, and `continue` goes, to the step, then the body again;
+/// `break` leaves it to `after`. The references live at its head, to a fixed point.
+fn lv_loop(inout c: C, f: u32, body: u32, step: u32, after: List[u32], report: bool, inout seen: List[u64], inout found: List[Found]) -> List[u32] {
+    var head: List[u32] = List.new()
+    while true {
+        let sin = lv_block(inout c, f, step, head, after, head, false, inout seen, inout found)
+        let bin = lv_block(inout c, f, body, sin, after, sin, false, inout seen, inout found)
+        let nh = union(head, bin)
+        if nh.len() == head.len() { break }
+        head = nh
+    }
+    if report {
+        let sin = lv_block(inout c, f, step, head, after, head, true, inout seen, inout found)
+        lv_block(inout c, f, body, sin, after, sin, true, inout seen, inout found)
+    }
+    head
+}
+
+/// E0308 when write w (of function f) invalidates a reference in `live` (the earliest one).
+fn check_write(inout c: C, f: u32, w: u32, live: List[u32], inout seen: List[u64], inout found: List[Found]) {
+    let wi = c.rf.writes[w as usize]
+    var best = NONE
+    for r in live {
+        if (best == NONE || r < best) && invalidates(c, c.rf.refs[r as usize].place, wi.place) { best = r }
+    }
+    if best == NONE { return }
+    // once per write (generic bodies are checked once per instance)
+    let key = (wi.m as u64) * 1099511627776 + (wi.line as u64) * 1048576 + wi.col as u64
+    if seen.contains(key) { return }
+    seen.push(key)
+    let rf = c.rf.refs[best as usize]
+    let pn = place_name(c, f, wi.place)
+    let rn = kt(c, rf.key)
+    var msg: List[u8] = List.new()
+    if wi.kind == W_RESIZE {
+        msg = q3("can't call `", wi.what, "` on `", pn, "` while `", rn, "` refers into it")
+    } else if wi.kind == W_INOUT {
+        msg = q2("can't pass `", pn, "` as `inout` while `", rn, "` refers into it")
+    } else {
+        msg = q2("can't assign to `", pn, "` while `", rn, "` refers into it")
+    }
+    var d = err("E0308", wi.line, wi.col, msg)
+    var h = q("`", rn, "` is used after this change, which may free, move or replace what it refers to; use it before the change")
+    let has_fix = match rf.fix {
+        Some(_) => true
+        None => false
+    }
+    if has_fix || rf.generic { bytes.append(inout h, s(", or bind a copy with `.copy()`")) }
+    if rf.generic && !has_fix { bytes.append(inout h, s(" (with a `Copy` bound on its type parameter)")) }
+    if has_fix && rf.mutable { bytes.append(inout h, s(" (then writes through it change only the copy)")) }
+    d.help = h
+    d.fix = rf.fix
+    found.push(Found(d, wi.m))
+}
+
+/// Remove the S_NOTEs from every block (they are the checker's own; lowering never sees them).
+fn strip_notes(inout c: C) {
+    for b in 0..c.ir.blocks.len() {
+        let bl = c.ir.blocks[b]
+        var n: u32 = 0
+        for i in 0..bl.len {
+            let sid = c.ir.extra[(bl.start + i) as usize]
+            if c.ir.stmts[sid as usize].kind != ir.S_NOTE {
+                c.ir.extra[(bl.start + n) as usize] = sid
+                n += 1
+            }
+        }
+        if n != bl.len { c.ir.blocks[b] = ir.Block(bl.start, n) }
+    }
+}
+
 // ---- scopes
 
 fn push_scope(inout c: C) { c.marks.push(c.scopes.len() as u32) }
@@ -947,11 +1379,11 @@ fn declare(inout c: C, l: Local) -> Result[bool, diag.Diag] {
 }
 
 fn local_at(key: u64, ty: u32, mutable: bool, line: u32, col: u32, l: u32) -> Local {
-    Local(key, ty, mutable, false, true, line, col, l, line, col, line, col)
+    Local(key, ty, mutable, false, true, line, col, l, line, col, line, col, NONE, NONE, 0)
 }
 
 fn local_plain(key: u64, ty: u32, byref: bool, line: u32, col: u32, l: u32) -> Local {
-    Local(key, ty, false, byref, false, line, col, l, line, col, line, col)
+    Local(key, ty, false, byref, false, line, col, l, line, col, line, col, NONE, NONE, 0)
 }
 
 // ---- substitutions
@@ -1076,7 +1508,7 @@ fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] {
 
 /// Resolve `tn` of module am with the type parameters of `sb` (and no others).
 fn resolve_with(inout c: C, am: u32, tn: u32, sb: Subst) -> Result[u32, diag.Diag] {
-    let saved = c.tsubst
+    let saved = c.tsubst.copy()
     c.tsubst = sb
     let r = resolve_ty(inout c, am, tn)
     c.tsubst = saved
@@ -1152,7 +1584,7 @@ fn eq_without_hash(c: C, ty: u32, inout seen: Map[u32, bool]) -> u32 {
 /// The type of template di applied to `args`, resolving its fields the first time
 /// (memoized per instance).
 fn inst_type(inout c: C, di: u32, args: List[u32], line: u32, col: u32) -> Result[u32, diag.Diag] {
-    let d = c.t.defs[di as usize]
+    let d = c.t.defs[di as usize].copy()
     if !visible(c, d.md, d.public) {
         let path = c.p.mods[d.md as usize].path
         return Err(errh("E0801", line, col, q2("type `", kt(c, d.key), "` is private to module `", path, "`"), "mark it `pub` in its own file to use it from other modules"))
@@ -1184,9 +1616,9 @@ fn inst_type(inout c: C, di: u32, args: List[u32], line: u32, col: u32) -> Resul
         d2.filled = true
         c.t.defs[di as usize] = d2
     }
-    let saved_all = c.cur_all
-    let saved_mod = c.cur_mod
-    let saved_sub = c.tsubst
+    let saved_all = c.cur_all.copy()
+    let saved_mod = c.cur_mod.copy()
+    let saved_sub = c.tsubst.copy()
     c.cur_all = false
     c.cur_mod = d.md
     c.tsubst = sb
@@ -1260,7 +1692,7 @@ fn has_field(fs: List[types.Field], sym: u32) -> bool {
 /// Resolve the fields of definition di.
 fn fill_type(inout c: C, di: u32) -> Result[bool, diag.Diag] {
     let d = c.t.defs[di as usize]
-    let m = d.md
+    let m = d.md.copy()
     let n = ndm(c, m, d.node)
     if !d.is_enum {
         if n.f == 0 { return Err(err("E0111", n.line, n.col, s("records need at least one field"))) }
@@ -1823,7 +2255,7 @@ fn lack_err(c: C, code: str, line: u32, col: u32, what: List[u8], tr: u32, ty: u
 /// The type of the prelude's Ordering.
 fn ordering_ty(inout c: C, line: u32, col: u32) -> Result[u32, diag.Diag] {
     if c.lt.ordering == NONE { return Err(unsup(line, col, "a prelude without `Ordering`")) }
-    let od = c.lt.ordering
+    let od = c.lt.ordering.copy()
     inst_type(inout c, od, List.new(), line, col)
 }
 
@@ -1852,7 +2284,7 @@ fn impl_instance(inout c: C, tr: u32, ix: u32, ty: u32) -> Result[u32, diag.Diag
 /// lowering's glue can call them; again for the types and bodies that brings in.
 fn scan_impls(inout c: C) {
     while (c.lt.scanned as usize) < c.t.defs.len() {
-        let d = c.t.defs[c.lt.scanned as usize]
+        let d = c.t.defs[c.lt.scanned as usize].copy()
         c.lt.scanned += 1
         if d.generic > 0 || !d.filled || poisoned(c, d.ty) { continue }
         let bits = mget(c.lt.heads, head_of(c, d.ty))
@@ -2034,11 +2466,11 @@ fn abstract_bodies(inout c: C) {
         fds.push(inst.fd)
     }
     if fds.len() == 0 { return }
-    let saved = c
+    let saved = c.copy()
     c.lt.abs = true
     var found: List[diag.Diag] = List.new()
     for fd in fds {
-        let f = c.fdefs[fd as usize]
+        let f = c.fdefs[fd as usize].copy()
         var sb = no_subst()
         for gn in all_gparam_nodes(c, fd) {
             let g = ndm(c, f.md, gn)
@@ -2117,7 +2549,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C {
         List.new(), List.new(), List.new(),
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
         0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false, Rec(false, List.new(), List.new()),
-        List.new(), List.new(), false, Map.new(), false, false, Map.new(), List.new(), lt)
+        List.new(), List.new(), false, Map.new(), false, false, Map.new(), List.new(), lt, no_refs())
 }
 
 /// Every item of the program in load order (resolve.ei), as (module, node) pairs.
@@ -2396,7 +2828,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
     c.cur_mod = resolve.NOMOD
     // 7. signatures of every concrete function, then of every concrete method
     for fi in 0..c.fdefs.len() {
-        let f = c.fdefs[fi]
+        let f = c.fdefs[fi].copy()
         if f.generic || f.inode != NONE { continue }
         c.err_mod = f.md
         c.seen = List.new()
@@ -2410,7 +2842,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
         if ast.has(fl, ast.FN_EXTERN) || ast.has(fl, ast.FN_EXPORT) { record_ffi(inout c, ii) }
     }
     for fi in concrete {
-        let f = c.fdefs[fi as usize]
+        let f = c.fdefs[fi as usize].copy()
         c.err_mod = f.md
         c.seen = List.new()
         c.cur_mod = f.md
@@ -2456,7 +2888,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
             Some(x) => x
             None => 0
         }
-        let fd = c.insts[i as usize].fd
+        let fd = c.insts[i as usize].fd.copy()
         let generic = c.insts[i as usize].slen > 0
         // a further instance of a generic body that had errors would repeat them
         c.mute = generic && c.bad_fd.contains(fd)
@@ -2474,6 +2906,8 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
         // then the language-trait impls of the types made so far, whose bodies may make more
         if c.pending.len() == 0 { scan_impls(inout c) }
     }
+    // the protection rule (E0308), over every body ("References")
+    protect(inout c)
     // generic bodies against their bounds (E0605)
     abstract_bodies(inout c)
     c.err_mod = resolve.NOMOD
@@ -2533,7 +2967,7 @@ fn check_const(inout c: C, it: Item, n: ast.Node, k: u64) -> Result[bool, diag.D
 
 /// Record instance ii of an `extern "c"` or `export` function in the IR.
 fn record_ffi(inout c: C, ii: u32) {
-    let inst = c.insts[ii as usize]
+    let inst = c.insts[ii as usize].copy()
     let f = c.fdefs[inst.fd as usize]
     let n = ndm(c, f.md, f.node)
     if ast.has(n.b, ast.FN_EXTERN) {
@@ -2611,7 +3045,7 @@ fn check_bounds_known(inout c: C, m: u32, start: u32, len: u32) -> Result[bool, 
                 continue
             }
             if c.rec.on {
-                let tr = c.trs[mget(c.traits, bk) as usize]
+                let tr = c.trs[mget(c.traits, bk) as usize].copy()
                 let trn = ndm(c, tr.m, tr.node)
                 note_ref(inout c, m, b, tr.m, trn.line, trn.col)
             }
@@ -2673,7 +3107,7 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
             let rd = err("E0603", tn.line, tn.col, q("unknown trait `", kt(c, tk), "`"))
             record(inout c, rd)
         } else {
-            let tr = c.trs[ti as usize]
+            let tr = c.trs[ti as usize].copy()
             let trn = ndm(c, tr.m, tr.node)
             note_ref(inout c, m, tn, tr.m, trn.line, trn.col)
             // a language trait: the orphan rule and what each needs ("Operation traits")
@@ -2811,7 +3245,7 @@ fn inst_name(c: C, fi: u32, sb: Subst) -> List[u8] {
 /// The instance of declaration fi for substitution sb, resolving its signature the first
 /// time and queueing its body.
 fn instantiate(inout c: C, fi: u32, sb: Subst) -> Result[u32, diag.Diag] {
-    let f = c.fdefs[fi as usize]
+    let f = c.fdefs[fi as usize].copy()
     var keyl: List[u32] = List.new()
     if f.inode != NONE { keyl.push(subst_get(sb, intern.S_SELF_TYPE)) } else { keyl.push(NONE) }
     for g in all_generics(c, fi) { keyl.push(subst_get(sb, g)) }
@@ -2819,9 +3253,9 @@ fn instantiate(inout c: C, fi: u32, sb: Subst) -> Result[u32, diag.Diag] {
     let ik = (fi as u64) * 4294967296 + lid as u64
     let found = mget(c.inst_ix, ik)
     if found != NONE { return Ok(found) }
-    let saved_all = c.cur_all
-    let saved_mod = c.cur_mod
-    let saved_sub = c.tsubst
+    let saved_all = c.cur_all.copy()
+    let saved_mod = c.cur_mod.copy()
+    let saved_sub = c.tsubst.copy()
     c.cur_all = false
     c.cur_mod = f.md
     c.tsubst = sb
@@ -2856,7 +3290,7 @@ fn instantiate(inout c: C, fi: u32, sb: Subst) -> Result[u32, diag.Diag] {
 /// are the error type, or left out (a capability), so the instance always exists.
 fn signature(inout c: C, fi: u32) -> Result[Inst, diag.Diag] {
     let f = c.fdefs[fi as usize]
-    let m = f.md
+    let m = f.md.copy()
     let n = ndm(c, m, f.node)
     var ps: List[u32] = List.new()
     for i in 0..n.f {
@@ -2928,6 +3362,7 @@ fn begin_body(inout c: C, m: u32, ret: u32, caps: List[u32], line: u32, col: u32
     c.loops = 0
     c.scopes = List.new()
     c.marks = List.new()
+    c.rf.any = false
     push_scope(inout c)
 }
 
@@ -2937,9 +3372,9 @@ fn check_test(inout c: C, m: u32, n: ast.Node) -> Result[bool, diag.Diag] {
     c.cur_mod = resolve.NOMOD
     c.unsafe_depth = 0
     c.locals = Map.new()
-    let caps = c.w.caps
+    let caps = c.w.caps.copy()
     begin_body(inout c, m, types.UNIT, caps, n.line, n.col)
-    let tname = c.p.mods[m as usize].strs[n.a as usize]
+    let tname = c.p.mods[m as usize].strs[n.a as usize].copy()
     let f = ir.declare_fn(inout c.ir, tname, true)
     let ctext = caps_text(c, caps)
     ir.begin_fn(inout c.ir, f, types.UNIT, ctext)
@@ -2954,9 +3389,9 @@ fn check_test(inout c: C, m: u32, n: ast.Node) -> Result[bool, diag.Diag] {
 }
 
 fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] {
-    let inst = c.insts[ii as usize]
-    let f = c.fdefs[inst.fd as usize]
-    let m = f.md
+    let inst = c.insts[ii as usize].copy()
+    let f = c.fdefs[inst.fd as usize].copy()
+    let m = f.md.copy()
     let n = ndm(c, m, f.node)
     var sb = no_subst()
     for i in 0..inst.slen {
@@ -2980,7 +3415,7 @@ fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] {
     reset_frames(inout c)
     for i in 0..n.f {
         let pn = ndm(c, m, atm(c, m, n.e, i))
-        let ty = c.ptys[(inst.pstart + i) as usize]
+        let ty = c.ptys[(inst.pstart + i) as usize].copy()
         let kind = if pn.c == 1 { ir.L_INOUT } else { ir.L_PARAM }
         let l = ir.local(inout c.ir, pn.a, ty, kind, pn.line)
         // a parameter named twice is reported; the body sees the first
@@ -3053,7 +3488,7 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] {
     match n.kind {
         ast.SLet => {
             var declared = NONE
-            let am = c.am
+            let am = c.am.copy()
             if n.b > 0 {
                 // an annotation that doesn't resolve: the initializer is still checked
                 declared = match resolve_ty(inout c, am, n.b - 1) {
@@ -3066,7 +3501,13 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] {
                 }
             }
             let init = nd(c, n.c)
-            let kind = if n.d == 1 { ir.L_VAR } else { ir.L_LET }
+            // `let x = place`, `let mut x = place`: a reference ("References"), unless it
+            // would be a mutable alias of a read-only place (E0307: then x owns a copy, as the
+            // fix's `.copy()` makes it)
+            let place_init = ref_init(c, n.c)
+            let alias_ro = place_init && n.d == 2 && !writable(c, root(c, n.c).key)
+            if place_init && n.d != 1 && !alias_ro { return let_ref(inout c, n, declared) }
+            let kind = if n.d == 0 { ir.L_LET } else { ir.L_VAR }
             var fin = declared
             var l: u32 = 0
             if is_value_form(c, n.c) {
@@ -3079,12 +3520,19 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] {
                 let v = expr(inout c, n.c, declared)?
                 if fin == NONE { fin = v.ty }
                 check_bindable(c, v.ty, fin, init.line, init.col)?
+                if alias_ro {
+                    let what = q("`let mut ", nm(c, n.a), "`")
+                    let rr = root(c, n.c)
+                    let ad = alias_error(c, rr.line, rr.col, what, rr.key, copy_fix(c, fin, n.e, n.f))
+                    record(inout c, ad)
+                }
                 let o = take(inout c, v, n.line)
                 l = ir.local(inout c.ir, n.a, fin, kind, n.line)
                 emit(inout c, ir.S_COPY, l, o, 0, 0, fin, n.line)
             }
             register(inout c, l, fin)
-            declare(inout c, local_at(resolve.key(0, n.a), fin, n.d == 1, n.line, n.col, l))?
+            declare(inout c, local_at(resolve.key(0, n.a), fin, n.d != 0, n.line, n.col, l))?
+            if n.d == 1 { note_var(inout c, n, place_init, fin, List.new()) }
             Ok(types.UNIT)
         }
         ast.SLetPat => let_pat(inout c, n)
@@ -3129,7 +3577,7 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] {
                 return Ok(types.NEVER)
             }
             if c.ret == types.UNIT { return Err(err("E0401", e.line, e.col, s("this function returns (), it can't return a value"))) }
-            let ret = c.ret
+            let ret = c.ret.copy()
             let t = compile_value(inout c, n.a - 1, Dest(D_RETURN, 0), ret)?
             if !same(c, t, c.ret) && t != types.NEVER { return Err(mismatch(c, e.line, e.col, c.ret, t)) }
             Ok(types.NEVER)
@@ -3161,23 +3609,52 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] {
 
 /// `let PAT = init`.
 fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
-    let v = expr(inout c, n.c, NONE)?
     let init = nd(c, n.c)
-    check_bindable(c, v.ty, v.ty, init.line, init.col)?
-    if poisoned(c, v.ty) {
-        bind_pat_poison(inout c, n.a)
-        return Ok(types.UNIT)
+    // of a place (not `var`): the bindings are references into it ("References")
+    let place_init = ref_init(c, n.c)
+    let is_ref = place_init && n.d != 1
+    var vty: u32 = 0
+    var acc: u32 = 0
+    if is_ref {
+        let sp = snap(c)
+        match place_expr(inout c, n.c) {
+            Ok(pv) => {
+                if c.rec.on && init.kind == ast.EField { note_ty(inout c, init, pv.ty) }
+                vty = pv.ty
+                acc = pv.place
+            }
+            Err(d) => {
+                if fatal(d) { return Err(d) }
+                record(inout c, d)
+                restore(inout c, sp)
+                bind_pat_poison(inout c, n.a)
+                return Ok(types.UNIT)
+            }
+        }
+        check_bindable(c, vty, vty, init.line, init.col)?
+        if poisoned(c, vty) {
+            bind_pat_poison(inout c, n.a)
+            return Ok(types.UNIT)
+        }
+    } else {
+        let v = expr(inout c, n.c, NONE)?
+        check_bindable(c, v.ty, v.ty, init.line, init.col)?
+        if poisoned(c, v.ty) {
+            bind_pat_poison(inout c, n.a)
+            return Ok(types.UNIT)
+        }
+        vty = v.ty
+        acc = place_of_op(inout c, v.op, v.ty, n.line)
     }
-    let acc = place_of_op(inout c, v.op, v.ty, n.line)
     var lw = Lowered(List.new(), List.new())
     c.pat_bad = false
-    let pir = lower_pat(inout c, n.a, v.ty, acc, inout lw)?
+    let pir = lower_pat(inout c, n.a, vty, acc, inout lw)?
     var rows = pats.empty(1)
     var row: List[u32] = List.new()
     row.push(pir)
     pats.add_row(inout rows, row)
     var tys: List[u32] = List.new()
-    tys.push(v.ty)
+    tys.push(vty)
     let missing: Option[List[List[u8]]] = if c.pat_bad { None } else { pats.missing(c.pt, c.t, c.p.names, rows, tys) }
     match missing {
         Some(w) => {
@@ -3186,13 +3663,154 @@ fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
         }
         None => {}
     }
-    let kind = if n.d == 1 { ir.L_VAR } else { ir.L_LET }
+    let rk: u64 = if is_ref { root(c, n.c).key } else { 0 }
     for b in lw.binds {
+        let mutable = n.d == 1 || b.mutable
+        if is_ref {
+            if !b.mutable || writable(c, rk) {
+                let fx = copy_fix(c, vty, n.e, n.f)
+                var v = new_ref(inout c, b.key, b.ty, b.place, b.mutable, rk, b.line, b.col, fx)
+                v.dline = n.line
+                v.dcol = n.col
+                declare(inout c, v)?
+                continue
+            }
+            // a mutable alias of a read-only place: it owns a copy (E0307)
+            let ad = alias_error(c, b.line, b.col, q("`mut ", kt(c, b.key), "`"), rk, copy_fix(c, vty, n.e, n.f))
+            record(inout c, ad)
+        }
+        let kind = if mutable { ir.L_VAR } else { ir.L_LET }
         let l = ir.local(inout c.ir, resolve.key_sym(b.key), b.ty, kind, b.line)
         bind_value(inout c, l, b.ty, b.place)
-        declare(inout c, Local(b.key, b.ty, n.d == 1, false, true, b.line, b.col, l, n.line, n.col, b.line, b.col))?
+        declare(inout c, Local(b.key, b.ty, mutable, false, true, b.line, b.col, l, n.line, n.col, b.line, b.col, NONE, NONE, 0))?
     }
+    if n.d == 1 { note_var(inout c, n, place_init, vty, lw.binds) }
     Ok(types.UNIT)
+}
+
+/// `let x = place` or `let mut x = place` (n.d 0 or 2; the place's root may be written for
+/// `let mut`): x refers to the place ("References").
+fn let_ref(inout c: C, n: ast.Node, declared: u32) -> Result[u32, diag.Diag] {
+    let init = nd(c, n.c)
+    let key = resolve.key(0, n.a)
+    let sp = snap(c)
+    let pv = match place_expr(inout c, n.c) {
+        Ok(x) => x
+        Err(d) => {
+            if fatal(d) { return Err(d) }
+            record(inout c, d)
+            restore(inout c, sp)
+            // a failed initializer: the name has the error type (as `expr` would give it)
+            let pt = poison(inout c)
+            let fin = if declared != NONE { declared } else { pt }
+            let l = ir.local(inout c.ir, n.a, fin, ir.L_LET, n.line)
+            declare(inout c, local_at(key, fin, n.d == 2, n.line, n.col, l))?
+            return Ok(types.UNIT)
+        }
+    }
+    if c.rec.on && init.kind == ast.EField { note_ty(inout c, init, pv.ty) }
+    let fin = if declared != NONE { declared } else { pv.ty }
+    check_bindable(c, pv.ty, fin, init.line, init.col)?
+    let rk = root(c, n.c).key
+    let fx = copy_fix(c, fin, n.e, n.f)
+    let v = new_ref(inout c, key, fin, pv.place, n.d == 2, rk, n.line, n.col, fx)
+    declare(inout c, v)?
+    Ok(types.UNIT)
+}
+
+// ---- Migration of `var` (docs/compiler.md, "C8.6")
+//
+// `var` is deprecated: `var x = place` is `let mut x = place.copy()` (a `var` makes its own
+// value), `var x = fresh` is `let mut x = fresh`, `var (a, b) = e` is `let (mut a, mut b) = e`
+// (with `.copy()` when e is a place). Every `var` of a body checked with concrete types is
+// recorded with those edits; `eiderc migrate-var` applies them. A `var` of a place whose
+// type lacks Copy, or in a generic body (where `.copy()` may need a bound), is left as it is.
+
+fn note_var(inout c: C, n: ast.Node, place: bool, ty: u32, binds: List[Bind]) {
+    if generic_body(c) || poisoned(c, ty) { return }
+    var fx: List[diag.Fix] = List.new()
+    if place {
+        // `.copy()` must make what `var` made: the implicit copy, which shares a Mutex and a
+        // record with its own Drop and never runs an own `copy`
+        var seen: Map[u32, bool] = Map.new()
+        if copy_differs(c, ty, inout seen) { return }
+        match copy_fix(c, ty, n.e, n.f) {
+            Some(f) => fx.push(f)
+            None => { return }
+        }
+    }
+    if n.kind == ast.SLet {
+        fx.push(diag.Fix(n.line, n.col, 3, s("let mut")))
+    } else {
+        fx.push(diag.Fix(n.line, n.col, 3, s("let")))
+        for b in binds {
+            if !b.mutable { fx.push(diag.Fix(b.line, b.col, 0, s("mut "))) }
+        }
+    }
+    c.rf.vars.push(VarSite(c.am, fx))
+}
+
+/// Whether `.copy()` of a ty differs from the copy binding and passing make: ty holds a
+/// Mutex (`.copy()` makes a new one), a record with its own Drop (`.copy()` gives it a buffer
+/// of its own) or a type with its own Copy (`.copy()` runs it).
+fn copy_differs(c: C, ty: u32, inout seen: Map[u32, bool]) -> bool {
+    if seen.contains(ty) { return false }
+    seen.insert(ty, true)
+    let t = types.get(c.t, ty)
+    let k = t.kind
+    if k == types.T_MUTEX { return true }
+    if k == types.T_LIST || k == types.T_BOX || k == types.T_ARRAY { return copy_differs(c, t.a, inout seen) }
+    if k == types.T_MAP { return copy_differs(c, t.a, inout seen) || copy_differs(c, t.b, inout seen) }
+    if k == types.T_TUPLE {
+        for x in types.elems(c.t, ty) {
+            if copy_differs(c, x, inout seen) { return true }
+        }
+        return false
+    }
+    if k != types.T_RECORD && k != types.T_ENUM { return false }
+    if custom(c, TR_COPY, ty) || has_drop(c, ty) { return true }
+    let d = c.t.defs[t.a as usize]
+    if d.is_enum {
+        for i in 0..d.len {
+            let v = types.variant(c.t, d, i)
+            for j in 0..v.flen {
+                if copy_differs(c, types.field(c.t, v.fstart, j).ty, inout seen) { return true }
+            }
+        }
+        return false
+    }
+    for j in 0..d.len {
+        if copy_differs(c, types.field(c.t, d.start, j).ty, inout seen) { return true }
+    }
+    false
+}
+
+/// The edits that rewrite the `var`s of module m (each edit once, last in the file first, so
+/// they can be applied in order).
+pub fn var_fixes(c: C, m: u32) -> List[diag.Fix] {
+    var all: List[diag.Fix] = List.new()
+    for v in c.rf.vars {
+        if v.m != m { continue }
+        for f in v.fixes {
+            var dup = false
+            for g in all {
+                if g.line == f.line && g.col == f.col { dup = true }
+            }
+            if !dup { all.push(f) }
+        }
+    }
+    // insertion sort, by position, descending
+    var out: List[diag.Fix] = List.new()
+    for f in all {
+        var i: usize = 0
+        while i < out.len() && (out[i].line > f.line || (out[i].line == f.line && out[i].col > f.col)) { i += 1 }
+        var next: List[diag.Fix] = List.new()
+        for j in 0..i { next.push(out[j]) }
+        next.push(f)
+        for j in i..out.len() { next.push(out[j]) }
+        out = next
+    }
+    out
 }
 
 fn loop_exit(inout c: C, n: ast.Node, kind: u32) -> Result[u32, diag.Diag] {
@@ -3337,7 +3955,7 @@ fn for_iter(inout c: C, n: ast.Node, pv: PV) -> Result[u32, diag.Diag] {
     let ii = impl_instance(inout c, TR_ITER, ix, ty)?
     // (an impl without `next` was reported)
     if ii == NONE { return Err(quiet()) }
-    let inst = c.insts[ii as usize]
+    let inst = c.insts[ii as usize].copy()
     let fnode = ndm(c, c.fdefs[inst.fd as usize].md, c.fdefs[inst.fd as usize].node)
     for i in 0..fnode.j {
         let cap = ndm(c, c.fdefs[inst.fd as usize].md, atm(c, c.fdefs[inst.fd as usize].md, fnode.i, i)).a
@@ -3347,7 +3965,7 @@ fn for_iter(inout c: C, n: ast.Node, pv: PV) -> Result[u32, diag.Diag] {
             break
         }
     }
-    let oty = inst.ret
+    let oty = inst.ret.copy()
     var et = poison(inout c)
     var si: u32 = 0
     if types.kind(c.t, oty) == types.T_ENUM && !poisoned(c, oty) {
@@ -3428,6 +4046,13 @@ fn check_assignable(c: C, target: u32, verb: str) -> Result[bool, diag.Diag] {
 }
 
 fn assign(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
+    at_pos(inout c, n.line, n.col)
+    let r = assign_in(inout c, n)
+    end_pos(inout c)
+    r
+}
+
+fn assign_in(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     match check_assignable(c, n.a, "assign to") {
         Ok(_) => {}
         Err(d) => {
@@ -3569,7 +4194,7 @@ fn lower_pat(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) -> Re
             if other != NONE {
                 return Err(err("E0401", n.line, n.col, q3("`", kt(c, k), "` is a variant of ", kt(c, c.t.defs[other as usize].key), ", but the value has type ", ts(c, ty), "")))
             }
-            lw.binds.push(Bind(k, place, ty, n.line, n.col))
+            lw.binds.push(Bind(k, place, ty, n.line, n.col, n.c == 1))
             Ok(pats.WILD)
         }
         ast.PInt => {
@@ -3591,7 +4216,7 @@ fn lower_pat(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) -> Re
         }
         ast.PStr => {
             if tk != types.T_STR { return Err(mismatch(c, n.line, n.col, ty, types.STR)) }
-            let b = c.p.mods[c.am as usize].strs[n.a as usize]
+            let b = c.p.mods[c.am as usize].strs[n.a as usize].copy()
             let id = intern.intern(inout c.p.names, b, 0, b.len())
             lw.tests.push(Test(T_STR, place, ty, 0, fold.zero(), b))
             Ok(pats.ctor(inout c.pt, pats.C_STR, id, 0, List.new()))
@@ -3641,7 +4266,7 @@ fn lower_pat(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) -> Re
                 let d = types.def_of(c.t, ty)
                 if d.key == k {
                     if c.rec.on {
-                        let am = c.am
+                        let am = c.am.copy()
                         note_def(inout c, am, n, d.tmpl)
                     }
                     if d.len != n.d {
@@ -3671,7 +4296,7 @@ fn poison_binds(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) {
     let n = nd(c, pat)
     if n.kind == ast.PName {
         let k = resolve.name_key(c.p, c.am, n.a, n.b, n.line, n.col)
-        if !c.variants.contains(k) { lw.binds.push(Bind(k, place, ty, n.line, n.col)) }
+        if !c.variants.contains(k) { lw.binds.push(Bind(k, place, ty, n.line, n.col, n.c == 1)) }
         return
     }
     if n.kind == ast.PVariant || n.kind == ast.PTuple {
@@ -3686,15 +4311,38 @@ fn poison_binds(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) {
 type Alt = { tests: List[Test] }
 
 fn compile_match(inout c: C, m: ast.Node, dest: Dest, exp: u32) -> Result[u32, diag.Diag] {
-    let sv = expr(inout c, m.a, NONE)?
     let sn = nd(c, m.a)
+    // a place scrutinee: the bindings are references into it ("References")
+    let is_ref = ref_init(c, m.a)
+    var sv = v_of(types.UNIT, 0)
+    var place: u32 = NONE
+    if is_ref {
+        let sp = snap(c)
+        match place_expr(inout c, m.a) {
+            Ok(pv) => {
+                if c.rec.on && sn.kind == ast.EField { note_ty(inout c, sn, pv.ty) }
+                sv = v_of(pv.ty, 0)
+                place = pv.place
+            }
+            Err(d) => {
+                if fatal(d) { return Err(d) }
+                record(inout c, d)
+                restore(inout c, sp)
+                sv = poison_v(inout c)
+            }
+        }
+    } else {
+        sv = expr(inout c, m.a, NONE)?
+    }
     // a syntax error inside: an arm may have been skipped, so the match isn't judged
     c.pat_bad = resolve.syntax_in(c.p, c.am, m.line, m.end_line)
     if sv.ty == types.UNIT || sv.ty == types.NEVER {
         return Err(err("E0401", sn.line, sn.col, q("cannot match on a value of type ", ts(c, sv.ty), "")))
     }
     if m.d == 0 { return Err(err("E0101", m.line, m.col, s("match has no arms"))) }
-    let place = place_of_op(inout c, sv.op, sv.ty, m.line)
+    if place == NONE { place = place_of_op(inout c, sv.op, sv.ty, m.line) }
+    let rk: u64 = if place != NONE && is_ref { root(c, m.a).key } else { 0 }
+    let sc = Scrut(is_ref, rk, sv.ty, m.e, m.f)
     // lower every pattern, checking reachability
     var rows = pats.empty(1)
     var tys: List[u32] = List.new()
@@ -3741,23 +4389,27 @@ fn compile_match(inout c: C, m: ast.Node, dest: Dest, exp: u32) -> Result[u32, d
         }
         None => {}
     }
-    match_arms(inout c, m, 0, alts, alt_start, arm_binds, dest, exp, types.NEVER)
+    match_arms(inout c, m, 0, alts, alt_start, arm_binds, sc, dest, exp, types.NEVER)
 }
+
+/// A match's scrutinee as its bindings need it: a place (`is_ref`) rooted at variable `rk`,
+/// of type ty, ending just before (line, col) (where a fix puts `.copy()`).
+type Scrut = { is_ref: bool, rk: u64, ty: u32, line: u32, col: u32 }
 
 /// Emit arms i.. as an if/else chain (the last arm needs no test: the match is exhaustive);
 /// `result` is the unified type of the arms before i.
-fn match_arms(inout c: C, m: ast.Node, i: u32, alts: List[Alt], alt_start: List[u32], arm_binds: List[List[Bind]], dest: Dest, exp: u32, result: u32) -> Result[u32, diag.Diag] {
+fn match_arms(inout c: C, m: ast.Node, i: u32, alts: List[Alt], alt_start: List[u32], arm_binds: List[List[Bind]], sc: Scrut, dest: Dest, exp: u32, result: u32) -> Result[u32, diag.Diag] {
     if i + 1 == m.d {
-        let t = arm_body(inout c, m, i, arm_binds[i as usize], dest, exp)?
+        let t = arm_body(inout c, m, i, arm_binds[i as usize], sc, dest, exp)?
         return finish_match(c, m, i, dest, result, t)
     }
     let cond = alt_cond(inout c, alts, alt_start[i as usize], alt_start[(i + 1) as usize], m.line)
     let tm = ir.open(c.ir)
-    let t = arm_body(inout c, m, i, arm_binds[i as usize], dest, exp)?
+    let t = arm_body(inout c, m, i, arm_binds[i as usize], sc, dest, exp)?
     let then = ir.close(inout c.ir, tm)
     let r1 = finish_arm(c, m, i, result, t)?
     let em = ir.open(c.ir)
-    let r = match_arms(inout c, m, i + 1, alts, alt_start, arm_binds, dest, exp, r1)?
+    let r = match_arms(inout c, m, i + 1, alts, alt_start, arm_binds, sc, dest, exp, r1)?
     let els = ir.close(inout c.ir, em)
     emit(inout c, ir.S_IF, 0, cond, then, els, 0, m.line)
     Ok(r)
@@ -3777,14 +4429,30 @@ fn finish_match(c: C, m: ast.Node, i: u32, dest: Dest, result: u32, t: u32) -> R
     Ok(r)
 }
 
-fn arm_body(inout c: C, m: ast.Node, i: u32, binds: List[Bind], dest: Dest, exp: u32) -> Result[u32, diag.Diag] {
+fn arm_body(inout c: C, m: ast.Node, i: u32, binds: List[Bind], sc: Scrut, dest: Dest, exp: u32) -> Result[u32, diag.Diag] {
     let arm = nd(c, at(c, m.c, i))
     push_scope(inout c)
     push_frame(inout c)
     for b in binds {
-        let l = ir.local(inout c.ir, resolve.key_sym(b.key), b.ty, ir.L_LET, b.line)
+        if sc.is_ref {
+            if !b.mutable || writable(c, sc.rk) {
+                let fx = copy_fix(c, sc.ty, sc.line, sc.col)
+                var v = new_ref(inout c, b.key, b.ty, b.place, b.mutable, sc.rk, b.line, b.col, fx)
+                // (assigning to an arm binding is reported as before: it is no `let`)
+                v.has_decl = false
+                declare(inout c, v)?
+                continue
+            }
+            // a mutable alias of a read-only place: it owns a copy (E0307)
+            let ad = alias_error(c, b.line, b.col, q("`mut ", kt(c, b.key), "`"), sc.rk, copy_fix(c, sc.ty, sc.line, sc.col))
+            record(inout c, ad)
+        }
+        let kind = if b.mutable { ir.L_VAR } else { ir.L_LET }
+        let l = ir.local(inout c.ir, resolve.key_sym(b.key), b.ty, kind, b.line)
         bind_value(inout c, l, b.ty, b.place)
-        declare(inout c, local_plain(b.key, b.ty, false, b.line, b.col, l))?
+        var v = local_plain(b.key, b.ty, false, b.line, b.col, l)
+        v.mutable = b.mutable
+        declare(inout c, v)?
     }
     var t = types.UNIT
     if arm.b == 1 {
@@ -3902,7 +4570,7 @@ fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
             Ok(v_of(types.BOOL, o))
         }
         ast.EStr => {
-            let text = c.p.mods[c.am as usize].strs[n.a as usize]
+            let text = c.p.mods[c.am as usize].strs[n.a as usize].copy()
             let o = ir.op_str(inout c.ir, text)
             Ok(v_of(types.STR, o))
         }
@@ -3910,9 +4578,9 @@ fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
             let k = ekey(c, n)
             let li = lookup(c, k)
             if li != NONE {
-                let v = c.scopes[li as usize]
+                let v = c.scopes[li as usize].copy()
                 note_local(inout c, n, v)
-                let pl = ir.place_local(inout c.ir, v.ir, v.ty)
+                let pl = local_place(inout c, v)
                 let o = read(inout c, pl, v.ty, 0)
                 return Ok(v_of(v.ty, o))
             }
@@ -3927,7 +4595,7 @@ fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
                     match types.find_variant(c.t, d, fk) {
                         Some(_) => {
                             if c.rec.on {
-                                let am = c.am
+                                let am = c.am.copy()
                                 let base = nd(c, n.a)
                                 note_def(inout c, am, base, di)
                                 note_variant(inout c, n, di, fk)
@@ -3994,14 +4662,14 @@ fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
 fn ident_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag] {
     let ci = mget(c.consts, k)
     if ci != NONE {
-        let cd = c.cdefs[ci as usize]
+        let cd = c.cdefs[ci as usize].copy()
         if !visible(c, cd.md, cd.public) {
             // reported, then used as if it were visible
             let rd = err("E0801", n.line, n.col, q2("constant `", kt(c, k), "` is private to module `", c.p.mods[cd.md as usize].path, "`"))
             record(inout c, rd)
         }
         if c.rec.on {
-            let am = c.am
+            let am = c.am.copy()
             let cn = ndm(c, cd.md, cd.node)
             note_ref(inout c, am, n, cd.md, cn.line, cn.col)
         }
@@ -4039,12 +4707,12 @@ fn place_expr(inout c: C, e: u32) -> Result[PV, diag.Diag] {
         let k = ekey(c, n)
         let li = lookup(c, k)
         if li != NONE {
-            let v = c.scopes[li as usize]
+            let v = c.scopes[li as usize].copy()
             if c.rec.on {
                 note_local(inout c, n, v)
                 note_ty(inout c, n, v.ty)
             }
-            return Ok(PV(ir.place_local(inout c.ir, v.ir, v.ty), v.ty, NONE))
+            return Ok(PV(local_place(inout c, v), v.ty, NONE))
         }
     }
     if n.kind == ast.EField {
@@ -4273,7 +4941,7 @@ fn fold_arith(inout c: C, n: ast.Node, op: u32, ik: u32, ty: u32, a: fold.Wide, 
 }
 
 fn cast(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
-    let am = c.am
+    let am = c.am.copy()
     let target = resolve_ty(inout c, am, n.b)?
     if !types.is_int(c.t, target) {
         return Err(err("E0401", n.line, n.col, q("`as` only converts between integer types, not to ", ts(c, target), "")))
@@ -4396,7 +5064,7 @@ fn try_op(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
         rargs.push(emit_val(inout c, ir.S_MOVE, ep, 0, 0, et, et, n.line))
     }
     let st = ir.list(inout c.ir, rargs)
-    let rty = c.ret
+    let rty = c.ret.copy()
     let rv = emit_val(inout c, ir.S_VARIANT, rbad_i, st, rargs.len() as u32, rty, rty, n.line)
     drop_frames_from(inout c, 0)
     emit(inout c, ir.S_RETURN, 0, rv + 1, 0, 0, 0, n.line)
@@ -4423,6 +5091,13 @@ fn variant_index(c: C, ty: u32, sym: u32) -> u32 {
 fn arg_expr(c: C, a: u32) -> u32 { nd(c, a).a }
 
 fn call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
+    at_pos(inout c, n.line, n.col)
+    let r = call_in(inout c, n, exp)
+    end_pos(inout c)
+    r
+}
+
+fn call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let k = ekey(c, n)
     if is_builtin_fn(c, k) { return builtin(inout c, n, resolve.key_sym(k)) }
     let vd = mget(c.variants, k)
@@ -4432,15 +5107,15 @@ fn call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     }
     let td = mget(c.tmpl, k)
     if td != NONE && !c.t.defs[td as usize].is_enum {
-        let am = c.am
+        let am = c.am.copy()
         note_def(inout c, am, n, td)
         return construct(inout c, n.line, n.col, td, NONE as u64, n.c, n.d, exp)
     }
     let li = lookup(c, k)
     if li != NONE {
-        let v = c.scopes[li as usize]
+        let v = c.scopes[li as usize].copy()
         note_local(inout c, n, v)
-        let pl = ir.place_local(inout c.ir, v.ir, v.ty)
+        let pl = local_place(inout c, v)
         let fv = v_of(v.ty, read(inout c, pl, v.ty, 0))
         let label = kt(c, k)
         return call_value(inout c, n, label, fv)
@@ -4483,7 +5158,7 @@ fn field_nodes(c: C, di: u32, vkey: u64) -> List[u32] {
 /// from the arguments [start/len), inferring type arguments from the expected type and
 /// the arguments.
 fn construct(inout c: C, line: u32, col: u32, di: u32, vkey: u64, start: u32, len: u32, exp: u32) -> Result[V, diag.Diag] {
-    let d = c.t.defs[di as usize]
+    let d = c.t.defs[di as usize].copy()
     let fas = field_nodes(c, di, vkey)
     let label = if vkey != NONE as u64 { kt(c, vkey) } else { kt(c, d.key) }
     if len != fas.len() as u32 {
@@ -4601,8 +5276,8 @@ fn no_recv() -> Recv { Recv(false, 0, PV(0, 0, NONE)) }
 /// type parameters.
 fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv: Recv, exp: u32, is_method: bool) -> Result[V, diag.Diag] {
     note_fn(inout c, n, fi)
-    let f = c.fdefs[fi as usize]
-    let fm = f.md
+    let f = c.fdefs[fi as usize].copy()
+    let fm = f.md.copy()
     let fnode = ndm(c, fm, f.node)
     var sb = sb0
     var gs = gparams(c, fm, fnode.c, fnode.d)
@@ -4645,9 +5320,10 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
     }
     // exclusivity of inout borrows
     var roots: List[u64] = List.new()
+    // (a reference counts as the variable its place is rooted at: `canon`)
     if recv.has && ndm(c, fm, atm(c, fm, fnode.e, 0)).c == 1 {
         let r = root(c, recv.e)
-        if r.ok { roots.push(r.key) }
+        if r.ok { roots.push(canon(c, r.key)) }
     }
     for i in 0..n.d {
         let a = nd(c, at(c, n.c, i))
@@ -4655,10 +5331,12 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
         if pn.c == 1 && a.b == 1 {
             let r = root(c, a.a)
             if r.ok {
-                if roots.contains(r.key) {
+                let rk = canon(c, r.key)
+                if roots.contains(rk) {
+                    if rk != r.key { return Err(err("E0301", r.line, r.col, q2("`", kt(c, r.key), "` is an alias of `", kt(c, rk), "`, which is borrowed mutably more than once in this call"))) }
                     return Err(err("E0301", r.line, r.col, q("`", kt(c, r.key), "` is borrowed mutably more than once in this call")))
                 }
-                roots.push(r.key)
+                roots.push(rk)
             }
         }
     }
@@ -4669,9 +5347,12 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
             var ids: List[u64] = List.new()
             idents(c, a.a, inout ids)
             for r in roots {
-                if ids.contains(r) {
-                    let x = nd(c, a.a)
-                    return Err(err("E0301", x.line, x.col, q("`", kt(c, r), "` is borrowed mutably by another argument of this call and can't be read here")))
+                for k in ids {
+                    if canon(c, k) == r {
+                        let x = nd(c, a.a)
+                        if k != r { return Err(alias_read_error(c, x.line, x.col, k, r)) }
+                        return Err(err("E0301", x.line, x.col, q("`", kt(c, r), "` is borrowed mutably by another argument of this call and can't be read here")))
+                    }
                 }
             }
         }
@@ -4806,7 +5487,7 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
         if poisoned(c, t) { return Ok(poison_v(inout c)) }
     }
     let ii = instantiate(inout c, fi, sb)?
-    let inst = c.insts[ii as usize]
+    let inst = c.insts[ii as usize].copy()
     let ret = inst.ret
     let st = ir.list(inout c.ir, args)
     let na = args.len() as u32
@@ -4914,6 +5595,13 @@ fn label_of(c: C, head: List[u8], name: u32) -> List[u8] {
 }
 
 fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
+    at_pos(inout c, n.line, n.col)
+    let r = method_call_in(inout c, n, exp)
+    end_pos(inout c)
+    r
+}
+
+fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let r = nd(c, n.a)
     var static_head: u64 = 0
     var is_static = false
@@ -4927,7 +5615,7 @@ fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     if is_static {
         if c.rec.on {
             let tdi = mget(c.tmpl, static_head)
-            let am = c.am
+            let am = c.am.copy()
             if tdi != NONE { note_def(inout c, am, r, tdi) }
         }
         let x = resolve.key_sym(static_head)
@@ -5026,8 +5714,9 @@ fn trait_method(inout c: C, n: ast.Node, pv: PV, tr: u32) -> Result[V, diag.Diag
         }
         let rr = root(c, n.a)
         let ar = root(c, a.a)
-        if rr.ok && ar.ok && rr.key == ar.key {
+        if rr.ok && ar.ok && canon(c, rr.key) == canon(c, ar.key) {
             let r = nd(c, n.a)
+            if canon(c, rr.key) != rr.key { return Err(alias_read_error(c, r.line, r.col, rr.key, canon(c, ar.key))) }
             return Err(err("E0301", r.line, r.col, q("`", kt(c, rr.key), "` is borrowed mutably by another argument of this call and can't be read here")))
         }
         assignable_or_record(inout c, a.a, "borrow as inout")
@@ -5448,7 +6137,7 @@ fn walk_stmt(c: C, st: u32, inout out: List[u64]) {
 }
 
 /// A captured variable: its name key and its local in the enclosing function.
-type Capture = { key: u64, ty: u32, ir: u32, aline: u32, acol: u32 }
+type Capture = { key: u64, ty: u32, ir: u32, aline: u32, acol: u32, alias: u32, refid: u32 }
 
 /// The state of the enclosing function while a closure body is checked.
 type Saved = {
@@ -5483,7 +6172,7 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
         if (i as usize) < hp.len() { hinted = hp[i as usize] }
         var ty = hinted
         if lp.b > 0 {
-            let am = c.am
+            let am = c.am.copy()
             let t = resolve_ty(inout c, am, lp.b - 1)?
             if hinted != NONE && !same(c, hinted, t) { return Err(mismatch(c, lp.line, lp.col, hinted, t)) }
             ty = t
@@ -5500,7 +6189,7 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     }
     var ret_hint = hr
     if n.g > 0 {
-        let am = c.am
+        let am = c.am.copy()
         ret_hint = resolve_ty(inout c, am, n.g - 1)?
     }
     // captured variables
@@ -5513,7 +6202,7 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
         let li = lookup(c, k)
         if li != NONE {
             let v = c.scopes[li as usize]
-            caps.push(Capture(k, v.ty, v.ir, v.aline, v.acol))
+            caps.push(Capture(k, v.ty, v.ir, v.aline, v.acol, v.alias, v.refid))
             ckeys.push(k)
         }
     }
@@ -5559,7 +6248,12 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     // the environment: a snapshot of each captured variable
     var ops: List[u32] = List.new()
     for cp in caps {
-        let pl = ir.place_local(inout c.ir, cp.ir, cp.ty)
+        var pl = cp.alias
+        if pl == NONE {
+            pl = ir.place_local(inout c.ir, cp.ir, cp.ty)
+        } else {
+            ref_note(inout c, N_USE, cp.refid)
+        }
         let o = read(inout c, pl, cp.ty, 0)
         ops.push(take(inout c, v_of(cp.ty, o), n.line))
     }
@@ -5656,7 +6350,7 @@ fn callv(inout c: C, f: u32, args: List[u32], r: u32, line: u32) -> u32 {
 
 /// The fn type of instance ii.
 fn inst_fn_type(inout c: C, ii: u32) -> u32 {
-    let inst = c.insts[ii as usize]
+    let inst = c.insts[ii as usize].copy()
     var ps: List[u32] = List.new()
     for i in 0..inst.plen { ps.push(c.ptys[(inst.pstart + i) as usize]) }
     types.fn_of(inout c.t, ps, inst.ret)
@@ -5665,7 +6359,7 @@ fn inst_fn_type(inout c: C, ii: u32) -> u32 {
 /// A named function used as a value of the expected fn type.
 fn fn_as_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag] {
     let fi = mget(c.fns, k)
-    let f = c.fdefs[fi as usize]
+    let f = c.fdefs[fi as usize].copy()
     let label = kt(c, k)
     if f.generic {
         return Err(err("E0409", n.line, n.col, q("generic function `", label, "` can't be used as a value; wrap it in a closure")))
@@ -5679,7 +6373,7 @@ fn fn_as_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag
     }
     let actual = inst_fn_type(inout c, ii)
     if !same(c, actual, exp) { return Err(mismatch(c, n.line, n.col, exp, actual)) }
-    let inst = c.insts[ii as usize]
+    let inst = c.insts[ii as usize].copy()
     for i in 0..inst.clen {
         let cap = c.capl[(inst.cstart + i) as usize]
         if needs_cap(c, f.md, cap) && !has_sym(c.caps, cap) { return Err(cap_error(c, n.line, n.col, label, cap)) }

@@ -53,6 +53,10 @@
 //             into its environment; the function's L_CAPTURE locals read them)
 //   S_FNREF   dst := function a as a closure value of type ty (no environment)
 //   S_CALLV   dst := call closure op a with args [b/c] (borrowed); dst = NONE for ()
+//   S_NOTE    the checker's own note for the protection rule (a = kind, b = index; check.ei,
+//             "References"); removed before checking ends, so no IR that is used has one
+//   S_CHECK   the bounds checks of place a, and nothing else (a reference is bound to it:
+//             its indices are checked once, then)
 // Functions  {name text, def, ret, locals [lstart/lcount], nparams, body block+1 (0 = none),
 //             caps, is_test}; generic functions and methods appear once per instance
 //             (`name[i32]`, `Option[i32].unwrap`), each closure body is a function of its
@@ -77,7 +81,9 @@
 // dropped right before the store. Builtin argument conventions: the receiver of a mutating
 // builtin is a place (+ARG_PLACE); B_LIST_PUSH's element and B_MAP_INSERT's key and value
 // are moved in; every other argument is borrowed. B_LIST_POP's result is owned; B_MAP_GET's
-// Option borrows its payload from the map (the checker clones it).
+// Option borrows its payload from the map (the checker clones it). A reference (a `let` or
+// pattern binding of a place, docs/compiler.md "C8.6") has no local: the IR uses the place it
+// names wherever the source uses it, so it is never cloned or dropped.
 //
 // Builtins     B_STR_FROM(str) -> String          B_STR_FROM_INT(i64) -> String
 //   B_LEN(x) -> usize, B_IS_EMPTY(x) -> bool, x a String, List or Map
@@ -170,6 +176,8 @@ pub const S_BUILTIN: u32 = 25
 pub const S_CLOSURE: u32 = 26
 pub const S_FNREF: u32 = 27
 pub const S_CALLV: u32 = 28
+pub const S_NOTE: u32 = 29
+pub const S_CHECK: u32 = 30
 
 pub const B_STR_FROM: u32 = 0
 pub const B_STR_FROM_INT: u32 = 1
@@ -727,6 +735,10 @@ fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u3
             put(inout o, "callv ")
             put_op(inout o, ir, t, names, s.a)
             put_args(inout o, ir, t, names, s.b, s.c)
+        }
+        30 => {
+            put(inout o, "check ")
+            put_place(inout o, ir, t, names, s.a)
         }
         _ => {
             put(inout o, "return")

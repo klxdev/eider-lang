@@ -9,7 +9,7 @@ fn main() uses io {
     print(b)          // abc
     var xs: List[String] = List.new()
     xs.push(String.from("x"))
-    let ys = xs
+    let ys = xs.copy()
     xs[0].push_byte(33)
     print(xs[0])      // x!
     print(ys[0])      // x

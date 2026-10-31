@@ -1,0 +1,1 @@
+{"error":"E0307","span":{"file":"compiler/tests/check/fail/e0307_let_pattern_mut.ei","line":3,"col":14},"message":"`mut a` would be a mutable alias of `t`, which is read-only","help":"an alias can't add write access; take an independent value with `.copy()`","fix":{"at":{"line":3,"col":23},"delete":0,"insert":".copy()"}}

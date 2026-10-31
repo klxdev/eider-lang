@@ -1,0 +1,9 @@
+// expect: E0307 7:17
+type P = { x: i32, y: i32 }
+fn main() uses io {
+    var ps: List[P] = List.new()
+    ps.push(P(1, 2))
+    let r = ps[0]
+    let mut q = r.x
+    print(q)
+}

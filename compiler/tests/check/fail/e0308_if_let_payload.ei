@@ -1,0 +1,8 @@
+// expect: E0308 5:9
+fn main() uses io {
+    var o: Option[i32] = Some(1)
+    if let Some(v) = o {
+        o = None
+        print(v)
+    }
+}

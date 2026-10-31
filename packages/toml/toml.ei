@@ -200,7 +200,7 @@ fn array(inout p: P) -> Result[List[List[u8]], ParseError] {
 
 /// Parse the value for key `k` (already prefixed); inline tables add several entries.
 fn value(inout p: P, k: List[u8], inout out: List[Entry]) -> Result[bool, ParseError] {
-    let line = p.line
+    let line = p.line.copy()
     let c = peek(p)
     if c == 34 {
         let s = string(inout p)?
@@ -255,7 +255,7 @@ fn value(inout p: P, k: List[u8], inout out: List[Entry]) -> Result[bool, ParseE
 fn next_index(inout counts: List[Count], name: List[u8]) -> u64 {
     for i in 0..counts.len() {
         if bytes.eq(counts[i].name, name) {
-            let n = counts[i].n
+            let n = counts[i].n.copy()
             counts[i] = Count(name, n + 1)
             return n
         }

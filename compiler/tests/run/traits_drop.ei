@@ -85,14 +85,14 @@ fn main() uses io, threads {
     dump(log, "reverse order")
     {
         var a = g(3, log)
-        let b = a
+        var b = a
         a.id = 4
         print(b.id)
     }
     dump(log, "written while shared")
     {
         var r = Res(5, log)
-        let s = r
+        var s = r
         r.id = 6
         print(s.id)
         print(r.id)

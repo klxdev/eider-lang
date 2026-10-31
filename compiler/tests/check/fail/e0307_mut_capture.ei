@@ -1,0 +1,10 @@
+// expect: E0307 5:21
+fn main() uses io {
+    let n = 3
+    let f = |k: i32| -> i32 {
+        let mut m = n
+        m += k
+        m
+    }
+    print(f(1))
+}

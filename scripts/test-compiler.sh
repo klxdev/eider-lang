@@ -57,6 +57,10 @@
 #             node: WebAssembly is optional).
 #   unit:     programs in compiler/tests/unit that drive a compiler module (sha256.ei) must
 #             print their .out.
+#   migration: the staged rewrites (scripts/migrate-imports.sh, migrate-caps.sh,
+#             migrate-var.sh) on a copy of core, std, packages and compiler check, pass the
+#             package tests, and (`var` -> `let mut`) give a compiler that emits the same C;
+#             `eiderc migrate-var` of compiler/tests/migrate/*.ei equals the hand-checked .out.
 #   packages: compiler/tests/pkgs, packages with eider.toml and eider.lock (two packages
 #             with a util.ei, a dependency chain, vendored and store dependencies, the
 #             package-import errors E0808/E0809/E0810, capability grants and E0204, `eiderc
@@ -509,7 +513,16 @@ cp -R core std packages compiler $mig/
 sh scripts/migrate-imports.sh $mig/core $mig/std $mig/packages $mig/compiler >$tmp/mig 2>&1
 # and the staged removal of `uses ffi` (scripts/migrate-caps.sh, docs/compiler.md "C8.5")
 sh scripts/migrate-caps.sh $mig/core $mig/std $mig/packages $mig/compiler >$tmp/migc 2>&1
+# and the deprecated `var` rewritten as `let mut` (scripts/migrate-var.sh, docs/compiler.md
+# "C8.6"): none is left in core, std, the packages or the compiler, and the migrated
+# compiler, built by this one, emits the same C for compiler/ as this one (meaning unchanged)
+EIDER_ROOT=$mig EIDERC=$new sh scripts/migrate-var.sh $mig/core $mig/std $mig/packages $mig/compiler/*.ei >$tmp/migv 2>&1
 mig_ok=1
+grep -n '^[[:space:]]*var[[:space:]]' $mig/core/*.ei $mig/std/*.ei $mig/packages/*/*.ei $mig/compiler/*.ei >$tmp/migvl && { echo "FAIL migration: \`var\` is left in"; sed "s|$mig/||" $tmp/migvl | head -10; cat $tmp/migv | grep -v '^migrated' | head -5; mig_ok=0; }
+EIDER_CACHE=off EIDER_ROOT=$mig $new build $mig/compiler/main.ei -o $tmp/eiderc-mig >$tmp/mo 2>&1 || { echo "FAIL migration: build the migrated compiler"; head -10 $tmp/mo; mig_ok=0; }
+$new emit-c compiler/main.ei >$tmp/mc1 2>&1
+[ -x $tmp/eiderc-mig ] && EIDER_ROOT=$(pwd) $tmp/eiderc-mig emit-c compiler/main.ei >$tmp/mc2 2>&1
+cmp -s $tmp/mc1 $tmp/mc2 || { echo "FAIL migration: the migrated compiler's C for compiler/ differs"; mig_ok=0; }
 grep -q '^import "\.\./' $mig/compiler/main.ei $mig/packages/pkg/manifest.ei && { echo "FAIL migration: path imports into other packages are left"; mig_ok=0; }
 grep -l '^[[:space:]]*[^/[:space:]][^/]*uses [^/]*ffi' $mig/std/*.ei $mig/compiler/*.ei $mig/packages/*/*.ei >$tmp/migl && { echo "FAIL migration: \`uses ffi\` is left in $(sed "s|$mig/||" $tmp/migl | tr '\n' ' ')"; mig_ok=0; }
 grep -q 'uses .*ffi' $mig/core/sys.ei || { echo "FAIL migration: core/sys.ei lost its \`uses ffi\`"; mig_ok=0; }
@@ -520,7 +533,14 @@ for f in packages/*/tests/*.ei; do
   EIDER_ROOT=$mig $new run $mig/$f >$tmp/mo 2>&1
   cmp -s $tmp/mo "${f%.ei}.out" || { echo "FAIL migration: run $f"; diff "${f%.ei}.out" $tmp/mo | head -10; mig_ok=0; }
 done
-if [ $mig_ok = 1 ]; then echo "ok   migration: $(wc -l <$tmp/mig) files rewritten to package imports and $(wc -l <$tmp/migc) without \`uses ffi\` check and pass their package tests"; else fail=1; fi
+if [ $mig_ok = 1 ]; then echo "ok   migration: $(wc -l <$tmp/mig) files rewritten to package imports, $(wc -l <$tmp/migc) without \`uses ffi\` and $(grep -c '^migrated' $tmp/migv) without \`var\` check and pass their package tests; the migrated compiler emits the same C"; else fail=1; fi
+# migrate-var: `eiderc migrate-var` of compiler/tests/migrate/*.ei gives the hand-checked .out,
+# which checks
+for f in compiler/tests/migrate/*.ei; do
+  $new migrate-var "$f" >$tmp/mv 2>&1
+  cp $tmp/mv $tmp/migrated.ei
+  if cmp -s $tmp/mv "${f%.ei}.out" && $new check $tmp/migrated.ei >/dev/null 2>&1; then echo "ok   migrate-var $f"; else echo "FAIL migrate-var $f"; diff "${f%.ei}.out" $tmp/mv | head -10; fail=1; fi
+done
 
 # compile-fail: `eiderc test --compile-fail` against the recorded runner output (the oracle's
 # <dir>.compile-fail: the output, then `--- exit <code>`)

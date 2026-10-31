@@ -1,0 +1,141 @@
+// References by default (docs/compiler.md, "C8.6"): `let` of a place refers to it, `let
+// mut` is a mutable alias (Reading A), fresh values are owned, pattern bindings of a place
+// refer into it, `.copy()` is independent, and escapes are values. Expected output: refs.out.
+type Order = { id: i32, qty: i32, name: String, tags: List[String] }
+type Job = | Pending(Order) | Held(i32) | Done
+type Shop = { orders: List[Order], open: bool }
+
+fn order(id: i32, qty: i32, name: str) -> Order { Order(id, qty, String.from(name), List.new()) }
+
+fn first(orders: List[Order]) -> Order {
+    let o = orders[0]
+    // escapes: the caller gets a value
+    o
+}
+
+fn bump_all(inout shop: Shop) {
+    for i in 0..shop.orders.len() {
+        let mut o = shop.orders[i]
+        o.qty += 10
+    }
+}
+
+fn days(j: Job) -> i32 {
+    match j {
+        Held(d) => d
+        _ => -1
+    }
+}
+
+fn main() uses io {
+    var orders: List[Order] = List.new()
+    orders.push(order(1, 5, "apple"))
+    orders.push(order(2, 7, "pear"))
+
+    // a reference sees plain writes to its place
+    let o = orders[0]
+    orders[0].qty = 6
+    orders[0].name.push_str("s")
+    print(o.qty)
+    print(o.name)
+
+    // the index is evaluated once, when the reference is bound
+    var i: usize = 1
+    let p = orders[i]
+    i = 0
+    print(p.id)
+    print(i)
+
+    // `let mut`: a mutable alias, both names see every write
+    let mut m = orders[1]
+    m.qty += 1
+    print(orders[1].qty)
+    orders[1].qty = 0
+    print(m.qty)
+    m.tags.push(String.from("ripe"))
+    print(orders[1].tags.len())
+
+    // `let mut` of a fresh value owns it
+    let mut total = 0
+    for k in 0..orders.len() { total += orders[k].qty }
+    print(total)
+
+    // `.copy()` is independent of the place
+    let c = orders[0].copy()
+    orders[0].qty = 99
+    orders[0].name.push_str("!")
+    print(c.qty)
+    print(c.name)
+
+    // escapes are values: returned, stored, captured
+    let f = first(orders)
+    orders[0].qty = 1
+    print(f.qty)
+    var kept: List[Order] = List.new()
+    kept.push(o)
+    orders[0].qty = 2
+    print(kept[0].qty)
+    let get = || -> i32 { o.qty }
+    orders[0].qty = 3
+    print(get())
+    print(o.qty)
+
+    // a reference to the container itself sees it grow
+    let all = orders
+    orders.push(order(3, 1, "fig"))
+    print(all.len())
+
+    // references into nested places, and through an `inout` parameter
+    var shop = Shop(orders.copy(), true)
+    bump_all(inout shop)
+    let names = shop.orders[2].name
+    print(names)
+    print(shop.orders[2].qty)
+    let flag = shop.open
+    shop.open = false
+    print(flag)
+
+    // pattern bindings of a place refer into it; `mut` ones are aliases into the payload
+    var jobs: List[Job] = List.new()
+    jobs.push(Held(1))
+    jobs.push(Pending(order(4, 2, "kiwi")))
+    jobs.push(Done)
+    for j in 0..jobs.len() {
+        match jobs[j] {
+            Held(mut d) => { d += 41 }
+            Pending(mut po) => {
+                po.qty *= 3
+                po.name.push_str("?")
+            }
+            Done => {}
+        }
+    }
+    print(days(jobs[0]))
+    if let Pending(po) = jobs[1] {
+        print(po.qty)
+        print(po.name)
+    }
+    let (a, mut b) = (shop.orders[0].qty, 5)
+    b += a
+    print(b)
+    var pair = (1, String.from("one"))
+    let (n, s) = pair
+    pair.0 = 2
+    pair.1.push_str("!")
+    print(n)
+    print(s)
+
+    // a reference in a loop is bound again each iteration, so the list may grow after its use
+    for _ in 0..3 {
+        let last = orders[orders.len() - 1]
+        let id = last.id + 1
+        orders.push(order(id, 0, "more"))
+    }
+    print(orders.len())
+    print(orders[orders.len() - 1].id)
+
+    // `var` (deprecated) still makes its own copy
+    var v = orders[0]
+    v.qty = 1000
+    print(orders[0].qty)
+}

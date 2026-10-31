@@ -1,0 +1,1 @@
+{"error":"E0308","span":{"file":"compiler/tests/check/fail/e0308_assign_outer_record.ei","line":7,"col":5},"message":"can't assign to `inv` while `it` refers into it","help":"`it` is used after this change, which may free, move or replace what it refers to; use it before the change, or bind a copy with `.copy()`","fix":{"at":{"line":6,"col":26},"delete":0,"insert":".copy()"}}

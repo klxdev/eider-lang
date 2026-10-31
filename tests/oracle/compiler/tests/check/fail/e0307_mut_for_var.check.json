@@ -1,0 +1,1 @@
+{"error":"E0307","span":{"file":"compiler/tests/check/fail/e0307_mut_for_var.ei","line":4,"col":21},"message":"`let mut y` would be a mutable alias of `x`, which is read-only","help":"an alias can't add write access; take an independent value with `.copy()`","fix":{"at":{"line":4,"col":22},"delete":0,"insert":".copy()"}}

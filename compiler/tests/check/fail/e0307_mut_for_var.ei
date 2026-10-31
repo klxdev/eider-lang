@@ -1,0 +1,8 @@
+// expect: E0307 4:21
+fn main() uses io {
+    for x in 0..3 {
+        let mut y = x
+        y += 1
+        print(y)
+    }
+}

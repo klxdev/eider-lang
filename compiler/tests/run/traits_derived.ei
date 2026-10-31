@@ -10,12 +10,12 @@ type Pair[A, B] = { a: A, b: B }
 type Cell = { v: Mutex[i32] }
 
 /// An insertion sort for any ordered type.
-fn sort[T: Ord](inout xs: List[T]) {
+fn sort[T: Ord + Copy](inout xs: List[T]) {
     var i: usize = 1
     while i < xs.len() {
         var j = i
         while j > 0 && xs[j] < xs[j - 1] {
-            let t = xs[j]
+            let t = xs[j].copy()
             xs[j] = xs[j - 1]
             xs[j - 1] = t
             j -= 1

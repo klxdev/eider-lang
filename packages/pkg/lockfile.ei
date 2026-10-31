@@ -91,7 +91,7 @@ pub fn render(pkgs: List[Pkg], root: List[u8]) -> List[u8] {
         sorted.push(p)
         var i = sorted.len() - 1
         while i > 0 && bytes.compare(sorted[i - 1].name, sorted[i].name) > 0 {
-            let t = sorted[i - 1]
+            let t = sorted[i - 1].copy()
             sorted[i - 1] = sorted[i]
             sorted[i] = t
             i -= 1

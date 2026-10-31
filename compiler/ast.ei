@@ -15,15 +15,17 @@
 //            ECast a=expr b=type                   EArray [c/d]   ERepeat a=elem b=count
 //            ETuple [c/d]   ETry a   EUnsafe a=block   EBlock a=block
 //            ELambda a=body g=ret+1 [c/d]=LParam   EIf a=cond b=then c=else+1
-//            EMatch a=scrutinee [c/d]=Arm, end span = closing brace
+//            EMatch a=scrutinee [c/d]=Arm e/f=line/col just past the scrutinee, end span =
+//                closing brace
 //            EArg a=expr b=inout (call arguments)  LParam a=sym b=type+1
 //            Arm [c/d]=pats a=body b=1 if body is a statement
 // stmts      Block [c/d]=stmts, end span = closing brace
-//            SLet a=sym b=type+1 c=init d=mutable  SLetPat a=pat c=init d=mutable
+//            SLet a=sym b=type+1 c=init d=0 `let`, 1 `var`, 2 `let mut` e/f=line/col just past
+//                the initializer      SLetPat a=pat c=init d e f as SLet
 //            SAssign a=target b=op+1 (0 plain) c=value   SExpr a
 //            SWhile a=cond b=block   SFor a=var sym b=lo c=hi d=block   SForEach a=var b=iter d=block
 //            SReturn a=expr+1   SBreak   SContinue   SAssert a=cond b=message str+1
-// patterns   PWild  PName a=sym b=qual+1  PInt a=tok b=negated  PBool a  PStr a=str
+// patterns   PWild  PName a=sym b=qual+1 c=1 for `mut x`  PInt a=tok b=negated  PBool a  PStr a=str
 //            PVariant a=sym b=qual+1 [c/d]=subpatterns   PTuple [c/d]
 // items      IType a=sym b=public [c/d]=GParam [e/f]=Variant or Field (a record when no Variant)
 //            Variant a=sym [c/d]=VField   VField a=name sym, or position for unnamed, b=type c=named

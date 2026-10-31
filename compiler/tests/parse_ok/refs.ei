@@ -1,0 +1,20 @@
+// Golden AST dump: `let mut` and `mut` pattern bindings (docs/compiler.md, "C8.6"). `mut` is
+// a contextual word: followed by a name it marks a mutable binding, otherwise it is a name.
+type Job = | Held(i32) | Done
+
+fn refs(xs: List[i32], j: Job) -> i32 {
+    var ys = xs
+    let mut a = ys[0]
+    let mut b: i32 = 2
+    let (mut c, d) = (3, 4)
+    let mut = 5
+    var mut2 = mut
+    match j.copy() {
+        Held(mut n) => { n += 1 }
+        Done => {}
+    }
+    if let Held(mut k) = j.copy() { k += 1 }
+    a + b + c + d + mut2
+}
+
+fn main() {}

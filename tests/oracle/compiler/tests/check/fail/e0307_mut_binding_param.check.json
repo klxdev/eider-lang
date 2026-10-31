@@ -1,0 +1,1 @@
+{"error":"E0307","span":{"file":"compiler/tests/check/fail/e0307_mut_binding_param.ei","line":5,"col":18},"message":"`mut d` would be a mutable alias of `j`, which is read-only","help":"an alias can't add write access; take an independent value with `.copy()`","fix":{"at":{"line":4,"col":12},"delete":0,"insert":".copy()"}}

@@ -34,6 +34,8 @@ compile-fail tests (tests/checks/fail)
   ok   e0304_unexpected_inout.ei    E0304 at 5:14
   ok   e0305_redeclared.ei          E0305 at 4:3
   ok   e0306_break_outside_loop.ei  E0306 at 3:3
+  ok   e0307_mut_alias_of_param.ei  E0307 at 4:17 (fix compiles)
+  ok   e0308_push_while_referenced.ei E0308 at 7:12 (fix compiles)
   ok   e0401_closure_wrong_return.ei E0401 at 4:28
   ok   e0401_map_equality.ei        E0401 at 5:18
   ok   e0401_missing_return.ei      E0401 at 4:1
@@ -89,5 +91,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-87 passed, 0 failed; error-code coverage 52/52
+89 passed, 0 failed; error-code coverage 54/54
 --- exit 0

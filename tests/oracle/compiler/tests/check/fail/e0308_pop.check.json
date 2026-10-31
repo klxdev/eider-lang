@@ -1,0 +1,1 @@
+{"error":"E0308","span":{"file":"compiler/tests/check/fail/e0308_pop.ei","line":7,"col":8},"message":"can't call `pop` on `xs` while `n` refers into it","help":"`n` is used after this change, which may free, move or replace what it refers to; use it before the change, or bind a copy with `.copy()`","fix":{"at":{"line":6,"col":21},"delete":0,"insert":".copy()"}}

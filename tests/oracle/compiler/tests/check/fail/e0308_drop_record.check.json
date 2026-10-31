@@ -1,0 +1,1 @@
+{"error":"E0308","span":{"file":"compiler/tests/check/fail/e0308_drop_record.ei","line":9,"col":5},"message":"can't assign to `r` while `xs` refers into it","help":"`xs` is used after this change, which may free, move or replace what it refers to; use it before the change, or bind a copy with `.copy()`","fix":{"at":{"line":8,"col":18},"delete":0,"insert":".copy()"}}

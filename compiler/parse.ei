@@ -143,7 +143,7 @@ fn qualified(inout p: P, first: u32) -> Option[Name] {
     if !p.aliases.contains(first) || !is(p, lex.Dot) { return None }
     let n = p.i + 1
     if n < p.toks.len() && p.toks[n].kind == lex.Ident && p.toks[n].val > intern.LAST_KEYWORD as u64 {
-        let t = p.toks[n]
+        let t = p.toks[n].copy()
         adv(inout p)
         adv(inout p)
         return Some(Name(t.val as u32, t.line, t.col))
@@ -248,7 +248,7 @@ fn nest(inout st: List[u32], k: lex.Kind) -> bool {
     if c == 0 { return true }
     if !st.contains(c) { return c != 3 }
     while st.len() > 0 {
-        let top = st[st.len() - 1]
+        let top = st[st.len() - 1].copy()
         st.pop()
         if top == c { break }
     }
@@ -384,7 +384,7 @@ pub fn program(inout p: P) {
     var items: List[u32] = List.new()
     skip_seps(inout p)
     while !is_eof(p) {
-        let s0 = p.i
+        let s0 = p.i.copy()
         let m = mark(p)
         match item(inout p, inout items) {
             Ok(_) => {}
@@ -844,7 +844,7 @@ pub fn block(inout p: P) -> Result[u32, diag.Diag] {
             break
         }
         // a statement that fails is recorded, skipped (`sync`) and kept as an SError
-        let s0 = p.i
+        let s0 = p.i.copy()
         let m = mark(p)
         var stop = AT_SEP
         match stmt(inout p) {
@@ -852,7 +852,7 @@ pub fn block(inout p: P) -> Result[u32, diag.Diag] {
                 stmts.push(st)
                 if !(is_nl(p) || is(p, lex.Semi) || is(p, lex.RBrace)) {
                     note_here(inout p, "expected a newline or `;` after statement")
-                    let s1 = p.i
+                    let s1 = p.i.copy()
                     stop = sync(inout p, s1, false)
                     if p.i > s1 { stmts.push(err_node(inout p, ast.SError, s1)) }
                 }
@@ -893,11 +893,26 @@ fn assign_op(k: lex.Kind) -> u32 {
     }
 }
 
+/// Whether the current token is the contextual word `mut` followed by a name (`let mut x`,
+/// a pattern binding `mut x`; docs/compiler.md, "C8.6"). `mut` is not a keyword: `let mut = 1`
+/// still declares a variable named `mut`.
+fn at_mut(p: P) -> bool {
+    if !is(p, lex.Ident) || kind_at(p, p.i + 1) != lex.Ident { return false }
+    let t = cur(p)
+    if t.val <= intern.LAST_KEYWORD as u64 { return false }
+    bytes.eq(intern.name(p.names, t.val as u32), sys.lit("mut"))
+}
+
 fn stmt(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
     if is_kw(p, intern.K_LET) || is_kw(p, intern.K_VAR) {
-        let mutable: u32 = if is_kw(p, intern.K_VAR) { 1 } else { 0 }
+        // d: 0 `let`, 1 `var` (deprecated), 2 `let mut`
+        var mutable: u32 = if is_kw(p, intern.K_VAR) { 1 } else { 0 }
         adv(inout p)
+        if mutable == 0 && at_mut(p) {
+            mutable = 2
+            adv(inout p)
+        }
         if is(p, lex.LParen) {
             let pat = pattern(inout p)?
             expect(inout p, lex.Eq)?
@@ -906,6 +921,9 @@ fn stmt(inout p: P) -> Result[u32, diag.Diag] {
             n.a = pat
             n.c = expr(inout p)?
             n.d = mutable
+            let ie = prev_end(p)
+            n.e = ie.line
+            n.f = ie.col
             return Ok(add(inout p, n))
         }
         let name = ident(inout p)?
@@ -916,6 +934,9 @@ fn stmt(inout p: P) -> Result[u32, diag.Diag] {
         expect(inout p, lex.Eq)?
         skip_nl(inout p)
         n.c = expr(inout p)?
+        let ie = prev_end(p)
+        n.e = ie.line
+        n.f = ie.col
         return Ok(add(inout p, n))
     }
     if eat_kw(inout p, intern.K_WHILE) {
@@ -1117,7 +1138,7 @@ fn fits_group(cls: u32, x: Term) -> bool { x.cls == CL_NONE || x.cls == CL_SHIFT
 
 /// One level of the bitwise groups (CL_OR down to CL_SHIFT; under it the arithmetic ones).
 fn bit_expr(inout p: P, cls: u32) -> Result[Term, diag.Diag] {
-    let t0 = p.i
+    let t0 = p.i.copy()
     var l = if cls == CL_SHIFT { add_expr(inout p)? } else { bit_expr(inout p, cls - 1)? }
     var n: u32 = 0
     while bit_op(cls, kind(p)) > 0 {
@@ -1136,7 +1157,7 @@ fn bit_expr(inout p: P, cls: u32) -> Result[Term, diag.Diag] {
 }
 
 fn add_expr(inout p: P) -> Result[Term, diag.Diag] {
-    let t0 = p.i
+    let t0 = p.i.copy()
     var l = mul_expr(inout p)?
     while add_op(kind(p)) > 0 {
         let t = cur(p)
@@ -1151,7 +1172,7 @@ fn add_expr(inout p: P) -> Result[Term, diag.Diag] {
 }
 
 fn mul_expr(inout p: P) -> Result[Term, diag.Diag] {
-    let t0 = p.i
+    let t0 = p.i.copy()
     let first = cast_expr(inout p)?
     var l = term(p, first, CL_NONE, t0)
     while mul_op(kind(p)) > 0 {
@@ -1213,7 +1234,7 @@ fn postfix(inout p: P) -> Result[u32, diag.Diag] {
     while true {
         let t = cur(p)
         if is(p, lex.LParen) {
-            let en = p.ast.nodes[e as usize]
+            let en = p.ast.nodes[e as usize].copy()
             if !(en.kind == ast.EIdent) { return Err(err(p, "only named functions can be called")) }
             adv(inout p)
             let a = args(inout p)?
@@ -1420,6 +1441,7 @@ fn if_expr(inout p: P) -> Result[u32, diag.Diag] {
         let pat = pattern(inout p)?
         expect(inout p, lex.Eq)?
         let scrut = expr(inout p)?
+        let se = prev_end(p)
         let then = block(inout p)?
         let end = prev_end(p)
         var els: u32 = 0
@@ -1460,6 +1482,8 @@ fn if_expr(inout p: P) -> Result[u32, diag.Diag] {
         m.a = scrut
         m.c = list(inout p, arms)
         m.d = 2
+        m.e = se.line
+        m.f = se.col
         m.end_line = end.line
         m.end_col = end.col
         return Ok(add(inout p, m))
@@ -1478,6 +1502,7 @@ fn if_expr(inout p: P) -> Result[u32, diag.Diag] {
 fn match_expr(inout p: P) -> Result[u32, diag.Diag] {
     let pos = expect_kw(inout p, intern.K_MATCH)?
     let s = expr(inout p)?
+    let se = prev_end(p)
     expect(inout p, lex.LBrace)?
     var arms: List[u32] = List.new()
     while true {
@@ -1489,13 +1514,15 @@ fn match_expr(inout p: P) -> Result[u32, diag.Diag] {
             n.a = s
             n.c = list(inout p, arms)
             n.d = arms.len() as u32
+            n.e = se.line
+            n.f = se.col
             n.end_line = t.line
             n.end_col = t.col
             return Ok(add(inout p, n))
         }
         // an arm that fails is recorded, skipped (`sync`) and kept as an Arm with no patterns
         // and an EError body
-        let s0 = p.i
+        let s0 = p.i.copy()
         let m = mark(p)
         var stop = AT_SEP
         match arm(inout p) {
@@ -1503,7 +1530,7 @@ fn match_expr(inout p: P) -> Result[u32, diag.Diag] {
                 arms.push(a)
                 if !(is_nl(p) || is(p, lex.Comma) || is(p, lex.RBrace)) {
                     note_here(inout p, "expected a newline, `,` or `}` after match arm")
-                    let s1 = p.i
+                    let s1 = p.i.copy()
                     stop = sync(inout p, s1, true)
                 }
             }
@@ -1527,6 +1554,8 @@ fn match_expr(inout p: P) -> Result[u32, diag.Diag] {
             n.a = s
             n.c = list(inout p, arms)
             n.d = arms.len() as u32
+            n.e = se.line
+            n.f = se.col
             n.end_line = e.line
             n.end_col = e.col
             return Ok(add(inout p, n))
@@ -1608,6 +1637,15 @@ pub fn pattern(inout p: P) -> Result[u32, diag.Diag] {
     if t.kind == lex.Ident && t.val == intern.S_UNDERSCORE as u64 {
         adv(inout p)
         return Ok(add(inout p, mk(ast.PWild, t.line, t.col)))
+    }
+    if at_mut(p) {
+        // `mut x`: a binding that is a mutable alias (or owns a fresh value's part)
+        adv(inout p)
+        let mn = ident(inout p)?
+        var n = mk(ast.PName, mn.line, mn.col)
+        n.a = mn.sym
+        n.c = 1
+        return Ok(add(inout p, n))
     }
     if t.kind == lex.Ident && (t.val == intern.K_TRUE as u64 || t.val == intern.K_FALSE as u64) {
         adv(inout p)

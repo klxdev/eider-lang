@@ -1,0 +1,1 @@
+{"error":"E0301","span":{"file":"compiler/tests/check/fail/e0301_alias_read.ei","line":7,"col":18},"message":"`x` refers into `p`, which is borrowed mutably by another argument of this call","help":"bind a copy instead of a reference: `.copy()` (the call may change `p`)","fix":{"at":{"line":6,"col":16},"delete":0,"insert":".copy()"}}

@@ -40,13 +40,13 @@ fn max_of[T: Ord](xs: List[T]) -> Option[T] {
     Some(best)
 }
 
-fn sorted[T: Ord](xs: List[T]) -> List[T] {
+fn sorted[T: Ord + Copy](xs: List[T]) -> List[T] {
     var out = xs
     var i: usize = 1
     while i < out.len() {
         var j = i
         while j > 0 && out[j].compare(out[j - 1]) == Less {
-            let t = out[j]
+            let t = out[j].copy()
             out[j] = out[j - 1]
             out[j - 1] = t
             j -= 1

@@ -554,7 +554,7 @@ fn str_lit(inout p: P) -> Option[List[u8]] {
 
 /// A number at the cursor: -?(0|[1-9][0-9]*)(.[0-9]+)?([eE][+-]?[0-9]+)?
 fn num(inout p: P) -> Option[u32] {
-    let start = p.i
+    let start = p.i.copy()
     if peek(p) == 45 { p.i += 1 }
     if !bytes.is_digit(peek(p)) { return fail(inout p, "expected a digit") }
     if peek(p) == 48 {

@@ -42,7 +42,7 @@ fn main() uses io {
         print(f(21))
         print(h.name)
     }
-    let h0 = hs[0]
+    let h0 = hs[0].copy()
     hs.clear()
     let f0 = h0.run
     print(f0(5))

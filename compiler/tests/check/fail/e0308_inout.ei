@@ -1,0 +1,9 @@
+// expect: E0308 7:5
+fn grow(inout xs: List[i32]) { xs.push(0) }
+fn main() uses io {
+    var xs: List[i32] = List.new()
+    xs.push(1)
+    let a = xs[0]
+    grow(inout xs)
+    print(a)
+}

@@ -1,0 +1,12 @@
+// expect: E0307 5:18
+type Job = | Held(i32) | Done
+fn later(j: Job) -> i32 {
+    match j {
+        Held(mut d) => {
+            d += 1
+            d
+        }
+        Done => 0
+    }
+}
+fn main() uses io { print(later(Held(1))) }

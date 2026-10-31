@@ -446,13 +446,13 @@ fn load_prelude(inout p: Program, fp: Files) -> Result[bool, diag.Diag] uses io,
 
 /// Load module m's imports (and theirs, depth first), recording what fails in `diags`.
 fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag]) uses io, fs {
-    let a = p.mods[m as usize].ast
+    let a = p.mods[m as usize].ast.copy()
     let dir = dir_of(p.mods[m as usize].path)
-    let file = p.mods[m as usize].path
+    let file = p.mods[m as usize].path.copy()
     for k in 0..a.items_len {
-        let n = a.nodes[ast.at(a, a.items_start, k) as usize]
+        let n = a.nodes[ast.at(a, a.items_start, k) as usize].copy()
         if n.kind != ast.IImport { continue }
-        let rel = p.mods[m as usize].strs[n.a as usize]
+        let rel = p.mods[m as usize].strs[n.a as usize].copy()
         // the default alias: the file stem, or a package import's last segment
         let st = stem(rel)
         let st_sym = intern.intern(inout p.names, st, 0, st.len())
@@ -822,7 +822,7 @@ fn locate(inout p: Program, m: u32, spec: List[u8], n: ast.Node) -> Result[List[
         bytes.append(inout h, sys.lit(".ei\"`"))
         return Err(pkg_diag("E0809", n, quoted("unknown package `", head, "`: this file is in no package (no eider.toml above it)"), h))
     }
-    let own = p.pkgs[pk as usize]
+    let own = p.pkgs[pk as usize].copy()
     if own.err.len() > 0 { return Err(pkg_diag("E0810", n, own.err, sys.lit("fix eider.toml (`eider-pkg fetch` checks it)"))) }
     var dir = own.dir
     if !bytes.eq(head, own.name) {

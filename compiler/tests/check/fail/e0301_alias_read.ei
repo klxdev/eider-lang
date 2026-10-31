@@ -1,0 +1,9 @@
+// expect: E0301 7:18
+type P = { x: i32, tags: List[i32] }
+fn add(inout p: P, n: i32) { p.tags.push(n) }
+fn main() uses io {
+    var p = P(1, List.new())
+    let x = p.x
+    add(inout p, x)
+    print(p.tags.len())
+}

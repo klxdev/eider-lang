@@ -142,13 +142,13 @@ fn acc(inout limbs: [u64; 4], base: u64, digit: u64) -> bool {
 /// An integer literal at the cursor (a digit). Underscores are allowed after the first digit.
 /// A malformed or too-large literal is reported in `bad` and lexes as 0 (too large: with `big`).
 fn number(src: List[u8], inout l: L, inout bad: List[Bad]) -> Tok {
-    let start = l
+    let start = l.copy()
     var limbs: [u64; 4] = [0; 4]
     var ok = true
     if at(src, l.i) == 48 && (at(src, l.i + 1) == 120 || at(src, l.i + 1) == 88) {
         step(src, inout l)
         step(src, inout l)
-        let first = l.i
+        let first = l.i.copy()
         while l.i < src.len() && (hex_val(src[l.i]).is_some() || src[l.i] == 95) {
             match hex_val(src[l.i]) {
                 Some(d) => { if !acc(inout limbs, 16, d) { ok = false } }
@@ -183,7 +183,7 @@ fn number(src: List[u8], inout l: L, inout bad: List[Bad]) -> Tok {
 /// escape is reported and skipped; an unterminated string ends at the end of its line. At
 /// most one error is reported per literal.
 fn string(src: List[u8], inout l: L, inout strs: List[List[u8]], inout bad: List[Bad]) -> Tok {
-    let start = l
+    let start = l.copy()
     step(src, inout l)
     var s: List[u8] = List.new()
     var reported = false
@@ -292,7 +292,7 @@ fn run(src: List[u8], inout names: intern.Interner, all: bool) -> Run {
     while l.i < src.len() {
         if !all && bad.len() > 0 { return Run(Lexed(toks, strs, src), bad) }
         let c = src[l.i]
-        let start = l
+        let start = l.copy()
         if c == 10 {
             let n = toks.len()
             var dup = false

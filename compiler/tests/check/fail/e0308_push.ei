@@ -1,0 +1,9 @@
+// expect: E0308 7:12
+type Order = { qty: i32 }
+fn main() uses io {
+    var orders: List[Order] = List.new()
+    orders.push(Order(1))
+    let o = orders[0]
+    orders.push(Order(2))
+    print(o.qty)
+}

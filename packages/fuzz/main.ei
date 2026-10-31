@@ -209,10 +209,10 @@ fn tally(inout keys: List[List[u8]], inout counts: List[u64], code: List[u8]) {
     counts.push(1)
     var i = keys.len() - 1
     while i > 0 && bytes.compare(keys[i - 1], keys[i]) > 0 {
-        let k = keys[i - 1]
+        let k = keys[i - 1].copy()
         keys[i - 1] = keys[i]
         keys[i] = k
-        let c = counts[i - 1]
+        let c = counts[i - 1].copy()
         counts[i - 1] = counts[i]
         counts[i] = c
         i -= 1
