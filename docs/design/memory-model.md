@@ -126,15 +126,19 @@ Nothing is special-cased in the compiler beyond calling the trait.
 - **Generic code states what it needs.** Calling `.copy()` on a `T` in a generic function needs
   `T: Copy`; the compiler suggests the bound as a fix.
 
-| Operation | Trait | Status |
+| Operation | Trait | Notes |
 |---|---|---|
-| `x.copy()` | `Copy` | ✅ |
-| `==`, `!=` | `Eq` | proposed (today built in for most types; Maps excluded) |
-| `<`, `<=`, `>`, `>=`, sorting | `Ord` | proposed |
-| Map keys, hashing | `Hash` | proposed (today Map keys are limited to ints, bool, `str`, `String`) |
-| `print`, string formatting | `Show` | proposed |
-| `for x in e` | `Iter` | proposed (today only ranges and `List`) |
-| Cleanup at end of life | `Drop` | proposed (resource types close files, sockets) |
+| `x.copy()` | `Copy` | Full clone; `Chan`, `Task` don't implement it |
+| `==`, `!=` | `Eq` | Replaces today's built-in equality (which excludes Maps) |
+| `<`, `<=`, `>`, `>=`, sorting | `Ord` | Needs `Eq` |
+| Map keys, hashing | `Hash` | Lifts today's limit to ints, `bool`, `str`, `String`; needs `Eq` |
+| `print`, string formatting | `Show` | |
+| `for x in e` | `Iter` | Ranges and `List` today; any type that implements it after |
+| Cleanup at end of life | `Drop` | Resource types close files and sockets; runs once, when the last holder of a shared buffer goes |
+
+All seven ship together as the first set, since they share the derive and orphan-rule machinery.
+A type can't opt out of a derived trait: it lacks one only when one of its parts does, so there is
+one way to make a type non-copyable.
 
 Arithmetic operators (`+`, `*`, ...) stay built in for numbers only: no operator overloading.
 
@@ -278,6 +282,9 @@ true?
 | `.copy()` on `Chan`, `Task` | A compile error: they don't implement `Copy` |
 | Pattern bindings | Like `let` / `let mut`: a place gives a reference, `mut` an alias, a fresh scrutinee is owned |
 | Language operations | Traits in the core prelude, derived automatically, overridable by the type's own package |
+| First set of operation traits | All seven: `Copy`, `Eq`, `Ord`, `Hash`, `Show`, `Iter`, `Drop` |
+| `Drop` with copy-on-write | Runs once, when the last holder of a shared buffer goes |
+| Opting out of a derived trait | Not allowed: a type lacks a trait only when one of its parts does |
 | Warn when an escape forces a real copy | No: silent; a lint later |
 | Name of the shared handle | `Ref[T]` |
 | `mut` parameters | Not now; `let mut x = x.copy()` |
@@ -285,9 +292,5 @@ true?
 
 ## Open questions
 
-1. Which operation traits go in the first set: `Copy` alone, or with `Eq`, `Ord`, `Hash`, `Show`,
-   `Iter`, `Drop`?
-2. `Drop` with copy-on-write: does a shared buffer run its `Drop` once, when the last holder goes
-   (proposal)?
-3. Opting out of a derived trait without a non-copyable field: a marker (e.g. `impl !Copy for T`),
-   or not allowed (proposal: not allowed, to keep one way)?
+None open. Next: turn the design into C8 work items (docs/compiler.md), starting with
+copy-on-write.
