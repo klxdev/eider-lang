@@ -26,7 +26,7 @@ probe=$here/target/check_modules.ei
 : > "$probe"
 for f in "$here"/*.ei; do
   m=$(basename "$f" .ei)
-  if [ "$m" = "$pkg_name" ]; then echo "import \"$pkg_name\"" >> "$probe"; else echo "import \"$pkg_name/$m\"" >> "$probe"; fi
+  if [ "$m" = "$pkg_name" ]; then echo "import $pkg_name" >> "$probe"; else echo "import $pkg_name.$m" >> "$probe"; fi
 done
 printf '\nfn main() {}\n' >> "$probe"
 "$ei" check "$probe" > "$here/target/check.log" 2>&1 || { echo "FAIL eiderc check (every module: $probe)"; cat "$here/target/check.log"; exit 1; }
