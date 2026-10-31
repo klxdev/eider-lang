@@ -47,6 +47,10 @@ pub const T_TASK: u32 = 14
 pub const T_MUTEX: u32 = 15
 pub const T_CHAN: u32 = 16
 pub const T_POISON: u32 = 17
+/// A type parameter of a generic declaration, as its body is checked against the bounds
+/// (check.ei, "Bounds of generic code"): a = its symbol, b = the declaration + 1. Only the
+/// checker's throw-away pass makes them, so lowering never sees one.
+pub const T_PARAM: u32 = 18
 
 /// Int kinds, in a fixed order.
 pub const IK_I32: u32 = 0
@@ -189,6 +193,9 @@ pub fn chan_of(inout t: Types, elem: u32) -> u32 { comp(inout t, T_CHAN, elem, 0
 /// mentions it is such a consequence and is never reported. It is interned on first use,
 /// so a program without errors never has it (lowering never sees it).
 pub fn poison(inout t: Types) -> u32 { comp(inout t, T_POISON, 0, 0) }
+
+/// Type parameter `sym` of declaration `owner` (T_PARAM).
+pub fn param(inout t: Types, sym: u32, owner: u32) -> u32 { comp(inout t, T_PARAM, sym, owner + 1) }
 
 /// Whether type `id` is the error type or is built from it (`List[{error}]`, `(i32, {error})`,
 /// `Option[{error}]`, ...). NOTY is not.
@@ -399,6 +406,7 @@ pub fn show_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32)
             out.push(93)
         }
         17 => bytes.append(inout out, sys.lit("{error}"))
+        18 => bytes.append(inout out, intern.name(names, ty.a))
         13 => {
             bytes.append(inout out, sys.lit("fn("))
             show_list(inout out, t, names, ty.a)
