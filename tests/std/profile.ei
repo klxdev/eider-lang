@@ -1,0 +1,27 @@
+// std/profile in a program built without --profile: every call does nothing, and says so.
+// (The profiler itself is tested by tests/core/prof_test.c, and programs built with
+// --profile by scripts/test-compiler.sh's "profile" leg.)
+import "std/profile"
+
+fn twice(x: i64) -> i64 { x * 2 }
+
+fn main() uses io, fs, clock {
+    print(profile.enabled())
+    print(profile.running())
+    profile.start()
+    profile.stop()
+    profile.reset()
+    match profile.snapshot(List.new()) {
+        Ok(_) => print("snapshot written?")
+        Err(e) => print(e)
+    }
+    match profile.capture() {
+        Ok(_) => print("captured?")
+        Err(e) => print(e)
+    }
+    // labels just run the closure, results and all
+    print(profile.with_label("phase", "one", || -> i64 { twice(21) }))
+    profile.with_label("outer", "a", || profile.with_label("inner", "b", || print("nested")))
+    let s = profile.with_label_bytes(List.new(), List.new(), || -> String { String.from("bytes") })
+    print(s)
+}

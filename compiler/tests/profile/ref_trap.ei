@@ -1,0 +1,13 @@
+// --profile: a Ref conflict traps (exit 101) and the profile is still written, with the
+// conflict at its site in `add` (scripts/test-compiler.sh, "profile").
+type Graph = { nodes: Ref[List[i32]] }
+
+fn add(g: Graph, n: i32) { g.nodes.update(|inout l| l.push(n)) }
+
+fn main() uses io {
+    let g = Graph(Ref.new(List.new()))
+    add(g, 1)
+    g.nodes.read(|l| {
+        add(g, l.len() as i32)
+    })
+}

@@ -52,6 +52,19 @@ fn pattern(s: List[u8]) -> List[Seg] {
     out
 }
 
+/// A pattern as it was written (`/todos/:id`), from its segments.
+fn pattern_text(segs: List[Seg]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    for s in segs {
+        out.push(47)
+        if s.kind == PARAM { out.push(58) }
+        if s.kind == REST { out.push(42) }
+        bytes.append(inout out, s.text)
+    }
+    if out.len() == 0 { out.push(47) }
+    out
+}
+
 /// The decoded segments of a request path; None when it isn't an absolute path or has a
 /// malformed escape.
 fn segments(path: List[u8]) -> Option[List[List[u8]]] {
@@ -119,6 +132,16 @@ impl Router {
 
     /// What answers when no route matches the path.
     fn set_not_found(inout self, h: http.Handler) { self.not_found = h }
+
+    /// Replaces every route's handler `h` with `f(method, pattern, h)`: a layer that needs to
+    /// know the route, such as http/profiling's per-route labels. Routes added afterwards
+    /// are not wrapped.
+    fn wrap_routes(inout self, f: fn(List[u8], List[u8], http.Handler) -> http.Handler) {
+        for i in 0..self.routes.len() {
+            let r = self.routes[i]
+            self.routes[i].h = f(r.method, pattern_text(r.segs), r.h)
+        }
+    }
 
     /// Routes one request (see the module comment).
     fn handle(self, req: http.Request) -> http.Response {

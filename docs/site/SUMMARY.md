@@ -65,6 +65,7 @@
 - [The package manager: eider-pkg](tooling/eider-pkg.md)
 - [Editors](tooling/editors.md)
 - [The documentation generator: eider-doc](tooling/eider-doc.md)
+- [The profiler: eider-profiler](tooling/profiler.md)
 
 ## Design notes
 

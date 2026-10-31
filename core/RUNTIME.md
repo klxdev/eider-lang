@@ -321,6 +321,47 @@ overflows in instrumented C (tests/core), but TSan can itself run out of stack i
 runtime, which then dies of `SIGSEGV` first (so tests/std doesn't run its overflow test under
 TSan).
 
+## Profiling
+
+Only in programs built with `eiderc build|run|test --profile` (docs/runtime.md "Profiler"):
+their C starts with `#define EI_RT_PROFILE 1`, and the driver then compiles eider_rt.c (and
+eider_core.c) with `-DEI_RT_PROFILE`, a separate core-object cache entry. eider_rt.c includes
+`core/eider_prof.c` at its end under that flag, and its hooks are `#ifdef EI_RT_PROFILE`
+blocks: compiled without the flag, eider_rt.c preprocesses to the same text and object as
+before the profiler existed (tests/core/run.sh checks that no profiler code is left).
+
+| In `eider_rt.h` (inline, generated code) | Contract |
+|---|---|
+| `ei_prof_frame` `{ volatile float fn, line; }`, `ei_prof_stack[EI_PROF_DEPTH]`, `ei_prof_depth` (thread-local) | the shadow stack: 512 frames per thread, deeper ones write `ei_prof_spill`; floats so the stores alias none of the program's data, volatile so they happen where written and in order (the signal handler reads them on the same thread) |
+| `ei_prof_frame *ei_prof_enter(uint32_t fn)`, `ei_prof_leave(void)`, `ei_prof_unwind(depth)` | push (line 0), pop, and reset after a test's longjmp |
+| `ei_prof_ev(kind, n)` | an event at the current position: `EI_PEV_COW`, `COPY`, `DROP`, `GROW`, `REHASH` from glue (n bytes), `REF` before a Ref conflict's trap |
+| `ei_prof_init(const ei_prof_table *)` | generated `main` (and test `main`), after `ei_set_file`: the name table (`names[fn]`, `file_of[fn]`, `files`), what to profile (`EI_PROF_CPU`, `MEM`, `CONC`) and the program |
+
+| Hook in `eider_rt.c` (under `EI_RT_PROFILE`) | What it records |
+|---|---|
+| `ei_alloc`, `ei_free`, `ei_buf_grow` | with `mem`: a 16-byte prefix (site, size) on every block; counts and bytes per site, live counts per site, live and peak heap; a stack every `EIDER_PROF_MEM_RATE` bytes |
+| `ei_str_unique`, `ei_str_cat` | copy-on-write unshares and String growth |
+| `ei_mutex_lock` | with `conc`: a trylock; when it fails, the wait is timed (site and stack) |
+| `ei_chan_recv` | with `conc`: a wait for a value, timed, recorded after the unlock |
+| `ei_thread_start`, the thread's start routine | a spawn at the caller's site; the thread registers (ring, timer) before running and unregisters after |
+| `ei_check_leaks` | the program returned from `main`: live blocks at exit are leaks |
+
+`core/eider_prof.c` itself: the SIGPROF handler (async-signal-safe: atomics and stores only;
+it copies the innermost 128 frames and the thread's label into the thread's ring, or counts
+a drop when the ring is full), per-thread timers (Linux `timer_create` with
+`SIGEV_THREAD_ID` on `CLOCK_THREAD_CPUTIME_ID` or `CLOCK_MONOTONIC`; elsewhere
+`ITIMER_PROF`), a collector thread (blocks every signal; drains the rings every 20 ms into the
+stack table, takes the heap timeline every 100 ms, writes the profile on SIGUSR2), the
+lock-free site table, the label tree, the writer (to `<path>.tmp`, renamed) and the atexit
+hook that writes the profile at exit. It uses malloc, pthreads, stdio, `sigaction`,
+`timer_*`/`setitimer` and `clock_gettime`, each from ordinary code except the handler; the
+runtime's own allocations are never counted. The control calls arrive from Eider through
+eider_core's `ec_prof` (core/ABI.md "Profiling"): `ei_prof_init` stores its control function
+in `ec_prof_hook`, the one symbol eider_core defines for eider_rt.
+
+Under ASan+UBSan and TSan: tests/core/prof_test.c and the profiled programs of
+scripts/test-compiler.sh ("profile") run clean.
+
 ## What is core and what is generated
 
 The rule: anything that does not depend on a concrete type is in the core; anything that
@@ -345,6 +386,7 @@ walks or is parameterised by a concrete type stays compiler output.
 | locks in Mutex/Task/Chan | `ei_mutex` |
 | Task thread start/join-once/destroy, guarded stacks | `ei_thread` |
 | atomics on 64-bit integers | `ei_atomic_i64`, `ei_atomic_*` |
+| the profiler (`--profile` builds only) | `ei_prof_*` ("Profiling"; core/eider_prof.c) |
 | Chan queue: ring buffer, cond var, closed flag, send/recv/close | `ei_chan` (type-erased by element size) |
 
 ### Generated (stays compiler output)

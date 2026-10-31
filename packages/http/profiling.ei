@@ -1,0 +1,136 @@
+// http/profiling: the profiler (std/profile, docs/runtime.md "Profiler") for HTTP services.
+//
+// - `label_routes(inout r)`: every route's handler runs under the labels `method` and
+//   `route` (the pattern, `/todos/:id`, never the path), so a profile can be split per
+//   endpoint (`eider-profiler report --by route`). Call it after the routes are added. The
+//   labels are the worker thread's, so this works with the server's thread pool. In a
+//   program built without --profile it costs one call per request that returns at once.
+// - `labels(h)`: the same for a whole handler, with the label `method` only (a handler that
+//   isn't a router has no route patterns).
+// - `mount(inout r, opts)`: the debugging endpoints, only when `opts` says so (see `Options`):
+//     GET /debug/profile?seconds=N   records N seconds (default 10, at most opts.max_seconds)
+//                                    from now: the profile is reset, sampling runs for N
+//                                    seconds, and the answer is the profile file
+//                                    (application/x-eider-profile; eider-profiler reads it)
+//     GET /debug/heap                the profile as it is now, without resetting it: the live
+//                                    heap by allocation site, and everything since the start
+//   Both answer 501 in a program built without --profile, 403 to a peer that isn't the
+//   local host unless `opts.remote`, and 409 while another recording runs. A recording
+//   holds the worker that serves it for N seconds, and resets what the profile written at
+//   exit would have held.
+//
+// Opt-in on purpose: `options()` has everything off, so the endpoints exist only in a service
+// that turns them on (`opts.enabled = true`), typically from its configuration or an
+// environment variable, and never by accident. A profile names every function and file of
+// the program, so it is not for the public internet: keep `remote` false or put the
+// endpoints behind authentication (middleware.bearer).
+
+import "core/sys"
+import "std/bytes"
+import "std/atomic"
+import "std/profile"
+import "std/time"
+import "http.ei"
+import "router.ei"
+
+/// What `mount` adds. `enabled`: false adds nothing. `remote`: whether peers other than the
+/// local host (127.0.0.1, ::1, or a request that didn't come from a socket) may use them.
+/// `max_seconds`: the longest recording. `busy` is shared by every copy.
+pub type Options = { enabled: bool, remote: bool, max_seconds: i64, busy: atomic.Atomic }
+
+/// Everything off (see the module comment); set `enabled` to have the endpoints.
+pub fn options() -> Options { Options(false, false, 60, atomic.new(0)) }
+
+/// `h` with every request under the label `method`.
+pub fn labels(h: http.Handler) -> http.Handler {
+    |req: http.Request| -> http.Response {
+        profile.with_label_bytes(sys.lit("method"), req.method, || -> http.Response { h(req) })
+    }
+}
+
+/// One route's handler under the labels `method` and `route`.
+fn route_labels(method: List[u8], pattern: List[u8], h: http.Handler) -> http.Handler {
+    |req: http.Request| -> http.Response {
+        profile.with_label_bytes(sys.lit("method"), method, || -> http.Response {
+            profile.with_label_bytes(sys.lit("route"), pattern, || -> http.Response { h(req) })
+        })
+    }
+}
+
+/// Every route of `r` under its labels (see the module comment).
+pub fn label_routes(inout r: router.Router) {
+    r.wrap_routes(|m: List[u8], p: List[u8], h: http.Handler| -> http.Handler { route_labels(m, p, h) })
+}
+
+/// Whether `peer` ("127.0.0.1:50312", "[::1]:8080", "") is the local host.
+pub fn is_local(peer: List[u8]) -> bool {
+    peer.len() == 0 || bytes.starts_with(peer, sys.lit("127.")) || bytes.starts_with(peer, sys.lit("[::1]"))
+}
+
+fn refusal(o: Options, req: http.Request) -> Option[http.Response] {
+    if !profile.enabled() { return Some(http.text(501, "the program was not built with --profile\n")) }
+    if !o.remote && !is_local(req.peer) { return Some(http.text(403, "profiling is only for the local host\n")) }
+    None
+}
+
+fn profile_response(data: List[u8]) -> http.Response {
+    let mut r = http.respond(200, "application/x-eider-profile", data)
+    r.set_header("Cache-Control", sys.lit("no-store"))
+    r
+}
+
+/// GET /debug/profile?seconds=N (see the module comment).
+pub fn profile_handler(o: Options) -> http.Handler uses fs, io, clock {
+    |req: http.Request| -> http.Response {
+        match refusal(o, req) {
+            Some(r) => { return r }
+            None => {}
+        }
+        let mut secs: i64 = 10
+        match http.query_value(req.query, sys.lit("seconds")) {
+            Some(v) => {
+                match bytes.parse_u64(v) {
+                    Some(n) => {
+                        if n < 1 || n > (o.max_seconds as u64) { return http.text(400, "seconds: 1 to max_seconds\n") }
+                        secs = n as i64
+                    }
+                    None => { return http.text(400, "seconds: a whole number\n") }
+                }
+            }
+            None => {}
+        }
+        if o.busy.swap(1, atomic.SeqCst) != 0 { return http.text(409, "a recording is already running\n") }
+        let was = profile.running()
+        profile.reset()
+        profile.start()
+        time.sleep(time.seconds(secs))
+        if !was { profile.stop() }
+        let got = profile.capture()
+        o.busy.store(0, atomic.SeqCst)
+        match got {
+            Ok(data) => profile_response(data)
+            Err(e) => http.text(500, "cannot capture the profile\n")
+        }
+    }
+}
+
+/// GET /debug/heap (see the module comment).
+pub fn heap_handler(o: Options) -> http.Handler uses fs, io, clock {
+    |req: http.Request| -> http.Response {
+        match refusal(o, req) {
+            Some(r) => { return r }
+            None => {}
+        }
+        match profile.capture() {
+            Ok(data) => profile_response(data)
+            Err(e) => http.text(500, "cannot capture the profile\n")
+        }
+    }
+}
+
+/// Adds GET /debug/profile and GET /debug/heap to `r` when `o.enabled`; nothing otherwise.
+pub fn mount(inout r: router.Router, o: Options) uses fs, io, clock {
+    if !o.enabled { return }
+    r.get("/debug/profile", profile_handler(o))
+    r.get("/debug/heap", heap_handler(o))
+}

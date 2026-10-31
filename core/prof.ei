@@ -1,0 +1,24 @@
+// core/prof: the profiler's control call (core/ABI.md "Profiling"), which std/profile is built
+// on. A program built with `eiderc build|run --profile` has a profiler in its runtime
+// (core/eider_prof.c) and the call reaches it; in any other program every call answers
+// -ENOSYS. It is a module of its own, like core/os, so that programs that don't use the
+// profiler carry no binding (their C stays exactly what it was).
+//
+// Arguments that are text (a path, a label's key and value) go through the input buffer
+// first (sys.send / sys.send_all). Ops: 0 state (1 + 2 if sampling), 1 start, 2 stop, 3 reset,
+// 4 snapshot to the path in the buffer (empty: the profile path), 5 push the label
+// key NUL value (the previous label), 6 restore label `arg`, 7 the current label.
+//
+// The capabilities are the real ones (core/os's rule): writing a snapshot is `fs`; the
+// others change only the profiler's own state, so they need nothing beyond `ffi`.
+
+extern "c" fn ec_prof(op: i32, arg: i64) -> i64
+
+pub fn state() -> i64 uses ffi { unsafe { ec_prof(0, 0) } }
+pub fn start() -> i64 uses ffi { unsafe { ec_prof(1, 0) } }
+pub fn stop() -> i64 uses ffi { unsafe { ec_prof(2, 0) } }
+pub fn reset() -> i64 uses ffi { unsafe { ec_prof(3, 0) } }
+pub fn snapshot() -> i64 uses fs, ffi { unsafe { ec_prof(4, 0) } }
+pub fn label_push() -> i64 uses ffi { unsafe { ec_prof(5, 0) } }
+pub fn label_set(id: i64) -> i64 uses ffi { unsafe { ec_prof(6, id) } }
+pub fn label_get() -> i64 uses ffi { unsafe { ec_prof(7, 0) } }

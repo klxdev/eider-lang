@@ -18,6 +18,7 @@ import "std/sync"
 import "http"
 import "http/router"
 import "http/jsonrpc"
+import "http/profiling"
 
 // `keys` keeps insertion order for kv.keys (iterating the Map gives its slot order)
 type Kv = { keys: List[List[u8]], vals: Map[List[u8], List[u8]] }
@@ -115,8 +116,24 @@ pub fn rpc(s: Store) -> jsonrpc.Table {
     t
 }
 
-/// The whole service: /rpc, /health and /kv/:key.
+/// The whole service: /rpc, /health and /kv/:key, each route under the profiler's `method`
+/// and `route` labels (packages/http/profiling.ei; nothing without --profile).
 pub fn app(s: Store) -> http.Handler {
+    let mut r = routes(s)
+    profiling.label_routes(inout r)
+    router.handler(r)
+}
+
+/// `app` plus the profiler's /debug/profile and /debug/heap when `o` enables them (main.ei:
+/// KVSTORE_PROFILING=1).
+pub fn app_with(s: Store, o: profiling.Options) -> http.Handler uses fs, io, clock {
+    let mut r = routes(s)
+    profiling.label_routes(inout r)
+    profiling.mount(inout r, o)
+    router.handler(r)
+}
+
+fn routes(s: Store) -> router.Router {
     let mut r = router.new()
     r.post("/rpc", jsonrpc.handler(rpc(s)))
     r.get("/health", |q: http.Request| -> http.Response { http.text(200, "ok") })
@@ -126,5 +143,5 @@ pub fn app(s: Store) -> http.Handler {
             None => http.error_response(404)
         }
     })
-    router.handler(r)
+    r
 }

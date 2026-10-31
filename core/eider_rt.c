@@ -8,6 +8,9 @@
 // stacks (core/RUNTIME.md "Stack overflow") also use anonymous mappings, mprotect,
 // sigaltstack and sigaction, which every supported system has; the feature macros below are
 // each system's switch for them (MAP_ANONYMOUS is not in POSIX.1-2008).
+#if defined(__linux__) && defined(EI_RT_PROFILE)
+#define _GNU_SOURCE 1 /* the profiler's per-thread timers (core/eider_prof.c) */
+#endif
 #if defined(__linux__)
 #define _DEFAULT_SOURCE 1
 #define _POSIX_C_SOURCE 200809L
@@ -36,6 +39,20 @@
 #endif
 #if defined(MAP_ANONYMOUS) && defined(SA_ONSTACK) && defined(SA_SIGINFO)
 #define EI_GUARDED_STACKS 1
+#endif
+#ifdef EI_RT_PROFILE
+/* the hooks into the profiler (core/eider_prof.c, included at the end of this file) */
+static bool prof_mem_on(void);
+static bool prof_conc_on(void);
+static void *prof_alloc(uint64_t n);
+static void prof_free(void *p);
+static void *prof_realloc(void *p, uint64_t b);
+static void prof_thread_begin(void);
+static void prof_thread_end(void);
+static void prof_clean_exit(void);
+static void prof_mutex_lock(ei_mutex *m);
+static void prof_wait(int32_t kind, uint64_t ns);
+static uint64_t prof_now(void);
 #endif
 
 // ---- traps
@@ -85,6 +102,14 @@ static atomic_int_least64_t live_allocs;
 #endif
 
 void *ei_alloc(uint64_t n) {
+#ifdef EI_RT_PROFILE
+  if (prof_mem_on()) {
+#ifdef EI_RT_COUNT_ALLOCS
+    atomic_fetch_add(&live_allocs, 1);
+#endif
+    return prof_alloc(n);
+  }
+#endif
 #if SIZE_MAX < UINT64_MAX
   if (n > SIZE_MAX) ei_trap("out of memory", 0);
 #endif
@@ -101,10 +126,19 @@ void ei_free(void *p) {
 #ifdef EI_RT_COUNT_ALLOCS
   atomic_fetch_sub(&live_allocs, 1);
 #endif
+#ifdef EI_RT_PROFILE
+  if (prof_mem_on()) {
+    prof_free(p);
+    return;
+  }
+#endif
   free(p);
 }
 
 void ei_check_leaks(void) {
+#ifdef EI_RT_PROFILE
+  prof_clean_exit();
+#endif
 #ifdef EI_RT_COUNT_ALLOCS
   fflush(stdout);
   fprintf(stderr, "eider: outstanding allocations: %" PRIdLEAST64 "\n", (int_least64_t)atomic_load(&live_allocs));
@@ -134,6 +168,9 @@ void *ei_buf_grow(void *d, uint64_t n, uint64_t size) {
   if (b > SIZE_MAX) ei_trap("out of memory", 0);
 #endif
   /* still one allocation, so the allocation counter does not change */
+#ifdef EI_RT_PROFILE
+  if (prof_mem_on()) return (ei_buf_hdr *)prof_realloc(ei_buf_h(d), b) + 1;
+#endif
   ei_buf_hdr *h = realloc(ei_buf_h(d), b ? (size_t)b : 1);
   if (!h) ei_trap("out of memory", 0);
   return h + 1;
@@ -194,6 +231,9 @@ ei_String ei_clone_String(const ei_String *s) { return str_new(s->p, s->len, s->
 
 void ei_str_unique(ei_String *s) {
   if (!ei_buf_shared(s->p)) return;
+#ifdef EI_RT_PROFILE
+  ei_prof_ev(EI_PEV_COW, s->cap + 1);
+#endif
   ei_String n = str_new(s->p, s->len, s->cap);
   ei_drop_String(s);
   *s = n;
@@ -206,6 +246,9 @@ void ei_str_cat(ei_String *s, const char *t, uint64_t tl) {
   if (s->p && cap == s->cap && !ei_buf_shared(s->p)) {
     if (tl) memmove(s->p + s->len, t, (size_t)tl);
   } else {
+#ifdef EI_RT_PROFILE
+    ei_prof_ev(s->p && ei_buf_shared(s->p) ? EI_PEV_COW : EI_PEV_GROW, cap + 1);
+#endif
     ei_String n = str_new(s->p, s->len, cap);
     if (tl) memcpy(n.p + s->len, t, (size_t)tl);
     ei_drop_String(s);
@@ -322,6 +365,12 @@ void ei_mutex_init(ei_mutex *m) {
   pthread_mutexattr_destroy(&a);
 }
 void ei_mutex_lock(ei_mutex *m) {
+#ifdef EI_RT_PROFILE
+  if (prof_conc_on()) {
+    prof_mutex_lock(m);
+    return;
+  }
+#endif
   if (pthread_mutex_lock(&m->mu) != 0) ei_trap("cannot lock a mutex", 0);
 }
 void ei_mutex_unlock(ei_mutex *m) {
@@ -453,7 +502,13 @@ static void *thread_main(void *p) {
   altstack_set(t->map, alt);
   guard_lo = (uintptr_t)(t->map + alt);
   guard_hi = guard_lo + guard;
+#ifdef EI_RT_PROFILE
+  prof_thread_begin();
+#endif
   void *r = t->run(t->arg);
+#ifdef EI_RT_PROFILE
+  prof_thread_end();
+#endif
   guard_lo = guard_hi = 0;
   altstack_set(NULL, 0);
   return r;
@@ -490,6 +545,9 @@ void ei_thread_start(ei_thread *t, void *(*run)(void *), void *arg) {
   t->arg = arg;
   t->map = NULL;
   t->map_len = 0;
+#ifdef EI_RT_PROFILE
+  ei_prof_ev(EI_PEV_SPAWN, 0);
+#endif
 #if defined(EI_GUARDED_STACKS)
   pthread_once(&fault_once, fault_handlers_install);
   if (thread_start_guarded(t)) return;
@@ -566,15 +624,27 @@ void ei_chan_send(ei_chan *c, const void *elem) {
 
 bool ei_chan_recv(ei_chan *c, void *out) {
   ei_mutex_lock(&c->mu);
+#ifdef EI_RT_PROFILE
+  uint64_t waited = c->len == 0 && !c->closed && prof_conc_on() ? prof_now() : 0;
+#endif
   while (c->len == 0 && !c->closed) pthread_cond_wait(&c->cv, &c->mu.mu);
+#ifdef EI_RT_PROFILE
+  if (waited) waited = prof_now() - waited + 1;
+#endif
   if (c->len == 0) {
     ei_mutex_unlock(&c->mu);
+#ifdef EI_RT_PROFILE
+    if (waited) prof_wait(EI_PEV_RECV, waited);
+#endif
     return false;
   }
   memcpy(out, slot(c, 0), (size_t)c->size);
   c->head = (c->head + 1) % c->cap;
   c->len--;
   ei_mutex_unlock(&c->mu);
+#ifdef EI_RT_PROFILE
+  if (waited) prof_wait(EI_PEV_RECV, waited);
+#endif
   return true;
 }
 
@@ -595,3 +665,7 @@ void ei_chan_destroy(ei_chan *c) {
   pthread_cond_destroy(&c->cv);
   ei_mutex_destroy(&c->mu);
 }
+
+#ifdef EI_RT_PROFILE
+#include "eider_prof.c"
+#endif

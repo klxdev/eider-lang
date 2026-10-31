@@ -162,6 +162,133 @@ type G = {
     /// per loop in `loops`: the label after it that a labeled `break` from a nested loop
     /// jumps to (NONE: none needed; docs/compiler.md, "C8.22")
     brks: List[u32],
+    /// `--profile`: what to profile (PROF_CPU | PROF_MEM | PROF_CONC; 0: not profiling, and
+    /// then nothing below is emitted), and the line the shadow frame was last set to in the
+    /// straight-line code being emitted (NONE at block boundaries)
+    prof: u32,
+    pline: u32,
+    /// whether the function being emitted has a shadow frame (framed), and the toolchain
+    /// version the profile records
+    pframe: bool,
+    pver: List[u8],
+}
+
+// ---- profiling (`eiderc build|run --profile`; docs/runtime.md "Profiler"). The C starts with
+// `#define EI_RT_PROFILE 1` (the driver then links the profiling runtime, core/eider_prof.c).
+// Every Eider function pushes a shadow frame (`ei_prof_frame *ei_pf = ei_prof_enter(<id>);`,
+// id = its index + 1 in the name table `ei_prof_names`), sets `ei_pf->line` before each
+// statement with a line that differs from the last one set in the same straight-line code,
+// and pops it before every `return` and at the end. The glue reports the events that make
+// Eider programs slow (copy-on-write unshares, `.copy()`, Drop calls, List growth, Map
+// rehashes) with `ei_prof_ev`. Without --profile none of this is emitted.
+
+pub const PROF_CPU: u32 = 1
+pub const PROF_MEM: u32 = 2
+pub const PROF_CONC: u32 = 4
+
+/// What `--profile[=cpu,mem,conc]` asks for (PROF_CPU | PROF_MEM | PROF_CONC); a bare
+/// `--profile` is all three. 0: not a valid selection.
+pub fn prof_what(arg: List[u8]) -> u32 {
+    if bytes.eq(arg, sys.lit("--profile")) { return PROF_CPU + PROF_MEM + PROF_CONC }
+    if !bytes.starts_with(arg, sys.lit("--profile=")) { return 0 }
+    let mut what: u32 = 0
+    for part in bytes.split(bytes.slice(arg, 10, arg.len()), 44) {
+        if bytes.eq(part, sys.lit("cpu")) {
+            if what % 2 == 0 { what += PROF_CPU }
+        } else if bytes.eq(part, sys.lit("mem")) {
+            if (what / 2) % 2 == 0 { what += PROF_MEM }
+        } else if bytes.eq(part, sys.lit("conc")) {
+            if (what / 4) % 2 == 0 { what += PROF_CONC }
+        } else {
+            return 0
+        }
+    }
+    what
+}
+
+/// Whether a function whose body is block b gets a shadow frame: when it calls a function
+/// (S_CALL, S_CALLV) or loops, directly or in a nested block. Straight-line code that calls
+/// nothing (accessors, small helpers, wrappers of a builtin) gets none: like a function the C
+/// compiler inlines, its time, allocations and copies count for its caller, at the line of
+/// the call. That keeps the profiler cheap on code made of many small functions (eiderc:
+/// +31% instead of +52%), and every function that can take time of its own is still named.
+fn framed(p: P, b: u32) -> bool {
+    let bl = p.ir.blocks[b as usize]
+    for i in 0..bl.len {
+        let s = p.ir.stmts[p.ir.extra[(bl.start + i) as usize] as usize]
+        if s.kind == ir.S_CALL || s.kind == ir.S_CALLV || s.kind == ir.S_LOOP { return true }
+        if s.kind == ir.S_IF && (framed(p, s.b) || framed(p, s.c)) { return true }
+    }
+    false
+}
+
+/// Whether statement s gets its line in the shadow frame: those that call, allocate or run a
+/// Drop (calls, builtins, closures, records with their own Drop, drops of owned values,
+/// prints), which are the positions a profile names (call sites in the frames above, the
+/// sites of allocations and copies). Other statements don't: a store per statement costs
+/// more than the rest of the profiler (eiderc: +75% against +20%), so time in call-free code
+/// is attributed to its function at the line of its last call.
+fn prof_marks(p: P, s: ir.Stmt) -> bool {
+    let k = s.kind
+    if k == ir.S_CALL || k == ir.S_CALLV || k == ir.S_BUILTIN || k == ir.S_CLOSURE || k == ir.S_PRINT || k == ir.S_DROP { return true }
+    k == ir.S_RECORD && shared_rec(p, s.ty)
+}
+
+/// `ei_pf->line = <line>;` before a statement of line `line`, unless it is already set.
+fn prof_line(inout g: G, line: u32, depth: u32) {
+    if !g.pframe || line == 0 || line == g.pline { return }
+    ind(inout g, depth)
+    put(inout g, "ei_pf->line = ")
+    putn(inout g, line as u64)
+    put(inout g, ";\n")
+    g.pline = line
+}
+
+/// `ei_prof_ev(<kind>, <bytes>); ` in glue (nothing without --profile).
+fn prof_ev(inout g: G, kind: str, bytes: str) {
+    if g.prof == 0 { return }
+    put(inout g, "ei_prof_ev(")
+    put(inout g, kind)
+    put(inout g, ", ")
+    put(inout g, bytes)
+    put(inout g, "); ")
+}
+
+/// The name table and the profiler's start-up table (before `main`).
+fn prof_table(inout g: G, p: P, file: List[u8]) {
+    put(inout g, "static const char *const ei_prof_names[] = { \"\"")
+    for f in 0..p.ir.fns.len() {
+        put(inout g, ", ")
+        let n = p.ir.fns[f].name.copy()
+        str_lit(inout g.o, n)
+    }
+    put(inout g, " };\nstatic const uint32_t ei_prof_file_of[] = { 0")
+    for f in 0..p.ir.fns.len() {
+        put(inout g, ", ")
+        putn(inout g, p.ir.fns[f].file as u64)
+    }
+    put(inout g, " };\nstatic const char *const ei_prof_files[] = { ")
+    str_lit(inout g.o, file)
+    for i in 1..p.ir.files.len() {
+        put(inout g, ", ")
+        let name = p.ir.files[i].copy()
+        str_lit(inout g.o, name)
+    }
+    put(inout g, " };\nstatic const ei_prof_table ei_prof_tab = { ei_prof_names, ei_prof_file_of, ")
+    putn(inout g, (p.ir.fns.len() + 1) as u64)
+    put(inout g, ", ei_prof_files, ")
+    let mut nf = p.ir.files.len()
+    if nf == 0 { nf = 1 }
+    putn(inout g, nf as u64)
+    put(inout g, ", ")
+    let what = g.prof.copy()
+    putn(inout g, what as u64)
+    put(inout g, ", ")
+    str_lit(inout g.o, file)
+    put(inout g, ", ")
+    let ver = g.pver.copy()
+    str_lit(inout g.o, ver)
+    put(inout g, " };\n\n")
 }
 
 fn put(inout g: G, s: str) { bytes.append(inout g.o, sys.lit(s)) }
@@ -1075,8 +1202,11 @@ fn drop_glue(inout g: G, p: P, ty: u32) {
         // (in order); a holder that drop gives the value to keeps it alive
         let d = types.def_of(p.t, ty)
         put(inout g, "if (!x->p) return;\n  if (ei_buf_count(x->p) == 1) ")
+        if g.prof > 0 { put(inout g, "{ ei_prof_ev(EI_PEV_DROP, sizeof *x->p); ") }
         fn_name(inout g, p, custom_fn(p, TR_DROP, ty))
-        put(inout g, "(x);\n  if (ei_buf_dec(x->p)) {\n    ")
+        put(inout g, "(x);")
+        if g.prof > 0 { put(inout g, " }") }
+        put(inout g, "\n  if (ei_buf_dec(x->p)) {\n    ")
         for i in 0..d.len { drop_call(inout g, p, types.field(p.t, d.start, i).ty, rfp(p, ty, i)) }
         put(inout g, "ei_buf_free(x->p);\n  }\n  x->p = NULL;")
     } else if k == types.T_RECORD {
@@ -1263,6 +1393,7 @@ fn uniq_glue(inout g: G, p: P, ty: u32) {
         // a record with its own Drop: a copy through its own Copy, else of its fields as any
         // copy makes them (both values are dropped, each once)
         put(inout g, " {\n  if (!ei_buf_shared(x->p)) return;\n  ")
+        prof_ev(inout g, "EI_PEV_COW", "sizeof *x->p")
         cty(inout g, p, ty)
         let f = custom_fn(p, TR_COPY, ty)
         if f != NONE {
@@ -1288,6 +1419,7 @@ fn uniq_glue(inout g: G, p: P, ty: u32) {
     need(inout g, GK_DROP, ty)
     if k == types.T_LIST {
         put(inout g, " {\n  if (!ei_buf_shared(x->d)) return;\n  ")
+        prof_ev(inout g, "EI_PEV_COW", "x->cap * sizeof *x->d")
         cty(inout g, p, ty)
         put(inout g, " old = *x;\n  x->d = ei_buf_alloc(x->cap, sizeof *x->d);\n  ")
         if owns(inout g, p, t.a) {
@@ -1299,6 +1431,7 @@ fn uniq_glue(inout g: G, p: P, ty: u32) {
         }
     } else if k == types.T_MAP {
         put(inout g, " {\n  if (!ei_buf_shared(x->s)) return;\n  ")
+        prof_ev(inout g, "EI_PEV_COW", "x->cap * (sizeof *x->k + sizeof *x->v + 1)")
         cty(inout g, p, ty)
         put(inout g, " old = *x;\n  x->k = ei_alloc_n(x->cap, sizeof *x->k);\n  x->v = ei_alloc_n(x->cap, sizeof *x->v);\n  x->s = ei_buf_alloc(x->cap, 1);\n  for (uint64_t i = 0; i < x->cap; i++) {\n    x->s[i] = old.s[i];\n    if (old.s[i] == 1) { x->k[i] = ")
         clone_expr(inout g, p, t.a, sys.lit("&old.k[i]"))
@@ -1307,6 +1440,7 @@ fn uniq_glue(inout g: G, p: P, ty: u32) {
         put(inout g, "; }\n  }\n  ")
     } else {
         put(inout g, " {\n  if (!ei_buf_shared(x->p)) return;\n  ")
+        prof_ev(inout g, "EI_PEV_COW", "sizeof *x->p")
         cty(inout g, p, ty)
         put(inout g, " old = *x;\n  x->p = ei_buf_alloc(1, sizeof *x->p);\n  *x->p = ")
         clone_expr(inout g, p, t.a, sys.lit("old.p"))
@@ -2050,7 +2184,9 @@ fn list_glue(inout g: G, p: P, kind: u32, ty: u32) {
         proto(inout g, mark)
         put(inout g, " {\n  ")
         uniq_call(inout g, p, ty, sys.lit("l"))
-        put(inout g, ";\n  if (l->len == l->cap) {\n    uint64_t nc = ei_grow_cap(l->cap, l->len, 1, 4);\n    l->d = ei_buf_grow(l->d, nc, sizeof *l->d);\n    l->cap = nc;\n  }\n  l->d[l->len++] = x;\n}\n")
+        put(inout g, ";\n  if (l->len == l->cap) {\n    uint64_t nc = ei_grow_cap(l->cap, l->len, 1, 4);\n    ")
+        prof_ev(inout g, "EI_PEV_GROW", "nc * sizeof *l->d")
+        put(inout g, "l->d = ei_buf_grow(l->d, nc, sizeof *l->d);\n    l->cap = nc;\n  }\n  l->d[l->len++] = x;\n}\n")
         return
     }
     put(inout g, "static bool ")
@@ -2247,6 +2383,7 @@ fn map_glue(inout g: G, p: P, kind: u32, ty: u32) {
     drop_call(inout g, p, vt, sys.lit("&m->v[f]"))
     drop_call(inout g, p, kt, sys.lit("&key"))
     put(inout g, "m->v[f] = val;\n    return;\n  }\n  if ((m->used + 1) * 4 > m->cap * 3) {\n    uint64_t nc = ei_grow_cap(m->cap, m->cap, 1, 8);\n    ")
+    prof_ev(inout g, "EI_PEV_REHASH", "nc * (sizeof *m->k + sizeof *m->v + 1)")
     cty(inout g, p, kt)
     put(inout g, " *nk = ei_alloc_n(nc, sizeof *nk);\n    ")
     cty(inout g, p, vt)
@@ -2592,7 +2729,9 @@ fn fn_name(inout g: G, p: P, f: u32) {
 
 fn block(inout g: G, p: P, b: u32, depth: u32) {
     let bl = p.ir.blocks[b as usize]
+    g.pline = NONE
     for i in 0..bl.len { stmt(inout g, p, p.ir.extra[(bl.start + i) as usize], depth) }
+    g.pline = NONE
 }
 
 /// Whether block b contains a `continue` of its own loop (not of a nested one).
@@ -2934,7 +3073,14 @@ fn trait_builtin(inout g: G, p: P, s: ir.Stmt) {
     if b == ir.B_COPY {
         let mut ptr = sys.lit("&")
         bytes.append(inout ptr, v)
+        if g.prof > 0 {
+            // a comma expression: the copy is still the value assigned
+            put(inout g, "(ei_prof_ev(EI_PEV_COPY, sizeof(")
+            cty(inout g, p, ty)
+            put(inout g, ")), ")
+        }
         copy_expr(inout g, p, ty, ptr)
+        if g.prof > 0 { put(inout g, ")") }
     } else if b == ir.B_HASH {
         hash_text(inout g, p, ty, v)
     } else {
@@ -3226,6 +3372,7 @@ fn stmt(inout g: G, p: P, id: u32, depth: u32) {
     let copies = k == ir.S_COPY || k == ir.S_READ || k == ir.S_MOVE || k == ir.S_CLONE
     if copies && is_void(p, loc(p, g, s.dst).ty) { return }
     if k == ir.S_DROP && !owns(inout g, p, s.ty) { return }
+    if g.prof > 0 && prof_marks(p, s) { prof_line(inout g, s.line, depth) }
     // bounds checks of the places this statement uses
     if k == ir.S_READ || k == ir.S_STORE || k == ir.S_TAG || k == ir.S_MOVE || k == ir.S_DROP { checks(inout g, p, s.a, depth) }
     // a reference's place is checked when it is bound (docs/compiler.md, "C8.6")
@@ -3421,6 +3568,7 @@ fn stmt(inout g: G, p: P, id: u32, depth: u32) {
             putn(inout g, label as u64)
         }
     } else {
+        if g.pframe { put(inout g, "ei_prof_leave(); ") }
         put(inout g, "return")
         if s.a > 0 {
             put(inout g, " ")
@@ -3494,7 +3642,15 @@ fn function(inout g: G, p: P, f: u32) {
         }
         put(inout g, ";\n")
     }
+    g.pframe = g.prof > 0 && framed(p, fd.body - 1)
+    if g.pframe {
+        put(inout g, "  ei_prof_frame *ei_pf = ei_prof_enter(")
+        putn(inout g, (f + 1) as u64)
+        put(inout g, ");\n  (void)ei_pf;\n")
+    }
     block(inout g, p, fd.body - 1, 1)
+    if g.pframe && is_void(p, fd.ret) { put(inout g, "  ei_prof_leave();\n") }
+    g.pframe = false
     // every path of a function with a result returns; tell the C compiler so
     if !is_void(p, fd.ret) { put(inout g, "  ei_unreachable();\n") }
     put(inout g, "}\n\n")
@@ -3646,11 +3802,16 @@ pub fn program(p: P, file: List[u8], tests: bool) -> Result[List[u8], List[u8]] 
 
 /// The C for `p` as a program, or (lib = true) as a library: no `main`, a C entry point per
 /// `export fn` (export_wrappers).
-pub fn program_for(p: P, file: List[u8], tests: bool, lib: bool) -> Result[List[u8], List[u8]] { emit(p, file, tests, lib, false) }
+pub fn program_for(p: P, file: List[u8], tests: bool, lib: bool) -> Result[List[u8], List[u8]] { emit(p, file, tests, lib, false, 0, List.new()) }
+
+/// `program_for` built for the profiler (`--profile`; `what` is PROF_CPU | PROF_MEM | PROF_CONC,
+/// never 0): the same program with the shadow stack, the event hooks and the name table;
+/// `version` is the toolchain's, which the profile records.
+pub fn program_prof(p: P, file: List[u8], tests: bool, what: u32, version: List[u8]) -> Result[List[u8], List[u8]] { emit(p, file, tests, false, false, what, version) }
 
 /// The C for `p` as a WebAssembly module: a library whose entry points are the module's
 /// exports (compiled against core/wasm by wasm.ei).
-pub fn program_wasm(p: P, file: List[u8]) -> Result[List[u8], List[u8]] { emit(p, file, false, true, true) }
+pub fn program_wasm(p: P, file: List[u8]) -> Result[List[u8], List[u8]] { emit(p, file, false, true, true, 0, List.new()) }
 
 /// C `main` for the Eider `main` (function f) by its result (docs/compiler.md, "C8.2: small
 /// language gaps"): () exits 0; an i32 is the exit code (outside 0..255 it traps at main's
@@ -3658,10 +3819,12 @@ pub fn program_wasm(p: P, file: List[u8]) -> Result[List[u8], List[u8]] { emit(p
 /// when E can't be printed) to stderr, is dropped, and exits 1.
 fn main_body(inout g: G, p: P, file: List[u8], f: u32) {
     files_table(inout g, p, false)
+    if g.prof > 0 { prof_table(inout g, p, file) }
     put(inout g, "int main(void) {\n  ei_set_file(")
     str_lit(inout g.o, file)
     put(inout g, ");\n  ")
     files_table(inout g, p, true)
+    if g.prof > 0 { put(inout g, "ei_prof_init(&ei_prof_tab);\n  ") }
     let rt = p.ir.fns[f as usize].ret
     let rk = ty_kind(p, rt)
     if rk == types.T_INT {
@@ -3707,8 +3870,8 @@ fn main_body(inout g: G, p: P, file: List[u8], f: u32) {
     put(inout g, "\n    ei_check_leaks();\n    return 1;\n  }\n  ei_check_leaks();\n  return 0;\n}\n")
 }
 
-fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool) -> Result[List[u8], List[u8]] {
-    let mut g = G(List.new(), 0, List.new(), 0, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new())
+fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool, what: u32, version: List[u8]) -> Result[List[u8], List[u8]] {
+    let mut g = G(List.new(), 0, List.new(), 0, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new(), what, NONE, false, version)
     name_all(inout g, p)
     if g.err.len() > 0 { return Err(g.err) }
     let ord = order(g, p)
@@ -3727,9 +3890,11 @@ fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool) -> Result[List
         export_wrappers(inout g, p, wasm)
     } else if tests {
         files_table(inout g, p, false)
+        if g.prof > 0 { prof_table(inout g, p, file) }
         put(inout g, "int main(void) {\n  volatile int total = 0, failed = 0;\n  jmp_buf jb;\n  ei_set_trap_jmp(&jb);\n  ei_set_file(")
         str_lit(inout g.o, file)
         put(inout g, ");\n")
+        if g.prof > 0 { put(inout g, "  ei_prof_init(&ei_prof_tab);\n") }
         if g.files.len() > 0 {
             put(inout g, "  ")
             files_table(inout g, p, true)
@@ -3742,7 +3907,10 @@ fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool) -> Result[List
             str_lit(inout g.o, fd.name)
             put(inout g, ");\n  fflush(stdout);\n  if (setjmp(jb) == 0) {\n    ")
             fn_name(inout g, p, f)
-            put(inout g, "();\n    printf(\"ok\\n\");\n  } else {\n    failed++;\n  }\n")
+            put(inout g, "();\n    printf(\"ok\\n\");\n  } else {\n    failed++;\n")
+            // a failed test longjmps past its frames' pops
+            if g.prof > 0 { put(inout g, "    ei_prof_unwind(0);\n") }
+            put(inout g, "  }\n")
         }
         put(inout g, "  printf(\"\\n%d tests, %d failed\\n\", total, failed);\n  if (!failed) ei_check_leaks();\n  return failed ? 1 : 0;\n}\n")
     } else {
@@ -3773,6 +3941,12 @@ fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool) -> Result[List
         if b != 42 && b >= 32 && b < 127 { g.o.push(b) }
     }
     put(inout g, " */\n#include <stdio.h>\n#include \"eider_rt.h\"\n\n")
+    if g.prof > 0 {
+        // first, so the runtime's header sees it (and the driver links the profiling runtime)
+        let mut text = sys.lit("#define EI_RT_PROFILE 1\n")
+        bytes.append(inout text, g.o)
+        g.o = text
+    }
     extern_protos(inout g, p)
     put(inout g, "/* ---- types */\n")
     for ty in 0..p.t.tys.len() {
