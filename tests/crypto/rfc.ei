@@ -1,9 +1,9 @@
 // RFC test vectors (tests/crypto/vectors/rfc.rsp) and the package's misuse checks, against
 // whichever backend this program is linked with (tests/crypto/run.sh runs it on each).
 
-import "std/bytes"
-import "std/io"
-import "vec.ei"
+import std.bytes
+import std.io
+import vec
 import "../../packages/crypto/crypto.ei"
 
 fn eqb(a: List[u8], b: List[u8]) -> bool { bytes.eq(a, b) }

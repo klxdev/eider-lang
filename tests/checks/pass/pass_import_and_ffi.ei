@@ -1,5 +1,5 @@
 // mode: build
-import "lib/geometry.ei"
+import lib.geometry
 
 extern "c" fn abs(n: i32) -> i32
 extern "c" fn strlen(s: str) -> usize

@@ -124,7 +124,7 @@ inside a package.
 So a program calls std and core with `uses io`, `uses fs`, ..., never `uses ffi`:
 
 ```eider
-import "std/fs"
+import std.fs
 
 fn main() uses io, fs {
     print(fs.exists("no-such-file".bytes()))

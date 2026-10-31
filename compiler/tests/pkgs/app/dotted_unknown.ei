@@ -1,0 +1,5 @@
+// pkgtest: check
+// a module path whose first segment is neither the app nor one of its dependencies
+import legacy.util
+
+fn main() {}

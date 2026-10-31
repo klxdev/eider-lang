@@ -50,7 +50,7 @@ code 1 on stderr; stdout carries only what a command reports when it succeeds.
 [package]
 name = "warehouse"          # lowercase letters, digits and `_`, starting with a letter; not `core` or `std`
 version = "0.1.0"           # MAJOR.MINOR.PATCH
-entry = "warehouse.ei"      # what `import "warehouse"` loads (default: <name>.ei)
+entry = "warehouse.ei"      # what `import warehouse` loads (default: <name>.ei)
 main = "main.ei"            # the program, for packages that are one (optional)
 eider = "0.1"               # the toolchain MAJOR.MINOR it needs (optional; the compiler checks it, E0811)
 description = "What it is"  # optional
@@ -74,10 +74,10 @@ neither. `uses` takes `io`, `fs`, `net`, `clock`, `threads` and `ffi`. `eider` m
 MAJOR.MINOR (`"0.1"`, not `"0.1.0"`); eider-pkg checks its form, the compiler checks it
 against the toolchain on every build.
 
-A package's modules import their own files by relative path (`import "util.ei"`), and the
-toolchain and their direct dependencies by name: `import "json"` loads the entry module,
-`import "json/a/b"` the file `a/b.ei`. Importing a package that isn't a direct dependency
-is E0809.
+A package's modules import their own modules by the package's name (`import warehouse.util`),
+and the toolchain and their direct dependencies by theirs: `import json` loads the entry
+module, `import json.a.b` the file `a/b.ei`. Importing a package that isn't a direct
+dependency is E0809.
 
 ## eider.lock
 

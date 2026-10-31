@@ -2,14 +2,14 @@
 // poller, a UDP round trip, a Unix-domain socket, socket options, name resolution, and a
 // waker woken from another thread.
 
-import "core/sys"
-import "std/bytes"
-import "std/fd"
-import "std/fs"
-import "std/io"
-import "std/net"
-import "std/poll"
-import "std/time"
+import core.sys
+import std.bytes
+import std.fd
+import std.fs
+import std.io
+import std.net
+import std.poll
+import std.time
 
 fn show(b: List[u8]) uses io, ffi { io.outln(b) }
 

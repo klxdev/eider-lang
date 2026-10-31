@@ -17,8 +17,8 @@
 //!
 //! Capabilities: `io` (wakers are descriptors) and `clock` (deadlines), as declared on each.
 
-import "sync.ei"
-import "time.ei"
+import std.sync
+import std.time
 
 /// The result of a receive.
 /// - `Value(v)`: the oldest value.

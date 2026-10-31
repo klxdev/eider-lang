@@ -474,7 +474,7 @@ own file to use it from other modules"). Methods have the visibility of their ty
 doesn't apply to `impl` or `test` (E0001).
 
 ```eider,compile_fail=E0801
-import "std/strings"
+import std.strings
 
 fn main() {
     let s = strings.empty()
@@ -553,8 +553,9 @@ fn main() uses io {
 
 ## Imports and module lines
 
-`import "path"` and `import "path" as name` bring another module's public items into scope
-under a qualifier (`name.Item`). They are items like the others and may appear anywhere at
+`import a.b`, `import a.b as name` and `import a.{b, c as d}` bring another module's public
+items into scope under a qualifier (`b.Item`, `name.Item`), and `import std` the toolchain's
+namespace (`std.b.Item`). They are items like the others and may appear anywhere at
 the top level. See [Modules and packages](modules.md).
 
 `module a.b.c` (a dotted name) is accepted at the top level and has no effect.

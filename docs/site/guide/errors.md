@@ -213,7 +213,7 @@ read *because* it doesn't exist. `std/error` represents that as a chain of messa
   returns `Result[T, error.Failure]`, `?` works on all of them.
 
 ```eider
-import "std/error"
+import std.error
 
 type ParseError = { line: u32, what: String }
 
@@ -271,9 +271,9 @@ implements `error.Error` for `String`: the message is the text, with no source),
 typed `stream.Error`, `strings.ParseError` and `encoding.DecodeError`:
 
 ```eider
-import "std/error"
-import "std/fs"
-import "std/strings"
+import std.error
+import std.fs
+import std.strings
 
 fn load(path: str) -> Result[List[u8], error.Failure] uses fs {
     let text = fs.read(String.from(path).bytes()).context("reading the config")?

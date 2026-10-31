@@ -2,7 +2,7 @@
 // separator over multi-byte characters), split_once, fields, lines, join, trims, replace,
 // repeat, ASCII case, integer parsing (signs, radixes, limits at both ends, error kinds).
 
-import "std/strings"
+import std.strings
 
 fn main() uses io {
     let s = String.from("one, two, three")

@@ -19,7 +19,7 @@ export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL G
 # build the tool once, up front, so compiler noise stays out of the comparisons
 scripts/eider-pkg >/dev/null 2>&1
 [ -x target/eider-pkg ] || { echo "FAIL build eider-pkg"; exit 1; }
-# the programs import their dependencies by name (`import "util"`), which the compiler
+# the programs import their dependencies by name (`import util`), which the compiler
 # resolves through eider.lock (docs/compiler.md, "C8.3: packages and modules"), and eider-pkg
 # asks it what each package uses (`eiderc caps`, "C8.5"): a compiler newer than the seed,
 # compiler/ as the seed builds it (EIDERC=<binary> to use another), until the seed knows
@@ -97,7 +97,7 @@ manifest "$T/repos/alpha" alpha 1.0.0 "
 git = \"$U/util\"
 version = \"1.0.0\"
 "
-printf 'import "util"\n\npub fn value() -> i64 { util.level() * 10 }\n' > "$T/repos/alpha/alpha.ei"
+printf 'import util\n\npub fn value() -> i64 { util.level() * 10 }\n' > "$T/repos/alpha/alpha.ei"
 commit alpha v1.0.0
 
 newrepo beta
@@ -106,7 +106,7 @@ manifest "$T/repos/beta" beta 1.0.0 "
 git = \"$U/util\"
 version = \"1.2.0\"
 "
-printf 'import "util"\n\npub fn value() -> i64 { util.level() + 100 }\n' > "$T/repos/beta/beta.ei"
+printf 'import util\n\npub fn value() -> i64 { util.level() + 100 }\n' > "$T/repos/beta/beta.ei"
 commit beta v1.0.0
 
 # gamma is added by rev; its later commit must not be picked up
@@ -132,8 +132,8 @@ name = "app"
 version = "0.1.0"
 main = "main.ei"
 eider = "0.1"' "$(cat "$T/app/eider.toml")"
-check "init writes a program with package imports" 'import "core/sys"
-import "std/io"' "$(head -2 "$T/app/main.ei")"
+check "init writes a program with package imports" 'import core.sys
+import std.io' "$(head -2 "$T/app/main.ei")"
 check "init twice" "eider-pkg: eider.toml already exists
 exit 1" "$(pkg app init)"
 # streams: an error is one line on stderr and nothing on stdout, exit 1; a usage error the
@@ -269,12 +269,12 @@ check "fetch removes the link farm of an earlier eider-pkg" "no deps/" "$(ls -A 
 # ---- build and run: imports by package name, through eider.lock
 
 cat > "$T/app/main.ei" <<'EOF'
-import "core/sys"
-import "std/io"
-import "geom"
-import "alpha"
-import "beta"
-import "gamma"
+import core.sys
+import std.io
+import geom
+import alpha
+import beta
+import gamma
 
 fn main() uses io {
     io.outln(sys.lit("app"))
@@ -290,11 +290,11 @@ check "run the program" "app
 103
 7
 exit 0" "$(run app)"
-printf 'import "util"\n\nfn main() uses io { print(util.level()) }\n' > "$T/app/indirect.ei"
+printf 'import util\n\nfn main() uses io { print(util.level()) }\n' > "$T/app/indirect.ei"
 got=$(run app indirect.ei)
 check "the root can't import an indirect dep" "1
 1
-exit 1" "$(printf '%s\n' "$got" | grep -c "E0809.*package \`util\` is not a dependency of \`app\`"; printf '%s\n' "$got" | grep -c "eider-pkg add util"; printf '%s\n' "$got" | tail -1)"
+exit 1" "$(printf '%s\n' "$got" | grep -c "E0809.*\`util\` is neither this package (\`app\`) nor one of its dependencies"; printf '%s\n' "$got" | grep -c "eider-pkg add util"; printf '%s\n' "$got" | tail -1)"
 printf 'import "deps/geom/geom.ei"\n\nfn main() uses io { print(geom.area(1, 1)) }\n' > "$T/app/old.ei"
 got=$(run app old.ei)
 check "an import through the old link farm says what changed" "1
@@ -304,7 +304,7 @@ exit 1" "$(printf '%s\n' "$got" | grep -c "no longer links dependencies into dep
 
 mkdir -p "$T/sneaky" "$T/sneakyapp"
 manifest "$T/sneaky" sneaky 0.1.0
-printf 'import "geom"\n\npub fn value() -> i64 { geom.area(2, 3) }\n' > "$T/sneaky/sneaky.ei"
+printf 'import geom\n\npub fn value() -> i64 { geom.area(2, 3) }\n' > "$T/sneaky/sneaky.ei"
 manifest "$T/sneakyapp" sneakyapp 0.1.0 '
 [deps.geom]
 path = "../geom"
@@ -312,12 +312,12 @@ path = "../geom"
 [deps.sneaky]
 path = "../sneaky"
 '
-printf 'import "sneaky"\n\nfn main() uses io { print(sneaky.value()) }\n' > "$T/sneakyapp/main.ei"
+printf 'import sneaky\n\nfn main() uses io { print(sneaky.value()) }\n' > "$T/sneakyapp/main.ei"
 check "fetch (sneaky)" "locked 2 package(s)
 exit 0" "$(pkg sneakyapp fetch)"
 got=$(run sneakyapp)
 check "an undeclared import fails to compile" "1
-exit 1" "$(printf '%s\n' "$got" | grep -c "E0809.*package \`geom\` is not a dependency of \`sneaky\`"; printf '%s\n' "$got" | tail -1)"
+exit 1" "$(printf '%s\n' "$got" | grep -c "E0809.*\`geom\` is neither this package (\`sneaky\`) nor one of its dependencies"; printf '%s\n' "$got" | tail -1)"
 manifest "$T/sneaky" sneaky 0.1.0 '
 [deps.geom]
 path = "../geom"
@@ -330,7 +330,7 @@ mkdir -p "$T/late"
 manifest "$T/late" late 0.1.0
 printf 'pub fn value() -> i64 { 9 }\n' > "$T/late/late.ei"
 printf '\n[deps.late]\npath = "../late"\n' >> "$T/sneakyapp/eider.toml"
-printf 'import "late"\n\nfn main() uses io { print(late.value()) }\n' > "$T/sneakyapp/late.ei"
+printf 'import late\n\nfn main() uses io { print(late.value()) }\n' > "$T/sneakyapp/late.ei"
 got=$(run sneakyapp late.ei)
 check "a dependency not in eider.lock fails to compile" "1
 exit 1" "$(printf '%s\n' "$got" | grep -c "E0810.*package \`late\` is not in .*/sneakyapp/eider.lock"; printf '%s\n' "$got" | tail -1)"
@@ -346,7 +346,7 @@ mkdir -p "$T/fsdep" "$T/ffidep" "$T/plain" "$T/capsapp"
 manifest "$T/fsdep" fsdep 0.1.0
 printf '// uses net (in a comment: ignored)\npub fn noop() -> i64 { 0 }\n\npub fn save()\n    uses fs {\n}\n' > "$T/fsdep/fsdep.ei"
 manifest "$T/ffidep" ffidep 0.1.0
-printf 'extern "c" fn abs(x: i32) -> i32 uses clock\nimport "helper.ei"\n\npub fn magnitude(x: i32) -> i32 uses clock, ffi { unsafe { abs(x) } }\n' > "$T/ffidep/ffidep.ei"
+printf 'extern "c" fn abs(x: i32) -> i32 uses clock\nimport ffidep.helper\n\npub fn magnitude(x: i32) -> i32 uses clock, ffi { unsafe { abs(x) } }\n' > "$T/ffidep/ffidep.ei"
 # what the entry module reaches counts: helper.ei's `uses net`
 printf 'pub fn f()\n    uses net {\n}\n' > "$T/ffidep/helper.ei"
 # a test program is not part of the package (nor are words that aren't capabilities, which
@@ -356,7 +356,7 @@ printf 'fn f() uses fs {\n}\nfn g() uses telepathy {\n}\n' > "$T/ffidep/tests/ba
 # `uses ffi` with no unmanaged code means nothing outside the package, and core (whose
 # externs back sys.lit) is the toolchain's: plain needs no grant
 manifest "$T/plain" plain 0.1.0
-printf 'import "core/sys"\n\npub fn hello() -> u64 uses ffi { sys.lit("hi").len() as u64 }\n' > "$T/plain/plain.ei"
+printf 'import core.sys\n\npub fn hello() -> u64 uses ffi { sys.lit("hi").len() as u64 }\n' > "$T/plain/plain.ei"
 check "init (caps)" "created package \`capsapp\`
 exit 0" "$(pkg capsapp init)"
 cp "$T/capsapp/eider.toml" "$T/caps.toml"
@@ -382,7 +382,7 @@ check "unknown capability" "eider-pkg: <T>/capsapp/eider.toml:20:1: unknown capa
 exit 1" "$(pkg capsapp add other --path ../plain --uses disk)"
 # the program calls them without `uses ffi` (it stays inside ffidep and core), but with the
 # real capabilities they declare (magnitude: clock)
-printf 'import "std/io"\nimport "fsdep"\nimport "ffidep"\nimport "plain"\n\nfn main() uses io, clock {\n    print(fsdep.noop())\n    print(ffidep.magnitude(-7))\n    print(plain.hello())\n}\n' > "$T/capsapp/use.ei"
+printf 'import std.io\nimport fsdep\nimport ffidep\nimport plain\n\nfn main() uses io, clock {\n    print(fsdep.noop())\n    print(ffidep.magnitude(-7))\n    print(plain.hello())\n}\n' > "$T/capsapp/use.ei"
 check "granted packages run without \`uses ffi\`" "0
 7
 2
@@ -485,7 +485,7 @@ pub fn level() -> i64 { 4 }" "$(pkg app vendor; cat "$T/app/vendor/util/util.ei"
 check "remove drops it from eider.lock" "0" "$(grep -c gamma "$T/app/eider.lock")"
 got=$(run app)
 check "a removed dependency can't be imported" "1
-exit 1" "$(printf '%s\n' "$got" | grep -c "E0809.*package \`gamma\` is not a dependency of \`app\`"; printf '%s\n' "$got" | tail -1)"
+exit 1" "$(printf '%s\n' "$got" | grep -c "E0809.*\`gamma\` is neither this package (\`app\`) nor one of its dependencies"; printf '%s\n' "$got" | tail -1)"
 check "remove an unknown dep" "eider-pkg: no [deps.nope] table in eider.toml (inline \`name = { ... }\` entries must be removed by hand)
 exit 1" "$(pkg app remove nope)"
 
@@ -499,7 +499,7 @@ manifest "$T/ov" ov 0.1.0 "main = \"main.ei\"
 git = \"file://$T/repos/no-such-util\"
 version = \"1.2.0\"
 "
-printf 'import "util"\n\nfn main() uses io { print(util.level()) }\n' > "$T/ov/main.ei"
+printf 'import util\n\nfn main() uses io { print(util.level()) }\n' > "$T/ov/main.ei"
 manifest "$T/ovutil" util 1.3.0
 printf 'pub fn level() -> i64 { 13 }\n' > "$T/ovutil/util.ei"
 printf 'build output\n' > "$T/ovutil/target/junk"
@@ -536,7 +536,7 @@ manifest "$T/ov2" ov2 0.1.0 "main = \"main.ei\"
 git = \"$U/ovgit\"
 version = \"0.4.0\"
 "
-printf 'import "ovgit"\n\nfn main() uses io { print(ovgit.value()) }\n' > "$T/ov2/main.ei"
+printf 'import ovgit\n\nfn main() uses io { print(ovgit.value()) }\n' > "$T/ov2/main.ei"
 pkg ov2 fetch > /dev/null
 cp "$T/ov2/eider.lock" "$T/ov2.lock"
 rm -rf "$EIDER_HOME/pkg"/ovgit-* "$EIDER_HOME/index"
@@ -568,7 +568,7 @@ manifest "$T/bad" bad 0.1.0 '
 [deps.core]
 path = "../geom"
 '
-check "core can't be declared" "eider-pkg: <T>/bad/eider.toml:6:1: \`core\` is part of the toolchain: import its modules (\`import \"core/<module>\"\`) without declaring it
+check "core can't be declared" "eider-pkg: <T>/bad/eider.toml:6:1: \`core\` is part of the toolchain: import its modules (\`import core.<module>\`) without declaring it
 exit 1" "$(pkg bad fetch)"
 manifest "$T/bad" bad 0.1.0
 cp "$T/bad/eider.toml" "$T/bad.toml"

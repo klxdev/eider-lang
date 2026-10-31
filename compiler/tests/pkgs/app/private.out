@@ -1,5 +1,5 @@
 --- stderr
-error[E0801]: function `util.secret` is private to module `geo/util`
+error[E0801]: function `util.secret` is private to module `geo.util`
   --> compiler/tests/pkgs/app/private.ei:5:21
   |
 5 | fn main() { let x = util.secret() }

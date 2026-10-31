@@ -1,0 +1,6 @@
+// expect: E0813 4:1
+// one alias for two modules (docs/compiler.md, "C8.26: dotted imports")
+import std.fs
+import std.io as fs
+
+fn main() {}

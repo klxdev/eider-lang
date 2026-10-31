@@ -1,1 +1,1 @@
-{"error":"E0801","span":{"file":"compiler/tests/check/fail/e0801_std_private_fn.ei","line":3,"col":21},"message":"function `strings.empty` is private to module `std/strings`","help":"mark it `pub` in its own file to use it from other modules"}
+{"error":"E0801","span":{"file":"compiler/tests/check/fail/e0801_std_private_fn.ei","line":3,"col":21},"message":"function `strings.empty` is private to module `std.strings`","help":"mark it `pub` in its own file to use it from other modules"}

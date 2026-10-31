@@ -1,12 +1,12 @@
 // std/child start/wait/try_wait/kill: a child's stdin, stdout and stderr as pipes; /dev/null;
 // a non-blocking wait on a running child; a child killed by a signal.
 
-import "core/sys"
-import "std/bytes"
-import "std/fd"
-import "std/io"
-import "std/child"
-import "std/signal"
+import core.sys
+import std.bytes
+import std.fd
+import std.io
+import std.child
+import std.signal
 
 fn sh(script: str) -> List[List[u8]] uses ffi {
     var a: List[List[u8]] = List.new()

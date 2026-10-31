@@ -1,8 +1,8 @@
 // std/io input: io.read, io.read_fd and io.read_all on stdin (tests/std/io_read.in).
 
-import "core/sys"
-import "std/bytes"
-import "std/io"
+import core.sys
+import std.bytes
+import std.io
 
 fn main() uses io {
     // small reads: never more than asked for

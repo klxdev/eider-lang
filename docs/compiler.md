@@ -114,7 +114,7 @@ files ──lex──> tokens ──parse──> AST arena ──resolve──> 
 | `lex` | bytes → tokens `{kind, start, end}` | no token owns text; identifiers are interned |
 | `intern` | identifier bytes → `u32` symbol | open-addressing hash table written in Eider |
 | `parse` | tokens → AST arena | nodes are `{kind, a, b, c, span}`; variable-length children live in a shared `extra: List[u32]` |
-| `resolve` | AST → module graph + scopes | module identity is (package, path); bare `import "json"` goes through `eider.lock`; visibility (E0801), clashes |
+| `resolve` | AST → module graph + scopes | module identity is (package, path); dotted imports (`import json`, C8.26) go through `eider.lock`; visibility (E0801), clashes |
 | `check` | AST → typed IR | types interned in a type arena; monomorphization on demand; capabilities; `inout` exclusivity; exhaustiveness; const folding |
 | `lower` | typed IR → C | ownership: clones, moves and drops are explicit IR ops before C is printed, so order-of-evaluation and drop placement are decided once, not while printing text |
 | `driver` | CLI, `cc`, cache | uses `std/fs` and `std/proc` |
@@ -1114,6 +1114,7 @@ and leaves the analyzer building.
 | 5 | **8.23 `Default`** (done: "C8.23: `Default`") | the eighth operation trait: derived for records, built in for scalars, text, containers and Option; `T.default()`; `take()` for every `T: Default` | 8.4, 8.15 |
 | 5 | **8.24 `Error` and context** (P0.6; done: "C8.24: `Error`, `Failure` and context (std/error)") | `error.Error` (message, source), `error.Failure` (a chain), `.context`/`.with_context` on Result and Option, `?` into a Failure through `From` | 8.21 |
 | 5 | **8.25 Method chains across lines** (N13; done: "C8.25: method chains across lines") | a line starting with `.` continues the expression before it | — |
+| 5 | **8.26 Dotted imports** (#91; done: "C8.26: dotted imports"; compiler/, std/{bytes,fs,io,env,proc} and core/sys migrated after the next seed) | `import core.sys`, groups `std.{bytes, fs}`, `as`, `import json.stream`, own modules as `pkg.module`, siblings by name outside packages, the lazily loaded `import std` namespace; E0812, E0813; the quoted form deprecated silently with `eiderc migrate-imports` fixes | 8.3 |
 
 ## C8.3: packages and modules
 
@@ -1156,7 +1157,9 @@ interface (the variant names a program prints, `geo__South`; `export fn` symbols
 `eider_units__twice`; header record names). A known corner: a file in no package whose name
 contains `__0` displays oddly.
 
-**Imports.** An import string is a *path import* if it contains a `.` or starts with `/`
+**Imports.** (This is the quoted form, deprecated silently since "C8.26: dotted imports",
+which maps `import a.b.c` onto the package imports below.) An import string is a *path
+import* if it contains a `.` or starts with `/`
 (`"util.ei"`, `"../lib/geo.ei"`, `"lib/broken_mod.txt"`): a file relative to the importing
 file, as before. Otherwise it is a *package import*: `"<package>"` or
 `"<package>/<path>"`, the package name lowercase letters, digits and `_` starting with a
@@ -2680,6 +2683,151 @@ Tests: compiler/tests/run/chains.ei (builder methods over several lines with a b
 comment line between, fields and tuple fields, a chain as a block's value and inside call
 arguments, a line not starting with `.` ending the statement; hand-checked .out);
 compiler/tests/parse_ok/chains.ei (the AST: one chain).
+
+## C8.26: dotted imports
+
+Issue #91 (decided with the user on 2026-10-31; C280-C287). Code: parse.ei ("dotted imports":
+`dotted_import`, `qualified`), resolve.ei ("dotted imports": `locate_dotted`, `bind_alias`,
+`import_fixes`, `migrate_imports`), ide.ei (`module_refs`, `use_tok`, `ns_at`), dump.ei.
+
+Imports name modules by dotted paths instead of quoted file paths:
+
+```eider
+import core.sys
+import std.{bytes, encoding, fs}   // a group
+import std.encoding as enc         // an alias
+import json                        // a dependency's entry module
+import json.stream                 // a module inside a dependency
+import std                         // the package namespace: std.bytes.split(...)
+import pkg.manifest                // a module of your own package, by the package's name
+```
+
+**Syntax** (parse.ei). `import` followed by a string is the quoted form, as before.
+Otherwise a module path: identifiers (not keywords) joined by `.`, then either `as name`,
+or `.{ member, ... }` with each member a module path with its own optional `as` (newlines
+and a trailing comma allowed inside the braces; a group is one IImport per member, at the
+member's position), or nothing. The default alias is the last segment. `import std` and
+`import core` (one segment, the toolchain packages) are namespaces. `*` where a segment or
+the path should be (`import std.*`, `import * from std`) and `from` after a path (`import
+bytes from std`) are E0001 with the help "name each module, or group them: `import
+std.{bytes, fs}`; or import the package namespace, `import std`, and write
+`std.bytes.eq(...)`". `from` stays an ordinary identifier (it is a method name: `From.from`).
+An IImport's slot c is the form (IMPORT_QUOTED 0, IMPORT_DOTTED 1, IMPORT_NAMESPACE 2,
+IMPORT_IMPLIED 3); a is the path with `/` between segments (`std/bytes`, the spelling of a
+package import, so the resolver reuses `locate`); d/e where the path starts (for the quoted
+form, the string token: the fix's position).
+
+**Resolution, precisely** (resolve.ei `locate_dotted`), for `import s1.s2...sn` in module m:
+
+1. `s1` is `std` or `core`: the toolchain's file `<root>/s1/s2/.../sn.ei`; one segment is
+   the namespace.
+2. m is in a package P (its eider.toml parses): `s1` must be P's own name or one of P's
+   direct dependencies; then it is the package import `"s1/s2/.../sn"` of C8.3 (one
+   segment: the entry module; through eider.lock for a dependency). `s1` both P's name and
+   a dependency's is **E0812**. Anything else is E0809 "unknown module `a.b`: `a` is
+   neither this package (`P`) nor one of its dependencies (<eider.toml>)"; when `a/b.ei`
+   exists beside m or at P's top, the help is "this package's own modules are imported by
+   its name: `import P.<path>`", else the `eider-pkg add` help.
+3. m is in no package: the file `s1/s2/.../sn.ei` relative to m's directory (a sibling
+   module by its name, `import util`; below it, `import lib.geo`). There is no way up
+   (`"../lib/geo.ei"` stays quoted) and no package but std and core. The module's identity
+   and name are those the path import of that file has (its stem), so nothing changes in C.
+
+A missing file is **E0804** "unknown module `std.nope`" (help: there is no file <path>; in
+no package, which file `import x.y` names). Module identity, names and C names are C8.3's:
+the import form never enters them, so a program's C is byte-identical whichever form loads
+its modules (test-compiler.sh "migration" holds the whole compiler to that).
+
+**Aliases.** Two imports of one module with different aliases are fine, and so is one alias
+for one module twice. A dotted import whose alias already names another module, or a
+namespace (`import std` and `import foo.std`), is **E0813** at the second import ("the
+alias `fs` already names another module (imported on line 3)"; help: `as`). The quoted form
+keeps its old meaning (the later import wins), so no existing program breaks.
+
+**Namespaces, loaded lazily.** `import std` binds `std` to no module (its Alias has prefix 0).
+In an expression, type or pattern, `std . m . Name` (the parser's `qualified`, only when the
+first identifier is a namespace alias of the file) is a qualified name whose qualifier is
+the symbol `std.m` (a name no identifier can spell), and the first such use adds an implied
+IImport of `std/m` with alias `std.m`, after the file's items; its Alias takes effect from
+the namespace's import, its diagnostics are at the use. So a module behind a namespace is
+loaded only when a use names it, and everything downstream (checking, `eiderc caps` and the
+E0204 grants, `eiderc doc`'s links, ide.ei's refs, the modules a program loads) sees exactly
+the modules used, through the ordinary import machinery. A namespace use names one module,
+then an item: `std.encoding.base64` is not a module path in code (import it). Importing both
+`std` and `std.bytes` is allowed: one module. Messages show the module's stem as before
+(`strings.Builder`).
+
+**The quoted form, deprecated silently.** It works as before and nothing reports it.
+`import_fixes` computes, per quoted import, the dotted path that loads the same canonical
+file (`dotted_of`: std/core, the importer's own package by its name, a declared
+dependency by its name, or in no package the file below the importer's directory), checks
+it through `locate_dotted`, and gives a machine-applicable fix (diag.Fix over the string
+token; `as <old alias>` added when the default alias would change). `eiderc migrate-imports
+<file>` prints the file with the fixes applied; `--json` prints them, one line each, in
+diagnostics' fix format: `{"deprecated":"quoted-import","span":...,"message":"the quoted
+import is deprecated: `import std.fs`","fix":{"at":...,"delete":N,"insert":"std.fs"}}`.
+An import with no dotted form has no fix: a file outside the importer's package and its
+dependencies, `..` from a file in no package, and a path segment that isn't an identifier or
+is a keyword (compiler/comptime.ei).
+
+**Migration** (`scripts/migrate-imports-dotted.sh [--keep-seed] <file or dir>...`, which runs
+`eiderc migrate-imports` on every .ei with a quoted import and lists what stays quoted).
+Done now, with `--keep-seed`: core, std, packages, tests and examples of eider-lang, every
+sibling repository (eider-toml, eider-json, eider-markdown, eider-http, eider-rpc,
+eider-openapi, eider-profiler, eider-analyzer), re-vendored (vendor/vendor.lock), the docs'
+code blocks and tests/pkg/run.sh's generated programs. Kept quoted until the seed knows
+dotted imports, because the seed builds the compiler from them: compiler/ and
+std/{bytes,fs,io,env,proc}.ei, core/{sys,version}.ei. Kept on purpose: tests of the quoted
+form (tests/checks/fail/e0804_missing_module.ei, e0809_not_a_dependency.ei), tests/crypto's
+`"../../packages/crypto/crypto.ei"` (a file in no package importing upward), and the entry
+eiderc doc and migrate-var generate (quoted, internal).
+
+Until the next seed, what the seed's eiderc compiles in verify.sh fails on the migrated code
+(the legs that build with scripts/ei: the compile-fail suite, run tests, std, packages,
+crypto, export, wasm, and the libraries in the tools leg); the toolchain's own tools fall back
+to compiler/ as the seed builds it, as scripts/docs.sh already did for `eiderc doc`:
+scripts/eider-pkg builds eider-pkg, and answers `eiderc caps`, with target/eiderc-next while
+the seed's eiderc has no `migrate-imports`, and docs.sh builds eider-doc and runs the doc tests
+with it.
+
+**After the next seed** (the follow-up):
+
+1. Regenerate the seed (`sh scripts/selfhost.sh --seed`); verify.sh is then ALL GREEN as is.
+2. `sh scripts/migrate-imports-dotted.sh compiler std core` (without `--keep-seed`):
+   compiler/, std/{bytes,fs,io,env,proc}.ei and core/sys.ei. test-compiler.sh "migration"
+   already does exactly this on a copy and holds the result to the same C.
+3. compiler/ide.ei's `import "comptime.ei" as consteval` has no dotted form (`comptime` is a
+   keyword): rename compiler/comptime.ei to consteval.ei (it is only ever imported as
+   `consteval`), which changes that module's C names once, then `import eiderc.consteval`.
+4. Drop the fallbacks in scripts/eider-pkg and scripts/docs.sh's migrate-imports probe once
+   the seed has `migrate-imports`; BLESS for any diagnostic that quotes a migrated import.
+5. Later (not decided): a warning for the quoted form, then its removal.
+
+**Style** (docs/site/reference/modules.md): import the modules a file uses heavily directly
+(`import std.{bytes, fs}`), and reach occasional ones through the namespace
+(`std.time.mono_ms()`).
+
+**Tests.** tests/checks: e0001_import_wildcard, e0001_import_from, e0804_unknown_module,
+e0804_unknown_module_namespace (a use through the namespace), e0812_ambiguous_package (with
+lib/selfdep, a package that depends on itself), e0813_alias_clash, and
+pass/pass_dotted_imports (group across lines, alias, sibling module, namespace, a type and a
+pattern through it). compiler/tests/pkgs/app: dotted (run: entry and inner modules of
+dependencies, own module by name, vendored and stored git packages, namespace),
+dotted_caps (`eiderc caps` reports only the std modules a namespace use loads),
+dotted_own and dotted_unknown (E0809's two helps). compiler/tests/ide/dotted (refs from
+import segments and aliases, group members, and the module segment of a namespace use;
+compiler/tests is in package eiderc, so it imports `eiderc.tests.ide.lib.shapes`).
+compiler/tests/doc/shapes/util/ns.ei (a signature through the namespace links to
+std/time#Duration). compiler/tests/parse/import_no_path.ei is now `import 42` (`import
+util` is valid). test-compiler.sh "migration": the dotted rewrite of the copy of core,
+std, packages and compiler leaves only the comptime import quoted, and this compiler's C for
+the migrated compiler equals its C for compiler/.
+
+**Syntax changes** (for the grammar and the analyzer): tree-sitter-eider 0.1.1
+(`import_declaration` with `path: (module_path (identifier)+)`, `alias:`, `group:
+(import_group (import_member path: alias:)+)`; `scoped_type_identifier` with several
+`path:` qualifiers for `std.bytes.Buf`); eider-analyzer 0.1.1 (the stand-in, completion of
+module paths after `import` and in `{}`, hover and definition on path segments).
 
 ## Profiling: `--profile`
 

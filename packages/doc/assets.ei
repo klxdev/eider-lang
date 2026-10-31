@@ -3,7 +3,7 @@
 //! (`prefers-color-scheme`, overridden by the toggle through `data-theme` on `<html>`), and a
 //! search that filters the index in `search-index.js`.
 
-import "std/bytes"
+import std.bytes
 
 /// style.css.
 pub fn css() -> List[u8] {

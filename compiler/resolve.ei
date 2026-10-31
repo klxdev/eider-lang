@@ -469,24 +469,39 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
     let a = p.mods[m as usize].ast.copy()
     let dir = dir_of(p.mods[m as usize].path)
     let file = p.mods[m as usize].path.copy()
+    let mut binds = Binds(List.new(), List.new(), List.new(), List.new())
     for k in 0..a.items_len {
         let n = a.nodes[ast.at(a, a.items_start, k) as usize].copy()
         if n.kind != ast.IImport { continue }
         let rel = p.mods[m as usize].strs[n.a as usize].copy()
-        // the default alias: the file stem, or a package import's last segment
+        let form = n.c
+        // the default alias: the file stem, or a module path's last segment
         let st = stem(rel)
         let st_sym = intern.intern(inout p.names, st, 0, st.len())
         let alias = if n.b > 0 { n.b - 1 } else { st_sym }
+        // an implied import (a namespace use) is in effect from the namespace's import on
+        let al_line = if form == parse.IMPORT_IMPLIED { n.d } else { n.line }
+        let al_col = if form == parse.IMPORT_IMPLIED { n.e } else { n.col }
+        if form == parse.IMPORT_NAMESPACE {
+            // no module: `std.bytes.eq` implies the import of std.bytes where it is used
+            p.mods[m as usize].aliases.push(Alias(alias, 0, n.line, n.col))
+            let mut key = sys.lit("namespace ")
+            bytes.append(inout key, rel)
+            bind_alias(inout p, inout binds, alias, key, n, dots(rel), file, inout diags)
+            continue
+        }
         let mut path: List[u8] = List.new()
-        if is_package_import(rel) {
-            match locate(inout p, m, rel, n) {
+        let dotted = form != parse.IMPORT_QUOTED
+        if dotted || is_package_import(rel) {
+            let found = if dotted { locate_dotted(inout p, m, rel, n) } else { locate(inout p, m, rel, n) }
+            match found {
                 Ok(x) => { path = x }
                 Err(d) => {
                     // a prefix no module has, so what it qualifies is not reported as unknown
                     let mut bad = st.copy()
                     bytes.append(inout bad, sys.lit("__0"))
                     let bad_sym = intern.intern(inout p.names, bad, 0, bad.len())
-                    p.mods[m as usize].aliases.push(Alias(alias, bad_sym + 1, n.line, n.col))
+                    p.mods[m as usize].aliases.push(Alias(alias, bad_sym + 1, al_line, al_col))
                     diags.push(in_file(d, file))
                     p.broken.push(bad_sym + 1)
                     continue
@@ -501,7 +516,7 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
         check_series(inout p, pk, n.line, n.col, file, inout diags)
         let mname = module_name(p, canon, pk, st)
         let pre_sym = intern.intern(inout p.names, mname, 0, mname.len())
-        p.mods[m as usize].aliases.push(Alias(alias, pre_sym + 1, n.line, n.col))
+        p.mods[m as usize].aliases.push(Alias(alias, pre_sym + 1, al_line, al_col))
         let mut clash = false
         let mut known = false
         for j in 0..p.pre_syms.len() {
@@ -516,6 +531,11 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
         if clash {
             p.broken.push(pre_sym + 1)
             continue
+        }
+        // (after E0808: one alias for two files with one identity is that error, not E0813)
+        if form != parse.IMPORT_IMPLIED {
+            let written = if dotted { dots(rel) } else { quoted("\"", rel, "\"") }
+            bind_alias(inout p, inout binds, alias, canon, n, written, file, inout diags)
         }
         if !known {
             p.pre_syms.push(pre_sym)
@@ -533,8 +553,30 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
                 bytes.append(inout msg, sys.lit("`: "))
                 bytes.append(inout msg, read_error(path))
                 let mut d = diag.new("E0804", n.line, n.col, msg)
-                if bytes.starts_with(rel, sys.lit("deps/")) || bytes.find(rel, sys.lit("/deps/"), 0).is_some() {
-                    d.help = sys.lit("eider-pkg no longer links dependencies into deps/: import a package by name (`import \"json\"`, `import \"json/util\"`, `import \"std/fs\"`)")
+                if dotted {
+                    d.msg = quoted("unknown module `", dots(rel), "`")
+                    d.help = quoted("there is no file ", path, "")
+                    let head = bytes.split(rel, 47)[0]
+                    let toolchain = bytes.eq(head, sys.lit("std")) || bytes.eq(head, sys.lit("core"))
+                    // (the toolchain's directory depends on how eiderc was run: not named)
+                    if toolchain {
+                        d.help = quoted("`", head, "` has no module `")
+                        bytes.append(inout d.help, bytes.slice(rel, head.len() + 1, rel.len()))
+                        d.help.push(96)
+                    }
+                    if p.mods[m as usize].pkg == NOPKG && !toolchain {
+                        d.help = quoted("outside a package, `import ", dots(rel), "` names the file ")
+                        bytes.append(inout d.help, rel)
+                        bytes.append(inout d.help, sys.lit(".ei beside the importing file, and there is no "))
+                        bytes.append(inout d.help, path)
+                    }
+                    if form == parse.IMPORT_IMPLIED {
+                        bytes.append(inout d.help, sys.lit(" (the namespace names one module, then an item of it: `"))
+                        bytes.append(inout d.help, dots(rel))
+                        bytes.append(inout d.help, sys.lit(".Name`)"))
+                    }
+                } else if bytes.starts_with(rel, sys.lit("deps/")) || bytes.find(rel, sys.lit("/deps/"), 0).is_some() {
+                    d.help = sys.lit("eider-pkg no longer links dependencies into deps/: import a package by name (`import json`, `import json.util`, `import std.fs`)")
                 }
                 diags.push(in_file(d, file))
                 p.broken.push(pre_sym + 1)
@@ -547,6 +589,270 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
         load_imports(inout p, mi, fp, inout diags)
     }
     p.order.push(m)
+}
+
+// ---- dotted imports (docs/compiler.md, "C8.26: dotted imports")
+//
+// `import a.b.c` names a module by its path (parse.ei IMPORT_*; slot a holds `a/b/c`):
+//   - `std.x`, `core.x`: the toolchain's module (as `"std/x"`); `import std` alone is the
+//     package namespace: no module is loaded, and the first use `std.x.Name` implies the
+//     import of `std.x` at that use (IMPORT_IMPLIED), so only the modules used are loaded;
+//   - in a package: `a` is the package itself or one of its direct dependencies, `a.b.c`
+//     its file `b/c.ei` and `a` alone its entry module (as `"a/b/c"`, `"a"`); `a` both the
+//     package's name and a dependency's is E0812; anything else is E0809;
+//   - in no package: the file `a/b/c.ei` beside the importing file (a sibling module by its
+//     name: `import util` is util.ei next to it).
+// A module that isn't there is E0804 ("unknown module `std.nope`"). Two imports of one
+// module give it two aliases; a dotted import whose alias already names another module (or
+// a namespace) is E0813 (a quoted import keeps its old meaning: the later one wins).
+
+/// The aliases bound so far in one module: the alias, what it names (a canonical path, or
+/// `namespace <package>`) and the line of its import.
+type Binds = { syms: List[u32], keys: List[List[u8]], lines: List[u32], cols: List[u32] }
+
+/// E0813 if `alias` already names something other than `key` in this module; else bind it.
+fn bind_alias(inout p: Program, inout b: Binds, alias: u32, key: List[u8], n: ast.Node, written: List[u8], file: List[u8], inout diags: List[diag.Diag]) {
+    for i in 0..b.syms.len() {
+        if b.syms[i] == alias {
+            // the quoted form keeps its meaning: the later import wins
+            if bytes.eq(b.keys[i], key) || n.c == parse.IMPORT_QUOTED { return }
+            let name = intern.name(p.names, alias)
+            let mut msg = quoted("the alias `", name, "` already names another module (imported on line ")
+            bytes.append(inout msg, bytes.from_u64(b.lines[i] as u64))
+            msg.push(41)
+            let mut h = sys.lit("give one of them another name with `as`: `import ")
+            bytes.append(inout h, written)
+            bytes.append(inout h, sys.lit(" as <name>`"))
+            diags.push(in_file(pkg_diag("E0813", n, msg, h), file))
+            return
+        }
+    }
+    b.syms.push(alias)
+    b.keys.push(key)
+    b.lines.push(n.line)
+    b.cols.push(n.col)
+}
+
+/// A module path as written: `std/bytes` -> `std.bytes`.
+fn dots(path: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    for c in path {
+        if c == 47 { out.push(46) } else { out.push(c) }
+    }
+    out
+}
+
+/// The file the dotted import `spec` (`a/b/c`) of module m names, or why it can't be found.
+fn locate_dotted(inout p: Program, m: u32, spec: List[u8], n: ast.Node) -> Result[List[u8], diag.Diag] uses io, fs {
+    let parts = bytes.split(spec, 47)
+    let head = parts[0]
+    if bytes.eq(head, sys.lit("std")) || bytes.eq(head, sys.lit("core")) { return locate(inout p, m, spec, n) }
+    let pk = p.mods[m as usize].pkg
+    let here = dir_of(p.mods[m as usize].path)
+    if pk == NOPKG || p.pkgs[pk as usize].err.len() > 0 {
+        if pk != NOPKG { return locate(inout p, m, spec, n) }
+        // a file in no package: the module beside it
+        let mut f = spec.copy()
+        bytes.append(inout f, sys.lit(".ei"))
+        return Ok(join(here, f))
+    }
+    let own = p.pkgs[pk as usize].copy()
+    if bytes.eq(head, own.name) && parts.len() > 1 && !contains(own.deps, head) {
+        // a module of the importer's own package: named from the importer's directory, as the
+        // relative path import of it was, so diagnostics and traps name the file as before
+        let mut f = join(own.dir, bytes.slice(spec, head.len() + 1, spec.len()))
+        bytes.append(inout f, sys.lit(".ei"))
+        let base = if here.len() == 0 { canonical(sys.lit(".")) } else { canonical(here) }
+        return Ok(join(here, relative(base, f)))
+    }
+    if bytes.eq(head, own.name) || contains(own.deps, head) { return locate(inout p, m, spec, n) }
+    let mut msg = quoted("unknown module `", dots(spec), "`: `")
+    bytes.append(inout msg, head)
+    bytes.append(inout msg, sys.lit("` is neither this package (`"))
+    bytes.append(inout msg, own.name)
+    bytes.append(inout msg, sys.lit("`) nor one of its dependencies ("))
+    bytes.append(inout msg, join(own.dir, sys.lit("eider.toml")))
+    bytes.append(inout msg, sys.lit(")"))
+    // a module of this package, beside the file or at the package's top?
+    let mut f = spec.copy()
+    bytes.append(inout f, sys.lit(".ei"))
+    let mut h: List[u8] = List.new()
+    let mut cands: List[List[u8]] = List.new()
+    cands.push(join(here, f))
+    cands.push(join(own.dir, f))
+    for cand in cands {
+        if h.len() == 0 && fs.exists(cand) {
+            let c = canonical(cand)
+            if c.len() > own.dir.len() + 1 && bytes.starts_with(c, own.dir) {
+                h = sys.lit("this package's own modules are imported by its name: `import ")
+                bytes.append(inout h, own.name)
+                h.push(46)
+                bytes.append(inout h, dots(strip_ext(bytes.slice(c, own.dir.len() + 1, c.len()))))
+                h.push(96)
+            }
+        }
+    }
+    if h.len() == 0 {
+        h = sys.lit("add it with `eider-pkg add ")
+        bytes.append(inout h, head)
+        bytes.append(inout h, sys.lit(" --path <dir>` or `eider-pkg add "))
+        bytes.append(inout h, head)
+        bytes.append(inout h, sys.lit(" --git <url> --version <v>`: a package imports only its own dependencies"))
+    }
+    Err(pkg_diag("E0809", n, msg, h))
+}
+
+/// The path of `to` from directory `from` (both absolute and normalized): `../../lock.ei`.
+fn relative(from: List[u8], to: List[u8]) -> List[u8] {
+    let a = bytes.split(from, 47)
+    let b = bytes.split(to, 47)
+    let mut i: usize = 0
+    while i < a.len() && i + 1 < b.len() && bytes.eq(a[i], b[i]) { i += 1 }
+    let mut out: List[u8] = List.new()
+    for j in i..a.len() {
+        if a[j].len() > 0 { bytes.append(inout out, sys.lit("../")) }
+    }
+    for j in i..b.len() {
+        if j > i { out.push(47) }
+        bytes.append(inout out, b[j])
+    }
+    out
+}
+
+/// Whether `s` is an identifier that isn't a keyword (a segment of a module path).
+fn ident_segment(inout p: Program, s: List[u8]) -> bool {
+    if s.len() == 0 || bytes.is_digit(s[0]) { return false }
+    for c in s {
+        if !bytes.is_ident(c) { return false }
+    }
+    intern.intern(inout p.names, s, 0, s.len()) > intern.LAST_KEYWORD
+}
+
+/// The file a quoted import (node n of module m) loads, canonical, or "" if it can't be found.
+fn quoted_target(inout p: Program, m: u32, n: ast.Node) -> List[u8] uses io, fs {
+    let rel = p.mods[m as usize].strs[n.a as usize].copy()
+    let mut path: List[u8] = List.new()
+    if is_package_import(rel) {
+        match locate(inout p, m, rel, n) {
+            Ok(x) => { path = x }
+            Err(_) => { return List.new() }
+        }
+    } else {
+        path = join(dir_of(p.mods[m as usize].path), rel)
+        if !has_ext(path) { bytes.append(inout path, sys.lit(".ei")) }
+    }
+    if !fs.exists(path) { return List.new() }
+    canonical(path)
+}
+
+/// The dotted spelling (`a/b/c`) of the module at canonical path `want`, as module m would
+/// import it, or "" when it has none (a file outside the importer's package and its
+/// dependencies, a path segment that isn't an identifier, a file in no package that isn't
+/// below the importer).
+fn dotted_of(inout p: Program, m: u32, want: List[u8]) -> List[u8] uses io, fs {
+    let none: List[u8] = List.new()
+    let tp = package_of(inout p, want)
+    let ip = p.mods[m as usize].pkg
+    let mut spec: List[u8] = List.new()
+    let named = tp != NOPKG && p.pkgs[tp as usize].err.len() == 0 && p.pkgs[tp as usize].name.len() > 0
+    let mut toolchain = false
+    if named { toolchain = bytes.eq(p.pkgs[tp as usize].name, sys.lit("std")) || bytes.eq(p.pkgs[tp as usize].name, sys.lit("core")) }
+    if named && (toolchain || ip != NOPKG) {
+        let k = p.pkgs[tp as usize].copy()
+        let inner = strip_ext(bytes.slice(want, k.dir.len() + 1, want.len()))
+        if !toolchain {
+            if p.pkgs[ip as usize].err.len() > 0 { return none }
+            let own = p.pkgs[ip as usize].copy()
+            if tp != ip && !contains(own.deps, k.name) { return none }
+        }
+        spec = k.name.copy()
+        let entry = strip_ext(k.entry)
+        if toolchain || !bytes.eq(inner, entry) {
+            spec.push(47)
+            bytes.append(inout spec, inner)
+        }
+    } else {
+        // in no package: a file below the importer's directory, by its path from there
+        // (also one that is in a package: `lib.grants.grantee.grantee`)
+        if ip != NOPKG { return none }
+        let mut here = canonical(dir_of(p.mods[m as usize].path))
+        here.push(47)
+        if !bytes.starts_with(want, here) { return none }
+        spec = strip_ext(bytes.slice(want, here.len(), want.len()))
+        let head = bytes.split(spec, 47)[0]
+        if bytes.eq(head, sys.lit("std")) || bytes.eq(head, sys.lit("core")) { return none }
+    }
+    for seg in bytes.split(spec, 47) {
+        if !ident_segment(inout p, seg) { return none }
+    }
+    spec
+}
+
+/// The machine-applicable fixes that rewrite module m's quoted imports in the dotted form
+/// (`import "std/fs"` -> `import std.fs`, `import "lex.ei"` -> `import eiderc.lex` in
+/// package eiderc), keeping each alias (`as <old alias>` where the default would change).
+/// An import is rewritten only when the dotted form loads the same file; others (a file
+/// outside the importer's package and its dependencies, a path that isn't made of
+/// identifiers) are left as they are. The quoted form is deprecated silently: nothing
+/// reports it; `eiderc migrate-imports` applies these.
+pub fn import_fixes(inout p: Program, m: u32) -> List[diag.Fix] uses io, fs {
+    let mut out: List[diag.Fix] = List.new()
+    let a = p.mods[m as usize].ast.copy()
+    for k in 0..a.items_len {
+        let n = a.nodes[ast.at(a, a.items_start, k) as usize].copy()
+        if n.kind != ast.IImport || n.c != parse.IMPORT_QUOTED { continue }
+        let want = quoted_target(inout p, m, n)
+        if want.len() == 0 { continue }
+        let spec = dotted_of(inout p, m, want)
+        if spec.len() == 0 { continue }
+        // the dotted form must load the same file
+        let back: List[u8] = match locate_dotted(inout p, m, spec, n) {
+            Ok(x) => canonical(x)
+            Err(_) => List.new()
+        }
+        if !bytes.eq(back, want) { continue }
+        // the quoted string's token
+        let mut del: u64 = 0
+        for t in p.mods[m as usize].toks {
+            if t.line == n.d && t.col == n.e && t.kind == lex.Str { del = (t.end - t.start) as u64 }
+        }
+        if del == 0 { continue }
+        let mut ins = dots(spec)
+        let rel = p.mods[m as usize].strs[n.a as usize].copy()
+        if n.b == 0 && !bytes.eq(stem(rel), stem(spec)) {
+            bytes.append(inout ins, sys.lit(" as "))
+            bytes.append(inout ins, stem(rel))
+        }
+        out.push(diag.Fix(n.d, n.e, del, ins))
+    }
+    out
+}
+
+/// `eiderc migrate-imports <file>`: the file with its quoted imports in the dotted form
+/// (import_fixes), or with `json`, one JSON line per fix:
+/// `{"deprecated":"quoted-import","span":{...},"message":...,"fix":{...}}`.
+pub fn migrate_imports(file: List[u8], src: List[u8], json: bool) -> List[u8] uses io, fs {
+    let mut names = intern.new()
+    let lx = lex.lex_all(src, inout names)
+    let pr = parse.parse_all(lx.lexed, names)
+    let mut ld = load_from(file, src, pr.p, disk())
+    let fixes = import_fixes(inout ld.p, 0)
+    if !json {
+        let mut out = src.copy()
+        for f in fixes { out = diag.apply_fix(out, f) }
+        return out
+    }
+    let mut out: List[u8] = List.new()
+    for f in fixes {
+        let mut d = diag.new("E0000", f.line, f.col, quoted("the quoted import is deprecated: `import ", f.insert, "`"))
+        d.fix = Some(f)
+        let j = diag.json(d, file)
+        // {"error":"E0000", ... -> {"deprecated":"quoted-import", ...
+        bytes.append(inout out, sys.lit("{\"deprecated\":\"quoted-import\""))
+        bytes.append(inout out, bytes.slice(j, 16, j.len()))
+        out.push(10)
+    }
+    out
 }
 
 // ---- the toolchain series (docs/site/tooling/releases.md)
@@ -922,6 +1228,12 @@ fn locate(inout p: Program, m: u32, spec: List[u8], n: ast.Node) -> Result[List[
     let own = p.pkgs[pk as usize].copy()
     if own.err.len() > 0 { return Err(pkg_diag("E0810", n, own.err, sys.lit("fix eider.toml (`eider-pkg fetch` checks it)"))) }
     let mut dir = own.dir.copy()
+    if bytes.eq(head, own.name) && contains(own.deps, head) {
+        let mut msg = quoted("`", head, "` is both this package and one of its dependencies (")
+        bytes.append(inout msg, join(own.dir, sys.lit("eider.toml")))
+        bytes.append(inout msg, sys.lit(")"))
+        return Err(pkg_diag("E0812", n, msg, sys.lit("an import's first segment names one package, and a package can't depend on one with its own name: rename this package (`[package] name`) or drop the dependency")))
+    }
     if !bytes.eq(head, own.name) {
         if !contains(own.deps, head) {
             let mut msg = quoted("package `", head, "` is not a dependency of `")

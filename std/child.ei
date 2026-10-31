@@ -3,8 +3,8 @@
 //! (core/ABI.md "Processes"). std/proc runs a program to completion instead. A child can do
 //! anything, so starting, waiting for and killing one needs io, fs and net.
 
-import "core/sys"
-import "core/os"
+import core.sys
+import core.os
 
 /// What a started child's stdin/stdout/stderr is: ours, /dev/null, or a pipe to us.
 pub const INHERIT: i32 = 0

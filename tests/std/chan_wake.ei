@@ -6,9 +6,9 @@
 // (a select that takes another case, or times out, leaves its other cases), many senders
 // blocked on a full channel with capacity 1, and senders that give up and retry.
 
-import "std/chan"
-import "std/time"
-import "std/atomic"
+import std.chan
+import std.time
+import std.atomic
 
 fn sum_to(n: i64) -> i64 { n * (n - 1) / 2 }
 

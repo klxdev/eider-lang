@@ -1,5 +1,5 @@
 [package]
 name = "markdown"
-version = "0.1.0"
+version = "0.1.1"
 eider = "0.1"
 description = "A CommonMark subset plus GFM tables: a block tree and a safe HTML renderer (no raw HTML ever gets through)"

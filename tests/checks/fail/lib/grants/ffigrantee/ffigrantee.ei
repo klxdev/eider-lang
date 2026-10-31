@@ -1,4 +1,4 @@
 // helper package for e0204_ungranted_ffi.ei: ffidep declares an extern, and eider.toml grants it only io
-import "ffidep"
+import ffidep
 
 pub fn f() -> i32 { ffidep.magnitude(-2) }

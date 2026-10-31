@@ -5,7 +5,7 @@
 //! ASCII only (Unicode case mapping and the White_Space property are P2, docs/std.md).
 //! Integer parsing reports what was wrong (`ParseError`) instead of returning None.
 
-import "error.ei"
+import std.error
 
 /// A text argument: `str` or `String`.
 pub trait Text {

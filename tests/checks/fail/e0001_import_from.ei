@@ -1,0 +1,5 @@
+// expect: E0001 3:14
+// no `from` imports: `import std.bytes`
+import bytes from std
+
+fn main() {}

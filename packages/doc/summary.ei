@@ -4,7 +4,7 @@
 //! spaces or more per level). Other lines (the `# Summary` title, blank lines, prose) are
 //! ignored.
 
-import "std/bytes"
+import std.bytes
 
 /// A navigation entry: its title, the link as written, the section it is in (index into
 /// `Summary.sections`), its nesting depth (0: top) and its line in SUMMARY.md.

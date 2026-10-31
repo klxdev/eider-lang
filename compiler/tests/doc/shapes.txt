@@ -52,3 +52,9 @@ pub type Vec
     dy: i64
 pub fn len(v: Vec) -> i64
     The taxicab length of `v`.
+
+module shapes/util/ns (util/ns.ei)
+    Dotted imports in a documented module (docs/compiler.md, "C8.26: dotted imports"): a type named through the std namespace links to std's module, one through the package's own name to the module of this package.
+
+pub fn draw_time(v: geo.Vec) -> std.time.Duration
+    How long a shape takes to draw.

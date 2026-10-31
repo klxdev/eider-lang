@@ -3,10 +3,10 @@
 //! and closed with std/fd too. Non-blocking use goes with std/poll; connection and listener
 //! types on tasks come later (layer/std, layer/runtime).
 
-import "core/sys"
-import "core/os"
-import "bytes.ei"
-import "fd.ei"
+import core.sys
+import core.os
+import std.bytes
+import std.fd
 
 /// Address families.
 pub const IPV4: i32 = 4

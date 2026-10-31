@@ -1,0 +1,8 @@
+{"package":"app","dir":"<root>/compiler/tests/pkgs/app","cap":"fs","kind":"uses","fn":"main","file":"dotted_caps.ei","line":6,"col":16}
+{"package":"std","dir":"<root>/std","cap":"fs","kind":"uses","fn":"read","file":"fs.ei","line":24,"col":62}
+{"package":"core","dir":"<root>/core","cap":"ffi","kind":"extern","fn":"ec_in_clear","file":"sys.ei","line":11,"col":15}
+{"package":"core","dir":"<root>/core","cap":"fs","kind":"uses","fn":"read_file","file":"sys.ei","line":120,"col":32}
+{"package":"core","dir":"<root>/core","cap":"io","kind":"uses","fn":"getenv","file":"sys.ei","line":136,"col":30}
+{"package":"core","dir":"<root>/core","cap":"net","kind":"uses","fn":"run","file":"sys.ei","line":146,"col":87}
+--- stderr
+--- exit 0

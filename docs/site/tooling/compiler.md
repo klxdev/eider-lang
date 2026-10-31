@@ -55,7 +55,7 @@ and exit code 2. With no arguments at all, eiderc prints its usage to stderr and
 `help`, `--help` and `-h` print the usage to stdout and exit 0. `version` and `--version`
 print `eiderc <version>` (`eiderc 0.1.0`) and exit 0: the toolchain's version, from
 `VERSION` at the root of eider-lang, which also versions core, std, eider-pkg and eider-doc
-(see [Releases](releases.md)). Programs can read it too: `import "core/version"` has
+(see [Releases](releases.md)). Programs can read it too: `import core.version` has
 `version.VERSION` (`"0.1.0"`), `MAJOR`, `MINOR`, `PATCH` and `SERIES` (`"0.1"`).
 
 ## Options

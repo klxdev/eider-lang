@@ -1,10 +1,10 @@
 // core/version (docs/site/tooling/releases.md): its constants agree with each other. The
 // output doesn't name the version, so a bump changes nothing here (scripts/version.sh check
 // compares the constants with VERSION).
-import "core/sys"
-import "core/version"
-import "std/bytes"
-import "std/io"
+import core.sys
+import core.version
+import std.bytes
+import std.io
 
 fn dotted(a: u64, b: u64) -> List[u8] {
     let mut out = bytes.from_u64(a)

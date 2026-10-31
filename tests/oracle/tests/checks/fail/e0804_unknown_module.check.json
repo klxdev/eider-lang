@@ -1,0 +1,1 @@
+{"error":"E0804","span":{"file":"tests/checks/fail/e0804_unknown_module.ei","line":3,"col":1},"message":"unknown module `std.nope`","help":"`std` has no module `nope`"}

@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./tests/checks/fail/e0001_import_wildcard.ei","line":3,"col":12},"message":"wildcard imports are not supported","help":"name each module, or group them: `import std.{bytes, fs}`; or import the package namespace, `import std`, and write `std.bytes.eq(...)`"}

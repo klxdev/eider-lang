@@ -1,0 +1,7 @@
+[package]
+name = "selfdep"
+version = "0.1.0"
+
+# helper for e0812_ambiguous_package.ei: a dependency named like the package itself
+[deps.selfdep]
+path = "."

@@ -4,14 +4,14 @@
 // DecodeError (each implements it); `.with_context`, chains and roots; a String error stays
 // a String where a function returns one.
 
-import "core/sys"
-import "std/error"
-import "std/fs"
-import "std/proc"
-import "std/stream"
-import "std/strings"
-import "std/encoding"
-import "std/fd"
+import core.sys
+import std.error
+import std.fs
+import std.proc
+import std.stream
+import std.strings
+import std.encoding
+import std.fd
 
 fn config(path: str) -> Result[List[u8], error.Failure] uses fs {
     let text = fs.read(sys.lit(path)).context("reading the config")?

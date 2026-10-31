@@ -15,9 +15,9 @@
 //! These run on OS threads; when the compiler makes stackless tasks from functions that use a
 //! blocking capability (C4), the same API runs them on the pool's workers instead.
 
-import "sync.ei"
-import "chan.ei"
-import "time.ei"
+import std.sync
+import std.chan
+import std.time
 
 const NEVER: i64 = 9223372036854775807
 

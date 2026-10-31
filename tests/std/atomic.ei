@@ -3,7 +3,7 @@
 // a spin lock from compare-exchange (acquire) and store (release) whose sections never overlap;
 // overflow and use after free end the program (atomic_overflow.ei, atomic_freed.ei).
 
-import "std/atomic"
+import std.atomic
 
 fn main() uses io, threads {
     let a = atomic.new(5)

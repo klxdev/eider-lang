@@ -1,9 +1,9 @@
 // Helpers for the crypto vector tests (tests/crypto/run.sh): hex, NIST .rsp records, tallies.
 
-import "std/bytes"
-import "std/io"
-import "std/env"
-import "std/fs"
+import std.bytes
+import std.io
+import std.env
+import std.fs
 
 /// passed / failed / skipped checks of one test program
 pub type Tally = { pass: u64, fail: u64, skip: u64 }

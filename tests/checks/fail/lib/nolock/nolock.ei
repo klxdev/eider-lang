@@ -1,4 +1,4 @@
 // helper package for e0810_no_lock.ei: json is declared, but there is no eider.lock
-import "json"
+import json
 
 pub fn f() -> i64 { 0 }

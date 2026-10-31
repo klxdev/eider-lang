@@ -13,11 +13,11 @@
 //! stopped after 30 seconds. The same fences in `///` and `//!` comments are tests too, at
 //! their source lines.
 
-import "std/bytes"
-import "std/fs"
-import "std/proc"
-import "markdown"
-import "model.ei"
+import std.bytes
+import std.fs
+import std.proc
+import markdown
+import doc.model
 
 /// One test: where its fence starts, its info string and code, and the next block's text
 /// when that block is `output`.

@@ -1,7 +1,7 @@
 // std/path: join, parent, file_name, extension, stem, with_extension, normalize,
 // components, relative_to, on edge cases (root, empty, trailing separators, dot files, ..).
 
-import "std/path"
+import std.path
 
 fn t(b: List[u8]) -> String {
     match String.from_bytes(b) {

@@ -1,0 +1,24 @@
+// pkgtest: run
+// Dotted imports (docs/compiler.md, "C8.26: dotted imports"): a dependency's entry module
+// (`geo`) and its other modules (`geo.util`, `shapes.src.util`), the app's own module by the
+// package's name (`app.util`), git dependencies (vendored `net`, stored `cache`), a group, and
+// the std namespace (std.io and std.strings are loaded by their first use).
+import core.{sys}
+import geo
+import geo.util as gu
+import shapes
+import shapes.src.util as su
+import app.util
+import net
+import cache
+import std
+
+fn main() uses io {
+    std.io.outln(sys.lit(util.name()))
+    print(gu.name())
+    print(su.name())
+    print(geo.area(6, 7))
+    print(shapes.sides(3))
+    print(net.port() + cache.hits())
+    print(std.strings.repeat("ab", 2))
+}

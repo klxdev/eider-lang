@@ -14,12 +14,12 @@
 //! Entries are separated by commas or white space; a relative directory is relative to the
 //! current directory. The checkout's version must be at least the one required.
 
-import "core/sys"
-import "std/bytes"
-import "std/env"
-import "std/fs"
-import "std/proc"
-import "store.ei"
+import core.sys
+import std.bytes
+import std.env
+import std.fs
+import std.proc
+import pkg.store
 
 pub type Override = { name: List[u8], dir: List[u8] }
 

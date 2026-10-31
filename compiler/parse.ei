@@ -26,6 +26,18 @@ pub type P = {
     errs: List[diag.Diag],
     // the source text (E0002's fix quotes an operand)
     src: List[u8],
+    // package namespaces (`import std`, `import core as c`; docs/compiler.md, "C8.26"):
+    // the alias, the package's name and where the import is
+    nss: List[u32],
+    ns_heads: List[List[u8]],
+    ns_at: List[Name],
+    // the qualifier `qualified` found: the alias, or for `ns.module.Name` the symbol of
+    // `ns.module`
+    qual: u32,
+    // the module imports that uses through a namespace imply (`std.bytes.eq` imports
+    // std.bytes there), added after the items
+    implied: List[ast.Node],
+    implied_syms: List[u32],
 }
 
 /// The result of `parse_all`: the tree, with error nodes (ast.ei) where parts failed, and
@@ -138,17 +150,64 @@ fn ident(inout p: P) -> Result[Name, diag.Diag] {
 }
 
 /// After an identifier `first`: if it is an import alias followed by `. Name`, consume both and
-/// return the name (the qualifier is `first`).
+/// return the name (the qualifier, `p.qual`, is `first`). If it is a package namespace
+/// followed by `. module . Name` (`std.bytes.eq`), consume all four and return the name; the
+/// qualifier is then the symbol of `std.bytes`, and the first such use implies the import of
+/// the module (`implied`; docs/compiler.md, "C8.26: dotted imports").
 fn qualified(inout p: P, first: u32) -> Option[Name] {
-    if !p.aliases.contains(first) || !is(p, lex.Dot) { return None }
+    p.qual = first
+    if !is(p, lex.Dot) { return None }
     let n = p.i + 1
-    if n < p.toks.len() && p.toks[n].kind == lex.Ident && p.toks[n].val > intern.LAST_KEYWORD as u64 {
-        let t = p.toks[n].copy()
-        adv(inout p)
-        adv(inout p)
-        return Some(Name(t.val as u32, t.line, t.col))
+    if p.aliases.contains(first) {
+        if name_at(p, n) {
+            let t = p.toks[n].copy()
+            adv(inout p)
+            adv(inout p)
+            return Some(Name(t.val as u32, t.line, t.col))
+        }
+        return None
     }
-    None
+    let mut k: usize = 0
+    while k < p.nss.len() {
+        if p.nss[k] == first { break }
+        k += 1
+    }
+    if k == p.nss.len() || p.i == 0 { return None }
+    if !(name_at(p, n) && kind_at(p, n + 1) == lex.Dot && name_at(p, n + 2)) { return None }
+    let at = p.toks[p.i - 1].copy()
+    let seg = p.toks[n].val as u32
+    let t = p.toks[n + 2].copy()
+    let mut q = intern.name(p.names, first).copy()
+    q.push(46)
+    bytes.append(inout q, intern.name(p.names, seg))
+    let qs = intern.intern(inout p.names, q, 0, q.len())
+    if !p.implied_syms.contains(qs) {
+        let mut path = p.ns_heads[k].copy()
+        path.push(47)
+        bytes.append(inout path, intern.name(p.names, seg))
+        p.strs.push(path)
+        let mut im = mk(ast.IImport, at.line, at.col)
+        im.a = (p.strs.len() - 1) as u32
+        im.b = qs + 1
+        im.c = IMPORT_IMPLIED
+        im.d = p.ns_at[k].line
+        im.e = p.ns_at[k].col
+        im.end_line = p.toks[n].line
+        im.end_col = p.toks[n].end_col
+        p.implied.push(im)
+        p.implied_syms.push(qs)
+    }
+    adv(inout p)
+    adv(inout p)
+    adv(inout p)
+    adv(inout p)
+    p.qual = qs
+    Some(Name(t.val as u32, t.line, t.col))
+}
+
+/// Whether token j is a non-keyword identifier.
+fn name_at(p: P, j: usize) -> bool {
+    j < p.toks.len() && p.toks[j].kind == lex.Ident && p.toks[j].val > intern.LAST_KEYWORD as u64
 }
 
 // ---- recovery
@@ -376,6 +435,139 @@ fn stem(path: List[u8]) -> List[u8] {
     out
 }
 
+// ---- dotted imports (docs/compiler.md, "C8.26: dotted imports")
+//
+//   import core.sys                 a module path: identifiers joined by `.`
+//   import std.{bytes, fs as f}     a group: one import per member, each after the prefix
+//   import std.encoding as enc      an alias (default: the last segment)
+//   import std                      a package namespace (`std`, `core`): `std.bytes.eq(...)`
+//
+// An IImport's slot c says which form it is (IMPORT_*); a is the path with `/` between the
+// segments (`std/bytes`, as a package import spells it), b the alias + 1 when one is given
+// (for an implied import: the symbol of `std.bytes`); d/e is where the path starts (the
+// string of a quoted import; for an implied import, where the namespace was imported).
+
+/// `import "path"`: a path or package import (the deprecated quoted form).
+pub const IMPORT_QUOTED: u32 = 0
+/// `import a.b.c`, or one member of a group.
+pub const IMPORT_DOTTED: u32 = 1
+/// `import std`, `import core`: a namespace; no module is loaded until a use names one.
+pub const IMPORT_NAMESPACE: u32 = 2
+/// The import a namespace use implies (`std.bytes.eq` with `import std`), added after the items.
+pub const IMPORT_IMPLIED: u32 = 3
+
+fn import_help() -> List[u8] {
+    sys.lit("name each module, or group them: `import std.{bytes, fs}`; or import the package namespace, `import std`, and write `std.bytes.eq(...)`")
+}
+
+fn import_err(p: P, m: str) -> diag.Diag {
+    let mut d = err(p, m)
+    d.help = import_help()
+    d
+}
+
+/// The segments of a module path from the cursor, appended to `path` with `/` between them:
+/// `a.b.c` (stopping before `.{`). The last segment's name.
+fn import_path(inout p: P, inout path: List[u8]) -> Result[Name, diag.Diag] {
+    if is(p, lex.Star) { return Err(import_err(p, "wildcard imports are not supported")) }
+    let mut last = ident(inout p)?
+    if path.len() > 0 { path.push(47) }
+    bytes.append(inout path, intern.name(p.names, last.sym))
+    while is(p, lex.Dot) && kind_at(p, p.i + 1) != lex.LBrace {
+        adv(inout p)
+        if is(p, lex.Star) { return Err(import_err(p, "wildcard imports are not supported")) }
+        last = ident(inout p)?
+        path.push(47)
+        bytes.append(inout path, intern.name(p.names, last.sym))
+    }
+    Ok(last)
+}
+
+/// `from` after an import path (`import bytes from std`) is not Eider.
+fn no_from(p: P) -> Result[bool, diag.Diag] {
+    let t = cur(p)
+    if t.kind == lex.Ident && bytes.eq(intern.name(p.names, t.val as u32), sys.lit("from")) {
+        return Err(import_err(p, "`from` imports are not supported: an import names a module by its path, like `import std.bytes`"))
+    }
+    Ok(true)
+}
+
+/// A dotted import, or a group of them, after `import` (token t), appended to `items`.
+fn dotted_import(inout p: P, t: lex.Tok, inout items: List[u32]) -> Result[bool, diag.Diag] {
+    if is(p, lex.Star) { return Err(import_err(p, "wildcard imports are not supported")) }
+    if !is(p, lex.Ident) { return Err(err(p, "expected a module path after `import`, e.g. `import std.fs`")) }
+    let s0 = cur(p)
+    let mut prefix: List[u8] = List.new()
+    let last = import_path(inout p, inout prefix)?
+    if is(p, lex.Dot) {
+        // a group: `prefix.{a, b.c as d}` (a trailing comma and newlines allowed)
+        adv(inout p)
+        adv(inout p)
+        let mut any = false
+        while true {
+            skip_nl(inout p)
+            if is(p, lex.RBrace) && any { break }
+            let m0 = cur(p)
+            let mut path = prefix.copy()
+            let ml = import_path(inout p, inout path)?
+            let mut n = mk(ast.IImport, m0.line, m0.col)
+            n.c = IMPORT_DOTTED
+            n.d = m0.line
+            n.e = m0.col
+            import_alias(inout p, inout n, ml)?
+            p.strs.push(path)
+            n.a = (p.strs.len() - 1) as u32
+            items.push(add(inout p, n))
+            any = true
+            skip_nl(inout p)
+            if eat(inout p, lex.Comma) { continue }
+            if is(p, lex.RBrace) { break }
+            no_from(p)?
+            return Err(err(p, "expected `,` or `}` in an import group"))
+        }
+        adv(inout p)
+        no_from(p)?
+        return Ok(true)
+    }
+    no_from(p)?
+    let mut n = mk(ast.IImport, t.line, t.col)
+    n.c = IMPORT_DOTTED
+    n.d = s0.line
+    n.e = s0.col
+    let ns = bytes.eq(prefix, sys.lit("std")) || bytes.eq(prefix, sys.lit("core"))
+    if ns { n.c = IMPORT_NAMESPACE }
+    import_alias(inout p, inout n, last)?
+    no_from(p)?
+    p.strs.push(prefix.copy())
+    n.a = (p.strs.len() - 1) as u32
+    if ns {
+        // a namespace is not a module's alias: `std.Name` is no qualified name
+        let al = if n.b > 0 { n.b - 1 } else { last.sym }
+        p.aliases.pop()
+        p.nss.push(al)
+        p.ns_heads.push(prefix)
+        p.ns_at.push(Name(0, t.line, t.col))
+    }
+    items.push(add(inout p, n))
+    Ok(true)
+}
+
+/// `as alias` after a module path whose last segment is `last` (the default alias); sets the
+/// end of the import's span.
+fn import_alias(inout p: P, inout n: ast.Node, last: Name) -> Result[bool, diag.Diag] {
+    if eat_kw(inout p, intern.K_AS) {
+        let al = ident(inout p)?
+        n.b = al.sym + 1
+        p.aliases.push(al.sym)
+    } else {
+        p.aliases.push(last.sym)
+    }
+    let e = prev_end(p)
+    n.end_line = e.line
+    n.end_col = e.col
+    Ok(true)
+}
+
 // ---- items
 
 /// The file's items. An item that fails is recorded, skipped (`sync_item`) and kept as an
@@ -397,6 +589,7 @@ pub fn program(inout p: P) {
         }
         skip_seps(inout p)
     }
+    for im in p.implied { items.push(add(inout p, im)) }
     p.ast.items_start = list(inout p, items)
     p.ast.items_len = items.len() as u32
 }
@@ -412,11 +605,14 @@ fn item(inout p: P, inout items: List[u32]) -> Result[bool, diag.Diag] {
     if is_kw(p, intern.K_IMPORT) {
         let t = cur(p)
         adv(inout p)
-        if !is(p, lex.Str) { return Err(err(p, "expected a file path string after `import`, e.g. `import \"util.ei\"`")) }
-        let si = cur(p).val as u32
+        if !is(p, lex.Str) { return dotted_import(inout p, t, inout items) }
+        let st = cur(p)
+        let si = st.val as u32
         adv(inout p)
         let mut n = mk(ast.IImport, t.line, t.col)
         n.a = si
+        n.d = st.line
+        n.e = st.col
         if eat_kw(inout p, intern.K_AS) {
             let al = ident(inout p)?
             n.b = al.sym + 1
@@ -487,7 +683,7 @@ fn generics(inout p: P) -> Result[List[u32], diag.Diag] {
                 match qualified(inout p, b.sym) {
                     Some(q) => {
                         tn.a = q.sym
-                        tn.b = b.sym + 1
+                        tn.b = p.qual + 1
                     }
                     None => {}
                 }
@@ -683,7 +879,7 @@ pub fn ty(inout p: P) -> Result[u32, diag.Diag] {
         let mut qual: u32 = 0
         match qualified(inout p, sym) {
             Some(q) => {
-                qual = sym + 1
+                qual = p.qual + 1
                 sym = q.sym
             }
             None => {}
@@ -1513,7 +1709,7 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] {
             Some(q) => {
                 // the position stays at the qualifier, as tests/oracle expects
                 node.a = q.sym
-                node.b = n.sym + 1
+                node.b = p.qual + 1
             }
             None => {}
         }
@@ -1826,7 +2022,7 @@ pub fn pattern(inout p: P) -> Result[u32, diag.Diag] {
         match qualified(inout p, nm.sym) {
             Some(q) => {
                 // the position stays at the qualifier, as tests/oracle expects
-                qual = nm.sym + 1
+                qual = p.qual + 1
                 nm = Name(q.sym, nm.line, nm.col)
             }
             None => {}
@@ -1864,7 +2060,8 @@ pub fn parse(lx: lex.Lexed, names: intern.Interner) -> Result[P, diag.Diag] {
 /// Parse a lexed file (from `lex.lex` or `lex.lex_all`) to the end, recovering from each
 /// error ("recovery"): Parsed.
 pub fn parse_all(lx: lex.Lexed, names: intern.Interner) -> Parsed {
-    let mut p = P(lx.toks, lx.strs, 0, ast.new(), names, List.new(), List.new(), lx.src)
+    let mut p = P(lx.toks, lx.strs, 0, ast.new(), names, List.new(), List.new(), lx.src, List.new(), List.new(), List.new(), 0,
+        List.new(), List.new())
     program(inout p)
     let ds = p.errs
     Parsed(p, ds)

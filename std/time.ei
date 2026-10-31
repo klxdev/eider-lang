@@ -3,7 +3,7 @@
 //! every blocking operation in std takes (decision C5: timeouts on every blocking operation;
 //! docs/runtime.md).
 
-import "core/os"
+import core.os
 
 /// Nanoseconds from an arbitrary start; never goes backwards, unaffected by setting the clock.
 pub fn mono_ns() -> i64 uses clock { os.time_mono_ns() }

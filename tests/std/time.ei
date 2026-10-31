@@ -1,7 +1,7 @@
 // std/time: the monotonic clock never goes backwards and advances across a sleep; the wall
 // clock is after 2020; now_ms (the language's clock) is monotonic too.
 
-import "std/time"
+import std.time
 
 fn main() uses io, clock, ffi {
     var prev = time.mono_ns()

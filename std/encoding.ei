@@ -5,7 +5,7 @@
 //! value has exactly one encoding, which matters for signatures and cache keys.
 //! (Integers are 8, 32 or 64 bits wide in Eider; 16-bit values travel in a u32.)
 
-import "error.ei"
+import std.error
 
 // ---- errors
 

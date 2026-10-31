@@ -232,7 +232,7 @@ locked 1 package(s)
 `eider.lock`. Import the package by name and use it:
 
 ```eider,ignore
-import "json"
+import json
 
 fn main() uses io {
     let text = String.from("{\"name\": \"Eider\", \"year\": 2026}").bytes()
@@ -296,15 +296,15 @@ greet/
   eider.toml        # the manifest: name, version, entry, main, [deps.*] with grants
   eider.lock        # written by eider-pkg: every package's source, hash and grants
   main.ei           # `main = "main.ei"`: the program
-  greet.ei          # the library entry, what `import "greet"` loads (`entry` changes it)
-  util.ei           # other modules, imported by path: `import "util.ei"`
+  greet.ei          # the library entry, what `import greet` loads (`entry` changes it)
+  util.ei           # other modules, imported by the package's name: `import greet.util`
   tests/
     greet_test.ei   # test programs, run with `scripts/ei test` or `run`
   vendor/           # optional: `eider-pkg vendor` copies git dependencies here
 ```
 
-Inside a package, files import each other by relative path (`import "util.ei"`) and the
-toolchain and dependencies by name (`import "std/fs"`, `import "json"`). Commit
+Inside a package, files import each other by the package's name (`import greet.util`) and
+the toolchain and dependencies by theirs (`import std.fs`, `import json`). Commit
 `eider.lock`. `eider-pkg tree` prints the locked graph with each package's grants.
 [eider-pkg](../tooling/eider-pkg.md) documents every command and manifest field.
 

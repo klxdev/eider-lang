@@ -2,7 +2,7 @@
 // past U+10FFFF, truncated), maximal-subpart replacement counts, encoding round trips,
 // iteration, lossy conversion, agreement with String.from_bytes.
 
-import "std/utf8"
+import std.utf8
 
 fn bs(xs: List[i32]) -> List[u8] {
     var out: List[u8] = List.new()

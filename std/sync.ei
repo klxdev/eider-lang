@@ -33,9 +33,9 @@
 //! a closure changes after sharing it (`let mut t = s.copy()` in `with`), which is why
 //! changes go through `modify`.
 
-import "core/os"
-import "poll.ei"
-import "time.ei"
+import core.os
+import std.poll
+import std.time
 
 /// A value one thread at a time holds (see the module comment). Copies of a Lock share it.
 /// The channel holds `Some(value)` while nobody holds the lock.

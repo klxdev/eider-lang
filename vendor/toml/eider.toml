@@ -1,5 +1,5 @@
 [package]
 name = "toml"
-version = "0.1.0"
+version = "0.1.1"
 eider = "0.1"
 description = "The TOML subset Eider manifests and lockfiles use: a flattened entry list with source lines"

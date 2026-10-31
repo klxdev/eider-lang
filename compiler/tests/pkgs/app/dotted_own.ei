@@ -1,0 +1,5 @@
+// pkgtest: check
+// a module of the app imported without the package's name: the help says `import app.util`
+import util
+
+fn main() {}

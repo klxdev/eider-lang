@@ -4,7 +4,7 @@
 // value changed many times, which is quick only because nothing of it is copied (issue #90:
 // each call used to copy the whole value).
 
-import "std/sync"
+import std.sync
 
 type St = { n: i64, names: List[String], seen: Map[String, i64] }
 

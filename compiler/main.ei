@@ -6,7 +6,7 @@
 // usage error (exit 2). `lex` dumps tokens (one per line: line:col kind [value]), `parse`
 // the AST (dump.ei), `ir` the typed IR (ir.ei); `build`, `run` and `test` go through
 // driver.ei, `test --compile-fail` through suite.ei, `caps` through resolve.caps_json ("C8.5"),
-// `migrate-var` through check.var_fixes ("C8.6": the file with every `var` it can rewrite as
+// `migrate-imports` through resolve.import_fixes ("C8.26"), `migrate-var` through check.var_fixes ("C8.6": the file with every `var` it can rewrite as
 // `let mut`, on stdout; the file must check, apart from having no `main`), `audit-refs`
 // through check.check_audit (every write that changes what a `let` or pattern reference
 // sees, which code written when `let` copied didn't mean; then the errors, if any).
@@ -83,6 +83,8 @@ fn usage_text() -> List[u8] {
         "  eiderc ir <file.ei>                        dump the typed IR",
         "  eiderc caps <file.ei>                      each package's capability use, one JSON line per capability",
         "  eiderc migrate-var <file.ei>               print the file with its `var`s rewritten as `let mut` (deprecated `var`)",
+        "  eiderc migrate-imports <file.ei> [--json]  print the file with its quoted imports in the dotted form",
+        "                                             (--json: the fixes, one JSON line each)",
         "  eiderc audit-refs <file.ei> [--json]       every write that changes what a `let` reference sees (it was a copy",
         "                                             before C8.6), with the `.copy()` that keeps the old meaning",
         "  eiderc ide <file.ei> [--overlay <path> <text>]  print the IDE analysis (ide.ei): symbols, refs, types;",
@@ -134,7 +136,7 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] {
 }
 
 fn known_cmd(c: List[u8]) -> bool {
-    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "audit-refs") || is(c, "doc")
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "migrate-imports") || is(c, "audit-refs") || is(c, "doc")
 }
 
 fn parse_args() -> Args uses io {
@@ -516,6 +518,11 @@ fn main() uses io, fs, net, clock {
     }
     if is(a.cmd, "migrate-var") {
         migrate_var(a, src)
+        return
+    }
+    if is(a.cmd, "migrate-imports") {
+        // docs/compiler.md, "C8.26: dotted imports"
+        io.out(resolve.migrate_imports(a.file, src, a.json))
         return
     }
     if is(a.cmd, "parse") && a.all_errors {

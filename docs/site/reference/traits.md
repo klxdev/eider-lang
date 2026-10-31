@@ -682,7 +682,7 @@ std/fs, std/io and std/proc take `.context` as they are), `stream.Error`,
 `strings.ParseError` and `encoding.DecodeError`.
 
 ```eider
-import "std/error"
+import std.error
 
 type ParseError = { line: u32, what: String }
 

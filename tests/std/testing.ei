@@ -3,9 +3,9 @@
 // out deadline reads, scripted errors, a sink with short writes that fails, an in-memory
 // pipe, a fake clock), Suite, diff_lines, and failing checks, to pin what they print.
 
-import "std/testing"
-import "std/stream"
-import "std/time"
+import std.testing
+import std.stream
+import std.time
 
 // The service under test: reads lines (at most 64 bytes) and answers each with its upper
 // case; a line that doesn't arrive in time is answered "timeout" and the service goes on

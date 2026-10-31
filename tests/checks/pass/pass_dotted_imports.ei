@@ -1,0 +1,27 @@
+// mode: build
+// Dotted imports (docs/compiler.md, "C8.26: dotted imports"): a module path, a group with an
+// alias and a trailing comma, an alias, a file beside this one by its module name (in no
+// package), and the std namespace, whose modules load on first use (std.strings here; also
+// std.bytes, which the group imports too: one module, two names).
+import core.sys
+import std.{
+    bytes,
+    fs as files,
+}
+import std.encoding as enc
+import lib.geometry
+import std
+
+fn main() uses io {
+    let p = geometry.Point(1, 2)
+    print(p.x + p.y)
+    print(std.strings.repeat("ab", 2))
+    print(std.bytes.eq(sys.lit("a"), sys.lit("a")))
+    print(bytes.eq(sys.lit("a"), sys.lit("b")))
+    let k: std.fs.Kind = files.Missing
+    match k {
+        std.fs.Missing => print("missing")
+        _ => print("other")
+    }
+    print(enc.hex(sys.lit("A")))
+}
