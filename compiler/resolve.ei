@@ -570,6 +570,12 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
                     d.help = quoted("there is no file ", path, "")
                     let head = bytes.split(rel, 47)[0]
                     let toolchain = bytes.eq(head, sys.lit("std")) || bytes.eq(head, sys.lit("core"))
+                    // (the toolchain's directory depends on how eiderc was run: not named)
+                    if toolchain {
+                        d.help = quoted("`", head, "` has no module `")
+                        bytes.append(inout d.help, bytes.slice(rel, head.len() + 1, rel.len()))
+                        d.help.push(96)
+                    }
                     if p.mods[m as usize].pkg == NOPKG && !toolchain {
                         d.help = quoted("outside a package, `import ", dots(rel), "` names the file ")
                         bytes.append(inout d.help, rel)

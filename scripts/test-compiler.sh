@@ -477,7 +477,8 @@ done
 for f in compiler/tests/ide/*.ei; do
   g="${f%.ei}.ide"
   ov=$(sed -n 's|^// overlay: \([^ ]*\) \([^ ]*\)$|--overlay \1 \2|p' "$f")
-  $new ide "$f" $ov 2>&1 | norm >$tmp/ide
+  # (absolute, so toolchain files are <root>/... however $new is spelled)
+  $anew ide "$f" $ov 2>&1 | norm >$tmp/ide
   if [ -n "$BLESS" ]; then cp $tmp/ide "$g"; fi
   if cmp -s $tmp/ide "$g"; then echo "ok   ide $f"; else echo "FAIL ide $f"; diff "$g" $tmp/ide | head -10; fail=1; fi
 done

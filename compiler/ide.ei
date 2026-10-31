@@ -577,7 +577,10 @@ fn module_symbols(inout b: B, m: u32) {
     for k in 0..a.items_len {
         let it = a.nodes[ast.at(a, a.items_start, k) as usize]
         let ti = tok_at(b, m, it.line, it.col)
-        if ti == NONE { starts.push(0) } else { starts.push(line_start(b, m, ti)) }
+        // an implied import (a namespace use, after the items but at the use) ends nothing
+        if it.kind == ast.IImport && it.c == parse.IMPORT_IMPLIED {
+            starts.push(n)
+        } else if ti == NONE { starts.push(0) } else { starts.push(line_start(b, m, ti)) }
     }
     let mut tys: Map[u32, u32] = Map.new()
     for pass in 0..2 {
@@ -586,6 +589,7 @@ fn module_symbols(inout b: B, m: u32) {
             let it = a.nodes[id as usize]
             let is_impl = it.kind == ast.IImpl
             if (pass == 0) == is_impl { continue }
+            if it.kind == ast.IImport && it.c == parse.IMPORT_IMPLIED { continue }
             let first = starts[k as usize]
             // from the next item's first token (or the end of the file) back to the last
             // token that isn't a separator
