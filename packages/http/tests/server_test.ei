@@ -1,0 +1,307 @@
+// http/server, client and router over loopback (127.0.0.1, ephemeral ports; nothing else
+// on the network). Every wait has a deadline and nothing sleeps to synchronise: a server is
+// listening before its thread starts, and each step waits for the response it needs.
+// Covers: routing (parameters, encoded slashes, rest, 404, 405 with Allow, HEAD), keep-alive,
+// pipelining, chunked request bodies, Expect: 100-continue, refused smuggling, the read and
+// idle deadlines, max requests per connection, back-pressure (503 when the queue is full,
+// and keep-alive given up while others wait), and graceful shutdown with a request in flight.
+
+import "core/sys"
+import "std/bytes"
+import "std/fd"
+import "std/io"
+import "std/net"
+import "std/time"
+import "std/task"
+import "../http.ei"
+import "../parse.ei"
+import "../server.ei"
+import "../client.ei"
+import "../router.ei"
+
+fn lit(s: str) -> List[u8] { sys.lit(s) }
+
+/// `\n` is CRLF.
+fn wire(s: str) -> List[u8] {
+    var out: List[u8] = List.new()
+    for c in sys.lit(s) {
+        if c == 10 {
+            out.push(13)
+            out.push(10)
+        } else {
+            out.push(c)
+        }
+    }
+    out
+}
+
+fn app() -> router.Router {
+    var r = router.new()
+    r.get("/hello", |q: http.Request| -> http.Response { http.text(200, "hello, world") })
+    r.get("/users/:id", |q: http.Request| -> http.Response {
+        http.respond(200, "text/plain", bytes.concat(lit("user "), q.param("id").unwrap()))
+    })
+    r.get("/users/me", |q: http.Request| -> http.Response { http.text(200, "the current user") })
+    r.get("/files/*path", |q: http.Request| -> http.Response {
+        http.respond(200, "text/plain", bytes.concat(lit("file "), q.param("path").unwrap()))
+    })
+    r.post("/echo", |q: http.Request| -> http.Response { http.respond(200, "application/octet-stream", q.body) })
+    r.put("/hello", |q: http.Request| -> http.Response { http.response(204) })
+    r.get("/search", |q: http.Request| -> http.Response {
+        http.respond(200, "text/plain", q.query_param("q").unwrap_or(lit("-")))
+    })
+    r.get("/bad-header", |q: http.Request| -> http.Response {
+        var resp = http.text(200, "x")
+        resp.set_header("X-Injected", wire("a\nSet-Cookie: evil=1"))
+        resp
+    })
+    r
+}
+
+fn loopback() -> net.Addr { net.ipv4(127, 0, 0, 1, 0) }
+
+fn show_resp(r: http.Response) uses io {
+    var l = bytes.from_u64(r.status as u64)
+    l.push(32)
+    for name in [lit("content-type"), lit("content-length"), lit("allow"), lit("connection"), lit("retry-after")] {
+        match http.find(r.headers, name) {
+            Some(v) => {
+                bytes.append(inout l, name)
+                l.push(61)
+                bytes.append(inout l, v)
+                l.push(32)
+            }
+            None => {}
+        }
+    }
+    bytes.append(inout l, lit("| "))
+    bytes.append(inout l, r.body)
+    io.outln(l)
+}
+
+fn show(r: Result[http.Response, String]) uses io {
+    match r {
+        Ok(resp) => show_resp(resp)
+        Err(e) => {
+            var m = String.from("error: ")
+            m.append(e)
+            print(m)
+        }
+    }
+}
+
+/// A raw connection: what a client that isn't ours sends.
+fn raw(a: net.Addr) -> i32 uses net {
+    let s = net.socket(net.IPV4, net.STREAM, false).unwrap()
+    net.connect(s, a).unwrap()
+    s
+}
+
+/// The responses on `s` until `n` arrived, the peer closed, or `dl`; "eof" when it closed.
+fn read_responses(s: i32, n: usize, dl: time.Deadline) uses io, clock, net {
+    var p = parse.responses(http.limits())
+    var got: usize = 0
+    while got < n {
+        match p.next() {
+            parse.Done(m) => {
+                show_resp(parse.to_response(m))
+                got += 1
+                continue
+            }
+            parse.Bad(st, why) => {
+                io.outln(why)
+                return
+            }
+            parse.More => {}
+        }
+        match fd.read_by(s, 65536, dl) {
+            Ok(Some(b)) => {
+                if b.len() == 0 {
+                    print("eof")
+                    return
+                }
+                p.feed(b)
+            }
+            Ok(None) => {
+                print("timed out")
+                return
+            }
+            Err(e) => {
+                print(e)
+                return
+            }
+        }
+    }
+}
+
+/// Waits for the peer to close `s` (true) before `dl`, ignoring data.
+fn closed_by_peer(s: i32, dl: time.Deadline) -> bool uses io, clock {
+    while true {
+        match fd.read_by(s, 65536, dl) {
+            Ok(Some(b)) => {
+                if b.len() == 0 { return true }
+            }
+            Ok(None) => { return false }
+            Err(e) => { return true }
+        }
+    }
+    false
+}
+
+fn start(cfg: server.Config, tok: task.Token) -> (net.Addr, Task[server.Stats]) uses net, io, clock, threads {
+    let srv = server.listen(loopback(), cfg).unwrap()
+    let h = router.handler(app())
+    let t = tok
+    let th = spawn(|| -> server.Stats { srv.serve(h, t).unwrap() })
+    (srv.addr(), th)
+}
+
+fn main() uses io, net, clock, threads {
+    let dl = time.after_ms(20000)
+    var cfg = server.config()
+    cfg.workers = 4
+    let tok = task.root()
+    let (a, th) = start(cfg, tok)
+    print(a.port > 0)
+
+    print("-- routing")
+    show(client.get(a, "/hello", dl))
+    show(client.get(a, "/users/42", dl))
+    show(client.get(a, "/users/me", dl))
+    show(client.get(a, "/users/a%2Fb", dl))
+    show(client.get(a, "/users/", dl))
+    show(client.get(a, "/files/a/b/c.txt", dl))
+    show(client.get(a, "/files/", dl))
+    show(client.get(a, "/nope", dl))
+    show(client.get(a, "/users/%zz", dl))
+    show(client.post(a, "/hello", "text/plain", lit("x"), dl))
+    show(client.get(a, "/search?q=a+b%21", dl))
+    show(client.get(a, "/bad-header", dl))
+    show(client.fetch(a, http.request("HEAD", lit("/hello")), dl))
+    show(client.fetch(a, http.request("PUT", lit("/hello")), dl))
+
+    print("-- keep-alive")
+    var c = client.connect(a, dl).unwrap()
+    show(c.request(http.request("GET", lit("/hello")), dl))
+    print(c.open)
+    var post = http.request("POST", lit("/echo"))
+    post.body = lit("body one")
+    show(c.request(post, dl))
+    var last = http.request("GET", lit("/users/7"))
+    last.keep_alive = false
+    show(c.request(last, dl))
+    print(c.open)
+
+    print("-- pipelining and chunked bodies")
+    let s = raw(a)
+    net.send_all(s, wire("GET /users/1 HTTP/1.1\nHost: x\n\nPOST /echo HTTP/1.1\nHost: x\nTransfer-Encoding: chunked\n\n3\nabc\n4\ndefg\n0\n\nGET /users/3 HTTP/1.1\nHost: x\nConnection: close\n\n")).unwrap()
+    read_responses(s, 4, dl)
+    fd.close(s).unwrap()
+
+    print("-- expect 100-continue")
+    let s2 = raw(a)
+    net.send_all(s2, wire("POST /echo HTTP/1.1\nHost: x\nExpect: 100-continue\nContent-Length: 5\n\n")).unwrap()
+    read_responses(s2, 1, dl)
+    net.send_all(s2, lit("hello")).unwrap()
+    read_responses(s2, 1, dl)
+    fd.close(s2).unwrap()
+
+    print("-- refused")
+    let s3 = raw(a)
+    net.send_all(s3, wire("POST /echo HTTP/1.1\nHost: x\nContent-Length: 4\nTransfer-Encoding: chunked\n\n0\n\nGET /smuggled HTTP/1.1\nHost: x\n\n")).unwrap()
+    read_responses(s3, 2, dl)
+    fd.close(s3).unwrap()
+    let s4 = raw(a)
+    net.send_all(s4, wire("GET / HTTP/1.1\nHost: x\nX: a\n b\n\n")).unwrap()
+    read_responses(s4, 2, dl)
+    fd.close(s4).unwrap()
+    let s5 = raw(a)
+    net.send_all(s5, wire("GET / HTTP/3.0\nHost: x\n\n")).unwrap()
+    read_responses(s5, 2, dl)
+    fd.close(s5).unwrap()
+
+    tok.cancel()
+    let st = th.join()
+    print(st.connections)
+    print(st.requests)
+    print(st.bad)
+    print(st.rejected)
+
+    print("-- deadlines")
+    var tc = server.config()
+    tc.workers = 2
+    tc.read_timeout = time.millis(200)
+    tc.idle_timeout = time.millis(300)
+    tc.max_requests = 2
+    let tok2 = task.root()
+    let (b, th2) = start(tc, tok2)
+    // a request that doesn't arrive in time: 408
+    let t0 = time.mono_ns()
+    let s6 = raw(b)
+    net.send_all(s6, lit("GET /hello HTTP/1.1")).unwrap()
+    read_responses(s6, 2, dl)
+    print(time.mono_ns() - t0 >= 200000000)
+    fd.close(s6).unwrap()
+    // a connection that sends nothing: closed when idle
+    let t1 = time.mono_ns()
+    let s7 = raw(b)
+    print(closed_by_peer(s7, dl))
+    print(time.mono_ns() - t1 >= 300000000)
+    fd.close(s7).unwrap()
+    // max requests: the second response closes the connection
+    var c2 = client.connect(b, dl).unwrap()
+    show(c2.request(http.request("GET", lit("/hello")), dl))
+    show(c2.request(http.request("GET", lit("/hello")), dl))
+    print(c2.open)
+    tok2.cancel()
+    let st2 = th2.join()
+    print(st2.timeouts)
+
+    print("-- back-pressure")
+    var bc = server.config()
+    bc.workers = 1
+    bc.queue = 1
+    let tok3 = task.root()
+    let (d, th3) = start(bc, tok3)
+    // A holds the only worker (its first response proves it is being served) ...
+    var ca = client.connect(d, dl).unwrap()
+    show(ca.request(http.request("GET", lit("/hello")), dl))
+    // ... B waits in the queue (it sent its request), C finds the queue full
+    let sb = raw(d)
+    net.send_all(sb, wire("GET /users/b HTTP/1.1\nHost: x\n\n")).unwrap()
+    let sc = raw(d)
+    read_responses(sc, 1, dl)
+    print(closed_by_peer(sc, dl))
+    fd.close(sc).unwrap()
+    // A's next response gives up keep-alive since B is waiting; then B is served
+    show(ca.request(http.request("GET", lit("/hello")), dl))
+    print(ca.open)
+    read_responses(sb, 1, dl)
+    fd.close(sb).unwrap()
+    tok3.cancel()
+    let st3 = th3.join()
+    print(st3.rejected)
+
+    print("-- graceful shutdown")
+    let tok4 = task.root()
+    let (e, th4) = start(server.config(), tok4)
+    var idle = client.connect(e, dl).unwrap()
+    show(idle.request(http.request("GET", lit("/hello")), dl))
+    // a request half sent when the server is told to stop ...
+    let s8 = raw(e)
+    net.send_all(s8, wire("POST /echo HTTP/1.1\nHost: x\nContent-Length: 6\n\nhal")).unwrap()
+    tok4.cancel()
+    // ... the idle keep-alive connection is closed, the request in flight completes
+    print(closed_by_peer(idle.fd, dl))
+    net.send_all(s8, lit("f!!")).unwrap()
+    read_responses(s8, 2, dl)
+    fd.close(s8).unwrap()
+    let st4 = th4.join()
+    print(st4.requests)
+    // nothing listens any more
+    match client.get(e, "/hello", dl) {
+        Ok(r) => print("still serving?")
+        Err(m) => print(bytes.ends_with(m.bytes(), lit("Connection refused")))
+    }
+    idle.close()
+}

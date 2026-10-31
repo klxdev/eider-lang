@@ -1,0 +1,205 @@
+// http/router: routes by method and path pattern to handlers, with path parameters.
+//
+// Patterns are `/`-separated segments: a literal (`users`), a parameter (`:id`, one
+// non-empty segment), or a rest parameter (`*path`, the last segment: everything after,
+// possibly empty). The request path is split at `/` first and each segment is then
+// percent-decoded, so an encoded slash (`%2F`) stays inside its segment and can't reach
+// another route; a malformed escape is 400. Trailing slashes are significant (`/a/` is not
+// `/a`).
+//
+// When several routes match a path, the most specific wins: comparing segment by segment, a
+// literal beats a parameter, which beats a rest parameter (then the earlier route). If routes
+// match the path but none has the method, the answer is 405 with `Allow`; if none match,
+// the router's not-found handler (404 by default). A HEAD request uses the GET route when
+// there is no HEAD route (the server leaves out the body).
+
+import "core/sys"
+import "std/bytes"
+import "http.ei"
+
+const LIT: i32 = 0
+const PARAM: i32 = 1
+const REST: i32 = 2
+
+type Seg = { kind: i32, text: List[u8] }
+
+type Route = { method: List[u8], segs: List[Seg], h: fn(http.Request) -> http.Response }
+
+pub type Router = { routes: List[Route], not_found: fn(http.Request) -> http.Response }
+
+pub fn new() -> Router {
+    Router(List.new(), |r: http.Request| -> http.Response { http.error_response(404) })
+}
+
+/// The segments of a pattern; panics on a malformed one (a programming error, found the
+/// first time the program starts).
+fn pattern(p: str) -> List[Seg] {
+    let s = sys.lit(p)
+    if s.len() == 0 || s[0] != 47 { panic("router: a pattern starts with /") }
+    let parts = bytes.split(bytes.slice(s, 1, s.len()), 47)
+    var out: List[Seg] = List.new()
+    for i in 0..parts.len() {
+        let t = parts[i]
+        if t.len() > 0 && t[0] == 58 {
+            if t.len() == 1 { panic("router: a parameter needs a name (:name)") }
+            out.push(Seg(PARAM, bytes.slice(t, 1, t.len())))
+        } else if t.len() > 0 && t[0] == 42 {
+            if i + 1 != parts.len() { panic("router: a rest parameter (*name) must be last") }
+            out.push(Seg(REST, bytes.slice(t, 1, t.len())))
+        } else {
+            out.push(Seg(LIT, t))
+        }
+    }
+    out
+}
+
+/// The decoded segments of a request path; None when it isn't an absolute path or has a
+/// malformed escape.
+fn segments(path: List[u8]) -> Option[List[List[u8]]] {
+    if path.len() == 0 || path[0] != 47 { return None }
+    var out: List[List[u8]] = List.new()
+    for raw in bytes.split(bytes.slice(path, 1, path.len()), 47) {
+        out.push(http.pct_decode(raw, false)?)
+    }
+    Some(out)
+}
+
+/// The parameters if `segs` matches `path`.
+fn match_route(segs: List[Seg], path: List[List[u8]]) -> Option[List[http.Header]] {
+    var ps: List[http.Header] = List.new()
+    for i in 0..segs.len() {
+        let s = segs[i]
+        if s.kind == REST {
+            var rest: List[List[u8]] = List.new()
+            var k = i
+            while k < path.len() {
+                rest.push(path[k])
+                k += 1
+            }
+            ps.push(http.Header(s.text, bytes.join(rest, sys.lit("/"))))
+            return Some(ps)
+        }
+        if i >= path.len() { return None }
+        if s.kind == LIT {
+            if !bytes.eq(s.text, path[i]) { return None }
+        } else {
+            if path[i].len() == 0 { return None }
+            ps.push(http.Header(s.text, path[i]))
+        }
+    }
+    if segs.len() != path.len() { return None }
+    Some(ps)
+}
+
+/// Whether route `a` is more specific than route `b` (see the module comment).
+fn more_specific(a: List[Seg], b: List[Seg]) -> bool {
+    var i: usize = 0
+    while i < a.len() && i < b.len() {
+        if a[i].kind != b[i].kind { return a[i].kind < b[i].kind }
+        i += 1
+    }
+    a.len() > b.len()
+}
+
+impl Router {
+    /// Adds a route: `method` ("GET", ...), `pat` (see the module comment), handler `h`.
+    fn route(inout self, method: str, pat: str, h: fn(http.Request) -> http.Response) {
+        self.routes.push(Route(sys.lit(method), pattern(pat), h))
+    }
+
+    fn get(inout self, pat: str, h: fn(http.Request) -> http.Response) { self.route("GET", pat, h) }
+    fn post(inout self, pat: str, h: fn(http.Request) -> http.Response) { self.route("POST", pat, h) }
+    fn put(inout self, pat: str, h: fn(http.Request) -> http.Response) { self.route("PUT", pat, h) }
+    fn delete(inout self, pat: str, h: fn(http.Request) -> http.Response) { self.route("DELETE", pat, h) }
+    fn patch(inout self, pat: str, h: fn(http.Request) -> http.Response) { self.route("PATCH", pat, h) }
+
+    /// What answers when no route matches the path.
+    fn set_not_found(inout self, h: fn(http.Request) -> http.Response) { self.not_found = h }
+
+    /// Routes one request (see the module comment).
+    fn handle(self, req: http.Request) -> http.Response {
+        let path = match segments(req.path) {
+            Some(p) => p
+            None => {
+                if bytes.eq(req.path, sys.lit("*")) {
+                    let nf = self.not_found
+                    return nf(req)
+                }
+                return http.error_response(400)
+            }
+        }
+        // the best route with the method, and the methods of every route matching the path
+        var best: Option[usize] = None
+        var best_get: Option[usize] = None
+        var best_params: List[http.Header] = List.new()
+        var get_params: List[http.Header] = List.new()
+        var allowed: List[List[u8]] = List.new()
+        let head = bytes.eq(req.method, sys.lit("HEAD"))
+        for i in 0..self.routes.len() {
+            let r = self.routes[i]
+            match match_route(r.segs, path) {
+                Some(ps) => {
+                    var seen = false
+                    for a in allowed {
+                        if bytes.eq(a, r.method) { seen = true }
+                    }
+                    if !seen { allowed.push(r.method) }
+                    if bytes.eq(r.method, req.method) {
+                        let better = match best {
+                            Some(b) => more_specific(r.segs, self.routes[b].segs)
+                            None => true
+                        }
+                        if better {
+                            best = Some(i)
+                            best_params = ps
+                        }
+                    } else if head && bytes.eq(r.method, sys.lit("GET")) {
+                        let better = match best_get {
+                            Some(b) => more_specific(r.segs, self.routes[b].segs)
+                            None => true
+                        }
+                        if better {
+                            best_get = Some(i)
+                            get_params = ps
+                        }
+                    }
+                }
+                None => {}
+            }
+        }
+        if best.is_none() && best_get.is_some() {
+            best = best_get
+            best_params = get_params
+        }
+        match best {
+            Some(i) => {
+                var r = req
+                r.params = best_params
+                let h = self.routes[i].h
+                h(r)
+            }
+            None => {
+                if allowed.len() == 0 {
+                    let nf = self.not_found
+                    return nf(req)
+                }
+                var methods = allowed
+                var has_get = false
+                var has_head = false
+                for m in allowed {
+                    if bytes.eq(m, sys.lit("GET")) { has_get = true }
+                    if bytes.eq(m, sys.lit("HEAD")) { has_head = true }
+                }
+                if has_get && !has_head { methods.push(sys.lit("HEAD")) }
+                var resp = http.error_response(405)
+                resp.set_header("Allow", bytes.join(methods, sys.lit(", ")))
+                resp
+            }
+        }
+    }
+}
+
+/// The router as a handler (for `server.serve`).
+pub fn handler(r: Router) -> fn(http.Request) -> http.Response {
+    |req: http.Request| -> http.Response { r.handle(req) }
+}
