@@ -3,6 +3,10 @@
 // boundary: data moves a byte at a time through the core's `in` and `out` buffers.
 // Only core symbols (ec_*) are bound here, never libc names, so platform symbol rules stay
 // inside the C file (see core/ABI.md).
+// Each wrapper declares the real capability of what it does (fs, io, net) next to `ffi`, and
+// the buffer and text helpers only `ffi`: `ffi` doesn't leave its package, so a caller in std
+// or any other package needs only the real one (docs/compiler.md, "C8.5: capabilities per
+// package").
 
 extern "c" fn ec_in_clear()
 extern "c" fn ec_in_push(b: i32)
@@ -113,37 +117,37 @@ pub fn error_text(status: i64) -> String uses ffi {
 
 // ---- operations (arguments must already be in the input buffer)
 
-pub fn read_file() -> i64 uses ffi { unsafe { ec_read_file() } }
-pub fn write_file(append: bool) -> i64 uses ffi {
+pub fn read_file() -> i64 uses fs, ffi { unsafe { ec_read_file() } }
+pub fn write_file(append: bool) -> i64 uses fs, ffi {
     let a = if append { 1 } else { 0 }
     unsafe { ec_write_file(a) }
 }
-pub fn list_dir() -> i64 uses ffi { unsafe { ec_list_dir() } }
-pub fn kind(follow: bool) -> i32 uses ffi {
+pub fn list_dir() -> i64 uses fs, ffi { unsafe { ec_list_dir() } }
+pub fn kind(follow: bool) -> i32 uses fs, ffi {
     let f = if follow { 1 } else { 0 }
     unsafe { ec_kind(f) }
 }
-pub fn mkdir() -> i64 uses ffi { unsafe { ec_mkdir() } }
-pub fn remove() -> i64 uses ffi { unsafe { ec_remove() } }
-pub fn rename() -> i64 uses ffi { unsafe { ec_rename() } }
-pub fn symlink() -> i64 uses ffi { unsafe { ec_symlink() } }
-pub fn cwd() -> i64 uses ffi { unsafe { ec_cwd() } }
-pub fn realpath() -> i64 uses ffi { unsafe { ec_realpath() } }
-pub fn getenv() -> bool uses ffi {
+pub fn mkdir() -> i64 uses fs, ffi { unsafe { ec_mkdir() } }
+pub fn remove() -> i64 uses fs, ffi { unsafe { ec_remove() } }
+pub fn rename() -> i64 uses fs, ffi { unsafe { ec_rename() } }
+pub fn symlink() -> i64 uses fs, ffi { unsafe { ec_symlink() } }
+pub fn cwd() -> i64 uses fs, ffi { unsafe { ec_cwd() } }
+pub fn realpath() -> i64 uses fs, ffi { unsafe { ec_realpath() } }
+pub fn getenv() -> bool uses io, ffi {
     let r = unsafe { ec_getenv() }
     r == 1
 }
-pub fn write_fd(fd: i32) -> i64 uses ffi { unsafe { ec_write_fd(fd) } }
+pub fn write_fd(fd: i32) -> i64 uses io, ffi { unsafe { ec_write_fd(fd) } }
 /// Read up to `max` bytes from `fd` into `out`: the count, 0 at end of file, or -errno.
-pub fn read_fd(fd: i32, max: i64) -> i64 uses ffi { unsafe { ec_read_fd(fd, max) } }
+pub fn read_fd(fd: i32, max: i64) -> i64 uses io, ffi { unsafe { ec_read_fd(fd, max) } }
 /// Run argv (in the input buffer). Captured output is in `out` as an 8-byte little-endian
 /// stdout length, stdout, then stderr; a result of 256 means the timeout killed the child
 /// (core/ABI.md "Running a program"). timeout_ms <= 0: no limit.
-pub fn run(capture_out: bool, capture_err: bool, timeout_ms: i64) -> i64 uses ffi {
+pub fn run(capture_out: bool, capture_err: bool, timeout_ms: i64) -> i64 uses io, fs, net, ffi {
     let o = if capture_out { 1 } else { 0 }
     let e = if capture_err { 1 } else { 0 }
     unsafe { ec_run(o, e, timeout_ms) }
 }
-pub fn args() -> i64 uses ffi { unsafe { ec_args() } }
+pub fn args() -> i64 uses io, ffi { unsafe { ec_args() } }
 
-pub fn exit_now(code: i32) uses ffi { unsafe { ec_exit(code) } }
+pub fn exit_now(code: i32) uses io, ffi { unsafe { ec_exit(code) } }
