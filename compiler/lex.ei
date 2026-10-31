@@ -4,9 +4,14 @@
 // Tokens hold no text: identifiers carry an interned symbol id, strings an index into
 // `strs`, integers their value (with `big` set when it doesn't fit in u64; the checker
 // reports those as out of range, and anything past i128 is rejected here).
+//
+// `lex` stops at the first error; `lex_all` (Lexed2) records every error and goes on, for
+// reporting all the syntax errors of a file. Both run the same scanner (`run`).
 
+import "deps/core/sys.ei"
 import "deps/std/bytes.ei"
 import "intern.ei"
+import "diag.ei"
 
 pub type Kind =
     | Ident | Int | Str | Newline | Eof
@@ -118,7 +123,8 @@ fn acc(inout limbs: [u64; 4], base: u64, digit: u64) -> bool {
 }
 
 /// An integer literal at the cursor (a digit). Underscores are allowed after the first digit.
-fn number(src: List[u8], inout l: L) -> Result[Tok, LexError] {
+/// A malformed or too-large literal is reported in `bad` and lexes as 0 (too large: with `big`).
+fn number(src: List[u8], inout l: L, inout bad: List[Bad]) -> Tok {
     let start = l
     var limbs: [u64; 4] = [0; 4]
     var ok = true
@@ -133,7 +139,10 @@ fn number(src: List[u8], inout l: L) -> Result[Tok, LexError] {
             }
             step(src, inout l)
         }
-        if l.i == first { return Err(err(start.line, start.col, "expected hex digits after 0x")) }
+        if l.i == first {
+            bad.push(fail(start, "expected hex digits after 0x"))
+            return tok(Int, start, l, 0)
+        }
     } else {
         while l.i < src.len() && (bytes.is_digit(src[l.i]) || src[l.i] == 95) {
             if src[l.i] != 95 {
@@ -142,19 +151,30 @@ fn number(src: List[u8], inout l: L) -> Result[Tok, LexError] {
             step(src, inout l)
         }
     }
-    if !ok { return Err(err(start.line, start.col, "integer literal too large")) }
+    if !ok {
+        bad.push(fail(start, "integer literal too large"))
+        var big = tok(Int, start, l, 0)
+        big.big = true
+        return big
+    }
     var t = tok(Int, start, l, limbs[0] + limbs[1] * 4294967296)
     t.big = limbs[2] != 0 || limbs[3] != 0
-    Ok(t)
+    t
 }
 
-/// A string literal at the cursor (`"`). Decoded bytes are appended to `strs`.
-fn string(src: List[u8], inout l: L, inout strs: List[List[u8]]) -> Result[Tok, LexError] {
+/// A string literal at the cursor (`"`). Decoded bytes are appended to `strs`. An unknown
+/// escape is reported and skipped; an unterminated string ends at the end of its line. At
+/// most one error is reported per literal.
+fn string(src: List[u8], inout l: L, inout strs: List[List[u8]], inout bad: List[Bad]) -> Tok {
     let start = l
     step(src, inout l)
     var s: List[u8] = List.new()
+    var reported = false
     while true {
-        if l.i >= src.len() || src[l.i] == 10 { return Err(err(start.line, start.col, "unterminated string literal")) }
+        if l.i >= src.len() || src[l.i] == 10 {
+            if !reported { bad.push(fail(start, "unterminated string literal")) }
+            break
+        }
         let c = src[l.i]
         if c == 34 {
             step(src, inout l)
@@ -169,7 +189,13 @@ fn string(src: List[u8], inout l: L, inout strs: List[List[u8]]) -> Result[Tok, 
             } else if e == 34 || e == 92 {
                 s.push(e)
             } else {
-                return Err(err(l.line, l.col, "unknown escape sequence"))
+                if !reported { bad.push(fail(l, "unknown escape sequence")) }
+                reported = true
+                // only the backslash when the line (or the file) ends after it
+                if e == 10 || l.i + 1 >= src.len() {
+                    step(src, inout l)
+                    continue
+                }
             }
             step(src, inout l)
             step(src, inout l)
@@ -179,7 +205,7 @@ fn string(src: List[u8], inout l: L, inout strs: List[List[u8]]) -> Result[Tok, 
         }
     }
     strs.push(s)
-    Ok(tok(Str, start, l, (strs.len() - 1) as u64))
+    tok(Str, start, l, (strs.len() - 1) as u64)
 }
 
 /// The UTF-8 sequence starting at `i`, for "unexpected character" messages.
@@ -197,11 +223,57 @@ fn scalar_at(src: List[u8], i: usize) -> List[u8] {
 /// The result of lexing. `BadChar` carries the offending character for the message.
 pub type Lex = | Done(lexed: Lexed) | Failed(error: LexError) | BadChar(line: u32, col: u32, ch: List[u8])
 
+/// Lexing that never stops (`lex_all`): the tokens of everything that lexed (a bad character
+/// skipped, an unterminated string ended at the end of its line, an unterminated block
+/// comment run to the end of the file, a too-large literal lexed as 0 with `big` set) and
+/// every error in source order, the first being the one `lex` reports.
+pub type Lexed2 = { lexed: Lexed, diags: List[diag.Diag] }
+
+/// A lexing error: `msg`, or with `ch` set an unexpected character.
+type Bad = { line: u32, col: u32, msg: str, ch: List[u8] }
+
+fn fail(at: L, m: str) -> Bad { Bad(at.line, at.col, m, List.new()) }
+
+type Run = { lexed: Lexed, bad: List[Bad] }
+
+/// The tokens, or the first error.
 pub fn lex(src: List[u8], inout names: intern.Interner) -> Lex {
+    let r = run(src, inout names, false)
+    if r.bad.len() == 0 { return Done(r.lexed) }
+    let b = r.bad[0]
+    if b.ch.len() > 0 { return BadChar(b.line, b.col, b.ch) }
+    Failed(err(b.line, b.col, b.msg))
+}
+
+/// Every lexing error, and the tokens of the rest (Lexed2). The messages are the ones
+/// `resolve.lex_diag` makes of `lex`'s result.
+pub fn lex_all(src: List[u8], inout names: intern.Interner) -> Lexed2 uses ffi {
+    let r = run(src, inout names, true)
+    var ds: List[diag.Diag] = List.new()
+    for b in r.bad {
+        if b.ch.len() > 0 {
+            var m = sys.lit("unexpected character `")
+            bytes.append(inout m, b.ch)
+            m.push(96)
+            ds.push(diag.new("E0001", b.line, b.col, m))
+        } else {
+            ds.push(diag.new("E0001", b.line, b.col, sys.lit(b.msg)))
+        }
+    }
+    Lexed2(r.lexed, ds)
+}
+
+/// The lexer: stops at the first error (`lex`), or with `all` records each one and goes on.
+/// A run of adjacent bad characters is reported once, at its first.
+fn run(src: List[u8], inout names: intern.Interner, all: bool) -> Run {
     var toks: List[Tok] = List.new()
     var strs: List[List[u8]] = List.new()
+    var bad: List[Bad] = List.new()
     var l = L(0, 1, 1)
+    // the offset just past the last bad character (0: none yet)
+    var bad_end: usize = 0
     while l.i < src.len() {
+        if !all && bad.len() > 0 { return Run(Lexed(toks, strs), bad) }
         let c = src[l.i]
         let start = l
         if c == 10 {
@@ -223,7 +295,11 @@ pub fn lex(src: List[u8], inout names: intern.Interner) -> Lex {
             step(src, inout l)
             step(src, inout l)
             while true {
-                if l.i + 1 >= src.len() { return Failed(err(start.line, start.col, "unterminated block comment")) }
+                if l.i + 1 >= src.len() {
+                    bad.push(fail(start, "unterminated block comment"))
+                    while l.i < src.len() { step(src, inout l) }
+                    break
+                }
                 if src[l.i] == 42 && src[l.i + 1] == 47 {
                     step(src, inout l)
                     step(src, inout l)
@@ -232,19 +308,13 @@ pub fn lex(src: List[u8], inout names: intern.Interner) -> Lex {
                 step(src, inout l)
             }
         } else if bytes.is_digit(c) {
-            match number(src, inout l) {
-                Ok(t) => toks.push(t)
-                Err(e) => { return Failed(e) }
-            }
+            toks.push(number(src, inout l, inout bad))
         } else if bytes.is_alpha(c) || c == 95 {
             while l.i < src.len() && bytes.is_ident(src[l.i]) { step(src, inout l) }
             let id = intern.intern(inout names, src, start.i, l.i)
             toks.push(tok(Ident, start, l, id as u64))
         } else if c == 34 {
-            match string(src, inout l, inout strs) {
-                Ok(t) => toks.push(t)
-                Err(e) => { return Failed(e) }
-            }
+            toks.push(string(src, inout l, inout strs, inout bad))
         } else {
             match sym2(c, at(src, l.i + 1)) {
                 Some(k) => {
@@ -258,14 +328,20 @@ pub fn lex(src: List[u8], inout names: intern.Interner) -> Lex {
                             step(src, inout l)
                             toks.push(tok(k, start, l, 0))
                         }
-                        None => { return BadChar(start.line, start.col, scalar_at(src, l.i)) }
+                        None => {
+                            let ch = scalar_at(src, l.i)
+                            if bad_end == 0 || bad_end != l.i { bad.push(Bad(start.line, start.col, "", ch)) }
+                            let stop = l.i + ch.len()
+                            while l.i < stop { step(src, inout l) }
+                            bad_end = l.i
+                        }
                     }
                 }
             }
         }
     }
     toks.push(Tok(Eof, l.i as u32, l.i as u32, l.line, l.col, l.col, 0, false))
-    Done(Lexed(toks, strs))
+    Run(Lexed(toks, strs), bad)
 }
 
 /// Display name of a token kind, as used in dumps and messages.
