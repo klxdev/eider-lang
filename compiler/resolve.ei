@@ -529,10 +529,6 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
         let mname = module_name(p, canon, pk, st)
         let pre_sym = intern.intern(inout p.names, mname, 0, mname.len())
         p.mods[m as usize].aliases.push(Alias(alias, pre_sym + 1, al_line, al_col))
-        if form != parse.IMPORT_IMPLIED {
-            let written = if dotted { dots(rel) } else { quoted("\"", rel, "\"") }
-            bind_alias(inout p, inout binds, alias, canon, n, written, file, inout diags)
-        }
         let mut clash = false
         let mut known = false
         for j in 0..p.pre_syms.len() {
@@ -547,6 +543,11 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
         if clash {
             p.broken.push(pre_sym + 1)
             continue
+        }
+        // (after E0808: one alias for two files with one identity is that error, not E0813)
+        if form != parse.IMPORT_IMPLIED {
+            let written = if dotted { dots(rel) } else { quoted("\"", rel, "\"") }
+            bind_alias(inout p, inout binds, alias, canon, n, written, file, inout diags)
         }
         if !known {
             p.pre_syms.push(pre_sym)
@@ -581,7 +582,7 @@ fn load_imports(inout p: Program, m: u32, fp: Files, inout diags: List[diag.Diag
                         bytes.append(inout d.help, sys.lit(".Name`)"))
                     }
                 } else if bytes.starts_with(rel, sys.lit("deps/")) || bytes.find(rel, sys.lit("/deps/"), 0).is_some() {
-                    d.help = sys.lit("eider-pkg no longer links dependencies into deps/: import a package by name (`import \"json\"`, `import \"json/util\"`, `import \"std/fs\"`)")
+                    d.help = sys.lit("eider-pkg no longer links dependencies into deps/: import a package by name (`import json`, `import json.util`, `import std.fs`)")
                 }
                 diags.push(in_file(d, file))
                 p.broken.push(pre_sym + 1)
@@ -662,6 +663,14 @@ fn locate_dotted(inout p: Program, m: u32, spec: List[u8], n: ast.Node) -> Resul
         return Ok(join(here, f))
     }
     let own = p.pkgs[pk as usize].copy()
+    if bytes.eq(head, own.name) && parts.len() > 1 && !contains(own.deps, head) {
+        // a module of the importer's own package: named from the importer's directory, as the
+        // relative path import of it was, so diagnostics and traps name the file as before
+        let mut f = join(own.dir, bytes.slice(spec, head.len() + 1, spec.len()))
+        bytes.append(inout f, sys.lit(".ei"))
+        let base = if here.len() == 0 { canonical(sys.lit(".")) } else { canonical(here) }
+        return Ok(join(here, relative(base, f)))
+    }
     if bytes.eq(head, own.name) || contains(own.deps, head) { return locate(inout p, m, spec, n) }
     let mut msg = quoted("unknown module `", dots(spec), "`: `")
     bytes.append(inout msg, head)
@@ -699,6 +708,23 @@ fn locate_dotted(inout p: Program, m: u32, spec: List[u8], n: ast.Node) -> Resul
     Err(pkg_diag("E0809", n, msg, h))
 }
 
+/// The path of `to` from directory `from` (both absolute and normalized): `../../lock.ei`.
+fn relative(from: List[u8], to: List[u8]) -> List[u8] {
+    let a = bytes.split(from, 47)
+    let b = bytes.split(to, 47)
+    let mut i: usize = 0
+    while i < a.len() && i + 1 < b.len() && bytes.eq(a[i], b[i]) { i += 1 }
+    let mut out: List[u8] = List.new()
+    for j in i..a.len() {
+        if a[j].len() > 0 { bytes.append(inout out, sys.lit("../")) }
+    }
+    for j in i..b.len() {
+        if j > i { out.push(47) }
+        bytes.append(inout out, b[j])
+    }
+    out
+}
+
 /// Whether `s` is an identifier that isn't a keyword (a segment of a module path).
 fn ident_segment(inout p: Program, s: List[u8]) -> bool {
     if s.len() == 0 || bytes.is_digit(s[0]) { return false }
@@ -734,12 +760,14 @@ fn dotted_of(inout p: Program, m: u32, want: List[u8]) -> List[u8] uses io, fs {
     let tp = package_of(inout p, want)
     let ip = p.mods[m as usize].pkg
     let mut spec: List[u8] = List.new()
-    if tp != NOPKG && p.pkgs[tp as usize].err.len() == 0 && p.pkgs[tp as usize].name.len() > 0 {
+    let named = tp != NOPKG && p.pkgs[tp as usize].err.len() == 0 && p.pkgs[tp as usize].name.len() > 0
+    let mut toolchain = false
+    if named { toolchain = bytes.eq(p.pkgs[tp as usize].name, sys.lit("std")) || bytes.eq(p.pkgs[tp as usize].name, sys.lit("core")) }
+    if named && (toolchain || ip != NOPKG) {
         let k = p.pkgs[tp as usize].copy()
         let inner = strip_ext(bytes.slice(want, k.dir.len() + 1, want.len()))
-        let toolchain = bytes.eq(k.name, sys.lit("std")) || bytes.eq(k.name, sys.lit("core"))
         if !toolchain {
-            if ip == NOPKG || p.pkgs[ip as usize].err.len() > 0 { return none }
+            if p.pkgs[ip as usize].err.len() > 0 { return none }
             let own = p.pkgs[ip as usize].copy()
             if tp != ip && !contains(own.deps, k.name) { return none }
         }
@@ -750,6 +778,8 @@ fn dotted_of(inout p: Program, m: u32, want: List[u8]) -> List[u8] uses io, fs {
             bytes.append(inout spec, inner)
         }
     } else {
+        // in no package: a file below the importer's directory, by its path from there
+        // (also one that is in a package: `lib.grants.grantee.grantee`)
         if ip != NOPKG { return none }
         let mut here = canonical(dir_of(p.mods[m as usize].path))
         here.push(47)

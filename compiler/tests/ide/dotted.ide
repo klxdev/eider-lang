@@ -1,6 +1,6 @@
 files
   compiler/tests/ide/dotted.ei
-  <root>/compiler/tests/ide/lib/shapes.ei
+  compiler/tests/ide/lib/shapes.ei
   ./std/bytes.ei
   ./std/fs.ei
   ./core/sys.ei
@@ -12,29 +12,29 @@ symbols
   1 fn area compiler/tests/ide/dotted.ei:10:4-10:8 full 10:1-10:41 :: fn area(s: sh.Shape) -> i32
   2 param s compiler/tests/ide/dotted.ei:10:9-10:10 full 10:9-10:20 in 1 :: s: sh.Shape
   3 fn main compiler/tests/ide/dotted.ei:12:4-12:8 full 12:1-13:48 :: fn main() uses io, fs
-  4 module shapes <root>/compiler/tests/ide/lib/shapes.ei:1:1-1:1 full 1:1-31:1 :: <root>/compiler/tests/ide/lib/shapes.ei
-  5 type Point <root>/compiler/tests/ide/lib/shapes.ei:3:10-3:15 full 3:1-3:36 :: pub type Point
-  6 field x <root>/compiler/tests/ide/lib/shapes.ei:3:20-3:21 full 3:20-3:26 in 5 :: x: i32
-  7 field y <root>/compiler/tests/ide/lib/shapes.ei:3:28-3:29 full 3:28-3:34 in 5 :: y: i32
-  8 type Shape <root>/compiler/tests/ide/lib/shapes.ei:5:10-5:15 full 5:1-8:12 :: pub type Shape
-  9 variant Circle <root>/compiler/tests/ide/lib/shapes.ei:6:7-6:13 full 6:7-6:21 in 8 :: Circle(r: i32)
-  10 field r <root>/compiler/tests/ide/lib/shapes.ei:6:14-6:15 full 6:14-6:20 in 9 :: r: i32
-  11 variant Rect <root>/compiler/tests/ide/lib/shapes.ei:7:7-7:11 full 7:7-7:25 in 8 :: Rect(Point, Point)
-  12 variant Empty <root>/compiler/tests/ide/lib/shapes.ei:8:7-8:12 full 8:7-8:12 in 8 :: Empty
-  13 const ORIGIN <root>/compiler/tests/ide/lib/shapes.ei:10:11-10:17 full 10:1-10:26 :: pub const ORIGIN: i32 = 0
-  14 trait Area <root>/compiler/tests/ide/lib/shapes.ei:12:11-12:15 full 12:1-14:2 :: pub trait Area
-  15 method area <root>/compiler/tests/ide/lib/shapes.ei:13:8-13:12 full 13:5-13:25 in 14 :: fn area(self) -> i32
-  16 param self <root>/compiler/tests/ide/lib/shapes.ei:13:13-13:17 full 13:13-13:17 in 15 :: self
-  17 fn make <root>/compiler/tests/ide/lib/shapes.ei:30:8-30:12 full 30:1-30:53 :: pub fn make(x: i32, y: i32) -> Point
-  18 param x <root>/compiler/tests/ide/lib/shapes.ei:30:13-30:14 full 30:13-30:19 in 17 :: x: i32
-  19 param y <root>/compiler/tests/ide/lib/shapes.ei:30:21-30:22 full 30:21-30:27 in 17 :: y: i32
-  20 method area <root>/compiler/tests/ide/lib/shapes.ei:17:8-17:12 full 17:5-23:6 in 8 :: fn area(self) -> i32
-  21 param self <root>/compiler/tests/ide/lib/shapes.ei:17:13-17:17 full 17:13-17:17 in 20 :: self
-  22 local r <root>/compiler/tests/ide/lib/shapes.ei:19:20-19:21 full 19:20-19:21 in 20 :: i32
-  23 local a <root>/compiler/tests/ide/lib/shapes.ei:20:18-20:19 full 20:18-20:19 in 20 :: shapes.Point
-  24 local b <root>/compiler/tests/ide/lib/shapes.ei:20:21-20:22 full 20:21-20:22 in 20 :: shapes.Point
-  25 method sum <root>/compiler/tests/ide/lib/shapes.ei:27:8-27:11 full 27:5-27:44 in 5 :: fn sum(self) -> i32
-  26 param self <root>/compiler/tests/ide/lib/shapes.ei:27:12-27:16 full 27:12-27:16 in 25 :: self
+  4 module shapes compiler/tests/ide/lib/shapes.ei:1:1-1:1 full 1:1-31:1 :: compiler/tests/ide/lib/shapes.ei
+  5 type Point compiler/tests/ide/lib/shapes.ei:3:10-3:15 full 3:1-3:36 :: pub type Point
+  6 field x compiler/tests/ide/lib/shapes.ei:3:20-3:21 full 3:20-3:26 in 5 :: x: i32
+  7 field y compiler/tests/ide/lib/shapes.ei:3:28-3:29 full 3:28-3:34 in 5 :: y: i32
+  8 type Shape compiler/tests/ide/lib/shapes.ei:5:10-5:15 full 5:1-8:12 :: pub type Shape
+  9 variant Circle compiler/tests/ide/lib/shapes.ei:6:7-6:13 full 6:7-6:21 in 8 :: Circle(r: i32)
+  10 field r compiler/tests/ide/lib/shapes.ei:6:14-6:15 full 6:14-6:20 in 9 :: r: i32
+  11 variant Rect compiler/tests/ide/lib/shapes.ei:7:7-7:11 full 7:7-7:25 in 8 :: Rect(Point, Point)
+  12 variant Empty compiler/tests/ide/lib/shapes.ei:8:7-8:12 full 8:7-8:12 in 8 :: Empty
+  13 const ORIGIN compiler/tests/ide/lib/shapes.ei:10:11-10:17 full 10:1-10:26 :: pub const ORIGIN: i32 = 0
+  14 trait Area compiler/tests/ide/lib/shapes.ei:12:11-12:15 full 12:1-14:2 :: pub trait Area
+  15 method area compiler/tests/ide/lib/shapes.ei:13:8-13:12 full 13:5-13:25 in 14 :: fn area(self) -> i32
+  16 param self compiler/tests/ide/lib/shapes.ei:13:13-13:17 full 13:13-13:17 in 15 :: self
+  17 fn make compiler/tests/ide/lib/shapes.ei:30:8-30:12 full 30:1-30:53 :: pub fn make(x: i32, y: i32) -> Point
+  18 param x compiler/tests/ide/lib/shapes.ei:30:13-30:14 full 30:13-30:19 in 17 :: x: i32
+  19 param y compiler/tests/ide/lib/shapes.ei:30:21-30:22 full 30:21-30:27 in 17 :: y: i32
+  20 method area compiler/tests/ide/lib/shapes.ei:17:8-17:12 full 17:5-23:6 in 8 :: fn area(self) -> i32
+  21 param self compiler/tests/ide/lib/shapes.ei:17:13-17:17 full 17:13-17:17 in 20 :: self
+  22 local r compiler/tests/ide/lib/shapes.ei:19:20-19:21 full 19:20-19:21 in 20 :: i32
+  23 local a compiler/tests/ide/lib/shapes.ei:20:18-20:19 full 20:18-20:19 in 20 :: shapes.Point
+  24 local b compiler/tests/ide/lib/shapes.ei:20:21-20:22 full 20:21-20:22 in 20 :: shapes.Point
+  25 method sum compiler/tests/ide/lib/shapes.ei:27:8-27:11 full 27:5-27:44 in 5 :: fn sum(self) -> i32
+  26 param self compiler/tests/ide/lib/shapes.ei:27:12-27:16 full 27:12-27:16 in 25 :: self
   27 module bytes ./std/bytes.ei:1:1-1:1 full 1:1-215:1 :: ./std/bytes.ei
   28 fn eq ./std/bytes.ei:3:8-3:10 full 3:1-9:2 :: pub fn eq(a: List[u8], b: List[u8]) -> bool
   29 param a ./std/bytes.ei:3:11-3:12 full 3:11-3:22 in 28 :: a: List[u8]
@@ -614,34 +614,34 @@ refs
   compiler/tests/ide/dotted.ei:15:32-15:38 -> 490 fn repeat
   compiler/tests/ide/dotted.ei:16:11-16:16 -> 128 module fs
   compiler/tests/ide/dotted.ei:16:17-16:23 -> 160 fn exists
-  <root>/compiler/tests/ide/lib/shapes.ei:7:12-7:17 -> 5 type Point
-  <root>/compiler/tests/ide/lib/shapes.ei:7:19-7:24 -> 5 type Point
-  <root>/compiler/tests/ide/lib/shapes.ei:16:6-16:10 -> 14 trait Area
-  <root>/compiler/tests/ide/lib/shapes.ei:16:15-16:20 -> 8 type Shape
-  <root>/compiler/tests/ide/lib/shapes.ei:18:15-18:19 -> 21 param self
-  <root>/compiler/tests/ide/lib/shapes.ei:19:13-19:19 -> 9 variant Circle
-  <root>/compiler/tests/ide/lib/shapes.ei:19:26-19:27 -> 22 local r
-  <root>/compiler/tests/ide/lib/shapes.ei:19:30-19:31 -> 22 local r
-  <root>/compiler/tests/ide/lib/shapes.ei:20:13-20:17 -> 11 variant Rect
-  <root>/compiler/tests/ide/lib/shapes.ei:20:28-20:29 -> 24 local b
-  <root>/compiler/tests/ide/lib/shapes.ei:20:30-20:31 -> 6 field x
-  <root>/compiler/tests/ide/lib/shapes.ei:20:34-20:35 -> 23 local a
-  <root>/compiler/tests/ide/lib/shapes.ei:20:36-20:37 -> 6 field x
-  <root>/compiler/tests/ide/lib/shapes.ei:20:42-20:43 -> 24 local b
-  <root>/compiler/tests/ide/lib/shapes.ei:20:44-20:45 -> 7 field y
-  <root>/compiler/tests/ide/lib/shapes.ei:20:48-20:49 -> 23 local a
-  <root>/compiler/tests/ide/lib/shapes.ei:20:50-20:51 -> 7 field y
-  <root>/compiler/tests/ide/lib/shapes.ei:21:13-21:18 -> 12 variant Empty
-  <root>/compiler/tests/ide/lib/shapes.ei:21:22-21:28 -> 13 const ORIGIN
-  <root>/compiler/tests/ide/lib/shapes.ei:26:6-26:11 -> 5 type Point
-  <root>/compiler/tests/ide/lib/shapes.ei:27:27-27:31 -> 26 param self
-  <root>/compiler/tests/ide/lib/shapes.ei:27:32-27:33 -> 6 field x
-  <root>/compiler/tests/ide/lib/shapes.ei:27:36-27:40 -> 26 param self
-  <root>/compiler/tests/ide/lib/shapes.ei:27:41-27:42 -> 7 field y
-  <root>/compiler/tests/ide/lib/shapes.ei:30:32-30:37 -> 5 type Point
-  <root>/compiler/tests/ide/lib/shapes.ei:30:40-30:45 -> 5 type Point
-  <root>/compiler/tests/ide/lib/shapes.ei:30:46-30:47 -> 18 param x
-  <root>/compiler/tests/ide/lib/shapes.ei:30:49-30:50 -> 19 param y
+  compiler/tests/ide/lib/shapes.ei:7:12-7:17 -> 5 type Point
+  compiler/tests/ide/lib/shapes.ei:7:19-7:24 -> 5 type Point
+  compiler/tests/ide/lib/shapes.ei:16:6-16:10 -> 14 trait Area
+  compiler/tests/ide/lib/shapes.ei:16:15-16:20 -> 8 type Shape
+  compiler/tests/ide/lib/shapes.ei:18:15-18:19 -> 21 param self
+  compiler/tests/ide/lib/shapes.ei:19:13-19:19 -> 9 variant Circle
+  compiler/tests/ide/lib/shapes.ei:19:26-19:27 -> 22 local r
+  compiler/tests/ide/lib/shapes.ei:19:30-19:31 -> 22 local r
+  compiler/tests/ide/lib/shapes.ei:20:13-20:17 -> 11 variant Rect
+  compiler/tests/ide/lib/shapes.ei:20:28-20:29 -> 24 local b
+  compiler/tests/ide/lib/shapes.ei:20:30-20:31 -> 6 field x
+  compiler/tests/ide/lib/shapes.ei:20:34-20:35 -> 23 local a
+  compiler/tests/ide/lib/shapes.ei:20:36-20:37 -> 6 field x
+  compiler/tests/ide/lib/shapes.ei:20:42-20:43 -> 24 local b
+  compiler/tests/ide/lib/shapes.ei:20:44-20:45 -> 7 field y
+  compiler/tests/ide/lib/shapes.ei:20:48-20:49 -> 23 local a
+  compiler/tests/ide/lib/shapes.ei:20:50-20:51 -> 7 field y
+  compiler/tests/ide/lib/shapes.ei:21:13-21:18 -> 12 variant Empty
+  compiler/tests/ide/lib/shapes.ei:21:22-21:28 -> 13 const ORIGIN
+  compiler/tests/ide/lib/shapes.ei:26:6-26:11 -> 5 type Point
+  compiler/tests/ide/lib/shapes.ei:27:27-27:31 -> 26 param self
+  compiler/tests/ide/lib/shapes.ei:27:32-27:33 -> 6 field x
+  compiler/tests/ide/lib/shapes.ei:27:36-27:40 -> 26 param self
+  compiler/tests/ide/lib/shapes.ei:27:41-27:42 -> 7 field y
+  compiler/tests/ide/lib/shapes.ei:30:32-30:37 -> 5 type Point
+  compiler/tests/ide/lib/shapes.ei:30:40-30:45 -> 5 type Point
+  compiler/tests/ide/lib/shapes.ei:30:46-30:47 -> 18 param x
+  compiler/tests/ide/lib/shapes.ei:30:49-30:50 -> 19 param y
   ./std/bytes.ei:4:8-4:9 -> 29 param a
   ./std/bytes.ei:4:19-4:20 -> 30 param b
   ./std/bytes.ei:5:17-5:18 -> 29 param a
@@ -1523,32 +1523,32 @@ types
   compiler/tests/ide/dotted.ei:16:5-16:10 : ()
   compiler/tests/ide/dotted.ei:16:17-16:23 : bool
   compiler/tests/ide/dotted.ei:16:28-16:33 : List[u8]
-  <root>/compiler/tests/ide/lib/shapes.ei:17:13-17:17 : shapes.Shape
-  <root>/compiler/tests/ide/lib/shapes.ei:18:15-18:19 : shapes.Shape
-  <root>/compiler/tests/ide/lib/shapes.ei:19:20-19:21 : i32
-  <root>/compiler/tests/ide/lib/shapes.ei:19:26-19:27 : i32
-  <root>/compiler/tests/ide/lib/shapes.ei:19:30-19:31 : i32
-  <root>/compiler/tests/ide/lib/shapes.ei:20:18-20:19 : shapes.Point
-  <root>/compiler/tests/ide/lib/shapes.ei:20:21-20:22 : shapes.Point
-  <root>/compiler/tests/ide/lib/shapes.ei:20:28-20:29 : shapes.Point
-  <root>/compiler/tests/ide/lib/shapes.ei:20:30-20:31 : i32
-  <root>/compiler/tests/ide/lib/shapes.ei:20:34-20:35 : shapes.Point
-  <root>/compiler/tests/ide/lib/shapes.ei:20:36-20:37 : i32
-  <root>/compiler/tests/ide/lib/shapes.ei:20:42-20:43 : shapes.Point
-  <root>/compiler/tests/ide/lib/shapes.ei:20:44-20:45 : i32
-  <root>/compiler/tests/ide/lib/shapes.ei:20:48-20:49 : shapes.Point
-  <root>/compiler/tests/ide/lib/shapes.ei:20:50-20:51 : i32
-  <root>/compiler/tests/ide/lib/shapes.ei:21:22-21:28 : i32
-  <root>/compiler/tests/ide/lib/shapes.ei:27:12-27:16 : shapes.Point
-  <root>/compiler/tests/ide/lib/shapes.ei:27:27-27:31 : shapes.Point
-  <root>/compiler/tests/ide/lib/shapes.ei:27:32-27:33 : i32
-  <root>/compiler/tests/ide/lib/shapes.ei:27:36-27:40 : shapes.Point
-  <root>/compiler/tests/ide/lib/shapes.ei:27:41-27:42 : i32
-  <root>/compiler/tests/ide/lib/shapes.ei:30:13-30:14 : i32
-  <root>/compiler/tests/ide/lib/shapes.ei:30:21-30:22 : i32
-  <root>/compiler/tests/ide/lib/shapes.ei:30:40-30:45 : shapes.Point
-  <root>/compiler/tests/ide/lib/shapes.ei:30:46-30:47 : i32
-  <root>/compiler/tests/ide/lib/shapes.ei:30:49-30:50 : i32
+  compiler/tests/ide/lib/shapes.ei:17:13-17:17 : shapes.Shape
+  compiler/tests/ide/lib/shapes.ei:18:15-18:19 : shapes.Shape
+  compiler/tests/ide/lib/shapes.ei:19:20-19:21 : i32
+  compiler/tests/ide/lib/shapes.ei:19:26-19:27 : i32
+  compiler/tests/ide/lib/shapes.ei:19:30-19:31 : i32
+  compiler/tests/ide/lib/shapes.ei:20:18-20:19 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:20:21-20:22 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:20:28-20:29 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:20:30-20:31 : i32
+  compiler/tests/ide/lib/shapes.ei:20:34-20:35 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:20:36-20:37 : i32
+  compiler/tests/ide/lib/shapes.ei:20:42-20:43 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:20:44-20:45 : i32
+  compiler/tests/ide/lib/shapes.ei:20:48-20:49 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:20:50-20:51 : i32
+  compiler/tests/ide/lib/shapes.ei:21:22-21:28 : i32
+  compiler/tests/ide/lib/shapes.ei:27:12-27:16 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:27:27-27:31 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:27:32-27:33 : i32
+  compiler/tests/ide/lib/shapes.ei:27:36-27:40 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:27:41-27:42 : i32
+  compiler/tests/ide/lib/shapes.ei:30:13-30:14 : i32
+  compiler/tests/ide/lib/shapes.ei:30:21-30:22 : i32
+  compiler/tests/ide/lib/shapes.ei:30:40-30:45 : shapes.Point
+  compiler/tests/ide/lib/shapes.ei:30:46-30:47 : i32
+  compiler/tests/ide/lib/shapes.ei:30:49-30:50 : i32
   ./std/bytes.ei:3:11-3:12 : List[u8]
   ./std/bytes.ei:3:24-3:25 : List[u8]
   ./std/bytes.ei:4:8-4:9 : List[u8]

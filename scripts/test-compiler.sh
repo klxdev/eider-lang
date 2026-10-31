@@ -58,8 +58,9 @@
 #   unit:     programs in compiler/tests/unit that drive a compiler module (sha256.ei) must
 #             print their .out.
 #   migration: the staged rewrites (scripts/migrate-imports.sh, migrate-caps.sh,
-#             migrate-var.sh) on a copy of core, std, packages and compiler check, pass the
-#             package tests, and (`var` -> `let mut`) give a compiler that emits the same C;
+#             migrate-var.sh, migrate-imports-dotted.sh) on a copy of core, std, packages and
+#             compiler check, pass the package tests, and give a compiler that emits the same
+#             C (and whose own C, with every import dotted, is compiler/'s);
 #             `eiderc migrate-var` of compiler/tests/migrate/*.ei equals the hand-checked .out.
 #   meaning:  tests/std, packages/*/tests and examples/*/tests give their .out when built by this
 #             compiler (references by default) as well as by the seed (verify.sh); an
@@ -536,10 +537,20 @@ sh scripts/migrate-caps.sh $mig/core $mig/std $mig/packages $mig/compiler >$tmp/
 EIDER_ROOT=$mig EIDERC=$new sh scripts/migrate-var.sh $mig/core $mig/std $mig/packages $mig/compiler/*.ei >$tmp/migv 2>&1
 mig_ok=1
 grep -n '^[[:space:]]*var[[:space:]]' $mig/core/*.ei $mig/compiler/*.ei >$tmp/migvl && { echo "FAIL migration: \`var\` is left in"; sed "s|$mig/||" $tmp/migvl | head -10; cat $tmp/migv | grep -v '^migrated' | head -5; mig_ok=0; }
+# and every quoted import in the dotted form (scripts/migrate-imports-dotted.sh, docs/compiler.md
+# "C8.26"), compiler/ and what the seed builds included: the ones left are the compiler's
+# `import "comptime.ei" as consteval` (`comptime` is a keyword, so no module path names it),
+# and this compiler's C for the migrated compiler is byte-identical to its C for compiler/
+EIDER_ROOT=$mig EIDERC=$new sh scripts/migrate-imports-dotted.sh $mig/core $mig/std $mig/packages $mig/compiler >$tmp/migd 2>$tmp/migde
+grep -h '^kept ' $tmp/migde | grep -v '/compiler/[a-z_]*\.ei: import "comptime.ei" as consteval$' | grep -v '/compiler/tests/' >$tmp/migdk
+[ -s $tmp/migdk ] && { echo "FAIL migration: quoted imports are left"; sed "s|$mig/||" $tmp/migdk | head -10; mig_ok=0; }
+grep -v '^kept ' $tmp/migde | head -5 | grep . && { echo "FAIL migration: migrate-imports-dotted.sh failed on a file (above)"; mig_ok=0; }
 EIDER_CACHE=off EIDER_ROOT=$mig $new build $mig/compiler/main.ei -o $tmp/eiderc-mig >$tmp/mo 2>&1 || { echo "FAIL migration: build the migrated compiler"; head -10 $tmp/mo; mig_ok=0; }
 $new emit-c compiler/main.ei >$tmp/mc1 2>&1
 [ -x $tmp/eiderc-mig ] && EIDER_ROOT=$(pwd) $tmp/eiderc-mig emit-c compiler/main.ei >$tmp/mc2 2>&1
 cmp -s $tmp/mc1 $tmp/mc2 || { echo "FAIL migration: the migrated compiler's C for compiler/ differs"; mig_ok=0; }
+(cd $mig && EIDER_ROOT=$mig $anew emit-c compiler/main.ei) >$tmp/mc3 2>&1
+cmp -s $tmp/mc1 $tmp/mc3 || { echo "FAIL migration: the C of the compiler with dotted imports differs from compiler/'s"; diff $tmp/mc1 $tmp/mc3 | head -10; mig_ok=0; }
 grep -q '^import "\.\./' $mig/compiler/main.ei $mig/packages/pkg/manifest.ei && { echo "FAIL migration: path imports into other packages are left"; mig_ok=0; }
 grep -l '^[[:space:]]*[^/[:space:]][^/]*uses [^/]*ffi' $mig/std/*.ei $mig/compiler/*.ei $mig/packages/*/*.ei >$tmp/migl && { echo "FAIL migration: \`uses ffi\` is left in $(sed "s|$mig/||" $tmp/migl | tr '\n' ' ')"; mig_ok=0; }
 grep -q 'uses .*ffi' $mig/core/sys.ei || { echo "FAIL migration: core/sys.ei lost its \`uses ffi\`"; mig_ok=0; }
@@ -550,7 +561,7 @@ for f in packages/*/tests/*.ei; do
   EIDER_ROOT=$mig $new run $mig/$f >$tmp/mo 2>&1
   cmp -s $tmp/mo "${f%.ei}.out" || { echo "FAIL migration: run $f"; diff "${f%.ei}.out" $tmp/mo | head -10; mig_ok=0; }
 done
-if [ $mig_ok = 1 ]; then echo "ok   migration: $(wc -l <$tmp/mig) files rewritten to package imports, $(wc -l <$tmp/migc) without \`uses ffi\` and $(grep -c '^migrated' $tmp/migv) without \`var\` ($(cat $mig/std/*.ei $mig/packages/*/*.ei | grep -c '^[[:space:]]*var[[:space:]]') generic ones left) check and pass their package tests; the migrated compiler emits the same C"; else fail=1; fi
+if [ $mig_ok = 1 ]; then echo "ok   migration: $(wc -l <$tmp/mig) files rewritten to package imports, $(grep -c '^migrated' $tmp/migd) to dotted imports (the compiler's C unchanged), $(wc -l <$tmp/migc) without \`uses ffi\` and $(grep -c '^migrated' $tmp/migv) without \`var\` ($(cat $mig/std/*.ei $mig/packages/*/*.ei | grep -c '^[[:space:]]*var[[:space:]]') generic ones left) check and pass their package tests; the migrated compiler emits the same C"; else fail=1; fi
 # meaning: std's, the packages' and the examples' tests (run by verify.sh with the seed, where
 # `let` copies) give their .out with this compiler too, where `let` of a place is a reference
 # (docs/compiler.md, "C8.6"); a difference is code that relied on the copy (`eiderc audit-refs`)
@@ -637,6 +648,7 @@ elif ! (cd $pref_dir && tar -xf src.tar) || ! EIDER_CACHE=off scripts/ei build $
 else
   pototal=0
   pook=0
+  ponew=0
   for f in tests/run/*.ei compiler/tests/run/*.ei compiler/main.ei; do
     case " $routside " in *" $(basename "$f") "*) continue ;; esac
     for mode in "" --test; do
@@ -644,6 +656,11 @@ else
       pototal=$((pototal + 1))
       $new emit-c "$f" $mode >$tmp/p1 2>&1
       EIDER_ROOT=$(pwd) $pref_dir/eiderc emit-c "$f" $mode >$tmp/p2 2>&1
+      # a test in syntax the reference predates (dotted imports, docs/compiler.md "C8.26",
+      # while the merge base is older) can't be compared: counted apart
+      if grep -q '^error\[E0001\]: expected a file path string after `import`' $tmp/p2 && ! grep -q '^error' $tmp/p1; then
+        pototal=$((pototal - 1)); ponew=$((ponew + 1)); continue
+      fi
       # (the compiler's own C has the profiler's names in its string literals)
       if cmp -s $tmp/p1 $tmp/p2 && { [ "$f" = compiler/main.ei ] || ! grep -q 'ei_prof\|EI_RT_PROFILE' $tmp/p1; }; then
         pook=$((pook + 1))
@@ -655,7 +672,8 @@ else
     done
   done
   if [ "$pook" = "$pototal" ]; then v="ok  "; else v="FAIL"; fi
-  echo "$v profile-off: $pook/$pototal emit-c outputs without --profile are byte-identical to those of the compiler of $(echo $pref | cut -c1-10), with no profiler in them"
+  pnote=""; [ "$ponew" -gt 0 ] && pnote=" ($ponew in syntax that compiler predates not compared)"
+  echo "$v profile-off: $pook/$pototal emit-c outputs without --profile are byte-identical to those of the compiler of $(echo $pref | cut -c1-10), with no profiler in them$pnote"
 fi
 
 # profile: programs built with --profile write the profile they should
