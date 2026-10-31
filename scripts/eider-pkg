@@ -8,16 +8,7 @@ if [ ! -x "$bin" ] || [ -n "$newest" ]; then
   EIDER_CACHE=off "$root/scripts/ei" build "$root/packages/pkg/main.ei" -o "$bin" || exit 3
 fi
 # eider-pkg asks the compiler what each package uses (`eiderc caps`, docs/compiler.md "C8.5:
-# capabilities per package"), which the seed doesn't know: until the next seed that is
-# compiler/ as the seed builds it (target/eiderc-next, rebuilt when compiler/, std/ or core/
-# changed). EIDERC overrides it. (After the next seed: drop this, eider-pkg's default
-# $EIDER_ROOT/target/eiderc will do.)
-if [ -z "$EIDERC" ]; then
-  EIDERC="$root/target/eiderc-next"
-  newest=$(find "$root/compiler" "$root/std" "$root/core" -name '*.ei' -newer "$EIDERC" 2>/dev/null | head -1)
-  if [ ! -x "$EIDERC" ] || [ -n "$newest" ]; then
-    EIDER_CACHE=off "$root/scripts/ei" build "$root/compiler/main.ei" -o "$EIDERC" >/dev/null || exit 3
-  fi
-  export EIDERC
-fi
+# capabilities per package"): $EIDERC, else $EIDER_ROOT/target/eiderc, which scripts/ei
+# (re)builds from the seed.
+[ -n "$EIDERC" ] || "$root/scripts/ei" --help >/dev/null || exit 3
 EIDER_ROOT="${EIDER_ROOT:-$root}" exec "$bin" "$@"

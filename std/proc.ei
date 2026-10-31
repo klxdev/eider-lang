@@ -33,7 +33,7 @@ fn split(raw: List[u8], code: i32, timed_out: bool) -> Output {
 }
 
 /// Run `argv` (searched on PATH) as `opts` says. Err only if it could not be started.
-pub fn run_with(argv: List[List[u8]], opts: Options) -> Result[Output, String] uses io, fs, net, ffi {
+pub fn run_with(argv: List[List[u8]], opts: Options) -> Result[Output, String] uses io, fs, net {
     if argv.len() == 0 { return Err(String.from("proc: empty command")) }
     sys.send_all(argv)
     let n = sys.run(opts.capture_out, opts.capture_err, opts.timeout_ms)
@@ -50,18 +50,18 @@ pub fn run_with(argv: List[List[u8]], opts: Options) -> Result[Output, String] u
 }
 
 /// Run with inherited stdin/stdout/stderr; returns the exit code.
-pub fn run(argv: List[List[u8]]) -> Result[i32, String] uses io, fs, net, ffi {
+pub fn run(argv: List[List[u8]]) -> Result[i32, String] uses io, fs, net {
     let o = run_with(argv, Options(false, false, 0))?
     Ok(o.code)
 }
 
 /// Run and capture stdout (stderr still goes to the terminal).
-pub fn output(argv: List[List[u8]]) -> Result[Output, String] uses io, fs, net, ffi {
+pub fn output(argv: List[List[u8]]) -> Result[Output, String] uses io, fs, net {
     run_with(argv, Options(true, false, 0))
 }
 
 /// Run, capture stdout, and fail unless the exit code is 0.
-pub fn check(argv: List[List[u8]]) -> Result[List[u8], String] uses io, fs, net, ffi {
+pub fn check(argv: List[List[u8]]) -> Result[List[u8], String] uses io, fs, net {
     let o = output(argv)?
     if o.code != 0 {
         var m = String.from("command failed (exit ")

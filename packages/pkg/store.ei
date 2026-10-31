@@ -20,7 +20,7 @@ import "sha256"
 
 pub type Export = { dir: List[u8], hash: List[u8] }
 
-pub fn home() -> Result[List[u8], String] uses io, fs, ffi {
+pub fn home() -> Result[List[u8], String] uses io, fs {
     match env.get(sys.lit("EIDER_HOME")) {
         Some(h) => { return fs.absolute(h) }
         None => {}
@@ -32,7 +32,7 @@ pub fn home() -> Result[List[u8], String] uses io, fs, ffi {
 }
 
 /// Names that never belong to a package's content.
-pub fn skipped() -> List[List[u8]] uses ffi {
+pub fn skipped() -> List[List[u8]] {
     var s: List[List[u8]] = List.new()
     s.push(sys.lit(".git"))
     s.push(sys.lit("deps"))
@@ -41,7 +41,7 @@ pub fn skipped() -> List[List[u8]] uses ffi {
 }
 
 /// sha256 over every file: `path NUL hex(sha256(content)) LF`, in sorted path order.
-pub fn tree_hash(dir: List[u8]) -> Result[List[u8], String] uses fs, ffi {
+pub fn tree_hash(dir: List[u8]) -> Result[List[u8], String] uses fs {
     let s = sha256.new()
     var manifest: List[u8] = List.new()
     for rel in fs.walk(dir, skipped())? {
@@ -56,7 +56,7 @@ pub fn tree_hash(dir: List[u8]) -> Result[List[u8], String] uses fs, ffi {
     Ok(out)
 }
 
-fn mirror_dir(home: List[u8], url: List[u8]) -> List[u8] uses ffi {
+fn mirror_dir(home: List[u8], url: List[u8]) -> List[u8] {
     var name: List[u8] = List.new()
     for c in url {
         if bytes.is_ident(c) || c == 45 || c == 46 { name.push(c) } else { name.push(95) }
@@ -64,7 +64,7 @@ fn mirror_dir(home: List[u8], url: List[u8]) -> List[u8] uses ffi {
     fs.join(fs.join(home, sys.lit("git")), name)
 }
 
-fn git(args: List[List[u8]]) -> Result[List[u8], String] uses io, fs, net, ffi {
+fn git(args: List[List[u8]]) -> Result[List[u8], String] uses io, fs, net {
     var argv: List[List[u8]] = List.new()
     argv.push(sys.lit("git"))
     for a in args { argv.push(a) }
@@ -79,7 +79,7 @@ fn a2(a: List[u8], b: List[u8]) -> List[List[u8]] {
 }
 
 /// The commit `ref` names in the mirror, if any.
-fn rev_parse(m: List[u8], r: List[u8]) -> Option[List[u8]] uses io, fs, net, ffi {
+fn rev_parse(m: List[u8], r: List[u8]) -> Option[List[u8]] uses io, fs, net {
     if !fs.exists(m) { return None }
     var args = a2(sys.lit("-C"), m)
     args.push(sys.lit("rev-parse"))
@@ -100,7 +100,7 @@ fn rev_parse(m: List[u8], r: List[u8]) -> Option[List[u8]] uses io, fs, net, ffi
     }
 }
 
-fn candidates(want: List[u8], is_rev: bool) -> List[List[u8]] uses ffi {
+fn candidates(want: List[u8], is_rev: bool) -> List[List[u8]] {
     var c: List[List[u8]] = List.new()
     if is_rev {
         c.push(want)
@@ -115,7 +115,7 @@ fn candidates(want: List[u8], is_rev: bool) -> List[List[u8]] uses ffi {
     c
 }
 
-fn find_commit(m: List[u8], want: List[u8], is_rev: bool) -> Option[List[u8]] uses io, fs, net, ffi {
+fn find_commit(m: List[u8], want: List[u8], is_rev: bool) -> Option[List[u8]] uses io, fs, net {
     for r in candidates(want, is_rev) {
         match rev_parse(m, r) {
             Some(c) => { return Some(c) }
@@ -125,7 +125,7 @@ fn find_commit(m: List[u8], want: List[u8], is_rev: bool) -> Option[List[u8]] us
     None
 }
 
-fn offline_error(url: List[u8], want: List[u8]) -> String uses ffi {
+fn offline_error(url: List[u8], want: List[u8]) -> String {
     var e = String.from("offline: ")
     e.append(sys.to_string(url))
     e.push_str(" has no local copy of ")
@@ -134,7 +134,7 @@ fn offline_error(url: List[u8], want: List[u8]) -> String uses ffi {
 }
 
 /// Clone the mirror of `url`, or bring an existing one up to date (tags may have moved).
-fn sync_mirror(home: List[u8], url: List[u8]) -> Result[bool, String] uses io, fs, net, ffi {
+fn sync_mirror(home: List[u8], url: List[u8]) -> Result[bool, String] uses io, fs, net {
     let m = mirror_dir(home, url)
     if fs.exists(m) {
         var args = a2(sys.lit("-C"), m)
@@ -158,7 +158,7 @@ fn sync_mirror(home: List[u8], url: List[u8]) -> Result[bool, String] uses io, f
 /// Find the commit for a version (tag `v<version>` or `<version>`) or rev. Clones or updates
 /// the mirror only when the commit isn't already known locally (or when `refresh`, for
 /// `update`, since tags can move), and never when `offline`.
-pub fn resolve_commit(home: List[u8], url: List[u8], want: List[u8], is_rev: bool, offline: bool, refresh: bool) -> Result[List[u8], String] uses io, fs, net, ffi {
+pub fn resolve_commit(home: List[u8], url: List[u8], want: List[u8], is_rev: bool, offline: bool, refresh: bool) -> Result[List[u8], String] uses io, fs, net {
     let m = mirror_dir(home, url)
     if !refresh || offline {
         match find_commit(m, want, is_rev) {
@@ -187,7 +187,7 @@ pub fn resolve_commit(home: List[u8], url: List[u8], want: List[u8], is_rev: boo
 /// The store directory for `commit` of `url`, exporting it on first use. A store directory
 /// that no longer matches the hash recorded when it was exported is an error, never reused.
 /// `want` (the version or rev asked for) is only for messages.
-pub fn checkout(home: List[u8], url: List[u8], commit: List[u8], name: List[u8], want: List[u8], offline: bool) -> Result[Export, String] uses io, fs, net, ffi {
+pub fn checkout(home: List[u8], url: List[u8], commit: List[u8], name: List[u8], want: List[u8], offline: bool) -> Result[Export, String] uses io, fs, net {
     let index = fs.join(fs.join(home, sys.lit("index")), commit)
     if fs.exists(index) {
         let h = bytes.trim(fs.read(index)?)
@@ -258,7 +258,7 @@ pub fn checkout(home: List[u8], url: List[u8], commit: List[u8], name: List[u8],
     Ok(Export(dir, h))
 }
 
-pub fn store_dir(home: List[u8], name: List[u8], hash: List[u8]) -> List[u8] uses ffi {
+pub fn store_dir(home: List[u8], name: List[u8], hash: List[u8]) -> List[u8] {
     var leaf = name
     leaf.push(45)
     // "sha256-" is 7 bytes; keep 16 hex digits

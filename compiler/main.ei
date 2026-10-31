@@ -42,10 +42,10 @@ type Args = {
 
 /// Comparisons go through a function so no owned temporary sits in an `else if` condition
 /// (compiler/ avoids that pattern: such temporaries were once dropped too late, LEARNINGS.md).
-fn is(a: List[u8], s: str) -> bool uses ffi { bytes.eq(a, sys.lit(s)) }
+fn is(a: List[u8], s: str) -> bool { bytes.eq(a, sys.lit(s)) }
 
 /// `eiderc --help`: every command, option and environment variable.
-fn usage_text() -> List[u8] uses ffi {
+fn usage_text() -> List[u8] {
     var t: List[u8] = List.new()
     for l in [
         "eiderc 0.1.0 (the Eider compiler, written in Eider: Eider -> C11)",
@@ -86,7 +86,7 @@ fn usage_text() -> List[u8] uses ffi {
 }
 
 /// A usage error: the message and a pointer to --help on stderr, exit 2.
-fn usage_error(msg: List[u8]) uses io, ffi {
+fn usage_error(msg: List[u8]) uses io {
     var m = sys.lit("eiderc: ")
     bytes.append(inout m, msg)
     io.errln(m)
@@ -95,12 +95,12 @@ fn usage_error(msg: List[u8]) uses io, ffi {
 }
 
 /// No command at all: the usage text on stderr, exit 2 (as tests/oracle records).
-fn usage() uses io, ffi {
+fn usage() uses io {
     io.err(usage_text())
     env.exit(2)
 }
 
-fn quoted(pre: str, a: List[u8]) -> List[u8] uses ffi {
+fn quoted(pre: str, a: List[u8]) -> List[u8] {
     var m = sys.lit(pre)
     m.push(96)
     bytes.append(inout m, a)
@@ -108,11 +108,11 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] uses ffi {
     m
 }
 
-fn known_cmd(c: List[u8]) -> bool uses ffi {
+fn known_cmd(c: List[u8]) -> bool {
     is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps")
 }
 
-fn parse_args() -> Args uses io, ffi {
+fn parse_args() -> Args uses io {
     let argv = env.args()
     var cmd: List[u8] = List.new()
     var file: List[u8] = List.new()
@@ -202,7 +202,7 @@ fn parse_args() -> Args uses io, ffi {
 
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
 /// the file it is in) on stderr. Module prefixes in the text are shown as `module.Name`.
-fn report(d: diag.Diag, a: Args, src: List[u8]) uses io, fs, ffi {
+fn report(d: diag.Diag, a: Args, src: List[u8]) uses io, fs {
     var d2 = d
     d2.msg = diag.demangle(d.msg)
     d2.help = diag.demangle(d.help)
@@ -228,7 +228,7 @@ fn one(d: diag.Diag) -> List[diag.Diag] {
 
 /// Report every diagnostic of the run (each once, at most `--max-errors`), then the summary
 /// (human output) and, if some were left out, the note saying so; exit 1.
-fn fail(ds: List[diag.Diag], a: Args, src: List[u8]) uses io, fs, ffi {
+fn fail(ds: List[diag.Diag], a: Args, src: List[u8]) uses io, fs {
     let all = diag.dedup(ds)
     let total = all.len() as u64
     var shown = total
@@ -247,7 +247,7 @@ fn fail(ds: List[diag.Diag], a: Args, src: List[u8]) uses io, fs, ffi {
     env.exit(1)
 }
 
-fn dump(lx: lex.Lexed, names: intern.Interner) uses io, ffi {
+fn dump(lx: lex.Lexed, names: intern.Interner) uses io {
     var out: List[u8] = List.new()
     for t in lx.toks {
         bytes.append(inout out, bytes.from_u64(t.line as u64))
@@ -279,7 +279,7 @@ fn dump(lx: lex.Lexed, names: intern.Interner) uses io, ffi {
 }
 
 /// `eiderc ide`: the analysis of the file (with the overlays read from their text files).
-fn run_ide(a: Args) uses io, fs, net, clock, ffi {
+fn run_ide(a: Args) uses io, fs, net, clock {
     var paths: List[List[u8]] = List.new()
     var texts: List[List[u8]] = List.new()
     var k: usize = 0
@@ -298,7 +298,7 @@ fn run_ide(a: Args) uses io, fs, net, clock, ffi {
     io.out(ide.dump(ide.analyze(a.file, paths, texts)))
 }
 
-fn main() uses io, fs, net, clock, ffi {
+fn main() uses io, fs, net, clock {
     let a = parse_args()
     if a.compile_fail { env.exit(suite.run(a.file)) }
     if is(a.cmd, "ide") {

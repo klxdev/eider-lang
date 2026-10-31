@@ -56,13 +56,12 @@ Tooling:
 
 - `scripts/ei <eiderc args>`: the compiler, `target/eiderc`, built from `seed/eiderc.c` with `$CC` when it is missing or older than the seed or `core/` (eiderc links the C core into every program itself).
 - `scripts/migrate-imports.sh <dirs>`: rewrites path imports that cross into another package (core, std, a declared dependency) into package imports; run on compiler/, std/, core/, packages/ and tests/ once the seed knows package imports (docs/compiler.md, "C8.3"). (`scripts/bootstrap-deps.sh`, which linked a `deps/` farm into each package, is retired: nothing needs it.)
-- `scripts/migrate-caps.sh <dirs>`: removes the `ffi` that `uses` clauses carried only to call another package (`ffi` stays inside the package with the unmanaged code since C8.5); run on compiler/, std/, packages/ and tests/ once the seed has C8.5 (docs/compiler.md, "C8.5: capabilities per package").
+- `scripts/migrate-caps.sh <dirs>`: removes the `ffi` that `uses` clauses carried only to call another package (`ffi` stays inside the package with the unmanaged code since C8.5); already run on compiler/, std/, packages/, tests/ and examples/, and kept for code written before C8.5 (docs/compiler.md, "C8.5: capabilities per package").
 - `tests/std/run.sh`, `tests/packages.sh`: suites for std and packages (both run by `scripts/verify.sh`).
 - `tests/pkg/run.sh`: eider-pkg end to end against local git repositories under `target/tmp/pkgtest/` (no network; also run by `scripts/verify.sh`).
 
 Known limits of this arrangement (all need compiler work):
 
-- Until the next seed, every caller of std that the seed builds (compiler/, std/, packages/, the tests) still writes `uses ffi`, because the seed propagates `ffi` along call chains. The compiler built from compiler/ keeps `ffi` inside the package with the unmanaged code (docs/compiler.md, "C8.5: capabilities per package"): std callers write `uses fs`; scripts/migrate-caps.sh removes the rest after the next seed.
 - `str` has no byte access, so literals become bytes through `sys.lit` (an ffi call). (C8.2
   adds `str.bytes()`/`byte(i)`; std switches with 8.9, after the seed has them.)
 - No bitwise operators: `sha256` uses arithmetic and a byte table. (C8.2 adds them; the

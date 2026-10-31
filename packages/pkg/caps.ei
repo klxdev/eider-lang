@@ -25,7 +25,7 @@ import "std/proc"
 pub type Use = { cap: List[u8], file: List[u8], line: u32, kind: List[u8] }
 
 /// The compiler to ask: $EIDERC, else the toolchain's `target/eiderc`.
-pub fn compiler(toolchain: List[u8]) -> List[u8] uses io, ffi {
+pub fn compiler(toolchain: List[u8]) -> List[u8] uses io {
     match env.get(sys.lit("EIDERC")) {
         Some(c) => { if c.len() > 0 { return c } }
         None => {}
@@ -35,7 +35,7 @@ pub fn compiler(toolchain: List[u8]) -> List[u8] uses io, ffi {
 
 /// The string or number after `"key":` in a JSON line of `eiderc caps` (strings unescaped;
 /// "" when the key is missing).
-fn field(line: List[u8], key: str) -> List[u8] uses ffi {
+fn field(line: List[u8], key: str) -> List[u8] {
     var pat = sys.lit("\"")
     bytes.append(inout pat, sys.lit(key))
     bytes.append(inout pat, sys.lit("\":"))
@@ -69,7 +69,7 @@ fn field(line: List[u8], key: str) -> List[u8] uses ffi {
 /// The capabilities package `name` uses, as `eiderc` (the compiler at `eiderc`) reports
 /// for the module `dir`/`entry` (its entry module or program; none when that file doesn't
 /// exist).
-pub fn of_package(eiderc: List[u8], dir: List[u8], entry: List[u8], name: List[u8]) -> Result[List[Use], String] uses io, fs, net, ffi {
+pub fn of_package(eiderc: List[u8], dir: List[u8], entry: List[u8], name: List[u8]) -> Result[List[Use], String] uses io, fs, net {
     var out: List[Use] = List.new()
     let file = fs.join(dir, entry)
     if !fs.exists(file) { return Ok(out) }

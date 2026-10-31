@@ -3,7 +3,7 @@ import "std/bytes"
 import "std/io"
 import "../fuzz.ei"
 
-fn show_tokens(s: str) uses io, ffi {
+fn show_tokens(s: str) uses io {
     var parts: List[List[u8]] = List.new()
     for t in fuzz.tokens(sys.lit(s)) {
         var q = sys.lit("[")
@@ -14,7 +14,7 @@ fn show_tokens(s: str) uses io, ffi {
     io.outln(bytes.join(parts, sys.lit(" ")))
 }
 
-fn show_mutants(seed: u64, wild: bool, src: List[u8]) uses io, ffi {
+fn show_mutants(seed: u64, wild: bool, src: List[u8]) uses io {
     let t = fuzz.tables()
     var r = fuzz.rng(seed)
     for _ in 0..4 {
@@ -22,7 +22,7 @@ fn show_mutants(seed: u64, wild: bool, src: List[u8]) uses io, ffi {
     }
 }
 
-fn main() uses io, ffi {
+fn main() uses io {
     // the PRNG sequence is part of the tool's contract: SEED=n replays a run
     var r = fuzz.rng(1)
     for _ in 0..4 { print(fuzz.next(inout r)) }

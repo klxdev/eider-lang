@@ -47,9 +47,9 @@ pub type Tables = {
 }
 
 /// `~`-separated words (no entry contains `~`).
-fn words(s: str) -> List[List[u8]] uses ffi { bytes.split(sys.lit(s), 126) }
+fn words(s: str) -> List[List[u8]] { bytes.split(sys.lit(s), 126) }
 
-pub fn tables() -> Tables uses ffi {
+pub fn tables() -> Tables {
     Tables(
         words("i32~i64~u8~u32~u64~usize~bool~str"),
         words("0~1~2~255~256~4294967296~18446744073709551615~18446744073709551616"),

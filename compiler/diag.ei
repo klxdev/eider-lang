@@ -24,14 +24,14 @@ pub const MAX_ERRORS: u64 = 100
 
 /// Whether two diagnostics report the same error: code, place and message (the help and
 /// the fix can differ: a comptime evaluator reports a missing capability without its fix).
-pub fn same(a: Diag, b: Diag) -> bool uses ffi {
+pub fn same(a: Diag, b: Diag) -> bool {
     a.line == b.line && a.col == b.col && bytes.eq(sys.lit(a.code), sys.lit(b.code)) && bytes.eq(a.file, b.file) &&
         bytes.eq(a.msg, b.msg)
 }
 
 /// `ds` without repetitions (a later report of an earlier error is dropped; passes can find
 /// one error twice, e.g. a comptime evaluator and the checker).
-pub fn dedup(ds: List[Diag]) -> List[Diag] uses ffi {
+pub fn dedup(ds: List[Diag]) -> List[Diag] {
     var out: List[Diag] = List.new()
     for d in ds {
         var dup = false
@@ -47,7 +47,7 @@ pub fn dedup(ds: List[Diag]) -> List[Diag] uses ffi {
 }
 
 /// The summary after the diagnostics (human output): `error: 1 error`, `error: 3 errors`.
-pub fn summary(n: u64) -> List[u8] uses ffi {
+pub fn summary(n: u64) -> List[u8] {
     var s = sys.lit("error: ")
     num(inout s, n)
     if n == 1 { bytes.append(inout s, sys.lit(" error")) } else { bytes.append(inout s, sys.lit(" errors")) }
@@ -55,7 +55,7 @@ pub fn summary(n: u64) -> List[u8] uses ffi {
 }
 
 /// The note when only `shown` of `total` diagnostics are shown (`--max-errors`).
-pub fn capped_note(shown: u64, total: u64) -> List[u8] uses ffi {
+pub fn capped_note(shown: u64, total: u64) -> List[u8] {
     var s = sys.lit("only the first ")
     num(inout s, shown)
     bytes.append(inout s, sys.lit(" of "))
@@ -65,7 +65,7 @@ pub fn capped_note(shown: u64, total: u64) -> List[u8] uses ffi {
 }
 
 /// capped_note as a JSON line (`--json`).
-pub fn capped_json(shown: u64, total: u64) -> List[u8] uses ffi {
+pub fn capped_json(shown: u64, total: u64) -> List[u8] {
     var s = sys.lit("{\"note\":")
     jstr(inout s, capped_note(shown, total))
     s.push(125)
@@ -76,7 +76,7 @@ pub fn capped_json(shown: u64, total: u64) -> List[u8] uses ffi {
 /// one list: `eiderc test --compile-fail` measures its coverage line against it, so a new
 /// code is added here together with its compile-fail test. (`unsupported` is eiderc's
 /// marker for a feature it doesn't implement yet, not a code of the language.)
-pub fn all_codes() -> List[List[u8]] uses ffi {
+pub fn all_codes() -> List[List[u8]] {
     var out: List[List[u8]] = List.new()
     for c in [
         "E0001", "E0002", "E0101", "E0102", "E0103", "E0107", "E0108", "E0110", "E0111", "E0112", "E0113",
@@ -150,7 +150,7 @@ pub fn demangle(s: List[u8]) -> List[u8] {
 fn num(inout out: List[u8], n: u64) { bytes.append(inout out, bytes.from_u64(n)) }
 
 /// Debug-style quoting of a string (used for fixes, and by dumps): quotes plus \" \\ \n \t \r and \u{..} for other controls.
-pub fn debug_str(inout out: List[u8], s: List[u8]) uses ffi {
+pub fn debug_str(inout out: List[u8], s: List[u8]) {
     out.push(34)
     for c in s {
         if c == 34 || c == 92 {
@@ -209,7 +209,7 @@ fn line_of(src: List[u8], n: u32) -> Option[List[u8]] {
 }
 
 /// error[CODE]: msg / --> file:L:C / source line with a caret / help / fix
-pub fn render(d: Diag, file: List[u8], src: List[u8]) -> List[u8] uses ffi {
+pub fn render(d: Diag, file: List[u8], src: List[u8]) -> List[u8] {
     var s = sys.lit("error[")
     bytes.append(inout s, sys.lit(d.code))
     bytes.append(inout s, sys.lit("]: "))
@@ -267,7 +267,7 @@ pub fn render(d: Diag, file: List[u8], src: List[u8]) -> List[u8] uses ffi {
 }
 
 /// A JSON string literal.
-pub fn jstr(inout out: List[u8], s: List[u8]) uses ffi {
+pub fn jstr(inout out: List[u8], s: List[u8]) {
     out.push(34)
     for c in s {
         if c == 34 {
@@ -289,7 +289,7 @@ pub fn jstr(inout out: List[u8], s: List[u8]) uses ffi {
     out.push(34)
 }
 
-pub fn json(d: Diag, file: List[u8]) -> List[u8] uses ffi {
+pub fn json(d: Diag, file: List[u8]) -> List[u8] {
     let f = if d.file.len() > 0 { d.file } else { file }
     var s = sys.lit("{\"error\":\"")
     bytes.append(inout s, sys.lit(d.code))

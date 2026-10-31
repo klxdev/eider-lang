@@ -31,7 +31,7 @@ pub fn valid_name(n: List[u8]) -> bool {
 }
 
 /// eider.toml text; Err is a message (`line N: ...`).
-pub fn manifest(src: List[u8]) -> Result[Manifest, List[u8]] uses ffi {
+pub fn manifest(src: List[u8]) -> Result[Manifest, List[u8]] {
     let doc = parse(src)?
     let name = text_at(doc, sys.lit("package.name"))
     if name.len() == 0 { return Err(sys.lit("no `name` in [package]")) }
@@ -50,7 +50,7 @@ pub fn manifest(src: List[u8]) -> Result[Manifest, List[u8]] uses ffi {
 }
 
 /// eider.lock text: its packages in file order.
-pub fn lockfile(src: List[u8]) -> Result[List[Locked], List[u8]] uses ffi {
+pub fn lockfile(src: List[u8]) -> Result[List[Locked], List[u8]] {
     let doc = parse(src)?
     var out: List[Locked] = List.new()
     var n: u64 = 0
@@ -79,7 +79,7 @@ pub fn lockfile(src: List[u8]) -> Result[List[Locked], List[u8]] uses ffi {
 
 /// The store directory name of a git package (eider-pkg's store.ei `store_dir`):
 /// `<name>-<the first 16 hex digits of its content hash>`.
-pub fn store_leaf(name: List[u8], hash: List[u8]) -> List[u8] uses ffi {
+pub fn store_leaf(name: List[u8], hash: List[u8]) -> List[u8] {
     var leaf = name
     leaf.push(45)
     // "sha256-" is 7 bytes
@@ -95,7 +95,7 @@ type P = { src: List[u8], i: usize, line: u32 }
 
 type Count = { name: List[u8], n: u64 }
 
-fn fail(p: P, m: str) -> List[u8] uses ffi {
+fn fail(p: P, m: str) -> List[u8] {
     var out = sys.lit("line ")
     bytes.append(inout out, bytes.from_u64(p.line as u64))
     bytes.append(inout out, sys.lit(": "))
@@ -135,7 +135,7 @@ fn space(inout p: P) {
     }
 }
 
-fn end_line(inout p: P) -> Result[bool, List[u8]] uses ffi {
+fn end_line(inout p: P) -> Result[bool, List[u8]] {
     blank(inout p)
     if peek(p) == 35 {
         while !at_end(p) && peek(p) != 10 { bump(inout p) }
@@ -147,7 +147,7 @@ fn end_line(inout p: P) -> Result[bool, List[u8]] uses ffi {
     Ok(true)
 }
 
-fn string(inout p: P) -> Result[List[u8], List[u8]] uses ffi {
+fn string(inout p: P) -> Result[List[u8], List[u8]] {
     bump(inout p)
     var out: List[u8] = List.new()
     while true {
@@ -176,7 +176,7 @@ fn string(inout p: P) -> Result[List[u8], List[u8]] uses ffi {
     Ok(out)
 }
 
-fn key_part(inout p: P) -> Result[List[u8], List[u8]] uses ffi {
+fn key_part(inout p: P) -> Result[List[u8], List[u8]] {
     if peek(p) == 34 { return string(inout p) }
     var out: List[u8] = List.new()
     while bytes.is_ident(peek(p)) || peek(p) == 45 {
@@ -187,7 +187,7 @@ fn key_part(inout p: P) -> Result[List[u8], List[u8]] uses ffi {
     Ok(out)
 }
 
-fn key(inout p: P) -> Result[List[u8], List[u8]] uses ffi {
+fn key(inout p: P) -> Result[List[u8], List[u8]] {
     var k = key_part(inout p)?
     blank(inout p)
     while peek(p) == 46 {
@@ -211,7 +211,7 @@ fn join_key(prefix: List[u8], k: List[u8]) -> List[u8] {
 
 /// A value for key `k`: strings and string arrays are kept, integers and booleans skipped,
 /// inline tables flattened.
-fn value(inout p: P, k: List[u8], inout out: List[Entry]) -> Result[bool, List[u8]] uses ffi {
+fn value(inout p: P, k: List[u8], inout out: List[Entry]) -> Result[bool, List[u8]] {
     let none: List[List[u8]] = List.new()
     let c = peek(p)
     if c == 34 {
@@ -280,7 +280,7 @@ fn next_index(inout counts: List[Count], name: List[u8]) -> u64 {
 }
 
 /// The document flattened to dotted keys.
-pub fn parse(src: List[u8]) -> Result[List[Entry], List[u8]] uses ffi {
+pub fn parse(src: List[u8]) -> Result[List[Entry], List[u8]] {
     var p = P(src, 0, 1)
     var out: List[Entry] = List.new()
     var prefix: List[u8] = List.new()

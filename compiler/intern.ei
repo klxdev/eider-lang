@@ -44,7 +44,7 @@ pub const S_UNDERSCORE: u32 = 31
 pub const S_SELF: u32 = 32
 pub const S_SELF_TYPE: u32 = 33
 
-pub fn new() -> Interner uses ffi {
+pub fn new() -> Interner {
     var slots: List[u32] = List.new()
     for i in 0..64 { slots.push(0) }
     var s = Interner(List.new(), List.new(), slots)

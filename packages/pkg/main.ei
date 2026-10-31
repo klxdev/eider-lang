@@ -34,15 +34,15 @@ import "caps.ei"
 
 type Cli = { dir: List[u8], cmd: List[u8], args: List[List[u8]], offline: bool }
 
-fn is(a: List[u8], s: str) -> bool uses ffi { bytes.eq(a, sys.lit(s)) }
+fn is(a: List[u8], s: str) -> bool { bytes.eq(a, sys.lit(s)) }
 
-fn say(s: str) uses io, ffi { io.outln(sys.lit(s)) }
+fn say(s: str) uses io { io.outln(sys.lit(s)) }
 
 fn usage() -> String {
     String.from("usage: eider-pkg [-C dir] (init [name] | add <name> --path P | add <name> --git URL --version V|--rev R [--uses a,b] | remove <name> | fetch [--offline] | update [--offline] | vendor | tree | hash <dir>)")
 }
 
-fn parse_cli() -> Result[Cli, String] uses io, fs, ffi {
+fn parse_cli() -> Result[Cli, String] uses io, fs {
     let argv = env.args()
     var dir = fs.cwd()?
     var cmd: List[u8] = List.new()
@@ -69,7 +69,7 @@ fn parse_cli() -> Result[Cli, String] uses io, fs, ffi {
     Ok(Cli(dir, cmd, rest, offline))
 }
 
-fn toolchain() -> Result[List[u8], String] uses io, fs, ffi {
+fn toolchain() -> Result[List[u8], String] uses io, fs {
     match env.get(sys.lit("EIDER_ROOT")) {
         Some(r) => fs.absolute(r)
         None => Err(String.from("EIDER_ROOT is not set (it should point at the Eider checkout with core/ and std/; scripts/eider-pkg sets it)"))
@@ -78,13 +78,13 @@ fn toolchain() -> Result[List[u8], String] uses io, fs, ffi {
 
 // ---- fetch / update / vendor
 
-fn sync(c: Cli, use_lock: bool, offline: bool) -> Result[List[lockfile.Pkg], String] uses io, fs, net, ffi {
+fn sync(c: Cli, use_lock: bool, offline: bool) -> Result[List[lockfile.Pkg], String] uses io, fs, net {
     sync_from(c, use_lock, offline, fs.join(c.dir, sys.lit("vendor")))
 }
 
 /// Resolve and write eider.lock. Pinned git packages come from `vendor` when it holds them
 /// (an empty `vendor` means the store only).
-fn sync_from(c: Cli, use_lock: bool, offline: bool, vendor: List[u8]) -> Result[List[lockfile.Pkg], String] uses io, fs, net, ffi {
+fn sync_from(c: Cli, use_lock: bool, offline: bool, vendor: List[u8]) -> Result[List[lockfile.Pkg], String] uses io, fs, net {
     let root = manifest.load(c.dir)?
     toolchain()?
     let locked = lockfile.load(c.dir)?
@@ -98,14 +98,14 @@ fn sync_from(c: Cli, use_lock: bool, offline: bool, vendor: List[u8]) -> Result[
     Ok(pkgs)
 }
 
-fn report(pkgs: List[lockfile.Pkg]) uses io, ffi {
+fn report(pkgs: List[lockfile.Pkg]) uses io {
     var l = sys.lit("locked ")
     bytes.append(inout l, bytes.from_u64(pkgs.len() as u64))
     bytes.append(inout l, sys.lit(" package(s)"))
     io.outln(l)
 }
 
-fn vendor(c: Cli) -> Result[bool, String] uses io, fs, net, ffi {
+fn vendor(c: Cli) -> Result[bool, String] uses io, fs, net {
     // from the store, so a stale vendor/ is replaced rather than reported
     let none: List[u8] = List.new()
     let pkgs = sync_from(c, true, c.offline, none)?
@@ -137,7 +137,7 @@ fn vendor(c: Cli) -> Result[bool, String] uses io, fs, net, ffi {
 
 // ---- manifest editing
 
-fn add(c: Cli) -> Result[bool, String] uses io, fs, net, ffi {
+fn add(c: Cli) -> Result[bool, String] uses io, fs, net {
     if c.args.len() < 1 { return Err(usage()) }
     let name = c.args[0]
     let file = manifest.file_in(c.dir)
@@ -218,7 +218,7 @@ fn manifest_quote(s: List[u8]) -> List[u8] {
 }
 
 /// Drop the `[deps.<name>]` table: its header through the line before the next header.
-fn remove(c: Cli) -> Result[bool, String] uses io, fs, net, ffi {
+fn remove(c: Cli) -> Result[bool, String] uses io, fs, net {
     if c.args.len() != 1 { return Err(usage()) }
     let name = c.args[0]
     let file = manifest.file_in(c.dir)
@@ -254,7 +254,7 @@ fn remove(c: Cli) -> Result[bool, String] uses io, fs, net, ffi {
     Ok(true)
 }
 
-fn init(c: Cli) -> Result[bool, String] uses io, fs, ffi {
+fn init(c: Cli) -> Result[bool, String] uses io, fs {
     let file = manifest.file_in(c.dir)
     if fs.exists(file) { return Err(String.from("eider.toml already exists")) }
     var name = if c.args.len() > 0 { c.args[0] } else {
@@ -283,7 +283,7 @@ fn init(c: Cli) -> Result[bool, String] uses io, fs, ffi {
     fs.write(file, t)?
     let main_file = fs.join(c.dir, sys.lit("main.ei"))
     if !fs.exists(main_file) {
-        fs.write(main_file, sys.lit("import \"core/sys\"\nimport \"std/io\"\n\nfn main() uses io, ffi {\n    io.outln(sys.lit(\"hello from eider\"))\n}\n"))?
+        fs.write(main_file, sys.lit("import \"core/sys\"\nimport \"std/io\"\n\nfn main() uses io {\n    io.outln(sys.lit(\"hello from eider\"))\n}\n"))?
     }
     var l = sys.lit("created package `")
     bytes.append(inout l, clean)
@@ -292,7 +292,7 @@ fn init(c: Cli) -> Result[bool, String] uses io, fs, ffi {
     Ok(true)
 }
 
-fn tree(c: Cli) -> Result[bool, String] uses io, fs, ffi {
+fn tree(c: Cli) -> Result[bool, String] uses io, fs {
     let root = manifest.load(c.dir)?
     let pkgs = lockfile.load(c.dir)?
     var l = root.name
@@ -304,7 +304,7 @@ fn tree(c: Cli) -> Result[bool, String] uses io, fs, ffi {
     Ok(true)
 }
 
-fn tree_line(pkgs: List[lockfile.Pkg], name: List[u8], depth: usize, inout seen: List[List[u8]]) uses io, ffi {
+fn tree_line(pkgs: List[lockfile.Pkg], name: List[u8], depth: usize, inout seen: List[List[u8]]) uses io {
     var l: List[u8] = List.new()
     for i in 0..depth {
         bytes.append(inout l, sys.lit("  "))
@@ -338,7 +338,7 @@ fn tree_line(pkgs: List[lockfile.Pkg], name: List[u8], depth: usize, inout seen:
     }
 }
 
-fn run(c: Cli) -> Result[bool, String] uses io, fs, net, ffi {
+fn run(c: Cli) -> Result[bool, String] uses io, fs, net {
     if is(c.cmd, "init") { return init(c) }
     if is(c.cmd, "add") { return add(c) }
     if is(c.cmd, "remove") { return remove(c) }
@@ -360,7 +360,7 @@ fn run(c: Cli) -> Result[bool, String] uses io, fs, net, ffi {
     Err(usage())
 }
 
-fn main() uses io, fs, net, ffi {
+fn main() uses io, fs, net {
     let r: Result[bool, String] = match parse_cli() {
         Ok(c) => run(c)
         Err(e) => Err(e)

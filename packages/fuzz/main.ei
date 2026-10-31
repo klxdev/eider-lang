@@ -51,16 +51,16 @@ type Res = { code: i32, out: List[u8], err: List[u8] }
 /// The counters of a campaign.
 type Stats = { ok: u64, unsup: u64, failed: u64, foreign: u64, built: u64, warned: u64, ran: u64, segv: u64, slow: u64 }
 
-fn is(a: List[u8], s: str) -> bool uses ffi { bytes.eq(a, sys.lit(s)) }
+fn is(a: List[u8], s: str) -> bool { bytes.eq(a, sys.lit(s)) }
 
-fn has(hay: List[u8], s: str) -> bool uses ffi {
+fn has(hay: List[u8], s: str) -> bool {
     match bytes.find(hay, sys.lit(s), 0) {
         Some(_) => true
         None => false
     }
 }
 
-fn line(parts: List[List[u8]]) uses io, ffi {
+fn line(parts: List[List[u8]]) uses io {
     let none: List[u8] = List.new()
     io.outln(bytes.join(parts, none))
 }
@@ -70,7 +70,7 @@ fn num(n: u64) -> List[u8] { bytes.from_u64(n) }
 fn int(n: i32) -> List[u8] { bytes.from_i64(n as i64) }
 
 /// The `.ei` files directly in `dir` (leftover fuzz_*.ei mutants excluded), as paths.
-fn ei_files(dir: str, inout out: List[List[u8]]) -> Result[bool, String] uses fs, ffi {
+fn ei_files(dir: str, inout out: List[List[u8]]) -> Result[bool, String] uses fs {
     let d = sys.lit(dir)
     for n in fs.list(d)? {
         if bytes.ends_with(n, sys.lit(".ei")) && !bytes.starts_with(n, sys.lit("fuzz_")) {
@@ -80,7 +80,7 @@ fn ei_files(dir: str, inout out: List[List[u8]]) -> Result[bool, String] uses fs
     Ok(true)
 }
 
-fn default_seeds() -> Result[List[List[u8]], String] uses fs, ffi {
+fn default_seeds() -> Result[List[List[u8]], String] uses fs {
     var s: List[List[u8]] = List.new()
     ei_files("compiler/tests/check/pass", inout s)?
     ei_files("compiler/tests/check/fail", inout s)?
@@ -92,14 +92,14 @@ fn default_seeds() -> Result[List[List[u8]], String] uses fs, ffi {
     Ok(fs.sort(s))
 }
 
-fn env_or(name: str, dflt: str) -> List[u8] uses io, ffi {
+fn env_or(name: str, dflt: str) -> List[u8] uses io {
     match env.get(sys.lit(name)) {
         Some(v) => v
         None => sys.lit(dflt)
     }
 }
 
-fn parse_opts() -> Result[Opts, String] uses io, fs, ffi {
+fn parse_opts() -> Result[Opts, String] uses io, fs {
     let argv = env.args()
     var count: u64 = 500
     var seeds: List[List[u8]] = List.new()
@@ -132,14 +132,14 @@ fn parse_opts() -> Result[Opts, String] uses io, fs, ffi {
 }
 
 /// Run argv for at most `ms` milliseconds.
-fn exec(argv: List[List[u8]], ms: i64) -> Result[Res, String] uses io, fs, net, ffi {
+fn exec(argv: List[List[u8]], ms: i64) -> Result[Res, String] uses io, fs, net {
     let o = proc.run_with(argv, proc.limited(ms))?
     let code = if o.timed_out { -1 } else { o.code }
     Ok(Res(code, bytes.trim(o.out), bytes.trim(o.err)))
 }
 
 /// `<compiler> <cmd> [--json] <path> [-o <out>]`, killed after 30 s.
-fn compile(compiler: List[u8], cmd: str, json: bool, path: List[u8], out: List[u8]) -> Result[Res, String] uses io, fs, net, ffi {
+fn compile(compiler: List[u8], cmd: str, json: bool, path: List[u8], out: List[u8]) -> Result[Res, String] uses io, fs, net {
     var a: List[List[u8]] = List.new()
     a.push(compiler)
     a.push(sys.lit(cmd))
@@ -162,7 +162,7 @@ fn first_line(out: List[u8]) -> List[u8] {
 
 /// Whether every line of `check --json` output is a diagnostic, none repeated, except a last
 /// `{"note":...}` line.
-fn well_formed(out: List[u8]) -> bool uses ffi {
+fn well_formed(out: List[u8]) -> bool {
     let ls = bytes.lines(out)
     for i in 0..ls.len() {
         let l = ls[i]
@@ -177,7 +177,7 @@ fn well_formed(out: List[u8]) -> bool uses ffi {
 }
 
 /// The code of a `check --json` diagnostic (`{"error":"E0101",...}`), or "" if `out` isn't one.
-fn json_code(out: List[u8]) -> List[u8] uses ffi {
+fn json_code(out: List[u8]) -> List[u8] {
     let none: List[u8] = List.new()
     if !bytes.starts_with(out, sys.lit("{\"error\":\"")) { return none }
     match bytes.find_byte(out, 34, 10) {
@@ -187,7 +187,7 @@ fn json_code(out: List[u8]) -> List[u8] uses ffi {
 }
 
 /// Whether `err` (human-readable diagnostics) reports `error[<code>]`.
-fn reports(err: List[u8], code: List[u8]) -> bool uses ffi {
+fn reports(err: List[u8], code: List[u8]) -> bool {
     var want = sys.lit("error[")
     bytes.append(inout want, code)
     want.push(93)
@@ -220,7 +220,7 @@ fn tally(inout keys: List[List[u8]], inout counts: List[u64], code: List[u8]) {
 }
 
 /// `FAIL <what> <kept mutant>` and the evidence, one line each.
-fn report(what: List[u8], keep: List[u8], r: Res, detail: List[u8]) uses io, ffi {
+fn report(what: List[u8], keep: List[u8], r: Res, detail: List[u8]) uses io {
     var l1: List[List[u8]] = List.new()
     l1.push(sys.lit("FAIL "))
     l1.push(what)
@@ -247,13 +247,13 @@ fn report(what: List[u8], keep: List[u8], r: Res, detail: List[u8]) uses io, ffi
 /// detail line, or, when it breaks none, its diagnostic code (`ok`, `unsupported`, `E0101`...).
 type Verdict = { what: List[u8], res: Res, detail: List[u8], code: List[u8] }
 
-fn verdict(what: str, r: Res, detail: List[u8]) -> Verdict uses ffi {
+fn verdict(what: str, r: Res, detail: List[u8]) -> Verdict {
     let none: List[u8] = List.new()
     Verdict(sys.lit(what), r, detail, none)
 }
 
 /// Hold mutant `path` to the invariants (top of file); counts what it built and ran in `st`.
-fn judge(o: Opts, path: List[u8], src: List[u8], bin: List[u8], inout st: Stats) -> Result[Verdict, String] uses io, fs, net, ffi {
+fn judge(o: Opts, path: List[u8], src: List[u8], bin: List[u8], inout st: Stats) -> Result[Verdict, String] uses io, fs, net {
     let none: List[u8] = List.new()
     let c = compile(o.eiderc, "check", true, path, none)?
     if c.code == -1 { return Ok(verdict("check (timeout)", c, none)) }
@@ -310,7 +310,7 @@ fn judge(o: Opts, path: List[u8], src: List[u8], bin: List[u8], inout st: Stats)
     Ok(v)
 }
 
-fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net, ffi {
+fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net {
     let t = fuzz.tables()
     var r = fuzz.rng(o.seed)
     var st = Stats(0, 0, 0, 0, 0, 0, 0, 0, 0)
@@ -376,7 +376,7 @@ fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net, ffi {
     Ok(st.failed == 0)
 }
 
-fn main() uses io, fs, net, ffi {
+fn main() uses io, fs, net {
     let r: Result[bool, String] = match parse_opts() {
         Ok(o) => campaign(o)
         Err(e) => Err(e)

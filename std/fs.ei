@@ -6,7 +6,7 @@ import "bytes.ei"
 /// What is at a path, without following a final symlink.
 pub type Kind = | Missing | File | Dir | Link | Other
 
-fn fail(what: str, path: List[u8], status: i64) -> String uses ffi {
+fn fail(what: str, path: List[u8], status: i64) -> String {
     var m = String.from(what)
     m.push_str(" ")
     m.append(sys.to_string(path))
@@ -15,20 +15,20 @@ fn fail(what: str, path: List[u8], status: i64) -> String uses ffi {
     m
 }
 
-fn one(path: List[u8]) uses ffi {
+fn one(path: List[u8]) {
     var p: List[List[u8]] = List.new()
     p.push(path)
     sys.send_all(p)
 }
 
-pub fn read(path: List[u8]) -> Result[List[u8], String] uses fs, ffi {
+pub fn read(path: List[u8]) -> Result[List[u8], String] uses fs {
     one(path)
     let n = sys.read_file()
     if n < 0 { return Err(fail("cannot read", path, n)) }
     Ok(sys.take())
 }
 
-fn put(path: List[u8], data: List[u8], append: bool) -> Result[bool, String] uses fs, ffi {
+fn put(path: List[u8], data: List[u8], append: bool) -> Result[bool, String] uses fs {
     var p: List[List[u8]] = List.new()
     p.push(path)
     p.push(data)
@@ -38,10 +38,10 @@ fn put(path: List[u8], data: List[u8], append: bool) -> Result[bool, String] use
     Ok(true)
 }
 
-pub fn write(path: List[u8], data: List[u8]) -> Result[bool, String] uses fs, ffi { put(path, data, false) }
-pub fn append(path: List[u8], data: List[u8]) -> Result[bool, String] uses fs, ffi { put(path, data, true) }
+pub fn write(path: List[u8], data: List[u8]) -> Result[bool, String] uses fs { put(path, data, false) }
+pub fn append(path: List[u8], data: List[u8]) -> Result[bool, String] uses fs { put(path, data, true) }
 
-pub fn kind(path: List[u8]) -> Kind uses fs, ffi {
+pub fn kind(path: List[u8]) -> Kind uses fs {
     one(path)
     match sys.kind(false) {
         0 => Missing
@@ -52,7 +52,7 @@ pub fn kind(path: List[u8]) -> Kind uses fs, ffi {
     }
 }
 
-pub fn exists(path: List[u8]) -> bool uses fs, ffi {
+pub fn exists(path: List[u8]) -> bool uses fs {
     match kind(path) {
         Missing => false
         _ => true
@@ -60,13 +60,13 @@ pub fn exists(path: List[u8]) -> bool uses fs, ffi {
 }
 
 /// True for a directory or a symlink to one.
-pub fn is_dir(path: List[u8]) -> bool uses fs, ffi {
+pub fn is_dir(path: List[u8]) -> bool uses fs {
     one(path)
     sys.kind(true) == 2
 }
 
 /// Entry names (not full paths), sorted.
-pub fn list(path: List[u8]) -> Result[List[List[u8]], String] uses fs, ffi {
+pub fn list(path: List[u8]) -> Result[List[List[u8]], String] uses fs {
     one(path)
     let n = sys.list_dir()
     if n < 0 { return Err(fail("cannot list", path, n)) }
@@ -90,7 +90,7 @@ pub fn sort(xs: List[List[u8]]) -> List[List[u8]] {
 }
 
 /// Create `path` and any missing parents. Fine if it already exists as a directory.
-pub fn mkdir_all(path: List[u8]) -> Result[bool, String] uses fs, ffi {
+pub fn mkdir_all(path: List[u8]) -> Result[bool, String] uses fs {
     if is_dir(path) { return Ok(true) }
     match bytes.rfind_byte(path, 47) {
         Some(i) => {
@@ -106,7 +106,7 @@ pub fn mkdir_all(path: List[u8]) -> Result[bool, String] uses fs, ffi {
 
 /// Remove a file, or a directory and everything in it. Fine if it doesn't exist.
 /// Symlinks are removed, never followed.
-pub fn remove_all(path: List[u8]) -> Result[bool, String] uses fs, ffi {
+pub fn remove_all(path: List[u8]) -> Result[bool, String] uses fs {
     match kind(path) {
         Missing => { return Ok(true) }
         Dir => {
@@ -124,7 +124,7 @@ pub fn remove_all(path: List[u8]) -> Result[bool, String] uses fs, ffi {
 }
 
 /// Create a symlink at `link` pointing to `target`.
-pub fn symlink(target: List[u8], link: List[u8]) -> Result[bool, String] uses fs, ffi {
+pub fn symlink(target: List[u8], link: List[u8]) -> Result[bool, String] uses fs {
     var p: List[List[u8]] = List.new()
     p.push(target)
     p.push(link)
@@ -134,20 +134,20 @@ pub fn symlink(target: List[u8], link: List[u8]) -> Result[bool, String] uses fs
     Ok(true)
 }
 
-pub fn cwd() -> Result[List[u8], String] uses fs, ffi {
+pub fn cwd() -> Result[List[u8], String] uses fs {
     let n = sys.cwd()
     if n < 0 { return Err(sys.error_text(n)) }
     Ok(sys.take())
 }
 
 /// Make `p` absolute (against the current directory) and fold `.` and `..` segments.
-pub fn absolute(p: List[u8]) -> Result[List[u8], String] uses fs, ffi {
+pub fn absolute(p: List[u8]) -> Result[List[u8], String] uses fs {
     let full = if p.len() > 0 && p[0] == 47 { p } else { join(cwd()?, p) }
     Ok(normalize(full))
 }
 
 /// The canonical absolute form of an existing path, with every symlink resolved.
-pub fn canonical(p: List[u8]) -> Result[List[u8], String] uses fs, ffi {
+pub fn canonical(p: List[u8]) -> Result[List[u8], String] uses fs {
     one(p)
     let n = sys.realpath()
     if n < 0 { return Err(fail("cannot resolve", p, n)) }
@@ -180,7 +180,7 @@ pub fn normalize(p: List[u8]) -> List[u8] {
     out
 }
 
-pub fn rename(from: List[u8], to: List[u8]) -> Result[bool, String] uses fs, ffi {
+pub fn rename(from: List[u8], to: List[u8]) -> Result[bool, String] uses fs {
     var p: List[List[u8]] = List.new()
     p.push(from)
     p.push(to)
@@ -191,7 +191,7 @@ pub fn rename(from: List[u8], to: List[u8]) -> Result[bool, String] uses fs, ffi
 }
 
 /// Copy a file or directory tree. `skip` names (e.g. `.git`) are left out at every level.
-pub fn copy_all(from: List[u8], to: List[u8], skip: List[List[u8]]) -> Result[bool, String] uses fs, ffi {
+pub fn copy_all(from: List[u8], to: List[u8], skip: List[List[u8]]) -> Result[bool, String] uses fs {
     if is_dir(from) {
         mkdir_all(to)?
         let names = list(from)?
@@ -209,14 +209,14 @@ pub fn copy_all(from: List[u8], to: List[u8], skip: List[List[u8]]) -> Result[bo
 }
 
 /// Every file under `root` as a path relative to it, sorted, skipping `skip` names.
-pub fn walk(root: List[u8], skip: List[List[u8]]) -> Result[List[List[u8]], String] uses fs, ffi {
+pub fn walk(root: List[u8], skip: List[List[u8]]) -> Result[List[List[u8]], String] uses fs {
     var out: List[List[u8]] = List.new()
     let top: List[u8] = List.new()
     walk_into(root, top, skip, inout out)?
     Ok(out)
 }
 
-fn walk_into(root: List[u8], rel: List[u8], skip: List[List[u8]], inout out: List[List[u8]]) -> Result[bool, String] uses fs, ffi {
+fn walk_into(root: List[u8], rel: List[u8], skip: List[List[u8]], inout out: List[List[u8]]) -> Result[bool, String] uses fs {
     let here = if rel.len() == 0 { root } else { join(root, rel) }
     let names = list(here)?
     for n in names {

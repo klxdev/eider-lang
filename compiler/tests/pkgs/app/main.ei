@@ -15,7 +15,7 @@ import "util.ei"
 import "net"
 import "cache"
 
-fn main() uses io, ffi {
+fn main() uses io {
     io.outln(sys.lit(util.name()))
     print(gu.name())
     print(su.name())

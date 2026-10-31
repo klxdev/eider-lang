@@ -30,9 +30,9 @@ fn key(name: List[u8], want: List[u8]) -> List[u8] {
 
 fn pkg_key(p: lockfile.Pkg) -> List[u8] { key(p.name, p.want) }
 
-fn text(b: List[u8]) -> String uses ffi { sys.to_string(b) }
+fn text(b: List[u8]) -> String { sys.to_string(b) }
 
-fn req_of(d: manifest.Dep, base: List[u8], by: List[u8], by_git: bool) -> Result[Req, String] uses ffi {
+fn req_of(d: manifest.Dep, base: List[u8], by: List[u8], by_git: bool) -> Result[Req, String] {
     let none: List[u8] = List.new()
     match d.source {
         manifest.Path(p) => {
@@ -89,7 +89,7 @@ fn settle(o: Opts, r: Req) -> Req {
     r
 }
 
-fn mismatch(what: str, name: List[u8], a: List[u8], b: List[u8]) -> String uses ffi {
+fn mismatch(what: str, name: List[u8], a: List[u8], b: List[u8]) -> String {
     var m = String.from(what)
     m.push_str(" `")
     m.append(text(name))
@@ -101,7 +101,7 @@ fn mismatch(what: str, name: List[u8], a: List[u8], b: List[u8]) -> String uses 
 }
 
 /// Fetch (if needed) and read one requirement's package.
-fn visit(o: Opts, r: Req) -> Result[lockfile.Pkg, String] uses io, fs, net, ffi {
+fn visit(o: Opts, r: Req) -> Result[lockfile.Pkg, String] uses io, fs, net {
     let none: List[u8] = List.new()
     var dir = r.loc
     var commit = none
@@ -173,7 +173,7 @@ fn intersect(a: List[List[u8]], b: List[List[u8]]) -> List[List[u8]] {
 }
 
 /// Pick, for `name`, the node to use: the highest version (or the one rev) among visited nodes.
-fn select(nodes: List[lockfile.Pkg], name: List[u8]) -> Result[lockfile.Pkg, String] uses ffi {
+fn select(nodes: List[lockfile.Pkg], name: List[u8]) -> Result[lockfile.Pkg, String] {
     var best: Option[lockfile.Pkg] = None
     for n in nodes {
         if bytes.eq(n.name, name) {
@@ -209,7 +209,7 @@ fn select(nodes: List[lockfile.Pkg], name: List[u8]) -> Result[lockfile.Pkg, Str
 }
 
 /// Resolve `root` into the list of packages to install (root itself excluded).
-pub fn resolve(root: manifest.Manifest, o: Opts) -> Result[List[lockfile.Pkg], String] uses io, fs, net, ffi {
+pub fn resolve(root: manifest.Manifest, o: Opts) -> Result[List[lockfile.Pkg], String] uses io, fs, net {
     let none: List[u8] = List.new()
     var queue: List[Req] = List.new()
     for d in root.deps { queue.push(req_of(d, root.dir, none, false)?) }
@@ -291,7 +291,7 @@ pub fn resolve(root: manifest.Manifest, o: Opts) -> Result[List[lockfile.Pkg], S
 
 /// Every package must stay within its grants, as the compiler `eiderc` reports its
 /// capability use (see caps.ei).
-pub fn check_grants(pkgs: List[lockfile.Pkg], eiderc: List[u8]) -> Result[bool, String] uses io, fs, net, ffi {
+pub fn check_grants(pkgs: List[lockfile.Pkg], eiderc: List[u8]) -> Result[bool, String] uses io, fs, net {
     for p in pkgs {
         let mf = manifest.load(p.dir)?
         // a package without its entry module may still have a program (`main`) reaching

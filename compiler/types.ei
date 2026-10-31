@@ -346,13 +346,13 @@ pub fn bits(k: u32) -> u32 {
 
 // ---- display (type names as diagnostics print them; module names stay mangled, `diag` demangles)
 
-pub fn show(t: Types, names: intern.Interner, id: u32) -> List[u8] uses ffi {
+pub fn show(t: Types, names: intern.Interner, id: u32) -> List[u8] {
     var out: List[u8] = List.new()
     show_into(inout out, t, names, id)
     out
 }
 
-pub fn show_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32) uses ffi {
+pub fn show_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32) {
     let ty = t.tys[id as usize]
     match ty.kind {
         0 => bytes.append(inout out, sys.lit(int_name(ty.a)))
@@ -428,7 +428,7 @@ pub fn show_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32)
     }
 }
 
-fn show_list(inout out: List[u8], t: Types, names: intern.Interner, l: u32) uses ffi {
+fn show_list(inout out: List[u8], t: Types, names: intern.Interner, l: u32) {
     for i in 0..list_len(t, l) {
         if i > 0 { bytes.append(inout out, sys.lit(", ")) }
         show_into(inout out, t, names, list_at(t, l, i))

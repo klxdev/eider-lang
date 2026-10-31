@@ -3,7 +3,7 @@ import "std/bytes"
 import "std/io"
 import "../toml.ei"
 
-fn dump(src: str) uses io, ffi {
+fn dump(src: str) uses io {
     match toml.parse(sys.lit(src)) {
         Ok(doc) => {
             for e in doc {
@@ -42,7 +42,7 @@ fn dump(src: str) uses io, ffi {
     print("--")
 }
 
-fn main() uses io, ffi {
+fn main() uses io {
     dump("# manifest\n[package]\nname = \"warehouse\"   # trailing\nversion = \"0.1.0\"\n\n[deps.json]\ngit = \"https://example.com/json.git\"\nversion = \"1.2.0\"\nuses = [\"io\", \"fs\",]\n\n[deps]\ngeom = { path = \"../geom\", uses = [] }\n\"quoted key\" = -42\nflag = false\n")
     dump("[[package]]\nname = \"a\"\n[[package]]\nname = \"b\"\ndeps = [\n  \"a\", # comment\n  \"c\"\n]\n")
     dump("a = \"tab\\tq\\\"\"\nb = 1_000\n")

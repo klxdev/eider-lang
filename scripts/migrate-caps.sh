@@ -9,7 +9,8 @@
 # it has unmanaged code itself (an `extern "c"` declaration or `unsafe` outside comments and
 # strings) or path-imports a file that has (a wrapper in the same package, whose `uses ffi`
 # still propagates): `uses ffi` is removed from every signature, and `ffi` from every longer
-# `uses` list (`uses io, ffi` -> `uses io`). Comment lines are left alone. Prints each
+# `uses` list (`uses io, ffi` -> `uses io`). Comment lines, and lines where the clause is inside
+# a string literal, are left alone. Prints each
 # rewritten file.
 #
 # The seed asks for `ffi` along call chains, so this runs after the next seed: on compiler/,
@@ -39,6 +40,7 @@ migrate() {
   unmanaged "$f" && return 0
   imports_unmanaged "$f" && return 0
   sed -e '/^[[:space:]]*\/\//b' \
+      -e '/"[^"]*uses [a-z, ]*ffi[^"]*"/b' \
       -e 's/\(uses [a-z, ]*\), ffi\([^A-Za-z0-9_]\)/\1\2/' \
       -e 's/\(uses [a-z, ]*\), ffi$/\1/' \
       -e 's/uses ffi, /uses /' \

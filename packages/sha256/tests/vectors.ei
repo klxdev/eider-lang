@@ -3,7 +3,7 @@ import "std/bytes"
 import "std/io"
 import "../sha256.ei"
 
-fn main() uses io, ffi {
+fn main() uses io {
     let s = sha256.new()
     io.outln(bytes.hex(sha256.digest(s, sys.lit(""))))
     io.outln(bytes.hex(sha256.digest(s, sys.lit("abc"))))

@@ -333,23 +333,23 @@ fn note_ty(inout c: C, n: ast.Node, ty: u32) {
 
 // ---- messages
 
-fn s(x: str) -> List[u8] uses ffi { sys.lit(x) }
+fn s(x: str) -> List[u8] { sys.lit(x) }
 
-fn q(pre: str, x: List[u8], post: str) -> List[u8] uses ffi {
+fn q(pre: str, x: List[u8], post: str) -> List[u8] {
     var m = sys.lit(pre)
     bytes.append(inout m, x)
     bytes.append(inout m, sys.lit(post))
     m
 }
 
-fn q2(pre: str, x: List[u8], mid: str, y: List[u8], post: str) -> List[u8] uses ffi {
+fn q2(pre: str, x: List[u8], mid: str, y: List[u8], post: str) -> List[u8] {
     var m = q(pre, x, mid)
     bytes.append(inout m, y)
     bytes.append(inout m, sys.lit(post))
     m
 }
 
-fn q3(pre: str, x: List[u8], m1: str, y: List[u8], m2: str, z: List[u8], post: str) -> List[u8] uses ffi {
+fn q3(pre: str, x: List[u8], m1: str, y: List[u8], m2: str, z: List[u8], post: str) -> List[u8] {
     var m = q2(pre, x, m1, y, m2)
     bytes.append(inout m, z)
     bytes.append(inout m, sys.lit(post))
@@ -360,21 +360,21 @@ fn num(n: u64) -> List[u8] { bytes.from_u64(n) }
 
 fn err(code: str, line: u32, col: u32, msg: List[u8]) -> diag.Diag { diag.new(code, line, col, msg) }
 
-fn errh(code: str, line: u32, col: u32, msg: List[u8], help: str) -> diag.Diag uses ffi {
+fn errh(code: str, line: u32, col: u32, msg: List[u8], help: str) -> diag.Diag {
     var d = diag.new(code, line, col, msg)
     d.help = sys.lit(help)
     d
 }
 
-fn unsup(line: u32, col: u32, what: str) -> diag.Diag uses ffi {
+fn unsup(line: u32, col: u32, what: str) -> diag.Diag {
     diag.new("unsupported", line, col, q("not yet supported by eiderc: ", sys.lit(what), ""))
 }
 
-fn ts(c: C, ty: u32) -> List[u8] uses ffi { types.show(c.t, c.p.names, ty) }
-fn kt(c: C, k: u64) -> List[u8] uses ffi { resolve.key_text(c.p.names, k) }
+fn ts(c: C, ty: u32) -> List[u8] { types.show(c.t, c.p.names, ty) }
+fn kt(c: C, k: u64) -> List[u8] { resolve.key_text(c.p.names, k) }
 fn nm(c: C, sym: u32) -> List[u8] { intern.name(c.p.names, sym) }
 
-fn mismatch(c: C, line: u32, col: u32, expected: u32, found: u32) -> diag.Diag uses ffi {
+fn mismatch(c: C, line: u32, col: u32, expected: u32, found: u32) -> diag.Diag {
     var d = err("E0401", line, col, q2("expected ", ts(c, expected), ", found ", ts(c, found), ""))
     if types.is_int(c.t, expected) && types.is_int(c.t, found) {
         d.help = q("there are no implicit conversions; use an explicit cast: `value as ", ts(c, expected), "`")
@@ -442,13 +442,13 @@ fn restore(inout c: C, sp: Snap) {
     c.lam = no_hint()
 }
 
-fn is_code(d: diag.Diag, code: str) -> bool uses ffi { bytes.eq(sys.lit(d.code), sys.lit(code)) }
+fn is_code(d: diag.Diag, code: str) -> bool { bytes.eq(sys.lit(d.code), sys.lit(code)) }
 
 /// A diagnostic that ends checking even with recovery.
-fn fatal(d: diag.Diag) -> bool uses ffi { is_code(d, "unsupported") }
+fn fatal(d: diag.Diag) -> bool { is_code(d, "unsupported") }
 
 /// An error that is only a consequence of an earlier one (never reported).
-fn quiet() -> diag.Diag uses ffi { diag.new("cascade", 0, 0, List.new()) }
+fn quiet() -> diag.Diag { diag.new("cascade", 0, 0, List.new()) }
 
 /// The error type.
 fn poison(inout c: C) -> u32 { types.poison(inout c.t) }
@@ -474,7 +474,7 @@ fn contains_text(hay: List[u8], needle: List[u8]) -> bool {
 
 /// Whether d is a consequence of an earlier error: it mentions the error type, or a name of
 /// a module that failed to load.
-fn consequence(c: C, d: diag.Diag) -> bool uses ffi {
+fn consequence(c: C, d: diag.Diag) -> bool {
     if is_code(d, "cascade") { return true }
     let et = s("{error}")
     if contains_text(d.msg, et) || contains_text(d.help, et) { return true }
@@ -490,7 +490,7 @@ fn consequence(c: C, d: diag.Diag) -> bool uses ffi {
 /// Whether d may be explained by a syntax error: it is on the line of one, or it is an
 /// unknown name and the parser skipped a statement of the body (`body_err`), an item of the
 /// module before its name, or the item of that name (ast.ei, SError and IError).
-fn syntax_consequence(c: C, d: diag.Diag) -> bool uses ffi {
+fn syntax_consequence(c: C, d: diag.Diag) -> bool {
     // anything on the line of a syntax error may come from how the parser recovered there
     if c.err_mod != resolve.NOMOD && d.file.len() == 0 && resolve.syntax_in(c.p, c.err_mod, d.line, d.line) { return true }
     let unknown = bytes.starts_with(d.msg, s("unknown name `")) || bytes.starts_with(d.msg, s("unknown function `")) || bytes.starts_with(d.msg, s("unknown type `")) || bytes.starts_with(d.msg, s("unknown trait `"))
@@ -506,7 +506,7 @@ fn syntax_consequence(c: C, d: diag.Diag) -> bool uses ffi {
 }
 
 /// Note the items the parser skipped (IError: a = keyword sym+1, b = name sym+1 or 0).
-fn note_failed_items(inout c: C) uses ffi {
+fn note_failed_items(inout c: C) {
     for it in items(c.p) {
         let n = ndm(c, it.m, it.node)
         if n.kind != ast.IError { continue }
@@ -532,7 +532,7 @@ fn entry_skipped(c: C) -> bool {
 
 /// What makes d one of the diagnostics reported once per body: the message of an unknown
 /// name, and the fix of a missing capability (one per capability). Empty for the others.
-fn once_key(d: diag.Diag) -> List[u8] uses ffi {
+fn once_key(d: diag.Diag) -> List[u8] {
     if bytes.starts_with(d.msg, s("unknown ")) {
         var k = sys.lit(d.code)
         bytes.append(inout k, d.msg)
@@ -558,7 +558,7 @@ fn once_key(d: diag.Diag) -> List[u8] uses ffi {
 
 /// Record diagnostic d (naming the file of the module being checked, as the end of the
 /// run does) unless it is a consequence or a repetition.
-fn record(inout c: C, d: diag.Diag) uses ffi {
+fn record(inout c: C, d: diag.Diag) {
     if c.mute || consequence(c, d) || syntax_consequence(c, d) { return }
     let k = once_key(d)
     if k.len() > 0 {
@@ -572,7 +572,7 @@ fn record(inout c: C, d: diag.Diag) uses ffi {
 }
 
 /// Record the error of `r` (a fatal one is returned); Ok(true) when there was none.
-fn recover(inout c: C, r: Result[bool, diag.Diag]) -> Result[bool, diag.Diag] uses ffi {
+fn recover(inout c: C, r: Result[bool, diag.Diag]) -> Result[bool, diag.Diag] {
     match r {
         Ok(_) => Ok(true)
         Err(d) => {
@@ -585,7 +585,7 @@ fn recover(inout c: C, r: Result[bool, diag.Diag]) -> Result[bool, diag.Diag] us
 
 /// Record d, then check the arguments [start/len) of a call that can't go on (each against
 /// the error type, so nothing is inferred from them); the call's value is of the error type.
-fn fail_call(inout c: C, d: diag.Diag, start: u32, len: u32) -> Result[V, diag.Diag] uses ffi {
+fn fail_call(inout c: C, d: diag.Diag, start: u32, len: u32) -> Result[V, diag.Diag] {
     record(inout c, d)
     let pt = poison(inout c)
     for i in 0..len {
@@ -597,7 +597,7 @@ fn fail_call(inout c: C, d: diag.Diag, start: u32, len: u32) -> Result[V, diag.D
 
 /// Declare `key` as a local of the error type (the binding of a statement that failed);
 /// nothing if the name is already declared in this scope.
-fn declare_poison(inout c: C, key: u64, line: u32, col: u32) uses ffi {
+fn declare_poison(inout c: C, key: u64, line: u32, col: u32) {
     let ty = poison(inout c)
     let l = ir.local(inout c.ir, resolve.key_sym(key), ty, ir.L_LET, line)
     let m = c.marks[c.marks.len() - 1] as usize
@@ -608,7 +608,7 @@ fn declare_poison(inout c: C, key: u64, line: u32, col: u32) uses ffi {
 }
 
 /// The names pattern `pat` binds (as lower_pat would), declared with the error type.
-fn bind_pat_poison(inout c: C, pat: u32) uses ffi {
+fn bind_pat_poison(inout c: C, pat: u32) {
     let n = nd(c, pat)
     if n.kind == ast.PName {
         let k = resolve.name_key(c.p, c.am, n.a, n.b, n.line, n.col)
@@ -624,14 +624,14 @@ fn bind_pat_poison(inout c: C, pat: u32) uses ffi {
 }
 
 /// The names statement st would have declared, with the error type (it failed).
-fn bind_failed(inout c: C, st: u32) uses ffi {
+fn bind_failed(inout c: C, st: u32) {
     let n = nd(c, st)
     if n.kind == ast.SLet { declare_poison(inout c, resolve.key(0, n.a), n.line, n.col) }
     if n.kind == ast.SLetPat { bind_pat_poison(inout c, n.a) }
 }
 
 /// check_assignable, recording its error and going on (the expression is still checked).
-fn assignable_or_record(inout c: C, target: u32, verb: str) uses ffi {
+fn assignable_or_record(inout c: C, target: u32, verb: str) {
     match check_assignable(c, target, verb) {
         Ok(_) => {}
         Err(d) => record(inout c, d)
@@ -934,7 +934,7 @@ fn lookup(c: C, k: u64) -> u32 {
     NONE
 }
 
-fn declare(inout c: C, l: Local) -> Result[bool, diag.Diag] uses ffi {
+fn declare(inout c: C, l: Local) -> Result[bool, diag.Diag] {
     let m = c.marks[c.marks.len() - 1] as usize
     for i in m..c.scopes.len() {
         if c.scopes[i].key == l.key {
@@ -987,7 +987,7 @@ fn gparams(c: C, m: u32, start: u32, len: u32) -> List[u32] {
 
 /// Resolve type node `tn` of module `am` (names resolve in that module, visibility from the
 /// module being checked, type parameters from `tsubst`).
-fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] uses ffi {
+fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] {
     let n = ndm(c, am, tn)
     match n.kind {
         ast.TUnit => Ok(types.UNIT)
@@ -1075,7 +1075,7 @@ fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] uses ffi {
 }
 
 /// Resolve `tn` of module am with the type parameters of `sb` (and no others).
-fn resolve_with(inout c: C, am: u32, tn: u32, sb: Subst) -> Result[u32, diag.Diag] uses ffi {
+fn resolve_with(inout c: C, am: u32, tn: u32, sb: Subst) -> Result[u32, diag.Diag] {
     let saved = c.tsubst
     c.tsubst = sb
     let r = resolve_ty(inout c, am, tn)
@@ -1085,7 +1085,7 @@ fn resolve_with(inout c: C, am: u32, tn: u32, sb: Subst) -> Result[u32, diag.Dia
 
 /// A Map key type has Hash and Eq ("Operation traits"); a part with its own `==` needs its own
 /// hash too, since equal keys must hash alike.
-fn check_map_key(c: C, k: u32, line: u32, col: u32) -> Result[bool, diag.Diag] uses ffi {
+fn check_map_key(c: C, k: u32, line: u32, col: u32) -> Result[bool, diag.Diag] {
     for tr in [TR_HASH, TR_EQ] {
         var seen: Map[u32, bool] = Map.new()
         let part = lacks(c, tr, k, inout seen)
@@ -1151,7 +1151,7 @@ fn eq_without_hash(c: C, ty: u32, inout seen: Map[u32, bool]) -> u32 {
 
 /// The type of template di applied to `args`, resolving its fields the first time
 /// (memoized per instance).
-fn inst_type(inout c: C, di: u32, args: List[u32], line: u32, col: u32) -> Result[u32, diag.Diag] uses ffi {
+fn inst_type(inout c: C, di: u32, args: List[u32], line: u32, col: u32) -> Result[u32, diag.Diag] {
     let d = c.t.defs[di as usize]
     if !visible(c, d.md, d.public) {
         let path = c.p.mods[d.md as usize].path
@@ -1216,7 +1216,7 @@ fn inst_type(inout c: C, di: u32, args: List[u32], line: u32, col: u32) -> Resul
     Ok(d3.ty)
 }
 
-fn recursive(c: C, d: types.Def) -> diag.Diag uses ffi {
+fn recursive(c: C, d: types.Def) -> diag.Diag {
     let n = ndm(c, d.md, d.node)
     errh("E0108", n.line, n.col, q("type `", ts(c, d.ty), "` contains itself and would have infinite size"), "use an index into a List, or Box[T], to express recursion")
 }
@@ -1258,7 +1258,7 @@ fn has_field(fs: List[types.Field], sym: u32) -> bool {
 }
 
 /// Resolve the fields of definition di.
-fn fill_type(inout c: C, di: u32) -> Result[bool, diag.Diag] uses ffi {
+fn fill_type(inout c: C, di: u32) -> Result[bool, diag.Diag] {
     let d = c.t.defs[di as usize]
     let m = d.md
     let n = ndm(c, m, d.node)
@@ -1325,7 +1325,7 @@ fn fill_type(inout c: C, di: u32) -> Result[bool, diag.Diag] uses ffi {
 /// The type of a field or in a signature (type node tn of module m, the item's own): one
 /// that doesn't resolve is recorded, naming m's file as inst_type and instantiate do, and is
 /// the error type.
-fn item_ty(inout c: C, m: u32, tn: u32) -> Result[u32, diag.Diag] uses ffi {
+fn item_ty(inout c: C, m: u32, tn: u32) -> Result[u32, diag.Diag] {
     match resolve_ty(inout c, m, tn) {
         Ok(t) => Ok(t)
         Err(d) => {
@@ -1440,7 +1440,7 @@ fn unify_ast(c: C, m: u32, tn: u32, actual: u32, inout sb: Subst, gs: List[u32])
 
 /// A type node as messages spell it (show_ast: module items mangled, type
 /// parameters `gens` as written).
-fn show_ast(c: C, m: u32, tn: u32, gens: List[u32]) -> List[u8] uses ffi {
+fn show_ast(c: C, m: u32, tn: u32, gens: List[u32]) -> List[u8] {
     let n = ndm(c, m, tn)
     var out: List[u8] = List.new()
     match n.kind {
@@ -1477,14 +1477,14 @@ fn show_ast(c: C, m: u32, tn: u32, gens: List[u32]) -> List[u8] uses ffi {
     out
 }
 
-fn show_list(c: C, m: u32, start: u32, len: u32, gens: List[u32], inout out: List[u8]) uses ffi {
+fn show_list(c: C, m: u32, start: u32, len: u32, gens: List[u32], inout out: List[u8]) {
     for i in 0..len {
         if i > 0 { bytes.append(inout out, s(", ")) }
         bytes.append(inout out, show_ast(c, m, atm(c, m, start, i), gens))
     }
 }
 
-fn ty_name(c: C, m: u32, n: ast.Node, gens: List[u32]) -> List[u8] uses ffi {
+fn ty_name(c: C, m: u32, n: ast.Node, gens: List[u32]) -> List[u8] {
     if n.b == 0 && has_sym(gens, n.a) { return nm(c, n.a) }
     kt(c, resolve.name_key(c.p, m, n.a, n.b, n.line, n.col))
 }
@@ -1541,7 +1541,7 @@ fn head_of(c: C, ty: u32) -> u64 {
     }
 }
 
-fn head_text(c: C, h: u64) -> List[u8] uses ffi {
+fn head_text(c: C, h: u64) -> List[u8] {
     if h == H_ARRAY { return s("[]") }
     if h == H_UNIT { return s("()") }
     if h == H_NEVER { return s("!") }
@@ -1603,7 +1603,7 @@ type Lang = {
     abs: bool, pty: List[u32], pm: List[u32], pn: List[u32],
 }
 
-fn new_lang(inout names: intern.Interner) -> Lang uses ffi {
+fn new_lang(inout names: intern.Interner) -> Lang {
     var ns: List[u32] = List.new()
     for w in ["Copy", "Eq", "Ord", "Hash", "Show", "Iter", "Drop"] { ns.push(sym(inout names, w)) }
     var ms: List[u32] = List.new()
@@ -1787,7 +1787,7 @@ fn lacks(c: C, tr: u32, ty: u32, inout seen: Map[u32, bool]) -> u32 {
 }
 
 /// The error when `what` needs language trait tr of ty, which it lacks (`part`: lacks' answer).
-fn lack_msg(c: C, what: List[u8], tr: u32, ty: u32, part: u32) -> List[u8] uses ffi {
+fn lack_msg(c: C, what: List[u8], tr: u32, ty: u32, part: u32) -> List[u8] {
     var m = q2("", what, " needs `", trait_name(c, tr), "`, which ")
     bytes.append(inout m, ts(c, ty))
     bytes.append(inout m, s(" doesn't implement"))
@@ -1807,7 +1807,7 @@ fn lack_help(c: C, tr: u32, part: u32) -> str {
     ""
 }
 
-fn lack_err(c: C, code: str, line: u32, col: u32, what: List[u8], tr: u32, ty: u32) -> diag.Diag uses ffi {
+fn lack_err(c: C, code: str, line: u32, col: u32, what: List[u8], tr: u32, ty: u32) -> diag.Diag {
     match param_lack(c, line, col, what, tr, ty) {
         Some(d) => { return d }
         None => {}
@@ -1821,7 +1821,7 @@ fn lack_err(c: C, code: str, line: u32, col: u32, what: List[u8], tr: u32, ty: u
 }
 
 /// The type of the prelude's Ordering.
-fn ordering_ty(inout c: C, line: u32, col: u32) -> Result[u32, diag.Diag] uses ffi {
+fn ordering_ty(inout c: C, line: u32, col: u32) -> Result[u32, diag.Diag] {
     if c.lt.ordering == NONE { return Err(unsup(line, col, "a prelude without `Ordering`")) }
     let od = c.lt.ordering
     inst_type(inout c, od, List.new(), line, col)
@@ -1829,7 +1829,7 @@ fn ordering_ty(inout c: C, line: u32, col: u32) -> Result[u32, diag.Diag] uses f
 
 /// The method instance of impl ix (timpls) of language trait tr for type ty, recorded for
 /// lowering in ir.Ir.impls.
-fn impl_instance(inout c: C, tr: u32, ix: u32, ty: u32) -> Result[u32, diag.Diag] uses ffi {
+fn impl_instance(inout c: C, tr: u32, ix: u32, ty: u32) -> Result[u32, diag.Diag] {
     let im = c.timpls[ix as usize]
     let n = ndm(c, im.md, im.node)
     let gs = gparams(c, im.md, n.c, n.d)
@@ -1850,7 +1850,7 @@ fn impl_instance(inout c: C, tr: u32, ix: u32, ty: u32) -> Result[u32, diag.Diag
 
 /// Instantiate the language-trait impls of every concrete record and enum that has one, so
 /// lowering's glue can call them; again for the types and bodies that brings in.
-fn scan_impls(inout c: C) uses ffi {
+fn scan_impls(inout c: C) {
     while (c.lt.scanned as usize) < c.t.defs.len() {
         let d = c.t.defs[c.lt.scanned as usize]
         c.lt.scanned += 1
@@ -1872,7 +1872,7 @@ fn scan_impls(inout c: C) uses ffi {
 /// Check impl node im (module m) of language trait tr: the orphan rule (E0604) and what
 /// Drop, Ord and Hash need (E0606, E0601). False: it is left out (its methods aren't
 /// registered).
-fn check_lang_impl(inout c: C, m: u32, im: ast.Node, tr: u32, igens: List[u32]) -> bool uses ffi {
+fn check_lang_impl(inout c: C, m: u32, im: ast.Node, tr: u32, igens: List[u32]) -> bool {
     let tn = ndm(c, m, im.b)
     let tname = show_ast(c, m, im.b, igens)
     let h = head_key(c, m, im.b, igens)
@@ -1983,7 +1983,7 @@ fn trait_names(c: C, trs: List[u32]) -> List[List[u8]] {
 
 /// E0605: `what` needs type parameter ty to have the traits named `trs`; the fix adds them
 /// to its bounds.
-fn bound_err(c: C, line: u32, col: u32, what: List[u8], trs: List[List[u8]], ty: u32) -> diag.Diag uses ffi {
+fn bound_err(c: C, line: u32, col: u32, what: List[u8], trs: List[List[u8]], ty: u32) -> diag.Diag {
     let name = nm(c, types.get(c.t, ty).a)
     var bounds: List[u8] = List.new()
     for i in 0..trs.len() {
@@ -2016,7 +2016,7 @@ fn bound_err(c: C, line: u32, col: u32, what: List[u8], trs: List[List[u8]], ty:
 
 /// lack_err's E0605 when the part lacking trait tr is a type parameter (else NONE-coded: the
 /// caller reports its own error).
-fn param_lack(c: C, line: u32, col: u32, what: List[u8], tr: u32, ty: u32) -> Option[diag.Diag] uses ffi {
+fn param_lack(c: C, line: u32, col: u32, what: List[u8], tr: u32, ty: u32) -> Option[diag.Diag] {
     var seen: Map[u32, bool] = Map.new()
     let part = lacks(c, tr, ty, inout seen)
     if part == NONE || types.kind(c.t, part) != types.T_PARAM { return None }
@@ -2025,7 +2025,7 @@ fn param_lack(c: C, line: u32, col: u32, what: List[u8], tr: u32, ty: u32) -> Op
 
 /// Check every generic declaration with an instance against its bounds (see above); the
 /// E0605s found are appended.
-fn abstract_bodies(inout c: C) uses ffi {
+fn abstract_bodies(inout c: C) {
     var fds: List[u32] = List.new()
     for inst in c.insts {
         if inst.slen == 0 || has_sym(fds, inst.fd) { continue }
@@ -2085,7 +2085,7 @@ fn abstract_bodies(inout c: C) uses ffi {
 
 // ---- program
 
-fn well_known(inout names: intern.Interner) -> W uses ffi {
+fn well_known(inout names: intern.Interner) -> W {
     var ints: List[u32] = List.new()
     for w in ["i32", "i64", "u8", "u32", "u64", "usize"] { ints.push(sym(inout names, w)) }
     var heap: List[u32] = List.new()
@@ -2103,12 +2103,12 @@ fn well_known(inout names: intern.Interner) -> W uses ffi {
         sym(inout names, "Some"), sym(inout names, "None"), sym(inout names, "Ok"), sym(inout names, "Err"), hm)
 }
 
-fn sym(inout names: intern.Interner, w: str) -> u32 uses ffi {
+fn sym(inout names: intern.Interner, w: str) -> u32 {
     let b = sys.lit(w)
     intern.intern(inout names, b, 0, b.len())
 }
 
-fn new_checker(p: resolve.Program, lib: bool) -> C uses ffi {
+fn new_checker(p: resolve.Program, lib: bool) -> C {
     var p2 = p
     let w = well_known(inout p2.names)
     let lt = new_lang(inout p2.names)
@@ -2150,15 +2150,15 @@ fn fn_key(c: C, m: u32, n: ast.Node) -> u64 {
 }
 
 /// Check the whole program; on success `c.ir` holds the typed IR.
-pub fn check(p: resolve.Program) -> Result[C, diag.Diag] uses ffi { check_mode(p, false) }
+pub fn check(p: resolve.Program) -> Result[C, diag.Diag] { check_mode(p, false) }
 
 /// Check the program as a program (`lib` = false) or as a library of `export fn`s: the
 /// first diagnostic of check_all, if any.
-pub fn check_mode(p: resolve.Program, lib: bool) -> Result[C, diag.Diag] uses ffi { first(check_all(p, lib, false)) }
+pub fn check_mode(p: resolve.Program, lib: bool) -> Result[C, diag.Diag] { first(check_all(p, lib, false)) }
 
 /// Check the program as a WebAssembly module (`--wasm`): a library
 /// whose exports cross the boundary as integers and bool only, without threads (E0806).
-pub fn check_wasm(p: resolve.Program) -> Result[C, diag.Diag] uses ffi { first(check_all(p, true, true)) }
+pub fn check_wasm(p: resolve.Program) -> Result[C, diag.Diag] { first(check_all(p, true, true)) }
 
 fn first(k: Checked) -> Result[C, diag.Diag] {
     if k.diags.len() > 0 { return Err(k.diags[0]) }
@@ -2171,7 +2171,7 @@ pub type Checked = { c: C, diags: List[diag.Diag] }
 
 /// Check the program (as a library with `lib`, as a WebAssembly module with `wasm`),
 /// recovering from errors (see "Recovery").
-pub fn check_all(p: resolve.Program, lib: bool, wasm: bool) -> Checked uses ffi {
+pub fn check_all(p: resolve.Program, lib: bool, wasm: bool) -> Checked {
     var c = new_checker(p, lib)
     c.wasm = wasm
     finish(inout c)
@@ -2179,7 +2179,7 @@ pub fn check_all(p: resolve.Program, lib: bool, wasm: bool) -> Checked uses ffi 
 
 /// Run the passes on c; its diagnostics, with an `unsupported` that ended the run reported
 /// only if nothing else was.
-fn finish(inout c: C) -> Checked uses ffi {
+fn finish(inout c: C) -> Checked {
     match run(inout c) {
         Ok(_) => {}
         Err(d) => {
@@ -2200,20 +2200,20 @@ pub type Recorded = { c: C, diags: List[diag.Diag] }
 
 /// `check` with the IDE recording on (ide.ei). The diagnostics are check's; the recording
 /// holds everything noted, also after an error.
-pub fn check_ide(p: resolve.Program) -> Recorded uses ffi {
+pub fn check_ide(p: resolve.Program) -> Recorded {
     var c = new_checker(p, false)
     c.rec.on = true
     let k = finish(inout c)
     Recorded(k.c, k.diags)
 }
 
-fn wasm_threads_error() -> diag.Diag uses ffi {
+fn wasm_threads_error() -> diag.Diag {
     err("E0806", 1, 1, s("threads (`spawn`, `Task`, `Mutex`, `Chan`) aren't available when targeting WebAssembly"))
 }
 
 /// Whether the program uses a thread type (`Task`, `Mutex` or `Chan`, wherever it is met;
 /// the type arena holds every type the program uses).
-fn uses_thread_types(c: C) -> bool uses ffi {
+fn uses_thread_types(c: C) -> bool {
     for ty in 0..c.t.tys.len() {
         let k = types.kind(c.t, ty as u32)
         if k == types.T_RECORD || k == types.T_ENUM { continue }
@@ -2230,7 +2230,7 @@ fn begin_item(inout c: C, it: Item) {
     c.seen = List.new()
 }
 
-fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
+fn run(inout c: C) -> Result[bool, diag.Diag] {
     let its = items(c.p)
     note_failed_items(inout c)
     lang_prepass(inout c, its)
@@ -2493,7 +2493,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] uses ffi {
 /// Check constant node n (key k) of item it; false when it is a constant of the error type
 /// (its initializer failed, and that was recorded).
 /// E0111: `main`'s signature (docs/compiler.md, "C8.2: small language gaps").
-fn main_error(n: ast.Node) -> diag.Diag uses ffi {
+fn main_error(n: ast.Node) -> diag.Diag {
     errh("E0111", n.line, n.col, s("`main` takes no parameters and returns (), i32 or Result[(), E]"), "an i32 is the exit code (0 to 255); an Err is printed and exits with 1")
 }
 
@@ -2512,7 +2512,7 @@ fn main_result(c: C, ty: u32) -> bool {
     types.list_at(c.t, d.args, 0) == types.UNIT
 }
 
-fn check_const(inout c: C, it: Item, n: ast.Node, k: u64) -> Result[bool, diag.Diag] uses ffi {
+fn check_const(inout c: C, it: Item, n: ast.Node, k: u64) -> Result[bool, diag.Diag] {
     let ty = resolve_ty(inout c, it.m, n.c)?
     let vn = ndm(c, it.m, n.d)
     if owns(c, ty) { return Err(err("E0504", vn.line, vn.col, s("constants can't own heap memory; build the value in a function instead"))) }
@@ -2532,7 +2532,7 @@ fn check_const(inout c: C, it: Item, n: ast.Node, k: u64) -> Result[bool, diag.D
 }
 
 /// Record instance ii of an `extern "c"` or `export` function in the IR.
-fn record_ffi(inout c: C, ii: u32) uses ffi {
+fn record_ffi(inout c: C, ii: u32) {
     let inst = c.insts[ii as usize]
     let f = c.fdefs[inst.fd as usize]
     let n = ndm(c, f.md, f.node)
@@ -2566,7 +2566,7 @@ fn ffi_safe(c: C, ty: u32, is_ret: bool, records: bool) -> bool {
 
 /// E0803 for an `extern "c"` or `export` signature that can't cross the C boundary
 /// (node n of module m, parameter types ps).
-fn check_ffi_sig(c: C, m: u32, n: ast.Node, ps: List[u32], ret: u32) -> Result[bool, diag.Diag] uses ffi {
+fn check_ffi_sig(c: C, m: u32, n: ast.Node, ps: List[u32], ret: u32) -> Result[bool, diag.Diag] {
     let is_export = ast.has(n.b, ast.FN_EXPORT)
     let what = if is_export { "export" } else { "extern \"c\"" }
     let help = "C-safe types: integers, bool, str (const char*), and records made only of those (export only)"
@@ -2599,7 +2599,7 @@ fn check_ffi_sig(c: C, m: u32, n: ast.Node, ps: List[u32], ret: u32) -> Result[b
 }
 
 /// E0603 for a bound naming no trait, on generic parameters [start/len) of module m.
-fn check_bounds_known(inout c: C, m: u32, start: u32, len: u32) -> Result[bool, diag.Diag] uses ffi {
+fn check_bounds_known(inout c: C, m: u32, start: u32, len: u32) -> Result[bool, diag.Diag] {
     for i in 0..len {
         let g = ndm(c, m, atm(c, m, start, i))
         for j in 0..g.d {
@@ -2629,7 +2629,7 @@ fn find_method(c: C, m: u32, start: u32, len: u32, name: u32) -> u32 {
 }
 
 /// A trait method's return type or parameter type as compared by register_impl.
-fn norm(c: C, m: u32, tn1: u32, gens: List[u32], target: List[u8]) -> List[u8] uses ffi {
+fn norm(c: C, m: u32, tn1: u32, gens: List[u32], target: List[u8]) -> List[u8] {
     if tn1 == 0 { return s("()") }
     replace_self(show_ast(c, m, tn1 - 1, gens), target)
 }
@@ -2650,7 +2650,7 @@ fn option_ret(c: C, m: u32, mn: ast.Node) -> bool {
 /// Register the methods of impl node `id` of module m. Its errors are recorded as they are
 /// found; its methods are registered (an unknown trait's as inherent ones) unless the impl
 /// repeats another, each name once.
-fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Result[bool, diag.Diag] uses ffi {
+fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Result[bool, diag.Diag] {
     let im = ndm(c, m, id)
     let igens = gparams(c, m, im.c, im.d)
     let head = head_key(c, m, im.b, igens)
@@ -2787,7 +2787,7 @@ fn all_gparam_nodes(c: C, fi: u32) -> List[u32] {
 }
 
 /// The IR name of an instance: `name`, `name[T1, ..]`, `Self.name[..]`.
-fn inst_name(c: C, fi: u32, sb: Subst) -> List[u8] uses ffi {
+fn inst_name(c: C, fi: u32, sb: Subst) -> List[u8] {
     let f = c.fdefs[fi as usize]
     var out: List[u8] = List.new()
     if f.inode != NONE {
@@ -2810,7 +2810,7 @@ fn inst_name(c: C, fi: u32, sb: Subst) -> List[u8] uses ffi {
 
 /// The instance of declaration fi for substitution sb, resolving its signature the first
 /// time and queueing its body.
-fn instantiate(inout c: C, fi: u32, sb: Subst) -> Result[u32, diag.Diag] uses ffi {
+fn instantiate(inout c: C, fi: u32, sb: Subst) -> Result[u32, diag.Diag] {
     let f = c.fdefs[fi as usize]
     var keyl: List[u32] = List.new()
     if f.inode != NONE { keyl.push(subst_get(sb, intern.S_SELF_TYPE)) } else { keyl.push(NONE) }
@@ -2854,7 +2854,7 @@ fn instantiate(inout c: C, fi: u32, sb: Subst) -> Result[u32, diag.Diag] uses ff
 
 /// The parts of a signature that fail are recorded (naming the file as instantiate does) and
 /// are the error type, or left out (a capability), so the instance always exists.
-fn signature(inout c: C, fi: u32) -> Result[Inst, diag.Diag] uses ffi {
+fn signature(inout c: C, fi: u32) -> Result[Inst, diag.Diag] {
     let f = c.fdefs[fi as usize]
     let m = f.md
     let n = ndm(c, m, f.node)
@@ -2901,7 +2901,7 @@ fn signature(inout c: C, fi: u32) -> Result[Inst, diag.Diag] uses ffi {
     Ok(Inst(fi, 0, 0, NONE, ret, pstart, ps.len() as u32, cstart, caps.len() as u32))
 }
 
-fn caps_text(c: C, caps: List[u32]) -> List[u8] uses ffi {
+fn caps_text(c: C, caps: List[u32]) -> List[u8] {
     var out: List[u8] = List.new()
     for i in 0..caps.len() {
         if i > 0 { bytes.append(inout out, s(", ")) }
@@ -2931,7 +2931,7 @@ fn begin_body(inout c: C, m: u32, ret: u32, caps: List[u32], line: u32, col: u32
     push_scope(inout c)
 }
 
-fn check_test(inout c: C, m: u32, n: ast.Node) -> Result[bool, diag.Diag] uses ffi {
+fn check_test(inout c: C, m: u32, n: ast.Node) -> Result[bool, diag.Diag] {
     c.tsubst = no_subst()
     c.cur_all = true
     c.cur_mod = resolve.NOMOD
@@ -2953,7 +2953,7 @@ fn check_test(inout c: C, m: u32, n: ast.Node) -> Result[bool, diag.Diag] uses f
     Ok(true)
 }
 
-fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] uses ffi {
+fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] {
     let inst = c.insts[ii as usize]
     let f = c.fdefs[inst.fd as usize]
     let m = f.md
@@ -3005,7 +3005,7 @@ fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] uses ffi {
 
 // ---- statements
 
-fn block_body(inout c: C, b: u32, dest: Dest, exp: u32) -> Result[u32, diag.Diag] uses ffi {
+fn block_body(inout c: C, b: u32, dest: Dest, exp: u32) -> Result[u32, diag.Diag] {
     let n = nd(c, b)
     push_scope(inout c)
     push_frame(inout c)
@@ -3040,7 +3040,7 @@ fn block_body(inout c: C, b: u32, dest: Dest, exp: u32) -> Result[u32, diag.Diag
     Ok(ty)
 }
 
-fn check_bindable(c: C, actual: u32, fin: u32, line: u32, col: u32) -> Result[bool, diag.Diag] uses ffi {
+fn check_bindable(c: C, actual: u32, fin: u32, line: u32, col: u32) -> Result[bool, diag.Diag] {
     if poisoned(c, actual) || poisoned(c, fin) { return Ok(true) }
     if actual == types.NEVER { return Err(err("E0401", line, col, s("this expression never produces a value"))) }
     if actual == types.UNIT { return Err(err("E0401", line, col, s("cannot bind a value of type ()"))) }
@@ -3048,7 +3048,7 @@ fn check_bindable(c: C, actual: u32, fin: u32, line: u32, col: u32) -> Result[bo
     Ok(true)
 }
 
-fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] uses ffi {
+fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] {
     let n = nd(c, st)
     match n.kind {
         ast.SLet => {
@@ -3160,7 +3160,7 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] uses ffi {
 }
 
 /// `let PAT = init`.
-fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
+fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     let v = expr(inout c, n.c, NONE)?
     let init = nd(c, n.c)
     check_bindable(c, v.ty, v.ty, init.line, init.col)?
@@ -3195,7 +3195,7 @@ fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
     Ok(types.UNIT)
 }
 
-fn loop_exit(inout c: C, n: ast.Node, kind: u32) -> Result[u32, diag.Diag] uses ffi {
+fn loop_exit(inout c: C, n: ast.Node, kind: u32) -> Result[u32, diag.Diag] {
     if c.loops == 0 { return Err(err("E0306", n.line, n.col, s("`break`/`continue` outside of a loop"))) }
     let base: u32 = if c.loop_bases.len() > 0 { c.loop_bases[c.loop_bases.len() - 1] } else { 0 }
     drop_frames_from(inout c, base)
@@ -3213,7 +3213,7 @@ fn emit_exit_unless(inout c: C, cond: u32, base: u32, line: u32) {
     emit(inout c, ir.S_IF, 0, cond, then, els, 0, line)
 }
 
-fn for_range(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
+fn for_range(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     var vl = v_of(types.UNIT, 0)
     var vh = v_of(types.UNIT, 0)
     if is_lit(c, n.b) && !is_lit(c, n.c) {
@@ -3261,7 +3261,7 @@ fn for_range(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
     Ok(types.UNIT)
 }
 
-fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
+fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     let pv = place_expr(inout c, n.b)?
     let t = types.get(c.t, pv.ty)
     // (over a type parameter, with the bound, the body is checked as over an error value)
@@ -3331,7 +3331,7 @@ fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
 /// `for x in e` over a type with its own Iter ("Operation traits"): the loop runs on a copy
 /// of e, owned by the loop and dropped after it:
 /// it := e; loop { r := it.next(); if !(r is Some) break; x := r's item; body }
-fn for_iter(inout c: C, n: ast.Node, pv: PV) -> Result[u32, diag.Diag] uses ffi {
+fn for_iter(inout c: C, n: ast.Node, pv: PV) -> Result[u32, diag.Diag] {
     let ty = pv.ty
     let ix = custom_impl(c, TR_ITER, ty)
     let ii = impl_instance(inout c, TR_ITER, ix, ty)?
@@ -3404,7 +3404,7 @@ fn root(c: C, e: u32) -> Root {
     Root(false, 0, 0, 0)
 }
 
-fn check_assignable(c: C, target: u32, verb: str) -> Result[bool, diag.Diag] uses ffi {
+fn check_assignable(c: C, target: u32, verb: str) -> Result[bool, diag.Diag] {
     let r = root(c, target)
     if !r.ok {
         let tn = nd(c, target)
@@ -3427,7 +3427,7 @@ fn check_assignable(c: C, target: u32, verb: str) -> Result[bool, diag.Diag] use
     Err(err("E0110", r.line, r.col, q("unknown name `", kt(c, r.key), "`")))
 }
 
-fn assign(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
+fn assign(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     match check_assignable(c, n.a, "assign to") {
         Ok(_) => {}
         Err(d) => {
@@ -3470,7 +3470,7 @@ fn assign(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
 
 // ---- value forms
 
-fn compile_value(inout c: C, e: u32, dest: Dest, exp: u32) -> Result[u32, diag.Diag] uses ffi {
+fn compile_value(inout c: C, e: u32, dest: Dest, exp: u32) -> Result[u32, diag.Diag] {
     let n = nd(c, e)
     if n.kind == ast.EIf { return compile_if(inout c, n, dest, exp) }
     if n.kind == ast.EMatch { return compile_match(inout c, n, dest, exp) }
@@ -3499,7 +3499,7 @@ fn compile_value(inout c: C, e: u32, dest: Dest, exp: u32) -> Result[u32, diag.D
     Ok(types.UNIT)
 }
 
-fn unify(c: C, a: u32, b: u32, line: u32, col: u32) -> Result[u32, diag.Diag] uses ffi {
+fn unify(c: C, a: u32, b: u32, line: u32, col: u32) -> Result[u32, diag.Diag] {
     if a == types.NEVER { return Ok(b) }
     if b == types.NEVER || a == b { return Ok(a) }
     if poisoned(c, a) { return Ok(b) }
@@ -3507,7 +3507,7 @@ fn unify(c: C, a: u32, b: u32, line: u32, col: u32) -> Result[u32, diag.Diag] us
     Err(err("E0401", line, col, q2("branches have different types: ", ts(c, a), " and ", ts(c, b), "")))
 }
 
-fn compile_if(inout c: C, n: ast.Node, dest: Dest, exp: u32) -> Result[u32, diag.Diag] uses ffi {
+fn compile_if(inout c: C, n: ast.Node, dest: Dest, exp: u32) -> Result[u32, diag.Diag] {
     let cv = expr(inout c, n.a, types.BOOL)?
     if !same(c, cv.ty, types.BOOL) {
         let cn = nd(c, n.a)
@@ -3536,7 +3536,7 @@ fn compile_if(inout c: C, n: ast.Node, dest: Dest, exp: u32) -> Result[u32, diag
 
 // ---- patterns
 
-fn lower_pat(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) -> Result[u32, diag.Diag] uses ffi {
+fn lower_pat(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) -> Result[u32, diag.Diag] {
     let n = nd(c, pat)
     let tk = types.kind(c.t, ty)
     if tk == types.T_POISON {
@@ -3685,7 +3685,7 @@ fn poison_binds(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) {
 /// One arm alternative: its pattern tests.
 type Alt = { tests: List[Test] }
 
-fn compile_match(inout c: C, m: ast.Node, dest: Dest, exp: u32) -> Result[u32, diag.Diag] uses ffi {
+fn compile_match(inout c: C, m: ast.Node, dest: Dest, exp: u32) -> Result[u32, diag.Diag] {
     let sv = expr(inout c, m.a, NONE)?
     let sn = nd(c, m.a)
     // a syntax error inside: an arm may have been skipped, so the match isn't judged
@@ -3746,7 +3746,7 @@ fn compile_match(inout c: C, m: ast.Node, dest: Dest, exp: u32) -> Result[u32, d
 
 /// Emit arms i.. as an if/else chain (the last arm needs no test: the match is exhaustive);
 /// `result` is the unified type of the arms before i.
-fn match_arms(inout c: C, m: ast.Node, i: u32, alts: List[Alt], alt_start: List[u32], arm_binds: List[List[Bind]], dest: Dest, exp: u32, result: u32) -> Result[u32, diag.Diag] uses ffi {
+fn match_arms(inout c: C, m: ast.Node, i: u32, alts: List[Alt], alt_start: List[u32], arm_binds: List[List[Bind]], dest: Dest, exp: u32, result: u32) -> Result[u32, diag.Diag] {
     if i + 1 == m.d {
         let t = arm_body(inout c, m, i, arm_binds[i as usize], dest, exp)?
         return finish_match(c, m, i, dest, result, t)
@@ -3765,19 +3765,19 @@ fn match_arms(inout c: C, m: ast.Node, i: u32, alts: List[Alt], alt_start: List[
 
 fn arm_pos(c: C, arm: ast.Node) -> ast.Node { nd(c, arm.a) }
 
-fn finish_arm(c: C, m: ast.Node, i: u32, result: u32, t: u32) -> Result[u32, diag.Diag] uses ffi {
+fn finish_arm(c: C, m: ast.Node, i: u32, result: u32, t: u32) -> Result[u32, diag.Diag] {
     let arm = nd(c, at(c, m.c, i))
     let b = arm_pos(c, arm)
     unify(c, result, t, b.line, b.col)
 }
 
-fn finish_match(c: C, m: ast.Node, i: u32, dest: Dest, result: u32, t: u32) -> Result[u32, diag.Diag] uses ffi {
+fn finish_match(c: C, m: ast.Node, i: u32, dest: Dest, result: u32, t: u32) -> Result[u32, diag.Diag] {
     let r = finish_arm(c, m, i, result, t)?
     if dest.kind == D_DISCARD && r != types.NEVER { return Ok(types.UNIT) }
     Ok(r)
 }
 
-fn arm_body(inout c: C, m: ast.Node, i: u32, binds: List[Bind], dest: Dest, exp: u32) -> Result[u32, diag.Diag] uses ffi {
+fn arm_body(inout c: C, m: ast.Node, i: u32, binds: List[Bind], dest: Dest, exp: u32) -> Result[u32, diag.Diag] {
     let arm = nd(c, at(c, m.c, i))
     push_scope(inout c)
     push_frame(inout c)
@@ -3864,7 +3864,7 @@ fn is_place(c: C, e: u32) -> bool {
 
 /// Check expression e against the expected type `exp` (NONE: no expectation). An owned
 /// rvalue comes back as a registered temporary.
-fn expr(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
+fn expr(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
     // a recovery point: a failed expression is recorded and stands for an error value
     let sp = snap(c)
     let v = match expr_raw(inout c, e, exp) {
@@ -3885,7 +3885,7 @@ fn expr(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
     Ok(mk_fresh(inout c, v, line))
 }
 
-fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
+fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
     let n = nd(c, e)
     match n.kind {
         ast.EInt => {
@@ -3991,7 +3991,7 @@ fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
 }
 
 /// A name that isn't a local: a constant, a unit variant, or an error.
-fn ident_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag] uses ffi {
+fn ident_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag] {
     let ci = mget(c.consts, k)
     if ci != NONE {
         let cd = c.cdefs[ci as usize]
@@ -4033,7 +4033,7 @@ fn static_tmpl(c: C, n: ast.Node) -> u32 {
 }
 
 /// A place expression (variable, field, element), or a value held in a temporary.
-fn place_expr(inout c: C, e: u32) -> Result[PV, diag.Diag] uses ffi {
+fn place_expr(inout c: C, e: u32) -> Result[PV, diag.Diag] {
     let n = nd(c, e)
     if n.kind == ast.EIdent {
         let k = ekey(c, n)
@@ -4125,7 +4125,7 @@ fn value_place(inout c: C, v: V, line: u32) -> PV {
     PV(pl, v.ty, v.op)
 }
 
-fn negate(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
+fn negate(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let x = nd(c, n.b)
     if x.kind == ast.EInt {
         var ik = types.IK_I32
@@ -4155,7 +4155,7 @@ fn negate(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
 }
 
 /// `~x`: the bitwise complement of an integer (any integer type; no trap).
-fn bit_not(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
+fn bit_not(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let v = expr(inout c, n.b, exp)?
     if poisoned(c, v.ty) { return Ok(v) }
     if !types.is_int(c.t, v.ty) {
@@ -4166,7 +4166,7 @@ fn bit_not(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
     Ok(v_of(v.ty, emit_val(inout c, ir.S_UNARY, ir.U_BNOT, v.op, 0, v.ty, v.ty, n.line)))
 }
 
-fn binary(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
+fn binary(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let op = n.a
     let ln = nd(c, n.b)
     let rn = nd(c, n.c)
@@ -4240,7 +4240,7 @@ fn binary(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
 }
 
 /// A shift count known at compile time must be below the width (and not negative): E0505.
-fn check_shift(c: C, rn: ast.Node, ik: u32, vr: V) -> Result[bool, diag.Diag] uses ffi {
+fn check_shift(c: C, rn: ast.Node, ik: u32, vr: V) -> Result[bool, diag.Diag] {
     if !vr.has_k { return Ok(true) }
     let bits = types.bits(ik)
     if fold.lt(vr.k, fold.zero()) || !fold.lt(vr.k, fold.of_u64(bits as u64)) {
@@ -4250,7 +4250,7 @@ fn check_shift(c: C, rn: ast.Node, ik: u32, vr: V) -> Result[bool, diag.Diag] us
     Ok(true)
 }
 
-fn fold_arith(inout c: C, n: ast.Node, op: u32, ik: u32, ty: u32, a: fold.Wide, b: fold.Wide) -> Result[V, diag.Diag] uses ffi {
+fn fold_arith(inout c: C, n: ast.Node, op: u32, ik: u32, ty: u32, a: fold.Wide, b: fold.Wide) -> Result[V, diag.Diag] {
     var wide = fold.zero()
     var wraps = false
     if op == ast.OP_ADD || op == ast.OP_WADD { wide = fold.add(a, b) }
@@ -4272,7 +4272,7 @@ fn fold_arith(inout c: C, n: ast.Node, op: u32, ik: u32, ty: u32, a: fold.Wide, 
     Ok(const_v(inout c, ty, wide))
 }
 
-fn cast(inout c: C, n: ast.Node) -> Result[V, diag.Diag] uses ffi {
+fn cast(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
     let am = c.am
     let target = resolve_ty(inout c, am, n.b)?
     if !types.is_int(c.t, target) {
@@ -4295,7 +4295,7 @@ fn cast(inout c: C, n: ast.Node) -> Result[V, diag.Diag] uses ffi {
     Ok(v_of(target, emit_val(inout c, ir.S_CAST, v.op, 0, 0, target, target, n.line)))
 }
 
-fn array_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
+fn array_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     var exp_elem = NONE
     if exp != NONE && types.kind(c.t, exp) == types.T_ARRAY { exp_elem = types.get(c.t, exp).a }
     if n.d == 0 { return Err(err("E0401", n.line, n.col, s("cannot infer the element type of an empty array"))) }
@@ -4320,7 +4320,7 @@ fn array_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi
     Ok(v_of(ty, emit_val(inout c, ir.S_ARRAY, 0, start, n.d, ty, ty, n.line)))
 }
 
-fn tuple_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
+fn tuple_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     // `()`: the unit value
     if n.d == 0 { return Ok(v_of(types.UNIT, ir.op_unit(inout c.ir))) }
     var hints: List[u32] = List.new()
@@ -4347,7 +4347,7 @@ fn tuple_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi
 }
 
 /// `x?` on a Result or Option: on Err/None, drop everything and return it.
-fn try_op(inout c: C, n: ast.Node) -> Result[V, diag.Diag] uses ffi {
+fn try_op(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
     if c.lam_expr { return Err(unsup(n.line, n.col, "`?` in a closure without a block body")) }
     let v = expr(inout c, n.a, NONE)?
     if poisoned(c, v.ty) || poisoned(c, c.ret) { return Ok(poison_v(inout c)) }
@@ -4422,7 +4422,7 @@ fn variant_index(c: C, ty: u32, sym: u32) -> u32 {
 
 fn arg_expr(c: C, a: u32) -> u32 { nd(c, a).a }
 
-fn call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
+fn call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let k = ekey(c, n)
     if is_builtin_fn(c, k) { return builtin(inout c, n, resolve.key_sym(k)) }
     let vd = mget(c.variants, k)
@@ -4482,7 +4482,7 @@ fn field_nodes(c: C, di: u32, vkey: u64) -> List[u32] {
 /// Construct record template `di` (vkey = NONE) or variant `vkey` of enum template `di`
 /// from the arguments [start/len), inferring type arguments from the expected type and
 /// the arguments.
-fn construct(inout c: C, line: u32, col: u32, di: u32, vkey: u64, start: u32, len: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
+fn construct(inout c: C, line: u32, col: u32, di: u32, vkey: u64, start: u32, len: u32, exp: u32) -> Result[V, diag.Diag] {
     let d = c.t.defs[di as usize]
     let fas = field_nodes(c, di, vkey)
     let label = if vkey != NONE as u64 { kt(c, vkey) } else { kt(c, d.key) }
@@ -4576,7 +4576,7 @@ fn idents(c: C, e: u32, inout out: List[u64]) {
     }
 }
 
-fn cap_error(c: C, line: u32, col: u32, what: List[u8], cap: u32) -> diag.Diag uses ffi {
+fn cap_error(c: C, line: u32, col: u32, what: List[u8], cap: u32) -> diag.Diag {
     var d = err("E0201", line, col, q2("call to `", what, "` requires capability `", nm(c, cap), "`"))
     let ins = if c.caps.len() == 0 { q(" uses ", nm(c, cap), "") } else { q(", ", nm(c, cap), "") }
     d.fix = Some(diag.Fix(c.sig_line, c.sig_col, 0, ins))
@@ -4599,7 +4599,7 @@ fn no_recv() -> Recv { Recv(false, 0, PV(0, 0, NONE)) }
 
 /// Call declaration fi with the arguments of call node n (ECall or EMethod), inferring its
 /// type parameters.
-fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv: Recv, exp: u32, is_method: bool) -> Result[V, diag.Diag] uses ffi {
+fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv: Recv, exp: u32, is_method: bool) -> Result[V, diag.Diag] {
     note_fn(inout c, n, fi)
     let f = c.fdefs[fi as usize]
     let fm = f.md
@@ -4817,7 +4817,7 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
     Ok(v_of(ret, emit_val(inout c, ir.S_CALL, inst.ir, st, na, ret, ret, n.line)))
 }
 
-fn builtin(inout c: C, n: ast.Node, which: u32) -> Result[V, diag.Diag] uses ffi {
+fn builtin(inout c: C, n: ast.Node, which: u32) -> Result[V, diag.Diag] {
     for i in 0..n.d {
         let a = nd(c, at(c, n.c, i))
         if a.b == 1 {
@@ -4913,7 +4913,7 @@ fn label_of(c: C, head: List[u8], name: u32) -> List[u8] {
     l
 }
 
-fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
+fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let r = nd(c, n.a)
     var static_head: u64 = 0
     var is_static = false
@@ -4995,7 +4995,7 @@ fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses f
 
 /// `x.copy()`, `x.eq(y)`, `x.compare(y)`, `x.hash()`, `x.show(inout out)` and `x.to_string()`
 /// (tr = NTR) of a type that derives the trait (a type with its own impl has the method).
-fn trait_method(inout c: C, n: ast.Node, pv: PV, tr: u32) -> Result[V, diag.Diag] uses ffi {
+fn trait_method(inout c: C, n: ast.Node, pv: PV, tr: u32) -> Result[V, diag.Diag] {
     let ty = pv.ty
     let label = label_of(c, ts(c, ty), n.b)
     let need = if tr == NTR { TR_SHOW } else { tr }
@@ -5054,7 +5054,7 @@ fn trait_method(inout c: C, n: ast.Node, pv: PV, tr: u32) -> Result[V, diag.Diag
 
 /// The built-in methods of type kind tk (heap_method, thread_method): an impl on the type
 /// can add methods (found after these), but not one of these names (E0116).
-fn builtin_method(c: C, tk: u32, name: u32) -> bool uses ffi {
+fn builtin_method(c: C, tk: u32, name: u32) -> bool {
     let mi = sym_index(c.w.hm, name)
     if tk == types.T_STRING {
         return mi == M_LEN || mi == M_IS_EMPTY || mi == M_PUSH_STR || mi == M_APPEND || mi == M_BYTE || mi == M_SLICE || mi == M_BYTES || mi == M_PUSH_BYTE
@@ -5093,7 +5093,7 @@ fn builtin_head_kind(c: C, head: u64) -> u32 {
 }
 
 /// Check the arguments of a built-in method against `tys`.
-fn eval_args(inout c: C, n: ast.Node, tys: List[u32], label: List[u8]) -> Result[List[V], diag.Diag] uses ffi {
+fn eval_args(inout c: C, n: ast.Node, tys: List[u32], label: List[u8]) -> Result[List[V], diag.Diag] {
     if n.d != tys.len() as u32 {
         return Err(err("E0405", n.line, n.col, q3("`", label, "` takes ", num(tys.len() as u64), " argument(s), but ", num(n.d as u64), " were given")))
     }
@@ -5124,7 +5124,7 @@ fn two(a: u32, b: u32) -> List[u32] {
 }
 
 /// `String.from(..)`, `List.new()`, ...
-fn heap_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
+fn heap_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag.Diag] {
     let label = label_of(c, nm(c, head), n.b)
     let mi = sym_index(c.w.hm, n.b)
     if head == c.w.s_string && mi == M_FROM {
@@ -5183,7 +5183,7 @@ fn recv_op(inout c: C, pv: PV) -> u32 {
 
 /// Methods of String, List, Map and Box. Mutating methods need the
 /// receiver to be assignable and take it as a place.
-fn heap_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] uses ffi {
+fn heap_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
     let ty = pv.ty
     let t = types.get(c.t, ty)
     let tk = t.kind
@@ -5325,7 +5325,7 @@ fn heap_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] uses ffi
 
 /// The byte methods of String and str (C8.2): byte, slice, bytes, and push_byte on String.
 /// V.ty is NONE when `mi` isn't one of them.
-fn text_method(inout c: C, n: ast.Node, pv: PV, mi: u32, label: List[u8]) -> Result[V, diag.Diag] uses ffi {
+fn text_method(inout c: C, n: ast.Node, pv: PV, mi: u32, label: List[u8]) -> Result[V, diag.Diag] {
     if mi == M_BYTE {
         let ro = recv_op(inout c, pv)
         let vs = eval_args(inout c, n, one(types.USIZE), label)?
@@ -5359,7 +5359,7 @@ fn text_method(inout c: C, n: ast.Node, pv: PV, mi: u32, label: List[u8]) -> Res
 }
 
 /// The prelude's Option[el].
-fn option_of(inout c: C, el: u32, n: ast.Node) -> Result[u32, diag.Diag] uses ffi {
+fn option_of(inout c: C, el: u32, n: ast.Node) -> Result[u32, diag.Diag] {
     let di = mget(c.tmpl, resolve.key(0, c.w.option))
     inst_type(inout c, di, one(el), n.line, n.col)
 }
@@ -5458,7 +5458,7 @@ type Saved = {
 
 /// `|params| body`: the body becomes an IR function of its own whose
 /// environment holds a snapshot (clone) of every enclosing local the body mentions.
-fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
+fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     var hp: List[u32] = List.new()
     var hr = NONE
     // a closure where an error value is expected: its parameters and result are of the error type
@@ -5568,7 +5568,7 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] uses ffi {
 }
 
 /// The closure's captures and parameters declared, its body checked; its return type.
-fn lambda_in(inout c: C, n: ast.Node, caps: List[Capture], ptys: List[u32], pkeys: List[u64], ret_hint: u32) -> Result[u32, diag.Diag] uses ffi {
+fn lambda_in(inout c: C, n: ast.Node, caps: List[Capture], ptys: List[u32], pkeys: List[u64], ret_hint: u32) -> Result[u32, diag.Diag] {
     let body = nd(c, n.a)
     for cp in caps {
         let l = ir.local(inout c.ir, resolve.key_sym(cp.key), cp.ty, ir.L_CAPTURE, body.line)
@@ -5586,7 +5586,7 @@ fn lambda_in(inout c: C, n: ast.Node, caps: List[Capture], ptys: List[u32], pkey
 }
 
 /// Check a closure body; returns its return type.
-fn lambda_body(inout c: C, e: u32, ret_hint: u32) -> Result[u32, diag.Diag] uses ffi {
+fn lambda_body(inout c: C, e: u32, ret_hint: u32) -> Result[u32, diag.Diag] {
     let body = nd(c, e)
     if is_value_form(c, e) {
         if ret_hint == NONE {
@@ -5620,7 +5620,7 @@ fn lambda_body(inout c: C, e: u32, ret_hint: u32) -> Result[u32, diag.Diag] uses
 }
 
 /// Call the closure value fv with the arguments of call node n.
-fn call_value(inout c: C, n: ast.Node, label: List[u8], fv: V) -> Result[V, diag.Diag] uses ffi {
+fn call_value(inout c: C, n: ast.Node, label: List[u8], fv: V) -> Result[V, diag.Diag] {
     if types.kind(c.t, fv.ty) != types.T_FN {
         let d = if poisoned(c, fv.ty) { quiet() } else { err("E0112", n.line, n.col, q2("`", label, "` has type ", ts(c, fv.ty), ", so it can't be called")) }
         return fail_call(inout c, d, n.c, n.d)
@@ -5663,7 +5663,7 @@ fn inst_fn_type(inout c: C, ii: u32) -> u32 {
 }
 
 /// A named function used as a value of the expected fn type.
-fn fn_as_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag] uses ffi {
+fn fn_as_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag] {
     let fi = mget(c.fns, k)
     let f = c.fdefs[fi as usize]
     let label = kt(c, k)
@@ -5721,7 +5721,7 @@ fn list_loop_end(inout c: C, lp: ListLoop, line: u32) {
 }
 
 /// The closure argument of a List combinator, checked against `fn(el) -> want`.
-fn closure_arg(inout c: C, n: ast.Node, i: u32, ps: List[u32], want: u32) -> Result[V, diag.Diag] uses ffi {
+fn closure_arg(inout c: C, n: ast.Node, i: u32, ps: List[u32], want: u32) -> Result[V, diag.Diag] {
     c.lam = LamHint(true, ps, want)
     let ae = arg_expr(c, at(c, n.c, i))
     let fv = expr(inout c, ae, NONE)?
@@ -5730,7 +5730,7 @@ fn closure_arg(inout c: C, n: ast.Node, i: u32, ps: List[u32], want: u32) -> Res
 }
 
 /// map / filter / for_each / any / all on a List.
-fn combinator(inout c: C, n: ast.Node, pv: PV, mi: u32) -> Result[V, diag.Diag] uses ffi {
+fn combinator(inout c: C, n: ast.Node, pv: PV, mi: u32) -> Result[V, diag.Diag] {
     let ty = pv.ty
     let el = types.get(c.t, ty).a
     var want = NONE
@@ -5814,7 +5814,7 @@ fn combinator(inout c: C, n: ast.Node, pv: PV, mi: u32) -> Result[V, diag.Diag] 
 }
 
 /// `l.fold(init, f)`: acc := init; for x in l { acc = f(acc, x) } (the old acc dropped).
-fn fold_list(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] uses ffi {
+fn fold_list(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
     let ty = pv.ty
     let el = types.get(c.t, ty).a
     let ro = recv_op(inout c, pv)
@@ -5854,10 +5854,10 @@ fn fold_list(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] uses ffi {
 // needs an assignable receiver). The closure given to `spawn`, a Mutex's new value and a
 // sent value are moved in (`take`); `join`, `get` and `recv` give owned results.
 
-fn is_word(c: C, sym: u32, w: str) -> bool uses ffi { bytes.eq(nm(c, sym), s(w)) }
+fn is_word(c: C, sym: u32, w: str) -> bool { bytes.eq(nm(c, sym), s(w)) }
 
 /// `spawn(closure)`; the `threads` capability is checked by the caller.
-fn spawn(inout c: C, n: ast.Node) -> Result[V, diag.Diag] uses ffi {
+fn spawn(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
     if n.d != 1 { return Err(err("E0405", n.line, n.col, s("`spawn` takes exactly one closure"))) }
     let ae = arg_expr(c, at(c, n.c, 0))
     let x = nd(c, ae)
@@ -5875,7 +5875,7 @@ fn spawn(inout c: C, n: ast.Node) -> Result[V, diag.Diag] uses ffi {
 }
 
 /// `Mutex.new(v)` and `Chan.new()`.
-fn thread_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag.Diag] uses ffi {
+fn thread_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag.Diag] {
     if head == c.w.heap[4] {
         if n.d != 1 { return Err(err("E0405", n.line, n.col, s("`Mutex.new` takes exactly one argument"))) }
         var hint = NONE
@@ -5898,7 +5898,7 @@ fn thread_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag
 }
 
 /// Methods of Task, Mutex and Chan.
-fn thread_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] uses ffi {
+fn thread_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
     let ty = pv.ty
     let t = types.get(c.t, ty)
     let el = t.a

@@ -216,7 +216,7 @@ fn field_tys(t: types.Types, ty: u32, c: Pat) -> List[u32] {
 }
 
 /// How a constructor prints in a witness.
-fn show(t: types.Types, names: intern.Interner, ty: u32, ck: u32, ca: u32, cv: u64, inner: List[List[u8]]) -> List[u8] uses ffi {
+fn show(t: types.Types, names: intern.Interner, ty: u32, ck: u32, ca: u32, cv: u64, inner: List[List[u8]]) -> List[u8] {
     var out: List[u8] = List.new()
     if ck == C_BOOL {
         let s = if ca == 1 { "true" } else { "false" }
@@ -258,7 +258,7 @@ fn show(t: types.Types, names: intern.Interner, ty: u32, ck: u32, ca: u32, cv: u
 }
 
 /// A witness (one text per column) of a value no row matches, or None if `m` is exhaustive.
-pub fn missing(p: Pats, t: types.Types, names: intern.Interner, m: M, tys: List[u32]) -> Option[List[List[u8]]] uses ffi {
+pub fn missing(p: Pats, t: types.Types, names: intern.Interner, m: M, tys: List[u32]) -> Option[List[List[u8]]] {
     if tys.len() == 0 {
         if m.n == 0 { return Some(List.new()) }
         return None

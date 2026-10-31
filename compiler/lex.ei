@@ -264,7 +264,7 @@ pub fn lex(src: List[u8], inout names: intern.Interner) -> Lex {
 
 /// Every lexing error, and the tokens of the rest (Lexed2). The messages are the ones
 /// `resolve.lex_diag` makes of `lex`'s result.
-pub fn lex_all(src: List[u8], inout names: intern.Interner) -> Lexed2 uses ffi {
+pub fn lex_all(src: List[u8], inout names: intern.Interner) -> Lexed2 {
     let r = run(src, inout names, true)
     var ds: List[diag.Diag] = List.new()
     for b in r.bad {

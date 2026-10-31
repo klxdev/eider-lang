@@ -72,7 +72,7 @@ pub fn new_int(inout d: Doc, v: i64) -> u32 {
 }
 
 /// A number from its text, which must be a valid JSON number (it is written as is).
-pub fn new_number(inout d: Doc, text: List[u8]) -> Option[u32] uses ffi {
+pub fn new_number(inout d: Doc, text: List[u8]) -> Option[u32] {
     if !valid_number(text) { return None }
     let v = int_value(text)
     let t = add_str(inout d, text)
@@ -184,7 +184,7 @@ pub fn get(d: Doc, id: u32, key: List[u8]) -> Option[u32] {
 }
 
 /// `get` with a literal key.
-pub fn field(d: Doc, id: u32, key: str) -> Option[u32] uses ffi { get(d, id, sys.lit(key)) }
+pub fn field(d: Doc, id: u32, key: str) -> Option[u32] { get(d, id, sys.lit(key)) }
 
 /// Follow a path of object keys from `id`.
 pub fn path(d: Doc, id: u32, keys: List[List[u8]]) -> Option[u32] {
@@ -201,7 +201,7 @@ pub fn path(d: Doc, id: u32, keys: List[List[u8]]) -> Option[u32] {
 // ---- parsing
 
 /// Parse one JSON text.
-pub fn parse(src: List[u8]) -> Result[Doc, Error] uses ffi {
+pub fn parse(src: List[u8]) -> Result[Doc, Error] {
     var p = P(src, 0, 0, new_doc(), List.new())
     // a UTF-8 byte order mark is not JSON (RFC 8259 8.1: MUST NOT add one; we may reject it)
     ws(inout p)
@@ -235,7 +235,7 @@ fn error_at(src: List[u8], at: usize, msg: List[u8]) -> Error {
 }
 
 /// "msg at line L, column C (byte N)"
-pub fn error_text(e: Error) -> List[u8] uses ffi {
+pub fn error_text(e: Error) -> List[u8] {
     var m = e.msg
     bytes.append(inout m, sys.lit(" at line "))
     bytes.append(inout m, bytes.from_u64(e.line as u64))
@@ -252,7 +252,7 @@ fn peek(p: P) -> u8 {
     0
 }
 
-fn fail(inout p: P, m: str) -> Option[u32] uses ffi {
+fn fail(inout p: P, m: str) -> Option[u32] {
     p.err = sys.lit(m)
     None
 }
@@ -268,7 +268,7 @@ fn ws(inout p: P) {
     }
 }
 
-fn value(inout p: P) -> Option[u32] uses ffi {
+fn value(inout p: P) -> Option[u32] {
     if p.i >= p.src.len() { return fail(inout p, "unexpected end of input, expected a value") }
     let c = p.src[p.i]
     if c == 123 { return obj(inout p) }
@@ -286,7 +286,7 @@ fn value(inout p: P) -> Option[u32] uses ffi {
     fail(inout p, "unexpected character, expected a value")
 }
 
-fn word(inout p: P, w: str, k: u32, a: u32) -> Option[u32] uses ffi {
+fn word(inout p: P, w: str, k: u32, a: u32) -> Option[u32] {
     let t = sys.lit(w)
     for x in t {
         if peek(p) != x {
@@ -302,7 +302,7 @@ fn enter(inout p: P) -> bool {
     p.depth <= MAX_DEPTH
 }
 
-fn arr(inout p: P) -> Option[u32] uses ffi {
+fn arr(inout p: P) -> Option[u32] {
     if !enter(inout p) { return fail(inout p, "nested too deeply") }
     p.i += 1
     var items: List[u32] = List.new()
@@ -335,7 +335,7 @@ fn arr(inout p: P) -> Option[u32] uses ffi {
     Some(new_array(inout p.doc, items))
 }
 
-fn obj(inout p: P) -> Option[u32] uses ffi {
+fn obj(inout p: P) -> Option[u32] {
     if !enter(inout p) { return fail(inout p, "nested too deeply") }
     p.i += 1
     var keys: List[u32] = List.new()
@@ -462,7 +462,7 @@ pub fn utf8_len(s: List[u8], i: usize) -> usize {
 }
 
 /// A string literal at the cursor (the opening quote); returns its decoded contents.
-fn str_lit(inout p: P) -> Option[List[u8]] uses ffi {
+fn str_lit(inout p: P) -> Option[List[u8]] {
     p.i += 1
     var out: List[u8] = List.new()
     while true {
@@ -553,7 +553,7 @@ fn str_lit(inout p: P) -> Option[List[u8]] uses ffi {
 }
 
 /// A number at the cursor: -?(0|[1-9][0-9]*)(.[0-9]+)?([eE][+-]?[0-9]+)?
-fn num(inout p: P) -> Option[u32] uses ffi {
+fn num(inout p: P) -> Option[u32] {
     let start = p.i
     if peek(p) == 45 { p.i += 1 }
     if !bytes.is_digit(peek(p)) { return fail(inout p, "expected a digit") }
@@ -584,7 +584,7 @@ fn num(inout p: P) -> Option[u32] uses ffi {
 }
 
 /// The whole text is a JSON number.
-fn valid_number(text: List[u8]) -> bool uses ffi {
+fn valid_number(text: List[u8]) -> bool {
     if text.len() == 0 { return false }
     var p = P(text, 0, 0, new_doc(), List.new())
     match num(inout p) {
@@ -682,13 +682,13 @@ pub fn quote(s: List[u8]) -> List[u8] {
 }
 
 /// Node `id` as compact JSON text.
-pub fn write(d: Doc, id: u32) -> List[u8] uses ffi {
+pub fn write(d: Doc, id: u32) -> List[u8] {
     var out: List[u8] = List.new()
     write_into(inout out, d, id)
     out
 }
 
-pub fn write_into(inout out: List[u8], d: Doc, id: u32) uses ffi {
+pub fn write_into(inout out: List[u8], d: Doc, id: u32) {
     let k = kind(d, id)
     if k == NULL || k == 0 {
         bytes.append(inout out, sys.lit("null"))

@@ -16,7 +16,7 @@ import "dump.ei"
 /// (`explained`).
 pub type Front = { parsed: parse.Parsed, diags: List[diag.Diag] }
 
-pub fn analyze(src: List[u8]) -> Front uses ffi {
+pub fn analyze(src: List[u8]) -> Front {
     var names = intern.new()
     let lx = lex.lex_all(src, inout names)
     let parsed = parse.parse_all(lx.lexed, names)
@@ -24,7 +24,7 @@ pub fn analyze(src: List[u8]) -> Front uses ffi {
 }
 
 /// The lexer's diagnostics, then the parser's that no lexer error explains.
-pub fn merge(lexd: List[diag.Diag], parsed: List[diag.Diag]) -> List[diag.Diag] uses ffi {
+pub fn merge(lexd: List[diag.Diag], parsed: List[diag.Diag]) -> List[diag.Diag] {
     var out = lexd
     for d in parsed {
         if !explained(lexd, d) { out.push(d) }
@@ -35,7 +35,7 @@ pub fn merge(lexd: List[diag.Diag], parsed: List[diag.Diag]) -> List[diag.Diag] 
 /// Whether parser error `d` may come only from the lexer's recovery: it is on the line of a
 /// lexer error, at or after it (the skipped character, or the literal that lexed as 0), or
 /// anywhere after an unterminated block comment (which runs to the end of the file).
-fn explained(lexd: List[diag.Diag], d: diag.Diag) -> bool uses ffi {
+fn explained(lexd: List[diag.Diag], d: diag.Diag) -> bool {
     let comment = sys.lit("unterminated block comment")
     for e in lexd {
         let after = d.line > e.line || (d.line == e.line && d.col >= e.col)
@@ -47,7 +47,7 @@ fn explained(lexd: List[diag.Diag], d: diag.Diag) -> bool uses ffi {
 
 /// Every diagnostic as a JSON line (diag.json, against `file`), then the AST dump (dump.ei,
 /// error nodes included).
-pub fn report(file: List[u8], src: List[u8]) -> List[u8] uses ffi {
+pub fn report(file: List[u8], src: List[u8]) -> List[u8] {
     let f = analyze(src)
     var out: List[u8] = List.new()
     for d in f.diags {

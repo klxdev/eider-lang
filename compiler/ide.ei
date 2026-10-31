@@ -18,7 +18,7 @@
 //   pub type Ref = { span: Span, target: u32 }          a use and the Symbol it resolves to
 //   pub type TypeAt = { span: Span, text: List[u8] }    the type of an expression or binding
 //   pub type Analysis = { diags: List[diag.Diag], symbols: List[Symbol], refs: List[Ref], types: List[TypeAt], files: List[List[u8]] }
-//   pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: List[List[u8]]) -> Analysis uses io, fs, net, clock, ffi
+//   pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: List[List[u8]]) -> Analysis uses io, fs, net, clock
 //       entry: a .ei path; the overlay (unsaved editor buffers) replaces the contents of
 //       the files on disk with the same canonical path. Never exits and never prints:
 //       every failure is a diagnostic.
@@ -93,11 +93,11 @@ pub type Analysis = { diags: List[diag.Diag], symbols: List[Symbol], refs: List[
 
 const NONE: u32 = 4294967295
 
-fn s(x: str) -> List[u8] uses ffi { sys.lit(x) }
+fn s(x: str) -> List[u8] { sys.lit(x) }
 
 // ---- analyze
 
-pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: List[List[u8]]) -> Analysis uses io, fs, net, clock, ffi {
+pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: List[List[u8]]) -> Analysis uses io, fs, net, clock {
     let fp = resolve.overlay(overlay_paths, overlay_texts)
     var diags: List[diag.Diag] = List.new()
     var files: List[List[u8]] = List.new()
@@ -136,7 +136,7 @@ pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: Li
 }
 
 /// The diagnostics as `eiderc check` prints them (each once, final_diag).
-fn finals(ds: List[diag.Diag], entry: List[u8]) -> List[diag.Diag] uses ffi {
+fn finals(ds: List[diag.Diag], entry: List[u8]) -> List[diag.Diag] {
     var out: List[diag.Diag] = List.new()
     for d in diag.dedup(ds) { out.push(final_diag(d, entry)) }
     out
@@ -155,7 +155,7 @@ fn final_diag(d: diag.Diag, entry: List[u8]) -> diag.Diag {
 }
 
 /// The entry file can't be read (`eiderc check` prints `eiderc: <error>` and exits 2).
-fn read_diag(entry: List[u8]) -> diag.Diag uses fs, ffi {
+fn read_diag(entry: List[u8]) -> diag.Diag uses fs {
     var m = s("cannot read `")
     bytes.append(inout m, entry)
     bytes.append(inout m, s("`"))
@@ -179,7 +179,7 @@ fn has_comptime(p: resolve.Program) -> bool {
 
 /// Why comptime evaluation would make `eiderc check` exit (driver.fail), if it would: no
 /// toolchain, no C core, or no work directory.
-fn toolchain_problem() -> Option[diag.Diag] uses io, fs, clock, ffi {
+fn toolchain_problem() -> Option[diag.Diag] uses io, fs, clock {
     let root = driver.find_root()
     if root.len() == 0 { return Some(diag.new("toolchain", 1, 1, s("cannot find the toolchain (a directory with core/eider_rt.h); set EIDER_ROOT"))) }
     for f in ["core/eider_rt.h", "core/eider_rt.c", "core/eider_core.c"] {
@@ -222,7 +222,7 @@ fn akey(m: u32, line: u32, col: u32) -> u64 {
     (m as u64) * 17592186044416 + (l as u64) * 4194304 + c as u64
 }
 
-fn build(p: resolve.Program, rec: check.Rec, t: types.Types, diags: List[diag.Diag]) -> Analysis uses ffi {
+fn build(p: resolve.Program, rec: check.Rec, t: types.Types, diags: List[diag.Diag]) -> Analysis {
     var b = B(p, List.new(), Map.new(), List.new(), Map.new(), Map.new(), Map.new())
     for r in rec.refs { b.used.insert(akey(r.m, r.line, r.col), true) }
     for x in rec.tys {
@@ -550,7 +550,7 @@ fn sym_at(inout b: B, m: u32, ti: u32, name: List[u8], kind: u32, first: u32, la
     add_sym(inout b, m, name, kind, sp, full, container, detail, n.line, n.col)
 }
 
-fn module_symbols(inout b: B, m: u32) uses ffi {
+fn module_symbols(inout b: B, m: u32) {
     let md = b.p.mods[m as usize]
     let n = ntoks(b, m)
     let eof = tok(b, m, n - 1)
@@ -587,7 +587,7 @@ fn module_symbols(inout b: B, m: u32) uses ffi {
 
 fn is_sep(k: lex.Kind) -> bool { k == lex.Newline || k == lex.Semi || k == lex.Eof }
 
-fn item_symbols(inout b: B, m: u32, id: u32, first: u32, last: u32, inout tys: Map[u32, u32]) uses ffi {
+fn item_symbols(inout b: B, m: u32, id: u32, first: u32, last: u32, inout tys: Map[u32, u32]) {
     let n = node(b, m, id)
     let ti = tok_at(b, m, n.line, n.col)
     if ti == NONE { return }
@@ -671,7 +671,7 @@ fn item_symbols(inout b: B, m: u32, id: u32, first: u32, last: u32, inout tys: M
 }
 
 /// A method of an impl or trait: from its first token to the end of its body (or signature).
-fn method_symbols(inout b: B, m: u32, id: u32, container: u32) uses ffi {
+fn method_symbols(inout b: B, m: u32, id: u32, container: u32) {
     let n = node(b, m, id)
     let ti = tok_at(b, m, n.line, n.col)
     if ti == NONE { return }
@@ -698,7 +698,7 @@ fn sig_end(b: B, m: u32, ti: u32, n: ast.Node) -> u32 {
     ti
 }
 
-fn fn_symbols(inout b: B, m: u32, id: u32, ti: u32, first: u32, last: u32, kind: u32, container: u32) uses ffi {
+fn fn_symbols(inout b: B, m: u32, id: u32, ti: u32, first: u32, last: u32, kind: u32, container: u32) {
     let n = node(b, m, id)
     let name = nm(b, n.a)
     let detail = text(b, m, first, sig_end(b, m, ti, n))
@@ -932,7 +932,7 @@ fn module_refs(inout b: B, m: u32, inout refs: Refs) {
 
 // ---- `eiderc ide`: the analysis as text
 
-fn put(inout out: List[u8], x: str) uses ffi { bytes.append(inout out, sys.lit(x)) }
+fn put(inout out: List[u8], x: str) { bytes.append(inout out, sys.lit(x)) }
 fn num(inout out: List[u8], n: u32) { bytes.append(inout out, bytes.from_u64(n as u64)) }
 
 fn kind_name(k: u32) -> str {
@@ -962,7 +962,7 @@ fn range(inout out: List[u8], sp: Span) {
 }
 
 /// `file:range`, the file written `<prelude>` for the prelude's.
-fn place(inout out: List[u8], sp: Span, prelude: List[u8]) uses ffi {
+fn place(inout out: List[u8], sp: Span, prelude: List[u8]) {
     if prelude.len() > 0 && bytes.eq(sp.file, prelude) { put(inout out, "<prelude>") } else { bytes.append(inout out, sp.file) }
     out.push(58)
     range(inout out, sp)
@@ -971,7 +971,7 @@ fn place(inout out: List[u8], sp: Span, prelude: List[u8]) uses ffi {
 /// The analysis in a stable line format (`eiderc ide`, compiler/tests/ide goldens). The
 /// prelude's own symbols and types are summarised in one line (they are the same for every
 /// program); refs into it name their target.
-pub fn dump(a: Analysis) -> List[u8] uses ffi {
+pub fn dump(a: Analysis) -> List[u8] {
     var out: List[u8] = List.new()
     var prelude: List[u8] = List.new()
     for x in a.symbols {

@@ -100,32 +100,32 @@ fn prev_end(p: P) -> Name {
 
 fn err_at(line: u32, col: u32, m: List[u8]) -> diag.Diag { diag.new("E0001", line, col, m) }
 
-fn err(p: P, m: str) -> diag.Diag uses ffi {
+fn err(p: P, m: str) -> diag.Diag {
     let t = cur(p)
     err_at(t.line, t.col, sys.lit(m))
 }
 
-fn quoted(pre: str, mid: List[u8], post: str) -> List[u8] uses ffi {
+fn quoted(pre: str, mid: List[u8], post: str) -> List[u8] {
     var m = sys.lit(pre)
     bytes.append(inout m, mid)
     bytes.append(inout m, sys.lit(post))
     m
 }
 
-fn expect(inout p: P, k: lex.Kind) -> Result[Name, diag.Diag] uses ffi {
+fn expect(inout p: P, k: lex.Kind) -> Result[Name, diag.Diag] {
     let t = cur(p)
     if eat(inout p, k) { return Ok(Name(0, t.line, t.col)) }
     Err(err_at(t.line, t.col, quoted("expected `", sys.lit(lex.kind_text(k)), "`")))
 }
 
-fn expect_kw(inout p: P, kw: u32) -> Result[Name, diag.Diag] uses ffi {
+fn expect_kw(inout p: P, kw: u32) -> Result[Name, diag.Diag] {
     let t = cur(p)
     if eat_kw(inout p, kw) { return Ok(Name(0, t.line, t.col)) }
     Err(err_at(t.line, t.col, quoted("expected `", intern.name(p.names, kw), "`")))
 }
 
 /// A non-keyword identifier.
-fn ident(inout p: P) -> Result[Name, diag.Diag] uses ffi {
+fn ident(inout p: P) -> Result[Name, diag.Diag] {
     let t = cur(p)
     if t.kind == lex.Ident {
         if t.val > intern.LAST_KEYWORD as u64 {
@@ -175,7 +175,7 @@ fn note(inout p: P, d: diag.Diag) {
 }
 
 /// Record error `m` at the cursor.
-fn note_here(inout p: P, m: str) uses ffi {
+fn note_here(inout p: P, m: str) {
     let d = err(p, m)
     note(inout p, d)
 }
@@ -380,7 +380,7 @@ fn stem(path: List[u8]) -> List[u8] {
 
 /// The file's items. An item that fails is recorded, skipped (`sync_item`) and kept as an
 /// IError.
-pub fn program(inout p: P) uses ffi {
+pub fn program(inout p: P) {
     var items: List[u32] = List.new()
     skip_seps(inout p)
     while !is_eof(p) {
@@ -402,7 +402,7 @@ pub fn program(inout p: P) uses ffi {
 }
 
 /// One item (or `module` line), appended to `items`.
-fn item(inout p: P, inout items: List[u32]) -> Result[bool, diag.Diag] uses ffi {
+fn item(inout p: P, inout items: List[u32]) -> Result[bool, diag.Diag] {
     if is_kw(p, intern.K_MODULE) {
         adv(inout p)
         ident(inout p)?
@@ -472,7 +472,7 @@ fn item(inout p: P, inout items: List[u32]) -> Result[bool, diag.Diag] uses ffi 
 }
 
 /// `[T, U: Bound + Other]`; returns (start, len) of GParam nodes.
-fn generics(inout p: P) -> Result[List[u32], diag.Diag] uses ffi {
+fn generics(inout p: P) -> Result[List[u32], diag.Diag] {
     var gs: List[u32] = List.new()
     if !eat(inout p, lex.LBracket) { return Ok(gs) }
     while true {
@@ -507,7 +507,7 @@ fn generics(inout p: P) -> Result[List[u32], diag.Diag] uses ffi {
     Ok(gs)
 }
 
-fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
+fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
     expect_kw(inout p, intern.K_TYPE)?
     let name = ident(inout p)?
     let gs = generics(inout p)?
@@ -585,7 +585,7 @@ fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
 }
 
 /// Comma-separated items of `f` until `close`, with newlines allowed around them.
-fn ty_list(inout p: P, close: lex.Kind) -> Result[List[u32], diag.Diag] uses ffi {
+fn ty_list(inout p: P, close: lex.Kind) -> Result[List[u32], diag.Diag] {
     var ts: List[u32] = List.new()
     while true {
         skip_nl(inout p)
@@ -597,7 +597,7 @@ fn ty_list(inout p: P, close: lex.Kind) -> Result[List[u32], diag.Diag] uses ffi
     Ok(ts)
 }
 
-pub fn ty(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+pub fn ty(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
     if is_kw(p, intern.K_INOUT) {
         var d = diag.new("E0302", t.line, t.col, sys.lit("`inout` is only valid on function parameters; types can't hold references"))
@@ -681,7 +681,7 @@ pub fn ty(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     Err(err(p, "expected a type"))
 }
 
-fn fn_decl(inout p: P, allow_no_body: bool, flags: u32) -> Result[u32, diag.Diag] uses ffi {
+fn fn_decl(inout p: P, allow_no_body: bool, flags: u32) -> Result[u32, diag.Diag] {
     expect_kw(inout p, intern.K_FN)?
     let name = ident(inout p)?
     let gs = generics(inout p)?
@@ -747,7 +747,7 @@ fn fn_decl(inout p: P, allow_no_body: bool, flags: u32) -> Result[u32, diag.Diag
     Ok(add(inout p, n))
 }
 
-fn trait_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
+fn trait_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
     expect_kw(inout p, intern.K_TRAIT)?
     let name = ident(inout p)?
     skip_nl(inout p)
@@ -766,7 +766,7 @@ fn trait_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
     Ok(add(inout p, n))
 }
 
-fn impl_decl(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn impl_decl(inout p: P) -> Result[u32, diag.Diag] {
     let pos = expect_kw(inout p, intern.K_IMPL)?
     let gs = generics(inout p)?
     let first = ty(inout p)?
@@ -793,7 +793,7 @@ fn impl_decl(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     Ok(add(inout p, n))
 }
 
-fn const_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
+fn const_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
     expect_kw(inout p, intern.K_CONST)?
     let name = ident(inout p)?
     expect(inout p, lex.Colon)?
@@ -810,7 +810,7 @@ fn const_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] uses ffi {
     Ok(add(inout p, n))
 }
 
-fn test_decl(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn test_decl(inout p: P) -> Result[u32, diag.Diag] {
     let pos = expect_kw(inout p, intern.K_TEST)?
     if !is(p, lex.Str) { return Err(err(p, "expected test name string")) }
     let si = cur(p).val as u32
@@ -824,7 +824,7 @@ fn test_decl(inout p: P) -> Result[u32, diag.Diag] uses ffi {
 
 // ---- statements
 
-pub fn block(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+pub fn block(inout p: P) -> Result[u32, diag.Diag] {
     let open = expect(inout p, lex.LBrace)?
     var stmts: List[u32] = List.new()
     while true {
@@ -893,7 +893,7 @@ fn assign_op(k: lex.Kind) -> u32 {
     }
 }
 
-fn stmt(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn stmt(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
     if is_kw(p, intern.K_LET) || is_kw(p, intern.K_VAR) {
         let mutable: u32 = if is_kw(p, intern.K_VAR) { 1 } else { 0 }
@@ -977,7 +977,7 @@ fn stmt(inout p: P) -> Result[u32, diag.Diag] uses ffi {
 
 // ---- expressions
 
-pub fn expr(inout p: P) -> Result[u32, diag.Diag] uses ffi { or_expr(inout p) }
+pub fn expr(inout p: P) -> Result[u32, diag.Diag] { or_expr(inout p) }
 
 fn bin(inout p: P, op: u32, l: u32, r: u32, line: u32, col: u32) -> u32 {
     var n = mk(ast.EBinary, line, col)
@@ -987,7 +987,7 @@ fn bin(inout p: P, op: u32, l: u32, r: u32, line: u32, col: u32) -> u32 {
     add(inout p, n)
 }
 
-fn or_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn or_expr(inout p: P) -> Result[u32, diag.Diag] {
     var l = and_expr(inout p)?
     while is(p, lex.OrOr) {
         let t = cur(p)
@@ -999,7 +999,7 @@ fn or_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     Ok(l)
 }
 
-fn and_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn and_expr(inout p: P) -> Result[u32, diag.Diag] {
     var l = cmp_expr(inout p)?
     while is(p, lex.AndAnd) {
         let t = cur(p)
@@ -1067,7 +1067,7 @@ fn term(p: P, node: u32, cls: u32, t0: usize) -> Term {
 }
 
 /// E0002 at operator token `t`: operand x (an operation of another group) needs parentheses.
-fn mixed(inout p: P, t: lex.Tok, x: Term) uses ffi {
+fn mixed(inout p: P, t: lex.Tok, x: Term) {
     let inner = ast.op_text(p.ast.nodes[x.node as usize].a)
     var m = quoted("`", sys.lit(lex.kind_text(t.kind)), "` and `")
     bytes.append(inout m, sys.lit(inner))
@@ -1083,7 +1083,7 @@ fn mixed(inout p: P, t: lex.Tok, x: Term) uses ffi {
     note(inout p, d)
 }
 
-fn cmp_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn cmp_expr(inout p: P) -> Result[u32, diag.Diag] {
     let first = bit_expr(inout p, CL_OR)?
     var l = first.node
     var n: u32 = 0
@@ -1116,7 +1116,7 @@ fn bit_op(cls: u32, k: lex.Kind) -> u32 {
 fn fits_group(cls: u32, x: Term) -> bool { x.cls == CL_NONE || x.cls == CL_SHIFT || x.cls == cls }
 
 /// One level of the bitwise groups (CL_OR down to CL_SHIFT; under it the arithmetic ones).
-fn bit_expr(inout p: P, cls: u32) -> Result[Term, diag.Diag] uses ffi {
+fn bit_expr(inout p: P, cls: u32) -> Result[Term, diag.Diag] {
     let t0 = p.i
     var l = if cls == CL_SHIFT { add_expr(inout p)? } else { bit_expr(inout p, cls - 1)? }
     var n: u32 = 0
@@ -1135,7 +1135,7 @@ fn bit_expr(inout p: P, cls: u32) -> Result[Term, diag.Diag] uses ffi {
     Ok(l)
 }
 
-fn add_expr(inout p: P) -> Result[Term, diag.Diag] uses ffi {
+fn add_expr(inout p: P) -> Result[Term, diag.Diag] {
     let t0 = p.i
     var l = mul_expr(inout p)?
     while add_op(kind(p)) > 0 {
@@ -1150,7 +1150,7 @@ fn add_expr(inout p: P) -> Result[Term, diag.Diag] uses ffi {
     Ok(l)
 }
 
-fn mul_expr(inout p: P) -> Result[Term, diag.Diag] uses ffi {
+fn mul_expr(inout p: P) -> Result[Term, diag.Diag] {
     let t0 = p.i
     let first = cast_expr(inout p)?
     var l = term(p, first, CL_NONE, t0)
@@ -1166,7 +1166,7 @@ fn mul_expr(inout p: P) -> Result[Term, diag.Diag] uses ffi {
     Ok(l)
 }
 
-fn cast_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn cast_expr(inout p: P) -> Result[u32, diag.Diag] {
     var l = unary(inout p)?
     while is_kw(p, intern.K_AS) {
         let t = cur(p)
@@ -1179,7 +1179,7 @@ fn cast_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     Ok(l)
 }
 
-fn unary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn unary(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
     if eat(inout p, lex.Minus) || eat(inout p, lex.Bang) || eat(inout p, lex.Tilde) {
         var n = mk(ast.EUnary, t.line, t.col)
@@ -1191,7 +1191,7 @@ fn unary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
 }
 
 /// Call arguments after `(`.
-fn args(inout p: P) -> Result[List[u32], diag.Diag] uses ffi {
+fn args(inout p: P) -> Result[List[u32], diag.Diag] {
     var out: List[u32] = List.new()
     while true {
         skip_nl(inout p)
@@ -1208,7 +1208,7 @@ fn args(inout p: P) -> Result[List[u32], diag.Diag] uses ffi {
     Ok(out)
 }
 
-fn postfix(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn postfix(inout p: P) -> Result[u32, diag.Diag] {
     var e = primary(inout p)?
     while true {
         let t = cur(p)
@@ -1271,7 +1271,7 @@ fn postfix(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     Ok(e)
 }
 
-fn primary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn primary(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
     if t.kind == lex.Int {
         var n = mk(ast.EInt, t.line, t.col)
@@ -1405,7 +1405,7 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     Err(err(p, "expected an expression"))
 }
 
-fn else_branch(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn else_branch(inout p: P) -> Result[u32, diag.Diag] {
     if is_kw(p, intern.K_IF) { return if_expr(inout p) }
     let t = cur(p)
     var n = mk(ast.EBlock, t.line, t.col)
@@ -1413,7 +1413,7 @@ fn else_branch(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     Ok(add(inout p, n))
 }
 
-fn if_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn if_expr(inout p: P) -> Result[u32, diag.Diag] {
     let pos = expect_kw(inout p, intern.K_IF)?
     if eat_kw(inout p, intern.K_LET) {
         // `if let PAT = EXPR { A } else { B }` is a two-arm match
@@ -1475,7 +1475,7 @@ fn if_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
     Ok(add(inout p, n))
 }
 
-fn match_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn match_expr(inout p: P) -> Result[u32, diag.Diag] {
     let pos = expect_kw(inout p, intern.K_MATCH)?
     let s = expr(inout p)?
     expect(inout p, lex.LBrace)?
@@ -1536,7 +1536,7 @@ fn match_expr(inout p: P) -> Result[u32, diag.Diag] uses ffi {
 }
 
 /// One match arm: patterns, `=>` and the body.
-fn arm(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+fn arm(inout p: P) -> Result[u32, diag.Diag] {
     let at = cur(p)
     var pats: List[u32] = List.new()
     pats.push(pattern(inout p)?)
@@ -1559,7 +1559,7 @@ fn arm(inout p: P) -> Result[u32, diag.Diag] uses ffi {
 }
 
 /// Sub-patterns after `(`, up to `)`.
-fn pat_list(inout p: P) -> Result[List[u32], diag.Diag] uses ffi {
+fn pat_list(inout p: P) -> Result[List[u32], diag.Diag] {
     var ps: List[u32] = List.new()
     while true {
         skip_nl(inout p)
@@ -1571,7 +1571,7 @@ fn pat_list(inout p: P) -> Result[List[u32], diag.Diag] uses ffi {
     Ok(ps)
 }
 
-pub fn pattern(inout p: P) -> Result[u32, diag.Diag] uses ffi {
+pub fn pattern(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
     if t.kind == lex.Int {
         let ti = p.i as u32
@@ -1650,7 +1650,7 @@ pub fn pattern(inout p: P) -> Result[u32, diag.Diag] uses ffi {
 }
 
 /// Parse a lexed file: the tree, or the first error.
-pub fn parse(lx: lex.Lexed, names: intern.Interner) -> Result[P, diag.Diag] uses ffi {
+pub fn parse(lx: lex.Lexed, names: intern.Interner) -> Result[P, diag.Diag] {
     let r = parse_all(lx, names)
     if r.diags.len() > 0 { return Err(r.diags[0]) }
     Ok(r.p)
@@ -1658,7 +1658,7 @@ pub fn parse(lx: lex.Lexed, names: intern.Interner) -> Result[P, diag.Diag] uses
 
 /// Parse a lexed file (from `lex.lex` or `lex.lex_all`) to the end, recovering from each
 /// error ("recovery"): Parsed.
-pub fn parse_all(lx: lex.Lexed, names: intern.Interner) -> Parsed uses ffi {
+pub fn parse_all(lx: lex.Lexed, names: intern.Interner) -> Parsed {
     var p = P(lx.toks, lx.strs, 0, ast.new(), names, List.new(), List.new(), lx.src)
     program(inout p)
     let ds = p.errs

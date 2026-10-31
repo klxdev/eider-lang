@@ -39,9 +39,9 @@ import "check.ei"
 import "lower.ei"
 import "driver.ei"
 
-fn s(x: str) -> List[u8] uses ffi { sys.lit(x) }
+fn s(x: str) -> List[u8] { sys.lit(x) }
 
-fn sym(inout p: resolve.Program, w: str) -> u32 uses ffi {
+fn sym(inout p: resolve.Program, w: str) -> u32 {
     let b = sys.lit(w)
     intern.intern(inout p.names, b, 0, b.len())
 }
@@ -51,7 +51,7 @@ pub type Outcome = | Printed(out: List[u8]) | Failed(why: List[u8]) | NoBuild
 
 /// Evaluate every comptime constant of `p`, in item order; the result has each replaced by
 /// its value as a literal. The first diagnostic, if there is one (see eval_all).
-pub fn eval(p: resolve.Program) -> Result[resolve.Program, diag.Diag] uses io, fs, net, clock, ffi {
+pub fn eval(p: resolve.Program) -> Result[resolve.Program, diag.Diag] uses io, fs, net, clock {
     let ev = eval_all(p)
     if ev.diags.len() > 0 { return Err(ev.diags[0]) }
     Ok(ev.p)
@@ -64,7 +64,7 @@ pub type Evaluated = { p: resolve.Program, diags: List[diag.Diag] }
 /// Evaluate every comptime constant of `p`, in item order. A constant whose evaluation
 /// fails is reported (the evaluator's first diagnostic) and becomes a constant of the error
 /// type (its `comptime` flag 2), which check.ei accepts silently, and the rest go on.
-pub fn eval_all(p: resolve.Program) -> Evaluated uses io, fs, net, clock, ffi {
+pub fn eval_all(p: resolve.Program) -> Evaluated uses io, fs, net, clock {
     var prog = p
     var diags: List[diag.Diag] = List.new()
     var r = Runner(List.new(), List.new(), false)
@@ -100,7 +100,7 @@ fn e0807(p: resolve.Program, m: u32, n: ast.Node, msg: List[u8]) -> diag.Diag {
 
 /// Whether type node `t` of module m names an integer type or bool (judged from the
 /// type's spelling, before resolving it).
-fn int_or_bool(inout p: resolve.Program, m: u32, t: u32) -> u32 uses ffi {
+fn int_or_bool(inout p: resolve.Program, m: u32, t: u32) -> u32 {
     let tn = p.mods[m as usize].ast.nodes[t as usize]
     if tn.kind != ast.TName || tn.b != 0 { return 0 }
     for w in ["i32", "i64", "u8", "u32", "u64", "usize"] {
@@ -111,7 +111,7 @@ fn int_or_bool(inout p: resolve.Program, m: u32, t: u32) -> u32 uses ffi {
 }
 
 /// Evaluate the comptime constant `id` of module m and splice its value into `p`.
-fn eval_one(inout p: resolve.Program, inout r: Runner, m: u32, id: u32) -> Result[bool, diag.Diag] uses io, fs, net, clock, ffi {
+fn eval_one(inout p: resolve.Program, inout r: Runner, m: u32, id: u32) -> Result[bool, diag.Diag] uses io, fs, net, clock {
     let n = p.mods[m as usize].ast.nodes[id as usize]
     let kind = int_or_bool(inout p, m, n.c)
     if kind == 0 { return Err(e0807(p, m, n, s("`comptime` constants must be integers or bool"))) }
@@ -181,7 +181,7 @@ fn eval_one(inout p: resolve.Program, inout r: Runner, m: u32, id: u32) -> Resul
 /// module only the order in which two independent errors are found can differ. The nodes
 /// take the positions they have in the stub text above (`__ct` at 1:4 for E0107), the
 /// return statement the expression's.
-fn evaluator(inout p: resolve.Program, m: u32, id: u32) -> resolve.Program uses ffi {
+fn evaluator(inout p: resolve.Program, m: u32, id: u32) -> resolve.Program {
     let s_ct = sym(inout p, "__ct")
     let s_main = sym(inout p, "main")
     let s_print = sym(inout p, "print")
@@ -265,7 +265,7 @@ fn evaluator(inout p: resolve.Program, m: u32, id: u32) -> resolve.Program uses 
 
 /// Check the evaluator program as tests/oracle records: its errors are reported as they are, except
 /// that a missing capability can't be fixed by adding it (the evaluator has none).
-fn checked(ev: resolve.Program) -> Result[check.C, diag.Diag] uses ffi {
+fn checked(ev: resolve.Program) -> Result[check.C, diag.Diag] {
     // the first diagnostic: the rest of the program's are found again when it is checked
     match check.check_mode(ev, false) {
         Ok(c) => Ok(c)
@@ -289,12 +289,12 @@ fn checked(ev: resolve.Program) -> Result[check.C, diag.Diag] uses ffi {
 /// failed.
 type Runner = { dir: List[u8], objs: List[List[u8]], broken: bool }
 
-fn finish(r: Runner) uses fs, ffi {
+fn finish(r: Runner) uses fs {
     if r.dir.len() > 0 { fs.remove_all(r.dir) }
 }
 
 /// Run a C compiler command quietly; whether it succeeded.
-fn cc_ok(argv: List[List[u8]]) -> bool uses io, fs, net, ffi {
+fn cc_ok(argv: List[List[u8]]) -> bool uses io, fs, net {
     match proc.run_with(argv, proc.captured()) {
         Ok(o) => o.code == 0
         Err(_) => false
@@ -302,7 +302,7 @@ fn cc_ok(argv: List[List[u8]]) -> bool uses io, fs, net, ffi {
 }
 
 /// Compile the C core into `r.dir` (once).
-fn prepare(inout r: Runner) uses io, fs, net, clock, ffi {
+fn prepare(inout r: Runner) uses io, fs, net, clock {
     if r.dir.len() > 0 || r.broken { return }
     r.dir = driver.temp_dir()
     let core = fs.join(driver.root(), s("core"))
@@ -325,7 +325,7 @@ fn prepare(inout r: Runner) uses io, fs, net, clock, ffi {
 /// do), build it with the driver's C compiler invocation at -O0 against the core compiled
 /// once (`prepare`), and run it, capturing its output. This is the one function an IR
 /// interpreter would replace.
-fn run_evaluator(inout r: Runner, c: check.C) -> Outcome uses io, fs, net, clock, ffi {
+fn run_evaluator(inout r: Runner, c: check.C) -> Outcome uses io, fs, net, clock {
     let lp = lower.P(c.ir, c.t, c.p.names)
     let text = match lower.program_for(lp, s("program"), false, false) {
         Ok(t) => t

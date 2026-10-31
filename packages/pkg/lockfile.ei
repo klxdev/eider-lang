@@ -34,7 +34,7 @@ pub type Pkg = {
     grants: List[List[u8]],
 }
 
-pub fn file_in(dir: List[u8]) -> List[u8] uses ffi { fs.join(dir, sys.lit("eider.lock")) }
+pub fn file_in(dir: List[u8]) -> List[u8] { fs.join(dir, sys.lit("eider.lock")) }
 
 pub fn find(pkgs: List[Pkg], name: List[u8]) -> Option[Pkg] {
     for p in pkgs {
@@ -57,7 +57,7 @@ fn strs(items: List[List[u8]]) -> List[u8] {
     out
 }
 
-fn line(inout out: List[u8], k: str, v: List[u8]) uses ffi {
+fn line(inout out: List[u8], k: str, v: List[u8]) {
     bytes.append(inout out, sys.lit(k))
     bytes.append(inout out, sys.lit(" = "))
     bytes.append(inout out, v)
@@ -65,7 +65,7 @@ fn line(inout out: List[u8], k: str, v: List[u8]) uses ffi {
 }
 
 /// Path from directory `from` to `to` (both absolute and normalized).
-pub fn relative(from: List[u8], to: List[u8]) -> List[u8] uses ffi {
+pub fn relative(from: List[u8], to: List[u8]) -> List[u8] {
     let a = bytes.split(from, 47)
     let b = bytes.split(to, 47)
     var i: usize = 0
@@ -85,7 +85,7 @@ pub fn relative(from: List[u8], to: List[u8]) -> List[u8] uses ffi {
 }
 
 /// Lockfile text; packages sorted by name so the file is stable.
-pub fn render(pkgs: List[Pkg], root: List[u8]) -> List[u8] uses ffi {
+pub fn render(pkgs: List[Pkg], root: List[u8]) -> List[u8] {
     var sorted: List[Pkg] = List.new()
     for p in pkgs {
         sorted.push(p)
@@ -119,7 +119,7 @@ pub fn render(pkgs: List[Pkg], root: List[u8]) -> List[u8] uses ffi {
     out
 }
 
-fn field(doc: List[toml.Entry], prefix: List[u8], k: str) -> List[u8] uses ffi {
+fn field(doc: List[toml.Entry], prefix: List[u8], k: str) -> List[u8] {
     var key = prefix
     bytes.append(inout key, sys.lit(k))
     match toml.get(doc, key) {
@@ -131,7 +131,7 @@ fn field(doc: List[toml.Entry], prefix: List[u8], k: str) -> List[u8] uses ffi {
     }
 }
 
-fn list_field(doc: List[toml.Entry], prefix: List[u8], k: str) -> List[List[u8]] uses ffi {
+fn list_field(doc: List[toml.Entry], prefix: List[u8], k: str) -> List[List[u8]] {
     var key = prefix
     bytes.append(inout key, sys.lit(k))
     match toml.get(doc, key) {
@@ -144,7 +144,7 @@ fn list_field(doc: List[toml.Entry], prefix: List[u8], k: str) -> List[List[u8]]
 }
 
 /// Parse eider.lock in project `root`. A missing file is an empty lock.
-pub fn load(root: List[u8]) -> Result[List[Pkg], String] uses fs, ffi {
+pub fn load(root: List[u8]) -> Result[List[Pkg], String] uses fs {
     let file = file_in(root)
     var pkgs: List[Pkg] = List.new()
     if !fs.exists(file) { return Ok(pkgs) }

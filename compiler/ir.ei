@@ -472,21 +472,21 @@ pub fn add_export(inout ir: Ir, f: u32, name: List[u8]) {
 
 type Out = { b: List[u8] }
 
-fn put(inout o: Out, s: str) uses ffi { bytes.append(inout o.b, sys.lit(s)) }
+fn put(inout o: Out, s: str) { bytes.append(inout o.b, sys.lit(s)) }
 fn putb(inout o: Out, s: List[u8]) { bytes.append(inout o.b, s) }
 fn putn(inout o: Out, n: u64) { bytes.append(inout o.b, bytes.from_u64(n)) }
-fn putty(inout o: Out, t: types.Types, names: intern.Interner, ty: u32) uses ffi { types.show_into(inout o.b, t, names, ty) }
+fn putty(inout o: Out, t: types.Types, names: intern.Interner, ty: u32) { types.show_into(inout o.b, t, names, ty) }
 
-fn ind(inout o: Out, depth: u32) uses ffi {
+fn ind(inout o: Out, depth: u32) {
     for i in 0..depth { put(inout o, "  ") }
 }
 
-fn put_local(inout o: Out, l: u32) uses ffi {
+fn put_local(inout o: Out, l: u32) {
     put(inout o, "%")
     putn(inout o, l as u64)
 }
 
-fn put_op(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u32) uses ffi {
+fn put_op(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u32) {
     let x = ir.ops[id as usize]
     match x.kind {
         0 => {
@@ -506,7 +506,7 @@ fn put_op(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u32)
     }
 }
 
-fn put_place(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u32) uses ffi {
+fn put_place(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u32) {
     let x = ir.places[id as usize]
     match x.kind {
         0 => put_local(inout o, x.a)
@@ -536,7 +536,7 @@ fn put_place(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u
     }
 }
 
-fn put_args(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, start: u32, n: u32) uses ffi {
+fn put_args(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, start: u32, n: u32) {
     put(inout o, "(")
     for i in 0..n {
         if i > 0 { put(inout o, ", ") }
@@ -551,19 +551,19 @@ fn put_args(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, start:
     put(inout o, ")")
 }
 
-fn put_dst(inout o: Out, dst: u32) uses ffi {
+fn put_dst(inout o: Out, dst: u32) {
     put_local(inout o, dst)
     put(inout o, " = ")
 }
 
-fn put_block(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, b: u32, depth: u32) uses ffi {
+fn put_block(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, b: u32, depth: u32) {
     let bl = ir.blocks[b as usize]
     for i in 0..bl.len {
         put_stmt(inout o, ir, t, names, ir.extra[(bl.start + i) as usize], depth)
     }
 }
 
-fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u32, depth: u32) uses ffi {
+fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u32, depth: u32) {
     let s = ir.stmts[id as usize]
     ind(inout o, depth)
     match s.kind {
@@ -757,7 +757,7 @@ fn kind_text(k: u32) -> str {
 }
 
 /// The whole program as text.
-pub fn dump(ir: Ir, t: types.Types, names: intern.Interner) -> List[u8] uses ffi {
+pub fn dump(ir: Ir, t: types.Types, names: intern.Interner) -> List[u8] {
     var o = Out(List.new())
     for c in ir.consts {
         put(inout o, "const ")
