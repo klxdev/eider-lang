@@ -1,125 +1,101 @@
-// caps: which capabilities a package's code declares, so a dependency can be held to the
-// `uses = [...]` it was granted in the depender's eider.toml.
+// caps: which capabilities a package uses, as the compiler reports them, so a dependency
+// can be held to the `uses = [...]` it was granted in the depender's eider.toml.
 //
-// A function's `uses` clause is a sound over-approximation of what it can do: the compiler
-// rejects calls that need a capability the caller didn't declare. So scanning every `uses`
-// clause in a package bounds its reach.
+// `eiderc caps <file>` loads the program at <file> and prints, per package it loads, every
+// capability the package uses with its first use, one JSON line each (docs/compiler.md,
+// "C8.5: capabilities per package"): the `uses` clauses of its functions, plus `ffi` when it
+// has unmanaged code (an `extern` function, an `unsafe fn` or block). A function's `uses`
+// clause is a sound over-approximation of what it can do, since the compiler rejects calls
+// needing a capability the caller didn't declare; and `ffi` doesn't propagate across
+// packages, so `uses ffi` written only to call std counts for nothing.
 //
-// `ffi` is special until the compiler can hide std's internals: every caller of std has to
-// write `uses ffi`, so it only counts when the package declares `extern` functions itself,
-// i.e. when it brings its own unmanaged code.
+// What is checked is the package's entry module and the modules it reaches, as the compiler
+// loads them (not test programs or comments). The compiler checks every import against its
+// grant again when it builds (E0204), so a package with neither its entry module nor a `main`
+// program is left to it.
 
 import "core/sys"
 import "std/bytes"
+import "std/env"
 import "std/fs"
+import "std/proc"
 
-pub type Use = { cap: List[u8], file: List[u8], line: u32 }
+/// A capability the package uses, at its first use: the file (relative to the package's
+/// directory) and line, and `kind`: `uses`, `extern` or `unsafe`.
+pub type Use = { cap: List[u8], file: List[u8], line: u32, kind: List[u8] }
 
-type Tok = { word: List[u8], line: u32 }
-
-/// Identifier-like words and single punctuation bytes, skipping comments and strings.
-fn words(src: List[u8]) -> List[Tok] {
-    var out: List[Tok] = List.new()
-    var i: usize = 0
-    var line: u32 = 1
-    let n = src.len()
-    while i < n {
-        let c = src[i]
-        if c == 10 {
-            line += 1
-            i += 1
-        } else if c == 47 && i + 1 < n && src[i + 1] == 47 {
-            while i < n && src[i] != 10 { i += 1 }
-        } else if c == 47 && i + 1 < n && src[i + 1] == 42 {
-            i += 2
-            while i + 1 < n && !(src[i] == 42 && src[i + 1] == 47) {
-                if src[i] == 10 { line += 1 }
-                i += 1
-            }
-            i += 2
-        } else if c == 34 {
-            i += 1
-            while i < n && src[i] != 34 {
-                if src[i] == 92 { i += 1 }
-                i += 1
-            }
-            i += 1
-        } else if bytes.is_ident(c) {
-            var w: List[u8] = List.new()
-            while i < n && bytes.is_ident(src[i]) {
-                w.push(src[i])
-                i += 1
-            }
-            out.push(Tok(w, line))
-        } else {
-            if !bytes.is_space(c) {
-                var w: List[u8] = List.new()
-                w.push(c)
-                out.push(Tok(w, line))
-            }
-            i += 1
-        }
+/// The compiler to ask: $EIDERC, else the toolchain's `target/eiderc`.
+pub fn compiler(toolchain: List[u8]) -> List[u8] uses io, ffi {
+    match env.get(sys.lit("EIDERC")) {
+        Some(c) => { if c.len() > 0 { return c } }
+        None => {}
     }
-    out
+    fs.join(toolchain, sys.lit("target/eiderc"))
 }
 
-/// The capabilities the compiler knows (check.ei's list); anything else in a `uses` clause
-/// is a compile error.
-fn language_cap(w: List[u8]) -> bool uses ffi {
-    for c in ["io", "clock", "fs", "net", "threads", "ffi", "python", "js", "wasm"] {
-        if bytes.eq(w, sys.lit(c)) { return true }
+/// The string or number after `"key":` in a JSON line of `eiderc caps` (strings unescaped;
+/// "" when the key is missing).
+fn field(line: List[u8], key: str) -> List[u8] uses ffi {
+    var pat = sys.lit("\"")
+    bytes.append(inout pat, sys.lit(key))
+    bytes.append(inout pat, sys.lit("\":"))
+    var out: List[u8] = List.new()
+    let at = match bytes.find(line, pat, 0) {
+        Some(i) => i + pat.len()
+        None => { return out }
     }
-    false
-}
-
-/// Every capability named in a `uses` clause, plus `ffi` when the code declares `extern`.
-pub fn scan(src: List[u8], file: List[u8]) -> List[Use] uses ffi {
-    let ws = words(src)
-    var out: List[Use] = List.new()
-    let k_uses = sys.lit("uses")
-    let k_extern = sys.lit("extern")
-    var i: usize = 0
-    while i < ws.len() {
-        if bytes.eq(ws[i].word, k_extern) {
-            out.push(Use(sys.lit("ffi"), file, ws[i].line))
-        } else if bytes.eq(ws[i].word, k_uses) {
-            // the clause is the rest of the line, continued onto the next one only after a
-            // comma: `uses clock` followed by `fn main()` on the next line names only clock
-            var j = i + 1
-            var line = ws[i].line
-            var after_comma = false
-            while j < ws.len() {
-                let w = ws[j].word
-                if ws[j].line != line && !after_comma { break }
-                line = ws[j].line
-                if w.len() == 1 && w[0] == 44 {
-                    after_comma = true
-                    j += 1
-                } else if w.len() > 0 && bytes.is_alpha(w[0]) {
-                    // a word that isn't a capability of the language can't grant anything
-                    // (the compiler rejects it, E0203), e.g. in a compile-fail test
-                    if !bytes.eq(w, sys.lit("ffi")) && language_cap(w) { out.push(Use(w, file, ws[j].line)) }
-                    after_comma = false
-                    j += 1
-                } else {
-                    break
-                }
-            }
-            i = j - 1
-        }
+    var i = at
+    if i < line.len() && line[i] == 34 {
         i += 1
+        while i < line.len() && line[i] != 34 {
+            if line[i] == 92 && i + 1 < line.len() {
+                i += 1
+                let c = line[i]
+                if c == 110 { out.push(10) } else if c == 116 { out.push(9) } else { out.push(c) }
+            } else {
+                out.push(line[i])
+            }
+            i += 1
+        }
+    } else {
+        while i < line.len() && bytes.is_digit(line[i]) {
+            out.push(line[i])
+            i += 1
+        }
     }
     out
 }
 
-/// All capability uses in the package at `dir` (every .ei file, skipping deps/ and vendor/).
-pub fn scan_dir(dir: List[u8], skip: List[List[u8]]) -> Result[List[Use], String] uses fs, ffi {
+/// The capabilities package `name` uses, as `eiderc` (the compiler at `eiderc`) reports
+/// for the module `dir`/`entry` (its entry module or program; none when that file doesn't
+/// exist).
+pub fn of_package(eiderc: List[u8], dir: List[u8], entry: List[u8], name: List[u8]) -> Result[List[Use], String] uses io, fs, net, ffi {
     var out: List[Use] = List.new()
-    for rel in fs.walk(dir, skip)? {
-        if bytes.ends_with(rel, sys.lit(".ei")) {
-            let src = fs.read(fs.join(dir, rel))?
-            for u in scan(src, rel) { out.push(u) }
+    let file = fs.join(dir, entry)
+    if !fs.exists(file) { return Ok(out) }
+    var argv: List[List[u8]] = List.new()
+    argv.push(eiderc)
+    argv.push(sys.lit("caps"))
+    argv.push(file)
+    let r = proc.run_with(argv, proc.captured())?
+    if r.code != 0 {
+        var m = String.from("cannot list the capabilities of package `")
+        m.append(sys.to_string(name))
+        m.push_str("`: `")
+        m.append(sys.to_string(eiderc))
+        m.push_str(" caps` failed (exit ")
+        m.append(String.from_int(r.code as i64))
+        m.push_str("; set EIDERC to an eiderc that has the `caps` command): ")
+        m.append(sys.to_string(bytes.trim(r.err)))
+        return Err(m)
+    }
+    for l in bytes.lines(r.out) {
+        if !bytes.eq(field(l, "package"), name) { continue }
+        let n: u32 = match bytes.parse_u64(field(l, "line")) {
+            Some(x) => x as u32
+            None => 0
         }
+        out.push(Use(field(l, "cap"), field(l, "file"), n, field(l, "kind")))
     }
     Ok(out)
 }
