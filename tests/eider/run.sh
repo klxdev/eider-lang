@@ -18,6 +18,7 @@
 # exit 1 on any failure. Needs what scripts/eider needs (a crypto backend: skip without it).
 cd "$(dirname "$0")/../.." || exit 1
 root=$(pwd)
+ver=$(head -1 "$root/VERSION")   # eider reports the toolchain version it was built from
 if ! why=$(sh scripts/crypto-build.sh --check 2>&1); then echo "skip eider: needs a crypto backend (${why#crypto-build: }; sh scripts/fetch-awslc.sh)"; exit 0; fi
 sh scripts/eider --build-only >/dev/null 2>&1 || { echo "FAIL eider: scripts/eider --build-only"; sh scripts/eider --build-only 2>&1 | tail -10; exit 1; }
 E=$root/target/eider
@@ -72,7 +73,7 @@ mkdir -p "$P/sub"
 e() { (cd "${CWD:-$T}" && env -u EIDER_TOOLCHAIN -u EIDER_AUTO_INSTALL -u EIDER_ROOT EIDER_HOME="$H" EIDER_RELEASES="file://$REL" EIDER_RELEASE_PUBKEY="$T/test.pub" "$E" "$@" 2>&1); }
 
 # ---- version, help
-out=$(e --version); check "--version" "eider 0.1.0" "$out"
+out=$(e --version); check "--version" "eider $ver" "$out"
 out=$(e help); check "help" "eider toolchain install" "$out"
 out=$(e version); check "version without a toolchain" "toolchain: none (no toolchain is installed" "$out"
 out=$(e build x.ei); rc=$?
@@ -126,7 +127,7 @@ mkdir -p "$T/exists"; out=$(e new exists); check "new: the directory exists" "ex
 out=$(e doc build --out site); check "doc -> eider-doc" "eider-doc 1.2.0 root=$H/toolchains/1.2.0 eiderc=$H/toolchains/1.2.0/bin/eiderc args: build --out site" "$out"
 out=$(e eiderc --help); check "eiderc --help" "eiderc 1.2.0 root=" "$out"
 out=$(e eider-pkg --version); check "eider-pkg --version" "eider-pkg 1.2.0 " "$out"
-out=$(e version); check "version" "$(printf 'eider 0.1.0\ntoolchain 1.2.0 (%s/toolchains/1.2.0; the default' "$H")" "$out"
+out=$(e version); check "version" "$(printf 'eider %s\ntoolchain 1.2.0 (%s/toolchains/1.2.0; the default' "$ver" "$H")" "$out"
 
 # ---- use, remove
 out=$(e toolchain use 1.3.0); check "use" "the default toolchain is 1.3.0" "$out"
