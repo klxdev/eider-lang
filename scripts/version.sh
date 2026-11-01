@@ -198,7 +198,8 @@ bump() {
   echo
   echo "next:"
   if [ "$kind" != patch ] || [ "$comp" = eider-lang ]; then
-    echo "  sh scripts/selfhost.sh --seed           # the seed embeds core/version.ei (eiderc --version)"
+    echo "  sh scripts/selfhost.sh --seed           # the seed embeds core/version.ei (eiderc --version);"
+    echo "                                          # after major/minor, bootstrap first: seed/README.md"
     echo "  BLESS=1 sh scripts/test-compiler.sh     # E0811 messages name the MAJOR.MINOR; review the diff"
   fi
   echo "  add the new version's section to CHANGELOG.md in each repository bumped, then commit each"

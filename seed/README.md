@@ -40,6 +40,17 @@ build the same seed, that stage2 leaks nothing while compiling `compiler/`, and 
 passes `scripts/test-compiler.sh`, then writes stage2's `build --wasm-core` to `eiderc.wasm`
 (and its clang to `eiderc.wasm.clang`). Commit both with the compiler change.
 
+After a MAJOR or MINOR bump (`scripts/version.sh bump`) the current seed refuses `core/`,
+`std/` and `compiler/`, which now say the new `eider = "X.Y"` (E0811). Bootstrap once: build
+stage0 (`--seed` does, then stops), set aside the `eider = ` line of `core/eider.toml`,
+`std/eider.toml` and `compiler/eider.toml` (no line means any toolchain), let
+`target/selfhost/stage0 build compiler/main.ei -o target/selfhost/bump` build the new
+compiler, restore the three lines, write `target/selfhost/bump build --wasm-core
+compiler/main.ei -o seed/eiderc.wasm`, then run `--seed` again. Its test leg fails on the
+version in E0811's text until `BLESS=1 EIDERC=$PWD/target/selfhost/stage2 sh
+scripts/test-compiler.sh` records it; review that diff (the version only) and commit with
+the seed (`--from-seed` then passes). 0.2.0 was bumped this way.
+
 `sh scripts/selfhost.sh --from-seed` must always pass: it builds stage0 from the seed with only
 a C compiler and checks `compiler/main.ei` with it; with clang it also checks that the seed is
 current (stage0 emits the same LLVM IR for `compiler/` as the compiler it builds) and, when
