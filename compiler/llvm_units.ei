@@ -1,0 +1,424 @@
+// llvm_units: the LLVM backend's module cut into units, so that each is compiled and cached
+// on its own (build.ei; docs/compiler.md, "C8.27: incremental builds", "Units").
+//
+// `split` takes llvm.program's Out (the module in parts, each function's parts tagged with
+// its IR function, `Out.owner`) and returns one text per unit:
+//
+//   mod.<n>    the functions whose body comes from module n (Ir.fns[f].file), closures and
+//              C-convention wrappers included
+//   inst.<k>   the monomorphized generic instances (an IR name with `[`), shard
+//              k = hash(IR name) mod SHARDS, whatever module instantiated them
+//
+// Each unit is a complete LLVM module: the named types it uses (closed over the types they
+// mention), its functions, the private constants it uses, and a declaration of every
+// function it calls that is defined elsewhere (another unit: from that function's
+// `define` line, as `declare hidden`; the C half, the core, intrinsics: the module's own
+// `declare` lines). A function some other unit calls becomes `define hidden` (internal
+// otherwise, as in the whole module). So that an edit stays local, nothing program-wide
+// numbered survives in a unit's text: the type names (`%t<type id>`, numbered by the whole
+// program's type table) become `%T<k>` and the constants (`@.s<string index>`, `@.m<n>`)
+// `@.c<k>`, both numbered by first use in the unit. (Trap lines still encode the module's
+// index in the program, "C8.16": an edit that adds or removes a module renumbers the units
+// of the modules after it.)
+//
+// The units are the module's text rearranged: every function's text is unchanged but for
+// those names and its linkage, so the program is the same program.
+
+import core.sys
+import std.bytes
+import eiderc.lower
+import eiderc.llvm
+
+/// Shards of generic instances (C383).
+pub const SHARDS: u64 = 16
+
+pub type Unit = { name: List[u8], text: List[u8] }
+
+fn lit(x: str) -> List[u8] { sys.lit(x) }
+
+fn h64(s: List[u8]) -> u64 {
+    let mut h: u64 = 14695981039346656037
+    for b in s { h = (h ^ (b as u64)) *% 1099511628211 }
+    h
+}
+
+fn name_byte(b: u8) -> bool {
+    (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57) || b == 95 || b == 46 || b == 36 || b == 45
+}
+
+/// A table of names: index by hash, with the text kept to rule out collisions.
+type Names = { keys: Map[u64, u32], texts: List[List[u8]] }
+
+fn names_new() -> Names { Names(Map.new(), List.new()) }
+
+/// The hash of text[a..b] (h64 of that slice, without making it).
+fn hash_at(text: List[u8], a: usize, b: usize) -> u64 {
+    let mut h: u64 = 14695981039346656037
+    for i in a..b { h = (h ^ (text[i] as u64)) *% 1099511628211 }
+    h
+}
+
+/// Whether text[a..b] is `n`.
+fn eq_at(text: List[u8], a: usize, b: usize, n: List[u8]) -> bool {
+    if b - a != n.len() { return false }
+    for i in a..b {
+        if text[i] != n[i - a] { return false }
+    }
+    true
+}
+
+/// The index of text[a..b] (hash `h`) in `t`, or -1. Only a name whose hash another name
+/// already has (a collision, never seen) is looked up by scanning.
+fn find_at(t: Names, text: List[u8], a: usize, b: usize, h: u64) -> i64 {
+    match t.keys.get(h) {
+        Some(i) => {
+            if eq_at(text, a, b, t.texts[i as usize]) { return i as i64 }
+            for k in 0..t.texts.len() {
+                if eq_at(text, a, b, t.texts[k]) { return k as i64 }
+            }
+            -1
+        }
+        None => -1
+    }
+}
+
+/// The index of `n` in `t`, or -1.
+fn find(t: Names, n: List[u8]) -> i64 { find_at(t, n, 0, n.len(), h64(n)) }
+
+/// Add text[a..b] (hash `h`) if new; its index.
+fn add_at(inout t: Names, text: List[u8], a: usize, b: usize, h: u64) -> u32 {
+    let i = find_at(t, text, a, b, h)
+    if i >= 0 { return i as u32 }
+    let k = t.texts.len() as u32
+    if !t.keys.contains(h) { t.keys.insert(h, k) }
+    t.texts.push(bytes.slice(text, a, b))
+    k
+}
+
+/// Add `n` (if new); its index.
+fn add(inout t: Names, n: List[u8]) -> u32 { add_at(inout t, n, 0, n.len(), h64(n)) }
+
+/// The `@` names in `text` and the `%` names that are in `types`, in order of appearance
+/// (each once), skipping quoted strings and `;` comments.
+type Refs = { at: Names, pct: Names }
+
+fn refs(text: List[u8], types: Names) -> Refs {
+    let mut r = Refs(names_new(), names_new())
+    let n = text.len()
+    let mut i: usize = 0
+    while i < n {
+        let b = text[i]
+        if b == 34 {
+            i += 1
+            while i < n && text[i] != 34 { i += 1 }
+            i += 1
+            continue
+        }
+        if b == 59 {
+            while i < n && text[i] != 10 { i += 1 }
+            continue
+        }
+        if (b == 64 || b == 37) && i + 1 < n && name_byte(text[i + 1]) {
+            let mut j = i + 1
+            while j < n && name_byte(text[j]) { j += 1 }
+            let h = hash_at(text, i + 1, j)
+            if b == 64 {
+                add_at(inout r.at, text, i + 1, j, h)
+            } else if find_at(types, text, i + 1, j, h) >= 0 {
+                add_at(inout r.pct, text, i + 1, j, h)
+            }
+            i = j
+            continue
+        }
+        i += 1
+    }
+    r
+}
+
+/// `text` with every `@`/`%` name that `at`/`pct` maps (to the name at the same index of
+/// `at_new`/`pct_new`; an empty one keeps it) replaced; quoted strings and comments are
+/// copied as they are.
+fn rename(text: List[u8], at: Names, at_new: List[List[u8]], pct: Names, pct_new: List[List[u8]]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let n = text.len()
+    let mut last: usize = 0
+    let mut i: usize = 0
+    while i < n {
+        let b = text[i]
+        if b == 34 {
+            i += 1
+            while i < n && text[i] != 34 { i += 1 }
+            i += 1
+            continue
+        }
+        if b == 59 {
+            while i < n && text[i] != 10 { i += 1 }
+            continue
+        }
+        if (b == 64 || b == 37) && i + 1 < n && name_byte(text[i + 1]) {
+            let mut j = i + 1
+            while j < n && name_byte(text[j]) { j += 1 }
+            let h = hash_at(text, i + 1, j)
+            let k = if b == 64 { find_at(at, text, i + 1, j, h) } else { find_at(pct, text, i + 1, j, h) }
+            if k >= 0 {
+                let repl = if b == 64 { at_new[k as usize] } else { pct_new[k as usize] }
+                if repl.len() > 0 {
+                    bytes.append(inout out, bytes.slice(text, last, i + 1))
+                    bytes.append(inout out, repl)
+                    last = j
+                }
+            }
+            i = j
+            continue
+        }
+        i += 1
+    }
+    bytes.append(inout out, bytes.slice(text, last, n))
+    out
+}
+
+/// The name after the first `@` of a `define` line, up to `(`.
+fn def_name(line: List[u8]) -> List[u8] {
+    match bytes.find_byte(line, 64, 0) {
+        Some(i) => {
+            let mut j = i + 1
+            while j < line.len() && line[j] != 40 { j += 1 }
+            bytes.slice(line, i + 1, j)
+        }
+        None => List.new()
+    }
+}
+
+/// The first line of `t` (without the newline).
+fn first_line(t: List[u8]) -> List[u8] {
+    match bytes.find_byte(t, 10, 0) {
+        Some(i) => bytes.slice(t, 0, i)
+        None => t
+    }
+}
+
+/// `declare` for the function of `define` line `d` (`... {`): linkage `hidden` for an
+/// internal one.
+fn declaration(d: List[u8]) -> List[u8] {
+    let mut l = d.copy()
+    if bytes.ends_with(l, lit(" {")) { l = bytes.slice(l, 0, l.len() - 2) }
+    let mut out = lit("declare ")
+    let mut rest = bytes.slice(l, 7, l.len())
+    if bytes.starts_with(rest, lit("internal ")) {
+        rest = bytes.slice(rest, 9, rest.len())
+        bytes.append(inout out, lit("hidden "))
+    }
+    bytes.append(inout out, rest)
+    out
+}
+
+/// The unit of IR function f's text: its module's, or for a generic instance its shard.
+fn unit_of(p: lower.P, f: u32) -> List[u8] {
+    let fd = p.ir.fns[f as usize]
+    match bytes.find_byte(fd.name, 91, 0) {
+        Some(_) => {
+            let mut n = lit("inst.")
+            bytes.append(inout n, bytes.from_u64(h64(fd.name) % SHARDS))
+            n
+        }
+        None => {
+            let mut n = lit("mod.")
+            bytes.append(inout n, bytes.from_u64(fd.file as u64))
+            n
+        }
+    }
+}
+
+/// The module as one unit.
+fn whole(o: llvm.Out) -> List[Unit] {
+    let mut out: List[Unit] = List.new()
+    out.push(Unit(lit("prog"), llvm.whole(o)))
+    out
+}
+
+/// The module `o` (of program `p`) as units (see the top of this file), in a fixed order:
+/// by the first function of each.
+pub fn split(o: llvm.Out, p: lower.P) -> List[Unit] {
+    // the trailer: private constants and declarations, by name
+    let mut consts = names_new()
+    let mut const_text: List[List[u8]] = List.new()
+    let mut decls = names_new()
+    let mut decl_text: List[List[u8]] = List.new()
+    for k in o.owner.len()..o.ll.len() {
+        for line in bytes.lines(o.ll[k]) {
+            if bytes.starts_with(line, lit("@")) {
+                // only private constants can be copied into every unit that uses them; anything
+                // else (none today) keeps the module whole
+                match bytes.find(line, lit(" = private unnamed_addr constant "), 0) {
+                    Some(_) => {}
+                    None => { return whole(o) }
+                }
+                let mut j: usize = 1
+                while j < line.len() && name_byte(line[j]) { j += 1 }
+                add(inout consts, bytes.slice(line, 1, j))
+                const_text.push(line)
+            } else if bytes.starts_with(line, lit("declare ")) {
+                add(inout decls, def_name(line))
+                decl_text.push(line)
+            }
+        }
+    }
+    // the named types, by name
+    let mut types = names_new()
+    let mut type_text: List[List[u8]] = List.new()
+    for line in bytes.lines(o.head) {
+        if bytes.starts_with(line, lit("%")) {
+            match bytes.find(line, lit(" = type "), 0) {
+                Some(i) => {
+                    add(inout types, bytes.slice(line, 1, i))
+                    type_text.push(line)
+                }
+                None => {}
+            }
+        }
+    }
+    // the units and their bodies; every defined function: its unit and its define line
+    let mut units = names_new()
+    let mut parts: List[List[u32]] = List.new()
+    let mut defs = names_new()
+    let mut def_unit: List[u32] = List.new()
+    let mut def_line: List[List[u8]] = List.new()
+    for k in 0..o.owner.len() {
+        let un = unit_of(p, o.owner[k])
+        let u = add(inout units, un)
+        if (u as usize) == parts.len() { parts.push(List.new()) }
+        let part = o.ll[k]
+        if bytes.starts_with(part, lit("define ")) {
+            let dl = first_line(part)
+            add(inout defs, def_name(dl))
+            def_unit.push(u)
+            def_line.push(dl)
+        }
+        parts[u as usize].push(k as u32)
+    }
+    let mut bodies: List[List[u8]] = List.new()
+    for ps in parts {
+        let mut body: List[u8] = List.new()
+        for k in ps { bytes.append(inout body, o.ll[k as usize]) }
+        bodies.push(body)
+    }
+    // what each unit names; a function named outside its own unit is exported (hidden)
+    let mut urefs: List[Refs] = List.new()
+    let mut exported: List[bool] = List.new()
+    for d in 0..def_unit.len() { exported.push(false) }
+    for u in 0..bodies.len() {
+        let r = refs(bodies[u], types)
+        for nm in r.at.texts {
+            let d = find(defs, nm)
+            if d >= 0 && (def_unit[d as usize] as usize) != u { exported[d as usize] = true }
+        }
+        urefs.push(r)
+    }
+    let mut out: List[Unit] = List.new()
+    for u in 0..bodies.len() {
+        let r = urefs[u]
+        // constants and declarations, in order of first use
+        let mut at = names_new()
+        let mut at_new: List[List[u8]] = List.new()
+        let mut tail: List[u8] = List.new()
+        let mut nconst: u64 = 0
+        for nm in r.at.texts {
+            let c = find(consts, nm)
+            if c >= 0 {
+                add(inout at, nm)
+                let mut x = lit(".c")
+                bytes.append(inout x, bytes.from_u64(nconst))
+                nconst += 1
+                at_new.push(x)
+                bytes.append(inout tail, const_text[c as usize])
+                tail.push(10)
+                continue
+            }
+            let d = find(defs, nm)
+            if d >= 0 {
+                if (def_unit[d as usize] as usize) != u {
+                    bytes.append(inout tail, declaration(def_line[d as usize]))
+                    tail.push(10)
+                }
+                continue
+            }
+            let x = find(decls, nm)
+            if x >= 0 {
+                bytes.append(inout tail, decl_text[x as usize])
+                tail.push(10)
+            }
+        }
+        // types: those the functions name, closed over the types their definitions name
+        let mut tneed = names_new()
+        for nm in r.pct.texts {
+            if find(types, nm) >= 0 { add(inout tneed, nm) }
+        }
+        // (and those the declarations and constants name)
+        for nm in refs(tail, types).pct.texts {
+            if find(types, nm) >= 0 { add(inout tneed, nm) }
+        }
+        let mut ti: usize = 0
+        while ti < tneed.texts.len() {
+            let t = find(types, tneed.texts[ti])
+            for nm in refs(type_text[t as usize], types).pct.texts {
+                if find(types, nm) >= 0 { add(inout tneed, nm) }
+            }
+            ti += 1
+        }
+        let mut pct_new: List[List[u8]] = List.new()
+        for nm in tneed.texts {
+            if bytes.eq(nm, lit("ei.String")) {
+                pct_new.push(List.new())
+            } else {
+                let mut x = lit("T")
+                bytes.append(inout x, bytes.from_u64(pct_new.len() as u64))
+                pct_new.push(x)
+            }
+        }
+        // the module's name (else clang names it by its file): a unit's object doesn't depend
+        // on where it was compiled
+        let mut text = lit("source_filename = \"")
+        bytes.append(inout text, units.texts[u])
+        bytes.append(inout text, lit("\"\n"))
+        for nm in tneed.texts {
+            bytes.append(inout text, type_text[find(types, nm) as usize])
+            text.push(10)
+        }
+        text.push(10)
+        bytes.append(inout text, bodies[u])
+        bytes.append(inout text, tail)
+        // the linkage of what other units call
+        let mut body = rename(text, at, at_new, tneed, pct_new)
+        body = hide(body, defs, def_unit, exported, u as u32)
+        out.push(Unit(units.texts[u], body))
+    }
+    out
+}
+
+/// `text` with `define internal` made `define hidden` for every function of unit u that
+/// another unit calls.
+fn hide(text: List[u8], defs: Names, def_unit: List[u32], exported: List[bool], u: u32) -> List[u8] {
+    let key = lit("\ndefine internal ")
+    let mut out: List[u8] = List.new()
+    let mut last: usize = 0
+    let mut from: usize = 0
+    while true {
+        match bytes.find(text, key, from) {
+            Some(i) => {
+                let mut e = i + 1
+                while e < text.len() && text[e] != 10 { e += 1 }
+                let line = bytes.slice(text, i + 1, e)
+                let d = find(defs, def_name(line))
+                if d >= 0 && exported[d as usize] && def_unit[d as usize] == u {
+                    bytes.append(inout out, bytes.slice(text, last, i + 8))
+                    bytes.append(inout out, lit("hidden "))
+                    last = i + key.len()
+                }
+                from = i + key.len()
+            }
+            None => { break }
+        }
+    }
+    bytes.append(inout out, bytes.slice(text, last, text.len()))
+    out
+}

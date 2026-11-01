@@ -271,15 +271,21 @@ if [ -n "$binaries" ]; then
     mkdir -p "$W/bin"
     printf '#!/bin/sh\nexec "%s" cc -target %s-linux-musl "$@"\n' "$zig" "$arch" > "$W/cc"
     chmod +x "$W/cc"
-    echo "release: $t: eiderc, crypto, eider-pkg, eider-doc, eider with zig cc -target $arch-linux-musl (its clang compiles the LLVM IR too)"
-    CC=$here/$W/cc EIDER_LLVM_CC=$here/$W/cc EIDER_LLVM_LTO=0 EIDER_CACHE=off EIDER_CFLAGS=-s target/eiderc build compiler/main.ei -o "$W/bin/eiderc" >"$W/eiderc.log" 2>&1 ||
+    echo "release: $t: eiderc, crypto, eider-pkg, eider-doc, eider with zig cc -target $arch-linux-musl"
+    EIDER_CACHE=off target/eiderc emit-c compiler/main.ei >"$W/eiderc.c" 2>"$W/eiderc.log" &&
+      "$W/cc" -std=c11 -O2 -pthread -s -I core -o "$W/bin/eiderc" "$W/eiderc.c" core/eider_rt.c core/eider_core.c >>"$W/eiderc.log" 2>&1 ||
       { cat "$W/eiderc.log" >&2; die "$t: eiderc did not build"; }
     CC="$zig cc -target $arch-linux-musl" AR="$zig ar" EIDER_CRYPTO_OUT=$here/$W/crypto sh scripts/crypto-build.sh awslc-noasm >"$W/crypto.log" 2>&1 ||
       { tail -20 "$W/crypto.log" >&2; die "$t: AWS-LC did not build"; }
     for p in pkg:packages/pkg/main.ei doc:packages/doc/main.ei eider:packages/eider/main.ei; do
       bin=${p%%:*}; [ $bin = eider ] || bin=eider-$bin
-      libs=; [ $bin = eider ] && libs="-l eider_crypto"
-      CC=$here/$W/cc EIDER_LLVM_CC=$here/$W/cc EIDER_LLVM_LTO=0 EIDER_CACHE=off EIDER_CFLAGS="-s -L$here/$W/crypto/awslc-noasm" target/eiderc build "${p#*:}" -o "$W/bin/$bin" $libs >"$W/$bin.log" 2>&1 ||
+      # The tools are built from the compiler's portable C (emit-c) with the target's zig cc, as
+      # eiderc is from the C seed: the LLVM backend emits IR for the host's C ABI (System V
+      # x86-64; AAPCS64 is not done), which must not be cross-compiled to another target.
+      EIDER_CACHE=off target/eiderc emit-c "${p#*:}" >"$W/$bin.c" 2>"$W/$bin.log" ||
+        { tail -20 "$W/$bin.log" >&2; die "$t: $bin: emit-c failed"; }
+      ldl=; [ $bin = eider ] && ldl="-L$here/$W/crypto/awslc-noasm -leider_crypto"
+      "$W/cc" -std=c11 -O2 -pthread -s -I core -o "$W/bin/$bin" "$W/$bin.c" core/eider_rt.c core/eider_core.c $ldl >>"$W/$bin.log" 2>&1 ||
         { tail -20 "$W/$bin.log" >&2; die "$t: $bin did not build"; }
     done
     # smoke tests every target gets: static ELF executables for the right machine

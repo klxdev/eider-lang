@@ -857,6 +857,9 @@ EC_FN(int64_t, ec_stat, (int32_t follow)) {
   return 0;
 }
 
+/* in[0] path: its access and modification times set to now (utimensat; follows symlinks). */
+EC_FN(int64_t, ec_touch, (void)) { return utimensat(AT_FDCWD, arg(0), NULL, 0) == 0 ? 0 : fail(); }
+
 EC_FN(int64_t, ec_fd_chmod, (int32_t fd, int32_t mode)) {
   return fchmod(fd, (mode_t)(mode & 07777)) == 0 ? 0 : fail();
 }

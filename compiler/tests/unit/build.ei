@@ -1,0 +1,73 @@
+// compiler/build.ei (incremental builds): the job runner's exit codes, in order, at several
+// job counts (a failure, a missing program, a signal); the CPU count and its list parser; the
+// size parser and printer; the key's framing (streamed SHA-256 equals the one-shot digest of
+// the framed parts).
+import core.sys
+import std.io
+import std.bytes
+import eiderc.build
+import eiderc.sha256
+
+fn sh(cmd: str) -> List[List[u8]] {
+    let mut a: List[List[u8]] = List.new()
+    a.push(sys.lit("sh"))
+    a.push(sys.lit("-c"))
+    a.push(sys.lit(cmd))
+    a
+}
+
+fn show(codes: List[i32]) uses io {
+    let mut t = String.from("")
+    for c in codes {
+        t.append(String.from_int(c as i64))
+        t.push_str(" ")
+    }
+    print(t)
+}
+
+fn main() uses io, fs, net, clock {
+    let mut cmds: List[List[List[u8]]] = List.new()
+    cmds.push(sh("exit 0"))
+    cmds.push(sh("sleep 0.05; exit 3"))
+    cmds.push(sh("exit 1"))
+    let mut missing: List[List[u8]] = List.new()
+    missing.push(sys.lit("/nonexistent/eiderc-test-program"))
+    cmds.push(missing)
+    cmds.push(sh("kill -9 $$"))
+    cmds.push(sh("sleep 0.02"))
+    for j in [1, 2, 3, 8] {
+        show(build.run_jobs(cmds, j as u64, true))
+    }
+    // no commands
+    let none: List[List[List[u8]]] = List.new()
+    print(build.run_jobs(none, 4, true).len())
+    print(build.cpus() >= 1)
+    print(build.count_list(sys.lit("0-3,8,10-11\n")))
+    print(build.count_list(sys.lit("0")))
+    print(build.count_list(sys.lit("")))
+    for v in ["123", "64K", "500M", "5G", "2GiB", "7kB", "", "x", "12Q"] {
+        match build.parse_size(sys.lit(v)) {
+            Some(n) => print(String.from_int(n as i64))
+            None => print("none")
+        }
+    }
+    let sizes: [u64; 6] = [0, 1023, 1024, 1536, 1048576, 5368709120]
+    for n in sizes {
+        io.outln(build.human(n))
+    }
+    // the key frames each part as <length>:<bytes>
+    let mut parts: List[List[u8]] = List.new()
+    parts.push(sys.lit("ab"))
+    parts.push(List.new())
+    let mut big: List[u8] = List.new()
+    for i in 0..1000 { big.push((i % 251) as u8) }
+    parts.push(big)
+    let mut framed: List[u8] = List.new()
+    for p in parts {
+        bytes.append(inout framed, bytes.from_u64(p.len() as u64))
+        framed.push(58)
+        bytes.append(inout framed, p)
+    }
+    print(bytes.eq(build.key(parts), bytes.hex(sha256.digest(sha256.new(), framed))))
+    io.outln(build.key(parts))
+}

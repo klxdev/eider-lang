@@ -1,0 +1,33 @@
+// Every std module, for scripts/frontend-bench.sh (the front end on std).
+import std.atomic
+import std.bytes
+import std.chan
+import std.child
+import std.deque
+import std.encoding
+import std.env
+import std.error
+import std.event
+import std.fd
+import std.fmt
+import std.fs
+import std.heap
+import std.io
+import std.net
+import std.path
+import std.poll
+import std.proc
+import std.profile
+import std.random
+import std.set
+import std.signal
+import std.sort
+import std.stream
+import std.strings
+import std.sync
+import std.task
+import std.testing
+import std.time
+import std.utf8
+
+fn main() {}

@@ -600,27 +600,24 @@ The rest of the driver, so every command the tests use exists in eiderc.
   runner's own cases (wrong code, wrong position, missing header, a file that compiles, a
   rejected pass file, a fix after non-ASCII text, a fix that leads to the next error, test
   mode), whose output (5 failed, exit 1) must equal the recorded output too.
-- **Cache** (top of `driver.ei`). `EIDER_CACHE=off` disables it, `EIDER_CACHE=<dir>` moves
-  it, the default is `$XDG_CACHE_HOME/eider`, else `~/.cache/eider`, with
-  eiderc's entries in subdirectories (`core/`, `bin/`, `tmp/`). Keys are SHA-256 (`sha256.ei`,
-  see LAYERS.md for why the compiler has its own) over length-prefixed parts:
-  `core/<key>/{eider_rt.o,eider_core.o}`, the C core compiled once per toolchain, keyed by
-  the whole cc argv (cc, warning and -O flags, `$EIDER_CFLAGS`, `-I <root>/core`, `-fPIC`
-  for libraries), `$CC --version`, `LIBRARY_PATH`/`CPATH`/`C_INCLUDE_PATH` and the bytes of
-  eider_rt.h, eider_rt.c and eider_core.c; and `bin/<key>`, an executable, keyed by the same
-  toolchain parts, the core objects (their path holds their key), the `-l` libraries and the
-  generated C. `run` executes a cached binary in place, `build` copies it to `-o`'s path
-  (removing the old file first, so a running binary isn't rewritten). Not in any key: the
-  contents of external `-l` libraries and of system headers beyond what `--version`
-  identifies. With the cache off the
-  core sources are compiled into each program, as before.
+- **Cache** (top of `driver.ei`; since C8.27 the layout is build.ei's: "C8.27: incremental
+  builds"). `EIDER_CACHE=off` disables it, `EIDER_CACHE=<dir>` moves it, the default is
+  `$XDG_CACHE_HOME/eider`, else `~/.cache/eider`. A build compiles units (the program's C and
+  the C core's two sources) to objects cached under `obj/`, each keyed by its text, included
+  headers, the whole cc argv and `$CC --version`, and links them into a program cached under
+  `bin/` by the objects' keys, the link command and the `-l` libraries. `run` executes a cached
+  binary in place, `build` copies it to `-o`'s path (removing the old file first, so a running
+  binary isn't rewritten). `EIDER_CACHE_MAX` bounds the size (LRU; `eiderc cache
+  size|clean|trim`). Not in any key: the contents of external `-l` libraries and of system
+  headers beyond what `--version` identifies. With the cache off the objects are made in the
+  work directory.
 - **Work directories.** Each compile gets its own `eiderc-<ms>-<n>` directory made with an
   exclusive mkdir, under `<cache>/tmp/`, else (cache off) `<root>/target/tmp/`, else
   `$TMPDIR` or `/tmp` if neither is writable; it is removed afterwards (kept, with the C, when
   the C fails to compile). Entries are made there and renamed into the cache, so they appear
-  atomically: the core objects as one directory (a rename onto an existing one fails, and
-  the loser uses the winner's), a binary as one file. Twelve concurrent `eiderc run`s on an
-  empty cache all succeed with one binary and one core build ("cache" in test-compiler.sh).
+  atomically, one file each (two processes making the same entry both succeed; the files are
+  identical). Twelve concurrent `eiderc run`s on an empty cache all succeed with one object
+  for the program and one build of the core ("cache" in test-compiler.sh).
 - **Reusable entry points** for C built by the compiler itself (comptime): `driver.executable(c,
   file, release, libs)` returns an `Exe` (the binary's path, cached or in its work
   directory) for the caller to run, `driver.try_executable` the same for C that may not
@@ -1053,15 +1050,16 @@ half can call the other's functions. `lower.c_names` gives the LLVM half the C n
 types and functions. The module comes back in parts (`Out.head`, the type definitions,
 then each function's text as it was built), and is joined only to write `prog.ll`.
 
-**Build.** At -O0 clang compiles `prog.ll` to an object (`-g`, and the sanitizer and `-O`
-flags of `EIDER_CFLAGS`) and `$CC` compiles and links the C half as usual. A release build
-uses link-time optimization when clang links an `-flto` probe with lld, else gold (C343):
-both halves are compiled by clang to bitcode (the C half with `-w`: it is generated code that
-the C backend already checks under `$CC`), the C core's objects stay native and cached, and
-clang links everything with `-fuse-ld=lld`, so the C half's glue (push, clone, drop, `==`)
-inlines into the IR. `EIDER_LLVM_LTO=0`, no such linker, and `build --lib` link plain
-objects. The executable is cached under the same key as the C path's (C440), plus clang's
-argv and version, `EIDER_LLVM_LTO` and the IR. Today no construct falls back: every
+**Build.** Since C8.27 the module is cut into units (one per module, the generic instances in
+16 shards; llvm_units.ei), each compiled by clang (the sanitizer, `-g` and `-O` flags of
+`EIDER_CFLAGS` too) in parallel and cached, and `$CC` compiles the C half; a release build
+uses ThinLTO with lld and lld's cache (C396, replacing C343's full LTO with lld or gold): the
+units and the C half (with `-w`: it is generated code that the C backend already checks under
+`$CC`) are compiled to bitcode, the C core's objects stay native and cached, so the C half's
+glue (push, clone, drop, `==`) still inlines into the IR. `EIDER_LLVM_LTO=0`, no lld, and
+`build --lib` link plain objects; `-g` and `build --lib` build the module as one unit. The
+program is cached by its objects ("C8.27: incremental builds"; this replaces the whole-IR
+binary key of C440). Today no construct falls back: every
 function of the run tests, and every function of the compiler, is native.
 
 **Calling conventions.** A call from Eider to Eider uses an internal convention (C340):
@@ -1279,9 +1277,9 @@ and the core sources (sha256.ei at -O2: ~40 ms per MB; a small program's C is ~1
 | ✅ (C7) Build `core/eider_rt.c` and `core/eider_core.c` once per (CC, flags) and link the cached objects | measured above: build 0.31 s -> 0.07 s, run 0.14 s -> 0.06 s |
 | ✅ (C7) Binary cache keyed on (generated C, CC, flags, core objects), controlled by `EIDER_CACHE` | unchanged programs skip gcc: 0.01 s |
 | Smaller C: declare temporaries in the narrowest scope that still avoids `-Wmaybe-uninitialized`; share glue between identical layouts (only used glue is emitted since C5); eiderc's own C is 74k lines | less C for gcc, whose time is roughly linear in it |
-| One C file per module, compiled in parallel (needs constraint 3) | uses the idle cores; most of the gcc time for large programs |
+| One unit per module, compiled in parallel (needs constraint 3; "C8.27: incremental builds": the infrastructure is built, the split comes with the LLVM backend) | uses the idle cores; most of the compile time for large programs |
 | -O0 for the edit/run loop by default (already), -O2 only for `build` | 4x faster gcc on large programs |
-| Incremental front end: cache per-module check results keyed by source hash and the interfaces of imports | matters once programs are large; the front end is not the bottleneck today |
+| Incremental front end: cache per-module check results keyed by source hash and the interfaces of imports | measured in "C8.27" ("The front-end cache"): a parse cache would be slower than parsing; a whole-program manifest and per-module lowering by interface hashes are the designs kept |
 | A direct debug back end (no C compiler in the loop) | edit/run latency independent of gcc |
 
 ## C8 plan: the backlog
@@ -3041,6 +3039,317 @@ the migrated compiler equals its C for compiler/.
 `path:` qualifiers for `std.bytes.Buf`); eider-analyzer 0.1.1 (the stand-in, completion of
 module paths after `import` and in `{}`, hover and definition on path segments).
 
+## C8.27: incremental builds
+
+Issue #129 (U25, decided with the user on 2026-10-31; C380-C397). Code: build.ei (units, the
+object and link caches, the job runner, eviction), llvm_units.ei (the LLVM module cut into
+units), driver.ei (each backend's units, ThinLTO), main.ei (`-j`, `eiderc cache`), sha256.ei
+(streaming, with bitwise operators). LLVM is the only backend from #125/#128 on (U23), so the
+units are LLVM's; the C backend, until #128 removes it, builds as three units (its program's
+C and the C core's two sources) through the same cache.
+
+Before: the front end is whole-program and its output is one translation unit, compiled by
+one `cc` and cached as one binary (`bin/<key>`, key over the whole generated text). Any
+edit anywhere recompiles everything; building eiderc at -O2 is one 30 s gcc process on 4.7 MB
+of C while 15 cores idle, and even a no-op rebuild hashed the 4.7 MB at 50 ns a byte (0.23 s
+of its 0.52 s).
+
+### Units
+
+A **unit** is the smallest thing compiled and cached on its own: a text the backend produced,
+the command that compiles it, and the extra key parts its object depends on (build.ei
+`Unit`). The backend decides the boundaries; build.ei never looks inside a unit. The
+boundaries are chosen so that a unit's text changes only when something its object really
+depends on changes. For the LLVM backend (llvm_units.split; `run`, `test` and `build`):
+
+| unit | contains | its text changes when |
+|---|---|---|
+| `mod.<n>` (one per module) | the functions whose body comes from module n (`Ir.fns[f].file`), its closures and the C-convention wrappers of its functions | that module's source changes, or the layout or signature of something it uses |
+| `inst.<k>` (16 shards) | the monomorphized generic instances (an IR name with `[`), shard `hash(IR name) mod 16`, whatever module instantiated them | an instance of that shard is added, removed or changes |
+| `half` | the C half: per-type glue, `main`, the test driver, the trap file table, fallbacks | the set of glue, natives, tests or modules changes |
+| `eider_rt`, `eider_core` | the C core | the core or the flags change (so: almost never) |
+
+For eiderc that is 43 LLVM units (27 modules with functions, 16 shards), the C half and the
+core: 48 objects. Why shards for instances rather than "with the module that uses them": an
+instance such as `List[String].push` is used by many modules; put with its user it would be
+compiled once per user and invalidated by every edit to any user, and a unit of its own per
+instance would be thousands of compiler processes. Hash shards keep each instance in exactly
+one unit whatever uses it, so editing `diag.ei` recompiles `mod.<diag>` and nothing else,
+unless the edit adds an instance (its shard changes) or changes a type's layout (the units
+that use the type change, as they must). 16 shards (C383): eiderc has ~1,400 functions, and
+16 keeps 16 cores busy on a cold build. The per-type glue is in the C half today; #128 moves it
+into the IR, and it then shards like the instances (`glue.<k>`, by the type's stable name).
+
+The split works on the module's text (llvm.ei records which IR function each part of
+`Out.ll` is, `Out.owner`; C392). Each unit is a complete module: `source_filename` (the unit's
+name), the named types it uses closed over the types they mention, its functions, the private
+constants it uses (copied into every unit that uses them: they are `private unnamed_addr`),
+and a declaration of every function it calls that is defined elsewhere: from that
+function's own `define` line (`declare hidden ...`) for another unit's, the module's
+`declare` lines for the C half's, the core's and the intrinsics. A function another unit calls
+becomes `define hidden` (external in its object, invisible outside the program); the rest
+stay `internal`, so -O2 still sees most functions as local. So that an edit stays local, a
+unit's text holds nothing numbered program-wide: the types (`%t<type id>`, numbered by the
+program's type table, which an edit anywhere can renumber) become `%T<k>` and the constants
+(`@.s<string index>`, `@.m<n>`) `@.c<k>`, both numbered by first use in the unit (C393).
+Function names are already stable (constraint 1 of "Compile speed"). What remains numbered:
+trap lines encode `file index * 2^20 + line` with the module's position in the program
+("C8.16"), so an edit that adds or removes a module renumbers the units of the modules after
+it (C394; a per-module file symbol would fix it, with #128's trap table).
+
+The units are the whole module's text rearranged, every function unchanged but for those
+names and its linkage, so the program is the same: the 407 runs of scripts/llvm-diff.sh
+(-O0, -O2 with ThinLTO, allocation counts, ASan+UBSan) are byte-identical to the C backend
+through units, and the eiderc built from units emits byte-identical C and LLVM IR for
+compiler/main.ei. Not split: `-g` (one DWARF compile unit; splitting the metadata is later),
+`build --lib`, and `EIDER_LLVM_UNITS=0` (the whole module as one unit, for comparison).
+
+An object must not depend on where it was compiled, or ThinLTO's output (which reads every
+module's identifier) would differ between two caches: build.compile writes each generated
+text to a directory of its own (`u<n>/<name><ext>`) and compiles it from there by relative
+names (C395). `-j 1` and `-j 8`, and two caches, give byte-identical programs (tested).
+
+### The cache key and layout
+
+Keys are SHA-256 (sha256.ei) over length-prefixed parts (`build.key`: `<len>:<bytes>` for each
+part, streamed, so a key over large parts concatenates nothing). sha256.ei now uses the
+bitwise operators (C8.2, which the seed has): 4.7 ms per MB instead of 52 ms (C381).
+
+```
+<cache>/                     $EIDER_CACHE, else $XDG_CACHE_HOME/eider, else ~/.cache/eider
+  obj/<k2>/<key>.o           a unit's object
+  bin/<k2>/<key>             a linked program
+  lto/                       lld's ThinLTO cache (release builds; lld prunes it)
+  tmp/eiderc-<ms>-<n>/       one work directory per process
+  trimmed                    stamp: when the size limit was last applied
+```
+
+`<k2>` is the key's first two hex digits, so no directory grows past a few hundred entries
+(fs.list sorts its listing). The unit key covers, in order: the format tag `eiderc unit 2`,
+the compiler's identity (`build.tool_id`: `<cc> --version` and `LIBRARY_PATH`, `CPATH`,
+`C_INCLUDE_PATH`), the whole compile command (compiler, every flag, `EIDER_CFLAGS`, `-I`
+path, target and `-O` level), the unit's extra parts (the bytes of the headers it includes:
+`eider_rt.h`, `eider_core_ext.h`, `eider_prof.c` when profiling), its extension and its text.
+The text already holds everything else the object depends on (the target triple and data
+layout in LLVM IR; file names for traps), so the eiderc version is not a part: two eiderc
+versions that emit the same text share the object. The link key covers `eiderc link 2`, the
+linker's identity, the link command, every object's key in link order and the arguments after
+the objects (`-l` libraries). Not in any key, as before: the contents of `-l` libraries and of
+system headers beyond what `--version` identifies.
+
+A hit costs a stat and a `fd.touch` (the entry's time is its last use, for eviction); a
+no-op rebuild of eiderc (three units with the C backend) hashes 4.7 MB in ~25 ms and links
+nothing.
+
+### Parallel compilation
+
+`build.compile` computes every unit's key, takes the hits, writes the misses' texts to the
+work directory and gives their commands to `build.run_jobs`, which keeps at most `-j N`
+running (child processes through std/child: start, `try_wait` with a back-off of 1 to 8 ms,
+`wait` for the last one; the compiler has no threads, "Writing the compiler in today's
+Eider"). The default is `$EIDER_JOBS`, else the CPUs this process may run on: Linux's
+`Cpus_allowed_list` (so `taskset` counts), capped by a cgroup v2 quota (`cpu.max`, so a
+container's limit counts), else the online CPUs, else 1 (`build.cpus`). Each object is renamed
+into the cache as soon as all compiles succeeded; the first failing unit (in unit order, not
+completion order, so the message doesn't depend on timing) is reported, its source kept in the
+work directory. Compilers' output goes to eiderc's stdout and stderr (interleaved when
+several fail), or to /dev/null for comptime evaluators. `-j 1` and `-j 8` make byte-identical
+objects and programs (tested).
+
+### Linking
+
+`build.link` links the objects (in unit order) with the compile command's compiler and flags
+and then the `-l` libraries; with the cache on, the program is a cache entry (`bin/`), keyed
+as above, so a no-op rebuild runs no compiler and no linker. `build` copies it out, `run`
+executes it in place, as before. Debug builds link with `$CC`'s default linker: linking
+eiderc's 48 objects is ~0.1 s of its 0.9 s edit (lld would save part of that; later). A library (`build --lib`) archives the same objects (`ar`) and links them
+`-shared`; it is not cached as a whole (it is written next to `-o`).
+
+### Release builds: ThinLTO and lld's cache
+
+Before #129 a release LLVM build was full LTO over one module (`-flto`, with lld or gold):
+single-threaded, ~30 s for eiderc, and every edit redid all of it. Now (C396) a release build
+compiles each LLVM unit and the C half with `-flto=thin` (the unit object is bitcode with a
+summary, still cached by its text) and links with
+
+```
+clang <cc flags> -flto=thin -fuse-ld=lld \
+  -Wl,--thinlto-jobs=<-j> \
+  -Wl,--thinlto-cache-dir=<cache>/lto \
+  -Wl,--thinlto-cache-policy=prune_interval=15m:prune_after=168h:cache_size_bytes=<limit/4>
+```
+
+ThinLTO optimizes every module in parallel, importing across modules what the summaries say
+is worth inlining (the C half's glue into the IR, as full LTO did); lld's cache keys each
+module's optimized object by the module's hash and everything imported into it, so after an
+edit only the edited module and the modules that import from it are optimized again; the rest
+come from `lto/`. The job count and the cache flags are not part of the link key (build.link
+`nokey`): they don't change the program. lld prunes `lto/` itself under the policy above;
+`eiderc cache trim` counts its size but leaves it to lld, `clean` removes it. Without lld
+(probed with a one-line `-flto=thin -fuse-ld=lld` link; gold is no longer used), with
+`EIDER_LLVM_LTO=0` or when EIDER_CFLAGS ends with -O0, a release build links native -O2
+objects. The C core stays native objects.
+
+### Eviction and size limits
+
+`EIDER_CACHE_MAX` (bytes, or with `K`, `M`, `G`, powers of 1024; default 5 GiB, `0`: no limit)
+bounds the cache. After a build that added entries, `build.maybe_trim` applies it when the
+stamp `<cache>/trimmed` is missing or older than 15 minutes (it touches the stamp first, so
+concurrent builds don't all walk the cache): the least recently used objects and programs
+(oldest `mtime`; every hit touches its entry) are removed until the cache is under 90% of the
+limit, so the next builds don't trim again at once. Work directories older than a day (left by
+a process that was killed) go too, and entries of the layout before C8.27 (`core/<key>/`)
+always. `eiderc cache size` prints each kind's files and bytes, the total and the limit;
+`eiderc cache trim` applies the limit now; `eiderc cache clean` removes every entry (work
+directories of running builds stay). A cold -O2 build of eiderc adds ~2.5 MB of objects and
+~2 MB of program with the C backend, so 5 GiB holds well over a thousand builds' distinct
+entries (phase 2 measures the LLVM units' sizes).
+
+### Concurrency
+
+Every entry is made in the process's own work directory (an exclusive mkdir) and renamed into
+place, as the driver already did: a concurrent eiderc sees no entry or a complete one, two
+processes making the same entry both succeed and the last rename wins (the files are
+identical, the key being their content). Eviction can't make that safe by renaming alone,
+because it removes what another build may be about to link: so `trim` never removes an entry
+used in the last 10 minutes (`GRACE_MS`; a hit touches the entry before the link reads it),
+re-stats each candidate just before removing it, and a link that fails while one of its
+objects has vanished (a `cache clean` at the wrong moment) compiles the missing units again and
+links once more (`driver.build_units`). Tested: twelve concurrent runs of one program on an
+empty cache, eight parallel builds of four programs into one cache (one object per program
+plus the core's two, no work directory left), and the LRU and automatic trims.
+
+### The front-end cache
+
+The front end is whole-program (resolve, check and lower see every module). The issue asks
+for a per-module cache of parse and resolve results keyed by file hash first. Measured with
+`scripts/frontend-bench.sh` (compiler/tests/bench/frontend.ei; 2026-10-31, 16 cores, medians
+of 5 runs, -O2 eiderc), against the lower bound of reading a parse back: every module's AST
+nodes, extra words and tokens as little-endian u32s, read and decoded into the same Lists, with
+no symbol remapping, kinds or strings (so a real cache can only be slower):
+
+| program | modules | source | load (lex, parse, resolve) | lex+parse alone | SHA-256 of the sources | consteval+check | cached parse: bytes | read+decode |
+|---|---|---|---|---|---|---|---|---|
+| compiler/main.ei | 38 | 1.05 MB | 66 ms | 49 ms | 3.5 ms | 85 ms | 19.3 MB | 109 ms |
+| every std module (compiler/tests/bench/allstd.ei) | 35 | 0.25 MB | 16 ms | 8 ms | 0.8 ms | 12 ms | 3.8 MB | 20 ms |
+
+The lexer and parser run at ~45 ns a byte; a parse is ~18 bytes per source byte (an AST node
+is 15 words, a token 8), and decoding it in Eider costs more than making it. A parse cache
+would be 2.2-2.4 times slower than parsing again, before symbol remapping (the interner is
+program-wide, so a cached module's symbol ids would have to be renumbered by node kind),
+which is also where it would be fragile. Not built (C389); file hashing (3.5 ms per MB) is
+cheap and is what the next step uses.
+
+What would pay instead, kept for later:
+
+1. **A whole-program manifest** (the no-op build). Key: the command, its flags, the entry's
+   canonical path, the eiderc binary's identity and the variables resolve reads (`EIDER_ROOT`,
+   `EIDER_HOME`). Value: every file resolve read (path, SHA-256: modules, the prelude,
+   eider.toml, eider.lock) and every path it probed and found missing (a new `eider.toml` above
+   a module, a module that would now shadow another), plus the backend's unit keys and the
+   link key. On a hit with every file unchanged and every probe still missing, the build is the
+   link-cache entry: no front end at all (today a no-op build of eiderc is ~0.25 s of front end
+   and lowering, 0.03 s of hashing). The hard part is recording the probes: resolve's file
+   access would go through `resolve.Files` everywhere (it does for module texts already) so
+   the manifest sees every probe.
+2. **Per-module lowering by interface hashes** (the clean interface-hash design the issue
+   asks about). A module's *interface* is what other modules can see of it: its public types
+   with their layouts, function signatures (with capabilities), traits and impls, constant
+   values (comptime included) and its public generic templates' source. Its interface hash is
+   the hash of that, plus the interface hashes of the modules its interface mentions. Checking
+   stays whole-program (instances and coherence are global, and the diagnostics' order is the
+   whole program's), but the backend text of `mod.<m>` is a function of m's typed IR, which is
+   a function of m's source and its imports' interfaces: key `mod.<m>`'s *text* by (m's
+   source hash, its imports' interface hashes, the eiderc identity) and skip lowering it
+   when the key is known (the unit key then follows from the cached text). That saves lowering
+   and LLVM emission for unchanged modules (two thirds of a no-op front end) and keeps check
+   as it is. It needs the type ids in the IR to stop being program-wide (a unit's text names
+   types by stable name already; the IR would need to as well, or lowering to be per module
+   from stable keys). For checking itself the same interface hashes would allow caching a
+   module's typed IR, but the decode cost measured above makes that unattractive until the IR
+   has a compact form.
+
+### Measurements
+
+Phase 1 (the C backend; 2026-10-31, 16 cores, gcc, wall clock). `scripts/build-bench.sh
+<eiderc>...` builds compiler/main.ei from a copy of the tree on an empty cache per row: cold,
+no-op (median of 3), then an edit to a message in compiler/diag.ei, then one in std/proc.ei;
+`release` is `build` (-O2), `debug` is `run -- --version` (-O0). `main` is main's compiler,
+`#129` this one, both built at -O2 by the seed's eiderc. Seconds, one run each (a shared
+machine: differences under ~10% are noise):
+
+| compiler | build | cold | no-op | edit compiler/diag.ei | edit std/proc.ei |
+|---|---|---|---|---|---|
+| main | release | 35.33 | 0.57 | 37.87 | 34.23 |
+| main | debug | 8.00 | 0.57 | 7.75 | 7.52 |
+| #129 | release | 34.67 | 0.31 | 32.19 | 31.60 |
+| #129 | debug | 6.94 | 0.28 | 6.80 | 6.84 |
+
+Small programs (`eiderc run tests/run/adt.ei`, median of 5): cold 0.30 s before, 0.18 s now
+(the core's two sources and the program compile in parallel); no-op 0.021 s, 0.008 s. SHA-256
+(sha256.ei) of 1 MB: 52 ms before, 4.7 ms now.
+
+Cold builds and edits of eiderc barely change: its C is one 4.7 MB unit, so any edit
+recompiles all of it and gcc on it is the whole time. No-op builds halve: they are now the
+front end and lowering (0.25 s) plus hashing (0.03 s). Edits become cheap in phase 2, when an
+edit changes one unit of many.
+
+Phase 2 (2026-10-31, 16 cores, gcc and clang 22, wall clock, one session; measured just
+before #128 made LLVM the default backend, when `--backend=llvm` still selected it):
+`scripts/build-bench.sh` on eiderc for five configurations; after each time, in parentheses,
+the unit objects that step compiled (main's compiler has the old cache layout: not counted).
+`main-c`: main's compiler, C backend, the whole-program binary cache (one cc per build, binary
+keyed by the whole C). `main-llvm`: main's `--backend=llvm` (one module, full LTO, no binary
+cache). `c`: this compiler, C backend. `llvm-whole`: this compiler, `--backend=llvm` with
+`EIDER_LLVM_UNITS=0` (one LLVM unit through the new cache, ThinLTO). `llvm-units`: this
+compiler, `--backend=llvm`, the default. Release is `build` (-O2), debug `run -- --version`
+(-O0):
+
+| configuration | build | cold | no-op | edit compiler/diag.ei | edit std/proc.ei |
+|---|---|---|---|---|---|
+| main-c | release | 42.57 | 0.69 | 42.11 | 42.31 |
+| main-c | debug | 9.42 | 0.69 | 9.23 | 9.11 |
+| main-llvm | release | 30.82 | 30.73 | 30.94 | 30.31 |
+| main-llvm | debug | 2.27 | 2.05 | 2.03 | 2.04 |
+| c | release | 41.51 (3) | 0.36 | 42.80 (1) | 38.81 (1) |
+| c | debug | 8.43 (3) | 0.36 | 8.86 (1) | 8.91 (1) |
+| llvm-whole | release | 33.83 (4) | 0.69 | 30.84 (1) | 29.86 (1) |
+| llvm-whole | debug | 1.69 (4) | 0.58 | 1.66 (1) | 1.69 (1) |
+| llvm-units | release | 12.77 (48) | 0.88 | 8.53 (1) | 1.75 (1) |
+| llvm-units | debug | 1.88 (48) | 0.80 | 0.88 (1) | 0.89 (1) |
+
+Against the whole-program cache (main-c): a release build of eiderc after an edit goes from 42 s
+to 1.8-8.5 s, a debug one from 9 s to 0.9 s; a cold release build from 43 s to 13 s. Against
+the LLVM build without units (main-llvm, and llvm-whole through the new cache), the units make
+the release build parallel (31-34 s to 13 s cold) and the edits cheap: one unit compiles, and
+ThinLTO re-optimizes only what imports from it. An edit to diag.ei costs 8.5 s in release
+because diag is imported by nearly every module (its functions are inlined into them, so lld
+optimizes those again); proc.ei, used by the driver alone, 1.75 s. The debug edit is 0.9 s:
+the front end and emission (0.5 s), the split (~0.1 s), one clang -O0 and the link. A no-op is
+0.8-0.9 s against 0.6-0.7 s for one unit: the split and hashing 10 MB of IR; it is the front
+end that remains, and the front-end manifest above is what would remove it.
+
+After #128 (LLVM the default backend, with main's whole-IR binary cache, C440), the same
+benchmark on the same day: `main` is main's compiler (one LLVM module, full LTO, the program
+cached by the whole IR), `whole` this compiler with `EIDER_LLVM_UNITS=0`, `units` this
+compiler's default:
+
+| configuration | build | cold | no-op | edit compiler/diag.ei | edit std/proc.ei |
+|---|---|---|---|---|---|
+| main | release | 28.83 | 0.93 | 28.78 | 29.09 |
+| main | debug | 2.57 | 0.93 | 2.32 | 2.33 |
+| whole | release | 27.90 (4) | 0.62 | 28.44 (1) | 27.77 (1) |
+| whole | debug | 1.66 (4) | 0.55 | 1.62 (1) | 1.63 (1) |
+| units | release | 10.71 (48) | 0.81 | 7.31 (1) | 1.55 (1) |
+| units | debug | 1.66 (48) | 0.73 | 1.00 (1) | 0.84 (1) |
+
+So against today's whole-program cache: a release build after an edit 29 s to 1.6-7.3 s, a
+debug one 2.3 s to 0.8-1.0 s, a cold release build 29 s to 11 s; a no-op 0.93 s to 0.73-0.81 s
+(main hashes the whole IR with the old SHA-256).
+
+The unit objects of a debug and a release build of eiderc take 8 MB, lld's ThinLTO cache 4 MB
+and each linked program 2.4 MB, so the 5 GiB default holds hundreds of builds.
+
 ## Profiling: `--profile`
 
 `eiderc build|run|test <file> --profile[=cpu,mem,conc]` (main.ei: `profile`, parsed by
@@ -3136,6 +3445,7 @@ compiler/
   main.ei             CLI (`eiderc --help`)
   source.ei  lex.ei  intern.ei  ast.ei  parse.ei  resolve.ei  types.ei  fold.ei  pats.ei
   check.ei  ir.ei  lower.ei  emit.ei  diag.ei  driver.ei  consteval.ei  suite.ei  sha256.ei
+  build.ei            units, the object and link caches, the job runner, eviction ("C8.27")
   lock.ei             eider.toml and eider.lock for package imports ("C8.3")
   ide.ei              the IDE analysis API (`eiderc ide`; "IDE analysis")
   front.ei            every syntax error at once ("Front-end recovery")

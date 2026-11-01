@@ -193,6 +193,7 @@ acts on:
 | `int64_t ec_fd_truncate(int32_t fd, int64_t len)` | | `0`; the file is now `len` bytes (zero-filled if it grew) |
 | `int64_t ec_fd_stat(int32_t fd)` | | `0`; `out` = the stat record (below) |
 | `int64_t ec_stat(int32_t follow)` | `in[0]` path | `0`; `out` = the stat record. `follow == 0` describes a final symlink itself. Unlike `ec_kind`, a missing path is `-ENOENT` |
+| `int64_t ec_touch(void)` | `in[0]` path | `0`; the file's access and modification times are now (`utimensat`, following a final symlink). The compiler's cache marks an entry used with it |
 | `int64_t ec_fd_chmod(int32_t fd, int32_t mode)` | | `0`; permission bits `mode & 07777` |
 | `int64_t ec_fd_lock(int32_t fd, int32_t op)` | | `flock(2)`: `op` `0` unlock, `1` shared, `2` exclusive, `+4` don't wait (`-EWOULDBLOCK` while another open file holds a conflicting lock). The lock belongs to the open file (all `dup`s of it), is advisory, and goes away when the last descriptor of that open file closes |
 | `int64_t ec_fd_nonblock(int32_t fd, int32_t on)` | | `0`; `O_NONBLOCK` set (`on != 0`) or cleared. A non-blocking descriptor returns `-EAGAIN` instead of waiting |

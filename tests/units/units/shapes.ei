@@ -1,0 +1,9 @@
+pub type Box = { w: i64, h: i64 }
+
+pub fn area(b: Box) -> i64 { b.w * b.h }
+
+pub fn total(xs: List[Box]) -> i64 {
+    let mut t: i64 = 0
+    for b in xs { t += area(b) }
+    t
+}
