@@ -164,6 +164,17 @@ exists, else in `pkg/<name>-<first 16 hex digits of its hash>`.
 
 `git` must be on the `PATH` for git dependencies.
 
+## Private git dependencies
+
+For a `https://github.com/` URL, eider-pkg authenticates git with a token when one is at
+hand: `GH_TOKEN`, else `GITHUB_TOKEN`, else what `gh auth token` prints (the same order
+`eider` uses for releases). It runs git with `-c credential.https://github.com.helper=` (which
+drops any other helper for github.com, a broken one included) and a one-off helper that
+answers `x-access-token` and the token, read by the helper itself from the environment or
+`gh`. The token is never on a command line, and `git -c` writes nothing to your git config or
+to the store's mirrors. With no token, git uses your own credential setup. Other hosts always
+use your git setup (a credential helper, or an SSH URL).
+
 ## Overriding a git dependency
 
 `EIDER_PKG_OVERRIDE` names local directories that stand in for git dependencies, for
