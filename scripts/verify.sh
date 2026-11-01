@@ -72,6 +72,15 @@ if [ $crc != 0 ]; then
 elif [ "$nok" -gt 0 ]; then
   echo "ok   crypto ($(grep -c '^ok   crypto rfc (' $S/crypto) backend(s): RFC/CAVP/Wycheproof vectors, ASan+UBSan, $(grep -c '^ok   crypto cross' $S/crypto) cross-backend checks)"
 fi
+# eider, the Eider command, end to end against fake signed releases (tests/eider/run.sh; it
+# links a crypto backend and needs .vendor/: skipped without them)
+if [ -n "$novendor" ]; then skip "eider: the eider command $novendor"
+else
+  sh tests/eider/run.sh > $S/eider 2>&1; erc=$?
+  while IFS= read -r l; do case $l in "skip "*) skip "${l#skip }" ;; esac; done < $S/eider
+  if [ $erc != 0 ]; then echo "FAIL eider: sh tests/eider/run.sh"; grep -A3 "^FAIL" $S/eider | head -20; fail=1
+  else grep "^ok" $S/eider; fi
+fi
 if [ -n "$novendor" ]; then skip "pkg: eider-pkg $novendor"
 else sh tests/pkg/run.sh | grep -q FAIL && { echo "FAIL pkg"; fail=1; } || echo "ok   pkg (eider-pkg end to end, local git repos)"; fi
 # imports: no quoted imports are left but the tests of the quoted form (docs/compiler.md "C8.26")

@@ -1,0 +1,28 @@
+key id: 666AF26DBB3CDE5D
+32
+true
+true
+alg: Ed
+untrusted: signature from eider-sign secret key
+signer: 666AF26DBB3CDE5D
+64
+64
+release: eider 0.1.0
+file: f
+true
+true
+102
+the public key is empty
+the public key file has a comment but no key line
+the public key is not a minisign Ed25519 key (42 bytes)
+the public key is not valid base64
+the signature file does not have the four lines of minisign's format
+the signature line is not 74 bytes (algorithm, key id, Ed25519 signature)
+the signature's first line is not `untrusted comment: ...`
+the secret key is not 158 bytes
+2
+1111111111111111111111111111111111111111111111111111111111111111
+true
+SHA256SUMS line 1 is not `<64 lowercase hex digits>  <file name>`
+SHA256SUMS line 1 is not `<64 lowercase hex digits>  <file name>`
+SHA256SUMS names a file twice

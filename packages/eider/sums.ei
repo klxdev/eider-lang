@@ -1,0 +1,57 @@
+//! sums: SHA256SUMS, the checksum list of a release (`sha256sum` format: 64 lowercase hex
+//! digits, two spaces, the file name; `*name`, the binary-mode mark, is accepted too).
+
+import std.bytes
+
+pub type Sum = { name: List[u8], hex: List[u8] }
+
+fn is_hex(b: u8) -> bool { bytes.is_digit(b) || (b >= 97 && b <= 102) }
+
+/// Every line of `text`, or Err naming the first malformed line. A name may appear once.
+pub fn parse(text: List[u8]) -> Result[List[Sum], String] {
+    let mut out: List[Sum] = List.new()
+    let mut n: u64 = 0
+    for line in bytes.lines(text) {
+        n += 1
+        if line.len() == 0 { continue }
+        let bad = line.len() < 67 || line[64] != 32 || (line[65] != 32 && line[65] != 42)
+        let mut ok = !bad
+        if ok {
+            for i in 0..64 {
+                if !is_hex(line[i as usize]) { ok = false }
+            }
+        }
+        if !ok {
+            let mut m = String.from("SHA256SUMS line ")
+            m.append(String.from_int(n as i64))
+            m.push_str(" is not `<64 lowercase hex digits>  <file name>`")
+            return Err(m)
+        }
+        let name = bytes.slice(line, 66, line.len())
+        for s in out {
+            if bytes.eq(s.name, name) { return Err(String.from("SHA256SUMS names a file twice")) }
+        }
+        out.push(Sum(name, bytes.slice(line, 0, 64)))
+    }
+    Ok(out)
+}
+
+/// The hex digest listed for `name`.
+pub fn lookup(sums: List[Sum], name: List[u8]) -> Option[List[u8]] {
+    for s in sums {
+        if bytes.eq(s.name, name) { return Some(s.hex) }
+    }
+    None
+}
+
+/// `sha256sum`'s text for `sums`, in the order given.
+pub fn render(sums: List[Sum]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    for s in sums {
+        bytes.append(inout out, s.hex)
+        bytes.append(inout out, "  ".bytes())
+        bytes.append(inout out, s.name)
+        out.push(10)
+    }
+    out
+}

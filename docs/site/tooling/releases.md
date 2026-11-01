@@ -20,6 +20,7 @@ and a `0.2` toolchain needs `0.2` tools.
 | core and std | eider-lang | `VERSION` | (programs: `import core.version`) |
 | `eider-pkg`, the package manager | eider-lang (`packages/pkg`) | `VERSION` | `eider-pkg 0.1.0` |
 | `eider-doc`, the docs generator | eider-lang (`packages/doc`) | `VERSION` | `eider-doc 0.1.0` |
+| `eider`, the command ([eider](eider.md)) | eider-lang (`packages/eider`) | `VERSION` | `eider 0.1.0` |
 | the language server | eider-analyzer | its `VERSION` | `eider-analyzer 0.1.0 (eider 0.1.0)` |
 | the tree-sitter grammar | tree-sitter-eider | its `VERSION` | (no binary) |
 | the profiler | eider-profiler | its `VERSION` | `eider-profiler 0.1.0` |
@@ -131,18 +132,50 @@ in each.
 
 ## Releasing
 
+A release is published as a GitHub Release of klxdev/eider-lang, tagged `v<version>`. The
+repository is private, so a release is visible only to people with access to it, and
+downloading one needs a GitHub token ([eider](eider.md#installing-eider)). One command does
+it:
+
 ```sh
-scripts/release.sh
+sh scripts/publish.sh 0.1.0 --dry-run    # everything but the tag, the push and GitHub
+sh scripts/publish.sh 0.1.0              # and then those
+```
+
+`scripts/publish.sh <version>`:
+
+1. **Checks** that `<version>` is `VERSION`, the tree is clean, `CHANGELOG.md` has a
+   `## <version>` section, the release key exists (mode 0600) and is the key embedded in
+   `eider` and `install.sh`, and the tag doesn't exist yet.
+2. **Runs `scripts/release.sh`** (below), which builds every file of the release into
+   `target/release/assets/v<version>/` after verify is ALL GREEN.
+3. **Signs** `SHA256SUMS` with the release key (`SHA256SUMS.minisig`), checks the signature,
+   and installs the release from that directory into a scratch `EIDER_HOME` with the
+   release's own `eider`, then builds and runs a program with it.
+4. **Publishes** (not with `--dry-run`): tags `v<version>` (annotated) in eider-lang at
+   HEAD, pushes the tag, and creates the release with `gh release create v<version>
+   --verify-tag`, its notes taken from the CHANGELOG section, with every file of the assets
+   directory.
+
+The siblings (eider-analyzer, tree-sitter-eider, eider-profiler) keep their own versions:
+`RELEASE.toml` records the commit of each, and `release.sh` prints the commands to tag
+them too.
+
+### What scripts/release.sh builds
+
+```sh
+scripts/release.sh [--skip-verify] [--targets "linux-x86_64 linux-aarch64"] [--no-binaries]
 ```
 
 1. **Checks.** eider-lang and the three siblings are present and clean (no uncommitted or
-   untracked files); `scripts/version.sh check` and `check-siblings` pass; each
-   `CHANGELOG.md` has a `## <version>` section; the seed's `eiderc --version` and
-   `eider-pkg --version` print the version; `scripts/verify.sh` ends with ALL GREEN, its
-   tools leg having built and tested the siblings; `scripts/selfhost.sh` prints
-   SELF-HOSTED.
-2. **The manifest.** `target/release/eider-<version>/RELEASE.toml` lists each component's
-   exact version, commit and tag:
+   untracked files; `EIDER_SIBLINGS` or `EIDER_ANALYZER`, `TREE_SITTER_EIDER`,
+   `EIDER_PROFILER` find them, default next to the checkout); `scripts/version.sh check`
+   and `check-siblings` pass; each `CHANGELOG.md` has a `## <version>` section; the seed's
+   `eiderc --version` and `eider-pkg --version` print the version; `scripts/verify.sh`
+   ends with ALL GREEN, its tools leg having built and tested the siblings;
+   `scripts/selfhost.sh` prints SELF-HOSTED.
+2. **The manifest.** `RELEASE.toml` lists each component's exact version, commit and tag,
+   the targets and how they were built, and the release key's id:
 
    ```toml
    [release]
@@ -150,31 +183,106 @@ scripts/release.sh
    series = "0.1"
    date = "2026-10-31"
    verified = true
+   backend = "c"
+   release_key = "51439F1DFD014199"
 
    [component.eider-lang]
    version = "0.1.0"
    commit = "<40 hex digits>"
    tag = "v0.1.0"
-   contains = ["eiderc", "core", "std", "eider-pkg", "eider-doc", "docs"]
+   contains = ["eiderc", "core", "std", "eider-pkg", "eider-doc", "eider", "docs"]
 
    [component.eider-analyzer]
    version = "0.1.0"
    commit = "<40 hex digits>"
    tag = "v0.1.0"
+
+   [target.linux-aarch64]
+   archive = "eider-0.1.0-linux-aarch64.tar.gz"
+   eider = "eider-0.1.0-linux-aarch64"
+   built_with = "zig 0.13.0 cc -target aarch64-linux-musl (static)"
+   tested = false   # cross-built; untested until an aarch64 machine or CI exists
    ```
 
-3. **The bundle.** `target/release/eider-<version>.tar.gz` holds RELEASE.toml, a README,
-   and each repository's committed files at its commit, side by side: `eider-lang/` (the
-   seed, core, std, the compiler, scripts, eider-pkg, eider-doc, the packages and the docs;
-   not the tests), `eider-analyzer/`, `tree-sitter-eider/` and `eider-profiler/`. The README
+3. **The source bundle.** `eider-<version>.tar.gz` holds RELEASE.toml, a README, and each
+   repository's committed files at its commit, side by side: `eider-lang/` (the seed, core,
+   std, the compiler, scripts, eider-pkg, eider-doc, eider, the packages and the docs; not
+   the tests), `eider-analyzer/`, `tree-sitter-eider/` and `eider-profiler/`. The README
    says how to build all of it with only a C compiler, plus node for regenerating the
-   grammar. The tarball is reproducible: the same commits give the same bytes.
-4. **The tags.** The script prints a `git tag -a v<version>` command for each repository,
-   at the commit it bundled, and the `git push origin v<version>` commands. It runs neither:
-   tagging and pushing the tags happen when a release is decided.
+   grammar.
+4. **The toolchains.** For each target, static executables built with `zig cc -target
+   <arch>-linux-musl`: `eiderc` from the seed, `eider-pkg`, `eider-doc`, and `eider` (with
+   the AWS-LC backend's portable build, for its signature checks). zig is used by this
+   release tooling only, because it cross-compiles against musl out of the box (`mise use
+   -g zig@0.13`, or `ZIG=<path>`); the language and the toolchain still need only a C
+   compiler. `eider-<version>-<target>.tar.gz` holds `eider-<version>-<target>/` with
+   `bin/{eiderc,eider-pkg,eider-doc,eider}`, `core/`, `std/`, `VERSION`, `toolchain.toml`
+   and a README; `eider-<version>-<target>` is `eider` alone, for `install.sh` and `eider
+   self update`. Smoke tests: `file` and `readelf` check that every binary is a static
+   executable for the target's machine, and on a machine of the target's architecture
+   each `--version` is run and a program is built and run with the unpacked toolchain,
+   through `eiderc` and through `eider`. **linux-aarch64 is cross-built and untested**
+   beyond `file` and `readelf` until an arm64 machine or CI exists (`tested = false`).
+5. **The assets.** `target/release/assets/v<version>/` collects the two toolchain archives,
+   the two `eider` binaries, the source bundle, `RELEASE.toml`, `install.sh` and
+   `SHA256SUMS` (the SHA-256 of each). It is also a release directory `eider` can install
+   from: `EIDER_RELEASES=file://$PWD/target/release/assets eider toolchain install`.
 
-`scripts/release.sh --skip-verify` does everything but the verify and selfhost runs, to try
-the script; its RELEASE.toml says `verified = false` and it prints no tag commands to run.
+Every archive is reproducible: entries sorted, owner and group 0, modes normalized, every
+mtime the eider-lang commit's time, `gzip -n`; the same commits give the same bytes.
+`--skip-verify` leaves out the verify and selfhost runs to try the script (RELEASE.toml
+then says `verified = false`, and publish.sh accepts it only with `--dry-run`), and
+`--no-binaries` stops after the source bundle.
+
+## Keys and verification
+
+Releases are signed with one Ed25519 key in [minisign](https://jedisct1.github.io/minisign/)'s
+format. Its public key is in eider-lang as `packages/eider/release.pub`, compiled into
+`eider` (`packages/eider/release_key.ei`) and written into `install.sh`:
+
+```text
+untrusted comment: minisign public key 51439F1DFD014199
+RWSZQQH9HZ9DUczdsxRctXcTuoj372VcNm6IrijiVqJ8sj3Dbrb3nzrl
+```
+
+**The secret key** is `~/.config/eider/release.key` (or `$EIDER_RELEASE_KEY`) on the machine
+that publishes, mode 0600 in a 0700 directory, and never in a repository. It is
+**unencrypted**: minisign's key derivation is set to none (`minisign -G -W` writes the same
+format), so publishing needs no passphrase, and the file's permissions are its only
+protection. Back it up offline. It was made once with:
+
+```sh
+sh scripts/release-key.sh            # generate the keypair, embed the public key
+sh scripts/release-key.sh --embed    # embed the existing key's public key again
+sh scripts/release-key.sh --print    # print it
+```
+
+`release-key.sh` refuses to overwrite a key. A new key means a new `eider` for everyone
+(the old one rejects releases signed by another key), so replace it only if it is lost or
+exposed, and say so in the CHANGELOG.
+
+**What is signed.** `SHA256SUMS` is signed with the legacy `Ed` algorithm (Ed25519 over
+the file itself; eider and install.sh refuse minisign's prehashed `ED`). The trusted
+comment is
+
+```text
+timestamp:<unix time>	file:SHA256SUMS	release:eider <version>
+```
+
+(tab-separated), and the global signature covers it. eider, install.sh and minisign
+check the same things: the signature's key id is the release key's, the signature over
+`SHA256SUMS` and the global signature over the trusted comment are valid, the trusted
+comment names the release being installed, and each download's SHA-256 is the one
+`SHA256SUMS` lists. To check a release by hand:
+
+```sh
+minisign -Vm SHA256SUMS -P RWSZQQH9HZ9DUczdsxRctXcTuoj372VcNm6IrijiVqJ8sj3Dbrb3nzrl
+sha256sum -c SHA256SUMS
+```
+
+or with eider-lang's own tool, `target/eider-sign verify packages/eider/release.pub
+SHA256SUMS` (built by `scripts/eider --build-only`; `eider-sign keygen | pubkey | sign |
+verify | sha256`, packages/eider/signtool.ei).
 
 ## What every shipped tool provides
 
