@@ -28,6 +28,7 @@ extern "c" fn ec_fd_sync(fd: i32, data_only: i32) -> i64
 extern "c" fn ec_fd_truncate(fd: i32, len: i64) -> i64
 extern "c" fn ec_fd_stat(fd: i32) -> i64
 extern "c" fn ec_stat(follow: i32) -> i64
+extern "c" fn ec_touch() -> i64
 extern "c" fn ec_fd_chmod(fd: i32, mode: i32) -> i64
 extern "c" fn ec_fd_lock(fd: i32, op: i32) -> i64
 extern "c" fn ec_fd_nonblock(fd: i32, on: i32) -> i64
@@ -121,6 +122,7 @@ pub fn stat(follow: bool) -> i64 uses fs, ffi {
     let f = flag(follow)
     unsafe { ec_stat(f) }
 }
+pub fn touch() -> i64 uses fs, ffi { unsafe { ec_touch() } }
 pub fn fd_chmod(fd: i32, mode: i32) -> i64 uses fs, ffi { unsafe { ec_fd_chmod(fd, mode) } }
 pub fn fd_lock(fd: i32, op: i32) -> i64 uses fs, ffi { unsafe { ec_fd_lock(fd, op) } }
 pub fn fd_nonblock(fd: i32, on: bool) -> i64 uses io, ffi {

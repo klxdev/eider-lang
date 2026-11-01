@@ -37,7 +37,7 @@ scripts/selfhost.sh                       # seed -> stage1 -> stage2 -> stage3, 
 | Safety | no null, no implicit conversions, checked `as`, overflow traps (`+% -% *%` wrap), bounds checks, stack overflow reported as a trap, immutable by default, `inout` exclusivity, capabilities per function and per package (`uses io, fs, net, clock, threads`; grants in eider.toml) |
 | Diagnostics | 58 stable codes (`diag.all_codes()`), every independent error reported, exact spans, `--json`, machine-applicable `fix` (round-trip verified) |
 | Back end | standard C11; strict left-to-right evaluation; clean under `-pedantic`, ASan, UBSan, TSan; gcc and clang agree; `--profile` builds with the sampling profiler (eider-profiler) |
-| Tools | binary and core-object cache (`EIDER_CACHE`), `eiderc ide` (eider-analyzer), `eiderc doc` (eider-doc, the site in docs/site), `audit-refs`, `migrate-var` |
+| Tools | object and link cache with parallel units and a size limit (`EIDER_CACHE`, `-j`, `eiderc cache`), `eiderc ide` (eider-analyzer), `eiderc doc` (eider-doc, the site in docs/site), `audit-refs`, `migrate-var` |
 
 ## Verification
 

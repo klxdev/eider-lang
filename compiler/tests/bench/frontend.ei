@@ -1,0 +1,142 @@
+// The front end's costs on one program, for the front-end cache decision (docs/compiler.md,
+// "C8.27: incremental builds", "The front-end cache"): `eiderc build` this file, then run it
+// with a program's entry file (scripts/frontend-bench.sh does both for the compiler and std).
+//
+// Prints, in microseconds: loading (lex, parse and resolve of every module), lex+parse of
+// every module's source alone, SHA-256 of all the sources (what keying a cache by file hash
+// costs), consteval+check; then the lower bound of reading a parse back from a cache: every
+// module's AST nodes, extra words and tokens written as little-endian u32s to a file, then
+// read and decoded into the same Lists (no symbol remapping, no kinds, no strings, so a real
+// cache could only be slower).
+
+import core.sys
+import std.bytes
+import std.fs
+import std.io
+import std.env
+import std.time
+import eiderc.intern
+import eiderc.lex
+import eiderc.parse
+import eiderc.resolve
+import eiderc.consteval
+import eiderc.check
+import eiderc.sha256
+import eiderc.ast
+
+fn us(t: i64) -> List[u8] { bytes.from_u64((t / 1000) as u64) }
+
+fn line(label: str, v: List[u8]) uses io {
+    let mut m = sys.lit(label)
+    bytes.append(inout m, v)
+    io.outln(m)
+}
+
+fn main() uses io, fs, net, clock {
+    let args = env.args()
+    if args.len() < 2 {
+        io.errln(sys.lit("usage: frontend <file.ei>"))
+        env.exit(2)
+    }
+    let file = args[1]
+    let src: List[u8] = match fs.read(file) {
+        Ok(t) => t
+        Err(_) => List.new()
+    }
+    let t0 = time.mono_ns()
+    let mut names = intern.new()
+    let lx = lex.lex_all(src, inout names)
+    let pr = parse.parse_all(lx.lexed, names)
+    let ld = resolve.load_from(file, src, pr.p, resolve.disk())
+    let t1 = time.mono_ns()
+    let mut total: usize = 0
+    let mut n2 = intern.new()
+    for m in ld.p.mods {
+        let l = lex.lex_all(m.src, inout n2)
+        let r = parse.parse_all(l.lexed, n2)
+        n2 = r.p.names
+        total += m.src.len()
+    }
+    let t2 = time.mono_ns()
+    let mut h = sha256.start(sha256.new())
+    for m in ld.p.mods { sha256.update(inout h, m.src) }
+    let digest = sha256.finish(h)
+    let t3 = time.mono_ns()
+    let ev = consteval.eval_all(ld.p)
+    let k = check.check_all(ev.p, false, false)
+    let t4 = time.mono_ns()
+    line("modules              ", bytes.from_u64(ld.p.mods.len() as u64))
+    line("source bytes         ", bytes.from_u64(total as u64))
+    line("load us              ", us(t1 - t0))
+    line("lex+parse us         ", us(t2 - t1))
+    line("sha256 us            ", us(t3 - t2))
+    line("consteval+check us   ", us(t4 - t3))
+    if k.diags.len() > 0 || digest.len() != 32 { line("errors               ", bytes.from_u64(k.diags.len() as u64)) }
+    // the parse written as u32s, then read back
+    let mut buf: List[u8] = List.new()
+    let mut nn: usize = 0
+    let mut nt: usize = 0
+    let mut ne: usize = 0
+    for md in ld.p.mods {
+        for x in md.ast.nodes {
+            for v in [x.a, x.b, x.c, x.d, x.e, x.f, x.g, x.h, x.i, x.j, x.line, x.col, x.end_line, x.end_col, 0] { put32(inout buf, v) }
+            nn += 1
+        }
+        for v in md.ast.extra { put32(inout buf, v) }
+        ne += md.ast.extra.len()
+        for t in md.toks {
+            for v in [t.start, t.end, t.line, t.col, t.end_col, (t.val % 4294967296) as u32, (t.val / 4294967296) as u32, 0] { put32(inout buf, v) }
+            nt += 1
+        }
+    }
+    let blob_path = sys.lit("target/frontend-bench.blob")
+    match fs.write(blob_path, buf) {
+        Ok(_) => {}
+        Err(_) => {
+            io.errln(sys.lit("cannot write target/frontend-bench.blob"))
+            env.exit(1)
+        }
+    }
+    let t5 = time.mono_ns()
+    let blob: List[u8] = match fs.read(blob_path) {
+        Ok(t) => t
+        Err(_) => List.new()
+    }
+    let mut at: usize = 0
+    let mut nodes: List[ast.Node] = List.new()
+    for q in 0..nn {
+        nodes.push(ast.Node(ast.EInt, get32(blob, at), get32(blob, at + 4), get32(blob, at + 8), get32(blob, at + 12), get32(blob, at + 16),
+            get32(blob, at + 20), get32(blob, at + 24), get32(blob, at + 28), get32(blob, at + 32), get32(blob, at + 36),
+            get32(blob, at + 40), get32(blob, at + 44), get32(blob, at + 48), get32(blob, at + 52)))
+        at += 60
+    }
+    let mut extra: List[u32] = List.new()
+    for q in 0..ne {
+        extra.push(get32(blob, at))
+        at += 4
+    }
+    let mut toks: List[lex.Tok] = List.new()
+    for q in 0..nt {
+        let v = (get32(blob, at + 20) as u64) + (get32(blob, at + 24) as u64) * 4294967296
+        toks.push(lex.Tok(lex.Ident, get32(blob, at), get32(blob, at + 4), get32(blob, at + 8), get32(blob, at + 12), get32(blob, at + 16), v, false))
+        at += 32
+    }
+    let t6 = time.mono_ns()
+    fs.remove_all(blob_path)
+    line("ast nodes            ", bytes.from_u64(nn as u64))
+    line("tokens               ", bytes.from_u64(nt as u64))
+    line("cache bytes          ", bytes.from_u64(blob.len() as u64))
+    line("read+decode us       ", us(t6 - t5))
+    if nodes.len() + extra.len() + toks.len() == 0 { line("empty", List.new()) }
+}
+
+fn put32(inout b: List[u8], v: u32) {
+    b.push((v & 255) as u8)
+    b.push(((v >> 8) & 255) as u8)
+    b.push(((v >> 16) & 255) as u8)
+    b.push((v >> 24) as u8)
+}
+
+fn get32(b: List[u8], at: usize) -> u32 {
+    (b[at] as u32) | ((b[at + 1] as u32) << 8) | ((b[at + 2] as u32) << 16) | ((b[at + 3] as u32) << 24)
+}

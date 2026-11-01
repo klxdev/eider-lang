@@ -65,6 +65,7 @@ print `eiderc <version>` (`eiderc 0.1.0`) and exit 0: the toolchain's version, f
 | `-o <path>` | `build` | the output file (for `--lib` and `--wasm`, the output name: files are made next to it) |
 | `-l <lib>` | `build`, `run`, `test` | link the C library `<lib>` (repeatable) |
 | `--release` | `run`, `test` | compile the C at `-O2` instead of `-O0` |
+| `-j <n>` | `build`, `run`, `test` | compile at most `n` units at once (default `$EIDER_JOBS`, else one per CPU the process may use) |
 | `--lib` | `check`, `emit-c`, `build`, `run` | treat the file as a library: no `main`, at least one `export fn` |
 | `--wasm` | `check`, `emit-c`, `emit-header`, `build`, `run` | treat the file as a WebAssembly module (implies `--lib`; exports take and return integers and `bool`; no threads) |
 | `--test` | `emit-c` | include the test driver |
@@ -125,6 +126,8 @@ exits 101.
 | `CC` | the C compiler (default `cc`); gcc and clang are both tested |
 | `EIDER_CFLAGS` | extra C compiler flags, split at spaces (for example `-fsanitize=address,undefined`) |
 | `EIDER_CACHE` | `off`, or the cache directory (default `$XDG_CACHE_HOME/eider`, else `~/.cache/eider`) |
+| `EIDER_CACHE_MAX` | the cache's size limit: bytes, or with `K`, `M` or `G` (powers of 1024); default `5G`, `0` for none |
+| `EIDER_JOBS` | parallel compile jobs when there is no `-j` |
 | `EIDER_ROOT` | the toolchain, the directory holding `core/` and `std/` (default: the nearest directory above the eiderc binary, symlinks resolved, that holds `core/eider_rt.h`, else the same search from the working directory) |
 | `WASM_CC` | the clang used by `build --wasm` (default `clang`) |
 | `EIDER_HOME` | where package imports find git packages fetched by eider-pkg (default `~/.eider`) |
@@ -132,13 +135,21 @@ exits 101.
 
 ## The cache
 
-`build`, `run` and `test` cache the compiled C core once per toolchain and each binary by
-a SHA-256 of everything that affects it: the C compiler and its version, the flags,
-`EIDER_CFLAGS`, the `-l` libraries and the generated C. Running an unchanged program again
-skips the C compiler entirely. Entries appear atomically, so concurrent runs are safe.
-External libraries' contents and system headers are not part of the key: after changing
-one, run with `EIDER_CACHE=off`. The front end (parsing and checking) runs every time; it
-is whole-program and not incremental yet.
+`build`, `run` and `test` compile a program as units (today the program's C and the C
+core's two sources), in parallel (`-j`), and cache each unit's object by a SHA-256 of
+everything that affects it: its text, the headers it includes, the C compiler and its
+version, the flags and `EIDER_CFLAGS`. The linked program is cached too, by its objects and
+the `-l` libraries, so running an unchanged program again runs neither the compiler nor the
+linker. Entries appear atomically, so concurrent builds into one cache are safe. External
+libraries' contents and system headers are not part of the key: after changing one, run with
+`EIDER_CACHE=off` or `eiderc cache clean`. The front end (parsing and checking) runs every
+time; it is whole-program.
+
+The cache stays under `EIDER_CACHE_MAX` (default 5 GiB): after a build that added entries
+(at most every 15 minutes), the least recently used entries are removed until it is under
+90% of the limit; nothing used in the last 10 minutes is removed. `eiderc cache size` prints
+what each kind of entry takes, `eiderc cache trim` applies the limit now, and `eiderc cache
+clean` removes every entry.
 
 ## Compile times
 
