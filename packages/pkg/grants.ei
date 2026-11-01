@@ -241,7 +241,7 @@ pub fn set_uses(src: List[u8], name: List[u8], caps: List[List[u8]]) -> Result[L
             e.append(text(name))
             e.push_str("] table in eider.toml (an inline `")
             e.append(text(name))
-            e.push_str(" = { ... }` entry must be edited by hand)")
+            e.push_str(r" = { ... }` entry must be edited by hand)")
             return Err(e)
         }
     }

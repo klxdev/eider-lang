@@ -164,7 +164,7 @@ fn auth_args(url: List[u8]) -> List[List[u8]] uses io, fs, net {
     out.push(sys.lit("-c"))
     out.push(sys.lit("credential.https://github.com.helper="))
     out.push(sys.lit("-c"))
-    out.push(sys.lit("credential.https://github.com.helper=!f() { test \"$1\" = get || exit 0; t=\"${GH_TOKEN:-$GITHUB_TOKEN}\"; test -n \"$t\" || t=$(gh auth token 2>/dev/null); test -n \"$t\" || exit 0; echo username=x-access-token; echo \"password=$t\"; }; f"))
+    out.push(sys.lit("credential.https://github.com.helper=!f() {{ test \"$1\" = get || exit 0; t=\"${{GH_TOKEN:-$GITHUB_TOKEN}}\"; test -n \"$t\" || t=$(gh auth token 2>/dev/null); test -n \"$t\" || exit 0; echo username=x-access-token; echo \"password=$t\"; }}; f"))
     out
 }
 
