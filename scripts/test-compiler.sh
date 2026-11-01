@@ -27,13 +27,11 @@
 #   run:      every tests/run/*.ei and compiler/tests/run/*.ei that eiderc checks without
 #             `unsupported` must give the recorded stdout, stderr and exit code under
 #             `eiderc run` (X.run), and, if it has test blocks, under `eiderc test` (X.test).
-#             eiderc compiles its C with -Werror (on top of the driver's -std=c11 -pedantic
-#             -Wall -Wextra). Exception: a compiler/tests/run file with an X.out (and
+#             (EIDER_CFLAGS=-Werror: the C core compiles warning-free too). Exception: a compiler/tests/run file with an X.out (and
 #             X.test.out) next to it is a regression test for behaviour eiderc deliberately
 #             fixed (LEARNINGS.md); it is compared with that hand-written
 #             expected stdout instead (and must exit 0 with empty stderr).
-#   sanitize: every run again with its C at -O2 -Werror (so -Wmaybe-uninitialized is
-#             checked) under UBSan in trap mode (-fsanitize=undefined
+#   sanitize: every run again at -O2 (the IR and the core) under UBSan in trap mode (-fsanitize=undefined
 #             -fsanitize-undefined-trap-on-error, no runtime library needed); the output must
 #             equal the plain run's. ASan and TSan run too when their runtimes are installed
 #             (a test with `// nosan: thread` skips TSan: compiler/tests/run/stack_overflow_main.ei).
@@ -41,9 +39,9 @@
 #             and generated main reports them when the program ends normally): a run that
 #             exits 0 must report `eider: outstanding allocations: 0`, and apart from that
 #             line the output must equal the plain run's.
-#   determinism: `emit-c` of every run test twice, and once from a copy of the test
+#   determinism: `emit-llvm` of every run test twice, and once from a copy of the test
 #             directory at another path (same relative file name), must be byte-identical.
-#   names:    two functions with one C name (compiler/tests/lower/clash.ei) stop `emit-c`
+#   names:    two functions with one C name (compiler/tests/lower/clash.ei) stop `emit-llvm`
 #             with an internal error (exit 3) naming both.
 #   export:   libraries from `eiderc build --lib`: tests/export/run.sh (C and C++ consumers)
 #             with EIDER=eiderc, compiler/tests/export/run.sh (eiderc's own: more types,
@@ -52,8 +50,8 @@
 #   wasm:     `check --wasm --json` and `emit-header --wasm` equal to the oracle
 #             (X.check-wasm.json, X.emit-header-wasm) for tests/wasm and
 #             compiler/tests/wasm{,/check} (`// mode: wasm` check tests use --wasm in the check
-#             section); compiler/tests/wasm/run.sh: core/wasm and the emitted C are strict
-#             freestanding C, and `build --wasm` modules give the recorded node output and
+#             section); compiler/tests/wasm/run.sh: core/wasm is strict freestanding C, and
+#             `build --wasm` modules give the recorded node output and
 #             .d.ts/.js (skipped, with the reason, without clang's wasm32 target, wasm-ld or
 #             node: WebAssembly is optional).
 #   unit:     programs in compiler/tests/unit that drive a compiler module (sha256.ei) must
@@ -84,7 +82,7 @@
 #             compiler/tests/suite (the runner's own failure cases); for tests/checks it
 #             reports 0 failed and every line but the `skip`s (features eiderc doesn't have)
 #             and the coverage summary is the recorded one.
-#   profile-off: without --profile, `emit-c` of every run test (also --test) and of the
+#   profile-off: without --profile, `emit-llvm` of every run test (also --test) and of the
 #             compiler is byte-identical to that of the compiler of $PROFILE_OFF_REF (default:
 #             the merge base with main) and has no profiler in it (zero cost).
 #   profile:  compiler/tests/profile/*.ei built with --profile write the profile they should:
@@ -386,7 +384,7 @@ echo "$v sanitize: $rsan_ok/$rsan runs at -O2 under -fsanitize={$sans} match"
 if [ "$rleak_ok" = "$rleak" ]; then v="ok  "; else v="FAIL"; fi
 echo "$v leaks: $rleak_ok/$rleak runs end with no outstanding allocation (-DEI_RT_COUNT_ALLOCS)"
 
-# determinism: the same input gives byte-identical C, also from another directory
+# determinism: the same input gives byte-identical LLVM IR, also from another directory
 det=target/determinism
 rm -rf $det
 mkdir -p $det/a $det/b/tests
@@ -404,21 +402,21 @@ for f in tests/run/*.ei compiler/tests/run/*.ei; do
   case "$f" in tests/*) dir=tests ;; *) dir=compiler/tests ;; esac
   case "$f" in tests/*) copy=$det/a ;; *) copy=$det/b/tests ;; esac
   rel="run/$(basename "$f")"
-  (cd $dir && "$anew" emit-c "$rel" --test) >$tmp/c1 2>&1
-  (cd $dir && "$anew" emit-c "$rel" --test) >$tmp/c2 2>&1
-  (cd $copy && "$anew" emit-c "$rel" --test) >$tmp/c3 2>&1
+  (cd $dir && "$anew" emit-llvm "$rel" --test) >$tmp/c1 2>&1
+  (cd $dir && "$anew" emit-llvm "$rel" --test) >$tmp/c2 2>&1
+  (cd $copy && "$anew" emit-llvm "$rel" --test) >$tmp/c3 2>&1
   if cmp -s $tmp/c1 $tmp/c2 && cmp -s $tmp/c1 $tmp/c3; then
     dok=$((dok + 1))
   else
-    echo "FAIL determinism: emit-c $f"
+    echo "FAIL determinism: emit-llvm $f"
     diff $tmp/c1 $tmp/c3 | head -10
     fail=1
   fi
 done
 if [ "$dok" = "$dtotal" ]; then v="ok  "; else v="FAIL"; fi
-echo "$v determinism: $dok/$dtotal programs give byte-identical C twice and from a copy at another path"
+echo "$v determinism: $dok/$dtotal programs give byte-identical LLVM IR twice and from a copy at another path"
 # the C name clash check stops lowering loudly (exit 3 and both names)
-$new emit-c compiler/tests/lower/clash.ei >$tmp/o 2>$tmp/e
+$new emit-llvm compiler/tests/lower/clash.ei >$tmp/o 2>$tmp/e
 code=$?
 if [ $code = 3 ] && grep -q 'C name clash: `f_Sq__area` names both `Sq__area` and `Sq.area`' $tmp/e; then
   echo "ok   names: a C name clash is an internal error (compiler/tests/lower/clash.ei)"
@@ -506,7 +504,7 @@ done
 # packages: package-qualified modules and bare imports in the multi-package layout of
 # compiler/tests/pkgs (docs/compiler.md, "C8.3: packages and modules"). Each file starting
 # `// pkgtest: <run|check|ide>` gives X.out (stdout, stderr, exit; `ide`: its dump), with
-# git dependencies from the store compiler/tests/pkgs/home. The program's C is the same
+# git dependencies from the store compiler/tests/pkgs/home. The program's LLVM IR is the same
 # from a copy of the layout at another path.
 pk_total=0
 pk_ok=0
@@ -533,12 +531,12 @@ pkc=target/pkgcopy
 rm -rf $pkc
 mkdir -p $pkc
 cp -R compiler/tests/pkgs $pkc/pkgs
-(cd compiler/tests/pkgs/app && EIDER_HOME=$(pwd)/../home "$anew" emit-c main.ei) >$tmp/c1 2>&1
-(cd $pkc/pkgs/app && EIDER_HOME=$(pwd)/../home "$anew" emit-c main.ei) >$tmp/c2 2>&1
-if cmp -s $tmp/c1 $tmp/c2 && grep -q 'f_util__0geo__name' $tmp/c1; then pk_ok=$((pk_ok + 1)); else echo "FAIL packages: emit-c of compiler/tests/pkgs/app/main.ei differs from a copy's (or lacks the package C names)"; diff $tmp/c1 $tmp/c2 | head -10; fail=1; fi
+(cd compiler/tests/pkgs/app && EIDER_HOME=$(pwd)/../home "$anew" emit-llvm main.ei) >$tmp/c1 2>&1
+(cd $pkc/pkgs/app && EIDER_HOME=$(pwd)/../home "$anew" emit-llvm main.ei) >$tmp/c2 2>&1
+if cmp -s $tmp/c1 $tmp/c2 && grep -q 'f_util__0geo__name' $tmp/c1; then pk_ok=$((pk_ok + 1)); else echo "FAIL packages: emit-llvm of compiler/tests/pkgs/app/main.ei differs from a copy's (or lacks the package names)"; diff $tmp/c1 $tmp/c2 | head -10; fail=1; fi
 pk_total=$((pk_total + 1))
 if [ "$pk_ok" = "$pk_total" ]; then v="ok  "; else v="FAIL"; fi
-echo "$v packages: $pk_ok/$pk_total multi-package cases (compiler/tests/pkgs) give their .out, and the same C from a copy"
+echo "$v packages: $pk_ok/$pk_total multi-package cases (compiler/tests/pkgs) give their .out, and the same LLVM IR from a copy"
 # migration: the staged rewrites to package imports (scripts/migrate-imports.sh) and away
 # from `uses ffi` outside core (scripts/migrate-caps.sh), on a copy of core, std, packages
 # and compiler, give a toolchain this compiler checks, whose package tests pass (what the
@@ -555,24 +553,24 @@ sh scripts/migrate-caps.sh $mig/core $mig/std $mig/packages $mig/compiler >$tmp/
 # and the deprecated `var` rewritten as `let mut` (scripts/migrate-var.sh, docs/compiler.md
 # "C8.6"): none is left in core or the compiler (std and the packages keep the `var`s of
 # places in generic bodies, which `.copy()` could need a bound for), and the migrated
-# compiler, built by this one, emits the same C for compiler/ as this one (meaning unchanged)
+# compiler, built by this one, emits the same LLVM IR for compiler/ as this one (meaning unchanged)
 EIDER_ROOT=$mig EIDERC=$new sh scripts/migrate-var.sh $mig/core $mig/std $mig/packages $mig/compiler/*.ei >$tmp/migv 2>&1
 mig_ok=1
 grep -n '^[[:space:]]*var[[:space:]]' $mig/core/*.ei $mig/compiler/*.ei >$tmp/migvl && { echo "FAIL migration: \`var\` is left in"; sed "s|$mig/||" $tmp/migvl | head -10; cat $tmp/migv | grep -v '^migrated' | head -5; mig_ok=0; }
 # and every quoted import in the dotted form (scripts/migrate-imports-dotted.sh, docs/compiler.md
 # "C8.26"), compiler/ and what the seed builds included: none is left outside compiler/tests
-# (which keeps the quoted form's own tests), and this compiler's C for the migrated compiler is
-# byte-identical to its C for compiler/
+# (which keeps the quoted form's own tests), and this compiler's IR for the migrated compiler is
+# byte-identical to its IR for compiler/
 EIDER_ROOT=$mig EIDERC=$new sh scripts/migrate-imports-dotted.sh $mig/core $mig/std $mig/packages $mig/compiler >$tmp/migd 2>$tmp/migde
 grep -h '^kept ' $tmp/migde | grep -v '/compiler/tests/' >$tmp/migdk
 [ -s $tmp/migdk ] && { echo "FAIL migration: quoted imports are left"; sed "s|$mig/||" $tmp/migdk | head -10; mig_ok=0; }
 grep -v '^kept ' $tmp/migde | head -5 | grep . && { echo "FAIL migration: migrate-imports-dotted.sh failed on a file (above)"; mig_ok=0; }
 EIDER_CACHE=off EIDER_ROOT=$mig $new build $mig/compiler/main.ei -o $tmp/eiderc-mig >$tmp/mo 2>&1 || { echo "FAIL migration: build the migrated compiler"; head -10 $tmp/mo; mig_ok=0; }
-$new emit-c compiler/main.ei >$tmp/mc1 2>&1
-[ -x $tmp/eiderc-mig ] && EIDER_ROOT=$(pwd) $tmp/eiderc-mig emit-c compiler/main.ei >$tmp/mc2 2>&1
-cmp -s $tmp/mc1 $tmp/mc2 || { echo "FAIL migration: the migrated compiler's C for compiler/ differs"; mig_ok=0; }
-(cd $mig && EIDER_ROOT=$mig $anew emit-c compiler/main.ei) >$tmp/mc3 2>&1
-cmp -s $tmp/mc1 $tmp/mc3 || { echo "FAIL migration: the C of the compiler with dotted imports differs from compiler/'s"; diff $tmp/mc1 $tmp/mc3 | head -10; mig_ok=0; }
+$new emit-llvm compiler/main.ei >$tmp/mc1 2>&1
+[ -x $tmp/eiderc-mig ] && EIDER_ROOT=$(pwd) $tmp/eiderc-mig emit-llvm compiler/main.ei >$tmp/mc2 2>&1
+cmp -s $tmp/mc1 $tmp/mc2 || { echo "FAIL migration: the migrated compiler's IR for compiler/ differs"; mig_ok=0; }
+(cd $mig && EIDER_ROOT=$mig $anew emit-llvm compiler/main.ei) >$tmp/mc3 2>&1
+cmp -s $tmp/mc1 $tmp/mc3 || { echo "FAIL migration: the IR of the compiler with dotted imports differs from compiler/'s"; diff $tmp/mc1 $tmp/mc3 | head -10; mig_ok=0; }
 grep -q '^import "\.\./' $mig/compiler/main.ei $mig/packages/pkg/manifest.ei && { echo "FAIL migration: path imports into other packages are left"; mig_ok=0; }
 grep -l '^[[:space:]]*[^/[:space:]][^/]*uses [^/]*ffi' $mig/std/*.ei $mig/compiler/*.ei $mig/packages/*/*.ei >$tmp/migl && { echo "FAIL migration: \`uses ffi\` is left in $(sed "s|$mig/||" $tmp/migl | tr '\n' ' ')"; mig_ok=0; }
 grep -q 'uses .*ffi' $mig/core/sys.ei || { echo "FAIL migration: core/sys.ei lost its \`uses ffi\`"; mig_ok=0; }
@@ -583,7 +581,7 @@ for f in packages/*/tests/*.ei; do
   EIDER_ROOT=$mig $new run $mig/$f >$tmp/mo 2>&1
   cmp -s $tmp/mo "${f%.ei}.out" || { echo "FAIL migration: run $f"; diff "${f%.ei}.out" $tmp/mo | head -10; mig_ok=0; }
 done
-if [ $mig_ok = 1 ]; then echo "ok   migration: $(wc -l <$tmp/mig) files rewritten to package imports, $(grep -c '^migrated' $tmp/migd) to dotted imports (the compiler's C unchanged), $(wc -l <$tmp/migc) without \`uses ffi\` and $(grep -c '^migrated' $tmp/migv) without \`var\` ($(cat $mig/std/*.ei $mig/packages/*/*.ei | grep -c '^[[:space:]]*var[[:space:]]') generic ones left) check and pass their package tests; the migrated compiler emits the same C"; else fail=1; fi
+if [ $mig_ok = 1 ]; then echo "ok   migration: $(wc -l <$tmp/mig) files rewritten to package imports, $(grep -c '^migrated' $tmp/migd) to dotted imports (the compiler's IR unchanged), $(wc -l <$tmp/migc) without \`uses ffi\` and $(grep -c '^migrated' $tmp/migv) without \`var\` ($(cat $mig/std/*.ei $mig/packages/*/*.ei | grep -c '^[[:space:]]*var[[:space:]]') generic ones left) check and pass their package tests; the migrated compiler emits the same IR"; else fail=1; fi
 fi
 # meaning: std's, the packages' and the examples' tests (run by verify.sh with the seed, where
 # `let` copies) give their .out with this compiler too, where `let` of a place is a reference
@@ -658,50 +656,29 @@ else
   fail=1
 fi
 
-# profile-off: without --profile the C is exactly what it was (docs/runtime.md "Profiler": zero
-# cost). The reference is the compiler of revision $PROFILE_OFF_REF (default: the merge base
-# with `main`, so on a branch it is the compiler before the branch's changes), extracted with
-# `git archive` and built by the seed: `emit-c` of every run test (also with --test) and of
-# the compiler itself must be byte-identical between the two, and contain nothing of the
-# profiler. Skipped, with the reason, without git or the revision.
-pref=${PROFILE_OFF_REF:-$(git merge-base HEAD main 2>/dev/null)}
-pref_dir=target/proforef
-rm -rf $pref_dir
-mkdir -p $pref_dir
-if [ -z "$pref" ] || ! git archive "$pref" compiler > $pref_dir/src.tar 2>/dev/null; then
-  echo "skip profile-off: no git revision to compare with (set PROFILE_OFF_REF)"
-elif ! (cd $pref_dir && tar -xf src.tar) || ! EIDER_CACHE=off scripts/ei build $pref_dir/compiler/main.ei -o $pref_dir/eiderc >$pref_dir/build.log 2>&1; then
-  echo "FAIL profile-off: cannot build the compiler of $pref"; cat $pref_dir/build.log | head -20; fail=1
-else
-  pototal=0
-  pook=0
-  ponew=0
-  for f in tests/run/*.ei compiler/tests/run/*.ei compiler/main.ei; do
-    case " $routside " in *" $(basename "$f") "*) continue ;; esac
-    for mode in "" --test; do
-      [ "$f" = compiler/main.ei ] && [ -n "$mode" ] && continue
-      pototal=$((pototal + 1))
-      $new emit-c "$f" $mode >$tmp/p1 2>&1
-      EIDER_ROOT=$(pwd) $pref_dir/eiderc emit-c "$f" $mode >$tmp/p2 2>&1
-      # a test in syntax the reference predates (dotted imports, docs/compiler.md "C8.26",
-      # while the merge base is older) can't be compared: counted apart
-      if grep -q '^error\[E0001\]: expected a file path string after `import`' $tmp/p2 && ! grep -q '^error' $tmp/p1; then
-        pototal=$((pototal - 1)); ponew=$((ponew + 1)); continue
-      fi
-      # (the compiler's own C has the profiler's names in its string literals)
-      if cmp -s $tmp/p1 $tmp/p2 && { [ "$f" = compiler/main.ei ] || ! grep -q 'ei_prof\|EI_RT_PROFILE' $tmp/p1; }; then
-        pook=$((pook + 1))
-      else
-        echo "FAIL profile-off: emit-c $f $mode differs from the compiler of $pref"
-        diff $tmp/p2 $tmp/p1 | head -10
-        fail=1
-      fi
-    done
+# profile-off: without --profile the IR has no trace of the profiler (docs/runtime.md
+# "Profiler": zero cost): `emit-llvm` of every run test (also with --test) and of the compiler
+# itself calls nothing of it and declares none of its globals
+pototal=0
+pook=0
+for f in tests/run/*.ei compiler/tests/run/*.ei compiler/main.ei; do
+  case " $routside " in *" $(basename "$f") "*) continue ;; esac
+  for mode in "" --test; do
+    [ "$f" = compiler/main.ei ] && [ -n "$mode" ] && continue
+    pototal=$((pototal + 1))
+    $new emit-llvm "$f" $mode >$tmp/p1 2>&1
+    # (the compiler's string constants name the profiler: only calls and its globals count)
+    if grep -q '^define' $tmp/p1 && ! grep -q 'call [^"]*@ei_prof\|^@ei_prof' $tmp/p1; then
+      pook=$((pook + 1))
+    else
+      echo "FAIL profile-off: emit-llvm $f $mode has the profiler in it (or failed)"
+      grep -m3 'ei_prof' $tmp/p1
+      fail=1
+    fi
   done
-  if [ "$pook" = "$pototal" ]; then v="ok  "; else v="FAIL"; fi
-  pnote=""; [ "$ponew" -gt 0 ] && pnote=" ($ponew in syntax that compiler predates not compared)"
-  echo "$v profile-off: $pook/$pototal emit-c outputs without --profile are byte-identical to those of the compiler of $(echo $pref | cut -c1-10), with no profiler in them$pnote"
-fi
+done
+if [ "$pook" = "$pototal" ]; then v="ok  "; else v="FAIL"; fi
+echo "$v profile-off: $pook/$pototal emit-llvm outputs without --profile have no profiler in them"
 
 # profile: programs built with --profile write the profile they should
 # (compiler/tests/profile/*.ei; docs/runtime.md "Profile format"). `fnid NAME FILE` is the id of
@@ -780,7 +757,7 @@ units() { u=$cdir.u.$1; shift; rm -rf $u; EIDER_CACHE=$u $new "$@" >/dev/null 2>
 A2=$(units adt build tests/run/adt.ei -o $tmp/adt_u)
 C2=$(units clo build tests/run/closures.ei -o $tmp/clo_u)
 H2=$(units heap build tests/run/heap.ei -o $tmp/heap_u)
-[ "$A2" -ge 3 ] || cfail "a build should make at least 3 objects (units, the C half, the core), not $A2"
+[ "$A2" -ge 3 ] || cfail "a build should make at least 3 objects (units and the core), not $A2"
 EIDER_CACHE=$cdir $new build tests/run/adt.ei -o $tmp/adt1 || cfail "build"
 [ "$(n obj)" = $A2 ] && [ "$(n bin)" = 1 ] || cfail "a first build should cache $A2 objects and 1 program, not $(n obj) and $(n bin)"
 EIDER_CACHE=$cdir $new build tests/run/adt.ei -o $tmp/adt2 || cfail "second build"
@@ -799,9 +776,9 @@ cmp -s $tmp/o tests/run/adt.out || cfail "run"
 n1=$(n obj)
 EIDER_CACHE=$cdir EIDER_CFLAGS=-DEI_RT_COUNT_ALLOCS $new run tests/run/adt.ei >$tmp/o 2>&1
 grep -q '^eider: outstanding allocations: 0' $tmp/o || cfail "EIDER_CFLAGS is not part of the key (the counting runtime didn't run)"
-# (a -D reaches the C units only, the C half and the core's two; clang gets EIDER_CFLAGS's -O,
-# -g and sanitizer flags for the IR)
-[ "$(n obj)" = $((n1 + 3)) ] || cfail "a new -D in EIDER_CFLAGS should compile the 3 C units again, not $(($(n obj) - n1))"
+# (a -D reaches the C units only, the core's two; clang gets EIDER_CFLAGS's -O, -g and
+# sanitizer flags for the IR)
+[ "$(n obj)" = $((n1 + 2)) ] || cfail "a new -D in EIDER_CFLAGS should compile the 2 C units again, not $(($(n obj) - n1))"
 # -j 1 and -j 8 make the same program (the same cache entries)
 EIDER_CACHE=$cdir.j1 $new build tests/run/adt.ei -o $tmp/adt_j1 -j 1 || cfail "build -j 1"
 EIDER_CACHE=$cdir.j8 $new build tests/run/adt.ei -o $tmp/adt_j8 -j 8 || cfail "build -j 8"
@@ -911,7 +888,7 @@ $new --help >$tmp/o 2>&1
 code=$?
 uok=1
 [ $code = 0 ] || uok=0
-for c in check emit-c emit-header build "build --lib" "build --wasm" run test "test --compile-fail" lex parse ir caps ide doc help version; do
+for c in check emit-llvm emit-header build "build --lib" "build --wasm" run test "test --compile-fail" lex parse ir caps ide doc help version; do
   grep -q "^  eiderc $c " $tmp/o || { echo "FAIL usage: --help does not list \`$c\`"; uok=0; }
 done
 $new check --no-such-flag tests/run/adt.ei >/dev/null 2>&1

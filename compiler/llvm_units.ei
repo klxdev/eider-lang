@@ -8,12 +8,13 @@
 //              C-convention wrappers included
 //   inst.<k>   the monomorphized generic instances (an IR name with `[`), shard
 //              k = hash(IR name) mod SHARDS, whatever module instantiated them
+//   glue       the per-type glue, `main` and the test driver, the exports (llvm.GLUE)
 //
 // Each unit is a complete LLVM module: the named types it uses (closed over the types they
 // mention), its functions, the private constants it uses, and a declaration of every
 // function it calls that is defined elsewhere (another unit: from that function's
-// `define` line, as `declare hidden`; the C half, the core, intrinsics: the module's own
-// `declare` lines). A function some other unit calls becomes `define hidden` (internal
+// `define` line, as `declare hidden`; the core, intrinsics: the module's own `declare`
+// lines). A function some other unit calls becomes `define hidden` (internal
 // otherwise, as in the whole module). So that an edit stays local, nothing program-wide
 // numbered survives in a unit's text: the type names (`%t<type id>`, numbered by the whole
 // program's type table) become `%T<k>` and the constants (`@.s<string index>`, `@.m<n>`)
@@ -214,6 +215,8 @@ fn declaration(d: List[u8]) -> List[u8] {
 
 /// The unit of IR function f's text: its module's, or for a generic instance its shard.
 fn unit_of(p: lower.P, f: u32) -> List[u8] {
+    // the per-type glue, main and the test driver, the exports
+    if f == llvm.GLUE { return lit("glue") }
     let fd = p.ir.fns[f as usize]
     match bytes.find_byte(fd.name, 91, 0) {
         Some(_) => {
@@ -322,9 +325,15 @@ pub fn split(o: llvm.Out, p: lower.P) -> List[Unit] {
         let mut at_new: List[List[u8]] = List.new()
         let mut tail: List[u8] = List.new()
         let mut nconst: u64 = 0
-        for nm in r.at.texts {
+        // (a constant may name others: a table of names, the trap files)
+        let mut todo = r.at.copy()
+        let mut ti0: usize = 0
+        while ti0 < todo.texts.len() {
+            let nm = todo.texts[ti0].copy()
+            ti0 += 1
             let c = find(consts, nm)
             if c >= 0 {
+                for nm2 in refs(const_text[c as usize], types).at.texts { add(inout todo, nm2) }
                 add(inout at, nm)
                 let mut x = lit(".c")
                 bytes.append(inout x, bytes.from_u64(nconst))

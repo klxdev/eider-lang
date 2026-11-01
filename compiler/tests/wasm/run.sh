@@ -6,7 +6,7 @@
 # byte (unless line 1 is `// oracle differs: <why>`, for a bug of the recorded oracle's shim that
 # eiderc fixes: then only X.out counts, and the recorded output must really differ).
 # BLESS=1 rewrites the oracle files from eiderc's (X.node not for `oracle differs` files).
-# Also: tests/wasm/core.sh (core/wasm and the emitted C compile as strict freestanding C) and
+# Also: tests/wasm/core.sh (core/wasm compiles as strict freestanding C) and
 # tests/wasm/run.sh (calc.ei) with EIDER=eiderc.
 # WebAssembly is optional (LAYERS.md, "Dependencies"): without clang's wasm32 target,
 # wasm-ld or node this prints `skip` with the reason and succeeds.

@@ -4,10 +4,8 @@
 #   - with the host C compiler, -fsyntax-only, against nothing but core/wasm/include and the
 #     compiler's own freestanding headers (-nostdinc), so no libc header can leak in;
 #   - with $WASM_CC (default clang) for wasm32, when it has the target (else: skip).
-# EIDER=<compiler>: also checks that compiler's `emit-c --wasm` of tests/wasm/*.ei the same way.
 cd "$(dirname "$0")/../.." || exit 1
 strict="-std=c11 -pedantic -Wall -Wextra -Wconversion -Wshadow -Werror"
-gen="-std=c11 -pedantic -Wall -Wextra -Werror -Wno-unused-function -Wno-unused-variable -Wno-unused-parameter"
 CC=${CC:-cc}
 WASM_CC=${WASM_CC:-clang}
 T=$(mktemp -d)
@@ -29,17 +27,6 @@ if $WASM_CC --target=wasm32 -c -o $T/p.o $T/p.c 2>/dev/null; then
   [ $ok = 1 ] && echo "ok   core/wasm: wasm32, strict warnings ($WASM_CC)"
 else
   echo "skip core/wasm with $WASM_CC: no wasm32 target"
-fi
-if [ -n "$EIDER" ]; then
-  for f in tests/wasm/*.ei compiler/tests/wasm/*.ei; do
-    $EIDER emit-c --wasm "$f" >$T/gen.c 2>$T/e || { echo "FAIL emit-c --wasm $f:"; cat $T/e; fail=1; continue; }
-    # export_name is a wasm-only attribute the host compiler does not know
-    if host $gen -Wno-attributes $T/gen.c 2>$T/e; then
-      echo "ok   emit-c --wasm $f: freestanding C ($CC -fsyntax-only -nostdinc)"
-    else
-      echo "FAIL emit-c --wasm $f with $CC:"; head -20 $T/e; fail=1
-    fi
-  done
 fi
 rm -rf $T
 exit $fail

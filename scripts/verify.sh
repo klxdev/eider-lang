@@ -12,28 +12,31 @@ EIDER=$(pwd)/target/eiderc; export EIDER
 fail=0
 "$EIDER" test --compile-fail tests/checks | tail -1 | grep -q " 0 failed" && echo "ok   compile-fail suite (eiderc)" || { echo "FAIL compile-fail"; fail=1; }
 S=$(mktemp -d)
-# sanitizer wrappers: gcc when its sanitizer runtimes are installed, otherwise clang's
+# sanitizers are clang flags (EIDER_CFLAGS reaches clang for the IR and $CC for the core and the
+# link): clang links them when it has their runtimes, else gcc's
 san_cc() {
-  for c in gcc clang; do
+  for c in clang gcc; do
     printf 'int main(void){return 0;}\n' > $S/san.c
     command -v $c >/dev/null && $c -fsanitize=$1 -o $S/san $S/san.c 2>/dev/null && $S/san && { echo $c; return; }
   done
-  echo gcc
+  echo clang
 }
-printf '#!/bin/sh\nexec %s -fsanitize=address,undefined -fno-sanitize-recover=undefined -Wpedantic "$@"\n' "$(san_cc address,undefined)" > $S/asan.sh
-printf '#!/bin/sh\nexec %s -fsanitize=thread -Wpedantic "$@"\n' "$(san_cc thread)" > $S/tsan.sh
-chmod +x $S/*.sh
 # A missing toolchain is reported as `skip` with the reason, never as a pass; the final line
 # says how many legs were skipped so a partial run can't be mistaken for a full one.
 skipped=0
 skip() { echo "skip $1"; skipped=$((skipped + 1)); }
-# can this C compiler (wrapper) build and run a trivial program?
-works() { printf 'int main(void){return 0;}\n' > $S/probe.c && $1 -o $S/probe $S/probe.c 2>/dev/null && $S/probe; }
-for cc in gcc clang $S/asan.sh $S/tsan.sh; do
-  name=$(basename $cc .sh)
-  if ! works $cc; then skip "run tests ($name): toolchain not available"; continue; fi
-  n=$(CC=$cc bash tests/run.sh 2>&1 | grep -vc "^ok")
-  [ "$n" = 0 ] && echo "ok   run tests ($name)" || { echo "FAIL run tests ($cc)"; fail=1; }
+# can this C compiler build and run a trivial program with these flags?
+works() { printf 'int main(void){return 0;}\n' > $S/probe.c && $1 $2 -o $S/probe $S/probe.c 2>/dev/null && $S/probe; }
+# the run tests with $CC linking (gcc, clang), then under ASan+UBSan and TSan
+for leg in gcc clang asan tsan; do
+  case $leg in
+    gcc|clang) cc=$leg; fl= ;;
+    asan) cc=$(san_cc address,undefined); fl="-fsanitize=address,undefined -fno-sanitize-recover=undefined" ;;
+    tsan) cc=$(san_cc thread); fl="-fsanitize=thread" ;;
+  esac
+  if ! works $cc "$fl"; then skip "run tests ($leg): toolchain not available"; continue; fi
+  n=$(CC=$cc EIDER_CFLAGS="$fl" bash tests/run.sh 2>&1 | grep -vc "^ok")
+  [ "$n" = 0 ] && echo "ok   run tests ($leg)" || { echo "FAIL run tests ($leg: CC=$cc EIDER_CFLAGS=$fl)"; fail=1; }
 done
 sh tests/core/run.sh | grep -q FAIL && { echo "FAIL core"; fail=1; } || echo "ok   core (eider_rt + eider_core, strict warnings, sanitizers when available)"
 sh tests/std/run.sh | grep -q FAIL && { echo "FAIL std"; fail=1; } || echo "ok   std (C core + Eider std)"
@@ -92,9 +95,9 @@ sh scripts/version.sh check > $S/version 2>&1 && cat $S/version || { echo "FAIL 
 sh scripts/test-compiler.sh > $S/compiler 2>&1
 while IFS= read -r l; do case $l in "skip "*".vendor/"*) skip "compiler: ${l#skip }" ;; esac; done < $S/compiler
 grep -q FAIL $S/compiler && { echo "FAIL compiler (eiderc)"; grep -A6 '^FAIL' $S/compiler | head -20; fail=1; } || echo "ok   compiler (eiderc vs the recorded oracle, tests/oracle)"
-# llvm: the backend's C ABI test, its coverage (no function of the run tests or of the compiler
-# falls back to C) and its debug info (compiler/tests/llvm/run.sh; docs/compiler.md
-# "Backends"); the run tests' outputs are checked against the oracle by the compiler leg; and
+# llvm: the backend's C ABI test, its AArch64 signatures and its debug info
+# (compiler/tests/llvm/run.sh; docs/compiler.md "Backends"); the run tests' outputs are checked
+# against the oracle by the compiler leg; and
 # the units through the cache (tests/units/run.sh, with the compiler built from compiler/;
 # docs/compiler.md "C8.27: incremental builds").
 sh compiler/tests/llvm/run.sh target/eiderc > $S/llvm 2>&1; lrc=$?
@@ -105,7 +108,7 @@ elif [ $lrc != 0 ]; then
 elif ! sh tests/units/run.sh target/eiderc-next > $S/llvmunits 2>&1; then
   echo "FAIL llvm: sh tests/units/run.sh"; tail -5 $S/llvmunits; fail=1
 else
-  echo "ok   llvm ($(grep '^ok' $S/llvm | sed 's/^ok   llvm //; s/:.*//' | paste -sd, - | sed 's/,/, /g'): $(sed -n 's/^ok   llvm coverage: //p' $S/llvm); $(sed 's/^ok   llvm units: /units: /' $S/llvmunits))"
+  echo "ok   llvm ($(grep '^ok' $S/llvm | sed 's/^ok   llvm //; s/:.*//' | paste -sd, - | sed 's/,/, /g'); $(sed 's/^ok   llvm units: /units: /' $S/llvmunits))"
 fi
 # seed: stage0 from seed/eiderc.wasm with only a C compiler, the seed current (it emits compiler/'s
 # LLVM IR) and, with the clang that built it, rebuilt byte for byte (scripts/selfhost.sh

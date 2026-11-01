@@ -37,6 +37,7 @@ import eiderc.diag
 import eiderc.resolve
 import eiderc.check
 import eiderc.lower
+import eiderc.llvm
 import eiderc.driver
 
 fn s(x: str) -> List[u8] { sys.lit(x) }
@@ -321,20 +322,20 @@ fn prepare(inout r: Runner) uses io, fs, net, clock {
     }
 }
 
-/// Run the checked evaluator: lower it to C (traps name the file `program`, as the oracle's
-/// do), build it with the driver's C compiler invocation at -O0 against the core compiled
-/// once (`prepare`), and run it, capturing its output. This is the one function an IR
-/// interpreter would replace.
+/// Run the checked evaluator: lower it to LLVM IR (traps name the file `program`, as the
+/// oracle's do), build it at -O0 (clang, then the driver's C compiler invocation against the
+/// core compiled once, `prepare`), and run it, capturing its output. This is the one
+/// function an IR interpreter (#7) would replace.
 fn run_evaluator(inout r: Runner, c: check.C) -> Outcome uses io, fs, net, clock {
     let lp = lower.P(c.ir, c.t, c.p.names)
-    let text = match lower.program_for(lp, s("program"), false, false) {
-        Ok(t) => t
+    let text = match llvm.program(lp, s("program"), false, false, List.new(), s("."), false, driver.target_arch()) {
+        Ok(o) => llvm.whole(o)
         Err(_) => { return NoBuild }
     }
     if driver.cache_dir().len() > 0 {
         // with the cache on, the driver links the cached core objects, and an evaluator
         // whose C was built before (an unchanged constant) isn't compiled again
-        let e: driver.Exe = match driver.try_executable(text, s("ct"), false, List.new()) {
+        let e: driver.Exe = match driver.try_executable(text, s("ct")) {
             Some(x) => x
             None => { return NoBuild }
         }
@@ -349,17 +350,23 @@ fn run_evaluator(inout r: Runner, c: check.C) -> Outcome uses io, fs, net, clock
     }
     prepare(inout r)
     if r.broken { return NoBuild }
-    let cfile = fs.join(r.dir, s("ct.c"))
+    let llfile = fs.join(r.dir, s("ct.ll"))
+    let obj = fs.join(r.dir, s("ct_ll.o"))
     let exe = fs.join(r.dir, s("ct"))
     let core = fs.join(driver.root(), s("core"))
+    let mut ca: List[List[u8]] = List.new()
+    ca.push(driver.llvm_cc(17))
+    for a in ["-c", "-O0", "-Wno-override-module", "-o"] { ca.push(s(a)) }
+    ca.push(obj.copy())
+    ca.push(llfile.copy())
     let mut argv = driver.cc_argv(core, false)
     argv.push(s("-o"))
     argv.push(exe)
-    argv.push(cfile)
+    argv.push(obj)
     for o in r.objs { argv.push(o) }
     let mut built = false
-    match fs.write(cfile, text) {
-        Ok(_) => { built = cc_ok(argv) }
+    match fs.write(llfile, text) {
+        Ok(_) => { built = cc_ok(ca) && cc_ok(argv) }
         Err(_) => {}
     }
     if !built { return NoBuild }

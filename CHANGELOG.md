@@ -5,6 +5,31 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## 0.2.0
+
+LLVM is Eider's only backend, and the compiler bootstraps from WebAssembly (U23, U24). Not
+compatible with 0.1 at the command line: `emit-c`, `--backend` and `emit-llvm --coverage`
+are gone, and building programs needs clang 17 or newer.
+
+- **The LLVM backend** builds everything: `build`, `run`, `test`, `build --lib`, `--wasm`,
+  `--profile` and comptime evaluators; no C is generated (#128). The per-type operations,
+  `main`, the test driver and the exports are LLVM IR; `emit-header` still writes the C
+  header of a library's `export fn`s. The target is clang's (`-dumpmachine`): x86-64
+  (System V) or AArch64 (AAPCS64, new), or wasm32 for WebAssembly. Sanitizers are clang
+  flags (`EIDER_CFLAGS`). Incremental builds: per-module units, an object and link cache,
+  ThinLTO, `-j`, `eiderc cache` (#129).
+- **WebAssembly** modules are built by the LLVM backend for wasm32 with an explicit feature
+  set; `build --wasm-core` builds a program as a module whose only imports are the C core's
+  functions (#126).
+- **The seed** is `seed/eiderc.wasm`, the compiler as WebAssembly, with `seed/wasm2c.c`, a
+  small validating translator to C: the compiler still builds from a fresh checkout with only
+  a C compiler (stage0 checks programs and emits IR), and builds itself natively with clang
+  (#127). `seed/eiderc.c` is gone.
+- **The runtime** gains what the IR can't spell portably: handle objects for Task, Mutex and
+  Chan (`ei_h_*`), the test driver (`ei_test`), `main`'s error text, Show's numbers and quoted
+  text (core/RUNTIME.md). The WebAssembly libc's allocator is size-classed.
+- **Libraries and tools** move to 0.2.0 with it (`eider = "0.2"`).
+
 ## 0.1.0
 
 The first version.

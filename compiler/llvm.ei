@@ -1,40 +1,40 @@
-// llvm: the typed IR (ir.ei) to textual LLVM IR, beside the C backend (lower.ei). See
-// docs/compiler.md, "Backends", and docs/site/tooling/llvm.md. The default backend of
-// `eiderc build|run|test` and `build --lib`.
+// llvm: the typed IR (ir.ei) to textual LLVM IR: Eider's only backend (U23, #128). See
+// docs/compiler.md, "Backends", and docs/site/tooling/llvm.md. It builds `eiderc build|run|
+// test`, `build --lib`, `--wasm`, `--wasm-core` and comptime evaluators; emit-llvm prints it.
 //
-// Function by function: a function whose statements this file can lower is emitted as LLVM IR
-// (`native`); any other falls back to the C backend. lower.program_split writes the C half (the
-// fallback functions, the per-type glue this half asks for (`gneed`), `main` and the test
-// driver) with prototypes for the native functions and external linkage everywhere. Calls from
-// Eider to Eider use an internal convention (`@<name>.i`, internal linkage; `isig`: records
-// the C ABI passes in memory go by reference); the C half reaches a native function through a
-// C-convention wrapper `@<name>` (llvm_abi.ei: System V x86-64), and this half reaches a
-// fallback through a shim `@<name>.i`, so a function can still move between the halves.
+// Every function with a body becomes a `define` (a construct this file can't lower is an
+// internal error naming the function). Calls from Eider to Eider use an internal convention
+// (`@<name>.i`, internal linkage; `isig`: records the C ABI passes in memory go by reference);
+// the C ABI (llvm_abi.ei: System V x86-64, or wasm32's) is used where C is on the other side:
+// the C core and runtime, `extern "c"` functions, exports (`eider_<name>`), fn values and
+// closure bodies. The per-type operations (drop, clone, copy, ==, Ord, Hash, Show, the List
+// and Map operations, copy-on-write `uniq_`, `own_` before a value crosses threads, closure
+// environments, thunks, the thread handles, Default) are glue functions in this module
+// (`glue_all`, asked for by `gneed` where they are used), and so are `main` (handing
+// `ei_main_body` to the runtime), the test driver (the runtime's ei_test per block), the trap
+// file table and the profiler's tables.
 //
-// Semantics are the C backend's, statement for statement, with nothing undefined: checked
+// Semantics are the language's, statement for statement, with nothing undefined: checked
 // arithmetic is `llvm.*.with.overflow` and an explicit trap branch (the runtime's ei_trap with
-// the same message and the same encoded line, so traps print and exit exactly as in C), bounds
+// the message and the encoded line, so traps print and exit as the oracle records), bounds
 // checks are an `icmp uge` and a trap branch, division checks zero and MIN / -1 first, shifts
 // check the count. Flags only restate what a check or a language rule proved: `nsw`/`nuw` on
 // checked arithmetic past its trap branch, `inbounds` GEPs, `noalias`/`noundef`/
 // `dereferenceable` on the internal convention's parameters (param_attrs); never `exact`.
-// Wrapping operators are plain `add`/`sub`/`mul`. Per-type operations (drop, clone, ==, Ord,
-// Show, List and Map operations, copy-on-write `uniq_`) call the C half's glue, exactly where
-// lower.ei calls it; the hot helpers (ei_idx, checked arithmetic, conversions, shifts,
-// ei_hash_u64) are inline IR.
+// Wrapping operators are plain `add`/`sub`/`mul`. The hot helpers (ei_idx, checked
+// arithmetic, conversions, shifts, ei_hash_u64, the shared-buffer counts) are inline IR.
 //
 // Values: a local is an `alloca` (`%l<i>`), zeroed at entry only when the IR may read it
 // before assigning it, or, for a scalar assigned once and read only after that, an SSA value
 // with no alloca (`scan`). Scalars are SSA registers between statements (bool is `i1` there and
-// `i8` in memory), aggregates are moved with `llvm.memcpy`. Types are the C layouts
-// (llvm_abi.ei): `%t<id>` per struct type (`%t<id>.v<i>` an enum variant's payload struct,
-// `%t<id>.d` a shared record's buffer), `%ei.String` for String. Control flow is the IR's
-// structure: S_IF and S_LOOP become labelled blocks (`L<n>`), break/continue/return branches,
-// code after them a dead block.
+// `i8` in memory), aggregates are moved with `llvm.memcpy`. Types are C layouts (llvm_abi.ei,
+// so `export fn` records match lower.header's C structs): `%t<id>` per struct type
+// (`%t<id>.v<i>` an enum variant's payload struct, `%t<id>.d` a shared record's buffer),
+// `%ei.String` for String. Control flow is the IR's structure: S_IF and S_LOOP become
+// labelled blocks (`L<n>`), break/continue/return branches, code after them a dead block.
 //
-// Debug info (`-g`): a DICompileUnit, a DIFile per module, a DISubprogram per native
-// function and a DILocation per statement (the statement's source line), so a debugger
-// breaks on Eider lines in native functions; the C half carries its own (`#line`-less) C info.
+// Debug info (`-g`): a DICompileUnit, a DIFile per module, a DISubprogram per function and a
+// DILocation per statement (the statement's source line), so a debugger breaks on Eider lines.
 
 import core.sys
 import std.bytes
@@ -43,23 +43,20 @@ import eiderc.intern
 import eiderc.ast
 import eiderc.ir
 import eiderc.lower
+import eiderc.resolve
 import eiderc.llvm_abi as abi
 
 const NONE: u32 = 4294967295
 const PTR: u32 = 2147483648
 
-/// The two halves: `ll` the LLVM module, `c` the C (lower.program_split), and per function
-/// whether it is native (functions without a body are never native). `report` names each
-/// fallback with the first construct it needed (one line each).
-/// The module is `head` (a comment and the type definitions, which must precede their uses)
-/// followed by the parts in `ll` (each function's header, entry allocas and body, then the
-/// constants and declarations they use): parts, so a function's text is written once and
-/// never copied to join it to the others (`whole` joins them for a file).
-/// The module in parts: `head` (the type definitions), `ll` (each function's text in pieces,
-/// then the constants and declarations), the C half `c`; `owner[i]` is the IR function whose
-/// text `ll[i]` is (the parts after the last owned one are the trailer), which
-/// llvm_units.split uses to cut the module into units ("C8.27: incremental builds").
-pub type Out = { head: List[u8], ll: List[List[u8]], c: List[u8], native: List[bool], nfns: u32, nnative: u32, report: List[u8], owner: List[u32] }
+/// The module: its head (comment, triple, type definitions) and its parts, joined by `whole`;
+/// `owner[i]` is the IR function whose text `ll[i]` is, or GLUE for the glue and the entry
+/// points (the parts after the last owned one are the trailer: constants and declarations),
+/// which llvm_units.split uses to cut the module into units ("C8.27: incremental builds").
+pub type Out = { head: List[u8], ll: List[List[u8]], owner: List[u32] }
+
+/// The owner of the glue's and the entry points' parts (one unit of their own).
+pub const GLUE: u32 = 4294967295
 
 /// The whole module.
 pub fn whole(o: Out) -> List[u8] {
@@ -118,15 +115,14 @@ type E = {
     paths: List[List[u8]],
     dir: List[u8],
     /// per function: its internal and C conventions (memoized), and whether `@<name>.i` is
-    /// called (a fallback function then needs its shim)
+    /// called
     isigs: List[abi.Sig],
     isok: List[bool],
     csigs: List[abi.Sig],
     csok: List[bool],
     iused: List[bool],
-    /// the C half's glue this half calls (lower.GK_* * 2^32 + id; `nseen` dedupes) and the
-    /// modules whose trap lines it encodes: lower.program_split emits that glue and file
-    /// table without lowering the native functions' bodies
+    /// the glue the module needs (lower.GK_* * 2^32 + id; `nseen` dedupes; glue_all emits it)
+    /// and the modules whose trap lines it encodes (files_table)
     needs: List[u64],
     nseen: Map[u64, bool],
     tfiles: List[u32],
@@ -135,6 +131,16 @@ type E = {
     sigmemo: Map[u64, u32],
     /// debug info: the metadata node of each type's DWARF description (0: not yet)
     dty: List[u32],
+    /// the functions this module defines (by h64 of the name): no declaration for them
+    gdef: Map[u64, bool],
+    /// --profile (docs/runtime.md "Profiler"): what it records (lower.prof_what; 0: no
+    /// profiler), the toolchain's version, and in the function being emitted whether it has a
+    /// shadow frame (lower.framed), the frame's register and the line last stored in it
+    prof: u32,
+    pver: List[u8],
+    pframe: bool,
+    pf: List[u8],
+    pline: u32,
 }
 
 // ---- text
@@ -469,7 +475,7 @@ fn owns(inout e: E, p: lower.P, ty: u32) -> bool {
 /// The glue name `<op><C type name>` (lower.ei's gname).
 fn gname(e: E, op: str, ty: u32) -> List[u8] { catb(lit(op), e.tn[ty as usize]) }
 
-/// Ask the C half for glue item (kind, id), as lower.ei's `need` does where it calls it.
+/// Ask for glue item (kind, id) (glue_all emits it).
 fn gneed(inout e: E, kind: u32, id: u32) {
     let key = (kind as u64) * 4294967296 + id as u64
     if e.nseen.contains(key) { return }
@@ -545,7 +551,10 @@ fn declare(inout e: E, name: List[u8], text: List[u8]) {
     e.dtext.push(text)
 }
 
-fn ext_attr(p: lower.P, ty: u32) -> str {
+/// The extension attribute of a direct argument or result (none on AArch64).
+fn ext_of(p: lower.P, a: abi.Arg) -> str {
+    if a.c1 == abi.NOEXT { return "" }
+    let ty = a.ty
     if ty >= PTR { return "" }
     let t = types.get(p.t, ty)
     if t.kind == types.T_BOOL || t.kind == types.T_UNIT || t.kind == types.T_NEVER || (t.kind == types.T_INT && t.a == types.IK_U8) { return " zeroext" }
@@ -554,6 +563,7 @@ fn ext_attr(p: lower.P, ty: u32) -> str {
 
 fn coerce_ty(a: abi.Arg) -> List[u8] {
     if a.n == 1 { return num("i", a.b0 as u64) }
+    if a.c0 == abi.C_PAIR { return lit("[2 x i64]") }
     let mut o = num("{ i", a.b0 as u64)
     bytes.append(inout o, lit(", i"))
     bytes.append(inout o, bytes.from_u64(a.b1 as u64))
@@ -565,7 +575,7 @@ fn ret_text(inout e: E, p: lower.P, s: abi.Sig) -> List[u8] {
     let r = s.ret
     if r.kind == abi.A_VOID || r.kind == abi.A_SRET { return lit("void") }
     if r.kind == abi.A_DIRECT {
-        let mut o = lit(ext_attr(p, r.ty))
+        let mut o = lit(ext_of(p, r))
         if o.len() > 0 { o = lit("zeroext ") }
         bytes.append(inout o, vty(inout e, p, r.ty))
         return o
@@ -597,7 +607,7 @@ fn params_text(inout e: E, p: lower.P, s: abi.Sig, names: List[List[u8]], intern
             if !first { bytes.append(inout o, lit(", ")) }
             first = false
             bytes.append(inout o, vty(inout e, p, a.ty))
-            bytes.append(inout o, lit(ext_attr(p, a.ty)))
+            bytes.append(inout o, lit(ext_of(p, a)))
             if internal { param_attrs(inout e, p, inout o, a) }
             if names.len() > 0 {
                 bytes.append(inout o, lit(" "))
@@ -614,6 +624,16 @@ fn params_text(inout e: E, p: lower.P, s: abi.Sig, names: List[List[u8]], intern
                 bytes.append(inout o, names[ni])
                 ni += 1
             }
+        } else if a.kind == abi.A_COERCE && a.c0 == abi.C_PAIR {
+            // AArch64: two pieces as one array, never split (unpacked at entry: unpack_pairs)
+            if !first { bytes.append(inout o, lit(", ")) }
+            first = false
+            bytes.append(inout o, lit("[2 x i64]"))
+            if names.len() > 0 {
+                bytes.append(inout o, lit(" "))
+                bytes.append(inout o, names[ni])
+                ni += 1
+            }
         } else if a.kind == abi.A_COERCE {
             for i in 0..a.n {
                 if !first { bytes.append(inout o, lit(", ")) }
@@ -625,6 +645,16 @@ fn params_text(inout e: E, p: lower.P, s: abi.Sig, names: List[List[u8]], intern
                     bytes.append(inout o, names[ni])
                     ni += 1
                 }
+            }
+        } else if a.c0 == abi.C_PTR {
+            // AArch64: a pointer to the caller's copy
+            if !first { bytes.append(inout o, lit(", ")) }
+            first = false
+            bytes.append(inout o, lit("ptr"))
+            if names.len() > 0 {
+                bytes.append(inout o, lit(" "))
+                bytes.append(inout o, names[ni])
+                ni += 1
             }
         } else {
             if !first { bytes.append(inout o, lit(", ")) }
@@ -762,11 +792,26 @@ fn call_sig(inout e: E, p: lower.P, callee: List[u8], s: abi.Sig, args: List[Lis
     if (s.ret.kind == abi.A_SRET || s.ret.kind == abi.A_COERCE) && d.len() == 0 { d = temp(inout e, p, s.ret.ty) }
     // the pieces of coerced arguments, loaded before the call
     let mut pieces: List[List[u8]] = List.new()
+    // AArch64's large arguments: a copy for the callee, made here
+    let mut copies: List[List[u8]] = List.new()
     for i in 0..s.args.len() {
         let a = s.args[i]
-        if a.kind == abi.A_COERCE {
+        if a.kind == abi.A_COERCE && a.c0 == abi.C_PAIR {
+            let p0 = load_piece(inout e, args[i], 0, a.b0)
+            let mut p1 = load_piece(inout e, args[i], 8, a.b1)
+            if a.b1 < 64 { p1 = val(inout e, catb(num("zext i", a.b1 as u64), catb(lit(" "), cat(p1, " to i64")))) }
+            let x = val(inout e, catb(lit("insertvalue [2 x i64] poison, i64 "), cat(p0, ", 0")))
+            pieces.push(val(inout e, catb(lit("insertvalue [2 x i64] "), catb(x, catb(lit(", i64 "), cat(p1, ", 1"))))))
+        } else if a.kind == abi.A_COERCE {
             pieces.push(load_piece(inout e, args[i], 0, a.b0))
             if a.n > 1 { pieces.push(load_piece(inout e, args[i], 8, a.b1)) }
+        }
+        if a.kind == abi.A_BYVAL && a.c0 == abi.C_PTR {
+            let t = temp(inout e, p, a.ty)
+            memcpy(inout e, p, a.ty, t, args[i])
+            copies.push(t)
+        } else {
+            copies.push(List.new())
         }
     }
     let rt = ret_text(inout e, p, s)
@@ -797,9 +842,14 @@ fn call_sig(inout e: E, p: lower.P, callee: List[u8], s: abi.Sig, args: List[Lis
         if a.kind == abi.A_DIRECT {
             let vt = vty(inout e, p, a.ty)
             wb(inout e, vt)
-            w(inout e, ext_attr(p, a.ty))
+            let ea = ext_of(p, a)
+            w(inout e, ea)
             w(inout e, " ")
             wb(inout e, args[i])
+        } else if a.kind == abi.A_COERCE && a.c0 == abi.C_PAIR {
+            w(inout e, "[2 x i64] ")
+            wb(inout e, pieces[pi])
+            pi += 1
         } else if a.kind == abi.A_COERCE {
             w(inout e, "i")
             wn(inout e, a.b0 as u64)
@@ -816,6 +866,9 @@ fn call_sig(inout e: E, p: lower.P, callee: List[u8], s: abi.Sig, args: List[Lis
         } else if a.kind == A_REF {
             w(inout e, "ptr ")
             wb(inout e, args[i])
+        } else if a.c0 == abi.C_PTR {
+            w(inout e, "ptr ")
+            wb(inout e, copies[i])
         } else {
             let mt = mty(inout e, p, a.ty)
             w(inout e, "ptr byval(")
@@ -839,7 +892,8 @@ fn call_sig(inout e: E, p: lower.P, callee: List[u8], s: abi.Sig, args: List[Lis
             bytes.append(inout x0, lit(" "))
             bytes.append(inout x0, r)
             let v0 = val(inout e, cat(x0, ", 0"))
-            let v1 = val(inout e, cat(x0, ", 1"))
+            let mut v1 = val(inout e, cat(x0, ", 1"))
+            if s.ret.c0 == abi.C_PAIR && s.ret.b1 < 64 { v1 = val(inout e, catb(lit("trunc i64 "), catb(v1, num(" to i", s.ret.b1 as u64)))) }
             store_piece(inout e, v0, d, 0, s.ret.b0)
             store_piece(inout e, v1, d, 8, s.ret.b1)
         }
@@ -894,6 +948,18 @@ fn args1(a: List[u8]) -> List[List[u8]] {
 fn args2(a: List[u8], b: List[u8]) -> List[List[u8]] {
     let mut o = args1(a)
     o.push(b)
+    o
+}
+
+fn tys4(a: u32, b: u32, c: u32, d: u32) -> List[u32] {
+    let mut o = tys3(a, b, c)
+    o.push(d)
+    o
+}
+
+fn args4(a: List[u8], b: List[u8], c: List[u8], d: List[u8]) -> List[List[u8]] {
+    let mut o = args3(a, b, c)
+    o.push(d)
     o
 }
 
@@ -1425,11 +1491,10 @@ fn show_into(inout e: E, p: lower.P, ty: u32, o: List[u8], v: List[u8]) {
         call(inout e, p, lit("ei_str_push"), tys2(sp, types.STR), args2(o, m), types.UNIT, none)
     } else if k == types.T_INT {
         let x = if int_bits(t.a) == 64 { v.copy() } else if types.signed(t.a) { val(inout e, catb(lit("sext "), catb(lit(int_ty(t.a)), catb(lit(" "), cat(v, " to i64"))))) } else { val(inout e, catb(lit("zext "), catb(lit(int_ty(t.a)), catb(lit(" "), cat(v, " to i64"))))) }
-        gneed(inout e, lower.GK_SHOWN, 0)
         if types.signed(t.a) {
-            call(inout e, p, lit("showi_"), tys2(sp, types.I64), args2(o, x), types.UNIT, none)
+            call(inout e, p, lit("ei_str_push_i64"), tys2(sp, types.I64), args2(o, x), types.UNIT, none)
         } else {
-            call(inout e, p, lit("showu_"), tys2(sp, types.U64), args2(o, x), types.UNIT, none)
+            call(inout e, p, lit("ei_str_push_u64"), tys2(sp, types.U64), args2(o, x), types.UNIT, none)
         }
     } else if k == types.T_BOOL {
         let tr = msg(inout e, "true")
@@ -1513,6 +1578,7 @@ fn stmt(inout e: E, p: lower.P, id: u32) {
     let s = p.ir.stmts[id as usize]
     let k = s.kind
     set_line(inout e, s.line)
+    if e.prof > 0 && lower.prof_marks(p, s) { prof_line(inout e, s.line) }
     if k == ir.S_IF {
         let c = opv(inout e, p, s.a)
         let lt = new_label(inout e)
@@ -1685,7 +1751,7 @@ fn stmt(inout e: E, p: lower.P, id: u32) {
         let f = field_addr(inout e, p, s.ty, d, 1)
         gneed(inout e, lower.GK_THUNK, s.a)
         let tk = catb(lit("k_"), e.fnn[s.a as usize])
-        // the thunk's prototype comes from the C half; its address is all that is needed
+        // the thunk is glue (g_thunk); its address is all that is needed
         declare_thunk(inout e, p, s.a, tk)
         let mut t = lit("store ptr @")
         bytes.append(inout t, tk)
@@ -2003,7 +2069,7 @@ fn print(inout e: E, p: lower.P, s: ir.Stmt) {
     }
 }
 
-/// The parameter types of function f as the C half declares them (inout: a pointer; a
+/// The parameter types of function f in its C convention (inout: a pointer; a
 /// closure body: the environment pointer first).
 fn fn_ptys(e: E, p: lower.P, f: u32) -> List[u32] {
     let fd = p.ir.fns[f as usize]
@@ -2228,6 +2294,7 @@ fn closure(inout e: E, p: lower.P, s: ir.Stmt) {
 
 fn ret(inout e: E, p: lower.P, s: ir.Stmt) {
     let r = e.rsig.copy()
+    prof_leave(inout e)
     if s.a == 0 || r.kind == abi.A_VOID {
         stmt_text(inout e, lit("ret void"))
         e.term = true
@@ -2258,10 +2325,12 @@ fn ret_pieces(inout e: E, r: abi.Arg, a: List[u8]) {
     if r.n == 1 {
         stmt_text(inout e, catb(num("ret i", r.b0 as u64), catb(lit(" "), v0)))
     } else {
-        let v1 = load_piece(inout e, a, 8, r.b1)
+        let mut v1 = load_piece(inout e, a, 8, r.b1)
         let ct = coerce_ty(r)
+        if r.c0 == abi.C_PAIR && r.b1 < 64 { v1 = val(inout e, catb(num("zext i", r.b1 as u64), catb(lit(" "), cat(v1, " to i64")))) }
         let x = val(inout e, catb(lit("insertvalue "), catb(ct, catb(lit(" poison, i"), catb(bytes.from_u64(r.b0 as u64), catb(lit(" "), cat(v0, ", 0")))))))
-        let y = val(inout e, catb(lit("insertvalue "), catb(ct, catb(lit(" "), catb(x, catb(lit(", i"), catb(bytes.from_u64(r.b1 as u64), catb(lit(" "), cat(v1, ", 1")))))))))
+        let w1: u32 = if r.c0 == abi.C_PAIR { 64 } else { r.b1 }
+        let y = val(inout e, catb(lit("insertvalue "), catb(ct, catb(lit(" "), catb(x, catb(lit(", i"), catb(bytes.from_u64(w1 as u64), catb(lit(" "), cat(v1, ", 1")))))))))
         stmt_text(inout e, catb(lit("ret "), catb(ct, catb(lit(" "), y))))
     }
     e.term = true
@@ -2562,8 +2631,8 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         let c = argptr(inout e, p, barg(p, s, 0))
         let ct = arg_ty(p, barg(p, s, 0))
         let q = load_ptr_field(inout e, p, ct, c, 0)
-        // `struct <chan>_c { ei_rc rc; ei_chan ch; }`: ch follows the 8-byte count
-        let ch = val(inout e, catb(lit("getelementptr inbounds i8, ptr "), cat(q, ", i64 8")))
+        // the runtime's handle object (ei_h_*) holds the channel
+        let ch = rt_call(inout e, p, "ei_h_chan", tys1(types.STR), args1(q), types.STR)
         rt_call(inout e, p, "ei_chan_close", tys1(types.STR), args1(ch), types.UNIT)
         return
     }
@@ -2709,6 +2778,12 @@ fn ref_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
     let voff = abi.offset_of(inout e.lay, p, ms, 1)
     let va = val(inout e, catb(lit("getelementptr inbounds i8, ptr "), catb(q, num(", i64 ", voff))))
     let st = val(inout e, catb(lit("load i64, ptr "), q))
+    if e.prof > 0 {
+        let cw = if upd { icmp(inout e, "ne", lit("i64"), st, lit("0")) } else { icmp(inout e, "slt", lit("i64"), st, lit("0")) }
+        let jw = if_then(inout e, cw)
+        prof_ev(inout e, p, PEV_REF, lit("0"))
+        if_end(inout e, jw)
+    }
     if upd {
         let c1 = icmp(inout e, "slt", lit("i64"), st, lit("0"))
         trap_if(inout e, c1, "Ref updated while it is already being updated", s.line)
@@ -2885,6 +2960,8 @@ fn trait_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
     }
     if b == ir.B_COPY {
         let src = argptr(inout e, p, x)
+        let csz = size(inout e, p, ty)
+        prof_ev(inout e, p, PEV_COPY, bytes.from_u64(csz))
         let bd_ = bdst(inout e, p, s)
         copy_to(inout e, p, ty, src, bd_)
         return
@@ -2914,7 +2991,7 @@ fn trait_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
     stmt_text(inout e, catb(lit("store i32 "), catb(tag, catb(lit(", ptr "), f))))
 }
 
-/// Task, Mutex and Chan operations: the C half's glue, called with every argument by value.
+/// Task, Mutex and Chan operations: glue (g_thread), called with every argument by value.
 fn thread_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
     let b = s.a
     let mut op = "new_"
@@ -3178,7 +3255,7 @@ fn sig_names(sg: abi.Sig) -> List[List[u8]] {
     if sg.ret.kind == abi.A_SRET { names.push(lit("%sret")) }
     for i in 0..sg.args.len() {
         let a = sg.args[i]
-        if a.kind == abi.A_COERCE {
+        if a.kind == abi.A_COERCE && a.c0 != abi.C_PAIR {
             names.push(cat(num("%a", i as u64), ".0"))
             if a.n > 1 { names.push(cat(num("%a", i as u64), ".1")) }
         } else {
@@ -3188,6 +3265,23 @@ fn sig_names(sg: abi.Sig) -> List[List[u8]] {
     names
 }
 
+/// At a function's entry: an AArch64 pair `[2 x i64] %a<i>` as the pieces %a<i>.0 and
+/// %a<i>.1 (of the piece's own width), as the other conventions name them.
+fn unpack_pairs(inout e: E, sg: abi.Sig) {
+    for i in 0..sg.args.len() {
+        let a = sg.args[i].copy()
+        if a.kind != abi.A_COERCE || a.c0 != abi.C_PAIR { continue }
+        let an = num("%a", i as u64)
+        stmt_text(inout e, catb(cat(an, ".0 = extractvalue [2 x i64] "), cat(an, ", 0")))
+        if a.b1 < 64 {
+            stmt_text(inout e, catb(cat(an, ".1w = extractvalue [2 x i64] "), cat(an, ", 1")))
+            stmt_text(inout e, catb(cat(an, ".1 = trunc i64 "), catb(cat(an, ".1w to i"), bytes.from_u64(a.b1 as u64))))
+        } else {
+            stmt_text(inout e, catb(cat(an, ".1 = extractvalue [2 x i64] "), cat(an, ", 1")))
+        }
+    }
+}
+
 fn signature_params(inout e: E, p: lower.P, sg: abi.Sig, internal: bool) -> List[u8] {
     let names = sig_names(sg)
     params_text(inout e, p, sg, names, internal)
@@ -3195,7 +3289,7 @@ fn signature_params(inout e: E, p: lower.P, sg: abi.Sig, internal: bool) -> List
 
 /// One function as LLVM IR into e.fns, or nothing (and e.fail set) when it needs something
 /// this backend doesn't lower yet. A function called from Eider is `internal` with the
-/// internal convention (`@<name>.i`); its C-convention symbol, when the C half needs one, is
+/// internal convention (`@<name>.i`); its C-convention symbol, when one is needed, is
 /// a wrapper emitted at the end (c_wrapper). A closure body keeps the C convention.
 fn function(inout e: E, p: lower.P, f: u32) -> bool {
     let fd = p.ir.fns[f as usize]
@@ -3232,6 +3326,7 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
     set_line(inout e, first_line)
     let clo = e.clo[f as usize].copy()
     if e.nc > 0 { gneed(inout e, lower.GK_ENV, f) }
+    unpack_pairs(inout e, sg)
     // parameters into their locals
     let mut ai: usize = 0
     if clo { ai = 1 }
@@ -3283,10 +3378,19 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
         if sc.nz[i as usize] { zero(inout e, p, l.ty, laddr(i)) }
     }
     if e.dbg { declare_locals(inout e, p, f) }
+    e.pframe = e.prof > 0 && lower.framed(p, fd.body - 1)
+    e.pline = 0
+    if e.pframe { e.pf = prof_enter(inout e, (f + 1) as u64) }
     block(inout e, p, fd.body - 1)
     if !e.term {
-        if sg.ret.kind == abi.A_VOID || sg.ret.kind == abi.A_SRET { stmt_text(inout e, lit("ret void")) } else { stmt_text(inout e, lit("unreachable")) }
+        if sg.ret.kind == abi.A_VOID || sg.ret.kind == abi.A_SRET {
+            prof_leave(inout e)
+            stmt_text(inout e, lit("ret void"))
+        } else {
+            stmt_text(inout e, lit("unreachable"))
+        }
     }
+    e.pframe = false
     if e.fail.len() > 0 {
         // roll back this function's metadata
         while e.md.len() > md_mark { e.md.pop() }
@@ -3308,109 +3412,6 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
     bytes.append(inout h, lit(" {\nentry:\n"))
     flush_fn(inout e, h)
     true
-}
-
-/// `@<name>`, the C-convention entry of internal function f, for the C half (main, the test
-/// driver, exports, thunks, fallback functions): its arguments passed on to `@<name>.i` (a
-/// byval copy by reference; a pair of integers, or a byval copy of one that ran out of
-/// registers, reloaded as the pair), the result returned as the C ABI returns it.
-fn c_wrapper(inout e: E, p: lower.P, f: u32) {
-    let cs = csig(inout e, p, f)
-    let is = isig(inout e, p, f)
-    e.o = List.new()
-    e.ent = List.new()
-    e.nreg = 0
-    e.term = false
-    e.dloc = 0
-    let mut args: List[List[u8]] = List.new()
-    for i in 0..is.args.len() {
-        let c = cs.args[i]
-        let a = is.args[i]
-        let an = num("%a", i as u64)
-        if a.kind == abi.A_COERCE && c.kind == abi.A_COERCE {
-            let t = temp(inout e, p, a.ty)
-            store_piece(inout e, cat(an, ".0"), t, 0, c.b0)
-            if c.n > 1 { store_piece(inout e, cat(an, ".1"), t, 8, c.b1) }
-            args.push(t)
-        } else {
-            // direct, by reference to the byval copy, or pieces reloaded from it
-            args.push(an)
-        }
-    }
-    let mut d: List[u8] = List.new()
-    if is.ret.kind == abi.A_SRET { d = lit("%sret") }
-    if is.ret.kind == abi.A_COERCE { d = temp(inout e, p, is.ret.ty) }
-    let callee = catb(lit("@"), iname(e, f))
-    let r = call_sig(inout e, p, callee, is, args, d)
-    if is.ret.kind == abi.A_DIRECT {
-        let mut t = lit("ret ")
-        bytes.append(inout t, vty(inout e, p, is.ret.ty))
-        bytes.append(inout t, lit(" "))
-        bytes.append(inout t, r)
-        stmt_text(inout e, t)
-    } else if is.ret.kind == abi.A_COERCE {
-        ret_pieces(inout e, is.ret, d)
-    } else {
-        stmt_text(inout e, lit("ret void"))
-    }
-    let mut h = lit("define ")
-    bytes.append(inout h, ret_text(inout e, p, cs))
-    bytes.append(inout h, lit(" @"))
-    bytes.append(inout h, e.fnn[f as usize])
-    bytes.append(inout h, lit("("))
-    bytes.append(inout h, signature_params(inout e, p, cs, false))
-    bytes.append(inout h, lit(") nounwind {\nentry:\n"))
-    flush_fn(inout e, h)
-}
-
-/// `@<name>.i` for a function f that fell back to C: the internal convention's call passed
-/// on to the C half's `@<name>` (a reference argument copied byval by the call).
-fn c_shim(inout e: E, p: lower.P, f: u32) {
-    let cs = csig(inout e, p, f)
-    let is = isig(inout e, p, f)
-    e.o = List.new()
-    e.ent = List.new()
-    e.nreg = 0
-    e.term = false
-    e.dloc = 0
-    let mut args: List[List[u8]] = List.new()
-    for i in 0..is.args.len() {
-        let a = is.args[i]
-        let an = num("%a", i as u64)
-        if a.kind == abi.A_COERCE {
-            let t = temp(inout e, p, a.ty)
-            store_piece(inout e, cat(an, ".0"), t, 0, a.b0)
-            if a.n > 1 { store_piece(inout e, cat(an, ".1"), t, 8, a.b1) }
-            args.push(t)
-        } else {
-            args.push(an)
-        }
-    }
-    let mut d: List[u8] = List.new()
-    if cs.ret.kind == abi.A_SRET { d = lit("%sret") }
-    if cs.ret.kind == abi.A_COERCE { d = temp(inout e, p, cs.ret.ty) }
-    let cn = e.fnn[f as usize].copy()
-    declare_sig(inout e, p, cn, cs, false)
-    let r = call_sig(inout e, p, catb(lit("@"), cn), cs, args, d)
-    if cs.ret.kind == abi.A_DIRECT {
-        let mut t = lit("ret ")
-        bytes.append(inout t, vty(inout e, p, cs.ret.ty))
-        bytes.append(inout t, lit(" "))
-        bytes.append(inout t, r)
-        stmt_text(inout e, t)
-    } else if cs.ret.kind == abi.A_COERCE {
-        ret_pieces(inout e, cs.ret, d)
-    } else {
-        stmt_text(inout e, lit("ret void"))
-    }
-    let mut h = lit("define internal ")
-    bytes.append(inout h, ret_text(inout e, p, is))
-    bytes.append(inout h, lit(" @"))
-    bytes.append(inout h, iname(e, f))
-    bytes.append(inout h, lit("("))
-    bytes.append(inout h, signature_params(inout e, p, is, false))
-    bytes.append(inout h, lit(") nounwind {\nentry:\n"))
-    flush_fn(inout e, h)
 }
 
 /// The function in e.ent and e.o, with header h, onto the module.
@@ -3691,19 +3692,2673 @@ fn di_struct(inout e: E, name: List[u8], bits: u64, ms: List[u32]) -> u32 {
     id
 }
 
+// ---- --profile: the shadow stack (core/eider_rt.h ei_prof_*, the runtime's thread-locals)
+
+fn tls(inout e: E, name: str, ty: str) -> List[u8] {
+    let mut d = lit("@")
+    bytes.append(inout d, lit(name))
+    bytes.append(inout d, lit(" = external thread_local global "))
+    bytes.append(inout d, lit(ty))
+    declare(inout e, lit(name), d)
+    declare(inout e, lit("llvm.threadlocal.address.p0"), lit("declare ptr @llvm.threadlocal.address.p0(ptr)"))
+    val(inout e, catb(lit("call ptr @llvm.threadlocal.address.p0(ptr @"), cat(lit(name), ")")))
+}
+
+/// ei_prof_enter(id): the next frame (or the spill frame past EI_PROF_DEPTH) gets the function
+/// and line 0; returns its address.
+fn prof_enter(inout e: E, id: u64) -> List[u8] {
+    let dp = tls(inout e, "ei_prof_depth", "i16")
+    let st = tls(inout e, "ei_prof_stack", "[512 x { float, float }]")
+    let sp = tls(inout e, "ei_prof_spill", "{ float, float }")
+    let d = val(inout e, catb(lit("load volatile i16, ptr "), dp))
+    let dw = val(inout e, catb(lit("zext i16 "), cat(d, " to i64")))
+    let inb = val(inout e, catb(lit("icmp ult i64 "), cat(dw, ", 512")))
+    let fa = val(inout e, catb(lit("getelementptr inbounds [512 x { float, float }], ptr "), catb(st, catb(lit(", i64 0, i64 "), dw))))
+    let f = val(inout e, catb(lit("select i1 "), catb(inb, catb(lit(", ptr "), catb(fa, catb(lit(", ptr "), sp))))))
+    stmt_text(inout e, catb(lit("store volatile float "), catb(num("", id), catb(lit(".0, ptr "), f))))
+    let la = val(inout e, catb(lit("getelementptr inbounds { float, float }, ptr "), cat(f, ", i32 0, i32 1")))
+    stmt_text(inout e, catb(lit("store volatile float 0.0, ptr "), la))
+    let d1 = val(inout e, catb(lit("add i16 "), cat(d, ", 1")))
+    stmt_text(inout e, catb(lit("store volatile i16 "), catb(d1, catb(lit(", ptr "), dp))))
+    la
+}
+
+/// ei_prof_leave() before a return of a framed function.
+fn prof_leave(inout e: E) {
+    if !e.pframe { return }
+    let dp = tls(inout e, "ei_prof_depth", "i16")
+    let d = val(inout e, catb(lit("load volatile i16, ptr "), dp))
+    let d1 = val(inout e, catb(lit("sub i16 "), cat(d, ", 1")))
+    stmt_text(inout e, catb(lit("store volatile i16 "), catb(d1, catb(lit(", ptr "), dp))))
+}
+
+/// The frame's line before a statement that calls, allocates or drops (unless it is set).
+fn prof_line(inout e: E, line: u32) {
+    if !e.pframe || line == 0 || line == e.pline { return }
+    let a = e.pf.copy()
+    stmt_text(inout e, catb(lit("store volatile float "), catb(num("", line as u64), catb(lit(".0, ptr "), a))))
+    e.pline = line
+}
+
+/// ei_prof_ev(kind, n) (n: an i64 value) in a profiled program.
+fn prof_ev(inout e: E, p: lower.P, kind: u32, n: List[u8]) {
+    if e.prof == 0 { return }
+    let none: List[u8] = List.new()
+    call(inout e, p, lit("ei_prof_ev"), tys2(types.I32, types.U64), args2(bytes.from_u64(kind as u64), n), types.UNIT, none)
+}
+
+// the runtime's event kinds (core/eider_rt.h EI_PEV_*)
+const PEV_COW: u32 = 1
+const PEV_COPY: u32 = 2
+const PEV_DROP: u32 = 3
+const PEV_GROW: u32 = 4
+const PEV_REHASH: u32 = 5
+const PEV_REF: u32 = 6
+
+/// `ei_prof_init(&ei_prof_tab)`: the name table (every function, its file), the files, what
+/// to record, the program and the toolchain's version.
+fn prof_init(inout e: E, p: lower.P, file: List[u8]) {
+    if e.prof == 0 { return }
+    let n = p.ir.fns.len() + 1
+    let mut t = lit("@ei_prof_names = private unnamed_addr constant [")
+    wd(inout t, n as u64)
+    bytes.append(inout t, lit(" x ptr] [ptr "))
+    bytes.append(inout t, msgb(inout e, List.new()))
+    for f in 0..p.ir.fns.len() {
+        bytes.append(inout t, lit(", ptr "))
+        bytes.append(inout t, msgb(inout e, p.ir.fns[f].name))
+    }
+    bytes.append(inout t, lit("]\n@ei_prof_file_of = private unnamed_addr constant ["))
+    wd(inout t, n as u64)
+    bytes.append(inout t, lit(" x i32] [i32 0"))
+    for f in 0..p.ir.fns.len() {
+        bytes.append(inout t, lit(", i32 "))
+        wd(inout t, p.ir.fns[f].file as u64)
+    }
+    let mut nf = p.ir.files.len()
+    if nf == 0 { nf = 1 }
+    bytes.append(inout t, lit("]\n@ei_prof_files = private unnamed_addr constant ["))
+    wd(inout t, nf as u64)
+    bytes.append(inout t, lit(" x ptr] [ptr "))
+    bytes.append(inout t, msgb(inout e, file))
+    for i in 1..p.ir.files.len() {
+        bytes.append(inout t, lit(", ptr "))
+        bytes.append(inout t, msgb(inout e, p.ir.files[i]))
+    }
+    bytes.append(inout t, lit("]\n@ei_prof_tab = private unnamed_addr constant { ptr, ptr, i32, ptr, i32, i32, ptr, ptr } { ptr @ei_prof_names, ptr @ei_prof_file_of, i32 "))
+    wd(inout t, n as u64)
+    bytes.append(inout t, lit(", ptr @ei_prof_files, i32 "))
+    wd(inout t, nf as u64)
+    bytes.append(inout t, lit(", i32 "))
+    wd(inout t, e.prof as u64)
+    bytes.append(inout t, lit(", ptr "))
+    bytes.append(inout t, msgb(inout e, file))
+    bytes.append(inout t, lit(", ptr "))
+    let ver = e.pver.copy()
+    bytes.append(inout t, msgb(inout e, ver))
+    bytes.append(inout t, lit(" }\n"))
+    bytes.append(inout e.gl, t)
+    let none: List[u8] = List.new()
+    call(inout e, p, lit("ei_prof_init"), tys1(types.STR), args1(lit("@ei_prof_tab")), types.UNIT, none)
+}
+
+// ---- glue (#128): the per-type operations, in IR
+//
+// What lower.ei once wrote as C (its `glue`): drop, clone, copy, uniq (copy-on-write), own
+// (before a value crosses to another thread), ==, cmp, hash, Show, variant names, the List and
+// Map operations, Box/Ref/record buffers, closure environments and thunks, the thread handles,
+// Default. Each is a function `@<op><C name of the type>` (lower.c_names) with the C convention
+// of the call sites that ask for it (gneed: csig_of of their parameter types), internal to the
+// module, built after the program's functions until no new glue is needed (glue_all).
+
+/// A glue function being built: its name, signature and, per parameter, its value (a scalar,
+/// or a pointer parameter's pointer) or, for an aggregate, its address.
+type GF = { name: List[u8], sig: abi.Sig, args: List[List[u8]] }
+
+fn gfn_begin(inout e: E, p: lower.P, name: List[u8], ptys: List[u32], ret: u32) -> GF {
+    let sg = csig_of(inout e, p, ptys, ret)
+    e.o = List.new()
+    e.ent = List.new()
+    e.nreg = 0
+    e.nlbl = 0
+    e.term = false
+    e.cur = lit("%entry")
+    e.dloc = 0
+    e.file = 0
+    e.unchecked = false
+    e.loops = List.new()
+    e.brks = List.new()
+    e.ssa = List.new()
+    e.vals = List.new()
+    e.rsig = sg.ret.copy()
+    e.pframe = false
+    unpack_pairs(inout e, sg)
+    let mut args: List[List[u8]] = List.new()
+    for i in 0..sg.args.len() {
+        let a = sg.args[i].copy()
+        let an = num("%a", i as u64)
+        if a.kind == abi.A_COERCE {
+            let t = temp(inout e, p, a.ty)
+            store_piece(inout e, cat(an, ".0"), t, 0, a.b0)
+            if a.n > 1 {
+                store_piece(inout e, cat(an, ".1"), t, 8, a.b1)
+            }
+            args.push(t)
+        } else {
+            args.push(an)
+        }
+    }
+    GF(name, sg, args)
+}
+
+/// The function onto the module (a block left open returns: void, or unreachable).
+fn gfn_end(inout e: E, p: lower.P, gf: GF) {
+    if !e.term {
+        if gf.sig.ret.kind == abi.A_VOID || gf.sig.ret.kind == abi.A_SRET {
+            stmt_text(inout e, lit("ret void"))
+        } else {
+            stmt_text(inout e, lit("unreachable"))
+        }
+    }
+    let mut h = lit("define internal ")
+    bytes.append(inout h, ret_text(inout e, p, gf.sig))
+    bytes.append(inout h, lit(" @"))
+    bytes.append(inout h, gf.name)
+    bytes.append(inout h, lit("("))
+    bytes.append(inout h, signature_params(inout e, p, gf.sig, false))
+    bytes.append(inout h, lit(") unnamed_addr nounwind {\nentry:\n"))
+    flush_fn(inout e, h)
+    e.gdef.insert(h64(gf.name), true)
+}
+
+/// Return the scalar value v (bool: i1).
+fn gret_v(inout e: E, p: lower.P, v: List[u8]) {
+    let r = e.rsig.copy()
+    let _h1 = catb(lit("ret "), catb(vty(inout e, p, r.ty), catb(lit(" "), v)))
+    stmt_text(inout e, _h1)
+    e.term = true
+}
+
+/// Return the aggregate at address a.
+fn gret_a(inout e: E, p: lower.P, a: List[u8]) {
+    let r = e.rsig.copy()
+    if r.kind == abi.A_SRET {
+        memcpy(inout e, p, r.ty, lit("%sret"), a)
+        stmt_text(inout e, lit("ret void"))
+        e.term = true
+    } else if r.kind == abi.A_COERCE {
+        ret_pieces(inout e, r, a)
+    } else {
+        // a scalar result kept at an address
+        let v = load(inout e, p, r.ty, a)
+        gret_v(inout e, p, v)
+    }
+}
+
+fn gret_void(inout e: E) {
+    stmt_text(inout e, lit("ret void"))
+    e.term = true
+}
+
+/// `for i in 0..n` (n: an i64 value): the loop's counter, index value and labels. The body
+/// follows; loop_next closes it.
+type Loop = { ctr: List[u8], iv: List[u8], head: u32, done: u32 }
+
+fn loop_n(inout e: E, p: lower.P, n: List[u8]) -> Loop {
+    let ctr = temp(inout e, p, types.U64)
+    stmt_text(inout e, catb(lit("store i64 0, ptr "), ctr))
+    let head = new_label(inout e)
+    let body = new_label(inout e)
+    let done = new_label(inout e)
+    label(inout e, head)
+    let iv = val(inout e, catb(lit("load i64, ptr "), ctr))
+    let c = val(inout e, catb(lit("icmp ult i64 "), catb(iv, catb(lit(", "), n))))
+    condbr(inout e, c, body, done)
+    label(inout e, body)
+    Loop(ctr, iv, head, done)
+}
+
+fn loop_next(inout e: E, lp: Loop) {
+    if !e.term {
+        let nx = val(inout e, catb(lit("add nuw i64 "), cat(lp.iv, ", 1")))
+        stmt_text(inout e, catb(lit("store i64 "), catb(nx, catb(lit(", ptr "), lp.ctr))))
+        br(inout e, lp.head)
+    }
+    label(inout e, lp.done)
+}
+
+/// `if c {` (c: i1): returns the label after the block (if_end).
+fn if_then(inout e: E, c: List[u8]) -> u32 {
+    let t = new_label(inout e)
+    let j = new_label(inout e)
+    condbr(inout e, c, t, j)
+    label(inout e, t)
+    j
+}
+
+fn if_end(inout e: E, j: u32) { label(inout e, j) }
+
+/// The address of element i (an i64 value) of an array of el at pointer d.
+fn elem(inout e: E, p: lower.P, el: u32, d: List[u8], i: List[u8]) -> List[u8] {
+    let mut g = lit("getelementptr inbounds ")
+    bytes.append(inout g, mty(inout e, p, el))
+    bytes.append(inout g, lit(", ptr "))
+    bytes.append(inout g, d)
+    bytes.append(inout g, lit(", i64 "))
+    bytes.append(inout g, i)
+    val(inout e, g)
+}
+
+fn store_ptr(inout e: E, v: List[u8], a: List[u8]) { stmt_text(inout e, catb(lit("store ptr "), catb(v, catb(lit(", ptr "), a)))) }
+fn store_i64(inout e: E, v: List[u8], a: List[u8]) { stmt_text(inout e, catb(lit("store i64 "), catb(v, catb(lit(", ptr "), a)))) }
+fn load_i64(inout e: E, a: List[u8]) -> List[u8] { val(inout e, catb(lit("load i64, ptr "), a)) }
+fn load_p(inout e: E, a: List[u8]) -> List[u8] { val(inout e, catb(lit("load ptr, ptr "), a)) }
+fn store_field_ptr(inout e: E, p: lower.P, ty: u32, a: List[u8], i: u32, v: List[u8]) {
+    let f = field_addr(inout e, p, ty, a, i)
+    store_ptr(inout e, v, f)
+}
+fn store_field_i64(inout e: E, p: lower.P, ty: u32, a: List[u8], i: u32, v: List[u8]) {
+    let f = field_addr(inout e, p, ty, a, i)
+    store_i64(inout e, v, f)
+}
+fn not_null(inout e: E, v: List[u8]) -> List[u8] { val(inout e, catb(lit("icmp ne ptr "), cat(v, ", null"))) }
+
+// ---- shared buffers: the count in the 16-byte header before the data (core/eider_rt.h,
+// ei_buf_*; not atomic)
+
+fn buf_hdr(inout e: E, d: List[u8]) -> List[u8] { val(inout e, catb(lit("getelementptr inbounds i8, ptr "), cat(d, ", i64 -16"))) }
+
+/// ei_buf_inc(d)
+fn buf_inc(inout e: E, d: List[u8]) {
+    let _h2 = not_null(inout e, d)
+    let j = if_then(inout e, _h2)
+    let h = buf_hdr(inout e, d)
+    let n = load_i64(inout e, h)
+    let m = val(inout e, catb(lit("add i64 "), cat(n, ", 1")))
+    store_i64(inout e, m, h)
+    if_end(inout e, j)
+}
+
+/// ei_buf_dec(d): one holder fewer; an i1, true when that was the last (false for null).
+fn buf_dec(inout e: E, p: lower.P, d: List[u8]) -> List[u8] {
+    let r = temp(inout e, p, types.BOOL)
+    stmt_text(inout e, catb(lit("store i8 0, ptr "), r))
+    let _h3 = not_null(inout e, d)
+    let j = if_then(inout e, _h3)
+    let h = buf_hdr(inout e, d)
+    let n = load_i64(inout e, h)
+    let m = val(inout e, catb(lit("sub i64 "), cat(n, ", 1")))
+    store_i64(inout e, m, h)
+    let z = val(inout e, catb(lit("icmp eq i64 "), cat(m, ", 0")))
+    store(inout e, p, types.BOOL, z, r)
+    if_end(inout e, j)
+    load(inout e, p, types.BOOL, r)
+}
+
+/// ei_buf_shared(d): more than one holder (false for null).
+fn buf_shared(inout e: E, p: lower.P, d: List[u8]) -> List[u8] {
+    let r = temp(inout e, p, types.BOOL)
+    stmt_text(inout e, catb(lit("store i8 0, ptr "), r))
+    let _h4 = not_null(inout e, d)
+    let j = if_then(inout e, _h4)
+    let h = buf_hdr(inout e, d)
+    let n = load_i64(inout e, h)
+    let s = val(inout e, catb(lit("icmp ugt i64 "), cat(n, ", 1")))
+    store(inout e, p, types.BOOL, s, r)
+    if_end(inout e, j)
+    load(inout e, p, types.BOOL, r)
+}
+
+/// ei_buf_count(d) == 1 (d not null)
+fn buf_single(inout e: E, d: List[u8]) -> List[u8] {
+    let h = buf_hdr(inout e, d)
+    let n = load_i64(inout e, h)
+    val(inout e, catb(lit("icmp eq i64 "), cat(n, ", 1")))
+}
+
+fn buf_free(inout e: E, p: lower.P, d: List[u8]) {
+    let none: List[u8] = List.new()
+    call(inout e, p, lit("ei_buf_free"), tys1(types.STR), args1(d), types.UNIT, none)
+}
+
+fn buf_alloc(inout e: E, p: lower.P, n: List[u8], size: u64) -> List[u8] {
+    rt_call(inout e, p, "ei_buf_alloc", tys2(types.U64, types.U64), args2(n, bytes.from_u64(size)), types.STR)
+}
+
+fn rt_free(inout e: E, p: lower.P, d: List[u8]) {
+    let none: List[u8] = List.new()
+    call(inout e, p, lit("ei_free"), tys1(types.STR), args1(d), types.UNIT, none)
+}
+
+/// Append text t to the String at o (ei_str_push with a constant).
+fn show_text(inout e: E, p: lower.P, o: List[u8], t: List[u8]) {
+    let none: List[u8] = List.new()
+    let m = msgb(inout e, t)
+    call(inout e, p, lit("ei_str_push"), tys2(PTR + types.STRING, types.STR), args2(o, m), types.UNIT, none)
+}
+
+/// msg for any bytes (glue's names and labels).
+fn msgb(inout e: E, s: List[u8]) -> List[u8] {
+    let k = h64(s)
+    match e.msgs.get(k) {
+        Some(i) => { return num("@.m", i as u64) }
+        None => {}
+    }
+    let i = e.nmsg
+    e.nmsg += 1
+    e.msgs.insert(k, i)
+    let name = num("@.m", i as u64)
+    bytes.append(inout e.gl, name)
+    bytes.append(inout e.gl, lit(" = private unnamed_addr constant ["))
+    bytes.append(inout e.gl, bytes.from_u64((s.len() + 1) as u64))
+    bytes.append(inout e.gl, lit(" x i8] "))
+    c_string(inout e.gl, s)
+    e.gl.push(10)
+    name
+}
+
+/// The value of type ty at address a, for a call argument: a scalar's value, an aggregate's
+/// address.
+fn argof(inout e: E, p: lower.P, ty: u32, a: List[u8]) -> List[u8] {
+    if is_scalar(p, ty) && !is_void(ty) {
+        return load(inout e, p, ty, a)
+    }
+    a
+}
+
+/// The address of a value of type ty given as a glue parameter (a scalar's value is stored).
+fn addrof(inout e: E, p: lower.P, ty: u32, v: List[u8]) -> List[u8] {
+    if is_scalar(p, ty) && !is_void(ty) {
+        let t = temp(inout e, p, ty)
+        store(inout e, p, ty, v, t)
+        return t
+    }
+    v
+}
+
+/// The fields of a struct-like type (record, tuple; a variant with v) with their addresses in
+/// the value at a: for a shared record, in its buffer.
+fn part_addr(inout e: E, p: lower.P, ty: u32, a: List[u8], i: u32) -> List[u8] {
+    if kind(p, ty) == types.T_RECORD && lower.shared_rec(p, ty) {
+        let q = load_ptr_field(inout e, p, ty, a, 0)
+        return gep(inout e, p, cat(num("%t", ty as u64), ".d"), q, i)
+    }
+    field_addr(inout e, p, ty, a, i)
+}
+
+/// Call user function f (a trait impl) with the internal convention: args are values for
+/// scalars, addresses for aggregates; an aggregate result goes to dst.
+fn call_user(inout e: E, p: lower.P, f: u32, args: List[List[u8]], dst: List[u8]) -> List[u8] {
+    let sg = isig(inout e, p, f)
+    let mut d = dst.copy()
+    if (sg.ret.kind == abi.A_SRET || sg.ret.kind == abi.A_COERCE) && d.len() == 0 {
+        d = temp(inout e, p, sg.ret.ty)
+    }
+    // A_REF arguments must not alias each other's writes: the callee doesn't write them
+    let callee = catb(lit("@"), iname(e, f))
+    call_sig(inout e, p, callee, sg, args, d)
+}
+
+/// The tag of the enum at a (i32).
+fn tag_of(inout e: E, p: lower.P, ty: u32, a: List[u8]) -> List[u8] { load_tag(inout e, p, ty, a) }
+
+/// Whether an i32 tag value t is variant i (i1).
+fn tag_is(inout e: E, t: List[u8], i: u32) -> List[u8] { val(inout e, catb(lit("icmp eq i32 "), catb(t, num(", ", i as u64)))) }
+
+fn variant_owns(inout e: E, p: lower.P, ty: u32, i: u32) -> bool {
+    let d = types.def_of(p.t, ty)
+    let v = types.variant(p.t, d, i)
+    for j in 0..v.flen {
+        if owns(inout e, p, types.field(p.t, v.fstart, j).ty) {
+            return true
+        }
+    }
+    false
+}
+
+/// An early `return false` unless i1 c.
+fn ret_false_unless(inout e: E, p: lower.P, c: List[u8]) {
+    let nc = val(inout e, catb(lit("xor i1 "), cat(c, ", true")))
+    let j = if_then(inout e, nc)
+    gret_v(inout e, p, lit("false"))
+    if_end(inout e, j)
+}
+
+/// The address of element i (i64 value) of the array value at a (`{ [n x T] }`).
+fn arr_elem(inout e: E, p: lower.P, ty: u32, a: List[u8], i: List[u8]) -> List[u8] {
+    let mut g = lit("getelementptr inbounds ")
+    bytes.append(inout g, mty(inout e, p, ty))
+    bytes.append(inout g, lit(", ptr "))
+    bytes.append(inout g, a)
+    bytes.append(inout g, lit(", i32 0, i32 0, i64 "))
+    bytes.append(inout g, i)
+    val(inout e, g)
+}
+
+/// own(a): the value of type ty at a about to be seen by another thread gets buffers of
+/// its own (lower.ei's own_call).
+fn own_at(inout e: E, p: lower.P, ty: u32, a: List[u8]) {
+    if !owns(inout e, p, ty) || types.is_handle(kind(p, ty)) {
+        return
+    }
+    let none: List[u8] = List.new()
+    if kind(p, ty) == types.T_STRING {
+        call(inout e, p, lit("ei_str_unique"), tys1(PTR + ty), args1(a), types.UNIT, none)
+        return
+    }
+    gneed(inout e, lower.GK_OWN, ty)
+    let gn_ = gname(e, "own_", ty)
+    call(inout e, p, gn_, tys1(PTR + ty), args1(a), types.UNIT, none)
+}
+
+/// Call the function pointer at field i of the fn value at fv with (env) when it is set:
+/// its drop (2) or own (4).
+fn fnval_hook(inout e: E, p: lower.P, fty: u32, fv: List[u8], i: u32) {
+    let h = load_ptr_field(inout e, p, fty, fv, i)
+    let _h5 = not_null(inout e, h)
+    let j = if_then(inout e, _h5)
+    let env = load_ptr_field(inout e, p, fty, fv, 0)
+    stmt_text(inout e, catb(lit("call void "), catb(h, catb(lit("(ptr "), cat(env, ")")))))
+    if_end(inout e, j)
+}
+
+/// The struct of a Ref's buffer, `{ i64 st, T v }`: the offset of v.
+fn ref_voff(inout e: E, p: lower.P, el: u32) -> u64 {
+    let mut ms: List[u32] = List.new()
+    ms.push(types.I64)
+    ms.push(el)
+    abi.offset_of(inout e.lay, p, ms, 1)
+}
+
+fn ref_size(inout e: E, p: lower.P, el: u32) -> u64 {
+    let mut ms: List[u32] = List.new()
+    ms.push(types.I64)
+    ms.push(el)
+    abi.struct_of(inout e.lay, p, ms)[0]
+}
+
+fn off_ptr(inout e: E, q: List[u8], off: u64) -> List[u8] {
+    if off == 0 {
+        return q.copy()
+    }
+    val(inout e, catb(lit("getelementptr inbounds i8, ptr "), catb(q, num(", i64 ", off))))
+}
+
+/// The size of a shared record's buffer struct.
+fn rec_dsize(inout e: E, p: lower.P, ty: u32) -> u64 {
+    let d = types.def_of(p.t, ty)
+    if d.len == 0 {
+        return 1
+    }
+    abi.struct_of(inout e.lay, p, abi.parts(p, ty, NONE))[0]
+}
+
+fn dyn_memcpy(inout e: E, dst: List[u8], src: List[u8], n: List[u8]) {
+    declare(inout e, lit("llvm.memcpy.p0.p0.i64"), lit("declare void @llvm.memcpy.p0.p0.i64(ptr, ptr, i64, i1)"))
+    stmt_text(inout e, catb(lit("call void @llvm.memcpy.p0.p0.i64(ptr "), catb(dst, catb(lit(", ptr "), catb(src, catb(lit(", i64 "), cat(n, ", i1 false)")))))))
+}
+
+fn dyn_memset0(inout e: E, dst: List[u8], n: List[u8]) {
+    declare(inout e, lit("llvm.memset.p0.i64"), lit("declare void @llvm.memset.p0.i64(ptr, i8, i64, i1)"))
+    stmt_text(inout e, catb(lit("call void @llvm.memset.p0.i64(ptr "), catb(dst, catb(lit(", i8 0, i64 "), cat(n, ", i1 false)")))))
+}
+
+fn mul_const(inout e: E, n: List[u8], k: u64) -> List[u8] {
+    if k == 1 {
+        return n.copy()
+    }
+    val(inout e, catb(lit("mul i64 "), catb(n, num(", ", k))))
+}
+
+// ---- drop, clone, copy, uniq, own
+
+fn g_drop(inout e: E, p: lower.P, ty: u32) {
+    let _h6 = gname(e, "drop_", ty)
+    let gf = gfn_begin(inout e, p, _h6, tys1(PTR + ty), types.UNIT)
+    let x = gf.args[0].copy()
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_RECORD && lower.shared_rec(p, ty) {
+        // its own drop runs once, when the last holder goes, before the fields are dropped
+        let d = types.def_of(p.t, ty)
+        let q = load_ptr_field(inout e, p, ty, x, 0)
+        let _h7 = not_null(inout e, q)
+        let j0 = if_then(inout e, _h7)
+        let _h8 = buf_single(inout e, q)
+        let j1 = if_then(inout e, _h8)
+        let none: List[u8] = List.new()
+        let ds0 = rec_dsize(inout e, p, ty)
+        prof_ev(inout e, p, PEV_DROP, bytes.from_u64(ds0))
+        call_user(inout e, p, lower.custom_fn(p, lower.TR_DROP, ty), args1(x), none)
+        if_end(inout e, j1)
+        let q2 = load_ptr_field(inout e, p, ty, x, 0)
+        let _h9 = buf_dec(inout e, p, q2)
+        let j2 = if_then(inout e, _h9)
+        for i in 0..d.len {
+            let ft = types.field(p.t, d.start, i).ty
+            if !owns(inout e, p, ft) {
+                continue
+            }
+            let _h10 = gep(inout e, p, cat(num("%t", ty as u64), ".d"), q2, i)
+            drop_at(inout e, p, ft, _h10)
+        }
+        buf_free(inout e, p, q2)
+        if_end(inout e, j2)
+        if_end(inout e, j0)
+        store_field_ptr(inout e, p, ty, x, 0, lit("null"))
+    } else if k == types.T_RECORD || k == types.T_TUPLE {
+        let ms = abi.parts(p, ty, NONE)
+        for i in 0..ms.len() {
+            if owns(inout e, p, ms[i]) {
+                let _h11 = field_addr(inout e, p, ty, x, i as u32)
+                drop_at(inout e, p, ms[i], _h11)
+            }
+        }
+    } else if k == types.T_ENUM {
+        let d = types.def_of(p.t, ty)
+        let tg = tag_of(inout e, p, ty, x)
+        for i in 0..d.len {
+            if !variant_owns(inout e, p, ty, i) {
+                continue
+            }
+            let _h12 = tag_is(inout e, tg, i)
+            let j = if_then(inout e, _h12)
+            let v = types.variant(p.t, d, i)
+            for f in 0..v.flen {
+                let ft = types.field(p.t, v.fstart, f).ty
+                if owns(inout e, p, ft) {
+                    let _h13 = payload_addr(inout e, p, ty, x, i, f)
+                    drop_at(inout e, p, ft, _h13)
+                }
+            }
+            if_end(inout e, j)
+        }
+    } else if k == types.T_ARRAY {
+        if t.b > 0 && owns(inout e, p, t.a) {
+            let lp = loop_n(inout e, p, bytes.from_u64(t.b as u64))
+            let _h14 = arr_elem(inout e, p, ty, x, lp.iv)
+            drop_at(inout e, p, t.a, _h14)
+            loop_next(inout e, lp)
+        }
+    } else if k == types.T_LIST {
+        // the last holder of the shared buffer drops the elements, once
+        let d = load_ptr_field(inout e, p, ty, x, 0)
+        let _h15 = buf_dec(inout e, p, d)
+        let j = if_then(inout e, _h15)
+        if owns(inout e, p, t.a) {
+            let n = load_i64_field(inout e, p, ty, x, 1)
+            let lp = loop_n(inout e, p, n)
+            let _h16 = elem(inout e, p, t.a, d, lp.iv)
+            drop_at(inout e, p, t.a, _h16)
+            loop_next(inout e, lp)
+        }
+        buf_free(inout e, p, d)
+        if_end(inout e, j)
+        store_field_ptr(inout e, p, ty, x, 0, lit("null"))
+        store_field_i64(inout e, p, ty, x, 1, lit("0"))
+        store_field_i64(inout e, p, ty, x, 2, lit("0"))
+    } else if k == types.T_MAP {
+        // the count is on the slot states `s`; k and v go with it
+        let s = load_ptr_field(inout e, p, ty, x, 2)
+        let _h17 = buf_dec(inout e, p, s)
+        let j = if_then(inout e, _h17)
+        let kp = load_ptr_field(inout e, p, ty, x, 0)
+        let vp = load_ptr_field(inout e, p, ty, x, 1)
+        if owns(inout e, p, t.a) || owns(inout e, p, t.b) {
+            let cap = load_i64_field(inout e, p, ty, x, 4)
+            let lp = loop_n(inout e, p, cap)
+            let _h18 = catb(lit("load i8, ptr "), elem(inout e, p, types.U8, s, lp.iv))
+            let sv = val(inout e, _h18)
+            let _h19 = val(inout e, catb(lit("icmp eq i8 "), cat(sv, ", 1")))
+            let j2 = if_then(inout e, _h19)
+            let _h20 = elem(inout e, p, t.a, kp, lp.iv)
+            drop_at(inout e, p, t.a, _h20)
+            let _h21 = elem(inout e, p, t.b, vp, lp.iv)
+            drop_at(inout e, p, t.b, _h21)
+            if_end(inout e, j2)
+            loop_next(inout e, lp)
+        }
+        rt_free(inout e, p, kp)
+        rt_free(inout e, p, vp)
+        buf_free(inout e, p, s)
+        if_end(inout e, j)
+        for i in 0..3 {
+            store_field_ptr(inout e, p, ty, x, i as u32, lit("null"))
+        }
+        for i in 3..6 {
+            store_field_i64(inout e, p, ty, x, i as u32, lit("0"))
+        }
+    } else if k == types.T_BOX || k == types.T_REF {
+        let q = load_ptr_field(inout e, p, ty, x, 0)
+        let _h22 = buf_dec(inout e, p, q)
+        let j = if_then(inout e, _h22)
+        if k == types.T_BOX {
+            drop_at(inout e, p, t.a, q)
+        } else {
+            let _h240 = ref_voff(inout e, p, t.a)
+            let _h23 = off_ptr(inout e, q, _h240)
+            drop_at(inout e, p, t.a, _h23)
+        }
+        buf_free(inout e, p, q)
+        if_end(inout e, j)
+        store_field_ptr(inout e, p, ty, x, 0, lit("null"))
+    } else if k == types.T_FN {
+        fnval_hook(inout e, p, ty, x, 2)
+        store_field_ptr(inout e, p, ty, x, 0, lit("null"))
+        for i in 2..5 {
+            store_field_ptr(inout e, p, ty, x, i as u32, lit("null"))
+        }
+    } else if types.is_handle(k) {
+        handle_drop(inout e, p, ty, x)
+    }
+    gfn_end(inout e, p, gf)
+}
+
+fn g_clone(inout e: E, p: lower.P, ty: u32) {
+    let _h24 = gname(e, "clone_", ty)
+    let gf = gfn_begin(inout e, p, _h24, tys1(PTR + ty), ty)
+    let x = gf.args[0].copy()
+    let r = temp(inout e, p, ty)
+    memcpy(inout e, p, ty, r, x)
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_RECORD && lower.shared_rec(p, ty) {
+        let _h25 = load_ptr_field(inout e, p, ty, r, 0)
+        buf_inc(inout e, _h25)
+    } else if k == types.T_RECORD || k == types.T_TUPLE {
+        let ms = abi.parts(p, ty, NONE)
+        for i in 0..ms.len() {
+            if owns(inout e, p, ms[i]) {
+                let _h26 = field_addr(inout e, p, ty, x, i as u32)
+                let _h241 = field_addr(inout e, p, ty, r, i as u32)
+                clone_to(inout e, p, ms[i], _h26, _h241)
+            }
+        }
+    } else if k == types.T_ENUM {
+        let d = types.def_of(p.t, ty)
+        let tg = tag_of(inout e, p, ty, x)
+        for i in 0..d.len {
+            if !variant_owns(inout e, p, ty, i) {
+                continue
+            }
+            let _h27 = tag_is(inout e, tg, i)
+            let j = if_then(inout e, _h27)
+            let v = types.variant(p.t, d, i)
+            for f in 0..v.flen {
+                let ft = types.field(p.t, v.fstart, f).ty
+                if owns(inout e, p, ft) {
+                    let _h28 = payload_addr(inout e, p, ty, x, i, f)
+                    let _h242 = payload_addr(inout e, p, ty, r, i, f)
+                    clone_to(inout e, p, ft, _h28, _h242)
+                }
+            }
+            if_end(inout e, j)
+        }
+    } else if k == types.T_ARRAY {
+        if t.b > 0 && owns(inout e, p, t.a) {
+            let lp = loop_n(inout e, p, bytes.from_u64(t.b as u64))
+            let _h29 = arr_elem(inout e, p, ty, x, lp.iv)
+            let _h243 = arr_elem(inout e, p, ty, r, lp.iv)
+            clone_to(inout e, p, t.a, _h29, _h243)
+            loop_next(inout e, lp)
+        }
+    } else if k == types.T_LIST || k == types.T_BOX || k == types.T_REF {
+        // copy-on-write: the copy shares the buffer
+        let _h30 = load_ptr_field(inout e, p, ty, r, 0)
+        buf_inc(inout e, _h30)
+    } else if k == types.T_MAP {
+        let _h31 = load_ptr_field(inout e, p, ty, r, 2)
+        buf_inc(inout e, _h31)
+    } else if k == types.T_FN {
+        let c = load_ptr_field(inout e, p, ty, x, 3)
+        let _h32 = not_null(inout e, c)
+        let j = if_then(inout e, _h32)
+        let env = load_ptr_field(inout e, p, ty, x, 0)
+        let ne = val(inout e, catb(lit("call ptr "), catb(c, catb(lit("(ptr "), cat(env, ")")))))
+        store_field_ptr(inout e, p, ty, r, 0, ne)
+        if_end(inout e, j)
+    } else if types.is_handle(k) {
+        // shares the object
+        let none: List[u8] = List.new()
+        let _h33 = args1(load_ptr_field(inout e, p, ty, r, 0))
+        call(inout e, p, lit("ei_h_inc"), tys1(types.STR), _h33, types.UNIT, none)
+    }
+    gret_a(inout e, p, r)
+    gfn_end(inout e, p, gf)
+}
+
+/// dst = a copy of src (`.copy()` of part ty, lower.ei's copy_part), when ty owns anything
+/// (else the memcpy of the whole already copied it).
+fn copy_part(inout e: E, p: lower.P, ty: u32, src: List[u8], dst: List[u8]) {
+    if !owns(inout e, p, ty) {
+        return
+    }
+    copy_to(inout e, p, ty, src, dst)
+}
+
+fn g_copy(inout e: E, p: lower.P, ty: u32) {
+    let _h34 = gname(e, "copy_", ty)
+    let gf = gfn_begin(inout e, p, _h34, tys1(PTR + ty), ty)
+    let x = gf.args[0].copy()
+    let r = temp(inout e, p, ty)
+    let f = lower.custom_fn(p, lower.TR_COPY, ty)
+    if f != NONE {
+        let _h35 = args1(argof(inout e, p, ty, x))
+        call_user(inout e, p, f, _h35, r)
+        gret_a(inout e, p, r)
+        gfn_end(inout e, p, gf)
+        return
+    }
+    memcpy(inout e, p, ty, r, x)
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_RECORD && lower.shared_rec(p, ty) {
+        let d = types.def_of(p.t, ty)
+        let dt = cat(num("%t", ty as u64), ".d")
+        let oq = load_ptr_field(inout e, p, ty, x, 0)
+        let ds = rec_dsize(inout e, p, ty)
+        let q = buf_alloc(inout e, p, lit("1"), ds)
+        dyn_memcpy(inout e, q, oq, bytes.from_u64(ds))
+        store_field_ptr(inout e, p, ty, r, 0, q)
+        for i in 0..d.len {
+            let ft = types.field(p.t, d.start, i).ty
+            let _h36 = gep(inout e, p, dt, oq, i)
+            let _h244 = gep(inout e, p, dt, q, i)
+            copy_part(inout e, p, ft, _h36, _h244)
+        }
+    } else if k == types.T_RECORD || k == types.T_TUPLE {
+        let ms = abi.parts(p, ty, NONE)
+        for i in 0..ms.len() {
+            let _h37 = field_addr(inout e, p, ty, x, i as u32)
+            let _h245 = field_addr(inout e, p, ty, r, i as u32)
+            copy_part(inout e, p, ms[i], _h37, _h245)
+        }
+    } else if k == types.T_ENUM {
+        let d = types.def_of(p.t, ty)
+        let tg = tag_of(inout e, p, ty, x)
+        for i in 0..d.len {
+            let v = types.variant(p.t, d, i)
+            if v.flen == 0 {
+                continue
+            }
+            let _h38 = tag_is(inout e, tg, i)
+            let j = if_then(inout e, _h38)
+            for fi in 0..v.flen {
+                let _h39 = payload_addr(inout e, p, ty, x, i, fi)
+                let _h246 = payload_addr(inout e, p, ty, r, i, fi)
+                copy_part(inout e, p, types.field(p.t, v.fstart, fi).ty, _h39, _h246)
+            }
+            if_end(inout e, j)
+        }
+    } else if k == types.T_ARRAY {
+        if t.b > 0 && owns(inout e, p, t.a) {
+            let lp = loop_n(inout e, p, bytes.from_u64(t.b as u64))
+            let _h40 = arr_elem(inout e, p, ty, x, lp.iv)
+            let _h247 = arr_elem(inout e, p, ty, r, lp.iv)
+            copy_part(inout e, p, t.a, _h40, _h247)
+            loop_next(inout e, lp)
+        }
+    } else if k == types.T_LIST {
+        let cap = load_i64_field(inout e, p, ty, x, 2)
+        let _h41 = val(inout e, catb(lit("icmp ne i64 "), cat(cap, ", 0")))
+        let j = if_then(inout e, _h41)
+        let es = size(inout e, p, t.a)
+        let nd = buf_alloc(inout e, p, cap, es)
+        store_field_ptr(inout e, p, ty, r, 0, nd)
+        let od = load_ptr_field(inout e, p, ty, x, 0)
+        let n = load_i64_field(inout e, p, ty, x, 1)
+        let lp = loop_n(inout e, p, n)
+        let _h42 = elem(inout e, p, t.a, od, lp.iv)
+        let _h248 = elem(inout e, p, t.a, nd, lp.iv)
+        copy_to(inout e, p, t.a, _h42, _h248)
+        loop_next(inout e, lp)
+        if_end(inout e, j)
+    } else if k == types.T_MAP {
+        let cap = load_i64_field(inout e, p, ty, x, 4)
+        let _h43 = val(inout e, catb(lit("icmp ne i64 "), cat(cap, ", 0")))
+        let j = if_then(inout e, _h43)
+        let _h44 = args2(cap, bytes.from_u64(size(inout e, p, t.a)))
+        let nk = rt_call(inout e, p, "ei_alloc_n", tys2(types.U64, types.U64), _h44, types.STR)
+        let _h45 = args2(cap, bytes.from_u64(size(inout e, p, t.b)))
+        let nv = rt_call(inout e, p, "ei_alloc_n", tys2(types.U64, types.U64), _h45, types.STR)
+        let ns = buf_alloc(inout e, p, cap, 1)
+        store_field_ptr(inout e, p, ty, r, 0, nk)
+        store_field_ptr(inout e, p, ty, r, 1, nv)
+        store_field_ptr(inout e, p, ty, r, 2, ns)
+        let ok = load_ptr_field(inout e, p, ty, x, 0)
+        let ov = load_ptr_field(inout e, p, ty, x, 1)
+        let os = load_ptr_field(inout e, p, ty, x, 2)
+        let lp = loop_n(inout e, p, cap)
+        let sa = elem(inout e, p, types.U8, os, lp.iv)
+        let sv = val(inout e, catb(lit("load i8, ptr "), sa))
+        let _h46 = catb(lit("store i8 "), catb(sv, catb(lit(", ptr "), elem(inout e, p, types.U8, ns, lp.iv))))
+        stmt_text(inout e, _h46)
+        let _h47 = val(inout e, catb(lit("icmp eq i8 "), cat(sv, ", 1")))
+        let j2 = if_then(inout e, _h47)
+        let _h48 = elem(inout e, p, t.a, ok, lp.iv)
+        let _h249 = elem(inout e, p, t.a, nk, lp.iv)
+        copy_to(inout e, p, t.a, _h48, _h249)
+        let _h49 = elem(inout e, p, t.b, ov, lp.iv)
+        let _h250 = elem(inout e, p, t.b, nv, lp.iv)
+        copy_to(inout e, p, t.b, _h49, _h250)
+        if_end(inout e, j2)
+        loop_next(inout e, lp)
+        if_end(inout e, j)
+    } else if k == types.T_BOX {
+        let _h50 = size(inout e, p, t.a)
+        let q = buf_alloc(inout e, p, lit("1"), _h50)
+        let _h51 = load_ptr_field(inout e, p, ty, x, 0)
+        copy_to(inout e, p, t.a, _h51, q)
+        store_field_ptr(inout e, p, ty, r, 0, q)
+    } else if k == types.T_MUTEX {
+        // locks, copies the contents into a new Mutex, unlocks
+        gneed(inout e, lower.GK_MXGET, ty)
+        gneed(inout e, lower.GK_MXNEW, ty)
+        let v = temp(inout e, p, t.a)
+        let _h52 = gname(e, "get_", ty)
+        let gv = call(inout e, p, _h52, tys1(ty), args1(x), t.a, v)
+        if is_scalar(p, t.a) && !is_void(t.a) {
+            store(inout e, p, t.a, gv, v)
+        }
+        let mut seen: Map[u32, bool] = Map.new()
+        if lower.deep(p, t.a, inout seen) {
+            let w2 = temp(inout e, p, t.a)
+            copy_to(inout e, p, t.a, v, w2)
+            drop_at(inout e, p, t.a, v)
+            copy_mem(inout e, p, t.a, v, w2)
+        }
+        let _h53 = gname(e, "new_", ty)
+        let _h251 = args1(argof(inout e, p, t.a, v))
+        call(inout e, p, _h53, tys1(t.a), _h251, ty, r)
+    } else if k == types.T_REF {
+        // a new Ref holding a copy of the value (a read of it)
+        let oq = load_ptr_field(inout e, p, ty, x, 0)
+        let st = load_i64(inout e, oq)
+        let c = icmp(inout e, "slt", lit("i64"), st, lit("0"))
+        trap_if(inout e, c, "Ref read while it is being updated", 0)
+        let _h54 = val(inout e, catb(lit("add i64 "), cat(st, ", 1")))
+        store_i64(inout e, _h54, oq)
+        let _h55 = ref_size(inout e, p, t.a)
+        let q = buf_alloc(inout e, p, lit("1"), _h55)
+        store_i64(inout e, lit("0"), q)
+        let vo = ref_voff(inout e, p, t.a)
+        let _h56 = off_ptr(inout e, oq, vo)
+        let _h252 = off_ptr(inout e, q, vo)
+        copy_to(inout e, p, t.a, _h56, _h252)
+        store_field_ptr(inout e, p, ty, r, 0, q)
+        let st2 = load_i64(inout e, oq)
+        let _h57 = val(inout e, catb(lit("sub i64 "), cat(st2, ", 1")))
+        store_i64(inout e, _h57, oq)
+    }
+    gret_a(inout e, p, r)
+    gfn_end(inout e, p, gf)
+}
+
+/// `uniq_T(T *x)` for a List, Map, Box or shared record: when x's buffer is shared, x gets a
+/// copy (each element a copy, sharing its own buffers in turn) and lets go of the shared one.
+fn g_uniq(inout e: E, p: lower.P, ty: u32) {
+    let _h58 = gname(e, "uniq_", ty)
+    let gf = gfn_begin(inout e, p, _h58, tys1(PTR + ty), types.UNIT)
+    let x = gf.args[0].copy()
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    let fi: u32 = if k == types.T_MAP { 2 } else { 0 }
+    let b0 = load_ptr_field(inout e, p, ty, x, fi)
+    let sh = buf_shared(inout e, p, b0)
+    let _h59 = val(inout e, catb(lit("xor i1 "), cat(sh, ", true")))
+    let j = if_then(inout e, _h59)
+    gret_void(inout e)
+    if_end(inout e, j)
+    if e.prof > 0 {
+        // the copy's bytes
+        let mut cb = bytes.from_u64(0)
+        if k == types.T_RECORD {
+            cb = bytes.from_u64(rec_dsize(inout e, p, ty))
+        } else if k == types.T_LIST {
+            let c0 = load_i64_field(inout e, p, ty, x, 2)
+            let es0 = size(inout e, p, t.a)
+            cb = mul_const(inout e, c0, es0)
+        } else if k == types.T_MAP {
+            let c0 = load_i64_field(inout e, p, ty, x, 4)
+            let w0 = size(inout e, p, t.a) + size(inout e, p, t.b) + 1
+            cb = mul_const(inout e, c0, w0)
+        } else {
+            cb = bytes.from_u64(size(inout e, p, t.a))
+        }
+        prof_ev(inout e, p, PEV_COW, cb)
+    }
+    if k == types.T_RECORD {
+        let n = temp(inout e, p, ty)
+        let f = lower.custom_fn(p, lower.TR_COPY, ty)
+        if f != NONE {
+            let _h60 = args1(argof(inout e, p, ty, x))
+            call_user(inout e, p, f, _h60, n)
+        } else {
+            let d = types.def_of(p.t, ty)
+            let dt = cat(num("%t", ty as u64), ".d")
+            let ds = rec_dsize(inout e, p, ty)
+            let q = buf_alloc(inout e, p, lit("1"), ds)
+            dyn_memcpy(inout e, q, b0, bytes.from_u64(ds))
+            store_field_ptr(inout e, p, ty, n, 0, q)
+            for i in 0..d.len {
+                let ft = types.field(p.t, d.start, i).ty
+                if owns(inout e, p, ft) {
+                    let _h61 = gep(inout e, p, dt, b0, i)
+                    let _h253 = gep(inout e, p, dt, q, i)
+                    clone_to(inout e, p, ft, _h61, _h253)
+                }
+            }
+        }
+        // one holder fewer of the shared buffer (never the last)
+        buf_dec(inout e, p, b0)
+        memcpy(inout e, p, ty, x, n)
+        gfn_end(inout e, p, gf)
+        return
+    }
+    gneed(inout e, lower.GK_DROP, ty)
+    let old = temp(inout e, p, ty)
+    memcpy(inout e, p, ty, old, x)
+    if k == types.T_LIST {
+        let cap = load_i64_field(inout e, p, ty, x, 2)
+        let es = size(inout e, p, t.a)
+        let nd = buf_alloc(inout e, p, cap, es)
+        store_field_ptr(inout e, p, ty, x, 0, nd)
+        let n = load_i64_field(inout e, p, ty, x, 1)
+        if owns(inout e, p, t.a) {
+            let lp = loop_n(inout e, p, n)
+            let _h62 = elem(inout e, p, t.a, b0, lp.iv)
+            let _h254 = elem(inout e, p, t.a, nd, lp.iv)
+            clone_to(inout e, p, t.a, _h62, _h254)
+            loop_next(inout e, lp)
+        } else {
+            let _h63 = val(inout e, catb(lit("icmp ne i64 "), cat(n, ", 0")))
+            let jn = if_then(inout e, _h63)
+            let _h64 = mul_const(inout e, n, es)
+            dyn_memcpy(inout e, nd, b0, _h64)
+            if_end(inout e, jn)
+        }
+    } else if k == types.T_MAP {
+        let cap = load_i64_field(inout e, p, ty, x, 4)
+        let _h65 = args2(cap, bytes.from_u64(size(inout e, p, t.a)))
+        let nk = rt_call(inout e, p, "ei_alloc_n", tys2(types.U64, types.U64), _h65, types.STR)
+        let _h66 = args2(cap, bytes.from_u64(size(inout e, p, t.b)))
+        let nv = rt_call(inout e, p, "ei_alloc_n", tys2(types.U64, types.U64), _h66, types.STR)
+        let ns = buf_alloc(inout e, p, cap, 1)
+        let ok = load_ptr_field(inout e, p, ty, old, 0)
+        let ov = load_ptr_field(inout e, p, ty, old, 1)
+        store_field_ptr(inout e, p, ty, x, 0, nk)
+        store_field_ptr(inout e, p, ty, x, 1, nv)
+        store_field_ptr(inout e, p, ty, x, 2, ns)
+        let lp = loop_n(inout e, p, cap)
+        let _h67 = catb(lit("load i8, ptr "), elem(inout e, p, types.U8, b0, lp.iv))
+        let sv = val(inout e, _h67)
+        let _h68 = catb(lit("store i8 "), catb(sv, catb(lit(", ptr "), elem(inout e, p, types.U8, ns, lp.iv))))
+        stmt_text(inout e, _h68)
+        let _h69 = val(inout e, catb(lit("icmp eq i8 "), cat(sv, ", 1")))
+        let j2 = if_then(inout e, _h69)
+        let _h70 = elem(inout e, p, t.a, ok, lp.iv)
+        let _h255 = elem(inout e, p, t.a, nk, lp.iv)
+        clone_to(inout e, p, t.a, _h70, _h255)
+        let _h71 = elem(inout e, p, t.b, ov, lp.iv)
+        let _h256 = elem(inout e, p, t.b, nv, lp.iv)
+        clone_to(inout e, p, t.b, _h71, _h256)
+        if_end(inout e, j2)
+        loop_next(inout e, lp)
+    } else {
+        let _h72 = size(inout e, p, t.a)
+        let q = buf_alloc(inout e, p, lit("1"), _h72)
+        store_field_ptr(inout e, p, ty, x, 0, q)
+        clone_to(inout e, p, t.a, b0, q)
+    }
+    let none: List[u8] = List.new()
+    let _h73 = gname(e, "drop_", ty)
+    call(inout e, p, _h73, tys1(PTR + ty), args1(old), types.UNIT, none)
+    gfn_end(inout e, p, gf)
+}
+
+fn g_own(inout e: E, p: lower.P, ty: u32) {
+    let _h74 = gname(e, "own_", ty)
+    let gf = gfn_begin(inout e, p, _h74, tys1(PTR + ty), types.UNIT)
+    let x = gf.args[0].copy()
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_RECORD && lower.shared_rec(p, ty) {
+        uniq_call(inout e, p, ty, x)
+        let d = types.def_of(p.t, ty)
+        let q = load_ptr_field(inout e, p, ty, x, 0)
+        for i in 0..d.len {
+            let _h75 = gep(inout e, p, cat(num("%t", ty as u64), ".d"), q, i)
+            own_at(inout e, p, types.field(p.t, d.start, i).ty, _h75)
+        }
+    } else if k == types.T_RECORD || k == types.T_TUPLE {
+        let ms = abi.parts(p, ty, NONE)
+        for i in 0..ms.len() {
+            let _h76 = field_addr(inout e, p, ty, x, i as u32)
+            own_at(inout e, p, ms[i], _h76)
+        }
+    } else if k == types.T_ENUM {
+        let d = types.def_of(p.t, ty)
+        let tg = tag_of(inout e, p, ty, x)
+        for i in 0..d.len {
+            if !variant_owns(inout e, p, ty, i) {
+                continue
+            }
+            let _h77 = tag_is(inout e, tg, i)
+            let j = if_then(inout e, _h77)
+            let v = types.variant(p.t, d, i)
+            for f in 0..v.flen {
+                let _h78 = payload_addr(inout e, p, ty, x, i, f)
+                own_at(inout e, p, types.field(p.t, v.fstart, f).ty, _h78)
+            }
+            if_end(inout e, j)
+        }
+    } else if k == types.T_ARRAY {
+        if t.b > 0 && owns(inout e, p, t.a) {
+            let lp = loop_n(inout e, p, bytes.from_u64(t.b as u64))
+            let _h79 = arr_elem(inout e, p, ty, x, lp.iv)
+            own_at(inout e, p, t.a, _h79)
+            loop_next(inout e, lp)
+        }
+    } else if k == types.T_LIST {
+        uniq_call(inout e, p, ty, x)
+        if owns(inout e, p, t.a) {
+            let d = load_ptr_field(inout e, p, ty, x, 0)
+            let n = load_i64_field(inout e, p, ty, x, 1)
+            let lp = loop_n(inout e, p, n)
+            let _h80 = elem(inout e, p, t.a, d, lp.iv)
+            own_at(inout e, p, t.a, _h80)
+            loop_next(inout e, lp)
+        }
+    } else if k == types.T_MAP {
+        uniq_call(inout e, p, ty, x)
+        if owns(inout e, p, t.a) || owns(inout e, p, t.b) {
+            let kp = load_ptr_field(inout e, p, ty, x, 0)
+            let vp = load_ptr_field(inout e, p, ty, x, 1)
+            let s = load_ptr_field(inout e, p, ty, x, 2)
+            let cap = load_i64_field(inout e, p, ty, x, 4)
+            let lp = loop_n(inout e, p, cap)
+            let _h81 = catb(lit("load i8, ptr "), elem(inout e, p, types.U8, s, lp.iv))
+            let sv = val(inout e, _h81)
+            let _h82 = val(inout e, catb(lit("icmp eq i8 "), cat(sv, ", 1")))
+            let j2 = if_then(inout e, _h82)
+            let _h83 = elem(inout e, p, t.a, kp, lp.iv)
+            own_at(inout e, p, t.a, _h83)
+            let _h84 = elem(inout e, p, t.b, vp, lp.iv)
+            own_at(inout e, p, t.b, _h84)
+            if_end(inout e, j2)
+            loop_next(inout e, lp)
+        }
+    } else if k == types.T_BOX {
+        uniq_call(inout e, p, ty, x)
+        if owns(inout e, p, t.a) {
+            let q = load_ptr_field(inout e, p, ty, x, 0)
+            let _h85 = not_null(inout e, q)
+            let j = if_then(inout e, _h85)
+            own_at(inout e, p, t.a, q)
+            if_end(inout e, j)
+        }
+    } else if k == types.T_FN {
+        fnval_hook(inout e, p, ty, x, 4)
+    } else if k == types.T_REF {
+        // the checker keeps every Ref it can see on its thread (E0411); this catches one
+        // inside a closure's environment, which no type shows
+        let q = load_ptr_field(inout e, p, ty, x, 0)
+        let c = not_null(inout e, q)
+        trap_if(inout e, c, "a Ref can't be sent to another thread", 0)
+    }
+    gfn_end(inout e, p, gf)
+}
+
+// ---- ==, cmp, hash, Show, variant names
+
+fn g_eq(inout e: E, p: lower.P, ty: u32) {
+    let _h86 = gname(e, "eq_", ty)
+    let gf = gfn_begin(inout e, p, _h86, tys2(ty, ty), types.BOOL)
+    let a = gf.args[0].copy()
+    let b = gf.args[1].copy()
+    let f = lower.custom_fn(p, lower.TR_EQ, ty)
+    if f != NONE {
+        let none: List[u8] = List.new()
+        let r = call_user(inout e, p, f, args2(a, b), none)
+        gret_v(inout e, p, r)
+        gfn_end(inout e, p, gf)
+        return
+    }
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_MAP {
+        // the same keys, each with an equal value (slot order is not part of the value)
+        gneed(inout e, lower.GK_FIND, ty)
+        let la = load_i64_field(inout e, p, ty, a, 3)
+        let lb = load_i64_field(inout e, p, ty, b, 3)
+        let _h87 = val(inout e, catb(lit("icmp eq i64 "), catb(la, catb(lit(", "), lb))))
+        ret_false_unless(inout e, p, _h87)
+        let cap = load_i64_field(inout e, p, ty, a, 4)
+        let kp = load_ptr_field(inout e, p, ty, a, 0)
+        let vp = load_ptr_field(inout e, p, ty, a, 1)
+        let s = load_ptr_field(inout e, p, ty, a, 2)
+        let vb = load_ptr_field(inout e, p, ty, b, 1)
+        let lp = loop_n(inout e, p, cap)
+        let _h88 = catb(lit("load i8, ptr "), elem(inout e, p, types.U8, s, lp.iv))
+        let sv = val(inout e, _h88)
+        let _h89 = val(inout e, catb(lit("icmp eq i8 "), cat(sv, ", 1")))
+        let j = if_then(inout e, _h89)
+        let ka = elem(inout e, p, t.a, kp, lp.iv)
+        let _h90 = gname(e, "find_", ty)
+        let _h257 = args2(b, argof(inout e, p, t.a, ka))
+        let fx = rt_call_b(inout e, p, _h90, tys2(PTR + ty, t.a), _h257, types.I64)
+        let _h91 = val(inout e, catb(lit("icmp sge i64 "), cat(fx, ", 0")))
+        ret_false_unless(inout e, p, _h91)
+        let va = elem(inout e, p, t.b, vp, lp.iv)
+        let vbx = elem(inout e, p, t.b, vb, fx)
+        let _h258 = argof(inout e, p, t.b, va)
+        let _h286 = argof(inout e, p, t.b, vbx)
+        let _h92 = eq_val(inout e, p, t.b, _h258, _h286)
+        ret_false_unless(inout e, p, _h92)
+        if_end(inout e, j)
+        loop_next(inout e, lp)
+    } else if k == types.T_ARRAY || k == types.T_LIST {
+        let mut n = bytes.from_u64(t.b as u64)
+        let mut da = a.copy()
+        let mut db = b.copy()
+        if k == types.T_LIST {
+            let la = load_i64_field(inout e, p, ty, a, 1)
+            let lb = load_i64_field(inout e, p, ty, b, 1)
+            let _h93 = val(inout e, catb(lit("icmp eq i64 "), catb(la, catb(lit(", "), lb))))
+            ret_false_unless(inout e, p, _h93)
+            n = la
+            da = load_ptr_field(inout e, p, ty, a, 0)
+            db = load_ptr_field(inout e, p, ty, b, 0)
+        }
+        if k == types.T_LIST || t.b > 0 {
+            let lp = loop_n(inout e, p, n)
+            let mut xa: List[u8] = List.new()
+            let mut xb: List[u8] = List.new()
+            if k == types.T_LIST {
+                xa = elem(inout e, p, t.a, da, lp.iv)
+                xb = elem(inout e, p, t.a, db, lp.iv)
+            } else {
+                xa = arr_elem(inout e, p, ty, a, lp.iv)
+                xb = arr_elem(inout e, p, ty, b, lp.iv)
+            }
+            let _h259 = argof(inout e, p, t.a, xa)
+            let _h287 = argof(inout e, p, t.a, xb)
+            let _h94 = eq_val(inout e, p, t.a, _h259, _h287)
+            ret_false_unless(inout e, p, _h94)
+            loop_next(inout e, lp)
+        }
+    } else if k == types.T_BOX {
+        let qa = load_ptr_field(inout e, p, ty, a, 0)
+        let qb = load_ptr_field(inout e, p, ty, b, 0)
+        let _h260 = argof(inout e, p, t.a, qa)
+        let _h288 = argof(inout e, p, t.a, qb)
+        let _h95 = eq_val(inout e, p, t.a, _h260, _h288)
+        ret_false_unless(inout e, p, _h95)
+    } else if k == types.T_RECORD || k == types.T_TUPLE {
+        let ms = abi.parts(p, ty, NONE)
+        for i in 0..ms.len() {
+            let xa = part_addr(inout e, p, ty, a, i as u32)
+            let xb = part_addr(inout e, p, ty, b, i as u32)
+            let _h261 = argof(inout e, p, ms[i], xa)
+            let _h289 = argof(inout e, p, ms[i], xb)
+            let _h96 = eq_val(inout e, p, ms[i], _h261, _h289)
+            ret_false_unless(inout e, p, _h96)
+        }
+    } else if k == types.T_ENUM {
+        let d = types.def_of(p.t, ty)
+        let ta = tag_of(inout e, p, ty, a)
+        let tb = tag_of(inout e, p, ty, b)
+        let _h97 = val(inout e, catb(lit("icmp eq i32 "), catb(ta, catb(lit(", "), tb))))
+        ret_false_unless(inout e, p, _h97)
+        for i in 0..d.len {
+            let v = types.variant(p.t, d, i)
+            if v.flen == 0 {
+                continue
+            }
+            let _h98 = tag_is(inout e, ta, i)
+            let j = if_then(inout e, _h98)
+            for fi in 0..v.flen {
+                let ft = types.field(p.t, v.fstart, fi).ty
+                let xa = payload_addr(inout e, p, ty, a, i, fi)
+                let xb = payload_addr(inout e, p, ty, b, i, fi)
+                let _h262 = argof(inout e, p, ft, xa)
+                let _h290 = argof(inout e, p, ft, xb)
+                let _h99 = eq_val(inout e, p, ft, _h262, _h290)
+                ret_false_unless(inout e, p, _h99)
+            }
+            gret_v(inout e, p, lit("true"))
+            if_end(inout e, j)
+        }
+    }
+    gret_v(inout e, p, lit("true"))
+    gfn_end(inout e, p, gf)
+}
+
+/// One part of a lexicographic order: return its order (-1 or 1) when it isn't 0.
+fn cmp_part(inout e: E, p: lower.P, ty: u32, xa: List[u8], xb: List[u8]) {
+    let _h100 = argof(inout e, p, ty, xa)
+    let _h263 = argof(inout e, p, ty, xb)
+    let r = cmp_val(inout e, p, ty, _h100, _h263)
+    let _h101 = val(inout e, catb(lit("icmp ne i32 "), cat(r, ", 0")))
+    let j = if_then(inout e, _h101)
+    let lt = val(inout e, catb(lit("icmp slt i32 "), cat(r, ", 0")))
+    let _h102 = val(inout e, catb(lit("select i1 "), cat(lt, ", i32 -1, i32 1")))
+    gret_v(inout e, p, _h102)
+    if_end(inout e, j)
+}
+
+fn g_cmp(inout e: E, p: lower.P, ty: u32) {
+    let _h103 = gname(e, "cmp_", ty)
+    let gf = gfn_begin(inout e, p, _h103, tys2(ty, ty), types.I32)
+    let a = gf.args[0].copy()
+    let b = gf.args[1].copy()
+    let f = lower.custom_fn(p, lower.TR_ORD, ty)
+    if f != NONE {
+        // Ordering: Less, Equal, Greater -> -1, 0, 1
+        let ot = p.ir.fns[f as usize].ret
+        let o = temp(inout e, p, ot)
+        call_user(inout e, p, f, args2(a, b), o)
+        let tg = tag_of(inout e, p, ot, o)
+        let _h104 = val(inout e, catb(lit("sub i32 "), cat(tg, ", 1")))
+        gret_v(inout e, p, _h104)
+        gfn_end(inout e, p, gf)
+        return
+    }
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_RECORD || k == types.T_TUPLE {
+        let ms = abi.parts(p, ty, NONE)
+        for i in 0..ms.len() {
+            let _h105 = part_addr(inout e, p, ty, a, i as u32)
+            let _h264 = part_addr(inout e, p, ty, b, i as u32)
+            cmp_part(inout e, p, ms[i], _h105, _h264)
+        }
+    } else if k == types.T_ENUM {
+        // by variant order, then by the payload
+        let d = types.def_of(p.t, ty)
+        let ta = tag_of(inout e, p, ty, a)
+        let tb = tag_of(inout e, p, ty, b)
+        let ne = val(inout e, catb(lit("icmp ne i32 "), catb(ta, catb(lit(", "), tb))))
+        let j0 = if_then(inout e, ne)
+        let lt = val(inout e, catb(lit("icmp ult i32 "), catb(ta, catb(lit(", "), tb))))
+        let _h106 = val(inout e, catb(lit("select i1 "), cat(lt, ", i32 -1, i32 1")))
+        gret_v(inout e, p, _h106)
+        if_end(inout e, j0)
+        for i in 0..d.len {
+            let v = types.variant(p.t, d, i)
+            if v.flen == 0 {
+                continue
+            }
+            let _h107 = tag_is(inout e, ta, i)
+            let j = if_then(inout e, _h107)
+            for fi in 0..v.flen {
+                let _h108 = payload_addr(inout e, p, ty, a, i, fi)
+                let _h265 = payload_addr(inout e, p, ty, b, i, fi)
+                cmp_part(inout e, p, types.field(p.t, v.fstart, fi).ty, _h108, _h265)
+            }
+            if_end(inout e, j)
+        }
+    } else if k == types.T_ARRAY {
+        if t.b > 0 {
+            let lp = loop_n(inout e, p, bytes.from_u64(t.b as u64))
+            let _h109 = arr_elem(inout e, p, ty, a, lp.iv)
+            let _h266 = arr_elem(inout e, p, ty, b, lp.iv)
+            cmp_part(inout e, p, t.a, _h109, _h266)
+            loop_next(inout e, lp)
+        }
+    } else if k == types.T_LIST {
+        let la = load_i64_field(inout e, p, ty, a, 1)
+        let lb = load_i64_field(inout e, p, ty, b, 1)
+        let lt = val(inout e, catb(lit("icmp ult i64 "), catb(la, catb(lit(", "), lb))))
+        let mn = val(inout e, catb(lit("select i1 "), catb(lt, catb(lit(", i64 "), catb(la, catb(lit(", i64 "), lb))))))
+        let da = load_ptr_field(inout e, p, ty, a, 0)
+        let db = load_ptr_field(inout e, p, ty, b, 0)
+        let lp = loop_n(inout e, p, mn)
+        let _h110 = elem(inout e, p, t.a, da, lp.iv)
+        let _h267 = elem(inout e, p, t.a, db, lp.iv)
+        cmp_part(inout e, p, t.a, _h110, _h267)
+        loop_next(inout e, lp)
+        let gt = val(inout e, catb(lit("icmp ugt i64 "), catb(la, catb(lit(", "), lb))))
+        let g32 = val(inout e, catb(lit("zext i1 "), cat(gt, " to i32")))
+        let l32 = val(inout e, catb(lit("zext i1 "), cat(lt, " to i32")))
+        let _h111 = val(inout e, catb(lit("sub i32 "), catb(g32, catb(lit(", "), l32))))
+        gret_v(inout e, p, _h111)
+    } else if k == types.T_BOX {
+        let _h112 = load_ptr_field(inout e, p, ty, a, 0)
+        let _h268 = load_ptr_field(inout e, p, ty, b, 0)
+        cmp_part(inout e, p, t.a, _h112, _h268)
+    }
+    if !e.term {
+        gret_v(inout e, p, lit("0"))
+    }
+    gfn_end(inout e, p, gf)
+}
+
+/// h = mix64(h ^ <hash of the part at xa>), h in the alloca at ha.
+fn hash_part(inout e: E, p: lower.P, ty: u32, ha: List[u8], xa: List[u8]) {
+    let _h113 = argof(inout e, p, ty, xa)
+    let hv = hash_val(inout e, p, ty, _h113)
+    let h = load_i64(inout e, ha)
+    let x = val(inout e, catb(lit("xor i64 "), catb(h, catb(lit(", "), hv))))
+    let _h114 = mix64(inout e, x)
+    store_i64(inout e, _h114, ha)
+}
+
+fn g_hash(inout e: E, p: lower.P, ty: u32) {
+    let _h115 = gname(e, "hash_", ty)
+    let gf = gfn_begin(inout e, p, _h115, tys1(ty), types.U64)
+    let x = gf.args[0].copy()
+    let f = lower.custom_fn(p, lower.TR_HASH, ty)
+    if f != NONE {
+        let none: List[u8] = List.new()
+        let r = call_user(inout e, p, f, args1(x), none)
+        gret_v(inout e, p, r)
+        gfn_end(inout e, p, gf)
+        return
+    }
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    let ha = temp(inout e, p, types.U64)
+    // 0x9e3779b97f4a7c15
+    store_i64(inout e, lit("-7046029254386353131"), ha)
+    if k == types.T_RECORD || k == types.T_TUPLE {
+        let ms = abi.parts(p, ty, NONE)
+        for i in 0..ms.len() {
+            let _h116 = part_addr(inout e, p, ty, x, i as u32)
+            hash_part(inout e, p, ms[i], ha, _h116)
+        }
+    } else if k == types.T_ENUM {
+        let d = types.def_of(p.t, ty)
+        let tg = tag_of(inout e, p, ty, x)
+        let h = load_i64(inout e, ha)
+        let t64 = val(inout e, catb(lit("zext i32 "), cat(tg, " to i64")))
+        let _h269 = val(inout e, catb(lit("xor i64 "), catb(h, catb(lit(", "), t64))))
+        let _h117 = mix64(inout e, _h269)
+        store_i64(inout e, _h117, ha)
+        for i in 0..d.len {
+            let v = types.variant(p.t, d, i)
+            if v.flen == 0 {
+                continue
+            }
+            let _h118 = tag_is(inout e, tg, i)
+            let j = if_then(inout e, _h118)
+            for fi in 0..v.flen {
+                let _h119 = payload_addr(inout e, p, ty, x, i, fi)
+                hash_part(inout e, p, types.field(p.t, v.fstart, fi).ty, ha, _h119)
+            }
+            if_end(inout e, j)
+        }
+    } else if k == types.T_ARRAY {
+        let lp = loop_n(inout e, p, bytes.from_u64(t.b as u64))
+        let _h120 = arr_elem(inout e, p, ty, x, lp.iv)
+        hash_part(inout e, p, t.a, ha, _h120)
+        loop_next(inout e, lp)
+    } else if k == types.T_LIST {
+        let n = load_i64_field(inout e, p, ty, x, 1)
+        let h = load_i64(inout e, ha)
+        let _h270 = val(inout e, catb(lit("xor i64 "), catb(h, catb(lit(", "), n))))
+        let _h121 = mix64(inout e, _h270)
+        store_i64(inout e, _h121, ha)
+        let d = load_ptr_field(inout e, p, ty, x, 0)
+        let lp = loop_n(inout e, p, n)
+        let _h122 = elem(inout e, p, t.a, d, lp.iv)
+        hash_part(inout e, p, t.a, ha, _h122)
+        loop_next(inout e, lp)
+    } else if k == types.T_BOX {
+        let _h123 = load_ptr_field(inout e, p, ty, x, 0)
+        hash_part(inout e, p, t.a, ha, _h123)
+    }
+    let _h124 = load_i64(inout e, ha)
+    gret_v(inout e, p, _h124)
+    gfn_end(inout e, p, gf)
+}
+
+/// Append the text of the value of type ty at address xa to the String at o, as a part of
+/// another value: text quoted (lower.ei's show_into with `quoted`).
+fn show_part(inout e: E, p: lower.P, ty: u32, o: List[u8], xa: List[u8]) {
+    let k = kind(p, ty)
+    if k == types.T_STR || k == types.T_STRING {
+        let s = if k == types.T_STRING { load_ptr_field(inout e, p, ty, xa, 0) } else { load(inout e, p, ty, xa) }
+        let none: List[u8] = List.new()
+        call(inout e, p, lit("ei_str_push_quoted"), tys2(PTR + types.STRING, types.STR), args2(o, s), types.UNIT, none)
+        return
+    }
+    let _h125 = argof(inout e, p, ty, xa)
+    show_into(inout e, p, ty, o, _h125)
+}
+
+fn g_show(inout e: E, p: lower.P, ty: u32) {
+    let sp = PTR + types.STRING
+    let _h126 = gname(e, "show_", ty)
+    let gf = gfn_begin(inout e, p, _h126, tys2(sp, ty), types.UNIT)
+    let o = gf.args[0].copy()
+    let x = gf.args[1].copy()
+    let f = lower.custom_fn(p, lower.TR_SHOW, ty)
+    if f != NONE {
+        let none: List[u8] = List.new()
+        call_user(inout e, p, f, args2(x, o), none)
+        gfn_end(inout e, p, gf)
+        return
+    }
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_RECORD {
+        // `Name { a: 1, b: "x" }`
+        let d = types.def_of(p.t, ty)
+        let mut head = shown_name(p, d.key)
+        if d.len == 0 { bytes.append(inout head, lit(" {}")) } else { bytes.append(inout head, lit(" { ")) }
+        show_text(inout e, p, o, head)
+        for i in 0..d.len {
+            let fl = types.field(p.t, d.start, i)
+            let mut lab: List[u8] = List.new()
+            if i > 0 {
+                bytes.append(inout lab, lit(", "))
+            }
+            bytes.append(inout lab, intern.name(p.names, fl.name))
+            bytes.append(inout lab, lit(": "))
+            show_text(inout e, p, o, lab)
+            let _h127 = part_addr(inout e, p, ty, x, i)
+            show_part(inout e, p, fl.ty, o, _h127)
+        }
+        if d.len > 0 {
+            show_text(inout e, p, o, lit(" }"))
+        }
+    } else if k == types.T_TUPLE {
+        // `(1, "x")`, `(1,)`
+        let es = types.elems(p.t, ty)
+        show_text(inout e, p, o, lit("("))
+        for i in 0..es.len() {
+            if i > 0 {
+                show_text(inout e, p, o, lit(", "))
+            }
+            let _h128 = field_addr(inout e, p, ty, x, i as u32)
+            show_part(inout e, p, es[i], o, _h128)
+        }
+        if es.len() == 1 {
+            show_text(inout e, p, o, lit(","))
+        }
+        show_text(inout e, p, o, lit(")"))
+    } else if k == types.T_ENUM {
+        // `Some(1)`, `None`
+        let d = types.def_of(p.t, ty)
+        let tg = tag_of(inout e, p, ty, x)
+        for i in 0..d.len {
+            let v = types.variant(p.t, d, i)
+            let _h129 = tag_is(inout e, tg, i)
+            let j = if_then(inout e, _h129)
+            let mut nmv = shown_name(p, v.key)
+            if v.flen > 0 {
+                nmv.push(40)
+            }
+            show_text(inout e, p, o, nmv)
+            for fi in 0..v.flen {
+                if fi > 0 {
+                    show_text(inout e, p, o, lit(", "))
+                }
+                let _h130 = payload_addr(inout e, p, ty, x, i, fi)
+                show_part(inout e, p, types.field(p.t, v.fstart, fi).ty, o, _h130)
+            }
+            if v.flen > 0 {
+                show_text(inout e, p, o, lit(")"))
+            }
+            if_end(inout e, j)
+        }
+    } else if k == types.T_ARRAY || k == types.T_LIST {
+        // `[1, 2]`
+        show_text(inout e, p, o, lit("["))
+        let mut n = bytes.from_u64(t.b as u64)
+        let mut d: List[u8] = List.new()
+        if k == types.T_LIST {
+            n = load_i64_field(inout e, p, ty, x, 1)
+            d = load_ptr_field(inout e, p, ty, x, 0)
+        }
+        let lp = loop_n(inout e, p, n)
+        let _h131 = val(inout e, catb(lit("icmp ne i64 "), cat(lp.iv, ", 0")))
+        let j = if_then(inout e, _h131)
+        show_text(inout e, p, o, lit(", "))
+        if_end(inout e, j)
+        let xa = if k == types.T_LIST { elem(inout e, p, t.a, d, lp.iv) } else { arr_elem(inout e, p, ty, x, lp.iv) }
+        show_part(inout e, p, t.a, o, xa)
+        loop_next(inout e, lp)
+        show_text(inout e, p, o, lit("]"))
+    } else if k == types.T_MAP {
+        // `{1: "a", 2: "b"}`, in slot order
+        show_text(inout e, p, o, lit("{"))
+        let first = temp(inout e, p, types.BOOL)
+        stmt_text(inout e, catb(lit("store i8 1, ptr "), first))
+        let kp = load_ptr_field(inout e, p, ty, x, 0)
+        let vp = load_ptr_field(inout e, p, ty, x, 1)
+        let s = load_ptr_field(inout e, p, ty, x, 2)
+        let cap = load_i64_field(inout e, p, ty, x, 4)
+        let lp = loop_n(inout e, p, cap)
+        let _h132 = catb(lit("load i8, ptr "), elem(inout e, p, types.U8, s, lp.iv))
+        let sv = val(inout e, _h132)
+        let _h133 = val(inout e, catb(lit("icmp eq i8 "), cat(sv, ", 1")))
+        let j = if_then(inout e, _h133)
+        let fv = load(inout e, p, types.BOOL, first)
+        let _h134 = val(inout e, catb(lit("xor i1 "), cat(fv, ", true")))
+        let j2 = if_then(inout e, _h134)
+        show_text(inout e, p, o, lit(", "))
+        if_end(inout e, j2)
+        stmt_text(inout e, catb(lit("store i8 0, ptr "), first))
+        let _h135 = elem(inout e, p, t.a, kp, lp.iv)
+        show_part(inout e, p, t.a, o, _h135)
+        show_text(inout e, p, o, lit(": "))
+        let _h136 = elem(inout e, p, t.b, vp, lp.iv)
+        show_part(inout e, p, t.b, o, _h136)
+        if_end(inout e, j)
+        loop_next(inout e, lp)
+        show_text(inout e, p, o, lit("}"))
+    } else if k == types.T_BOX {
+        show_text(inout e, p, o, lit("Box("))
+        let _h137 = load_ptr_field(inout e, p, ty, x, 0)
+        show_part(inout e, p, t.a, o, _h137)
+        show_text(inout e, p, o, lit(")"))
+    }
+    gfn_end(inout e, p, gf)
+}
+
+/// A type or variant name as printing (derived Show) spells it (lower.ei's shown_name).
+fn shown_name(p: lower.P, key: u64) -> List[u8] { intern.name(p.names, resolve.key_sym(key)) }
+
+/// `name_T(u32 tag) -> ptr`: the variant's name, from a constant table.
+fn g_name(inout e: E, p: lower.P, ty: u32) {
+    let d = types.def_of(p.t, ty)
+    let mut tab = catb(lit("@names."), e.tn[ty as usize])
+    let mut def = tab.copy()
+    bytes.append(inout def, lit(" = private unnamed_addr constant ["))
+    wd(inout def, d.len as u64)
+    bytes.append(inout def, lit(" x ptr] ["))
+    for i in 0..d.len {
+        if i > 0 {
+            bytes.append(inout def, lit(", "))
+        }
+        bytes.append(inout def, lit("ptr "))
+        bytes.append(inout def, msgb(inout e, shown_name(p, types.variant(p.t, d, i).key)))
+    }
+    bytes.append(inout def, lit("]\n"))
+    bytes.append(inout e.gl, def)
+    let _h138 = gname(e, "name_", ty)
+    let gf = gfn_begin(inout e, p, _h138, tys1(types.U32), types.STR)
+    let i64t = val(inout e, catb(lit("zext i32 "), cat(gf.args[0], " to i64")))
+    let mut g = lit("getelementptr inbounds [")
+    wd(inout g, d.len as u64)
+    bytes.append(inout g, lit(" x ptr], ptr "))
+    bytes.append(inout g, tab)
+    bytes.append(inout g, lit(", i64 0, i64 "))
+    bytes.append(inout g, i64t)
+    let a = val(inout e, g)
+    let _h139 = load_p(inout e, a)
+    gret_v(inout e, p, _h139)
+    gfn_end(inout e, p, gf)
+}
+
+// ---- List, text, Box, Map
+
+fn g_push(inout e: E, p: lower.P, ty: u32) {
+    let el = types.get(p.t, ty).a
+    let _h140 = gname(e, "push_", ty)
+    let gf = gfn_begin(inout e, p, _h140, tys2(PTR + ty, el), types.UNIT)
+    let l = gf.args[0].copy()
+    let xa = addrof(inout e, p, el, gf.args[1])
+    uniq_call(inout e, p, ty, l)
+    let n = load_i64_field(inout e, p, ty, l, 1)
+    let cap = load_i64_field(inout e, p, ty, l, 2)
+    let _h141 = val(inout e, catb(lit("icmp eq i64 "), catb(n, catb(lit(", "), cap))))
+    let j = if_then(inout e, _h141)
+    let nc = rt_call(inout e, p, "ei_grow_cap", tys4(types.U64, types.U64, types.U64, types.U64), args4(cap, n, lit("1"), lit("4")), types.U64)
+    if e.prof > 0 {
+        let es0 = size(inout e, p, el)
+        let gb = mul_const(inout e, nc, es0)
+        prof_ev(inout e, p, PEV_GROW, gb)
+    }
+    let d0 = load_ptr_field(inout e, p, ty, l, 0)
+    let _h142 = args3(d0, nc, bytes.from_u64(size(inout e, p, el)))
+    let nd = rt_call(inout e, p, "ei_buf_grow", tys3(types.STR, types.U64, types.U64), _h142, types.STR)
+    store_field_ptr(inout e, p, ty, l, 0, nd)
+    store_field_i64(inout e, p, ty, l, 2, nc)
+    if_end(inout e, j)
+    let d = load_ptr_field(inout e, p, ty, l, 0)
+    if !is_void(el) {
+        let _h143 = elem(inout e, p, el, d, n)
+        copy_mem(inout e, p, el, _h143, xa)
+    }
+    let _h144 = val(inout e, catb(lit("add nuw i64 "), cat(n, ", 1")))
+    store_field_i64(inout e, p, ty, l, 1, _h144)
+    gfn_end(inout e, p, gf)
+}
+
+fn g_has(inout e: E, p: lower.P, ty: u32) {
+    let el = types.get(p.t, ty).a
+    let _h145 = gname(e, "has_", ty)
+    let gf = gfn_begin(inout e, p, _h145, tys2(PTR + ty, el), types.BOOL)
+    let l = gf.args[0].copy()
+    let x = gf.args[1].copy()
+    let n = load_i64_field(inout e, p, ty, l, 1)
+    let d = load_ptr_field(inout e, p, ty, l, 0)
+    let lp = loop_n(inout e, p, n)
+    let _h271 = elem(inout e, p, el, d, lp.iv)
+    let _h146 = argof(inout e, p, el, _h271)
+    let c = eq_val(inout e, p, el, _h146, x)
+    let j = if_then(inout e, c)
+    gret_v(inout e, p, lit("true"))
+    if_end(inout e, j)
+    loop_next(inout e, lp)
+    gret_v(inout e, p, lit("false"))
+    gfn_end(inout e, p, gf)
+}
+
+/// `bytes_L(s, n)`: a List[u8] holding bytes s[0..n); `utf8_R(d, n)`: Ok(the String of
+/// bytes d[0..n)) when they are valid UTF-8 without NUL, else Err(offset of the first bad
+/// byte), for R = Result[String, usize].
+fn g_text(inout e: E, p: lower.P, kd: u32, ty: u32) {
+    if kd == lower.GK_BYTES {
+        let _h147 = gname(e, "bytes_", ty)
+        let gf = gfn_begin(inout e, p, _h147, tys2(types.STR, types.U64), ty)
+        let s = gf.args[0].copy()
+        let n = gf.args[1].copy()
+        let r = temp(inout e, p, ty)
+        zero(inout e, p, ty, r)
+        let _h148 = val(inout e, catb(lit("icmp ne i64 "), cat(n, ", 0")))
+        let j = if_then(inout e, _h148)
+        let d = buf_alloc(inout e, p, n, 1)
+        dyn_memcpy(inout e, d, s, n)
+        store_field_ptr(inout e, p, ty, r, 0, d)
+        store_field_i64(inout e, p, ty, r, 1, n)
+        store_field_i64(inout e, p, ty, r, 2, n)
+        if_end(inout e, j)
+        gret_a(inout e, p, r)
+        gfn_end(inout e, p, gf)
+        return
+    }
+    let _h149 = gname(e, "utf8_", ty)
+    let gf = gfn_begin(inout e, p, _h149, tys2(types.STR, types.U64), ty)
+    let d = gf.args[0].copy()
+    let n = gf.args[1].copy()
+    let r = temp(inout e, p, ty)
+    zero(inout e, p, ty, r)
+    let bad = rt_call(inout e, p, "ei_utf8_check", tys2(types.STR, types.U64), args2(d, n), types.U64)
+    let ok = val(inout e, catb(lit("icmp eq i64 "), catb(bad, catb(lit(", "), n))))
+    let lo = new_label(inout e)
+    let le = new_label(inout e)
+    let lj = new_label(inout e)
+    condbr(inout e, ok, lo, le)
+    label(inout e, lo)
+    store_tag(inout e, p, ty, r, 0)
+    let _h150 = payload_addr(inout e, p, ty, r, 0, 0)
+    call(inout e, p, lit("ei_str_from_n"), tys2(types.STR, types.U64), args2(d, n), types.STRING, _h150)
+    br(inout e, lj)
+    label(inout e, le)
+    store_tag(inout e, p, ty, r, 1)
+    let _h151 = payload_addr(inout e, p, ty, r, 1, 0)
+    store_i64(inout e, bad, _h151)
+    label(inout e, lj)
+    gret_a(inout e, p, r)
+    gfn_end(inout e, p, gf)
+}
+
+/// `new_B(v)` for Box type ty (moves v in).
+fn g_box(inout e: E, p: lower.P, ty: u32) {
+    let el = types.get(p.t, ty).a
+    let _h152 = gname(e, "new_", ty)
+    let gf = gfn_begin(inout e, p, _h152, tys1(el), ty)
+    let va = addrof(inout e, p, el, gf.args[0])
+    let r = temp(inout e, p, ty)
+    let _h153 = size(inout e, p, el)
+    let q = buf_alloc(inout e, p, lit("1"), _h153)
+    if !is_void(el) {
+        copy_mem(inout e, p, el, q, va)
+    }
+    store_field_ptr(inout e, p, ty, r, 0, q)
+    gret_a(inout e, p, r)
+    gfn_end(inout e, p, gf)
+}
+
+/// hash(key) & (cap - 1)
+fn slot_of(inout e: E, p: lower.P, kt: u32, kv: List[u8], cap: List[u8]) -> List[u8] {
+    let h = hash_val(inout e, p, kt, kv)
+    let m = val(inout e, catb(lit("sub i64 "), cat(cap, ", 1")))
+    val(inout e, catb(lit("and i64 "), catb(h, catb(lit(", "), m))))
+}
+
+fn next_slot(inout e: E, i: List[u8], cap: List[u8]) -> List[u8] {
+    let m = val(inout e, catb(lit("sub i64 "), cat(cap, ", 1")))
+    let n = val(inout e, catb(lit("add i64 "), cat(i, ", 1")))
+    val(inout e, catb(lit("and i64 "), catb(n, catb(lit(", "), m))))
+}
+
+fn slot_state(inout e: E, p: lower.P, s: List[u8], i: List[u8]) -> List[u8] {
+    let a = elem(inout e, p, types.U8, s, i)
+    val(inout e, catb(lit("load i8, ptr "), a))
+}
+
+/// The Map operations: `find_M` (slot or -1), `get_M` (pointer to the value or null), `ins_M`
+/// (moves key and value in; an existing key keeps its slot, its old value and the new key
+/// are dropped), `rem_M` (drops the entry; true if it was there).
+fn g_map(inout e: E, p: lower.P, kd: u32, ty: u32) {
+    let t = types.get(p.t, ty)
+    let kt = t.a
+    let vt = t.b
+    let none: List[u8] = List.new()
+    if kd == lower.GK_FIND {
+        let _h155 = gname(e, "find_", ty)
+        let gf = gfn_begin(inout e, p, _h155, tys2(PTR + ty, kt), types.I64)
+        let m = gf.args[0].copy()
+        let key = gf.args[1].copy()
+        let cap = load_i64_field(inout e, p, ty, m, 4)
+        let _h156 = val(inout e, catb(lit("icmp eq i64 "), cat(cap, ", 0")))
+        let j0 = if_then(inout e, _h156)
+        gret_v(inout e, p, lit("-1"))
+        if_end(inout e, j0)
+        let s = load_ptr_field(inout e, p, ty, m, 2)
+        let kp = load_ptr_field(inout e, p, ty, m, 0)
+        let ia = temp(inout e, p, types.U64)
+        let _h157 = slot_of(inout e, p, kt, key, cap)
+        store_i64(inout e, _h157, ia)
+        let lp = loop_n(inout e, p, cap)
+        let i = load_i64(inout e, ia)
+        let sv = slot_state(inout e, p, s, i)
+        let _h158 = val(inout e, catb(lit("icmp eq i8 "), cat(sv, ", 0")))
+        let j1 = if_then(inout e, _h158)
+        gret_v(inout e, p, lit("-1"))
+        if_end(inout e, j1)
+        let _h159 = val(inout e, catb(lit("icmp eq i8 "), cat(sv, ", 1")))
+        let j2 = if_then(inout e, _h159)
+        let _h272 = elem(inout e, p, kt, kp, i)
+        let _h160 = argof(inout e, p, kt, _h272)
+        let c = eq_val(inout e, p, kt, _h160, key)
+        let j3 = if_then(inout e, c)
+        gret_v(inout e, p, i)
+        if_end(inout e, j3)
+        if_end(inout e, j2)
+        let _h161 = next_slot(inout e, i, cap)
+        store_i64(inout e, _h161, ia)
+        loop_next(inout e, lp)
+        gret_v(inout e, p, lit("-1"))
+        gfn_end(inout e, p, gf)
+        return
+    }
+    gneed(inout e, lower.GK_FIND, ty)
+    let fname = gname(e, "find_", ty)
+    if kd == lower.GK_GET {
+        let _h162 = gname(e, "get_", ty)
+        let gf = gfn_begin(inout e, p, _h162, tys2(PTR + ty, kt), types.STR)
+        let m = gf.args[0].copy()
+        let f = rt_call_b(inout e, p, fname, tys2(PTR + ty, kt), args2(m, gf.args[1]), types.I64)
+        let _h163 = val(inout e, catb(lit("icmp slt i64 "), cat(f, ", 0")))
+        let j = if_then(inout e, _h163)
+        gret_v(inout e, p, lit("null"))
+        if_end(inout e, j)
+        let vp = load_ptr_field(inout e, p, ty, m, 1)
+        let _h164 = elem(inout e, p, vt, vp, f)
+        gret_v(inout e, p, _h164)
+        gfn_end(inout e, p, gf)
+        return
+    }
+    if kd == lower.GK_REM {
+        let _h165 = gname(e, "rem_", ty)
+        let gf = gfn_begin(inout e, p, _h165, tys2(PTR + ty, kt), types.BOOL)
+        let m = gf.args[0].copy()
+        let f = rt_call_b(inout e, p, fname, tys2(PTR + ty, kt), args2(m, gf.args[1]), types.I64)
+        let _h166 = val(inout e, catb(lit("icmp slt i64 "), cat(f, ", 0")))
+        let j = if_then(inout e, _h166)
+        gret_v(inout e, p, lit("false"))
+        if_end(inout e, j)
+        // a copy keeps the slots, so f stays valid
+        uniq_call(inout e, p, ty, m)
+        let _h273 = load_ptr_field(inout e, p, ty, m, 0)
+        let _h167 = elem(inout e, p, kt, _h273, f)
+        drop_at(inout e, p, kt, _h167)
+        let _h274 = load_ptr_field(inout e, p, ty, m, 1)
+        let _h168 = elem(inout e, p, vt, _h274, f)
+        drop_at(inout e, p, vt, _h168)
+        let _h275 = load_ptr_field(inout e, p, ty, m, 2)
+        let _h169 = catb(lit("store i8 2, ptr "), elem(inout e, p, types.U8, _h275, f))
+        stmt_text(inout e, _h169)
+        let n = load_i64_field(inout e, p, ty, m, 3)
+        let _h170 = val(inout e, catb(lit("sub i64 "), cat(n, ", 1")))
+        store_field_i64(inout e, p, ty, m, 3, _h170)
+        gret_v(inout e, p, lit("true"))
+        gfn_end(inout e, p, gf)
+        return
+    }
+    let _h171 = gname(e, "ins_", ty)
+    let gf = gfn_begin(inout e, p, _h171, tys3(PTR + ty, kt, vt), types.UNIT)
+    let m = gf.args[0].copy()
+    let key = gf.args[1].copy()
+    let ka = addrof(inout e, p, kt, key)
+    let va = addrof(inout e, p, vt, gf.args[2])
+    let f = rt_call_b(inout e, p, fname, tys2(PTR + ty, kt), args2(m, key), types.I64)
+    uniq_call(inout e, p, ty, m)
+    let _h172 = val(inout e, catb(lit("icmp sge i64 "), cat(f, ", 0")))
+    let j0 = if_then(inout e, _h172)
+    let _h173 = load_ptr_field(inout e, p, ty, m, 1)
+    let vf = elem(inout e, p, vt, _h173, f)
+    drop_at(inout e, p, vt, vf)
+    drop_at(inout e, p, kt, ka)
+    if !is_void(vt) {
+        copy_mem(inout e, p, vt, vf, va)
+    }
+    gret_void(inout e)
+    if_end(inout e, j0)
+    // grow at 3/4 full (used counts removed slots too)
+    let used = load_i64_field(inout e, p, ty, m, 5)
+    let cap = load_i64_field(inout e, p, ty, m, 4)
+    let _h174 = catb(lit("mul i64 "), cat(val(inout e, catb(lit("add i64 "), cat(used, ", 1"))), ", 4"))
+    let u4 = val(inout e, _h174)
+    let c3 = val(inout e, catb(lit("mul i64 "), cat(cap, ", 3")))
+    let _h175 = val(inout e, catb(lit("icmp ugt i64 "), catb(u4, catb(lit(", "), c3))))
+    let jg = if_then(inout e, _h175)
+    let nc = rt_call(inout e, p, "ei_grow_cap", tys4(types.U64, types.U64, types.U64, types.U64), args4(cap, cap, lit("1"), lit("8")), types.U64)
+    if e.prof > 0 {
+        let w0 = size(inout e, p, kt) + size(inout e, p, vt) + 1
+        let rb = mul_const(inout e, nc, w0)
+        prof_ev(inout e, p, PEV_REHASH, rb)
+    }
+    let _h176 = args2(nc, bytes.from_u64(size(inout e, p, kt)))
+    let nk = rt_call(inout e, p, "ei_alloc_n", tys2(types.U64, types.U64), _h176, types.STR)
+    let _h177 = args2(nc, bytes.from_u64(size(inout e, p, vt)))
+    let nv = rt_call(inout e, p, "ei_alloc_n", tys2(types.U64, types.U64), _h177, types.STR)
+    let ns = buf_alloc(inout e, p, nc, 1)
+    dyn_memset0(inout e, ns, nc)
+    let ok = load_ptr_field(inout e, p, ty, m, 0)
+    let ov = load_ptr_field(inout e, p, ty, m, 1)
+    let os = load_ptr_field(inout e, p, ty, m, 2)
+    let lp = loop_n(inout e, p, cap)
+    let sv = slot_state(inout e, p, os, lp.iv)
+    let _h178 = val(inout e, catb(lit("icmp eq i8 "), cat(sv, ", 1")))
+    let j1 = if_then(inout e, _h178)
+    let kj = elem(inout e, p, kt, ok, lp.iv)
+    let ia = temp(inout e, p, types.U64)
+    let _h276 = argof(inout e, p, kt, kj)
+    let _h179 = slot_of(inout e, p, kt, _h276, nc)
+    store_i64(inout e, _h179, ia)
+    let wh = new_label(inout e)
+    let wb_ = new_label(inout e)
+    let wd_ = new_label(inout e)
+    label(inout e, wh)
+    let i = load_i64(inout e, ia)
+    let si = slot_state(inout e, p, ns, i)
+    let _h180 = val(inout e, catb(lit("icmp ne i8 "), cat(si, ", 0")))
+    condbr(inout e, _h180, wb_, wd_)
+    label(inout e, wb_)
+    let _h181 = next_slot(inout e, i, nc)
+    store_i64(inout e, _h181, ia)
+    br(inout e, wh)
+    label(inout e, wd_)
+    let i2 = load_i64(inout e, ia)
+    if !is_void(kt) {
+        let _h182 = elem(inout e, p, kt, nk, i2)
+        copy_mem(inout e, p, kt, _h182, kj)
+    }
+    if !is_void(vt) {
+        let _h183 = elem(inout e, p, vt, nv, i2)
+        let _h277 = elem(inout e, p, vt, ov, lp.iv)
+        copy_mem(inout e, p, vt, _h183, _h277)
+    }
+    let _h184 = catb(lit("store i8 1, ptr "), elem(inout e, p, types.U8, ns, i2))
+    stmt_text(inout e, _h184)
+    if_end(inout e, j1)
+    loop_next(inout e, lp)
+    rt_free(inout e, p, ok)
+    rt_free(inout e, p, ov)
+    buf_free(inout e, p, os)
+    store_field_ptr(inout e, p, ty, m, 0, nk)
+    store_field_ptr(inout e, p, ty, m, 1, nv)
+    store_field_ptr(inout e, p, ty, m, 2, ns)
+    store_field_i64(inout e, p, ty, m, 4, nc)
+    let _h185 = load_i64_field(inout e, p, ty, m, 3)
+    store_field_i64(inout e, p, ty, m, 5, _h185)
+    if_end(inout e, jg)
+    let cap2 = load_i64_field(inout e, p, ty, m, 4)
+    let s = load_ptr_field(inout e, p, ty, m, 2)
+    let ia2 = temp(inout e, p, types.U64)
+    let _h186 = slot_of(inout e, p, kt, key, cap2)
+    store_i64(inout e, _h186, ia2)
+    let wh2 = new_label(inout e)
+    let wb2 = new_label(inout e)
+    let wd2 = new_label(inout e)
+    label(inout e, wh2)
+    let k2 = load_i64(inout e, ia2)
+    let s2 = slot_state(inout e, p, s, k2)
+    let _h187 = val(inout e, catb(lit("icmp eq i8 "), cat(s2, ", 1")))
+    condbr(inout e, _h187, wb2, wd2)
+    label(inout e, wb2)
+    let _h188 = next_slot(inout e, k2, cap2)
+    store_i64(inout e, _h188, ia2)
+    br(inout e, wh2)
+    label(inout e, wd2)
+    let k3 = load_i64(inout e, ia2)
+    let s3 = slot_state(inout e, p, s, k3)
+    let _h189 = val(inout e, catb(lit("icmp eq i8 "), cat(s3, ", 0")))
+    let ju = if_then(inout e, _h189)
+    let u = load_i64_field(inout e, p, ty, m, 5)
+    let _h190 = val(inout e, catb(lit("add i64 "), cat(u, ", 1")))
+    store_field_i64(inout e, p, ty, m, 5, _h190)
+    if_end(inout e, ju)
+    if !is_void(kt) {
+        let _h278 = load_ptr_field(inout e, p, ty, m, 0)
+        let _h191 = elem(inout e, p, kt, _h278, k3)
+        copy_mem(inout e, p, kt, _h191, ka)
+    }
+    if !is_void(vt) {
+        let _h279 = load_ptr_field(inout e, p, ty, m, 1)
+        let _h192 = elem(inout e, p, vt, _h279, k3)
+        copy_mem(inout e, p, vt, _h192, va)
+    }
+    let _h193 = catb(lit("store i8 1, ptr "), elem(inout e, p, types.U8, s, k3))
+    stmt_text(inout e, _h193)
+    let n = load_i64_field(inout e, p, ty, m, 3)
+    let _h194 = val(inout e, catb(lit("add i64 "), cat(n, ", 1")))
+    store_field_i64(inout e, p, ty, m, 3, _h194)
+    gfn_end(inout e, p, gf)
+}
+
+// ---- closures
+
+/// The environment of closure body f (`{ c0, c1, ... }`) and its drop (`edrop_F`), clone
+/// (`eclone_F`) and own (`eown_F`), which the closure value points to.
+fn g_env(inout e: E, p: lower.P, f: u32) {
+    let fd = p.ir.fns[f as usize]
+    let n = e.ncap[f as usize].copy()
+    let fname = e.fnn[f as usize].copy()
+    let mut cts: List[u32] = List.new()
+    for i in 0..n {
+        cts.push(p.ir.locals[(fd.lstart + i) as usize].ty)
+    }
+    let est = members(inout e, p, cts)
+    let sz = abi.struct_of(inout e.lay, p, cts)[0]
+    let gd = gfn_begin(inout e, p, catb(lit("edrop_"), fname), tys1(types.STR), types.UNIT)
+    let q = gd.args[0].copy()
+    for i in 0..n {
+        if owns(inout e, p, cts[i as usize]) {
+            let _h195 = gep(inout e, p, est, q, i)
+            drop_at(inout e, p, cts[i as usize], _h195)
+        }
+    }
+    rt_free(inout e, p, q)
+    gfn_end(inout e, p, gd)
+    let gc = gfn_begin(inout e, p, catb(lit("eclone_"), fname), tys1(types.STR), types.STR)
+    let q2 = gc.args[0].copy()
+    let r = rt_call(inout e, p, "ei_alloc", tys1(types.U64), args1(bytes.from_u64(sz)), types.STR)
+    dyn_memcpy(inout e, r, q2, bytes.from_u64(sz))
+    for i in 0..n {
+        if owns(inout e, p, cts[i as usize]) {
+            let _h196 = gep(inout e, p, est, q2, i)
+            let _h280 = gep(inout e, p, est, r, i)
+            clone_to(inout e, p, cts[i as usize], _h196, _h280)
+        }
+    }
+    gret_v(inout e, p, r)
+    gfn_end(inout e, p, gc)
+    // before the closure runs on (or is handed to) another thread
+    let go = gfn_begin(inout e, p, catb(lit("eown_"), fname), tys1(types.STR), types.UNIT)
+    let q3 = go.args[0].copy()
+    for i in 0..n {
+        let _h197 = gep(inout e, p, est, q3, i)
+        own_at(inout e, p, cts[i as usize], _h197)
+    }
+    gfn_end(inout e, p, go)
+}
+
+/// `k_F(env, params...)`: function f called through a fn value (no environment).
+fn g_thunk(inout e: E, p: lower.P, f: u32) {
+    let fd = p.ir.fns[f as usize]
+    // as fn values are called (fnval_sig): the environment, then the parameters
+    let mut ptys: List[u32] = List.new()
+    ptys.push(types.STR)
+    for t in fn_ptys(e, p, f) {
+        ptys.push(t)
+    }
+    let _h198 = catb(lit("k_"), e.fnn[f as usize])
+    let gf = gfn_begin(inout e, p, _h198, ptys, fd.ret)
+    let mut args: List[List[u8]] = List.new()
+    for i in 1..gf.args.len() {
+        args.push(gf.args[i])
+    }
+    if is_void(fd.ret) {
+        let none: List[u8] = List.new()
+        call_user(inout e, p, f, args, none)
+    } else if is_scalar(p, fd.ret) {
+        let none: List[u8] = List.new()
+        let r = call_user(inout e, p, f, args, none)
+        gret_v(inout e, p, r)
+    } else {
+        let r = temp(inout e, p, fd.ret)
+        call_user(inout e, p, f, args, r)
+        gret_a(inout e, p, r)
+    }
+    gfn_end(inout e, p, gf)
+}
+
+// ---- records with their own Drop, Default, Ref
+
+/// `rnew_T(fields...)`: a record with its own Drop, its fields moved into a new buffer.
+fn g_rnew(inout e: E, p: lower.P, ty: u32) {
+    let ms = abi.parts(p, ty, NONE)
+    let _h199 = gname(e, "rnew_", ty)
+    let gf = gfn_begin(inout e, p, _h199, ms, ty)
+    let r = temp(inout e, p, ty)
+    let _h200 = rec_dsize(inout e, p, ty)
+    let q = buf_alloc(inout e, p, lit("1"), _h200)
+    let dt = cat(num("%t", ty as u64), ".d")
+    if ms.len() == 0 {
+        stmt_text(inout e, catb(lit("store i8 0, ptr "), q))
+    }
+    for i in 0..ms.len() {
+        if is_void(ms[i]) {
+            continue
+        }
+        let a = addrof(inout e, p, ms[i], gf.args[i])
+        let _h201 = gep(inout e, p, dt, q, i as u32)
+        copy_mem(inout e, p, ms[i], _h201, a)
+    }
+    store_field_ptr(inout e, p, ty, r, 0, q)
+    gret_a(inout e, p, r)
+    gfn_end(inout e, p, gf)
+}
+
+/// `default_T()`: each part's Default (a record, tuple, array or Box).
+fn g_default(inout e: E, p: lower.P, ty: u32) {
+    let _h202 = gname(e, "default_", ty)
+    let gf = gfn_begin(inout e, p, _h202, List.new(), ty)
+    let r = temp(inout e, p, ty)
+    zero(inout e, p, ty, r)
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_RECORD || k == types.T_TUPLE {
+        let ms = abi.parts(p, ty, NONE)
+        for i in 0..ms.len() {
+            let _h203 = part_addr(inout e, p, ty, r, i as u32)
+            default_to(inout e, p, ms[i], _h203)
+        }
+    } else if k == types.T_ARRAY {
+        if t.b > 0 {
+            let lp = loop_n(inout e, p, bytes.from_u64(t.b as u64))
+            let _h204 = arr_elem(inout e, p, ty, r, lp.iv)
+            default_to(inout e, p, t.a, _h204)
+            loop_next(inout e, lp)
+        }
+    } else if k == types.T_BOX {
+        let _h205 = size(inout e, p, t.a)
+        let q = buf_alloc(inout e, p, lit("1"), _h205)
+        default_to(inout e, p, t.a, q)
+        store_field_ptr(inout e, p, ty, r, 0, q)
+    }
+    gret_a(inout e, p, r)
+    gfn_end(inout e, p, gf)
+}
+
+/// `new_R(v)`: a new Ref holding v (moved in).
+fn g_refnew(inout e: E, p: lower.P, ty: u32) {
+    let el = types.get(p.t, ty).a
+    let _h206 = gname(e, "new_", ty)
+    let gf = gfn_begin(inout e, p, _h206, tys1(el), ty)
+    let va = addrof(inout e, p, el, gf.args[0])
+    let r = temp(inout e, p, ty)
+    let _h207 = ref_size(inout e, p, el)
+    let q = buf_alloc(inout e, p, lit("1"), _h207)
+    store_i64(inout e, lit("0"), q)
+    if !is_void(el) {
+        let _h281 = ref_voff(inout e, p, el)
+        let _h208 = off_ptr(inout e, q, _h281)
+        copy_mem(inout e, p, el, _h208, va)
+    }
+    store_field_ptr(inout e, p, ty, r, 0, q)
+    gret_a(inout e, p, r)
+    gfn_end(inout e, p, gf)
+}
+
+// ---- the thread handles (Task, Mutex, Chan): objects the runtime makes (core/eider_rt.h
+// `ei_h_*`: a count, a lock, a thread and a channel), with the program's part in their data:
+// a Task's closure and result `{ f, r }`, a Mutex's value
+
+fn task_fn(p: lower.P, el: u32) -> u32 { types.find_comp(p.t, types.T_FN, types.EMPTY, el) }
+
+/// A Task's data: `{ fn () -> T f, T r }` (the offset of r).
+fn task_roff(inout e: E, p: lower.P, el: u32) -> u64 {
+    let mut ms: List[u32] = List.new()
+    ms.push(task_fn(p, el))
+    ms.push(el)
+    abi.offset_of(inout e.lay, p, ms, 1)
+}
+
+fn task_dsize(inout e: E, p: lower.P, el: u32) -> u64 {
+    let mut ms: List[u32] = List.new()
+    ms.push(task_fn(p, el))
+    ms.push(el)
+    abi.struct_of(inout e.lay, p, ms)[0]
+}
+
+fn h_obj(inout e: E, p: lower.P, ty: u32, a: List[u8]) -> List[u8] { load_ptr_field(inout e, p, ty, a, 0) }
+
+fn h_data(inout e: E, p: lower.P, h: List[u8]) -> List[u8] { rt_call(inout e, p, "ei_h_data", tys1(types.STR), args1(h), types.STR) }
+
+fn h_void(inout e: E, p: lower.P, name: str, h: List[u8]) {
+    let none: List[u8] = List.new()
+    call(inout e, p, lit(name), tys1(types.STR), args1(h), types.UNIT, none)
+}
+
+/// The drop of a handle at x: the last holder drops the program's part and frees the object.
+fn handle_drop(inout e: E, p: lower.P, ty: u32, x: List[u8]) {
+    let t = types.get(p.t, ty)
+    let h = h_obj(inout e, p, ty, x)
+    let last = rt_call(inout e, p, "ei_h_dec", tys1(types.STR), args1(h), types.BOOL)
+    let j = if_then(inout e, last)
+    if t.kind == types.T_TASK {
+        // the thread is joined before its closure and result go
+        h_void(inout e, p, "ei_h_join", h)
+        let d = h_data(inout e, p, h)
+        drop_at(inout e, p, task_fn(p, t.a), d)
+        if !is_void(t.a) {
+            let _h282 = task_roff(inout e, p, t.a)
+            let _h209 = off_ptr(inout e, d, _h282)
+            drop_at(inout e, p, t.a, _h209)
+        }
+    } else if t.kind == types.T_MUTEX {
+        let _h210 = h_data(inout e, p, h)
+        drop_at(inout e, p, t.a, _h210)
+    } else if owns(inout e, p, t.a) {
+        let ch = rt_call(inout e, p, "ei_h_chan", tys1(types.STR), args1(h), types.STR)
+        let n = rt_call(inout e, p, "ei_chan_len", tys1(types.STR), args1(ch), types.U64)
+        let lp = loop_n(inout e, p, n)
+        let at = rt_call(inout e, p, "ei_chan_at", tys2(types.STR, types.U64), args2(ch, lp.iv), types.STR)
+        drop_at(inout e, p, t.a, at)
+        loop_next(inout e, lp)
+    }
+    h_void(inout e, p, "ei_h_free", h)
+    if_end(inout e, j)
+    store_field_ptr(inout e, p, ty, x, 0, lit("null"))
+}
+
+/// Keep the old value at a (when T owns heap data) to drop after the unlock.
+fn old_save(inout e: E, p: lower.P, el: u32, a: List[u8]) -> List[u8] {
+    if !owns(inout e, p, el) {
+        return List.new()
+    }
+    let o = temp(inout e, p, el)
+    copy_mem(inout e, p, el, o, a)
+    o
+}
+
+fn g_thread(inout e: E, p: lower.P, kd: u32, ty: u32) {
+    let el = types.get(p.t, ty).a
+    let unit_r = is_void(el)
+    let none: List[u8] = List.new()
+    if kd == lower.GK_SPAWN {
+        // the thread's entry point: runs the closure, keeps its result in the object
+        let ft = task_fn(p, el)
+        let _h211 = gname(e, "run_", ty)
+        let gr = gfn_begin(inout e, p, _h211, tys1(types.STR), types.STR)
+        let d = h_data(inout e, p, gr.args[0])
+        let sg = fnval_sig(inout e, p, ft)
+        let env = load_ptr_field(inout e, p, ft, d, 0)
+        let fp = load_ptr_field(inout e, p, ft, d, 1)
+        let _h212 = task_roff(inout e, p, el)
+        let ra = off_ptr(inout e, d, _h212)
+        let mut rd: List[u8] = List.new()
+        if !(unit_r || is_scalar(p, el)) { rd = ra.copy() }
+        let r = call_sig(inout e, p, fp, sg, args1(env), rd)
+        if !unit_r && is_scalar(p, el) {
+            store(inout e, p, el, r, ra)
+        }
+        gret_v(inout e, p, lit("null"))
+        gfn_end(inout e, p, gr)
+        let _h213 = gname(e, "spawn_", ty)
+        let gf = gfn_begin(inout e, p, _h213, tys1(ft), ty)
+        let fa = gf.args[0].copy()
+        // the closure runs on the new thread: nothing it captured may share a buffer here
+        own_at(inout e, p, ft, fa)
+        let _h214 = args2(bytes.from_u64(task_dsize(inout e, p, el)), lit("0"))
+        let h = rt_call(inout e, p, "ei_h_new", tys2(types.U64, types.U64), _h214, types.STR)
+        let _h215 = h_data(inout e, p, h)
+        copy_mem(inout e, p, ft, _h215, fa)
+        let _h216 = args2(h, catb(lit("@"), gname(e, "run_", ty)))
+        call(inout e, p, lit("ei_h_start"), tys2(types.STR, types.STR), _h216, types.UNIT, none)
+        let t = temp(inout e, p, ty)
+        store_field_ptr(inout e, p, ty, t, 0, h)
+        gret_a(inout e, p, t)
+        gfn_end(inout e, p, gf)
+        return
+    }
+    if kd == lower.GK_JOIN {
+        // waits for the thread (once, whoever asks first); the result stays in the Task
+        let _h217 = gname(e, "join_", ty)
+        let gf = gfn_begin(inout e, p, _h217, tys1(ty), el)
+        let h = h_obj(inout e, p, ty, gf.args[0])
+        h_void(inout e, p, "ei_h_join", h)
+        let _h218 = h_data(inout e, p, h)
+        let _h283 = task_roff(inout e, p, el)
+        let ra = off_ptr(inout e, _h218, _h283)
+        if !unit_r && owns(inout e, p, el) {
+            // a copy of its own, made under the Task's lock (other threads may be joining)
+            h_void(inout e, p, "ei_h_lock", h)
+            let r = temp(inout e, p, el)
+            clone_to(inout e, p, el, ra, r)
+            own_at(inout e, p, el, r)
+            h_void(inout e, p, "ei_h_unlock", h)
+            gret_a(inout e, p, r)
+        } else if !unit_r {
+            if is_scalar(p, el) {
+                let _h219 = load(inout e, p, el, ra)
+                gret_v(inout e, p, _h219)
+            } else {
+                gret_a(inout e, p, ra)
+            }
+        }
+        gfn_end(inout e, p, gf)
+        return
+    }
+    if kd == lower.GK_MXNEW || kd == lower.GK_CHNEW {
+        let mut ptys: List[u32] = List.new()
+        if kd == lower.GK_MXNEW { ptys = tys1(el) }
+        let _h220 = gname(e, "new_", ty)
+        let gf = gfn_begin(inout e, p, _h220, ptys, ty)
+        let mut h: List[u8] = List.new()
+        if kd == lower.GK_MXNEW {
+            let va = addrof(inout e, p, el, gf.args[0])
+            own_at(inout e, p, el, va)
+            let _h221 = args2(bytes.from_u64(size(inout e, p, el)), lit("0"))
+            h = rt_call(inout e, p, "ei_h_new", tys2(types.U64, types.U64), _h221, types.STR)
+            if !unit_r {
+                let _h222 = h_data(inout e, p, h)
+                copy_mem(inout e, p, el, _h222, va)
+            }
+        } else {
+            // a channel of elements of el's size (at least 1)
+            let es = size(inout e, p, el)
+            h = rt_call(inout e, p, "ei_h_new", tys2(types.U64, types.U64), args2(lit("0"), bytes.from_u64(es)), types.STR)
+        }
+        let t = temp(inout e, p, ty)
+        store_field_ptr(inout e, p, ty, t, 0, h)
+        gret_a(inout e, p, t)
+        gfn_end(inout e, p, gf)
+        return
+    }
+    if kd == lower.GK_MXGET {
+        let _h223 = gname(e, "get_", ty)
+        let gf = gfn_begin(inout e, p, _h223, tys1(ty), el)
+        let h = h_obj(inout e, p, ty, gf.args[0])
+        h_void(inout e, p, "ei_h_lock", h)
+        let r = temp(inout e, p, el)
+        let _h224 = h_data(inout e, p, h)
+        clone_to(inout e, p, el, _h224, r)
+        own_at(inout e, p, el, r)
+        h_void(inout e, p, "ei_h_unlock", h)
+        if unit_r {
+            gret_void(inout e)
+        } else {
+            gret_a(inout e, p, r)
+        }
+        gfn_end(inout e, p, gf)
+        return
+    }
+    if kd == lower.GK_MXSET || kd == lower.GK_MXUPD {
+        let upd = kd == lower.GK_MXUPD
+        let at = if upd { lower.update_fn(p, el) } else { el }
+        let opn = if upd { "upd_" } else { "set_" }
+        let _h225 = gname(e, opn, ty)
+        let gf = gfn_begin(inout e, p, _h225, tys2(ty, at), types.UNIT)
+        let h = h_obj(inout e, p, ty, gf.args[0])
+        let nv = temp(inout e, p, el)
+        if !upd {
+            let _h226 = addrof(inout e, p, el, gf.args[1])
+            copy_mem(inout e, p, el, nv, _h226)
+            own_at(inout e, p, el, nv)
+            h_void(inout e, p, "ei_h_lock", h)
+        } else {
+            // the closure runs with the lock held, on a borrow of the value
+            h_void(inout e, p, "ei_h_lock", h)
+            let fv = gf.args[1].copy()
+            let sg = fnval_sig(inout e, p, at)
+            let env = load_ptr_field(inout e, p, at, fv, 0)
+            let fp = load_ptr_field(inout e, p, at, fv, 1)
+            let _h284 = h_data(inout e, p, h)
+            let _h227 = args2(env, argof(inout e, p, el, _h284))
+            let mut rd: List[u8] = List.new()
+            if !is_scalar(p, el) { rd = nv.copy() }
+            let r = call_sig(inout e, p, fp, sg, _h227, rd)
+            if is_scalar(p, el) && !unit_r {
+                store(inout e, p, el, r, nv)
+            }
+            // the result may share buffers with the old value or the closure's captures
+            own_at(inout e, p, el, nv)
+        }
+        let d = h_data(inout e, p, h)
+        let old = old_save(inout e, p, el, d)
+        if !unit_r {
+            copy_mem(inout e, p, el, d, nv)
+        }
+        h_void(inout e, p, "ei_h_unlock", h)
+        if old.len() > 0 {
+            drop_at(inout e, p, el, old)
+        }
+        gfn_end(inout e, p, gf)
+        return
+    }
+    if kd == lower.GK_CHSEND {
+        // the value's bytes move into the queue: the channel owns it now
+        let _h228 = gname(e, "send_", ty)
+        let gf = gfn_begin(inout e, p, _h228, tys2(ty, el), types.UNIT)
+        let h = h_obj(inout e, p, ty, gf.args[0])
+        let v = temp(inout e, p, el)
+        if !unit_r {
+            let _h229 = addrof(inout e, p, el, gf.args[1])
+            copy_mem(inout e, p, el, v, _h229)
+        }
+        own_at(inout e, p, el, v)
+        let ch = rt_call(inout e, p, "ei_h_chan", tys1(types.STR), args1(h), types.STR)
+        call(inout e, p, lit("ei_chan_send"), tys2(types.STR, types.STR), args2(ch, v), types.UNIT, none)
+        gfn_end(inout e, p, gf)
+        return
+    }
+    let _h230 = gname(e, "recv_", ty)
+    let gf = gfn_begin(inout e, p, _h230, tys2(ty, PTR + el), types.BOOL)
+    let h = h_obj(inout e, p, ty, gf.args[0])
+    let ch = rt_call(inout e, p, "ei_h_chan", tys1(types.STR), args1(h), types.STR)
+    let _h231 = rt_call(inout e, p, "ei_chan_recv", tys2(types.STR, types.STR), args2(ch, gf.args[1]), types.BOOL)
+    gret_v(inout e, p, _h231)
+    gfn_end(inout e, p, gf)
+}
+
+// ---- the worklist
+
+/// Emit the IR of glue item `key` (GK_* * 2^32 + id).
+fn glue(inout e: E, p: lower.P, key: u64) {
+    let kd = (key / 4294967296) as u32
+    let id = (key % 4294967296) as u32
+    if kd == lower.GK_EQ {
+        g_eq(inout e, p, id)
+    } else if kd == lower.GK_DROP {
+        g_drop(inout e, p, id)
+    } else if kd == lower.GK_CLONE {
+        g_clone(inout e, p, id)
+    } else if kd == lower.GK_NAME {
+        g_name(inout e, p, id)
+    } else if kd == lower.GK_PUSH {
+        g_push(inout e, p, id)
+    } else if kd == lower.GK_HAS {
+        g_has(inout e, p, id)
+    } else if kd == lower.GK_NEW {
+        g_box(inout e, p, id)
+    } else if kd == lower.GK_ENV {
+        g_env(inout e, p, id)
+    } else if kd == lower.GK_THUNK {
+        g_thunk(inout e, p, id)
+    } else if kd == lower.GK_UNIQ {
+        g_uniq(inout e, p, id)
+    } else if kd == lower.GK_OWN {
+        g_own(inout e, p, id)
+    } else if kd == lower.GK_BYTES || kd == lower.GK_UTF8 {
+        g_text(inout e, p, kd, id)
+    } else if kd == lower.GK_REFNEW {
+        g_refnew(inout e, p, id)
+    } else if kd == lower.GK_DEFAULT {
+        g_default(inout e, p, id)
+    } else if kd == lower.GK_RNEW {
+        g_rnew(inout e, p, id)
+    } else if kd == lower.GK_CMP {
+        g_cmp(inout e, p, id)
+    } else if kd == lower.GK_HASH {
+        g_hash(inout e, p, id)
+    } else if kd == lower.GK_SHOW {
+        g_show(inout e, p, id)
+    } else if kd == lower.GK_COPY {
+        g_copy(inout e, p, id)
+    } else if kd >= lower.GK_SPAWN && kd <= lower.GK_CHRECV {
+        g_thread(inout e, p, kd, id)
+    } else {
+        g_map(inout e, p, kd, id)
+    }
+}
+
+/// Every glue item the program needs, until none is new (glue asks for glue).
+fn glue_all(inout e: E, p: lower.P) {
+    let mut i: usize = 0
+    while i < e.needs.len() {
+        let k = e.needs[i].copy()
+        glue(inout e, p, k)
+        i += 1
+    }
+}
+
+// ---- the program's entry points (what lower.ei's main_body, test driver and export
+// wrappers were): the trap file table, `main`, the test driver, the exports
+
+/// `ei_set_file(file); ei_set_files(@ei_files, n)` (the table is made by files_table).
+fn set_files(inout e: E, p: lower.P, file: List[u8]) {
+    let none: List[u8] = List.new()
+    let _h232 = args1(msgb(inout e, file))
+    call(inout e, p, lit("ei_set_file"), tys1(types.STR), _h232, types.UNIT, none)
+    if e.tfiles.len() == 0 {
+        return
+    }
+    let mut n: u32 = 0
+    for f in e.tfiles {
+        if f + 1 > n {
+            n = f + 1
+        }
+    }
+    call(inout e, p, lit("ei_set_files"), tys2(types.STR, types.I32), args2(lit("@ei_files"), bytes.from_u64(n as u64)), types.UNIT, none)
+}
+
+/// `@ei_files`: the module files whose lines traps encode (file index * 2^20 + line), by index.
+fn files_table(inout e: E, p: lower.P) {
+    if e.tfiles.len() == 0 {
+        return
+    }
+    let mut n: u32 = 0
+    for f in e.tfiles {
+        if f + 1 > n {
+            n = f + 1
+        }
+    }
+    let mut t = lit("@ei_files = private unnamed_addr constant [")
+    wd(inout t, n as u64)
+    bytes.append(inout t, lit(" x ptr] ["))
+    for i in 0..n {
+        if i > 0 {
+            bytes.append(inout t, lit(", "))
+        }
+        if e.tfiles.contains(i) {
+            bytes.append(inout t, lit("ptr "))
+            bytes.append(inout t, msgb(inout e, p.ir.files[i as usize]))
+        } else {
+            bytes.append(inout t, lit("ptr null"))
+        }
+    }
+    bytes.append(inout t, lit("]\n"))
+    bytes.append(inout e.gl, t)
+}
+
+/// `int main(void) { return ei_main(ei_main_body); }` around the Eider `main` (function f)
+/// by its result (docs/compiler.md, "C8.2"): () exits 0; an i32 is the exit code (outside
+/// 0..255 it traps at main's line); a Result[(), E]'s Err prints `error: <the error>` (or
+/// `error: main returned Err` when E can't be printed) to stderr, is dropped, and exits 1.
+/// The body runs on the runtime's guarded thread (core/RUNTIME.md "Stack overflow").
+fn main_fn(inout e: E, p: lower.P, file: List[u8], f: u32) {
+    let gf = gfn_begin(inout e, p, lit("ei_main_body"), List.new(), types.I32)
+    set_files(inout e, p, file)
+    prof_init(inout e, p, file)
+    let none: List[u8] = List.new()
+    let rt = p.ir.fns[f as usize].ret
+    let rk = kind(p, rt)
+    if rk == types.T_INT {
+        let c = call_user(inout e, p, f, List.new(), none)
+        let lo = icmp(inout e, "slt", lit("i32"), c, lit("0"))
+        let hi = icmp(inout e, "sgt", lit("i32"), c, lit("255"))
+        e.file = 0
+        let _h233 = val(inout e, catb(lit("or i1 "), catb(lo, catb(lit(", "), hi))))
+        trap_if(inout e, _h233, "exit code out of range", p.ir.main_line)
+        call(inout e, p, lit("ei_check_leaks"), List.new(), List.new(), types.UNIT, none)
+        gret_v(inout e, p, c)
+    } else if rk != types.T_ENUM {
+        call_user(inout e, p, f, List.new(), none)
+        call(inout e, p, lit("ei_check_leaks"), List.new(), List.new(), types.UNIT, none)
+        gret_v(inout e, p, lit("0"))
+    } else {
+        let r = temp(inout e, p, rt)
+        call_user(inout e, p, f, List.new(), r)
+        let tg = tag_of(inout e, p, rt, r)
+        let _h234 = tag_is(inout e, tg, 1)
+        let j = if_then(inout e, _h234)
+        let d = types.def_of(p.t, rt)
+        let et = types.field(p.t, types.variant(p.t, d, 1).fstart, 0).ty
+        let ea = payload_addr(inout e, p, rt, r, 1, 0)
+        let x = types.get(p.t, et)
+        if x.kind == types.T_INT {
+            let v = load(inout e, p, et, ea)
+            let w64 = if int_bits(x.a) == 64 { v.copy() } else if types.signed(x.a) { val(inout e, catb(lit("sext "), catb(lit(int_ty(x.a)), catb(lit(" "), cat(v, " to i64"))))) } else { val(inout e, catb(lit("zext "), catb(lit(int_ty(x.a)), catb(lit(" "), cat(v, " to i64"))))) }
+            let fname = if types.signed(x.a) { "ei_main_error_i" } else { "ei_main_error_u" }
+            call(inout e, p, lit(fname), tys1(types.U64), args1(w64), types.UNIT, none)
+        } else {
+            let mut s = msg(inout e, "main returned Err")
+            if x.kind == types.T_BOOL {
+                let v = load(inout e, p, et, ea)
+                let _h235 = catb(lit("select i1 "), catb(v, catb(lit(", ptr "), catb(msg(inout e, "true"), catb(lit(", ptr "), msg(inout e, "false"))))))
+                s = val(inout e, _h235)
+            } else if x.kind == types.T_STR {
+                s = load(inout e, p, et, ea)
+            } else if x.kind == types.T_STRING {
+                s = load_ptr_field(inout e, p, et, ea, 0)
+            } else if x.kind == types.T_ENUM && !types.def_of(p.t, et).payload {
+                gneed(inout e, lower.GK_NAME, et)
+                let _h236 = gname(e, "name_", et)
+                let _h285 = args1(tag_of(inout e, p, et, ea))
+                s = rt_call_b(inout e, p, _h236, tys1(types.U32), _h285, types.STR)
+            }
+            call(inout e, p, lit("ei_main_error"), tys1(types.STR), args1(s), types.UNIT, none)
+        }
+        drop_at(inout e, p, rt, r)
+        call(inout e, p, lit("ei_check_leaks"), List.new(), List.new(), types.UNIT, none)
+        gret_v(inout e, p, lit("1"))
+        if_end(inout e, j)
+        call(inout e, p, lit("ei_check_leaks"), List.new(), List.new(), types.UNIT, none)
+        gret_v(inout e, p, lit("0"))
+    }
+    gfn_end(inout e, p, gf)
+    entry_main(inout e, p)
+}
+
+/// `main`: the runtime runs ei_main_body on its guarded thread.
+fn entry_main(inout e: E, p: lower.P) {
+    declare(inout e, lit("ei_main"), lit("declare i32 @ei_main(ptr)"))
+    e.fns.push(lit("define i32 @main() nounwind {\nentry:\n  %r = call i32 @ei_main(ptr @ei_main_body)\n  ret i32 %r\n}\n\n"))
+}
+
+/// The test driver: each `test` block through the runtime's ei_test (it prints `test <name>
+/// ... ok`, or FAILED with the trap that ended it), then the summary (ei_tests_done: the
+/// counts, the leak report when none failed, the exit code).
+fn test_main(inout e: E, p: lower.P, file: List[u8]) {
+    let gf = gfn_begin(inout e, p, lit("ei_main_body"), List.new(), types.I32)
+    set_files(inout e, p, file)
+    prof_init(inout e, p, file)
+    let failed = temp(inout e, p, types.I32)
+    stmt_text(inout e, catb(lit("store i32 0, ptr "), failed))
+    let mut total: u64 = 0
+    for f in 0..p.ir.fns.len() {
+        let fd = p.ir.fns[f]
+        if fd.body == 0 || !fd.is_test {
+            continue
+        }
+        total += 1
+        let _h237 = args2(msgb(inout e, fd.name), catb(lit("@"), iname(e, f as u32)))
+        let r = rt_call(inout e, p, "ei_test", tys2(types.STR, types.STR), _h237, types.I32)
+        let n = val(inout e, catb(lit("load i32, ptr "), failed))
+        let m = val(inout e, catb(lit("add i32 "), catb(n, catb(lit(", "), r))))
+        stmt_text(inout e, catb(lit("store i32 "), catb(m, catb(lit(", ptr "), failed))))
+    }
+    let n = val(inout e, catb(lit("load i32, ptr "), failed))
+    let c = rt_call(inout e, p, "ei_tests_done", tys2(types.I32, types.I32), args2(bytes.from_u64(total), n), types.I32)
+    gret_v(inout e, p, c)
+    gfn_end(inout e, p, gf)
+    entry_main(inout e, p)
+}
+
+/// A library's entry points: `eider_<name>` for each `export fn`, with the C convention of
+/// the header (lower.header), calling it after naming "lib" as the trap file (as
+/// tests/oracle expects); for WebAssembly also exported under that name.
+fn export_fns(inout e: E, p: lower.P) {
+    for x in p.ir.exports {
+        let mut name = lit("eider_")
+        for b in x.name {
+            if bytes.is_ident(b) {
+                name.push(b)
+            } else {
+                name.push(95)
+            }
+        }
+        let f = x.f
+        let fd = p.ir.fns[f as usize]
+        let _h238 = fn_ptys(e, p, f)
+        let gf = gfn_begin(inout e, p, name.copy(), _h238, fd.ret)
+        let none: List[u8] = List.new()
+        let _h239 = args1(msg(inout e, "lib"))
+        call(inout e, p, lit("ei_set_file"), tys1(types.STR), _h239, types.UNIT, none)
+        if e.tfiles.len() > 0 {
+            let mut n: u32 = 0
+            for t in e.tfiles {
+                if t + 1 > n {
+                    n = t + 1
+                }
+            }
+            call(inout e, p, lit("ei_set_files"), tys2(types.STR, types.I32), args2(lit("@ei_files"), bytes.from_u64(n as u64)), types.UNIT, none)
+        }
+        if is_void(fd.ret) {
+            call_user(inout e, p, f, gf.args, none)
+            gret_void(inout e)
+        } else if is_scalar(p, fd.ret) {
+            let r = call_user(inout e, p, f, gf.args, none)
+            gret_v(inout e, p, r)
+        } else {
+            let r = temp(inout e, p, fd.ret)
+            call_user(inout e, p, f, gf.args, r)
+            gret_a(inout e, p, r)
+        }
+        // external, and for wasm32 exported under its name
+        if !e.term {
+            gret_void(inout e)
+        }
+        let mut h = lit("define ")
+        bytes.append(inout h, ret_text(inout e, p, gf.sig))
+        bytes.append(inout h, lit(" @"))
+        bytes.append(inout h, name)
+        bytes.append(inout h, lit("("))
+        bytes.append(inout h, signature_params(inout e, p, gf.sig, false))
+        bytes.append(inout h, lit(") nounwind"))
+        if e.lay.wasm {
+            bytes.append(inout h, lit(" \"wasm-export-name\"=\""))
+            bytes.append(inout h, name)
+            bytes.append(inout h, lit("\""))
+        }
+        bytes.append(inout h, lit(" {\nentry:\n"))
+        flush_fn(inout e, h)
+        e.gdef.insert(h64(name), true)
+    }
+}
+
 // ---- the program
 
 /// The LLVM version this backend's IR needs (opaque pointers, `poison`, the overflow
 /// intrinsics' current names): clang's major version must be at least this.
 pub const MIN_LLVM: u64 = 17
 
-/// The program as two halves (see the top of the file). `paths`: the module files by index
-/// (debug info), `dir` the working directory, `debug` whether to emit debug info, `wasm`
-/// whether the target is wasm32 (`--wasm`, `--wasm-core`: 4-byte pointers and its C ABI,
-/// llvm_abi.ei; exports named `eider_<name>` in the module; no debug info).
-pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[List[u8]], dir: List[u8], debug: bool, wasm: bool) -> Result[Out, List[u8]] {
+/// The program as one LLVM module (see the top of the file). `paths`: the module files by
+/// index (debug info), `dir` the working directory, `debug` whether to emit debug info, `arch`
+/// the target (llvm_abi.ei: X86_64, AARCH64, WASM32 for `--wasm`/`--wasm-core`, whose module
+/// names its triple and exports `eider_<name>`; no debug info there). A function this
+/// backend can't lower is an internal error naming it and the construct.
+pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[List[u8]], dir: List[u8], debug: bool, arch: u32) -> Result[Out, List[u8]] { program_prof(p, file, tests, lib, paths, dir, debug, arch, 0, List.new()) }
+
+/// `program` with the profiler (`what`: lower.prof_what's bits, 0 for none; `version`: the
+/// toolchain's, recorded in the profile): every function that calls or loops (lower.framed)
+/// keeps a frame on the runtime's shadow stack (eider_rt.h ei_prof_*, inline here), stores
+/// the line of each statement that calls, allocates or drops (lower.prof_marks), and the glue
+/// reports copy-on-write, growth, rehash, Drop, `.copy()` and Ref events.
+pub fn program_prof(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[List[u8]], dir: List[u8], debug: bool, arch: u32, what: u32, version: List[u8]) -> Result[Out, List[u8]] {
+    let wasm = arch == abi.WASM32
     let names = lower.c_names(p)?
-    let mut e = E(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), abi.new_lay(p, wasm), List.new(), names.tys, names.fns, List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), Map.new(), 0, 0, 0, false, List.new(), 0, 0, 0, List.new(), List.new(), false, abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new(), debug, false, List.new(), List.new(), List.new(), 4, 0, 0, Map.new(), Map.new(), paths, dir, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new())
+    let mut e = E(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), abi.new_lay(p, arch), List.new(), names.tys, names.fns, List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), Map.new(), 0, 0, 0, false, List.new(), 0, 0, 0, List.new(), List.new(), false, abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new(), debug, false, List.new(), List.new(), List.new(), 4, 0, 0, Map.new(), Map.new(), paths, dir, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new(), Map.new(), what, version, false, List.new(), 0)
     let nosig = abi.Sig(abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new())
     for f in 0..p.ir.fns.len() {
         e.isigs.push(nosig.copy())
@@ -3717,72 +6372,67 @@ pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[L
         e.own.push(0)
         e.dty.push(0)
     }
-    for i in 0..p.ir.strs.len() { e.sused.push(false) }
+    for i in 0..p.ir.strs.len() {
+        e.sused.push(false)
+    }
     for f in 0..p.ir.fns.len() {
         let fd = p.ir.fns[f]
         let mut n: u32 = 0
-        while n < fd.lcount && p.ir.locals[(fd.lstart + n) as usize].kind == ir.L_CAPTURE { n += 1 }
+        while n < fd.lcount && p.ir.locals[(fd.lstart + n) as usize].kind == ir.L_CAPTURE {
+            n += 1
+        }
         e.ncap.push(n)
         e.clo.push(fd.body > 0 && !fd.is_test && is_closure_name(fd.name))
     }
     if debug {
         file_md(inout e, 0)
         for f in 0..p.ir.fns.len() {
-            if p.ir.fns[f].body > 0 { file_md(inout e, p.ir.fns[f].file) }
+            if p.ir.fns[f].body > 0 {
+                file_md(inout e, p.ir.fns[f].file)
+            }
         }
     }
-    let mut native: List[bool] = List.new()
-    let mut report: List[u8] = List.new()
-    let mut nfns: u32 = 0
-    let mut nnat: u32 = 0
-    let mut defined: Map[u64, bool] = Map.new()
+    let mut main_f = NONE
     let mut owner: List[u32] = List.new()
     for f in 0..p.ir.fns.len() {
         let fd = p.ir.fns[f]
         if fd.body == 0 || (!tests && fd.is_test) {
-            native.push(false)
             continue
         }
-        nfns += 1
-        let ok = function(inout e, p, f as u32)
-        while owner.len() < e.fns.len() { owner.push(f as u32) }
-        native.push(ok)
-        if ok {
-            nnat += 1
-            let fname = e.fnn[f].copy()
-            defined.insert(h64(fname), true)
-        } else {
-            bytes.append(inout report, lit("fallback "))
-            bytes.append(inout report, fd.name)
-            bytes.append(inout report, lit(": "))
-            bytes.append(inout report, e.fail)
-            report.push(10)
+        if !fd.is_test && bytes.eq(fd.name, lit("main")) {
+            main_f = f as u32
         }
-    }
-    let c = lower.program_split(p, file, tests, lib, wasm, native, e.needs, e.tfiles)?
-    // the C half's entries into this one: C-convention wrappers of the internal functions
-    // it names (beyond their prototypes), and shims for calls into its fallback functions
-    let refs = c_idents(c)
-    for f in 0..p.ir.fns.len() {
-        if !internal_fn(e, p, f as u32) { continue }
-        if native[f] {
-            let k = h64(e.fnn[f])
-            let mut n: u32 = 0
-            match refs.get(k) {
-                Some(x) => { n = x }
-                None => {}
-            }
-            if n > 1 || p.ir.fns[f].is_test { c_wrapper(inout e, p, f as u32) } else { defined.remove(k) }
-        } else if e.iused[f] {
-            c_shim(inout e, p, f as u32)
+        if !function(inout e, p, f as u32) {
+            let mut m = lit("the LLVM backend can't lower ")
+            bytes.append(inout m, fd.name)
+            bytes.append(inout m, lit(": "))
+            bytes.append(inout m, e.fail)
+            return Err(m)
         }
+        e.gdef.insert(h64(e.fnn[f]), true)
+        e.gdef.insert(h64(iname(e, f as u32)), true)
         while owner.len() < e.fns.len() { owner.push(f as u32) }
     }
+    // the entry points, then the glue everything asks for
+    if lib {
+        export_fns(inout e, p)
+    } else if tests {
+        test_main(inout e, p, file)
+    } else if main_f != NONE {
+        main_fn(inout e, p, file, main_f)
+    }
+    glue_all(inout e, p)
+    files_table(inout e, p)
+    while owner.len() < e.fns.len() { owner.push(GLUE) }
     let mut head = lit("; generated by eiderc from ")
     for b in file {
-        if b >= 32 && b < 127 { head.push(b) }
+        if b >= 32 && b < 127 {
+            head.push(b)
+        }
     }
-    if wasm { bytes.append(inout head, lit("\ntarget triple = \"wasm32-unknown-unknown\"")) }
+    if wasm {
+        bytes.append(inout head, lit("\ntarget triple = \"wasm32-unknown-unknown\""))
+    }
     bytes.append(inout head, lit("\n\n%ei.String = type { ptr, i64, i64 }\n"))
     bytes.append(inout head, e.tdefs)
     head.push(10)
@@ -3791,7 +6441,9 @@ pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[L
     let mut ll: List[u8] = List.new()
     ll.push(10)
     for i in 0..p.ir.strs.len() {
-        if !e.sused[i] { continue }
+        if !e.sused[i] {
+            continue
+        }
         bytes.append(inout ll, num("@.s", i as u64))
         bytes.append(inout ll, lit(" = private unnamed_addr constant ["))
         bytes.append(inout ll, bytes.from_u64((p.ir.strs[i].len() + 1) as u64))
@@ -3802,7 +6454,9 @@ pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[L
     bytes.append(inout ll, e.gl)
     ll.push(10)
     for i in 0..e.dnames.len() {
-        if defined.contains(h64(e.dnames[i])) { continue }
+        if e.gdef.contains(h64(e.dnames[i])) {
+            continue
+        }
         bytes.append(inout ll, e.dtext[i])
         ll.push(10)
     }
@@ -3816,47 +6470,16 @@ pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[L
         bytes.append(inout ll, e.md)
     }
     e.fns.push(ll)
-    Ok(Out(head, e.fns, c, native, nfns, nnat, report, owner))
-}
-
-/// How often each C identifier (by h64) occurs in the C text c.
-fn c_idents(c: List[u8]) -> Map[u64, u32] {
-    let mut m: Map[u64, u32] = Map.new()
-    let mut h: u64 = 14695981039346656037
-    let mut inid = false
-    for b in c {
-        let idc = (b >= 97 && b <= 122) || (b >= 65 && b <= 90) || (b >= 48 && b <= 57) || b == 95
-        if idc {
-            if !inid { h = 14695981039346656037 }
-            h = (h ^ (b as u64)) *% 1099511628211
-            inid = true
-        } else if inid {
-            inid = false
-            let mut n: u32 = 0
-            match m.get(h) {
-                Some(x) => { n = x }
-                None => {}
-            }
-            m.insert(h, n + 1)
-        }
-    }
-    m
+    Ok(Out(head, e.fns, owner))
 }
 
 fn is_closure_name(s: List[u8]) -> bool {
     let mut i = s.len()
-    while i > 0 && bytes.is_digit(s[i - 1]) { i -= 1 }
-    if i == s.len() || i < 8 { return false }
+    while i > 0 && bytes.is_digit(s[i - 1]) {
+        i -= 1
+    }
+    if i == s.len() || i < 8 {
+        return false
+    }
     bytes.eq(bytes.slice(s, i - 8, i), lit(".closure"))
-}
-
-/// `emit-llvm --coverage`: how many functions are native, then each fallback and why.
-pub fn coverage(o: Out) -> List[u8] {
-    let mut r = lit("native ")
-    bytes.append(inout r, bytes.from_u64(o.nnative as u64))
-    r.push(47)
-    bytes.append(inout r, bytes.from_u64(o.nfns as u64))
-    bytes.append(inout r, lit(" functions\n"))
-    bytes.append(inout r, o.report)
-    r
 }

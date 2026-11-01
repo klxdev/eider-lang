@@ -51,7 +51,7 @@ from source: [Getting started](../guide/getting-started.md).
 | `eider toolchain show [--json]` | the toolchain a command here would use, and why |
 | `eider self update [--force] [--json]` | replace `~/.eider/bin/eider` with the latest release's, checked like a toolchain |
 | `eider version [--json]`, `eider --version` | eider's version (and the selected toolchain's) |
-| `eider build\|run\|test\|check\|emit-c\|emit-header\|caps\|ir\|... <args>` | the toolchain's `eiderc` with these arguments ([eiderc](compiler.md)) |
+| `eider build\|run\|test\|check\|emit-llvm\|emit-header\|caps\|ir\|... <args>` | the toolchain's `eiderc` with these arguments ([eiderc](compiler.md)) |
 | `eider doc <args>` | the toolchain's `eider-doc` ([eider-doc](eider-doc.md)) |
 | `eider new <name>` | a new package in `<name>/` (`eider-pkg -C <name> init <name>`) |
 | `eider init\|add\|remove\|fetch\|update\|vendor\|tree <args>` | the toolchain's `eider-pkg` ([eider-pkg](eider-pkg.md)) |

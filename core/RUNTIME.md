@@ -95,17 +95,13 @@ there is exactly one report and `exit` never runs concurrently with itself.
 
 ### The test hook
 
-`void ei_set_trap_jmp(jmp_buf *jb)` sets this thread's hook (`NULL` clears it). `setjmp` has
-to run in the caller's frame, so generated test `main` does:
-
-```c
-jmp_buf jb;
-ei_set_trap_jmp(&jb);
-ei_set_file("tests/x.ei");
-/* per test */
-printf("test %s ... ", name); fflush(stdout);
-if (setjmp(jb) == 0) { t_1(); printf("ok\n"); } else { failed++; }
-```
+`void ei_set_trap_jmp(jmp_buf *jb)` sets this thread's hook (`NULL` clears it). The test
+driver the compiler generates calls `int32_t ei_test(const char *name, void (*fn)(void))` for
+each test block: it prints `test <name> ... `, sets the hook, runs `fn` under `setjmp` (which
+has to run in this frame), prints `ok` (or the trap prints `FAILED` and its message), clears
+the hook and returns 1 when the test failed; `int32_t ei_tests_done(int32_t total, int32_t
+failed)` prints the summary, reports leaks when none failed, and returns the exit code. In a
+`--profile` build a failed test is unwound in the shadow stack (`ei_prof_unwind(0)`).
 
 The hook is thread-local: a trap on a thread spawned by a test exits the whole test binary
 with 101. A `longjmp` out of a failed test does not run drops, so values owned
@@ -438,7 +434,22 @@ walks or is parameterised by a concrete type stays compiler output.
 | the profiler (`--profile` builds only) | `ei_prof_*` ("Profiling"; core/eider_prof.c) |
 | Chan queue: ring buffer, cond var, closed flag, send/recv/close | `ei_chan` (type-erased by element size) |
 
+Also in the core, for the LLVM backend's IR (#128), which can't name C types or macros:
+
+| Piece | Core |
+|---|---|
+| derived Show of numbers and quoted text | `ei_str_push_i64`, `ei_str_push_u64`, `ei_str_push_quoted` |
+| `main` returning `Err` | `ei_main_error(text)`, `ei_main_error_i`, `ei_main_error_u`: flush stdout, then `error: ...` on stderr |
+| the test driver | `ei_test`, `ei_tests_done` (above) |
+| handle objects (Task, Mutex, Chan) | `ei_h_new(size, chan_elem)` (a thread-safe count, a lock, a thread, a channel of `chan_elem`-byte elements when it is above 0, and `size` bytes of the program's data, 16-byte aligned), `ei_h_data`, `ei_h_inc`, `ei_h_dec` (true when that was the last holder), `ei_h_lock`/`unlock`, `ei_h_start(h, run)` (runs `run(h)` on a runtime thread), `ei_h_join`, `ei_h_chan`, `ei_h_free` (joins a started thread, destroys the lock and the channel, frees; the program drops its data first) |
+
+The buffer counts and the Ref checks are inline in the IR as they are in the header.
+
 ### Generated (stays compiler output)
+
+Since #128 the per-type operations below are LLVM IR (llvm.ei's glue), with these names; the
+handles keep their data in `ei_h_*` objects.
+
 
 | Generated | Why it is per type |
 |---|---|

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Runs every tests/run/*.ei and compares stdout with the .out file next to it.
-# Extra flags for the C compiler (e.g. sanitizers) come from $EIDER_CFLAGS via a CC wrapper.
+# Extra flags (e.g. sanitizers, for clang on the IR and $CC on the core) come from $EIDER_CFLAGS.
 # EIDER=<compiler> picks the compiler (default: scripts/ei, the seed's eiderc).
 cd "$(dirname "$0")/.." || exit 1
 E=${EIDER:-scripts/ei}

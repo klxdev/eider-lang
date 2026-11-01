@@ -17,7 +17,7 @@
 //!           more `{"error":"<code>",...}` lines (every independent error; at most 100, then
 //!           a `{"note":...}` line), none repeated, and nothing on stderr (no internal error,
 //!           no crash)
-//!   emit-c  `emit-c` succeeds exactly when check does, and fails with check's first code
+//!   emit-llvm  `emit-llvm` succeeds exactly when check does, and fails with check's first code
 //!   build   a program check accepts builds (the C it lowers to compiles), unless it declares an
 //!           `extern "c"` fn (which may name a symbol nothing defines; such programs are
 //!           counted, not built)
@@ -275,14 +275,14 @@ fn judge(o: Opts, path: List[u8], src: List[u8], bin: List[u8], inout st: Stats)
             return Ok(verdict("ref (check --json differs)", c, d))
         }
     }
-    let e = compile(o.eiderc, "emit-c", false, path, none)?
+    let e = compile(o.eiderc, "emit-llvm", false, path, none)?
     if c.code == 0 {
-        if e.code != 0 { return Ok(verdict("emit-c (fails where check succeeds)", e, none)) }
+        if e.code != 0 { return Ok(verdict("emit-llvm (fails where check succeeds)", e, none)) }
     } else {
         if e.code != 1 || !reports(e.err, code) {
             let mut d = sys.lit("check: ")
             bytes.append(inout d, c.out)
-            return Ok(verdict("emit-c (does not fail like check)", e, d))
+            return Ok(verdict("emit-llvm (does not fail like check)", e, d))
         }
     }
     // an `extern "c"` fn may name a symbol nothing defines, and calling one is unmanaged code

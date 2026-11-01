@@ -586,5 +586,46 @@ void *ei_chan_at(ei_chan *c, uint64_t i);
 /* Frees the queue (queued elements are not dropped: use ei_chan_at first). */
 void ei_chan_destroy(ei_chan *c);
 
+// ---- for generated code (the LLVM backend, #128): what C glue once did inline
+
+/* Append v in decimal, signed or unsigned (derived Show). */
+void ei_str_push_i64(ei_String *s, int64_t v);
+void ei_str_push_u64(ei_String *s, uint64_t v);
+/* Append t quoted and escaped as derived Show writes text inside a value: `"a\"b\n"` (\" \\
+   \n \t \r escaped, other bytes as they are). */
+void ei_str_push_quoted(ei_String *s, const char *t);
+
+/* `main` returned Err: flush stdout and print `error: <text>` (or the number) to stderr. */
+void ei_main_error(const char *text);
+void ei_main_error_i(int64_t v);
+void ei_main_error_u(uint64_t v);
+
+/* The test driver: print `test <name> ... `, run fn, print `ok`; a trap inside prints FAILED
+   and its message (ei_trap) and returns here. Returns 1 when the test failed, else 0. */
+int32_t ei_test(const char *name, void (*fn)(void));
+/* After the tests: `\n<total> tests, <failed> failed`, the leak report when none failed (with
+   EI_RT_COUNT_ALLOCS); the exit code (1 if any failed). */
+int32_t ei_tests_done(int32_t total, int32_t failed);
+
+/* Handle objects (Task, Mutex, Chan): one allocation with a thread-safe count of holders, a
+   lock, a thread, a channel of `chan_elem`-byte elements (when chan_elem > 0), and `size`
+   bytes of the program's data (a Task's closure and result, a Mutex's value), maximally
+   aligned. The program drops its data before ei_h_free. */
+void *ei_h_new(uint64_t size, uint64_t chan_elem);
+void *ei_h_data(void *h);
+/* Another holder (NULL: nothing). */
+void ei_h_inc(void *h);
+/* One holder fewer: true when that was the last (NULL: false). */
+bool ei_h_dec(void *h);
+void ei_h_lock(void *h);
+void ei_h_unlock(void *h);
+/* Run run(h) on a new runtime thread (once). */
+void ei_h_start(void *h, void *(*run)(void *));
+/* Wait for that thread (any number of times, from any thread; nothing if none started). */
+void ei_h_join(void *h);
+ei_chan *ei_h_chan(void *h);
+/* Joins the thread if one was started, destroys the lock and the channel, frees h. */
+void ei_h_free(void *h);
+
 
 #endif

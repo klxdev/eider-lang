@@ -2,7 +2,6 @@ eiderc <VERSION> (the Eider compiler, written in Eider: Eider -> LLVM IR)
 
 usage:
   eiderc check <file.ei> [--json] [--lib] [--wasm]  type-check only: `ok` or the errors
-  eiderc emit-c <file.ei> [--test] [--lib]   print the program lowered to C (the seed's form; --test: with the test driver)
   eiderc emit-header <file.ei>               print the C header for the `export fn`s
   eiderc build <file.ei> [-o out] [-l lib] [-g]  compile to a native binary (-O2) via clang ($EIDER_LLVM_CC) and $CC
   eiderc build --lib <file.ei> [-o name]     build lib<name>.a, lib<name>.so and <name>.h from `export fn`s
@@ -20,8 +19,7 @@ usage:
   eiderc parse <file.ei> [--all-errors]      dump the AST (--all-errors: every syntax error as JSON lines,
                                              then the AST with its error nodes)
   eiderc ir <file.ei>                        dump the typed IR
-  eiderc emit-llvm <file.ei> [--test] [--coverage]  print the LLVM IR (--coverage: which functions are
-                                             native and why the others fall back to C)
+  eiderc emit-llvm <file.ei> [--test] [--lib] [--wasm]  print the LLVM IR (--test: with the test driver)
   eiderc caps <file.ei>                      each package's capability use, one JSON line per capability
   eiderc migrate-var <file.ei>               print the file with its `var`s rewritten as `let mut` (deprecated `var`)
   eiderc migrate-imports <file.ei> [--json]  print the file with its quoted imports in the dotted form
@@ -35,7 +33,7 @@ usage:
   eiderc help | --help | -h                  print this text
   eiderc version | --version                 print `eiderc <version>` (VERSION; docs/site/tooling/releases.md)
 
-build, run and test emit LLVM IR (the runtime glue and the entry point as C) and build it with
+build, run and test emit LLVM IR (llvm.ei) and build it with
 clang 17 or newer ($EIDER_LLVM_CC), one unit per module and generic instances in 16 shards, each
 cached (EIDER_LLVM_UNITS=0: one unit); a release build uses ThinLTO when clang links with lld
 (EIDER_LLVM_LTO=0: plain objects); -g adds DWARF line info for the .ei sources (one unit).

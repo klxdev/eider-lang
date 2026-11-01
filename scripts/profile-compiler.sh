@@ -1,8 +1,8 @@
 #!/bin/sh
-# Profile eiderc compiling a program (default: itself, `emit-c compiler/main.ei`) with the
+# Profile eiderc compiling a program (default: itself, `emit-llvm compiler/main.ei`) with the
 # profiler (docs/runtime.md "Profiler"), and write a report and a flame graph.
 #
-#   sh scripts/profile-compiler.sh [eiderc args...]     default args: emit-c compiler/main.ei
+#   sh scripts/profile-compiler.sh [eiderc args...]     default args: emit-llvm compiler/main.ei
 #   sh scripts/profile-compiler.sh --save-baseline      ... and keep the profile as the baseline
 #   sh scripts/profile-compiler.sh --check              ... and compare with the baseline:
 #                                                        exit 1 if a deterministic count grew
@@ -25,7 +25,7 @@ case $1 in
   --save-baseline) mode=save; shift ;;
   --check) mode=check; shift ;;
 esac
-[ $# -gt 0 ] || set -- emit-c compiler/main.ei
+[ $# -gt 0 ] || set -- emit-llvm compiler/main.ei
 mkdir -p target/prof
 if [ ! -x target/eiderc-next ] || [ -n "$(find compiler core std -newer target/eiderc-next \( -name '*.ei' -o -name '*.c' -o -name '*.h' \) | head -1)" ]; then
   EIDER_CACHE=off scripts/ei build compiler/main.ei -o target/eiderc-next || exit 3

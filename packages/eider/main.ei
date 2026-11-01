@@ -10,7 +10,7 @@
 //!   eider toolchain show [--json]          the toolchain a command here would use, and why
 //!   eider self update [--force] [--json]   replace $EIDER_HOME/bin/eider with the latest
 //!   eider version [--json] | --version
-//!   eider build|run|test|check|emit-c|caps|ir|... <args>   the toolchain's eiderc
+//!   eider build|run|test|check|emit-llvm|caps|ir|... <args>   the toolchain's eiderc
 //!   eider doc <args>                       the toolchain's eider-doc
 //!   eider new <name> | init|add|remove|fetch|update|vendor|tree <args>   its eider-pkg
 //!   eider eiderc|eider-pkg|eider-doc <args>   that program, with any arguments
@@ -90,7 +90,7 @@ fn help() -> List[u8] {
         "  eider version [--json]           eider's version and the selected toolchain's",
         "",
         "the selected toolchain's programs:",
-        "  eider build|run|test|check|emit-c|caps|ir|... <args>   eiderc (`eider eiderc --help`)",
+        "  eider build|run|test|check|emit-llvm|caps|ir|... <args>   eiderc (`eider eiderc --help`)",
         "  eider doc <args>                 eider-doc (documentation sites, doc tests)",
         "  eider new <name>                 a new package in <name>/ (eider-pkg init)",
         "  eider init|add|remove|fetch|update|vendor|tree <args>  eider-pkg",

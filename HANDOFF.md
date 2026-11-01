@@ -13,7 +13,7 @@ scripts/verify.sh          # full matrix; must end with ALL GREEN
 scripts/selfhost.sh        # seed -> stage1 -> stage2 -> stage3; must print SELF-HOSTED
 ```
 
-Commands: `check [--json]`, `emit-c`, `emit-header`, `build [--lib|--wasm] [-o name] [-l lib]`, `run [--release] [--] [args...]`, `test`, `test --compile-fail <dir>`, `lex`, `parse`, `ir`, `caps`, `ide`, `doc`, `audit-refs`, `migrate-var`, `cache size|clean|trim`, and `--profile` and `-j N` on build/run/test (`scripts/ei --help`).
+Commands: `check [--json]`, `emit-llvm`, `emit-header`, `build [--lib|--wasm] [-o name] [-l lib]`, `run [--release] [--] [args...]`, `test`, `test --compile-fail <dir>`, `lex`, `parse`, `ir`, `caps`, `ide`, `doc`, `audit-refs`, `migrate-var`, `cache size|clean|trim`, and `--profile` and `-j N` on build/run/test (`scripts/ei --help`).
 Version: `VERSION` (`scripts/ei --version`, `scripts/version.sh`); the sibling tools share its MAJOR.MINOR and ship with it (docs/site/tooling/releases.md, `scripts/release.sh`).
 Env: `CC`, `WASM_CC`, `EIDER_CFLAGS`, `EIDER_CACHE` (dir or `off`), `EIDER_CACHE_MAX` (size limit, default 5G), `EIDER_JOBS`, `EIDER_ROOT`, `EIDER_HOME` (eider-pkg's store), `EIDER_PROF`.
 

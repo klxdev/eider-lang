@@ -25,8 +25,9 @@ the C core (`core/`) and building the compiler from nothing needs only a C11 com
 C7; since #127 that path goes through a WebAssembly seed, and building programs needs clang
 17+ (U23, U24).
 
-Non-goals for the first version: a new back end (we keep emitting portable C11), an
-interpreter, incremental compilation, an LSP. The design leaves room for all of them.
+Non-goals for the first version were a new back end (it emitted portable C11 until #128,
+when LLVM IR replaced it), an interpreter, incremental compilation and an LSP; the design left
+room for all of them.
 
 ## Why this order
 
@@ -95,7 +96,7 @@ The progress numbers in the sections below were measured against it at the time.
 |---|---|---|
 | OS interop | `core/eider_core.c` (ABI in `core/ABI.md`) | unchanged; one backend file per OS |
 | Language runtime (traps, checked arithmetic, allocation, string/list helpers, thread glue) | `core/eider_rt.{h,c}` (once C text pasted into every program) | `core/eider_rt.h` + `core/eider_rt.c` (done; contract and inventory in `core/RUNTIME.md`, tested by `tests/core/run.sh`), included by code from the self-hosted compiler |
-| Per-type glue (drop/clone/equality/hash for each concrete type) | generated C | generated C (compiler output; trusted because the compiler is) |
+| Per-type glue (drop/clone/equality/hash for each concrete type) | generated LLVM IR (generated C until #128) | generated (compiler output; trusted because the compiler is) |
 | WASM libc shim | `core/wasm/` (written for eiderc, `core/wasm/README.md`): `eider_rt.c`, the runtime contract for wasm32, and `libc.c`, the freestanding C library | unchanged |
 
 Moving the runtime into `core/` makes it reviewable, testable under sanitizers on its own,
@@ -112,8 +113,8 @@ The language is what the test suites specify, with the expected results recorded
 - `LEARNINGS.md`: semantics that the tests don't pin down well (value semantics, drops on
   every exit path, left-to-right evaluation, snapshot captures).
 
-`eiderc` must pass all of them. Generated C is not part of
-the contract: `eiderc` can name and lay out C differently. Diagnostic codes, messages'
+`eiderc` must pass all of them. Generated code (LLVM IR, before #128 C) is not part of
+the contract: `eiderc` can name and lay out it differently. Diagnostic codes, messages'
 meaning, positions (line, column in Unicode scalar values) and `--json` output are part of
 it.
 
@@ -126,7 +127,7 @@ data-oriented compilers.
 
 ```
 files ──lex──> tokens ──parse──> AST arena ──resolve──> scopes, module graph
-      ──check──> types arena + typed IR ──lower──> C text ──cc──> binary
+      ──check──> types arena + typed IR ──llvm──> LLVM IR ──clang──> binary
 ```
 
 | Pass | Input → output | Notes |
@@ -137,7 +138,7 @@ files ──lex──> tokens ──parse──> AST arena ──resolve──> 
 | `parse` | tokens → AST arena | nodes are `{kind, a, b, c, span}`; variable-length children live in a shared `extra: List[u32]` |
 | `resolve` | AST → module graph + scopes | module identity is (package, path); dotted imports (`import json`, C8.26) go through `eider.lock`; visibility (E0801), clashes |
 | `check` | AST → typed IR | types interned in a type arena; monomorphization on demand; capabilities; `inout` exclusivity; exhaustiveness; const folding |
-| `lower` | typed IR → C | ownership: clones, moves and drops are explicit IR ops before C is printed, so order-of-evaluation and drop placement are decided once, not while printing text |
+| `llvm` | typed IR → LLVM IR | ownership: clones, moves and drops are explicit IR ops before IR is printed, so order-of-evaluation and drop placement are decided once, not while printing text (`lower.ei` names the symbols and lays out the types) |
 | `driver` | CLI, `cc`, cache | uses `std/fs` and `std/proc` |
 
 A compiler that fuses checking and C emission pays for it with evaluation-order and hoisting
@@ -259,6 +260,9 @@ replaced by stubs (and, since "C7: FFI", without stubs).
   `compiler/tests/ir` show where clones and drops go.
 
 ## C5: lowering
+
+*History: this section describes the C backend, removed in #128 (U23); the LLVM backend
+lowers the same IR with the same semantics ("Backends").*
 
 `lower.ei` lowers every IR node of S1–S3. The checker already placed every clone, move and
 drop (ir.ei, "Ownership"), so lowering only prints them: S_READ is a bitwise copy (a borrow
@@ -461,7 +465,7 @@ constant it is handed, so a caller that skips `eval` finds out).
 
 ## C7: WebAssembly
 
-- **Checking.** `--wasm` (`check`, `emit-c`, `emit-header`, `build`, `run`; `test` ignores
+- **Checking.** `--wasm` (`check`, `emit-llvm`, `emit-header`, `build`, `run`; `test` ignores
   it like `--lib`) checks the program as a library (`check.check_wasm`: no `main`, E0805)
   whose exports take only integer and bool parameters (E0806 at the parameter) and return an
   integer, bool or `()` (E0806 at the function), checked before the E0803 rules, which then
@@ -474,12 +478,11 @@ constant it is handed, so a caller that skips `eval` finds out).
 - **Lowering** (#126). The LLVM backend for wasm32 (`llvm.program(..., wasm)`): the module
   says `target triple = "wasm32-unknown-unknown"`, llvm_abi.ei lays values out with 4-byte
   pointers (Map 40 bytes, fn values 20; String and List stay 24, `usize` stays 64 bits on
-  every target) and uses clang's WebAssembly C ABI between the IR and its C half (a single
-  scalar leaf direct, other aggregates byval / sret); `strlen` is a 32-bit `size_t`. The C
-  half's `eider_<name>` entry points carry `export_name("eider_<name>")`.
-  `emit-c --wasm` (`lower.program_wasm`) still prints the whole library as C.
+  every target) and uses clang's WebAssembly C ABI towards C (a single scalar leaf direct,
+  other aggregates byval / sret); `strlen` is a 32-bit `size_t`. The `eider_<name>` entry
+  points carry `"wasm-export-name"="eider_<name>"`.
 - **Driver** (`wasm.ei`). `build --wasm` (and `run --wasm`, which also only builds) compiles
-  the IR and its C half with `core/wasm/eider_rt.c` and `core/wasm/libc.c` by `$WASM_CC`
+  the IR with `core/wasm/eider_rt.c` and `core/wasm/libc.c` by `$WASM_CC`
   (default clang) for wasm32 with an explicit feature set (`wasm.features`: MVP, sign-ext,
   bulk-memory, mutable-globals; the commands are at the top of wasm.ei), and writes
   `<name>.wasm`, `<name>.d.ts` and `<name>.js` (`-o`'s path, else the source's stem),
@@ -963,6 +966,9 @@ review the oracle diff, add a test, and regenerate the seed.
 
 ## C4: lowering
 
+*History: this section describes the C backend, removed in #128 (U23); the LLVM backend
+lowers the same IR with the same semantics ("Backends").*
+
 `lower.ei` turns the IR into one C11 file; `driver.ei` compiles and runs it.
 
 - **One C statement per IR statement.** The IR already fixes evaluation order, so lowering
@@ -1027,51 +1033,62 @@ review the oracle diff, add a test, and regenerate the seed.
 
 ## Backends
 
-The LLVM backend (issues #92, #96 and #125, U21, U23, C260-C269, C340-C346, C440) is the
-backend of `build`, `run`, `test` and `build --lib`, with no flag to choose another: `llvm.ei`
-lowers the typed IR to textual LLVM IR, which clang builds (`emit-llvm` prints it; user
-documentation in docs/site/tooling/llvm.md). It is ordinary compiler code built by the seed,
-so building eiderc needs no LLVM. eiderc checks before every build that clang is LLVM 17 or
-newer (`driver.llvm_cc`; exit 3 with a message otherwise). The C lowering (`lower.ei`, "C4:
-lowering") is still the path of `emit-c`, `--profile`, and of comptime evaluators, until #128 replaces those too. Since #126 the backend also targets
-wasm32 (`--wasm`, `--wasm-core`: "C7: WebAssembly").
+The LLVM backend (issues #92, #96, #125 and #128, U21, U23, C260-C269, C340-C346, C440,
+C447-C452) is Eider's only backend: `llvm.ei` lowers the typed IR to textual LLVM IR, which
+clang builds, for `build`, `run`, `test`, `build --lib`, `--wasm`, `--wasm-core`, `--profile`
+and comptime evaluators (`emit-llvm` prints it; user documentation in
+docs/site/tooling/llvm.md). It is ordinary compiler code built by the seed, so building eiderc
+needs no LLVM; eiderc checks before every build that clang is LLVM 17 or newer
+(`driver.llvm_cc`; exit 3 with a message otherwise). Until #128 a C backend (`lower.ei`
+writing C11) was the default and the seed's form, and this backend wrote only the functions
+it could lower, leaving the rest, the glue, `main` and the test driver to a "C half"; that is
+all gone. `lower.ei` keeps the C names and layouts (llvm.ei's symbols, and `emit-header`'s C
+header for `export fn`s, which is interop, not a backend) and the facts about types the
+backend asks.
 
-**Split.** The backend works one function at a time. `llvm.program` tries every function
-with a body. A function whose statements it can lower becomes a `define` in the module
-(native). Any other function falls back to C, and `emit-llvm --coverage` names the
-construct that made it fall back. `lower.program_split` then writes the C half: the
-fallback functions, the per-type glue, the trap file table, `main` and the test driver.
-Each native function keeps only its prototype in the C half, and its body is not lowered to
-C at all: `llvm.ei` records every glue item it calls (`gneed`, the `lower.GK_*` keys) and
-every module whose trap lines it encodes, and the C half emits exactly that glue and that
-file table (C344; a missing item would be a link error or a wrong trap file, which the
-differential suite would show). Every `static` at the start of a line is dropped, so each
-half can call the other's functions. `lower.c_names` gives the LLVM half the C names of
-types and functions. The module comes back in parts (`Out.head`, the type definitions,
-then each function's text as it was built), and is joined only to write `prog.ll`.
+**The module.** Every function with a body becomes a `define`; a construct the backend can't
+lower is an internal error naming the function. The per-type operations are glue functions in
+the module (`glue_all`, C447): drop, clone, `.copy()`, copy-on-write `uniq_`, `own_` (before a
+value crosses threads), `==`, Ord, Hash, Show (with `ei_str_push_quoted` for text inside a
+value), variant names (a constant table), the List and Map operations, Box/Ref/record buffers
+(the shared-buffer counts inline), closure environments (`edrop_`/`eclone_`/`eown_`) and
+thunks, Default, and the thread handles over the runtime's handle objects (`ei_h_*`: a count,
+a lock, a thread and a channel the runtime lays out, with the program's data after them, so
+the IR never depends on `pthread_mutex_t`'s size). Each is asked for where it is used
+(`gneed`) with the C convention of that call, defined `internal`, and built until no new glue
+is needed. `main` hands `ei_main_body` (the trap file table, the profiler's start, the Eider
+`main` and its result as an exit code or `error: ...`) to the runtime's `ei_main`; the test
+driver runs each block through the runtime's `ei_test` (which owns the setjmp) and ends with
+`ei_tests_done`; a library's `eider_<name>` entry points have the header's C convention. The
+module comes back in parts (`Out.head`, the type definitions, then each function's text,
+`Out.owner` its IR function or GLUE), which llvm_units.ei cuts into units.
 
 **Build.** Since C8.27 the module is cut into units (one per module, the generic instances in
-16 shards; llvm_units.ei), each compiled by clang (the sanitizer, `-g` and `-O` flags of
-`EIDER_CFLAGS` too) in parallel and cached, and `$CC` compiles the C half; a release build
-uses ThinLTO with lld and lld's cache (C396, replacing C343's full LTO with lld or gold): the
-units and the C half (with `-w`: it is generated code that the C backend already checks under
-`$CC`) are compiled to bitcode, the C core's objects stay native and cached, so the C half's
-glue (push, clone, drop, `==`) still inlines into the IR. `EIDER_LLVM_LTO=0`, no lld, and
-`build --lib` link plain objects; `-g` and `build --lib` build the module as one unit. The
-program is cached by its objects ("C8.27: incremental builds"; this replaces the whole-IR
-binary key of C440). Today no construct falls back: every
-function of the run tests, and every function of the compiler, is native.
+16 shards, and one for the glue and the entry points; llvm_units.ei), each compiled by clang
+(the sanitizer, `-g` and `-O` flags of `EIDER_CFLAGS` too) in parallel and cached; the C core's
+two sources are compiled by `$CC`; a release build uses ThinLTO with lld and lld's cache
+(C396). `EIDER_LLVM_LTO=0`, no lld, and `build --lib` link plain objects; `-g` and `build
+--lib` build the module as one unit. The program is cached by its objects ("C8.27:
+incremental builds"). A `--profile` build compiles the core with -DEI_RT_PROFILE.
+
+**Targets** (C448). The target is the one clang builds for (`$EIDER_LLVM_CC -dumpmachine`;
+x86-64 without clang), or wasm32 for `--wasm`/`--wasm-core`; it chooses llvm_abi.ei's C
+convention: System V x86-64, AAPCS64 for aarch64 (a scalar direct and not extended, a
+composite of up to 16 bytes as an integer of its size or `[2 x i64]`, a larger one as a pointer
+to a copy the caller makes, a larger result through `sret`), or clang's WebAssembly ABI. The
+layouts are the same on x86-64 and AArch64 (LP64). compiler/tests/llvm/a64.sh compares the
+AArch64 signatures of abi.ei's exports with clang's for the same C prototypes, so a
+cross-built tool (zig cc -target aarch64-linux-musl as clang, scripts/release.sh) calls the C
+core correctly; there is no AArch64 machine here to run one.
 
 **Calling conventions.** A call from Eider to Eider uses an internal convention (C340):
 every native function is `define internal @<name>.i`. Its parameters are classified as the
 System V ABI classifies them, except that an aggregate the C ABI would copy onto the stack
 (byval: over 16 bytes, or out of registers) is passed by reference, and registers are not
 counted. The callee never writes through that reference; a function that writes such a
-parameter copies it first. The C half reaches a native function through a C-convention
-wrapper `@<name>`, emitted only for functions the C half names beyond their prototype
-(`main`, tests, exports, thunks, glue calling an `impl`), and a call into a fallback
-function goes through a shim `@<name>.i`, so a function still moves between the halves
-freely. Closure bodies, which are only called through fn values, keep the C convention.
+parameter copies it first. Glue calls a trait `impl` through the internal convention too;
+the C convention is for the C core and runtime, `extern "c"` functions, exports, and closure
+bodies and thunks, which are only called through fn values.
 This reverses part of C262. The profile of round one showed why: a borrowed record such as
 check's 3 KB context was copied byval on every call, and external linkage stopped clang from
 doing what it does with the C backend's static functions (argument promotion, inlining a
@@ -1087,8 +1104,7 @@ arguments go `byval`, and MEMORY results go through `sret`. An aggregate that ne
 the six integer registers than are left goes `byval` as a whole. bool and u8 are
 `zeroext`. compiler/tests/llvm checks this against the C compiler: records of 2 to 24
 bytes with padding, nesting, a str, register exhaustion, and both directions (C export
-wrappers into LLVM IR, LLVM IR into the C half's `eq_` glue). AAPCS64 (arm64) is a later
-step, and `abi.sig` is the one place it goes.
+wrappers into LLVM IR, and the runtime's functions); AAPCS64 and wasm32 are above ("Targets").
 
 **Semantics.** One IR statement lowers to the same operations the C backend performs, in the
 same order: bounds checks first (outermost index first), then copy-on-write `uniq_` calls,
@@ -1118,12 +1134,12 @@ copies it to a temporary of its own if the same local is also an `inout` root or
 destination), and `sret` is `noalias`. No `exact`, no flags on shifts, and none of LLVM 18's
 newer flags while the minimum is LLVM 17. compiler/tests/run/llvm_opt*.ei trap in loops
 whose induction variables the flags describe, with the C backend's messages and lines.
-Per-type operations call the C half's glue where `lower.ei` calls it. The hot helpers are
-inline IR: `ei_idx`, checked arithmetic, the conversions and shifts, `ei_hash_u64`, and the
-Ref access checks.
+Per-type operations call the module's glue. The hot helpers are inline IR: `ei_idx`, checked
+arithmetic, the conversions and shifts, `ei_hash_u64`, the shared-buffer counts and the Ref
+access checks.
 
 **Debug info** (`-g`): a DICompileUnit (`DW_LANG_C11`, since DWARF has no code for Eider),
-a DIFile per module, a DISubprogram per native function (its Eider name, and its C name as
+a DIFile per module, a DISubprogram per function (its Eider name, and its C name as
 the linkage name), a DILocation per statement from the IR's line, and a DILocalVariable for
 every parameter and named local that has an address (`llvm.dbg.declare`). Types are
 described from the C layouts: integers, bool and str as base and pointer types, arrays,
@@ -1135,15 +1151,14 @@ compiler/tests/llvm/dwarf.ei at -O0 with `-g` and finds every parameter, local, 
 type name with a frame location (llvm-dwarfdump, else `readelf --debug-dump=info`; gdb and
 lldb are not installed here). At -O2 the variables of inlined functions are optimized away.
 
-**Tests.** Until it became the only way to build programs, `scripts/llvm-diff.sh` ran every
+**Tests.** Until it became the default (C440), `scripts/llvm-diff.sh` ran every
 run test through both backends and required byte-identical stdout, stderr and exit codes at
 -O0, -O2 (with LTO), with `-DEI_RT_COUNT_ALLOCS` and under ASan+UBSan; it is gone (C440).
 The reference is now the recorded oracle: scripts/test-compiler.sh's run, sanitize and leaks
 legs build every run test with the LLVM backend and compare it with tests/oracle's `.run` and
 `.test` files. compiler/tests/llvm/run.sh (verify.sh's "llvm" leg, skipped with the reason
-when clang 17+ is missing) checks the C ABI, that no function of the run tests or of the
-compiler falls back to C, and the DWARF. The compiler built by the LLVM backend emits
-byte-identical C and LLVM IR for compiler/main.ei.
+when clang 17+ is missing) checks the C ABI, the AArch64 signatures (a64.sh) and the DWARF;
+scripts/selfhost.sh checks that two stages emit byte-identical IR for compiler/main.ei.
 
 **Measurements** (taken with the comparison scripts/llvm-bench.sh had then; it now times
 the LLVM backend alone. 2026-10-31, x86-64, clang 22.1.8 for both backends, median of 7 runs, EIDER_CACHE=off, a shared and busy machine: compare within a
@@ -3066,19 +3081,19 @@ depends on changes. For the LLVM backend (llvm_units.split; `run`, `test` and `b
 |---|---|---|
 | `mod.<n>` (one per module) | the functions whose body comes from module n (`Ir.fns[f].file`), its closures and the C-convention wrappers of its functions | that module's source changes, or the layout or signature of something it uses |
 | `inst.<k>` (16 shards) | the monomorphized generic instances (an IR name with `[`), shard `hash(IR name) mod 16`, whatever module instantiated them | an instance of that shard is added, removed or changes |
-| `half` | the C half: per-type glue, `main`, the test driver, the trap file table, fallbacks | the set of glue, natives, tests or modules changes |
+| `glue` | the per-type glue, `main`, the test driver, the exports (llvm.GLUE, since #128) | the set of glue, tests or exports changes |
 | `eider_rt`, `eider_core` | the C core | the core or the flags change (so: almost never) |
 
-For eiderc that is 43 LLVM units (27 modules with functions, 16 shards), the C half and the
-core: 48 objects. Why shards for instances rather than "with the module that uses them": an
+For eiderc that is 44 LLVM units (27 modules with functions, 16 shards, the glue) and the
+core: 46 objects. Why shards for instances rather than "with the module that uses them": an
 instance such as `List[String].push` is used by many modules; put with its user it would be
 compiled once per user and invalidated by every edit to any user, and a unit of its own per
 instance would be thousands of compiler processes. Hash shards keep each instance in exactly
 one unit whatever uses it, so editing `diag.ei` recompiles `mod.<diag>` and nothing else,
 unless the edit adds an instance (its shard changes) or changes a type's layout (the units
 that use the type change, as they must). 16 shards (C383): eiderc has ~1,400 functions, and
-16 keeps 16 cores busy on a cold build. The per-type glue is in the C half today; #128 moves it
-into the IR, and it then shards like the instances (`glue.<k>`, by the type's stable name).
+16 keeps 16 cores busy on a cold build. Since #128 the per-type glue is IR, in one `glue`
+unit (sharding it like the instances, by the type's stable name, is a later step).
 
 The split works on the module's text (llvm.ei records which IR function each part of
 `Out.ll` is, `Out.owner`; C392). Each unit is a complete module: `source_filename` (the unit's
@@ -3086,7 +3101,8 @@ name), the named types it uses closed over the types they mention, its functions
 constants it uses (copied into every unit that uses them: they are `private unnamed_addr`),
 and a declaration of every function it calls that is defined elsewhere: from that
 function's own `define` line (`declare hidden ...`) for another unit's, the module's
-`declare` lines for the C half's, the core's and the intrinsics. A function another unit calls
+`declare` lines for the core's and the intrinsics. A constant can name others (a table of
+names, the trap files): the unit gets them too. A function another unit calls
 becomes `define hidden` (external in its object, invisible outside the program); the rest
 stay `internal`, so -O2 still sees most functions as local. So that an edit stays local, a
 unit's text holds nothing numbered program-wide: the types (`%t<type id>`, numbered by the
@@ -3169,7 +3185,7 @@ eiderc's 48 objects is ~0.1 s of its 0.9 s edit (lld would save part of that; la
 
 Before #129 a release LLVM build was full LTO over one module (`-flto`, with lld or gold):
 single-threaded, ~30 s for eiderc, and every edit redid all of it. Now (C396) a release build
-compiles each LLVM unit and the C half with `-flto=thin` (the unit object is bitcode with a
+compiles each LLVM unit with `-flto=thin` (the unit object is bitcode with a
 summary, still cached by its text) and links with
 
 ```
@@ -3180,7 +3196,7 @@ clang <cc flags> -flto=thin -fuse-ld=lld \
 ```
 
 ThinLTO optimizes every module in parallel, importing across modules what the summaries say
-is worth inlining (the C half's glue into the IR, as full LTO did); lld's cache keys each
+is worth inlining (the glue into the modules' functions); lld's cache keys each
 module's optimized object by the module's hash and everything imported into it, so after an
 edit only the edited module and the modules that import from it are optimized again; the rest
 come from `lto/`. The job count and the cache flags are not part of the link key (build.link
@@ -3354,34 +3370,34 @@ and each linked program 2.4 MB, so the 5 GiB default holds hundreds of builds.
 
 `eiderc build|run|test <file> --profile[=cpu,mem,conc]` (main.ei: `profile`, parsed by
 `lower.prof_what`; a bare `--profile` is all three; with `--lib` or `--wasm` it is a usage
-error) lowers the program through `lower.program_prof`, which is `emit` with `G.prof` set.
-Everything below is emitted only then (`g.prof > 0`), so without the flag the C is byte for
-byte what it was (scripts/test-compiler.sh "profile-off" compares `emit-c` of every run test
-and of the compiler with the compiler of the merge base). The runtime side, the file format
-and the overhead are docs/runtime.md "Profiler"; decisions C200 to C206.
+error) lowers the program through `llvm.program_prof` with `E.prof` set. Everything below is
+emitted only then (`e.prof > 0`), so without the flag the IR has none of it
+(scripts/test-compiler.sh "profile-off" checks `emit-llvm` of every run test and of the
+compiler). The runtime side, the file format and the overhead are docs/runtime.md
+"Profiler"; decisions C200 to C206, C449.
 
-- **The C asks for the runtime.** The output starts with `#define EI_RT_PROFILE 1`;
-  `driver.profiled` sees it and adds `-DEI_RT_PROFILE` to the cc argv, so eider_rt.c is
-  compiled with core/eider_prof.c (and the core objects are cached apart: the argv and
+- **The runtime.** The driver compiles the core with `-DEI_RT_PROFILE` (`prof`), so eider_rt.c
+  includes core/eider_prof.c (and the core objects are cached apart: the argv and
   eider_prof.c's bytes are in the key).
-- **Shadow frames** (`function`, `framed`). A function whose body calls (S_CALL, S_CALLV) or
-  loops pushes `ei_prof_frame *ei_pf = ei_prof_enter(<index + 1>);` after its locals and pops
-  (`ei_prof_leave();`) before every `return` and at the end of a `()` function. Straight-line
-  code that calls nothing gets no frame: it counts for its caller, as if inlined.
-- **Lines** (`prof_marks`, `prof_line`): `ei_pf->line = <line>;` before a statement that calls,
-  runs a builtin, makes a closure, builds a record with its own Drop, drops an owned value or
-  prints, unless the same straight-line code already set that line (`G.pline`, reset at every
-  block boundary).
+- **Shadow frames** (`function`, `lower.framed`, `prof_enter`). A function whose body calls
+  (S_CALL, S_CALLV) or loops takes the next frame of the runtime's thread-local shadow stack
+  (`ei_prof_stack`, `ei_prof_depth`, `ei_prof_spill`, through `llvm.threadlocal.address`, with
+  volatile float stores as eider_rt.h's `ei_prof_enter` does) at entry, and pops it
+  (`prof_leave`) before every `ret`. Straight-line code that calls nothing gets no frame: it
+  counts for its caller, as if inlined.
+- **Lines** (`lower.prof_marks`, `prof_line`): the frame's line is stored before a statement
+  that calls, runs a builtin, makes a closure, builds a record with its own Drop, drops an
+  owned value or prints, unless the line last stored is the same (`E.pline`).
 - **Events** in glue (`prof_ev`): `EI_PEV_COW` in `uniq_` when the buffer is shared (bytes of
   the buffer), `EI_PEV_GROW` in `push_` when it grows, `EI_PEV_REHASH` in `ins_` when it
-  rehashes, `EI_PEV_DROP` around a type's own Drop in `drop_`, and `EI_PEV_COPY` at each
-  `.copy()` (a comma expression, so the copy stays the assigned value).
-- **The name table** (`prof_table`, before `main`): `ei_prof_names` (every IR function's name,
-  index + 1), `ei_prof_file_of`, `ei_prof_files` (the entry file, then the module files as
-  `ir.files` names them), and `ei_prof_tab` with the selection, the program and the
-  toolchain version (`driver.version`: the first line of `<root>/VERSION`). Generated `main`
-  and test `main` call `ei_prof_init(&ei_prof_tab)` after `ei_set_file`; a failed test calls
-  `ei_prof_unwind(0)` (its longjmp skipped the pops).
+  rehashes, `EI_PEV_DROP` before a type's own Drop in `drop_`, `EI_PEV_COPY` at each
+  `.copy()`, `EI_PEV_REF` when a Ref access overlaps another.
+- **The name table** (`prof_init`): `@ei_prof_names` (every IR function's name, index + 1),
+  `@ei_prof_file_of`, `@ei_prof_files` (the entry file, then the module files as `ir.files`
+  names them), and `@ei_prof_tab` with the selection, the program and the toolchain version
+  (`driver.version`: the first line of `<root>/VERSION`). `ei_main_body` calls
+  `ei_prof_init(&ei_prof_tab)` after the trap file table; a failed test is unwound by the
+  runtime's `ei_test` (`ei_prof_unwind(0)`).
 
 Tests: compiler/tests/profile (memory events at their lines, waits and labels on threads,
 CPU samples under labels with a snapshot, a Ref conflict's trap, `EIDER_PROF=off`; also under
@@ -3434,8 +3450,9 @@ Each with a design note, compile-fail tests and new codes:
   with hand-written expected output, so the compiler is held to the correct behaviour rather
   than the recorded one.
 - `scripts/fuzz-check.sh`: crash and consistency fuzzing, plus `check --json` against the seed.
-- Generated C compiled with `-Wall -Wextra -pedantic` and run under ASan/UBSan/TSan in CI.
-  `eiderc`'s C must not trip `-Wmaybe-uninitialized` at `-O2`.
+- Every run test built through the LLVM backend at -O0, at -O2 under UBSan, with ASan and
+  TSan and with the runtime's allocation count, against the oracle; the emitted IR is
+  deterministic (also from another directory).
 
 ## Layout
 
@@ -3444,13 +3461,15 @@ compiler/
   eider.toml          package `eiderc`
   main.ei             CLI (`eiderc --help`)
   source.ei  lex.ei  intern.ei  ast.ei  parse.ei  resolve.ei  types.ei  fold.ei  pats.ei
-  check.ei  ir.ei  lower.ei  emit.ei  diag.ei  driver.ei  consteval.ei  suite.ei  sha256.ei
+  check.ei  ir.ei  lower.ei (C names and layouts)  diag.ei  driver.ei  consteval.ei  suite.ei  sha256.ei
   build.ei            units, the object and link caches, the job runner, eviction ("C8.27")
   lock.ei             eider.toml and eider.lock for package imports ("C8.3")
   ide.ei              the IDE analysis API (`eiderc ide`; "IDE analysis")
   front.ei            every syntax error at once ("Front-end recovery")
   doc.ei              the API description (`eiderc doc`; "Documentation: `eiderc doc`")
-  llvm.ei llvm_abi.ei the experimental LLVM backend and its C layouts and System V classifier ("Backends")
+  llvm.ei llvm_abi.ei the backend, and its C layouts and C conventions (x86-64, AArch64, wasm32; "Backends")
+  llvm_units.ei       the module cut into units ("C8.27")
+  wasm.ei             `build --wasm` and `--wasm-core` ("C7: WebAssembly")
   tests/              pass-level golden tests (lex, lex_ok, check, ir, run, wasm, export, ide, pkgs, ...)
 tests/oracle/         the recorded expected results (scripts/test-compiler.sh, BLESS=1)
 ```

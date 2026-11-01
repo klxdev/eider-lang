@@ -88,7 +88,7 @@ What is different:
 ## From C
 
 What carries over: the output is C11, so anything that runs C runs Eider, and the
-generated code is readable (`scripts/ei emit-c file.ei`); `extern "c"` calls C functions
+generated code is readable (`scripts/ei emit-llvm file.ei`); `extern "c"` calls C functions
 directly and `export fn` builds `.a`/`.so` libraries with a header ([FFI](ffi.md)).
 
 What is different:

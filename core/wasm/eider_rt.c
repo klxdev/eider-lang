@@ -382,3 +382,125 @@ void ei_chan_destroy(ei_chan *c) {
   (void)c;
   ei_trap(EI_WASM_NO_THREADS, 0);
 }
+
+// ---- for generated code (the LLVM backend): what C glue once did inline
+
+void ei_str_push_u64(ei_String *s, uint64_t v) {
+  char b[24];
+  int i = 23;
+  b[23] = 0;
+  do {
+    b[--i] = (char)(48 + v % 10);
+    v /= 10;
+  } while (v);
+  ei_str_cat(s, b + i, (uint64_t)(23 - i));
+}
+
+void ei_str_push_i64(ei_String *s, int64_t v) {
+  if (v < 0) {
+    char m = 45;
+    ei_str_cat(s, &m, 1);
+    ei_str_push_u64(s, (uint64_t)0 - (uint64_t)v);
+  } else {
+    ei_str_push_u64(s, (uint64_t)v);
+  }
+}
+
+void ei_str_push_quoted(ei_String *o, const char *t) {
+  char e[2];
+  e[0] = 34;
+  ei_str_cat(o, e, 1);
+  for (; *t; t++) {
+    unsigned char ch = (unsigned char)*t;
+    e[0] = 92;
+    if (ch == 34 || ch == 92) {
+      e[1] = (char)ch;
+      ei_str_cat(o, e, 2);
+    } else if (ch == 10) {
+      e[1] = 110;
+      ei_str_cat(o, e, 2);
+    } else if (ch == 9) {
+      e[1] = 116;
+      ei_str_cat(o, e, 2);
+    } else if (ch == 13) {
+      e[1] = 114;
+      ei_str_cat(o, e, 2);
+    } else {
+      ei_str_cat(o, t, 1);
+    }
+  }
+  e[0] = 34;
+  ei_str_cat(o, e, 1);
+}
+
+void ei_main_error(const char *text) {
+  fflush(stdout);
+  fprintf(stderr, "error: %s\n", text);
+}
+void ei_main_error_i(int64_t v) {
+  fflush(stdout);
+  fprintf(stderr, "error: %" PRId64 "\n", v);
+}
+void ei_main_error_u(uint64_t v) {
+  fflush(stdout);
+  fprintf(stderr, "error: %" PRIu64 "\n", v);
+}
+
+int32_t ei_test(const char *name, void (*fn)(void)) {
+  /* static: a failing test's trap longjmps back here, while ei_test runs */
+  static jmp_buf jb;
+  printf("test %s ... ", name);
+  fflush(stdout);
+  ei_set_trap_jmp(&jb);
+  if (setjmp(jb) == 0) {
+    fn();
+    ei_set_trap_jmp(NULL);
+    printf("ok\n");
+    return 0;
+  }
+  ei_set_trap_jmp(NULL);
+#ifdef EI_RT_PROFILE
+  /* a failed test longjmps past its frames' pops */
+  ei_prof_unwind(0);
+#endif
+  return 1;
+}
+
+int32_t ei_tests_done(int32_t total, int32_t failed) {
+  printf("\n%" PRId32 " tests, %" PRId32 " failed\n", total, failed);
+  if (!failed) ei_check_leaks();
+  return failed ? 1 : 0;
+}
+
+// handle objects: one thread, so a count, the data, and threads and channels that trap
+typedef struct {
+  uint64_t rc;
+  uint64_t pad;
+} ei_h_head;
+#define EI_H_DATA ((uint64_t)16)
+void *ei_h_new(uint64_t size, uint64_t chan_elem) {
+  if (chan_elem > 0) ei_trap(EI_WASM_NO_THREADS, 0);
+  if (size > UINT64_MAX - EI_H_DATA) ei_trap("out of memory", 0);
+  ei_h_head *h = ei_alloc(EI_H_DATA + size);
+  memset(h, 0, (size_t)(EI_H_DATA + size));
+  h->rc = 1;
+  return h;
+}
+void *ei_h_data(void *h) { return (unsigned char *)h + EI_H_DATA; }
+void ei_h_inc(void *h) {
+  if (h) ((ei_h_head *)h)->rc++;
+}
+bool ei_h_dec(void *h) { return h && --((ei_h_head *)h)->rc == 0; }
+void ei_h_lock(void *h) { (void)h; }
+void ei_h_unlock(void *h) { (void)h; }
+void ei_h_start(void *h, void *(*run)(void *)) {
+  (void)h;
+  (void)run;
+  ei_trap("cannot create a thread", 0);
+}
+void ei_h_join(void *h) { (void)h; }
+ei_chan *ei_h_chan(void *h) {
+  (void)h;
+  ei_trap(EI_WASM_NO_THREADS, 0);
+}
+void ei_h_free(void *h) { ei_free(h); }

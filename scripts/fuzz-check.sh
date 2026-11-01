@@ -1,6 +1,6 @@
 #!/bin/sh
 # Crash and consistency fuzzing of eiderc (packages/fuzz; its main.ei lists the invariants:
-# check, emit-c, build and run agree with each other and never crash, and `check --json`
+# check, emit-llvm, build and run agree with each other and never crash, and `check --json`
 # equals a reference compiler's). Builds the fuzzer, and target/eiderc-next (compiler/ built
 # by the seed's eiderc), when their sources changed, then runs it from the repository root.
 # Failing mutants are kept next to their seed as fuzz_<n>.ei.

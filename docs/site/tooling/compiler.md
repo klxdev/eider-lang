@@ -37,12 +37,11 @@ and exit code 2. With no arguments at all, eiderc prints its usage to stderr and
 
 | Command | Prints |
 |---|---|
-| `emit-c <file> [--test] [--lib] [--wasm]` | The program lowered to C (the form the seed is in; `build`, `run` and `test` use the LLVM backend). `--test`: with the test driver, as `test` builds it; `--lib`: as a library (no `main`, entry points for the exports); `--wasm`: as a WebAssembly module. |
 | `emit-header <file> [--wasm]` | The C header for the file's `export fn`s (the file is checked as a library). With `--wasm`, the `.d.ts` and the JavaScript loader, separated by a `\x01` byte. |
 | `lex <file>` | The tokens, one per line: `line:col-endcol kind [value]`. |
 | `parse <file> [--all-errors]` | The syntax tree. With `--all-errors`, every syntax error as a JSON line, then the tree with its error nodes (exit 1 if there were errors). |
 | `ir <file>` | The typed intermediate representation the LLVM IR (and the C) is generated from. |
-| `emit-llvm <file> [--test] [--lib] [--coverage]` | The LLVM IR that `build`, `run` and `test` compile (with `--coverage`, which functions are native and why any other would fall back to C). See [The LLVM backend](llvm.md). |
+| `emit-llvm <file> [--test] [--lib] [--wasm]` | The LLVM IR that `build`, `run` and `test` compile (`--test`: with the test driver, as `test` builds it; `--lib`: as a library, with entry points for the exports; `--wasm`: as a WebAssembly module). See [The LLVM backend](llvm.md). |
 | `caps <file>` | Each package's capability use, one JSON line per (package, capability), with the first function that uses it: `{"package":..., "dir":..., "cap":"fs", "kind":"uses", "fn":"save", "file":"notes.ei", "line":4, "col":70}`; `kind` is `uses`, `extern` or `unsafe`. Imports that can't be loaded are left out silently. See [Capabilities](../guide/capabilities.md). |
 | `ide <file> [--overlay <path> <text>]...` | The analysis an editor uses (`compiler/ide.ei`): files, diagnostics, symbols with their spans and types, references, and the type at each expression. `--overlay <path> <text>` (repeatable) analyses `<path>` as if it contained the contents of the file `<text>`, for unsaved buffers. |
 
@@ -69,17 +68,16 @@ print `eiderc <version>` (`eiderc 0.1.0`) and exit 0: the toolchain's version, f
 | `-l <lib>` | `build`, `run`, `test` | link the C library `<lib>` (repeatable) |
 | `--release` | `run`, `test` | compile at `-O2` instead of `-O0` |
 | `-j <n>` | `build`, `run`, `test` | compile at most `n` units at once (default `$EIDER_JOBS`, else one per CPU the process may use) |
-| `--lib` | `check`, `emit-c`, `build`, `run` | treat the file as a library: no `main`, at least one `export fn` |
-| `--wasm` | `check`, `emit-c`, `emit-header`, `build`, `run`, `emit-llvm` | treat the file as a WebAssembly module (implies `--lib`; exports take and return integers and `bool`; no threads) |
+| `--lib` | `check`, `emit-llvm`, `build`, `run` | treat the file as a library: no `main`, at least one `export fn` |
+| `--wasm` | `check`, `emit-header`, `build`, `run`, `emit-llvm` | treat the file as a WebAssembly module (implies `--lib`; exports take and return integers and `bool`; no threads) |
 | `--wasm-core` | `build`, `check`, `emit-llvm` | build the program as a WebAssembly core module (see `build --wasm-core`) |
-| `--test` | `emit-c` | include the test driver |
+| `--test` | `emit-llvm` | include the test driver |
 | `--compile-fail` | `test` | run a compile-fail suite (`<dir>` instead of a file) |
 | `--json` | every command that reports errors; `audit-refs` | diagnostics as JSON, one object per line on stdout |
 | `--max-errors <n>` | every command that reports errors | show at most `n` errors (default 100; `0` shows all) |
 | `--all-errors` | `parse` | every syntax error, then the tree |
 | `--overlay <path> <text>` | `ide` | read `<path>` from the file `<text>` |
 | `-g` | `build`, `run`, `test` | DWARF debug information for the `.ei` files |
-| `--coverage` | `emit-llvm` | the native/fallback report instead of the IR |
 | `--` | `run` | every argument after it goes to the program, even one that looks like an option |
 | `--help`, `-h` | | print the usage and exit |
 | `--version` | | print `eiderc <version>` and exit |
@@ -162,9 +160,9 @@ clean` removes every entry.
 
 ## Compile times
 
-The front end takes about 50 ms for a 3,000-line program; the C compiler dominates
-(gcc `-O0` about 1.3 s, `-O2` about 4.9 s; clang `-O0` about 0.5 s for the same program).
-That is why `run` and `test` use `-O0` and `build` uses `-O2`.
+The front end takes about 50 ms for a 3,000-line program; clang dominates a build. That is
+why `run` and `test` use `-O0` and `build` uses `-O2`, and why the IR is built in cached,
+parallel units ([the LLVM backend](llvm.md)).
 
 ## The bootstrap
 

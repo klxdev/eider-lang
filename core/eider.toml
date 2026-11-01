@@ -1,5 +1,5 @@
 [package]
 name = "core"
-version = "0.1.0"
-eider = "0.1"
+version = "0.2.0"
+eider = "0.2"
 description = "The language core (sys.ei, the prelude, the C runtime): part of the toolchain, imported as `core/<module>`"

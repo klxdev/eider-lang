@@ -15,7 +15,7 @@ cc -o wasm2c seed/wasm2c.c && ./wasm2c seed/eiderc.wasm -o eiderc.c && cc -pthre
 scripts/ei run examples/warehouse.ei      # build + run (scripts/ei builds target/eiderc from the seed)
 scripts/ei test examples/warehouse.ei     # run `test` blocks
 scripts/ei check file.ei --json           # machine-readable diagnostics for agents
-scripts/ei emit-c file.ei                 # inspect the generated C
+scripts/ei emit-llvm file.ei              # inspect the generated LLVM IR
 scripts/ei test --compile-fail tests/checks   # compile-fail / compile-pass suite
 tests/run.sh                              # run-and-compare suite (CC=clang works too)
 scripts/verify.sh                         # everything

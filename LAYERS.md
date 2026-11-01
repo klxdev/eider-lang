@@ -106,7 +106,7 @@ Building Eider must stay cheap to bootstrap and audit. The rule:
 - **Building programs** needs clang 17 or newer: `build`, `run`, `test` and `build --lib` go
   through the LLVM backend (compiler/llvm.ei; docs/compiler.md, "Backends"), whose IR clang
   compiles (U23). Building the compiler itself from the seed still needs only the C compiler,
-  and so do `check`, `emit-c` and the other commands that build nothing. `build --wasm` needs
+  and so do `check`, `emit-llvm` and the other commands that build nothing. `build --wasm` needs
   clang with the wasm32 target and `wasm-ld`.
 - **Cryptography is the one scoped exception to "no third-party C libraries"** (decisions U12,
   C1, C2, C140-C146; core/crypto/README.md). Eider never implements primitives: hashes,

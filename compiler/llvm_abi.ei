@@ -23,9 +23,12 @@
 // one field, recursively, an array of one) goes as that leaf's integer, any other aggregate
 // `byval` as an argument and through `sret` as a result; no registers are counted.
 //
-// AAPCS64 (arm64) is a later step: composites up to 16 bytes in up to two x registers,
-// larger ones by reference to a caller copy (not byval), no SSE class; `sig` is the one
-// place it goes.
+// For AArch64 (AAPCS64, `a64`: the target clang builds for, driver.target): a scalar goes
+// direct and is not extended; a composite of up to 16 bytes goes in one or two general
+// registers, coerced to an integer of its size (one piece) or to `[2 x i64]` (two pieces,
+// C_PAIR: never split between a register and the stack); a larger one goes as a pointer to a
+// copy the caller makes (A_BYVAL with C_PTR: no `byval`), and a larger result through `sret`
+// (x8). No registers are counted (the backend's [2 x i64] keeps a pair whole).
 
 import eiderc.types
 import eiderc.lower
@@ -34,6 +37,11 @@ pub const C_NONE: u32 = 0
 pub const C_SSE: u32 = 1
 pub const C_INTEGER: u32 = 2
 pub const C_MEMORY: u32 = 3
+/// AArch64 markers: in c0 of A_COERCE, the two pieces travel as `[2 x i64]`; in c0 of
+/// A_BYVAL, a pointer to the caller's copy (no `byval`); in c1 of A_DIRECT, no extension.
+pub const C_PAIR: u32 = 9
+pub const C_PTR: u32 = 8
+pub const NOEXT: u32 = 7
 
 /// A parameter type that is a pointer to the type below this bit (an `inout` parameter,
 /// glue's `T *x`); every other parameter type is an Eider type id (str: a C pointer).
@@ -58,12 +66,17 @@ pub type Leaf = { off: u64, size: u64, cls: u32 }
 /// Layout memo: size and alignment per type id (0: not computed yet), and how a value of
 /// the type crosses as an argument and as a result (arg_of; `known` bit 1: as an argument,
 /// bit 2: as a result).
-/// `ptr`: the size of a pointer (8, or 4 on wasm32), `wasm`: wasm32's C ABI.
-pub type Lay = { size: List[u64], align: List[u64], arg: List[Arg], res: List[Arg], known: List[u8], ptr: u64, wasm: bool }
+/// The targets: x86-64 (System V), AArch64 (AAPCS64), wasm32.
+pub const X86_64: u32 = 0
+pub const AARCH64: u32 = 1
+pub const WASM32: u32 = 2
 
-pub fn new_lay(p: lower.P, wasm: bool) -> Lay {
-    let pt: u64 = if wasm { 4 } else { 8 }
-    let mut l = Lay(List.new(), List.new(), List.new(), List.new(), List.new(), pt, wasm)
+/// `ptr`: the size of a pointer (8, or 4 on wasm32), `wasm`: wasm32's C ABI, `a64`: AAPCS64.
+pub type Lay = { size: List[u64], align: List[u64], arg: List[Arg], res: List[Arg], known: List[u8], ptr: u64, wasm: bool, a64: bool }
+
+pub fn new_lay(p: lower.P, arch: u32) -> Lay {
+    let pt: u64 = if arch == WASM32 { 4 } else { 8 }
+    let mut l = Lay(List.new(), List.new(), List.new(), List.new(), List.new(), pt, arch == WASM32, arch == AARCH64)
     let none = Arg(A_VOID, 0, 0, 0, 0, 0, 0)
     for i in 0..p.t.tys.len() {
         l.size.push(0)
@@ -336,7 +349,10 @@ pub fn arg_of(inout l: Lay, p: lower.P, ty: u32, is_ret: bool) -> Arg {
 
 fn classify_arg(inout l: Lay, p: lower.P, ty: u32, is_ret: bool) -> Arg {
     if ty < PTR_TO && (ty == types.UNIT || ty == types.NEVER) && is_ret { return Arg(A_VOID, ty, 0, 0, 0, 0, 0) }
-    if scalar(p, ty) { return Arg(A_DIRECT, ty, 1, 0, 0, C_INTEGER, 0) }
+    if scalar(p, ty) {
+        if l.a64 { return Arg(A_DIRECT, ty, 1, 0, 0, C_INTEGER, NOEXT) }
+        return Arg(A_DIRECT, ty, 1, 0, 0, C_INTEGER, 0)
+    }
     let sz = size(inout l, p, ty)
     let mut ls: List[Leaf] = List.new()
     leaves(inout l, p, ty, 0, inout ls)
@@ -345,6 +361,14 @@ fn classify_arg(inout l: Lay, p: lower.P, ty: u32, is_ret: bool) -> Arg {
         if ls.len() == 1 && ls[0].off == 0 && ls[0].size == sz { return Arg(A_COERCE, ty, 1, (sz * 8) as u32, 0, C_INTEGER, 0) }
         if is_ret { return Arg(A_SRET, ty, 0, 0, 0, 0, 0) }
         return Arg(A_BYVAL, ty, 0, 0, 0, 0, 0)
+    }
+    if l.a64 {
+        if sz > 16 {
+            if is_ret { return Arg(A_SRET, ty, 0, 0, 0, 0, 0) }
+            return Arg(A_BYVAL, ty, 0, 0, 0, C_PTR, 0)
+        }
+        if sz > 8 { return Arg(A_COERCE, ty, 2, 64, bits_of(sz, 1), C_PAIR, C_INTEGER) }
+        return Arg(A_COERCE, ty, 1, bits_of(sz, 0), 0, C_INTEGER, 0)
     }
     let cs = classify(sz, ls)
     if cs[0] == C_MEMORY {
@@ -362,7 +386,7 @@ fn classify_arg(inout l: Lay, p: lower.P, ty: u32, is_ret: bool) -> Arg {
 /// fit in what is left goes byval.
 pub fn sig(inout l: Lay, p: lower.P, params: List[u32], ret: u32) -> Sig {
     let r = arg_of(inout l, p, ret, true)
-    if l.wasm {
+    if l.wasm || l.a64 {
         let mut wargs: List[Arg] = List.new()
         for t in params { wargs.push(arg_of(inout l, p, t, false)) }
         return Sig(r, wargs)
