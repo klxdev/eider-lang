@@ -1,0 +1,23 @@
+# eider.lock: written by `eider-pkg`. Do not edit.
+version = 1
+
+[[package]]
+name = "crypto"
+version = "0.1.0"
+source = "path+../crypto"
+deps = []
+grants = ["io"]
+
+[[package]]
+name = "json"
+version = "0.1.1"
+source = "path+../../.vendor/json"
+deps = []
+grants = []
+
+[[package]]
+name = "toml"
+version = "0.1.1"
+source = "path+../../.vendor/toml"
+deps = []
+grants = []

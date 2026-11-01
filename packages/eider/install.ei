@@ -1,0 +1,369 @@
+//! install: downloading, checking and unpacking a release's files.
+//!
+//! A release has, for each target (`linux-x86_64`, `linux-aarch64`), the toolchain archive
+//! `eider-<version>-<target>.tar.gz` and the standalone command `eider-<version>-<target>`,
+//! plus `SHA256SUMS` (every file's SHA-256) and `SHA256SUMS.minisig`, its minisign signature
+//! (docs/site/tooling/releases.md). Before anything is unpacked or installed:
+//!
+//! 1. SHA256SUMS.minisig must be a valid legacy (`Ed`) minisign signature of SHA256SUMS by
+//!    the release key (release_key.ei, embedded; EIDER_RELEASE_PUBKEY overrides it), its
+//!    global signature included, and its trusted comment must say `release:eider <version>`
+//!    for the version being installed (so one release's signed sums can't stand in for
+//!    another's);
+//! 2. the file's SHA-256 must be the one SHA256SUMS lists for its name;
+//! 3. an archive must hold only regular files and directories under
+//!    `eider-<version>-<target>/` (no absolute paths, `..`, or links), and its
+//!    toolchain.toml must name that version and target.
+//!
+//! Any mismatch stops with an error and installs nothing; the download is removed.
+
+import core.version
+import std.bytes
+import std.fs
+import std.env
+import std.proc
+import eider.vers
+import eider.home
+import eider.sums
+import eider.minisign
+import eider.sig
+import eider.source
+import eider.release_key
+
+fn errs(m: str) -> String { String.from(m) }
+fn text(m: List[u8]) -> String { String.from_bytes(m).unwrap_or(String.from("?")) }
+
+fn getenv(n: str) -> List[u8] uses io {
+    match env.get(n.bytes()) {
+        Some(v) => v
+        None => List.new()
+    }
+}
+
+fn run(argv: List[List[u8]]) -> Result[proc.Output, String] uses io, fs, net {
+    let o = proc.run_with(argv, proc.captured())?
+    Ok(o)
+}
+
+fn argv3(a: str, b: str, c: List[u8]) -> List[List[u8]] {
+    let mut v: List[List[u8]] = List.new()
+    v.push(a.bytes())
+    v.push(b.bytes())
+    v.push(c)
+    v
+}
+
+/// This machine's target, `linux-<arch>` (EIDER_TARGET overrides it).
+pub fn target() -> Result[List[u8], String] uses io, fs, net {
+    let t = getenv("EIDER_TARGET")
+    if t.len() > 0 { return Ok(t) }
+    let mut argv: List[List[u8]] = List.new()
+    argv.push("uname".bytes())
+    argv.push("-sm".bytes())
+    let o = run(argv)?
+    let parts = bytes.split(bytes.trim(o.out), 32)
+    if parts.len() != 2 { return Err(errs("cannot tell this machine's system and architecture (uname -sm)")) }
+    if !bytes.eq(parts[0], "Linux".bytes()) {
+        let mut m = String.from("there are no Eider releases for ")
+        m.append(text(parts[0]))
+        m.push_str(" yet (linux-x86_64 and linux-aarch64 only); build eider-lang from source")
+        return Err(m)
+    }
+    let a = parts[1]
+    let mut out = "linux-".bytes()
+    if bytes.eq(a, "x86_64".bytes()) || bytes.eq(a, "amd64".bytes()) {
+        bytes.append(inout out, "x86_64".bytes())
+    } else if bytes.eq(a, "aarch64".bytes()) || bytes.eq(a, "arm64".bytes()) {
+        bytes.append(inout out, "aarch64".bytes())
+    } else {
+        let mut m = String.from("there are no Eider releases for ")
+        m.append(text(a))
+        m.push_str(" yet (linux-x86_64 and linux-aarch64 only)")
+        return Err(m)
+    }
+    Ok(out)
+}
+
+/// The release key: EIDER_RELEASE_PUBKEY (a .pub file or the key's line), else the embedded one.
+pub fn public_key() -> Result[minisign.PublicKey, String] uses io, fs {
+    let o = getenv("EIDER_RELEASE_PUBKEY")
+    if o.len() > 0 {
+        let t = if fs.exists(o) { fs.read(o)? } else { o }
+        return minisign.parse_public(t)
+    }
+    let k = minisign.parse_public(release_key.PUBLIC_KEY.bytes())?
+    let mut zero = true
+    for b in k.key {
+        if b != 0 { zero = false }
+    }
+    if zero { return Err(errs("this eider was built without a release key (packages/eider/release_key.ei is the placeholder: run scripts/release-key.sh); set EIDER_RELEASE_PUBKEY")) }
+    Ok(k)
+}
+
+fn release_name(v: vers.Version) -> List[u8] {
+    let mut s = "eider ".bytes()
+    bytes.append(inout s, vers.text(v))
+    s
+}
+
+pub fn archive_name(v: vers.Version, t: List[u8]) -> List[u8] {
+    let mut n = "eider-".bytes()
+    bytes.append(inout n, vers.text(v))
+    n.push(45)
+    bytes.append(inout n, t)
+    n
+}
+
+fn need(r: source.Release, name: List[u8], src: source.Source) -> Result[source.Asset, String] {
+    match source.asset(r, name) {
+        Some(a) => Ok(a)
+        None => {
+            let mut m = String.from("release ")
+            m.append(text(r.tag))
+            m.push_str(" in ")
+            m.append(text(source.describe(src)))
+            m.push_str(" has no ")
+            m.append(text(name))
+            Err(m)
+        }
+    }
+}
+
+/// Download SHA256SUMS and its signature into `dl` and check them (step 1 at the top).
+pub fn checked_sums(src: source.Source, r: source.Release, dl: List[u8], tmp: List[u8]) -> Result[List[sums.Sum], String] uses io, fs, net {
+    let pk = public_key()?
+    let sp = fs.join(dl, "SHA256SUMS".bytes())
+    let gp = fs.join(dl, "SHA256SUMS.minisig".bytes())
+    source.fetch(src, need(r, "SHA256SUMS".bytes(), src)?, sp, tmp)?
+    source.fetch(src, need(r, "SHA256SUMS.minisig".bytes(), src)?, gp, tmp)?
+    let body = fs.read(sp)?
+    let trusted = match sig.verify(pk, body, fs.read(gp)?) {
+        Ok(t) => t
+        Err(e) => {
+            let mut m = String.from("refusing release ")
+            m.append(text(r.tag))
+            m.push_str(": SHA256SUMS.minisig does not verify with the release key ")
+            m.append(text(minisign.keyid_text(pk.keyid)))
+            m.push_str(": ")
+            m.append(e)
+            return Err(m)
+        }
+    }
+    let want = release_name(r.version)
+    match minisign.trusted_field(trusted, "release") {
+        Some(got) => {
+            if !bytes.eq(got, want) {
+                let mut m = String.from("refusing release ")
+                m.append(text(r.tag))
+                m.push_str(": its signed SHA256SUMS is for `")
+                m.append(text(got))
+                m.push_str("`, not `")
+                m.append(text(want))
+                m.push_str("`")
+                return Err(m)
+            }
+        }
+        None => {
+            let mut m = String.from("refusing release ")
+            m.append(text(r.tag))
+            m.push_str(": the signature's trusted comment names no release (`release:eider <version>`)")
+            return Err(m)
+        }
+    }
+    sums.parse(body)
+}
+
+/// Download asset `name` into `dl` and check its SHA-256 against `list` (step 2).
+pub fn checked_file(src: source.Source, r: source.Release, list: List[sums.Sum], name: List[u8], dl: List[u8], tmp: List[u8]) -> Result[List[u8], String] uses io, fs, net {
+    let want = match sums.lookup(list, name) {
+        Some(h) => h
+        None => {
+            let mut m = String.from("refusing ")
+            m.append(text(name))
+            m.push_str(": SHA256SUMS does not list it")
+            return Err(m)
+        }
+    }
+    let p = fs.join(dl, name)
+    source.fetch(src, need(r, name, src)?, p, tmp)?
+    let got = sig.sha256_hex(fs.read(p)?)
+    if !bytes.eq(got, want) {
+        let _ = fs.remove_all(p)
+        let mut m = String.from("refusing ")
+        m.append(text(name))
+        m.push_str(": its SHA-256 is ")
+        m.append(text(got))
+        m.push_str(", but the signed SHA256SUMS says ")
+        m.append(text(want))
+        m.push_str(" (a damaged or altered download)")
+        return Err(m)
+    }
+    Ok(p)
+}
+
+/// Step 3: the archive's entries, as `tar -tvzf` lists them, are regular files and
+/// directories under `top/`.
+fn check_entries(archive: List[u8], top: List[u8]) -> Result[bool, String] uses io, fs, net {
+    let o = run(argv3("tar", "-tvzf", archive))?
+    if o.code != 0 { return Err(errs("the archive is not a gzip'd tar file")) }
+    let mut prefix = top.copy()
+    prefix.push(47)
+    let names = run(argv3("tar", "-tzf", archive))?
+    for l in bytes.lines(o.out) {
+        if l.len() == 0 { continue }
+        if l[0] != 45 && l[0] != 100 { return Err(errs("refusing the archive: it holds a link or a special file")) }
+    }
+    for n in bytes.lines(names.out) {
+        if n.len() == 0 { continue }
+        let mut bad = !bytes.starts_with(n, prefix) && !bytes.eq(n, top)
+        for part in bytes.split(n, 47) {
+            if bytes.eq(part, "..".bytes()) { bad = true }
+        }
+        if bad {
+            let mut m = String.from("refusing the archive: the entry ")
+            m.append(text(n))
+            m.push_str(" is outside ")
+            m.append(text(prefix))
+            return Err(m)
+        }
+    }
+    Ok(true)
+}
+
+fn manifest_value(t: List[u8], k: str) -> List[u8] {
+    let mut key = k.bytes()
+    bytes.append(inout key, " = \"".bytes())
+    for l in bytes.lines(t) {
+        if bytes.starts_with(l, key) && l.len() > key.len() && l[l.len() - 1] == 34 {
+            return bytes.slice(l, key.len(), l.len() - 1)
+        }
+    }
+    List.new()
+}
+
+pub type Done = { version: vers.Version, dir: List[u8], already: bool }
+
+fn fresh_dir(d: List[u8]) -> Result[bool, String] uses fs {
+    if fs.exists(d) { fs.remove_all(d)? }
+    fs.mkdir_all(d)
+}
+
+/// Install the newest release `want` accepts (step 1 to 3 above), unless it is installed
+/// already (`force`: again).
+pub fn install(h: List[u8], src: source.Source, want: vers.Want, force: bool) -> Result[Done, String] uses io, fs, net {
+    let tmp = home.downloads(h)
+    let rs = source.releases(src, tmp)?
+    let r = match source.find(rs, want) {
+        Some(x) => x
+        None => {
+            let mut m = String.from("no release matches ")
+            m.append(text(vers.want_text(want)))
+            m.push_str(" in ")
+            m.append(text(source.describe(src)))
+            if rs.len() > 0 {
+                m.push_str(" (there are: ")
+                let mut first = true
+                for x in rs {
+                    if !first { m.push_str(", ") }
+                    first = false
+                    m.append(text(vers.text(x.version)))
+                }
+                m.push_str(")")
+            } else {
+                m.push_str(" (it has none)")
+            }
+            return Err(m)
+        }
+    }
+    let dest = home.toolchain_dir(h, r.version)
+    if home.is_installed(dest) && !force { return Ok(Done(r.version, dest, true)) }
+    let t = target()?
+    let top = archive_name(r.version, t)
+    let mut file = top.copy()
+    bytes.append(inout file, ".tar.gz".bytes())
+    let dl = fs.join(tmp, vers.text(r.version))
+    fresh_dir(dl)?
+    let result = unpack(src, r, t, top, file, dl, tmp, h, dest)
+    let _ = fs.remove_all(dl)
+    result?
+    Ok(Done(r.version, dest, false))
+}
+
+fn unpack(src: source.Source, r: source.Release, t: List[u8], top: List[u8], file: List[u8], dl: List[u8], tmp: List[u8], h: List[u8], dest: List[u8]) -> Result[bool, String] uses io, fs, net {
+    let list = checked_sums(src, r, dl, tmp)?
+    let archive = checked_file(src, r, list, file, dl, tmp)?
+    check_entries(archive, top)?
+    let mut partial = fs.join(home.toolchains(h), ".partial-".bytes())
+    bytes.append(inout partial, vers.text(r.version))
+    fresh_dir(partial)?
+    let mut argv = argv3("tar", "-xzf", archive)
+    argv.push("-C".bytes())
+    argv.push(partial)
+    argv.push("--no-same-owner".bytes())
+    let o = run(argv)?
+    if o.code != 0 {
+        let _ = fs.remove_all(partial)
+        let mut m = String.from("tar could not unpack ")
+        m.append(text(file))
+        m.push_str(": ")
+        m.append(text(bytes.trim(o.err)))
+        return Err(m)
+    }
+    let inner = fs.join(partial, top)
+    let man = match fs.read(fs.join(inner, "toolchain.toml".bytes())) {
+        Ok(x) => x
+        Err(_) => {
+            let _ = fs.remove_all(partial)
+            return Err(errs("refusing the archive: it has no toolchain.toml"))
+        }
+    }
+    if !bytes.eq(manifest_value(man, "version"), vers.text(r.version)) || !bytes.eq(manifest_value(man, "target"), t) || !home.is_installed(inner) {
+        let _ = fs.remove_all(partial)
+        return Err(errs("refusing the archive: its toolchain.toml names another version or target, or bin/eiderc is missing"))
+    }
+    if fs.exists(dest) { fs.remove_all(dest)? }
+    fs.rename(inner, dest)?
+    let _ = fs.remove_all(partial)
+    Ok(true)
+}
+
+pub type Updated = { version: vers.Version, path: List[u8], already: bool }
+
+/// `eider self update`: the latest release's `eider` for this target, checked like a
+/// toolchain, replaces $EIDER_HOME/bin/eider.
+pub fn self_update(h: List[u8], src: source.Source, force: bool) -> Result[Updated, String] uses io, fs, net {
+    let tmp = home.downloads(h)
+    let rs = source.releases(src, tmp)?
+    let r = match source.find(rs, vers.Latest) {
+        Some(x) => x
+        None => {
+            let mut m = String.from("there are no releases in ")
+            m.append(text(source.describe(src)))
+            return Err(m)
+        }
+    }
+    let path = fs.join(home.bin(h), "eider".bytes())
+    let cur = vers.parse(version.VERSION.bytes()).unwrap()
+    if vers.compare(r.version, cur) <= 0 && !force && fs.exists(path) { return Ok(Updated(cur, path, true)) }
+    let t = target()?
+    let name = archive_name(r.version, t)
+    let mut dl = fs.join(tmp, "self-".bytes())
+    bytes.append(inout dl, vers.text(r.version))
+    fresh_dir(dl)?
+    let result = replace_self(src, r, name, dl, tmp, h, path)
+    let _ = fs.remove_all(dl)
+    result?
+    Ok(Updated(r.version, path, false))
+}
+
+fn replace_self(src: source.Source, r: source.Release, name: List[u8], dl: List[u8], tmp: List[u8], h: List[u8], path: List[u8]) -> Result[bool, String] uses io, fs, net {
+    let list = checked_sums(src, r, dl, tmp)?
+    let p = checked_file(src, r, list, name, dl, tmp)?
+    fs.mkdir_all(home.bin(h))?
+    let mut next = path.copy()
+    bytes.append(inout next, ".new".bytes())
+    fs.write(next, fs.read(p)?)?
+    let o = run(argv3("chmod", "755", next))?
+    if o.code != 0 { return Err(errs("chmod 755 failed on the new eider")) }
+    fs.rename(next, path)
+}

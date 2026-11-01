@@ -1,0 +1,126 @@
+//! eider-sign: minisign-compatible Ed25519 keys and signatures, for publishing releases
+//! (scripts/release-key.sh, scripts/publish.sh; docs/site/tooling/releases.md).
+//!
+//!   eider-sign keygen <secret key> <public key>     a new keypair; the secret key is
+//!                                                    unencrypted (no KDF) and the file must
+//!                                                    not exist; prints the public key line
+//!   eider-sign pubkey <secret key>                   print the public key file
+//!   eider-sign sign <secret key> <file> <trusted comment> [<untrusted comment>]
+//!                                                    write <file>.minisig (legacy `Ed`)
+//!   eider-sign verify <public key> <file> [<signature>]
+//!                                                    check <file>.minisig (or <signature>);
+//!                                                    prints the trusted comment
+//!   eider-sign sha256 <file>...                      `sha256sum` lines
+//!
+//! <public key> is a .pub file or the key's base64 line. Exit 1 on any failure, 2 on usage.
+//! The files it writes are written with the process's umask: the scripts set 077 first.
+
+import core.version
+import std.bytes
+import std.fs
+import std.io
+import std.env
+import eider.minisign
+import eider.sig
+
+fn is(a: List[u8], s: str) -> bool { bytes.eq(a, s.bytes()) }
+
+fn die(m: String) uses io {
+    let mut l = "eider-sign: ".bytes()
+    bytes.append(inout l, m.bytes())
+    io.errln(l)
+    env.exit(1)
+}
+
+fn usage() uses io {
+    io.errln("usage: eider-sign keygen <secret key> <public key> | pubkey <secret key> | sign <secret key> <file> <trusted comment> [<untrusted comment>] | verify <public key> <file> [<signature>] | sha256 <file>...".bytes())
+    env.exit(2)
+}
+
+fn read(p: List[u8]) -> List[u8] uses io, fs {
+    match fs.read(p) {
+        Ok(t) => t
+        Err(e) => {
+            die(e)
+            List.new()
+        }
+    }
+}
+
+fn ok[T](r: Result[T, String]) -> T uses io {
+    match r {
+        Ok(x) => x
+        Err(e) => {
+            die(e)
+            panic("unreachable")
+        }
+    }
+}
+
+fn write(p: List[u8], t: List[u8]) uses io, fs {
+    match fs.write(p, t) {
+        Ok(_) => {}
+        Err(e) => die(e)
+    }
+}
+
+fn base(p: List[u8]) -> List[u8] {
+    match bytes.rfind_byte(p, 47) {
+        Some(i) => bytes.slice(p, i + 1, p.len())
+        None => p
+    }
+}
+
+fn public_text(a: List[u8]) -> List[u8] uses io, fs {
+    if fs.exists(a) { return read(a) }
+    a
+}
+
+fn main() uses io, fs {
+    let argv = env.args()
+    if argv.len() < 2 { usage() }
+    let cmd = argv[1]
+    let n = argv.len()
+    if is(cmd, "--version") {
+        let mut l = "eider-sign ".bytes()
+        bytes.append(inout l, version.VERSION.bytes())
+        io.outln(l)
+    } else if is(cmd, "keygen") && n == 4 {
+        if fs.exists(argv[2]) { die(String.from("the secret key file exists already; remove it first, or keep it")) }
+        let sk = ok(sig.generate())
+        write(argv[2], ok(sig.render_secret(sk)))
+        let pk = sig.public_of(sk)
+        write(argv[3], minisign.render_public(pk))
+        io.outln(minisign.public_line(pk))
+    } else if is(cmd, "pubkey") && n == 3 {
+        let sk = ok(sig.load_secret(read(argv[2])))
+        io.out(minisign.render_public(sig.public_of(sk)))
+    } else if is(cmd, "sign") && (n == 5 || n == 6) {
+        let sk = ok(sig.load_secret(read(argv[2])))
+        let untrusted = if n == 6 { argv[5].copy() } else { "signature from eider-sign secret key".bytes() }
+        let text = ok(sig.sign(sk, read(argv[3]), untrusted, argv[4]))
+        let mut out = argv[3].copy()
+        bytes.append(inout out, ".minisig".bytes())
+        write(out, text)
+    } else if is(cmd, "verify") && (n == 4 || n == 5) {
+        let pk = ok(minisign.parse_public(public_text(argv[2])))
+        let mut sp = argv[3].copy()
+        bytes.append(inout sp, ".minisig".bytes())
+        if n == 5 { sp = argv[4].copy() }
+        let trusted = ok(sig.verify(pk, read(argv[3]), read(sp)))
+        let mut l = "ok: ".bytes()
+        bytes.append(inout l, trusted)
+        io.outln(l)
+    } else if is(cmd, "sha256") && n >= 3 {
+        let mut i: usize = 2
+        while i < n {
+            let mut l = sig.sha256_hex(read(argv[i]))
+            bytes.append(inout l, "  ".bytes())
+            bytes.append(inout l, base(argv[i]))
+            io.outln(l)
+            i += 1
+        }
+    } else {
+        usage()
+    }
+}

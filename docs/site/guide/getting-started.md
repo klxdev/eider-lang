@@ -37,6 +37,26 @@ Optional:
 
 There is no other dependency: no Python, no make, no third-party C libraries.
 
+## Install with eider
+
+The quickest way in is a published release, installed with `eider`, the Eider command
+([eider](../tooling/eider.md)). The releases are on the private GitHub repository
+klxdev/eider-lang, so you need access to it and a GitHub token: `GH_TOKEN`, or
+`gh auth login`. Then:
+
+```sh
+gh release download --repo klxdev/eider-lang --pattern install.sh
+sh install.sh --toolchain        # eider into ~/.eider/bin, then the latest toolchain
+export PATH="$HOME/.eider/bin:$PATH"
+eider version                    # eider 0.1.0, toolchain 0.1.0 (...)
+```
+
+`install.sh` and `eider` check every download's SHA-256 against the release's
+`SHA256SUMS` and that file's signature against the release key before installing
+anything. Every command below works the same with `eider` in place of `scripts/ei`
+(`eider run hello.ei`, `eider test`, `eider new`, `eider add`, ...); the rest of this page
+builds the toolchain from a checkout instead, which needs only a C compiler.
+
 ## Build the toolchain
 
 From the root of an eider-lang checkout:

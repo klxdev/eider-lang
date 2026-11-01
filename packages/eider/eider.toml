@@ -1,0 +1,21 @@
+[package]
+name = "eider"
+version = "0.1.0"
+eider = "0.1"
+main = "main.ei"
+description = "eider: the Eider command, which installs toolchains and runs their eiderc, eider-pkg and eider-doc"
+
+# Ed25519 (the releases' minisign signatures) and SHA-256 (their checksums), over the core's
+# crypto provider: a program built from here links a backend (scripts/ei-crypto). `io` for
+# the random keys and key ids of eider-sign's keygen.
+[deps.crypto]
+path = "../crypto"
+uses = ["io"]
+
+# the GitHub API's answers, and eider.toml and config.toml: the pinned releases of
+# eider-json and eider-toml (vendor.lock), fetched into .vendor/ by scripts/vendor.sh; pure
+[deps.json]
+path = "../../.vendor/json"
+
+[deps.toml]
+path = "../../.vendor/toml"

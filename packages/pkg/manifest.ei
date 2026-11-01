@@ -121,11 +121,12 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
         Err(e) => { return Err(at(file, e.line, e.col, e.msg)) }
     }
     // every key must be one we know: catches typos like `verison`
-    let top_ok = ["package.name", "package.version", "package.entry", "package.main", "package.description", "package.eider"]
+    // crypto.provider: the backend scripts/crypto-build.sh links (packages/crypto, core/crypto/README.md)
+    let top_ok = ["package.name", "package.version", "package.entry", "package.main", "package.description", "package.eider", "crypto.provider"]
     let dep_ok = ["path", "git", "version", "rev", "uses"]
     for e in doc {
         let mut ok = false
-        for i in 0..6 {
+        for i in 0..7 {
             if bytes.eq(e.key, sys.lit(top_ok[i as usize])) { ok = true }
         }
         if !ok && bytes.starts_with(e.key, sys.lit("deps.")) {

@@ -18,6 +18,9 @@
 #   --libdir   only print the directory to put on LIBRARY_PATH (building first if needed)
 #   --libs     only print the eiderc -l options
 #   --check    exit 0 if the backend can be built here, else print why and exit 2
+# EIDER_CRYPTO_OUT puts the build in another directory than target/crypto, and AR names the
+# archiver (default ar): scripts/release.sh cross-builds a backend per target with
+# CC="zig cc -target <arch>-linux-musl", AR="zig ar" and its own EIDER_CRYPTO_OUT.
 # The backend is the argument, else $EIDER_CRYPTO, else `provider` in the [crypto] table of
 # ./eider.toml, else awslc. Exit 2 means "not available here" (missing tool or headers).
 set -eu
@@ -44,7 +47,9 @@ jobs=${EIDER_CRYPTO_JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}
 unavailable() { echo "crypto-build: backend $backend not available: $1" >&2; exit 2; }
 
 suffix=; [ $san = 1 ] && suffix=-san
-out=$root/target/crypto/$backend$suffix
+AR=${AR:-ar}
+crypto_out=${EIDER_CRYPTO_OUT:-$root/target/crypto}
+out=$crypto_out/$backend$suffix
 GLUE_FLAGS="-std=c11 -O2 -fPIC -Wall -Wextra -Wpedantic -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Werror"
 [ $san = 1 ] && GLUE_FLAGS="$GLUE_FLAGS -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer"
 
@@ -60,7 +65,7 @@ awslc() {
   # libcrypto's objects: awslc-aead (the glue's EVP_AEAD path, the one BoringSSL takes for
   # ChaCha20-Poly1305) reuses awslc's
   lc=$out
-  if [ "$backend" = awslc-aead ]; then lc=$root/target/crypto/awslc$suffix; GLUE_FLAGS="$GLUE_FLAGS -DEIDER_CRYPTO_EVP_AEAD=1"; fi
+  if [ "$backend" = awslc-aead ]; then lc=$crypto_out/awslc$suffix; GLUE_FLAGS="$GLUE_FLAGS -DEIDER_CRYPTO_EVP_AEAD=1"; fi
   mkdir -p "$lc"
   if [ "$backend" != awslc-noasm ] && [ "$(uname -s)" = Linux ]; then
     case $(uname -m) in
@@ -87,7 +92,7 @@ awslc() {
       ' sh "$lc" "$CC" "$flags" "$v" 2>"$lc/build.log" ||
       { cat "$lc/build.log" >&2; echo "crypto-build: AWS-LC did not build (log: $lc/build.log)" >&2; exit 1; }
     rm -f "$lc/libcrypto.a"
-    ar rcs "$lc/libcrypto.a" "$lc"/obj/*.o
+    $AR rcs "$lc/libcrypto.a" "$lc"/obj/*.o
     echo "$key" > "$lc/key"
     echo "crypto-build: AWS-LC $(sed -n 's/^TAG=//p' "$root/core/crypto/awslc/PIN") ($arch) compiled in $(($(date +%s) - start)) s with $jobs jobs" >&2
   fi
@@ -174,10 +179,10 @@ glue() {
     *.a)
       # one archive with the glue and every libcrypto object, so `-l eider_crypto` is enough
       rm -rf "$out/ar"; mkdir -p "$out/ar"
-      (cd "$out/ar" && ar x "$2")
-      ar rcs "$out/libeider_crypto.a" "$out/eider_crypto.o" "$out"/ar/*.o
+      (cd "$out/ar" && $AR x "$2")
+      $AR rcs "$out/libeider_crypto.a" "$out/eider_crypto.o" "$out"/ar/*.o
       rm -rf "$out/ar" ;;
-    *) ar rcs "$out/libeider_crypto.a" "$out/eider_crypto.o" ;;
+    *) $AR rcs "$out/libeider_crypto.a" "$out/eider_crypto.o" ;;
   esac
 }
 
