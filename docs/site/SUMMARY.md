@@ -60,6 +60,7 @@
 - [The documentation generator: eider-doc](tooling/eider-doc.md)
 - [The profiler: eider-profiler](tooling/profiler.md)
 - [Versions and releases](tooling/releases.md)
+- [The LLVM backend (experimental)](tooling/llvm.md)
 
 ## Design notes
 

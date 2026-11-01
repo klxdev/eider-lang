@@ -1,0 +1,4 @@
+90
+--- stderr
+eider: runtime error: integer overflow in + (compiler/tests/run/llvm_opt_sum.ei:9)
+--- exit 101

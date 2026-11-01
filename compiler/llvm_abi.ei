@@ -1,0 +1,388 @@
+// llvm_abi: C layouts of Eider types and the System V x86-64 calling convention, for the
+// LLVM backend (llvm.ei; docs/compiler.md, "Backends").
+//
+// Layouts are the C backend's (lower.ei, "Layout"): every value has the size and alignment
+// of the C struct lower.ei declares for it, so the two halves of a mixed program (functions
+// in LLVM IR, the rest in C) share memory without conversions.
+//
+// The classifier is the System V AMD64 psABI's (section 3.2.3), applied to the C type: an
+// aggregate is flattened into its scalar leaves (offset, size, class); larger than 16 bytes,
+// it is MEMORY; otherwise each eightbyte gets the merge of the classes of the leaves that
+// overlap it (NO_CLASS < SSE < INTEGER, MEMORY wins), and a MEMORY eightbyte makes the whole
+// aggregate MEMORY. Eider has no floating-point type, so its leaves are all INTEGER, but the
+// merge is the general one (tested with SSE leaves below). An INTEGER eightbyte is passed as
+// an integer of the bytes it holds (`i64`, or `i8`..`i56` for a last partial one), as clang
+// does; MEMORY arguments go `byval`, MEMORY results through a hidden `sret` pointer. An
+// aggregate that needs more integer registers than are left (6, one fewer with sret) goes
+// `byval` instead (psABI: "If there are no registers available for any eightbyte of an
+// argument, the whole argument is passed on the stack"). Scalars narrower than 32 bits are
+// extended by the caller (`zeroext` for bool and u8, the only ones Eider has).
+//
+// AAPCS64 (arm64) is a later step: composites up to 16 bytes in up to two x registers,
+// larger ones by reference to a caller copy (not byval), no SSE class; `sig` is the one
+// place it goes.
+
+import eiderc.types
+import eiderc.lower
+
+pub const C_NONE: u32 = 0
+pub const C_SSE: u32 = 1
+pub const C_INTEGER: u32 = 2
+pub const C_MEMORY: u32 = 3
+
+/// A parameter type that is a pointer to the type below this bit (an `inout` parameter,
+/// glue's `T *x`); every other parameter type is an Eider type id (str: a C pointer).
+pub const PTR_TO: u32 = 2147483648
+
+/// How one value crosses: A_DIRECT a scalar in its own register (bool is `i1 zeroext`),
+/// A_COERCE an aggregate in `n` eightbytes (bits of each in b0/b1; class in c0/c1), A_BYVAL
+/// a MEMORY argument on the stack, A_SRET a MEMORY result through a hidden pointer, A_VOID
+/// nothing (a () result).
+pub const A_VOID: u32 = 0
+pub const A_DIRECT: u32 = 1
+pub const A_COERCE: u32 = 2
+pub const A_BYVAL: u32 = 3
+pub const A_SRET: u32 = 4
+
+pub type Arg = { kind: u32, ty: u32, n: u32, b0: u32, b1: u32, c0: u32, c1: u32 }
+pub type Sig = { ret: Arg, args: List[Arg] }
+
+/// One scalar leaf of a flattened aggregate.
+pub type Leaf = { off: u64, size: u64, cls: u32 }
+
+/// Layout memo: size and alignment per type id (0: not computed yet), and how a value of
+/// the type crosses as an argument and as a result (arg_of; `known` bit 1: as an argument,
+/// bit 2: as a result).
+pub type Lay = { size: List[u64], align: List[u64], arg: List[Arg], res: List[Arg], known: List[u8] }
+
+pub fn new_lay(p: lower.P) -> Lay {
+    let mut l = Lay(List.new(), List.new(), List.new(), List.new(), List.new())
+    let none = Arg(A_VOID, 0, 0, 0, 0, 0, 0)
+    for i in 0..p.t.tys.len() {
+        l.size.push(0)
+        l.align.push(0)
+        l.arg.push(none.copy())
+        l.res.push(none.copy())
+        l.known.push(0)
+    }
+    l
+}
+
+fn up(x: u64, a: u64) -> u64 { (x + a - 1) / a * a }
+
+/// Whether values of ty are C scalars (integers, bool, str, () and pointers).
+pub fn scalar(p: lower.P, ty: u32) -> bool {
+    if ty >= PTR_TO { return true }
+    let k = types.kind(p.t, ty)
+    k == types.T_INT || k == types.T_BOOL || k == types.T_STR || k == types.T_UNIT || k == types.T_NEVER
+}
+
+/// The fields of a struct-like type by value: record fields, tuple elements, a variant's
+/// fields (variant v of enum ty; NONE for the type itself).
+pub fn parts(p: lower.P, ty: u32, v: u32) -> List[u32] {
+    let mut out: List[u32] = List.new()
+    let k = types.kind(p.t, ty)
+    if k == types.T_TUPLE { return types.elems(p.t, ty) }
+    let d = types.def_of(p.t, ty)
+    if v != 4294967295 {
+        let x = types.variant(p.t, d, v)
+        for j in 0..x.flen { out.push(types.field(p.t, x.fstart, j).ty) }
+        return out
+    }
+    for j in 0..d.len { out.push(types.field(p.t, d.start, j).ty) }
+    out
+}
+
+/// Size and alignment of a C struct of these members, in order.
+pub fn struct_of(inout l: Lay, p: lower.P, ms: List[u32]) -> List[u64] {
+    let mut off: u64 = 0
+    let mut al: u64 = 1
+    for m in ms {
+        let a = align(inout l, p, m)
+        off = up(off, a) + size(inout l, p, m)
+        if a > al { al = a }
+    }
+    if ms.len() == 0 { off = 1 }
+    let mut r: List[u64] = List.new()
+    r.push(up(off, al))
+    r.push(al)
+    r
+}
+
+/// The byte offset of member i of a struct of members ms.
+pub fn offset_of(inout l: Lay, p: lower.P, ms: List[u32], i: u32) -> u64 {
+    let mut off: u64 = 0
+    for j in 0..ms.len() {
+        let a = align(inout l, p, ms[j])
+        off = up(off, a)
+        if j as u32 == i { return off }
+        off += size(inout l, p, ms[j])
+    }
+    off
+}
+
+/// The union of an enum with payloads: (size, align) of `union { struct {...} v<i>; ... }`.
+pub fn union_of(inout l: Lay, p: lower.P, ty: u32) -> List[u64] {
+    let d = types.def_of(p.t, ty)
+    let mut sz: u64 = 0
+    let mut al: u64 = 1
+    for i in 0..d.len {
+        if types.variant(p.t, d, i).flen == 0 { continue }
+        let s = struct_of(inout l, p, parts(p, ty, i))
+        if s[0] > sz { sz = s[0] }
+        if s[1] > al { al = s[1] }
+    }
+    let mut r: List[u64] = List.new()
+    r.push(up(sz, al))
+    r.push(al)
+    r
+}
+
+fn compute(inout l: Lay, p: lower.P, ty: u32) {
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    let mut s: u64 = 8
+    let mut a: u64 = 8
+    if k == types.T_INT {
+        if t.a == types.IK_I32 || t.a == types.IK_U32 {
+            s = 4
+            a = 4
+        } else if t.a == types.IK_U8 {
+            s = 1
+            a = 1
+        }
+    } else if k == types.T_BOOL || k == types.T_UNIT || k == types.T_NEVER {
+        s = 1
+        a = 1
+    } else if k == types.T_STRING || k == types.T_LIST {
+        s = 24
+    } else if k == types.T_MAP {
+        s = 48
+    } else if k == types.T_FN {
+        s = 40
+    } else if k == types.T_ARRAY {
+        let n: u64 = if t.b == 0 { 1 } else { t.b as u64 }
+        s = size(inout l, p, t.a) * n
+        a = align(inout l, p, t.a)
+    } else if k == types.T_TUPLE || (k == types.T_RECORD && !lower.shared_rec(p, ty)) {
+        let r = struct_of(inout l, p, parts(p, ty, 4294967295))
+        s = r[0]
+        a = r[1]
+    } else if k == types.T_ENUM {
+        let d = types.def_of(p.t, ty)
+        s = 4
+        a = 4
+        if lower.any_payload(p, d) {
+            let u = union_of(inout l, p, ty)
+            if u[1] > a { a = u[1] }
+            s = up(up(4, u[1]) + u[0], a)
+        }
+    }
+    // str, Box, handles, Ref and shared records are one pointer (8, 8)
+    l.size[ty as usize] = s
+    l.align[ty as usize] = a
+}
+
+pub fn size(inout l: Lay, p: lower.P, ty: u32) -> u64 {
+    if ty >= PTR_TO { return 8 }
+    if l.size[ty as usize] == 0 { compute(inout l, p, ty) }
+    l.size[ty as usize]
+}
+
+pub fn align(inout l: Lay, p: lower.P, ty: u32) -> u64 {
+    if ty >= PTR_TO { return 8 }
+    if l.align[ty as usize] == 0 { compute(inout l, p, ty) }
+    l.align[ty as usize]
+}
+
+// ---- classification
+
+/// The scalar leaves of a value of type ty at byte offset `off` (every leaf is INTEGER:
+/// Eider has no floating point). Union members (an enum's variants) overlap.
+pub fn leaves(inout l: Lay, p: lower.P, ty: u32, off: u64, inout out: List[Leaf]) {
+    if scalar(p, ty) {
+        out.push(Leaf(off, size(inout l, p, ty), C_INTEGER))
+        return
+    }
+    let k0 = types.kind(p.t, ty)
+    if k0 != types.T_TUPLE && k0 != types.T_RECORD && k0 != types.T_ENUM && k0 != types.T_ARRAY {
+        // String, List, Map, Box, fn values, handles, Ref: pointers and 64-bit counts
+        let n = size(inout l, p, ty) / 8
+        for i in 0..n { out.push(Leaf(off + i * 8, 8, C_INTEGER)) }
+        return
+    }
+    let k = types.kind(p.t, ty)
+    if k == types.T_ARRAY {
+        let t = types.get(p.t, ty)
+        let n: u64 = if t.b == 0 { 1 } else { t.b as u64 }
+        let es = size(inout l, p, t.a)
+        for i in 0..n { leaves(inout l, p, t.a, off + i * es, inout out) }
+        return
+    }
+    if k == types.T_RECORD && lower.shared_rec(p, ty) {
+        out.push(Leaf(off, 8, C_INTEGER))
+        return
+    }
+    if k == types.T_ENUM {
+        out.push(Leaf(off, 4, C_INTEGER))
+        let d = types.def_of(p.t, ty)
+        if !lower.any_payload(p, d) { return }
+        let u = union_of(inout l, p, ty)
+        let uoff = off + up(4, u[1])
+        for i in 0..d.len {
+            if types.variant(p.t, d, i).flen == 0 { continue }
+            let ms = parts(p, ty, i)
+            for j in 0..ms.len() {
+                let o = uoff + offset_of(inout l, p, ms, j as u32)
+                leaves(inout l, p, ms[j], o, inout out)
+            }
+        }
+        return
+    }
+    let ms = parts(p, ty, 4294967295)
+    for j in 0..ms.len() {
+        let o = off + offset_of(inout l, p, ms, j as u32)
+        leaves(inout l, p, ms[j], o, inout out)
+    }
+}
+
+/// The psABI merge of two classes of one eightbyte.
+pub fn merge(a: u32, b: u32) -> u32 {
+    if a == b { return a }
+    if a == C_NONE { return b }
+    if b == C_NONE { return a }
+    if a == C_MEMORY || b == C_MEMORY { return C_MEMORY }
+    if a == C_INTEGER || b == C_INTEGER { return C_INTEGER }
+    C_SSE
+}
+
+/// The classes of the eightbytes of an aggregate of `size` bytes with these leaves (one
+/// C_MEMORY entry when it is passed in memory).
+pub fn classify(sz: u64, ls: List[Leaf]) -> List[u32] {
+    let mut out: List[u32] = List.new()
+    if sz > 16 {
+        out.push(C_MEMORY)
+        return out
+    }
+    let n = (sz + 7) / 8
+    for i in 0..n { out.push(C_NONE) }
+    for x in ls {
+        // a leaf that is not aligned to its size (packed) is MEMORY; C layouts never have one
+        if x.size > 0 && x.off % x.size != 0 {
+            let mut m: List[u32] = List.new()
+            m.push(C_MEMORY)
+            return m
+        }
+        let first = x.off / 8
+        let last = (x.off + x.size - 1) / 8
+        for e in first..last + 1 {
+            if e < n { out[e as usize] = merge(out[e as usize], x.cls) }
+        }
+    }
+    for c in out {
+        if c == C_MEMORY {
+            let mut m: List[u32] = List.new()
+            m.push(C_MEMORY)
+            return m
+        }
+    }
+    out
+}
+
+fn bits_of(sz: u64, i: u64) -> u32 {
+    let rest = sz - i * 8
+    if rest >= 8 { return 64 }
+    (rest * 8) as u32
+}
+
+/// How a value of type ty crosses on its own, ignoring register pressure (memoized per type).
+pub fn arg_of(inout l: Lay, p: lower.P, ty: u32, is_ret: bool) -> Arg {
+    if ty >= PTR_TO { return classify_arg(inout l, p, ty, is_ret) }
+    let bit: u8 = if is_ret { 2 } else { 1 }
+    if (l.known[ty as usize] & bit) != 0 {
+        if is_ret { return l.res[ty as usize].copy() }
+        return l.arg[ty as usize].copy()
+    }
+    let a = classify_arg(inout l, p, ty, is_ret)
+    if is_ret { l.res[ty as usize] = a.copy() } else { l.arg[ty as usize] = a.copy() }
+    l.known[ty as usize] = l.known[ty as usize] | bit
+    a
+}
+
+fn classify_arg(inout l: Lay, p: lower.P, ty: u32, is_ret: bool) -> Arg {
+    if ty < PTR_TO && (ty == types.UNIT || ty == types.NEVER) && is_ret { return Arg(A_VOID, ty, 0, 0, 0, 0, 0) }
+    if scalar(p, ty) { return Arg(A_DIRECT, ty, 1, 0, 0, C_INTEGER, 0) }
+    let sz = size(inout l, p, ty)
+    let mut ls: List[Leaf] = List.new()
+    leaves(inout l, p, ty, 0, inout ls)
+    let cs = classify(sz, ls)
+    if cs[0] == C_MEMORY {
+        if is_ret { return Arg(A_SRET, ty, 0, 0, 0, 0, 0) }
+        return Arg(A_BYVAL, ty, 0, 0, 0, 0, 0)
+    }
+    let n = cs.len() as u32
+    let b1: u32 = if n > 1 { bits_of(sz, 1) } else { 0 }
+    let c1: u32 = if n > 1 { cs[1] } else { 0 }
+    Arg(A_COERCE, ty, n, bits_of(sz, 0), b1, cs[0], c1)
+}
+
+/// The convention of a C function taking `params` and returning `ret`, with the integer
+/// registers counted (6, one taken by an sret pointer): an aggregate whose eightbytes don't
+/// fit in what is left goes byval.
+pub fn sig(inout l: Lay, p: lower.P, params: List[u32], ret: u32) -> Sig {
+    let r = arg_of(inout l, p, ret, true)
+    let mut ints: u32 = 6
+    if r.kind == A_SRET { ints = 5 }
+    let mut args: List[Arg] = List.new()
+    for t in params {
+        let a = arg_of(inout l, p, t, false)
+        if a.kind == A_DIRECT {
+            if ints > 0 { ints -= 1 }
+            args.push(a)
+        } else if a.kind == A_COERCE {
+            let mut need: u32 = 0
+            if a.c0 == C_INTEGER { need += 1 }
+            if a.n > 1 && a.c1 == C_INTEGER { need += 1 }
+            if need > ints {
+                args.push(Arg(A_BYVAL, t, 0, 0, 0, 0, 0))
+            } else {
+                ints -= need
+                args.push(a)
+            }
+        } else {
+            args.push(a)
+        }
+    }
+    Sig(r, args)
+}
+
+// ---- the merge rules on leaves Eider can't spell yet (doubles), as psABI's examples give them
+
+test "classify: two ints in one eightbyte, a long in the next" {
+    let mut ls: List[Leaf] = List.new()
+    ls.push(Leaf(0, 4, C_INTEGER))
+    ls.push(Leaf(4, 4, C_INTEGER))
+    ls.push(Leaf(8, 8, C_INTEGER))
+    let c = classify(16, ls)
+    assert c.len() == 2 && c[0] == C_INTEGER && c[1] == C_INTEGER
+}
+
+test "classify: an int and a float share an eightbyte (INTEGER), a double is SSE" {
+    let mut ls: List[Leaf] = List.new()
+    ls.push(Leaf(0, 4, C_INTEGER))
+    ls.push(Leaf(4, 4, C_SSE))
+    ls.push(Leaf(8, 8, C_SSE))
+    let c = classify(16, ls)
+    assert c.len() == 2 && c[0] == C_INTEGER && c[1] == C_SSE
+}
+
+test "classify: more than 16 bytes, or a misaligned leaf, is MEMORY" {
+    let mut ls: List[Leaf] = List.new()
+    ls.push(Leaf(0, 8, C_INTEGER))
+    ls.push(Leaf(8, 8, C_INTEGER))
+    ls.push(Leaf(16, 1, C_INTEGER))
+    assert classify(24, ls)[0] == C_MEMORY
+    let mut odd: List[Leaf] = List.new()
+    odd.push(Leaf(1, 4, C_INTEGER))
+    assert classify(8, odd)[0] == C_MEMORY
+}

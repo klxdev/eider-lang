@@ -40,6 +40,7 @@ and exit code 2. With no arguments at all, eiderc prints its usage to stderr and
 | `lex <file>` | The tokens, one per line: `line:col-endcol kind [value]`. |
 | `parse <file> [--all-errors]` | The syntax tree. With `--all-errors`, every syntax error as a JSON line, then the tree with its error nodes (exit 1 if there were errors). |
 | `ir <file>` | The typed intermediate representation the C is generated from. |
+| `emit-llvm <file> [--test] [--lib] [--coverage]` | The LLVM IR half of `--backend=llvm` (experimental; with `--coverage`, which functions are native and why the others fall back to C). See [The LLVM backend](llvm.md). |
 | `caps <file>` | Each package's capability use, one JSON line per (package, capability), with the first function that uses it: `{"package":..., "dir":..., "cap":"fs", "kind":"uses", "fn":"save", "file":"notes.ei", "line":4, "col":70}`; `kind` is `uses`, `extern` or `unsafe`. Imports that can't be loaded are left out silently. See [Capabilities](../guide/capabilities.md). |
 | `ide <file> [--overlay <path> <text>]...` | The analysis an editor uses (`compiler/ide.ei`): files, diagnostics, symbols with their spans and types, references, and the type at each expression. `--overlay <path> <text>` (repeatable) analyses `<path>` as if it contained the contents of the file `<text>`, for unsaved buffers. |
 
@@ -74,6 +75,9 @@ print `eiderc <version>` (`eiderc 0.1.0`) and exit 0: the toolchain's version, f
 | `--max-errors <n>` | every command that reports errors | show at most `n` errors (default 100; `0` shows all) |
 | `--all-errors` | `parse` | every syntax error, then the tree |
 | `--overlay <path> <text>` | `ide` | read `<path>` from the file `<text>` |
+| `--backend=llvm` | `build`, `run`, `test`, `emit-c` | experimental: emit LLVM IR where the LLVM backend can and build with clang 17+ ([The LLVM backend](llvm.md)); `--backend=c` is the default |
+| `-g` | `build`, `run`, `test` with `--backend=llvm` | DWARF line information for the `.ei` files |
+| `--coverage` | `emit-llvm` | the native/fallback report instead of the IR |
 | `--` | `run` | every argument after it goes to the program, even one that looks like an option |
 | `--help`, `-h` | | print the usage and exit |
 | `--version` | | print `eiderc <version>` and exit |
@@ -128,15 +132,18 @@ exits 101.
 | `EIDER_CACHE` | `off`, or the cache directory (default `$XDG_CACHE_HOME/eider`, else `~/.cache/eider`) |
 | `EIDER_CACHE_MAX` | the cache's size limit: bytes, or with `K`, `M` or `G` (powers of 1024); default `5G`, `0` for none |
 | `EIDER_JOBS` | parallel compile jobs when there is no `-j` |
+| `EIDER_LLVM_UNITS` | `0`: build the LLVM module as one unit instead of one per module (`--backend=llvm`) |
 | `EIDER_ROOT` | the toolchain, the directory holding `core/` and `std/` (default: the nearest directory above the eiderc binary, symlinks resolved, that holds `core/eider_rt.h`, else the same search from the working directory) |
 | `WASM_CC` | the clang used by `build --wasm` (default `clang`) |
+| `EIDER_LLVM_CC` | the clang used by `--backend=llvm` (default `clang`; LLVM 17 or newer) |
 | `EIDER_HOME` | where package imports find git packages fetched by eider-pkg (default `~/.eider`) |
 | `TMPDIR` | work directories when neither the cache nor `<root>/target/tmp` is writable |
 
 ## The cache
 
-`build`, `run` and `test` compile a program as units (today the program's C and the C
-core's two sources), in parallel (`-j`), and cache each unit's object by a SHA-256 of
+`build`, `run` and `test` compile a program as units (with `--backend=llvm` one per module,
+plus the generic instances in 16 shards, the C half and the C core's two sources; with the C
+backend the program's C and the core's sources), in parallel (`-j`), and cache each unit's object by a SHA-256 of
 everything that affects it: its text, the headers it includes, the C compiler and its
 version, the flags and `EIDER_CFLAGS`. The linked program is cached too, by its objects and
 the `-l` libraries, so running an unchanged program again runs neither the compiler nor the

@@ -1,0 +1,123 @@
+// What the LLVM backend's optimisation must leave alone (docs/compiler.md, "Backends"): the
+// internal convention between Eider functions (records by reference, `noalias` inout and
+// sret, C wrappers for fn values and tests) gives the C backend's results, and every trap
+// that a dominating check turns into `nsw`/`nuw`/`inbounds` still fires, with the same
+// message and line, also inside loops whose induction variables the flags describe.
+// (Traps that leave a List behind are in llvm_opt_index.ei and llvm_opt_sum.ei: a test block
+// that traps abandons its frame, which LeakSanitizer would report.)
+
+type Big = { tag: String, xs: List[u64], a: u64, b: u64, c: u64 }
+
+type Pair = { x: u64, y: u32 }
+
+fn id_u8(x: u8) -> u8 { x }
+fn id_i32(x: i32) -> i32 { x }
+fn id_i64(x: i64) -> i64 { x }
+fn id_u64(x: u64) -> u64 { x }
+fn id_usize(x: usize) -> usize { x }
+
+fn total(b: Big) -> u64 {
+    let mut t = b.a + b.b + b.c
+    for x in b.xs { t += x }
+    t
+}
+
+/// a Big built from another, returned through sret
+fn grown(b: Big, by: u64) -> Big {
+    let mut xs = b.xs.copy()
+    xs.push(by)
+    Big(b.tag.copy(), xs, b.a + by, b.b, b.c)
+}
+
+/// writes through `inout` while reading a by-reference argument that shares its buffer
+fn absorb(inout dst: Big, src: Big) {
+    dst.xs.push(src.xs.len() as u64)
+    dst.a += src.a
+    dst.tag.push_str("+")
+}
+
+/// eight small records: the C ABI runs out of registers (byval), the internal one doesn't
+fn eight(p0: Pair, p1: Pair, p2: Pair, p3: Pair, p4: Pair, p5: Pair, p6: Pair, p7: Pair) -> u64 {
+    p0.x + p1.x + p2.x + p3.x + p4.x + p5.x + p6.x + p7.x + (p7.y as u64)
+}
+
+fn pair(n: u64) -> Pair { Pair(n, (n * 2) as u32) }
+
+/// the same function through a fn value: its C entry (a thunk of the C half)
+fn call8(f: fn(Pair, Pair, Pair, Pair, Pair, Pair, Pair, Pair) -> u64) -> u64 {
+    f(pair(1), pair(2), pair(3), pair(4), pair(5), pair(6), pair(7), pair(8))
+}
+
+fn main() uses io {
+    let mut xs: List[u64] = List.new()
+    xs.push(1)
+    xs.push(2)
+    let b = Big(String.from("b"), xs, 10, 20, 30)
+    print(total(b))
+    let mut c = grown(b, 5)
+    c = grown(c, 7)
+    print(total(c))
+    print(total(b))
+    let shared = c.copy()
+    absorb(inout c, shared)
+    let again = c.copy()
+    absorb(inout c, again)
+    print(c.tag)
+    print(total(c))
+    print(total(shared))
+    let direct = eight(pair(1), pair(2), pair(3), pair(4), pair(5), pair(6), pair(7), pair(8))
+    let through = call8(eight)
+    print(direct)
+    print(through)
+}
+
+test "the convention through a test's own C entry" {
+    let b = Big(String.from("t"), List.new(), 1, 2, 3)
+    assert total(grown(b, 4)) == 14
+}
+
+test "u8 counter overflows in a loop" {
+    let mut i: u8 = id_u8(250)
+    while true { i += 1 }
+}
+
+test "i32 sum of squares overflows in a loop" {
+    let mut s: i32 = 0
+    for k in 0..100000 { s = s + id_i32(k) * id_i32(k) }
+    assert false, "not reached"
+}
+
+test "i64 doubling overflows in a loop" {
+    let mut x: i64 = id_i64(3)
+    while x > 0 { x = x * 2 }
+    assert false, "not reached"
+}
+
+test "usize countdown underflows in a loop" {
+    let mut i: usize = id_usize(3)
+    while true { i = i - 1 }
+}
+
+test "negation of the minimum in a loop" {
+    let mut x: i64 = id_i64(-9223372036854775807)
+    for k in 0..3 { x = -(x - 1) }
+    assert false, "not reached"
+}
+
+test "u64 multiply overflows" {
+    let x = id_u64(4294967296) * id_u64(4294967296)
+    assert false, "not reached"
+}
+
+test "array index past the end in a loop" {
+    let a: [u64; 4] = [1, 2, 3, 4]
+    let mut t: u64 = 0
+    for i in 0..id_usize(5) { t += a[i] }
+    assert false, "not reached"
+}
+
+test "passes after the traps" {
+    let mut s: u64 = 0
+    for k in 0..id_u64(10) { s += k }
+    assert s == 45
+}

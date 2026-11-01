@@ -103,7 +103,9 @@ Building Eider must stay cheap to bootstrap and audit. The rule:
   content hash ("Vendored libraries" above), from a sibling checkout, a mirror or tarball, or
   the network. The compiler never does: it needs only the C compiler.
 - **Optional targets** may need more, and stay optional: `build --wasm` needs clang with the
-  wasm32 target and `wasm-ld`.
+  wasm32 target and `wasm-ld`; the experimental `--backend=llvm` (compiler/llvm.ei, on the
+  `experiment/llvm-backend` branch) needs clang 17 or newer, which eiderc only runs when the
+  flag is given (docs/compiler.md, "Backends").
 - **Cryptography is the one scoped exception to "no third-party C libraries"** (decisions U12,
   C1, C2, C140-C146; core/crypto/README.md). Eider never implements primitives: hashes,
   MACs, KDFs, AEADs, key agreement and signatures come from an **OpenSSL-compatible

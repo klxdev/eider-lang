@@ -18,6 +18,8 @@ usage:
   eiderc parse <file.ei> [--all-errors]      dump the AST (--all-errors: every syntax error as JSON lines,
                                              then the AST with its error nodes)
   eiderc ir <file.ei>                        dump the typed IR
+  eiderc emit-llvm <file.ei> [--test] [--coverage]  print the LLVM IR half of --backend=llvm (--coverage: which
+                                             functions are native and why the others fall back to C)
   eiderc caps <file.ei>                      each package's capability use, one JSON line per capability
   eiderc migrate-var <file.ei>               print the file with its `var`s rewritten as `let mut` (deprecated `var`)
   eiderc migrate-imports <file.ei> [--json]  print the file with its quoted imports in the dotted form
@@ -30,6 +32,12 @@ usage:
                                              items, signatures, doc comments (doc.ei); --private: also non-pub items
   eiderc help | --help | -h                  print this text
   eiderc version | --version                 print `eiderc <version>` (VERSION; docs/site/tooling/releases.md)
+
+--backend=llvm (build, run, test, emit-c; experimental): functions are emitted as LLVM IR where
+the LLVM backend supports them (the rest as C) and built with clang 17 or newer ($EIDER_LLVM_CC),
+one unit per module and generic instances in 16 shards, each cached (EIDER_LLVM_UNITS=0: one unit);
+a release build uses ThinLTO when clang links with lld (EIDER_LLVM_LTO=0: plain objects);
+-g adds DWARF line info for the .ei sources (and builds the module as one unit).
 
 errors: every independent error is reported, in the order found, then `error: N errors`
 (stderr); with --json one JSON object per line (stdout). --max-errors N shows at most N

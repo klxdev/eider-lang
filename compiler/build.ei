@@ -43,7 +43,9 @@ fn s(x: str) -> List[u8] { sys.lit(x) }
 
 /// One unit: `text` compiled by `argv` (compiler and flags; `-c -o <obj> <source>` are
 /// added) into one object. The source is `file` when it is non-empty (a file on disk whose
-/// bytes are `text`), else `text` written to the work directory as `<n>-<name><ext>`. `tool`
+/// bytes are `text`), else `text` written to the work directory as `u<n>/<name><ext>` and
+/// compiled from `u<n>/` by relative names (so the object is the same whatever the work
+/// directory; argv's paths must then be absolute). `tool`
 /// identifies the compiler (`tool_id`); `deps` are further key parts (the bytes of headers
 /// the text includes).
 pub type Unit = { name: List[u8], ext: List[u8], text: List[u8], file: List[u8], argv: List[List[u8]], tool: List[u8], deps: List[List[u8]] }
@@ -163,30 +165,51 @@ pub fn compile(units: List[Unit], cache: List[u8], dir: List[u8], jobs: u64, qui
         } else {
             objs.push(List.new())
         }
-        let mut base = bytes.from_u64(i as u64)
-        base.push(45)
-        bytes.append(inout base, u.name)
+        // a generated text is compiled in a directory of its own (u<n>/<name><ext>), from
+        // there and by relative names, so the object doesn't name the work directory (bitcode
+        // records its source's path, and ThinLTO's output would depend on it)
+        let mut sub = s("u")
+        bytes.append(inout sub, bytes.from_u64(i as u64))
+        let udir = fs.join(dir, sub)
+        let mut srcname = u.name.copy()
+        bytes.append(inout srcname, u.ext)
+        let mut oname = u.name.copy()
+        bytes.append(inout oname, s(".o"))
+        let mut argv: List[List[u8]] = List.new()
         let mut src = u.file.copy()
+        let mut obj = fs.join(dir, sub)
         if src.len() == 0 {
-            let mut f = base.copy()
-            bytes.append(inout f, u.ext)
-            src = fs.join(dir, f)
-            match fs.write(src, u.text) {
-                Ok(_) => {}
-                Err(_) => {
-                    let none: List[usize] = List.new()
-                    return Built(objs, keys, none, i as i64, src)
-                }
+            src = fs.join(udir, srcname)
+            let made_dir = match fs.mkdir_all(udir) {
+                Ok(_) => true
+                Err(_) => false
             }
+            let wrote = match fs.write(src, u.text) {
+                Ok(_) => true
+                Err(_) => false
+            }
+            if !made_dir || !wrote {
+                let none: List[usize] = List.new()
+                return Built(objs, keys, none, i as i64, src)
+            }
+            obj = fs.join(udir, oname)
+            argv.push(s("sh"))
+            argv.push(s("-c"))
+            argv.push(s("cd \"$0\" && exec \"$@\""))
+            argv.push(udir)
+            for a in u.argv { argv.push(a) }
+            argv.push(s("-c"))
+            argv.push(s("-o"))
+            argv.push(oname)
+            argv.push(srcname)
+        } else {
+            bytes.append(inout obj, s(".o"))
+            for a in u.argv { argv.push(a) }
+            argv.push(s("-c"))
+            argv.push(s("-o"))
+            argv.push(obj)
+            argv.push(src)
         }
-        let mut o = base.copy()
-        bytes.append(inout o, s(".o"))
-        let obj = fs.join(dir, o)
-        let mut argv = u.argv.copy()
-        argv.push(s("-c"))
-        argv.push(s("-o"))
-        argv.push(obj)
-        argv.push(src)
         cmds.push(argv)
         which.push(i)
         made.push(obj)
@@ -204,11 +227,12 @@ pub fn compile(units: List[Unit], cache: List[u8], dir: List[u8], jobs: u64, qui
 }
 
 /// Link objects `objs` (whose unit keys are `keys`) with `argv` (the linker command, without
-/// `-o` and inputs) and then `post` (-l libraries) into `exe`; with a cache, the program is a
+/// `-o` and inputs), `nokey` (flags that don't change the program, so are not in the key: the
+/// job count, lld's cache directory) and then `post` (-l libraries) into `exe`; with a cache, the program is a
 /// cache entry (bin/, see the top) and `exe` only the scratch name. `tool` is the linker's
 /// tool_id. Returns the program's path, "" if the link failed (`quiet`: its output is then
 /// discarded, else on our stderr).
-pub fn link(argv: List[List[u8]], keys: List[List[u8]], objs: List[List[u8]], post: List[List[u8]], tool: List[u8], cache: List[u8], exe: List[u8], quiet: bool) -> List[u8] uses io, fs, net {
+pub fn link(argv: List[List[u8]], nokey: List[List[u8]], keys: List[List[u8]], objs: List[List[u8]], post: List[List[u8]], tool: List[u8], cache: List[u8], exe: List[u8], quiet: bool) -> List[u8] uses io, fs, net {
     let mut bin: List[u8] = List.new()
     if cache.len() > 0 {
         let mut parts: List[List[u8]] = List.new()
@@ -227,6 +251,7 @@ pub fn link(argv: List[List[u8]], keys: List[List[u8]], objs: List[List[u8]], po
         }
     }
     let mut cmd = argv.copy()
+    for x in nokey { cmd.push(x) }
     cmd.push(s("-o"))
     cmd.push(exe)
     for o in objs { cmd.push(o) }

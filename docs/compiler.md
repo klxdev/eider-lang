@@ -989,6 +989,183 @@ review the oracle diff, add a test, and regenerate the seed.
   (`geo__South`), and trap messages always name the entry file, even for a trap in an
   imported module.
 
+## Backends
+
+The C backend (`lower.ei`, "C4: lowering") is the default and the bootstrap path. Beside it,
+on the `experiment/llvm-backend` branch, is an experimental LLVM backend (issues #92 and #96,
+U21, C260-C269, C340-C346): `llvm.ei` lowers the same typed IR to textual LLVM IR, which
+clang builds (`eiderc build|run|test --backend=llvm`, `build --lib --backend=llvm`,
+`emit-llvm`; user documentation in docs/site/tooling/llvm.md). It is ordinary compiler code
+built by the seed, so building eiderc needs no LLVM. eiderc runs clang only when the flag is
+given, and checks first that it is LLVM 17 or newer (`driver.llvm_cc`; exit 3 with a message
+otherwise).
+
+**Split.** The backend works one function at a time. `llvm.program` tries every function
+with a body. A function whose statements it can lower becomes a `define` in the module
+(native). Any other function falls back to C, and `emit-llvm --coverage` names the
+construct that made it fall back. `lower.program_split` then writes the C half: the
+fallback functions, the per-type glue, the trap file table, `main` and the test driver.
+Each native function keeps only its prototype in the C half, and its body is not lowered to
+C at all: `llvm.ei` records every glue item it calls (`gneed`, the `lower.GK_*` keys) and
+every module whose trap lines it encodes, and the C half emits exactly that glue and that
+file table (C344; a missing item would be a link error or a wrong trap file, which the
+differential suite would show). Every `static` at the start of a line is dropped, so each
+half can call the other's functions. `lower.c_names` gives the LLVM half the C names of
+types and functions. The module comes back in parts (`Out.head`, the type definitions,
+then each function's text as it was built), and is joined only to write `prog.ll`.
+
+**Build.** Since C8.27 the module is cut into units (one per module, the generic instances in
+16 shards; llvm_units.ei), each compiled by clang (the sanitizer, `-g` and `-O` flags of
+`EIDER_CFLAGS` too) in parallel and cached, and `$CC` compiles the C half; a release build
+uses ThinLTO with lld and lld's cache (C396, replacing C343's full LTO with lld or gold): the
+units and the C half (with `-w`: it is generated code that the C backend already checks under
+`$CC`) are compiled to bitcode, the C core's objects stay native and cached, so the C half's
+glue (push, clone, drop, `==`) still inlines into the IR. `EIDER_LLVM_LTO=0`, no lld, and
+`build --lib` link plain objects; `-g` and `build --lib` build the module as one unit. The
+program is cached by its objects ("C8.27: incremental builds"). Today no construct falls back: every
+function of the run tests, and every function of the compiler, is native.
+
+**Calling conventions.** A call from Eider to Eider uses an internal convention (C340):
+every native function is `define internal @<name>.i`. Its parameters are classified as the
+System V ABI classifies them, except that an aggregate the C ABI would copy onto the stack
+(byval: over 16 bytes, or out of registers) is passed by reference, and registers are not
+counted. The callee never writes through that reference; a function that writes such a
+parameter copies it first. The C half reaches a native function through a C-convention
+wrapper `@<name>`, emitted only for functions the C half names beyond their prototype
+(`main`, tests, exports, thunks, glue calling an `impl`), and a call into a fallback
+function goes through a shim `@<name>.i`, so a function still moves between the halves
+freely. Closure bodies, which are only called through fn values, keep the C convention.
+This reverses part of C262. The profile of round one showed why: a borrowed record such as
+check's 3 KB context was copied byval on every call, and external linkage stopped clang from
+doing what it does with the C backend's static functions (argument promotion, inlining a
+function called once, dropping the copies). `llvm_abi.ei` still holds the C layout of every
+type, the same layout `lower.ei` declares: records and tuples are structs, an enum is
+`{ i32 tag, [n x iA] }` with a struct per variant, String/List/Map/Box/fn values/handles
+are the C structs. It also holds the System V x86-64 classifier, memoized per type. A type
+is flattened into scalar leaves, and anything over 16 bytes is MEMORY. Each eightbyte gets
+the merge of its leaves' classes (the general psABI merge, unit-tested with SSE leaves,
+although Eider has no floating-point type yet). An INTEGER eightbyte is passed as an
+integer of its bytes (`i64`, or `i8`..`i56` for the last one, as clang does). MEMORY
+arguments go `byval`, and MEMORY results go through `sret`. An aggregate that needs more of
+the six integer registers than are left goes `byval` as a whole. bool and u8 are
+`zeroext`. compiler/tests/llvm checks this against the C compiler: records of 2 to 24
+bytes with padding, nesting, a str, register exhaustion, and both directions (C export
+wrappers into LLVM IR, LLVM IR into the C half's `eq_` glue). AAPCS64 (arm64) is a later
+step, and `abi.sig` is the one place it goes.
+
+**Semantics.** One IR statement lowers to the same operations the C backend performs, in the
+same order: bounds checks first (outermost index first), then copy-on-write `uniq_` calls,
+then the operation. Locals (C341): a definite-assignment walk over the structured IR finds
+the locals that may be read before the whole local is assigned, and only those are zeroed at
+entry, as C's `= {0}`; a scalar local that one statement assigns, that no place is rooted
+at, and that is read only after that assignment, is an SSA value with no alloca. The walk
+was checked by filling every unzeroed alloca with 0xAA (a volatile memset): the differential
+suite, and the compiler built that way reproducing its own C and IR, were unchanged. Scalars
+are SSA values between statements (bool is `i1` in registers and `i8` in memory),
+aggregates are copied with `llvm.memcpy`, and the IR's structured S_IF and S_LOOP become
+labelled blocks. Nothing is undefined behaviour. Checked `+ - *` use
+`llvm.{s,u}{add,sub,mul}.with.overflow`, and `/ %` check zero and MIN / -1. Shifts check the
+count with one unsigned compare, conversions check the source widened to 64 bits, and
+indices are an `icmp uge`. Each check branches to a call of the runtime's `ei_trap` with the
+C runtime's message and the same encoded line (file index * 2^20 + line, "C8.16"), so traps
+print, exit 101 and longjmp under `test` exactly as in C. Flags only restate what a check or
+a language rule proved (C342): past its trap branch a checked operation is `add`/`sub`/`mul
+nsw` (signed) or `nuw` (unsigned), a negation `sub nsw`; every GEP is `inbounds` (a field of
+a value of its type, an element after its bounds check), except an element address among a
+closure call's `inout` arguments, which neither backend checks; the builtins' own loop
+counters are `add nuw nsw`. The internal convention's parameters say what the language
+guarantees: scalars are `noundef` (nothing is read before it is written), an `inout` pointer
+is `noalias` (C8.6: E0301 makes it exclusive, and the caller makes its path unique first)
+and `dereferenceable`, a by-reference record is `noalias nocapture readonly` (call_internal
+copies it to a temporary of its own if the same local is also an `inout` root or the
+destination), and `sret` is `noalias`. No `exact`, no flags on shifts, and none of LLVM 18's
+newer flags while the minimum is LLVM 17. compiler/tests/run/llvm_opt*.ei trap in loops
+whose induction variables the flags describe, with the C backend's messages and lines.
+Per-type operations call the C half's glue where `lower.ei` calls it. The hot helpers are
+inline IR: `ei_idx`, checked arithmetic, the conversions and shifts, `ei_hash_u64`, and the
+Ref access checks.
+
+**Debug info** (`-g`): a DICompileUnit (`DW_LANG_C11`, since DWARF has no code for Eider),
+a DIFile per module, a DISubprogram per native function (its Eider name, and its C name as
+the linkage name), a DILocation per statement from the IR's line, and a DILocalVariable for
+every parameter and named local that has an address (`llvm.dbg.declare`). Types are
+described from the C layouts: integers, bool and str as base and pointer types, arrays,
+records and tuples with their members' names and offsets, an enum as its tag plus one member
+per variant with a payload (at the union's offset), String and List with their pointer,
+`len` and `cap`; other handles are sized structures. The line table names the `.ei` files,
+so a debugger can break on an Eider line. compiler/tests/llvm/run.sh builds
+compiler/tests/llvm/dwarf.ei at -O0 with `-g` and finds every parameter, local, member and
+type name with a frame location (llvm-dwarfdump, else `readelf --debug-dump=info`; gdb and
+lldb are not installed here). At -O2 the variables of inlined functions are optimized away.
+
+**Tests.** `scripts/llvm-diff.sh` runs every run test (tests/run, compiler/tests/run) under
+`run`, and under `test` when it has test blocks, through both backends. Stdout, stderr and
+the exit code must be byte-identical with the LLVM build at -O0, at -O2 (with LTO), with
+`-DEI_RT_COUNT_ALLOCS` (the same leak report), and under ASan+UBSan, with clang building
+both halves. The script also prints the coverage per test and overall. It is the
+"llvm (--backend=llvm)" leg of scripts/verify.sh, together with compiler/tests/llvm/run.sh,
+and the leg is skipped with the reason when clang 17+ is missing. The compiler built by the
+LLVM backend emits byte-identical C and LLVM IR for compiler/main.ei.
+
+**Measurements** (`scripts/llvm-bench.sh`, 2026-10-31, x86-64, clang 22.1.8 for both
+backends, median of 7 runs, EIDER_CACHE=off, a shared and busy machine: compare within a
+row, not across days).
+
+Round two (#96): compile time in ms. `emit` is the front end plus lowering (emit-llvm also
+writes the C half). `build` adds clang on the `.ll` and `$CC` on the C, or `$CC` on the whole
+C; LLVM -O2 includes LTO.
+
+| program | emit-c | emit-llvm | C -O0 | LLVM -O0 | C -O2 | LLVM -O2 |
+|---|---|---|---|---|---|---|
+| tests/bench/list_copies | 4 | 4 | 194 | 232 | 442 | 461 |
+| tests/bench/state | 4 | 4 | 194 | 234 | 499 | 510 |
+| tests/bench/str_append | 3 | 3 | 187 | 223 | 418 | 436 |
+| compiler/main.ei (1378 functions) | 309 | 428 | 2345 | 1640 | 23235 | 24185 |
+
+Run time of the -O2 binaries in ms. `self` is the built compiler running `emit-c
+compiler/main.ei`. The three bench programs finish in a few ms, too fast to compare.
+
+| program | C | LLVM | LLVM/C |
+|---|---|---|---|
+| list_copies | 4 | 3 | 0.75 |
+| state | 3 | 3 | 1.00 |
+| str_append | 5 | 5 | 1.00 |
+| self | 335 | 254 | 0.76 |
+
+What each step bought (the compiler's run time, `emit-c compiler/main.ei`, medians of 7-15
+interleaved runs on the same machine; round one: C 258-305, LLVM 369-428):
+
+| step | LLVM/C |
+|---|---|
+| round one | 1.40-1.43 |
+| internal convention alone (locals still zeroed) | 1.56 (no gain: the memsets kept the copies alive) |
+| definite assignment alone (C convention) | 1.16 |
+| both (C340, C341), no LTO | 0.95 |
+| plus nsw/nuw/inbounds (C342), no LTO | 0.95 (under 1% on the compiler) |
+| plus SSA scalars, no LTO | 0.94 |
+| plus LTO in the driver (C343) | 0.76-0.79 |
+
+The profile behind it (a SIGPROF sampler with frame-pointer stacks, since perf isn't
+installed): in round one the LLVM build spent twice the C build's time in libc, nearly all
+of it memcpy called from check.expr, check.call_decl and their kin, which copied the 3 KB
+checker context byval on every borrowed call, inside 35 KB frames whose locals were all
+zeroed at entry; with LTO alone (round one's 1.37) push/clone/drop of List[u8] still were
+not inlined into lower.emit.
+
+emit-llvm against emit-c (the same -O2 compiler, interleaved): 3.4x in round one, then 1.99
+with the internal convention and SSA scalars (the IR shrank from 16.3 to 10.8 MB), 1.70 once
+the C half stopped lowering the native bodies (C344), 1.61 with instructions written in place,
+1.53 with the module in parts, 1.42 with the conventions memoized, and 1.39 in the table
+above (9.6 MB of IR against 5.3 MB of C; writing it to stdout is a tenth of emit-llvm).
+
+LLVM -O0 builds the compiler in 70% of the C time (clang -O0 on 9.6 MB of IR is faster than
+on 5.3 MB of C, and the C half is small); at -O2 with LTO the two take about the same time
+(LTO's link is single-threaded; without LTO the LLVM build takes about 60% of the C time).
+The recommendation on graduating (C346): to main as an opt-in backend, the C backend staying
+the default and the bootstrap path; the default waits for AAPCS64. Still to do: arm64,
+`--profile` and the binary cache with `--backend=llvm`, TBAA (clang's type-based aliasing,
+which the IR doesn't give LLVM yet), and DWARF for SSA values and inlined frames.
+
 ## Compile speed
 
 Measured 2026-10-30 (16 cores, gcc, one run each). The front end is cheap: about 1 ms per 100
@@ -2830,14 +3007,12 @@ module paths after `import` and in `{}`, hover and definition on path segments).
 
 ## C8.27: incremental builds
 
-Issue #129 (U25, decided with the user on 2026-10-31; C380-C391). Code: build.ei (units, the
-object and link caches, the job runner, eviction), driver.ei (the C backend's units),
-main.ei (`-j`, `eiderc cache`), sha256.ei (streaming, with bitwise operators). LLVM is the
-only backend from #125 on (U23), so the unit design below is written for its output. Built so
-far (phase 1, backend-independent): the unit object cache, the link cache, the job runner,
-eviction, `eiderc cache`, the faster SHA-256, and the C backend as three units (the program's
-C and the C core's two sources) through all of it. Phase 2, after #125: the LLVM output split
-into the units below, ThinLTO with lld's cache, and the measurements per unit.
+Issue #129 (U25, decided with the user on 2026-10-31; C380-C397). Code: build.ei (units, the
+object and link caches, the job runner, eviction), llvm_units.ei (the LLVM module cut into
+units), driver.ei (each backend's units, ThinLTO), main.ei (`-j`, `eiderc cache`), sha256.ei
+(streaming, with bitwise operators). LLVM is the only backend from #125/#128 on (U23), so the
+units are LLVM's; the C backend, until #128 removes it, builds as three units (its program's
+C and the C core's two sources) through the same cache.
 
 Before: the front end is whole-program and its output is one translation unit, compiled by
 one `cc` and cached as one binary (`bin/<key>`, key over the whole generated text). Any
@@ -2847,54 +3022,58 @@ of its 0.52 s).
 
 ### Units
 
-(The table and the rules after it are the design for the LLVM backend, phase 2; today the C
-backend's units are `prog`, `eider_rt` and `eider_core`.)
-
 A **unit** is the smallest thing compiled and cached on its own: a text the backend produced,
 the command that compiles it, and the extra key parts its object depends on (build.ei
-`Unit`). The backend decides the boundaries; the driver infrastructure never looks inside a
-unit. The boundaries are chosen so that a unit's text changes only when something its
-object really depends on changes:
+`Unit`). The backend decides the boundaries; build.ei never looks inside a unit. The
+boundaries are chosen so that a unit's text changes only when something its object really
+depends on changes. With `--backend=llvm` (llvm_units.split; `run`, `test` and `build`):
 
 | unit | contains | its text changes when |
 |---|---|---|
-| `mod.<module>` (one per module) | the module's non-generic functions, closures and its `const`/`static` data, with the declarations of everything they reference | that module's source changes, or the layout or signature of something it references |
-| `inst.<k>` (instances, K shards) | monomorphized generic functions, assigned to shard `hash(stable name) mod K`, sorted by stable name within a shard | an instance in that shard is added, removed or changes (its generic's source or a type argument's layout) |
-| `glue.<k>` (per-type glue, K shards) | drop, clone, `==`, hash, show and the other per-type operations (`lower.GK_*`), sharded the same way by the type's stable name | the same, for glue |
-| `main` | `main`, the test driver, the trap file table, the exports' C-convention wrappers | the set of modules, tests or exports changes |
-| `core.rt`, `core.os` | the C core (eider_rt.c, eider_core.c) | the core or the flags change (so: almost never) |
+| `mod.<n>` (one per module) | the functions whose body comes from module n (`Ir.fns[f].file`), its closures and the C-convention wrappers of its functions | that module's source changes, or the layout or signature of something it uses |
+| `inst.<k>` (16 shards) | the monomorphized generic instances (an IR name with `[`), shard `hash(IR name) mod 16`, whatever module instantiated them | an instance of that shard is added, removed or changes |
+| `half` | the C half: per-type glue, `main`, the test driver, the trap file table, fallbacks | the set of glue, natives, tests or modules changes |
+| `eider_rt`, `eider_core` | the C core | the core or the flags change (so: almost never) |
 
-Why shards for instances and glue rather than "with the module that uses them": an instance
-such as `List[String].push` is used by many modules; put with its user it would be compiled
-once per user (and deduplicated by the linker) and invalidated by every edit to any user. A
-unit of its own per instance would be thousands of compiler processes. Hash shards keep each
-instance in exactly one unit, whatever uses it, so editing `diag.ei` recompiles `mod.diag` and
-nothing else, unless the edit adds an instance (one shard changes) or changes a type's layout
-(the units that use the type change, as they must). K is 16 (C383): the compiler has about 1,400
-functions, so a shard is ~40 instances, and 16 is enough to keep a 16-core machine busy on a
-cold build.
+For eiderc that is 43 LLVM units (27 modules with functions, 16 shards), the C half and the
+core: 48 objects. Why shards for instances rather than "with the module that uses them": an
+instance such as `List[String].push` is used by many modules; put with its user it would be
+compiled once per user and invalidated by every edit to any user, and a unit of its own per
+instance would be thousands of compiler processes. Hash shards keep each instance in exactly
+one unit whatever uses it, so editing `diag.ei` recompiles `mod.<diag>` and nothing else,
+unless the edit adds an instance (its shard changes) or changes a type's layout (the units
+that use the type change, as they must). 16 shards (C383): eiderc has ~1,400 functions, and
+16 keeps 16 cores busy on a cold build. The per-type glue is in the C half today; #128 moves it
+into the IR, and it then shards like the instances (`glue.<k>`, by the type's stable name).
 
-What a unit's text must not contain, so that an edit stays local (constraint 1 of "Compile
-speed", extended):
+The split works on the module's text (llvm.ei records which IR function each part of
+`Out.ll` is, `Out.owner`; C392). Each unit is a complete module: `source_filename` (the unit's
+name), the named types it uses closed over the types they mention, its functions, the private
+constants it uses (copied into every unit that uses them: they are `private unnamed_addr`),
+and a declaration of every function it calls that is defined elsewhere: from that
+function's own `define` line (`declare hidden ...`) for another unit's, the module's
+`declare` lines for the C half's, the core's and the intrinsics. A function another unit calls
+becomes `define hidden` (external in its object, invisible outside the program); the rest
+stay `internal`, so -O2 still sees most functions as local. So that an edit stays local, a
+unit's text holds nothing numbered program-wide: the types (`%t<type id>`, numbered by the
+program's type table, which an edit anywhere can renumber) become `%T<k>` and the constants
+(`@.s<string index>`, `@.m<n>`) `@.c<k>`, both numbered by first use in the unit (C393).
+Function names are already stable (constraint 1 of "Compile speed"). What remains numbered:
+trap lines encode `file index * 2^20 + line` with the module's position in the program
+("C8.16"), so an edit that adds or removes a module renumbers the units of the modules after
+it (C394; a per-module file symbol would fix it, with #128's trap table).
 
-- **No program-wide numbering.** Today's trap location is `file index * 2^20 + line`, with the
-  index the module's position in the program: an import added anywhere renumbers every later
-  module, and every unit would change. In unit mode a trap names its file through a per-module
-  symbol (`@ei.file.<module>`, defined in `mod.<module>`, holding the shown path) instead of an
-  index, and the trap table in `main` lists those symbols. Likewise string constants are named
-  by content hash, not by a counter, and closures and lambda thunks by their enclosing function
-  and position in it.
-- **No unused declarations.** Each unit declares only the types and functions it references
-  (the backend collects them while emitting, as `llvm.ei` already collects `gneed`): a full
-  shared header would put every type of the program in every unit's text, and any type change
-  would invalidate everything.
-- **Stable names and deterministic order** (constraints 1 and 2, already held and tested by
-  "determinism").
+The units are the whole module's text rearranged, every function unchanged but for those
+names and its linkage, so the program is the same: the 407 runs of scripts/llvm-diff.sh
+(-O0, -O2 with ThinLTO, allocation counts, ASan+UBSan) are byte-identical to the C backend
+through units, and the eiderc built from units emits byte-identical C and LLVM IR for
+compiler/main.ei. Not split: `-g` (one DWARF compile unit; splitting the metadata is later),
+`build --lib`, and `EIDER_LLVM_UNITS=0` (the whole module as one unit, for comparison).
 
-Linkage across units: a function called from another unit can't be `internal`; in unit mode
-every function is `hidden` (external to the object, invisible outside the program), and the
-ThinLTO link internalizes what isn't used across units again. The C half of today's LLVM
-backend (glue and fallbacks in C) is a unit like any other (`ext .c`), compiled by `$CC`.
+An object must not depend on where it was compiled, or ThinLTO's output (which reads every
+module's identifier) would differ between two caches: build.compile writes each generated
+text to a directory of its own (`u<n>/<name><ext>`) and compiles it from there by relative
+names (C395). `-j 1` and `-j 8`, and two caches, give byte-identical programs (tested).
 
 ### The cache key and layout
 
@@ -2948,33 +3127,34 @@ objects and programs (tested).
 `build.link` links the objects (in unit order) with the compile command's compiler and flags
 and then the `-l` libraries; with the cache on, the program is a cache entry (`bin/`), keyed
 as above, so a no-op rebuild runs no compiler and no linker. `build` copies it out, `run`
-executes it in place, as before. In phase 2 debug builds (`run`, `test`) link with lld when
-clang can (`-fuse-ld=lld`; the linker matters once there are ~40 objects), else the default
-linker. A library (`build --lib`) archives the same objects (`ar`) and links them
+executes it in place, as before. Debug builds link with `$CC`'s default linker: linking
+eiderc's 48 objects is ~0.1 s of its 0.9 s edit (lld would save part of that; later). A library (`build --lib`) archives the same objects (`ar`) and links them
 `-shared`; it is not cached as a whole (it is written next to `-o`).
 
-### Release builds: ThinLTO and lld's cache (phase 2)
+### Release builds: ThinLTO and lld's cache
 
-Today's release LLVM build is full LTO over one module: single-threaded, ~24 s for eiderc,
-and every edit redoes all of it. With units, a release build compiles each unit with
-`-flto=thin` (the unit object is bitcode with a summary; still cached by its text) and links
-with
+Before #129 a release LLVM build was full LTO over one module (`-flto`, with lld or gold):
+single-threaded, ~30 s for eiderc, and every edit redid all of it. Now (C396) a release build
+compiles each LLVM unit and the C half with `-flto=thin` (the unit object is bitcode with a
+summary, still cached by its text) and links with
 
 ```
-clang -fuse-ld=lld -flto=thin -O2 \
-  -Wl,--thinlto-jobs=<N> \
+clang <cc flags> -flto=thin -fuse-ld=lld \
+  -Wl,--thinlto-jobs=<-j> \
   -Wl,--thinlto-cache-dir=<cache>/lto \
-  -Wl,--thinlto-cache-policy=cache_size_bytes=<limit/4>:prune_interval=15m:prune_after=168h
+  -Wl,--thinlto-cache-policy=prune_interval=15m:prune_after=168h:cache_size_bytes=<limit/4>
 ```
 
-ThinLTO optimizes every module in parallel (`--thinlto-jobs`, the same `-j`), importing
-across modules what the summaries say is worth inlining; lld's cache keys each module's
-optimized object by the module's hash and everything imported into it, so after an edit only
-the edited module and the modules that imported from it are optimized again; the rest come
-from `lto/`. The link itself (the program in `bin/`) is cached by the objects' keys as in debug
-builds. lld prunes `lto/` itself under the policy above; `eiderc cache trim` counts its size
-but leaves it to lld, `clean` removes it. Without lld (or `EIDER_LLVM_LTO=0`) a release build
-links native `-O2` objects without LTO. The C core stays native objects, as in #96.
+ThinLTO optimizes every module in parallel, importing across modules what the summaries say
+is worth inlining (the C half's glue into the IR, as full LTO did); lld's cache keys each
+module's optimized object by the module's hash and everything imported into it, so after an
+edit only the edited module and the modules that import from it are optimized again; the rest
+come from `lto/`. The job count and the cache flags are not part of the link key (build.link
+`nokey`): they don't change the program. lld prunes `lto/` itself under the policy above;
+`eiderc cache trim` counts its size but leaves it to lld, `clean` removes it. Without lld
+(probed with a one-line `-flto=thin -fuse-ld=lld` link; gold is no longer used), with
+`EIDER_LLVM_LTO=0` or when EIDER_CFLAGS ends with -O0, a release build links native -O2
+objects. The C core stays native objects.
 
 ### Eviction and size limits
 
@@ -3080,7 +3260,42 @@ recompiles all of it and gcc on it is the whole time. No-op builds halve: they a
 front end and lowering (0.25 s) plus hashing (0.03 s). Edits become cheap in phase 2, when an
 edit changes one unit of many.
 
-Phase 2 (LLVM units) adds its tables here.
+Phase 2 (2026-10-31, 16 cores, gcc and clang 22, wall clock, one session):
+`scripts/build-bench.sh` on eiderc for five configurations; after each time, in parentheses,
+the unit objects that step compiled (main's compiler has the old cache layout: not counted).
+`main-c`: main's compiler, C backend, the whole-program binary cache (one cc per build, binary
+keyed by the whole C). `main-llvm`: main's `--backend=llvm` (one module, full LTO, no binary
+cache). `c`: this compiler, C backend. `llvm-whole`: this compiler, `--backend=llvm` with
+`EIDER_LLVM_UNITS=0` (one LLVM unit through the new cache, ThinLTO). `llvm-units`: this
+compiler, `--backend=llvm`, the default. Release is `build` (-O2), debug `run -- --version`
+(-O0):
+
+| configuration | build | cold | no-op | edit compiler/diag.ei | edit std/proc.ei |
+|---|---|---|---|---|---|
+| main-c | release | 42.57 | 0.69 | 42.11 | 42.31 |
+| main-c | debug | 9.42 | 0.69 | 9.23 | 9.11 |
+| main-llvm | release | 30.82 | 30.73 | 30.94 | 30.31 |
+| main-llvm | debug | 2.27 | 2.05 | 2.03 | 2.04 |
+| c | release | 41.51 (3) | 0.36 | 42.80 (1) | 38.81 (1) |
+| c | debug | 8.43 (3) | 0.36 | 8.86 (1) | 8.91 (1) |
+| llvm-whole | release | 33.83 (4) | 0.69 | 30.84 (1) | 29.86 (1) |
+| llvm-whole | debug | 1.69 (4) | 0.58 | 1.66 (1) | 1.69 (1) |
+| llvm-units | release | 12.77 (48) | 0.88 | 8.53 (1) | 1.75 (1) |
+| llvm-units | debug | 1.88 (48) | 0.80 | 0.88 (1) | 0.89 (1) |
+
+Against the whole-program cache (main-c): a release build of eiderc after an edit goes from 42 s
+to 1.8-8.5 s, a debug one from 9 s to 0.9 s; a cold release build from 43 s to 13 s. Against
+the LLVM build without units (main-llvm, and llvm-whole through the new cache), the units make
+the release build parallel (31-34 s to 13 s cold) and the edits cheap: one unit compiles, and
+ThinLTO re-optimizes only what imports from it. An edit to diag.ei costs 8.5 s in release
+because diag is imported by nearly every module (its functions are inlined into them, so lld
+optimizes those again); proc.ei, used by the driver alone, 1.75 s. The debug edit is 0.9 s:
+the front end and emission (0.5 s), the split (~0.1 s), one clang -O0 and the link. A no-op is
+0.8-0.9 s against 0.6-0.7 s for one unit: the split and hashing 10 MB of IR; it is the front
+end that remains, and the front-end manifest above is what would remove it.
+
+The unit objects of a debug and a release build of eiderc take 8 MB, lld's ThinLTO cache 4 MB
+and each linked program 2.4 MB, so the 5 GiB default holds hundreds of builds.
 
 ## Profiling: `--profile`
 
@@ -3182,6 +3397,7 @@ compiler/
   ide.ei              the IDE analysis API (`eiderc ide`; "IDE analysis")
   front.ei            every syntax error at once ("Front-end recovery")
   doc.ei              the API description (`eiderc doc`; "Documentation: `eiderc doc`")
+  llvm.ei llvm_abi.ei the experimental LLVM backend and its C layouts and System V classifier ("Backends")
   tests/              pass-level golden tests (lex, lex_ok, check, ir, run, wasm, export, ide, pkgs, ...)
 tests/oracle/         the recorded expected results (scripts/test-compiler.sh, BLESS=1)
 ```
