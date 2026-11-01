@@ -131,7 +131,7 @@ check "init writes eider.toml" '[package]
 name = "app"
 version = "0.1.0"
 main = "main.ei"
-eider = "0.1"' "$(cat "$T/app/eider.toml")"
+eider = "0.2"' "$(cat "$T/app/eider.toml")"
 check "init writes a program with package imports" 'import core.sys
 import std.io' "$(head -2 "$T/app/main.ei")"
 check "init twice" "eider-pkg: eider.toml already exists
@@ -170,7 +170,7 @@ check "eider.toml after add" "[package]
 name = \"app\"
 version = \"0.1.0\"
 main = \"main.ei\"
-eider = \"0.1\"
+eider = \"0.2\"
 
 [deps.geom]
 path = \"../geom\"
