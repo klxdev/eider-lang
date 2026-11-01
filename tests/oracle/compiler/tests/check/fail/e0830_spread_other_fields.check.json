@@ -1,0 +1,1 @@
+{"error":"E0830","span":{"file":"compiler/tests/check/fail/e0830_spread_other_fields.ei","line":4,"col":35},"message":"a `comptime for` that builds P goes over its fields"}

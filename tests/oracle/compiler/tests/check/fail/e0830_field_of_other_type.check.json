@@ -1,0 +1,1 @@
+{"error":"E0830","span":{"file":"compiler/tests/check/fail/e0830_field_of_other_type.ei","line":6,"col":9},"message":"`x` is a field of P, but this value has type Q","help":"in the `comptime for` iteration over field `a` of P"}

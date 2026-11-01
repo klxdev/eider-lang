@@ -23,6 +23,13 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
   (E0820, E0821), a bad argument E0822. Attributes are inert: only comptime reflection
   reads them.
 
+- **Comptime reflection** (#20): `comptime for f in fields(T)`, `comptime for v in
+  variants(T)` and `fields(v)` expand their body per field or variant while a generic
+  function is specialized; `x.[f]` is the typed field, `f.name`/`f.index`, `v.matches(x)`,
+  `attr[A](f)` and `has_attr[A](f)` read the rest; `comptime if` keeps one branch;
+  `T(comptime for f in fields(T) { ... })` and `v(...)` build values. Errors E0830-E0832,
+  and errors inside an expansion name its field. docs/site/reference/reflection.md.
+
 ## 0.2.0
 
 LLVM is Eider's only backend, and the compiler bootstraps from WebAssembly (U23, U24). Not

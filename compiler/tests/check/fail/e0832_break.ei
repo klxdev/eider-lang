@@ -1,0 +1,8 @@
+// expect: E0832 5:9
+type P = { a: i64, b: i64 }
+fn f() {
+    comptime for x in fields(P) {
+        break
+    }
+}
+fn main() { f() }

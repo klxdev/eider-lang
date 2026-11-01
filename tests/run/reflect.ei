@@ -1,0 +1,174 @@
+// Comptime reflection (docs/compiler.md, "C8.31"): a derived encoder and a derived
+// constructor, written once as generic code over fields(T) and variants(T), with attributes.
+attr enc { name: str = "", skip: bool = false }
+
+trait Enc { fn enc(self, inout out: String) }
+
+impl Enc for i64 {
+    fn enc(self, inout out: String) { out.append(String.from_int(self)) }
+}
+
+impl Enc for bool {
+    fn enc(self, inout out: String) { if self { out.push_str("true") } else { out.push_str("false") } }
+}
+
+impl Enc for String {
+    fn enc(self, inout out: String) {
+        out.push_str("'")
+        out.append(self)
+        out.push_str("'")
+    }
+}
+
+impl[T: Enc] Enc for List[T] {
+    fn enc(self, inout out: String) {
+        out.push_str("[")
+        for i in 0..self.len() {
+            if i > 0 { out.push_str(" ") }
+            self[i].enc(inout out)
+        }
+        out.push_str("]")
+    }
+}
+
+/// `{key=value, ...}` for any record whose fields have Enc (a skipped one needn't).
+fn record[T](x: T, inout out: String) {
+    out.push_str("{")
+    let mut first = true
+    comptime for f in fields(T) {
+        // (a `comptime if` leaves out only its own branch: what follows a `continue` in it
+        // would still be checked for the skipped field)
+        comptime if !attr[enc](f).skip {
+            if !first { out.push_str(", ") }
+            first = false
+            comptime if has_attr[enc](f) && attr[enc](f).name != "" {
+                out.push_str(attr[enc](f).name)
+            } else {
+                out.push_str(f.name)
+            }
+            out.push_str("=")
+            x.[f].enc(inout out)
+        }
+    }
+    out.push_str("}")
+}
+
+/// `Name(a, b)` for any enum whose payloads have Enc.
+fn variant[T](x: T, inout out: String) {
+    comptime for v in variants(T) {
+        if v.matches(x) {
+            out.push_str(v.name)
+            let mut n = 0
+            comptime for f in fields(v) {
+                comptime if f.index == 0 { out.push_str("(") } else { out.push_str(", ") }
+                x.[f].enc(inout out)
+                n += 1
+            }
+            if n > 0 { out.push_str(")") }
+        }
+    }
+}
+
+/// Each field from a function of its name and index (Default for the skipped ones).
+fn build[T](base: i64) -> T {
+    T(comptime for f in fields(T) {
+        comptime if attr[enc](f).skip { dflt() } else { make(base + f.index as i64) }
+    })
+}
+
+trait Make { fn make_from(n: i64) -> Self }
+
+impl Make for i64 {
+    fn make_from(n: i64) -> i64 { n }
+}
+
+impl Make for bool {
+    fn make_from(n: i64) -> bool { n % 2 == 0 }
+}
+
+impl Make for String {
+    fn make_from(n: i64) -> String { String.from_int(n * 100) }
+}
+
+impl[T: Make] Make for List[T] {
+    fn make_from(n: i64) -> List[T] {
+        let mut xs: List[T] = List.new()
+        for i in 0..n { xs.push(T.make_from(i as i64)) }
+        xs
+    }
+}
+
+fn make[F: Make](n: i64) -> F { F.make_from(n) }
+
+fn dflt[F: Default]() -> F { F.default() }
+
+/// Doubles every i64 field in place (a place: `x.[f] = ...`).
+fn double_ints(inout p: Pair) {
+    comptime for f in fields(Pair) {
+        comptime if f.name == "a" || f.name == "c" { p.[f] = p.[f] * 2 }
+    }
+}
+
+type Pair = { a: i64, @enc(name = "label") b: String, c: i64, @enc(skip) lock: Mutex[i64] }
+
+type Cfg = { n: i64, on: bool, name: String, xs: List[String], @enc(skip) seen: List[u8] }
+
+type Shape = | Circle(r: i64) | Rect(w: i64, h: i64) | Empty
+
+type Wrap[T] = { inner: T, count: i64 }
+
+// reflection inside comptime evaluation: the constants are computed by the interpreter
+fn field_count() -> i64 {
+    let mut n: i64 = 0
+    comptime for f in fields(Cfg) { n += 1 }
+    n
+}
+
+fn label_of_b() -> str {
+    comptime for f in fields(Pair) {
+        comptime if f.name == "b" { return attr[enc](f).name }
+    }
+    ""
+}
+
+const CFG_FIELDS: i64 = comptime field_count()
+const B_LABEL: str = comptime label_of_b()
+
+fn main() uses io {
+    print(CFG_FIELDS)
+    print(B_LABEL)
+    let p = Pair(1, String.from("one"), 3, Mutex.new(0))
+    let mut s = String.from("")
+    record(p, inout s)
+    print(s)
+    let mut q = Pair(5, String.from("q"), 7, Mutex.new(0))
+    double_ints(inout q)
+    let mut t = String.from("")
+    record(q, inout t)
+    print(t)
+    let c: Cfg = build(3)
+    let mut u = String.from("")
+    record(c, inout u)
+    print(u)
+    print(c.seen.len())
+    let mut v = String.from("")
+    for x in [Circle(2), Rect(3, 4), Empty] {
+        variant(x, inout v)
+        v.push_str(" ")
+    }
+    print(v)
+    let w = Wrap(String.from("in"), 2)
+    let mut z = String.from("")
+    record(w, inout z)
+    print(z)
+    let ws: Wrap[Wrap[i64]] = Wrap(Wrap(9, 1), 0)
+    let mut y = String.from("")
+    comptime for f in fields(Wrap[Wrap[i64]]) {
+        comptime if f.name == "count" { ws.[f].enc(inout y) } else { y.push_str(f.name) }
+    }
+    print(y)
+}
+
+impl[T: Enc] Enc for Wrap[T] {
+    fn enc(self, inout out: String) { record(self, inout out) }
+}

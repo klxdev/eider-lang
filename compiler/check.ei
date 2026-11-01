@@ -4353,6 +4353,7 @@ fn leave_loop(inout c: C) {
 /// (`break outer`; docs/compiler.md, "C8.22"): drops what the exit leaves, then S_BREAK or
 /// S_CONTINUE with a = how many loops it leaves besides its own.
 fn loop_exit(inout c: C, n: ast.Node, kind: u32) -> Result[u32, diag.Diag] {
+    ct_break(c, n, kind)?
     if c.loops == 0 { return Err(err("E0306", n.line, n.col, s("`break`/`continue` outside of a loop"))) }
     let mut depth: u32 = 0
     let mut at = c.loop_bases.len() - 1
@@ -4438,6 +4439,7 @@ fn for_range(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
 }
 
 fn for_each(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
+    if n.g == 1 { return ct_for(inout c, n) }
     let mut pv = place_expr(inout c, n.b)?
     let mut snapshot = false
     if types.kind(c.t, pv.ty) == types.T_MAP {
@@ -4645,7 +4647,7 @@ type Root = { ok: bool, key: u64, line: u32, col: u32 }
 fn root(c: C, e: u32) -> Root {
     let n = nd(c, e)
     if n.kind == ast.EIdent { return Root(true, ekey(c, n), n.line, n.col) }
-    if n.kind == ast.EField || n.kind == ast.EIndex { return root(c, n.a) }
+    if n.kind == ast.EField || n.kind == ast.EIndex || n.kind == ast.EFieldAt { return root(c, n.a) }
     Root(false, 0, 0, 0)
 }
 
@@ -4760,6 +4762,7 @@ fn unify(c: C, a: u32, b: u32, line: u32, col: u32) -> Result[u32, diag.Diag] {
 }
 
 fn compile_if(inout c: C, n: ast.Node, dest: Dest, exp: u32) -> Result[u32, diag.Diag] {
+    if n.d == 1 { return ct_compile_if(inout c, n, dest, exp) }
     let cv = expr(inout c, n.a, types.BOOL)?
     if !same(c, cv.ty, types.BOOL) {
         let cn = nd(c, n.a)
@@ -5154,7 +5157,7 @@ fn is_place(c: C, e: u32) -> bool {
     let n = nd(c, e)
     if n.kind == ast.EIdent { return lookup(c, ekey(c, n)) != NONE }
     if n.kind == ast.EField { return static_tmpl(c, n) == NONE }
-    n.kind == ast.EIndex
+    n.kind == ast.EIndex || n.kind == ast.EFieldAt
 }
 
 /// Check expression e against the expected type `exp` (NONE: no expectation). An owned
@@ -5202,6 +5205,7 @@ fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
             Ok(v_of(types.STR, o))
         }
         ast.EIdent => {
+            if n.b == 0 && ct_find(c, n.a) != NONE { return Err(ct_value_err(c, n)) }
             let k = ekey(c, n)
             let li = lookup(c, k)
             if li != NONE {
@@ -5213,7 +5217,17 @@ fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
             }
             ident_value(inout c, n, k, exp)
         }
+        ast.EFieldAt => {
+            let pv = place_expr(inout c, e)?
+            if pv.op != NONE { return Ok(v_of(pv.ty, pv.op)) }
+            Ok(v_of(pv.ty, read(inout c, pv.place, pv.ty, 0)))
+        }
+        ast.EReflect => reflect_value(inout c, n)
         ast.EField => {
+            match ct_field(inout c, n)? {
+                Some(v) => { return Ok(v) }
+                None => {}
+            }
             let di = static_tmpl(c, n)
             if di != NONE {
                 let d = c.t.defs[di as usize]
@@ -5274,7 +5288,7 @@ fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
             Ok(v_of(ty, emit_val(inout c, ir.S_REPEAT, v.op, n.b, 0, ty, ty, n.line)))
         }
         ast.ETuple => tuple_lit(inout c, n, exp)
-        ast.ETry => try_op(inout c, n)
+        ast.ETry => try_op(inout c, n, exp)
         ast.ELambda => lambda(inout c, n, exp)
         // reported by the parser: an error value
         ast.EError => Err(quiet())
@@ -5330,6 +5344,7 @@ fn static_tmpl(c: C, n: ast.Node) -> u32 {
 /// A place expression (variable, field, element), or a value held in a temporary.
 fn place_expr(inout c: C, e: u32) -> Result[PV, diag.Diag] {
     let n = nd(c, e)
+    if n.kind == ast.EFieldAt { return field_at(inout c, n) }
     if n.kind == ast.EIdent {
         let k = ekey(c, n)
         let li = lookup(c, k)
@@ -5642,9 +5657,10 @@ fn tuple_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
 }
 
 /// `x?` on a Result or Option: on Err/None, drop everything and return it.
-fn try_op(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
+fn try_op(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     if c.lam_expr { return Err(unsup(n.line, n.col, "`?` in a closure without a block body")) }
-    let v = expr(inout c, n.a, NONE)?
+    let hint = ct_try_hint(inout c, exp)
+    let v = expr(inout c, n.a, hint)?
     if poisoned(c, v.ty) || poisoned(c, c.ret) { return Ok(poison_v(inout c)) }
     let vt = types.get(c.t, v.ty)
     if vt.kind != types.T_ENUM {
@@ -5746,6 +5762,10 @@ fn call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
 }
 
 fn call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
+    match ct_call(inout c, n, exp)? {
+        Some(v) => { return Ok(v) }
+        None => {}
+    }
     let k = ekey(c, n)
     if is_builtin_fn(c, k) { return builtin(inout c, n, resolve.key_sym(k)) }
     let vd = mget(c.variants, k)
@@ -5806,6 +5826,10 @@ fn field_nodes(c: C, di: u32, vkey: u64) -> List[u32] {
 /// from the arguments [start/len), inferring type arguments from the expected type and
 /// the arguments.
 fn construct(inout c: C, line: u32, col: u32, di: u32, vkey: u64, start: u32, len: u32, exp: u32) -> Result[V, diag.Diag] {
+    if len == 1 && is_spread(c, at(c, start, 0)) {
+        let a0 = at(c, start, 0)
+        return spread_target(inout c, line, col, di, vkey, a0, exp)
+    }
     let d = c.t.defs[di as usize].copy()
     let fas = field_nodes(c, di, vkey)
     let label = if vkey != NONE as u64 { kt(c, vkey) } else { kt(c, d.key) }
@@ -6255,6 +6279,10 @@ fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
 }
 
 fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
+    match ct_matches(inout c, n)? {
+        Some(v) => { return Ok(v) }
+        None => {}
+    }
     let r = nd(c, n.a)
     let mut static_head: u64 = 0
     let mut is_static = false
@@ -7678,7 +7706,7 @@ fn thread_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
     Err(err("E0115", n.line, n.col, q2("type ", ts(c, ty), " has no method `", nm(c, n.b), "`")))
 }
 
-// ---- Attributes (docs/compiler.md, "C8.28: attributes")
+// ---- Attributes (docs/compiler.md, "C8.30: attributes")
 //
 // `attr name { key: T = default, ... }` declares an attribute: a record type (IType h=1)
 // whose keys are integers, bool or str, each with a default or required. `@name(key =
@@ -7989,9 +8017,591 @@ fn attr_use(c: C, m: u32, owner: u32, di: u32) -> Option[List[ALit]] {
     None
 }
 
-// ---- Reflection (docs/compiler.md, "C8.29: comptime reflection")
+// ---- Reflection (docs/compiler.md, "C8.31: comptime reflection")
 
 /// A comptime binding in scope: `comptime for` variable `key` (declared at scopes length
 /// `mark`), a field (B_FIELD: field `idx` of record `ty`, or of variant `vi` of enum `ty`)
 /// or a variant (B_VARIANT: variant `idx` of enum `ty`).
 type CtBind = { key: u64, mark: u32, kind: u32, ty: u32, idx: u32, vi: u32 }
+
+// Comptime reflection is resolved while a body is checked, per instance: a generic body is
+// checked once per instance with its type parameters substituted, so `fields(T)` there is
+// the instance's record and the code it unrolls is ordinary IR, specialized like any other.
+// In the bounds pass (T_PARAM types) a `comptime for` over a type parameter is not checked
+// at all, nor a `comptime if` that depends on one: their instances are.
+//
+// - `comptime for f in fields(T) { body }` (T a record type, or `fields(v)` for the payload
+//   of a variant binding v) and `comptime for v in variants(T)` (T an enum): the body once
+//   per field or variant, in declaration order, each time in a loop that runs once (so
+//   `continue` goes to the next one; `break` is E0832), with the variable bound to it
+//   (`Reflect.binds`, a CtBind; not a local: it has no value at run time).
+// - `x.[f]`: the field f names, a place of the field's type (E0830 when x's type isn't f's
+//   record; a payload field of variant v traps unless x is v).
+// - `f.name` (str) and `f.index` (usize), `v.name`, `v.index`: constants; `v.matches(x)`:
+//   whether x is variant v.
+// - `attr[A](x)`: attribute A's values on x (a field or variant binding, or a type) as a
+//   value of A's record type, the declared defaults when x doesn't have it;
+//   `has_attr[A](x)`: whether it has it.
+// - `T(comptime for f in fields(T) { e })` and `v(comptime for f in fields(v) { e })`: a
+//   record or variant built from one value per field; `T(...)` with T a type parameter
+//   constructs the record it stands for.
+// - `comptime if c { ... } else { ... }`: only the branch c selects is checked; c is
+//   evaluated by `ct_eval` from literals, constants, reflected names and indexes,
+//   attribute values, `!`, `&&`, `||` and comparisons (E0832 otherwise).
+// A comptime variable used as a value is E0831.
+
+const B_FIELD: u32 = 0
+const B_VARIANT: u32 = 1
+/// the loop label of a `comptime for`'s one-iteration loop (no label is this sym + 1)
+const CT_LOOP: u32 = 4294967294
+
+/// The binding (index into c.rx.binds) named `sym`, innermost first, unless a local declared
+/// after it shadows it; NONE.
+fn ct_find(c: C, sym: u32) -> u32 {
+    let mut i = c.rx.binds.len()
+    while i > 0 {
+        i -= 1
+        let b = c.rx.binds[i]
+        if resolve.key_sym(b.key) == sym {
+            let li = lookup(c, resolve.key(0, sym))
+            if li != NONE && li >= b.mark { return NONE }
+            return i as u32
+        }
+    }
+    NONE
+}
+
+/// The binding expression or type node e (of the module being checked) names, or NONE.
+fn ct_of(c: C, e: u32) -> u32 {
+    let n = nd(c, e)
+    if (n.kind == ast.EIdent || n.kind == ast.TName) && n.b == 0 { return ct_find(c, n.a) }
+    NONE
+}
+
+/// The template definition of type ty (a record or an enum) and its declaration node.
+fn tmpl_of(c: C, ty: u32) -> types.Def {
+    let d = types.def_of(c.t, ty)
+    c.t.defs[d.tmpl as usize]
+}
+
+/// The type of the field binding b names.
+fn bind_fty(c: C, b: CtBind) -> u32 {
+    let d = types.def_of(c.t, b.ty)
+    if b.vi == NONE { return types.field(c.t, d.start, b.idx).ty }
+    let v = types.variant(c.t, d, b.vi)
+    types.field(c.t, v.fstart, b.idx).ty
+}
+
+/// The source name of what binding b names (a positional payload field: its index).
+fn bind_name(c: C, b: CtBind) -> List[u8] {
+    let d = types.def_of(c.t, b.ty)
+    if b.kind == B_VARIANT { return nm(c, resolve.key_sym(types.variant(c.t, d, b.idx).key)) }
+    if b.vi == NONE { return nm(c, types.field(c.t, d.start, b.idx).name) }
+    let td = tmpl_of(c, b.ty)
+    let tn = ndm(c, td.md, td.node)
+    let vn = ndm(c, td.md, atm(c, td.md, tn.e, b.vi))
+    let vf = ndm(c, td.md, atm(c, td.md, vn.c, b.idx))
+    if vf.c == 1 { return nm(c, vf.a) }
+    bytes.from_u64(b.idx as u64)
+}
+
+/// What a reflection's attributes are attached to: module and node (NONE: nothing).
+type Owner = { m: u32, node: u32 }
+
+fn bind_owner(c: C, b: CtBind) -> Owner {
+    let td = tmpl_of(c, b.ty)
+    let tn = ndm(c, td.md, td.node)
+    if b.kind == B_VARIANT { return Owner(td.md, atm(c, td.md, tn.e, b.idx)) }
+    // (a payload field has no attributes)
+    if b.vi != NONE { return Owner(td.md, NONE) }
+    Owner(td.md, atm(c, td.md, tn.e, b.idx))
+}
+
+fn r_err(n: ast.Node, msg: List[u8]) -> diag.Diag { err("E0830", n.line, n.col, msg) }
+
+/// The fields or variants a `comptime for` goes over (`skip`: over a type parameter in the
+/// bounds pass, or an error type).
+type CtItems = { skip: bool, items: List[CtBind] }
+
+fn ct_items(inout c: C, r: ast.Node) -> Result[CtItems, diag.Diag] {
+    let mut out: List[CtBind] = List.new()
+    let tn = nd(c, r.b)
+    let bi = ct_of(c, r.b)
+    if bi != NONE {
+        let b = c.rx.binds[bi as usize].copy()
+        if b.kind != B_VARIANT || r.a != ast.R_FIELDS {
+            return Err(r_err(tn, q("`", nm(c, tn.a), "` is a reflected field; `fields(...)` takes a record type or a variant, `variants(...)` an enum type")))
+        }
+        let v = types.variant(c.t, types.def_of(c.t, b.ty), b.idx)
+        for j in 0..v.flen { out.push(CtBind(0, 0, B_FIELD, b.ty, j, b.idx)) }
+        return Ok(CtItems(false, out))
+    }
+    let am = c.am.copy()
+    let ty = resolve_ty(inout c, am, r.b)?
+    let k = types.kind(c.t, ty)
+    if poisoned(c, ty) || k == types.T_PARAM { return Ok(CtItems(true, out)) }
+    if r.a == ast.R_FIELDS {
+        if k != types.T_RECORD { return Err(r_err(tn, q("`fields(...)` takes a record type or a variant, not ", ts(c, ty), ""))) }
+        let d = types.def_of(c.t, ty)
+        for i in 0..d.len { out.push(CtBind(0, 0, B_FIELD, ty, i, NONE)) }
+        return Ok(CtItems(false, out))
+    }
+    if k != types.T_ENUM { return Err(r_err(tn, q("`variants(...)` takes an enum type, not ", ts(c, ty), ""))) }
+    let d = types.def_of(c.t, ty)
+    for i in 0..d.len { out.push(CtBind(0, 0, B_VARIANT, ty, i, NONE)) }
+    Ok(CtItems(false, out))
+}
+
+/// What the diagnostics recorded since `from` were found expanding: the help names the
+/// iteration (when they have none).
+fn note_iteration(inout c: C, from: usize, b: CtBind) {
+    let what = if b.kind == B_VARIANT { "variant" } else { "field" }
+    for i in from..c.diags.len() {
+        if c.diags[i].help.len() == 0 {
+            let mut h = s("in the `comptime for` iteration over ")
+            bytes.append(inout h, s(what))
+            bytes.append(inout h, s(" `"))
+            bytes.append(inout h, bind_name(c, b))
+            bytes.append(inout h, s("` of "))
+            bytes.append(inout h, ts(c, b.ty))
+            let mut d = c.diags[i].copy()
+            d.help = h
+            c.diags[i] = d
+        }
+    }
+}
+
+/// `comptime for` as a statement.
+fn ct_for(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
+    let r = nd(c, n.b)
+    let its = ct_items(inout c, r)?
+    if its.skip { return Ok(types.UNIT) }
+    for it in its.items {
+        let lm = ir.open(c.ir)
+        let base = c.fmarks.len() as u32
+        c.loops += 1
+        c.loop_bases.push(base)
+        c.loop_labels.push(CT_LOOP)
+        push_frame(inout c)
+        push_scope(inout c)
+        let mut b = it.copy()
+        b.key = resolve.key(0, n.a)
+        b.mark = c.scopes.len() as u32
+        c.rx.binds.push(b.copy())
+        let from = c.diags.len()
+        let res = block_body(inout c, n.d, Dest(D_DISCARD, 0), NONE)
+        c.rx.binds.pop()
+        note_iteration(inout c, from, b)
+        match res {
+            Ok(_) => {}
+            Err(d) => {
+                if fatal(d) { return Err(d) }
+                record(inout c, d)
+            }
+        }
+        pop_scope(inout c)
+        pop_frame(inout c, true)
+        leave_loop(inout c)
+        let body = ir.close(inout c.ir, lm)
+        // the step leaves the loop: the body runs once, and `continue` ends it
+        let sm = ir.open(c.ir)
+        emit(inout c, ir.S_BREAK, 0, 0, 0, 0, 0, n.line)
+        let step = ir.close(inout c.ir, sm)
+        emit(inout c, ir.S_LOOP, 0, body, step, 0, 0, n.line)
+    }
+    Ok(types.UNIT)
+}
+
+/// Whether call argument a is a `comptime for` (one argument per iteration).
+fn is_spread(c: C, a: u32) -> bool {
+    let n = nd(c, a)
+    n.kind == ast.EArg && n.c == 1
+}
+
+/// `T(comptime for f in fields(T) { e })` / `v(comptime for f in fields(v) { e })`: record
+/// type ty (vi NONE) or its variant vi, from the spread argument `arg`.
+fn spread_construct(inout c: C, line: u32, col: u32, ty: u32, vi: u32, arg: u32) -> Result[V, diag.Diag] {
+    let sf = nd(c, nd(c, arg).a)
+    let r = nd(c, sf.b)
+    let its = ct_items(inout c, r)?
+    if its.skip || poisoned(c, ty) { return Ok(poison_v(inout c)) }
+    let d = types.def_of(c.t, ty)
+    let want: u32 = if vi == NONE { d.len } else { types.variant(c.t, d, vi).flen }
+    let mut ok = its.items.len() as u32 == want && r.a == ast.R_FIELDS
+    for it in its.items {
+        if it.ty != ty || it.vi != vi { ok = false }
+    }
+    if !ok {
+        let what = if vi == NONE { ts(c, ty) } else { q("variant `", nm(c, resolve.key_sym(types.variant(c.t, d, vi).key)), "`") }
+        return Err(r_err(r, q("a `comptime for` that builds ", what, " goes over its fields")))
+    }
+    let mut vs: List[V] = List.new()
+    for it in its.items {
+        let fty = bind_fty(c, it)
+        let l = tmp(inout c, fty, line)
+        let mut b = it.copy()
+        b.key = resolve.key(0, sf.a)
+        b.mark = c.scopes.len() as u32
+        c.rx.binds.push(b.copy())
+        let from = c.diags.len()
+        let res = block_body(inout c, sf.d, Dest(D_VAR, l), fty)
+        c.rx.binds.pop()
+        note_iteration(inout c, from, b)
+        let t = res?
+        if !same(c, t, fty) && t != types.NEVER {
+            let bn = nd(c, sf.d)
+            let mut e = mismatch(c, bn.line, bn.col, fty, t)
+            e.help = q("the value for field `", bind_name(c, b), "`")
+            return Err(e)
+        }
+        let lo = ir.op_local(inout c.ir, l, fty)
+        vs.push(mk_fresh(inout c, v_of(fty, lo), line))
+    }
+    let mut ops: List[u32] = List.new()
+    for v in vs { ops.push(take(inout c, v, line)) }
+    let st = ir.list(inout c.ir, ops)
+    if vi != NONE { return Ok(v_of(ty, emit_val(inout c, ir.S_VARIANT, vi, st, want, ty, ty, line))) }
+    Ok(v_of(ty, emit_val(inout c, ir.S_RECORD, 0, st, want, ty, ty, line)))
+}
+
+/// A call whose callee is a reflected variant (`v(...)`) or a type parameter standing for a
+/// record (`T(...)`): its value, or None for any other call.
+fn ct_call(inout c: C, n: ast.Node, exp: u32) -> Result[Option[V], diag.Diag] {
+    if n.b != 0 { return Ok(None) }
+    let spread = n.d == 1 && is_spread(c, at(c, n.c, 0))
+    let bi = ct_find(c, n.a)
+    if bi != NONE {
+        let b = c.rx.binds[bi as usize].copy()
+        if b.kind != B_VARIANT { return Err(r_err(n, q("`", nm(c, n.a), "` is a reflected field; only a variant or a type can be called")) ) }
+        let a0 = at(c, n.c, 0)
+        if spread { return Ok(Some(spread_construct(inout c, n.line, n.col, b.ty, b.idx, a0)?)) }
+        let d = types.def_of(c.t, b.ty)
+        let vkey = types.variant(c.t, d, b.idx).key
+        return Ok(Some(construct(inout c, n.line, n.col, d.tmpl, vkey, n.c, n.d, b.ty)?))
+    }
+    if lookup(c, resolve.key(0, n.a)) != NONE || n.a == intern.S_SELF_TYPE { return Ok(None) }
+    let ty = subst_get(c.tsubst, n.a)
+    if ty == NONE { return Ok(None) }
+    let k = types.kind(c.t, ty)
+    if k == types.T_PARAM || poisoned(c, ty) {
+        // the bounds pass: its instances check the call
+        let pt = poison(inout c)
+        for i in 0..n.d {
+            let a = nd(c, at(c, n.c, i))
+            if a.c != 1 { expr(inout c, a.a, pt)? }
+        }
+        return Ok(Some(poison_v(inout c)))
+    }
+    if k != types.T_RECORD { return Err(r_err(n, q2("`", nm(c, n.a), "` is ", ts(c, ty), ", which has no constructor"))) }
+    let a1 = at(c, n.c, 0)
+    if spread { return Ok(Some(spread_construct(inout c, n.line, n.col, ty, NONE, a1)?)) }
+    let d = types.def_of(c.t, ty)
+    Ok(Some(construct(inout c, n.line, n.col, d.tmpl, NONE as u64, n.c, n.d, ty)?))
+}
+
+/// The record a constructor with a spread argument builds (template di, variant vkey): the
+/// expected instance of it, or the template itself when it isn't generic.
+fn spread_target(inout c: C, line: u32, col: u32, di: u32, vkey: u64, arg: u32, exp: u32) -> Result[V, diag.Diag] {
+    let d = c.t.defs[di as usize].copy()
+    let mut ty = NONE
+    if exp != NONE {
+        let ek = types.kind(c.t, exp)
+        if (ek == types.T_RECORD || ek == types.T_ENUM) && types.def_of(c.t, exp).tmpl == di { ty = exp }
+    }
+    if ty == NONE && d.generic == 0 { ty = inst_type(inout c, di, List.new(), line, col)? }
+    if ty == NONE { return Err(errh("E0409", line, col, q("cannot infer the type arguments of `", kt(c, d.key), "`"), "annotate the binding with the type it builds")) }
+    let mut vi = NONE
+    if vkey != NONE as u64 {
+        vi = match types.find_variant(c.t, types.def_of(c.t, ty), vkey) {
+            Some(i) => i
+            None => NONE
+        }
+    }
+    spread_construct(inout c, line, col, ty, vi, arg)
+}
+
+/// `x.[f]`: the place of the field binding f names in x.
+fn field_at(inout c: C, n: ast.Node) -> Result[PV, diag.Diag] {
+    let fe = nd(c, n.b)
+    let bi = ct_of(c, n.b)
+    if bi == NONE { return Err(errh("E0831", fe.line, fe.col, s("`x.[...]` takes a `comptime for` variable over fields"), "write `comptime for f in fields(T) { ... x.[f] ... }`")) }
+    let b = c.rx.binds[bi as usize].copy()
+    if b.kind != B_FIELD { return Err(r_err(fe, q("`", nm(c, fe.a), "` is a reflected variant; `x.[...]` takes a field"))) }
+    let pv = place_expr(inout c, n.a)?
+    let fty = bind_fty(c, b)
+    if poisoned(c, pv.ty) {
+        let pz = poison_v(inout c)
+        return Ok(value_place(inout c, pz, n.line))
+    }
+    if pv.ty != b.ty {
+        let xn = nd(c, n.a)
+        return Err(r_err(xn, q3("`", nm(c, fe.a), "` is a field of ", ts(c, b.ty), ", but this value has type ", ts(c, pv.ty), "")))
+    }
+    if b.vi == NONE { return Ok(PV(ir.place_field(inout c.ir, pv.place, b.idx, fty), fty, NONE)) }
+    // a payload field: the value must be that variant
+    let t = emit_val(inout c, ir.S_TAG, pv.place, b.vi, 0, b.ty, types.BOOL, n.line)
+    let tm = ir.open(c.ir)
+    let then = ir.close(inout c.ir, tm)
+    let em = ir.open(c.ir)
+    let mut m = s("`x.[")
+    bytes.append(inout m, nm(c, fe.a))
+    bytes.append(inout m, s("]`: the value is not variant `"))
+    bytes.append(inout m, nm(c, resolve.key_sym(types.variant(c.t, types.def_of(c.t, b.ty), b.vi).key)))
+    m.push(96)
+    let mo = ir.op_str(inout c.ir, m)
+    emit(inout c, ir.S_PANIC, 0, mo, 0, 0, 0, n.line)
+    let els = ir.close(inout c.ir, em)
+    emit(inout c, ir.S_IF, 0, t, then, els, 0, n.line)
+    Ok(PV(ir.place_payload(inout c.ir, pv.place, b.vi, b.idx, fty), fty, NONE))
+}
+
+/// `f.name`, `f.index` (and a variant's): constants. None when the base isn't a binding.
+fn ct_field(inout c: C, n: ast.Node) -> Result[Option[V], diag.Diag] {
+    let bi = ct_of(c, n.a)
+    if bi == NONE { return Ok(None) }
+    let b = c.rx.binds[bi as usize].copy()
+    let w = nm(c, n.b)
+    if bytes.eq(w, s("name")) {
+        let bn = bind_name(c, b)
+        return Ok(Some(v_of(types.STR, ir.op_str(inout c.ir, bn))))
+    }
+    if bytes.eq(w, s("index")) { return Ok(Some(const_v(inout c, types.USIZE, fold.of_u64(b.idx as u64)))) }
+    let what = if b.kind == B_VARIANT { "variant" } else { "field" }
+    Err(r_err(n, q2("a reflected ", s(what), " has `name` and `index`, not `", w, "`")))
+}
+
+/// `v.matches(x)`: None unless the receiver is a variant binding and the method `matches`.
+fn ct_matches(inout c: C, n: ast.Node) -> Result[Option[V], diag.Diag] {
+    let bi = ct_of(c, n.a)
+    if bi == NONE { return Ok(None) }
+    let b = c.rx.binds[bi as usize].copy()
+    let w = nm(c, n.b)
+    if b.kind != B_VARIANT || !bytes.eq(w, s("matches")) {
+        let r = nd(c, n.a)
+        return Err(r_err(n, q2("`", nm(c, r.a), "` is known only at compile time; it has no method `", w, "`")))
+    }
+    if n.d != 1 { return Err(err("E0405", n.line, n.col, s("`matches` takes one value"))) }
+    let a = arg_expr(c, at(c, n.c, 0))
+    let pv = place_expr(inout c, a)?
+    if poisoned(c, pv.ty) { return Ok(Some(poison_v(inout c))) }
+    if pv.ty != b.ty {
+        let xn = nd(c, a)
+        return Err(mismatch(c, xn.line, xn.col, b.ty, pv.ty))
+    }
+    Ok(Some(v_of(types.BOOL, emit_val(inout c, ir.S_TAG, pv.place, b.idx, 0, b.ty, types.BOOL, n.line))))
+}
+
+/// A comptime binding used as a value.
+fn ct_value_err(c: C, n: ast.Node) -> diag.Diag {
+    errh("E0831", n.line, n.col, q("`", nm(c, n.a), "` is known only at compile time"), "use it as `x.[f]`, `f.name`, `f.index`, `attr[A](f)` or, for a variant, `v.matches(x)` and `v(...)`")
+}
+
+/// The attribute `attr[A](x)` / `has_attr[A](x)` reads: its definition, whether x has it,
+/// the values (`unknown`: x is a type parameter in the bounds pass).
+type AttrRead = { unknown: bool, di: u32, has: bool, vals: List[ALit] }
+
+fn ct_attr(inout c: C, r: ast.Node) -> Result[AttrRead, diag.Diag] {
+    let an = nd(c, r.c - 1)
+    let fake = ast.Node(ast.Attr, an.a, an.b, 0, 0, 0, 0, 0, 0, 0, 0, an.line, an.col, an.line, an.col)
+    let am = c.am.copy()
+    let di = attr_named(c, am, fake)
+    if di == NONE { return Err(err("E0820", an.line, an.col, q("unknown attribute `", nm(c, an.a), "`"))) }
+    let ai = attr_def_ix(c, di)
+    if ai == NONE { return Err(quiet()) }
+    let defaults = c.rx.defs[ai as usize].vals.copy()
+    let mut ow = Owner(0, NONE)
+    let bi = ct_of(c, r.b)
+    if bi != NONE {
+        ow = bind_owner(c, c.rx.binds[bi as usize])
+    } else {
+        let ty = resolve_ty(inout c, am, r.b)?
+        let k = types.kind(c.t, ty)
+        if k == types.T_PARAM || poisoned(c, ty) { return Ok(AttrRead(true, di, false, defaults)) }
+        if k == types.T_RECORD || k == types.T_ENUM {
+            let td = tmpl_of(c, ty)
+            ow = Owner(td.md, td.node)
+        }
+    }
+    if ow.node != NONE {
+        match attr_use(c, ow.m, ow.node, di) {
+            Some(vals) => { return Ok(AttrRead(false, di, true, vals)) }
+            None => {}
+        }
+    }
+    Ok(AttrRead(false, di, false, defaults))
+}
+
+/// `attr[A](x)` (a record of A's type) or `has_attr[A](x)` (bool) as a value.
+fn reflect_value(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
+    if n.a == ast.R_FIELDS || n.a == ast.R_VARIANTS { return Err(r_err(n, s("`fields(...)` and `variants(...)` go after `comptime for x in`"))) }
+    let ar = ct_attr(inout c, n)?
+    if ar.unknown { return Ok(poison_v(inout c)) }
+    if n.a == ast.R_HAS_ATTR { return Ok(v_of(types.BOOL, ir.op_bool(inout c.ir, ar.has))) }
+    let d = c.t.defs[ar.di as usize].copy()
+    let ty = inst_type(inout c, ar.di, List.new(), n.line, n.col)?
+    let mut ops: List[u32] = List.new()
+    for i in 0..d.len {
+        let ft = types.field(c.t, d.start, i).ty
+        let v = ar.vals[i as usize].copy()
+        let k = types.kind(c.t, ft)
+        if k == types.T_BOOL {
+            ops.push(ir.op_bool(inout c.ir, v.n == 1))
+        } else if k == types.T_STR {
+            ops.push(ir.op_str(inout c.ir, v.s))
+        } else {
+            ops.push(ir.op_int(inout c.ir, ft, v.n))
+        }
+    }
+    let st = ir.list(inout c.ir, ops)
+    Ok(v_of(ty, emit_val(inout c, ir.S_RECORD, 0, st, d.len, ty, ty, n.line)))
+}
+
+// ---- comptime if: conditions known while checking
+
+const CV_BOOL: u32 = 0
+const CV_INT: u32 = 1
+const CV_STR: u32 = 2
+const CV_ATTR: u32 = 3
+const CV_UNKNOWN: u32 = 4
+
+/// A value `ct_eval` computes: a bool or integer (`n`), a str (`s`), attribute values
+/// (`di`, `vals`), or unknown (the bounds pass).
+type CV = { k: u32, n: u64, s: List[u8], di: u32, vals: List[ALit] }
+
+fn cv(k: u32, n: u64) -> CV { CV(k, n, List.new(), NONE, List.new()) }
+
+fn cv_err(n: ast.Node) -> diag.Diag {
+    errh("E0832", n.line, n.col, s("this isn't known at compile time"), "a `comptime if` condition uses literals, constants, `f.name`, `f.index`, `attr[A](x).key`, `has_attr[A](x)`, `+`, `-`, `*`, `!`, `&&`, `||`, `==`, `!=`, `<`, `<=`, `>`, `>=`")
+}
+
+fn lit_cv(c: C, v: ALit) -> CV {
+    let k = types.kind(c.t, v.ty)
+    if k == types.T_BOOL { return cv(CV_BOOL, v.n) }
+    if k == types.T_STR { return CV(CV_STR, 0, v.s, NONE, List.new()) }
+    cv(CV_INT, v.n)
+}
+
+fn ct_eval(inout c: C, e: u32) -> Result[CV, diag.Diag] {
+    let n = nd(c, e)
+    match n.kind {
+        ast.EBool => Ok(cv(CV_BOOL, n.a as u64))
+        ast.EInt => Ok(cv(CV_INT, fold.bits64(lit(c, n.a))))
+        ast.EStr => Ok(CV(CV_STR, 0, c.p.mods[c.am as usize].strs[n.a as usize], NONE, List.new()))
+        ast.EUnary => {
+            let x = ct_eval(inout c, n.b)?
+            if x.k == CV_UNKNOWN { return Ok(x) }
+            if n.a == 1 && x.k == CV_BOOL { return Ok(cv(CV_BOOL, 1 - x.n)) }
+            if n.a == 0 && x.k == CV_INT { return Ok(cv(CV_INT, 0 -% x.n)) }
+            Err(cv_err(n))
+        }
+        ast.EBinary => {
+            let a = ct_eval(inout c, n.b)?
+            if n.a == ast.OP_AND || n.a == ast.OP_OR {
+                if a.k == CV_UNKNOWN { return Ok(a) }
+                if a.k != CV_BOOL { return Err(cv_err(nd(c, n.b))) }
+                if (n.a == ast.OP_AND && a.n == 0) || (n.a == ast.OP_OR && a.n == 1) { return Ok(a) }
+                let b = ct_eval(inout c, n.c)?
+                if b.k != CV_BOOL && b.k != CV_UNKNOWN { return Err(cv_err(nd(c, n.c))) }
+                return Ok(b)
+            }
+            let b = ct_eval(inout c, n.c)?
+            if a.k == CV_UNKNOWN || b.k == CV_UNKNOWN { return Ok(cv(CV_UNKNOWN, 0)) }
+            if a.k != b.k || a.k == CV_ATTR { return Err(cv_err(n)) }
+            if a.k == CV_INT && (n.a == ast.OP_ADD || n.a == ast.OP_SUB || n.a == ast.OP_MUL) {
+                // wrapping 64-bit arithmetic: indexes and small constants
+                let r = if n.a == ast.OP_ADD { a.n +% b.n } else if n.a == ast.OP_SUB { a.n -% b.n } else { a.n *% b.n }
+                return Ok(cv(CV_INT, r))
+            }
+            let mut ord: i32 = 0
+            if a.k == CV_STR {
+                ord = bytes.compare(a.s, b.s)
+            } else if a.n != b.n {
+                ord = if fold.lt(fold.from_bits(a.n, true), fold.from_bits(b.n, true)) { -1 } else { 1 }
+            }
+            let r = if n.a == ast.OP_EQ { ord == 0 } else if n.a == ast.OP_NE { ord != 0 } else if n.a == ast.OP_LT { ord < 0 } else if n.a == ast.OP_LE { ord <= 0 } else if n.a == ast.OP_GT { ord > 0 } else { ord >= 0 }
+            if n.a < ast.OP_EQ || n.a > ast.OP_GE { return Err(cv_err(n)) }
+            let rv: u64 = if r { 1 } else { 0 }
+            Ok(cv(CV_BOOL, rv))
+        }
+        ast.EField => {
+            let bi = ct_of(c, n.a)
+            if bi != NONE {
+                let b = c.rx.binds[bi as usize].copy()
+                let w = nm(c, n.b)
+                if bytes.eq(w, s("name")) { return Ok(CV(CV_STR, 0, bind_name(c, b), NONE, List.new())) }
+                if bytes.eq(w, s("index")) { return Ok(cv(CV_INT, b.idx as u64)) }
+                return Err(cv_err(n))
+            }
+            let x = ct_eval(inout c, n.a)?
+            if x.k == CV_UNKNOWN { return Ok(x) }
+            if x.k != CV_ATTR { return Err(cv_err(n)) }
+            let d = c.t.defs[x.di as usize].copy()
+            match types.find_field(c.t, d, n.b) {
+                Some(i) => Ok(lit_cv(c, x.vals[i as usize])),
+                None => Err(err("E0821", n.line, n.col, q2("attribute `", kt(c, d.key), "` has no key `", nm(c, n.b), "`"))),
+            }
+        }
+        ast.EReflect => {
+            if n.a == ast.R_FIELDS || n.a == ast.R_VARIANTS { return Err(cv_err(n)) }
+            let ar = ct_attr(inout c, n)?
+            if ar.unknown { return Ok(cv(CV_UNKNOWN, 0)) }
+            let hv: u64 = if ar.has { 1 } else { 0 }
+            if n.a == ast.R_HAS_ATTR { return Ok(cv(CV_BOOL, hv)) }
+            Ok(CV(CV_ATTR, 0, List.new(), ar.di, ar.vals))
+        }
+        ast.EIdent => {
+            if ct_of(c, e) != NONE { return Err(ct_value_err(c, n)) }
+            let k = ekey(c, n)
+            let ci = mget(c.consts, k)
+            if ci == NONE || lookup(c, k) != NONE { return Err(cv_err(n)) }
+            let cd = c.cdefs[ci as usize].copy()
+            if cd.has_k { return Ok(cv(CV_INT, fold.bits64(cd.k))) }
+            let o = c.ir.ops[cd.op as usize]
+            if o.kind == ir.O_BOOL { return Ok(cv(CV_BOOL, o.v)) }
+            if o.kind == ir.O_STR { return Ok(CV(CV_STR, 0, c.ir.strs[o.a as usize], NONE, List.new())) }
+            Err(cv_err(n))
+        }
+        _ => Err(cv_err(n)),
+    }
+}
+
+/// `comptime if`: the branch its condition selects, checked like an `if`'s.
+fn ct_compile_if(inout c: C, n: ast.Node, dest: Dest, exp: u32) -> Result[u32, diag.Diag] {
+    let x = ct_eval(inout c, n.a)?
+    if x.k == CV_UNKNOWN { return Ok(types.UNIT) }
+    if x.k != CV_BOOL {
+        let cn = nd(c, n.a)
+        return Err(errh("E0832", cn.line, cn.col, s("a `comptime if` condition must be a bool"), "compare it: `x == ...`"))
+    }
+    if x.n == 1 { return block_body(inout c, n.b, dest, exp) }
+    if n.c == 0 { return Ok(types.UNIT) }
+    let el = nd(c, n.c - 1)
+    if el.kind == ast.EBlock { return block_body(inout c, el.a, dest, exp) }
+    compile_value(inout c, n.c - 1, dest, exp)
+}
+
+/// `break` directly inside a `comptime for` (its body is not a run-time loop).
+fn ct_break(c: C, n: ast.Node, kind: u32) -> Result[bool, diag.Diag] {
+    if kind == ir.S_BREAK && n.a == 0 && c.loops > 0 && c.loop_labels[c.loop_labels.len() - 1] == CT_LOOP {
+        return Err(errh("E0832", n.line, n.col, s("`break` can't leave a `comptime for`"), "its body is expanded once per field or variant; use `continue` to go to the next one, or `comptime if` to leave a part out"))
+    }
+    Ok(true)
+}
+
+/// The type `e?` expects of e, inside a `comptime for` only (C522): `Result[exp, E]` when the
+/// function returns `Result[_, E]`, so `T(comptime for f in fields(T) { decode(inout r)? })`
+/// infers decode's type from the field's; NONE elsewhere, as before.
+fn ct_try_hint(inout c: C, exp: u32) -> u32 {
+    if c.rx.binds.len() == 0 || exp == NONE || poisoned(c, exp) || poisoned(c, c.ret) { return NONE }
+    if types.kind(c.t, c.ret) != types.T_ENUM { return NONE }
+    let rd = types.def_of(c.t, c.ret)
+    if !is_root(c.t.defs[rd.tmpl as usize].key, c.w.result) { return NONE }
+    let rargs = types.list_items(c.t, rd.args)
+    let mut args: List[u32] = List.new()
+    args.push(exp)
+    args.push(rargs[1])
+    match inst_type(inout c, rd.tmpl, args, 0, 0) {
+        Ok(ty) => ty
+        Err(_) => NONE
+    }
+}

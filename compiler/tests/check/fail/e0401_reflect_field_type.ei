@@ -1,0 +1,10 @@
+// expect: E0401 7:21
+type P = { a: i64, b: String }
+fn f(p: P) {
+    comptime for x in fields(P) {
+        let mut n: i64 = 0
+        // b is a String: the expansion for `b` fails, and says so
+        n = p.[x] + 1
+    }
+}
+fn main() {}

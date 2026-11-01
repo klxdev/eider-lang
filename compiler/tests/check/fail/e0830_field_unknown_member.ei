@@ -1,0 +1,8 @@
+// expect: E0830 5:17
+type P = { a: i64 }
+fn f() uses io {
+    comptime for x in fields(P) {
+        print(x.ty)
+    }
+}
+fn main() uses io { f() }

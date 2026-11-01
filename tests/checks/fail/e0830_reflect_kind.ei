@@ -1,0 +1,6 @@
+// expect: E0830 4:30
+type Shape = | Circle(r: i64) | Empty
+fn f() {
+    comptime for x in fields(Shape) {}
+}
+fn main() { f() }

@@ -1729,3 +1729,58 @@ fn main() {}
 
 Fix: give the key (`@route(path = "/")`), or a default in the declaration
 (`attr route { path: str = "/" }`).
+
+## E0830
+
+**A reflection on the wrong kind of thing**: `fields(...)` of a type that isn't a record (or
+a variant binding), `variants(...)` of one that isn't an enum, `x.[f]` with x of another type
+than f's record, a member of a reflected name other than `name`, `index` and (a variant's)
+`matches`, a `comptime for` argument list that doesn't go over the fields of the record or
+variant it builds. See [Comptime reflection](reflection.md).
+
+```eider,compile_fail=E0830
+type Shape = | Circle(r: i64) | Empty
+
+fn f() {
+    comptime for x in fields(Shape) {}
+}
+
+fn main() { f() }
+```
+
+Fix: `variants(Shape)`, then `fields(v)` for a variant's payload.
+
+## E0831
+
+**A comptime-only name used as a value**: a `comptime for` variable has no value at run
+time, and `x.[e]` needs one.
+
+```eider,compile_fail=E0831
+type P = { a: i64 }
+
+fn f() {
+    comptime for x in fields(P) {
+        let y = x
+    }
+}
+
+fn main() { f() }
+```
+
+Fix: use `x.name`, `x.index`, `p.[x]` or `attr[A](x)`.
+
+## E0832
+
+**Not known at compile time**: a `comptime if` condition that uses something other than
+literals, constants, reflected names and indexes, attribute values and operators on them;
+or `break` directly inside a `comptime for`, whose body is not a loop at run time.
+
+```eider,compile_fail=E0832
+fn f(n: i64) {
+    comptime if n > 2 {}
+}
+
+fn main() { f(1) }
+```
+
+Fix: an ordinary `if` for a value known only at run time.

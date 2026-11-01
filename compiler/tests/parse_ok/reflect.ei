@@ -1,0 +1,14 @@
+fn f[T](x: T, inout out: String) {
+    comptime for f in fields(T) {
+        comptime if attr[json](f).skip && !has_attr[json](T) {
+            continue
+        } else if f.index > 0 {
+            out.push_str(",")
+        }
+        x.[f].show(inout out)
+    }
+    comptime for v in variants(T) {
+        if v.matches(x) { let y = v(comptime for f in fields(v) { 0 }) }
+    }
+    let r = T(comptime for f in fields(T) { Default.default() }, )
+}

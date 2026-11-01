@@ -71,6 +71,11 @@ impl_item   = "impl" [generics] type ["for" type] "{" { sep } { fn_item { sep } 
 test_item   = "test" string block
 ```
 
+- `comptime for x in fields(T) { ... }` and `comptime for v in variants(T) { ... }` are
+  statements (and, over `fields`, the only argument of a constructor call: one argument per
+  field); `comptime if` is an `if` whose condition is evaluated while checking; `x.[f]`
+  reads the field a `comptime for` variable names; `attr[A](x)` and `has_attr[A](x)` read
+  attributes (`attr` and `has_attr` followed by `[`); see [Comptime reflection](reflection.md).
 - `attr` is not a keyword: it starts an `attr_item` only when an identifier and `{` follow
   it at the start of an item. Attributes go before `type`, `attr`, `fn`, `const`, `trait`
   and `impl` items (not `import`, `module` or `test`); see [Attributes](attributes.md).

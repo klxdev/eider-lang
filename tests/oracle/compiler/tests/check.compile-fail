@@ -152,6 +152,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0115_method_on_int_type.ei  E0115 at 3:17
   ok   e0115_method_on_record.ei    E0115 at 5:15
   ok   e0115_ref_unknown_method.ei  E0115 at 4:7
+  ok   e0115_reflect_missing_trait.ei E0115 at 6:46
   ok   e0115_self_static.ei         E0115 at 4:24
   ok   e0115_static_method.ei       E0115 at 4:15
   ok   e0115_static_not_found.ei    E0115 at 3:24
@@ -384,6 +385,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_ref_print.ei           E0401 at 4:11
   ok   e0401_ref_set_type.ei        E0401 at 4:11
   ok   e0401_ref_update_type.ei     E0401 at 5:14
+  ok   e0401_reflect_field_type.ei  E0401 at 7:21
   ok   e0401_replace_type.ei        E0401 at 5:23
   ok   e0401_return_in_match_arm.ei E0401 at 4:21
   ok   e0401_return_type_of_tail_if.ei E0401 at 3:23
@@ -648,6 +650,15 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0822_attr_not_const.ei      E0822 at 3:15
   ok   e0822_attr_required.ei       E0822 at 3:1
   ok   e0822_attr_twice.ei          E0822 at 3:7
+  ok   e0830_field_of_other_type.ei E0830 at 6:9
+  ok   e0830_field_unknown_member.ei E0830 at 5:17
+  ok   e0830_fields_of_enum.ei      E0830 at 4:30
+  ok   e0830_spread_other_fields.ei E0830 at 4:35
+  ok   e0830_variants_of_record.ei  E0830 at 4:32
+  ok   e0831_field_at_not_reflected.ei E0831 at 4:8
+  ok   e0831_reflected_value.ei     E0831 at 5:17
+  ok   e0832_break.ei               E0832 at 5:9
+  ok   e0832_runtime_condition.ei   E0832 at 3:17
 
 compile-pass tests (compiler/tests/check/pass)
   ok   attrs.ei
@@ -725,6 +736,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-723 passed, 0 failed; error-code coverage 55/61
+734 passed, 0 failed; error-code coverage 58/64
 codes without a compile-fail test: E0302 E0402 E0806 E0808 E0812 E0813
 --- exit 0

@@ -1,0 +1,9 @@
+5
+label
+{a=1, label='one', c=3}
+{a=10, label='q', c=14}
+{n=3, on=true, name='500', xs=['0' '100' '200' '300' '400' '500']}
+0
+Circle(2) Rect(3, 4) Empty 
+{inner='in', count=2}
+inner0

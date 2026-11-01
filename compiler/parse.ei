@@ -608,7 +608,7 @@ fn item(inout p: P, inout items: List[u32]) -> Result[bool, diag.Diag] {
     Ok(true)
 }
 
-// ---- attributes (docs/compiler.md, "C8.28: attributes")
+// ---- attributes (docs/compiler.md, "C8.30: attributes")
 
 /// `@name`, `@name(key = value, flag)`, `@alias.name(...)`.
 fn attribute(inout p: P) -> Result[u32, diag.Diag] {
@@ -1273,6 +1273,7 @@ fn exit_label(inout p: P, inout n: ast.Node) {
 
 fn stmt(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
+    if is_kw(p, intern.K_COMPTIME) && kw_at(p, p.i + 1, intern.K_FOR) { return ct_for(inout p) }
     if at_label(p) {
         // the loop keeps its label in h (sym + 1) and the label's position in i, j
         adv(inout p)
@@ -1615,6 +1616,16 @@ fn args(inout p: P) -> Result[List[u32], diag.Diag] {
         skip_nl(inout p)
         if eat(inout p, lex.RParen) { return Ok(out) }
         let t = cur(p)
+        if is_kw(p, intern.K_COMPTIME) && kw_at(p, p.i + 1, intern.K_FOR) {
+            // one argument per iteration (docs/compiler.md, "C8.31")
+            let mut sn = mk(ast.EArg, t.line, t.col)
+            sn.a = ct_for(inout p)?
+            sn.c = 1
+            out.push(add(inout p, sn))
+            skip_nl(inout p)
+            if !eat(inout p, lex.Comma) && !is(p, lex.RParen) { return Err(err(p, "expected `,` or `)`")) }
+            continue
+        }
         let io = eat_kw(inout p, intern.K_INOUT)
         let mut n = mk(ast.EArg, t.line, t.col)
         n.a = expr(inout p)?
@@ -1651,6 +1662,19 @@ fn postfix(inout p: P) -> Result[u32, diag.Diag] {
             n.b = en.b
             n.c = list(inout p, a)
             n.d = a.len() as u32
+            e = add(inout p, n)
+        } else if is(p, lex.Dot) && kind_at(p, p.i + 1) == lex.LBracket {
+            // `x.[f]`: the field a `comptime for` variable names (docs/compiler.md, "C8.31")
+            adv(inout p)
+            let bt = cur(p)
+            adv(inout p)
+            skip_nl(inout p)
+            let f = expr(inout p)?
+            skip_nl(inout p)
+            expect(inout p, lex.RBracket)?
+            let mut n = mk(ast.EFieldAt, bt.line, bt.col)
+            n.a = e
+            n.b = f
             e = add(inout p, n)
         } else if is(p, lex.Dot) {
             adv(inout p)
@@ -1702,6 +1726,11 @@ fn postfix(inout p: P) -> Result[u32, diag.Diag] {
 
 fn primary(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
+    if is_kw(p, intern.K_COMPTIME) && kw_at(p, p.i + 1, intern.K_IF) { return ct_if(inout p) }
+    if t.kind == lex.Ident && kind_at(p, p.i + 1) == lex.LBracket {
+        let w = intern.name(p.names, t.val as u32)
+        if bytes.eq(w, sys.lit("attr")) || bytes.eq(w, sys.lit("has_attr")) { return attr_of(inout p) }
+    }
     if t.kind == lex.Int {
         let mut n = mk(ast.EInt, t.line, t.col)
         n.a = p.i as u32
@@ -1835,6 +1864,76 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] {
         return Ok(add(inout p, node))
     }
     Err(err(p, "expected an expression"))
+}
+
+// ---- comptime reflection (docs/compiler.md, "C8.31")
+
+/// `comptime for x in fields(T) { ... }`, `variants(T)`, `fields(v)`: an SForEach with g=1
+/// whose iterable is an EReflect.
+fn ct_for(inout p: P) -> Result[u32, diag.Diag] {
+    let t = cur(p)
+    adv(inout p)
+    expect_kw(inout p, intern.K_FOR)?
+    let v = ident(inout p)?
+    expect_kw(inout p, intern.K_IN)?
+    let it = cur(p)
+    let mut w: List[u8] = List.new()
+    if it.kind == lex.Ident { w = intern.name(p.names, it.val as u32) }
+    let fields = bytes.eq(w, sys.lit("fields"))
+    if !(fields || bytes.eq(w, sys.lit("variants"))) || kind_at(p, p.i + 1) != lex.LParen {
+        return Err(err(p, "`comptime for` goes over `fields(T)` or `variants(T)`"))
+    }
+    adv(inout p)
+    adv(inout p)
+    skip_nl(inout p)
+    let target = ty(inout p)?
+    skip_nl(inout p)
+    expect(inout p, lex.RParen)?
+    let mut r = mk(ast.EReflect, it.line, it.col)
+    r.a = if fields { ast.R_FIELDS } else { ast.R_VARIANTS }
+    r.b = target
+    let mut n = mk(ast.SForEach, t.line, t.col)
+    n.a = v.sym
+    n.b = add(inout p, r)
+    n.d = block(inout p)?
+    n.g = 1
+    Ok(add(inout p, n))
+}
+
+/// `comptime if cond { ... } else ...`: an EIf with d=1, the `else if`s too.
+fn ct_if(inout p: P) -> Result[u32, diag.Diag] {
+    adv(inout p)
+    let at = cur(p)
+    if kw_at(p, p.i + 1, intern.K_LET) { return Err(err_at(at.line, at.col, sys.lit("`comptime if let` isn't supported; test a comptime condition"))) }
+    let e = if_expr(inout p)?
+    let mut x = e.copy()
+    while p.ast.nodes[x as usize].kind == ast.EIf {
+        p.ast.nodes[x as usize].d = 1
+        let c = p.ast.nodes[x as usize].c
+        if c == 0 { break }
+        x = c - 1
+    }
+    Ok(e)
+}
+
+/// `attr[A](x)`, `has_attr[A](x)`: x a type or a `comptime for` variable.
+fn attr_of(inout p: P) -> Result[u32, diag.Diag] {
+    let t = cur(p)
+    let has = bytes.eq(intern.name(p.names, t.val as u32), sys.lit("has_attr"))
+    adv(inout p)
+    expect(inout p, lex.LBracket)?
+    let a = ty(inout p)?
+    expect(inout p, lex.RBracket)?
+    expect(inout p, lex.LParen)?
+    skip_nl(inout p)
+    let target = ty(inout p)?
+    skip_nl(inout p)
+    expect(inout p, lex.RParen)?
+    let mut n = mk(ast.EReflect, t.line, t.col)
+    n.a = if has { ast.R_HAS_ATTR } else { ast.R_ATTR }
+    n.b = target
+    n.c = a + 1
+    Ok(add(inout p, n))
 }
 
 fn else_branch(inout p: P) -> Result[u32, diag.Diag] {

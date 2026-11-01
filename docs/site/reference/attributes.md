@@ -3,7 +3,7 @@
 An attribute is a piece of typed data attached to an item, a record field or a variant:
 `@json(name = "user_id")`. Attributes do nothing by themselves. The compiler checks them
 against the attribute's declaration and keeps their values, and only code that reads them
-with comptime reflection gives them a meaning: a JSON codec renames a field,
+with [comptime reflection](reflection.md) gives them a meaning: a JSON codec renames a field,
 a schema generator documents it.
 
 ```text
@@ -100,5 +100,5 @@ own name.
 
 ## Reading attributes
 
-Comptime reflection, which reads attribute values while a generic function is specialized
-(`attr[A](f)`), is planned: see the [roadmap](../../design/roadmap.md) (P0.9).
+`attr[A](x)` gives the values of attribute `A` on a reflected field or variant, or on a type,
+and `has_attr[A](x)` whether it is there; see [Comptime reflection](reflection.md).

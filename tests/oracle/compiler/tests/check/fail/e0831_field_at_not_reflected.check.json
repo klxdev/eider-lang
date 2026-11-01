@@ -1,0 +1,1 @@
+{"error":"E0831","span":{"file":"compiler/tests/check/fail/e0831_field_at_not_reflected.ei","line":4,"col":8},"message":"`x.[...]` takes a `comptime for` variable over fields","help":"write `comptime for f in fields(T) { ... x.[f] ... }`"}

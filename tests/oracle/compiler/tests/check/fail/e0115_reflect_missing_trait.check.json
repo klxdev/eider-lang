@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_reflect_missing_trait.ei","line":6,"col":46},"message":"type bool has no method `enc`","help":"in the `comptime for` iteration over field `b` of P"}

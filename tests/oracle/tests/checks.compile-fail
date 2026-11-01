@@ -93,6 +93,9 @@ compile-fail tests (tests/checks/fail)
   ok   e0820_unknown_attribute.ei   E0820 at 4:1 (fix compiles)
   ok   e0821_unknown_attribute_key.ei E0821 at 3:7 (fix compiles)
   ok   e0822_attribute_argument.ei  E0822 at 3:1
+  ok   e0830_reflect_kind.ei        E0830 at 4:30
+  ok   e0831_comptime_only_value.ei E0831 at 5:17
+  ok   e0832_comptime_condition.ei  E0832 at 3:17
 
 compile-pass tests (tests/checks/pass)
   ok   pass_attributes.ei
@@ -107,5 +110,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-105 passed, 0 failed; error-code coverage 61/61
+108 passed, 0 failed; error-code coverage 64/64
 --- exit 0

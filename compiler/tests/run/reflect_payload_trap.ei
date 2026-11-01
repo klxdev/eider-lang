@@ -1,0 +1,19 @@
+// x.[f] for a payload field of a variant x isn't: a trap, not a read of the wrong payload
+type Shape = | Circle(r: i64) | Rect(w: i64, h: i64)
+
+fn first_of_second[T](x: T) -> i64 {
+    let mut n: i64 = 0
+    comptime for v in variants(T) {
+        comptime if v.index == 1 {
+            comptime for f in fields(v) {
+                comptime if f.index == 0 { n = x.[f] }
+            }
+        }
+    }
+    n
+}
+
+fn main() uses io {
+    print(first_of_second(Rect(5, 6)))
+    print(first_of_second(Circle(1)))
+}

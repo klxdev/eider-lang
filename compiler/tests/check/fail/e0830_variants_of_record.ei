@@ -1,0 +1,6 @@
+// expect: E0830 4:32
+type P = { a: i64 }
+fn f() {
+    comptime for x in variants(P) {}
+}
+fn main() { f() }

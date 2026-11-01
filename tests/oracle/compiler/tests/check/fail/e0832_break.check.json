@@ -1,0 +1,1 @@
+{"error":"E0832","span":{"file":"compiler/tests/check/fail/e0832_break.ei","line":5,"col":9},"message":"`break` can't leave a `comptime for`","help":"its body is expanded once per field or variant; use `continue` to go to the next one, or `comptime if` to leave a part out"}

@@ -1,0 +1,4 @@
+5
+--- stderr
+eider: runtime error: `x.[f]`: the value is not variant `Rect` (compiler/tests/run/reflect_payload_trap.ei:9)
+--- exit 101

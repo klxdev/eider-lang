@@ -1,0 +1,5 @@
+// expect: E0830 4:35
+type P = { a: i64 }
+type Q = { a: i64 }
+fn f() -> P { P(comptime for x in fields(Q) { 1 }) }
+fn main() {}

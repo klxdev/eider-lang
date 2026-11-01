@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_reflect_field_type.ei","line":7,"col":21},"message":"expected String, found i32","help":"in the `comptime for` iteration over field `b` of P"}

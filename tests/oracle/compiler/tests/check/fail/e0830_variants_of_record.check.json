@@ -1,0 +1,1 @@
+{"error":"E0830","span":{"file":"compiler/tests/check/fail/e0830_variants_of_record.ei","line":4,"col":32},"message":"`variants(...)` takes an enum type, not P"}

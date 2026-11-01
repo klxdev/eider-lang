@@ -1,0 +1,72 @@
+(IFn 1:4 name=f end=1:33
+  generic (GParam 1:6 name=T)
+  param (Param 1:9 name=x
+    type (TName 1:12 name=T))
+  param (Param 1:21 name=out inout
+    type (TName 1:26 name=String))
+  body (Block 1:34 end=14:1
+    stmt (SForEach 2:5 comptime var=f
+      iter (EReflect 2:23 what=fields
+        target (TName 2:30 name=T))
+      body (Block 2:33 end=9:5
+        stmt (SExpr 3:9
+          expr (EIf 3:18 comptime
+            cond (EBinary 3:40 op=`&&`
+              lhs (EField 3:35 name=skip
+                recv (EReflect 3:21 what=attr
+                  attr (TName 3:26 name=json)
+                  target (TName 3:32 name=f)))
+              rhs (EUnary 3:43 op=`!`
+                operand (EReflect 3:44 what=has_attr
+                  attr (TName 3:53 name=json)
+                  target (TName 3:59 name=T))))
+            then (Block 3:62 end=5:9
+              stmt (SContinue 4:13))
+            else (EIf 5:16 comptime
+              cond (EBinary 5:27 op=`>`
+                lhs (EField 5:21 name=index
+                  recv (EIdent 5:19 name=f))
+                rhs (EInt 5:29 value=0))
+              then (Block 5:31 end=7:9
+                stmt (SExpr 6:13
+                  expr (EMethod 6:17 name=push_str
+                    recv (EIdent 6:13 name=out)
+                    arg (EArg 6:26
+                      expr (EStr 6:26 value=","))))))))
+        stmt (SExpr 8:9
+          expr (EMethod 8:15 name=show
+            recv (EFieldAt 8:11
+              recv (EIdent 8:9 name=x)
+              field (EIdent 8:12 name=f))
+            arg (EArg 8:20 inout
+              expr (EIdent 8:26 name=out))))))
+    stmt (SForEach 10:5 comptime var=v
+      iter (EReflect 10:23 what=variants
+        target (TName 10:32 name=T))
+      body (Block 10:35 end=12:5
+        stmt (SExpr 11:9
+          expr (EIf 11:9
+            cond (EMethod 11:14 name=matches
+              recv (EIdent 11:12 name=v)
+              arg (EArg 11:22
+                expr (EIdent 11:22 name=x)))
+            then (Block 11:25 end=11:72
+              stmt (SLet 11:27 name=y
+                init (ECall 11:35 name=v
+                  arg (EArg 11:37 spread
+                    expr (SForEach 11:37 comptime var=f
+                      iter (EReflect 11:55 what=fields
+                        target (TName 11:62 name=v))
+                      body (Block 11:65 end=11:69
+                        stmt (SExpr 11:67
+                          expr (EInt 11:67 value=0))))))))))))
+    stmt (SLet 13:5 name=r
+      init (ECall 13:13 name=T
+        arg (EArg 13:15 spread
+          expr (SForEach 13:15 comptime var=f
+            iter (EReflect 13:33 what=fields
+              target (TName 13:40 name=T))
+            body (Block 13:43 end=13:63
+              stmt (SExpr 13:45
+                expr (EMethod 13:53 name=default
+                  recv (EIdent 13:45 name=Default))))))))))

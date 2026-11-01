@@ -1,0 +1,10 @@
+// expect: E0830 6:9
+type P = { a: i64 }
+type Q = { a: i64 }
+fn f(q: Q) -> i64 {
+    comptime for x in fields(P) {
+        q.[x]
+    }
+    0
+}
+fn main() {}

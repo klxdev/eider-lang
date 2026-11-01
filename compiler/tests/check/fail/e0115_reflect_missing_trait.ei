@@ -1,0 +1,10 @@
+// expect: E0115 6:46
+trait Enc { fn enc(self) -> i64 }
+impl Enc for i64 { fn enc(self) -> i64 { self } }
+fn sum[T](x: T) -> i64 {
+    let mut s: i64 = 0
+    comptime for f in fields(T) { s += x.[f].enc() }
+    s
+}
+type P = { a: i64, b: bool }
+fn main() uses io { print(sum(P(1, true))) }

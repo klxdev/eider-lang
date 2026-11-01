@@ -1,0 +1,5 @@
+// expect: E0832 3:17
+fn f(n: i64) {
+    comptime if n > 2 {}
+}
+fn main() { f(1) }

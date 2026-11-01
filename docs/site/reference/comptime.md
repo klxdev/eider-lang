@@ -165,5 +165,6 @@ expression: tens of microseconds for most constants (`tests/run/comptime.ei`'s f
 constants check in about 10 ms, against 0.8 s when every constant was built with the C
 compiler). Comptime evaluation needs no C compiler, so `eiderc check` works without one.
 
-> **Note:** Comptime reflection over types, for code generation from a type's fields and
-> attributes, is planned. See the [roadmap](../../design/roadmap.md) (P0.9).
+Generic code can also look at a type's fields, variants and attributes while it is
+specialized: see [Comptime reflection](reflection.md). Reflective code called by a comptime
+constant is evaluated like any other.

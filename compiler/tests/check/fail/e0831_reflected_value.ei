@@ -1,0 +1,8 @@
+// expect: E0831 5:17
+type P = { a: i64 }
+fn f() {
+    comptime for x in fields(P) {
+        let y = x
+    }
+}
+fn main() { f() }

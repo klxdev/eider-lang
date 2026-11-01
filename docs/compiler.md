@@ -3460,7 +3460,7 @@ an imported str constant passes (comptime_mod_str.ei), the E0807 message names s
 cases cover a cycle and a self-reference (E0110 with the help), Drop and runaway recursion
 (E0807).
 
-## C8.28: attributes
+## C8.30: attributes
 
 Wave 5 (#19, research #97; decisions C8, C510-C513). Code: lex.ei (`At`), parse.ei
 ("attributes": `attribute`, `attributes`, `attach`, `at_attr_decl`, `attr_decl`; fields and
@@ -3495,7 +3495,67 @@ with a fix, E0822 twice), each value (a literal or a constant: E0401, E0822; a b
 one node (E0822). Values are folded like constants into the scratch IR function and kept as
 `ALit`s in `Reflect.found` (module, owner node, attribute, values in key order with the
 defaults filled in). Nothing else in the checker or the backends reads them: attributes
-change no IR and no output, only what comptime reflection ("C8.29") makes of them.
+change no IR and no output, only what comptime reflection ("C8.31") makes of them.
+
+## C8.31: comptime reflection
+
+Wave 5 (#20, research #97; decisions C520-C525). Code: parse.ei ("comptime reflection":
+`ct_for`, `ct_if`, `attr_of`; `x.[f]` in `postfix`; a `comptime for` argument in `args`),
+ast.ei (`EReflect`, `EFieldAt`, SForEach g=1, EIf d=1, EArg c=1), check.ei ("Reflection":
+`ct_for`, `ct_items`, `field_at`, `ct_field`, `ct_matches`, `ct_call`, `spread_construct`,
+`ct_attr`, `reflect_value`, `ct_eval`, `ct_compile_if`, `ct_break`, `ct_try_hint`; hooks in
+`for_each`, `expr_raw`, `place_expr`, `root`, `is_place`, `compile_if`, `call_in`,
+`construct`, `method_call_in`, `loop_exit`, `try_op`), resolve.ei (`collect_expr`); tests:
+tests/run/reflect.ei, compiler/tests/run/reflect_payload_trap.ei,
+compiler/tests/parse_ok/reflect.ei, compiler/tests/check/fail `*reflect*`, `e083*`;
+docs: docs/site/reference/reflection.md.
+
+**Where it runs.** Reflection is resolved by the checker while it checks a body, which for
+a generic function is once per instance with its type parameters substituted: `fields(T)`
+there is the instance's record, and what it unrolls is ordinary IR in that instance, so
+specializations are cached and compiled like any other and the backends see nothing new.
+Every type parameter is therefore a comptime one; no syntax marks it (C520). The bounds pass
+(T_PARAM types, "Bounds of generic code") skips a `comptime for` over a type parameter and a
+`comptime if` whose condition depends on one: their instances check them. Comptime code that
+runs at compile time (a `comptime` constant calling reflective code) is the interpreter's
+("C8.11"); reflection itself evaluates nothing but `comptime if` conditions (below).
+
+**Bindings.** A `comptime for` variable is not a local: it is a `CtBind` on `Reflect.binds`
+(the field or variant, its type, and the scope depth it was declared at, so a local declared
+after it shadows it). Each iteration's body is checked in a loop of its own that runs once
+(`S_LOOP` whose step is `S_BREAK`, the label slot holding CT_LOOP): `continue` ends the
+iteration, labeled exits count it like any loop, and an unlabeled `break` is E0832.
+Diagnostics recorded during an iteration get the help "in the `comptime for` iteration over
+field `b` of P" when they have none (#99's "errors name the field").
+
+**Operations.** `x.[f]` is a place (`P_FIELD`, or for a payload field `P_PAYLOAD` after an
+`S_TAG` test that traps "`x.[f]`: the value is not variant `V`"), so it reads, assigns and
+passes `inout` like `x.name`, and `is_place`/`root` treat it as one (a borrow is not a fresh
+value: an early draft registered the read for a drop and freed a String twice, which the
+eider-json flatten test found). `f.name` and `f.index` are constants (a str, a usize).
+`v.matches(x)` is an `S_TAG`. `attr[A](x)` is an `S_RECORD` of A's type from the values pass
+6b kept ("C8.30"), the declared defaults when x has none (zeros for required keys);
+`has_attr` a bool constant. `T(comptime for f in fields(T) { e })` and
+`v(comptime for f in fields(v) { e })` check the body once per field into a temporary
+(`D_VAR`) with the field's type expected, then build the record or variant from them
+(`spread_construct`; the `comptime for` must go over exactly those fields, E0830); `T(...)`
+with T a type parameter (not `Self`) standing for a record constructs it, and `v(...)`
+with ordinary arguments constructs the variant. Inside a `comptime for`, `e?` expects
+`Result[<expected>, E]` of e when the function returns `Result[_, E]` (`ct_try_hint`), so a
+generic decode call infers its type from the field's; nowhere else, so no existing program
+changes meaning (C522).
+
+**`comptime if`.** `ct_eval` computes the condition from the AST: literals, constants
+(`cdefs`), reflected names and indexes, attribute values and `has_attr`, `+ - *` (wrapping),
+`!`, `&&`, `||` (short-circuit, so `has_attr[A](f) && attr[A](f).name != ""` is fine),
+comparisons; anything else is E0832. Only the selected branch is checked (statements and
+value forms alike, `ct_compile_if` taking `compile_if`'s place). It does not call functions:
+that would need the interpreter to run code whose IR is still being built (C523).
+
+**Errors.** E0830 (a reflection on the wrong kind of thing), E0831 (a comptime-only name used
+as a value, or `x.[e]` without a binding), E0832 (a condition not known while checking,
+`break`). An error in an iteration is the instance's: a generic body is reported for its
+first instance with errors only, as before.
 
 ## Profiling: `--profile`
 

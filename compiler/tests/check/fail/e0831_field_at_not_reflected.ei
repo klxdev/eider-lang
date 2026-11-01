@@ -1,0 +1,6 @@
+// expect: E0831 4:8
+type P = { a: i64 }
+fn f(p: P, k: i64) -> i64 {
+    p.[k]
+}
+fn main() {}
