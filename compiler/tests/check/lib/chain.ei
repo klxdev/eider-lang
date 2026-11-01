@@ -1,5 +1,5 @@
 // Helper module: imports another module and uses its names qualified.
-import "shapes.ei"
+import eiderc.tests.check.lib.shapes
 
 pub fn red() -> shapes.Color { shapes.Red }
 

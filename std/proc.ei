@@ -1,8 +1,8 @@
 //! std/proc: run other programs. A child process can do anything, so callers need every
 //! capability it might use (io, fs, net). (`ffi` stays inside core: docs/compiler.md, "C8.5".)
 
-import "core/sys"
-import "bytes.ei"
+import core.sys
+import std.bytes
 
 /// What a finished program produced. `out`/`err` are empty for streams that weren't
 /// captured. `timed_out`: the deadline passed and the child was killed; `code` is then -1.

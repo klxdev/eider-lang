@@ -5,12 +5,12 @@
 // strings escaped, operators in backticks, flags as bare words when set. The closing parens
 // follow the last child. An optional child or empty list prints nothing.
 
-import "core/sys"
-import "std/bytes"
-import "intern.ei"
-import "ast.ei"
-import "diag.ei"
-import "parse.ei"
+import core.sys
+import std.bytes
+import eiderc.intern
+import eiderc.ast
+import eiderc.diag
+import eiderc.parse
 
 fn put(inout out: List[u8], s: str) { bytes.append(inout out, sys.lit(s)) }
 

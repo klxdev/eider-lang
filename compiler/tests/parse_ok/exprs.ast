@@ -1,5 +1,5 @@
-(IImport 2:1 path="../../ast.ei")
-(IImport 3:1 path="../../intern.ei" alias=names)
+(IImport 2:1 path="eiderc/ast" dotted)
+(IImport 3:1 path="eiderc/intern" alias=names dotted)
 (IFn 5:4 name=exprs end=5:69
   param (Param 5:10 name=xs
     type (TGeneric 5:14 name=List

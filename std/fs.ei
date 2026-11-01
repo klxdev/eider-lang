@@ -1,7 +1,7 @@
 //! std/fs: files and directories. Paths are bytes; errors are human-readable Strings.
 
-import "core/sys"
-import "bytes.ei"
+import core.sys
+import std.bytes
 
 /// What is at a path, without following a final symlink.
 pub type Kind = | Missing | File | Dir | Link | Other

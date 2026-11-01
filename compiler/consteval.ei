@@ -23,21 +23,21 @@
 // interpreter (no C compiler at compile time, no capabilities by construction) replaces
 // that one function; the rest of this module stays.
 //
-// `comptime` is a keyword, so importers name this module with an alias
-// (`import "comptime.ei" as consteval`).
+// `comptime` is a keyword, so no module path can name a comptime.ei: the module is
+// consteval.ei (`import eiderc.consteval`; docs/compiler.md, "C8.26").
 
-import "core/sys"
-import "std/bytes"
-import "std/fs"
-import "std/proc"
-import "intern.ei"
-import "lex.ei"
-import "ast.ei"
-import "diag.ei"
-import "resolve.ei"
-import "check.ei"
-import "lower.ei"
-import "driver.ei"
+import core.sys
+import std.bytes
+import std.fs
+import std.proc
+import eiderc.intern
+import eiderc.lex
+import eiderc.ast
+import eiderc.diag
+import eiderc.resolve
+import eiderc.check
+import eiderc.lower
+import eiderc.driver
 
 fn s(x: str) -> List[u8] { sys.lit(x) }
 

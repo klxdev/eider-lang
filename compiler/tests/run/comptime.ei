@@ -2,7 +2,7 @@
 // bool, the range edges of every integer type, evaluation with owned data, records,
 // generics, closures and match, constants of an imported module, and test blocks that use
 // comptime constants.
-import "lib/ct_mod.ei"
+import eiderc.tests.run.lib.ct_mod
 
 type Pt = { x: i32, y: i32 }
 

@@ -1,5 +1,5 @@
 // Golden AST dump: statements, if-let desugaring, match arms and every pattern form.
-import "../../lex.ei"
+import eiderc.lex
 
 fn stmts(xs: List[i32], o: Option[i32]) -> i32 {
     let a = 1; var b: i32 = 2

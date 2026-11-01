@@ -384,9 +384,9 @@ capability encapsulation ("Language work" item 5) came with
 
 ## C7: comptime
 
-`const X: T = comptime expr` (`compiler/comptime.ei`; imported as `consteval`, since
-`comptime` is a keyword). Comptime constants are evaluated between loading the module
-graph and checking: `comptime.eval`, called by main.ei between
+`const X: T = comptime expr` (`compiler/consteval.ei`, `import eiderc.consteval`; named
+consteval since `comptime` is a keyword and no module path can name a comptime.ei). Comptime constants are evaluated between loading the module
+graph and checking: `consteval.eval`, called by main.ei between
 `resolve.load` and `check.check_mode` (check.ei still answers `unsupported` for a comptime
 constant it is handed, so a caller that skips `eval` finds out).
 
@@ -839,7 +839,7 @@ first diagnostic, so its output, tests/checks' 74/74 and the 42/42 coverage are 
   reported and left out, and loading goes on; its prefix goes into `Program.broken`, and a
   diagnostic naming `alias.X` of such a module is a consequence (never reported). Only a
   missing prelude is fatal.
-- **Comptime** (`comptime.eval_all`). A constant whose evaluation fails is reported (the
+- **Comptime** (`consteval.eval_all`). A constant whose evaluation fails is reported (the
   evaluator's first diagnostic) and its `comptime` flag becomes 2: check.ei makes it a
   constant of the error type, so its uses are silent; the next constants are still
   evaluated. An error elsewhere in the program found by an evaluator is found again by the
@@ -1114,7 +1114,7 @@ and leaves the analyzer building.
 | 5 | **8.23 `Default`** (done: "C8.23: `Default`") | the eighth operation trait: derived for records, built in for scalars, text, containers and Option; `T.default()`; `take()` for every `T: Default` | 8.4, 8.15 |
 | 5 | **8.24 `Error` and context** (P0.6; done: "C8.24: `Error`, `Failure` and context (std/error)") | `error.Error` (message, source), `error.Failure` (a chain), `.context`/`.with_context` on Result and Option, `?` into a Failure through `From` | 8.21 |
 | 5 | **8.25 Method chains across lines** (N13; done: "C8.25: method chains across lines") | a line starting with `.` continues the expression before it | — |
-| 5 | **8.26 Dotted imports** (#91; done: "C8.26: dotted imports"; compiler/, std/{bytes,fs,io,env,proc} and core/sys migrated after the next seed) | `import core.sys`, groups `std.{bytes, fs}`, `as`, `import json.stream`, own modules as `pkg.module`, siblings by name outside packages, the lazily loaded `import std` namespace; E0812, E0813; the quoted form deprecated silently with `eiderc migrate-imports` fixes | 8.3 |
+| 5 | **8.26 Dotted imports** (#91; done: "C8.26: dotted imports"; compiler/, std/{bytes,fs,io,env,proc} and core/{sys,version} migrated after the next seed, #95) | `import core.sys`, groups `std.{bytes, fs}`, `as`, `import json.stream`, own modules as `pkg.module`, siblings by name outside packages, the lazily loaded `import std` namespace; E0812, E0813; the quoted form deprecated silently with `eiderc migrate-imports` fixes | 8.3 |
 
 ## C8.3: packages and modules
 
@@ -1698,8 +1698,8 @@ package's lines to its grant, with the messages it had (`package \`fsdep\` uses 
 checks is what the compiler loads from that module, not every file in the directory: a
 `tests/` program, a comment or a stray word no longer counts, and a module the entry imports
 does. A package with neither file is left to the compiler, which checks every import at build
-time anyway. Until the next seed `scripts/eider-pkg` sets `EIDERC` to compiler/ built by the
-seed (`target/eiderc-next`), since the seed has no `caps`.
+time anyway. `scripts/eider-pkg` sets `EIDERC` to the seed's compiler (`target/eiderc`),
+which has `caps`.
 
 **Migration, staged.** The seed still asks for `ffi` along call chains, and it builds
 compiler/, std/, core/ and everything verify.sh builds with it (packages/, eider-pkg,
@@ -2591,7 +2591,7 @@ message and a cause, error values that print their chain, and `.context(...)` th
 with `?` and `From`. Code: std/error.ei (new module); no compiler change.
 
 ```eider
-import "std/error"
+import std.error
 
 type ParseError = { line: u32, what: String }
 
@@ -2772,36 +2772,34 @@ is a keyword (compiler/comptime.ei).
 
 **Migration** (`scripts/migrate-imports-dotted.sh [--keep-seed] <file or dir>...`, which runs
 `eiderc migrate-imports` on every .ei with a quoted import and lists what stays quoted).
-Done now, with `--keep-seed`: core, std, packages, tests and examples of eider-lang, every
+First with `--keep-seed` (#91): core, std, packages, tests and examples of eider-lang, every
 sibling repository (eider-toml, eider-json, eider-markdown, eider-http, eider-rpc,
 eider-openapi, eider-profiler, eider-analyzer), re-vendored (vendor/vendor.lock), the docs'
-code blocks and tests/pkg/run.sh's generated programs. Kept quoted until the seed knows
-dotted imports, because the seed builds the compiler from them: compiler/ and
-std/{bytes,fs,io,env,proc}.ei, core/{sys,version}.ei. Kept on purpose: tests of the quoted
-form (tests/checks/fail/e0804_missing_module.ei, e0809_not_a_dependency.ei), tests/crypto's
-`"../../packages/crypto/crypto.ei"` (a file in no package importing upward), and the entry
-eiderc doc and migrate-var generate (quoted, internal).
+code blocks and tests/pkg/run.sh's generated programs, leaving quoted what the seed then built
+the compiler from: compiler/, std/{bytes,fs,io,env,proc}.ei and core/{sys,version}.ei, with
+scripts/eider-pkg and scripts/docs.sh building with compiler/ as the seed built it
+(target/eiderc-next) while the seed had no `migrate-imports`. Then, after the seed that
+knows dotted imports (#95): `sh scripts/migrate-imports-dotted.sh compiler std core`, the
+compiler's tests with them; compiler/comptime.ei renamed consteval.ei (`comptime` is a
+keyword, so no module path names it; it was only ever imported as `consteval`), now `import
+eiderc.consteval`, which changed that module's C names once; the fallbacks in
+scripts/eider-pkg and docs.sh's `migrate-imports` probe dropped (docs.sh still falls back to
+target/eiderc-next when the seed's `eiderc doc` fails); the goldens that quote an import or
+point at its span blessed (compiler/tests/parse_ok/*.ast, ide/*.ide, pkgs/app/grants_fs.out
+and ide.out); the seed regenerated.
 
-Until the next seed, what the seed's eiderc compiles in verify.sh fails on the migrated code
-(the legs that build with scripts/ei: the compile-fail suite, run tests, std, packages,
-crypto, export, wasm, and the libraries in the tools leg); the toolchain's own tools fall back
-to compiler/ as the seed builds it, as scripts/docs.sh already did for `eiderc doc`:
-scripts/eider-pkg builds eider-pkg, and answers `eiderc caps`, with target/eiderc-next while
-the seed's eiderc has no `migrate-imports`, and docs.sh builds eider-doc and runs the doc tests
-with it.
+Kept on purpose, and listed in `scripts/check-imports.sh` (verify's "imports" leg, which fails
+on any other quoted import in an .ei file or a page, and on a listed file that has none
+left): the compiler's tests of the quoted form (compiler/tests: its parse, the diagnostics
+reached through it, IDE spans, package imports the migration can't rewrite), tests/checks's
+e0804_missing_module and e0809_not_a_dependency, errors.md's E0809 example, and
+tests/crypto's imports from a file in no package upward (`"../../packages/crypto/crypto.ei"`).
+The entry eiderc doc and migrate-var generate stays quoted (internal).
 
-**After the next seed** (the follow-up):
-
-1. Regenerate the seed (`sh scripts/selfhost.sh --seed`); verify.sh is then ALL GREEN as is.
-2. `sh scripts/migrate-imports-dotted.sh compiler std core` (without `--keep-seed`):
-   compiler/, std/{bytes,fs,io,env,proc}.ei and core/sys.ei. test-compiler.sh "migration"
-   already does exactly this on a copy and holds the result to the same C.
-3. compiler/ide.ei's `import "comptime.ei" as consteval` has no dotted form (`comptime` is a
-   keyword): rename compiler/comptime.ei to consteval.ei (it is only ever imported as
-   `consteval`), which changes that module's C names once, then `import eiderc.consteval`.
-4. Drop the fallbacks in scripts/eider-pkg and scripts/docs.sh's migrate-imports probe once
-   the seed has `migrate-imports`; BLESS for any diagnostic that quotes a migrated import.
-5. Later (not decided): a warning for the quoted form, then its removal.
+**When the quoted form becomes an error** (C361): it stays accepted with no warning through
+0.1.x; from 0.2.0 eiderc warns on each quoted import, with the `migrate-imports` fix attached
+(an analyzer quick fix); it is an error (E0001 with the fix) from 0.3.0, and the parser's
+quoted path, `import_fixes` and E0809's quoted-only cases go then.
 
 **Style** (docs/site/reference/modules.md): import the modules a file uses heavily directly
 (`import std.{bytes, fs}`), and reach occasional ones through the namespace
@@ -2923,7 +2921,7 @@ compiler/
   eider.toml          package `eiderc`
   main.ei             CLI (`eiderc --help`)
   source.ei  lex.ei  intern.ei  ast.ei  parse.ei  resolve.ei  types.ei  fold.ei  pats.ei
-  check.ei  ir.ei  lower.ei  emit.ei  diag.ei  driver.ei  comptime.ei  suite.ei  sha256.ei
+  check.ei  ir.ei  lower.ei  emit.ei  diag.ei  driver.ei  consteval.ei  suite.ei  sha256.ei
   lock.ei             eider.toml and eider.lock for package imports ("C8.3")
   ide.ei              the IDE analysis API (`eiderc ide`; "IDE analysis")
   front.ei            every syntax error at once ("Front-end recovery")

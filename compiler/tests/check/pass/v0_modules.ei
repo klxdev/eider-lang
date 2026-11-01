@@ -1,8 +1,8 @@
 // mode: build
 // Imports, `pub`, qualified names (types, variants, patterns, constants), aliases, and a
 // module calling back into the entry file's namespace.
-import "../lib/shapes.ei"
-import "../lib/chain.ei" as ch
+import eiderc.tests.check.lib.shapes
+import eiderc.tests.check.lib.chain as ch
 
 pub fn root_helper() -> i32 { 41 }
 

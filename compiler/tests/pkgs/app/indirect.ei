@@ -1,6 +1,6 @@
 // pkgtest: check
 // base is a dependency of geo, not of app: only direct dependencies are visible
-import "geo"
+import geo
 import "base"
 
 fn main() {}

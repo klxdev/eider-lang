@@ -1,8 +1,8 @@
 // compiler/lock.ei (bare imports: eider.toml and eider.lock as the compiler reads them):
 // comments, multi-line arrays, empty and inline dependency tables, path and git sources,
 // the store directory name, and a file that doesn't parse.
-import "../../lock.ei"
-import "core/sys"
+import eiderc.lock
+import core.sys
 
 fn main() uses io {
     let m = lock.manifest(sys.lit("[package]\nname = \"app\" # c\nversion = \"0.1.0\"\n\n[deps.json]\npath = \"../json\"\nuses = [\n  \"io\",\n]\n[deps.util]\n[deps]\ngeo = { path = \"../geo\", uses = [\"fs\"] }\n"))

@@ -1,3 +1,3 @@
 // expect: E0107 3:4
-import "../lib/other_main.ei"
+import eiderc.tests.check.lib.other_main
 fn main() {}

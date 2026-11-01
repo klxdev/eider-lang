@@ -1,5 +1,5 @@
 // expect: E0401 4:27
-import "../lib/shapes.ei"
+import eiderc.tests.check.lib.shapes
 fn main() {
     let p: shapes.Point = 1
 }

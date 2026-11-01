@@ -1,22 +1,10 @@
 #!/bin/sh
 # Build (when its sources changed) and run eider-pkg, the package manager written in Eider.
-#
-# The compiler is the seed's eiderc (scripts/ei). While the seed predates dotted imports
-# (docs/compiler.md, "C8.26": it has no `eiderc migrate-imports`), it can neither build
-# sources that use them nor answer `eiderc caps` for packages that do, so then the compiler
-# is compiler/ as the seed builds it (target/eiderc-next, rebuilt when compiler/, std/ or
-# core/ is newer), as scripts/docs.sh does for `eiderc doc`.
+# The compiler is the seed's eiderc (scripts/ei, only a C compiler).
 root="$(cd "$(dirname "$0")/.." && pwd)"
 bin="$root/target/eider-pkg"
 "$root/scripts/ei" --help >/dev/null || exit 3
 ec="$root/target/eiderc"
-if ! "$ec" --help 2>/dev/null | grep -q migrate-imports; then
-  ec="$root/target/eiderc-next"
-  if [ ! -x "$ec" ] || [ -n "$(find "$root/compiler" "$root/std" "$root/core" -name '*.ei' -newer "$ec" 2>/dev/null | head -1)" ]; then
-    mkdir -p "$root/target"
-    EIDER_CACHE=off "$root/scripts/ei" build "$root/compiler/main.ei" -o "$ec.$$" >/dev/null && mv -f "$ec.$$" "$ec" || { rm -f "$ec.$$"; exit 3; }
-  fi
-fi
 newest=$(find "$root/packages/pkg" "$root/vendor/toml" "$root/std" "$root/core" -name '*.ei' -newer "$bin" 2>/dev/null | head -1)
 if [ ! -x "$bin" ] || [ -n "$newest" ]; then
   mkdir -p "$root/target"

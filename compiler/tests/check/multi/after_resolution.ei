@@ -2,7 +2,7 @@
 // (its names, through its alias, are never reported unknown), a private item is reported
 // and then used as if it were visible, and checking goes on with the rest.
 import "../lib/no_such_module.ei" as gone
-import "../lib/shapes.ei"
+import eiderc.tests.check.lib.shapes
 
 fn main() uses io {
     let p = gone.make(1, 2)

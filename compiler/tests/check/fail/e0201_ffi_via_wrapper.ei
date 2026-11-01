@@ -1,5 +1,5 @@
 // expect: E0201 4:11
-import "../lib/ffi_ok.ei"
+import eiderc.tests.check.lib.ffi_ok
 fn main() uses io {
     print(ffi_ok.magnitude(-3))
 }

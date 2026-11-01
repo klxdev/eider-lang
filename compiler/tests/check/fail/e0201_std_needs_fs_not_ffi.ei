@@ -1,6 +1,6 @@
 // expect: E0201 7:11
-import "std/fs"
-import "core/sys"
+import std.fs
+import core.sys
 
 // std asks its callers for the real capability only (no `ffi`): the fix adds `fs`
 fn main() uses io {

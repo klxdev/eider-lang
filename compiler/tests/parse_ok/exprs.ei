@@ -1,6 +1,6 @@
 // Golden AST dump: every expression form, precedence and qualified names.
-import "../../ast.ei"
-import "../../intern.ei" as names
+import eiderc.ast
+import eiderc.intern as names
 
 fn exprs(xs: List[i32], inout acc: i32) -> Result[i32, str] uses ffi {
     let lits = (0x1F, 18446744073709551616, "a\"b\n\t\\", true, false)

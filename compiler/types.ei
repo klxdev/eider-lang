@@ -28,10 +28,10 @@
 // Type lists (tuple elements, fn parameters, instance arguments) are interned too: equal
 // lists have equal ids, so composite types are compared as integers as well.
 
-import "core/sys"
-import "std/bytes"
-import "intern.ei"
-import "resolve.ei"
+import core.sys
+import std.bytes
+import eiderc.intern
+import eiderc.resolve
 
 pub const T_INT: u32 = 0
 pub const T_BOOL: u32 = 1

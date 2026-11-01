@@ -12,17 +12,17 @@
 // Where eiderc answers `unsupported` (a feature it doesn't implement yet) the file is
 // reported as `skip` and counted on its own line, neither passed nor failed.
 
-import "core/sys"
-import "std/bytes"
-import "std/fs"
-import "std/io"
-import "intern.ei"
-import "lex.ei"
-import "diag.ei"
-import "parse.ei"
-import "resolve.ei"
-import "check.ei"
-import "comptime.ei" as consteval
+import core.sys
+import std.bytes
+import std.fs
+import std.io
+import eiderc.intern
+import eiderc.lex
+import eiderc.diag
+import eiderc.parse
+import eiderc.resolve
+import eiderc.check
+import eiderc.consteval
 
 /// How a file is checked (the checking modes, minus the library mode).
 pub const BUILD: i32 = 0

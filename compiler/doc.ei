@@ -25,17 +25,17 @@
 // `<package>/<module path>#<anchor>` (the prelude is `core/prelude`; a module in no
 // package is its file's stem, with no package).
 
-import "core/sys"
-import "std/bytes"
-import "std/fs"
-import "intern.ei"
-import "lex.ei"
-import "ast.ei"
-import "parse.ei"
-import "diag.ei"
-import "resolve.ei"
-import "lock.ei"
-import "front.ei"
+import core.sys
+import std.bytes
+import std.fs
+import eiderc.intern
+import eiderc.lex
+import eiderc.ast
+import eiderc.parse
+import eiderc.diag
+import eiderc.resolve
+import eiderc.lock
+import eiderc.front
 
 /// A link from bytes start..end of a signature to an item (`pkg/path#anchor`).
 pub type Link = { start: u32, end: u32, to: List[u8] }

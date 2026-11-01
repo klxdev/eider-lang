@@ -1,11 +1,11 @@
 // std called with the real capabilities only, never `uses ffi` (docs/compiler.md, "C8.5:
 // capabilities per package"): `ffi` stays inside core, so files need `fs`, standard streams
 // and arguments `io`, and bytes and paths nothing.
-import "std/bytes"
-import "std/env"
-import "std/fs"
-import "std/io"
-import "core/sys"
+import std.bytes
+import std.env
+import std.fs
+import std.io
+import core.sys
 
 fn roundtrip(dir: List[u8]) -> Result[List[u8], String] uses fs {
     fs.mkdir_all(dir)?

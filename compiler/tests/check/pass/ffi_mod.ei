@@ -1,5 +1,5 @@
 // externs live in a module and are reached through public wrappers
-import "../lib/ffi_ok.ei"
+import eiderc.tests.check.lib.ffi_ok
 
 extern "c" fn labs(n: i64) -> i64
 

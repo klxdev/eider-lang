@@ -1,5 +1,5 @@
 // expect: E0112 4:5
-import "../lib/shapes.ei"
+import eiderc.tests.check.lib.shapes
 fn main() {
     shapes.nothing()
 }

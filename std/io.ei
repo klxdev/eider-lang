@@ -1,7 +1,7 @@
 //! std/io: raw byte output to stdout/stderr (flushes `print` output first so order is kept),
 //! and raw byte input from stdin.
 
-import "core/sys"
+import core.sys
 
 pub fn out(b: List[u8]) uses io {
     sys.send(b)

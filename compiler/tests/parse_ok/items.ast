@@ -1,5 +1,5 @@
-(IImport 4:1 path="../../ast.ei")
-(IImport 5:1 path="../../intern.ei" alias=names)
+(IImport 4:1 path="eiderc/ast" dotted)
+(IImport 5:1 path="eiderc/intern" alias=names dotted)
 (IType 7:10 name=Pair pub
   generic (GParam 7:15 name=A)
   generic (GParam 7:18 name=B)

@@ -6,12 +6,12 @@
 // width. Constructors: C_VARIANT a=variant index, C_SINGLE (the one constructor of a
 // record or tuple), C_BOOL a=0/1, C_INT a=1 if negative v=magnitude, C_STR a=interned contents.
 
-import "core/sys"
-import "std/bytes"
-import "intern.ei"
-import "types.ei"
-import "resolve.ei"
-import "diag.ei"
+import core.sys
+import std.bytes
+import eiderc.intern
+import eiderc.types
+import eiderc.resolve
+import eiderc.diag
 
 pub const C_VARIANT: u32 = 0
 pub const C_SINGLE: u32 = 1

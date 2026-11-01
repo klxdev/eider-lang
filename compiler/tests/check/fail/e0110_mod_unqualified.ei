@@ -1,5 +1,5 @@
 // expect: E0110 4:13
-import "../lib/shapes.ei"
+import eiderc.tests.check.lib.shapes
 fn main() {
     let c = Red
 }

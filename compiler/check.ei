@@ -48,17 +48,17 @@
 // diagnostic at the point where handling them would start, so everything reported
 // before is exact.
 
-import "core/sys"
-import "std/bytes"
-import "intern.ei"
-import "lex.ei"
-import "ast.ei"
-import "diag.ei"
-import "resolve.ei"
-import "types.ei"
-import "fold.ei"
-import "pats.ei"
-import "ir.ei"
+import core.sys
+import std.bytes
+import eiderc.intern
+import eiderc.lex
+import eiderc.ast
+import eiderc.diag
+import eiderc.resolve
+import eiderc.types
+import eiderc.fold
+import eiderc.pats
+import eiderc.ir
 
 const NONE: u32 = 4294967295
 
@@ -3279,7 +3279,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
             record(inout c, rd)
             continue
         }
-        // a comptime constant whose evaluation failed (comptime.ei) was reported then
+        // a comptime constant whose evaluation failed (consteval.ei) was reported then
         let mut ok = n.e != 2
         if ok {
             let sp = snap(c)

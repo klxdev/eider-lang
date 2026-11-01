@@ -1,3 +1,3 @@
 // expect: E0401 24:32
-import "../lib/geo.ei"
+import eiderc.tests.check.lib.geo
 fn main() { let x = geo.bad(true) }

@@ -58,20 +58,20 @@
 // toolchain or a work directory is missing (where `check` would exit), that is a
 // `toolchain` diagnostic instead.
 
-import "core/sys"
-import "std/bytes"
-import "std/fs"
-import "intern.ei"
-import "lex.ei"
-import "ast.ei"
-import "parse.ei"
-import "diag.ei"
-import "resolve.ei"
-import "types.ei"
-import "check.ei"
-import "driver.ei"
-import "comptime.ei" as consteval
-import "front.ei"
+import core.sys
+import std.bytes
+import std.fs
+import eiderc.intern
+import eiderc.lex
+import eiderc.ast
+import eiderc.parse
+import eiderc.diag
+import eiderc.resolve
+import eiderc.types
+import eiderc.check
+import eiderc.driver
+import eiderc.consteval
+import eiderc.front
 
 pub type Span = { file: List[u8], line: u32, col: u32, end_line: u32, end_col: u32 }
 

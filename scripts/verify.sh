@@ -55,6 +55,8 @@ elif [ "$nok" -gt 0 ]; then
   echo "ok   crypto ($(grep -c '^ok   crypto rfc (' $S/crypto) backend(s): RFC/CAVP/Wycheproof vectors, ASan+UBSan, $(grep -c '^ok   crypto cross' $S/crypto) cross-backend checks)"
 fi
 sh tests/pkg/run.sh | grep -q FAIL && { echo "FAIL pkg"; fail=1; } || echo "ok   pkg (eider-pkg end to end, local git repos)"
+# imports: no quoted imports are left but the tests of the quoted form (docs/compiler.md "C8.26")
+sh scripts/check-imports.sh > $S/imports 2>&1 && cat $S/imports || { head -20 $S/imports; fail=1; }
 sh scripts/version.sh check > $S/version 2>&1 && cat $S/version || { echo "FAIL version: sh scripts/version.sh check"; sed 's/^/  /' $S/version; fail=1; }
 sh scripts/test-compiler.sh | grep -q FAIL && { echo "FAIL compiler (eiderc)"; fail=1; } || echo "ok   compiler (eiderc vs the recorded oracle, tests/oracle)"
 sh scripts/selfhost.sh --from-seed >/dev/null 2>&1 && echo "ok   seed (seed/eiderc.c rebuilds itself with only a C compiler)" || { echo "FAIL seed: sh scripts/selfhost.sh --from-seed"; fail=1; }

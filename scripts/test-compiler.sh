@@ -546,11 +546,11 @@ EIDER_ROOT=$mig EIDERC=$new sh scripts/migrate-var.sh $mig/core $mig/std $mig/pa
 mig_ok=1
 grep -n '^[[:space:]]*var[[:space:]]' $mig/core/*.ei $mig/compiler/*.ei >$tmp/migvl && { echo "FAIL migration: \`var\` is left in"; sed "s|$mig/||" $tmp/migvl | head -10; cat $tmp/migv | grep -v '^migrated' | head -5; mig_ok=0; }
 # and every quoted import in the dotted form (scripts/migrate-imports-dotted.sh, docs/compiler.md
-# "C8.26"), compiler/ and what the seed builds included: the ones left are the compiler's
-# `import "comptime.ei" as consteval` (`comptime` is a keyword, so no module path names it),
-# and this compiler's C for the migrated compiler is byte-identical to its C for compiler/
+# "C8.26"), compiler/ and what the seed builds included: none is left outside compiler/tests
+# (which keeps the quoted form's own tests), and this compiler's C for the migrated compiler is
+# byte-identical to its C for compiler/
 EIDER_ROOT=$mig EIDERC=$new sh scripts/migrate-imports-dotted.sh $mig/core $mig/std $mig/packages $mig/compiler >$tmp/migd 2>$tmp/migde
-grep -h '^kept ' $tmp/migde | grep -v '/compiler/[a-z_]*\.ei: import "comptime.ei" as consteval$' | grep -v '/compiler/tests/' >$tmp/migdk
+grep -h '^kept ' $tmp/migde | grep -v '/compiler/tests/' >$tmp/migdk
 [ -s $tmp/migdk ] && { echo "FAIL migration: quoted imports are left"; sed "s|$mig/||" $tmp/migdk | head -10; mig_ok=0; }
 grep -v '^kept ' $tmp/migde | head -5 | grep . && { echo "FAIL migration: migrate-imports-dotted.sh failed on a file (above)"; mig_ok=0; }
 EIDER_CACHE=off EIDER_ROOT=$mig $new build $mig/compiler/main.ei -o $tmp/eiderc-mig >$tmp/mo 2>&1 || { echo "FAIL migration: build the migrated compiler"; head -10 $tmp/mo; mig_ok=0; }

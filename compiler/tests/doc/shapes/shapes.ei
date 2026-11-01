@@ -3,8 +3,8 @@
 //! The second paragraph of the module doc.
 // an ordinary comment: not part of the doc
 
-import "std/time"
-import "util/geo.ei"
+import std.time
+import shapes.util.geo
 
 //! A second run of `//!` lines, joined with a blank line.
 

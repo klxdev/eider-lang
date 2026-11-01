@@ -1,5 +1,5 @@
 // expect: E0801 3:27
-import "../lib/leaky.ei"
+import eiderc.tests.check.lib.leaky
 fn main() {
     let o = leaky.Outer(leaky.make())
 }

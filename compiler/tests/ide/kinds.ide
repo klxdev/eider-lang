@@ -75,8 +75,8 @@ symbols
   68 param self compiler/tests/ide/lib/shapes.ei:27:12-27:16 full 27:12-27:16 in 67 :: self
   (95 symbols in <prelude>)
 refs
-  compiler/tests/ide/kinds.ei:4:8-4:23 -> 46 module shapes
-  compiler/tests/ide/kinds.ei:4:27-4:29 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:4:29-4:35 -> 46 module shapes
+  compiler/tests/ide/kinds.ei:4:39-4:41 -> 46 module shapes
   compiler/tests/ide/kinds.ei:8:16-8:20 -> 1 type Pair
   compiler/tests/ide/kinds.ei:8:32-8:33 -> 5 param p
   compiler/tests/ide/kinds.ei:8:34-8:35 -> 2 field a

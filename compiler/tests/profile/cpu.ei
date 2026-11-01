@@ -1,7 +1,7 @@
 // --profile: CPU samples, labels and snapshots (scripts/test-compiler.sh, "profile"). `hot`
 // takes most of the time, `warm` some, both under labels; a snapshot is written by
 // std/profile, and the profile at exit (EIDER_PROF) has everything.
-import "std/profile"
+import std.profile
 
 fn hot(n: i64) -> i64 {
     let mut s: i64 = 0

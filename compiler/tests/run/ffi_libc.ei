@@ -1,7 +1,7 @@
 // extern "c" calls into libc: every C-safe type, unit and str results, an extern behind a
 // module's public wrapper, `unsafe fn`, nested unsafe blocks, and an export fn called from
 // Eider (it gets a C entry point only in a library).
-import "lib/ffi_wrap.ei"
+import eiderc.tests.run.lib.ffi_wrap
 
 extern "c" fn abs(n: i32) -> i32
 extern "c" fn llabs(n: i64) -> i64

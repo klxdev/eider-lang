@@ -5,14 +5,14 @@
 // dependency vendored into vendor/ (net) and one from the store (cache, with
 // EIDER_HOME=compiler/tests/pkgs/home); the toolchain's std and core. Variant names print
 // with the module's stem.
-import "std/io"
-import "core/sys"
-import "geo"
-import "geo/util" as gu
-import "shapes"
-import "shapes/src/util" as su
-import "util.ei"
-import "net"
+import std.io
+import core.sys
+import geo
+import geo.util as gu
+import shapes
+import shapes.src.util as su
+import app.util
+import net
 import "cache"
 
 fn main() uses io {

@@ -1,7 +1,7 @@
 // pkgtest: check
 // only geo may implement a language trait for geo's types (E0604, C8.4); the app may for its
 // own, also for one holding a geo type
-import "geo/util" as gu
+import geo.util as gu
 
 type Mine = { u: gu.Unit }
 

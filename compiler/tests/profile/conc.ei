@@ -1,7 +1,7 @@
 // --profile: waits (scripts/test-compiler.sh, "profile"). Eight threads take one Mutex in
 // turn, each holding it while it works (contention in `bump`); main waits on a channel for
 // their results (receive waits in `main`); each thread is labelled with its kind of work.
-import "std/profile"
+import std.profile
 
 fn spin(n: i64) -> i64 {
     let mut s: i64 = 0

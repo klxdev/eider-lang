@@ -1,5 +1,5 @@
 // expect: E0401 5:9
-import "../lib/shapes.ei"
+import eiderc.tests.check.lib.shapes
 fn f(c: shapes.Color) -> i32 {
     match c {
         shapes.Circle(r) => 1

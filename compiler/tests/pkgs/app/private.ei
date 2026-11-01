@@ -1,5 +1,5 @@
 // pkgtest: check
 // a private function of a dependency: E0801 names the module as imported, `geo/util`
-import "geo/util"
+import geo.util
 
 fn main() { let x = util.secret() }

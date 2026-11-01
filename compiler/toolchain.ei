@@ -7,10 +7,10 @@
 // checkout and an installed <root>/bin/<anything>/eiderc finds <root>; otherwise the same
 // search from the working directory; otherwise "" (none).
 
-import "core/sys"
-import "std/bytes"
-import "std/fs"
-import "std/env"
+import core.sys
+import std.bytes
+import std.fs
+import std.env
 
 fn has_core(dir: List[u8]) -> bool uses fs { fs.exists(fs.join(dir, sys.lit("core/eider_rt.h"))) }
 

@@ -138,9 +138,9 @@ typedef struct t_proc__0std__Output t_proc__0std__Output;
 typedef struct t_proc__0std__Options t_proc__0std__Options;
 typedef struct t_sha256__0eiderc__Sha t_sha256__0eiderc__Sha;
 typedef struct t_driver__0eiderc__Exe t_driver__0eiderc__Exe;
-typedef struct t_comptime__0eiderc__Outcome t_comptime__0eiderc__Outcome;
-typedef struct t_comptime__0eiderc__Evaluated t_comptime__0eiderc__Evaluated;
-typedef struct t_comptime__0eiderc__Runner t_comptime__0eiderc__Runner;
+typedef struct t_consteval__0eiderc__Outcome t_consteval__0eiderc__Outcome;
+typedef struct t_consteval__0eiderc__Evaluated t_consteval__0eiderc__Evaluated;
+typedef struct t_consteval__0eiderc__Runner t_consteval__0eiderc__Runner;
 typedef struct t_ide__0eiderc__Span t_ide__0eiderc__Span;
 typedef struct t_ide__0eiderc__Symbol t_ide__0eiderc__Symbol;
 typedef struct t_ide__0eiderc__Ref t_ide__0eiderc__Ref;
@@ -461,9 +461,9 @@ struct t_proc__0std__Output { int32_t f0; tl_752cb7b7 f1; tl_752cb7b7 f2; bool f
 struct t_proc__0std__Options { bool f0; bool f1; int64_t f2; };
 struct t_sha256__0eiderc__Sha { tl_752cb7b7 f0; tl_752cb7b7 f1; tl_6ad0c9d9 f2; tl_50cd8cd9 f3; };
 struct t_driver__0eiderc__Exe { tl_752cb7b7 f0; tl_752cb7b7 f1; };
-struct t_comptime__0eiderc__Outcome { uint32_t tag; union { struct { tl_752cb7b7 f0; } v0; struct { tl_752cb7b7 f0; } v1; } u; };
-struct t_comptime__0eiderc__Evaluated { t_resolve__0eiderc__Program f0; tl_706ffa96 f1; };
-struct t_comptime__0eiderc__Runner { tl_752cb7b7 f0; tl_a0558209 f1; bool f2; };
+struct t_consteval__0eiderc__Outcome { uint32_t tag; union { struct { tl_752cb7b7 f0; } v0; struct { tl_752cb7b7 f0; } v1; } u; };
+struct t_consteval__0eiderc__Evaluated { t_resolve__0eiderc__Program f0; tl_706ffa96 f1; };
+struct t_consteval__0eiderc__Runner { tl_752cb7b7 f0; tl_a0558209 f1; bool f2; };
 struct t_ide__0eiderc__Span { tl_752cb7b7 f0; uint32_t f1; uint32_t f2; uint32_t f3; uint32_t f4; };
 struct t_ide__0eiderc__Symbol { tl_752cb7b7 f0; uint32_t f1; t_ide__0eiderc__Span f2; t_ide__0eiderc__Span f3; uint32_t f4; tl_752cb7b7 f5; };
 struct t_ide__0eiderc__Ref { t_ide__0eiderc__Span f0; uint32_t f1; };
@@ -600,7 +600,7 @@ static void drop_t_parse__0eiderc__Parsed(t_parse__0eiderc__Parsed *x);
 static void drop_t_lex__0eiderc__Lexed2(t_lex__0eiderc__Lexed2 *x);
 static void drop_t_intern__0eiderc__Interner(t_intern__0eiderc__Interner *x);
 static void drop_t_check__0eiderc__Checked(t_check__0eiderc__Checked *x);
-static void drop_t_comptime__0eiderc__Evaluated(t_comptime__0eiderc__Evaluated *x);
+static void drop_t_consteval__0eiderc__Evaluated(t_consteval__0eiderc__Evaluated *x);
 static void drop_t_Args(t_Args *x);
 static void drop_t_front__0eiderc__Front(t_front__0eiderc__Front *x);
 static void drop_t_Option_6d8763fb(t_Option_6d8763fb *x);
@@ -869,8 +869,8 @@ static void drop_t_sha256__0eiderc__Sha(t_sha256__0eiderc__Sha *x);
 static t_proc__0std__Output clone_t_proc__0std__Output(const t_proc__0std__Output *x);
 static void drop_t_Result_42580a5f(t_Result_42580a5f *x);
 static void drop_t_driver__0eiderc__Exe(t_driver__0eiderc__Exe *x);
-static void drop_t_comptime__0eiderc__Runner(t_comptime__0eiderc__Runner *x);
-static void drop_t_comptime__0eiderc__Outcome(t_comptime__0eiderc__Outcome *x);
+static void drop_t_consteval__0eiderc__Runner(t_consteval__0eiderc__Runner *x);
+static void drop_t_consteval__0eiderc__Outcome(t_consteval__0eiderc__Outcome *x);
 static void drop_t_Result_fc7d8749(t_Result_fc7d8749 *x);
 static t_driver__0eiderc__Exe clone_t_driver__0eiderc__Exe(const t_driver__0eiderc__Exe *x);
 static void drop_t_Option_3fcfef64(t_Option_3fcfef64 *x);
@@ -2133,20 +2133,20 @@ static void f_driver__0eiderc__build(tl_752cb7b7 l0_c, tl_752cb7b7 l1_file, tl_7
 static tl_752cb7b7 f_driver__0eiderc__lib_name(tl_752cb7b7 l0_file, tl_752cb7b7 l1_out);
 static void f_driver__0eiderc__build_lib(tl_752cb7b7 l0_c, tl_752cb7b7 l1_h, tl_752cb7b7 l2_file, tl_752cb7b7 l3_out, tl_a0558209 l4_libs);
 static void f_driver__0eiderc__run(tl_752cb7b7 l0_c, tl_752cb7b7 l1_file, bool l2_release, tl_a0558209 l3_libs, tl_a0558209 l4_args);
-static tl_752cb7b7 f_comptime__0eiderc__s(const char * l0_x);
-static uint32_t f_comptime__0eiderc__sym(t_resolve__0eiderc__Program *l0_p, const char * l1_w);
-static t_Result_0b48aa1d f_comptime__0eiderc__eval(t_resolve__0eiderc__Program l0_p);
-static t_comptime__0eiderc__Evaluated f_comptime__0eiderc__eval_all(t_resolve__0eiderc__Program l0_p);
-static t_diag__0eiderc__Diag f_comptime__0eiderc__e0807(t_resolve__0eiderc__Program l0_p, uint32_t l1_m, t_ast__0eiderc__Node l2_n, tl_752cb7b7 l3_msg);
-static uint32_t f_comptime__0eiderc__int_or_bool(t_resolve__0eiderc__Program *l0_p, uint32_t l1_m, uint32_t l2_t);
-static t_Result_d9acbe1d f_comptime__0eiderc__eval_one(t_resolve__0eiderc__Program *l0_p, t_comptime__0eiderc__Runner *l1_r, uint32_t l2_m, uint32_t l3_id);
-static t_resolve__0eiderc__Program f_comptime__0eiderc__evaluator(t_resolve__0eiderc__Program *l0_p, uint32_t l1_m, uint32_t l2_id);
-static t_Result_fc7d8749 f_comptime__0eiderc__checked(t_resolve__0eiderc__Program l0_ev);
-static void f_comptime__0eiderc__finish(t_comptime__0eiderc__Runner l0_r);
-static bool f_comptime__0eiderc__cc_ok(tl_a0558209 l0_argv);
-static void f_comptime__0eiderc__prepare(t_comptime__0eiderc__Runner *l0_r);
-static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptime__0eiderc__Runner *l0_r, t_check__0eiderc__C l1_c);
-static t_comptime__0eiderc__Outcome f_comptime__0eiderc__outcome(t_proc__0std__Output l0_o);
+static tl_752cb7b7 f_consteval__0eiderc__s(const char * l0_x);
+static uint32_t f_consteval__0eiderc__sym(t_resolve__0eiderc__Program *l0_p, const char * l1_w);
+static t_Result_0b48aa1d f_consteval__0eiderc__eval(t_resolve__0eiderc__Program l0_p);
+static t_consteval__0eiderc__Evaluated f_consteval__0eiderc__eval_all(t_resolve__0eiderc__Program l0_p);
+static t_diag__0eiderc__Diag f_consteval__0eiderc__e0807(t_resolve__0eiderc__Program l0_p, uint32_t l1_m, t_ast__0eiderc__Node l2_n, tl_752cb7b7 l3_msg);
+static uint32_t f_consteval__0eiderc__int_or_bool(t_resolve__0eiderc__Program *l0_p, uint32_t l1_m, uint32_t l2_t);
+static t_Result_d9acbe1d f_consteval__0eiderc__eval_one(t_resolve__0eiderc__Program *l0_p, t_consteval__0eiderc__Runner *l1_r, uint32_t l2_m, uint32_t l3_id);
+static t_resolve__0eiderc__Program f_consteval__0eiderc__evaluator(t_resolve__0eiderc__Program *l0_p, uint32_t l1_m, uint32_t l2_id);
+static t_Result_fc7d8749 f_consteval__0eiderc__checked(t_resolve__0eiderc__Program l0_ev);
+static void f_consteval__0eiderc__finish(t_consteval__0eiderc__Runner l0_r);
+static bool f_consteval__0eiderc__cc_ok(tl_a0558209 l0_argv);
+static void f_consteval__0eiderc__prepare(t_consteval__0eiderc__Runner *l0_r);
+static t_consteval__0eiderc__Outcome f_consteval__0eiderc__run_evaluator(t_consteval__0eiderc__Runner *l0_r, t_check__0eiderc__C l1_c);
+static t_consteval__0eiderc__Outcome f_consteval__0eiderc__outcome(t_proc__0std__Output l0_o);
 static tl_752cb7b7 f_wasm__0eiderc__s(const char * l0_x);
 static const char * f_wasm__0eiderc__ts_ty(t_lower__0eiderc__P l0_p, uint32_t l1_ty);
 static tl_752cb7b7 f_wasm__0eiderc__param_name(t_lower__0eiderc__P l0_p, t_ir__0eiderc__Fn l1_fd, uint32_t l2_i);
@@ -2423,7 +2423,7 @@ static void drop_t_intern__0eiderc__Interner(t_intern__0eiderc__Interner *x) {
 static void drop_t_check__0eiderc__Checked(t_check__0eiderc__Checked *x) {
   drop_t_check__0eiderc__C(&x->f0); drop_tl_706ffa96(&x->f1); 
 }
-static void drop_t_comptime__0eiderc__Evaluated(t_comptime__0eiderc__Evaluated *x) {
+static void drop_t_consteval__0eiderc__Evaluated(t_consteval__0eiderc__Evaluated *x) {
   drop_t_resolve__0eiderc__Program(&x->f0); drop_tl_706ffa96(&x->f1); 
 }
 static void drop_t_Args(t_Args *x) {
@@ -4060,10 +4060,10 @@ static void drop_t_Result_42580a5f(t_Result_42580a5f *x) {
 static void drop_t_driver__0eiderc__Exe(t_driver__0eiderc__Exe *x) {
   drop_tl_752cb7b7(&x->f0); drop_tl_752cb7b7(&x->f1); 
 }
-static void drop_t_comptime__0eiderc__Runner(t_comptime__0eiderc__Runner *x) {
+static void drop_t_consteval__0eiderc__Runner(t_consteval__0eiderc__Runner *x) {
   drop_tl_752cb7b7(&x->f0); drop_tl_a0558209(&x->f1); 
 }
-static void drop_t_comptime__0eiderc__Outcome(t_comptime__0eiderc__Outcome *x) {
+static void drop_t_consteval__0eiderc__Outcome(t_consteval__0eiderc__Outcome *x) {
   switch (x->tag) { case 0: drop_tl_752cb7b7(&x->u.v0.f0); break; case 1: drop_tl_752cb7b7(&x->u.v1.f0); break; default: break; }
 }
 static void drop_t_Result_fc7d8749(t_Result_fc7d8749 *x) {
@@ -7460,8 +7460,8 @@ static t_Migration f_migration(tl_752cb7b7 l0_entry, tl_752cb7b7 l1_esrc, tl_752
   tl_706ffa96 l43 = {0};
   t_Migration l44 = {0};
   t_resolve__0eiderc__Program l45 = {0};
-  t_comptime__0eiderc__Evaluated l46 = {0};
-  t_comptime__0eiderc__Evaluated l47_ev = {0};
+  t_consteval__0eiderc__Evaluated l46 = {0};
+  t_consteval__0eiderc__Evaluated l47_ev = {0};
   tl_706ffa96 l48 = {0};
   tl_706ffa96 l49 = {0};
   tl_706ffa96 l50 = {0};
@@ -7621,7 +7621,7 @@ static t_Migration f_migration(tl_752cb7b7 l0_entry, tl_752cb7b7 l1_esrc, tl_752
     return l44;
   }
   l45 = l21_ld.f0;
-  l46 = f_comptime__0eiderc__eval_all(l45);
+  l46 = f_consteval__0eiderc__eval_all(l45);
   l47_ev = l46;
   l48 = l47_ev.f1;
   l49 = clone_tl_706ffa96(&l48);
@@ -7735,7 +7735,7 @@ static t_Migration f_migration(tl_752cb7b7 l0_entry, tl_752cb7b7 l1_esrc, tl_752
     drop_tl_706ffa96(&l67);
     drop_t_check__0eiderc__Checked(&l64_k);
     drop_tl_706ffa96(&l50);
-    drop_t_comptime__0eiderc__Evaluated(&l47_ev);
+    drop_t_consteval__0eiderc__Evaluated(&l47_ev);
     drop_tl_e2f79851(&l38_none);
     drop_tl_706ffa96(&l25);
     drop_t_resolve__0eiderc__Loaded(&l21_ld);
@@ -7781,7 +7781,7 @@ static t_Migration f_migration(tl_752cb7b7 l0_entry, tl_752cb7b7 l1_esrc, tl_752
       drop_tl_706ffa96(&l67);
       drop_t_check__0eiderc__Checked(&l64_k);
       drop_tl_706ffa96(&l50);
-      drop_t_comptime__0eiderc__Evaluated(&l47_ev);
+      drop_t_consteval__0eiderc__Evaluated(&l47_ev);
       drop_tl_e2f79851(&l38_none);
       drop_tl_706ffa96(&l25);
       drop_t_resolve__0eiderc__Loaded(&l21_ld);
@@ -7808,7 +7808,7 @@ static t_Migration f_migration(tl_752cb7b7 l0_entry, tl_752cb7b7 l1_esrc, tl_752
   drop_tl_706ffa96(&l67);
   drop_t_check__0eiderc__Checked(&l64_k);
   drop_tl_706ffa96(&l50);
-  drop_t_comptime__0eiderc__Evaluated(&l47_ev);
+  drop_t_consteval__0eiderc__Evaluated(&l47_ev);
   drop_tl_e2f79851(&l38_none);
   drop_tl_706ffa96(&l25);
   drop_t_resolve__0eiderc__Loaded(&l21_ld);
@@ -7989,8 +7989,8 @@ static void f_main(void) {
   t_resolve__0eiderc__Program l133 = {0};
   tl_752cb7b7 l134 = {0};
   t_resolve__0eiderc__Program l135 = {0};
-  t_comptime__0eiderc__Evaluated l136 = {0};
-  t_comptime__0eiderc__Evaluated l137_ev = {0};
+  t_consteval__0eiderc__Evaluated l136 = {0};
+  t_consteval__0eiderc__Evaluated l137_ev = {0};
   tl_706ffa96 l138 = {0};
   tl_706ffa96 l139 = {0};
   tl_706ffa96 l140 = {0};
@@ -8406,7 +8406,7 @@ static void f_main(void) {
     return;
   }
   l135 = l108_ld.f0;
-  l136 = f_comptime__0eiderc__eval_all(l135);
+  l136 = f_consteval__0eiderc__eval_all(l135);
   l137_ev = l136;
   l138 = l137_ev.f1;
   l139 = clone_tl_706ffa96(&l138);
@@ -8491,7 +8491,7 @@ static void f_main(void) {
     drop_tl_706ffa96(&l165);
     drop_t_check__0eiderc__Checked(&l155_k);
     drop_tl_706ffa96(&l140);
-    drop_t_comptime__0eiderc__Evaluated(&l137_ev);
+    drop_t_consteval__0eiderc__Evaluated(&l137_ev);
     drop_tl_706ffa96(&l115);
     drop_tl_706ffa96(&l112_diags);
     drop_t_resolve__0eiderc__Loaded(&l108_ld);
@@ -8556,7 +8556,7 @@ static void f_main(void) {
       drop_tl_706ffa96(&l165);
       drop_t_check__0eiderc__Checked(&l155_k);
       drop_tl_706ffa96(&l140);
-      drop_t_comptime__0eiderc__Evaluated(&l137_ev);
+      drop_t_consteval__0eiderc__Evaluated(&l137_ev);
       drop_tl_706ffa96(&l115);
       drop_tl_706ffa96(&l112_diags);
       drop_t_resolve__0eiderc__Loaded(&l108_ld);
@@ -8616,7 +8616,7 @@ static void f_main(void) {
       drop_tl_706ffa96(&l165);
       drop_t_check__0eiderc__Checked(&l155_k);
       drop_tl_706ffa96(&l140);
-      drop_t_comptime__0eiderc__Evaluated(&l137_ev);
+      drop_t_consteval__0eiderc__Evaluated(&l137_ev);
       drop_tl_706ffa96(&l115);
       drop_tl_706ffa96(&l112_diags);
       drop_t_resolve__0eiderc__Loaded(&l108_ld);
@@ -8704,7 +8704,7 @@ static void f_main(void) {
   drop_tl_706ffa96(&l165);
   drop_t_check__0eiderc__Checked(&l155_k);
   drop_tl_706ffa96(&l140);
-  drop_t_comptime__0eiderc__Evaluated(&l137_ev);
+  drop_t_consteval__0eiderc__Evaluated(&l137_ev);
   drop_tl_706ffa96(&l115);
   drop_tl_706ffa96(&l112_diags);
   drop_t_resolve__0eiderc__Loaded(&l108_ld);
@@ -139663,8 +139663,8 @@ static void f_driver__0eiderc__run(tl_752cb7b7 l0_c, tl_752cb7b7 l1_file, bool l
   drop_t_driver__0eiderc__Exe(&l10_e);
 }
 
-/* ---- module comptime */
-static tl_752cb7b7 f_comptime__0eiderc__s(const char * l0_x) {
+/* ---- module consteval */
+static tl_752cb7b7 f_consteval__0eiderc__s(const char * l0_x) {
   const char * l1 = "";
   tl_752cb7b7 l2 = {0};
   l1 = l0_x;
@@ -139673,7 +139673,7 @@ static tl_752cb7b7 f_comptime__0eiderc__s(const char * l0_x) {
   ei_unreachable();
 }
 
-static uint32_t f_comptime__0eiderc__sym(t_resolve__0eiderc__Program *l0_p, const char * l1_w) {
+static uint32_t f_consteval__0eiderc__sym(t_resolve__0eiderc__Program *l0_p, const char * l1_w) {
   const char * l2 = "";
   tl_752cb7b7 l3 = {0};
   tl_752cb7b7 l4_b = {0};
@@ -139693,10 +139693,10 @@ static uint32_t f_comptime__0eiderc__sym(t_resolve__0eiderc__Program *l0_p, cons
   ei_unreachable();
 }
 
-static t_Result_0b48aa1d f_comptime__0eiderc__eval(t_resolve__0eiderc__Program l0_p) {
+static t_Result_0b48aa1d f_consteval__0eiderc__eval(t_resolve__0eiderc__Program l0_p) {
   t_resolve__0eiderc__Program l1 = {0};
-  t_comptime__0eiderc__Evaluated l2 = {0};
-  t_comptime__0eiderc__Evaluated l3_ev = {0};
+  t_consteval__0eiderc__Evaluated l2 = {0};
+  t_consteval__0eiderc__Evaluated l3_ev = {0};
   tl_706ffa96 l4 = {0};
   uint64_t l5 = 0;
   bool l6 = false;
@@ -139707,7 +139707,7 @@ static t_Result_0b48aa1d f_comptime__0eiderc__eval(t_resolve__0eiderc__Program l
   t_resolve__0eiderc__Program l11 = {0};
   t_Result_0b48aa1d l12 = {0};
   l1 = l0_p;
-  l2 = f_comptime__0eiderc__eval_all(l1);
+  l2 = f_consteval__0eiderc__eval_all(l1);
   l3_ev = l2;
   l4 = l3_ev.f1;
   l5 = (l4).len;
@@ -139717,18 +139717,18 @@ static t_Result_0b48aa1d f_comptime__0eiderc__eval(t_resolve__0eiderc__Program l
     l7 = l3_ev.f1.d[UINT64_C(0)];
     l8 = clone_t_diag__0eiderc__Diag(&l7);
     l9 = (t_Result_0b48aa1d){ .tag = 1, .u.v1.f0 = l8 };
-    drop_t_comptime__0eiderc__Evaluated(&l3_ev);
+    drop_t_consteval__0eiderc__Evaluated(&l3_ev);
     return l9;
   }
   l10 = l3_ev.f0;
   l11 = clone_t_resolve__0eiderc__Program(&l10);
   l12 = (t_Result_0b48aa1d){ .tag = 0, .u.v0.f0 = l11 };
-  drop_t_comptime__0eiderc__Evaluated(&l3_ev);
+  drop_t_consteval__0eiderc__Evaluated(&l3_ev);
   return l12;
   ei_unreachable();
 }
 
-static t_comptime__0eiderc__Evaluated f_comptime__0eiderc__eval_all(t_resolve__0eiderc__Program l0_p) {
+static t_consteval__0eiderc__Evaluated f_consteval__0eiderc__eval_all(t_resolve__0eiderc__Program l0_p) {
   t_resolve__0eiderc__Program l1 = {0};
   t_resolve__0eiderc__Program l2 = {0};
   t_resolve__0eiderc__Program l3_prog = {0};
@@ -139736,8 +139736,8 @@ static t_comptime__0eiderc__Evaluated f_comptime__0eiderc__eval_all(t_resolve__0
   tl_706ffa96 l5_diags = {0};
   tl_752cb7b7 l6 = {0};
   tl_a0558209 l7 = {0};
-  t_comptime__0eiderc__Runner l8 = {0};
-  t_comptime__0eiderc__Runner l9_r = {0};
+  t_consteval__0eiderc__Runner l8 = {0};
+  t_consteval__0eiderc__Runner l9_r = {0};
   tl_50cd8cd9 l10 = {0};
   tl_50cd8cd9 l11 = {0};
   tl_50cd8cd9 l12 = {0};
@@ -139796,12 +139796,12 @@ static t_comptime__0eiderc__Evaluated f_comptime__0eiderc__eval_all(t_resolve__0
   uint32_t l65 = 0;
   uint64_t l66 = 0;
   uint64_t l67 = 0;
-  t_comptime__0eiderc__Runner l68 = {0};
+  t_consteval__0eiderc__Runner l68 = {0};
   t_resolve__0eiderc__Program l69 = {0};
   tl_706ffa96 l70 = {0};
   t_resolve__0eiderc__Program l71 = {0};
   tl_706ffa96 l72 = {0};
-  t_comptime__0eiderc__Evaluated l73 = {0};
+  t_consteval__0eiderc__Evaluated l73 = {0};
   l1 = l0_p;
   l2 = clone_t_resolve__0eiderc__Program(&l1);
   l3_prog = l2;
@@ -139809,7 +139809,7 @@ static t_comptime__0eiderc__Evaluated f_comptime__0eiderc__eval_all(t_resolve__0
   l5_diags = l4;
   l6 = (tl_752cb7b7){0};
   l7 = (tl_a0558209){0};
-  l8 = (t_comptime__0eiderc__Runner){ .f0 = l6, .f1 = l7, .f2 = false };
+  l8 = (t_consteval__0eiderc__Runner){ .f0 = l6, .f1 = l7, .f2 = false };
   l9_r = l8;
   l10 = l0_p.f1;
   l11 = clone_tl_50cd8cd9(&l10);
@@ -139867,7 +139867,7 @@ static t_comptime__0eiderc__Evaluated f_comptime__0eiderc__eval_all(t_resolve__0
       if (l36) {
         l39 = l18_m;
         l40 = l30_id;
-        l41 = f_comptime__0eiderc__eval_one(&l3_prog, &l9_r, l39, l40);
+        l41 = f_consteval__0eiderc__eval_one(&l3_prog, &l9_r, l39, l40);
         l42 = (l41.tag == 0);
         if (l42) {
         } else {
@@ -139919,21 +139919,21 @@ static t_comptime__0eiderc__Evaluated f_comptime__0eiderc__eval_all(t_resolve__0
     l13 = l67;
   }
   l68 = l9_r;
-  f_comptime__0eiderc__finish(l68);
+  f_consteval__0eiderc__finish(l68);
   l69 = l3_prog;
   l70 = l5_diags;
   l71 = clone_t_resolve__0eiderc__Program(&l69);
   l72 = clone_tl_706ffa96(&l70);
-  l73 = (t_comptime__0eiderc__Evaluated){ .f0 = l71, .f1 = l72 };
+  l73 = (t_consteval__0eiderc__Evaluated){ .f0 = l71, .f1 = l72 };
   drop_tl_50cd8cd9(&l12);
-  drop_t_comptime__0eiderc__Runner(&l9_r);
+  drop_t_consteval__0eiderc__Runner(&l9_r);
   drop_tl_706ffa96(&l5_diags);
   drop_t_resolve__0eiderc__Program(&l3_prog);
   return l73;
   ei_unreachable();
 }
 
-static t_diag__0eiderc__Diag f_comptime__0eiderc__e0807(t_resolve__0eiderc__Program l0_p, uint32_t l1_m, t_ast__0eiderc__Node l2_n, tl_752cb7b7 l3_msg) {
+static t_diag__0eiderc__Diag f_consteval__0eiderc__e0807(t_resolve__0eiderc__Program l0_p, uint32_t l1_m, t_ast__0eiderc__Node l2_n, tl_752cb7b7 l3_msg) {
   uint32_t l4 = 0;
   uint32_t l5 = 0;
   tl_752cb7b7 l6 = {0};
@@ -139964,7 +139964,7 @@ static t_diag__0eiderc__Diag f_comptime__0eiderc__e0807(t_resolve__0eiderc__Prog
   ei_unreachable();
 }
 
-static uint32_t f_comptime__0eiderc__int_or_bool(t_resolve__0eiderc__Program *l0_p, uint32_t l1_m, uint32_t l2_t) {
+static uint32_t f_consteval__0eiderc__int_or_bool(t_resolve__0eiderc__Program *l0_p, uint32_t l1_m, uint32_t l2_t) {
   uint32_t l3 = 0;
   uint64_t l4 = 0;
   uint32_t l5 = 0;
@@ -140027,7 +140027,7 @@ static uint32_t f_comptime__0eiderc__int_or_bool(t_resolve__0eiderc__Program *l0
     l20_w = l16.a[l18];
     l21 = l9_tn.f1;
     l22 = l20_w;
-    l23 = f_comptime__0eiderc__sym(&(*l0_p), l22);
+    l23 = f_consteval__0eiderc__sym(&(*l0_p), l22);
     l24 = (l21 == l23);
     if (l24) {
       return UINT32_C(1);
@@ -140037,7 +140037,7 @@ static uint32_t f_comptime__0eiderc__int_or_bool(t_resolve__0eiderc__Program *l0
     l17 = l26;
   }
   l27 = l9_tn.f1;
-  l28 = f_comptime__0eiderc__sym(&(*l0_p), "bool");
+  l28 = f_consteval__0eiderc__sym(&(*l0_p), "bool");
   l29 = (l27 == l28);
   if (l29) {
     return UINT32_C(2);
@@ -140046,7 +140046,7 @@ static uint32_t f_comptime__0eiderc__int_or_bool(t_resolve__0eiderc__Program *l0
   ei_unreachable();
 }
 
-static t_Result_d9acbe1d f_comptime__0eiderc__eval_one(t_resolve__0eiderc__Program *l0_p, t_comptime__0eiderc__Runner *l1_r, uint32_t l2_m, uint32_t l3_id) {
+static t_Result_d9acbe1d f_consteval__0eiderc__eval_one(t_resolve__0eiderc__Program *l0_p, t_consteval__0eiderc__Runner *l1_r, uint32_t l2_m, uint32_t l3_id) {
   uint32_t l4 = 0;
   uint64_t l5 = 0;
   uint32_t l6 = 0;
@@ -140085,8 +140085,8 @@ static t_Result_d9acbe1d f_comptime__0eiderc__eval_one(t_resolve__0eiderc__Progr
   tl_752cb7b7 l39 = {0};
   tl_752cb7b7 l40_name = {0};
   t_check__0eiderc__C l41 = {0};
-  t_comptime__0eiderc__Outcome l42 = {0};
-  t_comptime__0eiderc__Outcome l43_outcome = {0};
+  t_consteval__0eiderc__Outcome l42 = {0};
+  t_consteval__0eiderc__Outcome l43_outcome = {0};
   tl_752cb7b7 l44_out = {0};
   bool l45 = false;
   tl_752cb7b7 l46 = {0};
@@ -140232,7 +140232,7 @@ static t_Result_d9acbe1d f_comptime__0eiderc__eval_one(t_resolve__0eiderc__Progr
   l10_n = l9;
   l11 = l2_m;
   l12 = l10_n.f3;
-  l13 = f_comptime__0eiderc__int_or_bool(&(*l0_p), l11, l12);
+  l13 = f_consteval__0eiderc__int_or_bool(&(*l0_p), l11, l12);
   l14_kind = l13;
   l15 = l14_kind;
   l16 = (l15 == UINT32_C(0));
@@ -140240,18 +140240,18 @@ static t_Result_d9acbe1d f_comptime__0eiderc__eval_one(t_resolve__0eiderc__Progr
     l17 = (*l0_p);
     l18 = l2_m;
     l19 = l10_n;
-    l20 = f_comptime__0eiderc__s("`comptime` constants must be integers or bool");
-    l21 = f_comptime__0eiderc__e0807(l17, l18, l19, l20);
+    l20 = f_consteval__0eiderc__s("`comptime` constants must be integers or bool");
+    l21 = f_consteval__0eiderc__e0807(l17, l18, l19, l20);
     l22 = (t_Result_d9acbe1d){ .tag = 1, .u.v1.f0 = l21 };
     drop_tl_752cb7b7(&l20);
     return l22;
   }
   l23 = l2_m;
   l24 = l3_id;
-  l25 = f_comptime__0eiderc__evaluator(&(*l0_p), l23, l24);
+  l25 = f_consteval__0eiderc__evaluator(&(*l0_p), l23, l24);
   l26_ev = l25;
   l27 = l26_ev;
-  l28 = f_comptime__0eiderc__checked(l27);
+  l28 = f_consteval__0eiderc__checked(l27);
   l29 = (l28.tag == 1);
   if (l29) {
     l30 = l28.u.v1.f0;
@@ -140269,7 +140269,7 @@ static t_Result_d9acbe1d f_comptime__0eiderc__eval_one(t_resolve__0eiderc__Progr
   l39 = f_resolve__0eiderc__key_text(l34, l38);
   l40_name = l39;
   l41 = l33_c;
-  l42 = f_comptime__0eiderc__run_evaluator(&(*l1_r), l41);
+  l42 = f_consteval__0eiderc__run_evaluator(&(*l1_r), l41);
   l43_outcome = l42;
   l45 = (l43_outcome.tag == 0);
   if (l45) {
@@ -140279,11 +140279,11 @@ static t_Result_d9acbe1d f_comptime__0eiderc__eval_one(t_resolve__0eiderc__Progr
   } else {
     l48 = (l43_outcome.tag == 1);
     if (l48) {
-      l49 = f_comptime__0eiderc__s("comptime evaluation of `");
+      l49 = f_consteval__0eiderc__s("comptime evaluation of `");
       l50_msg = l49;
       l51 = l40_name;
       f_bytes__0std__append(&l50_msg, l51);
-      l52 = f_comptime__0eiderc__s("` failed: ");
+      l52 = f_consteval__0eiderc__s("` failed: ");
       f_bytes__0std__append(&l50_msg, l52);
       l53 = l43_outcome.u.v1.f0;
       f_bytes__0std__append(&l50_msg, l53);
@@ -140291,11 +140291,11 @@ static t_Result_d9acbe1d f_comptime__0eiderc__eval_one(t_resolve__0eiderc__Progr
       l55 = l2_m;
       l56 = l10_n;
       l57 = l50_msg;
-      l58 = f_comptime__0eiderc__e0807(l54, l55, l56, l57);
+      l58 = f_consteval__0eiderc__e0807(l54, l55, l56, l57);
       l59 = (t_Result_d9acbe1d){ .tag = 1, .u.v1.f0 = l58 };
       drop_tl_752cb7b7(&l52);
       drop_tl_752cb7b7(&l50_msg);
-      drop_t_comptime__0eiderc__Outcome(&l43_outcome);
+      drop_t_consteval__0eiderc__Outcome(&l43_outcome);
       drop_tl_752cb7b7(&l40_name);
       drop_t_check__0eiderc__C(&l33_c);
       drop_t_resolve__0eiderc__Program(&l26_ev);
@@ -140304,11 +140304,11 @@ static t_Result_d9acbe1d f_comptime__0eiderc__eval_one(t_resolve__0eiderc__Progr
       l60 = (*l0_p);
       l61 = l2_m;
       l62 = l10_n;
-      l63 = f_comptime__0eiderc__s("could not build the comptime evaluator");
-      l64 = f_comptime__0eiderc__e0807(l60, l61, l62, l63);
+      l63 = f_consteval__0eiderc__s("could not build the comptime evaluator");
+      l64 = f_consteval__0eiderc__e0807(l60, l61, l62, l63);
       l65 = (t_Result_d9acbe1d){ .tag = 1, .u.v1.f0 = l64 };
       drop_tl_752cb7b7(&l63);
-      drop_t_comptime__0eiderc__Outcome(&l43_outcome);
+      drop_t_consteval__0eiderc__Outcome(&l43_outcome);
       drop_tl_752cb7b7(&l40_name);
       drop_t_check__0eiderc__C(&l33_c);
       drop_t_resolve__0eiderc__Program(&l26_ev);
@@ -140325,13 +140325,13 @@ static t_Result_d9acbe1d f_comptime__0eiderc__eval_one(t_resolve__0eiderc__Progr
     l72 = (*l0_p);
     l73 = l2_m;
     l74 = l10_n;
-    l75 = f_comptime__0eiderc__s("comptime evaluation can't perform I/O");
-    l76 = f_comptime__0eiderc__e0807(l72, l73, l74, l75);
+    l75 = f_consteval__0eiderc__s("comptime evaluation can't perform I/O");
+    l76 = f_consteval__0eiderc__e0807(l72, l73, l74, l75);
     l77 = (t_Result_d9acbe1d){ .tag = 1, .u.v1.f0 = l76 };
     drop_tl_752cb7b7(&l75);
     drop_tl_a0558209(&l68_ls);
     drop_tl_752cb7b7(&l44_out);
-    drop_t_comptime__0eiderc__Outcome(&l43_outcome);
+    drop_t_consteval__0eiderc__Outcome(&l43_outcome);
     drop_tl_752cb7b7(&l40_name);
     drop_t_check__0eiderc__C(&l33_c);
     drop_t_resolve__0eiderc__Program(&l26_ev);
@@ -140374,7 +140374,7 @@ static t_Result_d9acbe1d f_comptime__0eiderc__eval_one(t_resolve__0eiderc__Progr
   l100 = (l99 == UINT32_C(2));
   if (l100) {
     l101 = l79_first;
-    l102 = f_comptime__0eiderc__s("true");
+    l102 = f_consteval__0eiderc__s("true");
     l103 = f_bytes__0std__eq(l101, l102);
     if (l103) {
       l98_lit.f1 = UINT32_C(1);
@@ -140423,17 +140423,17 @@ static t_Result_d9acbe1d f_comptime__0eiderc__eval_one(t_resolve__0eiderc__Progr
       l128 = l127_x;
       l123_v = l128;
     } else {
-      l129 = f_comptime__0eiderc__s("unexpected comptime result `");
+      l129 = f_consteval__0eiderc__s("unexpected comptime result `");
       l130_msg = l129;
       l131 = l79_first;
       f_bytes__0std__append(&l130_msg, l131);
-      l132 = f_comptime__0eiderc__s("`");
+      l132 = f_consteval__0eiderc__s("`");
       f_bytes__0std__append(&l130_msg, l132);
       l133 = (*l0_p);
       l134 = l2_m;
       l135 = l10_n;
       l136 = l130_msg;
-      l137 = f_comptime__0eiderc__e0807(l133, l134, l135, l136);
+      l137 = f_consteval__0eiderc__e0807(l133, l134, l135, l136);
       l138 = (t_Result_d9acbe1d){ .tag = 1, .u.v1.f0 = l137 };
       drop_tl_752cb7b7(&l132);
       drop_tl_752cb7b7(&l130_msg);
@@ -140442,7 +140442,7 @@ static t_Result_d9acbe1d f_comptime__0eiderc__eval_one(t_resolve__0eiderc__Progr
       drop_tl_752cb7b7(&l79_first);
       drop_tl_a0558209(&l68_ls);
       drop_tl_752cb7b7(&l44_out);
-      drop_t_comptime__0eiderc__Outcome(&l43_outcome);
+      drop_t_consteval__0eiderc__Outcome(&l43_outcome);
       drop_tl_752cb7b7(&l40_name);
       drop_t_check__0eiderc__C(&l33_c);
       drop_t_resolve__0eiderc__Program(&l26_ev);
@@ -140529,7 +140529,7 @@ static t_Result_d9acbe1d f_comptime__0eiderc__eval_one(t_resolve__0eiderc__Progr
   drop_tl_752cb7b7(&l79_first);
   drop_tl_a0558209(&l68_ls);
   drop_tl_752cb7b7(&l44_out);
-  drop_t_comptime__0eiderc__Outcome(&l43_outcome);
+  drop_t_consteval__0eiderc__Outcome(&l43_outcome);
   drop_tl_752cb7b7(&l40_name);
   drop_t_check__0eiderc__C(&l33_c);
   drop_t_resolve__0eiderc__Program(&l26_ev);
@@ -140537,7 +140537,7 @@ static t_Result_d9acbe1d f_comptime__0eiderc__eval_one(t_resolve__0eiderc__Progr
   ei_unreachable();
 }
 
-static t_resolve__0eiderc__Program f_comptime__0eiderc__evaluator(t_resolve__0eiderc__Program *l0_p, uint32_t l1_m, uint32_t l2_id) {
+static t_resolve__0eiderc__Program f_consteval__0eiderc__evaluator(t_resolve__0eiderc__Program *l0_p, uint32_t l1_m, uint32_t l2_id) {
   uint32_t l3 = 0;
   uint32_t l4_s_ct = 0;
   uint32_t l5 = 0;
@@ -140720,13 +140720,13 @@ static t_resolve__0eiderc__Program f_comptime__0eiderc__evaluator(t_resolve__0ei
   uint64_t l182 = 0;
   t_resolve__0eiderc__Program l183 = {0};
   t_resolve__0eiderc__Program l184 = {0};
-  l3 = f_comptime__0eiderc__sym(&(*l0_p), "__ct");
+  l3 = f_consteval__0eiderc__sym(&(*l0_p), "__ct");
   l4_s_ct = l3;
-  l5 = f_comptime__0eiderc__sym(&(*l0_p), "main");
+  l5 = f_consteval__0eiderc__sym(&(*l0_p), "main");
   l6_s_main = l5;
-  l7 = f_comptime__0eiderc__sym(&(*l0_p), "print");
+  l7 = f_consteval__0eiderc__sym(&(*l0_p), "print");
   l8_s_print = l7;
-  l9 = f_comptime__0eiderc__sym(&(*l0_p), "io");
+  l9 = f_consteval__0eiderc__sym(&(*l0_p), "io");
   l10_s_io = l9;
   l11 = (*l0_p);
   l12 = clone_t_resolve__0eiderc__Program(&l11);
@@ -141004,7 +141004,7 @@ static t_resolve__0eiderc__Program f_comptime__0eiderc__evaluator(t_resolve__0ei
   ei_unreachable();
 }
 
-static t_Result_fc7d8749 f_comptime__0eiderc__checked(t_resolve__0eiderc__Program l0_ev) {
+static t_Result_fc7d8749 f_consteval__0eiderc__checked(t_resolve__0eiderc__Program l0_ev) {
   t_resolve__0eiderc__Program l1 = {0};
   t_Result_fc7d8749 l2 = {0};
   bool l3 = false;
@@ -141056,8 +141056,8 @@ static t_Result_fc7d8749 f_comptime__0eiderc__checked(t_resolve__0eiderc__Progra
       l14_has_fix = false;
     }
     l16 = l9_d.f0;
-    l17 = f_comptime__0eiderc__s(l16);
-    l18 = f_comptime__0eiderc__s("E0201");
+    l17 = f_consteval__0eiderc__s(l16);
+    l18 = f_consteval__0eiderc__s("E0201");
     l19 = f_bytes__0std__eq(l17, l18);
     l20 = l19;
     if (l20) {
@@ -141068,7 +141068,7 @@ static t_Result_fc7d8749 f_comptime__0eiderc__checked(t_resolve__0eiderc__Progra
       l22 = (t_Option_cbd22cf8){ .tag = 1 };
       drop_t_Option_cbd22cf8(&l13_d2.f5);
       l13_d2.f5 = l22;
-      l23 = f_comptime__0eiderc__s("`comptime` evaluation can't use capabilities");
+      l23 = f_consteval__0eiderc__s("`comptime` evaluation can't use capabilities");
       drop_tl_752cb7b7(&l13_d2.f4);
       l13_d2.f4 = l23;
     }
@@ -141086,7 +141086,7 @@ static t_Result_fc7d8749 f_comptime__0eiderc__checked(t_resolve__0eiderc__Progra
   ei_unreachable();
 }
 
-static void f_comptime__0eiderc__finish(t_comptime__0eiderc__Runner l0_r) {
+static void f_consteval__0eiderc__finish(t_consteval__0eiderc__Runner l0_r) {
   tl_752cb7b7 l1 = {0};
   uint64_t l2 = 0;
   bool l3 = false;
@@ -141102,7 +141102,7 @@ static void f_comptime__0eiderc__finish(t_comptime__0eiderc__Runner l0_r) {
   }
 }
 
-static bool f_comptime__0eiderc__cc_ok(tl_a0558209 l0_argv) {
+static bool f_consteval__0eiderc__cc_ok(tl_a0558209 l0_argv) {
   tl_a0558209 l1 = {0};
   t_proc__0std__Options l2 = {0};
   t_Result_42580a5f l3 = {0};
@@ -141131,7 +141131,7 @@ static bool f_comptime__0eiderc__cc_ok(tl_a0558209 l0_argv) {
   ei_unreachable();
 }
 
-static void f_comptime__0eiderc__prepare(t_comptime__0eiderc__Runner *l0_r) {
+static void f_consteval__0eiderc__prepare(t_consteval__0eiderc__Runner *l0_r) {
   tl_752cb7b7 l1 = {0};
   uint64_t l2 = 0;
   bool l3 = false;
@@ -141191,7 +141191,7 @@ static void f_comptime__0eiderc__prepare(t_comptime__0eiderc__Runner *l0_r) {
   drop_tl_752cb7b7(&(*l0_r).f0);
   (*l0_r).f0 = l6;
   l7 = f_driver__0eiderc__root();
-  l8 = f_comptime__0eiderc__s("core");
+  l8 = f_consteval__0eiderc__s("core");
   l9 = f_fs__0std__join(l7, l8);
   l10_core = l9;
   l11 = (ta_dea01677){ { "eider_rt", "eider_core" } };
@@ -141207,24 +141207,24 @@ static void f_comptime__0eiderc__prepare(t_comptime__0eiderc__Runner *l0_r) {
     l15_name = l11.a[l13];
     l16 = l10_core;
     l17 = l15_name;
-    l18 = f_comptime__0eiderc__s(l17);
+    l18 = f_consteval__0eiderc__s(l17);
     l19 = f_fs__0std__join(l16, l18);
     l20_src = l19;
-    l21 = f_comptime__0eiderc__s(".c");
+    l21 = f_consteval__0eiderc__s(".c");
     f_bytes__0std__append(&l20_src, l21);
     l22 = (*l0_r).f0;
     l23 = l15_name;
-    l24 = f_comptime__0eiderc__s(l23);
+    l24 = f_consteval__0eiderc__s(l23);
     l25 = f_fs__0std__join(l22, l24);
     l26_obj = l25;
-    l27 = f_comptime__0eiderc__s(".o");
+    l27 = f_consteval__0eiderc__s(".o");
     f_bytes__0std__append(&l26_obj, l27);
     l28 = l10_core;
     l29 = f_driver__0eiderc__cc_argv(l28, false);
     l30_argv = l29;
-    l31 = f_comptime__0eiderc__s("-c");
+    l31 = f_consteval__0eiderc__s("-c");
     push_tl_a0558209(&l30_argv, l31);
-    l32 = f_comptime__0eiderc__s("-o");
+    l32 = f_consteval__0eiderc__s("-o");
     push_tl_a0558209(&l30_argv, l32);
     l33 = l26_obj;
     l34 = clone_tl_752cb7b7(&l33);
@@ -141233,7 +141233,7 @@ static void f_comptime__0eiderc__prepare(t_comptime__0eiderc__Runner *l0_r) {
     l36 = clone_tl_752cb7b7(&l35);
     push_tl_a0558209(&l30_argv, l36);
     l37 = l30_argv;
-    l38 = f_comptime__0eiderc__cc_ok(l37);
+    l38 = f_consteval__0eiderc__cc_ok(l37);
     l39 = !l38;
     if (l39) {
       (*l0_r).f2 = true;
@@ -141257,7 +141257,7 @@ static void f_comptime__0eiderc__prepare(t_comptime__0eiderc__Runner *l0_r) {
   drop_tl_752cb7b7(&l7);
 }
 
-static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptime__0eiderc__Runner *l0_r, t_check__0eiderc__C l1_c) {
+static t_consteval__0eiderc__Outcome f_consteval__0eiderc__run_evaluator(t_consteval__0eiderc__Runner *l0_r, t_check__0eiderc__C l1_c) {
   t_ir__0eiderc__Ir l2 = {0};
   t_types__0eiderc__Types l3 = {0};
   t_intern__0eiderc__Interner l4 = {0};
@@ -141275,7 +141275,7 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptim
   tl_752cb7b7 l16 = {0};
   tl_752cb7b7 l17 = {0};
   tl_752cb7b7 l18 = {0};
-  t_comptime__0eiderc__Outcome l19 = {0};
+  t_consteval__0eiderc__Outcome l19 = {0};
   tl_752cb7b7 l20 = {0};
   uint64_t l21 = 0;
   bool l22 = false;
@@ -141289,7 +141289,7 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptim
   t_driver__0eiderc__Exe l30 = {0};
   t_driver__0eiderc__Exe l31 = {0};
   t_driver__0eiderc__Exe l32 = {0};
-  t_comptime__0eiderc__Outcome l33 = {0};
+  t_consteval__0eiderc__Outcome l33 = {0};
   tl_a0558209 l34 = {0};
   tl_a0558209 l35_argv = {0};
   tl_752cb7b7 l36 = {0};
@@ -141301,10 +141301,10 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptim
   t_driver__0eiderc__Exe l42 = {0};
   bool l43 = false;
   t_proc__0std__Output l44 = {0};
-  t_comptime__0eiderc__Outcome l45 = {0};
-  t_comptime__0eiderc__Outcome l46 = {0};
+  t_consteval__0eiderc__Outcome l45 = {0};
+  t_consteval__0eiderc__Outcome l46 = {0};
   bool l47 = false;
-  t_comptime__0eiderc__Outcome l48 = {0};
+  t_consteval__0eiderc__Outcome l48 = {0};
   tl_752cb7b7 l49 = {0};
   tl_752cb7b7 l50 = {0};
   tl_752cb7b7 l51 = {0};
@@ -141348,7 +141348,7 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptim
   bool l89 = false;
   bool l90 = false;
   bool l91 = false;
-  t_comptime__0eiderc__Outcome l92 = {0};
+  t_consteval__0eiderc__Outcome l92 = {0};
   tl_a0558209 l93 = {0};
   tl_a0558209 l94_run = {0};
   tl_752cb7b7 l95 = {0};
@@ -141360,8 +141360,8 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptim
   t_proc__0std__Output l101_o = {0};
   t_proc__0std__Output l102 = {0};
   t_proc__0std__Output l103 = {0};
-  t_comptime__0eiderc__Outcome l104 = {0};
-  t_comptime__0eiderc__Outcome l105 = {0};
+  t_consteval__0eiderc__Outcome l104 = {0};
+  t_consteval__0eiderc__Outcome l105 = {0};
   l2 = l1_c.f2;
   l3 = l1_c.f1;
   l4 = l1_c.f0.f2;
@@ -141371,7 +141371,7 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptim
   l8 = (t_lower__0eiderc__P){ .f0 = l5, .f1 = l6, .f2 = l7 };
   l9_lp = l8;
   l11 = l9_lp;
-  l12 = f_comptime__0eiderc__s("program");
+  l12 = f_consteval__0eiderc__s("program");
   l13 = f_lower__0eiderc__program_for(l11, l12, false, false);
   l14 = (l13.tag == 0);
   if (l14) {
@@ -141382,7 +141382,7 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptim
     l10_text = l18;
     drop_tl_752cb7b7(&l15_t);
   } else {
-    l19 = (t_comptime__0eiderc__Outcome){ .tag = 2 };
+    l19 = (t_consteval__0eiderc__Outcome){ .tag = 2 };
     drop_t_Result_c29eefe4(&l13);
     drop_tl_752cb7b7(&l12);
     drop_t_lower__0eiderc__P(&l9_lp);
@@ -141393,7 +141393,7 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptim
   l22 = (l21 > UINT64_C(0));
   if (l22) {
     l24 = l10_text;
-    l25 = f_comptime__0eiderc__s("ct");
+    l25 = f_consteval__0eiderc__s("ct");
     l26 = (tl_a0558209){0};
     l27 = f_driver__0eiderc__try_executable(l24, l25, false, l26);
     l28 = (l27.tag == 0);
@@ -141405,7 +141405,7 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptim
       l23_e = l32;
       drop_t_driver__0eiderc__Exe(&l29_x);
     } else {
-      l33 = (t_comptime__0eiderc__Outcome){ .tag = 2 };
+      l33 = (t_consteval__0eiderc__Outcome){ .tag = 2 };
       drop_t_Option_3fcfef64(&l27);
       drop_tl_a0558209(&l26);
       drop_tl_752cb7b7(&l25);
@@ -141430,7 +141430,7 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptim
     l43 = (l41_got.tag == 0);
     if (l43) {
       l44 = l41_got.u.v0.f0;
-      l45 = f_comptime__0eiderc__outcome(l44);
+      l45 = f_consteval__0eiderc__outcome(l44);
       drop_t_Result_42580a5f(&l41_got);
       drop_tl_a0558209(&l35_argv);
       drop_t_driver__0eiderc__Exe(&l23_e);
@@ -141444,7 +141444,7 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptim
       drop_t_lower__0eiderc__P(&l9_lp);
       return l45;
     } else {
-      l46 = (t_comptime__0eiderc__Outcome){ .tag = 2 };
+      l46 = (t_consteval__0eiderc__Outcome){ .tag = 2 };
       drop_t_Result_42580a5f(&l41_got);
       drop_tl_a0558209(&l35_argv);
       drop_t_driver__0eiderc__Exe(&l23_e);
@@ -141459,10 +141459,10 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptim
       return l46;
     }
   }
-  f_comptime__0eiderc__prepare(&(*l0_r));
+  f_consteval__0eiderc__prepare(&(*l0_r));
   l47 = (*l0_r).f2;
   if (l47) {
-    l48 = (t_comptime__0eiderc__Outcome){ .tag = 2 };
+    l48 = (t_consteval__0eiderc__Outcome){ .tag = 2 };
     drop_tl_752cb7b7(&l20);
     drop_tl_752cb7b7(&l10_text);
     drop_t_Result_c29eefe4(&l13);
@@ -141471,21 +141471,21 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptim
     return l48;
   }
   l49 = (*l0_r).f0;
-  l50 = f_comptime__0eiderc__s("ct.c");
+  l50 = f_consteval__0eiderc__s("ct.c");
   l51 = f_fs__0std__join(l49, l50);
   l52_cfile = l51;
   l53 = (*l0_r).f0;
-  l54 = f_comptime__0eiderc__s("ct");
+  l54 = f_consteval__0eiderc__s("ct");
   l55 = f_fs__0std__join(l53, l54);
   l56_exe = l55;
   l57 = f_driver__0eiderc__root();
-  l58 = f_comptime__0eiderc__s("core");
+  l58 = f_consteval__0eiderc__s("core");
   l59 = f_fs__0std__join(l57, l58);
   l60_core = l59;
   l61 = l60_core;
   l62 = f_driver__0eiderc__cc_argv(l61, false);
   l63_argv = l62;
-  l64 = f_comptime__0eiderc__s("-o");
+  l64 = f_consteval__0eiderc__s("-o");
   push_tl_a0558209(&l63_argv, l64);
   l65 = l56_exe;
   l66 = clone_tl_752cb7b7(&l65);
@@ -141524,13 +141524,13 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptim
   l87 = (l86.tag == 0);
   if (l87) {
     l88 = l63_argv;
-    l89 = f_comptime__0eiderc__cc_ok(l88);
+    l89 = f_consteval__0eiderc__cc_ok(l88);
     l83_built = l89;
   }
   l90 = l83_built;
   l91 = !l90;
   if (l91) {
-    l92 = (t_comptime__0eiderc__Outcome){ .tag = 2 };
+    l92 = (t_consteval__0eiderc__Outcome){ .tag = 2 };
     drop_t_Result_48fe407b(&l86);
     drop_tl_a0558209(&l71);
     drop_tl_a0558209(&l63_argv);
@@ -141561,7 +141561,7 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptim
     l102 = l99.u.v0.f0;
     l101_o = clone_t_proc__0std__Output(&l102);
     l103 = l101_o;
-    l104 = f_comptime__0eiderc__outcome(l103);
+    l104 = f_consteval__0eiderc__outcome(l103);
     drop_t_proc__0std__Output(&l101_o);
     drop_t_Result_42580a5f(&l99);
     drop_tl_a0558209(&l94_run);
@@ -141582,7 +141582,7 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptim
     drop_t_lower__0eiderc__P(&l9_lp);
     return l104;
   } else {
-    l105 = (t_comptime__0eiderc__Outcome){ .tag = 2 };
+    l105 = (t_consteval__0eiderc__Outcome){ .tag = 2 };
     drop_t_Result_42580a5f(&l99);
     drop_tl_a0558209(&l94_run);
     drop_t_Result_48fe407b(&l86);
@@ -141622,12 +141622,12 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__run_evaluator(t_comptim
   ei_unreachable();
 }
 
-static t_comptime__0eiderc__Outcome f_comptime__0eiderc__outcome(t_proc__0std__Output l0_o) {
+static t_consteval__0eiderc__Outcome f_consteval__0eiderc__outcome(t_proc__0std__Output l0_o) {
   int32_t l1 = 0;
   bool l2 = false;
   tl_752cb7b7 l3 = {0};
   tl_752cb7b7 l4 = {0};
-  t_comptime__0eiderc__Outcome l5 = {0};
+  t_consteval__0eiderc__Outcome l5 = {0};
   tl_752cb7b7 l6 = {0};
   tl_a0558209 l7 = {0};
   tl_a0558209 l8_errs = {0};
@@ -141636,15 +141636,15 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__outcome(t_proc__0std__O
   bool l11 = false;
   tl_752cb7b7 l12 = {0};
   tl_752cb7b7 l13 = {0};
-  t_comptime__0eiderc__Outcome l14 = {0};
+  t_consteval__0eiderc__Outcome l14 = {0};
   tl_752cb7b7 l15 = {0};
-  t_comptime__0eiderc__Outcome l16 = {0};
+  t_consteval__0eiderc__Outcome l16 = {0};
   l1 = l0_o.f0;
   l2 = (l1 == ((int32_t)0));
   if (l2) {
     l3 = l0_o.f1;
     l4 = clone_tl_752cb7b7(&l3);
-    l5 = (t_comptime__0eiderc__Outcome){ .tag = 0, .u.v0.f0 = l4 };
+    l5 = (t_consteval__0eiderc__Outcome){ .tag = 0, .u.v0.f0 = l4 };
     return l5;
   }
   l6 = l0_o.f2;
@@ -141657,12 +141657,12 @@ static t_comptime__0eiderc__Outcome f_comptime__0eiderc__outcome(t_proc__0std__O
     (void)ei_idx((uint64_t)UINT64_C(0), l8_errs.len, 27263354);
     l12 = l8_errs.d[UINT64_C(0)];
     l13 = clone_tl_752cb7b7(&l12);
-    l14 = (t_comptime__0eiderc__Outcome){ .tag = 1, .u.v1.f0 = l13 };
+    l14 = (t_consteval__0eiderc__Outcome){ .tag = 1, .u.v1.f0 = l13 };
     drop_tl_a0558209(&l8_errs);
     return l14;
   }
   l15 = (tl_752cb7b7){0};
-  l16 = (t_comptime__0eiderc__Outcome){ .tag = 1, .u.v1.f0 = l15 };
+  l16 = (t_consteval__0eiderc__Outcome){ .tag = 1, .u.v1.f0 = l15 };
   drop_tl_a0558209(&l8_errs);
   return l16;
   ei_unreachable();
@@ -142500,8 +142500,8 @@ static t_Result_d9acbe1d f_suite__0eiderc__compile(tl_752cb7b7 l0_file, tl_752cb
   t_diag__0eiderc__Diag l39 = {0};
   t_Result_d9acbe1d l40 = {0};
   t_resolve__0eiderc__Program l41 = {0};
-  t_comptime__0eiderc__Evaluated l42 = {0};
-  t_comptime__0eiderc__Evaluated l43_ev = {0};
+  t_consteval__0eiderc__Evaluated l42 = {0};
+  t_consteval__0eiderc__Evaluated l43_ev = {0};
   tl_706ffa96 l44 = {0};
   uint64_t l45 = 0;
   bool l46 = false;
@@ -142603,7 +142603,7 @@ static t_Result_d9acbe1d f_suite__0eiderc__compile(tl_752cb7b7 l0_file, tl_752cb
     return l40;
   }
   l41 = l34_ld.f0;
-  l42 = f_comptime__0eiderc__eval_all(l41);
+  l42 = f_consteval__0eiderc__eval_all(l41);
   l43_ev = l42;
   l44 = l43_ev.f1;
   l45 = (l44).len;
@@ -142613,7 +142613,7 @@ static t_Result_d9acbe1d f_suite__0eiderc__compile(tl_752cb7b7 l0_file, tl_752cb
     l47 = l43_ev.f1.d[UINT64_C(0)];
     l48 = clone_t_diag__0eiderc__Diag(&l47);
     l49 = (t_Result_d9acbe1d){ .tag = 1, .u.v1.f0 = l48 };
-    drop_t_comptime__0eiderc__Evaluated(&l43_ev);
+    drop_t_consteval__0eiderc__Evaluated(&l43_ev);
     drop_t_resolve__0eiderc__Loaded(&l34_ld);
     drop_t_resolve__0eiderc__Files(&l32);
     drop_t_parse__0eiderc__P(&l28_parsed);
@@ -142636,7 +142636,7 @@ static t_Result_d9acbe1d f_suite__0eiderc__compile(tl_752cb7b7 l0_file, tl_752cb
   if (l59) {
     l60 = (t_Result_d9acbe1d){ .tag = 0, .u.v0.f0 = true };
     drop_t_check__0eiderc__Checked(&l56_k);
-    drop_t_comptime__0eiderc__Evaluated(&l43_ev);
+    drop_t_consteval__0eiderc__Evaluated(&l43_ev);
     drop_t_resolve__0eiderc__Loaded(&l34_ld);
     drop_t_resolve__0eiderc__Files(&l32);
     drop_t_parse__0eiderc__P(&l28_parsed);
@@ -142666,7 +142666,7 @@ static t_Result_d9acbe1d f_suite__0eiderc__compile(tl_752cb7b7 l0_file, tl_752cb
   if (l67) {
     l70 = (t_Result_d9acbe1d){ .tag = 0, .u.v0.f0 = true };
     drop_t_check__0eiderc__Checked(&l56_k);
-    drop_t_comptime__0eiderc__Evaluated(&l43_ev);
+    drop_t_consteval__0eiderc__Evaluated(&l43_ev);
     drop_t_resolve__0eiderc__Loaded(&l34_ld);
     drop_t_resolve__0eiderc__Files(&l32);
     drop_t_parse__0eiderc__P(&l28_parsed);
@@ -142681,7 +142681,7 @@ static t_Result_d9acbe1d f_suite__0eiderc__compile(tl_752cb7b7 l0_file, tl_752cb
   l72 = clone_t_diag__0eiderc__Diag(&l71);
   l73 = (t_Result_d9acbe1d){ .tag = 1, .u.v1.f0 = l72 };
   drop_t_check__0eiderc__Checked(&l56_k);
-  drop_t_comptime__0eiderc__Evaluated(&l43_ev);
+  drop_t_consteval__0eiderc__Evaluated(&l43_ev);
   drop_t_resolve__0eiderc__Loaded(&l34_ld);
   drop_t_resolve__0eiderc__Files(&l32);
   drop_t_parse__0eiderc__P(&l28_parsed);
@@ -144310,8 +144310,8 @@ static t_ide__0eiderc__Analysis f_ide__0eiderc__analyze(tl_752cb7b7 l0_entry, tl
   tl_706ffa96 l89 = {0};
   t_ide__0eiderc__Analysis l90 = {0};
   t_resolve__0eiderc__Program l91 = {0};
-  t_comptime__0eiderc__Evaluated l92 = {0};
-  t_comptime__0eiderc__Evaluated l93_ev = {0};
+  t_consteval__0eiderc__Evaluated l92 = {0};
+  t_consteval__0eiderc__Evaluated l93_ev = {0};
   tl_706ffa96 l94 = {0};
   tl_706ffa96 l95 = {0};
   tl_706ffa96 l96 = {0};
@@ -144501,7 +144501,7 @@ static t_ide__0eiderc__Analysis f_ide__0eiderc__analyze(tl_752cb7b7 l0_entry, tl
     drop_t_Option_6d8763fb(&l76);
   }
   l91 = l46_ld.f0;
-  l92 = f_comptime__0eiderc__eval_all(l91);
+  l92 = f_consteval__0eiderc__eval_all(l91);
   l93_ev = l92;
   l94 = l93_ev.f1;
   l95 = clone_tl_706ffa96(&l94);
@@ -144565,7 +144565,7 @@ static t_ide__0eiderc__Analysis f_ide__0eiderc__analyze(tl_752cb7b7 l0_entry, tl
   drop_tl_706ffa96(&l113);
   drop_t_check__0eiderc__Recorded(&l110_rc);
   drop_tl_706ffa96(&l96);
-  drop_t_comptime__0eiderc__Evaluated(&l93_ev);
+  drop_t_consteval__0eiderc__Evaluated(&l93_ev);
   drop_tl_706ffa96(&l54);
   drop_tl_706ffa96(&l50_found);
   drop_t_resolve__0eiderc__Loaded(&l46_ld);
@@ -159655,7 +159655,7 @@ static t_lex__0eiderc__Kind f_Option__unwrap_817324e9(t_Option_e55ad729 l0_self)
   ei_unreachable();
 }
 
-static const char *const ei_files[32] = { 0, "core/sys.ei", 0, "std/bytes.ei", "std/fs.ei", "std/io.ei", 0, "compiler/intern.ei", "compiler/lex.ei", "compiler/diag.ei", "compiler/parse.ei", "compiler/ast.ei", "compiler/dump.ei", "compiler/resolve.ei", "compiler/front.ei", "compiler/lock.ei", "compiler/toolchain.ei", "compiler/check.ei", "compiler/types.ei", "compiler/fold.ei", "compiler/pats.ei", "compiler/ir.ei", "compiler/lower.ei", "compiler/driver.ei", "std/proc.ei", "compiler/sha256.ei", "compiler/comptime.ei", "compiler/wasm.ei", "compiler/suite.ei", "compiler/ide.ei", "compiler/doc.ei", "core/prelude.ei" };
+static const char *const ei_files[32] = { 0, "core/sys.ei", 0, "std/bytes.ei", "std/fs.ei", "std/io.ei", 0, "compiler/intern.ei", "compiler/lex.ei", "compiler/diag.ei", "compiler/parse.ei", "compiler/ast.ei", "compiler/dump.ei", "compiler/resolve.ei", "compiler/front.ei", "compiler/lock.ei", "compiler/toolchain.ei", "compiler/check.ei", "compiler/types.ei", "compiler/fold.ei", "compiler/pats.ei", "compiler/ir.ei", "compiler/lower.ei", "compiler/driver.ei", "std/proc.ei", "compiler/sha256.ei", "compiler/consteval.ei", "compiler/wasm.ei", "compiler/suite.ei", "compiler/ide.ei", "compiler/doc.ei", "core/prelude.ei" };
 
 static int ei_main_body(void) {
   ei_set_file("compiler/main.ei");

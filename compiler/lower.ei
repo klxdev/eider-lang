@@ -61,13 +61,13 @@
 // shared glue, then the functions per module (the entry module first, then the others in
 // order of first appearance), generic instances (sorted by C name), tests, and `main`.
 
-import "core/sys"
-import "std/bytes"
-import "intern.ei"
-import "types.ei"
-import "resolve.ei"
-import "ast.ei"
-import "ir.ei"
+import core.sys
+import std.bytes
+import eiderc.intern
+import eiderc.types
+import eiderc.resolve
+import eiderc.ast
+import eiderc.ir
 
 const NONE: u32 = 4294967295
 

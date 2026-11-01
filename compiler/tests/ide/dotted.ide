@@ -931,8 +931,8 @@ refs
   <root>/std/bytes.ei:212:8-212:9 -> 127 param n
   <root>/std/bytes.ei:212:29-212:30 -> 127 param n
   <root>/std/bytes.ei:213:10-213:11 -> 127 param n
-  <root>/std/fs.ei:3:8-3:18 -> 241 module sys
-  <root>/std/fs.ei:4:8-4:18 -> 27 module bytes
+  <root>/std/fs.ei:3:13-3:16 -> 241 module sys
+  <root>/std/fs.ei:4:12-4:17 -> 27 module bytes
   <root>/std/fs.ei:10:29-10:33 -> 136 param what
   <root>/std/fs.ei:11:5-11:6 -> 139 local m
   <root>/std/fs.ei:12:5-12:6 -> 139 local m

@@ -1,3 +1,3 @@
 // expect: E0807 2:11
-import "../lib/ct_str.ei"
+import eiderc.tests.check.lib.ct_str
 fn main() uses io { print(1) }

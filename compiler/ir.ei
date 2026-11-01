@@ -116,12 +116,12 @@
 //   (S_BINARY's == and <, S_PRINT and Map keys go through the same glue; a type in
 //   Ir.impls uses its own function there)
 
-import "core/sys"
-import "std/bytes"
-import "ast.ei"
-import "intern.ei"
-import "types.ei"
-import "diag.ei"
+import core.sys
+import std.bytes
+import eiderc.ast
+import eiderc.intern
+import eiderc.types
+import eiderc.diag
 
 pub const NONE: u32 = 4294967295
 pub const ARG_PLACE: u32 = 2147483648

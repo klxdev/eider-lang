@@ -2,7 +2,7 @@
 // `.with_context(...)` on Results and Options, `?` converting any Error into a Failure
 // through `From`, the chain, the root, and a Failure converted on into an application's own
 // error. Expected output: errors_context.out.
-import "std/error"
+import std.error
 
 type ParseError = { at: usize, what: String }
 

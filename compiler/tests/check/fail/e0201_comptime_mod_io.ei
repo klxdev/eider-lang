@@ -1,3 +1,3 @@
 // expect: E0201 6:29
-import "../lib/ct_io.ei"
+import eiderc.tests.check.lib.ct_io
 fn main() uses io { print(ct_io.Y) }

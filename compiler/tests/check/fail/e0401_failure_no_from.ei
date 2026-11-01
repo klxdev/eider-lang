@@ -1,5 +1,5 @@
 // expect: E0401 5:27
-import "std/error"
+import std.error
 fn f(r: Result[i32, error.Failure]) -> Result[i32, bool] {
     // a Failure converts into nothing but itself unless the target implements From
     let v = r.context("x")?

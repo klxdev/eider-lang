@@ -29,15 +29,15 @@ symbols
   20 fn secret <root>/compiler/tests/pkgs/geo/util.ei:9:4-9:10 full 9:1-9:25 :: fn secret() -> i64
   (95 symbols in <prelude>)
 refs
-  compiler/tests/pkgs/app/ide.ei:3:8-3:13 -> 2 module geo
-  compiler/tests/pkgs/app/ide.ei:4:8-4:18 -> 12 module util
-  compiler/tests/pkgs/app/ide.ei:4:22-4:24 -> 12 module util
+  compiler/tests/pkgs/app/ide.ei:3:8-3:11 -> 2 module geo
+  compiler/tests/pkgs/app/ide.ei:4:12-4:16 -> 12 module util
+  compiler/tests/pkgs/app/ide.ei:4:20-4:22 -> 12 module util
   compiler/tests/pkgs/app/ide.ei:7:11-7:14 -> 2 module geo
   compiler/tests/pkgs/app/ide.ei:7:15-7:19 -> 3 fn area
   compiler/tests/pkgs/app/ide.ei:8:11-8:13 -> 12 module util
   compiler/tests/pkgs/app/ide.ei:8:14-8:18 -> 19 fn name
   <root>/compiler/tests/pkgs/geo/geo.ei:2:8-2:14 -> 7 module base
-  <root>/compiler/tests/pkgs/geo/geo.ei:3:8-3:17 -> 12 module util
+  <root>/compiler/tests/pkgs/geo/geo.ei:3:12-3:16 -> 12 module util
   <root>/compiler/tests/pkgs/geo/geo.ei:5:38-5:42 -> 12 module util
   <root>/compiler/tests/pkgs/geo/geo.ei:5:43-5:46 -> 16 fn mul
   <root>/compiler/tests/pkgs/geo/geo.ei:5:47-5:48 -> 4 param w

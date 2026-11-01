@@ -1,5 +1,5 @@
 // expect: E0602 4:29
-import "../lib/geo.ei"
+import eiderc.tests.check.lib.geo
 type Mine = { v: u32 }
 impl geo.Area for Mine { fn area(self) -> bool { true } }
 fn main() {}

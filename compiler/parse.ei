@@ -8,12 +8,12 @@
 // the file) is kept as a qualified name in the tree instead of being mangled here. The
 // resolver decides what it refers to, so a local variable named like an alias works.
 
-import "core/sys"
-import "std/bytes"
-import "intern.ei"
-import "lex.ei"
-import "ast.ei"
-import "diag.ei"
+import core.sys
+import std.bytes
+import eiderc.intern
+import eiderc.lex
+import eiderc.ast
+import eiderc.diag
 
 pub type P = {
     toks: List[lex.Tok],

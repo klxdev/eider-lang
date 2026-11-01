@@ -1,6 +1,6 @@
 // pkgtest: check
 // geo loads base from ../base; a second copy of package base is one module twice (E0808)
-import "geo"
+import geo
 import "../base2/base.ei"
 
 fn main() {}

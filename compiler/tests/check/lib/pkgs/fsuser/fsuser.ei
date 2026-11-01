@@ -1,7 +1,7 @@
 // helper package for e0204_*: io (granted), then fs (not granted) in a method
-import "std/fs"
-import "std/io"
-import "core/sys"
+import std.fs
+import std.io
+import core.sys
 
 pub fn say() uses io { io.outln(sys.lit("hi")) }
 

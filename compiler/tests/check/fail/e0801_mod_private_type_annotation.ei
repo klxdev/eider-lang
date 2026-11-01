@@ -1,5 +1,5 @@
 // expect: E0801 4:12
-import "../lib/shapes.ei"
+import eiderc.tests.check.lib.shapes
 fn main() {
     let x: shapes.Secret = shapes.secret()
 }

@@ -36,19 +36,19 @@
 // below reproduce that renaming's rules, so lookups hit exactly what the mangled
 // `stem__Name` strings would hit.
 
-import "core/sys"
-import "core/version"
-import "std/bytes"
-import "std/fs"
-import "std/env"
-import "intern.ei"
-import "lex.ei"
-import "ast.ei"
-import "parse.ei"
-import "diag.ei"
-import "front.ei"
-import "lock.ei"
-import "toolchain.ei"
+import core.sys
+import core.version
+import std.bytes
+import std.fs
+import std.env
+import eiderc.intern
+import eiderc.lex
+import eiderc.ast
+import eiderc.parse
+import eiderc.diag
+import eiderc.front
+import eiderc.lock
+import eiderc.toolchain
 
 /// "no module": the prelude, or an error that belongs to no file.
 pub const NOMOD: u32 = 4294967295

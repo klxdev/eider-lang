@@ -11,7 +11,7 @@ symbols
   4 fn value compiler/tests/ide/lib/ov.ei:5:8-5:13 full 5:1-5:28 :: pub fn value() -> i32
   (95 symbols in <prelude>)
 refs
-  compiler/tests/ide/overlay.ei:6:8-6:19 -> 2 module ov
+  compiler/tests/ide/overlay.ei:6:29-6:31 -> 2 module ov
   compiler/tests/ide/overlay.ei:9:8-9:10 -> 2 module ov
   compiler/tests/ide/overlay.ei:9:11-9:16 -> 3 fn extra
   compiler/tests/ide/overlay.ei:9:27-9:29 -> 2 module ov

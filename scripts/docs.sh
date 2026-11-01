@@ -4,15 +4,13 @@
 #   sh scripts/docs.sh test                       runs the doc tests of the pages and of
 #                                                 the doc comments of core, std and packages/*
 # Needs only a C compiler: the compiler comes from the seed (scripts/ei) and eider-doc is
-# built with it. When the seed's compiler has no `eiderc doc` (a compiler change that hasn't
-# reached the seed yet), this uses compiler/ as the
-# seed builds it (target/eiderc-next, rebuilt when compiler/, std/ or core/ is newer), and so
-# it does while the seed predates dotted imports (no `eiderc migrate-imports`; docs/compiler.md
-# "C8.26"), which the pages, std and eider-doc's own sources use. eider-doc is built with it.
+# built with it. When the seed's compiler has no working `eiderc doc` (a compiler change that
+# hasn't reached the seed yet), this uses compiler/ as the seed builds it (target/eiderc-next,
+# rebuilt when compiler/, std/ or core/ is newer), and builds eider-doc with that.
 cd "$(dirname "$0")/.." || exit 1
 mkdir -p target
 scripts/ei --help >/dev/null || { echo "docs: cannot build target/eiderc from the seed"; exit 3; }
-if ./target/eiderc doc --json core/sys.ei >/dev/null 2>&1 && ./target/eiderc --help 2>/dev/null | grep -q migrate-imports; then
+if ./target/eiderc doc --json core/sys.ei >/dev/null 2>&1; then
   EIDERC=$(pwd)/target/eiderc
 else
   next=target/eiderc-next

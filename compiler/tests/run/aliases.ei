@@ -1,7 +1,7 @@
 // Type aliases (docs/compiler.md, "C8.18"): another name for a type, the same type wherever
 // it is written; generic aliases; pub aliases from another module. Expected output:
 // aliases.out.
-import "lib/handlers.ei" as h
+import eiderc.tests.run.lib.handlers as h
 
 type Id = u64
 type Pair[T] = (T, T)

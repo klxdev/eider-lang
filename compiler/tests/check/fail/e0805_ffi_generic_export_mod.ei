@@ -1,3 +1,3 @@
 // expect: E0805 2:11
-import "../lib/ffi_gen.ei"
+import eiderc.tests.check.lib.ffi_gen
 fn main() {}

@@ -1,7 +1,7 @@
 // Every symbol kind, refs across modules (plain and `alias.Name`), refs to locals,
 // params, fields, methods and variants in patterns, and generic instances.
 
-import "lib/shapes.ei" as sh
+import eiderc.tests.ide.lib.shapes as sh
 
 type Pair[T] = { a: T, b: T }
 

@@ -1,4 +1,4 @@
-(IImport 2:1 path="../../lex.ei")
+(IImport 2:1 path="eiderc/lex" dotted)
 (IFn 4:4 name=stmts end=4:47
   param (Param 4:10 name=xs
     type (TGeneric 4:14 name=List

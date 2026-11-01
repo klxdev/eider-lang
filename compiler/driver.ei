@@ -45,14 +45,14 @@
 // (argv[0], symlinks resolved) that contains core/eider_rt.h, so target/eiderc in a checkout
 // finds the checkout; otherwise the same search from the working directory.
 
-import "core/sys"
-import "std/bytes"
-import "std/fs"
-import "std/io"
-import "std/env"
-import "std/proc"
-import "sha256.ei"
-import "toolchain.ei"
+import core.sys
+import std.bytes
+import std.fs
+import std.io
+import std.env
+import std.proc
+import eiderc.sha256
+import eiderc.toolchain
 
 fn s(x: str) -> List[u8] { sys.lit(x) }
 

@@ -1,8 +1,8 @@
 // A derived Show of another module's types printed their C names (`kinds__TimedOut`; docs/
 // std.md, seed bug 4). Printing spells types and variants as their module writes them
 // (docs/compiler.md, "C8.16"). Expected output: bug_show_module.out.
-import "lib/kinds.ei"
-import "lib/kinds.ei" as kk
+import eiderc.tests.run.lib.kinds
+import eiderc.tests.run.lib.kinds as kk
 
 fn main() uses io {
     print(kinds.TimedOut)

@@ -7,8 +7,8 @@
 // the prefix `a.<n>`). eider-pkg validates both files when it writes or fetches; here a
 // file that doesn't parse is reported, and unknown keys are ignored.
 
-import "core/sys"
-import "std/bytes"
+import core.sys
+import std.bytes
 
 /// What the compiler needs of eider.toml: the package name, its entry module (`entry`,
 /// default `<name>.ei`), the names of its direct dependencies (`[deps.<name>]`) and, for

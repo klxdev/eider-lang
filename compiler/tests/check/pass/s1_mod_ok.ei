@@ -1,6 +1,6 @@
 // mode: build
-import "../lib/geo.ei"
-import "../lib/geo2.ei"
+import eiderc.tests.check.lib.geo
+import eiderc.tests.check.lib.geo2
 fn main() uses io {
     let p = geo.origin(3)
     print(p.x)

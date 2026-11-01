@@ -1,8 +1,8 @@
 // `eiderc run args.ei [--] args...` (scripts/test-compiler.sh, "usage"): prints each of its
 // arguments on a line of its own, between brackets, then how many there were.
-import "std/env"
-import "std/io"
-import "std/bytes"
+import std.env
+import std.io
+import std.bytes
 
 fn main() uses io {
     let a = env.args()

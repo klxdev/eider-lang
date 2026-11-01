@@ -18,28 +18,28 @@
 // `build --wasm` / `run --wasm` (<name>.wasm, <name>.d.ts, <name>.js; wasm.ei). `test`
 // ignores it, as it ignores `--lib`.
 
-import "core/sys"
-import "core/version"
-import "std/bytes"
-import "std/fs"
-import "std/io"
-import "std/env"
-import "intern.ei"
-import "lex.ei"
-import "diag.ei"
-import "parse.ei"
-import "dump.ei"
-import "resolve.ei"
-import "check.ei"
-import "ir.ei"
-import "lower.ei"
-import "driver.ei"
-import "comptime.ei" as consteval
-import "wasm.ei"
-import "suite.ei"
-import "ide.ei"
-import "front.ei"
-import "doc.ei"
+import core.sys
+import core.version
+import std.bytes
+import std.fs
+import std.io
+import std.env
+import eiderc.intern
+import eiderc.lex
+import eiderc.diag
+import eiderc.parse
+import eiderc.dump
+import eiderc.resolve
+import eiderc.check
+import eiderc.ir
+import eiderc.lower
+import eiderc.driver
+import eiderc.consteval
+import eiderc.wasm
+import eiderc.suite
+import eiderc.ide
+import eiderc.front
+import eiderc.doc
 
 type Args = {
     cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,

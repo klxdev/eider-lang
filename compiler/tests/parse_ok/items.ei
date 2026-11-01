@@ -1,8 +1,8 @@
 // Golden AST dump: every item kind and every type form.
 module demo.items
 
-import "../../ast.ei"
-import "../../intern.ei" as names
+import eiderc.ast
+import eiderc.intern as names
 
 pub type Pair[A, B] = { first: A, second: B }
 

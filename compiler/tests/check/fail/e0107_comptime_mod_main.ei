@@ -1,4 +1,4 @@
 // expect: E0107 4:4
-import "../lib/ct_main.ei"
+import eiderc.tests.check.lib.ct_main
 const M: i32 = comptime ct_main.Q
 fn main() uses io { print(M) }

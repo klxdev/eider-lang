@@ -1,8 +1,8 @@
 // files: uses fs and io through std, with no `uses ffi` (docs/compiler.md, "C8.5:
 // capabilities per package"); app grants it nothing, wrap grants it nothing
-import "std/fs"
-import "std/io"
-import "core/sys"
+import std.fs
+import std.io
+import core.sys
 
 pub type Log = { path: List[u8] }
 
