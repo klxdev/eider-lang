@@ -730,6 +730,32 @@ exit 0
 40
 exit 0" "$(cp "$T/ov2.lock" "$T/ov2/eider.lock"; pkg ov2 fetch; run ov2)"
 
+# ---- private git dependencies: a token for github.com URLs, through a one-off credential
+# helper (store.ei auth_args). A fake git records its arguments and fails, so nothing is
+# fetched; the helper itself is real git's business, and reads the token from the environment.
+
+mkdir -p "$T/fakebin" "$T/authapp"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$AUTHLOG"\nexit 1\n' > "$T/fakebin/git"
+printf '#!/bin/sh\n[ -n "$FAKE_GH_TOKEN" ] || exit 1\necho "$FAKE_GH_TOKEN"\n' > "$T/fakebin/gh"
+chmod +x "$T/fakebin/git" "$T/fakebin/gh"
+AUTHLOG="$T/auth.log"; export AUTHLOG
+manifest "$T/authapp" authapp 0.1.0
+# auth <url> [VAR=value...]: the arguments git got for a first fetch of <url>
+auth() {
+  u=$1; shift; : > "$AUTHLOG"; rm -rf "$EIDER_HOME/git"
+  env -u GH_TOKEN -u GITHUB_TOKEN "$@" PATH="$T/fakebin:$PATH" EIDER_ROOT="$R" EIDERC="$EC" target/eider-pkg -C "$T/authapp" add secret --git "$u" --version 1.0.0 >/dev/null 2>&1
+  cat "$AUTHLOG"
+}
+GH=https://github.com/o/secret.git
+check "auth: GH_TOKEN: a helper for github.com, the other helpers dropped" "1
+1" "$(got=$(auth $GH GH_TOKEN=s3cret); printf '%s\n' "$got" | grep -c '^-c credential.https://github.com.helper= -c credential.https://github.com.helper=!f() .* clone --mirror'; printf '%s\n' "$got" | grep -c 'password=\$t')"
+check "auth: the token is not on git's command line" "0" "$(auth $GH GH_TOKEN=s3cret | grep -c s3cret)"
+check "auth: GITHUB_TOKEN" "1" "$(auth $GH GITHUB_TOKEN=s3cret | grep -c 'helper=!f()')"
+check "auth: gh auth token" "1" "$(auth $GH FAKE_GH_TOKEN=s3cret | grep -c 'helper=!f()')"
+check "auth: no token: git's own setup" "0" "$(auth $GH | grep -c credential)"
+check "auth: another host: git's own setup" "0" "$(auth https://example.com/o/secret.git GH_TOKEN=s3cret | grep -c credential)"
+check "auth: nothing is written to the manifest" "0" "$(grep -c secret "$T/authapp/eider.toml")"
+
 # ---- errors
 
 mkdir -p "$T/bad"
