@@ -1,0 +1,1 @@
+{"error":"E0113","span":{"file":"compiler/tests/check/fail/e0113_record_pattern_field.ei","line":5,"col":13},"message":"`P` has no field `z`"}

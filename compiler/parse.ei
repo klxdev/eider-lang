@@ -1938,9 +1938,13 @@ fn arm(inout p: P) -> Result[u32, diag.Diag] {
         skip_nl(inout p)
         pats.push(pattern(inout p)?)
     }
+    // a guard (docs/compiler.md, "C8.30")
+    let mut guard: u32 = 0
+    if eat_kw(inout p, intern.K_IF) { guard = expr(inout p)? + 1 }
     expect(inout p, lex.FatArrow)?
     skip_nl(inout p)
     let mut n = mk(ast.Arm, at.line, at.col)
+    n.e = guard
     if is_kw(p, intern.K_RETURN) || is_kw(p, intern.K_BREAK) || is_kw(p, intern.K_CONTINUE) || is_kw(p, intern.K_ASSERT) {
         n.a = stmt(inout p)?
         n.b = 1
@@ -1972,6 +1976,7 @@ pub fn pattern(inout p: P) -> Result[u32, diag.Diag] {
         adv(inout p)
         let mut n = mk(ast.PInt, t.line, t.col)
         n.a = ti
+        if at_range(p) { return range_pat(inout p, n) }
         return Ok(add(inout p, n))
     }
     if t.kind == lex.Str {
@@ -1988,6 +1993,7 @@ pub fn pattern(inout p: P) -> Result[u32, diag.Diag] {
         let mut n = mk(ast.PInt, t.line, t.col)
         n.a = ti
         n.b = 1
+        if at_range(p) { return range_pat(inout p, n) }
         return Ok(add(inout p, n))
     }
     if t.kind == lex.LParen {
@@ -2035,6 +2041,7 @@ pub fn pattern(inout p: P) -> Result[u32, diag.Diag] {
             nm = ident(inout p)?
             qual = 0
         }
+        if is(p, lex.LBrace) { return record_pat(inout p, nm, qual) }
         if eat(inout p, lex.LParen) {
             let ps = pat_list(inout p)?
             let mut n = mk(ast.PVariant, nm.line, nm.col)
@@ -2173,6 +2180,57 @@ fn fmt_align(b: u8) -> u32 {
     if b == 62 { return 2 }
     if b == 94 { return 3 }
     0
+}
+
+// ---- patterns (docs/compiler.md, "C8.30")
+
+/// `..=` after an integer pattern.
+fn at_range(p: P) -> bool { is(p, lex.DotDot) && kind_at(p, p.i + 1) == lex.Eq }
+
+/// `lo..=hi` (lo already read into `lo`): a PRange.
+fn range_pat(inout p: P, lo: ast.Node) -> Result[u32, diag.Diag] {
+    adv(inout p)
+    adv(inout p)
+    let mut n = mk(ast.PRange, lo.line, lo.col)
+    n.a = lo.a
+    n.b = lo.b
+    if eat(inout p, lex.Minus) { n.d = 1 }
+    if !is(p, lex.Int) { return Err(err(p, "expected an integer after `..=` in a range pattern")) }
+    n.c = p.i as u32
+    adv(inout p)
+    Ok(add(inout p, n))
+}
+
+/// `Name { field, field: pat, .. }`: a PRecord.
+fn record_pat(inout p: P, nm: Name, qual: u32) -> Result[u32, diag.Diag] {
+    adv(inout p)
+    let mut fields: List[u32] = List.new()
+    let mut n = mk(ast.PRecord, nm.line, nm.col)
+    n.a = nm.sym
+    n.b = qual
+    while true {
+        skip_nl(inout p)
+        if eat(inout p, lex.RBrace) { break }
+        if eat(inout p, lex.DotDot) {
+            n.e = 1
+            skip_nl(inout p)
+            expect(inout p, lex.RBrace)?
+            break
+        }
+        let f = ident(inout p)?
+        let mut fn_ = mk(ast.PField, f.line, f.col)
+        fn_.a = f.sym
+        if eat(inout p, lex.Colon) {
+            skip_nl(inout p)
+            fn_.b = pattern(inout p)? + 1
+        }
+        fields.push(add(inout p, fn_))
+        skip_nl(inout p)
+        if !eat(inout p, lex.Comma) && !is(p, lex.RBrace) { return Err(err(p, "expected `,` or `}}` in a record pattern")) }
+    }
+    n.c = list(inout p, fields)
+    n.d = fields.len() as u32
+    Ok(add(inout p, n))
 }
 
 /// Parse a lexed file: the tree, or the first error.

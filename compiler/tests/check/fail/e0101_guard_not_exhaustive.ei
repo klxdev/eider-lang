@@ -1,0 +1,8 @@
+// expect: E0101 3:5
+fn f(o: Option[i32]) -> i32 {
+    match o {
+        Some(n) if n > 0 => n
+        None => 0
+    }
+}
+fn main() {}

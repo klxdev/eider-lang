@@ -1,0 +1,10 @@
+// expect: E0102 6:9
+const MAX: i32 = 10
+fn f(n: i32) -> i32 {
+    match n {
+        MAX => 1
+        10 => 2
+        _ => 3
+    }
+}
+fn main() {}

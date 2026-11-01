@@ -53,6 +53,10 @@
 //                2 `>`, 3 `^`) e=flags (FMT_*) f=radix letter (0: none; `x` `X` `b` `o`)
 //                g=column of the spec (after the `:`) h=its length in bytes
 // defer      SDefer a=the deferred statement b=1 for `errdefer` (docs/compiler.md, "C8.29")
+// patterns (docs/compiler.md, "C8.30")  PRange a=lo tok b=lo negated c=hi tok d=hi negated
+//                (`lo..=hi`)   PRecord a=sym b=qual+1 [c/d]=PField e=1 with `..`
+//            PField a=field sym b=pattern+1 (0: `name` alone binds the field to `name`)
+//            Arm e=guard+1 (`pat if cond =>`; 0: none)
 
 pub type Kind =
     | TName | TGeneric | TArray | TTuple | TUnit | TFn
@@ -67,6 +71,7 @@ pub type Kind =
     | EError | SError | IError
     | EFmt | EHole
     | SDefer
+    | PRange | PRecord | PField
 
 pub type Node = {
     kind: Kind,
@@ -229,5 +234,8 @@ pub fn kind_text(k: Kind) -> str {
         EFmt => "EFmt"
         EHole => "EHole"
         SDefer => "SDefer"
+        PRange => "PRange"
+        PRecord => "PRecord"
+        PField => "PField"
     }
 }

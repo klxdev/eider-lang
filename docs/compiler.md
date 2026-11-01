@@ -3536,6 +3536,35 @@ an imported str constant passes (comptime_mod_str.ei), the E0807 message names s
 cases cover a cycle and a self-reference (E0110 with the help), Drop and runaway recursion
 (E0807).
 
+## C8.30: patterns
+
+#98 and #105 (decisions C467-C469). Code: parse.ei (`arm`'s guard, `range_pat`, `record_pat`),
+pats.ei (C_RANGE, `useful_int`, `missing_int`), check.ei ("Patterns": `const_pat`, `range_pat`,
+`record_pat`, `same_binds`, `or_cond`, `guard_cond`; `compile_match`, `match_arms`, `bind_arm`).
+
+- **Constants.** A name in a pattern that is a constant (`mget(c.consts, k)`, after unit
+  variants) compares against it, lowered like its literal; a value not known as a literal (a
+  computed bool) is a T_EQV test and sets `Lowered.opaque`: the row stays out of the matrix
+  (in `let` and `for` it is refutable).
+- **Guards.** Arm e = guard+1. `guard_cond` binds, checks the guard, stores it in a bool, and
+  the arm's body binds again; a guarded row stays out of the matrix but is judged for
+  reachability against the rows before it.
+- **Or-patterns that bind.** `same_binds` holds every alternative to the first; `or_cond`
+  copies the matching alternative's parts into `Arms.pre`, locals the arm's frame owns (a failed
+  guard drops them).
+- **Field patterns.** PRecord of PField; `record_rest` checks the names, `field_pat` gives each
+  field its pattern or a wildcard, in declaration order, so the matrix sees the plain constructor.
+- **Ranges.** T_GE and T_LE tests, and pats.C_RANGE with bounds biased so unsigned order is the
+  type's. A column with a range is split at its patterns' bounds, one interval at a time; a
+  column without one goes through the old code, keeping its witnesses.
+- **String against `str`.** T_STRS, B_STR_IS: no allocation; C_STR for the matrix.
+
+Tests: compiler/tests/run/patterns.ei (hand-checked .out, no leaks), compiler/tests/parse_ok/
+patterns.ei, tests/checks/fail/e0117_*, e0118_*, compiler/tests/check/fail/e0101_range_gap.ei,
+e0101_guard_not_exhaustive.ei, e0102_after_constant.ei, e0410_record_missing_field.ei,
+e0113_record_field.ei; compiler/tests/check/fail/e0001_or_pattern_binds.ei became
+e0117_or_pattern_binds.ei (a reviewed oracle change).
+
 ## Profiling: `--profile`
 
 `eiderc build|run|test <file> --profile[=cpu,mem,conc]` (main.ei: `profile`, parsed by

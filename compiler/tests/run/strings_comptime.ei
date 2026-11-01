@@ -1,0 +1,36 @@
+// interpolation and the pattern finish at compile time, the same as at run time
+// (docs/compiler.md, "C8.28", "C8.30")
+const LIMIT: i32 = 3
+const TEXT: u64 = comptime digest(label(7))
+const KIND: i32 = comptime kind(String.from("two"), 5)
+
+fn label(n: i32) -> String {
+    let neg: i64 = -255
+    let word = "é"
+    "[{n:>3}] [{n:<3}] [{n:*^5}] [{n:03}] [{n:+}] [{255:#x}] [{neg:#06X}] [{5:b}] [{word:>3}]"
+}
+
+fn kind(s: String, n: i32) -> i32 {
+    match s {
+        "one" => 1
+        "two" => match n {
+            LIMIT => 30
+            0..=9 if n > 4 => 40
+            _ => 50
+        }
+        _ => 0
+    }
+}
+
+fn digest(t: String) -> u64 {
+    let mut h: u64 = 14695981039346656037
+    for i in 0..t.len() { h = (h ^ (t.byte(i) as u64)) *% 1099511628211 }
+    h
+}
+
+fn main() uses io {
+    print(TEXT == digest(label(7)))
+    print(KIND)
+    print(label(7))
+    print(kind(String.from("two"), 5))
+}

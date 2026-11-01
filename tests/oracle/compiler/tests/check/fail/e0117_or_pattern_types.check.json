@@ -1,0 +1,1 @@
+{"error":"E0117","span":{"file":"compiler/tests/check/fail/e0117_or_pattern_types.ei","line":5,"col":18},"message":"`x` is str here but i32 in the first alternative: every alternative of an or-pattern binds the same names with the same types"}

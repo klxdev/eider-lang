@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/range_no_end.ei","line":3,"col":14},"message":"expected an integer after `..=` in a range pattern"}

@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_constant_pattern_type.ei","line":5,"col":9},"message":"expected i32, found u8","help":"there are no implicit conversions; use an explicit cast: `value as i32`"}

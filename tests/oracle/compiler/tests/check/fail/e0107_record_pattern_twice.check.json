@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_record_pattern_twice.ei","line":5,"col":16},"message":"field `x` is named twice in this pattern"}

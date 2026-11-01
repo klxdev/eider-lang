@@ -882,6 +882,7 @@ fn locals_expr(inout b: B, m: u32, e: u32, container: u32) {
                     let child = at(b, m, arm.c, j)
                     locals_pat(inout b, m, child, container)
                 }
+                if arm.e > 0 { locals_expr(inout b, m, arm.e - 1, container) }
                 if arm.b == 1 {
                     locals_stmt(inout b, m, arm.a, container) } else { locals_expr(inout b, m, arm.a, container)
                 }
@@ -914,6 +915,21 @@ fn locals_pat(inout b: B, m: u32, pat: u32, container: u32) {
             for i in 0..n.d {
                 let child = at(b, m, n.c, i)
                 locals_pat(inout b, m, child, container)
+            }
+        }
+        ast.PRecord => {
+            for i in 0..n.d {
+                let child = at(b, m, n.c, i)
+                locals_pat(inout b, m, child, container)
+            }
+        }
+        ast.PField => {
+            if n.b > 0 {
+                locals_pat(inout b, m, n.b - 1, container)
+            } else {
+                // `Point { x }` binds x
+                let pt = tok_at(b, m, n.line, n.col)
+                if pt != NONE { local_sym(inout b, m, pt, n.a, SK_LOCAL, pt, pt, container, n) }
             }
         }
         _ => {}

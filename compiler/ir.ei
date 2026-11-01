@@ -243,6 +243,9 @@ pub const B_DEFAULT: u32 = 46
 /// formatted by the spec (an O_INT u64: check.ei's fmt_hole has the layout)
 pub const B_STR_PAD: u32 = 47
 pub const B_FMT_INT: u32 = 48
+/// B_STR_IS(s, lit) -> bool: String s has the text of str lit (a `str` pattern matching a
+/// String: docs/compiler.md, "C8.30")
+pub const B_STR_IS: u32 = 49
 
 pub fn builtin_name(b: u32) -> str {
     match b {
@@ -294,7 +297,8 @@ pub fn builtin_name(b: u32) -> str {
         45 => "update"
         46 => "default"
         47 => "pad"
-        _ => "fmt_int"
+        48 => "fmt_int"
+        _ => "str_is"
     }
 }
 

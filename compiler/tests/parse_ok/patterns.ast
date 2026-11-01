@@ -1,0 +1,43 @@
+(IFn 2:4 name=f end=2:26
+  param (Param 2:6 name=n
+    type (TName 2:9 name=i32))
+  param (Param 2:14 name=p
+    type (TName 2:17 name=P))
+  ret (TName 2:23 name=i32)
+  body (Block 2:27 end=16:1
+    stmt (SExpr 3:5
+      expr (EMatch 3:5 end=7:5
+        scrutinee (EIdent 3:11 name=n)
+        arm (Arm 4:9
+          pat (PRange 4:9 value=0 to value=9)
+          pat (PRange 4:17 value=-5 to value=-1)
+          body (EInt 4:28 value=1))
+        arm (Arm 5:9
+          pat (PName 5:9 name=k)
+          guard (EBinary 5:16 op=`>`
+            lhs (EIdent 5:14 name=k)
+            rhs (EInt 5:18 value=100))
+          body (EInt 5:25 value=2))
+        arm (Arm 6:9
+          pat (PWild 6:9)
+          body (EInt 6:14 value=3))))
+    stmt (SExpr 8:5
+      expr (EMatch 8:5 end=15:5
+        scrutinee (EIdent 8:11 name=p)
+        arm (Arm 9:9
+          pat (PRecord 9:9 name=P rest
+            field (PField 9:13 name=x)
+            field (PField 9:16 name=y
+              pat (PInt 9:19 value=0)))
+          guard (EBinary 9:32 op=`>`
+            lhs (EIdent 9:30 name=x)
+            rhs (EInt 9:34 value=0))
+          body (EIdent 9:39 name=x))
+        arm (Arm 10:9
+          pat (PRecord 10:9 name=P
+            field (PField 11:13 name=x)
+            field (PField 12:13 name=y))
+          body (EIdent 13:14 name=y))
+        arm (Arm 14:9
+          pat (PRecord 14:11 name=R)
+          body (EInt 14:20 value=0))))))

@@ -1435,6 +1435,7 @@ fn collect_expr(p: Program, m: u32, e: u32, inout out: Map[u32, bool]) {
             for i in 0..n.d {
                 let arm = node(p, m, at(p, m, n.c, i))
                 for j in 0..arm.d { collect_pat(p, m, at(p, m, arm.c, j), inout out) }
+                if arm.e > 0 { collect_expr(p, m, arm.e - 1, inout out) }
                 if arm.b == 1 { collect_stmt(p, m, arm.a, inout out) } else { collect_expr(p, m, arm.a, inout out) }
             }
         }
@@ -1448,6 +1449,10 @@ fn collect_pat(p: Program, m: u32, pat: u32, inout out: Map[u32, bool]) {
         ast.PName => { if n.b == 0 && !owns(p, m, n.a) { out.insert(n.a, true) } }
         ast.PVariant => { for i in 0..n.d { collect_pat(p, m, at(p, m, n.c, i), inout out) } }
         ast.PTuple => { for i in 0..n.d { collect_pat(p, m, at(p, m, n.c, i), inout out) } }
+        ast.PRecord => { for i in 0..n.d { collect_pat(p, m, at(p, m, n.c, i), inout out) } }
+        ast.PField => {
+            if n.b > 0 { collect_pat(p, m, n.b - 1, inout out) } else { out.insert(n.a, true) }
+        }
         _ => {}
     }
 }

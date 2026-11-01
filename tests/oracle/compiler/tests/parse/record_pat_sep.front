@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/record_pat_sep.ei","line":3,"col":15},"message":"expected `,` or `}` in a record pattern"}
