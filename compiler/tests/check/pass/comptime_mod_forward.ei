@@ -1,3 +1,2 @@
-// expect: E0110 2:29
 import eiderc.tests.check.lib.ct_forward
 fn main() uses io { print(ct_forward.Y) }

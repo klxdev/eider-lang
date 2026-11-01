@@ -1,0 +1,278 @@
+// The comptime interpreter (compiler/interp.ei) against the built program: each case is a
+// function computed once by the interpreter, as a comptime constant, and once at run time,
+// and the two must agree. The cases fold what they see (Map slot order, the text of derived
+// and custom Show, hashes, wrapping arithmetic, ...) into one number, so any difference
+// shows. Constants are declared after the functions they call and after `main`, which uses
+// them (forward references, C501).
+
+type Point = { x: i32, y: i32 }
+type Shape = | Circle(r: i64) | Rect(w: i64, h: i64) | Empty
+type Item = { name: String, tags: List[str], at: Point, shape: Shape, n: Option[u8], b: Box[i32] }
+
+/// A key type with its own Eq and Hash (case-insensitive ASCII), Show and Ord.
+type Key = { s: String }
+
+impl Eq for Key {
+    fn eq(self, other: Key) -> bool { lower(self.s) == lower(other.s) }
+}
+
+impl Hash for Key {
+    fn hash(self) -> u64 { lower(self.s).hash() }
+}
+
+impl Show for Key {
+    fn show(self, inout out: String) {
+        out.push_str("<")
+        out.append(lower(self.s))
+        out.push_str(">")
+    }
+}
+
+impl Ord for Key {
+    fn compare(self, other: Key) -> Ordering { lower(other.s).compare(lower(self.s)) }
+}
+
+fn lower(t: String) -> String {
+    let mut o = String.from("")
+    for i in 0..t.len() {
+        let c = t.byte(i)
+        if c >= 65 && c <= 90 { o.push_byte(c + 32) } else { o.push_byte(c) }
+    }
+    o
+}
+
+/// FNV-1a over text.
+fn mix(h: u64, t: String) -> u64 {
+    let mut x = h.copy()
+    for i in 0..t.len() {
+        x = (x ^ (t.byte(i) as u64)) *% 1099511628211
+    }
+    x
+}
+
+fn map_order() -> u64 {
+    let mut m: Map[i64, String] = Map.new()
+    for i in 0..200 {
+        let k = (i * 7919) % 1000 - 500
+        m.insert(k as i64, String.from_int(k as i64))
+    }
+    for i in 0..60 { m.remove((i * 13 - 500) as i64) }
+    m.insert(3, String.from("three"))
+    let mut h: u64 = 14695981039346656037
+    for (k, v) in m {
+        h = mix(h, v)
+        h = (h ^ ((k + 1000) as u64)) *% 1099511628211
+    }
+    let mut s: Map[String, i32] = Map.new()
+    for w in ["pear", "apple", "fig", "kiwi", "plum", "date", "lime", "yuzu", "nut"] { s.insert(String.from(w), w.len() as i32) }
+    s.remove(String.from("fig"))
+    h = mix(h, s.to_string())
+    h = mix(h, s.keys().to_string())
+    let mut ks: Map[Key, i32] = Map.new()
+    ks.insert(Key(String.from("Abc")), 1)
+    ks.insert(Key(String.from("aBC")), 2)
+    ks.insert(Key(String.from("xyz")), 3)
+    h = mix(h, ks.to_string())
+    let c = m.copy()
+    if c == m { h += 1 }
+    h
+}
+
+fn show_text() -> u64 {
+    let mut tags: List[str] = List.new()
+    tags.push("x")
+    tags.push("y\\z")
+    let it = Item(String.from("a \"quoted\"\tname\n"), tags, Point(-3, 4), Rect(2, -9), Some(7), Box.new(42))
+    let mut h = mix(0, it.to_string())
+    let mut shapes: List[Shape] = List.new()
+    shapes.push(Circle(1))
+    shapes.push(Empty)
+    shapes.push(Rect(0, 0))
+    h = mix(h, shapes.to_string())
+    let t = (1, "two", (3,), [true, false])
+    h = mix(h, t.to_string())
+    let mut out = String.from("k=")
+    Key(String.from("MiXeD")).show(inout out)
+    h = mix(h, out)
+    let none: Option[Point] = None
+    h = mix(h, none.to_string())
+    h
+}
+
+fn hashes() -> u64 {
+    let p = Point(1, 2)
+    let mut h = p.hash() ^ "text".hash() ^ (-1 as i32).hash() ^ true.hash()
+    h = h ^ Circle(5).hash() ^ [1, 2, 3].hash()
+    let mut xs: List[String] = List.new()
+    xs.push(String.from("a"))
+    xs.push(String.from("bc"))
+    h ^ xs.hash() ^ Key(String.from("Q")).hash()
+}
+
+fn arith() -> i64 {
+    let a: i32 = 2147483647
+    let b = a +% 1
+    let c: u8 = 200
+    let d = c *% 3
+    let e: i64 = -9
+    let f = e / 2 + e % 2 * 10
+    let g = (e >> 1) + ((-1 as i64) << 4)
+    let u: u32 = 4294967295
+    let v = (u >> 3) as i64 + (~c) as i64 + (c ^ 85) as i64 + (c & 15) as i64 + (c | 1) as i64
+    let w = (b as i64) + d as i64 + f + g + v
+    let mut s: i64 = 0
+    for i in 0..100 { s = s *% 31 +% i as i64 }
+    w ^ s
+}
+
+fn order() -> i64 {
+    let mut n: i64 = 0
+    if Point(1, 2) < Point(1, 3) { n += 1 }
+    if Rect(1, 1) > Circle(9) { n += 2 }
+    if "abc" < "abd" { n += 4 }
+    if [1, 2, 0] < [1, 2, 1] { n += 8 }
+    match Key(String.from("a")).compare(Key(String.from("B"))) {
+        Less => { n += 16 }
+        Equal => { n += 32 }
+        Greater => { n += 64 }
+    }
+    n
+}
+
+fn closures() -> i64 {
+    let base: i64 = 10
+    let add = |x: i64| -> i64 { x + base }
+    let twice = |f: fn(i64) -> i64, x: i64| -> i64 { f(f(x)) }
+    let mut total: i64 = twice(add, 1)
+    let mut xs: List[i64] = List.new()
+    for i in 1..5 { xs.push(i as i64) }
+    let ys = xs.map(|x: i64| -> i64 { x * x }).filter(|x: i64| -> bool { x % 2 == 0 })
+    for y in ys { total += y }
+    total + xs.fold(0 as i64, |acc: i64, x: i64| -> i64 { acc * 10 + x })
+}
+
+fn bump(inout xs: List[i32], inout n: i32) {
+    xs.push(n)
+    n += 1
+}
+
+fn refs_and_cells() -> i64 {
+    let r = Ref.new(5)
+    let r2 = r
+    r2.set(r.get() + 1)
+    let got = r.update(|inout v: i32| -> i32 {
+        v *= 3
+        v
+    })
+    let seen = r.read(|v: i32| -> i32 { v + 100 })
+    let mut xs: List[i32] = List.new()
+    let mut n: i32 = 0
+    for i in 0..5 { bump(inout xs, inout n) }
+    let m = Mutex.new(4)
+    m.update(|v: i32| -> i32 { v * v })
+    let ch: Chan[i32] = Chan.new()
+    ch.send(7)
+    ch.send(8)
+    ch.close()
+    let mut got_ch: i32 = 0
+    while let Some(v) = ch.recv() { got_ch = got_ch * 10 + v }
+    (got as i64) * 1000000 + (seen as i64) * 1000 + (xs.sum() + n + m.get() + got_ch) as i64
+}
+
+fn text() -> i64 {
+    let t = String.from("héllo wörld")
+    let bs = t.bytes()
+    let mut n = bs.len() as i64
+    let sl = t.slice(0, 6)
+    n = n * 100 + sl.len() as i64
+    let good = String.from_bytes(bs)
+    let mut bad = bs.copy()
+    bad.push(255)
+    match good {
+        Ok(g) => { n = n * 10 + g.len() as i64 }
+        Err(_) => {}
+    }
+    match String.from_bytes(bad) {
+        Ok(_) => {}
+        Err(at) => { n = n * 100 + at as i64 }
+    }
+    let mut p = String.from("")
+    p.push_byte(65)
+    p.push_str("bc")
+    n * 10 + p.byte(1) as i64
+}
+
+fn loops() -> i64 {
+    let mut n: i64 = 0
+    outer: for i in 0..10 {
+        for j in 0..10 {
+            if j > i { continue outer }
+            if i * j > 30 { break outer }
+            n += (i * j) as i64
+        }
+    }
+    let mut k = 0
+    while k < 5 {
+        k += 1
+        if k == 2 { continue }
+        n = n * 3 + k as i64
+    }
+    let mut st: List[i32] = List.new()
+    for i in 1..4 { st.push(i) }
+    let mut acc: i64 = 0
+    while let Some(x) = st.pop() { acc = acc * 10 + x as i64 }
+    n * 1000 + acc
+}
+
+type Conf = { name: String, level: i32, on: bool, tags: List[i32], opt: Option[i64], at: Point }
+
+fn defaults() -> u64 {
+    let c = Conf.default()
+    let mut x = Point(1, 1)
+    let old = x.replace(Point(5, 6))
+    let mut l: List[i32] = List.new()
+    l.push(1)
+    l.push(2)
+    let taken = l.take()
+    mix(0, c.to_string()) ^ ((old.x + x.y) as u64) ^ ((taken.len() + l.len()) as u64)
+}
+
+fn main() uses io {
+    check("map order", MAP_ORDER == map_order())
+    check("show", SHOW == show_text())
+    check("hash", HASH == hashes())
+    check("arith", ARITH == arith())
+    check("order", ORDER == order())
+    check("closures", CLOSURES == closures())
+    check("refs and cells", CELLS == refs_and_cells())
+    check("text", TEXT == text())
+    check("loops", LOOPS == loops())
+    check("defaults", DEFAULTS == defaults())
+    print(MAP_ORDER)
+    print(SHOW)
+    print(ARITH)
+    print(CELLS)
+    print(TEXT)
+    print(LOOPS)
+}
+
+fn check(what: str, ok: bool) uses io {
+    if ok {
+        print(what)
+    } else {
+        let mut m = String.from("MISMATCH ")
+        m.push_str(what)
+        print(m)
+    }
+}
+
+const MAP_ORDER: u64 = comptime map_order()
+const SHOW: u64 = comptime show_text()
+const HASH: u64 = comptime hashes()
+const ARITH: i64 = comptime arith()
+const ORDER: i64 = comptime order()
+const CLOSURES: i64 = comptime closures()
+const CELLS: i64 = comptime refs_and_cells()
+const TEXT: i64 = comptime text()
+const LOOPS: i64 = comptime loops()
+const DEFAULTS: u64 = comptime defaults()

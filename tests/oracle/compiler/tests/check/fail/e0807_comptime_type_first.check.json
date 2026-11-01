@@ -1,1 +1,1 @@
-{"error":"E0807","span":{"file":"compiler/tests/check/fail/e0807_comptime_type_first.ei","line":2,"col":7},"message":"`comptime` constants must be integers or bool"}
+{"error":"E0807","span":{"file":"compiler/tests/check/fail/e0807_comptime_type_first.ei","line":2,"col":7},"message":"`comptime` constants must be integers, bool or str"}

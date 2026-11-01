@@ -40,42 +40,53 @@ true
 
 ## Types
 
-The constant's type must be an integer type or `bool`; anything else (`str`, `String`, a
-tuple, a record) is E0807 ("`comptime` constants must be integers or bool"), reported at the
-constant's name. The expression itself may use any part of the language that needs no
-capability: owned data, records, enums, generics, closures, `match`, functions of imported
-modules. Negative results are fine.
+The constant's type must be an integer type, `bool` or `str`; anything else (`String`, a
+tuple, a record) is E0807 ("`comptime` constants must be integers, bool or str"), reported
+at the constant's name. The expression itself may use any part of the language that needs
+no capability: owned data, records, enums, generics, closures, `match`, `Map`, `Ref`,
+functions of imported modules. Negative results are fine.
+
+```eider
+const GREETING: str = comptime pick(3)
+
+fn pick(n: i32) -> str {
+    if n > 2 { "many" } else { "few" }
+}
+
+fn main() uses io { print(GREETING) }
+```
+
+```output
+many
+```
 
 ```eider,compile_fail=E0807
-const NAME: str = comptime "eider"
+const PAIR: (i32, i32) = comptime (1, 2)
 
 fn main() {}
 ```
 
 ## How a constant is evaluated
 
-The comptime constants of a program are evaluated one at a time, in item order (imported
-modules' in load order), before the program is checked. For each one the compiler builds an
-*evaluator program*: the whole program without any `main`, without test blocks and without
-the comptime constants not yet evaluated, plus a function that returns the expression and a
-`main` that prints it. The evaluator is checked, compiled with the C compiler and run; its
-output replaces the expression as a literal, so later constants and the rest of the program
-see an ordinary constant.
+The comptime constants of a program are evaluated before the program is checked. For each
+one the compiler checks an *evaluator program*: the whole program without any `main` and
+without test blocks, plus a function that returns the expression. That function is then
+run by the compiler's interpreter of its typed IR: no C compiler, no linker and no files
+are involved, and the interpreter can reach nothing outside the program. Its value replaces
+the expression as a literal, so the rest of the program sees an ordinary constant.
 
 What follows from that:
 
-- **No capabilities.** The evaluator's `main` declares none, so calling anything that uses
-  `io`, `fs`, `clock` or another capability is E0201, with the help "`comptime` evaluation
-  can't use capabilities" (and no fix).
-- **Earlier constants only.** A comptime constant may use plain constants and the comptime
-  constants declared before it. Naming a later comptime constant is E0110 ("unknown name"),
-  and so is naming it in *any* function of the program that is included in an earlier
-  constant's evaluator, even one the constant doesn't call. `main` and test blocks are left
-  out of evaluators, so they may name any comptime constant.
-- **Plain constants can't use comptime constants.** A `const` without `comptime` whose
-  initializer names a comptime constant is E0110: plain constants are checked inside every
-  evaluator, where the comptime constants are missing. Mark it `comptime` too.
-- **Errors anywhere surface early.** An error elsewhere in the program is found by the first
+- **No capabilities.** The evaluator declares none, so calling anything that uses `io`,
+  `fs`, `clock` or another capability is E0201, with the help "`comptime` evaluation can't
+  use capabilities" (and no fix).
+- **Any order.** A comptime constant may use plain constants and comptime constants
+  declared before or after it, and so may plain constants and functions. A constant that
+  needs another one's value is evaluated after it; while constants are still unevaluated,
+  the functions and constants that name them are left out of the evaluator. Constants
+  that need each other's values (a cycle) are E0110 ("unknown name"), with a help that says
+  so.
+- **Errors anywhere surface early.** An error elsewhere in the program is found by the
   evaluator and reported as it is.
 
 ```eider,compile_fail=E0201
@@ -89,36 +100,38 @@ const N: i32 = comptime noisy()
 fn main() {}
 ```
 
+```eider
+const A: i32 = comptime C / 10 - 1
+const B: i32 = A * 2
+
+fn scaled() -> i32 { B + C }
+
+fn main() uses io {
+    print(A)
+    print(scaled())
+}
+
+const C: i32 = comptime 3 * 10
+```
+
+```output
+2
+34
+```
+
 ```eider,compile_fail=E0110
-const A: i32 = comptime 2
-const B: i32 = A + 1
+const A: i32 = comptime B + 1
+const B: i32 = comptime A * 2
 
 fn main() {}
 ```
 
-```eider
-const A: i32 = comptime 2
-const B: i32 = comptime A + 1
-
-fn main() uses io {
-    print(B)
-    print(C)
-}
-
-const C: i32 = comptime B * 10
-```
-
-```output
-3
-30
-```
-
 ## Traps and failures
 
-If the evaluator traps (overflow, a bounds check, division by zero, `panic`, a failed
+If the evaluation traps (overflow, a bounds check, division by zero, `panic`, a failed
 `assert`, `unwrap` of `None`), the constant is E0807 "comptime evaluation of `N` failed:"
-followed by the trap's message; the file is named `program` when the trap is in the file
-being evaluated:
+followed by the message the built program would print; the file is named `program` when
+the trap is in the file being evaluated:
 
 ```eider,compile_fail=E0807
 fn check(n: i32) -> i32 {
@@ -136,17 +149,21 @@ fn main() {}
 that overflows while it is folded, is reported before evaluation, as for a plain constant
 (E0501).
 
+Calls nest at most 1,000 deep during evaluation; deeper recursion is the runtime's stack
+overflow message ("eider: runtime error: stack overflow (program:0)"). An evaluation that
+runs more than a billion IR statements stops with E0807 too. A value of a type with its own
+`Drop` can't be made during evaluation (`Drop` doesn't run at compile time), and neither can
+threads.
+
 When a constant fails, the program's other comptime constants are still evaluated and
 every error is reported; uses of the failed constant report nothing more.
 
 ## Cost
 
-Each comptime constant costs one check of the whole program plus a C compile and link of
-its evaluator (tens of milliseconds each). The evaluator is built with the same `$CC` and
-`$EIDER_CFLAGS` as the program, so a C compiler is needed at compile time; with the build
-cache on, an unchanged constant's evaluator is a cache hit.
+Each comptime constant costs one check of the program and an interpretation of its
+expression: tens of microseconds for most constants (`tests/run/comptime.ei`'s four
+constants check in about 10 ms, against 0.8 s when every constant was built with the C
+compiler). Comptime evaluation needs no C compiler, so `eiderc check` works without one.
 
-> **Note:** Evaluation by an interpreter of the compiler's IR, which would need no C
-> compiler at compile time and could lift the restrictions above (other constant types,
-> forward references), and comptime reflection over types for code generation are planned.
-> See the [roadmap](../../design/roadmap.md) (8.11, P0.9).
+> **Note:** Comptime reflection over types, for code generation from a type's fields and
+> attributes, is planned. See the [roadmap](../../design/roadmap.md) (P0.9).
