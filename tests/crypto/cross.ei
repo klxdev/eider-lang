@@ -12,7 +12,7 @@ import std.fs
 import std.io
 import vec
 import "../../packages/crypto/crypto.ei"
-import "../../vendor/json/json.ei"
+import "../../.vendor/json/json.ei"
 
 fn msg(n: usize, seed: u32) -> List[u8] {
     let mut out: List[u8] = List.new()

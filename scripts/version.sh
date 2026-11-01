@@ -23,8 +23,8 @@
 #   `version` in core/, std/, compiler/, packages/pkg/ (eider-pkg) and packages/doc/
 #   (eider-doc) eider.toml
 #   `eider` (MAJOR.MINOR) in the eider.toml of core, std, compiler, packages/* and examples/*
-# (vendor/<name>, the pinned releases of eider-toml, eider-json and eider-markdown, are their
-# repositories' files and are not rewritten here: vendor a new release, scripts/vendor.sh.)
+# (.vendor/<name>, the pinned releases of eider-toml, eider-json and eider-markdown, are their
+# repositories' files and are not rewritten here: pin a new release, scripts/vendor.sh.)
 #
 # bump: `major` or `minor` moves every component (this checkout and every sibling found) to
 # the next MAJOR.MINOR with PATCH 0, and rewrites every `eider = "<old MAJOR.MINOR>"` in the

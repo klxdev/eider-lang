@@ -7,4 +7,6 @@ target
 /*.so
 # materialized dependencies (eider-pkg fetch)
 deps/
+# the pinned libraries the tools fetch on first use (scripts/vendor.sh; the pins are vendor.lock)
+/.vendor/
 .claude/worktrees/

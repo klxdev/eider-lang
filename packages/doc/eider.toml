@@ -5,9 +5,10 @@ eider = "0.1"
 main = "main.ei"
 description = "eider-doc: documentation sites from Markdown pages and `eiderc doc --json`, and doc tests"
 
-# both pure: granted nothing
+# the pinned releases of eider-json and eider-markdown (vendor.lock), fetched into .vendor/
+# by scripts/vendor.sh (scripts/docs.sh does it); both pure: granted nothing
 [deps.json]
-path = "../../vendor/json"
+path = "../../.vendor/json"
 
 [deps.markdown]
-path = "../../vendor/markdown"
+path = "../../.vendor/markdown"

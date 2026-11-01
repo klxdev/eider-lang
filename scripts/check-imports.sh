@@ -9,8 +9,8 @@
 #
 # A quoted import outside the list is a FAIL (rewrite it with
 # scripts/migrate-imports-dotted.sh <file>), and so is a listed file that has none left (drop
-# it from the list). Searched: every .ei and .md file but target/, vendor/ (the pinned
-# releases), .vendor/, .git/, .claude/ and node_modules/.
+# it from the list). Searched: every .ei and .md file but target/, .vendor/ (the
+# pinned releases, scripts/vendor.sh), .git/, .claude/ and node_modules/.
 cd "$(dirname "$0")/.." || exit 1
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
@@ -55,10 +55,10 @@ EOF
 # (its parse, its diagnostics E0204/E0804/E0809/E0810/E0811 through it, IDE spans, and package
 # imports the migration can't rewrite: undeclared, unlocked or malformed names); errors.md's
 # E0809 example is the quoted form's own error; tests/crypto/*.ei are files in no package that
-# import upward (`"../../packages/crypto/crypto.ei"`, `"../../vendor/json/json.ei"`), which
+# import upward (`"../../packages/crypto/crypto.ei"`, `"../../.vendor/json/json.ei"`), which
 # no dotted path can name (C280).
 
-find . \( -path ./target -o -path ./vendor -o -path ./.vendor -o -path ./.git -o -path ./.claude -o -name node_modules \) -prune -o \
+find . \( -path ./target -o -path ./.vendor -o -path ./.git -o -path ./.claude -o -name node_modules \) -prune -o \
   \( -name '*.ei' -o -name '*.md' \) -type f -print | sed 's|^\./||' | LC_ALL=C sort > "$T/files"
 : > "$T/found"
 while IFS= read -r f; do

@@ -4,6 +4,6 @@ version = 1
 [[package]]
 name = "toml"
 version = "0.1.1"
-source = "path+../../vendor/toml"
+source = "path+../../.vendor/toml"
 deps = []
 grants = []

@@ -68,7 +68,7 @@ fn locked_commit(o: Opts, r: Req) -> Option[lockfile.Pkg] {
 /// Offline, a version requirement that eider.lock doesn't pin is met by the locked version
 /// of the same package when that one is higher: with an up-to-date lock MVS selects at least
 /// that version anyway, and the lower version's manifest may only exist in a mirror we can't
-/// reach. This is what lets `fetch --offline` work from vendor/, which holds only the
+/// reach. This is what lets `fetch --offline` work from .vendor/, which holds only the
 /// selected versions.
 fn settle(o: Opts, r: Req) -> Req {
     if !(o.use_lock && o.offline && r.git && !r.is_rev) { return r }
@@ -136,7 +136,7 @@ fn visit(o: Opts, r: Req) -> Result[lockfile.Pkg, String] uses io, fs, net {
         if expect.len() > 0 && o.vendor.len() > 0 && fs.is_dir(vend) {
             let h = store.tree_hash(vend)?
             if !bytes.eq(h, expect) {
-                return Err(mismatch("vendor/ doesn't match eider.lock for", r.name, h, expect))
+                return Err(mismatch(".vendor/ doesn't match eider.lock for", r.name, h, expect))
             }
             dir = vend
             hash = h

@@ -4,7 +4,7 @@
 #
 #   scripts/migrate-imports.sh <file or directory>...
 #
-# For every .ei file (directories are searched, skipping deps/, vendor/ and target/):
+# For every .ei file (directories are searched, skipping deps/, vendor/, .vendor/ and target/):
 #   - `import "deps/<name>/<path>.ei"` (the retired deps/ link farm) becomes `import "<name>"`
 #     for the default entry `<name>.ei`, else `import "<name>/<path>"`;
 #   - a relative `import "<path>.ei"` whose file is in another package becomes `import
@@ -90,7 +90,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 for a in "$@"; do
   if [ -d "$a" ]; then
-    find "$a" \( -name deps -o -name vendor -o -name target \) -prune -o -name '*.ei' -print | sort >"$tmp/files"
+    find "$a" \( -name deps -o -name vendor -o -name .vendor -o -name target \) -prune -o -name '*.ei' -print | sort >"$tmp/files"
     while read -r f; do migrate "$f"; done <"$tmp/files"
   else
     migrate "$a"

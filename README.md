@@ -41,7 +41,7 @@ scripts/selfhost.sh                       # seed -> stage1 -> stage2 -> stage3, 
 
 ## Verification
 
-`scripts/verify.sh`: the compile-fail/pass suite (tests/checks: 93 files, 56/56 codes), run tests on gcc, clang, ASan+UBSan and TSan, the C core, std, packages and the package manager, the vendored libraries, the docs site and its doc tests, the crypto backends that are present, the compiler against its recorded oracle (`scripts/test-compiler.sh`), the seed reproducing itself, C and C++ consumers of an exported library, the sibling repositories (editor tooling, libraries) when checked out next to this one, and a Node check of the WebAssembly build. It ends with `ALL GREEN` (naming the legs skipped for a missing toolchain).
+`scripts/verify.sh`: the compile-fail/pass suite (tests/checks: 93 files, 56/56 codes), run tests on gcc, clang, ASan+UBSan and TSan, the C core, std, packages and the package manager, the pinned libraries (fetched into `.vendor/` on first use and hash-checked against `vendor.lock`: `scripts/vendor.sh`), the docs site and its doc tests, the crypto backends that are present, the compiler against its recorded oracle (`scripts/test-compiler.sh`), the seed reproducing itself, C and C++ consumers of an exported library, the sibling repositories (editor tooling, libraries) when checked out next to this one, and a Node check of the WebAssembly build. It ends with `ALL GREEN` (naming the legs skipped for a missing toolchain).
 
 ## Known limits
 

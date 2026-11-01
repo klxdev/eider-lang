@@ -5,8 +5,10 @@
 #
 # Backends (default: all four): awslc, awslc-noasm (AWS-LC without assembly), openssl,
 # libressl. A backend that isn't available here is reported as `skip` with the reason
-# (scripts/crypto-build.sh --check); nothing is downloaded: fetch first with
+# (scripts/crypto-build.sh --check); no backend is downloaded: fetch first with
 # scripts/fetch-awslc.sh, scripts/crypto-build.sh libressl or fetch-openssl-headers.
+# wycheproof.ei and cross.ei read JSON with eider-json, the pinned release in .vendor/json
+# (fetched on first use by scripts/vendor.sh); they are `skip` when it can't be fetched.
 # --san: also run the RFC vectors with the glue and the program under ASan+UBSan.
 #
 # For each backend: rfc.ei (RFC 8439, 7748, 8032, 5869, 4231 and the package's misuse
@@ -23,6 +25,7 @@ out=target/crypto/test
 mkdir -p "$out"
 fail=0
 have=
+json=
 for b in $want; do
   why=$(sh scripts/crypto-build.sh --check "$b" 2>&1) || { echo "skip crypto ($b): ${why#crypto-build: }"; continue; }
   if [ "$b" = libressl ] && [ ! -f target/crypto/libressl/libeider_crypto.a ]; then
@@ -31,8 +34,17 @@ for b in $want; do
   if ! sh scripts/crypto-build.sh "$b" > "$out/$b.build" 2>&1; then
     echo "FAIL crypto ($b): backend did not build ($out/$b.build)"; fail=1; continue
   fi
+  if [ -z "$json" ]; then
+    jwhy=$(sh scripts/vendor.sh fetch json 2>&1)
+    case $? in
+      0) json=yes ;;
+      3) json=no; jwhy=$(printf '%s\n' "$jwhy" | grep 'cannot fetch' | head -1 | sed 's/^vendor.sh: //; s/, no source has it.*//') ;;
+      *) echo "FAIL crypto: sh scripts/vendor.sh fetch json"; printf '%s\n' "$jwhy" | sed 's/^/  /'; exit 1 ;;
+    esac
+  fi
   have="$have $b"
   for t in rfc cavp wycheproof; do
+    if [ $t = wycheproof ] && [ $json = no ]; then echo "skip crypto wycheproof ($b): needs .vendor/json ($jwhy; sh scripts/vendor.sh fetch json)"; continue; fi
     start=$(date +%s)
     if scripts/ei-crypto --crypto "$b" run "tests/crypto/$t.ei" > "$out/$b.$t" 2>&1; then
       echo "ok   crypto $t ($b): $(tail -1 "$out/$b.$t" | sed 's/^[a-z]*: //') [$(($(date +%s) - start)) s]"
@@ -40,7 +52,8 @@ for b in $want; do
       echo "FAIL crypto $t ($b): see $out/$b.$t"; grep FAIL "$out/$b.$t" | head -5; tail -2 "$out/$b.$t"; fail=1
     fi
   done
-  if scripts/ei-crypto --crypto "$b" run tests/crypto/cross.ei > "$out/$b.cross" 2>&1; then :; else
+  if [ $json = no ]; then :
+  elif scripts/ei-crypto --crypto "$b" run tests/crypto/cross.ei > "$out/$b.cross" 2>&1; then :; else
     echo "FAIL crypto cross emit ($b): see $out/$b.cross"; fail=1
   fi
   if [ $san = 1 ]; then
@@ -53,6 +66,9 @@ for b in $want; do
 done
 
 # every pair: identical deterministic outputs, and each verifies the other's signatures
+if [ "$json" = no ] && [ -n "$have" ]; then
+  echo "skip crypto cross: needs .vendor/json ($jwhy; sh scripts/vendor.sh fetch json)"; have=
+fi
 set -- $have
 for a in "$@"; do
   for b in "$@"; do

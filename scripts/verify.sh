@@ -1,6 +1,9 @@
 #!/bin/sh
 # Full verification matrix: compile-fail suite, run tests on gcc/clang/ASan+UBSan/TSan, std, export, wasm, the vendored libraries, and the sibling repositories (the editor tooling, eider-analyzer and tree-sitter-eider, and the libraries and frameworks, eider-json, eider-http, ...) when they are next to this one.
-# The compiler is target/eiderc, built from the seed by scripts/ei (only a C compiler).
+# The compiler is target/eiderc, built from the seed by scripts/ei (only a C compiler). The
+# toolchain's own tools (eider-pkg, eider-doc, tests/crypto) need the pinned libraries in
+# .vendor/, fetched on first use (scripts/vendor.sh: from the sibling checkouts, a mirror,
+# the network or a tarball, hash-checked); without them their legs are skipped, with the reason.
 cd "$(dirname "$0")/.." || exit 1
 EIDER_CACHE=off; export EIDER_CACHE
 scripts/ei --help >/dev/null || { echo "FAIL build target/eiderc from seed/eiderc.c"; exit 3; }
@@ -33,16 +36,31 @@ for cc in gcc clang $S/asan.sh $S/tsan.sh; do
 done
 sh tests/core/run.sh | grep -q FAIL && { echo "FAIL core"; fail=1; } || echo "ok   core (eider_rt + eider_core, strict warnings, sanitizers when available)"
 sh tests/std/run.sh | grep -q FAIL && { echo "FAIL std"; fail=1; } || echo "ok   std (C core + Eider std)"
-sh tests/packages.sh | grep -q FAIL && { echo "FAIL packages"; fail=1; } || echo "ok   packages (pkg with semver and sha256, doc, fuzz; the vendored toml, json, markdown)"
-# vendor: each vendor/<name> is the release vendor/vendor.lock pins (content hash), and is
-# byte-identical to that commit of its repository when the checkout is there (else that
-# comparison is a skipped leg): scripts/vendor.sh check
+# vendor: the releases vendor.lock pins, fetched into .vendor/<name> and hash-checked
+# (scripts/vendor.sh fetch; a hash mismatch fails), then scripts/vendor.sh check: the pins are
+# well formed, each copy has its content hash and, when the library's checkout is there, the
+# pinned commit has that hash and equals the copy byte for byte (else that comparison is a
+# skipped leg). When no source has a pin (a fresh clone with no siblings and no network), the
+# legs that need .vendor/ (docs, pkg, parts of packages, compiler, crypto and tools) are
+# skipped with that reason.
+novendor=
+sh scripts/vendor.sh fetch > $S/vfetch 2>&1
+case $? in
+  0) ;;
+  3) novendor="needs .vendor/, which can't be fetched: $(grep 'cannot fetch' $S/vfetch | sed 's/^vendor.sh: cannot fetch //; s/ (.*//' | paste -sd, - | sed 's/,/, /g') (no checkout, mirror or tarball, and no network; sh scripts/vendor.sh fetch)"
+     skip "vendor fetch: $(grep 'cannot fetch' $S/vfetch | head -1 | sed 's/^vendor.sh: //')" ;;
+  *) echo "FAIL vendor: sh scripts/vendor.sh fetch"; sed 's/^/  /' $S/vfetch | head -10; fail=1; novendor="needs .vendor/ (the fetch failed, above)" ;;
+esac
 sh scripts/vendor.sh check > $S/vendor 2>&1; vrc=$?
 while IFS= read -r l; do case $l in "skip "*) skip "${l#skip }" ;; esac; done < $S/vendor
 if [ $vrc != 0 ]; then echo "FAIL vendor: sh scripts/vendor.sh check"; grep -A4 "^FAIL" $S/vendor | head -20; fail=1
-else echo "ok   vendor ($(grep -c '^ok' $S/vendor) pinned libraries: $(sed -n 's/^ok   vendor\/\([a-z0-9_]*\): \([^,(]*\).*/\2/p' $S/vendor | sed 's/ *$//' | paste -sd, - | sed 's/,/, /g'); $(grep -c 'byte-identical to' $S/vendor) compared with their repositories)"; fi
+else echo "ok   vendor ($(grep -c '^ok' $S/vendor) pinned libraries: $(sed -n 's/^ok   vendor [a-z0-9_]*: \([^(]*\) (.*/\1/p' $S/vendor | sed 's/ *$//' | paste -sd, - | sed 's/,/, /g'); $(grep -c 'has the pinned hash\|byte-identical to' $S/vendor) hash-checked in .vendor/, $(grep -c 'byte-identical to\|pinned commit in' $S/vendor) against their repositories)"; fi
+sh tests/packages.sh > $S/packages 2>&1
+while IFS= read -r l; do case $l in "skip packages"*) skip "${l#skip }" ;; esac; done < $S/packages
+grep -q FAIL $S/packages && { echo "FAIL packages"; grep -A6 '^FAIL' $S/packages | head -20; fail=1; } || echo "ok   packages (pkg with semver and sha256, doc, fuzz; the pinned toml, json, markdown)"
 # the documentation site (target/site) and its doc tests: scripts/docs.sh, docs/site/CONTRACT.md
-if sh scripts/docs.sh >$S/docs.log 2>&1 && sh scripts/docs.sh test >>$S/docs.log 2>&1; then echo "ok   docs (the site in target/site; $(tail -1 $S/docs.log))"; else echo "FAIL docs: sh scripts/docs.sh; sh scripts/docs.sh test"; tail -20 $S/docs.log; fail=1; fi
+if [ -n "$novendor" ]; then skip "docs: eider-doc $novendor"
+elif sh scripts/docs.sh >$S/docs.log 2>&1 && sh scripts/docs.sh test >>$S/docs.log 2>&1; then echo "ok   docs (the site in target/site; $(tail -1 $S/docs.log))"; else echo "FAIL docs: sh scripts/docs.sh; sh scripts/docs.sh test"; tail -20 $S/docs.log; fail=1; fi
 # crypto: the vectors on every backend available here (and the RFC vectors under ASan+UBSan),
 # then the cross-backend checks. Each backend that isn't fetched or built is a skipped leg:
 # a plain checkout has none (sh scripts/fetch-awslc.sh fetches the default; core/crypto/README.md).
@@ -54,11 +72,14 @@ if [ $crc != 0 ]; then
 elif [ "$nok" -gt 0 ]; then
   echo "ok   crypto ($(grep -c '^ok   crypto rfc (' $S/crypto) backend(s): RFC/CAVP/Wycheproof vectors, ASan+UBSan, $(grep -c '^ok   crypto cross' $S/crypto) cross-backend checks)"
 fi
-sh tests/pkg/run.sh | grep -q FAIL && { echo "FAIL pkg"; fail=1; } || echo "ok   pkg (eider-pkg end to end, local git repos)"
+if [ -n "$novendor" ]; then skip "pkg: eider-pkg $novendor"
+else sh tests/pkg/run.sh | grep -q FAIL && { echo "FAIL pkg"; fail=1; } || echo "ok   pkg (eider-pkg end to end, local git repos)"; fi
 # imports: no quoted imports are left but the tests of the quoted form (docs/compiler.md "C8.26")
 sh scripts/check-imports.sh > $S/imports 2>&1 && cat $S/imports || { head -20 $S/imports; fail=1; }
 sh scripts/version.sh check > $S/version 2>&1 && cat $S/version || { echo "FAIL version: sh scripts/version.sh check"; sed 's/^/  /' $S/version; fail=1; }
-sh scripts/test-compiler.sh | grep -q FAIL && { echo "FAIL compiler (eiderc)"; fail=1; } || echo "ok   compiler (eiderc vs the recorded oracle, tests/oracle)"
+sh scripts/test-compiler.sh > $S/compiler 2>&1
+while IFS= read -r l; do case $l in "skip "*".vendor/"*) skip "compiler: ${l#skip }" ;; esac; done < $S/compiler
+grep -q FAIL $S/compiler && { echo "FAIL compiler (eiderc)"; grep -A6 '^FAIL' $S/compiler | head -20; fail=1; } || echo "ok   compiler (eiderc vs the recorded oracle, tests/oracle)"
 sh scripts/selfhost.sh --from-seed >/dev/null 2>&1 && echo "ok   seed (seed/eiderc.c rebuilds itself with only a C compiler)" || { echo "FAIL seed: sh scripts/selfhost.sh --from-seed"; fail=1; }
 bash tests/export/run.sh | tail -1 | grep -q "^ok" && echo "ok   export (C and C++ consumers)" || { echo "FAIL export"; fail=1; }
 # tools: the sibling repositories (scripts/check-tools.sh; EIDER_<NAME>, else

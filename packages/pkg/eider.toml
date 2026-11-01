@@ -5,7 +5,7 @@ eider = "0.1"
 main = "main.ei"
 description = "eider-pkg: the Eider package manager"
 
-# eider.toml and eider.lock: the vendored release of eider-toml (vendor/vendor.lock,
-# scripts/vendor.sh); pure, granted nothing
+# eider.toml and eider.lock: the pinned release of eider-toml (vendor.lock), fetched into
+# .vendor/toml by scripts/vendor.sh (scripts/eider-pkg does it); pure, granted nothing
 [deps.toml]
-path = "../../vendor/toml"
+path = "../../.vendor/toml"

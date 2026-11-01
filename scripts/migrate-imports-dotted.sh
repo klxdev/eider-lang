@@ -4,7 +4,7 @@
 #   scripts/migrate-imports-dotted.sh [--keep-seed] <file or directory>...
 #
 # For every .ei file (directories are searched, skipping deps/, target/, node_modules/,
-# .git/ and .claude/; vendor/ only when it is named itself) with a quoted import, `eiderc
+# .git/ and .claude/; vendor/ and .vendor/ only when named themselves) with a quoted import, `eiderc
 # migrate-imports <file>` prints the file with the compiler's fixes applied: each quoted
 # import becomes the dotted import that loads the same module, keeping its alias (`as <old
 # alias>` where the default would change):
@@ -75,7 +75,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 for a in "$@"; do
   if [ -d "$a" ]; then
-    find "$a" \( -name deps -o -name target -o -name node_modules -o -name .git -o -name .claude -o \( -name vendor ! -path "$a" \) \) -prune -o -name '*.ei' -print | sort >"$tmp/files"
+    find "$a" \( -name deps -o -name target -o -name node_modules -o -name .git -o -name .claude -o \( -name vendor ! -path "$a" \) -o \( -name .vendor ! -path "$a" \) \) -prune -o -name '*.ei' -print | sort >"$tmp/files"
     while read -r f; do migrate "$f"; done <"$tmp/files"
   else
     migrate "$a"

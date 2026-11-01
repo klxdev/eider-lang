@@ -1177,12 +1177,14 @@ letter, the path one or more non-empty segments. (So a path import without its e
 - The default alias is the last segment: `json`, `util` for `"json/util"`, `fs` for `"std/fs"`.
 - A dependency's directory comes from **eider.lock**: the lock of the program's root package
   (the entry file's; when the entry file is in no package, the importing package's own). A
-  `path+<dir>` source is `<dir>` relative to the lock; a `git+` source is `vendor/<name>`
+  `path+<dir>` source is `<dir>` relative to the lock; a `git+` source is `.vendor/<name>`
   beside the lock when that directory exists, else the store's `$EIDER_HOME/pkg/<name>-<the
   first 16 hex digits of the locked content hash>` (`EIDER_HOME` defaults to `~/.eider`):
   exactly where `eider-pkg fetch` and `eider-pkg vendor` put it. No lock, no entry for the
   package, a directory that doesn't exist, or an eider.toml or eider.lock that doesn't parse
-  is **E0810**, with the fix `run eider-pkg fetch in <dir>`. The compiler does not re-hash
+  is **E0810**, with the fix `run eider-pkg fetch in <dir>`; so is a git package found only
+  in `vendor/<name>`, where `eider-pkg vendor` wrote before `.vendor/` (#122), with the fix
+  `mv vendor .vendor` (never read silently: the store may hold another copy). The compiler does not re-hash
   store directories: eider-pkg checks the hash whenever it fetches.
 - The toolchain series (C220, docs/site/tooling/releases.md). `eider = "0.1"` under
   [package] names the toolchain MAJOR.MINOR a package needs (lock.ei `Manifest.eider`).
@@ -1194,7 +1196,7 @@ letter, the path one or more non-empty segments. (So a path import without its e
   file is the Eider copy of VERSION (scripts/version.sh check), so the seed embeds the
   version and a bump is a source change plus a seed regeneration.
 - So visibility is per package: app sees its dependencies, each dependency sees its own
-  (from its own eider.toml, read in the store or vendor copy), and the lock, written for the
+  (from its own eider.toml, read in the store or .vendor copy), and the lock, written for the
   whole graph by `eider-pkg fetch`, says where each one is.
 - A module's `path` (Diag.file, ide Span.file) is the package's directory joined with the
   module's path: absolute for a package import, since the directory comes from canonical
@@ -1208,7 +1210,7 @@ the TOML subset packages/toml reads, flattened the same way, keeping what the co
 and hash).
 
 **eider-pkg.** `fetch` (and `add`, `remove`, `update`, `vendor`) resolves and writes
-eider.lock and fills the store or vendor/; it no longer makes `deps/` (compatibility: a
+eider.lock and fills the store or .vendor/; it no longer makes `deps/` (compatibility: a
 `deps/` holding the `.all` directory an earlier eider-pkg made is removed). `init` writes a
 program that imports `"core/sys"` and `"std/io"`, and no `.gitignore`. The lock format is
 unchanged. `scripts/bootstrap-deps.sh` is retired (a no-op that removes old links; nothing
@@ -1237,7 +1239,8 @@ with the seed (packages/, eider-pkg, the tests). So:
    runs: the seed would report E0804 for them).
 
 **Tests.** compiler/tests/pkgs: app, geo, shapes and base packages with eider.lock, a
-vendored git package and one in a store (`home/`), in `// pkgtest: run|check|ide` files with
+vendored git package (`.vendor/`) and one in a store (`home/`), an old `vendor/` (oldvend:
+E0810), in `// pkgtest: run|check|ide` files with
 hand-checked `X.out`: three `util` modules in one program, a chain (app -> geo -> base),
 an entry that isn't `<name>.ei`, self-import by package name, std and core, then the errors:
 an undeclared package, an indirect one, one missing from eider.lock, a locked directory that
@@ -1248,7 +1251,8 @@ and seriesbad E0811 at 1:1 (another MAJOR.MINOR, a full version), app and geo a 
 `eider`, tests/checks/fail/e0811_toolchain_series.ei E0811 at an import. tests/pkg/run.sh builds and
 runs its projects through eider.lock: no `deps/` after fetch, the locked git packages in the
 store, an indirect or undeclared or removed dependency is E0809, one added by hand before a
-fetch E0810, a run from vendor/ with the store deleted, and `core`/`std` refused as names.
+fetch E0810, a run from .vendor/ with the store deleted, an old vendor/ (fetch's note, the
+compiler's E0810, `vendor` migrating it), and `core`/`std` refused as names.
 
 **IDE.** ide.analyze is unchanged in shape: Span.file is a module's path as above (absolute
 for package imports), files are told apart by canonical path as before, and module refs come
@@ -1677,7 +1681,7 @@ For `ffi` the message names the extern, the `unsafe fn` or the function holding 
 block, and the help adds "(it declares `extern` functions: unmanaged code)" or "(it has
 `unsafe` code: unmanaged code)". The help is text, not a machine-applicable fix: the edit is
 in another file. Grants are per edge, so a dependency's dependency is held to the grant its
-own eider.toml gives (in the store or vendor copy). Imports from files in no package are not
+own eider.toml gives (in the store or .vendor copy). Imports from files in no package are not
 held to grants (such a file is a program of its own; it can import packages only by path).
 
 **`eiderc caps <file>`** loads the program as `check` does (an import that can't be loaded,
@@ -2774,7 +2778,7 @@ is a keyword (compiler/comptime.ei).
 `eiderc migrate-imports` on every .ei with a quoted import and lists what stays quoted).
 First with `--keep-seed` (#91): core, std, packages, tests and examples of eider-lang, every
 sibling repository (eider-toml, eider-json, eider-markdown, eider-http, eider-rpc,
-eider-openapi, eider-profiler, eider-analyzer), re-vendored (vendor/vendor.lock), the docs'
+eider-openapi, eider-profiler, eider-analyzer), re-vendored (then vendor/vendor.lock, now vendor.lock), the docs'
 code blocks and tests/pkg/run.sh's generated programs, leaving quoted what the seed then built
 the compiler from: compiler/, std/{bytes,fs,io,env,proc}.ei and core/{sys,version}.ei, with
 scripts/eider-pkg and scripts/docs.sh building with compiler/ as the seed built it

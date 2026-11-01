@@ -4,6 +4,11 @@
 checks every dependency's capabilities against its grant, and writes `eider.lock`. It is
 written in Eider (`packages/pkg`). In a checkout, run it as `scripts/eider-pkg`, which
 builds `target/eider-pkg` when its sources change and sets `EIDER_ROOT` to the checkout.
+eider-pkg reads TOML with eider-toml, a release the checkout pins in `vendor.lock`: the first
+run fetches it into `.vendor/toml` and checks its content hash, from a checkout of eider-toml
+next to eider-lang (`../eider-toml`, or `EIDER_SIBLINGS`/`EIDER_TOML`), a local mirror or
+tarball (`EIDER_VENDOR_SOURCES`), or GitHub; with none of them it stops with exit 3 and says
+what it tried (the repository's `LAYERS.md`, "Vendored libraries").
 
 The compiler doesn't need eider-pkg to build: it reads `eider.toml` and `eider.lock`
 itself and finds each dependency's directory from the lock. eider-pkg is what writes the
@@ -34,10 +39,18 @@ arguments are relative to it.
 | `remove <name>` | Delete the `[deps.<name>]` table (an inline `name = { ... }` entry must be removed by hand) and re-resolve. |
 | `fetch` | Resolve, keeping the commits `eider.lock` pins, fetch what is missing into the store, check grants and write `eider.lock`. |
 | `update` | The same, ignoring the pins: re-resolve every git dependency from its tags and refresh the mirrors (tags can move). |
-| `vendor` | Copy every git package into `vendor/<name>`, drop vendored packages the graph no longer has, and check that resolving from `vendor/` alone gives the same lock. The compiler then reads `vendor/` before the store, so the project builds offline with no store. |
+| `vendor` | Copy every git package into `.vendor/<name>`, drop vendored packages the graph no longer has, and check that resolving from `.vendor/` alone gives the same lock. The compiler then reads `.vendor/` before the store, so the project builds offline with no store. `.vendor/` is hidden; commit it or ignore it, as you choose. |
 | `tree` | Print the locked graph, each package with its version and grants; a package seen before is marked `(*)`. |
 | `hash <dir>` | Print the content hash of a directory, as the lock records it. |
 | `--version` | Print `eider-pkg <version>`: the toolchain's version (VERSION; see [Releases](releases.md)). Only before a command: `add --version` is a dependency's version. |
+
+**`vendor/`, the old location.** Before `.vendor/`, `eider-pkg vendor` wrote `vendor/`. Neither
+eider-pkg nor the compiler reads it any more, and neither ignores it silently: while `vendor/`
+holds a locked git package that `.vendor/` doesn't, `fetch` (and `update`, `add`, `remove`)
+prints a note, and the compiler stops with E0810 ("package net is vendored in
+.../vendor/net, which is no longer read", with the help to move it). Run `eider-pkg vendor`
+(or `mv vendor .vendor`); `vendor` then writes `.vendor/` and says that `vendor/` can be
+removed once nothing else lives there.
 
 `--offline` makes `fetch` and `update` fail instead of touching the network. Only `add`,
 `remove`, `fetch`, `update` and `vendor` ever do, and `fetch` only when a pinned commit
@@ -143,7 +156,7 @@ Git packages live in a shared, immutable store, `$EIDER_HOME` (default `~/.eider
 ```
 
 A store directory whose files no longer match their hash is an error, never silently
-used. The compiler finds a git package in `vendor/<name>` next to the lock when that
+used. The compiler finds a git package in `.vendor/<name>` next to the lock when that
 exists, else in `pkg/<name>-<first 16 hex digits of its hash>`.
 
 ## Environment
@@ -154,6 +167,8 @@ exists, else in `pkg/<name>-<first 16 hex digits of its hash>`.
 | `EIDERC` | the compiler eider-pkg asks about capabilities (default `$EIDER_ROOT/target/eiderc`) |
 | `EIDER_HOME` | the store (default `~/.eider`) |
 | `EIDER_PKG_OVERRIDE` | local checkouts standing in for git dependencies (below) |
+| `EIDER_SIBLINGS`, `EIDER_TOML` | where `scripts/eider-pkg` finds eider-toml's checkout to fetch `.vendor/toml` from (default `..`) |
+| `EIDER_VENDOR_SOURCES`, `EIDER_VENDOR_OFFLINE` | a directory of mirrors and tarballs for that fetch, and `1` to keep it off the network |
 
 `git` must be on the `PATH` for git dependencies.
 
@@ -171,7 +186,7 @@ to the current directory). A git dependency with that name, anywhere in the grap
 from the directory instead of its repository: no network, no tag needed, and uncommitted
 edits count. The files are the ones git would commit (`git ls-files --cached --others
 --exclude-standard`, so `target/` and other ignored files stay out) when git knows the
-directory's `eider.toml`, else every file but `.git`, `deps`, `vendor` and `target`. They are
+directory's `eider.toml`, else every file but `.git`, `deps`, `vendor`, `.vendor` and `target`. They are
 copied into the store under their content hash, where the compiler finds them through
 `eider.lock` as for any git package, so the lock keeps the git source: with a checkout of
 exactly the locked release, the lock is the one a fetch from the network writes (the same
@@ -180,8 +195,8 @@ again without the override before committing it. The checkout's `version` must b
 the one required.
 
 The library repositories' `scripts/build.sh` set it for the sibling checkouts next to them
-(eider-lang's `scripts/check-tools.sh` builds them that way), and fall back to the
-toolchain's pinned copies in `vendor/` (`scripts/vendor.sh`).
+(eider-lang's `scripts/check-tools.sh` builds them that way, with json from the toolchain's
+pinned copy in `.vendor/json` when there is no eider-json checkout; `scripts/vendor.sh`).
 
 ## Not yet
 

@@ -1,4 +1,6 @@
-# vendor/vendor.lock: the pinned copies in vendor/, written by scripts/vendor.sh. Do not edit.
+# vendor.lock: the pinned releases of the libraries eider-lang's own tools use, fetched
+# into .vendor/<name> (gitignored) on first use and hash-checked (LAYERS.md, "Vendored
+# libraries"). Written by scripts/vendor.sh <name> <commit>. Do not edit.
 version = 1
 
 [[package]]

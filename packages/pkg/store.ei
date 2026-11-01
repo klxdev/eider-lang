@@ -8,7 +8,7 @@
 //!     tmp/                     staging for exports
 //!
 //! The compiler reads this layout too (compiler/lock.ei `store_leaf`): a git package of a
-//! project is vendor/<name> when that exists, else pkg/<name>-<hash16> here, the hash being
+//! project is .vendor/<name> when that exists, else pkg/<name>-<hash16> here, the hash being
 //! the one eider.lock records.
 
 import core.sys
@@ -37,6 +37,7 @@ pub fn skipped() -> List[List[u8]] {
     s.push(sys.lit(".git"))
     s.push(sys.lit("deps"))
     s.push(sys.lit("vendor"))
+    s.push(sys.lit(".vendor"))
     s
 }
 

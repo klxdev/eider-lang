@@ -192,7 +192,10 @@ error: 1 error
 
 A package is a directory with an `eider.toml`. The package manager, `eider-pkg`, creates
 one, adds dependencies and writes the lock file. It is itself an Eider program, which
-`scripts/eider-pkg` builds on first use.
+`scripts/eider-pkg` builds on first use, after fetching the one library it uses, eider-toml,
+into the checkout's `.vendor/toml` (from a checkout of eider-toml next to eider-lang, else
+from GitHub; its hash is checked against `vendor.lock`). The compiler itself needs no
+fetch.
 
 ```sh
 scripts/eider-pkg -C greet init
@@ -300,7 +303,7 @@ greet/
   util.ei           # other modules, imported by the package's name: `import greet.util`
   tests/
     greet_test.ei   # test programs, run with `scripts/ei test` or `run`
-  vendor/           # optional: `eider-pkg vendor` copies git dependencies here
+  .vendor/          # optional: `eider-pkg vendor` copies git dependencies here
 ```
 
 Inside a package, files import each other by the package's name (`import greet.util`) and

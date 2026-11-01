@@ -2,7 +2,7 @@
 // Package-qualified modules (docs/compiler.md, "C8.3: packages and modules"): geo, shapes
 // and the app each have a util module (one name, three identities: no E0808); a dependency
 // chain (app -> geo -> base); a package whose entry is not <name>.ei (shapes); a git
-// dependency vendored into vendor/ (net) and one from the store (cache, with
+// dependency vendored into .vendor/ (net) and one from the store (cache, with
 // EIDER_HOME=compiler/tests/pkgs/home); the toolchain's std and core. Variant names print
 // with the module's stem.
 import std.io

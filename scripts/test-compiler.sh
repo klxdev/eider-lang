@@ -70,7 +70,7 @@
 #   audit-refs: `eiderc audit-refs --json` of compiler/tests/audit/*.ei equals the hand-checked
 #             .out (the writes that change what a `let` reference sees).
 #   packages: compiler/tests/pkgs, packages with eider.toml and eider.lock (two packages
-#             with a util.ei, a dependency chain, vendored and store dependencies, the
+#             with a util.ei, a dependency chain, vendored (.vendor/) and store dependencies, an old vendor/ (E0810), the
 #             package-import errors E0808/E0809/E0810, capability grants and E0204, `eiderc
 #             caps`): each `// pkgtest: <cmd>` file's
 #             `eiderc <cmd>` output equals its X.out (BLESS=1 rewrites them; review by
@@ -110,6 +110,18 @@ else
   EIDER_CACHE=off scripts/ei build compiler/main.ei -o target/eiderc-next >/dev/null 2>target/eiderc.build.log || { cat target/eiderc.build.log; echo "FAIL build eiderc"; exit 1; }
   new=./target/eiderc-next
 fi
+# .vendor/: the pinned libraries packages/pkg and packages/doc depend on by path, fetched by
+# scripts/vendor.sh (LAYERS.md, "Vendored libraries"). Without them (no checkout, mirror or
+# tarball, and no network) the parts that build those packages are `skip` lines.
+novendor=
+sh scripts/vendor.sh fetch >target/vendor-fetch.log 2>&1
+case $? in
+  0) ;;
+  3) novendor="needs .vendor/, and the pinned libraries can't be fetched (no checkout, mirror or tarball of $(grep 'cannot fetch' target/vendor-fetch.log | sed 's/^vendor.sh: cannot fetch //; s/ (.*//' | paste -sd, - | sed 's/,/, /g'), and no network; sh scripts/vendor.sh fetch)" ;;
+  *) cat target/vendor-fetch.log; echo "FAIL vendor: sh scripts/vendor.sh fetch"; exit 1 ;;
+esac
+# needs_vendor <dir>: the package at <dir> depends on a pinned library and .vendor/ is missing
+needs_vendor() { [ -n "$novendor" ] && grep -q '^path = "\.\./\.\./\.vendor/' "$1/eider.toml" 2>/dev/null; }
 # the oracle (see the top): `oracle <source> <kind>` is the expected file of that (input,
 # command); norm writes the checkout's root as <root>
 O=tests/oracle
@@ -533,8 +545,9 @@ echo "$v packages: $pk_ok/$pk_total multi-package cases (compiler/tests/pkgs) gi
 mig=$(pwd)/target/migrate
 rm -rf $mig
 mkdir -p $mig
-# vendor/: the pinned libraries packages/pkg and packages/doc depend on by path
-cp -R core std packages compiler vendor $mig/
+if [ -n "$novendor" ]; then echo "skip migration: $novendor"; else
+# .vendor/: the pinned libraries packages/pkg and packages/doc depend on by path
+cp -R core std packages compiler .vendor $mig/
 sh scripts/migrate-imports.sh $mig/core $mig/std $mig/packages $mig/compiler >$tmp/mig 2>&1
 # and the staged removal of `uses ffi` (scripts/migrate-caps.sh, docs/compiler.md "C8.5")
 sh scripts/migrate-caps.sh $mig/core $mig/std $mig/packages $mig/compiler >$tmp/migc 2>&1
@@ -570,10 +583,11 @@ for f in packages/*/tests/*.ei; do
   cmp -s $tmp/mo "${f%.ei}.out" || { echo "FAIL migration: run $f"; diff "${f%.ei}.out" $tmp/mo | head -10; mig_ok=0; }
 done
 if [ $mig_ok = 1 ]; then echo "ok   migration: $(wc -l <$tmp/mig) files rewritten to package imports, $(grep -c '^migrated' $tmp/migd) to dotted imports (the compiler's C unchanged), $(wc -l <$tmp/migc) without \`uses ffi\` and $(grep -c '^migrated' $tmp/migv) without \`var\` ($(cat $mig/std/*.ei $mig/packages/*/*.ei | grep -c '^[[:space:]]*var[[:space:]]') generic ones left) check and pass their package tests; the migrated compiler emits the same C"; else fail=1; fi
+fi
 # meaning: std's, the packages' and the examples' tests (run by verify.sh with the seed, where
 # `let` copies) give their .out with this compiler too, where `let` of a place is a reference
 # (docs/compiler.md, "C8.6"); a difference is code that relied on the copy (`eiderc audit-refs`)
-m_ok=0; m_n=0
+m_ok=0; m_n=0; m_skip=
 for f in tests/std/*.ei packages/*/tests/*.ei examples/*/tests/*.ei; do
   [ -f "${f%.ei}.out" ] || continue
   m_n=$((m_n + 1))
@@ -585,9 +599,13 @@ for f in tests/std/*.ei packages/*/tests/*.ei examples/*/tests/*.ei; do
   # X.next.out: what this compiler prints where it deliberately differs from the seed (a
   # fix the seed doesn't have yet; it replaces X.out when the seed is regenerated)
   want="${f%.ei}.out"; [ -f "${f%.ei}.next.out" ] && want="${f%.ei}.next.out"
-  if [ "$got" = "$(cat "$want")" ]; then m_ok=$((m_ok + 1)); else echo "FAIL meaning: $f"; echo "$got" | diff "$want" - | head -10; fail=1; fi
+  if [ "$got" = "$(cat "$want")" ]; then m_ok=$((m_ok + 1))
+  # a package test that loads a pinned library which isn't there (E0810 at .vendor/<name>)
+  elif [ -n "$novendor" ] && printf '%s\n' "$got" | grep -q 'E0810.*/\.vendor/'; then m_n=$((m_n - 1)); m_skip="$m_skip $f"
+  else echo "FAIL meaning: $f"; echo "$got" | diff "$want" - | head -10; fail=1; fi
 done
 [ "$m_ok" = "$m_n" ] && echo "ok   meaning: $m_ok/$m_n std, package and example tests give their .out with references by default"
+[ -n "$m_skip" ] && echo "skip meaning: $(printf '%s\n' $m_skip | paste -sd, - | sed 's/,/, /g') (they load a pinned library): $novendor"
 # audit-refs: `eiderc audit-refs --json` of compiler/tests/audit/*.ei gives the hand-checked .out
 for f in compiler/tests/audit/*.ei; do
   $new audit-refs --json "$f" >$tmp/ar 2>&1
@@ -801,6 +819,7 @@ $new doc --json compiler/tests/doc/shapes/util/geo.ei 2>&1 | norm >$tmp/doc
 cmp -s $tmp/doc compiler/tests/doc/geo.json || { echo "FAIL doc: eiderc doc --json compiler/tests/doc/shapes/util/geo.ei"; diff compiler/tests/doc/geo.json $tmp/doc | head -10; d_ok=0; }
 for p in core std packages/*/; do
   case $p in packages/*) [ -f "${p}eider.toml" ] || continue ;; esac  # leftovers of removed packages
+  needs_vendor "${p%/}" && { echo "skip doc: eiderc doc --json $p $novendor"; continue; }
   $new doc --json "$p" >$tmp/doc 2>$tmp/doc_err || { echo "FAIL doc: eiderc doc --json $p exits $?"; d_ok=0; }
   [ -s $tmp/doc_err ] && { echo "FAIL doc: eiderc doc --json $p warns"; head -5 $tmp/doc_err; d_ok=0; }
 done

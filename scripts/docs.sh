@@ -3,8 +3,9 @@
 #   sh scripts/docs.sh [eider-doc build options]   builds it into target/site
 #   sh scripts/docs.sh test                       runs the doc tests of the pages and of
 #                                                 the doc comments of core, std and packages/*
-# Needs only a C compiler: the compiler comes from the seed (scripts/ei) and eider-doc is
-# built with it. When the seed's compiler has no working `eiderc doc` (a compiler change that
+# Needs a C compiler, and the pinned eider-markdown and eider-json (fetched on first use:
+# scripts/vendor.sh): the compiler comes from the seed (scripts/ei) and eider-doc is built
+# with it. When the seed's compiler has no working `eiderc doc` (a compiler change that
 # hasn't reached the seed yet), this uses compiler/ as the seed builds it (target/eiderc-next,
 # rebuilt when compiler/, std/ or core/ is newer), and builds eider-doc with that.
 cd "$(dirname "$0")/.." || exit 1
@@ -20,8 +21,11 @@ else
   EIDERC=$(pwd)/$next
 fi
 export EIDERC
+# eider-doc reads Markdown and JSON with eider-markdown and eider-json, pinned releases
+# fetched into .vendor/ on first use and hash-checked (scripts/vendor.sh); exit 3 without them
+sh scripts/vendor.sh fetch json markdown || exit $?
 bin=target/eider-doc
-if [ ! -x $bin ] || [ -n "$(find packages/doc vendor/markdown vendor/json std core -name '*.ei' -newer $bin 2>/dev/null | head -1)" ]; then
+if [ ! -x $bin ] || [ -n "$(find packages/doc .vendor/markdown .vendor/json std core -name '*.ei' -newer $bin 2>/dev/null | head -1)" ]; then
   "$EIDERC" build packages/doc/main.ei -o $bin >target/eider-doc.log 2>&1 || { cat target/eider-doc.log; echo "docs: cannot build eider-doc"; exit 3; }
 fi
 if [ "$1" = test ]; then

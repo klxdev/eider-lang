@@ -1581,7 +1581,9 @@ import your own module by the package's name, or import a toolchain module (`imp
 **A package that can't be located**: the program's `eider.lock` is missing, has no entry
 for the package, or points at a directory that doesn't exist, or an `eider.toml` or
 `eider.lock` doesn't parse. The fix (as help) is to run `eider-pkg fetch` in the package's
-directory. It needs a package; see [`tests/checks/fail/e0810_no_lock.ei`](../../../tests/checks/fail/e0810_no_lock.ei) and
+directory. Also a git package found only in `vendor/<name>`, where `eider-pkg vendor` wrote
+before `.vendor/`: the help says to move it (`mv vendor .vendor`, or run `eider-pkg vendor`).
+It needs a package; see [`tests/checks/fail/e0810_no_lock.ei`](../../../tests/checks/fail/e0810_no_lock.ei) and
 [`tests/checks/fail/lib/nolock/`](../../../tests/checks/fail/lib/nolock/), a package with a dependency and no `eider.lock`.
 
 ```toml

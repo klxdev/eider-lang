@@ -1,11 +1,15 @@
 #!/bin/sh
 # Build (when its sources changed) and run eider-pkg, the package manager written in Eider.
-# The compiler is the seed's eiderc (scripts/ei, only a C compiler).
+# The compiler is the seed's eiderc (scripts/ei, only a C compiler). eider-pkg reads TOML
+# with eider-toml, a pinned release fetched into .vendor/toml on first use and hash-checked
+# (scripts/vendor.sh; LAYERS.md, "Vendored libraries"): exit 3, with the reason, when no
+# source has it (no checkout, mirror or tarball, and no network).
 root="$(cd "$(dirname "$0")/.." && pwd)"
 bin="$root/target/eider-pkg"
 "$root/scripts/ei" --help >/dev/null || exit 3
+sh "$root/scripts/vendor.sh" fetch toml || exit $?
 ec="$root/target/eiderc"
-newest=$(find "$root/packages/pkg" "$root/vendor/toml" "$root/std" "$root/core" -name '*.ei' -newer "$bin" 2>/dev/null | head -1)
+newest=$(find "$root/packages/pkg" "$root/.vendor/toml" "$root/std" "$root/core" -name '*.ei' -newer "$bin" 2>/dev/null | head -1)
 if [ ! -x "$bin" ] || [ -n "$newest" ]; then
   mkdir -p "$root/target"
   EIDER_CACHE=off EIDER_ROOT="$root" "$ec" build "$root/packages/pkg/main.ei" -o "$bin" || exit 3

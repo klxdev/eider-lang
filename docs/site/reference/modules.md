@@ -228,12 +228,14 @@ grants = ["net", "io"]
 The compiler reads it to find a package's directory:
 
 - a `path+<dir>` source is `<dir>`, relative to the lock file;
-- a `git+` source is `vendor/<name>` beside the lock when that directory exists, else the
+- a `git+` source is `.vendor/<name>` beside the lock when that directory exists, else the
   package store, `$EIDER_HOME/pkg/<name>-<the first 16 hex digits of the hash>`
   (`EIDER_HOME` defaults to `~/.eider`).
 
 No lock, no entry for the package, a missing directory, or an `eider.toml`/`eider.lock`
-that doesn't parse is E0810, whose fix is to run `eider-pkg fetch`. The compiler never
+that doesn't parse is E0810, whose fix is to run `eider-pkg fetch`. So is a git package found
+only in `vendor/<name>`, where `eider-pkg vendor` wrote before `.vendor/`: move it (`mv vendor
+.vendor`). The compiler never
 touches the network and doesn't re-hash the store; eider-pkg checks hashes when it fetches.
 
 `eider = "0.1"` says which toolchain MAJOR.MINOR the package is written for. Before 1.0 a
@@ -257,7 +259,7 @@ manifest, resolves versions and fills the store. Only `add`, `remove`, `fetch`, 
 | `eider-pkg remove <name>` | removes a dependency |
 | `eider-pkg fetch [--offline]` | resolves (keeping the lock's pins), writes `eider.lock`, fills the store |
 | `eider-pkg update [--offline]` | resolves again, ignoring the lock |
-| `eider-pkg vendor` | copies the git packages into `vendor/` for offline builds |
+| `eider-pkg vendor` | copies the git packages into `.vendor/` for offline builds |
 | `eider-pkg tree` | prints the locked graph |
 | `eider-pkg hash <dir>` | the content hash of a directory |
 

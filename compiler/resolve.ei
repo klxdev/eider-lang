@@ -1265,8 +1265,21 @@ fn locate(inout p: Program, m: u32, spec: List[u8], n: ast.Node) -> Result[List[
             if bytes.eq(e.name, head) {
                 found = true
                 if e.git {
-                    let vendored = join(join(ld, sys.lit("vendor")), head)
-                    dir = if fs.is_dir(vendored) { vendored } else { join(join(eider_home(), sys.lit("pkg")), lock.store_leaf(head, e.hash)) }
+                    // `eider-pkg vendor`'s copy (.vendor/<name>), else the store's; a copy in
+                    // vendor/, where eider-pkg vendored before .vendor/, is never read silently
+                    let vendored = join(join(ld, sys.lit(".vendor")), head)
+                    let old = join(join(ld, sys.lit("vendor")), head)
+                    if fs.is_dir(vendored) {
+                        dir = vendored
+                    } else if fs.is_dir(old) {
+                        let mut msg = quoted("package `", head, "` is vendored in ")
+                        bytes.append(inout msg, old)
+                        bytes.append(inout msg, sys.lit(", which is no longer read: vendored packages are in .vendor/"))
+                        let h = quoted("move them: `mv vendor .vendor` in ", ld, " (or run `eider-pkg vendor` there and remove vendor/)")
+                        return Err(pkg_diag("E0810", n, msg, h))
+                    } else {
+                        dir = join(join(eider_home(), sys.lit("pkg")), lock.store_leaf(head, e.hash))
+                    }
                 } else {
                     dir = fs.normalize(join(ld, e.path))
                 }

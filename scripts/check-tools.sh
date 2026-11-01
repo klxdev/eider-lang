@@ -24,16 +24,19 @@
 #   points at this checkout is fetched (`eider-pkg fetch`), built (its scripts/build.sh, which
 #   builds the compiler from this checkout's compiler/) and tested (tests/run.sh: the scripted
 #   sessions, and tests/clean.sh, no diagnostics on any file of examples/ and std/). Its json
-#   dependency comes from the eider-json checkout, else this checkout's vendor/json
-#   (EIDER_PKG_OVERRIDE). The repository itself is left alone.
+#   dependency comes from the eider-json checkout, else this checkout's .vendor/json, the
+#   pinned release (EIDER_PKG_OVERRIDE). The repository itself is left alone.
 # - tree-sitter-eider: its scripts/check-eider-lang.sh on this checkout (every .ei file parses
 #   without ERROR or MISSING nodes, apart from the fixtures meant not to parse).
 # - each library: its VERSION must have this checkout's MAJOR.MINOR (before 1.0 they move
 #   together), then a copy of it is built and tested (scripts/test.sh, with EIDER_ROOT this
 #   checkout) with its git dependencies taken from the sibling checkouts (EIDER_PKG_OVERRIDE,
-#   through the EIDER_<NAME> its scripts/env.sh reads), json from vendor/json when there is
+#   through the EIDER_<NAME> its scripts/env.sh reads), json from .vendor/json when there is
 #   no eider-json checkout. One whose dependency has no checkout is skipped (it would need
 #   the network). The store is a fresh $EIDER_HOME.
+# eider-pkg (for the analyzer and the libraries) needs .vendor/toml, and json's fallback
+# .vendor/json: both are fetched by scripts/vendor.sh (from the checkouts when they are here);
+# what needs one that can't be fetched is skipped.
 #
 # Each prints `ok   ...`, `FAIL ...` (with the failures under it) or `skip: <reason>`. Exits 1
 # if one fails, else 0.
@@ -74,13 +77,25 @@ else
 fi
 
 # The libraries' checkouts, exported as the EIDER_<NAME> their scripts/env.sh reads (json
-# falls back to vendor/json, the release this checkout pins).
+# falls back to .vendor/json, the release this checkout pins).
 LIBS="toml json markdown http rpc openapi"
 for n in $LIBS; do
   var=EIDER_$(echo "$n" | tr 'a-z' 'A-Z')
   if d=$(repo_dir "eider-$n" "$var"); then eval "$var=\$d"; export "$var"; else unset "$var"; fi
 done
-[ -n "$EIDER_JSON" ] || { EIDER_JSON=$here/vendor/json; export EIDER_JSON; json_from="vendor/json"; }
+# fetched: vendor_ok <name>: .vendor/<name> is the pinned release (else $novendor says why)
+vendor_ok() {
+  sh "$here/scripts/vendor.sh" fetch "$1" > "$T/vendor-$1" 2>&1 && return 0
+  novendor="no checkout of eider-$1 here, and .vendor/$1 can't be fetched ($(grep 'cannot fetch' "$T/vendor-$1" | head -1 | sed 's/^vendor.sh: //; s/, no source has it.*//'): sh scripts/vendor.sh fetch $1)"
+  grep -q 'cannot fetch' "$T/vendor-$1" || { echo "FAIL vendor: sh scripts/vendor.sh fetch $1"; sed 's/^/  /' "$T/vendor-$1"; fail=1; }
+  return 1
+}
+nopkg=
+vendor_ok toml || nopkg="eider-pkg can't be built: $novendor"
+nojson=
+if [ -z "$EIDER_JSON" ]; then
+  if vendor_ok json; then EIDER_JSON=$here/.vendor/json; export EIDER_JSON; json_from=".vendor/json"; else nojson=$novendor; fi
+fi
 json_from=${json_from:-$EIDER_JSON}
 
 # ---- eider-analyzer
@@ -88,6 +103,8 @@ if ! an=$(repo_dir eider-analyzer EIDER_ANALYZER) || [ ! -f "$an/scripts/build.s
   echo "skip: eider-analyzer: no repository at ${EIDER_ANALYZER:-$sib/eider-analyzer} (set EIDER_ANALYZER or EIDER_SIBLINGS)"
 elif ! command -v "${CC:-cc}" >/dev/null 2>&1; then
   echo "skip: eider-analyzer: no C compiler (${CC:-cc})"
+elif [ -n "$nopkg" ] || [ -n "$nojson" ]; then
+  echo "skip: eider-analyzer: ${nopkg:-$nojson}"
 else
   w=$T/eider-analyzer
   copy "$an" "$w"
@@ -135,7 +152,7 @@ needs() { case $1 in http) echo "" ;; rpc|openapi) echo "http" ;; *) echo "" ;; 
 for n in $LIBS; do
   var=EIDER_$(echo "$n" | tr 'a-z' 'A-Z')
   eval "d=\${$var:-}"
-  if [ -z "$d" ] || [ "$d" = "$here/vendor/$n" ]; then
+  if [ -z "$d" ] || [ "$d" = "$here/.vendor/$n" ]; then
     echo "skip: eider-$n: no repository at $sib/eider-$n (set $var or EIDER_SIBLINGS)"
     continue
   fi
@@ -149,6 +166,8 @@ for n in $LIBS; do
     echo "skip: eider-$n: needs a checkout of$missing (else it fetches it from its repository)"
     continue
   fi
+  if [ -n "$nopkg" ]; then echo "skip: eider-$n: $nopkg"; continue; fi
+  if [ -n "$nojson" ] && grep -q '^\[deps\.json\]' "$d/eider.toml"; then echo "skip: eider-$n: $nojson"; continue; fi
   v=$(tr -d ' \n' < "$d/VERSION" 2>/dev/null)
   if [ "${v%.*}" != "$series" ]; then
     echo "FAIL eider-$n: VERSION is \`$v\`, but this checkout is Eider $(cat VERSION): libraries keep the toolchain's MAJOR.MINOR before 1.0 (LAYERS.md)"

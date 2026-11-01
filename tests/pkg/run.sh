@@ -52,7 +52,7 @@ store_dir() { h=$(grep -A4 "^name = \"$2\"" "$T/$1/eider.lock" | sed -n 's/^hash
 mask() { sed -e "s|$T|<T>|g" -e 's/sha256-[0-9a-f]\{64\}/sha256-<hash>/g' -e 's/[0-9a-f]\{40\}/<commit>/g' -e 's|pkg/\([a-z0-9_]*\)-[0-9a-f]\{16\}|pkg/\1-<hash16>|g'; }
 # tree_hash <dir>: the store's content hash, recomputed independently with sha256sum
 tree_hash() {
-  (cd "$1" && find . -type f ! -path './.git/*' ! -path './deps/*' ! -path './vendor/*' | sed 's|^\./||' | LC_ALL=C sort |
+  (cd "$1" && find . -type f ! -path './.git/*' ! -path './deps/*' ! -path './vendor/*' ! -path './.vendor/*' | sed 's|^\./||' | LC_ALL=C sort |
     while read -r f; do printf '%s\000%s\n' "$f" "$(sha256sum < "$f" | cut -d' ' -f1)"; done | sha256sum | sed 's/^/sha256-/; s/ .*//')
 }
 
@@ -422,7 +422,7 @@ check "runs the new code" "app
 exit 0" "$(run app)"
 check "a rev stays put on update" "gamma#$GAMMA" "$(grep -o "gamma#[0-9a-f]*" "$T/app/eider.lock")"
 
-# ---- content hashes: a modified store or vendor dir is detected
+# ---- content hashes: a modified store or .vendor dir is detected
 
 UTILDIR=$(store_dir app util)
 chmod -R u+w "$UTILDIR"
@@ -436,52 +436,80 @@ exit 0" "$(pkg app fetch)"
 
 # ---- vendor, then build offline with no mirrors and no store
 
-check "vendor" "vendored git packages into vendor/
+check "vendor" "vendored git packages into .vendor/
 exit 0" "$(pkg app vendor)"
-check "vendor/ holds the git packages" "alpha
+check ".vendor/ holds the git packages" "alpha
 beta
 gamma
-util" "$(ls "$T/app/vendor")"
+util" "$(ls "$T/app/.vendor")"
 cp "$T/app/eider.lock" "$T/lock3"
 chmod -R u+w "$EIDER_HOME"
 rm -rf "$EIDER_HOME"
-check "fetch --offline from vendor/" "locked 5 package(s)
+check "fetch --offline from .vendor/" "locked 5 package(s)
 exit 0" "$(pkg app fetch --offline)"
 cmp -s "$T/lock3" "$T/app/eider.lock" && echo "ok   vendoring doesn't change eider.lock" || { echo "FAIL vendoring doesn't change eider.lock"; diff "$T/lock3" "$T/app/eider.lock"; fail=1; }
 check "the store is gone" "no store" "$(ls "$EIDER_HOME/pkg" 2>/dev/null || echo "no store")"
-check "runs from vendor/" "app
+check "runs from .vendor/" "app
 42
 40
 104
 7
 exit 0" "$(run app)"
-cp "$T/app/vendor/util/util.ei" "$T/util.ei.bak"
-printf 'pub fn level() -> i64 { 666 }\n' > "$T/app/vendor/util/util.ei"
-check "a tampered vendor dir is detected" "eider-pkg: vendor/ doesn't match eider.lock for \`util\`: sha256-<hash> vs sha256-<hash>
+cp "$T/app/.vendor/util/util.ei" "$T/util.ei.bak"
+printf 'pub fn level() -> i64 { 666 }\n' > "$T/app/.vendor/util/util.ei"
+check "a tampered vendor dir is detected" "eider-pkg: .vendor/ doesn't match eider.lock for \`util\`: sha256-<hash> vs sha256-<hash>
 exit 1" "$(pkg app fetch --offline | mask)"
-cp "$T/util.ei.bak" "$T/app/vendor/util/util.ei"
-mv "$T/app/vendor" "$T/vendor.off"
-check "offline with no vendor/ and no store fails" "eider-pkg: offline: file://<T>/repos/alpha has no local copy of 1.0.0
+cp "$T/util.ei.bak" "$T/app/.vendor/util/util.ei"
+mv "$T/app/.vendor" "$T/vendor.off"
+check "offline with no .vendor/ and no store fails" "eider-pkg: offline: file://<T>/repos/alpha has no local copy of 1.0.0
 exit 1" "$(pkg app fetch --offline)"
 check "online, a locked commit is fetched again" "locked 5 package(s)
 exit 0" "$(pkg app fetch)"
 cmp -s "$T/lock3" "$T/app/eider.lock" && echo "ok   refetching doesn't change eider.lock" || { echo "FAIL refetching doesn't change eider.lock"; diff "$T/lock3" "$T/app/eider.lock"; fail=1; }
-mv "$T/vendor.off" "$T/app/vendor"
+mv "$T/vendor.off" "$T/app/.vendor"
+
+# ---- the old layout: vendor/, where eider-pkg vendored before .vendor/, is never read
+# silently: fetch notes it, the compiler stops with E0810 and says how to move it, and
+# `eider-pkg vendor` writes .vendor/ and says vendor/ can go
+mv "$T/app/.vendor" "$T/app/vendor"
+check "fetch notes an old vendor/" "eider-pkg: note: vendor/alpha is no longer read: vendored packages are in .vendor/ (the compiler stops with E0810 while vendor/ holds a package that .vendor/ doesn't); run \`eider-pkg vendor\` (or \`mv vendor .vendor\`), then remove vendor/
+locked 5 package(s)
+exit 0" "$(pkg app fetch)"
+got=$(run app | mask)
+check "the compiler does not read an old vendor/ (an E0810 per git import)" "3
+3
+exit 1" "$(printf '%s\n' "$got" | grep -c "E0810.*is vendored in <T>/app/vendor/[a-z]*, which is no longer read: vendored packages are in .vendor/"; printf '%s\n' "$got" | grep -c 'help: move them: `mv vendor .vendor` in <T>/app (or run `eider-pkg vendor` there and remove vendor/)'; printf '%s\n' "$got" | tail -1)"
+check "vendor migrates an old vendor/" "vendored git packages into .vendor/
+eider-pkg: note: vendor/, where eider-pkg vendored before, is no longer read; check that nothing else lives there and remove it (\`git rm -r vendor\` if it is committed)
+exit 0
+alpha
+beta
+gamma
+util" "$(pkg app vendor; ls "$T/app/.vendor")"
+check "with .vendor/, an old vendor/ is ignored" "app
+42
+40
+104
+7
+exit 0" "$(run app)"
+check "and fetch says nothing" "locked 5 package(s)
+exit 0" "$(pkg app fetch)"
+rm -rf "$T/app/vendor"
 
 # ---- remove
 
 check "remove" "locked 4 package(s)
 exit 0" "$(pkg app remove gamma)"
 check "remove drops the table" "0" "$(grep -c gamma "$T/app/eider.toml")"
-check "vendor again drops what's gone" "vendored git packages into vendor/
+check "vendor again drops what's gone" "vendored git packages into .vendor/
 exit 0
 alpha
 beta
-util" "$(pkg app vendor; ls "$T/app/vendor")"
-printf 'pub fn level() -> i64 { 666 }\n' > "$T/app/vendor/util/util.ei"
-check "vendor repairs a modified vendor/" "vendored git packages into vendor/
+util" "$(pkg app vendor; ls "$T/app/.vendor")"
+printf 'pub fn level() -> i64 { 666 }\n' > "$T/app/.vendor/util/util.ei"
+check "vendor repairs a modified .vendor/" "vendored git packages into .vendor/
 exit 0
-pub fn level() -> i64 { 4 }" "$(pkg app vendor; cat "$T/app/vendor/util/util.ei")"
+pub fn level() -> i64 { 4 }" "$(pkg app vendor; cat "$T/app/.vendor/util/util.ei")"
 check "remove drops it from eider.lock" "0" "$(grep -c gamma "$T/app/eider.lock")"
 got=$(run app)
 check "a removed dependency can't be imported" "1

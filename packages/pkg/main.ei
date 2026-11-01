@@ -5,7 +5,7 @@
 //!   eider-pkg [-C dir] remove <name>
 //!   eider-pkg [-C dir] fetch [--offline]      resolve (keeping eider.lock pins), write eider.lock
 //!   eider-pkg [-C dir] update [--offline]     re-resolve ignoring eider.lock
-//!   eider-pkg [-C dir] vendor                 copy git packages into vendor/ (offline builds)
+//!   eider-pkg [-C dir] vendor                 copy git packages into .vendor/ (offline builds)
 //!   eider-pkg [-C dir] tree                   print the locked graph
 //!   eider-pkg hash <dir>                      content hash of a directory
 //!   eider-pkg --version                       `eider-pkg <version>` (the toolchain's, VERSION)
@@ -17,7 +17,7 @@
 //! what each package uses, to hold it to its grant (caps.ei).
 //!
 //! The compiler finds dependencies itself: `import "json"` goes through eider.lock to the
-//! package's directory (a path package's own, vendor/<name>, or the store's
+//! package's directory (a path package's own, .vendor/<name>, or the store's
 //! pkg/<name>-<hash16>; docs/compiler.md, "C8.3: packages and modules"). So fetch writes
 //! eider.lock and fills the store, and links nothing: the deps/ link farm of earlier versions
 //! is gone (a deps/ an earlier eider-pkg made, recognisable by its deps/.all, is removed).
@@ -89,7 +89,29 @@ fn toolchain() -> Result[List[u8], String] uses io, fs {
 // ---- fetch / update / vendor
 
 fn sync(c: Cli, use_lock: bool, offline: bool) -> Result[List[lockfile.Pkg], String] uses io, fs, net {
-    sync_from(c, use_lock, offline, fs.join(c.dir, sys.lit("vendor")))
+    let pkgs = sync_from(c, use_lock, offline, fs.join(c.dir, sys.lit(".vendor")))?
+    match old_vendor(c, pkgs) {
+        Some(n) => {
+            let mut m = sys.lit("eider-pkg: note: vendor/")
+            bytes.append(inout m, n)
+            bytes.append(inout m, sys.lit(" is no longer read: vendored packages are in .vendor/ (the compiler stops with E0810 while vendor/ holds a package that .vendor/ doesn't); run `eider-pkg vendor` (or `mv vendor .vendor`), then remove vendor/"))
+            io.errln(m)
+        }
+        None => {}
+    }
+    Ok(pkgs)
+}
+
+/// A locked git package with a copy in vendor/, where eider-pkg vendored before .vendor/,
+/// and none in .vendor/: the name of the first.
+fn old_vendor(c: Cli, pkgs: List[lockfile.Pkg]) -> Option[List[u8]] uses fs {
+    let old = fs.join(c.dir, sys.lit("vendor"))
+    if !fs.is_dir(old) { return None }
+    let hidden = fs.join(c.dir, sys.lit(".vendor"))
+    for p in pkgs {
+        if p.git && fs.is_dir(fs.join(old, p.name)) && !fs.is_dir(fs.join(hidden, p.name)) { return Some(p.name) }
+    }
+    None
 }
 
 /// Resolve and write eider.lock. Pinned git packages come from `vendor` when it holds them
@@ -116,10 +138,11 @@ fn report(pkgs: List[lockfile.Pkg]) uses io {
 }
 
 fn vendor(c: Cli) -> Result[bool, String] uses io, fs, net {
-    // from the store, so a stale vendor/ is replaced rather than reported
+    // from the store, so a stale .vendor/ is replaced rather than reported
     let none: List[u8] = List.new()
     let pkgs = sync_from(c, true, c.offline, none)?
-    let vdir = fs.join(c.dir, sys.lit("vendor"))
+    let had_old = old_vendor(c, pkgs).is_some()
+    let vdir = fs.join(c.dir, sys.lit(".vendor"))
     // drop what the graph no longer has
     if fs.is_dir(vdir) {
         for old in fs.list(vdir)? {
@@ -139,9 +162,12 @@ fn vendor(c: Cli) -> Result[bool, String] uses io, fs, net {
             }
         }
     }
-    // resolve again from vendor/ alone: it must match eider.lock (the compiler reads it there)
-    sync(c, true, true)?
-    say("vendored git packages into vendor/")
+    // resolve again from .vendor/ alone: it must match eider.lock (the compiler reads it there)
+    sync_from(c, true, true, vdir)?
+    say("vendored git packages into .vendor/")
+    if had_old {
+        io.errln(sys.lit("eider-pkg: note: vendor/, where eider-pkg vendored before, is no longer read; check that nothing else lives there and remove it (`git rm -r vendor` if it is committed)"))
+    }
     Ok(true)
 }
 
