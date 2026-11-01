@@ -178,6 +178,12 @@ else
   echo "install.sh: add eider to your PATH (install.sh --modify-path does it for you):"
   echo "  $line"
 fi
+# building programs with the LLVM backend needs clang from LLVM 17 or newer: warn only
+cc=${EIDER_LLVM_CC:-clang}
+major=$("$cc" --version 2>/dev/null | sed -n 's/.*version \([0-9][0-9]*\).*/\1/p' | head -1)
+if [ -z "$major" ] || [ "$major" -lt 17 ]; then
+  echo "install.sh: warning: building Eider programs needs clang from LLVM 17 or newer ($cc: ${major:+LLVM $major}${major:-not found}); install it (Fedora: dnf install clang; Debian/Ubuntu: apt install clang-17 or newer), or set EIDER_LLVM_CC" >&2
+fi
 if [ -n "$toolchain" ]; then
   EIDER_HOME=$home "$home/bin/eider" toolchain install
 else

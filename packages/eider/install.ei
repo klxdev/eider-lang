@@ -327,7 +327,57 @@ fn unpack(src: source.Source, r: source.Release, t: List[u8], top: List[u8], fil
     Ok(true)
 }
 
-pub type Updated = { version: vers.Version, path: List[u8], already: bool }
+/// The backend an installed toolchain's eiderc builds programs with (`backend` in its
+/// toolchain.toml: "c" or "llvm"; "" when it doesn't say).
+pub fn backend_of(dir: List[u8]) -> List[u8] uses fs {
+    match fs.read(fs.join(dir, "toolchain.toml".bytes())) {
+        Ok(t) => manifest_value(t, "backend")
+        Err(_) => List.new()
+    }
+}
+
+/// With the LLVM backend, building a program needs clang from LLVM 17 or newer
+/// ($EIDER_LLVM_CC, default clang). None when it is there (or the toolchain is C only),
+/// else what to install.
+pub fn clang_problem(backend: List[u8]) -> Option[String] uses io, fs, net {
+    if bytes.eq(backend, "c".bytes()) { return None }
+    let mut cc = getenv("EIDER_LLVM_CC")
+    if cc.len() == 0 { cc = "clang".bytes() }
+    let mut argv: List[List[u8]] = List.new()
+    argv.push(cc)
+    argv.push("--version".bytes())
+    let mut major: u64 = 0
+    match proc.run_with(argv, proc.limited(15000)) {
+        Ok(o) => {
+            if o.code == 0 {
+                match bytes.find(o.out, "version ".bytes(), 0) {
+                    Some(i) => {
+                        let rest = bytes.slice(o.out, i + 8, o.out.len())
+                        let mut d: List[u8] = List.new()
+                        for b in rest {
+                            if !bytes.is_digit(b) { break }
+                            d.push(b)
+                        }
+                        major = bytes.parse_u64(d).unwrap_or(0)
+                    }
+                    None => {}
+                }
+            }
+        }
+        Err(_) => {}
+    }
+    if major >= 17 { return None }
+    let mut m = String.from("building programs with this toolchain needs clang from LLVM 17 or newer (")
+    m.append(text(cc))
+    if major == 0 { m.push_str(" was not found") } else {
+        m.push_str(" is LLVM ")
+        m.append(String.from_int(major as i64))
+    }
+    m.push_str("): install it (Fedora: dnf install clang; Debian/Ubuntu: apt install clang-17 or newer), or set EIDER_LLVM_CC to one")
+    Some(m)
+}
+
+pub type Updated ={ version: vers.Version, path: List[u8], already: bool }
 
 /// `eider self update`: the latest release's `eider` for this target, checked like a
 /// toolchain, replaces $EIDER_HOME/bin/eider.

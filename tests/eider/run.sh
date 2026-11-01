@@ -51,7 +51,7 @@ mkrel() {
   done
   printf '#!/bin/sh\necho "fake eider %s"\n' "$v" > "$s/bin/eider"; chmod 755 "$s/bin/eider"
   echo "$v" > "$s/VERSION"
-  printf '[toolchain]\nversion = "%s"\ntarget = "%s"\n' "$v" "$TGT" > "$s/toolchain.toml"
+  printf '[toolchain]\nversion = "%s"\ntarget = "%s"\nbackend = "llvm"\n' "$v" "$TGT" > "$s/toolchain.toml"
   tar -C "$T/stage-$v" -czf "$d/eider-$v-$TGT.tar.gz" "eider-$v-$TGT"
   cp "$s/bin/eider" "$d/eider-$v-$TGT"
   sums "$v"
@@ -90,6 +90,10 @@ check "install --json" '"already_installed":false,"default":false' "$out"
 out=$(e toolchain install 9.9); rc=$?
 check "install a version no release has" "no release matches 9.9 in the release directory $REL (there are: 1.2.0, 1.2.3, 1.3.0)" "$out"; [ $rc = 1 ] && ok || bad "exit status of a failed install: $rc"
 out=$(e toolchain list); check "list" "$(printf 'installed:\n  1.2.3\n  1.2.0 (default)\navailable (the release directory %s):\n  1.3.0\n  1.2.3 (installed)\n  1.2.0 (installed)' "$REL")" "$out"
+out=$(EIDER_LLVM_CC=$T/no-clang e toolchain install 1.2.0 --force); check "no clang: install works, with a warning" "eider: warning: building programs with this toolchain needs clang from LLVM 17 or newer ($T/no-clang was not found)" "$out"
+check "no clang: still installed" "installed eider 1.2.0" "$out"
+printf '#!/bin/sh\necho "clang version 15.0.7"\n' > "$T/bin/clang15"; chmod 755 "$T/bin/clang15"
+out=$(EIDER_LLVM_CC=$T/bin/clang15 e version); check "clang too old" "is LLVM 15)" "$out"
 grep -q '^default = "1.2.0"$' "$H/config.toml" && ok || bad "config.toml has no default" "$(cat "$H/config.toml")"
 
 # ---- selection and dispatch

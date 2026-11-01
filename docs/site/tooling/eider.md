@@ -107,7 +107,10 @@ was chosen and why:
 ```
 
 A toolchain's binaries are static executables; the compiler builds programs with your C
-compiler (`cc`, or `$CC`), as it always does. `toolchain.toml` records the version, the
+compiler (`cc`, or `$CC`), and with the LLVM backend (`backend = "llvm"` in
+toolchain.toml) with clang from LLVM 17 or newer (`$EIDER_LLVM_CC`, default `clang`).
+Installing works without clang, but `eider toolchain install`, `eider version` and
+`install.sh` warn, naming what to install, when it is missing or too old. `toolchain.toml` records the version, the
 target, the commit and how it was built.
 
 ## Verification

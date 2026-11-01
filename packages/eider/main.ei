@@ -305,7 +305,18 @@ fn check_flags(args: List[List[u8]], allowed: str) uses io {
     }
 }
 
-fn report_install(c: Ctx, d: install.Done, as_json: bool) uses io, fs {
+fn warn_clang(dir: List[u8]) uses io, fs, net {
+    match install.clang_problem(install.backend_of(dir)) {
+        Some(m) => {
+            let mut l = "eider: warning: ".bytes()
+            bytes.append(inout l, m.bytes())
+            io.errln(l)
+        }
+        None => {}
+    }
+}
+
+fn report_install(c: Ctx, d: install.Done, as_json: bool) uses io, fs, net {
     // the first toolchain installed becomes the default
     let mut made_default = false
     if c.cfg.default.len() == 0 || !home.is_installed(home.toolchain_dir(c.home, ok_version(c.cfg.default))) {
@@ -320,6 +331,7 @@ fn report_install(c: Ctx, d: install.Done, as_json: bool) uses io, fs {
         jfield(inout o, "default", jbool(made_default || bytes.eq(c.cfg.default, vers.text(d.version))))
         o.push(125)
         say(o)
+        warn_clang(d.dir)
         return
     }
     let mut l = if d.already { "eider ".bytes() } else { "installed eider ".bytes() }
@@ -335,6 +347,7 @@ fn report_install(c: Ctx, d: install.Done, as_json: bool) uses io, fs {
         bytes.append(inout m, " is the default toolchain (eider toolchain use <version> changes it)".bytes())
         io.errln(m)
     }
+    warn_clang(d.dir)
 }
 
 /// `v` as a version, or 0.0.0 (never installed) when it is not one.
@@ -542,7 +555,7 @@ fn self_update(c: Ctx, args: List[List[u8]]) uses io, fs, net {
     io.errln(l)
 }
 
-fn show_version(c: Ctx, plus: List[u8], args: List[List[u8]]) uses io, fs {
+fn show_version(c: Ctx, plus: List[u8], args: List[List[u8]]) uses io, fs, net {
     check_flags(args, "--json")
     let sel = select.select(plus, getenv("EIDER_TOOLCHAIN"), cwd(), c.home, c.cfg.default)
     if has_flag(args, "--json") {
@@ -570,6 +583,7 @@ fn show_version(c: Ctx, plus: List[u8], args: List[List[u8]]) uses io, fs {
             bytes.append(inout t, ch.why)
             t.push(41)
             say(t)
+            if is(ch.tool.kind, "install") { warn_clang(ch.tool.root) }
         }
         Err(miss) => {
             match miss {

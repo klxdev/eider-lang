@@ -131,6 +131,10 @@ B=$out/$name
 rm -rf "$B" "$B.tar.gz"
 mkdir -p "$B"
 epoch=$(git log -1 --format=%ct HEAD)
+# the backend programs are built with: LLVM once it is eiderc's default (no --backend flag
+# left, the driver asks for clang: $EIDER_LLVM_CC), else C; eider warns when clang 17+ is missing
+backend=c
+if ! target/eiderc --help 2>&1 | grep -q -- "--backend" && grep -q EIDER_LLVM_CC compiler/driver.ei; then backend=llvm; fi
 host_arch=$(uname -m); case $host_arch in amd64) host_arch=x86_64 ;; arm64) host_arch=aarch64 ;; esac
 {
   echo "# RELEASE.toml: the components of Eider $V, released together (docs/site/tooling/releases.md)."
@@ -141,7 +145,7 @@ host_arch=$(uname -m); case $host_arch in amd64) host_arch=x86_64 ;; arm64) host
   echo "series = \"$S\""
   echo "date = \"$(git log -1 --format=%cs HEAD)\""
   echo "verified = $verified"
-  echo "backend = \"c\""
+  echo "backend = \"$backend\""
   echo "release_key = \"$key_id\"   # minisign key id of SHA256SUMS.minisig (packages/eider/release.pub)"
   for c in $COMPONENTS; do
     d=$(dir_of $c); cv=$(tr -d ' \n' < "$d/VERSION")
@@ -300,7 +304,8 @@ if [ -n "$binaries" ]; then
       echo "version = \"$V\""
       echo "target = \"$t\""
       echo "commit = \"$(git rev-parse HEAD)\""
-      echo "backend = \"c\""
+      echo "# llvm: building programs needs clang from LLVM 17+ (\$EIDER_LLVM_CC, default clang)"
+      echo "backend = \"$backend\""
       echo "built_with = \"zig $zig_version cc -target $arch-linux-musl (static)\""
       echo "tested = $tested"
       echo
