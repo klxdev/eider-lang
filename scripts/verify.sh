@@ -93,14 +93,18 @@ while IFS= read -r l; do case $l in "skip "*".vendor/"*) skip "compiler: ${l#ski
 grep -q FAIL $S/compiler && { echo "FAIL compiler (eiderc)"; grep -A6 '^FAIL' $S/compiler | head -20; fail=1; } || echo "ok   compiler (eiderc vs the recorded oracle, tests/oracle)"
 # llvm: the backend's C ABI test, its coverage (no function of the run tests or of the compiler
 # falls back to C) and its debug info (compiler/tests/llvm/run.sh; docs/compiler.md
-# "Backends"); the run tests' outputs are checked against the oracle by the compiler leg.
+# "Backends"); the run tests' outputs are checked against the oracle by the compiler leg; and
+# the units through the cache (tests/units/run.sh, with the compiler built from compiler/;
+# docs/compiler.md "C8.27: incremental builds").
 sh compiler/tests/llvm/run.sh target/eiderc > $S/llvm 2>&1; lrc=$?
 if [ $lrc = 2 ]; then
   skip "llvm: $(sed -n 's/^skip: //p' $S/llvm | head -1)"
 elif [ $lrc != 0 ]; then
   echo "FAIL llvm: sh compiler/tests/llvm/run.sh"; grep "^FAIL" $S/llvm | head -5; fail=1
+elif ! sh tests/units/run.sh target/eiderc-next > $S/llvmunits 2>&1; then
+  echo "FAIL llvm: sh tests/units/run.sh"; tail -5 $S/llvmunits; fail=1
 else
-  echo "ok   llvm ($(grep '^ok' $S/llvm | sed 's/^ok   llvm //; s/:.*//' | paste -sd, - | sed 's/,/, /g'): $(sed -n 's/^ok   llvm coverage: //p' $S/llvm))"
+  echo "ok   llvm ($(grep '^ok' $S/llvm | sed 's/^ok   llvm //; s/:.*//' | paste -sd, - | sed 's/,/, /g'): $(sed -n 's/^ok   llvm coverage: //p' $S/llvm); $(sed 's/^ok   llvm units: /units: /' $S/llvmunits))"
 fi
 sh scripts/selfhost.sh --from-seed >/dev/null 2>&1 && echo "ok   seed (seed/eiderc.c rebuilds itself with only a C compiler)" || { echo "FAIL seed: sh scripts/selfhost.sh --from-seed"; fail=1; }
 bash tests/export/run.sh | tail -1 | grep -q "^ok" && echo "ok   export (C and C++ consumers)" || { echo "FAIL export"; fail=1; }

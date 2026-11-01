@@ -1,0 +1,733 @@
+// build: the backend-independent half of incremental builds (docs/compiler.md, "C8.27:
+// incremental builds"): units compiled to objects through a content-addressed cache, in
+// parallel; objects linked into a program through a link cache; the cache's size limit and
+// `eiderc cache`. A backend only produces units (`Unit`: a text, the command that compiles it
+// and what else its object depends on); nothing here knows C or LLVM.
+//
+// Cache layout, under driver.cache_dir() (keys: `key`, SHA-256 over length-prefixed parts):
+//
+//   obj/<k2>/<key>.o   one unit's object; key over "eiderc unit 2", the compiler's identity
+//                      (`tool_id`: `<cc> --version` and the variables that change what it
+//                      finds), the compile command, the unit's extra parts (the headers it
+//                      includes), its extension and its text
+//   bin/<k2>/<key>     a linked program; key over "eiderc link 2", the linker's identity, the
+//                      link command, every object's key in order and the arguments after
+//                      the objects (-l libraries)
+//   lto/               the linker's own ThinLTO cache (release builds; the linker prunes it)
+//   tmp/eiderc-*/      work directories (driver.ei), one per process
+//   trimmed            stamp: when the size limit was last applied
+//
+// <k2> is the key's first two hex digits, so no directory grows large (fs.list sorts).
+//
+// Concurrency: an entry is made in the process's own work directory and renamed into place,
+// so another process sees no entry or a complete one; two processes making the same entry
+// both succeed and the last rename wins (the files are identical). A hit marks the entry used
+// (fd.touch). Eviction (`trim`) removes the least recently used entries until the cache is
+// under 90% of its limit, never one used in the last `GRACE_MS`, and re-checks an entry's time
+// just before removing it; a link that still loses an object to a concurrent `trim` or `clean`
+// recompiles what is missing and links again (driver.ei).
+
+import core.sys
+import std.bytes
+import std.fs
+import std.fd
+import std.io
+import std.env
+import std.child
+import std.time
+import std.proc
+import std.sort
+import eiderc.sha256
+
+fn s(x: str) -> List[u8] { sys.lit(x) }
+
+/// One unit: `text` compiled by `argv` (compiler and flags; `-c -o <obj> <source>` are
+/// added) into one object. The source is `file` when it is non-empty (a file on disk whose
+/// bytes are `text`), else `text` written to the work directory as `u<n>/<name><ext>` and
+/// compiled from `u<n>/` by relative names (so the object is the same whatever the work
+/// directory; argv's paths must then be absolute). `tool`
+/// identifies the compiler (`tool_id`); `deps` are further key parts (the bytes of headers
+/// the text includes).
+pub type Unit = { name: List[u8], ext: List[u8], text: List[u8], file: List[u8], argv: List[List[u8]], tool: List[u8], deps: List[List[u8]] }
+
+/// What `compile` did: the object of each unit (in the cache, or in the work directory),
+/// each unit's key, the units that were compiled (not in the cache), and `failed`: the first
+/// unit (in order) whose compile failed, -1 when none did, with `failed_src` its source.
+pub type Built = { objs: List[List[u8]], keys: List[List[u8]], compiled: List[usize], failed: i64, failed_src: List[u8] }
+
+/// Never evict an entry used this recently (a build in progress may be about to link it).
+pub const GRACE_MS: i64 = 600000
+
+/// How often a build applies the size limit (`maybe_trim`).
+pub const TRIM_EVERY_MS: i64 = 900000
+
+/// The default size limit: 5 GiB.
+pub const DEFAULT_MAX: u64 = 5368709120
+
+/// Lowercase hex SHA-256 of `parts`, each prefixed with its length and `:`, so no two lists of
+/// parts hash the same bytes. Streams the parts (sha256.update): nothing is concatenated.
+pub fn key(parts: List[List[u8]]) -> List[u8] {
+    let mut h = sha256.start(sha256.new())
+    for p in parts {
+        let mut pre = bytes.from_u64(p.len() as u64)
+        pre.push(58)
+        sha256.update(inout h, pre)
+        sha256.update(inout h, p)
+    }
+    bytes.hex(sha256.finish(h))
+}
+
+/// The cache path of an entry: <cache>/<kind>/<first two hex digits>/<key><suffix>.
+pub fn entry(cache: List[u8], kind: str, k: List[u8], suffix: str) -> List[u8] {
+    let mut name = k.copy()
+    bytes.append(inout name, s(suffix))
+    fs.join(fs.join(fs.join(cache, s(kind)), bytes.slice(k, 0, 2)), name)
+}
+
+/// What identifies the compiler `cc` beyond its command line: `<cc> --version` and the
+/// environment variables that change what it finds (LIBRARY_PATH, CPATH, C_INCLUDE_PATH).
+pub fn tool_id(cc: List[u8]) -> List[u8] uses io, fs, net {
+    let mut v: List[List[u8]] = List.new()
+    v.push(cc)
+    v.push(s("--version"))
+    let mut id: List[u8] = match proc.run_with(v, proc.captured()) {
+        Ok(o) => o.out
+        Err(_) => List.new()
+    }
+    for e in ["LIBRARY_PATH", "CPATH", "C_INCLUDE_PATH"] {
+        id.push(0)
+        match env.get(s(e)) {
+            Some(x) => { bytes.append(inout id, x) }
+            None => {}
+        }
+    }
+    id
+}
+
+/// The key of unit `u` (see the top of this file).
+pub fn unit_key(u: Unit) -> List[u8] {
+    let mut parts: List[List[u8]] = List.new()
+    parts.push(s("eiderc unit 2"))
+    parts.push(u.tool)
+    parts.push(bytes.from_u64(u.argv.len() as u64))
+    for a in u.argv { parts.push(a) }
+    parts.push(bytes.from_u64(u.deps.len() as u64))
+    for d in u.deps { parts.push(d) }
+    parts.push(u.ext)
+    parts.push(u.text)
+    key(parts)
+}
+
+/// Mark a cache entry used (eviction removes the least recently used first).
+fn used(path: List[u8]) uses fs {
+    match fd.touch(path) {
+        Ok(_) => {}
+        Err(_) => {}
+    }
+}
+
+/// Install `made` (a file in a work directory) at cache path `dest`, atomically; whether
+/// `dest` now exists.
+pub fn install(made: List[u8], dest: List[u8]) -> bool uses fs {
+    match fs.mkdir_all(fs.dirname(dest)) {
+        Ok(_) => {}
+        Err(_) => { return false }
+    }
+    match fs.rename(made, dest) {
+        Ok(_) => true
+        Err(_) => fs.exists(dest)
+    }
+}
+
+/// Compile `units` into objects: with a cache (`cache` non-empty) each unit whose object is
+/// there is a hit and isn't compiled; the rest are compiled in `dir`, at most `jobs` at a time
+/// (0: `cpus()`), and installed into the cache. `quiet`: the compilers' output is discarded
+/// (else it goes to our stdout and stderr).
+pub fn compile(units: List[Unit], cache: List[u8], dir: List[u8], jobs: u64, quiet: bool) -> Built uses io, fs, net, clock {
+    let mut objs: List[List[u8]] = List.new()
+    let mut keys: List[List[u8]] = List.new()
+    let mut cmds: List[List[List[u8]]] = List.new()
+    let mut which: List[usize] = List.new()
+    let mut made: List[List[u8]] = List.new()
+    let mut srcs: List[List[u8]] = List.new()
+    for i in 0..units.len() {
+        let u = units[i]
+        let k = unit_key(u)
+        keys.push(k)
+        if cache.len() > 0 {
+            let path = entry(cache, "obj", k, ".o")
+            if fs.exists(path) {
+                used(path)
+                objs.push(path)
+                continue
+            }
+            objs.push(path)
+        } else {
+            objs.push(List.new())
+        }
+        // a generated text is compiled in a directory of its own (u<n>/<name><ext>), from
+        // there and by relative names, so the object doesn't name the work directory (bitcode
+        // records its source's path, and ThinLTO's output would depend on it)
+        let mut sub = s("u")
+        bytes.append(inout sub, bytes.from_u64(i as u64))
+        let udir = fs.join(dir, sub)
+        let mut srcname = u.name.copy()
+        bytes.append(inout srcname, u.ext)
+        let mut oname = u.name.copy()
+        bytes.append(inout oname, s(".o"))
+        let mut argv: List[List[u8]] = List.new()
+        let mut src = u.file.copy()
+        let mut obj = fs.join(dir, sub)
+        if src.len() == 0 {
+            src = fs.join(udir, srcname)
+            let made_dir = match fs.mkdir_all(udir) {
+                Ok(_) => true
+                Err(_) => false
+            }
+            let wrote = match fs.write(src, u.text) {
+                Ok(_) => true
+                Err(_) => false
+            }
+            if !made_dir || !wrote {
+                let none: List[usize] = List.new()
+                return Built(objs, keys, none, i as i64, src)
+            }
+            obj = fs.join(udir, oname)
+            argv.push(s("sh"))
+            argv.push(s("-c"))
+            argv.push(s("cd \"$0\" && exec \"$@\""))
+            argv.push(udir)
+            for a in u.argv { argv.push(a) }
+            argv.push(s("-c"))
+            argv.push(s("-o"))
+            argv.push(oname)
+            argv.push(srcname)
+        } else {
+            bytes.append(inout obj, s(".o"))
+            for a in u.argv { argv.push(a) }
+            argv.push(s("-c"))
+            argv.push(s("-o"))
+            argv.push(obj)
+            argv.push(src)
+        }
+        cmds.push(argv)
+        which.push(i)
+        made.push(obj)
+        srcs.push(src)
+    }
+    let codes = run_jobs(cmds, jobs, quiet)
+    for j in 0..cmds.len() {
+        if codes[j] != 0 { return Built(objs, keys, which, which[j] as i64, srcs[j]) }
+    }
+    for j in 0..cmds.len() {
+        let i = which[j]
+        if cache.len() == 0 || !install(made[j], objs[i]) { objs[i] = made[j] }
+    }
+    Built(objs, keys, which, -1, List.new())
+}
+
+/// Link objects `objs` (whose unit keys are `keys`) with `argv` (the linker command, without
+/// `-o` and inputs), `nokey` (flags that don't change the program, so are not in the key: the
+/// job count, lld's cache directory) and then `post` (-l libraries) into `exe`; with a cache, the program is a
+/// cache entry (bin/, see the top) and `exe` only the scratch name. `tool` is the linker's
+/// tool_id. Returns the program's path, "" if the link failed (`quiet`: its output is then
+/// discarded, else on our stderr).
+pub fn link(argv: List[List[u8]], nokey: List[List[u8]], keys: List[List[u8]], objs: List[List[u8]], post: List[List[u8]], tool: List[u8], cache: List[u8], exe: List[u8], quiet: bool) -> List[u8] uses io, fs, net {
+    let mut bin: List[u8] = List.new()
+    if cache.len() > 0 {
+        let mut parts: List[List[u8]] = List.new()
+        parts.push(s("eiderc link 2"))
+        parts.push(tool)
+        parts.push(bytes.from_u64(argv.len() as u64))
+        for a in argv { parts.push(a) }
+        parts.push(bytes.from_u64(keys.len() as u64))
+        for k in keys { parts.push(k) }
+        parts.push(bytes.from_u64(post.len() as u64))
+        for p in post { parts.push(p) }
+        bin = entry(cache, "bin", key(parts), "")
+        if fs.exists(bin) {
+            used(bin)
+            return bin
+        }
+    }
+    let mut cmd = argv.copy()
+    for x in nokey { cmd.push(x) }
+    cmd.push(s("-o"))
+    cmd.push(exe)
+    for o in objs { cmd.push(o) }
+    for p in post { cmd.push(p) }
+    let ok = match proc.run_with(cmd, proc.captured()) {
+        Ok(o) => {
+            if o.code != 0 && !quiet { io.err(o.err) }
+            o.code == 0
+        }
+        Err(_) => false
+    }
+    if !ok { return List.new() }
+    if bin.len() > 0 && install(exe, bin) { return bin }
+    exe
+}
+
+// ------------------------------------------------------------------ the job runner
+
+/// Run `cmds` (each an argv), at most `jobs` at once (0: `cpus()`), each with stdin from
+/// /dev/null and stdout/stderr ours (or /dev/null when `quiet`). Returns each command's exit
+/// code in order: 128 + n when signal n killed it, 127 when it couldn't be started.
+pub fn run_jobs(cmds: List[List[List[u8]]], jobs: u64, quiet: bool) -> List[i32] uses io, fs, net, clock {
+    let mut codes: List[i32] = List.new()
+    for c in cmds { codes.push(127) }
+    let mut limit = jobs.copy()
+    if limit == 0 { limit = cpus() }
+    let out = if quiet { child.NULL } else { child.INHERIT }
+    let mut pids: List[i32] = List.new()
+    let mut idx: List[usize] = List.new()
+    let mut next: usize = 0
+    let mut nap: i64 = 1
+    while next < cmds.len() || pids.len() > 0 {
+        while (pids.len() as u64) < limit && next < cmds.len() {
+            match child.start(cmds[next], child.NULL, out, out) {
+                Ok(c) => {
+                    pids.push(c.pid)
+                    idx.push(next)
+                }
+                Err(_) => {}
+            }
+            next += 1
+        }
+        if pids.len() == 0 { continue }
+        if pids.len() == 1 && next >= cmds.len() {
+            // the last one: just wait for it
+            codes[idx[0]] = exit_code(child.wait(pids[0]))
+            pids.pop()
+            idx.pop()
+            continue
+        }
+        let mut k: usize = 0
+        let mut done = false
+        while k < pids.len() {
+            let r = child.try_wait(pids[k])
+            let finished = match r {
+                Ok(Some(_)) => true
+                Ok(None) => false
+                Err(_) => true
+            }
+            if finished {
+                let code = match r {
+                    Ok(Some(e)) => if e.signal == 0 { e.code } else { 128 + e.signal }
+                    _ => 127
+                }
+                codes[idx[k]] = code
+                // swap-remove
+                let last = pids.len() - 1
+                pids[k] = pids[last]
+                idx[k] = idx[last]
+                pids.pop()
+                idx.pop()
+                done = true
+            } else {
+                k += 1
+            }
+        }
+        if done {
+            nap = 1
+        } else {
+            time.sleep_ms(nap)
+            if nap < 8 { nap = nap * 2 }
+        }
+    }
+    codes
+}
+
+fn exit_code(r: Result[child.Exit, String]) -> i32 {
+    match r {
+        Ok(e) => if e.signal == 0 { e.code } else { 128 + e.signal }
+        Err(_) => 127
+    }
+}
+
+/// How many jobs run at once by default: the CPUs this process may run on (Linux:
+/// /proc/self/status's Cpus_allowed_list, capped by a cgroup v2 CPU quota), else the online
+/// CPUs (/sys/devices/system/cpu/online), else 1.
+pub fn cpus() -> u64 uses fs {
+    let mut n: u64 = 0
+    match fs.read(s("/proc/self/status")) {
+        Ok(t) => {
+            for l in bytes.lines(t) {
+                if bytes.starts_with(l, s("Cpus_allowed_list:")) { n = count_list(bytes.slice(l, 18, l.len())) }
+            }
+        }
+        Err(_) => {}
+    }
+    if n == 0 {
+        match fs.read(s("/sys/devices/system/cpu/online")) {
+            Ok(t) => { n = count_list(t) }
+            Err(_) => {}
+        }
+    }
+    if n == 0 { n = 1 }
+    // cgroup v2: "<quota> <period>" or "max <period>"
+    match fs.read(s("/sys/fs/cgroup/cpu.max")) {
+        Ok(t) => {
+            let f = bytes.split(bytes.trim(t), 32)
+            if f.len() == 2 {
+                match bytes.parse_u64(f[0]) {
+                    Some(q) => {
+                        match bytes.parse_u64(f[1]) {
+                            Some(p) => {
+                                if p > 0 {
+                                    let mut c = (q + p - 1) / p
+                                    if c == 0 { c = 1 }
+                                    if c < n { n = c }
+                                }
+                            }
+                            None => {}
+                        }
+                    }
+                    None => {}
+                }
+            }
+        }
+        Err(_) => {}
+    }
+    n
+}
+
+/// The number of CPUs in a Linux CPU list ("0-3,8,10-11").
+pub fn count_list(t: List[u8]) -> u64 {
+    let mut n: u64 = 0
+    for part in bytes.split(bytes.trim(t), 44) {
+        let p = bytes.trim(part)
+        if p.len() == 0 { continue }
+        match bytes.find_byte(p, 45, 0) {
+            Some(i) => {
+                match bytes.parse_u64(bytes.slice(p, 0, i)) {
+                    Some(a) => {
+                        match bytes.parse_u64(bytes.slice(p, i + 1, p.len())) {
+                            Some(b) => { if b >= a { n += b - a + 1 } }
+                            None => {}
+                        }
+                    }
+                    None => {}
+                }
+            }
+            None => {
+                match bytes.parse_u64(p) {
+                    Some(_) => { n += 1 }
+                    None => {}
+                }
+            }
+        }
+    }
+    n
+}
+
+// ------------------------------------------------------------------ size, trim, clean
+
+/// One file of the cache: its path, size and last use (modification time).
+pub type File = { path: List[u8], size: u64, mtime_ns: i64 }
+
+/// The files under <cache>/<kind> (none when it doesn't exist).
+pub fn files(cache: List[u8], kind: str) -> List[File] uses fs {
+    let mut out: List[File] = List.new()
+    let top = fs.join(cache, s(kind))
+    if !fs.is_dir(top) { return out }
+    let none: List[List[u8]] = List.new()
+    match fs.walk(top, none) {
+        Ok(rels) => {
+            for r in rels {
+                let p = fs.join(top, r)
+                match fd.stat_path(p, false) {
+                    Ok(st) => { out.push(File(p, st.size as u64, st.mtime_ns)) }
+                    Err(_) => {}
+                }
+            }
+        }
+        Err(_) => {}
+    }
+    out
+}
+
+/// The kinds of entries the cache holds (see the top), and `core`, the layout before C8.27
+/// (its entries are never used now; `trim` and `clean` remove them).
+pub fn kinds() -> List[List[u8]] {
+    let mut k: List[List[u8]] = List.new()
+    for x in ["obj", "bin", "lto", "tmp", "core"] { k.push(s(x)) }
+    k
+}
+
+fn ki_kind(i: usize) -> str {
+    let k: [str; 5] = ["obj", "bin", "lto", "tmp", "core"]
+    k[i]
+}
+
+/// `t` right-aligned in `w` columns.
+fn pad(t: List[u8], w: usize) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut n = t.len()
+    while n < w {
+        out.push(32)
+        n += 1
+    }
+    bytes.append(inout out, t)
+    out
+}
+
+fn total(fs_: List[File]) -> u64 {
+    let mut n: u64 = 0
+    for f in fs_ { n += f.size }
+    n
+}
+
+/// The size limit: $EIDER_CACHE_MAX (bytes, or with a K, M or G suffix, powers of 1024; 0:
+/// no limit), else DEFAULT_MAX. None when the value doesn't parse.
+pub fn max_size() -> Option[u64] uses io {
+    match env.get(s("EIDER_CACHE_MAX")) {
+        Some(v) => {
+            if v.len() == 0 { return Some(DEFAULT_MAX) }
+            parse_size(v)
+        }
+        None => Some(DEFAULT_MAX)
+    }
+}
+
+/// "123", "64K", "500M", "5G" (powers of 1024; a trailing `B` or `iB` is allowed).
+pub fn parse_size(v0: List[u8]) -> Option[u64] {
+    let mut v = bytes.trim(v0)
+    if bytes.ends_with(v, s("iB")) { v = bytes.slice(v, 0, v.len() - 2) } else if bytes.ends_with(v, s("B")) { v = bytes.slice(v, 0, v.len() - 1) }
+    if v.len() == 0 { return None }
+    let last = v[v.len() - 1]
+    let mut mul: u64 = 1
+    if last == 75 || last == 107 { mul = 1024 }
+    if last == 77 || last == 109 { mul = 1048576 }
+    if last == 71 || last == 103 { mul = 1073741824 }
+    if mul > 1 { v = bytes.slice(v, 0, v.len() - 1) }
+    match bytes.parse_u64(v) {
+        Some(n) => Some(n * mul)
+        None => None
+    }
+}
+
+/// `n` bytes for people: "512 B", "3.4 KiB", "12.0 MiB", "1.2 GiB".
+pub fn human(n: u64) -> List[u8] {
+    if n < 1024 {
+        let mut t = bytes.from_u64(n)
+        bytes.append(inout t, s(" B"))
+        return t
+    }
+    let mut unit = s(" KiB")
+    let mut d: u64 = 1024
+    if n >= 1073741824 {
+        unit = s(" GiB")
+        d = 1073741824
+    } else if n >= 1048576 {
+        unit = s(" MiB")
+        d = 1048576
+    }
+    let tenths = (n * 10 + d / 2) / d
+    let mut t = bytes.from_u64(tenths / 10)
+    t.push(46)
+    bytes.append(inout t, bytes.from_u64(tenths % 10))
+    bytes.append(inout t, unit)
+    t
+}
+
+/// What `trim` removed.
+pub type Trimmed = { files: u64, bytes: u64, left: u64 }
+
+/// Apply the size limit `max` (0: none) now: remove the least recently used objects and
+/// programs (and anything under the old core/ layout) until the cache is under 90% of `max`,
+/// never an entry used in the last GRACE_MS; and work directories left by processes that died
+/// (older than a day). lto/ counts toward the size but is the linker's to prune.
+pub fn trim(cache: List[u8], max: u64) -> Trimmed uses fs, clock {
+    let now = time.wall_ns()
+    let stale = trim_tmp_only(cache)
+    let mut removed = stale.files.copy()
+    let mut freed = stale.bytes.copy()
+    let mut all: List[File] = List.new()
+    for f in files(cache, "core") { all.push(f) }
+    let core_n = all.len()
+    let mut size: u64 = 0
+    for k in ["obj", "bin"] {
+        for f in files(cache, k) {
+            size += f.size
+            all.push(f)
+        }
+    }
+    for k in ["lto", "tmp"] { size += total(files(cache, k)) }
+    for i in 0..core_n { size += all[i].size }
+    // the old layout goes first, whatever the limit
+    let mut cands: List[File] = List.new()
+    for i in 0..all.len() {
+        if i < core_n {
+            match fs.remove_all(all[i].path) {
+                Ok(_) => {
+                    removed += 1
+                    freed += all[i].size
+                    size -= all[i].size
+                }
+                Err(_) => {}
+            }
+        } else {
+            cands.push(all[i])
+        }
+    }
+    if core_n > 0 { fs.remove_all(fs.join(cache, s("core"))) }
+    if max == 0 || size <= max { return Trimmed(removed, freed, size) }
+    let low = max / 10 * 9
+    let grace = GRACE_MS * 1000000
+    let oldest = sort.sort_by_key(cands, |f: File| -> i64 f.mtime_ns)
+    for f in oldest {
+        if size <= low { break }
+        if now - f.mtime_ns < grace { break }
+        // re-check: a build may have used it since we looked
+        let fresh = match fd.stat_path(f.path, false) {
+            Ok(st) => now - st.mtime_ns < grace
+            Err(_) => true
+        }
+        if fresh { continue }
+        match fs.remove_all(f.path) {
+            Ok(_) => {
+                removed += 1
+                freed += f.size
+                size -= f.size
+            }
+            Err(_) => {}
+        }
+    }
+    Trimmed(removed, freed, size)
+}
+
+fn files_at(p: List[u8]) -> List[File] uses fs {
+    let mut out: List[File] = List.new()
+    if !fs.is_dir(p) {
+        match fd.stat_path(p, false) {
+            Ok(st) => { out.push(File(p, st.size as u64, st.mtime_ns)) }
+            Err(_) => {}
+        }
+        return out
+    }
+    let none: List[List[u8]] = List.new()
+    match fs.walk(p, none) {
+        Ok(rels) => {
+            for r in rels {
+                match fd.stat_path(fs.join(p, r), false) {
+                    Ok(st) => { out.push(File(fs.join(p, r), st.size as u64, st.mtime_ns)) }
+                    Err(_) => {}
+                }
+            }
+        }
+        Err(_) => {}
+    }
+    out
+}
+
+/// After a build that added entries: `trim` with the limit when the last trim (the stamp
+/// <cache>/trimmed) is more than TRIM_EVERY_MS old or missing. The stamp is touched first,
+/// so concurrent builds don't all walk the cache.
+pub fn maybe_trim(cache: List[u8]) uses io, fs, clock {
+    if cache.len() == 0 { return }
+    let max = match max_size() {
+        Some(m) => m
+        None => DEFAULT_MAX
+    }
+    if max == 0 { return }
+    let stamp = fs.join(cache, s("trimmed"))
+    let now = time.wall_ns()
+    match fd.stat_path(stamp, false) {
+        Ok(st) => { if now - st.mtime_ns < TRIM_EVERY_MS * 1000000 { return } }
+        Err(_) => {}
+    }
+    match fs.write(stamp, List.new()) {
+        Ok(_) => {}
+        Err(_) => { return }
+    }
+    trim(cache, max)
+}
+
+/// `eiderc cache clean`: remove every entry (obj, bin, lto, core) and the work directories
+/// of processes that are gone (older than a day); returns the files and bytes removed.
+pub fn clean(cache: List[u8]) -> Trimmed uses fs, clock {
+    let mut removed: u64 = 0
+    let mut freed: u64 = 0
+    for k in ["obj", "bin", "lto", "core"] {
+        let fl = files(cache, k)
+        removed += fl.len() as u64
+        freed += total(fl)
+        fs.remove_all(fs.join(cache, s(k)))
+    }
+    // work directories of running builds stay
+    let t = trim_tmp_only(cache)
+    removed += t.files
+    freed += t.bytes
+    fs.remove_all(fs.join(cache, s("trimmed")))
+    Trimmed(removed, freed, 0)
+}
+
+fn trim_tmp_only(cache: List[u8]) -> Trimmed uses fs, clock {
+    let now = time.wall_ns()
+    let mut removed: u64 = 0
+    let mut freed: u64 = 0
+    let tmp = fs.join(cache, s("tmp"))
+    match fs.list(tmp) {
+        Ok(names) => {
+            for n in names {
+                let p = fs.join(tmp, n)
+                match fd.stat_path(p, false) {
+                    Ok(st) => {
+                        if now - st.mtime_ns > 86400000000000 {
+                            let sz = total(files_at(p))
+                            match fs.remove_all(p) {
+                                Ok(_) => {
+                                    removed += 1
+                                    freed += sz
+                                }
+                                Err(_) => {}
+                            }
+                        }
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+        Err(_) => {}
+    }
+    Trimmed(removed, freed, 0)
+}
+
+/// `eiderc cache size`: one line per kind (files, bytes), the total and the limit.
+pub fn size_report(cache: List[u8]) -> List[u8] uses io, fs {
+    let mut out = s("cache ")
+    bytes.append(inout out, cache)
+    out.push(10)
+    let mut sum: u64 = 0
+    let mut nsum: u64 = 0
+    let ks = kinds()
+    for ki in 0..ks.len() {
+        let fl = files(cache, ki_kind(ki))
+        if ki == 4 && fl.len() == 0 { continue }
+        let b = total(fl)
+        sum += b
+        nsum += fl.len() as u64
+        let mut l = ks[ki].copy()
+        while l.len() < 6 { l.push(32) }
+        bytes.append(inout l, pad(bytes.from_u64(fl.len() as u64), 8))
+        bytes.append(inout l, s(" files  "))
+        bytes.append(inout l, human(b))
+        bytes.append(inout out, l)
+        out.push(10)
+    }
+    let mut l = s("total ")
+    bytes.append(inout l, pad(bytes.from_u64(nsum), 8))
+    bytes.append(inout l, s(" files  "))
+    bytes.append(inout l, human(sum))
+    bytes.append(inout l, s(" (limit "))
+    match max_size() {
+        Some(0) => { bytes.append(inout l, s("none")) }
+        Some(m) => { bytes.append(inout l, human(m)) }
+        None => { bytes.append(inout l, s("EIDER_CACHE_MAX does not parse")) }
+    }
+    bytes.append(inout l, s(", EIDER_CACHE_MAX)"))
+    bytes.append(inout out, l)
+    out.push(10)
+    out
+}

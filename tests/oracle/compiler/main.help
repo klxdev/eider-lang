@@ -11,6 +11,8 @@ usage:
                                              the arguments after the file (every one after `--`) go to the program
   eiderc build|run|test <file.ei> --profile[=cpu,mem,conc]  with the profiler (docs/runtime.md "Profiler")
   eiderc test <file.ei> [-l lib]             run the `test` blocks
+  eiderc build|run|test ... -j N             compile at most N units at once (default $EIDER_JOBS, else one per CPU)
+  eiderc cache size|clean|trim               the cache's use; remove every entry; apply EIDER_CACHE_MAX now
   eiderc test --compile-fail [<dir>]         run the compile-fail suite (<dir>/fail, <dir>/pass; default tests/checks)
   eiderc lex <file.ei>                       dump the tokens
   eiderc parse <file.ei> [--all-errors]      dump the AST (--all-errors: every syntax error as JSON lines,
@@ -32,8 +34,9 @@ usage:
   eiderc version | --version                 print `eiderc <version>` (VERSION; docs/site/tooling/releases.md)
 
 build, run and test emit LLVM IR (the runtime glue and the entry point as C) and build it with
-clang 17 or newer ($EIDER_LLVM_CC); a release build links with LTO when clang links with lld or
-gold (EIDER_LLVM_LTO=0: plain objects); -g adds DWARF line info for the .ei sources.
+clang 17 or newer ($EIDER_LLVM_CC), one unit per module and generic instances in 16 shards, each
+cached (EIDER_LLVM_UNITS=0: one unit); a release build uses ThinLTO when clang links with lld
+(EIDER_LLVM_LTO=0: plain objects); -g adds DWARF line info for the .ei sources (one unit).
 
 errors: every independent error is reported, in the order found, then `error: N errors`
 (stderr); with --json one JSON object per line (stdout). --max-errors N shows at most N
@@ -45,5 +48,7 @@ environment:
   WASM_CC       the C compiler of `build --wasm` (default clang; it needs the wasm32 target, and wasm-ld)
   EIDER_CFLAGS  extra C compiler flags, split at spaces
   EIDER_CACHE   `off`, or the cache directory (default $XDG_CACHE_HOME/eider, else ~/.cache/eider)
+  EIDER_CACHE_MAX  the cache's size limit (bytes, or with K, M or G; default 5G; 0: none)
+  EIDER_JOBS    parallel compile jobs when there is no -j (default: one per CPU)
   EIDER_ROOT    the toolchain, the directory holding core/ (default: found above the eiderc binary)
   EIDER_PROF    a --profile program's profile file (default eider.prof; `off`: none)

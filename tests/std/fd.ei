@@ -1,5 +1,5 @@
 // std/fd: open, read/write, positioned I/O, seek, stat, truncate, sync, chmod, flock, dup,
-// pipes and non-blocking reads.
+// pipes and non-blocking reads; touch.
 
 import core.sys
 import std.fs
@@ -35,6 +35,11 @@ fn run() -> Result[bool, String] uses io, fs, ffi {
     fd.sync(f)?
     fd.sync_data(f)?
     print(fd.stat_path(dir, true)?.kind == fd.DIR)
+    // touch: the modification time moves to now; a missing file is an error
+    let before = fd.stat_path(path, true)?.mtime_ns
+    print(fd.touch(path)?)
+    print(fd.stat_path(path, true)?.mtime_ns >= before)
+    print(fd.touch(fs.join(dir, sys.lit("missing"))).is_err())
     // flock belongs to the open file: a second open of the same file conflicts
     let g = fd.open(path, fd.READ, 0)?
     print(fd.lock(f, true, true)?)

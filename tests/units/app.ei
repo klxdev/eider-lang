@@ -1,0 +1,14 @@
+// The LLVM backend's units (compiler/llvm_units.ei; docs/compiler.md, "C8.27: incremental
+// builds"): three modules and generic instances, which tests/units/run.sh edits one at a
+// time to check that only the edited module's unit (and an instance's shard) recompiles.
+import units.shapes
+import units.words
+
+fn main() uses io {
+    let mut xs: List[shapes.Box] = List.new()
+    for i in 0..5 { xs.push(shapes.Box(i as i64, (i + 1) as i64)) }
+    print(shapes.total(xs))
+    let ws = words.words()
+    print(ws.len() as i64)
+    for w in ws { print(words.shout(w)) }
+}

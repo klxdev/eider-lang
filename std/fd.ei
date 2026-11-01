@@ -201,6 +201,20 @@ pub fn stat(fd: i32) -> Result[Stat, String] uses fs {
     Ok(take_stat())
 }
 
+/// Set the access and modification times of the file at `path` to now (it must exist).
+pub fn touch(path: List[u8]) -> Result[bool, String] uses fs {
+    path_arg(path)
+    let n = os.touch()
+    if n < 0 {
+        let mut m = String.from("cannot touch ")
+        m.append(sys.to_string(path))
+        m.push_str(": ")
+        m.append(sys.error_text(n))
+        return Err(m)
+    }
+    Ok(true)
+}
+
 /// What is at `path`; `follow`: describe a final symlink's target rather than the link.
 pub fn stat_path(path: List[u8], follow: bool) -> Result[Stat, String] uses fs {
     path_arg(path)

@@ -35,14 +35,20 @@ away; `EIDER_CFLAGS=-O0` keeps them.
 
 `EIDER_CFLAGS` applies to the C half (the runtime glue and `main`). Its `-O<n>`, `-g` and
 `-fsanitize=...` flags are also passed to clang for the IR, so
-`EIDER_CFLAGS=-fsanitize=address` instruments both. Executables are cached like the C core's
-objects ([the cache](compiler.md#the-cache)), keyed also on clang's version and the IR.
+`EIDER_CFLAGS=-fsanitize=address` instruments both.
 
-A release build (`build`, `run --release`) links the two halves with link-time optimization
-when clang can link with lld (or gold with LLVM's plugin): eiderc checks that by linking a
-one-line probe. Both halves are then compiled by clang, so the C half's helpers inline into
-the IR. `EIDER_LLVM_LTO=0` turns that off, and without such a linker the halves are linked
-as plain objects, as at -O0. `build --lib` always produces plain objects.
+The module is built as units: one per Eider module, and the generic instances in 16 shards.
+Each unit is compiled on its own (in parallel, `-j N`) and its object cached by its text, so
+after an edit only the edited module's unit is compiled again, and an unchanged program is
+neither compiled nor linked (the cache: docs/site/tooling/compiler.md, "The cache").
+`EIDER_LLVM_UNITS=0` builds the module as one unit; `-g` and `build --lib` always do.
+
+A release build (`build`, `run --release`) uses ThinLTO when clang can link with lld (eiderc
+checks that by linking a one-line probe): every unit and the C half are compiled to bitcode,
+lld optimizes them in parallel with cross-module inlining, and keeps its own cache of
+optimized modules in the cache's `lto/` directory, so after an edit only the edited module and
+those that inline from it are optimized again. `EIDER_LLVM_LTO=0` turns that off, and without
+lld the units are linked as plain objects, as at -O0.
 
 ```sh
 scripts/ei build -g examples/fib.ei -o fib

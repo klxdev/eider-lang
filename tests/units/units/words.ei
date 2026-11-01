@@ -1,0 +1,11 @@
+pub fn words() -> List[String] {
+    let mut out: List[String] = List.new()
+    for w in ["the", "quick", "brown", "fox"] { out.push(String.from(w)) }
+    out
+}
+
+pub fn shout(w: String) -> String {
+    let mut s = w.copy()
+    s.push_str("!")
+    s
+}

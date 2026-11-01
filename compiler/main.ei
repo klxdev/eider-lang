@@ -34,6 +34,8 @@ import eiderc.check
 import eiderc.ir
 import eiderc.lower
 import eiderc.driver
+import eiderc.build
+import eiderc.llvm_units
 import eiderc.consteval
 import eiderc.llvm
 import eiderc.wasm
@@ -45,7 +47,7 @@ import eiderc.doc
 type Args = {
     cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,
     lib: bool, libs: List[List[u8]], wasm: bool, compile_fail: bool, overlay: List[List[u8]],
-    max_errors: u64, all_errors: bool, private: bool, profile: u32, pargs: List[List[u8]],
+    max_errors: u64, all_errors: bool, private: bool, profile: u32, pargs: List[List[u8]], jobs: u64,
     /// whether the program goes through the LLVM backend (llvm.ei; docs/compiler.md,
     /// "Backends"): every command but `emit-c`, `--wasm` and `--profile`, which still use the
     /// C lowering internally; `-g` (debug info), `--coverage` (emit-llvm: the
@@ -82,6 +84,8 @@ fn usage_text() -> List[u8] {
         "                                             the arguments after the file (every one after `--`) go to the program",
         "  eiderc build|run|test <file.ei> --profile[=cpu,mem,conc]  with the profiler (docs/runtime.md \"Profiler\")",
         "  eiderc test <file.ei> [-l lib]             run the `test` blocks",
+        "  eiderc build|run|test ... -j N             compile at most N units at once (default $EIDER_JOBS, else one per CPU)",
+        "  eiderc cache size|clean|trim               the cache's use; remove every entry; apply EIDER_CACHE_MAX now",
         "  eiderc test --compile-fail [<dir>]         run the compile-fail suite (<dir>/fail, <dir>/pass; default tests/checks)",
         "  eiderc lex <file.ei>                       dump the tokens",
         "  eiderc parse <file.ei> [--all-errors]      dump the AST (--all-errors: every syntax error as JSON lines,",
@@ -103,8 +107,9 @@ fn usage_text() -> List[u8] {
         "  eiderc version | --version                 print `eiderc <version>` (VERSION; docs/site/tooling/releases.md)",
         "",
         "build, run and test emit LLVM IR (the runtime glue and the entry point as C) and build it with",
-        "clang 17 or newer ($EIDER_LLVM_CC); a release build links with LTO when clang links with lld or",
-        "gold (EIDER_LLVM_LTO=0: plain objects); -g adds DWARF line info for the .ei sources.",
+        "clang 17 or newer ($EIDER_LLVM_CC), one unit per module and generic instances in 16 shards, each",
+        "cached (EIDER_LLVM_UNITS=0: one unit); a release build uses ThinLTO when clang links with lld",
+        "(EIDER_LLVM_LTO=0: plain objects); -g adds DWARF line info for the .ei sources (one unit).",
         "",
         "errors: every independent error is reported, in the order found, then `error: N errors`",
         "(stderr); with --json one JSON object per line (stdout). --max-errors N shows at most N",
@@ -116,6 +121,8 @@ fn usage_text() -> List[u8] {
         "  WASM_CC       the C compiler of `build --wasm` (default clang; it needs the wasm32 target, and wasm-ld)",
         "  EIDER_CFLAGS  extra C compiler flags, split at spaces",
         "  EIDER_CACHE   `off`, or the cache directory (default $XDG_CACHE_HOME/eider, else ~/.cache/eider)",
+        "  EIDER_CACHE_MAX  the cache's size limit (bytes, or with K, M or G; default 5G; 0: none)",
+        "  EIDER_JOBS    parallel compile jobs when there is no -j (default: one per CPU)",
         "  EIDER_ROOT    the toolchain, the directory holding core/ (default: found above the eiderc binary)",
         "  EIDER_PROF    a --profile program's profile file (default eider.prof; `off`: none)",
     ] {
@@ -149,7 +156,7 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] {
 }
 
 fn known_cmd(c: List[u8]) -> bool {
-    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "migrate-imports") || is(c, "audit-refs") || is(c, "doc") || is(c, "emit-llvm")
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-c") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "migrate-imports") || is(c, "audit-refs") || is(c, "doc") || is(c, "emit-llvm") || is(c, "cache")
 }
 
 fn parse_args() -> Args uses io {
@@ -172,6 +179,7 @@ fn parse_args() -> Args uses io {
     let mut debug = false
     let mut coverage = false
     let mut pargs: List[List[u8]] = List.new()
+    let mut jobs: u64 = 0
     let mut dashes = false
     let mut i: usize = 1
     while i < argv.len() {
@@ -212,6 +220,16 @@ fn parse_args() -> Args uses io {
         } else if is(a, "-l") {
             if i >= argv.len() { usage_error(sys.lit("`-l` needs a library name")) }
             libs.push(argv[i])
+            i += 1
+        } else if is(a, "-j") {
+            if i >= argv.len() { usage_error(sys.lit("`-j` needs a number of jobs")) }
+            match bytes.parse_u64(argv[i]) {
+                Some(nj) => {
+                    if nj == 0 { usage_error(sys.lit("`-j` needs a number of jobs above 0")) }
+                    jobs = nj
+                }
+                None => usage_error(quoted("`-j` needs a number of jobs, not ", argv[i]))
+            }
             i += 1
         } else if is(a, "-g") {
             debug = true
@@ -258,6 +276,7 @@ fn parse_args() -> Args uses io {
         // the default suite
         if file.len() == 0 { file = sys.lit("tests/checks") }
     }
+    if is(cmd, "cache") && file.len() == 0 { usage_error(sys.lit("`cache` needs clean, size or trim")) }
     if file.len() == 0 { usage_error(quoted("missing the source file for ", cmd)) }
     if (dashes || pargs.len() > 0) && !is(cmd, "run") { usage_error(sys.lit("program arguments (and `--`) go with `run`")) }
     if is(cmd, "emit-header") { lib = true }
@@ -270,7 +289,7 @@ fn parse_args() -> Args uses io {
     if profile > 0 && (lib || !(is(cmd, "build") || is(cmd, "run") || is(cmd, "test") || is(cmd, "emit-c"))) { usage_error(sys.lit("`--profile` goes with build, run, test or emit-c, without --lib or --wasm")) }
     // the LLVM backend, but for the commands that still lower to C (see Args.llvm)
     let llvm = is(cmd, "emit-llvm") || !(is(cmd, "emit-c") || wasm || profile > 0)
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, llvm, debug, coverage)
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, llvm, debug, coverage)
 }
 
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
@@ -516,9 +535,47 @@ fn canon(path: List[u8]) -> List[u8] uses fs {
     }
 }
 
+/// `eiderc cache size|clean|trim` (build.ei): the cache's use per kind of entry; remove
+/// every entry; apply the size limit ($EIDER_CACHE_MAX) now.
+fn run_cache(a: Args) uses io, fs, clock {
+    let c = driver.cache_dir()
+    if c.len() == 0 {
+        io.errln(sys.lit("eiderc: the cache is off (EIDER_CACHE=off)"))
+        env.exit(2)
+    }
+    if is(a.file, "size") {
+        io.out(build.size_report(c))
+        return
+    }
+    let mut t = build.Trimmed(0, 0, 0)
+    if is(a.file, "clean") {
+        t = build.clean(c)
+    } else if is(a.file, "trim") {
+        match build.max_size() {
+            Some(m) => { t = build.trim(c, m) }
+            None => usage_error(sys.lit("EIDER_CACHE_MAX is not a size (bytes, or with K, M or G)"))
+        }
+    } else {
+        usage_error(quoted("`cache` takes clean, size or trim, not ", a.file))
+    }
+    let mut m = sys.lit("removed ")
+    bytes.append(inout m, bytes.from_u64(t.files))
+    bytes.append(inout m, sys.lit(" files ("))
+    bytes.append(inout m, build.human(t.bytes))
+    bytes.append(inout m, sys.lit("); "))
+    bytes.append(inout m, build.human(t.left))
+    bytes.append(inout m, sys.lit(" left in "))
+    bytes.append(inout m, c)
+    io.outln(m)
+}
+
 fn main() uses io, fs, net, clock {
     let a = parse_args()
     if a.compile_fail { env.exit(suite.run(a.file)) }
+    if is(a.cmd, "cache") {
+        run_cache(a)
+        return
+    }
     if is(a.cmd, "ide") {
         run_ide(a)
         return
@@ -635,10 +692,25 @@ fn main() uses io, fs, net, clock {
                 }
             } else if a.lib {
                 driver.build_lib_llvm(out.c, llvm.whole(out), lower.header(lp, driver.lib_name(a.file, a.out)), a.file, a.out, a.libs, a.debug)
-            } else if is(a.cmd, "build") {
-                driver.build_llvm(out.c, llvm.whole(out), a.file, a.out, a.libs, a.debug)
             } else {
-                driver.run_llvm(out.c, llvm.whole(out), a.file, a.release, a.libs, a.debug, a.pargs)
+                // the module as units (llvm_units.ei), or with -g (one debug-info compile unit)
+                // or EIDER_LLVM_UNITS=0 as one
+                let mut lnames: List[List[u8]] = List.new()
+                let mut lls: List[List[u8]] = List.new()
+                if a.debug || !driver.llvm_units_on() {
+                    lnames.push(sys.lit("prog"))
+                    lls.push(llvm.whole(out))
+                } else {
+                    for u in llvm_units.split(out, lp) {
+                        lnames.push(u.name)
+                        lls.push(u.text)
+                    }
+                }
+                if is(a.cmd, "build") {
+                    driver.build_llvm(out.c, lnames, lls, a.file, a.out, a.libs, a.debug, a.jobs)
+                } else {
+                    driver.run_llvm(out.c, lnames, lls, a.file, a.release, a.libs, a.debug, a.pargs, a.jobs)
+                }
             }
             return
         }
@@ -660,11 +732,11 @@ fn main() uses io, fs, net, clock {
             wasm.build(cprog, lp, a.file, a.out)
         } else if a.lib {
             // as recorded: `build --lib` and `run --lib` both build the library
-            driver.build_lib(cprog, lower.header(lp, driver.lib_name(a.file, a.out)), a.file, a.out, a.libs)
+            driver.build_lib(cprog, lower.header(lp, driver.lib_name(a.file, a.out)), a.file, a.out, a.libs, a.jobs)
         } else if is(a.cmd, "build") {
-            driver.build(cprog, a.file, a.out, a.libs)
+            driver.build(cprog, a.file, a.out, a.libs, a.jobs)
         } else {
-            driver.run(cprog, a.file, a.release, a.libs, a.pargs)
+            driver.run(cprog, a.file, a.release, a.libs, a.pargs, a.jobs)
         }
     } else if is(a.cmd, "ir") {
         io.out(ir.dump(c.ir, c.t, c.p.names))
