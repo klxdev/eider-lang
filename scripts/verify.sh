@@ -72,29 +72,39 @@ if [ $crc != 0 ]; then
 elif [ "$nok" -gt 0 ]; then
   echo "ok   crypto ($(grep -c '^ok   crypto rfc (' $S/crypto) backend(s): RFC/CAVP/Wycheproof vectors, ASan+UBSan, $(grep -c '^ok   crypto cross' $S/crypto) cross-backend checks)"
 fi
+# eider, the Eider command, end to end against fake signed releases (tests/eider/run.sh; it
+# links a crypto backend and needs .vendor/: skipped without them)
+if [ -n "$novendor" ]; then skip "eider: the eider command $novendor"
+else
+  sh tests/eider/run.sh > $S/eider 2>&1; erc=$?
+  while IFS= read -r l; do case $l in "skip "*) skip "${l#skip }" ;; esac; done < $S/eider
+  if [ $erc != 0 ]; then echo "FAIL eider: sh tests/eider/run.sh"; grep -A3 "^FAIL" $S/eider | head -20; fail=1
+  else grep "^ok" $S/eider; fi
+fi
 if [ -n "$novendor" ]; then skip "pkg: eider-pkg $novendor"
 else sh tests/pkg/run.sh | grep -q FAIL && { echo "FAIL pkg"; fail=1; } || echo "ok   pkg (eider-pkg end to end, local git repos)"; fi
 # imports: no quoted imports are left but the tests of the quoted form (docs/compiler.md "C8.26")
 sh scripts/check-imports.sh > $S/imports 2>&1 && cat $S/imports || { head -20 $S/imports; fail=1; }
+# vendor-layout: vendored copies are in .vendor/ only; nothing mentions the layout before it (#130, C400)
+sh scripts/check-vendor-layout.sh > $S/vlayout 2>&1 && cat $S/vlayout || { head -24 $S/vlayout; fail=1; }
 sh scripts/version.sh check > $S/version 2>&1 && cat $S/version || { echo "FAIL version: sh scripts/version.sh check"; sed 's/^/  /' $S/version; fail=1; }
 sh scripts/test-compiler.sh > $S/compiler 2>&1
 while IFS= read -r l; do case $l in "skip "*".vendor/"*) skip "compiler: ${l#skip }" ;; esac; done < $S/compiler
 grep -q FAIL $S/compiler && { echo "FAIL compiler (eiderc)"; grep -A6 '^FAIL' $S/compiler | head -20; fail=1; } || echo "ok   compiler (eiderc vs the recorded oracle, tests/oracle)"
-# llvm: the experimental LLVM backend (`--backend=llvm`, docs/compiler.md "Backends") against
-# the C backend on every run test (scripts/llvm-diff.sh), the C ABI test and the units through the
-# cache (tests/units/run.sh, docs/compiler.md "C8.27: incremental builds"); it needs clang 17+
-# (a skipped leg otherwise) and the compiler built from compiler/ (the seed has no LLVM backend).
-sh scripts/llvm-diff.sh > $S/llvm 2>&1; lrc=$?
+# llvm: the backend's C ABI test, its coverage (no function of the run tests or of the compiler
+# falls back to C) and its debug info (compiler/tests/llvm/run.sh; docs/compiler.md
+# "Backends"); the run tests' outputs are checked against the oracle by the compiler leg; and
+# the units through the cache (tests/units/run.sh, with the compiler built from compiler/;
+# docs/compiler.md "C8.27: incremental builds").
+sh compiler/tests/llvm/run.sh target/eiderc > $S/llvm 2>&1; lrc=$?
 if [ $lrc = 2 ]; then
-  skip "llvm (--backend=llvm): $(sed -n 's/^skip: //p' $S/llvm | head -1)"
+  skip "llvm: $(sed -n 's/^skip: //p' $S/llvm | head -1)"
 elif [ $lrc != 0 ]; then
-  echo "FAIL llvm (--backend=llvm): sh scripts/llvm-diff.sh"; grep "^FAIL" $S/llvm | head -5; fail=1
-elif ! sh compiler/tests/llvm/run.sh target/eiderc-next > $S/llvmabi 2>&1; then
-  echo "FAIL llvm (--backend=llvm): sh compiler/tests/llvm/run.sh"; tail -5 $S/llvmabi; fail=1
+  echo "FAIL llvm: sh compiler/tests/llvm/run.sh"; grep "^FAIL" $S/llvm | head -5; fail=1
 elif ! sh tests/units/run.sh target/eiderc-next > $S/llvmunits 2>&1; then
-  echo "FAIL llvm (--backend=llvm): sh tests/units/run.sh"; tail -5 $S/llvmunits; fail=1
+  echo "FAIL llvm: sh tests/units/run.sh"; tail -5 $S/llvmunits; fail=1
 else
-  echo "ok   llvm (--backend=llvm): $(tail -1 $S/llvm | sed 's/^ok   llvm differential: //'); $(sed 's/^ok   llvm abi: //' $S/llvmabi); $(sed 's/^ok   llvm units: /units: /' $S/llvmunits)"
+  echo "ok   llvm ($(grep '^ok' $S/llvm | sed 's/^ok   llvm //; s/:.*//' | paste -sd, - | sed 's/,/, /g'): $(sed -n 's/^ok   llvm coverage: //p' $S/llvm); $(sed 's/^ok   llvm units: /units: /' $S/llvmunits))"
 fi
 sh scripts/selfhost.sh --from-seed >/dev/null 2>&1 && echo "ok   seed (seed/eiderc.c rebuilds itself with only a C compiler)" || { echo "FAIL seed: sh scripts/selfhost.sh --from-seed"; fail=1; }
 bash tests/export/run.sh | tail -1 | grep -q "^ok" && echo "ok   export (C and C++ consumers)" || { echo "FAIL export"; fail=1; }

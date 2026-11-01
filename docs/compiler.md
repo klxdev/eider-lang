@@ -711,7 +711,7 @@ JSON form is what eider-doc reads (packages/doc; docs/site/tooling/eider-doc.md 
 format for users). Without `--json` it prints a text listing like `go doc`.
 
 - **What is documented.** For a directory: every `.ei` file under it, skipping `tests`,
-  `examples`, `vendor`, `target`, `deps` and hidden directories. The files are loaded as one
+  `examples`, `target`, `deps` and hidden directories. The files are loaded as one
   program through an entry that exists only in memory (`<dir>/__eiderc_doc__.ei`, with one
   `import "<file>" as __docN` per file, as migrate-var does). So every module's imports
   resolve as in a build, and module identity is the usual (package, path). For the
@@ -991,14 +991,14 @@ review the oracle diff, add a test, and regenerate the seed.
 
 ## Backends
 
-The C backend (`lower.ei`, "C4: lowering") is the default and the bootstrap path. Beside it,
-on the `experiment/llvm-backend` branch, is an experimental LLVM backend (issues #92 and #96,
-U21, C260-C269, C340-C346): `llvm.ei` lowers the same typed IR to textual LLVM IR, which
-clang builds (`eiderc build|run|test --backend=llvm`, `build --lib --backend=llvm`,
-`emit-llvm`; user documentation in docs/site/tooling/llvm.md). It is ordinary compiler code
-built by the seed, so building eiderc needs no LLVM. eiderc runs clang only when the flag is
-given, and checks first that it is LLVM 17 or newer (`driver.llvm_cc`; exit 3 with a message
-otherwise).
+The LLVM backend (issues #92, #96 and #125, U21, U23, C260-C269, C340-C346, C440) is the
+backend of `build`, `run`, `test` and `build --lib`, with no flag to choose another: `llvm.ei`
+lowers the typed IR to textual LLVM IR, which clang builds (`emit-llvm` prints it; user
+documentation in docs/site/tooling/llvm.md). It is ordinary compiler code built by the seed,
+so building eiderc needs no LLVM. eiderc checks before every build that clang is LLVM 17 or
+newer (`driver.llvm_cc`; exit 3 with a message otherwise). The C lowering (`lower.ei`, "C4:
+lowering") is still the path of `emit-c` (the seed's form), `--wasm` and `--profile`, and of
+comptime evaluators, until #126-#128 replace those too.
 
 **Split.** The backend works one function at a time. `llvm.program` tries every function
 with a body. A function whose statements it can lower becomes a `define` in the module
@@ -1022,7 +1022,8 @@ units and the C half (with `-w`: it is generated code that the C backend already
 `$CC`) are compiled to bitcode, the C core's objects stay native and cached, so the C half's
 glue (push, clone, drop, `==`) still inlines into the IR. `EIDER_LLVM_LTO=0`, no lld, and
 `build --lib` link plain objects; `-g` and `build --lib` build the module as one unit. The
-program is cached by its objects ("C8.27: incremental builds"). Today no construct falls back: every
+program is cached by its objects ("C8.27: incremental builds"; this replaces the whole-IR
+binary key of C440). Today no construct falls back: every
 function of the run tests, and every function of the compiler, is native.
 
 **Calling conventions.** A call from Eider to Eider uses an internal convention (C340):
@@ -1098,17 +1099,18 @@ compiler/tests/llvm/dwarf.ei at -O0 with `-g` and finds every parameter, local, 
 type name with a frame location (llvm-dwarfdump, else `readelf --debug-dump=info`; gdb and
 lldb are not installed here). At -O2 the variables of inlined functions are optimized away.
 
-**Tests.** `scripts/llvm-diff.sh` runs every run test (tests/run, compiler/tests/run) under
-`run`, and under `test` when it has test blocks, through both backends. Stdout, stderr and
-the exit code must be byte-identical with the LLVM build at -O0, at -O2 (with LTO), with
-`-DEI_RT_COUNT_ALLOCS` (the same leak report), and under ASan+UBSan, with clang building
-both halves. The script also prints the coverage per test and overall. It is the
-"llvm (--backend=llvm)" leg of scripts/verify.sh, together with compiler/tests/llvm/run.sh,
-and the leg is skipped with the reason when clang 17+ is missing. The compiler built by the
-LLVM backend emits byte-identical C and LLVM IR for compiler/main.ei.
+**Tests.** Until it became the only way to build programs, `scripts/llvm-diff.sh` ran every
+run test through both backends and required byte-identical stdout, stderr and exit codes at
+-O0, -O2 (with LTO), with `-DEI_RT_COUNT_ALLOCS` and under ASan+UBSan; it is gone (C440).
+The reference is now the recorded oracle: scripts/test-compiler.sh's run, sanitize and leaks
+legs build every run test with the LLVM backend and compare it with tests/oracle's `.run` and
+`.test` files. compiler/tests/llvm/run.sh (verify.sh's "llvm" leg, skipped with the reason
+when clang 17+ is missing) checks the C ABI, that no function of the run tests or of the
+compiler falls back to C, and the DWARF. The compiler built by the LLVM backend emits
+byte-identical C and LLVM IR for compiler/main.ei.
 
-**Measurements** (`scripts/llvm-bench.sh`, 2026-10-31, x86-64, clang 22.1.8 for both
-backends, median of 7 runs, EIDER_CACHE=off, a shared and busy machine: compare within a
+**Measurements** (taken with the comparison scripts/llvm-bench.sh had then; it now times
+the LLVM backend alone. 2026-10-31, x86-64, clang 22.1.8 for both backends, median of 7 runs, EIDER_CACHE=off, a shared and busy machine: compare within a
 row, not across days).
 
 Round two (#96): compile time in ms. `emit` is the front end plus lowering (emit-llvm also
@@ -1161,9 +1163,8 @@ above (9.6 MB of IR against 5.3 MB of C; writing it to stdout is a tenth of emit
 LLVM -O0 builds the compiler in 70% of the C time (clang -O0 on 9.6 MB of IR is faster than
 on 5.3 MB of C, and the C half is small); at -O2 with LTO the two take about the same time
 (LTO's link is single-threaded; without LTO the LLVM build takes about 60% of the C time).
-The recommendation on graduating (C346): to main as an opt-in backend, the C backend staying
-the default and the bootstrap path; the default waits for AAPCS64. Still to do: arm64,
-`--profile` and the binary cache with `--backend=llvm`, TBAA (clang's type-based aliasing,
+The recommendation on graduating (C346) was an opt-in backend; the user made it the default
+and the only one (U23, C440). Still to do: arm64, `--profile` through the LLVM backend, TBAA (clang's type-based aliasing,
 which the IR doesn't give LLVM yet), and DWARF for SSA values and inlined frames.
 
 ## Compile speed
@@ -1356,9 +1357,8 @@ letter, the path one or more non-empty segments. (So a path import without its e
   first 16 hex digits of the locked content hash>` (`EIDER_HOME` defaults to `~/.eider`):
   exactly where `eider-pkg fetch` and `eider-pkg vendor` put it. No lock, no entry for the
   package, a directory that doesn't exist, or an eider.toml or eider.lock that doesn't parse
-  is **E0810**, with the fix `run eider-pkg fetch in <dir>`; so is a git package found only
-  in `vendor/<name>`, where `eider-pkg vendor` wrote before `.vendor/` (#122), with the fix
-  `mv vendor .vendor` (never read silently: the store may hold another copy). The compiler does not re-hash
+  is **E0810**, with the fix `run eider-pkg fetch in <dir>`. No other directory is looked
+  at (C400). The compiler does not re-hash
   store directories: eider-pkg checks the hash whenever it fetches.
 - The toolchain series (C220, docs/site/tooling/releases.md). `eider = "0.1"` under
   [package] names the toolchain MAJOR.MINOR a package needs (lock.ei `Manifest.eider`).
@@ -1413,8 +1413,7 @@ with the seed (packages/, eider-pkg, the tests). So:
    runs: the seed would report E0804 for them).
 
 **Tests.** compiler/tests/pkgs: app, geo, shapes and base packages with eider.lock, a
-vendored git package (`.vendor/`) and one in a store (`home/`), an old `vendor/` (oldvend:
-E0810), in `// pkgtest: run|check|ide` files with
+vendored git package (`.vendor/`) and one in a store (`home/`), in `// pkgtest: run|check|ide` files with
 hand-checked `X.out`: three `util` modules in one program, a chain (app -> geo -> base),
 an entry that isn't `<name>.ei`, self-import by package name, std and core, then the errors:
 an undeclared package, an indirect one, one missing from eider.lock, a locked directory that
@@ -1425,8 +1424,7 @@ and seriesbad E0811 at 1:1 (another MAJOR.MINOR, a full version), app and geo a 
 `eider`, tests/checks/fail/e0811_toolchain_series.ei E0811 at an import. tests/pkg/run.sh builds and
 runs its projects through eider.lock: no `deps/` after fetch, the locked git packages in the
 store, an indirect or undeclared or removed dependency is E0809, one added by hand before a
-fetch E0810, a run from .vendor/ with the store deleted, an old vendor/ (fetch's note, the
-compiler's E0810, `vendor` migrating it), and `core`/`std` refused as names.
+fetch E0810, a run from .vendor/ with the store deleted, and `core`/`std` refused as names.
 
 **IDE.** ide.analyze is unchanged in shape: Span.file is a module's path as above (absolute
 for package imports), files are told apart by canonical path as before, and module refs come
@@ -2952,7 +2950,7 @@ is a keyword (compiler/comptime.ei).
 `eiderc migrate-imports` on every .ei with a quoted import and lists what stays quoted).
 First with `--keep-seed` (#91): core, std, packages, tests and examples of eider-lang, every
 sibling repository (eider-toml, eider-json, eider-markdown, eider-http, eider-rpc,
-eider-openapi, eider-profiler, eider-analyzer), re-vendored (then vendor/vendor.lock, now vendor.lock), the docs'
+eider-openapi, eider-profiler, eider-analyzer), re-vendored (into what is now .vendor/, pinned by vendor.lock), the docs'
 code blocks and tests/pkg/run.sh's generated programs, leaving quoted what the seed then built
 the compiler from: compiler/, std/{bytes,fs,io,env,proc}.ei and core/{sys,version}.ei, with
 scripts/eider-pkg and scripts/docs.sh building with compiler/ as the seed built it
@@ -3026,7 +3024,7 @@ A **unit** is the smallest thing compiled and cached on its own: a text the back
 the command that compiles it, and the extra key parts its object depends on (build.ei
 `Unit`). The backend decides the boundaries; build.ei never looks inside a unit. The
 boundaries are chosen so that a unit's text changes only when something its object really
-depends on changes. With `--backend=llvm` (llvm_units.split; `run`, `test` and `build`):
+depends on changes. For the LLVM backend (llvm_units.split; `run`, `test` and `build`):
 
 | unit | contains | its text changes when |
 |---|---|---|
@@ -3260,7 +3258,8 @@ recompiles all of it and gcc on it is the whole time. No-op builds halve: they a
 front end and lowering (0.25 s) plus hashing (0.03 s). Edits become cheap in phase 2, when an
 edit changes one unit of many.
 
-Phase 2 (2026-10-31, 16 cores, gcc and clang 22, wall clock, one session):
+Phase 2 (2026-10-31, 16 cores, gcc and clang 22, wall clock, one session; measured just
+before #128 made LLVM the default backend, when `--backend=llvm` still selected it):
 `scripts/build-bench.sh` on eiderc for five configurations; after each time, in parentheses,
 the unit objects that step compiled (main's compiler has the old cache layout: not counted).
 `main-c`: main's compiler, C backend, the whole-program binary cache (one cc per build, binary
@@ -3293,6 +3292,24 @@ optimizes those again); proc.ei, used by the driver alone, 1.75 s. The debug edi
 the front end and emission (0.5 s), the split (~0.1 s), one clang -O0 and the link. A no-op is
 0.8-0.9 s against 0.6-0.7 s for one unit: the split and hashing 10 MB of IR; it is the front
 end that remains, and the front-end manifest above is what would remove it.
+
+After #128 (LLVM the default backend, with main's whole-IR binary cache, C440), the same
+benchmark on the same day: `main` is main's compiler (one LLVM module, full LTO, the program
+cached by the whole IR), `whole` this compiler with `EIDER_LLVM_UNITS=0`, `units` this
+compiler's default:
+
+| configuration | build | cold | no-op | edit compiler/diag.ei | edit std/proc.ei |
+|---|---|---|---|---|---|
+| main | release | 28.83 | 0.93 | 28.78 | 29.09 |
+| main | debug | 2.57 | 0.93 | 2.32 | 2.33 |
+| whole | release | 27.90 (4) | 0.62 | 28.44 (1) | 27.77 (1) |
+| whole | debug | 1.66 (4) | 0.55 | 1.62 (1) | 1.63 (1) |
+| units | release | 10.71 (48) | 0.81 | 7.31 (1) | 1.55 (1) |
+| units | debug | 1.66 (48) | 0.73 | 1.00 (1) | 0.84 (1) |
+
+So against today's whole-program cache: a release build after an edit 29 s to 1.6-7.3 s, a
+debug one 2.3 s to 0.8-1.0 s, a cold release build 29 s to 11 s; a no-op 0.93 s to 0.73-0.81 s
+(main hashes the whole IR with the old SHA-256).
 
 The unit objects of a debug and a release build of eiderc take 8 MB, lld's ThinLTO cache 4 MB
 and each linked program 2.4 MB, so the 5 GiB default holds hundreds of builds.

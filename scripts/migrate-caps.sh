@@ -5,7 +5,7 @@
 #
 #   scripts/migrate-caps.sh <file or directory>...
 #
-# For every .ei file (directories are searched, skipping deps/, vendor/, .vendor/ and target/), unless
+# For every .ei file (directories are searched, skipping deps/, .vendor/ and target/), unless
 # it has unmanaged code itself (an `extern "c"` declaration or `unsafe` outside comments and
 # strings) or path-imports a file that has (a wrapper in the same package, whose `uses ffi`
 # still propagates): `uses ffi` is removed from every signature, and `ffi` from every longer
@@ -57,7 +57,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 for a in "$@"; do
   if [ -d "$a" ]; then
-    find "$a" \( -name deps -o -name vendor -o -name .vendor -o -name target \) -prune -o -name '*.ei' -print | sort >"$tmp/files"
+    find "$a" \( -name deps -o -name .vendor -o -name target \) -prune -o -name '*.ei' -print | sort >"$tmp/files"
     while read -r f; do migrate "$f"; done <"$tmp/files"
   else
     migrate "$a"

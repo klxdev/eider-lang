@@ -1,0 +1,129 @@
+//! vers: toolchain versions (MAJOR.MINOR.PATCH), the series a package asks for
+//! (MAJOR.MINOR), and what a user may type for one (`latest`, `0.1`, `0.1.0`, `v0.1.0`).
+
+import std.bytes
+
+pub type Version = { major: u64, minor: u64, patch: u64 }
+
+/// A request for a toolchain: the newest of all, the newest patch of a series, or one version.
+pub type Want = | Latest | Series(major: u64, minor: u64) | Exact(v: Version)
+
+fn number(p: List[u8]) -> Option[u64] {
+    if p.len() == 0 || p.len() > 9 { return None }
+    // no leading zeros ("01"), as in semver
+    if p.len() > 1 && p[0] == 48 { return None }
+    for b in p {
+        if !bytes.is_digit(b) { return None }
+    }
+    bytes.parse_u64(p)
+}
+
+/// MAJOR.MINOR.PATCH, nothing else.
+pub fn parse(s: List[u8]) -> Option[Version] {
+    let parts = bytes.split(s, 46)
+    if parts.len() != 3 { return None }
+    let a = number(parts[0])?
+    let b = number(parts[1])?
+    let c = number(parts[2])?
+    Some(Version(a, b, c))
+}
+
+/// A tag (`v0.1.0`) or a version (`0.1.0`).
+pub fn parse_tag(s: List[u8]) -> Option[Version] {
+    if s.len() > 0 && s[0] == 118 { return parse(bytes.slice(s, 1, s.len())) }
+    parse(s)
+}
+
+/// What the user typed after `install` or `+`: `latest`, `0.1` (`v0.1`) or `0.1.0` (`v0.1.0`).
+pub fn parse_want(s0: List[u8]) -> Option[Want] {
+    if bytes.eq(s0, "latest".bytes()) { return Some(Latest) }
+    let s = if s0.len() > 0 && s0[0] == 118 { bytes.slice(s0, 1, s0.len()) } else { s0.copy() }
+    let parts = bytes.split(s, 46)
+    if parts.len() == 2 {
+        let a = number(parts[0])?
+        let b = number(parts[1])?
+        return Some(Series(a, b))
+    }
+    match parse(s) {
+        Some(v) => Some(Exact(v))
+        None => None
+    }
+}
+
+/// An `eider = "MAJOR.MINOR"` value.
+pub fn parse_series(s: List[u8]) -> Option[Want] {
+    let parts = bytes.split(s, 46)
+    if parts.len() != 2 { return None }
+    let a = number(parts[0])?
+    let b = number(parts[1])?
+    Some(Series(a, b))
+}
+
+pub fn compare(a: Version, b: Version) -> i32 {
+    if a.major != b.major { return if a.major < b.major { -1 } else { 1 } }
+    if a.minor != b.minor { return if a.minor < b.minor { -1 } else { 1 } }
+    if a.patch != b.patch { return if a.patch < b.patch { -1 } else { 1 } }
+    0
+}
+
+pub fn matches(w: Want, v: Version) -> bool {
+    match w {
+        Latest => true
+        Series(a, b) => v.major == a && v.minor == b
+        Exact(x) => compare(x, v) == 0
+    }
+}
+
+/// The newest version in `vs` that `w` accepts.
+pub fn best(w: Want, vs: List[Version]) -> Option[Version] {
+    let mut found: Option[Version] = None
+    for v in vs {
+        if !matches(w, v) { continue }
+        match found {
+            Some(f) => { if compare(v, f) > 0 { found = Some(v) } }
+            None => { found = Some(v) }
+        }
+    }
+    found
+}
+
+/// `vs` from newest to oldest.
+pub fn sorted_desc(vs: List[Version]) -> List[Version] {
+    let mut out: List[Version] = List.new()
+    for v in vs {
+        let mut next: List[Version] = List.new()
+        let mut placed = false
+        for o in out {
+            if !placed && compare(v, o) > 0 {
+                next.push(v)
+                placed = true
+            }
+            next.push(o)
+        }
+        if !placed { next.push(v) }
+        out = next
+    }
+    out
+}
+
+pub fn text(v: Version) -> List[u8] {
+    let mut out = bytes.from_u64(v.major)
+    out.push(46)
+    bytes.append(inout out, bytes.from_u64(v.minor))
+    out.push(46)
+    bytes.append(inout out, bytes.from_u64(v.patch))
+    out
+}
+
+pub fn want_text(w: Want) -> List[u8] {
+    match w {
+        Latest => "latest".bytes()
+        Series(a, b) => {
+            let mut out = bytes.from_u64(a)
+            out.push(46)
+            bytes.append(inout out, bytes.from_u64(b))
+            out
+        }
+        Exact(v) => text(v)
+    }
+}

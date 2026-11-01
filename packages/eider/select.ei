@@ -1,0 +1,184 @@
+//! select: which toolchain a command runs with. The first that applies:
+//!
+//! 1. `eider +<version> ...`: that version (`0.1.0`), or the newest installed patch of a
+//!    series (`0.1`);
+//! 2. `EIDER_TOOLCHAIN=<path>`: a toolchain directory (an install, with bin/eiderc) or an
+//!    eider-lang checkout (scripts/ei, seed/eiderc.c), for developing eider-lang;
+//! 3. the nearest eider.toml at or above the working directory that says
+//!    `eider = "MAJOR.MINOR"`: the newest installed patch of that series;
+//! 4. the default (`default` in config.toml: `eider toolchain use`).
+//!
+//! A version that isn't installed is a `Missing`, which names the install command; the
+//! caller installs it instead when auto-install is on.
+
+import std.bytes
+import std.fs
+import toml
+import eider.vers
+import eider.home
+
+/// A toolchain's programs. `kind` is "install" or "checkout".
+pub type Tool = { root: List[u8], eiderc: List[u8], pkg: List[u8], doc: List[u8], version: List[u8], kind: List[u8] }
+
+/// The selected toolchain and why it was chosen.
+pub type Choice = { tool: Tool, why: List[u8] }
+
+/// Why there is none: a version that isn't installed (`want`, asked for by `why`), or
+/// another error.
+pub type Miss = | Missing(want: vers.Want, why: List[u8]) | Failed(msg: String)
+
+fn errs(m: str) -> String { String.from(m) }
+
+fn text(m: List[u8]) -> String { String.from_bytes(m).unwrap_or(String.from("?")) }
+
+fn first_line(t: List[u8]) -> List[u8] {
+    let mut v: List[u8] = List.new()
+    for b in t {
+        if b == 10 || b == 13 { break }
+        v.push(b)
+    }
+    bytes.trim(v)
+}
+
+fn read_version(dir: List[u8]) -> List[u8] uses fs {
+    match fs.read(fs.join(dir, "VERSION".bytes())) {
+        Ok(t) => first_line(t)
+        Err(_) => List.new()
+    }
+}
+
+/// The toolchain at `dir`: an install or a checkout.
+pub fn at_path(dir: List[u8]) -> Result[Tool, String] uses fs {
+    let d = fs.absolute(dir)?
+    if fs.exists(fs.join(d, "bin/eiderc".bytes())) {
+        return Ok(Tool(d, fs.join(d, "bin/eiderc".bytes()), fs.join(d, "bin/eider-pkg".bytes()), fs.join(d, "bin/eider-doc".bytes()), read_version(d), "install".bytes()))
+    }
+    if fs.exists(fs.join(d, "scripts/ei".bytes())) && fs.exists(fs.join(d, "seed/eiderc.c".bytes())) {
+        return Ok(Tool(d, fs.join(d, "scripts/ei".bytes()), fs.join(d, "scripts/eider-pkg".bytes()), fs.join(d, "target/eider-doc".bytes()), read_version(d), "checkout".bytes()))
+    }
+    let mut m = String.from("EIDER_TOOLCHAIN=")
+    m.append(text(dir))
+    m.push_str(" is neither a toolchain (bin/eiderc) nor an eider-lang checkout (scripts/ei, seed/eiderc.c)")
+    Err(m)
+}
+
+/// The installed toolchain `want` selects (the newest that matches).
+pub fn installed(h: List[u8], want: vers.Want) -> Option[Tool] uses fs {
+    match vers.best(want, home.installed(h)) {
+        Some(v) => match at_path(home.toolchain_dir(h, v)) {
+            Ok(t) => Some(t)
+            Err(_) => None
+        }
+        None => None
+    }
+}
+
+/// The nearest eider.toml at or above `dir`, and its `eider` (empty when it has none).
+pub fn project(dir: List[u8]) -> Result[Option[(List[u8], List[u8])], String] uses fs {
+    let mut d = dir.copy()
+    while d.len() > 0 {
+        let f = fs.join(d, "eider.toml".bytes())
+        if fs.exists(f) {
+            let src = fs.read(f)?
+            let doc = match toml.parse(src) {
+                Ok(x) => x
+                Err(e) => {
+                    let mut m = String.from("cannot read ")
+                    m.append(text(f))
+                    m.push_str(": line ")
+                    m.append(String.from_int(e.line as i64))
+                    m.push_str(": ")
+                    m.append(e.msg)
+                    return Err(m)
+                }
+            }
+            let series: List[u8] = match toml.get(doc, "package.eider".bytes()) {
+                Some(e) => match e.val {
+                    toml.Str(s) => s
+                    _ => List.new()
+                }
+                None => List.new()
+            }
+            return Ok(Some((f, series)))
+        }
+        let up = fs.dirname(d)
+        if bytes.eq(up, d) { break }
+        d = up
+    }
+    Ok(None)
+}
+
+fn found(t: Tool, why: List[u8]) -> Result[Choice, Miss] { Ok(Choice(t, why)) }
+
+/// The toolchain for a command (see the top of this file). `plus` is the text after `+`
+/// (empty when there was none), `env_tc` EIDER_TOOLCHAIN (empty when unset), `cwd` the
+/// working directory, `h` eider's home and `default` config.toml's `default`.
+pub fn select(plus: List[u8], env_tc: List[u8], cwd: List[u8], h: List[u8], default: List[u8]) -> Result[Choice, Miss] uses fs {
+    if plus.len() > 0 {
+        let mut why = "+".bytes()
+        bytes.append(inout why, plus)
+        let want = match vers.parse_want(plus) {
+            Some(w) => w
+            None => {
+                let mut m = String.from("`+")
+                m.append(text(plus))
+                m.push_str("` is not a version: use +MAJOR.MINOR.PATCH, +MAJOR.MINOR or +latest")
+                return Err(Failed(m))
+            }
+        }
+        // +latest: the newest installed (installing checks for a newer release)
+        return match installed(h, want) {
+            Some(t) => found(t, why)
+            None => Err(Missing(want, why))
+        }
+    }
+    if env_tc.len() > 0 {
+        return match at_path(env_tc) {
+            Ok(t) => {
+                let mut why = "EIDER_TOOLCHAIN=".bytes()
+                bytes.append(inout why, env_tc)
+                found(t, why)
+            }
+            Err(e) => Err(Failed(e))
+        }
+    }
+    match project(cwd) {
+        Ok(Some((f, series))) => {
+            if series.len() > 0 {
+                let mut why = f.copy()
+                bytes.append(inout why, " (eider = \"".bytes())
+                bytes.append(inout why, series)
+                bytes.append(inout why, "\")".bytes())
+                let want = match vers.parse_series(series) {
+                    Some(w) => w
+                    None => {
+                        let mut m = String.from("`eider = \"")
+                        m.append(text(series))
+                        m.push_str("\"` in ")
+                        m.append(text(f))
+                        m.push_str(" is not MAJOR.MINOR")
+                        return Err(Failed(m))
+                    }
+                }
+                return match installed(h, want) {
+                    Some(t) => found(t, why)
+                    None => Err(Missing(want, why))
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(e) => return Err(Failed(e))
+    }
+    if default.len() > 0 {
+        let why = "the default (config.toml; eider toolchain use)".bytes()
+        let want = match vers.parse(default) {
+            Some(v) => vers.Exact(v)
+            None => return Err(Failed(errs("config.toml's `default` is not a version (eider toolchain use <version>)")))
+        }
+        return match installed(h, want) {
+            Some(t) => found(t, why)
+            None => Err(Missing(want, why))
+        }
+    }
+    Err(Failed(errs("no toolchain is installed: run `eider toolchain install` (the latest release), or set EIDER_TOOLCHAIN to an eider-lang checkout")))
+}

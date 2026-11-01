@@ -1,6 +1,0 @@
-// pkgtest: check
-// net is vendored in vendor/net, the layout before .vendor/: never read silently (E0810,
-// with how to move it)
-import net
-
-fn main() {}

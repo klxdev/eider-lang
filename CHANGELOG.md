@@ -35,6 +35,15 @@ The first version.
 - **eider-pkg**: init, add, remove, fetch, update, vendor, tree, hash; path and git
   dependencies, minimal version selection, eider.lock, a content-addressed store,
   capability grants per dependency.
+- **eider**, the Eider command (docs/site/tooling/eider.md; U26): `eider toolchain
+  install|list|use|remove|show`, `eider self update`, `eider version`, and the selected
+  toolchain's eiderc, eider-pkg and eider-doc behind `eider build|run|test|doc|new|add|...`;
+  selection by `+<version>`, `EIDER_TOOLCHAIN`, eider.toml's `eider`, the default; every
+  download checked against the signed SHA256SUMS before it is unpacked.
+- **Releases** (docs/site/tooling/releases.md; U27): prebuilt static toolchains for
+  linux-x86_64 and linux-aarch64 (cross-built, untested) on the private GitHub Releases,
+  SHA256SUMS signed with minisign's Ed25519 format (release key 51439F1DFD014199);
+  `scripts/publish.sh`, `scripts/release-key.sh`, `install.sh`.
 - **Packages**: toml, semver, sha256, json, fuzz, http, openapi, crypto; examples kvstore
   and todo.
 - **Docs**: the docs site sources (docs/site: getting started, tour, guides, the language

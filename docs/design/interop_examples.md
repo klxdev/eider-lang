@@ -66,7 +66,7 @@ fn setup(path: str) -> Result[(), sqlite.Error] uses ffi, fs {
 **The Zig library:**
 
 ```zig
-// vendor/mathx/mathx.zig
+// third_party/mathx/mathx.zig
 export fn mathx_dot(a: [*]const f64, b: [*]const f64, len: usize) f64 {
     var sum: f64 = 0;
     for (0..len) |i| sum += a[i] * b[i];
@@ -77,7 +77,7 @@ export fn mathx_dot(a: [*]const f64, b: [*]const f64, len: usize) f64 {
 **Its header (write it by hand; it's one line):**
 
 ```c
-// vendor/mathx/mathx.h
+// third_party/mathx/mathx.h
 #include <stddef.h>
 double mathx_dot(const double *a, const double *b, size_t len);
 ```
@@ -98,13 +98,13 @@ fn dot(a: List[f64], b: List[f64]) -> Result[f64, str] uses ffi {
 **The C library (any language with a C ABI looks the same from Eider):**
 
 ```c
-// vendor/slug/slug.h
+// third_party/slug/slug.h
 char *slugify(const char *input);   // malloc'd, or NULL on failure; free with slugify_free
 void slugify_free(char *p);
 ```
 
 ```c
-// vendor/slug/slug.c
+// third_party/slug/slug.c
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
@@ -150,7 +150,7 @@ fn product_url(name: str) -> Option[str] uses ffi {
 **The C++ library (templates, classes, exceptions):**
 
 ```cpp
-// vendor/geo/geo.hpp
+// third_party/geo/geo.hpp
 namespace geo {
   template <typename T> struct Vec2 { T x, y; };
 
@@ -351,18 +351,18 @@ bindings = "bindings/sqlite3.api.toml"
 
 [native.mathx]
 lang = "zig"
-path = "vendor/mathx"                # built with `zig build-lib`
+path = "third_party/mathx"                # built with `zig build-lib`
 
 [native.slug]
 lang    = "c"
-path    = "vendor/slug"
+path    = "third_party/slug"
 files   = ["slug.c"]
 headers = ["slug.h"]
 
 [native.geo]
 lang   = "cpp"
-path   = "vendor/geo"
+path   = "third_party/geo"
 bridge = "src/geo_bridge.ei"
 
 [wasm.imaging]
-component = "vendor/imaging.wasm"
+component = "third_party/imaging.wasm"

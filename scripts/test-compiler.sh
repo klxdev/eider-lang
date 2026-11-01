@@ -70,7 +70,7 @@
 #   audit-refs: `eiderc audit-refs --json` of compiler/tests/audit/*.ei equals the hand-checked
 #             .out (the writes that change what a `let` reference sees).
 #   packages: compiler/tests/pkgs, packages with eider.toml and eider.lock (two packages
-#             with a util.ei, a dependency chain, vendored (.vendor/) and store dependencies, an old vendor/ (E0810), the
+#             with a util.ei, a dependency chain, vendored (.vendor/) and store dependencies, the
 #             package-import errors E0808/E0809/E0810, capability grants and E0204, `eiderc
 #             caps`): each `// pkgtest: <cmd>` file's
 #             `eiderc <cmd>` output equals its X.out (BLESS=1 rewrites them; review by
@@ -770,29 +770,39 @@ if [ $pfail = 0 ]; then echo "ok   profile: --profile programs record CPU, label
 # builds"): unit objects (obj/), linked programs (bin/), hits and misses, what the keys cover,
 # -j, concurrent builds into one cache, LRU eviction (trim, the automatic trim, clean, size)
 cdir=$(pwd)/target/cachetest
-rm -rf $cdir
+rm -rf $cdir $cdir.*
 cache_ok=1
 cfail() { echo "FAIL cache: $1"; cache_ok=0; fail=1; }
-# n <kind>: the files under <cache>/<kind>
-n() { find "$cdir/$1" -type f 2>/dev/null | wc -l | tr -d ' '; }
+# n <kind> [cache]: the files under <cache>/<kind>
+n() { find "${2:-$cdir}/$1" -type f 2>/dev/null | wc -l | tr -d ' '; }
+# units <name> <eiderc args...>: how many objects that build makes in an empty cache of its own
+units() { u=$cdir.u.$1; shift; rm -rf $u; EIDER_CACHE=$u $new "$@" >/dev/null 2>&1; n obj $u; rm -rf $u; }
+A2=$(units adt build tests/run/adt.ei -o $tmp/adt_u)
+C2=$(units clo build tests/run/closures.ei -o $tmp/clo_u)
+H2=$(units heap build tests/run/heap.ei -o $tmp/heap_u)
+[ "$A2" -ge 3 ] || cfail "a build should make at least 3 objects (units, the C half, the core), not $A2"
 EIDER_CACHE=$cdir $new build tests/run/adt.ei -o $tmp/adt1 || cfail "build"
-# the program's C and the C core's two sources: three objects, one program
-[ "$(n obj)" = 3 ] && [ "$(n bin)" = 1 ] || cfail "a first build should cache 3 objects and 1 program, not $(n obj) and $(n bin)"
+[ "$(n obj)" = $A2 ] && [ "$(n bin)" = 1 ] || cfail "a first build should cache $A2 objects and 1 program, not $(n obj) and $(n bin)"
 EIDER_CACHE=$cdir $new build tests/run/adt.ei -o $tmp/adt2 || cfail "second build"
-[ "$(n obj)" = 3 ] && [ "$(n bin)" = 1 ] || cfail "a second build of the same program compiled or linked again"
+[ "$(n obj)" = $A2 ] && [ "$(n bin)" = 1 ] || cfail "a second build of the same program compiled or linked again"
 $tmp/adt2 >$tmp/o 2>&1
 cmp -s $tmp/o tests/run/adt.out || cfail "the binary copied out of the cache is wrong"
-# another program: one new object (its C), the core's are hits
+# another program: its own units are misses, the ones it shares (the core, std's) are hits
 EIDER_CACHE=$cdir $new build tests/run/closures.ei -o $tmp/clo || cfail "build of a second program"
-[ "$(n obj)" = 4 ] && [ "$(n bin)" = 2 ] || cfail "a second program should add 1 object and 1 program, not $(n obj) and $(n bin)"
+d=$(($(n obj) - A2))
+[ $d -gt 0 ] && [ $d -lt $C2 ] && [ "$(n bin)" = 2 ] || cfail "a second program should add fewer than its $C2 objects (some are shared) and 1 program, not $d and $(($(n bin) - 1))"
+n1=$(n obj)
 EIDER_CACHE=$cdir $new run tests/run/adt.ei >$tmp/o 2>&1
 cmp -s $tmp/o tests/run/adt.out || cfail "run"
-# -O0 for run: three more objects (the -O level is in every unit's key) and one more program
-[ "$(n obj)" = 7 ] && [ "$(n bin)" = 3 ] || cfail "run should add 3 objects and 1 program, not $(n obj) and $(n bin)"
+# -O0 for run: the -O level is in every unit's key, so all of adt's units again, and one program
+[ "$(n obj)" = $((n1 + A2)) ] && [ "$(n bin)" = 3 ] || cfail "run should add $A2 objects and 1 program, not $(($(n obj) - n1)) and $(($(n bin) - 2))"
+n1=$(n obj)
 EIDER_CACHE=$cdir EIDER_CFLAGS=-DEI_RT_COUNT_ALLOCS $new run tests/run/adt.ei >$tmp/o 2>&1
 grep -q '^eider: outstanding allocations: 0' $tmp/o || cfail "EIDER_CFLAGS is not part of the key (the counting runtime didn't run)"
-[ "$(n obj)" = 10 ] || cfail "new flags should compile all three units again"
-# -j 1 and -j 8 make the same program (the same cache entry)
+# (a -D reaches the C units only, the C half and the core's two; clang gets EIDER_CFLAGS's -O,
+# -g and sanitizer flags for the IR)
+[ "$(n obj)" = $((n1 + 3)) ] || cfail "a new -D in EIDER_CFLAGS should compile the 3 C units again, not $(($(n obj) - n1))"
+# -j 1 and -j 8 make the same program (the same cache entries)
 EIDER_CACHE=$cdir.j1 $new build tests/run/adt.ei -o $tmp/adt_j1 -j 1 || cfail "build -j 1"
 EIDER_CACHE=$cdir.j8 $new build tests/run/adt.ei -o $tmp/adt_j8 -j 8 || cfail "build -j 8"
 cmp -s $tmp/adt_j1 $tmp/adt_j8 || cfail "-j 1 and -j 8 built different programs"
@@ -801,7 +811,9 @@ EIDER_CACHE=off EIDER_JOBS=1 $new build tests/run/adt.ei -o $tmp/adt_off || cfai
 $tmp/adt_off >$tmp/o 2>&1
 cmp -s $tmp/o tests/run/adt.out || cfail "the program built with the cache off is wrong"
 rm -rf $cdir.j1 $cdir.j8
-# twelve concurrent runs of a new program on that cache
+# twelve concurrent runs of a new program on that cache: the same entries as one run makes
+cp -R $cdir $cdir.seq
+EIDER_CACHE=$cdir.seq $new run tests/run/heap.ei >/dev/null 2>&1
 for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
   (EIDER_CACHE=$cdir $new run tests/run/heap.ei >$tmp/conc$i 2>&1; echo "exit $?" >>$tmp/conc$i) &
 done
@@ -810,23 +822,25 @@ wait
 for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
   cmp -s $tmp/conc_want $tmp/conc$i || cfail "concurrent run $i: $(head -3 $tmp/conc$i)"
 done
-[ "$(n obj)" = 11 ] || cfail "12 concurrent runs of one program should add one object, not $(($(n obj) - 10))"
-# parallel builds of different programs (sharing the core's objects) into one empty cache
+[ "$(cd $cdir && find obj bin -type f | sort)" = "$(cd $cdir.seq && find obj bin -type f | sort)" ] || cfail "12 concurrent runs made other entries than one run"
+rm -rf $cdir.seq
+# parallel builds of different programs (sharing units) into one empty cache: the same entries
+# as building them one after the other
+for t in adt closures heap order; do EIDER_CACHE=$cdir.one $new run tests/run/$t.ei >/dev/null 2>&1; done
 pdir=$cdir.par
-rm -rf $pdir
 for t in adt closures heap order adt closures heap order; do
-  (EIDER_CACHE=$pdir $new run tests/run/$t.ei >$tmp/par_$t.$$_$RANDOM 2>&1 || echo "exit $?" >>$tmp/par_fail) &
+  (EIDER_CACHE=$pdir $new run tests/run/$t.ei >/dev/null 2>&1 || echo "$t exit $?" >>$tmp/par_fail) &
 done
 wait
 [ ! -f $tmp/par_fail ] || cfail "a parallel build failed: $(cat $tmp/par_fail)"
-rm -f $tmp/par_fail $tmp/par_*
+rm -f $tmp/par_fail
 for t in adt closures heap order; do
   EIDER_CACHE=$pdir $new run tests/run/$t.ei >$tmp/o 2>&1
   cmp -s $tmp/o tests/run/$t.out || cfail "after parallel builds, $t gives the wrong output"
 done
-[ "$(find $pdir/obj -type f | wc -l | tr -d ' ')" = 6 ] || cfail "4 programs built in parallel should make 6 objects (4 programs' C and the core's 2), not $(find $pdir/obj -type f | wc -l)"
+[ "$(cd $pdir && find obj bin -type f | sort)" = "$(cd $cdir.one && find obj bin -type f | sort)" ] || cfail "4 programs built in parallel made other entries than built one after the other"
 [ -z "$(ls $pdir/tmp)" ] || cfail "parallel builds left work directories in $pdir/tmp"
-rm -rf $pdir
+rm -rf $pdir $cdir.one
 [ -z "$(ls $cdir/tmp)" ] || cfail "work directories left in $cdir/tmp"
 nb=$(n bin)
 EIDER_CACHE=off $new run tests/run/adt.ei >/dev/null 2>&1
@@ -840,31 +854,31 @@ done
 EIDER_CACHE=$cdir $new cache size >$tmp/o 2>&1 || cfail "cache size"
 grep -q "^obj  *$(n obj) files" $tmp/o && grep -q "^bin  *$(n bin) files" $tmp/o && grep -q '^total .*(limit 5.0 GiB' $tmp/o || cfail "cache size: $(cat $tmp/o)"
 # LRU: everything made two hours ago; then a build of closures.ei at -O2 uses (touches) its
-# object, the core's two -O2 objects and its program; a trim to a tiny limit removes every
-# other entry, never those (used within the grace period)
+# objects and its program; a trim to a tiny limit removes every other entry, never those
+# (used within the grace period)
 find $cdir/obj $cdir/bin -type f -exec touch -d '2 hours ago' {} +
 EIDER_CACHE=$cdir $new build tests/run/closures.ei -o $tmp/clo2 || cfail "build before the trim"
 mkdir -p $cdir/core/old && echo x >$cdir/core/old/eider_rt.o
 EIDER_CACHE=$cdir EIDER_CACHE_MAX=1 $new cache trim >$tmp/o 2>&1 || cfail "cache trim: $(cat $tmp/o)"
-[ "$(n obj)" = 3 ] && [ "$(n bin)" = 1 ] || cfail "trim should keep the 3 objects and 1 program used recently, not $(n obj) and $(n bin)"
+[ "$(n obj)" = $C2 ] && [ "$(n bin)" = 1 ] || cfail "trim should keep the $C2 objects and 1 program used recently, not $(n obj) and $(n bin)"
 [ ! -d $cdir/core ] || cfail "trim left the old core/ layout"
 EIDER_CACHE=$cdir $new build tests/run/closures.ei -o $tmp/clo3 && cmp -s $tmp/clo2 $tmp/clo3 || cfail "the build after the trim (a hit) differs"
-[ "$(n obj)" = 3 ] && [ "$(n bin)" = 1 ] || cfail "the entries kept by trim were not hits"
+[ "$(n obj)" = $C2 ] && [ "$(n bin)" = 1 ] || cfail "the entries kept by trim were not hits"
 # the limit is applied after a build that added entries, at most every 15 minutes (the stamp)
 EIDER_CACHE=$cdir $new build tests/run/adt.ei -o $tmp/adt3 || cfail "build to fill"
 find $cdir/obj $cdir/bin -type f -exec touch -d '2 hours ago' {} +
 rm -f $cdir/trimmed
 EIDER_CACHE=$cdir EIDER_CACHE_MAX=1 $new build tests/run/heap.ei -o $tmp/m1 || cfail "build with the automatic trim"
-[ "$(n obj)" = 3 ] && [ "$(n bin)" = 1 ] || cfail "the automatic trim should leave the 3 objects and 1 program of the last build, not $(n obj) and $(n bin)"
+[ "$(n obj)" = $H2 ] && [ "$(n bin)" = 1 ] || cfail "the automatic trim should leave the $H2 objects and 1 program of the last build, not $(n obj) and $(n bin)"
 find $cdir/obj $cdir/bin -type f -exec touch -d '2 hours ago' {} +
 EIDER_CACHE=$cdir EIDER_CACHE_MAX=1 $new build tests/run/adt.ei -o $tmp/adt4 || cfail "build after a recent trim"
-[ "$(n obj)" = 4 ] || cfail "a build within 15 minutes of the last trim trimmed again"
+[ "$(n bin)" = 2 ] || cfail "a build within 15 minutes of the last trim trimmed again"
 EIDER_CACHE=$cdir EIDER_CACHE_MAX=12Q $new cache trim >/dev/null 2>&1 && cfail "a bad EIDER_CACHE_MAX was accepted"
 EIDER_CACHE=$cdir $new cache clean >$tmp/o 2>&1 || cfail "cache clean"
 [ "$(n obj)" = 0 ] && [ "$(n bin)" = 0 ] || cfail "clean left entries"
 EIDER_CACHE=$cdir $new cache size | grep -q '^total  *0 files' || cfail "size after clean"
 EIDER_CACHE=off $new cache size >/dev/null 2>&1 && cfail "cache size with the cache off should fail"
-rm -rf $cdir
+rm -rf $cdir $cdir.*
 [ $cache_ok = 1 ] && echo "ok   cache: objects and programs, hits and misses, keys (flags, -O level), -j, 12 concurrent runs, parallel builds into one cache, comptime evaluators, EIDER_CACHE=off, LRU trim, automatic trim, clean, size"
 
 # doc: `eiderc doc` (doc.ei) of the fixture package compiler/tests/doc/shapes as JSON, as text,

@@ -9,8 +9,8 @@
 #
 #   sh scripts/build-bench.sh <label>:<eiderc>[:<flags>[:<VAR=value>]] ...
 #
-# e.g. `c:target/eiderc-next  units:target/eiderc-next:--backend=llvm
-# whole:target/eiderc-next:--backend=llvm:EIDER_LLVM_UNITS=0` (flags split at spaces).
+# e.g. `units:target/eiderc-next  whole:target/eiderc-next::EIDER_LLVM_UNITS=0
+# j4:target/eiderc-next:-j 4` (flags split at spaces).
 cd "$(dirname "$0")/.." || exit 1
 [ $# -gt 0 ] || { echo "usage: scripts/build-bench.sh <label>:<eiderc>[:<flags>[:<VAR=value>]] ..."; exit 2; }
 here=$(pwd)

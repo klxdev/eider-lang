@@ -50,10 +50,12 @@
 - [crypto](api:crypto)
 - [pkg (eider-pkg)](api:pkg)
 - [doc (eider-doc)](api:doc)
+- [eider (the eider command)](api:eider)
 - [fuzz](api:fuzz)
 
 ## Tooling
 
+- [The Eider command: eider](tooling/eider.md)
 - [The compiler: eiderc](tooling/compiler.md)
 - [The package manager: eider-pkg](tooling/eider-pkg.md)
 - [Editors](tooling/editors.md)

@@ -6,7 +6,7 @@
 //! instead of its repository: no network, no tag needed, and uncommitted edits count. The
 //! files are the ones git would commit (`git ls-files --cached --others --exclude-standard`,
 //! when that lists the package's eider.toml, so target/ and other ignored files stay out;
-//! every file but .git, deps, vendor, .vendor and target otherwise). They are copied into the store at their
+//! every file but .git, deps, .vendor and target otherwise). They are copied into the store at their
 //! content hash, pkg/<name>-<hash16>, where the compiler finds them through eider.lock, as for
 //! any git package. So eider.lock keeps the git source: when the checkout holds exactly the
 //! locked release, the lock is the one a fetch from the network writes. The commit recorded
@@ -120,7 +120,7 @@ pub fn head(dir: List[u8]) -> List[u8] uses io, fs, net {
 }
 
 /// The files of the package at `dir`, relative to it: git's, else every file but .git,
-/// deps, vendor, .vendor and target.
+/// deps, .vendor and target.
 fn files(dir: List[u8]) -> Result[List[List[u8]], String] uses io, fs, net {
     match git_files(dir) {
         Some(listed) => Ok(listed)

@@ -3,7 +3,7 @@
 #
 #   scripts/migrate-var.sh <file or directory>...
 #
-# For every .ei file (directories are searched, skipping deps/, vendor/, .vendor/ and target/) that
+# For every .ei file (directories are searched, skipping deps/, .vendor/ and target/) that
 # mentions `var`, `eiderc migrate-var <file>` checks the file on its own (a module without
 # `main` is fine) and prints it with each `var` it can rewrite: `var x = fresh` becomes
 # `let mut x = fresh`, `var x = place` becomes `let mut x = place.copy()` (a `var` made its
@@ -39,7 +39,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 for a in "$@"; do
   if [ -d "$a" ]; then
-    find "$a" \( -name deps -o -name vendor -o -name .vendor -o -name target \) -prune -o -name '*.ei' -print | sort >"$tmp/files"
+    find "$a" \( -name deps -o -name .vendor -o -name target \) -prune -o -name '*.ei' -print | sort >"$tmp/files"
     while read -r f; do migrate "$f"; done <"$tmp/files"
   else
     migrate "$a"

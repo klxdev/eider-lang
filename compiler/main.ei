@@ -48,8 +48,10 @@ type Args = {
     cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,
     lib: bool, libs: List[List[u8]], wasm: bool, compile_fail: bool, overlay: List[List[u8]],
     max_errors: u64, all_errors: bool, private: bool, profile: u32, pargs: List[List[u8]], jobs: u64,
-    /// `--backend=llvm` (llvm.ei; docs/compiler.md, "Backends"), `-g` (its debug info),
-    /// `--coverage` (emit-llvm: the native/fallback report instead of the IR)
+    /// whether the program goes through the LLVM backend (llvm.ei; docs/compiler.md,
+    /// "Backends"): every command but `emit-c`, `--wasm` and `--profile`, which still use the
+    /// C lowering internally; `-g` (debug info), `--coverage` (emit-llvm: the
+    /// native/fallback report instead of the IR)
     llvm: bool, debug: bool, coverage: bool,
 }
 
@@ -67,15 +69,15 @@ fn version_line() -> List[u8] {
 /// `eiderc --help`: every command, option and environment variable.
 fn usage_text() -> List[u8] {
     let mut t = version_line()
-    bytes.append(inout t, sys.lit(" (the Eider compiler, written in Eider: Eider -> C11)"))
+    bytes.append(inout t, sys.lit(" (the Eider compiler, written in Eider: Eider -> LLVM IR)"))
     t.push(10)
     for l in [
         "",
         "usage:",
         "  eiderc check <file.ei> [--json] [--lib] [--wasm]  type-check only: `ok` or the errors",
-        "  eiderc emit-c <file.ei> [--test] [--lib]   print the generated C (--test: with the test driver)",
+        "  eiderc emit-c <file.ei> [--test] [--lib]   print the program lowered to C (the seed's form; --test: with the test driver)",
         "  eiderc emit-header <file.ei>               print the C header for the `export fn`s",
-        "  eiderc build <file.ei> [-o out] [-l lib]   compile to a native binary (-O2) via $CC (default: cc)",
+        "  eiderc build <file.ei> [-o out] [-l lib] [-g]  compile to a native binary (-O2) via clang ($EIDER_LLVM_CC) and $CC",
         "  eiderc build --lib <file.ei> [-o name]     build lib<name>.a, lib<name>.so and <name>.h from `export fn`s",
         "  eiderc build --wasm <file.ei> [-o name]    build <name>.wasm, <name>.d.ts and <name>.js (needs clang for wasm32 and wasm-ld)",
         "  eiderc run <file.ei> [--release] [-l lib] [--] [args...]  build and run (-O0 unless --release);",
@@ -89,8 +91,8 @@ fn usage_text() -> List[u8] {
         "  eiderc parse <file.ei> [--all-errors]      dump the AST (--all-errors: every syntax error as JSON lines,",
         "                                             then the AST with its error nodes)",
         "  eiderc ir <file.ei>                        dump the typed IR",
-        "  eiderc emit-llvm <file.ei> [--test] [--coverage]  print the LLVM IR half of --backend=llvm (--coverage: which",
-        "                                             functions are native and why the others fall back to C)",
+        "  eiderc emit-llvm <file.ei> [--test] [--coverage]  print the LLVM IR (--coverage: which functions are",
+        "                                             native and why the others fall back to C)",
         "  eiderc caps <file.ei>                      each package's capability use, one JSON line per capability",
         "  eiderc migrate-var <file.ei>               print the file with its `var`s rewritten as `let mut` (deprecated `var`)",
         "  eiderc migrate-imports <file.ei> [--json]  print the file with its quoted imports in the dotted form",
@@ -104,11 +106,10 @@ fn usage_text() -> List[u8] {
         "  eiderc help | --help | -h                  print this text",
         "  eiderc version | --version                 print `eiderc <version>` (VERSION; docs/site/tooling/releases.md)",
         "",
-        "--backend=llvm (build, run, test, emit-c; experimental): functions are emitted as LLVM IR where",
-        "the LLVM backend supports them (the rest as C) and built with clang 17 or newer ($EIDER_LLVM_CC),",
-        "one unit per module and generic instances in 16 shards, each cached (EIDER_LLVM_UNITS=0: one unit);",
-        "a release build uses ThinLTO when clang links with lld (EIDER_LLVM_LTO=0: plain objects);",
-        "-g adds DWARF line info for the .ei sources (and builds the module as one unit).",
+        "build, run and test emit LLVM IR (the runtime glue and the entry point as C) and build it with",
+        "clang 17 or newer ($EIDER_LLVM_CC), one unit per module and generic instances in 16 shards, each",
+        "cached (EIDER_LLVM_UNITS=0: one unit); a release build uses ThinLTO when clang links with lld",
+        "(EIDER_LLVM_LTO=0: plain objects); -g adds DWARF line info for the .ei sources (one unit).",
         "",
         "errors: every independent error is reported, in the order found, then `error: N errors`",
         "(stderr); with --json one JSON object per line (stdout). --max-errors N shows at most N",
@@ -116,6 +117,7 @@ fn usage_text() -> List[u8] {
         "",
         "environment:",
         "  CC            the C compiler (default cc)",
+        "  EIDER_LLVM_CC the clang that builds the LLVM IR (default clang; LLVM 17 or newer)",
         "  WASM_CC       the C compiler of `build --wasm` (default clang; it needs the wasm32 target, and wasm-ld)",
         "  EIDER_CFLAGS  extra C compiler flags, split at spaces",
         "  EIDER_CACHE   `off`, or the cache directory (default $XDG_CACHE_HOME/eider, else ~/.cache/eider)",
@@ -174,7 +176,6 @@ fn parse_args() -> Args uses io {
     let mut all_errors = false
     let mut private = false
     let mut profile: u32 = 0
-    let mut llvm = false
     let mut debug = false
     let mut coverage = false
     let mut pargs: List[List[u8]] = List.new()
@@ -230,10 +231,6 @@ fn parse_args() -> Args uses io {
                 None => usage_error(quoted("`-j` needs a number of jobs, not ", argv[i]))
             }
             i += 1
-        } else if is(a, "--backend=llvm") {
-            llvm = true
-        } else if is(a, "--backend=c") {
-            llvm = false
         } else if is(a, "-g") {
             debug = true
         } else if is(a, "--coverage") {
@@ -290,9 +287,8 @@ fn parse_args() -> Args uses io {
     }
     if wasm { lib = true }
     if profile > 0 && (lib || !(is(cmd, "build") || is(cmd, "run") || is(cmd, "test") || is(cmd, "emit-c"))) { usage_error(sys.lit("`--profile` goes with build, run, test or emit-c, without --lib or --wasm")) }
-    if is(cmd, "emit-llvm") { llvm = true }
-    if llvm && wasm { usage_error(sys.lit("`--backend=llvm` does not build WebAssembly")) }
-    if llvm && profile > 0 { usage_error(sys.lit("`--profile` goes with the C backend (not `--backend=llvm` yet)")) }
+    // the LLVM backend, but for the commands that still lower to C (see Args.llvm)
+    let llvm = is(cmd, "emit-llvm") || !(is(cmd, "emit-c") || wasm || profile > 0)
     Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, llvm, debug, coverage)
 }
 
@@ -694,8 +690,6 @@ fn main() uses io, fs, net, clock {
                     io.out(out.head)
                     for x in out.ll { io.out(x) }
                 }
-            } else if is(a.cmd, "emit-c") {
-                io.out(out.c)
             } else if a.lib {
                 driver.build_lib_llvm(out.c, llvm.whole(out), lower.header(lp, driver.lib_name(a.file, a.out)), a.file, a.out, a.libs, a.debug)
             } else {

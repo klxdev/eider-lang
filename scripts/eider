@@ -1,0 +1,24 @@
+#!/bin/sh
+# Build (when its sources changed) and run `eider`, the Eider command (packages/eider,
+# docs/site/tooling/eider.md), from this checkout: with the seed's eiderc (scripts/ei), the
+# pinned eider-json and eider-toml (.vendor/, scripts/vendor.sh) and the default crypto
+# backend (AWS-LC, scripts/ei-crypto; sh scripts/fetch-awslc.sh fetches it). Also builds
+# target/eider-sign, the release signing tool (packages/eider/signtool.ei).
+#   scripts/eider <eider args>          e.g. scripts/eider toolchain list
+#   scripts/eider --build-only          only build target/eider and target/eider-sign
+# Exit 3 when something it needs is missing (the reason is printed).
+root="$(cd "$(dirname "$0")/.." && pwd)"
+"$root/scripts/ei" --help >/dev/null || exit 3
+sh "$root/scripts/vendor.sh" fetch json toml || exit $?
+sh "$root/scripts/crypto-build.sh" --check >/dev/null || { sh "$root/scripts/crypto-build.sh" --check; exit 3; }
+for p in eider:main.ei eider-sign:signtool.ei; do
+  bin="$root/target/${p%%:*}"
+  src="$root/packages/eider/${p#*:}"
+  newest=$(find "$root/packages/eider" "$root/packages/crypto" "$root/.vendor/json" "$root/.vendor/toml" "$root/std" "$root/core" -name '*.ei' -newer "$bin" 2>/dev/null | head -1)
+  if [ ! -x "$bin" ] || [ -n "$newest" ]; then
+    mkdir -p "$root/target"
+    (cd "$root" && EIDER_CACHE=${EIDER_CACHE:-off} scripts/ei-crypto build "$src" -o "$bin.$$" && mv -f "$bin.$$" "$bin") || { rm -f "$bin.$$"; echo "eider: could not build $bin" >&2; exit 3; }
+  fi
+done
+[ "${1:-}" = --build-only ] && exit 0
+exec "$root/target/eider" "$@"

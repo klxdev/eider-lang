@@ -44,14 +44,6 @@ arguments are relative to it.
 | `hash <dir>` | Print the content hash of a directory, as the lock records it. |
 | `--version` | Print `eider-pkg <version>`: the toolchain's version (VERSION; see [Releases](releases.md)). Only before a command: `add --version` is a dependency's version. |
 
-**`vendor/`, the old location.** Before `.vendor/`, `eider-pkg vendor` wrote `vendor/`. Neither
-eider-pkg nor the compiler reads it any more, and neither ignores it silently: while `vendor/`
-holds a locked git package that `.vendor/` doesn't, `fetch` (and `update`, `add`, `remove`)
-prints a note, and the compiler stops with E0810 ("package net is vendored in
-.../vendor/net, which is no longer read", with the help to move it). Run `eider-pkg vendor`
-(or `mv vendor .vendor`); `vendor` then writes `.vendor/` and says that `vendor/` can be
-removed once nothing else lives there.
-
 `--offline` makes `fetch` and `update` fail instead of touching the network. Only `add`,
 `remove`, `fetch`, `update` and `vendor` ever do, and `fetch` only when a pinned commit
 isn't already in the local mirror. Errors are printed as `eider-pkg: <message>` with exit
@@ -186,7 +178,7 @@ to the current directory). A git dependency with that name, anywhere in the grap
 from the directory instead of its repository: no network, no tag needed, and uncommitted
 edits count. The files are the ones git would commit (`git ls-files --cached --others
 --exclude-standard`, so `target/` and other ignored files stay out) when git knows the
-directory's `eider.toml`, else every file but `.git`, `deps`, `vendor`, `.vendor` and `target`. They are
+directory's `eider.toml`, else every file but `.git`, `deps`, `.vendor` and `target`. They are
 copied into the store under their content hash, where the compiler finds them through
 `eider.lock` as for any git package, so the lock keeps the git source: with a checkout of
 exactly the locked release, the lock is the one a fetch from the network writes (the same

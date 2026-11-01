@@ -22,11 +22,14 @@ correctness guarantees of Rust:
 
 The compiler, `eiderc`, is written in Eider and emits portable C11, which your C compiler
 turns into a native binary. Its own C output is committed to the repository as
-`seed/eiderc.c`, so building Eider needs nothing but a C compiler.
+`seed/eiderc.c`, so building the compiler needs nothing but a C compiler; the programs it
+builds go through LLVM IR, which clang compiles.
 
 ## Requirements
 
 - A C11 compiler: `cc`, gcc or clang (set `CC` to choose one).
+- clang 17 or newer, to build programs (`EIDER_LLVM_CC` to choose one): eiderc emits LLVM
+  IR. Without it, eiderc still checks programs (`check`), but can't build them.
 - A POSIX system with threads (`-pthread`). Development happens on x86-64 Linux, which is
   the only platform tested so far.
 
@@ -36,6 +39,26 @@ Optional:
 - For the package manager's git dependencies: `git`.
 
 There is no other dependency: no Python, no make, no third-party C libraries.
+
+## Install with eider
+
+The quickest way in is a published release, installed with `eider`, the Eider command
+([eider](../tooling/eider.md)). The releases are on the private GitHub repository
+klxdev/eider-lang, so you need access to it and a GitHub token: `GH_TOKEN`, or
+`gh auth login`. Then:
+
+```sh
+gh release download --repo klxdev/eider-lang --pattern install.sh
+sh install.sh --toolchain        # eider into ~/.eider/bin, then the latest toolchain
+export PATH="$HOME/.eider/bin:$PATH"
+eider version                    # eider 0.1.0, toolchain 0.1.0 (...)
+```
+
+`install.sh` and `eider` check every download's SHA-256 against the release's
+`SHA256SUMS` and that file's signature against the release key before installing
+anything. Every command below works the same with `eider` in place of `scripts/ei`
+(`eider run hello.ei`, `eider test`, `eider new`, `eider add`, ...); the rest of this page
+builds the toolchain from a checkout instead, which needs only a C compiler.
 
 ## Build the toolchain
 
