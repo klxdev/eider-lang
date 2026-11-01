@@ -36,7 +36,6 @@ pub fn skipped() -> List[List[u8]] {
     let mut s: List[List[u8]] = List.new()
     s.push(sys.lit(".git"))
     s.push(sys.lit("deps"))
-    s.push(sys.lit("vendor"))
     s.push(sys.lit(".vendor"))
     s
 }

@@ -1,2 +1,0 @@
-// net, vendored into app/vendor/net by `eider-pkg vendor`
-pub fn port() -> i64 { 80 }

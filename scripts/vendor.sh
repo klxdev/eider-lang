@@ -67,9 +67,9 @@ short() { echo "$1" | cut -c1-12; }
 
 sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum | cut -d' ' -f1; else shasum -a 256 | cut -d' ' -f1; fi; }
 # tree_hash <dir>: eider-pkg's content hash (packages/pkg/store.ei `tree_hash`): every file
-# but those under .git, deps, vendor and .vendor, as `path NUL hex(sha256) LF` in byte order
+# but those under .git, deps and .vendor, as `path NUL hex(sha256) LF` in byte order
 tree_hash() {
-  (cd "$1" && find . \( -name .git -o -name deps -o -name vendor -o -name .vendor \) -prune -o -type f -print |
+  (cd "$1" && find . \( -name .git -o -name deps -o -name .vendor \) -prune -o -type f -print |
     sed 's|^\./||' | LC_ALL=C sort |
     while IFS= read -r f; do printf '%s\000%s\n' "$f" "$(sha256 < "$f")"; done | sha256 | sed 's/^/sha256-/')
 }

@@ -1,4 +1,4 @@
-# The pinned AWS-LC release vendored in vendor/ (read by scripts/update-awslc.sh; sh syntax).
+# The pinned AWS-LC release vendored in sources/ (read by scripts/update-awslc.sh; sh syntax).
 # Release page: https://github.com/aws/aws-lc/releases/tag/v5.12.0 (published 2026-10-23)
 TAG=v5.12.0
 COMMIT=cd481c207e38f06aeb5766f4a1cdfce10a4c0af8
