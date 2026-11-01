@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex/multiline_unterminated.ei","line":2,"col":13},"message":"unterminated multi-line string: end it with `\"\"\"` on a line of its own"}

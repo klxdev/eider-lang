@@ -417,9 +417,17 @@ fn scan(src: List[u8], inout l: L, stop: usize, all: bool, inout toks: List[Tok]
             }
         } else if bytes.is_digit(c) {
             toks.push(number(src, inout l, inout bad))
-        } else if c == 102 && at(src, l.i + 1) == 34 {
-            // f"..." (docs/compiler.md, "C8.28: string literals")
-            fstring(src, inout l, all, inout toks, inout strs, inout bad, inout bad_end, inout names)
+        } else if (c == 102 || c == 114) && prefixed(src, l.i) {
+            // f"...", r"...", r#"..."#, f"""...""" (docs/compiler.md, "C8.28: string literals")
+            if c == 114 {
+                raw(src, inout l, inout toks, inout strs, inout bad)
+            } else if multi_open(src, l.i + 1) {
+                multiline(src, inout l, true, all, inout toks, inout strs, inout bad, inout bad_end, inout names)
+            } else {
+                fstring(src, inout l, all, inout toks, inout strs, inout bad, inout bad_end, inout names)
+            }
+        } else if c == 34 && multi_open(src, l.i) {
+            multiline(src, inout l, false, all, inout toks, inout strs, inout bad, inout bad_end, inout names)
         } else if bytes.is_alpha(c) || c == 95 {
             while l.i < src.len() && bytes.is_ident(src[l.i]) { step(src, inout l) }
             let id = intern.intern(inout names, src, start.i, l.i)
@@ -477,13 +485,33 @@ fn push_str(inout toks: List[Tok], inout strs: List[List[u8]], t: Tok) {
     }
 }
 
-// ---- f-strings (docs/compiler.md, "C8.28: string literals"). `f"` wasn't valid before: it
-// was a name next to a literal.
+// ---- f-strings, raw strings and multi-line strings (docs/compiler.md, "C8.28: string
+// literals"). None of these spellings was valid before: `f"`, `r"` and `r#` were a name next
+// to a literal (or an unexpected `#`), and `"""` followed by the end of the line was an
+// unterminated literal.
 //
 // An f-string is the tokens FStart, then for each text run an FText (val: its decoded text
 // in `strs`), for each `{expr[:spec]}` an FHole at the `{`, the expression's own tokens and
 // an FClose at the `:` or `}` (val: the spec text in `strs`, empty without one), and FEnd at
 // the closing quote. The parser makes an EFmt of them.
+
+/// `f"`, `f"""`, `r"` or `r#...#"` at i (a lone `f` or `r` before the literal).
+fn prefixed(src: List[u8], i: usize) -> bool {
+    let n = at(src, i + 1)
+    if n == 34 { return true }
+    if src[i] != 114 || n != 35 { return false }
+    let mut j = i + 1
+    while at(src, j) == 35 { j += 1 }
+    at(src, j) == 34
+}
+
+/// `"""` at i followed by nothing but spaces before the end of its line: a multi-line string.
+fn multi_open(src: List[u8], i: usize) -> bool {
+    if at(src, i) != 34 || at(src, i + 1) != 34 || at(src, i + 2) != 34 { return false }
+    let mut j = i + 3
+    while at(src, j) == 32 || at(src, j) == 9 || at(src, j) == 13 { j += 1 }
+    at(src, j) == 10
+}
 
 /// One escape sequence at the backslash at l.i, appended to s (the rules of `string`).
 fn escape(src: List[u8], inout l: L, inout s: List[u8], inout reported: bool, inout bad: List[Bad]) {
@@ -522,6 +550,38 @@ fn escape(src: List[u8], inout l: L, inout s: List[u8], inout reported: bool, in
     }
     step(src, inout l)
     step(src, inout l)
+}
+
+/// `r"..."` or `r#"..."#` (any number of `#`): the text as written, no escapes, on one line.
+fn raw(src: List[u8], inout l: L, inout toks: List[Tok], inout strs: List[List[u8]], inout bad: List[Bad]) {
+    let start = l.copy()
+    step(src, inout l)
+    let mut hashes: usize = 0
+    while src[l.i] == 35 {
+        hashes += 1
+        step(src, inout l)
+    }
+    step(src, inout l)
+    let mut s: List[u8] = List.new()
+    while true {
+        if l.i >= src.len() || src[l.i] == 10 {
+            bad.push(fail(start, "unterminated raw string literal"))
+            break
+        }
+        if src[l.i] == 34 {
+            let mut k: usize = 0
+            while k < hashes && at(src, l.i + 1 + k) == 35 { k += 1 }
+            if k == hashes {
+                for x in 0..(hashes + 1) { step(src, inout l) }
+                break
+            }
+        }
+        s.push(src[l.i])
+        step(src, inout l)
+    }
+    strs.push(s)
+    let t = tok(Str, start, l, (strs.len() - 1) as u64)
+    push_str(inout toks, inout strs, t)
 }
 
 /// The text of the literal being read so far (`cur`, starting at `from`) and whether an error
@@ -644,6 +704,86 @@ fn hole(src: List[u8], inout l: L, end: usize, all: bool, inout toks: List[Tok],
     strs.push(spec)
     toks.push(tok(FClose, close, l, (strs.len() - 1) as u64))
     true
+}
+
+/// `"""` (or `f"""`) and the end of its line, the lines of text, and a line holding only the
+/// closing `"""` after the indentation that is removed from every line of text (Swift's rule).
+/// The text starts after the first line break and ends before the last; `\` at the end of a
+/// line joins it to the next.
+fn multiline(src: List[u8], inout l: L, fmt: bool, all: bool, inout toks: List[Tok], inout strs: List[List[u8]], inout bad: List[Bad], inout bad_end: usize, inout names: intern.Interner) {
+    let start = l.copy()
+    if fmt { step(src, inout l) }
+    while src[l.i] != 10 { step(src, inout l) }
+    step(src, inout l)
+    if fmt { toks.push(tok(FStart, start, l, 0)) }
+    // the closing line: the first whose text starts with `"""`
+    let mut ls = l.i.copy()
+    let mut close: usize = src.len()
+    let mut ind: usize = 0
+    while ls < src.len() {
+        let mut j = ls.copy()
+        while j < src.len() && (src[j] == 32 || src[j] == 9) { j += 1 }
+        if at(src, j) == 34 && at(src, j + 1) == 34 && at(src, j + 2) == 34 {
+            close = ls
+            ind = j - ls
+            break
+        }
+        while j < src.len() && src[j] != 10 { j += 1 }
+        ls = j + 1
+    }
+    let mut p = Piece(List.new(), l.copy(), false)
+    if close == src.len() {
+        bad.push(fail(start, "unterminated multi-line string: end it with `\"\"\"` on a line of its own"))
+        while l.i < src.len() { step(src, inout l) }
+        p.reported = true
+    }
+    let mut joined = true
+    while l.i < close {
+        let mut le = l.i.copy()
+        while le < src.len() && src[le] != 10 { le += 1 }
+        let mut te = le.copy()
+        if te > l.i && src[te - 1] == 13 { te -= 1 }
+        if !joined { p.cur.push(10) }
+        joined = false
+        let mut k: usize = 0
+        while k < ind && l.i + k < te && src[l.i + k] == src[close + k] { k += 1 }
+        let mut blank = true
+        for x in l.i..te {
+            if src[x] != 32 && src[x] != 9 { blank = false }
+        }
+        if blank {
+            while l.i < te { step(src, inout l) }
+        } else if k < ind {
+            if !p.reported { bad.push(fail(l, "this line is indented less than the closing `\"\"\"`: indent it at least as far")) }
+            p.reported = true
+            while l.i < te { step(src, inout l) }
+        } else {
+            while k > 0 {
+                step(src, inout l)
+                k -= 1
+            }
+            // a backslash ending the line (an odd run of them) joins the next line
+            let mut n: usize = 0
+            while te - n > l.i && src[te - n - 1] == 92 { n += 1 }
+            if n % 2 == 1 {
+                te -= 1
+                joined = true
+            }
+            pieces(src, inout l, te, fmt, inout p, all, inout toks, inout strs, inout bad, inout bad_end, inout names)
+            if joined { step(src, inout l) }
+        }
+        while l.i <= le && l.i < src.len() { step(src, inout l) }
+    }
+    if close < src.len() {
+        for x in 0..(ind + 3) { step(src, inout l) }
+    }
+    if fmt {
+        flush(inout p, l, inout toks, inout strs)
+        toks.push(tok(FEnd, l, l, 0))
+    } else {
+        strs.push(p.cur)
+        toks.push(tok(Str, start, l, (strs.len() - 1) as u64))
+    }
 }
 
 /// Display name of a token kind, as used in dumps and messages.

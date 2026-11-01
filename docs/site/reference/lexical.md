@@ -136,8 +136,8 @@ int_literal = digit {digit | "_"}
 
 ## String literals
 
-A string literal is text between double quotes, on one line. It has type `str`.
-([f-strings](#f-strings) are below.) Any UTF-8
+A string literal is text between double quotes, on one line. It has type `str`. (Raw,
+multi-line and f-strings are below.) Any UTF-8
 text may appear in it except a newline, an unescaped `"` and an unescaped `\`; a literal
 not closed on its line is E0001 "unterminated string literal".
 
@@ -165,9 +165,9 @@ Refused escapes are E0001 at the backslash, with a message saying why:
 `"GET / HTTP/1.1\r\n" "Host: x\r\n"` is a single token. Literals on different lines are
 not joined.
 
-There are no character literals (`'a'` is E0001) and no raw strings. Text built from
-values is an [f-string](#f-strings), and std ([fmt](api:std/fmt)) has the same formatting
-as functions.
+There are no character literals (`'a'` is E0001). Literals that span lines are
+[multi-line strings](#multi-line-strings); text built from values is an
+[f-string](#f-strings), and std ([fmt](api:std/fmt)) has the same formatting as functions.
 
 ```eider
 fn main() uses io {
@@ -192,13 +192,65 @@ fn main() uses io {
 }
 ```
 
+### Raw strings
+
+`r"..."` is the text exactly as written: a backslash is a backslash, and there are no
+escapes. To put `"` in one, add the same number of `#` on both sides: `r#"say "hi""#`. A
+raw string is on one line, has type `str`, and joins adjacent literals like any other.
+
+```eider
+fn main() uses io {
+    print(r"C:\temp\new")
+    print(r#"{"key": "value"}"#)
+    print(r"\d+" "\n" r"done")
+}
+```
+
+```output
+C:\temp\new
+{"key": "value"}
+\d+
+done
+```
+
+### Multi-line strings
+
+`"""` at the end of a line starts a multi-line string, and a line holding only `"""`
+(after spaces or tabs) ends it. The indentation in front of the closing `"""` is removed
+from every line of text, so the literal can be indented with the code around it. The text
+starts after the opening line break and ends before the last one. Escapes work as in a
+one-line literal, `"` needs no escape, and a `\` at the end of a line joins the next line
+to it (no line break). A line of text indented less than the closing `"""` is E0001, except
+an empty or blank line. The closing `"""` may be followed by more code (`""".len()`).
+
+```eider
+fn main() uses io {
+    let query = """
+        SELECT name
+          FROM users
+         WHERE id = 1 \
+        LIMIT 1
+        """
+    print(query)
+}
+```
+
+```output
+SELECT name
+  FROM users
+ WHERE id = 1 LIMIT 1
+```
+
+`"""` followed by more text on its line is still the old reading (`"""x"""` is `""`, `"x"`
+and `""` joined: `"x"`), so no program changes meaning.
+
 ### f-strings
 
 `f"..."` builds a `String` from text and values: each `{expr}` is replaced by the value's
 text through [Show](traits.md#show), the same text `print` writes, and `{{` and `}}` stand for
 `{` and `}`. The expressions are evaluated left to right. An expression in braces can be any
-expression without `{`, `"` or a comment in it (bind such a value to a name first). An
-f-string is on one line; it isn't joined to adjacent literals.
+expression without `{`, `"` or a comment in it (bind such a value to a name first), on one
+line. `f"""` starts a multi-line f-string with the rules above.
 
 After the expression, `:` starts a **format spec**:
 `[[fill]align][+][#][0][width][x|X|b|o]`.

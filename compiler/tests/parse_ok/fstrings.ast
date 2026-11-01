@@ -1,6 +1,6 @@
 (IFn 2:4 name=main end=2:18
   cap (Cap 2:16 name=io)
-  body (Block 2:19 end=6:1
+  body (Block 2:19 end=8:1
     stmt (SLet 3:5 name=n
       init (EInt 3:13 value=5))
     stmt (SExpr 4:5
@@ -26,5 +26,5 @@
                 rhs (EInt 4:61 value=1)))))))
     stmt (SLet 5:5 name=s
       init (EFmt 5:13
-        part (EHole 5:15 radix=o
-          expr (EIdent 5:16 name=n))))))
+        part (EHole 6:9 radix=o
+          expr (EIdent 6:10 name=n))))))

@@ -10,3 +10,16 @@ p = P { x: 2, label: "b" }, name = Ada, len = 3, Circle(3),   Dot
 1+7=8
 [seven] is   7
 not a number
+Hello, Ada!
+  "quoted" and 	 tab
+joined here
+
+braces {x} }
+C:\path\n raw
+she said "hi" \ 
+ab
+c
+SELECT *
+FROM t
+0
+x

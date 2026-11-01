@@ -1,3 +1,13 @@
-// C8.28's f-strings: text runs, holes with their tokens and specs, `{{`/`}}`
+// C8.28's literals: f-strings (text runs, holes with their tokens and specs, `{{`/`}}`),
+// raw strings with and without `#`, and multi-line strings with their indentation removed
 let a = f"x{n}y{p.q(1, [2]):>8}{{z}}"
-let e = f""
+let b = r"a\nb" r#"say "hi""#
+let c = """
+    one
+      two \
+    three
+    """
+let d = f"""
+  {k:08x}
+  """
+let e = """x""" f""

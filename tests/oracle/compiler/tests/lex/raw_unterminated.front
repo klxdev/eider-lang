@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex/raw_unterminated.ei","line":2,"col":13},"message":"unterminated raw string literal"}

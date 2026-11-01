@@ -281,7 +281,7 @@ locked 1 package(s)
 import json
 
 fn main() uses io {
-    let text = String.from("{\"name\": \"Eider\", \"year\": 2026}").bytes()
+    let text = String.from(r#"{"name": "Eider", "year": 2026}"#).bytes()
     match json.parse(text) {
         Ok(doc) => {
             let name = json.field(doc, doc.root, "name").and_then(|id| json.as_str(doc, id))

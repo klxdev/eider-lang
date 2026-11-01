@@ -3368,7 +3368,8 @@ and each linked program 2.4 MB, so the 5 GiB default holds hundreds of builds.
 
 ## C8.28: string literals
 
-#17 (decisions C460, C461). Code: lex.ei (`fstring`, `pieces`, `hole`), parse.ei (`fstring`, `fmt_spec`), check.ei (`fmt_string`,
+#17 and #13 (decisions C460-C462). Code: lex.ei (`prefixed`, `raw`, `fstring`, `pieces`,
+`hole`, `multiline`), parse.ei (`fstring`, `fmt_spec`), check.ei (`fmt_string`,
 `fmt_hole`), llvm.ei (`fmt_builtin`), the runtime's `ei_str_pad` and `ei_str_fmt_i64/u64`
 (core/eider_rt.c and core/wasm/eider_rt.c).
 
@@ -3385,10 +3386,18 @@ and each linked program 2.4 MB, so the 5 GiB default holds hundreds of builds.
   integer with a spec B_FMT_INT. The spec reaches the runtime as one u64 (layout in
   `fmt_hole`). A type without Show is E0401 as for `print`; `+ # 0 x X b o` on a
   non-integer is E0412.
-- **No valid program changes meaning**: `f"` was a name next to a literal, an error.
+- **Raw strings.** `r"..."`, `r#"..."#`: a Str token of the bytes as written.
+- **Multi-line strings.** `"""` followed only by spaces before the line break; the closing
+  line is the first whose text starts with `"""`, and its indentation is removed from each
+  line (Swift's rule). A blank line may be indented less; any other such line is E0001.
+  `\` at the end of a line joins the next. The token is one Str (FStart... for `f"""`)
+  that spans lines: its `end_col` is a column of the closing line (tokens kept one line
+  before this; nothing needs the end line).
+- **No valid program changes meaning**: `f"`, `r"`, `r#` and `"""`+newline were all
+  errors, and `"""x"""` on one line still lexes as three joined literals.
 
 Tests: compiler/tests/run/fstrings.ei (every spec, Show of records and enums, a hole with
-`?`, a closure; hand-checked .out), compiler/tests/lex_ok/
+`?`, a closure, raw and multi-line strings; hand-checked .out), compiler/tests/lex_ok/
 strings.ei (the tokens), compiler/tests/parse_ok/fstrings.ei (the AST), the lexer and parser
 errors in compiler/tests/lex and compiler/tests/parse, tests/checks/fail/
 e0412_spec_not_integer.ei, compiler/tests/check/fail/e0401_fstring_no_show.ei.

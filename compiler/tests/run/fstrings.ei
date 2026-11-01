@@ -1,4 +1,4 @@
-// f-strings (docs/compiler.md, "C8.28: string literals")
+// f-strings, raw strings and multi-line strings (docs/compiler.md, "C8.28: string literals")
 type P = { x: i32, label: str }
 type Shape = | Circle(r: u32) | Dot
 
@@ -13,6 +13,17 @@ fn parse(s: str) -> Result[i32, str] {
 fn describe(s: str) -> Result[String, str] {
     let t = f"[{s}] is {parse(s)?:>3}"
     Ok(t)
+}
+
+fn greet(who: str) -> String {
+    f"""
+    Hello, {who}!
+      "quoted" and \t tab
+    joined \
+    here
+
+    braces {{x}} }}
+    """
 }
 
 fn main() uses io {
@@ -43,4 +54,16 @@ fn main() uses io {
         Ok(t) => print(t)
         Err(e) => print(e)
     }
+    print(greet("Ada"))
+    print(r"C:\path\n raw")
+    print(r#"she said "hi" \ "#)
+    print(r"a" "b\n" r"c")
+    let sql = """
+        SELECT *
+        FROM t
+        """
+    print(sql)
+    print("""
+    """.len())
+    print("""x""")
 }

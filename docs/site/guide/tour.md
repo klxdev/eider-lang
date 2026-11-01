@@ -44,18 +44,28 @@ true
   `f` at compile time (integer and `bool` constants).
 
 Text is built with f-strings: `{expr}` inserts a value's text, and a spec after `:` pads
-or formats it (`{n:>6}`, `{n:#x}`; [Lexical structure](../reference/lexical.md#f-strings)):
+or formats it (`{n:>6}`, `{n:#x}`; [Lexical structure](../reference/lexical.md#f-strings)).
+`r"..."` is a raw string and `"""` starts a multi-line one:
 
 ```eider
 fn main() uses io {
     let name = "Eider"
     let n = 42
     print(f"{name} has {n} ({n:#x}) users, [{name:^9}]")
+    let banner = """
+        Hello,
+          world
+        """
+    print(banner)
+    print(r"no \escapes here")
 }
 ```
 
 ```output
 Eider has 42 (0x2a) users, [  Eider  ]
+Hello,
+  world
+no \escapes here
 ```
 
 Arithmetic is checked. Overflow stops the program with exit code 101, in every build. When
