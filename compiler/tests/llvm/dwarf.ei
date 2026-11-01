@@ -1,5 +1,5 @@
 // DWARF variables and types (`-g`, docs/compiler.md "Backends"): compiler/tests/llvm/run.sh
-// builds this with --backend=llvm -g and finds each variable, parameter and member below in
+// builds this with -g and finds each variable, parameter and member below in
 // `readelf --debug-dump=info` (llvm-dwarfdump when it is installed).
 
 type Point = { px: i64, py: i64 }

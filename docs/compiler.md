@@ -994,14 +994,14 @@ review the oracle diff, add a test, and regenerate the seed.
 
 ## Backends
 
-The C backend (`lower.ei`, "C4: lowering") is the default and the bootstrap path. Beside it,
-on the `experiment/llvm-backend` branch, is an experimental LLVM backend (issues #92 and #96,
-U21, C260-C269, C340-C346): `llvm.ei` lowers the same typed IR to textual LLVM IR, which
-clang builds (`eiderc build|run|test --backend=llvm`, `build --lib --backend=llvm`,
-`emit-llvm`; user documentation in docs/site/tooling/llvm.md). It is ordinary compiler code
-built by the seed, so building eiderc needs no LLVM. eiderc runs clang only when the flag is
-given, and checks first that it is LLVM 17 or newer (`driver.llvm_cc`; exit 3 with a message
-otherwise).
+The LLVM backend (issues #92, #96 and #125, U21, U23, C260-C269, C340-C346, C440) is the
+backend of `build`, `run`, `test` and `build --lib`, with no flag to choose another: `llvm.ei`
+lowers the typed IR to textual LLVM IR, which clang builds (`emit-llvm` prints it; user
+documentation in docs/site/tooling/llvm.md). It is ordinary compiler code built by the seed,
+so building eiderc needs no LLVM. eiderc checks before every build that clang is LLVM 17 or
+newer (`driver.llvm_cc`; exit 3 with a message otherwise). The C lowering (`lower.ei`, "C4:
+lowering") is still the path of `emit-c` (the seed's form), `--wasm` and `--profile`, and of
+comptime evaluators, until #126-#128 replace those too.
 
 **Split.** The backend works one function at a time. `llvm.program` tries every function
 with a body. A function whose statements it can lower becomes a `define` in the module
@@ -1024,7 +1024,8 @@ both halves are compiled by clang to bitcode (the C half with `-w`: it is genera
 the C backend already checks under `$CC`), the C core's objects stay native and cached, and
 clang links everything with `-fuse-ld=lld`, so the C half's glue (push, clone, drop, `==`)
 inlines into the IR. `EIDER_LLVM_LTO=0`, no such linker, and `build --lib` link plain
-objects. There is no binary cache in this mode. Today no construct falls back: every
+objects. The executable is cached under the same key as the C path's (C440), plus clang's
+argv and version, `EIDER_LLVM_LTO` and the IR. Today no construct falls back: every
 function of the run tests, and every function of the compiler, is native.
 
 **Calling conventions.** A call from Eider to Eider uses an internal convention (C340):
@@ -1100,17 +1101,18 @@ compiler/tests/llvm/dwarf.ei at -O0 with `-g` and finds every parameter, local, 
 type name with a frame location (llvm-dwarfdump, else `readelf --debug-dump=info`; gdb and
 lldb are not installed here). At -O2 the variables of inlined functions are optimized away.
 
-**Tests.** `scripts/llvm-diff.sh` runs every run test (tests/run, compiler/tests/run) under
-`run`, and under `test` when it has test blocks, through both backends. Stdout, stderr and
-the exit code must be byte-identical with the LLVM build at -O0, at -O2 (with LTO), with
-`-DEI_RT_COUNT_ALLOCS` (the same leak report), and under ASan+UBSan, with clang building
-both halves. The script also prints the coverage per test and overall. It is the
-"llvm (--backend=llvm)" leg of scripts/verify.sh, together with compiler/tests/llvm/run.sh,
-and the leg is skipped with the reason when clang 17+ is missing. The compiler built by the
-LLVM backend emits byte-identical C and LLVM IR for compiler/main.ei.
+**Tests.** Until it became the only way to build programs, `scripts/llvm-diff.sh` ran every
+run test through both backends and required byte-identical stdout, stderr and exit codes at
+-O0, -O2 (with LTO), with `-DEI_RT_COUNT_ALLOCS` and under ASan+UBSan; it is gone (C440).
+The reference is now the recorded oracle: scripts/test-compiler.sh's run, sanitize and leaks
+legs build every run test with the LLVM backend and compare it with tests/oracle's `.run` and
+`.test` files. compiler/tests/llvm/run.sh (verify.sh's "llvm" leg, skipped with the reason
+when clang 17+ is missing) checks the C ABI, that no function of the run tests or of the
+compiler falls back to C, and the DWARF. The compiler built by the LLVM backend emits
+byte-identical C and LLVM IR for compiler/main.ei.
 
-**Measurements** (`scripts/llvm-bench.sh`, 2026-10-31, x86-64, clang 22.1.8 for both
-backends, median of 7 runs, EIDER_CACHE=off, a shared and busy machine: compare within a
+**Measurements** (taken with the comparison scripts/llvm-bench.sh had then; it now times
+the LLVM backend alone. 2026-10-31, x86-64, clang 22.1.8 for both backends, median of 7 runs, EIDER_CACHE=off, a shared and busy machine: compare within a
 row, not across days).
 
 Round two (#96): compile time in ms. `emit` is the front end plus lowering (emit-llvm also
@@ -1163,9 +1165,8 @@ above (9.6 MB of IR against 5.3 MB of C; writing it to stdout is a tenth of emit
 LLVM -O0 builds the compiler in 70% of the C time (clang -O0 on 9.6 MB of IR is faster than
 on 5.3 MB of C, and the C half is small); at -O2 with LTO the two take about the same time
 (LTO's link is single-threaded; without LTO the LLVM build takes about 60% of the C time).
-The recommendation on graduating (C346): to main as an opt-in backend, the C backend staying
-the default and the bootstrap path; the default waits for AAPCS64. Still to do: arm64,
-`--profile` and the binary cache with `--backend=llvm`, TBAA (clang's type-based aliasing,
+The recommendation on graduating (C346) was an opt-in backend; the user made it the default
+and the only one (U23, C440). Still to do: arm64, `--profile` through the LLVM backend, TBAA (clang's type-based aliasing,
 which the IR doesn't give LLVM yet), and DWARF for SSA values and inlined frames.
 
 ## Compile speed

@@ -1,23 +1,20 @@
 #!/bin/sh
-# The LLVM backend against the C backend (docs/compiler.md, "Backends"): for each
+# Compile and run times of the LLVM backend (docs/compiler.md, "Backends"): for each
 # tests/bench/*.ei and for the compiler itself (compiler/main.ei),
 #
-#   front   `eiderc emit-c` vs `eiderc emit-llvm` (the Eider part of a build: front end and
-#           lowering; emit-llvm also writes the C half)
-#   build   `eiderc build` vs `eiderc build --backend=llvm` at -O0 and -O2 (EIDER_CFLAGS=-O0
-#           applies to both halves), with CC=clang for both, so the same compiler does the work
-#   run     the -O2 binaries, REPS times each; their output must be identical
+#   emit    `eiderc emit-llvm` (the Eider part of a build: front end and lowering)
+#   build   `eiderc build` at -O0 (EIDER_CFLAGS=-O0) and at -O2 (with LTO when clang has lld)
+#   run     the -O2 binary, REPS times (`self` runs the built compiler on
+#           `emit-llvm compiler/main.ei`)
 #
 #   sh scripts/llvm-bench.sh            REPS=5; EIDERC (default target/eiderc-next)
 #
-# Median wall times in ms (`date +%s%N`), EIDER_CACHE=off. `self` runs the built compilers on
-# `emit-c compiler/main.ei`.
+# Median wall times in ms (`date +%s%N`), EIDER_CACHE=off.
 cd "$(dirname "$0")/.." || exit 1
 REPS=${REPS:-5}
 E=${EIDERC:-target/eiderc-next}
 EIDER_CACHE=off; export EIDER_CACHE
 EIDER_ROOT=$(pwd); export EIDER_ROOT
-CC=${LLVM_BENCH_CC:-clang}; export CC
 tmp=target/tmp/llvm-bench
 rm -rf "$tmp"; mkdir -p "$tmp"
 now() { date +%s%N; }
@@ -34,34 +31,13 @@ median() {
   if grep -q FAIL "$tmp/times"; then echo failed; return; fi
   sort -n "$tmp/times" | sed -n "$(( (REPS + 1) / 2 ))p"
 }
-fail=0
-echo "compile time (ms; median of $REPS)"
-printf '%-14s %8s %8s %10s %10s %10s %10s\n' program emit-c emit-ll "C -O0" "LLVM -O0" "C -O2" "LLVM -O2"
+echo "times in ms (median of $REPS)"
+printf '%-14s %8s %10s %10s %10s\n' program emit "build -O0" "build -O2" "run -O2"
 for f in tests/bench/*.ei compiler/main.ei; do
   n=$(basename "$f" .ei); [ "$f" = compiler/main.ei ] && n=self
-  a=$(median "$E" emit-c "$f")
-  b=$(median "$E" emit-llvm "$f")
-  c0=$(median env EIDER_CFLAGS=-O0 "$E" build "$f" -o "$tmp/$n.c0")
-  l0=$(median env EIDER_CFLAGS=-O0 "$E" build --backend=llvm "$f" -o "$tmp/$n.l0")
-  c2=$(median "$E" build "$f" -o "$tmp/$n.c2")
-  l2=$(median "$E" build --backend=llvm "$f" -o "$tmp/$n.l2")
-  printf '%-14s %8s %8s %10s %10s %10s %10s\n' "$n" "$a" "$b" "$c0" "$l0" "$c2" "$l2"
+  a=$(median "$E" emit-llvm "$f")
+  b0=$(median env EIDER_CFLAGS=-O0 "$E" build "$f" -o "$tmp/$n.o0")
+  b2=$(median "$E" build "$f" -o "$tmp/$n.o2")
+  if [ $n = self ]; then r=$(median "$tmp/self.o2" emit-llvm compiler/main.ei); else r=$(median "$tmp/$n.o2"); fi
+  printf '%-14s %8s %10s %10s %10s\n' "$n" "$a" "$b0" "$b2" "$r"
 done
-echo
-echo "run time of the -O2 binaries (ms; median of $REPS)"
-printf '%-14s %10s %10s %8s\n' program C LLVM "LLVM/C"
-for f in tests/bench/*.ei compiler/main.ei; do
-  n=$(basename "$f" .ei); [ "$f" = compiler/main.ei ] && n=self
-  if [ $n = self ]; then
-    tc=$(median "$tmp/self.c2" emit-c compiler/main.ei); cp "$tmp/out" "$tmp/self.c.out"
-    tl=$(median "$tmp/self.l2" emit-c compiler/main.ei); cp "$tmp/out" "$tmp/self.l.out"
-    cmp -s "$tmp/self.c.out" "$tmp/self.l.out" || { tl="$tl (differs)"; fail=1; }
-  else
-    tc=$(median "$tmp/$n.c2"); cp "$tmp/out" "$tmp/$n.c.out"
-    tl=$(median "$tmp/$n.l2"); cp "$tmp/out" "$tmp/$n.l.out"
-    cmp -s "$tmp/$n.c.out" "$tmp/$n.l.out" || { tl="$tl (differs)"; fail=1; }
-  fi
-  ratio=$(awk -v a="$tc" -v b="${tl%% *}" 'BEGIN { if (a > 0) printf "%.2f", b / a; else print "-" }')
-  printf '%-14s %10s %10s %8s\n' "$n" "$tc" "$tl" "$ratio"
-done
-exit $fail
