@@ -3441,11 +3441,12 @@ spelling as before; the message for the others is now "`comptime` constants must
 integers, bool or str". Aggregates (records, tuples, arrays) stay out: plain constants can't
 hold them (E0504).
 
-**Cost.** `eiderc check tests/run/comptime.ei` (4 constants): 823 ms before, 10 ms after;
-compiler/tests/run/comptime.ei (35 constants): 2,846 ms before, 18 ms after (medians of 7
-and 5 runs, `EIDER_CACHE=off`; most of the old time was clang and the link per constant).
-`scripts/bench.sh` is unchanged (it has no comptime constants): list_copies 4/3 ms, state
-3/3 ms, str_append 5/5 ms, self (emit-llvm of compiler/main.ei) 398/381 ms.
+**Cost.** `eiderc check tests/run/comptime.ei` (4 constants): 561 ms before, 9 ms after;
+compiler/tests/run/comptime.ei (35 constants): 3,784 ms before, 36 ms after (medians of 7
+runs, `EIDER_CACHE=off`, on an otherwise idle machine; most of the old time was clang and the
+link per constant). `scripts/bench.sh` is unchanged (it has no comptime constants):
+list_copies 3/3 ms, state 3/3 ms, str_append 5/5 ms, self (emit-llvm of compiler/main.ei)
+420/409 ms.
 
 **Tests.** compiler/tests/run/comptime_interp.ei computes ten cases twice, once as comptime
 constants and once at run time, and prints whether they agree: Map slot order after inserts,

@@ -162,7 +162,7 @@ every error is reported; uses of the failed constant report nothing more.
 
 Each comptime constant costs one check of the program and an interpretation of its
 expression: tens of microseconds for most constants (`tests/run/comptime.ei`'s four
-constants check in about 10 ms, against 0.8 s when every constant was built with the C
+constants check in about 10 ms, against 0.6 s when every constant was built with the C
 compiler). Comptime evaluation needs no C compiler, so `eiderc check` works without one.
 
 Generic code can also look at a type's fields, variants and attributes while it is

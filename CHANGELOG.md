@@ -10,8 +10,8 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 - **Comptime without a C compiler**: `comptime` constants are evaluated by an interpreter of
   the compiler's typed IR (compiler/interp.ei, #7), with the built program's results and
   trap messages, no C compiler, files or processes, and no way to reach a capability.
-  Checking a program with comptime constants is 50-150 times faster (tests/run/comptime.ei:
-  823 ms to 10 ms). Constants may be declared in any order, plain constants and functions
+  Checking a program with comptime constants is about 60-100 times faster
+  (tests/run/comptime.ei: 561 ms to 9 ms). Constants may be declared in any order, plain constants and functions
   may name comptime constants, and `str` is a comptime constant type; a cycle is E0110 with
   a help. A value of a type with its own `Drop` can't be made during evaluation, and calls
   nest at most 1,000 deep.
