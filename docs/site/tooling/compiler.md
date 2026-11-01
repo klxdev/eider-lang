@@ -2,7 +2,7 @@
 
 `eiderc` compiles Eider to LLVM IR and builds it with clang (17 or newer; see
 [The LLVM backend](llvm.md)). In a checkout, run it as
-`scripts/ei`, which builds `target/eiderc` from `seed/eiderc.c` when needed and passes every
+`scripts/ei`, which builds `target/eiderc` from the seed (`seed/eiderc.wasm`) when needed and passes every
 argument on. This page lists every command, option and environment variable, as
 `compiler/main.ei` defines them (`scripts/ei --help` prints the same list).
 
@@ -155,17 +155,21 @@ That is why `run` and `test` use `-O0` and `build` uses `-O2`.
 
 ## The bootstrap
 
-eiderc is written in Eider (`compiler/`). Its own C output is committed as
-`seed/eiderc.c`, so building it needs only a C11 compiler:
+eiderc is written in Eider (`compiler/`). It is committed compiled to WebAssembly,
+`seed/eiderc.wasm`, with `seed/wasm2c.c`, a small translator from WebAssembly to C, so
+building it needs only a C11 compiler:
 
 ```sh
-cc -std=c11 -O2 -pthread -I core -o target/eiderc seed/eiderc.c core/eider_rt.c core/eider_core.c
+cc -std=c11 -O2 -o wasm2c seed/wasm2c.c
+./wasm2c seed/eiderc.wasm -o eiderc.c
+cc -std=c11 -O1 -pthread -o eiderc eiderc.c core/eider_core.c
 ```
 
-`sh scripts/selfhost.sh` builds the compiler with the seed, then with itself, twice, and
-checks that the last two stages emit identical C (`SELF-HOSTED`); `--seed` writes the new
-seed after a compiler change, and `--from-seed` checks that the seed reproduces itself.
-The compiler may only use language features the committed seed supports, so a feature
+That compiler (stage0) checks programs and emits LLVM IR; with clang it builds `compiler/`
+natively, which is what `scripts/ei` does. `sh scripts/selfhost.sh` builds stage0, then the
+compiler with it, then with itself, and checks that the last two emit identical LLVM IR and
+build identical seeds (`SELF-HOSTED`); `--seed` writes the new seed after a compiler change,
+and `--from-seed` checks that the seed is current. The compiler may only use language features the committed seed supports, so a feature
 lands in `compiler/` first and is used there only after the seed is regenerated. That is
 why a few features (`Ref[T]`, labeled loops, `Default`, method chains across lines) are in
 the compiler sources but not yet in the compiler `scripts/ei` builds.

@@ -164,7 +164,8 @@ fn link(c: List[u8], ll: List[u8], wasm_file: List[u8], core_mod: bool) uses io,
         argv.push(s("-I"))
         argv.push(core.copy())
         if core_mod {
-            for a in ["-DEI_WASM_CORE", "-Wl,--stack-first", "-Wl,-z,stack-size=33554432"] { argv.push(s(a)) }
+            // --strip-all: no name section (it would name the output file) or producers
+            for a in ["-DEI_WASM_CORE", "-Wl,--stack-first", "-Wl,-z,stack-size=33554432", "-Wl,--strip-all"] { argv.push(s(a)) }
         }
         for a in ["-Wl,--no-entry", "-Wl,--allow-undefined", "-o"] { argv.push(s(a)) }
         argv.push(wasm_file)

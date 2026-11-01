@@ -66,7 +66,7 @@ design.
 
 ## Compiler versions
 
-The repository builds `eiderc` from a committed seed (`seed/eiderc.c`), which lags behind
+The repository builds `eiderc` from a committed seed (`seed/eiderc.wasm`), which lags behind
 `compiler/` between regenerations. These pages describe `compiler/`; a few features
 (`Ref[T]`, closures with `inout` parameters, labeled loops, `Default`, method chains
 across lines) are newer than the current seed.

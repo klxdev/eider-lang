@@ -88,10 +88,11 @@ dependencies of a path package, outside the pins).
 
 Building Eider must stay cheap to bootstrap and audit. The rule:
 
-- **To build the compiler from the seed, and to build any Eider program:** a C11 compiler and a
-  POSIX.1-2008 C library with threads (`-pthread`). Nothing else: no other language toolchain (no Python), no make,
+- **To build the compiler from the seed:** a C11 compiler and a POSIX.1-2008 C library with
+  threads (`-pthread`). Nothing else: no other language toolchain (no Python), no make,
   no third-party C libraries, no particular C compiler (gcc and clang both work; anything C11
-  should). `cc -std=c11 -O2 -pthread -I core -o eiderc seed/eiderc.c core/eider_rt.c core/eider_core.c`
+  should). The compiler builds from its WebAssembly seed with only that: `cc seed/wasm2c.c`,
+  translate `seed/eiderc.wasm`, `cc` the result with `core/eider_core.c` (seed/README.md)
   is the whole bootstrap.
 - **The language runtime (`core/`) and the compiler (`compiler/`)** may only depend on that. New
   C in core must use only C11 + POSIX; a new dependency for the runtime or the compiler needs a
@@ -133,11 +134,11 @@ Rules of thumb:
 
 - New C goes in core only if it is an OS call Eider cannot make otherwise. Anything that can be written in Eider is.
 - A module goes in std only if most programs would use it. Formats, algorithms and tools are packages.
-- `compiler/` self-hosts and its generated C is committed as `seed/eiderc.c`, so building Eider needs only a C compiler (`scripts/ei` does it; `scripts/selfhost.sh --from-seed` checks that the seed reproduces itself). The tests' expected results are recorded in `tests/oracle/` (docs/compiler.md, "History").
+- `compiler/` self-hosts and is committed compiled to WebAssembly as `seed/eiderc.wasm` (with the translator `seed/wasm2c.c`), so building the compiler needs only a C compiler (`scripts/ei` does it; `scripts/selfhost.sh --from-seed` checks that the seed reproduces itself). The tests' expected results are recorded in `tests/oracle/` (docs/compiler.md, "History").
 
 Tooling:
 
-- `scripts/ei <eiderc args>`: the compiler, `target/eiderc`, built from `seed/eiderc.c` with `$CC` when it is missing or older than the seed or `core/` (eiderc links the C core into every program itself).
+- `scripts/ei <eiderc args>`: the compiler, `target/eiderc`: stage0 (the seed through wasm2c, built with `$CC`) builds compiler/ natively with clang 17+, else it is stage0 itself; rebuilt when missing or older than the seed or `core/` (eiderc links the C core into every program itself).
 - `scripts/ei-crypto [--crypto <backend>] <eiderc args>`: scripts/ei with a crypto backend linked (built by `scripts/crypto-build.sh` when needed); `scripts/fetch-awslc.sh` fetches the pinned AWS-LC sources (`--repin` moves to a new release), `scripts/fetch-crypto-vectors.sh` re-creates tests/crypto/vectors from upstream, `scripts/crypto-bench.sh` measures each backend (core/crypto/README.md).
 - `scripts/migrate-imports.sh <dirs>`: rewrites path imports that cross into another package (core, std, a declared dependency) into package imports; run on compiler/, std/, core/, packages/ and tests/ once the seed knows package imports (docs/compiler.md, "C8.3"). (`scripts/bootstrap-deps.sh`, which linked a `deps/` farm into each package, is retired: nothing needs it.)
 - `scripts/migrate-caps.sh <dirs>`: removes the `ffi` that `uses` clauses carried only to call another package (`ffi` stays inside the package with the unmanaged code since C8.5); already run on compiler/, std/, packages/, tests/ and examples/, and kept for code written before C8.5 (docs/compiler.md, "C8.5: capabilities per package").

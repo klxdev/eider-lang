@@ -1,13 +1,13 @@
 # Eider handoff
 
-Eider is a compiled, type-safe language that emits C11. Source files use `.ei`, the compiler is `eiderc`. The compiler (`compiler/`) is written in Eider and self-hosted; its C output is committed as `seed/eiderc.c`, so building Eider needs only a C11 compiler, nothing else; the compiler tests' expected results are recorded in `tests/oracle/` (docs/compiler.md, "History"). Everything is Eider on top of a small C core. Read `LAYERS.md` first.
+Eider is a compiled, type-safe language that compiles through LLVM IR. Source files use `.ei`, the compiler is `eiderc`. The compiler (`compiler/`) is written in Eider and self-hosted; it is committed compiled to WebAssembly as `seed/eiderc.wasm`, with the translator `seed/wasm2c.c`, so building the compiler needs only a C11 compiler, nothing else (programs need clang 17+); the compiler tests' expected results are recorded in `tests/oracle/` (docs/compiler.md, "History"). Everything is Eider on top of a small C core. Read `LAYERS.md` first.
 
 ## Get running
 
-Needs: a C11 compiler (`$CC`, default `cc`; gcc and clang both tested) and a POSIX libc with threads. For the WebAssembly path also: clang with the wasm32 target, `wasm-ld`, and Node (tests only).
+Needs: a C11 compiler (`$CC`, default `cc`; gcc and clang both tested), a POSIX libc with threads, and clang 17+ to build programs. For the WebAssembly path also: clang with the wasm32 target, `wasm-ld`, and Node (tests only).
 
 ```
-scripts/ei run examples/warehouse.ei   # scripts/ei builds target/eiderc from seed/eiderc.c, then runs it
+scripts/ei run examples/warehouse.ei   # scripts/ei builds target/eiderc from seed/eiderc.wasm, then runs it
 scripts/ei run tests/std/std.ei
 scripts/verify.sh          # full matrix; must end with ALL GREEN
 scripts/selfhost.sh        # seed -> stage1 -> stage2 -> stage3; must print SELF-HOSTED

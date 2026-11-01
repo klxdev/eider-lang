@@ -1,16 +1,17 @@
 # Eider
 
-A compiled, type-safe language that emits portable C11. The repository is layered (see
+A compiled, type-safe language that compiles through LLVM IR. The repository is layered (see
 `LAYERS.md`): a small C core (`core/`, contract in `core/ABI.md`), a standard library in
 Eider (`std/`), and the ecosystem's tooling as packages in Eider (`packages/`: eider-pkg,
 eider-doc, the fuzzer, crypto). Libraries and frameworks (eider-json, eider-http, eider-rpc,
 eider-openapi, ...) live in repositories of their own (LAYERS.md, "Where code lives"). The
-compiler, `eiderc` (`compiler/`), is written in Eider and self-hosted: its own C output is
-committed as `seed/eiderc.c`, so building the compiler needs only a C11 compiler; programs
-are built through LLVM IR and need clang 17 or newer.
+compiler, `eiderc` (`compiler/`), is written in Eider and self-hosted: it is committed as
+WebAssembly (`seed/eiderc.wasm`) with a small translator to C (`seed/wasm2c.c`), so building
+the compiler needs only a C11 compiler; programs are built through LLVM IR and need clang 17
+or newer.
 
 ```
-cc -std=c11 -O2 -pthread -I core -o eiderc seed/eiderc.c core/eider_rt.c core/eider_core.c   # the whole bootstrap
+cc -o wasm2c seed/wasm2c.c && ./wasm2c seed/eiderc.wasm -o eiderc.c && cc -pthread -o eiderc eiderc.c core/eider_core.c   # the bootstrap
 scripts/ei run examples/warehouse.ei      # build + run (scripts/ei builds target/eiderc from the seed)
 scripts/ei test examples/warehouse.ei     # run `test` blocks
 scripts/ei check file.ei --json           # machine-readable diagnostics for agents

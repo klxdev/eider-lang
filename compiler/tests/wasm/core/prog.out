@@ -1,0 +1,11 @@
+args: target/seedtest/d a b
+env: yes
+written in wasm
+sub is a directory
+child out
+child err
+child exit 7
+1498500
+to stderr
+eider: runtime error: index out of bounds (compiler/tests/wasm/core/prog.ei:75)
+exit 101

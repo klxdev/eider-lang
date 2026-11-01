@@ -87,7 +87,7 @@ fn config(path: List[u8]) -> Result[List[u8], error.Failure] uses fs {
 ```
 
 Why an impl for String and not typed `fs.Error`/`io.Error`: the String errors are the
-seed's (std/bytes, fs, io, env and proc are compiled into seed/eiderc.c, and compiler/ uses
+seed's (std/bytes, fs, io, env and proc are compiled into the seed, and compiler/ uses
 them with their String errors throughout), so typed errors there would change the
 compiler's code and wait for a seed regeneration, while the impl lives in std/error, which
 the seed doesn't compile, and works with the seed and with eiderc as they are. The orphan
@@ -265,7 +265,7 @@ works around any of them (`stream.Kind` lost its own Show, `stream.plain` is gon
 ## Why std/stream and not std/io
 
 std/stream is the canonical place for streams (decision C101). The compiler imports
-`std/bytes`, `fs`, `io`, `env` and `proc`, so their text is compiled into `seed/eiderc.c`:
+`std/bytes`, `fs`, `io`, `env` and `proc`, so their text is compiled into the seed (`seed/eiderc.wasm`):
 any change to them, even an unused type, makes `selfhost.sh --from-seed` fail until the seed
 is regenerated. The earlier plan moved Reader/Writer and `Error` into std/io at a seed
 regeneration; it was dropped, because it would tie every change of the stream layer (large

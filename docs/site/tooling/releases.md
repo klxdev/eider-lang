@@ -36,7 +36,7 @@ check-siblings` and `bump` treat them as siblings. A package you write needs onl
 
 The compiler reads no file to know its version: `core/version.ei` is the Eider copy of
 `VERSION`, compiled into eiderc, eider-pkg and eider-doc, and into the seed
-(`seed/eiderc.c`). A version bump is therefore an ordinary source change followed by a seed
+(`seed/eiderc.wasm`). A version bump is therefore an ordinary source change followed by a seed
 regeneration, and the seed stays reproducible.
 
 Programs can use it too:

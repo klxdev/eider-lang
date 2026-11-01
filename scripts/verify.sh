@@ -1,12 +1,13 @@
 #!/bin/sh
 # Full verification matrix: compile-fail suite, run tests on gcc/clang/ASan+UBSan/TSan, std, export, wasm, the vendored libraries, and the sibling repositories (the editor tooling, eider-analyzer and tree-sitter-eider, and the libraries and frameworks, eider-json, eider-http, ...) when they are next to this one.
-# The compiler is target/eiderc, built from the seed by scripts/ei (only a C compiler). The
+# The compiler is target/eiderc (scripts/ei: the WebAssembly seed translated to C and built with
+# only a C compiler, stage0, which with clang builds compiler/ natively; seed/README.md). The
 # toolchain's own tools (eider-pkg, eider-doc, tests/crypto) need the pinned libraries in
 # .vendor/, fetched on first use (scripts/vendor.sh: from the sibling checkouts, a mirror,
 # the network or a tarball, hash-checked); without them their legs are skipped, with the reason.
 cd "$(dirname "$0")/.." || exit 1
 EIDER_CACHE=off; export EIDER_CACHE
-scripts/ei --help >/dev/null || { echo "FAIL build target/eiderc from seed/eiderc.c"; exit 3; }
+scripts/ei --help >/dev/null || { echo "FAIL build target/eiderc from seed/eiderc.wasm"; exit 3; }
 EIDER=$(pwd)/target/eiderc; export EIDER
 fail=0
 "$EIDER" test --compile-fail tests/checks | tail -1 | grep -q " 0 failed" && echo "ok   compile-fail suite (eiderc)" || { echo "FAIL compile-fail"; fail=1; }
@@ -102,7 +103,18 @@ elif [ $lrc != 0 ]; then
 else
   echo "ok   llvm ($(grep '^ok' $S/llvm | sed 's/^ok   llvm //; s/:.*//' | paste -sd, - | sed 's/,/, /g'): $(sed -n 's/^ok   llvm coverage: //p' $S/llvm))"
 fi
-sh scripts/selfhost.sh --from-seed >/dev/null 2>&1 && echo "ok   seed (seed/eiderc.c rebuilds itself with only a C compiler)" || { echo "FAIL seed: sh scripts/selfhost.sh --from-seed"; fail=1; }
+# seed: stage0 from seed/eiderc.wasm with only a C compiler, the seed current (it emits compiler/'s
+# LLVM IR) and, with the clang that built it, rebuilt byte for byte (scripts/selfhost.sh
+# --from-seed); seed/wasm2c.c's own tests (strict warnings, ASan+UBSan, instructions, a core
+# module, fuzzing: seed/tests/run.sh)
+sh scripts/selfhost.sh --from-seed > $S/seed 2>&1; src=$?
+while IFS= read -r l; do case $l in "skip: "*) skip "seed: ${l#skip: }" ;; esac; done < $S/seed
+if [ $src != 0 ]; then echo "FAIL seed: sh scripts/selfhost.sh --from-seed"; tail -5 $S/seed; fail=1
+else echo "ok   seed (stage0 from seed/eiderc.wasm with only a C compiler, $(wc -c < seed/eiderc.wasm) bytes; current, $(grep -q 'byte for byte.*ok' $S/seed && echo 'rebuilt byte for byte' || echo 'IR-identical'))"; fi
+sh seed/tests/run.sh target/eiderc > $S/w2c 2>&1; wrc=$?
+while IFS= read -r l; do case $l in "skip "*) skip "${l#skip }" ;; esac; done < $S/w2c
+if [ $wrc != 0 ]; then echo "FAIL wasm2c: sh seed/tests/run.sh"; grep -A5 "^FAIL" $S/w2c | head -12; fail=1
+else echo "ok   wasm2c ($(grep -c '^ok' $S/w2c) checks: $(grep '^ok' $S/w2c | sed 's/^ok   wasm2c \([a-z ]*\):.*/\1/' | paste -sd, - | sed 's/,/, /g'))"; fi
 bash tests/export/run.sh | tail -1 | grep -q "^ok" && echo "ok   export (C and C++ consumers)" || { echo "FAIL export"; fail=1; }
 # tools: the sibling repositories (scripts/check-tools.sh; EIDER_<NAME>, else
 # $EIDER_SIBLINGS/<name>, default ../<name>): the editor tooling (eider-analyzer,

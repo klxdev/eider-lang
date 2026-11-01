@@ -70,7 +70,7 @@ The first of these that applies:
 1. **`eider +<version> <command>`**: that version (`+0.1.0`), or the newest installed patch
    of a series (`+0.1`).
 2. **`EIDER_TOOLCHAIN=<path>`**: a toolchain directory, or an eider-lang checkout (one with
-   `scripts/ei` and `seed/eiderc.c`, whose compiler `scripts/ei` builds from the seed when
+   `scripts/ei` and `seed/eiderc.wasm`, whose compiler `scripts/ei` builds from the seed when
    needed). This is how eider-lang itself is developed: point it at your checkout.
 3. **The project's `eider.toml`**: the nearest one at or above the working directory, if
    it says `eider = "MAJOR.MINOR"` under `[package]` ([Versions and

@@ -131,10 +131,9 @@ B=$out/$name
 rm -rf "$B" "$B.tar.gz"
 mkdir -p "$B"
 epoch=$(git log -1 --format=%ct HEAD)
-# the backend programs are built with: LLVM once it is eiderc's default (no --backend flag
-# left, the driver asks for clang: $EIDER_LLVM_CC), else C; eider warns when clang 17+ is missing
-backend=c
-if ! target/eiderc --help 2>&1 | grep -q -- "--backend" && grep -q EIDER_LLVM_CC compiler/driver.ei; then backend=llvm; fi
+# the backend programs are built with: LLVM, the only one (U23; the driver asks for clang,
+# $EIDER_LLVM_CC); eider warns when clang 17+ is missing
+backend=llvm
 host_arch=$(uname -m); case $host_arch in amd64) host_arch=x86_64 ;; arm64) host_arch=aarch64 ;; esac
 {
   echo "# RELEASE.toml: the components of Eider $V, released together (docs/site/tooling/releases.md)."
@@ -203,7 +202,7 @@ packages say \`eider = "$S"\` in their eider.toml, and the compiler refuses any 
 
 | Directory | Version | What |
 |---|---|---|
-| eider-lang/ | $V | the language: the compiler (eiderc; its C in seed/eiderc.c), core, std, eider-pkg, eider-doc, eider, the packages, scripts, docs |
+| eider-lang/ | $V | the language: the compiler (eiderc; its seed, seed/eiderc.wasm, with the translator seed/wasm2c.c), core, std, eider-pkg, eider-doc, eider, the packages, scripts, docs |
 | eider-analyzer/ | $(tr -d ' \n' < "$B/eider-analyzer/VERSION") | the language server (LSP) |
 | tree-sitter-eider/ | $(tr -d ' \n' < "$B/tree-sitter-eider/VERSION") | the tree-sitter grammar (Neovim and others) |
 | eider-profiler/ | $(tr -d ' \n' < "$B/eider-profiler/VERSION") | profiles of Eider programs |
@@ -214,13 +213,14 @@ eider-$V-<target>.tar.gz files; \`eider toolchain install $V\` installs one
 
 ## Building
 
-Needs a C11 compiler (\`cc\`, or \`\$CC\`) and a POSIX system with threads; nothing else,
-except node for regenerating or testing the grammar. Keep the directories side by side: the
+Needs a C11 compiler (\`cc\`, or \`\$CC\`) and a POSIX system with threads to build the
+compiler, and clang 17 or newer to build programs with it (the tools are Eider programs);
+node for regenerating or testing the grammar. Keep the directories side by side: the
 tools find the toolchain at ../eider-lang.
 
 \`\`\`sh
 cd eider-lang
-scripts/ei --version              # builds target/eiderc from seed/eiderc.c with cc: eiderc $V
+scripts/ei --version              # builds target/eiderc from seed/eiderc.wasm (cc, then clang): eiderc $V
 scripts/eider-pkg --version       # builds target/eider-pkg (Eider, with that eiderc): eider-pkg $V
 $doc_line
 scripts/ei run examples/fib.ei    # a program
@@ -234,8 +234,9 @@ cc -shared -fPIC -O2 -I src -o eider.so src/parser.c src/scanner.c   # the parse
 npm install && npx tree-sitter test                                    # node: regenerate, test
 \`\`\`
 
-\`scripts/ei\` builds the compiler from the seed, the compiler's own C output, with only
-the C compiler: the bundle needs no earlier Eider. The compiler from its Eider sources:
+\`scripts/ei\` builds the compiler from the seed, the compiler as WebAssembly, translated to
+C by seed/wasm2c.c and compiled with only the C compiler (then, with clang, natively from
+compiler/): the bundle needs no earlier Eider. The compiler from its Eider sources:
 \`scripts/ei build compiler/main.ei -o target/eiderc-next\`, and \`sh scripts/selfhost.sh\`
 rebuilds it from itself until it reproduces itself.
 
@@ -270,15 +271,15 @@ if [ -n "$binaries" ]; then
     mkdir -p "$W/bin"
     printf '#!/bin/sh\nexec "%s" cc -target %s-linux-musl "$@"\n' "$zig" "$arch" > "$W/cc"
     chmod +x "$W/cc"
-    echo "release: $t: eiderc (seed/eiderc.c), crypto, eider-pkg, eider-doc, eider with zig cc -target $arch-linux-musl"
-    "$W/cc" -std=c11 -O2 -pthread -s -I core -o "$W/bin/eiderc" seed/eiderc.c core/eider_rt.c core/eider_core.c 2>"$W/eiderc.log" ||
+    echo "release: $t: eiderc, crypto, eider-pkg, eider-doc, eider with zig cc -target $arch-linux-musl (its clang compiles the LLVM IR too)"
+    CC=$here/$W/cc EIDER_LLVM_CC=$here/$W/cc EIDER_LLVM_LTO=0 EIDER_CACHE=off EIDER_CFLAGS=-s target/eiderc build compiler/main.ei -o "$W/bin/eiderc" >"$W/eiderc.log" 2>&1 ||
       { cat "$W/eiderc.log" >&2; die "$t: eiderc did not build"; }
     CC="$zig cc -target $arch-linux-musl" AR="$zig ar" EIDER_CRYPTO_OUT=$here/$W/crypto sh scripts/crypto-build.sh awslc-noasm >"$W/crypto.log" 2>&1 ||
       { tail -20 "$W/crypto.log" >&2; die "$t: AWS-LC did not build"; }
     for p in pkg:packages/pkg/main.ei doc:packages/doc/main.ei eider:packages/eider/main.ei; do
       bin=${p%%:*}; [ $bin = eider ] || bin=eider-$bin
       libs=; [ $bin = eider ] && libs="-l eider_crypto"
-      CC=$here/$W/cc EIDER_CACHE=off EIDER_CFLAGS="-s -L$here/$W/crypto/awslc-noasm" target/eiderc build "${p#*:}" -o "$W/bin/$bin" $libs >"$W/$bin.log" 2>&1 ||
+      CC=$here/$W/cc EIDER_LLVM_CC=$here/$W/cc EIDER_LLVM_LTO=0 EIDER_CACHE=off EIDER_CFLAGS="-s -L$here/$W/crypto/awslc-noasm" target/eiderc build "${p#*:}" -o "$W/bin/$bin" $libs >"$W/$bin.log" 2>&1 ||
         { tail -20 "$W/$bin.log" >&2; die "$t: $bin did not build"; }
     done
     # smoke tests every target gets: static ELF executables for the right machine
@@ -309,7 +310,7 @@ if [ -n "$binaries" ]; then
       echo "built_with = \"zig $zig_version cc -target $arch-linux-musl (static)\""
       echo "tested = $tested"
       echo
-      echo "# bin/eiderc (the compiler; it builds programs with \$CC, default cc), bin/eider-pkg,"
+      echo "# bin/eiderc (the compiler; it builds programs with clang 17+, \$EIDER_LLVM_CC, and \$CC), bin/eider-pkg,"
       echo "# bin/eider-doc, bin/eider; core/ and std/ (eiderc finds them above its own directory)"
     } > "$T/toolchain.toml"
     cat > "$T/README.md" <<EOF

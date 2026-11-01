@@ -26,7 +26,7 @@
 //!   compiler": capability polymorphism).
 //!
 //! std/stream is the canonical place for streams; std/io stays the raw stdout/stderr/stdin
-//! calls the compiler itself uses (its text is part of seed/eiderc.c, so it changes only with
+//! calls the compiler itself uses (its text is part of the seed, so it changes only with
 //! a seed regeneration). docs/std.md, "Why std/stream and not std/io"; decision C101.
 
 import core.sys

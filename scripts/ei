@@ -1,15 +1,52 @@
 #!/bin/sh
-# Run the eider compiler: target/eiderc, built from the seed (seed/eiderc.c) with only $CC
-# whenever it is missing or older than the seed or anything in core/. eiderc links the C core
-# into every program itself.
+# Run the eider compiler, target/eiderc (seed/README.md):
+#   - target/eiderc-stage0 is the seed (seed/eiderc.wasm) translated to C by seed/wasm2c.c and
+#     compiled with only $CC (default cc) against core/eider_core.c: it checks programs and
+#     emits LLVM IR on any machine with a C compiler;
+#   - with clang 17 or newer ($EIDER_LLVM_CC, default clang), target/eiderc is compiler/ built
+#     natively (optimized) by stage0, so it also builds programs; without clang it is stage0
+#     itself (and is replaced by the native build once clang is there).
+# Both are rebuilt when missing or older than the seed or anything in core/ (compiler/ is what
+# the seed was made from: seed/README.md, "The rule"). Concurrent callers are safe: files are
+# made next to their target and renamed into place.
 # Usage: scripts/ei run prog.ei [--] [args...]   (any eiderc command; `scripts/ei --help`)
 root="$(cd "$(dirname "$0")/.." && pwd)"
-bin="$root/target/eiderc"
-if [ ! -x "$bin" ] || [ -n "$(find "$root/seed/eiderc.c" "$root/core" -newer "$bin" 2>/dev/null | head -1)" ]; then
-  mkdir -p "$root/target"
-  # built next to the target and renamed into place, so concurrent callers never run half a file
-  tmp="$bin.$$"
-  ${CC:-cc} -std=c11 -O2 -pthread -I "$root/core" -o "$tmp" "$root/seed/eiderc.c" "$root/core/eider_rt.c" "$root/core/eider_core.c" &&
-    mv -f "$tmp" "$bin" || { rm -f "$tmp"; echo "ei: could not build target/eiderc from seed/eiderc.c" >&2; exit 3; }
+t="$root/target"
+bin="$t/eiderc"
+s0="$t/eiderc-stage0"
+CC=${CC:-cc}
+stale() { [ ! -x "$1" ] || [ -n "$(find "$root/seed/eiderc.wasm" "$root/seed/wasm2c.c" "$root/core" -newer "$1" 2>/dev/null | head -1)" ]; }
+has_clang() {
+  major=$("${EIDER_LLVM_CC:-clang}" --version 2>/dev/null | sed -n 's/.*version \([0-9][0-9]*\)\..*/\1/p' | head -1)
+  [ -n "$major" ] && [ "$major" -ge 17 ]
+}
+if stale "$s0"; then
+  mkdir -p "$t"
+  w="$t/wasm2c.$$"
+  c="$t/eiderc-stage0.$$.c"
+  if $CC -std=c11 -O2 -o "$w" "$root/seed/wasm2c.c" && "$w" "$root/seed/eiderc.wasm" -o "$c" &&
+    $CC -std=c11 -O1 -w -pthread -o "$s0.$$" "$c" "$root/core/eider_core.c"; then
+    mv -f "$s0.$$" "$s0"
+    rm -f "$w" "$c"
+  else
+    rm -f "$w" "$c" "$s0.$$"
+    echo "ei: could not build target/eiderc-stage0 from seed/eiderc.wasm" >&2
+    exit 3
+  fi
+fi
+if stale "$bin" || [ "$s0" -nt "$bin" ] || { cmp -s "$s0" "$bin" && has_clang; }; then
+  if has_clang; then
+    if EIDER_ROOT="$root" EIDER_CACHE=off "$s0" build "$root/compiler/main.ei" -o "$bin.$$" >"$t/eiderc.build.log.$$" 2>&1; then
+      mv -f "$bin.$$" "$bin"
+      rm -f "$t/eiderc.build.log.$$"
+    else
+      rm -f "$bin.$$"
+      cat "$t/eiderc.build.log.$$" >&2
+      echo "ei: stage0 could not build compiler/ (target/eiderc.build.log.$$)" >&2
+      exit 3
+    fi
+  else
+    cp "$s0" "$bin.$$" && mv -f "$bin.$$" "$bin"
+  fi
 fi
 exec "$bin" "$@"

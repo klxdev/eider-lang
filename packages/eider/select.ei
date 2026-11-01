@@ -3,7 +3,7 @@
 //! 1. `eider +<version> ...`: that version (`0.1.0`), or the newest installed patch of a
 //!    series (`0.1`);
 //! 2. `EIDER_TOOLCHAIN=<path>`: a toolchain directory (an install, with bin/eiderc) or an
-//!    eider-lang checkout (scripts/ei, seed/eiderc.c), for developing eider-lang;
+//!    eider-lang checkout (scripts/ei, seed/eiderc.wasm), for developing eider-lang;
 //! 3. the nearest eider.toml at or above the working directory that says
 //!    `eider = "MAJOR.MINOR"`: the newest installed patch of that series;
 //! 4. the default (`default` in config.toml: `eider toolchain use`).
@@ -53,12 +53,12 @@ pub fn at_path(dir: List[u8]) -> Result[Tool, String] uses fs {
     if fs.exists(fs.join(d, "bin/eiderc".bytes())) {
         return Ok(Tool(d, fs.join(d, "bin/eiderc".bytes()), fs.join(d, "bin/eider-pkg".bytes()), fs.join(d, "bin/eider-doc".bytes()), read_version(d), "install".bytes()))
     }
-    if fs.exists(fs.join(d, "scripts/ei".bytes())) && fs.exists(fs.join(d, "seed/eiderc.c".bytes())) {
+    if fs.exists(fs.join(d, "scripts/ei".bytes())) && fs.exists(fs.join(d, "seed/eiderc.wasm".bytes())) {
         return Ok(Tool(d, fs.join(d, "scripts/ei".bytes()), fs.join(d, "scripts/eider-pkg".bytes()), fs.join(d, "target/eider-doc".bytes()), read_version(d), "checkout".bytes()))
     }
     let mut m = String.from("EIDER_TOOLCHAIN=")
     m.append(text(dir))
-    m.push_str(" is neither a toolchain (bin/eiderc) nor an eider-lang checkout (scripts/ei, seed/eiderc.c)")
+    m.push_str(" is neither a toolchain (bin/eiderc) nor an eider-lang checkout (scripts/ei, seed/eiderc.wasm)")
     Err(m)
 }
 

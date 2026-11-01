@@ -20,10 +20,10 @@ correctness guarantees of Rust:
 - **No silent mistakes at run time.** Integer overflow, out-of-bounds indexing and failed
   assertions stop the program with a message and exit code 101, in every build.
 
-The compiler, `eiderc`, is written in Eider and emits portable C11, which your C compiler
-turns into a native binary. Its own C output is committed to the repository as
-`seed/eiderc.c`, so building the compiler needs nothing but a C compiler; the programs it
-builds go through LLVM IR, which clang compiles.
+The compiler, `eiderc`, is written in Eider and emits LLVM IR, which clang turns into a
+native binary. The compiler itself is committed to the repository as WebAssembly
+(`seed/eiderc.wasm`) with a small translator to C (`seed/wasm2c.c`), so building the
+compiler needs nothing but a C compiler; building programs with it needs clang.
 
 ## Requirements
 
@@ -68,16 +68,21 @@ From the root of an eider-lang checkout:
 scripts/ei --help
 ```
 
-The first run compiles `seed/eiderc.c` and the C core into `target/eiderc` (about 20
-seconds) and then prints the compiler's usage. Afterwards `scripts/ei` runs that binary
-directly, and rebuilds it only when the seed or `core/` changes. Every command on this site
-is written as `scripts/ei <command>`.
+The first run translates the seed to C and compiles it with the C core into
+`target/eiderc-stage0` (about a minute), uses that to build the compiler natively with clang
+into `target/eiderc` (about half a minute; without clang `target/eiderc` is stage0, which
+checks programs but can't build them), and then prints the compiler's usage. Afterwards
+`scripts/ei` runs that binary directly, and rebuilds it only when the seed or `core/`
+changes. Every command on this site is written as `scripts/ei <command>`.
 
-If you prefer to see the bootstrap step itself, this is all `scripts/ei` does:
+If you prefer to see the bootstrap step itself, this is what `scripts/ei` does:
 
 ```sh
 mkdir -p target
-cc -std=c11 -O2 -pthread -I core -o target/eiderc seed/eiderc.c core/eider_rt.c core/eider_core.c
+cc -std=c11 -O2 -o target/wasm2c seed/wasm2c.c
+target/wasm2c seed/eiderc.wasm -o target/eiderc-stage0.c
+cc -std=c11 -O1 -pthread -o target/eiderc-stage0 target/eiderc-stage0.c core/eider_core.c
+target/eiderc-stage0 build compiler/main.ei -o target/eiderc     # with clang
 ```
 
 The compiler finds the toolchain (`core/` and `std/`) in `$EIDER_ROOT` or, when that isn't

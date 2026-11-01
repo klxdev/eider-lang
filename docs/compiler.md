@@ -1,6 +1,6 @@
 # The self-hosted compiler (`eiderc`)
 
-Status: C1 to C7 done: eiderc is self-hosted (seed/eiderc.c committed), its observable behaviour is recorded in `tests/oracle/` ("C7: recording the oracle"), and everything builds from the seed with only a C compiler ("History"). Next is C8 (the language work and the parity quirks listed in "C8 candidates"). This file owns the plan; update it as stages land.
+Status: C1 to C7 done: eiderc is self-hosted (since #127 the seed is `seed/eiderc.wasm`, the compiler as WebAssembly, with the translator `seed/wasm2c.c`), its observable behaviour is recorded in `tests/oracle/` ("C7: recording the oracle"), and the compiler builds from the seed with only a C compiler ("Bootstrap chain"). Next is C8 (the language work and the parity quirks listed in "C8 candidates"). This file owns the plan; update it as stages land.
 
 Progress: **C1 done** (lexer, interner, diagnostics rendering; `scripts/test-compiler.sh`).
 **C2 done** (parser to the AST arena, `eiderc parse` dump, parse-error corpus and AST goldens).
@@ -21,7 +21,9 @@ expected results are recorded in `tests/oracle/`, and everything builds from the
 ## Goal
 
 A compiler for Eider written in Eider, so that the only non-Eider code in the toolchain is
-the C core (`core/`) and building Eider from nothing needs only a C11 compiler. Done at C7.
+the C core (`core/`) and building the compiler from nothing needs only a C11 compiler. Done at
+C7; since #127 that path goes through a WebAssembly seed, and building programs needs clang
+17+ (U23, U24).
 
 Non-goals for the first version: a new back end (we keep emitting portable C11), an
 interpreter, incremental compilation, an LSP. The design leaves room for all of them.
@@ -37,21 +39,40 @@ compiler is the one program that has to live with the language's current limits.
 
 ## Bootstrap chain
 
-Since C7 (`scripts/selfhost.sh`):
+Since #127 (`scripts/selfhost.sh`, seed/README.md; decision U24, Zig's approach):
 
 ```
-seed    cc seed/eiderc.c core/eider_rt.c core/eider_core.c  ->  a working eiderc
-stage1  compiler/ built by the seed   compiles compiler/ -> stage2
-stage2  compiler/ built by stage1     compiles compiler/ -> stage3
-fixed point: the C that stage2 and stage3 emit for compiler/ is byte-identical
-new seed: stage3's C is written to seed/eiderc.c (`--seed`) with every compiler change
+stage0  cc seed/wasm2c.c; wasm2c seed/eiderc.wasm -> C; cc that C with core/eider_core.c
+        -> a working eiderc (only a C compiler): it checks programs and emits LLVM IR
+stage1  compiler/ built natively by stage0 (clang 17+ from here on)
+stage2  compiler/ built by stage1
+fixed points: stage1 and stage2 emit byte-identical LLVM IR for compiler/, and build
+              byte-identical seeds (`build --wasm-core compiler/main.ei`)
+new seed: stage2's module is written to seed/eiderc.wasm (`--seed`) with every compiler
+          change, the clang that built it to seed/eiderc.wasm.clang
 ```
 
-Every stage is built with only `$CC` and the C core (`-Werror`, the driver's warning flags).
-`scripts/ei` (the compiler every script and test runner uses) is the seed compiled by `$CC`
-into `target/eiderc`. The seed is regenerated (and the fixed point re-checked) whenever the
-compiler changes. The rule: the compiler may only use language features that the previous
-seed supports (seed/README.md).
+`seed/eiderc.wasm` (1.7 MB, committed as it is: no decompressor is needed) is a core module
+("C7: WebAssembly"): its only imports are the C core's functions, so the translated C links
+with `core/eider_core.c` and calls it directly. `seed/wasm2c.c` is one C11 file of about 1,200
+lines that validates what it translates (only the MVP integer instructions, sign-ext,
+memory.copy/fill, one memory and table, active segments, `ec_*` imports) and writes C that
+checks every memory access, division, table call and the call depth, with no undefined or
+implementation-defined behaviour; it is tested under ASan+UBSan, fuzzed, and against a native
+build of an instruction test (seed/tests/run.sh). stage0 is about ten times slower than a
+native compiler (emit-llvm of compiler/main.ei: 2.2 s against 0.3 s), which is fine for
+building stage1 once. `scripts/ei` (the compiler every script and test runner uses) builds
+stage0 into `target/eiderc-stage0` with `$CC`, and with clang 17+ builds compiler/ natively
+with it into `target/eiderc`; without clang `target/eiderc` is stage0 itself, which checks
+programs and emits IR but can't build them. `--from-seed` checks that the seed is current:
+stage0 emits the same IR for compiler/ as the compiler it builds, and with the clang in
+seed/eiderc.wasm.clang the seed is rebuilt byte for byte (another clang makes another, equally
+valid, module). The rule: the compiler may only use language features that the previous seed
+supports (seed/README.md).
+
+Until #127 the seed was `seed/eiderc.c`, the C that the C backend emitted for compiler/, built
+by `cc` with the C core; the chain was seed -> stage1 -> stage2 -> stage3 with a fixed point on
+the C of stages 2 and 3.
 
 ## History
 

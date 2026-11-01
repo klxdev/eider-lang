@@ -103,7 +103,7 @@
 cd "$(dirname "$0")/.." || exit 1
 mkdir -p target
 # EIDERC=<binary> tests that compiler instead of target/eiderc-next, compiler/ as built by
-# the seed's eiderc (scripts/ei); scripts/selfhost.sh uses it for its stage 3.
+# scripts/ei; scripts/selfhost.sh uses it for its stage 2.
 if [ -n "$EIDERC" ]; then
   new=$EIDERC
 else
