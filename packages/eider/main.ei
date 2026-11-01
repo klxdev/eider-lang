@@ -12,7 +12,7 @@
 //!   eider version [--json] | --version
 //!   eider build|run|test|check|emit-llvm|caps|ir|... <args>   the toolchain's eiderc
 //!   eider doc <args>                       the toolchain's eider-doc
-//!   eider new <name> | init|add|remove|fetch|update|vendor|tree <args>   its eider-pkg
+//!   eider new <name> | init|add|remove|grant|revoke|fetch|update|vendor|tree <args>   its eider-pkg
 //!   eider eiderc|eider-pkg|eider-doc <args>   that program, with any arguments
 //!
 //! The toolchain is chosen by `+<version>`, else EIDER_TOOLCHAIN (a path), else the nearest
@@ -93,7 +93,7 @@ fn help() -> List[u8] {
         "  eider build|run|test|check|emit-llvm|caps|ir|... <args>   eiderc (`eider eiderc --help`)",
         "  eider doc <args>                 eider-doc (documentation sites, doc tests)",
         "  eider new <name>                 a new package in <name>/ (eider-pkg init)",
-        "  eider init|add|remove|fetch|update|vendor|tree <args>  eider-pkg",
+        "  eider init|add|remove|grant|revoke|fetch|update|vendor|tree <args>  eider-pkg",
         "  eider eiderc|eider-pkg|eider-doc <args>                that program directly",
         "",
         "the toolchain: +<version> (+0.1.0, +0.1: its newest installed patch), else EIDER_TOOLCHAIN",
@@ -267,7 +267,7 @@ fn run_tool(t: select.Tool, prog: List[u8], args: List[List[u8]], what: str) use
 }
 
 fn pkg_cmd(c: List[u8]) -> bool {
-    is(c, "new") || is(c, "init") || is(c, "add") || is(c, "remove") || is(c, "fetch") || is(c, "update") || is(c, "vendor") || is(c, "tree")
+    is(c, "new") || is(c, "init") || is(c, "add") || is(c, "remove") || is(c, "grant") || is(c, "revoke") || is(c, "fetch") || is(c, "update") || is(c, "vendor") || is(c, "tree")
 }
 
 // ------------------------------------------------------------------ toolchain commands

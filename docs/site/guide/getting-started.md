@@ -308,20 +308,16 @@ name it in `EIDER_PKG_OVERRIDE` (`EIDER_PKG_OVERRIDE=json=../eider-json eider-pk
 ### Capability grants
 
 A dependency can only use the capabilities you grant it. Suppose a package `notes` has a
-function that writes files (`pub fn save(...) uses fs`). Adding it without a grant fails:
+function that writes files (`pub fn save(...) uses fs`). Adding it grants it what it uses,
+and says so:
 
 ```sh
 $EIDER/scripts/eider-pkg add notes --path ../notes
 ```
 
 ```text
-eider-pkg: package `notes` uses capability `fs` (notes.ei:4) but is only granted []; to allow it, add "fs" to `uses` in its [deps.notes] table
-```
-
-Grant it explicitly:
-
-```sh
-$EIDER/scripts/eider-pkg add notes --path ../notes --uses fs
+added notes 0.1.0 — it uses: fs (granted)
+locked 1 package(s)
 ```
 
 ```toml
@@ -329,6 +325,11 @@ $EIDER/scripts/eider-pkg add notes --path ../notes --uses fs
 path = "../notes"
 uses = ["fs"]
 ```
+
+Adding is consenting to what the package does today. If a later version uses more,
+`eider-pkg update` stops and shows the difference until you accept it (`update --grant
+notes`); `--confirm` asks before granting, `--no-grant` adds the dependency without a grant
+([Capabilities](capabilities.md)).
 
 The compiler checks the same thing on every build (E0204 if the grant is missing), and your
 own function that calls `notes.save` must still declare `uses fs` itself. So a

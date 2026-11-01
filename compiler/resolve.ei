@@ -1618,12 +1618,17 @@ fn grant_diag(p: Program, u: CapUse, d: u32, grant: List[List[u8]], line: u32, c
     bytes.append(inout msg, sys.lit(") but is only granted ["))
     bytes.append(inout msg, bytes.join(grant, sys.lit(", ")))
     msg.push(93)
-    let mut h = quoted("to allow it, add \"", u.cap, "\" to `uses` in [deps.")
+    // the command that writes the grant (eider-pkg's `grant`), and the edit it makes
+    let mut h = quoted("to allow it, run `eider grant ", name, " ")
+    bytes.append(inout h, u.cap)
+    bytes.append(inout h, sys.lit("` in "))
+    bytes.append(inout h, p.pkgs[d as usize].dir)
+    bytes.append(inout h, quoted(" (it adds \"", u.cap, "\" to `uses` in [deps."))
     bytes.append(inout h, name)
-    bytes.append(inout h, sys.lit("] of "))
-    bytes.append(inout h, join(p.pkgs[d as usize].dir, sys.lit("eider.toml")))
-    if u.kind == USE_EXTERN { bytes.append(inout h, sys.lit(" (it declares `extern` functions: unmanaged code)")) }
-    if u.kind == USE_UNSAFE { bytes.append(inout h, sys.lit(" (it has `unsafe` code: unmanaged code)")) }
+    bytes.append(inout h, sys.lit("] of its eider.toml"))
+    if u.kind == USE_EXTERN { bytes.append(inout h, sys.lit("; it declares `extern` functions: unmanaged code")) }
+    if u.kind == USE_UNSAFE { bytes.append(inout h, sys.lit("; it has `unsafe` code: unmanaged code")) }
+    h.push(41)
     let mut dg = diag.new("E0204", line, col, msg)
     dg.help = h
     dg

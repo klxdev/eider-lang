@@ -9,6 +9,9 @@ It is written in Eider (`packages/eider` in eider-lang).
 eider toolchain install          # the latest release, which becomes the default
 eider run hello.ei               # eiderc run, with the selected toolchain
 eider new warehouse              # a new package (eider-pkg init)
+eider add json --git https://github.com/klxdev/eider-json.git --version 0.2.0
+                                 # a dependency, granted what it uses
+eider update                     # stops if a dependency now uses more; --grant json accepts
 eider +0.1.0 test lib.ei         # one command with another installed version
 ```
 
@@ -54,7 +57,8 @@ from source: [Getting started](../guide/getting-started.md).
 | `eider build\|run\|test\|check\|emit-llvm\|emit-header\|caps\|ir\|... <args>` | the toolchain's `eiderc` with these arguments ([eiderc](compiler.md)) |
 | `eider doc <args>` | the toolchain's `eider-doc` ([eider-doc](eider-doc.md)) |
 | `eider new <name>` | a new package in `<name>/` (`eider-pkg -C <name> init <name>`) |
-| `eider init\|add\|remove\|fetch\|update\|vendor\|tree <args>` | the toolchain's `eider-pkg` ([eider-pkg](eider-pkg.md)) |
+| `eider init\|add\|remove\|grant\|revoke\|fetch\|update\|vendor\|tree <args>` | the toolchain's `eider-pkg` ([eider-pkg](eider-pkg.md)) |
+| `eider grant <pkg> <cap,...>`, `eider revoke <pkg> <cap,...>` | edit a dependency's capability grant in `eider.toml` (E0204's help names `eider grant`); `eider add` writes the grant and `eider fetch\|update --grant <pkg>` (or `--grant-all`) accepts one that grew ([Grants](eider-pkg.md#grants)) |
 | `eider eiderc\|eider-pkg\|eider-doc <args>` | that program, with any arguments (`eider eiderc doc --json lib.ei`) |
 | `eider help` | the commands |
 

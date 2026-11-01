@@ -13,7 +13,13 @@
 //!   git = "https://..."         #   either git + (version | rev) ...
 //!   version = "1.2.0"           #   minimum version; tag v1.2.0 (or 1.2.0)
 //!   path = "../geom"            #   ... or a local directory
-//!   uses = ["io", "fs"]         #   capabilities granted to the dependency (default: none)
+//!   uses = ["io", "fs"]         #   capabilities granted to the dependency (default: none);
+//!                               #   eider-pkg writes it (grants.ei)
+//!
+//!   [policy]                    # optional: what this package may grant its dependencies
+//!   deny = ["ffi"]              #   never granted to any dependency
+//!   [policy.allow]
+//!   net = ["http", "rpc"]       #   only these dependencies may be granted `net`
 
 import core.sys
 import std.bytes
@@ -25,7 +31,13 @@ pub type Source = | Path(dir: List[u8]) | Git(url: List[u8], version: List[u8], 
 
 pub type Dep = { name: List[u8], source: Source, grants: List[List[u8]], line: u32 }
 
-pub type Manifest = { name: List[u8], version: List[u8], entry: List[u8], main: List[u8], deps: List[Dep], dir: List[u8] }
+/// `[policy.allow] <cap> = [pkgs]`: only `pkgs` may be granted `cap`.
+pub type Allow = { cap: List[u8], pkgs: List[List[u8]], line: u32 }
+
+/// `[policy]`: capabilities never granted (`deny`), and ones granted only to some packages.
+pub type Policy = { deny: List[List[u8]], deny_line: u32, allow: List[Allow] }
+
+pub type Manifest = { name: List[u8], version: List[u8], entry: List[u8], main: List[u8], deps: List[Dep], dir: List[u8], policy: Policy }
 
 pub fn file_in(dir: List[u8]) -> List[u8] { fs.join(dir, sys.lit("eider.toml")) }
 
@@ -129,6 +141,8 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
         for i in 0..7 {
             if bytes.eq(e.key, sys.lit(top_ok[i as usize])) { ok = true }
         }
+        if bytes.eq(e.key, sys.lit("policy.deny")) { ok = true }
+        if bytes.starts_with(e.key, sys.lit("policy.allow.")) { ok = true }
         if !ok && bytes.starts_with(e.key, sys.lit("deps.")) {
             let rest = bytes.slice(e.key, 5, e.key.len())
             match bytes.find_byte(rest, 46, 0) {
@@ -250,7 +264,61 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
         }
         deps.push(Dep(dn, source, grants, line))
     }
-    Ok(Manifest(name, version, entry, main, deps, dir))
+    Ok(Manifest(name, version, entry, main, deps, dir, policy_of(doc, file)?))
+}
+
+fn caps_list(e: toml.Entry, file: List[u8], what: str) -> Result[List[List[u8]], String] {
+    match e.val {
+        toml.Strs(items) => {
+            for c in items {
+                if !known_cap(c) {
+                    let mut m = String.from("unknown capability `")
+                    m.append(sys.to_string(c))
+                    m.push_str("` (known: io, clock, fs, net, threads, ffi)")
+                    return Err(at(file, e.line, 1, m))
+                }
+            }
+            Ok(items)
+        }
+        _ => Err(bad(file, e.line, what))
+    }
+}
+
+/// `[policy]`: `deny = [caps]` and `[policy.allow] <cap> = [packages]`.
+fn policy_of(doc: List[toml.Entry], file: List[u8]) -> Result[Policy, String] {
+    let mut p = Policy(List.new(), 0, List.new())
+    match toml.get(doc, sys.lit("policy.deny")) {
+        Some(e) => {
+            p.deny = caps_list(e, file, "`deny` in [policy] must be an array of capability names")?
+            p.deny_line = e.line
+        }
+        None => {}
+    }
+    for e in doc {
+        if !bytes.starts_with(e.key, sys.lit("policy.allow.")) { continue }
+        let cap = bytes.slice(e.key, 13, e.key.len())
+        if !known_cap(cap) {
+            let mut m = String.from("unknown capability `")
+            m.append(sys.to_string(cap))
+            m.push_str("` in [policy.allow] (known: io, clock, fs, net, threads, ffi)")
+            return Err(at(file, e.line, 1, m))
+        }
+        match e.val {
+            toml.Strs(items) => {
+                for n in items {
+                    if !valid_name(n) {
+                        let mut m = String.from("[policy.allow] lists package names; `")
+                        m.append(sys.to_string(n))
+                        m.push_str("` isn't one")
+                        return Err(at(file, e.line, 1, m))
+                    }
+                }
+                p.allow.push(Allow(cap, items, e.line))
+            }
+            _ => { return Err(bad(file, e.line, "[policy.allow] entries are `<capability> = [\"package\", ...]`")) }
+        }
+    }
+    Ok(p)
 }
 
 pub fn load(dir: List[u8]) -> Result[Manifest, String] uses fs {

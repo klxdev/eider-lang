@@ -133,11 +133,49 @@ fn offline_error(url: List[u8], want: List[u8]) -> String {
     e
 }
 
+fn has_env(k: str) -> bool uses io {
+    match env.get(sys.lit(k)) {
+        Some(v) => v.len() > 0
+        None => false
+    }
+}
+
+/// For a github.com URL when a token is at hand (GH_TOKEN, else GITHUB_TOKEN, else what
+/// `gh auth token` prints, as `eider` uses for releases): git options that make a one-off
+/// credential helper the only one for github.com, answering with that token. The helper reads
+/// the token itself, so it is never on a command line, and `git -c` writes nothing to any
+/// config (not the user's, not the mirror's). Private dependencies then work whatever the
+/// user's credential setup is; with no token git keeps its own.
+fn auth_args(url: List[u8]) -> List[List[u8]] uses io, fs, net {
+    let mut out: List[List[u8]] = List.new()
+    if !bytes.starts_with(url, sys.lit("https://github.com/")) { return out }
+    let mut have = has_env("GH_TOKEN") || has_env("GITHUB_TOKEN")
+    if !have {
+        let mut argv: List[List[u8]] = List.new()
+        argv.push(sys.lit("gh"))
+        argv.push(sys.lit("auth"))
+        argv.push(sys.lit("token"))
+        have = match proc.output(argv) {
+            Ok(o) => o.code == 0 && bytes.trim(o.out).len() > 0
+            Err(_) => false
+        }
+    }
+    if !have { return out }
+    out.push(sys.lit("-c"))
+    out.push(sys.lit("credential.https://github.com.helper="))
+    out.push(sys.lit("-c"))
+    out.push(sys.lit("credential.https://github.com.helper=!f() { test \"$1\" = get || exit 0; t=\"${GH_TOKEN:-$GITHUB_TOKEN}\"; test -n \"$t\" || t=$(gh auth token 2>/dev/null); test -n \"$t\" || exit 0; echo username=x-access-token; echo \"password=$t\"; }; f"))
+    out
+}
+
 /// Clone the mirror of `url`, or bring an existing one up to date (tags may have moved).
 fn sync_mirror(home: List[u8], url: List[u8]) -> Result[bool, String] uses io, fs, net {
     let m = mirror_dir(home, url)
+    let auth = auth_args(url)
     if fs.exists(m) {
-        let mut args = a2(sys.lit("-C"), m)
+        let mut args = auth.copy()
+        args.push(sys.lit("-C"))
+        args.push(m)
         args.push(sys.lit("fetch"))
         args.push(sys.lit("--quiet"))
         args.push(sys.lit("--prune"))
@@ -146,7 +184,9 @@ fn sync_mirror(home: List[u8], url: List[u8]) -> Result[bool, String] uses io, f
         git(args)?
     } else {
         fs.mkdir_all(fs.dirname(m))?
-        let mut args = a2(sys.lit("clone"), sys.lit("--mirror"))
+        let mut args = auth.copy()
+        args.push(sys.lit("clone"))
+        args.push(sys.lit("--mirror"))
         args.push(sys.lit("--quiet"))
         args.push(url)
         args.push(m)

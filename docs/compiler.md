@@ -1895,12 +1895,12 @@ none). Otherwise **E0204**, at that import in D's file, once per (D, P, capabili
 ```
 error[E0204]: package `fsdep` uses capability `fs` in `save` (fsdep.ei:5) but is only granted []
   --> app/main.ei:2:1
-  help: to allow it, add "fs" to `uses` in [deps.fsdep] of <dir>/eider.toml
+  help: to allow it, run `eider grant fsdep fs` in <dir> (it adds "fs" to `uses` in [deps.fsdep] of its eider.toml)
 ```
 
 For `ffi` the message names the extern, the `unsafe fn` or the function holding the `unsafe`
-block, and the help adds "(it declares `extern` functions: unmanaged code)" or "(it has
-`unsafe` code: unmanaged code)". The help is text, not a machine-applicable fix: the edit is
+block, and the help adds "; it declares `extern` functions: unmanaged code" or "; it has
+`unsafe` code: unmanaged code" inside its parentheses. The help is text, not a machine-applicable fix: the edit is
 in another file. Grants are per edge, so a dependency's dependency is held to the grant its
 own eider.toml gives (in the store or .vendor copy). Imports from files in no package are not
 held to grants (such a file is a program of its own; it can import packages only by path).
@@ -1915,16 +1915,33 @@ relative to the package's directory, and a file in no package has `"package":""`
 `"dir":""` (and its path as `file`). It exits 0, or 2 when the file can't be read.
 
 **eider-pkg** (`packages/pkg/caps.ei`) no longer scans text. After resolving, for every
-locked package it runs `$EIDERC caps <dir>/<entry>` (its `main` when it has no entry module,
-like the compiler's package; `EIDERC` defaults to `$EIDER_ROOT/target/eiderc`) and holds that
-package's lines to its grant, with the messages it had (`package \`fsdep\` uses capability
-\`fs\` (fsdep.ei:5) but is only granted []; to allow it, add "fs" to \`uses\` in its
-[deps.fsdep] table`, plus the unmanaged-code note for `ffi`, now also for `unsafe`). What it
-checks is what the compiler loads from that module, not every file in the directory: a
-`tests/` program, a comment or a stray word no longer counts, and a module the entry imports
-does. A package with neither file is left to the compiler, which checks every import at build
-time anyway. `scripts/eider-pkg` sets `EIDERC` to the seed's compiler (`target/eiderc`),
-which has `caps`.
+locked package it runs `$EIDERC caps` (`EIDERC` defaults to `$EIDER_ROOT/target/eiderc`) on a
+probe program in `$EIDER_HOME/tmp` that imports, by path, every module of the package: its
+entry module and every other `.ei` file a depender could import (`caps.modules`: not the
+`main` program, not `tests/`, `test/`, `examples/`, `bench/`, `benches/`, `scripts/`, `docs/`,
+`target/`, `deps/`, hidden directories or a nested package; a package that is only a program
+counts its `main`). So the set covers `import http.server` as well as `import http` (#141),
+while a test program, a comment or a stray word doesn't count. That is for the root's direct
+dependencies; a dependency's dependency is probed with its entry module alone (its `main`
+when it has none), what its depender's program loads being that library's business, and
+held to the intersection of its dependers' grants. `scripts/eider-pkg` sets
+`EIDERC` to the seed's compiler (`target/eiderc`), which has `caps`.
+
+**Grants written by the tooling** (#135, `packages/pkg/grants.ei`, main.ei `sync_from`). The
+grant stays the recorded consent the compiler holds a package to, but eider-pkg writes it:
+`add` grants the package what it uses (`--confirm` asks, `--no-grant` writes none and stops
+before the lock, `--uses` is an explicit list that must cover the use); `fetch` and `update`
+compute every direct dependency's set again and narrow a grant that holds more (a note), and
+stop with a per-package diff, before writing eider.toml or eider.lock, when the set holds
+more than the grant, until `--grant <pkg>,...` or `--grant-all` accepts it. `grant` and
+`revoke` edit one `uses` line by hand. A `[policy]` (`deny = [caps]`, `[policy.allow] <cap> =
+[packages]`) bounds every grant the manifest makes, automatic or explicit. Edits rewrite only
+the `uses` of one `[deps.<name>]` table (a multi-line array becomes one line, its trailing
+comment kept) or add one after the table's last key. Transitive packages are held, as before,
+to the intersection of their dependers' grants, and the error names every missing capability
+and the `uses = [...]` that covers them. E0204's help names the command:
+`to allow it, run \`eider grant fsdep fs\` in <dir> (it adds "fs" to \`uses\` in [deps.fsdep]
+of its eider.toml)`.
 
 **Migration, staged.** The seed still asks for `ffi` along call chains, and it builds
 compiler/, std/, core/ and everything verify.sh builds with it (packages/, eider-pkg,

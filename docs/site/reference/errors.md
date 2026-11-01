@@ -594,7 +594,7 @@ A **capability not granted to a package**. Every package other than the program'
 importing package's `eider.toml`, each capability it uses (a `uses` clause anywhere in the
 modules the program loads from it, and `ffi` when it has `extern` functions, an `unsafe fn`
 or an `unsafe` block). Reported at the import, once per (importing package, package,
-capability); the help names the table to change. It needs packages, so it can't be shown
+capability); the help names the command that grants it (`eider grant <pkg> <cap>`) and the table it changes. It needs packages, so it can't be shown
 in a single file; see [`tests/checks/fail/e0204_ungranted_fs.ei`](../../../tests/checks/fail/e0204_ungranted_fs.ei) and its packages under
 [`tests/checks/fail/lib/grants/`](../../../tests/checks/fail/lib/grants/).
 
@@ -604,10 +604,11 @@ error[E0204]: package `fsdep` uses capability `fs` in `here` (fsdep.ei:5) but is
   |
 2 | import fsdep
   | ^
-  help: to allow it, add "fs" to `uses` in [deps.fsdep] of <dir>/lib/grants/grantee/eider.toml
+  help: to allow it, run `eider grant fsdep fs` in <dir>/lib/grants/grantee (it adds "fs" to `uses` in [deps.fsdep] of its eider.toml)
 ```
 
-Fix: grant it, after checking that the dependency should have it:
+Fix: grant it, after checking that the dependency should have it: `eider grant fsdep fs` in
+the grantee package (or `eider fetch --grant fsdep`, which grants what it uses), which writes
 
 ```toml
 # grantee/eider.toml

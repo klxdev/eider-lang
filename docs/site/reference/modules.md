@@ -252,11 +252,12 @@ manifest, resolves versions and fills the store. Only `add`, `remove`, `fetch`, 
 | Command | Does |
 |---|---|
 | `eider-pkg init [name]` | a new package: `eider.toml` and a `main.ei` |
-| `eider-pkg add <name> --path P [--uses a,b]` | adds a path dependency |
-| `eider-pkg add <name> --git URL (--version V \| --rev R) [--uses a,b]` | adds a git dependency |
+| `eider-pkg add <name> --path P [--uses a,b \| --confirm \| --no-grant]` | adds a path dependency, granting it what it uses |
+| `eider-pkg add <name> --git URL (--version V \| --rev R) [...]` | adds a git dependency, the same way |
+| `eider-pkg grant\|revoke <name> <cap,...>` | edits the grant of a dependency |
 | `eider-pkg remove <name>` | removes a dependency |
-| `eider-pkg fetch [--offline]` | resolves (keeping the lock's pins), writes `eider.lock`, fills the store |
-| `eider-pkg update [--offline]` | resolves again, ignoring the lock |
+| `eider-pkg fetch [--offline] [--grant a,b \| --grant-all]` | resolves (keeping the lock's pins), narrows grants that shrank and stops on ones that grew, writes `eider.lock`, fills the store |
+| `eider-pkg update [--offline] [--grant a,b \| --grant-all]` | the same, ignoring the lock |
 | `eider-pkg vendor` | copies the git packages into `.vendor/` for offline builds |
 | `eider-pkg tree` | prints the locked graph |
 | `eider-pkg hash <dir>` | the content hash of a directory |

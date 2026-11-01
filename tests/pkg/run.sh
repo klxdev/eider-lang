@@ -143,7 +143,7 @@ check "an error goes to stderr" "stdout: []
 stderr: [eider-pkg: eider.toml already exists]
 exit 1" "$(streams app init)"
 check "a usage error goes to stderr" "stdout: []
-stderr: [eider-pkg: usage: eider-pkg [-C dir] (init [name] | add <name> --path P | add <name> --git URL --version V|--rev R [--uses a,b] | remove <name> | fetch [--offline] | update [--offline] | vendor | tree | hash <dir> | --version)]
+stderr: [eider-pkg: usage: eider-pkg [-C dir] (init [name] | add <name> --path P | add <name> --git URL --version V|--rev R [--uses a,b | --confirm | --no-grant] | remove <name> | grant|revoke <name> <cap,...> | fetch|update [--offline] [--grant a,b | --grant-all] | vendor | tree | hash <dir> | --version)]
 exit 1" "$(streams app frobnicate)"
 check "a missing eider.toml goes to stderr" "stdout: []
 stderr: [eider-pkg: cannot read <T>/nowhere/eider.toml: No such file or directory]
@@ -158,13 +158,17 @@ exit 0" "$(run app)"
 
 # ---- add
 
-check "add path dep" "locked 1 package(s)
+check "add path dep" "added geom 0.2.0 — it uses nothing
+locked 1 package(s)
 exit 0" "$(pkg app add geom --path ../geom)"
-check "add git dep by version (util 1.0.0 brings legacy)" "locked 4 package(s)
+check "add git dep by version (util 1.0.0 brings legacy)" "added alpha 1.0.0 — it uses nothing
+locked 4 package(s)
 exit 0" "$(pkg app add alpha --git "$U/alpha" --version 1.0.0)"
-check "add second git dep (diamond)" "locked 4 package(s)
+check "add second git dep (diamond)" "added beta 1.0.0 — it uses nothing
+locked 4 package(s)
 exit 0" "$(pkg app add beta --git "$U/beta" --version 1.0.0)"
-check "add git dep by rev" "locked 5 package(s)
+check "add git dep by rev" "added gamma 0.3.0 — it uses nothing
+locked 5 package(s)
 exit 0" "$(pkg app add gamma --git "$U/gamma" --rev "$GAMMA")"
 check "eider.toml after add" "[package]
 name = \"app\"
@@ -338,17 +342,22 @@ pkg sneakyapp fetch >/dev/null
 check "fetched, it compiles" "9
 exit 0" "$(run sneakyapp late.ei)"
 
-# ---- capability grants: eider-pkg asks the compiler what each package uses (`eiderc caps`,
-# docs/compiler.md "C8.5: capabilities per package"), and the compiler checks the grants
+# ---- capability grants: eider-pkg asks the compiler what each package uses (`eiderc caps`
+# on every module of the package, docs/compiler.md "C8.5: capabilities per package") and
+# writes the grant itself: `add` grants what the package uses, fetch/update narrow a grant
+# that shrank and stop on one that grew until it is accepted; the compiler checks the grants
 # again when it builds (E0204)
 
-mkdir -p "$T/fsdep" "$T/ffidep" "$T/plain" "$T/capsapp"
+mkdir -p "$T/fsdep" "$T/ffidep" "$T/plain" "$T/clockdep" "$T/capsapp"
 manifest "$T/fsdep" fsdep 0.1.0
 printf '// uses net (in a comment: ignored)\npub fn noop() -> i64 { 0 }\n\npub fn save()\n    uses fs {\n}\n' > "$T/fsdep/fsdep.ei"
 manifest "$T/ffidep" ffidep 0.1.0
 printf 'extern "c" fn abs(x: i32) -> i32 uses clock\nimport ffidep.helper\n\npub fn magnitude(x: i32) -> i32 uses clock, ffi { unsafe { abs(x) } }\n' > "$T/ffidep/ffidep.ei"
 # what the entry module reaches counts: helper.ei's `uses net`
 printf 'pub fn f()\n    uses net {\n}\n' > "$T/ffidep/helper.ei"
+# and so does a module the entry doesn't import (a depender may `import ffidep.extra.side`)
+mkdir -p "$T/ffidep/extra"
+printf 'pub fn start() uses threads {\n}\n' > "$T/ffidep/extra/side.ei"
 # a test program is not part of the package (nor are words that aren't capabilities, which
 # are compile errors: compile-fail tests have them)
 mkdir -p "$T/ffidep/tests"
@@ -357,29 +366,83 @@ printf 'fn f() uses fs {\n}\nfn g() uses telepathy {\n}\n' > "$T/ffidep/tests/ba
 # externs back sys.lit) is the toolchain's: plain needs no grant
 manifest "$T/plain" plain 0.1.0
 printf 'import core.sys\n\npub fn hello() -> u64 uses ffi { sys.lit("hi").len() as u64 }\n' > "$T/plain/plain.ei"
+manifest "$T/clockdep" clockdep 0.1.0
+printf 'pub fn now() uses clock {\n}\n' > "$T/clockdep/clockdep.ei"
 check "init (caps)" "created package \`capsapp\`
 exit 0" "$(pkg capsapp init)"
+check "add grants what the package uses" "added fsdep 0.1.0 — it uses: fs (granted)
+locked 1 package(s)
+exit 0" "$(pkg capsapp add fsdep --path ../fsdep)"
+check "the grant is in eider.toml" '[deps.fsdep]
+path = "../fsdep"
+uses = ["fs"]' "$(sed -n '/^\[deps.fsdep\]/,$p' "$T/capsapp/eider.toml")"
 cp "$T/capsapp/eider.toml" "$T/caps.toml"
-check "ungranted fs is rejected" "eider-pkg: package \`fsdep\` uses capability \`fs\` (fsdep.ei:5) but is only granted []; to allow it, add \"fs\" to \`uses\` in its [deps.fsdep] table
-exit 1" "$(pkg capsapp add fsdep --path ../fsdep)"
-cmp -s "$T/caps.toml" "$T/capsapp/eider.toml" && echo "ok   a rejected add leaves eider.toml alone" || { echo "FAIL a rejected add leaves eider.toml alone"; fail=1; }
-check "granted fs is accepted" "locked 1 package(s)
-exit 0" "$(pkg capsapp add fsdep --path ../fsdep --uses fs)"
-check "extern needs ffi" "eider-pkg: package \`ffidep\` uses capability \`ffi\` (ffidep.ei:1) but is only granted [io]; to allow it, add \"ffi\" to \`uses\` in its [deps.ffidep] table (it declares \`extern\` functions: unmanaged code)
+check "--uses is an explicit grant: all of it must be covered" "eider-pkg: more capabilities than granted (eider.lock is not written):
+  ffidep 0.1.0 uses: clock, ffi, net, threads (granted: io)
+    first used: clock (ffidep.ei:1), ffi (ffidep.ei:1, \`extern\` functions: unmanaged code), net (helper.ei:2), threads (extra/side.ei:1)
+to grant it what it uses, add it without --uses
 exit 1" "$(pkg capsapp add ffidep --path ../ffidep --uses io)"
-check "a module the entry imports counts, a test program doesn't" "eider-pkg: package \`ffidep\` uses capability \`net\` (helper.ei:2) but is only granted [clock, ffi]; to allow it, add \"net\" to \`uses\` in its [deps.ffidep] table
-exit 1" "$(pkg capsapp add ffidep --path ../ffidep --uses clock,ffi)"
-check "granted ffi is accepted" "locked 2 package(s)
-exit 0" "$(pkg capsapp add ffidep --path ../ffidep --uses clock,ffi,net)"
-check "uses ffi without extern, and core, need no grant" "locked 3 package(s)
-exit 0" "$(pkg capsapp add plain --path ../plain)"
+cmp -s "$T/caps.toml" "$T/capsapp/eider.toml" && echo "ok   a rejected add leaves eider.toml alone" || { echo "FAIL a rejected add leaves eider.toml alone"; fail=1; }
+check "--uses broader than the use is narrowed" "note: ffidep 0.1.0 doesn't use: io; its grant is narrowed to: clock, ffi, net, threads
+added ffidep 0.1.0 — it uses: clock, ffi, net, threads (granted)
+locked 2 package(s)
+exit 0" "$(pkg capsapp add ffidep --path ../ffidep --uses clock,ffi,net,threads,io)"
+check "the narrowed grant is sorted" 'uses = ["clock", "ffi", "net", "threads"]' "$(grep -A2 '^\[deps.ffidep\]' "$T/capsapp/eider.toml" | tail -1)"
+check "uses ffi without extern, and core, need no grant" "added plain 0.1.0 — it uses nothing
+locked 3 package(s)
+exit 0" "$(pkg capsapp add plain --path ../plain --no-grant)"
 check "grants in the tree" "capsapp 0.1.0
   fsdep 0.1.0 uses fs
-  ffidep 0.1.0 uses clock,ffi,net
+  ffidep 0.1.0 uses clock,ffi,net,threads
   plain 0.1.0
 exit 0" "$(pkg capsapp tree)"
 check "unknown capability" "eider-pkg: <T>/capsapp/eider.toml:20:1: unknown capability \`disk\` (known: io, clock, fs, net, threads, ffi)
 exit 1" "$(pkg capsapp add other --path ../plain --uses disk)"
+cp "$T/capsapp/eider.lock" "$T/caps.lock"
+check "--no-grant keeps the dependency ungranted and the lock unwritten" "eider-pkg: added \`clockdep\` to eider.toml with no grant; more capabilities than granted (eider.lock is not written):
+  clockdep 0.1.0 uses: clock (granted: nothing)
+    first used: clock (clockdep.ei:1)
+to accept: eider fetch --grant clockdep
+exit 1" "$(pkg capsapp add clockdep --path ../clockdep --no-grant)"
+check "--no-grant: no uses" '[deps.clockdep]
+path = "../clockdep"' "$(sed -n '/^\[deps.clockdep\]/,$p' "$T/capsapp/eider.toml")"
+cmp -s "$T/caps.lock" "$T/capsapp/eider.lock" && echo "ok   --no-grant: eider.lock unchanged" || { echo "FAIL --no-grant: eider.lock unchanged"; fail=1; }
+check "fetch stops on the ungranted dependency" "eider-pkg: more capabilities than granted (eider.lock is not written):
+  clockdep 0.1.0 now also uses: clock (granted: nothing)
+    first used: clock (clockdep.ei:1)
+to accept: eider fetch --grant clockdep (or --grant-all)
+exit 1" "$(pkg capsapp fetch)"
+check "grant" "clockdep: uses = [\"clock\"] (granted clock)
+exit 0" "$(pkg capsapp grant clockdep clock)"
+check "grant writes uses" '[deps.clockdep]
+path = "../clockdep"
+uses = ["clock"]' "$(sed -n '/^\[deps.clockdep\]/,$p' "$T/capsapp/eider.toml")"
+check "granted, it fetches" "locked 4 package(s)
+exit 0" "$(pkg capsapp fetch)"
+check "grant again" "clockdep is already granted: clock (uses = [\"clock\"])
+exit 0" "$(pkg capsapp grant clockdep clock)"
+check "revoke" "clockdep: uses = [] (revoked clock)
+exit 0" "$(pkg capsapp revoke clockdep clock)"
+check "revoked, fetch stops" "1
+exit 1" "$(pkg capsapp fetch | grep -c 'clockdep 0.1.0 now also uses: clock (granted: nothing)'; pkg capsapp fetch | tail -1)"
+check "fetch --grant accepts" "locked 4 package(s)
+exit 0
+uses = [\"clock\"]" "$(pkg capsapp fetch --grant clockdep; grep -A2 '^\[deps.clockdep\]' "$T/capsapp/eider.toml" | tail -1)"
+check "grant an unknown capability" "eider-pkg: unknown capability \`disk\` (known: io, clock, fs, net, threads, ffi)
+exit 1" "$(pkg capsapp grant clockdep disk)"
+check "grant to a package that isn't a dependency" "eider-pkg: \`nope\` is not a dependency in eider.toml
+exit 1" "$(pkg capsapp grant nope io)"
+check "--grant for a package that isn't a dependency" "eider-pkg: --grant nope: not a dependency in eider.toml
+exit 1" "$(pkg capsapp fetch --grant nope)"
+# --confirm reads the answer from standard input (a terminal, or a pipe)
+check "--confirm, declined" "plain2 0.1.0 uses: clock. Grant it? [y/N] eider-pkg: not added: \`plain2\` would need clock
+exit 1" "$(cp -r "$T/clockdep" "$T/plain2" && manifest "$T/plain2" plain2 0.1.0 && mv "$T/plain2/clockdep.ei" "$T/plain2/plain2.ei" && echo n | pkg capsapp add plain2 --path ../plain2 --confirm)"
+check "--confirm, declined: eider.toml unchanged" "0" "$(grep -c plain2 "$T/capsapp/eider.toml")"
+check "--confirm, accepted" "plain2 0.1.0 uses: clock. Grant it? [y/N] added plain2 0.1.0 — it uses: clock (granted)
+locked 5 package(s)
+exit 0" "$(echo y | pkg capsapp add plain2 --path ../plain2 --confirm)"
+check "one way to grant" "eider-pkg: add takes one of --uses, --confirm and --no-grant
+exit 1" "$(pkg capsapp add x --path ../plain --no-grant --uses io)"
 # the program calls them without `uses ffi` (it stays inside ffidep and core), but with the
 # real capabilities they declare (magnitude: clock)
 printf 'import std.io\nimport fsdep\nimport ffidep\nimport plain\n\nfn main() uses io, clock {\n    print(fsdep.noop())\n    print(ffidep.magnitude(-7))\n    print(plain.hello())\n}\n' > "$T/capsapp/use.ei"
@@ -387,13 +450,126 @@ check "granted packages run without \`uses ffi\`" "0
 7
 2
 exit 0" "$(run capsapp use.ei)"
-# a grant taken away after the fetch: the compiler holds the import to eider.toml (E0204)
-sed -i.bak '/^uses = \["fs"\]$/d' "$T/capsapp/eider.toml"
+# a grant taken away after the fetch: the compiler holds the import to eider.toml (E0204),
+# and its help names the command that grants it
+pkg capsapp revoke fsdep fs >/dev/null
 got=$(run capsapp use.ei)
 check "the compiler rejects an ungranted capability (E0204)" "error[E0204]: package \`fsdep\` uses capability \`fs\` in \`save\` (fsdep.ei:5) but is only granted []
-  help: to allow it, add \"fs\" to \`uses\` in [deps.fsdep] of <T>/capsapp/eider.toml
+  help: to allow it, run \`eider grant fsdep fs\` in <T>/capsapp (it adds \"fs\" to \`uses\` in [deps.fsdep] of its eider.toml)
 exit 1" "$(printf '%s\n' "$got" | grep -e '^error\[E0204\]' -e '^  help:'; printf '%s\n' "$got" | tail -1)"
-mv "$T/capsapp/eider.toml.bak" "$T/capsapp/eider.toml"
+check "eider grant, as the help says, and it builds" "fsdep: uses = [\"fs\"] (granted fs)
+0
+7
+2
+exit 0" "$(pkg capsapp grant fsdep fs | grep -v '^exit'; run capsapp use.ei)"
+
+# a dependency's dependency is held to its depender's grant for what the entry module reaches
+# (extra/side.ei's threads is the library's business); every missing capability is named
+mkdir -p "$T/wrapdep" "$T/wrapapp"
+manifest "$T/wrapdep" wrapdep 0.1.0 '
+[deps.ffidep]
+path = "../ffidep"
+uses = ["clock"]
+'
+printf 'pub fn w() -> i64 { 1 }\n' > "$T/wrapdep/wrapdep.ei"
+manifest "$T/wrapapp" wrapapp 0.1.0
+check "a library's grant short of what its program reaches names everything missing" "eider-pkg: package \`ffidep\` uses ffi (ffidep.ei:1, \`extern\` functions: unmanaged code), net (helper.ei:2) but is only granted [clock]; its dependers must grant it \`uses = [\"clock\", \"ffi\", \"net\"]\` in their [deps.ffidep] table
+exit 1" "$(pkg wrapapp add wrapdep --path ../wrapdep)"
+
+# ---- growth and shrinking: fetch/update narrow a grant automatically, and stop with a diff
+# when a dependency's use grows, until it is accepted; eider.toml keeps its layout
+
+mkdir -p "$T/growdep" "$T/growdep2" "$T/growapp"
+manifest "$T/growdep" growdep 0.1.0
+printf 'pub fn say() uses io {\n}\n' > "$T/growdep/growdep.ei"
+manifest "$T/growdep2" growdep2 0.1.0
+manifest "$T/growapp" growapp 0.1.0 '
+# reviewed by the team
+[deps.growdep]
+path = "../growdep"   # local
+uses = [
+    "io",
+]   # reviewed
+
+# a pure helper
+[deps.growdep2]
+path = "../growdep2"
+'
+check "fetch (growth)" "locked 2 package(s)
+exit 0" "$(pkg growapp fetch)"
+cp "$T/growapp/eider.lock" "$T/grow.lock"
+printf 'pub fn say() uses io {\n}\n\npub fn keep() uses fs {\n}\n' > "$T/growdep/growdep.ei"
+check "growth stops update with a diff" "eider-pkg: more capabilities than granted (eider.lock is not written):
+  growdep 0.1.0 now also uses: fs (granted: io)
+    first used: fs (growdep.ei:4)
+to accept: eider update --grant growdep (or --grant-all)
+exit 1" "$(pkg growapp update)"
+cmp -s "$T/grow.lock" "$T/growapp/eider.lock" && echo "ok   growth: eider.lock unchanged" || { echo "FAIL growth: eider.lock unchanged"; fail=1; }
+check "update --grant accepts it" "locked 2 package(s)
+exit 0" "$(pkg growapp update --grant growdep)"
+check "the grant is rewritten in place" '
+# reviewed by the team
+[deps.growdep]
+path = "../growdep"   # local
+uses = ["fs", "io"]   # reviewed
+
+# a pure helper
+[deps.growdep2]
+path = "../growdep2"' "$(sed -n '4,$p' "$T/growapp/eider.toml")"
+printf 'pub fn keep() uses fs {\n}\n' > "$T/growdep/growdep.ei"
+check "a shrinking use narrows the grant" "note: growdep 0.1.0 no longer uses: io; its grant is narrowed to: fs
+locked 2 package(s)
+exit 0
+uses = [\"fs\"]   # reviewed" "$(pkg growapp fetch; grep '^uses' "$T/growapp/eider.toml")"
+printf 'pub fn keep() uses fs, net {\n}\n' > "$T/growdep/growdep.ei"
+printf 'pub fn tick() uses clock {\n}\n' > "$T/growdep2/growdep2.ei"
+check "two grow: both in the diff" "eider-pkg: more capabilities than granted (eider.lock is not written):
+  growdep 0.1.0 now also uses: net (granted: fs)
+    first used: net (growdep.ei:1)
+  growdep2 0.1.0 now also uses: clock (granted: nothing)
+    first used: clock (growdep2.ei:1)
+to accept: eider update --grant growdep,growdep2 (or --grant-all)
+exit 1" "$(pkg growapp update)"
+check "update --grant-all" "locked 2 package(s)
+exit 0
+uses = [\"fs\", \"net\"]   # reviewed
+uses = [\"clock\"]" "$(pkg growapp update --grant-all; grep '^uses' "$T/growapp/eider.toml")"
+
+# ---- [policy]: what a package may grant at all
+
+mkdir -p "$T/netdep" "$T/sock" "$T/polapp"
+manifest "$T/netdep" netdep 0.1.0
+printf 'pub fn get() uses net {\n}\n' > "$T/netdep/netdep.ei"
+manifest "$T/sock" sock 0.1.0
+printf 'pub fn open() uses net {\n}\n' > "$T/sock/sock.ei"
+manifest "$T/polapp" polapp 0.1.0 '
+[policy]
+deny = ["ffi"]
+
+[policy.allow]
+net = ["netdep"]
+'
+cp "$T/polapp/eider.toml" "$T/pol.toml"
+check "policy: deny" "eider-pkg: cannot grant \`ffi\` to \`ffidep\`: the policy denies it to every dependency ([policy] deny = [\"ffi\"] in <T>/polapp/eider.toml)
+exit 1" "$(pkg polapp add ffidep --path ../ffidep)"
+check "policy: allow names who may have it" "eider-pkg: cannot grant \`net\` to \`sock\`: the policy allows it only to netdep ([policy.allow] net = [\"netdep\"] in <T>/polapp/eider.toml)
+exit 1" "$(pkg polapp add sock --path ../sock)"
+check "policy: an explicit --uses is held to it too" "eider-pkg: cannot grant \`net\` to \`sock\`: the policy allows it only to netdep ([policy.allow] net = [\"netdep\"] in <T>/polapp/eider.toml)
+exit 1" "$(pkg polapp add sock --path ../sock --uses net)"
+cmp -s "$T/pol.toml" "$T/polapp/eider.toml" && echo "ok   policy: eider.toml unchanged" || { echo "FAIL policy: eider.toml unchanged"; fail=1; }
+check "policy: allowed" "added netdep 0.1.0 — it uses: net (granted)
+locked 1 package(s)
+exit 0" "$(pkg polapp add netdep --path ../netdep)"
+check "policy: grant" "eider-pkg: cannot grant \`ffi\` to \`netdep\`: the policy denies it to every dependency ([policy] deny = [\"ffi\"] in <T>/polapp/eider.toml)
+exit 1" "$(pkg polapp grant netdep ffi)"
+printf '\n[deps.sock]\npath = "../sock"\nuses = ["net"]\n' >> "$T/polapp/eider.toml"
+check "policy: a hand-written grant is held to it at fetch" "eider-pkg: cannot grant \`net\` to \`sock\`: the policy allows it only to netdep ([policy.allow] net = [\"netdep\"] in <T>/polapp/eider.toml)
+exit 1" "$(pkg polapp fetch)"
+check "policy: an unknown capability" "eider-pkg: <T>/polapp/eider.toml:6:1: unknown capability \`disk\` in [policy.allow] (known: io, clock, fs, net, threads, ffi)
+exit 1" "$(manifest "$T/polapp" polapp 0.1.0 '
+[policy.allow]
+disk = ["netdep"]
+'; pkg polapp fetch)"
 
 # ---- lockfile pinning: a moved tag doesn't move a locked package
 
@@ -553,6 +729,32 @@ check "override off again: back to the locked release" "locked 1 package(s)
 exit 0
 40
 exit 0" "$(cp "$T/ov2.lock" "$T/ov2/eider.lock"; pkg ov2 fetch; run ov2)"
+
+# ---- private git dependencies: a token for github.com URLs, through a one-off credential
+# helper (store.ei auth_args). A fake git records its arguments and fails, so nothing is
+# fetched; the helper itself is real git's business, and reads the token from the environment.
+
+mkdir -p "$T/fakebin" "$T/authapp"
+printf '#!/bin/sh\nprintf "%%s\\n" "$*" >> "$AUTHLOG"\nexit 1\n' > "$T/fakebin/git"
+printf '#!/bin/sh\n[ -n "$FAKE_GH_TOKEN" ] || exit 1\necho "$FAKE_GH_TOKEN"\n' > "$T/fakebin/gh"
+chmod +x "$T/fakebin/git" "$T/fakebin/gh"
+AUTHLOG="$T/auth.log"; export AUTHLOG
+manifest "$T/authapp" authapp 0.1.0
+# auth <url> [VAR=value...]: the arguments git got for a first fetch of <url>
+auth() {
+  u=$1; shift; : > "$AUTHLOG"; rm -rf "$EIDER_HOME/git"
+  env -u GH_TOKEN -u GITHUB_TOKEN "$@" PATH="$T/fakebin:$PATH" EIDER_ROOT="$R" EIDERC="$EC" target/eider-pkg -C "$T/authapp" add secret --git "$u" --version 1.0.0 >/dev/null 2>&1
+  cat "$AUTHLOG"
+}
+GH=https://github.com/o/secret.git
+check "auth: GH_TOKEN: a helper for github.com, the other helpers dropped" "1
+1" "$(got=$(auth $GH GH_TOKEN=s3cret); printf '%s\n' "$got" | grep -c '^-c credential.https://github.com.helper= -c credential.https://github.com.helper=!f() .* clone --mirror'; printf '%s\n' "$got" | grep -c 'password=\$t')"
+check "auth: the token is not on git's command line" "0" "$(auth $GH GH_TOKEN=s3cret | grep -c s3cret)"
+check "auth: GITHUB_TOKEN" "1" "$(auth $GH GITHUB_TOKEN=s3cret | grep -c 'helper=!f()')"
+check "auth: gh auth token" "1" "$(auth $GH FAKE_GH_TOKEN=s3cret | grep -c 'helper=!f()')"
+check "auth: no token: git's own setup" "0" "$(auth $GH | grep -c credential)"
+check "auth: another host: git's own setup" "0" "$(auth https://example.com/o/secret.git GH_TOKEN=s3cret | grep -c credential)"
+check "auth: nothing is written to the manifest" "0" "$(grep -c secret "$T/authapp/eider.toml")"
 
 # ---- errors
 
