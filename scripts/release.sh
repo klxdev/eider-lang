@@ -277,8 +277,13 @@ if [ -n "$binaries" ]; then
       { tail -20 "$W/crypto.log" >&2; die "$t: AWS-LC did not build"; }
     for p in pkg:packages/pkg/main.ei doc:packages/doc/main.ei eider:packages/eider/main.ei; do
       bin=${p%%:*}; [ $bin = eider ] || bin=eider-$bin
-      libs=; [ $bin = eider ] && libs="-l eider_crypto"
-      CC=$here/$W/cc EIDER_CACHE=off EIDER_CFLAGS="-s -L$here/$W/crypto/awslc-noasm" target/eiderc build "${p#*:}" -o "$W/bin/$bin" $libs >"$W/$bin.log" 2>&1 ||
+      # The tools are built from the compiler's portable C (emit-c) with the target's zig cc, as
+      # eiderc is from the C seed: the LLVM backend emits IR for the host's C ABI (System V
+      # x86-64; AAPCS64 is not done), which must not be cross-compiled to another target.
+      EIDER_CACHE=off target/eiderc emit-c "${p#*:}" >"$W/$bin.c" 2>"$W/$bin.log" ||
+        { tail -20 "$W/$bin.log" >&2; die "$t: $bin: emit-c failed"; }
+      ldl=; [ $bin = eider ] && ldl="-L$here/$W/crypto/awslc-noasm -leider_crypto"
+      "$W/cc" -std=c11 -O2 -pthread -s -I core -o "$W/bin/$bin" "$W/$bin.c" core/eider_rt.c core/eider_core.c $ldl >>"$W/$bin.log" 2>&1 ||
         { tail -20 "$W/$bin.log" >&2; die "$t: $bin did not build"; }
     done
     # smoke tests every target gets: static ELF executables for the right machine
