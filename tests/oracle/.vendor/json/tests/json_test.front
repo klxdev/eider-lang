@@ -1,1 +1,0 @@
-{"error":"E0001","span":{"file":"./.vendor/json/tests/json_test.ei","line":54,"col":29},"message":"a string literal's `{...}` can't contain `{`, `\"` or a comment: bind the value to a name first"}
