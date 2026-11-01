@@ -20,23 +20,29 @@
 #   check, when it has one); `scripts/version.sh check-siblings`. One line, `ok   versions:
 #   <each component's version>`, naming the repositories that are absent, or `FAIL ...` per
 #   sibling that differs.
-# - eider-analyzer: a copy of the repository (its sources, without target/) whose eider.toml
-#   points at this checkout is fetched (`eider-pkg fetch`), built (its scripts/build.sh, which
-#   builds the compiler from this checkout's compiler/) and tested (tests/run.sh: the scripted
-#   sessions, and tests/clean.sh, no diagnostics on any file of examples/ and std/). Its json
-#   dependency comes from the eider-json checkout, else this checkout's .vendor/json, the
-#   pinned release (EIDER_PKG_OVERRIDE). The repository itself is left alone.
+# - eider-analyzer: a copy of the repository (its sources, without target/) is built (its
+#   scripts/build.sh, with EIDER_TOOLCHAIN this checkout: its eider.toml's eiderc dependency is
+#   the toolchain's compiler/, which build.sh links as target/toolchain) and tested
+#   (tests/run.sh: the scripted sessions, and tests/clean.sh, no diagnostics on any file of
+#   examples/ and std/). Its json dependency comes from the eider-json checkout, else this
+#   checkout's .vendor/json, the pinned release (EIDER_PKG_OVERRIDE). The repository itself
+#   is left alone.
 # - tree-sitter-eider: its scripts/check-eider-lang.sh on this checkout (every .ei file parses
 #   without ERROR or MISSING nodes, apart from the fixtures meant not to parse).
 # - each library: its VERSION must have this checkout's MAJOR.MINOR (before 1.0 they move
-#   together), then a copy of it is built and tested (scripts/test.sh, with EIDER_ROOT this
-#   checkout) with its git dependencies taken from the sibling checkouts (EIDER_PKG_OVERRIDE,
+#   together), then a copy of it is built and tested (scripts/test.sh, with EIDER_TOOLCHAIN
+#   this checkout) with its git dependencies taken from the sibling checkouts (EIDER_PKG_OVERRIDE,
 #   through the EIDER_<NAME> its scripts/env.sh reads), json from .vendor/json when there is
 #   no eider-json checkout. One whose dependency has no checkout is skipped (it would need
 #   the network). The store is a fresh $EIDER_HOME.
 # eider-pkg (for the analyzer and the libraries) needs .vendor/toml, and json's fallback
 # .vendor/json: both are fetched by scripts/vendor.sh (from the checkouts when they are here);
 # what needs one that can't be fetched is skipped.
+#
+# The siblings' scripts find their toolchain as `eider` does, EIDER_TOOLCHAIN first (else the
+# installed release `eider toolchain show` names), so EIDER_TOOLCHAIN=<this checkout> is what
+# makes them build and test against it; they run eiderc and eider-pkg through `eider` when it
+# is on the PATH, else this checkout's scripts/ei and scripts/eider-pkg directly.
 #
 # Each prints `ok   ...`, `FAIL ...` (with the failures under it) or `skip: <reason>`. Exits 1
 # if one fails, else 0.
@@ -108,18 +114,12 @@ elif [ -n "$nopkg" ] || [ -n "$nojson" ]; then
 else
   w=$T/eider-analyzer
   copy "$an" "$w"
-  # its path dependencies point into this checkout, whatever its eider.toml says
-  sed -E "s#^(path = \")[^\"]*eider-lang/#\1$here/#" "$an/eider.toml" > "$w/eider.toml"
   rm -f "$w/eider.lock"
-  if ! EIDER_PKG_OVERRIDE="json=$EIDER_JSON" "$here/scripts/eider-pkg" -C "$w" fetch > "$T/an.log" 2>&1; then
-    echo "FAIL eider-analyzer: eider-pkg fetch (json from $json_from)"
-    tail -5 "$T/an.log" | sed 's/^/  /'
+  if ! EIDER_TOOLCHAIN=$here EIDER_PKG_OVERRIDE="json=$EIDER_JSON" sh "$w/scripts/build.sh" > "$T/an.log" 2>&1; then
+    echo "FAIL eider-analyzer: build ($an against $here; json from $json_from)"
+    grep -E '^error|-->|build.sh|FAIL' "$T/an.log" | head -10 | sed 's/^/  /'
     fail=1
-  elif ! EIDER_LANG=$here EIDER_ROOT=$here sh "$w/scripts/build.sh" > "$T/an.log" 2>&1; then
-    echo "FAIL eider-analyzer: build ($an against $here)"
-    grep -E '^error|-->|build.sh' "$T/an.log" | head -10 | sed 's/^/  /'
-    fail=1
-  elif EIDER_LANG=$here EIDER_ROOT=$here NOBUILD=1 sh "$w/tests/run.sh" > "$T/an.log" 2>&1; then
+  elif EIDER_TOOLCHAIN=$here NOBUILD=1 sh "$w/tests/run.sh" > "$T/an.log" 2>&1; then
     echo "ok   eider-analyzer ($(grep -c '^ok' "$T/an.log") test groups: sessions, no diagnostics on examples/ and std/, stand-in, perf; json from $json_from)"
   else
     echo "FAIL eider-analyzer: tests/run.sh ($an against $here)"
@@ -177,7 +177,7 @@ for n in $LIBS; do
   w=$T/eider-$n
   copy "$d" "$w"
   # without a sibling next to the copy, scripts/env.sh takes each dependency from EIDER_<NAME>
-  if EIDER_ROOT=$here EIDER_LANG= sh "$w/scripts/test.sh" > "$T/$n.log" 2>&1; then
+  if EIDER_TOOLCHAIN=$here sh "$w/scripts/test.sh" > "$T/$n.log" 2>&1; then
     echo "ok   eider-$n $v ($(grep -c '^ok' "$T/$n.log") tests against this checkout)"
   else
     echo "FAIL eider-$n $v: scripts/test.sh ($d against $here)"
