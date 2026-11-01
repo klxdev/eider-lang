@@ -1,0 +1,5 @@
+1
+3
+--- stderr
+eider: runtime error: index out of bounds (compiler/tests/run/llvm_opt_index.ei:12)
+--- exit 101

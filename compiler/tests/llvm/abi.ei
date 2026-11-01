@@ -1,0 +1,52 @@
+// The LLVM backend's System V x86-64 classifier against C (compiler/tests/llvm/run.sh): records
+// of mixed field types cross between C (abi_consumer.c, and the C half's export wrappers and
+// glue) and the functions the LLVM backend emits, by value in both directions.
+//
+//   B2   2 bytes   one INTEGER eightbyte, coerced to i16
+//   M12  12 bytes  two INTEGER eightbytes (i64, i32), with padding inside
+//   L16  16 bytes  two INTEGER eightbytes (i64, i8)
+//   T24  24 bytes  MEMORY: byval argument, sret result
+//   Q    16 bytes  a bool and an i64 in separate eightbytes
+//   N    16 bytes  nested records (B2 at 0, M12 at 4)
+//   S    16 bytes  a str and a u32
+// `many` passes three M12 (six registers) and then an L16, which no longer fits in registers
+// and goes on the stack as a whole; `eqs` compares with ==, which is the C half's eq_ glue
+// called from LLVM IR with both records by value.
+
+type B2 = { a: u8, b: bool }
+type M12 = { a: u8, b: u32, c: bool }
+type L16 = { a: i64, b: u8 }
+type T24 = { a: i64, b: i64, c: i32 }
+type Q = { x: bool, y: i64 }
+type N = { b: B2, m: M12 }
+type S = { s: str, n: u32 }
+
+export fn b2_sum(x: B2) -> u32 {
+    let k: u32 = if x.b { 1000 } else { 0 }
+    (x.a as u32) + k
+}
+
+export fn m12_make(a: u8, b: u32, c: bool) -> M12 { M12(a, b, c) }
+
+export fn m12_bump(x: M12) -> M12 { M12(x.a +% 1, x.b * 2, !x.c) }
+
+export fn l16_mix(x: L16, y: L16) -> L16 { L16(x.a - y.a, x.b ^ y.b) }
+
+export fn t24_rot(x: T24) -> T24 { T24(x.b, x.c as i64, x.a as i32) }
+
+export fn many(a: M12, b: M12, c: M12, d: L16) -> i64 {
+    (a.b as i64) + (b.b as i64) * 10 + (c.b as i64) * 100 + d.a * 1000 + (d.b as i64)
+}
+
+export fn mixed(i: i32, x: Q, j: u8, n: N, s: S) -> N {
+    let flip: u32 = if x.x { 1 } else { 0 }
+    N(B2(n.b.a +% j, !n.b.b), M12(n.m.a, n.m.b + ((i * i) as u32) + s.n + flip + (x.y as u32), n.m.c))
+}
+
+export fn eqs(a: M12, b: M12) -> bool { a == b && same_b2(B2(a.a, a.c), B2(b.a, b.c)) }
+
+fn same_b2(x: B2, y: B2) -> bool { x == y }
+
+export fn label(x: S) -> str { x.s }
+
+export fn q_neg(x: Q) -> Q { Q(!x.x, 0 - x.y) }

@@ -1,0 +1,10 @@
+// List.sum's loop adds with `nuw` once its overflow check has passed: the check still traps
+// on the element that overflows (llvm_opt.ei has the others).
+
+fn main() uses io {
+    let mut xs: List[u8] = List.new()
+    for i in 0..10 { xs.push((i * 2) as u8) }
+    print(xs.sum())
+    xs.push(200)
+    print(xs.sum())
+}

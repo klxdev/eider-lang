@@ -1,0 +1,10 @@
+b2_sum 1007
+m12_make 200 70000 1
+m12_bump 201 140000 0
+l16_mix -42 255
+t24_rot -2 3 1
+many 7650
+mixed 3 1 11 1055 1
+eqs 1 0
+label label
+q_neg 0 -40
