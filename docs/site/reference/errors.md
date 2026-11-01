@@ -467,6 +467,74 @@ fn main() uses io { print(String.from("hi").shout()) }
 hi!
 ```
 
+## E0117
+
+**An or-pattern whose alternatives bind differently.** Every alternative of `p | q` binds the
+same names with the same types, and not as `mut` (each binding holds a copy of the part that
+matched).
+
+```eider,compile_fail=E0117
+type M = | A(x: i32) | B(y: i32)
+
+fn f(m: M) -> i32 {
+    match m {
+        A(x) | B(y) => x
+    }
+}
+
+fn main() {}
+```
+
+Fix: bind the same name in each alternative.
+
+```eider
+type M = | A(x: i32) | B(y: i32)
+
+fn f(m: M) -> i32 {
+    match m {
+        A(v) | B(v) => v
+    }
+}
+
+fn main() uses io { print(f(B(2))) }
+```
+
+```output
+2
+```
+
+## E0118
+
+**A range pattern that matches nothing:** its start is above its end.
+
+```eider,compile_fail=E0118
+fn f(n: i32) -> i32 {
+    match n {
+        9..=0 => 1
+        _ => 0
+    }
+}
+
+fn main() {}
+```
+
+Fix: write the smaller bound first, `0..=9`.
+
+```eider
+fn f(n: i32) -> i32 {
+    match n {
+        0..=9 => 1
+        _ => 0
+    }
+}
+
+fn main() uses io { print(f(5)) }
+```
+
+```output
+1
+```
+
 ## E0201
 
 A **missing capability**. A call to a function that `uses` a capability (`print` needs

@@ -1,7 +1,8 @@
-// expect: E0001 4:13
+// expect: E0118 4:9
 fn f(n: i32) -> i32 {
     match n {
-        1 | k => k
+        9..=0 => 1
+        _ => 0
     }
 }
 fn main() {}

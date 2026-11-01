@@ -168,6 +168,8 @@ seed supports:
   meaning of `let` (a copy) and by itself with the new one (a reference), so a `let` of a
   place whose place is written while the binding is used later takes `.copy()`, which means
   the same under both.
+- A brace in a literal is interpolation (C8.28; the current seed knows it): write `{{`, a raw
+  string, or (what the migration left in compiler/, core/ and std/) `\x7b`.
 - None of wave 4's language (C8.15 `take`/`replace`, C8.17 escapes, C8.18 aliases, C8.20 Map
   iteration and `for` patterns, C8.21 `From`, C8.22 `while let`) until a seed has it; the
   same holds for std and packages, which verify.sh builds with the seed.
@@ -3536,6 +3538,61 @@ reference and late constant, and a plain constant naming a comptime one now pass
 an imported str constant passes (comptime_mod_str.ei), the E0807 message names str, and new
 cases cover a cycle and a self-reference (E0110 with the help), Drop and runaway recursion
 (E0807).
+
+## C8.30: patterns
+
+#98 and #105 (decisions C467-C469). Code: parse.ei (`arm`'s guard, `range_pat`, `record_pat`),
+pats.ei (C_RANGE, `useful_int`, `missing_int`), check.ei ("Patterns": `const_pat`, `range_pat`,
+`record_pat`, `same_binds`, `or_cond`, `guard_cond`; `compile_match`, `match_arms`, `bind_arm`).
+
+- **Constants.** A name in a pattern that is a constant (`mget(c.consts, k)`, after unit
+  variants) compares against it, lowered like its literal; a value not known as a literal (a
+  computed bool) is a T_EQV test and sets `Lowered.opaque`: the row stays out of the matrix
+  (in `let` and `for` it is refutable).
+- **Guards.** Arm e = guard+1. `guard_cond` binds, checks the guard, stores it in a bool, and
+  the arm's body binds again; a guarded row stays out of the matrix but is judged for
+  reachability against the rows before it.
+- **Or-patterns that bind.** `same_binds` holds every alternative to the first; `or_cond`
+  copies the matching alternative's parts into `Arms.pre`, locals the arm's frame owns (a failed
+  guard drops them).
+- **Field patterns.** PRecord of PField; `record_rest` checks the names, `field_pat` gives each
+  field its pattern or a wildcard, in declaration order, so the matrix sees the plain constructor.
+- **Ranges.** T_GE and T_LE tests, and pats.C_RANGE with bounds biased so unsigned order is the
+  type's. A column with a range is split at its patterns' bounds, one interval at a time; a
+  column without one goes through the old code, keeping its witnesses.
+- **String against `str`.** T_STRS, B_STR_IS: no allocation; C_STR for the matrix.
+
+Tests: compiler/tests/run/patterns.ei (hand-checked .out, no leaks), compiler/tests/parse_ok/
+patterns.ei, tests/checks/fail/e0117_*, e0118_*, compiler/tests/check/fail/e0101_range_gap.ei,
+e0101_guard_not_exhaustive.ei, e0102_after_constant.ei, e0410_record_missing_field.ei,
+e0113_record_field.ei; compiler/tests/check/fail/e0001_or_pattern_binds.ei became
+e0117_or_pattern_binds.ei (a reviewed oracle change).
+
+## C8.31: default methods
+
+#45 and #75 (decision C470). Code: check.ei (`register_impl`, `register_defaults`, FnDef's
+`imd` and `dflt`, `call_decl`).
+
+A trait method with a body that an impl doesn't define is recorded (`Dflt`) and registered after
+every impl as a method of the impl's type: an FnDef whose `md` and `node` are the trait's module
+and method (so the body's names are the trait's) and whose `inode`/`imd` are the impl and its
+module (for matching the receiver against the impl's target), with `dflt` set. Its type
+parameters are its own and Self: the impl's are not in scope in a trait, so `all_generics` and
+`all_gparam_nodes` skip them and `call_decl` has no impl target to unify; Self comes from the
+receiver, or for `Type.f()` from a target without type parameters. An impl without type
+parameters instantiates its defaults whether they are called or not, as it does its own
+methods. Methods are looked up by (head, name), so a type's own method of the same name, found
+first, wins (`register_defaults` doesn't register the default then).
+
+Associated types (#107) and calling a method by its trait (#50) stay open; neither falls out of
+this. `T.Item` needs a type resolved per impl in signatures and bounds, with new syntax in
+traits and impls; `Trait.m(x)` needs a new path for static calls, and is only useful when two
+methods of a name can coexist on a type, which E0107 refuses today.
+
+Tests: compiler/tests/run/default_methods.ei and lib/shapes.ei (inherit, override, Self, generic
+methods, associated functions, generic impls, a bound, another module; hand-checked .out),
+tests/std/stream.ei (std's helpers as methods), compiler/tests/check/fail/e0602_* (no body, still
+missing).
 
 ## C8.40: attributes
 

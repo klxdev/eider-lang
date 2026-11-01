@@ -1,0 +1,67 @@
+// default methods in traits (docs/compiler.md, "C8.31"): inherited, overridden, calling other
+// methods of the trait, with Self in the signature, generic methods, associated functions,
+// generic impls, through a bound, and from another module (compiler/tests/run/lib/shapes.ei)
+import eiderc.tests.run.lib.shapes as shapes
+
+trait Named {
+    fn name(self) -> String
+    fn hello(self) -> String { "hello, {self.name()}" }
+    fn twice(self) -> String {
+        let h = self.hello()
+        "{h} {h}"
+    }
+    fn me(self) -> Self { self.copy() }
+    fn with[T: Show](self, x: T) -> String { "{self.name()} with {x}" }
+    fn make() -> str { "made by default" }
+    fn renamed(inout self, s: str) -> i32 { s.len() as i32 }
+}
+
+type Cat = { n: i32 }
+type Dog = { n: i32 }
+type Box2[T] = { v: T }
+
+impl Named for Cat {
+    fn name(self) -> String { "cat {self.n}" }
+}
+
+impl Named for Dog {
+    fn name(self) -> String { "dog {self.n}" }
+    // overriding
+    fn hello(self) -> String { "woof from {self.name()}" }
+    fn make() -> str { "made by the dog" }
+}
+
+impl[T: Show] Named for Box2[T] {
+    fn name(self) -> String { "box of {self.v}" }
+}
+
+fn greet[N: Named](x: N) -> String { x.twice() }
+
+type Sq = { s: i32 }
+
+impl shapes.Shape for Sq {
+    fn area(self) -> i32 { self.s * self.s }
+}
+
+fn main() uses io {
+    let c = Cat(1)
+    let d = Dog(2)
+    print(c.hello())
+    print(d.hello())
+    print(c.twice())
+    print(d.twice())
+    print(c.me())
+    print(c.with(5))
+    print(d.with("x"))
+    print(Cat.make())
+    print(Dog.make())
+    print(greet(c))
+    print(greet(d))
+    let b = Box2(7)
+    print(b.hello())
+    print(greet(Box2("t")))
+    let mut m = Cat(3)
+    print(m.renamed("four"))
+    // a default from another module, whose names are that module's
+    print(Sq(3).describe())
+}

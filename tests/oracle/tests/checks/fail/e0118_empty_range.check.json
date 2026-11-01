@@ -1,0 +1,1 @@
+{"error":"E0118","span":{"file":"tests/checks/fail/e0118_empty_range.ei","line":4,"col":9},"message":"range pattern `9..=0` matches nothing: its start is above its end","help":"write the smaller bound first"}

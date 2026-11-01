@@ -67,6 +67,10 @@ const NONE: u32 = 4294967295
 /// the impl a method belongs to (NONE for free functions).
 type FnDef = {
     key: u64, md: u32, node: u32, public: bool, generic: bool, unsafe_fn: bool, ir: u32, inode: u32,
+    /// the module of `inode`; `dflt`: a trait's default method (docs/compiler.md, "C8.31"), for
+    /// the impl `inode`: `md` and `node` are the trait's module and method, and its only type
+    /// parameters besides its own are Self (the impl's aren't in scope in the trait)
+    imd: u32, dflt: bool,
 }
 
 /// An instance of a function: its type substitution [sstart, slen) in `sub_s`/`sub_t`, its
@@ -122,8 +126,16 @@ const T_INT: u32 = 1
 const T_BOOL: u32 = 2
 const T_STR: u32 = 3
 type Test = { kind: u32, place: u32, ty: u32, a: u32, w: fold.Wide, s: List[u8] }
+/// Pattern tests besides T_TAG..T_STR ("Patterns" below): T_GE/T_LE the value against w (a
+/// range's bounds), T_EQV equal to operand `a` (a constant), T_STRS a String against s.
+const T_GE: u32 = 4
+const T_LE: u32 = 5
+const T_EQV: u32 = 6
+const T_STRS: u32 = 7
 type Bind = { key: u64, place: u32, ty: u32, line: u32, col: u32, mutable: bool }
-type Lowered = { tests: List[Test], binds: List[Bind] }
+/// `opaque`: a part tests something the pattern matrix can't represent (a constant of a
+/// type without literals), so the row doesn't count as covering anything.
+type Lowered = { tests: List[Test], binds: List[Bind], opaque: bool }
 
 /// An owned value in a frame (`l` = NONE once it moved out), or with `l` = DEFER a deferred
 /// statement (`ty`: its index in C.defers; "Defer" below).
@@ -280,6 +292,8 @@ pub type C = {
     rx: Reflect,
     /// the `defer` and `errdefer` statements registered in frames ("Defer" below)
     defers: List[Defer],
+    /// inherited default methods not registered yet (register_defaults)
+    dflts: List[Dflt],
 }
 
 /// `impl From[Source] for Target` (module md, IImpl node) and its `from` method (FnDef fd).
@@ -658,10 +672,18 @@ fn bind_pat_poison(inout c: C, pat: u32) {
         if !c.variants.contains(k) { declare_poison(inout c, k, n.line, n.col) }
         return
     }
-    if n.kind == ast.PVariant || n.kind == ast.PTuple {
+    if n.kind == ast.PVariant || n.kind == ast.PTuple || n.kind == ast.PRecord {
         for i in 0..n.d {
             let sp = at(c, n.c, i)
             bind_pat_poison(inout c, sp)
+        }
+    }
+    if n.kind == ast.PField {
+        if n.b > 0 {
+            bind_pat_poison(inout c, n.b - 1)
+        } else {
+            let k = resolve.name_key(c.p, c.am, n.a, 0, n.line, n.col)
+            declare_poison(inout c, k, n.line, n.col)
         }
     }
 }
@@ -2446,7 +2468,7 @@ fn register_from(inout c: C, m: u32, id: u32, igens: List[u32], target: List[u8]
             continue
         }
         fi = c.fdefs.len() as u32
-        c.fdefs.push(FnDef(resolve.key(0, mn.a), m, mid, true, false, ast.has(mn.b, ast.FN_UNSAFE), NONE, id))
+        c.fdefs.push(FnDef(resolve.key(0, mn.a), m, mid, true, false, ast.has(mn.b, ast.FN_UNSAFE), NONE, id, m, false))
         if im.d == 0 && mn.h > 0 { concrete.push(fi) }
     }
     if fi == NONE {
@@ -2944,6 +2966,7 @@ fn abstract_bodies(inout c: C) {
     let mut found: List[diag.Diag] = List.new()
     for fd in fds {
         let f = c.fdefs[fd as usize].copy()
+        if f.dflt { continue }
         let mut sb = no_subst()
         for gn in all_gparam_nodes(c, fd) {
             let g = ndm(c, f.md, gn)
@@ -3025,7 +3048,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C {
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
         0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false, Rec(false, List.new(), List.new()),
         List.new(), List.new(), false, Map.new(), false, false, Map.new(), List.new(), lt, no_refs(),
-        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), no_reflect(), List.new())
+        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), no_reflect(), List.new(), List.new())
 }
 
 /// Every item of the program in load order (resolve.ei), as (module, node) pairs.
@@ -3265,7 +3288,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
         let fname = kt(c, k)
         let decl_ir = ir.declare_fn(inout c.ir, fname, false)
         let irf = if n.d == 0 { decl_ir } else { NONE }
-        c.fdefs.push(FnDef(k, it.m, it.node, ast.has(n.b, ast.FN_PUBLIC), n.d > 0, ast.has(n.b, ast.FN_UNSAFE), irf, NONE))
+        c.fdefs.push(FnDef(k, it.m, it.node, ast.has(n.b, ast.FN_PUBLIC), n.d > 0, ast.has(n.b, ast.FN_UNSAFE), irf, NONE, it.m, false))
     }
     // 5. impls
     let mut concrete: List[u32] = List.new()
@@ -3275,6 +3298,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
         begin_item(inout c, it)
         register_impl(inout c, it.m, it.node, inout concrete)?
     }
+    register_defaults(inout c, inout concrete)
     c.lt.registered = true
     // constants and other code outside functions build into a scratch IR function
     let scratch = ir.declare_fn(inout c.ir, s("<const>"), false)
@@ -3344,8 +3368,9 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
         c.seen = List.new()
         c.cur_mod = f.md
         c.cur_all = false
-        let target = ndm(c, f.md, f.inode).b
-        let st = resolve_ty(inout c, f.md, target)
+        let target = ndm(c, f.imd, f.inode).b
+        c.cur_mod = f.imd
+        let st = resolve_ty(inout c, f.imd, target)
         c.cur_mod = resolve.NOMOD
         c.cur_all = true
         let mut self_ty = types.UNIT
@@ -3593,6 +3618,8 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
     }
     let head = head_key(c, m, im.b, igens)
     let target = show_ast(c, m, im.b, igens)
+    let mut defaults: List[u32] = List.new()
+    let mut dti = NONE
     let mut names: List[u32] = List.new()
     for i in 0..im.f {
         let mn = ndm(c, m, atm(c, m, im.e, i))
@@ -3625,8 +3652,15 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
             let lang = lang_of_key(c, tk)
             if lang != NONE && !check_lang_impl(inout c, m, im, lang, igens) { return Ok(true) }
             for i in 0..trn.d {
-                let tm = ndm(c, tr.m, atm(c, tr.m, trn.c, i))
+                let tmn = atm(c, tr.m, trn.c, i)
+                let tm = ndm(c, tr.m, tmn)
                 let mid = find_method(c, m, im.e, im.f, tm.a)
+                if mid == NONE && tm.h > 0 {
+                    // a default method (docs/compiler.md, "C8.31")
+                    defaults.push(tmn)
+                    dti = ti
+                    continue
+                }
                 if mid == NONE {
                     let rd = err("E0602", im.line, im.col, q2("impl of `", kt(c, tk), "` is missing method `", nm(c, tm.a), "`"))
                     record(inout c, rd)
@@ -3698,11 +3732,36 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
             continue
         }
         let fi = c.fdefs.len() as u32
-        c.fdefs.push(FnDef(resolve.key(0, mn.a), m, mid, true, mn.d > 0, ast.has(mn.b, ast.FN_UNSAFE), NONE, id))
+        c.fdefs.push(FnDef(resolve.key(0, mn.a), m, mid, true, mn.d > 0, ast.has(mn.b, ast.FN_UNSAFE), NONE, id, m, false))
         if im.d == 0 && mn.d == 0 && mn.h > 0 { concrete.push(fi) }
         c.meths.push(Meth(head, mn.a, fi, target))
     }
+    // the trait's default methods this impl doesn't define: registered after every impl
+    for tmid in defaults { c.dflts.push(Dflt(dti, tmid, head, target.copy(), id, m)) }
     Ok(true)
+}
+
+/// A default method an impl inherits, waiting for every impl to be registered.
+type Dflt = { ti: u32, tm: u32, head: u64, target: List[u8], inode: u32, m: u32 }
+
+/// Register the inherited default methods. A type's own method of that name wins: it is
+/// called instead (docs/compiler.md, "C8.31").
+fn register_defaults(inout c: C, inout concrete: List[u32]) {
+    for d in c.dflts {
+        let tr = c.trs[d.ti as usize].copy()
+        let tm = ndm(c, tr.m, d.tm)
+        let mut dup = false
+        for x in c.meths {
+            if x.head == d.head && x.name == tm.a && bytes.eq(x.target, d.target) { dup = true }
+        }
+        if dup { continue }
+        let im = ndm(c, d.m, d.inode)
+        let fi = c.fdefs.len() as u32
+        c.fdefs.push(FnDef(resolve.key(0, tm.a), tr.m, d.tm, true, tm.d > 0, ast.has(tm.b, ast.FN_UNSAFE), NONE, d.inode, d.m, true))
+        if im.d == 0 && tm.d == 0 { concrete.push(fi) }
+        c.meths.push(Meth(d.head, tm.a, fi, d.target))
+    }
+    c.dflts = List.new()
 }
 
 /// The type parameters of declaration fi, impl's first (call_decl's all_generics).
@@ -3710,7 +3769,7 @@ fn all_generics(c: C, fi: u32) -> List[u32] {
     let f = c.fdefs[fi as usize]
     let n = ndm(c, f.md, f.node)
     let mut out: List[u32] = List.new()
-    if f.inode != NONE {
+    if f.inode != NONE && !f.dflt {
         let im = ndm(c, f.md, f.inode)
         out = gparams(c, f.md, im.c, im.d)
     }
@@ -3723,7 +3782,7 @@ fn all_gparam_nodes(c: C, fi: u32) -> List[u32] {
     let f = c.fdefs[fi as usize]
     let n = ndm(c, f.md, f.node)
     let mut out: List[u32] = List.new()
-    if f.inode != NONE {
+    if f.inode != NONE && !f.dflt {
         let im = ndm(c, f.md, f.inode)
         for i in 0..im.d { out.push(atm(c, f.md, im.c, i)) }
     }
@@ -4176,7 +4235,7 @@ fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
         vty = v.ty
         acc = place_of_op(inout c, v.op, v.ty, n.line)
     }
-    let mut lw = Lowered(List.new(), List.new())
+    let mut lw = Lowered(List.new(), List.new(), false)
     c.pat_bad = false
     let pir = lower_pat(inout c, n.a, vty, acc, inout lw)?
     let mut rows = pats.empty(1)
@@ -4185,7 +4244,8 @@ fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     pats.add_row(inout rows, row)
     let mut tys: List[u32] = List.new()
     tys.push(vty)
-    let missing: Option[List[List[u8]]] = if c.pat_bad { None } else { pats.missing(c.pt, c.t, c.p.names, rows, tys) }
+    let mut missing: Option[List[List[u8]]] = if c.pat_bad { None } else { pats.missing(c.pt, c.t, c.p.names, rows, tys) }
+    if lw.opaque && !c.pat_bad { missing = Some(one_text("_")) }
     match missing {
         Some(w) => {
             let pn = nd(c, n.a)
@@ -4564,7 +4624,7 @@ fn for_pat(inout c: C, n: ast.Node, et: u32, acc: u32) -> Result[bool, diag.Diag
         bind_pat_poison(inout c, n.e - 1)
         return Ok(true)
     }
-    let mut lw = Lowered(List.new(), List.new())
+    let mut lw = Lowered(List.new(), List.new(), false)
     c.pat_bad = false
     let pir = lower_pat(inout c, n.e - 1, et, acc, inout lw)?
     let mut rows = pats.empty(1)
@@ -4573,7 +4633,8 @@ fn for_pat(inout c: C, n: ast.Node, et: u32, acc: u32) -> Result[bool, diag.Diag
     pats.add_row(inout rows, row)
     let mut tys: List[u32] = List.new()
     tys.push(et)
-    let missing: Option[List[List[u8]]] = if c.pat_bad { None } else { pats.missing(c.pt, c.t, c.p.names, rows, tys) }
+    let mut missing: Option[List[List[u8]]] = if c.pat_bad { None } else { pats.missing(c.pt, c.t, c.p.names, rows, tys) }
+    if lw.opaque && !c.pat_bad { missing = Some(one_text("_")) }
     match missing {
         Some(w) => {
             let pn = nd(c, n.e - 1)
@@ -4843,6 +4904,8 @@ fn lower_pat(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) -> Re
             if other != NONE {
                 return Err(err("E0401", n.line, n.col, q3("`", kt(c, k), "` is a variant of ", kt(c, c.t.defs[other as usize].key), ", but the value has type ", ts(c, ty), "")))
             }
+            let ci = mget(c.consts, k)
+            if ci != NONE && n.c == 0 { return const_pat(inout c, n, ci, ty, place, inout lw) }
             lw.binds.push(Bind(k, place, ty, n.line, n.col, n.c == 1))
             Ok(pats.WILD)
         }
@@ -4864,12 +4927,16 @@ fn lower_pat(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) -> Re
             Ok(pats.ctor(inout c.pt, pats.C_BOOL, n.a, 0, List.new()))
         }
         ast.PStr => {
-            if tk != types.T_STR { return Err(mismatch(c, n.line, n.col, ty, types.STR)) }
+            if tk != types.T_STR && tk != types.T_STRING { return Err(mismatch(c, n.line, n.col, ty, types.STR)) }
             let b = c.p.mods[c.am as usize].strs[n.a as usize].copy()
             let id = intern.intern(inout c.p.names, b, 0, b.len())
-            lw.tests.push(Test(T_STR, place, ty, 0, fold.zero(), b))
+            // a String matches the text too (docs/compiler.md, "C8.30")
+            let tkind = if tk == types.T_STRING { T_STRS } else { T_STR }
+            lw.tests.push(Test(tkind, place, ty, 0, fold.zero(), b))
             Ok(pats.ctor(inout c.pt, pats.C_STR, id, 0, List.new()))
         }
+        ast.PRange => range_pat(inout c, n, ty, place, inout lw)
+        ast.PRecord => record_pat(inout c, n, ty, place, inout lw)
         ast.PTuple => {
             // `()` matches the one unit value
             if n.d == 0 && tk == types.T_UNIT { return Ok(pats.WILD) }
@@ -4948,16 +5015,28 @@ fn poison_binds(inout c: C, pat: u32, ty: u32, place: u32, inout lw: Lowered) {
         if !c.variants.contains(k) { lw.binds.push(Bind(k, place, ty, n.line, n.col, n.c == 1)) }
         return
     }
-    if n.kind == ast.PVariant || n.kind == ast.PTuple {
+    if n.kind == ast.PVariant || n.kind == ast.PTuple || n.kind == ast.PRecord {
         for i in 0..n.d {
             let sp = at(c, n.c, i)
             poison_binds(inout c, sp, ty, place, inout lw)
         }
     }
+    if n.kind == ast.PField {
+        if n.b > 0 {
+            poison_binds(inout c, n.b - 1, ty, place, inout lw)
+        } else {
+            let k = resolve.name_key(c.p, c.am, n.a, 0, n.line, n.col)
+            lw.binds.push(Bind(k, place, ty, n.line, n.col, false))
+        }
+    }
 }
 
 /// One arm alternative: its pattern tests.
-type Alt = { tests: List[Test] }
+type Alt = { tests: List[Test], binds: List[Bind] }
+
+/// A match's lowered arms: the alternatives (alt_start[i] the first of arm i), each arm's
+/// bindings, and for an or-pattern that binds the locals its alternatives copy into (`pre`).
+type Arms = { alts: List[Alt], alt_start: List[u32], arm_binds: List[List[Bind]], pre: List[List[u32]] }
 
 fn compile_match(inout c: C, m: ast.Node, dest: Dest, exp: u32) -> Result[u32, diag.Diag] {
     let sn = nd(c, m.a)
@@ -4999,6 +5078,7 @@ fn compile_match(inout c: C, m: ast.Node, dest: Dest, exp: u32) -> Result[u32, d
     let mut alts: List[Alt] = List.new()
     let mut alt_start: List[u32] = List.new()
     let mut arm_binds: List[List[Bind]] = List.new()
+    let mut pres: List[List[u32]] = List.new()
     for i in 0..m.d {
         let arm = nd(c, at(c, m.c, i))
         let mut useful = false
@@ -5007,23 +5087,32 @@ fn compile_match(inout c: C, m: ast.Node, dest: Dest, exp: u32) -> Result[u32, d
         if arm.d == 0 {
             // an arm the parser skipped (no patterns, an EError body): the match isn't judged
             c.pat_bad = true
-            alts.push(Alt(List.new()))
+            alts.push(Alt(List.new(), List.new()))
         }
         for j in 0..arm.d {
             let pid = at(c, arm.c, j)
-            let mut lw = Lowered(List.new(), List.new())
+            let mut lw = Lowered(List.new(), List.new(), false)
             let pir = lower_pat(inout c, pid, sv.ty, place, inout lw)?
-            if arm.d > 1 && lw.binds.len() > 0 && !c.pat_bad {
-                let pn = nd(c, pid)
-                return Err(err("E0001", pn.line, pn.col, s("or-patterns can't bind names")))
-            }
+            if j > 0 && !c.pat_bad { same_binds(c, binds, lw.binds, nd(c, pid))? }
+            if j == 0 { binds = lw.binds.copy() }
             let mut v: List[u32] = List.new()
             v.push(pir)
             if pats.useful(c.pt, c.t, rows, v, tys) { useful = true }
-            pats.add_row(inout rows, v)
-            alts.push(Alt(lw.tests))
-            binds = lw.binds
+            // a guarded arm, or a test the matrix can't represent, covers nothing for later arms
+            if arm.e == 0 && !lw.opaque { pats.add_row(inout rows, v) }
+            alts.push(Alt(lw.tests, lw.binds))
         }
+        // an or-pattern that binds: its alternatives copy into locals of their own
+        let mut pre: List[u32] = List.new()
+        if arm.d > 1 && binds.len() > 0 {
+            for b in binds {
+                if b.mutable {
+                    return Err(err("E0117", b.line, b.col, q("`mut ", kt(c, b.key), "` in an or-pattern: its alternatives bind copies, which can't be mutable aliases")))
+                }
+                pre.push(ir.local(inout c.ir, resolve.key_sym(b.key), b.ty, ir.L_LET, b.line))
+            }
+        }
+        pres.push(pre)
         if !useful && !c.pat_bad {
             let p0 = nd(c, at(c, arm.c, 0))
             return Err(err("E0102", p0.line, p0.col, s("unreachable arm: everything it matches is already handled above")))
@@ -5038,7 +5127,8 @@ fn compile_match(inout c: C, m: ast.Node, dest: Dest, exp: u32) -> Result[u32, d
         }
         None => {}
     }
-    match_arms(inout c, m, 0, alts, alt_start, arm_binds, sc, dest, exp, types.NEVER)
+    let ar = Arms(alts, alt_start, arm_binds, pres)
+    match_arms(inout c, m, 0, ar, sc, dest, exp, types.NEVER)
 }
 
 /// A match's scrutinee as its bindings need it: a place (`is_ref`) rooted at variable `rk`,
@@ -5047,18 +5137,27 @@ type Scrut = { is_ref: bool, rk: u64, ty: u32, line: u32, col: u32 }
 
 /// Emit arms i.. as an if/else chain (the last arm needs no test: the match is exhaustive);
 /// `result` is the unified type of the arms before i.
-fn match_arms(inout c: C, m: ast.Node, i: u32, alts: List[Alt], alt_start: List[u32], arm_binds: List[List[Bind]], sc: Scrut, dest: Dest, exp: u32, result: u32) -> Result[u32, diag.Diag] {
-    if i + 1 == m.d {
-        let t = arm_body(inout c, m, i, arm_binds[i as usize], sc, dest, exp)?
+fn match_arms(inout c: C, m: ast.Node, i: u32, a: Arms, sc: Scrut, dest: Dest, exp: u32, result: u32) -> Result[u32, diag.Diag] {
+    let arm = nd(c, at(c, m.c, i))
+    let pre = a.pre[i as usize].copy()
+    let from = a.alt_start[i as usize]
+    let to = a.alt_start[(i + 1) as usize]
+    if i + 1 == m.d && arm.e == 0 && pre.len() == 0 {
+        let t = arm_body(inout c, m, i, a.arm_binds[i as usize], pre, sc, dest, exp)?
         return finish_match(c, m, i, dest, result, t)
     }
-    let cond = alt_cond(inout c, alts, alt_start[i as usize], alt_start[(i + 1) as usize], m.line)
+    let mut cond = if pre.len() > 0 { or_cond(inout c, a, from, to, pre, m.line) } else { alt_cond(inout c, a.alts, from, to, m.line) }
+    if arm.e > 0 { cond = guard_cond(inout c, arm, cond, a.arm_binds[i as usize], pre, sc)? }
+    if i + 1 == m.d {
+        let t = arm_body(inout c, m, i, a.arm_binds[i as usize], pre, sc, dest, exp)?
+        return finish_match(c, m, i, dest, result, t)
+    }
     let tm = ir.open(c.ir)
-    let t = arm_body(inout c, m, i, arm_binds[i as usize], sc, dest, exp)?
+    let t = arm_body(inout c, m, i, a.arm_binds[i as usize], pre, sc, dest, exp)?
     let then = ir.close(inout c.ir, tm)
     let r1 = finish_arm(c, m, i, result, t)?
     let em = ir.open(c.ir)
-    let r = match_arms(inout c, m, i + 1, alts, alt_start, arm_binds, sc, dest, exp, r1)?
+    let r = match_arms(inout c, m, i + 1, a, sc, dest, exp, r1)?
     let els = ir.close(inout c.ir, em)
     emit(inout c, ir.S_IF, 0, cond, then, els, 0, m.line)
     Ok(r)
@@ -5078,11 +5177,39 @@ fn finish_match(c: C, m: ast.Node, i: u32, dest: Dest, result: u32, t: u32) -> R
     Ok(r)
 }
 
-fn arm_body(inout c: C, m: ast.Node, i: u32, binds: List[Bind], sc: Scrut, dest: Dest, exp: u32) -> Result[u32, diag.Diag] {
+fn arm_body(inout c: C, m: ast.Node, i: u32, binds: List[Bind], pre: List[u32], sc: Scrut, dest: Dest, exp: u32) -> Result[u32, diag.Diag] {
     let arm = nd(c, at(c, m.c, i))
     push_scope(inout c)
     push_frame(inout c)
+    bind_arm(inout c, binds, pre, sc, true)?
+    let mut t = types.UNIT
+    if arm.b == 1 {
+        t = stmt(inout c, arm.a)?
+    } else {
+        let body = nd(c, arm.a)
+        if body.kind == ast.EBlock {
+            t = block_body(inout c, body.a, dest, exp)?
+        } else {
+            t = compile_value(inout c, arm.a, dest, exp)?
+        }
+    }
+    pop_frame(inout c, t != types.NEVER)
+    pop_scope(inout c)
+    Ok(t)
+}
+
+/// Declare an arm's bindings: references into a place scrutinee or owned copies, or for an
+/// or-pattern the locals `pre` its alternatives copied into (owned by this frame when `own`).
+fn bind_arm(inout c: C, binds: List[Bind], pre: List[u32], sc: Scrut, own: bool) -> Result[bool, diag.Diag] {
+    let mut bi: usize = 0
     for b in binds {
+        if pre.len() > 0 {
+            let l = pre[bi]
+            bi += 1
+            if own { register(inout c, l, b.ty) }
+            declare(inout c, local_plain(b.key, b.ty, false, b.line, b.col, l))?
+            continue
+        }
         if sc.is_ref {
             if !b.mutable || writable(c, sc.rk) {
                 let fx = copy_fix(c, sc.ty, sc.line, sc.col)
@@ -5103,20 +5230,7 @@ fn arm_body(inout c: C, m: ast.Node, i: u32, binds: List[Bind], sc: Scrut, dest:
         v.mutable = b.mutable
         declare(inout c, v)?
     }
-    let mut t = types.UNIT
-    if arm.b == 1 {
-        t = stmt(inout c, arm.a)?
-    } else {
-        let body = nd(c, arm.a)
-        if body.kind == ast.EBlock {
-            t = block_body(inout c, body.a, dest, exp)?
-        } else {
-            t = compile_value(inout c, arm.a, dest, exp)?
-        }
-    }
-    pop_frame(inout c, t != types.NEVER)
-    pop_scope(inout c)
-    Ok(t)
+    Ok(true)
 }
 
 /// The condition of alternatives [from, to): any alternative whose tests all pass.
@@ -5163,6 +5277,16 @@ fn test_val(inout c: C, t: Test, line: u32) -> u32 {
     if t.kind == T_BOOL {
         if t.a == 1 { return v }
         return emit_val(inout c, ir.S_UNARY, ir.U_NOT, v, 0, types.BOOL, types.BOOL, 0)
+    }
+    if t.kind == T_STRS {
+        let lo = ir.op_str(inout c.ir, t.s)
+        return builtin_op(inout c, ir.B_STR_IS, two(v, lo), types.BOOL, 0)
+    }
+    if t.kind == T_EQV { return emit_val(inout c, ir.S_BINARY, ast.OP_EQ, v, t.a, t.ty, types.BOOL, 0) }
+    if t.kind == T_GE || t.kind == T_LE {
+        let bound = int_op(inout c, t.ty, t.w)
+        let op = if t.kind == T_GE { ast.OP_GE } else { ast.OP_LE }
+        return emit_val(inout c, ir.S_BINARY, op, v, bound, t.ty, types.BOOL, 0)
     }
     let mut k = ir.op_str(inout c.ir, t.s)
     if t.kind == T_INT { k = int_op(inout c, t.ty, t.w) }
@@ -5977,7 +6101,15 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
     let mut sb = sb0.copy()
     let mut gs = gparams(c, fm, fnode.c, fnode.d)
     let mut target: u32 = NONE
-    if f.inode != NONE {
+    if f.dflt {
+        // only Self: from the receiver, or `Type.f()` of an impl without type parameters
+        gs.push(intern.S_SELF_TYPE)
+        let im = ndm(c, f.imd, f.inode)
+        if subst_get(sb, intern.S_SELF_TYPE) == NONE && im.d == 0 {
+            let st = resolve_ty(inout c, f.imd, im.b)?
+            subst_set(inout sb, intern.S_SELF_TYPE, st)
+        }
+    } else if f.inode != NONE {
         let im = ndm(c, fm, f.inode)
         target = im.b
         for g in gparams(c, fm, im.c, im.d) { gs.push(g) }
@@ -6381,10 +6513,11 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
         if m.head != head || m.name != n.b { continue }
         any = true
         let f = c.fdefs[m.fd as usize]
-        let im = ndm(c, f.md, f.inode)
-        let gs = gparams(c, f.md, im.c, im.d)
+        let im = ndm(c, f.imd, f.inode)
+        let gs = gparams(c, f.imd, im.c, im.d)
         let mut sb = no_subst()
-        if !unify_ast(c, f.md, im.b, pv.ty, inout sb, gs) { continue }
+        if !unify_ast(c, f.imd, im.b, pv.ty, inout sb, gs) { continue }
+        if f.dflt { sb = no_subst() }
         subst_set(inout sb, intern.S_SELF_TYPE, pv.ty)
         let label = label_of(c, head_text(c, head), n.b)
         return call_decl(inout c, n, label, m.fd, sb, Recv(true, n.a, pv), exp, true)
@@ -6972,6 +7105,7 @@ fn walk_expr(c: C, e: u32, inout out: List[u64]) {
             walk_expr(c, n.a, inout out)
             for i in 0..n.d {
                 let arm = nd(c, at(c, n.c, i))
+                if arm.e > 0 { walk_expr(c, arm.e - 1, inout out) }
                 if arm.b == 1 { walk_stmt(c, arm.a, inout out) } else { walk_expr(c, arm.a, inout out) }
             }
         }
@@ -8891,6 +9025,10 @@ fn leaves(c: C, st: u32, depth: u32, labels: List[u32]) -> u32 {
             if a != NONE { return a }
             for i in 0..n.d {
                 let arm = nd(c, at(c, n.c, i))
+                if arm.e > 0 {
+                    let g = leaves(c, arm.e - 1, depth, labels)
+                    if g != NONE { return g }
+                }
                 let b = leaves(c, arm.a, depth, labels)
                 if b != NONE { return b }
             }
@@ -8946,4 +9084,262 @@ fn leave_word(c: C, x: ast.Node) -> str {
     if x.kind == ast.ETry { return "?" }
     if x.kind == ast.SBreak { return "break" }
     "continue"
+}
+
+// ---- Patterns (docs/compiler.md, "C8.30: patterns")
+//
+// Constant patterns: a name that is a constant compares against it (an integer, bool or str
+// constant is a literal to the pattern matrix; any other is an `==` test through Eq that
+// covers nothing). Ranges `lo..=hi` are pats.C_RANGE. Record patterns `P { x, y: p, .. }` are
+// the record's (or variant's) one constructor with a wildcard for every field not named.
+// Guards: an arm with `if g` binds, evaluates g (its bindings dropped again), and runs only
+// when g holds; a guarded arm covers nothing. An or-pattern that binds: every alternative
+// binds the same names with the same types (E0117), each into a local of the arm's own (a
+// copy, also of a place scrutinee).
+
+fn one_text(x: str) -> List[List[u8]] {
+    let mut out: List[List[u8]] = List.new()
+    out.push(s(x))
+    out
+}
+
+/// The name in a pattern (node n) is constant ci.
+fn const_pat(inout c: C, n: ast.Node, ci: u32, ty: u32, place: u32, inout lw: Lowered) -> Result[u32, diag.Diag] {
+    let cd = c.cdefs[ci as usize].copy()
+    if !visible(c, cd.md, cd.public) {
+        let k = resolve.name_key(c.p, c.am, n.a, n.b, n.line, n.col)
+        let pd = err("E0801", n.line, n.col, q2("constant `", kt(c, k), "` is private to module `", mod_shown(c, cd.md), "`"))
+        record(inout c, pd)
+    }
+    if c.rec.on {
+        let am = c.am.copy()
+        let cn = ndm(c, cd.md, cd.node)
+        note_ref(inout c, am, n, cd.md, cn.line, cn.col)
+    }
+    if !same(c, cd.ty, ty) { return Err(mismatch(c, n.line, n.col, ty, cd.ty)) }
+    let tk = types.kind(c.t, ty)
+    let o = c.ir.ops[cd.op as usize].copy()
+    if tk == types.T_INT && cd.has_k {
+        lw.tests.push(Test(T_INT, place, ty, 0, cd.k, List.new()))
+        let neg: u32 = if cd.k.neg { 1 } else { 0 }
+        return Ok(pats.ctor(inout c.pt, pats.C_INT, neg, cd.k.lo, List.new()))
+    }
+    if tk == types.T_BOOL && o.kind == ir.O_BOOL {
+        let b = o.v as u32
+        lw.tests.push(Test(T_BOOL, place, ty, b, fold.zero(), List.new()))
+        return Ok(pats.ctor(inout c.pt, pats.C_BOOL, b, 0, List.new()))
+    }
+    if tk == types.T_STR && o.kind == ir.O_STR {
+        let b = c.ir.strs[o.a as usize].copy()
+        let id = intern.intern(inout c.p.names, b, 0, b.len())
+        lw.tests.push(Test(T_STR, place, ty, 0, fold.zero(), b))
+        return Ok(pats.ctor(inout c.pt, pats.C_STR, id, 0, List.new()))
+    }
+    if !has_trait(c, TR_EQ, ty) {
+        return Err(lack_err(c, "E0401", n.line, n.col, q("the constant pattern `", nm(c, n.a), "`"), TR_EQ, ty))
+    }
+    lw.tests.push(Test(T_EQV, place, ty, cd.op, fold.zero(), List.new()))
+    lw.opaque = true
+    Ok(pats.WILD)
+}
+
+/// `lo..=hi` on an integer.
+fn range_pat(inout c: C, n: ast.Node, ty: u32, place: u32, inout lw: Lowered) -> Result[u32, diag.Diag] {
+    if types.kind(c.t, ty) != types.T_INT { return Err(mismatch(c, n.line, n.col, ty, types.I32)) }
+    let ik = types.ik(c.t, ty)
+    let mut lo = lit(c, n.a)
+    if n.b == 1 { lo = fold.neg(lo) }
+    let mut hi = lit(c, n.c)
+    if n.d == 1 { hi = fold.neg(hi) }
+    if !fits(ik, lo) || !fits(ik, hi) {
+        let w = if fits(ik, lo) { hi } else { lo }
+        return Err(err("E0501", n.line, n.col, q2("pattern bound ", fold.text(w), " doesn't fit in ", s(types.int_name(ik)), "")))
+    }
+    if fold.gt(lo, hi) {
+        return Err(errh("E0118", n.line, n.col, q2("range pattern `", fold.text(lo), "..=", fold.text(hi), "` matches nothing: its start is above its end"), "write the smaller bound first"))
+    }
+    lw.tests.push(Test(T_GE, place, ty, 0, lo, List.new()))
+    lw.tests.push(Test(T_LE, place, ty, 0, hi, List.new()))
+    Ok(pats.range(inout c.pt, pats.bias(ik, lo.neg, lo.lo), pats.bias(ik, hi.neg, hi.lo)))
+}
+
+/// `Name { field, field: pat, .. }`: a record type, or a variant of the scrutinee's enum.
+fn record_pat(inout c: C, n: ast.Node, ty: u32, place: u32, inout lw: Lowered) -> Result[u32, diag.Diag] {
+    let k = resolve.name_key(c.p, c.am, n.a, n.b, n.line, n.col)
+    let tk = types.kind(c.t, ty)
+    if tk == types.T_ENUM {
+        let d = types.def_of(c.t, ty)
+        match types.find_variant(c.t, d, k) {
+            Some(vi) => {
+                let v = types.variant(c.t, d, vi)
+                note_variant(inout c, n, d.tmpl, v.key)
+                lw.tests.push(Test(T_TAG, place, ty, vi, fold.zero(), List.new()))
+                let mut subs: List[u32] = List.new()
+                for j in 0..v.flen {
+                    let f = types.field(c.t, v.fstart, j)
+                    let fp = ir.place_payload(inout c.ir, place, vi, j, f.ty)
+                    subs.push(field_pat(inout c, n, f.name, f.ty, fp, inout lw)?)
+                }
+                record_rest(c, n, k, v.fstart, v.flen)?
+                return Ok(pats.ctor(inout c.pt, pats.C_VARIANT, vi, 0, subs))
+            }
+            None => {}
+        }
+    }
+    if tk == types.T_RECORD {
+        let d = types.def_of(c.t, ty)
+        if d.key == k {
+            if c.rec.on {
+                let am = c.am.copy()
+                note_def(inout c, am, n, d.tmpl)
+            }
+            let mut subs: List[u32] = List.new()
+            for j in 0..d.len {
+                let f = types.field(c.t, d.start, j)
+                let fp = ir.place_field(inout c.ir, place, j, f.ty)
+                subs.push(field_pat(inout c, n, f.name, f.ty, fp, inout lw)?)
+            }
+            record_rest(c, n, k, d.start, d.len)?
+            return Ok(pats.ctor(inout c.pt, pats.C_SINGLE, 0, 0, subs))
+        }
+    }
+    let other = mget(c.variants, k)
+    if other != NONE {
+        return Err(err("E0401", n.line, n.col, q3("`", kt(c, k), "` is a variant of ", kt(c, c.t.defs[other as usize].key), ", but the value has type ", ts(c, ty), "")))
+    }
+    Err(err("E0114", n.line, n.col, q2("type ", ts(c, ty), " has no variant or constructor `", kt(c, k), "`")))
+}
+
+/// The pattern for field `fkey` in record pattern n: the one written, `name` alone (a binding
+/// of that name), or a wildcard when it isn't named.
+fn field_pat(inout c: C, n: ast.Node, fname: u32, fty: u32, fp: u32, inout lw: Lowered) -> Result[u32, diag.Diag] {
+    for i in 0..n.d {
+        let pf = nd(c, at(c, n.c, i))
+        if pf.a != fname { continue }
+        if pf.b > 0 { return lower_pat(inout c, pf.b - 1, fty, fp, inout lw) }
+        let bk = resolve.name_key(c.p, c.am, pf.a, 0, pf.line, pf.col)
+        lw.binds.push(Bind(bk, fp, fty, pf.line, pf.col, false))
+        return Ok(pats.WILD)
+    }
+    Ok(pats.WILD)
+}
+
+/// Every field written exists, none twice, and without `..` every field is written.
+fn record_rest(c: C, n: ast.Node, k: u64, fstart: u32, flen: u32) -> Result[bool, diag.Diag] {
+    for i in 0..n.d {
+        let pf = nd(c, at(c, n.c, i))
+        let mut found = false
+        for j in 0..flen {
+            if types.field(c.t, fstart, j).name == pf.a { found = true }
+        }
+        if !found { return Err(err("E0113", pf.line, pf.col, q2("`", kt(c, k), "` has no field `", nm(c, pf.a), "`"))) }
+        for i2 in 0..i {
+            if nd(c, at(c, n.c, i2)).a == pf.a { return Err(err("E0107", pf.line, pf.col, q("field `", nm(c, pf.a), "` is named twice in this pattern"))) }
+        }
+    }
+    if n.e == 1 { return Ok(true) }
+    for j in 0..flen {
+        let f = types.field(c.t, fstart, j)
+        let mut named = false
+        for i in 0..n.d {
+            if nd(c, at(c, n.c, i)).a == f.name { named = true }
+        }
+        if !named {
+            return Err(errh("E0410", n.line, n.col, q2("pattern `", kt(c, k), " {{ ... }}` doesn't name field `", nm(c, f.name), "`"), "name it, or end the pattern with `..` to leave the others out"))
+        }
+    }
+    Ok(true)
+}
+
+/// The alternative `alt` of an or-pattern binds the same names with the same types as the
+/// first (`first`).
+fn same_binds(c: C, first: List[Bind], other: List[Bind], alt: ast.Node) -> Result[bool, diag.Diag] {
+    for b in other {
+        let mut hit = false
+        for a in first {
+            if a.key == b.key {
+                hit = true
+                if !same(c, a.ty, b.ty) {
+                    return Err(err("E0117", b.line, b.col, q3("`", kt(c, b.key), "` is ", ts(c, b.ty), " here but ", ts(c, a.ty), " in the first alternative: every alternative of an or-pattern binds the same names with the same types")))
+                }
+            }
+        }
+        if !hit { return Err(err("E0117", b.line, b.col, q("`", kt(c, b.key), "` is bound by this alternative but not by the first: every alternative of an or-pattern binds the same names"))) }
+    }
+    for a in first {
+        let mut hit = false
+        for b in other {
+            if a.key == b.key { hit = true }
+        }
+        if !hit { return Err(err("E0117", alt.line, alt.col, q("this alternative doesn't bind `", kt(c, a.key), "`, which the first does: every alternative of an or-pattern binds the same names"))) }
+    }
+    Ok(true)
+}
+
+/// The condition of an or-pattern that binds: the first alternative that matches copies its
+/// bindings into `pre` (in the first alternative's order).
+fn or_cond(inout c: C, a: Arms, from: u32, to: u32, pre: List[u32], line: u32) -> u32 {
+    let r = tmp(inout c, types.BOOL, line)
+    let f = ir.op_bool(inout c.ir, false)
+    emit(inout c, ir.S_COPY, r, f, 0, 0, types.BOOL, line)
+    let rv = ir.op_local(inout c.ir, r, types.BOOL)
+    let first = a.alts[from as usize].binds.copy()
+    for k in from..to {
+        let em = ir.open(c.ir)
+        let x = tests_cond(inout c, a.alts[k as usize].tests, line)
+        let tm = ir.open(c.ir)
+        let t = ir.op_bool(inout c.ir, true)
+        emit(inout c, ir.S_COPY, r, t, 0, 0, types.BOOL, line)
+        for b in a.alts[k as usize].binds {
+            let mut idx: usize = 0
+            for j in 0..first.len() {
+                if first[j].key == b.key { idx = j }
+            }
+            let v = read(inout c, b.place, b.ty, 0)
+            if owns(c, b.ty) {
+                emit(inout c, ir.S_CLONE, pre[idx], v, 0, 0, b.ty, line)
+            } else {
+                emit(inout c, ir.S_COPY, pre[idx], v, 0, 0, b.ty, line)
+            }
+        }
+        let then = ir.close(inout c.ir, tm)
+        let none = ir.empty_block(inout c.ir)
+        emit(inout c, ir.S_IF, 0, x, then, none, 0, line)
+        let els = ir.close(inout c.ir, em)
+        let skip = ir.empty_block(inout c.ir)
+        emit(inout c, ir.S_IF, 0, rv, skip, els, 0, line)
+    }
+    rv
+}
+
+/// The condition of a guarded arm: its patterns match (`cond`) and, with the bindings in
+/// scope, its guard holds. An or-pattern's copies are dropped again when the guard fails.
+fn guard_cond(inout c: C, arm: ast.Node, cond: u32, binds: List[Bind], pre: List[u32], sc: Scrut) -> Result[u32, diag.Diag] {
+    let g = nd(c, arm.e - 1)
+    let hit = tmp(inout c, types.BOOL, g.line)
+    let f = ir.op_bool(inout c.ir, false)
+    emit(inout c, ir.S_COPY, hit, f, 0, 0, types.BOOL, g.line)
+    let hv = ir.op_local(inout c.ir, hit, types.BOOL)
+    let tm = ir.open(c.ir)
+    push_scope(inout c)
+    push_frame(inout c)
+    bind_arm(inout c, binds, pre, sc, false)?
+    let v = expr(inout c, arm.e - 1, types.BOOL)?
+    if !same(c, v.ty, types.BOOL) { return Err(mismatch(c, g.line, g.col, types.BOOL, v.ty)) }
+    emit(inout c, ir.S_COPY, hit, v.op, 0, 0, types.BOOL, g.line)
+    pop_frame(inout c, true)
+    pop_scope(inout c)
+    if pre.len() > 0 {
+        let dm = ir.open(c.ir)
+        for i in 0..pre.len() {
+            if owns(c, binds[i].ty) { drop_local(inout c, Owned(pre[i], binds[i].ty)) }
+        }
+        let drops = ir.close(inout c.ir, dm)
+        let keep = ir.empty_block(inout c.ir)
+        emit(inout c, ir.S_IF, 0, hv, keep, drops, 0, g.line)
+    }
+    let then = ir.close(inout c.ir, tm)
+    let els = ir.empty_block(inout c.ir)
+    emit(inout c, ir.S_IF, 0, cond, then, els, 0, g.line)
+    Ok(hv)
 }

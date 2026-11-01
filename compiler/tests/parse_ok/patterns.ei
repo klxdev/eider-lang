@@ -1,0 +1,16 @@
+// the pattern-matching finish (docs/compiler.md, "C8.30"): guards, ranges, field patterns
+fn f(n: i32, p: P) -> i32 {
+    match n {
+        0..=9 | -5..=-1 => 1
+        k if k > 100 => 2
+        _ => 3
+    }
+    match p {
+        P { x, y: 0, .. } if x > 0 => x
+        P {
+            x,
+            y,
+        } => y
+        q.R { } => 0
+    }
+}

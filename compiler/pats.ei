@@ -4,7 +4,11 @@
 // A lowered pattern is `Wild` or a constructor applied to sub-patterns; patterns live in an
 // arena (`Pats`, id 0 is the shared wildcard). A matrix is a flat list of rows of equal
 // width. Constructors: C_VARIANT a=variant index, C_SINGLE (the one constructor of a
-// record or tuple), C_BOOL a=0/1, C_INT a=1 if negative v=magnitude, C_STR a=interned contents.
+// record or tuple), C_BOOL a=0/1, C_INT a=1 if negative v=magnitude, C_STR a=interned contents,
+// C_RANGE v..hi an inclusive integer range (docs/compiler.md, "C8.30"), its bounds biased so
+// that unsigned order is the type's order (`bias`). A column of integers with a range in it
+// is split into the intervals its patterns' bounds make (`useful_int`, `missing_int`);
+// without one the matrix is judged as before, so its witnesses don't change.
 
 import core.sys
 import std.bytes
@@ -18,8 +22,9 @@ pub const C_SINGLE: u32 = 1
 pub const C_BOOL: u32 = 2
 pub const C_INT: u32 = 3
 pub const C_STR: u32 = 4
+pub const C_RANGE: u32 = 5
 
-pub type Pat = { wild: bool, ck: u32, ca: u32, cv: u64, start: u32, len: u32 }
+pub type Pat = { wild: bool, ck: u32, ca: u32, cv: u64, start: u32, len: u32, hi: u64 }
 
 pub type Pats = { ps: List[Pat], args: List[u32] }
 
@@ -28,7 +33,7 @@ pub type M = { w: u32, n: u32, cells: List[u32] }
 
 pub fn new() -> Pats {
     let mut p = Pats(List.new(), List.new())
-    p.ps.push(Pat(true, 0, 0, 0, 0, 0))
+    p.ps.push(Pat(true, 0, 0, 0, 0, 0, 0))
     p
 }
 
@@ -37,7 +42,7 @@ pub const WILD: u32 = 0
 pub fn ctor(inout p: Pats, ck: u32, ca: u32, cv: u64, subs: List[u32]) -> u32 {
     let start = p.args.len() as u32
     for s in subs { p.args.push(s) }
-    p.ps.push(Pat(false, ck, ca, cv, start, subs.len() as u32))
+    p.ps.push(Pat(false, ck, ca, cv, start, subs.len() as u32, 0))
     (p.ps.len() - 1) as u32
 }
 
@@ -53,7 +58,139 @@ fn cell(m: M, r: u32, c: u32) -> u32 { m.cells[(r * m.w + c) as usize] }
 fn same(p: Pats, a: u32, b: u32) -> bool {
     let x = p.ps[a as usize]
     let y = p.ps[b as usize]
-    x.ck == y.ck && x.ca == y.ca && x.cv == y.cv
+    x.ck == y.ck && x.ca == y.ca && x.cv == y.cv && x.hi == y.hi
+}
+
+/// An integer range pattern `lo..=hi` (biased bounds: `bias`).
+pub fn range(inout p: Pats, lo: u64, hi: u64) -> u32 {
+    p.ps.push(Pat(false, C_RANGE, 0, lo, 0, 0, hi))
+    (p.ps.len() - 1) as u32
+}
+
+const TOP: u64 = 9223372036854775808
+
+/// v (negative: its magnitude, with `neg`) as an unsigned number in the order of int kind ik.
+pub fn bias(ik: u32, neg: bool, mag: u64) -> u64 {
+    let v = if neg { 0 -% mag } else { mag.copy() }
+    if types.signed(ik) { return v +% TOP }
+    v
+}
+
+type Iv = { lo: u64, hi: u64 }
+
+/// Every value of int kind ik, biased.
+fn domain(ik: u32) -> Iv {
+    if ik == types.IK_I32 { return Iv(TOP - 2147483648, TOP + 2147483647) }
+    if ik == types.IK_I64 { return Iv(0, 18446744073709551615) }
+    if ik == types.IK_U8 { return Iv(0, 255) }
+    if ik == types.IK_U32 { return Iv(0, 4294967295) }
+    Iv(0, 18446744073709551615)
+}
+
+/// The values integer pattern x (C_INT or C_RANGE) matches.
+fn ival(ik: u32, x: Pat) -> Iv {
+    if x.ck == C_RANGE { return Iv(x.cv, x.hi) }
+    let b = bias(ik, x.ca == 1, x.cv)
+    Iv(b, b)
+}
+
+/// Whether the column (or v0, NONE for none) has a range pattern.
+fn has_ranges(p: Pats, m: M, v0: u32) -> bool {
+    if v0 != NONE && p.ps[v0 as usize].ck == C_RANGE && !p.ps[v0 as usize].wild { return true }
+    for r in 0..m.n {
+        let x = p.ps[cell(m, r, 0) as usize]
+        if !x.wild && x.ck == C_RANGE { return true }
+    }
+    false
+}
+
+const NONE: u32 = 4294967295
+
+/// The starts of the intervals of `want` that the column's patterns don't split.
+fn cuts(p: Pats, m: M, ik: u32, want: Iv) -> List[u64] {
+    let mut pts: List[u64] = List.new()
+    pts.push(want.lo)
+    for r in 0..m.n {
+        let x = p.ps[cell(m, r, 0) as usize]
+        if x.wild { continue }
+        let iv = ival(ik, x)
+        if iv.lo > want.lo && iv.lo <= want.hi { pts.push(iv.lo) }
+        if iv.hi < want.hi && iv.hi >= want.lo { pts.push(iv.hi + 1) }
+    }
+    // sorted, without repeats
+    let mut out: List[u64] = List.new()
+    for x in pts {
+        let mut i = out.len()
+        let mut dup = false
+        for y in out {
+            if y == x { dup = true }
+        }
+        if dup { continue }
+        out.push(x)
+        while i > 0 && out[i - 1] > out[i] {
+            let t = out[i - 1].copy()
+            out[i - 1] = out[i]
+            out[i] = t
+            i -= 1
+        }
+    }
+    out
+}
+
+/// The rows whose first pattern matches the interval starting at s (a wildcard, or a range
+/// or literal holding s), without that column.
+fn covering(p: Pats, m: M, ik: u32, s: u64) -> M {
+    let mut out = empty(m.w - 1)
+    for r in 0..m.n {
+        let x = p.ps[cell(m, r, 0) as usize]
+        if !x.wild {
+            let iv = ival(ik, x)
+            if s < iv.lo || s > iv.hi { continue }
+        }
+        let mut row: List[u32] = List.new()
+        for j in 1..m.w { row.push(cell(m, r, j)) }
+        add_row(inout out, row)
+    }
+    out
+}
+
+fn useful_int(p: Pats, t: types.Types, m: M, v: List[u32], tys: List[u32]) -> bool {
+    let ik = types.ik(t, tys[0])
+    let x = p.ps[v[0] as usize]
+    let want = if x.wild { domain(ik) } else { ival(ik, x) }
+    for s in cuts(p, m, ik, want) {
+        if useful(p, t, covering(p, m, ik, s), tail(v), tail(tys)) { return true }
+    }
+    false
+}
+
+/// A value biased by `bias` as text.
+fn unbias_text(ik: u32, b: u64) -> List[u8] {
+    if !types.signed(ik) { return bytes.from_u64(b) }
+    let v = b -% TOP
+    if v >= TOP {
+        let mut out: List[u8] = List.new()
+        out.push(45)
+        bytes.append(inout out, bytes.from_u64(0 -% v))
+        return out
+    }
+    bytes.from_u64(v)
+}
+
+fn missing_int(p: Pats, t: types.Types, names: intern.Interner, m: M, tys: List[u32]) -> Option[List[List[u8]]] {
+    let ik = types.ik(t, tys[0])
+    for s in cuts(p, m, ik, domain(ik)) {
+        match missing(p, t, names, covering(p, m, ik, s), tail(tys)) {
+            Some(w) => {
+                let mut out: List[List[u8]] = List.new()
+                out.push(unbias_text(ik, s))
+                for x in w { out.push(x) }
+                return Some(out)
+            }
+            None => {}
+        }
+    }
+    None
 }
 
 /// One constructor of a type with finitely many: its kind/argument and field types.
@@ -167,6 +304,7 @@ fn wilds(n: u32) -> List[u32] {
 /// Would `v` match some value that no row of `m` matches? (`tys` are the column types.)
 pub fn useful(p: Pats, t: types.Types, m: M, v: List[u32], tys: List[u32]) -> bool {
     if v.len() == 0 { return m.n == 0 }
+    if types.kind(t, tys[0]) == types.T_INT && has_ranges(p, m, v[0]) { return useful_int(p, t, m, v, tys) }
     let x = p.ps[v[0] as usize]
     if !x.wild {
         let r2 = specialize(p, m, x, x.len)
@@ -181,7 +319,7 @@ pub fn useful(p: Pats, t: types.Types, m: M, v: List[u32], tys: List[u32]) -> bo
         Some(all) => {
             if complete(p, hs, all) {
                 for s in all {
-                    let c = Pat(false, s.ck, s.ca, 0, 0, 0)
+                    let c = Pat(false, s.ck, s.ca, 0, 0, 0, 0)
                     let n = s.fields.len() as u32
                     let r2 = specialize(p, m, c, n)
                     let v2 = concat(wilds(n), tail(v))
@@ -263,6 +401,7 @@ pub fn missing(p: Pats, t: types.Types, names: intern.Interner, m: M, tys: List[
         if m.n == 0 { return Some(List.new()) }
         return None
     }
+    if types.kind(t, tys[0]) == types.T_INT && has_ranges(p, m, NONE) { return missing_int(p, t, names, m, tys) }
     let hs = heads(p, m)
     let s0 = sig(t, tys[0])
     match s0 {
@@ -270,7 +409,7 @@ pub fn missing(p: Pats, t: types.Types, names: intern.Interner, m: M, tys: List[
             if complete(p, hs, all) {
                 for s in all {
                     let n = s.fields.len() as u32
-                    let c = Pat(false, s.ck, s.ca, 0, 0, 0)
+                    let c = Pat(false, s.ck, s.ca, 0, 0, 0, 0)
                     let r2 = specialize(p, m, c, n)
                     let t2 = concat(s.fields, tail(tys))
                     match missing(p, t, names, r2, t2) {

@@ -1,0 +1,8 @@
+// expect: E0113 5:13
+type P = { x: i32, y: i32 }
+fn f(p: P) -> i32 {
+    match p {
+        P { z, .. } => z
+    }
+}
+fn main() {}

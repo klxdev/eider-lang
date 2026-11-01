@@ -1,0 +1,168 @@
+// the pattern-matching finish (docs/compiler.md, "C8.30"): constants, guards, or-patterns
+// that bind, record field patterns, integer ranges, String against str literals
+const MAX: i32 = 10
+const NEG: i32 = -1
+const ON: bool = true
+const NAME: str = "ada"
+
+type Point = { x: i32, y: i32, label: String }
+type Shape = | Circle(r: u32) | Rect(w: u32, h: u32) | Dot
+type Msg = | Text(s: String) | Note(s: String) | Quit
+
+fn constant(n: i32) -> str {
+    match n {
+        MAX => "max"
+        NEG => "neg"
+        _ => "other"
+    }
+}
+
+fn flag(b: bool) -> str {
+    match b {
+        ON => "on"
+        false => "off"
+    }
+}
+
+fn name(s: str) -> str {
+    match s {
+        NAME => "it's ada"
+        _ => "someone"
+    }
+}
+
+fn guard(o: Option[i32]) -> String {
+    match o {
+        Some(n) if n > 100 => "big {n}"
+        Some(n) if n < 0 => "negative {n}"
+        Some(n) => "small {n}"
+        None => String.from("none")
+    }
+}
+
+fn or_bind(m: Msg) -> String {
+    match m {
+        Text(s) | Note(s) => "text or note: {s}"
+        Quit => String.from("quit")
+    }
+}
+
+// a guard on an or-pattern: the copies are dropped when it fails
+fn or_guard(m: Msg) -> String {
+    match m {
+        Text(s) | Note(s) if s.len() > 3 => "long: {s}"
+        Text(s) => "short text {s}"
+        Note(_) => String.from("short note")
+        Quit => String.from("quit")
+    }
+}
+
+fn record(p: Point) -> String {
+    match p {
+        Point { x: 0, y, .. } => "on the y axis at {y}"
+        Point { x, y: 0, label } => "on the x axis at {x}, {label}"
+        Point { label, .. } => "elsewhere: {label}"
+    }
+}
+
+fn shape(s: Shape) -> u32 {
+    match s {
+        Circle { r } => r
+        Rect { w, h } if w == h => w
+        Rect { w, .. } => w * 2
+        Dot => 0
+    }
+}
+
+fn range(n: i32) -> str {
+    match n {
+        -5..=-1 => "small negative"
+        0 => "zero"
+        1..=9 => "digit"
+        10..=99 => "two digits"
+        _ => "other"
+    }
+}
+
+// exhaustive with ranges alone: the whole of u8
+fn byte(b: u8) -> str {
+    match b {
+        0..=127 => "ascii"
+        128..=255 => "high"
+    }
+}
+
+fn string(s: String) -> i32 {
+    match s {
+        "one" => 1
+        "two" => 2
+        _ => 0
+    }
+}
+
+fn nested(o: Option[String]) -> i32 {
+    match o {
+        Some("x") => 1
+        Some(_) => 2
+        None => 3
+    }
+}
+
+// a guard sees a place scrutinee's fields, and side effects run once
+fn counted(p: Point, inout hits: i32) -> i32 {
+    match p.x {
+        v if bump(inout hits, v) => v
+        _ => -1
+    }
+}
+
+fn bump(inout hits: i32, v: i32) -> bool {
+    hits += 1
+    v > 0
+}
+
+fn main() uses io {
+    print(constant(10))
+    print(constant(-1))
+    print(constant(3))
+    print(flag(true))
+    print(flag(false))
+    print(name("ada"))
+    print(name("bob"))
+    print(guard(Some(200)))
+    print(guard(Some(-3)))
+    print(guard(Some(5)))
+    print(guard(None))
+    print(or_bind(Text(String.from("a"))))
+    print(or_bind(Note(String.from("b"))))
+    print(or_bind(Quit))
+    print(or_guard(Text(String.from("longer"))))
+    print(or_guard(Note(String.from("longer"))))
+    print(or_guard(Text(String.from("a"))))
+    print(or_guard(Note(String.from("a"))))
+    print(record(Point(0, 2, String.from("p"))))
+    print(record(Point(3, 0, String.from("q"))))
+    print(record(Point(3, 4, String.from("r"))))
+    print(shape(Circle(7)))
+    print(shape(Rect(2, 2)))
+    print(shape(Rect(2, 3)))
+    print(shape(Dot))
+    print(range(-3))
+    print(range(0))
+    print(range(5))
+    print(range(50))
+    print(range(100))
+    print(range(-6))
+    print(byte(65))
+    print(byte(200))
+    print(string(String.from("one")))
+    print(string(String.from("two")))
+    print(string(String.from("three")))
+    print(nested(Some(String.from("x"))))
+    print(nested(Some(String.from("y"))))
+    print(nested(None))
+    let mut hits = 0
+    print(counted(Point(5, 0, String.from("")), inout hits))
+    print(counted(Point(-5, 0, String.from("")), inout hits))
+    print(hits)
+}

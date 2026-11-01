@@ -226,6 +226,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
         ast.Arm => {
             flag(inout out, "stmt", n.b == 1)
             kids(inout out, p, "pat", n.c, n.d, d)
+            opt(inout out, p, "guard", n.e, d)
             child(inout out, p, "body", n.a, d)
         }
         ast.Block => {
@@ -301,6 +302,21 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             kids(inout out, p, "sub", n.c, n.d, d)
         }
         ast.PTuple => kids(inout out, p, "sub", n.c, n.d, d)
+        ast.PRange => {
+            int_slot(inout out, p, n.a, n.b == 1)
+            put(inout out, " to")
+            int_slot(inout out, p, n.c, n.d == 1)
+        }
+        ast.PRecord => {
+            sym(inout out, p, "name", n.a)
+            qual(inout out, p, n.b)
+            flag(inout out, "rest", n.e == 1)
+            kids(inout out, p, "field", n.c, n.d, d)
+        }
+        ast.PField => {
+            sym(inout out, p, "name", n.a)
+            opt(inout out, p, "pat", n.b, d)
+        }
         ast.IType => {
             sym(inout out, p, "name", n.a)
             flag(inout out, "pub", n.b == 1)

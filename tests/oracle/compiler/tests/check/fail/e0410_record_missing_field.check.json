@@ -1,0 +1,1 @@
+{"error":"E0410","span":{"file":"compiler/tests/check/fail/e0410_record_missing_field.ei","line":5,"col":9},"message":"pattern `P { ... }` doesn't name field `y`","help":"name it, or end the pattern with `..` to leave the others out"}

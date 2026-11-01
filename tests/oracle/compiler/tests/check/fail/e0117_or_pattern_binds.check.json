@@ -1,0 +1,1 @@
+{"error":"E0117","span":{"file":"compiler/tests/check/fail/e0117_or_pattern_binds.ei","line":4,"col":13},"message":"`k` is bound by this alternative but not by the first: every alternative of an or-pattern binds the same names"}

@@ -1,0 +1,10 @@
+// expect: E0602 7:1
+trait T {
+    fn f(self) -> i32
+    fn g(self) -> i32 { self.f() }
+}
+type A = { x: i32 }
+impl T for A {
+    fn g(self) -> i32 { 1 }
+}
+fn main() {}

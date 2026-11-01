@@ -1,0 +1,8 @@
+// expect: E0117 5:15
+type M = | A(x: i32) | B(x: i32)
+fn f(m: M) -> i32 {
+    match m {
+        A(mut x) | B(mut x) => 1
+    }
+}
+fn main() {}

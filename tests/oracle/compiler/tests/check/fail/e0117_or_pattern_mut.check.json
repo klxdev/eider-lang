@@ -1,0 +1,1 @@
+{"error":"E0117","span":{"file":"compiler/tests/check/fail/e0117_or_pattern_mut.ei","line":5,"col":15},"message":"`mut x` in an or-pattern: its alternatives bind copies, which can't be mutable aliases"}

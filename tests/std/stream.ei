@@ -326,7 +326,28 @@ fn conversions() -> Result[i32, stream.Error] {
     Ok(a + b)
 }
 
+// the helpers as default methods of Reader and Writer
+fn methods() -> Result[(), stream.Error] uses io {
+    let mut r = stream.reader_str("default methods")
+    let t = r.read_text()?
+    print(t)
+    let mut e = stream.reader_str("abcd")
+    print(e.read_exact(2)?)
+    let mut b = stream.reader_str("xy")
+    print(b.read_all()?)
+    let mut w = stream.buffer()
+    w.write_str("to a ")?
+    w.write_string(String.from("writer "))?
+    w.write_all("ok".bytes())?
+    print(String.from_bytes(w.bytes()).unwrap())
+    Ok(())
+}
+
 fn main() uses io, fs, net, clock {
+    match methods() {
+        Ok(()) => {}
+        Err(e) => print(e)
+    }
     match memory() {
         Ok(()) => {}
         Err(e) => print(e)

@@ -17,6 +17,8 @@ compile-fail tests (tests/checks/fail)
   ok   e0114_unknown_variant.ei     E0114 at 4:12
   ok   e0115_no_method.ei           E0115 at 4:7
   ok   e0116_builtin_method_name.ei E0116 at 3:8
+  ok   e0117_or_pattern_names.ei    E0117 at 5:18
+  ok   e0118_empty_range.ei         E0118 at 4:9
   ok   e0201_comptime_io.ei         E0201 at 4:25
   ok   e0201_ffi_capability.ei      E0201 at 4:22 (fix compiles)
   ok   e0201_missing_capability.ei  E0201 at 3:3 (fix compiles)
@@ -113,5 +115,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-111 passed, 0 failed; error-code coverage 67/67
+113 passed, 0 failed; error-code coverage 69/69
 --- exit 0

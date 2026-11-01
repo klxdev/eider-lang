@@ -2619,6 +2619,15 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         fmt_builtin(inout e, p, s)
         return
     }
+    if b == ir.B_STR_IS {
+        let sv = argval(inout e, p, barg(p, s, 0))
+        let x = str_ptr(inout e, p, types.STRING, sv)
+        let y = argval(inout e, p, barg(p, s, 1))
+        let c = rt_call(inout e, p, "strcmp", tys2(types.STR, types.STR), args2(x, y), types.I32)
+        let r = val(inout e, catb(lit("icmp eq i32 "), cat(c, ", 0")))
+        bset(inout e, p, s, r)
+        return
+    }
     if b == ir.B_SPAWN || b == ir.B_MUTEX_NEW || b == ir.B_CHAN_NEW || b == ir.B_TASK_JOIN || b == ir.B_MUTEX_GET || b == ir.B_MUTEX_SET || b == ir.B_MUTEX_UPDATE || b == ir.B_CHAN_SEND {
         thread_builtin(inout e, p, s)
         return

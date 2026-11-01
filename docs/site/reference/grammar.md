@@ -215,18 +215,21 @@ arm        = pattern { "|" pattern } "=>"
 
 ```text
 pattern      = INT | "-" INT | string | "true" | "false"
+             | int_bound "..=" int_bound
              | "_"
              | "mut" IDENT
              | path { "." IDENT } [ "(" [ pattern_list ] ")" ]
+             | path { "." IDENT } "{" [ field_pat { "," field_pat } [","] ] [ ".." ] "}"
              | "(" [ pattern_list ] ")"
 pattern_list = pattern { "," pattern } [","]
+int_bound    = INT | "-" INT
+field_pat    = IDENT [ ":" pattern ]
 ```
 
 - `(p)` is `p`; `()` is the unit pattern; `(p,)` a one-element tuple.
 - `mut` is contextual here too: `mut` followed by a name.
 - In `a.b.C`, only the last segment is kept (`Shape.Circle(r)` is `Circle(r)`).
-- Or-patterns (`p | q`) exist only at the top of a match arm, and can't bind names
-  (E0001, reported by the checker).
+- Or-patterns (`p | q`) and guards (`p if cond`) exist only at the top of a match arm.
 
 ## Item recognition and error recovery
 

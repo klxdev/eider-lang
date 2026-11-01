@@ -1,0 +1,8 @@
+// expect: E0410 5:9
+type P = { x: i32, y: i32 }
+fn f(p: P) -> i32 {
+    match p {
+        P { x } => x
+    }
+}
+fn main() {}
