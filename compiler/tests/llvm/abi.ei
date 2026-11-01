@@ -1,5 +1,5 @@
 // The LLVM backend's System V x86-64 classifier against C (compiler/tests/llvm/run.sh): records
-// of mixed field types cross between C (abi_consumer.c, and the C half's export wrappers and
+// of mixed field types cross between C (abi_consumer.c, through the export wrappers and the
 // glue) and the functions the LLVM backend emits, by value in both directions.
 //
 //   B2   2 bytes   one INTEGER eightbyte, coerced to i16
@@ -10,7 +10,7 @@
 //   N    16 bytes  nested records (B2 at 0, M12 at 4)
 //   S    16 bytes  a str and a u32
 // `many` passes three M12 (six registers) and then an L16, which no longer fits in registers
-// and goes on the stack as a whole; `eqs` compares with ==, which is the C half's eq_ glue
+// and goes on the stack as a whole; `eqs` compares with ==, which is the eq_ glue
 // called from LLVM IR with both records by value.
 
 type B2 = { a: u8, b: bool }

@@ -142,7 +142,7 @@ exits 101.
 ## The cache
 
 `build`, `run` and `test` compile a program as units: one per module of the LLVM IR, the
-generic instances in 16 shards, the C half (the runtime glue and `main`) and the C core's two
+generic instances in 16 shards, one for the per-type glue and `main` and the C core's two
 sources, in parallel (`-j`); each unit's object is cached by a SHA-256 of everything that
 affects it: its text, the headers it includes, the compiler (clang or `$CC`) and its version,
 the flags and `EIDER_CFLAGS`. After an edit only the edited module's unit is compiled again.

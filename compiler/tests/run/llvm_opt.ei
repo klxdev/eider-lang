@@ -43,7 +43,7 @@ fn eight(p0: Pair, p1: Pair, p2: Pair, p3: Pair, p4: Pair, p5: Pair, p6: Pair, p
 
 fn pair(n: u64) -> Pair { Pair(n, (n * 2) as u32) }
 
-/// the same function through a fn value: its C entry (a thunk of the C half)
+/// the same function through a fn value: its C entry (a thunk)
 fn call8(f: fn(Pair, Pair, Pair, Pair, Pair, Pair, Pair, Pair) -> u64) -> u64 {
     f(pair(1), pair(2), pair(3), pair(4), pair(5), pair(6), pair(7), pair(8))
 }

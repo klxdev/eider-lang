@@ -1,7 +1,7 @@
 # core/wasm: the WebAssembly backend of the core
 
 `eiderc build --wasm` (and `--wasm-core`) builds a program for `wasm32` against this
-directory instead of the native core: the LLVM backend's IR for wasm32 and its C half. It is the second backend of the language runtime contract
+directory instead of the native core: the LLVM backend's IR for wasm32. It is the second backend of the language runtime contract
 (`core/RUNTIME.md`) and carries the few C library functions the runtime and generated code
 need, because a WebAssembly module has no libc. WebAssembly is an optional target
 (LAYERS.md, "Dependencies"): nothing here is needed to build the compiler or a native

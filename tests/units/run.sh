@@ -51,7 +51,8 @@ cmp -s $T/app-j1 $T/app-j8 || f "-j 1 and -j 8 built different programs"
 [ "$(cd $T/cache-j1 && find obj bin -type f | sort)" = "$(cd $T/cache-j8 && find obj bin -type f | sort)" ] || f "-j 1 and -j 8 made different cache entries"
 EIDER_LLVM_UNITS=0 EIDER_CACHE=$T/cache-whole $E run $T/src/app.ei >$T/o 2>&1
 cmp -s $T/o $want || f "EIDER_LLVM_UNITS=0 gives the wrong output"
-[ "$(find $T/cache-whole/obj -type f | wc -l | tr -d ' ')" = 4 ] || f "EIDER_LLVM_UNITS=0 should make 4 objects (the module, the C half, the core's 2)"
+nw=$(find $T/cache-whole/obj -type f | wc -l | tr -d ' ')
+[ "$nw" = 3 ] || f "EIDER_LLVM_UNITS=0 made $nw objects, not 3 (the module, the core's 2)"
 # release: ThinLTO when lld links
 $E build $T/src/app.ei -o $T/app2 >$T/ob 2>&1 || f "release build: $(head -3 $T/ob)"
 $T/app2 >$T/o 2>&1
