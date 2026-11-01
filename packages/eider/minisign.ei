@@ -1,0 +1,211 @@
+//! minisign: the file formats of minisign (https://jedisct1.github.io/minisign/), which
+//! signs Eider's releases: public keys, signatures and unencrypted secret keys. Parsing and
+//! writing only; the Ed25519 operations are in `eider.sig`, over the crypto package.
+//!
+//! A public key is two lines, `untrusted comment: <text>` and the base64 of `Ed` (the
+//! algorithm), the 8-byte key id and the 32-byte Ed25519 key. A signature file is four:
+//!
+//!     untrusted comment: <text>
+//!     base64(<algorithm, 2 bytes> <key id, 8 bytes> <signature, 64 bytes>)
+//!     trusted comment: <text>
+//!     base64(<global signature, 64 bytes>)
+//!
+//! The signature is Ed25519 over the file itself for the legacy algorithm `Ed`, the one
+//! Eider's releases use, or over its BLAKE2b-512 for the prehashed `ED` (minisign's default
+//! since 0.10, refused here). The global signature is Ed25519 over the signature's 64 bytes
+//! followed by the trusted comment's text, so the trusted comment can't be changed either;
+//! the untrusted comment can. A key id is printed as minisign does: the 8 bytes read as a
+//! little-endian number, in 16 uppercase hex digits.
+//!
+//! A secret key (`minisign -G -W`, unencrypted) is the base64 of: `Ed`, the KDF (`\0\0`:
+//! none), the checksum algorithm `B2`, a 32-byte KDF salt and two 8-byte KDF limits (all
+//! zero without a KDF), the key id, the 64-byte Ed25519 secret key (seed, then public key)
+//! and a 32-byte checksum, BLAKE2b-256 over `Ed`, the key id and the secret key.
+
+import std.bytes
+import std.encoding
+
+pub type PublicKey = { keyid: List[u8], key: List[u8] }
+
+/// `alg` is `Ed` (legacy, over the file) or `ED` (prehashed with BLAKE2b-512).
+pub type Signature = { untrusted: List[u8], alg: List[u8], keyid: List[u8], sig: List[u8], trusted: List[u8], global: List[u8] }
+
+/// `seed` is the 32-byte Ed25519 private key, `key` its public key.
+pub type SecretKey = { keyid: List[u8], seed: List[u8], key: List[u8] }
+
+const UNTRUSTED: str = "untrusted comment: "
+const TRUSTED: str = "trusted comment: "
+
+fn errs(m: str) -> String { String.from(m) }
+
+/// The lines of `text` with a final CR removed from each, empty lines dropped.
+fn text_lines(text: List[u8]) -> List[List[u8]] {
+    let mut out: List[List[u8]] = List.new()
+    for l in bytes.lines(text) {
+        let mut x = l.copy()
+        if x.len() > 0 && x[x.len() - 1] == 13 { x = bytes.slice(x, 0, x.len() - 1) }
+        if x.len() > 0 { out.push(x) }
+    }
+    out
+}
+
+fn b64(s: List[u8], what: str) -> Result[List[u8], String] {
+    match encoding.unbase64(bytes.trim(s)) {
+        Ok(b) => Ok(b)
+        Err(_) => {
+            let mut m = String.from(what)
+            m.push_str(" is not valid base64")
+            Err(m)
+        }
+    }
+}
+
+/// The key id as minisign prints it.
+pub fn keyid_text(id: List[u8]) -> List[u8] {
+    let mut r: List[u8] = List.new()
+    let mut i = id.len()
+    while i > 0 {
+        i -= 1
+        r.push(id[i])
+    }
+    encoding.hex_upper(r).bytes()
+}
+
+// ------------------------------------------------------------------ public keys
+
+/// A public key: a whole `.pub` file, or just its base64 line.
+pub fn parse_public(text: List[u8]) -> Result[PublicKey, String] {
+    let ls = text_lines(text)
+    if ls.len() == 0 { return Err(errs("the public key is empty")) }
+    let mut line = ls[0].copy()
+    if bytes.starts_with(line, UNTRUSTED.bytes()) {
+        if ls.len() < 2 { return Err(errs("the public key file has a comment but no key line")) }
+        line = ls[1].copy()
+    }
+    let raw = b64(line, "the public key")?
+    if raw.len() != 42 { return Err(errs("the public key is not a minisign Ed25519 key (42 bytes)")) }
+    if raw[0] != 69 || raw[1] != 100 { return Err(errs("the public key's algorithm is not Ed25519 (`Ed`)")) }
+    Ok(PublicKey(bytes.slice(raw, 2, 10), bytes.slice(raw, 10, 42)))
+}
+
+/// The public key's base64 line.
+pub fn public_line(pk: PublicKey) -> List[u8] {
+    let mut raw = "Ed".bytes()
+    bytes.append(inout raw, pk.keyid)
+    bytes.append(inout raw, pk.key)
+    encoding.base64(raw).bytes()
+}
+
+/// A `.pub` file.
+pub fn render_public(pk: PublicKey) -> List[u8] {
+    let mut out = UNTRUSTED.bytes()
+    bytes.append(inout out, "minisign public key ".bytes())
+    bytes.append(inout out, keyid_text(pk.keyid))
+    out.push(10)
+    bytes.append(inout out, public_line(pk))
+    out.push(10)
+    out
+}
+
+// ------------------------------------------------------------------ signatures
+
+pub fn parse_signature(text: List[u8]) -> Result[Signature, String] {
+    let ls = text_lines(text)
+    if ls.len() != 4 { return Err(errs("the signature file does not have the four lines of minisign's format")) }
+    if !bytes.starts_with(ls[0], UNTRUSTED.bytes()) { return Err(errs("the signature's first line is not `untrusted comment: ...`")) }
+    if !bytes.starts_with(ls[2], TRUSTED.bytes()) { return Err(errs("the signature's third line is not `trusted comment: ...`")) }
+    let raw = b64(ls[1], "the signature")?
+    if raw.len() != 74 { return Err(errs("the signature line is not 74 bytes (algorithm, key id, Ed25519 signature)")) }
+    let alg = bytes.slice(raw, 0, 2)
+    if !bytes.eq(alg, "Ed".bytes()) && !bytes.eq(alg, "ED".bytes()) { return Err(errs("the signature's algorithm is neither `Ed` nor `ED`")) }
+    let global = b64(ls[3], "the global signature")?
+    if global.len() != 64 { return Err(errs("the global signature is not 64 bytes")) }
+    let untrusted = bytes.slice(ls[0], UNTRUSTED.len(), ls[0].len())
+    let trusted = bytes.slice(ls[2], TRUSTED.len(), ls[2].len())
+    Ok(Signature(untrusted, alg, bytes.slice(raw, 2, 10), bytes.slice(raw, 10, 74), trusted, global))
+}
+
+/// What the global signature signs: the signature, then the trusted comment.
+pub fn global_message(sig: List[u8], trusted: List[u8]) -> List[u8] {
+    let mut m = sig.copy()
+    bytes.append(inout m, trusted)
+    m
+}
+
+pub fn render_signature(s: Signature) -> List[u8] {
+    let mut out = UNTRUSTED.bytes()
+    bytes.append(inout out, s.untrusted)
+    out.push(10)
+    let mut raw = s.alg.copy()
+    bytes.append(inout raw, s.keyid)
+    bytes.append(inout raw, s.sig)
+    bytes.append(inout out, encoding.base64(raw).bytes())
+    out.push(10)
+    bytes.append(inout out, TRUSTED.bytes())
+    bytes.append(inout out, s.trusted)
+    out.push(10)
+    bytes.append(inout out, encoding.base64(s.global).bytes())
+    out.push(10)
+    out
+}
+
+/// The value of `name:` in a trusted comment of tab-separated `name:value` fields
+/// (minisign's own are `timestamp:` and `file:`).
+pub fn trusted_field(trusted: List[u8], name: str) -> Option[List[u8]] {
+    let mut key = name.bytes()
+    key.push(58)
+    for f in bytes.split(trusted, 9) {
+        if bytes.starts_with(f, key) { return Some(bytes.slice(f, key.len(), f.len())) }
+    }
+    None
+}
+
+// ------------------------------------------------------------------ secret keys
+
+/// What the secret key's checksum covers: `Ed`, the key id, the 64-byte secret key.
+pub fn checksum_input(sk: SecretKey) -> List[u8] {
+    let mut m = "Ed".bytes()
+    bytes.append(inout m, sk.keyid)
+    bytes.append(inout m, sk.seed)
+    bytes.append(inout m, sk.key)
+    m
+}
+
+/// An unencrypted secret key file; `checksum` is BLAKE2b-256 of `checksum_input`.
+pub fn render_secret(sk: SecretKey, checksum: List[u8]) -> List[u8] {
+    let mut raw = "Ed".bytes()
+    raw.push(0)
+    raw.push(0)
+    bytes.append(inout raw, "B2".bytes())
+    // the KDF salt, opslimit and memlimit: zero without a KDF
+    let mut i = 0
+    while i < 48 {
+        raw.push(0)
+        i += 1
+    }
+    let mut keyed = raw.copy()
+    bytes.append(inout keyed, sk.keyid)
+    bytes.append(inout keyed, sk.seed)
+    bytes.append(inout keyed, sk.key)
+    bytes.append(inout keyed, checksum)
+    let mut out = UNTRUSTED.bytes()
+    bytes.append(inout out, "minisign secret key (unencrypted: no KDF; keep this file private)".bytes())
+    out.push(10)
+    bytes.append(inout out, encoding.base64(keyed).bytes())
+    out.push(10)
+    out
+}
+
+/// An unencrypted secret key file, and the checksum it records (check it against
+/// `checksum_input`).
+pub fn parse_secret(text: List[u8]) -> Result[(SecretKey, List[u8]), String] {
+    let ls = text_lines(text)
+    if ls.len() != 2 || !bytes.starts_with(ls[0], UNTRUSTED.bytes()) { return Err(errs("the secret key file is not minisign's two lines")) }
+    let raw = b64(ls[1], "the secret key")?
+    if raw.len() != 158 { return Err(errs("the secret key is not 158 bytes")) }
+    if raw[0] != 69 || raw[1] != 100 { return Err(errs("the secret key's algorithm is not Ed25519 (`Ed`)")) }
+    if raw[2] != 0 || raw[3] != 0 { return Err(errs("the secret key is encrypted (a KDF is set); eider-sign reads unencrypted keys only (minisign -G -W)")) }
+    if raw[4] != 66 || raw[5] != 50 { return Err(errs("the secret key's checksum algorithm is not BLAKE2b (`B2`)")) }
+    let sk = SecretKey(bytes.slice(raw, 54, 62), bytes.slice(raw, 62, 94), bytes.slice(raw, 94, 126))
+    Ok((sk, bytes.slice(raw, 126, 158)))
+}

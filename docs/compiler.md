@@ -729,7 +729,7 @@ JSON form is what eider-doc reads (packages/doc; docs/site/tooling/eider-doc.md 
 format for users). Without `--json` it prints a text listing like `go doc`.
 
 - **What is documented.** For a directory: every `.ei` file under it, skipping `tests`,
-  `examples`, `vendor`, `target`, `deps` and hidden directories. The files are loaded as one
+  `examples`, `target`, `deps` and hidden directories. The files are loaded as one
   program through an entry that exists only in memory (`<dir>/__eiderc_doc__.ei`, with one
   `import "<file>" as __docN` per file, as migrate-var does). So every module's imports
   resolve as in a build, and module identity is the usual (package, path). For the
@@ -1374,9 +1374,8 @@ letter, the path one or more non-empty segments. (So a path import without its e
   first 16 hex digits of the locked content hash>` (`EIDER_HOME` defaults to `~/.eider`):
   exactly where `eider-pkg fetch` and `eider-pkg vendor` put it. No lock, no entry for the
   package, a directory that doesn't exist, or an eider.toml or eider.lock that doesn't parse
-  is **E0810**, with the fix `run eider-pkg fetch in <dir>`; so is a git package found only
-  in `vendor/<name>`, where `eider-pkg vendor` wrote before `.vendor/` (#122), with the fix
-  `mv vendor .vendor` (never read silently: the store may hold another copy). The compiler does not re-hash
+  is **E0810**, with the fix `run eider-pkg fetch in <dir>`. No other directory is looked
+  at (C400). The compiler does not re-hash
   store directories: eider-pkg checks the hash whenever it fetches.
 - The toolchain series (C220, docs/site/tooling/releases.md). `eider = "0.1"` under
   [package] names the toolchain MAJOR.MINOR a package needs (lock.ei `Manifest.eider`).
@@ -1431,8 +1430,7 @@ with the seed (packages/, eider-pkg, the tests). So:
    runs: the seed would report E0804 for them).
 
 **Tests.** compiler/tests/pkgs: app, geo, shapes and base packages with eider.lock, a
-vendored git package (`.vendor/`) and one in a store (`home/`), an old `vendor/` (oldvend:
-E0810), in `// pkgtest: run|check|ide` files with
+vendored git package (`.vendor/`) and one in a store (`home/`), in `// pkgtest: run|check|ide` files with
 hand-checked `X.out`: three `util` modules in one program, a chain (app -> geo -> base),
 an entry that isn't `<name>.ei`, self-import by package name, std and core, then the errors:
 an undeclared package, an indirect one, one missing from eider.lock, a locked directory that
@@ -1443,8 +1441,7 @@ and seriesbad E0811 at 1:1 (another MAJOR.MINOR, a full version), app and geo a 
 `eider`, tests/checks/fail/e0811_toolchain_series.ei E0811 at an import. tests/pkg/run.sh builds and
 runs its projects through eider.lock: no `deps/` after fetch, the locked git packages in the
 store, an indirect or undeclared or removed dependency is E0809, one added by hand before a
-fetch E0810, a run from .vendor/ with the store deleted, an old vendor/ (fetch's note, the
-compiler's E0810, `vendor` migrating it), and `core`/`std` refused as names.
+fetch E0810, a run from .vendor/ with the store deleted, and `core`/`std` refused as names.
 
 **IDE.** ide.analyze is unchanged in shape: Span.file is a module's path as above (absolute
 for package imports), files are told apart by canonical path as before, and module refs come
@@ -2970,7 +2967,7 @@ is a keyword (compiler/comptime.ei).
 `eiderc migrate-imports` on every .ei with a quoted import and lists what stays quoted).
 First with `--keep-seed` (#91): core, std, packages, tests and examples of eider-lang, every
 sibling repository (eider-toml, eider-json, eider-markdown, eider-http, eider-rpc,
-eider-openapi, eider-profiler, eider-analyzer), re-vendored (then vendor/vendor.lock, now vendor.lock), the docs'
+eider-openapi, eider-profiler, eider-analyzer), re-vendored (into what is now .vendor/, pinned by vendor.lock), the docs'
 code blocks and tests/pkg/run.sh's generated programs, leaving quoted what the seed then built
 the compiler from: compiler/, std/{bytes,fs,io,env,proc}.ei and core/{sys,version}.ei, with
 scripts/eider-pkg and scripts/docs.sh building with compiler/ as the seed built it

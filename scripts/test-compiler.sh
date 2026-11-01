@@ -70,7 +70,7 @@
 #   audit-refs: `eiderc audit-refs --json` of compiler/tests/audit/*.ei equals the hand-checked
 #             .out (the writes that change what a `let` reference sees).
 #   packages: compiler/tests/pkgs, packages with eider.toml and eider.lock (two packages
-#             with a util.ei, a dependency chain, vendored (.vendor/) and store dependencies, an old vendor/ (E0810), the
+#             with a util.ei, a dependency chain, vendored (.vendor/) and store dependencies, the
 #             package-import errors E0808/E0809/E0810, capability grants and E0204, `eiderc
 #             caps`): each `// pkgtest: <cmd>` file's
 #             `eiderc <cmd>` output equals its X.out (BLESS=1 rewrites them; review by

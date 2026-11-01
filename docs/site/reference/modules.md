@@ -233,9 +233,7 @@ The compiler reads it to find a package's directory:
   (`EIDER_HOME` defaults to `~/.eider`).
 
 No lock, no entry for the package, a missing directory, or an `eider.toml`/`eider.lock`
-that doesn't parse is E0810, whose fix is to run `eider-pkg fetch`. So is a git package found
-only in `vendor/<name>`, where `eider-pkg vendor` wrote before `.vendor/`: move it (`mv vendor
-.vendor`). The compiler never
+that doesn't parse is E0810, whose fix is to run `eider-pkg fetch`. The compiler never
 touches the network and doesn't re-hash the store; eider-pkg checks hashes when it fetches.
 
 `eider = "0.1"` says which toolchain MAJOR.MINOR the package is written for. Before 1.0 a

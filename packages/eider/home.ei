@@ -1,0 +1,121 @@
+//! home: eider's directory and its settings.
+//!
+//!   $EIDER_HOME (default ~/.eider; eider-pkg's store shares it: git/, pkg/, index/, tmp/)
+//!     bin/eider                  this command (install.sh, `eider self update`)
+//!     toolchains/<version>/      an installed toolchain: bin/eiderc, bin/eider-pkg,
+//!                                bin/eider-doc, bin/eider, core/, std/, VERSION,
+//!                                toolchain.toml (its manifest)
+//!     downloads/<version>/       a release's files while they are checked; removed after
+//!     config.toml                `default = "<version>"` (`eider toolchain use`),
+//!                                `auto_install = true|false`, `releases = "<source>"`
+
+import std.bytes
+import std.fs
+import std.env
+import toml
+import eider.vers
+
+pub type Config = { default: List[u8], auto_install: bool, releases: List[u8] }
+
+pub fn home() -> Result[List[u8], String] uses io, fs {
+    match env.get("EIDER_HOME".bytes()) {
+        Some(h) => { if h.len() > 0 { return fs.absolute(h) } }
+        None => {}
+    }
+    match env.get("HOME".bytes()) {
+        Some(h) => Ok(fs.join(h, ".eider".bytes()))
+        None => Err(String.from("set EIDER_HOME or HOME"))
+    }
+}
+
+pub fn toolchains(h: List[u8]) -> List[u8] { fs.join(h, "toolchains".bytes()) }
+pub fn downloads(h: List[u8]) -> List[u8] { fs.join(h, "downloads".bytes()) }
+pub fn bin(h: List[u8]) -> List[u8] { fs.join(h, "bin".bytes()) }
+pub fn config_file(h: List[u8]) -> List[u8] { fs.join(h, "config.toml".bytes()) }
+
+/// Where version `v` is (or would be) installed.
+pub fn toolchain_dir(h: List[u8], v: vers.Version) -> List[u8] { fs.join(toolchains(h), vers.text(v)) }
+
+/// An installed toolchain is a directory named by its version, with bin/eiderc and its
+/// manifest (a half-unpacked one is `.partial-*`, never a version).
+pub fn is_installed(dir: List[u8]) -> bool uses fs {
+    fs.exists(fs.join(dir, "bin/eiderc".bytes())) && fs.exists(fs.join(dir, "toolchain.toml".bytes()))
+}
+
+/// The installed versions, newest first.
+pub fn installed(h: List[u8]) -> List[vers.Version] uses fs {
+    let mut out: List[vers.Version] = List.new()
+    let dir = toolchains(h)
+    if !fs.is_dir(dir) { return out }
+    let names: List[List[u8]] = match fs.list(dir) {
+        Ok(x) => x
+        Err(_) => List.new()
+    }
+    for n in names {
+        match vers.parse(n) {
+            Some(v) => { if is_installed(fs.join(dir, n)) { out.push(v) } }
+            None => {}
+        }
+    }
+    vers.sorted_desc(out)
+}
+
+fn str_of(doc: List[toml.Entry], k: str) -> List[u8] {
+    match toml.get(doc, k.bytes()) {
+        Some(e) => match e.val {
+            toml.Str(s) => s
+            _ => List.new()
+        }
+        None => List.new()
+    }
+}
+
+pub fn load_config(h: List[u8]) -> Result[Config, String] uses fs {
+    let f = config_file(h)
+    if !fs.exists(f) { return Ok(Config(List.new(), false, List.new())) }
+    let src = fs.read(f)?
+    let doc = match toml.parse(src) {
+        Ok(d) => d
+        Err(e) => {
+            let mut m = String.from("cannot read ")
+            m.append(String.from_bytes(f).unwrap_or(String.from("config.toml")))
+            m.push_str(": line ")
+            m.append(String.from_int(e.line as i64))
+            m.push_str(": ")
+            m.append(e.msg)
+            return Err(m)
+        }
+    }
+    let auto = match toml.get(doc, "auto_install".bytes()) {
+        Some(e) => match e.val {
+            toml.Bool(b) => b
+            _ => false
+        }
+        None => false
+    }
+    Ok(Config(str_of(doc, "default"), auto, str_of(doc, "releases")))
+}
+
+pub fn save_config(h: List[u8], c: Config) -> Result[bool, String] uses fs {
+    fs.mkdir_all(h)?
+    let mut t = "# eider's settings (docs/site/tooling/eider.md). `eider toolchain use <version>` writes `default`.\n".bytes()
+    if c.default.len() > 0 {
+        bytes.append(inout t, "default = ".bytes())
+        bytes.append(inout t, toml.quote(c.default))
+        t.push(10)
+    }
+    bytes.append(inout t, "auto_install = ".bytes())
+    let auto = if c.auto_install { "true".bytes() } else { "false".bytes() }
+    bytes.append(inout t, auto)
+    t.push(10)
+    if c.releases.len() > 0 {
+        bytes.append(inout t, "releases = ".bytes())
+        bytes.append(inout t, toml.quote(c.releases))
+        t.push(10)
+    }
+    let f = config_file(h)
+    let mut tmp = f.copy()
+    bytes.append(inout tmp, ".new".bytes())
+    fs.write(tmp, t)?
+    fs.rename(tmp, f)
+}

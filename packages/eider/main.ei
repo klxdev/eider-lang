@@ -1,0 +1,694 @@
+//! eider: the Eider command. It installs and selects toolchains, and runs the selected
+//! toolchain's eiderc, eider-pkg and eider-doc (docs/site/tooling/eider.md).
+//!
+//!   eider [+<version>] <command> [args...]
+//!
+//!   eider toolchain install [<version>|<MAJOR.MINOR>|latest] [--force] [--json]
+//!   eider toolchain list [--json]          installed toolchains, and the releases available
+//!   eider toolchain use <version>          the default toolchain (config.toml)
+//!   eider toolchain remove <version>
+//!   eider toolchain show [--json]          the toolchain a command here would use, and why
+//!   eider self update [--force] [--json]   replace $EIDER_HOME/bin/eider with the latest
+//!   eider version [--json] | --version
+//!   eider build|run|test|check|emit-c|caps|ir|... <args>   the toolchain's eiderc
+//!   eider doc <args>                       the toolchain's eider-doc
+//!   eider new <name> | init|add|remove|fetch|update|vendor|tree <args>   its eider-pkg
+//!   eider eiderc|eider-pkg|eider-doc <args>   that program, with any arguments
+//!
+//! The toolchain is chosen by `+<version>`, else EIDER_TOOLCHAIN (a path), else the nearest
+//! eider.toml's `eider = "MAJOR.MINOR"`, else the default (eider.select). Exit status: the
+//! program's; 1 when eider itself fails, 2 for a usage error.
+
+import core.version
+import std.bytes
+import std.fs
+import std.io
+import std.env
+import std.proc
+import json
+import eider.vers
+import eider.home
+import eider.select
+import eider.source
+import eider.install
+import eider.minisign
+import eider.release_key
+
+fn is(a: List[u8], s: str) -> bool { bytes.eq(a, s.bytes()) }
+fn text(m: List[u8]) -> String { String.from_bytes(m).unwrap_or(String.from("?")) }
+
+fn getenv(n: str) -> List[u8] uses io {
+    match env.get(n.bytes()) {
+        Some(v) => v
+        None => List.new()
+    }
+}
+
+fn die(m: String) uses io {
+    let mut l = "eider: ".bytes()
+    bytes.append(inout l, m.bytes())
+    io.errln(l)
+    env.exit(1)
+}
+
+fn usage_error(m: str) uses io {
+    let mut l = "eider: ".bytes()
+    bytes.append(inout l, m.bytes())
+    io.errln(l)
+    io.errln("run `eider help` for the commands".bytes())
+    env.exit(2)
+}
+
+fn ok[T](r: Result[T, String]) -> T uses io {
+    match r {
+        Ok(x) => x
+        Err(e) => {
+            die(e)
+            panic("unreachable")
+        }
+    }
+}
+
+fn say(l: List[u8]) uses io { io.outln(l) }
+
+fn help() -> List[u8] {
+    let mut t = "eider ".bytes()
+    bytes.append(inout t, version.VERSION.bytes())
+    bytes.append(inout t, " (the Eider command: toolchains, and the compiler, package manager and docs of the selected one)\n".bytes())
+    for l in [
+        "",
+        "usage: eider [+<version>] <command> [args...]",
+        "",
+        "toolchains:",
+        "  eider toolchain install [<version>|<MAJOR.MINOR>|latest] [--force] [--json]",
+        "                                   download, check (SHA-256, minisign) and install a release",
+        "  eider toolchain list [--json]    installed toolchains and the releases available",
+        "  eider toolchain use <version>    make an installed toolchain the default",
+        "  eider toolchain remove <version> remove an installed toolchain",
+        "  eider toolchain show [--json]    the toolchain a command here would use, and why",
+        "  eider self update [--force]      replace this eider ($EIDER_HOME/bin/eider) with the latest release's",
+        "  eider version [--json]           eider's version and the selected toolchain's",
+        "",
+        "the selected toolchain's programs:",
+        "  eider build|run|test|check|emit-c|caps|ir|... <args>   eiderc (`eider eiderc --help`)",
+        "  eider doc <args>                 eider-doc (documentation sites, doc tests)",
+        "  eider new <name>                 a new package in <name>/ (eider-pkg init)",
+        "  eider init|add|remove|fetch|update|vendor|tree <args>  eider-pkg",
+        "  eider eiderc|eider-pkg|eider-doc <args>                that program directly",
+        "",
+        "the toolchain: +<version> (+0.1.0, +0.1: its newest installed patch), else EIDER_TOOLCHAIN",
+        "(a toolchain directory or an eider-lang checkout), else the nearest eider.toml's",
+        "`eider = \"MAJOR.MINOR\"` (its newest installed patch), else the default.",
+        "",
+        "environment:",
+        "  EIDER_HOME            eider's directory (default ~/.eider)",
+        "  EIDER_TOOLCHAIN       a toolchain directory or eider-lang checkout to use",
+        "  EIDER_AUTO_INSTALL=1  install a toolchain an eider.toml (or +<version>) asks for when it is missing",
+        "  EIDER_RELEASES        github:<owner>/<repo> (default github:klxdev/eider-lang) or file://<dir>",
+        "  GH_TOKEN, GITHUB_TOKEN  the GitHub token (else `gh auth token`): the releases are private",
+        "  EIDER_RELEASE_PUBKEY  the release key (a minisign .pub file or key line), for testing",
+    ] {
+        bytes.append(inout t, l.bytes())
+        t.push(10)
+    }
+    t
+}
+
+// ------------------------------------------------------------------ JSON
+
+fn jq(s: List[u8]) -> List[u8] { json.quote(s) }
+
+fn jfield(inout out: List[u8], k: str, v: List[u8]) {
+    if out.len() > 1 { out.push(44) }
+    bytes.append(inout out, jq(k.bytes()))
+    out.push(58)
+    bytes.append(inout out, v)
+}
+
+fn jbool(b: bool) -> List[u8] { if b { "true".bytes() } else { "false".bytes() } }
+
+fn jlist(xs: List[List[u8]]) -> List[u8] {
+    let mut out = "[".bytes()
+    let mut first = true
+    for x in xs {
+        if !first { out.push(44) }
+        first = false
+        bytes.append(inout out, x)
+    }
+    out.push(93)
+    out
+}
+
+/// A failure as one JSON line on stdout (with --json), and exit 1.
+fn die_json(as_json: bool, m: String) uses io {
+    if as_json {
+        let mut o = "{".bytes()
+        jfield(inout o, "error", jq(m.bytes()))
+        o.push(125)
+        say(o)
+        env.exit(1)
+    }
+    die(m)
+}
+
+fn okj[T](as_json: bool, r: Result[T, String]) -> T uses io {
+    match r {
+        Ok(x) => x
+        Err(e) => {
+            die_json(as_json, e)
+            panic("unreachable")
+        }
+    }
+}
+
+// ------------------------------------------------------------------ settings
+
+type Ctx = { home: List[u8], cfg: home.Config }
+
+fn ctx() -> Ctx uses io, fs {
+    let h = ok(home.home())
+    let c = ok(home.load_config(h))
+    Ctx(h, c)
+}
+
+fn src(c: Ctx) -> source.Source uses io, fs { ok(source.from_settings(c.cfg.releases)) }
+
+fn auto_install(c: Ctx) -> bool uses io {
+    let e = getenv("EIDER_AUTO_INSTALL")
+    if e.len() > 0 { return !is(e, "0") && !is(e, "false") }
+    c.cfg.auto_install
+}
+
+fn cwd() -> List[u8] uses io, fs { ok(fs.cwd()) }
+
+// ------------------------------------------------------------------ selection
+
+fn missing_text(w: vers.Want, why: List[u8]) -> String {
+    let wt = vers.want_text(w)
+    let mut m = String.from("")
+    m.append(text(why))
+    m.push_str(" asks for Eider ")
+    m.append(text(wt))
+    m.push_str(", which is not installed. Run `eider toolchain install ")
+    m.append(text(wt))
+    m.push_str("` (or set EIDER_AUTO_INSTALL=1, or `auto_install = true` in config.toml, to install it when needed)")
+    m
+}
+
+/// The toolchain for a command; installs it first when it is missing and auto-install is on.
+fn choose(c: Ctx, plus: List[u8]) -> select.Choice uses io, fs, net {
+    let here = cwd()
+    let tc = getenv("EIDER_TOOLCHAIN")
+    match select.select(plus, tc, here, c.home, c.cfg.default) {
+        Ok(ch) => ch
+        Err(miss) => {
+            match miss {
+                select.Failed(m) => {
+                    die(m)
+                    panic("unreachable")
+                }
+                select.Missing(w, why) => {
+                    if !auto_install(c) {
+                        die(missing_text(w, why))
+                    }
+                    let mut l = "eider: ".bytes()
+                    bytes.append(inout l, why)
+                    bytes.append(inout l, " asks for Eider ".bytes())
+                    bytes.append(inout l, vers.want_text(w))
+                    bytes.append(inout l, ", which is not installed: installing it (auto-install)".bytes())
+                    io.errln(l)
+                    let d = ok(install.install(c.home, src(c), w, false))
+                    report_install(c, d, false)
+                    match select.select(plus, tc, here, c.home, c.cfg.default) {
+                        Ok(ch) => ch
+                        Err(_) => {
+                            die(String.from("the toolchain was installed but is still not selected"))
+                            panic("unreachable")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------ running a program
+
+/// Run `prog` with `args` under the toolchain `t` (EIDER_ROOT and EIDERC point at it), and
+/// exit with its status.
+fn run_tool(t: select.Tool, prog: List[u8], args: List[List[u8]], what: str) uses io, fs, net {
+    if !fs.exists(prog) {
+        let mut m = String.from("the toolchain at ")
+        m.append(text(t.root))
+        m.push_str(" has no ")
+        m.push_str(what)
+        m.push_str(" (")
+        m.append(text(prog))
+        m.push_str(")")
+        if is(t.kind, "checkout") && bytes.eq(what.bytes(), "eider-doc".bytes()) { m.push_str(": build it with `sh scripts/docs.sh` in the checkout") }
+        die(m)
+    }
+    let mut eiderc = t.eiderc.copy()
+    if is(t.kind, "checkout") { eiderc = fs.join(t.root, "target/eiderc".bytes()) }
+    let mut argv: List[List[u8]] = List.new()
+    argv.push("env".bytes())
+    let mut r = "EIDER_ROOT=".bytes()
+    bytes.append(inout r, t.root)
+    argv.push(r)
+    let mut e = "EIDERC=".bytes()
+    bytes.append(inout e, eiderc)
+    argv.push(e)
+    argv.push(prog)
+    for a in args { argv.push(a) }
+    match proc.run(argv) {
+        Ok(code) => env.exit(code)
+        Err(m) => die(m)
+    }
+}
+
+fn pkg_cmd(c: List[u8]) -> bool {
+    is(c, "new") || is(c, "init") || is(c, "add") || is(c, "remove") || is(c, "fetch") || is(c, "update") || is(c, "vendor") || is(c, "tree")
+}
+
+// ------------------------------------------------------------------ toolchain commands
+
+fn has_flag(args: List[List[u8]], f: str) -> bool {
+    for a in args {
+        if is(a, f) { return true }
+    }
+    false
+}
+
+fn positional(args: List[List[u8]]) -> List[List[u8]] {
+    let mut out: List[List[u8]] = List.new()
+    for a in args {
+        if a.len() > 0 && a[0] == 45 { continue }
+        out.push(a)
+    }
+    out
+}
+
+fn check_flags(args: List[List[u8]], allowed: str) uses io {
+    for a in args {
+        if a.len() == 0 || a[0] != 45 { continue }
+        let mut known = false
+        for f in bytes.split(allowed.bytes(), 32) {
+            if bytes.eq(a, f) { known = true }
+        }
+        if !known {
+            let mut l = "eider: unknown option ".bytes()
+            bytes.append(inout l, a)
+            io.errln(l)
+            io.errln("run `eider help` for the commands".bytes())
+            env.exit(2)
+        }
+    }
+}
+
+fn warn_clang(dir: List[u8]) uses io, fs, net {
+    match install.clang_problem(install.backend_of(dir)) {
+        Some(m) => {
+            let mut l = "eider: warning: ".bytes()
+            bytes.append(inout l, m.bytes())
+            io.errln(l)
+        }
+        None => {}
+    }
+}
+
+fn report_install(c: Ctx, d: install.Done, as_json: bool) uses io, fs, net {
+    // the first toolchain installed becomes the default
+    let mut made_default = false
+    if c.cfg.default.len() == 0 || !home.is_installed(home.toolchain_dir(c.home, ok_version(c.cfg.default))) {
+        ok(home.save_config(c.home, home.Config(vers.text(d.version), c.cfg.auto_install, c.cfg.releases)))
+        made_default = true
+    }
+    if as_json {
+        let mut o = "{".bytes()
+        jfield(inout o, "version", jq(vers.text(d.version)))
+        jfield(inout o, "path", jq(d.dir))
+        jfield(inout o, "already_installed", jbool(d.already))
+        jfield(inout o, "default", jbool(made_default || bytes.eq(c.cfg.default, vers.text(d.version))))
+        o.push(125)
+        say(o)
+        warn_clang(d.dir)
+        return
+    }
+    let mut l = if d.already { "eider ".bytes() } else { "installed eider ".bytes() }
+    bytes.append(inout l, vers.text(d.version))
+    let mid = if d.already { " is already installed in ".bytes() } else { " in ".bytes() }
+    bytes.append(inout l, mid)
+    bytes.append(inout l, d.dir)
+    if !d.already { bytes.append(inout l, " (checksum and signature verified)".bytes()) }
+    io.errln(l)
+    if made_default {
+        let mut m = "eider: ".bytes()
+        bytes.append(inout m, vers.text(d.version))
+        bytes.append(inout m, " is the default toolchain (eider toolchain use <version> changes it)".bytes())
+        io.errln(m)
+    }
+    warn_clang(d.dir)
+}
+
+/// `v` as a version, or 0.0.0 (never installed) when it is not one.
+fn ok_version(v: List[u8]) -> vers.Version {
+    match vers.parse(v) {
+        Some(x) => x
+        None => vers.Version(0, 0, 0)
+    }
+}
+
+fn toolchain_install(c: Ctx, args: List[List[u8]]) uses io, fs, net {
+    check_flags(args, "--force --json")
+    let as_json = has_flag(args, "--json")
+    let pos = positional(args)
+    if pos.len() > 1 { usage_error("eider toolchain install [<version>|<MAJOR.MINOR>|latest]") }
+    let w = if pos.len() == 0 { vers.Latest } else {
+        match vers.parse_want(pos[0]) {
+            Some(x) => x
+            None => {
+                usage_error("the version is MAJOR.MINOR.PATCH, MAJOR.MINOR or latest")
+                vers.Latest
+            }
+        }
+    }
+    let s = okj(as_json, source.from_settings(c.cfg.releases))
+    let d = okj(as_json, install.install(c.home, s, w, has_flag(args, "--force")))
+    report_install(c, d, as_json)
+}
+
+fn toolchain_list(c: Ctx, args: List[List[u8]]) uses io, fs, net {
+    check_flags(args, "--json")
+    let as_json = has_flag(args, "--json")
+    let inst = home.installed(c.home)
+    let s = okj(as_json, source.from_settings(c.cfg.releases))
+    let avail = source.releases(s, home.downloads(c.home))
+    if as_json {
+        let mut items: List[List[u8]] = List.new()
+        for v in inst {
+            let mut o = "{".bytes()
+            jfield(inout o, "version", jq(vers.text(v)))
+            jfield(inout o, "path", jq(home.toolchain_dir(c.home, v)))
+            jfield(inout o, "default", jbool(bytes.eq(c.cfg.default, vers.text(v))))
+            o.push(125)
+            items.push(o)
+        }
+        let mut out = "{".bytes()
+        jfield(inout out, "installed", jlist(items))
+        match avail {
+            Ok(rs) => {
+                let mut vs: List[vers.Version] = List.new()
+                for r in rs { vs.push(r.version) }
+                let mut names: List[List[u8]] = List.new()
+                for v in vers.sorted_desc(vs) { names.push(jq(vers.text(v))) }
+                jfield(inout out, "available", jlist(names))
+            }
+            Err(e) => {
+                jfield(inout out, "available", "null".bytes())
+                jfield(inout out, "available_error", jq(e.bytes()))
+            }
+        }
+        out.push(125)
+        say(out)
+        return
+    }
+    say("installed:".bytes())
+    if inst.len() == 0 { say("  (none: eider toolchain install)".bytes()) }
+    for v in inst {
+        let mut l = "  ".bytes()
+        bytes.append(inout l, vers.text(v))
+        if bytes.eq(c.cfg.default, vers.text(v)) { bytes.append(inout l, " (default)".bytes()) }
+        say(l)
+    }
+    let mut h = "available (".bytes()
+    bytes.append(inout h, source.describe(s))
+    bytes.append(inout h, "):".bytes())
+    say(h)
+    match avail {
+        Ok(rs) => {
+            let mut vs: List[vers.Version] = List.new()
+            for r in rs { vs.push(r.version) }
+            if vs.len() == 0 { say("  (none)".bytes()) }
+            for v in vers.sorted_desc(vs) {
+                let mut l = "  ".bytes()
+                bytes.append(inout l, vers.text(v))
+                if home.is_installed(home.toolchain_dir(c.home, v)) { bytes.append(inout l, " (installed)".bytes()) }
+                say(l)
+            }
+        }
+        Err(e) => {
+            let mut l = "  (cannot list them: ".bytes()
+            bytes.append(inout l, e.bytes())
+            l.push(41)
+            say(l)
+        }
+    }
+}
+
+fn exact_installed(c: Ctx, a: List[u8]) -> vers.Version uses io, fs {
+    let v = match vers.parse_tag(a) {
+        Some(x) => x
+        None => {
+            usage_error("give a version, MAJOR.MINOR.PATCH (eider toolchain list)")
+            vers.Version(0, 0, 0)
+        }
+    }
+    if !home.is_installed(home.toolchain_dir(c.home, v)) {
+        let mut m = String.from("eider ")
+        m.append(text(vers.text(v)))
+        m.push_str(" is not installed (eider toolchain install ")
+        m.append(text(vers.text(v)))
+        m.push_str(")")
+        die(m)
+    }
+    v
+}
+
+fn toolchain_use(c: Ctx, args: List[List[u8]]) uses io, fs {
+    check_flags(args, "")
+    let pos = positional(args)
+    if pos.len() != 1 { usage_error("eider toolchain use <version>") }
+    let v = exact_installed(c, pos[0])
+    ok(home.save_config(c.home, home.Config(vers.text(v), c.cfg.auto_install, c.cfg.releases)))
+    let mut l = "eider: the default toolchain is ".bytes()
+    bytes.append(inout l, vers.text(v))
+    io.errln(l)
+}
+
+fn toolchain_remove(c: Ctx, args: List[List[u8]]) uses io, fs {
+    check_flags(args, "")
+    let pos = positional(args)
+    if pos.len() != 1 { usage_error("eider toolchain remove <version>") }
+    let v = exact_installed(c, pos[0])
+    ok(fs.remove_all(home.toolchain_dir(c.home, v)))
+    let mut l = "eider: removed ".bytes()
+    bytes.append(inout l, vers.text(v))
+    if bytes.eq(c.cfg.default, vers.text(v)) {
+        ok(home.save_config(c.home, home.Config(List.new(), c.cfg.auto_install, c.cfg.releases)))
+        bytes.append(inout l, "; it was the default, so there is none now (eider toolchain use <version>)".bytes())
+    }
+    io.errln(l)
+}
+
+fn tool_json(t: select.Tool, why: List[u8]) -> List[u8] {
+    let mut o = "{".bytes()
+    jfield(inout o, "version", jq(t.version))
+    jfield(inout o, "path", jq(t.root))
+    jfield(inout o, "kind", jq(t.kind))
+    jfield(inout o, "why", jq(why))
+    o.push(125)
+    o
+}
+
+fn toolchain_show(c: Ctx, plus: List[u8], args: List[List[u8]]) uses io, fs, net {
+    check_flags(args, "--json")
+    let as_json = has_flag(args, "--json")
+    match select.select(plus, getenv("EIDER_TOOLCHAIN"), cwd(), c.home, c.cfg.default) {
+        Ok(ch) => {
+            if as_json {
+                say(tool_json(ch.tool, ch.why))
+                return
+            }
+            let mut l = ch.tool.version.copy()
+            bytes.append(inout l, " (".bytes())
+            bytes.append(inout l, ch.tool.root)
+            bytes.append(inout l, ")\n  chosen by ".bytes())
+            bytes.append(inout l, ch.why)
+            say(l)
+        }
+        Err(miss) => {
+            let m = match miss {
+                select.Failed(x) => x
+                select.Missing(w, why) => missing_text(w, why)
+            }
+            die_json(as_json, m)
+        }
+    }
+}
+
+fn self_update(c: Ctx, args: List[List[u8]]) uses io, fs, net {
+    check_flags(args, "--force --json")
+    let as_json = has_flag(args, "--json")
+    let pos = positional(args)
+    if pos.len() != 1 || !is(pos[0], "update") { usage_error("eider self update [--force]") }
+    let s = okj(as_json, source.from_settings(c.cfg.releases))
+    let u = okj(as_json, install.self_update(c.home, s, has_flag(args, "--force")))
+    if as_json {
+        let mut o = "{".bytes()
+        jfield(inout o, "version", jq(vers.text(u.version)))
+        jfield(inout o, "path", jq(u.path))
+        jfield(inout o, "updated", jbool(!u.already))
+        o.push(125)
+        say(o)
+        return
+    }
+    let mut l = if u.already { "eider: up to date (".bytes() } else { "eider: updated ".bytes() }
+    if u.already {
+        bytes.append(inout l, vers.text(u.version))
+        bytes.append(inout l, " is the latest release)".bytes())
+    } else {
+        bytes.append(inout l, u.path)
+        bytes.append(inout l, " to ".bytes())
+        bytes.append(inout l, vers.text(u.version))
+        bytes.append(inout l, " (checksum and signature verified)".bytes())
+    }
+    io.errln(l)
+}
+
+fn show_version(c: Ctx, plus: List[u8], args: List[List[u8]]) uses io, fs, net {
+    check_flags(args, "--json")
+    let sel = select.select(plus, getenv("EIDER_TOOLCHAIN"), cwd(), c.home, c.cfg.default)
+    if has_flag(args, "--json") {
+        let mut o = "{".bytes()
+        jfield(inout o, "eider", jq(version.VERSION.bytes()))
+        jfield(inout o, "release_key", jq(release_key.KEY_ID.bytes()))
+        match sel {
+            Ok(ch) => jfield(inout o, "toolchain", tool_json(ch.tool, ch.why))
+            Err(_) => jfield(inout o, "toolchain", "null".bytes())
+        }
+        o.push(125)
+        say(o)
+        return
+    }
+    let mut l = "eider ".bytes()
+    bytes.append(inout l, version.VERSION.bytes())
+    say(l)
+    match sel {
+        Ok(ch) => {
+            let mut t = "toolchain ".bytes()
+            bytes.append(inout t, ch.tool.version)
+            bytes.append(inout t, " (".bytes())
+            bytes.append(inout t, ch.tool.root)
+            bytes.append(inout t, "; ".bytes())
+            bytes.append(inout t, ch.why)
+            t.push(41)
+            say(t)
+            if is(ch.tool.kind, "install") { warn_clang(ch.tool.root) }
+        }
+        Err(miss) => {
+            match miss {
+                select.Failed(m) => {
+                    let mut t = "toolchain: none (".bytes()
+                    bytes.append(inout t, m.bytes())
+                    t.push(41)
+                    say(t)
+                }
+                select.Missing(w, why) => {
+                    let mut t = "toolchain: none (".bytes()
+                    bytes.append(inout t, missing_text(w, why).bytes())
+                    t.push(41)
+                    say(t)
+                }
+            }
+        }
+    }
+}
+
+// ------------------------------------------------------------------ main
+
+fn main() uses io, fs, net {
+    let argv = env.args()
+    let mut i: usize = 1
+    let mut plus: List[u8] = List.new()
+    if i < argv.len() && argv[i].len() > 0 && argv[i][0] == 43 {
+        plus = bytes.slice(argv[i], 1, argv[i].len())
+        if plus.len() == 0 { usage_error("`+` needs a version: eider +0.1.0 build ...") }
+        i += 1
+    }
+    if i >= argv.len() {
+        io.err(help())
+        env.exit(2)
+    }
+    let cmd = argv[i]
+    let mut rest: List[List[u8]] = List.new()
+    let mut j = i + 1
+    while j < argv.len() {
+        rest.push(argv[j])
+        j += 1
+    }
+    if is(cmd, "help") || is(cmd, "--help") || is(cmd, "-h") {
+        io.out(help())
+        return
+    }
+    if is(cmd, "--version") {
+        let mut l = "eider ".bytes()
+        bytes.append(inout l, version.VERSION.bytes())
+        say(l)
+        return
+    }
+    let c = ctx()
+    if is(cmd, "version") {
+        show_version(c, plus, rest)
+        return
+    }
+    if is(cmd, "toolchain") {
+        if rest.len() == 0 { usage_error("eider toolchain install|list|use|remove|show") }
+        let sub = rest[0]
+        let mut args: List[List[u8]] = List.new()
+        let mut k: usize = 1
+        while k < rest.len() {
+            args.push(rest[k])
+            k += 1
+        }
+        if is(sub, "install") { toolchain_install(c, args) }
+        else if is(sub, "list") { toolchain_list(c, args) }
+        else if is(sub, "use") { toolchain_use(c, args) }
+        else if is(sub, "remove") || is(sub, "uninstall") { toolchain_remove(c, args) }
+        else if is(sub, "show") { toolchain_show(c, plus, args) }
+        else { usage_error("eider toolchain install|list|use|remove|show") }
+        return
+    }
+    if is(cmd, "self") {
+        self_update(c, rest)
+        return
+    }
+    let ch = choose(c, plus)
+    let t = ch.tool
+    if is(cmd, "eiderc") { run_tool(t, t.eiderc, rest, "eiderc") }
+    if is(cmd, "eider-pkg") { run_tool(t, t.pkg, rest, "eider-pkg") }
+    if is(cmd, "eider-doc") || is(cmd, "doc") { run_tool(t, t.doc, rest, "eider-doc") }
+    if is(cmd, "new") {
+        if rest.len() != 1 || (rest[0].len() > 0 && rest[0][0] == 45) { usage_error("eider new <name>: a new package in the directory <name>") }
+        if fs.exists(rest[0]) {
+            let mut m = text(rest[0])
+            m.push_str(" exists already (eider init makes a package in an existing directory)")
+            die(m)
+        }
+        let mut args: List[List[u8]] = List.new()
+        args.push("-C".bytes())
+        args.push(rest[0])
+        args.push("init".bytes())
+        args.push(rest[0])
+        run_tool(t, t.pkg, args, "eider-pkg")
+    }
+    if pkg_cmd(cmd) {
+        let mut args: List[List[u8]] = List.new()
+        args.push(cmd)
+        for a in rest { args.push(a) }
+        run_tool(t, t.pkg, args, "eider-pkg")
+    }
+    let mut args: List[List[u8]] = List.new()
+    args.push(cmd)
+    for a in rest { args.push(a) }
+    run_tool(t, t.eiderc, args, "eiderc")
+}

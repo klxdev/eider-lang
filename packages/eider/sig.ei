@@ -1,0 +1,111 @@
+//! sig: minisign signatures (eider.minisign's formats) made and checked with Ed25519 from
+//! the crypto package, and SHA-256 for the release's checksums.
+
+import std.bytes
+import crypto
+import eider.minisign
+
+fn errs(m: str) -> String { String.from(m) }
+
+/// Checks `sig` (a minisign signature file's text) over `msg` with `pk`: the algorithm is
+/// the legacy `Ed`, the key id is `pk`'s, the signature is valid, and the global signature
+/// over the signature and the trusted comment is valid. Ok(the trusted comment) only then.
+pub fn verify(pk: minisign.PublicKey, msg: List[u8], sig_text: List[u8]) -> Result[List[u8], String] {
+    let s = minisign.parse_signature(sig_text)?
+    if bytes.eq(s.alg, "ED".bytes()) { return Err(errs("the signature is prehashed (`ED`, BLAKE2b-512); Eider's releases are signed with the legacy `Ed` algorithm (Ed25519 over the file)")) }
+    if !bytes.eq(s.keyid, pk.keyid) {
+        let mut m = String.from("the signature was made by key ")
+        m.append(String.from_bytes(minisign.keyid_text(s.keyid)).unwrap_or(String.from("?")))
+        m.push_str(", not by the trusted key ")
+        m.append(String.from_bytes(minisign.keyid_text(pk.keyid)).unwrap_or(String.from("?")))
+        return Err(m)
+    }
+    let key = match crypto.ed25519_public_key(pk.key) {
+        Ok(k) => k
+        Err(_) => return Err(errs("the public key is not 32 bytes"))
+    }
+    let one = match crypto.ed25519_signature(s.sig) {
+        Ok(x) => x
+        Err(_) => return Err(errs("the signature is not 64 bytes"))
+    }
+    if !crypto.ed25519_verify(key, msg, one) { return Err(errs("the signature does not match the file (it was changed, or signed by another key)")) }
+    let global = match crypto.ed25519_signature(s.global) {
+        Ok(x) => x
+        Err(_) => return Err(errs("the global signature is not 64 bytes"))
+    }
+    if !crypto.ed25519_verify(key, minisign.global_message(s.sig, s.trusted), global) { return Err(errs("the trusted comment's signature does not match (the trusted comment was changed)")) }
+    Ok(s.trusted)
+}
+
+/// The lowercase hex SHA-256 of `data`.
+pub fn sha256_hex(data: List[u8]) -> List[u8] { bytes.hex(crypto.sha256(data)) }
+
+fn checksum(sk: minisign.SecretKey) -> Result[List[u8], String] {
+    match crypto.digest(crypto.Blake2b256, minisign.checksum_input(sk)) {
+        Ok(d) => Ok(d)
+        Err(e) => {
+            let mut m = String.from("BLAKE2b-256 (the secret key's checksum): ")
+            m.append(crypto.error_text(e))
+            Err(m)
+        }
+    }
+}
+
+/// A new keypair: a random seed and key id.
+pub fn generate() -> Result[minisign.SecretKey, String] uses io {
+    let seed = match crypto.ed25519_generate() {
+        Ok(x) => x
+        Err(e) => return Err(crypto.error_text(e))
+    }
+    let pk = match crypto.ed25519_public(seed) {
+        Ok(x) => x
+        Err(e) => return Err(crypto.error_text(e))
+    }
+    let id = match crypto.random_bytes(8) {
+        Ok(x) => x
+        Err(e) => return Err(crypto.error_text(e))
+    }
+    Ok(minisign.SecretKey(id, seed.bytes, pk.bytes))
+}
+
+pub fn public_of(sk: minisign.SecretKey) -> minisign.PublicKey { minisign.PublicKey(sk.keyid, sk.key) }
+
+/// The secret key file's text (with its checksum).
+pub fn render_secret(sk: minisign.SecretKey) -> Result[List[u8], String] {
+    let c = checksum(sk)?
+    Ok(minisign.render_secret(sk, c))
+}
+
+/// A secret key file, its checksum checked and its public key recomputed from the seed.
+pub fn load_secret(text: List[u8]) -> Result[minisign.SecretKey, String] {
+    let (sk, want) = minisign.parse_secret(text)?
+    let got = checksum(sk)?
+    if !bytes.eq(got, want) { return Err(errs("the secret key's checksum does not match (the file is damaged)")) }
+    let seed = match crypto.ed25519_seed(sk.seed) {
+        Ok(x) => x
+        Err(_) => return Err(errs("the secret key's seed is not 32 bytes"))
+    }
+    let pk = match crypto.ed25519_public(seed) {
+        Ok(x) => x
+        Err(e) => return Err(crypto.error_text(e))
+    }
+    if !bytes.eq(pk.bytes, sk.key) { return Err(errs("the secret key's public half does not match its seed")) }
+    Ok(sk)
+}
+
+/// A legacy (`Ed`) minisign signature of `msg`, with the two comments.
+pub fn sign(sk: minisign.SecretKey, msg: List[u8], untrusted: List[u8], trusted: List[u8]) -> Result[List[u8], String] {
+    let seed = match crypto.ed25519_seed(sk.seed) {
+        Ok(x) => x
+        Err(_) => return Err(errs("the secret key's seed is not 32 bytes"))
+    }
+    let one = match crypto.ed25519_sign(seed, msg) {
+        Ok(x) => x
+        Err(e) => return Err(crypto.error_text(e))
+    }
+    let global = match crypto.ed25519_sign(seed, minisign.global_message(one.bytes, trusted)) {
+        Ok(x) => x
+        Err(e) => return Err(crypto.error_text(e))
+    }
+    Ok(minisign.render_signature(minisign.Signature(untrusted, "Ed".bytes(), sk.keyid, one.bytes, trusted, global.bytes)))
+}

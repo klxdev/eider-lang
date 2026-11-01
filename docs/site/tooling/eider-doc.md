@@ -217,7 +217,7 @@ pub fn is_absolute(p: List[u8]) -> bool
 ...
 ```
 
-For a directory, it documents every `.ei` file in it. It skips `tests`, `examples`, `vendor`,
+For a directory, it documents every `.ei` file in it. It skips `tests`, `examples`,
 `target`, `deps` and hidden directories. For a file, it documents the modules of that file's
 package that the file's program loads. It needs no C compiler and doesn't type-check, so it
 also works on code that doesn't compile yet. Problems in the documented files, such as a

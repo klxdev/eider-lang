@@ -72,10 +72,21 @@ if [ $crc != 0 ]; then
 elif [ "$nok" -gt 0 ]; then
   echo "ok   crypto ($(grep -c '^ok   crypto rfc (' $S/crypto) backend(s): RFC/CAVP/Wycheproof vectors, ASan+UBSan, $(grep -c '^ok   crypto cross' $S/crypto) cross-backend checks)"
 fi
+# eider, the Eider command, end to end against fake signed releases (tests/eider/run.sh; it
+# links a crypto backend and needs .vendor/: skipped without them)
+if [ -n "$novendor" ]; then skip "eider: the eider command $novendor"
+else
+  sh tests/eider/run.sh > $S/eider 2>&1; erc=$?
+  while IFS= read -r l; do case $l in "skip "*) skip "${l#skip }" ;; esac; done < $S/eider
+  if [ $erc != 0 ]; then echo "FAIL eider: sh tests/eider/run.sh"; grep -A3 "^FAIL" $S/eider | head -20; fail=1
+  else grep "^ok" $S/eider; fi
+fi
 if [ -n "$novendor" ]; then skip "pkg: eider-pkg $novendor"
 else sh tests/pkg/run.sh | grep -q FAIL && { echo "FAIL pkg"; fail=1; } || echo "ok   pkg (eider-pkg end to end, local git repos)"; fi
 # imports: no quoted imports are left but the tests of the quoted form (docs/compiler.md "C8.26")
 sh scripts/check-imports.sh > $S/imports 2>&1 && cat $S/imports || { head -20 $S/imports; fail=1; }
+# vendor-layout: vendored copies are in .vendor/ only; nothing mentions the layout before it (#130, C400)
+sh scripts/check-vendor-layout.sh > $S/vlayout 2>&1 && cat $S/vlayout || { head -24 $S/vlayout; fail=1; }
 sh scripts/version.sh check > $S/version 2>&1 && cat $S/version || { echo "FAIL version: sh scripts/version.sh check"; sed 's/^/  /' $S/version; fail=1; }
 sh scripts/test-compiler.sh > $S/compiler 2>&1
 while IFS= read -r l; do case $l in "skip "*".vendor/"*) skip "compiler: ${l#skip }" ;; esac; done < $S/compiler

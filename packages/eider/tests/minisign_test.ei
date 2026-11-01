@@ -1,0 +1,63 @@
+// eider.minisign and eider.sums: parsing and writing the formats (the signatures themselves
+// are checked in tests/eider/run.sh, which links a crypto backend).
+
+import std.bytes
+import std.io
+import eider.minisign
+import eider.sums
+
+const PUB: str = "untrusted comment: minisign public key 666AF26DBB3CDE5D\nRWRd3jy7bfJqZvGpjgN1hjCxBqar5bcAI6c2iLxDoh07zil+aHWOMuD8\n"
+
+const SIG: str = "untrusted comment: signature from eider-sign secret key\nRWRd3jy7bfJqZvR5U1qzxOq6tAXHAKZhD87THapuWEv+cIGUttNL7u2z3D65Nyh/FaPaw/VKlTsIDZZlhPdVsgrvJFbZcX7/dgg=\ntrusted comment: timestamp:1\tfile:f\trelease:eider 0.1.0\nX7J5w601+DGn20skPIIzOKt2kgePwrn4fjhMlUuKF62z7T3UMQcaYyHLZTxsq8YVZCayvSRcv6+jrDC/CiRIAA==\n"
+
+fn line(label: str, b: List[u8]) uses io {
+    let mut l = label.bytes()
+    bytes.append(inout l, b)
+    io.outln(l)
+}
+
+fn err[T](r: Result[T, String]) uses io {
+    match r {
+        Ok(_) => print("ok?")
+        Err(e) => print(e)
+    }
+}
+
+fn main() uses io {
+    let pk = minisign.parse_public(PUB.bytes()).unwrap()
+    line("key id: ", minisign.keyid_text(pk.keyid))
+    print(pk.key.len())
+    // the base64 line alone is a key too, and writing it back gives the same file
+    let pk2 = minisign.parse_public("RWRd3jy7bfJqZvGpjgN1hjCxBqar5bcAI6c2iLxDoh07zil+aHWOMuD8".bytes()).unwrap()
+    print(bytes.eq(pk2.key, pk.key))
+    print(bytes.eq(minisign.render_public(pk), PUB.bytes()))
+    let s = minisign.parse_signature(SIG.bytes()).unwrap()
+    line("alg: ", s.alg)
+    line("untrusted: ", s.untrusted)
+    line("signer: ", minisign.keyid_text(s.keyid))
+    print(s.sig.len())
+    print(s.global.len())
+    line("release: ", minisign.trusted_field(s.trusted, "release").unwrap())
+    line("file: ", minisign.trusted_field(s.trusted, "file").unwrap())
+    print(minisign.trusted_field(s.trusted, "nope").is_none())
+    print(bytes.eq(minisign.render_signature(s), SIG.bytes()))
+    print(minisign.global_message(s.sig, s.trusted).len())
+    // malformed
+    err(minisign.parse_public("".bytes()))
+    err(minisign.parse_public("untrusted comment: x\n".bytes()))
+    err(minisign.parse_public("RWQ=".bytes()))
+    err(minisign.parse_public("not base64!".bytes()))
+    err(minisign.parse_signature("untrusted comment: x\n".bytes()))
+    err(minisign.parse_signature("untrusted comment: x\nRWQ=\ntrusted comment: y\nRWQ=\n".bytes()))
+    err(minisign.parse_signature("comment: x\nRWQ=\ntrusted comment: y\nRWQ=\n".bytes()))
+    err(minisign.parse_secret("untrusted comment: x\nRWQ=\n".bytes()))
+
+    let text = "0f343b0931126a20f133d67c2b018a3b5e0f7d7a6b4a3d4c4b5a6978695a4b3c  eider-0.1.0-linux-x86_64.tar.gz\n1111111111111111111111111111111111111111111111111111111111111111 *eider-0.1.0-linux-x86_64\n".bytes()
+    let list = sums.parse(text).unwrap()
+    print(list.len())
+    line("", sums.lookup(list, "eider-0.1.0-linux-x86_64".bytes()).unwrap())
+    print(sums.lookup(list, "eider".bytes()).is_none())
+    err(sums.parse("abc  x\n".bytes()))
+    err(sums.parse("0F343B0931126A20F133D67C2B018A3B5E0F7D7A6B4A3D4C4B5A6978695A4B3C  x\n".bytes()))
+    err(sums.parse("1111111111111111111111111111111111111111111111111111111111111111  a\n1111111111111111111111111111111111111111111111111111111111111111  a\n".bytes()))
+}

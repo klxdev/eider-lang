@@ -1,0 +1,46 @@
+// eider.vers: versions, series and what a user may ask for.
+
+import std.bytes
+import std.io
+import eider.vers
+
+fn show(s: str) uses io {
+    match vers.parse_want(s.bytes()) {
+        Some(w) => {
+            let mut l = s.bytes()
+            bytes.append(inout l, " -> ".bytes())
+            bytes.append(inout l, vers.want_text(w))
+            io.outln(l)
+        }
+        None => {
+            let mut l = s.bytes()
+            bytes.append(inout l, " -> invalid".bytes())
+            io.outln(l)
+        }
+    }
+}
+
+fn v(s: str) -> vers.Version { vers.parse(s.bytes()).unwrap() }
+
+fn main() uses io {
+    show("latest")
+    show("0.1")
+    show("v0.1")
+    show("0.1.0")
+    show("v0.1.0")
+    show("0.01")
+    show("0.1.0.1")
+    show("x")
+    show("")
+    let mut vs: List[vers.Version] = List.new()
+    vs.push(v("0.1.0"))
+    vs.push(v("0.2.3"))
+    vs.push(v("0.1.10"))
+    vs.push(v("0.1.9"))
+    for x in vers.sorted_desc(vs) { io.outln(vers.text(x)) }
+    io.outln(vers.text(vers.best(vers.parse_want("0.1".bytes()).unwrap(), vs).unwrap()))
+    io.outln(vers.text(vers.best(vers.Latest, vs).unwrap()))
+    print(vers.best(vers.parse_want("0.3".bytes()).unwrap(), vs).is_none())
+    print(vers.parse_series("0.1.0".bytes()).is_none())
+    print(vers.compare(v("1.10.0"), v("1.9.9")))
+}

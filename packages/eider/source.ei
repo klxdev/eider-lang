@@ -1,0 +1,315 @@
+//! source: where releases come from, and downloading their files.
+//!
+//! `EIDER_RELEASES` (else `releases` in config.toml, else `github:klxdev/eider-lang`):
+//!
+//! - `github:<owner>/<repo>`: the repository's GitHub Releases, through the GitHub API
+//!   (`EIDER_GITHUB_API`, default https://api.github.com) with a token, since eider-lang is
+//!   private: `GH_TOKEN`, else `GITHUB_TOKEN`, else `gh auth token`. Requests go through
+//!   curl; the token reaches curl in a header file (`-H @file`) in a directory only the user
+//!   can read, never on its command line, and curl drops it on the redirect to the asset
+//!   storage's host.
+//! - `file://<dir>` (or an absolute path): a directory with one subdirectory per release,
+//!   `v<version>/`, holding the release's files (what scripts/publish.sh uploads; its
+//!   `--dry-run` writes one in target/release/assets). For testing and offline machines.
+//!
+//! Nothing here is trusted: install.ei checks every file against the signed SHA256SUMS.
+
+import core.version
+import std.bytes
+import std.fs
+import std.env
+import std.proc
+import json
+import eider.vers
+
+pub const DEFAULT: str = "github:klxdev/eider-lang"
+
+/// `url` is the asset's API URL (github) or its path (a directory).
+pub type Asset = { name: List[u8], url: List[u8] }
+pub type Release = { version: vers.Version, tag: List[u8], assets: List[Asset] }
+/// `kind` is "github" (`place` is owner/repo) or "dir" (`place` is the directory).
+pub type Source = { kind: List[u8], place: List[u8], api: List[u8] }
+
+fn errs(m: str) -> String { String.from(m) }
+fn text(m: List[u8]) -> String { String.from_bytes(m).unwrap_or(String.from("?")) }
+fn is(a: List[u8], s: str) -> bool { bytes.eq(a, s.bytes()) }
+
+fn getenv(n: str) -> List[u8] uses io {
+    match env.get(n.bytes()) {
+        Some(v) => v
+        None => List.new()
+    }
+}
+
+/// The source `EIDER_RELEASES` names, else `configured` (config.toml), else DEFAULT.
+pub fn from_settings(configured: List[u8]) -> Result[Source, String] uses io, fs {
+    let mut s = getenv("EIDER_RELEASES")
+    if s.len() == 0 { s = configured.copy() }
+    if s.len() == 0 { s = DEFAULT.bytes() }
+    let mut api = getenv("EIDER_GITHUB_API")
+    if api.len() == 0 { api = "https://api.github.com".bytes() }
+    while api.len() > 0 && api[api.len() - 1] == 47 { api = bytes.slice(api, 0, api.len() - 1) }
+    if bytes.starts_with(s, "github:".bytes()) {
+        let repo = bytes.slice(s, 7, s.len())
+        if bytes.split(repo, 47).len() != 2 { return Err(errs("EIDER_RELEASES: github:<owner>/<repo>")) }
+        return Ok(Source("github".bytes(), repo, api))
+    }
+    let mut dir = s.copy()
+    if bytes.starts_with(dir, "file://".bytes()) { dir = bytes.slice(dir, 7, dir.len()) }
+    if dir.len() == 0 || dir[0] != 47 {
+        let mut m = String.from("EIDER_RELEASES=")
+        m.append(text(s))
+        m.push_str(": use github:<owner>/<repo>, file:///<directory> or an absolute directory")
+        return Err(m)
+    }
+    Ok(Source("dir".bytes(), fs.normalize(dir), api))
+}
+
+/// The source in words, for messages.
+pub fn describe(src: Source) -> List[u8] {
+    let mut m: List[u8] = List.new()
+    if is(src.kind, "github") {
+        bytes.append(inout m, "the GitHub releases of ".bytes())
+        bytes.append(inout m, src.place)
+    } else {
+        bytes.append(inout m, "the release directory ".bytes())
+        bytes.append(inout m, src.place)
+    }
+    m
+}
+
+// ------------------------------------------------------------------ the token and curl
+
+/// The GitHub token: GH_TOKEN, else GITHUB_TOKEN, else `gh auth token`.
+pub fn token() -> Result[List[u8], String] uses io, fs, net {
+    let t = bytes.trim(getenv("GH_TOKEN"))
+    if t.len() > 0 { return Ok(t) }
+    let t2 = bytes.trim(getenv("GITHUB_TOKEN"))
+    if t2.len() > 0 { return Ok(t2) }
+    let mut argv: List[List[u8]] = List.new()
+    argv.push("gh".bytes())
+    argv.push("auth".bytes())
+    argv.push("token".bytes())
+    match proc.run_with(argv, proc.limited(15000)) {
+        Ok(o) => {
+            let tok = bytes.trim(o.out)
+            if o.code == 0 && tok.len() > 0 { return Ok(tok) }
+        }
+        Err(_) => {}
+    }
+    Err(errs("no GitHub token: klxdev/eider-lang is private, so downloading its releases needs one. Set GH_TOKEN (or GITHUB_TOKEN), or log in with `gh auth login`"))
+}
+
+/// A directory for curl's header file that only the user can read.
+fn private_dir(tmp: List[u8]) -> Result[List[u8], String] uses io, fs, net {
+    let d = fs.join(tmp, ".curl".bytes())
+    fs.mkdir_all(d)?
+    let mut argv: List[List[u8]] = List.new()
+    argv.push("chmod".bytes())
+    argv.push("700".bytes())
+    argv.push(d)
+    let o = proc.run_with(argv, proc.captured())?
+    if o.code != 0 { return Err(errs("cannot make the download directory private (chmod 700)")) }
+    Ok(d)
+}
+
+/// GET `url` into `out` with the token; Ok(the HTTP status). `accept` is the Accept header.
+fn get(src: Source, url: List[u8], accept: str, out: List[u8], tmp: List[u8]) -> Result[i64, String] uses io, fs, net {
+    let tok = token()?
+    let d = private_dir(tmp)?
+    let hdr = fs.join(d, "headers".bytes())
+    let mut h = "Authorization: Bearer ".bytes()
+    bytes.append(inout h, tok)
+    bytes.append(inout h, "\nAccept: ".bytes())
+    bytes.append(inout h, accept.bytes())
+    bytes.append(inout h, "\nX-GitHub-Api-Version: 2022-11-28\nUser-Agent: eider/".bytes())
+    bytes.append(inout h, version.VERSION.bytes())
+    h.push(10)
+    fs.write(hdr, h)?
+    let mut argv: List[List[u8]] = List.new()
+    for a in ["curl", "-sS", "-L", "--retry", "2", "--connect-timeout", "30", "-H"] { argv.push(a.bytes()) }
+    let mut at = "@".bytes()
+    bytes.append(inout at, hdr)
+    argv.push(at)
+    // https only, unless EIDER_GITHUB_API itself is http (a local test server)
+    if bytes.starts_with(src.api, "https:".bytes()) {
+        argv.push("--proto".bytes())
+        argv.push("=https".bytes())
+    }
+    argv.push("-o".bytes())
+    argv.push(out)
+    argv.push("-w".bytes())
+    argv.push("%{http_code}".bytes())
+    argv.push(url)
+    let r = proc.run_with(argv, proc.captured())
+    let _ = fs.remove_all(d)
+    let o = match r {
+        Ok(x) => x
+        Err(e) => {
+            let mut m = String.from("cannot run curl (needed to download from GitHub): ")
+            m.append(e)
+            return Err(m)
+        }
+    }
+    if o.code != 0 {
+        let mut m = String.from("curl failed (exit ")
+        m.append(String.from_int(o.code as i64))
+        m.push_str(") for ")
+        m.append(text(url))
+        m.push_str(": ")
+        m.append(text(bytes.trim(o.err)))
+        return Err(m)
+    }
+    match bytes.parse_u64(bytes.trim(o.out)) {
+        Some(c) => Ok(c as i64)
+        None => Err(errs("curl did not report an HTTP status"))
+    }
+}
+
+fn status_error(code: i64, what: List[u8], src: Source) -> String {
+    let mut m = String.from("GitHub answered ")
+    m.append(String.from_int(code))
+    m.push_str(" for ")
+    m.append(text(what))
+    if code == 401 {
+        m.push_str(": the token was rejected (check GH_TOKEN, GITHUB_TOKEN or `gh auth status`)")
+    } else if code == 403 {
+        m.push_str(": the token may not read ")
+        m.append(text(src.place))
+        m.push_str(", or the API rate limit was reached")
+    } else if code == 404 {
+        m.push_str(": not found (no such release, or the token cannot see ")
+        m.append(text(src.place))
+        m.push_str(", a private repository: it needs read access to it)")
+    }
+    m
+}
+
+// ------------------------------------------------------------------ listing
+
+fn str_field(d: json.Doc, id: u32, k: str) -> List[u8] {
+    match json.field(d, id, k) {
+        Some(x) => json.as_str(d, x).unwrap_or(List.new())
+        None => List.new()
+    }
+}
+
+fn parse_github(body: List[u8]) -> Result[List[Release], String] {
+    let d = match json.parse(body) {
+        Ok(x) => x
+        Err(e) => {
+            let mut m = String.from("the GitHub API's answer is not JSON: ")
+            m.append(text(json.error_text(e)))
+            return Err(m)
+        }
+    }
+    if json.kind(d, d.root) != json.ARRAY { return Err(errs("the GitHub API's list of releases is not an array")) }
+    let mut out: List[Release] = List.new()
+    let mut i: u32 = 0
+    while i < json.len(d, d.root) {
+        let r = json.at(d, d.root, i).unwrap()
+        i += 1
+        let draft = match json.field(d, r, "draft") {
+            Some(x) => json.as_bool(d, x).unwrap_or(false)
+            None => false
+        }
+        if draft { continue }
+        let tag = str_field(d, r, "tag_name")
+        let v = match vers.parse_tag(tag) {
+            Some(x) => x
+            None => continue
+        }
+        let mut assets: List[Asset] = List.new()
+        match json.field(d, r, "assets") {
+            Some(a) => {
+                let mut j: u32 = 0
+                while j < json.len(d, a) {
+                    let x = json.at(d, a, j).unwrap()
+                    j += 1
+                    assets.push(Asset(str_field(d, x, "name"), str_field(d, x, "url")))
+                }
+            }
+            None => {}
+        }
+        out.push(Release(v, tag, assets))
+    }
+    Ok(out)
+}
+
+fn list_dir(src: Source) -> Result[List[Release], String] uses fs {
+    if !fs.is_dir(src.place) {
+        let mut m = String.from("the release directory ")
+        m.append(text(src.place))
+        m.push_str(" does not exist (EIDER_RELEASES)")
+        return Err(m)
+    }
+    let mut out: List[Release] = List.new()
+    for n in fs.sort(fs.list(src.place)?) {
+        let dir = fs.join(src.place, n)
+        if !fs.is_dir(dir) { continue }
+        let v = match vers.parse_tag(n) {
+            Some(x) => x
+            None => continue
+        }
+        let mut assets: List[Asset] = List.new()
+        for f in fs.sort(fs.list(dir)?) {
+            let p = fs.join(dir, f)
+            if !fs.is_dir(p) { assets.push(Asset(f, p)) }
+        }
+        out.push(Release(v, n, assets))
+    }
+    Ok(out)
+}
+
+/// Every release (drafts left out), as the source lists them. `tmp` is a scratch directory.
+pub fn releases(src: Source, tmp: List[u8]) -> Result[List[Release], String] uses io, fs, net {
+    if is(src.kind, "dir") { return list_dir(src) }
+    fs.mkdir_all(tmp)?
+    let out = fs.join(tmp, "releases.json".bytes())
+    let mut url = src.api.copy()
+    bytes.append(inout url, "/repos/".bytes())
+    bytes.append(inout url, src.place)
+    bytes.append(inout url, "/releases?per_page=100".bytes())
+    let code = get(src, url, "application/vnd.github+json", out, tmp)?
+    if code != 200 {
+        let mut what = "the releases of ".bytes()
+        bytes.append(inout what, src.place)
+        let _ = fs.remove_all(out)
+        return Err(status_error(code, what, src))
+    }
+    let body = fs.read(out)?
+    let _ = fs.remove_all(out)
+    parse_github(body)
+}
+
+/// The newest release `w` accepts.
+pub fn find(rs: List[Release], w: vers.Want) -> Option[Release] {
+    let mut vs: List[vers.Version] = List.new()
+    for r in rs { vs.push(r.version) }
+    let best = vers.best(w, vs)?
+    for r in rs {
+        if vers.compare(r.version, best) == 0 { return Some(r) }
+    }
+    None
+}
+
+pub fn asset(r: Release, name: List[u8]) -> Option[Asset] {
+    for a in r.assets {
+        if bytes.eq(a.name, name) { return Some(a) }
+    }
+    None
+}
+
+/// Download `a` to `dest`.
+pub fn fetch(src: Source, a: Asset, dest: List[u8], tmp: List[u8]) -> Result[bool, String] uses io, fs, net {
+    if is(src.kind, "dir") {
+        let data = fs.read(a.url)?
+        return fs.write(dest, data)
+    }
+    let code = get(src, a.url, "application/octet-stream", dest, tmp)?
+    if code != 200 {
+        let _ = fs.remove_all(dest)
+        return Err(status_error(code, a.name, src))
+    }
+    Ok(true)
+}

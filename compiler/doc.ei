@@ -3,7 +3,7 @@
 // JSON; without `--json` the same description is printed as text, like `go doc`.
 //
 // What is documented. For a directory: every `.ei` file under it (skipping `tests`,
-// `examples`, `vendor`, `target`, `deps` and hidden directories), loaded as one program
+// `examples`, `target`, `deps` and hidden directories), loaded as one program
 // through an entry that imports them all, so each module's imports resolve as in a build;
 // the modules shown are those files (for the toolchain's core, also the prelude). For a
 // file: the modules of the file's package that its program loads (or, in no package, the
@@ -85,7 +85,7 @@ pub fn api(target: List[u8], private: bool) -> Result[Api, List[u8]] uses io, fs
     if dir_mode {
         let root = canon(target)
         let prelude = canon(fs.join(resolve.toolchain_root(), s("core/prelude.ei")))
-        let skip = [s("tests"), s("examples"), s("vendor"), s("target"), s("deps"), s(".git"), s(".claude")]
+        let skip = [s("tests"), s("examples"), s("target"), s("deps"), s(".git"), s(".claude")]
         let mut skips: List[List[u8]] = List.new()
         for x in skip { skips.push(x) }
         let files = match fs.walk(root, skips) {

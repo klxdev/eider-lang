@@ -1,9 +1,0 @@
---- stderr
-error[E0810]: package `net` is vendored in <root>/compiler/tests/pkgs/oldvend/vendor/net, which is no longer read: vendored packages are in .vendor/
-  --> compiler/tests/pkgs/oldvend/main.ei:4:1
-  |
-4 | import net
-  | ^
-  help: move them: `mv vendor .vendor` in <root>/compiler/tests/pkgs/oldvend (or run `eider-pkg vendor` there and remove vendor/)
-error: 1 error
---- exit 1
