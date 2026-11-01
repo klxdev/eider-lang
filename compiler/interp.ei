@@ -1,0 +1,1521 @@
+// interp: an interpreter of the typed IR (ir.ei), for `comptime` (consteval.ei; docs/compiler.md,
+// "C8.11: the comptime interpreter"; decision C500).
+//
+// It runs a checked program's functions on values instead of building them with clang and
+// running the result, and gives the same results and the same trap messages the built program
+// would: integer arithmetic is checked as llvm.ei's lowering checks it, the operation traits
+// (==, compare, hash, Show, copy, Default) follow llvm.ei's glue, user impls included, and a
+// Map keeps the runtime's slots (hash, probing, growth), so iterating one walks the same order.
+// Nothing reaches the outside: `print` appends to `St.out`, the only `extern "c"` functions it
+// knows are core/sys.ei's buffer and text helpers (ec_str_len, ec_str_byte, ec_in_*, ec_out_*),
+// and every other one, like a thread or the clock, is a failure. The checker's capabilities
+// keep comptime code away from those anyway; the interpreter makes it so by construction.
+//
+// Values (`Val`) are small records over copy-on-write Lists, so passing and storing one is a
+// share and value semantics come for free: S_READ, S_CLONE and S_MOVE are copies of the
+// value, S_DROP does nothing. Ref, Mutex and Chan are cells of `St.heap`, shared by handle.
+// A place is resolved to a path (a root local and child indexes, bounds checked) and written
+// by taking the value out, changing it and putting it back, so a write never copies a List
+// that only one owner holds. `inout` arguments are copied in and out: exclusivity (E0301)
+// keeps that equal to passing the place.
+//
+// What it refuses (an `Err` that consteval reports as E0807): records with their own Drop
+// (comptime evaluation doesn't run Drop), threads, the clock, and externs other than the ones
+// above; a call depth beyond MAX_DEPTH is the runtime's stack overflow message, and more than
+// MAX_STEPS statements stop the evaluation.
+
+import core.sys
+import std.bytes
+import eiderc.ast
+import eiderc.intern
+import eiderc.types
+import eiderc.resolve
+import eiderc.fold
+import eiderc.ir
+import eiderc.lower
+
+const NONE: u32 = 4294967295
+
+/// Value kinds. K_UNDEF: a local not assigned yet (it reads as its type's zero, like the
+/// zeroed alloca the backend gives it).
+pub const K_UNDEF: u32 = 0
+pub const K_INT: u32 = 1
+pub const K_BOOL: u32 = 2
+/// str and String: `b` holds the bytes (never a NUL)
+pub const K_STR: u32 = 3
+pub const K_UNIT: u32 = 4
+/// records, tuples, arrays and Box: `xs` holds the parts (a Box one)
+pub const K_AGG: u32 = 5
+/// `n` the variant, `xs` its payload
+pub const K_ENUM: u32 = 6
+/// `xs` the elements
+pub const K_LIST: u32 = 7
+/// `n` the count, `b` the slot states (0 empty, 1 used, 2 removed; its length is the
+/// capacity), xs[0] the keys and xs[1] the values by slot, xs[2] the used slot count
+pub const K_MAP: u32 = 8
+/// a fn value: `n` the IR function, `xs` the captured values
+pub const K_FN: u32 = 9
+/// a Ref, Mutex or Chan: `n` the cell in St.heap
+pub const K_HEAP: u32 = 10
+
+pub type Val = { k: u32, n: u64, b: List[u8], xs: List[Val] }
+
+/// A shared cell: a Ref's or Mutex's value `v` (`st`: a Ref's accesses, > 0 reads, -1 an
+/// update), or a Chan's queue `q` (`closed`).
+type Cell = { v: Val, st: i64, q: List[Val], closed: bool }
+
+/// The interpreter's state: the cells, what `print` wrote, core/sys.ei's input and output
+/// buffers, the call depth and the statements run.
+pub type St = { heap: List[Cell], out: List[u8], inb: List[u8], outb: List[u8], depth: u32, steps: u64, deep: Map[u32, bool] }
+
+/// A frame: the function, its locals, its module (for trap file names).
+type Fr = { f: u32, locals: List[Val], file: u32 }
+
+/// How a statement or block ended: F_NEXT, F_BREAK / F_CONT (`n`: how many enclosing loops
+/// it leaves besides the innermost), F_RET (`v`).
+const F_NEXT: u32 = 0
+const F_BREAK: u32 = 1
+const F_CONT: u32 = 2
+const F_RET: u32 = 3
+type Flow = { k: u32, n: u32, v: Val }
+
+/// Why evaluation stopped: the line the program would have written to stderr (a trap is
+/// `eider: runtime error: <message> (<file>:<line>)`), or a construct comptime can't run.
+pub type Trap = { msg: List[u8] }
+
+/// The result of a call: its value, and its parameters' final values (`inout` copy-out).
+type Called = { v: Val, params: List[Val] }
+
+const MAX_DEPTH: u32 = 1000
+const MAX_STEPS: u64 = 1000000000
+
+fn s(x: str) -> List[u8] { sys.lit(x) }
+
+pub fn new() -> St { St(List.new(), List.new(), List.new(), List.new(), 0, 0, Map.new()) }
+
+// ---- values
+
+fn mk(k: u32, n: u64) -> Val { Val(k, n, List.new(), List.new()) }
+pub fn vint(n: u64) -> Val { mk(K_INT, n) }
+pub fn vbool(b: bool) -> Val { if b { mk(K_BOOL, 1) } else { mk(K_BOOL, 0) } }
+pub fn vunit() -> Val { mk(K_UNIT, 0) }
+fn undef() -> Val { mk(K_UNDEF, 0) }
+pub fn vstr(b: List[u8]) -> Val { Val(K_STR, 0, b, List.new()) }
+fn agg(xs: List[Val]) -> Val { Val(K_AGG, 0, List.new(), xs) }
+fn venum(tag: u32, xs: List[Val]) -> Val { Val(K_ENUM, tag as u64, List.new(), xs) }
+fn vlist(xs: List[Val]) -> Val { Val(K_LIST, 0, List.new(), xs) }
+fn one(v: Val) -> List[Val] {
+    let mut xs: List[Val] = List.new()
+    xs.push(v)
+    xs
+}
+
+fn next() -> Flow { Flow(F_NEXT, 0, undef()) }
+
+fn tk(p: lower.P, ty: u32) -> u32 { types.kind(p.t, ty) }
+
+/// The zero of type ty (what a local reads before it is assigned).
+fn zero(p: lower.P, ty: u32) -> Val {
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_INT { return vint(0) }
+    if k == types.T_BOOL { return vbool(false) }
+    if k == types.T_STR || k == types.T_STRING { return vstr(List.new()) }
+    if k == types.T_LIST { return vlist(List.new()) }
+    if k == types.T_MAP { return empty_map() }
+    if k == types.T_RECORD || k == types.T_TUPLE {
+        let mut xs: List[Val] = List.new()
+        for x in parts(p, ty) { xs.push(zero(p, x)) }
+        return agg(xs)
+    }
+    if k == types.T_ARRAY {
+        let mut xs: List[Val] = List.new()
+        for i in 0..t.b { xs.push(zero(p, t.a)) }
+        return agg(xs)
+    }
+    if k == types.T_ENUM {
+        let d = types.def_of(p.t, ty)
+        let mut xs: List[Val] = List.new()
+        if d.len > 0 {
+            let v = types.variant(p.t, d, 0)
+            for i in 0..v.flen { xs.push(zero(p, types.field(p.t, v.fstart, i).ty)) }
+        }
+        return venum(0, xs)
+    }
+    // Box (a null box), fn values and handles: nothing to read
+    if k == types.T_BOX { return agg(List.new()) }
+    if k == types.T_FN { return mk(K_FN, NONE as u64) }
+    if types.is_handle(k) || k == types.T_REF { return mk(K_HEAP, NONE as u64) }
+    vunit()
+}
+
+/// The part types of a record or tuple, in order.
+fn parts(p: lower.P, ty: u32) -> List[u32] {
+    let mut out: List[u32] = List.new()
+    if tk(p, ty) == types.T_TUPLE { return types.elems(p.t, ty) }
+    let d = types.def_of(p.t, ty)
+    for i in 0..d.len { out.push(types.field(p.t, d.start, i).ty) }
+    out
+}
+
+/// The payload types of variant v of enum ty.
+fn vparts(p: lower.P, ty: u32, v: u32) -> List[u32] {
+    let mut out: List[u32] = List.new()
+    let d = types.def_of(p.t, ty)
+    let vr = types.variant(p.t, d, v)
+    for i in 0..vr.flen { out.push(types.field(p.t, vr.fstart, i).ty) }
+    out
+}
+
+fn some_of(p: lower.P, oty: u32, v: Val) -> Val { venum(lower.some_idx(p, oty), one(v)) }
+fn none_of(p: lower.P, oty: u32) -> Val { venum(lower.none_idx(p, oty), List.new()) }
+
+// ---- traps
+
+fn file_of(p: lower.P, fr: Fr, line: u32) -> List[u8] {
+    if fr.file == 0 || line >= 1048576 || fr.file as usize >= p.ir.files.len() { return s("program") }
+    p.ir.files[fr.file as usize]
+}
+
+/// The runtime's trap message for `msg` at `line` of frame fr's module.
+fn trap(p: lower.P, fr: Fr, msg: str, line: u32) -> Trap { trapb(p, fr, s(msg), line) }
+
+fn trapb(p: lower.P, fr: Fr, msg: List[u8], line: u32) -> Trap {
+    let mut m = s("eider: runtime error: ")
+    bytes.append(inout m, msg)
+    bytes.append(inout m, s(" ("))
+    bytes.append(inout m, file_of(p, fr, line))
+    m.push(58)
+    bytes.append(inout m, bytes.from_u64(line as u64))
+    m.push(41)
+    Trap(m)
+}
+
+/// A construct comptime evaluation doesn't run (no program would trap like this).
+fn cannot(what: str) -> Trap {
+    let mut m = s("comptime evaluation can't ")
+    bytes.append(inout m, s(what))
+    Trap(m)
+}
+
+// ---- integers (values are 64-bit two's complement, signed kinds sign-extended)
+
+fn ikind(p: lower.P, ty: u32) -> u32 { types.ik(p.t, ty) }
+
+/// v cut to kind k's width (sign-extended for signed kinds).
+fn norm(v: u64, k: u32) -> u64 {
+    if k == types.IK_I64 || k == types.IK_U64 || k == types.IK_USIZE { return v }
+    if k == types.IK_U8 { return v & 255 }
+    if k == types.IK_U32 { return v & 4294967295 }
+    // i32
+    let lo = v & 4294967295
+    if lo >= 2147483648 { return lo | 18446744069414584320 }
+    lo
+}
+
+fn wide(v: u64, k: u32) -> fold.Wide { fold.from_bits(v, types.signed(k)) }
+
+/// Whether the exact value w fits kind k.
+fn fits(w: fold.Wide, k: u32) -> bool {
+    let lo = fold.from_bits(lower.kmin(k), types.signed(k))
+    let hi = fold.of_u64(lower.kmax(k))
+    !fold.lt(w, lo) && !fold.gt(w, hi)
+}
+
+fn neg_val(v: u64) -> bool { v >= 9223372036854775808 }
+
+/// a < b for kind k.
+fn ilt(a: u64, b: u64, k: u32) -> bool {
+    if types.signed(k) {
+        let na = neg_val(a)
+        let nb = neg_val(b)
+        if na != nb { return na }
+    }
+    a < b
+}
+
+/// Arithmetic shift right of a sign-extended 64-bit value.
+fn ashr(a: u64, n: u64) -> u64 {
+    if neg_val(a) { return 18446744073709551615 ^ ((18446744073709551615 ^ a) >> n) }
+    a >> n
+}
+
+fn binary(p: lower.P, fr: Fr, o: u32, ty: u32, a: u64, b: u64, line: u32) -> Result[u64, Trap] {
+    let k = ikind(p, ty)
+    let sg = types.signed(k)
+    if o == ast.OP_ADD || o == ast.OP_SUB || o == ast.OP_MUL {
+        let wa = wide(a, k)
+        let wb = wide(b, k)
+        let r = if o == ast.OP_ADD { fold.add(wa, wb) } else if o == ast.OP_SUB { fold.sub(wa, wb) } else { fold.mul(wa, wb) }
+        if !fits(r, k) {
+            let m = if o == ast.OP_ADD { "integer overflow in +" } else if o == ast.OP_SUB { "integer overflow in -" } else { "integer overflow in *" }
+            return Err(trap(p, fr, m, line))
+        }
+        return Ok(norm(fold.bits64(r), k))
+    }
+    if o == ast.OP_DIV || o == ast.OP_REM {
+        if b == 0 {
+            let m = if o == ast.OP_DIV { "division by zero" } else { "remainder by zero" }
+            return Err(trap(p, fr, m, line))
+        }
+        if sg && a == lower.kmin(k) && b == 18446744073709551615 {
+            let m = if o == ast.OP_DIV { "integer overflow in /" } else { "integer overflow in %" }
+            return Err(trap(p, fr, m, line))
+        }
+        let wa = wide(a, k)
+        let wb = wide(b, k)
+        let r = if o == ast.OP_DIV { fold.div(wa, wb) } else { fold.rem(wa, wb) }
+        return Ok(norm(fold.bits64(r), k))
+    }
+    if o == ast.OP_WADD { return Ok(norm(a +% b, k)) }
+    if o == ast.OP_WSUB { return Ok(norm(a -% b, k)) }
+    if o == ast.OP_WMUL { return Ok(norm(a *% b, k)) }
+    if o == ast.OP_BAND { return Ok(a & b) }
+    if o == ast.OP_BOR { return Ok(a | b) }
+    if o == ast.OP_BXOR { return Ok(a ^ b) }
+    // shifts: the count compared unsigned at the type's width
+    // (a negative count is a huge unsigned one, so one unsigned compare checks both ends)
+    let bits = types.bits(k) as u64
+    let cu = b
+    if cu >= bits { return Err(trap(p, fr, "shift count out of range", line)) }
+    if o == ast.OP_SHL { return Ok(norm(a << cu, k)) }
+    if sg { return Ok(norm(ashr(a, cu), k)) }
+    Ok(a >> cu)
+}
+
+fn cast(p: lower.P, fr: Fr, v: u64, from: u32, to: u32, line: u32) -> Result[u64, Trap] {
+    let w = wide(v, from)
+    if !fits(w, to) { return Err(trap(p, fr, "integer conversion out of range", line)) }
+    Ok(norm(fold.bits64(w), to))
+}
+
+// ---- programs
+
+/// Run function f of program p (no arguments) to its result.
+pub fn run(p: lower.P, inout st: St, f: u32) -> Result[Val, Trap] {
+    let mut args: List[Val] = List.new()
+    let c = call(p, inout st, f, List.new(), inout args)?
+    Ok(c.v)
+}
+
+/// The number of captured values a closure body f starts with.
+fn ncap(p: lower.P, f: u32) -> u32 {
+    let fd = p.ir.fns[f as usize]
+    let mut n: u32 = 0
+    while n < fd.lcount && p.ir.locals[(fd.lstart + n) as usize].kind == ir.L_CAPTURE { n += 1 }
+    n
+}
+
+/// Call function f with environment env (a closure's captures) and arguments args (moved
+/// into the callee's parameters).
+fn call(p: lower.P, inout st: St, f: u32, env: List[Val], inout args: List[Val]) -> Result[Called, Trap] {
+    let fd = p.ir.fns[f as usize]
+    let mut fr = Fr(f, List.new(), fd.file)
+    if fd.body == 0 {
+        let r = extern_call(p, inout st, f, args)?
+        return Ok(Called(r, List.new()))
+    }
+    st.depth += 1
+    if st.depth > MAX_DEPTH {
+        return Err(Trap(s("eider: runtime error: stack overflow (program:0)")))
+    }
+    for i in 0..fd.lcount { fr.locals.push(undef()) }
+    let nc = env.len()
+    for i in 0..nc { fr.locals[i] = env[i] }
+    for i in 0..args.len() { fr.locals[nc + i] = args[i].replace(undef()) }
+    let fl = block(p, inout st, inout fr, fd.body - 1)?
+    st.depth -= 1
+    let mut params: List[Val] = List.new()
+    for i in 0..args.len() { params.push(fr.locals[nc + i].replace(undef())) }
+    if fl.k == F_RET { return Ok(Called(fl.v, params)) }
+    Ok(Called(vunit(), params))
+}
+
+fn block(p: lower.P, inout st: St, inout fr: Fr, b: u32) -> Result[Flow, Trap] {
+    let bl = p.ir.blocks[b as usize]
+    for i in 0..bl.len {
+        let fl = stmt(p, inout st, inout fr, p.ir.extra[(bl.start + i) as usize])?
+        if fl.k != F_NEXT { return Ok(fl) }
+    }
+    Ok(next())
+}
+
+/// The value of local l (its type's zero before it is assigned).
+fn local(p: lower.P, fr: Fr, l: u32) -> Val {
+    let v = fr.locals[l as usize]
+    if v.k == K_UNDEF { return zero(p, p.ir.locals[(p.ir.fns[fr.f as usize].lstart + l) as usize].ty) }
+    v
+}
+
+fn op(p: lower.P, fr: Fr, id: u32) -> Val {
+    let o = p.ir.ops[id as usize]
+    if o.kind == ir.O_INT { return vint(o.v) }
+    if o.kind == ir.O_BOOL { return vbool(o.v == 1) }
+    if o.kind == ir.O_STR { return vstr(p.ir.strs[o.a as usize]) }
+    if o.kind == ir.O_UNIT { return vunit() }
+    local(p, fr, o.a)
+}
+
+/// Resolve place id to its root local, pushing the child indexes onto steps (bounds checked).
+fn path(p: lower.P, fr: Fr, id: u32, inout steps: List[u32]) -> Result[u32, Trap] {
+    let pl = p.ir.places[id as usize]
+    if pl.kind == ir.P_LOCAL { return Ok(pl.a) }
+    let root = path(p, fr, pl.a, inout steps)?
+    if pl.kind == ir.P_FIELD {
+        steps.push(pl.b)
+    } else if pl.kind == ir.P_PAYLOAD {
+        steps.push(pl.c)
+    } else if pl.kind == ir.P_DEREF {
+        steps.push(0)
+    } else {
+        let i = op(p, fr, pl.b).n
+        let base = at(local(p, fr, root), steps, 0)
+        if i >= base.xs.len() as u64 { return Err(trap(p, fr, "index out of bounds", pl.line)) }
+        steps.push(i as u32)
+    }
+    Ok(root)
+}
+
+fn at(v: Val, steps: List[u32], k: usize) -> Val {
+    if k == steps.len() { return v }
+    at(v.xs[steps[k] as usize], steps, k + 1)
+}
+
+fn put(inout v: Val, steps: List[u32], k: usize, nv: Val) {
+    if k == steps.len() {
+        v = nv
+        return
+    }
+    put(inout v.xs[steps[k] as usize], steps, k + 1, nv)
+}
+
+fn take_at(inout v: Val, steps: List[u32], k: usize) -> Val {
+    if k == steps.len() { return v.replace(undef()) }
+    take_at(inout v.xs[steps[k] as usize], steps, k + 1)
+}
+
+/// A place resolved for writing: its root local holds a value (not K_UNDEF) from now on.
+type Loc = { root: u32, steps: List[u32] }
+
+fn locate(p: lower.P, inout fr: Fr, id: u32) -> Result[Loc, Trap] {
+    let mut steps: List[u32] = List.new()
+    let root = path(p, fr, id, inout steps)?
+    if fr.locals[root as usize].k == K_UNDEF { fr.locals[root as usize] = local(p, fr, root) }
+    Ok(Loc(root, steps))
+}
+
+fn read(p: lower.P, fr: Fr, id: u32) -> Result[Val, Trap] {
+    let mut steps: List[u32] = List.new()
+    let root = path(p, fr, id, inout steps)?
+    Ok(at(local(p, fr, root), steps, 0))
+}
+
+fn write(p: lower.P, inout fr: Fr, id: u32, v: Val) -> Result[bool, Trap] {
+    let lc = locate(p, inout fr, id)?
+    put(inout fr.locals[lc.root as usize], lc.steps, 0, v)
+    Ok(true)
+}
+
+fn take_loc(inout fr: Fr, lc: Loc) -> Val { take_at(inout fr.locals[lc.root as usize], lc.steps, 0) }
+fn put_loc(inout fr: Fr, lc: Loc, v: Val) { put(inout fr.locals[lc.root as usize], lc.steps, 0, v) }
+
+fn set_dst(inout fr: Fr, dst: u32, v: Val) {
+    if dst != NONE { fr.locals[dst as usize] = v }
+}
+
+/// Argument a of a call or builtin: an operand, or (ARG_PLACE) the value of a place.
+fn arg(p: lower.P, fr: Fr, a: u32) -> Result[Val, Trap] {
+    if a >= ir.ARG_PLACE { return read(p, fr, a - ir.ARG_PLACE) }
+    Ok(op(p, fr, a))
+}
+
+fn arg_ty(p: lower.P, a: u32) -> u32 {
+    if a >= ir.ARG_PLACE { return p.ir.places[(a - ir.ARG_PLACE) as usize].ty }
+    ir.op_ty(p.ir, a)
+}
+
+fn barg(p: lower.P, x: ir.Stmt, i: u32) -> u32 { p.ir.extra[(x.b + i) as usize] }
+
+// The statements: `stmt` (control flow, on the path every interpreted call takes, so its
+// frame stays small: the native stack bounds the depth MAX_DEPTH allows), `call_stmt`, and
+// `simple` for the rest.
+
+fn stmt(p: lower.P, inout st: St, inout fr: Fr, id: u32) -> Result[Flow, Trap] {
+    let k = p.ir.stmts[id as usize].kind
+    st.steps += 1
+    if st.steps > MAX_STEPS { return Err(cannot("run for more than 1000000000 IR statements")) }
+    if k == ir.S_IF {
+        let x = p.ir.stmts[id as usize]
+        if op(p, fr, x.a).n == 1 { return block(p, inout st, inout fr, x.b) }
+        return block(p, inout st, inout fr, x.c)
+    }
+    if k == ir.S_LOOP { return loop_stmt(p, inout st, inout fr, id) }
+    if k == ir.S_CALL || k == ir.S_CALLV {
+        call_stmt(p, inout st, inout fr, id)?
+        return Ok(next())
+    }
+    if k == ir.S_BREAK { return Ok(Flow(F_BREAK, p.ir.stmts[id as usize].a, undef())) }
+    if k == ir.S_CONTINUE { return Ok(Flow(F_CONT, p.ir.stmts[id as usize].a, undef())) }
+    if k == ir.S_RETURN {
+        let a = p.ir.stmts[id as usize].a
+        if a == 0 { return Ok(Flow(F_RET, 0, vunit())) }
+        return Ok(Flow(F_RET, 0, op(p, fr, a - 1)))
+    }
+    simple(p, inout st, inout fr, id)?
+    Ok(next())
+}
+
+fn loop_stmt(p: lower.P, inout st: St, inout fr: Fr, id: u32) -> Result[Flow, Trap] {
+    let x = p.ir.stmts[id as usize]
+    while true {
+        let fl = block(p, inout st, inout fr, x.a)?
+        if fl.k == F_RET { return Ok(fl) }
+        if fl.k == F_BREAK {
+            if fl.n == 0 { return Ok(next()) }
+            return Ok(Flow(F_BREAK, fl.n - 1, undef()))
+        }
+        if fl.k == F_CONT && fl.n > 0 { return Ok(Flow(F_CONT, fl.n - 1, undef())) }
+        let sf = block(p, inout st, inout fr, x.b)?
+        if sf.k == F_RET { return Ok(sf) }
+        if sf.k == F_BREAK {
+            if sf.n == 0 { return Ok(next()) }
+            return Ok(Flow(F_BREAK, sf.n - 1, undef()))
+        }
+        if sf.k == F_CONT && sf.n > 0 { return Ok(Flow(F_CONT, sf.n - 1, undef())) }
+    }
+    Ok(next())
+}
+
+fn call_stmt(p: lower.P, inout st: St, inout fr: Fr, id: u32) -> Result[bool, Trap] {
+    let x = p.ir.stmts[id as usize]
+    let k = x.kind
+    // operands first, then the `inout` places, taken out of their owners while the
+    // callee has them (copy-in, copy-out)
+    let mut args: List[Val] = List.new()
+    for i in 0..x.c {
+        let a = barg(p, x, i)
+        if a >= ir.ARG_PLACE { args.push(undef()) } else { args.push(op(p, fr, a)) }
+    }
+    let mut locs: List[Loc] = List.new()
+    for i in 0..x.c {
+        let a = barg(p, x, i)
+        if a < ir.ARG_PLACE { continue }
+        let lc = locate(p, inout fr, a - ir.ARG_PLACE)?
+        args[i as usize] = take_loc(inout fr, lc)
+        locs.push(lc)
+    }
+    let mut f = x.a.copy()
+    let mut env: List[Val] = List.new()
+    if k == ir.S_CALLV {
+        let fv = op(p, fr, x.a)
+        if fv.n == NONE as u64 { return Err(cannot("call an unset fn value")) }
+        f = fv.n as u32
+        env = fv.xs
+    }
+    let r = call(p, inout st, f, env, inout args)?
+    // `inout` arguments: the parameters' final values go back
+    let mut j: usize = 0
+    for i in 0..x.c {
+        if barg(p, x, i) < ir.ARG_PLACE { continue }
+        put_loc(inout fr, locs[j], r.params[i as usize])
+        j += 1
+    }
+    set_dst(inout fr, x.dst, r.v)
+    return Ok(true)
+}
+
+fn simple(p: lower.P, inout st: St, inout fr: Fr, id: u32) -> Result[bool, Trap] {
+    let x = p.ir.stmts[id as usize]
+    let k = x.kind
+    if k == ir.S_COPY || k == ir.S_CLONE {
+        let v = op(p, fr, x.a)
+        set_dst(inout fr, x.dst, v)
+        return Ok(true)
+    }
+    if k == ir.S_READ || k == ir.S_MOVE {
+        let v = read(p, fr, x.a)?
+        set_dst(inout fr, x.dst, v)
+        return Ok(true)
+    }
+    if k == ir.S_STORE {
+        let v = op(p, fr, x.b)
+        write(p, inout fr, x.a, v)?
+        return Ok(true)
+    }
+    if k == ir.S_DROP || k == ir.S_CHECK {
+        let mut steps: List[u32] = List.new()
+        path(p, fr, x.a, inout steps)?
+        return Ok(true)
+    }
+    if k == ir.S_NOTE { return Ok(true) }
+    if k == ir.S_UNARY {
+        let v = op(p, fr, x.b)
+        if x.a == ir.U_NOT {
+            set_dst(inout fr, x.dst, vbool(v.n == 0))
+            return Ok(true)
+        }
+        let ik = ikind(p, x.ty)
+        if x.a == ir.U_BNOT {
+            set_dst(inout fr, x.dst, vint(norm(v.n ^ 18446744073709551615, ik)))
+            return Ok(true)
+        }
+        if types.signed(ik) && v.n == lower.kmin(ik) { return Err(trap(p, fr, "integer overflow in negation", x.line)) }
+        set_dst(inout fr, x.dst, vint(norm(0 -% v.n, ik)))
+        return Ok(true)
+    }
+    if k == ir.S_BINARY {
+        let a = op(p, fr, x.b)
+        let b = op(p, fr, x.c)
+        let o = x.a
+        if o == ast.OP_EQ || o == ast.OP_NE {
+            let e = eq(p, inout st, x.ty, a, b)?
+            set_dst(inout fr, x.dst, vbool(e == (o == ast.OP_EQ)))
+            return Ok(true)
+        }
+        if o >= ast.OP_LT && o <= ast.OP_GE {
+            let c = cmp(p, inout st, x.ty, a, b)?
+            let r = if o == ast.OP_LT { c < 0 } else if o == ast.OP_LE { c <= 0 } else if o == ast.OP_GT { c > 0 } else { c >= 0 }
+            set_dst(inout fr, x.dst, vbool(r))
+            return Ok(true)
+        }
+        let r = binary(p, fr, o, x.ty, a.n, b.n, x.line)?
+        set_dst(inout fr, x.dst, vint(r))
+        return Ok(true)
+    }
+    if k == ir.S_CAST {
+        let v = op(p, fr, x.a)
+        let from = ikind(p, ir.op_ty(p.ir, x.a))
+        let r = cast(p, fr, v.n, from, ikind(p, x.ty), x.line)?
+        set_dst(inout fr, x.dst, vint(r))
+        return Ok(true)
+    }
+    if k == ir.S_RECORD || k == ir.S_TUPLE || k == ir.S_ARRAY {
+        if k == ir.S_RECORD && lower.shared_rec(p, x.ty) {
+            let mut m = s("comptime evaluation can't run `Drop` (`")
+            bytes.append(inout m, shown_name(p, types.def_of(p.t, x.ty).key))
+            bytes.append(inout m, s("` has its own)"))
+            return Err(Trap(m))
+        }
+        let mut xs: List[Val] = List.new()
+        for i in 0..x.c { xs.push(op(p, fr, barg(p, x, i))) }
+        set_dst(inout fr, x.dst, agg(xs))
+        return Ok(true)
+    }
+    if k == ir.S_VARIANT {
+        let mut xs: List[Val] = List.new()
+        for i in 0..x.c { xs.push(op(p, fr, barg(p, x, i))) }
+        set_dst(inout fr, x.dst, venum(x.a, xs))
+        return Ok(true)
+    }
+    if k == ir.S_REPEAT {
+        let v = op(p, fr, x.a)
+        let mut xs: List[Val] = List.new()
+        for i in 0..x.b { xs.push(v) }
+        set_dst(inout fr, x.dst, agg(xs))
+        return Ok(true)
+    }
+    if k == ir.S_TAG {
+        let v = read(p, fr, x.a)?
+        set_dst(inout fr, x.dst, vbool(v.n == x.b as u64))
+        return Ok(true)
+    }
+    if k == ir.S_PRINT {
+        let v = op(p, fr, x.a)
+        let mut o: List[u8] = List.new()
+        show_into(p, inout st, x.ty, v, inout o, false)?
+        bytes.append(inout st.out, o)
+        st.out.push(10)
+        return Ok(true)
+    }
+    if k == ir.S_PANIC {
+        let m = op(p, fr, x.a)
+        return Err(trapb(p, fr, m.b, x.line))
+    }
+    if k == ir.S_ASSERT {
+        let c = op(p, fr, x.a)
+        if c.n == 1 { return Ok(true) }
+        if x.b > 0 { return Err(trapb(p, fr, p.ir.strs[(x.b - 1) as usize], x.line)) }
+        return Err(trap(p, fr, "assertion failed", x.line))
+    }
+    if k == ir.S_CLOSURE {
+        let mut xs: List[Val] = List.new()
+        for i in 0..x.c { xs.push(op(p, fr, barg(p, x, i))) }
+        set_dst(inout fr, x.dst, Val(K_FN, x.a as u64, List.new(), xs))
+        return Ok(true)
+    }
+    if k == ir.S_FNREF {
+        set_dst(inout fr, x.dst, mk(K_FN, x.a as u64))
+        return Ok(true)
+    }
+    if k == ir.S_BUILTIN {
+        let v = builtin(p, inout st, inout fr, x)?
+        set_dst(inout fr, x.dst, v)
+        return Ok(true)
+    }
+    if k == ir.S_NOWMS { return Err(cannot("read the clock")) }
+    Err(cannot("run this IR statement"))
+}
+
+// ---- builtins
+
+/// A builtin (ir.ei, "Builtins"), by group: each group is a function of its own, so the
+/// native frame of a call made from a builtin (a closure, a user impl) stays small.
+fn builtin(p: lower.P, inout st: St, inout fr: Fr, x: ir.Stmt) -> Result[Val, Trap] {
+    let b = x.a
+    if b >= ir.B_REF_NEW && b <= ir.B_REF_UPDATE { return ref_op(p, inout st, inout fr, x) }
+    if b == ir.B_SHOW || b == ir.B_TO_STRING || b == ir.B_COPY || b == ir.B_HASH || b == ir.B_COMPARE || b == ir.B_DEFAULT { return trait_op(p, inout st, inout fr, x) }
+    if b >= ir.B_SPAWN && b <= ir.B_CHAN_CLOSE { return cell_op(p, inout st, inout fr, x) }
+    if b == ir.B_MAP_GET || b == ir.B_MAP_CONTAINS || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE || (b >= ir.B_MAP_KEYS && b <= ir.B_MAP_ENTRIES) { return map_op(p, inout st, inout fr, x) }
+    if b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_LIST_CONTAINS || b == ir.B_LIST_SUM { return list_op(p, inout st, inout fr, x) }
+    if b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || (b >= ir.B_STR_BYTE && b <= ir.B_STR_PUSH_BYTE) { return text_op(p, inout st, inout fr, x) }
+    value_op(p, inout st, inout fr, x)
+}
+
+fn value_op(p: lower.P, inout st: St, inout fr: Fr, x: ir.Stmt) -> Result[Val, Trap] {
+    let b = x.a
+    if b == ir.B_STR_FROM {
+        let v = arg(p, fr, barg(p, x, 0))?
+        return Ok(vstr(v.b))
+    }
+    if b == ir.B_STR_FROM_INT {
+        let v = arg(p, fr, barg(p, x, 0))?
+        return Ok(vstr(int_text(v.n, true)))
+    }
+    if b == ir.B_LEN || b == ir.B_IS_EMPTY {
+        let a = barg(p, x, 0)
+        let v = arg(p, fr, a)?
+        let k = tk(p, arg_ty(p, a))
+        let n: u64 = if k == types.T_STR || k == types.T_STRING { v.b.len() as u64 } else if k == types.T_MAP { v.n } else { v.xs.len() as u64 }
+        if b == ir.B_LEN { return Ok(vint(n)) }
+        return Ok(vbool(n == 0))
+    }
+    if b == ir.B_LIST_NEW { return Ok(vlist(List.new())) }
+    if b == ir.B_MAP_NEW { return Ok(empty_map()) }
+    if b == ir.B_BOX_NEW {
+        let v = arg(p, fr, barg(p, x, 0))?
+        return Ok(agg(one(v)))
+    }
+    Err(cannot("run this builtin"))
+}
+
+fn text_op(p: lower.P, inout st: St, inout fr: Fr, x: ir.Stmt) -> Result[Val, Trap] {
+    let b = x.a
+    if b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_STR_PUSH_BYTE {
+        let t = arg(p, fr, barg(p, x, 1))?
+        if b == ir.B_STR_PUSH_BYTE && (t.n == 0 || t.n > 127) { return Err(trap(p, fr, "push_byte needs an ASCII byte (1 to 127)", x.line)) }
+        let lc = recv(p, inout fr, x)?
+        let mut o = take_loc(inout fr, lc)
+        if b == ir.B_STR_PUSH_BYTE { o.b.push(t.n as u8) } else { bytes.append(inout o.b, t.b) }
+        put_loc(inout fr, lc, o)
+        return Ok(vunit())
+    }
+    if b == ir.B_STR_BYTE {
+        let t = arg(p, fr, barg(p, x, 0))?
+        let i = arg(p, fr, barg(p, x, 1))?
+        if i.n >= t.b.len() as u64 { return Err(trap(p, fr, "index out of bounds", x.line)) }
+        return Ok(vint(t.b[i.n as usize] as u64))
+    }
+    if b == ir.B_STR_SLICE {
+        let t = arg(p, fr, barg(p, x, 0))?
+        let iv = arg(p, fr, barg(p, x, 1))?
+        let jv = arg(p, fr, barg(p, x, 2))?
+        let i = iv.n
+        let j = jv.n
+        let n = t.b.len() as u64
+        if i > j || j > n { return Err(trap(p, fr, "slice out of bounds", x.line)) }
+        if cont(t.b, i) || cont(t.b, j) { return Err(trap(p, fr, "slice not on a character boundary", x.line)) }
+        return Ok(vstr(bytes.slice(t.b, i as usize, j as usize)))
+    }
+    if b == ir.B_STR_BYTES {
+        let t = arg(p, fr, barg(p, x, 0))?
+        let mut xs: List[Val] = List.new()
+        for c in t.b { xs.push(vint(c as u64)) }
+        return Ok(vlist(xs))
+    }
+    if b == ir.B_STR_FROM_BYTES {
+        let l = arg(p, fr, barg(p, x, 0))?
+        let mut d: List[u8] = List.new()
+        for e in l.xs { d.push(e.n as u8) }
+        let bad = utf8_check(d)
+        if bad == d.len() as u64 { return Ok(venum(0, one(vstr(d)))) }
+        return Ok(venum(1, one(vint(bad))))
+    }
+    Err(cannot("run this builtin"))
+}
+
+fn list_op(p: lower.P, inout st: St, inout fr: Fr, x: ir.Stmt) -> Result[Val, Trap] {
+    let b = x.a
+    if b == ir.B_LIST_PUSH {
+        let v = arg(p, fr, barg(p, x, 1))?
+        let lc = recv(p, inout fr, x)?
+        let mut l = take_loc(inout fr, lc)
+        l.xs.push(v)
+        put_loc(inout fr, lc, l)
+        return Ok(vunit())
+    }
+    if b == ir.B_LIST_POP {
+        let lc = recv(p, inout fr, x)?
+        let mut l = take_loc(inout fr, lc)
+        let r = match l.xs.pop() {
+            Some(v) => some_of(p, x.ty, v)
+            None => none_of(p, x.ty)
+        }
+        put_loc(inout fr, lc, l)
+        return Ok(r)
+    }
+    if b == ir.B_LIST_CLEAR {
+        let lc = recv(p, inout fr, x)?
+        put_loc(inout fr, lc, vlist(List.new()))
+        return Ok(vunit())
+    }
+    if b == ir.B_LIST_CONTAINS {
+        let a = barg(p, x, 0)
+        let l = arg(p, fr, a)?
+        let v = arg(p, fr, barg(p, x, 1))?
+        let et = types.get(p.t, arg_ty(p, a)).a
+        for e in l.xs {
+            if eq(p, inout st, et, e, v)? { return Ok(vbool(true)) }
+        }
+        return Ok(vbool(false))
+    }
+    if b == ir.B_LIST_SUM {
+        let l = arg(p, fr, barg(p, x, 0))?
+        let mut acc: u64 = 0
+        for e in l.xs { acc = binary(p, fr, ast.OP_ADD, x.ty, acc, e.n, x.line)? }
+        return Ok(vint(acc))
+    }
+    Err(cannot("run this builtin"))
+}
+
+fn map_op(p: lower.P, inout st: St, inout fr: Fr, x: ir.Stmt) -> Result[Val, Trap] {
+    let b = x.a
+    if b == ir.B_MAP_GET || b == ir.B_MAP_CONTAINS {
+        let a = barg(p, x, 0)
+        let m = arg(p, fr, a)?
+        let key = arg(p, fr, barg(p, x, 1))?
+        let mt = arg_ty(p, a)
+        let f = map_find(p, inout st, mt, m, key)?
+        if b == ir.B_MAP_CONTAINS { return Ok(vbool(f >= 0)) }
+        if f < 0 { return Ok(none_of(p, x.ty)) }
+        return Ok(some_of(p, x.ty, m.xs[1].xs[f as usize]))
+    }
+    if b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE {
+        let a = barg(p, x, 0)
+        let mt = arg_ty(p, a)
+        let key = arg(p, fr, barg(p, x, 1))?
+        let mut v = undef()
+        if b == ir.B_MAP_INSERT { v = arg(p, fr, barg(p, x, 2))? }
+        let lc = recv(p, inout fr, x)?
+        let mut m = take_loc(inout fr, lc)
+        let mut r = vunit()
+        if b == ir.B_MAP_INSERT {
+            map_insert(p, inout st, mt, inout m, key, v)?
+        } else {
+            r = vbool(map_remove(p, inout st, mt, inout m, key)?)
+        }
+        put_loc(inout fr, lc, m)
+        return Ok(r)
+    }
+    if b == ir.B_MAP_KEYS || b == ir.B_MAP_VALUES || b == ir.B_MAP_ENTRIES {
+        let m = arg(p, fr, barg(p, x, 0))?
+        let mut xs: List[Val] = List.new()
+        for i in 0..m.b.len() {
+            if m.b[i] != 1 { continue }
+            if b == ir.B_MAP_KEYS {
+                xs.push(m.xs[0].xs[i])
+            } else if b == ir.B_MAP_VALUES {
+                xs.push(m.xs[1].xs[i])
+            } else {
+                let mut kv: List[Val] = List.new()
+                kv.push(m.xs[0].xs[i])
+                kv.push(m.xs[1].xs[i])
+                xs.push(agg(kv))
+            }
+        }
+        return Ok(vlist(xs))
+    }
+    Err(cannot("run this builtin"))
+}
+
+fn trait_op(p: lower.P, inout st: St, inout fr: Fr, x: ir.Stmt) -> Result[Val, Trap] {
+    let b = x.a
+    if b == ir.B_DEFAULT { return default_of(p, inout st, x.ty) }
+    if b == ir.B_SHOW {
+        let a = barg(p, x, 1)
+        let v = arg(p, fr, a)?
+        let mut o: List[u8] = List.new()
+        show_into(p, inout st, arg_ty(p, a), v, inout o, false)?
+        let lc = recv(p, inout fr, x)?
+        let mut t = take_loc(inout fr, lc)
+        bytes.append(inout t.b, o)
+        put_loc(inout fr, lc, t)
+        return Ok(vunit())
+    }
+    if b == ir.B_TO_STRING {
+        let a = barg(p, x, 0)
+        let v = arg(p, fr, a)?
+        let mut o: List[u8] = List.new()
+        show_into(p, inout st, arg_ty(p, a), v, inout o, false)?
+        return Ok(vstr(o))
+    }
+    if b == ir.B_COPY {
+        let a = barg(p, x, 0)
+        let v = arg(p, fr, a)?
+        return copy_of(p, inout st, arg_ty(p, a), v)
+    }
+    if b == ir.B_HASH {
+        let a = barg(p, x, 0)
+        let v = arg(p, fr, a)?
+        return Ok(vint(hash(p, inout st, arg_ty(p, a), v)?))
+    }
+    if b == ir.B_COMPARE {
+        let a = barg(p, x, 0)
+        let va = arg(p, fr, a)?
+        let vb = arg(p, fr, barg(p, x, 1))?
+        let c = cmp(p, inout st, arg_ty(p, a), va, vb)?
+        let tag: u32 = if c < 0 { 0 } else if c == 0 { 1 } else { 2 }
+        return Ok(venum(tag, List.new()))
+    }
+    Err(cannot("run this builtin"))
+}
+
+fn cell_op(p: lower.P, inout st: St, inout fr: Fr, x: ir.Stmt) -> Result[Val, Trap] {
+    let b = x.a
+    if b == ir.B_MUTEX_NEW || b == ir.B_CHAN_NEW {
+        let mut v = undef()
+        if b == ir.B_MUTEX_NEW { v = arg(p, fr, barg(p, x, 0))? }
+        return Ok(new_cell(inout st, v))
+    }
+    if b == ir.B_MUTEX_GET || b == ir.B_MUTEX_SET || b == ir.B_MUTEX_UPDATE {
+        let h = arg(p, fr, barg(p, x, 0))?
+        let ci = h.n as usize
+        if b == ir.B_MUTEX_GET { return Ok(st.heap[ci].v) }
+        let v = arg(p, fr, barg(p, x, 1))?
+        if b == ir.B_MUTEX_SET {
+            st.heap[ci].v = v
+            return Ok(vunit())
+        }
+        let mut a = one(st.heap[ci].v)
+        let r = call(p, inout st, v.n as u32, v.xs, inout a)?
+        st.heap[ci].v = r.v
+        return Ok(vunit())
+    }
+    if b == ir.B_CHAN_SEND || b == ir.B_CHAN_RECV || b == ir.B_CHAN_CLOSE {
+        let h = arg(p, fr, barg(p, x, 0))?
+        let ci = h.n as usize
+        if b == ir.B_CHAN_CLOSE {
+            st.heap[ci].closed = true
+            return Ok(vunit())
+        }
+        if b == ir.B_CHAN_SEND {
+            if st.heap[ci].closed { return Err(trap(p, fr, "send on a closed channel", 0)) }
+            let v = arg(p, fr, barg(p, x, 1))?
+            st.heap[ci].q.push(v)
+            return Ok(vunit())
+        }
+        if st.heap[ci].q.len() > 0 {
+            let q = st.heap[ci].q.replace(List.new())
+            let mut rest: List[Val] = List.new()
+            for i in 1..q.len() { rest.push(q[i]) }
+            st.heap[ci].q = rest
+            return Ok(some_of(p, x.ty, q[0]))
+        }
+        if st.heap[ci].closed { return Ok(none_of(p, x.ty)) }
+        return Err(cannot("wait for a channel (recv would block forever)"))
+    }
+    if b == ir.B_SPAWN || b == ir.B_TASK_JOIN { return Err(cannot("start threads")) }
+    Err(cannot("run this builtin"))
+}
+
+/// The receiver of a mutating builtin: its first argument, a place.
+fn recv(p: lower.P, inout fr: Fr, x: ir.Stmt) -> Result[Loc, Trap] {
+    let a = barg(p, x, 0)
+    if a < ir.ARG_PLACE { return Err(cannot("change a value that isn't a place")) }
+    locate(p, inout fr, a - ir.ARG_PLACE)
+}
+
+fn new_cell(inout st: St, v: Val) -> Val {
+    st.heap.push(Cell(v, 0, List.new(), false))
+    mk(K_HEAP, (st.heap.len() - 1) as u64)
+}
+
+/// A UTF-8 continuation byte at i (not the start of a character).
+fn cont(t: List[u8], i: u64) -> bool { i < t.len() as u64 && (t[i as usize] & 192) == 128 }
+
+/// core/eider_rt.c's ei_utf8_check: the offset of the first byte that isn't valid UTF-8 (or
+/// a NUL), or the length.
+fn utf8_check(d: List[u8]) -> u64 {
+    let n = d.len()
+    let mut i: usize = 0
+    while i < n {
+        let c = d[i]
+        if c == 0 { return i as u64 }
+        if c < 128 {
+            i += 1
+            continue
+        }
+        let mut len: usize = 0
+        let mut lo: u8 = 128
+        let mut hi: u8 = 191
+        if c >= 194 && c <= 223 {
+            len = 2
+        } else if c >= 224 && c <= 239 {
+            len = 3
+            if c == 224 { lo = 160 }
+            if c == 237 { hi = 159 }
+        } else if c >= 240 && c <= 244 {
+            len = 4
+            if c == 240 { lo = 144 }
+            if c == 244 { hi = 143 }
+        } else {
+            return i as u64
+        }
+        if n - i < len || d[i + 1] < lo || d[i + 1] > hi { return i as u64 }
+        for k in 2..len {
+            if (d[i + k] & 192) != 128 { return i as u64 }
+        }
+        i += len
+    }
+    n as u64
+}
+
+fn ref_op(p: lower.P, inout st: St, inout fr: Fr, x: ir.Stmt) -> Result[Val, Trap] {
+    let b = x.a
+    if b == ir.B_REF_NEW {
+        let v = arg(p, fr, barg(p, x, 0))?
+        return Ok(new_cell(inout st, v))
+    }
+    let h = arg(p, fr, barg(p, x, 0))?
+    let ci = h.n as usize
+    let state = st.heap[ci].st
+    let upd = b == ir.B_REF_UPDATE || b == ir.B_REF_SET
+    if upd {
+        if state < 0 { return Err(trap(p, fr, "Ref updated while it is already being updated", x.line)) }
+        if state > 0 { return Err(trap(p, fr, "Ref updated while it is being read", x.line)) }
+    } else if state < 0 {
+        return Err(trap(p, fr, "Ref read while it is being updated", x.line))
+    }
+    if b == ir.B_REF_GET { return Ok(st.heap[ci].v) }
+    let a = arg(p, fr, barg(p, x, 1))?
+    if b == ir.B_REF_SET {
+        st.heap[ci].v = a
+        return Ok(vunit())
+    }
+    if b == ir.B_REF_READ {
+        st.heap[ci].st = state + 1
+        let mut ra = one(st.heap[ci].v)
+        let r = call(p, inout st, a.n as u32, a.xs, inout ra)?
+        st.heap[ci].st -= 1
+        return Ok(r.v)
+    }
+    st.heap[ci].st = -1
+    let mut ua = one(st.heap[ci].v.replace(undef()))
+    let r = call(p, inout st, a.n as u32, a.xs, inout ua)?
+    st.heap[ci].v = r.params[0]
+    st.heap[ci].st = 0
+    Ok(r.v)
+}
+
+// ---- core/sys.ei's externs
+
+fn extern_call(p: lower.P, inout st: St, f: u32, args: List[Val]) -> Result[Val, Trap] {
+    let mut sym: List[u8] = List.new()
+    for x in p.ir.externs {
+        if x.f == f { sym = x.symbol }
+    }
+    if bytes.eq(sym, s("ec_str_len")) { return Ok(vint(args[0].b.len() as u64)) }
+    if bytes.eq(sym, s("ec_str_byte")) {
+        let i = args[1].n
+        if i < args[0].b.len() as u64 { return Ok(vint(args[0].b[i as usize] as u64)) }
+        return Ok(vint(0))
+    }
+    if bytes.eq(sym, s("ec_in_clear")) {
+        st.inb = List.new()
+        return Ok(vunit())
+    }
+    if bytes.eq(sym, s("ec_in_push")) {
+        st.inb.push((args[0].n & 255) as u8)
+        return Ok(vunit())
+    }
+    if bytes.eq(sym, s("ec_in_cstr")) {
+        let mut t: List[u8] = List.new()
+        for c in st.inb {
+            if c == 0 { break }
+            t.push(c)
+        }
+        return Ok(vstr(t))
+    }
+    if bytes.eq(sym, s("ec_out_len")) { return Ok(vint(st.outb.len() as u64)) }
+    if bytes.eq(sym, s("ec_out_byte")) {
+        let i = args[0].n
+        if i < st.outb.len() as u64 { return Ok(vint(st.outb[i as usize] as u64)) }
+        return Ok(vint(0))
+    }
+    let mut m = s("call the C function `")
+    bytes.append(inout m, sym)
+    m.push(96)
+    let mut t = s("comptime evaluation can't ")
+    bytes.append(inout t, m)
+    Err(Trap(t))
+}
+
+// ---- the operation traits (llvm.ei's glue: g_eq, g_cmp, g_hash, g_show, g_copy, default_to)
+
+fn custom(p: lower.P, tr: u32, ty: u32) -> u32 { lower.custom_fn(p, tr, ty) }
+
+/// Call user function f (a trait method) with args; its result.
+fn call_user(p: lower.P, inout st: St, f: u32, args: List[Val]) -> Result[Called, Trap] {
+    let mut a = args.copy()
+    call(p, inout st, f, List.new(), inout a)
+}
+
+fn two(a: Val, b: Val) -> List[Val] {
+    let mut xs: List[Val] = List.new()
+    xs.push(a)
+    xs.push(b)
+    xs
+}
+
+fn eq(p: lower.P, inout st: St, ty: u32, a: Val, b: Val) -> Result[bool, Trap] {
+    let k = tk(p, ty)
+    if k == types.T_INT || k == types.T_BOOL { return Ok(a.n == b.n) }
+    if k == types.T_STR || k == types.T_STRING { return Ok(bytes.eq(a.b, b.b)) }
+    if k == types.T_UNIT || k == types.T_NEVER { return Ok(true) }
+    let f = custom(p, lower.TR_EQ, ty)
+    if f != NONE {
+        let r = call_user(p, inout st, f, two(a, b))?
+        return Ok(r.v.n == 1)
+    }
+    let t = types.get(p.t, ty)
+    if k == types.T_MAP {
+        if a.n != b.n { return Ok(false) }
+        for i in 0..a.b.len() {
+            if a.b[i] != 1 { continue }
+            let j = map_find(p, inout st, ty, b, a.xs[0].xs[i])?
+            if j < 0 { return Ok(false) }
+            if !eq(p, inout st, t.b, a.xs[1].xs[i], b.xs[1].xs[j as usize])? { return Ok(false) }
+        }
+        return Ok(true)
+    }
+    if k == types.T_ARRAY || k == types.T_LIST || k == types.T_BOX {
+        if a.xs.len() != b.xs.len() { return Ok(false) }
+        for i in 0..a.xs.len() {
+            if !eq(p, inout st, t.a, a.xs[i], b.xs[i])? { return Ok(false) }
+        }
+        return Ok(true)
+    }
+    if k == types.T_RECORD || k == types.T_TUPLE {
+        let ms = parts(p, ty)
+        for i in 0..ms.len() {
+            if !eq(p, inout st, ms[i], a.xs[i], b.xs[i])? { return Ok(false) }
+        }
+        return Ok(true)
+    }
+    if k == types.T_ENUM {
+        if a.n != b.n { return Ok(false) }
+        let ms = vparts(p, ty, a.n as u32)
+        for i in 0..ms.len() {
+            if !eq(p, inout st, ms[i], a.xs[i], b.xs[i])? { return Ok(false) }
+        }
+        return Ok(true)
+    }
+    // handles and fn values: the glue has nothing to compare
+    Ok(true)
+}
+
+/// Bytes compared as C's strcmp does (unsigned).
+fn strcmp(a: List[u8], b: List[u8]) -> i32 {
+    let n = if a.len() < b.len() { a.len() } else { b.len() }
+    for i in 0..n {
+        if a[i] != b[i] {
+            if a[i] < b[i] { return -1 }
+            return 1
+        }
+    }
+    if a.len() < b.len() { return -1 }
+    if a.len() > b.len() { return 1 }
+    0
+}
+
+/// The order of a and b: negative, 0 or positive.
+fn cmp(p: lower.P, inout st: St, ty: u32, a: Val, b: Val) -> Result[i32, Trap] {
+    let k = tk(p, ty)
+    if k == types.T_INT {
+        if a.n == b.n { return Ok(0) }
+        if ilt(a.n, b.n, ikind(p, ty)) { return Ok(-1) }
+        return Ok(1)
+    }
+    if k == types.T_BOOL {
+        if a.n == b.n { return Ok(0) }
+        if a.n < b.n { return Ok(-1) }
+        return Ok(1)
+    }
+    if k == types.T_STR || k == types.T_STRING { return Ok(strcmp(a.b, b.b)) }
+    if k == types.T_UNIT || k == types.T_NEVER { return Ok(0) }
+    let f = custom(p, lower.TR_ORD, ty)
+    if f != NONE {
+        let r = call_user(p, inout st, f, two(a, b))?
+        return Ok(r.v.n as i32 - 1)
+    }
+    let t = types.get(p.t, ty)
+    if k == types.T_RECORD || k == types.T_TUPLE {
+        let ms = parts(p, ty)
+        for i in 0..ms.len() {
+            let c = cmp(p, inout st, ms[i], a.xs[i], b.xs[i])?
+            if c != 0 { return Ok(c) }
+        }
+        return Ok(0)
+    }
+    if k == types.T_ENUM {
+        if a.n != b.n {
+            if a.n < b.n { return Ok(-1) }
+            return Ok(1)
+        }
+        let ms = vparts(p, ty, a.n as u32)
+        for i in 0..ms.len() {
+            let c = cmp(p, inout st, ms[i], a.xs[i], b.xs[i])?
+            if c != 0 { return Ok(c) }
+        }
+        return Ok(0)
+    }
+    if k == types.T_ARRAY || k == types.T_LIST || k == types.T_BOX {
+        let n = if a.xs.len() < b.xs.len() { a.xs.len() } else { b.xs.len() }
+        for i in 0..n {
+            let c = cmp(p, inout st, t.a, a.xs[i], b.xs[i])?
+            if c != 0 { return Ok(c) }
+        }
+        if a.xs.len() < b.xs.len() { return Ok(-1) }
+        if a.xs.len() > b.xs.len() { return Ok(1) }
+        return Ok(0)
+    }
+    Ok(0)
+}
+
+/// core/eider_rt.h's ei_hash_u64.
+fn mix64(x0: u64) -> u64 {
+    let mut x = x0.copy()
+    x = x ^ (x >> 33)
+    x = x *% 18397679294719823053
+    x = x ^ (x >> 33)
+    x = x *% 14181476777654086739
+    x ^ (x >> 33)
+}
+
+fn hash_str(t: List[u8]) -> u64 {
+    let mut h: u64 = 1469598103934665603
+    for c in t {
+        h = h ^ (c as u64)
+        h = h *% 1099511628211
+    }
+    mix64(h)
+}
+
+fn hash(p: lower.P, inout st: St, ty: u32, v: Val) -> Result[u64, Trap] {
+    let k = tk(p, ty)
+    if k == types.T_STR || k == types.T_STRING { return Ok(hash_str(v.b)) }
+    if k == types.T_INT || k == types.T_BOOL { return Ok(mix64(v.n)) }
+    if k == types.T_UNIT || k == types.T_NEVER { return Ok(mix64(0)) }
+    let f = custom(p, lower.TR_HASH, ty)
+    if f != NONE {
+        let r = call_user(p, inout st, f, one(v))?
+        return Ok(r.v.n)
+    }
+    let t = types.get(p.t, ty)
+    let mut h: u64 = 11400714819323198485
+    if k == types.T_RECORD || k == types.T_TUPLE {
+        let ms = parts(p, ty)
+        for i in 0..ms.len() { h = mix64(h ^ hash(p, inout st, ms[i], v.xs[i])?) }
+    } else if k == types.T_ENUM {
+        h = mix64(h ^ v.n)
+        let ms = vparts(p, ty, v.n as u32)
+        for i in 0..ms.len() { h = mix64(h ^ hash(p, inout st, ms[i], v.xs[i])?) }
+    } else if k == types.T_LIST {
+        h = mix64(h ^ (v.xs.len() as u64))
+        for e in v.xs { h = mix64(h ^ hash(p, inout st, t.a, e)?) }
+    } else if k == types.T_ARRAY || k == types.T_BOX {
+        for e in v.xs { h = mix64(h ^ hash(p, inout st, t.a, e)?) }
+    }
+    Ok(h)
+}
+
+fn int_text(n: u64, signed: bool) -> List[u8] {
+    if signed && neg_val(n) {
+        let mut o = s("-")
+        bytes.append(inout o, bytes.from_u64(0 -% n))
+        return o
+    }
+    bytes.from_u64(n)
+}
+
+/// core/eider_rt.c's ei_str_push_quoted.
+fn quoted(inout o: List[u8], t: List[u8]) {
+    o.push(34)
+    for c in t {
+        if c == 34 || c == 92 {
+            o.push(92)
+            o.push(c)
+        } else if c == 10 {
+            o.push(92)
+            o.push(110)
+        } else if c == 9 {
+            o.push(92)
+            o.push(116)
+        } else if c == 13 {
+            o.push(92)
+            o.push(114)
+        } else {
+            o.push(c)
+        }
+    }
+    o.push(34)
+}
+
+fn shown_name(p: lower.P, key: u64) -> List[u8] { intern.name(p.names, resolve.key_sym(key)) }
+
+/// Append the text of v (of type ty) to o: `print`, `to_string` and Show; `part`: as a part of
+/// another value (text quoted).
+fn show_into(p: lower.P, inout st: St, ty: u32, v: Val, inout o: List[u8], part: bool) -> Result[bool, Trap] {
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_STR || k == types.T_STRING {
+        if part { quoted(inout o, v.b) } else { bytes.append(inout o, v.b) }
+        return Ok(true)
+    }
+    if k == types.T_UNIT {
+        bytes.append(inout o, s("()"))
+        return Ok(true)
+    }
+    if k == types.T_INT {
+        bytes.append(inout o, int_text(v.n, types.signed(t.a)))
+        return Ok(true)
+    }
+    if k == types.T_BOOL {
+        if v.n == 1 { bytes.append(inout o, s("true")) } else { bytes.append(inout o, s("false")) }
+        return Ok(true)
+    }
+    if lower.plain_show(p, ty) {
+        let d = types.def_of(p.t, ty)
+        bytes.append(inout o, shown_name(p, types.variant(p.t, d, v.n as u32).key))
+        return Ok(true)
+    }
+    let f = custom(p, lower.TR_SHOW, ty)
+    if f != NONE {
+        let r = call_user(p, inout st, f, two(v, vstr(o)))?
+        o = r.params[1].b
+        return Ok(true)
+    }
+    if k == types.T_RECORD {
+        let d = types.def_of(p.t, ty)
+        bytes.append(inout o, shown_name(p, d.key))
+        if d.len == 0 {
+            bytes.append(inout o, s(" {}"))
+            return Ok(true)
+        }
+        bytes.append(inout o, s(" { "))
+        for i in 0..d.len {
+            let fl = types.field(p.t, d.start, i)
+            if i > 0 { bytes.append(inout o, s(", ")) }
+            bytes.append(inout o, intern.name(p.names, fl.name))
+            bytes.append(inout o, s(": "))
+            show_into(p, inout st, fl.ty, v.xs[i as usize], inout o, true)?
+        }
+        bytes.append(inout o, s(" }"))
+    } else if k == types.T_TUPLE {
+        let es = types.elems(p.t, ty)
+        o.push(40)
+        for i in 0..es.len() {
+            if i > 0 { bytes.append(inout o, s(", ")) }
+            show_into(p, inout st, es[i], v.xs[i], inout o, true)?
+        }
+        if es.len() == 1 { o.push(44) }
+        o.push(41)
+    } else if k == types.T_ENUM {
+        let d = types.def_of(p.t, ty)
+        let vr = types.variant(p.t, d, v.n as u32)
+        bytes.append(inout o, shown_name(p, vr.key))
+        if vr.flen > 0 {
+            o.push(40)
+            for i in 0..vr.flen {
+                if i > 0 { bytes.append(inout o, s(", ")) }
+                show_into(p, inout st, types.field(p.t, vr.fstart, i).ty, v.xs[i as usize], inout o, true)?
+            }
+            o.push(41)
+        }
+    } else if k == types.T_ARRAY || k == types.T_LIST {
+        o.push(91)
+        for i in 0..v.xs.len() {
+            if i > 0 { bytes.append(inout o, s(", ")) }
+            show_into(p, inout st, t.a, v.xs[i], inout o, true)?
+        }
+        o.push(93)
+    } else if k == types.T_MAP {
+        o.push(123)
+        let mut first = true
+        for i in 0..v.b.len() {
+            if v.b[i] != 1 { continue }
+            if !first { bytes.append(inout o, s(", ")) }
+            first = false
+            show_into(p, inout st, t.a, v.xs[0].xs[i], inout o, true)?
+            bytes.append(inout o, s(": "))
+            show_into(p, inout st, t.b, v.xs[1].xs[i], inout o, true)?
+        }
+        o.push(125)
+    } else if k == types.T_BOX {
+        bytes.append(inout o, s("Box("))
+        show_into(p, inout st, t.a, v.xs[0], inout o, true)?
+        o.push(41)
+    }
+    Ok(true)
+}
+
+/// `x.copy()`: a clone, except that a Mutex or Ref inside gets a new one with a copy and a
+/// part with its own Copy is copied by it.
+fn copy_of(p: lower.P, inout st: St, ty: u32, v: Val) -> Result[Val, Trap] {
+    let f = custom(p, lower.TR_COPY, ty)
+    if f != NONE {
+        let r = call_user(p, inout st, f, one(v))?
+        return Ok(r.v)
+    }
+    if !is_deep(p, inout st, ty) { return Ok(v) }
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_MUTEX || k == types.T_REF {
+        if v.n == NONE as u64 { return Ok(v) }
+        let inner = st.heap[v.n as usize].v.copy()
+        let c = copy_of(p, inout st, t.a, inner)?
+        return Ok(new_cell(inout st, c))
+    }
+    let mut out = v.copy()
+    if k == types.T_RECORD || k == types.T_TUPLE {
+        let ms = parts(p, ty)
+        for i in 0..ms.len() { out.xs[i] = copy_of(p, inout st, ms[i], v.xs[i])? }
+    } else if k == types.T_ENUM {
+        let ms = vparts(p, ty, v.n as u32)
+        for i in 0..ms.len() { out.xs[i] = copy_of(p, inout st, ms[i], v.xs[i])? }
+    } else if k == types.T_ARRAY || k == types.T_LIST || k == types.T_BOX {
+        for i in 0..v.xs.len() { out.xs[i] = copy_of(p, inout st, t.a, v.xs[i])? }
+    } else if k == types.T_MAP {
+        for i in 0..v.b.len() {
+            if v.b[i] != 1 { continue }
+            out.xs[0].xs[i] = copy_of(p, inout st, t.a, v.xs[0].xs[i])?
+            out.xs[1].xs[i] = copy_of(p, inout st, t.b, v.xs[1].xs[i])?
+        }
+    }
+    Ok(out)
+}
+
+fn is_deep(p: lower.P, inout st: St, ty: u32) -> bool {
+    match st.deep.get(ty) {
+        Some(d) => { return d }
+        None => {}
+    }
+    let mut seen: Map[u32, bool] = Map.new()
+    let d = lower.deep(p, ty, inout seen)
+    st.deep.insert(ty, d)
+    d
+}
+
+/// The derived or built-in Default of ty, or its own.
+fn default_of(p: lower.P, inout st: St, ty: u32) -> Result[Val, Trap] {
+    let f = custom(p, lower.TR_DEFAULT, ty)
+    if f != NONE {
+        let r = call_user(p, inout st, f, List.new())?
+        return Ok(r.v)
+    }
+    let t = types.get(p.t, ty)
+    let k = t.kind
+    if k == types.T_ENUM { return Ok(none_of(p, ty)) }
+    if k == types.T_RECORD || k == types.T_TUPLE {
+        let mut xs: List[Val] = List.new()
+        for x in parts(p, ty) { xs.push(default_of(p, inout st, x)?) }
+        return Ok(agg(xs))
+    }
+    if k == types.T_ARRAY {
+        let mut xs: List[Val] = List.new()
+        for i in 0..t.b { xs.push(default_of(p, inout st, t.a)?) }
+        return Ok(agg(xs))
+    }
+    if k == types.T_BOX { return Ok(agg(one(default_of(p, inout st, t.a)?))) }
+    Ok(zero(p, ty))
+}
+
+// ---- Map (llvm.ei's g_map: open addressing, linear probing, grown at 3/4 full)
+
+fn empty_map() -> Val {
+    let mut xs: List[Val] = List.new()
+    xs.push(agg(List.new()))
+    xs.push(agg(List.new()))
+    xs.push(vint(0))
+    Val(K_MAP, 0, List.new(), xs)
+}
+
+/// The slot holding key, or -1.
+fn map_find(p: lower.P, inout st: St, mt: u32, m: Val, key: Val) -> Result[i64, Trap] {
+    let cap = m.b.len() as u64
+    if cap == 0 { return Ok(-1) }
+    let kt = types.get(p.t, mt).a
+    let mut i = hash(p, inout st, kt, key)? & (cap - 1)
+    for n in 0..cap {
+        let sv = m.b[i as usize]
+        if sv == 0 { return Ok(-1) }
+        if sv == 1 && eq(p, inout st, kt, m.xs[0].xs[i as usize], key)? { return Ok(i as i64) }
+        i = (i + 1) & (cap - 1)
+    }
+    Ok(-1)
+}
+
+fn map_insert(p: lower.P, inout st: St, mt: u32, inout m: Val, key: Val, v: Val) -> Result[bool, Trap] {
+    let kt = types.get(p.t, mt).a
+    let f = map_find(p, inout st, mt, m, key)?
+    if f >= 0 {
+        m.xs[1].xs[f as usize] = v
+        return Ok(true)
+    }
+    let used = m.xs[2].n
+    let cap = m.b.len() as u64
+    if (used + 1) * 4 > cap * 3 {
+        let mut nc = cap * 2
+        if nc < cap + 1 { nc = cap + 1 }
+        if nc < 8 { nc = 8 }
+        let mut ks: List[Val] = List.new()
+        let mut vs: List[Val] = List.new()
+        let mut ns: List[u8] = List.new()
+        for j in 0..nc {
+            ks.push(undef())
+            vs.push(undef())
+            ns.push(0)
+        }
+        for j in 0..cap {
+            if m.b[j as usize] != 1 { continue }
+            let kj = m.xs[0].xs[j as usize]
+            let mut i = hash(p, inout st, kt, kj)? & (nc - 1)
+            while ns[i as usize] != 0 { i = (i + 1) & (nc - 1) }
+            ks[i as usize] = kj
+            vs[i as usize] = m.xs[1].xs[j as usize]
+            ns[i as usize] = 1
+        }
+        m.xs[0] = agg(ks)
+        m.xs[1] = agg(vs)
+        m.b = ns
+        m.xs[2] = vint(m.n)
+    }
+    let cap2 = m.b.len() as u64
+    let mut i = hash(p, inout st, kt, key)? & (cap2 - 1)
+    while m.b[i as usize] == 1 { i = (i + 1) & (cap2 - 1) }
+    if m.b[i as usize] == 0 { m.xs[2] = vint(m.xs[2].n + 1) }
+    m.xs[0].xs[i as usize] = key
+    m.xs[1].xs[i as usize] = v
+    m.b[i as usize] = 1
+    m.n += 1
+    Ok(true)
+}
+
+fn map_remove(p: lower.P, inout st: St, mt: u32, inout m: Val, key: Val) -> Result[bool, Trap] {
+    let f = map_find(p, inout st, mt, m, key)?
+    if f < 0 { return Ok(false) }
+    m.xs[0].xs[f as usize] = undef()
+    m.xs[1].xs[f as usize] = undef()
+    m.b[f as usize] = 2
+    m.n -= 1
+    Ok(true)
+}

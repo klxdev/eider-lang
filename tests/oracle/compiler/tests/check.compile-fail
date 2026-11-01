@@ -67,11 +67,8 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0108_gen_recursive.ei       E0108 at 2:6
   ok   e0108_mutual_recursion.ei    E0108 at 2:6
   ok   e0110_assign_to_variant.ei   E0110 at 4:5
-  ok   e0110_comptime_forward.ei    E0110 at 2:25
-  ok   e0110_comptime_later_in_fn.ei E0110 at 3:24
-  ok   e0110_comptime_mod_forward.ei E0110 at 2:29
-  ok   e0110_comptime_mod_late.ei   E0110 at 4:36
-  ok   e0110_comptime_plain_const.ei E0110 at 3:16
+  ok   e0110_comptime_cycle.ei      E0110 at 2:25
+  ok   e0110_comptime_self.ei       E0110 at 2:25
   ok   e0110_comptime_unknown.ei    E0110 at 2:25
   ok   e0110_const_before_definition.ei E0110 at 2:16
   ok   e0110_double_underscore_demangled.ei E0110 at 3:13
@@ -625,13 +622,14 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0807_comptime_assert.ei     E0807 at 6:7
   ok   e0807_comptime_cast.ei       E0807 at 3:7
   ok   e0807_comptime_div_zero.ei   E0807 at 3:7
+  ok   e0807_comptime_drop.ei       E0807 at 10:7
   ok   e0807_comptime_index.ei      E0807 at 6:7
-  ok   e0807_comptime_mod_str.ei    E0807 at 2:11
   ok   e0807_comptime_mod_trap.ei   E0807 at 3:11
   ok   e0807_comptime_mul_i64.ei    E0807 at 3:7
   ok   e0807_comptime_option.ei     E0807 at 2:7
   ok   e0807_comptime_panic.ei      E0807 at 3:7
   ok   e0807_comptime_record.ei     E0807 at 3:7
+  ok   e0807_comptime_recursion.ei  E0807 at 3:7
   ok   e0807_comptime_rem_zero.ei   E0807 at 3:7
   ok   e0807_comptime_second_fails.ei E0807 at 4:7
   ok   e0807_comptime_string.ei     E0807 at 2:7
@@ -653,9 +651,15 @@ compile-pass tests (compiler/tests/check/pass)
   ok   c8_gaps_ok.ei
   ok   comptime_chain.ei
   ok   comptime_edges.ei
+  ok   comptime_forward.ei
   ok   comptime_generic.ei
+  ok   comptime_later_in_fn.ei
   ok   comptime_mod.ei
+  ok   comptime_mod_forward.ei
+  ok   comptime_mod_late.ei
+  ok   comptime_mod_str.ei
   ok   comptime_no_io_main.ei
+  ok   comptime_plain_const.ei
   ok   comptime_tests.ei
   ok   ffi_closure_in_unsafe.ei
   ok   ffi_mod.ei
@@ -713,4 +717,6 @@ compile-pass tests (compiler/tests/check/pass)
 
 709 passed, 0 failed; error-code coverage 53/61
 codes without a compile-fail test: E0302 E0310 E0402 E0412 E0806 E0808 E0812 E0813
+709 passed, 0 failed; error-code coverage 52/58
+codes without a compile-fail test: E0302 E0402 E0806 E0808 E0812 E0813
 --- exit 0

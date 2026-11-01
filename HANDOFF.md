@@ -38,7 +38,7 @@ Integer types: `i32`, `i64`, `u8`, `u32`, `u64`, `usize`. 56 error codes (E0001.
 
 ## Layout
 
-`compiler/` (docs/compiler.md, "Architecture"): `lex.ei` -> `parse.ei` (AST arena) -> `resolve.ei` (module graph; `toolchain.ei` finds the toolchain) -> `check.ei` (typed IR, `ir.ei`) -> `llvm.ei` (LLVM IR; `lower.ei` keeps the C names and layouts) -> `driver.ei` (clang, units, cache), with `main.ei` the CLI; `consteval.ei` (comptime), `wasm.ei`, `suite.ei` (compile-fail runner), `ide.ei` (the analyzer's API), `doc.ei`. The runtime is `core/eider_rt.{h,c}` (core/RUNTIME.md); `core/eider_core.c` is the OS ABI (core/ABI.md); `core/wasm/` is the runtime and freestanding libc for WASM. After a compiler change: `sh scripts/selfhost.sh --seed` and commit `seed/eiderc.wasm`.
+`compiler/` (docs/compiler.md, "Architecture"): `lex.ei` -> `parse.ei` (AST arena) -> `resolve.ei` (module graph; `toolchain.ei` finds the toolchain) -> `check.ei` (typed IR, `ir.ei`) -> `llvm.ei` (LLVM IR; `lower.ei` keeps the C names and layouts) -> `driver.ei` (clang, units, cache), with `main.ei` the CLI; `consteval.ei` (comptime) and `interp.ei` (its IR interpreter), `wasm.ei`, `suite.ei` (compile-fail runner), `ide.ei` (the analyzer's API), `doc.ei`. The runtime is `core/eider_rt.{h,c}` (core/RUNTIME.md); `core/eider_core.c` is the OS ABI (core/ABI.md); `core/wasm/` is the runtime and freestanding libc for WASM. After a compiler change: `sh scripts/selfhost.sh --seed` and commit `seed/eiderc.wasm`.
 
 Tests: `tests/checks/{fail,pass}` (header `// expect: CODE LINE:COL`, header counts as line 1; `// mode: wasm|test|build`), `tests/run/*.ei` + `.out`, `tests/std`, `tests/export/`, `tests/wasm/`, `tests/pkg`, and the compiler's own in `compiler/tests/` (`scripts/test-compiler.sh`, against the recorded `tests/oracle/`; `BLESS=1` rewrites the expectations, review the diff). `LEARNINGS.md` has the gotchas; read it before changing the checker.
 
@@ -48,7 +48,7 @@ Tests: `tests/checks/{fail,pass}` (header `// expect: CODE LINE:COL`, header cou
 - Closures capture by snapshot and can't mutate captured variables (use an `inout` parameter or a `Ref`); recursion needs `Box`; references are re-derived places, not C pointers (docs/design/memory-model.md, "Open items").
 - No `dyn` traits, no default method bodies. Map keys are any `Hash + Eq` type (docs/compiler.md, "C8.4: operation traits").
 - WASM exports are ints/bool only, no threads.
-- `comptime` re-runs the front end per constant.
+- `comptime` re-runs the checker per constant (evaluation itself is an IR interpreter, compiler/interp.ei: no C compiler at compile time).
 - Front end is whole-program; the cache skips the C compiler per unit and the linker (docs/compiler.md, "C8.27: incremental builds"; the per-module split comes with the LLVM backend, #129).
 - Only x86-64 Linux was exercised.
 

@@ -54,13 +54,11 @@
 // - files: the path of every module (as in Span.file).
 //
 // The prelude is found like `eiderc check` finds it ($EIDER_ROOT, else above the running
-// binary). Comptime constants are evaluated with a C compiler, as in `check`; when the
-// toolchain or a work directory is missing (where `check` would exit), that is a
-// `toolchain` diagnostic instead.
+// binary). Comptime constants are evaluated by the IR interpreter, as in `check` (no C
+// compiler or work directory is involved).
 
 import core.sys
 import std.bytes
-import std.fs
 import eiderc.intern
 import eiderc.lex
 import eiderc.ast
@@ -69,7 +67,6 @@ import eiderc.diag
 import eiderc.resolve
 import eiderc.types
 import eiderc.check
-import eiderc.driver
 import eiderc.consteval
 import eiderc.front
 
@@ -123,16 +120,6 @@ pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: Li
     resolve.note_syntax(inout ld.p, 0, found)
     for d in ld.diags { found.push(d) }
     if ld.fatal { return build(ld.p, no_rec(), types.new(), finals(found, entry)) }
-    if has_comptime(ld.p) {
-        match toolchain_problem() {
-            Some(d) => {
-                let mut ds = finals(found, entry)
-                ds.push(d)
-                return build(ld.p, no_rec(), types.new(), ds)
-            }
-            None => {}
-        }
-    }
     let ev = consteval.eval_all(ld.p)
     for d in ev.diags { found.push(d) }
     let rc = check.check_ide(ev.p)
@@ -169,36 +156,6 @@ fn read_diag(entry: List[u8]) -> diag.Diag uses fs {
     let mut d = diag.new("E0804", 1, 1, m)
     d.file = entry
     d
-}
-
-fn has_comptime(p: resolve.Program) -> bool {
-    for md in p.mods {
-        let a = md.ast
-        for k in 0..a.items_len {
-            let n = a.nodes[ast.at(a, a.items_start, k) as usize]
-            if n.kind == ast.IConst && n.e == 1 { return true }
-        }
-    }
-    false
-}
-
-/// Why comptime evaluation would make `eiderc check` exit (driver.fail), if it would: no
-/// toolchain, no C core, or no work directory.
-fn toolchain_problem() -> Option[diag.Diag] uses io, fs, clock {
-    let root = driver.find_root()
-    if root.len() == 0 { return Some(diag.new("toolchain", 1, 1, s("cannot find the toolchain (a directory with core/eider_rt.h); set EIDER_ROOT"))) }
-    for f in ["core/eider_rt.h", "core/eider_rt.c", "core/eider_core.c"] {
-        let path = fs.join(root, s(f))
-        if !fs.exists(path) {
-            let mut m = s("cannot read ")
-            bytes.append(inout m, path)
-            return Some(diag.new("toolchain", 1, 1, m))
-        }
-    }
-    let d = driver.try_work_dir()
-    if d.len() == 0 { return Some(diag.new("toolchain", 1, 1, s("cannot create a work directory"))) }
-    fs.remove_all(d)
-    None
 }
 
 // ---- building the analysis

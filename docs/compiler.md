@@ -140,6 +140,7 @@ files ──lex──> tokens ──parse──> AST arena ──resolve──> 
 | `check` | AST → typed IR | types interned in a type arena; monomorphization on demand; capabilities; `inout` exclusivity; exhaustiveness; const folding |
 | `llvm` | typed IR → LLVM IR | ownership: clones, moves and drops are explicit IR ops before IR is printed, so order-of-evaluation and drop placement are decided once, not while printing text (`lower.ei` names the symbols and lays out the types) |
 | `driver` | CLI, `cc`, cache | uses `std/fs` and `std/proc` |
+| `consteval` + `interp` | resolved program → program with comptime constants as literals | each constant's evaluator program is checked, then its `__ct` runs on `interp.ei`, an interpreter of the typed IR ("C8.11") |
 
 A compiler that fuses checking and C emission pays for it with evaluation-order and hoisting
 bugs (every operand that hoists statements has to be reordered by hand). Keeping a typed IR
@@ -445,13 +446,9 @@ constant it is handed, so a caller that skips `eval` finds out).
   module's constant only the order in which two independent errors are found can differ from
   the recording. The evaluator is built with the driver's flags (not `-O1 -w`), so
   `$EIDER_CFLAGS` applies to it too.
-- **Later (C8): an IR interpreter.** Evaluating by compiling C needs a C compiler at
-  compile time and keeps the evaluator off capabilities only by checking. An interpreter of
-  eiderc's IR (ints, bool, and whatever the called functions use: records, enums, Lists,
-  closures) would need neither, and no temporary files; it can then lift the
-  restrictions above with a design note (forward references, other constant types). The swap is
-  local: replace `run_evaluator(c: check.C) -> Outcome` in comptime.ei; selection of
-  constants, the evaluator program, error mapping and splicing stay.
+- **Since C8.11: an IR interpreter.** The evaluator is no longer built and run: its `__ct`
+  is run by compiler/interp.ei, and the order and the restrictions above changed ("C8.11:
+  the comptime interpreter").
 - **Tests.** tests/checks' e0201_comptime_io, e0807_comptime_str and e0807_comptime_trap
   and tests/run/comptime.ei are in scope; 47 cases in `compiler/tests/check` (`*comptime*`:
   E0807 for each non-int type and for traps in every arithmetic op, casts, indexing,
@@ -940,12 +937,11 @@ review the oracle diff, add a test, and regenerate the seed.
 - Checker (S1–S3): registering an impl replaces `Self` textually, also inside `MySelf`;
   impls on fn types never match a receiver. (A name in an impl target or a generic signature
   that isn't a type parameter no longer matches every type: "C8.16".)
-- Comptime: an evaluator lacks every comptime constant not yet evaluated, so a plain `const`
-  naming a comptime constant always fails (E0110) and so does any function naming a later
-  one; any error in the rest of the program is found by the first evaluator, and an E0201
-  there loses its fix; traps during evaluation in the evaluated file name the file
+- Comptime: any error in the rest of the program is found by the first evaluator, and an
+  E0201 there loses its fix; traps during evaluation in the evaluated file name the file
   `program` ("C7: comptime"; a trap in an imported module or the prelude names its file
-  since "C8.16").
+  since "C8.16"). (Constants in any order, and plain constants and functions naming comptime
+  constants, are fixed: "C8.11: the comptime interpreter".)
 - Threads: `contains` on a List of handles compares them as equal ("C7: threads").
 - Library header: header type names keep the recorded spelling (`R_<mangled name>`, "C7:
   FFI"), so two libraries exporting records of one name can't be included together. (The
@@ -1325,7 +1321,7 @@ and leaves the analyzer building.
 | 4 | **8.8 Closures by reference** | non-escaping closures capture by reference | 8.6 |
 | 4 | **8.9 Std on the new base** | std speaks `String`, uses traits and references; `List[u8]` workarounds and `sys.lit` byte loops go | 8.2, 8.4, 8.5, 8.6 |
 | 4 | **8.10 Parity quirks** | fix each item in "C8 candidates" deliberately (wasm loader bugs, checker quirks), re-blessing the oracle per item | — |
-| 5 | **8.11 Comptime interpreter** | evaluate `comptime` by interpreting the IR: no C compiler at compile time, no capabilities by construction | — |
+| 5 | **8.11 Comptime interpreter** (#7; done: "C8.11: the comptime interpreter") | evaluate `comptime` by interpreting the IR: no C compiler at compile time, no capabilities by construction | — |
 | 5 | **8.12 Performance** | smaller generated C, one C file per module compiled in parallel, incremental front end keyed by module hash | 8.3 |
 | 5 | **8.13 Tooling** | `eiderc fmt` (formatter); analyzer: rename, workspace symbols, signature help, inlay hints, formatting; tree-sitter grammar generated from the compiler grammar | 8.9 |
 | 5 | **8.14 Package manager on bare imports** | eider-pkg reworked for 8.3/8.5 (no link farm, compiler-reported grants), registry design | 8.3, 8.5 |
@@ -3432,6 +3428,103 @@ use before its drop, a closure, the words as names; hand-checked .out, no leaks)
 compiler/tests/parse_ok/defer.ei, tests/checks/fail/e0309_return_in_defer.ei and
 e0310_errdefer_without_result.ei, compiler/tests/check/fail/e0309_* and
 e0201_defer_capability.ei.
+## C8.11: the comptime interpreter
+
+Wave 5 (#7; decisions C500-C503). Code: compiler/interp.ei (the interpreter),
+compiler/consteval.ei (`eval_all`, `eval_one`, `mentions`/`gone`, `run_evaluator`); tests:
+compiler/tests/run/comptime_interp.ei, the `*comptime*` cases of compiler/tests/check and
+tests/checks, compiler/tests/run/comptime.ei and tests/run/comptime.ei.
+
+**What runs.** Each comptime constant's evaluator program is checked as in "C7: comptime";
+then, instead of lowering it to LLVM IR, building it with clang and running it,
+`run_evaluator` hands the checked IR (`check.C`'s `ir`, `t`, `names`, as a `lower.P`) and the
+IR function of `__ct` to `interp.run`, which returns the value (`interp.Val`) or the line
+the built program would have written to stderr. The value is spliced in as before (an
+integer as `EInt`, negative as `-(magnitude)`; a bool as `EBool`; a str as `EStr`, a new
+string of the module). Nothing is written, no process starts, and no C compiler or
+toolchain directory is needed: `eiderc check` and the IDE analysis (`ide.ei` no longer
+reports a `toolchain` diagnostic for a program with comptime constants) work without one.
+
+**The interpreter.** A value is `Val { k, n, b, xs }` (an integer as 64-bit two's complement
+with signed kinds sign-extended, bool, text bytes, the parts of a record, tuple, array or
+Box, a variant and its payload, List elements, a Map, a fn value with its captures, a cell
+handle). Its Lists are copy-on-write, so a copy is a share: S_READ, S_CLONE and S_MOVE copy,
+S_DROP only checks its place's bounds. A frame holds the function's locals, unassigned ones
+reading as their type's zero (the backend's zeroed allocas). A place is resolved to its
+root local and child indexes, bounds checked like `paddr`/`checks`; a write takes the value
+out of its owner, changes it and puts it back, so a List with one owner is never copied by
+a push. Calls pass `inout` arguments by copy-in, copy-out (exclusivity, E0301, makes that
+the same as passing the place). Ref, Mutex and Chan are cells of the interpreter's heap.
+Everything follows llvm.ei's lowering and glue, so results and trap messages are the built
+program's:
+
+- integer `+ - *` checked in 128 bits (fold.ei's `Wide`), `/ %` checking zero and MIN / -1,
+  wrapping `+% -% *%`, shifts checking the count unsigned at the type's width, `as` checking
+  the target's range, each with the backend's message and the statement's line;
+- `==`, `<`, `compare`, `hash`, Show (`print`, `to_string`, `show`), `.copy()` and `Default`
+  derived per type exactly as `g_eq`, `g_cmp`, `g_hash` (FNV-1a and `ei_hash_u64` for text,
+  the same mixing per part), `g_show` (quoting), `g_copy` and `default_to` do, calling a
+  type's own impl (Ir.impls) where the glue would;
+- a Map keeps the runtime's table: slots by hash and linear probing, growth at 3/4 full to
+  `ei_grow_cap`'s capacity, removed slots, an existing key keeping its slot; so `for (k, v)
+  in m`, `keys()`, Show and `==` see the slot order the built program sees;
+- Ref accesses keep the run-time state (reads nest, an update excludes) with the runtime's
+  messages; Mutex `get`/`set`/`update` and Chan `send`/`recv`/`close` work on one thread (a
+  `recv` that would block forever stops the evaluation);
+- core/sys.ei's `ec_str_len`, `ec_str_byte`, `ec_in_*` and `ec_out_*` are emulated (so
+  `sys.lit` and `sys.to_string` work), and every other extern is refused.
+
+Refused, as E0807 "comptime evaluation of `X` failed: comptime evaluation can't ...": a
+value of a record with its own Drop (C503; the built program would run `drop` when the last
+share goes, which the interpreter doesn't track), threads, the clock, other externs, and
+more than 10^9 IR statements. Calls nest at most 1,000 deep (`MAX_DEPTH`): deeper is the
+runtime's own stack overflow message, `eider: runtime error: stack overflow (program:0)`.
+The bound comes from the interpreter's own stack: each interpreted call costs about 4 KB of
+the compiler's 8 MiB stack (measured with `-fstack-usage`), which is why `stmt` keeps only
+the control flow and the builtins are split into groups (`value_op`, `text_op`, `list_op`,
+`map_op`, `trait_op`, `cell_op`, `ref_op`): a call made from a builtin (a closure, a user
+impl) then adds a small frame.
+
+**Order and what an evaluator leaves out (C501).** `eval_all` tries the constants in item
+order. An evaluator leaves out the pending constants (as in C7) and now also every function,
+impl and plain constant that names one of them, and then whatever names those, to a fixed
+point (`mentions` records what each item names and defines, a method by its name; `gone`
+closes over it; a local named like an item counts too, which only defers). A constant whose
+evaluator has a check error while other constants are pending is retried after them; a
+round that makes no progress evaluates the rest in item order with only the pending
+constants left out, which is C7's evaluator and so reports C7's errors. A check error that
+is reported is the one of that evaluator too (an evaluator is rebuilt without the extra
+items left out first). The diagnostics are sorted into item order. Consequences: a comptime
+constant may use one declared later; a plain constant, and any function, may name a comptime
+constant; an E0110 for a constant that is still pending (a cycle, or a constant naming
+itself) gets the help "it is a comptime constant whose value depends on this one (a cycle of
+comptime constants)". Any error in the rest of the program is still found by the first
+evaluator, an E0201 there still loses its fix, and in the common case (no constant uses a
+later one) each constant still costs one check.
+
+**Types (C502).** `str` joins the integers and bool as a comptime constant type, judged by
+spelling as before; the message for the others is now "`comptime` constants must be
+integers, bool or str". Aggregates (records, tuples, arrays) stay out: plain constants can't
+hold them (E0504).
+
+**Cost.** `eiderc check tests/run/comptime.ei` (4 constants): 823 ms before, 10 ms after;
+compiler/tests/run/comptime.ei (35 constants): 2,846 ms before, 18 ms after (medians of 7
+and 5 runs, `EIDER_CACHE=off`; most of the old time was clang and the link per constant).
+`scripts/bench.sh` is unchanged (it has no comptime constants): list_copies 4/3 ms, state
+3/3 ms, str_append 5/5 ms, self (emit-llvm of compiler/main.ei) 398/381 ms.
+
+**Tests.** compiler/tests/run/comptime_interp.ei computes ten cases twice, once as comptime
+constants and once at run time, and prints whether they agree: Map slot order after inserts,
+removals and growth (integer, text and own-Eq/Hash keys), derived and own Show with quoting,
+hashes, wrapping and checked arithmetic, shifts, casts, comparisons and own Ord, closures and
+List combinators, Ref/Mutex/Chan and `inout`, text bytes and UTF-8 checks, labeled loops and
+`while let`, `Default`, `replace` and `take`. The C7 cases are unchanged except: E0110 for a
+forward reference, a function naming a later constant, an imported module's forward
+reference and late constant, and a plain constant naming a comptime one now pass
+(compiler/tests/check/pass/comptime_{forward,later_in_fn,mod_forward,mod_late,plain_const}.ei),
+an imported str constant passes (comptime_mod_str.ei), the E0807 message names str, and new
+cases cover a cycle and a self-reference (E0110 with the help), Drop and runaway recursion
+(E0807).
 
 ## Profiling: `--profile`
 

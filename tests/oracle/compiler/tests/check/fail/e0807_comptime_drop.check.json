@@ -1,0 +1,1 @@
+{"error":"E0807","span":{"file":"compiler/tests/check/fail/e0807_comptime_drop.ei","line":10,"col":7},"message":"comptime evaluation of `N` failed: comptime evaluation can't run `Drop` (`Guard` has its own)"}

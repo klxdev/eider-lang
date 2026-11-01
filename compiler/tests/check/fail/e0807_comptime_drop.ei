@@ -1,0 +1,11 @@
+// expect: E0807 10:7
+type Guard = { n: i32 }
+impl Drop for Guard {
+    fn drop(inout self) { self.n = 0 }
+}
+fn make() -> i32 {
+    let g = Guard(3)
+    g.n
+}
+const N: i32 = comptime make()
+fn main() uses io { print(N) }

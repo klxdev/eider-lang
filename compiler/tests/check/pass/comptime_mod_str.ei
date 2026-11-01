@@ -1,0 +1,2 @@
+import eiderc.tests.check.lib.ct_str
+fn main() uses io { print(ct_str.S) }

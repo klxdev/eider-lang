@@ -1,0 +1,7 @@
+const NAME: str = comptime pick(3)
+
+fn pick(n: i32) -> str {
+    if n > 2 { "many" } else { "few" }
+}
+
+fn main() uses io { print(NAME) }
