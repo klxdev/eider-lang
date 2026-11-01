@@ -848,7 +848,7 @@ pub fn migrate_imports(file: List[u8], src: List[u8], json: bool) -> List[u8] us
         d.fix = Some(f)
         let j = diag.json(d, file)
         // {"error":"E0000", ... -> {"deprecated":"quoted-import", ...
-        bytes.append(inout out, sys.lit("{\"deprecated\":\"quoted-import\""))
+        bytes.append(inout out, sys.lit("\x7b\"deprecated\":\"quoted-import\""))
         bytes.append(inout out, bytes.slice(j, 16, j.len()))
         out.push(10)
     }
@@ -1659,7 +1659,7 @@ pub fn caps_json(p: Program) -> List[u8] uses fs {
         let none: List[u8] = List.new()
         let name = if u.pkg == NOPKG { none } else { p.pkgs[u.pkg as usize].name }
         let dir = if u.pkg == NOPKG { none } else { p.pkgs[u.pkg as usize].dir }
-        bytes.append(inout out, sys.lit("{\"package\":"))
+        bytes.append(inout out, sys.lit("\x7b\"package\":"))
         diag.jstr(inout out, name)
         bytes.append(inout out, sys.lit(",\"dir\":"))
         diag.jstr(inout out, dir)

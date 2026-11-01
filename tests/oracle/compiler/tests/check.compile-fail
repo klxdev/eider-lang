@@ -321,7 +321,6 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_foreach_int.ei         E0401 at 3:14
   ok   e0401_from_bytes_arg.ei      E0401 at 3:23
   ok   e0401_from_call_no_impl.ei   E0401 at 8:20
-  ok   e0401_fstring_no_show.ei     E0401 at 4:14
   ok   e0401_gen_body_error_twice.ei E0401 at 2:26
   ok   e0401_gen_conflict.ei        E0401 at 3:29
   ok   e0401_gen_display.ei         E0401 at 4:22
@@ -352,6 +351,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_index_non_array.ei     E0401 at 4:14
   ok   e0401_index_not_usize.ei     E0401 at 5:15
   ok   e0401_int_pattern_on_bool.ei E0401 at 4:9
+  ok   e0401_interp_no_show.ei      E0401 at 4:13
   ok   e0401_len_of_int.ei          E0401 at 3:17
   ok   e0401_local_shadows_variant.ei E0401 at 5:16
   ok   e0401_map_closure_wrong.ei   E0401 at 3:20
@@ -715,8 +715,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-709 passed, 0 failed; error-code coverage 53/61
+713 passed, 0 failed; error-code coverage 53/61
 codes without a compile-fail test: E0302 E0310 E0402 E0412 E0806 E0808 E0812 E0813
-709 passed, 0 failed; error-code coverage 52/58
-codes without a compile-fail test: E0302 E0402 E0806 E0808 E0812 E0813
 --- exit 0

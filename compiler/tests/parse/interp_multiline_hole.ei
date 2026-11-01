@@ -1,5 +1,5 @@
 fn main() {
-    let s = f"""
+    let s = """
         {1 + }
         """
 }

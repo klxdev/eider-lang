@@ -1,4 +1,4 @@
-// f-strings, raw strings and multi-line strings (docs/compiler.md, "C8.28: string literals")
+// interpolation, raw strings and multi-line strings (docs/compiler.md, "C8.28: string literals")
 type P = { x: i32, label: str }
 type Shape = | Circle(r: u32) | Dot
 
@@ -11,12 +11,12 @@ fn parse(s: str) -> Result[i32, str] {
 
 // `?` inside a hole: the String built so far is dropped on the early return
 fn describe(s: str) -> Result[String, str] {
-    let t = f"[{s}] is {parse(s)?:>3}"
+    let t = "[{s}] is {parse(s)?:>3}"
     Ok(t)
 }
 
 fn greet(who: str) -> String {
-    f"""
+    """
     Hello, {who}!
       "quoted" and \t tab
     joined \
@@ -29,22 +29,22 @@ fn greet(who: str) -> String {
 fn main() uses io {
     let n = 7
     let who = "Kim"
-    print(f"{who} has {n} items")
-    print(f"[{n:>4}] [{n:<4}] [{n:^5}] [{n:*>6}] [{n:04}] [{n:+}] [{n:5}]")
-    print(f"[{255:x}] [{255:X}] [{255:#x}] [{255:#X}] [{5:b}] [{8:#o}] [{-255:#06x}] [{-3:+05}]")
+    print("{who} has {n} items")
+    print("[{n:>4}] [{n:<4}] [{n:^5}] [{n:*>6}] [{n:04}] [{n:+}] [{n:5}]")
+    print("[{255:x}] [{255:X}] [{255:#x}] [{255:#X}] [{5:b}] [{8:#o}] [{-255:#06x}] [{-3:+05}]")
     let big: u64 = 18446744073709551615
     let small: i64 = -9223372036854775807 - 1
     let byte: u8 = 200
-    print(f"{big} {big:x} {small} {byte:#b} {byte:>5}")
-    print(f"[{who:>6}] [{who:<6}] [{who:-^7}] [{who:2}] [{who}]")
+    print("{big} {big:x} {small} {byte:#b} {byte:>5}")
+    print("[{who:>6}] [{who:<6}] [{who:-^7}] [{who:2}] [{who}]")
     let p = P(2, "b")
-    print(f"p = {p}, name = {name()}, len = {name().len()}, {Circle(3)}, {Dot:>5}")
+    print("p = {p}, name = {name()}, len = {name().len()}, {Circle(3)}, {Dot:>5}")
     let xs = [1, 2, 3]
-    print(f"{xs} {xs[1] + 10} {len(xs) as i64 * -2} {true} {()}")
-    print(f"é{n:>3}é")
-    let empty = f""
+    print("{xs} {xs[1] + 10} {len(xs) as i64 * -2} {true} {()}")
+    print("é{n:>3}é")
+    let empty = ""
     print(empty.len())
-    let add = |a: i32| -> String { f"{a}+{n}={a + n}" }
+    let add = |a: i32| -> String { "{a}+{n}={a + n}" }
     print(add(1))
     match describe("seven") {
         Ok(t) => print(t)
@@ -66,4 +66,20 @@ fn main() uses io {
     print("""
     """.len())
     print("""x""")
+    // no `{expr}`: a str, usable where a str has to be
+    const_and_pattern(r"{a}")
+    print(BRACES)
+    print(r"""
+        raw {n} \t "quotes"
+          kept
+        """)
+}
+
+const BRACES: str = "{{const}}"
+
+fn const_and_pattern(s: str) uses io {
+    match s {
+        "{{a}}" => print("the pattern's braces are the text's")
+        _ => print("no")
+    }
 }

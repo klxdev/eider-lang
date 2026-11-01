@@ -108,6 +108,7 @@ stmt       = let_stmt
            | "break" [IDENT]
            | "continue" [IDENT]
            | "assert" expr ["," string]
+           | ("defer" | "errdefer") stmt
            | expr [assign_op expr]
 
 label      = IDENT ":"

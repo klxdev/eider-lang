@@ -57,7 +57,7 @@ compile-fail tests (tests/checks/fail)
   ok   e0409_list_new_uninferred.ei E0409 at 3:18
   ok   e0410_pattern_arity.ei       E0410 at 5:9
   ok   e0411_ref_in_mutex.ei        E0411 at 4:23
-  ok   e0412_spec_not_integer.ei    E0412 at 4:14 (fix compiles)
+  ok   e0412_spec_not_integer.ei    E0412 at 4:13 (fix compiles)
   ok   e0501_constant_overflow.ei   E0501 at 2:21
   ok   e0501_literal_out_of_range.ei E0501 at 3:15
   ok   e0502_constant_div_zero.ei   E0502 at 3:14
@@ -106,6 +106,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-103 passed, 0 failed; error-code coverage 61/61
-101 passed, 0 failed; error-code coverage 58/58
+104 passed, 0 failed; error-code coverage 61/61
 --- exit 0

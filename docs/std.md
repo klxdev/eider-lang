@@ -163,8 +163,8 @@ and WHATWG's rule, so every conforming decoder counts the same), and validity is
 `fmt` formats integers: `fmt.int(n)`, `fmt.hex(n)`, and with a `Spec` built by chaining,
 `fmt.uint_with(255, fmt.spec().hex().prefix().width(8).zero())` is "0x0000ff". Widths count
 characters. `put_*` forms append to a String, and a `Builder` collects pieces (`add`,
-`add_int`, `add_show` for any Show value, `add_pad`). Floats wait for f64 (C9). f-strings
-(`f"{n:#06x}"`) use the same rules without a `Spec`.
+`add_int`, `add_show` for any Show value, `add_pad`). Floats wait for f64 (C9). Interpolation
+(`"{n:#06x}"`) uses the same rules without a `Spec`.
 
 ## Collections (`std/sort`, `std/deque`, `std/set`, `std/heap`)
 

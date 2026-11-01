@@ -517,7 +517,7 @@ fn contains_text(hay: List[u8], needle: List[u8]) -> bool {
 /// a module that failed to load.
 fn consequence(c: C, d: diag.Diag) -> bool {
     if is_code(d, "cascade") { return true }
-    let et = s("{error}")
+    let et = s(r"{error}")
     if contains_text(d.msg, et) || contains_text(d.help, et) { return true }
     for pre in c.p.broken {
         let mut t = s("`")
@@ -1713,7 +1713,7 @@ fn alias_ty(inout c: C, ai: u32, args: List[u32], line: u32, col: u32) -> Result
         return Err(err("E0111", line, col, q3("type `", kt(c, k), "` takes ", num(n.d as u64), " type argument(s), but ", num(args.len() as u64), " were given")))
     }
     if c.al.stack.contains(ai) {
-        return Err(errh("E0111", line, col, q("type alias `", kt(c, k), "` refers to itself"), "an alias is another name for a type; a recursive type needs a record or an enum (`type Tree = { kids: List[Tree] }`)"))
+        return Err(errh("E0111", line, col, q("type alias `", kt(c, k), "` refers to itself"), r"an alias is another name for a type; a recursive type needs a record or an enum (`type Tree = { kids: List[Tree] }`)"))
     }
     let gs = gparams(c, a.m, n.c, n.d)
     let mut sb = no_subst()
@@ -2395,7 +2395,7 @@ fn register_from(inout c: C, m: u32, id: u32, igens: List[u32], target: List[u8]
     let im = ndm(c, m, id)
     let tn = ndm(c, m, im.a - 1)
     if tn.kind != ast.TGeneric || tn.d != 1 {
-        record(inout c, errh("E0603", tn.line, tn.col, s("`From` takes the type it converts from: `impl From[Source] for Target`"), "e.g. `impl From[stream.Error] for AppError { fn from(value: stream.Error) -> AppError { ... } }`"))
+        record(inout c, errh("E0603", tn.line, tn.col, s("`From` takes the type it converts from: `impl From[Source] for Target`"), r"e.g. `impl From[stream.Error] for AppError { fn from(value: stream.Error) -> AppError { ... } }`"))
         return Ok(true)
     }
     let snode = atm(c, m, tn.c, 0)
@@ -5296,7 +5296,7 @@ fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
         ast.EError => Err(quiet())
         _ => {
             // EIf, EMatch, EBlock, EUnsafe in expression position
-            Err(errh("E0103", n.line, n.col, s("`if`, `match` and blocks can only be used as a statement, a function's final expression, or the right side of `let`, `=` or `return`"), "bind the result first: `let x = match ... { ... }`, then use `x`"))
+            Err(errh("E0103", n.line, n.col, s("`if`, `match` and blocks can only be used as a statement, a function's final expression, or the right side of `let`, `=` or `return`"), r"bind the result first: `let x = match ... { ... }`, then use `x`"))
         }
     }
 }
@@ -6151,7 +6151,7 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
     }
     if f.unsafe_fn && c.unsafe_depth == 0 {
         let what = if is_extern { "call to C function `" } else { "call to unsafe function `" }
-        record(inout c, errh("E0802", n.line, n.col, q(what, label, "` is only allowed in an `unsafe` block or `unsafe fn`"), "wrap the call: `unsafe { ... }`"))
+        record(inout c, errh("E0802", n.line, n.col, q(what, label, "` is only allowed in an `unsafe` block or `unsafe fn`"), r"wrap the call: `unsafe { ... }`"))
     }
     // an instance for an error type would only report consequences
     for t in sb.tys {
@@ -7148,7 +7148,7 @@ fn lambda_body(inout c: C, e: u32, ret_hint: u32) -> Result[u32, diag.Diag] {
     let body = nd(c, e)
     if is_value_form(c, e) {
         if ret_hint == NONE {
-            return Err(errh("E0409", body.line, body.col, s("cannot infer the closure's return type"), "write it: `|x| -> i32 { ... }`"))
+            return Err(errh("E0409", body.line, body.col, s("cannot infer the closure's return type"), r"write it: `|x| -> i32 { ... }`"))
         }
         c.ret = ret_hint
         c.lam_expr = false
@@ -7699,9 +7699,9 @@ fn thread_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
     Err(err("E0115", n.line, n.col, q2("type ", ts(c, ty), " has no method `", nm(c, n.b), "`")))
 }
 
-// ---- f-strings (docs/compiler.md, "C8.28: string literals")
+// ---- interpolation (docs/compiler.md, "C8.28: string literals")
 
-/// `f"..."`: a fresh String. Text parts are pushed; each `{e}` appends e's text through Show
+/// A literal with `{expr}`: a fresh String. Text parts are pushed; each `{e}` appends e's text through Show
 /// (B_SHOW); a width pads what it appended (B_STR_PAD); `+`, `#`, `0` and a radix format an
 /// integer (B_FMT_INT). The pieces are evaluated left to right.
 fn fmt_string(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
@@ -7722,13 +7722,13 @@ fn fmt_string(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
     Ok(sv)
 }
 
-/// One `{e:spec}` of an f-string, appended to the String at `place`.
+/// One `{e:spec}` of a literal, appended to the String at `place`.
 fn fmt_hole(inout c: C, h: ast.Node, place: u32) -> Result[bool, diag.Diag] {
     let v = expr(inout c, h.a, NONE)?
     if poisoned(c, v.ty) { return Ok(true) }
     let x = nd(c, h.a)
     if !has_trait(c, TR_SHOW, v.ty) {
-        return Err(lack_err(c, "E0401", x.line, x.col, s("`{...}` in an f-string"), TR_SHOW, v.ty))
+        return Err(lack_err(c, "E0401", x.line, x.col, s(r"`{...}` in a string literal"), TR_SHOW, v.ty))
     }
     let is_int = types.is_int(c.t, v.ty)
     let numeric = h.e != 0 || h.f != 0
@@ -7739,7 +7739,7 @@ fn fmt_hole(inout c: C, h: ast.Node, place: u32) -> Result[bool, diag.Diag] {
             what.push(h.f as u8)
             what.push(96)
         }
-        let mut d = errh("E0412", x.line, x.col, q2("format spec ", what, " is for integers, and this is ", ts(c, v.ty), ""), "only a width, fill and alignment apply to any type: `{x:>8}`, `{x:*^9}`")
+        let mut d = errh("E0412", x.line, x.col, q2("format spec ", what, " is for integers, and this is ", ts(c, v.ty), ""), r"only a width, fill and alignment apply to any type: `{x:>8}`, `{x:*^9}`")
         d.fix = Some(diag.Fix(h.line, h.g, h.h as u64, List.new()))
         return Err(d)
     }

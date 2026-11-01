@@ -1,1 +1,1 @@
-{"error":"E0001","span":{"file":"./compiler/tests/parse/fmt_precision.ei","line":3,"col":19},"message":"a precision (`.N`) is for floats, which Eider doesn't have yet; pad with a width instead"}
+{"error":"E0001","span":{"file":"./compiler/tests/parse/fmt_precision.ei","line":3,"col":18},"message":"a precision (`.N`) is for floats, which Eider doesn't have yet; pad with a width instead"}

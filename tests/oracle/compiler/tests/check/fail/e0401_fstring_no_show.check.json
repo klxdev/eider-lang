@@ -1,1 +1,0 @@
-{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_fstring_no_show.ei","line":4,"col":14},"message":"`{...}` in an f-string needs `Show`, which T doesn't implement (its part fn(i32) -> i32 doesn't)","help":"fn values have no equality, order, hash or text"}

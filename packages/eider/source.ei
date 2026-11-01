@@ -139,7 +139,7 @@ fn get(src: Source, url: List[u8], accept: str, out: List[u8], tmp: List[u8]) ->
     argv.push("-o".bytes())
     argv.push(out)
     argv.push("-w".bytes())
-    argv.push("%{http_code}".bytes())
+    argv.push(r"%{http_code}".bytes())
     argv.push(url)
     let r = proc.run_with(argv, proc.captured())
     let _ = fs.remove_all(d)

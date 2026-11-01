@@ -139,14 +139,14 @@ Point { x: 3, y: -4 }
 (-1, "sum")
 ```
 
-An f-string puts values into text the same way, with an optional format spec after a
-colon:
+A string literal puts values into text the same way, in braces, with an optional format
+spec after a colon:
 
 ```eider
 fn main() uses io {
     let name = "Eider"
     let year = 2026
-    print(f"Hello from {name}, {year}! [{year:>8}] [{year:#x}]")
+    print("Hello from {name}, {year}! [{year:>8}] [{year:#x}]")
 }
 ```
 

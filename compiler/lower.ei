@@ -714,7 +714,7 @@ fn h_def(inout out: List[u8], p: P, ty: u32, inout done: Map[u32, bool]) {
     for i in 0..d.len { h_def(inout out, p, types.field(p.t, d.start, i).ty, inout done) }
     bytes.append(inout out, sys.lit("struct "))
     bytes.append(inout out, name)
-    bytes.append(inout out, sys.lit(" {"))
+    bytes.append(inout out, sys.lit(r" {"))
     for i in 0..d.len {
         let fl = types.field(p.t, d.start, i)
         out.push(32)
@@ -723,7 +723,7 @@ fn h_def(inout out: List[u8], p: P, ty: u32, inout done: Map[u32, bool]) {
         bytes.append(inout out, intern.name(p.names, fl.name))
         out.push(59)
     }
-    bytes.append(inout out, sys.lit(" };\n"))
+    bytes.append(inout out, sys.lit(" \x7d;\n"))
 }
 
 /// The include guard of library `name`'s header: `EIDER_<NAME>_H`, the name upper-cased
@@ -753,7 +753,7 @@ pub fn header(p: P, name: List[u8]) -> List[u8] {
     bytes.append(inout out, guard)
     bytes.append(inout out, sys.lit("\n#define "))
     bytes.append(inout out, guard)
-    bytes.append(inout out, sys.lit("\n#include <stdint.h>\n#include <stdbool.h>\n#ifdef __cplusplus\nextern \"C\" {\n#endif\n"))
+    bytes.append(inout out, sys.lit("\n#include <stdint.h>\n#include <stdbool.h>\n#ifdef __cplusplus\nextern \"C\" \x7b\n#endif\n"))
     let mut done: Map[u32, bool] = Map.new()
     let mut protos: List[u8] = List.new()
     for x in p.ir.exports {
@@ -776,7 +776,7 @@ pub fn header(p: P, name: List[u8]) -> List[u8] {
         bytes.append(inout protos, sys.lit(");\n"))
     }
     bytes.append(inout out, protos)
-    bytes.append(inout out, sys.lit("#ifdef __cplusplus\n}\n#endif\n#endif\n"))
+    bytes.append(inout out, sys.lit("#ifdef __cplusplus\n\x7d\n#endif\n#endif\n"))
     out
 }
 

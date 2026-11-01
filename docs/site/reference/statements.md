@@ -393,9 +393,9 @@ fn work() uses io {
     defer print("cleanup 1")
     defer print("cleanup 2")
     for i in 0..3 {
-        defer print(f"end of iteration {i}")
+        defer print("end of iteration {i}")
         if i == 1 { continue }
-        print(f"iteration {i}")
+        print("iteration {i}")
     }
     print("done")
 }

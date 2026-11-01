@@ -457,7 +457,7 @@ pub const IMPORT_NAMESPACE: u32 = 2
 pub const IMPORT_IMPLIED: u32 = 3
 
 fn import_help() -> List[u8] {
-    sys.lit("name each module, or group them: `import std.{bytes, fs}`; or import the package namespace, `import std`, and write `std.bytes.eq(...)`")
+    sys.lit(r"name each module, or group them: `import std.{bytes, fs}`; or import the package namespace, `import std`, and write `std.bytes.eq(...)`")
 }
 
 fn import_err(p: P, m: str) -> diag.Diag {
@@ -523,7 +523,7 @@ fn dotted_import(inout p: P, t: lex.Tok, inout items: List[u32]) -> Result[bool,
             if eat(inout p, lex.Comma) { continue }
             if is(p, lex.RBrace) { break }
             no_from(p)?
-            return Err(err(p, "expected `,` or `}` in an import group"))
+            return Err(err(p, r"expected `,` or `}` in an import group"))
         }
         adv(inout p)
         no_from(p)?
@@ -744,7 +744,7 @@ fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
             fnode.b = t
             members.push(add(inout p, fnode))
             skip_nl(inout p)
-            if !eat(inout p, lex.Comma) && !is(p, lex.RBrace) && !is_nl(p) { return Err(err(p, "expected `,` or `}`")) }
+            if !eat(inout p, lex.Comma) && !is(p, lex.RBrace) && !is_nl(p) { return Err(err(p, r"expected `,` or `}`")) }
         }
     } else {
         while true {
@@ -1070,7 +1070,7 @@ pub fn block(inout p: P) -> Result[u32, diag.Diag] {
             return Ok(add(inout p, n))
         }
         if is_eof(p) {
-            note_here(inout p, "unexpected end of file, expected `}`")
+            note_here(inout p, r"unexpected end of file, expected `}`")
             break
         }
         // a statement that fails is recorded, skipped (`sync`) and kept as an SError
@@ -1596,7 +1596,7 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] {
         n.a = t.val as u32
         return Ok(add(inout p, n))
     }
-    if t.kind == lex.FStart { return fstring(inout p) }
+    if t.kind == lex.FStart { return interp_string(inout p) }
     if t.kind == lex.LParen {
         adv(inout p)
         skip_nl(inout p)
@@ -1894,7 +1894,7 @@ fn match_expr(inout p: P) -> Result[u32, diag.Diag] {
             Ok(a) => {
                 arms.push(a)
                 if !(is_nl(p) || is(p, lex.Comma) || is(p, lex.RBrace)) {
-                    note_here(inout p, "expected a newline, `,` or `}` after match arm")
+                    note_here(inout p, r"expected a newline, `,` or `}` after match arm")
                     let s1 = p.i.copy()
                     stop = sync(inout p, s1, true)
                 }
@@ -2074,10 +2074,10 @@ fn defer_stmt(inout p: P) -> Result[u32, diag.Diag] {
     Ok(add(inout p, n))
 }
 
-// ---- f-strings (docs/compiler.md, "C8.28: string literals"; the tokens are lex.ei's)
+// ---- interpolation (docs/compiler.md, "C8.28: string literals"; the tokens are lex.ei's)
 
-/// `f"text {expr:spec} text"`: an EFmt of EStr and EHole parts.
-fn fstring(inout p: P) -> Result[u32, diag.Diag] {
+/// `"text {expr:spec} text"`: an EFmt of EStr and EHole parts.
+fn interp_string(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
     adv(inout p)
     let mut parts: List[u32] = List.new()
@@ -2096,12 +2096,12 @@ fn fstring(inout p: P) -> Result[u32, diag.Diag] {
             }
             continue
         }
-        if k.kind != lex.FHole { return Err(err(p, "expected the end of the f-string")) }
+        if k.kind != lex.FHole { return Err(err(p, "expected the end of the string literal")) }
         adv(inout p)
         let mut h = mk(ast.EHole, k.line, k.col)
         if is(p, lex.FClose) { return Err(err(p, "expected an expression")) }
         h.a = expr(inout p)?
-        if !is(p, lex.FClose) { return Err(err(p, "expected `}` or `:` after the expression in `{...}`")) }
+        if !is(p, lex.FClose) { return Err(err(p, r"expected `}` or `:` after the expression in `{...}`")) }
         let ct = cur(p)
         adv(inout p)
         fmt_spec(p.strs[ct.val as usize], ct.line, ct.col + 1, inout h)?

@@ -63,5 +63,15 @@ fails it.
 what builds the next compiler. A new feature lands in the compiler first (implemented, not
 used), the seed is regenerated, and only then may `compiler/` start using it.
 
+### Bootstrapping a change in what source means
+
+A change that gives existing source a new meaning (U29: every plain string literal
+interpolates, so a `{` in one stopped meaning itself) can't land the way a new feature does:
+the seed reads `compiler/`, and what it compiles of `core/` and `std/`, by the old rule, and
+the new compiler by the new one. Two steps: first make that source mean the same under both
+rules (for U29, `scripts/migrate-strings.sh --portable`: raw strings, which an earlier seed
+already has, or `\x7b`/`\x7d`), land the change, and regenerate the seed; then migrate the
+rest with the new rule (packages, tests, examples, docs, the sibling repositories).
+
 Until #127 the seed was `eiderc.c`, the compiler's own C output; the chain is in
 docs/compiler.md, "Bootstrap chain" and "History".

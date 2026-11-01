@@ -1308,10 +1308,10 @@ fn show_into(p: lower.P, inout st: St, ty: u32, v: Val, inout o: List[u8], part:
         let d = types.def_of(p.t, ty)
         bytes.append(inout o, shown_name(p, d.key))
         if d.len == 0 {
-            bytes.append(inout o, s(" {}"))
+            bytes.append(inout o, s(r" {}"))
             return Ok(true)
         }
-        bytes.append(inout o, s(" { "))
+        bytes.append(inout o, s(r" { "))
         for i in 0..d.len {
             let fl = types.field(p.t, d.start, i)
             if i > 0 { bytes.append(inout o, s(", ")) }
@@ -1319,7 +1319,7 @@ fn show_into(p: lower.P, inout st: St, ty: u32, v: Val, inout o: List[u8], part:
             bytes.append(inout o, s(": "))
             show_into(p, inout st, fl.ty, v.xs[i as usize], inout o, true)?
         }
-        bytes.append(inout o, s(" }"))
+        bytes.append(inout o, s(r" }"))
     } else if k == types.T_TUPLE {
         let es = types.elems(p.t, ty)
         o.push(40)

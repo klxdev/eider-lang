@@ -202,7 +202,7 @@ fn first_line(t: List[u8]) -> List[u8] {
 /// internal one.
 fn declaration(d: List[u8]) -> List[u8] {
     let mut l = d.copy()
-    if bytes.ends_with(l, lit(" {")) { l = bytes.slice(l, 0, l.len() - 2) }
+    if bytes.ends_with(l, lit(r" {")) { l = bytes.slice(l, 0, l.len() - 2) }
     let mut out = lit("declare ")
     let mut rest = bytes.slice(l, 7, l.len())
     if bytes.starts_with(rest, lit("internal ")) {

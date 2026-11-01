@@ -1081,7 +1081,7 @@ fn main() uses io {
 
 ## E0412
 
-A **format spec that applies only to integers**, used in an [f-string](lexical.md#f-strings)
+A **format spec that applies only to integers**, used in an [interpolated string](lexical.md#interpolation)
 on a value of another type: `+` (a sign on non-negative numbers), `#` (a radix prefix), `0`
 (zero padding) and the radix letters `x`, `X`, `b` and `o`. A width, a fill and an
 alignment apply to any type. The fix deletes the spec.
@@ -1089,7 +1089,7 @@ alignment apply to any type. The fix deletes the spec.
 ```eider,compile_fail=E0412
 fn main() uses io {
     let name = "Ada"
-    print(f"{name:x}")
+    print("{name:x}")
 }
 ```
 
@@ -1098,7 +1098,7 @@ Fix: format integers with those, and pad anything with a width.
 ```eider
 fn main() uses io {
     let name = "Ada"
-    print(f"[{name:>5}] [{255:#x}]")
+    print("[{name:>5}] [{255:#x}]")
 }
 ```
 

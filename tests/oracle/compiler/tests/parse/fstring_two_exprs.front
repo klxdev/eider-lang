@@ -1,1 +1,0 @@
-{"error":"E0001","span":{"file":"./compiler/tests/parse/fstring_two_exprs.ei","line":2,"col":18},"message":"expected `}` or `:` after the expression in `{...}`"}

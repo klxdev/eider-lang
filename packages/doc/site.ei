@@ -641,16 +641,16 @@ fn declaration(cx: Cx, it: model.Item) -> Decl {
     let is_enum = bytes.eq(it.kind, "enum".bytes())
     if is_record {
         if it.members.len() == 0 {
-            decl_add(inout d, " = {}".bytes(), List.new())
+            decl_add(inout d, r" = {}".bytes(), List.new())
         } else {
-            decl_add(inout d, " = {\n".bytes(), List.new())
+            decl_add(inout d, " = {{\n".bytes(), List.new())
             for mi in it.members {
                 let m = cx.api.items[mi as usize].copy()
                 decl_add(inout d, "    ".bytes(), List.new())
                 decl_add(inout d, m.sig, m.links)
                 decl_add(inout d, ",\n".bytes(), List.new())
             }
-            decl_add(inout d, "}".bytes(), List.new())
+            decl_add(inout d, r"}".bytes(), List.new())
         }
     } else if is_enum {
         decl_add(inout d, " =".bytes(), List.new())

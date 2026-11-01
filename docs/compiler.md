@@ -3364,13 +3364,14 @@ and each linked program 2.4 MB, so the 5 GiB default holds hundreds of builds.
 
 ## C8.28: string literals
 
-#17 and #13 (decisions C460-C462). Code: lex.ei (`prefixed`, `raw`, `fstring`, `pieces`,
-`hole`, `multiline`), parse.ei (`fstring`, `fmt_spec`), check.ei (`fmt_string`,
+#17 and #13 (decisions U29, C461, C462, C466). Code: lex.ei (`raw_at`, `raw`, `literal`,
+`finish`, `pieces`, `hole`, `multiline`), parse.ei (`interp_string`, `fmt_spec`), check.ei (`fmt_string`,
 `fmt_hole`), llvm.ei (`fmt_builtin`), the runtime's `ei_str_pad` and `ei_str_fmt_i64/u64`
 (core/eider_rt.c and core/wasm/eider_rt.c).
 
-- **f-strings.** `f"a {x} b {n:>4}"` is a fresh `String`. The lexer turns it into FStart,
-  an FText per text run (escapes decoded, `{{` and `}}` as braces), and for each hole an
+- **Interpolation.** Every plain literal interpolates. One with no `{expr}` is one Str
+  token and a `str`, as before; `"a {x} b {n:>4}"` is a fresh `String`. The lexer turns it into
+  FStart, an FText per text run (escapes decoded, `{{` and `}}` as braces), and for each hole an
   FHole, the expression's own tokens (lexed by the same scanner, bounded to the hole) and an
   FClose carrying the spec text, then FEnd. A hole ends at the first `}` or `:` outside
   `()`/`[]`; it can't contain `{`, `"` or a comment, so the lexer finds its end without
@@ -3382,21 +3383,30 @@ and each linked program 2.4 MB, so the 5 GiB default holds hundreds of builds.
   integer with a spec B_FMT_INT. The spec reaches the runtime as one u64 (layout in
   `fmt_hole`). A type without Show is E0401 as for `print`; `+ # 0 x X b o` on a
   non-integer is E0412.
-- **Raw strings.** `r"..."`, `r#"..."#`: a Str token of the bytes as written.
+- **Raw strings.** `r"..."`, `r#"..."#`, `r"""`: a Str token of the bytes as written; they
+  never interpolate.
 - **Multi-line strings.** `"""` followed only by spaces before the line break; the closing
   line is the first whose text starts with `"""`, and its indentation is removed from each
   line (Swift's rule). A blank line may be indented less; any other such line is E0001.
-  `\` at the end of a line joins the next. The token is one Str (FStart... for `f"""`)
+  `\` at the end of a line joins the next. The token is one Str (FStart... with a `{expr}`)
   that spans lines: its `end_col` is a column of the closing line (tokens kept one line
   before this; nothing needs the end line).
-- **No valid program changes meaning**: `f"`, `r"`, `r#` and `"""`+newline were all
-  errors, and `"""x"""` on one line still lexes as three joined literals.
+- **Migration.** `{` in a plain literal meant itself before, so this changed the meaning of
+  valid programs: `eiderc migrate-strings <file> [--json] [--portable]` (migrate.ei) and
+  scripts/migrate-strings.sh rewrite each such literal (decision C466). `r"`, `r#` and
+  `"""`+newline were all errors, and `"""x"""` on one line still lexes as three joined
+  literals.
+- **Bootstrap.** compiler/, core/ and std/ are compiled by the seed, so at the change their
+  literals had to mean the same under both rules (seed/README.md): `--portable` made them raw
+  strings or `\x7b`/`\x7d`, the feature landed with a seed that has it, and everything else
+  was migrated after.
 
-Tests: compiler/tests/run/fstrings.ei (every spec, Show of records and enums, a hole with
+Tests: compiler/tests/run/interp.ei (every spec, Show of records and enums, a hole with
 `?`, a closure, raw and multi-line strings; hand-checked .out), compiler/tests/lex_ok/
-strings.ei (the tokens), compiler/tests/parse_ok/fstrings.ei (the AST), the lexer and parser
+strings.ei (the tokens), compiler/tests/parse_ok/interp.ei (the AST), the lexer and parser
 errors in compiler/tests/lex and compiler/tests/parse, tests/checks/fail/
-e0412_spec_not_integer.ei, compiler/tests/check/fail/e0401_fstring_no_show.ei.
+e0412_spec_not_integer.ei, compiler/tests/check/fail/e0401_interp_no_show.ei,
+compiler/tests/migrate/strings.ei (migrate-strings).
 
 ## C8.29: defer and errdefer
 

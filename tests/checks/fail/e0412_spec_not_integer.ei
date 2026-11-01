@@ -1,5 +1,5 @@
-// expect: E0412 4:14
+// expect: E0412 4:13
 fn main() uses io {
     let name = "Ada"
-    print(f"{name:+}")
+    print("{name:+}")
 }

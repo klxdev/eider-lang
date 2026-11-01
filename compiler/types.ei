@@ -413,7 +413,7 @@ pub fn show_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32)
             show_into(inout out, t, names, ty.a)
             out.push(93)
         }
-        17 => bytes.append(inout out, sys.lit("{error}"))
+        17 => bytes.append(inout out, sys.lit(r"{error}"))
         19 => {
             bytes.append(inout out, sys.lit("inout "))
             show_into(inout out, t, names, ty.a)

@@ -136,8 +136,8 @@ int_literal = digit {digit | "_"}
 
 ## String literals
 
-A string literal is text between double quotes, on one line. It has type `str`. (Raw,
-multi-line and f-strings are below.) Any UTF-8
+A string literal is text between double quotes, on one line. It has type `str`. A `{` or `}` in it is
+[interpolation](#interpolation); raw and multi-line literals are below. Any UTF-8
 text may appear in it except a newline, an unescaped `"` and an unescaped `\`; a literal
 not closed on its line is E0001 "unterminated string literal".
 
@@ -166,8 +166,8 @@ Refused escapes are E0001 at the backslash, with a message saying why:
 not joined.
 
 There are no character literals (`'a'` is E0001). Literals that span lines are
-[multi-line strings](#multi-line-strings); text built from values is an
-[f-string](#f-strings), and std ([fmt](api:std/fmt)) has the same formatting as functions.
+[multi-line strings](#multi-line-strings); std ([fmt](api:std/fmt)) has the formatting of
+[interpolation](#interpolation) as functions.
 
 ```eider
 fn main() uses io {
@@ -194,9 +194,12 @@ fn main() uses io {
 
 ### Raw strings
 
-`r"..."` is the text exactly as written: a backslash is a backslash, and there are no
-escapes. To put `"` in one, add the same number of `#` on both sides: `r#"say "hi""#`. A
-raw string is on one line, has type `str`, and joins adjacent literals like any other.
+`r"..."` is the text exactly as written: a backslash is a backslash, there are no escapes,
+and it never interpolates, so it is the form for text full of braces (JSON, CSS). To put
+`"` in one, add the same number of `#` on both sides: `r#"say "hi""#`. A raw string is on one
+line, has type `str`, and joins adjacent literals like any other. `r"""` starts a raw
+[multi-line string](#multi-line-strings): the same rules for its lines and indentation,
+with no escapes and no interpolation.
 
 ```eider
 fn main() uses io {
@@ -241,16 +244,18 @@ SELECT name
  WHERE id = 1 LIMIT 1
 ```
 
-`"""` followed by more text on its line is still the old reading (`"""x"""` is `""`, `"x"`
-and `""` joined: `"x"`), so no program changes meaning.
+A multi-line string interpolates like any other. `"""` followed by more text on its line is
+not one: `"""x"""` is `""`, `"x"` and `""` joined, which is `"x"`.
 
-### f-strings
+### Interpolation
 
-`f"..."` builds a `String` from text and values: each `{expr}` is replaced by the value's
-text through [Show](traits.md#show), the same text `print` writes, and `{{` and `}}` stand for
-`{` and `}`. The expressions are evaluated left to right. An expression in braces can be any
-expression without `{`, `"` or a comment in it (bind such a value to a name first), on one
-line. `f"""` starts a multi-line f-string with the rules above.
+A string literal with a `{expr}` in it builds a `String` from text and values: each `{expr}`
+is replaced by the value's text through [Show](traits.md#show), the same text `print`
+writes. A literal with none is a `str`, whatever else is in it. `{{` and `}}` stand for `{`
+and `}` in every plain literal, and a lone `{` or `}` that is no `{expr}` is E0001; a
+[raw string](#raw-strings) never interpolates. The expressions are evaluated left to right.
+An expression in braces can be any expression without `{`, `"` or a comment in it (bind such
+a value to a name first), on one line.
 
 After the expression, `:` starts a **format spec**:
 `[[fill]align][+][#][0][width][x|X|b|o]`.
@@ -275,10 +280,10 @@ type Item = { name: str, count: u32 }
 fn main() uses io {
     let it = Item("bolts", 12)
     let total: i64 = -255
-    print(f"{it.name} x{it.count}")
-    print(f"[{it.name:>8}] [{it.name:<8}] [{it.name:*^9}]")
-    print(f"[{it.count:4}] [{it.count:04}] [{it.count:+}] [{255:#x}] [{total:#06X}] [{5:b}]")
-    print(f"{it} {{braces}}")
+    print("{it.name} x{it.count}")
+    print("[{it.name:>8}] [{it.name:<8}] [{it.name:*^9}]")
+    print("[{it.count:4}] [{it.count:04}] [{it.count:+}] [{255:#x}] [{total:#06X}] [{5:b}]")
+    print("{it} {{braces}}")
 }
 ```
 
@@ -292,7 +297,7 @@ Item { name: "bolts", count: 12 } {braces}
 ```eider,compile_fail=E0412
 fn main() uses io {
     let word = "text"
-    print(f"{word:x}")
+    print("{word:x}")
 }
 ```
 

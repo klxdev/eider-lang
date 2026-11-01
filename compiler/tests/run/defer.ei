@@ -23,14 +23,14 @@ fn value(inout log: Log) -> i32 {
 }
 
 fn early(x: i32) -> i32 uses io {
-    defer print(f"leaving early({x})")
+    defer print("leaving early({x})")
     if x > 0 { return x }
     -x
 }
 
 fn parse(s: str) -> Result[i32, String] {
     if s == "1" { return Ok(1) }
-    Err(f"bad: {s}")
+    Err("bad: {s}")
 }
 
 // errdefer: on `?`, on `return Err`, on an Err as the last value; not on Ok
@@ -54,9 +54,9 @@ fn find(xs: List[i32], want: i32) -> Option[usize] uses io {
 
 fn loops() uses io {
     outer: for i in 0..3 {
-        defer print(f"  outer {i} done")
+        defer print("  outer {i} done")
         for j in 0..3 {
-            defer print(f"    inner {i},{j} done")
+            defer print("    inner {i},{j} done")
             if j == 1 { continue }
             if i == 1 && j == 2 { continue outer }
             if i == 2 && j == 2 { break outer }
@@ -65,16 +65,16 @@ fn loops() uses io {
     let mut k = 0
     while k < 2 {
         defer { k += 1 }
-        print(f"  while {k}")
+        print("  while {k}")
     }
 }
 
 // a deferred String: the defer runs before the String's drop
 fn owned() uses io {
     let s = String.from("owned text")
-    defer print(f"  defer sees {s}")
+    defer print("  defer sees {s}")
     let t = String.from("second")
-    defer print(f"  and {t}")
+    defer print("  and {t}")
 }
 
 fn in_closure() uses io {
@@ -82,14 +82,14 @@ fn in_closure() uses io {
         defer print("  closure's defer")
         n + 1
     }
-    print(f"  closure gave {f(1)}")
+    print("  closure gave {f(1)}")
 }
 
 fn main() uses io {
     order()
     let mut log = Log(List.new())
     let v = value(inout log)
-    print(f"value: {v}, log: {log.lines}")
+    print("value: {v}, log: {log.lines}")
     print(early(5))
     print(early(-3))
     print("steps(1, 1):")

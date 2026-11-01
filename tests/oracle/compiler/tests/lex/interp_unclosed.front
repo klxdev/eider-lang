@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex/interp_unclosed.ei","line":3,"col":14},"message":"unclosed `{` in a string literal: close it with `}`, write `{{` for a brace, or use a raw string"}

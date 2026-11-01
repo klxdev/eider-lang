@@ -43,15 +43,16 @@ true
 - `const LIMIT: usize = 64` declares a constant; `const X: u64 = comptime f(10)` runs
   `f` at compile time (integer and `bool` constants).
 
-Text is built with f-strings: `{expr}` inserts a value's text, and a spec after `:` pads
-or formats it (`{n:>6}`, `{n:#x}`; [Lexical structure](../reference/lexical.md#f-strings)).
+A string literal interpolates: `{expr}` inserts a value's text, and a spec after `:` pads
+or formats it (`{n:>6}`, `{n:#x}`; `{{` is a brace; [Lexical
+structure](../reference/lexical.md#interpolation)).
 `r"..."` is a raw string and `"""` starts a multi-line one:
 
 ```eider
 fn main() uses io {
     let name = "Eider"
     let n = 42
-    print(f"{name} has {n} ({n:#x}) users, [{name:^9}]")
+    print("{name} has {n} ({n:#x}) users, [{name:^9}]")
     let banner = """
         Hello,
           world

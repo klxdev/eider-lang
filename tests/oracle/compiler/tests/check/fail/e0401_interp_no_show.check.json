@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_interp_no_show.ei","line":4,"col":13},"message":"`{...}` in a string literal needs `Show`, which T doesn't implement (its part fn(i32) -> i32 doesn't)","help":"fn values have no equality, order, hash or text"}

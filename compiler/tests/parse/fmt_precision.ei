@@ -1,4 +1,4 @@
 fn main() {
     let x = 1
-    let s = f"{x:8.2}"
+    let s = "{x:8.2}"
 }

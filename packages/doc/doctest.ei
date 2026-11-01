@@ -115,9 +115,9 @@ pub fn program(code: List[u8], fragment: bool) -> List[u8] {
             body.push(10)
         }
     }
-    bytes.append(inout imports, "fn main() uses io {\n".bytes())
+    bytes.append(inout imports, "fn main() uses io {{\n".bytes())
     bytes.append(inout imports, body)
-    bytes.append(inout imports, "}\n".bytes())
+    bytes.append(inout imports, "}}\n".bytes())
     imports
 }
 
@@ -236,7 +236,7 @@ fn one(c: Case, m: Mode, eiderc: List[u8], dir: List[u8], src: List[u8]) -> List
         if o.code == 0 { return fail_line(c, "it compiles".bytes(), List.new()) }
         if o.code != 1 { return fail_line(c, "the compiler failed".bytes(), both(o)) }
         if m.code.len() > 0 {
-            let mut want = "{\"error\":\"".bytes()
+            let mut want = "{{\"error\":\"".bytes()
             bytes.append(inout want, m.code.copy())
             want.push(34)
             if !bytes.starts_with(o.out, want) {

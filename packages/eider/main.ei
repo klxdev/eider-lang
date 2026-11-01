@@ -142,7 +142,7 @@ fn jlist(xs: List[List[u8]]) -> List[u8] {
 /// A failure as one JSON line on stdout (with --json), and exit 1.
 fn die_json(as_json: bool, m: String) uses io {
     if as_json {
-        let mut o = "{".bytes()
+        let mut o = r"{".bytes()
         jfield(inout o, "error", jq(m.bytes()))
         o.push(125)
         say(o)
@@ -324,7 +324,7 @@ fn report_install(c: Ctx, d: install.Done, as_json: bool) uses io, fs, net {
         made_default = true
     }
     if as_json {
-        let mut o = "{".bytes()
+        let mut o = r"{".bytes()
         jfield(inout o, "version", jq(vers.text(d.version)))
         jfield(inout o, "path", jq(d.dir))
         jfield(inout o, "already_installed", jbool(d.already))
@@ -386,14 +386,14 @@ fn toolchain_list(c: Ctx, args: List[List[u8]]) uses io, fs, net {
     if as_json {
         let mut items: List[List[u8]] = List.new()
         for v in inst {
-            let mut o = "{".bytes()
+            let mut o = r"{".bytes()
             jfield(inout o, "version", jq(vers.text(v)))
             jfield(inout o, "path", jq(home.toolchain_dir(c.home, v)))
             jfield(inout o, "default", jbool(bytes.eq(c.cfg.default, vers.text(v))))
             o.push(125)
             items.push(o)
         }
-        let mut out = "{".bytes()
+        let mut out = r"{".bytes()
         jfield(inout out, "installed", jlist(items))
         match avail {
             Ok(rs) => {
@@ -491,7 +491,7 @@ fn toolchain_remove(c: Ctx, args: List[List[u8]]) uses io, fs {
 }
 
 fn tool_json(t: select.Tool, why: List[u8]) -> List[u8] {
-    let mut o = "{".bytes()
+    let mut o = r"{".bytes()
     jfield(inout o, "version", jq(t.version))
     jfield(inout o, "path", jq(t.root))
     jfield(inout o, "kind", jq(t.kind))
@@ -534,7 +534,7 @@ fn self_update(c: Ctx, args: List[List[u8]]) uses io, fs, net {
     let s = okj(as_json, source.from_settings(c.cfg.releases))
     let u = okj(as_json, install.self_update(c.home, s, has_flag(args, "--force")))
     if as_json {
-        let mut o = "{".bytes()
+        let mut o = r"{".bytes()
         jfield(inout o, "version", jq(vers.text(u.version)))
         jfield(inout o, "path", jq(u.path))
         jfield(inout o, "updated", jbool(!u.already))
@@ -559,7 +559,7 @@ fn show_version(c: Ctx, plus: List[u8], args: List[List[u8]]) uses io, fs, net {
     check_flags(args, "--json")
     let sel = select.select(plus, getenv("EIDER_TOOLCHAIN"), cwd(), c.home, c.cfg.default)
     if has_flag(args, "--json") {
-        let mut o = "{".bytes()
+        let mut o = r"{".bytes()
         jfield(inout o, "eider", jq(version.VERSION.bytes()))
         jfield(inout o, "release_key", jq(release_key.KEY_ID.bytes()))
         match sel {

@@ -1,1 +1,0 @@
-{"error":"E0001","span":{"file":"./compiler/tests/parse/fstring_multiline_hole.ei","line":3,"col":14},"message":"expected an expression"}

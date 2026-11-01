@@ -66,7 +66,7 @@ pub fn capped_note(shown: u64, total: u64) -> List[u8] {
 
 /// capped_note as a JSON line (`--json`).
 pub fn capped_json(shown: u64, total: u64) -> List[u8] {
-    let mut s = sys.lit("{\"note\":")
+    let mut s = sys.lit("\x7b\"note\":")
     jstr(inout s, capped_note(shown, total))
     s.push(125)
     s
@@ -163,7 +163,7 @@ pub fn debug_str(inout out: List[u8], s: List[u8]) {
         } else if c == 13 {
             bytes.append(inout out, sys.lit("\\r"))
         } else if c < 32 {
-            bytes.append(inout out, sys.lit("\\u{"))
+            bytes.append(inout out, sys.lit("\\u\x7b"))
             bytes.append(inout out, hex_min(c))
             out.push(125)
         } else {
@@ -291,15 +291,15 @@ pub fn jstr(inout out: List[u8], s: List[u8]) {
 
 pub fn json(d: Diag, file: List[u8]) -> List[u8] {
     let f = if d.file.len() > 0 { d.file } else { file }
-    let mut s = sys.lit("{\"error\":\"")
+    let mut s = sys.lit("\x7b\"error\":\"")
     bytes.append(inout s, sys.lit(d.code))
-    bytes.append(inout s, sys.lit("\",\"span\":{\"file\":"))
+    bytes.append(inout s, sys.lit("\",\"span\":\x7b\"file\":"))
     jstr(inout s, f)
     bytes.append(inout s, sys.lit(",\"line\":"))
     num(inout s, d.line as u64)
     bytes.append(inout s, sys.lit(",\"col\":"))
     num(inout s, d.col as u64)
-    bytes.append(inout s, sys.lit("},\"message\":"))
+    bytes.append(inout s, sys.lit("\x7d,\"message\":"))
     jstr(inout s, d.msg)
     if d.help.len() > 0 {
         bytes.append(inout s, sys.lit(",\"help\":"))
@@ -307,11 +307,11 @@ pub fn json(d: Diag, file: List[u8]) -> List[u8] {
     }
     match d.fix {
         Some(x) => {
-            bytes.append(inout s, sys.lit(",\"fix\":{\"at\":{\"line\":"))
+            bytes.append(inout s, sys.lit(",\"fix\":\x7b\"at\":\x7b\"line\":"))
             num(inout s, x.line as u64)
             bytes.append(inout s, sys.lit(",\"col\":"))
             num(inout s, x.col as u64)
-            bytes.append(inout s, sys.lit("},\"delete\":"))
+            bytes.append(inout s, sys.lit("\x7d,\"delete\":"))
             num(inout s, x.delete)
             bytes.append(inout s, sys.lit(",\"insert\":"))
             jstr(inout s, x.insert)

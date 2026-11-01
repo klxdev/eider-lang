@@ -36,10 +36,10 @@ fn main() uses io {
     show_tokens("é 12ab\t\n x")
 
     let t = fuzz.tables()
-    let ids = fuzz.idents(t, fuzz.tokens(sys.lit("fn f(a: i32) -> bool { let b = a == 1 return b }")))
+    let ids = fuzz.idents(t, fuzz.tokens(sys.lit(r"fn f(a: i32) -> bool { let b = a == 1 return b }")))
     io.outln(bytes.join(ids, sys.lit(",")))
 
-    let src = sys.lit("fn f(a: i32) -> i32 {\n    let b = a * 2 + 1\n    if b > 3 && true { return b }\n    0\n}\n")
+    let src = sys.lit("fn f(a: i32) -> i32 {{\n    let b = a * 2 + 1\n    if b > 3 && true {{ return b }}\n    0\n}}\n")
     show_mutants(1, false, src)
     show_mutants(7, false, src)
     show_mutants(1, true, src)

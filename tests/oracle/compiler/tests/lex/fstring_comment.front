@@ -1,1 +1,0 @@
-{"error":"E0001","span":{"file":"./compiler/tests/lex/fstring_comment.ei","line":2,"col":17},"message":"an f-string's `{...}` can't contain `{`, `\"` or a comment: bind the value to a name first"}

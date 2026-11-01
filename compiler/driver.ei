@@ -559,7 +559,7 @@ fn thin_lto(cc: List[u8], dir: List[u8]) -> bool uses io, fs, net {
         None => {}
     }
     let src = fs.join(dir, s("lto_probe.c"))
-    write_or_fail(src, s("int main(void) { return 0; }\n"))
+    write_or_fail(src, s("int main(void) \x7b return 0; \x7d\n"))
     let mut argv: List[List[u8]] = List.new()
     argv.push(cc.copy())
     argv.push(s("-flto=thin"))

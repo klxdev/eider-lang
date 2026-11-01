@@ -110,7 +110,7 @@ fn reserve(stock: i32, n: i32) -> Result[i32, str] {
 
 fn order(stock: i32, a: i32, b: i32) -> Result[i32, str] uses io {
     let left = reserve(stock, a)?
-    errdefer print(f"released {a}")
+    errdefer print("released {a}")
     let rest = reserve(left, b)?
     Ok(rest)
 }

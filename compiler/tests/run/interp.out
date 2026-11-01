@@ -23,3 +23,7 @@ SELECT *
 FROM t
 0
 x
+the pattern's braces are the text's
+{const}
+raw {n} \t "quotes"
+  kept
