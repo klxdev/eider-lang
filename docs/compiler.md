@@ -3366,6 +3366,33 @@ debug one 2.3 s to 0.8-1.0 s, a cold release build 29 s to 11 s; a no-op 0.93 s 
 The unit objects of a debug and a release build of eiderc take 8 MB, lld's ThinLTO cache 4 MB
 and each linked program 2.4 MB, so the 5 GiB default holds hundreds of builds.
 
+## C8.28: string literals
+
+#17 (decisions C460, C461). Code: lex.ei (`fstring`, `pieces`, `hole`), parse.ei (`fstring`, `fmt_spec`), check.ei (`fmt_string`,
+`fmt_hole`), llvm.ei (`fmt_builtin`), the runtime's `ei_str_pad` and `ei_str_fmt_i64/u64`
+(core/eider_rt.c and core/wasm/eider_rt.c).
+
+- **f-strings.** `f"a {x} b {n:>4}"` is a fresh `String`. The lexer turns it into FStart,
+  an FText per text run (escapes decoded, `{{` and `}}` as braces), and for each hole an
+  FHole, the expression's own tokens (lexed by the same scanner, bounded to the hole) and an
+  FClose carrying the spec text, then FEnd. A hole ends at the first `}` or `:` outside
+  `()`/`[]`; it can't contain `{`, `"` or a comment, so the lexer finds its end without
+  parsing. The parser makes an EFmt of EStr and EHole parts and parses the spec into the
+  EHole's slots (ast.ei). The checker evaluates the parts left to right into one String
+  temporary (registered for its drop first, so a `?` in a hole frees it): text is
+  B_STR_PUSH, a plain hole B_SHOW (the value's Show, as `print`), a width alone on a
+  non-integer B_SHOW then B_STR_PAD (pads what follows the length taken before), and an
+  integer with a spec B_FMT_INT. The spec reaches the runtime as one u64 (layout in
+  `fmt_hole`). A type without Show is E0401 as for `print`; `+ # 0 x X b o` on a
+  non-integer is E0412.
+- **No valid program changes meaning**: `f"` was a name next to a literal, an error.
+
+Tests: compiler/tests/run/fstrings.ei (every spec, Show of records and enums, a hole with
+`?`, a closure; hand-checked .out), compiler/tests/lex_ok/
+strings.ei (the tokens), compiler/tests/parse_ok/fstrings.ei (the AST), the lexer and parser
+errors in compiler/tests/lex and compiler/tests/parse, tests/checks/fail/
+e0412_spec_not_integer.ei, compiler/tests/check/fail/e0401_fstring_no_show.ei.
+
 ## Profiling: `--profile`
 
 `eiderc build|run|test <file> --profile[=cpu,mem,conc]` (main.ei: `profile`, parsed by

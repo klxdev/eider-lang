@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex/fstring_close_brace.ei","line":2,"col":17},"message":"a `}` in an f-string is written `}}`"}

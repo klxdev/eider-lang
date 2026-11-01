@@ -1776,7 +1776,7 @@ fn stmt(inout e: E, p: lower.P, id: u32) {
 }
 
 fn mutates(b: u32) -> bool {
-    b == ir.B_SHOW || b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_STR_PUSH_BYTE || b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE
+    b == ir.B_SHOW || b == ir.B_STR_PAD || b == ir.B_FMT_INT || b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_STR_PUSH_BYTE || b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE
 }
 
 /// `[x; n]`: a loop storing x into every element.
@@ -2615,6 +2615,10 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         trait_builtin(inout e, p, s)
         return
     }
+    if b == ir.B_STR_PAD || b == ir.B_FMT_INT {
+        fmt_builtin(inout e, p, s)
+        return
+    }
     if b == ir.B_SPAWN || b == ir.B_MUTEX_NEW || b == ir.B_CHAN_NEW || b == ir.B_TASK_JOIN || b == ir.B_MUTEX_GET || b == ir.B_MUTEX_SET || b == ir.B_MUTEX_UPDATE || b == ir.B_CHAN_SEND {
         thread_builtin(inout e, p, s)
         return
@@ -2935,6 +2939,27 @@ fn default_to(inout e: E, p: lower.P, ty: u32, d: List[u8]) {
         gneed(inout e, lower.GK_DEFAULT, ty)
         let gn_ = gname(e, "default_", ty)
         call(inout e, p, gn_, List.new(), List.new(), ty, d)
+    }
+}
+
+/// f-strings' B_STR_PAD and B_FMT_INT: the runtime's ei_str_pad and ei_str_fmt_i64/u64.
+fn fmt_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
+    let none: List[u8] = List.new()
+    let sp = PTR + types.STRING
+    let o = argptr(inout e, p, barg(p, s, 0))
+    let x = barg(p, s, 1)
+    let v = argval(inout e, p, x)
+    let spec = argval(inout e, p, barg(p, s, 2))
+    if s.a == ir.B_STR_PAD {
+        call(inout e, p, lit("ei_str_pad"), tys3(sp, types.U64, types.U64), args3(o, v, spec), types.UNIT, none)
+        return
+    }
+    let t = types.get(p.t, arg_ty(p, x))
+    let w = if int_bits(t.a) == 64 { v.copy() } else if types.signed(t.a) { val(inout e, catb(lit("sext "), catb(lit(int_ty(t.a)), catb(lit(" "), cat(v, " to i64"))))) } else { val(inout e, catb(lit("zext "), catb(lit(int_ty(t.a)), catb(lit(" "), cat(v, " to i64"))))) }
+    if types.signed(t.a) {
+        call(inout e, p, lit("ei_str_fmt_i64"), tys3(sp, types.I64, types.U64), args3(o, w, spec), types.UNIT, none)
+    } else {
+        call(inout e, p, lit("ei_str_fmt_u64"), tys3(sp, types.U64, types.U64), args3(o, w, spec), types.UNIT, none)
     }
 }
 

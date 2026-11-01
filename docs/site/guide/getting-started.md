@@ -139,6 +139,21 @@ Point { x: 3, y: -4 }
 (-1, "sum")
 ```
 
+An f-string puts values into text the same way, with an optional format spec after a
+colon:
+
+```eider
+fn main() uses io {
+    let name = "Eider"
+    let year = 2026
+    print(f"Hello from {name}, {year}! [{year:>8}] [{year:#x}]")
+}
+```
+
+```output
+Hello from Eider, 2026! [    2026] [0x7ea]
+```
+
 ## Run, build and test
 
 | Command | What it does |

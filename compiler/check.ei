@@ -1120,7 +1120,7 @@ fn end_pos(inout c: C) { c.rf.wpos.pop() }
 
 /// Whether builtin b may resize or replace the buffer of its place argument.
 fn resizes(b: u32) -> bool {
-    b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE || b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_STR_PUSH_BYTE
+    b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE || b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_STR_PUSH_BYTE || b == ir.B_STR_PAD || b == ir.B_FMT_INT
 }
 
 /// Whether place p has an element on its path (a bounds check).
@@ -5271,6 +5271,7 @@ fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
         }
         ast.ETuple => tuple_lit(inout c, n, exp)
         ast.ETry => try_op(inout c, n)
+        ast.EFmt => fmt_string(inout c, n)
         ast.ELambda => lambda(inout c, n, exp)
         // reported by the parser: an error value
         ast.EError => Err(quiet())
@@ -5875,6 +5876,8 @@ fn idents(c: C, e: u32, inout out: List[u64]) {
         ast.ECast => idents(c, n.a, inout out)
         ast.EField => idents(c, n.a, inout out)
         ast.ERepeat => idents(c, n.a, inout out)
+        ast.EHole => idents(c, n.a, inout out)
+        ast.EFmt => { for i in 0..n.d { idents(c, at(c, n.c, i), inout out) } }
         ast.ETry => idents(c, n.a, inout out)
         ast.EBinary => {
             idents(c, n.b, inout out)
@@ -6883,6 +6886,8 @@ fn walk_expr(c: C, e: u32, inout out: List[u64]) {
         ast.ECast => walk_expr(c, n.a, inout out)
         ast.EField => walk_expr(c, n.a, inout out)
         ast.ERepeat => walk_expr(c, n.a, inout out)
+        ast.EHole => walk_expr(c, n.a, inout out)
+        ast.EFmt => { for i in 0..n.d { walk_expr(c, at(c, n.c, i), inout out) } }
         ast.ETry => walk_expr(c, n.a, inout out)
         ast.EBinary => {
             walk_expr(c, n.b, inout out)
@@ -7672,4 +7677,86 @@ fn thread_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
         }
     }
     Err(err("E0115", n.line, n.col, q2("type ", ts(c, ty), " has no method `", nm(c, n.b), "`")))
+}
+
+// ---- f-strings (docs/compiler.md, "C8.28: string literals")
+
+/// `f"..."`: a fresh String. Text parts are pushed; each `{e}` appends e's text through Show
+/// (B_SHOW); a width pads what it appended (B_STR_PAD); `+`, `#`, `0` and a radix format an
+/// integer (B_FMT_INT). The pieces are evaluated left to right.
+fn fmt_string(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
+    let empty = ir.op_str(inout c.ir, List.new())
+    let so = builtin_op(inout c, ir.B_STR_FROM, one(empty), types.STRING, n.line)
+    let sv = mk_fresh(inout c, v_of(types.STRING, so), n.line)
+    let place = place_of_op(inout c, sv.op, types.STRING, n.line)
+    for i in 0..n.d {
+        let pn = nd(c, at(c, n.c, i))
+        if pn.kind == ast.EStr {
+            let text = c.p.mods[c.am as usize].strs[pn.a as usize].copy()
+            let to = ir.op_str(inout c.ir, text)
+            builtin_op(inout c, ir.B_STR_PUSH, two(place + ir.ARG_PLACE, to), types.UNIT, pn.line)
+        } else {
+            fmt_hole(inout c, pn, place)?
+        }
+    }
+    Ok(sv)
+}
+
+/// One `{e:spec}` of an f-string, appended to the String at `place`.
+fn fmt_hole(inout c: C, h: ast.Node, place: u32) -> Result[bool, diag.Diag] {
+    let v = expr(inout c, h.a, NONE)?
+    if poisoned(c, v.ty) { return Ok(true) }
+    let x = nd(c, h.a)
+    if !has_trait(c, TR_SHOW, v.ty) {
+        return Err(lack_err(c, "E0401", x.line, x.col, s("`{...}` in an f-string"), TR_SHOW, v.ty))
+    }
+    let is_int = types.is_int(c.t, v.ty)
+    let numeric = h.e != 0 || h.f != 0
+    if numeric && !is_int {
+        let mut what = s("")
+        if ast.has(h.e, ast.FMT_PLUS) { what = s("`+`") } else if ast.has(h.e, ast.FMT_ALT) { what = s("`#`") } else if ast.has(h.e, ast.FMT_ZERO) { what = s("`0`") } else {
+            what = s("`")
+            what.push(h.f as u8)
+            what.push(96)
+        }
+        let mut d = errh("E0412", x.line, x.col, q2("format spec ", what, " is for integers, and this is ", ts(c, v.ty), ""), "only a width, fill and alignment apply to any type: `{x:>8}`, `{x:*^9}`")
+        d.fix = Some(diag.Fix(h.line, h.g, h.h as u64, List.new()))
+        return Err(d)
+    }
+    if !numeric && h.b == 0 {
+        builtin_op(inout c, ir.B_SHOW, two(place + ir.ARG_PLACE, v.op), types.UNIT, h.line)
+        return Ok(true)
+    }
+    // the spec as one u64: width (bits 0-31), fill (32-39), alignment (40-41: 1 left, 2 right,
+    // 3 center), `+` (42), `#` (43), `0` (44), radix (45-50), upper-case digits (51)
+    let width: u64 = if h.b > 0 { (h.b - 1) as u64 } else { 0 }
+    let fill: u64 = if h.c > 0 { h.c as u64 } else { 32 }
+    let mut align: u64 = h.d as u64
+    if align == 0 { align = if is_int { 2 } else { 1 } }
+    let mut bits = width + fill * 4294967296 + align * 1099511627776
+    if ast.has(h.e, ast.FMT_PLUS) { bits += 4398046511104 }
+    if ast.has(h.e, ast.FMT_ALT) { bits += 8796093022208 }
+    if ast.has(h.e, ast.FMT_ZERO) { bits += 17592186044416 }
+    let mut radix: u64 = 10
+    if h.f == 120 || h.f == 88 { radix = 16 }
+    if h.f == 98 { radix = 2 }
+    if h.f == 111 { radix = 8 }
+    bits += radix * 35184372088832
+    if h.f == 88 { bits += 2251799813685248 }
+    let spec = ir.op_int(inout c.ir, types.U64, bits)
+    if is_int {
+        builtin_op(inout c, ir.B_FMT_INT, three(place + ir.ARG_PLACE, v.op, spec), types.UNIT, h.line)
+        return Ok(true)
+    }
+    let sr = read(inout c, place, types.STRING, 0)
+    let mark = builtin_op(inout c, ir.B_LEN, one(sr), types.USIZE, h.line)
+    builtin_op(inout c, ir.B_SHOW, two(place + ir.ARG_PLACE, v.op), types.UNIT, h.line)
+    builtin_op(inout c, ir.B_STR_PAD, three(place + ir.ARG_PLACE, mark, spec), types.UNIT, h.line)
+    Ok(true)
+}
+
+fn three(a: u32, b: u32, x: u32) -> List[u32] {
+    let mut l = two(a, b)
+    l.push(x)
+    l
 }

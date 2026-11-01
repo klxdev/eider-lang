@@ -881,6 +881,8 @@ fn locals_expr(inout b: B, m: u32, e: u32, container: u32) {
         ast.EField => locals_expr(inout b, m, n.a, container)
         ast.ECast => locals_expr(inout b, m, n.a, container)
         ast.ERepeat => locals_expr(inout b, m, n.a, container)
+        ast.EHole => locals_expr(inout b, m, n.a, container)
+        ast.EFmt => locals_list(inout b, m, n.c, n.d, container)
         ast.EBinary => {
             locals_expr(inout b, m, n.b, container)
             locals_expr(inout b, m, n.c, container)

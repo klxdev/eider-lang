@@ -594,6 +594,11 @@ void ei_str_push_u64(ei_String *s, uint64_t v);
 /* Append t quoted and escaped as derived Show writes text inside a value: `"a\"b\n"` (\" \\
    \n \t \r escaped, other bytes as they are). */
 void ei_str_push_quoted(ei_String *s, const char *t);
+/* f-strings (docs/compiler.md, "C8.28"; the spec's layout is in eider_rt.c): pad the text after
+   byte offset mark to the spec's width; append an integer formatted by the spec. */
+void ei_str_pad(ei_String *s, uint64_t mark, uint64_t spec);
+void ei_str_fmt_i64(ei_String *s, int64_t v, uint64_t spec);
+void ei_str_fmt_u64(ei_String *s, uint64_t v, uint64_t spec);
 
 /* `main` returned Err: flush stdout and print `error: <text>` (or the number) to stderr. */
 void ei_main_error(const char *text);

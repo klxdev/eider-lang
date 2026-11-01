@@ -362,6 +362,14 @@ fn dump(lx: lex.Lexed, names: intern.Interner) uses io {
                 out.push(32)
                 diag.debug_str(inout out, lx.strs[t.val as usize])
             }
+            lex.FText => {
+                out.push(32)
+                diag.debug_str(inout out, lx.strs[t.val as usize])
+            }
+            lex.FClose => {
+                out.push(32)
+                diag.debug_str(inout out, lx.strs[t.val as usize])
+            }
             _ => {}
         }
         out.push(10)

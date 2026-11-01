@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex/fstring_unclosed.ei","line":3,"col":15},"message":"unclosed `{` in an f-string: close it with `}`, or write `{{` for a brace"}

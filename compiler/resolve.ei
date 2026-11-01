@@ -1401,6 +1401,8 @@ fn collect_expr(p: Program, m: u32, e: u32, inout out: Map[u32, bool]) {
         ast.EField => collect_expr(p, m, n.a, inout out)
         ast.ECast => collect_expr(p, m, n.a, inout out)
         ast.ERepeat => collect_expr(p, m, n.a, inout out)
+        ast.EHole => collect_expr(p, m, n.a, inout out)
+        ast.EFmt => collect_list(p, m, n.c, n.d, inout out)
         ast.EBinary => {
             collect_expr(p, m, n.b, inout out)
             collect_expr(p, m, n.c, inout out)

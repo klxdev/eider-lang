@@ -21,6 +21,7 @@ pub type Kind =
     | Comma | Colon | Semi | Dot | Plus | Minus | Star | Slash | Percent
     | Lt | Gt | Eq | Bang | Pipe
     | Amp | Caret | Tilde | Shl | Shr | AmpEq | PipeEq | CaretEq | ShlEq | ShrEq
+    | FStart | FText | FHole | FClose | FEnd
 
 /// `start`/`end` are byte offsets; `line`/`col` the start position; `end_col` is the column
 /// just past the token (tokens never span lines).
@@ -370,8 +371,17 @@ fn run(src: List[u8], inout names: intern.Interner, all: bool) -> Run {
     let mut l = L(0, 1, 1)
     // the offset just past the last bad character (0: none yet)
     let mut bad_end: usize = 0
-    while l.i < src.len() {
-        if !all && bad.len() > 0 { return Run(Lexed(toks, strs, src), bad) }
+    scan(src, inout l, src.len(), all, inout toks, inout strs, inout bad, inout bad_end, inout names)
+    if !all && bad.len() > 0 { return Run(Lexed(toks, strs, src), bad) }
+    toks.push(Tok(Eof, l.i as u32, l.i as u32, l.line, l.col, l.col, 0, false))
+    Run(Lexed(toks, strs, src), bad)
+}
+
+/// The tokens from `l` up to offset `stop` (the end of the file, or of an f-string's
+/// `{...}`), appended to `toks`.
+fn scan(src: List[u8], inout l: L, stop: usize, all: bool, inout toks: List[Tok], inout strs: List[List[u8]], inout bad: List[Bad], inout bad_end: usize, inout names: intern.Interner) {
+    while l.i < stop {
+        if !all && bad.len() > 0 { return }
         let c = src[l.i]
         let start = l.copy()
         if c == 10 {
@@ -407,25 +417,16 @@ fn run(src: List[u8], inout names: intern.Interner, all: bool) -> Run {
             }
         } else if bytes.is_digit(c) {
             toks.push(number(src, inout l, inout bad))
+        } else if c == 102 && at(src, l.i + 1) == 34 {
+            // f"..." (docs/compiler.md, "C8.28: string literals")
+            fstring(src, inout l, all, inout toks, inout strs, inout bad, inout bad_end, inout names)
         } else if bytes.is_alpha(c) || c == 95 {
             while l.i < src.len() && bytes.is_ident(src[l.i]) { step(src, inout l) }
             let id = intern.intern(inout names, src, start.i, l.i)
             toks.push(tok(Ident, start, l, id as u64))
         } else if c == 34 {
             let t = string(src, inout l, inout strs, inout bad)
-            let n = toks.len()
-            if n > 0 && toks[n - 1].kind == Str && toks[n - 1].line == t.line {
-                // adjacent literals on one line are one literal (docs/compiler.md, "C8.17")
-                let mut prev = toks[n - 1]
-                let more = strs[t.val as usize].copy()
-                strs.pop()
-                bytes.append(inout strs[prev.val as usize], more)
-                prev.end = t.end
-                prev.end_col = t.end_col
-                toks[n - 1] = prev
-            } else {
-                toks.push(t)
-            }
+            push_str(inout toks, inout strs, t)
         } else if sym3(c, at(src, l.i + 1), at(src, l.i + 2)).is_some() {
             let k3 = sym3(c, at(src, l.i + 1), at(src, l.i + 2)).unwrap()
             step(src, inout l)
@@ -457,8 +458,192 @@ fn run(src: List[u8], inout names: intern.Interner, all: bool) -> Run {
             }
         }
     }
-    toks.push(Tok(Eof, l.i as u32, l.i as u32, l.line, l.col, l.col, 0, false))
-    Run(Lexed(toks, strs, src), bad)
+}
+
+/// Push string token t, joined to a string token just before it on its line (adjacent
+/// literals on one line are one literal: docs/compiler.md, "C8.17").
+fn push_str(inout toks: List[Tok], inout strs: List[List[u8]], t: Tok) {
+    let n = toks.len()
+    if n > 0 && toks[n - 1].kind == Str && toks[n - 1].line == t.line {
+        let mut prev = toks[n - 1]
+        let more = strs[t.val as usize].copy()
+        strs.pop()
+        bytes.append(inout strs[prev.val as usize], more)
+        prev.end = t.end
+        prev.end_col = t.end_col
+        toks[n - 1] = prev
+    } else {
+        toks.push(t)
+    }
+}
+
+// ---- f-strings (docs/compiler.md, "C8.28: string literals"). `f"` wasn't valid before: it
+// was a name next to a literal.
+//
+// An f-string is the tokens FStart, then for each text run an FText (val: its decoded text
+// in `strs`), for each `{expr[:spec]}` an FHole at the `{`, the expression's own tokens and
+// an FClose at the `:` or `}` (val: the spec text in `strs`, empty without one), and FEnd at
+// the closing quote. The parser makes an EFmt of them.
+
+/// One escape sequence at the backslash at l.i, appended to s (the rules of `string`).
+fn escape(src: List[u8], inout l: L, inout s: List[u8], inout reported: bool, inout bad: List[Bad]) {
+    let e = at(src, l.i + 1)
+    if e == 120 || e == 117 {
+        let r = if e == 120 { hex_escape(src, l.i + 2) } else { unicode_escape(src, l.i + 2) }
+        if r.msg.len() > 0 {
+            if !reported { bad.push(fail(l, r.msg)) }
+            reported = true
+            step(src, inout l)
+            step(src, inout l)
+            return
+        }
+        utf8_push(inout s, r.v)
+        while l.i < r.end { step(src, inout l) }
+        return
+    }
+    if e == 110 {
+        s.push(10)
+    } else if e == 116 {
+        s.push(9)
+    } else if e == 114 {
+        s.push(13)
+    } else if e == 34 || e == 92 {
+        s.push(e)
+    } else if e == 48 {
+        if !reported { bad.push(fail(l, "a string can't contain NUL (`\\0`): str and String are UTF-8 text without NUL; put the byte 0 in a List[u8]")) }
+        reported = true
+    } else {
+        if !reported { bad.push(fail(l, "unknown escape sequence")) }
+        reported = true
+        if e == 10 || l.i + 1 >= src.len() {
+            step(src, inout l)
+            return
+        }
+    }
+    step(src, inout l)
+    step(src, inout l)
+}
+
+/// The text of the literal being read so far (`cur`, starting at `from`) and whether an error
+/// was reported for it.
+type Piece = { cur: List[u8], from: L, reported: bool }
+
+/// Push the text run so far as an FText token and start a new one at l.
+fn flush(inout p: Piece, l: L, inout toks: List[Tok], inout strs: List[List[u8]]) {
+    strs.push(p.cur)
+    toks.push(tok(FText, p.from, l, (strs.len() - 1) as u64))
+    p.cur = List.new()
+    p.from = l.copy()
+}
+
+/// The end of a one-line literal's text from i: the offset of its closing quote, or of the
+/// end of the line (or file) when it has none.
+fn text_end(src: List[u8], i: usize) -> usize {
+    let mut j = i.copy()
+    while j < src.len() && src[j] != 10 && src[j] != 34 {
+        if src[j] == 92 && j + 1 < src.len() && src[j + 1] != 10 { j += 1 }
+        j += 1
+    }
+    j
+}
+
+/// `f"..."` on one line.
+fn fstring(src: List[u8], inout l: L, all: bool, inout toks: List[Tok], inout strs: List[List[u8]], inout bad: List[Bad], inout bad_end: usize, inout names: intern.Interner) {
+    let start = l.copy()
+    step(src, inout l)
+    step(src, inout l)
+    toks.push(tok(FStart, start, l, 0))
+    let end = text_end(src, l.i)
+    let mut p = Piece(List.new(), l.copy(), false)
+    pieces(src, inout l, end, true, inout p, all, inout toks, inout strs, inout bad, inout bad_end, inout names)
+    flush(inout p, l, inout toks, inout strs)
+    let close = l.copy()
+    if l.i < src.len() && src[l.i] == 34 {
+        step(src, inout l)
+    } else if !p.reported {
+        bad.push(fail(start, "unterminated string literal"))
+    }
+    toks.push(tok(FEnd, close, l, 0))
+}
+
+/// The text of a literal from l to `end`: escapes decoded and, in an f-string (`fmt`), `{{`
+/// and `}}` as braces and each `{...}` as its tokens.
+fn pieces(src: List[u8], inout l: L, end: usize, fmt: bool, inout p: Piece, all: bool, inout toks: List[Tok], inout strs: List[List[u8]], inout bad: List[Bad], inout bad_end: usize, inout names: intern.Interner) {
+    while l.i < end {
+        let c = src[l.i]
+        if fmt && (c == 123 || c == 125) && at(src, l.i + 1) == c && l.i + 1 < end {
+            p.cur.push(c)
+            step(src, inout l)
+            step(src, inout l)
+        } else if fmt && c == 123 {
+            flush(inout p, l, inout toks, inout strs)
+            if !hole(src, inout l, end, all, inout toks, inout strs, inout bad, inout bad_end, inout names) {
+                p.reported = true
+                while l.i < end { step(src, inout l) }
+            }
+            p.from = l.copy()
+        } else if fmt && c == 125 {
+            if !p.reported { bad.push(fail(l, "a `}` in an f-string is written `}}`")) }
+            p.reported = true
+            step(src, inout l)
+        } else if c == 92 {
+            let mut rep = p.reported.copy()
+            escape(src, inout l, inout p.cur, inout rep, inout bad)
+            p.reported = rep
+        } else {
+            p.cur.push(c)
+            step(src, inout l)
+        }
+    }
+}
+
+/// `{expr}` or `{expr:spec}` at l (the `{`), within a literal ending at `end`: FHole, the
+/// expression's tokens, FClose. false (after reporting it) when it is malformed.
+fn hole(src: List[u8], inout l: L, end: usize, all: bool, inout toks: List[Tok], inout strs: List[List[u8]], inout bad: List[Bad], inout bad_end: usize, inout names: intern.Interner) -> bool {
+    let open = l.copy()
+    let mut j = l.i + 1
+    let mut depth: u32 = 0
+    while true {
+        if j >= end && at(src, j) == 34 && at(src, j + 1) != 10 && j + 1 < src.len() && text_end(src, j + 1) < src.len() && src[text_end(src, j + 1)] == 34 {
+            // `{f("x")}`: the literal seems to end inside the braces
+            bad.push(fail(open, "an f-string's `{...}` can't contain `{`, `\"` or a comment: bind the value to a name first"))
+            return false
+        }
+        if j >= end {
+            bad.push(fail(open, "unclosed `{` in an f-string: close it with `}`, or write `{{` for a brace"))
+            return false
+        }
+        let b = src[j]
+        if b == 123 || b == 34 || (b == 47 && (at(src, j + 1) == 47 || at(src, j + 1) == 42)) {
+            bad.push(fail(open, "an f-string's `{...}` can't contain `{`, `\"` or a comment: bind the value to a name first"))
+            return false
+        }
+        if b == 40 || b == 91 { depth += 1 }
+        if (b == 41 || b == 93) && depth > 0 { depth -= 1 }
+        if depth == 0 && (b == 125 || b == 58) { break }
+        j += 1
+    }
+    step(src, inout l)
+    toks.push(tok(FHole, open, l, 0))
+    scan(src, inout l, j, all, inout toks, inout strs, inout bad, inout bad_end, inout names)
+    while l.i < j { step(src, inout l) }
+    let close = l.copy()
+    let mut spec: List[u8] = List.new()
+    if src[j] == 58 {
+        step(src, inout l)
+        while l.i < end && src[l.i] != 125 {
+            spec.push(src[l.i])
+            step(src, inout l)
+        }
+        if l.i >= end {
+            bad.push(fail(open, "unclosed `{` in an f-string: close it with `}`, or write `{{` for a brace"))
+            return false
+        }
+    }
+    step(src, inout l)
+    strs.push(spec)
+    toks.push(tok(FClose, close, l, (strs.len() - 1) as u64))
+    true
 }
 
 /// Display name of a token kind, as used in dumps and messages.
@@ -517,5 +702,10 @@ pub fn kind_text(k: Kind) -> str {
         CaretEq => "^="
         ShlEq => "<<="
         ShrEq => ">>="
+        FStart => "f\""
+        FText => "ftext"
+        FHole => "{"
+        FClose => "}"
+        FEnd => "\""
     }
 }

@@ -1,0 +1,3 @@
+// C8.28's f-strings: text runs, holes with their tokens and specs, `{{`/`}}`
+let a = f"x{n}y{p.q(1, [2]):>8}{{z}}"
+let e = f""

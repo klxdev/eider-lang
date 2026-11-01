@@ -1595,6 +1595,7 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] {
         n.a = t.val as u32
         return Ok(add(inout p, n))
     }
+    if t.kind == lex.FStart { return fstring(inout p) }
     if t.kind == lex.LParen {
         adv(inout p)
         skip_nl(inout p)
@@ -2048,6 +2049,107 @@ pub fn pattern(inout p: P) -> Result[u32, diag.Diag] {
         return Ok(add(inout p, n))
     }
     Err(err(p, "expected a pattern"))
+}
+
+// ---- f-strings (docs/compiler.md, "C8.28: string literals"; the tokens are lex.ei's)
+
+/// `f"text {expr:spec} text"`: an EFmt of EStr and EHole parts.
+fn fstring(inout p: P) -> Result[u32, diag.Diag] {
+    let t = cur(p)
+    adv(inout p)
+    let mut parts: List[u32] = List.new()
+    while true {
+        let k = cur(p)
+        if k.kind == lex.FEnd {
+            adv(inout p)
+            break
+        }
+        if k.kind == lex.FText {
+            adv(inout p)
+            if p.strs[k.val as usize].len() > 0 {
+                let mut sn = mk(ast.EStr, k.line, k.col)
+                sn.a = k.val as u32
+                parts.push(add(inout p, sn))
+            }
+            continue
+        }
+        if k.kind != lex.FHole { return Err(err(p, "expected the end of the f-string")) }
+        adv(inout p)
+        let mut h = mk(ast.EHole, k.line, k.col)
+        if is(p, lex.FClose) { return Err(err(p, "expected an expression")) }
+        h.a = expr(inout p)?
+        if !is(p, lex.FClose) { return Err(err(p, "expected `}` or `:` after the expression in `{...}`")) }
+        let ct = cur(p)
+        adv(inout p)
+        fmt_spec(p.strs[ct.val as usize], ct.line, ct.col + 1, inout h)?
+        h.g = ct.col + 1
+        h.h = p.strs[ct.val as usize].len() as u32
+        parts.push(add(inout p, h))
+    }
+    let mut n = mk(ast.EFmt, t.line, t.col)
+    n.c = list(inout p, parts)
+    n.d = parts.len() as u32
+    let e = prev_end(p)
+    n.end_line = e.line
+    n.end_col = e.col
+    Ok(add(inout p, n))
+}
+
+/// `[[fill]align][+][#][0][width][type]` into h's slots (ast.ei, EHole); the spec starts at
+/// line:col. A precision (`.N`) waits for floats.
+fn fmt_spec(sp: List[u8], line: u32, col: u32, inout h: ast.Node) -> Result[bool, diag.Diag] {
+    let mut i: usize = 0
+    let n = sp.len()
+    let shape = "a format spec is `[[fill]align][+][#][0][width][x|X|b|o]`, like `>8`, `08` or `#x`"
+    if n >= 2 && fmt_align(sp[1]) > 0 && sp[0] < 128 {
+        h.c = sp[0] as u32
+        h.d = fmt_align(sp[1])
+        i = 2
+    } else if n >= 1 && fmt_align(sp[0]) > 0 {
+        h.d = fmt_align(sp[0])
+        i = 1
+    }
+    if i < n && sp[i] == 43 {
+        h.e += ast.FMT_PLUS
+        i += 1
+    }
+    if i < n && sp[i] == 35 {
+        h.e += ast.FMT_ALT
+        i += 1
+    }
+    if i < n && sp[i] == 48 {
+        h.e += ast.FMT_ZERO
+        i += 1
+    }
+    let mut w: u32 = 0
+    let mut digits = false
+    while i < n && sp[i] >= 48 && sp[i] <= 57 {
+        if w > 100000 { return Err(err_at(line, col + i as u32, sys.lit("a format width is at most 100000"))) }
+        w = w * 10 + (sp[i] - 48) as u32
+        digits = true
+        i += 1
+    }
+    if digits { h.b = w + 1 }
+    if i < n && sp[i] == 46 {
+        return Err(err_at(line, col + i as u32, sys.lit("a precision (`.N`) is for floats, which Eider doesn't have yet; pad with a width instead")))
+    }
+    if i < n && (sp[i] == 120 || sp[i] == 88 || sp[i] == 98 || sp[i] == 111) {
+        h.f = sp[i] as u32
+        i += 1
+    }
+    if i < n {
+        let mut m = if sp[i] < 128 { quoted("unexpected `", bytes.slice(sp, i, i + 1), "` in a format spec: ") } else { sys.lit("unexpected non-ASCII text in a format spec: ") }
+        bytes.append(inout m, sys.lit(shape))
+        return Err(err_at(line, col + i as u32, m))
+    }
+    Ok(true)
+}
+
+fn fmt_align(b: u8) -> u32 {
+    if b == 60 { return 1 }
+    if b == 62 { return 2 }
+    if b == 94 { return 3 }
+    0
 }
 
 /// Parse a lexed file: the tree, or the first error.

@@ -43,6 +43,21 @@ true
 - `const LIMIT: usize = 64` declares a constant; `const X: u64 = comptime f(10)` runs
   `f` at compile time (integer and `bool` constants).
 
+Text is built with f-strings: `{expr}` inserts a value's text, and a spec after `:` pads
+or formats it (`{n:>6}`, `{n:#x}`; [Lexical structure](../reference/lexical.md#f-strings)):
+
+```eider
+fn main() uses io {
+    let name = "Eider"
+    let n = 42
+    print(f"{name} has {n} ({n:#x}) users, [{name:^9}]")
+}
+```
+
+```output
+Eider has 42 (0x2a) users, [  Eider  ]
+```
+
 Arithmetic is checked. Overflow stops the program with exit code 101, in every build. When
 wrapping is what you want, say so with `+%`, `-%` or `*%`:
 

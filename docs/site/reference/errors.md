@@ -1015,6 +1015,33 @@ fn main() uses io {
 1
 ```
 
+## E0412
+
+A **format spec that applies only to integers**, used in an [f-string](lexical.md#f-strings)
+on a value of another type: `+` (a sign on non-negative numbers), `#` (a radix prefix), `0`
+(zero padding) and the radix letters `x`, `X`, `b` and `o`. A width, a fill and an
+alignment apply to any type. The fix deletes the spec.
+
+```eider,compile_fail=E0412
+fn main() uses io {
+    let name = "Ada"
+    print(f"{name:x}")
+}
+```
+
+Fix: format integers with those, and pad anything with a width.
+
+```eider
+fn main() uses io {
+    let name = "Ada"
+    print(f"[{name:>5}] [{255:#x}]")
+}
+```
+
+```output
+[  Ada] [0xff]
+```
+
 ## E0501
 
 A **constant out of range**: an integer literal that doesn't fit its type (`let x: u8 =

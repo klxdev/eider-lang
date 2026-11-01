@@ -199,7 +199,7 @@ pub fn grouped(n: i64, sep: str) -> String {
 }
 
 /// A String built piece by piece: `let mut b = fmt.builder()`, `b.add("n=")`, `b.add_int(5)`,
-/// then `b.text()`. (The language has no string interpolation yet: roadmap P0.5.)
+/// then `b.text()`. (An f-string, `f"n={n:>4}"`, is often shorter.)
 pub type Builder = { s: String }
 
 pub fn builder() -> Builder { Builder(String.from("")) }

@@ -1,0 +1,6 @@
+// f-strings (docs/compiler.md, "C8.28"): text and holes, every part of a spec
+fn main() uses io {
+    let n = 5
+    print(f"n={n} [{n:*^8}] [{n:+#010X}] [{n:<3}] {{}} {n + 1:b}")
+    let s = f"{n:o}"
+}
