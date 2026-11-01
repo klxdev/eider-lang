@@ -131,11 +131,34 @@ fn label_of_b() -> str {
     ""
 }
 
+// a closure mentions what the reflection reads: p is captured
+fn sum_a(p: Pair) -> i64 {
+    let g = || -> i64 {
+        let mut n: i64 = 0
+        comptime for f in fields(Pair) {
+            comptime if f.name == "a" { n += p.[f] }
+        }
+        n
+    }
+    g()
+}
+
+fn rebuilt(base: i64) -> Cfg {
+    let f = |b: i64| -> Cfg {
+        Cfg(comptime for x in fields(Cfg) {
+            comptime if attr[enc](x).skip { dflt() } else { make(b + x.index as i64) }
+        })
+    }
+    f(base)
+}
+
 const CFG_FIELDS: i64 = comptime field_count()
 const B_LABEL: str = comptime label_of_b()
 
 fn main() uses io {
     print(CFG_FIELDS)
+    print(sum_a(Pair(21, String.from("x"), 0, Mutex.new(0))))
+    print(rebuilt(1).name)
     print(B_LABEL)
     let p = Pair(1, String.from("one"), 3, Mutex.new(0))
     let mut s = String.from("")

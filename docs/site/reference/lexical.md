@@ -207,10 +207,11 @@ Tokens are read longest first (`<<=` before `<<` before `<`).
 | `=>` | match arm |
 | `..` | range, in `for` only |
 | `?` | error propagation |
-| `.` | field, method, tuple element, qualified name |
+| `.` | field, method, tuple element, qualified name; `.[` starts a reflected field (`x.[f]`) |
+| `@` | an [attribute](attributes.md) |
 | `,` `:` `;` | separators; `:` before a type and after a loop label |
 | `(` `)` `[` `]` `{` `}` | grouping, tuples, calls; indexing, arrays, type arguments; blocks, records |
 
 Operator precedence is given in [Expressions](expressions.md#operator-precedence). Other
-ASCII characters (`#`, `@`, `$`, `'`, the backquote) are not tokens and are E0001
+ASCII characters (`#`, `$`, `'`, the backquote) are not tokens and are E0001
 "unexpected character".

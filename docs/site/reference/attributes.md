@@ -102,3 +102,4 @@ own name.
 
 `attr[A](x)` gives the values of attribute `A` on a reflected field or variant, or on a type,
 and `has_attr[A](x)` whether it is there; see [Comptime reflection](reflection.md).
+[Deriving JSON](../guide/json.md) shows a package built on them.

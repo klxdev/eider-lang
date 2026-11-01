@@ -1390,7 +1390,11 @@ fn collect_list(p: Program, m: u32, start: u32, len: u32, inout out: Map[u32, bo
 }
 
 fn collect_args(p: Program, m: u32, start: u32, len: u32, inout out: Map[u32, bool]) {
-    for i in 0..len { collect_expr(p, m, node(p, m, at(p, m, start, i)).a, inout out) }
+    for i in 0..len {
+        let a = node(p, m, at(p, m, start, i))
+        // (a `comptime for` argument is a statement)
+        if a.c == 1 { collect_stmt(p, m, a.a, inout out) } else { collect_expr(p, m, a.a, inout out) }
+    }
 }
 
 fn collect_expr(p: Program, m: u32, e: u32, inout out: Map[u32, bool]) {

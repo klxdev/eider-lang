@@ -551,6 +551,12 @@ fn main() uses io {
 }
 ```
 
+## Attributes
+
+`attr name { key: type = default, ... }` declares an attribute, which is also a record type,
+and `@name(key = value)` before an item or field attaches one. They are inert data that
+[comptime reflection](reflection.md) reads. See [Attributes](attributes.md).
+
 ## Imports and module lines
 
 `import a.b`, `import a.b as name` and `import a.{b, c as d}` bring another module's public

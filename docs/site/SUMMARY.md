@@ -16,6 +16,7 @@
 - [Concurrency](guide/concurrency.md)
 - [Testing](guide/testing.md)
 - [Building services](guide/services.md)
+- [Deriving JSON](guide/json.md)
 - [Calling C, and calling Eider from C](guide/ffi.md)
 - [WebAssembly](guide/wasm.md)
 - [Coming from another language](guide/coming-from.md)

@@ -836,6 +836,7 @@ fn locals_expr(inout b: B, m: u32, e: u32, container: u32) {
         ast.EUnary => locals_expr(inout b, m, n.b, container)
         ast.ETry => locals_expr(inout b, m, n.a, container)
         ast.EField => locals_expr(inout b, m, n.a, container)
+        ast.EFieldAt => locals_expr(inout b, m, n.a, container)
         ast.ECast => locals_expr(inout b, m, n.a, container)
         ast.ERepeat => locals_expr(inout b, m, n.a, container)
         ast.EBinary => {

@@ -781,7 +781,8 @@ fn type_item(inout b: B, m: u32, id: u32, anchor: List[u8], lines: List[List[u8]
     let n = node(b, m, id)
     let mut g = sig()
     if m != b.p.prelude && public { put(inout g, "pub ") }
-    put(inout g, "type ")
+    // an attribute's declaration (docs/compiler.md, "C8.30") reads as what it is
+    if n.h == 1 { put(inout g, "attr ") } else { put(inout g, "type ") }
     putb(inout g, nm(b, n.a))
     let gens = generics(b, m, n.c, n.d, inout g)
     let mut kind = "record"

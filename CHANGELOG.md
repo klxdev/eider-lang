@@ -29,6 +29,7 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
   `attr[A](f)` and `has_attr[A](f)` read the rest; `comptime if` keeps one branch;
   `T(comptime for f in fields(T) { ... })` and `v(...)` build values. Errors E0830-E0832,
   and errors inside an expansion name its field. docs/site/reference/reflection.md.
+  docs/site/guide/json.md shows eider-json 0.2.1's codecs, derived this way.
 
 ## 0.2.0
 

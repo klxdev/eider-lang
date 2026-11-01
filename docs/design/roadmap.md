@@ -60,9 +60,9 @@ Goal of P0: a JSON-over-HTTP service written in Eider that handles thousands of 
 | P0.5 | String formatting | `"{name} has {n} items"` interpolation through `Show`; width/precision; `format` into a buffer | compiler + std | 8.4 |
 | P0.6 | Errors with context | `From` conversions for `?`, an `Error` trait, wrapping with context, error values that print a chain | std + compiler | 8.4 |
 | P0.7 | `dyn Trait` | Dynamic dispatch through a vtable, for handlers and middleware | compiler | 8.4 |
-| P0.8 | Attributes | `@name(args)` on items and fields, readable by comptime code | compiler | — |
-| P0.9 | Comptime reflection | Inspect a type's fields, variants and attributes at compile time; generate code from it | compiler | 8.11, P0.8 |
-| P0.10 | JSON with derive | `Json` trait derived for records and enums; renames/skips/defaults via attributes; streaming encode/decode with size limits | eider-json | P0.9 |
+| P0.8 | Attributes (done, #19: reference/attributes.md) | `@name(args)` on items and fields, declared with `attr` by the package that owns them, readable by comptime code | compiler | — |
+| P0.9 | Comptime reflection (done, #20: reference/reflection.md) | Inspect a type's fields, variants and attributes at compile time; generate code from it | compiler | 8.11, P0.8 |
+| P0.10 | JSON with derive (done, eider-json#1: guide/json.md) | `Encode`/`Decode` derived for records and enums through reflection; renames, skips, defaults, flatten, tags via `@json`; size, depth and collection limits, strict decoding with paths in errors, fuzzed | eider-json | P0.9 |
 | P0.11 | Time | Monotonic clock and wall clock, `Duration`, `Instant`, RFC 3339 parse/format, timers | std | P0.1 |
 | P0.12 | HTTP/1.1 server and client | Routing, request/response types, keep-alive, chunked bodies, header/body/time limits by default, graceful shutdown. **Started** in eider-http (then `packages/http`) on OS threads (eider-http's docs/services.md; decision C40), with JSON-RPC 2.0 (the first step of P1.1, now eider-rpc) | eider-http | P0.1–P0.7, P0.11 |
 | P0.13 | Service basics | Structured logging (JSON lines), config from env/files (TOML), signals (SIGTERM drain), process exit codes | std | P0.5, P0.11 |
@@ -105,7 +105,7 @@ The C8 waves stay first because P0 builds on them; P0 items without C8 dependenc
 | Now (wave 2, running) | 8.4 operation traits, 8.5 capability encapsulation |
 | Wave 3 | 8.6 references, 8.7 `Ref[T]`; alongside: P0.1 sockets + event loop, P0.3 `defer`, P0.14 `#line` debugging |
 | Wave 4 | 8.8 closures, 8.9 std on the new base, 8.10 parity quirks; alongside: P0.5 formatting, P0.6 errors, P0.7 `dyn Trait`, P0.8 attributes, P0.11 time |
-| Wave 5 | 8.11 comptime interpreter (needed by P0.9), 8.12 performance, 8.13 tooling; P0.2 lightweight tasks, P0.4 readers/writers, P0.9 reflection |
+| Wave 5 | 8.11 comptime interpreter (done; needed by P0.9), 8.12 performance, 8.13 tooling; P0.2 lightweight tasks, P0.4 readers/writers, P0.9 reflection |
 | Wave 6 | P0.10 JSON derive, P0.12 HTTP, P0.13 service basics: **first service runs** |
 | Wave 7+ | P1 in order, starting with P1.1 RPC and P1.2 OpenAPI |
 

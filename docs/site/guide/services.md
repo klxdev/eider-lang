@@ -11,7 +11,7 @@ complete example with an end-to-end test.
 | [eider-http](https://github.com/klxdev/eider-http) | `http` | HTTP/1.1: a strict incremental parser, a server with deadlines, back-pressure and graceful shutdown, a client, a router, middleware (request ids, access logs, problem+json errors, body limits and timeouts per route, CORS, bearer and Basic auth), Prometheus metrics, and the profiler's labels and endpoints |
 | [eider-rpc](https://github.com/klxdev/eider-rpc) | `rpc` | JSON-RPC 2.0 over eider-http: a method table, typed parameters, batches and notifications, the HTTP handler and a client; `examples/kvstore` |
 | [eider-openapi](https://github.com/klxdev/eider-openapi) | `openapi` | OpenAPI 3.1 services: one operation value drives the route, validation (problem+json) and `/openapi.json`; typed handlers; `examples/todo` |
-| [eider-json](https://github.com/klxdev/eider-json) | `json` | RFC 8259 JSON: an arena value tree, strict parsing with positions, writing |
+| [eider-json](https://github.com/klxdev/eider-json) | `json` | RFC 8259 JSON: an arena value tree, strict parsing with positions, writing, and typed values with derived codecs ([Deriving JSON](json.md)) |
 | [eider-toml](https://github.com/klxdev/eider-toml) | `toml` | the TOML subset of `eider.toml` and `eider.lock` |
 | [eider-markdown](https://github.com/klxdev/eider-markdown) | `markdown` | a CommonMark subset plus GFM tables, rendered to safe HTML |
 

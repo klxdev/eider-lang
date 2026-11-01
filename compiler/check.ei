@@ -5902,6 +5902,7 @@ fn idents(c: C, e: u32, inout out: List[u64]) {
         ast.EUnary => idents(c, n.b, inout out)
         ast.ECast => idents(c, n.a, inout out)
         ast.EField => idents(c, n.a, inout out)
+        ast.EFieldAt => idents(c, n.a, inout out)
         ast.ERepeat => idents(c, n.a, inout out)
         ast.ETry => idents(c, n.a, inout out)
         ast.EBinary => {
@@ -6914,6 +6915,9 @@ fn walk_expr(c: C, e: u32, inout out: List[u64]) {
         ast.EUnary => walk_expr(c, n.b, inout out)
         ast.ECast => walk_expr(c, n.a, inout out)
         ast.EField => walk_expr(c, n.a, inout out)
+        ast.EFieldAt => walk_expr(c, n.a, inout out)
+        // a `comptime for` that is a call's argument
+        ast.SForEach => walk_stmt(c, e, inout out)
         ast.ERepeat => walk_expr(c, n.a, inout out)
         ast.ETry => walk_expr(c, n.a, inout out)
         ast.EBinary => {
