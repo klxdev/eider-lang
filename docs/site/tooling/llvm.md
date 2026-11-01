@@ -28,13 +28,22 @@ from its measurements (docs/compiler.md, "Backends").
 | `emit-llvm --coverage <file>` | Prints `native N/M functions`, then one `fallback <function>: <reason>` line for each function that is still compiled as C. |
 | `emit-c --backend=llvm <file>` | Prints the C half. |
 
-`-g` adds DWARF line information that points at the `.ei` files, so a debugger can stop on
-an Eider line. Variables and types are not described yet.
+`-g` adds DWARF debug information that points at the `.ei` files, so a debugger can stop on
+an Eider line and show parameters and named locals with their types (records and tuples by
+member, enums by tag and variant, `String` and `List` by pointer, `len` and `cap`). With
+optimization (`build`, `run --release`) the variables of inlined functions are optimized
+away; `EIDER_CFLAGS=-O0` keeps them.
 
 `EIDER_CFLAGS` still applies to the C half. Its `-O<n>`, `-g` and `-fsanitize=...` flags
 are also passed to clang for the IR half, so `EIDER_CFLAGS=-fsanitize=address` instruments
 both halves. The binary cache is not used with `--backend=llvm` (the C core's objects still
 are).
+
+A release build (`build`, `run --release`) links the two halves with link-time optimization
+when clang can link with lld (or gold with LLVM's plugin): eiderc checks that by linking a
+one-line probe. Both halves are then compiled by clang, so the C half's helpers inline into
+the IR. `EIDER_LLVM_LTO=0` turns that off, and without such a linker the halves are linked
+as plain objects, as at -O0. `build --lib` always produces plain objects.
 
 ```sh
 EIDER_CACHE=off target/eiderc-next build --backend=llvm -g examples/fib.ei -o fib
@@ -51,13 +60,16 @@ Today every function in the run tests, and in the compiler itself, is native.
 
 The C half holds the fallback functions, the per-type glue (drop, clone, `==`, ordering,
 `Show`, the List and Map operations, closure environments, the thread handles) and `main`.
-The two halves call each other through the C ABI. A program behaves the same under both
+The C half calls into the IR half through the C ABI, and calls between Eider functions use
+a faster internal convention (large records by reference). A program behaves the same under both
 backends: the same output, the same trap messages with the same file and line, the same exit
 codes. That is tested on every run test (`scripts/llvm-diff.sh`).
 
 The IR has no undefined behaviour. Overflow checks use `llvm.*.with.overflow`, bounds and
-shift checks are explicit branches to the runtime's `ei_trap`, and the IR never uses `nsw`,
-`nuw`, `exact` or `inbounds`.
+shift checks are explicit branches to the runtime's `ei_trap`. The optimizer hints in the IR
+(`nsw`/`nuw` after an overflow check, `inbounds` addresses, `noalias` on `inout`
+parameters) only restate what a check or a language rule has already proved, so every trap
+happens where the C backend's does.
 
 ## Testing it
 

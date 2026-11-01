@@ -740,12 +740,26 @@ fn lto_linker(cc: List[u8], dir: List[u8]) -> List[u8] uses io, fs, net {
     List.new()
 }
 
+/// Whether EIDER_CFLAGS's last -O flag is -O0 (a release build made unoptimized: no LTO).
+fn unoptimized() -> bool uses io {
+    let mut o0 = false
+    match env.get(s("EIDER_CFLAGS")) {
+        Some(f) => {
+            for x in bytes.split(f, 32) {
+                if bytes.starts_with(x, s("-O")) { o0 = bytes.eq(x, s("-O0")) }
+            }
+        }
+        None => {}
+    }
+    o0
+}
+
 /// Build the two halves into `exe`. A release build links them with link-time optimization
 /// when clang has a linker for it (lto_linker), so the C half's glue inlines into the IR:
 /// both halves are compiled by clang to bitcode (`-flto`; the C half with `-w`: it is
 /// generated code, checked under $CC by the C backend), the C core's objects stay native, and
-/// clang links everything with `-fuse-ld=lld` (or gold). Otherwise, and for -O0, $CC compiles
-/// the C half and links it with the IR's object.
+/// clang links everything with `-fuse-ld=lld` (or gold). Otherwise, and at -O0 (also when
+/// EIDER_CFLAGS ends with -O0), $CC compiles the C half and links it with the IR's object.
 fn compile_llvm(c: List[u8], ll: List[u8], dir: List[u8], exe: List[u8], release: bool, libs: List[List[u8]], debug: bool) uses io, fs, net {
     let core = fs.join(root(), s("core"))
     let mut cc = cc_argv(core, release)
@@ -756,7 +770,7 @@ fn compile_llvm(c: List[u8], ll: List[u8], dir: List[u8], exe: List[u8], release
     let inputs = core_inputs(cc, id, core, cache, dir, false)
     let mut ld: List[u8] = List.new()
     let mut lcc: List[u8] = List.new()
-    if release {
+    if release && !unoptimized() {
         lcc = llvm_cc(17)
         ld = lto_linker(lcc, dir)
     }
