@@ -3495,7 +3495,10 @@ with a fix, E0822 twice), each value (a literal or a constant: E0401, E0822; a b
 one node (E0822). Values are folded like constants into the scratch IR function and kept as
 `ALit`s in `Reflect.found` (module, owner node, attribute, values in key order with the
 defaults filled in). Nothing else in the checker or the backends reads them: attributes
-change no IR and no output, only what comptime reflection ("C8.31") makes of them.
+change no IR and no output, only what comptime reflection ("C8.31") makes of them. A value
+may name a comptime constant: while that constant is pending, an evaluator takes the attribute
+out of its tree (`Ast.held`, consteval.ei's `hold_attrs`), and reflection that reads it traps
+if it runs there, so the constant running it is retried after the one it names.
 
 ## C8.31: comptime reflection
 

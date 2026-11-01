@@ -62,7 +62,8 @@ fn main() uses io {
 
 The arguments are `key = value`, or a bare `key` for `key = true` (bool keys only). Each
 value is a literal or a constant of the key's type, checked like a constant (E0401 for a
-value of the wrong type, E0822 for anything that isn't a constant). Leaving out the
+value of the wrong type, E0822 for anything that isn't a constant); a `comptime` constant
+counts. Leaving out the
 parentheses (`@json`) gives every key its default.
 
 Which attribute `@name` means:

@@ -662,6 +662,7 @@ compile-fail tests (compiler/tests/check/fail)
 
 compile-pass tests (compiler/tests/check/pass)
   ok   attrs.ei
+  ok   attrs_comptime_value.ei
   ok   c822_label_liveness.ei
   ok   c822_label_reused.ei
   ok   c84_shadow_ok.ei
@@ -736,6 +737,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-734 passed, 0 failed; error-code coverage 58/64
+735 passed, 0 failed; error-code coverage 58/64
 codes without a compile-fail test: E0302 E0402 E0806 E0808 E0812 E0813
 --- exit 0

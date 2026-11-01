@@ -80,7 +80,15 @@ pub type Node = {
     line: u32, col: u32, end_line: u32, end_col: u32,
 }
 
-pub type Ast = { nodes: List[Node], extra: List[u32], items_start: u32, items_len: u32, attrs: Map[u32, u64] }
+pub type Ast = {
+    nodes: List[Node], extra: List[u32], items_start: u32, items_len: u32, attrs: Map[u32, u64],
+    /// in a comptime evaluator: the nodes whose attributes name a constant still to evaluate
+    /// (consteval.ei); running code that reads one traps, so that constant is evaluated first
+    held: Map[u32, bool],
+}
+
+/// What reading a held attribute traps with in a comptime evaluator.
+pub const HELD_ATTR: str = "an attribute names a comptime constant not evaluated yet"
 
 /// EReflect kinds: `fields(T)`, `variants(T)`, `attr[A](x)`, `has_attr[A](x)`.
 pub const R_FIELDS: u32 = 0
@@ -149,7 +157,7 @@ pub fn op_text(op: u32) -> str {
 /// Whether `flags` has bit `flag` (flags are sums of distinct powers of two).
 pub fn has(flags: u32, flag: u32) -> bool { (flags / flag) % 2 == 1 }
 
-pub fn new() -> Ast { Ast(List.new(), List.new(), 0, 0, Map.new()) }
+pub fn new() -> Ast { Ast(List.new(), List.new(), 0, 0, Map.new(), Map.new()) }
 
 /// The Attr nodes of node id (none: an empty list).
 pub fn attrs_of(a: Ast, id: u32) -> List[u32] {

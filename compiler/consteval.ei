@@ -224,11 +224,16 @@ fn eval_one(inout p: resolve.Program, ment: Ment, m: u32, id: u32, drop: Map[u64
     let v = match run_evaluator(c, resolve.key_text(p.names, resolve.item_key(p, m, sym(inout p, "__ct")))) {
         Ok(x) => x
         Err(why) => {
+            // it reads an attribute naming a pending constant: after that one
+            let held = match bytes.find(why, s(ast.HELD_ATTR), 0) {
+                Some(_) => true
+                None => false
+            }
             let mut msg = s("comptime evaluation of `")
             bytes.append(inout msg, name)
             bytes.append(inout msg, s("` failed: "))
             bytes.append(inout msg, why)
-            return fail(e0807(p, m, n, msg))
+            return Try(false, held && others, e0807(p, m, n, msg))
         }
     }
     let vn = p.mods[m as usize].ast.nodes[n.d as usize]
@@ -354,6 +359,32 @@ fn gone(p: resolve.Program, ment: Ment, drop: Map[u64, bool]) -> List[List[bool]
     out
 }
 
+/// Take out of this evaluator's tree the attributes whose values name a constant in `drop`:
+/// a type can't be left out for naming one the way a function can. They are `held`, so
+/// reflection that reads them traps if it runs, and the constant running it waits for it.
+fn hold_attrs(p: resolve.Program, m: u32, inout a: ast.Ast, drop: Map[u64, bool]) {
+    if a.attrs.len() == 0 || drop.len() == 0 { return }
+    let none: Map[u32, bool] = Map.new()
+    let mut owners: List[u32] = List.new()
+    for (o, _) in a.attrs { owners.push(o) }
+    for o in owners {
+        let mut hit = false
+        for an in ast.attrs_of(a, o) {
+            let n = a.nodes[an as usize]
+            for j in 0..n.d {
+                let x = a.nodes[ast.at(a, n.c, j) as usize]
+                if x.b == 0 { continue }
+                let v = a.nodes[(x.b - 1) as usize]
+                if v.kind == ast.EIdent && drop.contains(resolve.expr_key(p, m, v.a, v.b, v.line, v.col, none)) { hit = true }
+            }
+        }
+        if hit {
+            a.attrs.remove(o)
+            a.held.insert(o, true)
+        }
+    }
+}
+
 /// The evaluator program for comptime constant `id` of module m: `p` without `main`, test
 /// blocks, comptime constants and the items that need a constant in `drop` (`gone`), plus
 /// `__ct` and a `main` printing it at the end of m's items (see the top of this file). The recorded oracle has the two after every item of the
@@ -370,6 +401,7 @@ fn evaluator(inout p: resolve.Program, ment: Ment, m: u32, id: u32, drop: Map[u6
     let mut ev = p.copy()
     for i in 0..ev.mods.len() {
         let mut md = ev.mods[i].copy()
+        hold_attrs(p, i as u32, inout md.ast, drop)
         let mut keep: List[u32] = List.new()
         for k in 0..md.ast.items_len {
             let it = ast.at(md.ast, md.ast.items_start, k)

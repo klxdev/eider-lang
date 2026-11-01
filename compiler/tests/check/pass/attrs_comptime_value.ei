@@ -1,0 +1,16 @@
+// an attribute value naming a comptime constant, read by reflection in another comptime
+// constant: LEVEL waits for K, and K's evaluator doesn't need the attribute
+attr a { n: i64 = 0 }
+const LEVEL: i64 = comptime level()
+const K: i64 = comptime 2 + 2
+type T = { @a(n = K) x: i64 }
+@a(n = K)
+fn f() {}
+fn level() -> i64 {
+    comptime for g in fields(T) { return attr[a](g).n }
+    0
+}
+fn main() uses io {
+    print(K)
+    print(LEVEL)
+}

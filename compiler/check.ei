@@ -8427,6 +8427,12 @@ fn ct_attr(inout c: C, r: ast.Node) -> Result[AttrRead, diag.Diag] {
         }
     }
     if ow.node != NONE {
+        // an evaluator's: running this is what must wait (consteval.ei, `hold_attrs`)
+        if c.p.mods[ow.m as usize].ast.held.contains(ow.node) {
+            let mo = ir.op_str(inout c.ir, s(ast.HELD_ATTR))
+            emit(inout c, ir.S_PANIC, 0, mo, 0, 0, 0, r.line)
+            return Ok(AttrRead(true, di, false, defaults))
+        }
         match attr_use(c, ow.m, ow.node, di) {
             Some(vals) => { return Ok(AttrRead(false, di, true, vals)) }
             None => {}
