@@ -1,1 +1,0 @@
-{"error":"E0807","span":{"file":"compiler/tests/check/fail/../lib/ct_str.ei","line":2,"col":11},"message":"`comptime` constants must be integers or bool"}

@@ -1,3 +1,3 @@
 // expect: E0807 2:7
-const NAME: str = comptime "hi"
+const PAIR: (i32, i32) = comptime (1, 2)
 fn main() uses io { print(1) }

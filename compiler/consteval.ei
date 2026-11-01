@@ -1,35 +1,35 @@
-// comptime: `const X: T = comptime expr` (docs/compiler.md, "C7: comptime").
+// comptime: `const X: T = comptime expr` (docs/compiler.md, "C7: comptime" and "C8.11: the
+// comptime interpreter").
 //
-// Each comptime constant is evaluated (the behaviour tests/oracle records), in
-// item order and after the module graph is loaded but before checking, by compiling the
-// program without `main`, test blocks and the comptime constants still to evaluate, plus a
-// synthetic evaluator
+// Each comptime constant is evaluated after the module graph is loaded but before checking,
+// by checking an *evaluator program*: the program without `main`, test blocks and the
+// comptime constants still to evaluate, plus a synthetic
 //
 //   fn __ct() -> T { return expr }
 //   fn main() uses io { print(__ct()) }
 //
-// placed in the constant's module, running it, and splicing the printed value back in as a
-// literal; later comptime constants then see it as an ordinary constant. Errors are its:
-// E0807 for a type other than an integer or bool, a failed evaluation (the first line the
-// evaluator wrote to stderr, e.g. a trap; traps name the file `program`) or output beyond
-// one line; any error from checking the evaluator program, with an E0201 fix (the missing
+// placed in the constant's module. `__ct` is then run by the IR interpreter (interp.ei; no C
+// compiler, no files, no capabilities) and its value is spliced back in as a literal; later
+// comptime constants, plain constants and the rest of the program then see it as an ordinary
+// constant. Errors are its: E0807 for a type other than an integer, bool or str, or a failed
+// evaluation (the trap message the built program would print; traps name the file
+// `program`); any error from checking the evaluator program, with an E0201 fix (the missing
 // capability is the evaluator's, not the user's) replaced by "`comptime` evaluation can't
 // use capabilities".
 //
-// eiderc does the same with its own pipeline in-process: the evaluator program is a copy of
-// the resolved program with rewritten item lists (`evaluator`), checked by check.ei
-// (`checked`). Only `run_evaluator` depends on how the value is computed: today it lowers the
-// IR to C, builds it with the driver's C compiler invocation and runs it. A later IR
-// interpreter (no C compiler at compile time, no capabilities by construction) replaces
-// that one function; the rest of this module stays.
+// Order (C501): the constants are tried in item order; one whose evaluator doesn't check
+// while other constants are still unevaluated is retried after them, so a constant may use
+// one declared later. While constants are pending, the evaluator also leaves out every
+// function, impl and constant that names one of them (it couldn't check without it), so a
+// plain constant or a function may name a comptime constant anywhere. When a round makes no
+// progress, the rest are evaluated in item order as before (C7), which reports their errors
+// as the recorded expectations have them; the diagnostics are in item order either way.
 //
 // `comptime` is a keyword, so no module path can name a comptime.ei: the module is
 // consteval.ei (`import eiderc.consteval`; docs/compiler.md, "C8.26").
 
 import core.sys
 import std.bytes
-import std.fs
-import std.proc
 import eiderc.intern
 import eiderc.lex
 import eiderc.ast
@@ -37,8 +37,7 @@ import eiderc.diag
 import eiderc.resolve
 import eiderc.check
 import eiderc.lower
-import eiderc.llvm
-import eiderc.driver
+import eiderc.interp
 
 fn s(x: str) -> List[u8] { sys.lit(x) }
 
@@ -47,12 +46,9 @@ fn sym(inout p: resolve.Program, w: str) -> u32 {
     intern.intern(inout p.names, b, 0, b.len())
 }
 
-/// What evaluating one constant gave: its printed value (stdout), or why there is none.
-pub type Outcome = | Printed(out: List[u8]) | Failed(why: List[u8]) | NoBuild
-
-/// Evaluate every comptime constant of `p`, in item order; the result has each replaced by
-/// its value as a literal. The first diagnostic, if there is one (see eval_all).
-pub fn eval(p: resolve.Program) -> Result[resolve.Program, diag.Diag] uses io, fs, net, clock {
+/// Evaluate every comptime constant of `p`; the result has each replaced by its value as a
+/// literal. The first diagnostic, if there is one (see eval_all).
+pub fn eval(p: resolve.Program) -> Result[resolve.Program, diag.Diag] {
     let ev = eval_all(p)
     if ev.diags.len() > 0 { return Err(ev.diags[0]) }
     Ok(ev.p)
@@ -62,35 +58,123 @@ pub fn eval(p: resolve.Program) -> Result[resolve.Program, diag.Diag] uses io, f
 /// them (one per constant that failed), in item order.
 pub type Evaluated = { p: resolve.Program, diags: List[diag.Diag] }
 
-/// Evaluate every comptime constant of `p`, in item order. A constant whose evaluation
-/// fails is reported (the evaluator's first diagnostic) and becomes a constant of the error
-/// type (its `comptime` flag 2), which check.ei accepts silently, and the rest go on.
-pub fn eval_all(p: resolve.Program) -> Evaluated uses io, fs, net, clock {
+/// A comptime constant: module, IConst node, its position in item order, its key.
+type Pend = { m: u32, id: u32, ord: u32, key: u64 }
+
+/// What trying a constant gave: done (its value is spliced in), a failure to report, or a
+/// failure that may come from what was left out (`later`: a check error while other
+/// constants are pending).
+type Try = { ok: bool, later: bool, d: diag.Diag }
+
+/// Evaluate every comptime constant of `p` (see the top of this file). A constant whose
+/// evaluation fails is reported and becomes a constant of the error type (its `comptime`
+/// flag 2), which check.ei accepts silently, and the rest go on.
+pub fn eval_all(p: resolve.Program) -> Evaluated {
     let mut prog = p.copy()
-    let mut diags: List[diag.Diag] = List.new()
-    let mut r = Runner(List.new(), List.new(), false)
+    let mut pend: List[Pend] = List.new()
     for m in p.order {
         let a = p.mods[m as usize].ast
         for k in 0..a.items_len {
             let id = ast.at(a, a.items_start, k)
             let n = a.nodes[id as usize]
             if n.kind == ast.IConst && n.e == 1 {
-                match eval_one(inout prog, inout r, m, id) {
-                    Ok(_) => {}
-                    Err(d) => {
-                        diags.push(d)
-                        let mut md = prog.mods[m as usize].copy()
-                        let mut cn = md.ast.nodes[id as usize].copy()
-                        cn.e = 2
-                        md.ast.nodes[id as usize] = cn
-                        prog.mods[m as usize] = md
-                    }
-                }
+                let ord = pend.len() as u32
+                pend.push(Pend(m, id, ord, resolve.item_key(p, m, n.a)))
             }
         }
     }
-    finish(r)
+    let ment = mentions(p)
+    let mut fails: List[Pend] = List.new()
+    let mut fdiags: List[diag.Diag] = List.new()
+    while pend.len() > 0 {
+        let mut rest: List[Pend] = List.new()
+        let mut progress = false
+        for i in 0..pend.len() {
+            let x = pend[i]
+            // what is still unevaluated besides x: the constants put off this round and
+            // those after x
+            let mut drop: Map[u64, bool] = Map.new()
+            for r in rest { drop.insert(r.key, true) }
+            for j in (i + 1)..pend.len() { drop.insert(pend[j].key, true) }
+            let others = drop.len() > 0
+            drop.insert(x.key, true)
+            let t = eval_one(inout prog, ment, x.m, x.id, drop, others)
+            if t.ok {
+                progress = true
+            } else if t.later {
+                rest.push(x)
+            } else {
+                // a check error to report: as the evaluator without anything left out has it
+                let mut d = t.d.copy()
+                if !others {
+                    let none: Map[u64, bool] = Map.new()
+                    let t2 = eval_one(inout prog, ment, x.m, x.id, none, false)
+                    if t2.ok {
+                        progress = true
+                        continue
+                    }
+                    d = t2.d
+                }
+                failed(inout prog, x)
+                fails.push(x)
+                fdiags.push(d)
+                progress = true
+            }
+        }
+        if !progress {
+            // the recorded behaviour (C7): in item order, with only the pending constants left out
+            for x in rest {
+                let none: Map[u64, bool] = Map.new()
+                let t = eval_one(inout prog, ment, x.m, x.id, none, false)
+                if !t.ok {
+                    failed(inout prog, x)
+                    fails.push(x)
+                    fdiags.push(cycle_help(prog, rest, t.d))
+                }
+            }
+            rest = List.new()
+        }
+        pend = rest
+    }
+    // the diagnostics in item order
+    let mut diags: List[diag.Diag] = List.new()
+    let mut taken: List[bool] = List.new()
+    for i in 0..fails.len() { taken.push(false) }
+    for r in 0..fails.len() {
+        let mut best = fails.len()
+        for i in 0..fails.len() {
+            if !taken[i] && (best == fails.len() || fails[i].ord < fails[best].ord) { best = i }
+        }
+        taken[best] = true
+        diags.push(fdiags[best])
+    }
     Evaluated(prog, diags)
+}
+
+/// An unknown name that is one of the constants left (a cycle: each needs another's value
+/// first) says so.
+fn cycle_help(p: resolve.Program, rest: List[Pend], d: diag.Diag) -> diag.Diag {
+    if !bytes.eq(s(d.code), s("E0110")) || d.help.len() > 0 { return d }
+    for x in rest {
+        let mut m = s("unknown name `")
+        bytes.append(inout m, resolve.key_text(p.names, x.key))
+        m.push(96)
+        if bytes.eq(m, d.msg) {
+            let mut d2 = d.copy()
+            d2.help = s("it is a comptime constant whose value depends on this one (a cycle of comptime constants)")
+            return d2
+        }
+    }
+    d
+}
+
+/// Constant x failed: it becomes a constant of the error type.
+fn failed(inout prog: resolve.Program, x: Pend) {
+    let mut md = prog.mods[x.m as usize].copy()
+    let mut cn = md.ast.nodes[x.id as usize].copy()
+    cn.e = 2
+    md.ast.nodes[x.id as usize] = cn
+    prog.mods[x.m as usize] = md
 }
 
 fn e0807(p: resolve.Program, m: u32, n: ast.Node, msg: List[u8]) -> diag.Diag {
@@ -99,68 +183,71 @@ fn e0807(p: resolve.Program, m: u32, n: ast.Node, msg: List[u8]) -> diag.Diag {
     d
 }
 
-/// Whether type node `t` of module m names an integer type or bool (judged from the
-/// type's spelling, before resolving it).
-fn int_or_bool(inout p: resolve.Program, m: u32, t: u32) -> u32 {
+/// The constant types comptime evaluates (judged from the type's spelling, before resolving
+/// it): T_NONE, a signed or an unsigned integer type, bool, str.
+const T_NONE: u32 = 0
+const T_SIGNED: u32 = 1
+const T_BOOL: u32 = 2
+const T_STR: u32 = 3
+const T_UNSIGNED: u32 = 4
+
+fn const_kind(inout p: resolve.Program, m: u32, t: u32) -> u32 {
     let tn = p.mods[m as usize].ast.nodes[t as usize].copy()
-    if tn.kind != ast.TName || tn.b != 0 { return 0 }
-    for w in ["i32", "i64", "u8", "u32", "u64", "usize"] {
-        if tn.a == sym(inout p, w) { return 1 }
+    if tn.kind != ast.TName || tn.b != 0 { return T_NONE }
+    for w in ["i32", "i64"] {
+        if tn.a == sym(inout p, w) { return T_SIGNED }
     }
-    if tn.a == sym(inout p, "bool") { return 2 }
-    0
+    for w in ["u8", "u32", "u64", "usize"] {
+        if tn.a == sym(inout p, w) { return T_UNSIGNED }
+    }
+    if tn.a == sym(inout p, "bool") { return T_BOOL }
+    if tn.a == sym(inout p, "str") { return T_STR }
+    T_NONE
 }
 
-/// Evaluate the comptime constant `id` of module m and splice its value into `p`.
-fn eval_one(inout p: resolve.Program, inout r: Runner, m: u32, id: u32) -> Result[bool, diag.Diag] uses io, fs, net, clock {
+fn done() -> Try { Try(true, false, diag.new("E0807", 0, 0, List.new())) }
+fn fail(d: diag.Diag) -> Try { Try(false, false, d) }
+
+/// Evaluate the comptime constant `id` of module m and splice its value into `p`, with the
+/// items that name a constant in `drop` left out of the evaluator (`others`: constants
+/// besides this one are pending, so a check error may be theirs).
+fn eval_one(inout p: resolve.Program, ment: Ment, m: u32, id: u32, drop: Map[u64, bool], others: bool) -> Try {
     let n = p.mods[m as usize].ast.nodes[id as usize].copy()
-    let kind = int_or_bool(inout p, m, n.c)
-    if kind == 0 { return Err(e0807(p, m, n, s("`comptime` constants must be integers or bool"))) }
-    let ev = evaluator(inout p, m, id)
-    let c = checked(ev)?
+    let kind = const_kind(inout p, m, n.c)
+    if kind == T_NONE { return fail(e0807(p, m, n, s("`comptime` constants must be integers, bool or str"))) }
+    let ev = evaluator(inout p, ment, m, id, drop)
+    let c = match checked(ev) {
+        Ok(x) => x
+        Err(d) => { return Try(false, others, d) }
+    }
     let name = resolve.key_text(p.names, resolve.item_key(p, m, n.a))
-    let outcome = run_evaluator(inout r, c)
-    let out = match outcome {
-        Printed(o) => o
-        Failed(why) => {
+    let v = match run_evaluator(c, resolve.key_text(p.names, resolve.item_key(p, m, sym(inout p, "__ct")))) {
+        Ok(x) => x
+        Err(why) => {
             let mut msg = s("comptime evaluation of `")
             bytes.append(inout msg, name)
             bytes.append(inout msg, s("` failed: "))
             bytes.append(inout msg, why)
-            return Err(e0807(p, m, n, msg))
+            return fail(e0807(p, m, n, msg))
         }
-        NoBuild => { return Err(e0807(p, m, n, s("could not build the comptime evaluator"))) }
     }
-    let ls = bytes.lines(out)
-    if ls.len() > 1 { return Err(e0807(p, m, n, s("comptime evaluation can't perform I/O"))) }
-    let mut first: List[u8] = List.new()
-    if ls.len() > 0 { first = bytes.trim(ls[0]) }
     let vn = p.mods[m as usize].ast.nodes[n.d as usize]
     let mut md = p.mods[m as usize].copy()
     let mut lit = ast.node(ast.EBool, vn.line, vn.col)
-    if kind == 2 {
-        if bytes.eq(first, s("true")) { lit.a = 1 }
+    if kind == T_BOOL {
+        lit.a = v.n as u32
+    } else if kind == T_STR {
+        md.strs.push(v.b)
+        lit = ast.node(ast.EStr, vn.line, vn.col)
+        lit.a = (md.strs.len() - 1) as u32
     } else {
-        let mut neg = false
-        let mut digits = first.copy()
-        if first.len() > 0 && (first[0] == 45 || first[0] == 43) {
-            neg = first[0] == 45
-            digits = bytes.slice(first, 1, first.len())
-        }
-        let v: u64 = match bytes.parse_u64(digits) {
-            Some(x) => x
-            None => {
-                let mut msg = s("unexpected comptime result `")
-                bytes.append(inout msg, first)
-                bytes.append(inout msg, s("`"))
-                return Err(e0807(p, m, n, msg))
-            }
-        }
+        let neg = kind == T_SIGNED && v.n >= 9223372036854775808
+        let mag = if neg { 0 -% v.n } else { v.n }
         // as tests/oracle expects: a negative value is `-(magnitude)`, both at the expression's position
-        md.toks.push(lex.Tok(lex.Int, 0, 0, vn.line, vn.col, vn.col, v, false))
+        md.toks.push(lex.Tok(lex.Int, 0, 0, vn.line, vn.col, vn.col, mag, false))
         lit = ast.node(ast.EInt, vn.line, vn.col)
         lit.a = (md.toks.len() - 1) as u32
-        if neg && v > 0 {
+        if neg {
             let inner = ast.add(inout md.ast, lit)
             lit = ast.node(ast.EUnary, vn.line, vn.col)
             lit.a = 0
@@ -172,21 +259,114 @@ fn eval_one(inout p: resolve.Program, inout r: Runner, m: u32, id: u32) -> Resul
     cn.e = 0
     md.ast.nodes[id as usize] = cn
     p.mods[m as usize] = md
-    Ok(true)
+    done()
+}
+
+/// What each item names and defines, by module and item (`used`, `defs`): function and
+/// constant keys, and a method name as M_TAG + its symbol (an impl defines its methods' names,
+/// a method call uses one). The nodes of an item are those after the item before it in the
+/// arena, up to it (the parser adds an item after its parts). A local named like an item
+/// counts too: leaving an item out only defers what needs it.
+type Ment = { used: List[List[List[u64]]], defs: List[List[List[u64]]] }
+
+const M_TAG: u64 = 9223372036854775808
+
+fn push_new(inout ks: List[u64], k: u64) {
+    if !ks.contains(k) { ks.push(k) }
+}
+
+fn mentions(p: resolve.Program) -> Ment {
+    let none: Map[u32, bool] = Map.new()
+    let mut used: List[List[List[u64]]] = List.new()
+    let mut defs: List[List[List[u64]]] = List.new()
+    for m in 0..p.mods.len() {
+        let a = p.mods[m].ast
+        let mut ids: List[u32] = List.new()
+        for k in 0..a.items_len { ids.push(ast.at(a, a.items_start, k)) }
+        let mut pu: List[List[u64]] = List.new()
+        let mut pd: List[List[u64]] = List.new()
+        for k in 0..ids.len() {
+            let it = ids[k]
+            let mut lo: u32 = 0
+            for o in ids {
+                if o < it && o + 1 > lo { lo = o + 1 }
+            }
+            let mut us: List[u64] = List.new()
+            let mut ds: List[u64] = List.new()
+            let n = a.nodes[it as usize]
+            if n.kind == ast.IFn || n.kind == ast.IConst || n.kind == ast.IImpl {
+                if n.kind == ast.IFn && ast.has(n.b, ast.FN_EXTERN) {
+                    ds.push(resolve.key(0, n.a))
+                } else if n.kind != ast.IImpl {
+                    ds.push(resolve.item_key(p, m as u32, n.a))
+                } else {
+                    for q in 0..n.f { ds.push(M_TAG + a.nodes[ast.at(a, n.e, q) as usize].a as u64) }
+                }
+                let mut i = lo
+                while i < it {
+                    let x = a.nodes[i as usize]
+                    if x.kind == ast.EIdent || x.kind == ast.ECall {
+                        push_new(inout us, resolve.expr_key(p, m as u32, x.a, x.b, x.line, x.col, none))
+                    } else if x.kind == ast.EMethod {
+                        push_new(inout us, M_TAG + x.b as u64)
+                    }
+                    i += 1
+                }
+            }
+            pu.push(us)
+            pd.push(ds)
+        }
+        used.push(pu)
+        defs.push(pd)
+    }
+    Ment(used, defs)
+}
+
+/// Which items to leave out of an evaluator: those that name a key of `drop`, then those that
+/// name what they define, and so on.
+fn gone(p: resolve.Program, ment: Ment, drop: Map[u64, bool]) -> List[List[bool]] {
+    let mut ks = drop.copy()
+    let mut out: List[List[bool]] = List.new()
+    for m in 0..p.mods.len() {
+        let mut g: List[bool] = List.new()
+        for k in 0..ment.used[m].len() { g.push(false) }
+        out.push(g)
+    }
+    if drop.len() == 0 { return out }
+    let mut changed = true
+    while changed {
+        changed = false
+        for m in 0..p.mods.len() {
+            for k in 0..ment.used[m].len() {
+                if out[m][k] { continue }
+                let mut hit = false
+                for u in ment.used[m][k] {
+                    if ks.contains(u) { hit = true }
+                }
+                if hit {
+                    out[m][k] = true
+                    changed = true
+                    for d in ment.defs[m][k] { ks.insert(d, true) }
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The evaluator program for comptime constant `id` of module m: `p` without `main`, test
-/// blocks and comptime constants, plus `__ct` and a `main` printing it at the end of m's
-/// items (see the top of this file). The recorded oracle has the two after every item of the
+/// blocks, comptime constants and the items that need a constant in `drop` (`gone`), plus
+/// `__ct` and a `main` printing it at the end of m's items (see the top of this file). The recorded oracle has the two after every item of the
 /// program, which is the same place when m is the entry file; for a constant of an imported
 /// module only the order in which two independent errors are found can differ. The nodes
 /// take the positions they have in the stub text above (`__ct` at 1:4 for E0107), the
 /// return statement the expression's.
-fn evaluator(inout p: resolve.Program, m: u32, id: u32) -> resolve.Program {
+fn evaluator(inout p: resolve.Program, ment: Ment, m: u32, id: u32, drop: Map[u64, bool]) -> resolve.Program {
     let s_ct = sym(inout p, "__ct")
     let s_main = sym(inout p, "main")
     let s_print = sym(inout p, "print")
     let s_io = sym(inout p, "io")
+    let out = gone(p, ment, drop)
     let mut ev = p.copy()
     for i in 0..ev.mods.len() {
         let mut md = ev.mods[i].copy()
@@ -195,9 +375,10 @@ fn evaluator(inout p: resolve.Program, m: u32, id: u32) -> resolve.Program {
             let it = ast.at(md.ast, md.ast.items_start, k)
             let n = md.ast.nodes[it as usize]
             let is_main = n.kind == ast.IFn && n.a == s_main && !ast.has(n.b, ast.FN_EXTERN)
-            let drop = n.kind == ast.ITest || (n.kind == ast.IConst && n.e == 1) || is_main
+            let mut leave = n.kind == ast.ITest || (n.kind == ast.IConst && n.e == 1) || is_main
             // (a constant whose evaluation failed, `e` 2, stays: it is of the error type)
-            if !drop { keep.push(it) }
+            if out[i][k as usize] { leave = true }
+            if !leave { keep.push(it) }
         }
         if i as u32 == m {
             let c = md.ast.nodes[id as usize].copy()
@@ -285,103 +466,18 @@ fn checked(ev: resolve.Program) -> Result[check.C, diag.Diag] {
     }
 }
 
-/// The evaluators' build state: a temporary directory holding the C core compiled once
-/// (`objs`: eider_rt.o, eider_core.o) for every constant of the program; `broken` when that
-/// failed.
-type Runner = { dir: List[u8], objs: List[List[u8]], broken: bool }
-
-fn finish(r: Runner) uses fs {
-    if r.dir.len() > 0 { fs.remove_all(r.dir) }
-}
-
-/// Run a C compiler command quietly; whether it succeeded.
-fn cc_ok(argv: List[List[u8]]) -> bool uses io, fs, net {
-    match proc.run_with(argv, proc.captured()) {
-        Ok(o) => o.code == 0
-        Err(_) => false
-    }
-}
-
-/// Compile the C core into `r.dir` (once).
-fn prepare(inout r: Runner) uses io, fs, net, clock {
-    if r.dir.len() > 0 || r.broken { return }
-    r.dir = driver.temp_dir()
-    let core = fs.join(driver.root(), s("core"))
-    for name in ["eider_rt", "eider_core"] {
-        let mut src = fs.join(core, s(name))
-        bytes.append(inout src, s(".c"))
-        let mut obj = fs.join(r.dir, s(name))
-        bytes.append(inout obj, s(".o"))
-        let mut argv = driver.cc_argv(core, false)
-        argv.push(s("-c"))
-        argv.push(s("-o"))
-        argv.push(obj)
-        argv.push(src)
-        if !cc_ok(argv) { r.broken = true }
-        r.objs.push(obj)
-    }
-}
-
-/// Run the checked evaluator: lower it to LLVM IR (traps name the file `program`, as the
-/// oracle's do), build it at -O0 (clang, then the driver's C compiler invocation against the
-/// core compiled once, `prepare`), and run it, capturing its output. This is the one
-/// function an IR interpreter (#7) would replace.
-fn run_evaluator(inout r: Runner, c: check.C) -> Outcome uses io, fs, net, clock {
+/// Run the checked evaluator's `__ct` (the IR function named `fname`) on the interpreter:
+/// its value, or the line the built program would have written to stderr.
+fn run_evaluator(c: check.C, fname: List[u8]) -> Result[interp.Val, List[u8]] {
     let lp = lower.P(c.ir, c.t, c.p.names)
-    let text = match llvm.program(lp, s("program"), false, false, List.new(), s("."), false, driver.target_arch()) {
-        Ok(o) => llvm.whole(o)
-        Err(_) => { return NoBuild }
+    let mut f: u32 = 4294967295
+    for i in 0..c.ir.fns.len() {
+        if c.ir.fns[i].body > 0 && bytes.eq(c.ir.fns[i].name, fname) { f = i as u32 }
     }
-    if driver.cache_dir().len() > 0 {
-        // with the cache on, the driver links the cached core objects, and an evaluator
-        // whose C was built before (an unchanged constant) isn't compiled again
-        let e: driver.Exe = match driver.try_executable(text, s("ct")) {
-            Some(x) => x
-            None => { return NoBuild }
-        }
-        let mut argv: List[List[u8]] = List.new()
-        argv.push(e.path)
-        let got = proc.run_with(argv, proc.captured())
-        driver.discard(e)
-        return match got {
-            Ok(o) => outcome(o)
-            Err(_) => NoBuild
-        }
+    if f == 4294967295 { return Err(s("no evaluator function")) }
+    let mut st = interp.new()
+    match interp.run(lp, inout st, f) {
+        Ok(v) => Ok(v)
+        Err(t) => Err(t.msg)
     }
-    prepare(inout r)
-    if r.broken { return NoBuild }
-    let llfile = fs.join(r.dir, s("ct.ll"))
-    let obj = fs.join(r.dir, s("ct_ll.o"))
-    let exe = fs.join(r.dir, s("ct"))
-    let core = fs.join(driver.root(), s("core"))
-    let mut ca: List[List[u8]] = List.new()
-    ca.push(driver.llvm_cc(17))
-    for a in ["-c", "-O0", "-Wno-override-module", "-o"] { ca.push(s(a)) }
-    ca.push(obj.copy())
-    ca.push(llfile.copy())
-    let mut argv = driver.cc_argv(core, false)
-    argv.push(s("-o"))
-    argv.push(exe)
-    argv.push(obj)
-    for o in r.objs { argv.push(o) }
-    let mut built = false
-    match fs.write(llfile, text) {
-        Ok(_) => { built = cc_ok(ca) && cc_ok(argv) }
-        Err(_) => {}
-    }
-    if !built { return NoBuild }
-    let mut run: List[List[u8]] = List.new()
-    run.push(exe)
-    match proc.run_with(run, proc.captured()) {
-        Ok(o) => outcome(o)
-        Err(_) => NoBuild
-    }
-}
-
-/// What an evaluator's run means: its output, or the first line of its trap.
-fn outcome(o: proc.Output) -> Outcome {
-    if o.code == 0 { return Printed(o.out) }
-    let errs = bytes.lines(o.err)
-    if errs.len() > 0 { return Failed(errs[0]) }
-    Failed(List.new())
 }

@@ -1,1 +1,0 @@
-{"error":"E0110","span":{"file":"compiler/tests/check/fail/../lib/ct_late.ei","line":4,"col":36},"message":"unknown name `ct_late.LATE`"}

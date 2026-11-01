@@ -1,3 +1,2 @@
-// expect: E0110 4:36
 import eiderc.tests.check.lib.ct_late
 fn main() uses io { print(ct_late.uses_late()) }

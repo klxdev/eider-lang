@@ -1,2 +1,2 @@
-// helper module for e0807_comptime_mod_str.ei
+// helper module for comptime_mod_str.ei: a str constant
 pub const S: str = comptime "s"

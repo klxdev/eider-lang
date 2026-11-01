@@ -1,0 +1,1 @@
+{"error":"E0110","span":{"file":"compiler/tests/check/fail/e0110_comptime_cycle.ei","line":2,"col":25},"message":"unknown name `B`","help":"it is a comptime constant whose value depends on this one (a cycle of comptime constants)"}
