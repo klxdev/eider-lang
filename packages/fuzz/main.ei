@@ -167,7 +167,7 @@ fn well_formed(out: List[u8]) -> bool {
     for i in 0..ls.len() {
         let l = ls[i]
         if json_code(l).len() == 0 {
-            if i + 1 < ls.len() || !bytes.starts_with(l, sys.lit("{\"note\":")) { return false }
+            if i + 1 < ls.len() || !bytes.starts_with(l, sys.lit("{{\"note\":")) { return false }
         }
         for j in 0..i {
             if bytes.eq(ls[j], l) { return false }
@@ -179,7 +179,7 @@ fn well_formed(out: List[u8]) -> bool {
 /// The code of a `check --json` diagnostic (`{"error":"E0101",...}`), or "" if `out` isn't one.
 fn json_code(out: List[u8]) -> List[u8] {
     let none: List[u8] = List.new()
-    if !bytes.starts_with(out, sys.lit("{\"error\":\"")) { return none }
+    if !bytes.starts_with(out, sys.lit("{{\"error\":\"")) { return none }
     match bytes.find_byte(out, 34, 10) {
         Some(e) => bytes.slice(out, 10, e)
         None => none
@@ -344,7 +344,7 @@ fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net {
         k += 1
     }
     let mut s: List[List[u8]] = List.new()
-    s.push(sys.lit("{'ok': "))
+    s.push(sys.lit(r"{'ok': "))
     s.push(num(st.ok))
     s.push(sys.lit(", 'unsupported': "))
     s.push(num(st.unsup))
@@ -362,7 +362,7 @@ fn campaign(o: Opts) -> Result[bool, String] uses io, fs, net {
     s.push(num(st.segv))
     s.push(sys.lit(", 'run timeouts': "))
     s.push(num(st.slow))
-    s.push(sys.lit("}"))
+    s.push(sys.lit(r"}"))
     line(s)
     let mut c: List[List[u8]] = List.new()
     for i in 0..keys.len() {

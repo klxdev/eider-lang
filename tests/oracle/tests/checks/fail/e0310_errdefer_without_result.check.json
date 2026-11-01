@@ -1,0 +1,1 @@
+{"error":"E0310","span":{"file":"tests/checks/fail/e0310_errdefer_without_result.ei","line":3,"col":5},"message":"`errdefer` needs a function that returns a Result or an Option, and this one returns ()","help":"an `errdefer` runs when the function returns Err (or None); use `defer` to run it on every exit","fix":{"at":{"line":3,"col":5},"delete":3,"insert":""}}

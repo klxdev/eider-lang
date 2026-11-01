@@ -458,7 +458,7 @@ pub const IMPORT_NAMESPACE: u32 = 2
 pub const IMPORT_IMPLIED: u32 = 3
 
 fn import_help() -> List[u8] {
-    sys.lit("name each module, or group them: `import std.{bytes, fs}`; or import the package namespace, `import std`, and write `std.bytes.eq(...)`")
+    sys.lit(r"name each module, or group them: `import std.{bytes, fs}`; or import the package namespace, `import std`, and write `std.bytes.eq(...)`")
 }
 
 fn import_err(p: P, m: str) -> diag.Diag {
@@ -524,7 +524,7 @@ fn dotted_import(inout p: P, t: lex.Tok, inout items: List[u32]) -> Result[bool,
             if eat(inout p, lex.Comma) { continue }
             if is(p, lex.RBrace) { break }
             no_from(p)?
-            return Err(err(p, "expected `,` or `}` in an import group"))
+            return Err(err(p, r"expected `,` or `}` in an import group"))
         }
         adv(inout p)
         no_from(p)?
@@ -608,7 +608,7 @@ fn item(inout p: P, inout items: List[u32]) -> Result[bool, diag.Diag] {
     Ok(true)
 }
 
-// ---- attributes (docs/compiler.md, "C8.30: attributes")
+// ---- attributes (docs/compiler.md, "C8.40: attributes")
 
 /// `@name`, `@name(key = value, flag)`, `@alias.name(...)`.
 fn attribute(inout p: P) -> Result[u32, diag.Diag] {
@@ -693,7 +693,7 @@ fn attr_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
         }
         members.push(add(inout p, fnode))
         skip_nl(inout p)
-        if !eat(inout p, lex.Comma) && !is(p, lex.RBrace) { return Err(err(p, "expected `,` or `}`")) }
+        if !eat(inout p, lex.Comma) && !is(p, lex.RBrace) { return Err(err(p, r"expected `,` or `}`")) }
     }
     let empty: List[u32] = List.new()
     let mut n = mk(ast.IType, name.line, name.col)
@@ -860,7 +860,7 @@ fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
             attach(inout p, fid, fattrs)
             members.push(fid)
             skip_nl(inout p)
-            if !eat(inout p, lex.Comma) && !is(p, lex.RBrace) && !is_nl(p) { return Err(err(p, "expected `,` or `}`")) }
+            if !eat(inout p, lex.Comma) && !is(p, lex.RBrace) && !is_nl(p) { return Err(err(p, r"expected `,` or `}`")) }
         }
     } else {
         while true {
@@ -1189,7 +1189,7 @@ pub fn block(inout p: P) -> Result[u32, diag.Diag] {
             return Ok(add(inout p, n))
         }
         if is_eof(p) {
-            note_here(inout p, "unexpected end of file, expected `}`")
+            note_here(inout p, r"unexpected end of file, expected `}`")
             break
         }
         // a statement that fails is recorded, skipped (`sync`) and kept as an SError
@@ -1368,6 +1368,7 @@ fn stmt(inout p: P) -> Result[u32, diag.Diag] {
         exit_label(inout p, inout n)
         return Ok(add(inout p, n))
     }
+    if t.kind == lex.Ident && at_defer(p) { return defer_stmt(inout p) }
     if eat_kw(inout p, intern.K_ASSERT) {
         let mut n = mk(ast.SAssert, t.line, t.col)
         n.a = expr(inout p)?
@@ -1617,7 +1618,7 @@ fn args(inout p: P) -> Result[List[u32], diag.Diag] {
         if eat(inout p, lex.RParen) { return Ok(out) }
         let t = cur(p)
         if is_kw(p, intern.K_COMPTIME) && kw_at(p, p.i + 1, intern.K_FOR) {
-            // one argument per iteration (docs/compiler.md, "C8.31")
+            // one argument per iteration (docs/compiler.md, "C8.41")
             let mut sn = mk(ast.EArg, t.line, t.col)
             sn.a = ct_for(inout p)?
             sn.c = 1
@@ -1664,7 +1665,7 @@ fn postfix(inout p: P) -> Result[u32, diag.Diag] {
             n.d = a.len() as u32
             e = add(inout p, n)
         } else if is(p, lex.Dot) && kind_at(p, p.i + 1) == lex.LBracket {
-            // `x.[f]`: the field a `comptime for` variable names (docs/compiler.md, "C8.31")
+            // `x.[f]`: the field a `comptime for` variable names (docs/compiler.md, "C8.41")
             adv(inout p)
             let bt = cur(p)
             adv(inout p)
@@ -1743,6 +1744,7 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] {
         n.a = t.val as u32
         return Ok(add(inout p, n))
     }
+    if t.kind == lex.FStart { return interp_string(inout p) }
     if t.kind == lex.LParen {
         adv(inout p)
         skip_nl(inout p)
@@ -1866,7 +1868,7 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] {
     Err(err(p, "expected an expression"))
 }
 
-// ---- comptime reflection (docs/compiler.md, "C8.31")
+// ---- comptime reflection (docs/compiler.md, "C8.41")
 
 /// `comptime for x in fields(T) { ... }`, `variants(T)`, `fields(v)`: an SForEach with g=1
 /// whose iterable is an EReflect.
@@ -2110,7 +2112,7 @@ fn match_expr(inout p: P) -> Result[u32, diag.Diag] {
             Ok(a) => {
                 arms.push(a)
                 if !(is_nl(p) || is(p, lex.Comma) || is(p, lex.RBrace)) {
-                    note_here(inout p, "expected a newline, `,` or `}` after match arm")
+                    note_here(inout p, r"expected a newline, `,` or `}` after match arm")
                     let s1 = p.i.copy()
                     stop = sync(inout p, s1, true)
                 }
@@ -2266,6 +2268,129 @@ pub fn pattern(inout p: P) -> Result[u32, diag.Diag] {
         return Ok(add(inout p, n))
     }
     Err(err(p, "expected a pattern"))
+}
+
+// ---- defer (docs/compiler.md, "C8.29: defer and errdefer")
+
+/// `defer` or `errdefer` starting a statement: the word, then a name or `{` (so `defer` stays
+/// an ordinary name everywhere else: `defer(x)`, `defer = 1`, `let defer = 2` keep meaning
+/// what they meant).
+fn at_defer(p: P) -> bool {
+    let k = kind_at(p, p.i + 1)
+    if k != lex.Ident && k != lex.LBrace { return false }
+    let w = intern.name(p.names, p.toks[p.i].val as u32)
+    bytes.eq(w, sys.lit("defer")) || bytes.eq(w, sys.lit("errdefer"))
+}
+
+/// `defer stmt` / `errdefer stmt`: SDefer.
+fn defer_stmt(inout p: P) -> Result[u32, diag.Diag] {
+    let t = cur(p)
+    let mut n = mk(ast.SDefer, t.line, t.col)
+    if bytes.eq(intern.name(p.names, t.val as u32), sys.lit("errdefer")) { n.b = 1 }
+    adv(inout p)
+    n.a = stmt(inout p)?
+    Ok(add(inout p, n))
+}
+
+// ---- interpolation (docs/compiler.md, "C8.28: string literals"; the tokens are lex.ei's)
+
+/// `"text {expr:spec} text"`: an EFmt of EStr and EHole parts.
+fn interp_string(inout p: P) -> Result[u32, diag.Diag] {
+    let t = cur(p)
+    adv(inout p)
+    let mut parts: List[u32] = List.new()
+    while true {
+        let k = cur(p)
+        if k.kind == lex.FEnd {
+            adv(inout p)
+            break
+        }
+        if k.kind == lex.FText {
+            adv(inout p)
+            if p.strs[k.val as usize].len() > 0 {
+                let mut sn = mk(ast.EStr, k.line, k.col)
+                sn.a = k.val as u32
+                parts.push(add(inout p, sn))
+            }
+            continue
+        }
+        if k.kind != lex.FHole { return Err(err(p, "expected the end of the string literal")) }
+        adv(inout p)
+        let mut h = mk(ast.EHole, k.line, k.col)
+        if is(p, lex.FClose) { return Err(err(p, "expected an expression")) }
+        h.a = expr(inout p)?
+        if !is(p, lex.FClose) { return Err(err(p, r"expected `}` or `:` after the expression in `{...}`")) }
+        let ct = cur(p)
+        adv(inout p)
+        fmt_spec(p.strs[ct.val as usize], ct.line, ct.col + 1, inout h)?
+        h.g = ct.col + 1
+        h.h = p.strs[ct.val as usize].len() as u32
+        parts.push(add(inout p, h))
+    }
+    let mut n = mk(ast.EFmt, t.line, t.col)
+    n.c = list(inout p, parts)
+    n.d = parts.len() as u32
+    let e = prev_end(p)
+    n.end_line = e.line
+    n.end_col = e.col
+    Ok(add(inout p, n))
+}
+
+/// `[[fill]align][+][#][0][width][type]` into h's slots (ast.ei, EHole); the spec starts at
+/// line:col. A precision (`.N`) waits for floats.
+fn fmt_spec(sp: List[u8], line: u32, col: u32, inout h: ast.Node) -> Result[bool, diag.Diag] {
+    let mut i: usize = 0
+    let n = sp.len()
+    let shape = "a format spec is `[[fill]align][+][#][0][width][x|X|b|o]`, like `>8`, `08` or `#x`"
+    if n >= 2 && fmt_align(sp[1]) > 0 && sp[0] < 128 {
+        h.c = sp[0] as u32
+        h.d = fmt_align(sp[1])
+        i = 2
+    } else if n >= 1 && fmt_align(sp[0]) > 0 {
+        h.d = fmt_align(sp[0])
+        i = 1
+    }
+    if i < n && sp[i] == 43 {
+        h.e += ast.FMT_PLUS
+        i += 1
+    }
+    if i < n && sp[i] == 35 {
+        h.e += ast.FMT_ALT
+        i += 1
+    }
+    if i < n && sp[i] == 48 {
+        h.e += ast.FMT_ZERO
+        i += 1
+    }
+    let mut w: u32 = 0
+    let mut digits = false
+    while i < n && sp[i] >= 48 && sp[i] <= 57 {
+        if w > 100000 { return Err(err_at(line, col + i as u32, sys.lit("a format width is at most 100000"))) }
+        w = w * 10 + (sp[i] - 48) as u32
+        digits = true
+        i += 1
+    }
+    if digits { h.b = w + 1 }
+    if i < n && sp[i] == 46 {
+        return Err(err_at(line, col + i as u32, sys.lit("a precision (`.N`) is for floats, which Eider doesn't have yet; pad with a width instead")))
+    }
+    if i < n && (sp[i] == 120 || sp[i] == 88 || sp[i] == 98 || sp[i] == 111) {
+        h.f = sp[i] as u32
+        i += 1
+    }
+    if i < n {
+        let mut m = if sp[i] < 128 { quoted("unexpected `", bytes.slice(sp, i, i + 1), "` in a format spec: ") } else { sys.lit("unexpected non-ASCII text in a format spec: ") }
+        bytes.append(inout m, sys.lit(shape))
+        return Err(err_at(line, col + i as u32, m))
+    }
+    Ok(true)
+}
+
+fn fmt_align(b: u8) -> u32 {
+    if b == 60 { return 1 }
+    if b == 62 { return 2 }
+    if b == 94 { return 3 }
+    0
 }
 
 /// Parse a lexed file: the tree, or the first error.

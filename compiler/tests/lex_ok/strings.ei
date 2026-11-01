@@ -1,0 +1,13 @@
+// C8.28's literals: interpolation (text runs, holes with their tokens and specs, `{{`/`}}`),
+// raw strings with and without `#`, and multi-line strings with their indentation removed
+let a = "x{n}y{p.q(1, [2]):>8}{{z}}"
+let b = r"a\nb" r#"say "hi""#
+let c = """
+    one
+      two \
+    three
+    """
+let d = """
+  {k:08x}
+  """
+let e = """x""" ""

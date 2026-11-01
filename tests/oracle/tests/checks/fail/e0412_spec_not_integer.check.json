@@ -1,0 +1,1 @@
+{"error":"E0412","span":{"file":"tests/checks/fail/e0412_spec_not_integer.ei","line":4,"col":13},"message":"format spec `+` is for integers, and this is str","help":"only a width, fill and alignment apply to any type: `{x:>8}`, `{x:*^9}`","fix":{"at":{"line":4,"col":18},"delete":1,"insert":""}}

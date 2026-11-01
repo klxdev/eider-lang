@@ -253,6 +253,10 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             child(inout out, p, "value", n.c, d)
         }
         ast.SExpr => child(inout out, p, "expr", n.a, d)
+        ast.SDefer => {
+            flag(inout out, "err", n.b == 1)
+            child(inout out, p, "stmt", n.a, d)
+        }
         ast.SWhile => {
             if n.h > 0 { sym(inout out, p, "label", n.h - 1) }
             child(inout out, p, "cond", n.a, d)
@@ -392,6 +396,30 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
         ast.EFieldAt => {
             child(inout out, p, "recv", n.a, d)
             child(inout out, p, "field", n.b, d)
+        }
+        ast.EFmt => kids(inout out, p, "part", n.c, n.d, d)
+        ast.EHole => {
+            if n.b > 0 {
+                put(inout out, " width=")
+                num(inout out, (n.b - 1) as u64)
+            }
+            if n.c > 0 {
+                put(inout out, " fill=")
+                out.push(n.c as u8)
+            }
+            if n.d > 0 {
+                put(inout out, " align=")
+                let al = if n.d == 1 { "<" } else if n.d == 2 { ">" } else { "^" }
+                put(inout out, al)
+            }
+            flag(inout out, "plus", ast.has(n.e, ast.FMT_PLUS))
+            flag(inout out, "alt", ast.has(n.e, ast.FMT_ALT))
+            flag(inout out, "zero", ast.has(n.e, ast.FMT_ZERO))
+            if n.f > 0 {
+                put(inout out, " radix=")
+                out.push(n.f as u8)
+            }
+            child(inout out, p, "expr", n.a, d)
         }
         ast.EError => end(inout out, n)
         ast.SError => end(inout out, n)

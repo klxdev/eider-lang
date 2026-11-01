@@ -504,3 +504,89 @@ ei_chan *ei_h_chan(void *h) {
   ei_trap(EI_WASM_NO_THREADS, 0);
 }
 void ei_h_free(void *h) { ei_free(h); }
+
+/* f-strings (docs/compiler.md, "C8.28"). The spec is one u64: width (bits 0-31), fill byte
+   (32-39), alignment (40-41: 1 left, 2 right, 3 center), `+` (42), `#` (43), `0` (44), radix
+   (45-50), upper-case digits (51). Widths count Unicode scalar values. */
+static void fmt_fill(ei_String *s, char f, uint64_t n) {
+  char b[64];
+  memset(b, f, sizeof b);
+  while (n > 0) {
+    uint64_t k = n < sizeof b ? n : (uint64_t)sizeof b;
+    ei_str_cat(s, b, k);
+    n -= k;
+  }
+}
+
+static uint64_t fmt_scalars(const char *p, uint64_t n) {
+  uint64_t c = 0;
+  for (uint64_t i = 0; i < n; i++) {
+    unsigned char b = (unsigned char)p[i];
+    if (b < 128 || b >= 192) c++;
+  }
+  return c;
+}
+
+/* Append t (tlen bytes) padded to the spec's width with its fill and alignment. */
+static void fmt_pad(ei_String *s, const char *t, uint64_t tlen, uint64_t spec) {
+  uint64_t width = spec & 0xffffffffu;
+  char fill = (char)((spec >> 32) & 0xff);
+  unsigned align = (unsigned)((spec >> 40) & 3);
+  uint64_t n = fmt_scalars(t, tlen);
+  uint64_t gap = n < width ? width - n : 0;
+  uint64_t before = align == 1 ? 0 : align == 3 ? gap / 2 : gap;
+  fmt_fill(s, fill, before);
+  ei_str_cat(s, t, tlen);
+  fmt_fill(s, fill, gap - before);
+}
+
+void ei_str_pad(ei_String *s, uint64_t mark, uint64_t spec) {
+  if (mark > s->len) mark = s->len;
+  uint64_t width = spec & 0xffffffffu;
+  if (fmt_scalars(s->p + mark, s->len - mark) >= width) return;
+  ei_String t = ei_str_from("");
+  ei_str_cat(&t, s->p, mark);
+  fmt_pad(&t, s->p + mark, s->len - mark, spec);
+  ei_drop_String(s);
+  *s = t;
+}
+
+static void fmt_int(ei_String *s, int neg, uint64_t mag, uint64_t spec) {
+  unsigned base = (unsigned)((spec >> 45) & 63);
+  int up = (int)((spec >> 51) & 1);
+  char b[80];
+  int h = 0;
+  if (base < 2 || base > 36) base = 10;
+  if (neg) b[h++] = '-';
+  else if ((spec >> 42) & 1) b[h++] = '+';
+  if ((spec >> 43) & 1) {
+    char k = base == 16 ? 'x' : base == 2 ? 'b' : base == 8 ? 'o' : 0;
+    if (k) {
+      b[h++] = '0';
+      b[h++] = up ? (char)(k - 32) : k;
+    }
+  }
+  char d[66];
+  int i = 66;
+  do {
+    unsigned x = (unsigned)(mag % base);
+    d[--i] = (char)(x < 10 ? 48 + x : (up ? 55 : 87) + x);
+    mag /= base;
+  } while (mag);
+  uint64_t nd = (uint64_t)(66 - i);
+  if ((spec >> 44) & 1) {
+    uint64_t width = spec & 0xffffffffu;
+    ei_str_cat(s, b, (uint64_t)h);
+    if ((uint64_t)h + nd < width) fmt_fill(s, '0', width - (uint64_t)h - nd);
+    ei_str_cat(s, d + i, nd);
+    return;
+  }
+  memcpy(b + h, d + i, (size_t)nd);
+  fmt_pad(s, b, (uint64_t)h + nd, spec);
+}
+
+void ei_str_fmt_i64(ei_String *s, int64_t v, uint64_t spec) {
+  fmt_int(s, v < 0, v < 0 ? (uint64_t)0 - (uint64_t)v : (uint64_t)v, spec);
+}
+
+void ei_str_fmt_u64(ei_String *s, uint64_t v, uint64_t spec) { fmt_int(s, 0, v, spec); }

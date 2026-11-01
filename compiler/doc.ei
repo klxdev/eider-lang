@@ -781,7 +781,7 @@ fn type_item(inout b: B, m: u32, id: u32, anchor: List[u8], lines: List[List[u8]
     let n = node(b, m, id)
     let mut g = sig()
     if m != b.p.prelude && public { put(inout g, "pub ") }
-    // an attribute's declaration (docs/compiler.md, "C8.30") reads as what it is
+    // an attribute's declaration (docs/compiler.md, "C8.40") reads as what it is
     if n.h == 1 { put(inout g, "attr ") } else { put(inout g, "type ") }
     putb(inout g, nm(b, n.a))
     let gens = generics(b, m, n.c, n.d, inout g)
@@ -1006,7 +1006,7 @@ fn jlist(inout out: List[u8], xs: List[List[u8]]) {
 
 fn item_json(a: Api, i: u32, inout out: List[u8]) {
     let it = a.items[i as usize]
-    bytes.append(inout out, s("{\"kind\":"))
+    bytes.append(inout out, s("\x7b\"kind\":"))
     diag.jstr(inout out, it.kind)
     jfield(inout out, "name", it.name)
     jfield(inout out, "anchor", it.anchor)
@@ -1028,7 +1028,7 @@ fn item_json(a: Api, i: u32, inout out: List[u8]) {
         out.push(91)
         for k in 0..it.generics.len() {
             if k > 0 { out.push(44) }
-            bytes.append(inout out, s("{\"name\":"))
+            bytes.append(inout out, s("\x7b\"name\":"))
             diag.jstr(inout out, it.generics[k].name)
             out.push(44)
             jkey(inout out, "bounds")
@@ -1049,7 +1049,7 @@ fn item_json(a: Api, i: u32, inout out: List[u8]) {
         for k in 0..it.links.len() {
             if k > 0 { out.push(44) }
             let l = it.links[k]
-            bytes.append(inout out, s("{\"start\":"))
+            bytes.append(inout out, s("\x7b\"start\":"))
             bytes.append(inout out, bytes.from_u64(l.start as u64))
             jnum(inout out, "end", l.end)
             jfield(inout out, "to", l.to)
@@ -1073,13 +1073,13 @@ fn item_json(a: Api, i: u32, inout out: List[u8]) {
 /// The API as one JSON document: `{"format":1,"toolchain":"0.1.0","packages":[...],"modules":[...]}`, one
 /// package, module header or item per line.
 pub fn json(a: Api) -> List[u8] {
-    let mut out = s("{\"format\":1,\"toolchain\":")
+    let mut out = s("\x7b\"format\":1,\"toolchain\":")
     diag.jstr(inout out, a.toolchain)
     bytes.append(inout out, s(",\n\"packages\":["))
     for i in 0..a.packages.len() {
         let k = a.packages[i]
         if i > 0 { out.push(44) }
-        bytes.append(inout out, s("\n{\"name\":"))
+        bytes.append(inout out, s("\n\x7b\"name\":"))
         diag.jstr(inout out, k.name)
         jfield(inout out, "dir", k.dir)
         jfield(inout out, "version", k.version)
@@ -1090,7 +1090,7 @@ pub fn json(a: Api) -> List[u8] {
     for i in 0..a.modules.len() {
         let md = a.modules[i]
         if i > 0 { out.push(44) }
-        bytes.append(inout out, s("\n{\"package\":"))
+        bytes.append(inout out, s("\n\x7b\"package\":"))
         diag.jstr(inout out, md.package)
         jfield(inout out, "path", md.path)
         jfield(inout out, "file", md.file)
@@ -1102,9 +1102,9 @@ pub fn json(a: Api) -> List[u8] {
             out.push(10)
             item_json(a, md.items[k], inout out)
         }
-        bytes.append(inout out, s("]}"))
+        bytes.append(inout out, s(r"]}"))
     }
-    bytes.append(inout out, s("]}\n"))
+    bytes.append(inout out, s("]\x7d\n"))
     out
 }
 

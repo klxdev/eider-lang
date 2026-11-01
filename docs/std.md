@@ -163,8 +163,8 @@ and WHATWG's rule, so every conforming decoder counts the same), and validity is
 `fmt` formats integers: `fmt.int(n)`, `fmt.hex(n)`, and with a `Spec` built by chaining,
 `fmt.uint_with(255, fmt.spec().hex().prefix().width(8).zero())` is "0x0000ff". Widths count
 characters. `put_*` forms append to a String, and a `Builder` collects pieces (`add`,
-`add_int`, `add_show` for any Show value, `add_pad`). Floats wait for f64 (C9); string
-interpolation is roadmap P0.5.
+`add_int`, `add_show` for any Show value, `add_pad`). Floats wait for f64 (C9). Interpolation
+(`"{n:#06x}"`) uses the same rules without a `Spec`.
 
 ## Collections (`std/sort`, `std/deque`, `std/set`, `std/heap`)
 
@@ -222,7 +222,7 @@ around in core.
 | **Capability polymorphism.** A generic body is checked per instance, so it must declare the union of the capabilities of every type it may be given | `BufReader[Bytes]` and `read_all` on memory need `uses io`; a user Reader that needs `net` can't go through std's generic code (so std's own streams use `io` only: sockets are read with read(2)) | capabilities that follow type parameters (`uses io + R`), or checking a generic body against its bounds' declared capabilities |
 | **Default methods in traits** | `stream.read_all(inout r)` rather than `r.read_all()` | trait methods with bodies |
 | ~~**Error conversions for `?`**~~ (roadmap P0.6) | done (docs/compiler.md "C8.21"): `impl From[String] for stream.Error`, and applications convert `stream.Error` with their own impl; `stream.plain` is gone (C103) | the `Error` trait with context chains is next |
-| **`Drop` that may do I/O** (E0606 forbids capabilities in `drop`) | `BufWriter` can't flush on drop and `Fd` can't close on drop: call `flush`/`close` | a scoped `defer` (P0.3) or a drop with checked capabilities |
+| **`Drop` that may do I/O** (E0606 forbids capabilities in `drop`) | `BufWriter` can't flush on drop and `Fd` can't close on drop: call `flush`/`close`, now with `defer w.flush()` right after making it (docs/compiler.md "C8.29") | a drop with checked capabilities, if `defer` isn't enough |
 | ~~**Iterating a Map**~~ | done (docs/compiler.md "C8.20"): eider-http's http/metrics and eider-openapi's examples/todo iterate their Maps; `Set` keeps its List on purpose, for insertion order (C102) | an insertion-ordered Map, if more code wants that order |
 | **In-place List operations and views** (`insert`/`remove` at an index, `truncate`, `extend`, `swap`, slices) | stream buffers copy their unread tail when compacting, `bytes.slice`-style copies everywhere; merge sort builds new Lists | the built-ins, and zero-copy views with 8.6 references |
 | **16-bit integers** | `encoding.u16_le` returns a u32 | `u16`/`i16` |

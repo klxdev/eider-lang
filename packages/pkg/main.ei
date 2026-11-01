@@ -251,7 +251,7 @@ fn remove(c: Cli) -> Result[bool, String] uses io, fs, net {
     if !found {
         let mut e = String.from("no [deps.")
         e.append(sys.to_string(name))
-        e.push_str("] table in eider.toml (inline `name = { ... }` entries must be removed by hand)")
+        e.push_str(r"] table in eider.toml (inline `name = { ... }` entries must be removed by hand)")
         return Err(e)
     }
     while kept.len() > 0 && kept[kept.len() - 1].len() == 0 { kept.pop() }
@@ -295,7 +295,7 @@ fn init(c: Cli) -> Result[bool, String] uses io, fs {
     fs.write(file, t)?
     let main_file = fs.join(c.dir, sys.lit("main.ei"))
     if !fs.exists(main_file) {
-        fs.write(main_file, sys.lit("import core.sys\nimport std.io\n\nfn main() uses io {\n    io.outln(sys.lit(\"hello from eider\"))\n}\n"))?
+        fs.write(main_file, sys.lit("import core.sys\nimport std.io\n\nfn main() uses io {{\n    io.outln(sys.lit(\"hello from eider\"))\n}}\n"))?
     }
     let mut l = sys.lit("created package `")
     bytes.append(inout l, clean)

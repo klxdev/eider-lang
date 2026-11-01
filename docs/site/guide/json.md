@@ -37,7 +37,7 @@ impl json.Decode for User {
 fn main() uses io {
     let u = User(7, String.from("Ada"), None, 3, List.new())
     io.outln(json.to_json(u))
-    let back: Result[User, json.DecodeError] = json.from_json("{\"id\": 9, \"displayName\": \"Bob\"}".bytes())
+    let back: Result[User, json.DecodeError] = json.from_json("{{\"id\": 9, \"displayName\": \"Bob\"}}".bytes())
     match back {
         Ok(b) => print(b.display_name)
         Err(e) => io.outln(json.decode_error_text(e))

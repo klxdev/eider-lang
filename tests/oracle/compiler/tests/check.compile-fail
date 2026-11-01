@@ -178,6 +178,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0201_comptime_other_fn.ei   E0201 at 3:5
   ok   e0201_core_os_needs_net.ei   E0201 at 7:13 (fix compiles)
   ok   e0201_core_wrapper_needs_fs.ei E0201 at 7:13 (fix compiles)
+  ok   e0201_defer_capability.ei    E0201 at 3:11 (fix compiles)
   ok   e0201_ffi_extern_own_caps.ei E0201 at 4:22 (fix compiles)
   ok   e0201_ffi_no_unsafe_either.ei E0201 at 4:13 (fix resolves it; next: E0802)
   ok   e0201_ffi_other_caps.ei      E0201 at 4:22 (fix compiles)
@@ -273,6 +274,8 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0308_push.ei                E0308 at 7:12 (fix compiles)
   ok   e0308_take_while_referenced.ei E0308 at 7:18 (fix compiles)
   ok   e0308_through_alias.ei       E0308 at 7:9 (fix compiles)
+  ok   e0309_break_in_defer.ei      E0309 at 4:28
+  ok   e0309_try_in_errdefer.ei     E0309 at 3:17
   ok   e0401_add_bools.ei           E0401 at 3:18
   ok   e0401_alias_generic_arg.ei   E0401 at 7:20
   ok   e0401_alias_transparent.ei   E0401 at 6:18
@@ -351,6 +354,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_index_non_array.ei     E0401 at 4:14
   ok   e0401_index_not_usize.ei     E0401 at 5:15
   ok   e0401_int_pattern_on_bool.ei E0401 at 4:9
+  ok   e0401_interp_no_show.ei      E0401 at 4:13
   ok   e0401_len_of_int.ei          E0401 at 3:17
   ok   e0401_local_shadows_variant.ei E0401 at 5:16
   ok   e0401_map_closure_wrong.ei   E0401 at 3:20
@@ -737,6 +741,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-735 passed, 0 failed; error-code coverage 58/64
-codes without a compile-fail test: E0302 E0402 E0806 E0808 E0812 E0813
+739 passed, 0 failed; error-code coverage 59/67
+codes without a compile-fail test: E0302 E0310 E0402 E0412 E0806 E0808 E0812 E0813
 --- exit 0

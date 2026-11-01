@@ -33,7 +33,7 @@ impl[T: Enc] Enc for List[T] {
 
 /// `{key=value, ...}` for any record whose fields have Enc (a skipped one needn't).
 fn record[T](x: T, inout out: String) {
-    out.push_str("{")
+    out.push_str(r"{")
     let mut first = true
     comptime for f in fields(T) {
         // (a `comptime if` leaves out only its own branch: what follows a `continue` in it
@@ -50,7 +50,7 @@ fn record[T](x: T, inout out: String) {
             x.[f].enc(inout out)
         }
     }
-    out.push_str("}")
+    out.push_str(r"}")
 }
 
 /// `Name(a, b)` for any enum whose payloads have Enc.

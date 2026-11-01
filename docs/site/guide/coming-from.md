@@ -77,7 +77,8 @@ What is different:
 - **No allocators to pass around.** Heap values (`String`, `List`, `Map`, `Box`) free
   themselves; copies are copy-on-write.
 - **Errors are `Result[T, E]`** with any error type, rather than error sets; `?` is `try`.
-  `defer`/`errdefer` are planned; `Drop` (cleanup when the last holder goes) exists today.
+  `defer` and `errdefer` work as in Zig (`errdefer` runs when the function returns `Err` or
+  `None`), and `Drop` cleans up when the last holder goes.
 - **Traits and bounded generics** instead of `anytype` and duck typing.
 - `comptime` evaluates integer and `bool` constants only; comptime reflection (for
   serializers) is planned.

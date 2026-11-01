@@ -1,0 +1,10 @@
+// defer and errdefer (docs/compiler.md, "C8.29"): a call, a block, an assignment; the
+// words stay names where they don't start such a statement
+fn f(h: i32) -> Result[i32, str] uses io {
+    defer print(h)
+    errdefer { print(0) }
+    let mut defer = 1
+    defer += 1
+    defer x = 2
+    Ok(defer)
+}

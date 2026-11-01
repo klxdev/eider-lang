@@ -1,0 +1,85 @@
+// interpolation, raw strings and multi-line strings (docs/compiler.md, "C8.28: string literals")
+type P = { x: i32, label: str }
+type Shape = | Circle(r: u32) | Dot
+
+fn name() -> String { String.from("Ada") }
+
+fn parse(s: str) -> Result[i32, str] {
+    if s == "seven" { return Ok(7) }
+    Err("not a number")
+}
+
+// `?` inside a hole: the String built so far is dropped on the early return
+fn describe(s: str) -> Result[String, str] {
+    let t = "[{s}] is {parse(s)?:>3}"
+    Ok(t)
+}
+
+fn greet(who: str) -> String {
+    """
+    Hello, {who}!
+      "quoted" and \t tab
+    joined \
+    here
+
+    braces {{x}} }}
+    """
+}
+
+fn main() uses io {
+    let n = 7
+    let who = "Kim"
+    print("{who} has {n} items")
+    print("[{n:>4}] [{n:<4}] [{n:^5}] [{n:*>6}] [{n:04}] [{n:+}] [{n:5}]")
+    print("[{255:x}] [{255:X}] [{255:#x}] [{255:#X}] [{5:b}] [{8:#o}] [{-255:#06x}] [{-3:+05}]")
+    let big: u64 = 18446744073709551615
+    let small: i64 = -9223372036854775807 - 1
+    let byte: u8 = 200
+    print("{big} {big:x} {small} {byte:#b} {byte:>5}")
+    print("[{who:>6}] [{who:<6}] [{who:-^7}] [{who:2}] [{who}]")
+    let p = P(2, "b")
+    print("p = {p}, name = {name()}, len = {name().len()}, {Circle(3)}, {Dot:>5}")
+    let xs = [1, 2, 3]
+    print("{xs} {xs[1] + 10} {len(xs) as i64 * -2} {true} {()}")
+    print("é{n:>3}é")
+    let empty = ""
+    print(empty.len())
+    let add = |a: i32| -> String { "{a}+{n}={a + n}" }
+    print(add(1))
+    match describe("seven") {
+        Ok(t) => print(t)
+        Err(e) => print(e)
+    }
+    match describe("x") {
+        Ok(t) => print(t)
+        Err(e) => print(e)
+    }
+    print(greet("Ada"))
+    print(r"C:\path\n raw")
+    print(r#"she said "hi" \ "#)
+    print(r"a" "b\n" r"c")
+    let sql = """
+        SELECT *
+        FROM t
+        """
+    print(sql)
+    print("""
+    """.len())
+    print("""x""")
+    // no `{expr}`: a str, usable where a str has to be
+    const_and_pattern(r"{a}")
+    print(BRACES)
+    print(r"""
+        raw {n} \t "quotes"
+          kept
+        """)
+}
+
+const BRACES: str = "{{const}}"
+
+fn const_and_pattern(s: str) uses io {
+    match s {
+        "{{a}}" => print("the pattern's braces are the text's")
+        _ => print("no")
+    }
+}

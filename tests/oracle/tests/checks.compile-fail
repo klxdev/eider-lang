@@ -39,6 +39,8 @@ compile-fail tests (tests/checks/fail)
   ok   e0306_unknown_label.ei       E0306 at 3:42
   ok   e0307_mut_alias_of_param.ei  E0307 at 4:17 (fix compiles)
   ok   e0308_push_while_referenced.ei E0308 at 7:12 (fix compiles)
+  ok   e0309_return_in_defer.ei     E0309 at 3:13
+  ok   e0310_errdefer_without_result.ei E0310 at 3:5 (fix compiles)
   ok   e0401_closure_wrong_return.ei E0401 at 4:28
   ok   e0401_map_equality.ei        E0401 at 5:18
   ok   e0401_missing_return.ei      E0401 at 4:1
@@ -55,6 +57,7 @@ compile-fail tests (tests/checks/fail)
   ok   e0409_list_new_uninferred.ei E0409 at 3:18
   ok   e0410_pattern_arity.ei       E0410 at 5:9
   ok   e0411_ref_in_mutex.ei        E0411 at 4:23
+  ok   e0412_spec_not_integer.ei    E0412 at 4:13 (fix compiles)
   ok   e0501_constant_overflow.ei   E0501 at 2:21
   ok   e0501_literal_out_of_range.ei E0501 at 3:15
   ok   e0502_constant_div_zero.ei   E0502 at 3:14
@@ -110,5 +113,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-108 passed, 0 failed; error-code coverage 64/64
+111 passed, 0 failed; error-code coverage 67/67
 --- exit 0

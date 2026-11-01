@@ -1,0 +1,23 @@
+// `eiderc migrate-strings` (docs/compiler.md, "C8.28"): {braces} in comments stay
+/* and { in block comments } */
+const CSS: str = r"a { color: red }"
+const NONE: str = "no braces"
+fn main() uses io {
+    print("{{\"json\": 1}}")
+    print("\u{e9} and no others")
+    print("\u{e9} {{x}}")
+    print(r"raw {stays}")
+    print(r#"raw "{stays}""#)
+    print("{CSS} and {{}}")
+    let multi = r"""
+        { "a": 1 }
+        """
+    let esc = """
+        {{tab}}\t
+        """
+    print("""
+        {multi}
+        """)
+    print(r"}" r"{")
+    print(""r"x{""")
+}

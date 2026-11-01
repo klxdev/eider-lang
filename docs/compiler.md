@@ -3362,6 +3362,82 @@ debug one 2.3 s to 0.8-1.0 s, a cold release build 29 s to 11 s; a no-op 0.93 s 
 The unit objects of a debug and a release build of eiderc take 8 MB, lld's ThinLTO cache 4 MB
 and each linked program 2.4 MB, so the 5 GiB default holds hundreds of builds.
 
+## C8.28: string literals
+
+#17 and #13 (decisions U29, C461, C462, C466). Code: lex.ei (`raw_at`, `raw`, `literal`,
+`finish`, `pieces`, `hole`, `multiline`), parse.ei (`interp_string`, `fmt_spec`), check.ei (`fmt_string`,
+`fmt_hole`), llvm.ei (`fmt_builtin`), the runtime's `ei_str_pad` and `ei_str_fmt_i64/u64`
+(core/eider_rt.c and core/wasm/eider_rt.c).
+
+- **Interpolation.** Every plain literal interpolates. One with no `{expr}` is one Str
+  token and a `str`, as before; `"a {x} b {n:>4}"` is a fresh `String`. The lexer turns it into
+  FStart, an FText per text run (escapes decoded, `{{` and `}}` as braces), and for each hole an
+  FHole, the expression's own tokens (lexed by the same scanner, bounded to the hole) and an
+  FClose carrying the spec text, then FEnd. A hole ends at the first `}` or `:` outside
+  `()`/`[]`; it can't contain `{`, `"` or a comment, so the lexer finds its end without
+  parsing. The parser makes an EFmt of EStr and EHole parts and parses the spec into the
+  EHole's slots (ast.ei). The checker evaluates the parts left to right into one String
+  temporary (registered for its drop first, so a `?` in a hole frees it): text is
+  B_STR_PUSH, a plain hole B_SHOW (the value's Show, as `print`), a width alone on a
+  non-integer B_SHOW then B_STR_PAD (pads what follows the length taken before), and an
+  integer with a spec B_FMT_INT. The spec reaches the runtime as one u64 (layout in
+  `fmt_hole`). A type without Show is E0401 as for `print`; `+ # 0 x X b o` on a
+  non-integer is E0412.
+- **Raw strings.** `r"..."`, `r#"..."#`, `r"""`: a Str token of the bytes as written; they
+  never interpolate.
+- **Multi-line strings.** `"""` followed only by spaces before the line break; the closing
+  line is the first whose text starts with `"""`, and its indentation is removed from each
+  line (Swift's rule). A blank line may be indented less; any other such line is E0001.
+  `\` at the end of a line joins the next. The token is one Str (FStart... with a `{expr}`)
+  that spans lines: its `end_col` is a column of the closing line (tokens kept one line
+  before this; nothing needs the end line).
+- **Migration.** `{` in a plain literal meant itself before, so this changed the meaning of
+  valid programs: `eiderc migrate-strings <file> [--json] [--portable]` (migrate.ei) and
+  scripts/migrate-strings.sh rewrite each such literal (decision C466). `r"`, `r#` and
+  `"""`+newline were all errors, and `"""x"""` on one line still lexes as three joined
+  literals.
+- **Bootstrap.** compiler/, core/ and std/ are compiled by the seed, so at the change their
+  literals had to mean the same under both rules (seed/README.md): `--portable` made them raw
+  strings or `\x7b`/`\x7d`, the feature landed with a seed that has it, and everything else
+  was migrated after.
+
+Tests: compiler/tests/run/interp.ei (every spec, Show of records and enums, a hole with
+`?`, a closure, raw and multi-line strings; hand-checked .out), compiler/tests/lex_ok/
+strings.ei (the tokens), compiler/tests/parse_ok/interp.ei (the AST), the lexer and parser
+errors in compiler/tests/lex and compiler/tests/parse, tests/checks/fail/
+e0412_spec_not_integer.ei, compiler/tests/check/fail/e0401_interp_no_show.ei,
+compiler/tests/migrate/strings.ei (migrate-strings).
+
+## C8.29: defer and errdefer
+
+#15 (decisions C463-C465). Code: parse.ei (`at_defer`, `defer_stmt`), check.ei ("Defer":
+`defer_stmt`, `run_defer`, `unwind`, `return_fails`, `leaves`).
+
+`defer s` is an SDefer in the tree. The checker checks s where it is written, into IR it
+throws away (this check reports errors and capabilities), and pushes an entry on the
+innermost frame (an Owned with `l` = DEFER, its index in `C.defers`). Frames are where drops
+are emitted, at the end of a block (pop_frame) and on each exit (unwind: `return`, `?`,
+`break`, `continue`), innermost first, so a deferred statement runs in reverse order with
+the drops and before the values declared ahead of it are dropped. Each time, s is checked
+and emitted again in a frame of its own, with the scopes it saw (a copy kept with the entry:
+its block's scope may already be closed) and with recording muted (no duplicate
+diagnostics or IDE references). An `errdefer` is skipped on a normal exit, emitted on `?`'s
+failure path, and on a `return` (or a function's last value) guarded by a tag test of the
+returned value (`return_fails`: Err for a Result, None for an Option); with no `errdefer`
+waiting, a return emits exactly what it did before. `leaves` walks s for a `return`, `?`, or
+a `break`/`continue` of a loop outside s (E0309; closures and nested defers are their own).
+An `errdefer` needs a function returning a Result or an Option (E0310, the fix deletes
+`err`). A trap runs no deferred code (there is no unwinding).
+
+`defer` and `errdefer` are words only at the start of a statement before a name or `{`
+(`at_defer`), so programs using them as names keep their meaning.
+
+Tests: compiler/tests/run/defer.ei (order, the value computed first, every exit kind,
+labeled loops, errdefer on `?`, `return Err`, a last `Err` value and `None`, a deferred String
+use before its drop, a closure, the words as names; hand-checked .out, no leaks),
+compiler/tests/parse_ok/defer.ei, tests/checks/fail/e0309_return_in_defer.ei and
+e0310_errdefer_without_result.ei, compiler/tests/check/fail/e0309_* and
+e0201_defer_capability.ei.
 ## C8.11: the comptime interpreter
 
 Wave 5 (#7; decisions C500-C503). Code: compiler/interp.ei (the interpreter),
@@ -3461,7 +3537,7 @@ an imported str constant passes (comptime_mod_str.ei), the E0807 message names s
 cases cover a cycle and a self-reference (E0110 with the help), Drop and runaway recursion
 (E0807).
 
-## C8.30: attributes
+## C8.40: attributes
 
 Wave 5 (#19, research #97; decisions C8, C510-C513). Code: lex.ei (`At`), parse.ei
 ("attributes": `attribute`, `attributes`, `attach`, `at_attr_decl`, `attr_decl`; fields and
@@ -3496,12 +3572,12 @@ with a fix, E0822 twice), each value (a literal or a constant: E0401, E0822; a b
 one node (E0822). Values are folded like constants into the scratch IR function and kept as
 `ALit`s in `Reflect.found` (module, owner node, attribute, values in key order with the
 defaults filled in). Nothing else in the checker or the backends reads them: attributes
-change no IR and no output, only what comptime reflection ("C8.31") makes of them. A value
+change no IR and no output, only what comptime reflection ("C8.41") makes of them. A value
 may name a comptime constant: while that constant is pending, an evaluator takes the attribute
 out of its tree (`Ast.held`, consteval.ei's `hold_attrs`), and reflection that reads it traps
 if it runs there, so the constant running it is retried after the one it names.
 
-## C8.31: comptime reflection
+## C8.41: comptime reflection
 
 Wave 5 (#20, research #97; decisions C520-C525). Code: parse.ei ("comptime reflection":
 `ct_for`, `ct_if`, `attr_of`; `x.[f]` in `postfix`; a `comptime for` argument in `args`),
@@ -3538,7 +3614,7 @@ passes `inout` like `x.name`, and `is_place`/`root` treat it as one (a borrow is
 value: an early draft registered the read for a drop and freed a String twice, which the
 eider-json flatten test found). `f.name` and `f.index` are constants (a str, a usize).
 `v.matches(x)` is an `S_TAG`. `attr[A](x)` is an `S_RECORD` of A's type from the values pass
-6b kept ("C8.30"), the declared defaults when x has none (zeros for required keys);
+6b kept ("C8.40"), the declared defaults when x has none (zeros for required keys);
 `has_attr` a bool constant. `T(comptime for f in fields(T) { e })` and
 `v(comptime for f in fields(v) { e })` check the body once per field into a temporary
 (`D_VAR`) with the field's type expected, then build the record or variant from them

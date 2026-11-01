@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./.vendor/toml/tests/toml_test.ei","line":46,"col":209},"message":"a string literal's `{...}` can't contain `{`, `\"` or a comment: bind the value to a name first"}

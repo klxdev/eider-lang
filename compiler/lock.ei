@@ -255,7 +255,7 @@ fn value(inout p: P, k: List[u8], inout out: List[Entry]) -> Result[bool, List[u
             blank(inout p)
             value(inout p, join_key(k, sub), inout out)?
             blank(inout p)
-            if peek(p) == 44 { bump(inout p) } else if peek(p) != 125 { return Err(fail(p, "expected `,` or `}`")) }
+            if peek(p) == 44 { bump(inout p) } else if peek(p) != 125 { return Err(fail(p, r"expected `,` or `}`")) }
         }
     }
     // an integer or a boolean

@@ -145,6 +145,8 @@ must be `bool`: integers are not conditions.
 |---|---|
 | `42`, `0xff` | an integer type, from the context (see [Types](types.md#integer-literals)) |
 | `"text"` | `str` |
+| `"n = {n}"`, `"{x:>8}"` | `String` ([interpolation](lexical.md#interpolation)) |
+| `r"text"`, `r#"a "b""#` | `str` ([raw strings](lexical.md#raw-strings)) |
 | `true`, `false` | `bool` |
 | `()` | `()` |
 | `(a, b)`, `(a,)` | a tuple |

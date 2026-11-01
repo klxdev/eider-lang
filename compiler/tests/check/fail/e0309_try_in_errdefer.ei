@@ -1,0 +1,7 @@
+// expect: E0309 3:17
+fn f(r: Result[i32, str]) -> Result[i32, str] {
+    errdefer g(r?)
+    r
+}
+fn g(x: i32) {}
+fn main() {}

@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex/interp_comment.ei","line":2,"col":16},"message":"a string literal's `{...}` can't contain `{`, `\"` or a comment: bind the value to a name first"}

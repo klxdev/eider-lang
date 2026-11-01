@@ -26,15 +26,15 @@ fn num(n: u32) -> List[u8] { bytes.from_u64(n as u64) }
 fn canned(dir: str) -> List[u8] {
     let mut j: List[u8] = List.new()
     for l in [
-        "{\"format\":1,\"toolchain\":\"9.9.1\",\"packages\":[{\"name\":\"geo\",\"dir\":\"", dir, "\",\"version\":\"0.2.0\",\"description\":\"Shapes.\"}],",
+        "{{\"format\":1,\"toolchain\":\"9.9.1\",\"packages\":[{{\"name\":\"geo\",\"dir\":\"", dir, "\",\"version\":\"0.2.0\",\"description\":\"Shapes.\"}}],",
         "\"modules\":[",
-        "{\"package\":\"geo\",\"path\":\"shapes\",\"file\":\"shapes.ei\",\"doc\":\"geo/shapes: shapes. More.\",\"doc_line\":1,\"items\":[",
-        "{\"kind\":\"record\",\"name\":\"Point\",\"anchor\":\"Point\",\"sig\":\"pub type Point\",\"line\":5,\"public\":true,\"doc\":\"A point.\\n\\n```eider,fragment\\nprint(1)\\n```\\n```output\\n1\\n```\",",
-        "\"members\":[{\"kind\":\"field\",\"name\":\"x\",\"anchor\":\"Point.x\",\"sig\":\"x: i64\",\"line\":5,\"public\":true,\"doc\":\"\"}]},",
-        "{\"kind\":\"fn\",\"name\":\"origin\",\"anchor\":\"origin\",\"sig\":\"pub fn origin() -> Point uses io\",\"line\":9,\"public\":true,\"doc\":\"The origin.\",\"uses\":[\"io\"],",
-        "\"links\":[{\"start\":19,\"end\":24,\"to\":\"geo/shapes#Point\"}]}]},",
-        "{\"package\":\"geo\",\"path\":\"util/vec\",\"file\":\"util/vec.ei\",\"doc\":\"\",\"doc_line\":0,\"items\":[]}",
-        "]}",
+        "{{\"package\":\"geo\",\"path\":\"shapes\",\"file\":\"shapes.ei\",\"doc\":\"geo/shapes: shapes. More.\",\"doc_line\":1,\"items\":[",
+        "{{\"kind\":\"record\",\"name\":\"Point\",\"anchor\":\"Point\",\"sig\":\"pub type Point\",\"line\":5,\"public\":true,\"doc\":\"A point.\\n\\n```eider,fragment\\nprint(1)\\n```\\n```output\\n1\\n```\",",
+        "\"members\":[{{\"kind\":\"field\",\"name\":\"x\",\"anchor\":\"Point.x\",\"sig\":\"x: i64\",\"line\":5,\"public\":true,\"doc\":\"\"}}]}},",
+        "{{\"kind\":\"fn\",\"name\":\"origin\",\"anchor\":\"origin\",\"sig\":\"pub fn origin() -> Point uses io\",\"line\":9,\"public\":true,\"doc\":\"The origin.\",\"uses\":[\"io\"],",
+        "\"links\":[{{\"start\":19,\"end\":24,\"to\":\"geo/shapes#Point\"}}]}}]}},",
+        "{{\"package\":\"geo\",\"path\":\"util/vec\",\"file\":\"util/vec.ei\",\"doc\":\"\",\"doc_line\":0,\"items\":[]}}",
+        r"]}",
     ] { bytes.append(inout j, l.bytes()) }
     j
 }
@@ -91,7 +91,7 @@ fn models() uses io {
         }
     }
     say(label("source page: ", model.source_page(api.modules[1])))
-    match model.add_json(inout api, "{\"format\":1,".bytes()) {
+    match model.add_json(inout api, "{{\"format\":1,".bytes()) {
         Ok(_) => say("unexpected: ok".bytes())
         Err(e) => say(label("bad json: ", e))
     }
@@ -106,7 +106,7 @@ fn paths() uses io {
 
 fn highlighting() uses io {
     say("-- highlight".bytes())
-    say(html.highlight("pub fn f(x: List[u8]) -> Option[i64] uses io { // <b>\n    let s = \"a\\\"<\" + 0x1f\n".bytes()))
+    say(html.highlight("pub fn f(x: List[u8]) -> Option[i64] uses io {{ // <b>\n    let s = \"a\\\"<\" + 0x1f\n".bytes()))
     let sig = "pub fn origin(p: geo.Point) -> Point".bytes()
     let mut a: List[usize] = List.new()
     let mut z: List[usize] = List.new()
@@ -126,7 +126,7 @@ fn highlighting() uses io {
 
 fn doctests() uses io {
     say("-- doc tests".bytes())
-    let md = "# T\n\n```eider\nfn main() uses io { print(1) }\n```\n\ntext\n\n```output\n1\n```\n\n```eider,compile_fail=E0401\nfn main() {}\n```\n\n```sh\nls\n```\n\n- item\n\n  ```eider,trap\n  fn main() { assert false }\n  ```\n".bytes()
+    let md = "# T\n\n```eider\nfn main() uses io {{ print(1) }}\n```\n\ntext\n\n```output\n1\n```\n\n```eider,compile_fail=E0401\nfn main() {{}}\n```\n\n```sh\nls\n```\n\n- item\n\n  ```eider,trap\n  fn main() {{ assert false }}\n  ```\n".bytes()
     for c in doctest.cases("t.md".bytes(), md, 10) {
         let mut l = label("  ", c.file)
         l.push(58)
@@ -176,8 +176,8 @@ fn site_build() uses io, fs {
     put_file(sd.copy(), "a.md", "# Page A\n\nSee [B](sub/b.md#second), [B's top](sub/b.md), [the point](api:geo/shapes#Point),\n[x](api:geo/shapes#Point.x), [missing](api:geo/shapes#Missing), [unlisted](c.md),\n[no heading](sub/b.md#nope), [web](https://example.com/), ![logo](img/logo.txt), ![remote](https://example.com/x.png).\n\n## Section two\n\n<script>alert(1)</script>\n")
     put_file(sd.copy(), "sub/b.md", "# Page B\n\n## Second\n\nBack to [A](../a.md#section-two).\n")
     put_file(sd.copy(), "img/logo.txt", "logo")
-    put_file(root.copy(), "geo/shapes.ei", "//! geo/shapes: shapes. More.\n\npub type Point = { x: i64 }\n")
-    put_file(root.copy(), "geo/util/vec.ei", "pub fn zero() -> i64 { 0 }\n")
+    put_file(root.copy(), "geo/shapes.ei", "//! geo/shapes: shapes. More.\n\npub type Point = {{ x: i64 }}\n")
+    put_file(root.copy(), "geo/util/vec.ei", "pub fn zero() -> i64 {{ 0 }}\n")
     let mut api = model.empty()
     match model.add_json(inout api, canned("target/doc-test/geo")) {
         Ok(_) => {}
@@ -222,7 +222,7 @@ fn site_build() uses io, fs {
         Ok(t) => t
         Err(_) => List.new()
     }
-    for want in ["id=\"Point\"", "id=\"Point.x\"", "id=\"origin\"", "<a href=\"#Point\">Point</a>", "<p>Shapes. More.</p>", "Capabilities: <code>io</code>", " = {\n    x: i64,\n}"] {
+    for want in ["id=\"Point\"", "id=\"Point.x\"", "id=\"origin\"", "<a href=\"#Point\">Point</a>", "<p>Shapes. More.</p>", "Capabilities: <code>io</code>", " = {{\n    x: i64,\n}}"] {
         match bytes.find(s, want.bytes(), 0) {
             Some(_) => say(label("shapes.html has ", want.bytes()))
             None => say(label("shapes.html LACKS ", want.bytes()))

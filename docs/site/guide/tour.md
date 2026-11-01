@@ -43,6 +43,32 @@ true
 - `const LIMIT: usize = 64` declares a constant; `const X: u64 = comptime f(10)` runs
   `f` at compile time (integer and `bool` constants).
 
+A string literal interpolates: `{expr}` inserts a value's text, and a spec after `:` pads
+or formats it (`{n:>6}`, `{n:#x}`; `{{` is a brace; [Lexical
+structure](../reference/lexical.md#interpolation)).
+`r"..."` is a raw string and `"""` starts a multi-line one:
+
+```eider
+fn main() uses io {
+    let name = "Eider"
+    let n = 42
+    print("{name} has {n} ({n:#x}) users, [{name:^9}]")
+    let banner = """
+        Hello,
+          world
+        """
+    print(banner)
+    print(r"no \escapes here")
+}
+```
+
+```output
+Eider has 42 (0x2a) users, [  Eider  ]
+Hello,
+  world
+no \escapes here
+```
+
 Arithmetic is checked. Overflow stops the program with exit code 101, in every build. When
 wrapping is what you want, say so with `+%`, `-%` or `*%`:
 
@@ -221,6 +247,34 @@ empty
 `Option` and `Result` have the usual helpers (`is_some`, `unwrap_or`, `map`, `and_then`,
 `ok_or`, `map_err`, ...). `unwrap` traps on `None` or `Err`. [Errors](errors.md) shows how
 `?` converts error types with `From` and how std/error adds context.
+
+`defer` runs a statement when its block is left, however it is left; `errdefer` only when
+the function fails (through `?`, or by returning `Err` or `None`):
+
+```eider
+fn load(ok: bool) -> Result[i32, str] uses io {
+    print("open")
+    defer print("close")
+    errdefer print("roll back")
+    if !ok { return Err("bad input") }
+    Ok(1)
+}
+
+fn main() uses io {
+    print(load(true))
+    print(load(false))
+}
+```
+
+```output
+open
+close
+Ok(1)
+open
+roll back
+close
+Err("bad input")
+```
 
 ## Collections and loops
 

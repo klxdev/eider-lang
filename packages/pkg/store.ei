@@ -86,7 +86,7 @@ fn rev_parse(m: List[u8], r: List[u8]) -> Option[List[u8]] uses io, fs, net {
     args.push(sys.lit("--verify"))
     args.push(sys.lit("--quiet"))
     let mut spec = r.copy()
-    bytes.append(inout spec, sys.lit("^{commit}"))
+    bytes.append(inout spec, sys.lit(r"^{commit}"))
     args.push(spec)
     let mut argv: List[List[u8]] = List.new()
     argv.push(sys.lit("git"))

@@ -42,12 +42,12 @@
 //                (the trait is a TGeneric for `impl From[E] for T`)
 //            IConst a=sym b=public c=type d=value e=comptime
 //            (IType h=1: an attribute declaration `attr name { key: T = default }`, a record
-//                whose Field nodes have c=default+1; docs/compiler.md, "C8.30: attributes")
+//                whose Field nodes have c=default+1; docs/compiler.md, "C8.40: attributes")
 // attributes Attr a=name sym b=qual+1 [c/d]=AttrArg e=1 with parentheses
 //            AttrArg a=key sym b=value+1 (0: a bare key, `@json(skip)`)
 //            the attributes of an item, field or variant are `attrs`: node id -> start * 2^32
 //                + count of its Attr nodes in extra
-// reflection (docs/compiler.md, "C8.31: comptime reflection")
+// reflection (docs/compiler.md, "C8.41: comptime reflection")
 //            SForEach g=1: `comptime for`, b=EReflect; as a call argument it is the EArg's a,
 //                with EArg c=1 (one argument per iteration)
 //            EIf d=1: `comptime if`
@@ -60,6 +60,11 @@
 //                with no patterns and an EError body
 //            SError: a statement that failed, or what was skipped after one on its line
 //            IError a=item keyword sym+1 b=name sym+1 (0 when not reached): a skipped item
+// strings    EFmt [c/d]=parts, each an EStr (text) or an EHole (docs/compiler.md, "C8.28")
+//            EHole a=expr b=width+1 (0: none) c=fill byte (0: a space) d=align (0 none, 1 `<`,
+//                2 `>`, 3 `^`) e=flags (FMT_*) f=radix letter (0: none; `x` `X` `b` `o`)
+//                g=column of the spec (after the `:`) h=its length in bytes
+// defer      SDefer a=the deferred statement b=1 for `errdefer` (docs/compiler.md, "C8.29")
 
 pub type Kind =
     | TName | TGeneric | TArray | TTuple | TUnit | TFn
@@ -73,6 +78,8 @@ pub type Kind =
     | ITest | IImport
     | EError | SError | IError
     | Attr | AttrArg | EReflect | EFieldAt
+    | EFmt | EHole
+    | SDefer
 
 pub type Node = {
     kind: Kind,
@@ -122,6 +129,11 @@ pub const OP_SHR: u32 = 20
 
 /// Whether op is one of `& | ^ << >>`.
 pub fn is_bitwise(op: u32) -> bool { op >= OP_BAND && op <= OP_SHR }
+
+/// Format spec flags of an EHole: `+`, `#`, `0`.
+pub const FMT_PLUS: u32 = 1
+pub const FMT_ALT: u32 = 2
+pub const FMT_ZERO: u32 = 4
 
 pub const FN_PUBLIC: u32 = 1
 pub const FN_EXTERN: u32 = 2
@@ -259,5 +271,8 @@ pub fn kind_text(k: Kind) -> str {
         AttrArg => "AttrArg"
         EReflect => "EReflect"
         EFieldAt => "EFieldAt"
+        EFmt => "EFmt"
+        EHole => "EHole"
+        SDefer => "SDefer"
     }
 }

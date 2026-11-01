@@ -668,6 +668,7 @@ fn builtin(p: lower.P, inout st: St, inout fr: Fr, x: ir.Stmt) -> Result[Val, Tr
     if b == ir.B_MAP_GET || b == ir.B_MAP_CONTAINS || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE || (b >= ir.B_MAP_KEYS && b <= ir.B_MAP_ENTRIES) { return map_op(p, inout st, inout fr, x) }
     if b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_LIST_CONTAINS || b == ir.B_LIST_SUM { return list_op(p, inout st, inout fr, x) }
     if b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || (b >= ir.B_STR_BYTE && b <= ir.B_STR_PUSH_BYTE) { return text_op(p, inout st, inout fr, x) }
+    if b == ir.B_STR_PAD || b == ir.B_FMT_INT { return fmt_op(p, inout fr, x) }
     value_op(p, inout st, inout fr, x)
 }
 
@@ -925,6 +926,94 @@ fn cell_op(p: lower.P, inout st: St, inout fr: Fr, x: ir.Stmt) -> Result[Val, Tr
     }
     if b == ir.B_SPAWN || b == ir.B_TASK_JOIN { return Err(cannot("start threads")) }
     Err(cannot("run this builtin"))
+}
+
+/// Interpolation's format specs (core/eider_rt.c's ei_str_pad, ei_str_fmt_i64/u64): the spec
+/// is width (bits 0-31), fill (32-39), alignment (40-41: 1 left, 2 right, 3 center), `+` (42),
+/// `#` (43), `0` (44), radix (45-50), upper-case digits (51).
+fn fmt_op(p: lower.P, inout fr: Fr, x: ir.Stmt) -> Result[Val, Trap] {
+    let a = barg(p, x, 1)
+    let v = arg(p, fr, a)?
+    let sv = arg(p, fr, barg(p, x, 2))?
+    let spec = sv.n
+    let lc = recv(p, inout fr, x)?
+    let mut o = take_loc(inout fr, lc)
+    if x.a == ir.B_STR_PAD {
+        let mark = if v.n > o.b.len() as u64 { o.b.len() } else { v.n as usize }
+        let t = bytes.slice(o.b, mark, o.b.len())
+        if scalars(t) < (spec & 4294967295) {
+            let mut r = bytes.slice(o.b, 0, mark)
+            fmt_pad(inout r, t, spec)
+            o.b = r
+        }
+    } else {
+        let k = ikind(p, arg_ty(p, a))
+        fmt_int(inout o.b, types.signed(k) && neg_val(v.n), v.n, spec)
+    }
+    put_loc(inout fr, lc, o)
+    Ok(vunit())
+}
+
+fn scalars(t: List[u8]) -> u64 {
+    let mut c: u64 = 0
+    for b in t {
+        if b < 128 || b >= 192 { c += 1 }
+    }
+    c
+}
+
+fn fill_n(inout o: List[u8], f: u8, n: u64) {
+    for i in 0..n { o.push(f) }
+}
+
+/// t padded to the spec's width with its fill and alignment.
+fn fmt_pad(inout o: List[u8], t: List[u8], spec: u64) {
+    let width = spec & 4294967295
+    let fill = ((spec >> 32) & 255) as u8
+    let align = (spec >> 40) & 3
+    let n = scalars(t)
+    let gap: u64 = if n < width { width - n } else { 0 }
+    let before: u64 = if align == 1 { 0 } else if align == 3 { gap / 2 } else { gap }
+    fill_n(inout o, fill, before)
+    bytes.append(inout o, t)
+    fill_n(inout o, fill, gap - before)
+}
+
+/// v (two's complement; `neg`: negative) in the spec's radix, prefix and padding.
+fn fmt_int(inout o: List[u8], neg: bool, v: u64, spec: u64) {
+    let mut base = (spec >> 45) & 63
+    let up = ((spec >> 51) & 1) == 1
+    if base < 2 || base > 36 { base = 10 }
+    let mut head: List[u8] = List.new()
+    if neg { head.push(45) } else if ((spec >> 42) & 1) == 1 { head.push(43) }
+    if ((spec >> 43) & 1) == 1 {
+        let k: u8 = if base == 16 { 120 } else if base == 2 { 98 } else if base == 8 { 111 } else { 0 }
+        if k != 0 {
+            head.push(48)
+            if up { head.push(k - 32) } else { head.push(k) }
+        }
+    }
+    let mut mag: u64 = if neg { 0 -% v } else { v.copy() }
+    let mut rev: List[u8] = List.new()
+    while true {
+        let d = (mag % base) as u8
+        let a: u8 = if up { 55 } else { 87 }
+        if d < 10 { rev.push(48 + d) } else { rev.push(a + d) }
+        mag = mag / base
+        if mag == 0 { break }
+    }
+    let mut digits: List[u8] = List.new()
+    while let Some(c) = rev.pop() { digits.push(c) }
+    if ((spec >> 44) & 1) == 1 {
+        let width = spec & 4294967295
+        let used = (head.len() + digits.len()) as u64
+        bytes.append(inout o, head)
+        if used < width { fill_n(inout o, 48, width - used) }
+        bytes.append(inout o, digits)
+        return
+    }
+    bytes.append(inout head, digits)
+    fmt_pad(inout o, head, spec)
 }
 
 /// The receiver of a mutating builtin: its first argument, a place.
@@ -1308,10 +1397,10 @@ fn show_into(p: lower.P, inout st: St, ty: u32, v: Val, inout o: List[u8], part:
         let d = types.def_of(p.t, ty)
         bytes.append(inout o, shown_name(p, d.key))
         if d.len == 0 {
-            bytes.append(inout o, s(" {}"))
+            bytes.append(inout o, s(r" {}"))
             return Ok(true)
         }
-        bytes.append(inout o, s(" { "))
+        bytes.append(inout o, s(r" { "))
         for i in 0..d.len {
             let fl = types.field(p.t, d.start, i)
             if i > 0 { bytes.append(inout o, s(", ")) }
@@ -1319,7 +1408,7 @@ fn show_into(p: lower.P, inout st: St, ty: u32, v: Val, inout o: List[u8], part:
             bytes.append(inout o, s(": "))
             show_into(p, inout st, fl.ty, v.xs[i as usize], inout o, true)?
         }
-        bytes.append(inout o, s(" }"))
+        bytes.append(inout o, s(r" }"))
     } else if k == types.T_TUPLE {
         let es = types.elems(p.t, ty)
         o.push(40)

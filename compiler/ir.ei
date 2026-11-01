@@ -238,6 +238,11 @@ pub const B_REF_UPDATE: u32 = 45
 /// with its own impl is an S_CALL of it instead): 0, false, "", empty List/Map, None, and a
 /// record, tuple, array or Box of its parts' defaults
 pub const B_DEFAULT: u32 = 46
+/// Interpolation (docs/compiler.md, "C8.28"): B_STR_PAD(inout s, mark, spec) pads what follows
+/// byte offset `mark` of s to the spec's width; B_FMT_INT(inout s, n, spec) appends integer n
+/// formatted by the spec (an O_INT u64: check.ei's fmt_hole has the layout)
+pub const B_STR_PAD: u32 = 47
+pub const B_FMT_INT: u32 = 48
 
 pub fn builtin_name(b: u32) -> str {
     match b {
@@ -287,7 +292,9 @@ pub fn builtin_name(b: u32) -> str {
         43 => "ref_set"
         44 => "read"
         45 => "update"
-        _ => "default"
+        46 => "default"
+        47 => "pad"
+        _ => "fmt_int"
     }
 }
 
@@ -711,22 +718,22 @@ fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u3
         16 => {
             put(inout o, "if ")
             put_op(inout o, ir, t, names, s.a)
-            put(inout o, " {\n")
+            put(inout o, " \x7b\n")
             put_block(inout o, ir, t, names, s.b, depth + 1)
             ind(inout o, depth)
-            put(inout o, "} else {\n")
+            put(inout o, "\x7d else \x7b\n")
             put_block(inout o, ir, t, names, s.c, depth + 1)
             ind(inout o, depth)
-            put(inout o, "}")
+            put(inout o, r"}")
         }
         17 => {
-            put(inout o, "loop {\n")
+            put(inout o, "loop \x7b\n")
             put_block(inout o, ir, t, names, s.a, depth + 1)
             ind(inout o, depth)
-            put(inout o, "} step {\n")
+            put(inout o, "\x7d step \x7b\n")
             put_block(inout o, ir, t, names, s.b, depth + 1)
             ind(inout o, depth)
-            put(inout o, "}")
+            put(inout o, r"}")
         }
         18 => {
             put(inout o, "break")
@@ -877,9 +884,9 @@ pub fn dump(ir: Ir, t: types.Types, names: intern.Interner) -> List[u8] {
             putty(inout o, t, names, l.ty)
             put(inout o, "\n")
         }
-        put(inout o, "  {\n")
+        put(inout o, "  \x7b\n")
         put_block(inout o, ir, t, names, f.body - 1, 2)
-        put(inout o, "  }\n")
+        put(inout o, "  \x7d\n")
     }
     o.b
 }

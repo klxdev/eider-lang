@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex/interp_close_brace.ei","line":2,"col":16},"message":"a `}` in a string literal is written `}}`, or use a raw string"}

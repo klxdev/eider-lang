@@ -139,6 +139,21 @@ Point { x: 3, y: -4 }
 (-1, "sum")
 ```
 
+A string literal puts values into text the same way, in braces, with an optional format
+spec after a colon:
+
+```eider
+fn main() uses io {
+    let name = "Eider"
+    let year = 2026
+    print("Hello from {name}, {year}! [{year:>8}] [{year:#x}]")
+}
+```
+
+```output
+Hello from Eider, 2026! [    2026] [0x7ea]
+```
+
 ## Run, build and test
 
 | Command | What it does |
@@ -266,7 +281,7 @@ locked 1 package(s)
 import json
 
 fn main() uses io {
-    let text = String.from("{\"name\": \"Eider\", \"year\": 2026}").bytes()
+    let text = String.from(r#"{"name": "Eider", "year": 2026}"#).bytes()
     match json.parse(text) {
         Ok(doc) => {
             let name = json.field(doc, doc.root, "name").and_then(|id| json.as_str(doc, id))

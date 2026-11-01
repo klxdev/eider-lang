@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex/multiline_indent.ei","line":4,"col":1},"message":"this line is indented less than the closing `\"\"\"`: indent it at least as far"}

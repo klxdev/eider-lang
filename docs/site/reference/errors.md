@@ -804,6 +804,70 @@ fn main() uses io {
 a
 ```
 
+## E0309
+
+**Deferred code that would leave itself.** The statement of a `defer` or `errdefer` runs
+while its block is being left, so it can't leave again: a `return`, a `?`, or a `break` or
+`continue` of a loop outside the deferred statement is refused (a loop inside it may use
+them). See [Statements](statements.md#defer-and-errdefer).
+
+```eider,compile_fail=E0309
+fn first(xs: List[i32]) -> i32 {
+    defer { return 0 }
+    xs[0]
+}
+
+fn main() {}
+```
+
+Fix: decide before the `defer`, and leave from the function's own code.
+
+```eider
+fn first(xs: List[i32]) -> i32 {
+    if xs.len() == 0 { return 0 }
+    xs[0]
+}
+
+fn main() uses io {
+    print(first(List.new()))
+}
+```
+
+```output
+0
+```
+
+## E0310
+
+**`errdefer` in a function that can't fail.** An `errdefer` runs when its function returns
+an `Err` or a `None` (also through `?`), so the function must return a `Result` or an
+`Option`. The fix makes it a `defer`.
+
+```eider,compile_fail=E0310
+fn work() uses io {
+    errdefer print("undo")
+    print("work")
+}
+
+fn main() uses io { work() }
+```
+
+Fix:
+
+```eider
+fn work() uses io {
+    defer print("undo")
+    print("work")
+}
+
+fn main() uses io { work() }
+```
+
+```output
+work
+undo
+```
+
 ## E0401
 
 A **type mismatch**, the general type error. Raised for, among others: a value of the wrong
@@ -1013,6 +1077,33 @@ fn main() uses io {
 
 ```output
 1
+```
+
+## E0412
+
+A **format spec that applies only to integers**, used in an [interpolated string](lexical.md#interpolation)
+on a value of another type: `+` (a sign on non-negative numbers), `#` (a radix prefix), `0`
+(zero padding) and the radix letters `x`, `X`, `b` and `o`. A width, a fill and an
+alignment apply to any type. The fix deletes the spec.
+
+```eider,compile_fail=E0412
+fn main() uses io {
+    let name = "Ada"
+    print("{name:x}")
+}
+```
+
+Fix: format integers with those, and pad anything with a width.
+
+```eider
+fn main() uses io {
+    let name = "Ada"
+    print("[{name:>5}] [{255:#x}]")
+}
+```
+
+```output
+[  Ada] [0xff]
 ```
 
 ## E0501

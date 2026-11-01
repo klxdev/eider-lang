@@ -136,7 +136,8 @@ int_literal = digit {digit | "_"}
 
 ## String literals
 
-A string literal is text between double quotes, on one line. It has type `str`. Any UTF-8
+A string literal is text between double quotes, on one line. It has type `str`. A `{` or `}` in it is
+[interpolation](#interpolation); raw and multi-line literals are below. Any UTF-8
 text may appear in it except a newline, an unescaped `"` and an unescaped `\`; a literal
 not closed on its line is E0001 "unterminated string literal".
 
@@ -164,8 +165,9 @@ Refused escapes are E0001 at the backslash, with a message saying why:
 `"GET / HTTP/1.1\r\n" "Host: x\r\n"` is a single token. Literals on different lines are
 not joined.
 
-There are no character literals (`'a'` is E0001), raw strings or string interpolation.
-Formatting is done with std ([fmt](api:std/fmt)).
+There are no character literals (`'a'` is E0001). Literals that span lines are
+[multi-line strings](#multi-line-strings); std ([fmt](api:std/fmt)) has the formatting of
+[interpolation](#interpolation) as functions.
 
 ```eider
 fn main() uses io {
@@ -187,6 +189,115 @@ one literal
 ```eider,compile_fail=E0001
 fn main() uses io {
     print("nul \0 inside")
+}
+```
+
+### Raw strings
+
+`r"..."` is the text exactly as written: a backslash is a backslash, there are no escapes,
+and it never interpolates, so it is the form for text full of braces (JSON, CSS). To put
+`"` in one, add the same number of `#` on both sides: `r#"say "hi""#`. A raw string is on one
+line, has type `str`, and joins adjacent literals like any other. `r"""` starts a raw
+[multi-line string](#multi-line-strings): the same rules for its lines and indentation,
+with no escapes and no interpolation.
+
+```eider
+fn main() uses io {
+    print(r"C:\temp\new")
+    print(r#"{"key": "value"}"#)
+    print(r"\d+" "\n" r"done")
+}
+```
+
+```output
+C:\temp\new
+{"key": "value"}
+\d+
+done
+```
+
+### Multi-line strings
+
+`"""` at the end of a line starts a multi-line string, and a line holding only `"""`
+(after spaces or tabs) ends it. The indentation in front of the closing `"""` is removed
+from every line of text, so the literal can be indented with the code around it. The text
+starts after the opening line break and ends before the last one. Escapes work as in a
+one-line literal, `"` needs no escape, and a `\` at the end of a line joins the next line
+to it (no line break). A line of text indented less than the closing `"""` is E0001, except
+an empty or blank line. The closing `"""` may be followed by more code (`""".len()`).
+
+```eider
+fn main() uses io {
+    let query = """
+        SELECT name
+          FROM users
+         WHERE id = 1 \
+        LIMIT 1
+        """
+    print(query)
+}
+```
+
+```output
+SELECT name
+  FROM users
+ WHERE id = 1 LIMIT 1
+```
+
+A multi-line string interpolates like any other. `"""` followed by more text on its line is
+not one: `"""x"""` is `""`, `"x"` and `""` joined, which is `"x"`.
+
+### Interpolation
+
+A string literal with a `{expr}` in it builds a `String` from text and values: each `{expr}`
+is replaced by the value's text through [Show](traits.md#show), the same text `print`
+writes. A literal with none is a `str`, whatever else is in it. `{{` and `}}` stand for `{`
+and `}` in every plain literal, and a lone `{` or `}` that is no `{expr}` is E0001; a
+[raw string](#raw-strings) never interpolates. The expressions are evaluated left to right.
+An expression in braces can be any expression without `{`, `"` or a comment in it (bind such
+a value to a name first), on one line.
+
+After the expression, `:` starts a **format spec**:
+`[[fill]align][+][#][0][width][x|X|b|o]`.
+
+| Spec | Means |
+|---|---|
+| `8` | at least 8 characters (Unicode scalar values) wide; numbers align right, everything else left |
+| `<8` `>8` `^8` | align left, right or centered in 8 characters |
+| `*^8` | the same, filled with `*` (any ASCII character) instead of spaces |
+| `+` | a `+` before non-negative integers |
+| `x` `X` `b` `o` | an integer in hex (lower or upper case), binary or octal |
+| `#` | the radix prefix: `0x`, `0X`, `0b`, `0o` |
+| `08` | zero padding between the sign or prefix and the digits, to the width |
+
+`+`, `#`, `0` and the radix letters apply only to integers (E0412 otherwise); a width, fill
+and alignment apply to any type with Show. A precision (`.2`) waits for floating-point
+types. A spec that doesn't have this shape is E0001 at the character that is wrong.
+
+```eider
+type Item = { name: str, count: u32 }
+
+fn main() uses io {
+    let it = Item("bolts", 12)
+    let total: i64 = -255
+    print("{it.name} x{it.count}")
+    print("[{it.name:>8}] [{it.name:<8}] [{it.name:*^9}]")
+    print("[{it.count:4}] [{it.count:04}] [{it.count:+}] [{255:#x}] [{total:#06X}] [{5:b}]")
+    print("{it} {{braces}}")
+}
+```
+
+```output
+bolts x12
+[   bolts] [bolts   ] [**bolts**]
+[  12] [0012] [+12] [0xff] [-0X0FF] [101]
+Item { name: "bolts", count: 12 } {braces}
+```
+
+```eider,compile_fail=E0412
+fn main() uses io {
+    let word = "text"
+    print("{word:x}")
 }
 ```
 

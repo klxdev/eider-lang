@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/lex_ok/strings.ei","line":3,"col":1},"message":"expected `fn`, `type`, `const`, `trait`, `impl`, `import` or `test`"}

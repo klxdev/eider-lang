@@ -1,0 +1,6 @@
+// expect: E0310 3:5
+fn close() uses io {
+    errdefer print("undo")
+    print("work")
+}
+fn main() uses io { close() }

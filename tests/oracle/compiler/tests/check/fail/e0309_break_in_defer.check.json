@@ -1,0 +1,1 @@
+{"error":"E0309","span":{"file":"compiler/tests/check/fail/e0309_break_in_defer.ei","line":4,"col":28},"message":"`break` can't leave deferred code (`defer`, `errdefer`): it runs while its block is being left","help":"compute what is needed before the `defer`, or move the early exit out of it"}

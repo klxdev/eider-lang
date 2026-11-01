@@ -1,0 +1,6 @@
+// expect: E0309 3:13
+fn first(xs: List[i32]) -> i32 {
+    defer { return 0 }
+    xs[0]
+}
+fn main() {}

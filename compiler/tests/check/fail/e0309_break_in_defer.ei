@@ -1,0 +1,9 @@
+// expect: E0309 4:28
+fn f(xs: List[i32]) -> Result[i32, str] {
+    for x in xs {
+        defer { if x > 1 { break } }
+        defer { for y in xs { if y > 0 { break } } }
+    }
+    Ok(0)
+}
+fn main() {}

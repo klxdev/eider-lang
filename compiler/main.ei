@@ -45,6 +45,7 @@ import eiderc.suite
 import eiderc.ide
 import eiderc.front
 import eiderc.doc
+import eiderc.migrate
 
 type Args = {
     cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,
@@ -52,6 +53,8 @@ type Args = {
     max_errors: u64, all_errors: bool, private: bool, profile: u32, pargs: List[List[u8]], jobs: u64,
     /// `-g`: debug info for the .ei sources (llvm.ei; docs/compiler.md, "Backends")
     debug: bool,
+    /// `migrate-strings --portable` (migrate.ei)
+    portable: bool,
 }
 
 /// Comparisons go through a function so no owned temporary sits in an `else if` condition
@@ -96,6 +99,10 @@ fn usage_text() -> List[u8] {
         "  eiderc migrate-var <file.ei>               print the file with its `var`s rewritten as `let mut` (deprecated `var`)",
         "  eiderc migrate-imports <file.ei> [--json]  print the file with its quoted imports in the dotted form",
         "                                             (--json: the fixes, one JSON line each)",
+        "  eiderc migrate-strings <file> [--json] [--portable]  print the file (.ei, or a .md's eider blocks) with",
+        "                                             each literal with braces meaning what it meant before",
+        "                                             literals interpolated: a raw string, or braces doubled",
+        "                                             (--portable: written as escapes)",
         "  eiderc audit-refs <file.ei> [--json]       every write that changes what a `let` reference sees (it was a copy",
         "                                             before C8.6), with the `.copy()` that keeps the old meaning",
         "  eiderc ide <file.ei> [--overlay <path> <text>]  print the IDE analysis (ide.ei): symbols, refs, types;",
@@ -155,7 +162,7 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] {
 }
 
 fn known_cmd(c: List[u8]) -> bool {
-    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "migrate-imports") || is(c, "audit-refs") || is(c, "doc") || is(c, "emit-llvm") || is(c, "cache")
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "migrate-imports") || is(c, "migrate-strings") || is(c, "audit-refs") || is(c, "doc") || is(c, "emit-llvm") || is(c, "cache")
 }
 
 fn parse_args() -> Args uses io {
@@ -174,6 +181,7 @@ fn parse_args() -> Args uses io {
     let mut overlay: List[List[u8]] = List.new()
     let mut max_errors = diag.MAX_ERRORS
     let mut all_errors = false
+    let mut portable = false
     let mut private = false
     let mut profile: u32 = 0
     let mut debug = false
@@ -238,6 +246,8 @@ fn parse_args() -> Args uses io {
             private = true
         } else if is(a, "--all-errors") {
             all_errors = true
+        } else if is(a, "--portable") {
+            portable = true
         } else if is(a, "--max-errors") {
             if i >= argv.len() { usage_error(sys.lit("`--max-errors` needs a number")) }
             match bytes.parse_u64(argv[i]) {
@@ -288,7 +298,7 @@ fn parse_args() -> Args uses io {
     if wasm_core && (wasm || lib) { usage_error(sys.lit("`--wasm-core` builds a program: not with --wasm or --lib")) }
     if wasm { lib = true }
     if profile > 0 && (lib || wasm_core || !(is(cmd, "build") || is(cmd, "run") || is(cmd, "test") || is(cmd, "emit-llvm"))) { usage_error(sys.lit("`--profile` goes with build, run, test or emit-llvm, without --lib or --wasm")) }
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, wasm_core, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, debug)
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, wasm_core, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, debug, portable)
 }
 
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
@@ -359,6 +369,14 @@ fn dump(lx: lex.Lexed, names: intern.Interner) uses io {
                 if t.big { bytes.append(inout out, sys.lit(" (big)")) }
             }
             lex.Str => {
+                out.push(32)
+                diag.debug_str(inout out, lx.strs[t.val as usize])
+            }
+            lex.FText => {
+                out.push(32)
+                diag.debug_str(inout out, lx.strs[t.val as usize])
+            }
+            lex.FClose => {
                 out.push(32)
                 diag.debug_str(inout out, lx.strs[t.val as usize])
             }
@@ -444,7 +462,7 @@ fn migrate_var(a: Args, src: List[u8]) uses io, fs, net, clock {
     bytes.append(inout entry, sys.lit("__migrate_var__.ei"))
     let mut esrc = sys.lit("import \"")
     bytes.append(inout esrc, base)
-    bytes.append(inout esrc, sys.lit("\"\nfn main() {}\n"))
+    bytes.append(inout esrc, sys.lit("\"\nfn main() \x7b\x7d\n"))
     let second = migration(entry, esrc, a.file)
     if second.ok {
         emit_migrated(src, second.fixes)
@@ -460,7 +478,7 @@ fn audit_report(hits: List[diag.Diag], a: Args, src: List[u8]) uses io, fs {
         if a.json {
             let j = diag.json(d, a.file)
             // {"error":"audit", ... -> {"audit":"reference", ...
-            let mut out = sys.lit("{\"audit\":\"reference\"")
+            let mut out = sys.lit("\x7b\"audit\":\"reference\"")
             bytes.append(inout out, bytes.slice(j, 16, j.len()))
             io.outln(out)
         } else {
@@ -595,6 +613,11 @@ fn main() uses io, fs, net, clock {
     }
     if is(a.cmd, "migrate-var") {
         migrate_var(a, src)
+        return
+    }
+    if is(a.cmd, "migrate-strings") {
+        // docs/compiler.md, "C8.28: string literals"
+        io.out(migrate.run(a.file, src, a.json, a.portable))
         return
     }
     if is(a.cmd, "migrate-imports") {

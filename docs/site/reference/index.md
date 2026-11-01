@@ -59,7 +59,7 @@ design.
 - `dyn Trait` (dynamic dispatch), associated types, default method bodies in traits;
 - closures that capture by reference (today every closure captures a snapshot);
 - lightweight (stackless) tasks, `select` in the language, structured concurrency;
-- `defer`/`errdefer`, attributes, comptime reflection, string interpolation;
+- attributes, comptime reflection;
 - a comptime interpreter (comptime constants are computed by compiling and running C, and
   only integers and `bool` are allowed);
 - strings and records across the WebAssembly boundary.
