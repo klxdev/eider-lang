@@ -26,7 +26,9 @@
 #    signature checks; sh scripts/fetch-awslc.sh). Only this release tooling uses zig: the
 #    language and the toolchain need just a C compiler. The toolchain archive
 #    eider-<VERSION>-<target>.tar.gz holds eider-<VERSION>-<target>/: bin/{eiderc, eider-pkg,
-#    eider-doc, eider}, core/, std/, VERSION, toolchain.toml and README.md; `eider` alone is
+#    eider-doc, eider}, core/, std/, compiler/ (the compiler's sources without its tests: the
+#    eiderc package, which eider-analyzer imports from the toolchain it is built with),
+#    VERSION, toolchain.toml and README.md; `eider` alone is
 #    eider-<VERSION>-<target>. Smoke tests: `file` and `readelf` (static, the right machine)
 #    on every binary; on a machine of the target's architecture also each --version, and a
 #    program built and run with the unpacked toolchain, through eiderc and through eider.
@@ -215,8 +217,8 @@ eider-$V-<target>.tar.gz files; \`eider toolchain install $V\` installs one
 
 Needs a C11 compiler (\`cc\`, or \`\$CC\`) and a POSIX system with threads to build the
 compiler, and clang 17 or newer to build programs with it (the tools are Eider programs);
-node for regenerating or testing the grammar. Keep the directories side by side: the
-tools find the toolchain at ../eider-lang.
+node for regenerating or testing the grammar. The tools take the toolchain from
+\`EIDER_TOOLCHAIN\` (else the installed release \`eider\` picks): point it at ../eider-lang.
 
 \`\`\`sh
 cd eider-lang
@@ -225,10 +227,10 @@ scripts/eider-pkg --version       # builds target/eider-pkg (Eider, with that ei
 $doc_line
 scripts/ei run examples/fib.ei    # a program
 cd ../eider-analyzer
-sh scripts/build.sh               # target/bin/eider-analyzer (checks ../eider-lang is Eider $S.x)
+EIDER_TOOLCHAIN=../eider-lang sh scripts/build.sh   # target/bin/eider-analyzer (checks it is Eider $S.x)
 target/bin/eider-analyzer --version
 cd ../eider-profiler
-sh scripts/build.sh               # eider-profiler (checks ../eider-lang is Eider $S.x)
+EIDER_TOOLCHAIN=../eider-lang sh scripts/build.sh   # eider-profiler (checks it is Eider $S.x)
 cd ../tree-sitter-eider
 cc -shared -fPIC -O2 -I src -o eider.so src/parser.c src/scanner.c   # the parser: cc only
 npm install && npx tree-sitter test                                    # node: regenerate, test
@@ -259,9 +261,10 @@ if [ -n "$binaries" ]; then
   rm -rf "$out/assets" "$out/build"
   mkdir -p "$A"
   # the toolchain's own files at the commit: core/ and std/ (what eiderc reads: the runtime's
-  # C, the prelude, the modules)
+  # C, the prelude, the modules), and compiler/ without its tests (the eiderc package, for
+  # tools that import the compiler's modules: eider-analyzer)
   mkdir -p "$out/build/src"
-  git archive --format=tar HEAD -- core std VERSION | tar -C "$out/build/src" -xf -
+  git archive --format=tar HEAD -- core std compiler VERSION ':(exclude)compiler/tests' | tar -C "$out/build/src" -xf -
   hello=$out/build/hello
   mkdir -p "$hello"
   printf 'import core.version\n\nfn main() uses io {\n    print("hello from eider")\n    print(version.VERSION)\n}\n' > "$hello/hello.ei"
@@ -301,7 +304,7 @@ if [ -n "$binaries" ]; then
     rm -rf "$T"
     mkdir -p "$T/bin"
     cp "$W/bin/eiderc" "$W/bin/eider-pkg" "$W/bin/eider-doc" "$W/bin/eider" "$T/bin/"
-    cp -R "$out/build/src/core" "$out/build/src/std" "$out/build/src/VERSION" "$T/"
+    cp -R "$out/build/src/core" "$out/build/src/std" "$out/build/src/compiler" "$out/build/src/VERSION" "$T/"
     tested=$(sed -n "/^\[target.$t\]/,/^\[/s/^tested = \([a-z]*\).*/\1/p" "$B/RELEASE.toml")
     {
       echo "# toolchain.toml: an Eider toolchain, installed by \`eider toolchain install\` (docs/site/tooling/eider.md)."
@@ -315,15 +318,18 @@ if [ -n "$binaries" ]; then
       echo "tested = $tested"
       echo
       echo "# bin/eiderc (the compiler; it builds programs with clang 17+, \$EIDER_LLVM_CC, and \$CC), bin/eider-pkg,"
-      echo "# bin/eider-doc, bin/eider; core/ and std/ (eiderc finds them above its own directory)"
+      echo "# bin/eider-doc, bin/eider; core/ and std/ (eiderc finds them above its own directory);"
+      echo "# compiler/, the compiler's sources (the eiderc package eider-analyzer imports)"
     } > "$T/toolchain.toml"
     cat > "$T/README.md" <<EOF
 # Eider $V for $t
 
 The Eider toolchain: \`bin/eiderc\` (the compiler), \`bin/eider-pkg\` (packages),
 \`bin/eider-doc\` (documentation), \`bin/eider\` (the command that selects a toolchain and
-runs these), with \`core/\` and \`std/\`. Static executables; building a program needs a C
-compiler (\`cc\`, or \`\$CC\`). Usually installed and run through \`eider\`:
+runs these), with \`core/\` and \`std/\`, and \`compiler/\`, the compiler's sources (the
+\`eiderc\` package, for tools that import its modules, such as eider-analyzer). Static
+executables; building a program needs a C compiler (\`cc\`, or \`\$CC\`). Usually installed
+and run through \`eider\`:
 
     eider toolchain install $V
     eider run hello.ei
@@ -338,6 +344,8 @@ EOF
       rm -rf "$U"; mkdir -p "$U"
       tar -C "$U" -xzf "$A/$name-$t.tar.gz"
       UT=$U/$name-$t
+      [ -f "$UT/compiler/eider.toml" ] && [ -f "$UT/compiler/ide.ei" ] && [ ! -d "$UT/compiler/tests" ] ||
+        die "$t: the toolchain archive has no compiler/ sources (or has its tests)"
       for b in eiderc eider-pkg eider-doc eider; do
         got=$(env -u EIDER_ROOT "$UT/bin/$b" --version 2>&1)
         [ "$got" = "$b $V" ] || die "$t: $b --version printed \`$got\`, not \`$b $V\`"

@@ -101,6 +101,7 @@ was chosen and why:
   toolchains/<version>/       an installed toolchain:
     bin/eiderc  bin/eider-pkg  bin/eider-doc  bin/eider
     core/  std/  VERSION  toolchain.toml  README.md
+    compiler/                 the compiler's sources, for tools that use its modules (from 0.1.1/0.2.0; not in 0.1.0)
   downloads/                  a release's files while they are checked (removed after)
   config.toml                 default = "0.1.0", auto_install = false, releases = "..."
   git/  pkg/  index/  tmp/    eider-pkg's package store (eider-pkg.md)
