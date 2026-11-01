@@ -67,6 +67,10 @@ const NONE: u32 = 4294967295
 /// the impl a method belongs to (NONE for free functions).
 type FnDef = {
     key: u64, md: u32, node: u32, public: bool, generic: bool, unsafe_fn: bool, ir: u32, inode: u32,
+    /// the module of `inode`; `dflt`: a trait's default method (docs/compiler.md, "C8.31"), for
+    /// the impl `inode`: `md` and `node` are the trait's module and method, and its only type
+    /// parameters besides its own are Self (the impl's aren't in scope in the trait)
+    imd: u32, dflt: bool,
 }
 
 /// An instance of a function: its type substitution [sstart, slen) in `sub_s`/`sub_t`, its
@@ -286,6 +290,8 @@ pub type C = {
     loop_labels: List[u32],
     /// the `defer` and `errdefer` statements registered in frames ("Defer" below)
     defers: List[Defer],
+    /// inherited default methods not registered yet (register_defaults)
+    dflts: List[Dflt],
 }
 
 /// `impl From[Source] for Target` (module md, IImpl node) and its `from` method (FnDef fd).
@@ -2460,7 +2466,7 @@ fn register_from(inout c: C, m: u32, id: u32, igens: List[u32], target: List[u8]
             continue
         }
         fi = c.fdefs.len() as u32
-        c.fdefs.push(FnDef(resolve.key(0, mn.a), m, mid, true, false, ast.has(mn.b, ast.FN_UNSAFE), NONE, id))
+        c.fdefs.push(FnDef(resolve.key(0, mn.a), m, mid, true, false, ast.has(mn.b, ast.FN_UNSAFE), NONE, id, m, false))
         if im.d == 0 && mn.h > 0 { concrete.push(fi) }
     }
     if fi == NONE {
@@ -2958,6 +2964,7 @@ fn abstract_bodies(inout c: C) {
     let mut found: List[diag.Diag] = List.new()
     for fd in fds {
         let f = c.fdefs[fd as usize].copy()
+        if f.dflt { continue }
         let mut sb = no_subst()
         for gn in all_gparam_nodes(c, fd) {
             let g = ndm(c, f.md, gn)
@@ -3039,7 +3046,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C {
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
         0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false, Rec(false, List.new(), List.new()),
         List.new(), List.new(), false, Map.new(), false, false, Map.new(), List.new(), lt, no_refs(),
-        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), List.new())
+        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), List.new(), List.new())
 }
 
 /// Every item of the program in load order (resolve.ei), as (module, node) pairs.
@@ -3279,7 +3286,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
         let fname = kt(c, k)
         let decl_ir = ir.declare_fn(inout c.ir, fname, false)
         let irf = if n.d == 0 { decl_ir } else { NONE }
-        c.fdefs.push(FnDef(k, it.m, it.node, ast.has(n.b, ast.FN_PUBLIC), n.d > 0, ast.has(n.b, ast.FN_UNSAFE), irf, NONE))
+        c.fdefs.push(FnDef(k, it.m, it.node, ast.has(n.b, ast.FN_PUBLIC), n.d > 0, ast.has(n.b, ast.FN_UNSAFE), irf, NONE, it.m, false))
     }
     // 5. impls
     let mut concrete: List[u32] = List.new()
@@ -3289,6 +3296,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
         begin_item(inout c, it)
         register_impl(inout c, it.m, it.node, inout concrete)?
     }
+    register_defaults(inout c, inout concrete)
     c.lt.registered = true
     // constants and other code outside functions build into a scratch IR function
     let scratch = ir.declare_fn(inout c.ir, s("<const>"), false)
@@ -3356,8 +3364,9 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
         c.seen = List.new()
         c.cur_mod = f.md
         c.cur_all = false
-        let target = ndm(c, f.md, f.inode).b
-        let st = resolve_ty(inout c, f.md, target)
+        let target = ndm(c, f.imd, f.inode).b
+        c.cur_mod = f.imd
+        let st = resolve_ty(inout c, f.imd, target)
         c.cur_mod = resolve.NOMOD
         c.cur_all = true
         let mut self_ty = types.UNIT
@@ -3605,6 +3614,8 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
     }
     let head = head_key(c, m, im.b, igens)
     let target = show_ast(c, m, im.b, igens)
+    let mut defaults: List[u32] = List.new()
+    let mut dti = NONE
     let mut names: List[u32] = List.new()
     for i in 0..im.f {
         let mn = ndm(c, m, atm(c, m, im.e, i))
@@ -3637,8 +3648,15 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
             let lang = lang_of_key(c, tk)
             if lang != NONE && !check_lang_impl(inout c, m, im, lang, igens) { return Ok(true) }
             for i in 0..trn.d {
-                let tm = ndm(c, tr.m, atm(c, tr.m, trn.c, i))
+                let tmn = atm(c, tr.m, trn.c, i)
+                let tm = ndm(c, tr.m, tmn)
                 let mid = find_method(c, m, im.e, im.f, tm.a)
+                if mid == NONE && tm.h > 0 {
+                    // a default method (docs/compiler.md, "C8.31")
+                    defaults.push(tmn)
+                    dti = ti
+                    continue
+                }
                 if mid == NONE {
                     let rd = err("E0602", im.line, im.col, q2("impl of `", kt(c, tk), "` is missing method `", nm(c, tm.a), "`"))
                     record(inout c, rd)
@@ -3710,11 +3728,36 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
             continue
         }
         let fi = c.fdefs.len() as u32
-        c.fdefs.push(FnDef(resolve.key(0, mn.a), m, mid, true, mn.d > 0, ast.has(mn.b, ast.FN_UNSAFE), NONE, id))
+        c.fdefs.push(FnDef(resolve.key(0, mn.a), m, mid, true, mn.d > 0, ast.has(mn.b, ast.FN_UNSAFE), NONE, id, m, false))
         if im.d == 0 && mn.d == 0 && mn.h > 0 { concrete.push(fi) }
         c.meths.push(Meth(head, mn.a, fi, target))
     }
+    // the trait's default methods this impl doesn't define: registered after every impl
+    for tmid in defaults { c.dflts.push(Dflt(dti, tmid, head, target.copy(), id, m)) }
     Ok(true)
+}
+
+/// A default method an impl inherits, waiting for every impl to be registered.
+type Dflt = { ti: u32, tm: u32, head: u64, target: List[u8], inode: u32, m: u32 }
+
+/// Register the inherited default methods. A type's own method of that name wins: it is
+/// called instead (docs/compiler.md, "C8.31").
+fn register_defaults(inout c: C, inout concrete: List[u32]) {
+    for d in c.dflts {
+        let tr = c.trs[d.ti as usize].copy()
+        let tm = ndm(c, tr.m, d.tm)
+        let mut dup = false
+        for x in c.meths {
+            if x.head == d.head && x.name == tm.a && bytes.eq(x.target, d.target) { dup = true }
+        }
+        if dup { continue }
+        let im = ndm(c, d.m, d.inode)
+        let fi = c.fdefs.len() as u32
+        c.fdefs.push(FnDef(resolve.key(0, tm.a), tr.m, d.tm, true, tm.d > 0, ast.has(tm.b, ast.FN_UNSAFE), NONE, d.inode, d.m, true))
+        if im.d == 0 && tm.d == 0 { concrete.push(fi) }
+        c.meths.push(Meth(d.head, tm.a, fi, d.target))
+    }
+    c.dflts = List.new()
 }
 
 /// The type parameters of declaration fi, impl's first (call_decl's all_generics).
@@ -3722,7 +3765,7 @@ fn all_generics(c: C, fi: u32) -> List[u32] {
     let f = c.fdefs[fi as usize]
     let n = ndm(c, f.md, f.node)
     let mut out: List[u32] = List.new()
-    if f.inode != NONE {
+    if f.inode != NONE && !f.dflt {
         let im = ndm(c, f.md, f.inode)
         out = gparams(c, f.md, im.c, im.d)
     }
@@ -3735,7 +3778,7 @@ fn all_gparam_nodes(c: C, fi: u32) -> List[u32] {
     let f = c.fdefs[fi as usize]
     let n = ndm(c, f.md, f.node)
     let mut out: List[u32] = List.new()
-    if f.inode != NONE {
+    if f.inode != NONE && !f.dflt {
         let im = ndm(c, f.md, f.inode)
         for i in 0..im.d { out.push(atm(c, f.md, im.c, i)) }
     }
@@ -6029,7 +6072,15 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
     let mut sb = sb0.copy()
     let mut gs = gparams(c, fm, fnode.c, fnode.d)
     let mut target: u32 = NONE
-    if f.inode != NONE {
+    if f.dflt {
+        // only Self: from the receiver, or `Type.f()` of an impl without type parameters
+        gs.push(intern.S_SELF_TYPE)
+        let im = ndm(c, f.imd, f.inode)
+        if subst_get(sb, intern.S_SELF_TYPE) == NONE && im.d == 0 {
+            let st = resolve_ty(inout c, f.imd, im.b)?
+            subst_set(inout sb, intern.S_SELF_TYPE, st)
+        }
+    } else if f.inode != NONE {
         let im = ndm(c, fm, f.inode)
         target = im.b
         for g in gparams(c, fm, im.c, im.d) { gs.push(g) }
@@ -6429,10 +6480,11 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
         if m.head != head || m.name != n.b { continue }
         any = true
         let f = c.fdefs[m.fd as usize]
-        let im = ndm(c, f.md, f.inode)
-        let gs = gparams(c, f.md, im.c, im.d)
+        let im = ndm(c, f.imd, f.inode)
+        let gs = gparams(c, f.imd, im.c, im.d)
         let mut sb = no_subst()
-        if !unify_ast(c, f.md, im.b, pv.ty, inout sb, gs) { continue }
+        if !unify_ast(c, f.imd, im.b, pv.ty, inout sb, gs) { continue }
+        if f.dflt { sb = no_subst() }
         subst_set(inout sb, intern.S_SELF_TYPE, pv.ty)
         let label = label_of(c, head_text(c, head), n.b)
         return call_decl(inout c, n, label, m.fd, sb, Recv(true, n.a, pv), exp, true)

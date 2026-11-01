@@ -1,0 +1,9 @@
+// expect: E0401 3:25
+trait T {
+    fn f(self) -> i32 { "not a number" }
+}
+type A = { x: i32 }
+type B = { x: i32 }
+impl T for A {}
+impl T for B {}
+fn main() {}

@@ -14,10 +14,10 @@ compiled once per set of type arguments (monomorphization).
 ## Declaring a trait
 
 ```text
-trait_item = ["pub"] "trait" name "{" {fn_signature} "}"
+trait_item = ["pub"] "trait" name "{" {fn_signature | fn_item} "}"
 ```
 
-A trait lists method signatures. A method takes `self` (read-only receiver), `inout self`
+A trait lists method signatures, and a method may have a body: a default. A method takes `self` (read-only receiver), `inout self`
 (a receiver it changes) or no receiver (an associated function, called on a type). `Self`
 in a signature stands for the implementing type.
 
@@ -52,7 +52,8 @@ square
 
 Rules for a trait impl, all E0602:
 
-- every method of the trait is implemented ("impl of `Area` is missing method `area`");
+- every method of the trait without a default is implemented ("impl of `Area` is missing
+  method `area`");
 - each has exactly the trait's signature, with `Self` replaced by the type ("method `area`
   doesn't match the signature in trait `Area`");
 - the impl adds no other methods ("trait `Area` has no method `other`").
@@ -72,11 +73,46 @@ impl Area for Sq {}
 fn main() {}
 ```
 
-A method in a trait may be written with a body, but the body is not used: there are no
-default methods, and every impl must define every method.
+**Default methods.** A trait method with a body is inherited by every impl that doesn't
+define it, and an impl that does overrides it (with the same signature, E0602 otherwise). The
+body is the trait's: its names are those of the trait's module, `self` and `Self` are the
+implementing type, and it can call the trait's other methods. It is checked for each type that
+inherits it, like a generic function, so a default no impl inherits isn't checked. A method
+of the type itself (of the type, or another trait's) with the same name wins over an
+inherited default, which is then never called on that type.
 
-> **Note:** Default method bodies are parsed and ignored. Write shared behaviour as a
-> generic function over `T: Trait`.
+```eider
+trait Greet {
+    fn name(self) -> String
+    fn hello(self) -> String { "hello, {self.name()}" }
+    fn twice(self) -> String {
+        let h = self.hello()
+        "{h} {h}"
+    }
+}
+
+type En = { who: str }
+type Fr = { who: str }
+
+impl Greet for En {
+    fn name(self) -> String { String.from(self.who) }
+}
+
+impl Greet for Fr {
+    fn name(self) -> String { String.from(self.who) }
+    fn hello(self) -> String { "bonjour, {self.name()}" }
+}
+
+fn main() uses io {
+    print(En("Ada").twice())
+    print(Fr("Zoe").twice())
+}
+```
+
+```output
+hello, Ada hello, Ada
+bonjour, Zoe bonjour, Zoe
+```
 
 A trait method's `uses` clause is not part of the signature that is compared. Capabilities
 are checked at each call with the concrete type: calling a method whose impl declares

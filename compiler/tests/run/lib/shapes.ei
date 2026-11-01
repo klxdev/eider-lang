@@ -1,0 +1,9 @@
+// the module of a trait with a default method (compiler/tests/run/default_methods.ei)
+const UNIT: str = "cm2"
+
+fn suffix() -> str { UNIT }
+
+pub trait Shape {
+    fn area(self) -> i32
+    fn describe(self) -> String { "area {self.area()} {suffix()}" }
+}

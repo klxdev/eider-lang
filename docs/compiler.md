@@ -168,6 +168,8 @@ seed supports:
   meaning of `let` (a copy) and by itself with the new one (a reference), so a `let` of a
   place whose place is written while the binding is used later takes `.copy()`, which means
   the same under both.
+- A brace in a literal is interpolation (C8.28; the current seed knows it): write `{{`, a raw
+  string, or (what the migration left in compiler/, core/ and std/) `\x7b`.
 - None of wave 4's language (C8.15 `take`/`replace`, C8.17 escapes, C8.18 aliases, C8.20 Map
   iteration and `for` patterns, C8.21 `From`, C8.22 `while let`) until a seed has it; the
   same holds for std and packages, which verify.sh builds with the seed.
@@ -3564,6 +3566,32 @@ patterns.ei, tests/checks/fail/e0117_*, e0118_*, compiler/tests/check/fail/e0101
 e0101_guard_not_exhaustive.ei, e0102_after_constant.ei, e0410_record_missing_field.ei,
 e0113_record_field.ei; compiler/tests/check/fail/e0001_or_pattern_binds.ei became
 e0117_or_pattern_binds.ei (a reviewed oracle change).
+
+## C8.31: default methods
+
+#45 and #75 (decision C470). Code: check.ei (`register_impl`, `register_defaults`, FnDef's
+`imd` and `dflt`, `call_decl`).
+
+A trait method with a body that an impl doesn't define is recorded (`Dflt`) and registered after
+every impl as a method of the impl's type: an FnDef whose `md` and `node` are the trait's module
+and method (so the body's names are the trait's) and whose `inode`/`imd` are the impl and its
+module (for matching the receiver against the impl's target), with `dflt` set. Its type
+parameters are its own and Self: the impl's are not in scope in a trait, so `all_generics` and
+`all_gparam_nodes` skip them and `call_decl` has no impl target to unify; Self comes from the
+receiver, or for `Type.f()` from a target without type parameters. An impl without type
+parameters instantiates its defaults whether they are called or not, as it does its own
+methods. Methods are looked up by (head, name), so a type's own method of the same name, found
+first, wins (`register_defaults` doesn't register the default then).
+
+Associated types (#107) and calling a method by its trait (#50) stay open; neither falls out of
+this. `T.Item` needs a type resolved per impl in signatures and bounds, with new syntax in
+traits and impls; `Trait.m(x)` needs a new path for static calls, and is only useful when two
+methods of a name can coexist on a type, which E0107 refuses today.
+
+Tests: compiler/tests/run/default_methods.ei and lib/shapes.ei (inherit, override, Self, generic
+methods, associated functions, generic impls, a bound, another module; hand-checked .out),
+tests/std/stream.ei (std's helpers as methods), compiler/tests/check/fail/e0602_* (no body, still
+missing).
 
 ## Profiling: `--profile`
 

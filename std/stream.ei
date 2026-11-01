@@ -142,6 +142,12 @@ pub trait Reader {
     fn read(inout self, max: usize) -> Result[List[u8], Error] uses io
     /// `read`, or `TimedOut` once `dl` passes with nothing read (nothing is consumed then).
     fn read_by(inout self, max: usize, dl: time.Deadline) -> Result[List[u8], Error] uses io, clock
+    /// Everything up to end of stream ([read_all]).
+    fn read_all(inout self) -> Result[List[u8], Error] uses io { read_all(inout self) }
+    /// All of the stream as text ([read_text]).
+    fn read_text(inout self) -> Result[String, Error] uses io { read_text(inout self) }
+    /// Exactly `n` bytes ([read_exact]).
+    fn read_exact(inout self, n: usize) -> Result[List[u8], Error] uses io { read_exact(inout self, n) }
 }
 
 /// A sink for bytes.
@@ -154,6 +160,12 @@ pub trait Writer {
     fn flush(inout self) -> Result[(), Error] uses io
     /// `flush`, or `TimedOut` once `dl` passes; what wasn't written stays buffered.
     fn flush_by(inout self, dl: time.Deadline) -> Result[(), Error] uses io, clock
+    /// All of `data` ([write_all]).
+    fn write_all(inout self, data: List[u8]) -> Result[(), Error] uses io { write_all(inout self, data) }
+    /// The text's bytes, all of them ([write_str]).
+    fn write_str(inout self, s: str) -> Result[(), Error] uses io { write_str(inout self, s) }
+    /// A String's bytes, all of them ([write_string]).
+    fn write_string(inout self, s: String) -> Result[(), Error] uses io { write_string(inout self, s) }
 }
 
 // ---- operations on any stream

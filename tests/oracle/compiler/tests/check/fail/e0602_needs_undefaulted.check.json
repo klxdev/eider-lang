@@ -1,0 +1,1 @@
+{"error":"E0602","span":{"file":"compiler/tests/check/fail/e0602_needs_undefaulted.ei","line":7,"col":1},"message":"impl of `T` is missing method `f`"}
