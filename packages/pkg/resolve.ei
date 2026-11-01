@@ -14,12 +14,13 @@ import pkg.lockfile
 import pkg.store
 import pkg.caps
 import pkg.override
+import pkg.grants
 
 pub type Opts = { home: List[u8], offline: bool, use_lock: bool, locked: List[lockfile.Pkg], vendor: List[u8], overrides: List[override.Override] }
 
 type Req = { name: List[u8], git: bool, loc: List[u8], want: List[u8], is_rev: bool, grants: List[List[u8]], by: List[u8] }
 
-type Edge = { from: List[u8], to: List[u8], grants: List[List[u8]] }
+pub type Edge = { from: List[u8], to: List[u8], grants: List[List[u8]] }
 
 /// Identity of one visited (package, version) node; the root is "".
 fn key(name: List[u8], want: List[u8]) -> List[u8] {
@@ -239,8 +240,12 @@ fn select(nodes: List[lockfile.Pkg], name: List[u8]) -> Result[lockfile.Pkg, Str
     }
 }
 
-/// Resolve `root` into the list of packages to install (root itself excluded).
-pub fn resolve(root: manifest.Manifest, o: Opts) -> Result[List[lockfile.Pkg], String] uses io, fs, net {
+/// The resolved graph: the packages to install (root itself excluded), with their grants, and
+/// the requirement edges the grants come from (the root's have `from` "").
+pub type Graph = { pkgs: List[lockfile.Pkg], edges: List[Edge] }
+
+/// Resolve `root` into its graph.
+pub fn resolve(root: manifest.Manifest, o: Opts) -> Result[Graph, String] uses io, fs, net {
     let none: List[u8] = List.new()
     let mut queue: List[Req] = List.new()
     for d in root.deps { queue.push(req_of(d, root.dir, none, false)?) }
@@ -292,7 +297,12 @@ pub fn resolve(root: manifest.Manifest, o: Opts) -> Result[List[lockfile.Pkg], S
             }
         }
     }
-    // grants: intersection over the edges that come from the root or a picked node
+    Ok(Graph(with_grants(picked, edges), edges))
+}
+
+/// Each picked package's grant: the intersection over the edges to it that come from the
+/// root or a picked node.
+fn with_grants(picked: List[lockfile.Pkg], edges: List[Edge]) -> List[lockfile.Pkg] {
     let mut out: List[lockfile.Pkg] = List.new()
     for p in picked {
         let mut g: Option[List[List[u8]]] = None
@@ -317,40 +327,116 @@ pub fn resolve(root: manifest.Manifest, o: Opts) -> Result[List[lockfile.Pkg], S
         }
         out.push(q)
     }
+    out
+}
+
+/// The graph with the root's grant to `name` replaced by `grants` (eider-pkg rewrote it).
+pub fn regrant(g: Graph, name: List[u8], grants: List[List[u8]]) -> Graph {
+    let mut edges: List[Edge] = List.new()
+    for e in g.edges {
+        let mut x = e.copy()
+        if e.from.len() == 0 && bytes.eq(e.to, name) { x.grants = grants }
+        edges.push(x)
+    }
+    Graph(with_grants(g.pkgs, edges), edges)
+}
+
+/// One package's capability use (caps.ei), every use with its first place: `reach`, what its
+/// entry module reaches (what a depending library's program loads, held to the intersection
+/// of the grants), and `every`, over all of its modules (what the root can import, and what
+/// eider-pkg grants a direct dependency; `reach` for the others).
+pub type PkgCaps = { name: List[u8], reach: List[caps.Use], every: List[caps.Use] }
+
+/// What every package of the graph uses, as the compiler `eiderc` reports (caps.ei); the
+/// root's dependencies (`direct`) get `every` too; `tmp` holds the probe programs.
+pub fn all_caps(pkgs: List[lockfile.Pkg], direct: List[List[u8]], eiderc: List[u8], tmp: List[u8]) -> Result[List[PkgCaps], String] uses io, fs, net {
+    let mut out: List[PkgCaps] = List.new()
+    for p in pkgs {
+        let mf = manifest.load(p.dir)?
+        let entry = caps.modules(p.dir, mf.entry, mf.main, false)
+        let reach = caps.of_package(eiderc, p.dir, entry, p.name, tmp)?
+        let mut every = reach.copy()
+        if grants.contains(direct, p.name) {
+            let mods = caps.modules(p.dir, mf.entry, mf.main, true)
+            if mods.len() > entry.len() { every = caps.of_package(eiderc, p.dir, mods, p.name, tmp)? }
+        }
+        out.push(PkgCaps(p.name, reach, every))
+    }
     Ok(out)
 }
 
-/// Every package must stay within its grants, as the compiler `eiderc` reports its
-/// capability use (see caps.ei).
-pub fn check_grants(pkgs: List[lockfile.Pkg], eiderc: List[u8]) -> Result[bool, String] uses io, fs, net {
-    for p in pkgs {
-        let mf = manifest.load(p.dir)?
-        // a package without its entry module may still have a program (`main`) reaching
-        // its modules, like the compiler's
-        let mut entry = mf.entry.copy()
-        if !fs.exists(fs.join(p.dir, entry)) && mf.main.len() > 0 { entry = mf.main }
-        for u in caps.of_package(eiderc, p.dir, entry, p.name)? {
-            if !contains(p.grants, u.cap) {
-                let mut m = String.from("package `")
-                m.append(text(p.name))
-                m.push_str("` uses capability `")
-                m.append(text(u.cap))
-                m.push_str("` (")
-                m.append(text(u.file))
-                m.push_str(":")
-                m.append(String.from_int(u.line as i64))
-                m.push_str(") but is only granted [")
-                m.append(text(bytes.join(p.grants, sys.lit(", "))))
-                m.push_str("]; to allow it, add \"")
-                m.append(text(u.cap))
-                m.push_str("\" to `uses` in its [deps.")
-                m.append(text(p.name))
-                m.push_str("] table")
-                if bytes.eq(u.kind, sys.lit("extern")) { m.push_str(" (it declares `extern` functions: unmanaged code)") }
-                if bytes.eq(u.kind, sys.lit("unsafe")) { m.push_str(" (it has `unsafe` code: unmanaged code)") }
-                return Err(m)
+/// Everything package `name` could use (`every`).
+pub fn uses_of(cs: List[PkgCaps], name: List[u8]) -> List[caps.Use] {
+    for c in cs {
+        if bytes.eq(c.name, name) { return c.every }
+    }
+    List.new()
+}
+
+fn reach_of(cs: List[PkgCaps], name: List[u8]) -> List[caps.Use] {
+    for c in cs {
+        if bytes.eq(c.name, name) { return c.reach }
+    }
+    List.new()
+}
+
+/// The capability names in `uses`, distinct and sorted.
+pub fn names(used: List[caps.Use]) -> List[List[u8]] {
+    let mut out: List[List[u8]] = List.new()
+    for u in used { out.push(u.cap) }
+    grants.sorted(out)
+}
+
+/// `fs (fsdep.ei:5), ffi (ffidep.ei:1, extern: unmanaged code)`: where the package first
+/// uses each of `wanted`.
+pub fn places(used: List[caps.Use], wanted: List[List[u8]]) -> String {
+    let mut parts: List[String] = List.new()
+    for w in wanted {
+        for u in used {
+            if bytes.eq(u.cap, w) {
+                let mut s = text(u.cap)
+                s.push_str(" (")
+                s.append(text(u.file))
+                s.push_str(":")
+                s.append(String.from_int(u.line as i64))
+                if bytes.eq(u.kind, sys.lit("extern")) { s.push_str(", `extern` functions: unmanaged code") }
+                if bytes.eq(u.kind, sys.lit("unsafe")) { s.push_str(", `unsafe` code: unmanaged code") }
+                s.push_str(")")
+                parts.push(s)
+                break
             }
         }
     }
+    let mut out = String.from("")
+    for i in 0..parts.len() {
+        if i > 0 { out.push_str(", ") }
+        out.append(parts[i])
+    }
+    out
+}
+
+/// Every package must stay within its grants: what its entry module reaches (`cs`, from
+/// all_caps; a direct dependency's whole use is held to the root's grant by the sync). The
+/// error lists every capability missing from each package that needs more.
+pub fn check_grants(pkgs: List[lockfile.Pkg], cs: List[PkgCaps]) -> Result[bool, String] {
+    let mut m = String.from("")
+    for p in pkgs {
+        let used = reach_of(cs, p.name)
+        let missing = grants.minus(names(used), p.grants)
+        if missing.len() == 0 { continue }
+        if m.len() > 0 { m.push_str("; ") }
+        m.push_str("package `")
+        m.append(text(p.name))
+        m.push_str("` uses ")
+        m.append(places(used, missing))
+        m.push_str(" but is only granted [")
+        m.append(text(bytes.join(p.grants, sys.lit(", "))))
+        m.push_str("]; its dependers must grant it `uses = [")
+        m.append(text(grants.quoted_list(grants.union(p.grants, missing))))
+        m.push_str("]` in their [deps.")
+        m.append(text(p.name))
+        m.push_str("] table")
+    }
+    if m.len() > 0 { return Err(m) }
     Ok(true)
 }

@@ -104,13 +104,70 @@ A dependency is granted capabilities in the depender's `eider.toml`:
 ```toml
 [deps.http]
 git = "https://github.com/klxdev/eider-http.git"
-version = "0.1.0"
-uses = ["net", "io", "clock", "threads"]
+version = "0.2.0"
+uses = ["clock", "io", "net", "threads"]
 
 [deps.json]
 git = "https://github.com/klxdev/eider-json.git"
-version = "0.1.0"                # no `uses`: granted nothing
+version = "0.2.0"                # no `uses`: granted nothing
 ```
+
+### The consent model: the compiler knows, you approve, growth asks again
+
+You don't type these lists. The grant is your recorded consent, and the tooling writes it:
+
+1. **The compiler knows** what every package uses (`eiderc caps`, below), so eider-pkg
+   computes each dependency's set over all of its modules.
+2. **You approve by adding.** `eider add` fetches the package, grants it exactly what it
+   uses today, and says so:
+
+   ```text
+   $ eider add http --git https://github.com/klxdev/eider-http.git --version 0.2.0
+   added http 0.2.0 — it uses: clock, io, net, threads (granted)
+   locked 3 package(s)
+   ```
+
+   `--confirm` asks first (`http 0.2.0 uses: clock, io, net, threads. Grant it? [y/N]`),
+   `--no-grant` adds the dependency with no grant and stops before writing `eider.lock`, so you
+   can look first, and `--uses a,b` grants exactly that list (it must cover what the package
+   uses).
+3. **Growth asks again.** `eider fetch` and `eider update` compute every direct
+   dependency's set again. When a new version uses more, they stop before writing anything,
+   with the difference and where the new capability is first used:
+
+   ```text
+   $ eider update
+   eider-pkg: more capabilities than granted (eider.lock is not written):
+     http 0.3.0 now also uses: fs (granted: clock, io, net, threads)
+       first used: fs (static.ei:12)
+   to accept: eider update --grant http (or --grant-all)
+   ```
+
+   Accepting rewrites the `uses` line (the rest of `eider.toml`, comments included, is left
+   as it was). When a package uses *less* than it is granted, the grant is narrowed for you,
+   with a note (`note: http 0.3.0 no longer uses: clock; its grant is narrowed to: io, net,
+   threads`): a grant never holds more than the package uses.
+4. **Hand edits** go through `eider grant <pkg> <cap,...>` and `eider revoke <pkg>
+   <cap,...>`, which change only that `uses` line. E0204's help names the first.
+
+A **policy** in `eider.toml` bounds what may be granted at all; an automatic or explicit
+grant that breaks it fails, naming the rule:
+
+```toml
+[policy]
+deny = ["ffi"]               # never granted to any dependency
+
+[policy.allow]
+net = ["http", "rpc"]        # only these dependencies may be granted `net`
+```
+
+```text
+eider-pkg: cannot grant `net` to `sock`: the policy allows it only to http, rpc ([policy.allow] net = ["http", "rpc"] in <dir>/eider.toml)
+```
+
+**You grant only your direct dependencies.** Each library's own `eider.toml` grants its
+dependencies, auto-filled the same way by its author's `eider add`, so a long transitive
+list never lands on you. The policy, likewise, governs the grants in the manifest it is in.
 
 The rules:
 
@@ -126,8 +183,8 @@ The rules:
    `json` is held to the grant in `http`'s `eider.toml`, not yours. When several packages
    depend on one, eider-pkg locks the intersection of their grants.
 5. **The compiler checks on every build** (E0204, at the import, with the help that names
-   the table to edit), and **eider-pkg checks when it resolves** (`add`, `fetch`, `update`
-   refuse a graph whose grants don't hold).
+   the command that grants it), and **eider-pkg checks when it resolves** (`add`, `fetch`,
+   `update` refuse a graph whose grants don't hold, naming every missing capability).
 
 ```text
 error[E0204]: package `notes` uses capability `fs` in `save` (notes.ei:4) but is only granted []
@@ -135,7 +192,7 @@ error[E0204]: package `notes` uses capability `fs` in `save` (notes.ei:4) but is
   |
 1 | import notes
   | ^
-  help: to allow it, add "fs" to `uses` in [deps.notes] of <dir>/eider.toml
+  help: to allow it, run `eider grant notes fs` in <dir> (it adds "fs" to `uses` in [deps.notes] of its eider.toml)
 ```
 
 [Getting started](getting-started.md#capability-grants) walks through adding a dependency
@@ -167,14 +224,16 @@ function that uses it:
 {"package":"core","dir":"<root>/core","cap":"ffi","kind":"extern","fn":"ec_in_clear","file":"sys.ei","line":11,"col":15}
 ```
 
-`kind` is `uses`, `extern` or `unsafe`. eider-pkg uses this to check grants, so what it
-checks is exactly what the compiler loads, not a text search.
+`kind` is `uses`, `extern` or `unsafe`. eider-pkg runs it on a probe program that imports
+every module of a dependency (not its `main` program, tests, examples or scripts), so the
+grant it writes covers `import http.server` as well as `import http`, and what it computes
+is what the compiler sees, not a text search.
 
 ## Known limits
 
-- A grant is checked against everything the program loads of a package, not per imported
-  module: eider-openapi, which is pure, grants http `net, io, clock, threads` because
-  programs that use it load http's server too.
+- A grant is per package, not per imported module: a program that imports only http's pure
+  parser still grants http everything its server uses, since eider-pkg computes the set over
+  all of http's modules.
 - Capabilities don't follow type parameters (see "Inside a program" above).
 - Capabilities say *which kind* of effect, not *which* file or host. Narrower grants
   (paths, hosts) are not designed yet.

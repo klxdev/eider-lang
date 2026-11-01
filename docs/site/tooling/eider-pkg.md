@@ -18,11 +18,13 @@ lock and fetches git packages.
 
 ```text
 eider-pkg [-C dir] init [name]
-eider-pkg [-C dir] add <name> --path <dir> [--uses a,b]
-eider-pkg [-C dir] add <name> --git <url> (--version <v> | --rev <r>) [--uses a,b]
+eider-pkg [-C dir] add <name> --path <dir> [--uses a,b | --confirm | --no-grant]
+eider-pkg [-C dir] add <name> --git <url> (--version <v> | --rev <r>) [--uses a,b | --confirm | --no-grant]
 eider-pkg [-C dir] remove <name>
-eider-pkg [-C dir] fetch [--offline]
-eider-pkg [-C dir] update [--offline]
+eider-pkg [-C dir] grant <name> <cap,...>
+eider-pkg [-C dir] revoke <name> <cap,...>
+eider-pkg [-C dir] fetch [--offline] [--grant a,b | --grant-all]
+eider-pkg [-C dir] update [--offline] [--grant a,b | --grant-all]
 eider-pkg [-C dir] vendor
 eider-pkg [-C dir] tree
 eider-pkg hash <dir>
@@ -35,9 +37,11 @@ arguments are relative to it.
 | Command | What it does |
 |---|---|
 | `init [name]` | Write `eider.toml` (name from the argument or the directory, version `0.1.0`, `main = "main.ei"`, `eider` the toolchain's MAJOR.MINOR) and, if there is none, a `main.ei` that prints a line. Refuses if `eider.toml` exists. |
-| `add <name> ...` | Append a `[deps.<name>]` table, resolve, check grants and write `eider.lock`. If resolution or a grant check fails, `eider.toml` is restored. `--uses io,fs` writes the grant. |
+| `add <name> ...` | Append a `[deps.<name>]` table, resolve, grant the package what it uses (`uses = [...]`, sorted; see [Grants](#grants)), check grants and write `eider.lock`, printing `added <name> <version> — it uses: <caps> (granted)`. If resolution or a grant check fails, `eider.toml` is restored. `--confirm` asks first (y/N, on standard input); `--no-grant` writes no grant, and when the package uses something keeps the table but stops before writing `eider.lock`; `--uses io,fs` is an explicit grant, which must cover what the package uses. |
 | `remove <name>` | Delete the `[deps.<name>]` table (an inline `name = { ... }` entry must be removed by hand) and re-resolve. |
-| `fetch` | Resolve, keeping the commits `eider.lock` pins, fetch what is missing into the store, check grants and write `eider.lock`. |
+| `grant <name> <cap,...>` | Add capabilities to the `uses` of `[deps.<name>]`, in place (E0204's help names this). No resolving: the next build sees it; `eider.lock`'s copy of the grants follows at the next `fetch`. |
+| `revoke <name> <cap,...>` | Take capabilities out of it, the same way. A package that still uses one fails to build (E0204), and `fetch` stops on it, until it is granted again. |
+| `fetch` | Resolve, keeping the commits `eider.lock` pins, fetch what is missing into the store, hold every direct dependency's grant to what it uses (narrow one that shrank, stop on one that grew unless `--grant <name>,...` or `--grant-all` accepts it), check grants and write `eider.lock`. |
 | `update` | The same, ignoring the pins: re-resolve every git dependency from its tags and refresh the mirrors (tags can move). |
 | `vendor` | Copy every git package into `.vendor/<name>`, drop vendored packages the graph no longer has, and check that resolving from `.vendor/` alone gives the same lock. The compiler then reads `.vendor/` before the store, so the project builds offline with no store. `.vendor/` is hidden; commit it or ignore it, as you choose. |
 | `tree` | Print the locked graph, each package with its version and grants; a package seen before is marked `(*)`. |
@@ -47,7 +51,62 @@ arguments are relative to it.
 `--offline` makes `fetch` and `update` fail instead of touching the network. Only `add`,
 `remove`, `fetch`, `update` and `vendor` ever do, and `fetch` only when a pinned commit
 isn't already in the local mirror. Errors are printed as `eider-pkg: <message>` with exit
-code 1 on stderr; stdout carries only what a command reports when it succeeds.
+code 1 on stderr (one line, except the capability diff below); stdout carries only what a
+command reports when it succeeds, notes included.
+
+## Grants
+
+A dependency may use only the capabilities its depender grants it (`uses = [...]` in
+`[deps.<name>]`; [Capabilities](../guide/capabilities.md)). The grant is the recorded
+consent, and eider-pkg writes it from what the compiler says the package uses
+(`eiderc caps` over every module of the package):
+
+```text
+$ eider-pkg add http --git https://github.com/klxdev/eider-http.git --version 0.2.0
+added http 0.2.0 — it uses: clock, io, net, threads (granted)
+locked 3 package(s)
+
+$ eider-pkg update
+eider-pkg: more capabilities than granted (eider.lock is not written):
+  http 0.3.0 now also uses: fs (granted: clock, io, net, threads)
+    first used: fs (static.ei:12)
+to accept: eider update --grant http (or --grant-all)
+
+$ eider-pkg update --grant http
+locked 3 package(s)
+
+$ eider-pkg fetch
+note: http 0.3.1 no longer uses: clock; its grant is narrowed to: fs, io, net, threads
+locked 3 package(s)
+
+$ eider-pkg grant json io
+json: uses = ["io"] (granted io)
+```
+
+- **Only direct dependencies.** `fetch` and `update` compute each direct dependency's set
+  and compare it with the grant. Growth stops the command before `eider.toml` or
+  `eider.lock` is written, with every grown package in the diff; shrinking narrows the grant
+  and prints a note. A dependency's own dependencies are granted by its own `eider.toml`
+  (written the same way by its author), and held to the intersection of what their dependers
+  grant: the error then names every missing capability and the `uses = [...]` that covers
+  them.
+- **Edits keep the file.** Only the `uses` of one `[deps.<name>]` table is rewritten (a
+  multi-line array becomes one line; the indentation and a comment after it are kept), or a
+  `uses` line is added after the table's last key. Comments, blank lines and other tables
+  are left byte for byte.
+- **Policy.** An optional `[policy]` bounds what this manifest may grant:
+
+  ```toml
+  [policy]
+  deny = ["ffi"]            # never granted to any dependency
+
+  [policy.allow]
+  net = ["http", "rpc"]     # only these dependencies may be granted `net`
+  ```
+
+  An automatic grant, an accepted growth, `--uses`, `grant`, or a hand-written grant found by
+  `fetch` that breaks it fails with the rule: ``cannot grant `ffi` to `cffi`: the policy
+  denies it to every dependency ([policy] deny = ["ffi"] in <dir>/eider.toml)``.
 
 ## eider.toml
 
@@ -63,7 +122,7 @@ description = "What it is"  # optional
 [deps.json]                 # one table per dependency; the key is the package's own name
 git = "https://example.com/json.git"
 version = "1.2.0"           # a minimum version: the tag v1.2.0 (or 1.2.0)
-uses = ["io"]               # the capabilities granted to it (default: none)
+uses = ["io"]               # the capabilities granted to it (default: none); `add` writes it
 
 [deps.geom]
 path = "../geom"            # a local directory
@@ -71,6 +130,11 @@ path = "../geom"            # a local directory
 [deps.edge]
 git = "https://example.com/edge.git"
 rev = "main"                # a branch, tag or commit instead of a version
+
+[policy]                    # optional: what this package may grant (see Grants)
+deny = ["ffi"]
+[policy.allow]
+net = ["json"]
 ```
 
 Unknown keys are errors (a typo like `verison` is caught). A dependency needs exactly one of
@@ -125,11 +189,13 @@ lock entry or files are missing when the compiler needs it is E0810, with the fi
 - A git package may only depend on other git packages (a path in a published package
   would mean nothing elsewhere).
 - **Grants are the intersection** of what every depender grants a package, and after
-  resolving, eider-pkg asks the compiler what each package really uses (`eiderc caps` on
-  its entry module) and refuses the graph if a package uses more than its grant:
+  resolving, eider-pkg asks the compiler what each package really uses (`eiderc caps` on a
+  probe program importing its modules: every one for a direct dependency, what the entry
+  module reaches for the others, since which modules a library loads is its own business) and
+  refuses the graph if a package uses more than its grant, naming everything missing:
 
 ```text
-eider-pkg: package `notes` uses capability `fs` (notes.ei:4) but is only granted []; to allow it, add "fs" to `uses` in its [deps.notes] table
+eider-pkg: package `notes` uses fs (notes.ei:4), io (log.ei:2) but is only granted []; its dependers must grant it `uses = ["fs", "io"]` in their [deps.notes] table
 ```
 
 The compiler checks the same thing on every build (E0204). See

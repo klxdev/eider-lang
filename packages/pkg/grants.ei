@@ -1,0 +1,310 @@
+//! grants: the `uses = [...]` a package grants each dependency, written by eider-pkg.
+//!
+//! The grant is the recorded consent that the compiler holds a dependency to (E0204), but the
+//! user doesn't type it: `add` writes what the package uses, `fetch`/`update` narrow a grant
+//! when the package uses less and stop when it uses more, until the user accepts
+//! (`--grant <pkg>`, `--grant-all`, or `eider grant <pkg> <caps>`). `[policy]` in eider.toml
+//! bounds what may be granted at all. Edits keep the rest of eider.toml as it was: only the
+//! `uses` line of one `[deps.<name>]` table is rewritten (or added).
+
+import core.sys
+import std.bytes
+import pkg.manifest
+
+fn text(b: List[u8]) -> String { sys.to_string(b) }
+
+pub fn contains(xs: List[List[u8]], x: List[u8]) -> bool {
+    for y in xs {
+        if bytes.eq(x, y) { return true }
+    }
+    false
+}
+
+/// Distinct, in byte order.
+pub fn sorted(xs: List[List[u8]]) -> List[List[u8]] {
+    let mut out: List[List[u8]] = List.new()
+    for x in xs {
+        if contains(out, x) { continue }
+        let mut at = out.len()
+        let mut i: usize = 0
+        while i < out.len() {
+            if bytes.compare(x, out[i]) < 0 {
+                at = i
+                break
+            }
+            i += 1
+        }
+        let mut next: List[List[u8]] = List.new()
+        for j in 0..out.len() {
+            if j == at { next.push(x) }
+            next.push(out[j])
+        }
+        if at == out.len() { next.push(x) }
+        out = next
+    }
+    out
+}
+
+/// What is in `a` and not in `b`.
+pub fn minus(a: List[List[u8]], b: List[List[u8]]) -> List[List[u8]] {
+    let mut out: List[List[u8]] = List.new()
+    for x in a {
+        if !contains(b, x) && !contains(out, x) { out.push(x) }
+    }
+    out
+}
+
+pub fn union(a: List[List[u8]], b: List[List[u8]]) -> List[List[u8]] {
+    let mut all = a.copy()
+    for x in b { all.push(x) }
+    sorted(all)
+}
+
+pub fn same(a: List[List[u8]], b: List[List[u8]]) -> bool { minus(a, b).len() == 0 && minus(b, a).len() == 0 }
+
+/// `a, b, c`, or `nothing` for none.
+pub fn list(xs: List[List[u8]]) -> String {
+    if xs.len() == 0 { return String.from("nothing") }
+    text(bytes.join(xs, sys.lit(", ")))
+}
+
+/// Comma-separated capability names from the command line (`net,io` or `net, io`).
+pub fn parse_caps(arg: List[u8]) -> Result[List[List[u8]], String] {
+    let mut out: List[List[u8]] = List.new()
+    for c in bytes.split(arg, 44) {
+        let t = bytes.trim(c)
+        if t.len() == 0 { continue }
+        if !manifest.known_cap(t) {
+            let mut m = String.from("unknown capability `")
+            m.append(text(t))
+            m.push_str("` (known: io, clock, fs, net, threads, ffi)")
+            return Err(m)
+        }
+        out.push(t)
+    }
+    Ok(sorted(out))
+}
+
+/// Err naming the rule when granting `caps` to the dependency `name` breaks `[policy]`.
+pub fn check_policy(p: manifest.Policy, file: List[u8], name: List[u8], caps: List[List[u8]]) -> Result[bool, String] {
+    for c in caps {
+        if contains(p.deny, c) {
+            let mut m = String.from("cannot grant `")
+            m.append(text(c))
+            m.push_str("` to `")
+            m.append(text(name))
+            m.push_str("`: the policy denies it to every dependency ([policy] deny = [")
+            m.append(text(quoted_list(p.deny)))
+            m.push_str("] in ")
+            m.append(text(file))
+            m.push_str(")")
+            return Err(m)
+        }
+        for a in p.allow {
+            if bytes.eq(a.cap, c) && !contains(a.pkgs, name) {
+                let mut m = String.from("cannot grant `")
+                m.append(text(c))
+                m.push_str("` to `")
+                m.append(text(name))
+                m.push_str("`: the policy allows it only to ")
+                m.append(list(a.pkgs))
+                m.push_str(" ([policy.allow] ")
+                m.append(text(c))
+                m.push_str(" = [")
+                m.append(text(quoted_list(a.pkgs)))
+                m.push_str("] in ")
+                m.append(text(file))
+                m.push_str(")")
+                return Err(m)
+            }
+        }
+    }
+    Ok(true)
+}
+
+fn quote(s: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    out.push(34)
+    for c in s {
+        if c == 34 || c == 92 { out.push(92) }
+        out.push(c)
+    }
+    out.push(34)
+    out
+}
+
+/// `"a", "b"`.
+pub fn quoted_list(xs: List[List[u8]]) -> List[u8] {
+    let mut q: List[List[u8]] = List.new()
+    for x in xs { q.push(quote(x)) }
+    bytes.join(q, sys.lit(", "))
+}
+
+/// The line `uses = ["a", "b"]`, with `indent` before it.
+fn uses_line(indent: List[u8], caps: List[List[u8]]) -> List[u8] {
+    let mut l = indent.copy()
+    bytes.append(inout l, sys.lit("uses = ["))
+    bytes.append(inout l, quoted_list(caps))
+    l.push(93)
+    l
+}
+
+/// A line without its comment (outside strings) and surrounding blanks.
+fn code_of(line: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut in_str = false
+    let mut i: usize = 0
+    while i < line.len() {
+        let c = line[i]
+        if in_str {
+            if c == 92 && i + 1 < line.len() {
+                out.push(c)
+                i += 1
+                out.push(line[i])
+                i += 1
+                continue
+            }
+            if c == 34 { in_str = false }
+        } else if c == 34 {
+            in_str = true
+        } else if c == 35 {
+            break
+        }
+        out.push(c)
+        i += 1
+    }
+    bytes.trim(out)
+}
+
+fn indent_of(line: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    for c in line {
+        if c == 32 || c == 9 { out.push(c) } else { return out }
+    }
+    out
+}
+
+/// Is `code` the key `k` followed by `=`?
+fn is_key(code: List[u8], k: str) -> bool {
+    let key = sys.lit(k)
+    if !bytes.starts_with(code, key) { return false }
+    let rest = bytes.trim(bytes.slice(code, key.len(), code.len()))
+    rest.len() > 0 && rest[0] == 61
+}
+
+/// Where the array starting on line `from` (after `uses =`) closes: the line index and the
+/// byte just after its `]`.
+fn array_end(lines: List[List[u8]], from: usize) -> Option[(usize, usize)] {
+    let mut in_str = false
+    let mut seen_open = false
+    let mut li = from.copy()
+    while li < lines.len() {
+        let l = lines[li]
+        let mut i: usize = 0
+        while i < l.len() {
+            let c = l[i]
+            if in_str {
+                if c == 92 { i += 1 } else if c == 34 { in_str = false }
+            } else if c == 34 {
+                in_str = true
+            } else if c == 35 {
+                break
+            } else if c == 91 {
+                seen_open = true
+            } else if c == 93 && seen_open {
+                return Some((li, i + 1))
+            }
+            i += 1
+        }
+        li += 1
+    }
+    None
+}
+
+/// eider.toml text `src` with the grant of dependency `name` set to `caps`: the table's
+/// `uses` (which may span lines) is replaced by one line, keeping its indentation and a
+/// comment after it, or a `uses` line is added after the table's last key. Everything else
+/// is kept byte for byte. Err when there is no `[deps.<name>]` table.
+pub fn set_uses(src: List[u8], name: List[u8], caps: List[List[u8]]) -> Result[List[u8], String] {
+    let lines = bytes.split(src, 10)
+    let mut header = sys.lit("[deps.")
+    bytes.append(inout header, name)
+    header.push(93)
+    let mut h: Option[usize] = None
+    for i in 0..lines.len() {
+        if bytes.eq(code_of(lines[i]), header) { h = Some(i) }
+    }
+    let start = match h {
+        Some(i) => i
+        None => {
+            let mut e = String.from("no [deps.")
+            e.append(text(name))
+            e.push_str("] table in eider.toml (an inline `")
+            e.append(text(name))
+            e.push_str(" = { ... }` entry must be edited by hand)")
+            return Err(e)
+        }
+    }
+    let mut end = lines.len()
+    let mut i = start + 1
+    while i < lines.len() {
+        let c = code_of(lines[i])
+        if c.len() > 0 && c[0] == 91 {
+            end = i
+            break
+        }
+        i += 1
+    }
+    let mut out: List[List[u8]] = List.new()
+    let mut j: usize = 0
+    // the existing `uses`
+    let mut u = start + 1
+    while u < end {
+        if is_key(code_of(lines[u]), "uses") {
+            let closing = match array_end(lines, u) {
+                Some(x) => x
+                None => {
+                    let mut e = String.from("the `uses` of [deps.")
+                    e.append(text(name))
+                    e.push_str("] in eider.toml has no closing `]`")
+                    return Err(e)
+                }
+            }
+            let (le, after) = closing
+            while j < u {
+                out.push(lines[j])
+                j += 1
+            }
+            let mut l = uses_line(indent_of(lines[u]), caps)
+            bytes.append(inout l, bytes.slice(lines[le], after, lines[le].len()))
+            out.push(l)
+            j = le + 1
+            while j < lines.len() {
+                out.push(lines[j])
+                j += 1
+            }
+            return Ok(bytes.join(out, sys.lit("\n")))
+        }
+        u += 1
+    }
+    if caps.len() == 0 { return Ok(src) }
+    // after the table's last key (blank lines and comments before the next table stay there)
+    let mut last = start.copy()
+    let mut k = start + 1
+    while k < end {
+        if code_of(lines[k]).len() > 0 { last = k }
+        k += 1
+    }
+    while j <= last {
+        out.push(lines[j])
+        j += 1
+    }
+    let none: List[u8] = List.new()
+    let ind = if last > start { indent_of(lines[last]) } else { none }
+    out.push(uses_line(ind, caps))
+    while j < lines.len() {
+        out.push(lines[j])
+        j += 1
+    }
+    Ok(bytes.join(out, sys.lit("\n")))
+}

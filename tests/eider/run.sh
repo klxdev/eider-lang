@@ -121,7 +121,13 @@ printf '[package]\nname = "p"\nversion = "0.1.0"\n' > "$P/eider.toml"
 out=$(CWD=$P e build); check "an eider.toml without eider: the default" "eiderc 1.2.0 " "$out"
 
 out=$(CWD=$P e add json --path ../json); check "add -> eider-pkg" "eider-pkg 1.2.0 root=$H/toolchains/1.2.0 eiderc=$H/toolchains/1.2.0/bin/eiderc args: add json --path ../json" "$out"
-for c in init remove fetch update vendor tree; do out=$(CWD=$P e $c x); check "$c -> eider-pkg" "eider-pkg 1.2.0 " "$out"; done
+for c in init remove grant revoke fetch update vendor tree; do out=$(CWD=$P e $c x); check "$c -> eider-pkg" "eider-pkg 1.2.0 " "$out"; done
+# the grants (#135): `eider grant http fs`, as E0204's help says, and accepting growth
+out=$(CWD=$P e grant http fs,io); check "grant -> eider-pkg" "eider-pkg 1.2.0 root=$H/toolchains/1.2.0 eiderc=$H/toolchains/1.2.0/bin/eiderc args: grant http fs,io" "$out"
+out=$(CWD=$P e revoke http fs); check "revoke -> eider-pkg" "eider-pkg 1.2.0 root=$H/toolchains/1.2.0 eiderc=$H/toolchains/1.2.0/bin/eiderc args: revoke http fs" "$out"
+out=$(CWD=$P e update --grant http); check "update --grant -> eider-pkg" "eider-pkg 1.2.0 root=$H/toolchains/1.2.0 eiderc=$H/toolchains/1.2.0/bin/eiderc args: update --grant http" "$out"
+out=$(CWD=$P e update --grant-all); check "update --grant-all -> eider-pkg" "args: update --grant-all" "$out"
+out=$(CWD=$P e add http --git u --version 0.2.0 --confirm); check "add --confirm -> eider-pkg" "args: add http --git u --version 0.2.0 --confirm" "$out"
 out=$(e new demo); check "new" "eider-pkg 1.2.0 root=$H/toolchains/1.2.0 eiderc=$H/toolchains/1.2.0/bin/eiderc args: -C demo init demo" "$out"
 mkdir -p "$T/exists"; out=$(e new exists); check "new: the directory exists" "exists already" "$out"
 out=$(e doc build --out site); check "doc -> eider-doc" "eider-doc 1.2.0 root=$H/toolchains/1.2.0 eiderc=$H/toolchains/1.2.0/bin/eiderc args: build --out site" "$out"

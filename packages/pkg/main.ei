@@ -1,10 +1,16 @@
 //! eider-pkg: the Eider package manager.
 //!
 //!   eider-pkg [-C dir] init [name]
-//!   eider-pkg [-C dir] add <name> (--path P | --git URL (--version V | --rev R)) [--uses a,b]
+//!   eider-pkg [-C dir] add <name> (--path P | --git URL (--version V | --rev R))
+//!                      [--uses a,b | --confirm | --no-grant]   grants what it uses (grants.ei)
 //!   eider-pkg [-C dir] remove <name>
-//!   eider-pkg [-C dir] fetch [--offline]      resolve (keeping eider.lock pins), write eider.lock
-//!   eider-pkg [-C dir] update [--offline]     re-resolve ignoring eider.lock
+//!   eider-pkg [-C dir] grant <name> <cap,...>   add to the `uses` of [deps.<name>]
+//!   eider-pkg [-C dir] revoke <name> <cap,...>  take out of it
+//!   eider-pkg [-C dir] fetch [--offline] [--grant a,b | --grant-all]   resolve (keeping
+//!                      eider.lock pins), narrow grants that shrank, stop on ones that grew
+//!                      (unless accepted), write eider.lock
+//!   eider-pkg [-C dir] update [--offline] [--grant a,b | --grant-all]   the same, ignoring
+//!                      eider.lock's pins
 //!   eider-pkg [-C dir] vendor                 copy git packages into .vendor/ (offline builds)
 //!   eider-pkg [-C dir] tree                   print the locked graph
 //!   eider-pkg hash <dir>                      content hash of a directory
@@ -34,6 +40,7 @@ import pkg.store
 import pkg.resolve
 import pkg.caps
 import pkg.override
+import pkg.grants
 
 type Cli = { dir: List[u8], cmd: List[u8], args: List[List[u8]], offline: bool }
 
@@ -42,7 +49,7 @@ fn is(a: List[u8], s: str) -> bool { bytes.eq(a, sys.lit(s)) }
 fn say(s: str) uses io { io.outln(sys.lit(s)) }
 
 fn usage() -> String {
-    String.from("usage: eider-pkg [-C dir] (init [name] | add <name> --path P | add <name> --git URL --version V|--rev R [--uses a,b] | remove <name> | fetch [--offline] | update [--offline] | vendor | tree | hash <dir> | --version)")
+    String.from("usage: eider-pkg [-C dir] (init [name] | add <name> --path P | add <name> --git URL --version V|--rev R [--uses a,b | --confirm | --no-grant] | remove <name> | grant|revoke <name> <cap,...> | fetch|update [--offline] [--grant a,b | --grant-all] | vendor | tree | hash <dir> | --version)")
 }
 
 fn parse_cli() -> Result[Cli, String] uses io, fs {
@@ -86,26 +93,168 @@ fn toolchain() -> Result[List[u8], String] uses io, fs {
     }
 }
 
-// ---- fetch / update / vendor
+// ---- fetch / update / vendor, and the grants (grants.ei)
 
-fn sync(c: Cli, use_lock: bool, offline: bool) -> Result[List[lockfile.Pkg], String] uses io, fs, net {
-    sync_from(c, use_lock, offline, fs.join(c.dir, sys.lit(".vendor")))
+/// What a sync may do about a direct dependency that uses more than its grant: accept every
+/// one (`--grant-all`), the ones named (`--grant`, and `add` for the package it adds), or
+/// ask about one (`add --confirm`). `adding` is the package `add` is adding, `no_grant` when
+/// it was added with `--no-grant`.
+type Accept = { all: bool, names: List[List[u8]], confirm: List[u8], adding: List[u8], no_grant: bool }
+
+fn accept_none() -> Accept { Accept(false, List.new(), List.new(), List.new(), false) }
+
+type Synced = { pkgs: List[lockfile.Pkg], cs: List[resolve.PkgCaps] }
+
+/// The start of the error a sync stops with when grants would have to grow.
+fn grew_prefix() -> List[u8] { sys.lit("more capabilities than granted") }
+
+fn sync(c: Cli, use_lock: bool, offline: bool, acc: Accept) -> Result[Synced, String] uses io, fs, net {
+    sync_from(c, use_lock, offline, fs.join(c.dir, sys.lit(".vendor")), acc)
 }
 
-/// Resolve and write eider.lock. Pinned git packages come from `vendor` when it holds them
-/// (an empty `vendor` means the store only).
-fn sync_from(c: Cli, use_lock: bool, offline: bool, vendor: List[u8]) -> Result[List[lockfile.Pkg], String] uses io, fs, net {
-    let root = manifest.load(c.dir)?
-    toolchain()?
+fn version_of(pkgs: List[lockfile.Pkg], name: List[u8]) -> List[u8] {
+    match lockfile.find(pkgs, name) {
+        Some(p) => p.version
+        None => List.new()
+    }
+}
+
+/// Ask on the terminal whether to grant `set` to the package being added.
+fn ask(name: List[u8], ver: List[u8], set: List[List[u8]]) -> Result[bool, String] uses io {
+    let mut q = name.copy()
+    q.push(32)
+    bytes.append(inout q, ver)
+    bytes.append(inout q, sys.lit(" uses: "))
+    bytes.append(inout q, grants.list(set).bytes())
+    bytes.append(inout q, sys.lit(". Grant it? [y/N] "))
+    io.err(q)
+    let a = bytes.trim(io.read(1024)?)
+    Ok(is(a, "y") || is(a, "Y") || is(a, "yes"))
+}
+
+/// Resolve, hold each direct dependency's grant to what it uses, check every package's
+/// grants, and write eider.toml (when a grant changed) and eider.lock. Pinned git packages
+/// come from `vendor` when it holds them (an empty `vendor` means the store only).
+///
+/// A direct dependency that uses less than its grant has the grant narrowed (with a note);
+/// one that uses more stops the sync, unless `acc` accepts it, before anything is written.
+fn sync_from(c: Cli, use_lock: bool, offline: bool, vendor: List[u8], acc: Accept) -> Result[Synced, String] uses io, fs, net {
+    let file = manifest.file_in(c.dir)
+    let src = fs.read(file)?
+    let root = manifest.parse(src, file, c.dir)?
+    let tc = toolchain()?
+    for n in acc.names {
+        let mut found = false
+        for d in root.deps {
+            if bytes.eq(d.name, n) { found = true }
+        }
+        if !found {
+            let mut e = String.from("--grant ")
+            e.append(sys.to_string(n))
+            e.push_str(": not a dependency in eider.toml")
+            return Err(e)
+        }
+    }
     let locked = lockfile.load(c.dir)?
-    let o = resolve.Opts(store.home()?, offline, use_lock, locked, vendor, override.from_env()?)
-    let pkgs = resolve.resolve(root, o)?
-    resolve.check_grants(pkgs, caps.compiler(toolchain()?))?
-    fs.write(lockfile.file_in(c.dir), lockfile.render(pkgs, c.dir))?
+    let home = store.home()?
+    let o = resolve.Opts(home, offline, use_lock, locked, vendor, override.from_env()?)
+    let mut g = resolve.resolve(root, o)?
+    let mut direct: List[List[u8]] = List.new()
+    for d in root.deps { direct.push(d.name) }
+    let cs = resolve.all_caps(g.pkgs, direct, caps.compiler(tc), fs.join(home, sys.lit("tmp")))?
+    let mut out = src.copy()
+    let mut grew: List[String] = List.new()
+    let mut grew_names: List[List[u8]] = List.new()
+    let mut notes: List[String] = List.new()
+    for d in root.deps {
+        let ver = version_of(g.pkgs, d.name)
+        let used = resolve.uses_of(cs, d.name)
+        let set = resolve.names(used)
+        let extra = grants.minus(set, d.grants)
+        let unused = grants.minus(d.grants, set)
+        let adding = bytes.eq(d.name, acc.adding)
+        let mut target = d.grants.copy()
+        if extra.len() > 0 {
+            grants.check_policy(root.policy, file, d.name, set)?
+            let mut ok = acc.all || grants.contains(acc.names, d.name)
+            if !ok && bytes.eq(acc.confirm, d.name) {
+                if !ask(d.name, ver, set)? {
+                    let mut e = String.from("not added: `")
+                    e.append(sys.to_string(d.name))
+                    e.push_str("` would need ")
+                    e.append(grants.list(set))
+                    return Err(e)
+                }
+                ok = true
+            }
+            if !ok {
+                let mut l = String.from("  ")
+                l.append(sys.to_string(d.name))
+                l.push_str(" ")
+                l.append(sys.to_string(ver))
+                let verb = if adding { " uses: " } else { " now also uses: " }
+                l.push_str(verb)
+                let shown = if adding { set } else { extra }
+                l.append(grants.list(shown))
+                l.push_str(" (granted: ")
+                l.append(grants.list(grants.sorted(d.grants)))
+                l.push_str(")\n    first used: ")
+                l.append(resolve.places(used, extra))
+                grew.push(l)
+                grew_names.push(d.name)
+                continue
+            }
+            target = set
+        } else if unused.len() > 0 {
+            target = set
+            let mut n = String.from("note: ")
+            n.append(sys.to_string(d.name))
+            n.push_str(" ")
+            n.append(sys.to_string(ver))
+            let verb = if adding { " doesn't use: " } else { " no longer uses: " }
+            n.push_str(verb)
+            n.append(grants.list(unused))
+            n.push_str("; its grant is narrowed to: ")
+            n.append(grants.list(set))
+            notes.push(n)
+        }
+        grants.check_policy(root.policy, file, d.name, target)?
+        if !grants.same(target, d.grants) {
+            out = grants.set_uses(out, d.name, target)?
+            g = resolve.regrant(g, d.name, target)
+        }
+    }
+    if grew.len() > 0 {
+        let cmd = if is(c.cmd, "update") { "update" } else { "fetch" }
+        let mut e = sys.to_string(grew_prefix())
+        e.push_str(" (eider.lock is not written):")
+        for l in grew {
+            e.push_str("\n")
+            e.append(l)
+        }
+        let explicit = acc.adding.len() > 0 && !acc.no_grant && acc.confirm.len() == 0 && !grants.contains(acc.names, acc.adding)
+        if explicit && grew_names.len() == 1 && bytes.eq(grew_names[0], acc.adding) {
+            e.push_str("\nto grant it what it uses, add it without --uses")
+        } else {
+            e.push_str("\nto accept: eider ")
+            e.push_str(cmd)
+            e.push_str(" --grant ")
+            e.append(sys.to_string(bytes.join(grew_names, sys.lit(","))))
+            if !acc.no_grant { e.push_str(" (or --grant-all)") }
+        }
+        return Err(e)
+    }
+    resolve.check_grants(g.pkgs, cs)?
+    if !bytes.eq(out, src) {
+        manifest.parse(out, file, c.dir)?
+        fs.write(file, out)?
+    }
+    fs.write(lockfile.file_in(c.dir), lockfile.render(g.pkgs, c.dir))?
     // compatibility: the link farm an earlier eider-pkg made
     let deps = fs.join(c.dir, sys.lit("deps"))
     if fs.is_dir(fs.join(deps, sys.lit(".all"))) { fs.remove_all(deps)? }
-    Ok(pkgs)
+    for n in notes { io.outln(n.bytes()) }
+    Ok(Synced(g.pkgs, cs))
 }
 
 fn report(pkgs: List[lockfile.Pkg]) uses io {
@@ -115,10 +264,34 @@ fn report(pkgs: List[lockfile.Pkg]) uses io {
     io.outln(l)
 }
 
+/// `fetch`/`update` [--grant a,b]... [--grant-all]
+fn fetch(c: Cli, use_lock: bool) -> Result[bool, String] uses io, fs, net {
+    let mut acc = accept_none()
+    let mut i: usize = 0
+    while i < c.args.len() {
+        let a = c.args[i]
+        if is(a, "--grant-all") {
+            acc.all = true
+            i += 1
+        } else if is(a, "--grant") && i + 1 < c.args.len() {
+            for n in bytes.split(c.args[i + 1], 44) {
+                let t = bytes.trim(n)
+                if t.len() > 0 { acc.names.push(t) }
+            }
+            i += 2
+        } else {
+            return Err(usage())
+        }
+    }
+    let s = sync(c, use_lock, c.offline, acc)?
+    report(s.pkgs)
+    Ok(true)
+}
+
 fn vendor(c: Cli) -> Result[bool, String] uses io, fs, net {
     // from the store, so a stale .vendor/ is replaced rather than reported
     let none: List[u8] = List.new()
-    let pkgs = sync_from(c, true, c.offline, none)?
+    let pkgs = sync_from(c, true, c.offline, none, accept_none())?.pkgs
     let vdir = fs.join(c.dir, sys.lit(".vendor"))
     // drop what the graph no longer has
     if fs.is_dir(vdir) {
@@ -140,13 +313,16 @@ fn vendor(c: Cli) -> Result[bool, String] uses io, fs, net {
         }
     }
     // resolve again from .vendor/ alone: it must match eider.lock (the compiler reads it there)
-    sync_from(c, true, true, vdir)?
+    sync_from(c, true, true, vdir, accept_none())?
     say("vendored git packages into .vendor/")
     Ok(true)
 }
 
 // ---- manifest editing
 
+/// `add <name> (--path P | --git URL (--version V | --rev R)) [--uses a,b | --confirm | --no-grant]`:
+/// append the `[deps.<name>]` table, then sync, granting the package what it uses (or what
+/// `--uses` says, which must cover it; or asking first; or nothing).
 fn add(c: Cli) -> Result[bool, String] uses io, fs, net {
     if c.args.len() < 1 { return Err(usage()) }
     let name = c.args[0]
@@ -164,9 +340,23 @@ fn add(c: Cli) -> Result[bool, String] uses io, fs, net {
     let mut table = sys.lit("\n[deps.")
     bytes.append(inout table, name)
     bytes.append(inout table, sys.lit("]\n"))
+    let mut acc = accept_none()
+    acc.adding = name
+    let mut explicit = false
+    let mut confirm = false
     let mut i: usize = 1
     while i < c.args.len() {
         let flag = c.args[i]
+        if is(flag, "--confirm") {
+            confirm = true
+            i += 1
+            continue
+        }
+        if is(flag, "--no-grant") {
+            acc.no_grant = true
+            i += 1
+            continue
+        }
         if i + 1 >= c.args.len() { return Err(usage()) }
         let v = c.args[i + 1]
         let k = if is(flag, "--path") {
@@ -185,6 +375,7 @@ fn add(c: Cli) -> Result[bool, String] uses io, fs, net {
         bytes.append(inout table, k)
         bytes.append(inout table, sys.lit(" = "))
         if is(flag, "--uses") {
+            explicit = true
             let mut quoted: List[List[u8]] = List.new()
             for cap in bytes.split(v, 44) {
                 let t = bytes.trim(cap)
@@ -199,21 +390,111 @@ fn add(c: Cli) -> Result[bool, String] uses io, fs, net {
         table.push(10)
         i += 2
     }
+    let mut n_modes = 0
+    if explicit { n_modes += 1 }
+    if confirm { n_modes += 1 }
+    if acc.no_grant { n_modes += 1 }
+    if n_modes > 1 { return Err(String.from("add takes one of --uses, --confirm and --no-grant")) }
+    if confirm {
+        acc.confirm = name
+    } else if !explicit && !acc.no_grant {
+        acc.names.push(name)
+    }
     let mut after = before.copy()
     if after.len() > 0 && after[after.len() - 1] != 10 { after.push(10) }
     bytes.append(inout after, table)
-    manifest.parse(after, file, c.dir)?
+    let am = manifest.parse(after, file, c.dir)?
+    for d in am.deps {
+        if bytes.eq(d.name, name) { grants.check_policy(am.policy, file, name, d.grants)? }
+    }
     fs.write(file, after)?
-    match sync(c, true, c.offline) {
-        Ok(p) => {
-            report(p)
+    match sync(c, true, c.offline, acc) {
+        Ok(s) => {
+            let set = resolve.names(resolve.uses_of(s.cs, name))
+            let mut l = sys.lit("added ")
+            bytes.append(inout l, name)
+            l.push(32)
+            bytes.append(inout l, version_of(s.pkgs, name))
+            if set.len() == 0 {
+                bytes.append(inout l, sys.lit(" — it uses nothing"))
+            } else {
+                bytes.append(inout l, sys.lit(" — it uses: "))
+                bytes.append(inout l, grants.list(set).bytes())
+                bytes.append(inout l, sys.lit(" (granted)"))
+            }
+            io.outln(l)
+            report(s.pkgs)
             Ok(true)
         }
         Err(e) => {
+            // --no-grant: the dependency stays, ungranted, for `eider grant` or `fetch --grant`
+            if acc.no_grant && bytes.starts_with(e.bytes(), grew_prefix()) {
+                let mut m = String.from("added `")
+                m.append(sys.to_string(name))
+                m.push_str("` to eider.toml with no grant; ")
+                m.append(e)
+                return Err(m)
+            }
             fs.write(file, before)?
             Err(e)
         }
     }
+}
+
+/// `grant <name> <caps>` / `revoke <name> <caps>`: edit the `uses` of `[deps.<name>]`, in
+/// place (grants.set_uses); no resolving, so the next build sees it at once and eider.lock's
+/// record of the grant follows at the next fetch.
+fn edit_grant(c: Cli, give: bool) -> Result[bool, String] uses io, fs {
+    if c.args.len() < 2 { return Err(usage()) }
+    let name = c.args[0]
+    let mut want: List[List[u8]] = List.new()
+    for i in 1..c.args.len() {
+        for x in grants.parse_caps(c.args[i])? { want.push(x) }
+    }
+    want = grants.sorted(want)
+    if want.len() == 0 { return Err(usage()) }
+    let file = manifest.file_in(c.dir)
+    let src = fs.read(file)?
+    let m = manifest.parse(src, file, c.dir)?
+    let mut cur: Option[List[List[u8]]] = None
+    for d in m.deps {
+        if bytes.eq(d.name, name) { cur = Some(d.grants) }
+    }
+    let have = match cur {
+        Some(g) => g
+        None => {
+            let mut e = String.from("`")
+            e.append(sys.to_string(name))
+            e.push_str("` is not a dependency in eider.toml")
+            return Err(e)
+        }
+    }
+    let next = if give { grants.union(have, want) } else { grants.sorted(grants.minus(have, want)) }
+    if give { grants.check_policy(m.policy, file, name, next)? }
+    let mut l = sys.to_string(name)
+    if grants.same(next, have) {
+        let verb = if give { " is already granted: " } else { " isn't granted: " }
+        l.push_str(verb)
+        l.append(grants.list(want))
+        l.push_str(" (uses = [")
+        l.append(sys.to_string(grants.quoted_list(have)))
+        l.push_str("])")
+        io.outln(l.bytes())
+        return Ok(true)
+    }
+    let out = grants.set_uses(src, name, next)?
+    manifest.parse(out, file, c.dir)?
+    fs.write(file, out)?
+    l.push_str(": uses = [")
+    l.append(sys.to_string(grants.quoted_list(next)))
+    l.push_str("]")
+    let verb = if give { " (granted " } else { " (revoked " }
+    l.push_str(verb)
+    let changed = if give { grants.minus(next, have) } else { grants.minus(have, next) }
+    l.append(grants.list(changed))
+    l.push_str(")")
+    io.outln(l.bytes())
+    Ok(true)
 }
 
 fn manifest_quote(s: List[u8]) -> List[u8] {
@@ -259,7 +540,7 @@ fn remove(c: Cli) -> Result[bool, String] uses io, fs, net {
     after.push(10)
     manifest.parse(after, file, c.dir)?
     fs.write(file, after)?
-    let pkgs = sync(c, true, c.offline)?
+    let pkgs = sync(c, true, c.offline, accept_none())?.pkgs
     report(pkgs)
     Ok(true)
 }
@@ -354,11 +635,9 @@ fn run(c: Cli) -> Result[bool, String] uses io, fs, net {
     if is(c.cmd, "init") { return init(c) }
     if is(c.cmd, "add") { return add(c) }
     if is(c.cmd, "remove") { return remove(c) }
-    if is(c.cmd, "fetch") || is(c.cmd, "update") {
-        let pkgs = sync(c, is(c.cmd, "fetch"), c.offline)?
-        report(pkgs)
-        return Ok(true)
-    }
+    if is(c.cmd, "grant") { return edit_grant(c, true) }
+    if is(c.cmd, "revoke") { return edit_grant(c, false) }
+    if is(c.cmd, "fetch") || is(c.cmd, "update") { return fetch(c, is(c.cmd, "fetch")) }
     if is(c.cmd, "vendor") { return vendor(c) }
     if is(c.cmd, "tree") { return tree(c) }
     if is(c.cmd, "hash") {

@@ -9,10 +9,14 @@
 //! needing a capability the caller didn't declare; and `ffi` doesn't propagate across
 //! packages, so `uses ffi` written only to call std counts for nothing.
 //!
-//! What is checked is the package's entry module and the modules it reaches, as the compiler
-//! loads them (not test programs or comments). The compiler checks every import against its
-//! grant again when it builds (E0204), so a package with neither its entry module nor a `main`
-//! program is left to it.
+//! `of_package` asks about a probe program that imports a package's modules by path. For a
+//! direct dependency that is every module the depender could import (`import http.server` as
+//! well as `import http`; `modules`: the package's `.ei` files, but not its `main` program,
+//! test programs, examples, scripts, nested packages or hidden and build directories; not
+//! comments either): that set is what eider-pkg grants. A dependency's dependency is held to
+//! what its depender's program can reach from its entry module, since which of its modules
+//! that library loads is the library's business. The compiler checks every import against its
+//! grant again when it builds (E0204), for what the program really loads.
 
 import core.sys
 import std.bytes
@@ -66,18 +70,84 @@ fn field(line: List[u8], key: str) -> List[u8] {
     out
 }
 
-/// The capabilities package `name` uses, as `eiderc` (the compiler at `eiderc`) reports
-/// for the module `dir`/`entry` (its entry module or program; none when that file doesn't
-/// exist).
-pub fn of_package(eiderc: List[u8], dir: List[u8], entry: List[u8], name: List[u8]) -> Result[List[Use], String] uses io, fs, net {
+/// Directories that hold no importable modules of the package.
+fn skipped_dir(n: List[u8]) -> bool {
+    if n.len() > 0 && n[0] == 46 { return true }
+    let skip = ["target", "deps", "tests", "test", "examples", "bench", "benches", "scripts", "docs"]
+    for i in 0..9 {
+        if bytes.eq(n, sys.lit(skip[i as usize])) { return true }
+    }
+    false
+}
+
+fn walk(dir: List[u8], rel: List[u8], inout out: List[List[u8]]) uses fs {
+    let names = match fs.list(dir) {
+        Ok(l) => fs.sort(l)
+        Err(_) => { return }
+    }
+    for n in names {
+        let p = fs.join(dir, n)
+        let r = if rel.len() == 0 { n.copy() } else { fs.join(rel, n) }
+        if fs.is_dir(p) {
+            // a directory with its own eider.toml is another package
+            if !skipped_dir(n) && !fs.exists(fs.join(p, sys.lit("eider.toml"))) { walk(p, r, inout out) }
+        } else if bytes.ends_with(n, sys.lit(".ei")) {
+            out.push(r)
+        }
+    }
+}
+
+/// The package's modules, relative to `dir`: `entry` first (when it exists), then, when
+/// `every`, every other `.ei` file a depender could import, but not the `main` program (which
+/// counts only for a package that is nothing but a program).
+pub fn modules(dir: List[u8], entry: List[u8], main: List[u8], every: bool) -> List[List[u8]] uses fs {
+    let mut all: List[List[u8]] = List.new()
+    if every { walk(dir, List.new(), inout all) }
+    let mut out: List[List[u8]] = List.new()
+    if fs.exists(fs.join(dir, entry)) { out.push(entry) }
+    for m in all {
+        if bytes.eq(m, entry) || bytes.eq(m, main) { continue }
+        out.push(m)
+    }
+    if out.len() == 0 && main.len() > 0 && fs.exists(fs.join(dir, main)) { out.push(main) }
+    out
+}
+
+fn path_literal(p: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    out.push(34)
+    for c in p {
+        if c == 34 || c == 92 { out.push(92) }
+        out.push(c)
+    }
+    out.push(34)
+    out
+}
+
+/// The capabilities package `name` (in `dir`, with the modules `mods` from `modules`) uses,
+/// as `eiderc` (the compiler at `eiderc`) reports for a probe program in `tmp` that imports
+/// every module; none when it has no modules.
+pub fn of_package(eiderc: List[u8], dir: List[u8], mods: List[List[u8]], name: List[u8], tmp: List[u8]) -> Result[List[Use], String] uses io, fs, net {
     let mut out: List[Use] = List.new()
-    let file = fs.join(dir, entry)
-    if !fs.exists(file) { return Ok(out) }
+    if mods.len() == 0 { return Ok(out) }
+    let mut src: List[u8] = List.new()
+    for m in mods {
+        bytes.append(inout src, sys.lit("import "))
+        bytes.append(inout src, path_literal(fs.join(dir, m)))
+        src.push(10)
+    }
+    fs.mkdir_all(tmp)?
+    let mut fname = sys.lit("caps-")
+    bytes.append(inout fname, name)
+    bytes.append(inout fname, sys.lit(".ei"))
+    let file = fs.join(tmp, fname)
+    fs.write(file, src)?
     let mut argv: List[List[u8]] = List.new()
     argv.push(eiderc)
     argv.push(sys.lit("caps"))
     argv.push(file)
     let r = proc.run_with(argv, proc.captured())?
+    fs.remove_all(file)?
     if r.code != 0 {
         let mut m = String.from("cannot list the capabilities of package `")
         m.append(sys.to_string(name))

@@ -159,7 +159,7 @@ blocks excluded), plus `ffi` when it has unmanaged code: an `extern` function, a
 ```text
 error[E0204]: package `fsdep` uses capability `fs` in `save` (fsdep.ei:5) but is only granted []
   --> app/main.ei:2:1
-  help: to allow it, add "fs" to `uses` in [deps.fsdep] of <dir>/eider.toml
+  help: to allow it, run `eider grant fsdep fs` in <dir> (it adds "fs" to `uses` in [deps.fsdep] of its eider.toml)
 ```
 
 - Grants are per dependency edge: a dependency's own dependencies are held to the grants
