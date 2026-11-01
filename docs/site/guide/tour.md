@@ -247,6 +247,34 @@ empty
 `ok_or`, `map_err`, ...). `unwrap` traps on `None` or `Err`. [Errors](errors.md) shows how
 `?` converts error types with `From` and how std/error adds context.
 
+`defer` runs a statement when its block is left, however it is left; `errdefer` only when
+the function fails (through `?`, or by returning `Err` or `None`):
+
+```eider
+fn load(ok: bool) -> Result[i32, str] uses io {
+    print("open")
+    defer print("close")
+    errdefer print("roll back")
+    if !ok { return Err("bad input") }
+    Ok(1)
+}
+
+fn main() uses io {
+    print(load(true))
+    print(load(false))
+}
+```
+
+```output
+open
+close
+Ok(1)
+open
+roll back
+close
+Err("bad input")
+```
+
 ## Collections and loops
 
 ```eider

@@ -1,0 +1,120 @@
+// defer and errdefer (docs/compiler.md, "C8.29"): reverse order, every exit, the failure
+// exits of errdefer, labeled loops, values computed before the deferred code runs
+type Log = { lines: List[String] }
+
+fn note(inout log: Log, s: str) { log.lines.push(String.from(s)) }
+
+fn order() uses io {
+    defer print("first registered, last run")
+    defer print("second")
+    {
+        defer print("inner block ends")
+        print("in the inner block")
+    }
+    print("end of body")
+}
+
+// the return value is computed before the deferred code runs
+fn value(inout log: Log) -> i32 {
+    let mut n = 1
+    defer note(inout log, "deferred after the value")
+    n += 1
+    n * 10
+}
+
+fn early(x: i32) -> i32 uses io {
+    defer print(f"leaving early({x})")
+    if x > 0 { return x }
+    -x
+}
+
+fn parse(s: str) -> Result[i32, String] {
+    if s == "1" { return Ok(1) }
+    Err(f"bad: {s}")
+}
+
+// errdefer: on `?`, on `return Err`, on an Err as the last value; not on Ok
+fn steps(a: str, b: str, last_err: bool) -> Result[i32, String] uses io {
+    defer print("  defer (always)")
+    errdefer print("  errdefer 1 (on failure)")
+    let x = parse(a)?
+    errdefer print("  errdefer 2 (after the first step)")
+    let y = parse(b)?
+    if x + y == 3 { return Err(String.from("unreachable")) }
+    if last_err { Err(String.from("last value")) } else { Ok(x + y) }
+}
+
+fn find(xs: List[i32], want: i32) -> Option[usize] uses io {
+    errdefer print("  not found")
+    for i in 0..xs.len() {
+        if xs[i] == want { return Some(i) }
+    }
+    None
+}
+
+fn loops() uses io {
+    outer: for i in 0..3 {
+        defer print(f"  outer {i} done")
+        for j in 0..3 {
+            defer print(f"    inner {i},{j} done")
+            if j == 1 { continue }
+            if i == 1 && j == 2 { continue outer }
+            if i == 2 && j == 2 { break outer }
+        }
+    }
+    let mut k = 0
+    while k < 2 {
+        defer { k += 1 }
+        print(f"  while {k}")
+    }
+}
+
+// a deferred String: the defer runs before the String's drop
+fn owned() uses io {
+    let s = String.from("owned text")
+    defer print(f"  defer sees {s}")
+    let t = String.from("second")
+    defer print(f"  and {t}")
+}
+
+fn in_closure() uses io {
+    let f = |n: i32| -> i32 {
+        defer print("  closure's defer")
+        n + 1
+    }
+    print(f"  closure gave {f(1)}")
+}
+
+fn main() uses io {
+    order()
+    let mut log = Log(List.new())
+    let v = value(inout log)
+    print(f"value: {v}, log: {log.lines}")
+    print(early(5))
+    print(early(-3))
+    print("steps(1, 1):")
+    print(steps("1", "1", false))
+    print("steps(1, 1, last Err):")
+    print(steps("1", "1", true))
+    print("steps(x, 1):")
+    print(steps("x", "1", false))
+    print("steps(1, y):")
+    print(steps("1", "y", false))
+    print("find:")
+    let mut l: List[i32] = List.new()
+    l.push(3)
+    l.push(4)
+    print(find(l, 4))
+    print(find(l, 7))
+    print("loops:")
+    loops()
+    print("owned:")
+    owned()
+    in_closure()
+    // the words are names everywhere but at the start of a statement before a name or `{`
+    let defer = 2
+    print(defer + 1)
+    let mut errdefer = 1
+    errdefer = errdefer + 1
+    print(errdefer)
+}

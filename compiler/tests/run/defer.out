@@ -1,0 +1,53 @@
+in the inner block
+inner block ends
+end of body
+second
+first registered, last run
+value: 20, log: ["deferred after the value"]
+leaving early(5)
+5
+leaving early(-3)
+3
+steps(1, 1):
+  defer (always)
+Ok(2)
+steps(1, 1, last Err):
+  errdefer 2 (after the first step)
+  errdefer 1 (on failure)
+  defer (always)
+Err("last value")
+steps(x, 1):
+  errdefer 1 (on failure)
+  defer (always)
+Err("bad: x")
+steps(1, y):
+  errdefer 2 (after the first step)
+  errdefer 1 (on failure)
+  defer (always)
+Err("bad: y")
+find:
+Some(1)
+  not found
+None
+loops:
+    inner 0,0 done
+    inner 0,1 done
+    inner 0,2 done
+  outer 0 done
+    inner 1,0 done
+    inner 1,1 done
+    inner 1,2 done
+  outer 1 done
+    inner 2,0 done
+    inner 2,1 done
+    inner 2,2 done
+  outer 2 done
+  while 0
+  while 1
+owned:
+  and second
+  defer sees owned text
+  closure's defer
+  closure gave 2
+3
+2

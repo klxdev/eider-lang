@@ -52,6 +52,7 @@
 //            EHole a=expr b=width+1 (0: none) c=fill byte (0: a space) d=align (0 none, 1 `<`,
 //                2 `>`, 3 `^`) e=flags (FMT_*) f=radix letter (0: none; `x` `X` `b` `o`)
 //                g=column of the spec (after the `:`) h=its length in bytes
+// defer      SDefer a=the deferred statement b=1 for `errdefer` (docs/compiler.md, "C8.29")
 
 pub type Kind =
     | TName | TGeneric | TArray | TTuple | TUnit | TFn
@@ -65,6 +66,7 @@ pub type Kind =
     | ITest | IImport
     | EError | SError | IError
     | EFmt | EHole
+    | SDefer
 
 pub type Node = {
     kind: Kind,
@@ -226,5 +228,6 @@ pub fn kind_text(k: Kind) -> str {
         IError => "IError"
         EFmt => "EFmt"
         EHole => "EHole"
+        SDefer => "SDefer"
     }
 }

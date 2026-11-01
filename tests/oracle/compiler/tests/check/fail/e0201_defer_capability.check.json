@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"compiler/tests/check/fail/e0201_defer_capability.ei","line":3,"col":11},"message":"call to `print` requires capability `io`","fix":{"at":{"line":2,"col":7},"delete":0,"insert":" uses io"}}

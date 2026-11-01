@@ -95,6 +95,38 @@ Err("empty")
 
 Every value owned by the function is dropped on the early return, as on any other exit.
 
+## Undo on failure: `errdefer`
+
+`errdefer s` runs `s` only when the function fails: it returns through `?`, or returns an
+`Err` (or `None`). Put it right after a step that needs undoing, and every later failure
+undoes it; `defer` runs on every exit. See
+[Statements](../reference/statements.md#defer-and-errdefer).
+
+```eider
+fn reserve(stock: i32, n: i32) -> Result[i32, str] {
+    if n > stock { return Err("not enough stock") }
+    Ok(stock - n)
+}
+
+fn order(stock: i32, a: i32, b: i32) -> Result[i32, str] uses io {
+    let left = reserve(stock, a)?
+    errdefer print(f"released {a}")
+    let rest = reserve(left, b)?
+    Ok(rest)
+}
+
+fn main() uses io {
+    print(order(10, 3, 4))
+    print(order(10, 3, 9))
+}
+```
+
+```output
+Ok(3)
+released 3
+Err("not enough stock")
+```
+
 ## Error types of your own
 
 A String says what went wrong; an enum also lets the caller act on it. Give each failure

@@ -3402,6 +3402,37 @@ strings.ei (the tokens), compiler/tests/parse_ok/fstrings.ei (the AST), the lexe
 errors in compiler/tests/lex and compiler/tests/parse, tests/checks/fail/
 e0412_spec_not_integer.ei, compiler/tests/check/fail/e0401_fstring_no_show.ei.
 
+## C8.29: defer and errdefer
+
+#15 (decisions C463-C465). Code: parse.ei (`at_defer`, `defer_stmt`), check.ei ("Defer":
+`defer_stmt`, `run_defer`, `unwind`, `return_fails`, `leaves`).
+
+`defer s` is an SDefer in the tree. The checker checks s where it is written, into IR it
+throws away (this check reports errors and capabilities), and pushes an entry on the
+innermost frame (an Owned with `l` = DEFER, its index in `C.defers`). Frames are where drops
+are emitted, at the end of a block (pop_frame) and on each exit (unwind: `return`, `?`,
+`break`, `continue`), innermost first, so a deferred statement runs in reverse order with
+the drops and before the values declared ahead of it are dropped. Each time, s is checked
+and emitted again in a frame of its own, with the scopes it saw (a copy kept with the entry:
+its block's scope may already be closed) and with recording muted (no duplicate
+diagnostics or IDE references). An `errdefer` is skipped on a normal exit, emitted on `?`'s
+failure path, and on a `return` (or a function's last value) guarded by a tag test of the
+returned value (`return_fails`: Err for a Result, None for an Option); with no `errdefer`
+waiting, a return emits exactly what it did before. `leaves` walks s for a `return`, `?`, or
+a `break`/`continue` of a loop outside s (E0309; closures and nested defers are their own).
+An `errdefer` needs a function returning a Result or an Option (E0310, the fix deletes
+`err`). A trap runs no deferred code (there is no unwinding).
+
+`defer` and `errdefer` are words only at the start of a statement before a name or `{`
+(`at_defer`), so programs using them as names keep their meaning.
+
+Tests: compiler/tests/run/defer.ei (order, the value computed first, every exit kind,
+labeled loops, errdefer on `?`, `return Err`, a last `Err` value and `None`, a deferred String
+use before its drop, a closure, the words as names; hand-checked .out, no leaks),
+compiler/tests/parse_ok/defer.ei, tests/checks/fail/e0309_return_in_defer.ei and
+e0310_errdefer_without_result.ei, compiler/tests/check/fail/e0309_* and
+e0201_defer_capability.ei.
+
 ## Profiling: `--profile`
 
 `eiderc build|run|test <file> --profile[=cpu,mem,conc]` (main.ei: `profile`, parsed by

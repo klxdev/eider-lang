@@ -790,6 +790,7 @@ fn locals_stmt(inout b: B, m: u32, st: u32, container: u32) {
         }
         ast.SExpr => locals_expr(inout b, m, n.a, container)
         ast.SAssert => locals_expr(inout b, m, n.a, container)
+        ast.SDefer => locals_stmt(inout b, m, n.a, container)
         ast.SWhile => {
             locals_expr(inout b, m, n.a, container)
             let lb = label_open(inout b, m, n, "while", container)

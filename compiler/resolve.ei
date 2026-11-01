@@ -1365,6 +1365,7 @@ fn collect_stmt(p: Program, m: u32, s: u32, inout out: Map[u32, bool]) {
         }
         ast.SExpr => collect_expr(p, m, n.a, inout out)
         ast.SAssert => collect_expr(p, m, n.a, inout out)
+        ast.SDefer => collect_stmt(p, m, n.a, inout out)
         ast.SWhile => {
             collect_expr(p, m, n.a, inout out)
             collect_block(p, m, n.b, inout out)

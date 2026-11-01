@@ -1,0 +1,34 @@
+(IFn 3:4 name=f end=3:41
+  param (Param 3:6 name=h
+    type (TName 3:9 name=i32))
+  ret (TGeneric 3:17 name=Result
+    arg (TName 3:24 name=i32)
+    arg (TName 3:29 name=str))
+  cap (Cap 3:39 name=io)
+  body (Block 3:42 end=10:1
+    stmt (SDefer 4:5
+      stmt (SExpr 4:11
+        expr (ECall 4:11 name=print
+          arg (EArg 4:17
+            expr (EIdent 4:17 name=h)))))
+    stmt (SDefer 5:5 err
+      stmt (SExpr 5:14
+        expr (EBlock 5:14
+          block (Block 5:14 end=5:25
+            stmt (SExpr 5:16
+              expr (ECall 5:16 name=print
+                arg (EArg 5:22
+                  expr (EInt 5:22 value=0))))))))
+    stmt (SLet 6:5 name=defer let_mut
+      init (EInt 6:21 value=1))
+    stmt (SAssign 7:5 op=`+=`
+      target (EIdent 7:5 name=defer)
+      value (EInt 7:14 value=1))
+    stmt (SDefer 8:5
+      stmt (SAssign 8:11 op=`=`
+        target (EIdent 8:11 name=x)
+        value (EInt 8:15 value=2)))
+    stmt (SExpr 9:5
+      expr (ECall 9:5 name=Ok
+        arg (EArg 9:8
+          expr (EIdent 9:8 name=defer))))))

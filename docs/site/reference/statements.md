@@ -375,6 +375,99 @@ from the closure.
 `return` can also be the body of a `match` arm, like `break`, `continue` and `assert`:
 `None => return`.
 
+## `defer` and `errdefer`
+
+```text
+defer_stmt = ("defer" | "errdefer") stmt
+```
+
+`defer s` runs the statement `s` when the block it is in is left: at the block's end, and
+on every exit that leaves the block early (`return`, `?`, `break` and `continue`, also of
+a labeled loop further out). Several deferred statements run in reverse order of their
+`defer`s, interleaved with the drops of the block's values: a `defer` runs before the
+values declared before it are dropped, so it can still use them. A `defer` in a loop's
+body runs at the end of each iteration.
+
+```eider
+fn work() uses io {
+    defer print("cleanup 1")
+    defer print("cleanup 2")
+    for i in 0..3 {
+        defer print(f"end of iteration {i}")
+        if i == 1 { continue }
+        print(f"iteration {i}")
+    }
+    print("done")
+}
+
+fn main() uses io {
+    work()
+}
+```
+
+```output
+iteration 0
+end of iteration 0
+end of iteration 1
+iteration 2
+end of iteration 2
+done
+cleanup 2
+cleanup 1
+```
+
+`errdefer s` runs only when the function **fails**: it returns through `?`, or it returns
+(with `return` or as its last value) an `Err` of its `Result` or `None` of its `Option`.
+That is the place to undo partial work. An `errdefer` in a function that returns neither is
+E0310 (the fix makes it a `defer`).
+
+```eider
+fn step(ok: bool) -> Result[i32, str] {
+    if ok { Ok(1) } else { Err("step failed") }
+}
+
+fn setup(first: bool, second: bool) -> Result[i32, str] uses io {
+    print("open")
+    errdefer print("close again")
+    let a = step(first)?
+    let b = step(second)?
+    Ok(a + b)
+}
+
+fn main() uses io {
+    print(setup(true, true))
+    print(setup(true, false))
+}
+```
+
+```output
+open
+Ok(2)
+open
+close again
+Err("step failed")
+```
+
+The deferred statement is any statement: a call, an assignment, a block `defer { ... }`. It
+sees the names visible where the `defer` is written, and is checked there (capabilities
+too: `defer print(x)` needs `io`). It runs after a `return`'s value is computed, so
+`defer` can't change what is returned. It can't leave itself: `return`, `?`, and a `break`
+or `continue` of a loop outside it are E0309 (loops inside it are fine). `defer` and
+`errdefer` are words only at the start of a statement, before a name or `{`: elsewhere they
+are ordinary names.
+
+A trap ends the program at once: deferred statements don't run then (see
+[Runtime behaviour](runtime.md#panic-and-assert)).
+
+```eider,compile_fail=E0309
+fn first(xs: List[i32]) -> i32 {
+    defer { return 0 }
+    xs[0]
+}
+
+fn main() {}
+```
+
 ## `assert`
 
 ```text
@@ -395,6 +488,6 @@ fn main() uses io {
 
 ## Other statements
 
-`let`, assignment, `while`, `for`, `return`, `break`, `continue` and `assert` are the
-statement forms; everything else is an expression statement. Items (`fn`, `type`, ...)
+`let`, assignment, `while`, `for`, `return`, `break`, `continue`, `defer`, `errdefer` and
+`assert` are the statement forms; everything else is an expression statement. Items (`fn`, `type`, ...)
 can't be declared inside a block.

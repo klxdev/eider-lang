@@ -1248,6 +1248,7 @@ fn stmt(inout p: P) -> Result[u32, diag.Diag] {
         exit_label(inout p, inout n)
         return Ok(add(inout p, n))
     }
+    if t.kind == lex.Ident && at_defer(p) { return defer_stmt(inout p) }
     if eat_kw(inout p, intern.K_ASSERT) {
         let mut n = mk(ast.SAssert, t.line, t.col)
         n.a = expr(inout p)?
@@ -2049,6 +2050,28 @@ pub fn pattern(inout p: P) -> Result[u32, diag.Diag] {
         return Ok(add(inout p, n))
     }
     Err(err(p, "expected a pattern"))
+}
+
+// ---- defer (docs/compiler.md, "C8.29: defer and errdefer")
+
+/// `defer` or `errdefer` starting a statement: the word, then a name or `{` (so `defer` stays
+/// an ordinary name everywhere else: `defer(x)`, `defer = 1`, `let defer = 2` keep meaning
+/// what they meant).
+fn at_defer(p: P) -> bool {
+    let k = kind_at(p, p.i + 1)
+    if k != lex.Ident && k != lex.LBrace { return false }
+    let w = intern.name(p.names, p.toks[p.i].val as u32)
+    bytes.eq(w, sys.lit("defer")) || bytes.eq(w, sys.lit("errdefer"))
+}
+
+/// `defer stmt` / `errdefer stmt`: SDefer.
+fn defer_stmt(inout p: P) -> Result[u32, diag.Diag] {
+    let t = cur(p)
+    let mut n = mk(ast.SDefer, t.line, t.col)
+    if bytes.eq(intern.name(p.names, t.val as u32), sys.lit("errdefer")) { n.b = 1 }
+    adv(inout p)
+    n.a = stmt(inout p)?
+    Ok(add(inout p, n))
 }
 
 // ---- f-strings (docs/compiler.md, "C8.28: string literals"; the tokens are lex.ei's)

@@ -642,9 +642,11 @@ a
 early a
 ```
 
-A trap does not unwind: no drops run, and the process ends ([runtime](runtime.md#traps)).
+A trap does not unwind: no drops run, no `defer` runs, and the process ends
+([runtime](runtime.md#traps)). A [`defer`](statements.md#defer-and-errdefer) runs with the
+drops of its block, before the values declared ahead of it are dropped.
 In test mode a failed test's values leak and a lock it held stays held.
 
-> **Note:** planned and not implemented: `defer`/`errdefer` (P0.3), std accessors that
+> **Note:** planned and not implemented: std accessors that
 > return references ("projections", 8.15), and lints for silent copies at escapes and for
 > `Ref` cycles. See the [roadmap](../../design/roadmap.md).

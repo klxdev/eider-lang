@@ -125,8 +125,11 @@ type Test = { kind: u32, place: u32, ty: u32, a: u32, w: fold.Wide, s: List[u8] 
 type Bind = { key: u64, place: u32, ty: u32, line: u32, col: u32, mutable: bool }
 type Lowered = { tests: List[Test], binds: List[Bind] }
 
-/// An owned value in a frame (`l` = NONE once it moved out).
+/// An owned value in a frame (`l` = NONE once it moved out), or with `l` = DEFER a deferred
+/// statement (`ty`: its index in C.defers; "Defer" below).
 type Owned = { l: u32, ty: u32 }
+
+const DEFER: u32 = 4294967294
 
 /// Heads of methods that aren't named types (head_key).
 const H_ARRAY: u64 = 18446744073709551615
@@ -273,6 +276,8 @@ pub type C = {
     /// the label of each loop in loop_bases (sym + 1; 0: none), in step with it
     /// (docs/compiler.md, "C8.22")
     loop_labels: List[u32],
+    /// the `defer` and `errdefer` statements registered in frames ("Defer" below)
+    defers: List[Defer],
 }
 
 /// `impl From[Source] for Target` (module md, IImpl node) and its `from` method (FnDef fd).
@@ -871,21 +876,33 @@ fn pop_frame(inout c: C, drops: bool) {
         while i > m as usize {
             i -= 1
             let o = c.frames[i].copy()
-            if o.l != NONE { drop_local(inout c, o) }
+            if o.l == DEFER {
+                run_defer(inout c, o.ty, EX_OK)
+            } else if o.l != NONE {
+                drop_local(inout c, o)
+            }
         }
     }
     while c.frames.len() as u32 > m { c.frames.pop() }
 }
 
-/// Drop everything in frames `base..` (innermost first) without popping them.
-fn drop_frames_from(inout c: C, base: u32) {
+/// Drop everything in frames `base..` (innermost first) without popping them, and run their
+/// `defer`s (not their `errdefer`s: this exit isn't a failure).
+fn drop_frames_from(inout c: C, base: u32) { unwind(inout c, base, EX_OK) }
+
+/// drop_frames_from for an exit that `ex` says is or may be a failure ("Defer").
+fn unwind(inout c: C, base: u32, ex: u32) {
     if base as usize >= c.fmarks.len() { return }
     let from = c.fmarks[base as usize] as usize
     let mut i = c.frames.len()
     while i > from {
         i -= 1
         let o = c.frames[i].copy()
-        if o.l != NONE { drop_local(inout c, o) }
+        if o.l == DEFER {
+            run_defer(inout c, o.ty, ex)
+        } else if o.l != NONE {
+            drop_local(inout c, o)
+        }
     }
 }
 
@@ -3006,7 +3023,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C {
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
         0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false, Rec(false, List.new(), List.new()),
         List.new(), List.new(), false, Map.new(), false, false, Map.new(), List.new(), lt, no_refs(),
-        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new())
+        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), List.new())
 }
 
 /// Every item of the program in load order (resolve.ei), as (module, node) pairs.
@@ -4046,6 +4063,7 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] {
             Ok(types.UNIT)
         }
         ast.SLetPat => let_pat(inout c, n)
+        ast.SDefer => defer_stmt(inout c, n)
         ast.SAssign => assign(inout c, n)
         ast.SExpr => compile_value(inout c, n.a, Dest(D_DISCARD, 0), NONE)
         ast.SWhile => {
@@ -4734,7 +4752,8 @@ fn compile_value(inout c: C, e: u32, dest: Dest, exp: u32) -> Result[u32, diag.D
     if dest.kind == D_RETURN {
         if !same(c, v.ty, c.ret) { return Err(mismatch(c, n.line, n.col, c.ret, v.ty)) }
         let o = take(inout c, v, n.line)
-        drop_frames_from(inout c, 0)
+        let ex = return_fails(inout c, o, n.line)
+        unwind(inout c, 0, ex)
         emit(inout c, ir.S_RETURN, 0, o + 1, 0, 0, 0, n.line)
         return Ok(v.ty)
     }
@@ -5711,7 +5730,7 @@ fn try_op(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
     let st = ir.list(inout c.ir, rargs)
     let rty = c.ret.copy()
     let rv = emit_val(inout c, ir.S_VARIANT, rbad_i, st, rargs.len() as u32, rty, rty, n.line)
-    drop_frames_from(inout c, 0)
+    unwind(inout c, 0, EX_FAIL)
     emit(inout c, ir.S_RETURN, 0, rv + 1, 0, 0, 0, n.line)
     let then = ir.close(inout c.ir, bm)
     let els = ir.empty_block(inout c.ir)
@@ -6956,6 +6975,7 @@ fn walk_stmt(c: C, st: u32, inout out: List[u64]) {
         }
         ast.SReturn => { if n.a > 0 { walk_expr(c, n.a - 1, inout out) } }
         ast.SAssert => walk_expr(c, n.a, inout out)
+        ast.SDefer => walk_stmt(c, n.a, inout out)
         _ => {}
     }
 }
@@ -7759,4 +7779,229 @@ fn three(a: u32, b: u32, x: u32) -> List[u32] {
     let mut l = two(a, b)
     l.push(x)
     l
+}
+
+// ---- Defer (docs/compiler.md, "C8.29: defer and errdefer")
+//
+// `defer s` registers s in the innermost frame (an Owned with l = DEFER), so it runs where
+// the frame's drops are emitted, in reverse order with them: at the end of its block and on
+// every exit that leaves the block (`return`, `?`, `break`, `continue`, labeled or not). Its
+// code is emitted anew at each of those places, checked again with the names it saw where it
+// was written (the scopes are cut back to that point) and with diagnostics and IDE notes off;
+// the check where it is written (into IR that is thrown away) is the one that reports. An
+// `errdefer` runs only on a failure: an exit through `?`, or a `return` (or a function's last
+// value) whose value is Err (Result) or None (Option), decided at run time by a tag test.
+
+/// A registered `defer`: its statement, its module, the locals and scope marks visible where
+/// it was written (a copy: by the time it runs, its block's scope may be closed), whether it
+/// is an `errdefer`, and its line.
+type Defer = { node: u32, m: u32, scopes: List[Local], marks: List[u32], err: bool, line: u32 }
+
+/// How an exit treats `errdefer`s (unwind): EX_OK skips them, EX_FAIL runs them, and any
+/// other value is the operand of a bool that decides at run time.
+const EX_OK: u32 = 4294967295
+const EX_FAIL: u32 = 4294967294
+
+/// `defer s` / `errdefer s`.
+fn defer_stmt(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
+    let lv = leaves(c, n.a, 0, List.new())
+    if lv != NONE {
+        let x = nd(c, lv)
+        let mut m = s("`")
+        bytes.append(inout m, s(leave_word(c, x)))
+        bytes.append(inout m, s("` can't leave deferred code (`defer`, `errdefer`): it runs while its block is being left"))
+        return Err(errh("E0309", x.line, x.col, m, "compute what is needed before the `defer`, or move the early exit out of it"))
+    }
+    if n.b == 1 && !fails_kind(c, c.ret) {
+        let mut d = errh("E0310", n.line, n.col, q("`errdefer` needs a function that returns a Result or an Option, and this one returns ", ts(c, c.ret), ""), "an `errdefer` runs when the function returns Err (or None); use `defer` to run it on every exit")
+        d.fix = Some(diag.Fix(n.line, n.col, 3, List.new()))
+        return Err(d)
+    }
+    // checked here, into code that never runs: this is the check that reports
+    let mark = ir.open(c.ir)
+    push_frame(inout c)
+    let r = stmt(inout c, n.a)
+    pop_frame(inout c, true)
+    while c.ir.pending.len() as u32 > mark { c.ir.pending.pop() }
+    r?
+    c.defers.push(Defer(n.a, c.am, c.scopes.copy(), c.marks.copy(), n.b == 1, n.line))
+    c.frames.push(Owned(DEFER, (c.defers.len() - 1) as u32))
+    Ok(types.UNIT)
+}
+
+/// Emit deferred statement di here, for an exit that `ex` describes (EX_OK, EX_FAIL or a
+/// bool operand: "How an exit treats `errdefer`s").
+fn run_defer(inout c: C, di: u32, ex: u32) {
+    let d = c.defers[di as usize].copy()
+    if d.err && ex == EX_OK { return }
+    // the names visible where it was written
+    let scopes = c.scopes.copy()
+    let marks = c.marks.copy()
+    c.scopes = d.scopes
+    c.marks = d.marks
+    let mute = c.mute.copy()
+    let rec = c.rec.on.copy()
+    c.mute = true
+    c.rec.on = false
+    if d.err && ex != EX_FAIL {
+        let m = ir.open(c.ir)
+        defer_body(inout c, d.node)
+        let then = ir.close(inout c.ir, m)
+        let els = ir.empty_block(inout c.ir)
+        emit(inout c, ir.S_IF, 0, ex, then, els, 0, d.line)
+    } else {
+        defer_body(inout c, d.node)
+    }
+    c.mute = mute
+    c.rec.on = rec
+    c.scopes = scopes
+    c.marks = marks
+}
+
+/// A deferred statement, in a frame of its own (its temporaries are dropped right after it).
+fn defer_body(inout c: C, st: u32) {
+    push_frame(inout c)
+    match stmt(inout c, st) {
+        Ok(_) => {}
+        Err(_) => {}
+    }
+    pop_frame(inout c, true)
+}
+
+/// Whether a function returning ty can fail in the sense of `errdefer`: a Result or an Option.
+fn fails_kind(c: C, ty: u32) -> bool {
+    if ty == NONE || types.kind(c.t, ty) != types.T_ENUM { return false }
+    let tkey = c.t.defs[types.def_of(c.t, ty).tmpl as usize].key
+    is_root(tkey, c.w.result) || is_root(tkey, c.w.option)
+}
+
+/// For a `return` of operand o: EX_OK when no `errdefer` is waiting (the common case: no
+/// code), else a bool operand, true when o is Err (or None).
+fn return_fails(inout c: C, o: u32, line: u32) -> u32 {
+    let mut any = false
+    for f in c.frames {
+        if f.l == DEFER && c.defers[f.ty as usize].err { any = true }
+    }
+    if !any || !fails_kind(c, c.ret) { return EX_OK }
+    let ty = c.ret.copy()
+    let tkey = c.t.defs[types.def_of(c.t, ty).tmpl as usize].key
+    let bad = if is_root(tkey, c.w.result) { c.w.errv } else { c.w.none }
+    let pl = place_of_op(inout c, o, ty, line)
+    let vi = variant_index(c, ty, bad)
+    emit_val(inout c, ir.S_TAG, pl, vi, 0, ty, types.BOOL, line)
+}
+
+/// The first statement or expression in st that would leave a deferred statement (`return`,
+/// `?`, or a `break`/`continue` of a loop outside it), or NONE. `depth` counts the loops
+/// entered inside it, `labels` their labels (sym + 1). Closures and nested `defer`s are
+/// checked on their own.
+fn leaves(c: C, st: u32, depth: u32, labels: List[u32]) -> u32 {
+    let n = nd(c, st)
+    match n.kind {
+        ast.SReturn => { return st }
+        ast.ETry => { return st }
+        ast.SBreak => { if exits_loop(n, depth, labels) { return st } }
+        ast.SContinue => { if exits_loop(n, depth, labels) { return st } }
+        ast.ELambda => {}
+        ast.SDefer => {}
+        ast.SWhile => {
+            let mut ls = labels.copy()
+            ls.push(n.h)
+            let a = leaves(c, n.a, depth, labels)
+            if a != NONE { return a }
+            return leaves(c, n.b, depth + 1, ls)
+        }
+        ast.SFor => {
+            let mut ls = labels.copy()
+            ls.push(n.h)
+            let a = leaves(c, n.b, depth, labels)
+            if a != NONE { return a }
+            let b = leaves(c, n.c, depth, labels)
+            if b != NONE { return b }
+            return leaves(c, n.d, depth + 1, ls)
+        }
+        ast.SForEach => {
+            let mut ls = labels.copy()
+            ls.push(n.h)
+            let a = leaves(c, n.b, depth, labels)
+            if a != NONE { return a }
+            return leaves(c, n.d, depth + 1, ls)
+        }
+        ast.Block => { return leaves_list(c, n.c, n.d, depth, labels) }
+        ast.SLet => { return leaves(c, n.c, depth, labels) }
+        ast.SLetPat => { return leaves(c, n.c, depth, labels) }
+        ast.SAssign => {
+            let a = leaves(c, n.a, depth, labels)
+            if a != NONE { return a }
+            return leaves(c, n.c, depth, labels)
+        }
+        ast.SExpr => { return leaves(c, n.a, depth, labels) }
+        ast.SAssert => { return leaves(c, n.a, depth, labels) }
+        ast.EIf => {
+            let a = leaves(c, n.a, depth, labels)
+            if a != NONE { return a }
+            let b = leaves(c, n.b, depth, labels)
+            if b != NONE { return b }
+            if n.c > 0 { return leaves(c, n.c - 1, depth, labels) }
+        }
+        ast.EMatch => {
+            let a = leaves(c, n.a, depth, labels)
+            if a != NONE { return a }
+            for i in 0..n.d {
+                let arm = nd(c, at(c, n.c, i))
+                let b = leaves(c, arm.a, depth, labels)
+                if b != NONE { return b }
+            }
+        }
+        ast.EBlock => { return leaves(c, n.a, depth, labels) }
+        ast.EUnsafe => { return leaves(c, n.a, depth, labels) }
+        ast.EUnary => { return leaves(c, n.b, depth, labels) }
+        ast.EBinary => {
+            let a = leaves(c, n.b, depth, labels)
+            if a != NONE { return a }
+            return leaves(c, n.c, depth, labels)
+        }
+        ast.ECall => { return leaves_list(c, n.c, n.d, depth, labels) }
+        ast.EMethod => {
+            let a = leaves(c, n.a, depth, labels)
+            if a != NONE { return a }
+            return leaves_list(c, n.c, n.d, depth, labels)
+        }
+        ast.EArg => { return leaves(c, n.a, depth, labels) }
+        ast.EField => { return leaves(c, n.a, depth, labels) }
+        ast.ECast => { return leaves(c, n.a, depth, labels) }
+        ast.ERepeat => { return leaves(c, n.a, depth, labels) }
+        ast.EHole => { return leaves(c, n.a, depth, labels) }
+        ast.EIndex => {
+            let a = leaves(c, n.a, depth, labels)
+            if a != NONE { return a }
+            return leaves(c, n.b, depth, labels)
+        }
+        ast.EArray => { return leaves_list(c, n.c, n.d, depth, labels) }
+        ast.ETuple => { return leaves_list(c, n.c, n.d, depth, labels) }
+        ast.EFmt => { return leaves_list(c, n.c, n.d, depth, labels) }
+        _ => {}
+    }
+    NONE
+}
+
+fn leaves_list(c: C, start: u32, len: u32, depth: u32, labels: List[u32]) -> u32 {
+    for i in 0..len {
+        let r = leaves(c, at(c, start, i), depth, labels)
+        if r != NONE { return r }
+    }
+    NONE
+}
+
+/// Whether `break`/`continue` n leaves the loops entered inside a deferred statement.
+fn exits_loop(n: ast.Node, depth: u32, labels: List[u32]) -> bool {
+    if n.a == 0 { return depth == 0 }
+    !has_sym(labels, n.a)
+}
+
+fn leave_word(c: C, x: ast.Node) -> str {
+    if x.kind == ast.SReturn { return "return" }
+    if x.kind == ast.ETry { return "?" }
+    if x.kind == ast.SBreak { return "break" }
+    "continue"
 }

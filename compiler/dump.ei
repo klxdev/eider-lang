@@ -251,6 +251,10 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             child(inout out, p, "value", n.c, d)
         }
         ast.SExpr => child(inout out, p, "expr", n.a, d)
+        ast.SDefer => {
+            flag(inout out, "err", n.b == 1)
+            child(inout out, p, "stmt", n.a, d)
+        }
         ast.SWhile => {
             if n.h > 0 { sym(inout out, p, "label", n.h - 1) }
             child(inout out, p, "cond", n.a, d)
