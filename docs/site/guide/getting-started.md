@@ -22,11 +22,14 @@ correctness guarantees of Rust:
 
 The compiler, `eiderc`, is written in Eider and emits portable C11, which your C compiler
 turns into a native binary. Its own C output is committed to the repository as
-`seed/eiderc.c`, so building Eider needs nothing but a C compiler.
+`seed/eiderc.c`, so building the compiler needs nothing but a C compiler; the programs it
+builds go through LLVM IR, which clang compiles.
 
 ## Requirements
 
 - A C11 compiler: `cc`, gcc or clang (set `CC` to choose one).
+- clang 17 or newer, to build programs (`EIDER_LLVM_CC` to choose one): eiderc emits LLVM
+  IR. Without it, eiderc still checks programs (`check`), but can't build them.
 - A POSIX system with threads (`-pthread`). Development happens on x86-64 Linux, which is
   the only platform tested so far.
 

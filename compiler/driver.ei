@@ -624,13 +624,15 @@ pub fn run(c: List[u8], file: List[u8], release: bool, libs: List[List[u8]], arg
     env.exit(code)
 }
 
-// ------------------------------------------------------------------ --backend=llvm
+// ------------------------------------------------------------------ the LLVM backend
 //
-// The LLVM backend's two halves (llvm.ei; docs/compiler.md, "Backends"): the LLVM IR is
+// build, run, test and build --lib (llvm.ei; docs/compiler.md, "Backends"): the LLVM IR is
 // compiled by clang ($EIDER_LLVM_CC, default clang; LLVM 17 or newer, checked first) to an
-// object with -O0/-O2 (and -g), then linked with the C half by $CC exactly as `compile` does
-// (no binary cache: the core objects are still cached). Of EIDER_CFLAGS, clang gets the
-// -fsanitize*/-fno-sanitize* flags (instrumentation of the IR half), -g and -O<n> (after the
+// object with -O0/-O2 (and -g), then linked with the C half (the runtime glue, the trap file
+// table, main and the test driver) by $CC as `compile` does. With the cache on, the
+// executable is cached under bin/<key> like `compile`'s, the key also covering clang's argv
+// and version, EIDER_LLVM_LTO and the IR. Of EIDER_CFLAGS, clang gets the
+// -fsanitize*/-fno-sanitize* flags (instrumentation of the IR), -g and -O<n> (after the
 // driver's own, so `EIDER_CFLAGS=-O0 eiderc build` is -O0 in both halves).
 
 /// clang for the LLVM half; exits 3 when it can't run or is older than LLVM `min`.
@@ -646,7 +648,7 @@ pub fn llvm_cc(min: u64) -> List[u8] uses io, fs, net {
     let out: List[u8] = match proc.run_with(v, proc.captured()) {
         Ok(o) => o.out
         Err(_) => {
-            let mut m = s("--backend=llvm needs clang (LLVM ")
+            let mut m = s("building a program needs clang (LLVM ")
             bytes.append(inout m, bytes.from_u64(min))
             bytes.append(inout m, s(" or newer); cannot run `"))
             bytes.append(inout m, cc)
@@ -667,7 +669,7 @@ pub fn llvm_cc(min: u64) -> List[u8] uses io, fs, net {
         None => {}
     }
     if major < min {
-        let mut m = s("--backend=llvm needs clang (LLVM ")
+        let mut m = s("building a program needs clang (LLVM ")
         bytes.append(inout m, bytes.from_u64(min))
         bytes.append(inout m, s(" or newer), but `"))
         bytes.append(inout m, cc)
@@ -678,12 +680,10 @@ pub fn llvm_cc(min: u64) -> List[u8] uses io, fs, net {
     cc
 }
 
-fn ll_object(ll: List[u8], dir: List[u8], release: bool, debug: bool, pic: bool, lto: bool) -> List[u8] uses io, fs, net {
-    let llfile = fs.join(dir, s("prog.ll"))
-    write_or_fail(llfile, ll)
-    let obj = fs.join(dir, s("prog_ll.o"))
+/// clang's argv for the IR (without the output and input files).
+fn llvm_argv(lcc: List[u8], release: bool, debug: bool, pic: bool, lto: bool) -> List[List[u8]] uses io {
     let mut argv: List[List[u8]] = List.new()
-    argv.push(llvm_cc(17))
+    argv.push(lcc)
     argv.push(s("-c"))
     if release { argv.push(s("-O2")) } else { argv.push(s("-O0")) }
     if debug { argv.push(s("-g")) }
@@ -698,6 +698,14 @@ fn ll_object(ll: List[u8], dir: List[u8], release: bool, debug: bool, pic: bool,
         None => {}
     }
     argv.push(s("-Wno-override-module"))
+    argv
+}
+
+fn ll_object(ll: List[u8], dir: List[u8], release: bool, debug: bool, pic: bool, lto: bool) -> List[u8] uses io, fs, net {
+    let llfile = fs.join(dir, s("prog.ll"))
+    write_or_fail(llfile, ll)
+    let obj = fs.join(dir, s("prog_ll.o"))
+    let mut argv = llvm_argv(llvm_cc(17), release, debug, pic, lto)
     argv.push(s("-o"))
     argv.push(obj)
     argv.push(llfile)
@@ -754,13 +762,14 @@ fn unoptimized() -> bool uses io {
     o0
 }
 
-/// Build the two halves into `exe`. A release build links them with link-time optimization
-/// when clang has a linker for it (lto_linker), so the C half's glue inlines into the IR:
-/// both halves are compiled by clang to bitcode (`-flto`; the C half with `-w`: it is
-/// generated code, checked under $CC by the C backend), the C core's objects stay native, and
-/// clang links everything with `-fuse-ld=lld` (or gold). Otherwise, and at -O0 (also when
-/// EIDER_CFLAGS ends with -O0), $CC compiles the C half and links it with the IR's object.
-fn compile_llvm(c: List[u8], ll: List[u8], dir: List[u8], exe: List[u8], release: bool, libs: List[List[u8]], debug: bool) uses io, fs, net {
+/// Build the two halves into `exe`, or with the cache on take the executable from (or put it
+/// into) <cache>/bin/<key>; returns the executable's path. A release build links them with
+/// link-time optimization when clang has a linker for it (lto_linker), so the C half's glue
+/// inlines into the IR: both halves are compiled by clang to bitcode (`-flto`; the C half
+/// with `-w`: it is generated code), the C core's objects stay native, and clang links
+/// everything with `-fuse-ld=lld` (or gold). Otherwise, and at -O0 (also when EIDER_CFLAGS
+/// ends with -O0), $CC compiles the C half and links it with the IR's object.
+fn compile_llvm(c: List[u8], ll: List[u8], dir: List[u8], exe: List[u8], release: bool, libs: List[List[u8]], debug: bool) -> List[u8] uses io, fs, net {
     let core = fs.join(root(), s("core"))
     let mut cc = cc_argv(core, release)
     if debug { cc.push(s("-g")) }
@@ -768,12 +777,27 @@ fn compile_llvm(c: List[u8], ll: List[u8], dir: List[u8], exe: List[u8], release
     let mut id: List[List[u8]] = List.new()
     if cache.len() > 0 { id = toolchain_id(cc) }
     let inputs = core_inputs(cc, id, core, cache, dir, false)
-    let mut ld: List[u8] = List.new()
-    let mut lcc: List[u8] = List.new()
-    if release && !unoptimized() {
-        lcc = llvm_cc(17)
-        ld = lto_linker(lcc, dir)
+    let lcc = llvm_cc(17)
+    let mut bin: List[u8] = List.new()
+    if cache.len() > 0 {
+        let mut parts = id.copy()
+        parts.push(s("llvm executable"))
+        for x in toolchain_id(llvm_argv(lcc.copy(), release, debug, false, false)) { parts.push(x) }
+        parts.push(bytes.from_u64(inputs.len() as u64))
+        for x in inputs { parts.push(x) }
+        parts.push(bytes.from_u64(libs.len() as u64))
+        for l in libs { parts.push(l) }
+        match env.get(s("EIDER_LLVM_LTO")) {
+            Some(x) => { parts.push(x) }
+            None => { parts.push(List.new()) }
+        }
+        parts.push(c)
+        parts.push(ll)
+        bin = fs.join(fs.join(cache, s("bin")), key(parts))
+        if fs.exists(bin) { return bin }
     }
+    let mut ld: List[u8] = List.new()
+    if release && !unoptimized() { ld = lto_linker(lcc, dir) }
     let lto = ld.len() > 0
     let obj = ll_object(ll, dir, release, debug, false, lto)
     let cfile = fs.join(dir, s("prog.c"))
@@ -804,32 +828,55 @@ fn compile_llvm(c: List[u8], ll: List[u8], dir: List[u8], exe: List[u8], release
         for x in inputs { la.push(x) }
         add_libs(inout la, libs)
         cc_or_fail(la, cfile)
-        return
+    } else {
+        let mut argv = cc.copy()
+        argv.push(s("-o"))
+        argv.push(exe)
+        argv.push(cfile)
+        argv.push(obj)
+        for x in inputs { argv.push(x) }
+        add_libs(inout argv, libs)
+        cc_or_fail(argv, cfile)
     }
-    let mut argv = cc.copy()
-    argv.push(s("-o"))
-    argv.push(exe)
-    argv.push(cfile)
-    argv.push(obj)
-    for x in inputs { argv.push(x) }
-    add_libs(inout argv, libs)
-    cc_or_fail(argv, cfile)
+    if bin.len() > 0 {
+        match fs.mkdir_all(fs.join(cache, s("bin"))) {
+            Ok(_) => {
+                // atomic: a concurrent eiderc finds no binary or a complete one
+                match fs.rename(exe, bin) {
+                    Ok(_) => { return bin }
+                    Err(_) => {}
+                }
+            }
+            Err(_) => {}
+        }
+    }
+    exe
 }
 
-/// `eiderc build --backend=llvm`.
+/// `eiderc build`: an -O2 executable at `out` (default: the source file's stem).
 pub fn build_llvm(c: List[u8], ll: List[u8], file: List[u8], out: List[u8], libs: List[List[u8]], debug: bool) uses io, fs, net, clock {
     let mut dest = out.copy()
     if dest.len() == 0 { dest = stem(file) }
     let dir = work_dir()
-    compile_llvm(c, ll, dir, dest, true, libs, debug)
+    if cache_dir().len() == 0 {
+        compile_llvm(c, ll, dir, dest, true, libs, debug)
+    } else {
+        let path = compile_llvm(c, ll, dir, fs.join(dir, stem(file)), true, libs, debug)
+        // a new file rather than a rewrite of the old one, which may be running
+        fs.remove_all(dest)
+        let mut cp: List[List[u8]] = List.new()
+        cp.push(s("cp"))
+        cp.push(path)
+        cp.push(dest)
+        tool(cp, "cannot copy the program out of the cache")
+    }
     fs.remove_all(dir)
 }
 
-/// `eiderc run|test --backend=llvm`: build in a work directory, run, exit with its code.
+/// `eiderc run|test`: build (or take from the cache), run, exit with the program's code.
 pub fn run_llvm(c: List[u8], ll: List[u8], file: List[u8], release: bool, libs: List[List[u8]], debug: bool, args: List[List[u8]]) uses io, fs, net, clock {
     let dir = work_dir()
-    let exe = fs.join(dir, stem(file))
-    compile_llvm(c, ll, dir, exe, release, libs, debug)
+    let exe = compile_llvm(c, ll, dir, fs.join(dir, stem(file)), release, libs, debug)
     let mut argv: List[List[u8]] = List.new()
     argv.push(exe)
     for x in args { argv.push(x) }
@@ -845,7 +892,7 @@ pub fn run_llvm(c: List[u8], ll: List[u8], file: List[u8], release: bool, libs: 
     env.exit(code)
 }
 
-/// `eiderc build --lib --backend=llvm`: build_lib with the LLVM half's object added.
+/// `eiderc build --lib`: build_lib with the LLVM half's object added.
 pub fn build_lib_llvm(c: List[u8], ll: List[u8], h: List[u8], file: List[u8], out: List[u8], libs: List[List[u8]], debug: bool) uses io, fs, net, clock {
     let dir = work_dir()
     let obj = ll_object(ll, dir, true, debug, true, false)

@@ -1,6 +1,7 @@
 # The compiler: eiderc
 
-`eiderc` compiles Eider to C11 and drives the C compiler. In a checkout, run it as
+`eiderc` compiles Eider to LLVM IR and builds it with clang (17 or newer; see
+[The LLVM backend](llvm.md)). In a checkout, run it as
 `scripts/ei`, which builds `target/eiderc` from `seed/eiderc.c` when needed and passes every
 argument on. This page lists every command, option and environment variable, as
 `compiler/main.ei` defines them (`scripts/ei --help` prints the same list).
@@ -24,10 +25,10 @@ and exit code 2. With no arguments at all, eiderc prints its usage to stderr and
 | Command | What it does |
 |---|---|
 | `check <file>` | Type-check the program (the file and everything it imports). Prints `ok`, or the errors and exits 1. With `--json`, prints nothing on success. |
-| `build <file> [-o out] [-l lib]` | Compile to a native executable at `-O2`. The output is `-o`'s path, by default the file's stem in the working directory. Prints nothing on success. |
+| `build <file> [-o out] [-l lib] [-g]` | Compile to a native executable at `-O2`. The output is `-o`'s path, by default the file's stem in the working directory. Prints nothing on success. |
 | `build --lib <file> [-o name]` | Build `lib<name>.a`, `lib<name>.so` and `<name>.h` from the file's `export fn`s (in `-o`'s directory, else the working directory; `name` defaults to the file's stem) and print `built <a>, <so>, <h>`. The library contains the Eider runtime and the C core. See [FFI](../guide/ffi.md). |
 | `build --wasm <file> [-o name]` | Build `<name>.wasm`, `<name>.d.ts` and `<name>.js` and print `built <wasm>, <d.ts>, <js>`. Needs clang with the wasm32 target and `wasm-ld`. See [WebAssembly](../guide/wasm.md). |
-| `run <file> [--release] [-l lib] [--] [args...]` | Build (C at `-O0`, or `-O2` with `--release`) and run the program with `args`; exits with the program's exit code (128 + n if it was killed by signal n). Words after the file that aren't options go to the program, and so does everything after `--` (`eiderc run server.ei -- --port 80`). `run --lib` and `run --wasm` only build, like `build`. |
+| `run <file> [--release] [-l lib] [--] [args...]` | Build (`-O0`, or `-O2` with `--release`) and run the program with `args`; exits with the program's exit code (128 + n if it was killed by signal n). Words after the file that aren't options go to the program, and so does everything after `--` (`eiderc run server.ei -- --port 80`). `run --lib` and `run --wasm` only build, like `build`. |
 | `test <file> [--release] [-l lib]` | Build the file with a test driver and run its `test` blocks: one `test <name> ... ok` or `FAILED` line each, then `N tests, M failed`; exits 1 if any failed. `--lib` and `--wasm` are ignored. |
 | `test --compile-fail [<dir>]` | Run a compile-fail suite: every `<dir>/fail/*.ei` must fail with the code and position in its `// expect: CODE LINE:COL` header (and its fix, if any, must not lead back to the same error), every `<dir>/pass/*.ei` must compile. Default `<dir>`: `tests/checks`. Exits 1 if any case failed. See [Testing](../guide/testing.md#compile-fail-tests). |
 
@@ -35,12 +36,12 @@ and exit code 2. With no arguments at all, eiderc prints its usage to stderr and
 
 | Command | Prints |
 |---|---|
-| `emit-c <file> [--test] [--lib] [--wasm]` | The generated C. `--test`: with the test driver, as `test` builds it; `--lib`: as a library (no `main`, entry points for the exports); `--wasm`: as a WebAssembly module. |
+| `emit-c <file> [--test] [--lib] [--wasm]` | The program lowered to C (the form the seed is in; `build`, `run` and `test` use the LLVM backend). `--test`: with the test driver, as `test` builds it; `--lib`: as a library (no `main`, entry points for the exports); `--wasm`: as a WebAssembly module. |
 | `emit-header <file> [--wasm]` | The C header for the file's `export fn`s (the file is checked as a library). With `--wasm`, the `.d.ts` and the JavaScript loader, separated by a `\x01` byte. |
 | `lex <file>` | The tokens, one per line: `line:col-endcol kind [value]`. |
 | `parse <file> [--all-errors]` | The syntax tree. With `--all-errors`, every syntax error as a JSON line, then the tree with its error nodes (exit 1 if there were errors). |
-| `ir <file>` | The typed intermediate representation the C is generated from. |
-| `emit-llvm <file> [--test] [--lib] [--coverage]` | The LLVM IR half of `--backend=llvm` (experimental; with `--coverage`, which functions are native and why the others fall back to C). See [The LLVM backend](llvm.md). |
+| `ir <file>` | The typed intermediate representation the LLVM IR (and the C) is generated from. |
+| `emit-llvm <file> [--test] [--lib] [--coverage]` | The LLVM IR that `build`, `run` and `test` compile (with `--coverage`, which functions are native and why any other would fall back to C). See [The LLVM backend](llvm.md). |
 | `caps <file>` | Each package's capability use, one JSON line per (package, capability), with the first function that uses it: `{"package":..., "dir":..., "cap":"fs", "kind":"uses", "fn":"save", "file":"notes.ei", "line":4, "col":70}`; `kind` is `uses`, `extern` or `unsafe`. Imports that can't be loaded are left out silently. See [Capabilities](../guide/capabilities.md). |
 | `ide <file> [--overlay <path> <text>]...` | The analysis an editor uses (`compiler/ide.ei`): files, diagnostics, symbols with their spans and types, references, and the type at each expression. `--overlay <path> <text>` (repeatable) analyses `<path>` as if it contained the contents of the file `<text>`, for unsaved buffers. |
 
@@ -65,7 +66,7 @@ print `eiderc <version>` (`eiderc 0.1.0`) and exit 0: the toolchain's version, f
 |---|---|---|
 | `-o <path>` | `build` | the output file (for `--lib` and `--wasm`, the output name: files are made next to it) |
 | `-l <lib>` | `build`, `run`, `test` | link the C library `<lib>` (repeatable) |
-| `--release` | `run`, `test` | compile the C at `-O2` instead of `-O0` |
+| `--release` | `run`, `test` | compile at `-O2` instead of `-O0` |
 | `--lib` | `check`, `emit-c`, `build`, `run` | treat the file as a library: no `main`, at least one `export fn` |
 | `--wasm` | `check`, `emit-c`, `emit-header`, `build`, `run` | treat the file as a WebAssembly module (implies `--lib`; exports take and return integers and `bool`; no threads) |
 | `--test` | `emit-c` | include the test driver |
@@ -74,8 +75,7 @@ print `eiderc <version>` (`eiderc 0.1.0`) and exit 0: the toolchain's version, f
 | `--max-errors <n>` | every command that reports errors | show at most `n` errors (default 100; `0` shows all) |
 | `--all-errors` | `parse` | every syntax error, then the tree |
 | `--overlay <path> <text>` | `ide` | read `<path>` from the file `<text>` |
-| `--backend=llvm` | `build`, `run`, `test`, `emit-c` | experimental: emit LLVM IR where the LLVM backend can and build with clang 17+ ([The LLVM backend](llvm.md)); `--backend=c` is the default |
-| `-g` | `build`, `run`, `test` with `--backend=llvm` | DWARF line information for the `.ei` files |
+| `-g` | `build`, `run`, `test` | DWARF debug information for the `.ei` files |
 | `--coverage` | `emit-llvm` | the native/fallback report instead of the IR |
 | `--` | `run` | every argument after it goes to the program, even one that looks like an option |
 | `--help`, `-h` | | print the usage and exit |
@@ -131,15 +131,15 @@ exits 101.
 | `EIDER_CACHE` | `off`, or the cache directory (default `$XDG_CACHE_HOME/eider`, else `~/.cache/eider`) |
 | `EIDER_ROOT` | the toolchain, the directory holding `core/` and `std/` (default: the nearest directory above the eiderc binary, symlinks resolved, that holds `core/eider_rt.h`, else the same search from the working directory) |
 | `WASM_CC` | the clang used by `build --wasm` (default `clang`) |
-| `EIDER_LLVM_CC` | the clang used by `--backend=llvm` (default `clang`; LLVM 17 or newer) |
+| `EIDER_LLVM_CC` | the clang that compiles the LLVM IR of `build`, `run` and `test` (default `clang`; LLVM 17 or newer) |
 | `EIDER_HOME` | where package imports find git packages fetched by eider-pkg (default `~/.eider`) |
 | `TMPDIR` | work directories when neither the cache nor `<root>/target/tmp` is writable |
 
 ## The cache
 
 `build`, `run` and `test` cache the compiled C core once per toolchain and each binary by
-a SHA-256 of everything that affects it: the C compiler and its version, the flags,
-`EIDER_CFLAGS`, the `-l` libraries and the generated C. Running an unchanged program again
+a SHA-256 of everything that affects it: the C compiler, clang and their versions, the
+flags, `EIDER_CFLAGS`, the `-l` libraries and the generated LLVM IR and C. Running an unchanged program again
 skips the C compiler entirely. Entries appear atomically, so concurrent runs are safe.
 External libraries' contents and system headers are not part of the key: after changing
 one, run with `EIDER_CACHE=off`. The front end (parsing and checking) runs every time; it

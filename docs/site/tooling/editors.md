@@ -33,7 +33,8 @@ nearest directory with an `eider.toml`.
 
 ### Build it
 
-It needs an eider-lang checkout and a C11 compiler, nothing else:
+It needs an eider-lang checkout, a C11 compiler and clang 17 or newer (eiderc builds
+programs through LLVM IR), nothing else:
 
 ```sh
 cd /path/to/eider-analyzer

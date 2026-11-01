@@ -6,7 +6,8 @@ Eider (`std/`), and the ecosystem's tooling as packages in Eider (`packages/`: e
 eider-doc, the fuzzer, crypto). Libraries and frameworks (eider-json, eider-http, eider-rpc,
 eider-openapi, ...) live in repositories of their own (LAYERS.md, "Where code lives"). The
 compiler, `eiderc` (`compiler/`), is written in Eider and self-hosted: its own C output is
-committed as `seed/eiderc.c`, so building Eider needs only a C11 compiler.
+committed as `seed/eiderc.c`, so building the compiler needs only a C11 compiler; programs
+are built through LLVM IR and need clang 17 or newer.
 
 ```
 cc -std=c11 -O2 -pthread -I core -o eiderc seed/eiderc.c core/eider_rt.c core/eider_core.c   # the whole bootstrap

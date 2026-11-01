@@ -102,10 +102,11 @@ Building Eider must stay cheap to bootstrap and audit. The rule:
   sources once (U22): the libraries in `vendor.lock`, into `.vendor/`, each checked against its
   content hash ("Vendored libraries" above), from a sibling checkout, a mirror or tarball, or
   the network. The compiler never does: it needs only the C compiler.
-- **Optional targets** may need more, and stay optional: `build --wasm` needs clang with the
-  wasm32 target and `wasm-ld`; the experimental `--backend=llvm` (compiler/llvm.ei, on the
-  `experiment/llvm-backend` branch) needs clang 17 or newer, which eiderc only runs when the
-  flag is given (docs/compiler.md, "Backends").
+- **Building programs** needs clang 17 or newer: `build`, `run`, `test` and `build --lib` go
+  through the LLVM backend (compiler/llvm.ei; docs/compiler.md, "Backends"), whose IR clang
+  compiles (U23). Building the compiler itself from the seed still needs only the C compiler,
+  and so do `check`, `emit-c` and the other commands that build nothing. `build --wasm` needs
+  clang with the wasm32 target and `wasm-ld`.
 - **Cryptography is the one scoped exception to "no third-party C libraries"** (decisions U12,
   C1, C2, C140-C146; core/crypto/README.md). Eider never implements primitives: hashes,
   MACs, KDFs, AEADs, key agreement and signatures come from an **OpenSSL-compatible

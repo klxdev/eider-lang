@@ -1,4 +1,4 @@
-/* A C consumer of abi.ei built with `eiderc build --lib [--backend=llvm]` (run.sh): every
+/* A C consumer of abi.ei built with `eiderc build --lib` (run.sh): every
    record crosses by value under the System V x86-64 ABI, as this C compiler implements it. */
 #include <stdio.h>
 #include "abi.h"
