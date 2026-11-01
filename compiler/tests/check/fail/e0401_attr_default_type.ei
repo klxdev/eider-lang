@@ -1,0 +1,3 @@
+// expect: E0401 2:26
+attr json { skip: bool = "yes" }
+fn main() {}

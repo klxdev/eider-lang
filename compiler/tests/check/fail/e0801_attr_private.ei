@@ -1,0 +1,4 @@
+// expect: E0801 3:1
+import eiderc.tests.check.lib.tag
+@tag.secret(level = 2)
+fn main() {}

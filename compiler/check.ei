@@ -273,6 +273,8 @@ pub type C = {
     /// the label of each loop in loop_bases (sym + 1; 0: none), in step with it
     /// (docs/compiler.md, "C8.22")
     loop_labels: List[u32],
+    /// attributes and comptime reflection ("Attributes", "Reflection" below)
+    rx: Reflect,
 }
 
 /// `impl From[Source] for Target` (module md, IImpl node) and its `from` method (FnDef fd).
@@ -3006,7 +3008,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C {
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
         0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false, Rec(false, List.new(), List.new()),
         List.new(), List.new(), false, Map.new(), false, false, Map.new(), List.new(), lt, no_refs(),
-        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new())
+        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), no_reflect())
 }
 
 /// Every item of the program in load order (resolve.ei), as (module, node) pairs.
@@ -3300,6 +3302,8 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
             c.cdefs.push(ConstDef(k, it.m, n.b == 1, pv.ty, false, fold.zero(), pv.op, it.node))
         }
     }
+    // 6b. attributes: declarations, then uses ("Attributes")
+    check_attrs(inout c)
     c.cur_all = true
     c.cur_mod = resolve.NOMOD
     // 7. signatures of every concrete function, then of every concrete method
@@ -7673,3 +7677,321 @@ fn thread_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
     }
     Err(err("E0115", n.line, n.col, q2("type ", ts(c, ty), " has no method `", nm(c, n.b), "`")))
 }
+
+// ---- Attributes (docs/compiler.md, "C8.28: attributes")
+//
+// `attr name { key: T = default, ... }` declares an attribute: a record type (IType h=1)
+// whose keys are integers, bool or str, each with a default or required. `@name(key =
+// value, flag)` on an item, a record field or a variant uses one: `name` is an attribute of
+// the module, or the attribute named like an import alias in the module the alias names
+// (`import json` then `@json(...)`), or `@alias.name(...)`. Each value is a literal or a
+// constant of the key's type; a bare key sets a bool key to true. The checked values are
+// kept (`Reflect.found`), in the attribute's field order with the defaults filled in, for
+// comptime reflection (`attr[A](x)`, "Reflection" below); nothing else reads them.
+// Errors: E0820 an unknown attribute (with a fix when a declared one is close), E0821 an
+// unknown key (with a fix), E0822 a bad declaration or argument, E0401 a value of the wrong
+// type, E0801 a private attribute of another module.
+
+/// An attribute value: an integer (`n`, 64-bit two's complement), a bool (`n`) or a str.
+type ALit = { ty: u32, n: u64, s: List[u8] }
+
+/// The attributes found on node `owner` of module m: attribute `def` (its record type's
+/// definition) with its values by field.
+type AttrUse = { m: u32, owner: u32, def: u32, vals: List[ALit] }
+
+/// A declared attribute: its definition, and per field whether it has a default and which.
+type AttrDef = { def: u32, has: List[bool], vals: List[ALit] }
+
+/// What reflection keeps: declared attributes, the attribute uses, the comptime bindings in
+/// scope ("Reflection" below).
+type Reflect = { defs: List[AttrDef], found: List[AttrUse], binds: List[CtBind] }
+
+fn no_reflect() -> Reflect { Reflect(List.new(), List.new(), List.new()) }
+
+/// Whether type definition di is an attribute's declaration.
+fn is_attr_def(c: C, di: u32) -> bool {
+    let d = c.t.defs[di as usize]
+    if d.is_enum || d.generic > 0 || d.node == NONE { return false }
+    let n = ndm(c, d.md, d.node)
+    n.kind == ast.IType && n.h == 1
+}
+
+fn attr_def_ix(c: C, di: u32) -> u32 {
+    for i in 0..c.rx.defs.len() {
+        if c.rx.defs[i].def == di { return i as u32 }
+    }
+    NONE
+}
+
+/// Levenshtein distance (small names only).
+fn edit_dist(a: List[u8], b: List[u8]) -> u32 {
+    let mut prev: List[u32] = List.new()
+    for j in 0..(b.len() + 1) { prev.push(j as u32) }
+    for i in 0..a.len() {
+        let mut cur: List[u32] = List.new()
+        cur.push((i + 1) as u32)
+        for j in 0..b.len() {
+            let same_b: u32 = if a[i] == b[j] { 0 } else { 1 }
+            let sub = prev[j] + same_b
+            let del = prev[j + 1] + 1
+            let ins = cur[j] + 1
+            let mut best = sub.copy()
+            if del < best { best = del }
+            if ins < best { best = ins }
+            cur.push(best)
+        }
+        prev = cur
+    }
+    prev[b.len()]
+}
+
+/// The closest of `cands` to `w` within a third of its length (rounded up), or empty.
+fn closest(w: List[u8], cands: List[List[u8]]) -> List[u8] {
+    let mut lim = ((w.len() + 2) / 3) as u32
+    if lim < 1 { lim = 1 }
+    let mut best: List[u8] = List.new()
+    let mut bd = lim + 1
+    for x in cands {
+        let d = edit_dist(w, x)
+        if d < bd {
+            bd = d
+            best = x.copy()
+        }
+    }
+    best
+}
+
+/// The constant value of expression e (module m) for a key of type ty, or an error.
+fn attr_value(inout c: C, m: u32, e: u32, ty: u32) -> Result[ALit, diag.Diag] {
+    c.am = m
+    c.cur_mod = m
+    let mark = ir.open(c.ir)
+    let v = expr(inout c, e, ty)?
+    ir.close(inout c.ir, mark)
+    let n = ndm(c, m, e)
+    if poisoned(c, v.ty) { return Err(quiet()) }
+    if !same(c, v.ty, ty) { return Err(mismatch(c, n.line, n.col, ty, v.ty)) }
+    if v.has_k { return Ok(ALit(ty, fold.bits64(v.k), List.new())) }
+    let o = c.ir.ops[v.op as usize]
+    if o.kind == ir.O_BOOL { return Ok(ALit(ty, o.v, List.new())) }
+    if o.kind == ir.O_STR { return Ok(ALit(ty, 0, c.ir.strs[o.a as usize])) }
+    Err(errh("E0822", n.line, n.col, s("attribute values must be literals or constants"), "an attribute is data the compiler keeps; compute other values in code that reads it"))
+}
+
+/// Check attribute declaration `node` (an IType h=1) of module m: key types and defaults.
+fn check_attr_decl(inout c: C, m: u32, node: u32) -> Result[bool, diag.Diag] {
+    let n = ndm(c, m, node)
+    let di = mget(c.tmpl, resolve.item_key(c.p, m, n.a))
+    if di == NONE || c.t.defs[di as usize].node != node || c.t.defs[di as usize].md != m { return Ok(false) }
+    let d = c.t.defs[di as usize].copy()
+    let mut has: List[bool] = List.new()
+    let mut vals: List[ALit] = List.new()
+    let mut res: Result[bool, diag.Diag] = Ok(true)
+    for i in 0..n.f {
+        let fnode = ndm(c, m, atm(c, m, n.e, i))
+        let ft = types.field(c.t, d.start, i).ty
+        let k = types.kind(c.t, ft)
+        if k != types.T_INT && k != types.T_BOOL && k != types.T_STR && !poisoned(c, ft) {
+            let tn = ndm(c, m, fnode.b)
+            res = Err(in_file(c, err("E0822", tn.line, tn.col, q("attribute keys are integers, bool or str, not ", ts(c, ft), "")), m))
+            has.push(false)
+            vals.push(ALit(ft, 0, List.new()))
+            continue
+        }
+        if fnode.c == 0 {
+            has.push(false)
+            vals.push(ALit(ft, 0, List.new()))
+            continue
+        }
+        match attr_value(inout c, m, fnode.c - 1, ft) {
+            Ok(v) => {
+                has.push(true)
+                vals.push(v)
+            }
+            Err(e) => {
+                res = Err(in_file(c, e, m))
+                has.push(true)
+                vals.push(ALit(ft, 0, List.new()))
+            }
+        }
+    }
+    c.rx.defs.push(AttrDef(di, has, vals))
+    res
+}
+
+/// The attribute that Attr node `an` of module m names, or NONE.
+fn attr_named(c: C, m: u32, an: ast.Node) -> u32 {
+    let k = resolve.name_key(c.p, m, an.a, an.b, an.line, an.col)
+    let di = mget(c.tmpl, k)
+    if di != NONE && is_attr_def(c, di) { return di }
+    if an.b == 0 {
+        // `@json`: the attribute `json` of the module the alias `json` names
+        let k2 = resolve.name_key(c.p, m, an.a, an.a + 1, an.line, an.col)
+        let d2 = mget(c.tmpl, k2)
+        if d2 != NONE && is_attr_def(c, d2) && resolve.key_pre(k2) != 0 { return d2 }
+    }
+    NONE
+}
+
+/// The attribute names module m can write unqualified (for E0820's suggestion).
+fn attr_names(c: C, m: u32) -> List[List[u8]] {
+    let mut out: List[List[u8]] = List.new()
+    for di in 0..c.t.defs.len() {
+        if !is_attr_def(c, di as u32) { continue }
+        let d = c.t.defs[di]
+        let sym = resolve.key_sym(d.key)
+        let an = ast.Node(ast.Attr, sym, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1)
+        if attr_named(c, m, an) == di as u32 { out.push(nm(c, sym)) }
+    }
+    out
+}
+
+/// Check the attributes of node `owner` of module m and keep their values.
+fn check_attr_uses(inout c: C, m: u32, owner: u32) -> Result[bool, diag.Diag] {
+    let mut res: Result[bool, diag.Diag] = Ok(true)
+    let mut seen: List[u32] = List.new()
+    for a in ast.attrs_of(c.p.mods[m as usize].ast, owner) {
+        let an = ndm(c, m, a)
+        let r = check_attr_use(inout c, m, owner, an, inout seen)
+        match r {
+            Ok(_) => {}
+            Err(d) => {
+                if fatal(d) { return Err(d) }
+                let d2 = in_file(c, d, m)
+                record(inout c, d2)
+                res = Ok(false)
+            }
+        }
+    }
+    res
+}
+
+fn check_attr_use(inout c: C, m: u32, owner: u32, an: ast.Node, inout seen: List[u32]) -> Result[bool, diag.Diag] {
+    let di = attr_named(c, m, an)
+    let name = nm(c, an.a)
+    if di == NONE {
+        let mut d = err("E0820", an.line, an.col, q("unknown attribute `", name, "`"))
+        let mut best: List[u8] = List.new()
+        if an.b == 0 { best = closest(name, attr_names(c, m)) }
+        if best.len() > 0 {
+            d.help = q("did you mean `@", best, "`?")
+            d.fix = Some(diag.Fix(an.line, an.col + 1, name.len() as u64, best))
+        } else {
+            d.help = s("an attribute is declared with `attr name { ... }` in the package that owns it; import that package to use its attributes")
+        }
+        return Err(d)
+    }
+    let d = c.t.defs[di as usize].copy()
+    c.cur_mod = m
+    c.cur_all = false
+    if !visible(c, d.md, d.public) {
+        return Err(err("E0801", an.line, an.col, q2("attribute `", name, "` is private to module `", mod_shown(c, d.md), "`")))
+    }
+    if seen.contains(di) { return Err(err("E0822", an.line, an.col, q("attribute `", name, "` is given twice here"))) }
+    seen.push(di)
+    let ai = attr_def_ix(c, di)
+    if ai == NONE { return Err(quiet()) }
+    let ad = c.rx.defs[ai as usize].copy()
+    let mut vals = ad.vals.copy()
+    let mut given: List[bool] = List.new()
+    for i in 0..d.len { given.push(false) }
+    let mut keys: List[List[u8]] = List.new()
+    for i in 0..d.len { keys.push(nm(c, types.field(c.t, d.start, i).name)) }
+    for j in 0..an.d {
+        let x = ndm(c, m, atm(c, m, an.c, j))
+        let kn = nm(c, x.a)
+        let fi = match types.find_field(c.t, d, x.a) {
+            Some(i) => i
+            None => {
+                let mut e = err("E0821", x.line, x.col, q2("attribute `", name, "` has no key `", kn, "`"))
+                let best = closest(kn, keys)
+                if best.len() > 0 {
+                    e.help = q("did you mean `", best, "`?")
+                    e.fix = Some(diag.Fix(x.line, x.col, kn.len() as u64, best))
+                } else {
+                    e.help = q("its keys: ", bytes.join(keys, s(", ")), "")
+                }
+                return Err(e)
+            }
+        }
+        if given[fi as usize] { return Err(err("E0822", x.line, x.col, q("key `", kn, "` is given twice"))) }
+        given[fi as usize] = true
+        let ft = types.field(c.t, d.start, fi).ty
+        if x.b == 0 {
+            if types.kind(c.t, ft) != types.T_BOOL {
+                let mut e = err("E0822", x.line, x.col, q2("key `", kn, "` needs a value (", ts(c, ft), ")"))
+                e.help = q("write `", kn, " = ...`")
+                return Err(e)
+            }
+            vals[fi as usize] = ALit(ft, 1, List.new())
+        } else {
+            vals[fi as usize] = attr_value(inout c, m, x.b - 1, ft)?
+        }
+    }
+    for i in 0..d.len {
+        if !given[i as usize] && !ad.has[i as usize] {
+            let e = errh("E0822", an.line, an.col, q2("attribute `", name, "` needs key `", keys[i as usize], "`"), "the attribute's declaration gives it no default")
+            return Err(e)
+        }
+    }
+    c.rx.found.push(AttrUse(m, owner, di, vals))
+    Ok(true)
+}
+
+/// Every attribute declaration, then every attribute use, of every module (pass 6b).
+fn check_attrs(inout c: C) {
+    let its = items(c.p)
+    for it in its {
+        let n = ndm(c, it.m, it.node)
+        if n.kind != ast.IType || n.h != 1 { continue }
+        begin_item(inout c, it)
+        c.cur_all = false
+        let r = check_attr_decl(inout c, it.m, it.node)
+        match r {
+            Ok(_) => {}
+            Err(d) => record(inout c, d)
+        }
+    }
+    for m in c.p.order {
+        let a = c.p.mods[m as usize].ast
+        if a.attrs.len() == 0 { continue }
+        // in source order of the attributes
+        let mut owners: List[u32] = List.new()
+        let mut poss: List[u64] = List.new()
+        for (o, _) in a.attrs {
+            let first = ast.attrs_of(a, o)[0]
+            let fnode = a.nodes[first as usize]
+            owners.push(o)
+            poss.push((fnode.line as u64) * 4294967296 + fnode.col as u64)
+        }
+        let mut done: List[bool] = List.new()
+        for i in 0..owners.len() { done.push(false) }
+        for r in 0..owners.len() {
+            let mut best = owners.len()
+            for i in 0..owners.len() {
+                if !done[i] && (best == owners.len() || poss[i] < poss[best]) { best = i }
+            }
+            done[best] = true
+            c.err_mod = m
+            c.seen = List.new()
+            check_attr_uses(inout c, m, owners[best])
+        }
+    }
+    c.cur_all = true
+    c.cur_mod = resolve.NOMOD
+}
+
+/// The values of attribute di on node `owner` of module m, if it has it.
+fn attr_use(c: C, m: u32, owner: u32, di: u32) -> Option[List[ALit]] {
+    for u in c.rx.found {
+        if u.m == m && u.owner == owner && u.def == di { return Some(u.vals) }
+    }
+    None
+}
+
+// ---- Reflection (docs/compiler.md, "C8.29: comptime reflection")
+
+/// A comptime binding in scope: `comptime for` variable `key` (declared at scopes length
+/// `mark`), a field (B_FIELD: field `idx` of record `ty`, or of variant `vi` of enum `ty`)
+/// or a variant (B_VARIANT: variant `idx` of enum `ty`).
+type CtBind = { key: u64, mark: u32, kind: u32, ty: u32, idx: u32, vi: u32 }

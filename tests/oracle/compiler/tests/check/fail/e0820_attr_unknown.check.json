@@ -1,0 +1,1 @@
+{"error":"E0820","span":{"file":"compiler/tests/check/fail/e0820_attr_unknown.ei","line":4,"col":1},"message":"unknown attribute `jsno`","help":"did you mean `@json`?","fix":{"at":{"line":4,"col":2},"delete":4,"insert":"json"}}

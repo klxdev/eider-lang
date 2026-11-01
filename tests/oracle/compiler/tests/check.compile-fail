@@ -280,6 +280,8 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_array_hint.ei          E0401 at 3:30
   ok   e0401_assert_not_bool.ei     E0401 at 3:12
   ok   e0401_assign_mismatch.ei     E0401 at 4:14
+  ok   e0401_attr_default_type.ei   E0401 at 2:26
+  ok   e0401_attr_value_type.ei     E0401 at 4:18
   ok   e0401_bind_never.ei          E0401 at 3:13
   ok   e0401_bind_unit.ei           E0401 at 4:13
   ok   e0401_bit_assign_string.ei   E0401 at 4:5
@@ -581,6 +583,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0701_heap_map_key_rec.ei    E0701 at 3:20
   ok   e0701_thr_map_key.ei         E0701 at 3:12
   ok   e0801_alias_private.ei       E0801 at 5:12
+  ok   e0801_attr_private.ei        E0801 at 3:1
   ok   e0801_mod_private_const.ei   E0801 at 4:11
   ok   e0801_mod_private_fn.ei      E0801 at 3:21
   ok   e0801_mod_private_fn_via_alias.ei E0801 at 4:13
@@ -635,8 +638,19 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0809_not_a_dependency.ei    E0809 at 3:1
   ok   e0810_no_lock.ei             E0810 at 2:1
   ok   e0811_series_import.ei       E0811 at 4:1
+  ok   e0820_attr_none_close.ei     E0820 at 2:1
+  ok   e0820_attr_qualified.ei      E0820 at 3:1
+  ok   e0820_attr_unknown.ei        E0820 at 4:1 (fix compiles)
+  ok   e0821_attr_key.ei            E0821 at 4:11 (fix compiles)
+  ok   e0822_attr_bare_key.ei       E0822 at 3:7
+  ok   e0822_attr_key_twice.ei      E0822 at 3:20
+  ok   e0822_attr_key_type.ei       E0822 at 2:17
+  ok   e0822_attr_not_const.ei      E0822 at 3:15
+  ok   e0822_attr_required.ei       E0822 at 3:1
+  ok   e0822_attr_twice.ei          E0822 at 3:7
 
 compile-pass tests (compiler/tests/check/pass)
+  ok   attrs.ei
   ok   c822_label_liveness.ei
   ok   c822_label_reused.ei
   ok   c84_shadow_ok.ei
@@ -711,6 +725,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-709 passed, 0 failed; error-code coverage 52/58
+723 passed, 0 failed; error-code coverage 55/61
 codes without a compile-fail test: E0302 E0402 E0806 E0808 E0812 E0813
 --- exit 0

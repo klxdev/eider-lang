@@ -16,6 +16,13 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
   a help. A value of a type with its own `Drop` can't be made during evaluation, and calls
   nest at most 1,000 deep.
 
+- **Attributes** (#19): `attr json { name: str = "", skip: bool = false }` declares an
+  attribute, a record type the package that owns it defines; `@json(name = "id")`,
+  `@json(skip)` and `@alias.name(...)` put one on an item, a record field or a variant.
+  Arguments are checked constants; an unknown attribute or key is an error with a fix
+  (E0820, E0821), a bad argument E0822. Attributes are inert: only comptime reflection
+  reads them.
+
 ## 0.2.0
 
 LLVM is Eider's only backend, and the compiler bootstraps from WebAssembly (U23, U24). Not

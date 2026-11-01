@@ -1,0 +1,1 @@
+{"error":"E0821","span":{"file":"compiler/tests/check/fail/e0821_attr_key.ei","line":4,"col":11},"message":"attribute `json` has no key `nmae`","help":"did you mean `name`?","fix":{"at":{"line":4,"col":11},"delete":4,"insert":"name"}}

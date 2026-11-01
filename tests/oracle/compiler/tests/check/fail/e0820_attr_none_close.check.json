@@ -1,0 +1,1 @@
+{"error":"E0820","span":{"file":"compiler/tests/check/fail/e0820_attr_none_close.ei","line":2,"col":1},"message":"unknown attribute `inline`","help":"an attribute is declared with `attr name { ... }` in the package that owns it; import that package to use its attributes"}

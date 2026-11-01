@@ -1,0 +1,1 @@
+{"error":"E0822","span":{"file":"compiler/tests/check/fail/e0822_attr_key_type.ei","line":2,"col":17},"message":"attribute keys are integers, bool or str, not List[i32]"}

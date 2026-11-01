@@ -1,0 +1,1 @@
+{"error":"E0822","span":{"file":"tests/checks/fail/e0822_attribute_argument.ei","line":3,"col":1},"message":"attribute `route` needs key `path`","help":"the attribute's declaration gives it no default"}

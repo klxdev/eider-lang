@@ -1,0 +1,6 @@
+// expect: E0820 4:1
+attr json { name: str = "" }
+
+@jsno(name = "p")
+type A = { x: i32 }
+fn main() {}

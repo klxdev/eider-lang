@@ -35,6 +35,7 @@
   - [Concurrency](reference/concurrency.md)
   - [C interop (FFI)](reference/ffi.md)
   - [Compile-time evaluation](reference/comptime.md)
+  - [Attributes](reference/attributes.md)
   - [Modules and packages](reference/modules.md)
   - [Runtime behaviour](reference/runtime.md)
   - [Error codes](reference/errors.md)

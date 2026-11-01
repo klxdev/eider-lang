@@ -1,0 +1,1 @@
+{"error":"E0821","span":{"file":"tests/checks/fail/e0821_unknown_attribute_key.ei","line":3,"col":7},"message":"attribute `json` has no key `nam`","help":"did you mean `name`?","fix":{"at":{"line":3,"col":7},"delete":3,"insert":"name"}}

@@ -261,6 +261,7 @@ fn item_kw(v: u64) -> bool {
 /// `type const trait impl import test pub extern export module`.
 fn starts_item(p: P, j: usize) -> bool {
     let t = p.toks[j]
+    if t.kind == lex.At { return true }
     if !(t.kind == lex.Ident) { return false }
     if t.val == intern.K_FN as u64 { return kind_at(p, j + 1) == lex.Ident }
     if t.val == intern.K_UNSAFE as u64 { return kw_at(p, j + 1, intern.K_FN) }
@@ -594,8 +595,118 @@ pub fn program(inout p: P) {
     p.ast.items_len = items.len() as u32
 }
 
-/// One item (or `module` line), appended to `items`.
+/// One item (or `module` line), appended to `items`, with the attributes before it.
 fn item(inout p: P, inout items: List[u32]) -> Result[bool, diag.Diag] {
+    let attrs = attributes(inout p)?
+    if attrs.len() == 0 { return item_body(inout p, inout items) }
+    if is_kw(p, intern.K_MODULE) || is_kw(p, intern.K_IMPORT) || is_kw(p, intern.K_TEST) {
+        return Err(err(p, "attributes go on a `type`, `attr`, `fn`, `const`, `trait` or `impl`, a record field or a variant"))
+    }
+    let before = items.len()
+    item_body(inout p, inout items)?
+    if items.len() > before { attach(inout p, items[items.len() - 1], attrs) }
+    Ok(true)
+}
+
+// ---- attributes (docs/compiler.md, "C8.28: attributes")
+
+/// `@name`, `@name(key = value, flag)`, `@alias.name(...)`.
+fn attribute(inout p: P) -> Result[u32, diag.Diag] {
+    let at = expect(inout p, lex.At)?
+    let nm = ident(inout p)?
+    let mut n = mk(ast.Attr, at.line, at.col)
+    n.a = nm.sym
+    match qualified(inout p, nm.sym) {
+        Some(q) => {
+            n.a = q.sym
+            n.b = p.qual + 1
+        }
+        None => {}
+    }
+    let mut args: List[u32] = List.new()
+    if eat(inout p, lex.LParen) {
+        n.e = 1
+        while true {
+            skip_nl(inout p)
+            if eat(inout p, lex.RParen) { break }
+            let k = ident(inout p)?
+            let mut a = mk(ast.AttrArg, k.line, k.col)
+            a.a = k.sym
+            if eat(inout p, lex.Eq) {
+                skip_nl(inout p)
+                a.b = expr(inout p)? + 1
+            }
+            args.push(add(inout p, a))
+            skip_nl(inout p)
+            if !eat(inout p, lex.Comma) && !is(p, lex.RParen) { return Err(err(p, "expected `,` or `)`")) }
+        }
+    }
+    n.c = list(inout p, args)
+    n.d = args.len() as u32
+    let e = prev_end(p)
+    n.end_line = e.line
+    n.end_col = e.col
+    Ok(add(inout p, n))
+}
+
+/// The attributes before an item, field or variant (each followed by newlines or not).
+fn attributes(inout p: P) -> Result[List[u32], diag.Diag] {
+    let mut out: List[u32] = List.new()
+    while is(p, lex.At) {
+        out.push(attribute(inout p)?)
+        skip_nl(inout p)
+    }
+    Ok(out)
+}
+
+fn attach(inout p: P, owner: u32, attrs: List[u32]) {
+    if attrs.len() == 0 { return }
+    let start = list(inout p, attrs)
+    p.ast.attrs.insert(owner, (start as u64) * 4294967296 + attrs.len() as u64)
+}
+
+/// Whether the tokens start `attr name {`: `attr` is a word only there.
+fn at_attr_decl(p: P) -> bool {
+    if !is(p, lex.Ident) || !name_at(p, p.i + 1) || kind_at(p, p.i + 2) != lex.LBrace { return false }
+    bytes.eq(intern.name(p.names, cur(p).val as u32), sys.lit("attr"))
+}
+
+/// `attr name { key: Type = default, ... }`: an attribute's declaration, a record type
+/// whose fields may have defaults (IType h=1).
+fn attr_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
+    adv(inout p)
+    let name = ident(inout p)?
+    expect(inout p, lex.LBrace)?
+    let mut members: List[u32] = List.new()
+    while true {
+        skip_nl(inout p)
+        if eat(inout p, lex.RBrace) { break }
+        let f = ident(inout p)?
+        expect(inout p, lex.Colon)?
+        let ft = ty(inout p)?
+        let mut fnode = mk(ast.Field, f.line, f.col)
+        fnode.a = f.sym
+        fnode.b = ft
+        if eat(inout p, lex.Eq) {
+            skip_nl(inout p)
+            fnode.c = expr(inout p)? + 1
+        }
+        members.push(add(inout p, fnode))
+        skip_nl(inout p)
+        if !eat(inout p, lex.Comma) && !is(p, lex.RBrace) { return Err(err(p, "expected `,` or `}`")) }
+    }
+    let empty: List[u32] = List.new()
+    let mut n = mk(ast.IType, name.line, name.col)
+    n.a = name.sym
+    n.b = public
+    n.c = list(inout p, empty)
+    n.e = list(inout p, members)
+    n.f = members.len() as u32
+    n.h = 1
+    Ok(add(inout p, n))
+}
+
+fn item_body(inout p: P, inout items: List[u32]) -> Result[bool, diag.Diag] {
     if is_kw(p, intern.K_MODULE) {
         adv(inout p)
         ident(inout p)?
@@ -661,6 +772,8 @@ fn item(inout p: P, inout items: List[u32]) -> Result[bool, diag.Diag] {
     } else if is_kw(p, intern.K_IMPL) {
         if public { return Err(err(p, "`pub` doesn't apply to `impl`; methods follow the visibility of their type")) }
         items.push(impl_decl(inout p)?)
+    } else if at_attr_decl(p) {
+        items.push(attr_decl(inout p, pf)?)
     } else {
         return Err(err(p, "expected `fn`, `type`, `const`, `trait`, `impl`, `import` or `test`"))
     }
@@ -736,13 +849,16 @@ fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
         while true {
             skip_nl(inout p)
             if eat(inout p, lex.RBrace) { break }
+            let fattrs = attributes(inout p)?
             let f = ident(inout p)?
             expect(inout p, lex.Colon)?
             let t = ty(inout p)?
             let mut fnode = mk(ast.Field, f.line, f.col)
             fnode.a = f.sym
             fnode.b = t
-            members.push(add(inout p, fnode))
+            let fid = add(inout p, fnode)
+            attach(inout p, fid, fattrs)
+            members.push(fid)
             skip_nl(inout p)
             if !eat(inout p, lex.Comma) && !is(p, lex.RBrace) && !is_nl(p) { return Err(err(p, "expected `,` or `}`")) }
         }
@@ -750,6 +866,7 @@ fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
         while true {
             expect(inout p, lex.Pipe)?
             skip_nl(inout p)
+            let vattrs = attributes(inout p)?
             let v = ident(inout p)?
             let mut fields: List[u32] = List.new()
             if eat(inout p, lex.LParen) {
@@ -777,7 +894,9 @@ fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
             vn.a = v.sym
             vn.c = list(inout p, fields)
             vn.d = fields.len() as u32
-            members.push(add(inout p, vn))
+            let vid = add(inout p, vn)
+            attach(inout p, vid, vattrs)
+            members.push(vid)
             if peek_nonnl_is(p, lex.Pipe) {
                 skip_nl(inout p)
             } else {

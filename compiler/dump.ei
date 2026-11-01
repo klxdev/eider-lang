@@ -203,6 +203,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             child(inout out, p, "body", n.a, d)
         }
         ast.EIf => {
+            flag(inout out, "comptime", n.d == 1)
             child(inout out, p, "cond", n.a, d)
             child(inout out, p, "then", n.b, d)
             opt(inout out, p, "else", n.c, d)
@@ -214,6 +215,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
         }
         ast.EArg => {
             flag(inout out, "inout", n.b == 1)
+            flag(inout out, "spread", n.c == 1)
             child(inout out, p, "expr", n.a, d)
         }
         ast.LParam => {
@@ -264,6 +266,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             child(inout out, p, "body", n.d, d)
         }
         ast.SForEach => {
+            flag(inout out, "comptime", n.g == 1)
             if n.h > 0 { sym(inout out, p, "label", n.h - 1) }
             if n.e > 0 { child(inout out, p, "pat", n.e - 1, d) } else { sym(inout out, p, "var", n.a) }
             child(inout out, p, "iter", n.b, d)
@@ -297,6 +300,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
         ast.IType => {
             sym(inout out, p, "name", n.a)
             flag(inout out, "pub", n.b == 1)
+            flag(inout out, "attr", n.h == 1)
             kids(inout out, p, "generic", n.c, n.d, d)
             kids(inout out, p, "member", n.e, n.f, d)
             opt(inout out, p, "alias", n.g, d)
@@ -317,6 +321,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
         ast.Field => {
             sym(inout out, p, "name", n.a)
             child(inout out, p, "type", n.b, d)
+            opt(inout out, p, "default", n.c, d)
         }
         ast.GParam => {
             sym(inout out, p, "name", n.a)
@@ -368,6 +373,26 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             flag(inout out, "namespace", n.c == parse.IMPORT_NAMESPACE)
             flag(inout out, "implied", n.c == parse.IMPORT_IMPLIED)
         }
+        ast.Attr => {
+            sym(inout out, p, "name", n.a)
+            qual(inout out, p, n.b)
+            kids(inout out, p, "arg", n.c, n.d, d)
+        }
+        ast.AttrArg => {
+            sym(inout out, p, "key", n.a)
+            opt(inout out, p, "value", n.b, d)
+        }
+        ast.EReflect => {
+            let what = ["fields", "variants", "attr", "has_attr"]
+            put(inout out, " what=")
+            put(inout out, what[n.a as usize])
+            opt(inout out, p, "attr", n.c, d)
+            child(inout out, p, "target", n.b, d)
+        }
+        ast.EFieldAt => {
+            child(inout out, p, "recv", n.a, d)
+            child(inout out, p, "field", n.b, d)
+        }
         ast.EError => end(inout out, n)
         ast.SError => end(inout out, n)
         ast.IError => {
@@ -376,6 +401,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             end(inout out, n)
         }
     }
+    for a in ast.attrs_of(p.ast, id) { child(inout out, p, "attribute", a, d) }
     out.push(41)
 }
 

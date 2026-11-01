@@ -3460,6 +3460,43 @@ an imported str constant passes (comptime_mod_str.ei), the E0807 message names s
 cases cover a cycle and a self-reference (E0110 with the help), Drop and runaway recursion
 (E0807).
 
+## C8.28: attributes
+
+Wave 5 (#19, research #97; decisions C8, C510-C513). Code: lex.ei (`At`), parse.ei
+("attributes": `attribute`, `attributes`, `attach`, `at_attr_decl`, `attr_decl`; fields and
+variants), ast.ei (`Attr`, `AttrArg`, `Ast.attrs`, `attrs_of`, IType h=1, Field c), dump.ei,
+check.ei ("Attributes": `check_attrs`, pass 6b); tests: compiler/tests/check/{fail,pass}
+`*attr*`, compiler/tests/parse_ok/attrs.ei, tests/checks `*attribute*`; docs:
+docs/site/reference/attributes.md.
+
+**Syntax.** `@name`, `@name(key = value, flag)`, `@alias.name(...)`, before an item (the
+newlines after an attribute are skipped), before a record field and after a variant's `|`.
+`attr name { key: T = default, ... }` declares one: `attr` is an identifier, and a word only
+where an item starts with `attr`, a name and `{` (no keyword, so `attr` stays a name; the
+reflection call `attr[A](x)` is another place it is read). The lexer's `@` was a bad
+character before: compiler/tests/lex/bad_char_at.ei became bad_char_dollar.ei.
+
+**Tree.** An attribute is an `Attr` node (name, qualifier, `AttrArg` list, whether it had
+parentheses) and an argument an `AttrArg` (key, value+1; 0 for a bare key). Which node an
+attribute belongs to is a side table, `Ast.attrs` (node id -> its Attr nodes in `extra`),
+rather than a slot: IFn has none free, and no other pass needs to see them. A declaration is
+an IType record with h=1 whose Field nodes have c = default+1. `eiderc parse` prints both
+(`attr` flag, `default`, `attribute` children).
+
+**Checking (pass 6b, after constants).** A declaration is a record type like any other (the
+type passes register and fill it, so `json(...)` constructs one); 6b checks its keys
+(integer types, bool, str: E0822) and defaults (constants of the key's type: E0401, E0822),
+then every attribute use of every module, in source order: the name (the module's own
+attribute; else, unqualified, the attribute named like an import alias in the module the
+alias names, which is how `import json` gives `@json`; else qualified; E0820 with a fix to
+the closest name within a third of its length, E0801 for a private one), each key (E0821
+with a fix, E0822 twice), each value (a literal or a constant: E0401, E0822; a bare key is
+`true` for a bool key, else E0822), required keys (E0822) and the attribute given twice on
+one node (E0822). Values are folded like constants into the scratch IR function and kept as
+`ALit`s in `Reflect.found` (module, owner node, attribute, values in key order with the
+defaults filled in). Nothing else in the checker or the backends reads them: attributes
+change no IR and no output, only what comptime reflection ("C8.29") makes of them.
+
 ## Profiling: `--profile`
 
 `eiderc build|run|test <file> --profile[=cpu,mem,conc]` (main.ei: `profile`, parsed by

@@ -24,9 +24,13 @@ sep = NL | ";"
 ## Items
 
 ```text
-file        = { sep } { item { sep } }
+file        = { sep } { attrs item { sep } }
+attrs       = { attribute { NEWLINE } }
+attribute   = "@" IDENT ["." IDENT] [ "(" [ attr_arg { "," attr_arg } [","] ] ")" ]
+attr_arg    = IDENT ["=" expr]
 item        = import | module_line
             | ["pub"] type_item
+            | ["pub"] attr_item
             | ["pub"] fn_item
             | ["pub"] "unsafe" fn_item
             | ["pub"] "extern" "\"c\"" fn_signature
@@ -49,9 +53,11 @@ path        = IDENT ["." IDENT]
 
 type_item   = "type" IDENT [generics] "=" ( record_body | variants | type )
 record_body = "{" [ field { "," field } [","] ] "}"
-field       = IDENT ":" type
+field       = attrs IDENT ":" type
 variants    = variant { "|" variant }
-variant     = "|" IDENT [ "(" [ vfield { "," vfield } [","] ] ")" ]
+variant     = "|" attrs IDENT [ "(" [ vfield { "," vfield } [","] ] ")" ]
+attr_item   = "attr" IDENT "{" [ attr_key { "," attr_key } [","] ] "}"
+attr_key    = IDENT ":" type ["=" expr]
 vfield      = [IDENT ":"] type
 
 fn_item      = fn_signature block
@@ -65,6 +71,9 @@ impl_item   = "impl" [generics] type ["for" type] "{" { sep } { fn_item { sep } 
 test_item   = "test" string block
 ```
 
+- `attr` is not a keyword: it starts an `attr_item` only when an identifier and `{` follow
+  it at the start of an item. Attributes go before `type`, `attr`, `fn`, `const`, `trait`
+  and `impl` items (not `import`, `module` or `test`); see [Attributes](attributes.md).
 - `variants` is written with a leading `|` before every variant, the first included
   (`type A = X | Y` is E0001 "expected `|`"; `type A = X` is an alias of `X`). Variants may
   be on separate lines.

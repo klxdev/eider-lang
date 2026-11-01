@@ -1,0 +1,3 @@
+// expect: E0820 2:1
+@inline
+fn main() {}

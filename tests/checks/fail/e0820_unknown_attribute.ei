@@ -1,0 +1,5 @@
+// expect: E0820 4:1
+attr json { name: str = "" }
+
+@jsno(name = "id")
+fn main() {}

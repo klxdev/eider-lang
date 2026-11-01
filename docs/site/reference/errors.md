@@ -1681,3 +1681,51 @@ fn main() uses io, fs { out.outln(fs.join("a".bytes(), "b".bytes())) }
 ```output
 a/b
 ```
+
+## E0820
+
+**An unknown attribute**: `@name` where no attribute `name` is declared in the module, by
+the module an import alias `name` names, or (for `@alias.name`) by that module. Reported at
+the `@`. When a declared attribute is close, the fix renames it. See
+[Attributes](attributes.md).
+
+```eider,compile_fail=E0820
+attr json { name: str = "" }
+
+@jsno(name = "id")
+fn main() {}
+```
+
+Fix: use a declared attribute (`@json`), or import the package that declares it.
+
+## E0821
+
+**An unknown attribute key**: an argument names a key the attribute's declaration doesn't
+have. Reported at the key, with a fix when a key is close (else the help lists the keys).
+
+```eider,compile_fail=E0821
+attr json { name: str = "" }
+
+@json(nam = "id")
+fn main() {}
+```
+
+Fix: use one of the declared keys.
+
+## E0822
+
+**A bad attribute declaration or argument**: a key whose type isn't an integer type, `bool`
+or `str`; a value that isn't a literal or a constant; a key given twice, or an attribute
+given twice on one item; a bare key (`@json(skip)`) that isn't a `bool`; a key without a
+default that the use leaves out. Reported at the declaration's type, the value, the key or
+the `@`.
+
+```eider,compile_fail=E0822
+attr route { path: str }
+
+@route
+fn main() {}
+```
+
+Fix: give the key (`@route(path = "/")`), or a default in the declaration
+(`attr route { path: str = "/" }`).

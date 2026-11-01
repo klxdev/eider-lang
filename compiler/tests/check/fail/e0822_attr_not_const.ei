@@ -1,0 +1,5 @@
+// expect: E0822 3:15
+attr json { level: i32 = 0 }
+@json(level = f())
+fn main() {}
+fn f() -> i32 { 3 }

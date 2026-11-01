@@ -1,9 +1,9 @@
-{"error":"E0001","span":{"file":"compiler/tests/recover/lex_and_parse.src","line":3,"col":15},"message":"unexpected character `@`"}
 {"error":"E0001","span":{"file":"compiler/tests/recover/lex_and_parse.src","line":9,"col":13},"message":"unterminated string literal"}
 {"error":"E0001","span":{"file":"compiler/tests/recover/lex_and_parse.src","line":10,"col":18},"message":"unknown escape sequence"}
 {"error":"E0001","span":{"file":"compiler/tests/recover/lex_and_parse.src","line":11,"col":13},"message":"integer literal too large"}
 {"error":"E0001","span":{"file":"compiler/tests/recover/lex_and_parse.src","line":12,"col":13},"message":"expected hex digits after 0x"}
 {"error":"E0001","span":{"file":"compiler/tests/recover/lex_and_parse.src","line":21,"col":1},"message":"unterminated block comment"}
+{"error":"E0001","span":{"file":"compiler/tests/recover/lex_and_parse.src","line":3,"col":15},"message":"expected a newline or `;` after statement"}
 {"error":"E0001","span":{"file":"compiler/tests/recover/lex_and_parse.src","line":4,"col":17},"message":"expected an expression"}
 {"error":"E0001","span":{"file":"compiler/tests/recover/lex_and_parse.src","line":17,"col":13},"message":"expected an expression"}
 (IFn 2:4 name=a end=2:14
@@ -11,7 +11,7 @@
   body (Block 2:15 end=6:1
     stmt (SLet 3:5 name=x
       init (EInt 3:13 value=5))
-    stmt (SError 3:17 end=3:18)
+    stmt (SError 3:15 end=3:18)
     stmt (SError 4:5 end=4:20)
     stmt (SExpr 5:5
       expr (EIdent 5:5 name=x))))

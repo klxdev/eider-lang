@@ -41,6 +41,18 @@
 //            ITrait a=sym b=public [c/d]=IFn   IImpl a=trait TName+1 b=target type [c/d]=GParam [e/f]=IFn
 //                (the trait is a TGeneric for `impl From[E] for T`)
 //            IConst a=sym b=public c=type d=value e=comptime
+//            (IType h=1: an attribute declaration `attr name { key: T = default }`, a record
+//                whose Field nodes have c=default+1; docs/compiler.md, "C8.28: attributes")
+// attributes Attr a=name sym b=qual+1 [c/d]=AttrArg e=1 with parentheses
+//            AttrArg a=key sym b=value+1 (0: a bare key, `@json(skip)`)
+//            the attributes of an item, field or variant are `attrs`: node id -> start * 2^32
+//                + count of its Attr nodes in extra
+// reflection (docs/compiler.md, "C8.29: comptime reflection")
+//            SForEach g=1: `comptime for`, b=EReflect; as a call argument it is the EArg's a,
+//                with EArg c=1 (one argument per iteration)
+//            EIf d=1: `comptime if`
+//            EReflect a=R_* b=target type node c=attribute TName+1 (R_ATTR, R_HAS_ATTR)
+//            EFieldAt a=receiver b=the reflected field (`x.[f]`)
 //            ITest a=name str b=block      IImport a=path str b=alias sym+1
 // errors     (only from parse.parse_all, so never in a tree that parsed without errors; the
 //            span runs from the first skipped token to the end of the last one)
@@ -60,6 +72,7 @@ pub type Kind =
     | IType | Variant | VField | Field | GParam | IFn | Param | Cap | ITrait | IImpl | IConst
     | ITest | IImport
     | EError | SError | IError
+    | Attr | AttrArg | EReflect | EFieldAt
 
 pub type Node = {
     kind: Kind,
@@ -67,7 +80,13 @@ pub type Node = {
     line: u32, col: u32, end_line: u32, end_col: u32,
 }
 
-pub type Ast = { nodes: List[Node], extra: List[u32], items_start: u32, items_len: u32 }
+pub type Ast = { nodes: List[Node], extra: List[u32], items_start: u32, items_len: u32, attrs: Map[u32, u64] }
+
+/// EReflect kinds: `fields(T)`, `variants(T)`, `attr[A](x)`, `has_attr[A](x)`.
+pub const R_FIELDS: u32 = 0
+pub const R_VARIANTS: u32 = 1
+pub const R_ATTR: u32 = 2
+pub const R_HAS_ATTR: u32 = 3
 
 pub const OP_ADD: u32 = 0
 pub const OP_SUB: u32 = 1
@@ -130,7 +149,21 @@ pub fn op_text(op: u32) -> str {
 /// Whether `flags` has bit `flag` (flags are sums of distinct powers of two).
 pub fn has(flags: u32, flag: u32) -> bool { (flags / flag) % 2 == 1 }
 
-pub fn new() -> Ast { Ast(List.new(), List.new(), 0, 0) }
+pub fn new() -> Ast { Ast(List.new(), List.new(), 0, 0, Map.new()) }
+
+/// The Attr nodes of node id (none: an empty list).
+pub fn attrs_of(a: Ast, id: u32) -> List[u32] {
+    let mut out: List[u32] = List.new()
+    match a.attrs.get(id) {
+        Some(x) => {
+            let start = (x / 4294967296) as u32
+            let n = (x % 4294967296) as u32
+            for i in 0..n { out.push(a.extra[(start + i) as usize]) }
+        }
+        None => {}
+    }
+    out
+}
 
 pub fn node(k: Kind, line: u32, col: u32) -> Node { Node(k, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, line, col, line, col) }
 
@@ -214,5 +247,9 @@ pub fn kind_text(k: Kind) -> str {
         EError => "EError"
         SError => "SError"
         IError => "IError"
+        Attr => "Attr"
+        AttrArg => "AttrArg"
+        EReflect => "EReflect"
+        EFieldAt => "EFieldAt"
     }
 }

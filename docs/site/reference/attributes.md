@@ -1,0 +1,104 @@
+# Attributes
+
+An attribute is a piece of typed data attached to an item, a record field or a variant:
+`@json(name = "user_id")`. Attributes do nothing by themselves. The compiler checks them
+against the attribute's declaration and keeps their values, and only code that reads them
+with comptime reflection gives them a meaning: a JSON codec renames a field,
+a schema generator documents it.
+
+```text
+attr_decl = ["pub"] "attr" name "{" { key ":" type ["=" literal] "," } "}"
+attribute = "@" name ["." name] ["(" { key ["=" expr] "," } ")"]
+```
+
+## Declaring an attribute
+
+The package that gives an attribute its meaning declares it, with `attr`:
+
+```eider
+pub attr json { name: str = "", skip: bool = false, depth: i32 = 0 }
+
+fn main() {}
+```
+
+The declaration is a record type named like the attribute (here `json`, with the fields
+`name`, `skip` and `depth`), whose fields are the attribute's keys. A key's type is an integer
+type, `bool` or `str`; anything else is E0822. A key with a default (`= literal`) may be left
+out where the attribute is used; one without must be given. `attr` is a word with this
+meaning only at the start of an item followed by a name and `{`, so it stays usable as a name
+everywhere else.
+
+## Using an attribute
+
+An attribute goes on the line before an item (`type`, `fn`, `const`, `trait`, `impl`, `attr`)
+or a record field, or after the `|` of a variant, as many as needed:
+
+```eider
+attr json { name: str = "", skip: bool = false }
+attr doc { text: str }
+
+@doc(text = "A registered user.")
+type User = {
+    @json(name = "user_id") id: u64,
+    name: String,
+    @json(skip)
+    @doc(text = "computed, never sent")
+    score: i64,
+}
+
+type Event =
+    | @json(name = "joined") Joined(id: u64)
+    | Left
+
+fn main() uses io {
+    let u = User(7, String.from("ada"), 0)
+    print(u.id)
+}
+```
+
+```output
+7
+```
+
+The arguments are `key = value`, or a bare `key` for `key = true` (bool keys only). Each
+value is a literal or a constant of the key's type, checked like a constant (E0401 for a
+value of the wrong type, E0822 for anything that isn't a constant). Leaving out the
+parentheses (`@json`) gives every key its default.
+
+Which attribute `@name` means:
+
+- an attribute `name` declared in the same module;
+- else, when `name` is an import alias, the attribute `name` of the module it names: after
+  `import json` (a package whose entry module declares `attr json`), `@json(...)` is that
+  attribute, which is how a package names its attribute after itself;
+- `@alias.name(...)` is the attribute `name` of the module `alias` names (it must be `pub`,
+  else E0801).
+
+## Errors
+
+| Code | When |
+|---|---|
+| E0820 | no attribute of that name (the fix renames a close one) |
+| E0821 | the attribute has no such key (the fix renames a close one) |
+| E0822 | a key type that isn't an integer, bool or str; a value that isn't a constant; a key or an attribute given twice; a bare non-bool key; a required key left out |
+| E0401 | a value of the wrong type |
+| E0801 | an attribute that is private to its module |
+
+```eider,compile_fail=E0821
+attr json { name: str = "", skip: bool = false }
+
+type User = {
+    @json(nmae = "user_id") id: u64,
+}
+
+fn main() {}
+```
+
+The fix here renames `nmae` to `name`. Go's struct tags are the counter-example: a
+misspelled tag key is a string nothing checks, and the field is silently encoded under its
+own name.
+
+## Reading attributes
+
+Comptime reflection, which reads attribute values while a generic function is specialized
+(`attr[A](f)`), is planned: see the [roadmap](../../design/roadmap.md) (P0.9).

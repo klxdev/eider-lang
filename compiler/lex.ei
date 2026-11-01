@@ -21,6 +21,7 @@ pub type Kind =
     | Comma | Colon | Semi | Dot | Plus | Minus | Star | Slash | Percent
     | Lt | Gt | Eq | Bang | Pipe
     | Amp | Caret | Tilde | Shl | Shr | AmpEq | PipeEq | CaretEq | ShlEq | ShrEq
+    | At
 
 /// `start`/`end` are byte offsets; `line`/`col` the start position; `end_col` is the column
 /// just past the token (tokens never span lines).
@@ -116,6 +117,7 @@ fn sym1(a: u8) -> Option[Kind] {
         38 => Some(Amp)
         94 => Some(Caret)
         126 => Some(Tilde)
+        64 => Some(At)
         _ => None
     }
 }
@@ -517,5 +519,6 @@ pub fn kind_text(k: Kind) -> str {
         CaretEq => "^="
         ShlEq => "<<="
         ShrEq => ">>="
+        At => "@"
     }
 }

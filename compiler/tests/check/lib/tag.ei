@@ -1,0 +1,4 @@
+// helper module for the attribute tests: an attribute named like its module, a private one
+pub attr tag { name: str = "", weight: i32 = 1, on: bool = false }
+attr secret { level: u8 = 0 }
+pub attr note { text: str }

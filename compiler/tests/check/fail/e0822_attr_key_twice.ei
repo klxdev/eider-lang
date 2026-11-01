@@ -1,0 +1,4 @@
+// expect: E0822 3:20
+attr json { name: str = "", skip: bool = false }
+@json(skip = true, skip)
+fn main() {}

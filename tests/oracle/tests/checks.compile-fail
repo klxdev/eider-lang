@@ -90,8 +90,12 @@ compile-fail tests (tests/checks/fail)
   ok   e0811_toolchain_series.ei    E0811 at 3:1
   ok   e0812_ambiguous_package.ei   E0812 at 2:1
   ok   e0813_alias_clash.ei         E0813 at 4:1
+  ok   e0820_unknown_attribute.ei   E0820 at 4:1 (fix compiles)
+  ok   e0821_unknown_attribute_key.ei E0821 at 3:7 (fix compiles)
+  ok   e0822_attribute_argument.ei  E0822 at 3:1
 
 compile-pass tests (tests/checks/pass)
+  ok   pass_attributes.ei
   ok   pass_bitwise_units_bytes.ei
   ok   pass_capabilities.ei
   ok   pass_comptime_str.ei
@@ -103,5 +107,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-101 passed, 0 failed; error-code coverage 58/58
+105 passed, 0 failed; error-code coverage 61/61
 --- exit 0
