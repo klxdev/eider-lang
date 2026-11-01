@@ -62,13 +62,13 @@ consent, and eider-pkg writes it from what the compiler says the package uses
 (`eiderc caps` over every module of the package):
 
 ```text
-$ eider-pkg add http --git https://github.com/klxdev/eider-http.git --version 0.2.0
-added http 0.2.0 — it uses: clock, io, net, threads (granted)
+$ eider-pkg add http --git https://github.com/klxdev/eider-http.git --version 0.3.0
+added http 0.3.0 — it uses: clock, fs, io, net, threads (granted)
 locked 3 package(s)
 
 $ eider-pkg update
 eider-pkg: more capabilities than granted (eider.lock is not written):
-  http 0.3.0 now also uses: fs (granted: clock, io, net, threads)
+  http 0.3.0 now also uses: fs (granted: clock, fs, io, net, threads)
     first used: fs (static.ei:12)
 to accept: eider update --grant http (or --grant-all)
 
@@ -116,7 +116,7 @@ name = "warehouse"          # lowercase letters, digits and `_`, starting with a
 version = "0.1.0"           # MAJOR.MINOR.PATCH
 entry = "warehouse.ei"      # what `import warehouse` loads (default: <name>.ei)
 main = "main.ei"            # the program, for packages that are one (optional)
-eider = "0.2"               # the toolchain MAJOR.MINOR it needs (optional; the compiler checks it, E0811)
+eider = "0.3"               # the toolchain MAJOR.MINOR it needs (optional; the compiler checks it, E0811)
 description = "What it is"  # optional
 
 [deps.json]                 # one table per dependency; the key is the package's own name

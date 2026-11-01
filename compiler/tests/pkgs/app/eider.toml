@@ -2,7 +2,7 @@
 name = "app"
 version = "0.1.0"
 main = "main.ei"
-eider = "0.2"
+eider = "0.3"
 
 [deps.geo]
 path = "../geo"

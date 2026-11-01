@@ -1786,12 +1786,12 @@ eider = "9.9"
 ```
 
 ```text
-error[E0811]: package `newer` needs Eider 9.9 (`eider = "9.9"` in <dir>/lib/newer/eider.toml), but this toolchain is 0.2
+error[E0811]: package `newer` needs Eider 9.9 (`eider = "9.9"` in <dir>/lib/newer/eider.toml), but this toolchain is 0.3
   --> e0811_toolchain_series.ei:3:1
   |
 3 | import lib.newer.newer
   | ^
-  help: build it with an Eider 9.9.x toolchain, or port it to 0.2 and set `eider = "0.2"` in <dir>/lib/newer/eider.toml
+  help: build it with an Eider 9.9.x toolchain, or port it to 0.3 and set `eider = "0.3"` in <dir>/lib/newer/eider.toml
 ```
 
 Fix: build with a toolchain of the MAJOR.MINOR the package names (a release bundle has

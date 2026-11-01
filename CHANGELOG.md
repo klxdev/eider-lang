@@ -5,7 +5,36 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
-## Unreleased
+## 0.3.0
+
+The language's metaprogramming and string release: comptime runs on an interpreter, attributes
+and reflection derive code without macros, every string literal interpolates. Not compatible
+with 0.2 at the source level: a plain string literal with a brace in it changes meaning
+(`scripts/migrate-strings.sh` or `eiderc migrate-strings` rewrites it), and `f"..."` is gone.
+Siblings: eider-json 0.3.0 has derived JSON codecs, and every sibling moves to 0.3.0.
+
+- **Every string literal interpolates** (U29, #17): `"{name} has {n:>4} items"` formats through
+  `Show`; `{{` and `}}` are braces. The seed's source was made to mean the same under both rules
+  first (seed/README.md, "Bootstrapping a change in what source means"), then the packages,
+  tests, docs and siblings were migrated.
+- **Raw and multi-line strings** (#13): `r"..."` and `r#"..."#` have no escapes and don't
+  interpolate; `"""` strings span lines and strip their indentation.
+- **`defer` and `errdefer`** (#15): run a statement at every exit of the block (end, `return`,
+  `?`, `break`, `continue`), in reverse order; `errdefer` only when the function returns an `Err`
+  or `None`. They are contextual words.
+- **Pattern matching** (#98, #105): a constant's name in a pattern compares against the constant,
+  guards (`p if cond`), or-patterns that bind, field patterns (`OutOfStock(..)`), ranges, and
+  `String` against a `str` literal.
+- **Default methods in traits** (#45, #75): a trait method with a body is inherited by each impl
+  that doesn't define it, and is checked per implementing type.
+- **Automatic capability grants** (U28, #135, #141): `eider add` grants a package what it uses
+  and prints it (`--confirm` asks, `--no-grant`, `--uses`); `fetch` and `update` compute each
+  direct dependency's set again over every module a depender could import, narrow a grant that
+  holds more, and stop on growth with a diff until `--grant <pkg>` or `--grant-all`; `eider grant`
+  and `eider revoke` edit one `uses` line; `[policy]` bounds every grant. The compiler still holds
+  each dependency to its grant (E0204, whose help names the command).
+- **Private git dependencies** (#142): eider-pkg authenticates github.com fetches with
+  `GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`, through a one-off credential helper.
 
 - **Comptime without a C compiler**: `comptime` constants are evaluated by an interpreter of
   the compiler's typed IR (compiler/interp.ei, #7), with the built program's results and
@@ -29,7 +58,7 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
   `attr[A](f)` and `has_attr[A](f)` read the rest; `comptime if` keeps one branch;
   `T(comptime for f in fields(T) { ... })` and `v(...)` build values. Errors E0830-E0832,
   and errors inside an expansion name its field. docs/site/reference/reflection.md.
-  docs/site/guide/json.md shows eider-json 0.2.1's codecs, derived this way.
+  docs/site/guide/json.md shows eider-json 0.3.0's codecs, derived this way.
 
 ## 0.2.0
 

@@ -1,6 +1,6 @@
 [package]
 name = "fuzz"
 version = "0.1.0"
-eider = "0.2"
+eider = "0.3"
 main = "main.ei"
 description = "crash and consistency fuzzer for eiderc (check, emit-llvm, build, run), plus check --json against a reference compiler"

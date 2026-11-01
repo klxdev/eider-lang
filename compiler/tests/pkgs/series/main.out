@@ -1,9 +1,9 @@
 --- stderr
-error[E0811]: package `series` needs Eider 0.0 (`eider = "0.0"` in <root>/compiler/tests/pkgs/series/eider.toml), but this toolchain is 0.2
+error[E0811]: package `series` needs Eider 0.0 (`eider = "0.0"` in <root>/compiler/tests/pkgs/series/eider.toml), but this toolchain is 0.3
   --> compiler/tests/pkgs/series/main.ei:1:1
   |
 1 | // pkgtest: check
   | ^
-  help: build it with an Eider 0.0.x toolchain, or port it to 0.2 and set `eider = "0.2"` in <root>/compiler/tests/pkgs/series/eider.toml
+  help: build it with an Eider 0.0.x toolchain, or port it to 0.3 and set `eider = "0.3"` in <root>/compiler/tests/pkgs/series/eider.toml
 error: 1 error
 --- exit 1

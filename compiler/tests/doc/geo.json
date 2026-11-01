@@ -1,4 +1,4 @@
-{"format":1,"toolchain":"0.2.0",
+{"format":1,"toolchain":"0.3.0",
 "packages":[
 {"name":"shapes","dir":"<root>/compiler/tests/doc/shapes","version":"1.2.3","description":"The fixture of `eiderc doc` (compiler/tests/doc): \"shapes\" and their areas"}],
 "modules":[

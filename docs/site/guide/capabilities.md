@@ -104,12 +104,12 @@ A dependency is granted capabilities in the depender's `eider.toml`:
 ```toml
 [deps.http]
 git = "https://github.com/klxdev/eider-http.git"
-version = "0.2.0"
-uses = ["clock", "io", "net", "threads"]
+version = "0.3.0"
+uses = ["clock", "fs", "io", "net", "threads"]
 
 [deps.json]
 git = "https://github.com/klxdev/eider-json.git"
-version = "0.2.0"                # no `uses`: granted nothing
+version = "0.3.0"                # no `uses`: granted nothing
 ```
 
 ### The consent model: the compiler knows, you approve, growth asks again
@@ -122,12 +122,12 @@ You don't type these lists. The grant is your recorded consent, and the tooling 
    uses today, and says so:
 
    ```text
-   $ eider add http --git https://github.com/klxdev/eider-http.git --version 0.2.0
-   added http 0.2.0 — it uses: clock, io, net, threads (granted)
+   $ eider add http --git https://github.com/klxdev/eider-http.git --version 0.3.0
+   added http 0.3.0 — it uses: clock, fs, io, net, threads (granted)
    locked 3 package(s)
    ```
 
-   `--confirm` asks first (`http 0.2.0 uses: clock, io, net, threads. Grant it? [y/N]`),
+   `--confirm` asks first (`http 0.3.0 uses: clock, fs, io, net, threads. Grant it? [y/N]`),
    `--no-grant` adds the dependency with no grant and stops before writing `eider.lock`, so you
    can look first, and `--uses a,b` grants exactly that list (it must cover what the package
    uses).
@@ -138,7 +138,7 @@ You don't type these lists. The grant is your recorded consent, and the tooling 
    ```text
    $ eider update
    eider-pkg: more capabilities than granted (eider.lock is not written):
-     http 0.3.0 now also uses: fs (granted: clock, io, net, threads)
+     http 0.3.0 now also uses: fs (granted: clock, fs, io, net, threads)
        first used: fs (static.ei:12)
    to accept: eider update --grant http (or --grant-all)
    ```
