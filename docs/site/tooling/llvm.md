@@ -3,9 +3,9 @@
 `eiderc build`, `run`, `test` and `build --lib` emit
 [LLVM IR](https://llvm.org/docs/LangRef.html) and build it with clang. There is no flag: the
 LLVM backend is the only way programs are built (decision U23). Building eiderc itself, and
-bootstrapping from the seed, still need only a C compiler. WebAssembly modules (`--wasm`) and
-`--profile` builds still go through the C lowering for now, and `emit-c` prints it (it is the
-form the seed is in).
+bootstrapping from the seed, still need only a C compiler. WebAssembly modules (`--wasm`,
+`--wasm-core`) are built by the same backend for wasm32. `--profile` builds still go through
+the C lowering for now, and `emit-c` prints it.
 
 ## Requirements
 

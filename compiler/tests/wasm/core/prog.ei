@@ -1,0 +1,76 @@
+// A core module (`eiderc build --wasm-core`, core/wasm/README.md "Core modules"): an ordinary
+// program whose OS calls are imports of the C core's ABI (env.ec_*). compiler/tests/wasm/run.sh
+// checks that those are its only imports; seed/tests/run.sh translates it with seed/wasm2c.c,
+// links it with core/eider_core.c and checks its output against prog.out: arguments, the
+// environment, a file written and read back, a directory, a child process with its output
+// captured, print (stdout and stderr), a Map, a trap's exit code.
+import core.sys
+import std.bytes
+import std.env
+import std.fs
+import std.io
+import std.proc
+
+fn s(x: str) -> List[u8] { sys.lit(x) }
+
+fn main() uses io, fs, net, clock {
+    let args = env.args()
+    let mut line = s("args:")
+    for i in 1..args.len() {
+        line.push(32)
+        bytes.append(inout line, args[i])
+    }
+    io.outln(line)
+    match env.get(s("EIDER_CORE_TEST")) {
+        Some(v) => {
+            let mut m = s("env: ")
+            bytes.append(inout m, v)
+            io.outln(m)
+        }
+        None => io.outln(s("env: unset"))
+    }
+    let dir = args[1].copy()
+    let f = fs.join(dir, s("note.txt"))
+    match fs.write(f, s("written in wasm\n")) {
+        Ok(_) => {}
+        Err(_) => io.outln(s("write failed"))
+    }
+    match fs.read(f) {
+        Ok(t) => io.out(t)
+        Err(_) => io.outln(s("read failed"))
+    }
+    let mut d = fs.join(dir, s("sub"))
+    match fs.mkdir_all(d) {
+        Ok(_) => {}
+        Err(_) => io.outln(s("mkdir failed"))
+    }
+    if fs.is_dir(d) { io.outln(s("sub is a directory")) }
+    let mut argv: List[List[u8]] = List.new()
+    argv.push(s("sh"))
+    argv.push(s("-c"))
+    argv.push(s("echo child out; echo child err >&2; exit 7"))
+    match proc.run_with(argv, proc.captured()) {
+        Ok(o) => {
+            io.out(o.out)
+            io.out(o.err)
+            let mut m = s("child exit ")
+            bytes.append(inout m, bytes.from_u64(o.code as u64))
+            io.outln(m)
+        }
+        Err(_) => io.outln(s("spawn failed"))
+    }
+    let mut m: Map[i64, i64] = Map.new()
+    for i in 0..1000 { m.insert(i as i64, (i * 3) as i64) }
+    let mut total: i64 = 0
+    for i in 0..1000 {
+        match m.get(i as i64) {
+            Some(v) => { total = total + v }
+            None => {}
+        }
+    }
+    print(total)
+    io.errln(s("to stderr"))
+    let xs: List[i64] = List.new()
+    let k: usize = args.len() + 5
+    print(xs[k])
+}

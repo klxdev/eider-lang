@@ -28,6 +28,7 @@ and exit code 2. With no arguments at all, eiderc prints its usage to stderr and
 | `build <file> [-o out] [-l lib] [-g]` | Compile to a native executable at `-O2`. The output is `-o`'s path, by default the file's stem in the working directory. Prints nothing on success. |
 | `build --lib <file> [-o name]` | Build `lib<name>.a`, `lib<name>.so` and `<name>.h` from the file's `export fn`s (in `-o`'s directory, else the working directory; `name` defaults to the file's stem) and print `built <a>, <so>, <h>`. The library contains the Eider runtime and the C core. See [FFI](../guide/ffi.md). |
 | `build --wasm <file> [-o name]` | Build `<name>.wasm`, `<name>.d.ts` and `<name>.js` and print `built <wasm>, <d.ts>, <js>`. Needs clang with the wasm32 target and `wasm-ld`. See [WebAssembly](../guide/wasm.md). |
+| `build --wasm-core <file> [-o out.wasm]` | Build a program (with `main`) as a WebAssembly *core module*: it exports `_start` and imports only the C core's functions (`env.ec_*`), so a host linking `core/eider_core.c` runs it with files, arguments, the environment and processes as a native program has them. This is how the compiler's seed is made (`seed/README.md`). |
 | `run <file> [--release] [-l lib] [--] [args...]` | Build (`-O0`, or `-O2` with `--release`) and run the program with `args`; exits with the program's exit code (128 + n if it was killed by signal n). Words after the file that aren't options go to the program, and so does everything after `--` (`eiderc run server.ei -- --port 80`). `run --lib` and `run --wasm` only build, like `build`. |
 | `test <file> [--release] [-l lib]` | Build the file with a test driver and run its `test` blocks: one `test <name> ... ok` or `FAILED` line each, then `N tests, M failed`; exits 1 if any failed. `--lib` and `--wasm` are ignored. |
 | `test --compile-fail [<dir>]` | Run a compile-fail suite: every `<dir>/fail/*.ei` must fail with the code and position in its `// expect: CODE LINE:COL` header (and its fix, if any, must not lead back to the same error), every `<dir>/pass/*.ei` must compile. Default `<dir>`: `tests/checks`. Exits 1 if any case failed. See [Testing](../guide/testing.md#compile-fail-tests). |
@@ -68,7 +69,8 @@ print `eiderc <version>` (`eiderc 0.1.0`) and exit 0: the toolchain's version, f
 | `-l <lib>` | `build`, `run`, `test` | link the C library `<lib>` (repeatable) |
 | `--release` | `run`, `test` | compile at `-O2` instead of `-O0` |
 | `--lib` | `check`, `emit-c`, `build`, `run` | treat the file as a library: no `main`, at least one `export fn` |
-| `--wasm` | `check`, `emit-c`, `emit-header`, `build`, `run` | treat the file as a WebAssembly module (implies `--lib`; exports take and return integers and `bool`; no threads) |
+| `--wasm` | `check`, `emit-c`, `emit-header`, `build`, `run`, `emit-llvm` | treat the file as a WebAssembly module (implies `--lib`; exports take and return integers and `bool`; no threads) |
+| `--wasm-core` | `build`, `check`, `emit-llvm` | build the program as a WebAssembly core module (see `build --wasm-core`) |
 | `--test` | `emit-c` | include the test driver |
 | `--compile-fail` | `test` | run a compile-fail suite (`<dir>` instead of a file) |
 | `--json` | every command that reports errors; `audit-refs` | diagnostics as JSON, one object per line on stdout |
@@ -130,7 +132,7 @@ exits 101.
 | `EIDER_CFLAGS` | extra C compiler flags, split at spaces (for example `-fsanitize=address,undefined`) |
 | `EIDER_CACHE` | `off`, or the cache directory (default `$XDG_CACHE_HOME/eider`, else `~/.cache/eider`) |
 | `EIDER_ROOT` | the toolchain, the directory holding `core/` and `std/` (default: the nearest directory above the eiderc binary, symlinks resolved, that holds `core/eider_rt.h`, else the same search from the working directory) |
-| `WASM_CC` | the clang used by `build --wasm` (default `clang`) |
+| `WASM_CC` | the clang used by `build --wasm` and `--wasm-core` (default `clang`) |
 | `EIDER_LLVM_CC` | the clang that compiles the LLVM IR of `build`, `run` and `test` (default `clang`; LLVM 17 or newer) |
 | `EIDER_HOME` | where package imports find git packages fetched by eider-pkg (default `~/.eider`) |
 | `TMPDIR` | work directories when neither the cache nor `<root>/target/tmp` is writable |

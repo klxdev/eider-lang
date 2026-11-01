@@ -3822,8 +3822,8 @@ pub fn program_wasm(p: P, file: List[u8]) -> Result[List[u8], List[u8]] { emit(p
 /// half calls them and they call it through the C ABI. The other backend names the glue
 /// its functions call (`needs`: glue keys, GK_* * 2^32 + id) and the modules whose trap
 /// lines they encode (`files`), so their bodies aren't lowered here at all.
-pub fn program_split(p: P, file: List[u8], tests: bool, lib: bool, native: List[bool], needs: List[u64], files: List[u32]) -> Result[List[u8], List[u8]] {
-    let c = emit_split(p, file, tests, lib, native, needs, files)?
+pub fn program_split(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool, native: List[bool], needs: List[u64], files: List[u32]) -> Result[List[u8], List[u8]] {
+    let c = emit_split(p, file, tests, lib, wasm, native, needs, files)?
     let mut out: List[u8] = List.new()
     let st = sys.lit("static ")
     let mut i: usize = 0
@@ -3915,8 +3915,8 @@ fn emit(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool, what: u32, ver
     emit_with(p, file, tests, lib, wasm, what, version, native, List.new(), List.new())
 }
 
-fn emit_split(p: P, file: List[u8], tests: bool, lib: bool, native: List[bool], needs: List[u64], files: List[u32]) -> Result[List[u8], List[u8]] {
-    emit_with(p, file, tests, lib, false, 0, List.new(), native, needs, files)
+fn emit_split(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool, native: List[bool], needs: List[u64], files: List[u32]) -> Result[List[u8], List[u8]] {
+    emit_with(p, file, tests, lib, wasm, 0, List.new(), native, needs, files)
 }
 
 fn emit_with(p: P, file: List[u8], tests: bool, lib: bool, wasm: bool, what: u32, version: List[u8], native: List[bool], needs: List[u64], files: List[u32]) -> Result[List[u8], List[u8]] {

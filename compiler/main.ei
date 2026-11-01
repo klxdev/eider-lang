@@ -16,7 +16,8 @@
 // and return integers and bool, no threads: E0806): `check --wasm`, `emit-c --wasm`,
 // `emit-header --wasm` (the .d.ts and the loader, \x01-separated, as tests/oracle records them) and
 // `build --wasm` / `run --wasm` (<name>.wasm, <name>.d.ts, <name>.js; wasm.ei). `test`
-// ignores it, as it ignores `--lib`.
+// ignores it, as it ignores `--lib`. `build --wasm-core` builds a program (with `main`) as a
+// WebAssembly module whose imports are the C core's ABI (env.ec_*; wasm.ei): the seed.
 
 import core.sys
 import core.version
@@ -44,7 +45,7 @@ import eiderc.doc
 
 type Args = {
     cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,
-    lib: bool, libs: List[List[u8]], wasm: bool, compile_fail: bool, overlay: List[List[u8]],
+    lib: bool, libs: List[List[u8]], wasm: bool, wasm_core: bool, compile_fail: bool, overlay: List[List[u8]],
     max_errors: u64, all_errors: bool, private: bool, profile: u32, pargs: List[List[u8]],
     /// whether the program goes through the LLVM backend (llvm.ei; docs/compiler.md,
     /// "Backends"): every command but `emit-c`, `--wasm` and `--profile`, which still use the
@@ -78,6 +79,8 @@ fn usage_text() -> List[u8] {
         "  eiderc build <file.ei> [-o out] [-l lib] [-g]  compile to a native binary (-O2) via clang ($EIDER_LLVM_CC) and $CC",
         "  eiderc build --lib <file.ei> [-o name]     build lib<name>.a, lib<name>.so and <name>.h from `export fn`s",
         "  eiderc build --wasm <file.ei> [-o name]    build <name>.wasm, <name>.d.ts and <name>.js (needs clang for wasm32 and wasm-ld)",
+        "  eiderc build --wasm-core <file.ei> [-o out.wasm]  build the program as a WebAssembly module that imports",
+        "                                             only the C core's ABI (env.ec_*; the seed: seed/README.md)",
         "  eiderc run <file.ei> [--release] [-l lib] [--] [args...]  build and run (-O0 unless --release);",
         "                                             the arguments after the file (every one after `--`) go to the program",
         "  eiderc build|run|test <file.ei> --profile[=cpu,mem,conc]  with the profiler (docs/runtime.md \"Profiler\")",
@@ -162,6 +165,7 @@ fn parse_args() -> Args uses io {
     let mut tests = false
     let mut lib = false
     let mut wasm = false
+    let mut wasm_core = false
     let mut compile_fail = false
     let mut libs: List[List[u8]] = List.new()
     let mut overlay: List[List[u8]] = List.new()
@@ -198,6 +202,8 @@ fn parse_args() -> Args uses io {
             lib = true
         } else if is(a, "--wasm") {
             wasm = true
+        } else if is(a, "--wasm-core") {
+            wasm_core = true
         } else if is(a, "--compile-fail") {
             compile_fail = true
         } else if is(a, "-o") {
@@ -266,11 +272,13 @@ fn parse_args() -> Args uses io {
         lib = false
         wasm = false
     }
+    if wasm_core && !(is(cmd, "build") || is(cmd, "emit-llvm") || is(cmd, "check")) { usage_error(sys.lit("`--wasm-core` goes with build, check or emit-llvm")) }
+    if wasm_core && (wasm || lib) { usage_error(sys.lit("`--wasm-core` builds a program: not with --wasm or --lib")) }
     if wasm { lib = true }
-    if profile > 0 && (lib || !(is(cmd, "build") || is(cmd, "run") || is(cmd, "test") || is(cmd, "emit-c"))) { usage_error(sys.lit("`--profile` goes with build, run, test or emit-c, without --lib or --wasm")) }
+    if profile > 0 && (lib || wasm_core || !(is(cmd, "build") || is(cmd, "run") || is(cmd, "test") || is(cmd, "emit-c"))) { usage_error(sys.lit("`--profile` goes with build, run, test or emit-c, without --lib or --wasm")) }
     // the LLVM backend, but for the commands that still lower to C (see Args.llvm)
-    let llvm = is(cmd, "emit-llvm") || !(is(cmd, "emit-c") || wasm || profile > 0)
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, llvm, debug, coverage)
+    let llvm = is(cmd, "emit-llvm") || !(is(cmd, "emit-c") || profile > 0)
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, wasm_core, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, llvm, debug, coverage)
 }
 
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
@@ -616,7 +624,8 @@ fn main() uses io, fs, net, clock {
                 Ok(x) => x
                 Err(_) => sys.lit(".")
             }
-            let out = match llvm.program(lp, a.file, tests, a.lib, paths, here, a.debug) {
+            let wt = a.wasm || a.wasm_core
+            let out = match llvm.program(lp, a.file, tests, a.lib, paths, here, a.debug && !wt, wt) {
                 Ok(o) => o
                 Err(m) => {
                     let mut msg = sys.lit("eiderc: internal error: ")
@@ -633,6 +642,11 @@ fn main() uses io, fs, net, clock {
                     io.out(out.head)
                     for x in out.ll { io.out(x) }
                 }
+            } else if a.wasm {
+                // as recorded: `build --wasm` and `run --wasm` both build the module
+                wasm.build(out.c, llvm.whole(out), lp, a.file, a.out)
+            } else if a.wasm_core {
+                wasm.build_core(out.c, llvm.whole(out), a.file, a.out)
             } else if a.lib {
                 driver.build_lib_llvm(out.c, llvm.whole(out), lower.header(lp, driver.lib_name(a.file, a.out)), a.file, a.out, a.libs, a.debug)
             } else if is(a.cmd, "build") {
@@ -642,6 +656,7 @@ fn main() uses io, fs, net, clock {
             }
             return
         }
+        // emit-c and --profile (the C lowering, until #128)
         let lowered = if a.wasm { lower.program_wasm(lp, a.file) } else if a.profile > 0 { lower.program_prof(lp, a.file, tests, a.profile, driver.version()) } else { lower.program_for(lp, a.file, tests, a.lib) }
         let cprog = match lowered {
             Ok(text) => text
@@ -655,9 +670,6 @@ fn main() uses io, fs, net, clock {
         }
         if is(a.cmd, "emit-c") {
             io.out(cprog)
-        } else if a.wasm {
-            // as recorded: `build --wasm` and `run --wasm` both build the module
-            wasm.build(cprog, lp, a.file, a.out)
         } else if a.lib {
             // as recorded: `build --lib` and `run --lib` both build the library
             driver.build_lib(cprog, lower.header(lp, driver.lib_name(a.file, a.out)), a.file, a.out, a.libs)

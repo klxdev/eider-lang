@@ -7,6 +7,8 @@ usage:
   eiderc build <file.ei> [-o out] [-l lib] [-g]  compile to a native binary (-O2) via clang ($EIDER_LLVM_CC) and $CC
   eiderc build --lib <file.ei> [-o name]     build lib<name>.a, lib<name>.so and <name>.h from `export fn`s
   eiderc build --wasm <file.ei> [-o name]    build <name>.wasm, <name>.d.ts and <name>.js (needs clang for wasm32 and wasm-ld)
+  eiderc build --wasm-core <file.ei> [-o out.wasm]  build the program as a WebAssembly module that imports
+                                             only the C core's ABI (env.ec_*; the seed: seed/README.md)
   eiderc run <file.ei> [--release] [-l lib] [--] [args...]  build and run (-O0 unless --release);
                                              the arguments after the file (every one after `--`) go to the program
   eiderc build|run|test <file.ei> --profile[=cpu,mem,conc]  with the profiler (docs/runtime.md "Profiler")

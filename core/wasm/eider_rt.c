@@ -7,6 +7,9 @@
 //   - a trap prints its message through env.eider_write and executes `unreachable`, which
 //     the host sees as a trap (a RuntimeError in JavaScript) instead of exit(101);
 //   - ei_now_ms is the host's clock (env.eider_now_ms), not processor time.
+// A core module (-DEI_WASM_CORE: `eiderc build --wasm-core`, README.md "Core modules") is a
+// program instead: its imports are the C core's ABI (env.ec_*), a trap exits with 101 through
+// ec_exit, ei_now_ms is ec_time_mono_ns, and `_start` runs main.
 // Allocation, String, hashing and print are the text of core/eider_rt.c.
 #include "../eider_rt.h"
 
@@ -41,7 +44,7 @@ _Noreturn void ei_trap(const char *msg, int32_t line) {
     longjmp(*trap_jmp, 1);
   }
   fprintf(stderr, "eider: runtime error: %s (%s:%" PRId32 ")\n", msg, file, line);
-  ei_wasm_trap();
+  ei_host_leave(101);
 }
 
 // ---- allocation
@@ -262,9 +265,59 @@ void ei_print_s(const char *v) { printf("%s\n", v); }
 // ---- clock: the host's milliseconds (0 if it reports a negative time)
 
 uint64_t ei_now_ms(void) {
+#if defined(EI_WASM_CORE)
+  int64_t ms = ei_host_mono_ns() / 1000000;
+#else
   int64_t ms = eider_now_ms();
+#endif
   return ms > 0 ? (uint64_t)ms : 0;
 }
+
+#if defined(EI_WASM_CORE)
+// ---- a core module's side of core/ABI.md. Eider calls the core by symbol name; these few
+// are defined here instead of imported, because they hand out or take pointers, which mean
+// nothing to the host: the bytes of a literal (ec_str_len, ec_str_byte: the literal is in
+// this module's memory), and ec_in_cstr, the `in` buffer as a C string, kept as a copy of
+// what ec_in_clear / ec_in_push send on to the host.
+
+static char *in_copy;
+static size_t in_len, in_cap;
+
+void ec_in_clear(void);
+void ec_in_push(int32_t b);
+const char *ec_in_cstr(void);
+int64_t ec_str_len(const char *s);
+int32_t ec_str_byte(const char *s, int64_t i);
+
+void ec_in_clear(void) {
+  in_len = 0;
+  ei_host_in_clear();
+}
+void ec_in_push(int32_t b) {
+  if (in_len + 1 >= in_cap) {
+    size_t c = in_cap ? in_cap * 2 : 256;
+    char *p = realloc(in_copy, c);
+    if (!p) ei_trap("out of memory", 0);
+    in_copy = p;
+    in_cap = c;
+  }
+  in_copy[in_len++] = (char)(b & 0xff);
+  ei_host_in_push(b);
+}
+const char *ec_in_cstr(void) {
+  if (!in_copy) return "";
+  in_copy[in_len] = 0;
+  return in_copy;
+}
+int64_t ec_str_len(const char *s) { return (int64_t)strlen(s); }
+int32_t ec_str_byte(const char *s, int64_t i) { return (unsigned char)s[i]; }
+
+// the entry the host runs (seed/wasm2c.c's main): the program's C main, then exit with
+// what it returned
+int main(void);
+EI_WASM_EXPORT("_start") void ei_wasm_start(void);
+void ei_wasm_start(void) { ei_host_leave(main()); }
+#endif
 
 // ---- threads: there is one. Shared handles still count references; the rest traps.
 

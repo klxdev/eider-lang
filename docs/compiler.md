@@ -450,13 +450,28 @@ constant it is handed, so a caller that skips `eval` finds out).
   checks threads, `spawn` stops checking with `unsupported`, which `check_wasm` turns into
   that E0806. The compile-fail runner reads `// mode: wasm` and
   passes `--wasm` (as `scripts/test-compiler.sh` does).
-- **Lowering.** `lower.program_wasm`: the library C, with each `eider_<name>` entry point
-  marked `__attribute__((export_name("eider_<name>")))`.
-- **Driver** (`wasm.ei`). `build --wasm` (and `run --wasm`, which also only builds) compiles that C
-  with `core/wasm/eider_rt.c` and `core/wasm/libc.c` by `$WASM_CC` (default clang) for
-  wasm32 (the command is at the top of wasm.ei), and writes `<name>.wasm`, `<name>.d.ts` and
-  `<name>.js` (`-o`'s path, else the source's stem), printing `built <wasm>, <d.ts>, <js>`;
-  a failed compile is exit 3 with the recorded message. The `.d.ts` and the loader are the
+- **Lowering** (#126). The LLVM backend for wasm32 (`llvm.program(..., wasm)`): the module
+  says `target triple = "wasm32-unknown-unknown"`, llvm_abi.ei lays values out with 4-byte
+  pointers (Map 40 bytes, fn values 20; String and List stay 24, `usize` stays 64 bits on
+  every target) and uses clang's WebAssembly C ABI between the IR and its C half (a single
+  scalar leaf direct, other aggregates byval / sret); `strlen` is a 32-bit `size_t`. The C
+  half's `eider_<name>` entry points carry `export_name("eider_<name>")`.
+  `emit-c --wasm` (`lower.program_wasm`) still prints the whole library as C.
+- **Driver** (`wasm.ei`). `build --wasm` (and `run --wasm`, which also only builds) compiles
+  the IR and its C half with `core/wasm/eider_rt.c` and `core/wasm/libc.c` by `$WASM_CC`
+  (default clang) for wasm32 with an explicit feature set (`wasm.features`: MVP, sign-ext,
+  bulk-memory, mutable-globals; the commands are at the top of wasm.ei), and writes
+  `<name>.wasm`, `<name>.d.ts` and `<name>.js` (`-o`'s path, else the source's stem),
+  printing `built <wasm>, <d.ts>, <js>`; a failed compile is exit 3 with the recorded
+  message.
+- **Core modules** (`build --wasm-core`, #126): a program with `main` built the same way with
+  `-DEI_WASM_CORE` (core/wasm/README.md "Core modules"): it exports `_start` and imports only
+  the C core's functions (`env.ec_*`, core/ABI.md), so a host that links core/eider_core.c
+  provides files, arguments, the environment, stdio and process spawning through the same
+  functions a native program calls; the ABI functions that take or return pointers
+  (`ec_str_len`, `ec_str_byte`, `ec_in_cstr`) are defined inside the module. The compiler
+  built this way imports 20 of them (ec_args, ec_run, ec_read_file, ...: every OS operation
+  it does, process spawning included, goes through `ec_*`); it is the seed (#127). The `.d.ts` and the loader are the
   recorded text byte for byte (`emit-header --wasm` prints both: declarations, `\x01`,
   loader naming the module `@WASM@`). Only this command needs clang and wasm-ld.
 - **Tests.** The two `e0806_*` compile-fail tests; "wasm" in `scripts/test-compiler.sh`:
@@ -1000,8 +1015,8 @@ lowers the typed IR to textual LLVM IR, which clang builds (`emit-llvm` prints i
 documentation in docs/site/tooling/llvm.md). It is ordinary compiler code built by the seed,
 so building eiderc needs no LLVM. eiderc checks before every build that clang is LLVM 17 or
 newer (`driver.llvm_cc`; exit 3 with a message otherwise). The C lowering (`lower.ei`, "C4:
-lowering") is still the path of `emit-c` (the seed's form), `--wasm` and `--profile`, and of
-comptime evaluators, until #126-#128 replace those too.
+lowering") is still the path of `emit-c`, `--profile`, and of comptime evaluators, until #128 replaces those too. Since #126 the backend also targets
+wasm32 (`--wasm`, `--wasm-core`: "C7: WebAssembly").
 
 **Split.** The backend works one function at a time. `llvm.program` tries every function
 with a body. A function whose statements it can lower becomes a `define` in the module

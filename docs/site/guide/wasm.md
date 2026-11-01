@@ -10,7 +10,8 @@ it imports only two host functions (writing text, and the time).
 - clang with the `wasm32` target, and `wasm-ld` (set `WASM_CC` to choose the clang).
 - Node or a browser to run the result.
 
-Only this command needs them; everything else in Eider needs just a C compiler.
+Only these commands need the wasm32 target and `wasm-ld`; building native programs needs
+clang 17 or newer, and building the compiler itself only a C compiler.
 `scripts/verify.sh` skips its WebAssembly leg, with the reason, when they are missing.
 
 ## A module

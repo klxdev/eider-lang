@@ -1,10 +1,12 @@
 // core/wasm libc: the freestanding C library subset a WebAssembly module of Eider needs,
 // and nothing more. Contract and limits: core/wasm/README.md.
 //
-// Exactly the functions declared in core/wasm/include/: allocation (first-fit free list over
-// a bump pointer into linear memory), the mem*/str* functions, printf/fprintf/snprintf
-// (%d %i %u %s %c %%, length modifiers l ll z), fflush, exit/abort/longjmp (all `unreachable`).
-// Output goes to the host import env.eider_write. Single-threaded, like the module.
+// Exactly the functions declared in core/wasm/include/: allocation (power-of-two size
+// classes with a free list each, over a bump pointer into linear memory), the mem*/str*
+// functions, printf/fprintf/snprintf (%d %i %u %s %c %%, length modifiers l ll z), fflush,
+// exit/abort/longjmp (`unreachable`; in a core module exit and abort end the process through
+// ec_exit). Output goes to the host import env.eider_write (in a core module ec_write_fd).
+// Single-threaded, like the module.
 #include <setjmp.h>
 #include <stdarg.h>
 #include <stddef.h>
@@ -26,44 +28,65 @@ int fflush(FILE *f) {
   return 0;
 }
 
+void ei_host_write(int fd, const char *p, uint32_t n) {
+#if defined(EI_WASM_CORE)
+  ei_host_in_clear();
+  for (uint32_t i = 0; i < n; i++) ei_host_in_push((unsigned char)p[i]);
+  ei_host_write_fd(fd == 2 ? 2 : 1);
+#else
+  (void)fd;
+  eider_write(p, n);
+#endif
+}
+
 // ---- termination
 
-_Noreturn void exit(int code) {
+_Noreturn void ei_host_leave(int code) {
+#if defined(EI_WASM_CORE)
+  ei_host_exit(code);
+#else
   (void)code;
+#endif
   ei_wasm_trap();
 }
-_Noreturn void abort(void) { ei_wasm_trap(); }
+
+_Noreturn void exit(int code) { ei_host_leave(code); }
+_Noreturn void abort(void) { ei_host_leave(134); }
 _Noreturn void longjmp(jmp_buf b, int v) {
   (void)b;
   (void)v;
   ei_wasm_trap();
 }
 
-// ---- allocation. A block is a 16-byte header (its usable size) and the memory after it;
-// freed blocks go on a free list and are reused first fit, never split or merged.
+// ---- allocation. A block is a 16-byte header (its size class) and the memory after it.
+// Sizes are rounded up to a power of two (at least 16 bytes); each class has a free list,
+// so malloc and free take constant time and a block is reused only by its own class (at
+// most half of a block is unused; blocks are never split, merged or returned to the host).
 
 #define EI_WASM_PAGE ((uintptr_t)65536)
 #define EI_WASM_ALIGN ((size_t)16)
+#define EI_WASM_CLASSES 28 /* 16 B .. 2 GiB */
 
-typedef struct blk { size_t size; struct blk *next; } blk;
+typedef struct blk { size_t cls; struct blk *next; } blk;
 _Static_assert(sizeof(blk) <= EI_WASM_ALIGN, "block header fits the alignment");
 
 extern unsigned char __heap_base; /* first free byte after the data and stack (wasm-ld) */
 static uintptr_t brk_ptr;
-static blk *free_list;
+static blk *free_list[EI_WASM_CLASSES];
 
 static blk *header(void *p) { return (blk *)(void *)((unsigned char *)p - EI_WASM_ALIGN); }
+static size_t class_size(size_t c) { return EI_WASM_ALIGN << c; }
 
 void *malloc(size_t n) {
-  if (n > SIZE_MAX - EI_WASM_ALIGN * 2) return NULL;
-  n = (n + EI_WASM_ALIGN - 1) / EI_WASM_ALIGN * EI_WASM_ALIGN;
-  for (blk **pp = &free_list; *pp; pp = &(*pp)->next) {
-    if ((*pp)->size >= n) {
-      blk *b = *pp;
-      *pp = b->next;
-      return (unsigned char *)b + EI_WASM_ALIGN;
-    }
+  size_t c = 0;
+  while (c < EI_WASM_CLASSES && class_size(c) < n) c++;
+  if (c == EI_WASM_CLASSES) return NULL;
+  if (free_list[c]) {
+    blk *b = free_list[c];
+    free_list[c] = b->next;
+    return (unsigned char *)b + EI_WASM_ALIGN;
   }
+  n = class_size(c);
   if (!brk_ptr) brk_ptr = ((uintptr_t)&__heap_base + EI_WASM_ALIGN - 1) / EI_WASM_ALIGN * EI_WASM_ALIGN;
   if (n + EI_WASM_ALIGN > UINTPTR_MAX - brk_ptr) return NULL;
   uintptr_t need = brk_ptr + EI_WASM_ALIGN + n;
@@ -73,7 +96,7 @@ void *malloc(size_t n) {
     if (ei_wasm_grow(pages) == SIZE_MAX) return NULL;
   }
   blk *b = (blk *)brk_ptr;
-  b->size = n;
+  b->cls = c;
   brk_ptr = need;
   return (unsigned char *)b + EI_WASM_ALIGN;
 }
@@ -81,17 +104,18 @@ void *malloc(size_t n) {
 void free(void *p) {
   if (!p) return;
   blk *b = header(p);
-  b->next = free_list;
-  free_list = b;
+  b->next = free_list[b->cls];
+  free_list[b->cls] = b;
 }
 
 void *realloc(void *p, size_t n) {
   if (!p) return malloc(n);
   blk *b = header(p);
-  if (b->size >= n) return p;
+  size_t have = class_size(b->cls);
+  if (have >= n) return p;
   void *q = malloc(n);
   if (!q) return NULL;
-  memcpy(q, p, b->size);
+  memcpy(q, p, have);
   free(p);
   return q;
 }
@@ -100,6 +124,11 @@ void *realloc(void *p, size_t n) {
 // back into calls to themselves)
 
 void *memcpy(void *restrict d, const void *restrict s, size_t n) {
+#if defined(__wasm_bulk_memory__)
+  /* memory.copy (the intrinsic is an instruction with bulk memory, never a call) */
+  if (n) __builtin_memcpy(d, s, n);
+  return d;
+#endif
   unsigned char *a = d;
   const unsigned char *b = s;
   while (n--) *a++ = *b++;
@@ -107,6 +136,10 @@ void *memcpy(void *restrict d, const void *restrict s, size_t n) {
 }
 
 void *memmove(void *d, const void *s, size_t n) {
+#if defined(__wasm_bulk_memory__)
+  if (n) __builtin_memmove(d, s, n);
+  return d;
+#endif
   unsigned char *a = d;
   const unsigned char *b = s;
   if (a < b) {
@@ -120,6 +153,10 @@ void *memmove(void *d, const void *s, size_t n) {
 }
 
 void *memset(void *d, int c, size_t n) {
+#if defined(__wasm_bulk_memory__)
+  if (n) __builtin_memset(d, c, n);
+  return d;
+#endif
   unsigned char *a = d;
   while (n--) *a++ = (unsigned char)c;
   return d;
@@ -179,7 +216,7 @@ ei_u128 __multi3(ei_u128 a, ei_u128 b) {
 typedef struct {
   char *buf;
   size_t cap, len; /* len: bytes produced so far */
-  int host;        /* flush full chunks to eider_write */
+  int host;        /* flush full chunks to the host: 0 no, else the fd (1 or 2) */
   char chunk[256];
 } out_t;
 
@@ -187,7 +224,7 @@ static void put(out_t *o, char c) {
   if (o->host) {
     o->chunk[o->len % sizeof o->chunk] = c;
     o->len++;
-    if (o->len % sizeof o->chunk == 0) eider_write(o->chunk, (uint32_t)sizeof o->chunk);
+    if (o->len % sizeof o->chunk == 0) ei_host_write(o->host, o->chunk, (uint32_t)sizeof o->chunk);
     return;
   }
   if (o->len + 1 < o->cap) o->buf[o->len] = c;
@@ -267,31 +304,30 @@ int snprintf(char *b, size_t n, const char *f, ...) {
   return o.len > INT32_MAX ? -1 : (int)o.len;
 }
 
-static int emit(const char *f, va_list ap) {
+static int emit(int fd, const char *f, va_list ap) {
   out_t o;
   o.buf = NULL;
   o.cap = 0;
   o.len = 0;
-  o.host = 1;
+  o.host = fd;
   format(&o, f, ap);
   size_t rest = o.len % sizeof o.chunk;
-  if (rest) eider_write(o.chunk, (uint32_t)rest);
+  if (rest) ei_host_write(fd, o.chunk, (uint32_t)rest);
   return o.len > INT32_MAX ? -1 : (int)o.len;
 }
 
 int printf(const char *f, ...) {
   va_list ap;
   va_start(ap, f);
-  int r = emit(f, ap);
+  int r = emit(1, f, ap);
   va_end(ap);
   return r;
 }
 
 int fprintf(FILE *fp, const char *f, ...) {
-  (void)fp;
   va_list ap;
   va_start(ap, f);
-  int r = emit(f, ap);
+  int r = emit(fp == stderr ? 2 : 1, f, ap);
   va_end(ap);
   return r;
 }

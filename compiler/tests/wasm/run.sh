@@ -64,6 +64,18 @@ for f in compiler/tests/wasm/*.ei; do
   fi
   ok=$((ok + 1))
 done
+# a core module (`build --wasm-core`, core/wasm/README.md "Core modules"): it validates, exports
+# _start and imports nothing but functions of the C core (env.ec_*); seed/tests/run.sh runs it
+$E build --wasm-core compiler/tests/wasm/core/prog.ei -o $T/core.wasm >$T/log 2>&1 || { echo "FAIL build --wasm-core:"; cat $T/log; fail=1; }
+if [ -f $T/core.wasm ]; then
+  imps=$(node -e '
+const m = new WebAssembly.Module(require("fs").readFileSync(process.argv[1]));
+const bad = WebAssembly.Module.imports(m).filter(i => i.module !== "env" || i.kind !== "function" || !i.name.startsWith("ec_"));
+const start = WebAssembly.Module.exports(m).some(e => e.name === "_start" && e.kind === "function");
+console.log(bad.length === 0 && start ? "ok " + WebAssembly.Module.imports(m).length : "bad " + JSON.stringify(bad) + " start=" + start);
+' $T/core.wasm 2>&1)
+  case "$imps" in "ok "*) echo "ok   wasm core module: compiler/tests/wasm/core/prog.ei imports only env.ec_* (${imps#ok } functions) and exports _start" ;; *) echo "FAIL wasm core module: $imps"; fail=1 ;; esac
+fi
 rm -rf $T
 if [ "$ok" = "$n" ]; then v="ok  "; else v="FAIL"; fi
 echo "$v wasm: $ok/$n eiderc build --wasm modules give the expected node output, and the oracle's node output and .d.ts/.js"

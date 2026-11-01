@@ -1,25 +1,33 @@
-// wasm: `build --wasm` (docs/compiler.md, "C7: WebAssembly"). WebAssembly is an optional
-// target (LAYERS.md, "Dependencies"): only this command needs clang and wasm-ld.
+// wasm: `build --wasm` and `build --wasm-core` (docs/compiler.md, "C7: WebAssembly" and
+// "Backends"). WebAssembly is an optional target (LAYERS.md, "Dependencies"): only these
+// commands need clang's wasm32 target and wasm-ld.
 //
-// The checker has already checked the program as a WebAssembly module (check.check_wasm,
-// E0806) and lower.program_wasm has made its C: a library whose entry points carry
-// `export_name("eider_<name>")`. That C is compiled with the WebAssembly core instead of the
+// `--wasm`: the checker has checked the program as a WebAssembly module (check.check_wasm,
+// E0806), and llvm.ei has lowered it for wasm32 (4-byte pointers, clang's WebAssembly C ABI),
+// with a C half (lower.program_split) whose `eider_<name>` entry points carry
+// `export_name("eider_<name>")`. Both are built with the WebAssembly core instead of the
 // native one (core/wasm/README.md: core/wasm/eider_rt.c, the runtime, and core/wasm/libc.c,
-// the freestanding C library) by $WASM_CC (default clang):
+// the freestanding C library) by $WASM_CC (default clang), with an explicit feature set
+// (`features`: MVP, sign-ext, bulk-memory, mutable-globals):
 //
-//   clang --target=wasm32 -std=c11 -O2 -ffreestanding -nostdlib -fno-builtin
-//         -Wno-unused-function -Wno-unused-variable -isystem <root>/core/wasm/include
-//         -I <root>/core -Wl,--no-entry -Wl,--allow-undefined -o <name>.wasm
-//         <prog>.c <root>/core/wasm/eider_rt.c <root>/core/wasm/libc.c
+//   clang <features> -O2 -c -o prog_ll.o prog.ll
+//   clang <features> -std=c11 -O2 -ffreestanding -nostdlib -fno-builtin -w
+//         -isystem <root>/core/wasm/include -I <root>/core -Wl,--no-entry -Wl,--allow-undefined
+//         -o <name>.wasm prog.c prog_ll.o <root>/core/wasm/eider_rt.c <root>/core/wasm/libc.c
 //
-// (the core's freestanding libc in place of a per-build shim). --allow-undefined turns
-// every function the module does not define (`extern "c"` functions, the native core's ec_*)
-// into an import from "env", which the host supplies through the loader's `imports`.
+// --allow-undefined turns every function the module does not define (`extern "c"`
+// functions, the native core's ec_*) into an import from "env", which the host supplies
+// through the loader's `imports`.
 //
 // Next to <name>.wasm go <name>.d.ts (TypeScript declarations of the exports) and <name>.js
 // (an ES module loader that supplies the host imports and wraps the exports), byte-identical
 // to what tests/oracle records. `emit-header --wasm` prints both the way the oracle
 // records them: the declarations, a \x01 byte, then the loader naming the module `@WASM@`.
+//
+// `--wasm-core`: an ordinary program (with `main`) as a core module: the same build with
+// -DEI_WASM_CORE and 32 MiB of stack placed first; it exports `_start` and imports only the
+// C core's functions (env.ec_*, core/ABI.md), so a host that links core/eider_core.c runs it
+// (seed/wasm2c.c translates it to C for that: the compiler's seed, seed/README.md).
 
 import core.sys
 import std.bytes
@@ -107,39 +115,80 @@ pub fn header(p: lower.P) -> List[u8] {
     o
 }
 
-/// `eiderc build --wasm` (and `run --wasm`, which builds the same): <name>.wasm, <name>.d.ts and
-/// <name>.js, where <name> is `-o`'s path, else the source's stem.
-pub fn build(c: List[u8], p: lower.P, file: List[u8], out: List[u8]) uses io, fs, net, clock {
-    let mut base = out.copy()
-    if base.len() == 0 { base = driver.stem(file) }
-    let mut wasm_file = base.copy()
-    bytes.append(inout wasm_file, s(".wasm"))
-    let dir = driver.temp_dir()
-    let core = fs.join(driver.root(), s("core"))
-    let cfile = fs.join(dir, s("prog.c"))
-    driver.write_or_fail(cfile, c)
+/// The WebAssembly features modules are built with (and seed/wasm2c.c translates): the MVP,
+/// sign extension, bulk memory (memory.copy, memory.fill) and mutable globals.
+pub fn features() -> List[List[u8]] {
+    let mut f: List[List[u8]] = List.new()
+    for a in ["--target=wasm32-unknown-unknown", "-mcpu=mvp", "-msign-ext", "-mbulk-memory", "-mmutable-globals"] { f.push(s(a)) }
+    f
+}
+
+fn wasm_cc() -> List[u8] uses io {
     let mut cc = s("clang")
     match env.get(s("WASM_CC")) {
         Some(x) => { if x.len() > 0 { cc = x } }
         None => {}
     }
-    let mut argv: List[List[u8]] = List.new()
-    argv.push(cc)
-    for a in ["--target=wasm32", "-std=c11", "-O2", "-ffreestanding", "-nostdlib", "-fno-builtin", "-Wno-unused-function", "-Wno-unused-variable", "-isystem"] { argv.push(s(a)) }
-    argv.push(fs.join(core, s("wasm/include")))
-    argv.push(s("-I"))
-    argv.push(core)
-    for a in ["-Wl,--no-entry", "-Wl,--allow-undefined", "-o"] { argv.push(s(a)) }
-    argv.push(wasm_file)
-    argv.push(cfile)
-    argv.push(fs.join(core, s("wasm/eider_rt.c")))
-    argv.push(fs.join(core, s("wasm/libc.c")))
-    let code = match proc.run(argv) {
+    cc
+}
+
+/// Build a module at `wasm_file` from the LLVM IR `ll` and its C half `c` (llvm.ei,
+/// lower.program_split), with the WebAssembly core (core/wasm). `core`: a core module
+/// (`--wasm-core`; core/wasm/README.md "Core modules"): -DEI_WASM_CORE, 32 MiB of stack
+/// placed first (an overflow is an out-of-bounds access, not corrupted data), `_start`.
+fn link(c: List[u8], ll: List[u8], wasm_file: List[u8], core_mod: bool) uses io, fs, net, clock {
+    let dir = driver.temp_dir()
+    let core = fs.join(driver.root(), s("core"))
+    let cfile = fs.join(dir, s("prog.c"))
+    driver.write_or_fail(cfile, c)
+    let llfile = fs.join(dir, s("prog.ll"))
+    driver.write_or_fail(llfile, ll)
+    let obj = fs.join(dir, s("prog_ll.o"))
+    let cc = wasm_cc()
+    let mut ca: List[List[u8]] = List.new()
+    ca.push(cc.copy())
+    for a in features() { ca.push(a) }
+    for a in ["-O2", "-c", "-Wno-override-module", "-o"] { ca.push(s(a)) }
+    ca.push(obj.copy())
+    ca.push(llfile)
+    let mut code = match proc.run(ca) {
         Ok(n) => n
         Err(_) => -1
     }
+    if code == 0 {
+        let mut argv: List[List[u8]] = List.new()
+        argv.push(cc)
+        for a in features() { argv.push(a) }
+        for a in ["-std=c11", "-O2", "-ffreestanding", "-nostdlib", "-fno-builtin", "-w", "-isystem"] { argv.push(s(a)) }
+        argv.push(fs.join(core, s("wasm/include")))
+        argv.push(s("-I"))
+        argv.push(core.copy())
+        if core_mod {
+            for a in ["-DEI_WASM_CORE", "-Wl,--stack-first", "-Wl,-z,stack-size=33554432"] { argv.push(s(a)) }
+        }
+        for a in ["-Wl,--no-entry", "-Wl,--allow-undefined", "-o"] { argv.push(s(a)) }
+        argv.push(wasm_file)
+        argv.push(cfile)
+        argv.push(obj)
+        argv.push(fs.join(core, s("wasm/eider_rt.c")))
+        argv.push(fs.join(core, s("wasm/libc.c")))
+        code = match proc.run(argv) {
+            Ok(n) => n
+            Err(_) => -1
+        }
+    }
     fs.remove_all(dir)
     if code != 0 { driver.fail(s("wasm build failed (needs clang with the wasm32 target and wasm-ld; set WASM_CC to override)"), 3) }
+}
+
+/// `eiderc build --wasm` (and `run --wasm`, which builds the same): <name>.wasm, <name>.d.ts and
+/// <name>.js, where <name> is `-o`'s path, else the source's stem.
+pub fn build(c: List[u8], ll: List[u8], p: lower.P, file: List[u8], out: List[u8]) uses io, fs, net, clock {
+    let mut base = out.copy()
+    if base.len() == 0 { base = driver.stem(file) }
+    let mut wasm_file = base.copy()
+    bytes.append(inout wasm_file, s(".wasm"))
+    link(c, ll, wasm_file, false)
     let mut dts_file = base.copy()
     bytes.append(inout dts_file, s(".d.ts"))
     let mut js_file = base.copy()
@@ -157,5 +206,19 @@ pub fn build(c: List[u8], p: lower.P, file: List[u8], out: List[u8]) uses io, fs
     bytes.append(inout m, dts_file)
     bytes.append(inout m, s(", "))
     bytes.append(inout m, js_file)
+    io.outln(m)
+}
+
+/// `eiderc build --wasm-core`: the program as a core module at `-o`'s path, else
+/// <stem>.wasm (core/wasm/README.md "Core modules"); prints `built <wasm>`.
+pub fn build_core(c: List[u8], ll: List[u8], file: List[u8], out: List[u8]) uses io, fs, net, clock {
+    let mut wasm_file = out.copy()
+    if wasm_file.len() == 0 {
+        wasm_file = driver.stem(file)
+        bytes.append(inout wasm_file, s(".wasm"))
+    }
+    link(c, ll, wasm_file, true)
+    let mut m = s("built ")
+    bytes.append(inout m, wasm_file)
     io.outln(m)
 }

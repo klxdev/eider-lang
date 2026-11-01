@@ -627,7 +627,8 @@ fn params_text(inout e: E, p: lower.P, s: abi.Sig, names: List[List[u8]], intern
             first = false
             bytes.append(inout o, lit("ptr byval("))
             bytes.append(inout o, mty(inout e, p, a.ty))
-            bytes.append(inout o, lit(") align 8"))
+            bytes.append(inout o, lit(") align "))
+            bytes.append(inout o, bytes.from_u64(byval_align(inout e, p, a.ty)))
             if names.len() > 0 {
                 bytes.append(inout o, lit(" "))
                 bytes.append(inout o, names[ni])
@@ -636,6 +637,13 @@ fn params_text(inout e: E, p: lower.P, s: abi.Sig, names: List[List[u8]], intern
         }
     }
     o
+}
+
+/// The alignment of a byval copy: 8 on x86-64 (the psABI's stack slots), the type's own on
+/// wasm32 (as clang passes it).
+fn byval_align(inout e: E, p: lower.P, ty: u32) -> u64 {
+    if e.lay.wasm { return align(inout e, p, ty) }
+    8
 }
 
 /// The attributes of an internal-convention parameter, each a language guarantee:
@@ -808,7 +816,10 @@ fn call_sig(inout e: E, p: lower.P, callee: List[u8], s: abi.Sig, args: List[Lis
             let mt = mty(inout e, p, a.ty)
             w(inout e, "ptr byval(")
             wb(inout e, mt)
-            w(inout e, ") align 8 ")
+            let ba = byval_align(inout e, p, a.ty)
+            w(inout e, ") align ")
+            wn(inout e, ba)
+            w(inout e, " ")
             wb(inout e, args[i])
         }
     }
@@ -1288,6 +1299,13 @@ fn copy_to(inout e: E, p: lower.P, ty: u32, src: List[u8], dst: List[u8]) {
 fn str_ptr(inout e: E, p: lower.P, ty: u32, v: List[u8]) -> List[u8] {
     if kind(p, ty) == types.T_STRING { return load_ptr_field(inout e, p, ty, v, 0) }
     v
+}
+
+/// strlen(v) as an i64 (size_t is 32 bits on wasm32).
+fn strlen64(inout e: E, p: lower.P, v: List[u8]) -> List[u8] {
+    if !e.lay.wasm { return rt_call(inout e, p, "strlen", tys1(types.STR), args1(v), types.U64) }
+    let r = rt_call(inout e, p, "strlen", tys1(types.STR), args1(v), types.U32)
+    val(inout e, catb(lit("zext i32 "), cat(r, " to i64")))
 }
 
 fn strcmp(inout e: E, p: lower.P, ty: u32, a: List[u8], b: List[u8]) -> List[u8] {
@@ -2294,7 +2312,7 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
     if (b == ir.B_LEN || b == ir.B_IS_EMPTY) && kind(p, arg_ty(p, barg(p, s, 0))) == types.T_STR {
         let v = argval(inout e, p, barg(p, s, 0))
         if b == ir.B_LEN {
-            let r = rt_call(inout e, p, "strlen", tys1(types.STR), args1(v), types.U64)
+            let r = strlen64(inout e, p, v)
             bset(inout e, p, s, r)
         } else {
             let c = val(inout e, catb(lit("load i8, ptr "), v))
@@ -2489,7 +2507,7 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
             n = load_i64_field(inout e, p, ty, ad, 1)
         } else {
             sp = argval(inout e, p, a)
-            n = rt_call(inout e, p, "strlen", tys1(types.STR), args1(sp), types.U64)
+            n = strlen64(inout e, p, sp)
         }
         if b == ir.B_STR_BYTES {
             gneed(inout e, lower.GK_BYTES, s.ty)
@@ -3676,10 +3694,12 @@ fn di_struct(inout e: E, name: List[u8], bits: u64, ms: List[u32]) -> u32 {
 pub const MIN_LLVM: u64 = 17
 
 /// The program as two halves (see the top of the file). `paths`: the module files by index
-/// (debug info), `dir` the working directory, `debug` whether to emit debug info.
-pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[List[u8]], dir: List[u8], debug: bool) -> Result[Out, List[u8]] {
+/// (debug info), `dir` the working directory, `debug` whether to emit debug info, `wasm`
+/// whether the target is wasm32 (`--wasm`, `--wasm-core`: 4-byte pointers and its C ABI,
+/// llvm_abi.ei; exports named `eider_<name>` in the module; no debug info).
+pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[List[u8]], dir: List[u8], debug: bool, wasm: bool) -> Result[Out, List[u8]] {
     let names = lower.c_names(p)?
-    let mut e = E(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), abi.new_lay(p), List.new(), names.tys, names.fns, List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), Map.new(), 0, 0, 0, false, List.new(), 0, 0, 0, List.new(), List.new(), false, abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new(), debug, false, List.new(), List.new(), List.new(), 4, 0, 0, Map.new(), Map.new(), paths, dir, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new())
+    let mut e = E(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), abi.new_lay(p, wasm), List.new(), names.tys, names.fns, List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), Map.new(), 0, 0, 0, false, List.new(), 0, 0, 0, List.new(), List.new(), false, abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new(), debug, false, List.new(), List.new(), List.new(), 4, 0, 0, Map.new(), Map.new(), paths, dir, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new())
     let nosig = abi.Sig(abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new())
     for f in 0..p.ir.fns.len() {
         e.isigs.push(nosig.copy())
@@ -3733,7 +3753,7 @@ pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[L
             report.push(10)
         }
     }
-    let c = lower.program_split(p, file, tests, lib, native, e.needs, e.tfiles)?
+    let c = lower.program_split(p, file, tests, lib, wasm, native, e.needs, e.tfiles)?
     // the C half's entries into this one: C-convention wrappers of the internal functions
     // it names (beyond their prototypes), and shims for calls into its fallback functions
     let refs = c_idents(c)
@@ -3755,6 +3775,7 @@ pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[L
     for b in file {
         if b >= 32 && b < 127 { head.push(b) }
     }
+    if wasm { bytes.append(inout head, lit("\ntarget triple = \"wasm32-unknown-unknown\"")) }
     bytes.append(inout head, lit("\n\n%ei.String = type { ptr, i64, i64 }\n"))
     bytes.append(inout head, e.tdefs)
     head.push(10)
