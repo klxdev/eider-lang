@@ -7,9 +7,8 @@ hashing, printing, iteration, cleanup, default values, error conversion) is a tr
 prelude, derived automatically for ordinary types. Dispatch is static: generic code is
 compiled once per set of type arguments (monomorphization).
 
-> **Note:** There are no trait objects (`dyn Trait`) and no associated types yet; a trait
-> is only usable as a bound. Both are planned: see the [roadmap](../../design/roadmap.md)
-> (P0.7).
+> **Note:** There are no trait objects (`dyn Trait`) yet; a trait is only usable as a
+> bound. They are planned: see the [roadmap](../../design/roadmap.md) (P0.7).
 
 ## Declaring a trait
 
@@ -187,6 +186,93 @@ trait is an error where the default body uses it, and the help names the field: 
 trait (E0820 elsewhere unless an `attr` of that name exists). The derived methods are the
 trait's defaults checked for the type, so they cost what generic instantiation costs and
 nothing more.
+
+## Associated types
+
+A trait can declare types that each impl chooses, with `type Name` in the trait and
+`type Name = T` in the impl. In the trait's signatures, and in the impl's, `Self.Name` is that
+type; in generic code `C.Name` is the associated type of the type parameter `C`, whose bound
+must be a trait that declares it. This is what lets one trait say "a container, whatever it
+holds" or "a source, with its own item and error types".
+
+```text
+trait_item  = ["pub"] "trait" name "{" {assoc_decl | fn_signature | fn_item} "}"
+assoc_decl  = "type" name
+impl_item   = "impl" [type_params] trait "for" type "{" {assoc_def | fn_item} "}"
+assoc_def   = "type" name "=" type
+type        = ... | name "." Name        (a name starting with a capital after the dot)
+```
+
+```eider
+trait Container {
+    type Item
+    fn get(self, i: usize) -> Self.Item
+    fn size(self) -> usize
+}
+
+type Bag = { xs: List[i32] }
+type Words = { xs: List[String] }
+
+impl Container for Bag {
+    type Item = i32
+    fn get(self, i: usize) -> i32 { self.xs[i] }
+    fn size(self) -> usize { self.xs.len() }
+}
+
+impl Container for Words {
+    type Item = String
+    fn get(self, i: usize) -> Self.Item { self.xs[i].copy() }
+    fn size(self) -> usize { self.xs.len() }
+}
+
+fn last[C: Container](c: C) -> C.Item { c.get(c.size() - 1) }
+
+fn or_else[C: Container](c: C, i: usize, d: C.Item) -> C.Item {
+    if i < c.size() { c.get(i) } else { d }
+}
+
+fn main() uses io {
+    let mut xs: List[i32] = List.new()
+    xs.push(3)
+    xs.push(4)
+    let mut ws: List[String] = List.new()
+    ws.push(String.from("ada"))
+    print(last(Bag(xs.copy())))
+    print(last(Words(ws)))
+    print(or_else(Bag(xs), 9, -1))
+}
+```
+
+```output
+4
+ada
+-1
+```
+
+An impl defines every associated type its trait declares, each once, and no others; the impl's
+methods have the trait's signatures with `Self.Name` replaced by the type the impl gave it (all
+E0602; a name twice is E0107). Defaults and the generic body of a function see the type through the
+impl, so `C.Item` is `i32` in the instance for `Bag` and `String` for `Words`. An impl may be
+generic: `impl[T: Copy] Container for Pairs[T] { type Item = (T, T) ... }`.
+
+`C.Name` needs a bound of `C` that declares `Name` (E0605, with a fix that adds the bound);
+`X.Name` for a type that no impl gives `Name` is E0111, and two traits that both give a type `Name`
+make `X.Name` ambiguous (E0119). Associated types are resolved where `C` is a concrete type,
+when the generic function is instantiated, so they are free at run time.
+
+```eider,compile_fail=E0602
+trait Container {
+    type Item
+    fn get(self) -> Self.Item
+}
+type A = { n: i32 }
+impl Container for A {
+    fn get(self) -> i32 { 1 }
+}
+fn main() {}
+```
+
+Fix: `type Item = i32` in the impl.
 
 ## Calling a method by its trait
 
@@ -446,7 +532,7 @@ trait Default { fn default() -> Self }
 ```
 
 (Shown, not tested: this is the prelude's own text. `Item` and `Source` are placeholders read
-off each impl, since there are no associated types.)
+off each impl: the language's own traits predate [associated types](#associated-types).)
 
 | Operation | Trait |
 |---|---|

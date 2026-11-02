@@ -1,0 +1,10 @@
+// expect: E0602 8:10
+trait Container {
+    fn size(self) -> usize
+}
+type A = { n: i32 }
+impl Container for A {
+    fn size(self) -> usize { 1 }
+    type Item = i32
+}
+fn main() {}

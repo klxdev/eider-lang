@@ -1,0 +1,6 @@
+// expect: E0107 4:10
+trait Container {
+    type Item
+    type Item
+}
+fn main() {}

@@ -482,6 +482,39 @@ this is your captain
 up!
 ```
 
+A trait can also declare a type that each impl chooses, an associated type: `type Item` in
+the trait, `type Item = i32` in the impl, `Self.Item` in the signatures and `C.Item` for a type
+parameter `C` with the bound.
+
+```eider
+trait Container {
+    type Item
+    fn get(self, i: usize) -> Self.Item
+    fn size(self) -> usize
+}
+
+type Bag = { xs: List[i32] }
+
+impl Container for Bag {
+    type Item = i32
+    fn get(self, i: usize) -> i32 { self.xs[i] }
+    fn size(self) -> usize { self.xs.len() }
+}
+
+fn last[C: Container](c: C) -> C.Item { c.get(c.size() - 1) }
+
+fn main() uses io {
+    let mut xs: List[i32] = List.new()
+    xs.push(3)
+    xs.push(4)
+    print(last(Bag(xs)))
+}
+```
+
+```output
+4
+```
+
 ## Closures
 
 ```eider

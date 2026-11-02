@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_assoc_twice_in_impl.ei","line":9,"col":10},"message":"associated type `Item` is defined twice in this impl"}

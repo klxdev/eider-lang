@@ -929,6 +929,13 @@ fn ty_list(inout p: P, close: lex.Kind) -> Result[List[u32], diag.Diag] {
     Ok(ts)
 }
 
+/// Whether token i is a name that starts with a capital letter.
+fn upper_name_at(p: P, i: usize) -> bool {
+    if !name_at(p, i) { return false }
+    let w = intern.name(p.names, p.toks[i].val as u32)
+    w.len() > 0 && w[0] >= 65 && w[0] <= 90
+}
+
 pub fn ty(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
     if is_kw(p, intern.K_INOUT) {
@@ -1004,6 +1011,17 @@ pub fn ty(inout p: P) -> Result[u32, diag.Diag] {
                 sym = q.sym
             }
             None => {}
+        }
+        // `T.Item`, `Self.Item`: an associated type (docs/compiler.md, "C8.45"), when no module
+        // alias was meant: the name after the dot starts with a capital
+        if qual == 0 && is(p, lex.Dot) && upper_name_at(p, p.i + 1) {
+            let nt = p.toks[p.i + 1].copy()
+            adv(inout p)
+            adv(inout p)
+            let mut n = mk(ast.TAssoc, t.line, t.col)
+            n.a = nt.val as u32
+            n.b = sym
+            return Ok(add(inout p, n))
         }
         if is(p, lex.LBracket) {
             adv(inout p)
@@ -1102,9 +1120,19 @@ fn trait_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
     skip_nl(inout p)
     expect(inout p, lex.LBrace)?
     let mut methods: List[u32] = List.new()
+    let mut assocs: List[u32] = List.new()
     while true {
         skip_seps(inout p)
         if eat(inout p, lex.RBrace) { break }
+        if is_kw(p, intern.K_TYPE) {
+            // an associated type: `type Item` (docs/compiler.md, "C8.45")
+            adv(inout p)
+            let an = ident(inout p)?
+            let mut a = mk(ast.IAssoc, an.line, an.col)
+            a.a = an.sym
+            assocs.push(add(inout p, a))
+            continue
+        }
         methods.push(fn_decl(inout p, true, 0)?)
     }
     let mut n = mk(ast.ITrait, name.line, name.col)
@@ -1112,6 +1140,8 @@ fn trait_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
     n.b = public
     n.c = list(inout p, methods)
     n.d = methods.len() as u32
+    n.e = list(inout p, assocs)
+    n.f = assocs.len() as u32
     Ok(add(inout p, n))
 }
 
@@ -1132,15 +1162,30 @@ fn impl_decl(inout p: P) -> Result[u32, diag.Diag] {
     skip_nl(inout p)
     expect(inout p, lex.LBrace)?
     let mut methods: List[u32] = List.new()
+    let mut assocs: List[u32] = List.new()
     while true {
         skip_seps(inout p)
         if eat(inout p, lex.RBrace) { break }
+        if is_kw(p, intern.K_TYPE) {
+            // an associated type: `type Item = i32` (docs/compiler.md, "C8.45")
+            adv(inout p)
+            let an = ident(inout p)?
+            expect(inout p, lex.Eq)?
+            skip_nl(inout p)
+            let mut a = mk(ast.IAssoc, an.line, an.col)
+            a.a = an.sym
+            a.b = ty(inout p)? + 1
+            assocs.push(add(inout p, a))
+            continue
+        }
         methods.push(fn_decl(inout p, false, 0)?)
     }
     n.c = list(inout p, gs)
     n.d = gs.len() as u32
     n.e = list(inout p, methods)
     n.f = methods.len() as u32
+    n.g = list(inout p, assocs)
+    n.h = assocs.len() as u32
     Ok(add(inout p, n))
 }
 

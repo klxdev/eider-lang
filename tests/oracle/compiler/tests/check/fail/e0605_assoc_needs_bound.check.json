@@ -1,0 +1,1 @@
+{"error":"E0605","span":{"file":"compiler/tests/check/fail/e0605_assoc_needs_bound.ei","line":11,"col":22},"message":"`T.Item` needs `T: Container`","help":"a generic body can only use what its type parameters' bounds promise; add the bound","fix":{"at":{"line":11,"col":11},"delete":0,"insert":": Container"}}

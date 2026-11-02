@@ -1,0 +1,1 @@
+{"error":"E0119","span":{"file":"compiler/tests/check/fail/e0119_assoc_ambiguous.ei","line":15,"col":17},"message":"associated type `Item` of `A` is ambiguous: traits `Container` and `Other` define it","help":"implement only one of them for the type"}

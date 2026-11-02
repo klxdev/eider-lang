@@ -39,6 +39,8 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0103_ffi_unsafe_as_argument.ei E0103 at 4:11
   ok   e0103_if_as_argument.ei      E0103 at 4:7
   ok   e0107_alias_duplicate.ei     E0107 at 4:6
+  ok   e0107_assoc_twice_in_impl.ei E0107 at 9:10
+  ok   e0107_assoc_twice_in_trait.ei E0107 at 4:10
   ok   e0107_builtin_fn_name.ei     E0107 at 2:4
   ok   e0107_builtin_type_name.ei   E0107 at 2:6
   ok   e0107_comptime_ct_name.ei    E0107 at 1:4
@@ -90,6 +92,8 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0111_alias_mutual_cycle.ei  E0111 at 4:16
   ok   e0111_alias_needs_args.ei    E0111 at 4:9
   ok   e0111_alias_unknown_target.ei E0111 at 3:13
+  ok   e0111_assoc_no_such_owner.ei E0111 at 2:17
+  ok   e0111_assoc_unknown.ei       E0111 at 6:26
   ok   e0111_empty_record.ei        E0111 at 2:6
   ok   e0111_ffi_extern_unit_param.ei E0111 at 2:17
   ok   e0111_fn_type_unknown.ei     E0111 at 2:12
@@ -184,6 +188,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0119_ambiguous_default.ei   E0119 at 9:13
   ok   e0119_ambiguous_method.ei    E0119 at 9:13
   ok   e0119_ambiguous_static.ei    E0119 at 8:15
+  ok   e0119_assoc_ambiguous.ei     E0119 at 15:17
   ok   e0201_comptime_builtin.ei    E0201 at 2:25
   ok   e0201_comptime_clock.ei      E0201 at 3:25
   ok   e0201_comptime_ffi.ei        E0201 at 3:34
@@ -573,6 +578,10 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0601_default_part.ei        E0601 at 4:17
   ok   e0601_ord_without_eq.ei      E0601 at 3:1
   ok   e0601_ref_copy_chan.ei       E0601 at 5:16
+  ok   e0602_assoc_inherent_impl.ei E0602 at 4:10
+  ok   e0602_assoc_missing.ei       E0602 at 7:1
+  ok   e0602_assoc_not_in_trait.ei  E0602 at 8:10
+  ok   e0602_assoc_signature.ei     E0602 at 9:8
   ok   e0602_default_signature.ei   E0602 at 4:8
   ok   e0602_from_caps.ei           E0602 at 5:8
   ok   e0602_from_signature.ei      E0602 at 5:8
@@ -596,6 +605,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0604_orphan_list.ei         E0604 at 3:1
   ok   e0604_orphan_param.ei        E0604 at 2:1
   ok   e0604_orphan_prelude.ei      E0604 at 2:1
+  ok   e0605_assoc_needs_bound.ei   E0605 at 11:22 (fix compiles)
   ok   e0605_call_bound.ei          E0605 at 3:29 (fix compiles)
   ok   e0605_copy_param.ei          E0605 at 2:34 (fix compiles)
   ok   e0605_default_needs_bound.ei E0605 at 2:30 (fix compiles)
@@ -767,6 +777,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-765 passed, 0 failed; error-code coverage 61/70
+775 passed, 0 failed; error-code coverage 61/70
 codes without a compile-fail test: E0118 E0302 E0310 E0402 E0412 E0806 E0808 E0812 E0813
 --- exit 0

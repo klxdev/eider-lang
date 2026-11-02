@@ -3602,10 +3602,7 @@ parameters instantiates its defaults whether they are called or not, as it does 
 methods. Methods are looked up by (head, name), so a type's own method of the same name, found
 first, wins (`register_defaults` doesn't register the default then).
 
-Associated types (#107) and calling a method by its trait (#50) stay open; neither falls out of
-this. `T.Item` needs a type resolved per impl in signatures and bounds, with new syntax in
-traits and impls; `Trait.m(x)` needs a new path for static calls, and is only useful when two
-methods of a name can coexist on a type, which E0107 refuses today.
+Associated types (#107) and calling a method by its trait (#50) came after: "C8.45" and "C8.44".
 
 Tests: compiler/tests/run/default_methods.ei and lib/shapes.ei (inherit, override, Self, generic
 methods, associated functions, generic impls, a bound, another module; hand-checked .out),
@@ -3817,6 +3814,55 @@ and nothing otherwise, so no existing name, trap message or profile changes.
 traits' functions of one name stay ambiguous, E0119); a bound in a generic function does not
 choose among several candidates of a concrete instance (call by trait there, as the test
 does); a path `Trait.m` as a function value.
+
+## C8.45: associated types
+
+0.4.0 (#107; decision C622). Code: ast.ei (`TAssoc`, `IAssoc`), parse.ei (`ty`'s `T.Item` branch,
+`upper_name_at`, `trait_decl`, `impl_decl`), dump.ei, doc.ei (`ty`), check.ei ("Associated types":
+`assoc_ty`, `param_assoc_ok`, `traits_with_assoc`, `find_assoc`, `replace_text`; `norm`,
+`register_impl`, `resolve_ty`, `has_unbound`, `unify_ast`, `show_ast`); tests:
+compiler/tests/run/assoc_types.ei and lib/stores.ei (hand-checked .out), compiler/tests/parse_ok/assoc_types.ei,
+compiler/tests/parse/assoc_type_no_eq.ei, compiler/tests/check/fail/e0602_assoc_*, e0107_assoc_*,
+e0111_assoc_*, e0605_assoc_needs_bound, e0119_assoc_ambiguous; docs: docs/site/reference/traits.md
+("Associated types"); tree-sitter-eider `associated_type`, eider-analyzer's lexical stand-in
+(`assoc_item`).
+
+**Syntax.** In a trait body `type Name` declares one; in an impl body `type Name = T` defines
+it. In a type position `A.B` where no module alias or namespace is meant (parse.ei's `qualified`
+said no) and `B` starts with a capital is a `TAssoc` (a=B, b=A): `Self.Item`, `C.Item`. (The
+capital keeps `x as u8.abs()` as before, though `abs` was never a type.) `ITrait` keeps its
+`IAssoc` list in [e/f], `IImpl` in [g/h]; an `IAssoc` has the name and, in an impl, `type+1`.
+`type` is already a keyword, so the member loops test it before `fn`.
+
+**Resolution at instantiation.** `resolve_ty` of a `TAssoc` looks its owner symbol up in
+`tsubst` (a type parameter, `Self`; a type named outright, when it has no type parameters),
+then `assoc_ty` scans `timpls` for an impl whose target unifies with the owner type and that
+defines the name, and resolves the impl's type node with the unifier's substitution
+(`impl[T] ... for Pairs[T] { type Item = (T, T) }` gives `(u8, u8)` for `Pairs[u8]`). More than one
+trait defining the name for the type is E0119; none is E0111. Functions are checked as instances
+with concrete types, so nothing else in the checker learned about the type: a method of the
+impl returns `Self.Item` or `i32` and both are the one type.
+
+**The bounds pass.** The abstract pass (C8.4) checks a generic declaration with T_PARAM types.
+There `C.Item` is E0605 unless a bound of `C` declares `Item` (the fix adds the bound when one
+trait declares the name), and otherwise the error type, which `same` accepts everywhere, so
+the body is neither checked against nor reported for a type nobody knows yet. `has_unbound`
+treats `C.Item` as unbound while `C` is, so an argument typed `C.Item` waits for the one that
+binds `C`; `unify_ast` binds nothing through it (the resolved type is compared after).
+
+**Impl checks.** `register_impl` compares an impl's methods with the trait's after
+substituting the impl's types for `Self.Name` in the text of both signatures (`norm`; a whole-word
+replace, so `Self.ItemX` is left alone); an impl that lacks a declared type or defines one the
+trait doesn't is E0602 (and a missing one stops the signature comparison, which would only repeat
+it), a name twice in a trait or an impl is E0107, and `type` in an inherent impl is E0602.
+Default methods of a trait are instances with `Self` set, so they use `Self.Item` as an impl's
+methods do.
+
+**Not done.** A bound on an associated type (`type Item: Show`), a default (`type Item = i32`
+in the trait), a where clause equating one (`C.Item == i32`), and associated types of the
+language's own traits (`Iter` still reads its `Item` off the impl: C8.4). `eiderc doc` shows a
+trait's methods but not its associated types. A function never instantiated is not checked for
+`C.Item` without a bound, like every other bounds error (C8.4).
 
 ## Profiling: `--profile`
 

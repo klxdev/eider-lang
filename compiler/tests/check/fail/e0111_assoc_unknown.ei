@@ -1,0 +1,7 @@
+// expect: E0111 6:26
+trait Container {
+    type Item
+}
+type A = { n: i32 }
+fn first(a: A) -> Option[A.Item] { None }
+fn main() {}

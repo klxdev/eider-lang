@@ -135,6 +135,14 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
         }
         ast.TTuple => kids(inout out, p, "elem", n.c, n.d, d)
         ast.TUnit => {}
+        ast.TAssoc => {
+            sym(inout out, p, "name", n.a)
+            sym(inout out, p, "owner", n.b)
+        }
+        ast.IAssoc => {
+            sym(inout out, p, "name", n.a)
+            opt(inout out, p, "type", n.b, d)
+        }
         ast.TFn => {
             if n.e != 0 {
                 put(inout out, " inout=")
@@ -367,12 +375,14 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             sym(inout out, p, "name", n.a)
             flag(inout out, "pub", n.b == 1)
             kids(inout out, p, "method", n.c, n.d, d)
+            kids(inout out, p, "assoc", n.e, n.f, d)
         }
         ast.IImpl => {
             kids(inout out, p, "generic", n.c, n.d, d)
             opt(inout out, p, "trait", n.a, d)
             child(inout out, p, "target", n.b, d)
             kids(inout out, p, "method", n.e, n.f, d)
+            kids(inout out, p, "assoc", n.g, n.h, d)
         }
         ast.IConst => {
             sym(inout out, p, "name", n.a)

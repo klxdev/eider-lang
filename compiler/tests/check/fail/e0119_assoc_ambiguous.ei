@@ -1,0 +1,16 @@
+// expect: E0119 15:17
+trait Container {
+    type Item
+}
+trait Other {
+    type Item
+}
+type A = { n: i32 }
+impl Container for A {
+    type Item = i32
+}
+impl Other for A {
+    type Item = u8
+}
+fn amb(x: A) -> A.Item { 1 }
+fn main() {}

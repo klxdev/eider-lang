@@ -293,7 +293,8 @@ fn main() uses io {
 
 ## E0111
 
-An **invalid type**. Raised for an unknown type name, a generic type without its type
+An **invalid type**. Raised for an unknown type name, an associated type (`T.Item`) that
+the type has none of, a generic type without its type
 arguments or with the wrong number of them, an array of length 0, a record with no fields,
 `()` where a value type is needed (a parameter of type `()`, `List[()]`), a type alias that
 refers to itself or names an unknown type, an `impl` that names an alias instead of the
@@ -541,6 +542,8 @@ An **ambiguous method**: a type implements two traits that each define the metho
 (or inherit a default of that name), and the type has no method of its own with the name.
 `value.name()` can't tell which is meant. The help names the way out, calling the method by
 its trait. (An associated function without `self` can't be called by its trait; rename one.)
+The same code is raised for an associated type name (`X.Item`) that two traits implemented
+for `X` both define.
 
 ```eider,compile_fail=E0119
 trait Greeter { fn hello(self) -> str }
@@ -1412,7 +1415,8 @@ fn main() uses io {
 
 An **impl that doesn't match its trait**: a method whose signature differs from the
 trait's, a method the trait doesn't have, a missing method, an `Iter` impl whose `next`
-doesn't return an `Option`, and for `From`: a signature other than
+doesn't return an `Option`, an associated type the impl doesn't define (or one the trait
+doesn't declare, or one in an inherent impl), and for `From`: a signature other than
 `fn from(value: Source) -> Target`, or a `from` that declares capabilities.
 
 ```eider,compile_fail=E0602
@@ -1504,7 +1508,8 @@ A **missing bound in generic code**: a generic body may use an operation on a ty
 only when its bounds promise it: `==` needs `T: Eq`, `<` and `compare` `T: Ord`, printing
 `T: Show`, `.copy()` `T: Copy`, `for` over it `T: Iter`, `contains` on a `List[T]` `T: Eq`,
 `T.default()` and `take()` `T: Default`, and a `Map[K, V]` (also in a signature)
-`K: Hash + Eq`. The compiler offers a machine-applicable fix that adds the bound. These
+`K: Hash + Eq`, and an associated type `T.Item` needs a bound of `T` that declares `Item`.
+The compiler offers a machine-applicable fix that adds the bound. These
 errors are found after every other check, so they come last.
 
 ```eider,compile_fail=E0605

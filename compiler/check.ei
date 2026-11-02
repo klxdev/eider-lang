@@ -1597,6 +1597,7 @@ fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] {
     let n = ndm(c, am, tn)
     match n.kind {
         ast.TUnit => Ok(types.UNIT)
+        ast.TAssoc => assoc_ty(inout c, am, n)
         ast.TArray => {
             if n.b == 0 { return Err(err("E0111", n.line, n.col, s("array length must be at least 1"))) }
             let e = resolve_ty(inout c, am, n.a)?
@@ -2050,6 +2051,7 @@ fn has_unbound(c: C, m: u32, tn: u32, sb: Subst, gs: List[u32]) -> bool {
         ast.TName => n.b == 0 && has_sym(gs, n.a) && subst_get(sb, n.a) == NONE
         ast.TArray => has_unbound(c, m, n.a, sb, gs)
         ast.TUnit => false
+        ast.TAssoc => has_sym(gs, n.b) && subst_get(sb, n.b) == NONE
         _ => {
             for i in 0..n.d {
                 if has_unbound(c, m, atm(c, m, n.c, i), sb, gs) { return true }
@@ -2166,6 +2168,7 @@ fn unify_ast(c: C, m: u32, tn: u32, actual: u32, inout sb: Subst, gs: List[u32])
             if n.g > 0 { return unify_ast(c, m, n.g - 1, t.b, inout sb, gs) }
             t.b == types.UNIT
         }
+        ast.TAssoc => true
         _ => actual == types.UNIT
     }
 }
@@ -2194,6 +2197,11 @@ fn show_ast(c: C, m: u32, tn: u32, gens: List[u32]) -> List[u8] {
             out.push(40)
             show_list(c, m, n.c, n.d, gens, inout out)
             out.push(41)
+        }
+        ast.TAssoc => {
+            bytes.append(inout out, nm(c, n.b))
+            out.push(46)
+            bytes.append(inout out, nm(c, n.a))
         }
         ast.TFn => {
             bytes.append(inout out, s("fn("))
@@ -3326,6 +3334,15 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
         }
         c.traits.insert(k, c.trs.len() as u32)
         c.trs.push(it)
+        let mut seen_assoc: List[u32] = List.new()
+        for i in 0..n.f {
+            let an = ndm(c, it.m, atm(c, it.m, n.e, i))
+            if has_sym(seen_assoc, an.a) {
+                let rd = in_file(c, err("E0107", an.line, an.col, q("associated type `", nm(c, an.a), "` is declared twice in this trait")), it.m)
+                record(inout c, rd)
+            }
+            seen_assoc.push(an.a)
+        }
     }
     // 4. free functions (a misdeclared one is reported and still declared)
     for it in its {
@@ -3655,9 +3672,144 @@ fn find_method(c: C, m: u32, start: u32, len: u32, name: u32) -> u32 {
 }
 
 /// A trait method's return type or parameter type as compared by register_impl.
-fn norm(c: C, m: u32, tn1: u32, gens: List[u32], target: List[u8]) -> List[u8] {
+fn norm(c: C, m: u32, tn1: u32, gens: List[u32], target: List[u8], ans: List[u32], ats: List[List[u8]]) -> List[u8] {
     if tn1 == 0 { return s("()") }
-    replace_self(show_ast(c, m, tn1 - 1, gens), target)
+    let mut text = show_ast(c, m, tn1 - 1, gens)
+    // `Self.Item` is the impl's associated type (docs/compiler.md, "C8.45")
+    for i in 0..ans.len() {
+        let mut pat = s("Self.")
+        bytes.append(inout pat, nm(c, ans[i]))
+        text = replace_text(text, pat, ats[i])
+    }
+    replace_self(text, target)
+}
+
+fn name_byte(b: u8) -> bool { (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95 }
+
+/// `text` with every whole-word occurrence of `pat` replaced by `with`.
+fn replace_text(text: List[u8], pat: List[u8], with: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut i: usize = 0
+    while i < text.len() {
+        let mut hit = i + pat.len() <= text.len()
+        if hit {
+            for j in 0..pat.len() {
+                if text[i + j] != pat[j] { hit = false }
+            }
+        }
+        if hit && i + pat.len() < text.len() && name_byte(text[i + pat.len()]) { hit = false }
+        if hit && i > 0 && (name_byte(text[i - 1]) || text[i - 1] == 46) { hit = false }
+        if hit {
+            bytes.append(inout out, with)
+            i += pat.len()
+        } else {
+            out.push(text[i])
+            i += 1
+        }
+    }
+    out
+}
+
+/// The IAssoc node named `name` in list [start/len) of module m, or NONE.
+fn find_assoc(c: C, m: u32, start: u32, len: u32, name: u32) -> u32 {
+    for i in 0..len {
+        let id = atm(c, m, start, i)
+        if ndm(c, m, id).a == name { return id }
+    }
+    NONE
+}
+
+// ---- Associated types (docs/compiler.md, "C8.45")
+
+/// Whether a bound of type parameter ty (a T_PARAM, in the bounds pass) is a trait that declares
+/// the associated type `name`.
+fn param_assoc_ok(c: C, ty: u32, name: u32) -> bool {
+    let i = param_ix(c, ty)
+    if i == NONE { return true }
+    let m = c.lt.pm[i as usize]
+    let g = ndm(c, m, c.lt.pn[i as usize])
+    for j in 0..g.d {
+        let b = ndm(c, m, atm(c, m, g.c, j))
+        let ti = mget(c.traits, resolve.name_key(c.p, m, b.a, b.b, b.line, b.col))
+        if ti == NONE { continue }
+        let tr = c.trs[ti as usize].copy()
+        let trn = ndm(c, tr.m, tr.node)
+        if find_assoc(c, tr.m, trn.e, trn.f, name) != NONE { return true }
+    }
+    false
+}
+
+/// The keys of the traits that declare an associated type `name`.
+fn traits_with_assoc(c: C, name: u32) -> List[u64] {
+    let mut out: List[u64] = List.new()
+    for ti in 0..c.trs.len() {
+        let tr = c.trs[ti].copy()
+        let trn = ndm(c, tr.m, tr.node)
+        if find_assoc(c, tr.m, trn.e, trn.f, name) != NONE { out.push(resolve.item_key(c.p, tr.m, trn.a)) }
+    }
+    out
+}
+
+/// `Owner.Name`: the associated type `Name` of the type `Owner` stands for, found among the
+/// impls whose target fits it. In the bounds pass an owner that is a type parameter has the
+/// associated types its bounds declare and stands for an error type (no cascades); without
+/// such a bound it is E0605.
+fn assoc_ty(inout c: C, am: u32, n: ast.Node) -> Result[u32, diag.Diag] {
+    let mut owner = subst_get(c.tsubst, n.b)
+    if owner == NONE {
+        // a type named outright: `Counter.Item`
+        let k = resolve.name_key(c.p, am, n.b, 0, n.line, n.col)
+        let di = mget(c.tmpl, k)
+        if di == NONE || c.t.defs[di as usize].generic > 0 {
+            let fd = errh("E0111", n.line, n.col, q2("unknown type `", nm(c, n.b), ".", nm(c, n.a), "`"), "`T.Item` names an associated type of a type parameter, of `Self` or of a type without type parameters")
+            return Err(fd)
+        }
+        owner = inst_type(inout c, di, List.new(), n.line, n.col)?
+    }
+    if poisoned(c, owner) { return Ok(poison(inout c)) }
+    if types.kind(c.t, owner) == types.T_PARAM {
+        if !param_assoc_ok(c, owner, n.a) {
+            let what = q2("`", nm(c, n.b), ".", nm(c, n.a), "`")
+            let trs = traits_with_assoc(c, n.a)
+            if trs.len() == 1 {
+                let mut names: List[List[u8]] = List.new()
+                names.push(kt(c, trs[0]))
+                return Err(bound_err(c, n.line, n.col, what, names, owner))
+            }
+            return Err(errh("E0605", n.line, n.col, q("", what, " needs a bound with an associated type of that name"), "a generic body can only use what its type parameters' bounds promise; add the bound"))
+        }
+        return Ok(poison(inout c))
+    }
+    let mut found = NONE
+    let mut found_tk: u64 = 0
+    for x in c.timpls {
+        let im = ndm(c, x.md, x.node)
+        let an = find_assoc(c, x.md, im.g, im.h, n.a)
+        if an == NONE { continue }
+        let gs = gparams(c, x.md, im.c, im.d)
+        let mut sb = no_subst()
+        if !unify_ast(c, x.md, im.b, owner, inout sb, gs) { continue }
+        subst_set(inout sb, intern.S_SELF_TYPE, owner)
+        if found != NONE {
+            if x.tkey != found_tk {
+                let mut a = kt(c, found_tk)
+                let b = kt(c, x.tkey)
+                bytes.append(inout a, s("` and `"))
+                bytes.append(inout a, b)
+                let fd = errh("E0119", n.line, n.col, q3("associated type `", nm(c, n.a), "` of `", ts(c, owner), "` is ambiguous: traits `", a, "` define it"), "implement only one of them for the type")
+                return Err(fd)
+            }
+            continue
+        }
+        let atn = ndm(c, x.md, an).b - 1
+        found = resolve_with(inout c, x.md, atn, sb)?
+        found_tk = x.tkey
+    }
+    if found == NONE {
+        let fd = errh("E0111", n.line, n.col, q3("type `", ts(c, owner), "` has no associated type `", nm(c, n.a), "`", List.new(), ""), "it is declared by a trait (`type Item`) and defined in the type's impl of it (`type Item = i32`)")
+        return Err(fd)
+    }
+    Ok(found)
 }
 
 fn concat_syms(a: List[u32], b: List[u32]) -> List[u32] {
@@ -3692,6 +3844,13 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
     let mut dti = NONE
     let mut names: List[u32] = List.new()
     let mut mtk: u64 = 0
+    if im.a == 0 {
+        for i in 0..im.h {
+            let ian = ndm(c, m, atm(c, m, im.g, i))
+            let rd = errh("E0602", ian.line, ian.col, q("associated type `", nm(c, ian.a), "` in an inherent impl"), "associated types are defined in an impl of the trait that declares them")
+            record(inout c, rd)
+        }
+    }
     for i in 0..im.f {
         let mn = ndm(c, m, atm(c, m, im.e, i))
         if has_sym(names, mn.a) {
@@ -3723,6 +3882,34 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
             // a language trait: the orphan rule and what each needs ("Operation traits")
             let lang = lang_of_key(c, tk)
             if lang != NONE && !check_lang_impl(inout c, m, im, lang, igens) { return Ok(true) }
+            // associated types (docs/compiler.md, "C8.45"): each of the trait's is defined once;
+            // `Self.Item` in the two signatures is the impl's type
+            let mut ans: List[u32] = List.new()
+            let mut ats: List[List[u8]] = List.new()
+            for i in 0..im.h {
+                let ian = ndm(c, m, atm(c, m, im.g, i))
+                if has_sym(ans, ian.a) {
+                    let rd = err("E0107", ian.line, ian.col, q("associated type `", nm(c, ian.a), "` is defined twice in this impl"))
+                    record(inout c, rd)
+                    continue
+                }
+                ans.push(ian.a)
+                ats.push(show_ast(c, m, ian.b - 1, igens))
+                if find_assoc(c, tr.m, trn.e, trn.f, ian.a) == NONE {
+                    let rd = err("E0602", ian.line, ian.col, q2("trait `", kt(c, tk), "` has no associated type `", nm(c, ian.a), "`"))
+                    record(inout c, rd)
+                }
+            }
+            // (a missing one leaves `Self.Item` of the signatures unknown: they aren't compared)
+            let mut assoc_missing = false
+            for i in 0..trn.f {
+                let tan = ndm(c, tr.m, atm(c, tr.m, trn.e, i))
+                if !has_sym(ans, tan.a) {
+                    let rd = err("E0602", im.line, im.col, q2("impl of `", kt(c, tk), "` is missing associated type `", nm(c, tan.a), "`"))
+                    record(inout c, rd)
+                    assoc_missing = true
+                }
+            }
             for i in 0..trn.d {
                 let tmn = atm(c, tr.m, trn.c, i)
                 let tm = ndm(c, tr.m, tmn)
@@ -3741,14 +3928,14 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
                 let mn = ndm(c, m, mid)
                 let mgens = concat_syms(igens, gparams(c, m, mn.c, mn.d))
                 let tgens = gparams(c, tr.m, tm.c, tm.d)
-                let mut differs = !bytes.eq(norm(c, m, mn.g, mgens, target), norm(c, tr.m, tm.g, tgens, target))
+                let mut differs = !bytes.eq(norm(c, m, mn.g, mgens, target, ans, ats), norm(c, tr.m, tm.g, tgens, target, ans, ats))
                 // Iter's `next` returns `Option[Item]` for the item type the impl chooses
                 if lang == TR_ITER { differs = !option_ret(c, m, mn) }
                 let mut k: u32 = 1
                 while k < mn.f && k < tm.f {
                     let a = ndm(c, m, atm(c, m, mn.e, k))
                     let b = ndm(c, tr.m, atm(c, tr.m, tm.e, k))
-                    if !bytes.eq(norm(c, m, a.b + 1, mgens, target), norm(c, tr.m, b.b + 1, tgens, target)) { differs = true }
+                    if !bytes.eq(norm(c, m, a.b + 1, mgens, target, ans, ats), norm(c, tr.m, b.b + 1, tgens, target, ans, ats)) { differs = true }
                     k += 1
                 }
                 if mn.f != tm.f { differs = true }
@@ -3759,6 +3946,7 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
                     if a.c != b.c { differs = true }
                     k += 1
                 }
+                if assoc_missing { differs = false }
                 if differs {
                     let rd = err("E0602", mn.line, mn.col, q2("method `", nm(c, mn.a), "` doesn't match the signature in trait `", kt(c, tk), "`"))
                     record(inout c, rd)
