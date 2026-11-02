@@ -1,0 +1,4 @@
+start
+--- stderr
+error: main returned Err
+--- exit 1

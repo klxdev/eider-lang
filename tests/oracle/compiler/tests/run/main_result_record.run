@@ -1,5 +1,5 @@
 one
 two
 --- stderr
-error: main returned Err
+error: Why { code: 3, line: 9 }
 --- exit 1

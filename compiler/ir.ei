@@ -339,6 +339,8 @@ pub type Ir = {
     outer: List[Outer],
     /// the line of `main` (its exit code's range check traps there)
     main_line: u32,
+    /// `main` returns Result[(), E] and E has Show: its Err is printed through Show (docs/compiler.md, "C8.43")
+    main_show: bool,
     /// Operation traits (docs/compiler.md, "C8.4: operation traits"): for a type with its own
     /// impl of a language trait, trait (TR_* in check.ei: 0 Copy, 1 Eq, 2 Ord, 3 Hash, 4 Show,
     /// 5 Iter, 6 Drop) * 2^32 + type -> the function implementing its method; lowering's glue
@@ -354,7 +356,7 @@ pub type Ir = {
 type Outer = { cur: u32, building: List[Local] }
 
 pub fn new() -> Ir {
-    Ir(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new(), 0, Map.new(), List.new(), 0)
+    Ir(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), 0, List.new(), List.new(), 0, false, Map.new(), List.new(), 0)
 }
 
 // ---- building

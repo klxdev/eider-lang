@@ -3421,6 +3421,11 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
         if f.key == resolve.key(0, c.w.main) {
             c.ir.main_line = fnode.line
             if fnode.f == 0 && fnode.d == 0 && !main_returns_ok(c, c.insts[ii as usize].ret) { record(inout c, main_error(fnode)) }
+            if fnode.f == 0 && fnode.d == 0 && main_result(c, c.insts[ii as usize].ret) {
+                // an Err is printed through Show ("C8.43")
+                let rty = c.insts[ii as usize].ret
+                c.ir.main_show = has_trait(c, TR_SHOW, types.list_at(c.t, types.def_of(c.t, rty).args, 1))
+            }
         }
         let fl = fnode.b
         if ast.has(fl, ast.FN_EXTERN) || ast.has(fl, ast.FN_EXPORT) { record_ffi(inout c, ii) }

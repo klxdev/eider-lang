@@ -1,0 +1,11 @@
+// An Err of a type with no Show (a record holding a function) still ends the program with
+// exit code 1; there is nothing to print but `error: main returned Err`.
+
+type Why = { code: i32, hint: fn(i32) -> i32 }
+
+fn inc(n: i32) -> i32 { n + 1 }
+
+fn main() -> Result[(), Why] uses io {
+    print("start")
+    Err(Why(3, inc))
+}

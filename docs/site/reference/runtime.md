@@ -18,10 +18,12 @@ A program's entry module must define `fn main`. It takes no parameters and retur
 Any other signature is [E0111](errors.md#e0111). Like every function, `main` declares the
 [capabilities](capabilities.md) it uses (`fn main() uses io`).
 
-For `Err(e)`, the error is printed when `E` is an integer type, `bool`, `str`, `String` or an
-enum without payloads (its variant name); for any other `E` the line is
-`error: main returned Err`. Standard output is flushed first, and the `Result` is dropped
-before the process exits.
+For `Err(e)`, the error is printed through its `Show` (see [Traits](traits.md)): an
+integer type, `bool`, `str`, `String`, an enum without payloads (its variant name), and any
+type that implements or derives `Show` (a record, a tuple, an enum with payloads, a
+`Failure` as its whole chain `outer: middle: root`). Only an `E` with no `Show` (a record
+holding a function, say) prints `error: main returned Err`. Standard output is flushed first,
+and the `Result` is dropped before the process exits.
 
 ```eider
 fn code(n: i32) -> i32 { n * 7 }
@@ -63,6 +65,29 @@ fn main() -> Result[(), String] uses io {
 
 With `parse("x")?` instead, the program prints `error: not a number: x` to stderr and exits
 with 1.
+
+The natural error type of a `main` that uses `?` everywhere is `std/error`'s `Failure`: `?`
+converts any `Error` into one, `.context("...")` adds what the program was doing, and a
+Failure that reaches `main` prints as its chain, outermost first. For
+`error: starting up: loading b.toml: bad digit at 0` the program below would have to fail;
+it prints the chain with `print` so that it runs:
+
+```eider
+import std.error
+
+fn main() -> Result[(), error.Failure] uses io {
+    let f = error.Failure.new("bad digit at 0").wrap(String.from("loading b.toml")).wrap(String.from("starting up"))
+    print(f)
+    Ok(())
+}
+```
+
+```output
+starting up: loading b.toml: bad digit at 0
+```
+
+Returning `Err(f)` instead prints `error: starting up: loading b.toml: bad digit at 0` and
+exits with 1.
 
 A library (`eiderc build --lib`, `--wasm`) has no `main`; see [FFI](ffi.md).
 

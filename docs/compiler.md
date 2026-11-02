@@ -1635,7 +1635,8 @@ E0401/E0115/E0303/E0405 cases in `compiler/tests/check/fail`, `c8_*_ok.ei` in
   `main`'s line (exit 101), because the OS keeps only the low byte and 256 would read as
   success. With `Result[(), E]`, `Ok(())` exits 0; an `Err(e)` flushes stdout, prints
   `error: <e>` to stderr when `E` is printable by `print` (an integer, `bool`, `str`, `String`
-  or an enum without payloads; its variant name), else `error: main returned Err`, drops the
+  or an enum without payloads; its variant name), else `error: main returned Err` (C8.43:
+  through `Show` for any type that has it), drops the
   Result, and exits 1. Traps still exit 101 and `eiderc run` passes every exit code on.
 - **`impl` on built-in types**: `impl String`, `impl str`, `impl i32` (any integer), `impl
   bool`, `impl[T] List[T]`, `impl Map[K, V]`, `impl Box[T]`, `impl Mutex[T]` and so on, with
@@ -3753,6 +3754,24 @@ no method `enc`" with the help "in the `comptime for` iteration over field `n` o
 library supplies those impls, as eider-json does); a trait with required methods is not
 derived (its methods without a body stay missing: calling one is E0115 on the type).
 Associated constants and `eiderc expand` (research #97) are separate work.
+
+## C8.43: `main` returning `Result` (an Err through Show)
+
+0.4.0 (#12; decision C620). Code: check.ei (pass 7: `c.ir.main_show`), ir.ei (`main_show`),
+llvm.ei (`main_fn`); tests: compiler/tests/run/main_result_{failure,show,tuple,noshow,record}.ei;
+docs: docs/site/reference/runtime.md.
+
+C8.2 printed an Err for an integer, `bool`, `str`, `String` or an enum without payloads and said
+`error: main returned Err` for anything else. Now any `E` with `Show` is printed through it:
+when pass 7 resolves `main`'s signature and it is `Result[(), E]`, `has_trait(TR_SHOW, E)` is
+recorded as `Ir.main_show`. `main_fn` then builds a String with `show_into` (the glue `print`
+uses: an `impl Show` found in `Ir.impls`, else the derived one), hands its bytes to
+`ei_main_error`, and drops it before the Result is dropped. The fixed cases keep their old
+direct paths (so the output of an Err of a plain enum, integer or text is unchanged); an enum
+with its own `Show` now goes through it. A `Failure` has `Show` (std/error), so it prints its
+chain `outer: inner: root`. An `E` without `Show` (a record with a function field) still
+prints `error: main returned Err`; the exit code is 1 in every case, and `E0111` for the
+signature is unchanged.
 
 ## Profiling: `--profile`
 

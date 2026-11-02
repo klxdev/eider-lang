@@ -1,0 +1,27 @@
+// `main` returning Result[(), E] prints an Err through E's Show: its own impl, or the derived
+// one for a record, and the program exits with 1 (#12). An Err of a type with no Show prints
+// `error: main returned Err` (main_result_record.ei).
+
+type Code = | Missing(str) | Refused(i32, i32)
+
+impl Show for Code {
+    fn show(self, inout out: String) {
+        match self {
+            Missing(name) => { out.push_str("missing "); out.push_str(name) }
+            Refused(a, b) => { out.append("refused ({a}/{b})") }
+        }
+    }
+}
+
+fn step(n: i32) -> Result[i32, Code] {
+    if n == 3 { return Err(Refused(n, 9)) }
+    if n > 3 { return Err(Missing("later")) }
+    Ok(n)
+}
+
+fn main() -> Result[(), Code] uses io {
+    print(step(1)?)
+    print(step(3)?)
+    print("not reached")
+    Ok(())
+}

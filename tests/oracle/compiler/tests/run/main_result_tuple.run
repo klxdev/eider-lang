@@ -1,0 +1,4 @@
+start
+--- stderr
+error: (Code(7), "seven")
+--- exit 1
