@@ -1,0 +1,60 @@
+// Capability polymorphism (#46): fn types carry `uses`, a generic function can be polymorphic
+// over a capability set with `[uses E]`, and a plain fn parameter passes the caps on.
+type Handler = { name: str, run: fn(i32) -> i32 uses io }
+
+fn map_all[T, U, uses E](xs: List[T], f: fn(T) -> U uses E) -> List[U] uses E {
+    let mut out: List[U] = List.new()
+    for x in xs { out.push(f(x)) }
+    out
+}
+
+fn twice(f: fn()) {
+    f()
+    f()
+}
+
+fn logs(x: i32) -> i32 uses io {
+    print(x)
+    x + 1
+}
+
+fn run_io(f: fn() uses io) uses io { f() }
+
+fn both[uses E](f: fn() uses E, g: fn() uses E) uses E {
+    f()
+    g()
+}
+
+fn nums() -> List[i32] {
+    let mut l: List[i32] = List.new()
+    l.push(1)
+    l.push(2)
+    l
+}
+
+fn pure_double(x: i32) -> i32 { x * 2 }
+
+fn call_it(h: Handler, x: i32) -> i32 uses io { h.run(x) }
+
+fn main() uses io, clock {
+    // E is empty: the call needs nothing, so a function without `uses` could make it
+    let a = map_all(nums(), pure_double)
+    print(a.len())
+    // E is io: the call needs io
+    let b = map_all(nums(), logs)
+    print(b[1])
+    let c = map_all(nums(), |x: i32| -> i32 {
+        print(x * 10)
+        x
+    })
+    print(c.len())
+    // a plain fn parameter: the caller needs what the argument carries
+    twice(|| print("hi"))
+    run_io(|| print("run"))
+    // E is the union of the arguments
+    both(|| print("a"), || print(now_ms() >= 0))
+    let g: fn() uses io = || print("g")
+    g()
+    let h = Handler("h", logs)
+    print(call_it(h, 41))
+}

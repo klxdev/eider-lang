@@ -447,6 +447,10 @@ fn main() uses io {
 `inout` (`fn(inout List[i32])`); only closures make such values (a named function with
 `inout` parameters can't be used as a value, E0304).
 
+A fn type can list the capabilities calling it needs, `fn(A) -> R uses io + fs`, and a
+generic function can be polymorphic over them; see
+[Capabilities](capabilities.md#function-types-and-capability-parameters).
+
 Function values can be copied, stored and passed, but have no `==`, order, hash or text
 (E0401).
 

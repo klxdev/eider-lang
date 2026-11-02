@@ -1,0 +1,11 @@
+// mode: build
+fn each[uses E](f: fn() uses E) uses E { f() }
+fn once(f: fn() uses io) uses io { each(f) }
+fn plain(f: fn()) { f() }
+fn main() uses io, clock {
+  each(|| print(1))
+  once(|| print(2))
+  plain(|| print(3))
+  let g: fn() uses io + clock = || print(now_ms() * 0)
+  g()
+}

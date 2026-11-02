@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"tests/checks/fail/e0201_cap_param_call.ei","line":4,"col":5},"message":"call to `each` requires capability `io`","fix":{"at":{"line":3,"col":24},"delete":0,"insert":" uses io"}}

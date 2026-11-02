@@ -150,6 +150,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             }
             kids(inout out, p, "param", n.c, n.d, d)
             opt(inout out, p, "ret", n.g, d)
+            if n.h == 1 { kids(inout out, p, "cap", n.i, n.j, d) }
         }
         ast.EInt => int_slot(inout out, p, n.a, false)
         ast.EStr => str_slot(inout out, p, "value", n.a)
@@ -353,6 +354,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
         }
         ast.GParam => {
             sym(inout out, p, "name", n.a)
+            if n.e == 1 { put(inout out, " caps") }
             kids(inout out, p, "bound", n.c, n.d, d)
         }
         ast.IFn => {

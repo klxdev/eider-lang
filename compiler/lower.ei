@@ -329,7 +329,7 @@ pub fn usable(p: P, ty: u32) -> bool {
 fn type_name(p: P, ty: u32) -> List[u8] {
     let k = types.kind(p.t, ty)
     let mut out: List[u8] = List.new()
-    let shown = types.show(p.t, p.names, ty)
+    let shown = types.show_caps(p.t, p.names, ty)
     if k == types.T_ENUM || k == types.T_RECORD {
         let d = types.def_of(p.t, ty)
         bytes.append(inout out, sys.lit("t_"))
@@ -459,7 +459,7 @@ fn name_all(inout g: G, p: P) {
         let mut n: List[u8] = List.new()
         if is_struct_kind(k) && usable(p, ty as u32) {
             n = type_name(p, ty as u32)
-            let from = types.show(p.t, p.names, ty as u32)
+            let from = types.show_caps(p.t, p.names, ty as u32)
             if !register(inout g, n, from) { clash(inout g, n, from) }
         }
         g.tn.push(n)

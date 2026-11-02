@@ -481,6 +481,13 @@ fn ty(b: B, m: u32, t: u32, inout g: Sig) {
                 put(inout g, " -> ")
                 ty(b, m, n.g - 1, inout g)
             }
+            if n.h == 1 {
+                put(inout g, " uses ")
+                for i in 0..n.j {
+                    if i > 0 { put(inout g, " + ") }
+                    putb(inout g, nm(b, node(b, m, at(b, m, n.i, i)).a))
+                }
+            }
         }
         _ => put(inout g, "?")
     }
@@ -512,6 +519,7 @@ fn generics(b: B, m: u32, start: u32, len: u32, inout g: Sig) -> List[Generic] {
     for i in 0..len {
         if i > 0 { put(inout g, ", ") }
         let gp = node(b, m, at(b, m, start, i))
+        if gp.e == 1 { put(inout g, "uses ") }
         putb(inout g, nm(b, gp.a))
         let mut bounds: List[List[u8]] = List.new()
         for j in 0..gp.d {

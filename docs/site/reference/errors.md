@@ -585,7 +585,10 @@ function that declares it too. Capabilities propagate up call chains; within a p
 `ffi` does too, but not across a package boundary (see [Capabilities](capabilities.md)).
 In a `comptime` initializer no capability is available at all (the help says so). The
 compiler offers a machine-applicable fix that adds the capability to the enclosing
-function's `uses` clause.
+function's `uses` clause. Calling a fn value whose type lists a capability
+(`f: fn() uses io`) needs it too, and so does passing such a value for a plain fn
+parameter, which calls it unchecked; a call of a function with a capability parameter
+(`uses E`) needs what `E` stands for at that call.
 
 ```eider,compile_fail=E0201
 fn log(n: i32) uses io { print(n) }
@@ -991,7 +994,9 @@ different types (`u8 + u32`), a function whose body ends without a value of its 
 something that isn't iterable, indexing a non-array, negating an unsigned integer), a
 pattern of the wrong shape for the value, `[x; n]` of a type that owns heap memory, an
 argument that doesn't match a generic parameter type, `?` that can't convert an error type
-(no `From` impl) and a closure whose body has the wrong type.
+(no `From` impl), a closure whose body has the wrong type, and a fn value whose capabilities
+the expected fn type doesn't list (`expected fn() uses fs, found fn() uses io`; add the
+capability to the type's `uses`).
 
 ```eider,compile_fail=E0401
 fn area(w: u32, h: u64) -> u64 {

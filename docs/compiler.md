@@ -3934,6 +3934,41 @@ Each with a design note, compile-fail tests and new codes:
 | C7 ✅ | Parity: modules/namespaces, FFI/export/`--lib`, threads, WASM, comptime, driver (`test --compile-fail`, cache, `--help`); then record the oracle in `tests/oracle/` and build everything from the seed ("History") | in a clean clone with only a C toolchain `verify.sh` ends ALL GREEN and `selfhost.sh` prints SELF-HOSTED |
 | C8+ | See "C8 plan: the backlog" (waves 1–5). Language work above, the parity quirks in "C8 candidates", then std and package-manager rework; comptime by an IR interpreter instead of a C compiler ("C7: comptime") | per feature |
 
+## C8.46: capability polymorphism
+
+Function types carry a capability set (#46). `Ty` has a fourth slot `c`, the mask (bit i is
+`types.cap_name(i)`; `ffi` is never in a mask, because it stays inside its package); `c = 0`
+is the plain fn type, which every program written before this had, so its ids, names and
+messages are unchanged. A fn type with a nonzero mask is interned apart (`Types.fncaps`) and
+shows as `fn() -> T uses io + fs` through `types.show_caps` / the checker's `tsc` (plain `ts`
+and lowering's old name hash leave it out; lowering names types with `show_caps` so two fn types
+that differ in capabilities are two C types of one layout).
+
+- **Syntax.** TFn `h = 1`, `[i/j]` = Cap nodes (names joined with `+`; a comma would end a
+  parameter), not parsed in the result type of a `fn` declaration (`P.in_ret`). A GParam with
+  `e = 1` is `uses E`.
+- **A capability parameter** is a generic parameter whose value is a `T_CAPS` type (ids
+  `CAPS0 + mask`, all 512 made by `types.new`). It is bound like a type parameter: `unify_ast`
+  of a TFn node with `uses` against a fn value's mask (`unify_caps`) takes what the listed
+  capabilities and the bound parameters don't cover into the first unbound or bound parameter
+  (the union over the arguments), an unbound one is the empty set, and `instantiate` keys the
+  instance by it. `resolve_ty` (`fn_cap_mask`) and `signature` read `c.tsubst`, so an instance
+  has concrete caps, is checked with them (E0201 inside the body if the callback needs more),
+  and `abstract_bodies` (which keeps only E0605) binds it empty. At the call, the callee's
+  needs are its declared capabilities with the parameters expanded.
+- **Values.** A closure's type has the mask of the capabilities its body used (`C.used`, set
+  by `use_cap` at every capability check) and is the expected type when it fits; a named fn
+  value has its instance's. `same` and `unify` accept a value for a type when the signature is
+  equal and either mask is 0 or the value's is a subset (`fn_sub`); the closure and function
+  value take the expected type's id so plain types stay plain. A closure is still checked with
+  the capabilities of the function that writes it.
+- **Calls.** A fn value call needs its type's mask (`call_value`; E0201 "call to `f`"). A plain
+  fn parameter's argument that carries a mask needs it at the call ("passing this function to
+  `g` requires capability `io`", E0201) because the callee calls it unchecked.
+- **Not done.** Capabilities of a trait method's implementation per type parameter; masks inside
+  generic arguments are invariant (`List[fn() uses io]` is not `List[fn()]`); `uses` in the
+  result type of a declaration; an explicit empty `uses`.
+
 ## Testing
 
 - Golden dumps per pass (`lex`, `parse`, `ir`), regenerated with a bless flag and

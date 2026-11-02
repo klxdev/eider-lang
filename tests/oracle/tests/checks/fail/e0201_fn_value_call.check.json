@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"tests/checks/fail/e0201_fn_value_call.ei","line":3,"col":5},"message":"call to `f` requires capability `io`","fix":{"at":{"line":2,"col":24},"delete":0,"insert":" uses io"}}

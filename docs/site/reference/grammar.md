@@ -48,7 +48,7 @@ mpath       = IDENT { "." IDENT }
 module_line = "module" IDENT { "." IDENT }
 
 generics    = "[" gparam { "," gparam } "]"
-gparam      = IDENT [":" path { "+" path }]
+gparam      = IDENT [":" path { "+" path }] | "uses" IDENT
 path        = IDENT ["." IDENT]
 
 type_item   = "type" IDENT [generics] "=" ( record_body | variants | type )
@@ -99,6 +99,7 @@ test_item   = "test" string block
 
 ```text
 type     = "fn" "(" [ ["inout"] type { "," ["inout"] type } [","] ] ")" ["->" type]
+                ["uses" IDENT { "+" IDENT }]
          | "[" type ";" INT "]"
          | "(" ")"
          | "(" type "," ")"
@@ -110,6 +111,10 @@ type     = "fn" "(" [ ["inout"] type { "," ["inout"] type } [","] ] ")" ["->" ty
 - The array length is an integer literal.
 - `inout` is a parameter mode, not a type: anywhere else in a type it is E0302.
 - At most 31 parameters of a fn type can be `inout`.
+- A `uses` after a fn type lists the capabilities it carries, joined with `+`. In the result
+  type of a `fn` declaration the `uses` belongs to the declaration, not to that fn type.
+  `uses E` among the generics is a capability parameter; see
+  [Capabilities](capabilities.md#function-types-and-capability-parameters).
 
 ## Statements
 
