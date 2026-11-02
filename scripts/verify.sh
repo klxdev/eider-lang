@@ -191,6 +191,9 @@ esac
 export VERIFY_NOVENDOR
 # build the tools several legs start from, once, before they run side by side
 scripts/eider-pkg --version >/dev/null 2>&1
+# target/eider and target/eider-sign (the eider leg, and tools through it), rebuilt when std/ or core/
+# changed: not by two legs at once (a failure here is the eider leg's to report)
+[ -z "$VERIFY_NOVENDOR" ] && sh scripts/eider --build-only >/dev/null 2>&1
 # compiler/ built by the seed's compiler, target/eiderc-next: the compiler, llvm and pkg legs
 # use it (test-compiler.sh would otherwise rebuild it under the others)
 case " ${VERIFY_ONLY:-$LEGS} " in
