@@ -10,8 +10,10 @@
 
 extern "c" fn ec_in_clear()
 extern "c" fn ec_in_push(b: i32)
+extern "c" fn ec_in_set(b: List[u8])
+extern "c" fn ec_in_append(b: List[u8])
+extern "c" fn ec_out_copy(inout dst: List[u8], from: i64) -> i64
 extern "c" fn ec_out_len() -> i64
-extern "c" fn ec_out_byte(i: i64) -> i32
 extern "c" fn ec_in_cstr() -> str
 extern "c" fn ec_str_byte(s: str, i: i64) -> i32
 extern "c" fn ec_read_file() -> i64
@@ -56,12 +58,9 @@ pub fn to_string(b: List[u8]) -> String uses ffi {
 
 // ---- argument passing
 
-/// Replace the core's input buffer with `b`.
+/// Replace the core's input buffer with `b` (one call, whatever the length).
 pub fn send(b: List[u8]) uses ffi {
-    unsafe { ec_in_clear() }
-    for x in b {
-        unsafe { ec_in_push(x as i32) }
-    }
+    unsafe { ec_in_set(b) }
 }
 
 /// Replace the input buffer with `parts`, NUL-separated.
@@ -71,21 +70,17 @@ pub fn send_all(parts: List[List[u8]]) uses ffi {
         if i > 0 {
             unsafe { ec_in_push(0) }
         }
-        for x in parts[i] {
-            unsafe { ec_in_push(x as i32) }
-        }
+        unsafe { ec_in_append(parts[i]) }
     }
 }
 
-/// The core's output buffer.
+/// The core's output buffer (one `ec_out_copy`).
 pub fn take() -> List[u8] uses ffi {
-    let mut out: List[u8] = List.new()
     let n = unsafe { ec_out_len() }
-    let mut i: i64 = 0
-    while i < n {
-        let b = unsafe { ec_out_byte(i) }
-        out.push(b as u8)
-        i += 1
+    let mut out: List[u8] = List.filled(0, n as usize)
+    let got = unsafe { ec_out_copy(inout out, 0) }
+    if got < n {
+        out.truncate(got as usize)
     }
     out
 }

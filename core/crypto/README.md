@@ -256,16 +256,17 @@ packing, wiping), and end to end from Eider (`tests/crypto/bench.ei`, 1 MiB mess
 | ECDSA P-256 sign | 51 151 ops/s | 10 204 | 25 361 | 1 273 |
 | ECDSA P-256 verify | 23 161 ops/s | 6 372 | 14 353 | 1 509 |
 | ECDH P-256 | 22 463 ops/s | 5 356 | 12 751 | 899 |
-| from Eider: SHA-256, 1 MiB | 316 MB/s | 187 MB/s | 314 MB/s | 321 MB/s |
-| from Eider: ChaCha20-Poly1305, 1 MiB | 72 MB/s | 65 MB/s | 73 MB/s | 64 MB/s |
-| from Eider: X25519 | 36 466 ops/s | 12 669 | 16 587 | 7 012 |
+| from Eider: SHA-256, 1 MiB | 1829 MB/s | n/a | n/a | n/a |
+| from Eider: ChaCha20-Poly1305, 1 MiB | 1439 MB/s | n/a | n/a | n/a |
+| from Eider: X25519 | 36 578 ops/s | 12 669 | 16 587 | 7 012 |
 
-From Eider, small operations (key agreement, signatures) run at the library's speed; bulk
-data is limited by the byte-at-a-time crossing of the core buffers (one `ec_in_push` /
-`ec_out_byte` call per byte), the same cost every core operation pays today. A bulk
-transfer for `List[u8]` (the runtime copying a list's bytes into `in`, still without exposing
-a pointer) is the follow-up that would let TLS records move at library speed; it belongs to
-the core ABI, not to crypto.
+The "from Eider" rows cross the core ABI in bulk (`ec_in_set` and `ec_out_copy`, one call for
+a whole `List[u8]`; core/ABI.md "Bulk transfer"). Before that each byte was a call, which held
+SHA-256 at about 316 MB/s and ChaCha20-Poly1305 at about 72 MB/s for every backend; now a
+1 MiB message runs at 85% and 70% of the library's own speed (the rest is the copy into `in`,
+the copy out of `out`, and the bounds-checked loops of the benchmark). Only the AWS-LC column
+was remeasured after the change (`n/a`: not rerun); the others were byte-limited at
+about 190-320 MB/s and 65-75 MB/s.
 
 ## Files
 
