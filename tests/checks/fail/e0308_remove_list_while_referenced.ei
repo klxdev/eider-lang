@@ -1,0 +1,9 @@
+// expect: E0308 7:23
+type Order = { qty: i32, name: String }
+fn main() uses io {
+    let mut orders: List[Order] = List.new()
+    orders.push(Order(1, String.from("a")))
+    let o = orders[0]
+    let gone = orders.remove(0)
+    print(o.qty)
+}

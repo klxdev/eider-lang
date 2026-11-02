@@ -120,6 +120,25 @@ uint64_t ei_grow_cap(uint64_t cap, uint64_t len, uint64_t extra, uint64_t min) {
   return c;
 }
 
+/* In-place List operations (docs/compiler.md "C8.49"). The caller owns the buffer (it made it
+   unique). ei_list_open opens a gap of n elements at index `at` (<= *len): grows the buffer
+   if needed, moves the tail up and adds n to *len; the gap is uninitialised. ei_list_close
+   removes the n elements at `at` (already moved out or dropped) and moves the tail down. */
+void ei_list_open(void **data, uint64_t *len, uint64_t *cap, uint64_t at, uint64_t n, uint64_t size) {
+  if (n > *cap - *len) {
+    uint64_t nc = ei_grow_cap(*cap, *len, n, 4);
+    *data = ei_buf_grow(*data, nc, size);
+    *cap = nc;
+  }
+  if (size != 0 && at < *len) memmove((char *)*data + (size_t)((at + n) * size), (char *)*data + (size_t)(at * size), (size_t)((*len - at) * size));
+  *len += n;
+}
+
+void ei_list_close(void *data, uint64_t *len, uint64_t at, uint64_t n, uint64_t size) {
+  if (size != 0 && at + n < *len) memmove((char *)data + (size_t)(at * size), (char *)data + (size_t)((at + n) * size), (size_t)((*len - at - n) * size));
+  *len -= n;
+}
+
 // ---- String
 
 /* A new String holding t[0..tl) with room for cap bytes (cap >= tl). */

@@ -1,0 +1,8 @@
+// List.remove past the end traps like an index (docs/compiler.md "C8.49").
+fn main() uses io {
+    let mut l: List[i32] = List.new()
+    l.push(1)
+    let i = l.len()
+    print(l.remove(0))
+    print(l.remove(i))
+}

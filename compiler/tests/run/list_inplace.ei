@@ -1,0 +1,93 @@
+// In-place List operations (#16, docs/compiler.md "C8.49"): insert, remove, truncate, extend,
+// swap, remove_range, slice and List.filled, on scalars, Strings and nested Lists. Copies made
+// before a change keep their contents (copy-on-write), and the counting allocator (the run
+// harness) finds no leak.
+fn show(l: List[i32]) -> String {
+    let mut out = String.from("[")
+    for i in 0..l.len() {
+        if i > 0 { out.push_str(",") }
+        out.append(String.from_int(l[i] as i64))
+    }
+    out.push_str("]")
+    out
+}
+
+fn words(l: List[String]) -> String {
+    let mut out = String.from("")
+    for w in l {
+        out.append(w)
+        out.push_str(" ")
+    }
+    out
+}
+
+fn main() uses io {
+    let mut a: List[i32] = List.new()
+    for i in 0..5 { a.push(i * 10) }
+    let before = a.copy()
+    a.insert(0, 99)
+    a.insert(3, 77)
+    a.insert(a.len(), 55)
+    print(show(a))
+    let x = a.remove(3)
+    let y = a.remove(0)
+    print(show(a))
+    print(x + y)
+    a.swap(0, 4)
+    print(show(a))
+    a.truncate(3)
+    print(show(a))
+    a.truncate(10)
+    print(show(a))
+    let mut b: List[i32] = List.new()
+    b.push(1)
+    b.push(2)
+    a.extend(b)
+    a.extend(a.copy())
+    print(show(a))
+    a.remove_range(1, 4)
+    print(show(a))
+    print(show(a.slice(1, 3)))
+    print(show(a.slice(2, 2)))
+    print(show(before))
+    print(show(b))
+    let f = List.filled(7, 4)
+    print(show(f))
+    let z: List[i32] = List.filled(1, 0)
+    print(z.len())
+
+    let mut s: List[String] = List.new()
+    s.push(String.from("a"))
+    s.push(String.from("b"))
+    s.push(String.from("c"))
+    let keep = s.copy()
+    s.insert(1, String.from("x"))
+    let gone = s.remove(0)
+    print(words(s))
+    print(gone)
+    s.extend(keep)
+    s.swap(0, 4)
+    print(words(s))
+    s.remove_range(0, 2)
+    print(words(s))
+    s.truncate(1)
+    print(words(s))
+    print(words(s.slice(0, 1)))
+    let t = List.filled(String.from("hi"), 3)
+    print(words(t))
+
+    let mut n: List[List[String]] = List.new()
+    n.push(keep.copy())
+    n.insert(0, List.filled(String.from("q"), 2))
+    n.extend(n.copy())
+    print(n.len())
+    print(words(n[1]))
+    n.truncate(1)
+    print(words(n[0]))
+    let mut u: List[u8] = List.filled(0, 5)
+    u.insert(2, 9)
+    u.swap(0, 2)
+    let w = u.slice(0, 3)
+    print(w.len())
+    print(w[0])
+}

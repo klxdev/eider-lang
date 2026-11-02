@@ -1,0 +1,20 @@
+// In-place List operations (docs/compiler.md "C8.49"): swap writes elements without resizing,
+// so a reference into the list stays valid; slice and filled are reads and constructors.
+type Order = { qty: i32, name: String }
+fn main() uses io {
+    let mut orders: List[Order] = List.new()
+    orders.push(Order(1, String.from("a")))
+    orders.push(Order(2, String.from("b")))
+    let o = orders[0]
+    orders.swap(0, 1)
+    print(o.qty)
+    let part = orders.slice(0, 1)
+    let rest = List.filled(3, 2)
+    let mut xs: List[i32] = rest.copy()
+    xs.insert(1, 5)
+    let x = xs.remove(0)
+    xs.truncate(1)
+    xs.extend(rest)
+    xs.remove_range(0, 1)
+    print(part.len() + xs.len() + x as usize)
+}

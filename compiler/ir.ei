@@ -263,6 +263,20 @@ pub const B_STR_IS: u32 = 49
 /// B_FMT_FLOAT(inout s, x, spec) appends float x (f32 or f64) formatted by the spec: width, fill,
 /// alignment, `+`, `0` and the precision in bits 52-62 (bit 63: a precision is given)
 pub const B_FMT_FLOAT: u32 = 50
+/// In-place List operations (docs/compiler.md "C8.49"; the receiver is a place, +ARG_PLACE):
+/// B_LIST_INSERT(inout l, i, x) (x moved in; traps unless i <= len), B_LIST_REMOVE(inout l, i) -> T
+/// (moved out; traps unless i < len), B_LIST_TRUNCATE(inout l, n) (drops the tail), B_LIST_EXTEND(inout l,
+/// other) (other moved in; its elements are cloned onto l), B_LIST_SWAP(inout l, i, j),
+/// B_LIST_REMOVE_RANGE(inout l, a, b) (drops [a, b)), B_LIST_SLICE(l, a, b) -> List[T] (a copy of
+/// [a, b); l borrowed), B_LIST_FILLED(x, n) -> List[T] (n clones of x; x moved in)
+pub const B_LIST_INSERT: u32 = 51
+pub const B_LIST_REMOVE: u32 = 52
+pub const B_LIST_TRUNCATE: u32 = 53
+pub const B_LIST_EXTEND: u32 = 54
+pub const B_LIST_SWAP: u32 = 55
+pub const B_LIST_REMOVE_RANGE: u32 = 56
+pub const B_LIST_SLICE: u32 = 57
+pub const B_LIST_FILLED: u32 = 58
 
 pub fn builtin_name(b: u32) -> str {
     match b {
@@ -316,7 +330,16 @@ pub fn builtin_name(b: u32) -> str {
         47 => "pad"
         48 => "fmt_int"
         49 => "str_is"
-        _ => "fmt_float"
+        50 => "fmt_float"
+        51 => "insert"
+        52 => "remove"
+        53 => "truncate"
+        54 => "extend"
+        55 => "swap"
+        56 => "remove_range"
+        57 => "slice"
+        58 => "filled"
+        _ => "builtin"
     }
 }
 

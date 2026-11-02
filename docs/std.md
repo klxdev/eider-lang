@@ -238,7 +238,8 @@ around in core.
 | ~~**Error conversions for `?`**~~ (roadmap P0.6) | done (docs/compiler.md "C8.21"): `impl From[String] for stream.Error`, and applications convert `stream.Error` with their own impl; `stream.plain` is gone (C103) | the `Error` trait with context chains is next |
 | **`Drop` that may do I/O** (E0606 forbids capabilities in `drop`) | `BufWriter` can't flush on drop and `Fd` can't close on drop: call `flush`/`close`, now with `defer w.flush()` right after making it (docs/compiler.md "C8.29") | a drop with checked capabilities, if `defer` isn't enough |
 | ~~**Iterating a Map**~~ | done (docs/compiler.md "C8.20"): eider-http's http/metrics and eider-openapi's examples/todo iterate their Maps; `Set` keeps its List on purpose, for insertion order (C102) | an insertion-ordered Map, if more code wants that order |
-| **In-place List operations and views** (`insert`/`remove` at an index, `truncate`, `extend`, `swap`, slices) | stream buffers copy their unread tail when compacting, `bytes.slice`-style copies everywhere; merge sort builds new Lists | the built-ins, and zero-copy views with 8.6 references |
+| ~~**In-place List operations**~~ (`insert`/`remove` at an index, `truncate`, `remove_range`, `extend`, `swap`, `slice`, `List.filled`) | done (docs/compiler.md "C8.49"): `BufReader` compacts in place, `tail` and `part` are one `slice` | |
+| **Zero-copy views** (a `slice` that shares the List's buffer) | `slice` copies; `Decode` returning `str` fields that share the input buffer | a read-only view type and an offset in every List (decision C800) |
 | **16-bit integers** | `encoding.u16_le` returns a u32 | `u16`/`i16` |
 | ~~**String literal escapes**~~ `\r`, `\xNN`, `\u{...}` | done (docs/compiler.md "C8.17"; `\0` refused: strings hold no NUL); http writes `\r\n` literals | |
 | **`panic` with a computed message** (`panic` takes only a `str`) | `assert_eq` prints its diff to stderr, then panics with a fixed text | `panic(String)` |

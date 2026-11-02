@@ -4068,6 +4068,39 @@ text.
   traits in one `dyn`, upcasting, comparing or printing a dyn value, comptime (`cannot use a
   `dyn` value`).
 
+## C8.49: in-place List operations (#16)
+
+`insert(i, x)`, `remove(i) -> T`, `truncate(n)`, `remove_range(a, b)`, `extend(ys)`, `swap(i, j)`,
+`slice(a, b) -> List[T]` and `List.filled(x, n)` (decision C800). New builtins B_LIST_INSERT ..
+B_LIST_FILLED (ir.ei), method names interned after all earlier symbols (`well_known`), so no
+earlier symbol moves; `insert` and `remove` on a List were not method names before (they were a
+Map's), and an impl on a List can't use any of them (E0116).
+
+- **Checking** (`heap_method`, `heap_static`): the first six take a writable receiver as a place;
+  `insert` and `extend` move their argument in (`take`), so `xs.extend(xs)` clones the List
+  first and the unshare below copies once; `remove` returns the element, owned; `slice` borrows
+  the receiver. `List.filled`'s element type comes from the expected List type or the value; the
+  count is a `usize`.
+- **The protection rule**: `insert`, `remove`, `truncate`, `remove_range` and `extend` are in
+  `resizes` (E0308 with a reference into the List alive); `swap` is not noted as a write at all:
+  it frees and resizes nothing, and a reference is its place, so it reads the element now there.
+  Tests: `tests/checks/fail/e0308_{insert,remove,truncate,extend,remove_range}_list_while_referenced.ei`,
+  `tests/checks/pass/pass_list_inplace.ei`.
+- **Lowering** (`list_ops` in llvm.ei, inline at the call, no glue kind): the receiver's buffer is
+  made unique (`uniq_call`) first; bounds are checked (`index out of bounds`, `slice out of
+  bounds`, at the call's line); `insert` and `extend` open a gap with the runtime's `ei_list_open`
+  (grow, then `memmove` of the tail; core/RUNTIME.md) and copy or clone into it; `remove` copies
+  the element out and `ei_list_close`s; `truncate` and `remove_range` drop the elements that go
+  (a loop, only when the element type owns heap data) before `ei_list_close`; `swap` goes through
+  a temporary; `slice` and `filled` allocate a buffer and clone (one `memcpy` when the element
+  type owns nothing). The comptime interpreter refuses them (`cannot run this builtin`).
+- **Views are not done.** `slice` copies. A view sharing the buffer needs an offset in every
+  List (the count lives in the header before `data`), a read-only type and rules for views that
+  outlive their List: left open in #16 and in decision C800.
+- Tests: `compiler/tests/run/list_inplace.ei` (hand-written `.out`; counting allocator, ASan and
+  UBSan clean), `trap_list_remove.ei`, `trap_list_slice.ei`. std/stream's `BufReader` compacts with
+  `remove_range` and appends a chunk with `extend`; `tail` and `part` are `slice`s.
+
 ## Testing
 
 - Golden dumps per pass (`lex`, `parse`, `ir`), regenerated with a bless flag and

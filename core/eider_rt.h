@@ -319,6 +319,12 @@ void ei_buf_free(void *d);
 /* The amortised capacity for len + extra elements: at least min, doubling cap; traps
    "out of memory" when len + extra overflows. */
 uint64_t ei_grow_cap(uint64_t cap, uint64_t len, uint64_t extra, uint64_t min);
+/* In-place List operations on a List.s {data, len, cap} whose buffer the caller owns: open a gap of
+   n elements at index at (<= *len), growing the buffer; close the n elements at at (already moved
+   out or dropped). docs/compiler.md "C8.49". */
+void ei_list_open(void **data, uint64_t *len, uint64_t *cap, uint64_t at, uint64_t n, uint64_t size);
+void ei_list_close(void *data, uint64_t *len, uint64_t at, uint64_t n, uint64_t size);
+
 
 static inline ei_buf_hdr *ei_buf_h(void *d) { return (ei_buf_hdr *)d - 1; }
 /* Another holder (NULL is a no-op). */

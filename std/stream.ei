@@ -311,26 +311,16 @@ pub fn copy_by[R: Reader, W: Writer](inout r: R, inout w: W, dl: time.Deadline) 
     Ok(total)
 }
 
-/// data[at..]
+/// data[at..] (one copy of the bytes)
 fn tail(data: List[u8], at: usize) -> List[u8] {
-    let mut out: List[u8] = List.new()
-    let mut i = at.copy()
-    while i < data.len() {
-        out.push(data[i])
-        i += 1
-    }
-    out
+    if at >= data.len() { return List.new() }
+    data.slice(at, data.len())
 }
 
-/// data[a..b]
+/// data[a..b] (one copy of the bytes; empty if b <= a)
 fn part(data: List[u8], a: usize, b: usize) -> List[u8] {
-    let mut out: List[u8] = List.new()
-    let mut i = a.copy()
-    while i < b {
-        out.push(data[i])
-        i += 1
-    }
-    out
+    if b <= a { return List.new() }
+    data.slice(a, b)
 }
 
 // ---- descriptors
@@ -682,7 +672,8 @@ impl[R: Reader] BufReader[R] {
     /// The stream underneath (what is buffered stays here).
     fn inner(self) -> R { self.inner }
 
-    // Moves the unread bytes to the front once they are less than half the buffer.
+    // Moves the unread bytes to the front once they are less than half the buffer: in place,
+    // nothing is allocated or copied but the unread tail itself (docs/compiler.md "C8.49").
     fn compact(inout self) {
         if self.pos == 0 { return }
         if self.pos == self.buf.len() {
@@ -691,7 +682,7 @@ impl[R: Reader] BufReader[R] {
             return
         }
         if self.pos * 2 >= self.buf.len() {
-            self.buf = tail(self.buf, self.pos)
+            self.buf.remove_range(0, self.pos)
             self.pos = 0
         }
     }
@@ -706,7 +697,7 @@ impl[R: Reader] BufReader[R] {
             self.eof = true
             return Ok(false)
         }
-        for b in chunk { self.buf.push(b) }
+        self.buf.extend(chunk)
         Ok(true)
     }
 
@@ -719,7 +710,7 @@ impl[R: Reader] BufReader[R] {
             self.eof = true
             return Ok(false)
         }
-        for b in chunk { self.buf.push(b) }
+        self.buf.extend(chunk)
         Ok(true)
     }
 
@@ -920,13 +911,13 @@ impl[W: Writer] BufWriter[W] {
             match self.inner.write(rest) {
                 Ok(n) => {
                     if n == 0 {
-                        self.buf = tail(self.buf, at)
+                        self.buf.remove_range(0, at)
                         return Err(error(WriteZero, "write: the stream took no bytes"))
                     }
                     at += n
                 }
                 Err(e) => {
-                    self.buf = tail(self.buf, at)
+                    self.buf.remove_range(0, at)
                     return Err(e)
                 }
             }
@@ -942,13 +933,13 @@ impl[W: Writer] BufWriter[W] {
             match self.inner.write_by(rest, dl) {
                 Ok(n) => {
                     if n == 0 {
-                        self.buf = tail(self.buf, at)
+                        self.buf.remove_range(0, at)
                         return Err(error(WriteZero, "write: the stream took no bytes"))
                     }
                     at += n
                 }
                 Err(e) => {
-                    self.buf = tail(self.buf, at)
+                    self.buf.remove_range(0, at)
                     return Err(e)
                 }
             }

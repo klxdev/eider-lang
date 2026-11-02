@@ -1,0 +1,4 @@
+1
+--- stderr
+eider: runtime error: index out of bounds (compiler/tests/run/trap_list_remove.ei:7)
+--- exit 101

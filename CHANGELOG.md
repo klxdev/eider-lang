@@ -9,6 +9,9 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 
 - **The driver links the crypto backend** (#64): a program that imports `core/crypto` needs no
   wrapper; `--crypto <name>`, `$EIDER_CRYPTO` or `[crypto] provider`. Decision C802.
+- **In-place List operations** (#16): `insert`, `remove`, `truncate`, `remove_range`, `extend`,
+  `swap`, `slice` and `List.filled`; stream buffers compact in place. Views that share a buffer
+  are not done. Decision C800.
 
 ## 0.4.0
 

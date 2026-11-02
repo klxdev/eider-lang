@@ -1832,7 +1832,7 @@ fn stmt(inout e: E, p: lower.P, id: u32) {
 }
 
 fn mutates(b: u32) -> bool {
-    b == ir.B_SHOW || b == ir.B_STR_PAD || b == ir.B_FMT_INT || b == ir.B_FMT_FLOAT || b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_STR_PUSH_BYTE || b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE
+    b == ir.B_SHOW || b == ir.B_LIST_INSERT || b == ir.B_LIST_REMOVE || b == ir.B_LIST_TRUNCATE || b == ir.B_LIST_EXTEND || b == ir.B_LIST_SWAP || b == ir.B_LIST_REMOVE_RANGE || b == ir.B_STR_PAD || b == ir.B_FMT_INT || b == ir.B_FMT_FLOAT || b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_STR_PUSH_BYTE || b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE
 }
 
 /// `[x; n]`: a loop storing x into every element.
@@ -2670,6 +2670,10 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         let ep = val(inout e, g)
         option_some_from(inout e, p, s.ty, d, ep)
         label(inout e, lj)
+        return
+    }
+    if b >= ir.B_LIST_INSERT && b <= ir.B_LIST_FILLED {
+        list_ops(inout e, p, s, b)
         return
     }
     if b == ir.B_LIST_CLEAR {
@@ -5575,6 +5579,220 @@ fn g_name(inout e: E, p: lower.P, ty: u32) {
     let _h139 = load_p(inout e, a)
     gret_v(inout e, p, _h139)
     gfn_end(inout e, p, gf)
+}
+
+// ---- in-place List operations (docs/compiler.md, "C8.49")
+
+/// ei_list_open: a gap of n elements at index `at` of the List at lp (its buffer is unique).
+fn list_open(inout e: E, p: lower.P, lt: u32, lp: List[u8], at: List[u8], n: List[u8]) {
+    let el = types.get(p.t, lt).a
+    let none: List[u8] = List.new()
+    let fd = field_addr(inout e, p, lt, lp, 0)
+    let fl = field_addr(inout e, p, lt, lp, 1)
+    let fc = field_addr(inout e, p, lt, lp, 2)
+    let mut args = args4(fd, fl, fc, at)
+    args.push(n)
+    args.push(bytes.from_u64(size(inout e, p, el)))
+    let mut ptys = tys4(types.STR, types.STR, types.STR, types.U64)
+    ptys.push(types.U64)
+    ptys.push(types.U64)
+    call(inout e, p, lit("ei_list_open"), ptys, args, types.UNIT, none)
+}
+
+/// ei_list_close: removes the n elements at index `at` (moved out or dropped already).
+fn list_close(inout e: E, p: lower.P, lt: u32, lp: List[u8], at: List[u8], n: List[u8]) {
+    let el = types.get(p.t, lt).a
+    let none: List[u8] = List.new()
+    let d = load_ptr_field(inout e, p, lt, lp, 0)
+    let fl = field_addr(inout e, p, lt, lp, 1)
+    let mut args = args4(d, fl, at, n)
+    args.push(bytes.from_u64(size(inout e, p, el)))
+    let mut ptys = tys4(types.STR, types.STR, types.U64, types.U64)
+    ptys.push(types.U64)
+    call(inout e, p, lit("ei_list_close"), ptys, args, types.UNIT, none)
+}
+
+fn add64(inout e: E, a: List[u8], b: List[u8]) -> List[u8] {
+    val(inout e, catb(lit("add i64 "), catb(a, catb(lit(", "), b))))
+}
+
+fn sub64(inout e: E, a: List[u8], b: List[u8]) -> List[u8] {
+    val(inout e, catb(lit("sub i64 "), catb(a, catb(lit(", "), b))))
+}
+
+fn icmp64(inout e: E, cond: str, a: List[u8], b: List[u8]) -> List[u8] {
+    val(inout e, catb(lit("icmp "), catb(lit(cond), catb(lit(" i64 "), catb(a, catb(lit(", "), b))))))
+}
+
+/// Drop the elements [from, from + cnt) of the buffer at d (when the element type owns heap data).
+fn list_drop_range(inout e: E, p: lower.P, el: u32, d: List[u8], from: List[u8], cnt: List[u8]) {
+    if !owns(inout e, p, el) { return }
+    let lp = loop_n(inout e, p, cnt)
+    let ix = add64(inout e, from, lp.iv)
+    let ea = elem(inout e, p, el, d, ix)
+    drop_at(inout e, p, el, ea)
+    loop_next(inout e, lp)
+}
+
+/// Copy cnt elements from sd[sfrom..] to dd[dfrom..]: a clone of each when the element type
+/// owns heap data, else one move of the bytes.
+fn list_clone_range(inout e: E, p: lower.P, el: u32, sd: List[u8], sfrom: List[u8], dd: List[u8], dfrom: List[u8], cnt: List[u8]) {
+    if is_void(el) { return }
+    if !owns(inout e, p, el) {
+        let sa = elem(inout e, p, el, sd, sfrom)
+        let da = elem(inout e, p, el, dd, dfrom)
+        let esz = size(inout e, p, el)
+        let nb = mul_const(inout e, cnt, esz)
+        dyn_memcpy(inout e, da, sa, nb)
+        return
+    }
+    let lp = loop_n(inout e, p, cnt)
+    let si = add64(inout e, sfrom, lp.iv)
+    let di = add64(inout e, dfrom, lp.iv)
+    let sa = elem(inout e, p, el, sd, si)
+    let da = elem(inout e, p, el, dd, di)
+    clone_to(inout e, p, el, sa, da)
+    loop_next(inout e, lp)
+}
+
+/// B_LIST_INSERT .. B_LIST_FILLED (ir.ei).
+fn list_ops(inout e: E, p: lower.P, s: ir.Stmt, b: u32) {
+    if b == ir.B_LIST_FILLED {
+        let x = barg(p, s, 0)
+        let el = arg_ty(p, x)
+        let lt = s.ty
+        let xv = argval(inout e, p, x)
+        let xa = addrof(inout e, p, el, xv)
+        let n = argval(inout e, p, barg(p, s, 1))
+        let r = bdst(inout e, p, s)
+        zero(inout e, p, lt, r)
+        let nz = icmp64(inout e, "ne", n, lit("0"))
+        let j = if_then(inout e, nz)
+        let esz = size(inout e, p, el)
+        let nd = buf_alloc(inout e, p, n, esz)
+        store_field_ptr(inout e, p, lt, r, 0, nd)
+        store_field_i64(inout e, p, lt, r, 1, n)
+        store_field_i64(inout e, p, lt, r, 2, n)
+        if !is_void(el) {
+            let lp = loop_n(inout e, p, n)
+            let da = elem(inout e, p, el, nd, lp.iv)
+            clone_to(inout e, p, el, xa, da)
+            loop_next(inout e, lp)
+        }
+        if_end(inout e, j)
+        drop_at(inout e, p, el, xa)
+        return
+    }
+    let l = barg(p, s, 0)
+    let lt = arg_ty(p, l)
+    let el = types.get(p.t, lt).a
+    let lp = argptr(inout e, p, l)
+    if b == ir.B_LIST_SLICE {
+        let a = argval(inout e, p, barg(p, s, 1))
+        let bb = argval(inout e, p, barg(p, s, 2))
+        let n = load_i64_field(inout e, p, lt, lp, 1)
+        let c1 = icmp64(inout e, "ugt", a, bb)
+        trap_if(inout e, c1, "slice out of bounds", s.line)
+        let c2 = icmp64(inout e, "ugt", bb, n)
+        trap_if(inout e, c2, "slice out of bounds", s.line)
+        let cnt = sub64(inout e, bb, a)
+        let r = bdst(inout e, p, s)
+        zero(inout e, p, lt, r)
+        let nz = icmp64(inout e, "ne", cnt, lit("0"))
+        let j = if_then(inout e, nz)
+        let esz = size(inout e, p, el)
+        let nd = buf_alloc(inout e, p, cnt, esz)
+        store_field_ptr(inout e, p, lt, r, 0, nd)
+        store_field_i64(inout e, p, lt, r, 1, cnt)
+        store_field_i64(inout e, p, lt, r, 2, cnt)
+        let sd = load_ptr_field(inout e, p, lt, lp, 0)
+        list_clone_range(inout e, p, el, sd, a, nd, lit("0"), cnt)
+        if_end(inout e, j)
+        return
+    }
+    // the others change the List: its buffer first becomes its own
+    uniq_call(inout e, p, lt, lp)
+    let n = load_i64_field(inout e, p, lt, lp, 1)
+    if b == ir.B_LIST_INSERT {
+        let at = argval(inout e, p, barg(p, s, 1))
+        let xv = argval(inout e, p, barg(p, s, 2))
+        let xa = addrof(inout e, p, el, xv)
+        let c = icmp64(inout e, "ugt", at, n)
+        trap_if(inout e, c, "index out of bounds", s.line)
+        list_open(inout e, p, lt, lp, at, lit("1"))
+        if !is_void(el) {
+            let d = load_ptr_field(inout e, p, lt, lp, 0)
+            let ea = elem(inout e, p, el, d, at)
+            copy_mem(inout e, p, el, ea, xa)
+        }
+        return
+    }
+    if b == ir.B_LIST_REMOVE {
+        let at = argval(inout e, p, barg(p, s, 1))
+        let c = icmp64(inout e, "uge", at, n)
+        trap_if(inout e, c, "index out of bounds", s.line)
+        if !is_void(el) {
+            let d = load_ptr_field(inout e, p, lt, lp, 0)
+            let ea = elem(inout e, p, el, d, at)
+            let rd = bdst(inout e, p, s)
+            copy_mem(inout e, p, el, rd, ea)
+        }
+        list_close(inout e, p, lt, lp, at, lit("1"))
+        return
+    }
+    if b == ir.B_LIST_TRUNCATE {
+        let k = argval(inout e, p, barg(p, s, 1))
+        let c = icmp64(inout e, "ult", k, n)
+        let j = if_then(inout e, c)
+        let d = load_ptr_field(inout e, p, lt, lp, 0)
+        let cnt = sub64(inout e, n, k)
+        list_drop_range(inout e, p, el, d, k, cnt)
+        store_field_i64(inout e, p, lt, lp, 1, k)
+        if_end(inout e, j)
+        return
+    }
+    if b == ir.B_LIST_REMOVE_RANGE {
+        let a = argval(inout e, p, barg(p, s, 1))
+        let bb = argval(inout e, p, barg(p, s, 2))
+        let c1 = icmp64(inout e, "ugt", a, bb)
+        trap_if(inout e, c1, "slice out of bounds", s.line)
+        let c2 = icmp64(inout e, "ugt", bb, n)
+        trap_if(inout e, c2, "slice out of bounds", s.line)
+        let cnt = sub64(inout e, bb, a)
+        let d = load_ptr_field(inout e, p, lt, lp, 0)
+        list_drop_range(inout e, p, el, d, a, cnt)
+        list_close(inout e, p, lt, lp, a, cnt)
+        return
+    }
+    if b == ir.B_LIST_SWAP {
+        let i = argval(inout e, p, barg(p, s, 1))
+        let k = argval(inout e, p, barg(p, s, 2))
+        let c1 = icmp64(inout e, "uge", i, n)
+        trap_if(inout e, c1, "index out of bounds", s.line)
+        let c2 = icmp64(inout e, "uge", k, n)
+        trap_if(inout e, c2, "index out of bounds", s.line)
+        if !is_void(el) {
+            let d = load_ptr_field(inout e, p, lt, lp, 0)
+            let ai = elem(inout e, p, el, d, i)
+            let ak = elem(inout e, p, el, d, k)
+            let t = temp(inout e, p, el)
+            copy_mem(inout e, p, el, t, ai)
+            copy_mem(inout e, p, el, ai, ak)
+            copy_mem(inout e, p, el, ak, t)
+        }
+        return
+    }
+    // B_LIST_EXTEND: the other List was moved in; its elements are cloned onto the end
+    let ov = argptr(inout e, p, barg(p, s, 1))
+    let m = load_i64_field(inout e, p, lt, ov, 1)
+    let nz = icmp64(inout e, "ne", m, lit("0"))
+    let j = if_then(inout e, nz)
+    list_open(inout e, p, lt, lp, n, m)
+    let d = load_ptr_field(inout e, p, lt, lp, 0)
+    let od = load_ptr_field(inout e, p, lt, ov, 0)
+    list_clone_range(inout e, p, el, od, lit("0"), d, n, m)
+    if_end(inout e, j)
+    drop_at(inout e, p, lt, ov)
 }
 
 // ---- List, text, Box, Map

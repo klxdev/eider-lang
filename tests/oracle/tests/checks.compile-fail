@@ -47,7 +47,12 @@ compile-fail tests (tests/checks/fail)
   ok   e0306_break_outside_loop.ei  E0306 at 3:3
   ok   e0306_unknown_label.ei       E0306 at 3:42
   ok   e0307_mut_alias_of_param.ei  E0307 at 4:17 (fix compiles)
+  ok   e0308_extend_list_while_referenced.ei E0308 at 7:12 (fix compiles)
+  ok   e0308_insert_list_while_referenced.ei E0308 at 7:12 (fix compiles)
   ok   e0308_push_while_referenced.ei E0308 at 7:12 (fix compiles)
+  ok   e0308_remove_list_while_referenced.ei E0308 at 7:23 (fix compiles)
+  ok   e0308_remove_range_list_while_referenced.ei E0308 at 7:12 (fix compiles)
+  ok   e0308_truncate_list_while_referenced.ei E0308 at 7:12 (fix compiles)
   ok   e0309_return_in_defer.ei     E0309 at 3:13
   ok   e0310_errdefer_without_result.ei E0310 at 3:5 (fix compiles)
   ok   e0401_closure_wrong_return.ei E0401 at 4:28
@@ -126,10 +131,11 @@ compile-pass tests (tests/checks/pass)
   ok   pass_dyn_trait.ei
   ok   pass_import_and_ffi.ei
   ok   pass_inout_and_var.ei
+  ok   pass_list_inplace.ei
   ok   pass_match_all.ei
   ok   pass_shadow_in_inner_scope.ei
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-129 passed, 0 failed; error-code coverage 72/72
+135 passed, 0 failed; error-code coverage 72/72
 --- exit 0

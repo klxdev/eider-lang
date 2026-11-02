@@ -184,6 +184,7 @@ caller that gets `true` (the last holder) drops the elements once and calls `ei_
 | `void *ei_buf_grow(void *d, uint64_t n, uint64_t size)` | resizes a buffer with one holder (or `NULL`: a new one) to `n * size` bytes, keeping the contents (`realloc`: still one allocation for the counter) |
 | `void ei_buf_free(void *d)` | frees it whatever the count (`NULL` is a no-op) |
 | `ei_buf_inc(d)`, `bool ei_buf_dec(d)`, `bool ei_buf_shared(d)`, `uint64_t ei_buf_count(d)` (inline) | one more holder; one fewer, `true` when it was the last; more than one holder; the count (0 for `NULL`; tests) |
+| `void ei_list_open(void **data, uint64_t *len, uint64_t *cap, uint64_t at, uint64_t n, uint64_t size)`, `ei_list_close(data, len, at, n, size)` | the in-place List operations (docs/compiler.md "C8.49"), on a List whose buffer the caller made unique: open a gap of `n` elements at index `at` (growing the buffer: `ei_grow_cap`, `ei_buf_grow`), or close one (the elements already moved out or dropped). The element copies and drops are generated |
 | `uint64_t ei_grow_cap(uint64_t cap, uint64_t len, uint64_t extra, uint64_t min)` | the amortised capacity for `len + extra` elements: `max(2 * cap, len + extra, min)` (doubling saturates at `UINT64_MAX`, which then fails to allocate); traps `out of memory` if `len + extra` overflows. List and Map growth and `ei_str_cat` use it |
 
 **Counts are not atomic**, which is sound because a buffer is reachable from one thread at a

@@ -73,22 +73,22 @@ pub const LIBRESSL: i32 = 4
 
 fn send2(a: List[u8], b: List[u8]) uses ffi {
     let mut all = a.copy()
-    for x in b { all.push(x) }
+    all.extend(b)
     sys.send(all)
 }
 
 fn send3(a: List[u8], b: List[u8], c: List[u8]) uses ffi {
     let mut all = a.copy()
-    for x in b { all.push(x) }
-    for x in c { all.push(x) }
+    all.extend(b)
+    all.extend(c)
     sys.send(all)
 }
 
 fn send4(a: List[u8], b: List[u8], c: List[u8], d: List[u8]) uses ffi {
     let mut all = a.copy()
-    for x in b { all.push(x) }
-    for x in c { all.push(x) }
-    for x in d { all.push(x) }
+    all.extend(b)
+    all.extend(c)
+    all.extend(d)
     sys.send(all)
 }
 

@@ -1,0 +1,8 @@
+// List.slice out of range traps (docs/compiler.md "C8.49").
+fn main() uses io {
+    let mut l: List[i32] = List.new()
+    l.push(1)
+    l.push(2)
+    let n = l.len() + 1
+    print(l.slice(1, n).len())
+}

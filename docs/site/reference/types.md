@@ -445,6 +445,14 @@ List; its element type must be known from the context (E0409 otherwise). Indexin
 | `xs.push(x)` | `()` | appends |
 | `xs.pop()` | `Option[T]` | removes the last element |
 | `xs.clear()` | `()` | removes every element |
+| `xs.insert(i, x)` | `()` | puts `x` at index `i`, moving the rest up; `i <= len` (traps otherwise) |
+| `xs.remove(i)` | `T` | takes out and returns element `i`, moving the rest down; `i < len` (traps otherwise) |
+| `xs.truncate(n)` | `()` | drops the elements from index `n` on (nothing if `n >= len`) |
+| `xs.remove_range(a, b)` | `()` | drops the elements `a` up to `b`, moving the rest down; `a <= b <= len` |
+| `xs.extend(ys)` | `()` | appends a copy of the elements of the List `ys` (`xs.extend(xs)` doubles it) |
+| `xs.swap(i, j)` | `()` | exchanges elements `i` and `j` |
+| `xs.slice(a, b)` | `List[T]` | a new List of the elements `a` up to `b`; `a <= b <= len` |
+| `List.filled(x, n)` | `List[T]` | `n` copies of `x` |
 | `xs.map(f)` | `List[U]` | `f: fn(T) -> U` |
 | `xs.filter(f)` | `List[T]` | `f: fn(T) -> bool` |
 | `xs.for_each(f)` | `()` | `f: fn(T)` |
@@ -452,7 +460,12 @@ List; its element type must be known from the context (E0409 otherwise). Indexin
 | `xs.fold(init, f)` | `A` | `f: fn(A, T) -> A` |
 | `xs.sum()` | `T` | integers (traps on overflow) or floats |
 
-`push`, `pop` and `clear` need a writable place. Two Lists are equal when they have equal
+`push`, `pop`, `clear`, `insert`, `remove`, `truncate`, `remove_range`, `extend` and `swap` need a
+writable place; `insert`, `remove`, `truncate`, `remove_range` and `extend` resize, so they
+are not allowed while a reference into the List is alive (E0308; `swap` exchanges elements
+and is). They change the List in place: a List shared with another (a copy, a `let` of it) gets
+a buffer of its own first, and the other keeps its elements. `slice` copies the range; it is
+not a view that shares the buffer (docs/decisions.md C800). Two Lists are equal when they have equal
 elements in the same order; Lists compare lexicographically, then by length; they print as
 `[1, 2]`. Sorting is in std ([sort](api:std/sort)), as are other
 collections ([deque](api:std/deque), [set](api:std/set), [heap](api:std/heap)).

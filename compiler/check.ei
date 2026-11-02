@@ -195,6 +195,11 @@ const M_FROM_BYTES: u32 = 26
 const M_KEYS: u32 = 27
 const M_VALUES: u32 = 28
 const M_ENTRIES: u32 = 29
+const M_TRUNCATE: u32 = 30
+const M_EXTEND: u32 = 31
+const M_SWAP: u32 = 32
+const M_REMOVE_RANGE: u32 = 33
+const M_FILLED: u32 = 34
 
 /// Well-known symbols.
 type W = {
@@ -1220,7 +1225,7 @@ fn end_pos(inout c: C) { c.rf.wpos.pop() }
 
 /// Whether builtin b may resize or replace the buffer of its place argument.
 fn resizes(b: u32) -> bool {
-    b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE || b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_STR_PUSH_BYTE || b == ir.B_STR_PAD || b == ir.B_FMT_INT || b == ir.B_FMT_FLOAT
+    b == ir.B_LIST_PUSH || b == ir.B_LIST_INSERT || b == ir.B_LIST_REMOVE || b == ir.B_LIST_TRUNCATE || b == ir.B_LIST_EXTEND || b == ir.B_LIST_REMOVE_RANGE || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE || b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_STR_PUSH_BYTE || b == ir.B_STR_PAD || b == ir.B_FMT_INT || b == ir.B_FMT_FLOAT
 }
 
 /// Whether place p has an element on its path (a bounds check).
@@ -1240,6 +1245,9 @@ fn place_root(c: C, p: u32) -> u32 {
 /// Note the writes of statement (kind, a, b, x) that may invalidate a reference in scope.
 fn note_writes(inout c: C, kind: u32, a: u32, b: u32, x: u32) {
     if !refs_in_scope(c) { return }
+    // swap moves elements without freeing or resizing anything: a reference is its place, so it
+    // reads the element now there (docs/compiler.md "C8.49")
+    if kind == ir.S_BUILTIN && a == ir.B_LIST_SWAP { return }
     if kind == ir.S_STORE {
         write_note(inout c, a, W_ASSIGN, List.new())
         return
@@ -3589,11 +3597,14 @@ fn well_known(inout names: intern.Interner) -> W {
         "byte", "slice", "bytes", "push_byte", "from_bytes", "keys", "values", "entries"] { hm.push(sym(inout names, w)) }
     // heap[6]: Ref (docs/compiler.md, "C8.7"), interned last so no earlier symbol moves
     heap.push(sym(inout names, "Ref"))
-    W(ints, sym(inout names, "bool"), sym(inout names, "str"), sym(inout names, "Self"), sym(inout names, "String"), heap,
+    let mut w = W(ints, sym(inout names, "bool"), sym(inout names, "str"), sym(inout names, "Self"), sym(inout names, "String"), heap,
         sym(inout names, "print"), sym(inout names, "len"), sym(inout names, "now_ms"), sym(inout names, "panic"),
         sym(inout names, "spawn"), sym(inout names, "main"), sym(inout names, "Option"), sym(inout names, "Result"),
         caps, caps[0], caps[1], caps[4], heap[0], heap[1], heap[2],
         sym(inout names, "Some"), sym(inout names, "None"), sym(inout names, "Ok"), sym(inout names, "Err"), hm)
+    // the in-place List operations (docs/compiler.md "C8.49"), interned last so no earlier symbol moves
+    for x in ["truncate", "extend", "swap", "remove_range", "filled"] { w.hm.push(sym(inout names, x)) }
+    w  // well-known
 }
 
 fn sym(inout names: intern.Interner, w: str) -> u32 {
@@ -7973,7 +7984,7 @@ fn builtin_method(c: C, tk: u32, name: u32) -> bool {
         return mi == M_LEN || mi == M_IS_EMPTY || mi == M_PUSH_STR || mi == M_APPEND || mi == M_BYTE || mi == M_SLICE || mi == M_BYTES || mi == M_PUSH_BYTE
     }
     if tk == types.T_STR { return mi == M_LEN || mi == M_IS_EMPTY || mi == M_BYTE || mi == M_SLICE || mi == M_BYTES }
-    if tk == types.T_LIST { return mi == M_LEN || mi == M_IS_EMPTY || (mi >= M_PUSH && mi <= M_CONTAINS) || (mi >= M_MAP && mi <= M_SUM) }
+    if tk == types.T_LIST { return mi == M_LEN || mi == M_IS_EMPTY || (mi >= M_PUSH && mi <= M_CONTAINS) || (mi >= M_MAP && mi <= M_SUM) || mi == M_INSERT || mi == M_REMOVE || mi == M_SLICE || (mi >= M_TRUNCATE && mi <= M_REMOVE_RANGE) }
     if tk == types.T_MAP { return mi == M_LEN || mi == M_IS_EMPTY || mi == M_GET || mi == M_CONTAINS || mi == M_INSERT || mi == M_REMOVE || (mi >= M_KEYS && mi <= M_ENTRIES) }
     if tk == types.T_BOX { return mi == M_GET || mi == M_SET }
     if tk == types.T_TASK { return is_word(c, name, "join") }
@@ -7988,6 +7999,7 @@ fn builtin_method(c: C, tk: u32, name: u32) -> bool {
 fn builtin_static(c: C, head: u32, name: u32) -> bool {
     let mi = sym_index(c.w.hm, name)
     if head == c.w.s_string { return mi == M_FROM || mi == M_FROM_INT || mi == M_FROM_BYTES }
+    if head == c.w.list && mi == M_FILLED { return true }
     mi == M_NEW && head != c.w.heap[3]
 }
 
@@ -8073,6 +8085,24 @@ fn heap_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag.D
         let b = if want_list { ir.B_LIST_NEW } else { ir.B_MAP_NEW }
         return Ok(v_of(exp, builtin_op(inout c, b, List.new(), exp, n.line)))
     }
+    if head == c.w.list && mi == M_FILLED {
+        // List.filled(x, n): n clones of x (docs/compiler.md, "C8.49")
+        if n.d != 2 { return Err(err("E0405", n.line, n.col, s("`List.filled` takes a value and a length"))) }
+        let mut hint = NONE
+        if exp != NONE && types.kind(c.t, exp) == types.T_LIST { hint = types.get(c.t, exp).a }
+        let ae = arg_expr(c, at(c, n.c, 0))
+        let x = nd(c, ae)
+        let v = expr(inout c, ae, hint)?
+        if hint != NONE && !same(c, v.ty, hint) { return Err(mismatch(c, x.line, x.col, hint, v.ty)) }
+        if v.ty == types.UNIT || v.ty == types.NEVER { return Err(err("E0401", x.line, x.col, s("can't make a List of ()"))) }
+        let be = arg_expr(c, at(c, n.c, 1))
+        let y = nd(c, be)
+        let cv = expr(inout c, be, types.USIZE)?
+        if !same(c, cv.ty, types.USIZE) { return Err(mismatch(c, y.line, y.col, types.USIZE, cv.ty)) }
+        let lt = types.list_of(inout c.t, v.ty)
+        let o = take(inout c, v, n.line)
+        return Ok(v_of(lt, builtin_op(inout c, ir.B_LIST_FILLED, two(o, cv.op), lt, n.line)))
+    }
     if head == c.w.boxs && mi == M_NEW {
         if n.d != 1 { return Err(err("E0405", n.line, n.col, s("`Box.new` takes exactly one argument"))) }
         let mut hint = NONE
@@ -8150,6 +8180,52 @@ fn heap_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
             assignable_or_record(inout c, n.a, "modify")
             eval_args(inout c, n, List.new(), label)?
             return Ok(v_of(types.UNIT, builtin_op(inout c, ir.B_LIST_CLEAR, one(place), types.UNIT, n.line)))
+        }
+        // in-place operations (docs/compiler.md, "C8.49")
+        if mi == M_INSERT {
+            assignable_or_record(inout c, n.a, "modify")
+            let vs = eval_args(inout c, n, two(types.USIZE, el), label)?
+            let x = take(inout c, vs[1], n.line)
+            let mut args = two(place, vs[0].op)
+            args.push(x)
+            return Ok(v_of(types.UNIT, builtin_op(inout c, ir.B_LIST_INSERT, args, types.UNIT, n.line)))
+        }
+        if mi == M_REMOVE {
+            assignable_or_record(inout c, n.a, "modify")
+            let vs = eval_args(inout c, n, one(types.USIZE), label)?
+            return Ok(v_of(el, builtin_op(inout c, ir.B_LIST_REMOVE, two(place, vs[0].op), el, n.line)))
+        }
+        if mi == M_TRUNCATE {
+            assignable_or_record(inout c, n.a, "modify")
+            let vs = eval_args(inout c, n, one(types.USIZE), label)?
+            return Ok(v_of(types.UNIT, builtin_op(inout c, ir.B_LIST_TRUNCATE, two(place, vs[0].op), types.UNIT, n.line)))
+        }
+        if mi == M_EXTEND {
+            assignable_or_record(inout c, n.a, "modify")
+            let vs = eval_args(inout c, n, one(ty), label)?
+            let x = take(inout c, vs[0], n.line)
+            return Ok(v_of(types.UNIT, builtin_op(inout c, ir.B_LIST_EXTEND, two(place, x), types.UNIT, n.line)))
+        }
+        if mi == M_SWAP {
+            assignable_or_record(inout c, n.a, "modify")
+            let vs = eval_args(inout c, n, two(types.USIZE, types.USIZE), label)?
+            let mut args = two(place, vs[0].op)
+            args.push(vs[1].op)
+            return Ok(v_of(types.UNIT, builtin_op(inout c, ir.B_LIST_SWAP, args, types.UNIT, n.line)))
+        }
+        if mi == M_REMOVE_RANGE {
+            assignable_or_record(inout c, n.a, "modify")
+            let vs = eval_args(inout c, n, two(types.USIZE, types.USIZE), label)?
+            let mut args = two(place, vs[0].op)
+            args.push(vs[1].op)
+            return Ok(v_of(types.UNIT, builtin_op(inout c, ir.B_LIST_REMOVE_RANGE, args, types.UNIT, n.line)))
+        }
+        if mi == M_SLICE {
+            let ro = recv_op(inout c, pv)
+            let vs = eval_args(inout c, n, two(types.USIZE, types.USIZE), label)?
+            let mut args = two(ro, vs[0].op)
+            args.push(vs[1].op)
+            return Ok(v_of(ty, builtin_op(inout c, ir.B_LIST_SLICE, args, ty, n.line)))
         }
         if mi == M_GET {
             let ro = recv_op(inout c, pv)
