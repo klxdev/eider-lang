@@ -4351,3 +4351,21 @@ Not done: a coverage report (it needs per-statement counters in the backend and 
 lines; filed as a follow-up), `eiderc test` discovering `bench`/`fuzz` as separate kinds, the
 timing statistics of a benchmark (median, spread), and a fuzz corpus directory on disk.
 
+## C8.59: std/cli (#114)
+
+Decision C811. Code: std/cli.ei; tests: tests/run/cli.ei.
+
+`record_of[R](inout st)` is `R(comptime for f in fields(R) { value_of(inout st, f.name, attr[cli](f).name,
+.short, .help, .default) })`, the "building values" form of reflection with the argument's type
+inferred from the field. `value_of[F: Value]` walks the arguments before `--` for its own flag (long,
+`=`, short, `--no-` for a flag type), marks the words it used, falls back to the attribute's default
+text, and parses with `F.parse`; everything it finds wrong goes to `State.problems`. `finish` then
+turns a `--help` into `Error(help = true, usage)`, an unused word that starts with `-` into an unknown
+flag, and the rest (and the words after `--`) into `Parsed.rest`. The spec list for the usage is
+filled by `value_of` as it goes, which is why it never returns an error early. `command[C]` goes over
+`variants(C)`, matches the first word with the variant's kebab-case name and builds the variant from
+a `record_of` per payload field. Limits found: attributes are not allowed on a variant's payload
+fields (so a subcommand's flags are a record); explicit type arguments in a call are not syntax; the
+float parser's error text is std/strings'. Not done: std/config loading a typed record (the reflective
+form announced in its header), shell completions, flag groups and aliases, environment fallbacks.
+
