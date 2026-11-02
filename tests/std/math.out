@@ -1,0 +1,125 @@
+sqrt 2: 1.414214
+cbrt 27: 3.000000
+pow: 1.414214
+powi: 3.375000
+exp 1: 2.718282
+ln 10: 2.302585
+log2 8: 3.000000
+log10 1000: 3.000000
+log 8 base 2: 3.000000
+sin: 0.841471
+cos: 0.540302
+tan: 1.557408
+atan2: 2.356194
+asin: 0.523599
+sinh: 1.175201
+hypot: 5.000000
+mul_add: 10.000000
+to_degrees: 180.000000
+to_radians: 3.141593
+true
+-inf
+inf
+3.0
+-3.0
+2.0
+4.0
+2.0
+-3.0
+3.0
+-2.0
+0.75
+3.5
+0.0
+-2.0
+-1.0
+1.0
+-1.0
+true
+1.0
+2.0
+2.0
+2.0
+true
+-0.0
+0.0
+3.0
+1.0
+true
+0.5
+true
+true
+true
+true
+false
+true
+true
+4609434218613702656
+1.5
+1069547520
+1.5
+true
+false
+Equal
+Greater
+Equal
+Some(3)
+Some(-3)
+Some(2147483647)
+Some(-2147483648)
+None
+None
+None
+Some(255)
+None
+Some(0)
+None
+Some(4294967295)
+None
+Some(1)
+1.4142135
+1.4142135
+0.9092974
+0.3
+3.1415927
+3.0
+Less
+3.141592653589793
+2.718281828459045
+6.283185307179586
+1.4142135623730951
+2.220446049250313e-16
+1.7976931348623157e308
+2.2250738585072014e-308
+3.4028235e38
+1.1920929e-7
+Ok(1.5)
+Ok(-100.0)
+Ok(7.0)
+Ok(0.5)
+Ok(5.0)
+Ok(inf)
+Ok(-inf)
+Ok(0.0)
+Ok(-0.0)
+Ok(inf)
+Ok(-inf)
+Ok(NaN)
+Ok(0.1)
+Ok(9007199254740992.0)
+Ok(1.2345678901234567e19)
+Err(invalid digit at byte 2)
+Err(invalid digit at byte 2)
+Err(invalid digit at byte 3)
+Err(invalid digit at byte 0)
+Err(invalid digit at byte 1)
+Err(invalid digit at byte 1)
+Err(invalid digit at byte 1)
+Err(invalid digit at byte 1)
+Err(no digits)
+Ok(0.1)
+Ok(3.4028235e38)
+Ok(inf)
+Ok(0.0)
+39907 round trips, 0 wrong
+exit 0

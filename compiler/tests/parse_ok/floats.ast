@@ -1,0 +1,19 @@
+(IFn 1:4 name=main end=1:10
+  body (Block 1:11 end=5:1
+    stmt (SLet 2:5 name=a
+      init (EFloat 2:13 text=1.5))
+    stmt (SLet 3:5 name=b
+      init (EBinary 3:21 op=`*`
+        lhs (EUnary 3:13 op=`-`
+          operand (EFloat 3:14 text=2.5e-3))
+        rhs (EFloat 3:23 text=4f64)))
+    stmt (SLet 4:5 name=s
+      init (EFmt 4:13
+        part (EHole 4:14 width=8 precision=2
+          expr (EIdent 4:15 name=a))
+        part (EStr 4:21 value=" ")
+        part (EHole 4:22 plus precision=3
+          expr (EIdent 4:23 name=b))
+        part (EStr 4:29 value=" ")
+        part (EHole 4:30 width=8 zero precision=1
+          expr (EIdent 4:31 name=a))))))

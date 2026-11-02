@@ -1,0 +1,5 @@
+// expect: E0401 4:19
+fn main() {
+    let n: i32 = 2
+    let x = 1.5 * n
+}

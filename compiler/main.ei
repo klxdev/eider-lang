@@ -376,6 +376,10 @@ fn dump(lx: lex.Lexed, names: intern.Interner) uses io {
                 bytes.append(inout out, bytes.from_u64(t.val))
                 if t.big { bytes.append(inout out, sys.lit(" (big)")) }
             }
+            lex.Float => {
+                out.push(32)
+                for i in t.start..t.end { out.push(lx.src[i as usize]) }
+            }
             lex.Str => {
                 out.push(32)
                 diag.debug_str(inout out, lx.strs[t.val as usize])

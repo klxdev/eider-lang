@@ -1,0 +1,4 @@
+// expect: E0401 3:18
+fn main() {
+    let x: f64 = 1
+}

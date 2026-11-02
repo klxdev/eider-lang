@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_float_wrapping.ei","line":4,"col":15},"message":"operator +% needs integers, found f64","help":"floats have no wrapping operators: + - * already don't trap"}

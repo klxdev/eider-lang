@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_float_const_pattern.ei","line":6,"col":9},"message":"the constant `HALF` is a float, which can't be a pattern","help":"floats compare with IEEE `==` (NaN != NaN), so a match on one would be unsound; test it with `==` or a range check in an `if`"}

@@ -1786,6 +1786,12 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] {
         adv(inout p)
         return Ok(add(inout p, n))
     }
+    if t.kind == lex.Float {
+        let mut n = mk(ast.EFloat, t.line, t.col)
+        n.a = p.i as u32
+        adv(inout p)
+        return Ok(add(inout p, n))
+    }
     if t.kind == lex.Str {
         adv(inout p)
         let mut n = mk(ast.EStr, t.line, t.col)
@@ -2250,6 +2256,9 @@ fn pat_list(inout p: P) -> Result[List[u32], diag.Diag] {
 
 pub fn pattern(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
+    if t.kind == lex.Float || (t.kind == lex.Minus && kind_at(p, p.i + 1) == lex.Float) {
+        return Err(err(p, "a float can't be a pattern (NaN != NaN, so a match on one would be unsound); compare with `==` or a range check in an `if`"))
+    }
     if t.kind == lex.Int {
         let ti = p.i as u32
         adv(inout p)
@@ -2405,7 +2414,7 @@ fn interp_string(inout p: P) -> Result[u32, diag.Diag] {
 }
 
 /// `[[fill]align][+][#][0][width][type]` into h's slots (ast.ei, EHole); the spec starts at
-/// line:col. A precision (`.N`) waits for floats.
+/// line:col. A precision `.N` (floats) is stored as N + 1 in h.i.
 fn fmt_spec(sp: List[u8], line: u32, col: u32, inout h: ast.Node) -> Result[bool, diag.Diag] {
     let mut i: usize = 0
     let n = sp.len()
@@ -2440,7 +2449,18 @@ fn fmt_spec(sp: List[u8], line: u32, col: u32, inout h: ast.Node) -> Result[bool
     }
     if digits { h.b = w + 1 }
     if i < n && sp[i] == 46 {
-        return Err(err_at(line, col + i as u32, sys.lit("a precision (`.N`) is for floats, which Eider doesn't have yet; pad with a width instead")))
+        i += 1
+        let mut pr: u32 = 0
+        let mut pd = false
+        while i < n && sp[i] >= 48 && sp[i] <= 57 {
+            if pr > 400 { return Err(err_at(line, col + i as u32, sys.lit("a format precision is at most 400"))) }
+            pr = pr * 10 + (sp[i] - 48) as u32
+            pd = true
+            i += 1
+        }
+        if !pd { return Err(err_at(line, col + i as u32, sys.lit("expected the number of digits after `.` in a format spec, like `.2`"))) }
+        if pr > 400 { return Err(err_at(line, col + i as u32 - 1, sys.lit("a format precision is at most 400"))) }
+        h.i = pr + 1
     }
     if i < n && (sp[i] == 120 || sp[i] == 88 || sp[i] == 98 || sp[i] == 111) {
         h.f = sp[i] as u32

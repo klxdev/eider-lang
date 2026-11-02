@@ -1,0 +1,154 @@
+// Floating point: f32 and f64 (docs/decisions.md C660). Literals, IEEE arithmetic and
+// comparisons, conversions with `as`, shortest round-trip text, `{x:.N}`.
+
+const PI: f64 = 3.141592653589793
+const NEG: f64 = -2.5
+const HALF: f32 = 0.5f32
+
+type Vec2 = { x: f64, y: f64 }
+type Pair = (f32, f64)
+
+fn dot(a: Vec2, b: Vec2) -> f64 { a.x * b.x + a.y * b.y }
+
+fn lerp(a: f64, b: f64, t: f64) -> f64 { a + (b - a) * t }
+
+fn id[T](x: T) -> T { x }
+
+fn nan() -> f64 { 0.0 / 0.0 }
+
+fn main() uses io {
+    // literals and their types
+    let a = 1.5
+    let b: f32 = 2.5
+    let c = 2.5f32
+    let d = 1e3
+    let e = 1_000.000_5
+    print(a)
+    print(b)
+    print(c * b)
+    print(d)
+    print(e)
+    print(PI)
+    print(NEG)
+    print(HALF)
+
+    // arithmetic is IEEE: no traps
+    print(1.0 / 3.0)
+    print(0.1 + 0.2)
+    print(10.0 % 3.0)
+    print(-7.5 % 2.0)
+    print(1.0 / 0.0)
+    print(-1.0 / 0.0)
+    print(nan())
+    print(-0.0)
+    print(0.0 == -0.0)
+    print(b / 3.0)
+    print(16777216.0f32 + 1.0f32)
+
+    // comparisons: NaN is unordered and unequal to itself
+    let n = nan()
+    print(n == n)
+    print(n != n)
+    print(n < 1.0)
+    print(n > 1.0)
+    print(n <= n)
+    print(1.0 < 2.0)
+    print(2.0 >= 2.0)
+    print(a == 1.5)
+    print(1.0 / 0.0 > 1e308)
+
+    // records, tuples and arrays of floats compare field by field; they have no order
+    let v = Vec2(3.0, 4.0)
+    print(v)
+    print(v == Vec2(3.0, 4.0))
+    print(v == Vec2(3.0, nan()))
+    print(dot(v, v))
+    let p: Pair = (1.5, 2.5)
+    print(p)
+    print(p.0 + 1.0)
+    let xs = [1.5, 2.5, 3.0]
+    print(xs)
+    print(xs == [1.5, 2.5, 3.0])
+
+    // conversions
+    print(7 as f64)
+    print(-3 as f32)
+    print(16777217 as f32)
+    print(9007199254740993 as f64)
+    print(18446744073709551615 as f64)
+    print(3.99 as i32)
+    print(-3.99 as i32)
+    print(255.9 as u8)
+    print(-0.5 as u8)
+    print(2147483647.0 as i32)
+    print(-2147483648.9 as i32)
+    print(4294967295.5 as u32)
+    print(9.2e18 as i64)
+    print(1.5f32 as f64)
+    print(0.1f32 as f64)
+    print(0.1 as f32)
+    print(1e300 as f32)
+    print((16777217 as f32) as i64)
+
+    // text: shortest round-trip form
+    print(0.3)
+    print(100.0)
+    print(1e15)
+    print(1e16)
+    print(1.5e-7)
+    print(0.00001)
+    print(123456.789)
+    print(5e-324)
+    print(1.7976931348623157e308)
+    print(3.4028235e38f32)
+    print(1e-45f32)
+    print(0.1f32)
+
+    // formatting: width, fill, alignment, sign, zero padding, precision
+    let x = 3.14159
+    print("[{x}] [{x:8}] [{x:<8}] [{x:^9}] [{x:*>9}]")
+    print("[{x:.2}] [{x:8.3}] [{x:+.1}] [{x:08.2}] [{x:.0}] [{2.5:.0}] [{3.5:.0}]")
+    print("[{-x:010.3}] [{0.125:.2}] [{1e22:.1}] [{1.0e-10:.12}] [{nan():.3}] [{1.0 / 0.0:+.2}]")
+    print("{a} and {b} and {c:6.2}")
+
+    // compound assignment, loops
+    var t = 1.0
+    t += 0.5
+    t *= 4.0
+    t -= 1.0
+    t /= 2.0
+    print(t)
+    var acc = 0.0
+    for i in 0..10 { acc += 0.1 }
+    print(acc)
+    var k = 0
+    var h = 1.0
+    while h > 1e-3 {
+        h = h / 2.0
+        k += 1
+    }
+    print(k)
+
+    // generics, closures, lists, Default, copy
+    print(id(2.5))
+    print(id(1.5f32))
+    let scale = |q: f64| -> f64 { q * a }
+    print(scale(4.0))
+    var ys: List[f64] = List.new()
+    ys.push(1.5)
+    ys.push(2.25)
+    ys.push(-0.75)
+    print(ys)
+    print(ys.sum())
+    print(ys.contains(2.25))
+    print(lerp(0.0, 10.0, 0.25))
+    let z: f64 = f64.default()
+    print(z)
+    let w = v.copy()
+    print(w == v)
+    let ok = match a < 2.0 {
+        true => "less"
+        false => "not less"
+    }
+    print(ok)
+}

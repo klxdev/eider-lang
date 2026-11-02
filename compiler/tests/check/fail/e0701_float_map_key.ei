@@ -1,0 +1,4 @@
+// expect: E0701 3:12
+fn main() {
+    let m: Map[f64, i32] = Map.new()
+}

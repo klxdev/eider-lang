@@ -348,6 +348,7 @@ fn mty(inout e: E, p: lower.P, ty: u32) -> List[u8] {
     let t = types.get(p.t, ty)
     let k = t.kind
     if k == types.T_INT { return lit(int_ty(t.a)) }
+    if k == types.T_FLOAT { return float_ty(t.a) }
     if k == types.T_BOOL || k == types.T_UNIT || k == types.T_NEVER { return lit("i8") }
     if k == types.T_STR { return lit("ptr") }
     if k == types.T_STRING { return lit("%ei.String") }
@@ -561,12 +562,37 @@ fn ext_of(p: lower.P, a: abi.Arg) -> str {
     ""
 }
 
+/// The LLVM type of one coerced piece of class cls and width bits: an integer, or what an SSE
+/// piece holds (llvm_abi.ei, C_SSEV).
+fn piece_ty(cls: u32, bits: u32) -> List[u8] {
+    if cls == abi.C_SSEV { return lit("<2 x float>") }
+    if cls == abi.C_SSE {
+        if bits == 32 { return lit("float") }
+        return lit("double")
+    }
+    num("i", bits as u64)
+}
+
+fn piece0(a: abi.Arg) -> List[u8] { piece_ty(a.c0, a.b0) }
+fn piece1(a: abi.Arg) -> List[u8] { piece_ty(a.c1, a.b1) }
+
+/// An AArch64 homogeneous float aggregate's type: `[n x float]` or `[n x double]`.
+fn hfa_ty(a: abi.Arg) -> List[u8] {
+    let mut o = num("[", a.n as u64)
+    bytes.append(inout o, lit(" x "))
+    bytes.append(inout o, lit(pick(a.b0 == 32, "float", "double")))
+    bytes.append(inout o, lit("]"))
+    o
+}
+
 fn coerce_ty(a: abi.Arg) -> List[u8] {
-    if a.n == 1 { return num("i", a.b0 as u64) }
+    if a.c0 == abi.C_HFA { return hfa_ty(a) }
+    if a.n == 1 { return piece0(a) }
     if a.c0 == abi.C_PAIR { return lit("[2 x i64]") }
-    let mut o = num(r"{ i", a.b0 as u64)
-    bytes.append(inout o, lit(", i"))
-    bytes.append(inout o, bytes.from_u64(a.b1 as u64))
+    let mut o = lit(r"{ ")
+    bytes.append(inout o, piece0(a))
+    bytes.append(inout o, lit(", "))
+    bytes.append(inout o, piece1(a))
     bytes.append(inout o, lit(r" }"))
     o
 }
@@ -624,6 +650,17 @@ fn params_text(inout e: E, p: lower.P, s: abi.Sig, names: List[List[u8]], intern
                 bytes.append(inout o, names[ni])
                 ni += 1
             }
+        } else if a.kind == abi.A_COERCE && a.c0 == abi.C_HFA {
+            // AArch64: a homogeneous float aggregate, one array in FP registers
+            if !first { bytes.append(inout o, lit(", ")) }
+            first = false
+            bytes.append(inout o, hfa_ty(a))
+            bytes.append(inout o, lit(" alignstack(8)"))
+            if names.len() > 0 {
+                bytes.append(inout o, lit(" "))
+                bytes.append(inout o, names[ni])
+                ni += 1
+            }
         } else if a.kind == abi.A_COERCE && a.c0 == abi.C_PAIR {
             // AArch64: two pieces as one array, never split (unpacked at entry: unpack_pairs)
             if !first { bytes.append(inout o, lit(", ")) }
@@ -638,8 +675,8 @@ fn params_text(inout e: E, p: lower.P, s: abi.Sig, names: List[List[u8]], intern
             for i in 0..a.n {
                 if !first { bytes.append(inout o, lit(", ")) }
                 first = false
-                let bits = if i == 0 { a.b0 } else { a.b1 }
-                bytes.append(inout o, num("i", bits as u64))
+                let pt = if i == 0 { piece0(a) } else { piece1(a) }
+                bytes.append(inout o, pt)
                 if names.len() > 0 {
                     bytes.append(inout o, lit(" "))
                     bytes.append(inout o, names[ni])
@@ -716,8 +753,8 @@ fn declare_sig(inout e: E, p: lower.P, name: List[u8], s: abi.Sig, noreturn: boo
     declare(inout e, name, d)
 }
 
-/// Load `bits` bits at byte offset `off` of address a.
-fn load_piece(inout e: E, a: List[u8], off: u64, bits: u32) -> List[u8] {
+/// Load a piece of LLVM type pt at byte offset `off` of address a.
+fn load_piece(inout e: E, a: List[u8], off: u64, pt: List[u8]) -> List[u8] {
     let mut at = a.copy()
     if off > 0 {
         let mut g = lit("getelementptr inbounds i8, ptr ")
@@ -726,13 +763,14 @@ fn load_piece(inout e: E, a: List[u8], off: u64, bits: u32) -> List[u8] {
         bytes.append(inout g, bytes.from_u64(off))
         at = val(inout e, g)
     }
-    let mut t = num("load i", bits as u64)
+    let mut t = lit("load ")
+    bytes.append(inout t, pt)
     bytes.append(inout t, lit(", ptr "))
     bytes.append(inout t, at)
     val(inout e, t)
 }
 
-fn store_piece(inout e: E, v: List[u8], a: List[u8], off: u64, bits: u32) {
+fn store_piece(inout e: E, v: List[u8], a: List[u8], off: u64, pt: List[u8]) {
     let mut at = a.copy()
     if off > 0 {
         let mut g = lit("getelementptr inbounds i8, ptr ")
@@ -741,7 +779,8 @@ fn store_piece(inout e: E, v: List[u8], a: List[u8], off: u64, bits: u32) {
         bytes.append(inout g, bytes.from_u64(off))
         at = val(inout e, g)
     }
-    let mut t = num("store i", bits as u64)
+    let mut t = lit("store ")
+    bytes.append(inout t, pt)
     bytes.append(inout t, lit(" "))
     bytes.append(inout t, v)
     bytes.append(inout t, lit(", ptr "))
@@ -796,15 +835,17 @@ fn call_sig(inout e: E, p: lower.P, callee: List[u8], s: abi.Sig, args: List[Lis
     let mut copies: List[List[u8]] = List.new()
     for i in 0..s.args.len() {
         let a = s.args[i]
-        if a.kind == abi.A_COERCE && a.c0 == abi.C_PAIR {
-            let p0 = load_piece(inout e, args[i], 0, a.b0)
-            let mut p1 = load_piece(inout e, args[i], 8, a.b1)
+        if a.kind == abi.A_COERCE && a.c0 == abi.C_HFA {
+            pieces.push(load_piece(inout e, args[i], 0, hfa_ty(a)))
+        } else if a.kind == abi.A_COERCE && a.c0 == abi.C_PAIR {
+            let p0 = load_piece(inout e, args[i], 0, piece0(a))
+            let mut p1 = load_piece(inout e, args[i], 8, piece1(a))
             if a.b1 < 64 { p1 = val(inout e, catb(num("zext i", a.b1 as u64), catb(lit(" "), cat(p1, " to i64")))) }
             let x = val(inout e, catb(lit("insertvalue [2 x i64] poison, i64 "), cat(p0, ", 0")))
             pieces.push(val(inout e, catb(lit("insertvalue [2 x i64] "), catb(x, catb(lit(", i64 "), cat(p1, ", 1"))))))
         } else if a.kind == abi.A_COERCE {
-            pieces.push(load_piece(inout e, args[i], 0, a.b0))
-            if a.n > 1 { pieces.push(load_piece(inout e, args[i], 8, a.b1)) }
+            pieces.push(load_piece(inout e, args[i], 0, piece0(a)))
+            if a.n > 1 { pieces.push(load_piece(inout e, args[i], 8, piece1(a))) }
         }
         if a.kind == abi.A_BYVAL && a.c0 == abi.C_PTR {
             let t = temp(inout e, p, a.ty)
@@ -846,19 +887,23 @@ fn call_sig(inout e: E, p: lower.P, callee: List[u8], s: abi.Sig, args: List[Lis
             w(inout e, ea)
             w(inout e, " ")
             wb(inout e, args[i])
+        } else if a.kind == abi.A_COERCE && a.c0 == abi.C_HFA {
+            wb(inout e, hfa_ty(a))
+            w(inout e, " alignstack(8) ")
+            wb(inout e, pieces[pi])
+            pi += 1
         } else if a.kind == abi.A_COERCE && a.c0 == abi.C_PAIR {
             w(inout e, "[2 x i64] ")
             wb(inout e, pieces[pi])
             pi += 1
         } else if a.kind == abi.A_COERCE {
-            w(inout e, "i")
-            wn(inout e, a.b0 as u64)
+            wb(inout e, piece0(a))
             w(inout e, " ")
             wb(inout e, pieces[pi])
             pi += 1
             if a.n > 1 {
-                w(inout e, ", i")
-                wn(inout e, a.b1 as u64)
+                w(inout e, ", ")
+                wb(inout e, piece1(a))
                 w(inout e, " ")
                 wb(inout e, pieces[pi])
                 pi += 1
@@ -884,8 +929,8 @@ fn call_sig(inout e: E, p: lower.P, callee: List[u8], s: abi.Sig, args: List[Lis
     fin(inout e)
     if s.ret.kind == abi.A_DIRECT { return r }
     if s.ret.kind == abi.A_COERCE {
-        if s.ret.n == 1 {
-            store_piece(inout e, r, d, 0, s.ret.b0)
+        if s.ret.n == 1 || s.ret.c0 == abi.C_HFA {
+            store_piece(inout e, r, d, 0, coerce_ty(s.ret))
         } else {
             let mut x0 = lit("extractvalue ")
             bytes.append(inout x0, coerce_ty(s.ret))
@@ -894,8 +939,8 @@ fn call_sig(inout e: E, p: lower.P, callee: List[u8], s: abi.Sig, args: List[Lis
             let v0 = val(inout e, cat(x0, ", 0"))
             let mut v1 = val(inout e, cat(x0, ", 1"))
             if s.ret.c0 == abi.C_PAIR && s.ret.b1 < 64 { v1 = val(inout e, catb(lit("trunc i64 "), catb(v1, num(" to i", s.ret.b1 as u64)))) }
-            store_piece(inout e, v0, d, 0, s.ret.b0)
-            store_piece(inout e, v1, d, 8, s.ret.b1)
+            store_piece(inout e, v0, d, 0, piece0(s.ret))
+            store_piece(inout e, v1, d, 8, piece1(s.ret))
         }
     }
     List.new()
@@ -1068,7 +1113,7 @@ fn memcpy(inout e: E, p: lower.P, ty: u32, dst: List[u8], src: List[u8]) {
 
 fn zero(inout e: E, p: lower.P, ty: u32, a: List[u8]) {
     if is_scalar(p, ty) {
-        let z = if ty < PTR && kind(p, ty) == types.T_STR { "null" } else if ty < PTR && kind(p, ty) == types.T_BOOL { "false" } else { "0" }
+        let z = if ty < PTR && kind(p, ty) == types.T_STR { "null" } else if ty < PTR && kind(p, ty) == types.T_BOOL { "false" } else if ty < PTR && kind(p, ty) == types.T_FLOAT { "0.0" } else { "0" }
         store(inout e, p, ty, lit(z), a)
         return
     }
@@ -1141,6 +1186,7 @@ fn laddr(l: u32) -> List[u8] { num("%l", l as u64) }
 fn opv(inout e: E, p: lower.P, id: u32) -> List[u8] {
     let x = p.ir.ops[id as usize]
     if x.kind == ir.O_INT { return int_text(types.ik(p.t, x.ty), x.v) }
+    if x.kind == ir.O_FLOAT { return float_const(types.get(p.t, x.ty).a, x.v) }
     if x.kind == ir.O_BOOL {
         if x.v == 1 { return lit("true") }
         return lit("false")
@@ -1397,6 +1443,7 @@ fn eq_val(inout e: E, p: lower.P, ty: u32, a: List[u8], b: List[u8]) -> List[u8]
         return rt_call_b(inout e, p, gn_, tys2(ty, ty), args2(a, b), types.BOOL)
     }
     if k == types.T_UNIT || k == types.T_NEVER { return lit("true") }
+    if k == types.T_FLOAT { return fcmp(inout e, "oeq", float_ty(types.get(p.t, ty).a), a, b) }
     let mut t = lit("icmp eq ")
     bytes.append(inout t, vty(inout e, p, ty))
     bytes.append(inout t, lit(" "))
@@ -1496,6 +1543,9 @@ fn show_into(inout e: E, p: lower.P, ty: u32, o: List[u8], v: List[u8]) {
         } else {
             call(inout e, p, lit("ei_str_push_u64"), tys2(sp, types.U64), args2(o, x), types.UNIT, none)
         }
+    } else if k == types.T_FLOAT {
+        let fname = if t.a == 0 { "ei_str_push_f32" } else { "ei_str_push_f64" }
+        call(inout e, p, lit(fname), tys2(sp, ty), args2(o, v), types.UNIT, none)
     } else if k == types.T_BOOL {
         let tr = msg(inout e, "true")
         let fa = msg(inout e, "false")
@@ -1776,7 +1826,7 @@ fn stmt(inout e: E, p: lower.P, id: u32) {
 }
 
 fn mutates(b: u32) -> bool {
-    b == ir.B_SHOW || b == ir.B_STR_PAD || b == ir.B_FMT_INT || b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_STR_PUSH_BYTE || b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE
+    b == ir.B_SHOW || b == ir.B_STR_PAD || b == ir.B_FMT_INT || b == ir.B_FMT_FLOAT || b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_STR_PUSH_BYTE || b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE
 }
 
 /// `[x; n]`: a loop storing x into every element.
@@ -1828,6 +1878,10 @@ fn unary(inout e: E, p: lower.P, s: ir.Stmt) {
     if s.a == ir.U_NOT {
         let r = val(inout e, catb(lit("xor i1 "), cat(v, ", true")))
         store(inout e, p, types.BOOL, r, d)
+        return
+    }
+    if kind(p, s.ty) == types.T_FLOAT {
+        float_neg(inout e, p, s, v, d)
         return
     }
     let ik = types.ik(p.t, s.ty)
@@ -1912,6 +1966,10 @@ fn binary(inout e: E, p: lower.P, s: ir.Stmt) {
     let o = s.a
     let d = dst_addr(s.dst)
     let tk = kind(p, s.ty)
+    if tk == types.T_FLOAT {
+        float_binary(inout e, p, s)
+        return
+    }
     if o == ast.OP_EQ || o == ast.OP_NE {
         let a = oparg(inout e, p, s.b)
         let b = oparg(inout e, p, s.c)
@@ -1992,6 +2050,10 @@ fn binary(inout e: E, p: lower.P, s: ir.Stmt) {
 /// `x as target` (lower.ei's cast through ei_s2s/s2u/u2s/u2u).
 fn cast(inout e: E, p: lower.P, s: ir.Stmt) {
     let fty = ir.op_ty(p.ir, s.a)
+    if kind(p, fty) == types.T_FLOAT || kind(p, s.ty) == types.T_FLOAT {
+        float_cast(inout e, p, s, fty)
+        return
+    }
     let from = types.ik(p.t, fty)
     let to = types.ik(p.t, s.ty)
     let v = opv(inout e, p, s.a)
@@ -2035,6 +2097,12 @@ fn print(inout e: E, p: lower.P, s: ir.Stmt) {
         let q = load_ptr_field(inout e, p, types.STRING, o, 0)
         rt_call(inout e, p, "ei_print_s", tys1(types.STR), args1(q), types.UNIT)
         call(inout e, p, lit("ei_drop_String"), tys1(PTR + types.STRING), args1(o), types.UNIT, none)
+        return
+    }
+    if t.kind == types.T_FLOAT {
+        let v = opv(inout e, p, s.a)
+        let fname = if t.a == 0 { "ei_print_f32" } else { "ei_print_f64" }
+        rt_call(inout e, p, fname, tys1(s.ty), args1(v), types.UNIT)
         return
     }
     if t.kind == types.T_INT {
@@ -2321,16 +2389,22 @@ fn ret(inout e: E, p: lower.P, s: ir.Stmt) {
 
 /// Return the aggregate at address a in the registers of its coerced result r.
 fn ret_pieces(inout e: E, r: abi.Arg, a: List[u8]) {
-    let v0 = load_piece(inout e, a, 0, r.b0)
+    if r.c0 == abi.C_HFA {
+        let hv = load_piece(inout e, a, 0, hfa_ty(r))
+        stmt_text(inout e, catb(lit("ret "), catb(hfa_ty(r), catb(lit(" "), hv))))
+        e.term = true
+        return
+    }
+    let v0 = load_piece(inout e, a, 0, piece0(r))
     if r.n == 1 {
-        stmt_text(inout e, catb(num("ret i", r.b0 as u64), catb(lit(" "), v0)))
+        stmt_text(inout e, catb(lit("ret "), catb(piece0(r), catb(lit(" "), v0))))
     } else {
-        let mut v1 = load_piece(inout e, a, 8, r.b1)
+        let mut v1 = load_piece(inout e, a, 8, piece1(r))
         let ct = coerce_ty(r)
         if r.c0 == abi.C_PAIR && r.b1 < 64 { v1 = val(inout e, catb(num("zext i", r.b1 as u64), catb(lit(" "), cat(v1, " to i64")))) }
-        let x = val(inout e, catb(lit("insertvalue "), catb(ct, catb(lit(" poison, i"), catb(bytes.from_u64(r.b0 as u64), catb(lit(" "), cat(v0, ", 0")))))))
-        let w1: u32 = if r.c0 == abi.C_PAIR { 64 } else { r.b1 }
-        let y = val(inout e, catb(lit("insertvalue "), catb(ct, catb(lit(" "), catb(x, catb(lit(", i"), catb(bytes.from_u64(w1 as u64), catb(lit(" "), cat(v1, ", 1")))))))))
+        let x = val(inout e, catb(lit("insertvalue "), catb(ct, catb(lit(" poison, "), catb(piece0(r), catb(lit(" "), cat(v0, ", 0")))))))
+        let w1 = if r.c0 == abi.C_PAIR { lit("i64") } else { piece1(r) }
+        let y = val(inout e, catb(lit("insertvalue "), catb(ct, catb(lit(" "), catb(x, catb(lit(", "), catb(w1, catb(lit(" "), cat(v1, ", 1")))))))))
         stmt_text(inout e, catb(lit("ret "), catb(ct, catb(lit(" "), y))))
     }
     e.term = true
@@ -2615,7 +2689,7 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         trait_builtin(inout e, p, s)
         return
     }
-    if b == ir.B_STR_PAD || b == ir.B_FMT_INT {
+    if b == ir.B_STR_PAD || b == ir.B_FMT_INT || b == ir.B_FMT_FLOAT {
         fmt_builtin(inout e, p, s)
         return
     }
@@ -2868,10 +2942,11 @@ fn list_sum(inout e: E, p: lower.P, s: ir.Stmt) {
     let l = barg(p, s, 0)
     let lt = arg_ty(p, l)
     let lp = argptr(inout e, p, l)
+    let isf = kind(p, s.ty) == types.T_FLOAT
     let ik = types.ik(p.t, s.ty)
-    let it = lit(int_ty(ik))
+    let it = if isf { float_ty(ik) } else { lit(int_ty(ik)) }
     let d = dst_addr(s.dst)
-    store(inout e, p, s.ty, lit("0"), d)
+    store(inout e, p, s.ty, lit(pick(isf, "0.0", "0")), d)
     live(inout e)
     let pre = e.cur.copy()
     let lh = new_label(inout e)
@@ -2909,7 +2984,12 @@ fn list_sum(inout e: E, p: lower.P, s: ir.Stmt) {
     let x = load(inout e, p, s.ty, ep)
     let acc = load(inout e, p, s.ty, d)
     let sg = types.signed(ik)
-    let r = checked(inout e, pick(sg, "sadd", "uadd"), it, acc, x, "integer overflow in +", s.line)
+    let mut r = acc.copy()
+    if isf {
+        r = arith2(inout e, "fadd", it, acc, x)
+    } else {
+        r = checked(inout e, pick(sg, "sadd", "uadd"), it, acc, x, "integer overflow in +", s.line)
+    }
     store(inout e, p, s.ty, r, d)
     br(inout e, back)
     label(inout e, back)
@@ -2934,7 +3014,7 @@ fn default_to(inout e: E, p: lower.P, ty: u32, d: List[u8]) {
         // no arguments: the statement only gives call_internal an empty argument list
         let s0 = ir.Stmt(ir.S_CALL, NONE, f, 0, 0, ty, 0)
         call_internal(inout e, p, f, s0, d, NONE)
-    } else if k == types.T_INT || k == types.T_UNIT || k == types.T_BOOL || k == types.T_LIST || k == types.T_MAP {
+    } else if k == types.T_INT || k == types.T_FLOAT || k == types.T_UNIT || k == types.T_BOOL || k == types.T_LIST || k == types.T_MAP {
         zero(inout e, p, ty, d)
     } else if k == types.T_STR {
         let m = msg(inout e, "")
@@ -2961,6 +3041,12 @@ fn fmt_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
     let spec = argval(inout e, p, barg(p, s, 2))
     if s.a == ir.B_STR_PAD {
         call(inout e, p, lit("ei_str_pad"), tys3(sp, types.U64, types.U64), args3(o, v, spec), types.UNIT, none)
+        return
+    }
+    if s.a == ir.B_FMT_FLOAT {
+        let ft = arg_ty(p, x)
+        let fname = if types.get(p.t, ft).a == 0 { "ei_str_fmt_f32" } else { "ei_str_fmt_f64" }
+        call(inout e, p, lit(fname), tys3(sp, ft, types.U64), args3(o, v, spec), types.UNIT, none)
         return
     }
     let t = types.get(p.t, arg_ty(p, x))
@@ -3289,7 +3375,7 @@ fn sig_names(sg: abi.Sig) -> List[List[u8]] {
     if sg.ret.kind == abi.A_SRET { names.push(lit("%sret")) }
     for i in 0..sg.args.len() {
         let a = sg.args[i]
-        if a.kind == abi.A_COERCE && a.c0 != abi.C_PAIR {
+        if a.kind == abi.A_COERCE && a.c0 != abi.C_PAIR && a.c0 != abi.C_HFA {
             names.push(cat(num("%a", i as u64), ".0"))
             if a.n > 1 { names.push(cat(num("%a", i as u64), ".1")) }
         } else {
@@ -3386,8 +3472,12 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
         } else if a.kind == abi.A_DIRECT {
             store(inout e, p, l.ty, an, laddr(li))
         } else {
-            store_piece(inout e, cat(an, ".0"), laddr(li), 0, a.b0)
-            if a.n > 1 { store_piece(inout e, cat(an, ".1"), laddr(li), 8, a.b1) }
+            if a.c0 == abi.C_HFA {
+                store_piece(inout e, an, laddr(li), 0, hfa_ty(a))
+            } else {
+                store_piece(inout e, cat(an, ".0"), laddr(li), 0, piece0(a))
+                if a.n > 1 { store_piece(inout e, cat(an, ".1"), laddr(li), 8, piece1(a)) }
+            }
         }
     }
     // captures: copies (borrows) of the environment's values; every other local is
@@ -3588,8 +3678,8 @@ fn di_type(inout e: E, p: lower.P, ty: u32) -> u32 {
     let k = t.kind
     let mut o = num("!", id as u64)
     let bits = size(inout e, p, ty) * 8
-    if k == types.T_INT || k == types.T_BOOL || k == types.T_UNIT || k == types.T_NEVER {
-        let enc = if k == types.T_BOOL { "DW_ATE_boolean" } else if k == types.T_INT && t.a == types.IK_U8 { "DW_ATE_unsigned_char" } else if k == types.T_INT && types.signed(t.a) { "DW_ATE_signed" } else { "DW_ATE_unsigned" }
+    if k == types.T_INT || k == types.T_FLOAT || k == types.T_BOOL || k == types.T_UNIT || k == types.T_NEVER {
+        let enc = if k == types.T_FLOAT { "DW_ATE_float" } else if k == types.T_BOOL { "DW_ATE_boolean" } else if k == types.T_INT && t.a == types.IK_U8 { "DW_ATE_unsigned_char" } else if k == types.T_INT && types.signed(t.a) { "DW_ATE_signed" } else { "DW_ATE_unsigned" }
         bytes.append(inout o, lit(" = !DIBasicType(name: "))
         md_string(inout o, types.show(p.t, p.names, ty))
         bytes.append(inout o, num(", size: ", bits))
@@ -3920,9 +4010,13 @@ fn gfn_begin(inout e: E, p: lower.P, name: List[u8], ptys: List[u32], ret: u32) 
         let an = num("%a", i as u64)
         if a.kind == abi.A_COERCE {
             let t = temp(inout e, p, a.ty)
-            store_piece(inout e, cat(an, ".0"), t, 0, a.b0)
-            if a.n > 1 {
-                store_piece(inout e, cat(an, ".1"), t, 8, a.b1)
+            if a.c0 == abi.C_HFA {
+                store_piece(inout e, an, t, 0, hfa_ty(a))
+            } else {
+                store_piece(inout e, cat(an, ".0"), t, 0, piece0(a))
+                if a.n > 1 {
+                    store_piece(inout e, cat(an, ".1"), t, 8, piece1(a))
+                }
             }
             args.push(t)
         } else {
@@ -6583,4 +6677,143 @@ fn is_closure_name(s: List[u8]) -> bool {
         return false
     }
     bytes.eq(bytes.slice(s, i - 8, i), lit(".closure"))
+}
+
+// ---- floating point (docs/decisions.md C660)
+//
+// f32 is `float` and f64 `double`, IEEE 754 binary32 and binary64, with the default
+// environment: round to nearest even, no traps, no fast-math flags (no `nnan`, `ninf`,
+// `reassoc`, `contract`...), so every operation is exactly the IEEE one and a program
+// means the same at -O0 and -O2. `==` is `fcmp oeq` and `!=` is `fcmp une`: NaN is unequal to
+// everything and unordered. Constants are written from their bits (a hex double, or an `i32`
+// bitcast to float), so NaN payloads and signed zeros survive.
+
+fn float_ty(a: u32) -> List[u8] {
+    if a == 0 { return lit("float") }
+    lit("double")
+}
+
+fn hex16(v: u64) -> List[u8] {
+    let hx = lit("0123456789ABCDEF")
+    let mut o = lit("0x")
+    let mut i: u32 = 16
+    while i > 0 {
+        i -= 1
+        let sh: u64 = (i * 4) as u64
+        o.push(hx[((v >> sh) % 16) as usize])
+    }
+    o
+}
+
+/// The constant of float kind a (0: f32, 1: f64) with these bits.
+fn float_const(a: u32, bits: u64) -> List[u8] {
+    if a == 1 { return hex16(bits) }
+    let mut o = lit("bitcast (i32 ")
+    bytes.append(inout o, bytes.from_u64(bits % 4294967296))
+    bytes.append(inout o, lit(" to float)"))
+    o
+}
+
+fn fcmp(inout e: E, cc: str, ft: List[u8], a: List[u8], b: List[u8]) -> List[u8] {
+    let r = begin(inout e)
+    w(inout e, "fcmp ")
+    w(inout e, cc)
+    w(inout e, " ")
+    wb(inout e, ft)
+    w(inout e, " ")
+    wb(inout e, a)
+    w(inout e, ", ")
+    wb(inout e, b)
+    fin(inout e)
+    r
+}
+
+fn float_neg(inout e: E, p: lower.P, s: ir.Stmt, v: List[u8], d: List[u8]) {
+    let ft = float_ty(types.get(p.t, s.ty).a)
+    let r = val(inout e, catb(lit("fneg "), catb(ft, catb(lit(" "), v))))
+    store(inout e, p, s.ty, r, d)
+}
+
+fn float_binary(inout e: E, p: lower.P, s: ir.Stmt) {
+    let o = s.a
+    let d = dst_addr(s.dst)
+    let ft = float_ty(types.get(p.t, s.ty).a)
+    let a = opv(inout e, p, s.b)
+    let b = opv(inout e, p, s.c)
+    if o >= ast.OP_EQ && o <= ast.OP_GE {
+        let cc = if o == ast.OP_EQ { "oeq" } else if o == ast.OP_NE { "une" } else if o == ast.OP_LT { "olt" } else if o == ast.OP_LE { "ole" } else if o == ast.OP_GT { "ogt" } else { "oge" }
+        let r = fcmp(inout e, cc, ft, a, b)
+        store(inout e, p, types.BOOL, r, d)
+        return
+    }
+    let op = if o == ast.OP_ADD { "fadd" } else if o == ast.OP_SUB { "fsub" } else if o == ast.OP_MUL { "fmul" } else if o == ast.OP_DIV { "fdiv" } else { "frem" }
+    if o > ast.OP_REM {
+        unsupported(inout e, "a wrapping or bitwise operator on a float")
+        return
+    }
+    let r = arith2(inout e, op, ft, a, b)
+    store(inout e, p, s.ty, r, d)
+}
+
+/// The exact value 2^n as a float constant of kind a (n: 31, 32, 63, 64 and the like).
+fn pow2_const(a: u32, n: u32, neg: bool) -> List[u8] {
+    // binary64 bits: exponent field 1023 + n, mantissa 0
+    let one: u64 = 1
+    let mut bits: u64 = ((1023 + n) as u64) << 52
+    if neg { bits += one << 63 }
+    hex16(bits)
+}
+
+/// `x as T` where a float is the source or the target.
+fn float_cast(inout e: E, p: lower.P, s: ir.Stmt, fty: u32) {
+    let d = dst_addr(s.dst)
+    let v = opv(inout e, p, s.a)
+    let sf = kind(p, fty) == types.T_FLOAT
+    let tf = kind(p, s.ty) == types.T_FLOAT
+    if sf && tf {
+        // f32 <-> f64: exact widening, or rounding to nearest even (an overflow is infinity)
+        let sa = types.get(p.t, fty).a
+        let ta = types.get(p.t, s.ty).a
+        let op = if sa < ta { "fpext " } else { "fptrunc " }
+        let r = val(inout e, catb(lit(op), catb(float_ty(sa), catb(lit(" "), catb(v, catb(lit(" to "), float_ty(ta)))))))
+        store(inout e, p, s.ty, r, d)
+        return
+    }
+    if tf {
+        // an integer to the nearest float
+        let sk = types.ik(p.t, fty)
+        let op = if types.signed(sk) { "sitofp " } else { "uitofp " }
+        let ta = types.get(p.t, s.ty).a
+        let r = val(inout e, catb(lit(op), catb(lit(int_ty(sk)), catb(lit(" "), catb(v, catb(lit(" to "), float_ty(ta)))))))
+        store(inout e, p, s.ty, r, d)
+        return
+    }
+    // a float to an integer: NaN and out of range trap (never saturate, never undefined);
+    // the value is truncated toward zero, then compared with the exact powers of two that
+    // bound the type
+    let sa = types.get(p.t, fty).a
+    let ft = float_ty(sa)
+    let tk = types.ik(p.t, s.ty)
+    let bits = int_bits(tk)
+    let tr = trunc_name(sa)
+    declare(inout e, tr, catb(lit("declare "), catb(ft, catb(lit(" @"), catb(tr, catb(lit("("), cat(ft, ")")))))))
+    let t = val(inout e, catb(lit("call "), catb(ft, catb(lit(" @"), catb(tr, catb(lit("("), catb(ft, catb(lit(" "), cat(v, ")")))))))))
+    let sg = types.signed(tk)
+    let hb = if sg { bits - 1 } else { bits }
+    let hi = pow2_const(sa, hb, false)
+    let lo = if sg { pow2_const(sa, bits - 1, true) } else { lit("0.0") }
+    // in range: lo <= t < hi (ordered: NaN fails both)
+    let c1 = fcmp(inout e, "oge", ft, t, lo)
+    let c2 = fcmp(inout e, "olt", ft, t, hi)
+    let ok = val(inout e, catb(lit("and i1 "), catb(c1, catb(lit(", "), c2))))
+    let bad = val(inout e, catb(lit("xor i1 "), cat(ok, ", true")))
+    trap_if(inout e, bad, "float conversion out of range", s.line)
+    let op = if sg { "fptosi " } else { "fptoui " }
+    let r = val(inout e, catb(lit(op), catb(ft, catb(lit(" "), catb(t, catb(lit(" to "), lit(int_ty(tk))))))))
+    store(inout e, p, s.ty, r, d)
+}
+
+fn trunc_name(a: u32) -> List[u8] {
+    if a == 0 { return lit("llvm.trunc.f32") }
+    lit("llvm.trunc.f64")
 }

@@ -23,6 +23,7 @@ pub type Kind =
     | Amp | Caret | Tilde | Shl | Shr | AmpEq | PipeEq | CaretEq | ShlEq | ShrEq
     | At
     | FStart | FText | FHole | FClose | FEnd
+    | Float
 
 /// `start`/`end` are byte offsets; `line`/`col` the start position; `end_col` is the column
 /// just past the token (tokens never span lines).
@@ -142,13 +143,51 @@ fn acc(inout limbs: [u64; 4], base: u64, digit: u64) -> bool {
     carry == 0 && limbs[3] < 2147483648
 }
 
+/// After the digits of a decimal literal: a fractional part (`.` and a digit), an exponent
+/// (`e`, an optional sign, digits) and a `f32`/`f64` suffix make it a float literal
+/// ("Floating point", docs/decisions.md C660); `1.` and `1.max(2)` stay an integer and a dot.
+/// The token's `val` is the suffix width (0, 32 or 64); the text is read from the source
+/// (check.ei, `float_lit`). A malformed exponent is reported in `bad`.
+fn float_tail(src: List[u8], inout l: L, inout bad: List[Bad], start: L) -> Option[Tok] {
+    let mut i = l.i.copy()
+    let mut is_float = false
+    if at(src, i) == 46 && bytes.is_digit(at(src, i + 1)) {
+        is_float = true
+        i += 1
+        while i < src.len() && (bytes.is_digit(src[i]) || src[i] == 95) { i += 1 }
+    }
+    let e = at(src, i)
+    if e == 101 || e == 69 {
+        let mut j = i + 1
+        let sg = at(src, j)
+        if sg == 43 || sg == 45 { j += 1 }
+        if bytes.is_digit(at(src, j)) {
+            is_float = true
+            while j < src.len() && (bytes.is_digit(src[j]) || src[j] == 95) { j += 1 }
+            i = j
+        } else if is_float {
+            bad.push(fail(start, "expected digits in the exponent of a float literal"))
+        }
+    }
+    let mut suffix: u64 = 0
+    if at(src, i) == 102 && ((at(src, i + 1) == 51 && at(src, i + 2) == 50) || (at(src, i + 1) == 54 && at(src, i + 2) == 52)) && !bytes.is_ident(at(src, i + 3)) {
+        is_float = true
+        suffix = if at(src, i + 1) == 51 { 32 } else { 64 }
+        i += 3
+    }
+    if !is_float { return None }
+    while l.i < i { step(src, inout l) }
+    Some(tok(Float, start, l, suffix))
+}
+
 /// An integer literal at the cursor (a digit). Underscores are allowed after the first digit.
 /// A malformed or too-large literal is reported in `bad` and lexes as 0 (too large: with `big`).
-fn number(src: List[u8], inout l: L, inout bad: List[Bad]) -> Tok {
+fn number(src: List[u8], inout l: L, inout bad: List[Bad], after_dot: bool) -> Tok {
     let start = l.copy()
     let mut limbs: [u64; 4] = [0; 4]
     let mut ok = true
-    if at(src, l.i) == 48 && (at(src, l.i + 1) == 120 || at(src, l.i + 1) == 88) {
+    let is_hex = at(src, l.i) == 48 && (at(src, l.i + 1) == 120 || at(src, l.i + 1) == 88)
+    if is_hex {
         step(src, inout l)
         step(src, inout l)
         let first = l.i.copy()
@@ -170,6 +209,10 @@ fn number(src: List[u8], inout l: L, inout bad: List[Bad]) -> Tok {
             }
             step(src, inout l)
         }
+    }
+    if !after_dot && !is_hex {
+        let f = float_tail(src, inout l, inout bad, start)
+        if f.is_some() { return f.unwrap() }
     }
     if !ok {
         bad.push(fail(start, "integer literal too large"))
@@ -353,7 +396,7 @@ fn scan(src: List[u8], inout l: L, stop: usize, all: bool, inout toks: List[Tok]
                 step(src, inout l)
             }
         } else if bytes.is_digit(c) {
-            toks.push(number(src, inout l, inout bad))
+            toks.push(number(src, inout l, inout bad, toks.len() > 0 && toks[toks.len() - 1].kind == Dot))
         } else if c == 114 && raw_at(src, l.i) {
             // r"...", r#"..."#, r"""...""" (docs/compiler.md, "C8.28: string literals")
             if multi_open(src, l.i + 1) {
@@ -794,5 +837,6 @@ pub fn kind_text(k: Kind) -> str {
         FHole => r"{"
         FClose => r"}"
         FEnd => "\""
+        Float => "float"
     }
 }

@@ -1,0 +1,1 @@
+{"error":"E0701","span":{"file":"compiler/tests/check/fail/e0701_float_hash_derive.ei","line":4,"col":12},"message":"K can't be a Map key: it doesn't implement `Hash` (its part f64 doesn't)","help":"floats have no hash: 0.0 == -0.0 but their bits differ, and NaN != NaN; key by `x.to_bits()` if exact bits are meant, or by a rounded integer"}

@@ -1,0 +1,5 @@
+// expect: E0701 4:12
+type K = { x: f64, n: i32 }
+fn main() {
+    let m: Map[K, i32] = Map.new()
+}

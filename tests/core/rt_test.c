@@ -491,6 +491,131 @@ static void test_print(void) {
       "true\nfalse\n\nhi there %d\n");
 }
 
+
+/* Floats (docs/decisions.md C660): the printer is exact. For hundreds of thousands of bit
+   patterns the text reads back (strtod, exact) as the same value, and no shorter text does;
+   {x:.N} is the exact value rounded like printf's. */
+static void fstr(char *b, size_t cap_, double v) {
+  ei_String s = ei_str_from("");
+  ei_str_push_f64(&s, v);
+  snprintf(b, cap_, "%s", s.p);
+  ei_drop_String(&s);
+}
+
+static uint64_t rng_state = 88172645463325252ull;
+static uint64_t rng(void) {
+  rng_state ^= rng_state << 13;
+  rng_state ^= rng_state >> 7;
+  rng_state ^= rng_state << 17;
+  return rng_state;
+}
+
+static int sig_digits(const char *b) {
+  int digits = 0, started = 0, last_nz = 0;
+  for (const char *c = b; *c && *c != 'e'; c++) {
+    if (*c < '0' || *c > '9') continue;
+    if (*c != '0') started = 1;
+    if (started) {
+      digits++;
+      if (*c != '0') last_nz = digits;
+    }
+  }
+  return last_nz > 0 ? last_nz : 1;
+}
+
+static void test_float_text(void) {
+  char b[64];
+  struct {
+    double v;
+    const char *t;
+  } fixed[] = {
+      {0.0, "0.0"},
+      {-0.0, "-0.0"},
+      {1.0, "1.0"},
+      {1.5, "1.5"},
+      {0.1, "0.1"},
+      {0.3, "0.3"},
+      {100.0, "100.0"},
+      {1e15, "1000000000000000.0"},
+      {1e16, "1e16"},
+      {1.5e300, "1.5e300"},
+      {1e-5, "0.00001"},
+      {1e-6, "1e-6"},
+      {123456.789, "123456.789"},
+      {5e-324, "5e-324"},
+      {1.7976931348623157e308, "1.7976931348623157e308"},
+      {0.1 + 0.2, "0.30000000000000004"},
+      {9007199254740993.0, "9007199254740992.0"},
+      {-2.5, "-2.5"},
+      {1.0 / 3.0, "0.3333333333333333"},
+      {2.2250738585072014e-308, "2.2250738585072014e-308"},
+  };
+  for (size_t i = 0; i < sizeof fixed / sizeof fixed[0]; i++) {
+    fstr(b, sizeof b, fixed[i].v);
+    CHECK(strcmp(b, fixed[i].t) == 0);
+  }
+  fstr(b, sizeof b, 1.0 / 0.0);
+  CHECK(strcmp(b, "inf") == 0);
+  fstr(b, sizeof b, -1.0 / 0.0);
+  CHECK(strcmp(b, "-inf") == 0);
+  fstr(b, sizeof b, 0.0 / 0.0);
+  CHECK(strcmp(b, "NaN") == 0);
+  /* round trip and shortest, over random bit patterns (finite ones) */
+  int bad = 0;
+  for (int n = 0; n < 200000; n++) {
+    uint64_t bits = rng();
+    if (n % 4 == 0) bits = (bits & ~(0x7ffull << 52)) | ((uint64_t)(1000 + rng() % 48) << 52);
+    double v;
+    memcpy(&v, &bits, 8);
+    if (v != v || v - v != 0) continue;
+    fstr(b, sizeof b, v);
+    if (strtod(b, NULL) != v) {
+      bad++;
+      continue;
+    }
+    int digits = sig_digits(b);
+    if (digits > 1) {
+      char t[64];
+      snprintf(t, sizeof t, "%.*e", digits - 2, v);
+      if (strtod(t, NULL) == v) bad++;
+    }
+  }
+  CHECK(bad == 0);
+  bad = 0;
+  for (int n = 0; n < 100000; n++) {
+    uint32_t bits = (uint32_t)rng();
+    float v;
+    memcpy(&v, &bits, 4);
+    if (v != v || v - v != 0) continue;
+    ei_String s = ei_str_from("");
+    ei_str_push_f32(&s, v);
+    snprintf(b, sizeof b, "%s", s.p);
+    ei_drop_String(&s);
+    if (strtof(b, NULL) != v) bad++;
+  }
+  CHECK(bad == 0);
+  /* {x:.N}: the exact value rounded half to even, as printf does */
+  bad = 0;
+  for (int n = 0; n < 50000; n++) {
+    uint64_t bits = rng();
+    if (n % 2) bits = (bits & ~(0x7ffull << 52)) | ((uint64_t)(1023 - 10 + rng() % 40) << 52);
+    double v;
+    memcpy(&v, &bits, 8);
+    if (v != v || v - v != 0) continue;
+    unsigned prec = (unsigned)(rng() % 20);
+    ei_String s = ei_str_from("");
+    ei_str_fmt_f64(&s, v, (1ull << 63) | ((uint64_t)prec << 52) | (1ull << 40));
+    char want[512];
+    snprintf(want, sizeof want, "%.*f", (int)prec, v);
+    if (strcmp(s.p, want) != 0) {
+      bad++;
+      if (bad < 4) fprintf(stderr, "fixed: %s vs %s\n", s.p, want);
+    }
+    ei_drop_String(&s);
+  }
+  CHECK(bad == 0);
+}
+
 static void test_clock(void) {
   uint64_t a = ei_now_ms();
   volatile uint64_t spin = 0;
@@ -978,6 +1103,7 @@ int main(void) {
   test_string();
   test_hash();
   test_print();
+  test_float_text();
   test_clock();
   test_exit_path();
   test_rc();

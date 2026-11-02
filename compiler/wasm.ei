@@ -231,6 +231,33 @@ fn marshalled(p: lower.P, fd: ir.Fn, name: List[u8], args: List[u8], o: List[u8]
     r
 }
 
+/// The math functions of core/libm.ei the program calls that the module does not define (the
+/// others are in core/wasm/libc.c), as JavaScript's Math: `env.ec_m_sin` and the like. Nothing
+/// for a program that doesn't use std/math, so its loader is the one it always was.
+fn math_imports(p: lower.P, inout o: List[u8]) {
+    let names = ["exp", "exp2", "expm1", "log", "log2", "log10", "log1p", "sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "cbrt", "round", "rint", "pow", "atan2", "hypot", "fmod", "fma"]
+    let defs = ["Math.exp(x)", "2 ** x", "Math.expm1(x)", "Math.log(x)", "Math.log2(x)", "Math.log10(x)", "Math.log1p(x)", "Math.sin(x)", "Math.cos(x)", "Math.tan(x)", "Math.asin(x)", "Math.acos(x)", "Math.atan(x)", "Math.sinh(x)", "Math.cosh(x)", "Math.tanh(x)", "Math.asinh(x)", "Math.acosh(x)", "Math.atanh(x)", "Math.cbrt(x)", "Math.sign(x) * Math.round(Math.abs(x))", r"(() => { const r = Math.round(x); return Math.abs(x % 1) === 0.5 && r % 2 !== 0 ? r - 1 : r; })()", "Math.pow(x, y)", "Math.atan2(x, y)", "Math.hypot(x, y)", "x % y", "x * y + z"]
+    for i in 0..27 {
+        let mut sym = s("ec_m_")
+        bytes.append(inout sym, s(names[i as usize]))
+        let mut used = false
+        for x in p.ir.externs {
+            if bytes.eq(x.symbol, sym) { used = true }
+        }
+        if !used { continue }
+        let args = if i >= 22 && i < 26 { "x, y" } else if i == 26 { "x, y, z" } else { "x" }
+        let mut line = s("    ")
+        bytes.append(inout line, sym)
+        bytes.append(inout line, s(": ("))
+        bytes.append(inout line, s(args))
+        bytes.append(inout line, s(") => "))
+        bytes.append(inout line, s(defs[i as usize]))
+        bytes.append(inout line, s(","))
+        bytes.append(inout o, line)
+        o.push(10)
+    }
+}
+
 /// <name>.js: instantiates the module `wasm_file` with the host imports (core/wasm/README.md)
 /// plus the caller's, and wraps each export (bool results become JavaScript booleans, a
 /// String or List[u8] is copied in and out of the module's memory). The result also has the
@@ -246,6 +273,7 @@ pub fn loader(p: lower.P, wasm_file: List[u8]) -> List[u8] {
     ln(inout o, r"  const env = {")
     ln(inout o, r"    eider_write(p, n) { (typeof process !== 'undefined' ? process.stdout.write.bind(process.stdout) : console.log)(dec.decode(new Uint8Array(mem.buffer, p, n))); },")
     ln(inout o, r"    eider_now_ms() { return BigInt(Date.now()); },")
+    math_imports(p, inout o)
     ln(inout o, "    ...imports,")
     ln(inout o, r"  };")
     ln(inout o, "  if (imports.eider_write) env.eider_write = (p, n) => imports.eider_write(p, n, mem);")
@@ -303,6 +331,7 @@ pub fn loader(p: lower.P, wasm_file: List[u8]) -> List[u8] {
 fn c_scalar(p: lower.P, ty: u32) -> str {
     if ty == types.UNIT || ty == types.NEVER { return "void" }
     if types.kind(p.t, ty) == types.T_BOOL { return "bool" }
+    if types.kind(p.t, ty) == types.T_FLOAT { return pick(types.ik(p.t, ty) == 0, "float", "double") }
     let ik = types.ik(p.t, ty)
     if ik == types.IK_I32 { return "int32_t" }
     if ik == types.IK_I64 { return "int64_t" }

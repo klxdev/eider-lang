@@ -1,0 +1,1 @@
+{"error":"E0412","span":{"file":"compiler/tests/check/fail/e0412_float_radix.ei","line":4,"col":15},"message":"format spec `x` is for integers, and this is f64","help":"only a width, fill and alignment apply to any type: `{x:>8}`, `{x:*^9}`","fix":{"at":{"line":4,"col":17},"delete":1,"insert":""}}

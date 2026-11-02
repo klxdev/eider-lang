@@ -1,0 +1,6 @@
+// expect: E0401 5:15
+type P = { x: f64 }
+fn main() {
+    let a = P(1.0)
+    let b = a < P(2.0)
+}

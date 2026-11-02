@@ -1,0 +1,4 @@
+3
+--- stderr
+eider: runtime error: float conversion out of range (compiler/tests/run/float_trap_nan.ei:6)
+--- exit 101

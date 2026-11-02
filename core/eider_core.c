@@ -36,6 +36,7 @@
 #include <pthread.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <math.h>
 #include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
@@ -1960,4 +1961,92 @@ EC_FN(int64_t, ec_prof, (int32_t op, int64_t arg)) {
   reserve(&in_p, &in_cap, 1);
   in_p[in_len] = 0;
   return h(op, arg, in_p, in_len);
+}
+
+/* ---- math (core/ABI.md "Math"): one libm call each, on doubles; no state, no buffers, no
+   errors (a domain error is a NaN, an overflow an infinity: IEEE). std/math is built on these
+   and on the bit casts below. libm is a weak reference here: a program that never calls
+   std/math (the seed's cc-only bootstrap, a C consumer of an Eider library's .a) links without
+   -lm, and `eiderc build` adds it for every Eider program. */
+#pragma weak sqrt
+EC_FN(double, ec_m_sqrt, (double x)) { return sqrt ? sqrt(x) : (double)NAN; }
+#pragma weak cbrt
+EC_FN(double, ec_m_cbrt, (double x)) { return cbrt ? cbrt(x) : (double)NAN; }
+#pragma weak exp
+EC_FN(double, ec_m_exp, (double x)) { return exp ? exp(x) : (double)NAN; }
+#pragma weak exp2
+EC_FN(double, ec_m_exp2, (double x)) { return exp2 ? exp2(x) : (double)NAN; }
+#pragma weak expm1
+EC_FN(double, ec_m_expm1, (double x)) { return expm1 ? expm1(x) : (double)NAN; }
+#pragma weak log
+EC_FN(double, ec_m_log, (double x)) { return log ? log(x) : (double)NAN; }
+#pragma weak log2
+EC_FN(double, ec_m_log2, (double x)) { return log2 ? log2(x) : (double)NAN; }
+#pragma weak log10
+EC_FN(double, ec_m_log10, (double x)) { return log10 ? log10(x) : (double)NAN; }
+#pragma weak log1p
+EC_FN(double, ec_m_log1p, (double x)) { return log1p ? log1p(x) : (double)NAN; }
+#pragma weak sin
+EC_FN(double, ec_m_sin, (double x)) { return sin ? sin(x) : (double)NAN; }
+#pragma weak cos
+EC_FN(double, ec_m_cos, (double x)) { return cos ? cos(x) : (double)NAN; }
+#pragma weak tan
+EC_FN(double, ec_m_tan, (double x)) { return tan ? tan(x) : (double)NAN; }
+#pragma weak asin
+EC_FN(double, ec_m_asin, (double x)) { return asin ? asin(x) : (double)NAN; }
+#pragma weak acos
+EC_FN(double, ec_m_acos, (double x)) { return acos ? acos(x) : (double)NAN; }
+#pragma weak atan
+EC_FN(double, ec_m_atan, (double x)) { return atan ? atan(x) : (double)NAN; }
+#pragma weak sinh
+EC_FN(double, ec_m_sinh, (double x)) { return sinh ? sinh(x) : (double)NAN; }
+#pragma weak cosh
+EC_FN(double, ec_m_cosh, (double x)) { return cosh ? cosh(x) : (double)NAN; }
+#pragma weak tanh
+EC_FN(double, ec_m_tanh, (double x)) { return tanh ? tanh(x) : (double)NAN; }
+#pragma weak asinh
+EC_FN(double, ec_m_asinh, (double x)) { return asinh ? asinh(x) : (double)NAN; }
+#pragma weak acosh
+EC_FN(double, ec_m_acosh, (double x)) { return acosh ? acosh(x) : (double)NAN; }
+#pragma weak atanh
+EC_FN(double, ec_m_atanh, (double x)) { return atanh ? atanh(x) : (double)NAN; }
+#pragma weak floor
+EC_FN(double, ec_m_floor, (double x)) { return floor ? floor(x) : (double)NAN; }
+#pragma weak ceil
+EC_FN(double, ec_m_ceil, (double x)) { return ceil ? ceil(x) : (double)NAN; }
+#pragma weak trunc
+EC_FN(double, ec_m_trunc, (double x)) { return trunc ? trunc(x) : (double)NAN; }
+#pragma weak round
+EC_FN(double, ec_m_round, (double x)) { return round ? round(x) : (double)NAN; }
+#pragma weak rint
+EC_FN(double, ec_m_rint, (double x)) { return rint ? rint(x) : (double)NAN; }
+#pragma weak pow
+EC_FN(double, ec_m_pow, (double x, double y)) { return pow ? pow(x, y) : (double)NAN; }
+#pragma weak atan2
+EC_FN(double, ec_m_atan2, (double x, double y)) { return atan2 ? atan2(x, y) : (double)NAN; }
+#pragma weak hypot
+EC_FN(double, ec_m_hypot, (double x, double y)) { return hypot ? hypot(x, y) : (double)NAN; }
+#pragma weak fmod
+EC_FN(double, ec_m_fmod, (double x, double y)) { return fmod ? fmod(x, y) : (double)NAN; }
+#pragma weak fma
+EC_FN(double, ec_m_fma, (double x, double y, double z)) { return fma ? fma(x, y, z) : (double)NAN; }
+EC_FN(uint64_t, ec_f64_bits, (double x)) {
+  uint64_t b;
+  memcpy(&b, &x, 8);
+  return b;
+}
+EC_FN(double, ec_f64_from_bits, (uint64_t b)) {
+  double x;
+  memcpy(&x, &b, 8);
+  return x;
+}
+EC_FN(uint32_t, ec_f32_bits, (float x)) {
+  uint32_t b;
+  memcpy(&b, &x, 4);
+  return b;
+}
+EC_FN(float, ec_f32_from_bits, (uint32_t b)) {
+  float x;
+  memcpy(&x, &b, 4);
+  return x;
 }

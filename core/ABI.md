@@ -13,7 +13,7 @@ file implementing exactly this contract. Nothing above the core changes.
    `str` literals (read-only, owned by the program image) and `ec_in_cstr`'s view of `in`,
    which Eider copies immediately.
 3. **Fixed-width types only:** `int32_t`, `int64_t`, `const char *` (Eider `i32`, `i64`,
-   `str`). Results never depend on `int`/`long`/pointer width, so the ABI is the same on
+   `str`), and, for the math functions below, `double` and `float` (`f64`, `f32`). Results never depend on `int`/`long`/pointer width, so the ABI is the same on
    32- and 64-bit targets.
 4. **Errors are `-errno`** (`< 0`); success is `>= 0`. `ec_errstr` turns a status into text.
 5. **Raw symbol names.** Eider binds `extern "c"` functions by raw symbol name
@@ -426,6 +426,25 @@ thread's operation either fails the generation check (and ends the process) or, 
 passed it, acts on the freed cell, which is still valid memory (and, if a later
 `ec_atomic_new` has handed the slot out again in between, on that new cell's value: a logic
 error, never memory corruption).
+
+## Math
+
+core/libm.ei binds these, and std/math is built on them. Each is one libm call on doubles: no
+buffers, no state, no errors (a domain error is a NaN, an overflow an infinity, as IEEE says).
+They are pure: the wrappers declare only `ffi`, which doesn't leave `core`, so a caller declares
+no capability. libm is referenced weakly (`#pragma weak`) so a program that never calls them
+(the seed's cc-only bootstrap, a C consumer of an Eider library's .a) links without `-lm`;
+`eiderc build` links `-lm`. In a `--wasm` module `ec_m_sqrt`, `ec_m_floor`, `ec_m_ceil`,
+`ec_m_trunc` and the bit casts are defined in core/wasm/libc.c, and the others are imports of
+`env` that the generated loader fills in with JavaScript's `Math`.
+
+| Function | Meaning |
+|---|---|
+| `double ec_m_f(double x)` | `f` is one of `sqrt cbrt exp exp2 expm1 log log2 log10 log1p sin cos tan asin acos atan sinh cosh tanh asinh acosh atanh floor ceil trunc round rint` (`round` half away from zero, `rint` half to even) |
+| `double ec_m_f(double x, double y)` | `f` is one of `pow atan2 hypot fmod` |
+| `double ec_m_fma(double x, double y, double z)` | `x * y + z` fused |
+| `uint64_t ec_f64_bits(double x)`, `double ec_f64_from_bits(uint64_t b)` | the IEEE bits of an f64 and back |
+| `uint32_t ec_f32_bits(float x)`, `float ec_f32_from_bits(uint32_t b)` | the same for f32 |
 
 ## Profiling
 

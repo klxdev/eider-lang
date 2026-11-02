@@ -1,0 +1,6 @@
+2147483520
+255
+0
+--- stderr
+eider: runtime error: float conversion out of range (compiler/tests/run/float_trap_range.ei:8)
+--- exit 101

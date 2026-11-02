@@ -1,0 +1,5 @@
+// expect: E0412 4:15
+fn main() {
+    let x = 1.5
+    let s = "{x:#.2}"
+}

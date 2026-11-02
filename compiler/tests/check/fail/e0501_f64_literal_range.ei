@@ -1,0 +1,4 @@
+// expect: E0501 3:13
+fn main() {
+    let x = 1e400
+}

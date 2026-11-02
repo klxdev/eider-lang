@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_f32_literal_range.ei","line":3,"col":18},"message":"literal 1e39 doesn't fit in f32 (max 3.4028235e38)"}

@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/check/fail/e0001_float_pattern.ei","line":5,"col":9},"message":"a float can't be a pattern (NaN != NaN, so a match on one would be unsound); compare with `==` or a range check in an `if`"}

@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_float_eq_int.ei","line":4,"col":18},"message":"expected f64, found an integer literal","help":"integers and floats don't mix implicitly; write a float literal like `1.0`, or convert with `as`"}

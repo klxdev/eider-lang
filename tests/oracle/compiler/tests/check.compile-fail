@@ -1,7 +1,11 @@
 compile-fail tests (compiler/tests/check/fail)
   ok   e0001_clo_list_of_fn.ei      E0001 at 4:15
+  ok   e0001_float_exponent.ei      E0001 at 3:13
+  ok   e0001_float_pattern.ei       E0001 at 5:9
   ok   e0001_literal_past_u128.ei   E0001 at 5:13
   ok   e0001_mod_parse_error_in_module.ei E0001 at 2:14
+  ok   e0001_precision_digits.ei    E0001 at 4:18
+  ok   e0001_precision_max.ei       E0001 at 4:20
   ok   e0002_add_and.ei             E0002 at 3:11 (fix compiles)
   ok   e0002_and_eq.ei              E0002 at 3:11 (fix compiles)
   ok   e0002_and_or.ei              E0002 at 3:11 (fix compiles)
@@ -337,6 +341,17 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_failure_no_from.ei     E0401 at 5:27
   ok   e0401_field_mismatch.ei      E0401 at 4:18
   ok   e0401_filter_wrong_ret.ei    E0401 at 3:28
+  ok   e0401_float_bitand.ei        E0401 at 4:15
+  ok   e0401_float_cast_bool.ei     E0401 at 3:18
+  ok   e0401_float_cast_to_str.ei   E0401 at 3:17
+  ok   e0401_float_compound_int_literal.ei E0401 at 4:11
+  ok   e0401_float_const_pattern.ei E0401 at 6:9
+  ok   e0401_float_derived_ord.ei   E0401 at 5:15
+  ok   e0401_float_eq_int.ei        E0401 at 4:18
+  ok   e0401_float_f32_f64.ei       E0401 at 5:17
+  ok   e0401_float_int_literal.ei   E0401 at 3:18
+  ok   e0401_float_int_mix.ei       E0401 at 4:19
+  ok   e0401_float_wrapping.ei      E0401 at 4:15
   ok   e0401_fnval_mismatch.ei      E0401 at 3:37
   ok   e0401_fold_wrong.ei          E0401 at 3:30
   ok   e0401_fold_wrong2.ei         E0401 at 3:27
@@ -507,6 +522,9 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0411_mutex_of_ref.ei        E0411 at 3:12
   ok   e0411_spawn_captures_ref.ei  E0411 at 4:19
   ok   e0411_task_result_ref.ei     E0411 at 3:19
+  ok   e0412_float_alt.ei           E0412 at 4:15 (fix compiles)
+  ok   e0412_float_radix.ei         E0412 at 4:15 (fix compiles)
+  ok   e0412_precision_int.ei       E0412 at 4:15 (fix compiles)
   ok   e0501_big_hex_literal.ei     E0501 at 3:18
   ok   e0501_cast_constant.ei       E0501 at 3:26
   ok   e0501_cast_literal.ei        E0501 at 3:13
@@ -514,6 +532,9 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0501_comptime_folded.ei     E0501 at 2:27
   ok   e0501_comptime_literal.ei    E0501 at 2:24
   ok   e0501_const_through_const.ei E0501 at 3:17
+  ok   e0501_f32_literal_range.ei   E0501 at 3:18
+  ok   e0501_f32_suffix_range.ei    E0501 at 3:13
+  ok   e0501_f64_literal_range.ei   E0501 at 3:13
   ok   e0501_fold_precedence.ei     E0501 at 2:17
   ok   e0501_gen_body_error.ei      E0501 at 2:34
   ok   e0501_hex_literal.ei         E0501 at 3:17
@@ -551,6 +572,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0503_len_index.ei           E0503 at 4:15
   ok   e0504_bool_comparison.ei     E0504 at 2:19
   ok   e0504_const_from_const_bool.ei E0504 at 3:17
+  ok   e0504_float_const_expr.ei    E0504 at 2:20
   ok   e0504_heap_owned_const.ei    E0504 at 2:26
   ok   e0504_heap_owned_const_list.ei E0504 at 2:22
   ok   e0504_record_const.ei        E0504 at 3:14
@@ -617,6 +639,8 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0606_drop_enum.ei           E0606 at 3:1
   ok   e0606_drop_one_instance.ei   E0606 at 3:1
   ok   e0701_custom_eq_no_hash.ei   E0701 at 7:12
+  ok   e0701_float_hash_derive.ei   E0701 at 4:12
+  ok   e0701_float_map_key.ei       E0701 at 3:12
   ok   e0701_heap_map_key.ei        E0701 at 2:20
   ok   e0701_heap_map_key_rec.ei    E0701 at 3:20
   ok   e0701_thr_map_key.ei         E0701 at 3:12
@@ -635,6 +659,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0802_ffi_unsafe_ends.ei     E0802 at 5:13
   ok   e0802_ffi_unsafe_fn_call.ei  E0802 at 4:11
   ok   e0802_unsafe_fn_call.ei      E0802 at 4:13
+  ok   e0803_extern_float_option.ei E0803 at 2:15
   ok   e0803_ffi_export_box.ei      E0803 at 2:13
   ok   e0803_ffi_export_enum.ei     E0803 at 3:13
   ok   e0803_ffi_export_inout.ei    E0803 at 2:22
@@ -673,6 +698,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0807_comptime_sub_u32.ei    E0807 at 3:7
   ok   e0807_comptime_type_first.ei E0807 at 2:7
   ok   e0807_comptime_unwrap.ei     E0807 at 10:7
+  ok   e0807_float_comptime.ei      E0807 at 6:7
   ok   e0809_not_a_dependency.ei    E0809 at 3:1
   ok   e0810_no_lock.ei             E0810 at 2:1
   ok   e0811_series_import.ei       E0811 at 4:1
@@ -777,6 +803,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-775 passed, 0 failed; error-code coverage 61/70
-codes without a compile-fail test: E0118 E0302 E0310 E0402 E0412 E0806 E0808 E0812 E0813
+801 passed, 0 failed; error-code coverage 62/70
+codes without a compile-fail test: E0118 E0302 E0310 E0402 E0806 E0808 E0812 E0813
 --- exit 0

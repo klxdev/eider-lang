@@ -331,3 +331,90 @@ int fprintf(FILE *fp, const char *f, ...) {
   va_end(ap);
   return r;
 }
+
+// ---- floating point (docs/decisions.md C660)
+//
+// Defined in the module because the instruction set has them (sqrt, floor, ceil, trunc) or
+// they are exact bit work (the casts to and from IEEE bits, fmod for `%` on floats). The rest
+// of core/libm.ei (exp, log, sin, pow, ...) stays an import from `env` that the loader fills in
+// with JavaScript's Math (wasm.ei), or a core module's host supplies as libm's.
+double ec_m_sqrt(double x) { return __builtin_sqrt(x); }
+double ec_m_floor(double x) { return __builtin_floor(x); }
+double ec_m_ceil(double x) { return __builtin_ceil(x); }
+double ec_m_trunc(double x) { return __builtin_trunc(x); }
+
+uint64_t ec_f64_bits(double x) {
+  uint64_t b;
+  memcpy(&b, &x, 8);
+  return b;
+}
+
+double ec_f64_from_bits(uint64_t b) {
+  double x;
+  memcpy(&x, &b, 8);
+  return x;
+}
+
+uint32_t ec_f32_bits(float x) {
+  uint32_t b;
+  memcpy(&b, &x, 4);
+  return b;
+}
+
+float ec_f32_from_bits(uint32_t b) {
+  float x;
+  memcpy(&x, &b, 4);
+  return x;
+}
+
+// The remainder of x / y with the sign of x, exactly (the algorithm of musl's fmod: shift and
+// subtract on the significands); what LLVM's `frem` calls.
+double fmod(double x, double y) {
+  uint64_t ux = ec_f64_bits(x), uy = ec_f64_bits(y);
+  int ex = (int)((ux >> 52) & 0x7ff), ey = (int)((uy >> 52) & 0x7ff);
+  uint64_t sx = ux >> 63;
+  uint64_t i;
+  if ((uy << 1) == 0 || y != y || ex == 0x7ff) return (x * y) / (x * y);
+  if ((ux << 1) <= (uy << 1)) {
+    if ((ux << 1) == (uy << 1)) return 0 * x;
+    return x;
+  }
+  if (!ex) {
+    for (i = ux << 12; (i >> 63) == 0; ex--, i <<= 1) {}
+    ux <<= (unsigned)(-ex + 1);
+  } else {
+    ux &= (uint64_t)-1 >> 12;
+    ux |= (uint64_t)1 << 52;
+  }
+  if (!ey) {
+    for (i = uy << 12; (i >> 63) == 0; ey--, i <<= 1) {}
+    uy <<= (unsigned)(-ey + 1);
+  } else {
+    uy &= (uint64_t)-1 >> 12;
+    uy |= (uint64_t)1 << 52;
+  }
+  for (; ex > ey; ex--) {
+    i = ux - uy;
+    if ((i >> 63) == 0) {
+      if (i == 0) return 0 * x;
+      ux = i;
+    }
+    ux <<= 1;
+  }
+  i = ux - uy;
+  if ((i >> 63) == 0) {
+    if (i == 0) return 0 * x;
+    ux = i;
+  }
+  for (; (ux >> 52) == 0; ux <<= 1, ex--) {}
+  if (ex > 0) {
+    ux -= (uint64_t)1 << 52;
+    ux |= (uint64_t)ex << 52;
+  } else {
+    ux >>= (unsigned)(-ex + 1);
+  }
+  ux |= sx << 63;
+  return ec_f64_from_bits(ux);
+}
+
+float fmodf(float x, float y) { return (float)fmod((double)x, (double)y); }

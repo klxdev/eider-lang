@@ -1,1 +1,1 @@
-{"error":"E0806","span":{"file":"compiler/tests/wasm/check/record_param.ei","line":3,"col":15},"message":"parameter `p` has type P; WebAssembly exports take only integers, bool, String and List[u8]"}
+{"error":"E0806","span":{"file":"compiler/tests/wasm/check/record_param.ei","line":3,"col":15},"message":"parameter `p` has type P; WebAssembly exports take only integers, f32, f64, bool, String and List[u8]"}

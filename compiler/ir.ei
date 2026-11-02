@@ -14,6 +14,7 @@
 //            L_CAPTURE (a closure function's first locals: the values its environment holds,
 //            in S_CLOSURE argument order; read-only)
 // Operands   O_INT ty v=value (64-bit two's complement)   O_BOOL v   O_STR v=string index
+//            O_FLOAT ty v=the IEEE bits (binary64; the low 32 bits for an f32)
 //            O_UNIT   O_LOCAL a=local (only temporaries and pattern scrutinees)
 // Places     P_LOCAL a=local
 //            P_FIELD a=base place b=field index (records and tuples)
@@ -26,14 +27,19 @@
 //   S_COPY    dst := op a
 //   S_READ    dst := place a
 //   S_STORE   place a := op b
-//   S_UNARY   dst := a (U_NEG checked, U_NOT, U_BNOT `~`) b=operand
+//   S_UNARY   dst := a (U_NEG checked (a float's: IEEE negation, never traps), U_NOT, U_BNOT `~`) b=operand
 //   S_BINARY  dst := b (op a = ast.OP_*) c; ty = operand type. + - * / % trap on overflow
 //             and division by zero; +% -% *% wrap; & | ^ on the bits; << >> trap on a
 //             count outside 0..width-1 (>> is arithmetic on signed types); == != compare
 //             through Eq for any type that has it; < <= > >= through Ord (integers, bool
 //             and text inline, the rest through cmp_ glue; C8.4).
+//             On floats (f32, f64; docs/decisions.md C660) + - * / % are IEEE operations that
+//             never trap, and == != < <= > >= are the IEEE comparisons (unordered: false,
+//             except !=); +% -% *% and the bitwise operators are not defined on them.
 //             (&& and || are lowered to S_IF.)
-//   S_CAST    dst := a as ty (traps when out of range)
+//   S_CAST    dst := a as ty (traps when out of range; int <-> float: an int converts to the
+//             nearest float, a float to an int traps on NaN or a value that doesn't fit,
+//             truncating toward zero otherwise; float <-> float rounds to nearest)
 //   S_CALL    dst := fn a (args [b/c]); dst = NONE for a () result
 //   S_RECORD  dst := ty(args [b/c])        S_VARIANT dst := variant a of enum ty (args [b/c])
 //   S_ARRAY   dst := [args [b/c]] : ty     S_REPEAT  dst := [op a; b] : ty
@@ -138,6 +144,7 @@ pub const O_BOOL: u32 = 1
 pub const O_STR: u32 = 2
 pub const O_UNIT: u32 = 3
 pub const O_LOCAL: u32 = 4
+pub const O_FLOAT: u32 = 5
 
 pub const P_LOCAL: u32 = 0
 pub const P_FIELD: u32 = 1
@@ -246,6 +253,9 @@ pub const B_FMT_INT: u32 = 48
 /// B_STR_IS(s, lit) -> bool: String s has the text of str lit (a `str` pattern matching a
 /// String: docs/compiler.md, "C8.30")
 pub const B_STR_IS: u32 = 49
+/// B_FMT_FLOAT(inout s, x, spec) appends float x (f32 or f64) formatted by the spec: width, fill,
+/// alignment, `+`, `0` and the precision in bits 52-62 (bit 63: a precision is given)
+pub const B_FMT_FLOAT: u32 = 50
 
 pub fn builtin_name(b: u32) -> str {
     match b {
@@ -298,7 +308,8 @@ pub fn builtin_name(b: u32) -> str {
         46 => "default"
         47 => "pad"
         48 => "fmt_int"
-        _ => "str_is"
+        49 => "str_is"
+        _ => "fmt_float"
     }
 }
 
@@ -432,6 +443,7 @@ fn op(inout ir: Ir, o: Op) -> u32 {
 }
 
 pub fn op_int(inout ir: Ir, ty: u32, v: u64) -> u32 { op(inout ir, Op(O_INT, ty, 0, v)) }
+pub fn op_float(inout ir: Ir, ty: u32, bits: u64) -> u32 { op(inout ir, Op(O_FLOAT, ty, 0, bits)) }
 pub fn op_bool(inout ir: Ir, b: bool) -> u32 {
     let v: u64 = if b { 1 } else { 0 }
     op(inout ir, Op(O_BOOL, types.BOOL, 0, v))

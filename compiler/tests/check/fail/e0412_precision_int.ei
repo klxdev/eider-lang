@@ -1,0 +1,5 @@
+// expect: E0412 4:15
+fn main() {
+    let n = 3
+    let s = "{n:.2}"
+}

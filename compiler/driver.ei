@@ -158,6 +158,8 @@ pub fn cc_argv(core: List[u8], release: bool) -> List[List[u8]] uses io {
 }
 
 fn add_libs(inout argv: List[List[u8]], libs: List[List[u8]]) {
+    // libm: std/math's functions and `%` on floats (docs/decisions.md C660)
+    argv.push(s("-lm"))
     for l in libs {
         let mut a = s("-l")
         bytes.append(inout a, l)
@@ -297,6 +299,7 @@ fn core_units(cc: List[List[u8]], core: List[u8], tool: List[u8]) -> List[build.
     let mut units: List[build.Unit] = List.new()
     let rt = fs.join(core, s("eider_rt.c"))
     let mut rdeps = hdr.copy()
+    rdeps.push(read_or_fail(fs.join(core, s("eider_float.inc"))))
     for a in cc {
         if bytes.eq(a, s("-DEI_RT_PROFILE")) { rdeps.push(read_or_fail(fs.join(core, s("eider_prof.c")))) }
     }

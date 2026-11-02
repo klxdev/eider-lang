@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_float_cast_to_str.ei","line":3,"col":17},"message":"`as` only converts between numeric types (integers and floats), not to str"}

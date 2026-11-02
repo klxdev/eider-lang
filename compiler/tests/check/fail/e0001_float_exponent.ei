@@ -1,0 +1,4 @@
+// expect: E0001 3:13
+fn main() {
+    let x = 1.5e+
+}

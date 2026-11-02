@@ -1,4 +1,4 @@
-error[E0806]: parameter `p` has type P; WebAssembly exports take only integers, bool, String and List[u8]
+error[E0806]: parameter `p` has type P; WebAssembly exports take only integers, f32, f64, bool, String and List[u8]
   --> compiler/tests/wasm/check/record_param.ei:3:15
   |
 3 | export fn sum(p: P) -> i32 { return p.x + p.y }

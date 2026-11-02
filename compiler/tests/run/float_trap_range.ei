@@ -1,0 +1,10 @@
+// A float that does not fit the integer type traps, however large (and an f32 too)
+fn big() -> f32 { 3e9f32 }
+
+fn main() uses io {
+    print(2147483520.0f32 as i32)
+    print(255.5 as u8)
+    print(-0.99 as u8)
+    print(big() as i32)
+    print("not reached")
+}

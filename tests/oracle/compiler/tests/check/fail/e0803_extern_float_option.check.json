@@ -1,0 +1,1 @@
+{"error":"E0803","span":{"file":"compiler/tests/check/fail/e0803_extern_float_option.ei","line":2,"col":15},"message":"return type Option[f64] can't cross the C boundary","help":"C-safe types: integers, f32, f64, bool, str (const char*), and records made only of those (export only)"}

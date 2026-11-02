@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_float_int_mix.ei","line":4,"col":19},"message":"expected f64, found i32","help":"integers and floats don't mix implicitly; convert with `value as f64`"}

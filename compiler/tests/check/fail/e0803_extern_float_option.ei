@@ -1,0 +1,3 @@
+// expect: E0803 2:15
+extern "c" fn ec_x(a: f64) -> Option[f64]
+fn main() {}

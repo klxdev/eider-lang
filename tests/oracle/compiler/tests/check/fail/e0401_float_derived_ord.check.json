@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_float_derived_ord.ei","line":5,"col":15},"message":"`<` needs `Ord`, which P doesn't implement (its part f64 doesn't)","help":"floats are only partially ordered (NaN is unordered), so a record or tuple holding one has no derived order; order floats with `a.total_cmp(b)` (std/math) or compare them with `<` directly"}

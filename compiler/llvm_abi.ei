@@ -9,11 +9,12 @@
 // aggregate is flattened into its scalar leaves (offset, size, class); larger than 16 bytes,
 // it is MEMORY; otherwise each eightbyte gets the merge of the classes of the leaves that
 // overlap it (NO_CLASS < SSE < INTEGER, MEMORY wins), and a MEMORY eightbyte makes the whole
-// aggregate MEMORY. Eider has no floating-point type, so its leaves are all INTEGER, but the
-// merge is the general one (tested with SSE leaves below). An INTEGER eightbyte is passed as
+// aggregate MEMORY. A float leaf is SSE, so an eightbyte of floats and doubles is passed in an XMM
+// register (`float`, `double` or `<2 x float>`, as clang does) and one that also holds an
+// integer in a general one. An INTEGER eightbyte is passed as
 // an integer of the bytes it holds (`i64`, or `i8`..`i56` for a last partial one), as clang
 // does; MEMORY arguments go `byval`, MEMORY results through a hidden `sret` pointer. An
-// aggregate that needs more integer registers than are left (6, one fewer with sret) goes
+// aggregate that needs more integer or SSE registers than are left (6, one fewer with sret) goes
 // `byval` instead (psABI: "If there are no registers available for any eightbyte of an
 // argument, the whole argument is passed on the stack"). Scalars narrower than 32 bits are
 // extended by the caller (`zeroext` for bool and u8, the only ones Eider has).
@@ -37,6 +38,12 @@ pub const C_NONE: u32 = 0
 pub const C_SSE: u32 = 1
 pub const C_INTEGER: u32 = 2
 pub const C_MEMORY: u32 = 3
+/// Refinements of a piece's class, for the type its register holds: C_SSEV is two floats in
+/// one XMM register (`<2 x float>`; an SSE piece of 32 bits is a `float`, of 64 a `double`),
+/// C_HFA (AArch64) an array of one to four floats or doubles, passed in FP registers
+/// (b0 = 32 or 64 bits an element, n = the count).
+pub const C_SSEV: u32 = 5
+pub const C_HFA: u32 = 6
 /// AArch64 markers: in c0 of A_COERCE, the two pieces travel as `[2 x i64]`; in c0 of
 /// A_BYVAL, a pointer to the caller's copy (no `byval`); in c1 of A_DIRECT, no extension.
 pub const C_PAIR: u32 = 9
@@ -94,7 +101,7 @@ fn up(x: u64, a: u64) -> u64 { (x + a - 1) / a * a }
 pub fn scalar(p: lower.P, ty: u32) -> bool {
     if ty >= PTR_TO { return true }
     let k = types.kind(p.t, ty)
-    k == types.T_INT || k == types.T_BOOL || k == types.T_STR || k == types.T_UNIT || k == types.T_NEVER
+    k == types.T_INT || k == types.T_FLOAT || k == types.T_BOOL || k == types.T_STR || k == types.T_UNIT || k == types.T_NEVER
 }
 
 /// Whether type ty crosses a WebAssembly export as memory, copied by the loader (String,
@@ -182,6 +189,9 @@ fn compute(inout l: Lay, p: lower.P, ty: u32) {
             s = 1
             a = 1
         }
+    } else if k == types.T_FLOAT {
+        s = if t.a == 0 { 4 } else { 8 }
+        a = s
     } else if k == types.T_BOOL || k == types.T_UNIT || k == types.T_NEVER {
         s = 1
         a = 1
@@ -237,7 +247,8 @@ pub fn align(inout l: Lay, p: lower.P, ty: u32) -> u64 {
 /// Eider has no floating point). Union members (an enum's variants) overlap.
 pub fn leaves(inout l: Lay, p: lower.P, ty: u32, off: u64, inout out: List[Leaf]) {
     if scalar(p, ty) {
-        out.push(Leaf(off, size(inout l, p, ty), C_INTEGER))
+        let cls = if ty < PTR_TO && types.kind(p.t, ty) == types.T_FLOAT { C_SSE } else { C_INTEGER }
+        out.push(Leaf(off, size(inout l, p, ty), cls))
         return
     }
     let k0 = types.kind(p.t, ty)
@@ -359,19 +370,23 @@ pub fn arg_of(inout l: Lay, p: lower.P, ty: u32, is_ret: bool) -> Arg {
 fn classify_arg(inout l: Lay, p: lower.P, ty: u32, is_ret: bool) -> Arg {
     if ty < PTR_TO && (ty == types.UNIT || ty == types.NEVER) && is_ret { return Arg(A_VOID, ty, 0, 0, 0, 0, 0) }
     if scalar(p, ty) {
-        if l.a64 { return Arg(A_DIRECT, ty, 1, 0, 0, C_INTEGER, NOEXT) }
-        return Arg(A_DIRECT, ty, 1, 0, 0, C_INTEGER, 0)
+        let cls = if ty < PTR_TO && types.kind(p.t, ty) == types.T_FLOAT { C_SSE } else { C_INTEGER }
+        if l.a64 { return Arg(A_DIRECT, ty, 1, 0, 0, cls, NOEXT) }
+        return Arg(A_DIRECT, ty, 1, 0, 0, cls, 0)
     }
     let sz = size(inout l, p, ty)
     let mut ls: List[Leaf] = List.new()
     leaves(inout l, p, ty, 0, inout ls)
     if l.wasm {
         // clang's WebAssembly C ABI: a single scalar leaf goes as itself, the rest in memory
-        if ls.len() == 1 && ls[0].off == 0 && ls[0].size == sz { return Arg(A_COERCE, ty, 1, (sz * 8) as u32, 0, C_INTEGER, 0) }
+        if ls.len() == 1 && ls[0].off == 0 && ls[0].size == sz { return Arg(A_COERCE, ty, 1, (sz * 8) as u32, 0, ls[0].cls, 0) }
         if is_ret { return Arg(A_SRET, ty, 0, 0, 0, 0, 0) }
         return Arg(A_BYVAL, ty, 0, 0, 0, 0, 0)
     }
     if l.a64 {
+        // a homogeneous floating-point aggregate (one to four floats, or doubles): in FP registers
+        let hn = hfa_count(ls, sz)
+        if hn > 0 { return Arg(A_COERCE, ty, hn, (ls[0].size * 8) as u32, 0, C_HFA, 0) }
         if sz > 16 {
             if is_ret { return Arg(A_SRET, ty, 0, 0, 0, 0, 0) }
             return Arg(A_BYVAL, ty, 0, 0, 0, C_PTR, 0)
@@ -385,9 +400,59 @@ fn classify_arg(inout l: Lay, p: lower.P, ty: u32, is_ret: bool) -> Arg {
         return Arg(A_BYVAL, ty, 0, 0, 0, 0, 0)
     }
     let n = cs.len() as u32
-    let b1: u32 = if n > 1 { bits_of(sz, 1) } else { 0 }
-    let c1: u32 = if n > 1 { cs[1] } else { 0 }
-    Arg(A_COERCE, ty, n, bits_of(sz, 0), b1, cs[0], c1)
+    let mut b0 = bits_of(sz, 0)
+    let mut c0 = cs[0].copy()
+    if c0 == C_SSE {
+        let sp = sse_piece(ls, 0)
+        c0 = sp[0]
+        b0 = sp[1]
+    }
+    let mut b1: u32 = if n > 1 { bits_of(sz, 1) } else { 0 }
+    let mut c1: u32 = if n > 1 { cs[1].copy() } else { 0 }
+    if n > 1 && c1 == C_SSE {
+        let sp = sse_piece(ls, 1)
+        c1 = sp[0]
+        b1 = sp[1]
+    }
+    Arg(A_COERCE, ty, n, b0, b1, c0, c1)
+}
+
+/// The class and width of SSE eightbyte i: a double (C_SSE, 64), two floats (C_SSEV, 64), or one
+/// float with nothing after it in the eightbyte (C_SSE, 32), as clang types it.
+fn sse_piece(ls: List[Leaf], i: u64) -> List[u32] {
+    let lo = i * 8
+    let mut second = false
+    let mut wide = false
+    for x in ls {
+        if x.off >= lo && x.off < lo + 8 {
+            if x.size == 8 { wide = true }
+            if x.off == lo + 4 { second = true }
+        }
+    }
+    let mut r: List[u32] = List.new()
+    if wide {
+        r.push(C_SSE)
+        r.push(64)
+    } else if second {
+        r.push(C_SSEV)
+        r.push(64)
+    } else {
+        r.push(C_SSE)
+        r.push(32)
+    }
+    r
+}
+
+/// AAPCS64: the number of members (1 to 4) of a homogeneous floating-point aggregate whose
+/// scalar leaves `ls` are all floats, or all doubles, with no padding; 0 when it isn't one.
+fn hfa_count(ls: List[Leaf], sz: u64) -> u32 {
+    if ls.len() == 0 || ls.len() > 4 { return 0 }
+    let w = ls[0].size
+    for x in ls {
+        if x.cls != C_SSE || x.size != w { return 0 }
+    }
+    if w * (ls.len() as u64) != sz { return 0 }
+    ls.len() as u32
 }
 
 /// The convention of a C function taking `params` and returning `ret`, with the integer
@@ -401,21 +466,30 @@ pub fn sig(inout l: Lay, p: lower.P, params: List[u32], ret: u32) -> Sig {
         return Sig(r, wargs)
     }
     let mut ints: u32 = 6
+    let mut sses: u32 = 8
     if r.kind == A_SRET { ints = 5 }
     let mut args: List[Arg] = List.new()
     for t in params {
         let a = arg_of(inout l, p, t, false)
         if a.kind == A_DIRECT {
-            if ints > 0 { ints -= 1 }
+            if a.c0 == C_SSE {
+                if sses > 0 { sses -= 1 }
+            } else if ints > 0 {
+                ints -= 1
+            }
             args.push(a)
         } else if a.kind == A_COERCE {
             let mut need: u32 = 0
+            let mut needx: u32 = 0
             if a.c0 == C_INTEGER { need += 1 }
+            if a.c0 == C_SSE || a.c0 == C_SSEV { needx += 1 }
             if a.n > 1 && a.c1 == C_INTEGER { need += 1 }
-            if need > ints {
+            if a.n > 1 && (a.c1 == C_SSE || a.c1 == C_SSEV) { needx += 1 }
+            if need > ints || needx > sses {
                 args.push(Arg(A_BYVAL, t, 0, 0, 0, 0, 0))
             } else {
                 ints -= need
+                sses -= needx
                 args.push(a)
             }
         } else {

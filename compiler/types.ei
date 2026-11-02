@@ -1,7 +1,7 @@
 // types: the interned type arena. A type is a small record `{kind, a, b}` addressed by a u32
 // id; equal types have equal ids, so the checker compares types as integers.
 //
-//   T_INT     a = int kind (IK_*)          T_BOOL  T_STR  T_UNIT  T_NEVER  T_STRING
+//   T_INT     a = int kind (IK_*)          T_FLOAT a = 0 (f32) or 1 (f64)     T_BOOL  T_STR  T_UNIT  T_NEVER  T_STRING
 //   T_ENUM    a = def                      T_RECORD a = def
 //   T_ARRAY   a = element type, b = length
 //   T_TUPLE   a = type list (element types), b = element count
@@ -57,6 +57,8 @@ pub const T_POISON: u32 = 17
 pub const T_PARAM: u32 = 18
 pub const T_INOUT: u32 = 19
 pub const T_REF: u32 = 20
+/// `f32` (a = 0) and `f64` (a = 1): IEEE 754 binary32 and binary64 (docs/decisions.md C660).
+pub const T_FLOAT: u32 = 21
 
 /// Int kinds, in a fixed order.
 pub const IK_I32: u32 = 0
@@ -78,6 +80,8 @@ pub const STR: u32 = 7
 pub const UNIT: u32 = 8
 pub const NEVER: u32 = 9
 pub const STRING: u32 = 10
+pub const F32: u32 = 11
+pub const F64: u32 = 12
 
 /// "no type" / "no definition"
 pub const NOTY: u32 = 4294967295
@@ -124,6 +128,8 @@ pub fn new() -> Types {
     t.tys.push(Ty(T_UNIT, 0, 0))
     t.tys.push(Ty(T_NEVER, 0, 0))
     t.tys.push(Ty(T_STRING, 0, 0))
+    t.tys.push(Ty(T_FLOAT, 0, 0))
+    t.tys.push(Ty(T_FLOAT, 1, 0))
     // list 0 is the empty list
     t.lists.push(Span(0, 0))
     t
@@ -277,6 +283,9 @@ pub fn kind(t: Types, id: u32) -> u32 { t.tys[id as usize].kind }
 pub fn get(t: Types, id: u32) -> Ty { t.tys[id as usize] }
 
 pub fn is_int(t: Types, id: u32) -> bool { t.tys[id as usize].kind == T_INT }
+pub fn is_float(t: Types, id: u32) -> bool { t.tys[id as usize].kind == T_FLOAT }
+/// Bits of a float type: 32 or 64.
+pub fn float_bits(t: Types, id: u32) -> u32 { if t.tys[id as usize].a == 0 { 32 } else { 64 } }
 
 pub fn array(inout t: Types, elem: u32, len: u32) -> u32 {
     let k = (elem as u64) * 4294967296 + len as u64
@@ -364,6 +373,10 @@ pub fn show_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32)
     let ty = t.tys[id as usize]
     match ty.kind {
         0 => bytes.append(inout out, sys.lit(int_name(ty.a)))
+        21 => {
+            let fname = if ty.a == 0 { "f32" } else { "f64" }
+            bytes.append(inout out, sys.lit(fname))
+        }
         1 => bytes.append(inout out, sys.lit("bool"))
         2 => bytes.append(inout out, sys.lit("str"))
         3 => bytes.append(inout out, sys.lit("()"))

@@ -597,3 +597,6 @@ void ei_str_fmt_i64(ei_String *s, int64_t v, uint64_t spec) {
 }
 
 void ei_str_fmt_u64(ei_String *s, uint64_t v, uint64_t spec) { fmt_int(s, 0, v, spec); }
+
+/* floats: print, Show and {x:spec} (core/eider_float.inc, shared with the native runtime) */
+#include "../eider_float.inc"

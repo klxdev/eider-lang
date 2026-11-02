@@ -1,0 +1,363 @@
+//! std/floatconv: decimal text to IEEE 754 bits, exactly rounded, in integer arithmetic only.
+//!
+//! It is the one implementation of float parsing: the compiler reads float literals with it
+//! (so `compiler/` needs no floating point of its own) and `std/strings.parse_f64` wraps it
+//! into an `f64`. The result is the correctly rounded value (round half to even) of the
+//! decimal text for binary32 or binary64, with subnormals, infinities on overflow and signed
+//! zeros, computed with a small big-integer: the digits as an integer N, a power of ten D,
+//! and the quotient N / D scaled to 55 or 56 bits, rounded once with the remainder as the
+//! sticky bit. No libc, no locale. Pure Eider, no capabilities.
+//!
+//! Printing is the runtime's (core/eider_rt.c, `ei_f64_digits`): it is written in C because
+//! generated code calls it from `print` and string interpolation, which must not depend on
+//! an Eider module being linked in.
+
+/// The result of parsing: `ok` is false when the text isn't a number; `bits` holds the IEEE
+/// bits (the low 32 bits for binary32).
+pub type Parsed = { ok: bool, bits: u64 }
+
+// ---- big integers: little-endian limbs of 32 bits held in u64s, no leading zero limbs
+
+fn trim(inout a: List[u64]) {
+    while a.len() > 0 && a[a.len() - 1] == 0 { a.pop() }
+}
+
+fn mul_small(inout a: List[u64], m: u64) {
+    let mut carry: u64 = 0
+    for i in 0..a.len() {
+        let t = a[i] * m + carry
+        a[i] = t % 4294967296
+        carry = t / 4294967296
+    }
+    if carry > 0 { a.push(carry) }
+}
+
+fn add_small(inout a: List[u64], v: u64) {
+    let mut carry = v.copy()
+    let mut i: usize = 0
+    while carry > 0 {
+        if i == a.len() {
+            a.push(carry)
+            return
+        }
+        let t = a[i] + carry
+        a[i] = t % 4294967296
+        carry = t / 4294967296
+        i += 1
+    }
+}
+
+fn bitlen64(x: u64) -> u32 {
+    let mut n: u32 = 0
+    let mut v = x.copy()
+    while v > 0 {
+        n += 1
+        v = v >> 1
+    }
+    n
+}
+
+fn bitlen(a: List[u64]) -> u32 {
+    if a.len() == 0 { return 0 }
+    (a.len() as u32 - 1) * 32 + bitlen64(a[a.len() - 1])
+}
+
+fn shl(a: List[u64], n: u32) -> List[u64] {
+    let mut out: List[u64] = List.new()
+    if a.len() == 0 { return out }
+    for i in 0..(n / 32) { out.push(0) }
+    let bits: u64 = (n % 32) as u64
+    if bits == 0 {
+        for x in a { out.push(x) }
+        return out
+    }
+    let mut carry: u64 = 0
+    let one: u64 = 1
+    let mul: u64 = one << bits
+    for x in a {
+        let t = x * mul + carry
+        out.push(t % 4294967296)
+        carry = t / 4294967296
+    }
+    if carry > 0 { out.push(carry) }
+    out
+}
+
+fn cmp(a: List[u64], b: List[u64]) -> i32 {
+    if a.len() != b.len() { return if a.len() < b.len() { -1 } else { 1 } }
+    let mut i = a.len()
+    while i > 0 {
+        i -= 1
+        if a[i] != b[i] { return if a[i] < b[i] { -1 } else { 1 } }
+    }
+    0
+}
+
+/// a -= b, for a >= b.
+fn sub(inout a: List[u64], b: List[u64]) {
+    let mut borrow: u64 = 0
+    for i in 0..a.len() {
+        let mut y = borrow
+        if i < b.len() { y += b[i] }
+        if a[i] >= y {
+            a[i] = a[i] - y
+            borrow = 0
+        } else {
+            a[i] = a[i] + 4294967296 - y
+            borrow = 1
+        }
+    }
+    trim(inout a)
+}
+
+// ---- decimal to bits
+
+/// The IEEE bits of (-1)^neg * digits * 10^exp10, correctly rounded: `digits` are decimal
+/// digit values (0 to 9), most significant first. `single`: binary32, else binary64.
+pub fn decimal_to_bits(digits: List[u8], exp10: i64, neg: bool, single: bool) -> u64 {
+    let p: u64 = if single { 24 } else { 53 }
+    let ebits: u64 = if single { 8 } else { 11 }
+    let emin: i64 = if single { -149 } else { -1074 }
+    let one: u64 = 1
+    let sign: u64 = if neg { one << (p - 1 + ebits) } else { 0 }
+    let inf: u64 = (((one << ebits) - 1) << (p - 1)) + sign
+    // significant digits: no leading or trailing zeros, at most 800 (more cannot change the
+    // rounding once a nonzero tail is kept as a final 1)
+    let mut first: usize = 0
+    while first < digits.len() && digits[first] == 0 { first += 1 }
+    let mut last = digits.len()
+    let mut e = exp10.copy()
+    while last > first && digits[last - 1] == 0 {
+        last -= 1
+        e += 1
+    }
+    if first == last { return sign }
+    let mut ds: List[u8] = List.new()
+    let mut i = first
+    let mut dropped_nonzero = false
+    while i < last {
+        if ds.len() < 800 {
+            ds.push(digits[i])
+        } else {
+            e += 1
+            if digits[i] != 0 { dropped_nonzero = true }
+        }
+        i += 1
+    }
+    if dropped_nonzero {
+        ds.push(1)
+        e -= 1
+    }
+    let mag: i64 = ds.len() as i64 + e
+    if mag > 400 { return inf }
+    if mag < -400 { return sign }
+    let mut num: List[u64] = List.new()
+    for d in ds {
+        mul_small(inout num, 10)
+        add_small(inout num, d as u64)
+    }
+    let mut den: List[u64] = List.new()
+    den.push(1)
+    if e >= 0 {
+        let mut k = e
+        while k >= 9 {
+            mul_small(inout num, 1000000000)
+            k -= 9
+        }
+        while k > 0 {
+            mul_small(inout num, 10)
+            k -= 1
+        }
+    } else {
+        let mut k = 0 - e
+        while k >= 9 {
+            mul_small(inout den, 1000000000)
+            k -= 9
+        }
+        while k > 0 {
+            mul_small(inout den, 10)
+            k -= 1
+        }
+    }
+    // scale so that the quotient has p + 2 or p + 3 bits: N / D = q * 2^k
+    let k: i64 = bitlen(num) as i64 - bitlen(den) as i64 - (p as i64 + 2)
+    if k > 0 {
+        den = shl(den, k as u32)
+    } else if k < 0 {
+        num = shl(num, (0 - k) as u32)
+    }
+    let mut q: u64 = 0
+    let mut j: u64 = p + 4
+    while j > 0 {
+        j -= 1
+        let t = shl(den, j as u32)
+        if cmp(num, t) >= 0 {
+            sub(inout num, t)
+            q = q | (one << j)
+        }
+    }
+    let sticky = num.len() > 0
+    let mut extra: i64 = bitlen64(q) as i64 - p as i64
+    let mut kt: i64 = k + extra
+    if kt < emin {
+        extra += emin - kt
+        kt = emin
+    }
+    let mut mant: u64 = 0
+    if extra < 64 {
+        let ex = extra as u64
+        mant = q >> ex
+        let rem = q - (mant << ex)
+        let half = one << (ex - 1)
+        if rem > half || (rem == half && (sticky || mant % 2 == 1)) { mant += 1 }
+    }
+    let field = kt - emin
+    if field >= ((one << ebits) - 1) as i64 { return inf }
+    let bits = ((field as u64) << (p - 1)) + mant
+    if bits >= inf - sign { return inf }
+    bits + sign
+}
+
+fn lower(b: u8) -> u8 {
+    if b >= 65 && b <= 90 { return b + 32 }
+    b
+}
+
+fn word_at(s: List[u8], i: usize, end: usize, w: str) -> bool {
+    let n = w.len()
+    if end - i != n { return false }
+    for j in 0..n {
+        if lower(s[i + j]) != w.byte(j) { return false }
+    }
+    true
+}
+
+/// Parse the unsigned decimal `digits[.digits][(e|E)[+|-]digits]` that fills s[i0..end]
+/// exactly. `underscores`: `_` may separate digits (the language's literals). A fraction
+/// may lack its integer digits (`.5`) and the reverse (`5.`), but not both.
+pub fn parse_decimal(s: List[u8], i0: usize, end: usize, single: bool, underscores: bool) -> Parsed {
+    let bad = Parsed(false, 0)
+    let mut ds: List[u8] = List.new()
+    let mut i = i0.copy()
+    let mut ndig: usize = 0
+    let mut frac: i64 = 0
+    while i < end && ((s[i] >= 48 && s[i] <= 57) || (underscores && s[i] == 95)) {
+        if s[i] != 95 {
+            ds.push(s[i] - 48)
+            ndig += 1
+        }
+        i += 1
+    }
+    if i < end && s[i] == 46 {
+        i += 1
+        while i < end && ((s[i] >= 48 && s[i] <= 57) || (underscores && s[i] == 95)) {
+            if s[i] != 95 {
+                ds.push(s[i] - 48)
+                ndig += 1
+                frac += 1
+            }
+            i += 1
+        }
+    }
+    if ndig == 0 { return bad }
+    let mut ex: i64 = 0
+    if i < end && (s[i] == 101 || s[i] == 69) {
+        i += 1
+        let mut eneg = false
+        if i < end && (s[i] == 43 || s[i] == 45) {
+            eneg = s[i] == 45
+            i += 1
+        }
+        let mut nex: usize = 0
+        while i < end && ((s[i] >= 48 && s[i] <= 57) || (underscores && s[i] == 95)) {
+            if s[i] != 95 {
+                if ex < 100000 { ex = ex * 10 + (s[i] - 48) as i64 }
+                nex += 1
+            }
+            i += 1
+        }
+        if nex == 0 { return bad }
+        if eneg { ex = 0 - ex }
+    }
+    if i != end { return bad }
+    Parsed(true, decimal_to_bits(ds, ex - frac, false, single))
+}
+
+/// Parse a float as `parse_f64` and `parse_f32` accept it: an optional sign, then a decimal
+/// as `parse_decimal` (no underscores), or `inf`, `infinity` or `nan` in any case. The whole
+/// text must be the number: no spaces. `-0` is negative zero.
+pub fn parse_text(s: List[u8], single: bool) -> Parsed {
+    let n = s.len()
+    let mut i: usize = 0
+    let mut neg = false
+    if n > 0 && (s[0] == 43 || s[0] == 45) {
+        neg = s[0] == 45
+        i = 1
+    }
+    let one: u64 = 1
+    let p: u64 = if single { 24 } else { 53 }
+    let ebits: u64 = if single { 8 } else { 11 }
+    let sign: u64 = if neg { one << (p - 1 + ebits) } else { 0 }
+    let inf: u64 = ((one << ebits) - 1) << (p - 1)
+    if word_at(s, i, n, "inf") || word_at(s, i, n, "infinity") { return Parsed(true, inf + sign) }
+    if word_at(s, i, n, "nan") { return Parsed(true, inf + (one << (p - 2)) + sign) }
+    let r = parse_decimal(s, i, n, single, false)
+    if !r.ok { return r }
+    Parsed(true, r.bits + sign)
+}
+
+/// The IEEE bits of the decimal text of a float literal (`1_000.5e-3`, no suffix, no sign),
+/// for the compiler.
+pub fn literal_bits(s: List[u8], start: usize, end: usize, single: bool) -> u64 {
+    let r = parse_decimal(s, start, end, single, true)
+    r.bits
+}
+
+/// Whether `bits` (binary32 or binary64) is an infinity.
+pub fn is_inf_bits(bits: u64, single: bool) -> bool {
+    if single { return (bits & 2147483647) == 2139095040 }
+    (bits & 9223372036854775807) == 9218868437227405312
+}
+
+/// The binary32 bits of the binary64 value `bits` (rounded to nearest even; overflow gives
+/// an infinity, a NaN stays a NaN). Used where the checker narrows a constant.
+pub fn f64_to_f32_bits(bits: u64) -> u64 {
+    let one: u64 = 1
+    let sign: u64 = (bits >> 63) << 31
+    let e = (bits >> 52) & 2047
+    let m = bits & 4503599627370495
+    if e == 2047 {
+        if m == 0 { return sign + 2139095040 }
+        return sign + 2143289344
+    }
+    if e == 0 && m == 0 { return sign }
+    // value = (2^52 + m) * 2^(e - 1075), or m * 2^-1074 for a subnormal
+    let mut mant = m + (one << 52)
+    let mut exp: i64 = e as i64 - 1075
+    if e == 0 {
+        mant = m
+        exp = -1074
+    }
+    // round mant * 2^exp to 24 bits at exponent >= -149
+    let top = bitlen64(mant) as i64
+    let mut shift: i64 = top - 24
+    if exp + shift < -149 { shift = -149 - exp }
+    let mut r: u64 = 0
+    if shift <= 0 {
+        r = mant << ((0 - shift) as u64)
+    } else if shift > 63 {
+        r = 0
+    } else {
+        let sh = shift as u64
+        r = mant >> sh
+        let rem = mant - (r << sh)
+        let half = one << (sh - 1)
+        if rem > half || (rem == half && r % 2 == 1) { r += 1 }
+    }
+    let kt: i64 = exp + shift
+    let field = kt + 149
+    if field >= 255 { return sign + 2139095040 }
+    let out = ((field as u64) << 23) + r
+    if out >= 2139095040 { return sign + 2139095040 }
+    out + sign
+}

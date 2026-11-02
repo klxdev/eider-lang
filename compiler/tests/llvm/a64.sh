@@ -20,11 +20,23 @@ python3 -I - $T/ours.ll $T/clang.ll <<'EOF' || exit 1
 import re, sys
 def sigs(path):
     out = {}
+    structs = {}
     for l in open(path):
-        m = re.match(r'define\s+(?:dso_local\s+)?(?:noundef\s+)?(?:zeroext\s+|signext\s+)?(\[2 x i64\]|\S+)\s+@(eider_\w+)\((.*)\)', l)
+        m = re.match(r'(%struct\.\w+) = type \{ (.*) \}', l)
+        if m:
+            structs[m.group(1)] = [x.strip() for x in m.group(2).split(',')]
+    def hfa(t):
+        # a homogeneous float aggregate is returned as its struct: the same as our array
+        if t in structs:
+            f = structs[t]
+            if f and all(x in ('float', 'double') and x == f[0] for x in f):
+                return '[%d x %s]' % (len(f), f[0])
+        return t
+    for l in open(path):
+        m = re.match(r'define\s+(?:dso_local\s+)?(?:noundef\s+)?(?:zeroext\s+|signext\s+)?(\[\d+ x \w+\]|\S+)\s+@(eider_\w+)\((.*)\)', l)
         if not m:
             continue
-        ret, name, params = m.group(1), m.group(2), m.group(3)
+        ret, name, params = hfa(m.group(1)), m.group(2), m.group(3)
         ps, depth, cur = [], 0, ''
         for ch in params:
             if ch in '([': depth += 1
@@ -36,7 +48,7 @@ def sigs(path):
         if cur.strip(): ps.append(cur.strip())
         types = []
         for q in ps:
-            if q.startswith('[2 x i64]'): types.append('[2 x i64]'); continue
+            if q.startswith('['): types.append(q[:q.index(']') + 1]); continue
             types.append('sret' if 'sret' in q else q.split()[0])
         out[name] = (ret, types)
     return out
@@ -46,6 +58,6 @@ ours, theirs = sigs(sys.argv[1]), sigs(sys.argv[2])
 bad = [n for n in theirs if n not in ours or w(ours[n][0]) != w(theirs[n][0]) or [w(x) for x in ours[n][1]] != [w(x) for x in theirs[n][1]]]
 for n in bad: print('FAIL llvm aarch64: %s: ours %s, clang %s' % (n, ours.get(n), theirs[n]))
 if bad: sys.exit(1)
-print('ok   llvm aarch64: %d exports of abi.ei pass and return as clang does for AAPCS64 (pairs, sret, pointers to copies)' % len(theirs))
+print('ok   llvm aarch64: %d exports of abi.ei pass and return as clang does for AAPCS64 (pairs, homogeneous float aggregates, sret, pointers to copies)' % len(theirs))
 EOF
 rm -rf $T

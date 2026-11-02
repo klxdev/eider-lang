@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_float_bitand.ei","line":4,"col":15},"message":"operator & needs integers, found f64","help":"bit operations are for integers; to inspect a float's bits use `to_bits`"}

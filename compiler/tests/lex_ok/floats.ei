@@ -1,0 +1,12 @@
+// float literals: a fraction, an exponent, a suffix; `1.` and `t.0.1` stay integers and dots
+let a = 1.5
+let b = 0.25f32
+let c = 1e10
+let d = 2.5E-3
+let e = 1_000.000_1
+let f = 7f64
+let g = 1e+5f32
+let h = t.0.1
+let i = 3.max(4)
+let j = 1..2
+let k = 0xe5

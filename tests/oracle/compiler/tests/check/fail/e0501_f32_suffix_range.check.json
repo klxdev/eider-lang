@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"compiler/tests/check/fail/e0501_f32_suffix_range.ei","line":3,"col":13},"message":"literal 3.5e38 doesn't fit in f32 (max 3.4028235e38)"}

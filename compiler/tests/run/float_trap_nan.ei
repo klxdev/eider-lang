@@ -1,0 +1,8 @@
+// A float to integer `as` traps on NaN (no saturation, no undefined behaviour); the text before it is printed
+fn nan() -> f64 { 0.0 / 0.0 }
+
+fn main() uses io {
+    print(3.9 as i32)
+    print(nan() as i32)
+    print("not reached")
+}

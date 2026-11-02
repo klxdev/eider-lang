@@ -8,7 +8,7 @@
 // types      TName a=sym b=qualifier sym+1        TGeneric a=sym b=qual+1 [c/d]=args
 //            TArray a=elem b=len                  TTuple [c/d]                TUnit
 //            TFn [c/d]=params g=ret+1 e=inout params (bit i: parameter i is `inout`)
-// exprs      EInt a=tok   EStr a=str   EBool a=0/1   EIdent a=sym b=qual+1
+// exprs      EInt a=tok   EFloat a=tok (its text is in the source; the token's val is the f32/f64 suffix: 0, 32, 64)   EStr a=str   EBool a=0/1   EIdent a=sym b=qual+1
 //            EUnary a=op (0 neg, 1 not, 2 bitwise not `~`) b=operand  EBinary a=op (OP_*) b=lhs c=rhs
 //            ECall a=callee sym b=qual+1 [c/d]=args  EMethod a=recv b=name sym [c/d]=args
 //            EField a=recv b=name sym              EIndex a=recv b=index
@@ -64,6 +64,7 @@
 //            EHole a=expr b=width+1 (0: none) c=fill byte (0: a space) d=align (0 none, 1 `<`,
 //                2 `>`, 3 `^`) e=flags (FMT_*) f=radix letter (0: none; `x` `X` `b` `o`)
 //                g=column of the spec (after the `:`) h=its length in bytes
+//                i=precision+1 (0: none; `.2` for floats)
 // defer      SDefer a=the deferred statement b=1 for `errdefer` (docs/compiler.md, "C8.29")
 // patterns (docs/compiler.md, "C8.30")  PRange a=lo tok b=lo negated c=hi tok d=hi negated
 //                (`lo..=hi`)   PRecord a=sym b=qual+1 [c/d]=PField e=1 with `..`
@@ -90,6 +91,7 @@ pub type Kind =
     | SDefer
     | PRange | PRecord | PField
     | TAssoc | IAssoc
+    | EFloat
 
 pub type Node = {
     kind: Kind,
@@ -224,6 +226,7 @@ pub fn kind_text(k: Kind) -> str {
         TAssoc => "TAssoc"
         IAssoc => "IAssoc"
         EInt => "EInt"
+        EFloat => "EFloat"
         EStr => "EStr"
         EBool => "EBool"
         EIdent => "EIdent"

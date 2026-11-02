@@ -6,6 +6,8 @@
 //! Integer parsing reports what was wrong (`ParseError`) instead of returning None.
 
 import std.error
+import std.floatconv
+import core.libm
 
 /// A text argument: `str` or `String`.
 pub trait Text {
@@ -453,6 +455,62 @@ pub fn parse_u8[A: Text](s: A) -> Result[u8, ParseError] {
 pub fn parse_usize[A: Text](s: A) -> Result[usize, ParseError] {
     let v = parse_uint_radix(s, 10, 18446744073709551615)?
     Ok(v as usize)
+}
+
+// ---- parsing floats
+
+// the byte offset where text that parse_text refused stops being a float
+fn float_bad_at(b: List[u8]) -> usize {
+    let n = b.len()
+    let mut i: usize = 0
+    if n > 0 && (b[0] == 43 || b[0] == 45) { i = 1 }
+    let mut nd: usize = 0
+    while i < n && b[i] >= 48 && b[i] <= 57 {
+        i += 1
+        nd += 1
+    }
+    if i < n && b[i] == 46 {
+        i += 1
+        while i < n && b[i] >= 48 && b[i] <= 57 {
+            i += 1
+            nd += 1
+        }
+    }
+    if nd == 0 { return i }
+    if i < n && (b[i] == 101 || b[i] == 69) {
+        let e = i
+        i += 1
+        if i < n && (b[i] == 43 || b[i] == 45) { i += 1 }
+        let mut ne: usize = 0
+        while i < n && b[i] >= 48 && b[i] <= 57 {
+            i += 1
+            ne += 1
+        }
+        if ne == 0 { return i }
+    }
+    i
+}
+
+/// A decimal float, correctly rounded (the nearest f64, ties to even; std/floatconv): an optional
+/// sign, digits with an optional `.` fraction (either side of the point may be empty, not both)
+/// and an optional exponent `e5` / `E-3`, or `inf`, `infinity` or `nan` in any case. No spaces,
+/// underscores or hex. A value past the range is infinity, one too small is zero (IEEE
+/// conversion, as `1e400` would be a literal error but a runtime text isn't). Locale-free.
+pub fn parse_f64[A: Text](s: A) -> Result[f64, ParseError] {
+    let b = s.text().bytes()
+    if b.len() == 0 { return Err(ParseError(Empty, 0)) }
+    let r = floatconv.parse_text(b, false)
+    if !r.ok { return Err(ParseError(InvalidDigit, float_bad_at(b))) }
+    Ok(libm.f64_from_bits(r.bits))
+}
+
+/// As `parse_f64`, rounded once to the nearest f32 (not through f64: no double rounding).
+pub fn parse_f32[A: Text](s: A) -> Result[f32, ParseError] {
+    let b = s.text().bytes()
+    if b.len() == 0 { return Err(ParseError(Empty, 0)) }
+    let r = floatconv.parse_text(b, true)
+    if !r.ok { return Err(ParseError(InvalidDigit, float_bad_at(b))) }
+    Ok(libm.f32_from_bits(r.bits as u32))
 }
 
 /// "true" or "false", exactly.

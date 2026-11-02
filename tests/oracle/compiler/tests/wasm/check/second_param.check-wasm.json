@@ -1,1 +1,1 @@
-{"error":"E0806","span":{"file":"compiler/tests/wasm/check/second_param.ei","line":2,"col":30},"message":"parameter `c` has type str; WebAssembly exports take only integers, bool, String and List[u8]"}
+{"error":"E0806","span":{"file":"compiler/tests/wasm/check/second_param.ei","line":2,"col":30},"message":"parameter `c` has type str; WebAssembly exports take only integers, f32, f64, bool, String and List[u8]"}

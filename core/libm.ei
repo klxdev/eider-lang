@@ -1,0 +1,80 @@
+//! core/libm: the math primitives (core/ABI.md, "Math"): libm's functions on doubles, and the
+//! casts between a float and its IEEE bits. Each function is one core call (`ec_m_*`,
+//! `ec_f64_*`, `ec_f32_*`): no state, no buffers, no errors (a domain error is a NaN, an
+//! overflow an infinity). It is a module of its own, like core/os, so programs that don't use
+//! math, the compiler among them, don't carry its bindings. std/math is built on it.
+//!
+//! The functions are pure: they declare only `ffi`, which doesn't leave this package
+//! (docs/compiler.md "C8.5"), so std/math's functions declare no capability at all.
+
+extern "c" fn ec_m_sqrt(x: f64) -> f64
+extern "c" fn ec_m_cbrt(x: f64) -> f64
+extern "c" fn ec_m_exp(x: f64) -> f64
+extern "c" fn ec_m_exp2(x: f64) -> f64
+extern "c" fn ec_m_expm1(x: f64) -> f64
+extern "c" fn ec_m_log(x: f64) -> f64
+extern "c" fn ec_m_log2(x: f64) -> f64
+extern "c" fn ec_m_log10(x: f64) -> f64
+extern "c" fn ec_m_log1p(x: f64) -> f64
+extern "c" fn ec_m_sin(x: f64) -> f64
+extern "c" fn ec_m_cos(x: f64) -> f64
+extern "c" fn ec_m_tan(x: f64) -> f64
+extern "c" fn ec_m_asin(x: f64) -> f64
+extern "c" fn ec_m_acos(x: f64) -> f64
+extern "c" fn ec_m_atan(x: f64) -> f64
+extern "c" fn ec_m_sinh(x: f64) -> f64
+extern "c" fn ec_m_cosh(x: f64) -> f64
+extern "c" fn ec_m_tanh(x: f64) -> f64
+extern "c" fn ec_m_asinh(x: f64) -> f64
+extern "c" fn ec_m_acosh(x: f64) -> f64
+extern "c" fn ec_m_atanh(x: f64) -> f64
+extern "c" fn ec_m_floor(x: f64) -> f64
+extern "c" fn ec_m_ceil(x: f64) -> f64
+extern "c" fn ec_m_trunc(x: f64) -> f64
+extern "c" fn ec_m_round(x: f64) -> f64
+extern "c" fn ec_m_rint(x: f64) -> f64
+extern "c" fn ec_m_pow(x: f64, y: f64) -> f64
+extern "c" fn ec_m_atan2(x: f64, y: f64) -> f64
+extern "c" fn ec_m_hypot(x: f64, y: f64) -> f64
+extern "c" fn ec_m_fmod(x: f64, y: f64) -> f64
+extern "c" fn ec_m_fma(x: f64, y: f64, z: f64) -> f64
+extern "c" fn ec_f64_bits(x: f64) -> u64
+extern "c" fn ec_f64_from_bits(b: u64) -> f64
+extern "c" fn ec_f32_bits(x: f32) -> u32
+extern "c" fn ec_f32_from_bits(b: u32) -> f32
+
+pub fn sqrt(x: f64) -> f64 uses ffi { unsafe { ec_m_sqrt(x) } }
+pub fn cbrt(x: f64) -> f64 uses ffi { unsafe { ec_m_cbrt(x) } }
+pub fn exp(x: f64) -> f64 uses ffi { unsafe { ec_m_exp(x) } }
+pub fn exp2(x: f64) -> f64 uses ffi { unsafe { ec_m_exp2(x) } }
+pub fn expm1(x: f64) -> f64 uses ffi { unsafe { ec_m_expm1(x) } }
+pub fn log(x: f64) -> f64 uses ffi { unsafe { ec_m_log(x) } }
+pub fn log2(x: f64) -> f64 uses ffi { unsafe { ec_m_log2(x) } }
+pub fn log10(x: f64) -> f64 uses ffi { unsafe { ec_m_log10(x) } }
+pub fn log1p(x: f64) -> f64 uses ffi { unsafe { ec_m_log1p(x) } }
+pub fn sin(x: f64) -> f64 uses ffi { unsafe { ec_m_sin(x) } }
+pub fn cos(x: f64) -> f64 uses ffi { unsafe { ec_m_cos(x) } }
+pub fn tan(x: f64) -> f64 uses ffi { unsafe { ec_m_tan(x) } }
+pub fn asin(x: f64) -> f64 uses ffi { unsafe { ec_m_asin(x) } }
+pub fn acos(x: f64) -> f64 uses ffi { unsafe { ec_m_acos(x) } }
+pub fn atan(x: f64) -> f64 uses ffi { unsafe { ec_m_atan(x) } }
+pub fn sinh(x: f64) -> f64 uses ffi { unsafe { ec_m_sinh(x) } }
+pub fn cosh(x: f64) -> f64 uses ffi { unsafe { ec_m_cosh(x) } }
+pub fn tanh(x: f64) -> f64 uses ffi { unsafe { ec_m_tanh(x) } }
+pub fn asinh(x: f64) -> f64 uses ffi { unsafe { ec_m_asinh(x) } }
+pub fn acosh(x: f64) -> f64 uses ffi { unsafe { ec_m_acosh(x) } }
+pub fn atanh(x: f64) -> f64 uses ffi { unsafe { ec_m_atanh(x) } }
+pub fn floor(x: f64) -> f64 uses ffi { unsafe { ec_m_floor(x) } }
+pub fn ceil(x: f64) -> f64 uses ffi { unsafe { ec_m_ceil(x) } }
+pub fn trunc(x: f64) -> f64 uses ffi { unsafe { ec_m_trunc(x) } }
+pub fn round(x: f64) -> f64 uses ffi { unsafe { ec_m_round(x) } }
+pub fn rint(x: f64) -> f64 uses ffi { unsafe { ec_m_rint(x) } }
+pub fn pow(x: f64, y: f64) -> f64 uses ffi { unsafe { ec_m_pow(x, y) } }
+pub fn atan2(x: f64, y: f64) -> f64 uses ffi { unsafe { ec_m_atan2(x, y) } }
+pub fn hypot(x: f64, y: f64) -> f64 uses ffi { unsafe { ec_m_hypot(x, y) } }
+pub fn fmod(x: f64, y: f64) -> f64 uses ffi { unsafe { ec_m_fmod(x, y) } }
+pub fn fma(x: f64, y: f64, z: f64) -> f64 uses ffi { unsafe { ec_m_fma(x, y, z) } }
+pub fn f64_bits(x: f64) -> u64 uses ffi { unsafe { ec_f64_bits(x) } }
+pub fn f64_from_bits(b: u64) -> f64 uses ffi { unsafe { ec_f64_from_bits(b) } }
+pub fn f32_bits(x: f32) -> u32 uses ffi { unsafe { ec_f32_bits(x) } }
+pub fn f32_from_bits(b: u32) -> f32 uses ffi { unsafe { ec_f32_from_bits(b) } }

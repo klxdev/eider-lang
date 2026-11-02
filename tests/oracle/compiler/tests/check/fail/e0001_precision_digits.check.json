@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"compiler/tests/check/fail/e0001_precision_digits.ei","line":4,"col":18},"message":"expected the number of digits after `.` in a format spec, like `.2`"}

@@ -1,0 +1,1 @@
+{"error":"E0412","span":{"file":"compiler/tests/check/fail/e0412_precision_int.ei","line":4,"col":15},"message":"format spec `.N` is for floats, and this is i32","help":"only a width, fill and alignment apply to any type: `{x:>8}`, `{x:*^9}`","fix":{"at":{"line":4,"col":17},"delete":2,"insert":""}}

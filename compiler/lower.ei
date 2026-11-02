@@ -576,7 +576,7 @@ pub fn shared_rec(p: P, ty: u32) -> bool { ty_kind(p, ty) == types.T_RECORD && c
 /// without payloads that doesn't have its own Show): what `print` showed before C8.4.
 pub fn plain_show(p: P, ty: u32) -> bool {
     let k = ty_kind(p, ty)
-    if k == types.T_INT || k == types.T_BOOL || k == types.T_STR || k == types.T_STRING { return true }
+    if k == types.T_INT || k == types.T_FLOAT || k == types.T_BOOL || k == types.T_STR || k == types.T_STRING { return true }
     k == types.T_ENUM && !types.def_of(p.t, ty).payload && custom_fn(p, TR_SHOW, ty) == NONE
 }
 
@@ -685,6 +685,9 @@ fn h_ty(inout out: List[u8], p: P, ty: u32) {
     let k = ty_kind(p, ty)
     if k == types.T_INT {
         bytes.append(inout out, sys.lit(int_cty(types.ik(p.t, ty))))
+    } else if k == types.T_FLOAT {
+        let fname = if types.get(p.t, ty).a == 0 { "float" } else { "double" }
+        bytes.append(inout out, sys.lit(fname))
     } else if k == types.T_BOOL {
         bytes.append(inout out, sys.lit("bool"))
     } else if k == types.T_STR {

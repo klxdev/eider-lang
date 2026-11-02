@@ -1,0 +1,273 @@
+//! std/math: floating-point math on `f64` and `f32`. Pure Eider over core/libm (libm's
+//! functions, one core call each): no function declares a capability.
+//!
+//! The functions are methods, `x.sqrt()`, `a.max(b)`, `y.atan2(x)`, `f64.from_bits(b)`, and
+//! the constants are `math.PI` and friends. Results follow IEEE 754 and libm: a domain error is
+//! a NaN (`(-1.0).sqrt()`), an overflow an infinity, nothing traps. `f32` functions compute in
+//! `f64` and round the result to `f32` (within half an ulp of the correctly rounded one, bar
+//! the rare double-rounding tie).
+//!
+//! Ordering and NaN. `<` `<=` `>` `>=` and `==` are IEEE: false whenever a NaN is involved, and
+//! `NaN != NaN`. Floats therefore have no `Ord` and no `Hash`: a `List[f64]` can't be `sort`ed
+//! or used as a `Map` key, and a record holding a float has no derived order. Use
+//! `a.total_cmp(b)` (a total order: -NaN < -inf < ... < -0.0 < +0.0 < ... < inf < NaN) with
+//! `std/sort`'s `sort_by`, or key by `x.to_bits()`.
+//!   `min` and `max` ignore a NaN operand (the result is the other operand; NaN only if both
+//!   are) and order -0.0 below +0.0, as `total_cmp` does. `clamp` keeps a NaN and traps when
+//!   the bounds are NaN or reversed.
+//!   `round` rounds half away from zero, `round_even` half to even; `floor`, `ceil`, `trunc`
+//!   as named. `rem_euclid` is never negative.
+//!
+//! Conversions. `x as i32` traps on NaN or a value that doesn't fit (no saturation, no
+//! undefined behaviour); `x.to_i32()` and the other `to_<int>` methods return None there
+//! instead, with the same truncation toward zero in range.
+
+import core.libm
+
+pub const PI: f64 = 3.141592653589793
+pub const TAU: f64 = 6.283185307179586
+pub const E: f64 = 2.718281828459045
+pub const SQRT_2: f64 = 1.4142135623730951
+pub const LN_2: f64 = 0.6931471805599453
+pub const LN_10: f64 = 2.302585092994046
+pub const FRAC_PI_2: f64 = 1.5707963267948966
+pub const FRAC_PI_4: f64 = 0.7853981633974483
+/// The difference between 1.0 and the next f64.
+pub const EPSILON: f64 = 2.220446049250313e-16
+/// The largest finite f64.
+pub const MAX: f64 = 1.7976931348623157e308
+/// The smallest positive normal f64.
+pub const MIN_POSITIVE: f64 = 2.2250738585072014e-308
+pub const PI_F32: f32 = 3.14159274f32
+pub const TAU_F32: f32 = 6.2831855f32
+pub const E_F32: f32 = 2.7182817f32
+pub const SQRT_2_F32: f32 = 1.4142135f32
+pub const EPSILON_F32: f32 = 1.1920929e-7f32
+pub const MAX_F32: f32 = 3.4028235e38f32
+pub const MIN_POSITIVE_F32: f32 = 1.17549435e-38f32
+
+/// A quiet NaN.
+pub fn nan() -> f64 { 0.0 / 0.0 }
+pub fn infinity() -> f64 { 1.0 / 0.0 }
+pub fn neg_infinity() -> f64 { -1.0 / 0.0 }
+pub fn nan_f32() -> f32 { 0.0f32 / 0.0f32 }
+pub fn infinity_f32() -> f32 { 1.0f32 / 0.0f32 }
+pub fn neg_infinity_f32() -> f32 { -1.0f32 / 0.0f32 }
+
+impl f64 {
+    fn to_bits(self) -> u64 { libm.f64_bits(self) }
+    fn from_bits(b: u64) -> f64 { libm.f64_from_bits(b) }
+    fn is_nan(self) -> bool { self != self }
+    fn is_infinite(self) -> bool { self == 1.0 / 0.0 || self == -1.0 / 0.0 }
+    fn is_finite(self) -> bool { self - self == 0.0 }
+    fn is_sign_negative(self) -> bool { libm.f64_bits(self) >> 63 == 1 }
+    fn is_sign_positive(self) -> bool { libm.f64_bits(self) >> 63 == 0 }
+    fn abs(self) -> f64 { libm.f64_from_bits(libm.f64_bits(self) & 9223372036854775807) }
+    fn copysign(self, sign: f64) -> f64 {
+        libm.f64_from_bits((libm.f64_bits(self) & 9223372036854775807) | (libm.f64_bits(sign) & 9223372036854775808))
+    }
+    /// 1.0 or -1.0 by the sign bit (so for the zeros too); NaN stays NaN.
+    fn signum(self) -> f64 {
+        if self != self { return self }
+        (1.0).copysign(self)
+    }
+    fn min(self, other: f64) -> f64 {
+        if self != self { return other }
+        if other != other { return self }
+        if self < other { return self }
+        if other < self { return other }
+        if self.is_sign_negative() { return self }
+        other
+    }
+    fn max(self, other: f64) -> f64 {
+        if self != self { return other }
+        if other != other { return self }
+        if self > other { return self }
+        if other > self { return other }
+        if self.is_sign_negative() { return other }
+        self
+    }
+    fn clamp(self, lo: f64, hi: f64) -> f64 {
+        assert lo <= hi, "clamp: the bounds must be ordered numbers (lo <= hi)"
+        if self < lo { return lo }
+        if self > hi { return hi }
+        self
+    }
+    /// The IEEE total order, as `Ordering`.
+    fn total_cmp(self, other: f64) -> Ordering {
+        let a = total_key(libm.f64_bits(self))
+        let b = total_key(libm.f64_bits(other))
+        if a < b { return Less }
+        if a > b { return Greater }
+        Equal
+    }
+    fn pow(self, y: f64) -> f64 { libm.pow(self, y) }
+    fn powi(self, n: i32) -> f64 { libm.pow(self, n as f64) }
+    fn atan2(self, x: f64) -> f64 { libm.atan2(self, x) }
+    fn hypot(self, y: f64) -> f64 { libm.hypot(self, y) }
+    fn log(self, base: f64) -> f64 { libm.log(self) / libm.log(base) }
+    fn mul_add(self, a: f64, b: f64) -> f64 { libm.fma(self, a, b) }
+    fn fract(self) -> f64 { self - libm.trunc(self) }
+    fn to_radians(self) -> f64 { self * (PI / 180.0) }
+    fn to_degrees(self) -> f64 { self * (180.0 / PI) }
+    /// The remainder with the sign of `m`'s: never negative for a positive `m`.
+    fn rem_euclid(self, m: f64) -> f64 {
+        let r = self % m
+        if r < 0.0 { return r + m.abs() }
+        r
+    }
+    fn to_i32(self) -> Option[i32] {
+        if self > -2147483649.0 && self < 2147483648.0 { return Some(self as i32) }
+        None
+    }
+    fn to_i64(self) -> Option[i64] {
+        if self >= -9223372036854775808.0 && self < 9223372036854775808.0 { return Some(self as i64) }
+        None
+    }
+    fn to_u8(self) -> Option[u8] {
+        if self > -1.0 && self < 256.0 { return Some(self as u8) }
+        None
+    }
+    fn to_u32(self) -> Option[u32] {
+        if self > -1.0 && self < 4294967296.0 { return Some(self as u32) }
+        None
+    }
+    fn to_u64(self) -> Option[u64] {
+        if self > -1.0 && self < 18446744073709551616.0 { return Some(self as u64) }
+        None
+    }
+    fn to_usize(self) -> Option[usize] {
+        if self > -1.0 && self < 18446744073709551616.0 { return Some(self as usize) }
+        None
+    }
+    fn sqrt(self) -> f64 { libm.sqrt(self) }
+    fn cbrt(self) -> f64 { libm.cbrt(self) }
+    fn exp(self) -> f64 { libm.exp(self) }
+    fn exp2(self) -> f64 { libm.exp2(self) }
+    fn sin(self) -> f64 { libm.sin(self) }
+    fn cos(self) -> f64 { libm.cos(self) }
+    fn tan(self) -> f64 { libm.tan(self) }
+    fn asin(self) -> f64 { libm.asin(self) }
+    fn acos(self) -> f64 { libm.acos(self) }
+    fn atan(self) -> f64 { libm.atan(self) }
+    fn sinh(self) -> f64 { libm.sinh(self) }
+    fn cosh(self) -> f64 { libm.cosh(self) }
+    fn tanh(self) -> f64 { libm.tanh(self) }
+    fn asinh(self) -> f64 { libm.asinh(self) }
+    fn acosh(self) -> f64 { libm.acosh(self) }
+    fn atanh(self) -> f64 { libm.atanh(self) }
+    fn floor(self) -> f64 { libm.floor(self) }
+    fn ceil(self) -> f64 { libm.ceil(self) }
+    fn trunc(self) -> f64 { libm.trunc(self) }
+    fn round(self) -> f64 { libm.round(self) }
+    fn exp_m1(self) -> f64 { libm.expm1(self) }
+    fn ln(self) -> f64 { libm.log(self) }
+    fn log2(self) -> f64 { libm.log2(self) }
+    fn log10(self) -> f64 { libm.log10(self) }
+    fn ln_1p(self) -> f64 { libm.log1p(self) }
+    fn round_even(self) -> f64 { libm.rint(self) }
+}
+
+impl f32 {
+    fn to_bits(self) -> u32 { libm.f32_bits(self) }
+    fn from_bits(b: u32) -> f32 { libm.f32_from_bits(b) }
+    fn is_nan(self) -> bool { self != self }
+    fn is_infinite(self) -> bool { self == 1.0f32 / 0.0f32 || self == -1.0f32 / 0.0f32 }
+    fn is_finite(self) -> bool { self - self == 0.0f32 }
+    fn is_sign_negative(self) -> bool { libm.f32_bits(self) >> 31 == 1 }
+    fn is_sign_positive(self) -> bool { libm.f32_bits(self) >> 31 == 0 }
+    fn abs(self) -> f32 { libm.f32_from_bits(libm.f32_bits(self) & 2147483647) }
+    fn copysign(self, sign: f32) -> f32 {
+        libm.f32_from_bits((libm.f32_bits(self) & 2147483647) | (libm.f32_bits(sign) & 2147483648))
+    }
+    fn signum(self) -> f32 {
+        if self != self { return self }
+        (1.0f32).copysign(self)
+    }
+    fn min(self, other: f32) -> f32 {
+        if self != self { return other }
+        if other != other { return self }
+        if self < other { return self }
+        if other < self { return other }
+        if self.is_sign_negative() { return self }
+        other
+    }
+    fn max(self, other: f32) -> f32 {
+        if self != self { return other }
+        if other != other { return self }
+        if self > other { return self }
+        if other > self { return other }
+        if self.is_sign_negative() { return other }
+        self
+    }
+    fn clamp(self, lo: f32, hi: f32) -> f32 {
+        assert lo <= hi, "clamp: the bounds must be ordered numbers (lo <= hi)"
+        if self < lo { return lo }
+        if self > hi { return hi }
+        self
+    }
+    fn total_cmp(self, other: f32) -> Ordering {
+        let a = total_key32(libm.f32_bits(self))
+        let b = total_key32(libm.f32_bits(other))
+        if a < b { return Less }
+        if a > b { return Greater }
+        Equal
+    }
+    fn pow(self, y: f32) -> f32 { libm.pow(self as f64, y as f64) as f32 }
+    fn powi(self, n: i32) -> f32 { libm.pow(self as f64, n as f64) as f32 }
+    fn atan2(self, x: f32) -> f32 { libm.atan2(self as f64, x as f64) as f32 }
+    fn hypot(self, y: f32) -> f32 { libm.hypot(self as f64, y as f64) as f32 }
+    fn log(self, base: f32) -> f32 { (libm.log(self as f64) / libm.log(base as f64)) as f32 }
+    fn mul_add(self, a: f32, b: f32) -> f32 { libm.fma(self as f64, a as f64, b as f64) as f32 }
+    fn fract(self) -> f32 { self - libm.trunc(self as f64) as f32 }
+    fn to_radians(self) -> f32 { self * (PI_F32 / 180.0f32) }
+    fn to_degrees(self) -> f32 { self * (180.0f32 / PI_F32) }
+    fn rem_euclid(self, m: f32) -> f32 {
+        let r = self % m
+        if r < 0.0f32 { return r + m.abs() }
+        r
+    }
+    fn to_i32(self) -> Option[i32] { (self as f64).to_i32() }
+    fn to_i64(self) -> Option[i64] { (self as f64).to_i64() }
+    fn to_u8(self) -> Option[u8] { (self as f64).to_u8() }
+    fn to_u32(self) -> Option[u32] { (self as f64).to_u32() }
+    fn to_u64(self) -> Option[u64] { (self as f64).to_u64() }
+    fn to_usize(self) -> Option[usize] { (self as f64).to_usize() }
+    fn sqrt(self) -> f32 { libm.sqrt(self as f64) as f32 }
+    fn cbrt(self) -> f32 { libm.cbrt(self as f64) as f32 }
+    fn exp(self) -> f32 { libm.exp(self as f64) as f32 }
+    fn exp2(self) -> f32 { libm.exp2(self as f64) as f32 }
+    fn sin(self) -> f32 { libm.sin(self as f64) as f32 }
+    fn cos(self) -> f32 { libm.cos(self as f64) as f32 }
+    fn tan(self) -> f32 { libm.tan(self as f64) as f32 }
+    fn asin(self) -> f32 { libm.asin(self as f64) as f32 }
+    fn acos(self) -> f32 { libm.acos(self as f64) as f32 }
+    fn atan(self) -> f32 { libm.atan(self as f64) as f32 }
+    fn sinh(self) -> f32 { libm.sinh(self as f64) as f32 }
+    fn cosh(self) -> f32 { libm.cosh(self as f64) as f32 }
+    fn tanh(self) -> f32 { libm.tanh(self as f64) as f32 }
+    fn asinh(self) -> f32 { libm.asinh(self as f64) as f32 }
+    fn acosh(self) -> f32 { libm.acosh(self as f64) as f32 }
+    fn atanh(self) -> f32 { libm.atanh(self as f64) as f32 }
+    fn floor(self) -> f32 { libm.floor(self as f64) as f32 }
+    fn ceil(self) -> f32 { libm.ceil(self as f64) as f32 }
+    fn trunc(self) -> f32 { libm.trunc(self as f64) as f32 }
+    fn round(self) -> f32 { libm.round(self as f64) as f32 }
+    fn exp_m1(self) -> f32 { libm.expm1(self as f64) as f32 }
+    fn ln(self) -> f32 { libm.log(self as f64) as f32 }
+    fn log2(self) -> f32 { libm.log2(self as f64) as f32 }
+    fn log10(self) -> f32 { libm.log10(self as f64) as f32 }
+    fn ln_1p(self) -> f32 { libm.log1p(self as f64) as f32 }
+    fn round_even(self) -> f32 { libm.rint(self as f64) as f32 }
+}
+
+/// The unsigned key whose order is the IEEE total order of the float with these bits.
+fn total_key(bits: u64) -> u64 {
+    if bits >> 63 == 1 { return ~bits }
+    bits ^ 9223372036854775808
+}
+
+fn total_key32(bits: u32) -> u32 {
+    if bits >> 31 == 1 { return ~bits }
+    bits ^ 2147483648
+}

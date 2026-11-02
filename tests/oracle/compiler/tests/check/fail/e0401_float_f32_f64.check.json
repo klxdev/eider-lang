@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_float_f32_f64.ei","line":5,"col":17},"message":"expected f32, found f64","help":"f32 and f64 don't mix implicitly; convert with `value as f32`"}

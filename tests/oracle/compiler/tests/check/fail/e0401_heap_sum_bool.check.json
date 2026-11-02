@@ -1,1 +1,1 @@
-{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_sum_bool.ei","line":3,"col":15},"message":"`sum` needs a List of integers, found List[bool]"}
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_heap_sum_bool.ei","line":3,"col":15},"message":"`sum` needs a List of integers or floats, found List[bool]"}

@@ -1,0 +1,1 @@
+{"error":"E0701","span":{"file":"compiler/tests/check/fail/e0701_float_map_key.ei","line":3,"col":12},"message":"f64 can't be a Map key: it doesn't implement `Hash`","help":"floats have no hash: 0.0 == -0.0 but their bits differ, and NaN != NaN; key by `x.to_bits()` if exact bits are meant, or by a rounded integer"}

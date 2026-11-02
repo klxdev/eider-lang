@@ -1,0 +1,188 @@
+// std/math and std/strings' float parsing: methods on f64 and f32, NaN rules, the total order,
+// checked conversions, constants, and parse_f64 against the printer.
+
+import std.math
+import std.strings
+
+fn show(label: str, x: f64) uses io { print("{label}: {x:.6}") }
+
+fn main() uses io {
+    // libm
+    show("sqrt 2", (2.0).sqrt())
+    show("cbrt 27", (27.0).cbrt())
+    show("pow", (2.0).pow(0.5))
+    show("powi", (1.5).powi(3))
+    show("exp 1", (1.0).exp())
+    show("ln 10", (10.0).ln())
+    show("log2 8", (8.0).log2())
+    show("log10 1000", (1000.0).log10())
+    show("log 8 base 2", (8.0).log(2.0))
+    show("sin", (1.0).sin())
+    show("cos", (1.0).cos())
+    show("tan", (1.0).tan())
+    show("atan2", (1.0).atan2(-1.0))
+    show("asin", (0.5).asin())
+    show("sinh", (1.0).sinh())
+    show("hypot", (3.0).hypot(4.0))
+    show("mul_add", (2.0).mul_add(3.0, 4.0))
+    show("to_degrees", math.PI.to_degrees())
+    show("to_radians", (180.0).to_radians())
+    print((-1.0).sqrt().is_nan())
+    print((0.0).ln())
+    print((710.0).exp())
+
+    // rounding
+    print((2.5).round())
+    print((-2.5).round())
+    print((2.5).round_even())
+    print((3.5).round_even())
+    print((2.7).floor())
+    print((-2.7).floor())
+    print((2.2).ceil())
+    print((-2.7).trunc())
+    print((2.75).fract())
+
+    // sign, abs, copysign, min, max, clamp with NaN and zeros
+    print((-3.5).abs())
+    print((-0.0).abs())
+    print((2.0).copysign(-1.0))
+    print((-2.0).signum())
+    print((0.0).signum())
+    print((-0.0).signum())
+    let nan = math.nan()
+    print(nan.signum().is_nan())
+    print((1.0).min(2.0))
+    print((1.0).max(2.0))
+    print(nan.min(2.0))
+    print((2.0).max(nan))
+    print(nan.max(nan).is_nan())
+    print((0.0).min(-0.0))
+    print((-0.0).max(0.0))
+    print((5.0).clamp(1.0, 3.0))
+    print((-5.0).clamp(1.0, 3.0))
+    print(nan.clamp(1.0, 3.0).is_nan())
+    print((-7.5).rem_euclid(2.0))
+
+    // classification and bits
+    print(nan.is_nan())
+    print(math.infinity().is_infinite())
+    print(math.neg_infinity().is_infinite())
+    print((1.0).is_finite())
+    print(nan.is_finite())
+    print((-0.0).is_sign_negative())
+    print((0.0).is_sign_positive())
+    print((1.5).to_bits())
+    print(f64.from_bits(4609434218613702656))
+    print((1.5f32).to_bits())
+    print(f32.from_bits(1069547520))
+    print(f64.from_bits(9221120237041090560).is_nan())
+
+    // the total order
+    let ord = [math.neg_infinity(), -1.5, -0.0, 0.0, 1.5, math.infinity(), nan]
+    var inorder = true
+    var i: usize = 1
+    while i < 7 {
+        if ord[i - 1].total_cmp(ord[i]) != Less { inorder = false }
+        i += 1
+    }
+    print(inorder)
+    print((1.0).total_cmp(1.0))
+    print((2.0).total_cmp(1.0))
+    print(nan.total_cmp(nan))
+
+    // checked conversions: None where `as` would trap
+    print((3.99).to_i32())
+    print((-3.99).to_i32())
+    print((2147483647.5).to_i32())
+    print((-2147483648.5).to_i32())
+    print((-2147483649.0).to_i32())
+    print(nan.to_i32())
+    print((1e30).to_i64())
+    print((255.9).to_u8())
+    print((256.0).to_u8())
+    print((-0.5).to_u8())
+    print((-1.0).to_u8())
+    print((4294967295.0).to_u32())
+    print((18446744073709551615.0).to_u64())
+    print((1.5f32).to_i32())
+
+    // f32
+    let f: f32 = 2.0
+    print(f.sqrt())
+    print(f.pow(0.5f32))
+    print(f.sin())
+    print((0.1f32 + 0.2f32).abs())
+    print(math.PI_F32)
+    print(f.max(3.0f32))
+    print(f.total_cmp(3.0f32))
+
+    // constants
+    print(math.PI)
+    print(math.E)
+    print(math.TAU)
+    print(math.SQRT_2)
+    print(math.EPSILON)
+    print(math.MAX)
+    print(math.MIN_POSITIVE)
+    print(math.MAX_F32)
+    print(math.EPSILON_F32)
+
+    // parse_f64 / parse_f32
+    print(strings.parse_f64("1.5"))
+    print(strings.parse_f64("-0.1e3"))
+    print(strings.parse_f64("+7"))
+    print(strings.parse_f64(".5"))
+    print(strings.parse_f64("5."))
+    print(strings.parse_f64("1e400"))
+    print(strings.parse_f64("-1e400"))
+    print(strings.parse_f64("1e-400"))
+    print(strings.parse_f64("-0"))
+    print(strings.parse_f64("inf"))
+    print(strings.parse_f64("-Infinity"))
+    print(strings.parse_f64("NaN"))
+    print(strings.parse_f64("0.1"))
+    print(strings.parse_f64("9007199254740993"))
+    print(strings.parse_f64("123456789012345678901234567890e-10"))
+    print(strings.parse_f64("12x"))
+    print(strings.parse_f64("1e"))
+    print(strings.parse_f64("1.2.3"))
+    print(strings.parse_f64(" 1"))
+    print(strings.parse_f64("1_0"))
+    print(strings.parse_f64("0x10"))
+    print(strings.parse_f64("."))
+    print(strings.parse_f64("-"))
+    print(strings.parse_f64(""))
+    print(strings.parse_f32("0.1"))
+    print(strings.parse_f32("3.4028235e38"))
+    print(strings.parse_f32("3.4028236e38"))
+    print(strings.parse_f32("1e-46"))
+
+    // text -> float -> text round-trips for random bit patterns
+    var x: u64 = 88172645463325252
+    var bad = 0
+    var tried = 0
+    var n = 0
+    while n < 20000 {
+        x = x ^ (x << 13)
+        x = x ^ (x >> 7)
+        x = x ^ (x << 17)
+        n += 1
+        let v = f64.from_bits(x)
+        if v.is_finite() {
+            tried += 1
+            match strings.parse_f64(v.to_string()) {
+                Ok(w) => { if w.to_bits() != v.to_bits() { bad += 1 } }
+                Err(_) => { bad += 1 }
+            }
+        }
+        let u = f32.from_bits((x >> 32) as u32)
+        if u.is_finite() {
+            tried += 1
+            match strings.parse_f32(u.to_string()) {
+                Ok(w) => { if w.to_bits() != u.to_bits() { bad += 1 } }
+                Err(_) => { bad += 1 }
+            }
+        }
+    }
+    print("{tried} round trips, {bad} wrong")
+}

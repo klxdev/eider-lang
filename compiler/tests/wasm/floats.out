@@ -1,0 +1,12 @@
+imports: env.ec_m_exp env.ec_m_log env.ec_m_pow env.ec_m_sin env.eider_write env.host_half env.host_third
+mean 1.875
+scale32 3.3000001907348633 3.3000001907348633
+is_nan true false
+trunc_to -3 2147483647
+eider: runtime error: float conversion out of range (lib:15)
+NaN traps: RuntimeError
+widen 0.10000000149011612
+via_host 3
+maths 31.893790226
+bits 4609434218613702656n
+text 0.6666666666666666 0.667

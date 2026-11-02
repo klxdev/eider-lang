@@ -8,3 +8,17 @@ mixed 3 1 11 1055 1
 eqs 1 0
 label label
 q_neg 0 -40
+f2_scale 3 -4
+f3_rot 2 3 1
+d2_swap 2.5 1.25
+d3_neg -1 2 -4
+fd_mix 0.75 12
+dl_next 1.5 42
+ld_next 9 3
+ffd_sum 7
+fi_sum 8.5
+fsum 4
+mixf 113.5 20
+manyd 248
+nan_is 1 0
+f32_next 3.5

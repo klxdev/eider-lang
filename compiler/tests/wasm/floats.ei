@@ -1,0 +1,25 @@
+// f32 and f64 cross the WebAssembly boundary as JavaScript numbers (exports and imports),
+// std/math's functions are the module's own (sqrt, floor, bit casts, fmod for `%`) or JavaScript's
+// Math through env.ec_m_* (exp, sin, pow, ...), and text is the runtime's shortest round-trip form.
+import std.math
+
+extern "c" fn host_half(v: f64) -> f64
+extern "c" fn host_third(v: f32) -> f32
+
+export fn mean(a: f64, b: f64) -> f64 { (a + b) / 2.0 }
+
+export fn scale32(x: f32, k: f32) -> f32 { x * k }
+
+export fn is_nan(x: f64) -> bool { x != x }
+
+export fn trunc_to(x: f64) -> i32 { x as i32 }
+
+export fn widen(x: f32) -> f64 { x as f64 }
+
+export fn via_host(x: f64, y: f32) -> f64 uses ffi { unsafe { host_half(x) + (host_third(y) as f64) } }
+
+export fn maths(x: f64) -> f64 { x.sqrt() + x.floor() + x.sin() + x.pow(2.0) + (x % 2.5) + x.exp().ln() }
+
+export fn bits(x: f64) -> u64 { x.to_bits() }
+
+export fn text(x: f64) -> String { "{x} {x:.3}" }

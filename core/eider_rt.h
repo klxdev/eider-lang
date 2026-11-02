@@ -599,6 +599,16 @@ void ei_str_push_quoted(ei_String *s, const char *t);
 void ei_str_pad(ei_String *s, uint64_t mark, uint64_t spec);
 void ei_str_fmt_i64(ei_String *s, int64_t v, uint64_t spec);
 void ei_str_fmt_u64(ei_String *s, uint64_t v, uint64_t spec);
+/* Floats (docs/decisions.md C660): print / Show the shortest text that reads back as the same
+   value (`1.5`, `0.1`, `1e16`, `NaN`, `inf`, `-0.0`), and {x:spec}: width, fill, alignment, `+`,
+   `0` and the precision (spec bits 52-62; bit 63: given), the exact value rounded half to even.
+   Integer arithmetic only: no libm, no locale. */
+void ei_str_push_f64(ei_String *s, double v);
+void ei_str_push_f32(ei_String *s, float v);
+void ei_str_fmt_f64(ei_String *s, double v, uint64_t spec);
+void ei_str_fmt_f32(ei_String *s, float v, uint64_t spec);
+void ei_print_f64(double v);
+void ei_print_f32(float v);
 
 /* `main` returned Err: flush stdout and print `error: <text>` (or the number) to stderr. */
 void ei_main_error(const char *text);

@@ -1,0 +1,68 @@
+1:94-95 newline
+2:1-4 ident let
+2:5-6 ident a
+2:7-8 =
+2:9-12 float 1.5
+2:12-13 newline
+3:1-4 ident let
+3:5-6 ident b
+3:7-8 =
+3:9-16 float 0.25f32
+3:16-17 newline
+4:1-4 ident let
+4:5-6 ident c
+4:7-8 =
+4:9-13 float 1e10
+4:13-14 newline
+5:1-4 ident let
+5:5-6 ident d
+5:7-8 =
+5:9-15 float 2.5E-3
+5:15-16 newline
+6:1-4 ident let
+6:5-6 ident e
+6:7-8 =
+6:9-20 float 1_000.000_1
+6:20-21 newline
+7:1-4 ident let
+7:5-6 ident f
+7:7-8 =
+7:9-13 float 7f64
+7:13-14 newline
+8:1-4 ident let
+8:5-6 ident g
+8:7-8 =
+8:9-16 float 1e+5f32
+8:16-17 newline
+9:1-4 ident let
+9:5-6 ident h
+9:7-8 =
+9:9-10 ident t
+9:10-11 .
+9:11-12 int 0
+9:12-13 .
+9:13-14 int 1
+9:14-15 newline
+10:1-4 ident let
+10:5-6 ident i
+10:7-8 =
+10:9-10 int 3
+10:10-11 .
+10:11-14 ident max
+10:14-15 (
+10:15-16 int 4
+10:16-17 )
+10:17-18 newline
+11:1-4 ident let
+11:5-6 ident j
+11:7-8 =
+11:9-10 int 1
+11:10-12 ..
+11:12-13 int 2
+11:13-14 newline
+12:1-4 ident let
+12:5-6 ident k
+12:7-8 =
+12:9-13 int 229
+12:13-14 newline
+13:1-1 eof

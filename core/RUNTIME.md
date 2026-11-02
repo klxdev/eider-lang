@@ -37,7 +37,7 @@ pinning (`EC_SYM`) that the OS ABI uses for `extern "c"`.
    target). Source lines are `int32_t`.
 4. **No undefined or implementation-defined integer behaviour.** No signed overflow; no
    out-of-range conversion to a signed type (wrapping results go through `ei_bits_i32` /
-   `ei_bits_i64`); no out-of-range float-to-integer conversion.
+   `ei_bits_i64`); float-to-integer conversion is generated code, not the runtime's: it traps on NaN or out of range (docs/decisions.md C660).
 5. **Builtins only behind feature checks.** `__builtin_*_overflow` is used when
    `__has_builtin` reports it, `__builtin_unreachable` under `__GNUC__`; `-DEI_RT_PORTABLE`
    forces the portable code. Both paths are tested.
@@ -215,7 +215,18 @@ brackets each access with the inline functions below (no call when inlined):
 | `ei_print_i(int64_t)`, `ei_print_u(uint64_t)` | decimal, then `\n` |
 | `ei_print_b(bool)` | `true` / `false`, then `\n` |
 | `ei_print_s(const char *)` | the bytes up to the NUL, then `\n` |
+| `ei_print_f64(double)`, `ei_print_f32(float)` | the shortest decimal text that reads back as the same value, then `\n` (below) |
 | `uint64_t ei_now_ms(void)` | milliseconds on the monotonic clock (`CLOCK_MONOTONIC`) from an arbitrary start; `0` if unavailable |
+
+**Float text** (core/eider_float.inc, included by both runtimes; docs/decisions.md C660):
+`ei_str_push_f64` / `ei_str_push_f32` (Show, `print`) append the shortest digits that read back
+as the same float (Burger and Dybvig's free-format algorithm over a small big integer), positional
+for decimal exponents -5 to 15 and always with a point (`100.0`, `0.00001`), else `1.5e-7` / `1e16`;
+`NaN`, `inf`, `-inf`, `-0.0`. `ei_str_fmt_f64` / `ei_str_fmt_f32` append `{x:spec}`: width, fill,
+alignment, `+`, `0` (the integers' bits in `ei_str_fmt_i64`'s spec) and the precision in bits 52-62
+with bit 63 set when given: the exact value rounded half to even, up to 400 places. Integer
+arithmetic only: no libm, no printf, no locale. tests/core/rt_test.c checks the text against
+strtod and printf over random bit patterns.
 
 `now_ms` measures elapsed time: it advances while the program sleeps or blocks and never jumps
 when the system clock is set. It used to be processor time (`clock()`), which did neither; no

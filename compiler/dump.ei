@@ -152,6 +152,11 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             opt(inout out, p, "ret", n.g, d)
         }
         ast.EInt => int_slot(inout out, p, n.a, false)
+        ast.EFloat => {
+            let t = p.toks[n.a as usize]
+            put(inout out, " text=")
+            for i in t.start..t.end { out.push(p.src[i as usize]) }
+        }
         ast.EStr => str_slot(inout out, p, "value", n.a)
         ast.EBool => {
             let v = if n.a == 1 { " value=true" } else { " value=false" }
@@ -444,6 +449,10 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             if n.f > 0 {
                 put(inout out, " radix=")
                 out.push(n.f as u8)
+            }
+            if n.i > 0 {
+                put(inout out, " precision=")
+                num(inout out, (n.i - 1) as u64)
             }
             child(inout out, p, "expr", n.a, d)
         }

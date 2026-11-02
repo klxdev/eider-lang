@@ -1,0 +1,1 @@
+{"error":"E0807","span":{"file":"compiler/tests/check/fail/e0807_float_comptime.ei","line":6,"col":7},"message":"comptime evaluation of `H` failed: comptime evaluation can't use floating point (f32, f64); it evaluates integers, bool and str"}

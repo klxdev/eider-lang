@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_float_cast_bool.ei","line":3,"col":18},"message":"`as` only converts between numeric types (integers and floats), not from bool"}

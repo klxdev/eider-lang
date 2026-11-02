@@ -1,0 +1,9 @@
+// expect: E0401 6:9
+const HALF: f64 = 0.5
+fn main() {
+    let x = 0.5
+    match x {
+        HALF => {}
+        _ => {}
+    }
+}

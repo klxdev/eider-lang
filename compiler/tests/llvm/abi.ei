@@ -50,3 +50,54 @@ fn same_b2(x: B2, y: B2) -> bool { x == y }
 export fn label(x: S) -> str { x.s }
 
 export fn q_neg(x: Q) -> Q { Q(!x.x, 0 - x.y) }
+
+// Floating point (SSE eightbytes on x86-64, FP registers on AArch64; docs/decisions.md C660):
+//   F2   8 bytes   two f32 in one XMM register (`<2 x float>`); an AArch64 HFA of two floats
+//   F3   12 bytes  `<2 x float>` and a `float`
+//   D2   16 bytes  two SSE eightbytes (two doubles); an AArch64 HFA of two doubles
+//   FD   16 bytes  a float (with padding) and a double: two SSE eightbytes
+//   DL   16 bytes  one SSE and one INTEGER eightbyte (`{ double, i64 }`)
+//   LD   16 bytes  one INTEGER and one SSE eightbyte
+//   FFD  16 bytes  `<2 x float>` and a double
+//   D3   24 bytes  MEMORY
+//   FI   8 bytes   a float and an int share an eightbyte: INTEGER
+type F2 = { a: f32, b: f32 }
+type F3 = { a: f32, b: f32, c: f32 }
+type D2 = { a: f64, b: f64 }
+type D3 = { a: f64, b: f64, c: f64 }
+type FD = { a: f32, b: f64 }
+type DL = { a: f64, b: i64 }
+type LD = { a: i64, b: f64 }
+type FFD = { a: f32, b: f32, c: f64 }
+type FI = { a: f32, b: i32 }
+
+export fn fsum(a: f32, b: f64, c: f32) -> f64 { (a as f64) + b + (c as f64) }
+
+export fn f2_scale(x: F2, k: f32) -> F2 { F2(x.a * k, x.b * k) }
+
+export fn f3_rot(x: F3) -> F3 { F3(x.b, x.c, x.a) }
+
+export fn d2_swap(x: D2) -> D2 { D2(x.b, x.a) }
+
+export fn d3_neg(x: D3) -> D3 { D3(-x.a, -x.b, -x.c) }
+
+export fn fd_mix(x: FD, y: FD) -> FD { FD(x.a + y.a, x.b * y.b) }
+
+export fn dl_next(x: DL) -> DL { DL(x.a + 0.5, x.b + 1) }
+
+export fn ld_next(x: LD) -> LD { LD(x.a - 1, x.b * 2.0) }
+
+export fn ffd_sum(x: FFD) -> f64 { (x.a as f64) + (x.b as f64) + x.c }
+
+export fn fi_sum(x: FI) -> f64 { (x.a as f64) + (x.b as f64) }
+
+export fn mixf(i: i32, d: D2, j: i32, f: F2, k: i64) -> D2 { D2(d.a + (i + j) as f64 + (k as f64) + (f.a as f64), d.b) }
+
+// nine doubles and a D2: eight XMM registers hold the doubles, so the D2 goes on the stack
+export fn manyd(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, g: f64, h: f64, i: f64, j: D2) -> f64 {
+    a + b * 2.0 + c * 3.0 + d * 4.0 + e * 5.0 + f * 6.0 + g * 7.0 + h * 8.0 + i * 9.0 + j.a * 100.0 + j.b
+}
+
+export fn nan_is(x: f64) -> bool { x != x }
+
+export fn f32_next(x: f32) -> f32 { x + 1.0 }

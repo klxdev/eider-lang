@@ -298,6 +298,20 @@ pub fn run(p: lower.P, inout st: St, f: u32) -> Result[Val, Trap] {
     Ok(c.v)
 }
 
+/// Whether type ty is a float, or holds one (a record, tuple, array, List or Box of one).
+fn has_float(p: lower.P, ty: u32, depth: u32) -> bool {
+    if depth > 6 { return false }
+    let t = types.get(p.t, ty)
+    if t.kind == types.T_FLOAT { return true }
+    if t.kind == types.T_ARRAY || t.kind == types.T_LIST || t.kind == types.T_BOX { return has_float(p, t.a, depth + 1) }
+    if t.kind == types.T_TUPLE || t.kind == types.T_RECORD {
+        for x in parts(p, ty) {
+            if has_float(p, x, depth + 1) { return true }
+        }
+    }
+    false
+}
+
 /// The number of captured values a closure body f starts with.
 fn ncap(p: lower.P, f: u32) -> u32 {
     let fd = p.ir.fns[f as usize]
@@ -318,6 +332,11 @@ fn call(p: lower.P, inout st: St, f: u32, env: List[Val], inout args: List[Val])
     st.depth += 1
     if st.depth > MAX_DEPTH {
         return Err(Trap(s("eider: runtime error: stack overflow (program:0)")))
+    }
+    for i in 0..fd.lcount {
+        // floats are not evaluated at compile time: an interpreter that computed them with
+        // integers would answer wrongly (docs/decisions.md C660)
+        if has_float(p, p.ir.locals[(fd.lstart + i) as usize].ty, 0) { return Err(cannot("use floating point (f32, f64); it evaluates integers, bool and str")) }
     }
     for i in 0..fd.lcount { fr.locals.push(undef()) }
     let nc = env.len()

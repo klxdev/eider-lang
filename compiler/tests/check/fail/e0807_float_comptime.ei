@@ -1,0 +1,7 @@
+// expect: E0807 6:7
+fn half(x: i32) -> i32 {
+    let f = x as f64 * 0.5
+    f as i32
+}
+const H: i32 = comptime half(10)
+fn main() {}

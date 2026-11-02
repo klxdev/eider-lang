@@ -1,4 +1,4 @@
-error[E0806]: parameter `c` has type str; WebAssembly exports take only integers, bool, String and List[u8]
+error[E0806]: parameter `c` has type str; WebAssembly exports take only integers, f32, f64, bool, String and List[u8]
   --> compiler/tests/wasm/check/second_param.ei:2:30
   |
 2 | export fn f(a: i32, b: bool, c: str, d: str) -> i32 { return a }

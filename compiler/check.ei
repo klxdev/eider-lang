@@ -50,6 +50,7 @@
 
 import core.sys
 import std.bytes
+import std.floatconv
 import eiderc.intern
 import eiderc.lex
 import eiderc.ast
@@ -437,6 +438,11 @@ fn mismatch(c: C, line: u32, col: u32, expected: u32, found: u32) -> diag.Diag {
     if types.is_int(c.t, expected) && types.is_int(c.t, found) {
         d.help = q("there are no implicit conversions; use an explicit cast: `value as ", ts(c, expected), "`")
     }
+    if types.is_float(c.t, expected) && types.is_float(c.t, found) {
+        d.help = q("f32 and f64 don't mix implicitly; convert with `value as ", ts(c, expected), "`")
+    } else if (types.is_int(c.t, expected) && types.is_float(c.t, found)) || (types.is_float(c.t, expected) && types.is_int(c.t, found)) {
+        d.help = q("integers and floats don't mix implicitly; convert with `value as ", ts(c, expected), "`")
+    }
     d
 }
 
@@ -770,6 +776,36 @@ fn lit(c: C, tok: u32) -> fold.Wide {
 
 fn v_of(ty: u32, op: u32) -> V { V(ty, op, false, fold.zero()) }
 
+/// A float literal (token n.a): `2.5f32` and `2.5f64` carry their type, any other takes the
+/// expected one when that is a float, else f64. Its text is read exactly (std/floatconv.ei); one that
+/// overflows the type is E0501. `neg`: the literal is negated (the sign bit flips).
+fn float_literal(inout c: C, n: ast.Node, exp: u32, neg: bool) -> Result[V, diag.Diag] {
+    let t = c.p.mods[c.am as usize].toks[n.a as usize]
+    let mut fty = types.F64
+    if t.val == 32 {
+        fty = types.F32
+    } else if t.val == 0 && exp != NONE && types.is_float(c.t, exp) {
+        fty = exp
+    }
+    let single = fty == types.F32
+    let mut end = t.end as usize
+    if t.val != 0 { end -= 3 }
+    let mut bits = floatconv.literal_bits(c.p.mods[c.am as usize].src, t.start as usize, end, single)
+    if floatconv.is_inf_bits(bits, single) {
+        let mut text: List[u8] = List.new()
+        if neg { text.push(45) }
+        for i in t.start..(end as u32) { text.push(c.p.mods[c.am as usize].src[i as usize]) }
+        let mx = if single { "3.4028235e38" } else { "1.7976931348623157e308" }
+        return Err(err("E0501", n.line, n.col, q3("literal ", text, " doesn't fit in ", ts(c, fty), " (max ", s(mx), ")")))
+    }
+    if neg {
+        let one: u64 = 1
+        let sh: u64 = if single { 31 } else { 63 }
+        bits = bits ^ (one << sh)
+    }
+    Ok(v_of(fty, ir.op_float(inout c.ir, fty, bits)))
+}
+
 fn visible(c: C, md: u32, public: bool) -> bool {
     public || md == resolve.NOMOD || md == c.p.prelude || c.cur_all || md == c.cur_mod
 }
@@ -779,10 +815,10 @@ fn is_value_form(c: C, e: u32) -> bool {
     k == ast.EIf || k == ast.EMatch || k == ast.EBlock || k == ast.EUnsafe
 }
 
-/// An integer literal, possibly negated.
+/// An integer or float literal, possibly negated.
 fn is_lit(c: C, e: u32) -> bool {
     let n = nd(c, e)
-    if n.kind == ast.EInt { return true }
+    if n.kind == ast.EInt || n.kind == ast.EFloat { return true }
     if n.kind == ast.EUnary && n.a == 0 { return is_lit(c, n.b) }
     false
 }
@@ -1163,7 +1199,7 @@ fn end_pos(inout c: C) { c.rf.wpos.pop() }
 
 /// Whether builtin b may resize or replace the buffer of its place argument.
 fn resizes(b: u32) -> bool {
-    b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE || b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_STR_PUSH_BYTE || b == ir.B_STR_PAD || b == ir.B_FMT_INT
+    b == ir.B_LIST_PUSH || b == ir.B_LIST_POP || b == ir.B_LIST_CLEAR || b == ir.B_MAP_INSERT || b == ir.B_MAP_REMOVE || b == ir.B_STR_PUSH || b == ir.B_STR_APPEND || b == ir.B_STR_PUSH_BYTE || b == ir.B_STR_PAD || b == ir.B_FMT_INT || b == ir.B_FMT_FLOAT
 }
 
 /// Whether place p has an element on its path (a bounds check).
@@ -2266,6 +2302,7 @@ fn head_of(c: C, ty: u32) -> u64 {
     let t = types.get(c.t, ty)
     match t.kind {
         0 => resolve.key(0, c.w.ints[t.a as usize])
+        21 => resolve.key(0, c.w.ints[(11 + t.a) as usize])
         1 => resolve.key(0, c.w.s_bool)
         2 => resolve.key(0, c.w.s_str)
         3 => H_UNIT
@@ -2721,6 +2758,12 @@ fn lacks(c: C, tr: u32, ty: u32, inout seen: Map[u32, bool]) -> u32 {
     }
     // (`()` too, as a part: `Ok(()) == r`, `print(Ok(()))`; comparing two ()s is E0401)
     if k == types.T_INT || k == types.T_BOOL || k == types.T_STR || k == types.T_STRING || k == types.T_UNIT { return NONE }
+    // floats: Copy, Eq (IEEE `==`: NaN != NaN), Show and Default, but no Ord (NaN is
+    // unordered) and no Hash (equal values must hash alike; 0.0 == -0.0 and NaN != NaN)
+    if k == types.T_FLOAT {
+        if tr == TR_ORD || tr == TR_HASH { return ty }
+        return NONE
+    }
     if k == types.T_ARRAY || k == types.T_LIST || k == types.T_BOX { return lacks(c, tr, t.a, inout seen) }
     if k == types.T_TUPLE {
         for x in types.elems(c.t, ty) {
@@ -2757,7 +2800,7 @@ fn lacks_default(c: C, ty: u32, inout seen: Map[u32, bool]) -> u32 {
         if param_has(c, ty, resolve.key(0, c.lt.names[TR_DEFAULT as usize])) { return NONE }
         return ty
     }
-    if k == types.T_INT || k == types.T_BOOL || k == types.T_STR || k == types.T_STRING || k == types.T_UNIT { return NONE }
+    if k == types.T_INT || k == types.T_FLOAT || k == types.T_BOOL || k == types.T_STR || k == types.T_STRING || k == types.T_UNIT { return NONE }
     if k == types.T_LIST || k == types.T_MAP { return NONE }
     if k == types.T_RECORD || k == types.T_ENUM {
         if custom(c, TR_DEFAULT, ty) { return NONE }
@@ -2797,6 +2840,10 @@ fn lack_msg(c: C, what: List[u8], tr: u32, ty: u32, part: u32) -> List[u8] {
 /// The help for a type that lacks trait tr because of `part`.
 fn lack_help(c: C, tr: u32, part: u32) -> str {
     let k = types.kind(c.t, part)
+    if k == types.T_FLOAT {
+        if tr == TR_HASH { return "floats have no hash: 0.0 == -0.0 but their bits differ, and NaN != NaN; key by `x.to_bits()` if exact bits are meant, or by a rounded integer" }
+        return "floats are only partially ordered (NaN is unordered), so a record or tuple holding one has no derived order; order floats with `a.total_cmp(b)` (std/math) or compare them with `<` directly"
+    }
     if k == types.T_TASK || k == types.T_CHAN {
         if tr == TR_COPY { return "a running thread can't be cloned and a copied queue has no clear meaning; share the handle instead" }
         return "Task, Mutex and Chan values are shared handles: they have no equality, order, hash or text"
@@ -3087,8 +3134,10 @@ fn abstract_bodies(inout c: C) {
 // ---- program
 
 fn well_known(inout names: intern.Interner) -> W {
+    // the names of the primitive types, indexed by type id (types.ei): the six integers, then
+    // bool, str, (), !, String and the floats, so `int_kind` of a name is its type id
     let mut ints: List[u32] = List.new()
-    for w in ["i32", "i64", "u8", "u32", "u64", "usize"] { ints.push(sym(inout names, w)) }
+    for w in ["i32", "i64", "u8", "u32", "u64", "usize", "bool", "str", "()", "!", "String", "f32", "f64"] { ints.push(sym(inout names, w)) }
     let mut heap: List[u32] = List.new()
     for w in ["List", "Map", "Box", "Task", "Mutex", "Chan"] { heap.push(sym(inout names, w)) }
     let mut caps: List[u32] = List.new()
@@ -3565,7 +3614,7 @@ fn check_const(inout c: C, it: Item, n: ast.Node, k: u64) -> Result[bool, diag.D
     if poisoned(c, v.ty) { return Ok(false) }
     if v.ty != ty { return Err(mismatch(c, vn.line, vn.col, ty, v.ty)) }
     let tk = types.kind(c.t, ty)
-    let ok = (tk == types.T_INT && v.has_k) || (tk == types.T_BOOL && vn.kind == ast.EBool) || (tk == types.T_STR && vn.kind == ast.EStr)
+    let ok = (tk == types.T_INT && v.has_k) || (tk == types.T_FLOAT && c.ir.ops[v.op as usize].kind == ir.O_FLOAT) || (tk == types.T_BOOL && vn.kind == ast.EBool) || (tk == types.T_STR && vn.kind == ast.EStr)
     if !ok { return Err(err("E0504", vn.line, vn.col, s("constant initializers must be literals or compile-time integer expressions"))) }
     c.consts.insert(k, c.cdefs.len() as u32)
     c.cdefs.push(ConstDef(k, it.m, n.b == 1, ty, v.has_k, v.k, v.op, it.node))
@@ -3592,11 +3641,11 @@ fn record_ffi(inout c: C, ii: u32) {
     }
 }
 
-/// Whether type ty can cross the C boundary: integers, bool and str; ()
+/// Whether type ty can cross the C boundary: integers, floats, bool and str; ()
 /// as a return type; records made only of those when `records` (exports).
 fn ffi_safe(c: C, ty: u32, is_ret: bool, records: bool) -> bool {
     let k = types.kind(c.t, ty)
-    if k == types.T_INT || k == types.T_BOOL || k == types.T_STR { return true }
+    if k == types.T_INT || k == types.T_FLOAT || k == types.T_BOOL || k == types.T_STR { return true }
     if k == types.T_UNIT { return is_ret }
     // (a record with its own Drop lives in a shared buffer)
     if k != types.T_RECORD || !records || has_drop(c, ty) { return false }
@@ -3620,18 +3669,18 @@ pub fn wasm_memory_ty(c: C, ty: u32) -> bool {
 fn check_ffi_sig(c: C, m: u32, n: ast.Node, ps: List[u32], ret: u32) -> Result[bool, diag.Diag] {
     let is_export = ast.has(n.b, ast.FN_EXPORT)
     let what = if is_export { "export" } else { "extern \"c\"" }
-    let help = "C-safe types: integers, bool, str (const char*), and records made only of those (export only)"
+    let help = "C-safe types: integers, f32, f64, bool, str (const char*), and records made only of those (export only)"
     if is_export && c.wasm {
         for i in 0..n.f {
             let k = types.kind(c.t, ps[i as usize])
-            if k != types.T_INT && k != types.T_BOOL && !wasm_memory_ty(c, ps[i as usize]) {
+            if k != types.T_INT && k != types.T_FLOAT && k != types.T_BOOL && !wasm_memory_ty(c, ps[i as usize]) {
                 let pn = ndm(c, m, atm(c, m, n.e, i))
-                return Err(err("E0806", pn.line, pn.col, q2("parameter `", nm(c, pn.a), "` has type ", ts(c, ps[i as usize]), "; WebAssembly exports take only integers, bool, String and List[u8]")))
+                return Err(err("E0806", pn.line, pn.col, q2("parameter `", nm(c, pn.a), "` has type ", ts(c, ps[i as usize]), "; WebAssembly exports take only integers, f32, f64, bool, String and List[u8]")))
             }
         }
         let rk = types.kind(c.t, ret)
-        if rk != types.T_INT && rk != types.T_BOOL && rk != types.T_UNIT && !wasm_memory_ty(c, ret) {
-            return Err(err("E0806", n.line, n.col, q("return type ", ts(c, ret), " isn't supported for WebAssembly exports (integers, bool, String, List[u8], or ())")))
+        if rk != types.T_INT && rk != types.T_FLOAT && rk != types.T_BOOL && rk != types.T_UNIT && !wasm_memory_ty(c, ret) {
+            return Err(err("E0806", n.line, n.col, q("return type ", ts(c, ret), " isn't supported for WebAssembly exports (integers, f32, f64, bool, String, List[u8], or ())")))
         }
     }
     for i in 0..n.f {
@@ -5095,6 +5144,12 @@ fn assign_in(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
         return Ok(types.UNIT)
     }
     let op = n.b - 1
+    if types.is_float(c.t, tv.ty) && op <= ast.OP_REM {
+        let curf = read(inout c, tv.place, tv.ty, n.line)
+        let rf = emit_val(inout c, ir.S_BINARY, op, curf, vv.op, tv.ty, tv.ty, n.line)
+        emit(inout c, ir.S_STORE, 0, tv.place, rf, 0, tv.ty, n.line)
+        return Ok(types.UNIT)
+    }
     if !types.is_int(c.t, tv.ty) && !poisoned(c, tv.ty) && !poisoned(c, vv.ty) {
         return Err(err("E0401", n.line, n.col, q2("operator ", s(ast.op_text(op)), "= needs integers, found ", ts(c, tv.ty), "")))
     }
@@ -5633,9 +5688,13 @@ fn expr(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
 fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
     let n = nd(c, e)
     match n.kind {
+        ast.EFloat => float_literal(inout c, n, exp, false)
         ast.EInt => {
             let mut ik = types.IK_I32
             if exp != NONE && types.is_int(c.t, exp) { ik = types.ik(c.t, exp) }
+            if exp != NONE && types.is_float(c.t, exp) {
+                return Err(errh("E0401", n.line, n.col, q("expected ", ts(c, exp), ", found an integer literal"), "integers and floats don't mix implicitly; write a float literal like `1.0`, or convert with `as`"))
+            }
             let w = lit(c, n.a)
             if fold.gt(w, imax(ik)) {
                 return Err(err("E0501", n.line, n.col, q3("literal ", fold.text(w), " doesn't fit in ", s(types.int_name(ik)), " (max ", fold.text(imax(ik)), ")")))
@@ -5885,6 +5944,7 @@ fn value_place(inout c: C, v: V, line: u32) -> PV {
 
 fn negate(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let x = nd(c, n.b)
+    if x.kind == ast.EFloat { return float_literal(inout c, x, exp, true) }
     if x.kind == ast.EInt {
         let mut ik = types.IK_I32
         if exp != NONE && types.is_int(c.t, exp) { ik = types.ik(c.t, exp) }
@@ -5899,6 +5959,9 @@ fn negate(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     }
     let v = expr(inout c, n.b, exp)?
     if poisoned(c, v.ty) { return Ok(v) }
+    if types.is_float(c.t, v.ty) {
+        return Ok(v_of(v.ty, emit_val(inout c, ir.S_UNARY, ir.U_NEG, v.op, 0, v.ty, v.ty, n.line)))
+    }
     if !types.is_int(c.t, v.ty) || !types.signed(types.ik(c.t, v.ty)) {
         return Err(err("E0401", n.line, n.col, q("cannot negate a value of type ", ts(c, v.ty), "")))
     }
@@ -5968,6 +6031,15 @@ fn binary(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     }
     if vl.ty != vr.ty { return Err(mismatch(c, rn.line, rn.col, vl.ty, vr.ty)) }
     let ty = vl.ty
+    if arith && types.is_float(c.t, ty) {
+        // IEEE arithmetic: + - * / % never trap (a division by zero is an infinity or NaN);
+        // the wrapping and bitwise operators are for integers
+        if op > ast.OP_REM {
+            let help = if ast.is_bitwise(op) { "bit operations are for integers; to inspect a float's bits use `to_bits`" } else { "floats have no wrapping operators: + - * already don't trap" }
+            return Err(errh("E0401", n.line, n.col, q2("operator ", s(ast.op_text(op)), " needs integers, found ", ts(c, ty), ""), help))
+        }
+        return Ok(v_of(ty, emit_val(inout c, ir.S_BINARY, op, vl.op, vr.op, ty, ty, n.line)))
+    }
     if arith {
         if !types.is_int(c.t, ty) {
             return Err(err("E0401", n.line, n.col, q2("operator ", s(ast.op_text(op)), " needs integers, found ", ts(c, ty), "")))
@@ -5986,6 +6058,12 @@ fn binary(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let tk = types.kind(c.t, ty)
     if tk == types.T_UNIT || tk == types.T_NEVER {
         return Err(err("E0401", n.line, n.col, q("cannot compare values of type ", ts(c, ty), "")))
+    }
+    // floats compare as IEEE says (NaN is unequal to everything, itself included, and
+    // unordered), so < <= > >= work on them though they have no `Ord` (a record of floats
+    // has none either: its derived order would not be a total one)
+    if tk == types.T_FLOAT {
+        return Ok(v_of(types.BOOL, emit_val(inout c, ir.S_BINARY, op, vl.op, vr.op, ty, types.BOOL, n.line)))
     }
     // == != through Eq, < <= > >= through Ord ("Operation traits"): integers, bool, and
     // String and str by their bytes (Unicode scalar order) are built in, the rest derived
@@ -6030,17 +6108,54 @@ fn fold_arith(inout c: C, n: ast.Node, op: u32, ik: u32, ty: u32, a: fold.Wide, 
     Ok(const_v(inout c, ty, wide))
 }
 
+/// The type of an integer literal (possibly negated) converted to a float: i32 when it fits,
+/// else i64, else u64, so `18446744073709551615 as f64` needs no suffix.
+fn int_lit_hint(c: C, e: u32) -> u32 {
+    let n = nd(c, e)
+    let mut neg = false
+    let mut x = n.copy()
+    if n.kind == ast.EUnary && n.a == 0 {
+        neg = true
+        x = nd(c, n.b)
+    }
+    if x.kind != ast.EInt { return NONE }
+    let mut w = lit(c, x.a)
+    if neg { w = fold.neg(w) }
+    if fits(types.IK_I32, w) { return NONE }
+    if fits(types.IK_I64, w) { return types.I64 }
+    types.U64
+}
+
+/// Whether literal expression e (possibly negated) is a float literal.
+fn float_lit_expr(c: C, e: u32) -> bool {
+    let n = nd(c, e)
+    if n.kind == ast.EFloat { return true }
+    if n.kind == ast.EUnary && n.a == 0 { return float_lit_expr(c, n.b) }
+    false
+}
+
 fn cast(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
     let am = c.am.copy()
     let target = resolve_ty(inout c, am, n.b)?
-    if !types.is_int(c.t, target) {
-        return Err(err("E0401", n.line, n.col, q("`as` only converts between integer types, not to ", ts(c, target), "")))
+    if !types.is_int(c.t, target) && !types.is_float(c.t, target) {
+        return Err(err("E0401", n.line, n.col, q("`as` only converts between numeric types (integers and floats), not to ", ts(c, target), "")))
     }
-    let hint = if is_lit(c, n.a) { target } else { NONE }
+    // a literal takes the target as its type when it is of the same family (`300 as u8` is
+    // checked as a u8; `3 as f64` is an integer literal, `3.0 as f32` a float one)
+    let mut hint = NONE
+    if is_lit(c, n.a) && !float_lit_expr(c, n.a) {
+        if types.is_int(c.t, target) { hint = target } else { hint = int_lit_hint(c, n.a) }
+    }
     let v = expr(inout c, n.a, hint)?
     if poisoned(c, v.ty) { return Ok(v_of(target, v.op)) }
-    if !types.is_int(c.t, v.ty) {
-        return Err(err("E0401", n.line, n.col, q("`as` only converts between integer types, not from ", ts(c, v.ty), "")))
+    if !types.is_int(c.t, v.ty) && !types.is_float(c.t, v.ty) {
+        return Err(err("E0401", n.line, n.col, q("`as` only converts between numeric types (integers and floats), not from ", ts(c, v.ty), "")))
+    }
+    if types.is_float(c.t, v.ty) || types.is_float(c.t, target) {
+        // int <-> float and float <-> float: conversions at run time (IEEE rounding; a float
+        // that is NaN or doesn't fit the integer type traps, docs/decisions.md C660)
+        if v.ty == target { return Ok(v) }
+        return Ok(v_of(target, emit_val(inout c, ir.S_CAST, v.op, 0, 0, target, target, n.line)))
     }
     let tk = types.ik(c.t, target)
     if v.has_k {
@@ -7429,8 +7544,8 @@ fn heap_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
             return fold_list(inout c, n, pv)
         }
         if mi == M_SUM {
-            if !types.is_int(c.t, el) && !poisoned(c, el) {
-                return Err(err("E0401", n.line, n.col, q("`sum` needs a List of integers, found List[", ts(c, el), "]")))
+            if !types.is_int(c.t, el) && !types.is_float(c.t, el) && !poisoned(c, el) {
+                return Err(err("E0401", n.line, n.col, q("`sum` needs a List of integers or floats, found List[", ts(c, el), "]")))
             }
             let ro = recv_op(inout c, pv)
             eval_args(inout c, n, List.new(), label)?
@@ -9308,15 +9423,20 @@ fn fmt_hole(inout c: C, h: ast.Node, place: u32) -> Result[bool, diag.Diag] {
         return Err(lack_err(c, "E0401", x.line, x.col, s(r"`{...}` in a string literal"), TR_SHOW, v.ty))
     }
     let is_int = types.is_int(c.t, v.ty)
-    let numeric = h.e != 0 || h.f != 0
-    if numeric && !is_int {
+    let is_flt = types.is_float(c.t, v.ty)
+    // a float takes a width, fill, alignment, `+`, `0` and a precision (`.2`); the radix
+    // letters and `#` are for integers
+    let numeric = h.e != 0 || h.f != 0 || h.i != 0
+    let flt_ok = is_flt && h.f == 0 && !ast.has(h.e, ast.FMT_ALT)
+    if (numeric && !is_int && !flt_ok) || (h.i != 0 && !is_flt) {
         let mut what = s("")
-        if ast.has(h.e, ast.FMT_PLUS) { what = s("`+`") } else if ast.has(h.e, ast.FMT_ALT) { what = s("`#`") } else if ast.has(h.e, ast.FMT_ZERO) { what = s("`0`") } else {
+        if h.i != 0 && h.e == 0 && h.f == 0 { what = s("`.N`") } else if ast.has(h.e, ast.FMT_PLUS) { what = s("`+`") } else if ast.has(h.e, ast.FMT_ALT) { what = s("`#`") } else if ast.has(h.e, ast.FMT_ZERO) { what = s("`0`") } else {
             what = s("`")
             what.push(h.f as u8)
             what.push(96)
         }
-        let mut d = errh("E0412", x.line, x.col, q2("format spec ", what, " is for integers, and this is ", ts(c, v.ty), ""), r"only a width, fill and alignment apply to any type: `{x:>8}`, `{x:*^9}`")
+        let who = if h.i != 0 && h.e == 0 && h.f == 0 { "floats" } else if is_flt { "integers" } else { "integers" }
+        let mut d = errh("E0412", x.line, x.col, q3("format spec ", what, " is for ", s(who), ", and this is ", ts(c, v.ty), ""), r"only a width, fill and alignment apply to any type: `{x:>8}`, `{x:*^9}`")
         d.fix = Some(diag.Fix(h.line, h.g, h.h as u64, List.new()))
         return Err(d)
     }
@@ -9329,7 +9449,7 @@ fn fmt_hole(inout c: C, h: ast.Node, place: u32) -> Result[bool, diag.Diag] {
     let width: u64 = if h.b > 0 { (h.b - 1) as u64 } else { 0 }
     let fill: u64 = if h.c > 0 { h.c as u64 } else { 32 }
     let mut align: u64 = h.d as u64
-    if align == 0 { align = if is_int { 2 } else { 1 } }
+    if align == 0 { align = if is_int || is_flt { 2 } else { 1 } }
     let mut bits = width + fill * 4294967296 + align * 1099511627776
     if ast.has(h.e, ast.FMT_PLUS) { bits += 4398046511104 }
     if ast.has(h.e, ast.FMT_ALT) { bits += 8796093022208 }
@@ -9340,7 +9460,12 @@ fn fmt_hole(inout c: C, h: ast.Node, place: u32) -> Result[bool, diag.Diag] {
     if h.f == 111 { radix = 8 }
     bits += radix * 35184372088832
     if h.f == 88 { bits += 2251799813685248 }
+    if is_flt && h.i != 0 { bits += ((h.i - 1) as u64) * 4503599627370496 + 9223372036854775808 }
     let spec = ir.op_int(inout c.ir, types.U64, bits)
+    if is_flt {
+        builtin_op(inout c, ir.B_FMT_FLOAT, three(place + ir.ARG_PLACE, v.op, spec), types.UNIT, h.line)
+        return Ok(true)
+    }
     if is_int {
         builtin_op(inout c, ir.B_FMT_INT, three(place + ir.ARG_PLACE, v.op, spec), types.UNIT, h.line)
         return Ok(true)
@@ -9635,6 +9760,9 @@ fn const_pat(inout c: C, n: ast.Node, ci: u32, ty: u32, place: u32, inout lw: Lo
         let id = intern.intern(inout c.p.names, b, 0, b.len())
         lw.tests.push(Test(T_STR, place, ty, 0, fold.zero(), b))
         return Ok(pats.ctor(inout c.pt, pats.C_STR, id, 0, List.new()))
+    }
+    if tk == types.T_FLOAT {
+        return Err(errh("E0401", n.line, n.col, q("the constant `", nm(c, n.a), "` is a float, which can't be a pattern"), "floats compare with IEEE `==` (NaN != NaN), so a match on one would be unsound; test it with `==` or a range check in an `if`"))
     }
     if !has_trait(c, TR_EQ, ty) {
         return Err(lack_err(c, "E0401", n.line, n.col, q("the constant pattern `", nm(c, n.a), "`"), TR_EQ, ty))
