@@ -102,7 +102,9 @@ if [ "$1" = "--leg" ]; then
     sh scripts/check-imports.sh > $S/imports 2>&1 && cat $S/imports || { echo "FAIL imports"; head -20 $S/imports; }
     # vendor-layout: vendored copies are in .vendor/ only; nothing mentions the layout before it (#130, C400)
     sh scripts/check-vendor-layout.sh > $S/vlayout 2>&1 && cat $S/vlayout || { echo "FAIL vendor-layout"; head -24 $S/vlayout; }
-    sh scripts/version.sh check > $S/version 2>&1 && cat $S/version || { echo "FAIL version: sh scripts/version.sh check"; sed 's/^/  /' $S/version; } ;;
+    sh scripts/version.sh check > $S/version 2>&1 && cat $S/version || { echo "FAIL version: sh scripts/version.sh check"; sed 's/^/  /' $S/version; }
+    # the gdb and lldb printers (debug/), against fake values
+    sh tests/debug/run.sh > $S/debug 2>&1 && cat $S/debug || { echo "FAIL debug printers: sh tests/debug/run.sh"; cat $S/debug; } ;;
   docs)
     # the documentation site (target/site) and its doc tests: scripts/docs.sh, docs/site/CONTRACT.md
     if [ -n "$novendor" ]; then skip "docs: eider-doc $novendor"

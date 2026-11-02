@@ -42,6 +42,7 @@ import eiderc.llvm
 import eiderc.llvm_abi as abi
 import eiderc.wasm
 import eiderc.pkgtest
+import eiderc.sanitize
 import eiderc.suite
 import eiderc.ide
 import eiderc.front
@@ -118,6 +119,8 @@ fn usage_text() -> List[u8] {
         "clang 17 or newer ($EIDER_LLVM_CC), one unit per module and generic instances in 16 shards, each",
         "cached (EIDER_LLVM_UNITS=0: one unit); a release build uses ThinLTO when clang links with lld",
         "(EIDER_LLVM_LTO=0: plain objects); -g adds DWARF line info for the .ei sources (one unit).",
+        "--sanitize[=address,undefined|thread] and --race (thread) build with that sanitizer (sanitize.ei);",
+        "debug/eider_gdb.py and debug/eider_lldb.py print String, List, Map and enums in gdb and lldb.",
         "",
         "errors: every independent error is reported, in the order found, then `error: N errors`",
         "(stderr); with --json one JSON object per line (stdout). --max-errors N shows at most N",
@@ -590,6 +593,7 @@ fn run_cache(a: Args) uses io, fs, clock {
 }
 
 fn main() uses io, fs, net, clock {
+    sanitize.run_if_asked()
     let a = parse_args()
     if a.compile_fail { env.exit(suite.run(a.file)) }
     if is(a.cmd, "test") && a.file.len() == 0 {

@@ -20,6 +20,8 @@ fn main() uses io {
     let mut names_list: List[String] = List.new()
     names_list.push(String.from("a"))
     let flag_ok = names_list.len() == 1
+    let mut ages_map: Map[String, i64] = Map.new()
+    ages_map.insert(String.from("a"), 7)
     print(area(Circle(origin_pt, 2), 3))
     print(flag_ok)
 }

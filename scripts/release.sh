@@ -284,7 +284,7 @@ if [ -n "$binaries" ]; then
   # C, the prelude, the modules), and compiler/ without its tests (the eiderc package, for
   # tools that import the compiler's modules: eider-analyzer)
   mkdir -p "$out/build/src"
-  git archive --format=tar HEAD -- core std compiler VERSION ':(exclude)compiler/tests' | tar -C "$out/build/src" -xf -
+  git archive --format=tar HEAD -- core std compiler debug VERSION ':(exclude)compiler/tests' | tar -C "$out/build/src" -xf -
   hello=$out/build/hello
   mkdir -p "$hello"
   printf 'import core.version\n\nfn main() uses io {\n    print("hello from eider")\n    print(version.VERSION)\n}\n' > "$hello/hello.ei"
@@ -324,7 +324,7 @@ if [ -n "$binaries" ]; then
     rm -rf "$T"
     mkdir -p "$T/bin"
     cp "$W/bin/eiderc" "$W/bin/eider-pkg" "$W/bin/eider-doc" "$W/bin/eider" "$T/bin/"
-    cp -R "$out/build/src/core" "$out/build/src/std" "$out/build/src/compiler" "$out/build/src/VERSION" "$T/"
+    cp -R "$out/build/src/core" "$out/build/src/std" "$out/build/src/compiler" "$out/build/src/debug" "$out/build/src/VERSION" "$T/"
     tested=$(sed -n "/^\[target.$t\]/,/^\[/s/^tested = \([a-z]*\).*/\1/p" "$B/RELEASE.toml")
     {
       echo "# toolchain.toml: an Eider toolchain, installed by \`eider toolchain install\` (docs/site/tooling/eider.md)."
