@@ -1,0 +1,25 @@
+(ITrait 2:7 name=Enc
+  method (IFn 3:8 name=enc end=3:36
+    param (Param 3:12 name=self
+      type (TName 3:12 name=Self))
+    param (Param 3:24 name=out inout
+      type (TName 3:29 name=String))
+    body (Block 3:37 end=5:5
+      stmt (SExpr 4:9
+        expr (EIf 4:18 comptime
+          cond (EReflect 4:21 what=is_enum_type
+            target (TName 4:34 name=Self))
+          then (Block 4:40 end=4:60
+            stmt (SExpr 4:42
+              expr (EMethod 4:46 name=push_str
+                recv (EIdent 4:42 name=out)
+                arg (EArg 4:55
+                  expr (EStr 4:55 value="e")))))
+          else (EBlock 4:67
+            block (Block 4:67 end=4:87
+              stmt (SExpr 4:69
+                expr (EMethod 4:73 name=push_str
+                  recv (EIdent 4:69 name=out)
+                  arg (EArg 4:82
+                    expr (EStr 4:82 value="r"))))))))))
+  attribute (Attr 1:1 name=derive))

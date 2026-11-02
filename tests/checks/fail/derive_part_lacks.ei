@@ -1,0 +1,22 @@
+// expect: E0115 7:22
+// a derived implementation names the field whose type lacks the trait
+@derive
+trait Enc {
+    fn enc(self, inout out: String) {
+        comptime for f in fields(Self) {
+            self.[f].enc(inout out)
+        }
+    }
+}
+
+type Cache = { n: u8 }
+
+fn show[T: Enc](x: T) -> String {
+    let mut out = String.from("")
+    x.enc(inout out)
+    out
+}
+
+fn main() uses io {
+    print(show(Cache(1)))
+}

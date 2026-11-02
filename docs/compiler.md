@@ -3712,6 +3712,49 @@ as a value, or `x.[e]` without a binding), E0832 (a condition not known while ch
 `break`). An error in an iteration is the instance's: a generic body is reported for its
 first instance with errors only, as before.
 
+## C8.42: reflective default implementations
+
+0.4.0 (#99, research #97; decision C600). Code: ast.ei (`R_IS_ENUM`), parse.ei (`is_enum_of`),
+dump.ei, check.ei ("Derived traits": `trait_derives`, `derived_by`, `derived_trait`,
+`derived_method`; hooks in `implements`, `method_call_in`, `instantiate`, `inst_name`,
+`call_decl`, `check_attr_use`, pass 7); tests: tests/run/derive.ei,
+tests/checks/fail/derive_part_lacks.ei; docs: docs/site/reference/traits.md ("Derived
+traits"), docs/site/guide/json.md; eider-json 0.3.1.
+
+**`@derive`.** A trait item with the attribute `@derive` (built in: no `attr` declares it,
+`check_attr_use` accepts it on a trait with no keys and E0820/E0821 apply elsewhere) is a
+derived trait. A record or enum has it when no impl of the trait names its type's head
+(`derived_by`; a bounded or generic impl for the head also turns it off, so
+`impl[T: Enc] Enc for Wrapper[T]` never leaves `Wrapper[X]` half derived). Nothing is
+registered for it: there is no impl node, so nothing is instantiated until used.
+
+**Where it applies.** `implements` (a bound: `x: T` with `T: Enc`) answers yes for such a
+type without looking at its parts, because a part may be `@json(skip)`ped by the trait's
+own default. Method lookup falls back to `derived_method` when the type has no method of
+that name: a FnDef for the trait's method, made once, with `dflt` set and no impl (`inode`
+NONE), so `instantiate`/`inst_name` treat Self as part of the key as they do for an
+inherited default (`f.inode != NONE || f.dflt`), `call_decl` takes Self from the caller,
+and pass 7 skips it. The three call forms are an instance method (`x.m()`), `T.m()` with T a
+type parameter, and `Type.m()` for a type without type parameters or with the expected type.
+An impl that defines the method (or inherits the default) is found first by the existing
+tables, so the owning package overrides a derived trait by implementing it, wholly or one
+method at a time (a type with an impl of the trait is no longer derived, so its other
+methods are the trait's defaults, as for any impl).
+
+**`is_enum_type[T]`.** `EReflect` kind `R_IS_ENUM` (b = type): a `comptime if` condition, true
+for an enum, false for anything else, unknown for a type parameter (the bounds pass), and an
+error as a value. The default body picks `variants(Self)` or `fields(Self)` with it, since
+the branch not taken is not checked.
+
+**Errors.** A part without the trait fails where the body uses it, e.g. E0115 "type u8 has
+no method `enc`" with the help "in the `comptime for` iteration over field `n` of Cache"
+(C8.41's note); a generic body is reported for its first failing instance. No new error code.
+
+**Not done.** A derived trait cannot be implemented for primitives, tuples or List (the
+library supplies those impls, as eider-json does); a trait with required methods is not
+derived (its methods without a body stay missing: calling one is E0115 on the type).
+Associated constants and `eiderc expand` (research #97) are separate work.
+
 ## Profiling: `--profile`
 
 `eiderc build|run|test <file> --profile[=cpu,mem,conc]` (main.ei: `profile`, parsed by
