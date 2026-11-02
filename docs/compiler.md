@@ -3865,6 +3865,69 @@ language's own traits (`Iter` still reads its `Item` off the impl: C8.4). `eider
 trait's methods but not its associated types. A function never instantiated is not checked for
 `C.Item` without a bound, like every other bounds error (C8.4).
 
+## C8.46: floating point (#43)
+
+`f32` and `f64` (decisions C660 to C668; the language rules are in docs/site/reference/types.md).
+
+**Front end.** The lexer (`lex.ei`, `float_tail`) makes a `Float` token of a decimal that has a
+fraction (a `.` followed by a digit), an exponent or an `f32`/`f64` suffix; its `val` is the
+suffix width and the text stays in the source. After a `.` token only an integer is lexed
+(`t.0.1`). The parser's `EFloat` has the token index; a float in a pattern is E0001. A format
+spec's `.N` is `EHole.i` (precision + 1), at most 400.
+
+**Types.** `T_FLOAT` with `a` 0 (f32) or 1 (f64); the fixed type ids `F32 = 11` and `F64 = 12`
+(after `STRING`), so the checker's well-known primitive names (`W.ints`, indexed by type id:
+the six integers, bool, str, `()`, `!`, String, f32, f64) name them like the integers.
+
+**Checking.** `float_literal` reads the literal's text with `std/floatconv` (exact; an infinity
+is E0501), the expected type picks f32 or f64, a negated literal flips the sign bit. IR constants
+are `O_FLOAT` (the IEEE bits). `binary` handles floats before the integer rules: `+ - * / %`
+and the six comparisons become `S_BINARY` on the float type, anything else is E0401; `negate`
+is `S_UNARY U_NEG`; compound assignment goes through the same `S_BINARY`; `cast` accepts every
+pair of numeric types (an int literal operand to a float target is typed by its size,
+`int_lit_hint`). Traits (`lacks`): floats have Copy, Eq, Show and Default and no Ord and no Hash
+(`lack_help` explains it); `<` on floats is built in. A float constant pattern is E0401. `const`
+takes a float literal only. `List.sum` accepts floats. `{x:.N}` is `B_FMT_FLOAT` with the spec
+(precision in bits 52-62, bit 63 set when given); a precision on a non-float, or `#` and the radix
+letters on a float, are E0412.
+
+**Lowering** (`llvm.ei`, the block "floating point" at the end of the file; `llvm_abi.ei`).
+`float`/`double`; `fadd fsub fmul fdiv frem fneg`, `fcmp oeq une olt ole ogt oge`; no fast-math
+flags. `float_cast`: `sitofp`/`uitofp`, `fpext`/`fptrunc`, and float to int as `llvm.trunc`, two
+ordered compares with the exact powers of two bounding the type (`ei_trap` "float conversion out
+of range" when either fails, NaN included), then `fptosi`/`fptoui`. Constants: `0x...` hex
+doubles, `bitcast (i32 N to float)` for f32. Show, print and `{x:.N}` call the runtime
+(`ei_str_push_f64`, `ei_print_f64`, `ei_str_fmt_f64` and the f32 forms; core/eider_float.inc,
+shared by core/eider_rt.c and core/wasm/eider_rt.c). Programs link `-lm` (`add_libs`).
+
+**C ABI.** `scalar` includes floats (class SSE). A coerced aggregate's eightbyte has the class of
+its leaves; an SSE one is `double`, `<2 x float>` (`C_SSEV`) or `float` as clang types them
+(`sse_piece`), mixed with INTEGER pieces in `{ T0, T1 }`; `sig` counts 6 integer and 8 SSE
+registers. AArch64 (`hfa_count`): one to four floats or doubles is `C_HFA`, `[n x T]
+alignstack(8)` as an argument and a result; wasm32: a one-float struct is a float. The test is
+compiler/tests/llvm/abi.ei with its C consumer, and a64.sh compares all exports with clang's
+AArch64 output for the same prototypes.
+
+**WebAssembly.** `c_scalar` names `float`/`double`; the loader fills in `env.ec_m_*` from
+JavaScript's `Math` for the math functions a program calls that the module does not define
+(`math_imports`); core/wasm/libc.c has sqrt, floor, ceil, trunc, the bit casts and an exact
+`fmod`. compiler/tests/wasm/floats.ei.
+
+**Comptime.** `interp.ei` refuses a function with a float local (E0807): it computes with
+integers and would answer wrongly.
+
+**std.** core/libm.ei (the `ec_m_*` bindings, weak libm references in core/eider_core.c),
+std/math (methods on f64 and f32, constants), std/floatconv (decimal to bits in integer Eider,
+used by the checker, `strings.parse_f64` and `parse_f32`). `compiler/` itself uses no floats; the
+seed regenerates for the new front end, and std/strings, which `compiler/` imports, gets
+`parse_f64` only after that, in the next commit.
+
+Tests: tests/run/floats.ei (hand-checked .out), compiler/tests/run/float_trap_*.ei,
+compiler/tests/check/fail/e*_float_*.ei, compiler/tests/{lex_ok,parse_ok}/floats.*,
+tests/std/math.ei and floatconv.ei (157 vectors against strtod/strtof), tests/core/rt_test.c
+(the printer against strtod and printf over random bit patterns), compiler/tests/llvm,
+compiler/tests/wasm/floats.ei.
+
 ## Profiling: `--profile`
 
 `eiderc build|run|test <file> --profile[=cpu,mem,conc]` (main.ei: `profile`, parsed by

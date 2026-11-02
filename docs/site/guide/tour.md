@@ -35,13 +35,37 @@ true
   no implicit conversions: `as` converts, and a conversion whose value doesn't fit traps
   (`integer conversion out of range`). 16-bit integers are not in the language yet.
 - `bool`, `str` (string literals), `String` (owned UTF-8 text), `()` (the unit value).
-- Floating-point types are not in the language yet: they are planned (layer/language in
-  the repository's `docs/design/roadmap.md`).
+- Floats: `f32` and `f64`, IEEE 754 (`1.5`, `1e-3`, `2.5f32`). They never trap, they mix with
+  nothing without `as` (`n as f64`), and `NaN != NaN`; see below and [Numbers](numbers.md).
 - `let` bindings can't be changed; `let mut` ones can. Newlines end statements.
 - Bitwise operators `& | ^ ~ << >>` work on integers; mixing them with comparisons or
   arithmetic needs parentheses (`(a & b) == c`), and the compiler offers them.
 - `const LIMIT: usize = 64` declares a constant; `const X: u64 = comptime f(10)` runs
   `f` at compile time (integer and `bool` constants).
+
+```eider
+fn main() uses io {
+    let radius = 2.5
+    let area = 3.14159 * radius * radius
+    print(area)
+    print("{area:.1}")
+    let n = 7
+    print((n as f64) / 2.0)
+    print(0.1 + 0.2)
+    print(10.9 as i32)
+}
+```
+
+```output
+19.6349375
+19.6
+3.5
+0.30000000000000004
+10
+```
+
+A float prints as the shortest text that reads back as the same value; `as` to an integer
+truncates and traps on a NaN or a value that doesn't fit.
 
 A string literal interpolates: `{expr}` inserts a value's text, and a spec after `:` pads
 or formats it (`{n:>6}`, `{n:#x}`; `{{` is a brace; [Lexical

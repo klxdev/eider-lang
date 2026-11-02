@@ -18,7 +18,8 @@ qualified by their module, so two declarations of one symbol in a program are E0
 
 The parameter and result types must be *C-safe* (E0803 otherwise):
 
-- each parameter is an integer type, `bool` or `str`, and not `inout`;
+- each parameter is an integer type, `f32`, `f64`, `bool` or `str`, and not `inout`
+  (`f32` is `float`, `f64` is `double`);
 - the result is one of those, or `()` (no `->`).
 
 The program is linked with the C library; other libraries are added with `-l <lib>` on
@@ -116,7 +117,7 @@ export_fn = ["pub"] "export" fn_item
 `export fn` makes a function callable from C. An exported function:
 
 - can't be generic (E0805);
-- takes and returns C-safe types: integers, `bool`, `str`, `()` as the result, and records
+- takes and returns C-safe types: integers, `f32`, `f64`, `bool`, `str`, `()` as the result, and records
   whose fields are C-safe (recursively), passed by value (E0803 otherwise). A record with
   its own `Drop` can't cross (E0803);
 - is otherwise an ordinary function, callable from Eider as well.

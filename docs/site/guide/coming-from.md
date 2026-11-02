@@ -29,7 +29,7 @@ What is different:
   them with the next seed regeneration.)
 - **Capabilities**: a function that does I/O says `uses io, fs, ...`, and a dependency gets
   only the capabilities your `eider.toml` grants. Rust has no equivalent.
-- Missing today: `dyn Trait`, macros (by design: `comptime` instead), floats, `async`
+- Missing today: `dyn Trait`, macros (by design: `comptime` instead), `async`
   (by design: blocking code on threads; stackless tasks planned without colouring),
   closures that mutate captures (pass `inout` or use a `Ref`), slices and views.
 - Records are built positionally, `Point(1, 2)`; enum variants are in scope unqualified
@@ -118,7 +118,8 @@ What is different:
 - **Compiled to native code**, no runtime or VM. A program is one binary.
 - **Nominal types**, not structural: two records with the same fields are different types.
 - **Integers, not `number`**: `i32`, `i64`, `u64`, `usize`, ... with overflow checks and
-  explicit `as` conversions. There are no floats yet.
+  explicit `as` conversions. Floats are `f32` and `f64`, IEEE (`NaN != NaN`, no `Ord`, `as` to an
+  integer traps on NaN); see [Numbers](numbers.md).
 - **Values, not references**: assigning a record or List gives an independent value
   (copy-on-write); there is no shared mutable object graph unless you ask for one
   (`Ref[T]`).

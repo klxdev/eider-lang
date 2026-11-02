@@ -34,7 +34,9 @@ Three things make a call to C:
 
 1. **The declaration** names the C symbol. Parameters and the result must be C-safe: an
    integer type (`i32` is `int32_t`, `u64` is `uint64_t`, `usize` is `size_t`, ...),
-   `bool`, or `str` (a `const char *` to NUL-terminated text); the result may also be `()`.
+   `f32` (`float`), `f64` (`double`), `bool`, or `str` (a `const char *` to NUL-terminated text);
+   the result may also be `()`. Records of floats cross by value as C structs do (SSE registers
+   on x86-64, FP registers for up to four floats or doubles on AArch64).
    Anything else (a `String`, a List, a record, an `inout` parameter) is E0803.
 2. **`uses ffi`** on the function that makes the call (E0201 without it).
 3. **An `unsafe` block** (or an `unsafe fn`) around the call (E0802 without it):

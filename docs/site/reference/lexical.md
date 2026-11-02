@@ -134,6 +134,16 @@ int_literal = digit {digit | "_"}
 > **Note:** Floating-point literals and types are planned, not implemented
 > ([roadmap](../../design/roadmap.md), `layer/language`).
 
+## Float literals
+
+A decimal literal is a float when it has a fraction (`1.5`: a `.` followed by a digit), an
+exponent (`1e-3`, `2E10`, `1e+5`) or a suffix (`2.5f32`, `7f64`); `_` may separate digits
+after the first. `1.` is the integer `1` followed by a dot (`3.max(4)`, `0..5`), and after a `.`
+(`t.0.1`) the lexer takes only an integer. The text is read exactly (the nearest float, ties
+to even). Without a suffix the literal has the expected type if it is a float, else `f64`; a
+literal that doesn't fit its type is E0501 and a malformed exponent (`1.5e+`) E0001. There are
+no hexadecimal floats, and no `inf` or `nan` literals ([`std/math`](../../std.md) has them).
+
 ## String literals
 
 A string literal is text between double quotes, on one line. It has type `str`. A `{` or `}` in it is
@@ -258,21 +268,23 @@ An expression in braces can be any expression without `{`, `"` or a comment in i
 a value to a name first), on one line.
 
 After the expression, `:` starts a **format spec**:
-`[[fill]align][+][#][0][width][x|X|b|o]`.
+`[[fill]align][+][#][0][width][.N][x|X|b|o]`.
 
 | Spec | Means |
 |---|---|
 | `8` | at least 8 characters (Unicode scalar values) wide; numbers align right, everything else left |
 | `<8` `>8` `^8` | align left, right or centered in 8 characters |
 | `*^8` | the same, filled with `*` (any ASCII character) instead of spaces |
-| `+` | a `+` before non-negative integers |
+| `+` | a `+` before non-negative numbers (integers and floats) |
 | `x` `X` `b` `o` | an integer in hex (lower or upper case), binary or octal |
 | `#` | the radix prefix: `0x`, `0X`, `0b`, `0o` |
 | `08` | zero padding between the sign or prefix and the digits, to the width |
+| `.2` | floats: two places after the point, the exact value rounded half to even |
 
 `+`, `#`, `0` and the radix letters apply only to integers (E0412 otherwise); a width, fill
-and alignment apply to any type with Show. A precision (`.2`) waits for floating-point
-types. A spec that doesn't have this shape is E0001 at the character that is wrong.
+and alignment apply to any type with Show. A float also takes a precision, `.N` (`{x:.2}`; `N` up to 400): the exact value rounded
+half to even to N places, alongside the width, fill, alignment, `+` and `0` (`{x:+08.2}`); `x`, `X`, `b`, `o`
+and `#` are for integers, and a precision on an integer is E0412. A spec that doesn't have this shape is E0001 at the character that is wrong.
 
 ```eider
 type Item = { name: str, count: u32 }

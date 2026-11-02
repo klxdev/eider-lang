@@ -122,14 +122,17 @@ trapped: RuntimeError
 
 Checked by `scripts/ei check --wasm file.ei`:
 
-- Exported functions take integers, `bool`, `String` and `List[u8]`, and return one of
-  those or `()` (E0806). Other Lists, records, `Option` and `Result` can't cross the
+- Exported functions take integers, `f32`, `f64` (JavaScript numbers), `bool`, `String` and
+  `List[u8]`, and return one of those or `()` (E0806). An `extern "c"` function with float
+  parameters is an import the loader's `imports` supplies. `std/math`'s `sqrt`, `floor`, `ceil`,
+  `trunc`, `%` and the bit casts are in the module; `exp`, `sin`, `pow` and the rest are imports
+  the generated loader fills in with JavaScript's `Math`. Other Lists, records, `Option` and `Result` can't cross the
   boundary yet.
 - No threads: a module that uses `spawn`, `Task`, `Mutex` or `Chan` is E0806.
 - No `main` (the module is a library) and at least one `export fn` (E0805).
 
 ```text
-error[E0806]: parameter `name` has type str; WebAssembly exports take only integers, bool, String and List[u8]
+error[E0806]: parameter `name` has type str; WebAssembly exports take only integers, f32, f64, bool, String and List[u8]
   --> bad.ei:1:17
   |
 1 | export fn greet(name: str) -> i32 { 1 }

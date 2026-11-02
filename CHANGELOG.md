@@ -5,6 +5,16 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## Unreleased (0.4.0)
+
+- **Floating point** (#43): `f32` and `f64`, IEEE 754. Literals (`1.5`, `1e-3`, `2.5f32`),
+  operators and comparisons that never trap (`NaN != NaN`), no mixing with integers without
+  `as`, no `Ord` and no `Hash` (use `total_cmp`), float-to-int `as` traps on NaN or out of range,
+  `{x:.2}` in string literals, the shortest round-trip text on print, exact parsing
+  (`strings.parse_f64`), `std/math` over libm (no capability), SSE and AArch64 HFA classes in the
+  C ABI, `f32`/`f64` in WebAssembly exports and imports. `Decimal` and `BigInt` are not in it.
+  Programs link `-lm`. Decisions C660 to C668; guide/numbers.md.
+
 ## 0.3.0
 
 The language's metaprogramming and string release: comptime runs on an interpreter, attributes

@@ -10,6 +10,7 @@
 
 ## Guides
 
+- [Numbers: integers and floats](guide/numbers.md)
 - [Memory](guide/memory.md)
 - [Errors](guide/errors.md)
 - [Capabilities](guide/capabilities.md)

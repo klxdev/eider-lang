@@ -170,7 +170,7 @@ unary     = ("-" | "!" | "~") unary | postfix
 postfix   = primary { call_args | "." (IDENT | INT) [call_args] | "[" expr "]" | "?" }
 call_args = "(" [ ["inout"] expr { "," ["inout"] expr } [","] ] ")"
 
-primary   = INT | string | "true" | "false"
+primary   = INT | FLOAT | string | "true" | "false"
           | "(" ")" | "(" expr ")" | "(" expr "," [ expr { "," expr } [","] ] ")"
           | "[" "]" | "[" expr { "," expr } [","] "]" | "[" expr ";" INT "]"
           | block

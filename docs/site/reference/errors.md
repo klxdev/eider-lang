@@ -1196,7 +1196,9 @@ fn main() uses io {
 A **format spec that applies only to integers**, used in an [interpolated string](lexical.md#interpolation)
 on a value of another type: `+` (a sign on non-negative numbers), `#` (a radix prefix), `0`
 (zero padding) and the radix letters `x`, `X`, `b` and `o`. A width, a fill and an
-alignment apply to any type. The fix deletes the spec.
+alignment apply to any type. A floating-point value takes `+`, `0` and a precision (`{x:.2}`) but
+not `#` or the radix letters, and a precision on a value that isn't a float is this error too. The
+fix deletes the spec.
 
 ```eider,compile_fail=E0412
 fn main() uses io {
@@ -1221,8 +1223,9 @@ fn main() uses io {
 ## E0501
 
 A **constant out of range**: an integer literal that doesn't fit its type (`let x: u8 =
-256`), a pattern literal that doesn't fit the matched type, and a constant expression whose
-result overflows (`200 + 100` as `u8`), folded at compile time.
+256`), a float literal too large for its type (`let x: f32 = 1e39`), a pattern literal that
+doesn't fit the matched type, and a constant expression whose result overflows (`200 + 100` as
+`u8`), folded at compile time.
 
 ```eider,compile_fail=E0501
 fn main() uses io {
@@ -1299,7 +1302,8 @@ fn main() uses io {
 ## E0504
 
 An **invalid constant initializer**: a `const` must be a literal or a compile-time integer
-or bool expression over other constants, and can't own heap memory (`String`, `List`, ...).
+or bool expression over other constants (a float constant is a literal, possibly negated:
+floats are not folded), and can't own heap memory (`String`, `List`, ...).
 Call a function at compile time with `comptime` (integers and `bool` only, see
 [Compile-time evaluation](comptime.md)), or build the value in a function.
 
@@ -1717,7 +1721,7 @@ export fn greet(name: str) -> i32 { return 1 }
 
 ```text
 $ eiderc check --wasm greet.ei
-error[E0806]: parameter `name` has type str; WebAssembly exports take only integers, bool, String and List[u8]
+error[E0806]: parameter `name` has type str; WebAssembly exports take only integers, f32, f64, bool, String and List[u8]
 ```
 
 Fix: pass integers, `bool`, a `String` or a `List[u8]` across the boundary.
@@ -1725,7 +1729,8 @@ Fix: pass integers, `bool`, a `String` or a `List[u8]` across the boundary.
 ## E0807
 
 A **failed `comptime` evaluation**: the type of a `comptime` constant isn't an integer type
-or `bool`, the evaluation traps (`comptime evaluation of `X` failed: <the trap>`), or it
+or `bool`, the evaluation uses a floating-point value (comptime does not run floats), the
+evaluation traps (`comptime evaluation of `X` failed: <the trap>`), or it
 prints more than one line. See [Compile-time evaluation](comptime.md).
 
 ```eider,compile_fail=E0807

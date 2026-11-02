@@ -163,8 +163,22 @@ and WHATWG's rule, so every conforming decoder counts the same), and validity is
 `fmt` formats integers: `fmt.int(n)`, `fmt.hex(n)`, and with a `Spec` built by chaining,
 `fmt.uint_with(255, fmt.spec().hex().prefix().width(8).zero())` is "0x0000ff". Widths count
 characters. `put_*` forms append to a String, and a `Builder` collects pieces (`add`,
-`add_int`, `add_show` for any Show value, `add_pad`). Floats wait for f64 (C9). Interpolation
-(`"{n:#06x}"`) uses the same rules without a `Spec`.
+`add_int`, `add_show` for any Show value, `add_pad`). Interpolation
+(`"{n:#06x}"`) uses the same rules without a `Spec`, and takes `.N` for floats (`"{x:.2}"`).
+
+`strings.parse_f64` and `parse_f32` read a float exactly (the nearest value, ties to even; an
+optional sign, digits, a `.` fraction, an exponent, or `inf`/`infinity`/`nan`) and return a
+`ParseError`; there is no locale. `std/math` (below) has the functions.
+
+## Math (`std/math`)
+
+Methods on `f64` and `f32` over libm (core/libm.ei; no capability): `sqrt`, `cbrt`, `pow`, `powi`,
+`exp`, `ln`, `log2`, `log10`, `sin`, `cos`, `tan`, the inverse and hyperbolic ones, `atan2`, `hypot`,
+`floor`, `ceil`, `trunc`, `round`, `round_even`, `fract`, `abs`, `signum`, `copysign`, `min`/`max`
+(a NaN operand is ignored), `clamp`, `mul_add`, `rem_euclid`, `is_nan`/`is_finite`/`is_infinite`,
+`to_bits`/`from_bits`, `total_cmp` (the IEEE total order; floats have no `Ord`), and `to_i32`...`to_usize`
+(`None` where `as` would trap); constants `math.PI`, `E`, `TAU`, `EPSILON`, `MAX`, ... and `nan()`,
+`infinity()`. See docs/site/guide/numbers.md.
 
 ## Collections (`std/sort`, `std/deque`, `std/set`, `std/heap`)
 

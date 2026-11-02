@@ -8,6 +8,7 @@ built-in operations on each, and the `as` conversion.
 | Kind | Types |
 |---|---|
 | Integers | `i32`, `i64`, `u8`, `u32`, `u64`, `usize` |
+| Floats | `f32`, `f64` |
 | Booleans | `bool` |
 | Text | `str` (literals), `String` (owned, growable) |
 | Unit | `()` |
@@ -21,9 +22,9 @@ Type names are ordinary identifiers, not keywords: `i32`, `String` and `List` ar
 compiler knows. A type with parameters is written with square brackets: `List[i32]`,
 `Map[String, List[u8]]`.
 
-> **Note:** There are no floating-point types (`f32`, `f64`), no `i8`, `i16`, `u16`, `i128`,
-> `u128` or `isize`, no `char` type and no `dyn Trait`. Floats and `dyn Trait` are planned;
-> see the [roadmap](../../design/roadmap.md) (`layer/language`, P0.7).
+> **Note:** There are no `i8`, `i16`, `u16`, `i128`, `u128` or `isize`, no `char` type, no
+> `Decimal` or `BigInt` and no `dyn Trait`. `dyn Trait` is planned; see the
+> [roadmap](../../design/roadmap.md) (`layer/language`, P0.7).
 
 ## Integer types
 
@@ -140,6 +141,125 @@ See [Runtime behaviour](runtime.md#traps) for what a trap does.
 
 All integer types have `==`, `!=`, `<`, `<=`, `>`, `>=`, by value. Comparisons don't chain:
 `a < b < c` compares a `bool` with `c` and is E0401.
+
+## Floating point: `f32` and `f64`
+
+`f64` is IEEE 754 binary64 (a double) and `f32` binary32 (a float). They are values like any
+other: an overflow is an infinity, `0.0 / 0.0` is a NaN, and nothing traps. A float literal has
+a fraction (`1.5`), an exponent (`1e-3`, `2E10`) or a suffix (`2.5f32`, `7f64`); `_` may
+separate digits. Without a suffix it has the expected type when that is a float, else `f64`.
+`1.` is an integer followed by a dot (`3.max(4)`), and in `t.0.1` the `0` and `1` are tuple
+fields. A literal too large for its type is E0501. An integer literal where a float is wanted
+is E0401 (`let x: f64 = 1` needs `1.0`): there is no mixing of integers, `f32` and `f64`
+without `as`.
+
+The operators are `+ - * / %` (`%` is `fmod`: the sign of the left operand), unary `-`, and
+`== != < <= > >=`. They are IEEE's: a comparison with a NaN is false (`!=` is true), `NaN`
+is not equal to itself, and `0.0 == -0.0`. There are no `+%`, bitwise or shift operators on
+floats.
+
+```eider
+fn main() uses io {
+    let a = 0.1 + 0.2
+    print(a)
+    print(a == 0.3)
+    let third: f32 = 1.0 / 3.0
+    print(third)
+    print(third as f64)
+    print(1.0 / 0.0)
+    print(-1.0 / 0.0)
+    let nan = 0.0 / 0.0
+    print(nan)
+    print(nan == nan)
+    print(nan < 1.0 || nan >= 1.0)
+    print(0.0 == -0.0)
+    print(-0.0)
+}
+```
+
+```output
+0.30000000000000004
+false
+0.33333334
+0.3333333432674408
+inf
+-inf
+NaN
+false
+false
+true
+-0.0
+```
+
+**Text.** `print`, `Show` and interpolation write the shortest digits that read back as the
+same float, in decimal and never in the locale's form: `0.1`, `100.0`, `123456.789`, `1e16`,
+`1.5e-7` (positional from `0.00001` up to below `1e16`, always with a point), `NaN`, `inf`,
+`-inf`, `-0.0`. `{x:.2}` in a string literal writes the exact value rounded half to even to 2
+places, and takes the width, fill, alignment, `+` and `0` flags of the integers
+([Lexical structure](lexical.md#string-literals)): `{x:08.2}`, `{x:+.0}`. `std/strings`
+parses (`parse_f64`, `parse_f32`: exact, the nearest float; see [the standard library](../../std.md)).
+
+**Equality and order.** Floats have `Eq` (the IEEE `==`), `Copy`, `Show` and `Default`
+(`0.0`), and no `Ord` and no `Hash`: `<` works on two floats, but a `List[f64]` can't be
+`sort`ed, a float can't be a `Map` key (E0701), and a record that holds one has `==` but no
+derived order (E0401, the help says why). Use `a.total_cmp(b)` (a total order: `-NaN`, `-inf`,
+...,`-0.0`, `0.0`, ..., `inf`, `NaN`) with `sort_by`, or key by `x.to_bits()`. A float can't
+be a pattern, whether a literal (E0001) or a constant (E0401): `NaN != NaN` makes a match on one
+unsound, so compare with `==` or a range check in an `if`. A `const` of a float type must be
+a literal, possibly negated (E0504); nothing is folded at compile time, and `comptime`
+refuses floats (E0807).
+
+**Conversions.** See [Conversions: `as`](#conversions-as). `std/math` (`import std.math`)
+has the functions as methods (`x.sqrt()`, `a.max(b)`, `y.atan2(x)`, `f64.from_bits(b)`) and
+the constants (`math.PI`); `min` and `max` ignore a NaN operand.
+
+```eider
+import std.math
+import std.sort
+
+fn main() uses io {
+    let n = 7
+    let avg = (n as f64) / 2.0
+    print(avg)
+    print(avg as i32)
+    print(-2.9 as i32)
+    print(2.5.round())
+    print(2.0.sqrt())
+    print(2.0.pow(0.5) == 2.0.sqrt())
+    let x = 3.14159265
+    print("{x:.2} [{x:8.3}] [{x:<8.1}] [{x:+.0}] [{x:08.2}]")
+    print((1e20).to_i32())
+    print((12.9).to_i32())
+    var xs = [3.5, -1.0, 2.25]
+    var best = xs[0]
+    for v in xs { best = best.max(v) }
+    print(best)
+    var ys: List[f64] = List.new()
+    ys.push(2.5)
+    ys.push(-1.0)
+    ys.push(0.5)
+    let sorted = sort.sort_by(ys, |a: f64, b: f64| -> Ordering a.total_cmp(b))
+    print(sorted)
+    print(ys.sum())
+}
+```
+
+```output
+3.5
+3
+-2
+3.0
+1.4142135623730951
+true
+3.14 [   3.142] [3.1     ] [+3] [00003.14]
+None
+Some(12)
+3.5
+[-1.0, 0.5, 2.5]
+2.0
+```
+
+`xs.sum()` on a `List[f64]` adds from the left.
 
 ## `bool`
 
@@ -330,7 +450,7 @@ List; its element type must be known from the context (E0409 otherwise). Indexin
 | `xs.for_each(f)` | `()` | `f: fn(T)` |
 | `xs.any(f)`, `xs.all(f)` | `bool` | `f: fn(T) -> bool` |
 | `xs.fold(init, f)` | `A` | `f: fn(A, T) -> A` |
-| `xs.sum()` | `T` | integers only; traps on overflow |
+| `xs.sum()` | `T` | integers (traps on overflow) or floats |
 
 `push`, `pop` and `clear` need a writable place. Two Lists are equal when they have equal
 elements in the same order; Lists compare lexicographically, then by length; they print as
@@ -574,13 +694,22 @@ fn main() uses io {
 
 ## Conversions: `as`
 
-`e as T` converts an integer to another integer type. It is the only conversion operator,
-and it converts integers only: `bool`, text and every other type are refused (E0401).
+`e as T` converts a number to another numeric type: integers, `f32` and `f64`. It is the
+only conversion operator, and it converts numbers only: `bool`, text and every other type are
+refused (E0401).
 
-The conversion is checked: when the value doesn't fit in T it traps with `integer
-conversion out of range` (exit 101). It never truncates or reinterprets bits; for that use
+Between integers the conversion is checked: when the value doesn't fit in T it traps with
+`integer conversion out of range` (exit 101). It never truncates or reinterprets bits; for that use
 the bitwise operators (`(x & 255) as u8`). A constant that doesn't fit is a compile error
 (E0501). A literal operand takes T as its type (`255 as u8`).
+
+Between floats and integers: an integer becomes the nearest float (exact up to 2^24 for `f32`
+and 2^53 for `f64`, rounded to nearest even beyond); a float becomes an integer by truncating
+toward zero, and traps with `float conversion out of range` when it is a NaN or doesn't fit
+the type (there is no saturation and no undefined behaviour; `x.to_i32()` and the like in
+`std/math` return `None` instead). `f64` to `f32` rounds (an overflow is an infinity) and `f32`
+to `f64` is exact. An integer literal converted to a float is an `i32`, `i64` or `u64` by its
+size.
 
 `as` binds tighter than the binary operators and looser than unary operators:
 `-x as i64` is `(-x) as i64`, and `a + b as u64` is `a + (b as u64)`.

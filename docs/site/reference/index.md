@@ -54,8 +54,8 @@ These are designed or planned, not implemented; each page notes what it is missi
 the [roadmap](../../design/roadmap.md) and the [memory model](../../design/memory-model.md)
 design.
 
-- floating-point types and literals, `char`, the integer widths `i8`, `i16`, `u16`, `i128`,
-  `u128`, `isize`;
+- `char`, `Decimal` and `BigInt`, the integer widths `i8`, `i16`, `u16`, `i128`, `u128`,
+  `isize`;
 - `dyn Trait` (dynamic dispatch);
 - closures that capture by reference (today every closure captures a snapshot);
 - lightweight (stackless) tasks, `select` in the language, structured concurrency;
