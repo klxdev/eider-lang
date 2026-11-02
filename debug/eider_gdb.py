@@ -14,7 +14,7 @@ its variant with the fields of that variant:
 How the values are laid out in the debug information (llvm.ei, di_type):
   String  { p: char*, len, cap }                 the bytes are p[0..len), UTF-8
   List    { d: T*, len, cap }                    the elements are d[0..len)
-  Map     { k: K*, v: V*, s: u8*, len, cap, used }   slot i is an entry when s[i] == 1
+  Map     { k: K*, v: V*, s: u8*, len, cap, used, key0, key1 }   slot i is an entry when s[i] == 1
   enum    { tag: <enumeration of the variants>, <Variant>: { fields } ... }
 
 `bt` leaves out the runtime's frames (ei_main_body, main_run, thread_main, ...);
@@ -125,7 +125,7 @@ def lookup(val):
         return StringPrinter(val)
     if tag.startswith("List[") and names == ["d", "len", "cap"]:
         return ListPrinter(val)
-    if tag.startswith("Map[") and names == ["k", "v", "s", "len", "cap", "used"]:
+    if tag.startswith("Map[") and names in (["k", "v", "s", "len", "cap", "used"], ["k", "v", "s", "len", "cap", "used", "key0", "key1"]):
         return MapPrinter(val)
     if _is_enum(t):
         return EnumPrinter(val)

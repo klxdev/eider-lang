@@ -3887,7 +3887,7 @@ fn di_type(inout e: E, p: lower.P, ty: u32) -> u32 {
         ms.push(di_member(inout e, p, lit("len"), types.U64, 64))
         ms.push(di_member(inout e, p, lit("cap"), types.U64, 128))
     } else if k == types.T_MAP {
-        // { K *k; V *v; uint8_t *s; uint64_t len, cap, used; } (slot i holds an entry when
+        // { K *k; V *v; uint8_t *s; uint64_t len, cap, used, key0, key1; } (slot i holds an entry when
         // s[i] == 1): what the debugger printers (debug/) read
         let kt = di_type(inout e, p, t.a)
         let vt = di_type(inout e, p, t.b)
@@ -3907,6 +3907,8 @@ fn di_type(inout e: E, p: lower.P, ty: u32) -> u32 {
         ms.push(di_member(inout e, p, lit("len"), types.U64, 192))
         ms.push(di_member(inout e, p, lit("cap"), types.U64, 256))
         ms.push(di_member(inout e, p, lit("used"), types.U64, 320))
+        ms.push(di_member(inout e, p, lit("key0"), types.U64, 384))
+        ms.push(di_member(inout e, p, lit("key1"), types.U64, 448))
     } else if k == types.T_ENUM {
         // `tag` is an enumeration of the variants, so a debugger shows `Circle`, not 1
         let d = types.def_of(p.t, ty)
