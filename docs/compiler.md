@@ -4112,6 +4112,17 @@ llvm.ei expands it to two C arguments, the address of the bytes and the length (
 has the contract; compiler/tests/run/ffi_bytes.ei the test. The module that binds them
 (core/sys.ei) can use them only after the seed knows the feature (seed/README.md "The rule").
 
+## C8.51: `Task.catch` (#54)
+
+`Task.catch(f)` with `f: fn() -> T` (no parameters, borrowed like `Mutex.update`'s closure) is
+`Result[T, String]`: `Ok` of its result, or `Err` of the text of the trap that ended it
+(decision C803, core/RUNTIME.md "Containing a trap"). B_TASK_CATCH; `task_catch` in check.ei
+instantiates the prelude's `Result` with `T` and `String`; the glue kind GK_CATCH makes
+`catchrun_R(fv, slot)` (calls the closure, keeps its result in the slot) and `catch_R(f)`
+(runs `ei_try(catchrun_R, f, slot, &msg)` and builds the Result). It needs no capability (it
+starts no thread). The interpreter refuses it. Tests: compiler/tests/run/task_catch.ei, and
+tests/std/task_trap.ei for std/task.
+
 ## C8.52: seeded Map hashing (#55)
 
 `Map` hashes keys with SipHash-1-3 under a key kept in the Map (decision C805). The map type grows

@@ -108,6 +108,38 @@ with 101. A `longjmp` out of a failed test does not run drops, so values owned
 by the failed test leak, and a lock held at the moment of the trap stays held (for example a
 trap inside a `Mutex.update` closure). Tests after it that use the same Mutex deadlock.
 
+### Containing a trap
+
+`int32_t ei_try(void (*fn)(void *, void *), void *a, void *b, ei_String *msg)` runs `fn(a, b)`.
+It returns 0 when `fn` returns. If a trap ends `fn` on this thread (overflow, bounds, `panic`,
+`assert`, out of memory, a failed lock), `ei_trap` does not report or exit: it keeps the text
+(`<msg> (<file>:<line>)`, the report without `eider: runtime error: `), and `ei_try` returns
+1 with that text in `*msg` (a String the caller owns). Generated code reaches it through
+`Task.catch(f)` (docs/compiler.md "C8.51"; the glue `catch_R` makes `Result[T, String]`).
+Frames nest (the innermost catches), and a trap inside a test block that is inside a `catch`
+is the catch's. The design (decision C803) and its limits:
+
+- **No unwinding.** The trap is a `longjmp` to the `setjmp` in `ei_try`, so the frames
+  between are abandoned **without their drops**: memory they owned is not freed (a leak,
+  reported by the counting allocator), a `Drop` impl does not run, counts of shared handles
+  they held stay up (a `Task` never joins, a `Chan` is never freed). The leak is bounded by
+  what one contained call built. Stack unwinding is not available in C, and cleanup code on
+  every call would cost the code that does not trap; so containment is at a call you choose.
+- **Locks.** Each thread remembers the `ei_mutex` locks it holds (32, innermost last); a
+  contained trap unlocks those taken since the `ei_try` began. So a built-in `Mutex` whose
+  `update` closure trapped, a channel, and a Task's lock are usable again, with the value as
+  the closure left it (it may be logically inconsistent: the traps are checked operations,
+  none leaves a half-built buffer except an out-of-memory in the middle of a `Chan` send).
+  A lock that is a channel holding the value (std/sync's `Lock`) is not an `ei_mutex`: its
+  `modify` took the value out, so a trap in `f` loses it and the lock stays empty.
+- **Not contained.** Stack overflow (the fault handler ends the process with 101 from the
+  signal handler: it cannot `longjmp` off a stack that is exhausted), `env.exit`, `_exit`, a
+  signal that kills the process, and a trap in a thread that has no `ei_try` around it (as before:
+  report on stderr, exit 101; the main thread is such a thread unless the program catches).
+  In a WebAssembly module a trap is `unreachable` and cannot be caught: `ei_try` just
+  calls `fn`.
+- A profiled build (`--profile`) restores the shadow stack depth like a failed test.
+
 ## Map hashing
 
 A `Map` is `{ K *keys; V *vals; uint8_t *state; len, cap, used, key0, key1 }` (the last two
@@ -522,6 +554,7 @@ handles keep their data in `ei_h_*` objects.
 ## Known gaps
 
 - Traps do not unwind: no drops run (irrelevant when exiting; a leak and possibly a held lock
-  in `test` mode, see above).
+  in `test` mode, see above; with `ei_try`, a leak of what the abandoned frames owned,
+  "Containing a trap").
 - `ei_trap` called while a runtime lock is held (an allocation failure during `ei_chan_send`
   growth) leaves that lock held. Only reachable on out-of-memory.

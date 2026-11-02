@@ -7,6 +7,11 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 
 ## Unreleased (0.5.0, runtime and std)
 
+- **Containing a trap** (#54): `Task.catch(f)` runs a closure and gives `Ok(result)` or `Err(text
+  of the trap)`; std/task has `catch`, `spawn_caught`, pools that survive a job's trap
+  (`Pool.traps()`, `Future.result`) and groups whose child can trap. No unwinding: the frames the
+  trap leaves are abandoned without their drops. Decisions C803, C804; docs/runtime.md "What is
+  safe afterwards".
 - **Seeded Map hashing** (#55): Maps hash keys with SipHash-1-3 under a key of their own made from
   OS randomness; `Map.deterministic()` for tests. **The iteration order of a Map is unspecified**
   (it differs between Maps and runs); programs and tests that printed a Map in slot order must sort

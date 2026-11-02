@@ -1,0 +1,10 @@
+42
+integer overflow in + (compiler/tests/run/task_catch.ei:7)
+index out of bounds (compiler/tests/run/task_catch.ei:10)
+no way (compiler/tests/run/task_catch.ei:30)
+fine
+7
+true
+11
+integer overflow in + (compiler/tests/run/task_catch.ei:7)
+done

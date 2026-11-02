@@ -11,6 +11,13 @@
 //!   the first error.
 //! - `Pool`: a fixed set of worker threads taking jobs from a bounded queue (back-pressure:
 //!   submitting waits while the queue is full, until a deadline).
+//! - Containing a trap (decision C803, core/RUNTIME.md "Containing a trap"): `catch(f)` runs
+//!   `f` and gives `Ok(result)`, or `Err(text)` if a trap (overflow, bounds, `panic`, out of
+//!   memory) ended it; `spawn_caught(f)` is that on a thread of its own, so `join` gives the
+//!   outcome. A pool worker catches each job's trap and goes on (`Pool.traps`), `Pool.run`'s
+//!   future then holds the error (`Future.result`), and a group's child that traps fails the
+//!   group. What a trapped job built is not dropped (it leaks), and a `sync.Lock` it held in
+//!   `modify` stays empty: see "What is safe afterwards" in docs/runtime.md.
 //!
 //! These run on OS threads; when the compiler makes stackless tasks from functions that use a
 //! blocking capability (C4), the same API runs them on the pool's workers instead.
@@ -164,12 +171,33 @@ pub fn group_until[T](parent: Token, dl: time.Deadline) -> Group[T] {
     Group(parent, parent.child_until(dl), List.new(), List.new(), sync.lock(List.new()))
 }
 
+/// Runs `f` and gives `Ok(its result)`, or `Err(the text of the trap that ended it)`: an
+/// overflow, an index out of bounds, a division by zero, `panic`, out of memory (the text
+/// names the file and line, as the report of an uncontained trap does). The thread goes on.
+/// What `f` was building is gone without its drops (its memory leaks, a `Drop` does not run),
+/// and the built-in `Mutex` locks it held are released, with the value as `f` left it. A
+/// stack overflow, `env.exit` and the end of the process are not contained. Traps of the
+/// main thread outside `catch` end the process as before.
+pub fn catch[T](f: fn() -> T) -> Result[T, String] { Task.catch(f) }
+
+/// `spawn` of a thread that runs `f` under `catch`: `join` gives the outcome and the process
+/// goes on if `f` traps.
+pub fn spawn_caught[T](f: fn() -> T) -> Task[Result[T, String]] uses threads {
+    spawn(|| -> Result[T, String] { Task.catch(f) })
+}
+
 /// What a child runs: `f` with the token (unless it is cancelled already), recording an
-/// error and cancelling the siblings when it fails.
+/// error and cancelling the siblings when it fails. A child that traps fails (its text is
+/// the error).
 fn run_child[T](f: fn(Token) -> Result[T, String], tok: Token, errs: sync.Lock[List[String]], out: chan.Channel[Result[T, String]]) uses io, clock {
     let r: Result[T, String] = match tok.reason() {
         Some(why) => Err(why)
-        None => f(tok)
+        None => {
+            match Task.catch(|| -> Result[T, String] { f(tok) }) {
+                Ok(x) => x
+                Err(why) => Err(trapped(why))
+            }
+        }
     }
     match r {
         Ok(v) => {}
@@ -246,23 +274,42 @@ impl[T] Group[T] {
     }
 }
 
+fn trapped(why: String) -> String {
+    let mut m = String.from("trapped: ")
+    m.append(why)
+    m
+}
+
 // ---- the pool
 
-/// Worker threads taking jobs from a bounded queue. Copies share the pool.
-pub type Pool = { jobs: chan.Channel[fn()], workers: List[Task[i32]] }
+/// Worker threads taking jobs from a bounded queue. Copies share the pool. A job that traps
+/// is contained (`catch`): the worker goes on with the next job, and the trap's text is kept
+/// (`traps`).
+pub type Pool = { jobs: chan.Channel[fn()], workers: List[Task[i32]], lost: sync.Lock[List[String]] }
 
 /// A pool of `n` workers (at least 1) and a queue of `queue` jobs (at least 1).
 pub fn pool(n: usize, queue: usize) -> Pool uses threads, io, clock {
     if n == 0 { panic("task.pool: needs at least one worker") }
     let jobs: chan.Channel[fn()] = chan.bounded(queue)
+    let lost: sync.Lock[List[String]] = sync.lock(List.new())
     let mut ws: List[Task[i32]] = List.new()
     for i in 0..n {
         let js = jobs
+        let lo = lost
         ws.push(spawn(|| -> i32 {
             let mut going = true
             while going {
                 match js.recv(time.never()) {
-                    chan.Value(job) => job()
+                    chan.Value(job) => {
+                        match Task.catch(job) {
+                            Ok(u) => {}
+                            Err(why) => {
+                                lo.modify(|inout l: List[String]| -> () {
+                                    if l.len() < MAX_TRAPS { l.push(why) }
+                                })
+                            }
+                        }
+                    }
                     chan.Empty => {}
                     chan.Closed => { going = false }
                 }
@@ -270,18 +317,38 @@ pub fn pool(n: usize, queue: usize) -> Pool uses threads, io, clock {
             0
         }))
     }
-    Pool(jobs, ws)
+    Pool(jobs, ws, lost)
 }
 
-/// A job's result, filled in when it has run.
-pub type Future[T] = { ch: chan.Channel[T] }
+/// How many trap texts a pool keeps.
+const MAX_TRAPS: usize = 64
+
+/// A job's result, filled in when it has run: the value, or the text of the trap that ended
+/// the job.
+pub type Future[T] = { ch: chan.Channel[Result[T, String]] }
 
 impl[T] Future[T] {
-    /// The result, waiting for it until `dl` (None: not done by then; ask again).
+    /// The result, waiting for it until `dl` (None: not done by then; ask again; also None if
+    /// the job trapped: ask `result` to tell them apart).
     /// Cancel-safe: giving up leaves the result for a later `get`.
     fn get(self, dl: time.Deadline) -> Option[T] uses io, clock {
         match self.ch.recv(dl) {
-            chan.Value(v) => Some(v)
+            chan.Value(r) => {
+                match r {
+                    Ok(v) => Some(v)
+                    Err(why) => None
+                }
+            }
+            chan.Empty => None
+            chan.Closed => None
+        }
+    }
+
+    /// The outcome, waiting for it until `dl` (None: not done by then; ask again): Ok(the
+    /// value) or Err(the text of the trap that ended the job).
+    fn result(self, dl: time.Deadline) -> Option[Result[T, String]] uses io, clock {
+        match self.ch.recv(dl) {
+            chan.Value(r) => Some(r)
             chan.Empty => None
             chan.Closed => None
         }
@@ -301,12 +368,17 @@ impl Pool {
 
     /// Runs `f` on a worker; its result arrives in the Future. Err as for `submit`.
     fn run[T](self, f: fn() -> T, dl: time.Deadline) -> Result[Future[T], String] uses io, clock {
-        let out: chan.Channel[T] = chan.bounded(1)
+        let out: chan.Channel[Result[T, String]] = chan.bounded(1)
         let o = out
         self.submit(|| {
-            let z = o.try_send(f())
+            let z = o.try_send(Task.catch(f))
         }, dl)?
         Ok(Future(out))
+    }
+
+    /// The texts of the traps that ended jobs on this pool (the first 64), oldest first.
+    fn traps(self) -> List[String] {
+        self.lost.modify(|inout l: List[String]| -> List[String] l.copy())
     }
 
     /// Workers in the pool.

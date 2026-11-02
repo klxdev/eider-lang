@@ -61,6 +61,17 @@ static _Atomic(const char *) trap_file;
 static _Atomic(const char *const *) trap_files;
 static atomic_int trap_nfiles;
 static _Thread_local jmp_buf *trap_jmp;
+/* The innermost ei_try of this thread ("Containing a trap" in core/RUNTIME.md). */
+typedef struct ei_try_frame {
+  jmp_buf jb;
+  struct ei_try_frame *prev;
+  char *volatile msg;
+  uint32_t held; /* ei_mutex locks this thread held when the frame was made */
+#ifdef EI_RT_PROFILE
+  uint32_t depth;
+#endif
+} ei_try_frame;
+static _Thread_local ei_try_frame *try_top;
 /* Taken by the first thread that traps without a hook and never released: a second
    trapping thread waits here while the first reports and exits (exit must not race). */
 static pthread_mutex_t dying = PTHREAD_MUTEX_INITIALIZER;
@@ -85,6 +96,14 @@ _Noreturn void ei_trap(const char *msg, int32_t line) {
     }
   }
   fflush(stdout);
+  if (try_top) {
+    /* contained: the report is kept for ei_try's caller, the thread goes on from there */
+    int n = snprintf(NULL, 0, "%s (%s:%" PRId32 ")", msg, file, line);
+    char *m = n >= 0 ? malloc((size_t)n + 1) : NULL;
+    if (m) snprintf(m, (size_t)n + 1, "%s (%s:%" PRId32 ")", msg, file, line);
+    try_top->msg = m;
+    longjmp(try_top->jb, 1);
+  }
   if (trap_jmp) {
     printf("FAILED\n    %s (%s:%" PRId32 ")\n", msg, file, line);
     fflush(stdout);
@@ -419,17 +438,68 @@ void ei_mutex_init(ei_mutex *m) {
   }
   pthread_mutexattr_destroy(&a);
 }
+/* The locks this thread holds, innermost last, so ei_try can release those a contained trap
+   abandoned (more than EI_HELD_MAX at once are counted but not remembered). */
+#define EI_HELD_MAX 32
+static _Thread_local ei_mutex *held_locks[EI_HELD_MAX];
+static _Thread_local uint32_t held_n;
+static void held_add(ei_mutex *m) {
+  if (held_n < EI_HELD_MAX) held_locks[held_n] = m;
+  held_n++;
+}
+static void held_del(ei_mutex *m) {
+  uint32_t top = held_n < EI_HELD_MAX ? held_n : EI_HELD_MAX;
+  for (uint32_t i = top; i > 0; i--) {
+    if (held_locks[i - 1] == m) {
+      for (uint32_t j = i; j < top; j++) held_locks[j - 1] = held_locks[j];
+      break;
+    }
+  }
+  if (held_n > 0) held_n--;
+}
 void ei_mutex_lock(ei_mutex *m) {
 #ifdef EI_RT_PROFILE
   if (prof_conc_on()) {
     prof_mutex_lock(m);
+    held_add(m);
     return;
   }
 #endif
   if (pthread_mutex_lock(&m->mu) != 0) ei_trap("cannot lock a mutex", 0);
+  held_add(m);
 }
 void ei_mutex_unlock(ei_mutex *m) {
+  held_del(m);
   if (pthread_mutex_unlock(&m->mu) != 0) ei_trap("cannot unlock a mutex", 0);
+}
+
+int32_t ei_try(void (*fn)(void *, void *), void *a, void *b, ei_String *msg) {
+  ei_try_frame fr;
+  fr.prev = try_top;
+  fr.msg = NULL;
+  fr.held = held_n;
+#ifdef EI_RT_PROFILE
+  fr.depth = ei_prof_depth;
+#endif
+  try_top = &fr;
+  if (setjmp(fr.jb) == 0) {
+    fn(a, b);
+    try_top = fr.prev;
+    return 0;
+  }
+  /* a trap ended fn: its frames are gone without their drops (values they owned leak), so the
+     locks they held are released and the thread goes on */
+  try_top = fr.prev;
+  uint32_t top = held_n < EI_HELD_MAX ? held_n : EI_HELD_MAX;
+  while (top > fr.held) pthread_mutex_unlock(&held_locks[--top]->mu);
+  held_n = fr.held;
+#ifdef EI_RT_PROFILE
+  ei_prof_unwind(fr.depth);
+#endif
+  char *m = fr.msg;
+  *msg = ei_str_from(m ? m : "trap");
+  free(m);
+  return 1;
 }
 void ei_mutex_destroy(ei_mutex *m) { pthread_mutex_destroy(&m->mu); }
 

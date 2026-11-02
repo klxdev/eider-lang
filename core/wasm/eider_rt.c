@@ -129,6 +129,14 @@ void ei_map_seed(uint64_t *key) {
   key[1] = EI_MAP_DET_K1;
 }
 
+/* A trap in a WebAssembly module is `unreachable`: it cannot be contained, so a contained call
+   just runs (core/RUNTIME.md "Containing a trap"). */
+int32_t ei_try(void (*fn)(void *, void *), void *a, void *b, ei_String *msg) {
+  (void)msg;
+  fn(a, b);
+  return 0;
+}
+
 /* In-place List operations (docs/compiler.md "C8.49"). The caller owns the buffer (it made it
    unique). ei_list_open opens a gap of n elements at index `at` (<= *len): grows the buffer
    if needed, moves the tail up and adds n to *len; the gap is uninitialised. ei_list_close

@@ -1,0 +1,67 @@
+// Task.catch(f) runs a closure and gives Ok(its result) or Err(the text of the trap that ended
+// it) (docs/compiler.md "C8.51", core/RUNTIME.md "Containing a trap"): arithmetic overflow,
+// bounds, division, `panic`. The thread goes on; the Mutex lock a trapped `update` held is
+// released; a catch in a catch works; a trap outside any catch still ends the process.
+fn boom(n: i32) -> i32 {
+    let a: i32 = 2147483647
+    a + n
+}
+
+fn at(xs: List[i32], i: usize) -> i32 { xs[i] }
+
+fn main() uses io, threads {
+    let ok = Task.catch(|| -> i32 { 40 + 2 })
+    match ok {
+        Ok(v) => print(v)
+        Err(e) => print(e)
+    }
+    let n = 5
+    let r1 = Task.catch(|| -> i32 { boom(n) })
+    match r1 {
+        Ok(v) => print(v)
+        Err(e) => print(e)
+    }
+    let xs: List[i32] = List.new()
+    let r2 = Task.catch(|| -> i32 { at(xs, 3) })
+    match r2 {
+        Ok(v) => print(v)
+        Err(e) => print(e)
+    }
+    let r3 = Task.catch(|| { panic("no way") })
+    match r3 {
+        Ok(v) => print("unit ok")
+        Err(e) => print(e)
+    }
+    let r4 = Task.catch(|| -> String { String.from("fine") })
+    print(r4.unwrap())
+    let r5 = Task.catch(|| -> i32 {
+        let inner = Task.catch(|| -> i32 { boom(n) })
+        match inner {
+            Ok(v) => v
+            Err(e) => 7
+        }
+    })
+    print(r5.unwrap())
+
+    // a lock held by the trapped closure is released
+    let m = Mutex.new(10)
+    let r6 = Task.catch(|| {
+        m.update(|v: i32| -> i32 { boom(v) })
+    })
+    print(r6.is_err())
+    m.set(11)
+    print(m.get())
+
+    // in a thread of its own: the task ends with the error value
+    let t = spawn(|| -> Result[i32, String] { Task.catch(|| -> i32 { boom(n) }) })
+    match t.join() {
+        Ok(v) => print(v)
+        Err(e) => print(e)
+    }
+    // many in a row leak nothing the counting allocator can see besides what the frames owned
+    for i in 0..100 {
+        let r = Task.catch(|| -> i32 { boom(i + 1) })
+        if r.is_ok() { print("unexpected") }
+    }
+    print("done")
+}

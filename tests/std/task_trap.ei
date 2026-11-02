@@ -1,0 +1,74 @@
+// Containing a trap (decision C803): task.catch, spawn_caught, a pool whose job traps (the
+// worker goes on, the future holds the error, the trap is recorded), a group whose child traps,
+// and what stays usable afterwards (a built-in Mutex whose update trapped). An uncontained
+// trap in the main thread still ends the process (compiler/tests/run/trap_*.ei).
+import std.task
+import std.time
+
+fn boom(n: i64) -> i64 {
+    let big: i64 = 9223372036854775807
+    big + n
+}
+
+fn first(xs: List[i64], i: usize) -> i64 { xs[i] }
+
+fn err_of(r: Result[i64, String]) -> String {
+    match r {
+        Ok(v) => String.from_int(v)
+        Err(e) => e
+    }
+}
+
+fn main() uses io, clock, threads {
+    print(err_of(task.catch(|| -> i64 { 5 })))
+    print(err_of(task.catch(|| -> i64 { boom(1) })))
+
+    // a thread of its own: join gives the outcome
+    let t = task.spawn_caught(|| -> i64 { boom(2) })
+    print(err_of(t.join()))
+    let t2 = task.spawn_caught(|| -> i64 { 6 * 7 })
+    print(err_of(t2.join()))
+
+    // the pool: a trapping job does not take its worker down
+    let pool = task.pool(2, 8)
+    let bad = pool.run(|| -> i64 { boom(3) }, time.never()).unwrap()
+    print(err_of(bad.result(time.never()).unwrap()))
+    let bad2 = pool.run(|| -> i64 {
+        let xs: List[i64] = List.new()
+        first(xs, 4)
+    }, time.never()).unwrap()
+    print(bad2.get(time.never()).is_none())
+    var futs: List[task.Future[i64]] = List.new()
+    for i in 0..10 {
+        let k = i as i64
+        futs.push(pool.run(|| -> i64 { k + 1 }, time.never()).unwrap())
+    }
+    var sum: i64 = 0
+    for f in futs { sum += f.get(time.never()).unwrap() }
+    print(sum)
+    // a job without a future
+    pool.submit(|| { panic("job panics") }, time.never())
+    let tail = pool.run(|| -> i64 { 1 }, time.never()).unwrap()
+    print(tail.get(time.never()).unwrap())
+    let traps = pool.traps()
+    print(traps.len())
+    print(traps[0])
+    pool.shutdown()
+
+    // a group: a child that traps fails the group and cancels the others
+    var g: task.Group[i64] = task.group(task.root())
+    g.spawn(|tk: task.Token| -> Result[i64, String] { Ok(boom(4)) })
+    g.spawn(|tk: task.Token| -> Result[i64, String] {
+        tk.wait(time.after_ms(2000))
+        Ok(1)
+    })
+    print(err_of(g.wait().map(|v: List[i64]| -> i64 { 0 })))
+
+    // a built-in Mutex whose update trapped is usable again
+    let m = Mutex.new(1)
+    let r = task.catch(|| -> () { m.update(|v: i32| -> i32 { v + 2147483647 }) })
+    print(r.is_err())
+    m.set(5)
+    print(m.get())
+    print("done")
+}

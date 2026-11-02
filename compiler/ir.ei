@@ -279,6 +279,9 @@ pub const B_LIST_SLICE: u32 = 57
 pub const B_LIST_FILLED: u32 = 58
 /// B_MAP_DETERMINISTIC -> ty: an empty Map with the fixed seed (`Map.deterministic()`, decision C805)
 pub const B_MAP_DETERMINISTIC: u32 = 59
+/// B_TASK_CATCH(f) -> Result[T, String] (`Task.catch(f)`, f: fn() -> T borrowed): runs f; Ok(its
+/// result), or Err(the text of the trap that ended it) (docs/compiler.md, "C8.51")
+pub const B_TASK_CATCH: u32 = 60
 
 pub fn builtin_name(b: u32) -> str {
     match b {
@@ -342,6 +345,7 @@ pub fn builtin_name(b: u32) -> str {
         57 => "slice"
         58 => "filled"
         59 => "deterministic"
+        60 => "catch"
         _ => "builtin"
     }
 }

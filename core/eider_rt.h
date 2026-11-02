@@ -453,6 +453,14 @@ static inline void ei_ref_update_end(int64_t *st) { *st = 0; }
 
 typedef struct { char *p; uint64_t len; uint64_t cap; } ei_String;
 ei_String ei_str_from(const char *s);
+
+/* Containing a trap (decision C803; core/RUNTIME.md "Containing a trap"): runs fn(a, b) and
+   returns 0; if a trap (overflow, bounds, panic, out of memory) ends it on this thread, the trap
+   is not reported and the process does not exit: the frames fn built are abandoned without
+   their drops, the ei_mutex locks they held are released, *msg is the trap's text ("integer
+   overflow in + (file:3)") and the result is 1. Nests; a stack overflow and exit are not
+   contained. */
+int32_t ei_try(void (*fn)(void *, void *), void *a, void *b, ei_String *msg);
 ei_String ei_str_from_i64(int64_t v);
 void ei_drop_String(ei_String *s);
 /* A copy that shares the buffer (O(1)): what generated code calls for a String copy. */

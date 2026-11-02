@@ -208,9 +208,43 @@ joins its threads (a Task's last drop joins it).
 
 **Pool.** `task.pool(workers, queue)`; `submit(job, dl)` (Err if the queue stays full until
 `dl`, or after shutdown: then the job never runs), `run(f, dl) -> Future[T]` with `fut.get(dl)`
-(cancel-safe: giving up leaves the result for a later `get`), `size`, `queued`, `shutdown`
-(no new jobs; the queued ones finish; waits for the workers). Back-pressure is the bounded
-queue.
+(cancel-safe: giving up leaves the result for a later `get`) and `fut.result(dl)` (the same, but
+`Ok(value)` or `Err(text of the trap)`), `size`, `queued`, `traps()`, `shutdown` (no new jobs;
+the queued ones finish; waits for the workers). Back-pressure is the bounded queue.
+
+**Containing a trap** (decision C803; core/RUNTIME.md "Containing a trap"). A trap (overflow,
+index out of bounds, division by zero, `panic`, `assert`, out of memory) ends the process
+(exit 101) wherever it happens, except inside `Task.catch(f)` (std/task: `task.catch(f)`),
+which returns `Err(text)` and lets the thread go on:
+
+```
+match task.catch(|| -> Response { handler(req) }) {
+    Ok(resp) => resp
+    Err(why) => internal_error(why)        // a 500; the worker serves the next request
+}
+```
+
+`task.spawn_caught(f)` is that on a thread of its own (`join` gives the `Result`). A pool worker
+catches each job's trap itself and goes on with the next job (`pool.traps()` keeps the first 64
+texts); the `Future` of `pool.run` then holds `Err(text)` (`get` returns `None`: use `result`); a
+group child that traps fails the group (`trapped: <text>`). The main thread's traps, outside a
+`catch`, are as before.
+
+*What is safe afterwards.* There is no unwinding: the call that trapped is abandoned where it
+stood, so (1) what its frames owned is **not dropped**: the memory leaks (bounded by one call's
+allocations), a `Drop` impl does not run (so a file descriptor held by a value in an abandoned
+frame stays open: keep resources in the frame that calls `catch` and close them after it
+returns), counts of shared handles stay up; (2) the locks of the built-in `Mutex` (and the
+runtime's channel and task locks) that the abandoned frames held are released, and the value is
+as the closure left it, which a trap in the middle of a multi-step update can leave logically
+inconsistent; (3) a `sync.Lock` (std/sync, the lock under channels, groups and tokens) whose
+`modify` closure trapped has lost its value: the lock stays empty and every later user waits
+forever, so closures given to `modify` should not trap (use checked arithmetic or the built-in
+`Mutex` for state a handler may corrupt); (4) a stack overflow, `env.exit` and a trap on a thread
+with no `catch` around it end the process; (5) shared state the handler changed before the trap
+(a Map in a `Mutex`, a counter) keeps those changes: the catch undoes nothing. A leak per trap is
+the price of not paying for unwinding on every call; a server that traps often is a server with
+a bug to fix, and one that restarts workers has a better answer than leaking.
 
 ## Event loop and timers (`std/event`)
 
@@ -415,6 +449,8 @@ calls pays most. `EIDER_PROF=off` leaves only the shadow stack.
    unique); after the next seed.
 
 ## Known limits
+
+- A contained trap leaks what its frames owned and does not run their drops (above).
 
 - An `Atomic` must be freed by hand; a forgotten `free` leaks one cell (16 bytes).
 - A `Pool` must be shut down: its workers hold the queue open, and the last drop of a worker

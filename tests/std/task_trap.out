@@ -1,0 +1,15 @@
+5
+integer overflow in + (tests/std/task_trap.ei:10)
+integer overflow in + (tests/std/task_trap.ei:10)
+42
+integer overflow in + (tests/std/task_trap.ei:10)
+true
+55
+1
+1
+job panics (tests/std/task_trap.ei:50)
+trapped: integer overflow in + (tests/std/task_trap.ei:10)
+true
+5
+done
+exit 0

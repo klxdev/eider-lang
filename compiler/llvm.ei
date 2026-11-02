@@ -2852,7 +2852,7 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         bset(inout e, p, s, r)
         return
     }
-    if b == ir.B_SPAWN || b == ir.B_MUTEX_NEW || b == ir.B_CHAN_NEW || b == ir.B_TASK_JOIN || b == ir.B_MUTEX_GET || b == ir.B_MUTEX_SET || b == ir.B_MUTEX_UPDATE || b == ir.B_CHAN_SEND {
+    if b == ir.B_SPAWN || b == ir.B_TASK_CATCH || b == ir.B_MUTEX_NEW || b == ir.B_CHAN_NEW || b == ir.B_TASK_JOIN || b == ir.B_MUTEX_GET || b == ir.B_MUTEX_SET || b == ir.B_MUTEX_UPDATE || b == ir.B_CHAN_SEND {
         thread_builtin(inout e, p, s)
         return
     }
@@ -3269,6 +3269,7 @@ fn thread_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
     if b == ir.B_SPAWN { op = "spawn_" }
     if b == ir.B_TASK_JOIN || b == ir.B_MUTEX_GET || b == ir.B_MUTEX_SET || b == ir.B_MUTEX_UPDATE || b == ir.B_CHAN_SEND { gty = arg_ty(p, barg(p, s, 0)) }
     if b == ir.B_TASK_JOIN { op = "join_" }
+    if b == ir.B_TASK_CATCH { op = "catch_" }
     if b == ir.B_MUTEX_GET { op = "get_" }
     if b == ir.B_MUTEX_SET { op = "set_" }
     if b == ir.B_MUTEX_UPDATE { op = "upd_" }
@@ -3282,7 +3283,7 @@ fn thread_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
     }
     let mut d: List[u8] = List.new()
     if !is_scalar(p, s.ty) { d = bdst(inout e, p, s) }
-    let gk = if b == ir.B_SPAWN { lower.GK_SPAWN } else if b == ir.B_MUTEX_NEW { lower.GK_MXNEW } else if b == ir.B_CHAN_NEW { lower.GK_CHNEW } else if b == ir.B_TASK_JOIN { lower.GK_JOIN } else if b == ir.B_MUTEX_GET { lower.GK_MXGET } else if b == ir.B_MUTEX_SET { lower.GK_MXSET } else if b == ir.B_MUTEX_UPDATE { lower.GK_MXUPD } else { lower.GK_CHSEND }
+    let gk = if b == ir.B_SPAWN { lower.GK_SPAWN } else if b == ir.B_MUTEX_NEW { lower.GK_MXNEW } else if b == ir.B_CHAN_NEW { lower.GK_CHNEW } else if b == ir.B_TASK_CATCH { lower.GK_CATCH } else if b == ir.B_TASK_JOIN { lower.GK_JOIN } else if b == ir.B_MUTEX_GET { lower.GK_MXGET } else if b == ir.B_MUTEX_SET { lower.GK_MXSET } else if b == ir.B_MUTEX_UPDATE { lower.GK_MXUPD } else { lower.GK_CHSEND }
     gneed(inout e, gk, gty)
     let gn_ = gname(e, op, gty)
     let r = call(inout e, p, gn_, ptys, args, s.ty, d)
@@ -6622,6 +6623,62 @@ fn g_thread(inout e: E, p: lower.P, kd: u32, ty: u32) {
     gfn_end(inout e, p, gf)
 }
 
+// ---- Task.catch (docs/compiler.md "C8.51"): `catch_R(f) -> R` for R = Result[T, String]. The
+// closure runs under the runtime's ei_try (core/RUNTIME.md "Containing a trap"): Ok(its result),
+// or, if a trap ends it, Err(the trap's text). `catchrun_R(fv, slot)` is what ei_try calls: it
+// calls the closure at fv and keeps its result in slot.
+
+fn g_catch(inout e: E, p: lower.P, ty: u32) {
+    let d = types.def_of(p.t, ty)
+    let el = types.field(p.t, types.variant(p.t, d, 0).fstart, 0).ty
+    let unit_r = is_void(el)
+    let ft = task_fn(p, el)
+    let none: List[u8] = List.new()
+    let runn = gname(e, "catchrun_", ty)
+    let gr = gfn_begin(inout e, p, runn.copy(), tys2(types.STR, types.STR), types.UNIT)
+    let fv = gr.args[0].copy()
+    let slot = gr.args[1].copy()
+    let sg = fnval_sig(inout e, p, ft)
+    let env = load_ptr_field(inout e, p, ft, fv, 0)
+    let fp = load_ptr_field(inout e, p, ft, fv, 1)
+    let mut rd: List[u8] = List.new()
+    if !(unit_r || is_scalar(p, el)) { rd = slot.copy() }
+    let r0 = call_sig(inout e, p, fp, sg, args1(env), rd)
+    if !unit_r && is_scalar(p, el) {
+        store(inout e, p, el, r0, slot)
+    }
+    gfn_end(inout e, p, gr)
+    let gname_ = gname(e, "catch_", ty)
+    let gf = gfn_begin(inout e, p, gname_, tys1(ft), ty)
+    let fa = gf.args[0].copy()
+    let mut slot2 = lit("null")
+    if !unit_r { slot2 = temp(inout e, p, el) }
+    let ms = temp(inout e, p, types.STRING)
+    let targs = args4(catb(lit("@"), runn), fa, slot2, ms)
+    let flag = rt_call(inout e, p, "ei_try", tys4(types.STR, types.STR, types.STR, types.STR), targs, types.I32)
+    let r = temp(inout e, p, ty)
+    let isok = val(inout e, catb(lit("icmp eq i32 "), cat(flag, ", 0")))
+    let lo = new_label(inout e)
+    let le = new_label(inout e)
+    let lj = new_label(inout e)
+    condbr(inout e, isok, lo, le)
+    label(inout e, lo)
+    store_tag(inout e, p, ty, r, 0)
+    if !unit_r {
+        let pa = payload_addr(inout e, p, ty, r, 0, 0)
+        copy_mem(inout e, p, el, pa, slot2)
+    }
+    br(inout e, lj)
+    label(inout e, le)
+    store_tag(inout e, p, ty, r, 1)
+    let ea = payload_addr(inout e, p, ty, r, 1, 0)
+    copy_mem(inout e, p, types.STRING, ea, ms)
+    br(inout e, lj)
+    label(inout e, lj)
+    gret_a(inout e, p, r)
+    gfn_end(inout e, p, gf)
+}
+
 // ---- the worklist
 
 /// Emit the IR of glue item `key` (GK_* * 2^32 + id).
@@ -6670,6 +6727,8 @@ fn glue(inout e: E, p: lower.P, key: u64) {
         g_copy(inout e, p, id)
     } else if kd >= lower.GK_SPAWN && kd <= lower.GK_CHRECV {
         g_thread(inout e, p, kd, id)
+    } else if kd == lower.GK_CATCH {
+        g_catch(inout e, p, id)
     } else {
         g_map(inout e, p, kd, id)
     }

@@ -201,6 +201,7 @@ const M_SWAP: u32 = 32
 const M_REMOVE_RANGE: u32 = 33
 const M_FILLED: u32 = 34
 const M_DETERMINISTIC: u32 = 35
+const M_CATCH: u32 = 36
 
 /// Well-known symbols.
 type W = {
@@ -3607,6 +3608,8 @@ fn well_known(inout names: intern.Interner) -> W {
     for x in ["truncate", "extend", "swap", "remove_range", "filled"] { w.hm.push(sym(inout names, x)) }
     // `Map.deterministic()` (decision C805)
     for x in ["deterministic"] { w.hm.push(sym(inout names, x)) }
+    // `Task.catch(f)` (decision C803)
+    for x in ["catch"] { w.hm.push(sym(inout names, x)) }
     w  // well-known
 }
 
@@ -8007,6 +8010,7 @@ fn builtin_static(c: C, head: u32, name: u32) -> bool {
     if head == c.w.s_string { return mi == M_FROM || mi == M_FROM_INT || mi == M_FROM_BYTES }
     if head == c.w.list && mi == M_FILLED { return true }
     if head == c.w.map && mi == M_DETERMINISTIC { return true }
+    if head == c.w.heap[3] && mi == M_CATCH { return true }
     mi == M_NEW && head != c.w.heap[3]
 }
 
@@ -8133,6 +8137,7 @@ fn heap_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag.D
         return Ok(v_of(ty, builtin_op(inout c, ir.B_BOX_NEW, one(o), ty, n.line)))
     }
     if (head == c.w.heap[4] || head == c.w.heap[5]) && mi == M_NEW { return thread_static(inout c, n, head, exp) }
+    if head == c.w.heap[3] && mi == M_CATCH { return task_catch(inout c, n) }
     if head == c.w.heap[6] && mi == M_NEW { return ref_new(inout c, n, exp) }
     Err(err("E0115", n.line, n.col, q2("`", nm(c, head), "` has no associated function `", nm(c, n.b), "`")))
 }
@@ -8997,6 +9002,28 @@ fn spawn(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
     let ty = types.task_of(inout c.t, ft.b)
     let o = take(inout c, fv, n.line)
     Ok(v_of(ty, builtin_op(inout c, ir.B_SPAWN, one(o), ty, n.line)))
+}
+
+/// `Task.catch(f)`: runs the closure `f` (no parameters) and gives Ok(its result), or Err(the
+/// text of the trap that ended it): a Result[T, String] (docs/compiler.md, "C8.51"). `f` is
+/// borrowed, as `Mutex.update`'s is.
+fn task_catch(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
+    if n.d != 1 { return Err(err("E0405", n.line, n.col, s("`Task.catch` takes exactly one closure"))) }
+    let ae = arg_expr(c, at(c, n.c, 0))
+    let x = nd(c, ae)
+    let a0 = nd(c, ae)
+    let mut rh = NONE
+    if a0.kind == ast.ELambda && a0.g == 0 && is_value_form(c, a0.a) { rh = types.UNIT }
+    let fv = closure_arg(inout c, n, 0, List.new(), rh)?
+    if poisoned(c, fv.ty) { return Ok(poison_v(inout c)) }
+    let ft = types.get(c.t, fv.ty)
+    if ft.kind != types.T_FN || types.list_len(c.t, ft.a) != 0 {
+        return Err(err("E0401", x.line, x.col, q("`Task.catch` needs a closure with no parameters, found ", ts(c, fv.ty), "")))
+    }
+    if ft.b == types.NEVER { return Err(err("E0401", x.line, x.col, s("the closure never returns a value"))) }
+    let di = mget(c.tmpl, resolve.key(0, c.w.result))
+    let rt = inst_type(inout c, di, two(ft.b, types.STRING), n.line, n.col)?
+    Ok(v_of(rt, builtin_op(inout c, ir.B_TASK_CATCH, one(fv.op), rt, n.line)))
 }
 
 /// `Mutex.new(v)` and `Chan.new()`.
