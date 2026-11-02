@@ -1,0 +1,135 @@
+// pkgtest: `eiderc test` with no file, in a package directory (a directory with eider.toml):
+// every module's `test` blocks and those of tests/*.ei, one `eiderc test <file>` each, and one
+// summary. A file is a program or a library module with no `main` (docs/compiler.md,
+// "Library modules"); only files with a `test` block at the start of a line are run.
+// Skipped, like a dependency's modules are (decision C547): target/, deps/, hidden directories,
+// examples/, bench/, benches/, scripts/, docs/, node_modules/ and nested packages.
+
+import core.sys
+import std.bytes
+import std.fs
+import std.io
+import std.env
+import std.proc
+
+fn s(x: str) -> List[u8] { sys.lit(x) }
+
+fn skipped_dir(name: List[u8]) -> bool {
+    if name.len() > 0 && name[0] == 46 { return true }
+    for n in ["target", "deps", "examples", "bench", "benches", "scripts", "docs", "node_modules"] {
+        if bytes.eq(name, s(n)) { return true }
+    }
+    false
+}
+
+/// Whether the source has a `test "name" { ... }` block (a line that starts with `test `).
+fn has_test(src: List[u8]) -> bool {
+    for l in bytes.lines(src) {
+        if bytes.starts_with(l, s("test \"")) { return true }
+    }
+    false
+}
+
+fn collect(dir: List[u8], inout out: List[List[u8]]) uses fs {
+    let none: List[List[u8]] = List.new()
+    let names = match fs.list(dir) {
+        Ok(x) => x
+        Err(_) => none
+    }
+    for name in names {
+        let path = fs.join(dir, name)
+        if fs.is_dir(path) {
+            if skipped_dir(name) { continue }
+            if fs.exists(fs.join(path, s("eider.toml"))) { continue }
+            collect(path, inout out)
+        } else if bytes.ends_with(name, s(".ei")) {
+            let nosrc: List[u8] = List.new()
+            let src = match fs.read(path) {
+                Ok(x) => x
+                Err(_) => nosrc
+            }
+            if has_test(src) { out.push(path) }
+        }
+    }
+}
+
+/// "N tests, M failed" is the last line a test run prints: (N, M), or None.
+fn summary(out: List[u8]) -> Option[(u64, u64)] {
+    let ls = bytes.lines(out)
+    let mut i = ls.len()
+    while i > 0 {
+        i -= 1
+        let l = ls[i]
+        if l.len() == 0 { continue }
+        let sp = bytes.find(l, s(" tests, "), 0)
+        let tail = bytes.find(l, s(" failed"), 0)
+        if sp.is_none() || tail.is_none() { return None }
+        let a = bytes.parse_u64(bytes.slice(l, 0, sp.unwrap()))
+        let b = bytes.parse_u64(bytes.slice(l, sp.unwrap() + 8, tail.unwrap()))
+        if a.is_none() || b.is_none() { return None }
+        return Some((a.unwrap(), b.unwrap()))
+    }
+    None
+}
+
+/// Runs every test of the package in the current directory; the exit code (0: all passed).
+pub fn run(me: List[u8]) -> i32 uses io, fs, net, clock {
+    if !fs.exists(s("eider.toml")) {
+        io.errln(s("eiderc: `test` with no file runs a package's tests: there is no eider.toml here"))
+        return 2
+    }
+    let mut files: List[List[u8]] = List.new()
+    collect(s("."), inout files)
+    files = fs.sort(files)
+    let mut total: u64 = 0
+    let mut failed: u64 = 0
+    let mut broken: u64 = 0
+    for f in files {
+        let mut name = f.copy()
+        if bytes.starts_with(name, s("./")) { name = bytes.slice(name, 2, name.len()) }
+        let mut h = s("== ")
+        bytes.append(inout h, name.copy())
+        io.outln(h)
+        let mut argv: List[List[u8]] = List.new()
+        argv.push(me.copy())
+        argv.push(s("test"))
+        argv.push(f)
+        let r = proc.run_with(argv, proc.captured())
+        match r {
+            Ok(o) => {
+                io.out(o.out)
+                io.err(o.err)
+                match summary(o.out) {
+                    Some(t) => {
+                        total += t.0
+                        failed += t.1
+                        if o.code != 0 && t.1 == 0 { broken += 1 }
+                    }
+                    None => {
+                        broken += 1
+                        io.errln(s("eiderc: no test summary (the file did not build or run)"))
+                    }
+                }
+            }
+            Err(e) => {
+                broken += 1
+                io.errln(e.bytes())
+            }
+        }
+    }
+    let mut m = s("\n")
+    bytes.append(inout m, bytes.from_u64(files.len() as u64))
+    bytes.append(inout m, s(" files, "))
+    bytes.append(inout m, bytes.from_u64(total))
+    bytes.append(inout m, s(" tests, "))
+    bytes.append(inout m, bytes.from_u64(failed))
+    bytes.append(inout m, s(" failed"))
+    if broken > 0 {
+        bytes.append(inout m, s(", "))
+        bytes.append(inout m, bytes.from_u64(broken))
+        bytes.append(inout m, s(" files did not run"))
+    }
+    io.outln(m)
+    if failed > 0 || broken > 0 { return 1 }
+    0
+}

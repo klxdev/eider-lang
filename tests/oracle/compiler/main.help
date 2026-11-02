@@ -11,7 +11,8 @@ usage:
   eiderc run <file.ei> [--release] [-l lib] [--] [args...]  build and run (-O0 unless --release);
                                              the arguments after the file (every one after `--`) go to the program
   eiderc build|run|test <file.ei> --profile[=cpu,mem,conc]  with the profiler (docs/runtime.md "Profiler")
-  eiderc test <file.ei> [-l lib]             run the `test` blocks
+  eiderc test <file.ei> [-l lib]             run the `test` blocks (a module with no `main` too)
+  eiderc test                                run the tests of every module of the package in this directory
   eiderc build|run|test ... -j N             compile at most N units at once (default $EIDER_JOBS, else one per CPU)
   eiderc cache size|clean|trim               the cache's use; remove every entry; apply EIDER_CACHE_MAX now
   eiderc test --compile-fail [<dir>]         run the compile-fail suite (<dir>/fail, <dir>/pass; default tests/checks)
