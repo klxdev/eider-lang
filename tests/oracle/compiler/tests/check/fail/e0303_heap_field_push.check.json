@@ -1,1 +1,1 @@
-{"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_heap_field_push.ei","line":5,"col":5},"message":"cannot modify `r`: it is not mutable","help":"declare `r` with `var`","fix":{"at":{"line":4,"col":5},"delete":3,"insert":"var"}}
+{"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_heap_field_push.ei","line":5,"col":5},"message":"cannot modify `r`: it is not mutable","help":"declare `r` with `let mut`","fix":{"at":{"line":4,"col":8},"delete":0,"insert":" mut"}}

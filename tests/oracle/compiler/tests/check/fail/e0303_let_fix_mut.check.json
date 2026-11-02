@@ -1,0 +1,1 @@
+{"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_let_fix_mut.ei","line":5,"col":5},"message":"cannot assign to `k`: it is not mutable","help":"declare `k` with `let mut`","fix":{"at":{"line":4,"col":8},"delete":0,"insert":" mut"}}

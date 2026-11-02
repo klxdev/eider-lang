@@ -217,6 +217,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0301_method_style_roots.ei  E0301 at 6:19
   ok   e0301_read_in_binary.ei      E0301 at 5:9
   ok   e0303_assign_call_result.ei  E0303 at 5:10
+  ok   e0303_assign_captured.ei     E0303 at 4:31
   ok   e0303_assign_constant.ei     E0303 at 4:5
   ok   e0303_assign_field_of_let.ei E0303 at 5:5 (fix compiles)
   ok   e0303_assign_for_var.ei      E0303 at 4:9
@@ -235,6 +236,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0303_inout_of_let.ei        E0303 at 5:16 (fix compiles)
   ok   e0303_inout_of_literal.ei    E0303 at 4:16
   ok   e0303_inout_self_immutable.ei E0303 at 5:5 (fix compiles)
+  ok   e0303_let_fix_mut.ei         E0303 at 5:5 (fix compiles)
   ok   e0303_mod_inout_constant.ei  E0303 at 4:23
   ok   e0303_push_byte_let.ei       E0303 at 4:5 (fix compiles)
   ok   e0303_replace_read_only.ei   E0303 at 5:13 (fix compiles)
@@ -756,6 +758,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-754 passed, 0 failed; error-code coverage 60/69
+756 passed, 0 failed; error-code coverage 60/69
 codes without a compile-fail test: E0118 E0302 E0310 E0402 E0412 E0806 E0808 E0812 E0813
 --- exit 0

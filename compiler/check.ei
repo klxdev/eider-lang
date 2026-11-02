@@ -103,6 +103,7 @@ type ConstDef = { key: u64, md: u32, public: bool, ty: u32, has_k: bool, k: fold
 type Local = {
     key: u64, ty: u32, mutable: bool, byref: bool, has_decl: bool, line: u32, col: u32,
     ir: u32, dline: u32, dcol: u32, aline: u32, acol: u32, alias: u32, refid: u32, aroot: u64,
+    captured: bool,
 }
 
 /// A checked expression: its type, the IR operand holding its value, and its value when it
@@ -1128,7 +1129,7 @@ fn new_ref(inout c: C, key: u64, ty: u32, place: u32, mutable: bool, rk: u64, li
     ref_note(inout c, N_DEF, rid)
     // its indices are checked now, as reading the place would
     if has_index(c, place) { emit(inout c, ir.S_CHECK, 0, place, 0, 0, ty, line) }
-    Local(key, ty, mutable, false, true, line, col, NONE, line, col, line, col, place, rid, canon(c, rk))
+    Local(key, ty, mutable, false, true, line, col, NONE, line, col, line, col, place, rid, canon(c, rk), false)
 }
 
 /// A use of every reference expression e names (e is read again where this is noted).
@@ -1542,7 +1543,7 @@ fn declare(inout c: C, l: Local) -> Result[bool, diag.Diag] {
     let m = c.marks[c.marks.len() - 1] as usize
     for i in m..c.scopes.len() {
         if c.scopes[i].key == l.key {
-            return Err(errh("E0305", l.line, l.col, q("`", kt(c, l.key), "` is already declared in this scope"), "assign to it (declare with `var`), or pick a different name"))
+            return Err(errh("E0305", l.line, l.col, q("`", kt(c, l.key), "` is already declared in this scope"), "assign to it (declare it with `let mut`), or pick a different name"))
         }
     }
     c.scopes.push(l)
@@ -1551,11 +1552,11 @@ fn declare(inout c: C, l: Local) -> Result[bool, diag.Diag] {
 }
 
 fn local_at(key: u64, ty: u32, mutable: bool, line: u32, col: u32, l: u32) -> Local {
-    Local(key, ty, mutable, false, true, line, col, l, line, col, line, col, NONE, NONE, 0)
+    Local(key, ty, mutable, false, true, line, col, l, line, col, line, col, NONE, NONE, 0, false)
 }
 
 fn local_plain(key: u64, ty: u32, byref: bool, line: u32, col: u32, l: u32) -> Local {
-    Local(key, ty, false, byref, false, line, col, l, line, col, line, col, NONE, NONE, 0)
+    Local(key, ty, false, byref, false, line, col, l, line, col, line, col, NONE, NONE, 0, false)
 }
 
 // ---- substitutions
@@ -4334,7 +4335,7 @@ fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
         let kind = if mutable { ir.L_VAR } else { ir.L_LET }
         let l = ir.local(inout c.ir, resolve.key_sym(b.key), b.ty, kind, b.line)
         bind_value(inout c, l, b.ty, b.place)
-        declare(inout c, Local(b.key, b.ty, mutable, false, true, b.line, b.col, l, n.line, n.col, b.line, b.col, NONE, NONE, 0))?
+        declare(inout c, Local(b.key, b.ty, mutable, false, true, b.line, b.col, l, n.line, n.col, b.line, b.col, NONE, NONE, 0, false))?
     }
     if n.d == 1 { note_var(inout c, n, place_init, vty, lw.binds) }
     Ok(types.UNIT)
@@ -4708,7 +4709,7 @@ fn for_pat(inout c: C, n: ast.Node, et: u32, acc: u32) -> Result[bool, diag.Diag
         let kind = if b.mutable { ir.L_VAR } else { ir.L_LET }
         let l = ir.local(inout c.ir, resolve.key_sym(b.key), b.ty, kind, b.line)
         bind_value(inout c, l, b.ty, b.place)
-        declare(inout c, Local(b.key, b.ty, b.mutable, false, true, b.line, b.col, l, n.line, n.col, b.line, b.col, NONE, NONE, 0))?
+        declare(inout c, Local(b.key, b.ty, b.mutable, false, true, b.line, b.col, l, n.line, n.col, b.line, b.col, NONE, NONE, 0, false))?
     }
     Ok(true)
 }
@@ -4804,8 +4805,10 @@ fn check_assignable(c: C, target: u32, verb: str) -> Result[bool, diag.Diag] {
         if v.mutable || v.byref { return Ok(true) }
         let mut d = err("E0303", r.line, r.col, q2("cannot ", s(verb), " `", kt(c, r.key), "`: it is not mutable"))
         if v.has_decl {
-            d.help = q("declare `", kt(c, r.key), "` with `var`")
-            d.fix = Some(diag.Fix(v.dline, v.dcol, 3, s("var")))
+            d.help = q("declare `", kt(c, r.key), "` with `let mut`")
+            d.fix = Some(diag.Fix(v.dline, v.dcol + 3, 0, s(" mut")))
+        } else if v.captured {
+            d.help = s("a closure changes only its own copy of a captured variable; use an `inout` parameter, or capture a `Ref[T]`")
         } else {
             d.help = s("parameters are immutable; declare it `inout` to modify the caller's value")
         }
@@ -7395,6 +7398,7 @@ fn lambda_in(inout c: C, n: ast.Node, caps: List[Capture], ptys: List[u32], pkey
         let mut cl = local_plain(cp.key, cp.ty, false, body.line, body.col, l)
         cl.aline = cp.aline
         cl.acol = cp.acol
+        cl.captured = true
         declare(inout c, cl)?
     }
     for i in 0..n.d {

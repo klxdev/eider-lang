@@ -1,0 +1,1 @@
+{"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_assign_captured.ei","line":4,"col":31},"message":"cannot assign to `n`: it is not mutable","help":"a closure changes only its own copy of a captured variable; use an `inout` parameter, or capture a `Ref[T]`"}

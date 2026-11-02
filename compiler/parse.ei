@@ -931,7 +931,7 @@ pub fn ty(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
     if is_kw(p, intern.K_INOUT) {
         let mut d = diag.new("E0302", t.line, t.col, sys.lit("`inout` is only valid on function parameters; types can't hold references"))
-        d.help = sys.lit("store the value itself, or an index into a List, or Shared[Mutex[T]]")
+        d.help = sys.lit("store the value itself, or an index into a List, or a Ref[T] or Mutex[T] to share")
         return Err(d)
     }
     if is_kw(p, intern.K_FN) {

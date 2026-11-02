@@ -1,1 +1,1 @@
-{"error":"E0303","span":{"file":"tests/checks/fail/e0303_push_on_immutable.ei","line":4,"col":5},"message":"cannot modify `l`: it is not mutable","help":"declare `l` with `var`","fix":{"at":{"line":3,"col":5},"delete":3,"insert":"var"}}
+{"error":"E0303","span":{"file":"tests/checks/fail/e0303_push_on_immutable.ei","line":4,"col":5},"message":"cannot modify `l`: it is not mutable","help":"declare `l` with `let mut`","fix":{"at":{"line":3,"col":8},"delete":0,"insert":" mut"}}

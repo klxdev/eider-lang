@@ -1,1 +1,1 @@
-{"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_heap_list_pop_immut.ei","line":3,"col":13},"message":"cannot modify `l`: it is not mutable","help":"declare `l` with `var`","fix":{"at":{"line":2,"col":13},"delete":3,"insert":"var"}}
+{"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_heap_list_pop_immut.ei","line":3,"col":13},"message":"cannot modify `l`: it is not mutable","help":"declare `l` with `let mut`","fix":{"at":{"line":2,"col":16},"delete":0,"insert":" mut"}}

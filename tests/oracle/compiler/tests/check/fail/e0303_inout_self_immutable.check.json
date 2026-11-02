@@ -1,1 +1,1 @@
-{"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_inout_self_immutable.ei","line":5,"col":5},"message":"cannot borrow as inout `a`: it is not mutable","help":"declare `a` with `var`","fix":{"at":{"line":4,"col":13},"delete":3,"insert":"var"}}
+{"error":"E0303","span":{"file":"compiler/tests/check/fail/e0303_inout_self_immutable.ei","line":5,"col":5},"message":"cannot borrow as inout `a`: it is not mutable","help":"declare `a` with `let mut`","fix":{"at":{"line":4,"col":16},"delete":0,"insert":" mut"}}

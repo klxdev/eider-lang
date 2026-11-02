@@ -1,0 +1,6 @@
+// expect: E0303 4:31
+fn main() {
+    let mut n = 1
+    let f = |x: i32| -> i32 { n = 2; x }
+    f(1)
+}

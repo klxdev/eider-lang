@@ -654,7 +654,7 @@ fn main() uses io {
 
 **`inout` outside a parameter**: in a field type, a return type, a type argument. `inout`
 is a way of passing an argument, not a type; values can't hold references. The help
-suggests storing the value itself, an index into a List, or a shared handle.
+suggests storing the value itself, an index into a List, or a `Ref[T]` or `Mutex[T]` to share.
 
 ```eider,compile_fail=E0302
 type Cache = { items: inout List[i32] }
@@ -683,8 +683,9 @@ fn main() uses io {
 constant, calling a mutating method (`push`, `insert`, `clear`, ...) on one, passing it as
 `inout`, `take`/`replace` on a fresh value (they need a place to move the value out of),
 and passing a read-only place to a closure's `inout` parameter. The help and the
-machine-applicable fix declare the variable with `var`, the deprecated spelling; write
-`let mut` instead.
+machine-applicable fix declare the variable `let mut`. Assigning to a variable a closure
+captured has its own help: the closure works on a copy, so it takes an `inout` parameter or
+captures a `Ref[T]` instead.
 
 ```eider,compile_fail=E0303
 fn main() uses io {
