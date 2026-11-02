@@ -288,4 +288,27 @@ In these docs, a code block marked `eider,compile_fail=E0308` is the same kind o
 
 Programs built for the sanitizers use `EIDER_CFLAGS`, for example
 `EIDER_CACHE=off EIDER_CFLAGS="-fsanitize=thread -g" scripts/ei build prog.ei`.
-Test filters, benchmarks and fuzz targets in `eiderc test` are planned.
+
+## Filters, tables, benchmarks and fuzz targets
+
+`eiderc test --filter NAME file.ei` runs only the tests whose name contains `NAME` and counts
+the others (`2 tests, 0 failed, 3 filtered out`); `eiderc test` with no file takes the same
+options for every file of the package.
+
+`std/testing` has the rest, all of it ordinary `test` blocks:
+
+- `testing.table("clamp", cases, f)` runs `f` on each `(input, expected)` pair, prints every
+  failing case with both values, and fails the test once at the end.
+- `testing.bench("parse", 10_000, || { parse(req) })` runs once as a smoke test; with
+  `eiderc test --bench` it runs the given number of times and prints `bench parse: 10000
+  runs, 1520 ns/run` to stderr.
+- `testing.fuzz("decode", seed, corpus, |b: List[u8]| { decode(b) })` runs the target on the
+  corpus and then on 200 generated inputs (`eiderc test --fuzz N` for N) from a seeded
+  generator, so a run is repeatable; a trap in the target is contained, the failing input
+  is printed as hex with the seed and case number, and the test fails.
+- `testing.temp_dir("name")` and `testing.remove_dir(dir)` make and remove a fixture directory.
+
+A service tests its routes in-process with `http/testing` (eider-http): a client that calls a
+router or a middleware stack directly, no port.
+
+Coverage reports are not available yet.

@@ -908,9 +908,17 @@ void ei_main_error_u(uint64_t v) {
   fprintf(stderr, "error: %" PRIu64 "\n", v);
 }
 
+/* EIDER_TEST_FILTER (`eiderc test --filter NAME`): only the tests whose name contains it run */
+static int32_t ei_tests_filtered = 0;
+
 int32_t ei_test(const char *name, void (*fn)(void)) {
   /* static: a failing test's trap longjmps back here, while ei_test runs */
   static jmp_buf jb;
+  const char *filter = getenv("EIDER_TEST_FILTER");
+  if (filter && *filter && !strstr(name, filter)) {
+    ei_tests_filtered++;
+    return 0;
+  }
   printf("test %s ... ", name);
   fflush(stdout);
   ei_set_trap_jmp(&jb);
@@ -929,7 +937,11 @@ int32_t ei_test(const char *name, void (*fn)(void)) {
 }
 
 int32_t ei_tests_done(int32_t total, int32_t failed) {
-  printf("\n%" PRId32 " tests, %" PRId32 " failed\n", total, failed);
+  if (ei_tests_filtered) {
+    printf("\n%" PRId32 " tests, %" PRId32 " failed, %" PRId32 " filtered out\n", total - ei_tests_filtered, failed, ei_tests_filtered);
+  } else {
+    printf("\n%" PRId32 " tests, %" PRId32 " failed\n", total, failed);
+  }
   if (!failed) ei_check_leaks();
   return failed ? 1 : 0;
 }

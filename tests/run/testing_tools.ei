@@ -1,0 +1,51 @@
+// std/testing's table tests, benchmarks, fuzz targets and fixtures (docs/compiler.md, "C8.58"):
+// run as `test` blocks; `eiderc test --filter`, `--bench` and `--fuzz N` steer them.
+import std.testing
+import std.fs
+
+fn clamp(x: i32) -> i32 {
+    if x < 0 { return 0 }
+    if x > 10 { return 10 }
+    x
+}
+
+fn decode(b: List[u8]) -> usize {
+    // never traps: an index past the end is checked
+    if b.len() > 1 && b[0] == 255 { return b[1] as usize }
+    b.len()
+}
+
+test "table: every case is compared" {
+    let mut cases: List[(i32, i32)] = List.new()
+    cases.push((-5, 0))
+    cases.push((3, 3))
+    cases.push((99, 10))
+    testing.table("clamp", cases, |x: i32| -> i32 clamp(x))
+}
+
+test "bench: runs once without --bench" {
+    let n: Ref[i32] = Ref.new(0)
+    let ns = testing.bench("sum", 1000, || { n.update(|inout v: i32| { v += 1 }) })
+    assert(ns == 0 || testing.benching())
+}
+
+test "fuzz: a target that does not trap" {
+    let corpus: List[List[u8]] = List.new()
+    testing.fuzz("decode", 7, corpus, |b: List[u8]| { decode(b) })
+}
+
+test "fixture: a temp directory is made and removed" {
+    let dir = match testing.temp_dir("eider-testing") {
+        Ok(d) => d
+        Err(_) => { panic("no temp dir") }
+    }
+    let file = fs.join(dir, "note.txt".bytes())
+    assert(fs.write(file, "hi".bytes()).is_ok())
+    assert(fs.exists(file))
+    testing.remove_dir(dir)
+    assert(!fs.exists(dir))
+}
+
+fn main() uses io {
+    print("testing tools: see the test blocks")
+}

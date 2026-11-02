@@ -4330,3 +4330,24 @@ Not done: printing the specialization as Eider source (it would need the checker
 iteration's bindings as AST), and a call-site chain (which call asked for the instance): the help
 names the specialization, not who requested it.
 
+## C8.58: testing for services (#30)
+
+Decision C810. Code: core/eider_rt.c (`ei_test`, `ei_tests_done`), main.ei (`--filter`, `--bench`,
+`--fuzz`, `test_env`, `test_flags`), driver.ei (`run_llvm`'s `envs`), pkgtest.ei (forwards the options),
+std/testing.ei (`table`, `bench`, `fuzz`, `fuzz_cases`, `benching`, `temp_dir`, `remove_dir`);
+tests: tests/run/testing_tools.ei; eider-http's `http/testing` and tests/testing_test.ei.
+
+The filter is decided at run time, by the program, from the environment: the test driver is the same
+for every filter, so the cache and the compile are shared, and `eiderc test` with no file passes the
+flags on to each file's `eiderc test`. A filtered-out test prints nothing; the summary counts the
+tests that ran and says how many were filtered out after `failed` (pkgtest's summary reader, which
+looks for ` tests, ` and ` failed`, is unaffected). The options reach the program by `env NAME=value
+program` because the C core has no `setenv`. Benchmarks and fuzz targets are library functions over
+`test` blocks rather than new item kinds: no grammar, tree-sitter or analyzer change, and a
+benchmark is a smoke test in a plain run. A fuzz case is reproducible from (seed, case number); the
+generator draws a length up to 64 and random bytes, case 0 being the empty input.
+
+Not done: a coverage report (it needs per-statement counters in the backend and a mapping back to
+lines; filed as a follow-up), `eiderc test` discovering `bench`/`fuzz` as separate kinds, the
+timing statistics of a benchmark (median, spread), and a fuzz corpus directory on disk.
+

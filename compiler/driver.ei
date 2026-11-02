@@ -848,11 +848,16 @@ pub fn build_llvm(lnames: List[List[u8]], lls: List[List[u8]], file: List[u8], o
 
 /// `eiderc run|test`: build (or take from the cache), run, exit with the program's exit code
 /// (a program killed by signal n exits 128 + n). `args` are the program's arguments (`eiderc
-/// run x.ei [--] args...`; none for `test`).
-pub fn run_llvm(lnames: List[List[u8]], lls: List[List[u8]], file: List[u8], release: bool, libs: List[List[u8]], debug: bool, prof: bool, args: List[List[u8]], jobs: u64) uses io, fs, net, clock {
+/// run x.ei [--] args...`; none for `test`); `envs`: `NAME=value` settings the program starts with.
+pub fn run_llvm(lnames: List[List[u8]], lls: List[List[u8]], file: List[u8], release: bool, libs: List[List[u8]], debug: bool, prof: bool, args: List[List[u8]], envs: List[List[u8]], jobs: u64) uses io, fs, net, clock {
     let dir = work_dir()
     let exe = compile_llvm(lnames, lls, dir, fs.join(dir, stem(file)), release, libs, debug, prof, jobs, false)
     let mut argv: List[List[u8]] = List.new()
+    // `NAME=value` settings for the program (`eiderc test --filter`, --bench, --fuzz): through env(1)
+    if envs.len() > 0 {
+        argv.push(s("env"))
+        for x in envs { argv.push(x) }
+    }
     argv.push(exe)
     for x in args { argv.push(x) }
     let code = match proc.run(argv) {

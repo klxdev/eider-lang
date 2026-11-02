@@ -16,7 +16,13 @@
 //! Printing needs `io`; the stream doubles need `io` through the generic stream code as
 //! every stream does (std/stream), never when called directly.
 
+import core.sys
 import std.io
+import std.bytes
+import std.encoding
+import std.env
+import std.fs
+import std.task
 import std.time
 import std.stream
 
@@ -418,4 +424,183 @@ impl stream.Writer for PipeWriter {
     fn write_by(inout self, data: List[u8], dl: time.Deadline) -> Result[usize, stream.Error] uses io, clock { self.push(data) }
     fn flush(inout self) -> Result[(), stream.Error] uses io { Ok(()) }
     fn flush_by(inout self, dl: time.Deadline) -> Result[(), stream.Error] uses io, clock { Ok(()) }
+}
+
+// ---- table tests, benchmarks and fuzz targets (`eiderc test --filter`, `--bench`, `--fuzz N`)
+
+/// A table test: `f` run on each case's input, every output compared with the case's expected
+/// value; every failing case is printed (`FAIL <name> case <i>: ...` with both values) and the
+/// test fails once, after the last case, so one run shows all that is wrong.
+///
+///     testing.table("clamp", cases, |x: i32| -> i32 clamp(x))   // cases: List[(i32, i32)]
+pub fn table[T: Show + Copy, R: Eq + Show + Copy](name: str, cases: List[(T, R)], f: fn(T) -> R) uses io {
+    let mut failed = 0
+    for i in 0..cases.len() {
+        let c = cases[i].copy()
+        let want = c.1.copy()
+        let input = c.0.copy()
+        let shown = input.to_string()
+        let got = f(input)
+        if got == want { continue }
+        failed += 1
+        let mut m = String.from("FAIL ")
+        m.push_str(name)
+        m.push_str(" case ")
+        m.append(i.to_string())
+        m.push_str(" (input ")
+        m.append(shown)
+        m.push_str(")")
+        io.errln(difference(m, got, want).bytes())
+    }
+    if failed > 0 {
+        let mut m = String.from(name)
+        m.push_str(": ")
+        m.append(failed.to_string())
+        m.push_str(" of ")
+        m.append(cases.len().to_string())
+        m.push_str(" cases failed")
+        io.errln(m.bytes())
+        panic("table test failed")
+    }
+}
+
+fn env_flag(name: str) -> Option[List[u8]] uses io {
+    env.get(sys.lit(name))
+}
+
+/// Whether `eiderc test --bench` asked for measurements (EIDER_TEST_BENCH).
+pub fn benching() -> bool uses io {
+    match env_flag("EIDER_TEST_BENCH") {
+        Some(v) => v.len() > 0 && v[0] != 48
+        None => false
+    }
+}
+
+/// A benchmark: with `eiderc test --bench`, `f` runs `runs` times (after one warm-up run) and
+/// `bench <name>: <runs> runs, <ns> ns/run` is printed; without it `f` runs once and nothing is
+/// printed, so a benchmark is also a smoke test in an ordinary `eiderc test`. Returns the
+/// nanoseconds per run measured (0 when it only ran once).
+///
+///     test "bench: parse a request" { testing.bench("parse", 10000, || { parse(req) }) }
+pub fn bench(name: str, runs: u64, f: fn()) -> i64 uses io, clock {
+    f()
+    if !benching() || runs == 0 { return 0 }
+    let t0 = time.mono_ns()
+    let mut i: u64 = 0
+    while i < runs {
+        f()
+        i += 1
+    }
+    let per = (time.mono_ns() - t0) / (runs as i64)
+    let mut m = String.from("bench ")
+    m.push_str(name)
+    m.push_str(": ")
+    m.append(runs.to_string())
+    m.push_str(" runs, ")
+    m.append(per.to_string())
+    m.push_str(" ns/run")
+    io.errln(m.bytes())
+    per
+}
+
+/// How many generated inputs a fuzz target tries: 200, or what `eiderc test --fuzz N` says.
+pub fn fuzz_cases() -> u64 uses io {
+    match env_flag("EIDER_TEST_FUZZ") {
+        Some(v) => {
+            match bytes.parse_u64(v) {
+                Some(n) => n
+                None => 200
+            }
+        }
+        None => 200
+    }
+}
+
+// xorshift64*: the generator of fuzz inputs; the same seed gives the same inputs everywhere
+fn next_rand(inout s: u64) -> u64 {
+    let mut x = s.copy()
+    x = x ^ (x >> 12)
+    x = x ^ (x << 25)
+    x = x ^ (x >> 27)
+    s = x
+    x *% 2685821657736338717
+}
+
+/// A fuzz target: `f` is run on the `corpus` inputs first, then on `fuzz_cases()` generated
+/// inputs (the empty input, then random bytes of random length up to 64, from `seed`: the same
+/// every run). A trap in `f` is contained; the input that caused it is printed as hex with the
+/// seed and the case number, and the test fails once, so a failure can be replayed by adding
+/// the input to `corpus`.
+///
+///     test "fuzz: decode never traps" { testing.fuzz("decode", 1, corpus, |b: List[u8]| { decode(b) }) }
+pub fn fuzz(name: str, seed: u64, corpus: List[List[u8]], f: fn(List[u8])) uses io {
+    let total = fuzz_cases()
+    let mut st: u64 = if seed == 0 { 88172645463325252 } else { seed }
+    let mut failed = 0
+    let mut n: u64 = 0
+    let clen = corpus.len() as u64
+    let all = clen + total
+    while n < all {
+        let mut input: List[u8] = List.new()
+        if n < clen {
+            input = corpus[n as usize].copy()
+        } else if n > clen {
+            let len = next_rand(inout st) % 65
+            let mut k: u64 = 0
+            while k < len {
+                input.push(((next_rand(inout st) >> 24) % 256) as u8)
+                k += 1
+            }
+        }
+        let shown = input.copy()
+        match task.catch(|| -> () { f(shown.copy()) }) {
+            Ok(_) => {}
+            Err(why) => {
+                failed += 1
+                if failed <= 3 {
+                    let mut m = String.from("FAIL ")
+                    m.push_str(name)
+                    m.push_str(" case ")
+                    m.append(n.to_string())
+                    m.push_str(" (seed ")
+                    m.append(seed.to_string())
+                    m.push_str("), input ")
+                    m.append(encoding.hex(input))
+                    m.push_str(": ")
+                    m.append(why)
+                    io.errln(m.bytes())
+                }
+            }
+        }
+        n += 1
+    }
+    if failed > 0 {
+        let mut m = String.from(name)
+        m.push_str(": ")
+        m.append(failed.to_string())
+        m.push_str(" of ")
+        m.append(all.to_string())
+        m.push_str(" inputs made it trap")
+        io.errln(m.bytes())
+        panic("fuzz target failed")
+    }
+}
+
+// ---- fixtures
+
+/// A fresh directory under /tmp for a test's files (a fixture); remove it with
+/// `testing.remove_dir(dir)` (a `defer` right after is the usual way).
+pub fn temp_dir(prefix: str) -> Result[List[u8], String] uses fs, clock {
+    let mut name = sys.lit("/tmp/")
+    bytes.append(inout name, sys.lit(prefix))
+    name.push(45)
+    bytes.append(inout name, bytes.from_u64(time.mono_ns() as u64))
+    match fs.mkdir_all(name) {
+        Ok(_) => Ok(name)
+        Err(e) => Err(e)
+    }
+}
+
+pub fn remove_dir(dir: List[u8]) uses fs {
+    let _ = fs.remove_all(dir)
 }

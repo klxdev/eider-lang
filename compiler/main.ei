@@ -64,6 +64,9 @@ type Args = {
     portable: bool,
     /// the word after the file: `expand`'s filter, `test`'s `--filter`
     filter: List[u8],
+    /// `test --bench`, `test --fuzz N` (std/testing)
+    bench: bool,
+    fuzz: u64,
     /// `lint --deny|--warn|--allow <name>` (lint.ei), in order
     lints: List[lint.Setting],
     /// `lint --list`
@@ -233,6 +236,8 @@ fn parse_args() -> Args uses io, fs {
     let mut crypto: List[u8] = List.new()
     let mut lints: List[lint.Setting] = List.new()
     let mut list = false
+    let mut bench = false
+    let mut fuzz: u64 = 0
     let mut filter: List[u8] = List.new()
     let mut dashes = false
     let mut i: usize = 1
@@ -301,6 +306,15 @@ fn parse_args() -> Args uses io, fs {
             i += 1
         } else if is(a, "--list") {
             list = true
+        } else if is(a, "--bench") {
+            bench = true
+        } else if is(a, "--fuzz") {
+            if i >= argv.len() { usage_error(sys.lit("`--fuzz` needs a number of cases")) }
+            match bytes.parse_u64(argv[i]) {
+                Some(nf) => { fuzz = nf }
+                None => usage_error(quoted("`--fuzz` needs a number of cases, not ", argv[i]))
+            }
+            i += 1
         } else if is(a, "--filter") {
             if i >= argv.len() { usage_error(sys.lit("`--filter` needs a name")) }
             filter = argv[i]
@@ -368,8 +382,10 @@ fn parse_args() -> Args uses io, fs {
     if wasm_core && (wasm || lib) { usage_error(sys.lit("`--wasm-core` builds a program: not with --wasm or --lib")) }
     if wasm { lib = true }
     if profile > 0 && (lib || wasm_core || !(is(cmd, "build") || is(cmd, "run") || is(cmd, "test") || is(cmd, "emit-llvm"))) { usage_error(sys.lit("`--profile` goes with build, run, test or emit-llvm, without --lib or --wasm")) }
+    if (bench || fuzz > 0) && !is(cmd, "test") { usage_error(sys.lit("`--bench` and `--fuzz` go with `test`")) }
+    if filter.len() > 0 && !(is(cmd, "test") || is(cmd, "expand")) { usage_error(sys.lit("`--filter` goes with `test`")) }
     if (lints.len() > 0 || list) && !is(cmd, "lint") { usage_error(sys.lit("`--deny`, `--warn`, `--allow` and `--list` go with `lint`")) }
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, wasm_core, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, debug, crypto, portable, filter, lints, list)
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, wasm_core, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, debug, crypto, portable, filter, bench, fuzz, lints, list)
 }
 
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
@@ -627,6 +643,33 @@ fn canon(path: List[u8]) -> List[u8] uses fs {
     }
 }
 
+/// The settings `eiderc test` starts the test program with: `--filter NAME` (only the tests whose
+/// name contains it run; the runtime's ei_test), `--bench` (std/testing's `bench` measures) and
+/// `--fuzz N` (std/testing's `fuzz` runs N cases).
+fn test_env(a: Args) -> List[List[u8]] {
+    let mut out: List[List[u8]] = List.new()
+    if !is(a.cmd, "test") { return out }
+    if a.filter.len() > 0 { out.push(bytes.concat(sys.lit("EIDER_TEST_FILTER="), a.filter)) }
+    if a.bench { out.push(sys.lit("EIDER_TEST_BENCH=1")) }
+    if a.fuzz > 0 { out.push(bytes.concat(sys.lit("EIDER_TEST_FUZZ="), bytes.from_u64(a.fuzz))) }
+    out
+}
+
+/// The test options `eiderc test` with no file passes on to each file's run.
+fn test_flags(a: Args) -> List[List[u8]] {
+    let mut out: List[List[u8]] = List.new()
+    if a.filter.len() > 0 {
+        out.push(sys.lit("--filter"))
+        out.push(a.filter)
+    }
+    if a.bench { out.push(sys.lit("--bench")) }
+    if a.fuzz > 0 {
+        out.push(sys.lit("--fuzz"))
+        out.push(bytes.from_u64(a.fuzz))
+    }
+    out
+}
+
 /// `eiderc expand <file> [<name>]` (docs/compiler.md, "C8.57"): the specialized IR of the
 /// instances whose body used comptime reflection (what a `@derive`d method or a generic
 /// reflective function became for each type), or of every function whose name contains
@@ -723,7 +766,7 @@ fn main() uses io, fs, net, clock {
     let a = parse_args()
     if a.compile_fail { env.exit(suite.run(a.file)) }
     if is(a.cmd, "test") && a.file.len() == 0 {
-        env.exit(pkgtest.run(env.args()[0]))
+        env.exit(pkgtest.run(env.args()[0], test_flags(a)))
         return
     }
     if is(a.cmd, "cache") {
@@ -908,7 +951,7 @@ fn main() uses io, fs, net, clock {
             if is(a.cmd, "build") {
                 driver.build_llvm(lnames, lls, a.file, a.out, libs, a.debug, a.profile > 0, a.jobs)
             } else {
-                driver.run_llvm(lnames, lls, a.file, a.release, libs, a.debug, a.profile > 0, a.pargs, a.jobs)
+                driver.run_llvm(lnames, lls, a.file, a.release, libs, a.debug, a.profile > 0, a.pargs, test_env(a), a.jobs)
             }
         }
     } else if is(a.cmd, "ir") {
