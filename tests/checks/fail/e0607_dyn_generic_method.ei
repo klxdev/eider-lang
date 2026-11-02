@@ -1,0 +1,4 @@
+// expect: E0607 3:13
+trait Pick { fn pick[T](self, a: T) -> T }
+fn first(p: dyn Pick) {}
+fn main() {}

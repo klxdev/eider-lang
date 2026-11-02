@@ -407,7 +407,7 @@ fn def_ty(inout e: E, p: lower.P, ty: u32) {
         tdef(inout e, name, lit(r"{ ptr, i64, i64 }"))
     } else if k == types.T_MAP {
         tdef(inout e, name, lit(r"{ ptr, ptr, ptr, i64, i64, i64 }"))
-    } else if k == types.T_FN {
+    } else if k == types.T_FN || k == types.T_DYN {
         tdef(inout e, name, lit(r"{ ptr, ptr, ptr, ptr, ptr }"))
     } else if k == types.T_ENUM {
         let d = types.def_of(p.t, ty)
@@ -445,7 +445,7 @@ fn owns(inout e: E, p: lower.P, ty: u32) -> bool {
     let t = types.get(p.t, ty)
     let k = t.kind
     let mut r = false
-    if k == types.T_STRING || k == types.T_LIST || k == types.T_MAP || k == types.T_BOX || k == types.T_FN || types.is_handle(k) || k == types.T_REF {
+    if k == types.T_STRING || k == types.T_LIST || k == types.T_MAP || k == types.T_BOX || k == types.T_FN || k == types.T_DYN || types.is_handle(k) || k == types.T_REF {
         r = true
     } else if k == types.T_ARRAY {
         r = owns(inout e, p, t.a)
@@ -1812,6 +1812,12 @@ fn stmt(inout e: E, p: lower.P, id: u32) {
         e.unchecked = true
         callv(inout e, p, s)
         e.unchecked = false
+    } else if k == ir.S_DYN {
+        dyn_value(inout e, p, s)
+    } else if k == ir.S_DYNCALL {
+        e.unchecked = true
+        dyn_call(inout e, p, s)
+        e.unchecked = false
     } else if k == ir.S_BREAK {
         let t = e.brks[e.brks.len() - 1 - s.a as usize].copy()
         br(inout e, t)
@@ -2312,6 +2318,109 @@ fn callv(inout e: E, p: lower.P, s: ir.Stmt) {
     if s.dst != NONE { d = dst_addr(s.dst) }
     let r = call_sig(inout e, p, fp, sg, args, d)
     if s.dst != NONE && is_scalar(p, rt) && !is_void(rt) { store(inout e, p, rt, r, d) }
+}
+
+// ---- dyn Trait (docs/compiler.md, "C8.47")
+//
+// A dyn value has a fn value's five words: the environment (a block holding the value, made
+// like a closure's), the vtable where a fn value has its code pointer, and the environment's
+// drop, clone and own glue (those of S_DYN's empty closure body, which captures the value).
+// The vtable is a private constant of the addresses of the functions that call each method
+// of the value's type, in the trait's order; each has a closure body's convention, with the
+// environment first and the `self` pointer (the same block: the value is its first member)
+// second.
+
+/// The vtable of S_DYN statement s, made once per environment function.
+fn dyn_vtable(inout e: E, p: lower.P, s: ir.Stmt) -> List[u8] {
+    let key = h64(cat(e.fnn[s.a as usize], "!vt"))
+    match e.msgs.get(key) {
+        Some(i) => { return num("@.m", i as u64) }
+        None => {}
+    }
+    let i = e.nmsg
+    e.nmsg += 1
+    e.msgs.insert(key, i)
+    let name = num("@.m", i as u64)
+    let n = s.c - 1
+    let mut body: List[u8] = List.new()
+    for j in 0..n {
+        let th = p.ir.ops[p.ir.extra[(s.b + 1 + j) as usize] as usize].v as u32
+        let tn = e.fnn[th as usize].copy()
+        let tp = fn_ptys(e, p, th)
+        let tsg = abi.sig(inout e.lay, p, tp, p.ir.fns[th as usize].ret)
+        declare_sig(inout e, p, tn, tsg, false)
+        if j > 0 { bytes.append(inout body, lit(", ")) }
+        bytes.append(inout body, lit("ptr @"))
+        bytes.append(inout body, tn)
+    }
+    bytes.append(inout e.gl, name)
+    bytes.append(inout e.gl, lit(" = private unnamed_addr constant ["))
+    bytes.append(inout e.gl, bytes.from_u64(n as u64))
+    bytes.append(inout e.gl, lit(" x ptr] ["))
+    bytes.append(inout e.gl, body)
+    bytes.append(inout e.gl, lit("]\n"))
+    name
+}
+
+/// S_DYN: the environment holding the value, and the dyn value pointing at it and the vtable.
+fn dyn_value(inout e: E, p: lower.P, s: ir.Stmt) {
+    let d = dst_addr(s.dst)
+    zero(inout e, p, s.ty, d)
+    let fname = e.fnn[s.a as usize].copy()
+    let fd = p.ir.fns[s.a as usize]
+    let bp = fn_ptys(e, p, s.a)
+    let bs = abi.sig(inout e.lay, p, bp, fd.ret)
+    declare_sig(inout e, p, fname, bs, false)
+    let vt = dyn_vtable(inout e, p, s)
+    let f1 = field_addr(inout e, p, s.ty, d, 1)
+    stmt_text(inout e, catb(lit("store ptr "), catb(vt, catb(lit(", ptr "), f1))))
+    gneed(inout e, lower.GK_ENV, s.a)
+    let mut cts: List[u32] = List.new()
+    cts.push(p.ir.locals[fd.lstart as usize].ty)
+    let sz = abi.struct_of(inout e.lay, p, cts)
+    let envp = rt_call(inout e, p, "ei_alloc", tys1(types.U64), args1(bytes.from_u64(sz[0])), types.STR)
+    let est = members(inout e, p, cts)
+    let fv = gep(inout e, p, est, envp, 0)
+    put_op(inout e, p, cts[0], p.ir.extra[s.b as usize], fv)
+    let f0 = field_addr(inout e, p, s.ty, d, 0)
+    stmt_text(inout e, catb(lit("store ptr "), catb(envp, catb(lit(", ptr "), f0))))
+    let glue = ["edrop_", "eclone_", "eown_"]
+    for j in 0..3 {
+        let gn = catb(lit(glue[j as usize]), fname)
+        let rty = if j == 1 { types.STR } else { types.UNIT }
+        let gs = abi.sig(inout e.lay, p, tys1(types.STR), rty)
+        declare_sig(inout e, p, gn, gs, false)
+        let fj = field_addr(inout e, p, s.ty, d, (j + 2) as u32)
+        stmt_text(inout e, catb(lit("store ptr @"), catb(gn, catb(lit(", ptr "), fj))))
+    }
+}
+
+/// S_DYNCALL: the method's function out of the vtable, called with the environment, the
+/// `self` pointer (the environment) and the arguments.
+fn dyn_call(inout e: E, p: lower.P, s: ir.Stmt) {
+    let dty = ir.op_ty(p.ir, s.a)
+    let dv = opa(inout e, p, s.a)
+    let idx = p.ir.ops[p.ir.extra[s.b as usize] as usize].v
+    let mut ptys: List[u32] = List.new()
+    ptys.push(types.STR)
+    ptys.push(types.STR)
+    let env = load_ptr_field(inout e, p, dty, dv, 0)
+    let mut args: List[List[u8]] = List.new()
+    args.push(env)
+    args.push(env)
+    for i in 1..s.c {
+        let a = p.ir.extra[(s.b + i) as usize]
+        ptys.push(ir.op_ty(p.ir, a))
+        args.push(oparg(inout e, p, a))
+    }
+    let sg = abi.sig(inout e.lay, p, ptys, s.ty)
+    let vt = load_ptr_field(inout e, p, dty, dv, 1)
+    let slot = val(inout e, catb(lit("getelementptr inbounds ptr, ptr "), catb(vt, catb(lit(", i64 "), bytes.from_u64(idx)))))
+    let fp = val(inout e, catb(lit("load ptr, ptr "), slot))
+    let mut d: List[u8] = List.new()
+    if s.dst != NONE { d = dst_addr(s.dst) }
+    let r = call_sig(inout e, p, fp, sg, args, d)
+    if s.dst != NONE && is_scalar(p, s.ty) && !is_void(s.ty) { store(inout e, p, s.ty, r, d) }
 }
 
 fn declare_thunk(inout e: E, p: lower.P, f: u32, name: List[u8]) {
@@ -3318,9 +3427,9 @@ fn sc_stmt(p: lower.P, inout sc: Scan, id: u32) {
             let r = sc_place(p, inout sc, s.a)
             sc.wr[r as usize] = true
         }
-    } else if k == ir.S_CALL || k == ir.S_RECORD || k == ir.S_VARIANT || k == ir.S_ARRAY || k == ir.S_TUPLE || k == ir.S_CLOSURE {
+    } else if k == ir.S_CALL || k == ir.S_RECORD || k == ir.S_VARIANT || k == ir.S_ARRAY || k == ir.S_TUPLE || k == ir.S_CLOSURE || k == ir.S_DYN {
         sc_args(p, inout sc, s, k == ir.S_CALL)
-    } else if k == ir.S_CALLV {
+    } else if k == ir.S_CALLV || k == ir.S_DYNCALL {
         sc_op(p, inout sc, s.a)
         sc_args(p, inout sc, s, true)
     } else if k == ir.S_BUILTIN {
@@ -3338,7 +3447,7 @@ fn sc_stmt(p: lower.P, inout sc: Scan, id: u32) {
         }
     }
     // the destination, assigned whole
-    let has_dst = k == ir.S_COPY || k == ir.S_READ || k == ir.S_UNARY || k == ir.S_BINARY || k == ir.S_CAST || k == ir.S_CALL || k == ir.S_RECORD || k == ir.S_VARIANT || k == ir.S_ARRAY || k == ir.S_REPEAT || k == ir.S_TAG || k == ir.S_NOWMS || k == ir.S_TUPLE || k == ir.S_CLONE || k == ir.S_MOVE || k == ir.S_BUILTIN || k == ir.S_CLOSURE || k == ir.S_FNREF || k == ir.S_CALLV
+    let has_dst = k == ir.S_COPY || k == ir.S_READ || k == ir.S_UNARY || k == ir.S_BINARY || k == ir.S_CAST || k == ir.S_CALL || k == ir.S_RECORD || k == ir.S_VARIANT || k == ir.S_ARRAY || k == ir.S_REPEAT || k == ir.S_TAG || k == ir.S_NOWMS || k == ir.S_TUPLE || k == ir.S_CLONE || k == ir.S_MOVE || k == ir.S_BUILTIN || k == ir.S_CLOSURE || k == ir.S_FNREF || k == ir.S_CALLV || k == ir.S_DYN || k == ir.S_DYNCALL
     if has_dst && s.dst != NONE {
         if k != ir.S_REPEAT || s.b > 0 { sc_def(inout sc, s.dst) } else { sc.wr[s.dst as usize] = true }
         // List.sum accumulates in its destination: never an SSA value
@@ -4517,7 +4626,7 @@ fn g_drop(inout e: E, p: lower.P, ty: u32) {
         buf_free(inout e, p, q)
         if_end(inout e, j)
         store_field_ptr(inout e, p, ty, x, 0, lit("null"))
-    } else if k == types.T_FN {
+    } else if k == types.T_FN || k == types.T_DYN {
         fnval_hook(inout e, p, ty, x, 2)
         store_field_ptr(inout e, p, ty, x, 0, lit("null"))
         for i in 2..5 {
@@ -4584,7 +4693,7 @@ fn g_clone(inout e: E, p: lower.P, ty: u32) {
     } else if k == types.T_MAP {
         let _h31 = load_ptr_field(inout e, p, ty, r, 2)
         buf_inc(inout e, _h31)
-    } else if k == types.T_FN {
+    } else if k == types.T_FN || k == types.T_DYN {
         let c = load_ptr_field(inout e, p, ty, x, 3)
         let _h32 = not_null(inout e, c)
         let j = if_then(inout e, _h32)
@@ -4972,7 +5081,7 @@ fn g_own(inout e: E, p: lower.P, ty: u32) {
             own_at(inout e, p, t.a, q)
             if_end(inout e, j)
         }
-    } else if k == types.T_FN {
+    } else if k == types.T_FN || k == types.T_DYN {
         fnval_hook(inout e, p, ty, x, 4)
     } else if k == types.T_REF {
         // the checker keeps every Ref it can see on its thread (E0411); this catches one

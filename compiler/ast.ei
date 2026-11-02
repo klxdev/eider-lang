@@ -8,6 +8,7 @@
 // types      TName a=sym b=qualifier sym+1        TGeneric a=sym b=qual+1 [c/d]=args
 //            TArray a=elem b=len                  TTuple [c/d]                TUnit
 //            TFn [c/d]=params g=ret+1 e=inout params (bit i: parameter i is `inout`)
+//                h=1: has `uses`, [i/j]=Cap (`fn() -> T uses io + E`; docs/compiler.md, "C8.46")
 // exprs      EInt a=tok   EFloat a=tok (its text is in the source; the token's val is the f32/f64 suffix: 0, 32, 64)   EStr a=str   EBool a=0/1   EIdent a=sym b=qual+1
 //            EUnary a=op (0 neg, 1 not, 2 bitwise not `~`) b=operand  EBinary a=op (OP_*) b=lhs c=rhs
 //            ECall a=callee sym b=qual+1 [c/d]=args  EMethod a=recv b=name sym [c/d]=args
@@ -34,7 +35,7 @@
 // items      IType a=sym b=public [c/d]=GParam [e/f]=Variant or Field (a record when no Variant)
 //                g=aliased type+1 (a type alias, with no members; 0 otherwise)
 //            Variant a=sym [c/d]=VField   VField a=name sym, or position for unnamed, b=type c=named
-//            Field a=sym b=type             GParam a=sym [c/d]=bounds (TName)
+//            Field a=sym b=type             GParam a=sym [c/d]=bounds (TName) e=1: `uses E`
 //            IFn a=sym b=flags (FN_*) [c/d]=GParam [e/f]=Param g=ret+1 h=body+1 [i/j]=Cap,
 //                end span = end of the signature (where `uses` goes)
 //            Param a=sym b=type c=inout   Cap a=sym
@@ -74,6 +75,8 @@
 //            IAssoc a=name sym b=type+1 (0: a trait's `type Item`)   ITrait [e/f]=IAssoc
 //            IImpl [g/h]=IAssoc (`type Item = i32`)
 //            Arm e=guard+1 (`pat if cond =>`; 0: none)
+// trait objects (docs/compiler.md, "C8.47")
+//            TDyn a=trait sym b=qual+1 (`dyn Trait`)
 
 pub type Kind =
     | TName | TGeneric | TArray | TTuple | TUnit | TFn
@@ -92,6 +95,7 @@ pub type Kind =
     | PRange | PRecord | PField
     | TAssoc | IAssoc
     | EFloat
+    | TDyn
 
 pub type Node = {
     kind: Kind,
@@ -224,6 +228,7 @@ pub fn kind_text(k: Kind) -> str {
         TUnit => "TUnit"
         TFn => "TFn"
         TAssoc => "TAssoc"
+        TDyn => "TDyn"
         IAssoc => "IAssoc"
         EInt => "EInt"
         EFloat => "EFloat"

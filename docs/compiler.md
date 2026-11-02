@@ -3865,7 +3865,7 @@ language's own traits (`Iter` still reads its `Item` off the impl: C8.4). `eider
 trait's methods but not its associated types. A function never instantiated is not checked for
 `C.Item` without a bound, like every other bounds error (C8.4).
 
-## C8.46: floating point (#43)
+## C8.48: floating point (#43)
 
 `f32` and `f64` (decisions C660 to C668; the language rules are in docs/site/reference/types.md).
 
@@ -3997,6 +3997,76 @@ Each with a design note, compile-fail tests and new codes:
 | C6 ✅ | Self-host: stage1 builds stage2 builds stage3; fixed point; commit the seed | `scripts/selfhost.sh` green (stages compile `-Werror`, stage3 passes `scripts/test-compiler.sh`), `scripts/selfhost.sh --from-seed` reproduces the seed with only a C compiler |
 | C7 ✅ | Parity: modules/namespaces, FFI/export/`--lib`, threads, WASM, comptime, driver (`test --compile-fail`, cache, `--help`); then record the oracle in `tests/oracle/` and build everything from the seed ("History") | in a clean clone with only a C toolchain `verify.sh` ends ALL GREEN and `selfhost.sh` prints SELF-HOSTED |
 | C8+ | See "C8 plan: the backlog" (waves 1–5). Language work above, the parity quirks in "C8 candidates", then std and package-manager rework; comptime by an IR interpreter instead of a C compiler ("C7: comptime") | per feature |
+
+## C8.46: capability polymorphism
+
+Function types carry a capability set (#46). `Ty` has a fourth slot `c`, the mask (bit i is
+`types.cap_name(i)`; `ffi` is never in a mask, because it stays inside its package); `c = 0`
+is the plain fn type, which every program written before this had, so its ids, names and
+messages are unchanged. A fn type with a nonzero mask is interned apart (`Types.fncaps`) and
+shows as `fn() -> T uses io + fs` through `types.show_caps` / the checker's `tsc` (plain `ts`
+and lowering's old name hash leave it out; lowering names types with `show_caps` so two fn types
+that differ in capabilities are two C types of one layout).
+
+- **Syntax.** TFn `h = 1`, `[i/j]` = Cap nodes (names joined with `+`; a comma would end a
+  parameter), not parsed in the result type of a `fn` declaration (`P.in_ret`). A GParam with
+  `e = 1` is `uses E`.
+- **A capability parameter** is a generic parameter whose value is a `T_CAPS` type (ids
+  `CAPS0 + mask`, all 512 made by `types.new`). It is bound like a type parameter: `unify_ast`
+  of a TFn node with `uses` against a fn value's mask (`unify_caps`) takes what the listed
+  capabilities and the bound parameters don't cover into the first unbound or bound parameter
+  (the union over the arguments), an unbound one is the empty set, and `instantiate` keys the
+  instance by it. `resolve_ty` (`fn_cap_mask`) and `signature` read `c.tsubst`, so an instance
+  has concrete caps, is checked with them (E0201 inside the body if the callback needs more),
+  and `abstract_bodies` (which keeps only E0605) binds it empty. At the call, the callee's
+  needs are its declared capabilities with the parameters expanded.
+- **Values.** A closure's type has the mask of the capabilities its body used (`C.used`, set
+  by `use_cap` at every capability check) and is the expected type when it fits; a named fn
+  value has its instance's. `same` and `unify` accept a value for a type when the signature is
+  equal and either mask is 0 or the value's is a subset (`fn_sub`); the closure and function
+  value take the expected type's id so plain types stay plain. A closure is still checked with
+  the capabilities of the function that writes it.
+- **Calls.** A fn value call needs its type's mask (`call_value`; E0201 "call to `f`"). A plain
+  fn parameter's argument that carries a mask needs it at the call ("passing this function to
+  `g` requires capability `io`", E0201) because the callee calls it unchecked.
+- **Not done.** Capabilities of a trait method's implementation per type parameter; masks inside
+  generic arguments are invariant (`List[fn() uses io]` is not `List[fn()]`); `uses` in the
+  result type of a declaration; an explicit empty `uses`.
+
+## C8.47: `dyn Trait`
+
+A trait object (#18): a value of any type that implements a trait, called through a table
+of its methods. The type is `T_DYN` (a = the trait key's prefix, b = its symbol; syntax TDyn
+`dyn Name`, `dyn` a word only before a trait name, so it stays a name elsewhere) and has a fn
+value's layout: five pointers, the environment (a heap block holding the value), the vtable
+where a fn value has its code, and the environment's drop, clone and own. So it owns its value,
+a copy clones it, a drop runs the value's `Drop`, and every place that treats `T_FN` as an
+owned handle (layouts, glue, `owns`) treats `T_DYN` the same; it has no equality, order, hash or
+text.
+
+- **The rule** (`dyn_rule`, printed as the help of E0607): every method takes `self` or `inout self`,
+  has no type parameters and mentions `Self` only as its receiver, none has another `inout`
+  parameter, the trait has no associated types. A language trait is never `dyn`. Types are
+  resolved before traits are registered, so `resolve_ty` looks the trait up in the items
+  (`find_trait_item`).
+- **Coercion** (`coerce_dyn`) happens in `expr` when the expected type is a dyn type and the
+  value's is not (a `let` with a type, an argument, a result, a field, an element, `Some(x)`
+  where the payload is expected, `x as dyn T`): the type must implement the trait (E0601), and
+  for each method of the trait it finds the impl's instance as a method call does (own impl,
+  inherited default, derived default) and makes `dyn_thunk`, a closure body `(env, inout self,
+  args...)` that calls it with `self` read from (or, for `inout self`, as) the environment
+  block. Every capability of the instance must be in the trait method's declaration (E0608).
+  S_DYN holds the value (moved), an empty closure body capturing it (`dyn_holder`, whose
+  environment glue is the dyn value's) and one integer operand per method, the thunk.
+- **A call** (`dyn_method`) is S_DYNCALL: the method's index, then the arguments. It needs the
+  capabilities of the trait's declaration, and `inout self` needs an assignable receiver.
+- **llvm.ei** (`dyn_value`, `dyn_vtable`, `dyn_call`, separate from `closure`/`callv`): the
+  vtable is a private constant (`@.m<n>`) of the thunks' addresses, the call loads the slot
+  and calls it in a closure body's convention with the environment as both its first
+  argument and `self` (the value is the environment's first member, so they are one address).
+- **Not done**: `dyn` of a trait with generic methods or associated types (the rule), several
+  traits in one `dyn`, upcasting, comparing or printing a dyn value, comptime (`cannot use a
+  `dyn` value`).
 
 ## Testing
 

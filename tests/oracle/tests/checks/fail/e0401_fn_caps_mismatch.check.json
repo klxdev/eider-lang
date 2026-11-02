@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"tests/checks/fail/e0401_fn_caps_mismatch.ei","line":3,"col":5},"message":"expected fn() uses fs, found fn() uses io","help":"the value uses io, which the expected fn type doesn't allow; add it to that type's `uses`"}

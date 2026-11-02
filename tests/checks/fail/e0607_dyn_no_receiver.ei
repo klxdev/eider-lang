@@ -1,0 +1,4 @@
+// expect: E0607 3:9
+trait Make { fn make() -> i32 }
+fn f(p: dyn Make) {}
+fn main() {}

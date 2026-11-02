@@ -1,0 +1,1 @@
+{"error":"E0203","span":{"file":"tests/checks/fail/e0203_unknown_cap_param.ei","line":2,"col":21},"message":"unknown capability `E`","help":"known capabilities: io, clock, fs, net, threads, ffi, python, js, wasm; or a capability parameter `[uses E]` of the function"}

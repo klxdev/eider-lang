@@ -63,35 +63,55 @@ error[E0201]: call to `save` requires capability `fs`
 Applying the fix moves the error to `main`'s call of `remember`, and so on up. That is the
 point: the capability is visible at every level that can cause the effect.
 
-**Closures** carry the capabilities of the function that writes them. A function without
-`uses` that calls a closure it was given runs whatever that closure's author was allowed to
-do, which is how a pure `map` or a handler table can take effectful closures:
+**Closures** are checked with the capabilities of the function that writes them, and their
+type says which they use. A function that takes a callback says what the callback may do in
+the callback's type, and a generic function can leave that open with a capability
+parameter, `uses E`, so a pure `map` takes effectful closures without every caller
+declaring everything:
 
 ```eider
-fn twice(f: fn(i32) -> i32) -> i32 { f(f(1)) }
+fn map_all[T, U, uses E](xs: List[T], f: fn(T) -> U uses E) -> List[U] uses E {
+    let mut out: List[U] = List.new()
+    for x in xs { out.push(f(x)) }
+    out
+}
+
+fn nums() -> List[i32] {
+    let mut l: List[i32] = List.new()
+    l.push(1)
+    l.push(2)
+    l
+}
 
 fn main() uses io {
-    let r = twice(|x| -> i32 {
+    let doubled = map_all(nums(), |x: i32| x * 2)          // E is empty
+    let shown = map_all(nums(), |x: i32| -> i32 {           // E is io
         print(x)
-        x + 1
+        x
     })
-    print(r)
+    print(doubled.len() + shown.len())
 }
 ```
 
 ```output
 1
 2
-3
+4
 ```
+
+The call of `map_all` needs what `E` stands for, and nothing else: with a pure closure it
+could sit in a function with no `uses` at all. Without the `uses E` the callback's type is
+unchecked, as it always was (`fn(i32) -> i32` takes any closure, and calling it needs
+nothing), and the only thing the caller owes is what the argument carries. See the
+[reference](../reference/capabilities.md#function-types-and-capability-parameters).
 
 Some more details:
 
 - **Methods and trait methods** declare `uses` like functions. A generic body is checked
   for every type it is instantiated with, so a generic function over a trait must declare
   the capabilities of the most demanding implementation (std's stream functions declare
-  `io` for that reason). Capabilities that follow type parameters are not in the language
-  yet.
+  `io` for that reason). Capabilities that follow a callback follow a capability parameter
+  (`uses E`, above); the ones that follow a type parameter's methods do not.
 - **`test` blocks** run with every capability.
 - **`comptime` evaluation** has none, so a constant can't depend on the environment.
 - **`Drop` and `From` impls** can't declare capabilities (E0606, E0602): they run wherever a
@@ -234,6 +254,6 @@ is what the compiler sees, not a text search.
 - A grant is per package, not per imported module: a program that imports only http's pure
   parser still grants http everything its server uses, since eider-pkg computes the set over
   all of http's modules.
-- Capabilities don't follow type parameters (see "Inside a program" above).
+- Capabilities follow callbacks (`uses E`) but not the methods of a type parameter (see "Inside a program" above).
 - Capabilities say *which kind* of effect, not *which* file or host. Narrower grants
   (paths, hosts) are not designed yet.

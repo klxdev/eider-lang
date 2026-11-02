@@ -1,0 +1,5 @@
+// expect: E0201 3:5
+fn run(f: fn() uses io) {
+    f()
+}
+fn main() {}

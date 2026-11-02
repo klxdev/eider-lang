@@ -1,0 +1,5 @@
+// expect: E0201 4:25
+trait Run { fn go(self) uses io }
+type A = { n: i32 }
+fn call(r: dyn Run) { r.go() }
+fn main() {}

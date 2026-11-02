@@ -1,0 +1,6 @@
+// expect: E0201 4:5
+fn each[uses E](f: fn() uses E) uses E { f() }
+fn run(f: fn() uses io) {
+    each(f)
+}
+fn main() {}

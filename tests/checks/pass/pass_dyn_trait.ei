@@ -1,0 +1,25 @@
+// mode: build
+trait Shape {
+  fn area(self) -> i64
+  fn grow(inout self, k: i64)
+  fn note(self) uses io
+}
+type Sq = { s: i64 }
+impl Shape for Sq {
+  fn area(self) -> i64 { self.s * self.s }
+  fn grow(inout self, k: i64) { self.s = self.s * k }
+  fn note(self) uses io { print(self.s) }
+}
+fn total(xs: List[dyn Shape]) -> i64 {
+  let mut t: i64 = 0
+  for x in xs { t += x.area() }
+  t
+}
+fn main() uses io {
+  var xs: List[dyn Shape] = List.new()
+  xs.push(Sq(2))
+  xs.push(Sq(3) as dyn Shape)
+  xs[0].grow(2)
+  xs[0].note()
+  print(total(xs))
+}

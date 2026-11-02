@@ -1,0 +1,3 @@
+// expect: E0203 2:21
+fn bad(f: fn() uses E) {}
+fn main() {}

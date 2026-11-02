@@ -61,6 +61,11 @@
 //             into its environment; the function's L_CAPTURE locals read them)
 //   S_FNREF   dst := function a as a closure value of type ty (no environment)
 //   S_CALLV   dst := call closure op a with args [b/c] (borrowed); dst = NONE for ()
+//   S_DYN     dst := dyn value of type ty (docs/compiler.md, "C8.47"): function a is an empty closure body
+//             capturing the value, whose environment glue is the dyn value's; [b/c] = the captured value
+//             (moved), then one integer operand per method of the trait: the function that calls that
+//             method of the value's type (`env, inout self, args...` in a closure body's convention)
+//   S_DYNCALL dst := call method (integer operand [b]) of the dyn value op a with args [b+1..b+c) (borrowed)
 //   S_NOTE    the checker's own note for the protection rule (a = kind, b = index; check.ei,
 //             "References"); removed before checking ends, so no IR that is used has one
 //   S_CHECK   the bounds checks of place a, and nothing else (a reference is bound to it:
@@ -187,6 +192,8 @@ pub const S_FNREF: u32 = 27
 pub const S_CALLV: u32 = 28
 pub const S_NOTE: u32 = 29
 pub const S_CHECK: u32 = 30
+pub const S_DYN: u32 = 31
+pub const S_DYNCALL: u32 = 32
 
 pub const B_STR_FROM: u32 = 0
 pub const B_STR_FROM_INT: u32 = 1
@@ -814,6 +821,18 @@ fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u3
         30 => {
             put(inout o, "check ")
             put_place(inout o, ir, t, names, s.a)
+        }
+        31 => {
+            put_dst(inout o, s.dst)
+            put(inout o, "dyn ")
+            putb(inout o, ir.fns[s.a as usize].name)
+            put_args(inout o, ir, t, names, s.b, s.c)
+        }
+        32 => {
+            if s.dst != NONE { put_dst(inout o, s.dst) }
+            put(inout o, "dyncall ")
+            put_op(inout o, ir, t, names, s.a)
+            put_args(inout o, ir, t, names, s.b, s.c)
         }
         _ => {
             put(inout o, "return")

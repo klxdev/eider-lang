@@ -74,24 +74,109 @@ fn main() uses io {
 }
 ```
 
-A fn type carries no capabilities: calling a fn value needs nothing, because the
-capabilities were checked where the closure or function value was made. A function that
-takes a callback can call it whatever it does:
+## Function types and capability parameters
+
+A fn type may list the capabilities calling it needs, after its result type, joined with
+`+` (a comma would end the parameter or type argument):
+
+```text
+fn_type = "fn" "(" [types] ")" ["->" type] ["uses" cap {"+" cap}]
+generic = name [":" bounds] | "uses" name
+```
 
 ```eider
-fn twice(f: fn()) {
-    f()
+fn run(f: fn() uses io) uses io {
     f()
 }
 
-fn main() uses io {
-    twice(|| print("hi"))
+fn main() uses io, clock {
+    run(|| print("hi"))
+    let g: fn(i32) -> i32 uses io + clock = |x| -> i32 {
+        print(x)
+        x + 1
+    }
+    print(g(1))
 }
 ```
 
 ```output
 hi
-hi
+1
+2
+```
+
+- **Calling a fn value needs the capabilities of its type** (E0201 "call to `f`"). A closure's
+  type carries exactly the capabilities its body uses (`|| print(1)` is `fn() uses io`); a
+  named function used as a value carries its own `uses`.
+- **A value fits a type that lists at least its capabilities** (`fn() uses io` where
+  `fn() uses io + fs` is wanted); otherwise E0401, with a help naming the extra capability.
+- **A fn type without `uses` is unchecked**, as before: closures of any capabilities fit it
+  and calling it needs nothing, because the capabilities were checked where the closure was
+  made (a closure is still checked with the capabilities of the function it is written in).
+  Existing code, and std's `map`, `sort_by` and the rest, keep working unchanged. The one
+  thing a plain fn *parameter* adds is that **its argument's capabilities flow to the
+  caller**: passing a `fn() uses io` for `f: fn()` needs `io` where the call is made,
+  because the callee will call it without a check.
+- In a function's result type a `uses` after a fn type belongs to the function
+  (`fn make() -> fn() uses io` declares a function that uses `io`), so a result type that
+  carries capabilities is written through a type alias.
+
+### Capability parameters
+
+A generic function can be polymorphic over capabilities with a `uses E` parameter among its
+generic parameters, naming it in the fn types of its parameters and in its own `uses`:
+
+```eider
+fn map_all[T, U, uses E](xs: List[T], f: fn(T) -> U uses E) -> List[U] uses E {
+    let mut out: List[U] = List.new()
+    for x in xs { out.push(f(x)) }
+    out
+}
+
+fn pure_double(x: i32) -> i32 { x * 2 }
+
+fn nums() -> List[i32] {
+    let mut l: List[i32] = List.new()
+    l.push(1)
+    l.push(2)
+    l
+}
+
+fn main() uses io {
+    // E is empty: nothing is needed to call it, so this could be in a function without `uses`
+    print(map_all(nums(), pure_double).len())
+    // E is io: the call needs io
+    let shown = map_all(nums(), |x: i32| -> i32 {
+        print(x)
+        x
+    })
+    print(shown.len())
+}
+```
+
+```output
+2
+1
+2
+2
+```
+
+`E` is inferred at each call as the union of the capabilities of the arguments that name it
+in their fn types, and stands for them in the callee's `uses`; a call that infers nothing
+gets the empty set. Like a type parameter, `E` is part of the instance: `map_all` is
+compiled once for each set it is called with, and each instance's body is checked with its
+set, so a callback that needs more than `E` offers is reported in the body as E0201.
+
+```eider,compile_fail=E0201
+fn each[uses E](f: fn() uses E) uses E {
+    f()
+}
+
+fn run(f: fn() uses io) {
+    each(f)
+}
+
+fn main() {}
 ```
 
 A trait method's implementation may declare capabilities its trait declaration doesn't;

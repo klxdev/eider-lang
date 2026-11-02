@@ -212,7 +212,7 @@ pub fn framed(p: P, b: u32) -> bool {
     let bl = p.ir.blocks[b as usize]
     for i in 0..bl.len {
         let s = p.ir.stmts[p.ir.extra[(bl.start + i) as usize] as usize]
-        if s.kind == ir.S_CALL || s.kind == ir.S_CALLV || s.kind == ir.S_LOOP { return true }
+        if s.kind == ir.S_CALL || s.kind == ir.S_CALLV || s.kind == ir.S_DYNCALL || s.kind == ir.S_LOOP { return true }
         if s.kind == ir.S_IF && (framed(p, s.b) || framed(p, s.c)) { return true }
     }
     false
@@ -226,7 +226,7 @@ pub fn framed(p: P, b: u32) -> bool {
 /// is attributed to its function at the line of its last call.
 pub fn prof_marks(p: P, s: ir.Stmt) -> bool {
     let k = s.kind
-    if k == ir.S_CALL || k == ir.S_CALLV || k == ir.S_BUILTIN || k == ir.S_CLOSURE || k == ir.S_PRINT || k == ir.S_DROP { return true }
+    if k == ir.S_CALL || k == ir.S_CALLV || k == ir.S_DYNCALL || k == ir.S_BUILTIN || k == ir.S_CLOSURE || k == ir.S_DYN || k == ir.S_PRINT || k == ir.S_DROP { return true }
     k == ir.S_RECORD && shared_rec(p, s.ty)
 }
 
@@ -297,7 +297,7 @@ fn clash(inout g: G, name: List[u8], from: List[u8]) {
 }
 
 pub fn is_struct_kind(k: u32) -> bool {
-    k == types.T_ENUM || k == types.T_RECORD || k == types.T_ARRAY || k == types.T_TUPLE || k == types.T_LIST || k == types.T_MAP || k == types.T_BOX || k == types.T_FN || types.is_handle(k) || k == types.T_REF
+    k == types.T_ENUM || k == types.T_RECORD || k == types.T_ARRAY || k == types.T_TUPLE || k == types.T_LIST || k == types.T_MAP || k == types.T_BOX || k == types.T_FN || k == types.T_DYN || types.is_handle(k) || k == types.T_REF
 }
 
 /// Whether type `ty` is concrete (no generic template inside it).
@@ -329,7 +329,7 @@ pub fn usable(p: P, ty: u32) -> bool {
 fn type_name(p: P, ty: u32) -> List[u8] {
     let k = types.kind(p.t, ty)
     let mut out: List[u8] = List.new()
-    let shown = types.show(p.t, p.names, ty)
+    let shown = types.show_caps(p.t, p.names, ty)
     if k == types.T_ENUM || k == types.T_RECORD {
         let d = types.def_of(p.t, ty)
         bytes.append(inout out, sys.lit("t_"))
@@ -346,6 +346,7 @@ fn type_name(p: P, ty: u32) -> List[u8] {
     if k == types.T_MAP { bytes.append(inout out, sys.lit("tm_")) }
     if k == types.T_BOX { bytes.append(inout out, sys.lit("tb_")) }
     if k == types.T_FN { bytes.append(inout out, sys.lit("tf_")) }
+    if k == types.T_DYN { bytes.append(inout out, sys.lit("td_")) }
     if k == types.T_TASK { bytes.append(inout out, sys.lit("tk_")) }
     if k == types.T_MUTEX { bytes.append(inout out, sys.lit("tx_")) }
     if k == types.T_CHAN { bytes.append(inout out, sys.lit("tc_")) }
@@ -459,7 +460,7 @@ fn name_all(inout g: G, p: P) {
         let mut n: List[u8] = List.new()
         if is_struct_kind(k) && usable(p, ty as u32) {
             n = type_name(p, ty as u32)
-            let from = types.show(p.t, p.names, ty as u32)
+            let from = types.show_caps(p.t, p.names, ty as u32)
             if !register(inout g, n, from) { clash(inout g, n, from) }
         }
         g.tn.push(n)

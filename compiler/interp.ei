@@ -144,7 +144,7 @@ fn zero(p: lower.P, ty: u32) -> Val {
     }
     // Box (a null box), fn values and handles: nothing to read
     if k == types.T_BOX { return agg(List.new()) }
-    if k == types.T_FN { return mk(K_FN, NONE as u64) }
+    if k == types.T_FN || k == types.T_DYN { return mk(K_FN, NONE as u64) }
     if types.is_handle(k) || k == types.T_REF { return mk(K_HEAP, NONE as u64) }
     vunit()
 }
@@ -662,6 +662,7 @@ fn simple(p: lower.P, inout st: St, inout fr: Fr, id: u32) -> Result[bool, Trap]
         set_dst(inout fr, x.dst, Val(K_FN, x.a as u64, List.new(), xs))
         return Ok(true)
     }
+    if k == ir.S_DYN || k == ir.S_DYNCALL { return Err(cannot("use a `dyn` value")) }
     if k == ir.S_FNREF {
         set_dst(inout fr, x.dst, mk(K_FN, x.a as u64))
         return Ok(true)

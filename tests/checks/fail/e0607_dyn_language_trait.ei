@@ -1,0 +1,3 @@
+// expect: E0607 2:9
+fn f(p: dyn Show) {}
+fn main() {}

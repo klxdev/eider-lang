@@ -38,6 +38,9 @@ pub type P = {
     // std.bytes there), added after the items
     implied: List[ast.Node],
     implied_syms: List[u32],
+    // set while the result type of a `fn` declaration is parsed: a `uses` after a fn type in
+    // that position belongs to the declaration, not to the type (docs/compiler.md, "C8.46")
+    in_ret: bool,
 }
 
 /// The result of `parse_all`: the tree, with error nodes (ast.ei) where parts failed, and
@@ -786,9 +789,11 @@ fn generics(inout p: P) -> Result[List[u32], diag.Diag] {
     if !eat(inout p, lex.LBracket) { return Ok(gs) }
     while true {
         skip_nl(inout p)
+        // `uses E`: a capability parameter (C8.46)
+        let is_cap = eat_kw(inout p, intern.K_USES)
         let g = ident(inout p)?
         let mut bounds: List[u32] = List.new()
-        if eat(inout p, lex.Colon) {
+        if !is_cap && eat(inout p, lex.Colon) {
             while true {
                 let b = ident(inout p)?
                 let mut tn = mk(ast.TName, b.line, b.col)
@@ -808,6 +813,7 @@ fn generics(inout p: P) -> Result[List[u32], diag.Diag] {
         gn.a = g.sym
         gn.c = list(inout p, bounds)
         gn.d = bounds.len() as u32
+        if is_cap { gn.e = 1 }
         gs.push(add(inout p, gn))
         skip_nl(inout p)
         if eat(inout p, lex.RBracket) { return Ok(gs) }
@@ -938,6 +944,8 @@ fn upper_name_at(p: P, i: usize) -> bool {
 
 pub fn ty(inout p: P) -> Result[u32, diag.Diag] {
     let t = cur(p)
+    let in_ret = p.in_ret
+    p.in_ret = false
     if is_kw(p, intern.K_INOUT) {
         let mut d = diag.new("E0302", t.line, t.col, sys.lit("`inout` is only valid on function parameters; types can't hold references"))
         d.help = sys.lit("store the value itself, or an index into a List, or a Ref[T] or Mutex[T] to share")
@@ -968,6 +976,22 @@ pub fn ty(inout p: P) -> Result[u32, diag.Diag] {
         n.d = ps.len() as u32
         n.e = io
         if eat(inout p, lex.Arrow) { n.g = ty(inout p)? + 1 }
+        // `fn(T) -> U uses io + E`: the capabilities the fn type carries, joined with `+` because a
+        // comma would end the parameter or type argument (C8.46)
+        if !in_ret && is_kw(p, intern.K_USES) {
+            adv(inout p)
+            let mut caps: List[u32] = List.new()
+            while true {
+                let c = ident(inout p)?
+                let mut cn = mk(ast.Cap, c.line, c.col)
+                cn.a = c.sym
+                caps.push(add(inout p, cn))
+                if !eat(inout p, lex.Plus) { break }
+            }
+            n.h = 1
+            n.i = list(inout p, caps)
+            n.j = caps.len() as u32
+        }
         return Ok(add(inout p, n))
     }
     if eat(inout p, lex.LBracket) {
@@ -1000,6 +1024,25 @@ pub fn ty(inout p: P) -> Result[u32, diag.Diag] {
         n.c = list(inout p, ts)
         n.d = ts.len() as u32
         return Ok(add(inout p, n))
+    }
+    // `dyn Trait`: `dyn` is a word only before a trait name (docs/compiler.md, "C8.47")
+    if t.kind == lex.Ident && t.val > intern.LAST_KEYWORD as u64 && p.i + 1 < p.toks.len() && name_at(p, p.i + 1) && bytes.eq(intern.name(p.names, t.val as u32), sys.lit("dyn")) {
+        adv(inout p)
+        let nt = cur(p)
+        adv(inout p)
+        let mut dsym = nt.val as u32
+        let mut dqual: u32 = 0
+        match qualified(inout p, dsym) {
+            Some(q) => {
+                dqual = p.qual + 1
+                dsym = q.sym
+            }
+            None => {}
+        }
+        let mut dn = mk(ast.TDyn, t.line, t.col)
+        dn.a = dsym
+        dn.b = dqual
+        return Ok(add(inout p, dn))
     }
     if t.kind == lex.Ident && t.val > intern.LAST_KEYWORD as u64 {
         adv(inout p)
@@ -1079,7 +1122,9 @@ fn fn_decl(inout p: P, allow_no_body: bool, flags: u32) -> Result[u32, diag.Diag
     if peek_nonnl_is(p, lex.Arrow) {
         skip_nl(inout p)
         adv(inout p)
+        p.in_ret = true
         ret = ty(inout p)? + 1
+        p.in_ret = false
         sig_end = prev_end(p)
     }
     let mut caps: List[u32] = List.new()
@@ -2543,7 +2588,7 @@ pub fn parse(lx: lex.Lexed, names: intern.Interner) -> Result[P, diag.Diag] {
 /// error ("recovery"): Parsed.
 pub fn parse_all(lx: lex.Lexed, names: intern.Interner) -> Parsed {
     let mut p = P(lx.toks, lx.strs, 0, ast.new(), names, List.new(), List.new(), lx.src, List.new(), List.new(), List.new(), 0,
-        List.new(), List.new())
+        List.new(), List.new(), false)
     program(inout p)
     let ds = p.errs
     Parsed(p, ds)

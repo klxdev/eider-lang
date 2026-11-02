@@ -1,0 +1,53 @@
+trait Shape {
+    fn area(self) -> i64
+    fn bump(inout self)
+    fn say(self) uses io
+}
+type Rect = { w: i64, h: i64 }
+impl Shape for Rect {
+    fn area(self) -> i64 { self.w * self.h }
+    fn bump(inout self) { self.w += 1 }
+    fn say(self) uses io { print(self.w) }
+}
+type Pair[T] = { a: T, b: T }
+impl[T] Shape for Pair[T] {
+    fn area(self) -> i64 { 2 }
+    fn bump(inout self) {}
+    fn say(self) uses io { print("pair") }
+}
+
+fn first(xs: List[dyn Shape]) -> Option[dyn Shape] {
+    if xs.len() == 0 { None } else { Some(xs[0]) }
+}
+
+fn main() uses io {
+    let b: Box[dyn Shape] = Box.new(Rect(2, 2))
+    print(b.get().area())
+    let o: Option[dyn Shape] = Some(Rect(3, 3))
+    match o {
+        Some(s) => print(s.area())
+        None => print(0)
+    }
+    let mut m: Map[i32, dyn Shape] = Map.new()
+    m.insert(1, Rect(4, 4))
+    match m.get(1) {
+        Some(s) => print(s.area())
+        None => print(0)
+    }
+    var xs: List[dyn Shape] = List.new()
+    xs.push(Rect(1, 5))
+    xs.push(Pair(1, 2))
+    match first(xs) {
+        Some(s) => s.say()
+        None => print(0)
+    }
+    xs[0].bump()
+    xs[0].say()
+    xs[1].say()
+    let r: Ref[dyn Shape] = Ref.new(Rect(7, 1))
+    print(r.get().area())
+    var d: dyn Shape = Rect(1, 1)
+    d.bump()
+    d.bump()
+    d.say()
+}

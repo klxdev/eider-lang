@@ -297,6 +297,9 @@ pub type C = {
     defers: List[Defer],
     /// inherited default methods not registered yet (register_defaults)
     dflts: List[Dflt],
+    /// the capabilities (a mask, bit i = `types.cap_name(i)`) the body being checked has used
+    /// so far: what a closure's type carries ("C8.46")
+    used: u32,
 }
 
 /// `impl From[Source] for Target` (module md, IImpl node) and its `from` method (FnDef fd).
@@ -430,11 +433,19 @@ fn unsup(line: u32, col: u32, what: str) -> diag.Diag {
 }
 
 fn ts(c: C, ty: u32) -> List[u8] { types.show(c.t, c.p.names, ty) }
+
+/// `ts` with the capabilities of fn types (`fn() uses io`): for the messages about them and
+/// the names of instances. Plain `ts` leaves them out, so the text of every existing
+/// message stays what it was.
+fn tsc(c: C, ty: u32) -> List[u8] { types.show_caps(c.t, c.p.names, ty) }
 fn kt(c: C, k: u64) -> List[u8] { resolve.key_text(c.p.names, k) }
 fn nm(c: C, sym: u32) -> List[u8] { intern.name(c.p.names, sym) }
 
 fn mismatch(c: C, line: u32, col: u32, expected: u32, found: u32) -> diag.Diag {
     let mut d = err("E0401", line, col, q2("expected ", ts(c, expected), ", found ", ts(c, found), ""))
+    if expected != NONE && found != NONE && types.fn_caps(c.t, expected) != 0 {
+        d = err("E0401", line, col, q2("expected ", tsc(c, expected), ", found ", tsc(c, found), ""))
+    }
     if types.is_int(c.t, expected) && types.is_int(c.t, found) {
         d.help = q("there are no implicit conversions; use an explicit cast: `value as ", ts(c, expected), "`")
     }
@@ -442,6 +453,16 @@ fn mismatch(c: C, line: u32, col: u32, expected: u32, found: u32) -> diag.Diag {
         d.help = q("f32 and f64 don't mix implicitly; convert with `value as ", ts(c, expected), "`")
     } else if (types.is_int(c.t, expected) && types.is_float(c.t, found)) || (types.is_float(c.t, expected) && types.is_int(c.t, found)) {
         d.help = q("integers and floats don't mix implicitly; convert with `value as ", ts(c, expected), "`")
+    }
+    if expected != NONE && found != NONE && types.kind(c.t, expected) == types.T_FN && types.kind(c.t, found) == types.T_FN {
+        let te = types.get(c.t, expected)
+        let tf = types.get(c.t, found)
+        if te.a == tf.a && te.b == tf.b {
+            let extra = mask_minus(tf.c, te.c)
+            let mut names: List[u8] = List.new()
+            bytes.append(inout names, caps_text(c, mask_syms(c, extra)))
+            d.help = q("the value uses ", names, ", which the expected fn type doesn't allow; add it to that type's `uses`")
+        }
     }
     d
 }
@@ -528,7 +549,7 @@ fn poison_v(inout c: C) -> V {
 fn poisoned(c: C, ty: u32) -> bool { ty != NONE && types.has_poison(c.t, ty) }
 
 /// Type equality where the error type matches anything.
-fn same(c: C, a: u32, b: u32) -> bool { a == b || poisoned(c, a) || poisoned(c, b) }
+fn same(c: C, a: u32, b: u32) -> bool { a == b || poisoned(c, a) || poisoned(c, b) || fn_sub(c, a, b) }
 
 fn contains_text(hay: List[u8], needle: List[u8]) -> bool {
     match bytes.find(hay, needle, 0) {
@@ -878,7 +899,7 @@ fn builtin_op(inout c: C, b: u32, args: List[u32], rty: u32, line: u32) -> u32 {
 /// Does a value of this type own heap memory?
 fn owns(c: C, ty: u32) -> bool {
     let t = types.get(c.t, ty)
-    if t.kind == types.T_STRING || t.kind == types.T_LIST || t.kind == types.T_MAP || t.kind == types.T_BOX || t.kind == types.T_FN { return true }
+    if t.kind == types.T_STRING || t.kind == types.T_LIST || t.kind == types.T_MAP || t.kind == types.T_BOX || t.kind == types.T_FN || t.kind == types.T_DYN { return true }
     if types.is_handle(t.kind) || t.kind == types.T_REF { return true }
     if t.kind == types.T_ARRAY { return owns(c, t.a) }
     if t.kind == types.T_TUPLE {
@@ -1711,6 +1732,28 @@ fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] {
             }
             Ok(types.tuple(inout c.t, elems))
         }
+        ast.TDyn => {
+            let k = resolve.name_key(c.p, am, n.a, n.b, n.line, n.col)
+            let fi = find_trait_item(c, k)
+            if fi.len() == 0 { return Err(err("E0111", n.line, n.col, q("unknown trait `", kt(c, k), "`"))) }
+            if lang_of_key(c, k) != NONE {
+                return Err(errh("E0607", n.line, n.col, q("the language trait `", kt(c, k), "` can't be `dyn`"), DYN_RULE))
+            }
+            let r = dyn_rule(c, fi[0].copy())
+            if !r.ok {
+                let mut msg = q("trait `", kt(c, k), "` can't be `dyn`: ")
+                if r.method != NONE {
+                    bytes.append(inout msg, s("method `"))
+                    bytes.append(inout msg, nm(c, r.method))
+                    bytes.append(inout msg, s("` "))
+                } else {
+                    bytes.append(inout msg, s("it "))
+                }
+                bytes.append(inout msg, r.why)
+                return Err(errh("E0607", n.line, n.col, msg, DYN_RULE))
+            }
+            Ok(types.dyn_of(inout c.t, resolve.key_pre(k), resolve.key_sym(k)))
+        }
         _ => {
             let mut ps: List[u32] = List.new()
             for i in 0..n.d {
@@ -1720,7 +1763,9 @@ fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] {
             }
             let mut r = types.UNIT
             if n.g > 0 { r = resolve_ty(inout c, am, n.g - 1)? }
-            Ok(types.fn_of(inout c.t, ps, r))
+            let mut cm: u32 = 0
+            if n.h == 1 { cm = fn_cap_mask(c, am, n)? }
+            Ok(types.fn_caps_of(inout c.t, ps, r, cm))
         }
     }
 }
@@ -2092,6 +2137,12 @@ fn has_unbound(c: C, m: u32, tn: u32, sb: Subst, gs: List[u32]) -> bool {
             for i in 0..n.d {
                 if has_unbound(c, m, atm(c, m, n.c, i), sb, gs) { return true }
             }
+            if n.kind == ast.TFn && n.h == 1 {
+                for i in 0..n.j {
+                    let cs = ndm(c, m, atm(c, m, n.i, i)).a
+                    if has_sym(gs, cs) && subst_get(sb, cs) == NONE { return true }
+                }
+            }
             if n.kind == ast.TFn && n.g > 0 { return has_unbound(c, m, n.g - 1, sb, gs) }
             false
         }
@@ -2201,12 +2252,69 @@ fn unify_ast(c: C, m: u32, tn: u32, actual: u32, inout sb: Subst, gs: List[u32])
                 if pin { pt = types.get(c.t, pt).a }
                 if !unify_ast(c, m, atm(c, m, n.c, i), pt, inout sb, gs) { return false }
             }
-            if n.g > 0 { return unify_ast(c, m, n.g - 1, t.b, inout sb, gs) }
-            t.b == types.UNIT
+            if n.g > 0 {
+                if !unify_ast(c, m, n.g - 1, t.b, inout sb, gs) { return false }
+            } else if t.b != types.UNIT {
+                return false
+            }
+            if n.h == 1 { return unify_caps(c, m, n, t.c, inout sb, gs) }
+            true
         }
         ast.TAssoc => true
+        ast.TDyn => {
+            if t.kind != types.T_DYN { return false }
+            let k = resolve.name_key(c.p, m, n.a, n.b, n.line, n.col)
+            t.a == resolve.key_pre(k) && t.b == resolve.key_sym(k)
+        }
         _ => actual == types.UNIT
     }
+}
+
+/// The capabilities `have` of a fn value against the `uses` list of fn type node n: they must be
+/// among the listed capabilities and the capability parameters' values; a parameter not bound
+/// yet takes what the listed capabilities don't cover, and the first one is widened by what
+/// a later argument adds (so `uses E` is the union over the arguments; "C8.46").
+fn unify_caps(c: C, m: u32, n: ast.Node, have: u32, inout sb: Subst, gs: List[u32]) -> bool {
+    let mut allowed: u32 = 0
+    let mut vars: List[u32] = List.new()
+    for i in 0..n.j {
+        let cs = ndm(c, m, atm(c, m, n.i, i)).a
+        let ix = cap_ix(c, cs)
+        if ix != NONE {
+            allowed = mask_or(allowed, bit_of(ix))
+        } else if has_sym(gs, cs) {
+            vars.push(cs)
+            let b = subst_get(sb, cs)
+            if b != NONE { allowed = mask_or(allowed, types.get(c.t, b).a) }
+        }
+    }
+    let rest = mask_minus(have, allowed)
+    if rest == 0 {
+        // (an unbound parameter that nothing is left for is the empty set)
+        for v in vars {
+            if subst_get(sb, v) == NONE { subst_set(inout sb, v, types.caps_of(0)) }
+        }
+        return true
+    }
+    if vars.len() == 0 { return false }
+    let first = vars[0]
+    let b = subst_get(sb, first)
+    let mut cur: u32 = 0
+    if b != NONE { cur = types.get(c.t, b).a }
+    subst_set(inout sb, first, types.caps_of(mask_or(cur, rest)))
+    for v in vars {
+        if subst_get(sb, v) == NONE { subst_set(inout sb, v, types.caps_of(0)) }
+    }
+    true
+}
+
+/// Whether fn type node n lists a capability parameter of `gs`.
+fn has_cap_var(c: C, m: u32, n: ast.Node, gs: List[u32]) -> bool {
+    if n.h != 1 { return false }
+    for i in 0..n.j {
+        if has_sym(gs, ndm(c, m, atm(c, m, n.i, i)).a) { return true }
+    }
+    false
 }
 
 /// A type node as messages spell it (show_ast: module items mangled, type
@@ -2239,6 +2347,10 @@ fn show_ast(c: C, m: u32, tn: u32, gens: List[u32]) -> List[u8] {
             out.push(46)
             bytes.append(inout out, nm(c, n.a))
         }
+        ast.TDyn => {
+            bytes.append(inout out, s("dyn "))
+            bytes.append(inout out, ty_name(c, m, n, gens))
+        }
         ast.TFn => {
             bytes.append(inout out, s("fn("))
             for i in 0..n.d {
@@ -2250,6 +2362,13 @@ fn show_ast(c: C, m: u32, tn: u32, gens: List[u32]) -> List[u8] {
             if n.g > 0 {
                 bytes.append(inout out, s(" -> "))
                 bytes.append(inout out, show_ast(c, m, n.g - 1, gens))
+            }
+            if n.h == 1 {
+                bytes.append(inout out, s(" uses "))
+                for i in 0..n.j {
+                    if i > 0 { bytes.append(inout out, s(" + ")) }
+                    bytes.append(inout out, nm(c, ndm(c, m, atm(c, m, n.i, i)).a))
+                }
             }
         }
         _ => { bytes.append(inout out, s("()")) }
@@ -2302,7 +2421,7 @@ fn head_of(c: C, ty: u32) -> u64 {
     let t = types.get(c.t, ty)
     match t.kind {
         0 => resolve.key(0, c.w.ints[t.a as usize])
-        21 => resolve.key(0, c.w.ints[(11 + t.a) as usize])
+        23 => resolve.key(0, c.w.ints[(11 + t.a) as usize])
         1 => resolve.key(0, c.w.s_bool)
         2 => resolve.key(0, c.w.s_str)
         3 => H_UNIT
@@ -2780,7 +2899,7 @@ fn lacks(c: C, tr: u32, ty: u32, inout seen: Map[u32, bool]) -> u32 {
         return lacks(c, tr, t.b, inout seen)
     }
     // a fn value copies its environment; a Mutex copies its contents into a new Mutex
-    if k == types.T_FN && tr == TR_COPY { return NONE }
+    if (k == types.T_FN || k == types.T_DYN) && tr == TR_COPY { return NONE }
     if k == types.T_MUTEX && tr == TR_COPY { return lacks(c, tr, t.a, inout seen) }
     // a Ref copies its contents into a new Ref (docs/compiler.md, "C8.7")
     if k == types.T_REF && tr == TR_COPY { return lacks(c, tr, t.a, inout seen) }
@@ -2851,6 +2970,7 @@ fn lack_help(c: C, tr: u32, part: u32) -> str {
     if k == types.T_MUTEX { return "Task, Mutex and Chan values are shared handles: they have no equality, order, hash or text" }
     if k == types.T_REF { return "a Ref is a shared handle: it has no equality, order, hash or text; compare or print what it holds, inside `read`" }
     if k == types.T_FN { return "fn values have no equality, order, hash or text" }
+    if k == types.T_DYN { return "dyn values have no equality, order, hash or text" }
     ""
 }
 
@@ -3090,6 +3210,10 @@ fn abstract_bodies(inout c: C) {
         let mut sb = no_subst()
         for gn in all_gparam_nodes(c, fd) {
             let g = ndm(c, f.md, gn)
+            if g.e == 1 {
+                subst_set(inout sb, g.a, types.caps_of(0))
+                continue
+            }
             let ty = types.param(inout c.t, g.a, fd)
             if param_ix(c, ty) == NONE {
                 c.lt.pty.push(ty)
@@ -3133,6 +3257,323 @@ fn abstract_bodies(inout c: C) {
 
 // ---- program
 
+// ---- dyn Trait (docs/compiler.md, "C8.47")
+//
+// `dyn Trait` is a value of any type that implements the trait, with the table of the
+// methods of that type (S_DYN builds it, S_DYNCALL calls through it; llvm.ei). The checker's
+// part: which traits qualify (`dyn_rule`), the coercion from a concrete type (`coerce_dyn`,
+// where an expression's expected type is a dyn type), and the call (`dyn_method`).
+
+const DYN_RULE: str = "a trait can be `dyn` when every method takes `self` or `inout self`, has no type parameters and mentions `Self` only as its receiver, no method has another `inout` parameter, and the trait has no associated types"
+
+/// Whether a trait qualifies; if not, the method (NONE: the trait itself) and the clause.
+type DynRule = { ok: bool, method: u32, why: List[u8] }
+
+/// Whether type node tn of module m mentions `Self`.
+fn mentions_self(c: C, m: u32, tn: u32) -> bool {
+    let n = ndm(c, m, tn)
+    match n.kind {
+        ast.TName => n.b == 0 && n.a == intern.S_SELF_TYPE
+        ast.TAssoc => n.b == intern.S_SELF_TYPE
+        ast.TArray => mentions_self(c, m, n.a)
+        ast.TUnit => false
+        ast.TDyn => false
+        _ => {
+            for i in 0..n.d {
+                if mentions_self(c, m, atm(c, m, n.c, i)) { return true }
+            }
+            if n.kind == ast.TFn && n.g > 0 { return mentions_self(c, m, n.g - 1) }
+            false
+        }
+    }
+}
+
+/// The declaration of the trait with key k (types are resolved before the traits are
+/// registered, so a field of type `dyn T` looks it up in the items): zero or one.
+fn find_trait_item(c: C, k: u64) -> List[Item] {
+    let mut out: List[Item] = List.new()
+    let ti = mget(c.traits, k)
+    if ti != NONE {
+        out.push(c.trs[ti as usize].copy())
+        return out
+    }
+    for it in items(c.p) {
+        let n = ndm(c, it.m, it.node)
+        if n.kind == ast.ITrait && resolve.item_key(c.p, it.m, n.a) == k {
+            out.push(it)
+            return out
+        }
+    }
+    out
+}
+
+/// The dyn-compatibility rule (DYN_RULE) for the trait declared by `tr`.
+fn dyn_rule(c: C, tr: Item) -> DynRule {
+    let trn = ndm(c, tr.m, tr.node)
+    if trn.f > 0 {
+        let an = ndm(c, tr.m, atm(c, tr.m, trn.e, 0))
+        return DynRule(false, NONE, q("declares the associated type `", nm(c, an.a), "`"))
+    }
+    for i in 0..trn.d {
+        let tm = ndm(c, tr.m, atm(c, tr.m, trn.c, i))
+        if tm.d > 0 { return DynRule(false, tm.a, s("is generic")) }
+        let mut has_self = false
+        if tm.f > 0 { has_self = ndm(c, tr.m, atm(c, tr.m, tm.e, 0)).a == intern.S_SELF }
+        if !has_self { return DynRule(false, tm.a, s("has no `self` receiver")) }
+        for k in 1..tm.f {
+            let pn = ndm(c, tr.m, atm(c, tr.m, tm.e, k))
+            if pn.c == 1 { return DynRule(false, tm.a, q("takes the `inout` parameter `", nm(c, pn.a), "`")) }
+            if mentions_self(c, tr.m, pn.b) { return DynRule(false, tm.a, q("mentions `Self` in the parameter `", nm(c, pn.a), "`")) }
+        }
+        if tm.g > 0 && mentions_self(c, tr.m, tm.g - 1) { return DynRule(false, tm.a, s("mentions `Self` in its result")) }
+    }
+    DynRule(true, NONE, List.new())
+}
+
+/// The function that runs method `name` of trait `key` for type `ty`: an impl's method or an
+/// inherited default (the lookup of a method call), as an instance.
+fn dyn_instance(inout c: C, ty: u32, name: u32, key: u64) -> Result[u32, diag.Diag] {
+    let head = head_of(c, ty)
+    let mut cands: List[u32] = List.new()
+    for i in meth_cands(c, head, name, key) {
+        let m = c.meths[i as usize].copy()
+        let f = c.fdefs[m.fd as usize]
+        let im = ndm(c, f.imd, f.inode)
+        let gs = gparams(c, f.imd, im.c, im.d)
+        let mut sb = no_subst()
+        if !unify_ast(c, f.imd, im.b, ty, inout sb, gs) { continue }
+        cands.push(i)
+    }
+    if cands.len() > 0 {
+        let ch = pick_meth(c, cands)
+        if ch == NONE { return Err(err("E0119", 0, 0, q("ambiguous method `", nm(c, name), "`"))) }
+        let m = c.meths[ch as usize].copy()
+        let f = c.fdefs[m.fd as usize]
+        let im = ndm(c, f.imd, f.inode)
+        let gs = gparams(c, f.imd, im.c, im.d)
+        let mut sb = no_subst()
+        unify_ast(c, f.imd, im.b, ty, inout sb, gs)
+        if f.dflt { sb = no_subst() }
+        subst_set(inout sb, intern.S_SELF_TYPE, ty)
+        return instantiate(inout c, m.fd, sb)
+    }
+    let dm = derived_method(inout c, ty, name, key)
+    if dm == NONE { return Err(err("E0115", 0, 0, q2("type ", ts(c, ty), " has no method `", nm(c, name), "`"))) }
+    let mut sb = no_subst()
+    subst_set(inout sb, intern.S_SELF_TYPE, ty)
+    instantiate(inout c, dm, sb)
+}
+
+/// A function that calls `inst` (a method of type `ty`) with the environment of a dyn value
+/// (a closure body: `env, inout self, args...`).
+fn dyn_thunk(inout c: C, ty: u32, inst: Inst, self_inout: bool, line: u32) -> u32 {
+    c.closures += 1
+    let mut fname = ir.cur_name(c.ir)
+    bytes.append(inout fname, s(".closure"))
+    bytes.append(inout fname, num(c.closures as u64))
+    let f = ir.declare_fn(inout c.ir, fname, false)
+    let saved = Saved(c.scopes, c.marks, c.frames, c.fmarks, c.firs, c.fresh, c.ret, c.loops, c.loop_bases, c.lam_expr)
+    let ctext = caps_text(c, c.caps)
+    ir.begin_nested(inout c.ir, f, types.UNIT, ctext)
+    c.scopes = List.new()
+    c.marks = List.new()
+    push_scope(inout c)
+    reset_frames(inout c)
+    c.loops = 0
+    let mark = ir.open(c.ir)
+    // (the parameters are the function's first locals: declared before anything is read)
+    let ls = ir.local(inout c.ir, intern.S_SELF, ty, ir.L_INOUT, line)
+    let mut plocals: List[u32] = List.new()
+    let mut ptys: List[u32] = List.new()
+    for k in 1..inst.plen {
+        let pty = c.ptys[(inst.pstart + k) as usize].copy()
+        plocals.push(ir.local(inout c.ir, 0, pty, ir.L_PARAM, line))
+        ptys.push(pty)
+    }
+    let mut args: List[u32] = List.new()
+    let selfp = ir.place_local(inout c.ir, ls, ty)
+    if self_inout { args.push(selfp + ir.ARG_PLACE) } else { args.push(read(inout c, selfp, ty, line)) }
+    for k in 0..plocals.len() {
+        let pp = ir.place_local(inout c.ir, plocals[k], ptys[k])
+        args.push(read(inout c, pp, ptys[k], line))
+    }
+    let st = ir.list(inout c.ir, args)
+    let na = args.len() as u32
+    let ret = inst.ret.copy()
+    if ret == types.UNIT {
+        emit(inout c, ir.S_CALL, ir.NONE, inst.ir, st, na, ret, line)
+    } else {
+        let o = emit_val(inout c, ir.S_CALL, inst.ir, st, na, ret, ret, line)
+        drop_frames_from(inout c, 0)
+        emit(inout c, ir.S_RETURN, 0, o + 1, 0, 0, 0, line)
+    }
+    let b = ir.close(inout c.ir, mark)
+    ir.set_ret(inout c.ir, ret)
+    ir.end_nested(inout c.ir, inst.plen, b)
+    c.scopes = saved.scopes
+    c.marks = saved.marks
+    c.frames = saved.frames
+    c.fmarks = saved.fmarks
+    c.firs = saved.firs
+    c.fresh = saved.fresh
+    c.ret = saved.ret
+    c.loops = saved.loops
+    c.loop_bases = saved.loop_bases
+    while c.loop_labels.len() > c.loop_bases.len() { c.loop_labels.pop() }
+    c.lam_expr = saved.lam_expr
+    f
+}
+
+/// The empty closure body that captures a value of type `ty`: its environment glue is the
+/// glue of a dyn value holding one.
+fn dyn_holder(inout c: C, ty: u32, line: u32) -> u32 {
+    c.closures += 1
+    let mut fname = ir.cur_name(c.ir)
+    bytes.append(inout fname, s(".closure"))
+    bytes.append(inout fname, num(c.closures as u64))
+    let f = ir.declare_fn(inout c.ir, fname, false)
+    let saved = Saved(c.scopes, c.marks, c.frames, c.fmarks, c.firs, c.fresh, c.ret, c.loops, c.loop_bases, c.lam_expr)
+    let ctext = caps_text(c, c.caps)
+    ir.begin_nested(inout c.ir, f, types.UNIT, ctext)
+    c.scopes = List.new()
+    c.marks = List.new()
+    push_scope(inout c)
+    reset_frames(inout c)
+    c.loops = 0
+    let mark = ir.open(c.ir)
+    ir.local(inout c.ir, 0, ty, ir.L_CAPTURE, line)
+    let b = ir.close(inout c.ir, mark)
+    ir.set_ret(inout c.ir, types.UNIT)
+    ir.end_nested(inout c.ir, 0, b)
+    c.scopes = saved.scopes
+    c.marks = saved.marks
+    c.frames = saved.frames
+    c.fmarks = saved.fmarks
+    c.firs = saved.firs
+    c.fresh = saved.fresh
+    c.ret = saved.ret
+    c.loops = saved.loops
+    c.loop_bases = saved.loop_bases
+    while c.loop_labels.len() > c.loop_bases.len() { c.loop_labels.pop() }
+    c.lam_expr = saved.lam_expr
+    f
+}
+
+/// The value v as the dyn type `dty`: its type must implement the trait, and none of its
+/// methods may need a capability the trait's declaration doesn't list (the call can't see the
+/// implementation).
+fn coerce_dyn(inout c: C, v: V, dty: u32, line: u32, col: u32) -> Result[V, diag.Diag] {
+    let dt = types.get(c.t, dty)
+    let key = resolve.key(dt.a, dt.b)
+    let ti = mget(c.traits, key)
+    let from = v.ty.copy()
+    if ti == NONE || !implements(c, key, from) {
+        return Err(err("E0601", line, col, q3("type ", ts(c, from), " doesn't implement trait `", kt(c, key), "` (required by `", ts(c, dty), "`)")))
+    }
+    let tr = c.trs[ti as usize].copy()
+    let trn = ndm(c, tr.m, tr.node)
+    let mut thunks: List[u32] = List.new()
+    for i in 0..trn.d {
+        let tm = ndm(c, tr.m, atm(c, tr.m, trn.c, i))
+        let ii = match dyn_instance(inout c, from, tm.a, key) {
+            Ok(x) => x
+            Err(d) => {
+                let mut d2 = d.copy()
+                d2.line = line
+                d2.col = col
+                return Err(d2)
+            }
+        }
+        let inst = c.insts[ii as usize].copy()
+        for j in 0..inst.clen {
+            let cap = c.capl[(inst.cstart + j) as usize]
+            if cap_ix(c, cap) == 5 { continue }
+            let mut declared = false
+            for k in 0..tm.j {
+                if ndm(c, tr.m, atm(c, tr.m, tm.i, k)).a == cap { declared = true }
+            }
+            if !declared {
+                let mut help = q("a `dyn ", kt(c, key), "` is called without knowing the implementation, so the method in the trait has to declare what any implementation needs: add `uses ")
+                bytes.append(inout help, nm(c, cap))
+                bytes.append(inout help, s("` to it"))
+                let mut msg = q("method `", nm(c, tm.a), "` of `")
+                bytes.append(inout msg, ts(c, from))
+                bytes.append(inout msg, s("` uses capability `"))
+                bytes.append(inout msg, nm(c, cap))
+                bytes.append(inout msg, s("`, which the trait doesn't declare for it"))
+                let mut d = err("E0608", line, col, msg)
+                d.help = help
+                return Err(d)
+            }
+        }
+        let self_inout = ndm(c, tr.m, atm(c, tr.m, tm.e, 0)).c == 1
+        thunks.push(dyn_thunk(inout c, from, inst, self_inout, line))
+    }
+    let holder = dyn_holder(inout c, from, line)
+    let o = take(inout c, v, line)
+    let mut ex: List[u32] = List.new()
+    ex.push(o)
+    for th in thunks { ex.push(ir.op_int(inout c.ir, types.U32, th as u64)) }
+    let st = ir.list(inout c.ir, ex)
+    Ok(v_of(dty, emit_val(inout c, ir.S_DYN, holder, st, ex.len() as u32, dty, dty, line)))
+}
+
+/// `d.m(args)` on a `dyn Trait`: the method of the trait, through the vtable.
+fn dyn_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
+    let dt = types.get(c.t, pv.ty)
+    let key = resolve.key(dt.a, dt.b)
+    let ti = mget(c.traits, key)
+    let tr = c.trs[ti as usize].copy()
+    let trn = ndm(c, tr.m, tr.node)
+    let mut idx = NONE
+    for i in 0..trn.d {
+        if ndm(c, tr.m, atm(c, tr.m, trn.c, i)).a == n.b { idx = i }
+    }
+    if idx == NONE {
+        let fd = err("E0115", n.line, n.col, q2("type ", ts(c, pv.ty), " has no method `", nm(c, n.b), "`"))
+        return fail_call(inout c, fd, n.c, n.d)
+    }
+    let tm = ndm(c, tr.m, atm(c, tr.m, trn.c, idx))
+    let label = label_of(c, ts(c, pv.ty), n.b)
+    if ndm(c, tr.m, atm(c, tr.m, tm.e, 0)).c == 1 { assignable_or_record(inout c, n.a, "borrow as inout") }
+    if n.d != tm.f - 1 {
+        let fd = err("E0405", n.line, n.col, q3("`", label, "` takes ", num((tm.f - 1) as u64), " argument(s), but ", num(n.d as u64), " were given"))
+        return fail_call(inout c, fd, n.c, n.d)
+    }
+    // the capabilities the trait's method declares
+    for i in 0..tm.j {
+        let cap = ndm(c, tr.m, atm(c, tr.m, tm.i, i)).a
+        use_cap(inout c, cap)
+        if !has_sym(c.caps, cap) {
+            let rd = cap_error(c, n.line, n.col, label, cap)
+            record(inout c, rd)
+            break
+        }
+    }
+    let ro = recv_op(inout c, pv)
+    let mut args: List[u32] = List.new()
+    args.push(ir.op_int(inout c.ir, types.U32, idx as u64))
+    for i in 0..n.d {
+        let a = nd(c, at(c, n.c, i))
+        let x = nd(c, a.a)
+        let pn = ndm(c, tr.m, atm(c, tr.m, tm.e, i + 1))
+        if a.b == 1 { return Err(err("E0304", x.line, x.col, q("parameter `", nm(c, pn.a), "` is not `inout`; remove the `inout`"))) }
+        let pty = resolve_with(inout c, tr.m, pn.b, no_subst())?
+        let v = expr(inout c, a.a, pty)?
+        if !same(c, v.ty, pty) { return Err(mismatch(c, x.line, x.col, pty, v.ty)) }
+        args.push(v.op)
+    }
+    let mut ret = types.UNIT
+    if tm.g > 0 { ret = resolve_with(inout c, tr.m, tm.g - 1, no_subst())? }
+    let st = ir.list(inout c.ir, args)
+    let na = args.len() as u32
+    if ret == types.UNIT {
+        emit(inout c, ir.S_DYNCALL, ir.NONE, ro, st, na, ret, n.line)
+        return Ok(v_of(ret, ir.op_unit(inout c.ir)))
+    }
+    Ok(v_of(ret, emit_val(inout c, ir.S_DYNCALL, ro, st, na, ret, ret, n.line)))
+}
+
 fn well_known(inout names: intern.Interner) -> W {
     // the names of the primitive types, indexed by type id (types.ei): the six integers, then
     // bool, str, (), !, String and the floats, so `int_kind` of a name is its type id
@@ -3170,7 +3611,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C {
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
         0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false, Rec(false, List.new(), List.new()),
         List.new(), List.new(), false, Map.new(), false, false, Map.new(), List.new(), lt, no_refs(),
-        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), no_reflect(), List.new(), List.new())
+        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), no_reflect(), List.new(), List.new(), 0)
 }
 
 /// Every item of the program in load order (resolve.ei), as (module, node) pairs.
@@ -4156,7 +4597,7 @@ fn inst_name(c: C, fi: u32, sb: Subst) -> List[u8] {
         let gs = gparams(c, f.md, n.c, n.d)
         for i in 0..gs.len() {
             if i > 0 { bytes.append(inout out, s(", ")) }
-            bytes.append(inout out, ts(c, subst_get(sb, gs[i])))
+            bytes.append(inout out, tsc(c, subst_get(sb, gs[i])))
         }
         out.push(93)
     }
@@ -4238,6 +4679,14 @@ fn signature(inout c: C, fi: u32) -> Result[Inst, diag.Diag] {
     for i in 0..n.j {
         let cn = ndm(c, m, atm(c, m, n.i, i))
         if !has_sym(c.w.caps, cn.a) {
+            // `uses E`: the capabilities the parameter stands for in this instance
+            let cv = cap_var(c, cn.a)
+            if cv != NONE {
+                for x in mask_syms(c, cv) {
+                    if !has_sym(caps, x) { caps.push(x) }
+                }
+                continue
+            }
             let rd = in_file(c, errh("E0203", cn.line, cn.col, q("unknown capability `", nm(c, cn.a), "`"), "known capabilities: io, clock, fs, net, threads, ffi, python, js, wasm"), m)
             record(inout c, rd)
             continue
@@ -4262,6 +4711,114 @@ fn signature(inout c: C, fi: u32) -> Result[Inst, diag.Diag] {
     let cstart = c.capl.len() as u32
     for x in caps { c.capl.push(x) }
     Ok(Inst(fi, 0, 0, NONE, ret, pstart, ps.len() as u32, cstart, caps.len() as u32))
+}
+
+// ---- Capability sets (docs/compiler.md, "C8.46")
+
+/// The bit index of capability symbol `sym` (NONE if it isn't one).
+fn cap_ix(c: C, sym: u32) -> u32 {
+    for i in 0..c.w.caps.len() {
+        if c.w.caps[i as usize] == sym { return i as u32 }
+    }
+    NONE
+}
+
+/// The mask of one capability bit.
+fn bit_of(i: u32) -> u32 {
+    let mut b: u32 = 1
+    for _ in 0..i { b *= 2 }
+    b
+}
+
+fn mask_or(a: u32, b: u32) -> u32 {
+    let mut out: u32 = 0
+    for i in 0..9 {
+        if types.has_bit(a, i as u32) || types.has_bit(b, i as u32) { out += bit_of(i as u32) }
+    }
+    out
+}
+
+/// Whether every capability of `a` is in `b`.
+fn mask_sub(a: u32, b: u32) -> bool {
+    for i in 0..9 {
+        if types.has_bit(a, i as u32) && !types.has_bit(b, i as u32) { return false }
+    }
+    true
+}
+
+/// `a` without the capabilities of `b`.
+fn mask_minus(a: u32, b: u32) -> u32 {
+    let mut out: u32 = 0
+    for i in 0..9 {
+        if types.has_bit(a, i as u32) && !types.has_bit(b, i as u32) { out += bit_of(i as u32) }
+    }
+    out
+}
+
+/// The capability symbols of a mask, in bit order.
+fn mask_syms(c: C, mask: u32) -> List[u32] {
+    let mut out: List[u32] = List.new()
+    for i in 0..9 {
+        if types.has_bit(mask, i as u32) { out.push(c.w.caps[i as usize]) }
+    }
+    out
+}
+
+/// The mask of capability symbols, leaving out `ffi`, which stays inside its package and so
+/// is not part of a fn type.
+fn syms_mask(c: C, syms: List[u32]) -> u32 {
+    let mut m: u32 = 0
+    for x in syms {
+        let i = cap_ix(c, x)
+        if i != NONE && i != 5 { m = mask_or(m, bit_of(i)) }
+    }
+    m
+}
+
+/// Note that the body being checked has used capability `cap`.
+fn use_cap(inout c: C, cap: u32) {
+    let i = cap_ix(c, cap)
+    if i != NONE && i != 5 { c.used = mask_or(c.used, bit_of(i)) }
+}
+
+/// The value of capability parameter `sym` in the substitution being resolved with, as a mask
+/// (NONE if it is not bound to a capability set).
+fn cap_var(c: C, sym: u32) -> u32 {
+    let t = subst_get(c.tsubst, sym)
+    if t == NONE || types.kind(c.t, t) != types.T_CAPS { return NONE }
+    types.get(c.t, t).a
+}
+
+/// The capability mask a fn type node `n` (with `uses`) names: capabilities and bound
+/// capability parameters.
+fn fn_cap_mask(c: C, am: u32, n: ast.Node) -> Result[u32, diag.Diag] {
+    let mut mask: u32 = 0
+    for i in 0..n.j {
+        let cn = ndm(c, am, atm(c, am, n.i, i))
+        let ix = cap_ix(c, cn.a)
+        if ix != NONE {
+            if ix != 5 { mask = mask_or(mask, bit_of(ix)) }
+            continue
+        }
+        let v = cap_var(c, cn.a)
+        if v == NONE {
+            return Err(errh("E0203", cn.line, cn.col, q("unknown capability `", nm(c, cn.a), "`"), "known capabilities: io, clock, fs, net, threads, ffi, python, js, wasm; or a capability parameter `[uses E]` of the function"))
+        }
+        mask = mask_or(mask, v)
+    }
+    Ok(mask)
+}
+
+/// Whether a value of fn type `a` can be used where `b` is expected: the same signature and
+/// capabilities within the target's. A plain fn type (no `uses`) is checked where its
+/// closures are made and fits both ways (docs/compiler.md, "C8.46").
+fn fn_sub(c: C, a: u32, b: u32) -> bool {
+    if a == NONE || b == NONE || a == b { return false }
+    let ta = types.get(c.t, a)
+    let tb = types.get(c.t, b)
+    if ta.kind != types.T_FN || tb.kind != types.T_FN { return false }
+    if ta.a != tb.a || ta.b != tb.b { return false }
+    ta.c == 0 || tb.c == 0 || mask_sub(ta.c, tb.c)
 }
 
 fn caps_text(c: C, caps: List[u32]) -> List[u8] {
@@ -5015,6 +5572,7 @@ fn for_iter(inout c: C, n: ast.Node, pv: PV) -> Result[u32, diag.Diag] {
     let fnode = ndm(c, c.fdefs[inst.fd as usize].md, c.fdefs[inst.fd as usize].node)
     for i in 0..fnode.j {
         let cap = ndm(c, c.fdefs[inst.fd as usize].md, atm(c, c.fdefs[inst.fd as usize].md, fnode.i, i)).a
+        use_cap(inout c, cap)
         if !has_sym(c.caps, cap) {
             let rd = cap_error(c, n.line, n.col, label_of(c, ts(c, ty), c.lt.meths[TR_ITER as usize]), cap)
             record(inout c, rd)
@@ -5197,6 +5755,8 @@ fn unify(c: C, a: u32, b: u32, line: u32, col: u32) -> Result[u32, diag.Diag] {
     if b == types.NEVER || a == b { return Ok(a) }
     if poisoned(c, a) { return Ok(b) }
     if poisoned(c, b) { return Ok(a) }
+    if fn_sub(c, a, b) { return Ok(b) }
+    if fn_sub(c, b, a) { return Ok(a) }
     Err(err("E0401", line, col, q2("branches have different types: ", ts(c, a), " and ", ts(c, b), "")))
 }
 
@@ -5680,6 +6240,22 @@ fn expr(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
         let n = nd(c, e)
         if n.kind == ast.EIdent || n.kind == ast.EField || n.kind == ast.ECall || n.kind == ast.EMethod { note_ty(inout c, n, v.ty) }
     }
+    // a value of a type that implements the trait, where a `dyn Trait` is expected ("C8.47"):
+    // an owned value, which the dyn value then holds
+    if exp != NONE && v.ty != exp && types.kind(c.t, exp) == types.T_DYN && types.kind(c.t, v.ty) != types.T_DYN && !poisoned(c, v.ty) && v.ty != types.NEVER {
+        let dn = nd(c, e)
+        let mut ov = v.copy()
+        if owns(c, v.ty) && !is_place(c, e) && !is_fresh(c, v.op) { ov = mk_fresh(inout c, v, dn.line) }
+        match coerce_dyn(inout c, ov, exp, dn.line, dn.col) {
+            Ok(dv) => { return Ok(mk_fresh(inout c, dv, dn.line)) }
+            Err(d) => {
+                if fatal(d) { return Err(d) }
+                record(inout c, d)
+                restore(inout c, sp)
+                return Ok(poison_v(inout c))
+            }
+        }
+    }
     if !owns(c, v.ty) || is_place(c, e) || is_fresh(c, v.op) { return Ok(v) }
     let line = nd(c, e).line
     Ok(mk_fresh(inout c, v, line))
@@ -6137,6 +6713,15 @@ fn float_lit_expr(c: C, e: u32) -> bool {
 fn cast(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
     let am = c.am.copy()
     let target = resolve_ty(inout c, am, n.b)?
+    if types.kind(c.t, target) == types.T_DYN {
+        let dv = expr(inout c, n.a, NONE)?
+        if poisoned(c, dv.ty) { return Ok(v_of(target, dv.op)) }
+        if types.kind(c.t, dv.ty) == types.T_DYN {
+            if dv.ty != target { return Err(mismatch(c, n.line, n.col, target, dv.ty)) }
+            return Ok(dv)
+        }
+        return coerce_dyn(inout c, dv, target, n.line, n.col)
+    }
     if !types.is_int(c.t, target) && !types.is_float(c.t, target) {
         return Err(err("E0401", n.line, n.col, q("`as` only converts between numeric types (integers and floats), not to ", ts(c, target), "")))
     }
@@ -6606,6 +7191,7 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
         }
     }
     let mut args: List[u32] = List.new()
+    let mut arg_tys: List[u32] = List.new()
     if recv.has {
         if ndm(c, fm, atm(c, fm, fnode.e, 0)).c == 1 {
             assignable_or_record(inout c, recv.e, "borrow as inout")
@@ -6621,8 +7207,8 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
         let x = nd(c, a.a)
         let pn = ndm(c, fm, atm(c, fm, fnode.e, i + skip))
         let mut hint = NONE
-        if !has_unbound(c, fm, pn.b, sb, gs) { hint = resolve_with(inout c, fm, pn.b, sb)? }
         let ptn = ndm(c, fm, pn.b)
+        if !has_unbound(c, fm, pn.b, sb, gs) && !(ptn.kind == ast.TFn && has_cap_var(c, fm, ptn, gs)) { hint = resolve_with(inout c, fm, pn.b, sb)? }
         if hint == NONE && ptn.kind == ast.TFn && x.kind == ast.ELambda {
             let mut hp: List[u32] = List.new()
             for j in 0..ptn.d {
@@ -6670,6 +7256,7 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
             args.push(v.op)
         }
         if poisoned(c, ty) { tainted = true }
+        arg_tys.push(ty)
         if hint != NONE {
             if !same(c, ty, hint) { return Err(mismatch(c, x.line, x.col, hint, ty)) }
         } else if !unify_ast(c, fm, pn.b, ty, inout sb, gs) {
@@ -6680,6 +7267,10 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
     if target != NONE && subst_get(sb, intern.S_SELF_TYPE) == NONE && !has_unbound(c, fm, target, sb, gs) {
         let t = resolve_with(inout c, fm, target, sb)?
         subst_set(inout sb, intern.S_SELF_TYPE, t)
+    }
+    for g in gnodes {
+        let gn = ndm(c, fm, g)
+        if gn.e == 1 && subst_get(sb, gn.a) == NONE { subst_set(inout sb, gn.a, types.caps_of(0)) }
     }
     for g in gnodes {
         let gn = ndm(c, fm, g)
@@ -6717,13 +7308,46 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
         }
     }
     // a missing capability or `unsafe` is reported, and the call is otherwise fine
+    // (a capability parameter `uses E` stands for what the arguments bring)
+    let mut need: List[u32] = List.new()
     for i in 0..fnode.j {
         let cap = ndm(c, fm, atm(c, fm, fnode.i, i)).a
+        if has_sym(c.w.caps, cap) {
+            need.push(cap)
+        } else {
+            let cv = subst_get(sb, cap)
+            if cv != NONE && types.kind(c.t, cv) == types.T_CAPS {
+                for x in mask_syms(c, types.get(c.t, cv).a) { need.push(x) }
+            }
+        }
+    }
+    for cap in need {
         if !needs_cap(c, fm, cap) { continue }
+        use_cap(inout c, cap)
         if !has_sym(c.caps, cap) {
             let rd = cap_error(c, n.line, n.col, label, cap)
             record(inout c, rd)
             break
+        }
+    }
+    // a fn argument that carries capabilities, passed for a plain fn parameter, is called
+    // there without a check: the caller must have them
+    for i in 0..n.d {
+        let pn = ndm(c, fm, atm(c, fm, fnode.e, i + skip))
+        let ptn = ndm(c, fm, pn.b)
+        if ptn.kind != ast.TFn || ptn.h == 1 || i as usize >= arg_tys.len() { continue }
+        let am = types.fn_caps(c.t, arg_tys[i as usize])
+        for x in mask_syms(c, am) {
+            use_cap(inout c, x)
+            if !has_sym(c.caps, x) {
+                let a = nd(c, at(c, n.c, i))
+                let ax = nd(c, a.a)
+                let mut d = err("E0201", ax.line, ax.col, q2("passing this function to `", label, "` requires capability `", nm(c, x), "`"))
+                let ins = if c.caps.len() == 0 { q(" uses ", nm(c, x), "") } else { q(", ", nm(c, x), "") }
+                d.fix = Some(diag.Fix(c.sig_line, c.sig_col, 0, ins))
+                record(inout c, d)
+                break
+            }
         }
     }
     let is_extern = ast.has(fnode.b, ast.FN_EXTERN)
@@ -6761,6 +7385,8 @@ fn builtin(inout c: C, n: ast.Node, which: u32) -> Result[V, diag.Diag] {
     }
     if which == c.w.print {
         // a missing capability is reported, and the call is otherwise fine
+        let io_cap = c.w.io.copy()
+        use_cap(inout c, io_cap)
         if !has_sym(c.caps, c.w.io) {
             let rd = cap_error(c, n.line, n.col, s("print"), c.w.io)
             record(inout c, rd)
@@ -6798,6 +7424,8 @@ fn builtin(inout c: C, n: ast.Node, which: u32) -> Result[V, diag.Diag] {
         return Err(err("E0401", x.line, x.col, q("`len` needs an array, List, Map or String, found ", ts(c, v.ty), "")))
     }
     if which == c.w.spawn {
+        let th_cap = c.w.threads.copy()
+        use_cap(inout c, th_cap)
         if !has_sym(c.caps, c.w.threads) {
             let rd = cap_error(c, n.line, n.col, s("spawn"), c.w.threads)
             record(inout c, rd)
@@ -6819,6 +7447,8 @@ fn builtin(inout c: C, n: ast.Node, which: u32) -> Result[V, diag.Diag] {
         return Ok(v_of(types.NEVER, ir.op_unit(inout c.ir)))
     }
     // now_ms
+    let ck_cap = c.w.clock.copy()
+    use_cap(inout c, ck_cap)
     if !has_sym(c.caps, c.w.clock) {
         let rd = cap_error(c, n.line, n.col, s("now_ms"), c.w.clock)
         record(inout c, rd)
@@ -7073,6 +7703,7 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32, want: u64) -> Result[V, dia
         if tk == types.T_REF { return ref_method(inout c, n, pv, exp) }
         return heap_method(inout c, n, pv)
     }
+    if tk == types.T_DYN { return dyn_method(inout c, n, pv) }
     let head = head_of(c, pv.ty)
     if n.b == c.lt.meths[TR_DROP as usize] && has_drop(c, pv.ty) {
         let fd = errh("E0115", n.line, n.col, q("`drop` of ", ts(c, pv.ty), " can't be called"), "it runs by itself, once, when the value's last holder goes")
@@ -7844,7 +8475,13 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     reset_frames(inout c)
     c.loops = 0
     let mark = ir.open(c.ir)
+    // the capabilities the body uses are the closure's (a closure is checked with its
+    // enclosing function's, and carries only what it needs; "C8.46")
+    let used_before = c.used.copy()
+    c.used = 0
     let r = lambda_in(inout c, n, caps, ptys, pkeys, ret_hint)
+    let lam_used = c.used.copy()
+    c.used = used_before
     // the enclosing function's state comes back also when the closure failed
     let b = ir.close(inout c.ir, mark)
     let mut rty = types.UNIT
@@ -7873,7 +8510,9 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     for i in 0..n.d {
         if nd(c, at(c, n.c, i)).c == 1 { fps.push(types.inout_of(inout c.t, ptys[i as usize])) } else { fps.push(ptys[i as usize]) }
     }
-    let fty = types.fn_of(inout c.t, fps, rty)
+    let mut fty = types.fn_caps_of(inout c.t, fps, rty, lam_used)
+    // (it has the expected type when it fits, so plain fn types stay plain)
+    if exp != NONE && fn_sub(c, fty, exp) { fty = exp }
     // the environment: a snapshot of each captured variable
     let mut ops: List[u32] = List.new()
     for cp in caps {
@@ -7957,6 +8596,15 @@ fn call_value(inout c: C, n: ast.Node, label: List[u8], fv: V) -> Result[V, diag
         let fd = err("E0405", n.line, n.col, q3("`", label, "` takes ", num(ps.len() as u64), " argument(s), but ", num(n.d as u64), " were given"))
         return fail_call(inout c, fd, n.c, n.d)
     }
+    // calling a fn value needs the capabilities its type carries ("C8.46")
+    for cap in mask_syms(c, types.fn_caps(c.t, fv.ty)) {
+        use_cap(inout c, cap)
+        if !has_sym(c.caps, cap) {
+            let rd = cap_error(c, n.line, n.col, label, cap)
+            record(inout c, rd)
+            break
+        }
+    }
     // exclusivity of the inout arguments (as for a named function's)
     let mut roots: List[u64] = List.new()
     for i in 0..n.d {
@@ -8019,7 +8667,10 @@ fn inst_fn_type(inout c: C, ii: u32) -> u32 {
     let inst = c.insts[ii as usize].copy()
     let mut ps: List[u32] = List.new()
     for i in 0..inst.plen { ps.push(c.ptys[(inst.pstart + i) as usize]) }
-    types.fn_of(inout c.t, ps, inst.ret)
+    let mut cs: List[u32] = List.new()
+    for i in 0..inst.clen { cs.push(c.capl[(inst.cstart + i) as usize]) }
+    let cm = syms_mask(c, cs)
+    types.fn_caps_of(inout c.t, ps, inst.ret, cm)
 }
 
 /// A named function used as a value of the expected fn type.
@@ -8037,8 +8688,10 @@ fn fn_as_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag
             return Err(err("E0304", n.line, n.col, q("`", label, "` has `inout` parameters and can't be used as a value")))
         }
     }
-    let actual = inst_fn_type(inout c, ii)
+    let mut actual = inst_fn_type(inout c, ii)
     if !same(c, actual, exp) { return Err(mismatch(c, n.line, n.col, exp, actual)) }
+    // (the value has the expected type when it fits, so plain fn types stay plain)
+    if fn_sub(c, actual, exp) { actual = exp }
     let inst = c.insts[ii as usize].copy()
     for i in 0..inst.clen {
         let cap = c.capl[(inst.cstart + i) as usize]

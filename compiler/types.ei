@@ -57,8 +57,35 @@ pub const T_POISON: u32 = 17
 pub const T_PARAM: u32 = 18
 pub const T_INOUT: u32 = 19
 pub const T_REF: u32 = 20
+/// A set of capabilities as a value of a capability parameter (`uses E`): a = the mask (bit i
+/// is capability i of `CAP_NAMES`). Only a substitution holds one (docs/compiler.md, "C8.46").
+pub const T_CAPS: u32 = 21
+/// `dyn Trait`: a = the trait's key prefix, b = its symbol (resolve.key); a record of the same
+/// five words as a fn value (environment, vtable, and the environment's drop, clone and own),
+/// docs/compiler.md, "C8.47"
+pub const T_DYN: u32 = 22
 /// `f32` (a = 0) and `f64` (a = 1): IEEE 754 binary32 and binary64 (docs/decisions.md C660).
-pub const T_FLOAT: u32 = 21
+pub const T_FLOAT: u32 = 23
+
+/// The name of capability i, in the order of a mask's bits (the checker's `well_known` list).
+pub fn cap_name(i: u32) -> str {
+    if i == 0 { return "io" }
+    if i == 1 { return "clock" }
+    if i == 2 { return "fs" }
+    if i == 3 { return "net" }
+    if i == 4 { return "threads" }
+    if i == 5 { return "ffi" }
+    if i == 6 { return "python" }
+    if i == 7 { return "js" }
+    "wasm"
+}
+
+/// Whether bit i of mask is set.
+pub fn has_bit(mask: u32, i: u32) -> bool {
+    let mut b: u32 = 1
+    for _ in 0..i { b *= 2 }
+    (mask / b) % 2 == 1
+}
 
 /// Int kinds, in a fixed order.
 pub const IK_I32: u32 = 0
@@ -86,7 +113,7 @@ pub const F64: u32 = 12
 /// "no type" / "no definition"
 pub const NOTY: u32 = 4294967295
 
-pub type Ty = { kind: u32, a: u32, b: u32 }
+pub type Ty = { kind: u32, a: u32, b: u32, c: u32 }
 
 /// A record field or a variant field. `name` is a symbol (unnamed variant fields are named
 /// by their position); `tnode` is its type in the declaring module's AST.
@@ -115,21 +142,25 @@ pub type Types = {
     variants: List[Variant],
     /// interned composite types other than arrays: kind * 2^56 + a * 2^28 + b
     comps: Map[u64, u32],
+    /// interned fn types that carry capabilities (`fn() uses io`, docs/compiler.md, "C8.46"):
+    /// ((params * 2^27 + ret) * 2^10 + capability mask)
+    fncaps: Map[u64, u32],
     /// interned type lists: their cells, and each list's span of them
     cells: List[u32],
     lists: List[Span],
 }
 
 pub fn new() -> Types {
-    let mut t = Types(List.new(), Map.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new())
-    for i in 0..6 { t.tys.push(Ty(T_INT, i as u32, 0)) }
-    t.tys.push(Ty(T_BOOL, 0, 0))
-    t.tys.push(Ty(T_STR, 0, 0))
-    t.tys.push(Ty(T_UNIT, 0, 0))
-    t.tys.push(Ty(T_NEVER, 0, 0))
-    t.tys.push(Ty(T_STRING, 0, 0))
-    t.tys.push(Ty(T_FLOAT, 0, 0))
-    t.tys.push(Ty(T_FLOAT, 1, 0))
+    let mut t = Types(List.new(), Map.new(), List.new(), List.new(), List.new(), Map.new(), Map.new(), List.new(), List.new())
+    for i in 0..6 { t.tys.push(Ty(T_INT, i as u32, 0, 0)) }
+    t.tys.push(Ty(T_BOOL, 0, 0, 0))
+    t.tys.push(Ty(T_STR, 0, 0, 0))
+    t.tys.push(Ty(T_UNIT, 0, 0, 0))
+    t.tys.push(Ty(T_NEVER, 0, 0, 0))
+    t.tys.push(Ty(T_STRING, 0, 0, 0))
+    t.tys.push(Ty(T_FLOAT, 0, 0, 0))
+    t.tys.push(Ty(T_FLOAT, 1, 0, 0))
+    for m in 0..512 { t.tys.push(Ty(T_CAPS, m as u32, 0, 0)) }
     // list 0 is the empty list
     t.lists.push(Span(0, 0))
     t
@@ -174,7 +205,7 @@ fn comp(inout t: Types, k: u32, a: u32, b: u32) -> u32 {
         None => {}
     }
     let id = t.tys.len() as u32
-    t.tys.push(Ty(k, a, b))
+    t.tys.push(Ty(k, a, b, 0))
     t.comps.insert(key, id)
     id
 }
@@ -190,6 +221,39 @@ pub fn fn_of(inout t: Types, params: List[u32], ret: u32) -> u32 {
     let l = list(inout t, params)
     comp(inout t, T_FN, l, ret)
 }
+/// A fn type that carries the capability set `caps` (a nonzero mask: `fn() uses io`). Mask 0
+/// is the plain `fn_of` (no capabilities tracked).
+pub fn fn_caps_of(inout t: Types, params: List[u32], ret: u32, caps: u32) -> u32 {
+    if caps == 0 { return fn_of(inout t, params, ret) }
+    let l = list(inout t, params)
+    let key = ((l as u64) * 134217728 + ret as u64) * 1024 + caps as u64
+    match t.fncaps.get(key) {
+        Some(id) => { return id }
+        None => {}
+    }
+    let id = t.tys.len() as u32
+    t.tys.push(Ty(T_FN, l, ret, caps))
+    t.fncaps.insert(key, id)
+    id
+}
+/// The capability mask of fn type `id` (0 for a plain one and for any other type).
+pub fn fn_caps(t: Types, id: u32) -> u32 {
+    if id == NOTY || id as usize >= t.tys.len() { return 0 }
+    let ty = t.tys[id as usize]
+    if ty.kind == T_FN { ty.c } else { 0 }
+}
+/// The fn type `id` without its capabilities.
+pub fn fn_plain(inout t: Types, id: u32) -> u32 {
+    let ty = t.tys[id as usize]
+    let la = ty.a.copy()
+    let rb = ty.b.copy()
+    comp(inout t, T_FN, la, rb)
+}
+/// The type of capability set `mask` (a substitution's value for `uses E`): all 512 are made
+/// by `new`, right after the primitive types.
+pub const CAPS0: u32 = 13
+pub fn caps_of(mask: u32) -> u32 { CAPS0 + mask }
+pub fn dyn_of(inout t: Types, pre: u32, sym: u32) -> u32 { comp(inout t, T_DYN, pre, sym) }
 /// `Task[elem]`; also interns `fn() -> elem`, the closure a Task runs (its layout holds one).
 pub fn task_of(inout t: Types, elem: u32) -> u32 {
     let run = fn_of(inout t, List.new(), elem)
@@ -294,7 +358,7 @@ pub fn array(inout t: Types, elem: u32, len: u32) -> u32 {
         None => {}
     }
     let id = t.tys.len() as u32
-    t.tys.push(Ty(T_ARRAY, elem, len))
+    t.tys.push(Ty(T_ARRAY, elem, len, 0))
     t.arrays.insert(k, id)
     id
 }
@@ -304,7 +368,7 @@ pub fn add_def(inout t: Types, d: Def) -> u32 {
     let di = t.defs.len() as u32
     let id = t.tys.len() as u32
     let k = if d.is_enum { T_ENUM } else { T_RECORD }
-    t.tys.push(Ty(k, di, 0))
+    t.tys.push(Ty(k, di, 0, 0))
     let mut d2 = d.copy()
     d2.ty = id
     if d2.tmpl == NOTY { d2.tmpl = di }
@@ -369,11 +433,39 @@ pub fn show(t: Types, names: intern.Interner, id: u32) -> List[u8] {
     out
 }
 
+pub fn show_caps(t: Types, names: intern.Interner, id: u32) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    show_caps_into(inout out, t, names, id)
+    out
+}
+
 pub fn show_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32) {
+    show_e(inout out, t, names, id, false)
+}
+
+/// `show_into` with the capabilities of fn types (`fn() uses io`), for the checker's messages
+/// and instance names; lowering uses the plain form, so fn types that differ only in
+/// capabilities are one C type.
+pub fn show_caps_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32) {
+    show_e(inout out, t, names, id, true)
+}
+
+fn caps_text(inout out: List[u8], mask: u32) {
+    let mut first = true
+    for i in 0..9 {
+        if has_bit(mask, i as u32) {
+            if !first { bytes.append(inout out, sys.lit(" + ")) }
+            first = false
+            bytes.append(inout out, sys.lit(cap_name(i as u32)))
+        }
+    }
+}
+
+fn show_e(inout out: List[u8], t: Types, names: intern.Interner, id: u32, caps: bool) {
     let ty = t.tys[id as usize]
     match ty.kind {
         0 => bytes.append(inout out, sys.lit(int_name(ty.a)))
-        21 => {
+        23 => {
             let fname = if ty.a == 0 { "f32" } else { "f64" }
             bytes.append(inout out, sys.lit(fname))
         }
@@ -383,67 +475,79 @@ pub fn show_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32)
         4 => out.push(33)
         7 => {
             out.push(91)
-            show_into(inout out, t, names, ty.a)
+            show_e(inout out, t, names, ty.a, caps)
             bytes.append(inout out, sys.lit("; "))
             bytes.append(inout out, bytes.from_u64(ty.b as u64))
             out.push(93)
         }
         8 => {
             out.push(40)
-            show_list(inout out, t, names, ty.a)
+            show_list(inout out, t, names, ty.a, caps)
             out.push(41)
         }
         9 => bytes.append(inout out, sys.lit("String"))
         10 => {
             bytes.append(inout out, sys.lit("List["))
-            show_into(inout out, t, names, ty.a)
+            show_e(inout out, t, names, ty.a, caps)
             out.push(93)
         }
         11 => {
             bytes.append(inout out, sys.lit("Map["))
-            show_into(inout out, t, names, ty.a)
+            show_e(inout out, t, names, ty.a, caps)
             bytes.append(inout out, sys.lit(", "))
-            show_into(inout out, t, names, ty.b)
+            show_e(inout out, t, names, ty.b, caps)
             out.push(93)
         }
         12 => {
             bytes.append(inout out, sys.lit("Box["))
-            show_into(inout out, t, names, ty.a)
+            show_e(inout out, t, names, ty.a, caps)
             out.push(93)
         }
         14 => {
             bytes.append(inout out, sys.lit("Task["))
-            show_into(inout out, t, names, ty.a)
+            show_e(inout out, t, names, ty.a, caps)
             out.push(93)
         }
         15 => {
             bytes.append(inout out, sys.lit("Mutex["))
-            show_into(inout out, t, names, ty.a)
+            show_e(inout out, t, names, ty.a, caps)
             out.push(93)
         }
         16 => {
             bytes.append(inout out, sys.lit("Chan["))
-            show_into(inout out, t, names, ty.a)
+            show_e(inout out, t, names, ty.a, caps)
             out.push(93)
         }
         17 => bytes.append(inout out, sys.lit(r"{error}"))
         19 => {
             bytes.append(inout out, sys.lit("inout "))
-            show_into(inout out, t, names, ty.a)
+            show_e(inout out, t, names, ty.a, caps)
         }
         20 => {
             bytes.append(inout out, sys.lit("Ref["))
-            show_into(inout out, t, names, ty.a)
+            show_e(inout out, t, names, ty.a, caps)
             out.push(93)
         }
         18 => bytes.append(inout out, intern.name(names, ty.a))
+        21 => {
+            bytes.append(inout out, sys.lit("uses "))
+            caps_text(inout out, ty.a)
+        }
+        22 => {
+            bytes.append(inout out, sys.lit("dyn "))
+            bytes.append(inout out, resolve.key_text(names, resolve.key(ty.a, ty.b)))
+        }
         13 => {
             bytes.append(inout out, sys.lit("fn("))
-            show_list(inout out, t, names, ty.a)
+            show_list(inout out, t, names, ty.a, caps)
             out.push(41)
             if ty.b != UNIT {
                 bytes.append(inout out, sys.lit(" -> "))
-                show_into(inout out, t, names, ty.b)
+                show_e(inout out, t, names, ty.b, caps)
+            }
+            if caps && ty.c != 0 {
+                bytes.append(inout out, sys.lit(" uses "))
+                caps_text(inout out, ty.c)
             }
         }
         _ => {
@@ -451,16 +555,16 @@ pub fn show_into(inout out: List[u8], t: Types, names: intern.Interner, id: u32)
             bytes.append(inout out, resolve.key_text(names, d.key))
             if d.args != NOTY && list_len(t, d.args) > 0 {
                 out.push(91)
-                show_list(inout out, t, names, d.args)
+                show_list(inout out, t, names, d.args, caps)
                 out.push(93)
             }
         }
     }
 }
 
-fn show_list(inout out: List[u8], t: Types, names: intern.Interner, l: u32) {
+fn show_list(inout out: List[u8], t: Types, names: intern.Interner, l: u32, caps: bool) {
     for i in 0..list_len(t, l) {
         if i > 0 { bytes.append(inout out, sys.lit(", ")) }
-        show_into(inout out, t, names, list_at(t, l, i))
+        show_e(inout out, t, names, list_at(t, l, i), caps)
     }
 }

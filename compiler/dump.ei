@@ -128,6 +128,10 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             qual(inout out, p, n.b)
             kids(inout out, p, "arg", n.c, n.d, d)
         }
+        ast.TDyn => {
+            sym(inout out, p, "trait", n.a)
+            qual(inout out, p, n.b)
+        }
         ast.TArray => {
             put(inout out, " len=")
             num(inout out, n.b as u64)
@@ -150,6 +154,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             }
             kids(inout out, p, "param", n.c, n.d, d)
             opt(inout out, p, "ret", n.g, d)
+            if n.h == 1 { kids(inout out, p, "cap", n.i, n.j, d) }
         }
         ast.EInt => int_slot(inout out, p, n.a, false)
         ast.EFloat => {
@@ -358,6 +363,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
         }
         ast.GParam => {
             sym(inout out, p, "name", n.a)
+            if n.e == 1 { put(inout out, " caps") }
             kids(inout out, p, "bound", n.c, n.d, d)
         }
         ast.IFn => {
