@@ -1,2 +1,2 @@
-// expect: E0112 1:1
+// no main: `check` accepts it since 0.4.0 (#140); `build` and `run` report E0112 1:1
 const A: i32 = comptime 1
