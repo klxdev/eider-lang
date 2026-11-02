@@ -160,13 +160,26 @@ The type arguments are always inferred; there is no syntax to write them at a ca
 
 ```text
 type_item = "type" name [type_params] "=" (record_body | variants | type)
-record_body = "{" field {"," field} [","] "}"
+record_body = "{" field {sep field} [sep] "}"      (sep = "," | NL)
 field = name ":" type
 ```
 
-A record type is a named product of fields. Fields are separated by commas (a trailing
-comma is allowed; newlines alone do not separate fields). A record needs at least one field
+A record type is a named product of fields. Fields are separated by a comma or a
+newline (a trailing comma is allowed, and the two may be mixed). A record needs at least one field
 (E0111 "records need at least one field").
+
+```eider
+type Account = {
+    id: u32
+    owner: String
+    balance: i64,
+}
+
+fn main() uses io {
+    let a = Account(1, "ada", 250)
+    print(a.owner)
+}
+```
 
 A record is constructed by calling its name with one value per field, in declaration
 order; there is no named-field constructor. The wrong number of values is E0405. Fields are

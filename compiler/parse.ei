@@ -859,8 +859,10 @@ fn type_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
             let fid = add(inout p, fnode)
             attach(inout p, fid, fattrs)
             members.push(fid)
+            // fields are separated by `,` or a newline
+            let nl = is_nl(p)
             skip_nl(inout p)
-            if !eat(inout p, lex.Comma) && !is(p, lex.RBrace) && !is_nl(p) { return Err(err(p, r"expected `,` or `}`")) }
+            if !eat(inout p, lex.Comma) && !is(p, lex.RBrace) && !nl { return Err(err(p, r"expected `,` or `}`")) }
         }
     } else {
         while true {
