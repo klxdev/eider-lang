@@ -1,0 +1,357 @@
+//! std/config: a service's settings from defaults, a TOML file, the environment and command-line
+//! flags, in that order of precedence (each layer overrides the one before), read as typed
+//! values into your own record.
+//!
+//!     type Settings = { addr: String, workers: i64, verbose: bool, grace_ms: i64 }
+//!
+//!     fn load(toml: String, args: List[List[u8]]) -> Result[Settings, String] uses io {
+//!         let c = config.new()
+//!             .default("addr", ":8080").default("workers", "4")
+//!             .default("verbose", "false").default("grace", "10s")
+//!         let c = c.toml(toml)?.env("APP")?.flags(args)?
+//!         Ok(Settings(c.str("addr")?, c.int("workers")?, c.bool("verbose")?, c.duration_ms("grace")?))
+//!     }
+//!
+//! The defaults are the schema: a key must have a default (or be set by the TOML file) before the
+//! environment and the flags can set it, and a flag no key matches is an error (a typo is not
+//! silently ignored). Keys are lowercase words joined by `.` (`http.port`); the TOML file's
+//! `[http]` tables give them the same way; the environment variable for `http.port` with prefix
+//! `APP` is `APP_HTTP_PORT`; the flag is `--http.port=8080` or `--http.port 8080`, and a bare
+//! `--verbose` is `true` (a setting whose current value is `true` or `false` takes the next word
+//! only when it is `true` or `false`; any other setting takes the next word that is not a flag).
+//!
+//! The TOML understood is the part services use: `key = value` lines, `[table]` headers,
+//! `#` comments, strings ("..." with \" \\ \n \t escapes, or '...'), integers, floats and
+//! booleans. Arrays, inline tables and `[[arrays of tables]]` are an error naming the line.
+//! (A full parser is the eider-toml library.)
+//!
+//! A typed record loaded by field name (instead of the getters above) waits for reflection in
+//! the language.
+
+import std.strings
+import std.env
+import std.bytes
+
+/// The settings and where each value came from ("default", "toml", "env APP_X", "flag --x").
+pub type Config = { vals: Map[String, String], from: Map[String, String], rest: List[String] }
+
+/// No settings.
+pub fn new() -> Config { Config(Map.new(), Map.new(), List.new()) }
+
+fn set(c: Config, key: String, value: String, from: String) -> Config {
+    let mut v = c.vals.copy()
+    let mut f = c.from.copy()
+    v.insert(key.copy(), value)
+    f.insert(key, from)
+    Config(v, f, c.rest.copy())
+}
+
+fn origin(c: Config, key: String) -> String {
+    match c.from.get(key) {
+        Some(s) => s
+        None => String.from("")
+    }
+}
+
+fn bad(c: Config, key: String, got: String, want: str) -> String {
+    let mut m = key.copy()
+    m.push_str(": ")
+    m.append(got)
+    m.push_str(" is not ")
+    m.push_str(want)
+    let o = origin(c, key)
+    if o.len() > 0 {
+        m.push_str(" (from ")
+        m.append(o)
+        m.push_str(")")
+    }
+    m
+}
+
+/// A value in a TOML line's right-hand side: the text of a string (unescaped) or the raw
+/// token of a number or boolean.
+fn toml_value(raw: String, line: usize) -> Result[String, String] {
+    let t = strings.trim(raw)
+    let b = t.bytes()
+    let fail = |why: str| -> Result[String, String] {
+        let mut m = String.from("config: toml line ")
+        m.append(String.from_int(line as i64))
+        m.push_str(": ")
+        m.push_str(why)
+        Err(m)
+    }
+    if b.len() == 0 { return fail("no value") }
+    if b[0] == 34 {
+        // "basic string"
+        let mut out: List[u8] = List.new()
+        let mut i: usize = 1
+        let mut closed = false
+        while i < b.len() {
+            let c = b[i]
+            if c == 34 {
+                closed = true
+                i += 1
+                break
+            }
+            if c == 92 && i + 1 < b.len() {
+                let e = b[i + 1]
+                if e == 110 { out.push(10) } else if e == 116 { out.push(9) } else if e == 114 { out.push(13) } else if e == 34 { out.push(34) } else if e == 92 { out.push(92) } else { return fail("unsupported escape in a string") }
+                i += 2
+            } else {
+                out.push(c)
+                i += 1
+            }
+        }
+        if !closed { return fail("a string is not closed") }
+        let rest = strings.trim(String.from_bytes(bytes.slice(b, i, b.len())).unwrap_or(String.from("?")))
+        if rest.len() > 0 && !strings.starts_with(rest, "#") { return fail("text after a string") }
+        return match String.from_bytes(out) {
+            Ok(s) => Ok(s)
+            Err(_) => fail("a string is not UTF-8")
+        }
+    }
+    if b[0] == 39 {
+        // 'literal string'
+        let mut end: usize = 1
+        while end < b.len() && b[end] != 39 { end += 1 }
+        if end >= b.len() { return fail("a string is not closed") }
+        return match String.from_bytes(bytes.slice(b, 1, end)) {
+            Ok(s) => Ok(s)
+            Err(_) => fail("a string is not UTF-8")
+        }
+    }
+    if b[0] == 91 || b[0] == 123 { return fail("arrays and inline tables are not supported") }
+    // a number or boolean: up to a comment
+    let mut tok = t.copy()
+    match strings.find(t, "#") {
+        Some(i) => { tok = strings.trim(String.from_bytes(bytes.slice(b, 0, i)).unwrap_or(String.from(""))) }
+        None => {}
+    }
+    Ok(tok)
+}
+
+impl Config {
+    /// Sets `key`'s default (the lowest layer; it also declares the key).
+    fn default(self, key: str, value: str) -> Config { set(self, String.from(key), String.from(value), String.from("default")) }
+
+    /// Applies a TOML document (see the module comment) on top.
+    fn toml(self, src: String) -> Result[Config, String] {
+        let mut c = self.copy()
+        let mut table = String.from("")
+        let mut n: usize = 0
+        for raw in strings.lines(src) {
+            n += 1
+            let line = strings.trim(raw)
+            if line.len() == 0 || strings.starts_with(line, "#") { continue }
+            if strings.starts_with(line, "[[") {
+                let mut m = String.from("config: toml line ")
+                m.append(String.from_int(n as i64))
+                m.push_str(": arrays of tables are not supported")
+                return Err(m)
+            }
+            if strings.starts_with(line, "[") {
+                match strings.strip_suffix(strings.trim(strings.strip_prefix(line, "[").unwrap_or(String.from(""))), "]") {
+                    Some(name) => { table = strings.trim(name) }
+                    None => {
+                        let mut m = String.from("config: toml line ")
+                        m.append(String.from_int(n as i64))
+                        m.push_str(": a table header needs a closing ]")
+                        return Err(m)
+                    }
+                }
+                continue
+            }
+            match strings.split_once(line, "=") {
+                Some(kv) => {
+                    let k = strings.trim(kv.0)
+                    if k.len() == 0 {
+                        let mut m = String.from("config: toml line ")
+                        m.append(String.from_int(n as i64))
+                        m.push_str(": no key before =")
+                        return Err(m)
+                    }
+                    let mut key = String.from("")
+                    if table.len() > 0 {
+                        key.append(table.copy())
+                        key.push_str(".")
+                    }
+                    key.append(k)
+                    let v = toml_value(kv.1, n)?
+                    c = set(c, key, v, String.from("toml"))
+                }
+                None => {
+                    let mut m = String.from("config: toml line ")
+                    m.append(String.from_int(n as i64))
+                    m.push_str(": expected key = value")
+                    return Err(m)
+                }
+            }
+        }
+        Ok(c)
+    }
+
+    /// Applies the environment on top: for each key already set, the variable `<PREFIX>_<KEY>`
+    /// (upper case, `.` and `-` as `_`), if the environment has it.
+    fn env(self, prefix: str) -> Result[Config, String] uses io {
+        let mut c = self.copy()
+        for key in self.vals.keys() {
+            let mut name = String.from(prefix)
+            name.push_str("_")
+            name.append(strings.to_upper(strings.replace(strings.replace(key.copy(), ".", "_"), "-", "_")))
+            match env.get(name.bytes()) {
+                Some(v) => {
+                    let text = String.from_bytes(v).unwrap_or(String.from(""))
+                    let mut from = String.from("env ")
+                    from.append(name)
+                    c = set(c, key, text, from)
+                }
+                None => {}
+            }
+        }
+        Ok(c)
+    }
+
+    /// Applies command-line flags on top (`args` as `env.args()` gives them, the program name
+    /// first). `--key=value`, `--key value`, and a bare `--key` (true, when the next argument
+    /// is a flag or there is none, or the setting is a boolean and the next word is not
+    /// true or false). A key with no setting is an error; everything else is kept
+    /// in `rest()`. `--` ends the flags.
+    fn flags(self, args: List[List[u8]]) -> Result[Config, String] {
+        let mut c = self.copy()
+        let mut i: usize = 1
+        let mut rest: List[String] = List.new()
+        while i < args.len() {
+            let a = String.from_bytes(args[i].copy()).unwrap_or(String.from(""))
+            i += 1
+            if a == String.from("--") {
+                while i < args.len() {
+                    rest.push(String.from_bytes(args[i].copy()).unwrap_or(String.from("")))
+                    i += 1
+                }
+                break
+            }
+            if !strings.starts_with(a.copy(), "--") {
+                rest.push(a)
+                continue
+            }
+            let body = strings.trim_prefix(a.copy(), "--")
+            let mut key = body.copy()
+            let mut value = String.from("")
+            let mut has = false
+            match strings.split_once(body.copy(), "=") {
+                Some(kv) => {
+                    key = kv.0
+                    value = kv.1
+                    has = true
+                }
+                None => {}
+            }
+            if c.vals.get(key.copy()).is_none() {
+                let mut m = String.from("config: unknown flag --")
+                m.append(key)
+                return Err(m)
+            }
+            if !has {
+                let mut take = false
+                if i < args.len() {
+                    let nx = String.from_bytes(args[i].copy()).unwrap_or(String.from(""))
+                    take = !strings.starts_with(nx.copy(), "--")
+                    // a boolean setting takes the next word only if it is true or false
+                    let cur = c.vals.get(key.copy()).unwrap_or(String.from(""))
+                    let is_bool = cur == String.from("true") || cur == String.from("false")
+                    if is_bool && !(nx == String.from("true") || nx == String.from("false")) { take = false }
+                    if take { value = nx }
+                }
+                if take { i += 1 } else { value = String.from("true") }
+            }
+            let mut from = String.from("flag --")
+            from.append(key.copy())
+            c = set(c, key, value, from)
+        }
+        Ok(Config(c.vals, c.from, rest))
+    }
+
+    /// The arguments `flags` did not take (positional arguments, and everything after `--`).
+    fn rest(self) -> List[String] { self.rest.copy() }
+
+    /// Whether `key` has a value.
+    fn has(self, key: str) -> bool { self.vals.get(String.from(key)).is_some() }
+
+    /// Where `key`'s value came from: "default", "toml", "env APP_X" or "flag --x" ("" if unset).
+    fn source(self, key: str) -> String { origin(self, String.from(key)) }
+
+    /// `key`'s value as text.
+    fn str(self, key: str) -> Result[String, String] {
+        match self.vals.get(String.from(key)) {
+            Some(v) => Ok(v)
+            None => {
+                let mut m = String.from("config: ")
+                m.push_str(key)
+                m.push_str(" is not set")
+                Err(m)
+            }
+        }
+    }
+
+    /// `key`'s value as an integer.
+    fn int(self, key: str) -> Result[i64, String] {
+        let s = self.str(key)?
+        match strings.parse_i64(s.copy()) {
+            Ok(n) => Ok(n)
+            Err(_) => Err(bad(self, String.from(key), s, "an integer"))
+        }
+    }
+
+    /// `key`'s value as a boolean (`true` or `false`).
+    fn bool(self, key: str) -> Result[bool, String] {
+        let s = self.str(key)?
+        if s == String.from("true") { return Ok(true) }
+        if s == String.from("false") { return Ok(false) }
+        Err(bad(self, String.from(key), s, "true or false"))
+    }
+
+    /// `key`'s value as a duration in milliseconds: a number with a unit (`250ms`, `10s`, `2m`,
+    /// `1h`), or a bare number of milliseconds.
+    fn duration_ms(self, key: str) -> Result[i64, String] {
+        let s = self.str(key)?
+        let t = strings.trim(s.copy())
+        let mut num = t.copy()
+        let mut mul: i64 = 1
+        match strings.strip_suffix(t.copy(), "ms") {
+            Some(x) => { num = x }
+            None => {
+                match strings.strip_suffix(t.copy(), "s") {
+                    Some(x) => {
+                        num = x
+                        mul = 1000
+                    }
+                    None => {
+                        match strings.strip_suffix(t.copy(), "m") {
+                            Some(x) => {
+                                num = x
+                                mul = 60000
+                            }
+                            None => {
+                                match strings.strip_suffix(t.copy(), "h") {
+                                    Some(x) => {
+                                        num = x
+                                        mul = 3600000
+                                    }
+                                    None => {}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        match strings.parse_i64(num) {
+            Ok(n) => {
+                if n < 0 { return Err(bad(self, String.from(key), s, "a duration")) }
+                if n > 9223372036854775807 / mul { return Err(bad(self, String.from(key), s, "a duration that fits")) }
+                Ok(n * mul)
+            }
+            Err(_) => Err(bad(self, String.from(key), s, "a duration (250ms, 10s, 2m, 1h)"))
+        }
+    }
+}

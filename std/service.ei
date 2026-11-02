@@ -1,0 +1,82 @@
+//! std/service: what a long-running service needs around `main`: draining on SIGTERM and
+//! SIGINT, and process exit codes.
+//!
+//! Draining: make a cancellation token the root of your work (a `task.Group` under it, a server
+//! loop that waits on it), and let a watcher cancel it when the process is told to stop:
+//!
+//!     let root = task.root()
+//!     let watcher = service.cancel_on_term(root)?     // SIGTERM or SIGINT cancels `root`
+//!     serve(root)                                      // returns when `root` is cancelled
+//!     watcher.join()
+//!     exit(service.EX_OK)
+//!
+//! Everything under the token sees the cancellation (`tok.is_cancelled()`, `tok.wait(dl)`, a
+//! `cancel_case` in a select, a group's children) and finishes what it has; a deadline on the
+//! drain is `root.child_until(time.after_ms(grace))` for the work you give it.
+//!
+//! The signal pipe is one per process (std/signal): the watcher consumes the signals it reads,
+//! so don't run another reader of `signal.pending()` beside it.
+
+import std.signal
+import std.fd
+import std.task
+import std.time
+
+/// Exit codes, after BSD's sysexits.h: 0, and the failures a service reports.
+pub const EX_OK: i32 = 0
+pub const EX_USAGE: i32 = 64
+pub const EX_DATAERR: i32 = 65
+pub const EX_UNAVAILABLE: i32 = 69
+pub const EX_SOFTWARE: i32 = 70
+pub const EX_IOERR: i32 = 74
+pub const EX_CONFIG: i32 = 78
+
+/// The code for a `Result` from `main`: `EX_OK`, or `code` when it is an error.
+pub fn exit_code[T, E](r: Result[T, E], code: i32) -> i32 {
+    match r {
+        Ok(_) => EX_OK
+        Err(_) => code
+    }
+}
+
+/// Starts a watcher thread that cancels `tok` when one of `sigs` arrives. The thread ends when
+/// that happens or when `tok` is cancelled some other way (within 50 ms); `join` gives the
+/// signal that cancelled it, or 0 when the token was cancelled by other means. Err if a signal
+/// can't be watched or the signal pipe can't be read.
+pub fn cancel_on(tok: task.Token, sigs: List[i32]) -> Result[Task[i32], String] uses io, clock, threads {
+    for s in sigs { signal.watch(s)? }
+    let sfd = signal.events_fd()?
+    Ok(spawn(|| -> i32 {
+        let mut got: i32 = 0
+        while got == 0 && !tok.is_cancelled() {
+            match fd.wait_ready(sfd, fd.READY_READ, time.after_ms(50)) {
+                Ok(ready) => {
+                    if ready {
+                        match signal.pending() {
+                            Ok(seen) => {
+                                for s in seen {
+                                    for want in sigs {
+                                        if s == want && got == 0 { got = s }
+                                    }
+                                }
+                            }
+                            Err(_) => { got = 0 - 1 }
+                        }
+                    }
+                }
+                Err(_) => { got = 0 - 1 }
+            }
+        }
+        if got != 0 { tok.cancel() }
+        if got < 0 { 0 } else { got }
+    }))
+}
+
+/// `cancel_on` for SIGTERM and SIGINT: the signals that mean "stop" to an init system and to a
+/// terminal's Ctrl-C.
+pub fn cancel_on_term(tok: task.Token) -> Result[Task[i32], String] uses io, clock, threads {
+    let mut sigs: List[i32] = List.new()
+    sigs.push(signal.TERM)
+    sigs.push(signal.INT)
+    cancel_on(tok, sigs)
+}
