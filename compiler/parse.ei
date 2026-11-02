@@ -1731,6 +1731,7 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] {
     if t.kind == lex.Ident && kind_at(p, p.i + 1) == lex.LBracket {
         let w = intern.name(p.names, t.val as u32)
         if bytes.eq(w, sys.lit("attr")) || bytes.eq(w, sys.lit("has_attr")) { return attr_of(inout p) }
+        if bytes.eq(w, sys.lit("is_enum_type")) { return is_enum_of(inout p) }
     }
     if t.kind == lex.Int {
         let mut n = mk(ast.EInt, t.line, t.col)
@@ -1935,6 +1936,19 @@ fn attr_of(inout p: P) -> Result[u32, diag.Diag] {
     n.a = if has { ast.R_HAS_ATTR } else { ast.R_ATTR }
     n.b = target
     n.c = a + 1
+    Ok(add(inout p, n))
+}
+
+/// `is_enum_type[T]`: whether T is an enum (C8.42), for a `comptime if`.
+fn is_enum_of(inout p: P) -> Result[u32, diag.Diag] {
+    let t = cur(p)
+    adv(inout p)
+    expect(inout p, lex.LBracket)?
+    let target = ty(inout p)?
+    expect(inout p, lex.RBracket)?
+    let mut n = mk(ast.EReflect, t.line, t.col)
+    n.a = ast.R_IS_ENUM
+    n.b = target
     Ok(add(inout p, n))
 }
 

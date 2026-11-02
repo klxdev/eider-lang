@@ -1,0 +1,6 @@
+@derive
+trait Enc {
+    fn enc(self, inout out: String) {
+        comptime if is_enum_type[Self] { out.push_str("e") } else { out.push_str("r") }
+    }
+}

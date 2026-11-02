@@ -1,9 +1,10 @@
 # Deriving JSON
 
 [eider-json](https://github.com/klxdev/eider-json) turns your records and enums into JSON
-and back with codecs it derives from their fields. There is no macro and no code
-generator: the package's `encode_record` and `decode_record` are generic functions that go
-over a type's fields with [comptime reflection](../reference/reflection.md), and the
+and back with codecs it derives from their fields. There is nothing to write and no
+generator: `Encode` and `Decode` are [`@derive` traits](../reference/traits.md) whose
+default methods go over a type's fields with [comptime
+reflection](../reference/reflection.md), so every record and enum has them, and the
 `@json(...)` [attribute](../reference/attributes.md) shapes the result. This guide builds a
 small API type, then shows what decoding rejects and why.
 
@@ -25,15 +26,6 @@ type User = {
     @json(skip) cache: List[u8],
 }
 
-impl json.Encode for User {
-    fn encode(self, inout w: json.Writer) { json.encode_record(self, inout w) }
-}
-
-impl json.Decode for User {
-    fn decode(inout r: json.Reader) -> Result[User, json.DecodeError] { json.decode_record(inout r) }
-    fn missing() -> Option[User] { None }
-}
-
 fn main() uses io {
     let u = User(7, String.from("Ada"), None, 3, List.new())
     io.outln(json.to_json(u))
@@ -50,8 +42,10 @@ fn main() uses io {
 Bob
 ```
 
-The two impls are the whole derivation: each method hands the value to a generic function
-that knows every record. What the attribute says:
+There is no impl: a type that doesn't implement `Encode` or `Decode` itself has the traits'
+default methods, which are `json.encode_record` / `json.encode_enum` and
+`json.decode_record` / `json.decode_enum` (eider-json 0.3.1 and later; before it, a
+one-line impl for each trait called them). What the attribute says:
 
 | On | Key | Effect |
 |---|---|---|
@@ -79,15 +73,6 @@ type Shape =
     | Circle(radius: i64)
     | @json(name = "box") Rect(w: i64, h: i64)
     | Empty
-
-impl json.Encode for Shape {
-    fn encode(self, inout w: json.Writer) { json.encode_enum(self, inout w) }
-}
-
-impl json.Decode for Shape {
-    fn decode(inout r: json.Reader) -> Result[Shape, json.DecodeError] { json.decode_enum(inout r) }
-    fn missing() -> Option[Shape] { None }
-}
 ```
 
 A variant with fields is an object with its tag first, a variant without fields is just
@@ -119,7 +104,8 @@ checks that each one decodes or is rejected with a path, and that what decodes r
 ## Your own encoding
 
 The derived codec is a default, not a rule: a type that needs another representation (a
-date as a string, a set as a sorted array) implements `Encode` and `Decode` by hand with the
+date as a string, a set as a sorted array) implements `Encode` and `Decode` by hand (its own
+package can; the impl replaces the derived one) with the
 `Writer` (`string`, `int`, `begin_object`, `key`, ...) and the `Reader` (`kind`, `error`).
 The derived code of every type that contains it then uses that impl.
 

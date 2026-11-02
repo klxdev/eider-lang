@@ -119,6 +119,74 @@ are checked at each call with the concrete type: calling a method whose impl dec
 `uses io` needs `io` in the caller, also through a generic function (the instance for that
 type then needs it; see [Capabilities](capabilities.md)).
 
+**Derived traits.** A trait declared `@derive` gives its methods to every record and enum
+that has no impl of it, with the trait's default bodies, which usually go over the type's own
+fields or variants with [comptime reflection](reflection.md) (`Self` is then the record or
+enum, `is_enum_type[Self]` tells the two apart). This is how a library derives a codec, a printer
+or a comparison without macros: it is ordinary generic code, instantiated per type.
+
+```eider
+@derive
+trait Describe {
+    fn describe(self, inout out: String) {
+        comptime if is_enum_type[Self] {
+            comptime for v in variants(Self) {
+                if v.matches(self) { out.push_str(v.name) }
+            }
+        } else {
+            out.push_str("{{")
+            comptime for f in fields(Self) {
+                out.push_str(f.name)
+                out.push_str("=")
+                self.[f].describe(inout out)
+                out.push_str(" ")
+            }
+            out.push_str("}}")
+        }
+    }
+}
+
+impl Describe for i32 {
+    fn describe(self, inout out: String) { out.append(String.from_int(self as i64)) }
+}
+
+type Point = { x: i32, y: i32 }
+type Light = | Red | Green
+type Pole = { at: Point, state: Light }
+
+// the type's own package can still implement the trait
+type Tag = { id: i32 }
+
+impl Describe for Tag {
+    fn describe(self, inout out: String) { out.push_str("#tag") }
+}
+
+fn show[T: Describe](x: T) -> String {
+    let mut out = String.from("")
+    x.describe(inout out)
+    out
+}
+
+fn main() uses io {
+    print(show(Pole(Point(1, 2), Light.Green)))
+    print(show(Tag(5)))
+}
+```
+
+```output
+{at={x=1 y=2 } state=Green }
+#tag
+```
+
+A type has the trait by derivation only when no impl of the trait names its type (any
+`impl[T] Describe for Wrapper[T]` counts), and only a record or an enum does: integers,
+`String`, `List` and the like need an impl, which the library provides. A part that lacks the
+trait is an error where the default body uses it, and the help names the field: "in the
+`comptime for` iteration over field `n` of Cache". `@derive` takes no keys and goes only on a
+trait (E0820 elsewhere unless an `attr` of that name exists). The derived methods are the
+trait's defaults checked for the type, so they cost what generic instantiation costs and
+nothing more.
+
 A trait is not a type: `fn f(x: Shape)` is E0111 ("unknown type `Shape`").
 
 User-declared traits take no type arguments (`impl Shape[i32] for X` is E0603); only the

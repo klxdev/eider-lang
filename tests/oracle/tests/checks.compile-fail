@@ -1,4 +1,5 @@
 compile-fail tests (tests/checks/fail)
+  ok   derive_part_lacks.ei         E0115 at 7:22
   ok   e0001_import_from.ei         E0001 at 3:14
   ok   e0001_import_wildcard.ei     E0001 at 3:12
   ok   e0001_missing_brace.ei       E0001 at 5:1
@@ -115,5 +116,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-113 passed, 0 failed; error-code coverage 69/69
+114 passed, 0 failed; error-code coverage 69/69
 --- exit 0

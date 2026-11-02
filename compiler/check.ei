@@ -2296,7 +2296,69 @@ fn implements(c: C, tk: u64, ty: u32) -> bool {
         let mut sb = no_subst()
         if unify_ast(c, im.md, n.b, ty, inout sb, gs) { return true }
     }
+    derived_trait(c, tk, ty)
+}
+
+// ---- Derived traits (docs/compiler.md, "C8.42")
+
+/// Whether trait ti (index into trs) is declared `@derive`.
+fn trait_derives(c: C, ti: u32) -> bool {
+    let tr = c.trs[ti as usize]
+    let a = c.p.mods[tr.m as usize].ast
+    for at in ast.attrs_of(a, tr.node) {
+        let an = a.nodes[at as usize]
+        if an.b == 0 && is_word(c, an.a, "derive") { return true }
+    }
     false
+}
+
+/// Whether record or enum ty has `@derive` trait ti by derivation: no impl of the trait
+/// names its type.
+fn derived_by(c: C, ti: u32, ty: u32) -> bool {
+    let k = types.kind(c.t, ty)
+    if k != types.T_RECORD && k != types.T_ENUM { return false }
+    if !trait_derives(c, ti) { return false }
+    let h = head_of(c, ty)
+    for im in c.timpls {
+        if mget(c.traits, im.tkey) != ti { continue }
+        let n = ndm(c, im.md, im.node)
+        let gs = gparams(c, im.md, n.c, n.d)
+        if head_key(c, im.md, n.b, gs) == h { return false }
+    }
+    true
+}
+
+/// `derived_by` for the trait with key tk.
+fn derived_trait(c: C, tk: u64, ty: u32) -> bool {
+    let ti = mget(c.traits, tk)
+    if ti == NONE { return false }
+    derived_by(c, ti, ty)
+}
+
+/// The default method `name` that record or enum ty gets from a `@derive` trait it has by
+/// derivation: a FnDef for the trait's method (made once) whose Self the caller sets; NONE
+/// when there is none.
+fn derived_method(inout c: C, ty: u32, name: u32) -> u32 {
+    let k = types.kind(c.t, ty)
+    if k != types.T_RECORD && k != types.T_ENUM { return NONE }
+    for ti in 0..c.trs.len() {
+        if !derived_by(c, ti as u32, ty) { continue }
+        let tr = c.trs[ti].copy()
+        let trn = ndm(c, tr.m, tr.node)
+        for i in 0..trn.d {
+            let tmn = atm(c, tr.m, trn.c, i)
+            let tm = ndm(c, tr.m, tmn)
+            if tm.a != name || tm.h == 0 { continue }
+            for fi in 0..c.fdefs.len() {
+                let f = c.fdefs[fi]
+                if f.dflt && f.inode == NONE && f.md == tr.m && f.node == tmn { return fi as u32 }
+            }
+            let fi = c.fdefs.len() as u32
+            c.fdefs.push(FnDef(resolve.key(0, tm.a), tr.m, tmn, true, tm.d > 0, ast.has(tm.b, ast.FN_UNSAFE), NONE, NONE, tr.m, true))
+            return fi
+        }
+    }
+    NONE
 }
 
 // ---- Operation traits (docs/compiler.md, "C8.4: operation traits")
@@ -3350,7 +3412,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
     // 7. signatures of every concrete function, then of every concrete method
     for fi in 0..c.fdefs.len() {
         let f = c.fdefs[fi].copy()
-        if f.generic || f.inode != NONE { continue }
+        if f.generic || f.inode != NONE || f.dflt { continue }
         c.err_mod = f.md
         c.seen = List.new()
         let ii = instantiate(inout c, fi as u32, no_subst())?
@@ -3794,7 +3856,7 @@ fn all_gparam_nodes(c: C, fi: u32) -> List[u32] {
 fn inst_name(c: C, fi: u32, sb: Subst) -> List[u8] {
     let f = c.fdefs[fi as usize]
     let mut out: List[u8] = List.new()
-    if f.inode != NONE {
+    if f.inode != NONE || f.dflt {
         bytes.append(inout out, ts(c, subst_get(sb, intern.S_SELF_TYPE)))
         out.push(46)
     }
@@ -3817,7 +3879,7 @@ fn inst_name(c: C, fi: u32, sb: Subst) -> List[u8] {
 fn instantiate(inout c: C, fi: u32, sb: Subst) -> Result[u32, diag.Diag] {
     let f = c.fdefs[fi as usize].copy()
     let mut keyl: List[u32] = List.new()
-    if f.inode != NONE { keyl.push(subst_get(sb, intern.S_SELF_TYPE)) } else { keyl.push(NONE) }
+    if f.inode != NONE || f.dflt { keyl.push(subst_get(sb, intern.S_SELF_TYPE)) } else { keyl.push(NONE) }
     for g in all_generics(c, fi) { keyl.push(subst_get(sb, g)) }
     let lid = types.list(inout c.t, keyl)
     let ik = (fi as u64) * 4294967296 + lid as u64
@@ -6104,10 +6166,12 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
     if f.dflt {
         // only Self: from the receiver, or `Type.f()` of an impl without type parameters
         gs.push(intern.S_SELF_TYPE)
-        let im = ndm(c, f.imd, f.inode)
-        if subst_get(sb, intern.S_SELF_TYPE) == NONE && im.d == 0 {
-            let st = resolve_ty(inout c, f.imd, im.b)?
-            subst_set(inout sb, intern.S_SELF_TYPE, st)
+        if f.inode != NONE {
+            let im = ndm(c, f.imd, f.inode)
+            if subst_get(sb, intern.S_SELF_TYPE) == NONE && im.d == 0 {
+                let st = resolve_ty(inout c, f.imd, im.b)?
+                subst_set(inout sb, intern.S_SELF_TYPE, st)
+            }
         }
     } else if f.inode != NONE {
         let im = ndm(c, fm, f.inode)
@@ -6463,6 +6527,13 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
                 return call_decl(inout c, n, label, m.fd, sb, no_recv(), exp, true)
             }
         }
+        let dm = derived_method(inout c, pt, n.b)
+        if dm != NONE {
+            let label = label_of(c, ts(c, pt), n.b)
+            let mut sb = no_subst()
+            subst_set(inout sb, intern.S_SELF_TYPE, pt)
+            return call_decl(inout c, n, label, dm, sb, no_recv(), exp, true)
+        }
         let fd = err("E0115", n.line, n.col, q2("type ", ts(c, pt), " has no associated function `", nm(c, n.b), "`"))
         return fail_call(inout c, fd, n.c, n.d)
     }
@@ -6480,6 +6551,19 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
             if m.head == static_head && m.name == n.b {
                 let label = label_of(c, kt(c, static_head), n.b)
                 return call_decl(inout c, n, label, m.fd, no_subst(), no_recv(), exp, true)
+            }
+        }
+        // a method of a derived trait (docs/compiler.md, "C8.42")
+        if !heap_head {
+            let st = static_head_ty(inout c, static_head, exp)
+            if st != NONE {
+                let dm = derived_method(inout c, st, n.b)
+                if dm != NONE {
+                    let label = label_of(c, kt(c, static_head), n.b)
+                    let mut sb = no_subst()
+                    subst_set(inout sb, intern.S_SELF_TYPE, st)
+                    return call_decl(inout c, n, label, dm, sb, no_recv(), exp, true)
+                }
             }
         }
         // a derived or built-in Default (docs/compiler.md, "C8.23")
@@ -6521,6 +6605,16 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
         subst_set(inout sb, intern.S_SELF_TYPE, pv.ty)
         let label = label_of(c, head_text(c, head), n.b)
         return call_decl(inout c, n, label, m.fd, sb, Recv(true, n.a, pv), exp, true)
+    }
+    // a method of a derived trait (docs/compiler.md, "C8.42")
+    if !any {
+        let dm = derived_method(inout c, pv.ty, n.b)
+        if dm != NONE {
+            let mut sb = no_subst()
+            subst_set(inout sb, intern.S_SELF_TYPE, pv.ty)
+            let label = label_of(c, head_text(c, head), n.b)
+            return call_decl(inout c, n, label, dm, sb, Recv(true, n.a, pv), exp, true)
+        }
     }
     // a handle's unknown method: thread_method's message
     if !any && types.is_handle(tk) && lang_method(c, n.b) == NONE { return thread_method(inout c, n, pv) }
@@ -8060,6 +8154,15 @@ fn check_attr_uses(inout c: C, m: u32, owner: u32) -> Result[bool, diag.Diag] {
 fn check_attr_use(inout c: C, m: u32, owner: u32, an: ast.Node, inout seen: List[u32]) -> Result[bool, diag.Diag] {
     let di = attr_named(c, m, an)
     let name = nm(c, an.a)
+    // `@derive` on a trait is built in (docs/compiler.md, "C8.42")
+    if di == NONE && an.b == 0 && bytes.eq(name, s("derive")) && ndm(c, m, owner).kind == ast.ITrait {
+        if an.d > 0 {
+            let mut e = err("E0821", an.line, an.col, s("`@derive` takes no keys"))
+            e.help = s("write `@derive` alone before a trait")
+            return Err(e)
+        }
+        return Ok(true)
+    }
     if di == NONE {
         let mut d = err("E0820", an.line, an.col, q("unknown attribute `", name, "`"))
         let mut best: List[u8] = List.new()
@@ -8603,6 +8706,7 @@ fn ct_attr(inout c: C, r: ast.Node) -> Result[AttrRead, diag.Diag] {
 /// `attr[A](x)` (a record of A's type) or `has_attr[A](x)` (bool) as a value.
 fn reflect_value(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
     if n.a == ast.R_FIELDS || n.a == ast.R_VARIANTS { return Err(r_err(n, s("`fields(...)` and `variants(...)` go after `comptime for x in`"))) }
+    if n.a == ast.R_IS_ENUM { return Err(r_err(n, s("`is_enum_type[T]` is a `comptime if` condition"))) }
     let ar = ct_attr(inout c, n)?
     if ar.unknown { return Ok(poison_v(inout c)) }
     if n.a == ast.R_HAS_ATTR { return Ok(v_of(types.BOOL, ir.op_bool(inout c.ir, ar.has))) }
@@ -8712,6 +8816,14 @@ fn ct_eval(inout c: C, e: u32) -> Result[CV, diag.Diag] {
         }
         ast.EReflect => {
             if n.a == ast.R_FIELDS || n.a == ast.R_VARIANTS { return Err(cv_err(n)) }
+            if n.a == ast.R_IS_ENUM {
+                let am = c.am.copy()
+                let ty = resolve_ty(inout c, am, n.b)?
+                let k = types.kind(c.t, ty)
+                if k == types.T_PARAM || poisoned(c, ty) { return Ok(cv(CV_UNKNOWN, 0)) }
+                let ev: u64 = if k == types.T_ENUM { 1 } else { 0 }
+                return Ok(cv(CV_BOOL, ev))
+            }
             let ar = ct_attr(inout c, n)?
             if ar.unknown { return Ok(cv(CV_UNKNOWN, 0)) }
             let hv: u64 = if ar.has { 1 } else { 0 }

@@ -73,7 +73,8 @@ field or variant it was for (`in the comptime for iteration over field b of P`).
 `comptime if c { ... } else { ... }` checks only the branch that `c` selects. The condition
 is evaluated while the code is checked. It may use literals, constants, `f.name`, `f.index`,
 `v.name`, `v.index`, attribute values (`attr[A](f).key`), `has_attr[A](f)`, `+ - *`, `!`,
-`&&`, `||` and comparisons; anything else is E0832. The branch that isn't taken can be code
+`&&`, `||`, comparisons and `is_enum_type[T]` (whether a type is an enum, not a record; a
+[derived trait's](traits.md) default body tells the two apart with it); anything else is E0832. The branch that isn't taken can be code
 that wouldn't type-check for this field, which is what lets a codec skip a field whose type
 can't be encoded.
 

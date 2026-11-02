@@ -102,11 +102,13 @@ pub type Ast = {
 /// What reading a held attribute traps with in a comptime evaluator.
 pub const HELD_ATTR: str = "an attribute names a comptime constant not evaluated yet"
 
-/// EReflect kinds: `fields(T)`, `variants(T)`, `attr[A](x)`, `has_attr[A](x)`.
+/// EReflect kinds: `fields(T)`, `variants(T)`, `attr[A](x)`, `has_attr[A](x)`, `is_enum_type[T]`.
 pub const R_FIELDS: u32 = 0
 pub const R_VARIANTS: u32 = 1
 pub const R_ATTR: u32 = 2
 pub const R_HAS_ATTR: u32 = 3
+/// `is_enum_type[T]`: whether the type is an enum (a record otherwise), in a `comptime if`
+pub const R_IS_ENUM: u32 = 4
 
 pub const OP_ADD: u32 = 0
 pub const OP_SUB: u32 = 1

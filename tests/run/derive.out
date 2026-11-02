@@ -1,0 +1,12 @@
+{x=1, y=2}
+{from={x=0, y=0}, to={x=3, y=4}, tags=['a' 'b']}
+Circle(5)
+Rect(2 3)
+Empty()
+{inner={x=7, y=8}, ok=true}
+[{x=1, y=1} {x=2, y=2}]
+<secret>
+{s=<secret>, p={x=5, y=6}}
+derived
+own
+derived

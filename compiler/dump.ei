@@ -403,7 +403,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             opt(inout out, p, "value", n.b, d)
         }
         ast.EReflect => {
-            let what = ["fields", "variants", "attr", "has_attr"]
+            let what = ["fields", "variants", "attr", "has_attr", "is_enum_type"]
             put(inout out, " what=")
             put(inout out, what[n.a as usize])
             opt(inout out, p, "attr", n.c, d)
