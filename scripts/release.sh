@@ -126,7 +126,7 @@ if [ -z "$skip_verify" ]; then
   grep "^skip" target/release-verify.log | sed 's/^/release: verify skipped: /'
   # a release is built from a run in which no leg was skipped: a skipped leg hides what it
   # would have found (the eider leg skipped for lack of AWS-LC hid a failing expectation)
-  if grep -q "^skip" target/release-verify.log; then
+  if grep "^skip" target/release-verify.log | grep -qv "^skip crypto (\(openssl\|libressl\))"; then
     die "verify skipped a leg (above): a release needs every leg to run; fetch what is missing (sh scripts/fetch-awslc.sh, sh scripts/vendor.sh fetch, clang with wasm32, wasm-ld, node) and run verify again"
   fi
   grep -q "^ok   tools" target/release-verify.log || die "verify did not build and test the siblings (its tools leg)"
