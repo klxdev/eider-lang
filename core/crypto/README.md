@@ -138,34 +138,34 @@ makes identical); an all-zero X25519 result is refused by the glue whatever the 
 
 ## Choosing a backend
 
-The driver doesn't know about crypto yet (compiler/ is being changed elsewhere), so a backend
-is a separately built static library, `target/crypto/<backend>/libeider_crypto.a` (the glue
-plus, for AWS-LC and LibreSSL, every libcrypto object, so one `-l` is enough), linked through
-the driver's existing `-l` option and `LIBRARY_PATH`:
+A backend is a static library, `target/crypto/<backend>/libeider_crypto.a` (the glue plus, for
+AWS-LC and LibreSSL, every libcrypto object, so one `-l` is enough). The driver links it by
+itself: when a program imports `core/crypto` (so does `packages/crypto`), `eiderc build|run|test`
+picks the provider, runs `scripts/crypto-build.sh` (which builds the backend when the archive is
+missing or older than the glue, and prints its progress on stderr), appends `-L<dir>` and the
+words of the backend.s `libs` file to the cc argv (a shared libcrypto outside the loader.s default
+paths also gets an rpath), and puts the SHA-256 of the archive in the program.s cache key, so a
+rebuilt backend relinks. A program that does not import it is untouched (no script is run).
+Decision C802.
 
 ```sh
 sh scripts/fetch-awslc.sh                  # once: the pinned AWS-LC sources (offline: EIDER_AWSLC_TARBALL=<file>)
-scripts/ei-crypto run prog.ei              # builds the backend if needed, links it, runs
-EIDER_CRYPTO=openssl scripts/ei-crypto build prog.ei
-scripts/ei-crypto --crypto libressl run prog.ei
-# by hand: LIBRARY_PATH=target/crypto/awslc scripts/ei run prog.ei -l eider_crypto
+scripts/ei run prog.ei                  # builds the backend if needed, links it, runs
+EIDER_CRYPTO=openssl scripts/ei build prog.ei
+scripts/ei run prog.ei --crypto libressl
+scripts/ei-crypto --san run prog.ei       # the sanitizer build of the backend (a wrapper over the above)
 ```
 
-The backend is `--crypto`, else `$EIDER_CRYPTO`, else `provider` in the `[crypto]` table of
+The backend is `--crypto <name>` (an `eiderc` option), else `$EIDER_CRYPTO`, else `provider` in the `[crypto]` table of
 the program's `eider.toml` (`[crypto]` / `provider = "awslc"`), else `awslc`.
 `scripts/crypto-build.sh [--san] <backend>` builds one (`--check` says whether it can, exit 2
 and the reason if not; `--libdir`, `--libs` print what to link).
 
-**The driver change that makes this automatic** (for whoever owns compiler/): in
-`driver.ei`, when the loaded module graph contains the module (core, crypto), (1) take the
-provider from a new `--crypto <name>` option, else `EIDER_CRYPTO`, else the root package's
-`[crypto] provider` (lock.ei already reads eider.toml), else `awslc`; (2) if
-`<root>/target/crypto/<provider>/libeider_crypto.a` is missing or older than
-`core/crypto/eider_crypto.c`, run `sh <root>/scripts/crypto-build.sh <provider>` (or compile
-the glue itself like the core objects, leaving only libcrypto's one-time build to the script);
-(3) append `-L<root>/target/crypto/<provider>` and the words of its `libs` file to the cc argv
-(as `add_libs` does for `-l`), and put the archive's hash in the binary cache key. About 30
-lines; nothing else changes.
+**In the driver** (`driver.crypto_libs`): the module graph contains core/crypto.ei; the provider is
+chosen as above (the `[crypto]` table of the nearest `eider.toml` above the entry file); the build
+is the script.s (`--libdir`, `--libs`; `EIDER_CRYPTO_SAN=1` adds `--san`); `-L`, the library names
+and an `@eider-crypto:<sha256 of the archive>` entry (key only) join the `-l` list. A backend that
+is not available here (`crypto-build.sh --check` says why) ends the build with exit 3.
 
 ## AWS-LC: the default
 

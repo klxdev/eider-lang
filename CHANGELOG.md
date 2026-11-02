@@ -5,6 +5,11 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## Unreleased (0.5.0, runtime and std)
+
+- **The driver links the crypto backend** (#64): a program that imports `core/crypto` needs no
+  wrapper; `--crypto <name>`, `$EIDER_CRYPTO` or `[crypto] provider`. Decision C802.
+
 ## 0.4.0
 
 The language gains floating point, trait objects, associated types, capability polymorphism and

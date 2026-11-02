@@ -47,6 +47,7 @@ import std.io
 import std.env
 import std.proc
 import eiderc.build
+import eiderc.lock
 import eiderc.toolchain
 
 fn s(x: str) -> List[u8] { sys.lit(x) }
@@ -161,10 +162,149 @@ fn add_libs(inout argv: List[List[u8]], libs: List[List[u8]]) {
     // libm: std/math's functions and `%` on floats (docs/decisions.md C660)
     argv.push(s("-lm"))
     for l in libs {
-        let mut a = s("-l")
-        bytes.append(inout a, l)
-        argv.push(a)
+        if l.len() > 0 && l[0] == 45 {
+            // a linker flag as it is (-L<dir>, -Wl,...): crypto_libs
+            argv.push(l)
+        } else if l.len() > 0 && l[0] == 64 {
+            // `@...` is only part of the link cache key (key_libs)
+        } else {
+            let mut a = s("-l")
+            bytes.append(inout a, l)
+            argv.push(a)
+        }
     }
+}
+
+// ------------------------------------------------------------------ the crypto backend
+//
+// A program that imports core/crypto (packages/crypto does) links a backend: a static
+// library built by scripts/crypto-build.sh into <root>/target/crypto/<provider>/ (core/crypto/
+// README.md, "Choosing a backend"; docs/decisions.md C802). The provider is `--crypto`, else
+// $EIDER_CRYPTO, else `provider` in the [crypto] table of the program's eider.toml (the
+// nearest one above the entry file), else awslc. `crypto_libs` returns what to add to the
+// `-l` list: `-L<dir>` flags, the library names of the backend's `libs` file, and
+// `@eider-crypto:<hash>`, the SHA-256 of the archive, which is part of the program's cache key.
+
+/// Whether one of the loaded modules `paths` is core/crypto.
+pub fn uses_crypto(paths: List[List[u8]]) -> bool {
+    for p in paths {
+        if bytes.ends_with(p, s("/core/crypto.ei")) { return true }
+    }
+    false
+}
+
+/// The `provider` of the [crypto] table of the eider.toml nearest above `file` ("" if none).
+fn manifest_provider(file: List[u8]) -> List[u8] uses fs {
+    let abs: List[u8] = match fs.absolute(file) {
+        Ok(x) => x
+        Err(_) => file
+    }
+    let mut d = fs.dirname(abs)
+    for _i in 0..64 {
+        let mf = fs.join(d, s("eider.toml"))
+        if fs.exists(mf) {
+            let src: List[u8] = match fs.read(mf) {
+                Ok(x) => x
+                Err(_) => List.new()
+            }
+            match lock.parse(src) {
+                Ok(doc) => { return lock.text_at(doc, s("crypto.provider")) }
+                Err(_) => { return List.new() }
+            }
+        }
+        let up = fs.dirname(d)
+        if up.len() == 0 || bytes.eq(up, d) { break }
+        d = up
+    }
+    List.new()
+}
+
+/// Run `sh <root>/scripts/crypto-build.sh <mode> <provider>` (it builds the backend when its
+/// archive is missing or older than the glue; the progress goes to our stderr) and return what
+/// it prints, or exit 3.
+fn crypto_script(mode: str, provider: List[u8]) -> List[u8] uses io, fs, net {
+    let mut argv: List[List[u8]] = List.new()
+    argv.push(s("sh"))
+    argv.push(fs.join(root(), s("scripts/crypto-build.sh")))
+    // EIDER_CRYPTO_SAN: the backend built with ASan+UBSan (scripts/ei-crypto --san)
+    match env.get(s("EIDER_CRYPTO_SAN")) {
+        Some(x) => { if x.len() > 0 { argv.push(s("--san")) } }
+        None => {}
+    }
+    argv.push(s(mode))
+    argv.push(provider)
+    match proc.run_with(argv, proc.Options(true, false, 0)) {
+        Ok(o) => {
+            if o.code != 0 {
+                let mut m = s("the crypto backend `")
+                bytes.append(inout m, provider)
+                bytes.append(inout m, s("` is not available (see above; `sh scripts/crypto-build.sh --check "))
+                bytes.append(inout m, provider)
+                bytes.append(inout m, s("` says why)"))
+                fail(m, 3)
+            }
+            o.out
+        }
+        Err(_) => {
+            fail(s("cannot run scripts/crypto-build.sh (it builds the crypto backend)"), 3)
+            List.new()
+        }
+    }
+}
+
+/// What a program that imports core/crypto adds to its link (see above); nothing when it
+/// doesn't. `opt` is `--crypto`'s value ("" when not given).
+pub fn crypto_libs(paths: List[List[u8]], file: List[u8], opt: List[u8]) -> List[List[u8]] uses io, fs, net {
+    let mut out: List[List[u8]] = List.new()
+    if !uses_crypto(paths) { return out }
+    let mut provider = opt.copy()
+    if provider.len() == 0 {
+        match env.get(s("EIDER_CRYPTO")) {
+            Some(x) => { provider = x }
+            None => {}
+        }
+    }
+    if provider.len() == 0 { provider = manifest_provider(file) }
+    if provider.len() == 0 { provider = s("awslc") }
+    for b in provider {
+        let ok = (b >= 97 && b <= 122) || (b >= 48 && b <= 57) || b == 45
+        if !ok { fail(s("the crypto backend is a name: awslc, awslc-noasm, awslc-aead, openssl or libressl"), 2) }
+    }
+    let dirs = bytes.split(bytes.trim(crypto_script("--libdir", provider)), 58)
+    let words = bytes.split(bytes.trim(crypto_script("--libs", provider)), 32)
+    for i in 0..dirs.len() {
+        if dirs[i].len() == 0 { continue }
+        let mut l = s("-L")
+        bytes.append(inout l, dirs[i])
+        out.push(l)
+        if i == 0 {
+            // the archive's hash is in the cache key
+            let a: List[u8] = match fs.read(fs.join(dirs[i], s("libeider_crypto.a"))) {
+                Ok(x) => x
+                Err(_) => List.new()
+            }
+            let mut parts: List[List[u8]] = List.new()
+            parts.push(a)
+            let mut k = s("@eider-crypto:")
+            bytes.append(inout k, build.key(parts))
+            out.push(k)
+        } else {
+            // a shared libcrypto outside the loader's default paths is found at run time too
+            let mut r = s("-Wl,-rpath,")
+            bytes.append(inout r, dirs[i])
+            out.push(r)
+        }
+    }
+    let mut want = false
+    for w in words {
+        if bytes.eq(w, s("-l")) {
+            want = true
+        } else if want {
+            if w.len() > 0 { out.push(w) }
+            want = false
+        }
+    }
+    out
 }
 
 /// Run a toolchain command; exit 3 when it can't be started or fails (`what` names it).
@@ -316,7 +456,7 @@ fn core_units(cc: List[List[u8]], core: List[u8], tool: List[u8]) -> List[build.
 /// which unit failed (`internal`: the units that are generated code, from the first; the rest
 /// are the C core). A link that fails because a cached object vanished (a concurrent `cache
 /// clean` or trim) compiles again once.
-fn build_units(units: List[build.Unit], internal: usize, link_argv: List[List[u8]], nokey: List[List[u8]], post: List[List[u8]], tool: List[u8], dir: List[u8], exe: List[u8], jobs: u64, quiet: bool) -> List[u8] uses io, fs, net, clock {
+fn build_units(units: List[build.Unit], internal: usize, extra_keys: List[List[u8]], link_argv: List[List[u8]], nokey: List[List[u8]], post: List[List[u8]], tool: List[u8], dir: List[u8], exe: List[u8], jobs: u64, quiet: bool) -> List[u8] uses io, fs, net, clock {
     let cache = cache_dir()
     for attempt in 0..2 {
         let b = build.compile(units, cache, dir, jobs_or_default(jobs), quiet)
@@ -330,7 +470,9 @@ fn build_units(units: List[build.Unit], internal: usize, link_argv: List[List[u8
             }
             fail(s("compiling the C core failed"), 3)
         }
-        let path = build.link(link_argv, nokey, b.keys, b.objs, post, tool, cache, exe, quiet)
+        let mut keys = b.keys.copy()
+        for k in extra_keys { keys.push(k) }
+        let path = build.link(link_argv, nokey, keys, b.objs, post, tool, cache, exe, quiet)
         if path.len() > 0 {
             if b.compiled.len() > 0 { build.maybe_trim(cache) }
             return path
@@ -617,6 +759,10 @@ fn compile_llvm(lnames: List[List[u8]], lls: List[List[u8]], dir: List[u8], exe:
     for u in core_units(cc, core, ctool) { units.push(u) }
     let mut post: List[List[u8]] = List.new()
     add_libs(inout post, libs)
+    let mut extra_keys: List[List[u8]] = List.new()
+    for l in libs {
+        if l.len() > 0 && l[0] == 64 { extra_keys.push(l) }
+    }
     let mut nokey: List[List[u8]] = List.new()
     if lto {
         let mut ld: List[List[u8]] = List.new()
@@ -645,9 +791,9 @@ fn compile_llvm(lnames: List[List[u8]], lls: List[List[u8]], dir: List[u8], exe:
             }
             nokey.push(pol)
         }
-        return build_units(units, lls.len(), ld, nokey, post, ltool, dir, exe, jobs, quiet)
+        return build_units(units, lls.len(), extra_keys, ld, nokey, post, ltool, dir, exe, jobs, quiet)
     }
-    build_units(units, lls.len(), cc, nokey, post, ctool, dir, exe, jobs, quiet)
+    build_units(units, lls.len(), extra_keys, cc, nokey, post, ctool, dir, exe, jobs, quiet)
 }
 
 /// A compiled program: `path` is the executable (in the cache, or in `dir`); `dir` is the

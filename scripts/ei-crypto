@@ -1,25 +1,19 @@
 #!/bin/sh
-# scripts/ei with a crypto backend linked: builds it if needed (scripts/crypto-build.sh), puts
-# it on LIBRARY_PATH and adds its -l options. Until the driver does this itself
-# (core/crypto/README.md, "Choosing a backend"), programs that import "core/crypto" or
-# packages/crypto run through here.
+# scripts/ei with a crypto backend chosen: a program that imports "core/crypto" (or
+# packages/crypto) gets its backend linked by the driver itself since 0.5 (compiler/driver.ei,
+# core/crypto/README.md "Choosing a backend"), built when missing, so this wrapper only picks
+# the backend (`--crypto`, which `scripts/ei` takes as well) and the sanitizer build.
 # Usage: scripts/ei-crypto [--crypto <backend>] [--san] <eiderc args>
 #   e.g. scripts/ei-crypto run prog.ei;  EIDER_CRYPTO=openssl scripts/ei-crypto build prog.ei
-# The backend: --crypto, else $EIDER_CRYPTO, else [crypto] provider in ./eider.toml, else awslc.
+# --san links the backend built with ASan+UBSan (target/crypto/<backend>-san).
 root="$(cd "$(dirname "$0")/.." && pwd)"
 backend=
-san=
 while :; do
   case ${1:-} in
     --crypto) backend=$2; shift 2 ;;
-    --san) san=--san; shift ;;
+    --san) EIDER_CRYPTO_SAN=1; export EIDER_CRYPTO_SAN; shift ;;
     *) break ;;
   esac
 done
-dir=$(sh "$root/scripts/crypto-build.sh" $san --libdir $backend) || exit $?
-libs=$(sh "$root/scripts/crypto-build.sh" $san --libs $backend) || exit $?
-LIBRARY_PATH="$dir${LIBRARY_PATH:+:$LIBRARY_PATH}"
-export LIBRARY_PATH
-# a shared libcrypto outside the loader's default paths (openssl from a custom prefix)
-case $dir in *:*) LD_LIBRARY_PATH="${dir#*:}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; export LD_LIBRARY_PATH ;; esac
-exec "$root/scripts/ei" "$@" $libs
+if [ -n "$backend" ]; then exec "$root/scripts/ei" "$@" --crypto "$backend"; fi
+exec "$root/scripts/ei" "$@"

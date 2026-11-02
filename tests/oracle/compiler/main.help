@@ -10,6 +10,8 @@ usage:
                                              only the C core's ABI (env.ec_*; the seed: seed/README.md)
   eiderc run <file.ei> [--release] [-l lib] [--] [args...]  build and run (-O0 unless --release);
                                              the arguments after the file (every one after `--`) go to the program
+  eiderc build|run|test <file.ei> --crypto <backend>  the crypto backend a program importing core/crypto links
+                                             (else $EIDER_CRYPTO, [crypto] provider in eider.toml, awslc; built when missing)
   eiderc build|run|test <file.ei> --profile[=cpu,mem,conc]  with the profiler (docs/runtime.md "Profiler")
   eiderc test <file.ei> [-l lib]             run the `test` blocks (a module with no `main` too)
   eiderc test                                run the tests of every module of the package in this directory
