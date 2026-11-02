@@ -84,6 +84,23 @@ print `eiderc <version>` (`eiderc 0.1.0`) and exit 0: the toolchain's version, f
 | `--help`, `-h` | | print the usage and exit |
 | `--version` | | print `eiderc <version>` and exit |
 
+## Formatting
+
+`eiderc fmt <file.ei>` prints the file in the one canonical layout; it has no options (the
+file is not rewritten: `eiderc fmt f.ei > f.new && mv f.new f.ei`). It fixes layout that has no
+meaning and nothing else: the indentation (four spaces per open bracket, four more on a
+continuation line), runs of spaces between tokens, trailing white space, tabs, CRLF, blank
+lines (at most one in a row), the newline at the end. Tokens, comments and strings are copied
+byte for byte and no space is added or removed between tokens, so line breaks and the spacing
+inside a line stay yours.
+
+It checks its own work: the output must lex to the same tokens as the input and formatting it
+again must change nothing, else it prints an error (`internal error: ...`, exit 1) and no text.
+A file with a lexing error, or with a `"""` multi-line string (its lines are text, which a
+layout pass must not touch), is refused. `tests/fmt/run.sh` runs it over every `.ei` file of the
+repository, compares diagnostics before and after, and fuzzes the layout (random indentation,
+tabs, CRLF, trailing white space).
+
 ## Debugging
 
 `-g` gives gdb and lldb the `.ei` files and lines, with the types of your variables (records,

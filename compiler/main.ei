@@ -42,6 +42,7 @@ import eiderc.llvm
 import eiderc.llvm_abi as abi
 import eiderc.wasm
 import eiderc.pkgtest
+import eiderc.fmt
 import eiderc.sanitize
 import eiderc.suite
 import eiderc.ide
@@ -112,6 +113,7 @@ fn usage_text() -> List[u8] {
         "                                             --overlay (repeatable) reads <path> from the file <text>",
         "  eiderc doc <file.ei | dir> [--json] [--private]  the API of a package directory or a program's package:",
         "                                             items, signatures, doc comments (doc.ei); --private: also non-pub items",
+        "  eiderc fmt <file.ei>                       print the file in the canonical layout (fmt.ei; no options)",
         "  eiderc help | --help | -h                  print this text",
         "  eiderc version | --version                 print `eiderc <version>` (VERSION; docs/site/tooling/releases.md)",
         "",
@@ -167,7 +169,7 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] {
 }
 
 fn known_cmd(c: List[u8]) -> bool {
-    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "migrate-imports") || is(c, "migrate-strings") || is(c, "audit-refs") || is(c, "doc") || is(c, "emit-llvm") || is(c, "cache")
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "migrate-imports") || is(c, "migrate-strings") || is(c, "audit-refs") || is(c, "doc") || is(c, "fmt") || is(c, "emit-llvm") || is(c, "cache")
 }
 
 fn parse_args() -> Args uses io {
@@ -621,6 +623,19 @@ fn main() uses io, fs, net, clock {
             env.exit(2)
             return
         }
+    }
+    if is(a.cmd, "fmt") {
+        // docs/site/tooling/compiler.md, "Formatting"
+        let f = fmt.format(src)
+        if f.ok {
+            io.out(f.text)
+        } else {
+            let mut m = sys.lit("eiderc: fmt: ")
+            bytes.append(inout m, f.why)
+            io.errln(m)
+            env.exit(1)
+        }
+        return
     }
     if is(a.cmd, "migrate-var") {
         migrate_var(a, src)

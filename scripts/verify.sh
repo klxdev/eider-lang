@@ -74,6 +74,8 @@ if [ "$1" = "--leg" ]; then
     else
       echo "ok   llvm ($(grep '^ok' $S/llvm | sed 's/^ok   llvm //; s/:.*//' | paste -sd, - | sed 's/,/, /g'); $(sed 's/^ok   llvm units: /units: /' $S/llvmunits))"
     fi
+    # eiderc fmt: idempotent over every .ei file, tokens and diagnostics unchanged, a layout fuzz
+    sh tests/fmt/run.sh target/eiderc-next > $S/fmt 2>&1 && grep "^ok" $S/fmt || { echo "FAIL fmt: sh tests/fmt/run.sh"; grep -v "^fmt:" $S/fmt | head -12; }
     printf 'int x;\n' > $S/wasm.c
     if "${WASM_CC:-clang}" --target=wasm32 -c -o $S/wasm.o $S/wasm.c 2>/dev/null && command -v wasm-ld >/dev/null && command -v node >/dev/null; then
       sh tests/wasm/run.sh || echo "FAIL tests/wasm"
