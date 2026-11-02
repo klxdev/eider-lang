@@ -1,0 +1,29 @@
+// pkgtest: lint
+// unused_uses: a capability in `uses` the body never needs, with the edit that removes it;
+// `@allow(unused_uses)` on the function (or its impl) silences it
+fn quiet() uses io { let x = 1 }
+fn some() uses io, clock { print(1) }
+fn two() uses fs, io, clock, net { print(2) }
+@allow(unused_uses)
+fn silenced() uses io { let x = 1 }
+@allow(all)
+fn silenced_all() uses io { let x = 1 }
+type Box1 = { v: i32 }
+@allow(unused_uses)
+impl Box1 {
+    fn get(self) -> i32 uses clock { self.v }
+}
+impl Box1 {
+    fn put(self) -> i32 uses clock { self.v }
+}
+fn generic[T](x: T) -> T uses io { x }
+
+fn main() uses io, clock, fs, net {
+    quiet()
+    some()
+    two()
+    silenced()
+    silenced_all()
+    let b = Box1(1)
+    print(b.get() + b.put() + generic(1))
+}

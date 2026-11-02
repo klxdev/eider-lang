@@ -1,0 +1,403 @@
+// lint: `eiderc lint` (docs/compiler.md, "C8.56"). The checker records what the lints need
+// while it checks (`Collected`: capability use per function body, and the hits of the lints
+// that need types); this module owns the registry of lints and groups, the levels
+// (defaults, `[lints]` in eider.toml, the command line), `@allow`, and the report.
+//
+// A lint has a name, a group, a default level and a one-line description. A level is
+// allow (not reported), warn (reported) or deny (reported, and the exit code is 1). A
+// setting names a lint, a group, or `all`; a more specific setting beats a less specific
+// one, and between two of the same kind the later wins (eider.toml, then the command line).
+// `@allow(name, ...)` before a fn, an impl or a trait silences those lints in its body.
+
+import core.sys
+import std.bytes
+import eiderc.ast
+import eiderc.diag
+import eiderc.intern
+import eiderc.resolve
+import eiderc.types
+
+pub const ALLOW: u32 = 0
+pub const WARN: u32 = 1
+pub const DENY: u32 = 2
+
+/// A lint: `name`, its `group`, the level it has when nothing says otherwise.
+pub type Def = { name: str, group: str, level: u32, doc: str }
+
+pub fn defs() -> List[Def] {
+    let mut out: List[Def] = List.new()
+    out.push(Def("unused_uses", "caps", WARN, "a capability in a function's `uses` that its body never needs"))
+    out.push(Def("unused_result", "correctness", WARN, "a `Result` computed in a statement and dropped"))
+    out.push(Def("needless_copy", "perf", WARN, "`.copy()` of a value that is already a fresh copy"))
+    out
+}
+
+pub fn groups() -> List[str] {
+    let mut out: List[str] = List.new()
+    for g in ["caps", "correctness", "perf"] { out.push(g) }
+    out
+}
+
+fn is_group(w: List[u8]) -> bool {
+    if bytes.eq(w, sys.lit("all")) { return true }
+    for g in groups() {
+        if bytes.eq(w, sys.lit(g)) { return true }
+    }
+    false
+}
+
+fn find_def(w: List[u8]) -> Option[Def] {
+    for d in defs() {
+        if bytes.eq(w, sys.lit(d.name)) { return Some(d) }
+    }
+    None
+}
+
+/// Whether `w` names a lint, a group or `all` (what `@allow` and `[lints]` may name).
+pub fn known(w: List[u8]) -> bool { is_group(w) || find_def(w).is_some() }
+
+/// The level a word names (`allow`, `warn`, `deny`), else None.
+pub fn level_named(w: List[u8]) -> Option[u32] {
+    if bytes.eq(w, sys.lit("allow")) { return Some(ALLOW) }
+    if bytes.eq(w, sys.lit("warn")) { return Some(WARN) }
+    if bytes.eq(w, sys.lit("deny")) { return Some(DENY) }
+    None
+}
+
+pub fn level_text(l: u32) -> str {
+    if l == DENY { return "deny" }
+    if l == WARN { return "warn" }
+    "allow"
+}
+
+// ---- what the checker records
+
+/// A hit of a lint: `item` is the fn (or test) node of module `m` it was found in, for `@allow`.
+pub type Hit = { lint: str, m: u32, item: u32, d: diag.Diag }
+
+/// The capabilities (a mask, `types.cap_name` bits) one instance of the fn node `node` of
+/// module `m` used, closures included.
+pub type CapRec = { m: u32, node: u32, used: u32 }
+
+pub type Collected = { used: u32, cur: u32, recs: List[CapRec], hits: List[Hit] }
+
+pub fn new_collected() -> Collected { Collected(0, 4294967295, List.new(), List.new()) }
+
+/// Record a hit (once per place: a generic body is checked once per instance).
+pub fn note(inout c: Collected, lint: str, m: u32, d: diag.Diag) {
+    for h in c.hits {
+        if h.m == m && h.d.line == d.line && h.d.col == d.col && bytes.eq(sys.lit(h.lint), sys.lit(lint)) { return }
+    }
+    c.hits.push(Hit(lint, m, c.cur, d))
+}
+
+// ---- levels
+
+/// One setting: a lint, group or `all`, and its level.
+pub type Setting = { name: List[u8], level: u32 }
+
+/// How specific a setting is: `all` 1, a group 2, a lint 3.
+fn rank(w: List[u8]) -> u32 {
+    if bytes.eq(w, sys.lit("all")) { return 1 }
+    if is_group(w) { return 2 }
+    3
+}
+
+/// The level of lint `d` under `settings` (earlier settings first; later ones of the same
+/// specificity win).
+pub fn level_of(d: Def, settings: List[Setting]) -> u32 {
+    let mut level = d.level.copy()
+    let mut best: u32 = 0
+    for s in settings {
+        let r = rank(s.name)
+        let applies = if r == 3 { bytes.eq(s.name, sys.lit(d.name)) } else if r == 2 { bytes.eq(s.name, sys.lit(d.group)) } else { true }
+        if applies && r >= best {
+            level = s.level
+            best = r
+        }
+    }
+    level
+}
+
+/// A package's `[lints]` as settings; the errors are messages (an unknown name or level).
+pub fn package_settings(pk: resolve.Pkg, inout errs: List[List[u8]]) -> List[Setting] {
+    let mut out: List[Setting] = List.new()
+    for i in 0..pk.lints.len() {
+        let name = pk.lints[i]
+        let lv = if i < pk.lint_levels.len() { pk.lint_levels[i] } else { sys.lit("") }
+        if !known(name) {
+            errs.push(bytes.concat(bytes.concat(sys.lit("eider.toml: [lints] names no lint or group `"), name), sys.lit("`")))
+            continue
+        }
+        match level_named(lv) {
+            Some(l) => out.push(Setting(name, l))
+            None => errs.push(bytes.concat(bytes.concat(bytes.concat(sys.lit("eider.toml: [lints] `"), name), sys.lit("`: the level must be \"allow\", \"warn\" or \"deny\", not \"")), bytes.concat(lv, sys.lit("\""))))
+        }
+    }
+    out
+}
+
+// ---- the report
+
+/// One lint finding to show: its lint, level, the diagnostic and the file it is in.
+pub type Finding = { lint: str, level: u32, d: diag.Diag, file: List[u8], src: List[u8] }
+
+/// The node of the impl or trait that holds fn node `item` in module `m`, else NOSYM.
+fn holder_of(p: resolve.Program, m: u32, item: u32) -> u32 {
+    let a = p.mods[m as usize].ast
+    for k in 0..a.items_len {
+        let id = ast.at(a, a.items_start, k)
+        let n = a.nodes[id as usize]
+        if n.kind == ast.IImpl {
+            for j in 0..n.f { if ast.at(a, n.e, j) == item { return id } }
+        } else if n.kind == ast.ITrait {
+            for j in 0..n.d { if ast.at(a, n.c, j) == item { return id } }
+        }
+    }
+    resolve.NOSYM
+}
+
+/// Whether `@allow` on node `id` names `lint` or its group (or `all`).
+fn allows(p: resolve.Program, m: u32, id: u32, d: Def) -> bool {
+    if id == resolve.NOSYM { return false }
+    let a = p.mods[m as usize].ast
+    for at in ast.attrs_of(a, id) {
+        let an = a.nodes[at as usize]
+        if !bytes.eq(intern.name(p.names, an.a), sys.lit("allow")) { continue }
+        for j in 0..an.d {
+            let k = a.nodes[ast.at(a, an.c, j) as usize]
+            let w = intern.name(p.names, k.a)
+            if bytes.eq(w, sys.lit(d.name)) || bytes.eq(w, sys.lit(d.group)) || bytes.eq(w, sys.lit("all")) { return true }
+        }
+    }
+    false
+}
+
+fn silenced(p: resolve.Program, m: u32, item: u32, d: Def) -> bool {
+    if item == resolve.NOSYM { return false }
+    if allows(p, m, item, d) { return true }
+    allows(p, m, holder_of(p, m, item), d)
+}
+
+fn is_trait_member(p: resolve.Program, m: u32, item: u32) -> bool {
+    let h = holder_of(p, m, item)
+    if h == resolve.NOSYM { return false }
+    let n = p.mods[m as usize].ast.nodes[h as usize]
+    n.kind == ast.ITrait || (n.kind == ast.IImpl && n.a > 0)
+}
+
+fn mask_or(a: u32, b: u32) -> u32 {
+    let mut out: u32 = 0
+    let mut bit: u32 = 1
+    for i in 0..9 {
+        if types.has_bit(a, i as u32) || types.has_bit(b, i as u32) { out += bit }
+        bit *= 2
+    }
+    out
+}
+
+fn capabilities() -> List[str] {
+    let mut out: List[str] = List.new()
+    for g in ["io", "clock", "fs", "net", "threads", "python", "js", "wasm"] { out.push(g) }
+    out
+}
+
+fn bit_of(name: List[u8]) -> Option[u32] {
+    for i in 0..9 {
+        let b = i as u32
+        if bytes.eq(name, sys.lit(types.cap_name(b))) { return Some(b) }
+    }
+    None
+}
+
+/// The edit that rewrites fn node `n`'s `uses` clause without the capabilities `gone` (indexes
+/// into the clause), when the clause is on one line: the remaining names joined by `, `, or
+/// nothing at all (` uses` included) when none remain. Every finding of one function carries
+/// the same edit, so applying any of them fixes all.
+fn clause_fix(p: resolve.Program, m: u32, n: ast.Node, gone: List[u32]) -> Option[diag.Fix] {
+    let a = p.mods[m as usize].ast
+    let src = p.mods[m as usize].src
+    let first = a.nodes[ast.at(a, n.i, 0) as usize]
+    let last = a.nodes[ast.at(a, n.i, n.j - 1) as usize]
+    if first.line != last.line { return None }
+    let start = line_start_of(src, first.line)
+    let from = start + (first.col - 1) as usize
+    let lname = intern.name(p.names, last.a)
+    let to = start + (last.col - 1) as usize + lname.len()
+    if to > src.len() { return None }
+    let mut keep: List[u8] = List.new()
+    let mut kept = 0
+    for k in 0..n.j {
+        if gone.contains(k) { continue }
+        if kept > 0 { bytes.append(inout keep, sys.lit(", ")) }
+        bytes.append(inout keep, intern.name(p.names, a.nodes[ast.at(a, n.i, k) as usize].a))
+        kept += 1
+    }
+    if kept > 0 { return Some(diag.Fix(first.line, first.col, (to - from) as u64, keep)) }
+    // none remain: the blanks before `uses`, the keyword, the blanks, the names
+    let mut b = from.copy()
+    while b > 0 && (src[b - 1] == 32 || src[b - 1] == 9) { b -= 1 }
+    if b < 4 || !bytes.eq(bytes.slice(src, b - 4, b), sys.lit("uses")) { return None }
+    b -= 4
+    while b > 0 && (src[b - 1] == 32 || src[b - 1] == 9) { b -= 1 }
+    if b < start { return None }
+    Some(diag.Fix(first.line, (b - start) as u32 + 1, (to - b) as u64, List.new()))
+}
+
+/// Byte offset of the start of line `line` (1-based).
+fn line_start_of(src: List[u8], line: u32) -> usize {
+    let mut off: usize = 0
+    let mut ln: u32 = 1
+    while ln < line && off < src.len() {
+        if src[off] == 10 { ln += 1 }
+        off += 1
+    }
+    off
+}
+
+fn fn_label(p: resolve.Program, m: u32, item: u32) -> List[u8] {
+    let n = p.mods[m as usize].ast.nodes[item as usize]
+    let mut out: List[u8] = List.new()
+    let h = holder_of(p, m, item)
+    if h != resolve.NOSYM {
+        let hn = p.mods[m as usize].ast.nodes[h as usize]
+        let tix = if hn.kind == ast.IImpl { hn.b } else { h }
+        let ty = p.mods[m as usize].ast.nodes[tix as usize]
+        if ty.kind == ast.TName || ty.kind == ast.TGeneric || ty.kind == ast.ITrait {
+            bytes.append(inout out, intern.name(p.names, ty.a))
+            out.push(46)
+        }
+    }
+    bytes.append(inout out, intern.name(p.names, n.a))
+    out
+}
+
+/// The unused `uses` findings: capabilities declared in a function's `uses` clause that
+/// no instance of its body needed.
+fn unused_uses(p: resolve.Program, col: Collected) -> List[Hit] {
+    let mut out: List[Hit] = List.new()
+    let mut seen: List[u64] = List.new()
+    for r in col.recs {
+        let key = (r.m as u64) * 4294967296 + r.node as u64
+        if seen.contains(key) { continue }
+        seen.push(key)
+        let mut used: u32 = 0
+        for q in col.recs {
+            if q.m == r.m && q.node == r.node { used = mask_or(used, q.used) }
+        }
+        let a = p.mods[r.m as usize].ast
+        let n = a.nodes[r.node as usize]
+        if n.kind != ast.IFn || is_trait_member(p, r.m, r.node) { continue }
+        let mut gone: List[u32] = List.new()
+        for k in 0..n.j {
+            let cn = a.nodes[ast.at(a, n.i, k) as usize]
+            let name = intern.name(p.names, cn.a)
+            if !contained(capabilities(), name) { continue }
+            match bit_of(name) {
+                Some(b) => {
+                    if !types.has_bit(used, b) { gone.push(k) }
+                }
+                None => {}
+            }
+        }
+        let mut fix: Option[diag.Fix] = None
+        if gone.len() > 0 { fix = clause_fix(p, r.m, n, gone) }
+        for k in gone {
+            let cn = a.nodes[ast.at(a, n.i, k) as usize]
+            let mut msg = sys.lit("`")
+            bytes.append(inout msg, fn_label(p, r.m, r.node))
+            bytes.append(inout msg, sys.lit("` declares capability `"))
+            bytes.append(inout msg, intern.name(p.names, cn.a))
+            bytes.append(inout msg, sys.lit("` in `uses` but its body never needs it"))
+            let mut d = diag.new("unused_uses", cn.line, cn.col, msg)
+            d.help = sys.lit("remove it from `uses` (least privilege), or silence this with `@allow(unused_uses)` on the function")
+            d.fix = fix
+            out.push(Hit("unused_uses", r.m, r.node, d))
+        }
+    }
+    out
+}
+
+fn contained(xs: List[str], w: List[u8]) -> bool {
+    for x in xs {
+        if bytes.eq(sys.lit(x), w) { return true }
+    }
+    false
+}
+
+fn before(a: Hit, b: Hit) -> bool {
+    if a.m != b.m { return a.m < b.m }
+    if a.d.line != b.d.line { return a.d.line < b.d.line }
+    a.d.col < b.d.col
+}
+
+/// The findings for the modules of package `pkg` (NOPKG: the files in no package) in program
+/// `p`: the checker's hits and the unused `uses`, each with its level under `settings`
+/// (`pk_settings` per package, then `cli`), `@allow` applied, allowed ones left out.
+pub fn findings(p: resolve.Program, col: Collected, pkg: u32, cli: List[Setting], inout errs: List[List[u8]]) -> List[Finding] {
+    let mut settings: List[Setting] = List.new()
+    if pkg != resolve.NOPKG { settings = package_settings(p.pkgs[pkg as usize], inout errs) }
+    for s in cli { settings.push(s) }
+    let mut all: List[Hit] = col.hits.copy()
+    for h in unused_uses(p, col) { all.push(h) }
+    // module order of the program, then position
+    let mut ordered: List[Hit] = List.new()
+    for h in all {
+        let mut at = ordered.len()
+        while at > 0 && before(h, ordered[at - 1]) { at -= 1 }
+        ordered.insert(at, h)
+    }
+    let mut out: List[Finding] = List.new()
+    for h in ordered {
+        if p.mods[h.m as usize].pkg != pkg || h.m == p.prelude { continue }
+        let d = match find_def(sys.lit(h.lint)) {
+            Some(x) => x
+            None => { continue }
+        }
+        let level = level_of(d, settings)
+        if level == ALLOW || silenced(p, h.m, h.item, d) { continue }
+        let mut dd = h.d.copy()
+        dd.file = p.mods[h.m as usize].path
+        out.push(Finding(h.lint, level, dd, p.mods[h.m as usize].path, p.mods[h.m as usize].src))
+    }
+    out
+}
+
+/// `warning[lint]: msg` or `error[lint]: msg` (a denied lint), as diag.render lays it out.
+pub fn render(f: Finding) -> List[u8] {
+    let r = diag.render(f.d, f.file, f.src)
+    let body = bytes.slice(r, 5, r.len())
+    let mut out = if f.level == DENY { sys.lit("error") } else { sys.lit("warning") }
+    bytes.append(inout out, body)
+    out
+}
+
+/// One JSON line: the diagnostic's fields with `lint` and `level` in place of `error`.
+pub fn json(f: Finding) -> List[u8] {
+    let j = diag.json(f.d, f.file)
+    // {"error":"<code>",...} -> {"lint":"<code>","level":"warn",...}
+    let cut = 11 + f.d.code.len()
+    let mut out = sys.lit("\x7b\"lint\":\"")
+    bytes.append(inout out, sys.lit(f.lint))
+    bytes.append(inout out, sys.lit("\",\"level\":\""))
+    bytes.append(inout out, sys.lit(level_text(f.level)))
+    out.push(34)
+    bytes.append(inout out, bytes.slice(j, cut, j.len()))
+    out
+}
+
+/// `eiderc lint --list`: every lint with its group, default level and description.
+pub fn list() -> List[u8] {
+    let mut out: List[u8] = List.new()
+    for d in defs() {
+        bytes.append(inout out, sys.lit(d.name))
+        bytes.append(inout out, sys.lit("  ["))
+        bytes.append(inout out, sys.lit(d.group))
+        bytes.append(inout out, sys.lit(", "))
+        bytes.append(inout out, sys.lit(level_text(d.level)))
+        bytes.append(inout out, sys.lit("]  "))
+        bytes.append(inout out, sys.lit(d.doc))
+        out.push(10)
+    }
+    out
+}

@@ -1,0 +1,9 @@
+// lints reach the analyzer: `unused_uses` with its fix, `unused_result`
+fn quiet() uses io, clock { print(1) }
+
+fn r() -> Result[i32, String] { Ok(1) }
+
+fn main() uses io, clock {
+    r()
+    quiet()
+}

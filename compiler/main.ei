@@ -49,6 +49,8 @@ import eiderc.ide
 import eiderc.front
 import eiderc.doc
 import eiderc.migrate
+import eiderc.lint
+import eiderc.lock
 
 type Args = {
     cmd: List[u8], file: List[u8], json: bool, out: List[u8], release: bool, tests: bool,
@@ -60,6 +62,10 @@ type Args = {
     crypto: List[u8],
     /// `migrate-strings --portable` (migrate.ei)
     portable: bool,
+    /// `lint --deny|--warn|--allow <name>` (lint.ei), in order
+    lints: List[lint.Setting],
+    /// `lint --list`
+    list: bool,
 }
 
 /// Comparisons go through a function so no owned temporary sits in an `else if` condition
@@ -103,6 +109,9 @@ fn usage_text() -> List[u8] {
         "                                             then the AST with its error nodes)",
         "  eiderc ir <file.ei>                        dump the typed IR",
         "  eiderc emit-llvm <file.ei> [--test] [--lib] [--wasm]  print the LLVM IR (--test: with the test driver)",
+        "  eiderc lint [<file.ei>] [--json] [--deny|--warn|--allow <lint|group|all>]...  the lints (lint.ei) of a package's",
+        "                                             modules; no file: the package here; `--list` lists them; levels also come from",
+        "                                             [lints] in eider.toml; exit 1 if a denied lint is hit",
         "  eiderc caps <file.ei>                      each package's capability use, one JSON line per capability",
         "  eiderc migrate-var <file.ei>               print the file with its `var`s rewritten as `let mut` (deprecated `var`)",
         "  eiderc migrate-imports <file.ei> [--json]  print the file with its quoted imports in the dotted form",
@@ -173,10 +182,29 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] {
 }
 
 fn known_cmd(c: List[u8]) -> bool {
-    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "migrate-imports") || is(c, "migrate-strings") || is(c, "audit-refs") || is(c, "doc") || is(c, "fmt") || is(c, "emit-llvm") || is(c, "cache")
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "migrate-imports") || is(c, "migrate-strings") || is(c, "audit-refs") || is(c, "doc") || is(c, "fmt") || is(c, "emit-llvm") || is(c, "cache") || is(c, "lint")
 }
 
-fn parse_args() -> Args uses io {
+/// The entry module of the package in the current directory (`eiderc lint` with no file).
+fn package_entry() -> List[u8] uses io, fs {
+    let none: List[u8] = List.new()
+    let text = match fs.read(sys.lit("eider.toml")) {
+        Ok(t) => t
+        Err(_) => {
+            usage_error(sys.lit("`lint` with no file lints the package in this directory: there is no eider.toml here"))
+            return none
+        }
+    }
+    match lock.manifest(text) {
+        Ok(m) => m.entry
+        Err(e) => {
+            usage_error(bytes.concat(sys.lit("eider.toml: "), e))
+            none
+        }
+    }
+}
+
+fn parse_args() -> Args uses io, fs {
     let argv = env.args()
     let mut cmd: List[u8] = List.new()
     let mut file: List[u8] = List.new()
@@ -199,6 +227,8 @@ fn parse_args() -> Args uses io {
     let mut pargs: List[List[u8]] = List.new()
     let mut jobs: u64 = 0
     let mut crypto: List[u8] = List.new()
+    let mut lints: List[lint.Setting] = List.new()
+    let mut list = false
     let mut dashes = false
     let mut i: usize = 1
     while i < argv.len() {
@@ -258,6 +288,14 @@ fn parse_args() -> Args uses io {
             i += 1
         } else if is(a, "-g") {
             debug = true
+        } else if is(a, "--deny") || is(a, "--warn") || is(a, "--allow") {
+            if i >= argv.len() { usage_error(quoted("needs a lint, a lint group or `all`: ", a)) }
+            if !lint.known(argv[i]) { usage_error(quoted("no lint or group named ", argv[i])) }
+            let lv = if is(a, "--deny") { lint.DENY } else if is(a, "--warn") { lint.WARN } else { lint.ALLOW }
+            lints.push(lint.Setting(argv[i], lv))
+            i += 1
+        } else if is(a, "--list") {
+            list = true
         } else if is(a, "--private") {
             private = true
         } else if is(a, "--all-errors") {
@@ -303,7 +341,11 @@ fn parse_args() -> Args uses io {
     }
     if is(cmd, "cache") && file.len() == 0 { usage_error(sys.lit("`cache` needs clean, size or trim")) }
     // (`test` with no file runs the tests of the package in the current directory: pkgtest.ei)
-    if file.len() == 0 && !is(cmd, "test") { usage_error(quoted("missing the source file for ", cmd)) }
+    if file.len() == 0 && is(cmd, "lint") && !list {
+        // the package in this directory: its entry module
+        file = package_entry()
+    }
+    if file.len() == 0 && !is(cmd, "test") && !(is(cmd, "lint") && list) { usage_error(quoted("missing the source file for ", cmd)) }
     if (dashes || pargs.len() > 0) && !is(cmd, "run") { usage_error(sys.lit("program arguments (and `--`) go with `run`")) }
     if is(cmd, "emit-header") { lib = true }
     // `test` checks the test driver, never a library (the recorded mode order)
@@ -315,7 +357,8 @@ fn parse_args() -> Args uses io {
     if wasm_core && (wasm || lib) { usage_error(sys.lit("`--wasm-core` builds a program: not with --wasm or --lib")) }
     if wasm { lib = true }
     if profile > 0 && (lib || wasm_core || !(is(cmd, "build") || is(cmd, "run") || is(cmd, "test") || is(cmd, "emit-llvm"))) { usage_error(sys.lit("`--profile` goes with build, run, test or emit-llvm, without --lib or --wasm")) }
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, wasm_core, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, debug, crypto, portable)
+    if (lints.len() > 0 || list) && !is(cmd, "lint") { usage_error(sys.lit("`--deny`, `--warn`, `--allow` and `--list` go with `lint`")) }
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, wasm_core, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, debug, crypto, portable, lints, list)
 }
 
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
@@ -409,7 +452,7 @@ fn dump(lx: lex.Lexed, names: intern.Interner) uses io {
 }
 
 /// `eiderc ide`: the analysis of the file (with the overlays read from their text files).
-fn run_ide(a: Args) uses io, fs, net, clock {
+fn run_ide(a: Args) uses io, fs {
     let mut paths: List[List[u8]] = List.new()
     let mut texts: List[List[u8]] = List.new()
     let mut k: usize = 0
@@ -462,7 +505,7 @@ fn run_doc(a: Args) uses io, fs {
 /// can rewrite as `let mut`. The file is checked as the entry (a module without `main` is
 /// fine), else, when that fails (a module whose own names clash with the entry's builtins,
 /// like a `fn print`), as the module a one-line entry next to it imports.
-fn migrate_var(a: Args, src: List[u8]) uses io, fs, net, clock {
+fn migrate_var(a: Args, src: List[u8]) uses io, fs {
     let first = migration(a.file, src, a.file)
     if first.ok {
         emit_migrated(src, first.fixes)
@@ -540,7 +583,7 @@ fn emit_migrated(src: List[u8], fixes: List[diag.Fix]) uses io {
 /// `target`: its `var` rewrites, or the diagnostics (a missing `main` aside).
 type Migration = { ok: bool, fixes: List[diag.Fix], diags: List[diag.Diag] }
 
-fn migration(entry: List[u8], esrc: List[u8], target: List[u8]) -> Migration uses io, fs, net, clock {
+fn migration(entry: List[u8], esrc: List[u8], target: List[u8]) -> Migration uses io, fs {
     let mut names = intern.new()
     let lx = lex.lex_all(esrc, inout names)
     let pr = parse.parse_all(lx.lexed, names)
@@ -571,6 +614,42 @@ fn canon(path: List[u8]) -> List[u8] uses fs {
         Ok(x) => x
         Err(_) => path
     }
+}
+
+/// `eiderc lint` (lint.ei): the findings for the modules of the entry file's package, in
+/// module order, human form on stderr or JSON lines on stdout; exit 1 if a denied lint hit.
+fn run_lint(c: check.C, a: Args) uses io {
+    let mut errs: List[List[u8]] = List.new()
+    let pkg = c.p.mods[0].pkg
+    let fs2 = lint.findings(c.p, c.lint, pkg, a.lints, inout errs)
+    if errs.len() > 0 {
+        for e in errs {
+            io.errln(bytes.concat(sys.lit("eiderc: "), e))
+        }
+        env.exit(2)
+        return
+    }
+    let mut denied: u64 = 0
+    let mut warned: u64 = 0
+    for f in fs2 {
+        if f.level == lint.DENY { denied += 1 } else { warned += 1 }
+        let mut g = f.copy()
+        g.d.msg = diag.demangle(f.d.msg)
+        g.d.help = diag.demangle(f.d.help)
+        if a.json {
+            io.outln(lint.json(g))
+        } else {
+            io.err(lint.render(g))
+        }
+    }
+    if !a.json {
+        let mut m = bytes.from_u64(denied)
+        bytes.append(inout m, sys.lit(" denied, "))
+        bytes.append(inout m, bytes.from_u64(warned))
+        bytes.append(inout m, sys.lit(" warnings"))
+        io.errln(m)
+    }
+    if denied > 0 { env.exit(1) }
 }
 
 /// `eiderc cache size|clean|trim` (build.ei): the cache's use per kind of entry; remove
@@ -625,6 +704,10 @@ fn main() uses io, fs, net, clock {
     }
     if is(a.cmd, "doc") {
         run_doc(a)
+        return
+    }
+    if is(a.cmd, "lint") && a.list {
+        io.out(lint.list())
         return
     }
     let src = match fs.read(a.file) {
@@ -725,6 +808,10 @@ fn main() uses io, fs, net, clock {
     }
     // nothing is lowered after an error
     if diags.len() > 0 { fail(diags, a, src) }
+    if is(a.cmd, "lint") {
+        run_lint(k.c, a)
+        return
+    }
     let c = k.c
     if backend {
         let tests = a.tests || is(a.cmd, "test")

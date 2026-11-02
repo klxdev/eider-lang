@@ -58,6 +58,9 @@ if [ "$1" = "--leg" ]; then
     EIDERC=$(pwd)/target/eiderc-next sh scripts/test-compiler.sh > $S/compiler 2>&1; crc=$?
     while IFS= read -r l; do case $l in "skip "*".vendor/"*) skip "compiler: ${l#skip }" ;; esac; done < $S/compiler
     if grep -q FAIL $S/compiler || [ $crc != 0 ]; then echo "FAIL compiler (eiderc; exit $crc)"; grep -A6 '^FAIL' $S/compiler | head -20; tail -3 $S/compiler; else echo "ok   compiler (eiderc vs the recorded oracle, tests/oracle)"; fi
+    # lint: the compiler's own package is held to its [lints] (eiderc lint, compiler/eider.toml:
+    # a declared capability the code never needs is denied), by the compiler just built
+    if target/eiderc-next lint compiler/main.ei > $S/lint 2>&1; then echo "ok   lint (compiler/: unused_uses denied)"; else echo "FAIL lint: target/eiderc-next lint compiler/main.ei"; grep -B1 -A4 '^error' $S/lint | head -20; fi
     # llvm: the backend's C ABI test, its AArch64 signatures and its debug info
     # (compiler/tests/llvm/run.sh; docs/compiler.md "Backends"); the run tests' outputs are checked
     # against the oracle by the compiler leg; and

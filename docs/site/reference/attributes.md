@@ -99,6 +99,23 @@ The fix here renames `nmae` to `name`. Go's struct tags are the counter-example:
 misspelled tag key is a string nothing checks, and the field is silently encoded under its
 own name.
 
+## The built-in attributes
+
+Two attributes need no declaration. `@derive` marks a trait whose reflective default methods
+implement it for types (see [Traits](traits.md)). `@allow(lint, ...)` silences lints of
+`eiderc lint` (see the [compiler tooling](../tooling/compiler.md#lints)) in the function,
+`impl` or `trait` it precedes: it takes lint names, groups or `all` and nothing else (E0821
+for an unknown name, E0822 for `key = value`).
+
+```eider
+@allow(unused_uses)
+fn reserved() uses io {
+    // the capability is declared for the callers that will need it
+}
+
+fn main() uses io { reserved() }
+```
+
 ## Reading attributes
 
 `attr[A](x)` gives the values of attribute `A` on a reflected field or variant, or on a type,

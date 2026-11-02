@@ -36,7 +36,7 @@ fn is(a: List[u8], x: str) -> bool { bytes.eq(a, sys.lit(x)) }
 /// Lex, parse, load, evaluate comptime constants and check `src` as the file `file` in
 /// `mode`: Ok when it compiles, else the first diagnostic (the passes recover and find
 /// more, as `eiderc check` reports them; the runner judges a file by its first).
-pub fn compile(file: List[u8], src: List[u8], mode: i32) -> Result[bool, diag.Diag] uses io, fs, net, clock {
+pub fn compile(file: List[u8], src: List[u8], mode: i32) -> Result[bool, diag.Diag] uses io, fs {
     let mut names = intern.new()
     let r = lex.lex(src, inout names)
     match resolve.lex_diag(r) {
@@ -166,7 +166,7 @@ fn has(xs: List[List[u8]], x: List[u8]) -> bool {
 }
 
 /// Run the suite in `dir`; returns the exit code (1 if anything failed).
-pub fn run(dir: List[u8]) -> i32 uses io, fs, net, clock {
+pub fn run(dir: List[u8]) -> i32 uses io, fs {
     let mut pass: u64 = 0
     let mut failed: u64 = 0
     let mut skipped: u64 = 0

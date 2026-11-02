@@ -1,0 +1,2 @@
+// pkgtest: lint
+fn main() uses io { print(1) }

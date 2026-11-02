@@ -4269,3 +4269,41 @@ user function with that name is shadowed there. Not done: `List[u8]` data (needs
 comptime types, #100), and an analyzer dependency edge from the source file to the data file
 (the analyzer re-analyses when the source changes, not when only the data file does).
 
+## C8.56: `eiderc lint` (#113, #85)
+
+Decision C808. Code: lint.ei (registry, levels, `@allow`, report), check.ei (`C.lint`, `use_cap`,
+`lint_hit`, `is_result_ty`, the `@allow` case of `check_attr_use`), lock.ei and resolve.ei
+(`[lints]` in `Manifest` and `Pkg`), main.ei (`lint`, `run_lint`, `package_entry`), ide.ei
+(`Analysis.lints`); tests: compiler/tests/pkgs/lints and lintsbad (`// pkgtest: lint ...`),
+tests/checks `*allow*`, compiler/tests/ide/lint.ei; verify.sh's lint line.
+
+**Collection.** The checker is the only pass that knows types and which capability a body
+needs, so it records while it checks. `use_cap` (called wherever a capability is demanded of
+the body: a call, a spawn, `print`, a loop's iterator, a fn passed or used as a value, a clock
+read) also sets a bit in `C.lint.used`, which unlike `C.used` is not reset by a closure: a
+closure's uses count for the function that makes it. `check_fn` resets it before a body and
+pushes a `CapRec` (module, fn node, mask) after a body that checked without error, once per
+instance, so `unused_uses` unions the instances of a generic function and a generic function
+never instantiated is not judged. The type-aware lints call `lint_hit`: `unused_result` in
+`compile_value` for a discarded statement value of type `Result`, `needless_copy` in
+`trait_method` when the receiver of `.copy()` is a fresh value (`PV.op`). A hit is noted once per place.
+
+**Levels and report.** `lint.findings` takes the checked program, the package of the entry
+module and the command-line settings, and returns the findings of that package's modules in
+module order and position. Each is level-resolved (`level_of`: defaults, then the package's
+`[lints]` in file order, then the options; `all` < group < lint), dropped when allow or
+silenced by `@allow` on the fn or on the impl or trait holding it. `[lints]` entries naming no
+lint or with a level other than allow/warn/deny make `eiderc lint` exit 2 with the message.
+`unused_uses` reads the declared names from the `uses` clause (only io, clock, fs, net,
+threads, python, js and wasm: not `ffi`, not a capability parameter), skips methods of trait
+impls and traits, and gives each unused name a finding at its position; the fix
+(`clause_fix`) rewrites the clause on its line without the unused names, or removes ` uses ...`
+when none remain. Human form is `warning[lint]: ...` or `error[lint]: ...` (diag.render) and a
+count line on stderr; `--json` is diag.json's object with `lint` and `level` first.
+
+**Using it.** `compiler/eider.toml` denies `unused_uses`; the unused capabilities lint found
+there were removed by its own fixes (`compiler/`, and `Token.cancel_case` in std). verify.sh's
+compiler leg runs `eiderc-next lint compiler/main.ei`. Not done: the needless_copy fix (the
+analyzer would need the `.` position), copy and cycle lints (#11), lints for dependencies,
+`--deny warnings` as a spelling of `--deny all` after `--warn`.
+

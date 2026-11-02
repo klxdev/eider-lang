@@ -80,7 +80,7 @@ pub type Module = {
 /// says why that file can't be used (then the package has no name and its files are
 /// identified as files in no package). `eider` is the toolchain MAJOR.MINOR it needs (""
 /// when it doesn't say), `vchecked` whether that was checked yet (E0811, `series_diag`).
-pub type Pkg = { dir: List[u8], name: List[u8], entry: List[u8], deps: List[List[u8]], err: List[u8], grants: List[List[List[u8]]], eider: List[u8], vchecked: bool }
+pub type Pkg = { dir: List[u8], name: List[u8], entry: List[u8], deps: List[List[u8]], err: List[u8], grants: List[List[List[u8]]], eider: List[u8], vchecked: bool, lints: List[List[u8]], lint_levels: List[List[u8]] }
 
 /// eider.lock in `dir` (`missing`: there is none; `err`: it doesn't parse).
 pub type Lock = { dir: List[u8], missing: bool, err: List[u8], pkgs: List[lock.Locked] }
@@ -749,7 +749,7 @@ fn quoted_target(inout p: Program, m: u32, n: ast.Node) -> List[u8] uses io, fs 
 /// import it, or "" when it has none (a file outside the importer's package and its
 /// dependencies, a path segment that isn't an identifier, a file in no package that isn't
 /// below the importer).
-fn dotted_of(inout p: Program, m: u32, want: List[u8]) -> List[u8] uses io, fs {
+fn dotted_of(inout p: Program, m: u32, want: List[u8]) -> List[u8] uses fs {
     let none: List[u8] = List.new()
     let tp = package_of(inout p, want)
     let ip = p.mods[m as usize].pkg
@@ -981,7 +981,7 @@ fn dir_lookup(p: Program, dir: List[u8]) -> u32 {
 /// Read the eider.toml `mf` of the package in `dir`.
 fn add_pkg(inout p: Program, dir: List[u8], mf: List[u8]) -> u32 uses fs {
     let none: List[u8] = List.new()
-    let mut pk = Pkg(dir, none, none, List.new(), none, List.new(), none, false)
+    let mut pk = Pkg(dir, none, none, List.new(), none, List.new(), none, false, List.new(), List.new())
     match fs.read(mf) {
         Ok(t) => {
             match lock.manifest(t) {
@@ -991,6 +991,8 @@ fn add_pkg(inout p: Program, dir: List[u8], mf: List[u8]) -> u32 uses fs {
                     pk.deps = x.deps
                     pk.grants = x.grants
                     pk.eider = x.eider
+                    pk.lints = x.lints
+                    pk.lint_levels = x.lint_levels
                 }
                 Err(e) => { pk.err = cannot(mf, e) }
             }

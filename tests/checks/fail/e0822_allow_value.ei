@@ -1,0 +1,5 @@
+// expect: E0822 3:8
+
+@allow(unused_uses = true)
+fn f() {}
+fn main() {}

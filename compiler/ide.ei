@@ -17,7 +17,11 @@
 //       signature or type as source-like text.
 //   pub type Ref = { span: Span, target: u32 }          a use and the Symbol it resolves to
 //   pub type TypeAt = { span: Span, text: List[u8] }    the type of an expression or binding
-//   pub type Analysis = { diags: List[diag.Diag], symbols: List[Symbol], refs: List[Ref], types: List[TypeAt], files: List[List[u8]] }
+//   pub type Analysis = { diags: List[diag.Diag], symbols: List[Symbol], refs: List[Ref], types: List[TypeAt], files: List[List[u8]], lints: List[lint.Finding] }
+//       lints: what `eiderc lint` reports for the entry file's package (lint.ei; levels from
+//       its eider.toml; a Finding has the lint's name, its level, the diagnostic with its
+//       machine-applicable `fix` when there is one, and the file); editors show them as hints
+//       (warnings for level warn, errors for deny)
 //   pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: List[List[u8]]) -> Analysis uses io, fs, net, clock
 //       entry: a .ei path; the overlay (unsaved editor buffers) replaces the contents of
 //       the files on disk with the same canonical path. Never exits and never prints:
@@ -69,6 +73,7 @@ import eiderc.types
 import eiderc.check
 import eiderc.consteval
 import eiderc.front
+import eiderc.lint
 
 pub type Span = { file: List[u8], line: u32, col: u32, end_line: u32, end_col: u32 }
 
@@ -91,7 +96,7 @@ pub type Ref = { span: Span, target: u32 }
 
 pub type TypeAt = { span: Span, text: List[u8] }
 
-pub type Analysis = { diags: List[diag.Diag], symbols: List[Symbol], refs: List[Ref], types: List[TypeAt], files: List[List[u8]] }
+pub type Analysis = { diags: List[diag.Diag], symbols: List[Symbol], refs: List[Ref], types: List[TypeAt], files: List[List[u8]], lints: List[lint.Finding] }
 
 const NONE: u32 = 4294967295
 
@@ -99,7 +104,7 @@ fn s(x: str) -> List[u8] { sys.lit(x) }
 
 // ---- analyze
 
-pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: List[List[u8]]) -> Analysis uses io, fs, net, clock {
+pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: List[List[u8]]) -> Analysis uses io, fs {
     let fp = resolve.overlay(overlay_paths, overlay_texts)
     let mut diags: List[diag.Diag] = List.new()
     let mut files: List[List[u8]] = List.new()
@@ -108,7 +113,7 @@ pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: Li
         Some(t) => t
         None => {
             diags.push(read_diag(entry))
-            return Analysis(diags, List.new(), List.new(), List.new(), files)
+            return Analysis(diags, List.new(), List.new(), List.new(), files, List.new())
         }
     }
     let mut names = intern.new()
@@ -119,12 +124,16 @@ pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: Li
     let mut found = front.merge(lx.diags, pr.diags)
     resolve.note_syntax(inout ld.p, 0, found)
     for d in ld.diags { found.push(d) }
-    if ld.fatal { return build(ld.p, no_rec(), types.new(), finals(found, entry)) }
+    if ld.fatal { return build(ld.p, no_rec(), types.new(), finals(found, entry), List.new()) }
     let ev = consteval.eval_all(ld.p)
     for d in ev.diags { found.push(d) }
     let rc = check.check_ide(ev.p)
     for d in rc.diags { found.push(d) }
-    build(rc.c.p, rc.c.rec, rc.c.t, finals(found, entry))
+    // the lints of the entry file's package (lint.ei), with the levels of its eider.toml
+    let mut lerrs: List[List[u8]] = List.new()
+    let cli: List[lint.Setting] = List.new()
+    let lf = lint.findings(rc.c.p, rc.c.lint, rc.c.p.mods[0].pkg, cli, inout lerrs)
+    build(rc.c.p, rc.c.rec, rc.c.t, finals(found, entry), lf)
 }
 
 /// The diagnostics as `eiderc check` prints them (each once, final_diag).
@@ -192,7 +201,7 @@ fn akey(m: u32, line: u32, col: u32) -> u64 {
     (m as u64) * 17592186044416 + (l as u64) * 4194304 + c as u64
 }
 
-fn build(p: resolve.Program, rec: check.Rec, t: types.Types, diags: List[diag.Diag]) -> Analysis {
+fn build(p: resolve.Program, rec: check.Rec, t: types.Types, diags: List[diag.Diag], lints: List[lint.Finding]) -> Analysis {
     let mut b = B(p, List.new(), Map.new(), List.new(), Map.new(), Map.new(), Map.new(), List.new(), List.new())
     for r in rec.refs { b.used.insert(akey(r.m, r.line, r.col), true) }
     for x in rec.tys {
@@ -270,7 +279,7 @@ fn build(p: resolve.Program, rec: check.Rec, t: types.Types, diags: List[diag.Di
     for i in order(refs.keys) { sorted_refs.push(refs.refs[i as usize]) }
     let mut sorted_tys: List[TypeAt] = List.new()
     for i in order(tkeys) { sorted_tys.push(tys[i as usize]) }
-    Analysis(diags, b.syms, sorted_refs, sorted_tys, files)
+    Analysis(diags, b.syms, sorted_refs, sorted_tys, files, lints)
 }
 
 /// Refs being collected, with their positions (akey) and, per position, the target already
@@ -1076,6 +1085,38 @@ pub fn dump(a: Analysis) -> List[u8] {
             out.push(41)
         }
         out.push(10)
+    }
+    if a.lints.len() > 0 {
+        put(inout out, "lints\n")
+        for f in a.lints {
+            put(inout out, "  ")
+            bytes.append(inout out, sys.lit(f.lint))
+            out.push(32)
+            bytes.append(inout out, sys.lit(lint.level_text(f.level)))
+            out.push(32)
+            bytes.append(inout out, f.file)
+            out.push(58)
+            num(inout out, f.d.line)
+            out.push(58)
+            num(inout out, f.d.col)
+            out.push(32)
+            bytes.append(inout out, f.d.msg)
+            match f.d.fix {
+                Some(x) => {
+                    put(inout out, " (fix: ")
+                    num(inout out, x.line)
+                    out.push(58)
+                    num(inout out, x.col)
+                    put(inout out, " delete ")
+                    num(inout out, x.delete as u32)
+                    put(inout out, " insert ")
+                    bytes.append(inout out, x.insert)
+                    out.push(41)
+                }
+                None => {}
+            }
+            out.push(10)
+        }
     }
     put(inout out, "symbols\n")
     let mut in_prelude: u32 = 0

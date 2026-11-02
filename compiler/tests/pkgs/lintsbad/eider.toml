@@ -1,0 +1,8 @@
+[package]
+name = "lintsbad"
+version = "0.1.0"
+eider = "0.4"
+
+[lints]
+no_such_lint = "deny"
+unused_uses = "loud"

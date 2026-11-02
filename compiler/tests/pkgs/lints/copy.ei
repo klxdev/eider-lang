@@ -1,0 +1,13 @@
+// pkgtest: lint --warn needless_copy
+// needless_copy is allowed by [lints]; --warn on the command line beats the package
+fn mk() -> List[i32] {
+    let mut l: List[i32] = List.new()
+    l.push(1)
+    l
+}
+
+fn main() uses io {
+    let a = mk().copy()
+    let b = a.copy()
+    print(b.len())
+}

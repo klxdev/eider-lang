@@ -1,0 +1,10 @@
+[package]
+name = "lints"
+version = "0.1.0"
+eider = "0.4"
+
+# lint levels (docs/compiler.md, "C8.56"): a lint beats its group, a group beats `all`
+[lints]
+all = "warn"
+unused_result = "deny"
+needless_copy = "allow"

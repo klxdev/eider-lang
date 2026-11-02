@@ -119,7 +119,7 @@ impl Token {
     }
 
     /// A select case that is ready, producing `u`, once the token is cancelled or expires.
-    fn cancel_case[U](self, u: U) -> chan.Case[U] uses io, clock {
+    fn cancel_case[U](self, u: U) -> chan.Case[U] uses clock {
         let st = self.st
         let at = self.deadline().mono_ns()
         chan.Case(|me: sync.Parker, reg: bool| -> Option[U] {

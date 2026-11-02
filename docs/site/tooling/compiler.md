@@ -43,6 +43,7 @@ and exit code 2. With no arguments at all, eiderc prints its usage to stderr and
 | `ir <file>` | The typed intermediate representation the LLVM IR (and the C) is generated from. |
 | `emit-llvm <file> [--test] [--lib] [--wasm]` | The LLVM IR that `build`, `run` and `test` compile (`--test`: with the test driver, as `test` builds it; `--lib`: as a library, with entry points for the exports; `--wasm`: as a WebAssembly module). See [The LLVM backend](llvm.md). |
 | `caps <file>` | Each package's capability use, one JSON line per (package, capability), with the first function that uses it: `{"package":..., "dir":..., "cap":"fs", "kind":"uses", "fn":"save", "file":"notes.ei", "line":4, "col":70}`; `kind` is `uses`, `extern` or `unsafe`. Imports that can't be loaded are left out silently. See [Capabilities](../guide/capabilities.md). |
+| `lint [<file>] [--json] [--deny\|--warn\|--allow <lint\|group\|all>]... [--list]` | The lints of the file's package, in the form of diagnostics (`warning[unused_uses]: ...`, `error[...]` for a denied lint), with machine-applicable fixes where there is one; `--json` prints one JSON object per finding (`lint`, `level`, `span`, `message`, `help`, `fix`). With no file it lints the package in the current directory (its entry module). Levels come from `[lints]` in the package's `eider.toml` and the options, which are applied after it; `--list` prints every lint with its group and default level. Exits 1 if a denied lint was hit, 2 for an unusable `[lints]`. The code must check first. See [Lints](#lints). |
 | `ide <file> [--overlay <path> <text>]...` | The analysis an editor uses (`compiler/ide.ei`): files, diagnostics, symbols with their spans and types, references, and the type at each expression. `--overlay <path> <text>` (repeatable) analyses `<path>` as if it contained the contents of the file `<text>`, for unsaved buffers. |
 
 ### Migrating code
@@ -83,6 +84,35 @@ print `eiderc <version>` (`eiderc 0.1.0`) and exit 0: the toolchain's version, f
 | `--` | `run` | every argument after it goes to the program, even one that looks like an option |
 | `--help`, `-h` | | print the usage and exit |
 | `--version` | | print `eiderc <version>` and exit |
+
+## Lints
+
+`eiderc lint` runs checks that are not errors: code that is legal but probably not what was
+meant, or more than it needs. A lint has a name, a group and a default level.
+
+| Lint | Group | Default | Finds |
+|---|---|---|---|
+| `unused_uses` | `caps` | warn | a capability in a function's `uses` that its body never needs (a closure counts for the function that makes it; methods of trait impls are not checked, since the trait fixes their signatures). The fix rewrites the `uses` clause without it: least privilege, in the editor |
+| `unused_result` | `correctness` | warn | a `Result` computed in a statement and dropped; write `let _ = f()` to drop it on purpose |
+| `needless_copy` | `perf` | warn | `.copy()` of a value that is already fresh (a call's result or a literal) |
+
+A level is `allow` (not reported), `warn` or `deny` (reported; the exit code is 1). A package
+sets them in `eider.toml`; a setting names a lint, a group, or `all`, a lint beats its group
+and a group beats `all`, and `--deny`, `--warn` and `--allow` on the command line come after
+the file:
+
+```toml
+[lints]
+all = "warn"
+unused_uses = "deny"
+needless_copy = "allow"
+```
+
+`@allow(unused_uses)` before a function, an `impl` or a `trait` silences a lint (or a group,
+or `all`) inside it; an unknown name is E0821. Only the modules of the entry file's package
+are reported, not its dependencies. The compiler's own package denies `unused_uses`
+(`compiler/eider.toml`), and `scripts/verify.sh` runs it. The analyzer shows the findings as
+hints through the `lints` of `eiderc ide`, with the same fixes.
 
 ## Formatting
 

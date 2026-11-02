@@ -52,6 +52,7 @@ import core.sys
 import std.bytes
 import std.floatconv
 import eiderc.intern
+import eiderc.lint
 import eiderc.lex
 import eiderc.ast
 import eiderc.diag
@@ -307,6 +308,8 @@ pub type C = {
     /// the capabilities (a mask, bit i = `types.cap_name(i)`) the body being checked has used
     /// so far: what a closure's type carries ("C8.46")
     used: u32,
+    /// what `eiderc lint` needs (compiler/lint.ei, docs/compiler.md "C8.56")
+    lint: lint.Collected,
 }
 
 /// `impl From[Source] for Target` (module md, IImpl node) and its `from` method (FnDef fd).
@@ -3741,7 +3744,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C {
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
         0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false, Rec(false, List.new(), List.new()),
         List.new(), List.new(), false, Map.new(), false, false, Map.new(), List.new(), lt, no_refs(),
-        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), no_reflect(), List.new(), List.new(), 0)
+        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), no_reflect(), List.new(), List.new(), 0, lint.new_collected())
 }
 
 /// Every item of the program in load order (resolve.ei), as (module, node) pairs.
@@ -4912,6 +4915,7 @@ fn syms_mask(c: C, syms: List[u32]) -> u32 {
 fn use_cap(inout c: C, cap: u32) {
     let i = cap_ix(c, cap)
     if i != NONE && i != 5 { c.used = mask_or(c.used, bit_of(i)) }
+    if i != NONE { c.lint.used = mask_or(c.lint.used, bit_of(i)) }
 }
 
 /// The value of capability parameter `sym` in the substitution being resolved with, as a mask
@@ -4997,6 +5001,7 @@ fn trap_file(inout c: C, m: u32) -> u32 {
 
 fn check_test(inout c: C, m: u32, n: ast.Node) -> Result[bool, diag.Diag] {
     c.tsubst = no_subst()
+    c.lint.cur = resolve.NOSYM
     c.cur_all = true
     c.cur_mod = resolve.NOMOD
     c.unsafe_depth = 0
@@ -5029,6 +5034,8 @@ fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] {
         sb.tys.push(c.sub_t[(inst.sstart + i) as usize])
     }
     c.tsubst = sb
+    c.lint.cur = f.node
+    c.lint.used = 0
     c.cur_all = false
     c.cur_mod = m
     c.err_mod = m
@@ -5065,6 +5072,7 @@ fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] {
         return Err(errh("E0401", bn.end_line, bn.end_col, q2("function `", kt(c, f.key), "` must return ", ts(c, inst.ret), ", but its body ends without producing one"), "add a `return` or end the body with an expression of that type"))
     }
     ir.end_fn(inout c.ir, n.f, b)
+    c.lint.recs.push(lint.CapRec(m, f.node, c.lint.used))
     c.tsubst = no_subst()
     Ok(true)
 }
@@ -5880,7 +5888,27 @@ fn compile_value(inout c: C, e: u32, dest: Dest, exp: u32) -> Result[u32, diag.D
         emit(inout c, ir.S_COPY, dest.local, o, 0, 0, v.ty, n.line)
         return Ok(v.ty)
     }
+    // a `Result` computed and dropped (lint `unused_result`)
+    if dest.kind == D_DISCARD && is_result_ty(c, v.ty) {
+        let msg = q("the `", ts(c, v.ty), "` of this expression is dropped, and an error in it goes unnoticed")
+        lint_hit(inout c, "unused_result", n.line, n.col, msg, "handle it (`match`, `?`), or write `let _ = ...` to drop it on purpose")
+    }
     Ok(types.UNIT)
+}
+
+fn is_result_ty(c: C, ty: u32) -> bool {
+    if ty == NONE || types.kind(c.t, ty) != types.T_ENUM { return false }
+    c.t.defs[types.def_of(c.t, ty).tmpl as usize].key == resolve.key(0, c.w.result)
+}
+
+/// Record a hit of lint `name` for the body being checked (`eiderc lint`; dropped in a muted
+/// or erroneous body, which is reported anyway).
+fn lint_hit(inout c: C, name: str, line: u32, col: u32, msg: List[u8], help: str) {
+    if c.mute || line == 0 { return }
+    let mut d = diag.new(name, line, col, msg)
+    d.help = s(help)
+    let am = c.am.copy()
+    lint.note(inout c.lint, name, am, d)
 }
 
 fn unify(c: C, a: u32, b: u32, line: u32, col: u32) -> Result[u32, diag.Diag] {
@@ -8093,7 +8121,13 @@ fn trait_method(inout c: C, n: ast.Node, pv: PV, tr: u32) -> Result[V, diag.Diag
     }
     let ro = recv_op(inout c, pv)
     eval_args(inout c, n, List.new(), label)?
-    if tr == TR_COPY { return Ok(v_of(ty, builtin_op(inout c, ir.B_COPY, one(ro), ty, n.line))) }
+    if tr == TR_COPY {
+        // the receiver is a fresh value (a call's result, a literal): the copy is of a temporary
+        if pv.op != NONE {
+            lint_hit(inout c, "needless_copy", n.line, n.col, s("`.copy()` of a value that is already a fresh copy"), "drop the `.copy()`")
+        }
+        return Ok(v_of(ty, builtin_op(inout c, ir.B_COPY, one(ro), ty, n.line)))
+    }
     if tr == TR_HASH { return Ok(v_of(types.U64, builtin_op(inout c, ir.B_HASH, one(ro), types.U64, n.line))) }
     Ok(v_of(types.STRING, builtin_op(inout c, ir.B_TO_STRING, one(ro), types.STRING, n.line)))
 }
@@ -8911,7 +8945,8 @@ fn fn_as_value(inout c: C, n: ast.Node, k: u64, exp: u32) -> Result[V, diag.Diag
     if fn_sub(c, actual, exp) { actual = exp }
     let inst = c.insts[ii as usize].copy()
     for i in 0..inst.clen {
-        let cap = c.capl[(inst.cstart + i) as usize]
+        let cap = c.capl[(inst.cstart + i) as usize].copy()
+        if needs_cap(c, f.md, cap) { use_cap(inout c, cap) }
         if needs_cap(c, f.md, cap) && !has_sym(c.caps, cap) { return Err(cap_error(c, n.line, n.col, label, cap)) }
     }
     // checking declared capabilities alone would pass these with neither `unsafe` nor `ffi`
@@ -9547,6 +9582,14 @@ fn check_attr_uses(inout c: C, m: u32, owner: u32) -> Result[bool, diag.Diag] {
     res
 }
 
+fn lint_names() -> List[List[u8]] {
+    let mut out: List[List[u8]] = List.new()
+    for d in lint.defs() { out.push(s(d.name)) }
+    for g in lint.groups() { out.push(s(g)) }
+    out.push(s("all"))
+    out
+}
+
 fn check_attr_use(inout c: C, m: u32, owner: u32, an: ast.Node, inout seen: List[u32]) -> Result[bool, diag.Diag] {
     let di = attr_named(c, m, an)
     let name = nm(c, an.a)
@@ -9556,6 +9599,20 @@ fn check_attr_use(inout c: C, m: u32, owner: u32, an: ast.Node, inout seen: List
             let mut e = err("E0821", an.line, an.col, s("`@derive` takes no keys"))
             e.help = s("write `@derive` alone before a trait")
             return Err(e)
+        }
+        return Ok(true)
+    }
+    // `@allow(lint, ...)` is built in: it silences those lints in the item (docs/compiler.md, "C8.56")
+    if di == NONE && an.b == 0 && bytes.eq(name, s("allow")) {
+        for j in 0..an.d {
+            let x = ndm(c, m, atm(c, m, an.c, j))
+            let kn = nm(c, x.a)
+            if x.b != 0 { return Err(err("E0822", x.line, x.col, s("`@allow` takes lint names, not `key = value`"))) }
+            if !lint.known(kn) {
+                let mut e = err("E0821", x.line, x.col, q("`@allow` names no lint or group `", kn, "`"))
+                e.help = q("lints: ", bytes.join(lint_names(), s(", ")), "")
+                return Err(e)
+            }
         }
         return Ok(true)
     }

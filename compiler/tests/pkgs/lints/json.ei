@@ -1,0 +1,7 @@
+// pkgtest: lint --json --deny caps
+// --json prints one object per finding; --deny of a group beats the package's `all`
+fn quiet() uses io { let x = 1 }
+
+fn main() uses io {
+    quiet()
+}
