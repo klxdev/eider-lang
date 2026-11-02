@@ -453,7 +453,7 @@ fn test_cname(text: List[u8]) -> List[u8] {
 fn ncaptures(p: P, f: u32) -> u32 {
     let fd = p.ir.fns[f as usize]
     let mut n: u32 = 0
-    while n < fd.lcount && p.ir.locals[(fd.lstart + n) as usize].kind == ir.L_CAPTURE { n += 1 }
+    while n < fd.lcount && ir.is_capture(p.ir.locals[(fd.lstart + n) as usize].kind) { n += 1 }
     n
 }
 

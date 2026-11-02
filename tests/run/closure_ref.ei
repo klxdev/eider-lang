@@ -1,0 +1,67 @@
+// Closures run before their call returns capture by reference (docs/compiler.md, "C8.53"):
+// they see the variable itself, with no copy; closures that are stored or returned still
+// capture by value.
+type P = { name: String, n: i32 }
+
+fn adder(n: i32) -> fn(i32) -> i32 {
+    |x| x + n
+}
+
+fn total(inout ys: List[i32], bump: i32) -> i32 {
+    ys.push(bump)
+    ys.map(|y| y + ys.len() as i32 + bump).sum()
+}
+
+fn main() uses io {
+    let base = 10
+    var xs: List[i32] = List.new()
+    for i in 1..6 { xs.push(i) }
+    print(xs.map(|x| x + base).sum())
+    print(xs.fold(0, |a, x| a + x * base))
+    print(xs.filter(|x| x > base / 5).len())
+
+    // strings, lists and records are used in place
+    var words: List[String] = List.new()
+    words.push(String.from("a"))
+    words.push(String.from("bbb"))
+    let suffix = String.from("-end")
+    let lens = words.map(|w| w.len() + suffix.len())
+    print(lens.sum())
+    var ps: List[P] = List.new()
+    ps.push(P(String.from("x"), 1))
+    ps.push(P(String.from("yy"), 2))
+    let tags = xs.map(|x| ps.len() as i32 + x)
+    print(tags.sum())
+
+    // through a reference (a `let` binding of a place)
+    let p = ps[1]
+    let ls = words.map(|w| w.len() + p.name.len())
+    print(ls.sum())
+
+    // a closure taking `inout` over a Ref, reading a captured variable
+    let r = Ref.new(5)
+    r.update(|inout v| v + base)
+    print(r.get())
+    let seen = r.read(|v| v + ps.len() as i32)
+    print(seen)
+
+    // nested: the inner closure reads a variable of the enclosing function through the outer
+    let nested = xs.map(|x| ps.map(|q| q.n + x + base).sum())
+    print(nested.sum())
+
+    // an `inout` parameter and a variable of the enclosing closure
+    var zs: List[i32] = List.new()
+    zs.push(1)
+    print(total(inout zs, 3))
+    let outer = xs.map(|x| xs.map(|y| x * y + base).sum())
+    print(outer.sum())
+
+    // stored or returned closures keep the value they captured
+    var k = 1
+    let add_k = adder(k)
+    k = 100
+    print(add_k(1))
+    let held = || k
+    k = 200
+    print(held())
+}

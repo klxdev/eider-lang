@@ -1681,7 +1681,7 @@ fn stmt(inout e: E, p: lower.P, id: u32) {
         checks(inout e, p, s.a)
         return
     }
-    if k == ir.S_CALL || k == ir.S_BUILTIN {
+    if k == ir.S_CALL || k == ir.S_BUILTIN || k == ir.S_CLOSURE {
         for i in 0..s.c {
             let a = p.ir.extra[(s.b + i) as usize]
             if a >= ir.ARG_PLACE { checks(inout e, p, a - ir.ARG_PLACE) }
@@ -2462,6 +2462,14 @@ fn declare_thunk(inout e: E, p: lower.P, f: u32, name: List[u8]) {
     declare_sig(inout e, p, name, sg, false)
 }
 
+/// The type of capture i of closure body f in its environment: the capture's own, or for a
+/// capture by reference (L_CAPREF) a word holding the address.
+fn env_ty(p: lower.P, f: u32, i: u32) -> u32 {
+    let l = p.ir.locals[(p.ir.fns[f as usize].lstart + i) as usize]
+    if l.kind == ir.L_CAPREF { return types.U64 }
+    l.ty
+}
+
 /// S_CLOSURE: a new environment holding the captures, and the fn value pointing at the body
 /// and the environment's glue (lower.ei's `closure`).
 fn closure(inout e: E, p: lower.P, s: ir.Stmt) {
@@ -2478,13 +2486,20 @@ fn closure(inout e: E, p: lower.P, s: ir.Stmt) {
     if s.c == 0 { return }
     gneed(inout e, lower.GK_ENV, s.a)
     let mut cts: List[u32] = List.new()
-    for i in 0..s.c { cts.push(p.ir.locals[(fd.lstart + i) as usize].ty) }
+    for i in 0..s.c { cts.push(env_ty(p, s.a, i)) }
     let sz = abi.struct_of(inout e.lay, p, cts)
     let envp = rt_call(inout e, p, "ei_alloc", tys1(types.U64), args1(bytes.from_u64(sz[0])), types.STR)
     let est = members(inout e, p, cts)
     for i in 0..s.c {
         let f = gep(inout e, p, est, envp, i)
-        put_op(inout e, p, cts[i as usize], p.ir.extra[(s.b + i) as usize], f)
+        let a = p.ir.extra[(s.b + i) as usize]
+        if a >= ir.ARG_PLACE {
+            // by reference: the place's address
+            let ad = paddr(inout e, p, a - ir.ARG_PLACE)
+            stmt_text(inout e, catb(lit("store ptr "), catb(ad, catb(lit(", ptr "), f))))
+        } else {
+            put_op(inout e, p, cts[i as usize], a, f)
+        }
     }
     let f0 = field_addr(inout e, p, s.ty, d, 0)
     stmt_text(inout e, catb(lit("store ptr "), catb(envp, catb(lit(", ptr "), f0))))
@@ -3512,7 +3527,7 @@ fn scan(p: lower.P, f: u32) -> Scan {
         sc.deaduse.push(false)
     }
     let mut np: u32 = 0
-    while np < fd.lcount && p.ir.locals[(fd.lstart + np) as usize].kind == ir.L_CAPTURE { np += 1 }
+    while np < fd.lcount && ir.is_capture(p.ir.locals[(fd.lstart + np) as usize].kind) { np += 1 }
     for i in 0..(np + fd.nparams) { sc.da[i as usize] = true }
     sc_block(p, inout sc, fd.body - 1)
     sc
@@ -3635,10 +3650,16 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
     // zeroed only when it may be read before it is assigned (scan)
     if e.nc > 0 {
         let mut cts: List[u32] = List.new()
-        for i in 0..e.nc { cts.push(loc(p, e, i).ty) }
+        for i in 0..e.nc { cts.push(env_ty(p, f, i)) }
         let est = members(inout e, p, cts)
         for i in 0..e.nc {
             let ct = loc(p, e, i).ty
+            if loc(p, e, i).kind == ir.L_CAPREF {
+                // by reference: the local is the enclosing function's place
+                let fa = gep(inout e, p, est, lit("%a0"), i)
+                stmt_text(inout e, catb(laddr(i), catb(lit(" = load ptr, ptr "), fa)))
+                continue
+            }
             if is_void(ct) { continue }
             alloca(inout e, p, i, ct)
             let fa = gep(inout e, p, est, lit("%a0"), i)
@@ -6228,7 +6249,7 @@ fn g_env(inout e: E, p: lower.P, f: u32) {
     let fname = e.fnn[f as usize].copy()
     let mut cts: List[u32] = List.new()
     for i in 0..n {
-        cts.push(p.ir.locals[(fd.lstart + i) as usize].ty)
+        cts.push(env_ty(p, f, i))
     }
     let est = members(inout e, p, cts)
     let sz = abi.struct_of(inout e.lay, p, cts)[0]
@@ -7022,7 +7043,7 @@ pub fn program_prof(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: L
     for f in 0..p.ir.fns.len() {
         let fd = p.ir.fns[f]
         let mut n: u32 = 0
-        while n < fd.lcount && p.ir.locals[(fd.lstart + n) as usize].kind == ir.L_CAPTURE {
+        while n < fd.lcount && ir.is_capture(p.ir.locals[(fd.lstart + n) as usize].kind) {
             n += 1
         }
         e.ncap.push(n)

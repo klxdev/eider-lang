@@ -316,7 +316,7 @@ fn has_float(p: lower.P, ty: u32, depth: u32) -> bool {
 fn ncap(p: lower.P, f: u32) -> u32 {
     let fd = p.ir.fns[f as usize]
     let mut n: u32 = 0
-    while n < fd.lcount && p.ir.locals[(fd.lstart + n) as usize].kind == ir.L_CAPTURE { n += 1 }
+    while n < fd.lcount && ir.is_capture(p.ir.locals[(fd.lstart + n) as usize].kind) { n += 1 }
     n
 }
 
@@ -658,7 +658,7 @@ fn simple(p: lower.P, inout st: St, inout fr: Fr, id: u32) -> Result[bool, Trap]
     }
     if k == ir.S_CLOSURE {
         let mut xs: List[Val] = List.new()
-        for i in 0..x.c { xs.push(op(p, fr, barg(p, x, i))) }
+        for i in 0..x.c { xs.push(arg(p, fr, barg(p, x, i))?) }
         set_dst(inout fr, x.dst, Val(K_FN, x.a as u64, List.new(), xs))
         return Ok(true)
     }

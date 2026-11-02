@@ -364,6 +364,12 @@ A closure captures each variable it uses by copying its value when the closure i
 closure, and a closure can't assign to a captured variable (E0303). A closure changes state
 only through its own `inout` parameters or a [`Ref`](#reft).
 
+The exception is a closure written as the argument of a call that runs it before returning:
+`map`, `filter`, `fold`, `for_each`, `any` and `all` on a List, `Ref.read` and `update`, and
+`Mutex.update`. It captures **by reference**: it uses the variables themselves, and nothing
+is copied. A closure that is stored, returned, passed to a function of your own or spawned
+captures a snapshot, as below.
+
 ```eider
 fn main() uses io {
     let mut x = 1
@@ -378,11 +384,6 @@ fn main() uses io {
 10
 2
 ```
-
-> **Note:** the design ([memory-model.md](../../design/memory-model.md)) has non-escaping
-> closures (passed straight to `map`, `fold`, `read`, ...) capture by reference. That is
-> backlog item 8.8 and not implemented: every closure captures a snapshot today. See the
-> [roadmap](../../design/roadmap.md).
 
 ## Copy-on-write
 

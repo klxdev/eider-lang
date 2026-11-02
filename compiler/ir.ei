@@ -12,7 +12,9 @@
 // Locals     {name sym, ty, kind (L_*), line}
 //            L_PARAM, L_INOUT (a parameter passed by reference), L_LET, L_VAR, L_TEMP,
 //            L_CAPTURE (a closure function's first locals: the values its environment holds,
-//            in S_CLOSURE argument order; read-only)
+//            in S_CLOSURE argument order; read-only), L_CAPREF (a capture by reference,
+//            "C8.53": the environment holds the address of the enclosing function's place,
+//            so the local *is* that place; the S_CLOSURE argument is a place + ARG_PLACE)
 // Operands   O_INT ty v=value (64-bit two's complement)   O_BOOL v   O_STR v=string index
 //            O_FLOAT ty v=the IEEE bits (binary64; the low 32 bits for an f32)
 //            O_UNIT   O_LOCAL a=local (only temporaries and pattern scrutinees)
@@ -58,7 +60,9 @@
 //   S_BUILTIN dst := builtin a (B_*) of args [b/c]; ty = result type; dst = NONE for ()
 //             (B_LIST_SUM traps on overflow at `line`)
 //   S_CLOSURE dst := closure value of type ty: function a with captured values [b/c] (moved
-//             into its environment; the function's L_CAPTURE locals read them)
+//             into its environment; the function's L_CAPTURE locals read them; an argument
+//             that is a place + ARG_PLACE is captured by reference: the environment holds its
+//             address and the function's local is L_CAPREF)
 //   S_FNREF   dst := function a as a closure value of type ty (no environment)
 //   S_CALLV   dst := call closure op a with args [b/c] (borrowed); dst = NONE for ()
 //   S_DYN     dst := dyn value of type ty (docs/compiler.md, "C8.47"): function a is an empty closure body
@@ -143,6 +147,10 @@ pub const L_LET: u32 = 2
 pub const L_VAR: u32 = 3
 pub const L_TEMP: u32 = 4
 pub const L_CAPTURE: u32 = 5
+pub const L_CAPREF: u32 = 6
+
+/// Whether a local of kind k is one of a closure function's captures.
+pub fn is_capture(k: u32) -> bool { k == L_CAPTURE || k == L_CAPREF }
 
 pub const O_INT: u32 = 0
 pub const O_BOOL: u32 = 1
@@ -888,6 +896,7 @@ fn kind_text(k: u32) -> str {
         2 => "let"
         3 => "var"
         5 => "capture"
+        6 => "capref"
         _ => "temp"
     }
 }

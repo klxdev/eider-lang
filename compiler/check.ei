@@ -317,9 +317,12 @@ type FromImpl = { md: u32, node: u32, fd: u32, target: List[u8], source: List[u8
 type Aliases = { keys: Map[u64, u32], defs: List[Item], stack: List[u32] }
 
 /// Expected parameter types (NONE: unknown) and return type of a closure.
-type LamHint = { has: bool, params: List[u32], ret: u32 }
+/// `noesc`: the closure is written as the argument of a call that only runs it before it
+/// returns (a List combinator, `Ref.read`/`update`, `Mutex.update`), so it captures by
+/// reference ("C8.53").
+type LamHint = { has: bool, params: List[u32], ret: u32, noesc: bool }
 
-fn no_hint() -> LamHint { LamHint(false, List.new(), NONE) }
+fn no_hint() -> LamHint { LamHint(false, List.new(), NONE, false) }
 
 // ---- IDE recording (ide.ei)
 //
@@ -5674,7 +5677,7 @@ fn check_assignable(c: C, target: u32, verb: str) -> Result[bool, diag.Diag] {
             d.help = q("declare `", kt(c, r.key), "` with `let mut`")
             d.fix = Some(diag.Fix(v.dline, v.dcol + 3, 0, s(" mut")))
         } else if v.captured {
-            d.help = s("a closure changes only its own copy of a captured variable; use an `inout` parameter, or capture a `Ref[T]`")
+            d.help = s("a closure can't change a variable it captures; use an `inout` parameter, or capture a `Ref[T]`")
         } else {
             d.help = s("parameters are immutable; declare it `inout` to modify the caller's value")
         }
@@ -7245,7 +7248,7 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
                 hr = NONE
                 if !has_unbound(c, fm, ptn.g - 1, sb, gs) { hr = resolve_with(inout c, fm, ptn.g - 1, sb)? }
             }
-            c.lam = LamHint(true, hp, hr)
+            c.lam = LamHint(true, hp, hr, false)
         }
         if pn.c == 1 && a.b == 0 {
             let mut d = err("E0304", x.line, x.col, q("parameter `", nm(c, pn.a), "` is `inout`; pass the argument as `inout ...`"))
@@ -8476,7 +8479,7 @@ fn walk_stmt(c: C, st: u32, inout out: List[u64]) {
 }
 
 /// A captured variable: its name key and its local in the enclosing function.
-type Capture = { key: u64, ty: u32, ir: u32, aline: u32, acol: u32, alias: u32, refid: u32 }
+type Capture = { key: u64, ty: u32, ir: u32, aline: u32, acol: u32, alias: u32, refid: u32, byref: bool }
 
 /// The state of the enclosing function while a closure body is checked.
 type Saved = {
@@ -8499,6 +8502,7 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
         hp = c.lam.params
         hr = c.lam.ret
     }
+    let noesc = c.lam.noesc.copy()
     c.lam = no_hint()
     if hp.len() > 0 && hp.len() as u32 != n.d {
         return Err(err("E0405", n.line, n.col, q2("this closure takes ", num(n.d as u64), " parameter(s), but ", num(hp.len() as u64), " are expected here")))
@@ -8554,7 +8558,7 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
         let li = lookup(c, k)
         if li != NONE {
             let v = c.scopes[li as usize]
-            caps.push(Capture(k, v.ty, v.ir, v.aline, v.acol, v.alias, v.refid))
+            caps.push(Capture(k, v.ty, v.ir, v.aline, v.acol, v.alias, v.refid, noesc && v.ty != types.UNIT))
             ckeys.push(k)
         }
     }
@@ -8610,7 +8614,8 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let mut fty = types.fn_caps_of(inout c.t, fps, rty, lam_used)
     // (it has the expected type when it fits, so plain fn types stay plain)
     if exp != NONE && fn_sub(c, fty, exp) { fty = exp }
-    // the environment: a snapshot of each captured variable
+    // the environment: a snapshot of each captured variable, or for a closure that is run
+    // before its call returns, the variable's place (its address)
     let mut ops: List[u32] = List.new()
     for cp in caps {
         let mut pl = cp.alias.copy()
@@ -8618,6 +8623,10 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
             pl = ir.place_local(inout c.ir, cp.ir, cp.ty)
         } else {
             ref_note(inout c, N_USE, cp.refid)
+        }
+        if cp.byref {
+            ops.push(pl + ir.ARG_PLACE)
+            continue
         }
         let o = read(inout c, pl, cp.ty, 0)
         ops.push(take(inout c, v_of(cp.ty, o), n.line))
@@ -8630,7 +8639,8 @@ fn lambda(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
 fn lambda_in(inout c: C, n: ast.Node, caps: List[Capture], ptys: List[u32], pkeys: List[u64], ret_hint: u32) -> Result[u32, diag.Diag] {
     let body = nd(c, n.a)
     for cp in caps {
-        let l = ir.local(inout c.ir, resolve.key_sym(cp.key), cp.ty, ir.L_CAPTURE, body.line)
+        let ck = if cp.byref { ir.L_CAPREF } else { ir.L_CAPTURE }
+        let l = ir.local(inout c.ir, resolve.key_sym(cp.key), cp.ty, ck, body.line)
         let mut cl = local_plain(cp.key, cp.ty, false, body.line, body.col, l)
         cl.aline = cp.aline
         cl.acol = cp.acol
@@ -8832,8 +8842,8 @@ fn list_loop_end(inout c: C, lp: ListLoop, line: u32) {
 
 /// The closure argument of a List combinator, checked against `fn(el) -> want`.
 fn closure_arg(inout c: C, n: ast.Node, i: u32, ps: List[u32], want: u32) -> Result[V, diag.Diag] {
-    c.lam = LamHint(true, ps, want)
     let ae = arg_expr(c, at(c, n.c, i))
+    c.lam = LamHint(true, ps, want, nd(c, ae).kind == ast.ELambda)
     let fv = expr(inout c, ae, NONE)?
     c.lam = no_hint()
     Ok(fv)

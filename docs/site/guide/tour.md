@@ -612,8 +612,8 @@ true
 ```
 
 A closure is `|params| body`; its type is `fn(A, B) -> R`, and named functions are values
-of the same types. A closure captures a snapshot of the variables it uses, so it can't
-change them; to change state, pass it an `inout` parameter or use a shared handle (below).
+of the same types. A closure captures a snapshot of the variables it uses (by reference when it is the argument of
+`map`, `fold` and the like), so it can't change them; to change state, pass it an `inout` parameter or use a shared handle (below).
 A closure whose body is a block or `if` needs its result type written: `|x| -> i32 { ... }`.
 
 ## References: `let`, `let mut` and `.copy()`

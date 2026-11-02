@@ -294,7 +294,9 @@ A closure is an anonymous function value. `|x| x + 1`, `|a: i32, b: i32| -> i32 
 - **Captures.** A closure can read every variable in scope where it is written. It
   captures a snapshot: the values are copied (copy-on-write, so cheaply) when the closure is
   created, so later changes to the variables are not seen, and the closure can't assign to
-  them (E0303). To change state from a closure, give it an `inout` parameter or capture a
+  them (E0303). A closure written as the argument of `map`, `filter`, `fold`, `for_each`,
+  `any`, `all`, `Ref.read`/`update` or `Mutex.update` is run before the call returns and
+  captures by reference instead: nothing is copied. To change state from a closure, give it an `inout` parameter or capture a
   `Ref[T]` (see [Memory model](memory.md#closures-capture-snapshots)).
 - **`inout` parameters.** `|inout x| ...` declares a parameter the closure may change; it
   must match an `inout` in the expected fn type, and the reverse (E0304).
@@ -329,10 +331,6 @@ negative
 A closure is a value of a fn type (see [Types](types.md#function-types)): it can be stored
 in a variable, a field or a List, passed and returned. A closure written inside an
 `unsafe { }` block may call C functions (see [C interop](ffi.md)).
-
-> **Note:** Closures that don't escape will capture by reference in a later version
-> (backlog item 8.8); today every closure captures a snapshot. See the
-> [roadmap](../../design/roadmap.md).
 
 ## `if`
 

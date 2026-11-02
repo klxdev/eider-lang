@@ -4139,6 +4139,39 @@ unspecified now), so compiler/tests/run/comptime_interp.ei folds Maps with an op
 not depend on the order. Tests: compiler/tests/run/map_seeded.ei, tests/core's SipHash vectors,
 tests/bench/map.ei (scripts/bench.sh).
 
+## C8.53: closures capture by reference (#4)
+
+A closure literal that is the argument of a call which runs it before returning captures
+each variable it uses by reference (decision C763): `closure_arg`'s callers, that is the
+List combinators `map`, `filter`, `fold`, `for_each`, `any`, `all`, `Ref.read`/`update` and
+`Mutex.update`. Any other closure (stored, returned, passed to a function of the program's own,
+spawned, built by `||` in a `let`) captures a snapshot as before.
+
+- **Checker.** `closure_arg` sets the hint's `noesc` when its argument is a lambda; `lambda`
+  marks each `Capture` `byref` (not for `()`-typed variables). The environment operand of a
+  by-reference capture is the variable's place (or, for a reference, the place it names)
+  plus `ARG_PLACE` instead of a cloned read; the capture's local is `L_CAPREF`, and a
+  captured reference still counts as a use of it (`ref_note N_USE`), so the protection rule
+  sees it where the closure is made. A closure can't write a captured variable either way
+  (E0303; the help no longer says "its own copy").
+- **IR.** `L_CAPREF` is a capture whose local *is* the enclosing place: the environment holds
+  its address. `S_CLOSURE` takes `ARG_PLACE` arguments for them. Comptime (`interp.ei`)
+  reads the place's value into the environment, which is the same thing for a closure that
+  runs before its call returns.
+- **LLVM.** The environment slot of such a capture is one word (`env_ty`), stored with the
+  place's address (bounds checks of the place run first, like any `ARG_PLACE`); at entry the
+  body loads it into the capture's local, so every read in the body goes through the pointer.
+  The environment's drop, clone and own glue leave the word alone. A local whose address is
+  taken this way is not an SSA value (`scan` counts a place argument as placing it).
+- **Why it is sound.** The closure value dies when the call returns, the call's receiver and
+  other arguments are evaluated before it, and nothing else runs meanwhile: the closure
+  can't write what it captured and the combinators write only their result. A pointer into a
+  List's buffer stays valid for the same reason (no write on that path happens while the
+  closure runs, so copy-on-write never moves the buffer).
+- **Tests.** `tests/run/closure_ref.ei` (strings, records, lists, a reference, `inout`
+  parameters, nested closures, `Ref.update`, stored and returned closures still snapshotting),
+  `tests/checks/fail/e0308_closure_captures_reference.ei`.
+
 ## Testing
 
 - Golden dumps per pass (`lex`, `parse`, `ir`), regenerated with a bless flag and

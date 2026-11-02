@@ -13,7 +13,7 @@ and where (docs/compiler.md's C8 sections); what is not yet is listed in
 | `let` references, `let mut` aliases, `.copy()`, the protection rule | implemented (C8.6), with references re-derived places rather than C pointers ([#1](https://github.com/klxdev/eider-lang/issues/1)); `var` deprecated, not yet retired ([#2](https://github.com/klxdev/eider-lang/issues/2)) |
 | `Ref[T]` | implemented (C8.7; inout fn values at the export boundary: [#3](https://github.com/klxdev/eider-lang/issues/3)) |
 | `for` over a List, an array or a Map | implemented: a snapshot taken before the loop (C8.20, C303) |
-| Closures | implemented with **snapshot** captures (by value, copy-on-write); capture by reference for non-escaping closures is open ([#4](https://github.com/klxdev/eider-lang/issues/4)) |
+| Closures | implemented: a closure that is run before its call returns (the argument of a List combinator, `Ref.read`/`update`, `Mutex.update`) captures by **reference**; every other closure captures a **snapshot** (by value, copy-on-write), C8.53 |
 | Threads: `Mutex`, `Chan`, `select` | implemented (C7 threads; std/chan's channels with deadlines and `select`, docs/runtime.md) |
 | Projections, copy and cycle lints | open ([#11](https://github.com/klxdev/eider-lang/issues/11)) |
 
@@ -306,19 +306,25 @@ fn remember(ctx: Ctx, key: String, a: Answer) {
 - Return values are always values (owned). Returning a reference into an argument is not
   possible; accessors that return a reference ("projections") are a later, std-only feature
   ([#11](https://github.com/klxdev/eider-lang/issues/11)).
-- **Closures capture by snapshot**: when the closure is made, each captured variable is
-  copied into its environment (a copy-on-write share, so a count, not a deep copy), and the
-  body sees that value however the variable changes afterwards. That holds for every
-  closure, escaping or not, today.
+- **Closures that are run before their call returns capture by reference** (C8.53): a
+  closure written as the argument of a List combinator (`map`, `filter`, `fold`, `for_each`,
+  `any`, `all`), of `Ref.read` or `update`, or of `Mutex.update` holds the address of each
+  variable it uses; nothing is copied, and it reads the variable as it is when it runs.
+- **Every other closure captures a snapshot**: when the closure is made, each captured
+  variable is copied into its environment (a copy-on-write share, so a count, not a deep
+  copy), and the body sees that value however the variable changes afterwards. That
+  holds for a closure that is stored, returned, passed to a function of your own or spawned.
 - Closures change captured state only through their own `inout` parameters (`|inout m|`,
   C8.7) or a `Ref`; no implicit mutable captures.
 
-❓ Not implemented yet: non-escaping closures (passed straight to `map`, `filter`, `fold`,
-`read`, `update`) capturing by reference, so they cost nothing and see current values,
-while escaping closures (stored, returned, spawned) keep capturing by value
-([#4](https://github.com/klxdev/eider-lang/issues/4), C8 item 8.8). The visible difference is
-a non-escaping closure that reads a variable the enclosing code writes between the
-closure's creation and its call, which no closure can do today.
+✅ Non-escaping closures capture by reference (C8 item 8.8, [#4](https://github.com/klxdev/eider-lang/issues/4)):
+the sites are the ones the compiler runs to completion before the call returns, so nothing
+can write a captured variable while the closure runs (the closure itself can't, and the one
+write a combinator could make, to its receiver, is a resize the protection rule rejects).
+The visible difference from a snapshot is therefore small: no copy, and a closure that
+captures a reference (`let o = orders[0]`) counts as a use of it where it is written.
+Escaping closures (stored, returned, passed to your own functions, spawned) keep
+capturing by value.
 
 ## What we will not add ✅
 
@@ -349,8 +355,7 @@ true?
    references ([#1](https://github.com/klxdev/eider-lang/issues/1)), migrating the repository
    off `var` and retiring it ([#2](https://github.com/klxdev/eider-lang/issues/2)).
 3. ✅ `Ref[T]` on the existing handle machinery (C8.7).
-4. ❓ Non-escaping closures capture by reference
-   ([#4](https://github.com/klxdev/eider-lang/issues/4)).
+4. ✅ Non-escaping closures capture by reference (C8.53).
 5. ❓ Later: projections for std accessors; lints for real copies and `Ref` cycles
    ([#11](https://github.com/klxdev/eider-lang/issues/11)).
 
@@ -371,7 +376,7 @@ true?
 | Warn when an escape forces a real copy | No: silent; a lint later |
 | Name of the shared handle | `Ref[T]` |
 | `mut` parameters | Not now; `let mut x = x.copy()` |
-| Closure captures | Non-escaping by reference, escaping by value (implemented: every closure captures by snapshot; by reference is [#4](https://github.com/klxdev/eider-lang/issues/4)) |
+| Closure captures | Non-escaping by reference, escaping by value (implemented, C8.53) |
 | What a reference is | Its place, re-derived at each use (C8.6); C pointers are an optimisation ([#1](https://github.com/klxdev/eider-lang/issues/1)) |
 | `for` over a sequence | A snapshot taken before the loop, for Lists as for arrays and Maps (C303) |
 
