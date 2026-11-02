@@ -20,7 +20,13 @@ The parameter and result types must be *C-safe* (E0803 otherwise):
 
 - each parameter is an integer type, `f32`, `f64`, `bool` or `str`, and not `inout`
   (`f32` is `float`, `f64` is `double`);
-- the result is one of those, or `()` (no `->`).
+- the result is one of those, or `()` (no `->`);
+- a parameter may also be a `List[u8]`, plain or `inout`: C receives a pointer to the bytes
+  and the length, two parameters (`const uint8_t *p, uint64_t n`; for `inout`, `uint8_t *p,
+  uint64_t n`, which C may write). Eider never sees the pointer, and an `inout` list is first
+  made the caller's own, so the bytes C writes are nobody else's. An `export` can't take a
+  List (E0803). It is what the core uses to move data across in one call (core/ABI.md "Bulk
+  transfer").
 
 The program is linked with the C library; other libraries are added with `-l <lib>` on
 `eiderc build`, `run` and `test` (repeatable). A declared function that nothing defines is a

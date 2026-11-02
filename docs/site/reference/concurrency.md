@@ -63,6 +63,41 @@ A thread is joined when the last handle to its Task is dropped, so no thread out
 last handle to it, and `main` never returns with a spawned thread still running. Dropping
 the last handle on the task's own thread traps (`cannot join a thread`).
 
+## `Task.catch(f)`: containing a trap
+
+A trap (arithmetic overflow, an index out of bounds, a division by zero, `panic`, out of
+memory) ends the process with exit code 101, on whatever thread it happens. `Task.catch(f)`,
+with `f` a closure that takes no parameters, runs `f` and returns a `Result[T, String]`: `Ok`
+of its result, or `Err` of the trap's text (with the file and line). The thread goes on. It
+needs no capability: it starts no thread (std/task has `catch`, and `spawn_caught`, which runs
+the closure on a thread of its own, so `join` gives the outcome).
+
+```eider
+fn risky(n: i32) -> i32 {
+    let big: i32 = 2147483647
+    big + n
+}
+
+fn main() uses io {
+    let bad = Task.catch(|| -> i32 { risky(1) })
+    let good = Task.catch(|| -> i32 { risky(0) })
+    print(bad.is_err())
+    print(good.unwrap())
+}
+```
+
+```output
+true
+2147483647
+```
+
+There is no unwinding. The call that trapped is abandoned where it stood: **what its frames owned
+is not dropped** (the memory leaks, a `Drop` impl does not run, shared handles stay counted),
+and the locks of the built-in `Mutex` they held are released, with the value as the closure
+left it. A stack overflow, `env.exit`, and a trap with no `catch` around it still end the
+process. Nothing is rolled back: state the closure changed before the trap stays changed.
+The design and what is safe afterwards: [Concurrency guide](../guide/concurrency.md#containing-a-trap).
+
 ## `Mutex[T]`
 
 A `Mutex[T]` holds one value of type `T` behind a lock. Copies of the handle share the same

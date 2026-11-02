@@ -393,6 +393,38 @@ atomics with C11 orderings (handles to cells that must be freed with `free()`). 
 programs that wait on many descriptors and timers on one thread, `std/event` has an event
 loop (epoll on Linux) with a timer heap. Both are documented in their modules' API pages.
 
+## Containing a trap
+
+One request that overflows an integer or indexes past a List should not end a server. A trap ends
+the process wherever it happens, unless the code that ran is inside `Task.catch(f)` (or
+`task.catch(f)` in std/task, the same):
+
+```text
+match task.catch(|| -> Response { handler(req) }) {
+    Ok(resp) => resp
+    Err(why) => internal_error(why)       // a 500; the worker serves the next request
+}
+```
+
+`task.spawn_caught(f)` runs `f` on a thread of its own, and `join` gives the `Result`. A pool
+worker catches each job's trap and goes on with the next job (`pool.traps()` has the texts), and
+the `Future` that `pool.run` returns holds the outcome (`result(dl)`; `get` is `None` for a job
+that trapped). A group child that traps fails the group like one that returns `Err`.
+
+What is safe afterwards, because nothing is unwound:
+
+- The frames of the call that trapped are abandoned without their drops: memory they allocated
+  leaks (one call's worth), a `Drop` impl does not run (keep a file or socket in the frame that
+  calls `catch` and close it after the call), counts of shared handles stay up.
+- Locks of the built-in `Mutex`, channels and tasks held by those frames are released. The value
+  in a `Mutex` is as the closure left it: a trap in the middle of a multi-step update leaves it
+  half updated, so update in one step.
+- A `sync.Lock` whose `modify` closure trapped has lost its value: it stays empty and every later
+  use waits forever. Closures given to `modify` must not trap.
+- A stack overflow, `env.exit` and a trap on a thread with no `catch` around it end the process.
+- It is for requests and jobs, not for programs that expect to trap: a server that traps often
+  has a bug to fix, and every trap leaks.
+
 ## The rules, in short
 
 - Threads share only `Mutex`, `Chan` and what std builds on them (Locks, Channels, tokens,
