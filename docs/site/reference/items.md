@@ -176,7 +176,7 @@ type Account = {
 }
 
 fn main() uses io {
-    let a = Account(1, "ada", 250)
+    let a = Account(1, String.from("ada"), 250)
     print(a.owner)
 }
 ```
