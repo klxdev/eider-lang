@@ -154,10 +154,11 @@ Tooling:
 
 Known limits of this arrangement (all need compiler work):
 
-- `str` has no byte access, so literals become bytes through `sys.lit` (an ffi call). (C8.2
-  adds `str.bytes()`/`byte(i)`; std switches with 8.9, after the seed has them.)
-- No bitwise operators: eider-pkg's `sha256` uses arithmetic and a byte table. (C8.2 adds
-  them; it and `compiler/sha256.ei` can use them once the seed is regenerated.)
+- None open in the language: `str` has byte access and literals convert with `.bytes()` (C8.2),
+  and the bitwise operators exist, so std needs `sys.lit` only for core's own functions. What is
+  left of #5 is API shape, not a language limit: fs, path, net, bytes and encoding still take and
+  return `List[u8]` text where a `str`/`String` would do; the error types of std implement
+  `error.Error`.
 
 Known gaps in core/std (fix in core, not by working around them in packages):
 

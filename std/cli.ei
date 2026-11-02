@@ -35,6 +35,7 @@
 
 import std.io
 import std.env
+import std.error
 import std.strings
 
 /// `@cli(...)` on a field (or a variant, for its `help`).
@@ -205,6 +206,11 @@ pub type Parsed[T] = { opts: T, rest: List[String] }
 /// A command line that did not parse, or `--help`. `text` is what to print (the usage for
 /// help; the problems and the usage hint otherwise).
 pub type Error = { help: bool, text: String }
+
+impl error.Error for Error {
+    fn message(self) -> String { self.text.copy() }
+    fn source(self) -> Option[error.Failure] { None }
+}
 
 /// The flags seen so far while the record is being built.
 type Spec = { name: String, short: String, help: String, kind: String, default: String, required: bool, flag: bool }

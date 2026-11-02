@@ -67,8 +67,8 @@ pub fn snapshot(path: List[u8]) -> Result[(), String] uses fs {
 /// The profile as it is now, as the bytes of a profile file (written to a temporary file in
 /// $TMPDIR, else /tmp, read back and removed).
 pub fn capture() -> Result[List[u8], String] uses fs, io, clock {
-    let mut path = sys.lit("/tmp")
-    match env.get(sys.lit("TMPDIR")) {
+    let mut path = "/tmp".bytes()
+    match env.get("TMPDIR".bytes()) {
         Some(t) => { if t.len() > 0 { path = t } }
         None => {}
     }
@@ -88,7 +88,7 @@ pub fn capture() -> Result[List[u8], String] uses fs, io, clock {
 /// Run `f` with the label (key, value) added to this thread's labels; its result. Without a
 /// profiler this is one call and `f()`.
 pub fn with_label[T](key: str, value: str, f: fn() -> T) -> T {
-    if prof.state() <= 0 { f() } else { labelled(sys.lit(key), sys.lit(value), f) }
+    if prof.state() <= 0 { f() } else { labelled(key.bytes(), value.bytes(), f) }
 }
 
 /// `with_label` for a key and value that are bytes (a route pattern, a method).

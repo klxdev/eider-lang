@@ -465,7 +465,7 @@ pub fn table[T: Show + Copy, R: Eq + Show + Copy](name: str, cases: List[(T, R)]
 }
 
 fn env_flag(name: str) -> Option[List[u8]] uses io {
-    env.get(sys.lit(name))
+    env.get(name.bytes())
 }
 
 /// Whether `eiderc test --bench` asked for measurements (EIDER_TEST_BENCH).
@@ -591,8 +591,8 @@ pub fn fuzz(name: str, seed: u64, corpus: List[List[u8]], f: fn(List[u8])) uses 
 /// A fresh directory under /tmp for a test's files (a fixture); remove it with
 /// `testing.remove_dir(dir)` (a `defer` right after is the usual way).
 pub fn temp_dir(prefix: str) -> Result[List[u8], String] uses fs, clock {
-    let mut name = sys.lit("/tmp/")
-    bytes.append(inout name, sys.lit(prefix))
+    let mut name = "/tmp/".bytes()
+    bytes.append(inout name, prefix.bytes())
     name.push(45)
     bytes.append(inout name, bytes.from_u64(time.mono_ns() as u64))
     match fs.mkdir_all(name) {

@@ -67,7 +67,7 @@ pub fn check(argv: List[List[u8]]) -> Result[List[u8], String] uses io, fs, net 
         let mut m = String.from("command failed (exit ")
         m.append(String.from_int(o.code as i64))
         m.push_str("): ")
-        m.append(sys.to_string(bytes.join(argv, sys.lit(" "))))
+        m.append(sys.to_string(bytes.join(argv, " ".bytes())))
         return Err(m)
     }
     Ok(o.out)
