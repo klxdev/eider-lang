@@ -111,15 +111,35 @@ if [ -n "$binaries" ]; then
 fi
 
 # ---- green
+# A verify that ended ALL GREEN for this very state (the commit, the siblings' commits, the
+# toolchain: scripts/verify-stamp.sh) is reused, not repeated; so is a selfhost. Nothing is
+# reused from a dirty tree. The release's own build below is always from scratch.
 if [ -z "$skip_verify" ]; then
-  echo "release: sh scripts/verify.sh (the full matrix, with the siblings)"
-  sh scripts/verify.sh > target/release-verify.log 2>&1
-  tail -1 target/release-verify.log | grep -q "^ALL GREEN" || { grep "^FAIL" target/release-verify.log >&2; die "verify is not ALL GREEN (target/release-verify.log)"; }
+  if sh scripts/verify-stamp.sh check; then
+    echo "release: scripts/verify.sh already ended ALL GREEN for this commit, the siblings and the toolchain (target/verify-green.log): not repeated"
+    cp target/verify-green.log target/release-verify.log
+  else
+    echo "release: sh scripts/verify.sh (the full matrix, with the siblings)"
+    sh scripts/verify.sh > target/release-verify.log 2>&1
+    tail -1 target/release-verify.log | grep -q "^ALL GREEN" || { grep "^FAIL" target/release-verify.log >&2; die "verify is not ALL GREEN (target/release-verify.log)"; }
+  fi
   grep "^skip" target/release-verify.log | sed 's/^/release: verify skipped: /'
+  # a release is built from a run in which no leg was skipped: a skipped leg hides what it
+  # would have found (the eider leg skipped for lack of AWS-LC hid a failing expectation)
+  if grep -q "^skip" target/release-verify.log; then
+    die "verify skipped a leg (above): a release needs every leg to run; fetch what is missing (sh scripts/fetch-awslc.sh, sh scripts/vendor.sh fetch, clang with wasm32, wasm-ld, node) and run verify again"
+  fi
   grep -q "^ok   tools" target/release-verify.log || die "verify did not build and test the siblings (its tools leg)"
-  echo "release: sh scripts/selfhost.sh"
-  sh scripts/selfhost.sh > target/release-selfhost.log 2>&1
-  grep -q SELF-HOSTED target/release-selfhost.log || die "selfhost did not print SELF-HOSTED (target/release-selfhost.log)"
+  grep -q "^ok   eider" target/release-verify.log || die "verify did not run the eider leg"
+  grep -q "^ok   crypto" target/release-verify.log || die "verify did not run the crypto leg"
+  if sh scripts/verify-stamp.sh check-selfhost; then
+    echo "release: scripts/selfhost.sh already printed SELF-HOSTED for this commit: not repeated"
+  else
+    echo "release: sh scripts/selfhost.sh"
+    sh scripts/selfhost.sh > target/release-selfhost.log 2>&1
+    grep -q SELF-HOSTED target/release-selfhost.log || die "selfhost did not print SELF-HOSTED (target/release-selfhost.log)"
+    sh scripts/verify-stamp.sh write-selfhost
+  fi
   verified=true
 else
   echo "release: --skip-verify: not running verify.sh and selfhost.sh; this is not a release"
