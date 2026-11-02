@@ -1,0 +1,101 @@
+// std/time: Timestamp, DateTime and RFC 3339 (decision C806). The examples are RFC 3339 section
+// 5.8; the seconds were computed with another implementation (Python's datetime).
+import std.time
+
+fn ts(s: str) -> Result[time.Timestamp, String] { time.parse_timestamp(s.bytes()) }
+
+fn show(s: str) uses io {
+    match ts(s) {
+        Ok(t) => {
+            let text = t.rfc3339()
+            print("{s} -> {t.unix_seconds()} + {t.nanosecond()} ns, {text}")
+        }
+        Err(e) => print("{s} -> error: {e}")
+    }
+}
+
+fn main() uses io, clock {
+    // RFC 3339 section 5.8
+    show("1985-04-12T23:20:50.52Z")
+    show("1996-12-19T16:39:57-08:00")
+    show("1990-12-31T23:59:60Z")
+    show("1990-12-31T15:59:60-08:00")
+    show("1937-01-01T12:00:27.87+00:20")
+    // other shapes
+    show("2026-11-02T09:30:05Z")
+    show("2026-11-02t09:30:05z")
+    show("2026-11-02 09:30:05+00:00")
+    show("0000-01-01T00:00:00Z")
+    show("9999-12-31T23:59:59Z")
+    show("2024-02-29T12:00:00+05:30")
+    show("2026-11-02T09:30:05.123456789012Z")
+    show("2026-11-02T09:30:05.000000001Z")
+    show("2026-11-02T09:30:05.5-00:00")
+    // errors
+    show("2026-02-29T00:00:00Z")
+    show("2026-13-01T00:00:00Z")
+    show("2026-04-31T00:00:00Z")
+    show("2026-11-02T24:00:00Z")
+    show("2026-11-02T09:60:00Z")
+    show("2026-11-02T09:30:61Z")
+    show("2026-11-02T09:30:60Z")
+    show("2026-11-02T09:30:05")
+    show("2026-11-02T09:30:05+0100")
+    show("2026-11-02T09:30:05+24:00")
+    show("2026-11-02T09:30:05.Z")
+    show("2026-11-02T09:30:05Zx")
+    show("26-11-02T09:30:05Z")
+    show("2026/11/02T09:30:05Z")
+    show("")
+
+    // the calendar view keeps its offset
+    let t = ts("1996-12-19T16:39:57-08:00").unwrap()
+    let local = t.to_datetime(-480)
+    print(local.rfc3339())
+    print(t.utc().rfc3339())
+    print(t.to_datetime(330).rfc3339())
+    print(local.weekday())
+    print(local.day_of_year())
+    match time.parse_rfc3339("2024-12-31T23:00:00-05:00".bytes()) {
+        Ok(d) => {
+            print(d.day_of_year())
+            print(d.offset_min)
+            print(d.to_timestamp().rfc3339())
+        }
+        Err(e) => print(e)
+    }
+    print(time.parse_rfc3339("2026-11-02T09:30:05Z".bytes()).unwrap().weekday())
+    print(time.unix(0).utc().weekday())
+
+    // arithmetic and order
+    let a = time.timestamp(100, 900000000)
+    let b = a.plus(time.millis(250))
+    print("{b.unix_seconds()}.{b.nanosecond()}")
+    print(b.minus(time.seconds(101)).rfc3339())
+    print(b.since(a).as_ms())
+    print(a.since(b).as_ms())
+    print(a.is_before(b))
+    print(a.is_after(b))
+    print(a.compare(b) == Less)
+    print(b.compare(b) == Equal)
+    print(b == a.plus(time.millis(250)))
+    let n = time.timestamp(5, -1)
+    print("{n.unix_seconds()} {n.nanosecond()}")
+    print(time.unix_nanos(-1).rfc3339())
+    print(time.unix_nanos(1500000000).rfc3339())
+    print(time.unix(-1).rfc3339())
+    print(time.unix(951782400).rfc3339())
+    print(time.unix(253402300799).rfc3339())
+    print(time.unix(-62167219200).rfc3339())
+    // the clock: a plausible year, and a round trip through text
+    let now = time.now_utc()
+    print(now.unix_seconds() > 1700000000)
+    let again = time.parse_timestamp(now.rfc3339().bytes()).unwrap()
+    print(again == now)
+    // checked construction
+    print(time.datetime(2024, 2, 29, 0, 0, 0, 0, 0).is_ok())
+    print(time.datetime(2023, 2, 29, 0, 0, 0, 0, 0).is_ok())
+    print(time.datetime(2024, 4, 31, 0, 0, 0, 0, 0).is_ok())
+    print(time.datetime(1900, 2, 29, 0, 0, 0, 0, 0).is_ok())
+    print(time.datetime(2000, 2, 29, 0, 0, 0, 0, 0).is_ok())
+}

@@ -177,3 +177,305 @@ pub fn remaining_on[C: Clock](c: C, dl: Deadline) -> Duration uses clock {
     if now >= dl.at_ns { return Duration(0) }
     Duration(dl.at_ns - now)
 }
+
+// ---- Wall-clock time: Timestamp and DateTime, RFC 3339 (decision C806, issue #22)
+//
+// `Timestamp` is a point in time on the wall clock: whole seconds since 1970-01-01 00:00:00
+// UTC plus nanoseconds, any year an i64 count of seconds holds (the clock itself is `wall_ns`,
+// which jumps when the system clock is set: never measure durations with it). `DateTime` is a
+// Timestamp seen on a calendar with a fixed UTC offset, the shape of RFC 3339 text. The
+// calendar is the proleptic Gregorian one, with no time zones and no leap seconds (a
+// leap second `23:59:60` parses as the second that follows it).
+
+/// Seconds since the Unix epoch and the nanoseconds after them (`nanos` is 0 to 999999999;
+/// `timestamp` and `unix_nanos` make sure of it).
+pub type Timestamp = { secs: i64, nanos: i64 }
+
+/// A calendar date and time of day with the offset from UTC in minutes (east is positive):
+/// year 0 to 9999, month 1 to 12, day 1 to 31, hour 0 to 23, minute 0 to 59, second 0 to 59,
+/// nanos 0 to 999999999. `datetime` and `parse_rfc3339` check them.
+pub type DateTime = { year: i64, month: i64, day: i64, hour: i64, minute: i64, second: i64, nanos: i64, offset_min: i64 }
+
+const NS_PER_SEC: i64 = 1000000000
+
+/// The timestamp `secs` seconds and `nanos` nanoseconds after the epoch; `nanos` may be any
+/// value (it is carried into the seconds).
+pub fn timestamp(secs: i64, nanos: i64) -> Timestamp {
+    let mut s = secs + nanos / NS_PER_SEC
+    let mut n = nanos % NS_PER_SEC
+    if n < 0 {
+        n += NS_PER_SEC
+        s -= 1
+    }
+    Timestamp(s, n)
+}
+
+/// The timestamp `secs` whole seconds after the epoch.
+pub fn unix(secs: i64) -> Timestamp { Timestamp(secs, 0) }
+
+/// The timestamp `ns` nanoseconds after the epoch (before it when negative).
+pub fn unix_nanos(ns: i64) -> Timestamp { timestamp(0, ns) }
+
+/// The wall clock now.
+pub fn now_utc() -> Timestamp uses clock { unix_nanos(os.time_wall_ns()) }
+
+impl Timestamp {
+    /// Whole seconds since the epoch (rounded down for times before it).
+    fn unix_seconds(self) -> i64 { self.secs }
+    /// The nanoseconds after the whole second.
+    fn nanosecond(self) -> i64 { self.nanos }
+    /// Nanoseconds since the epoch; traps when they do not fit an i64 (years 1678 to 2262).
+    fn unix_nanos(self) -> i64 { self.secs * NS_PER_SEC + self.nanos }
+    /// This time plus `d`.
+    fn plus(self, d: Duration) -> Timestamp { timestamp(self.secs + d.ns / NS_PER_SEC, self.nanos + d.ns % NS_PER_SEC) }
+    /// This time minus `d`.
+    fn minus(self, d: Duration) -> Timestamp { timestamp(self.secs - d.ns / NS_PER_SEC, self.nanos - d.ns % NS_PER_SEC) }
+    /// The time from `earlier` to this one, zero if `earlier` is later (a Duration is never
+    /// negative); saturates at the longest Duration.
+    fn since(self, earlier: Timestamp) -> Duration {
+        if !self.is_after(earlier) { return Duration(0) }
+        let ds = self.secs - earlier.secs
+        if ds >= 9223372035 { return Duration(MAX) }
+        Duration(ds * NS_PER_SEC + self.nanos - earlier.nanos)
+    }
+    fn is_before(self, o: Timestamp) -> bool {
+        if self.secs != o.secs { return self.secs < o.secs }
+        self.nanos < o.nanos
+    }
+    fn is_after(self, o: Timestamp) -> bool { o.is_before(self) }
+    /// The calendar view at `offset_min` minutes east of UTC.
+    fn to_datetime(self, offset_min: i64) -> DateTime {
+        let local = self.secs + offset_min * 60
+        let mut days = local / 86400
+        let mut rem = local % 86400
+        if rem < 0 {
+            rem += 86400
+            days -= 1
+        }
+        let (y, m, d) = civil_from_days(days)
+        DateTime(y, m, d, rem / 3600, rem % 3600 / 60, rem % 60, self.nanos, offset_min)
+    }
+    /// The calendar view in UTC.
+    fn utc(self) -> DateTime { self.to_datetime(0) }
+    /// RFC 3339 text in UTC: `2026-11-02T09:30:05.25Z` (the fraction only when there is one,
+    /// without trailing zeros).
+    fn rfc3339(self) -> String { self.utc().rfc3339() }
+}
+
+impl Ord for Timestamp {
+    fn compare(self, o: Timestamp) -> Ordering {
+        if self.is_before(o) { return Less }
+        if o.is_before(self) { return Greater }
+        Equal
+    }
+}
+
+impl DateTime {
+    /// The instant this calendar time at its offset names.
+    fn to_timestamp(self) -> Timestamp {
+        let days = days_from_civil(self.year, self.month, self.day)
+        timestamp(days * 86400 + self.hour * 3600 + self.minute * 60 + self.second - self.offset_min * 60, self.nanos)
+    }
+    /// The day of the week: 0 is Sunday, 6 is Saturday.
+    fn weekday(self) -> i64 {
+        let z = days_from_civil(self.year, self.month, self.day)
+        let w = (z + 4) % 7
+        if w < 0 { return w + 7 }
+        w
+    }
+    /// The day of the year, 1 to 366.
+    fn day_of_year(self) -> i64 { days_from_civil(self.year, self.month, self.day) - days_from_civil(self.year, 1, 1) + 1 }
+    /// RFC 3339 text with this offset: `1996-12-19T16:39:57-08:00`, `Z` for offset 0; the
+    /// fraction only when there is one, without trailing zeros.
+    fn rfc3339(self) -> String {
+        let mut o = String.from("")
+        pad_num(inout o, self.year, 4)
+        o.push_str("-")
+        pad_num(inout o, self.month, 2)
+        o.push_str("-")
+        pad_num(inout o, self.day, 2)
+        o.push_str("T")
+        pad_num(inout o, self.hour, 2)
+        o.push_str(":")
+        pad_num(inout o, self.minute, 2)
+        o.push_str(":")
+        pad_num(inout o, self.second, 2)
+        if self.nanos > 0 {
+            let mut frac = String.from("")
+            pad_num(inout frac, self.nanos, 9)
+            let mut end: usize = 9
+            while end > 1 && frac.byte(end - 1) == 48 { end -= 1 }
+            o.push_str(".")
+            o.append(frac.slice(0, end))
+        }
+        if self.offset_min == 0 {
+            o.push_str("Z")
+        } else {
+            let a = if self.offset_min < 0 { 0 - self.offset_min } else { self.offset_min }
+            if self.offset_min < 0 { o.push_str("-") } else { o.push_str("+") }
+            pad_num(inout o, a / 60, 2)
+            o.push_str(":")
+            pad_num(inout o, a % 60, 2)
+        }
+        o
+    }
+}
+
+/// `n` in decimal, zero-padded to `width` digits, appended to `o`.
+fn pad_num(inout o: String, n: i64, width: usize) {
+    let t = String.from_int(n)
+    let mut k = t.len()
+    while k < width {
+        o.push_str("0")
+        k += 1
+    }
+    o.append(t)
+}
+
+/// Days from 1970-01-01 to the civil date (proleptic Gregorian; Howard Hinnant's algorithm).
+fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
+    let y = if month <= 2 { year - 1 } else { year }
+    let ya = if y >= 0 { y } else { y - 399 }
+    let era = ya / 400
+    let yoe = y - era * 400
+    let mp = if month > 2 { month - 3 } else { month + 9 }
+    let doy = (153 * mp + 2) / 5 + day - 1
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy
+    era * 146097 + doe - 719468
+}
+
+/// The civil date `z` days after 1970-01-01.
+fn civil_from_days(z0: i64) -> (i64, i64, i64) {
+    let z = z0 + 719468
+    let za = if z >= 0 { z } else { z - 146096 }
+    let era = za / 146097
+    let doe = z - era * 146097
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+    let mp = (5 * doy + 2) / 153
+    let d = doy - (153 * mp + 2) / 5 + 1
+    let m = if mp < 10 { mp + 3 } else { mp - 9 }
+    let y = yoe + era * 400
+    let yy = if m <= 2 { y + 1 } else { y }
+    (yy, m, d)
+}
+
+fn is_leap(y: i64) -> bool { y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) }
+
+fn days_in_month(y: i64, m: i64) -> i64 {
+    if m == 2 { return if is_leap(y) { 29 } else { 28 } }
+    if m == 4 || m == 6 || m == 9 || m == 11 { return 30 }
+    31
+}
+
+/// A checked DateTime: Err(why) when a field is out of range (day 29 to 31 only in months
+/// that have it, the 29th of February only in leap years).
+pub fn datetime(year: i64, month: i64, day: i64, hour: i64, minute: i64, second: i64, nanos: i64, offset_min: i64) -> Result[DateTime, String] {
+    if year < 0 || year > 9999 { return Err(String.from("year out of range (0 to 9999)")) }
+    if month < 1 || month > 12 { return Err(String.from("month out of range (1 to 12)")) }
+    if day < 1 || day > days_in_month(year, month) { return Err(String.from("day out of range for the month")) }
+    if hour < 0 || hour > 23 { return Err(String.from("hour out of range (0 to 23)")) }
+    if minute < 0 || minute > 59 { return Err(String.from("minute out of range (0 to 59)")) }
+    if second < 0 || second > 59 { return Err(String.from("second out of range (0 to 59)")) }
+    if nanos < 0 || nanos >= NS_PER_SEC { return Err(String.from("nanoseconds out of range")) }
+    if offset_min <= -1440 || offset_min >= 1440 { return Err(String.from("offset out of range (under 24 hours)")) }
+    Ok(DateTime(year, month, day, hour, minute, second, nanos, offset_min))
+}
+
+/// `n` digits of `t` from `i` as a number, or -1 when one of them is not a digit or `t` ends.
+fn digits(t: List[u8], i: usize, n: usize) -> i64 {
+    if i + n > t.len() { return -1 }
+    let mut v: i64 = 0
+    for k in 0..n {
+        let c = t[i + k]
+        if c < 48 || c > 57 { return -1 }
+        v = v * 10 + (c - 48) as i64
+    }
+    v
+}
+
+fn bad(why: str, at: usize) -> String {
+    let mut m = String.from(why)
+    m.push_str(" at byte ")
+    m.append(String.from_int(at as i64))
+    m
+}
+
+/// Parses RFC 3339 `date-time` text: `YYYY-MM-DDTHH:MM:SS[.fraction](Z|+HH:MM|-HH:MM)`. The
+/// `T`, the `Z` may be lower case, a space may replace the `T`; the fraction has one or more
+/// digits (those after the ninth are dropped). The seconds may be 60 only at 23:59 UTC (a
+/// leap second): it is read as the second after, 00:00:00 of the next day. Err(why) names
+/// what is wrong and where.
+pub fn parse_rfc3339(text: List[u8]) -> Result[DateTime, String] {
+    let n = text.len()
+    let year = digits(text, 0, 4)
+    if year < 0 { return Err(bad("expected a four digit year", 0)) }
+    if n < 5 || text[4] != 45 { return Err(bad("expected `-` after the year", 4)) }
+    let month = digits(text, 5, 2)
+    if month < 0 { return Err(bad("expected a two digit month", 5)) }
+    if n < 8 || text[7] != 45 { return Err(bad("expected `-` after the month", 7)) }
+    let day = digits(text, 8, 2)
+    if day < 0 { return Err(bad("expected a two digit day", 8)) }
+    if n < 11 || !(text[10] == 84 || text[10] == 116 || text[10] == 32) { return Err(bad("expected `T` after the date", 10)) }
+    let hour = digits(text, 11, 2)
+    if hour < 0 { return Err(bad("expected a two digit hour", 11)) }
+    if n < 14 || text[13] != 58 { return Err(bad("expected `:` after the hour", 13)) }
+    let minute = digits(text, 14, 2)
+    if minute < 0 { return Err(bad("expected a two digit minute", 14)) }
+    if n < 17 || text[16] != 58 { return Err(bad("expected `:` after the minute", 16)) }
+    let second = digits(text, 17, 2)
+    if second < 0 { return Err(bad("expected a two digit second", 17)) }
+    let mut i: usize = 19
+    let mut nanos: i64 = 0
+    if i < n && text[i] == 46 {
+        i += 1
+        let start = i.copy()
+        let mut scale: i64 = 100000000
+        while i < n && text[i] >= 48 && text[i] <= 57 {
+            nanos += (text[i] - 48) as i64 * scale
+            scale = scale / 10
+            i += 1
+        }
+        if i == start { return Err(bad("expected digits after `.`", i)) }
+    }
+    if i >= n { return Err(bad("expected `Z` or an offset", i)) }
+    let mut offset: i64 = 0
+    if text[i] == 90 || text[i] == 122 {
+        i += 1
+    } else if text[i] == 43 || text[i] == 45 {
+        let sign: i64 = if text[i] == 45 { -1 } else { 1 }
+        let oh = digits(text, i + 1, 2)
+        if oh < 0 { return Err(bad("expected a two digit offset hour", i + 1)) }
+        if i + 3 >= n || text[i + 3] != 58 { return Err(bad("expected `:` in the offset", i + 3)) }
+        let om = digits(text, i + 4, 2)
+        if om < 0 { return Err(bad("expected a two digit offset minute", i + 4)) }
+        if oh > 23 || om > 59 { return Err(bad("offset out of range", i)) }
+        offset = sign * (oh * 60 + om)
+        i += 6
+    } else {
+        return Err(bad("expected `Z` or an offset", i))
+    }
+    if i != n { return Err(bad("unexpected text after the time", i)) }
+    // a leap second is accepted at 23:59 UTC only
+    let mut leap = false
+    let mut sec = second.copy()
+    if second == 60 {
+        let utc_min = (hour * 60 + minute - offset) % 1440
+        let um = if utc_min < 0 { utc_min + 1440 } else { utc_min }
+        if um != 23 * 60 + 59 { return Err(bad("second 60 only at 23:59 UTC", 17)) }
+        leap = true
+        sec = 59
+    }
+    let dt = datetime(year, month, day, hour, minute, sec, nanos, offset)?
+    if leap {
+        // the instant after 23:59:59: the next second, in the same offset
+        return Ok(unix(dt.to_timestamp().secs + 1).to_datetime(offset))
+    }
+    Ok(dt)
+}
+
+/// Parses RFC 3339 text to the instant it names (`parse_rfc3339` and `to_timestamp`).
+pub fn parse_timestamp(text: List[u8]) -> Result[Timestamp, String] {
+    let dt = parse_rfc3339(text)?
+    Ok(dt.to_timestamp())
+}

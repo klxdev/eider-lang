@@ -21,6 +21,7 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
   moves its data with them. Decision C801.
 - **The driver links the crypto backend** (#64): a program that imports `core/crypto` needs no
   wrapper; `--crypto <name>`, `$EIDER_CRYPTO` or `[crypto] provider`. Decision C802.
+- **Time** (#22): `Timestamp`, `DateTime` and RFC 3339 parse and format in std/time. Decision C806.
 - **In-place List operations** (#16): `insert`, `remove`, `truncate`, `remove_range`, `extend`,
   `swap`, `slice` and `List.filled`; stream buffers compact in place. Views that share a buffer
   are not done. Decision C800.
