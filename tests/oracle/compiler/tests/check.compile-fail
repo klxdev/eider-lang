@@ -123,14 +123,10 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0111_unknown_type_in_let.ei E0111 at 3:12
   ok   e0111_zero_length_array.ei   E0111 at 2:9
   ok   e0112_clo_not_callable.ei    E0112 at 3:13
-  ok   e0112_comptime_no_main.ei    E0112 at 1:1
   ok   e0112_enum_called.ei         E0112 at 4:13
-  ok   e0112_ffi_export_needs_main.ei E0112 at 1:1
   ok   e0112_local_shadows_fn.ei    E0112 at 5:13
   ok   e0112_mod_root_name_missing.ei E0112 at 17:30
   ok   e0112_mod_unknown_function.ei E0112 at 4:5
-  ok   e0112_no_main.ei             E0112 at 1:1
-  ok   e0112_order_main_last.ei     E0112 at 1:1
   ok   e0112_param_called.ei        E0112 at 2:23
   ok   e0112_self_in_impl.ei        E0112 at 5:29
   ok   e0113_field_of_array.ei      E0113 at 4:15
@@ -702,6 +698,10 @@ compile-pass tests (compiler/tests/check/pass)
   ok   comptime_no_io_main.ei
   ok   comptime_plain_const.ei
   ok   comptime_tests.ei
+  ok   e0112_comptime_no_main.ei
+  ok   e0112_ffi_export_needs_main.ei
+  ok   e0112_no_main.ei
+  ok   e0112_order_main_last.ei
   ok   ffi_closure_in_unsafe.ei
   ok   ffi_mod.ei
   ok   ffi_types.ei
