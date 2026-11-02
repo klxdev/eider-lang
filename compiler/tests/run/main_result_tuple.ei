@@ -1,0 +1,7 @@
+// An Err of a type that is Show only by derivation: a tuple holding an enum with a payload.
+type Why = | Code(i32) | Text(str)
+
+fn main() -> Result[(), (Why, str)] uses io {
+    print("start")
+    Err((Code(7), "seven"))
+}

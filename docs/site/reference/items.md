@@ -160,13 +160,26 @@ The type arguments are always inferred; there is no syntax to write them at a ca
 
 ```text
 type_item = "type" name [type_params] "=" (record_body | variants | type)
-record_body = "{" field {"," field} [","] "}"
+record_body = "{" field {sep field} [sep] "}"      (sep = "," | NL)
 field = name ":" type
 ```
 
-A record type is a named product of fields. Fields are separated by commas (a trailing
-comma is allowed; newlines alone do not separate fields). A record needs at least one field
+A record type is a named product of fields. Fields are separated by a comma or a
+newline (a trailing comma is allowed, and the two may be mixed). A record needs at least one field
 (E0111 "records need at least one field").
+
+```eider
+type Account = {
+    id: u32
+    owner: String
+    balance: i64,
+}
+
+fn main() uses io {
+    let a = Account(1, String.from("ada"), 250)
+    print(a.owner)
+}
+```
 
 A record is constructed by calling its name with one value per field, in declaration
 order; there is no named-field constructor. The wrong number of values is E0405. Fields are
@@ -364,9 +377,11 @@ fn main() uses io {
 
 A method that takes `inout self` needs a writable receiver (E0303). Rules for impls:
 
-- A type has one namespace of methods: a name defined in two impls of one type, inherent or
-  trait, is E0107 ("method `go` is already defined for `T`"), and so is the same trait
-  implemented twice.
+- A name defined in two inherent impls of one type, or twice for one trait, is E0107
+  ("method `go` is already defined for `T`"), and so is the same trait implemented twice. An
+  inherent method and a trait's, or two traits' methods, of one name can coexist: a call
+  picks the type's own, and `Trait.go(x)` names the trait (see
+  [Traits and generics](traits.md#calling-a-method-by-its-trait)); two traits tie in E0119.
 - `pub` doesn't apply to an impl (E0001); methods are visible wherever their type is.
 - The impl's type must exist (E0111) and can't be an alias (E0111).
 - Built-in types take impls too: `impl String`, `impl i32`, `impl[T] List[T]`,

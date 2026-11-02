@@ -1,0 +1,10 @@
+// expect: E0304 9:18
+trait Counter { fn bump(inout self) }
+type Cat = { n: i32 }
+impl Counter for Cat {
+    fn bump(inout self) { self.n += 1 }
+}
+fn main() {
+    let mut c = Cat(1)
+    Counter.bump(c)
+}

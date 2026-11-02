@@ -1,0 +1,6 @@
+// expect: E0602 4:10
+type A = { n: i32 }
+impl A {
+    type Item = i32
+}
+fn main() {}

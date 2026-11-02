@@ -1,5 +1,5 @@
-// `main` returning Ok(()) exits 0; an Err whose type can't be printed (a record here)
-// prints `error: main returned Err`.
+// `main` returning Ok(()) exits 0; an Err of a record prints through its (derived) Show,
+// `error: Why { code: 3, line: 9 }` (#12).
 
 type Why = { code: i32, line: u32 }
 

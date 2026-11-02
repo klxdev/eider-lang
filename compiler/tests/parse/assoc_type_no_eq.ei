@@ -1,0 +1,4 @@
+type Bag = { n: i32 }
+impl Container for Bag {
+    type Item i32
+}

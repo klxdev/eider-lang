@@ -52,7 +52,7 @@ gparam      = IDENT [":" path { "+" path }]
 path        = IDENT ["." IDENT]
 
 type_item   = "type" IDENT [generics] "=" ( record_body | variants | type )
-record_body = "{" [ field { "," field } [","] ] "}"
+record_body = "{" [ field { fsep field } [fsep] ] "}"     fsep = "," | NL
 field       = attrs IDENT ":" type
 variants    = variant { "|" variant }
 variant     = "|" attrs IDENT [ "(" [ vfield { "," vfield } [","] ] ")" ]

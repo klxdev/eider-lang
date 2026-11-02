@@ -1,0 +1,39 @@
+// `main` returning Result[(), Failure]: an Err prints its whole chain, outermost first
+// (`a: b: c`, the Failure's Show), then the program exits with 1 (#12).
+import std.error
+
+type ParseError = { at: usize, what: String }
+
+impl error.Error for ParseError {
+    fn message(self) -> String {
+        let mut m = String.from("bad ")
+        m.append(self.what.copy())
+        m.push_str(" at ")
+        m.append(String.from_int(self.at as i64))
+        m
+    }
+    fn source(self) -> Option[error.Failure] { None }
+}
+
+fn parse(s: str) -> Result[i32, ParseError] {
+    if s.byte(0) < 48 || s.byte(0) > 57 { return Err(ParseError(0, String.from("digit"))) }
+    Ok((s.byte(0) - 48) as i32)
+}
+
+fn load(text: str) -> Result[i32, error.Failure] uses io {
+    let v = parse(text).context("reading the port")?
+    print(v)
+    Ok(v)
+}
+
+fn settings() -> Result[i32, error.Failure] uses io {
+    let a = load("8")?
+    let b = load("x").context("loading b.toml")?
+    Ok(a + b)
+}
+
+fn main() -> Result[(), error.Failure] uses io {
+    settings().context("starting up")?
+    print("not reached")
+    Ok(())
+}

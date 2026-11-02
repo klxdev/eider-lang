@@ -1,0 +1,1 @@
+{"error":"E0602","span":{"file":"compiler/tests/check/fail/e0602_assoc_not_in_trait.ei","line":8,"col":10},"message":"trait `Container` has no associated type `Item`"}

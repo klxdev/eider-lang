@@ -1,0 +1,79 @@
+// Calling a method by its trait, `Trait.m(x, ...)` (#50): two traits, or a trait and the type,
+// may each define a method of one name; `x.m()` picks the type's own, and means the trait's
+// when only one has it. Expected output: trait_call.out.
+trait Greeter {
+    fn hello(self) -> str
+    fn bye(self) -> str { "greeter bye" }
+}
+trait Waver {
+    fn hello(self) -> str
+    fn bye(self) -> str { "waver bye" }
+}
+trait Counter { fn bump(inout self) }
+
+type Dog = { name: str }
+
+impl Dog {
+    fn hello(self) -> str { "dog's own hello" }
+}
+impl Greeter for Dog {
+    fn hello(self) -> str { "dog greeter" }
+}
+impl Waver for Dog {
+    fn hello(self) -> str { "dog waver" }
+}
+
+type Cat = { n: i32 }
+impl Greeter for Cat {
+    fn hello(self) -> str { "cat greeter" }
+}
+impl Waver for Cat {
+    fn hello(self) -> str { "cat waver" }
+    fn bye(self) -> str { "cat waver bye" }
+}
+impl Counter for Cat {
+    fn bump(inout self) { self.n += 1 }
+}
+impl Show for Cat {
+    fn show(self, inout out: String) { out.push_str("a cat") }
+}
+
+type Wrap[T] = { v: T }
+impl[T] Greeter for Wrap[T] {
+    fn hello(self) -> str { "wrap greeter" }
+}
+impl[T] Waver for Wrap[T] {
+    fn hello(self) -> str { "wrap waver" }
+}
+
+// the bound says which: the call names the trait
+fn greet[T: Greeter + Waver](x: T) -> str {
+    let a = Greeter.hello(x)
+    a
+}
+
+fn main() uses io {
+    let d = Dog("rex")
+    print(d.hello())
+    print(Greeter.hello(d))
+    print(Waver.hello(d))
+    let mut c = Cat(1)
+    print(Greeter.hello(c))
+    print(Waver.hello(c))
+    // each trait's default, or the one the impl overrides
+    print(Greeter.bye(c))
+    print(Waver.bye(c))
+    Counter.bump(inout c)
+    c.bump()
+    print(c.n)
+    let w = Wrap(5)
+    print(Greeter.hello(w))
+    print(Waver.hello(w))
+    print(greet(c))
+    print(greet(w))
+    // a language trait, by name
+    let mut s = String.from("x: ")
+    Show.show(c, inout s)
+    print(s)
+    print(Eq.eq(3, 3))
+}

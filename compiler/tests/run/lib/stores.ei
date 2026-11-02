@@ -1,0 +1,19 @@
+// the module of a trait with associated types (compiler/tests/run/assoc_types.ei)
+pub trait Store {
+    type Key
+    type Value
+    fn put(inout self, k: Self.Key, v: Self.Value)
+    fn find(self, k: Self.Key) -> Option[Self.Value]
+    // a default method that uses both
+    fn get_or(self, k: Self.Key, d: Self.Value) -> Self.Value {
+        match self.find(k) {
+            Some(v) => v
+            None => d
+        }
+    }
+}
+
+// a function over any store: the associated types come from the type parameter
+pub fn put_all[S: Store](inout s: S, k: S.Key, v: S.Value) {
+    s.put(k, v)
+}

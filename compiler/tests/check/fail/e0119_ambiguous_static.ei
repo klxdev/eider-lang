@@ -1,0 +1,9 @@
+// expect: E0119 8:15
+trait Greeter { fn make() -> i32 }
+trait Waver { fn make() -> i32 }
+type Cat = { n: i32 }
+impl Greeter for Cat { fn make() -> i32 { 1 } }
+impl Waver for Cat { fn make() -> i32 { 2 } }
+fn main() uses io {
+    print(Cat.make())
+}

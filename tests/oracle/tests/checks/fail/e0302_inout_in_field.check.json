@@ -1,1 +1,1 @@
-{"error":"E0302","span":{"file":"tests/checks/fail/e0302_inout_in_field.ei","line":2,"col":21},"message":"`inout` is only valid on function parameters; types can't hold references","help":"store the value itself, or an index into a List, or Shared[Mutex[T]]"}
+{"error":"E0302","span":{"file":"tests/checks/fail/e0302_inout_in_field.ei","line":2,"col":21},"message":"`inout` is only valid on function parameters; types can't hold references","help":"store the value itself, or an index into a List, or a Ref[T] or Mutex[T] to share"}

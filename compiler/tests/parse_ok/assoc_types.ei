@@ -1,0 +1,15 @@
+trait Container {
+    type Item
+    type Err
+    fn get(self, i: usize) -> Self.Item
+}
+
+type Bag = { xs: List[i32] }
+
+impl Container for Bag {
+    type Item = i32
+    type Err = ()
+    fn get(self, i: usize) -> Self.Item { self.xs[i] }
+}
+
+fn first[C: Container](c: C) -> Option[C.Item] { None }

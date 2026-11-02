@@ -6294,6 +6294,7 @@ fn main_fn(inout e: E, p: lower.P, file: List[u8], f: u32) {
             call(inout e, p, lit(fname), tys1(types.U64), args1(w64), types.UNIT, none)
         } else {
             let mut s = msg(inout e, "main returned Err")
+            let mut shown: List[u8] = List.new()
             if x.kind == types.T_BOOL {
                 let v = load(inout e, p, et, ea)
                 let _h235 = catb(lit("select i1 "), catb(v, catb(lit(", ptr "), catb(msg(inout e, "true"), catb(lit(", ptr "), msg(inout e, "false"))))))
@@ -6302,13 +6303,22 @@ fn main_fn(inout e: E, p: lower.P, file: List[u8], f: u32) {
                 s = load(inout e, p, et, ea)
             } else if x.kind == types.T_STRING {
                 s = load_ptr_field(inout e, p, et, ea, 0)
-            } else if x.kind == types.T_ENUM && !types.def_of(p.t, et).payload {
+            } else if x.kind == types.T_ENUM && !types.def_of(p.t, et).payload && lower.plain_show(p, et) {
                 gneed(inout e, lower.GK_NAME, et)
                 let _h236 = gname(e, "name_", et)
                 let _h285 = args1(tag_of(inout e, p, et, ea))
                 s = rt_call_b(inout e, p, _h236, tys1(types.U32), _h285, types.STR)
+            } else if p.ir.main_show {
+                // through Show: a record, an enum with a payload or its own Show, a Failure (its chain)
+                shown = temp(inout e, p, types.STRING)
+                let em = msg(inout e, "")
+                call(inout e, p, lit("ei_str_from"), tys1(types.STR), args1(em), types.STRING, shown)
+                let sv = argof(inout e, p, et, ea)
+                show_into(inout e, p, et, shown, sv)
+                s = load_ptr_field(inout e, p, types.STRING, shown, 0)
             }
             call(inout e, p, lit("ei_main_error"), tys1(types.STR), args1(s), types.UNIT, none)
+            if shown.len() > 0 { call(inout e, p, lit("ei_drop_String"), tys1(PTR + types.STRING), args1(shown), types.UNIT, none) }
         }
         drop_at(inout e, p, rt, r)
         call(inout e, p, lit("ei_check_leaks"), List.new(), List.new(), types.UNIT, none)

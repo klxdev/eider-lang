@@ -1,0 +1,1 @@
+{"error":"E0602","span":{"file":"compiler/tests/check/fail/e0602_assoc_missing.ei","line":7,"col":1},"message":"impl of `Container` is missing associated type `Item`"}

@@ -1,0 +1,1 @@
+{"error":"E0119","span":{"file":"compiler/tests/check/fail/e0119_ambiguous_method.ei","line":9,"col":13},"message":"method `hello` of `Cat` is ambiguous: traits `Greeter` and `Waver` define it","help":"call it by its trait: `Greeter.hello(value, ...)`"}

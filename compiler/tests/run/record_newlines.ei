@@ -1,0 +1,30 @@
+// Record fields are separated by a comma or a newline (#76); the two mix.
+type Point = {
+    x: i32
+    y: i32
+}
+
+type Line = {
+    from: Point,
+    to: Point
+    label: str
+}
+
+type Mixed = { a: i32, b: i32
+    c: i32 }
+
+type Tagged = {
+    id: u32
+    name: str,
+}
+
+fn main() uses io {
+    let l = Line(Point(1, 2), Point(3, 4), "diag")
+    print(l.from.x + l.to.y)
+    print(l.label)
+    let m = Mixed(1, 2, 3)
+    print(m.a + m.b + m.c)
+    let t = Tagged(7, "seven")
+    print(t.name)
+    print(t.id)
+}

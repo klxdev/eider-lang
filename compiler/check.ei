@@ -85,7 +85,8 @@ type Subst = { syms: List[u32], tys: List[u32] }
 
 /// A method registered by an impl: its head (see head_key), name, declaration, and the
 /// impl's target as show_ast spells it (for duplicate checks).
-type Meth = { head: u64, name: u32, fd: u32, target: List[u8] }
+/// `tk`: the trait whose impl defines it (or whose default it is), 0 for an inherent method.
+type Meth = { head: u64, name: u32, fd: u32, target: List[u8], tk: u64 }
 
 /// An impl of a trait: the trait, the impl (module, node) and its target's spelling.
 type TImpl = { tkey: u64, md: u32, node: u32, target: List[u8] }
@@ -103,6 +104,7 @@ type ConstDef = { key: u64, md: u32, public: bool, ty: u32, has_k: bool, k: fold
 type Local = {
     key: u64, ty: u32, mutable: bool, byref: bool, has_decl: bool, line: u32, col: u32,
     ir: u32, dline: u32, dcol: u32, aline: u32, acol: u32, alias: u32, refid: u32, aroot: u64,
+    captured: bool,
 }
 
 /// A checked expression: its type, the IR operand holding its value, and its value when it
@@ -1128,7 +1130,7 @@ fn new_ref(inout c: C, key: u64, ty: u32, place: u32, mutable: bool, rk: u64, li
     ref_note(inout c, N_DEF, rid)
     // its indices are checked now, as reading the place would
     if has_index(c, place) { emit(inout c, ir.S_CHECK, 0, place, 0, 0, ty, line) }
-    Local(key, ty, mutable, false, true, line, col, NONE, line, col, line, col, place, rid, canon(c, rk))
+    Local(key, ty, mutable, false, true, line, col, NONE, line, col, line, col, place, rid, canon(c, rk), false)
 }
 
 /// A use of every reference expression e names (e is read again where this is noted).
@@ -1542,7 +1544,7 @@ fn declare(inout c: C, l: Local) -> Result[bool, diag.Diag] {
     let m = c.marks[c.marks.len() - 1] as usize
     for i in m..c.scopes.len() {
         if c.scopes[i].key == l.key {
-            return Err(errh("E0305", l.line, l.col, q("`", kt(c, l.key), "` is already declared in this scope"), "assign to it (declare with `var`), or pick a different name"))
+            return Err(errh("E0305", l.line, l.col, q("`", kt(c, l.key), "` is already declared in this scope"), "assign to it (declare it with `let mut`), or pick a different name"))
         }
     }
     c.scopes.push(l)
@@ -1551,11 +1553,11 @@ fn declare(inout c: C, l: Local) -> Result[bool, diag.Diag] {
 }
 
 fn local_at(key: u64, ty: u32, mutable: bool, line: u32, col: u32, l: u32) -> Local {
-    Local(key, ty, mutable, false, true, line, col, l, line, col, line, col, NONE, NONE, 0)
+    Local(key, ty, mutable, false, true, line, col, l, line, col, line, col, NONE, NONE, 0, false)
 }
 
 fn local_plain(key: u64, ty: u32, byref: bool, line: u32, col: u32, l: u32) -> Local {
-    Local(key, ty, false, byref, false, line, col, l, line, col, line, col, NONE, NONE, 0)
+    Local(key, ty, false, byref, false, line, col, l, line, col, line, col, NONE, NONE, 0, false)
 }
 
 // ---- substitutions
@@ -1595,6 +1597,7 @@ fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] {
     let n = ndm(c, am, tn)
     match n.kind {
         ast.TUnit => Ok(types.UNIT)
+        ast.TAssoc => assoc_ty(inout c, am, n)
         ast.TArray => {
             if n.b == 0 { return Err(err("E0111", n.line, n.col, s("array length must be at least 1"))) }
             let e = resolve_ty(inout c, am, n.a)?
@@ -2048,6 +2051,7 @@ fn has_unbound(c: C, m: u32, tn: u32, sb: Subst, gs: List[u32]) -> bool {
         ast.TName => n.b == 0 && has_sym(gs, n.a) && subst_get(sb, n.a) == NONE
         ast.TArray => has_unbound(c, m, n.a, sb, gs)
         ast.TUnit => false
+        ast.TAssoc => has_sym(gs, n.b) && subst_get(sb, n.b) == NONE
         _ => {
             for i in 0..n.d {
                 if has_unbound(c, m, atm(c, m, n.c, i), sb, gs) { return true }
@@ -2164,6 +2168,7 @@ fn unify_ast(c: C, m: u32, tn: u32, actual: u32, inout sb: Subst, gs: List[u32])
             if n.g > 0 { return unify_ast(c, m, n.g - 1, t.b, inout sb, gs) }
             t.b == types.UNIT
         }
+        ast.TAssoc => true
         _ => actual == types.UNIT
     }
 }
@@ -2192,6 +2197,11 @@ fn show_ast(c: C, m: u32, tn: u32, gens: List[u32]) -> List[u8] {
             out.push(40)
             show_list(c, m, n.c, n.d, gens, inout out)
             out.push(41)
+        }
+        ast.TAssoc => {
+            bytes.append(inout out, nm(c, n.b))
+            out.push(46)
+            bytes.append(inout out, nm(c, n.a))
         }
         ast.TFn => {
             bytes.append(inout out, s("fn("))
@@ -2338,13 +2348,14 @@ fn derived_trait(c: C, tk: u64, ty: u32) -> bool {
 /// The default method `name` that record or enum ty gets from a `@derive` trait it has by
 /// derivation: a FnDef for the trait's method (made once) whose Self the caller sets; NONE
 /// when there is none.
-fn derived_method(inout c: C, ty: u32, name: u32) -> u32 {
+fn derived_method(inout c: C, ty: u32, name: u32, want: u64) -> u32 {
     let k = types.kind(c.t, ty)
     if k != types.T_RECORD && k != types.T_ENUM { return NONE }
     for ti in 0..c.trs.len() {
         if !derived_by(c, ti as u32, ty) { continue }
         let tr = c.trs[ti].copy()
         let trn = ndm(c, tr.m, tr.node)
+        if want != 0 && resolve.item_key(c.p, tr.m, trn.a) != want { continue }
         for i in 0..trn.d {
             let tmn = atm(c, tr.m, trn.c, i)
             let tm = ndm(c, tr.m, tmn)
@@ -3323,6 +3334,15 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
         }
         c.traits.insert(k, c.trs.len() as u32)
         c.trs.push(it)
+        let mut seen_assoc: List[u32] = List.new()
+        for i in 0..n.f {
+            let an = ndm(c, it.m, atm(c, it.m, n.e, i))
+            if has_sym(seen_assoc, an.a) {
+                let rd = in_file(c, err("E0107", an.line, an.col, q("associated type `", nm(c, an.a), "` is declared twice in this trait")), it.m)
+                record(inout c, rd)
+            }
+            seen_assoc.push(an.a)
+        }
     }
     // 4. free functions (a misdeclared one is reported and still declared)
     for it in its {
@@ -3420,6 +3440,11 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
         if f.key == resolve.key(0, c.w.main) {
             c.ir.main_line = fnode.line
             if fnode.f == 0 && fnode.d == 0 && !main_returns_ok(c, c.insts[ii as usize].ret) { record(inout c, main_error(fnode)) }
+            if fnode.f == 0 && fnode.d == 0 && main_result(c, c.insts[ii as usize].ret) {
+                // an Err is printed through Show ("C8.43")
+                let rty = c.insts[ii as usize].ret
+                c.ir.main_show = has_trait(c, TR_SHOW, types.list_at(c.t, types.def_of(c.t, rty).args, 1))
+            }
         }
         let fl = fnode.b
         if ast.has(fl, ast.FN_EXTERN) || ast.has(fl, ast.FN_EXPORT) { record_ffi(inout c, ii) }
@@ -3657,9 +3682,144 @@ fn find_method(c: C, m: u32, start: u32, len: u32, name: u32) -> u32 {
 }
 
 /// A trait method's return type or parameter type as compared by register_impl.
-fn norm(c: C, m: u32, tn1: u32, gens: List[u32], target: List[u8]) -> List[u8] {
+fn norm(c: C, m: u32, tn1: u32, gens: List[u32], target: List[u8], ans: List[u32], ats: List[List[u8]]) -> List[u8] {
     if tn1 == 0 { return s("()") }
-    replace_self(show_ast(c, m, tn1 - 1, gens), target)
+    let mut text = show_ast(c, m, tn1 - 1, gens)
+    // `Self.Item` is the impl's associated type (docs/compiler.md, "C8.45")
+    for i in 0..ans.len() {
+        let mut pat = s("Self.")
+        bytes.append(inout pat, nm(c, ans[i]))
+        text = replace_text(text, pat, ats[i])
+    }
+    replace_self(text, target)
+}
+
+fn name_byte(b: u8) -> bool { (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95 }
+
+/// `text` with every whole-word occurrence of `pat` replaced by `with`.
+fn replace_text(text: List[u8], pat: List[u8], with: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut i: usize = 0
+    while i < text.len() {
+        let mut hit = i + pat.len() <= text.len()
+        if hit {
+            for j in 0..pat.len() {
+                if text[i + j] != pat[j] { hit = false }
+            }
+        }
+        if hit && i + pat.len() < text.len() && name_byte(text[i + pat.len()]) { hit = false }
+        if hit && i > 0 && (name_byte(text[i - 1]) || text[i - 1] == 46) { hit = false }
+        if hit {
+            bytes.append(inout out, with)
+            i += pat.len()
+        } else {
+            out.push(text[i])
+            i += 1
+        }
+    }
+    out
+}
+
+/// The IAssoc node named `name` in list [start/len) of module m, or NONE.
+fn find_assoc(c: C, m: u32, start: u32, len: u32, name: u32) -> u32 {
+    for i in 0..len {
+        let id = atm(c, m, start, i)
+        if ndm(c, m, id).a == name { return id }
+    }
+    NONE
+}
+
+// ---- Associated types (docs/compiler.md, "C8.45")
+
+/// Whether a bound of type parameter ty (a T_PARAM, in the bounds pass) is a trait that declares
+/// the associated type `name`.
+fn param_assoc_ok(c: C, ty: u32, name: u32) -> bool {
+    let i = param_ix(c, ty)
+    if i == NONE { return true }
+    let m = c.lt.pm[i as usize]
+    let g = ndm(c, m, c.lt.pn[i as usize])
+    for j in 0..g.d {
+        let b = ndm(c, m, atm(c, m, g.c, j))
+        let ti = mget(c.traits, resolve.name_key(c.p, m, b.a, b.b, b.line, b.col))
+        if ti == NONE { continue }
+        let tr = c.trs[ti as usize].copy()
+        let trn = ndm(c, tr.m, tr.node)
+        if find_assoc(c, tr.m, trn.e, trn.f, name) != NONE { return true }
+    }
+    false
+}
+
+/// The keys of the traits that declare an associated type `name`.
+fn traits_with_assoc(c: C, name: u32) -> List[u64] {
+    let mut out: List[u64] = List.new()
+    for ti in 0..c.trs.len() {
+        let tr = c.trs[ti].copy()
+        let trn = ndm(c, tr.m, tr.node)
+        if find_assoc(c, tr.m, trn.e, trn.f, name) != NONE { out.push(resolve.item_key(c.p, tr.m, trn.a)) }
+    }
+    out
+}
+
+/// `Owner.Name`: the associated type `Name` of the type `Owner` stands for, found among the
+/// impls whose target fits it. In the bounds pass an owner that is a type parameter has the
+/// associated types its bounds declare and stands for an error type (no cascades); without
+/// such a bound it is E0605.
+fn assoc_ty(inout c: C, am: u32, n: ast.Node) -> Result[u32, diag.Diag] {
+    let mut owner = subst_get(c.tsubst, n.b)
+    if owner == NONE {
+        // a type named outright: `Counter.Item`
+        let k = resolve.name_key(c.p, am, n.b, 0, n.line, n.col)
+        let di = mget(c.tmpl, k)
+        if di == NONE || c.t.defs[di as usize].generic > 0 {
+            let fd = errh("E0111", n.line, n.col, q2("unknown type `", nm(c, n.b), ".", nm(c, n.a), "`"), "`T.Item` names an associated type of a type parameter, of `Self` or of a type without type parameters")
+            return Err(fd)
+        }
+        owner = inst_type(inout c, di, List.new(), n.line, n.col)?
+    }
+    if poisoned(c, owner) { return Ok(poison(inout c)) }
+    if types.kind(c.t, owner) == types.T_PARAM {
+        if !param_assoc_ok(c, owner, n.a) {
+            let what = q2("`", nm(c, n.b), ".", nm(c, n.a), "`")
+            let trs = traits_with_assoc(c, n.a)
+            if trs.len() == 1 {
+                let mut names: List[List[u8]] = List.new()
+                names.push(kt(c, trs[0]))
+                return Err(bound_err(c, n.line, n.col, what, names, owner))
+            }
+            return Err(errh("E0605", n.line, n.col, q("", what, " needs a bound with an associated type of that name"), "a generic body can only use what its type parameters' bounds promise; add the bound"))
+        }
+        return Ok(poison(inout c))
+    }
+    let mut found = NONE
+    let mut found_tk: u64 = 0
+    for x in c.timpls {
+        let im = ndm(c, x.md, x.node)
+        let an = find_assoc(c, x.md, im.g, im.h, n.a)
+        if an == NONE { continue }
+        let gs = gparams(c, x.md, im.c, im.d)
+        let mut sb = no_subst()
+        if !unify_ast(c, x.md, im.b, owner, inout sb, gs) { continue }
+        subst_set(inout sb, intern.S_SELF_TYPE, owner)
+        if found != NONE {
+            if x.tkey != found_tk {
+                let mut a = kt(c, found_tk)
+                let b = kt(c, x.tkey)
+                bytes.append(inout a, s("` and `"))
+                bytes.append(inout a, b)
+                let fd = errh("E0119", n.line, n.col, q3("associated type `", nm(c, n.a), "` of `", ts(c, owner), "` is ambiguous: traits `", a, "` define it"), "implement only one of them for the type")
+                return Err(fd)
+            }
+            continue
+        }
+        let atn = ndm(c, x.md, an).b - 1
+        found = resolve_with(inout c, x.md, atn, sb)?
+        found_tk = x.tkey
+    }
+    if found == NONE {
+        let fd = errh("E0111", n.line, n.col, q3("type `", ts(c, owner), "` has no associated type `", nm(c, n.a), "`", List.new(), ""), "it is declared by a trait (`type Item`) and defined in the type's impl of it (`type Item = i32`)")
+        return Err(fd)
+    }
+    Ok(found)
 }
 
 fn concat_syms(a: List[u32], b: List[u32]) -> List[u32] {
@@ -3693,6 +3853,14 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
     let mut defaults: List[u32] = List.new()
     let mut dti = NONE
     let mut names: List[u32] = List.new()
+    let mut mtk: u64 = 0
+    if im.a == 0 {
+        for i in 0..im.h {
+            let ian = ndm(c, m, atm(c, m, im.g, i))
+            let rd = errh("E0602", ian.line, ian.col, q("associated type `", nm(c, ian.a), "` in an inherent impl"), "associated types are defined in an impl of the trait that declares them")
+            record(inout c, rd)
+        }
+    }
     for i in 0..im.f {
         let mn = ndm(c, m, atm(c, m, im.e, i))
         if has_sym(names, mn.a) {
@@ -3720,9 +3888,38 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
             let tr = c.trs[ti as usize].copy()
             let trn = ndm(c, tr.m, tr.node)
             note_ref(inout c, m, tn, tr.m, trn.line, trn.col)
+            mtk = tk
             // a language trait: the orphan rule and what each needs ("Operation traits")
             let lang = lang_of_key(c, tk)
             if lang != NONE && !check_lang_impl(inout c, m, im, lang, igens) { return Ok(true) }
+            // associated types (docs/compiler.md, "C8.45"): each of the trait's is defined once;
+            // `Self.Item` in the two signatures is the impl's type
+            let mut ans: List[u32] = List.new()
+            let mut ats: List[List[u8]] = List.new()
+            for i in 0..im.h {
+                let ian = ndm(c, m, atm(c, m, im.g, i))
+                if has_sym(ans, ian.a) {
+                    let rd = err("E0107", ian.line, ian.col, q("associated type `", nm(c, ian.a), "` is defined twice in this impl"))
+                    record(inout c, rd)
+                    continue
+                }
+                ans.push(ian.a)
+                ats.push(show_ast(c, m, ian.b - 1, igens))
+                if find_assoc(c, tr.m, trn.e, trn.f, ian.a) == NONE {
+                    let rd = err("E0602", ian.line, ian.col, q2("trait `", kt(c, tk), "` has no associated type `", nm(c, ian.a), "`"))
+                    record(inout c, rd)
+                }
+            }
+            // (a missing one leaves `Self.Item` of the signatures unknown: they aren't compared)
+            let mut assoc_missing = false
+            for i in 0..trn.f {
+                let tan = ndm(c, tr.m, atm(c, tr.m, trn.e, i))
+                if !has_sym(ans, tan.a) {
+                    let rd = err("E0602", im.line, im.col, q2("impl of `", kt(c, tk), "` is missing associated type `", nm(c, tan.a), "`"))
+                    record(inout c, rd)
+                    assoc_missing = true
+                }
+            }
             for i in 0..trn.d {
                 let tmn = atm(c, tr.m, trn.c, i)
                 let tm = ndm(c, tr.m, tmn)
@@ -3741,14 +3938,14 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
                 let mn = ndm(c, m, mid)
                 let mgens = concat_syms(igens, gparams(c, m, mn.c, mn.d))
                 let tgens = gparams(c, tr.m, tm.c, tm.d)
-                let mut differs = !bytes.eq(norm(c, m, mn.g, mgens, target), norm(c, tr.m, tm.g, tgens, target))
+                let mut differs = !bytes.eq(norm(c, m, mn.g, mgens, target, ans, ats), norm(c, tr.m, tm.g, tgens, target, ans, ats))
                 // Iter's `next` returns `Option[Item]` for the item type the impl chooses
                 if lang == TR_ITER { differs = !option_ret(c, m, mn) }
                 let mut k: u32 = 1
                 while k < mn.f && k < tm.f {
                     let a = ndm(c, m, atm(c, m, mn.e, k))
                     let b = ndm(c, tr.m, atm(c, tr.m, tm.e, k))
-                    if !bytes.eq(norm(c, m, a.b + 1, mgens, target), norm(c, tr.m, b.b + 1, tgens, target)) { differs = true }
+                    if !bytes.eq(norm(c, m, a.b + 1, mgens, target, ans, ats), norm(c, tr.m, b.b + 1, tgens, target, ans, ats)) { differs = true }
                     k += 1
                 }
                 if mn.f != tm.f { differs = true }
@@ -3759,6 +3956,7 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
                     if a.c != b.c { differs = true }
                     k += 1
                 }
+                if assoc_missing { differs = false }
                 if differs {
                     let rd = err("E0602", mn.line, mn.col, q2("method `", nm(c, mn.a), "` doesn't match the signature in trait `", kt(c, tk), "`"))
                     record(inout c, rd)
@@ -3790,7 +3988,7 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
         done.push(mn.a)
         let mut dup = false
         for x in c.meths {
-            if x.head == head && x.name == mn.a && bytes.eq(x.target, target) { dup = true }
+            if x.head == head && x.name == mn.a && bytes.eq(x.target, target) && x.tk == mtk { dup = true }
         }
         if dup {
             let rd = err("E0107", mn.line, mn.col, q2("method `", nm(c, mn.a), "` is already defined for `", target, "`"))
@@ -3806,7 +4004,7 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
         let fi = c.fdefs.len() as u32
         c.fdefs.push(FnDef(resolve.key(0, mn.a), m, mid, true, mn.d > 0, ast.has(mn.b, ast.FN_UNSAFE), NONE, id, m, false))
         if im.d == 0 && mn.d == 0 && mn.h > 0 { concrete.push(fi) }
-        c.meths.push(Meth(head, mn.a, fi, target))
+        c.meths.push(Meth(head, mn.a, fi, target, mtk))
     }
     // the trait's default methods this impl doesn't define: registered after every impl
     for tmid in defaults { c.dflts.push(Dflt(dti, tmid, head, target.copy(), id, m)) }
@@ -3822,16 +4020,25 @@ fn register_defaults(inout c: C, inout concrete: List[u32]) {
     for d in c.dflts {
         let tr = c.trs[d.ti as usize].copy()
         let tm = ndm(c, tr.m, d.tm)
-        let mut dup = false
+        let dtk = resolve.item_key(c.p, tr.m, ndm(c, tr.m, tr.node).a)
+        // a method of that name the type has already hides the default from `x.m()` (it is
+        // then not instantiated unless called by its trait: `Trait.m(x)`)
+        let mut shadowed = false
         for x in c.meths {
-            if x.head == d.head && x.name == tm.a && bytes.eq(x.target, d.target) { dup = true }
+            if x.head == d.head && x.name == tm.a && bytes.eq(x.target, d.target) {
+                if x.tk == dtk { shadowed = true }
+            }
         }
-        if dup { continue }
+        let mut hidden = false
+        for x in c.meths {
+            if x.head == d.head && x.name == tm.a && bytes.eq(x.target, d.target) { hidden = true }
+        }
+        if shadowed { continue }
         let im = ndm(c, d.m, d.inode)
         let fi = c.fdefs.len() as u32
         c.fdefs.push(FnDef(resolve.key(0, tm.a), tr.m, d.tm, true, tm.d > 0, ast.has(tm.b, ast.FN_UNSAFE), NONE, d.inode, d.m, true))
-        if im.d == 0 && tm.d == 0 { concrete.push(fi) }
-        c.meths.push(Meth(d.head, tm.a, fi, d.target))
+        if im.d == 0 && tm.d == 0 && !hidden { concrete.push(fi) }
+        c.meths.push(Meth(d.head, tm.a, fi, d.target, dtk))
     }
     c.dflts = List.new()
 }
@@ -3862,6 +4069,22 @@ fn all_gparam_nodes(c: C, fi: u32) -> List[u32] {
     out
 }
 
+/// The name of the trait of method fi when the type has another method of that name (else
+/// empty): what keeps their instances' names apart.
+fn clash_trait(c: C, fi: u32) -> List[u8] {
+    let mut mi = NONE
+    for i in 0..c.meths.len() {
+        if c.meths[i].fd == fi { mi = i as u32 }
+    }
+    if mi == NONE { return List.new() }
+    let m = c.meths[mi as usize].copy()
+    if m.tk == 0 { return List.new() }
+    for x in c.meths {
+        if x.fd != fi && x.head == m.head && x.name == m.name && bytes.eq(x.target, m.target) { return kt(c, m.tk) }
+    }
+    List.new()
+}
+
 /// The IR name of an instance: `name`, `name[T1, ..]`, `Self.name[..]`.
 fn inst_name(c: C, fi: u32, sb: Subst) -> List[u8] {
     let f = c.fdefs[fi as usize]
@@ -3869,6 +4092,13 @@ fn inst_name(c: C, fi: u32, sb: Subst) -> List[u8] {
     if f.inode != NONE || f.dflt {
         bytes.append(inout out, ts(c, subst_get(sb, intern.S_SELF_TYPE)))
         out.push(46)
+        // two methods of one name on a type (different traits, or a trait and the type) keep
+        // their names apart by the trait ("C8.44")
+        let tq = clash_trait(c, fi)
+        if tq.len() > 0 {
+            bytes.append(inout out, tq)
+            out.push(46)
+        }
     }
     bytes.append(inout out, kt(c, f.key))
     let n = ndm(c, f.md, f.node)
@@ -4344,7 +4574,7 @@ fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
         let kind = if mutable { ir.L_VAR } else { ir.L_LET }
         let l = ir.local(inout c.ir, resolve.key_sym(b.key), b.ty, kind, b.line)
         bind_value(inout c, l, b.ty, b.place)
-        declare(inout c, Local(b.key, b.ty, mutable, false, true, b.line, b.col, l, n.line, n.col, b.line, b.col, NONE, NONE, 0))?
+        declare(inout c, Local(b.key, b.ty, mutable, false, true, b.line, b.col, l, n.line, n.col, b.line, b.col, NONE, NONE, 0, false))?
     }
     if n.d == 1 { note_var(inout c, n, place_init, vty, lw.binds) }
     Ok(types.UNIT)
@@ -4718,7 +4948,7 @@ fn for_pat(inout c: C, n: ast.Node, et: u32, acc: u32) -> Result[bool, diag.Diag
         let kind = if b.mutable { ir.L_VAR } else { ir.L_LET }
         let l = ir.local(inout c.ir, resolve.key_sym(b.key), b.ty, kind, b.line)
         bind_value(inout c, l, b.ty, b.place)
-        declare(inout c, Local(b.key, b.ty, b.mutable, false, true, b.line, b.col, l, n.line, n.col, b.line, b.col, NONE, NONE, 0))?
+        declare(inout c, Local(b.key, b.ty, b.mutable, false, true, b.line, b.col, l, n.line, n.col, b.line, b.col, NONE, NONE, 0, false))?
     }
     Ok(true)
 }
@@ -4814,8 +5044,10 @@ fn check_assignable(c: C, target: u32, verb: str) -> Result[bool, diag.Diag] {
         if v.mutable || v.byref { return Ok(true) }
         let mut d = err("E0303", r.line, r.col, q2("cannot ", s(verb), " `", kt(c, r.key), "`: it is not mutable"))
         if v.has_decl {
-            d.help = q("declare `", kt(c, r.key), "` with `var`")
-            d.fix = Some(diag.Fix(v.dline, v.dcol, 3, s("var")))
+            d.help = q("declare `", kt(c, r.key), "` with `let mut`")
+            d.fix = Some(diag.Fix(v.dline, v.dcol + 3, 0, s(" mut")))
+        } else if v.captured {
+            d.help = s("a closure changes only its own copy of a captured variable; use an `inout` parameter, or capture a `Ref[T]`")
         } else {
             d.help = s("parameters are immutable; declare it `inout` to modify the caller's value")
         }
@@ -6502,12 +6734,130 @@ fn label_of(c: C, head: List[u8], name: u32) -> List[u8] {
 
 fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     at_pos(inout c, n.line, n.col)
-    let r = method_call_in(inout c, n, exp)
+    let r = method_call_in(inout c, n, exp, 0)
     end_pos(inout c)
     r
 }
 
-fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
+// ---- Calling a method by its trait (docs/compiler.md, "C8.44")
+
+/// How a plain call `x.m()` ranks a method: the type's own (inherent) first, then one an impl
+/// defines, then a trait's default (which every other method of the name hides).
+fn meth_rank(c: C, m: Meth) -> u32 {
+    if m.tk == 0 { return 0 }
+    if c.fdefs[m.fd as usize].dflt { return 2 }
+    1
+}
+
+/// The method of `cands` (indices into c.meths, all of one name on one type) a call means:
+/// the best ranked, NONE when two traits' methods share the best rank (E0119).
+fn pick_meth(c: C, cands: List[u32]) -> u32 {
+    let mut best = NONE
+    let mut br: u32 = 9
+    for i in cands {
+        let r = meth_rank(c, c.meths[i as usize])
+        if r < br {
+            br = r
+            best = i
+        }
+    }
+    for i in cands {
+        let m = c.meths[i as usize]
+        if meth_rank(c, m) == br && m.tk != c.meths[best as usize].tk { return NONE }
+    }
+    best
+}
+
+/// E0119: the traits whose methods of the name tie for `x.m()`.
+fn ambiguous_err(c: C, n: ast.Node, ty: List[u8], cands: List[u32]) -> diag.Diag {
+    let mut br: u32 = 9
+    for i in cands {
+        let r = meth_rank(c, c.meths[i as usize])
+        if r < br { br = r }
+    }
+    let mut names: List[List[u8]] = List.new()
+    for i in cands {
+        let m = c.meths[i as usize]
+        if meth_rank(c, m) != br { continue }
+        let t = kt(c, m.tk)
+        let mut seen = false
+        for x in names { if bytes.eq(x, t) { seen = true } }
+        if !seen { names.push(t) }
+    }
+    let mut list: List[u8] = List.new()
+    for i in 0..names.len() {
+        if i > 0 {
+            if i + 1 == names.len() { bytes.append(inout list, s(" and ")) } else { bytes.append(inout list, s(", ")) }
+        }
+        list.push(96)
+        bytes.append(inout list, names[i])
+        list.push(96)
+    }
+    let mut d = err("E0119", n.line, n.col, q3("method `", nm(c, n.b), "` of `", ty, "` is ambiguous: traits ", list, " define it"))
+    let f = c.fdefs[c.meths[cands[0] as usize].fd as usize]
+    let fnode = ndm(c, f.md, f.node)
+    if fnode.f > 0 && ndm(c, f.md, atm(c, f.md, fnode.e, 0)).a == intern.S_SELF {
+        d.help = q3("call it by its trait: `", names[0], ".", nm(c, n.b), "(value, ...)`", List.new(), "")
+    } else {
+        d.help = s("an associated function can't be called by its trait; give the functions different names")
+    }
+    d
+}
+
+/// The methods named `name` of head `head` whose trait is `want` (any when 0): indices into c.meths.
+fn meth_cands(c: C, head: u64, name: u32, want: u64) -> List[u32] {
+    let mut out: List[u32] = List.new()
+    for i in 0..c.meths.len() {
+        let m = c.meths[i]
+        if m.head != head || m.name != name { continue }
+        if want != 0 && m.tk != want { continue }
+        out.push(i as u32)
+    }
+    out
+}
+
+/// `Trait.m(x, args)` (#50): the method `m` of `Trait`, called on `x`, even when the type has
+/// another method of that name. The call is the method call `x.m(args)` restricted to the
+/// trait's own methods: the first argument is the receiver.
+fn trait_call(inout c: C, n: ast.Node, tk: u64, exp: u32) -> Result[V, diag.Diag] {
+    let ti = mget(c.traits, tk)
+    let tr = c.trs[ti as usize].copy()
+    let trn = ndm(c, tr.m, tr.node)
+    let tmid = find_method(c, tr.m, trn.c, trn.d, n.b)
+    if tmid == NONE {
+        let fd = err("E0115", n.line, n.col, q2("trait `", kt(c, tk), "` has no method `", nm(c, n.b), "`"))
+        return fail_call(inout c, fd, n.c, n.d)
+    }
+    let tm = ndm(c, tr.m, tmid)
+    let takes_self = tm.f > 0 && ndm(c, tr.m, atm(c, tr.m, tm.e, 0)).a == intern.S_SELF
+    if !takes_self {
+        let fd = errh("E0115", n.line, n.col, q3("`", kt(c, tk), ".", nm(c, n.b), "` has no `self`", List.new(), ""), "an associated function is called on a type: `Type.name(...)`")
+        return fail_call(inout c, fd, n.c, n.d)
+    }
+    if n.d == 0 {
+        let fd = errh("E0405", n.line, n.col, q3("`", kt(c, tk), ".", nm(c, n.b), "` takes the value it is called on as its first argument", List.new(), ""), "write `Trait.method(value, ...)`; it is `value.method(...)` with the trait named")
+        return fail_call(inout c, fd, n.c, n.d)
+    }
+    let a0 = nd(c, at(c, n.c, 0))
+    let want_inout = ndm(c, tr.m, atm(c, tr.m, tm.e, 0)).c == 1
+    let x0 = nd(c, a0.a)
+    if want_inout && a0.b == 0 {
+        let mut d = err("E0304", x0.line, x0.col, q("`", nm(c, tm.a), "` takes `inout self`; pass the first argument as `inout ...`"))
+        d.fix = Some(diag.Fix(x0.line, x0.col, 0, s("inout ")))
+        return Err(d)
+    }
+    if !want_inout && a0.b == 1 {
+        return Err(err("E0304", x0.line, x0.col, q("`", nm(c, tm.a), "` takes a read-only `self`; remove the `inout`")))
+    }
+    let mut n2 = n.copy()
+    n2.a = a0.a
+    n2.c = n.c + 1
+    n2.d = n.d - 1
+    method_call_in(inout c, n2, exp, tk)
+}
+
+/// `want`: the trait whose method is called (`Trait.m(x)`, with `n.a` the receiver `x`), else 0.
+fn method_call_in(inout c: C, n: ast.Node, exp: u32, want: u64) -> Result[V, diag.Diag] {
     match ct_matches(inout c, n)? {
         Some(v) => { return Ok(v) }
         None => {}
@@ -6515,7 +6865,14 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let r = nd(c, n.a)
     let mut static_head: u64 = 0
     let mut is_static = false
-    if r.kind == ast.EIdent {
+    // `Trait.m(x, ...)` (#50)
+    if want == 0 && r.kind == ast.EIdent {
+        let tk0 = ekey(c, r)
+        if lookup(c, tk0) == NONE && !c.consts.contains(tk0) && c.traits.contains(tk0) && !is_type_name(c, tk0) {
+            return trait_call(inout c, n, tk0, exp)
+        }
+    }
+    if want == 0 && r.kind == ast.EIdent {
         let k = ekey(c, r)
         if lookup(c, k) == NONE && !c.consts.contains(k) && is_type_name(c, k) {
             is_static = true
@@ -6524,20 +6881,22 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     }
     // `T.f(...)` on a type parameter T of the generic body (docs/compiler.md, "C8.23"):
     // the associated function of the type T stands for (`T.default()` needs `T: Default`)
-    if r.kind == ast.EIdent && r.b == 0 && lookup(c, ekey(c, r)) == NONE && subst_get(c.tsubst, r.a) != NONE {
+    if want == 0 && r.kind == ast.EIdent && r.b == 0 && lookup(c, ekey(c, r)) == NONE && subst_get(c.tsubst, r.a) != NONE {
         let pt = subst_get(c.tsubst, r.a)
         if n.b == c.lt.meths[TR_DEFAULT as usize] && !c.lt.shadow[TR_DEFAULT as usize] { return default_call(inout c, n, pt) }
         if types.kind(c.t, pt) == types.T_PARAM { return fail_call(inout c, quiet(), n.c, n.d) }
         let ph = head_of(c, pt)
-        for m in c.meths {
-            if m.head == ph && m.name == n.b {
-                let label = label_of(c, ts(c, pt), n.b)
-                let mut sb = no_subst()
-                subst_set(inout sb, intern.S_SELF_TYPE, pt)
-                return call_decl(inout c, n, label, m.fd, sb, no_recv(), exp, true)
-            }
+        let pcands = meth_cands(c, ph, n.b, 0)
+        if pcands.len() > 0 {
+            let pch = pick_meth(c, pcands)
+            if pch == NONE { return Err(ambiguous_err(c, n, ts(c, pt), pcands)) }
+            let label = label_of(c, ts(c, pt), n.b)
+            let mut sb = no_subst()
+            subst_set(inout sb, intern.S_SELF_TYPE, pt)
+            let pfd = c.meths[pch as usize].fd.copy()
+            return call_decl(inout c, n, label, pfd, sb, no_recv(), exp, true)
         }
-        let dm = derived_method(inout c, pt, n.b)
+        let dm = derived_method(inout c, pt, n.b, 0)
         if dm != NONE {
             let label = label_of(c, ts(c, pt), n.b)
             let mut sb = no_subst()
@@ -6557,17 +6916,19 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
         let heap_head = resolve.key_pre(static_head) == 0 && (has_sym(c.w.heap, x) || x == c.w.s_string)
         if heap_head && builtin_static(c, x, n.b) { return heap_static(inout c, n, x, exp) }
         if is_word(c, n.b, "from") && has_from(c, static_head) { return from_call(inout c, n, static_head, exp) }
-        for m in c.meths {
-            if m.head == static_head && m.name == n.b {
-                let label = label_of(c, kt(c, static_head), n.b)
-                return call_decl(inout c, n, label, m.fd, no_subst(), no_recv(), exp, true)
-            }
+        let scands = meth_cands(c, static_head, n.b, 0)
+        if scands.len() > 0 {
+            let sch = pick_meth(c, scands)
+            if sch == NONE { return Err(ambiguous_err(c, n, kt(c, static_head), scands)) }
+            let label = label_of(c, kt(c, static_head), n.b)
+            let sfd = c.meths[sch as usize].fd.copy()
+            return call_decl(inout c, n, label, sfd, no_subst(), no_recv(), exp, true)
         }
         // a method of a derived trait (docs/compiler.md, "C8.42")
         if !heap_head {
             let st = static_head_ty(inout c, static_head, exp)
             if st != NONE {
-                let dm = derived_method(inout c, st, n.b)
+                let dm = derived_method(inout c, st, n.b, 0)
                 if dm != NONE {
                     let label = label_of(c, kt(c, static_head), n.b)
                     let mut sb = no_subst()
@@ -6592,7 +6953,7 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let tk = types.kind(c.t, pv.ty)
     // a method of an error value: only its arguments are checked
     if tk == types.T_POISON { return fail_call(inout c, quiet(), n.c, n.d) }
-    if builtin_method(c, tk, n.b) {
+    if want == 0 && builtin_method(c, tk, n.b) {
         if types.is_handle(tk) { return thread_method(inout c, n, pv) }
         if tk == types.T_REF { return ref_method(inout c, n, pv, exp) }
         return heap_method(inout c, n, pv)
@@ -6603,14 +6964,26 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
         return fail_call(inout c, fd, n.c, n.d)
     }
     let mut any = false
-    for m in c.meths {
-        if m.head != head || m.name != n.b { continue }
+    let mut cands: List[u32] = List.new()
+    for i in meth_cands(c, head, n.b, want) {
         any = true
+        let m = c.meths[i as usize].copy()
         let f = c.fdefs[m.fd as usize]
         let im = ndm(c, f.imd, f.inode)
         let gs = gparams(c, f.imd, im.c, im.d)
         let mut sb = no_subst()
         if !unify_ast(c, f.imd, im.b, pv.ty, inout sb, gs) { continue }
+        cands.push(i)
+    }
+    if cands.len() > 0 {
+        let ch = pick_meth(c, cands)
+        if ch == NONE { return Err(ambiguous_err(c, n, head_text(c, head), cands)) }
+        let m = c.meths[ch as usize].copy()
+        let f = c.fdefs[m.fd as usize]
+        let im = ndm(c, f.imd, f.inode)
+        let gs = gparams(c, f.imd, im.c, im.d)
+        let mut sb = no_subst()
+        unify_ast(c, f.imd, im.b, pv.ty, inout sb, gs)
         if f.dflt { sb = no_subst() }
         subst_set(inout sb, intern.S_SELF_TYPE, pv.ty)
         let label = label_of(c, head_text(c, head), n.b)
@@ -6618,7 +6991,7 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     }
     // a method of a derived trait (docs/compiler.md, "C8.42")
     if !any {
-        let dm = derived_method(inout c, pv.ty, n.b)
+        let dm = derived_method(inout c, pv.ty, n.b, want)
         if dm != NONE {
             let mut sb = no_subst()
             subst_set(inout sb, intern.S_SELF_TYPE, pv.ty)
@@ -6634,8 +7007,9 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     // "C8.19")
     let lm = lang_method(c, n.b)
     let lneed = if lm == NTR { TR_SHOW } else { lm }
-    if lm != NONE && lm != TR_ITER && lm != TR_DROP && lm != TR_DEFAULT && has_trait(c, lneed, pv.ty) { return trait_method(inout c, n, pv, lm) }
-    if !any && tk == types.T_RECORD {
+    let lang_ok = want == 0 || lang_of_key(c, want) == lm
+    if lm != NONE && lm != TR_ITER && lm != TR_DROP && lm != TR_DEFAULT && lang_ok && has_trait(c, lneed, pv.ty) { return trait_method(inout c, n, pv, lm) }
+    if want == 0 && !any && tk == types.T_RECORD {
         let d = types.def_of(c.t, pv.ty)
         match types.find_field(c.t, d, n.b) {
             Some(i) => {
@@ -6652,8 +7026,12 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     }
     // a language trait's method, derived ("Operation traits")
     let li = lang_method(c, n.b)
-    if li != NONE && li != TR_ITER && li != TR_DROP && li != TR_DEFAULT { return trait_method(inout c, n, pv, li) }
-    if is_word(c, n.b, "take") || is_word(c, n.b, "replace") { return take_replace(inout c, n, pv) }
+    if li != NONE && li != TR_ITER && li != TR_DROP && li != TR_DEFAULT && lang_ok { return trait_method(inout c, n, pv, li) }
+    if want == 0 && (is_word(c, n.b, "take") || is_word(c, n.b, "replace")) { return take_replace(inout c, n, pv) }
+    if want != 0 {
+        let fd = errh("E0115", n.line, n.col, q3("type ", ts(c, pv.ty), " has no method `", nm(c, n.b), "` from trait `", kt(c, want), "`"), "the trait must be implemented for the type of the first argument")
+        return fail_call(inout c, fd, n.c, n.d)
+    }
     let fd = err("E0115", n.line, n.col, q2("type ", ts(c, pv.ty), " has no method `", nm(c, n.b), "`"))
     fail_call(inout c, fd, n.c, n.d)
 }
@@ -7405,6 +7783,7 @@ fn lambda_in(inout c: C, n: ast.Node, caps: List[Capture], ptys: List[u32], pkey
         let mut cl = local_plain(cp.key, cp.ty, false, body.line, body.col, l)
         cl.aline = cp.aline
         cl.acol = cp.acol
+        cl.captured = true
         declare(inout c, cl)?
     }
     for i in 0..n.d {

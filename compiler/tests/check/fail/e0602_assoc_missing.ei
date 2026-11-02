@@ -1,0 +1,10 @@
+// expect: E0602 7:1
+trait Container {
+    type Item
+    fn get(self) -> Self.Item
+}
+type A = { n: i32 }
+impl Container for A {
+    fn get(self) -> i32 { 1 }
+}
+fn main() {}

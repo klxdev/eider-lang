@@ -1,0 +1,1 @@
+{"error":"E0107","span":{"file":"compiler/tests/check/fail/e0107_assoc_twice_in_trait.ei","line":4,"col":10},"message":"associated type `Item` is declared twice in this trait"}

@@ -1,0 +1,118 @@
+// Associated types (#107): `type Item` in a trait, `type Item = i32` in its impls, `Self.Item`
+// in signatures and `C.Item` for a type parameter C with the bound. Expected output:
+// assoc_types.out.
+import eiderc.tests.run.lib.stores as stores
+
+trait Container {
+    type Item
+    fn get(self, i: usize) -> Self.Item
+    fn first(self) -> Option[Self.Item]
+    fn size(self) -> usize
+}
+
+type IntBag = { xs: List[i32] }
+
+impl Container for IntBag {
+    type Item = i32
+    fn get(self, i: usize) -> i32 { self.xs[i] }
+    fn first(self) -> Option[i32] {
+        if self.xs.len() == 0 { return None }
+        Some(self.xs[0])
+    }
+    fn size(self) -> usize { self.xs.len() }
+}
+
+type Names = { xs: List[String] }
+
+// the impl may spell its types with `Self.Item` too
+impl Container for Names {
+    type Item = String
+    fn get(self, i: usize) -> Self.Item { self.xs[i].copy() }
+    fn first(self) -> Option[Self.Item] {
+        if self.xs.len() == 0 { return None }
+        Some(self.xs[0].copy())
+    }
+    fn size(self) -> usize { self.xs.len() }
+}
+
+fn head[C: Container](c: C) -> Option[C.Item] { c.first() }
+
+fn last[C: Container](c: C) -> C.Item { c.get(c.size() - 1) }
+
+// an associated type in a parameter, and in an impl's own signature
+fn get_or[C: Container](c: C, i: usize, d: C.Item) -> C.Item {
+    if i < c.size() { c.get(i) } else { d }
+}
+
+type Reader[C] = { src: C, at: usize }
+
+impl[C: Container] Reader[C] {
+    fn read(inout self) -> Option[C.Item] {
+        if self.at >= self.src.size() { return None }
+        let v = self.src.get(self.at)
+        self.at += 1
+        Some(v)
+    }
+}
+
+// a generic impl defines the type with its parameter
+type Pairs[T] = { xs: List[T] }
+
+impl[T: Copy] Container for Pairs[T] {
+    type Item = (T, T)
+    fn get(self, i: usize) -> (T, T) { (self.xs[i].copy(), self.xs[i].copy()) }
+    fn first(self) -> Option[Self.Item] {
+        if self.xs.len() == 0 { return None }
+        Some((self.xs[0].copy(), self.xs[0].copy()))
+    }
+    fn size(self) -> usize { self.xs.len() }
+}
+
+// two associated types, a trait of another module, a default method over them
+type Table = { keys: List[str], vals: List[i32] }
+
+impl stores.Store for Table {
+    type Key = str
+    type Value = i32
+    fn put(inout self, k: str, v: i32) {
+        self.keys.push(k)
+        self.vals.push(v)
+    }
+    fn find(self, k: str) -> Option[i32] {
+        for i in 0..self.keys.len() {
+            if self.keys[i] == k { return Some(self.vals[i]) }
+        }
+        None
+    }
+}
+
+fn main() uses io {
+    let mut xs: List[i32] = List.new()
+    xs.push(3)
+    xs.push(4)
+    xs.push(5)
+    let b = IntBag(xs)
+    print(last(b))
+    match head(b) {
+        Some(x) => print(x)
+        None => print("empty")
+    }
+    print(get_or(b, 1, 0))
+    print(get_or(b, 7, -1))
+    let mut ns: List[String] = List.new()
+    ns.push(String.from("ada"))
+    ns.push(String.from("bob"))
+    let n = Names(ns)
+    print(last(n))
+    let mut r = Reader(b, 0)
+    while let Some(v) = r.read() { print(v) }
+    let mut ps: List[u8] = List.new()
+    ps.push(7)
+    let pr = Pairs(ps)
+    print(last(pr))
+    let mut t = Table(List.new(), List.new())
+    stores.put_all(inout t, "a", 1)
+    t.put("b", 2)
+    print(t.get_or("b", 0))
+    print(t.get_or("z", 99))
+}

@@ -1,0 +1,3 @@
+// expect: E0111 2:17
+fn f(a: i32) -> Nope.Item { 1 }
+fn main() {}

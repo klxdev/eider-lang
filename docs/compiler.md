@@ -1636,7 +1636,8 @@ E0401/E0115/E0303/E0405 cases in `compiler/tests/check/fail`, `c8_*_ok.ei` in
   `main`'s line (exit 101), because the OS keeps only the low byte and 256 would read as
   success. With `Result[(), E]`, `Ok(())` exits 0; an `Err(e)` flushes stdout, prints
   `error: <e>` to stderr when `E` is printable by `print` (an integer, `bool`, `str`, `String`
-  or an enum without payloads; its variant name), else `error: main returned Err`, drops the
+  or an enum without payloads; its variant name), else `error: main returned Err` (C8.43:
+  through `Show` for any type that has it), drops the
   Result, and exits 1. Traps still exit 101 and `eiderc run` passes every exit code on.
 - **`impl` on built-in types**: `impl String`, `impl str`, `impl i32` (any integer), `impl
   bool`, `impl[T] List[T]`, `impl Map[K, V]`, `impl Box[T]`, `impl Mutex[T]` and so on, with
@@ -3602,10 +3603,7 @@ parameters instantiates its defaults whether they are called or not, as it does 
 methods. Methods are looked up by (head, name), so a type's own method of the same name, found
 first, wins (`register_defaults` doesn't register the default then).
 
-Associated types (#107) and calling a method by its trait (#50) stay open; neither falls out of
-this. `T.Item` needs a type resolved per impl in signatures and bounds, with new syntax in
-traits and impls; `Trait.m(x)` needs a new path for static calls, and is only useful when two
-methods of a name can coexist on a type, which E0107 refuses today.
+Associated types (#107) and calling a method by its trait (#50) came after: "C8.45" and "C8.44".
 
 Tests: compiler/tests/run/default_methods.ei and lib/shapes.ei (inherit, override, Self, generic
 methods, associated functions, generic impls, a bound, another module; hand-checked .out),
@@ -3754,6 +3752,118 @@ no method `enc`" with the help "in the `comptime for` iteration over field `n` o
 library supplies those impls, as eider-json does); a trait with required methods is not
 derived (its methods without a body stay missing: calling one is E0115 on the type).
 Associated constants and `eiderc expand` (research #97) are separate work.
+
+## C8.43: `main` returning `Result` (an Err through Show)
+
+0.4.0 (#12; decision C620). Code: check.ei (pass 7: `c.ir.main_show`), ir.ei (`main_show`),
+llvm.ei (`main_fn`); tests: compiler/tests/run/main_result_{failure,show,tuple,noshow,record}.ei;
+docs: docs/site/reference/runtime.md.
+
+C8.2 printed an Err for an integer, `bool`, `str`, `String` or an enum without payloads and said
+`error: main returned Err` for anything else. Now any `E` with `Show` is printed through it:
+when pass 7 resolves `main`'s signature and it is `Result[(), E]`, `has_trait(TR_SHOW, E)` is
+recorded as `Ir.main_show`. `main_fn` then builds a String with `show_into` (the glue `print`
+uses: an `impl Show` found in `Ir.impls`, else the derived one), hands its bytes to
+`ei_main_error`, and drops it before the Result is dropped. The fixed cases keep their old
+direct paths (so the output of an Err of a plain enum, integer or text is unchanged); an enum
+with its own `Show` now goes through it. A `Failure` has `Show` (std/error), so it prints its
+chain `outer: inner: root`. An `E` without `Show` (a record with a function field) still
+prints `error: main returned Err`; the exit code is 1 in every case, and `E0111` for the
+signature is unchanged.
+
+## C8.44: calling a method by its trait
+
+0.4.0 (#50; decision C621). Code: check.ei (`Meth.tk`, `register_impl`, `register_defaults`,
+"Calling a method by its trait": `meth_rank`, `pick_meth`, `ambiguous_err`, `meth_cands`,
+`trait_call`, `method_call_in`'s `want`, `clash_trait` in `inst_name`, `derived_method`'s `want`),
+diag.ei (E0119); tests: compiler/tests/run/trait_call.ei (hand-checked .out),
+compiler/tests/check/fail/e0119_*, e0115_trait_call_*, e0405_trait_call_*, e0304_trait_call_*,
+tests/checks/fail/e0119_ambiguous_method.ei; docs: docs/site/reference/traits.md.
+
+**Methods carry their trait.** `Meth` has `tk`, the key of the trait whose impl defines the
+method or whose default it is (0 for an inherent method). E0107 for "already defined" now
+compares `tk` too, so an inherent method and a trait's, or two traits' methods, can share a
+name on one type (a name twice in one impl, twice in the inherent impls, or twice for one
+trait is still E0107). `register_defaults` registers a default unless the same trait's impl
+defines it (it can't); a default hidden by another method of the name is not instantiated
+with the impl (`concrete`), only if called.
+
+**Picking one.** `x.m()`, `Type.m()` and `T.m()` collect the methods of the name that fit
+(`meth_cands`) and `pick_meth` ranks them: the type's own (0), a method an impl defines (1), a
+trait's default (2). The best rank wins; two different traits at the best rank are E0119
+(`ambiguous_err`: the help names `Trait.m(value, ...)`, or says to rename for an associated
+function, which can't be called by its trait). Before, the first registered won, which could
+only differ with a default (an other trait's method hid it, as now).
+
+**`Trait.m(x, ...)`.** The parser needs nothing: it is a method call whose receiver is the
+identifier `Trait`. `method_call_in` checks first whether that identifier is a trait (not a
+local, constant or type) and calls `trait_call`, which finds the trait's method (E0115 for no
+such method, or one without `self`), requires a first argument (E0405) and `inout` exactly
+when the method's `self` is (E0304, with a fix to add it), and re-enters `method_call_in` with
+the call rewritten as `x.m(rest)` (receiver `n.a` is the first argument's expression, the
+argument list starts one slot later) and `want` set to the trait's key. With `want` the
+built-in methods are skipped, only the trait's `Meth`s (and `@derive` default, `derived_method`)
+are candidates, and a language trait with no impl (a derived `Show`) goes through
+`trait_method`. A type that does not implement the trait is E0115 ("has no method `m` from
+trait `T`"). `want` is a parameter, not state, so the arguments' own calls are unaffected.
+
+**Names.** Two methods of one name on one type would be one IR/C name (`Dog.hello`):
+`inst_name` adds the trait (`Dog.Greeter.hello`) for a trait method that has such a sibling,
+and nothing otherwise, so no existing name, trap message or profile changes.
+
+**Not done.** `Trait.m()` for an associated function (no receiver to take the type from; two
+traits' functions of one name stay ambiguous, E0119); a bound in a generic function does not
+choose among several candidates of a concrete instance (call by trait there, as the test
+does); a path `Trait.m` as a function value.
+
+## C8.45: associated types
+
+0.4.0 (#107; decision C622). Code: ast.ei (`TAssoc`, `IAssoc`), parse.ei (`ty`'s `T.Item` branch,
+`upper_name_at`, `trait_decl`, `impl_decl`), dump.ei, doc.ei (`ty`), check.ei ("Associated types":
+`assoc_ty`, `param_assoc_ok`, `traits_with_assoc`, `find_assoc`, `replace_text`; `norm`,
+`register_impl`, `resolve_ty`, `has_unbound`, `unify_ast`, `show_ast`); tests:
+compiler/tests/run/assoc_types.ei and lib/stores.ei (hand-checked .out), compiler/tests/parse_ok/assoc_types.ei,
+compiler/tests/parse/assoc_type_no_eq.ei, compiler/tests/check/fail/e0602_assoc_*, e0107_assoc_*,
+e0111_assoc_*, e0605_assoc_needs_bound, e0119_assoc_ambiguous; docs: docs/site/reference/traits.md
+("Associated types"); tree-sitter-eider `associated_type`, eider-analyzer's lexical stand-in
+(`assoc_item`).
+
+**Syntax.** In a trait body `type Name` declares one; in an impl body `type Name = T` defines
+it. In a type position `A.B` where no module alias or namespace is meant (parse.ei's `qualified`
+said no) and `B` starts with a capital is a `TAssoc` (a=B, b=A): `Self.Item`, `C.Item`. (The
+capital keeps `x as u8.abs()` as before, though `abs` was never a type.) `ITrait` keeps its
+`IAssoc` list in [e/f], `IImpl` in [g/h]; an `IAssoc` has the name and, in an impl, `type+1`.
+`type` is already a keyword, so the member loops test it before `fn`.
+
+**Resolution at instantiation.** `resolve_ty` of a `TAssoc` looks its owner symbol up in
+`tsubst` (a type parameter, `Self`; a type named outright, when it has no type parameters),
+then `assoc_ty` scans `timpls` for an impl whose target unifies with the owner type and that
+defines the name, and resolves the impl's type node with the unifier's substitution
+(`impl[T] ... for Pairs[T] { type Item = (T, T) }` gives `(u8, u8)` for `Pairs[u8]`). More than one
+trait defining the name for the type is E0119; none is E0111. Functions are checked as instances
+with concrete types, so nothing else in the checker learned about the type: a method of the
+impl returns `Self.Item` or `i32` and both are the one type.
+
+**The bounds pass.** The abstract pass (C8.4) checks a generic declaration with T_PARAM types.
+There `C.Item` is E0605 unless a bound of `C` declares `Item` (the fix adds the bound when one
+trait declares the name), and otherwise the error type, which `same` accepts everywhere, so
+the body is neither checked against nor reported for a type nobody knows yet. `has_unbound`
+treats `C.Item` as unbound while `C` is, so an argument typed `C.Item` waits for the one that
+binds `C`; `unify_ast` binds nothing through it (the resolved type is compared after).
+
+**Impl checks.** `register_impl` compares an impl's methods with the trait's after
+substituting the impl's types for `Self.Name` in the text of both signatures (`norm`; a whole-word
+replace, so `Self.ItemX` is left alone); an impl that lacks a declared type or defines one the
+trait doesn't is E0602 (and a missing one stops the signature comparison, which would only repeat
+it), a name twice in a trait or an impl is E0107, and `type` in an inherent impl is E0602.
+Default methods of a trait are instances with `Self` set, so they use `Self.Item` as an impl's
+methods do.
+
+**Not done.** A bound on an associated type (`type Item: Show`), a default (`type Item = i32`
+in the trait), a where clause equating one (`C.Item == i32`), and associated types of the
+language's own traits (`Iter` still reads its `Item` off the impl: C8.4). `eiderc doc` shows a
+trait's methods but not its associated types. A function never instantiated is not checked for
+`C.Item` without a bound, like every other bounds error (C8.4).
 
 ## Profiling: `--profile`
 

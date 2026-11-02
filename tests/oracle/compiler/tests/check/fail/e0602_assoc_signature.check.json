@@ -1,0 +1,1 @@
+{"error":"E0602","span":{"file":"compiler/tests/check/fail/e0602_assoc_signature.ei","line":9,"col":8},"message":"method `get` doesn't match the signature in trait `Container`"}

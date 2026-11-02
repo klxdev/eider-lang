@@ -1,0 +1,12 @@
+// expect: E0605 11:22
+trait Container {
+    type Item
+    fn get(self) -> Self.Item
+}
+type A = { n: i32 }
+impl Container for A {
+    type Item = i32
+    fn get(self) -> i32 { 1 }
+}
+fn first[T](x: T) -> T.Item { x.get() }
+fn main() uses io { print(first(A(1))) }

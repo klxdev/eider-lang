@@ -1,0 +1,6 @@
+// expect: E0303 5:5
+fn main() {
+    let (a, b) = (1, 2)
+    let k = a + b
+    k = 4
+}

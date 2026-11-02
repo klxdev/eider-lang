@@ -343,8 +343,10 @@ An application error can take a `Failure` too (`impl From[error.Failure] for App
 ## Errors from `main`
 
 `main` may return `Result[(), E]`. `Ok(())` exits 0. An `Err(e)` prints `error: <e>` to
-stderr and exits 1, when `E` is an integer, `bool`, `str`, `String` or an enum without
-payloads; for other error types it prints `error: main returned Err`.
+stderr (through `E`'s `Show`) and exits 1. A `Failure` prints its whole chain, outermost
+first, so a `main` that returns `Result[(), error.Failure]` and uses `?` and `.context`
+everywhere ends with a line such as `error: starting up: loading b.toml: bad digit at 0`.
+Only an `E` without `Show` prints `error: main returned Err`.
 
 ```eider
 fn main() -> Result[(), String] uses io {

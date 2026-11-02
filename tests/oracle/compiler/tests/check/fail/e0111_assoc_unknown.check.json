@@ -1,0 +1,1 @@
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_assoc_unknown.ei","line":6,"col":26},"message":"type `A` has no associated type `Item`","help":"it is declared by a trait (`type Item`) and defined in the type's impl of it (`type Item = i32`)"}

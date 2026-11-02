@@ -1,0 +1,1 @@
+{"error":"E0111","span":{"file":"compiler/tests/check/fail/e0111_assoc_no_such_owner.ei","line":2,"col":17},"message":"unknown type `Nope.Item`","help":"`T.Item` names an associated type of a type parameter, of `Self` or of a type without type parameters"}

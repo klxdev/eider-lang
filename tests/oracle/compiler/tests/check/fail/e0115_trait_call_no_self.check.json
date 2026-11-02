@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_trait_call_no_self.ei","line":4,"col":17},"message":"`Maker.make` has no `self`","help":"an associated function is called on a type: `Type.name(...)`"}

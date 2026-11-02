@@ -1,0 +1,1 @@
+{"error":"E0602","span":{"file":"compiler/tests/check/fail/e0602_assoc_inherent_impl.ei","line":4,"col":10},"message":"associated type `Item` in an inherent impl","help":"associated types are defined in an impl of the trait that declares them"}

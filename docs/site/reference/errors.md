@@ -215,7 +215,7 @@ fn main() uses io { print(sign(-4)) }
 A **duplicate definition**: two items with one name in a module (functions, types,
 constants, traits), two fields of one record or variant, two variants with one name
 (variant names must be unique across the enums of a module, since they are used without
-the enum's name), a method defined twice for a type or in one impl, a trait implemented
+the enum's name), a method defined twice for a type (inherent, or in impls of one trait) or in one impl, a trait implemented
 twice for a type (`From` once per source type), and a loop label already used by an
 enclosing loop.
 
@@ -293,7 +293,8 @@ fn main() uses io {
 
 ## E0111
 
-An **invalid type**. Raised for an unknown type name, a generic type without its type
+An **invalid type**. Raised for an unknown type name, an associated type (`T.Item`) that
+the type has none of, a generic type without its type
 arguments or with the wrong number of them, an array of length 0, a record with no fields,
 `()` where a value type is needed (a parameter of type `()`, `List[()]`), a type alias that
 refers to itself or names an unknown type, an `impl` that names an alias instead of the
@@ -535,6 +536,47 @@ fn main() uses io { print(f(5)) }
 1
 ```
 
+## E0119
+
+An **ambiguous method**: a type implements two traits that each define the method called
+(or inherit a default of that name), and the type has no method of its own with the name.
+`value.name()` can't tell which is meant. The help names the way out, calling the method by
+its trait. (An associated function without `self` can't be called by its trait; rename one.)
+The same code is raised for an associated type name (`X.Item`) that two traits implemented
+for `X` both define.
+
+```eider,compile_fail=E0119
+trait Greeter { fn hello(self) -> str }
+trait Waver { fn hello(self) -> str }
+type Cat = { n: i32 }
+impl Greeter for Cat { fn hello(self) -> str { "g" } }
+impl Waver for Cat { fn hello(self) -> str { "w" } }
+fn main() uses io {
+    let c = Cat(1)
+    print(c.hello())
+}
+```
+
+Fix: name the trait.
+
+```eider
+trait Greeter { fn hello(self) -> str }
+trait Waver { fn hello(self) -> str }
+type Cat = { n: i32 }
+impl Greeter for Cat { fn hello(self) -> str { "g" } }
+impl Waver for Cat { fn hello(self) -> str { "w" } }
+fn main() uses io {
+    let c = Cat(1)
+    print(Greeter.hello(c))
+    print(Waver.hello(c))
+}
+```
+
+```output
+g
+w
+```
+
 ## E0201
 
 A **missing capability**. A call to a function that `uses` a capability (`print` needs
@@ -654,7 +696,7 @@ fn main() uses io {
 
 **`inout` outside a parameter**: in a field type, a return type, a type argument. `inout`
 is a way of passing an argument, not a type; values can't hold references. The help
-suggests storing the value itself, an index into a List, or a shared handle.
+suggests storing the value itself, an index into a List, or a `Ref[T]` or `Mutex[T]` to share.
 
 ```eider,compile_fail=E0302
 type Cache = { items: inout List[i32] }
@@ -683,8 +725,9 @@ fn main() uses io {
 constant, calling a mutating method (`push`, `insert`, `clear`, ...) on one, passing it as
 `inout`, `take`/`replace` on a fresh value (they need a place to move the value out of),
 and passing a read-only place to a closure's `inout` parameter. The help and the
-machine-applicable fix declare the variable with `var`, the deprecated spelling; write
-`let mut` instead.
+machine-applicable fix declare the variable `let mut`. Assigning to a variable a closure
+captured has its own help: the closure works on a copy, so it takes an `inout` parameter or
+captures a `Ref[T]` instead.
 
 ```eider,compile_fail=E0303
 fn main() uses io {
@@ -1372,7 +1415,8 @@ fn main() uses io {
 
 An **impl that doesn't match its trait**: a method whose signature differs from the
 trait's, a method the trait doesn't have, a missing method, an `Iter` impl whose `next`
-doesn't return an `Option`, and for `From`: a signature other than
+doesn't return an `Option`, an associated type the impl doesn't define (or one the trait
+doesn't declare, or one in an inherent impl), and for `From`: a signature other than
 `fn from(value: Source) -> Target`, or a `from` that declares capabilities.
 
 ```eider,compile_fail=E0602
@@ -1464,7 +1508,8 @@ A **missing bound in generic code**: a generic body may use an operation on a ty
 only when its bounds promise it: `==` needs `T: Eq`, `<` and `compare` `T: Ord`, printing
 `T: Show`, `.copy()` `T: Copy`, `for` over it `T: Iter`, `contains` on a `List[T]` `T: Eq`,
 `T.default()` and `take()` `T: Default`, and a `Map[K, V]` (also in a signature)
-`K: Hash + Eq`. The compiler offers a machine-applicable fix that adds the bound. These
+`K: Hash + Eq`, and an associated type `T.Item` needs a bound of `T` that declares `Item`.
+The compiler offers a machine-applicable fix that adds the bound. These
 errors are found after every other check, so they come last.
 
 ```eider,compile_fail=E0605

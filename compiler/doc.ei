@@ -464,6 +464,11 @@ fn ty(b: B, m: u32, t: u32, inout g: Sig) {
             put(inout g, ")")
         }
         ast.TUnit => put(inout g, "()")
+        ast.TAssoc => {
+            putb(inout g, intern.name(b.p.names, n.b))
+            put(inout g, ".")
+            putb(inout g, intern.name(b.p.names, n.a))
+        }
         ast.TFn => {
             put(inout g, "fn(")
             for i in 0..n.d {

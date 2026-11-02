@@ -449,6 +449,72 @@ true
 
 There is no operator overloading: `+` and friends are for numbers.
 
+When two traits (or a trait and the type) define a method of one name, `value.name()` picks
+the type's own, and a tie is an error (E0119). Name the trait to call one of them:
+
+```eider
+trait Pilot { fn fly(self) -> str }
+trait Wizard { fn fly(self) -> str }
+
+type Human = { name: str }
+
+impl Pilot for Human {
+    fn fly(self) -> str { "this is your captain" }
+}
+impl Wizard for Human {
+    fn fly(self) -> str { "up!" }
+}
+impl Human {
+    fn fly(self) -> str { "*waves arms*" }
+}
+
+fn main() uses io {
+    let h = Human("Ada")
+    print(h.fly())
+    print(Pilot.fly(h))
+    print(Wizard.fly(h))
+}
+```
+
+```output
+*waves arms*
+this is your captain
+up!
+```
+
+A trait can also declare a type that each impl chooses, an associated type: `type Item` in
+the trait, `type Item = i32` in the impl, `Self.Item` in the signatures and `C.Item` for a type
+parameter `C` with the bound.
+
+```eider
+trait Container {
+    type Item
+    fn get(self, i: usize) -> Self.Item
+    fn size(self) -> usize
+}
+
+type Bag = { xs: List[i32] }
+
+impl Container for Bag {
+    type Item = i32
+    fn get(self, i: usize) -> i32 { self.xs[i] }
+    fn size(self) -> usize { self.xs.len() }
+}
+
+fn last[C: Container](c: C) -> C.Item { c.get(c.size() - 1) }
+
+fn main() uses io {
+    let mut xs: List[i32] = List.new()
+    xs.push(3)
+    xs.push(4)
+    print(last(Bag(xs)))
+}
+```
+
+```output
+4
+```
+
 ## Closures
 
 ```eider

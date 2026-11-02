@@ -1,0 +1,12 @@
+// expect: E0107 9:10
+trait Container {
+    type Item
+    fn get(self) -> Self.Item
+}
+type A = { n: i32 }
+impl Container for A {
+    type Item = i32
+    type Item = u8
+    fn get(self) -> i32 { 1 }
+}
+fn main() {}
