@@ -488,7 +488,7 @@ pub fn connect_by(a: net.Addr, dl: time.Deadline) -> Result[Fd, Error] uses net,
     let c = os.sock_connect(s.fd)
     if c < 0 {
         if os.err_kind(c) != 2 {
-            s.close()
+            let _ = s.close()
             let mut m = String.from("cannot connect to ")
             m.append(sys.to_string(net.text(a)))
             m.push_str(": ")
@@ -498,13 +498,13 @@ pub fn connect_by(a: net.Addr, dl: time.Deadline) -> Result[Fd, Error] uses net,
         match s.wait(READY_WRITE, dl, "connect") {
             Ok(()) => {}
             Err(e) => {
-                s.close()
+                let _ = s.close()
                 return Err(e)
             }
         }
         let r = os.sock_error(s.fd)
         if r < 0 {
-            s.close()
+            let _ = s.close()
             let mut m = String.from("cannot connect to ")
             m.append(sys.to_string(net.text(a)))
             m.push_str(": ")

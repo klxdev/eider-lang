@@ -915,6 +915,46 @@ fn kind_text(k: u32) -> str {
     }
 }
 
+fn put_fn(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, f: Fn) {
+    put(inout o, "\n")
+    if f.is_test { put(inout o, "test ") } else { put(inout o, "fn ") }
+    putb(inout o, f.name)
+    put(inout o, " -> ")
+    putty(inout o, t, names, f.ret)
+    if f.caps.len() > 0 {
+        put(inout o, " uses ")
+        putb(inout o, f.caps)
+    }
+    put(inout o, "\n")
+    for i in 0..f.lcount {
+        let l = ir.locals[(f.lstart + i) as usize]
+        put(inout o, "  ")
+        put_local(inout o, i)
+        put(inout o, " ")
+        put(inout o, kind_text(l.kind))
+        if l.kind != L_TEMP {
+            put(inout o, " ")
+            putb(inout o, intern.name(names, l.name))
+        }
+        put(inout o, ": ")
+        putty(inout o, t, names, l.ty)
+        put(inout o, "\n")
+    }
+    put(inout o, "  \x7b\n")
+    put_block(inout o, ir, t, names, f.body - 1, 2)
+    put(inout o, "  \x7d\n")
+}
+
+/// The text of the functions `want` (indexes into ir.fns), in order: `eiderc expand`.
+pub fn dump_fns(ir: Ir, t: types.Types, names: intern.Interner, want: List[u32]) -> List[u8] {
+    let mut o = Out(List.new())
+    for i in 0..ir.fns.len() {
+        if ir.fns[i].body == 0 || !want.contains(i as u32) { continue }
+        put_fn(inout o, ir, t, names, ir.fns[i])
+    }
+    o.b
+}
+
 /// The whole program as text.
 pub fn dump(ir: Ir, t: types.Types, names: intern.Interner) -> List[u8] {
     let mut o = Out(List.new())
@@ -950,33 +990,7 @@ pub fn dump(ir: Ir, t: types.Types, names: intern.Interner) -> List[u8] {
     }
     for f in ir.fns {
         if f.body == 0 { continue }
-        put(inout o, "\n")
-        if f.is_test { put(inout o, "test ") } else { put(inout o, "fn ") }
-        putb(inout o, f.name)
-        put(inout o, " -> ")
-        putty(inout o, t, names, f.ret)
-        if f.caps.len() > 0 {
-            put(inout o, " uses ")
-            putb(inout o, f.caps)
-        }
-        put(inout o, "\n")
-        for i in 0..f.lcount {
-            let l = ir.locals[(f.lstart + i) as usize]
-            put(inout o, "  ")
-            put_local(inout o, i)
-            put(inout o, " ")
-            put(inout o, kind_text(l.kind))
-            if l.kind != L_TEMP {
-                put(inout o, " ")
-                putb(inout o, intern.name(names, l.name))
-            }
-            put(inout o, ": ")
-            putty(inout o, t, names, l.ty)
-            put(inout o, "\n")
-        }
-        put(inout o, "  \x7b\n")
-        put_block(inout o, ir, t, names, f.body - 1, 2)
-        put(inout o, "  \x7d\n")
+        put_fn(inout o, ir, t, names, f)
     }
     o.b
 }

@@ -143,6 +143,18 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
         }
         if bytes.eq(e.key, sys.lit("policy.deny")) { ok = true }
         if bytes.starts_with(e.key, sys.lit("policy.allow.")) { ok = true }
+        // [lints]: `name = "allow" | "warn" | "deny"` (eiderc lint; compiler/lint.ei, which judges the names)
+        if bytes.starts_with(e.key, sys.lit("lints.")) {
+            match e.val {
+                toml.Str(_) => { ok = true }
+                _ => {
+                    let mut m = String.from("`")
+                    m.append(sys.to_string(e.key))
+                    m.push_str("` must be a string: \"allow\", \"warn\" or \"deny\"")
+                    return Err(at(file, e.line, 1, m))
+                }
+            }
+        }
         if !ok && bytes.starts_with(e.key, sys.lit("deps.")) {
             let rest = bytes.slice(e.key, 5, e.key.len())
             match bytes.find_byte(rest, 46, 0) {

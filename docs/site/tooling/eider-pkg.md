@@ -135,6 +135,9 @@ rev = "main"                # a branch, tag or commit instead of a version
 deny = ["ffi"]
 [policy.allow]
 net = ["json"]
+
+[lints]                     # optional: lint levels for `eiderc lint` ("allow", "warn" or "deny")
+unused_uses = "deny"
 ```
 
 Unknown keys are errors (a typo like `verison` is caught). A dependency needs exactly one of

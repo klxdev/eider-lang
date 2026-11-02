@@ -4307,3 +4307,26 @@ compiler leg runs `eiderc-next lint compiler/main.ei`. Not done: the needless_co
 analyzer would need the `.` position), copy and cycle lints (#11), lints for dependencies,
 `--deny warnings` as a spelling of `--deny all` after `--warn`.
 
+## C8.57: `eiderc expand` (#103)
+
+Decision C809. Code: check.ei (`check_fn` wraps `check_fn_body`; `ct_for` and `ct_compile_if` set `C.lint.refl`;
+`joined_help`), lint.ei (`Collected.refl`, `reflective`, `Refl`), ir.ei (`put_fn`, `dump_fns`), main.ei
+(`run_expand`, the `Args.filter` word after the file), ide.ei (`Expansion`, `Analysis.expansions`);
+tests: compiler/tests/pkgs/lints/expand.ei and expand_error.ei, the `lints` session of eider-analyzer.
+
+A specialization of a reflective body is not source: the checker unrolls `comptime for` straight into
+IR (C8.41), so there is no text of it to print but the IR. `check_fn` clears `C.lint.refl`, checks the
+instance, and if the flag was set (some `comptime for` or `comptime if` ran in it) keeps `Refl(ir fn,
+module, declaration node)` and appends `while specializing `<ir name>` (`eiderc expand` prints it)`
+to the help of every diagnostic recorded meanwhile and of the returned error. `eiderc expand FILE`
+checks the program (the errors stop it as for `check`) and prints `ir.dump_fns` of those instances;
+with a name, of every IR function whose name contains it, reflective or not (exit 1 when none).
+The language server: `Analysis.expansions` has the same texts with the declaration's position; the
+analyzer's `eider/expand` request picks those from the declaration at the cursor (or whose name starts
+with the type's at the cursor). The IDE has no new go-to-definition to add: a call of a derived method
+resolves to the trait method in `refs` (tests/run/derive.ei's ide dump).
+
+Not done: printing the specialization as Eider source (it would need the checker to keep each
+iteration's bindings as AST), and a call-site chain (which call asked for the instance): the help
+names the specialization, not who requested it.
+

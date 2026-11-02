@@ -180,3 +180,16 @@ leave a `comptime for`.
 | E0830 | `fields` of a non-record, `variants` of a non-enum, `x.[f]` on a value of another type, a member other than `name`, `index`, `matches`, a `comptime for` argument list that doesn't go over the fields it builds |
 | E0831 | a reflected name used as a value, `x.[e]` where e isn't a `comptime for` variable |
 | E0832 | a `comptime if` condition that isn't known while checking, `break` in a `comptime for` |
+
+## Reading a specialization
+
+A reflective body is checked once per type it is used for, with the `comptime for` loops
+unrolled over that type's fields or variants. `eiderc expand file.ei` prints those
+specializations as the typed IR the backends compile (the same text `eiderc ir` prints for
+them), so what a `@derive`d method does for `Point` can be read, not guessed; `eiderc expand
+file.ei Point.enc` prints the functions with that text in their name. The language server
+answers the same question through the custom request `eider/expand` (the specializations for
+the symbol at a position), and a call of a derived method already goes to the trait's
+reflective body. When the body fails to check for one type, the error names the iteration
+(`field y of Point`) and the specialization (`while specializing Point.enc`).
+

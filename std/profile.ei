@@ -81,7 +81,7 @@ pub fn capture() -> Result[List[u8], String] uses fs, io, clock {
     for b in name.bytes() { path.push(b) }
     snapshot(path)?
     let data = fs.read(path)
-    fs.remove_all(path)
+    let _ = fs.remove_all(path)
     data
 }
 

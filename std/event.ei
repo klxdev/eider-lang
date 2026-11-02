@@ -42,14 +42,14 @@ pub fn new() -> Result[Loop, String] uses io {
                 Ok(b) => {}
                 Err(e) => {
                     poll.close_waker(w)
-                    fd.close(p)
+                    let _ = fd.close(p)
                     return Err(e)
                 }
             }
             Ok(Loop(p, w, List.new(), Map.new(), 1))
         }
         Err(e) => {
-            fd.close(p)
+            let _ = fd.close(p)
             Err(e)
         }
     }
@@ -178,6 +178,6 @@ impl Loop {
     /// Closes the poller and the waker (descriptors still watched are not closed).
     fn close(self) uses io {
         poll.close_waker(self.w)
-        fd.close(self.p)
+        let _ = fd.close(self.p)
     }
 }

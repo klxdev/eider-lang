@@ -17,11 +17,17 @@
 //       signature or type as source-like text.
 //   pub type Ref = { span: Span, target: u32 }          a use and the Symbol it resolves to
 //   pub type TypeAt = { span: Span, text: List[u8] }    the type of an expression or binding
-//   pub type Analysis = { diags: List[diag.Diag], symbols: List[Symbol], refs: List[Ref], types: List[TypeAt], files: List[List[u8]], lints: List[lint.Finding] }
+//   pub type Analysis = { diags: List[diag.Diag], symbols: List[Symbol], refs: List[Ref], types: List[TypeAt], files: List[List[u8]], lints: List[lint.Finding], expansions: List[Expansion] }
 //       lints: what `eiderc lint` reports for the entry file's package (lint.ei; levels from
 //       its eider.toml; a Finding has the lint's name, its level, the diagnostic with its
 //       machine-applicable `fix` when there is one, and the file); editors show them as hints
 //       (warnings for level warn, errors for deny)
+//   pub type Expansion = { name: List[u8], file: List[u8], line: u32, col: u32, text: List[u8] }
+//       expansions: one per specialization of a body that uses comptime reflection (a
+//       `@derive`d method for a type): the instance's name, the position of the reflective
+//       declaration it came from (go to it for the trait's body; the analysis's refs already
+//       lead there from a call), and the specialized body, as `eiderc expand` prints it. In
+//       Analysis as `expansions`
 //   pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: List[List[u8]]) -> Analysis uses io, fs, net, clock
 //       entry: a .ei path; the overlay (unsaved editor buffers) replaces the contents of
 //       the files on disk with the same canonical path. Never exits and never prints:
@@ -74,6 +80,7 @@ import eiderc.check
 import eiderc.consteval
 import eiderc.front
 import eiderc.lint
+import eiderc.ir
 
 pub type Span = { file: List[u8], line: u32, col: u32, end_line: u32, end_col: u32 }
 
@@ -96,7 +103,13 @@ pub type Ref = { span: Span, target: u32 }
 
 pub type TypeAt = { span: Span, text: List[u8] }
 
-pub type Analysis = { diags: List[diag.Diag], symbols: List[Symbol], refs: List[Ref], types: List[TypeAt], files: List[List[u8]], lints: List[lint.Finding] }
+pub type Analysis = { diags: List[diag.Diag], symbols: List[Symbol], refs: List[Ref], types: List[TypeAt], files: List[List[u8]], lints: List[lint.Finding], expansions: List[Expansion] }
+
+/// A specialization of a body that uses comptime reflection (a `@derive`d method for a type, a
+/// reflective generic function for its type arguments): `name` as the typed IR names it, the
+/// position of the declaration it was specialized from (the trait's reflective body), and
+/// the specialized body as `eiderc expand` prints it.
+pub type Expansion = { name: List[u8], file: List[u8], line: u32, col: u32, text: List[u8] }
 
 const NONE: u32 = 4294967295
 
@@ -113,7 +126,7 @@ pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: Li
         Some(t) => t
         None => {
             diags.push(read_diag(entry))
-            return Analysis(diags, List.new(), List.new(), List.new(), files, List.new())
+            return Analysis(diags, List.new(), List.new(), List.new(), files, List.new(), List.new())
         }
     }
     let mut names = intern.new()
@@ -124,7 +137,7 @@ pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: Li
     let mut found = front.merge(lx.diags, pr.diags)
     resolve.note_syntax(inout ld.p, 0, found)
     for d in ld.diags { found.push(d) }
-    if ld.fatal { return build(ld.p, no_rec(), types.new(), finals(found, entry), List.new()) }
+    if ld.fatal { return build(ld.p, no_rec(), types.new(), finals(found, entry), List.new(), List.new()) }
     let ev = consteval.eval_all(ld.p)
     for d in ev.diags { found.push(d) }
     let rc = check.check_ide(ev.p)
@@ -132,8 +145,18 @@ pub fn analyze(entry: List[u8], overlay_paths: List[List[u8]], overlay_texts: Li
     // the lints of the entry file's package (lint.ei), with the levels of its eider.toml
     let mut lerrs: List[List[u8]] = List.new()
     let cli: List[lint.Setting] = List.new()
-    let lf = lint.findings(rc.c.p, rc.c.lint, rc.c.p.mods[0].pkg, cli, inout lerrs)
-    build(rc.c.p, rc.c.rec, rc.c.t, finals(found, entry), lf)
+    // (not while the program has errors: a callee's declared capabilities, or a skipped
+    // statement, can make a body look like it needs less than it does)
+    let mut lf: List[lint.Finding] = List.new()
+    if found.len() == 0 { lf = lint.findings(rc.c.p, rc.c.lint, rc.c.p.mods[0].pkg, cli, inout lerrs) }
+    let mut exps: List[Expansion] = List.new()
+    for r in rc.c.lint.reflective {
+        let n = rc.c.p.mods[r.m as usize].ast.nodes[r.node as usize]
+        let mut one: List[u32] = List.new()
+        one.push(r.f)
+        exps.push(Expansion(rc.c.ir.fns[r.f as usize].name, rc.c.p.mods[r.m as usize].path, n.line, n.col, ir.dump_fns(rc.c.ir, rc.c.t, rc.c.p.names, one)))
+    }
+    build(rc.c.p, rc.c.rec, rc.c.t, finals(found, entry), lf, exps)
 }
 
 /// The diagnostics as `eiderc check` prints them (each once, final_diag).
@@ -201,7 +224,7 @@ fn akey(m: u32, line: u32, col: u32) -> u64 {
     (m as u64) * 17592186044416 + (l as u64) * 4194304 + c as u64
 }
 
-fn build(p: resolve.Program, rec: check.Rec, t: types.Types, diags: List[diag.Diag], lints: List[lint.Finding]) -> Analysis {
+fn build(p: resolve.Program, rec: check.Rec, t: types.Types, diags: List[diag.Diag], lints: List[lint.Finding], exps: List[Expansion]) -> Analysis {
     let mut b = B(p, List.new(), Map.new(), List.new(), Map.new(), Map.new(), Map.new(), List.new(), List.new())
     for r in rec.refs { b.used.insert(akey(r.m, r.line, r.col), true) }
     for x in rec.tys {
@@ -279,7 +302,7 @@ fn build(p: resolve.Program, rec: check.Rec, t: types.Types, diags: List[diag.Di
     for i in order(refs.keys) { sorted_refs.push(refs.refs[i as usize]) }
     let mut sorted_tys: List[TypeAt] = List.new()
     for i in order(tkeys) { sorted_tys.push(tys[i as usize]) }
-    Analysis(diags, b.syms, sorted_refs, sorted_tys, files, lints)
+    Analysis(diags, b.syms, sorted_refs, sorted_tys, files, lints, exps)
 }
 
 /// Refs being collected, with their positions (akey) and, per position, the target already
@@ -1116,6 +1139,22 @@ pub fn dump(a: Analysis) -> List[u8] {
                 None => {}
             }
             out.push(10)
+        }
+    }
+    if a.expansions.len() > 0 {
+        put(inout out, "expansions\n")
+        for x in a.expansions {
+            put(inout out, "  ")
+            bytes.append(inout out, x.name)
+            put(inout out, " from ")
+            bytes.append(inout out, x.file)
+            out.push(58)
+            num(inout out, x.line)
+            out.push(58)
+            num(inout out, x.col)
+            put(inout out, " (")
+            num(inout out, bytes.lines(x.text).len() as u32)
+            put(inout out, " lines)\n")
         }
     }
     put(inout out, "symbols\n")

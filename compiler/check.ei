@@ -5023,7 +5023,50 @@ fn check_test(inout c: C, m: u32, n: ast.Node) -> Result[bool, diag.Diag] {
     Ok(true)
 }
 
+/// Check instance `ii`. The errors of a body that used comptime reflection say which
+/// specialization they were found in (docs/compiler.md, "C8.57": instantiation backtraces),
+/// and the instance is kept for `eiderc expand`.
 fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] {
+    let dstart = c.diags.len()
+    c.lint.refl = false
+    let r = check_fn_body(inout c, ii)
+    // what a body needs is known only when it checked cleanly (an error or a skipped statement
+    // may have hidden a use): `unused_uses` judges no other
+    if r.is_ok() && c.diags.len() == dstart && !c.body_err {
+        let fd0 = c.fdefs[c.insts[ii as usize].fd as usize].copy()
+        c.lint.recs.push(lint.CapRec(fd0.md, fd0.node, c.lint.used))
+    }
+    if !c.lint.refl { return r }
+    let irf = c.insts[ii as usize].ir.copy()
+    let fdr = c.fdefs[c.insts[ii as usize].fd as usize].copy()
+    c.lint.reflective.push(lint.Refl(irf, fdr.md, fdr.node))
+    let mut note = s("while specializing `")
+    bytes.append(inout note, c.ir.fns[irf as usize].name)
+    bytes.append(inout note, s("` (`eiderc expand` prints it)"))
+    for i in dstart..c.diags.len() {
+        let mut d = c.diags[i].copy()
+        d.help = joined_help(d.help, note)
+        c.diags[i] = d
+    }
+    match r {
+        Err(d) => {
+            let mut d2 = d.copy()
+            d2.help = joined_help(d.help, note)
+            return Err(d2)
+        }
+        Ok(x) => { return Ok(x) }
+    }
+}
+
+fn joined_help(h: List[u8], note: List[u8]) -> List[u8] {
+    if h.len() == 0 { return note.copy() }
+    let mut out = h.copy()
+    bytes.append(inout out, s("; "))
+    bytes.append(inout out, note)
+    out
+}
+
+fn check_fn_body(inout c: C, ii: u32) -> Result[bool, diag.Diag] {
     let inst = c.insts[ii as usize].copy()
     let f = c.fdefs[inst.fd as usize].copy()
     let m = f.md.copy()
@@ -5072,7 +5115,6 @@ fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] {
         return Err(errh("E0401", bn.end_line, bn.end_col, q2("function `", kt(c, f.key), "` must return ", ts(c, inst.ret), ", but its body ends without producing one"), "add a `return` or end the body with an expression of that type"))
     }
     ir.end_fn(inout c.ir, n.f, b)
-    c.lint.recs.push(lint.CapRec(m, f.node, c.lint.used))
     c.tsubst = no_subst()
     Ok(true)
 }
@@ -9892,6 +9934,7 @@ fn note_iteration(inout c: C, from: usize, b: CtBind) {
 
 /// `comptime for` as a statement.
 fn ct_for(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
+    c.lint.refl = true
     let r = nd(c, n.b)
     let its = ct_items(inout c, r)?
     if its.skip { return Ok(types.UNIT) }
@@ -10301,6 +10344,7 @@ fn ct_eval(inout c: C, e: u32) -> Result[CV, diag.Diag] {
 
 /// `comptime if`: the branch its condition selects, checked like an `if`'s.
 fn ct_compile_if(inout c: C, n: ast.Node, dest: Dest, exp: u32) -> Result[u32, diag.Diag] {
+    c.lint.refl = true
     let x = ct_eval(inout c, n.a)?
     if x.k == CV_UNKNOWN { return Ok(types.UNIT) }
     if x.k != CV_BOOL {
