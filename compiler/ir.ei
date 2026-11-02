@@ -72,6 +72,10 @@
 //   S_DYNCALL dst := call method (integer operand [b]) of the dyn value op a with args [b+1..b+c) (borrowed)
 //   S_NOTE    the checker's own note for the protection rule (a = kind, b = index; check.ei,
 //             "References"); removed before checking ends, so no IR that is used has one
+//   S_ADDR    local dst (L_REF) := the address of place a ("C8.54"): a read-only reference through
+//             heap memory is a pointer, set where it is bound and again after each write that
+//             may move the buffers its place goes through while it is live; P_LOCAL(dst)
+//             is the place afterwards
 //   S_CHECK   the bounds checks of place a, and nothing else (a reference is bound to it:
 //             its indices are checked once, then)
 // Functions  {name text, def, ret, locals [lstart/lcount], nparams, body block+1 (0 = none),
@@ -148,6 +152,9 @@ pub const L_VAR: u32 = 3
 pub const L_TEMP: u32 = 4
 pub const L_CAPTURE: u32 = 5
 pub const L_CAPREF: u32 = 6
+/// A reference through heap memory ("C8.54"): the local holds the address of the place an
+/// S_ADDR names; the place P_LOCAL(it) is that place
+pub const L_REF: u32 = 7
 
 /// Whether a local of kind k is one of a closure function's captures.
 pub fn is_capture(k: u32) -> bool { k == L_CAPTURE || k == L_CAPREF }
@@ -202,6 +209,7 @@ pub const S_NOTE: u32 = 29
 pub const S_CHECK: u32 = 30
 pub const S_DYN: u32 = 31
 pub const S_DYNCALL: u32 = 32
+pub const S_ADDR: u32 = 33
 
 pub const B_STR_FROM: u32 = 0
 pub const B_STR_FROM_INT: u32 = 1
@@ -856,6 +864,11 @@ fn put_stmt(inout o: Out, ir: Ir, t: types.Types, names: intern.Interner, id: u3
             put_op(inout o, ir, t, names, s.a)
             put_args(inout o, ir, t, names, s.b, s.c)
         }
+        33 => {
+            put_dst(inout o, s.dst)
+            put(inout o, "addr ")
+            put_place(inout o, ir, t, names, s.a)
+        }
         30 => {
             put(inout o, "check ")
             put_place(inout o, ir, t, names, s.a)
@@ -897,6 +910,7 @@ fn kind_text(k: u32) -> str {
         3 => "var"
         5 => "capture"
         6 => "capref"
+        7 => "ref"
         _ => "temp"
     }
 }

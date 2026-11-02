@@ -2223,11 +2223,8 @@ place): 137,817 to 137,518 lines in all, clone and drop call sites 7,750 to 7,48
 (compiler/main.ei: 131,152 to 131,073 lines, 7,253 to 7,024; tests/run/heap.ei 147 to 134;
 tests/bench/state.ei 76 to 74).
 
-**Remaining.** C pointer variables for references through heap memory (re-derived on each
-use today, choice 1): a pointer stays valid while the protection rule holds except across a
-copy-on-write un-share, so it needs a refresh after each write on the reference's root while
-it is alive (liveness in lowering), or a deep copy at the clones that share that root while
-it is alive. Then, after the next seed: run scripts/migrate-var.sh on compiler/, std/,
+**Remaining.** C pointer variables for references through heap memory: done for read-only
+references in C8.54 (choice 1 no longer holds for them). After the next seed: run scripts/migrate-var.sh on compiler/, std/,
 core/, packages/, tests/ and examples/, drop `var` from "Writing the compiler in today's
 Eider", and decide when `var` becomes an error.
 
@@ -4171,6 +4168,43 @@ spawned, built by `||` in a `let`) captures a snapshot as before.
 - **Tests.** `tests/run/closure_ref.ei` (strings, records, lists, a reference, `inout`
   parameters, nested closures, `Ref.update`, stored and returned closures still snapshotting),
   `tests/checks/fail/e0308_closure_captures_reference.ei`.
+
+## C8.54: read-only references through heap memory are pointers (#1)
+
+A `let` reference (and a pattern binding of a place scrutinee) that is read-only and whose place
+goes through a buffer a List, a Box or a record with its own Drop owns (`orders[i]`,
+`h.shapes[1]`, `o.items`) is a pointer, no longer a place re-derived at each use (decision
+C764). A reference that only reaches into the variable's own storage (a field of a local, an
+array element, an enum payload) and every mutable alias (`let mut`, `mut x`) stay re-derived
+places, as C8.6 chose: there the C compiler computes the same address, and a mutable alias must
+un-share the buffer before each write it makes.
+
+- **IR.** A new local kind `L_REF` holds the address and `S_ADDR dst := place` sets it; the
+  reference's place is `P_LOCAL(dst)`, so field and index steps on it start from the pointer,
+  with no bounds check (the binding's `S_CHECK` did it). The place of a reference taken
+  through another pointer reference is rewritten to the variable's own place
+  (`subst_ref_root`), so the protection rule and the refreshes see one root.
+- **Refresh.** Copy-on-write moves a buffer when a write un-shares it, and a write to
+  `orders[0].qty` un-shares the buffer of `orders` while `o = orders[1]` points into the old
+  one. The protection rule's backward liveness pass (`protect`) already knows the references
+  live after each noted write; for each pointer reference it finds live there,
+  `refresh_needed` says whether the write goes through a buffer the reference's path shares
+  (and is not a prefix of its heap path, which is an E0308 while the reference is live), and
+  `strip_notes` then puts an `S_ADDR` of the same place after the write statement, oldest
+  reference first. Only live references are refreshed, so a dead one never re-derives a place
+  that may no longer exist. Loops, branches and `break`/`continue` are covered by the
+  liveness fixed point.
+- **LLVM.** The slot is a `ptr` alloca (never an SSA value: `scan` places it); reading through
+  the reference loads it (`paddr` of a `P_LOCAL` whose local is `L_REF`). No debug variable
+  is declared for it. Comptime (`interp.ei`) keeps the place id in the local and resolves
+  paths through it, so it sees the variable's current data without any pointer.
+- **Tests.** `tests/run/ref_pointer.ei` (un-sharing writes to other elements, `inout` calls,
+  a push into another element's list, a reference into a reference, loops with a shared
+  buffer, a branch that writes, enum payloads in a record's List), run at -O2 under the
+  sanitizers by test-compiler.sh; `tests/bench/refs.ei`.
+- **Not done.** Mutable aliases as pointers: each write through one would have to un-share the
+  buffer on its path first (and so would the binding), and a buffer shared again later
+  would make a stale pointer write into data another variable sees.
 
 ## Testing
 

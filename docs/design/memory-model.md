@@ -10,7 +10,7 @@ and where (docs/compiler.md's C8 sections); what is not yet is listed in
 |---|---|
 | Copy-on-write heap values | implemented (C8.1) |
 | Operation traits | implemented (C8.4; `Default` added as an eighth, C8.23) |
-| `let` references, `let mut` aliases, `.copy()`, the protection rule | implemented (C8.6), with references re-derived places rather than C pointers ([#1](https://github.com/klxdev/eider-lang/issues/1)); `var` deprecated, not yet retired ([#2](https://github.com/klxdev/eider-lang/issues/2)) |
+| `let` references, `let mut` aliases, `.copy()`, the protection rule | implemented (C8.6); a read-only reference through heap memory is a pointer, other references are re-derived places (C8.54, [#1](https://github.com/klxdev/eider-lang/issues/1)); `var` deprecated, not yet retired ([#2](https://github.com/klxdev/eider-lang/issues/2)) |
 | `Ref[T]` | implemented (C8.7; inout fn values at the export boundary: [#3](https://github.com/klxdev/eider-lang/issues/3)) |
 | `for` over a List, an array or a Map | implemented: a snapshot taken before the loop (C8.20, C303) |
 | Closures | implemented: a closure that is run before its call returns (the argument of a List combinator, `Ref.read`/`update`, `Mutex.update`) captures by **reference**; every other closure captures a **snapshot** (by value, copy-on-write), C8.53 |
@@ -62,13 +62,14 @@ details decided there: the protection rule is E0308 with a `.copy()` fix, a muta
 a read-only place is E0307, `var` is rewritten by `eiderc migrate-var`, and `eiderc
 audit-refs` lists the writes whose meaning changed when `let` stopped copying).
 
-**What a reference is.** Not a C pointer: a reference is its *place* (root variable, fields,
-element indices, payloads), re-derived at each use, with every index evaluated once at the
-binding (and bounds-checked there). So nothing can dangle even across a copy-on-write
-un-share of the root, and the protection rule is what keeps the place meaning the same thing.
-Caching the address in a C pointer is an optimisation still open
-([#1](https://github.com/klxdev/eider-lang/issues/1)): it needs a refresh after each write to
-the root while the reference is alive.
+**What a reference is.** A reference is its *place* (root variable, fields, element indices,
+payloads), with every index evaluated once at the binding (and bounds-checked there); the
+protection rule is what keeps the place meaning the same thing. A place that goes through heap
+memory (a List element, a Box, a record with its own Drop) is cached in a pointer when the
+reference is read-only (C8.54): set at the binding and again after each write that may move a
+buffer on its path while the reference is alive (a copy-on-write un-share), so it always
+points at the variable's current data. Mutable aliases and references that stay inside
+the variable's own storage are re-derived at each use, which costs the same there.
 
 ```eider
 let o = orders[i]      // a read-only reference to orders[i]; nothing is copied
@@ -351,8 +352,8 @@ true?
    analysis on place paths, new errors with fixes, lowering (a reference is its place,
    re-derived at each use: no clone, no drop; C8.6). `var` keeps working as a deprecated
    spelling with an automatic fix: `var x = place` becomes `let mut x = place.copy()`,
-   `var x = fresh` becomes `let mut x = fresh` (`eiderc migrate-var`). Open: C pointers for
-   references ([#1](https://github.com/klxdev/eider-lang/issues/1)), migrating the repository
+   `var x = fresh` becomes `let mut x = fresh` (`eiderc migrate-var`). Read-only references
+   through heap memory are pointers (C8.54); open: pointers for mutable aliases, migrating the repository
    off `var` and retiring it ([#2](https://github.com/klxdev/eider-lang/issues/2)).
 3. ✅ `Ref[T]` on the existing handle machinery (C8.7).
 4. ✅ Non-escaping closures capture by reference (C8.53).
@@ -377,14 +378,14 @@ true?
 | Name of the shared handle | `Ref[T]` |
 | `mut` parameters | Not now; `let mut x = x.copy()` |
 | Closure captures | Non-escaping by reference, escaping by value (implemented, C8.53) |
-| What a reference is | Its place, re-derived at each use (C8.6); C pointers are an optimisation ([#1](https://github.com/klxdev/eider-lang/issues/1)) |
+| What a reference is | Its place (C8.6); a pointer to it when it is read-only and goes through heap memory, refreshed after writes that may move that memory (C8.54, [#1](https://github.com/klxdev/eider-lang/issues/1)) |
 | `for` over a sequence | A snapshot taken before the loop, for Lists as for arrays and Maps (C303) |
 
 ## Open items
 
 No design question is open. Work still to do on the model:
 
-- [#1](https://github.com/klxdev/eider-lang/issues/1) C pointer variables for references.
+- [#1](https://github.com/klxdev/eider-lang/issues/1) C pointer variables for references (done for read-only references; mutable aliases remain).
 - [#2](https://github.com/klxdev/eider-lang/issues/2) Retire `var`.
 - [#3](https://github.com/klxdev/eider-lang/issues/3) `Ref[T]`: inout fn values and the export boundary.
 - [#4](https://github.com/klxdev/eider-lang/issues/4) Closures capture by reference (non-escaping ones).

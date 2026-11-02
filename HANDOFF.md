@@ -45,7 +45,7 @@ Tests: `tests/checks/{fail,pass}` (header `// expect: CODE LINE:COL`, header cou
 ## Known limits
 
 - Every independent error is reported (at most `--max-errors`, default 100; docs/compiler.md, "Several errors"); the first is the one a first-error compiler would report.
-- Closures capture by snapshot and can't mutate captured variables (use an `inout` parameter or a `Ref`); recursion needs `Box`; references are re-derived places, not C pointers (docs/design/memory-model.md, "Open items").
+- Closures capture by snapshot (by reference when run before their call returns: docs/compiler.md, "C8.53") and can't mutate captured variables (use an `inout` parameter or a `Ref`); recursion needs `Box`; read-only references through heap memory are pointers, mutable aliases re-derived places (docs/compiler.md, "C8.54").
 - No `dyn` traits, no default method bodies. Map keys are any `Hash + Eq` type (docs/compiler.md, "C8.4: operation traits").
 - WASM exports are ints/bool only, no threads.
 - `comptime` re-runs the checker per constant (evaluation itself is an IR interpreter, compiler/interp.ei: no C compiler at compile time).

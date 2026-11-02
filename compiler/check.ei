@@ -1094,7 +1094,9 @@ const W_INOUT: u32 = 2
 /// A reference: the place it names, its binding (key, line, col, module m), whether it is
 /// a mutable alias, and the fix that makes it own a copy instead (`.copy()` after its
 /// initializer or scrutinee; none when its type lacks Copy, or in a generic body: `generic`).
-type RefInfo = { place: u32, key: u64, line: u32, col: u32, mutable: bool, fix: Option[diag.Fix], m: u32, generic: bool }
+/// `rl`: the L_REF local (of function `f`) that holds its address when it is a pointer ("C8.54"), else NONE;
+/// `ty` its type.
+type RefInfo = { place: u32, key: u64, line: u32, col: u32, mutable: bool, fix: Option[diag.Fix], m: u32, generic: bool, rl: u32, f: u32, ty: u32 }
 
 /// A write that may invalidate a reference: of `place`, an assignment, an `inout` argument
 /// or a resizing builtin (`what`), at (line, col) of module m.
@@ -1112,9 +1114,11 @@ type VarSite = { m: u32, fixes: List[diag.Fix] }
 type Refs = {
     refs: List[RefInfo], writes: List[WriteInfo], fns: Map[u32, bool], wpos: List[u64], vars: List[VarSite], any: bool,
     audit: bool, hits: List[diag.Diag],
+    /// per noted write: the pointer references live after it that it may move ("C8.54")
+    refresh: Map[u32, List[u32]],
 }
 
-fn no_refs() -> Refs { Refs(List.new(), List.new(), Map.new(), List.new(), List.new(), false, false, List.new()) }
+fn no_refs() -> Refs { Refs(List.new(), List.new(), Map.new(), List.new(), List.new(), false, false, List.new(), Map.new()) }
 
 fn ref_note(inout c: C, kind: u32, i: u32) { ir.emit(inout c.ir, ir.S_NOTE, 0, kind, i, 0, 0, 0) }
 
@@ -1189,15 +1193,77 @@ fn alias_read_error(c: C, line: u32, col: u32, k: u64, r: u64) -> diag.Diag {
 
 /// A new reference named key (declared at line:col) to `place` of type ty, rooted at the
 /// variable rk: noted, and the local that stands for it.
-fn new_ref(inout c: C, key: u64, ty: u32, place: u32, mutable: bool, rk: u64, line: u32, col: u32, fix: Option[diag.Fix]) -> Local {
+fn new_ref(inout c: C, key: u64, ty: u32, place0: u32, mutable: bool, rk: u64, line: u32, col: u32, fix: Option[diag.Fix]) -> Local {
     let rid = c.rf.refs.len() as u32
-    c.rf.refs.push(RefInfo(place, key, line, col, mutable, fix, c.am, generic_body(c)))
+    // (the place of a reference to a pointer reference is rooted at the variable, not at the pointer)
+    let place = subst_ref_root(inout c, place0)
+    let mut rl = NONE
+    if !mutable && ty != types.UNIT && ptr_path(c, place) {
+        rl = ir.local(inout c.ir, resolve.key_sym(key), ty, ir.L_REF, line)
+    }
+    c.rf.refs.push(RefInfo(place, key, line, col, mutable, fix, c.am, generic_body(c), rl, c.ir.cur, ty))
     c.rf.fns.insert(c.ir.cur, true)
     c.rf.any = true
     ref_note(inout c, N_DEF, rid)
     // its indices are checked now, as reading the place would
     if has_index(c, place) { emit(inout c, ir.S_CHECK, 0, place, 0, 0, ty, line) }
-    Local(key, ty, mutable, false, true, line, col, NONE, line, col, line, col, place, rid, canon(c, rk), false)
+    let mut alias = place.copy()
+    if rl != NONE {
+        // a read-only reference through heap memory is a pointer, set here and again after
+        // each write that may move the buffers it points into (protect, strip_notes)
+        ir.emit(inout c.ir, ir.S_ADDR, rl, place, 0, 0, ty, line)
+        alias = ir.place_local(inout c.ir, rl, ty)
+    }
+    Local(key, ty, mutable, false, true, line, col, NONE, line, col, line, col, alias, rid, canon(c, rk), false)
+}
+
+/// Place p with its root local, when that is a pointer reference's, replaced by the place the
+/// reference names (the analysis and the pointers of other references work on the variable's
+/// own places).
+fn subst_ref_root(inout c: C, p: u32) -> u32 {
+    let x = c.ir.places[p as usize].copy()
+    if x.kind == ir.P_LOCAL {
+        for r in c.rf.refs {
+            if r.rl == x.a && r.f == c.ir.cur { return r.place }
+        }
+        return p
+    }
+    let nb = subst_ref_root(inout c, x.a)
+    if nb == x.a { return p }
+    if x.kind == ir.P_FIELD { return ir.place_field(inout c.ir, nb, x.b, x.ty) }
+    if x.kind == ir.P_INDEX { return ir.place_index(inout c.ir, nb, x.b, x.ty, x.line) }
+    if x.kind == ir.P_PAYLOAD { return ir.place_payload(inout c.ir, nb, x.b, x.c, x.ty) }
+    ir.place_deref(inout c.ir, nb, x.ty)
+}
+
+/// Whether a read-only reference to place p is a pointer: its path goes through a buffer a
+/// List, a Box or a record with its own Drop owns (not just an enum payload).
+fn ptr_path(c: C, p: u32) -> bool {
+    let mut st: List[Step] = List.new()
+    path(c, p, inout st)
+    for x in st {
+        if x.heap && x.kind != ir.P_PAYLOAD { return true }
+    }
+    false
+}
+
+/// Whether a write to place w may move a buffer reference place r goes through (copy-on-write
+/// un-sharing along w's path), so r's pointer must be set again: the same root, a buffer in the
+/// path the two share, and w not a prefix that reaches r's heap memory (then r, if live, is
+/// an E0308).
+fn refresh_needed(c: C, r: u32, w: u32) -> bool {
+    if place_root(c, r) != place_root(c, w) { return false }
+    if invalidates(c, r, w) { return false }
+    let mut rs: List[Step] = List.new()
+    let mut ws: List[Step] = List.new()
+    path(c, r, inout rs)
+    path(c, w, inout ws)
+    let mut i: usize = 0
+    while i < rs.len() && i < ws.len() && rs[i].kind == ws[i].kind {
+        if rs[i].heap && rs[i].kind != ir.P_PAYLOAD { return true }
+        i += 1
+    }
+    false
 }
 
 /// A use of every reference expression e names (e is read again where this is noted).
@@ -1463,6 +1529,12 @@ fn pushed(st: List[List[u32]], top: List[u32]) -> List[List[u32]] {
 /// E0308 when write w (of function f) invalidates a reference in `live` (the earliest one).
 fn check_write(inout c: C, f: u32, w: u32, live: List[u32], inout seen: List[u64], inout found: List[Found]) {
     let wi = c.rf.writes[w as usize].copy()
+    let mut moved: List[u32] = List.new()
+    for r in live {
+        let ri = c.rf.refs[r as usize].copy()
+        if ri.rl != NONE && refresh_needed(c, ri.place, wi.place) { moved.push(r) }
+    }
+    if moved.len() > 0 { c.rf.refresh.insert(w, moved) }
     if c.rf.audit { audit_write(inout c, f, wi, live) }
     let mut best = NONE
     for r in live {
@@ -1577,15 +1649,53 @@ fn before_or_same(a: diag.Diag, b: diag.Diag) -> bool {
 fn strip_notes(inout c: C) {
     for b in 0..c.ir.blocks.len() {
         let bl = c.ir.blocks[b]
-        let mut n: u32 = 0
+        let mut out: List[u32] = List.new()
+        let mut pend: List[u32] = List.new()
+        let mut changed = false
         for i in 0..bl.len {
             let sid = c.ir.extra[(bl.start + i) as usize]
-            if c.ir.stmts[sid as usize].kind != ir.S_NOTE {
-                c.ir.extra[(bl.start + n) as usize] = sid
-                n += 1
+            let st = c.ir.stmts[sid as usize].copy()
+            if st.kind == ir.S_NOTE {
+                changed = true
+                if st.a == N_WRITE {
+                    match c.rf.refresh.get(st.b) {
+                        Some(l) => {
+                            for r in l {
+                                if !pend.contains(r) { pend.push(r) }
+                            }
+                        }
+                        None => {}
+                    }
+                }
+                continue
+            }
+            out.push(sid)
+            if pend.len() > 0 {
+                // after the write the pointer references it may have moved are set again (the
+                // oldest first: they are in creation order)
+                let mut done: List[u32] = List.new()
+                while done.len() < pend.len() {
+                    let mut best = NONE
+                    for r in pend {
+                        if !done.contains(r) && (best == NONE || r < best) { best = r }
+                    }
+                    done.push(best)
+                    let ri = c.rf.refs[best as usize].copy()
+                    c.ir.stmts.push(ir.Stmt(ir.S_ADDR, ri.rl, ri.place, 0, 0, ri.ty, st.line))
+                    out.push((c.ir.stmts.len() - 1) as u32)
+                }
+                pend = List.new()
             }
         }
-        if n != bl.len { c.ir.blocks[b] = ir.Block(bl.start, n) }
+        if !changed { continue }
+        if out.len() as u32 <= bl.len {
+            for i in 0..out.len() { c.ir.extra[(bl.start + i as u32) as usize] = out[i] }
+            c.ir.blocks[b] = ir.Block(bl.start, out.len() as u32)
+        } else {
+            let ns = c.ir.extra.len() as u32
+            for x in out { c.ir.extra.push(x) }
+            c.ir.blocks[b] = ir.Block(ns, out.len() as u32)
+        }
     }
 }
 

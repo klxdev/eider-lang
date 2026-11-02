@@ -1256,7 +1256,11 @@ fn gep_kw(e: E) -> str {
 /// The address of a place (its indices are checked already).
 fn paddr(inout e: E, p: lower.P, id: u32) -> List[u8] {
     let x = p.ir.places[id as usize]
-    if x.kind == ir.P_LOCAL { return laddr(x.a) }
+    if x.kind == ir.P_LOCAL {
+        // a pointer reference (S_ADDR): its slot holds the address
+        if loc(p, e, x.a).kind == ir.L_REF { return val(inout e, catb(lit("load ptr, ptr "), laddr(x.a))) }
+        return laddr(x.a)
+    }
     let bty = p.ir.places[x.a as usize].ty
     let b = paddr(inout e, p, x.a)
     if x.kind == ir.P_FIELD {
@@ -1808,6 +1812,9 @@ fn stmt(inout e: E, p: lower.P, id: u32) {
         builtin(inout e, p, s)
     } else if k == ir.S_CLOSURE {
         closure(inout e, p, s)
+    } else if k == ir.S_ADDR {
+        let ad = paddr(inout e, p, s.a)
+        stmt_text(inout e, catb(lit("store ptr "), catb(ad, catb(lit(", ptr "), laddr(s.dst)))))
     } else if k == ir.S_FNREF {
         let d = dst_addr(s.dst)
         zero(inout e, p, s.ty, d)
@@ -3471,6 +3478,9 @@ fn sc_stmt(p: lower.P, inout sc: Scan, id: u32) {
         sc_op(p, inout sc, s.c)
     } else if k == ir.S_READ || k == ir.S_TAG || k == ir.S_CHECK {
         sc_place(p, inout sc, s.a)
+    } else if k == ir.S_ADDR {
+        sc_place(p, inout sc, s.a)
+        sc.placed[s.dst as usize] = true
     } else if k == ir.S_MOVE || k == ir.S_DROP {
         let r = sc_place(p, inout sc, s.a)
         sc.wr[r as usize] = true
@@ -3504,7 +3514,7 @@ fn sc_stmt(p: lower.P, inout sc: Scan, id: u32) {
         }
     }
     // the destination, assigned whole
-    let has_dst = k == ir.S_COPY || k == ir.S_READ || k == ir.S_UNARY || k == ir.S_BINARY || k == ir.S_CAST || k == ir.S_CALL || k == ir.S_RECORD || k == ir.S_VARIANT || k == ir.S_ARRAY || k == ir.S_REPEAT || k == ir.S_TAG || k == ir.S_NOWMS || k == ir.S_TUPLE || k == ir.S_CLONE || k == ir.S_MOVE || k == ir.S_BUILTIN || k == ir.S_CLOSURE || k == ir.S_FNREF || k == ir.S_CALLV || k == ir.S_DYN || k == ir.S_DYNCALL
+    let has_dst = k == ir.S_COPY || k == ir.S_READ || k == ir.S_UNARY || k == ir.S_BINARY || k == ir.S_CAST || k == ir.S_CALL || k == ir.S_RECORD || k == ir.S_VARIANT || k == ir.S_ARRAY || k == ir.S_REPEAT || k == ir.S_TAG || k == ir.S_NOWMS || k == ir.S_TUPLE || k == ir.S_CLONE || k == ir.S_MOVE || k == ir.S_BUILTIN || k == ir.S_CLOSURE || k == ir.S_FNREF || k == ir.S_CALLV || k == ir.S_DYN || k == ir.S_DYNCALL || k == ir.S_ADDR
     if has_dst && s.dst != NONE {
         if k != ir.S_REPEAT || s.b > 0 { sc_def(inout sc, s.dst) } else { sc.wr[s.dst as usize] = true }
         // List.sum accumulates in its destination: never an SSA value
@@ -3671,7 +3681,7 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
         let l = loc(p, e, i)
         if is_void(l.ty) || e.ssa[i as usize] { continue }
         alloca(inout e, p, i, l.ty)
-        if sc.nz[i as usize] { zero(inout e, p, l.ty, laddr(i)) }
+        if sc.nz[i as usize] && l.kind != ir.L_REF { zero(inout e, p, l.ty, laddr(i)) }
     }
     if e.dbg { declare_locals(inout e, p, f) }
     e.pframe = e.prof > 0 && lower.framed(p, fd.body - 1)
@@ -3724,7 +3734,7 @@ fn flush_fn(inout e: E, h: List[u8]) {
 }
 
 fn alloca(inout e: E, p: lower.P, l: u32, ty: u32) {
-    let mt = mty(inout e, p, ty)
+    let mt = if loc(p, e, l).kind == ir.L_REF { lit("ptr") } else { mty(inout e, p, ty) }
     bytes.append(inout e.ent, lit("  %l"))
     wd(inout e.ent, l as u64)
     bytes.append(inout e.ent, lit(" = alloca "))
@@ -3811,7 +3821,7 @@ fn declare_locals(inout e: E, p: lower.P, f: u32) {
     declare(inout e, lit("llvm.dbg.declare"), lit("declare void @llvm.dbg.declare(metadata, metadata, metadata)"))
     for i in 0..fd.lcount {
         let l = loc(p, e, i)
-        if i < e.nc || is_void(l.ty) || e.ssa[i as usize] || l.name == 0 { continue }
+        if i < e.nc || is_void(l.ty) || e.ssa[i as usize] || l.name == 0 || l.kind == ir.L_REF { continue }
         let isparam = i < e.nc + fd.nparams
         if !isparam && l.kind == ir.L_TEMP { continue }
         let tyid = di_type(inout e, p, l.ty)

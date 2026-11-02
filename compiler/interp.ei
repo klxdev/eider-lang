@@ -378,7 +378,13 @@ fn op(p: lower.P, fr: Fr, id: u32) -> Val {
 /// Resolve place id to its root local, pushing the child indexes onto steps (bounds checked).
 fn path(p: lower.P, fr: Fr, id: u32, inout steps: List[u32]) -> Result[u32, Trap] {
     let pl = p.ir.places[id as usize]
-    if pl.kind == ir.P_LOCAL { return Ok(pl.a) }
+    if pl.kind == ir.P_LOCAL {
+        // a pointer reference (S_ADDR) is the place it was set to
+        if p.ir.locals[(p.ir.fns[fr.f as usize].lstart + pl.a) as usize].kind == ir.L_REF {
+            return path(p, fr, fr.locals[pl.a as usize].n as u32, inout steps)
+        }
+        return Ok(pl.a)
+    }
     let root = path(p, fr, pl.a, inout steps)?
     if pl.kind == ir.P_FIELD {
         steps.push(pl.b)
@@ -559,6 +565,10 @@ fn simple(p: lower.P, inout st: St, inout fr: Fr, id: u32) -> Result[bool, Trap]
     if k == ir.S_STORE {
         let v = op(p, fr, x.b)
         write(p, inout fr, x.a, v)?
+        return Ok(true)
+    }
+    if k == ir.S_ADDR {
+        fr.locals[x.dst as usize] = mk(K_INT, x.a as u64)
         return Ok(true)
     }
     if k == ir.S_DROP || k == ir.S_CHECK {
