@@ -108,6 +108,27 @@ with 101. A `longjmp` out of a failed test does not run drops, so values owned
 by the failed test leak, and a lock held at the moment of the trap stays held (for example a
 trap inside a `Mutex.update` closure). Tests after it that use the same Mutex deadlock.
 
+## Map hashing
+
+A `Map` is `{ K *keys; V *vals; uint8_t *state; len, cap, used, key0, key1 }` (the last two
+words are its hash key, 0 until the first insert). The slot of a key is `hash & (cap - 1)`,
+with the hash computed by SipHash-1-3 (core/eider_sip.inc, shared with the WebAssembly runtime)
+under `(key0, key1)`:
+
+| Function | Contract |
+|---|---|
+| `uint64_t ei_sip13_w(const uint64_t *key, uint64_t w)`, `ei_sip13_w2(key, a, b)` | SipHash-1-3 of the 8 little-endian bytes of `w`, or of the 16 bytes of `a`, `b` (integers, bool and `()` widen to a word; a record, tuple, enum, array or List folds its parts: `h = ei_sip13_w2(key, h, part)` from a fixed start, each part hashed the same way) |
+| `uint64_t ei_sip13_str(const uint64_t *key, const char *t)` | SipHash-1-3 of the bytes of text up to its NUL |
+| `uint64_t ei_sip13(k0, k1, p, n)` | any bytes under an explicit key (tests/core/rt_test.c checks it against the reference vectors) |
+| `void ei_map_seed(uint64_t *key)` | the key of a Map at its first insert: two words from a per-thread SipHash-1-3 counter whose own key is 128 bits of OS randomness (`ec_random_fill` in eider_core.c, read once per thread; the runtime linked without the core uses the fixed key), `key[0]` never 0 |
+| `EI_MAP_DET_K0`, `EI_MAP_DET_K1` | the key of `Map.deterministic()` |
+
+The key is copied with the Map (a copy shares the buffers, whose slots depend on it), kept
+by `uniq_` and by growth, and never changes. `hash` of a value (the `Hash` trait, `x.hash()`,
+`ei_hash_u64`, `ei_hash_str`) is not seeded and is unchanged. The order of a Map's slots, so of
+`keys`, `values`, `entries`, `for` and Show, is **unspecified**: it differs between Maps and runs.
+The WebAssembly runtime has no OS randomness: every Map there takes the fixed key.
+
 ## Inline (in the header) vs out of line (in the .c)
 
 | In `eider_rt.h`, `static inline` | In `eider_rt.c` |

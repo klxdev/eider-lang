@@ -1,7 +1,8 @@
 // Iterating a Map (docs/compiler.md, "C8.20"): `for (k, v) in m`, `for e in m` (a (key,
-// value) tuple), `m.keys()`, `m.values()`, `m.entries()`; all in slot order, which is fixed
-// for a given insertion history; the loop runs over copies made before it, so the body may
-// change the Map. Also tuple patterns in `for` over a List. Expected output: map_iter.out.
+// value) tuple), `m.keys()`, `m.values()`, `m.entries()`; all in the same order, which is
+// unspecified (each Map has its own hash seed: decision C805), so the checks here do not depend
+// on it; the loop runs over copies made before it, so the body may change the Map. Also tuple
+// patterns in `for` over a List. Expected output: map_iter.out.
 type Item = { name: String, qty: i32 }
 
 fn total(m: Map[String, Item]) -> i32 {
@@ -29,10 +30,12 @@ fn main() uses io {
     let mut m: Map[i32, String] = Map.new()
     for i in 0..5 { m.insert(i * 7, String.from_int((i * 10) as i64)) }
     let mut ks = 0
+    let mut lens: usize = 0
     for (k, v) in m {
         ks += k
-        print(v.len())
+        lens += v.len()
     }
+    print(lens)
     print(ks)
     print(m.keys().len())
     let mut sum = 0

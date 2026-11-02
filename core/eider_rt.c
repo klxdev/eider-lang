@@ -189,6 +189,42 @@ uint64_t ei_grow_cap(uint64_t cap, uint64_t len, uint64_t extra, uint64_t min) {
   return c;
 }
 
+
+#include "eider_sip.inc"
+
+/* OS randomness from the core (core/eider_core.c); weak so the runtime also links without it
+   (then Map seeds are the fixed deterministic one). */
+extern int64_t ec_random_fill(void *dst, uint64_t n) __attribute__((weak));
+
+static _Thread_local struct { uint64_t k0, k1, ctr; bool ready; } map_rng;
+
+void ei_map_seed(uint64_t *key) {
+  if (!map_rng.ready) {
+    uint64_t k[2] = {0, 0};
+    if (ec_random_fill) {
+      if (ec_random_fill(k, sizeof k) != 0) ei_trap("cannot read OS randomness for a Map seed", 0);
+    } else {
+      k[0] = EI_MAP_DET_K0;
+      k[1] = EI_MAP_DET_K1;
+    }
+    map_rng.k0 = k[0];
+    map_rng.k1 = k[1];
+    map_rng.ctr = 0;
+    map_rng.ready = true;
+  }
+  map_rng.ctr++;
+  /* SipHash-1-3 of the counter (one word) under the thread's key */
+  ei_sip_state st;
+  ei_sip_init(&st, map_rng.k0, map_rng.k1);
+  ei_sip_word(&st, map_rng.ctr);
+  uint64_t a = ei_sip_final(&st, UINT64_C(8) << 56);
+  /* the second word: the counter again, one block more */
+  ei_sip_word(&st, ~map_rng.ctr);
+  uint64_t b = ei_sip_final(&st, UINT64_C(16) << 56);
+  key[0] = a ? a : 1;
+  key[1] = b;
+}
+
 /* In-place List operations (docs/compiler.md "C8.49"). The caller owns the buffer (it made it
    unique). ei_list_open opens a gap of n elements at index `at` (<= *len): grows the buffer
    if needed, moves the tail up and adds n to *len; the gap is uninitialised. ei_list_close

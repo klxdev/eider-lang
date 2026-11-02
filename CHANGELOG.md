@@ -7,6 +7,10 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 
 ## Unreleased (0.5.0, runtime and std)
 
+- **Seeded Map hashing** (#55): Maps hash keys with SipHash-1-3 under a key of their own made from
+  OS randomness; `Map.deterministic()` for tests. **The iteration order of a Map is unspecified**
+  (it differs between Maps and runs); programs and tests that printed a Map in slot order must sort
+  or aggregate. Decision C805; the Map benchmark runs 1.8 times slower, the compiler itself no slower.
 - **The driver links the crypto backend** (#64): a program that imports `core/crypto` needs no
   wrapper; `--crypto <name>`, `$EIDER_CRYPTO` or `[crypto] provider`. Decision C802.
 - **In-place List operations** (#16): `insert`, `remove`, `truncate`, `remove_range`, `extend`,

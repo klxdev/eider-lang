@@ -474,6 +474,45 @@ static void test_hash(void) {
   EQU(ei_hash_str("ab\0cd"), ei_hash_str("ab"));
 }
 
+static void test_siphash(void) {
+  /* SipHash-1-3, key 00..0f, message 00 01 02 ...: the empty message is the reference vector;
+     the others come from an independent implementation (checked against the SipHash-2-4 vector
+     of the paper, a129ca6149be45e5) */
+  uint8_t msg[32];
+  for (int i = 0; i < 32; i++) msg[i] = (uint8_t)i;
+  uint64_t k0 = UINT64_C(0x0706050403020100), k1 = UINT64_C(0x0f0e0d0c0b0a0908);
+  EQU(ei_sip13(k0, k1, msg, 0), UINT64_C(0xabac0158050fc4dc));
+  EQU(ei_sip13(k0, k1, msg, 1), UINT64_C(0xc9f49bf37d57ca93));
+  EQU(ei_sip13(k0, k1, msg, 7), UINT64_C(0xd3927d989bb11140));
+  EQU(ei_sip13(k0, k1, msg, 8), UINT64_C(0x369095118d299a8e));
+  EQU(ei_sip13(k0, k1, msg, 9), UINT64_C(0x25a48eb36c063de4));
+  EQU(ei_sip13(k0, k1, msg, 15), UINT64_C(0xd320d86d2a519956));
+  EQU(ei_sip13(k0, k1, msg, 16), UINT64_C(0xcc4fdd1a7d908b66));
+  EQU(ei_sip13(k0, k1, msg, 17), UINT64_C(0x9cf2689063dbd80c));
+  EQU(ei_sip13(k0, k1, msg, 31), UINT64_C(0x2370dd1f8c21d1bc));
+  /* the word forms and the text form are the bytes' hash under the key */
+  uint64_t key[2] = {k0, k1};
+  uint8_t w8[8], w16[16];
+  for (int i = 0; i < 8; i++) {
+    w8[i] = (uint8_t)(UINT64_C(0x0123456789abcdef) >> (8 * i));
+    w16[i] = w8[i];
+    w16[8 + i] = (uint8_t)(UINT64_C(0xfedcba9876543210) >> (8 * i));
+  }
+  EQU(ei_sip13_w(key, UINT64_C(0x0123456789abcdef)), ei_sip13(k0, k1, w8, 8));
+  EQU(ei_sip13_w2(key, UINT64_C(0x0123456789abcdef), UINT64_C(0xfedcba9876543210)), ei_sip13(k0, k1, w16, 16));
+  EQU(ei_sip13_str(key, "ab"), ei_sip13_str(key, "ab\0cd"));
+  EQU(ei_sip13_str(key, "abcdefghij"), ei_sip13(k0, k1, (const uint8_t *)"abcdefghij", 10));
+  uint64_t other[2] = {k0 + 1, k1};
+  EQU(ei_sip13_w(key, 1) != ei_sip13_w(other, 1), 1);
+  EQU(ei_sip13_w(key, 1) != ei_sip13_w(key, 2), 1);
+  EQU(ei_sip13_w2(key, 1, 2) != ei_sip13_w2(key, 2, 1), 1);
+  /* keys: fresh, never unseeded, different */
+  uint64_t a[2], b[2];
+  ei_map_seed(a);
+  ei_map_seed(b);
+  EQU(a[0] != 0 && b[0] != 0 && (a[0] != b[0] || a[1] != b[1]), 1);
+}
+
 static void test_print(void) {
   cap_begin();
   ei_print_i(0);
@@ -1102,6 +1141,7 @@ int main(void) {
   test_buf();
   test_string();
   test_hash();
+  test_siphash();
   test_print();
   test_float_text();
   test_clock();

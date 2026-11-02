@@ -372,6 +372,12 @@ kernel's CSPRNG; it cannot fail or block; `nonblock` is ignored). There is no fa
 system with neither returns `-ENOSYS`, never bytes derived from the time or the pid. This is
 what seeded hashing (SipHash keys) and the std CSPRNG build on.
 
+`int64_t ec_random_fill(void *dst, uint64_t n)` is the same randomness for C that is linked into
+the program, straight into `dst` (at most 256 bytes) and through no buffer, so it can run in the
+middle of a sequence of core calls: 0, or `-errno`, and it blocks until the kernel pool is seeded
+(no `nonblock`). The language runtime uses it, once per thread, for the hash key of `Map`s
+(core/RUNTIME.md "Map hashing"). Eider does not bind it.
+
 ## Processes
 
 | Function | Arguments | Result |

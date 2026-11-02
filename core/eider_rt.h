@@ -325,6 +325,20 @@ uint64_t ei_grow_cap(uint64_t cap, uint64_t len, uint64_t extra, uint64_t min);
 void ei_list_open(void **data, uint64_t *len, uint64_t *cap, uint64_t at, uint64_t n, uint64_t size);
 void ei_list_close(void *data, uint64_t *len, uint64_t at, uint64_t n, uint64_t size);
 
+/* Map hashing (decision C6; core/RUNTIME.md "Map hashing"): SipHash-1-3 keyed by the 128-bit key
+   a Map carries (key[0], key[1]). ei_sip13_w hashes the 8 little-endian bytes of a word,
+   ei_sip13_w2 the 16 bytes of two words, ei_sip13_str a C string's bytes up to its NUL, ei_sip13
+   any bytes under an explicit key. */
+uint64_t ei_sip13(uint64_t k0, uint64_t k1, const uint8_t *p, uint64_t n);
+uint64_t ei_sip13_w(const uint64_t *key, uint64_t w);
+uint64_t ei_sip13_w2(const uint64_t *key, uint64_t a, uint64_t b);
+uint64_t ei_sip13_str(const uint64_t *key, const char *t);
+/* Writes a fresh key (two words, key[0] nonzero) for a Map's first insertion: from a per-thread
+   SipHash-keyed counter whose key is 128 bits of OS randomness (read once per thread). */
+void ei_map_seed(uint64_t *key);
+/* The key of a `Map.deterministic()` map. */
+#define EI_MAP_DET_K0 UINT64_C(0x0123456789abcdef)
+#define EI_MAP_DET_K1 UINT64_C(0xfedcba9876543210)
 
 static inline ei_buf_hdr *ei_buf_h(void *d) { return (ei_buf_hdr *)d - 1; }
 /* Another holder (NULL is a no-op). */

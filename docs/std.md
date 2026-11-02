@@ -298,4 +298,3 @@ String is an `error.Error`, "Errors and std/error" above).
 - `dyn Error` causes (P0.7), so a Failure can keep a stream.Error's kind.
 - `var` is gone from std except six shares of generic or Copy-less values out of read-only
   parameters (decision C100), which wait for a way to copy those (a `Copy`-free share).
-- Seeded SipHash Map (C6), `BTreeMap`, RwLock/Once, logging and config (roadmap layer/std).

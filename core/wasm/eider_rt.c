@@ -120,6 +120,15 @@ uint64_t ei_grow_cap(uint64_t cap, uint64_t len, uint64_t extra, uint64_t min) {
   return c;
 }
 
+
+#include "../eider_sip.inc"
+
+/* A WebAssembly module has no OS randomness: its Maps all take the fixed seed. */
+void ei_map_seed(uint64_t *key) {
+  key[0] = EI_MAP_DET_K0;
+  key[1] = EI_MAP_DET_K1;
+}
+
 /* In-place List operations (docs/compiler.md "C8.49"). The caller owns the buffer (it made it
    unique). ei_list_open opens a gap of n elements at index `at` (<= *len): grows the buffer
    if needed, moves the tail up and adds n to *len; the gap is uninitialised. ei_list_close

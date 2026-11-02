@@ -277,6 +277,8 @@ pub const B_LIST_SWAP: u32 = 55
 pub const B_LIST_REMOVE_RANGE: u32 = 56
 pub const B_LIST_SLICE: u32 = 57
 pub const B_LIST_FILLED: u32 = 58
+/// B_MAP_DETERMINISTIC -> ty: an empty Map with the fixed seed (`Map.deterministic()`, decision C805)
+pub const B_MAP_DETERMINISTIC: u32 = 59
 
 pub fn builtin_name(b: u32) -> str {
     match b {
@@ -339,6 +341,7 @@ pub fn builtin_name(b: u32) -> str {
         56 => "remove_range"
         57 => "slice"
         58 => "filled"
+        59 => "deterministic"
         _ => "builtin"
     }
 }

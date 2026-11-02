@@ -1,0 +1,36 @@
+// Map benchmark (decision C805): inserts, lookups, removals and a walk over integer keys and
+// text keys. The output does not depend on the order of a Map (it is unspecified), so every
+// compiler's build prints the same.
+fn main() uses io {
+    let n: i64 = 200000
+    let mut m: Map[i64, i64] = Map.new()
+    for i in 0..n { m.insert(i * 31 + 7, i) }
+    let mut hits: i64 = 0
+    for round in 0..5 {
+        for i in 0..n {
+            match m.get(i * 31 + 7 + (round % 2) as i64) {
+                Some(v) => { hits += v % 3 }
+                None => {}
+            }
+        }
+    }
+    for i in 0..n / 2 { m.remove(i * 31 + 7) }
+    let mut walk: i64 = 0
+    for v in m.values() { walk += v % 1000 }
+    print(m.len())
+    print(hits)
+    print(walk)
+
+    let mut s: Map[String, i64] = Map.new()
+    let k: i64 = 50000
+    for i in 0..k { s.insert(String.from_int(i * 13), i) }
+    let mut total: i64 = 0
+    for i in 0..k {
+        match s.get(String.from_int(i * 13)) {
+            Some(v) => { total += v }
+            None => {}
+        }
+    }
+    print(s.len())
+    print(total)
+}

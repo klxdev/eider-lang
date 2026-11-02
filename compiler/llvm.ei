@@ -406,7 +406,7 @@ fn def_ty(inout e: E, p: lower.P, ty: u32) {
     } else if k == types.T_LIST {
         tdef(inout e, name, lit(r"{ ptr, i64, i64 }"))
     } else if k == types.T_MAP {
-        tdef(inout e, name, lit(r"{ ptr, ptr, ptr, i64, i64, i64 }"))
+        tdef(inout e, name, lit(r"{ ptr, ptr, ptr, i64, i64, i64, i64, i64 }"))
     } else if k == types.T_FN || k == types.T_DYN {
         tdef(inout e, name, lit(r"{ ptr, ptr, ptr, ptr, ptr }"))
     } else if k == types.T_ENUM {
@@ -1501,16 +1501,28 @@ fn mix64(inout e: E, x: List[u8]) -> List[u8] {
     v
 }
 
-/// The hash of a value of type ty as i64 (lower.ei's hash_text).
-fn hash_val(inout e: E, p: lower.P, ty: u32, v: List[u8]) -> List[u8] {
+/// The hash of a value of type ty as i64 (lower.ei's hash_text). With a `seed` (a pointer to
+/// the map's two key words) it is the Map key hash: SipHash-1-3 under that key
+/// (core/eider_sip.inc); without one (empty), the unseeded structural hash that `x.hash()` and
+/// the comptime interpreter give.
+fn hash_val(inout e: E, p: lower.P, ty: u32, v: List[u8], seed: List[u8]) -> List[u8] {
     let k = kind(p, ty)
+    let sd = seed.len() > 0
     if k == types.T_STRING || k == types.T_STR {
         let s = str_ptr(inout e, p, ty, v)
+        if sd { return rt_call(inout e, p, "ei_sip13_str", tys2(types.STR, types.STR), args2(seed, s), types.U64) }
         return rt_call(inout e, p, "ei_hash_str", tys1(types.STR), args1(s), types.U64)
     }
-    let gn_ = gname(e, "hash_", ty)
-    if lower.is_struct_kind(k) { gneed(inout e, lower.GK_HASH, ty) }
-    if lower.is_struct_kind(k) { return rt_call_b(inout e, p, gn_, tys1(ty), args1(v), types.U64) }
+    if lower.is_struct_kind(k) {
+        if sd {
+            gneed(inout e, lower.GK_SHASH, ty)
+            let sn = gname(e, "shash_", ty)
+            return rt_call_b(inout e, p, sn, tys2(ty, types.STR), args2(v, seed), types.U64)
+        }
+        gneed(inout e, lower.GK_HASH, ty)
+        let gn_ = gname(e, "hash_", ty)
+        return rt_call_b(inout e, p, gn_, tys1(ty), args1(v), types.U64)
+    }
     // (uint64_t)(v): integers widen by their signedness, bool and () are 0 or 1
     let mut x = v.copy()
     if k == types.T_UNIT || k == types.T_NEVER {
@@ -1524,6 +1536,7 @@ fn hash_val(inout e: E, p: lower.P, ty: u32, v: List[u8]) -> List[u8] {
             x = val(inout e, catb(lit(op), catb(lit(int_ty(ik)), catb(lit(" "), cat(v, " to i64")))))
         }
     }
+    if sd { return rt_call(inout e, p, "ei_sip13_w", tys2(types.STR, types.U64), args2(seed, x), types.U64) }
     mix64(inout e, x)
 }
 
@@ -2612,6 +2625,13 @@ fn builtin(inout e: E, p: lower.P, s: ir.Stmt) {
         zero(inout e, p, s.ty, bd_)
         return
     }
+    if b == ir.B_MAP_DETERMINISTIC {
+        let bd_ = bdst(inout e, p, s)
+        zero(inout e, p, s.ty, bd_)
+        store_field_i64(inout e, p, s.ty, bd_, 6, lit("81985529216486895"))
+        store_field_i64(inout e, p, s.ty, bd_, 7, lit("-81985529216486896"))
+        return
+    }
     if b == ir.B_BOX_NEW {
         let a = barg(p, s, 0)
         let v = argval(inout e, p, a)
@@ -3201,7 +3221,7 @@ fn trait_builtin(inout e: E, p: lower.P, s: ir.Stmt) {
     }
     if b == ir.B_HASH {
         let v = argval(inout e, p, x)
-        let r = hash_val(inout e, p, ty, v)
+        let r = hash_val(inout e, p, ty, v, List.new())
         bset(inout e, p, s, r)
         return
     }
@@ -5322,24 +5342,40 @@ fn g_cmp(inout e: E, p: lower.P, ty: u32) {
     gfn_end(inout e, p, gf)
 }
 
-/// h = mix64(h ^ <hash of the part at xa>), h in the alloca at ha.
-fn hash_part(inout e: E, p: lower.P, ty: u32, ha: List[u8], xa: List[u8]) {
+/// The state h folded with x: mix64(h ^ x), or with a seed SipHash-1-3 of the two words.
+fn hash_fold(inout e: E, p: lower.P, h: List[u8], x: List[u8], seed: List[u8]) -> List[u8] {
+    if seed.len() > 0 {
+        return rt_call(inout e, p, "ei_sip13_w2", tys3(types.STR, types.U64, types.U64), args3(seed, h, x), types.U64)
+    }
+    let y = val(inout e, catb(lit("xor i64 "), catb(h, catb(lit(", "), x))))
+    mix64(inout e, y)
+}
+
+/// h = fold(h, <hash of the part at xa>), h in the alloca at ha.
+fn hash_part(inout e: E, p: lower.P, ty: u32, ha: List[u8], xa: List[u8], seed: List[u8]) {
     let _h113 = argof(inout e, p, ty, xa)
-    let hv = hash_val(inout e, p, ty, _h113)
+    let hv = hash_val(inout e, p, ty, _h113, seed)
     let h = load_i64(inout e, ha)
-    let x = val(inout e, catb(lit("xor i64 "), catb(h, catb(lit(", "), hv))))
-    let _h114 = mix64(inout e, x)
+    let _h114 = hash_fold(inout e, p, h, hv, seed)
     store_i64(inout e, _h114, ha)
 }
 
-fn g_hash(inout e: E, p: lower.P, ty: u32) {
-    let _h115 = gname(e, "hash_", ty)
-    let gf = gfn_begin(inout e, p, _h115, tys1(ty), types.U64)
+/// `hash_T(x)` (the structural hash of Hash, Map keys of other types than integers, bool and
+/// text before C805) or, seeded, `shash_T(x, seed)`: the Map key hash, the same walk with
+/// every step through SipHash-1-3 under the map's seed.
+fn g_hash(inout e: E, p: lower.P, ty: u32, seeded: bool) {
+    let hname = if seeded { gname(e, "shash_", ty) } else { gname(e, "hash_", ty) }
+    let hty = if seeded { tys2(ty, types.STR) } else { tys1(ty) }
+    let gf = gfn_begin(inout e, p, hname, hty, types.U64)
     let x = gf.args[0].copy()
+    let mut seed: List[u8] = List.new()
+    if seeded { seed = gf.args[1].copy() }
     let f = lower.custom_fn(p, lower.TR_HASH, ty)
     if f != NONE {
         let none: List[u8] = List.new()
-        let r = call_user(inout e, p, f, args1(x), none)
+        let mut r = call_user(inout e, p, f, args1(x), none)
+        // a user's Hash still goes through the seed, so a map's order differs per seed
+        if seeded { r = rt_call(inout e, p, "ei_sip13_w", tys2(types.STR, types.U64), args2(seed, r), types.U64) }
         gret_v(inout e, p, r)
         gfn_end(inout e, p, gf)
         return
@@ -5353,15 +5389,14 @@ fn g_hash(inout e: E, p: lower.P, ty: u32) {
         let ms = abi.parts(p, ty, NONE)
         for i in 0..ms.len() {
             let _h116 = part_addr(inout e, p, ty, x, i as u32)
-            hash_part(inout e, p, ms[i], ha, _h116)
+            hash_part(inout e, p, ms[i], ha, _h116, seed)
         }
     } else if k == types.T_ENUM {
         let d = types.def_of(p.t, ty)
         let tg = tag_of(inout e, p, ty, x)
         let h = load_i64(inout e, ha)
         let t64 = val(inout e, catb(lit("zext i32 "), cat(tg, " to i64")))
-        let _h269 = val(inout e, catb(lit("xor i64 "), catb(h, catb(lit(", "), t64))))
-        let _h117 = mix64(inout e, _h269)
+        let _h117 = hash_fold(inout e, p, h, t64, seed)
         store_i64(inout e, _h117, ha)
         for i in 0..d.len {
             let v = types.variant(p.t, d, i)
@@ -5372,29 +5407,28 @@ fn g_hash(inout e: E, p: lower.P, ty: u32) {
             let j = if_then(inout e, _h118)
             for fi in 0..v.flen {
                 let _h119 = payload_addr(inout e, p, ty, x, i, fi)
-                hash_part(inout e, p, types.field(p.t, v.fstart, fi).ty, ha, _h119)
+                hash_part(inout e, p, types.field(p.t, v.fstart, fi).ty, ha, _h119, seed)
             }
             if_end(inout e, j)
         }
     } else if k == types.T_ARRAY {
         let lp = loop_n(inout e, p, bytes.from_u64(t.b as u64))
         let _h120 = arr_elem(inout e, p, ty, x, lp.iv)
-        hash_part(inout e, p, t.a, ha, _h120)
+        hash_part(inout e, p, t.a, ha, _h120, seed)
         loop_next(inout e, lp)
     } else if k == types.T_LIST {
         let n = load_i64_field(inout e, p, ty, x, 1)
         let h = load_i64(inout e, ha)
-        let _h270 = val(inout e, catb(lit("xor i64 "), catb(h, catb(lit(", "), n))))
-        let _h121 = mix64(inout e, _h270)
+        let _h121 = hash_fold(inout e, p, h, n, seed)
         store_i64(inout e, _h121, ha)
         let d = load_ptr_field(inout e, p, ty, x, 0)
         let lp = loop_n(inout e, p, n)
         let _h122 = elem(inout e, p, t.a, d, lp.iv)
-        hash_part(inout e, p, t.a, ha, _h122)
+        hash_part(inout e, p, t.a, ha, _h122, seed)
         loop_next(inout e, lp)
     } else if k == types.T_BOX {
         let _h123 = load_ptr_field(inout e, p, ty, x, 0)
-        hash_part(inout e, p, t.a, ha, _h123)
+        hash_part(inout e, p, t.a, ha, _h123, seed)
     }
     let _h124 = load_i64(inout e, ha)
     gret_v(inout e, p, _h124)
@@ -5917,8 +5951,8 @@ fn g_box(inout e: E, p: lower.P, ty: u32) {
 }
 
 /// hash(key) & (cap - 1)
-fn slot_of(inout e: E, p: lower.P, kt: u32, kv: List[u8], cap: List[u8]) -> List[u8] {
-    let h = hash_val(inout e, p, kt, kv)
+fn slot_of(inout e: E, p: lower.P, kt: u32, kv: List[u8], cap: List[u8], seed: List[u8]) -> List[u8] {
+    let h = hash_val(inout e, p, kt, kv, seed)
     let m = val(inout e, catb(lit("sub i64 "), cat(cap, ", 1")))
     val(inout e, catb(lit("and i64 "), catb(h, catb(lit(", "), m))))
 }
@@ -5955,7 +5989,8 @@ fn g_map(inout e: E, p: lower.P, kd: u32, ty: u32) {
         let s = load_ptr_field(inout e, p, ty, m, 2)
         let kp = load_ptr_field(inout e, p, ty, m, 0)
         let ia = temp(inout e, p, types.U64)
-        let _h157 = slot_of(inout e, p, kt, key, cap)
+        let fseed = field_addr(inout e, p, ty, m, 6)
+        let _h157 = slot_of(inout e, p, kt, key, cap, fseed)
         store_i64(inout e, _h157, ia)
         let lp = loop_n(inout e, p, cap)
         let i = load_i64(inout e, ia)
@@ -6032,6 +6067,13 @@ fn g_map(inout e: E, p: lower.P, kd: u32, ty: u32) {
     let va = addrof(inout e, p, vt, gf.args[2])
     let f = rt_call_b(inout e, p, fname, tys2(PTR + ty, kt), args2(m, key), types.I64)
     uniq_call(inout e, p, ty, m)
+    // a map's seed is made when its first entry goes in (Map.new() has none yet)
+    let sd0 = load_i64_field(inout e, p, ty, m, 6)
+    let sz = val(inout e, catb(lit("icmp eq i64 "), cat(sd0, ", 0")))
+    let mseed = field_addr(inout e, p, ty, m, 6)
+    let jsd = if_then(inout e, sz)
+    call(inout e, p, lit("ei_map_seed"), tys1(types.STR), args1(mseed), types.UNIT, none)
+    if_end(inout e, jsd)
     let _h172 = val(inout e, catb(lit("icmp sge i64 "), cat(f, ", 0")))
     let j0 = if_then(inout e, _h172)
     let _h173 = load_ptr_field(inout e, p, ty, m, 1)
@@ -6073,7 +6115,7 @@ fn g_map(inout e: E, p: lower.P, kd: u32, ty: u32) {
     let kj = elem(inout e, p, kt, ok, lp.iv)
     let ia = temp(inout e, p, types.U64)
     let _h276 = argof(inout e, p, kt, kj)
-    let _h179 = slot_of(inout e, p, kt, _h276, nc)
+    let _h179 = slot_of(inout e, p, kt, _h276, nc, mseed)
     store_i64(inout e, _h179, ia)
     let wh = new_label(inout e)
     let wb_ = new_label(inout e)
@@ -6115,7 +6157,7 @@ fn g_map(inout e: E, p: lower.P, kd: u32, ty: u32) {
     let cap2 = load_i64_field(inout e, p, ty, m, 4)
     let s = load_ptr_field(inout e, p, ty, m, 2)
     let ia2 = temp(inout e, p, types.U64)
-    let _h186 = slot_of(inout e, p, kt, key, cap2)
+    let _h186 = slot_of(inout e, p, kt, key, cap2, mseed)
     store_i64(inout e, _h186, ia2)
     let wh2 = new_label(inout e)
     let wb2 = new_label(inout e)
@@ -6602,7 +6644,9 @@ fn glue(inout e: E, p: lower.P, key: u64) {
     } else if kd == lower.GK_CMP {
         g_cmp(inout e, p, id)
     } else if kd == lower.GK_HASH {
-        g_hash(inout e, p, id)
+        g_hash(inout e, p, id, false)
+    } else if kd == lower.GK_SHASH {
+        g_hash(inout e, p, id, true)
     } else if kd == lower.GK_SHOW {
         g_show(inout e, p, id)
     } else if kd == lower.GK_COPY {

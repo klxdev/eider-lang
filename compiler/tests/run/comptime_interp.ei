@@ -1,8 +1,9 @@
 // The comptime interpreter (compiler/interp.ei) against the built program: each case is a
 // function computed once by the interpreter, as a comptime constant, and once at run time,
-// and the two must agree. The cases fold what they see (Map slot order, the text of derived
+// and the two must agree. The cases fold what they see (Map contents, the text of derived
 // and custom Show, hashes, wrapping arithmetic, ...) into one number, so any difference
-// shows. Constants are declared after the functions they call and after `main`, which uses
+// shows. (A Map's order is unspecified since decision C805: the interpreter's and the built
+// program's differ, so a Map is folded with an operation that does not depend on the order.) Constants are declared after the functions they call and after `main`, which uses
 // them (forward references, C501).
 
 type Point = { x: i32, y: i32 }
@@ -59,20 +60,26 @@ fn map_order() -> u64 {
     for i in 0..60 { m.remove((i * 13 - 500) as i64) }
     m.insert(3, String.from("three"))
     let mut h: u64 = 14695981039346656037
+    let mut acc: u64 = 0
     for (k, v) in m {
-        h = mix(h, v)
-        h = (h ^ ((k + 1000) as u64)) *% 1099511628211
+        acc = acc +% mix(14695981039346656037, v) *% ((k + 1000) as u64)
     }
+    h = mix(h, String.from_int((acc % 1000003) as i64))
     let mut s: Map[String, i32] = Map.new()
     for w in ["pear", "apple", "fig", "kiwi", "plum", "date", "lime", "yuzu", "nut"] { s.insert(String.from(w), w.len() as i32) }
     s.remove(String.from("fig"))
-    h = mix(h, s.to_string())
-    h = mix(h, s.keys().to_string())
+    h = mix(h, String.from_int(s.len() as i64))
+    let mut sacc: u64 = 0
+    for (k, v) in s { sacc = sacc +% mix(0, k) *% (v as u64) }
+    h = mix(h, String.from_int((sacc % 1000003) as i64))
     let mut ks: Map[Key, i32] = Map.new()
     ks.insert(Key(String.from("Abc")), 1)
     ks.insert(Key(String.from("aBC")), 2)
     ks.insert(Key(String.from("xyz")), 3)
-    h = mix(h, ks.to_string())
+    let mut kacc: u64 = 0
+    for (k, v) in ks { kacc = kacc +% mix(1, k.to_string()) *% (v as u64) }
+    h = mix(h, String.from_int((kacc % 1000003) as i64))
+    h = mix(h, String.from_int(ks.len() as i64))
     let c = m.copy()
     if c == m { h += 1 }
     h

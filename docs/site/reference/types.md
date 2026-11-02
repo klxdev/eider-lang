@@ -500,7 +500,8 @@ tuples, arrays and Lists made of them. Maps, fn values, handles and `Ref`s can't
 
 | Call | Type | Does |
 |---|---|---|
-| `Map.new()` | `Map[K, V]` | an empty Map (needs an annotation) |
+| `Map.new()` | `Map[K, V]` | an empty Map with a hash key of its own (needs an annotation) |
+| `Map.deterministic()` | `Map[K, V]` | an empty Map with the fixed key, for reproducible order in tests |
 | `m.len()`, `len(m)`; `m.is_empty()` | `usize`; `bool` | |
 | `m.insert(k, v)` | `()` | adds or replaces |
 | `m.get(k)` | `Option[V]` | a copy of the value |
@@ -510,10 +511,15 @@ tuples, arrays and Lists made of them. Maps, fn values, handles and `Ref`s can't
 
 `for (k, v) in m` iterates the pairs (see [Statements](statements.md#for)). Keys, values,
 entries, `for` and printing all visit the pairs in one order: the order of the table's
-slots. It is the same on every run for the same history of inserts and removes, but it is
-neither sorted nor insertion order; sort the keys when the order matters. Two Maps are
-equal when they have the same keys with equal values, whatever their order. Maps have no
-`<` and no hash.
+slots. That order is **unspecified**: every Map hashes its keys with SipHash-1-3 under a key
+of its own made from the operating system's randomness when its first entry goes in, so two
+Maps with the same entries list them differently, and one program lists them differently on
+each run (a service that puts client data in a Map can't be made to collide on purpose). It is
+neither sorted nor insertion order; sort the keys when the order matters. For tests that
+compare an order, `Map.deterministic()` makes a Map with a fixed key: the same history of
+inserts and removes gives the same order on every run (and an attacker who knows the key can
+collide it: don't use it for client data). Two Maps are equal when they have the same keys
+with equal values, whatever their order. Maps have no `<` and no hash.
 
 Values in a Map are not places: `m.get(k)` returns a copy, and the way to change a value is
 `m.insert(k, new)`.

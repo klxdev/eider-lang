@@ -4101,6 +4101,22 @@ Map's), and an impl on a List can't use any of them (E0116).
   UBSan clean), `trap_list_remove.ei`, `trap_list_slice.ei`. std/stream's `BufReader` compacts with
   `remove_range` and appends a chunk with `extend`; `tail` and `part` are `slice`s.
 
+## C8.52: seeded Map hashing (#55)
+
+`Map` hashes keys with SipHash-1-3 under a key kept in the Map (decision C805). The map type grows
+two words after `used` (`key0`, `key1`; llvm_abi.ei, `tdef`, leaves), `0` until the first
+insert, when `ins_` calls `ei_map_seed` (`find_` on an empty Map never hashes). `hash_val` takes a
+`seed` (a pointer to the two words, empty for the old unseeded hash that `x.hash()` uses): text
+goes to `ei_sip13_str`, integers, bool and `()` to `ei_sip13_w`, and the kinds that have a hash
+glue get a second glue `shash_T(x, key)` (GK_SHASH, `g_hash(seeded)`) that folds every part with
+`ei_sip13_w2`; a user's `impl Hash` result is passed through `ei_sip13_w`. `slot_of` takes the
+key; `find_`, `ins_` and the rehash use the map's. `Map.deterministic()` (B_MAP_DETERMINISTIC)
+is `Map.new()` with the key set to the constants `EI_MAP_DET_K0/K1`. The interpreter's Maps
+keep the old hash (it never needs the same order as a built program: the order is
+unspecified now), so compiler/tests/run/comptime_interp.ei folds Maps with an operation that does
+not depend on the order. Tests: compiler/tests/run/map_seeded.ei, tests/core's SipHash vectors,
+tests/bench/map.ei (scripts/bench.sh).
+
 ## Testing
 
 - Golden dumps per pass (`lex`, `parse`, `ir`), regenerated with a bless flag and

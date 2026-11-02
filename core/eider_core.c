@@ -1691,6 +1691,32 @@ EC_FN(int64_t, ec_random, (int64_t n, int32_t nonblock)) {
   return n;
 }
 
+/* n bytes (at most 256) of OS randomness straight into dst, for the language runtime's Map
+   seeds (core/RUNTIME.md "Map hashing"): as ec_random, but through no buffer, so it can run in
+   the middle of a sequence of core calls. 0, or -errno; blocks until the kernel pool is seeded.
+   There is no fallback. */
+int64_t ec_random_fill(void *dst, uint64_t n);
+int64_t ec_random_fill(void *dst, uint64_t n) {
+  if (n > 256) return -EINVAL;
+#if defined(__linux__)
+  size_t got = 0;
+  while (got < (size_t)n) {
+    ssize_t r = getrandom((unsigned char *)dst + got, (size_t)n - got, 0);
+    if (r < 0) {
+      if (errno == EINTR) continue;
+      return -(int64_t)errno;
+    }
+    got += (size_t)r;
+  }
+  return 0;
+#elif defined(__APPLE__) || defined(EC_BSD)
+  arc4random_buf(dst, (size_t)n);
+  return 0;
+#else
+  return -ENOSYS;
+#endif
+}
+
 // ---- processes (ABI.md "Processes")
 
 /* Start in = argv (searched on PATH). in_mode/out_mode/err_mode for the child's 0/1/2:

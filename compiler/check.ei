@@ -200,6 +200,7 @@ const M_EXTEND: u32 = 31
 const M_SWAP: u32 = 32
 const M_REMOVE_RANGE: u32 = 33
 const M_FILLED: u32 = 34
+const M_DETERMINISTIC: u32 = 35
 
 /// Well-known symbols.
 type W = {
@@ -3604,6 +3605,8 @@ fn well_known(inout names: intern.Interner) -> W {
         sym(inout names, "Some"), sym(inout names, "None"), sym(inout names, "Ok"), sym(inout names, "Err"), hm)
     // the in-place List operations (docs/compiler.md "C8.49"), interned last so no earlier symbol moves
     for x in ["truncate", "extend", "swap", "remove_range", "filled"] { w.hm.push(sym(inout names, x)) }
+    // `Map.deterministic()` (decision C805)
+    for x in ["deterministic"] { w.hm.push(sym(inout names, x)) }
     w  // well-known
 }
 
@@ -8000,6 +8003,7 @@ fn builtin_static(c: C, head: u32, name: u32) -> bool {
     let mi = sym_index(c.w.hm, name)
     if head == c.w.s_string { return mi == M_FROM || mi == M_FROM_INT || mi == M_FROM_BYTES }
     if head == c.w.list && mi == M_FILLED { return true }
+    if head == c.w.map && mi == M_DETERMINISTIC { return true }
     mi == M_NEW && head != c.w.heap[3]
 }
 
@@ -8068,6 +8072,15 @@ fn heap_static(inout c: C, n: ast.Node, head: u32, exp: u32) -> Result[V, diag.D
     if head == c.w.s_string && mi == M_FROM_INT {
         let vs = eval_args(inout c, n, one(types.I64), label)?
         return Ok(v_of(types.STRING, builtin_op(inout c, ir.B_STR_FROM_INT, one(vs[0].op), types.STRING, n.line)))
+    }
+    if head == c.w.map && mi == M_DETERMINISTIC {
+        // Map.deterministic(): an empty Map with the fixed seed, so its order is the same on every run
+        if poisoned(c, exp) { return Ok(poison_v(inout c)) }
+        if exp == NONE || types.kind(c.t, exp) != types.T_MAP {
+            return Err(errh("E0409", n.line, n.col, q("cannot infer the type arguments of `", nm(c, head), "`"), "annotate the binding, e.g. `let x: Map[str, i32] = Map.deterministic()`"))
+        }
+        if n.d > 0 { return Err(err("E0405", n.line, n.col, q("`", label, "` takes no arguments"))) }
+        return Ok(v_of(exp, builtin_op(inout c, ir.B_MAP_DETERMINISTIC, List.new(), exp, n.line)))
     }
     if (head == c.w.list || head == c.w.map) && mi == M_NEW {
         let want_list = head == c.w.list
