@@ -88,7 +88,8 @@ class MapChildren:
         if i < 0 or i >= 2 * len(self.slots):
             return None
         pair = self.slots[i // 2]
-        return pair[i % 2]
+        v = pair[i % 2]
+        return v.Clone("[%d].%s" % (i // 2, "value" if i % 2 else "key"))
 
     def get_child_index(self, name):
         return -1
@@ -97,8 +98,8 @@ class MapChildren:
 def __lldb_init_module(debugger, internal_dict):
     m = __name__
     debugger.HandleCommand('type summary add -x "^String$" -F %s.string_summary -w eider' % m)
-    debugger.HandleCommand('type summary add -x "^List\\[" -F %s.list_summary -w eider' % m)
+    debugger.HandleCommand('type summary add -x "^List\\[" -e -F %s.list_summary -w eider' % m)
     debugger.HandleCommand('type synthetic add -x "^List\\[" -l %s.ListChildren -w eider' % m)
-    debugger.HandleCommand('type summary add -x "^Map\\[" -F %s.list_summary -w eider' % m)
+    debugger.HandleCommand('type summary add -x "^Map\\[" -e -F %s.list_summary -w eider' % m)
     debugger.HandleCommand('type synthetic add -x "^Map\\[" -l %s.MapChildren -w eider' % m)
     debugger.HandleCommand("type category enable eider")

@@ -16,6 +16,9 @@ How the values are laid out in the debug information (llvm.ei, di_type):
   List    { d: T*, len, cap }                    the elements are d[0..len)
   Map     { k: K*, v: V*, s: u8*, len, cap, used }   slot i is an entry when s[i] == 1
   enum    { tag: <enumeration of the variants>, <Variant>: { fields } ... }
+
+`bt` leaves out the runtime's frames (ei_main_body, main_run, thread_main, ...);
+`set eider-hide-runtime off` shows them (`bt -no-filters` too).
 """
 
 try:
@@ -129,8 +132,57 @@ def lookup(val):
     return None
 
 
+# ---- backtraces without the runtime's frames
+
+RUNTIME_FUNCTIONS = ("ei_main_body", "main_run", "thread_main", "start_thread", "__clone3", "clone3", "clone")
+
+
+def _is_runtime_frame(decorator):
+    name = decorator.function()
+    fname = decorator.filename() or ""
+    if isinstance(name, str) and (name in RUNTIME_FUNCTIONS or name.startswith("ei_")):
+        return True
+    return fname.endswith(("eider_rt.c", "eider_core.c", "eider_prof.c"))
+
+
+if gdb is not None:
+    import gdb.frames
+    from gdb.FrameDecorator import FrameDecorator
+
+    class HideRuntimeParameter(gdb.Parameter):
+        """Whether `bt` leaves out the Eider runtime's frames (ei_main_body, main_run, ...)."""
+
+        set_doc = "Set whether backtraces hide the Eider runtime's frames."
+        show_doc = "Show whether backtraces hide the Eider runtime's frames."
+
+        def __init__(self):
+            super(HideRuntimeParameter, self).__init__("eider-hide-runtime", gdb.COMMAND_STACK, gdb.PARAM_BOOLEAN)
+            self.value = True
+
+        def get_set_string(self):
+            return ""
+
+        def get_show_string(self, svalue):
+            return "Backtraces hide the Eider runtime's frames: " + svalue
+
+    class RuntimeFrameFilter:
+        def __init__(self):
+            self.name = "eider-runtime"
+            self.priority = 100
+            self.enabled = True
+            gdb.frame_filters[self.name] = self
+
+        def filter(self, frame_iter):
+            if not hide.value:
+                return frame_iter
+            return (f for f in frame_iter if not _is_runtime_frame(f))
+
+    hide = HideRuntimeParameter()
+
+
 def register(objfile=None):
     gdb.pretty_printers.append(lookup)
+    RuntimeFrameFilter()
 
 
 if gdb is not None:

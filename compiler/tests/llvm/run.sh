@@ -36,7 +36,7 @@ elif command -v readelf >/dev/null 2>&1; then
 else
   echo "skip llvm dwarf: no llvm-dwarfdump or readelf"; rm -rf $T; exit 0
 fi
-for v in shape_arg scale_arg acc_total origin_pt names_list flag_ok ages_map Point px py Shape Circle centre radius len cap used Dot; do
+for v in shape_arg scale_arg acc_total origin_pt names_list flag_ok ages_map once next Point px py Shape Circle centre radius len cap used Dot; do
   grep -Eq "(: |\")$v(\"|\$)" $T/dwarf.txt || { echo "FAIL llvm dwarf: no '$v' in the debug info"; exit 1; }
 done
 grep -q "DW_TAG_enumerator" $T/dwarf.txt || { echo "FAIL llvm dwarf: an enum's tag has no enumerators (the variant names the debugger prints)"; exit 1; }

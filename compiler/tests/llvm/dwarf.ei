@@ -12,7 +12,13 @@ fn area(shape_arg: Shape, scale_arg: u64) -> u64 {
         Dot => { acc_total = 1 }
         Circle(c, r) => { acc_total = (r as u64) * (r as u64) * 3 + (c.px as u64) }
     }
-    acc_total * scale_arg
+    acc_total * scale_arg  // BREAK-AREA
+}
+
+// a generic function and a closure, for the debugger sessions (tests/debug/session.sh)
+fn twice[T](x: T, f: fn(T) -> T) -> T {
+    let once = f(x)
+    f(once)  // BREAK-GENERIC
 }
 
 fn main() uses io {
@@ -22,6 +28,10 @@ fn main() uses io {
     let flag_ok = names_list.len() == 1
     let mut ages_map: Map[String, i64] = Map.new()
     ages_map.insert(String.from("a"), 7)
+    let bumped = twice(40 as i64, |v: i64| -> i64 {
+        let next = v + 1  // BREAK-CLOSURE
+        next
+    })
     print(area(Circle(origin_pt, 2), 3))
-    print(flag_ok)
+    print(flag_ok)  // BREAK-MAIN
 }

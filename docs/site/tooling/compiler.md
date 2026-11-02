@@ -103,6 +103,8 @@ tabs, CRLF, trailing white space).
 
 ## Debugging
 
+See [Debugging](../guide/debugging.md) for sessions; in short:
+
 `-g` gives gdb and lldb the `.ei` files and lines, with the types of your variables (records,
 enums, `String`, `List`, `Map`). A `-g` build is best run at `-O0` (`run` is).
 

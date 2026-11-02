@@ -11,6 +11,21 @@ gdb.TYPE_CODE_STRUCT = 1
 gdb.TYPE_CODE_ENUM = 2
 gdb.TYPE_CODE_INT = 3
 gdb.pretty_printers = []
+gdb.frame_filters = {}
+gdb.COMMAND_STACK = 1
+gdb.PARAM_BOOLEAN = 1
+
+
+class Parameter:
+    def __init__(self, *a):
+        pass
+
+
+gdb.Parameter = Parameter
+sys.modules["gdb.frames"] = types.ModuleType("gdb.frames")
+fd = types.ModuleType("gdb.FrameDecorator")
+fd.FrameDecorator = object
+sys.modules["gdb.FrameDecorator"] = fd
 gdbp = types.ModuleType("gdb.printing")
 sys.modules["gdb"] = gdb
 sys.modules["gdb.printing"] = gdbp
@@ -127,4 +142,20 @@ check(m.lookup(rec) is None, "records are left to gdb")
 check(m.lookup(V(T(gdb.TYPE_CODE_STRUCT, "String", [F("x", U64)]))) is None, "a struct named String with other fields")
 check(m.lookup(num(3)) is None, "scalars are left to gdb")
 check(m.lookup in gdb.pretty_printers or True, "registered when imported in gdb")
+# backtraces without the runtime's frames
+class Frame:
+    def __init__(self, fn, file=None):
+        self.fn, self.file = fn, file
+
+    def function(self):
+        return self.fn
+
+    def filename(self):
+        return self.file
+
+
+flt = gdb.frame_filters["eider-runtime"]
+frames = [Frame("f_area", "x.ei"), Frame("f_main", "x.ei"), Frame("ei_main_body"), Frame("main_run", "core/eider_rt.c"),
+          Frame("thread_main", "core/eider_rt.c"), Frame("start_thread"), Frame("__clone3")]
+check([f.fn for f in flt.filter(iter(frames))] == ["f_area", "f_main"], "runtime frames are hidden")
 print("ok   debug printers (String, List, Map, enum against fake gdb values)")
