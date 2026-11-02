@@ -1,0 +1,11 @@
+hello, world hello, héllo 😀 "hello, "
+256n 0n
+Uint8Array(3) [ 3, 2, 1 ] Uint8Array(0) []
+ababab! ""
+6n "" 0
+no leak true
+number TypeError
+nul TypeError
+bytes TypeError
+object "7\n"
+42

@@ -1661,7 +1661,8 @@ fn main() uses io { print(id_i32(4)) }
 ## E0806
 
 **Not available on WebAssembly** (checked only with `--wasm`): an export with a parameter
-other than an integer or `bool`, a result other than an integer, `bool` or `()`, and any use
+other than an integer, `bool`, `String` or `List[u8]`, a result other than one of those or
+`()`, and any use
 of threads (`spawn`, `Task`, `Mutex`, `Chan`; reported at 1:1). It needs `--wasm`, so it
 isn't shown as a test here; see [`tests/checks/fail/e0806_wasm_str.ei`](../../../tests/checks/fail/e0806_wasm_str.ei):
 
@@ -1671,10 +1672,10 @@ export fn greet(name: str) -> i32 { return 1 }
 
 ```text
 $ eiderc check --wasm greet.ei
-error[E0806]: parameter `name` has type str; WebAssembly exports take only integers and bool
+error[E0806]: parameter `name` has type str; WebAssembly exports take only integers, bool, String and List[u8]
 ```
 
-Fix: pass integers or `bool` across the boundary.
+Fix: pass integers, `bool`, a `String` or a `List[u8]` across the boundary.
 
 ## E0807
 

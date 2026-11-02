@@ -7,19 +7,21 @@ export async function load(wasm, imports = {}) {
     eider_now_ms() { return BigInt(Date.now()); },
     ...imports,
   };
+  if (imports.eider_write) env.eider_write = (p, n) => imports.eider_write(p, n, mem);
   const src = wasm instanceof WebAssembly.Module ? wasm : await WebAssembly.compile(wasm);
   const inst = await WebAssembly.instantiate(src, { env });
   mem = inst.exports.memory;
-  const x = inst.exports;
+  const $x = inst.exports;
   return {
-    i32_neg: (v) => x.eider_i32_neg(v),
-    i64_twice: (v) => x.eider_i64_twice(v),
-    u8_next: (v) => x.eider_u8_next(v),
-    u32_max: () => x.eider_u32_max(),
-    u64_big: (v) => x.eider_u64_big(v),
-    usize_len: (n) => x.eider_usize_len(n),
-    not: (b) => !!x.eider_not(b),
-    mixed: (a, b, c) => x.eider_mixed(a, b, c),
-    nothing: (v) => x.eider_nothing(v),
+    memory: mem,
+    i32_neg: (v) => $x.eider_i32_neg(v),
+    i64_twice: (v) => $x.eider_i64_twice(v),
+    u8_next: (v) => $x.eider_u8_next(v),
+    u32_max: () => $x.eider_u32_max(),
+    u64_big: (v) => $x.eider_u64_big(v),
+    usize_len: (n) => $x.eider_usize_len(n),
+    not: (b) => !!$x.eider_not(b),
+    mixed: (a, b, c) => $x.eider_mixed(a, b, c),
+    nothing: (v) => $x.eider_nothing(v),
   };
 }

@@ -1,6 +1,6 @@
 // Every integer type and bool across the WebAssembly boundary, both ways, plus a () export.
-// (No parameter is named `x`: the generated loader, byte-identical to the recorded one, calls
-// `x.eider_<name>(...)` inside an arrow function whose parameters would shadow it.)
+// (Trap messages name source lines, so this file keeps its line numbers.)
+// (A parameter named `x` is fine since 0.4.0: see strings.ei.)
 export fn i32_neg(v: i32) -> i32 { return 0 - v }
 export fn i64_twice(v: i64) -> i64 { return v * 2 }
 export fn u8_next(v: u8) -> u8 { return v + 1 }

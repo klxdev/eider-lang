@@ -6314,7 +6314,17 @@ fn test_main(inout e: E, p: lower.P, file: List[u8]) {
 /// tests/oracle expects); for WebAssembly also exported under that name.
 fn export_fns(inout e: E, p: lower.P) {
     for x in p.ir.exports {
-        let mut name = lit("eider_")
+        // for WebAssembly, an export that takes or returns a String or a List[u8] is the
+        // inner `eider.raw.<name>` (not exported); wasm.ei's C wrapper exports `eider_<name>`
+        let mut raw = false
+        if e.lay.wasm {
+            let rfd = p.ir.fns[x.f as usize]
+            if abi.wasm_memory(p, rfd.ret) { raw = true }
+            for i in 0..rfd.nparams {
+                if abi.wasm_memory(p, p.ir.locals[(rfd.lstart + i) as usize].ty) { raw = true }
+            }
+        }
+        let mut name = if raw { lit("eider.raw.") } else { lit("eider_") }
         for b in x.name {
             if bytes.is_ident(b) {
                 name.push(b)
@@ -6360,7 +6370,7 @@ fn export_fns(inout e: E, p: lower.P) {
         bytes.append(inout h, lit("("))
         bytes.append(inout h, signature_params(inout e, p, gf.sig, false))
         bytes.append(inout h, lit(") nounwind"))
-        if e.lay.wasm {
+        if e.lay.wasm && !raw {
             bytes.append(inout h, lit(" \"wasm-export-name\"=\""))
             bytes.append(inout h, name)
             bytes.append(inout h, lit("\""))

@@ -97,6 +97,15 @@ pub fn scalar(p: lower.P, ty: u32) -> bool {
     k == types.T_INT || k == types.T_BOOL || k == types.T_STR || k == types.T_UNIT || k == types.T_NEVER
 }
 
+/// Whether type ty crosses a WebAssembly export as memory, copied by the loader (String,
+/// List[u8]; check.wasm_memory_ty): such an export is built as `eider.raw.<name>`, taking and
+/// returning the value itself, and wasm.ei's C wrapper exports `eider_<name>` over it.
+pub fn wasm_memory(p: lower.P, ty: u32) -> bool {
+    if ty >= PTR_TO { return false }
+    let k = types.kind(p.t, ty)
+    k == types.T_STRING || k == types.T_LIST
+}
+
 /// The fields of a struct-like type by value: record fields, tuple elements, a variant's
 /// fields (variant v of enum ty; NONE for the type itself).
 pub fn parts(p: lower.P, ty: u32, v: u32) -> List[u32] {

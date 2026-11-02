@@ -7,11 +7,13 @@ export async function load(wasm, imports = {}) {
     eider_now_ms() { return BigInt(Date.now()); },
     ...imports,
   };
+  if (imports.eider_write) env.eider_write = (p, n) => imports.eider_write(p, n, mem);
   const src = wasm instanceof WebAssembly.Module ? wasm : await WebAssembly.compile(wasm);
   const inst = await WebAssembly.instantiate(src, { env });
   mem = inst.exports.memory;
-  const x = inst.exports;
+  const $x = inst.exports;
   return {
-    long_line: (n) => x.eider_long_line(n),
+    memory: mem,
+    long_line: (n) => $x.eider_long_line(n),
   };
 }

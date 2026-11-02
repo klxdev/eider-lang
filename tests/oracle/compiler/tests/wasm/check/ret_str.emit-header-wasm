@@ -1,4 +1,4 @@
-error[E0806]: return type str isn't supported for WebAssembly exports (integers, bool, or ())
+error[E0806]: return type str isn't supported for WebAssembly exports (integers, bool, String, List[u8], or ())
   --> compiler/tests/wasm/check/ret_str.ei:2:11
   |
 2 | export fn name(n: i32) -> str { return "x" }
