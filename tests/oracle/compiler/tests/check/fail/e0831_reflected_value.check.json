@@ -1,1 +1,1 @@
-{"error":"E0831","span":{"file":"compiler/tests/check/fail/e0831_reflected_value.ei","line":5,"col":17},"message":"`x` is known only at compile time","help":"use it as `x.[f]`, `f.name`, `f.index`, `attr[A](f)` or, for a variant, `v.matches(x)` and `v(...)`"}
+{"error":"E0831","span":{"file":"compiler/tests/check/fail/e0831_reflected_value.ei","line":5,"col":17},"message":"`x` is known only at compile time","help":"use it as `x.[f]`, `f.name`, `f.index`, `attr[A](f)` or, for a variant, `v.matches(x)` and `v(...)`; while specializing `f` (`eiderc expand` prints it)"}

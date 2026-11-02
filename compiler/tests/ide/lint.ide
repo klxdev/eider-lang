@@ -1,0 +1,23 @@
+files
+  compiler/tests/ide/lint.ei
+  <prelude>
+diags
+lints
+  unused_uses deny compiler/tests/ide/lint.ei:2:21 `quiet` declares capability `clock` in `uses` but its body never needs it (fix: 2:17 delete 9 insert io)
+  unused_result warn compiler/tests/ide/lint.ei:7:5 the `Result[i32, String]` of this expression is dropped, and an error in it goes unnoticed
+symbols
+  0 module lint compiler/tests/ide/lint.ei:1:1-1:1 full 1:1-10:1 :: compiler/tests/ide/lint.ei
+  1 fn quiet compiler/tests/ide/lint.ei:2:4-2:9 full 2:1-2:39 :: fn quiet() uses io, clock
+  2 fn r compiler/tests/ide/lint.ei:4:4-4:5 full 4:1-4:40 :: fn r() -> Result[i32, String]
+  3 fn main compiler/tests/ide/lint.ei:6:4-6:8 full 6:1-9:2 :: fn main() uses io, clock
+  (95 symbols in <prelude>)
+refs
+  compiler/tests/ide/lint.ei:4:11-4:17 -> <prelude> type Result
+  compiler/tests/ide/lint.ei:4:33-4:35 -> <prelude> variant Ok
+  compiler/tests/ide/lint.ei:7:5-7:6 -> 2 fn r
+  compiler/tests/ide/lint.ei:8:5-8:10 -> 1 fn quiet
+types
+  compiler/tests/ide/lint.ei:2:29-2:34 : ()
+  compiler/tests/ide/lint.ei:4:33-4:35 : Result[i32, String]
+  compiler/tests/ide/lint.ei:7:5-7:6 : Result[i32, String]
+  compiler/tests/ide/lint.ei:8:5-8:10 : ()

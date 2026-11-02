@@ -1,0 +1,4 @@
+--- stderr
+eiderc: eider.toml: [lints] names no lint or group `no_such_lint`
+eiderc: eider.toml: [lints] `unused_uses`: the level must be "allow", "warn" or "deny", not "loud"
+--- exit 2

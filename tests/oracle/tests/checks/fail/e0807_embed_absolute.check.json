@@ -1,0 +1,1 @@
+{"error":"E0807","span":{"file":"tests/checks/fail/e0807_embed_absolute.ei","line":2,"col":25},"message":"`embed(\"/etc/hostname\")` failed: the path must be relative to the file and inside its package"}

@@ -1,0 +1,1 @@
+{"error":"E0807","span":{"file":"tests/checks/fail/e0807_embed_missing.ei","line":2,"col":25},"message":"`embed(\"no_such_file.txt\")` failed: no such file"}

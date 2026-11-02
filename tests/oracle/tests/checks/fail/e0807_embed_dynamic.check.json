@@ -1,0 +1,1 @@
+{"error":"E0807","span":{"file":"tests/checks/fail/e0807_embed_dynamic.ei","line":3,"col":25},"message":"`embed` takes one string literal, the path of a file"}

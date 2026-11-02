@@ -1,0 +1,1 @@
+{"error":"E0807","span":{"file":"tests/checks/fail/e0807_embed_escape.ei","line":2,"col":25},"message":"`embed(\"../../../VERSION\")` failed: the file is outside its package"}

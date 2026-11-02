@@ -1,1 +1,1 @@
-{"error":"E0830","span":{"file":"tests/checks/fail/e0830_reflect_kind.ei","line":4,"col":30},"message":"`fields(...)` takes a record type or a variant, not Shape"}
+{"error":"E0830","span":{"file":"tests/checks/fail/e0830_reflect_kind.ei","line":4,"col":30},"message":"`fields(...)` takes a record type or a variant, not Shape","help":"while specializing `f` (`eiderc expand` prints it)"}

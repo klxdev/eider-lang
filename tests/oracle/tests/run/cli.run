@@ -1,0 +1,54 @@
+-- defaults, required max-conns, equals form, short flags, repeated
+:8080
+8
+true
+3
+Some(5)
+9
+2
+-- negated bool and a rest word
+:8080
+4
+false
+0
+None
+1
+1
+-- problems: missing, bad value, unknown, needs a value
+false
+serve: --workers: invalid digit at byte 0
+serve: --limit needs a value
+serve: missing the required flag --max-conns
+serve: unknown flag --nope
+try `serve --help`
+-- help
+true
+Usage: serve [flags] [--] [args...]
+run the server
+
+Flags:
+      --addr <text>           address to listen on (default :8080)
+  -w, --workers <integer>     worker tasks (default 4)
+  -v, --verbose               log every request
+      --tag <text>            labels, repeatable
+      --limit <unsigned integer>
+      --max-conns <unsigned integer>  (required)
+  -h, --help                  print this help
+-- commands
+Some(3)
+true
+:9
+2
+1
+Usage: tool <command> [--] [args...]
+a tool
+
+Commands:
+  serve             run the server
+  migrate-up        apply migrations
+
+Flags:
+  -h, --help                  print this help
+false
+--- stderr
+--- exit 0

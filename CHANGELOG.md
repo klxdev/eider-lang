@@ -7,6 +7,13 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 
 ## Unreleased (0.5.0, runtime and std)
 
+- **Tools and services** (#102, #103, #113, #85, #114, #30, #5; partly): `comptime embed("path")`
+  embeds a package file as a `str` constant (C807); `eiderc lint` with groups, `[lints]` in
+  eider.toml, the built-in `@allow(...)`, and `unused_uses`, `unused_result` and `needless_copy`
+  (C808; the compiler package denies `unused_uses`); `eiderc expand` prints the specialized IR of
+  reflective bodies and errors inside one name the specialization (C809); `eiderc test --filter`,
+  `--bench`, `--fuzz N` and std/testing's `table`, `bench`, `fuzz`, `temp_dir` (C810); `std/cli`,
+  flags and subcommands derived from a record and an enum (C811). eider-pkg accepts `[lints]`.
 - **Containing a trap** (#54): `Task.catch(f)` runs a closure and gives `Ok(result)` or `Err(text
   of the trap)`; std/task has `catch`, `spawn_caught`, pools that survive a job's trap
   (`Pool.traps()`, `Future.result`) and groups whose child can trap. No unwinding: the frames the

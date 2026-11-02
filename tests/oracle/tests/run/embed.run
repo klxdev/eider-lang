@@ -1,0 +1,9 @@
+select name
+from users;
+
+24
+2
+xéy
+4
+--- stderr
+--- exit 0

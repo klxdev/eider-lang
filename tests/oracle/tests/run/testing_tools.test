@@ -1,0 +1,8 @@
+test table: every case is compared ... ok
+test bench: runs once without --bench ... ok
+test fuzz: a target that does not trap ... ok
+test fixture: a temp directory is made and removed ... ok
+
+4 tests, 0 failed
+--- stderr
+--- exit 0

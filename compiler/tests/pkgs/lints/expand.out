@@ -1,0 +1,42 @@
+
+fn Pair.enc -> ()
+  %0 param self: Pair
+  %1 inout out: String
+  %2 temp: Point
+  %3 temp: i64
+  {
+    loop {
+      %2 = read %0.0
+      call Point.enc(%2, inout %1)
+    } step {
+      break
+    }
+    loop {
+      %3 = read %0.1
+      call i64.enc(%3, inout %1)
+    } step {
+      break
+    }
+  }
+
+fn Point.enc -> ()
+  %0 param self: Point
+  %1 inout out: String
+  %2 temp: i64
+  %3 temp: i64
+  {
+    loop {
+      %2 = read %0.0
+      call i64.enc(%2, inout %1)
+    } step {
+      break
+    }
+    loop {
+      %3 = read %0.1
+      call i64.enc(%3, inout %1)
+    } step {
+      break
+    }
+  }
+--- stderr
+--- exit 0

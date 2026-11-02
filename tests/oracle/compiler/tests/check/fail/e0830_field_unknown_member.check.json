@@ -1,1 +1,1 @@
-{"error":"E0830","span":{"file":"compiler/tests/check/fail/e0830_field_unknown_member.ei","line":5,"col":17},"message":"a reflected field has `name` and `index`, not `ty`","help":"in the `comptime for` iteration over field `a` of P"}
+{"error":"E0830","span":{"file":"compiler/tests/check/fail/e0830_field_unknown_member.ei","line":5,"col":17},"message":"a reflected field has `name` and `index`, not `ty`","help":"in the `comptime for` iteration over field `a` of P; while specializing `f` (`eiderc expand` prints it)"}

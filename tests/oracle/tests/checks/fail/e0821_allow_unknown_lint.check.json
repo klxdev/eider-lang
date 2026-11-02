@@ -1,0 +1,1 @@
+{"error":"E0821","span":{"file":"tests/checks/fail/e0821_allow_unknown_lint.ei","line":3,"col":8},"message":"`@allow` names no lint or group `unused_use`","help":"lints: unused_uses, unused_result, needless_copy, caps, correctness, perf, all"}

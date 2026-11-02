@@ -1,0 +1,1 @@
+{"error":"E0807","span":{"file":"tests/checks/fail/e0807_embed_utf8.ei","line":2,"col":25},"message":"`embed(\"embed/binary.dat\")` failed: the file is not valid UTF-8 text"}

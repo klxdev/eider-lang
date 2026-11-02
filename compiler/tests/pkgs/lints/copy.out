@@ -1,0 +1,9 @@
+--- stderr
+warning[needless_copy]: `.copy()` of a value that is already a fresh copy
+  --> compiler/tests/pkgs/lints/copy.ei:10:18
+   |
+10 |     let a = mk().copy()
+   |                  ^
+  help: drop the `.copy()`
+0 denied, 1 warnings
+--- exit 0
