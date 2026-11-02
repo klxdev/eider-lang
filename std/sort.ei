@@ -2,7 +2,8 @@
 //! O(n log n) comparisons in every case, insertion sort on short runs), over any `T: Ord`
 //! (integers, Strings, and records, enums and tuples by their derived or own order),
 //! `sort_by` with a comparison function, and searching sorted Lists. Values in, new Lists
-//! out, as everywhere in Eider (no sorting in place until references, 8.6).
+//! out, as everywhere in Eider; `sort_in_place`, `sort_in_place_by` and `reverse_in_place`
+//! reorder an `inout` List with no second one (heapsort, not stable).
 
 // Runs this short are sorted by insertion before merging.
 const RUN: usize = 16
@@ -168,4 +169,51 @@ pub fn max[T: Ord](xs: List[T]) -> Option[T] {
         if xs[i] > xs[m] { m = i }
     }
     Some(xs[m])
+}
+
+// ---- in place (heapsort over `swap`: no second List, O(n log n), not stable)
+
+fn sift_down[T](inout xs: List[T], start: usize, end: usize, cmp: fn(T, T) -> Ordering) {
+    let mut root = start.copy()
+    while 2 * root + 1 < end {
+        let mut child = 2 * root + 1
+        if child + 1 < end && cmp(xs[child], xs[child + 1]) == Less { child += 1 }
+        if cmp(xs[root], xs[child]) == Less {
+            xs.swap(root, child)
+            root = child
+        } else {
+            return
+        }
+    }
+}
+
+/// Sorts `xs` in place by `cmp`, with no second List: heapsort, O(n log n) in every case and
+/// not stable (equal elements may change places; use `sort_by` when that matters).
+pub fn sort_in_place_by[T](inout xs: List[T], cmp: fn(T, T) -> Ordering) {
+    let n = xs.len()
+    if n < 2 { return }
+    let mut s = n / 2
+    while s > 0 {
+        s -= 1
+        sift_down(inout xs, s, n, cmp)
+    }
+    let mut end = n.copy()
+    while end > 1 {
+        end -= 1
+        xs.swap(0, end)
+        sift_down(inout xs, 0, end, cmp)
+    }
+}
+
+/// Sorts `xs` ascending in place (not stable).
+pub fn sort_in_place[T: Ord](inout xs: List[T]) { sort_in_place_by(inout xs, |a: T, b: T| -> Ordering a.compare(b)) }
+
+/// Reverses `xs` in place.
+pub fn reverse_in_place[T](inout xs: List[T]) {
+    let n = xs.len()
+    let mut i: usize = 0
+    while i < n / 2 {
+        xs.swap(i, n - 1 - i)
+        i += 1
+    }
 }

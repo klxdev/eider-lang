@@ -17,7 +17,7 @@ channels, tasks, the event loop) has its own page, docs/runtime.md.
 | **`strings`** | String operations over `str` or `String`: find, split, fields, lines, trim, replace, case, integer parsing with errors | none |
 | **`utf8`** | validation, decoding with U+FFFD replacement, iteration, encoding, lossy conversion | none |
 | **`fmt`** | integers in any radix with width, fill, alignment, sign, prefix and zero padding; padding text; a String `Builder` | none |
-| **`sort`** | stable merge sort, `sort_by`, `sort_by_key`, binary search, bounds, dedup, min/max | none |
+| **`sort`** | stable merge sort, `sort_by`, `sort_by_key`, `sort_in_place` (heapsort, not stable), `reverse_in_place`, binary search, bounds, dedup, min/max | none |
 | **`deque`**, **`set`**, **`heap`** | `Deque[T]`; `Set[T: Hash + Eq]`; `Heap[T: Ord]` (min or max) and a stable priority `Queue[T]` | none |
 | **`encoding`** | hex, base64 (standard and URL-safe, padded or not, strict decoding), little/big-endian integers | none |
 | **`testing`** | `assert_eq` with a diff, `Suite`, `diff_lines`; test doubles: `FakeClock`, scripted Reader and Writer, an in-memory pipe | `io` to print |
@@ -292,7 +292,7 @@ String is an `error.Error`, "Errors and std/error" above).
 ## Next
 
 - After 8.6 (references): zero-copy reads (`read` into a caller's buffer, views into
-  BufReader's buffer), in-place sorting.
+  BufReader's buffer).
 - After P0.2 (lightweight tasks): `Fd` waits park the task instead of the thread; the API
   stays.
 - `dyn Error` causes (P0.7), so a Failure can keep a stream.Error's kind.
