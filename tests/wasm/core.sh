@@ -12,7 +12,7 @@ T=$(mktemp -d)
 fail=0
 inc=$($CC -print-file-name=include)
 host() { $CC -ffreestanding -nostdlib -fsyntax-only -nostdinc -isystem "$inc" -isystem core/wasm/include -I core -DEI_WASM_SYNTAX_CHECK "$@"; }
-if host $strict core/wasm/libc.c core/wasm/eider_rt.c 2>$T/e; then
+if host $strict core/wasm/libc.c core/wasm/eider_rt.c core/wasm/marshal.c 2>$T/e; then
   echo "ok   core/wasm: freestanding C, strict warnings ($CC -fsyntax-only -nostdinc)"
 else
   echo "FAIL core/wasm with $CC:"; cat $T/e; fail=1
@@ -20,7 +20,7 @@ fi
 printf 'int x;\n' >$T/p.c
 if $WASM_CC --target=wasm32 -c -o $T/p.o $T/p.c 2>/dev/null; then
   ok=1
-  for f in libc eider_rt; do
+  for f in libc eider_rt marshal; do
     $WASM_CC --target=wasm32 $strict -O2 -ffreestanding -nostdlib -fno-builtin -isystem core/wasm/include -I core \
       -c -o $T/$f.o core/wasm/$f.c 2>$T/e || { echo "FAIL core/wasm/$f.c with $WASM_CC --target=wasm32:"; cat $T/e; ok=0; fail=1; }
   done

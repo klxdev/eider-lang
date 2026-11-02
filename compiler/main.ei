@@ -41,6 +41,9 @@ import eiderc.consteval
 import eiderc.llvm
 import eiderc.llvm_abi as abi
 import eiderc.wasm
+import eiderc.pkgtest
+import eiderc.fmt
+import eiderc.sanitize
 import eiderc.suite
 import eiderc.ide
 import eiderc.front
@@ -86,7 +89,8 @@ fn usage_text() -> List[u8] {
         "  eiderc run <file.ei> [--release] [-l lib] [--] [args...]  build and run (-O0 unless --release);",
         "                                             the arguments after the file (every one after `--`) go to the program",
         "  eiderc build|run|test <file.ei> --profile[=cpu,mem,conc]  with the profiler (docs/runtime.md \"Profiler\")",
-        "  eiderc test <file.ei> [-l lib]             run the `test` blocks",
+        "  eiderc test <file.ei> [-l lib]             run the `test` blocks (a module with no `main` too)",
+        "  eiderc test                                run the tests of every module of the package in this directory",
         "  eiderc build|run|test ... -j N             compile at most N units at once (default $EIDER_JOBS, else one per CPU)",
         "  eiderc cache size|clean|trim               the cache's use; remove every entry; apply EIDER_CACHE_MAX now",
         "  eiderc test --compile-fail [<dir>]         run the compile-fail suite (<dir>/fail, <dir>/pass; default tests/checks)",
@@ -109,6 +113,7 @@ fn usage_text() -> List[u8] {
         "                                             --overlay (repeatable) reads <path> from the file <text>",
         "  eiderc doc <file.ei | dir> [--json] [--private]  the API of a package directory or a program's package:",
         "                                             items, signatures, doc comments (doc.ei); --private: also non-pub items",
+        "  eiderc fmt <file.ei>                       print the file in the canonical layout (fmt.ei; no options)",
         "  eiderc help | --help | -h                  print this text",
         "  eiderc version | --version                 print `eiderc <version>` (VERSION; docs/site/tooling/releases.md)",
         "",
@@ -116,6 +121,8 @@ fn usage_text() -> List[u8] {
         "clang 17 or newer ($EIDER_LLVM_CC), one unit per module and generic instances in 16 shards, each",
         "cached (EIDER_LLVM_UNITS=0: one unit); a release build uses ThinLTO when clang links with lld",
         "(EIDER_LLVM_LTO=0: plain objects); -g adds DWARF line info for the .ei sources (one unit).",
+        "--sanitize[=address,undefined|thread] and --race (thread) build with that sanitizer (sanitize.ei);",
+        "debug/eider_gdb.py and debug/eider_lldb.py print String, List, Map and enums in gdb and lldb.",
         "",
         "errors: every independent error is reported, in the order found, then `error: N errors`",
         "(stderr); with --json one JSON object per line (stdout). --max-errors N shows at most N",
@@ -162,7 +169,7 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] {
 }
 
 fn known_cmd(c: List[u8]) -> bool {
-    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "migrate-imports") || is(c, "migrate-strings") || is(c, "audit-refs") || is(c, "doc") || is(c, "emit-llvm") || is(c, "cache")
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "migrate-imports") || is(c, "migrate-strings") || is(c, "audit-refs") || is(c, "doc") || is(c, "fmt") || is(c, "emit-llvm") || is(c, "cache")
 }
 
 fn parse_args() -> Args uses io {
@@ -286,7 +293,8 @@ fn parse_args() -> Args uses io {
         if file.len() == 0 { file = sys.lit("tests/checks") }
     }
     if is(cmd, "cache") && file.len() == 0 { usage_error(sys.lit("`cache` needs clean, size or trim")) }
-    if file.len() == 0 { usage_error(quoted("missing the source file for ", cmd)) }
+    // (`test` with no file runs the tests of the package in the current directory: pkgtest.ei)
+    if file.len() == 0 && !is(cmd, "test") { usage_error(quoted("missing the source file for ", cmd)) }
     if (dashes || pargs.len() > 0) && !is(cmd, "run") { usage_error(sys.lit("program arguments (and `--`) go with `run`")) }
     if is(cmd, "emit-header") { lib = true }
     // `test` checks the test driver, never a library (the recorded mode order)
@@ -587,8 +595,13 @@ fn run_cache(a: Args) uses io, fs, clock {
 }
 
 fn main() uses io, fs, net, clock {
+    sanitize.run_if_asked()
     let a = parse_args()
     if a.compile_fail { env.exit(suite.run(a.file)) }
+    if is(a.cmd, "test") && a.file.len() == 0 {
+        env.exit(pkgtest.run(env.args()[0]))
+        return
+    }
     if is(a.cmd, "cache") {
         run_cache(a)
         return
@@ -610,6 +623,19 @@ fn main() uses io, fs, net, clock {
             env.exit(2)
             return
         }
+    }
+    if is(a.cmd, "fmt") {
+        // docs/site/tooling/compiler.md, "Formatting"
+        let f = fmt.format(src)
+        if f.ok {
+            io.out(f.text)
+        } else {
+            let mut m = sys.lit("eiderc: fmt: ")
+            bytes.append(inout m, f.why)
+            io.errln(m)
+            env.exit(1)
+        }
+        return
     }
     if is(a.cmd, "migrate-var") {
         migrate_var(a, src)
@@ -672,7 +698,13 @@ fn main() uses io, fs, net, clock {
     for d in ev.diags { diags.push(d) }
     let audit = is(a.cmd, "audit-refs")
     let k = if audit { check.check_audit(ev.p) } else { check.check_all(ev.p, a.lib, a.wasm) }
-    for d in k.diags { diags.push(d) }
+    for d in k.diags {
+        // a module with no `main` can be checked and tested (`check`, `test`): it is only a
+        // program that needs one (docs/compiler.md, "Library modules")
+        let module_ok = (is(a.cmd, "check") || is(a.cmd, "test")) && !a.lib && !a.wasm && !a.wasm_core
+        if module_ok && bytes.eq(sys.lit(d.code), sys.lit("E0112")) && d.line == 1 && d.col == 1 && bytes.eq(d.msg, sys.lit("no `main` function")) { continue }
+        diags.push(d)
+    }
     if audit {
         audit_report(check.audit_hits(k.c), a, src)
         if diags.len() > 0 { fail(diags, a, src) }

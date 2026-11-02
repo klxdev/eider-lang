@@ -4048,6 +4048,14 @@ fn ffi_safe(c: C, ty: u32, is_ret: bool, records: bool) -> bool {
     true
 }
 
+/// Whether type ty crosses a WebAssembly export as memory (the loader copies it in or out;
+/// docs/compiler.md, "Backends"): a String, or a List[u8].
+pub fn wasm_memory_ty(c: C, ty: u32) -> bool {
+    let k = types.kind(c.t, ty)
+    if k == types.T_STRING { return true }
+    k == types.T_LIST && types.get(c.t, ty).a == types.U8
+}
+
 /// E0803 for an `extern "c"` or `export` signature that can't cross the C boundary
 /// (node n of module m, parameter types ps).
 fn check_ffi_sig(c: C, m: u32, n: ast.Node, ps: List[u32], ret: u32) -> Result[bool, diag.Diag] {
@@ -4057,14 +4065,14 @@ fn check_ffi_sig(c: C, m: u32, n: ast.Node, ps: List[u32], ret: u32) -> Result[b
     if is_export && c.wasm {
         for i in 0..n.f {
             let k = types.kind(c.t, ps[i as usize])
-            if k != types.T_INT && k != types.T_BOOL {
+            if k != types.T_INT && k != types.T_BOOL && !wasm_memory_ty(c, ps[i as usize]) {
                 let pn = ndm(c, m, atm(c, m, n.e, i))
-                return Err(err("E0806", pn.line, pn.col, q2("parameter `", nm(c, pn.a), "` has type ", ts(c, ps[i as usize]), "; WebAssembly exports take only integers and bool")))
+                return Err(err("E0806", pn.line, pn.col, q2("parameter `", nm(c, pn.a), "` has type ", ts(c, ps[i as usize]), "; WebAssembly exports take only integers, bool, String and List[u8]")))
             }
         }
         let rk = types.kind(c.t, ret)
-        if rk != types.T_INT && rk != types.T_BOOL && rk != types.T_UNIT {
-            return Err(err("E0806", n.line, n.col, q("return type ", ts(c, ret), " isn't supported for WebAssembly exports (integers, bool, or ())")))
+        if rk != types.T_INT && rk != types.T_BOOL && rk != types.T_UNIT && !wasm_memory_ty(c, ret) {
+            return Err(err("E0806", n.line, n.col, q("return type ", ts(c, ret), " isn't supported for WebAssembly exports (integers, bool, String, List[u8], or ())")))
         }
     }
     for i in 0..n.f {
@@ -4072,10 +4080,12 @@ fn check_ffi_sig(c: C, m: u32, n: ast.Node, ps: List[u32], ret: u32) -> Result[b
         if pn.c == 1 {
             return Err(err("E0803", pn.line, pn.col, q2("`", nm(c, pn.a), "` is `inout`; ", sys.lit(what), " functions can't take `inout` parameters")))
         }
+        if is_export && c.wasm && wasm_memory_ty(c, ps[i as usize]) { continue }
         if !ffi_safe(c, ps[i as usize], false, is_export && !c.wasm) {
             return Err(errh("E0803", pn.line, pn.col, q2("parameter `", nm(c, pn.a), "` has type ", ts(c, ps[i as usize]), ", which can't cross the C boundary"), help))
         }
     }
+    if is_export && c.wasm && wasm_memory_ty(c, ret) { return Ok(true) }
     if !ffi_safe(c, ret, true, is_export && !c.wasm) {
         return Err(errh("E0803", n.line, n.col, q("return type ", ts(c, ret), " can't cross the C boundary"), help))
     }

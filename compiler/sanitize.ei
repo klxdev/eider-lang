@@ -1,0 +1,99 @@
+// sanitize: `--sanitize[=address,undefined|thread]` and `--race` for build, run and test
+// (docs/site/tooling/compiler.md): the program, its runtime and the link are built with the
+// sanitizer, as EIDER_CFLAGS="-fsanitize=..." does (driver.ei passes -fsanitize flags to clang
+// for the IR and to $CC for the core and the link). eiderc runs itself again with that set,
+// so the rest of the driver needs no new option: the child never sees these flags.
+//
+//   --sanitize                  address and undefined behaviour (-fsanitize=address,undefined
+//                               -fno-sanitize-recover=undefined)
+//   --sanitize=address|undefined|thread|a,b   those
+//   --race                      thread (-fsanitize=thread)
+// Each adds -g and -fno-omit-frame-pointer, so reports name .ei files and lines when the
+// program is also built with -g (a `run` is -O0 already).
+
+import core.sys
+import std.bytes
+import std.io
+import std.env
+import std.proc
+
+fn s(x: str) -> List[u8] { sys.lit(x) }
+
+fn is(a: List[u8], x: str) -> bool { bytes.eq(a, s(x)) }
+
+fn valid(list: List[u8]) -> bool {
+    if list.len() == 0 { return false }
+    for part in bytes.split(list, 44) {
+        if !(is(part, "address") || is(part, "undefined") || is(part, "thread")) { return false }
+    }
+    // thread excludes address (the sanitizers' own rule)
+    let mut thread = false
+    let mut other = false
+    for part in bytes.split(list, 44) {
+        if is(part, "thread") { thread = true } else { other = true }
+    }
+    !(thread && other)
+}
+
+fn usage(msg: str) uses io {
+    let mut m = s("eiderc: ")
+    bytes.append(inout m, s(msg))
+    io.errln(m)
+    env.exit(2)
+}
+
+/// If the arguments ask for a sanitizer, runs eiderc again with it and exits with its code.
+pub fn run_if_asked() uses io, fs, net {
+    let argv = env.args()
+    let mut san: List[u8] = List.new()
+    let mut rest: List[List[u8]] = List.new()
+    let mut cmd: List[u8] = List.new()
+    let mut dashes = false
+    let mut i: usize = 0
+    while i < argv.len() {
+        let a = argv[i]
+        i += 1
+        if i > 1 && cmd.len() == 0 && !dashes && !bytes.starts_with(a, s("-")) { cmd = a.copy() }
+        if i > 1 && is(a, "--") { dashes = true }
+        if !dashes && i > 1 && (is(a, "--sanitize") || bytes.starts_with(a, s("--sanitize=")) || is(a, "--race")) {
+            if san.len() > 0 { usage("--sanitize and --race: give one") }
+            if is(a, "--sanitize") {
+                san = s("address,undefined")
+            } else if is(a, "--race") {
+                san = s("thread")
+            } else {
+                san = bytes.slice(a, 11, a.len())
+                if !valid(san) { usage("`--sanitize=` takes address, undefined or thread (thread alone), separated by commas") }
+            }
+        } else {
+            rest.push(a)
+        }
+    }
+    if san.len() == 0 { return }
+    if !(is(cmd, "build") || is(cmd, "run") || is(cmd, "test")) { usage("`--sanitize` and `--race` go with build, run or test") }
+    let mut flags = s("EIDER_CFLAGS=")
+    match env.get(s("EIDER_CFLAGS")) {
+        Some(f) => {
+            bytes.append(inout flags, f)
+            flags.push(32)
+        }
+        None => {}
+    }
+    bytes.append(inout flags, s("-fsanitize="))
+    bytes.append(inout flags, san.copy())
+    if !is(san, "thread") && !bytes.eq(san, s("address")) && bytes.find(san, s("undefined"), 0).is_some() {
+        bytes.append(inout flags, s(" -fno-sanitize-recover=undefined"))
+    }
+    bytes.append(inout flags, s(" -fno-omit-frame-pointer -g"))
+    let mut child: List[List[u8]] = List.new()
+    child.push(s("env"))
+    child.push(flags)
+    for a in rest { child.push(a) }
+    match proc.run(child) {
+        Ok(code) => env.exit(code)
+        Err(e) => {
+            io.errln(e.bytes())
+            env.exit(3)
+        }
+    }
+}

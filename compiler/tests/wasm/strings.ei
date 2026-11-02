@@ -1,0 +1,41 @@
+// Strings and List[u8] across the WebAssembly boundary, both ways (#136): the loader copies
+// an argument into the module's memory, the module copies a result out for it.
+export fn greet(name: String) -> String {
+    let mut s = String.from("hello, ")
+    s.append(name)
+    s
+}
+
+export fn byte_sum(data: List[u8]) -> u64 {
+    let mut t: u64 = 0
+    for b in data { t += b as u64 }
+    t
+}
+
+export fn reverse(data: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut i = data.len()
+    while i > 0 {
+        i -= 1
+        out.push(data[i])
+    }
+    out
+}
+
+export fn repeat(text: String, n: i32, loud: bool) -> String {
+    let mut s = String.from("")
+    for i in 0..n { s.append(text.copy()) }
+    if loud { s.append(String.from("!")) }
+    s
+}
+
+export fn text_len(text: String) -> i64 { text.len() as i64 }
+
+export fn empty() -> String { String.from("") }
+
+export fn nothing(data: List[u8]) -> List[u8] { List.new() }
+
+// a parameter named `x` (it clashed with the loader's own name for the exports, #138)
+export fn x_named(x: i32) -> i32 { x + 1 }
+
+export fn say(n: i32) uses io { print(n) }

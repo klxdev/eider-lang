@@ -79,9 +79,58 @@ print `eiderc <version>` (`eiderc 0.1.0`) and exit 0: the toolchain's version, f
 | `--all-errors` | `parse` | every syntax error, then the tree |
 | `--overlay <path> <text>` | `ide` | read `<path>` from the file `<text>` |
 | `-g` | `build`, `run`, `test` | DWARF debug information for the `.ei` files |
+| `--sanitize[=address,undefined\|thread]`, `--race` | `build`, `run`, `test` | build with AddressSanitizer and UBSan (the default), the listed sanitizers, or ThreadSanitizer (`--race`); see [Debugging](#debugging) |
 | `--` | `run` | every argument after it goes to the program, even one that looks like an option |
 | `--help`, `-h` | | print the usage and exit |
 | `--version` | | print `eiderc <version>` and exit |
+
+## Formatting
+
+`eiderc fmt <file.ei>` prints the file in the one canonical layout; it has no options (the
+file is not rewritten: `eiderc fmt f.ei > f.new && mv f.new f.ei`). It fixes layout that has no
+meaning and nothing else: the indentation (four spaces per open bracket, four more on a
+continuation line), runs of spaces between tokens, trailing white space, tabs, CRLF, blank
+lines (at most one in a row), the newline at the end. Tokens, comments and strings are copied
+byte for byte and no space is added or removed between tokens, so line breaks and the spacing
+inside a line stay yours.
+
+It checks its own work: the output must lex to the same tokens as the input and formatting it
+again must change nothing, else it prints an error (`internal error: ...`, exit 1) and no text.
+A file with a lexing error, or with a `"""` multi-line string (its lines are text, which a
+layout pass must not touch), is refused. `tests/fmt/run.sh` runs it over every `.ei` file of the
+repository, compares diagnostics before and after, and fuzzes the layout (random indentation,
+tabs, CRLF, trailing white space).
+
+## Debugging
+
+See [Debugging](../guide/debugging.md) for sessions; in short:
+
+`-g` gives gdb and lldb the `.ei` files and lines, with the types of your variables (records,
+enums, `String`, `List`, `Map`). A `-g` build is best run at `-O0` (`run` is).
+
+The debug information describes a `String` as `{p, len, cap}`, a `List[T]` as `{d, len, cap}`
+and a `Map` as `{k, v, s, len, cap, used}`; an enum's `tag` is an enumeration of its variants,
+so `print shape` says `Circle`, not `1`. The toolchain's `debug/` directory has scripts that
+print them the way you wrote them:
+
+```text
+(gdb) source <toolchain>/debug/eider_gdb.py
+(gdb) print names_list
+$1 = List[String] of length 1 = {"a"}
+(gdb) print shape_arg
+$2 = Circle = {centre = {px = 4, py = 5}, radius = 2}
+
+(lldb) command script import <toolchain>/debug/eider_lldb.py
+```
+
+(The scripts are tested against values shaped like the debug information; the repository's
+tests don't run gdb or lldb.)
+
+`--sanitize` builds the program, the runtime and the link with AddressSanitizer and
+UndefinedBehaviorSanitizer; `--sanitize=thread` or `--race` with ThreadSanitizer (it can't be
+combined with address). They are the same as `EIDER_CFLAGS="-fsanitize=address,undefined"`
+(`-fsanitize=thread`) with `-g` and `-fno-omit-frame-pointer`, and need a compiler that links the
+sanitizer (clang or gcc: `CC`). Add `-g` for reports that name `.ei` lines.
 
 ## Diagnostics
 

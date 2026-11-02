@@ -3640,9 +3640,7 @@ fn subprogram(inout e: E, p: lower.P, f: u32, line: u32) {
     bytes.append(inout e.md, num("!", id as u64))
     bytes.append(inout e.md, lit(" = distinct !DISubprogram(name: "))
     md_string(inout e.md, fd.name)
-    bytes.append(inout e.md, lit(", linkageName: "))
-    let ln = e.fnn[f as usize].copy()
-    md_string(inout e.md, ln)
+    // (no linkageName: a debugger then shows `area`, not the symbol `f_area`)
     bytes.append(inout e.md, num(", scope: !", fm as u64))
     bytes.append(inout e.md, num(", file: !", fm as u64))
     bytes.append(inout e.md, num(", line: ", line as u64))
@@ -3756,9 +3754,58 @@ fn di_type(inout e: E, p: lower.P, ty: u32) -> u32 {
         }
         ms.push(di_member(inout e, p, lit("len"), types.U64, 64))
         ms.push(di_member(inout e, p, lit("cap"), types.U64, 128))
+    } else if k == types.T_MAP {
+        // { K *k; V *v; uint8_t *s; uint64_t len, cap, used; } (slot i holds an entry when
+        // s[i] == 1): what the debugger printers (debug/) read
+        let kt = di_type(inout e, p, t.a)
+        let vt = di_type(inout e, p, t.b)
+        let st = di_type(inout e, p, types.U8)
+        let mut ptrs: List[u32] = List.new()
+        for b in [kt, vt, st] {
+            let pt = e.nmd.copy()
+            e.nmd += 1
+            bytes.append(inout e.md, num("!", pt as u64))
+            bytes.append(inout e.md, num(" = !DIDerivedType(tag: DW_TAG_pointer_type, baseType: !", b as u64))
+            bytes.append(inout e.md, lit(", size: 64)\n"))
+            ptrs.push(pt)
+        }
+        ms.push(di_member_node(inout e, lit("k"), ptrs[0], 64, 0))
+        ms.push(di_member_node(inout e, lit("v"), ptrs[1], 64, 64))
+        ms.push(di_member_node(inout e, lit("s"), ptrs[2], 64, 128))
+        ms.push(di_member(inout e, p, lit("len"), types.U64, 192))
+        ms.push(di_member(inout e, p, lit("cap"), types.U64, 256))
+        ms.push(di_member(inout e, p, lit("used"), types.U64, 320))
     } else if k == types.T_ENUM {
-        ms.push(di_member(inout e, p, lit("tag"), types.U32, 0))
+        // `tag` is an enumeration of the variants, so a debugger shows `Circle`, not 1
         let d = types.def_of(p.t, ty)
+        let u32t = di_type(inout e, p, types.U32)
+        let mut ens: List[u32] = List.new()
+        for i in 0..d.len {
+            let vr0 = types.variant(p.t, d, i)
+            let eid = e.nmd.copy()
+            e.nmd += 1
+            bytes.append(inout e.md, num("!", eid as u64))
+            bytes.append(inout e.md, lit(" = !DIEnumerator(name: "))
+            md_string(inout e.md, intern.name(p.names, (vr0.key % 4294967296) as u32))
+            bytes.append(inout e.md, num(", value: ", i as u64))
+            bytes.append(inout e.md, lit(", isUnsigned: true)\n"))
+            ens.push(eid)
+        }
+        let tid = e.nmd.copy()
+        e.nmd += 1
+        bytes.append(inout e.md, num("!", tid as u64))
+        bytes.append(inout e.md, lit(" = !DICompositeType(tag: DW_TAG_enumeration_type, name: "))
+        let mut tn = types.show(p.t, p.names, ty)
+        bytes.append(inout tn, lit(".tag"))
+        md_string(inout e.md, tn)
+        bytes.append(inout e.md, num(", baseType: !", u32t as u64))
+        bytes.append(inout e.md, lit(", size: 32, elements: !\x7b"))
+        for j in 0..ens.len() {
+            if j > 0 { bytes.append(inout e.md, lit(", ")) }
+            bytes.append(inout e.md, num("!", ens[j] as u64))
+        }
+        bytes.append(inout e.md, lit("\x7d)\n"))
+        ms.push(di_member_node(inout e, lit("tag"), tid, 32, 0))
         if lower.any_payload(p, d) {
             let u = abi.union_of(inout e.lay, p, ty)
             let uoff = (4 + u[1] - 1) / u[1] * u[1]
@@ -6433,7 +6480,17 @@ fn test_main(inout e: E, p: lower.P, file: List[u8]) {
 /// tests/oracle expects); for WebAssembly also exported under that name.
 fn export_fns(inout e: E, p: lower.P) {
     for x in p.ir.exports {
-        let mut name = lit("eider_")
+        // for WebAssembly, an export that takes or returns a String or a List[u8] is the
+        // inner `eider.raw.<name>` (not exported); wasm.ei's C wrapper exports `eider_<name>`
+        let mut raw = false
+        if e.lay.wasm {
+            let rfd = p.ir.fns[x.f as usize]
+            if abi.wasm_memory(p, rfd.ret) { raw = true }
+            for i in 0..rfd.nparams {
+                if abi.wasm_memory(p, p.ir.locals[(rfd.lstart + i) as usize].ty) { raw = true }
+            }
+        }
+        let mut name = if raw { lit("eider.raw.") } else { lit("eider_") }
         for b in x.name {
             if bytes.is_ident(b) {
                 name.push(b)
@@ -6479,7 +6536,7 @@ fn export_fns(inout e: E, p: lower.P) {
         bytes.append(inout h, lit("("))
         bytes.append(inout h, signature_params(inout e, p, gf.sig, false))
         bytes.append(inout h, lit(") nounwind"))
-        if e.lay.wasm {
+        if e.lay.wasm && !raw {
             bytes.append(inout h, lit(" \"wasm-export-name\"=\""))
             bytes.append(inout h, name)
             bytes.append(inout h, lit("\""))

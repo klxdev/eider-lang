@@ -1,0 +1,55 @@
+// std/service: SIGTERM and SIGINT cancel a token (and so a group under it); a token cancelled
+// another way ends the watcher with 0; exit codes.
+
+import std.service
+import std.signal
+import std.child
+import std.task
+import std.time
+
+fn main() uses io, fs, net, clock, threads {
+    // SIGTERM cancels the root and the group's children see it
+    let root = task.root()
+    let w = service.cancel_on_term(root).unwrap()
+    var g: task.Group[i64] = task.group(root)
+    for i in 0..3 {
+        let k = i as i64
+        g.spawn(|t: task.Token| -> Result[i64, String] {
+            t.wait(time.after_ms(20000))
+            t.check()?
+            Ok(k)
+        })
+    }
+    print(root.is_cancelled())
+    signal.send(child.id(), signal.TERM).unwrap()
+    print(root.wait(time.after_ms(20000)))
+    print(w.join())
+    match g.wait() {
+        Ok(v) => print("no error?")
+        Err(e) => print(e)
+    }
+
+    // SIGINT likewise
+    let r2 = task.root()
+    let w2 = service.cancel_on_term(r2).unwrap()
+    signal.send(child.id(), signal.INT).unwrap()
+    print(r2.wait(time.after_ms(20000)))
+    print(w2.join())
+
+    // a token cancelled by other means: the watcher ends with 0 and no signal was taken
+    let r3 = task.root()
+    let mut only_term: List[i32] = List.new()
+    only_term.push(signal.TERM)
+    let w3 = service.cancel_on(r3, only_term).unwrap()
+    r3.cancel()
+    print(w3.join())
+
+    // exit codes
+    let ok: Result[i64, String] = Ok(1)
+    let bad: Result[i64, String] = Err(String.from("x"))
+    print(service.exit_code(ok, service.EX_CONFIG))
+    print(service.exit_code(bad, service.EX_CONFIG))
+    print(service.EX_USAGE)
+    signal.reset(signal.TERM).unwrap()
+    signal.reset(signal.INT).unwrap()
+}

@@ -81,6 +81,9 @@ fn main() uses io, clock, threads {
     })
     for e in lp.poll(time.never()).unwrap() { print(name(e, a, b, c)) }
     let z = waker.join()
+    // the second wake can land just after the round ended, so one more Woken may be
+    // pending; drain it, then nothing is left
+    let late = lp.poll(time.now()).unwrap().len()
     print(lp.poll(time.now()).unwrap().len())
 
     // a timer and a descriptor in the same round; then 500 timers, in order

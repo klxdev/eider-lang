@@ -1,1 +1,1 @@
-{"error":"E0806","span":{"file":"compiler/tests/wasm/check/record_ret.ei","line":3,"col":11},"message":"return type P isn't supported for WebAssembly exports (integers, bool, or ())"}
+{"error":"E0806","span":{"file":"compiler/tests/wasm/check/record_ret.ei","line":3,"col":11},"message":"return type P isn't supported for WebAssembly exports (integers, bool, String, List[u8], or ())"}

@@ -9,14 +9,20 @@
 # code, which then dies of SIGSEGV before our handler runs (tests/core checks the handler
 # under TSan, in C).
 cd "$(dirname "$0")/../.." || exit 1
-mkdir -p target/tmp
+mkdir -p target/tmp target/std-fail
 fail=0
+# A failing test keeps its whole output in target/std-fail/<name>.got (and the expected in
+# .want), so a flake under load is diagnosable afterwards; the diff is printed in full.
+keep() { # name want got
+  printf '%s\n' "$3" > "target/std-fail/$1.got"; cp "$2" "target/std-fail/$1.want"
+  echo "  output kept in target/std-fail/$1.got"
+}
 for f in tests/std/*.ei; do
   exp="${f%.ei}.out"
   in="${f%.ei}.in"
   [ -f "$in" ] || in=/dev/null
   got=$(EIDER_STD_TEST=set scripts/ei run "$f" <"$in" 2>&1; echo "exit $?")
-  if [ "$got" = "$(cat "$exp")" ]; then echo "ok   $f"; else echo "FAIL $f"; echo "$got" | diff "$exp" - | head -20; fail=1; fi
+  if [ "$got" = "$(cat "$exp")" ]; then echo "ok   $f"; else echo "FAIL $f"; echo "$got" | diff "$exp" -; keep "$(basename "${f%.ei}")" "$exp" "$got"; fail=1; fi
 done
 
 T=$(mktemp -d)
@@ -24,7 +30,7 @@ trap 'rm -rf "$T"' EXIT
 printf 'int main(void) { return 0; }\n' > "$T/probe.c"
 if ${CC:-cc} -fsanitize=thread -o "$T/probe" "$T/probe.c" 2>/dev/null && "$T/probe"; then
   runs=${EIDER_TSAN_RUNS:-3}
-  for t in atomic sync chan chan_wake task event; do
+  for t in atomic sync chan chan_wake task event service; do
     f=tests/std/$t.ei
     if ! EIDER_CACHE=off EIDER_CFLAGS="-fsanitize=thread -g" scripts/ei build "$f" -o "$T/$t" >"$T/log" 2>&1; then
       echo "FAIL $f (tsan): build"; cat "$T/log"; fail=1; continue
@@ -34,7 +40,7 @@ if ${CC:-cc} -fsanitize=thread -o "$T/probe" "$T/probe.c" 2>/dev/null && "$T/pro
     while [ $i -lt "$runs" ]; do
       got=$(TSAN_OPTIONS="halt_on_error=1 exitcode=66" EIDER_STD_TEST=set "$T/$t" </dev/null 2>&1; echo "exit $?")
       if [ "$got" != "$(cat "${f%.ei}.out")" ]; then
-        bad=1; echo "$got" | diff "${f%.ei}.out" - | head -20
+        bad=1; echo "$got" | diff "${f%.ei}.out" -; keep "$t.tsan" "${f%.ei}.out" "$got"
       fi
       i=$((i + 1))
     done

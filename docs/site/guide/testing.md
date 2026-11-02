@@ -57,7 +57,14 @@ test pop on an empty stack is None ... ok
 - A test stops at its first failure. `scripts/ei test` exits 1 when any test failed.
 - Test blocks have every capability, so they can print, read files or start threads
   without declaring it.
-- A file with only tests needs no real `main`; `fn main() {}` is enough.
+- A file with only tests, or a library module with no `main` at all, can be run:
+  `scripts/ei test stack.ei` (and `check stack.ei` type-checks it). Only `build` and `run`
+  need a `main`.
+- `scripts/ei test` with no file, in a package directory (one with an `eider.toml`), runs the
+  `test` blocks of every module and of `tests/*.ei` (not `target/`, `deps/`, `examples/`,
+  `bench/`, `scripts/`, `docs/`, hidden directories or nested packages) and ends with one
+  summary: `2 files, 3 tests, 0 failed`. A module's tests run once for each file that
+  imports it, and each run counts.
 
 ## Assertions with a diff: `std/testing`
 

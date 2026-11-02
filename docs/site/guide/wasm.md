@@ -78,7 +78,9 @@ export interface EiderImports { [name: string]: (...args: any[]) => any }
 export function load(wasm: BufferSource | WebAssembly.Module, imports?: EiderImports): Promise<EiderExports>;
 ```
 
-32-bit integers become `number`, 64-bit ones `bigint`, `bool` `boolean`, and `()` `void`.
+32-bit integers become `number`, 64-bit ones `bigint`, `bool` `boolean`, `()` `void`, a
+`String` a `string` and a `List[u8]` a `Uint8Array`. The loader's result also has the
+module's `memory`.
 
 ## Using it from JavaScript
 
@@ -107,8 +109,9 @@ trapped: RuntimeError
 ```
 
 - `print` output goes through the `eider_write` import: to `process.stdout` in Node, to
-  `console.log` elsewhere. Pass your own functions in `load`'s second argument to
-  redirect it (`{ eider_write(ptr, len) { ... } }`).
+  `console.log` elsewhere. Pass your own in `load`'s second argument to redirect it; it is
+  called with the module's memory as a third argument, so it can read the text:
+  `{ eider_write(ptr, len, memory) { text += new TextDecoder().decode(new Uint8Array(memory.buffer, ptr, len)); } }`.
 - A trap prints its message and becomes a WebAssembly `unreachable`, which JavaScript
   sees as a `RuntimeError`. The module stays usable afterwards only as far as the trap left
   its memory consistent; treat a trap as fatal, as in a native program.
@@ -119,27 +122,50 @@ trapped: RuntimeError
 
 Checked by `scripts/ei check --wasm file.ei`:
 
-- Exported functions take integers and `bool` only, and return an integer, `bool` or `()`
-  (E0806). Strings, records and Lists can't cross the boundary yet.
+- Exported functions take integers, `bool`, `String` and `List[u8]`, and return one of
+  those or `()` (E0806). Other Lists, records, `Option` and `Result` can't cross the
+  boundary yet.
 - No threads: a module that uses `spawn`, `Task`, `Mutex` or `Chan` is E0806.
 - No `main` (the module is a library) and at least one `export fn` (E0805).
 
 ```text
-error[E0806]: parameter `name` has type String; WebAssembly exports take only integers and bool
+error[E0806]: parameter `name` has type str; WebAssembly exports take only integers, bool, String and List[u8]
   --> bad.ei:1:17
   |
-1 | export fn greet(name: String) -> i32 { name.len() as i32 }
+1 | export fn greet(name: str) -> i32 { 1 }
   |                 ^
 ```
 
 ## Known limits
 
-- Strings and records across the boundary are planned.
-- The generated loader names the exports object `x`, so an export with a parameter
-  called `x` breaks the loader; rename the parameter.
+- Records, other Lists, `Option` and `Result` across the boundary are planned (the design is
+  `docs/design/typescript_models.md`).
 - Unsigned results above the signed range come back as negative numbers (or negative
   BigInts) in JavaScript.
 
-Both loader bugs are kept for now because the loader's text is recorded in the compiler's
-test oracle; they are listed for a deliberate fix in the repository's `docs/compiler.md`
-("C8 candidates").
+## Strings and bytes
+
+```eider,ignore
+export fn greet(name: String) -> String {
+    let mut s = String.from("hello, ")
+    s.append(name)
+    s
+}
+
+export fn checksum(data: List[u8]) -> u64 {
+    let mut t: u64 = 0
+    for b in data { t += b as u64 }
+    t
+}
+```
+
+```text
+const m = await load(bytes);
+m.greet("world")                     // "hello, world"
+m.checksum(new Uint8Array([1, 2]))   // 3n
+```
+
+The loader copies an argument into the module's memory (UTF-8 for a string; one containing
+a NUL character is a `TypeError`, as is a value of the wrong type), calls the function, and
+frees the copy; a result is copied out and freed the same way. Nothing stays allocated
+between calls. The module's `memory` is part of what `load` returns.

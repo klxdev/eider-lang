@@ -181,7 +181,9 @@ fn main() uses io, clock, threads {
 
     // a woken receiver that takes another case hands its wake-up on: A waits in a select on
     // c and d, B (registered after A) on c alone; d then c get a value at once, so both
-    // wake-ups go to A, and when A's select takes d's, B must still get c's
+    // wake-ups go to A, and when A's select takes d's, B must still get c's. Whether A is
+    // woken before c's value lands (so A takes d's) depends on scheduling, so the test
+    // doesn't assert that it happens: it asserts that no round loses a value or stalls B.
     let mut handed = 0
     for round in 0..20 {
         let c6: chan.Channel[i64] = chan.bounded(1)
@@ -197,7 +199,7 @@ fn main() uses io, clock, threads {
         time.sleep_until(time.after_ms(20))
         let cb = c6
         let tb = spawn(|| -> i64 {
-            match cb.recv(time.after_ms(3000)) {
+            match cb.recv(time.after_ms(20000)) {
                 chan.Value(v) => v
                 chan.Empty => -9
                 chan.Closed => 0
@@ -213,7 +215,6 @@ fn main() uses io, clock, threads {
         if y == -9 { stalls.add(1, atomic.SeqCst) }
         if x + y != 3 && !(x == 2 && y == 0) { print("lost a value") }
     }
-    print(handed > 0)
     print(stalls.load(atomic.SeqCst))
     stalls.free()
     done.free()

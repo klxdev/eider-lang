@@ -1,0 +1,43 @@
+:8080
+4
+false
+10000
+default
+0.0.0.0:9000
+8
+8443
+toml
+a	b "q"
+lit\n
+config: toml line 1: arrays and inline tables are not supported
+config: toml line 1: no value
+config: toml line 1: no key before =
+config: toml line 1: arrays of tables are not supported
+config: toml line 1: a table header needs a closing ]
+config: toml line 1: expected key = value
+config: toml line 1: a string is not closed
+16
+9
+true
+250
+flag --workers
+["serve", "--workers", "x"]
+config: unknown flag --wrokers
+workers: many is not an integer (from default)
+verbose: maybe is not true or false (from default)
+grace: soon is not a duration (250ms, 10s, 2m, 1h) (from default)
+config: missing is not set
+true
+false
+500
+1500
+2000
+180000
+3600000
+d: -1s is not a duration (from default)
+d: 1.5s is not a duration (250ms, 10s, 2m, 1h) (from default)
+d: 10000000000000000h is not a duration that fits (from default)
+set
+kept
+env EIDER_STD_TEST
+exit 0

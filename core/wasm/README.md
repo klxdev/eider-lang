@@ -38,6 +38,11 @@ both; a host that instantiates the module itself must too.
 | `eider_write(p, n)` | `(i32, i32) -> ()` | write bytes `[p, p+n)` of the exported memory. stdout and stderr both come here (the loader: `process.stdout.write`, else `console.log`) |
 | `eider_now_ms()` | `() -> i64` | milliseconds on the host's clock (the loader: `Date.now()`) |
 
+The text helpers of `core.sys` (`lit`, `to_string`: `ec_str_len`, `ec_str_byte`,
+`ec_in_clear`, `ec_in_push`, `ec_in_cstr`) are defined in the module (eider_rt.c, over a
+buffer of its own), so a module that uses them, directly or through std or a library
+(`json.field`, every parse error message), loads without the loader supplying anything.
+
 Every other function the module calls but does not define (an `extern "c"` function, or a
 native core function `ec_*` reached through `std`) is also an import from `env`
 (`--allow-undefined`), to be passed in the loader's `imports`. There is no wasm backend of
@@ -47,7 +52,7 @@ fails to instantiate with a `LinkError` naming the `env.ec_*` import (core/ABI.m
 "WebAssembly").
 
 Exports: `memory`, and `eider_<name>` for each `export fn`, whose parameters and result are
-integers or `bool` (E0806). `i64`/`u64`/`usize` cross as `i64` (JavaScript `BigInt`), the
+integers, `bool`, `String` or `List[u8]` (E0806; see "Values across the boundary"). `i64`/`u64`/`usize` cross as `i64` (JavaScript `BigInt`), the
 other integers and `bool` as `i32`.
 
 ## Memory model
@@ -84,6 +89,18 @@ with `-DEI_WASM_CORE`:
   out-of-bounds access, not corrupted data; the heap grows with `memory.grow` up to 4 GiB.
 - Threads aren't available (as in any module); `test` blocks aren't run.
 
+## Values across the boundary
+
+An export that takes or returns a `String` or `List[u8]` is built by llvm.ei as
+`eider.raw.<name>` (not exported), and wasm.ei writes a C file of wrappers (`marshal.h`,
+`marshal.c` are their runtime) that exports `eider_<name>` over it. Each such parameter is two
+`i32`s, an address and a length; the wrapper makes a String (checked: valid UTF-8 without NUL,
+else a trap) or `List[u8]` from the bytes, calls the function (which borrows its arguments)
+and drops the copy. A result is kept in the module, the call returns its address (0 if empty),
+`eider_ret_len()` gives the length and `eider_ret_release()` drops it. The loader copies
+arguments in with `eider_alloc`/`eider_free`, and results out between those two calls.
+All four are exported only by modules that need them.
+
 ## Runtime behaviour (differences from core/eider_rt.c)
 
 - **Traps**: `ei_trap` writes `eider: runtime error: <msg> (lib:<line>)` through
@@ -104,15 +121,12 @@ with `-DEI_WASM_CORE`:
 
 - `test` blocks: there is no `setjmp` (it returns 0 and `longjmp` traps), so `test --wasm`
   is not offered (`eiderc test` ignores `--wasm`).
-- Strings, records, lists and other non-integer values across the boundary (E0806).
+- Records, lists other than `List[u8]`, Option/Result and other values across the boundary (E0806).
 - Threads (E0806), files, processes, environment, arguments (no ABI.md backend; see above).
 - Unsigned results above the signed range come back negative in JavaScript (`u32` as a
   negative number, `u64`/`usize` as a negative BigInt): the loader passes the raw wasm values
   through (kept for byte-identity with the recorded oracle; a C8 candidate,
   docs/compiler.md).
-- An export parameter named `x` breaks the loader (`x.eider_<name>(...)` inside an arrow
-  function whose parameter shadows `x`). The loader text is kept byte-identical
-  with the recorded oracle; fixing it is a C8 candidate (docs/compiler.md).
 
 ## Compared with the recorded behaviour
 

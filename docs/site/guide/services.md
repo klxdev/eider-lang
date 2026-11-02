@@ -59,6 +59,58 @@ EIDER_PKG_OVERRIDE=http=../eider-http,rpc=../eider-rpc,json=../eider-json eider-
 
 ([eider-pkg](../tooling/eider-pkg.md#overriding-a-git-dependency) says how it works.)
 
+## Logging, configuration and shutdown
+
+Three std modules every service wants, so that they look the same in each one.
+
+**`std/log`** writes one JSON object per line to stderr (or stdout), with a level, fields that
+every record of a logger carries, and typed fields per record:
+
+```eider,ignore
+import std.log
+
+fn main() uses io, clock {
+    let lg = log.new(log.Info).with(log.fields().text("service", String.from("kv")))
+    lg.info("listening", log.fields().text("addr", String.from(":8080")).int("workers", 4))
+    lg.debug("not written", log.fields())
+}
+```
+
+```text
+{"time":"2026-11-01T12:34:56.789Z","level":"info","msg":"listening","service":"kv","addr":":8080","workers":4}
+```
+
+**`std/config`** layers defaults, a TOML file, the environment and flags (each over the one
+before) and reads typed values with errors that name the key, the text and the layer. The
+defaults are the schema: the environment and the flags can only set keys that have one, and an
+unknown flag is an error.
+
+```eider,ignore
+import std.config
+
+fn load(toml: String, args: List[List[u8]]) -> Result[Settings, String] uses io {
+    let c = config.new().default("addr", ":8080").default("workers", "4").default("grace", "10s")
+    let c = c.toml(toml)?.env("APP")?.flags(args)?          // APP_WORKERS, --workers=8
+    Ok(Settings(c.str("addr")?, c.int("workers")?, c.duration_ms("grace")?))
+}
+```
+
+(The TOML read is the part services use: `key = value`, `[table]`, strings, numbers,
+booleans; arrays and inline tables are an error. The eider-toml library parses all of TOML.
+Filling a record by field name waits for reflection to reach std.)
+
+**`std/service`** drains on SIGTERM and SIGINT: `cancel_on_term(token)` starts a watcher that
+cancels a [`std/task`](concurrency.md) token when one arrives, so everything under it (a task
+group, a server loop waiting on the token) finishes what it has and returns; and the exit codes
+of `sysexits.h` (`EX_CONFIG`, `EX_UNAVAILABLE`, ...) for what `main` reports.
+
+```eider,ignore
+let root = task.root()
+let watcher = service.cancel_on_term(root)?
+serve(root)                    // returns once `root` is cancelled
+let signal = watcher.join()    // 15 for SIGTERM, 2 for SIGINT
+```
+
 ## What to know before you start
 
 - The server speaks plain HTTP: run it on loopback or a private interface behind a

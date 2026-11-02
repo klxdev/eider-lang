@@ -1,0 +1,255 @@
+// fmt: `eiderc fmt <file.ei>` prints the file in the one canonical layout. No options.
+//
+// It works on the source text between the tokens (lex.ei), never on a tree, and changes only
+// layout that carries no meaning:
+//   - the indentation of every line: four spaces per open bracket, and four more on a
+//     continuation line (one that starts with `.`, `?`, `&&`, `||`, `==`, `+`, ... or follows
+//     a line that ends with an operator or `=>`); a line that starts with a closing bracket
+//     steps back first;
+//   - runs of spaces and tabs between two things on a line become one space; trailing white
+//     space goes; CRLF becomes LF;
+//   - blank lines: at most one in a row, none at the start of the file; the file ends with
+//     exactly one newline.
+// Spaces are never added or removed between tokens that had some, and tokens, comments and
+// strings are copied byte for byte (a block comment keeps its inside as it is), so what the
+// parser sees is the same. A file with a `"""` string is refused (its lines are text).
+//
+// It checks itself: the formatted text must lex to the same tokens (kind, value, text and
+// string table, Newline tokens apart from the ones at the ends) and formatting it again
+// must change nothing; otherwise `format` reports a failure instead of text.
+
+import core.sys
+import std.bytes
+import eiderc.intern
+import eiderc.lex
+
+fn s(x: str) -> List[u8] { sys.lit(x) }
+
+/// The result of `format`: the text, or why there is none.
+pub type Fmt = { ok: bool, text: List[u8], why: List[u8] }
+
+fn failed(why: str) -> Fmt { Fmt(false, List.new(), s(why)) }
+
+fn is_open(k: lex.Kind) -> bool { k == lex.LParen || k == lex.LBrace || k == lex.LBracket }
+
+fn is_close(k: lex.Kind) -> bool { k == lex.RParen || k == lex.RBrace || k == lex.RBracket }
+
+/// A token a line can end with when the expression goes on in the next line.
+fn ends_open(k: lex.Kind) -> bool {
+    k == lex.Plus || k == lex.Minus || k == lex.Star || k == lex.Slash || k == lex.Percent ||
+        k == lex.AndAnd || k == lex.OrOr || k == lex.Eq || k == lex.EqEq || k == lex.NotEq ||
+        k == lex.Lt || k == lex.Gt || k == lex.LtEq || k == lex.GtEq || k == lex.Arrow ||
+        k == lex.FatArrow || k == lex.Amp || k == lex.Pipe || k == lex.Caret || k == lex.Shl ||
+        k == lex.Shr || k == lex.WAdd || k == lex.WSub || k == lex.WMul || k == lex.DotDot ||
+        k == lex.Dot || k == lex.PlusEq || k == lex.MinusEq || k == lex.StarEq ||
+        k == lex.SlashEq || k == lex.PercentEq || k == lex.AmpEq || k == lex.PipeEq ||
+        k == lex.CaretEq || k == lex.ShlEq || k == lex.ShrEq
+}
+
+/// A token that can only continue an expression when it starts a line (`-`, `*`, `&`, `<` and
+/// `>` can be unary or brackets, so they don't count).
+fn starts_cont(k: lex.Kind) -> bool {
+    k == lex.Dot || k == lex.Question || k == lex.AndAnd || k == lex.OrOr || k == lex.Plus ||
+        k == lex.Slash || k == lex.Percent || k == lex.EqEq || k == lex.NotEq || k == lex.LtEq ||
+        k == lex.GtEq || k == lex.Arrow || k == lex.Pipe || k == lex.FatArrow
+}
+
+fn spaces(inout out: List[u8], n: i64) {
+    let mut i: i64 = 0
+    while i < n {
+        out.push(32)
+        i += 1
+    }
+}
+
+/// Whether the text has a blank-or-empty last line (so a newline would add a blank line).
+fn after_blank(out: List[u8]) -> bool {
+    let l = out.len()
+    l >= 2 && out[l - 1] == 10 && out[l - 2] == 10
+}
+
+/// The offset of the next newline at or after `from` (or the end).
+fn eol(src: List[u8], from: usize) -> usize {
+    let mut e = from.copy()
+    while e < src.len() && src[e] != 10 { e += 1 }
+    e
+}
+
+/// The end of the line comment at `from`, without the white space before the newline.
+fn comment_end(src: List[u8], from: usize) -> usize {
+    let mut e = eol(src, from)
+    while e > from && (src[e - 1] == 32 || src[e - 1] == 9 || src[e - 1] == 13) { e -= 1 }
+    e
+}
+
+fn pass(src: List[u8]) -> Fmt {
+    let mut names = intern.new()
+    let lx = lex.lex_all(src, inout names)
+    if lx.diags.len() > 0 { return Fmt(false, List.new(), lx.diags[0].msg.copy()) }
+    match bytes.find(src, s("\"\"\""), 0) {
+        Some(_) => { return failed("a file with a multi-line string (\"\"\") is not formatted") }
+        None => {}
+    }
+    let toks = lx.lexed.toks
+    let n = src.len()
+    let mut out: List[u8] = List.new()
+    let mut ti: usize = 0
+    let mut i: usize = 0
+    let mut depth: i64 = 0
+    let mut line_start = true
+    let mut space = false
+    let mut have_prev = false
+    let mut prev = lex.Newline
+    let mut line_kind = lex.Newline
+    let mut line_has_tok = false
+    while i < n {
+        while ti < toks.len() && (toks[ti].kind == lex.Newline || toks[ti].kind == lex.Eof || (toks[ti].start as usize) < i) { ti += 1 }
+        if ti < toks.len() && (toks[ti].start as usize) == i {
+            let t = toks[ti]
+            if line_start {
+                let mut d = depth.copy()
+                if is_close(t.kind) && d > 0 { d -= 1 }
+                let mut ind = d * 4
+                if have_prev && (ends_open(prev) || starts_cont(t.kind)) { ind += 4 }
+                spaces(inout out, ind)
+            } else if space {
+                out.push(32)
+            }
+            let e = t.end as usize
+            let mut j = i.copy()
+            while j < e {
+                out.push(src[j])
+                j += 1
+            }
+            if is_open(t.kind) { depth += 1 }
+            if is_close(t.kind) && depth > 0 { depth -= 1 }
+            i = e
+            ti += 1
+            line_start = false
+            space = false
+            prev = t.kind
+            have_prev = true
+            line_has_tok = true
+            continue
+        }
+        let c = src[i]
+        if c == 32 || c == 9 || c == 13 {
+            if !line_start { space = true }
+            i += 1
+        } else if c == 10 {
+            if line_start {
+                // an empty line: one at most, never first; it also ends a continuation
+                if out.len() > 0 && !after_blank(out) { out.push(10) }
+                have_prev = false
+            } else {
+                out.push(10)
+            }
+            line_start = true
+            space = false
+            line_has_tok = false
+            i += 1
+        } else if c == 47 && i + 1 < n && src[i + 1] == 47 {
+            if line_start {
+                spaces(inout out, depth * 4)
+            } else if space {
+                out.push(32)
+            }
+            let e = comment_end(src, i)
+            let mut j = i.copy()
+            while j < e {
+                out.push(src[j])
+                j += 1
+            }
+            i = eol(src, i)
+            line_start = false
+            space = false
+        } else if c == 47 && i + 1 < n && src[i + 1] == 42 {
+            if line_start {
+                spaces(inout out, depth * 4)
+            } else if space {
+                out.push(32)
+            }
+            // a block comment, nested ones too, as it is
+            let mut lvl: i64 = 0
+            let mut j = i.copy()
+            while j < n {
+                if src[j] == 47 && j + 1 < n && src[j + 1] == 42 {
+                    lvl += 1
+                    out.push(47)
+                    out.push(42)
+                    j += 2
+                } else if src[j] == 42 && j + 1 < n && src[j + 1] == 47 {
+                    lvl -= 1
+                    out.push(42)
+                    out.push(47)
+                    j += 2
+                    if lvl == 0 { break }
+                } else {
+                    out.push(src[j])
+                    j += 1
+                }
+            }
+            i = j
+            line_start = false
+            space = false
+        } else {
+            // not a token, white space or a comment: cannot happen after a clean lex
+            return failed("text between tokens that is neither white space nor a comment")
+        }
+    }
+    // exactly one newline at the end, none for an empty file
+    while out.len() > 0 && (out[out.len() - 1] == 10 || out[out.len() - 1] == 32) { out.pop() }
+    if out.len() > 0 { out.push(10) }
+    Fmt(true, out, List.new())
+}
+
+/// The tokens of `src` that matter to the parser, as (kind, value, big, text) with the Newline
+/// tokens at the ends dropped, and the string table: two sources with equal results parse alike.
+fn shape(src: List[u8]) -> Option[(List[(lex.Kind, u64, bool, List[u8])], List[List[u8]])] {
+    let mut names = intern.new()
+    let lx = lex.lex_all(src, inout names)
+    if lx.diags.len() > 0 { return None }
+    let mut out: List[(lex.Kind, u64, bool, List[u8])] = List.new()
+    for t in lx.lexed.toks {
+        if t.kind == lex.Eof { continue }
+        if t.kind == lex.Newline && out.len() == 0 { continue }
+        let text: List[u8] = if t.kind == lex.Newline { List.new() } else { bytes.slice(src, t.start as usize, t.end as usize) }
+        out.push((t.kind, t.val, t.big, text))
+    }
+    while out.len() > 0 && out[out.len() - 1].0 == lex.Newline { out.pop() }
+    Some((out, lx.lexed.strs))
+}
+
+fn same_shape(a: Option[(List[(lex.Kind, u64, bool, List[u8])], List[List[u8]])], b: Option[(List[(lex.Kind, u64, bool, List[u8])], List[List[u8]])]) -> bool {
+    match a {
+        Some(x) => {
+            match b {
+                Some(y) => {
+                    if x.0.len() != y.0.len() || x.1.len() != y.1.len() { return false }
+                    for i in 0..x.0.len() {
+                        let p = x.0[i]
+                        let q = y.0[i]
+                        if p.0 != q.0 || p.1 != q.1 || p.2 != q.2 || !bytes.eq(p.3, q.3) { return false }
+                    }
+                    for i in 0..x.1.len() {
+                        if !bytes.eq(x.1[i], y.1[i]) { return false }
+                    }
+                    true
+                }
+                None => false
+            }
+        }
+        None => false
+    }
+}
+
+/// The canonical layout of `src`, or why there is none (a lexing error, a `"""` string, or a
+/// failed self-check: the tokens changed or a second pass changed the text).
+pub fn format(src: List[u8]) -> Fmt {
+    let one = pass(src)
+    if !one.ok { return one }
+    if !same_shape(shape(src), shape(one.text)) { return failed("internal error: the formatted text has other tokens") }
+    let two = pass(one.text)
+    if !two.ok || !bytes.eq(one.text, two.text) { return failed("internal error: formatting is not idempotent here") }
+    one
+}

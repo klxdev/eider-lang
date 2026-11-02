@@ -466,9 +466,12 @@ constant it is handed, so a caller that skips `eval` finds out).
 
 - **Checking.** `--wasm` (`check`, `emit-llvm`, `emit-header`, `build`, `run`; `test` ignores
   it like `--lib`) checks the program as a library (`check.check_wasm`: no `main`, E0805)
-  whose exports take only integer and bool parameters (E0806 at the parameter) and return an
-  integer, bool or `()` (E0806 at the function), checked before the E0803 rules, which then
-  allow no records. A program that uses a thread type (`Task`, `Mutex`, `Chan`, so also
+  whose exports take only integer, bool, String and List[u8] parameters (E0806 at the
+  parameter) and return one of those or `()` (E0806 at the function; `check.wasm_memory_ty`),
+  checked before the E0803 rules, which then allow no records. A String or List[u8] crosses as
+  memory: llvm.ei builds that export as `eider.raw.<name>` and wasm.ei's generated C wrapper
+  (core/wasm/marshal.c) exports `eider_<name>` over it (core/wasm/README.md, "Values across
+  the boundary"). A program that uses a thread type (`Task`, `Mutex`, `Chan`, so also
   `spawn`) gets E0806 at 1:1 after everything else is checked (as tests/oracle records:
   the thread type is noted while checking, the error reported at the end). Until eiderc
   checks threads, `spawn` stops checking with `unsupported`, which `check_wasm` turns into
@@ -951,11 +954,9 @@ review the oracle diff, add a test, and regenerate the seed.
   `EIDER_<NAME>_H`, from the library's name, C302; compiler/tests/export/consumer.c
   includes two headers.)
 - WebAssembly loader (kept byte-identical to `tests/oracle/compiler/tests/wasm/*.js`,
-  core/wasm/README.md): an export
-  parameter named `x` shadows the loader's `const x = inst.exports`, so calling that export
-  breaks; `u32` results above the signed range come back as negative numbers and
+  core/wasm/README.md): `u32` results above the signed range come back as negative numbers and
   `u64`/`usize` results as negative BigInts, because the loader passes the raw wasm values
-  through.
+  through. (The `x` parameter clash is fixed in 0.4.0, C703.)
 - Runtime: `ei_now_ms` is the monotonic clock in ms (it was processor time, `clock()`, until layer/core-os; core/RUNTIME.md).
 - Answered `unsupported` where the recorded behaviour is wrong, waiting for a language
   decision: `?` in an expression-bodied closure (recorded: checked against the enclosing

@@ -1,0 +1,87 @@
+// std/config: defaults, a TOML file, the environment and flags, in that order; typed getters
+// with errors that say where the value came from.
+
+import std.config
+import std.env
+import std.strings
+
+// a command line from words separated by spaces
+fn args(line: str) -> List[List[u8]] {
+    let mut out: List[List[u8]] = List.new()
+    for x in strings.fields(String.from(line)) { out.push(x.bytes()) }
+    out
+}
+
+fn show(r: Result[String, String]) uses io {
+    match r {
+        Ok(v) => print(v)
+        Err(e) => print(e)
+    }
+}
+
+fn shown_int(r: Result[i64, String]) uses io {
+    match r {
+        Ok(v) => print(v)
+        Err(e) => print(e)
+    }
+}
+
+fn main() uses io {
+    let base = config.new().default("addr", ":8080").default("workers", "4").default("verbose", "false").default("grace", "10s").default("http.port", "80")
+    show(base.str("addr"))
+    shown_int(base.int("workers"))
+    print(base.bool("verbose").unwrap())
+    shown_int(base.duration_ms("grace"))
+    print(base.source("addr"))
+
+    // TOML on top: tables become dotted keys; comments, quotes and escapes
+    let doc = String.from("# service\naddr = \"0.0.0.0:9000\"   # public\nworkers = 8\n\n[http]\nport = 8443\n")
+    let t = base.toml(doc).unwrap()
+    show(t.str("addr"))
+    shown_int(t.int("workers"))
+    shown_int(t.int("http.port"))
+    print(t.source("http.port"))
+    show(config.new().toml(String.from("name = 'lit\\n'\nother = \"a\\tb \\\"q\\\"\"\n")).unwrap().str("other"))
+    show(config.new().toml(String.from("name = 'lit\\n'\n")).unwrap().str("name"))
+    for bad in ["x = [1, 2]", "x = ", "= 3", "[[t]]", "[open", "just text", "s = \"open"] {
+        match config.new().toml(String.from(bad)) {
+            Ok(c) => print("accepted?")
+            Err(e) => print(e)
+        }
+    }
+
+    // flags on top: = and space forms, a bare boolean, rest, --, and an unknown flag
+    let f = t.flags(args("prog --workers=16 --http.port 9 --verbose serve --grace 250ms -- --workers x")).unwrap()
+    shown_int(f.int("workers"))
+    shown_int(f.int("http.port"))
+    print(f.bool("verbose").unwrap())
+    shown_int(f.duration_ms("grace"))
+    print(f.source("workers"))
+    print(f.rest())
+    match t.flags(args("prog --wrokers=2")) {
+        Ok(c) => print("accepted?")
+        Err(e) => print(e)
+    }
+
+    // typed errors name the key, the text and the layer
+    let e = base.default("workers", "many").default("verbose", "maybe").default("grace", "soon")
+    shown_int(e.int("workers"))
+    match e.bool("verbose") {
+        Ok(v) => print(v)
+        Err(m) => print(m)
+    }
+    shown_int(e.duration_ms("grace"))
+    shown_int(e.int("missing"))
+    print(e.has("addr"))
+    print(e.has("missing"))
+    for d in ["500", "1500ms", "2s", "3m", "1h", "-1s", "1.5s", "10000000000000000h"] {
+        shown_int(base.default("d", d).duration_ms("d"))
+    }
+
+    // the environment: only keys that exist are read (EIDER_STD_TEST=set is in the test's
+    // environment; the others are not)
+    let ev = base.default("test", "unset").default("other", "kept").env("EIDER_STD").unwrap()
+    show(ev.str("test"))
+    show(ev.str("other"))
+    print(ev.source("test"))
+}

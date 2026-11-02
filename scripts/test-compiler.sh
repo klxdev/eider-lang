@@ -952,5 +952,46 @@ targs=$(pwd)/compiler/tests/driver/args.ei
 (unset EIDER_ROOT; cd $tc && EIDER_CACHE=off ./bin/x/eiderc run "$targs" deep) >$tmp/tc_got 2>&1
 printf '1: [deep]\n1\n' | cmp -s - $tmp/tc_got || { echo "FAIL usage: an eiderc at <root>/bin/x/eiderc gives:"; head -5 $tmp/tc_got; uok=0; }
 rm -rf $tc
+# a module with no `main` (#140): `check` and `test` take it; `build` and `run` still want a main;
+# `test` with no file runs every module's tests of the package in the current directory
+pk=$(pwd)/target/pkgtest
+newabs=$(cd "$(dirname "$new")" && pwd)/$(basename "$new")
+rm -rf $pk
+mkdir -p $pk/tests $pk/target $pk/examples
+printf '[package]\nname = "pk"\nversion = "0.1.0"\neider = "0.3"\n' >$pk/eider.toml
+printf 'pub fn double(n: i32) -> i32 { n * 2 }\n\ntest "double" {\n    assert double(4) == 8\n}\n' >$pk/lib.ei
+printf 'import pk.lib\n\ntest "uses the lib" {\n    assert lib.double(3) == 6\n}\n' >$pk/tests/more_test.ei
+printf 'test "skipped: examples/ is not run" {\n    assert 1 == 2\n}\n' >$pk/examples/e.ei
+printf 'test "skipped: target/ is not run" {\n    assert 1 == 2\n}\n' >$pk/target/t.ei
+(cd $pk && EIDER_CACHE=off $newabs check lib.ei) >$tmp/pk_got 2>&1
+[ "$(cat $tmp/pk_got)" = ok ] || { echo "FAIL usage: check of a module with no main gives:"; head -3 $tmp/pk_got; uok=0; }
+(cd $pk && EIDER_CACHE=off $newabs test lib.ei) >$tmp/pk_got 2>&1
+[ $? = 0 ] && grep -q "^1 tests, 0 failed" $tmp/pk_got || { echo "FAIL usage: test of a module with no main gives:"; head -5 $tmp/pk_got; uok=0; }
+(cd $pk && EIDER_CACHE=off $newabs test) >$tmp/pk_got 2>&1
+[ $? = 0 ] && grep -q "^2 files, 3 tests, 0 failed" $tmp/pk_got && ! grep -q skipped $tmp/pk_got || { echo "FAIL usage: test in a package gives:"; head -12 $tmp/pk_got; uok=0; }
+(cd $pk && EIDER_CACHE=off $newabs run lib.ei) >$tmp/pk_got 2>&1
+[ $? != 0 ] && grep -q "no .main. function" $tmp/pk_got || { echo "FAIL usage: run of a module with no main gives:"; head -3 $tmp/pk_got; uok=0; }
+rm -rf $pk
+# --sanitize and --race (#25): the program is built with the sanitizer (its runtime is in the
+# binary), a bad list or a command that can't take them is a usage error
+sa=$(pwd)/target/sanitest
+rm -rf $sa
+mkdir -p $sa
+printf 'fn main() uses io {\n    print("hi")\n}\n' >$sa/p.ei
+for fl in --sanitize --race --sanitize=thread; do
+  EIDER_CACHE=off $newabs build $fl $sa/p.ei -o $sa/p >$tmp/san_got 2>&1
+  if [ $? != 0 ]; then echo "FAIL usage: build $fl gives:"; head -5 $tmp/san_got; uok=0; continue; fi
+  case $fl in --race|--sanitize=thread) want=__tsan_init ;; *) want=__asan_init ;; esac
+  grep -aq $want $sa/p || { echo "FAIL usage: build $fl: no $want in the binary"; uok=0; }
+done
+EIDER_CACHE=off $newabs run --sanitize $sa/p.ei >$tmp/san_got 2>&1
+[ "$(cat $tmp/san_got)" = hi ] || { echo "FAIL usage: run --sanitize gives:"; head -5 $tmp/san_got; uok=0; }
+for bad in "--sanitize=bogus" "--sanitize=thread,address" "--sanitize --race"; do
+  $newabs build $bad $sa/p.ei >/dev/null 2>&1
+  [ $? = 2 ] || { echo "FAIL usage: build $bad is not a usage error"; uok=0; }
+done
+$newabs check --sanitize $sa/p.ei >/dev/null 2>&1
+[ $? = 2 ] || { echo "FAIL usage: check --sanitize is not a usage error"; uok=0; }
+rm -rf $sa
 if [ $uok = 1 ]; then echo "ok   usage: --help lists every command and equals the oracle; unknown options, commands and stray arguments exit 2; --version is VERSION; run passes program arguments; an eiderc below <root>/bin finds the toolchain"; else fail=1; fi
 exit $fail

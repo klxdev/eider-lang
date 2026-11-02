@@ -11,7 +11,8 @@ usage:
   eiderc run <file.ei> [--release] [-l lib] [--] [args...]  build and run (-O0 unless --release);
                                              the arguments after the file (every one after `--`) go to the program
   eiderc build|run|test <file.ei> --profile[=cpu,mem,conc]  with the profiler (docs/runtime.md "Profiler")
-  eiderc test <file.ei> [-l lib]             run the `test` blocks
+  eiderc test <file.ei> [-l lib]             run the `test` blocks (a module with no `main` too)
+  eiderc test                                run the tests of every module of the package in this directory
   eiderc build|run|test ... -j N             compile at most N units at once (default $EIDER_JOBS, else one per CPU)
   eiderc cache size|clean|trim               the cache's use; remove every entry; apply EIDER_CACHE_MAX now
   eiderc test --compile-fail [<dir>]         run the compile-fail suite (<dir>/fail, <dir>/pass; default tests/checks)
@@ -34,6 +35,7 @@ usage:
                                              --overlay (repeatable) reads <path> from the file <text>
   eiderc doc <file.ei | dir> [--json] [--private]  the API of a package directory or a program's package:
                                              items, signatures, doc comments (doc.ei); --private: also non-pub items
+  eiderc fmt <file.ei>                       print the file in the canonical layout (fmt.ei; no options)
   eiderc help | --help | -h                  print this text
   eiderc version | --version                 print `eiderc <version>` (VERSION; docs/site/tooling/releases.md)
 
@@ -41,6 +43,8 @@ build, run and test emit LLVM IR (llvm.ei) and build it with
 clang 17 or newer ($EIDER_LLVM_CC), one unit per module and generic instances in 16 shards, each
 cached (EIDER_LLVM_UNITS=0: one unit); a release build uses ThinLTO when clang links with lld
 (EIDER_LLVM_LTO=0: plain objects); -g adds DWARF line info for the .ei sources (one unit).
+--sanitize[=address,undefined|thread] and --race (thread) build with that sanitizer (sanitize.ei);
+debug/eider_gdb.py and debug/eider_lldb.py print String, List, Map and enums in gdb and lldb.
 
 errors: every independent error is reported, in the order found, then `error: N errors`
 (stderr); with --json one JSON object per line (stdout). --max-errors N shows at most N
