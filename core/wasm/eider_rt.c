@@ -273,12 +273,14 @@ uint64_t ei_now_ms(void) {
   return ms > 0 ? (uint64_t)ms : 0;
 }
 
-#if defined(EI_WASM_CORE)
-// ---- a core module's side of core/ABI.md. Eider calls the core by symbol name; these few
-// are defined here instead of imported, because they hand out or take pointers, which mean
-// nothing to the host: the bytes of a literal (ec_str_len, ec_str_byte: the literal is in
-// this module's memory), and ec_in_cstr, the `in` buffer as a C string, kept as a copy of
-// what ec_in_clear / ec_in_push send on to the host.
+// ---- the text helpers of core/sys.ei (core/ABI.md): `lit` and `to_string` reach the core
+// by symbol name. Those that hand out or take pointers are defined here, not imported,
+// because a pointer into the module's memory means nothing to the host: the bytes of a
+// literal (ec_str_len, ec_str_byte: the literal is in this module's memory), and the `in`
+// buffer (ec_in_clear, ec_in_push, ec_in_cstr), kept in the module. A core module
+// (-DEI_WASM_CORE) also sends what is pushed on to the host (the C core's `in` buffer, which
+// its other functions read); a plain `--wasm` module has no such functions, so the buffer is
+// all there is, and the loader needs to supply nothing for these five.
 
 static char *in_copy;
 static size_t in_len, in_cap;
@@ -291,7 +293,9 @@ int32_t ec_str_byte(const char *s, int64_t i);
 
 void ec_in_clear(void) {
   in_len = 0;
+#if defined(EI_WASM_CORE)
   ei_host_in_clear();
+#endif
 }
 void ec_in_push(int32_t b) {
   if (in_len + 1 >= in_cap) {
@@ -302,7 +306,9 @@ void ec_in_push(int32_t b) {
     in_cap = c;
   }
   in_copy[in_len++] = (char)(b & 0xff);
+#if defined(EI_WASM_CORE)
   ei_host_in_push(b);
+#endif
 }
 const char *ec_in_cstr(void) {
   if (!in_copy) return "";
@@ -312,6 +318,7 @@ const char *ec_in_cstr(void) {
 int64_t ec_str_len(const char *s) { return (int64_t)strlen(s); }
 int32_t ec_str_byte(const char *s, int64_t i) { return (unsigned char)s[i]; }
 
+#if defined(EI_WASM_CORE)
 // the entry the host runs (seed/wasm2c.c's main): the program's C main, then exit with
 // what it returned
 int main(void);

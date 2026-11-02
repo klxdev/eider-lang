@@ -1,0 +1,24 @@
+// core.sys's text helpers (`lit`, `to_string`) in a WebAssembly module: they reach the core by
+// symbol name (ec_str_len, ec_str_byte, ec_in_clear, ec_in_push, ec_in_cstr), which the
+// module defines itself, so the loader has nothing to supply for them (#137). Also a JSON-ish
+// escape written with `lit`, like the libraries do.
+import core.sys
+
+export fn lit_len() -> i64 { sys.lit("abc").len() as i64 }
+
+export fn utf8_len() -> i64 { sys.lit("h\u{e9}llo").len() as i64 }
+
+export fn round_trip() -> i64 {
+    let s = sys.to_string(sys.lit("hello, world"))
+    s.len() as i64
+}
+
+export fn lit_sum() -> i64 {
+    let mut t: i64 = 0
+    for b in sys.lit("AB") { t += b as i64 }
+    t
+}
+
+export fn shout() uses io {
+    print(sys.to_string(sys.lit("from a literal")))
+}

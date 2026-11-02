@@ -38,6 +38,11 @@ both; a host that instantiates the module itself must too.
 | `eider_write(p, n)` | `(i32, i32) -> ()` | write bytes `[p, p+n)` of the exported memory. stdout and stderr both come here (the loader: `process.stdout.write`, else `console.log`) |
 | `eider_now_ms()` | `() -> i64` | milliseconds on the host's clock (the loader: `Date.now()`) |
 
+The text helpers of `core.sys` (`lit`, `to_string`: `ec_str_len`, `ec_str_byte`,
+`ec_in_clear`, `ec_in_push`, `ec_in_cstr`) are defined in the module (eider_rt.c, over a
+buffer of its own), so a module that uses them, directly or through std or a library
+(`json.field`, every parse error message), loads without the loader supplying anything.
+
 Every other function the module calls but does not define (an `extern "c"` function, or a
 native core function `ec_*` reached through `std`) is also an import from `env`
 (`--allow-undefined`), to be passed in the loader's `imports`. There is no wasm backend of
