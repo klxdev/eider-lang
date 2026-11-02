@@ -34,7 +34,7 @@ fn main() uses io, clock, threads {
     a.cancel()
 
     // deadlines: a child's is never later than its parent's; past it, a token is cancelled
-    let short = root.child_until(time.after_ms(30))
+    let short = root.child_until(time.after_ms(300))
     let longer = short.child_until(time.after_ms(100000))
     print(longer.deadline().mono_ns() == short.deadline().mono_ns())
     print(root.deadline().is_never())
@@ -82,18 +82,23 @@ fn main() uses io, clock, threads {
     print(r[0] + r[3] + r[7])
 
     // the first error cancels the siblings; wait still waits for all of them
+    // (child 2 fails only once the other five run: a child that starts after the group is
+    // cancelled doesn't run at all, so under load the count would depend on thread start-up)
     let finished = atomic.new(0)
+    let nstarted = atomic.new(0)
     var h: task.Group[i64] = task.group(root)
     for i in 0..6 {
         let k = i as i64
         let fin = finished
+        let sta = nstarted
         h.spawn(|t: task.Token| -> Result[i64, String] {
             if k == 2 {
-                time.sleep_ms(10)
+                while sta.load(atomic.SeqCst) < 5 { time.sleep_ms(1) }
                 fin.add(1, atomic.SeqCst)
                 return Err(String.from("child 2 failed"))
             }
             // the others run until cancelled
+            sta.add(1, atomic.SeqCst)
             let woke = t.wait(time.after_ms(10000))
             fin.add(1, atomic.SeqCst)
             if woke { return Err(t.reason().unwrap()) }
@@ -106,6 +111,7 @@ fn main() uses io, clock, threads {
     }
     print(finished.load(atomic.SeqCst))
     finished.free()
+    nstarted.free()
 
     // a group's deadline reaches its children
     let t1 = time.mono_ns()
@@ -165,11 +171,14 @@ fn main() uses io, clock, threads {
     let pr = pgr.wait().unwrap()
     print(pr[0] + pr[9])
     // a future not ready by its deadline can be asked again
+    let hold: chan.Channel[i64] = chan.bounded(1)
+    let hh = hold
     let slow = pool.run(|| -> i64 {
-        time.sleep_ms(40)
+        hh.recv(time.never())
         7
     }, time.never()).unwrap()
     print(slow.get(time.after_ms(1)).is_none())
+    hold.try_send(1)
     print(slow.get(time.never()).unwrap())
 
     // back-pressure: one worker busy, a queue of one, the third submit times out
