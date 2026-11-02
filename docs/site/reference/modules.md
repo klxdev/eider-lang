@@ -172,7 +172,7 @@ name = "warehouse"        # lowercase letters, digits, _; not `core` or `std`
 version = "0.1.0"         # MAJOR.MINOR.PATCH
 entry = "warehouse.ei"    # what `import warehouse` loads (default: <name>.ei)
 main = "main.ei"          # the program entry for eider-pkg (optional)
-eider = "0.3"             # the toolchain MAJOR.MINOR it needs (optional)
+eider = "0.4"             # the toolchain MAJOR.MINOR it needs (optional)
 
 [deps.json]               # one table per dependency, named like the package
 path = "../json"          # a local directory ...
@@ -236,7 +236,7 @@ No lock, no entry for the package, a missing directory, or an `eider.toml`/`eide
 that doesn't parse is E0810, whose fix is to run `eider-pkg fetch`. The compiler never
 touches the network and doesn't re-hash the store; eider-pkg checks hashes when it fetches.
 
-`eider = "0.3"` says which toolchain MAJOR.MINOR the package is written for. Before 1.0 a
+`eider = "0.4"` says which toolchain MAJOR.MINOR the package is written for. Before 1.0 a
 MINOR release may break compatibility, so the compiler checks it on every build: a package
 whose `eider` is not the running toolchain's MAJOR.MINOR (`eiderc --version`), or is not a
 MAJOR.MINOR at all, is E0811, reported at 1:1 of the entry file for the entry file's own

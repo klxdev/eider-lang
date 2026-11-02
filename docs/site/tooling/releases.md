@@ -51,8 +51,8 @@ fn main() uses io {
 ```
 
 ```output
-0.3.0
-0.3
+0.4.0
+0.4
 ```
 
 `version.MAJOR`, `version.MINOR` and `version.PATCH` are the numbers.
@@ -65,19 +65,19 @@ A package's `eider.toml` can name the toolchain MAJOR.MINOR it is written for:
 [package]
 name = "warehouse"
 version = "1.4.2"   # the package's own version
-eider = "0.3"       # the toolchain it needs: MAJOR.MINOR
+eider = "0.4"       # the toolchain it needs: MAJOR.MINOR
 ```
 
 The compiler checks it on every build. A package whose `eider` isn't the running
 toolchain's MAJOR.MINOR is error E0811:
 
 ```text
-error[E0811]: package `newer` needs Eider 9.9 (`eider = "9.9"` in <dir>/lib/newer/eider.toml), but this toolchain is 0.3
+error[E0811]: package `newer` needs Eider 9.9 (`eider = "9.9"` in <dir>/lib/newer/eider.toml), but this toolchain is 0.4
   --> e0811_toolchain_series.ei:3:1
   |
 3 | import lib.newer.newer
   | ^
-  help: build it with an Eider 9.9.x toolchain, or port it to 0.3 and set `eider = "0.3"` in <dir>/lib/newer/eider.toml
+  help: build it with an Eider 9.9.x toolchain, or port it to 0.4 and set `eider = "0.4"` in <dir>/lib/newer/eider.toml
 ```
 
 `eider-pkg init` writes the field, and eider-pkg checks its form (`"0.1"`, not `"0.1.0"`).

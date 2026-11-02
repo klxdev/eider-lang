@@ -116,7 +116,7 @@ name = "warehouse"          # lowercase letters, digits and `_`, starting with a
 version = "0.1.0"           # MAJOR.MINOR.PATCH
 entry = "warehouse.ei"      # what `import warehouse` loads (default: <name>.ei)
 main = "main.ei"            # the program, for packages that are one (optional)
-eider = "0.3"               # the toolchain MAJOR.MINOR it needs (optional; the compiler checks it, E0811)
+eider = "0.4"               # the toolchain MAJOR.MINOR it needs (optional; the compiler checks it, E0811)
 description = "What it is"  # optional
 
 [deps.json]                 # one table per dependency; the key is the package's own name

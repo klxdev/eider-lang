@@ -5,7 +5,14 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
-## Unreleased (0.4.0)
+## 0.4.0
+
+The language gains floating point, trait objects, associated types, capability polymorphism and
+automatic derive; the tools gain a formatter, sanitizer and debugger support, and the standard
+library gains logging, configuration and service basics. A package needs
+`eider = "0.4"` (E0811 otherwise; the seed needed the bootstrap in
+seed/README.md after a MINOR bump). Siblings: every tool and library moves to 0.4.0, and
+eider-json 0.4.0 has `@derive` codecs (its 0.3.1, never tagged, is folded into it).
 
 - **Floating point** (#43): `f32` and `f64`, IEEE 754. Literals (`1.5`, `1e-3`, `2.5f32`),
   operators and comparisons that never trap (`NaN != NaN`), no mixing with integers without
@@ -14,6 +21,41 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
   (`strings.parse_f64`), `std/math` over libm (no capability), SSE and AArch64 HFA classes in the
   C ABI, `f32`/`f64` in WebAssembly exports and imports. `Decimal` and `BigInt` are not in it.
   Programs link `-lm`. Decisions C660 to C668; guide/numbers.md.
+- **Automatic derive** (#99): a trait declared `@derive` gives its default methods to every record
+  and enum with no impl of it, and `is_enum_type[T]` is a `comptime if` condition. Decision C600.
+- **Associated types** (#107): `type Item` in a trait, `type Item = T` in an impl, `Self.Item` and
+  `C.Item` in signatures (E0602). Decision C622.
+- **Calling a method by its trait** (#50): `Trait.m(x, args)`, module-qualified too; two traits
+  with a method of one name no longer clash until a plain call is ambiguous (E0119, whose help
+  names the qualified call). Decision C621.
+- **`dyn Trait`** (#18): trait objects with a vtable, in every container and field; one printed
+  dyn-compatibility rule (E0607) and E0608 for an impl method needing a capability its trait's
+  doesn't declare. Decisions C643 to C646.
+- **Capability polymorphism** (#46): a fn type may end in `uses cap + cap`, and a generic function
+  may declare `uses E` and have it inferred from its arguments. Decisions C640 to C642.
+- **`main` returns `Result`** (#12): `Result[(), E]` for any `E`; an Err is printed through `Show`
+  (a `Failure` prints its chain), exit code 1. Decision C620.
+- **Record fields without commas** (#76): newlines separate fields.
+- **Better diagnostics** (#78): E0302 suggests `Ref[T]` or `Mutex[T]`, E0303 and E0305 suggest
+  `let mut`, and an assignment to a captured variable gets its own help.
+- **`eider check` and `eider test` without a `main`** (#140): a library module checks and tests;
+  `eiderc test` with no file runs a package's tests. Decision C705.
+- **`eiderc fmt <file.ei>`** (#9): prints the canonical layout, no options. Decision C709.
+- **Debugging and sanitizers** (#25): `-g` names enum variants and describes Map members,
+  gdb and lldb printers, Eider names in frames, `--sanitize[=address,undefined|thread]` and
+  `--race` for `build`, `run` and `test`; the Debugging guide. Decisions C706, C707, C710.
+- **Services** (#24): `std/log` (JSON lines), `std/config` (defaults, flat TOML, environment,
+  flags) and `std/service` (drain on SIGTERM, sysexits-style exit codes). Decision C708.
+- **WebAssembly** (#136 to #138): exports may take and return `String` and `List[u8]`, modules
+  define core.sys's text helpers themselves, and the generated loader returns the module's
+  `memory` and passes it to an `eider_write` override. Decisions C701 to C703.
+- **Faster verify** (#134): `scripts/verify.sh` runs its legs in parallel (`VERIFY_JOBS`), and a
+  green run is recorded (`scripts/verify-stamp.sh`) for the exact commits of eider-lang and the
+  siblings, so a release does not repeat it. Decision C704.
+- **Release**: optional crypto backends (openssl, libressl) may be skipped by `release.sh`,
+  nothing else.
+- **Flaky tests fixed** (#148): the timing assumptions behind the intermittent std-leg failures
+  are gone; the std test runner keeps failing output and a stress script repeats the leg.
 
 ## 0.3.0
 

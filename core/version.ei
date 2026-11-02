@@ -20,10 +20,10 @@
 // line is `<tool> <VERSION>` (`eiderc 0.1.0`): `sys.lit("eiderc ")` + `sys.lit(VERSION)`.
 
 /// The toolchain version, MAJOR.MINOR.PATCH.
-pub const VERSION: str = "0.3.0"
+pub const VERSION: str = "0.4.0"
 pub const MAJOR: u64 = 0
-pub const MINOR: u64 = 3
+pub const MINOR: u64 = 4
 pub const PATCH: u64 = 0
 
 /// MAJOR.MINOR: what a package's `eider = "..."` must equal.
-pub const SERIES: str = "0.3"
+pub const SERIES: str = "0.4"
