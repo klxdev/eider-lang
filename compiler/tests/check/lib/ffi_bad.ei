@@ -1,3 +1,3 @@
 // an extern with a bad signature, in an imported module
 pub fn fine() -> i32 { 1 }
-extern "c" fn bad(xs: List[u8]) -> i32
+extern "c" fn bad(xs: List[i32]) -> i32

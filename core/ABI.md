@@ -35,8 +35,30 @@ file implementing exactly this contract. Nothing above the core changes.
 | `const char *ec_in_cstr(void)` | `in` as a NUL-terminated string (valid until the next `in` call). |
 | `int64_t ec_out_len(void)` | Bytes in `out`. |
 | `int32_t ec_out_byte(int64_t i)` | Byte `i` of `out`, or `-1` if out of range. |
+| `void ec_in_set(const uint8_t *p, uint64_t n)` | Replace `in` with the `n` bytes at `p` (`p` may be NULL when `n` is 0). |
+| `void ec_in_append(const uint8_t *p, uint64_t n)` | Append the `n` bytes at `p` to `in`. |
+| `int64_t ec_out_copy(uint8_t *dst, uint64_t n, int64_t from)` | Copy `out[from, from + n)`, clipped to `out`, to `dst`; the number of bytes copied (0 when `from` is outside `out`). |
 | `int64_t ec_str_len(const char *s)` | Length of a literal. |
 | `int32_t ec_str_byte(const char *s, int64_t i)` | Byte `i` of a literal; the caller checks `i < ec_str_len(s)`. |
+
+### Bulk transfer
+
+The last three rows of the table take a pointer, which Eider never holds: they are bound with
+a parameter of type `List[u8]`, and the compiler passes the list's bytes and its length as the
+pointer and the count (docs/compiler.md "C8.50", decision C801):
+
+```eider,ignore
+extern "c" fn ec_in_set(b: List[u8])
+extern "c" fn ec_out_copy(inout dst: List[u8], from: i64) -> i64
+```
+
+An `inout` list is made the caller's own before the call (copy-on-write), so `ec_out_copy`
+writes into a buffer nobody else holds, and it writes at most `len` bytes: the Eider side makes
+the list as long as `ec_out_len` (core/sys.ei's `take`) and `ec_out_copy`s once. `core.sys`'s
+`send`, `send_all` and `take` are these calls, so every operation that moves data through
+`in` and `out` (files, sockets, processes, crypto) crosses once instead of once per byte. A
+WebAssembly core module defines the three functions itself, over `ec_in_push` and `ec_out_byte`
+(a pointer into the module's memory means nothing to the host).
 
 ## Operations
 

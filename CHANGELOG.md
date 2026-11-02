@@ -11,6 +11,9 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
   OS randomness; `Map.deterministic()` for tests. **The iteration order of a Map is unspecified**
   (it differs between Maps and runs); programs and tests that printed a Map in slot order must sort
   or aggregate. Decision C805; the Map benchmark runs 1.8 times slower, the compiler itself no slower.
+- **Bulk byte transfer** (#63): an `extern "c"` parameter of type `List[u8]` crosses as a pointer
+  and a length; the core's `ec_in_set`, `ec_in_append` and `ec_out_copy` use it, and `core.sys`
+  moves its data with them. Decision C801.
 - **The driver links the crypto backend** (#64): a program that imports `core/crypto` needs no
   wrapper; `--crypto <name>`, `$EIDER_CRYPTO` or `[crypto] provider`. Decision C802.
 - **In-place List operations** (#16): `insert`, `remove`, `truncate`, `remove_range`, `extend`,

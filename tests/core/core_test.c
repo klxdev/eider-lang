@@ -23,6 +23,11 @@ int64_t ec_out_len(void);
 int32_t ec_out_byte(int64_t i);
 int64_t ec_run(int32_t out_mode, int32_t err_mode, int64_t timeout_ms);
 int64_t ec_read_fd(int32_t fd, int64_t max);
+void ec_in_set(const uint8_t *p, uint64_t n);
+void ec_in_append(const uint8_t *p, uint64_t n);
+const char *ec_in_cstr(void);
+void ec_errstr(int64_t e);
+int64_t ec_out_copy(uint8_t *dst, uint64_t n, int64_t from);
 
 static int failures, checks;
 static char self[4096];
@@ -452,6 +457,43 @@ static void test_read_fd(void) {
   close(p[1]);
 }
 
+// ---- bulk transfer (core/ABI.md "Buffers")
+
+static void test_bulk(void) {
+  uint8_t a[300];
+  for (int i = 0; i < 300; i++) a[i] = (uint8_t)(i % 250 + 1);
+  ec_in_set(a, 300);
+  CHECK(strlen(ec_in_cstr()) == 300 && memcmp(ec_in_cstr(), a, 300) == 0);
+  ec_in_append(a, 100);
+  CHECK(strlen(ec_in_cstr()) == 400 && memcmp(ec_in_cstr() + 300, a, 100) == 0);
+  ec_in_set(NULL, 0);
+  CHECK(strlen(ec_in_cstr()) == 0);
+  ec_in_append(NULL, 0);
+  CHECK(strlen(ec_in_cstr()) == 0);
+  /* a push after a bulk append continues it */
+  ec_in_set(a, 2);
+  ec_in_push(7);
+  CHECK(strlen(ec_in_cstr()) == 3 && ec_in_cstr()[2] == 7);
+  /* a large one grows the buffer */
+  static uint8_t big[1 << 20];
+  memset(big, 0x5a, sizeof big);
+  ec_in_set(big, sizeof big);
+  CHECK(strlen(ec_in_cstr()) == sizeof big);
+  /* out -> bytes: the text of an errno, in pieces, clipped */
+  ec_errstr(2);
+  int64_t n = ec_out_len();
+  CHECK(n > 4);
+  uint8_t d[64];
+  memset(d, 0xee, sizeof d);
+  EQI(ec_out_copy(d, 3, 0), 3);
+  CHECK(d[0] == (uint8_t)ec_out_byte(0) && d[2] == (uint8_t)ec_out_byte(2) && d[3] == 0xee);
+  EQI(ec_out_copy(d, sizeof d, n - 2), 2);
+  CHECK(d[0] == (uint8_t)ec_out_byte(n - 2) && d[1] == (uint8_t)ec_out_byte(n - 1));
+  EQI(ec_out_copy(d, 8, n), 0);
+  EQI(ec_out_copy(d, 8, -1), 0);
+  EQI(ec_out_copy(NULL, 0, 0), 0);
+}
+
 int main(int argc, char **argv) {
   if (argc >= 3 && !strcmp(argv[1], "child")) return child(argv[2], argc > 3 ? argv[3] : NULL);
   snprintf(self, sizeof self, "%s", argv[0]);
@@ -470,6 +512,7 @@ int main(int argc, char **argv) {
 #endif
   test_eintr();
   test_read_fd();
+  test_bulk();
   printf("%d checks, %d failed\n", checks, failures);
   return failures ? 1 : 0;
 }

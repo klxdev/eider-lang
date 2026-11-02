@@ -4101,6 +4101,17 @@ Map's), and an impl on a List can't use any of them (E0116).
   UBSan clean), `trap_list_remove.ei`, `trap_list_slice.ei`. std/stream's `BufReader` compacts with
   `remove_range` and appends a chunk with `extend`; `tail` and `part` are `slice`s.
 
+## C8.50: `List[u8]` across the core ABI (#63)
+
+An `extern "c"` parameter may have type `List[u8]`, plain or `inout` (decision C801); an `export`
+still may not (E0803, text unchanged). `check_ffi_sig` skips such a parameter; `call_fn` in
+llvm.ei expands it to two C arguments, the address of the bytes and the length (`ptr, i64`), after
+`uniq_call` for an `inout` one, and declares the extern with the expanded signature. So
+`extern "c" fn ec_out_copy(inout dst: List[u8], from: i64) -> i64` is C's
+`int64_t ec_out_copy(uint8_t *dst, uint64_t n, int64_t from)`. core/ABI.md "Bulk transfer"
+has the contract; compiler/tests/run/ffi_bytes.ei the test. The module that binds them
+(core/sys.ei) can use them only after the seed knows the feature (seed/README.md "The rule").
+
 ## C8.52: seeded Map hashing (#55)
 
 `Map` hashes keys with SipHash-1-3 under a key kept in the Map (decision C805). The map type grows

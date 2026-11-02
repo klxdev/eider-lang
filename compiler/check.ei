@@ -4140,6 +4140,9 @@ fn check_ffi_sig(c: C, m: u32, n: ast.Node, ps: List[u32], ret: u32) -> Result[b
     }
     for i in 0..n.f {
         let pn = ndm(c, m, atm(c, m, n.e, i))
+        // an extern takes a byte list, plain or `inout`, as a pointer and a length (core/ABI.md
+        // "Buffers", docs/compiler.md "C8.50"); an export does not
+        if !is_export && types.kind(c.t, ps[i as usize]) == types.T_LIST && types.get(c.t, ps[i as usize]).a == types.U8 { continue }
         if pn.c == 1 {
             return Err(err("E0803", pn.line, pn.col, q2("`", nm(c, pn.a), "` is `inout`; ", sys.lit(what), " functions can't take `inout` parameters")))
         }

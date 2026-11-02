@@ -1,0 +1,57 @@
+// A List[u8] parameter of an `extern "c"` function crosses as a pointer to the bytes and the
+// length (core/ABI.md "Buffers", docs/compiler.md "C8.50"): ec_in_set / ec_in_append copy a
+// list into the core's `in` buffer in one call, ec_out_copy fills an `inout` list from `out`
+// (the list becomes the caller's own first, so a copy made before keeps its bytes).
+extern "c" fn ec_in_set(b: List[u8])
+extern "c" fn ec_in_append(b: List[u8])
+extern "c" fn ec_in_cstr() -> str
+extern "c" fn ec_str_len(s: str) -> i64
+extern "c" fn ec_errstr(e: i64)
+extern "c" fn ec_out_len() -> i64
+extern "c" fn ec_out_copy(inout dst: List[u8], from: i64) -> i64
+
+fn show(b: List[u8]) -> String {
+    let mut out = String.from("[")
+    for i in 0..b.len() {
+        if i > 0 { out.push_str(" ") }
+        out.append(String.from_int(b[i] as i64))
+    }
+    out.push_str("]")
+    out
+}
+
+fn main() uses io, ffi {
+    let mut a: List[u8] = List.new()
+    for i in 0..10 { a.push(65 + i as u8) }
+    unsafe { ec_in_set(a) }
+    let one = unsafe { ec_in_cstr() }
+    print(String.from(one))
+    unsafe { ec_in_append(a) }
+    let both = unsafe { ec_in_cstr() }
+    print(String.from(both))
+    let n2 = unsafe { ec_str_len(both) }
+    print(n2)
+    let empty: List[u8] = List.new()
+    unsafe { ec_in_set(empty) }
+    let z = unsafe { ec_in_cstr() }
+    let n0 = unsafe { ec_str_len(z) }
+    print(n0)
+
+    // out -> a list, in pieces; a copy made before is untouched (copy-on-write)
+    unsafe { ec_errstr(2) }
+    let n = unsafe { ec_out_len() }
+    print(n)
+    let mut buf: List[u8] = List.filled(0, 6)
+    let keep = buf.copy()
+    let got = unsafe { ec_out_copy(inout buf, 3) }
+    print(got)
+    print(show(buf))
+    print(show(keep))
+    let mut tail: List[u8] = List.filled(0, 100)
+    let got2 = unsafe { ec_out_copy(inout tail, n - 4) }
+    print(got2)
+    print(show(tail.slice(0, 6)))
+    let mut none: List[u8] = List.new()
+    let got3 = unsafe { ec_out_copy(inout none, 0) }
+    print(got3)
+}

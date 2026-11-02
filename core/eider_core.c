@@ -306,6 +306,32 @@ EC_FN(int32_t, ec_out_byte, (int64_t i)) {
   return i >= 0 && (uint64_t)i < out_len ? out_p[i] : -1;
 }
 
+/* Bulk transfer (ABI.md "Buffers"): a List[u8] crosses in one call. The compiler passes an
+   `extern "c"` parameter of type List[u8] as a pointer to its bytes and its length; Eider
+   never sees the pointer. */
+EC_FN(void, ec_in_append, (const uint8_t *p, uint64_t n)) {
+  if (n > (uint64_t)SIZE_MAX - in_len - 2) { fputs("eider_core: buffer too large\n", stderr); exit(101); }
+  reserve(&in_p, &in_cap, in_len + (size_t)n + 2);
+  if (n) memcpy(in_p + in_len, p, (size_t)n);
+  in_len += (size_t)n;
+  if (in_len > in_hw) in_hw = in_len;
+  in_p[in_len] = 0;
+}
+
+EC_FN(void, ec_in_set, (const uint8_t *p, uint64_t n)) {
+  in_len = 0;
+  ec_in_append(p, n);
+}
+
+/* Copies out[from, from + n) (clipped to out) to dst; returns the number of bytes copied. */
+EC_FN(int64_t, ec_out_copy, (uint8_t *dst, uint64_t n, int64_t from)) {
+  if (from < 0 || (uint64_t)from >= out_len) return 0;
+  uint64_t avail = out_len - (uint64_t)from;
+  if (n > avail) n = avail;
+  if (n) memcpy(dst, out_p + from, (size_t)n);
+  return (int64_t)n;
+}
+
 // ---- core extensions (core/eider_core_ext.h): for C linked into the same program that
 // implements more of the ABI over these buffers (core/crypto). Never bound by Eider.
 

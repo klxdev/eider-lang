@@ -1,1 +1,1 @@
-{"error":"E0803","span":{"file":"compiler/tests/check/fail/../lib/ffi_bad.ei","line":3,"col":19},"message":"parameter `xs` has type List[u8], which can't cross the C boundary","help":"C-safe types: integers, f32, f64, bool, str (const char*), and records made only of those (export only)"}
+{"error":"E0803","span":{"file":"compiler/tests/check/fail/../lib/ffi_bad.ei","line":3,"col":19},"message":"parameter `xs` has type List[i32], which can't cross the C boundary","help":"C-safe types: integers, f32, f64, bool, str (const char*), and records made only of those (export only)"}

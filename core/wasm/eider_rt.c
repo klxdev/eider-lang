@@ -346,6 +346,28 @@ const char *ec_in_cstr(void) {
 int64_t ec_str_len(const char *s) { return (int64_t)strlen(s); }
 int32_t ec_str_byte(const char *s, int64_t i) { return (unsigned char)s[i]; }
 
+// the bulk transfers of core/ABI.md "Buffers" take a pointer, so a module defines them too (a
+// byte at a time over the functions above and the host's ec_out_len and ec_out_byte)
+void ec_in_append(const uint8_t *p, uint64_t n);
+void ec_in_set(const uint8_t *p, uint64_t n);
+int64_t ec_out_copy(uint8_t *dst, uint64_t n, int64_t from);
+int64_t ec_out_len(void);
+int32_t ec_out_byte(int64_t i);
+
+void ec_in_append(const uint8_t *p, uint64_t n) {
+  for (uint64_t i = 0; i < n; i++) ec_in_push(p[i]);
+}
+void ec_in_set(const uint8_t *p, uint64_t n) {
+  ec_in_clear();
+  ec_in_append(p, n);
+}
+int64_t ec_out_copy(uint8_t *dst, uint64_t n, int64_t from) {
+  int64_t len = ec_out_len();
+  uint64_t k = 0;
+  for (; k < n && from >= 0 && from + (int64_t)k < len; k++) dst[k] = (uint8_t)ec_out_byte(from + (int64_t)k);
+  return (int64_t)k;
+}
+
 #if defined(EI_WASM_CORE)
 // the entry the host runs (seed/wasm2c.c's main): the program's C main, then exit with
 // what it returned

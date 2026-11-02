@@ -2294,10 +2294,27 @@ fn call_fn(inout e: E, p: lower.P, s: ir.Stmt) {
         ptys = fn_ptys(e, p, s.a)
     }
     let mut args: List[List[u8]] = List.new()
+    let mut cptys: List[u32] = List.new()
     for i in 0..s.c {
         let a = p.ir.extra[(s.b + i) as usize]
-        if a >= ir.ARG_PLACE { args.push(paddr(inout e, p, a - ir.ARG_PLACE)) } else { args.push(oparg(inout e, p, a)) }
+        let mut pt = NONE
+        if x != NONE { pt = ptys[i as usize] }
+        if pt != NONE && kind(p, pt) == types.T_INOUT { pt = types.get(p.t, pt).a }
+        if x != NONE && pt != NONE && kind(p, pt) == types.T_LIST {
+            // an extern's List[u8]: a pointer to the bytes and the length (core/ABI.md "Buffers");
+            // one the extern may write (`inout`) first becomes the caller's own
+            let la = if a >= ir.ARG_PLACE { paddr(inout e, p, a - ir.ARG_PLACE) } else { argptr(inout e, p, a) }
+            if a >= ir.ARG_PLACE { uniq_call(inout e, p, pt, la) }
+            args.push(load_ptr_field(inout e, p, pt, la, 0))
+            cptys.push(types.STR)
+            args.push(load_i64_field(inout e, p, pt, la, 1))
+            cptys.push(types.U64)
+        } else {
+            if a >= ir.ARG_PLACE { args.push(paddr(inout e, p, a - ir.ARG_PLACE)) } else { args.push(oparg(inout e, p, a)) }
+            if x != NONE { cptys.push(ptys[i as usize]) }
+        }
     }
+    if x != NONE { ptys = cptys }
     let mut d: List[u8] = List.new()
     if s.dst != NONE { d = dst_addr(s.dst) }
     let r = call(inout e, p, name, ptys, args, fd.ret, d)
