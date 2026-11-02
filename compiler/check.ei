@@ -85,7 +85,8 @@ type Subst = { syms: List[u32], tys: List[u32] }
 
 /// A method registered by an impl: its head (see head_key), name, declaration, and the
 /// impl's target as show_ast spells it (for duplicate checks).
-type Meth = { head: u64, name: u32, fd: u32, target: List[u8] }
+/// `tk`: the trait whose impl defines it (or whose default it is), 0 for an inherent method.
+type Meth = { head: u64, name: u32, fd: u32, target: List[u8], tk: u64 }
 
 /// An impl of a trait: the trait, the impl (module, node) and its target's spelling.
 type TImpl = { tkey: u64, md: u32, node: u32, target: List[u8] }
@@ -2339,13 +2340,14 @@ fn derived_trait(c: C, tk: u64, ty: u32) -> bool {
 /// The default method `name` that record or enum ty gets from a `@derive` trait it has by
 /// derivation: a FnDef for the trait's method (made once) whose Self the caller sets; NONE
 /// when there is none.
-fn derived_method(inout c: C, ty: u32, name: u32) -> u32 {
+fn derived_method(inout c: C, ty: u32, name: u32, want: u64) -> u32 {
     let k = types.kind(c.t, ty)
     if k != types.T_RECORD && k != types.T_ENUM { return NONE }
     for ti in 0..c.trs.len() {
         if !derived_by(c, ti as u32, ty) { continue }
         let tr = c.trs[ti].copy()
         let trn = ndm(c, tr.m, tr.node)
+        if want != 0 && resolve.item_key(c.p, tr.m, trn.a) != want { continue }
         for i in 0..trn.d {
             let tmn = atm(c, tr.m, trn.c, i)
             let tm = ndm(c, tr.m, tmn)
@@ -3689,6 +3691,7 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
     let mut defaults: List[u32] = List.new()
     let mut dti = NONE
     let mut names: List[u32] = List.new()
+    let mut mtk: u64 = 0
     for i in 0..im.f {
         let mn = ndm(c, m, atm(c, m, im.e, i))
         if has_sym(names, mn.a) {
@@ -3716,6 +3719,7 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
             let tr = c.trs[ti as usize].copy()
             let trn = ndm(c, tr.m, tr.node)
             note_ref(inout c, m, tn, tr.m, trn.line, trn.col)
+            mtk = tk
             // a language trait: the orphan rule and what each needs ("Operation traits")
             let lang = lang_of_key(c, tk)
             if lang != NONE && !check_lang_impl(inout c, m, im, lang, igens) { return Ok(true) }
@@ -3786,7 +3790,7 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
         done.push(mn.a)
         let mut dup = false
         for x in c.meths {
-            if x.head == head && x.name == mn.a && bytes.eq(x.target, target) { dup = true }
+            if x.head == head && x.name == mn.a && bytes.eq(x.target, target) && x.tk == mtk { dup = true }
         }
         if dup {
             let rd = err("E0107", mn.line, mn.col, q2("method `", nm(c, mn.a), "` is already defined for `", target, "`"))
@@ -3802,7 +3806,7 @@ fn register_impl(inout c: C, m: u32, id: u32, inout concrete: List[u32]) -> Resu
         let fi = c.fdefs.len() as u32
         c.fdefs.push(FnDef(resolve.key(0, mn.a), m, mid, true, mn.d > 0, ast.has(mn.b, ast.FN_UNSAFE), NONE, id, m, false))
         if im.d == 0 && mn.d == 0 && mn.h > 0 { concrete.push(fi) }
-        c.meths.push(Meth(head, mn.a, fi, target))
+        c.meths.push(Meth(head, mn.a, fi, target, mtk))
     }
     // the trait's default methods this impl doesn't define: registered after every impl
     for tmid in defaults { c.dflts.push(Dflt(dti, tmid, head, target.copy(), id, m)) }
@@ -3818,16 +3822,25 @@ fn register_defaults(inout c: C, inout concrete: List[u32]) {
     for d in c.dflts {
         let tr = c.trs[d.ti as usize].copy()
         let tm = ndm(c, tr.m, d.tm)
-        let mut dup = false
+        let dtk = resolve.item_key(c.p, tr.m, ndm(c, tr.m, tr.node).a)
+        // a method of that name the type has already hides the default from `x.m()` (it is
+        // then not instantiated unless called by its trait: `Trait.m(x)`)
+        let mut shadowed = false
         for x in c.meths {
-            if x.head == d.head && x.name == tm.a && bytes.eq(x.target, d.target) { dup = true }
+            if x.head == d.head && x.name == tm.a && bytes.eq(x.target, d.target) {
+                if x.tk == dtk { shadowed = true }
+            }
         }
-        if dup { continue }
+        let mut hidden = false
+        for x in c.meths {
+            if x.head == d.head && x.name == tm.a && bytes.eq(x.target, d.target) { hidden = true }
+        }
+        if shadowed { continue }
         let im = ndm(c, d.m, d.inode)
         let fi = c.fdefs.len() as u32
         c.fdefs.push(FnDef(resolve.key(0, tm.a), tr.m, d.tm, true, tm.d > 0, ast.has(tm.b, ast.FN_UNSAFE), NONE, d.inode, d.m, true))
-        if im.d == 0 && tm.d == 0 { concrete.push(fi) }
-        c.meths.push(Meth(d.head, tm.a, fi, d.target))
+        if im.d == 0 && tm.d == 0 && !hidden { concrete.push(fi) }
+        c.meths.push(Meth(d.head, tm.a, fi, d.target, dtk))
     }
     c.dflts = List.new()
 }
@@ -3858,6 +3871,22 @@ fn all_gparam_nodes(c: C, fi: u32) -> List[u32] {
     out
 }
 
+/// The name of the trait of method fi when the type has another method of that name (else
+/// empty): what keeps their instances' names apart.
+fn clash_trait(c: C, fi: u32) -> List[u8] {
+    let mut mi = NONE
+    for i in 0..c.meths.len() {
+        if c.meths[i].fd == fi { mi = i as u32 }
+    }
+    if mi == NONE { return List.new() }
+    let m = c.meths[mi as usize].copy()
+    if m.tk == 0 { return List.new() }
+    for x in c.meths {
+        if x.fd != fi && x.head == m.head && x.name == m.name && bytes.eq(x.target, m.target) { return kt(c, m.tk) }
+    }
+    List.new()
+}
+
 /// The IR name of an instance: `name`, `name[T1, ..]`, `Self.name[..]`.
 fn inst_name(c: C, fi: u32, sb: Subst) -> List[u8] {
     let f = c.fdefs[fi as usize]
@@ -3865,6 +3894,13 @@ fn inst_name(c: C, fi: u32, sb: Subst) -> List[u8] {
     if f.inode != NONE || f.dflt {
         bytes.append(inout out, ts(c, subst_get(sb, intern.S_SELF_TYPE)))
         out.push(46)
+        // two methods of one name on a type (different traits, or a trait and the type) keep
+        // their names apart by the trait ("C8.44")
+        let tq = clash_trait(c, fi)
+        if tq.len() > 0 {
+            bytes.append(inout out, tq)
+            out.push(46)
+        }
     }
     bytes.append(inout out, kt(c, f.key))
     let n = ndm(c, f.md, f.node)
@@ -6500,12 +6536,130 @@ fn label_of(c: C, head: List[u8], name: u32) -> List[u8] {
 
 fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     at_pos(inout c, n.line, n.col)
-    let r = method_call_in(inout c, n, exp)
+    let r = method_call_in(inout c, n, exp, 0)
     end_pos(inout c)
     r
 }
 
-fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
+// ---- Calling a method by its trait (docs/compiler.md, "C8.44")
+
+/// How a plain call `x.m()` ranks a method: the type's own (inherent) first, then one an impl
+/// defines, then a trait's default (which every other method of the name hides).
+fn meth_rank(c: C, m: Meth) -> u32 {
+    if m.tk == 0 { return 0 }
+    if c.fdefs[m.fd as usize].dflt { return 2 }
+    1
+}
+
+/// The method of `cands` (indices into c.meths, all of one name on one type) a call means:
+/// the best ranked, NONE when two traits' methods share the best rank (E0119).
+fn pick_meth(c: C, cands: List[u32]) -> u32 {
+    let mut best = NONE
+    let mut br: u32 = 9
+    for i in cands {
+        let r = meth_rank(c, c.meths[i as usize])
+        if r < br {
+            br = r
+            best = i
+        }
+    }
+    for i in cands {
+        let m = c.meths[i as usize]
+        if meth_rank(c, m) == br && m.tk != c.meths[best as usize].tk { return NONE }
+    }
+    best
+}
+
+/// E0119: the traits whose methods of the name tie for `x.m()`.
+fn ambiguous_err(c: C, n: ast.Node, ty: List[u8], cands: List[u32]) -> diag.Diag {
+    let mut br: u32 = 9
+    for i in cands {
+        let r = meth_rank(c, c.meths[i as usize])
+        if r < br { br = r }
+    }
+    let mut names: List[List[u8]] = List.new()
+    for i in cands {
+        let m = c.meths[i as usize]
+        if meth_rank(c, m) != br { continue }
+        let t = kt(c, m.tk)
+        let mut seen = false
+        for x in names { if bytes.eq(x, t) { seen = true } }
+        if !seen { names.push(t) }
+    }
+    let mut list: List[u8] = List.new()
+    for i in 0..names.len() {
+        if i > 0 {
+            if i + 1 == names.len() { bytes.append(inout list, s(" and ")) } else { bytes.append(inout list, s(", ")) }
+        }
+        list.push(96)
+        bytes.append(inout list, names[i])
+        list.push(96)
+    }
+    let mut d = err("E0119", n.line, n.col, q3("method `", nm(c, n.b), "` of `", ty, "` is ambiguous: traits ", list, " define it"))
+    let f = c.fdefs[c.meths[cands[0] as usize].fd as usize]
+    let fnode = ndm(c, f.md, f.node)
+    if fnode.f > 0 && ndm(c, f.md, atm(c, f.md, fnode.e, 0)).a == intern.S_SELF {
+        d.help = q3("call it by its trait: `", names[0], ".", nm(c, n.b), "(value, ...)`", List.new(), "")
+    } else {
+        d.help = s("an associated function can't be called by its trait; give the functions different names")
+    }
+    d
+}
+
+/// The methods named `name` of head `head` whose trait is `want` (any when 0): indices into c.meths.
+fn meth_cands(c: C, head: u64, name: u32, want: u64) -> List[u32] {
+    let mut out: List[u32] = List.new()
+    for i in 0..c.meths.len() {
+        let m = c.meths[i]
+        if m.head != head || m.name != name { continue }
+        if want != 0 && m.tk != want { continue }
+        out.push(i as u32)
+    }
+    out
+}
+
+/// `Trait.m(x, args)` (#50): the method `m` of `Trait`, called on `x`, even when the type has
+/// another method of that name. The call is the method call `x.m(args)` restricted to the
+/// trait's own methods: the first argument is the receiver.
+fn trait_call(inout c: C, n: ast.Node, tk: u64, exp: u32) -> Result[V, diag.Diag] {
+    let ti = mget(c.traits, tk)
+    let tr = c.trs[ti as usize].copy()
+    let trn = ndm(c, tr.m, tr.node)
+    let tmid = find_method(c, tr.m, trn.c, trn.d, n.b)
+    if tmid == NONE {
+        let fd = err("E0115", n.line, n.col, q2("trait `", kt(c, tk), "` has no method `", nm(c, n.b), "`"))
+        return fail_call(inout c, fd, n.c, n.d)
+    }
+    let tm = ndm(c, tr.m, tmid)
+    let takes_self = tm.f > 0 && ndm(c, tr.m, atm(c, tr.m, tm.e, 0)).a == intern.S_SELF
+    if !takes_self {
+        let fd = errh("E0115", n.line, n.col, q3("`", kt(c, tk), ".", nm(c, n.b), "` has no `self`", List.new(), ""), "an associated function is called on a type: `Type.name(...)`")
+        return fail_call(inout c, fd, n.c, n.d)
+    }
+    if n.d == 0 {
+        let fd = errh("E0405", n.line, n.col, q3("`", kt(c, tk), ".", nm(c, n.b), "` takes the value it is called on as its first argument", List.new(), ""), "write `Trait.method(value, ...)`; it is `value.method(...)` with the trait named")
+        return fail_call(inout c, fd, n.c, n.d)
+    }
+    let a0 = nd(c, at(c, n.c, 0))
+    let want_inout = ndm(c, tr.m, atm(c, tr.m, tm.e, 0)).c == 1
+    let x0 = nd(c, a0.a)
+    if want_inout && a0.b == 0 {
+        let mut d = err("E0304", x0.line, x0.col, q("`", nm(c, tm.a), "` takes `inout self`; pass the first argument as `inout ...`"))
+        d.fix = Some(diag.Fix(x0.line, x0.col, 0, s("inout ")))
+        return Err(d)
+    }
+    if !want_inout && a0.b == 1 {
+        return Err(err("E0304", x0.line, x0.col, q("`", nm(c, tm.a), "` takes a read-only `self`; remove the `inout`")))
+    }
+    let mut n2 = n.copy()
+    n2.a = a0.a
+    n2.c = n.c + 1
+    n2.d = n.d - 1
+    method_call_in(inout c, n2, exp, tk)
+}
+
+/// `want`: the trait whose method is called (`Trait.m(x)`, with `n.a` the receiver `x`), else 0.
+fn method_call_in(inout c: C, n: ast.Node, exp: u32, want: u64) -> Result[V, diag.Diag] {
     match ct_matches(inout c, n)? {
         Some(v) => { return Ok(v) }
         None => {}
@@ -6513,7 +6667,14 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let r = nd(c, n.a)
     let mut static_head: u64 = 0
     let mut is_static = false
-    if r.kind == ast.EIdent {
+    // `Trait.m(x, ...)` (#50)
+    if want == 0 && r.kind == ast.EIdent {
+        let tk0 = ekey(c, r)
+        if lookup(c, tk0) == NONE && !c.consts.contains(tk0) && c.traits.contains(tk0) && !is_type_name(c, tk0) {
+            return trait_call(inout c, n, tk0, exp)
+        }
+    }
+    if want == 0 && r.kind == ast.EIdent {
         let k = ekey(c, r)
         if lookup(c, k) == NONE && !c.consts.contains(k) && is_type_name(c, k) {
             is_static = true
@@ -6522,20 +6683,22 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     }
     // `T.f(...)` on a type parameter T of the generic body (docs/compiler.md, "C8.23"):
     // the associated function of the type T stands for (`T.default()` needs `T: Default`)
-    if r.kind == ast.EIdent && r.b == 0 && lookup(c, ekey(c, r)) == NONE && subst_get(c.tsubst, r.a) != NONE {
+    if want == 0 && r.kind == ast.EIdent && r.b == 0 && lookup(c, ekey(c, r)) == NONE && subst_get(c.tsubst, r.a) != NONE {
         let pt = subst_get(c.tsubst, r.a)
         if n.b == c.lt.meths[TR_DEFAULT as usize] && !c.lt.shadow[TR_DEFAULT as usize] { return default_call(inout c, n, pt) }
         if types.kind(c.t, pt) == types.T_PARAM { return fail_call(inout c, quiet(), n.c, n.d) }
         let ph = head_of(c, pt)
-        for m in c.meths {
-            if m.head == ph && m.name == n.b {
-                let label = label_of(c, ts(c, pt), n.b)
-                let mut sb = no_subst()
-                subst_set(inout sb, intern.S_SELF_TYPE, pt)
-                return call_decl(inout c, n, label, m.fd, sb, no_recv(), exp, true)
-            }
+        let pcands = meth_cands(c, ph, n.b, 0)
+        if pcands.len() > 0 {
+            let pch = pick_meth(c, pcands)
+            if pch == NONE { return Err(ambiguous_err(c, n, ts(c, pt), pcands)) }
+            let label = label_of(c, ts(c, pt), n.b)
+            let mut sb = no_subst()
+            subst_set(inout sb, intern.S_SELF_TYPE, pt)
+            let pfd = c.meths[pch as usize].fd.copy()
+            return call_decl(inout c, n, label, pfd, sb, no_recv(), exp, true)
         }
-        let dm = derived_method(inout c, pt, n.b)
+        let dm = derived_method(inout c, pt, n.b, 0)
         if dm != NONE {
             let label = label_of(c, ts(c, pt), n.b)
             let mut sb = no_subst()
@@ -6555,17 +6718,19 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
         let heap_head = resolve.key_pre(static_head) == 0 && (has_sym(c.w.heap, x) || x == c.w.s_string)
         if heap_head && builtin_static(c, x, n.b) { return heap_static(inout c, n, x, exp) }
         if is_word(c, n.b, "from") && has_from(c, static_head) { return from_call(inout c, n, static_head, exp) }
-        for m in c.meths {
-            if m.head == static_head && m.name == n.b {
-                let label = label_of(c, kt(c, static_head), n.b)
-                return call_decl(inout c, n, label, m.fd, no_subst(), no_recv(), exp, true)
-            }
+        let scands = meth_cands(c, static_head, n.b, 0)
+        if scands.len() > 0 {
+            let sch = pick_meth(c, scands)
+            if sch == NONE { return Err(ambiguous_err(c, n, kt(c, static_head), scands)) }
+            let label = label_of(c, kt(c, static_head), n.b)
+            let sfd = c.meths[sch as usize].fd.copy()
+            return call_decl(inout c, n, label, sfd, no_subst(), no_recv(), exp, true)
         }
         // a method of a derived trait (docs/compiler.md, "C8.42")
         if !heap_head {
             let st = static_head_ty(inout c, static_head, exp)
             if st != NONE {
-                let dm = derived_method(inout c, st, n.b)
+                let dm = derived_method(inout c, st, n.b, 0)
                 if dm != NONE {
                     let label = label_of(c, kt(c, static_head), n.b)
                     let mut sb = no_subst()
@@ -6590,7 +6755,7 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let tk = types.kind(c.t, pv.ty)
     // a method of an error value: only its arguments are checked
     if tk == types.T_POISON { return fail_call(inout c, quiet(), n.c, n.d) }
-    if builtin_method(c, tk, n.b) {
+    if want == 0 && builtin_method(c, tk, n.b) {
         if types.is_handle(tk) { return thread_method(inout c, n, pv) }
         if tk == types.T_REF { return ref_method(inout c, n, pv, exp) }
         return heap_method(inout c, n, pv)
@@ -6601,14 +6766,26 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
         return fail_call(inout c, fd, n.c, n.d)
     }
     let mut any = false
-    for m in c.meths {
-        if m.head != head || m.name != n.b { continue }
+    let mut cands: List[u32] = List.new()
+    for i in meth_cands(c, head, n.b, want) {
         any = true
+        let m = c.meths[i as usize].copy()
         let f = c.fdefs[m.fd as usize]
         let im = ndm(c, f.imd, f.inode)
         let gs = gparams(c, f.imd, im.c, im.d)
         let mut sb = no_subst()
         if !unify_ast(c, f.imd, im.b, pv.ty, inout sb, gs) { continue }
+        cands.push(i)
+    }
+    if cands.len() > 0 {
+        let ch = pick_meth(c, cands)
+        if ch == NONE { return Err(ambiguous_err(c, n, head_text(c, head), cands)) }
+        let m = c.meths[ch as usize].copy()
+        let f = c.fdefs[m.fd as usize]
+        let im = ndm(c, f.imd, f.inode)
+        let gs = gparams(c, f.imd, im.c, im.d)
+        let mut sb = no_subst()
+        unify_ast(c, f.imd, im.b, pv.ty, inout sb, gs)
         if f.dflt { sb = no_subst() }
         subst_set(inout sb, intern.S_SELF_TYPE, pv.ty)
         let label = label_of(c, head_text(c, head), n.b)
@@ -6616,7 +6793,7 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     }
     // a method of a derived trait (docs/compiler.md, "C8.42")
     if !any {
-        let dm = derived_method(inout c, pv.ty, n.b)
+        let dm = derived_method(inout c, pv.ty, n.b, want)
         if dm != NONE {
             let mut sb = no_subst()
             subst_set(inout sb, intern.S_SELF_TYPE, pv.ty)
@@ -6632,8 +6809,9 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     // "C8.19")
     let lm = lang_method(c, n.b)
     let lneed = if lm == NTR { TR_SHOW } else { lm }
-    if lm != NONE && lm != TR_ITER && lm != TR_DROP && lm != TR_DEFAULT && has_trait(c, lneed, pv.ty) { return trait_method(inout c, n, pv, lm) }
-    if !any && tk == types.T_RECORD {
+    let lang_ok = want == 0 || lang_of_key(c, want) == lm
+    if lm != NONE && lm != TR_ITER && lm != TR_DROP && lm != TR_DEFAULT && lang_ok && has_trait(c, lneed, pv.ty) { return trait_method(inout c, n, pv, lm) }
+    if want == 0 && !any && tk == types.T_RECORD {
         let d = types.def_of(c.t, pv.ty)
         match types.find_field(c.t, d, n.b) {
             Some(i) => {
@@ -6650,8 +6828,12 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     }
     // a language trait's method, derived ("Operation traits")
     let li = lang_method(c, n.b)
-    if li != NONE && li != TR_ITER && li != TR_DROP && li != TR_DEFAULT { return trait_method(inout c, n, pv, li) }
-    if is_word(c, n.b, "take") || is_word(c, n.b, "replace") { return take_replace(inout c, n, pv) }
+    if li != NONE && li != TR_ITER && li != TR_DROP && li != TR_DEFAULT && lang_ok { return trait_method(inout c, n, pv, li) }
+    if want == 0 && (is_word(c, n.b, "take") || is_word(c, n.b, "replace")) { return take_replace(inout c, n, pv) }
+    if want != 0 {
+        let fd = errh("E0115", n.line, n.col, q3("type ", ts(c, pv.ty), " has no method `", nm(c, n.b), "` from trait `", kt(c, want), "`"), "the trait must be implemented for the type of the first argument")
+        return fail_call(inout c, fd, n.c, n.d)
+    }
     let fd = err("E0115", n.line, n.col, q2("type ", ts(c, pv.ty), " has no method `", nm(c, n.b), "`"))
     fail_call(inout c, fd, n.c, n.d)
 }

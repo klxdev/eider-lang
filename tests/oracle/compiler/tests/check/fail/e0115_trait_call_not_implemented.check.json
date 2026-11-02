@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_trait_call_not_implemented.ei","line":7,"col":19},"message":"type Dog has no method `hello` from trait `Greeter`","help":"the trait must be implemented for the type of the first argument"}

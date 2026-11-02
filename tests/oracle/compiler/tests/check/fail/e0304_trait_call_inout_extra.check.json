@@ -1,0 +1,1 @@
+{"error":"E0304","span":{"file":"compiler/tests/check/fail/e0304_trait_call_inout_extra.ei","line":8,"col":31},"message":"`hello` takes a read-only `self`; remove the `inout`"}

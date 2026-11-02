@@ -1,0 +1,1 @@
+{"error":"E0115","span":{"file":"compiler/tests/check/fail/e0115_trait_call_unknown_method.ei","line":6,"col":19},"message":"trait `Greeter` has no method `nope`"}

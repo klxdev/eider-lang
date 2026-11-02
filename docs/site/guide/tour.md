@@ -449,6 +449,39 @@ true
 
 There is no operator overloading: `+` and friends are for numbers.
 
+When two traits (or a trait and the type) define a method of one name, `value.name()` picks
+the type's own, and a tie is an error (E0119). Name the trait to call one of them:
+
+```eider
+trait Pilot { fn fly(self) -> str }
+trait Wizard { fn fly(self) -> str }
+
+type Human = { name: str }
+
+impl Pilot for Human {
+    fn fly(self) -> str { "this is your captain" }
+}
+impl Wizard for Human {
+    fn fly(self) -> str { "up!" }
+}
+impl Human {
+    fn fly(self) -> str { "*waves arms*" }
+}
+
+fn main() uses io {
+    let h = Human("Ada")
+    print(h.fly())
+    print(Pilot.fly(h))
+    print(Wizard.fly(h))
+}
+```
+
+```output
+*waves arms*
+this is your captain
+up!
+```
+
 ## Closures
 
 ```eider

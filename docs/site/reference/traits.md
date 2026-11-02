@@ -59,9 +59,10 @@ Rules for a trait impl, all E0602:
 - the impl adds no other methods ("trait `Area` has no method `other`").
 
 An unknown trait name (in an impl or a bound) is E0603. A type implements a trait at most
-once (E0107), and a method name is defined once per type across all its impls, inherent
-and trait (E0107 "method `go` is already defined for `T`"); so two traits with a method of
-the same name can't both be implemented for one type.
+once (E0107), and a method name is defined once per type within one trait's impl or its
+inherent impls (E0107 "method `go` is already defined for `T`"). Two traits, or a trait and
+the type itself, may each define a method of the same name: see
+[Calling a method by its trait](#calling-a-method-by-its-trait).
 
 ```eider,compile_fail=E0602
 trait Area { fn area(self) -> i32 }
@@ -186,6 +187,81 @@ trait is an error where the default body uses it, and the help names the field: 
 trait (E0820 elsewhere unless an `attr` of that name exists). The derived methods are the
 trait's defaults checked for the type, so they cost what generic instantiation costs and
 nothing more.
+
+## Calling a method by its trait
+
+A type may have several methods of one name: its own, and one from each trait it implements.
+`value.name()` calls the type's own method if it has one, else the trait's, or the trait's
+default only when no other method has the name. When two traits tie, the call is ambiguous
+(E0119). `Trait.name(value, args)` names the trait, so it calls that trait's method (or its
+default) whatever else the type has; the first argument is the receiver, written as it would
+be before the dot (`inout x` when the method takes `inout self`). It works for a trait of
+another module (`time.Clock.sleep(c, d)`) and for the language traits (`Show.show(x, inout
+out)`), and inside a generic function it is how a bound says which trait it means.
+
+```eider
+trait Greeter { fn hello(self) -> str }
+trait Waver { fn hello(self) -> str }
+
+type Dog = { name: str }
+
+impl Dog {
+    fn hello(self) -> str { "own" }
+}
+impl Greeter for Dog {
+    fn hello(self) -> str { "greeter" }
+}
+impl Waver for Dog {
+    fn hello(self) -> str { "waver" }
+}
+
+type Cat = { n: i32 }
+impl Greeter for Cat {
+    fn hello(self) -> str { "cat greeter" }
+}
+impl Waver for Cat {
+    fn hello(self) -> str { "cat waver" }
+}
+
+fn main() uses io {
+    let d = Dog("rex")
+    print(d.hello())
+    print(Greeter.hello(d))
+    print(Waver.hello(d))
+    let c = Cat(1)
+    print(Greeter.hello(c))
+    print(Waver.hello(c))
+}
+```
+
+```output
+own
+greeter
+waver
+cat greeter
+cat waver
+```
+
+Without the type's own method, `c.hello()` is E0119; the help names the way out.
+
+```eider,compile_fail=E0119
+trait Greeter { fn hello(self) -> str }
+trait Waver { fn hello(self) -> str }
+type Cat = { n: i32 }
+impl Greeter for Cat { fn hello(self) -> str { "g" } }
+impl Waver for Cat { fn hello(self) -> str { "w" } }
+fn main() uses io {
+    let c = Cat(1)
+    print(c.hello())
+}
+```
+
+Fix: `print(Greeter.hello(c))`.
+
+`Trait.name(...)` needs a method with `self` (E0115 for an associated function: call those on
+a type, `Type.name()`, where two traits' functions of one name stay ambiguous), a first
+argument (E0405), a type that implements the trait (E0115), and `inout` exactly where the
+method's `self` is (E0304).
 
 A trait is not a type: `fn f(x: Shape)` is E0111 ("unknown type `Shape`").
 

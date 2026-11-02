@@ -1,0 +1,1 @@
+{"error":"E0405","span":{"file":"compiler/tests/check/fail/e0405_trait_call_no_value.ei","line":4,"col":19},"message":"`Greeter.hello` takes the value it is called on as its first argument","help":"write `Trait.method(value, ...)`; it is `value.method(...)` with the trait named"}

@@ -1,0 +1,9 @@
+// expect: E0304 8:31
+trait Greeter { fn hello(self) -> str }
+type Cat = { n: i32 }
+impl Greeter for Cat { fn hello(self) -> str { "g" } }
+fn main() uses io {
+    let mut c = Cat(1)
+    c.n = 2
+    print(Greeter.hello(inout c))
+}

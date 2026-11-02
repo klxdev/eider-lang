@@ -215,7 +215,7 @@ fn main() uses io { print(sign(-4)) }
 A **duplicate definition**: two items with one name in a module (functions, types,
 constants, traits), two fields of one record or variant, two variants with one name
 (variant names must be unique across the enums of a module, since they are used without
-the enum's name), a method defined twice for a type or in one impl, a trait implemented
+the enum's name), a method defined twice for a type (inherent, or in impls of one trait) or in one impl, a trait implemented
 twice for a type (`From` once per source type), and a loop label already used by an
 enclosing loop.
 
@@ -533,6 +533,45 @@ fn main() uses io { print(f(5)) }
 
 ```output
 1
+```
+
+## E0119
+
+An **ambiguous method**: a type implements two traits that each define the method called
+(or inherit a default of that name), and the type has no method of its own with the name.
+`value.name()` can't tell which is meant. The help names the way out, calling the method by
+its trait. (An associated function without `self` can't be called by its trait; rename one.)
+
+```eider,compile_fail=E0119
+trait Greeter { fn hello(self) -> str }
+trait Waver { fn hello(self) -> str }
+type Cat = { n: i32 }
+impl Greeter for Cat { fn hello(self) -> str { "g" } }
+impl Waver for Cat { fn hello(self) -> str { "w" } }
+fn main() uses io {
+    let c = Cat(1)
+    print(c.hello())
+}
+```
+
+Fix: name the trait.
+
+```eider
+trait Greeter { fn hello(self) -> str }
+trait Waver { fn hello(self) -> str }
+type Cat = { n: i32 }
+impl Greeter for Cat { fn hello(self) -> str { "g" } }
+impl Waver for Cat { fn hello(self) -> str { "w" } }
+fn main() uses io {
+    let c = Cat(1)
+    print(Greeter.hello(c))
+    print(Waver.hello(c))
+}
+```
+
+```output
+g
+w
 ```
 
 ## E0201

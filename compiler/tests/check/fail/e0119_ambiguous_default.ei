@@ -1,0 +1,10 @@
+// expect: E0119 9:13
+trait Greeter { fn bye(self) -> str { "g" } }
+trait Waver { fn bye(self) -> str { "w" } }
+type Cat = { n: i32 }
+impl Greeter for Cat {}
+impl Waver for Cat {}
+fn main() uses io {
+    let c = Cat(1)
+    print(c.bye())
+}

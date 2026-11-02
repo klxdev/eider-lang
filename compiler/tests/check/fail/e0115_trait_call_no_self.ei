@@ -1,0 +1,5 @@
+// expect: E0115 4:17
+trait Maker { fn make() -> i32 }
+fn main() uses io {
+    print(Maker.make())
+}

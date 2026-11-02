@@ -377,9 +377,11 @@ fn main() uses io {
 
 A method that takes `inout self` needs a writable receiver (E0303). Rules for impls:
 
-- A type has one namespace of methods: a name defined in two impls of one type, inherent or
-  trait, is E0107 ("method `go` is already defined for `T`"), and so is the same trait
-  implemented twice.
+- A name defined in two inherent impls of one type, or twice for one trait, is E0107
+  ("method `go` is already defined for `T`"), and so is the same trait implemented twice. An
+  inherent method and a trait's, or two traits' methods, of one name can coexist: a call
+  picks the type's own, and `Trait.go(x)` names the trait (see
+  [Traits and generics](traits.md#calling-a-method-by-its-trait)); two traits tie in E0119.
 - `pub` doesn't apply to an impl (E0001); methods are visible wherever their type is.
 - The impl's type must exist (E0111) and can't be an alias (E0111).
 - Built-in types take impls too: `impl String`, `impl i32`, `impl[T] List[T]`,

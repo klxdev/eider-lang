@@ -3773,6 +3773,51 @@ chain `outer: inner: root`. An `E` without `Show` (a record with a function fiel
 prints `error: main returned Err`; the exit code is 1 in every case, and `E0111` for the
 signature is unchanged.
 
+## C8.44: calling a method by its trait
+
+0.4.0 (#50; decision C621). Code: check.ei (`Meth.tk`, `register_impl`, `register_defaults`,
+"Calling a method by its trait": `meth_rank`, `pick_meth`, `ambiguous_err`, `meth_cands`,
+`trait_call`, `method_call_in`'s `want`, `clash_trait` in `inst_name`, `derived_method`'s `want`),
+diag.ei (E0119); tests: compiler/tests/run/trait_call.ei (hand-checked .out),
+compiler/tests/check/fail/e0119_*, e0115_trait_call_*, e0405_trait_call_*, e0304_trait_call_*,
+tests/checks/fail/e0119_ambiguous_method.ei; docs: docs/site/reference/traits.md.
+
+**Methods carry their trait.** `Meth` has `tk`, the key of the trait whose impl defines the
+method or whose default it is (0 for an inherent method). E0107 for "already defined" now
+compares `tk` too, so an inherent method and a trait's, or two traits' methods, can share a
+name on one type (a name twice in one impl, twice in the inherent impls, or twice for one
+trait is still E0107). `register_defaults` registers a default unless the same trait's impl
+defines it (it can't); a default hidden by another method of the name is not instantiated
+with the impl (`concrete`), only if called.
+
+**Picking one.** `x.m()`, `Type.m()` and `T.m()` collect the methods of the name that fit
+(`meth_cands`) and `pick_meth` ranks them: the type's own (0), a method an impl defines (1), a
+trait's default (2). The best rank wins; two different traits at the best rank are E0119
+(`ambiguous_err`: the help names `Trait.m(value, ...)`, or says to rename for an associated
+function, which can't be called by its trait). Before, the first registered won, which could
+only differ with a default (an other trait's method hid it, as now).
+
+**`Trait.m(x, ...)`.** The parser needs nothing: it is a method call whose receiver is the
+identifier `Trait`. `method_call_in` checks first whether that identifier is a trait (not a
+local, constant or type) and calls `trait_call`, which finds the trait's method (E0115 for no
+such method, or one without `self`), requires a first argument (E0405) and `inout` exactly
+when the method's `self` is (E0304, with a fix to add it), and re-enters `method_call_in` with
+the call rewritten as `x.m(rest)` (receiver `n.a` is the first argument's expression, the
+argument list starts one slot later) and `want` set to the trait's key. With `want` the
+built-in methods are skipped, only the trait's `Meth`s (and `@derive` default, `derived_method`)
+are candidates, and a language trait with no impl (a derived `Show`) goes through
+`trait_method`. A type that does not implement the trait is E0115 ("has no method `m` from
+trait `T`"). `want` is a parameter, not state, so the arguments' own calls are unaffected.
+
+**Names.** Two methods of one name on one type would be one IR/C name (`Dog.hello`):
+`inst_name` adds the trait (`Dog.Greeter.hello`) for a trait method that has such a sibling,
+and nothing otherwise, so no existing name, trap message or profile changes.
+
+**Not done.** `Trait.m()` for an associated function (no receiver to take the type from; two
+traits' functions of one name stay ambiguous, E0119); a bound in a generic function does not
+choose among several candidates of a concrete instance (call by trait there, as the test
+does); a path `Trait.m` as a function value.
+
 ## Profiling: `--profile`
 
 `eiderc build|run|test <file> --profile[=cpu,mem,conc]` (main.ei: `profile`, parsed by
