@@ -1,0 +1,19 @@
+// comptime embed: a file of the package as a str constant, usable in further comptime code
+const QUERY: str = comptime embed("embed/q.sql")
+const LEN: usize = comptime embed("embed/q.sql").len()
+const LINES: usize = comptime lines(embed("embed/q.sql"))
+const U: str = comptime embed("embed/u.txt")
+
+fn lines(s: str) -> usize {
+    let mut n: usize = 0
+    for i in 0..s.len() { if s.byte(i) == 10 { n += 1 } }
+    n
+}
+
+fn main() uses io {
+    print(QUERY)
+    print(LEN)
+    print(LINES)
+    print(U)
+    print(U.len())
+}

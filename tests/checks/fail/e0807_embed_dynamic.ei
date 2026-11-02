@@ -1,0 +1,4 @@
+// expect: E0807 3:25
+const P: str = "a.txt"
+const X: str = comptime embed(P)
+fn main() uses io { print(X) }

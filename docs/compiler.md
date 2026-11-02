@@ -4245,3 +4245,27 @@ tests/oracle/         the recorded expected results (scripts/test-compiler.sh, B
 ```
 
 `compiler/` depends on `core` and `std` only.
+
+## C8.55: `comptime embed` (#102)
+
+Decision C807. Code: `consteval.embed_all` and `embed_read`, called by `eval_one` before the
+evaluator is built; tests: tests/run/embed.ei (data in tests/run/embed/),
+tests/checks/fail/e0807_embed_*.ei.
+
+In the arena nodes of a comptime constant (those after the previous item, up to the constant),
+every `ECall` named `embed` (unqualified) with one `EArg` whose expression is an `EStr` is
+rewritten in place to an `EStr` holding the file's text (pushed to the module's `strs`), so
+the constant's expression, `embed("f").len()` or `parse(embed("f"))`, evaluates as ordinary
+code over a literal. A call with any other argument is E0807 ("`embed` takes one string
+literal, the path of a file"). The path is joined to the directory of the module's file and
+canonicalised (`fs.canonical`, which resolves symlinks); it must lie under the canonical
+directory of the module's package (`Pkg.dir`; the file's directory when `Module.pkg` is
+`NOPKG`), be a file, be readable and valid UTF-8 (`utf8.valid`): otherwise E0807 "`embed("p")`
+failed: <why>" at the call. The rewrite happens once (a retried constant sees literals).
+Cache: nothing extra is needed. The text is spliced into the program like any comptime value,
+so the unit hash of the code that holds it changes with the file; the interface hash of a
+module that exposes the constant too. `embed` is reserved inside comptime initializers: a
+user function with that name is shadowed there. Not done: `List[u8]` data (needs aggregate
+comptime types, #100), and an analyzer dependency edge from the source file to the data file
+(the analyzer re-analyses when the source changes, not when only the data file does).
+

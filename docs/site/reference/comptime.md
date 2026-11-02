@@ -66,6 +66,29 @@ const PAIR: (i32, i32) = comptime (1, 2)
 fn main() {}
 ```
 
+## Embedding a file
+
+`embed("path")` inside a `comptime` initializer is replaced, before the constant is
+evaluated, by the text of a file as a string literal. It is the one thing a `comptime`
+expression can read from the outside, and it asks for no capability because it is not
+evaluated code: the compiler reads the file.
+
+```eider,ignore
+const QUERY: str = comptime embed("sql/users.sql")
+const QUERY_LINES: usize = comptime count_lines(embed("sql/users.sql"))
+```
+
+- The argument is a string literal, the path relative to the directory of the file that
+  declares the constant.
+- The file must lie inside the declaring package (the directory of its `eider.toml`; for a
+  file in no package, the file's own directory), after symlinks are resolved. Absolute paths
+  and paths that leave the package are E0807, as are a missing file, a directory, text that
+  is not valid UTF-8, and an argument that is not a literal.
+- The text is part of the compiled program, so changing the file changes what is built and
+  invalidates the build cache for the units that use it. There is no run-time file access.
+- Binary data (`List[u8]`) is not embeddable yet: a `comptime` constant is an integer, a
+  `bool` or a `str`.
+
 ## How a constant is evaluated
 
 The comptime constants of a program are evaluated before the program is checked. For each

@@ -1,0 +1,3 @@
+// expect: E0807 2:25
+const X: str = comptime embed("embed/binary.dat")
+fn main() uses io { print(X) }

@@ -30,6 +30,8 @@
 
 import core.sys
 import std.bytes
+import std.fs
+import std.utf8
 import eiderc.intern
 import eiderc.lex
 import eiderc.ast
@@ -48,7 +50,7 @@ fn sym(inout p: resolve.Program, w: str) -> u32 {
 
 /// Evaluate every comptime constant of `p`; the result has each replaced by its value as a
 /// literal. The first diagnostic, if there is one (see eval_all).
-pub fn eval(p: resolve.Program) -> Result[resolve.Program, diag.Diag] {
+pub fn eval(p: resolve.Program) -> Result[resolve.Program, diag.Diag] uses fs {
     let ev = eval_all(p)
     if ev.diags.len() > 0 { return Err(ev.diags[0]) }
     Ok(ev.p)
@@ -69,7 +71,7 @@ type Try = { ok: bool, later: bool, d: diag.Diag }
 /// Evaluate every comptime constant of `p` (see the top of this file). A constant whose
 /// evaluation fails is reported and becomes a constant of the error type (its `comptime`
 /// flag 2), which check.ei accepts silently, and the rest go on.
-pub fn eval_all(p: resolve.Program) -> Evaluated {
+pub fn eval_all(p: resolve.Program) -> Evaluated uses fs {
     let mut prog = p.copy()
     let mut pend: List[Pend] = List.new()
     for m in p.order {
@@ -205,16 +207,97 @@ fn const_kind(inout p: resolve.Program, m: u32, t: u32) -> u32 {
     T_NONE
 }
 
+/// `embed("path")` inside the comptime constant `id` of module m (docs/compiler.md, "C8.55"):
+/// each call is replaced, in the arena, by the file's text as a string literal. The path is
+/// a literal relative to the declaring file and stays inside its package (the directory of
+/// the file when it is in none); the text must be valid UTF-8. Reading a file is the
+/// compiler's, not the evaluator's: comptime itself still has no capabilities.
+fn embed_all(inout p: resolve.Program, m: u32, id: u32) -> Option[diag.Diag] uses fs {
+    let emb = sym(inout p, "embed")
+    let a = p.mods[m as usize].ast
+    let mut lo: u32 = 0
+    for k in 0..a.items_len {
+        let o = ast.at(a, a.items_start, k)
+        if o < id && o + 1 > lo { lo = o + 1 }
+    }
+    let mut i = lo
+    while i < id {
+        let x = p.mods[m as usize].ast.nodes[i as usize].copy()
+        if x.kind == ast.ECall && x.a == emb && x.b == 0 {
+            let n = x
+            let mut arg: u32 = 0
+            let mut lit = false
+            if n.d == 1 {
+                arg = p.mods[m as usize].ast.nodes[ast.at(p.mods[m as usize].ast, n.c, 0) as usize].a
+                lit =  p.mods[m as usize].ast.nodes[arg as usize].kind == ast.EStr
+            }
+            if !lit { return Some(e0807(p, m, n, s("`embed` takes one string literal, the path of a file"))) }
+            let rel = p.mods[m as usize].strs[p.mods[m as usize].ast.nodes[arg as usize].a as usize].copy()
+            match embed_read(p, m, rel) {
+                Err(why) => {
+                    let mut msg = s("`embed(\"")
+                    bytes.append(inout msg, rel)
+                    bytes.append(inout msg, s("\")` failed: "))
+                    bytes.append(inout msg, why)
+                    return Some(e0807(p, m, n, msg))
+                }
+                Ok(text) => {
+                    let mut md = p.mods[m as usize].copy()
+                    md.strs.push(text)
+                    let mut lit2 = ast.node(ast.EStr, n.line, n.col)
+                    lit2.a = (md.strs.len() - 1) as u32
+                    md.ast.nodes[i as usize] = lit2
+                    p.mods[m as usize] = md
+                }
+            }
+        }
+        i += 1
+    }
+    None
+}
+
+fn embed_read(p: resolve.Program, m: u32, rel: List[u8]) -> Result[List[u8], List[u8]] uses fs {
+    if rel.len() == 0 { return Err(s("the path is empty")) }
+    if rel[0] == 47 { return Err(s("the path must be relative to the file and inside its package")) }
+    let md = p.mods[m as usize]
+    let dir = fs.dirname(md.path)
+    let file = match fs.canonical(fs.join(dir, rel)) {
+        Ok(c) => c
+        Err(_) => { return Err(s("no such file")) }
+    }
+    let base = if md.pkg == resolve.NOPKG { dir } else { p.pkgs[md.pkg as usize].dir }
+    let root = match fs.canonical(base) {
+        Ok(c) => c
+        Err(_) => base
+    }
+    let mut pre = root.copy()
+    if pre.len() == 0 || pre[pre.len() - 1] != 47 { pre.push(47) }
+    if file.len() <= pre.len() || !bytes.eq(bytes.slice(file, 0, pre.len()), pre) {
+        return Err(s("the file is outside its package"))
+    }
+    if fs.is_dir(file) { return Err(s("it is a directory")) }
+    let text = match fs.read(file) {
+        Ok(t) => t
+        Err(_) => { return Err(s("the file can't be read")) }
+    }
+    if !utf8.valid(text) { return Err(s("the file is not valid UTF-8 text")) }
+    Ok(text)
+}
+
 fn done() -> Try { Try(true, false, diag.new("E0807", 0, 0, List.new())) }
 fn fail(d: diag.Diag) -> Try { Try(false, false, d) }
 
 /// Evaluate the comptime constant `id` of module m and splice its value into `p`, with the
 /// items that name a constant in `drop` left out of the evaluator (`others`: constants
 /// besides this one are pending, so a check error may be theirs).
-fn eval_one(inout p: resolve.Program, ment: Ment, m: u32, id: u32, drop: Map[u64, bool], others: bool) -> Try {
+fn eval_one(inout p: resolve.Program, ment: Ment, m: u32, id: u32, drop: Map[u64, bool], others: bool) -> Try uses fs {
     let n = p.mods[m as usize].ast.nodes[id as usize].copy()
     let kind = const_kind(inout p, m, n.c)
     if kind == T_NONE { return fail(e0807(p, m, n, s("`comptime` constants must be integers, bool or str"))) }
+    match embed_all(inout p, m, id) {
+        Some(d) => { return fail(d) }
+        None => {}
+    }
     let ev = evaluator(inout p, ment, m, id, drop)
     let c = match checked(ev) {
         Ok(x) => x
