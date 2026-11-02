@@ -1,0 +1,8 @@
+// expect: E0601 7:23
+trait Area { fn area(self) -> i32 }
+type Sq = { s: i32 }
+type Other = { o: i32 }
+impl Area for Sq { fn area(self) -> i32 { self.s } }
+fn main() {
+    let a: dyn Area = Other(1)
+}

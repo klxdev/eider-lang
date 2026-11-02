@@ -1386,7 +1386,8 @@ A **trait not implemented**: a type passed where a bound requires a trait it lac
 (`type i32 doesn't implement trait `Area` (required by `total`)`), `.copy()` on a type
 without `Copy` (anything holding a `Task` or `Chan`), `T.default()` or `take()` on a type
 without `Default`, an own `Ord` or `Hash` impl on a type without `Eq`, and `.context(...)`
-of std/error on an error type that isn't an `error.Error`. The message names the part of
+of std/error on an error type that isn't an `error.Error`, and a value that becomes a
+`dyn Trait` whose type doesn't implement the trait. The message names the part of
 the type that lacks the trait.
 
 ```eider,compile_fail=E0601
@@ -1563,6 +1564,98 @@ fn main() uses io {
 
 ```output
 3
+```
+
+## E0607
+
+A **trait that can't be `dyn`**. `dyn Trait` is one table of methods that works for any
+implementing type, so the trait must qualify: every method takes `self` or `inout self`, has no
+type parameters and mentions `Self` only as its receiver, no method has another `inout`
+parameter, and the trait has no associated types. The message names the method and the clause
+it breaks and the help prints the rule; the language traits (`Show`, `Eq`, `Drop`, ...) are
+never `dyn`.
+
+```eider,compile_fail=E0607
+trait Pick {
+    fn pick[T](self, a: T, b: T) -> T
+}
+
+fn first(p: dyn Pick) {}
+
+fn main() {}
+```
+
+Fix: take the generic part out of the trait (a method without type parameters, or a generic
+function that takes the trait as a bound).
+
+```eider
+trait Pick {
+    fn pick(self, first: bool) -> i32
+}
+
+type Two = { a: i32, b: i32 }
+
+impl Pick for Two {
+    fn pick(self, first: bool) -> i32 { if first { self.a } else { self.b } }
+}
+
+fn first_of(p: dyn Pick) -> i32 { p.pick(true) }
+
+fn main() uses io {
+    print(first_of(Two(1, 2)))
+}
+```
+
+```output
+1
+```
+
+## E0608
+
+A **method that needs a capability its trait doesn't declare**, where a value becomes a
+`dyn Trait`. A call through `dyn Trait` is checked against the trait's declaration, because the
+caller cannot see which implementation runs; so each method of the type's impl may declare only
+capabilities the trait's method declares. (Called on the concrete type, an impl may declare
+more.) The help names the `uses` to add to the trait.
+
+```eider,compile_fail=E0608
+trait Run {
+    fn go(self)
+}
+
+type Hello = { n: i32 }
+
+impl Run for Hello {
+    fn go(self) uses io { print(self.n) }
+}
+
+fn main() uses io {
+    let r: dyn Run = Hello(1)
+    r.go()
+}
+```
+
+Fix: declare the capability in the trait, so every call through `dyn Run` needs it.
+
+```eider
+trait Run {
+    fn go(self) uses io
+}
+
+type Hello = { n: i32 }
+
+impl Run for Hello {
+    fn go(self) uses io { print(self.n) }
+}
+
+fn main() uses io {
+    let r: dyn Run = Hello(1)
+    r.go()
+}
+```
+
+```output
+1
 ```
 
 ## E0701

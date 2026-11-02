@@ -515,6 +515,47 @@ fn main() uses io {
 4
 ```
 
+A generic function is instantiated once per type. When the type is only known while the
+program runs, a list of shapes with circles and rectangles in it, a router's handlers, use
+`dyn Trait`: a value of any type that implements the trait, called through a table of its
+methods. Putting a value in one is a plain conversion, and a copy of it is a copy of the value:
+
+```eider
+trait Handler {
+    fn handle(self, path: str) -> i32
+}
+
+type Fixed = { code: i32 }
+type Prefix = { prefix: str, code: i32 }
+
+impl Handler for Fixed {
+    fn handle(self, path: str) -> i32 { self.code }
+}
+
+impl Handler for Prefix {
+    fn handle(self, path: str) -> i32 {
+        if path.len() >= self.prefix.len() { self.code } else { 404 }
+    }
+}
+
+fn main() uses io {
+    var routes: List[dyn Handler] = List.new()
+    routes.push(Fixed(200))
+    routes.push(Prefix("/api", 201))
+    for r in routes { print(r.handle("/api/x")) }
+}
+```
+
+```output
+200
+201
+```
+
+Not every trait can be `dyn`: the compiler needs one table of methods that works for any
+implementing type, so the trait's methods must take `self` or `inout self`, have no type
+parameters and not mention `Self` besides the receiver (the rule is printed in the error,
+E0607). See [Traits](../reference/traits.md#dyn-trait).
+
 ## Closures
 
 ```eider

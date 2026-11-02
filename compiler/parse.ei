@@ -1025,6 +1025,25 @@ pub fn ty(inout p: P) -> Result[u32, diag.Diag] {
         n.d = ts.len() as u32
         return Ok(add(inout p, n))
     }
+    // `dyn Trait`: `dyn` is a word only before a trait name (docs/compiler.md, "C8.47")
+    if t.kind == lex.Ident && t.val > intern.LAST_KEYWORD as u64 && p.i + 1 < p.toks.len() && name_at(p, p.i + 1) && bytes.eq(intern.name(p.names, t.val as u32), sys.lit("dyn")) {
+        adv(inout p)
+        let nt = cur(p)
+        adv(inout p)
+        let mut dsym = nt.val as u32
+        let mut dqual: u32 = 0
+        match qualified(inout p, dsym) {
+            Some(q) => {
+                dqual = p.qual + 1
+                dsym = q.sym
+            }
+            None => {}
+        }
+        let mut dn = mk(ast.TDyn, t.line, t.col)
+        dn.a = dsym
+        dn.b = dqual
+        return Ok(add(inout p, dn))
+    }
     if t.kind == lex.Ident && t.val > intern.LAST_KEYWORD as u64 {
         adv(inout p)
         let mut sym = t.val as u32

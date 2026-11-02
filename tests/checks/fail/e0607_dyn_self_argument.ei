@@ -1,0 +1,4 @@
+// expect: E0607 3:9
+trait Same { fn same(self, other: Self) -> bool }
+fn f(p: dyn Same) {}
+fn main() {}

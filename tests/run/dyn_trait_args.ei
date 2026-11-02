@@ -1,0 +1,23 @@
+trait Pick {
+    fn pick(self, first: bool) -> i32
+    fn two(self, x: i32, first: bool, y: i32) -> i32
+}
+
+type Two = { a: i32, b: i32 }
+
+impl Pick for Two {
+    fn pick(self, first: bool) -> i32 { if first { self.a } else { self.b } }
+    fn two(self, x: i32, first: bool, y: i32) -> i32 { if first { x } else { y } }
+}
+
+fn main() uses io {
+    let p: dyn Pick = Two(1, 2)
+    print(p.pick(true))
+    print(p.pick(false))
+    let t = Two(1, 2)
+    print(t.pick(true))
+    let f = true
+    print(p.pick(f))
+    print(p.two(10, true, 20))
+    print(p.two(10, false, 20))
+}

@@ -438,6 +438,10 @@ fn ty(b: B, m: u32, t: u32, inout g: Sig) {
     let n = node(b, m, t)
     match n.kind {
         ast.TName => name_ref(b, m, n, inout g)
+        ast.TDyn => {
+            put(inout g, "dyn ")
+            name_ref(b, m, n, inout g)
+        }
         ast.TGeneric => {
             name_ref(b, m, n, inout g)
             put(inout g, "[")

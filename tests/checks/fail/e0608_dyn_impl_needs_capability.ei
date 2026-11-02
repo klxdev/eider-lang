@@ -1,0 +1,8 @@
+// expect: E0608 6:22
+trait Run { fn go(self) }
+type A = { n: i32 }
+impl Run for A { fn go(self) uses io { print(self.n) } }
+fn main() uses io {
+    let r: dyn Run = A(1)
+    r.go()
+}

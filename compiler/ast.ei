@@ -74,6 +74,8 @@
 //            IAssoc a=name sym b=type+1 (0: a trait's `type Item`)   ITrait [e/f]=IAssoc
 //            IImpl [g/h]=IAssoc (`type Item = i32`)
 //            Arm e=guard+1 (`pat if cond =>`; 0: none)
+// trait objects (docs/compiler.md, "C8.47")
+//            TDyn a=trait sym b=qual+1 (`dyn Trait`)
 
 pub type Kind =
     | TName | TGeneric | TArray | TTuple | TUnit | TFn
@@ -91,6 +93,7 @@ pub type Kind =
     | SDefer
     | PRange | PRecord | PField
     | TAssoc | IAssoc
+    | TDyn
 
 pub type Node = {
     kind: Kind,
@@ -223,6 +226,7 @@ pub fn kind_text(k: Kind) -> str {
         TUnit => "TUnit"
         TFn => "TFn"
         TAssoc => "TAssoc"
+        TDyn => "TDyn"
         IAssoc => "IAssoc"
         EInt => "EInt"
         EStr => "EStr"

@@ -512,6 +512,85 @@ compiled with the concrete types. Consequences:
   the bounds check (E0605) is a separate pass over each instantiated generic declaration,
   reported after the program's other errors.
 
+## `dyn Trait`
+
+Generics pick the implementation at compile time. When the type is only known at run time (a
+router's handlers, a list of plugins, a shape list with circles and rectangles in it), write
+`dyn Trait`: a value of any type that implements `Trait`, called through a table of its
+methods (a vtable).
+
+```eider
+trait Shape {
+    fn area(self) -> i64
+    fn scale(inout self, k: i64)
+}
+
+type Rect = { w: i64, h: i64 }
+type Circle = { r: i64 }
+
+impl Shape for Rect {
+    fn area(self) -> i64 { self.w * self.h }
+    fn scale(inout self, k: i64) {
+        self.w = self.w * k
+        self.h = self.h * k
+    }
+}
+
+impl Shape for Circle {
+    fn area(self) -> i64 { 3 * self.r * self.r }
+    fn scale(inout self, k: i64) { self.r = self.r * k }
+}
+
+fn total(shapes: List[dyn Shape]) -> i64 {
+    let mut sum: i64 = 0
+    for s in shapes { sum += s.area() }
+    sum
+}
+
+fn main() uses io {
+    var shapes: List[dyn Shape] = List.new()
+    shapes.push(Rect(2, 3))
+    shapes.push(Circle(2))
+    print(total(shapes))
+    shapes[0].scale(2)
+    print(total(shapes))
+}
+```
+
+```output
+18
+36
+```
+
+- **The rule for which traits qualify**: every method takes `self` or `inout self`, has no
+  type parameters of its own, and mentions `Self` nowhere but its receiver; the trait has no
+  associated types, and none of its methods has an `inout` parameter besides `self`. A trait
+  that breaks it is E0607 where `dyn Trait` is written, naming the method and the clause. The
+  language traits (`Show`, `Eq`, `Drop`, ...) aren't `dyn`.
+- **Coercion.** A value of a type that implements the trait becomes a `dyn Trait` wherever a
+  `dyn Trait` is expected: a `let` with a type, an argument, a result, a field, an element
+  pushed into a `List[dyn Trait]`, or `x as dyn Trait`. A type that doesn't implement it is
+  E0601.
+- **A `dyn Trait` owns its value**, like a closure owns what it captured: copying it
+  (`var c = a`) copies the value, `inout self` methods change the value it holds, and
+  dropping it runs the value's `Drop` through the vtable. `Box[dyn Trait]`, `Option[dyn Trait]`
+  and records holding one work like any type. A `dyn Trait` has no `==`, order, hash or text.
+- **Capabilities are checked at the call**, against the trait's declaration, because the
+  caller cannot see the implementation: calling `s.announce()` needs the `uses` of the trait's
+  `announce`. So that this is sound, a type can only become a `dyn Trait` when each of its
+  impl's methods declares no capability the trait's declaration doesn't (E0608).
+- A default method of the trait can be called through a `dyn` as well.
+
+```eider,compile_fail=E0607
+trait Pick {
+    fn pick[T](self, a: T, b: T) -> T
+}
+
+fn first(p: dyn Pick) {}
+
+fn main() {}
+```
+
 ## The operation traits
 
 The prelude (core/prelude.ei) declares these traits; their names, and `Ordering` with its

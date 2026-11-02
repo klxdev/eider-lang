@@ -1,0 +1,1 @@
+{"error":"E0201","span":{"file":"tests/checks/fail/e0201_dyn_call_capability.ei","line":4,"col":25},"message":"call to `dyn Run.go` requires capability `io`","fix":{"at":{"line":4,"col":20},"delete":0,"insert":" uses io"}}

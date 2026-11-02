@@ -1,0 +1,111 @@
+// dyn Trait (#18): a value of any type that implements the trait, called through a vtable.
+trait Shape {
+    fn area(self) -> i64
+    fn name(self) -> str
+    fn scale(inout self, k: i64)
+    fn double_area(self) -> i64 { self.area() * 2 }
+    fn announce(self) uses io
+}
+
+type Rect = { w: i64, h: i64 }
+type Circle = { r: i64 }
+type Tag = { label: str }
+
+impl Shape for Rect {
+    fn area(self) -> i64 { self.w * self.h }
+    fn name(self) -> str { "rect" }
+    fn scale(inout self, k: i64) {
+        self.w = self.w * k
+        self.h = self.h * k
+    }
+    fn announce(self) uses io { print(self.w) }
+}
+
+impl Shape for Circle {
+    fn area(self) -> i64 { 3 * self.r * self.r }
+    fn name(self) -> str { "circle" }
+    fn scale(inout self, k: i64) { self.r = self.r * k }
+    fn double_area(self) -> i64 { 1000 + self.area() }
+    fn announce(self) uses io { print(self.r) }
+}
+
+type Scene = { title: str, shapes: List[dyn Shape], star: dyn Shape }
+
+fn total(shapes: List[dyn Shape]) -> i64 {
+    let mut sum: i64 = 0
+    for s in shapes { sum += s.area() }
+    sum
+}
+
+fn make(big: bool) -> dyn Shape {
+    if big { Rect(10, 10) } else { Circle(2) }
+}
+
+fn grow(s: dyn Shape) -> dyn Shape {
+    var t = s
+    t.scale(3)
+    t
+}
+
+// Drop runs through the vtable
+type Log = { l: Ref[List[String]] }
+type Res = { name: str, log: Log }
+
+impl Drop for Res {
+    fn drop(inout self) {
+        let n = self.name
+        self.log.l.update(|inout xs| xs.push(String.from(n)))
+    }
+}
+
+impl Shape for Res {
+    fn area(self) -> i64 { 7 }
+    fn name(self) -> str { self.name }
+    fn scale(inout self, k: i64) {}
+    fn announce(self) uses io { print(self.name) }
+}
+
+fn show_log(log: Log) uses io {
+    let xs = log.l.get()
+    for x in xs { print(x) }
+}
+
+fn main() uses io {
+    let a: dyn Shape = Rect(2, 3)
+    let b: dyn Shape = Circle(1)
+    print(a.area())
+    print(b.name())
+    print(a.double_area())
+    print(b.double_area())
+    a.announce()
+    var shapes: List[dyn Shape] = List.new()
+    shapes.push(Rect(1, 1))
+    shapes.push(Circle(3))
+    shapes.push(make(true))
+    print(total(shapes))
+    // mutation through inout self; a copy is its own value
+    var c = a
+    c.scale(4)
+    print(c.area())
+    print(a.area())
+    let g = grow(make(false))
+    print(g.area())
+    let sc = Scene("s", shapes, b)
+    print(sc.shapes.len())
+    print(sc.star.name())
+    let e = Rect(5, 5) as dyn Shape
+    print(e.area())
+    // Drop through the vtable
+    let log = Log(Ref.new(List.new()))
+    {
+        let r: dyn Shape = Res("one", log)
+        let r2 = r
+        print(r2.area())
+    }
+    {
+        let mut held: List[dyn Shape] = List.new()
+        held.push(Res("two", log))
+        held.push(Res("three", log))
+    }
+    show_log(log)
+}

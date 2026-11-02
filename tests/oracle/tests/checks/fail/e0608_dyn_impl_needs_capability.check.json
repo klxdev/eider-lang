@@ -1,0 +1,1 @@
+{"error":"E0608","span":{"file":"tests/checks/fail/e0608_dyn_impl_needs_capability.ei","line":6,"col":22},"message":"method `go` of `A` uses capability `io`, which the trait doesn't declare for it","help":"a `dyn Run` is called without knowing the implementation, so the method in the trait has to declare what any implementation needs: add `uses io` to it"}

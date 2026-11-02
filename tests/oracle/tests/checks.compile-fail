@@ -23,6 +23,7 @@ compile-fail tests (tests/checks/fail)
   ok   e0119_ambiguous_method.ei    E0119 at 9:13
   ok   e0201_cap_param_call.ei      E0201 at 4:5 (fix compiles)
   ok   e0201_comptime_io.ei         E0201 at 4:25
+  ok   e0201_dyn_call_capability.ei E0201 at 4:25 (fix compiles)
   ok   e0201_ffi_capability.ei      E0201 at 4:22 (fix compiles)
   ok   e0201_fn_value_call.ei       E0201 at 3:5 (fix compiles)
   ok   e0201_fn_value_passed.ei     E0201 at 4:11 (fix compiles)
@@ -76,12 +77,18 @@ compile-fail tests (tests/checks/fail)
   ok   e0505_constant_shift_count.ei E0505 at 3:10
   ok   e0506_push_byte_not_ascii.ei E0506 at 4:17
   ok   e0601_bound_unmet.ei         E0601 at 9:5
+  ok   e0601_dyn_not_implemented.ei E0601 at 7:23
   ok   e0602_impl_mismatch.ei       E0602 at 7:8
   ok   e0603_unknown_trait.ei       E0603 at 2:6
   ok   e0604_orphan_impl.ei         E0604 at 2:1
   ok   e0605_missing_bound.ei       E0605 at 2:36 (fix resolves it; next: E0605)
   ok   e0605_take_type_param.ei     E0605 at 2:42 (fix compiles)
   ok   e0606_drop_on_enum.ei        E0606 at 3:1
+  ok   e0607_dyn_generic_method.ei  E0607 at 3:13
+  ok   e0607_dyn_language_trait.ei  E0607 at 2:9
+  ok   e0607_dyn_no_receiver.ei     E0607 at 3:9
+  ok   e0607_dyn_self_argument.ei   E0607 at 3:9
+  ok   e0608_dyn_impl_needs_capability.ei E0608 at 6:22
   ok   e0701_list_as_key.ei         E0701 at 3:12
   ok   e0801_private_fn.ei          E0801 at 5:11
   ok   e0801_private_type.ei        E0801 at 5:12
@@ -116,6 +123,7 @@ compile-pass tests (tests/checks/pass)
   ok   pass_capability_polymorphism.ei
   ok   pass_comptime_str.ei
   ok   pass_dotted_imports.ei
+  ok   pass_dyn_trait.ei
   ok   pass_import_and_ffi.ei
   ok   pass_inout_and_var.ei
   ok   pass_match_all.ei
@@ -123,5 +131,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-121 passed, 0 failed; error-code coverage 70/70
+129 passed, 0 failed; error-code coverage 72/72
 --- exit 0

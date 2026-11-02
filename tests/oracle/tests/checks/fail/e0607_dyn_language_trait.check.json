@@ -1,0 +1,1 @@
+{"error":"E0607","span":{"file":"tests/checks/fail/e0607_dyn_language_trait.ei","line":2,"col":9},"message":"the language trait `Show` can't be `dyn`","help":"a trait can be `dyn` when every method takes `self` or `inout self`, has no type parameters and mentions `Self` only as its receiver, no method has another `inout` parameter, and the trait has no associated types"}

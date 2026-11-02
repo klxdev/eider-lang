@@ -184,7 +184,7 @@ fn compute(inout l: Lay, p: lower.P, ty: u32) {
         // { K *k; V *v; uint8_t *s; uint64_t len, cap, used; }
         s = up(3 * l.ptr, 8) + 24
         a = 8
-    } else if k == types.T_FN {
+    } else if k == types.T_FN || k == types.T_DYN {
         // five pointers
         s = 5 * l.ptr
     } else if k == types.T_ARRAY {
@@ -241,7 +241,7 @@ pub fn leaves(inout l: Lay, p: lower.P, ty: u32, off: u64, inout out: List[Leaf]
         } else if k0 == types.T_MAP {
             np = 3
             nc = 3
-        } else if k0 == types.T_FN {
+        } else if k0 == types.T_FN || k0 == types.T_DYN {
             np = 5
         }
         for i in 0..np { out.push(Leaf(off + i * l.ptr, l.ptr, C_INTEGER)) }

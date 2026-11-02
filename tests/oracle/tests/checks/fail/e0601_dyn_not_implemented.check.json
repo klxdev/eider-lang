@@ -1,0 +1,1 @@
+{"error":"E0601","span":{"file":"tests/checks/fail/e0601_dyn_not_implemented.ei","line":7,"col":23},"message":"type Other doesn't implement trait `Area` (required by `dyn Area`)"}

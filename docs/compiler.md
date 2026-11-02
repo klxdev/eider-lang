@@ -3969,6 +3969,41 @@ that differ in capabilities are two C types of one layout).
   generic arguments are invariant (`List[fn() uses io]` is not `List[fn()]`); `uses` in the
   result type of a declaration; an explicit empty `uses`.
 
+## C8.47: `dyn Trait`
+
+A trait object (#18): a value of any type that implements a trait, called through a table
+of its methods. The type is `T_DYN` (a = the trait key's prefix, b = its symbol; syntax TDyn
+`dyn Name`, `dyn` a word only before a trait name, so it stays a name elsewhere) and has a fn
+value's layout: five pointers, the environment (a heap block holding the value), the vtable
+where a fn value has its code, and the environment's drop, clone and own. So it owns its value,
+a copy clones it, a drop runs the value's `Drop`, and every place that treats `T_FN` as an
+owned handle (layouts, glue, `owns`) treats `T_DYN` the same; it has no equality, order, hash or
+text.
+
+- **The rule** (`dyn_rule`, printed as the help of E0607): every method takes `self` or `inout self`,
+  has no type parameters and mentions `Self` only as its receiver, none has another `inout`
+  parameter, the trait has no associated types. A language trait is never `dyn`. Types are
+  resolved before traits are registered, so `resolve_ty` looks the trait up in the items
+  (`find_trait_item`).
+- **Coercion** (`coerce_dyn`) happens in `expr` when the expected type is a dyn type and the
+  value's is not (a `let` with a type, an argument, a result, a field, an element, `Some(x)`
+  where the payload is expected, `x as dyn T`): the type must implement the trait (E0601), and
+  for each method of the trait it finds the impl's instance as a method call does (own impl,
+  inherited default, derived default) and makes `dyn_thunk`, a closure body `(env, inout self,
+  args...)` that calls it with `self` read from (or, for `inout self`, as) the environment
+  block. Every capability of the instance must be in the trait method's declaration (E0608).
+  S_DYN holds the value (moved), an empty closure body capturing it (`dyn_holder`, whose
+  environment glue is the dyn value's) and one integer operand per method, the thunk.
+- **A call** (`dyn_method`) is S_DYNCALL: the method's index, then the arguments. It needs the
+  capabilities of the trait's declaration, and `inout self` needs an assignable receiver.
+- **llvm.ei** (`dyn_value`, `dyn_vtable`, `dyn_call`, separate from `closure`/`callv`): the
+  vtable is a private constant (`@.m<n>`) of the thunks' addresses, the call loads the slot
+  and calls it in a closure body's convention with the environment as both its first
+  argument and `self` (the value is the environment's first member, so they are one address).
+- **Not done**: `dyn` of a trait with generic methods or associated types (the rule), several
+  traits in one `dyn`, upcasting, comparing or printing a dyn value, comptime (`cannot use a
+  `dyn` value`).
+
 ## Testing
 
 - Golden dumps per pass (`lex`, `parse`, `ir`), regenerated with a bless flag and

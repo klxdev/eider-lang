@@ -863,7 +863,7 @@ fn builtin_op(inout c: C, b: u32, args: List[u32], rty: u32, line: u32) -> u32 {
 /// Does a value of this type own heap memory?
 fn owns(c: C, ty: u32) -> bool {
     let t = types.get(c.t, ty)
-    if t.kind == types.T_STRING || t.kind == types.T_LIST || t.kind == types.T_MAP || t.kind == types.T_BOX || t.kind == types.T_FN { return true }
+    if t.kind == types.T_STRING || t.kind == types.T_LIST || t.kind == types.T_MAP || t.kind == types.T_BOX || t.kind == types.T_FN || t.kind == types.T_DYN { return true }
     if types.is_handle(t.kind) || t.kind == types.T_REF { return true }
     if t.kind == types.T_ARRAY { return owns(c, t.a) }
     if t.kind == types.T_TUPLE {
@@ -1696,6 +1696,28 @@ fn resolve_ty(inout c: C, am: u32, tn: u32) -> Result[u32, diag.Diag] {
             }
             Ok(types.tuple(inout c.t, elems))
         }
+        ast.TDyn => {
+            let k = resolve.name_key(c.p, am, n.a, n.b, n.line, n.col)
+            let fi = find_trait_item(c, k)
+            if fi.len() == 0 { return Err(err("E0111", n.line, n.col, q("unknown trait `", kt(c, k), "`"))) }
+            if lang_of_key(c, k) != NONE {
+                return Err(errh("E0607", n.line, n.col, q("the language trait `", kt(c, k), "` can't be `dyn`"), DYN_RULE))
+            }
+            let r = dyn_rule(c, fi[0].copy())
+            if !r.ok {
+                let mut msg = q("trait `", kt(c, k), "` can't be `dyn`: ")
+                if r.method != NONE {
+                    bytes.append(inout msg, s("method `"))
+                    bytes.append(inout msg, nm(c, r.method))
+                    bytes.append(inout msg, s("` "))
+                } else {
+                    bytes.append(inout msg, s("it "))
+                }
+                bytes.append(inout msg, r.why)
+                return Err(errh("E0607", n.line, n.col, msg, DYN_RULE))
+            }
+            Ok(types.dyn_of(inout c.t, resolve.key_pre(k), resolve.key_sym(k)))
+        }
         _ => {
             let mut ps: List[u32] = List.new()
             for i in 0..n.d {
@@ -2203,6 +2225,11 @@ fn unify_ast(c: C, m: u32, tn: u32, actual: u32, inout sb: Subst, gs: List[u32])
             true
         }
         ast.TAssoc => true
+        ast.TDyn => {
+            if t.kind != types.T_DYN { return false }
+            let k = resolve.name_key(c.p, m, n.a, n.b, n.line, n.col)
+            t.a == resolve.key_pre(k) && t.b == resolve.key_sym(k)
+        }
         _ => actual == types.UNIT
     }
 }
@@ -2283,6 +2310,10 @@ fn show_ast(c: C, m: u32, tn: u32, gens: List[u32]) -> List[u8] {
             bytes.append(inout out, nm(c, n.b))
             out.push(46)
             bytes.append(inout out, nm(c, n.a))
+        }
+        ast.TDyn => {
+            bytes.append(inout out, s("dyn "))
+            bytes.append(inout out, ty_name(c, m, n, gens))
         }
         ast.TFn => {
             bytes.append(inout out, s("fn("))
@@ -2825,7 +2856,7 @@ fn lacks(c: C, tr: u32, ty: u32, inout seen: Map[u32, bool]) -> u32 {
         return lacks(c, tr, t.b, inout seen)
     }
     // a fn value copies its environment; a Mutex copies its contents into a new Mutex
-    if k == types.T_FN && tr == TR_COPY { return NONE }
+    if (k == types.T_FN || k == types.T_DYN) && tr == TR_COPY { return NONE }
     if k == types.T_MUTEX && tr == TR_COPY { return lacks(c, tr, t.a, inout seen) }
     // a Ref copies its contents into a new Ref (docs/compiler.md, "C8.7")
     if k == types.T_REF && tr == TR_COPY { return lacks(c, tr, t.a, inout seen) }
@@ -2892,6 +2923,7 @@ fn lack_help(c: C, tr: u32, part: u32) -> str {
     if k == types.T_MUTEX { return "Task, Mutex and Chan values are shared handles: they have no equality, order, hash or text" }
     if k == types.T_REF { return "a Ref is a shared handle: it has no equality, order, hash or text; compare or print what it holds, inside `read`" }
     if k == types.T_FN { return "fn values have no equality, order, hash or text" }
+    if k == types.T_DYN { return "dyn values have no equality, order, hash or text" }
     ""
 }
 
@@ -3177,6 +3209,323 @@ fn abstract_bodies(inout c: C) {
 }
 
 // ---- program
+
+// ---- dyn Trait (docs/compiler.md, "C8.47")
+//
+// `dyn Trait` is a value of any type that implements the trait, with the table of the
+// methods of that type (S_DYN builds it, S_DYNCALL calls through it; llvm.ei). The checker's
+// part: which traits qualify (`dyn_rule`), the coercion from a concrete type (`coerce_dyn`,
+// where an expression's expected type is a dyn type), and the call (`dyn_method`).
+
+const DYN_RULE: str = "a trait can be `dyn` when every method takes `self` or `inout self`, has no type parameters and mentions `Self` only as its receiver, no method has another `inout` parameter, and the trait has no associated types"
+
+/// Whether a trait qualifies; if not, the method (NONE: the trait itself) and the clause.
+type DynRule = { ok: bool, method: u32, why: List[u8] }
+
+/// Whether type node tn of module m mentions `Self`.
+fn mentions_self(c: C, m: u32, tn: u32) -> bool {
+    let n = ndm(c, m, tn)
+    match n.kind {
+        ast.TName => n.b == 0 && n.a == intern.S_SELF_TYPE
+        ast.TAssoc => n.b == intern.S_SELF_TYPE
+        ast.TArray => mentions_self(c, m, n.a)
+        ast.TUnit => false
+        ast.TDyn => false
+        _ => {
+            for i in 0..n.d {
+                if mentions_self(c, m, atm(c, m, n.c, i)) { return true }
+            }
+            if n.kind == ast.TFn && n.g > 0 { return mentions_self(c, m, n.g - 1) }
+            false
+        }
+    }
+}
+
+/// The declaration of the trait with key k (types are resolved before the traits are
+/// registered, so a field of type `dyn T` looks it up in the items): zero or one.
+fn find_trait_item(c: C, k: u64) -> List[Item] {
+    let mut out: List[Item] = List.new()
+    let ti = mget(c.traits, k)
+    if ti != NONE {
+        out.push(c.trs[ti as usize].copy())
+        return out
+    }
+    for it in items(c.p) {
+        let n = ndm(c, it.m, it.node)
+        if n.kind == ast.ITrait && resolve.item_key(c.p, it.m, n.a) == k {
+            out.push(it)
+            return out
+        }
+    }
+    out
+}
+
+/// The dyn-compatibility rule (DYN_RULE) for the trait declared by `tr`.
+fn dyn_rule(c: C, tr: Item) -> DynRule {
+    let trn = ndm(c, tr.m, tr.node)
+    if trn.f > 0 {
+        let an = ndm(c, tr.m, atm(c, tr.m, trn.e, 0))
+        return DynRule(false, NONE, q("declares the associated type `", nm(c, an.a), "`"))
+    }
+    for i in 0..trn.d {
+        let tm = ndm(c, tr.m, atm(c, tr.m, trn.c, i))
+        if tm.d > 0 { return DynRule(false, tm.a, s("is generic")) }
+        let mut has_self = false
+        if tm.f > 0 { has_self = ndm(c, tr.m, atm(c, tr.m, tm.e, 0)).a == intern.S_SELF }
+        if !has_self { return DynRule(false, tm.a, s("has no `self` receiver")) }
+        for k in 1..tm.f {
+            let pn = ndm(c, tr.m, atm(c, tr.m, tm.e, k))
+            if pn.c == 1 { return DynRule(false, tm.a, q("takes the `inout` parameter `", nm(c, pn.a), "`")) }
+            if mentions_self(c, tr.m, pn.b) { return DynRule(false, tm.a, q("mentions `Self` in the parameter `", nm(c, pn.a), "`")) }
+        }
+        if tm.g > 0 && mentions_self(c, tr.m, tm.g - 1) { return DynRule(false, tm.a, s("mentions `Self` in its result")) }
+    }
+    DynRule(true, NONE, List.new())
+}
+
+/// The function that runs method `name` of trait `key` for type `ty`: an impl's method or an
+/// inherited default (the lookup of a method call), as an instance.
+fn dyn_instance(inout c: C, ty: u32, name: u32, key: u64) -> Result[u32, diag.Diag] {
+    let head = head_of(c, ty)
+    let mut cands: List[u32] = List.new()
+    for i in meth_cands(c, head, name, key) {
+        let m = c.meths[i as usize].copy()
+        let f = c.fdefs[m.fd as usize]
+        let im = ndm(c, f.imd, f.inode)
+        let gs = gparams(c, f.imd, im.c, im.d)
+        let mut sb = no_subst()
+        if !unify_ast(c, f.imd, im.b, ty, inout sb, gs) { continue }
+        cands.push(i)
+    }
+    if cands.len() > 0 {
+        let ch = pick_meth(c, cands)
+        if ch == NONE { return Err(err("E0119", 0, 0, q("ambiguous method `", nm(c, name), "`"))) }
+        let m = c.meths[ch as usize].copy()
+        let f = c.fdefs[m.fd as usize]
+        let im = ndm(c, f.imd, f.inode)
+        let gs = gparams(c, f.imd, im.c, im.d)
+        let mut sb = no_subst()
+        unify_ast(c, f.imd, im.b, ty, inout sb, gs)
+        if f.dflt { sb = no_subst() }
+        subst_set(inout sb, intern.S_SELF_TYPE, ty)
+        return instantiate(inout c, m.fd, sb)
+    }
+    let dm = derived_method(inout c, ty, name, key)
+    if dm == NONE { return Err(err("E0115", 0, 0, q2("type ", ts(c, ty), " has no method `", nm(c, name), "`"))) }
+    let mut sb = no_subst()
+    subst_set(inout sb, intern.S_SELF_TYPE, ty)
+    instantiate(inout c, dm, sb)
+}
+
+/// A function that calls `inst` (a method of type `ty`) with the environment of a dyn value
+/// (a closure body: `env, inout self, args...`).
+fn dyn_thunk(inout c: C, ty: u32, inst: Inst, self_inout: bool, line: u32) -> u32 {
+    c.closures += 1
+    let mut fname = ir.cur_name(c.ir)
+    bytes.append(inout fname, s(".closure"))
+    bytes.append(inout fname, num(c.closures as u64))
+    let f = ir.declare_fn(inout c.ir, fname, false)
+    let saved = Saved(c.scopes, c.marks, c.frames, c.fmarks, c.firs, c.fresh, c.ret, c.loops, c.loop_bases, c.lam_expr)
+    let ctext = caps_text(c, c.caps)
+    ir.begin_nested(inout c.ir, f, types.UNIT, ctext)
+    c.scopes = List.new()
+    c.marks = List.new()
+    push_scope(inout c)
+    reset_frames(inout c)
+    c.loops = 0
+    let mark = ir.open(c.ir)
+    // (the parameters are the function's first locals: declared before anything is read)
+    let ls = ir.local(inout c.ir, intern.S_SELF, ty, ir.L_INOUT, line)
+    let mut plocals: List[u32] = List.new()
+    let mut ptys: List[u32] = List.new()
+    for k in 1..inst.plen {
+        let pty = c.ptys[(inst.pstart + k) as usize].copy()
+        plocals.push(ir.local(inout c.ir, 0, pty, ir.L_PARAM, line))
+        ptys.push(pty)
+    }
+    let mut args: List[u32] = List.new()
+    let selfp = ir.place_local(inout c.ir, ls, ty)
+    if self_inout { args.push(selfp + ir.ARG_PLACE) } else { args.push(read(inout c, selfp, ty, line)) }
+    for k in 0..plocals.len() {
+        let pp = ir.place_local(inout c.ir, plocals[k], ptys[k])
+        args.push(read(inout c, pp, ptys[k], line))
+    }
+    let st = ir.list(inout c.ir, args)
+    let na = args.len() as u32
+    let ret = inst.ret.copy()
+    if ret == types.UNIT {
+        emit(inout c, ir.S_CALL, ir.NONE, inst.ir, st, na, ret, line)
+    } else {
+        let o = emit_val(inout c, ir.S_CALL, inst.ir, st, na, ret, ret, line)
+        drop_frames_from(inout c, 0)
+        emit(inout c, ir.S_RETURN, 0, o + 1, 0, 0, 0, line)
+    }
+    let b = ir.close(inout c.ir, mark)
+    ir.set_ret(inout c.ir, ret)
+    ir.end_nested(inout c.ir, inst.plen, b)
+    c.scopes = saved.scopes
+    c.marks = saved.marks
+    c.frames = saved.frames
+    c.fmarks = saved.fmarks
+    c.firs = saved.firs
+    c.fresh = saved.fresh
+    c.ret = saved.ret
+    c.loops = saved.loops
+    c.loop_bases = saved.loop_bases
+    while c.loop_labels.len() > c.loop_bases.len() { c.loop_labels.pop() }
+    c.lam_expr = saved.lam_expr
+    f
+}
+
+/// The empty closure body that captures a value of type `ty`: its environment glue is the
+/// glue of a dyn value holding one.
+fn dyn_holder(inout c: C, ty: u32, line: u32) -> u32 {
+    c.closures += 1
+    let mut fname = ir.cur_name(c.ir)
+    bytes.append(inout fname, s(".closure"))
+    bytes.append(inout fname, num(c.closures as u64))
+    let f = ir.declare_fn(inout c.ir, fname, false)
+    let saved = Saved(c.scopes, c.marks, c.frames, c.fmarks, c.firs, c.fresh, c.ret, c.loops, c.loop_bases, c.lam_expr)
+    let ctext = caps_text(c, c.caps)
+    ir.begin_nested(inout c.ir, f, types.UNIT, ctext)
+    c.scopes = List.new()
+    c.marks = List.new()
+    push_scope(inout c)
+    reset_frames(inout c)
+    c.loops = 0
+    let mark = ir.open(c.ir)
+    ir.local(inout c.ir, 0, ty, ir.L_CAPTURE, line)
+    let b = ir.close(inout c.ir, mark)
+    ir.set_ret(inout c.ir, types.UNIT)
+    ir.end_nested(inout c.ir, 0, b)
+    c.scopes = saved.scopes
+    c.marks = saved.marks
+    c.frames = saved.frames
+    c.fmarks = saved.fmarks
+    c.firs = saved.firs
+    c.fresh = saved.fresh
+    c.ret = saved.ret
+    c.loops = saved.loops
+    c.loop_bases = saved.loop_bases
+    while c.loop_labels.len() > c.loop_bases.len() { c.loop_labels.pop() }
+    c.lam_expr = saved.lam_expr
+    f
+}
+
+/// The value v as the dyn type `dty`: its type must implement the trait, and none of its
+/// methods may need a capability the trait's declaration doesn't list (the call can't see the
+/// implementation).
+fn coerce_dyn(inout c: C, v: V, dty: u32, line: u32, col: u32) -> Result[V, diag.Diag] {
+    let dt = types.get(c.t, dty)
+    let key = resolve.key(dt.a, dt.b)
+    let ti = mget(c.traits, key)
+    let from = v.ty.copy()
+    if ti == NONE || !implements(c, key, from) {
+        return Err(err("E0601", line, col, q3("type ", ts(c, from), " doesn't implement trait `", kt(c, key), "` (required by `", ts(c, dty), "`)")))
+    }
+    let tr = c.trs[ti as usize].copy()
+    let trn = ndm(c, tr.m, tr.node)
+    let mut thunks: List[u32] = List.new()
+    for i in 0..trn.d {
+        let tm = ndm(c, tr.m, atm(c, tr.m, trn.c, i))
+        let ii = match dyn_instance(inout c, from, tm.a, key) {
+            Ok(x) => x
+            Err(d) => {
+                let mut d2 = d.copy()
+                d2.line = line
+                d2.col = col
+                return Err(d2)
+            }
+        }
+        let inst = c.insts[ii as usize].copy()
+        for j in 0..inst.clen {
+            let cap = c.capl[(inst.cstart + j) as usize]
+            if cap_ix(c, cap) == 5 { continue }
+            let mut declared = false
+            for k in 0..tm.j {
+                if ndm(c, tr.m, atm(c, tr.m, tm.i, k)).a == cap { declared = true }
+            }
+            if !declared {
+                let mut help = q("a `dyn ", kt(c, key), "` is called without knowing the implementation, so the method in the trait has to declare what any implementation needs: add `uses ")
+                bytes.append(inout help, nm(c, cap))
+                bytes.append(inout help, s("` to it"))
+                let mut msg = q("method `", nm(c, tm.a), "` of `")
+                bytes.append(inout msg, ts(c, from))
+                bytes.append(inout msg, s("` uses capability `"))
+                bytes.append(inout msg, nm(c, cap))
+                bytes.append(inout msg, s("`, which the trait doesn't declare for it"))
+                let mut d = err("E0608", line, col, msg)
+                d.help = help
+                return Err(d)
+            }
+        }
+        let self_inout = ndm(c, tr.m, atm(c, tr.m, tm.e, 0)).c == 1
+        thunks.push(dyn_thunk(inout c, from, inst, self_inout, line))
+    }
+    let holder = dyn_holder(inout c, from, line)
+    let o = take(inout c, v, line)
+    let mut ex: List[u32] = List.new()
+    ex.push(o)
+    for th in thunks { ex.push(ir.op_int(inout c.ir, types.U32, th as u64)) }
+    let st = ir.list(inout c.ir, ex)
+    Ok(v_of(dty, emit_val(inout c, ir.S_DYN, holder, st, ex.len() as u32, dty, dty, line)))
+}
+
+/// `d.m(args)` on a `dyn Trait`: the method of the trait, through the vtable.
+fn dyn_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
+    let dt = types.get(c.t, pv.ty)
+    let key = resolve.key(dt.a, dt.b)
+    let ti = mget(c.traits, key)
+    let tr = c.trs[ti as usize].copy()
+    let trn = ndm(c, tr.m, tr.node)
+    let mut idx = NONE
+    for i in 0..trn.d {
+        if ndm(c, tr.m, atm(c, tr.m, trn.c, i)).a == n.b { idx = i }
+    }
+    if idx == NONE {
+        let fd = err("E0115", n.line, n.col, q2("type ", ts(c, pv.ty), " has no method `", nm(c, n.b), "`"))
+        return fail_call(inout c, fd, n.c, n.d)
+    }
+    let tm = ndm(c, tr.m, atm(c, tr.m, trn.c, idx))
+    let label = label_of(c, ts(c, pv.ty), n.b)
+    if ndm(c, tr.m, atm(c, tr.m, tm.e, 0)).c == 1 { assignable_or_record(inout c, n.a, "borrow as inout") }
+    if n.d != tm.f - 1 {
+        let fd = err("E0405", n.line, n.col, q3("`", label, "` takes ", num((tm.f - 1) as u64), " argument(s), but ", num(n.d as u64), " were given"))
+        return fail_call(inout c, fd, n.c, n.d)
+    }
+    // the capabilities the trait's method declares
+    for i in 0..tm.j {
+        let cap = ndm(c, tr.m, atm(c, tr.m, tm.i, i)).a
+        use_cap(inout c, cap)
+        if !has_sym(c.caps, cap) {
+            let rd = cap_error(c, n.line, n.col, label, cap)
+            record(inout c, rd)
+            break
+        }
+    }
+    let ro = recv_op(inout c, pv)
+    let mut args: List[u32] = List.new()
+    args.push(ir.op_int(inout c.ir, types.U32, idx as u64))
+    for i in 0..n.d {
+        let a = nd(c, at(c, n.c, i))
+        let x = nd(c, a.a)
+        let pn = ndm(c, tr.m, atm(c, tr.m, tm.e, i + 1))
+        if a.b == 1 { return Err(err("E0304", x.line, x.col, q("parameter `", nm(c, pn.a), "` is not `inout`; remove the `inout`"))) }
+        let pty = resolve_with(inout c, tr.m, pn.b, no_subst())?
+        let v = expr(inout c, a.a, pty)?
+        if !same(c, v.ty, pty) { return Err(mismatch(c, x.line, x.col, pty, v.ty)) }
+        args.push(v.op)
+    }
+    let mut ret = types.UNIT
+    if tm.g > 0 { ret = resolve_with(inout c, tr.m, tm.g - 1, no_subst())? }
+    let st = ir.list(inout c.ir, args)
+    let na = args.len() as u32
+    if ret == types.UNIT {
+        emit(inout c, ir.S_DYNCALL, ir.NONE, ro, st, na, ret, n.line)
+        return Ok(v_of(ret, ir.op_unit(inout c.ir)))
+    }
+    Ok(v_of(ret, emit_val(inout c, ir.S_DYNCALL, ro, st, na, ret, ret, n.line)))
+}
 
 fn well_known(inout names: intern.Interner) -> W {
     let mut ints: List[u32] = List.new()
@@ -5826,6 +6175,22 @@ fn expr(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
         let n = nd(c, e)
         if n.kind == ast.EIdent || n.kind == ast.EField || n.kind == ast.ECall || n.kind == ast.EMethod { note_ty(inout c, n, v.ty) }
     }
+    // a value of a type that implements the trait, where a `dyn Trait` is expected ("C8.47"):
+    // an owned value, which the dyn value then holds
+    if exp != NONE && v.ty != exp && types.kind(c.t, exp) == types.T_DYN && types.kind(c.t, v.ty) != types.T_DYN && !poisoned(c, v.ty) && v.ty != types.NEVER {
+        let dn = nd(c, e)
+        let mut ov = v.copy()
+        if owns(c, v.ty) && !is_place(c, e) && !is_fresh(c, v.op) { ov = mk_fresh(inout c, v, dn.line) }
+        match coerce_dyn(inout c, ov, exp, dn.line, dn.col) {
+            Ok(dv) => { return Ok(mk_fresh(inout c, dv, dn.line)) }
+            Err(d) => {
+                if fatal(d) { return Err(d) }
+                record(inout c, d)
+                restore(inout c, sp)
+                return Ok(poison_v(inout c))
+            }
+        }
+    }
     if !owns(c, v.ty) || is_place(c, e) || is_fresh(c, v.op) { return Ok(v) }
     let line = nd(c, e).line
     Ok(mk_fresh(inout c, v, line))
@@ -6234,6 +6599,15 @@ fn fold_arith(inout c: C, n: ast.Node, op: u32, ik: u32, ty: u32, a: fold.Wide, 
 fn cast(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
     let am = c.am.copy()
     let target = resolve_ty(inout c, am, n.b)?
+    if types.kind(c.t, target) == types.T_DYN {
+        let dv = expr(inout c, n.a, NONE)?
+        if poisoned(c, dv.ty) { return Ok(v_of(target, dv.op)) }
+        if types.kind(c.t, dv.ty) == types.T_DYN {
+            if dv.ty != target { return Err(mismatch(c, n.line, n.col, target, dv.ty)) }
+            return Ok(dv)
+        }
+        return coerce_dyn(inout c, dv, target, n.line, n.col)
+    }
     if !types.is_int(c.t, target) {
         return Err(err("E0401", n.line, n.col, q("`as` only converts between integer types, not to ", ts(c, target), "")))
     }
@@ -7204,6 +7578,7 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32, want: u64) -> Result[V, dia
         if tk == types.T_REF { return ref_method(inout c, n, pv, exp) }
         return heap_method(inout c, n, pv)
     }
+    if tk == types.T_DYN { return dyn_method(inout c, n, pv) }
     let head = head_of(c, pv.ty)
     if n.b == c.lt.meths[TR_DROP as usize] && has_drop(c, pv.ty) {
         let fd = errh("E0115", n.line, n.col, q("`drop` of ", ts(c, pv.ty), " can't be called"), "it runs by itself, once, when the value's last holder goes")

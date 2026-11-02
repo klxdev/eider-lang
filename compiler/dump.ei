@@ -128,6 +128,10 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             qual(inout out, p, n.b)
             kids(inout out, p, "arg", n.c, n.d, d)
         }
+        ast.TDyn => {
+            sym(inout out, p, "trait", n.a)
+            qual(inout out, p, n.b)
+        }
         ast.TArray => {
             put(inout out, " len=")
             num(inout out, n.b as u64)

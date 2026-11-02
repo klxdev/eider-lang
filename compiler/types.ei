@@ -60,6 +60,10 @@ pub const T_REF: u32 = 20
 /// A set of capabilities as a value of a capability parameter (`uses E`): a = the mask (bit i
 /// is capability i of `CAP_NAMES`). Only a substitution holds one (docs/compiler.md, "C8.46").
 pub const T_CAPS: u32 = 21
+/// `dyn Trait`: a = the trait's key prefix, b = its symbol (resolve.key); a record of the same
+/// five words as a fn value (environment, vtable, and the environment's drop, clone and own),
+/// docs/compiler.md, "C8.47"
+pub const T_DYN: u32 = 22
 
 /// The name of capability i, in the order of a mask's bits (the checker's `well_known` list).
 pub fn cap_name(i: u32) -> str {
@@ -243,6 +247,7 @@ pub fn fn_plain(inout t: Types, id: u32) -> u32 {
 /// by `new`, right after the primitive types.
 pub const CAPS0: u32 = 11
 pub fn caps_of(mask: u32) -> u32 { CAPS0 + mask }
+pub fn dyn_of(inout t: Types, pre: u32, sym: u32) -> u32 { comp(inout t, T_DYN, pre, sym) }
 /// `Task[elem]`; also interns `fn() -> elem`, the closure a Task runs (its layout holds one).
 pub fn task_of(inout t: Types, elem: u32) -> u32 {
     let run = fn_of(inout t, List.new(), elem)
@@ -514,6 +519,10 @@ fn show_e(inout out: List[u8], t: Types, names: intern.Interner, id: u32, caps: 
         21 => {
             bytes.append(inout out, sys.lit("uses "))
             caps_text(inout out, ty.a)
+        }
+        22 => {
+            bytes.append(inout out, sys.lit("dyn "))
+            bytes.append(inout out, resolve.key_text(names, resolve.key(ty.a, ty.b)))
         }
         13 => {
             bytes.append(inout out, sys.lit("fn("))

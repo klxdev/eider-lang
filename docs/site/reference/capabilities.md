@@ -89,7 +89,7 @@ fn run(f: fn() uses io) uses io {
     f()
 }
 
-fn main() uses io {
+fn main() uses io, clock {
     run(|| print("hi"))
     let g: fn(i32) -> i32 uses io + clock = |x| -> i32 {
         print(x)
