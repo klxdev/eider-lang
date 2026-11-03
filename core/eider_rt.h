@@ -574,6 +574,7 @@ typedef struct {
   void *arg;
   unsigned char *map;
   size_t map_len;
+  struct ei_task *task; /* the task that is this "thread" (core/RUNTIME.md "Tasks"), or NULL */
 } ei_thread;
 /* The stack of a thread ei_thread_start starts, and its guard (bytes; the guard is rounded up
    to whole pages). */
@@ -600,6 +601,7 @@ typedef struct {
   unsigned char *buf;
   uint64_t size, head, len, cap;
   bool closed;
+  struct ei_task *wq_head, *wq_tail; /* tasks waiting in recv (core/RUNTIME.md "Tasks") */
 } ei_chan;
 void ei_chan_init(ei_chan *c, uint64_t elem_size);
 /* Appends *elem; traps "send on a closed channel". */

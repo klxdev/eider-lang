@@ -37,6 +37,20 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 
 **New:**
 
+- **Lightweight tasks** (#14, decision C830, docs/design/lightweight-tasks.md): `spawn` starts a task,
+  a function on a stack of its own (8 MiB of address space, a guard page, only the touched pages
+  are memory) run by a pool of worker threads with work stealing. Waiting parks the task instead
+  of blocking a thread: `Chan.recv` (so `Lock`, `select`, groups, pools), `join`, `time.sleep`
+  and descriptor waits (`std/fd`, `std/stream`, through an epoll reactor with a timer heap). The
+  language, `Task`, channels, tokens and groups are unchanged. 100,000 blocked tasks take about
+  450 MiB (threads fail between 1,500 and 5,000 here), a warm spawn and join takes 1.4 to 7 us
+  (40 us for a thread), an echo server holds 10,000 connections at 146,000 round trips a second. Tasks are stackful, not the compiler-generated state machines of C4. What
+  changes for programs: a task is not preempted (a runaway loop or a blocking system call holds a
+  worker; after 10 ms the runtime starts another, up to `EIDER_WORKERS_MAX`), a task cannot wait
+  inside `Mutex.update` (`cannot wait while holding a Mutex`), and the profiler counts workers,
+  not spawns, as threads. `EIDER_TASKS=threads` restores a thread per `spawn`. Linux only (x86-64
+  assembly switch, `ucontext` with glibc); elsewhere threads. The rest of #14 (eider-http on
+  tasks, cancellation of descriptor waits, a core `Parker`, a kqueue reactor) is open.
 - **std/serial** (#100): the data model and the traits of format-neutral serialization: `Serialize`
   and `Deserialize` for types, `Serializer` and `Deserializer` for formats, implementations for the
   built-in types, errors that name the path, and `Value` with `to_value`/`from_value`. See

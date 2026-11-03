@@ -17,7 +17,7 @@ fail=0
 
 # huge allocations must fail (and trap), not abort inside the sanitizer
 ASAN_OPTIONS=allocator_may_return_null=1; export ASAN_OPTIONS
-TSAN_OPTIONS="allocator_may_return_null=1 halt_on_error=1"; export TSAN_OPTIONS
+TSAN_OPTIONS="allocator_may_return_null=1 halt_on_error=1 die_after_fork=0"; export TSAN_OPTIONS
 UBSAN_OPTIONS=halt_on_error=1; export UBSAN_OPTIONS
 
 if $CC $STRICT -DEI_RT_COUNT_ALLOCS -c core/eider_rt.c -o "$T/o.o" 2>"$T/log"; then echo "ok   strict core/eider_rt.c (-DEI_RT_COUNT_ALLOCS)"; else echo "FAIL strict core/eider_rt.c (-DEI_RT_COUNT_ALLOCS)"; cat "$T/log"; fail=1; fi
@@ -57,6 +57,19 @@ core() {
   done
 }
 
+# task NAME FLAGS...: build task_test (the scheduler) with FLAGS against the runtime and the core
+task() {
+  name=$1; shift
+  if ! $CC $STRICT "$@" -o "$T/task_$name" tests/core/task_test.c core/eider_rt.c core/eider_core.c -pthread 2>"$T/log"; then
+    echo "FAIL task ($name): build"; cat "$T/log"; fail=1; return
+  fi
+  if "$T/task_$name" >"$T/out" 2>&1; then
+    echo "ok   task ($name): $(tail -1 "$T/out")"
+  else
+    echo "FAIL task ($name)"; cat "$T/out"; fail=1
+  fi
+}
+
 # prof NAME FLAGS...: build prof_test with FLAGS against the profiling runtime and run it
 prof() {
   name=$1; shift
@@ -78,6 +91,7 @@ sanitizer() {
     run "$name" -O1 -g "$@"
     core "$name" -O1 -g "$@"
     prof "$name" -O1 -g "$@"
+    task "$name" -O1 -g "$@" -DEI_TEST_SANITIZED
   else
     echo "skip rt ($name): $CC cannot build or run with $*"
   fi
@@ -88,6 +102,8 @@ run portable -O0 -DEI_RT_PORTABLE
 run count-allocs -O0 -DEI_RT_COUNT_ALLOCS
 core O2 -O2
 prof O2 -O2
+task O2 -O2
+task ucontext -O2 -DEI_TASK_UCONTEXT
 prof count-allocs -O0 -DEI_RT_COUNT_ALLOCS
 sanitizer ubsan-trap -fsanitize=undefined -fsanitize-trap=undefined
 sanitizer ubsan-trap,portable -fsanitize=undefined -fsanitize-trap=undefined -DEI_RT_PORTABLE

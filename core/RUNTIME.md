@@ -319,6 +319,36 @@ void ei_chsend_T(const CH_T *c, T v) { ei_chan_send(&c->p->ch, &v); }
 void ei_drop_CH_T(CH_T *x) { if (x->p && ei_rc_dec(&x->p->rc)) { for (uint64_t i = 0; i < ei_chan_len(&x->p->ch); i++) ei_drop_T(ei_chan_at(&x->p->ch, i)); ei_chan_destroy(&x->p->ch); free(x->p); } x->p = NULL; }
 ```
 
+## Tasks
+
+`ei_thread_start` makes a **task** (decision C830, docs/design/lightweight-tasks.md) wherever the
+platform has them (`EI_TASKS`: Linux on x86-64 with the assembly switch, Linux with glibc with
+`ucontext`); elsewhere, and with `EIDER_TASKS=threads`, it starts an OS thread as above. The
+`ei_thread` is the same handle (`task` is set for a task); `ei_h_start`, `ei_h_join`, the
+generated glue and the compiler don't know the difference.
+
+| Piece | Contract |
+|---|---|
+| `ei_task` (heap, freed by `ei_thread_destroy`) | saved context, a stack mapping (guard page + 8 MiB, `EIDER_TASK_STACK`; fresh mappings are `MAP_NORESERVE`; ended tasks' stacks are cached, 4096 of them, with all but the top 16 KiB returned to the system), a state word, links, the try-frame list of `ei_try` |
+| workers | `EIDER_WORKERS` threads (default CPUs, 4 to 64), started with the first spawn, each with a queue; an idle worker takes half of another's; a task made runnable by a worker goes on its queue, by another thread on a worker's chosen round robin |
+| `task_park` | switch to the worker's loop; state `RUNNING` -> `PARKED` there; `task_unpark` makes it `READY` and queues it, or, if it has not parked yet, leaves a permit (`NOTIFIED`) so the park returns at once. Every wait registers where it waits, releases that lock, parks, and re-checks (a permit can be left over) |
+| `ei_chan_recv` in a task | the task joins the channel's wait list (a send wakes one, close wakes all) and parks; threads still wait on the condition variable |
+| `ei_thread_join` in a task | the task joins the target's joiner list and parks; the worker publishes the end after leaving the dead task's stack |
+| `ec_fd_wait`, `ec_sleep_ns` in a task | through `ec_block_hook` (set by the scheduler; core/eider_core.c knows nothing else about tasks): a record on the task's stack goes into the reactor (up to eight reactors, each an epoll set with one-shot registrations, a timer heap and a thread; a descriptor belongs to the reactor its number selects), the task parks, the reactor completes it. `ec_sleep_ns(0)` yields |
+| the starvation guard | the reactor ticks every 10 ms while tasks are queued and no worker is idle; if no worker has switched tasks since the last tick, it starts one more worker, up to `EIDER_WORKERS_MAX` (256) |
+
+Thread-local state moves with the task: the `ei_try` frame list (a trap after a park is
+contained by the `catch` that was running, on whichever worker), the guard range of the stack
+overflow handler, and, in a profiling build, the shadow stack (copied out at park, back at
+resume). A task never parks holding an `ei_mutex` (`cannot wait while holding a Mutex`). The
+thread-local variables the runtime uses across a park are read through out-of-line functions,
+so no cached thread pointer is used after the task resumed on another thread. Under
+AddressSanitizer and ThreadSanitizer the switches are annotated (fiber API).
+
+Limits: a blocked task costs its touched stack pages (about 5 KiB) and a 100-byte record; one
+mapping pair per live task (`vm.max_map_count`); no preemption; descriptor waits need the
+descriptor to stay open; the reactor is Linux's epoll (kqueue is follow-up work).
+
 ## Atomics
 
 `ei_atomic_i64` (`_Atomic(int64_t)`) and inline operations on it, for generated code (the

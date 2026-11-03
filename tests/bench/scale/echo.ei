@@ -1,0 +1,139 @@
+// An echo server and its clients in one process, one task per connection on each side
+// (docs/runtime.md "Tasks: measured"):
+//   CONNS=10000 ROUNDS=20 scripts/task-bench.sh echo
+// CONNS clients connect over loopback, each sends ROUNDS messages of 64 bytes and reads each
+// back; the server task per connection reads and writes the bytes back. Prints the round trips
+// per second and the number of connections served; both sides park on their descriptors.
+
+import core.sys
+import std.env
+import std.fd
+import std.net
+import std.stream
+import std.chan
+import std.task
+import std.time
+
+fn number(name: str, dflt: i64) -> i64 uses io {
+    match env.get(sys.lit(name)) {
+        Some(v) => {
+            var n: i64 = 0
+            for b in v { n = n * 10 + (b - 48) as i64 }
+            n
+        }
+        None => dflt
+    }
+}
+
+fn serve_conn(raw: i32) -> i64 uses io, clock {
+    var echoed: i64 = 0
+    var going = true
+    while going {
+        match fd.read_by(raw, 4096, time.after_ms(30000)) {
+            Ok(Some(b)) => {
+                if b.len() == 0 {
+                    going = false
+                } else {
+                    match fd.write_all(raw, b) {
+                        Ok(w) => { echoed += 1 }
+                        Err(e) => { going = false }
+                    }
+                }
+            }
+            Ok(None) => { going = false }
+            Err(e) => { going = false }
+        }
+    }
+    let c = fd.close(raw)
+    echoed
+}
+
+fn accept_loop(l: i32, n: i64) -> i64 uses io, net, clock, threads {
+    var served: List[Task[i64]] = List.new()
+    for i in 0..n {
+        match stream.accept_by(l, time.after_ms(30000)) {
+            Ok(c) => {
+                let raw = c.fd.fd
+                served.push(spawn(|| -> i64 serve_conn(raw)))
+            }
+            Err(e) => {}
+        }
+    }
+    var total: i64 = 0
+    for t in served { total += t.join() }
+    total
+}
+
+fn client(a: net.Addr, rounds: i64, ready: Chan[i64], go: Chan[i64]) -> i64 uses io, net, clock {
+    let msg = sys.lit("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
+    match stream.connect_by(a, time.after_ms(30000)) {
+        Ok(s) => {
+            var ok: i64 = 0
+            ready.send(1)
+            let g = go.recv()
+            for r in 0..rounds {
+                match fd.write_all(s.fd, msg) {
+                    Ok(w) => {}
+                    Err(e) => { return ok }
+                }
+                var got: usize = 0
+                while got < msg.len() {
+                    match fd.read_by(s.fd, 4096, time.after_ms(30000)) {
+                        Ok(Some(b)) => {
+                            if b.len() == 0 { return ok }
+                            got += b.len()
+                        }
+                        Ok(None) => { return ok }
+                        Err(e) => { return ok }
+                    }
+                }
+                ok += 1
+            }
+            let c = fd.close(s.fd)
+            ok
+        }
+        Err(e) => {
+            ready.send(0)
+            0
+        }
+    }
+}
+
+fn listen_on(a: net.Addr) -> i32 uses net {
+    let s = net.socket(a.family, net.STREAM, true).unwrap()
+    let o = net.set_option(s, net.REUSE_ADDR, 1).unwrap()
+    let b = net.bind(s, a).unwrap()
+    let l = net.listen(s, 4096).unwrap()
+    s
+}
+
+fn main() uses io, net, clock, threads {
+    let conns = number("CONNS", 1000)
+    let rounds = number("ROUNDS", 20)
+    let l = listen_on(net.ipv4(127, 0, 0, 1, 0))
+    let a = net.local_addr(l).unwrap()
+    let server = spawn(|| -> i64 accept_loop(l, conns))
+    let ready: Chan[i64] = Chan.new()
+    let go: Chan[i64] = Chan.new()
+    var cs: List[Task[i64]] = List.new()
+    let tc = time.mono_ns()
+    for i in 0..conns {
+        let r = ready
+        let g = go
+        cs.push(spawn(|| -> i64 client(a, rounds, r, g)))
+    }
+    var up: i64 = 0
+    for i in 0..conns { up += ready.recv().unwrap() }
+    let t0 = time.mono_ns()
+    let cms = (t0 - tc) / 1000000
+    print("{up} connections established in {cms} ms")
+    go.close()
+    var trips: i64 = 0
+    for t in cs { trips += t.join() }
+    let t1 = time.mono_ns()
+    let echoed = server.join()
+    let secs_ms = (t1 - t0) / 1000000
+    let rate = trips * 1000000000 / (t1 - t0)
+    print("connections: {conns}, round trips: {trips} (expected {conns * rounds}), served messages: {echoed}")
+    print("time: {secs_ms} ms, {rate} round trips per second")
+}

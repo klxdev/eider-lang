@@ -1,19 +1,22 @@
 # Concurrency
 
-Eider programs run work in parallel on OS threads. Threads share data only through
+Eider programs run work in parallel in lightweight tasks, scheduled on a few OS threads. Tasks
+share data only through
 handles made for it (`Mutex`, `Chan`, and std's channels and locks built on them), and
-every other value a thread receives is its own copy, so a data race can't be written.
+every other value a task receives is its own copy, so a data race can't be written.
 Blocking operations in std take a deadline, cancellation is a token that flows down a tree
-of work, and task groups make sure no thread outlives the code that started it.
+of work, and task groups make sure no task outlives the code that started it.
 
 This page starts with the language's built-in handles, then the std modules:
 `std/chan` (bounded channels, `select`), `std/task` (tokens, groups, a pool) and `std/time`
 (deadlines).
 
-> **Note:** Every task here is an OS thread. Lightweight stackless tasks, which would let
-> one process serve tens of thousands of connections with the same code, are planned (see
-> the repository's `docs/design/roadmap.md`, P0.2); the std APIs on this page are designed
-> to stay the same when they arrive.
+> **Note:** `spawn` starts a lightweight task (decision C830, `docs/design/lightweight-tasks.md`): a
+> function on a stack of its own, run by a pool of worker threads, that parks instead of
+> blocking a thread when it waits on a channel, a join, a sleep or a descriptor. A process holds
+> a hundred thousand of them. Code is written as before: no `async`, no `await`. A task that
+> computes for a long time, or blocks in a system call, occupies a worker; the runtime adds
+> workers when all are stuck.
 
 ## `spawn` and `Task`
 

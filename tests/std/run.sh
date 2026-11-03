@@ -30,7 +30,7 @@ trap 'rm -rf "$T"' EXIT
 printf 'int main(void) { return 0; }\n' > "$T/probe.c"
 if ${CC:-cc} -fsanitize=thread -o "$T/probe" "$T/probe.c" 2>/dev/null && "$T/probe"; then
   runs=${EIDER_TSAN_RUNS:-3}
-  for t in atomic sync chan chan_wake task task_trap event service; do
+  for t in atomic sync chan chan_wake task task_trap event service tasks; do
     f=tests/std/$t.ei
     if ! EIDER_CACHE=off EIDER_CFLAGS="-fsanitize=thread -g" scripts/ei build "$f" -o "$T/$t" >"$T/log" 2>&1; then
       echo "FAIL $f (tsan): build"; cat "$T/log"; fail=1; continue

@@ -99,6 +99,8 @@ static char *slurp(const char *path) {
 int main(int argc, char **argv) {
   const char *snap = argc > 1 ? argv[1] : "prof_test.snapshot";
   ei_set_file("prof_test.ei");
+  /* the thread counts below are for one OS thread per spawn; tasks are profiled on their workers */
+  setenv("EIDER_TASKS", "threads", 1);
   CHECK(ec_prof(0, 0) == -38); /* no profiler before init: -ENOSYS */
   ei_prof_init(&tab);
   ei_prof_init(&tab); /* idempotent */

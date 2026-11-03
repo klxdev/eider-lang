@@ -1566,6 +1566,17 @@ EC_FN(int64_t, ec_waker_wake, (int32_t wfd)) {
   return 0;
 }
 
+/* Blocking calls of a task (core/RUNTIME.md "Tasks"): the runtime's scheduler registers these
+   when it starts; a call made in a task parks the task instead of blocking its thread. A hook
+   answers EC_NOT_A_TASK when the caller is not a task (the core then blocks as usual), so the
+   core knows nothing about the scheduler and a program without one never sets the hook. */
+#define EC_NOT_A_TASK INT64_MIN
+typedef struct {
+  int64_t (*fd_wait)(int32_t fd, int32_t interest, int64_t timeout_ms);
+  int64_t (*sleep_ns)(int64_t ns);
+} ec_block_ops;
+_Atomic(const ec_block_ops *) ec_block_hook;
+
 /* Milliseconds on the monotonic clock (for ec_fd_wait's deadline). */
 static int64_t mono_ms(void) {
   struct timespec t;
@@ -1579,6 +1590,11 @@ static int64_t mono_ms(void) {
    wait: it is resumed with the time that is left. */
 EC_FN(int64_t, ec_fd_wait, (int32_t fd, int32_t interest, int64_t timeout_ms)) {
   if ((interest & 3) == 0 || (interest & ~3) != 0) return -EINVAL;
+  const ec_block_ops *blk = atomic_load(&ec_block_hook);
+  if (blk) {
+    int64_t r = blk->fd_wait(fd, interest, timeout_ms);
+    if (r != EC_NOT_A_TASK) return r;
+  }
   struct pollfd p;
   p.fd = fd;
   p.events = (short)(((interest & 1) ? POLLIN : 0) | ((interest & 2) ? POLLOUT : 0));
@@ -1628,6 +1644,11 @@ EC_FN(int64_t, ec_time_wall_ns, (void)) {
 
 /* Sleep at least ns nanoseconds; a signal doesn't cut it short. */
 EC_FN(int64_t, ec_sleep_ns, (int64_t ns)) {
+  const ec_block_ops *blk = atomic_load(&ec_block_hook);
+  if (blk) {
+    int64_t r = blk->sleep_ns(ns);
+    if (r != EC_NOT_A_TASK) return r;
+  }
   if (ns <= 0) return 0;
   struct timespec t = {(time_t)(ns / 1000000000), (long)(ns % 1000000000)}, rem;
   while (nanosleep(&t, &rem) != 0) {

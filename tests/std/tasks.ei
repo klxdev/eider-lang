@@ -1,0 +1,154 @@
+// Lightweight tasks (docs/design/lightweight-tasks.md): `spawn` makes a task, and waiting
+// (channels, join, sleep, descriptors, locks, groups) parks it instead of a thread. Many tasks
+// blocked at once, tasks that wait for each other, sleeping overlaps, a descriptor wait, a trap
+// contained after a park, locks and groups on tasks.
+
+import core.sys
+import std.chan
+import std.fd
+import std.sync
+import std.task
+import std.time
+
+fn blocked_then_released(n: i64) -> i64 uses io, threads, clock {
+    let c: Chan[i64] = Chan.new()
+    var ts: List[Task[i64]] = List.new()
+    for i in 0..n {
+        let cc = c
+        ts.push(spawn(|| -> i64 {
+            match cc.recv() {
+                Some(v) => v
+                None => 0
+            }
+        }))
+    }
+    time.sleep_ms(50)
+    for i in 1..n + 1 { c.send(i) }
+    var sum: i64 = 0
+    for t in ts { sum += t.join() }
+    sum
+}
+
+fn chain(depth: i64) -> i64 uses threads {
+    if depth == 0 { return 1 }
+    let t = spawn(|| -> i64 chain(depth - 1))
+    t.join() + 1
+}
+
+fn sleeping_overlaps(n: i64) -> bool uses io, threads, clock {
+    let t0 = time.mono_ms()
+    var ts: List[Task[i64]] = List.new()
+    for i in 0..n {
+        ts.push(spawn(|| -> i64 {
+            time.sleep_ms(200)
+            1
+        }))
+    }
+    var done: i64 = 0
+    for t in ts { done += t.join() }
+    let took = time.mono_ms() - t0
+    done == n && took >= 200 && took < 2000
+}
+
+fn pipe_wait() -> String uses io, threads, clock {
+    let p = fd.pipe().unwrap()
+    let r = p.r
+    let w = p.w
+    let reader = spawn(|| -> i64 {
+        // nothing yet: None at the deadline, without holding a thread
+        let none = match fd.read_by(r, 16, time.after_ms(30)) {
+            Ok(x) => x.is_none()
+            Err(e) => false
+        }
+        let got = match fd.read_by(r, 16, time.after_ms(5000)) {
+            Ok(Some(b)) => b.len() as i64
+            Ok(None) => -1 as i64
+            Err(e) => -2 as i64
+        }
+        if none { got } else { -3 as i64 }
+    })
+    let writer = spawn(|| -> i64 {
+        time.sleep_ms(100)
+        match fd.write_all(w, sys.lit("hello")) {
+            Ok(b) => 0
+            Err(e) => 1
+        }
+    })
+    let n = reader.join()
+    let z = writer.join()
+    let a = fd.close(r)
+    let b = fd.close(w)
+    "{n} {z}"
+}
+
+fn trap_after_park() -> String uses io, threads, clock {
+    let c: Chan[i64] = Chan.new()
+    let cc = c
+    let t = spawn(|| -> String {
+        match task.catch(|| -> i64 {
+            let v = cc.recv().unwrap()
+            time.sleep_ms(5)
+            let zero = v - v
+            100 / zero
+        }) {
+            Ok(x) => String.from("no trap")
+            Err(why) => String.from("contained")
+        }
+    })
+    time.sleep_ms(30)
+    c.send(7)
+    t.join()
+}
+
+fn locks(n: i64, each: i64) -> i64 uses io, threads, clock {
+    let l: sync.Lock[i64] = sync.lock(0)
+    var ts: List[Task[i64]] = List.new()
+    for i in 0..n {
+        let ll = l
+        ts.push(spawn(|| -> i64 {
+            for k in 0..each { ll.modify(|inout v: i64| -> () { v += 1 }) }
+            0
+        }))
+    }
+    for t in ts { let z = t.join() }
+    l.get()
+}
+
+fn group_of_tasks(n: i64) -> String uses io, threads, clock {
+    var g: task.Group[i64] = task.group(task.root())
+    for i in 0..n {
+        g.spawn(|tok: task.Token| -> Result[i64, String] {
+            time.sleep_ms(10)
+            if i == 77 { Err(String.from("seventy-seven")) } else { Ok(i) }
+        })
+    }
+    match g.wait() {
+        Ok(v) => "ok {v.len()}"
+        Err(e) => "err {e}"
+    }
+}
+
+fn pool_jobs(n: i64) -> i64 uses io, threads, clock {
+    let p = task.pool(4, 64)
+    let total: sync.Lock[i64] = sync.lock(0)
+    var futs: List[task.Future[i64]] = List.new()
+    for i in 0..n {
+        let k = i
+        futs.push(p.run(|| -> i64 { k * 2 }, time.never()).unwrap())
+    }
+    var sum: i64 = 0
+    for f in futs { sum += f.get(time.never()).unwrap() }
+    p.shutdown()
+    sum
+}
+
+fn main() uses io, threads, clock {
+    print(blocked_then_released(4000))
+    print(chain(200))
+    print(sleeping_overlaps(1000))
+    print(pipe_wait())
+    print(trap_after_park())
+    print(locks(50, 200))
+    print(group_of_tasks(300))
+    print(pool_jobs(1000))
+}

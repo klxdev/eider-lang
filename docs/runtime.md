@@ -1,6 +1,6 @@
 # The runtime layer (layer/runtime)
 
-What a concurrent Eider program builds on, below the stackless tasks of decision C4: atomics,
+What a concurrent Eider program builds on, below and under the lightweight tasks of decisions C4 and C830: atomics,
 a way for a thread to wait with a deadline, bounded channels and `select`, cancellation
 tokens, task groups, a thread pool, and an event loop with timers. Everything is Eider in
 std except four things in the C core, each one operation per function (core/ABI.md,
@@ -8,7 +8,8 @@ core/RUNTIME.md):
 
 | Piece | Where | Why it is C |
 |---|---|---|
-| `ec_fd_wait` | core/eider_core.c (ABI "Readiness") | one `poll(2)` on one descriptor: how a thread blocks on its waker until a deadline |
+| `ec_fd_wait` | core/eider_core.c (ABI "Readiness") | one `poll(2)` on one descriptor: how a thread blocks on its waker until a deadline; in a task it parks the task in the reactor ("Tasks") |
+| tasks, workers, the reactor | core/eider_rt.c (RUNTIME "Tasks") | stacks, context switches and queues: what `spawn` is |
 | atomic cells `ec_atomic_*` | core/eider_core.c (ABI "Atomic cells") | Eider can't name shared memory; the core owns the cells, Eider holds handles |
 | `ei_atomic_*` | core/eider_rt.h (RUNTIME "Atomics") | the same operations for generated code (the compiler's built-in atomic type, next) |
 | guarded thread stacks | core/eider_rt.c (RUNTIME "Stack overflow") | mappings, a guard and a fault handler on an alternate signal stack |
@@ -420,9 +421,44 @@ calls pays most. `EIDER_PROF=off` leaves only the shadow stack.
 | Wake one waiter of a channel side per value or place, handed on by a woken waiter that doesn't use it (C321) | n idle receivers cost one wake-up per value, not n; correct with select and deadlines because every way out of a wait that doesn't take hands the wake-up on | wake every waiter (correct, simpler, a thundering herd: what it was until C321) |
 | Bounded channels need capacity >= 1 | rendezvous channels need a different protocol | capacity 0 later |
 | Deadlines fixed in tokens at creation, no timer thread | every wait is bounded by the token's deadline anyway | a timer thread cancelling tokens |
-| Pool: one shared bounded queue | simplest correct back-pressure on OS threads | per-worker deques with stealing (with stackless tasks, where spawn-from-task makes local queues pay off) |
+| Pool: one shared bounded queue | simplest correct back-pressure | per-worker deques with stealing (the scheduler under it has them now; the Pool is still one queue) |
 | Thread stacks: 8 MiB + 64 KiB guard + 64 KiB alternate stack, mapped by the runtime | an exact guard range lets the handler tell an overflow from any other fault, and a guard larger than a page catches big frames | `pthread_attr_setguardsize` (bounds need the non-POSIX `pthread_getattr_np`) |
 | Overflow handler flushes stdout with `ftrylockfile` | a trap flushes `print` output; trylock never waits in a handler | no flush (output before the overflow lost) |
+
+## Tasks (decision C830, #14)
+
+`spawn` starts a task (docs/design/lightweight-tasks.md): a function on a guarded stack of its
+own, run by `EIDER_WORKERS` worker threads that take tasks from one another. The library of
+this page did not change: `Parker.park` is `ec_fd_wait` on a waker, `Chan.recv` is the
+runtime's, `Task.join` the runtime's, `time.sleep` is `ec_sleep_ns`; in a task each of them parks
+the task, so `Lock`, channels, `select`, tokens, groups and `Pool` (whose workers are tasks now)
+run on tasks as they were written. core/RUNTIME.md "Tasks" has the contract.
+
+Behaviour that differs from threads: a task is not preempted (a loop that never waits holds
+its worker; a blocking system call too, which the starvation guard answers by starting another
+worker after 10 ms); a task cannot wait inside `Mutex.update`; `EIDER_TASKS=threads` restores
+one OS thread per `spawn`.
+
+### Tasks: measured
+
+Linux 7.2, 16 CPUs, gcc -O2, `tests/bench/scale/tasks_scale.ei` (`TASKS=n`, run
+`scripts/task-bench.sh`) and `tests/bench/tasks.ei`:
+
+| | threads (`EIDER_TASKS=threads`) | tasks |
+|---|---|---|
+| `tests/bench/tasks.ei` (20,000 spawn+join, 20,000 ping-pongs, 50,000 fan-in sends, 2,000 sleepers) | 863 ms (1.1 s of system time) | 340 ms (0.5 s) |
+| spawn + join, stacks cached | 40 us | 1.4 to 7 us (more workers, more contention on the spawner's wake-ups) |
+| spawn, cold (a stack mapping each) | 30 us | 10 to 16 us |
+| tasks blocked on a channel | 1,500: 9 KiB of memory each; 5,000: `cannot create a thread` | 100,000: 4.6 KiB each (a page of stack and the record), 450 MiB |
+| release and join of 100,000 | | 10 to 12 us each (most of it unmapping the stacks past the cache of 4,096) |
+| echo server, 1,000 connections, 50 round trips each (tests/bench/scale/echo.ei) | 216,000 round trips/s | 190,000 (one reactor thread: 57,000; eight: see C835) |
+| echo server, 10,000 connections | `cannot create a thread` | 146,000 round trips/s |
+| the compiler's own `emit-llvm` run (`bench.sh` self) | 375 ms | 377 ms (interleaved, 9 runs each; the compiler does not spawn) |
+
+The echo server is slower than threads at 1,000 connections because every wake-up passes
+through a reactor thread and a worker (two hand-offs where a blocked thread has one); a worker
+that polls itself when idle, as Go's does, is the known remedy and is not built. The kvstore and
+Pool numbers above come from threads; the Pool is the same code on tasks now.
 
 ## Next (needs the compiler)
 
@@ -434,13 +470,11 @@ calls pays most. `EIDER_PROF=off` leaves only the shadow stack.
    `return ei_main(ei_main_body);`, which runs the Eider `main` (or the test driver) on a
    guarded runtime thread, so an overflow there is a `stack overflow` trap too
    (core/RUNTIME.md "Stack overflow").
-3. **Stackless tasks (C4).** The pieces here are what they run on: a task that would `park`
-   instead returns to its worker; `Parker.unpark` becomes "make the task runnable"; the
-   `event.Loop` is the reactor that wakes tasks blocked on descriptors and timers; `Pool`
-   gains per-worker queues with stealing; `Group` and `Token` stay as they are (a task group
-   is the same API on tasks instead of threads). Until then each blocked thread holds an OS
-   thread, and a pool job that waits for other jobs of the same pool can deadlock it once
-   every worker waits (as with any fixed thread pool).
+3. ~~**Stackless tasks (C4).**~~ Done as stackful tasks (C830, "Tasks" above). Still open:
+   `Parker` as a core object instead of an eventfd per wait, `Loop` on the reactor,
+   cancellation reaching descriptor waits, a kqueue reactor. A pool job that waits for other
+   jobs of the same pool can still exhaust the pool's own workers (they are tasks now, so
+   only the pool's size, not the machine's thread limit, bounds it).
 4. Optional, smaller: `Chan.try_recv` and a timed `recv` on the built-in channel would let
    std/chan drop the reserve-then-move indirection. `Mutex.update(f: fn(inout T) -> R)`
    returning `f`'s result, with the glue making `f`'s captures and its result unique (not

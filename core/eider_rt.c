@@ -443,11 +443,11 @@ void ei_mutex_init(ei_mutex *m) {
 #define EI_HELD_MAX 32
 static _Thread_local ei_mutex *held_locks[EI_HELD_MAX];
 static _Thread_local uint32_t held_n;
-static void held_add(ei_mutex *m) {
+__attribute__((noinline)) static void held_add(ei_mutex *m) {
   if (held_n < EI_HELD_MAX) held_locks[held_n] = m;
   held_n++;
 }
-static void held_del(ei_mutex *m) {
+__attribute__((noinline)) static void held_del(ei_mutex *m) {
   uint32_t top = held_n < EI_HELD_MAX ? held_n : EI_HELD_MAX;
   for (uint32_t i = top; i > 0; i--) {
     if (held_locks[i - 1] == m) {
@@ -473,23 +473,29 @@ void ei_mutex_unlock(ei_mutex *m) {
   if (pthread_mutex_unlock(&m->mu) != 0) ei_trap("cannot unlock a mutex", 0);
 }
 
+/* try_top is thread-local, and a task that parks inside `fn` resumes on another thread: these
+   are the only accesses after the call, kept out of line so no cached thread pointer is used. */
+__attribute__((noinline)) static ei_try_frame *try_get(void) { return try_top; }
+__attribute__((noinline)) static void try_set(ei_try_frame *f) { try_top = f; }
+__attribute__((noinline)) static uint32_t held_get(void) { return held_n; }
+
 int32_t ei_try(void (*fn)(void *, void *), void *a, void *b, ei_String *msg) {
   ei_try_frame fr;
-  fr.prev = try_top;
+  fr.prev = try_get();
   fr.msg = NULL;
-  fr.held = held_n;
+  fr.held = held_get();
 #ifdef EI_RT_PROFILE
   fr.depth = ei_prof_depth;
 #endif
-  try_top = &fr;
+  try_set(&fr);
   if (setjmp(fr.jb) == 0) {
     fn(a, b);
-    try_top = fr.prev;
+    try_set(fr.prev);
     return 0;
   }
   /* a trap ended fn: its frames are gone without their drops (values they owned leak), so the
      locks they held are released and the thread goes on */
-  try_top = fr.prev;
+  try_set(fr.prev);
   uint32_t top = held_n < EI_HELD_MAX ? held_n : EI_HELD_MAX;
   while (top > fr.held) pthread_mutex_unlock(&held_locks[--top]->mu);
   held_n = fr.held;
@@ -661,6 +667,1108 @@ static bool thread_start_guarded(ei_thread *t) {
   }
   return ok;
 }
+
+// ---- tasks (core/RUNTIME.md "Tasks", docs/design/lightweight-tasks.md). `spawn` makes a task:
+// a function on a stack of its own (the guarded mapping of a thread, mostly untouched), run by
+// a pool of worker threads that take tasks from their own queue, from a global queue and from
+// each other. A task that has to wait (Chan.recv, Task.join, a descriptor, a sleep) parks:
+// it switches back to its worker's loop, which runs another task; whatever it waited for
+// readies it. Everything that waits in the library is built on those four operations.
+
+#if defined(EI_GUARDED_STACKS) && defined(__linux__)
+#if defined(__x86_64__) && !defined(EI_TASK_UCONTEXT)
+#define EI_TASKS 1
+#elif defined(__GLIBC__)
+#define EI_TASKS 1
+#ifndef EI_TASK_UCONTEXT
+#define EI_TASK_UCONTEXT 1
+#endif
+#endif
+#endif
+
+#if defined(EI_TASKS)
+#include <errno.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
+#ifdef EI_TASK_UCONTEXT
+#include <ucontext.h>
+typedef ucontext_t ei_ctx;
+#else
+typedef void *ei_ctx;
+#endif
+
+#ifndef MAP_NORESERVE
+#define MAP_NORESERVE 0
+#endif
+
+#if defined(__SANITIZE_ADDRESS__)
+#define EI_TASK_ASAN 1
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define EI_TASK_ASAN 1
+#endif
+#endif
+#if defined(__SANITIZE_THREAD__)
+#define EI_TASK_TSAN 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define EI_TASK_TSAN 1
+#endif
+#endif
+#ifdef EI_TASK_ASAN
+void __sanitizer_start_switch_fiber(void **fake, const void *bottom, size_t size);
+void __sanitizer_finish_switch_fiber(void *fake, const void **bottom_old, size_t *size_old);
+#endif
+#ifdef EI_TASK_TSAN
+void *__tsan_get_current_fiber(void);
+void *__tsan_create_fiber(unsigned flags);
+void __tsan_destroy_fiber(void *fiber);
+void __tsan_switch_to_fiber(void *fiber, unsigned flags);
+#endif
+
+typedef struct ei_task ei_task;
+typedef struct ei_worker ei_worker;
+
+enum { T_RUNNING, T_PARKED, T_NOTIFIED, T_READY };
+enum { Y_PARK, Y_YIELD, Y_EXIT };
+
+struct ei_task {
+  ei_ctx ctx;
+  unsigned char *map; /* [guard | stack] */
+  size_t map_len, guard;
+  void *(*run)(void *);
+  void *arg;
+  atomic_int state;
+  uint64_t id;
+  ei_task *wnext; /* wait queue of a channel or a task */
+  ei_worker *w;   /* the worker that runs it now */
+  bool done;      /* under join_mu */
+  bool in_wq;
+  ei_task *joiners;
+  ei_try_frame *try_top;
+#ifdef EI_RT_PROFILE
+  uint16_t pdepth;
+  ei_prof_frame *pframes;
+#endif
+#ifdef EI_TASK_ASAN
+  void *fake;
+#endif
+#ifdef EI_TASK_TSAN
+  void *fiber;
+#endif
+};
+
+#define EI_MAX_WORKERS 256
+#ifndef EI_SPIN
+#define EI_SPIN 0
+#endif
+struct ei_worker {
+  ei_ctx sched;
+  int yield;
+  pthread_mutex_t qmu;
+  ei_task **q;
+  size_t qcap, qhead, qlen;
+  ei_thread th;
+  atomic_uint_least64_t ticks;
+  uint32_t rng;
+  uintptr_t glo, ghi; /* the worker thread's own guard, while a task's is set */
+  unsigned char *stk_lo;
+  size_t stk_len;
+#ifdef EI_TASK_ASAN
+  void *fake;
+#endif
+#ifdef EI_TASK_TSAN
+  void *fiber;
+#endif
+};
+
+static struct {
+  pthread_once_t once;
+  bool on;
+  ei_worker *ws[EI_MAX_WORKERS];
+  atomic_int nw;
+  int maxw;
+  pthread_mutex_t mu; /* the idle workers */
+  pthread_cond_t cv;
+  atomic_int nidle, nsearch;
+  int wakeups;
+  atomic_bool watch;
+  atomic_uint_least64_t next_id;
+  atomic_int_least64_t live;
+  int64_t max_tasks;
+  size_t stack_size;
+} S = {.once = PTHREAD_ONCE_INIT, .mu = PTHREAD_MUTEX_INITIALIZER, .cv = PTHREAD_COND_INITIALIZER};
+
+static _Thread_local ei_worker *cur_worker;
+static _Thread_local ei_task *cur_task;
+
+__attribute__((noinline)) static ei_task *task_self(void) { return cur_task; }
+__attribute__((noinline)) static ei_worker *worker_self(void) { return cur_worker; }
+__attribute__((noinline)) static void tls_task_set(ei_worker *w, ei_task *t) {
+  cur_worker = w;
+  cur_task = t;
+}
+
+// ---- context switch
+
+#ifdef EI_TASK_UCONTEXT
+static void ctx_switch(ei_ctx *from, ei_ctx *to) { swapcontext(from, to); }
+#else
+/* ei_ctx_switch(&save, new): push the callee-saved registers, save the stack pointer, load the
+   other one, pop its registers, return into it. A new task's stack is set up so that the
+   "return" lands in ei_ctx_boot, which calls r13(r12). */
+__asm__(".text\n"
+        ".globl ei_ctx_switch\n"
+        ".type ei_ctx_switch,@function\n"
+        "ei_ctx_switch:\n"
+        "  pushq %rbp\n  pushq %rbx\n  pushq %r12\n  pushq %r13\n  pushq %r14\n  pushq %r15\n"
+        "  movq %rsp, (%rdi)\n"
+        "  movq %rsi, %rsp\n"
+        "  popq %r15\n  popq %r14\n  popq %r13\n  popq %r12\n  popq %rbx\n  popq %rbp\n"
+        "  ret\n"
+        ".size ei_ctx_switch,.-ei_ctx_switch\n"
+        ".globl ei_ctx_boot\n"
+        ".type ei_ctx_boot,@function\n"
+        "ei_ctx_boot:\n"
+        "  movq %r12, %rdi\n"
+        "  callq *%r13\n"
+        "  ud2\n"
+        ".size ei_ctx_boot,.-ei_ctx_boot\n");
+void ei_ctx_switch(void **save, void *to);
+void ei_ctx_boot(void);
+static void ctx_switch(ei_ctx *from, ei_ctx *to) { ei_ctx_switch(from, *to); }
+#endif
+
+static void task_main(void *p);
+
+static void ctx_make(ei_ctx *c, unsigned char *stack_lo, size_t len, ei_task *t) {
+#ifdef EI_TASK_UCONTEXT
+  (void)t;
+  getcontext(c);
+  c->uc_stack.ss_sp = stack_lo;
+  c->uc_stack.ss_size = len;
+  c->uc_link = NULL;
+  makecontext(c, (void (*)(void))task_main, 0);
+#else
+  uintptr_t top = ((uintptr_t)stack_lo + len) & ~(uintptr_t)15;
+  uintptr_t *sp = (uintptr_t *)top;
+  *--sp = (uintptr_t)ei_ctx_boot; /* the return address ei_ctx_switch pops */
+  *--sp = 0;                      /* rbp */
+  *--sp = 0;                      /* rbx */
+  *--sp = (uintptr_t)t;           /* r12: the argument */
+  *--sp = (uintptr_t)task_main;   /* r13: the function */
+  *--sp = 0;                      /* r14 */
+  *--sp = 0;                      /* r15 */
+  *c = (void *)sp;
+#endif
+}
+
+// ---- stacks
+
+static pthread_mutex_t stk_mu = PTHREAD_MUTEX_INITIALIZER;
+#define EI_STACK_CACHE 4096
+#define EI_STACK_KEEP ((size_t)16 << 10) /* the top of a cached stack stays resident */
+static unsigned char *stk_cache[EI_STACK_CACHE];
+static size_t stk_cached;
+
+static bool stack_get(ei_task *t) {
+  size_t p = page_size();
+  t->guard = page_round(EI_THREAD_GUARD, p);
+  t->map_len = t->guard + page_round(S.stack_size, p);
+  pthread_mutex_lock(&stk_mu);
+  t->map = stk_cached > 0 ? stk_cache[--stk_cached] : NULL;
+  pthread_mutex_unlock(&stk_mu);
+  if (t->map) return true;
+  void *m = mmap(NULL, t->map_len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+  if (m == MAP_FAILED) return false;
+  if (mprotect(m, t->guard, PROT_NONE) != 0) {
+    munmap(m, t->map_len);
+    return false;
+  }
+  t->map = m;
+  return true;
+}
+
+static void stack_put(ei_task *t) {
+  unsigned char *m = t->map;
+  t->map = NULL;
+  if (!m) return;
+  pthread_mutex_lock(&stk_mu);
+  bool room = stk_cached < EI_STACK_CACHE;
+  if (room) stk_cache[stk_cached++] = m;
+  pthread_mutex_unlock(&stk_mu);
+  if (!room) {
+    munmap(m, t->map_len);
+    return;
+  }
+  /* give back what the task touched below the top, so cached stacks stay small */
+  if (t->map_len > t->guard + EI_STACK_KEEP) madvise(m + t->guard, t->map_len - t->guard - EI_STACK_KEEP, MADV_DONTNEED);
+}
+
+// ---- run queues
+
+static void lq_push(ei_worker *w, ei_task *t) {
+  pthread_mutex_lock(&w->qmu);
+  if (w->qlen == w->qcap) {
+    size_t nc = w->qcap ? w->qcap * 2 : 256;
+    ei_task **nq = malloc(nc * sizeof *nq);
+    if (!nq) {
+      pthread_mutex_unlock(&w->qmu);
+      ei_trap("out of memory", 0);
+    }
+    for (size_t i = 0; i < w->qlen; i++) nq[i] = w->q[(w->qhead + i) % w->qcap];
+    free(w->q);
+    w->q = nq;
+    w->qcap = nc;
+    w->qhead = 0;
+  }
+  w->q[(w->qhead + w->qlen) % w->qcap] = t;
+  w->qlen++;
+  pthread_mutex_unlock(&w->qmu);
+}
+
+static ei_task *lq_pop(ei_worker *w) {
+  ei_task *t = NULL;
+  pthread_mutex_lock(&w->qmu);
+  if (w->qlen > 0) {
+    t = w->q[w->qhead];
+    w->qhead = (w->qhead + 1) % w->qcap;
+    w->qlen--;
+  }
+  pthread_mutex_unlock(&w->qmu);
+  return t;
+}
+
+/* Takes half of a victim's queue (at least one task): returns one, queues the rest on w. */
+static ei_task *steal(ei_worker *w) {
+  int n = atomic_load(&S.nw);
+  if (n <= 1) return NULL;
+  w->rng = w->rng * 1664525u + 1013904223u;
+  int start = (int)((w->rng >> 8) % (uint32_t)n);
+  for (int k = 0; k < n; k++) {
+    ei_worker *v = S.ws[(start + k) % n];
+    if (v == w || !v) continue;
+    if (pthread_mutex_trylock(&v->qmu) != 0) continue;
+    size_t take = (v->qlen + 1) / 2;
+    if (take > 32) take = 32;
+    ei_task *first = NULL;
+    ei_task *rest[32];
+    size_t nrest = 0;
+    for (size_t i = 0; i < take; i++) {
+      ei_task *t = v->q[v->qhead];
+      v->qhead = (v->qhead + 1) % v->qcap;
+      v->qlen--;
+      if (!first) first = t;
+      else rest[nrest++] = t;
+    }
+    pthread_mutex_unlock(&v->qmu);
+    for (size_t i = 0; i < nrest; i++) lq_push(w, rest[i]);
+    if (first) return first;
+  }
+  return NULL;
+}
+
+static void monitor_poke(void);
+
+/* Wakes an idle worker to look for work, unless one is looking already (it wakes the next one
+   when it finds some). */
+static void notify_one(void) {
+  if (atomic_load(&S.nidle) > 0 && atomic_load(&S.nsearch) == 0) {
+    pthread_mutex_lock(&S.mu);
+    S.wakeups++;
+    pthread_cond_signal(&S.cv);
+    pthread_mutex_unlock(&S.mu);
+  } else if (atomic_load(&S.nidle) == 0) {
+    /* work is queued and every worker is busy: have the reactor watch for stuck workers */
+    if (!atomic_exchange(&S.watch, true)) monitor_poke();
+  }
+}
+
+/* Makes t runnable: on the queue of the worker calling, else the global queue. */
+static void task_enqueue(ei_task *t) {
+  ei_worker *w = worker_self();
+  if (!w) {
+    /* from a thread that is not a worker (main, the reactor): spread over the workers */
+    static atomic_uint rr;
+    int n = atomic_load(&S.nw);
+    w = S.ws[atomic_fetch_add(&rr, 1) % (unsigned)n];
+  }
+  lq_push(w, t);
+  notify_one();
+}
+
+/* Makes a parked task runnable, or leaves it a permit if it is about to park. */
+static void task_unpark(ei_task *t) {
+  for (;;) {
+    int s = atomic_load(&t->state);
+    if (s == T_PARKED) {
+      if (atomic_compare_exchange_weak(&t->state, &s, T_READY)) {
+        task_enqueue(t);
+        return;
+      }
+    } else if (s == T_RUNNING) {
+      if (atomic_compare_exchange_weak(&t->state, &s, T_NOTIFIED)) return;
+    } else {
+      return;
+    }
+  }
+}
+
+// ---- the worker loop
+
+static ei_task *find_task(ei_worker *w);
+static void task_published(ei_task *t);
+
+static void switch_in(ei_worker *w, ei_task *t) {
+  t->w = w;
+  tls_task_set(w, t);
+  try_top = t->try_top;
+  guard_lo = (uintptr_t)t->map;
+  guard_hi = guard_lo + t->guard;
+#ifdef EI_RT_PROFILE
+  ei_prof_depth = t->pdepth;
+  if (t->pdepth > 0 && t->pframes) memcpy(ei_prof_stack, t->pframes, sizeof(ei_prof_frame) * (t->pdepth < EI_PROF_DEPTH ? t->pdepth : EI_PROF_DEPTH));
+#endif
+  atomic_store(&t->state, T_RUNNING);
+  atomic_fetch_add_explicit(&w->ticks, 1, memory_order_relaxed);
+#ifdef EI_TASK_ASAN
+  __sanitizer_start_switch_fiber(&w->fake, t->map + t->guard, t->map_len - t->guard);
+#endif
+#ifdef EI_TASK_TSAN
+  __tsan_switch_to_fiber(t->fiber, 0);
+#endif
+  ctx_switch(&w->sched, &t->ctx);
+#ifdef EI_TASK_ASAN
+  __sanitizer_finish_switch_fiber(w->fake, NULL, NULL);
+#endif
+  t->try_top = try_top;
+  try_top = NULL;
+  guard_lo = w->glo;
+  guard_hi = w->ghi;
+#ifdef EI_RT_PROFILE
+  t->pdepth = ei_prof_depth;
+  if (t->pdepth > 0) {
+    size_t n = t->pdepth < EI_PROF_DEPTH ? t->pdepth : EI_PROF_DEPTH;
+    if (!t->pframes) t->pframes = malloc(sizeof(ei_prof_frame) * EI_PROF_DEPTH);
+    if (t->pframes) memcpy(t->pframes, ei_prof_stack, sizeof(ei_prof_frame) * n);
+  }
+  ei_prof_depth = 0;
+#endif
+  tls_task_set(w, NULL);
+}
+
+static void *worker_main(void *p) {
+  ei_worker *w = p;
+  tls_task_set(w, NULL);
+  w->glo = guard_lo;
+  w->ghi = guard_hi;
+  w->rng = (uint32_t)(uintptr_t)w ^ 0x9e3779b9u;
+  {
+    size_t alt, guard, stack;
+    stack_parts(&alt, &guard, &stack);
+    w->stk_lo = w->th.map + alt + guard;
+    w->stk_len = stack;
+  }
+#ifdef EI_TASK_TSAN
+  w->fiber = __tsan_get_current_fiber();
+#endif
+  for (;;) {
+    ei_task *t = find_task(w);
+    switch_in(w, t);
+    switch (w->yield) {
+    case Y_PARK: {
+      int e = T_RUNNING;
+      if (!atomic_compare_exchange_strong(&t->state, &e, T_PARKED)) {
+        atomic_store(&t->state, T_RUNNING);
+        lq_push(w, t);
+      }
+      break;
+    }
+    case Y_YIELD:
+      atomic_store(&t->state, T_READY);
+      lq_push(w, t);
+      break;
+    default: /* Y_EXIT */
+#ifdef EI_TASK_TSAN
+      __tsan_destroy_fiber(t->fiber);
+#endif
+      stack_put(t);
+#ifdef EI_RT_PROFILE
+      free(t->pframes);
+      t->pframes = NULL;
+#endif
+      task_published(t);
+      break;
+    }
+  }
+  return NULL;
+}
+
+static ei_task *find_task(ei_worker *w) {
+  for (;;) {
+    ei_task *t = NULL;
+    t = lq_pop(w);
+    if (t) return t;
+    atomic_fetch_add(&S.nsearch, 1);
+    t = steal(w);
+    /* spin a little before sleeping: the next wake-up usually comes within microseconds */
+    for (int spin = 0; !t && spin < EI_SPIN; spin++) {
+#if defined(__x86_64__)
+      __builtin_ia32_pause();
+#endif
+      t = lq_pop(w);
+      if (!t && (spin & 7) == 7) t = steal(w);
+    }
+    if (t) {
+      /* the last searcher to find work wakes another, so work spreads */
+      if (atomic_fetch_sub(&S.nsearch, 1) == 1) notify_one();
+      return t;
+    }
+    atomic_fetch_add(&S.nidle, 1);
+    atomic_fetch_sub(&S.nsearch, 1);
+    t = lq_pop(w);
+    if (!t) t = steal(w);
+    if (t) {
+      atomic_fetch_sub(&S.nidle, 1);
+      return t;
+    }
+    pthread_mutex_lock(&S.mu);
+    while (S.wakeups == 0) pthread_cond_wait(&S.cv, &S.mu);
+    S.wakeups--;
+    pthread_mutex_unlock(&S.mu);
+    atomic_fetch_sub(&S.nidle, 1);
+    atomic_fetch_add_explicit(&w->ticks, 1, memory_order_relaxed);
+  }
+}
+
+static bool worker_add(void) {
+  int n = atomic_load(&S.nw);
+  if (n >= S.maxw || n >= EI_MAX_WORKERS) return false;
+  ei_worker *w = calloc(1, sizeof *w);
+  if (!w) return false;
+  pthread_mutex_init(&w->qmu, NULL);
+  w->th.run = worker_main;
+  w->th.arg = w;
+  w->th.task = NULL;
+  S.ws[n] = w;
+  atomic_store(&S.nw, n + 1);
+  if (!thread_start_guarded(&w->th)) {
+    atomic_store(&S.nw, n);
+    S.ws[n] = NULL;
+    free(w);
+    return false;
+  }
+  return true;
+}
+
+// ---- parking
+
+/* Called by a task: switch to its worker's loop and wait there to be unparked. A task
+   registers where it waits, releases the lock that guards that, then parks; an unpark that
+   comes in between leaves a permit (state NOTIFIED) and the park returns at once, so the
+   lock needs no release after the switch. Callers re-check what they wait for: a permit can
+   be left over. */
+static void task_park(ei_task *t) {
+  if (held_n != 0) ei_trap("cannot wait while holding a Mutex", 0);
+  ei_worker *w = t->w;
+  w->yield = Y_PARK;
+#ifdef EI_TASK_ASAN
+  __sanitizer_start_switch_fiber(&t->fake, w->stk_lo, w->stk_len);
+#endif
+#ifdef EI_TASK_TSAN
+  __tsan_switch_to_fiber(w->fiber, 0);
+#endif
+  ctx_switch(&t->ctx, &w->sched);
+#ifdef EI_TASK_ASAN
+  __sanitizer_finish_switch_fiber(t->fake, NULL, NULL);
+#endif
+}
+
+static void task_yield_now(ei_task *t) {
+  ei_worker *w = t->w;
+  w->yield = Y_YIELD;
+#ifdef EI_TASK_ASAN
+  __sanitizer_start_switch_fiber(&t->fake, w->stk_lo, w->stk_len);
+#endif
+#ifdef EI_TASK_TSAN
+  __tsan_switch_to_fiber(w->fiber, 0);
+#endif
+  ctx_switch(&t->ctx, &w->sched);
+#ifdef EI_TASK_ASAN
+  __sanitizer_finish_switch_fiber(t->fake, NULL, NULL);
+#endif
+}
+
+// ---- task start and end
+
+static pthread_mutex_t join_mu = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t join_cv = PTHREAD_COND_INITIALIZER;
+static int thread_joiners;
+
+static void task_main(void *p) {
+  ei_task *t = task_self();
+  (void)p;
+#ifdef EI_TASK_ASAN
+  __sanitizer_finish_switch_fiber(NULL, NULL, NULL);
+#endif
+  t->run(t->arg);
+  ei_worker *w = t->w;
+  w->yield = Y_EXIT;
+#ifdef EI_TASK_ASAN
+  __sanitizer_start_switch_fiber(NULL, w->stk_lo, w->stk_len);
+#endif
+#ifdef EI_TASK_TSAN
+  __tsan_switch_to_fiber(w->fiber, 0);
+#endif
+  ctx_switch(&t->ctx, &w->sched);
+  abort();
+}
+
+/* The worker has left the task's stack for good: it is done; wake whoever joins it. After
+   this nothing touches t (a joiner may free it). */
+static void task_published(ei_task *t) {
+  pthread_mutex_lock(&join_mu);
+  t->done = true;
+  ei_task *j = t->joiners;
+  t->joiners = NULL;
+  if (thread_joiners > 0) pthread_cond_broadcast(&join_cv);
+  pthread_mutex_unlock(&join_mu);
+  while (j) {
+    ei_task *n = j->wnext;
+    j->wnext = NULL;
+    task_unpark(j);
+    j = n;
+  }
+  atomic_fetch_sub(&S.live, 1);
+}
+
+static void sched_init(void);
+
+static ei_task *task_create(void *(*run)(void *), void *arg) {
+  if (atomic_fetch_add(&S.live, 1) >= S.max_tasks) {
+    atomic_fetch_sub(&S.live, 1);
+    ei_trap("too many tasks", 0);
+  }
+  ei_task *t = calloc(1, sizeof *t);
+  if (!t) ei_trap("cannot create a thread", 0);
+  if (!stack_get(t)) {
+    free(t);
+    atomic_fetch_sub(&S.live, 1);
+    ei_trap("cannot create a thread", 0); /* out of mappings: vm.max_map_count */
+  }
+  t->run = run;
+  t->arg = arg;
+  t->id = atomic_fetch_add(&S.next_id, 1) + 1;
+  atomic_init(&t->state, T_READY);
+#ifdef EI_TASK_TSAN
+  t->fiber = __tsan_create_fiber(0);
+#endif
+  ctx_make(&t->ctx, t->map + t->guard, t->map_len - t->guard, t);
+  task_enqueue(t);
+  return t;
+}
+
+/* Task.join: parks the calling task, or blocks the calling thread, until t has ended. */
+static void task_join(ei_task *t) {
+  pthread_mutex_lock(&join_mu);
+  while (!t->done) {
+    ei_task *me = task_self();
+    if (me) {
+      me->wnext = t->joiners;
+      t->joiners = me;
+      pthread_mutex_unlock(&join_mu);
+      task_park(me);
+      pthread_mutex_lock(&join_mu);
+      /* woken for another reason (a stale permit): unlink and wait again */
+      if (!t->done) {
+        for (ei_task **pp = &t->joiners; *pp; pp = &(*pp)->wnext) {
+          if (*pp == me) {
+            *pp = me->wnext;
+            break;
+          }
+        }
+      }
+    } else {
+      thread_joiners++;
+      pthread_cond_wait(&join_cv, &join_mu);
+      thread_joiners--;
+    }
+  }
+  pthread_mutex_unlock(&join_mu);
+}
+
+// ---- channels: waiting tasks
+
+static void wq_push(ei_chan *c, ei_task *t) {
+  t->wnext = NULL;
+  t->in_wq = true;
+  if (c->wq_tail) ((ei_task *)c->wq_tail)->wnext = t;
+  else c->wq_head = (struct ei_task *)t;
+  c->wq_tail = (struct ei_task *)t;
+}
+
+static void wq_wake(ei_chan *c, bool all) {
+  while (c->wq_head) {
+    ei_task *t = (ei_task *)c->wq_head;
+    c->wq_head = (struct ei_task *)t->wnext;
+    if (!c->wq_head) c->wq_tail = NULL;
+    t->wnext = NULL;
+    t->in_wq = false;
+    task_unpark(t);
+    if (!all) return;
+  }
+}
+
+static void wq_remove(ei_chan *c, ei_task *t) {
+  ei_task *prev = NULL;
+  for (ei_task *x = (ei_task *)c->wq_head; x; prev = x, x = x->wnext) {
+    if (x == t) {
+      if (prev) prev->wnext = x->wnext;
+      else c->wq_head = (struct ei_task *)x->wnext;
+      if ((ei_task *)c->wq_tail == x) c->wq_tail = (struct ei_task *)prev;
+      break;
+    }
+  }
+  t->in_wq = false;
+  t->wnext = NULL;
+}
+
+/* Waits for a send or close on c (c->mu held, released while waiting, held again after): the
+   calling task parks; a thread waits on the condition variable. */
+static void chan_wait(ei_chan *c) {
+  ei_task *me = task_self();
+  if (!me) {
+    pthread_cond_wait(&c->cv, &c->mu.mu);
+    return;
+  }
+  wq_push(c, me);
+  ei_mutex_unlock(&c->mu);
+  task_park(me);
+  ei_mutex_lock(&c->mu);
+  if (me->in_wq) wq_remove(c, me);
+}
+
+// ---- the reactor: descriptors and timers (ec_fd_wait and ec_sleep_ns of a task)
+
+struct reactor;
+typedef struct ei_wait ei_wait;
+struct ei_wait {
+  ei_task *task;
+  int32_t fd, interest;
+  int64_t dl; /* ns on the monotonic clock */
+  int64_t result;
+  struct reactor *rx;
+  int hidx; /* index in the timer heap, or -1 */
+  bool done;
+  ei_wait *rd_next, *wr_next;
+};
+typedef struct {
+  ei_wait *rd, *wr;
+} fdent;
+
+/* A reactor: an epoll set, a timer heap and the waits on its descriptors, with a thread. There are
+   a few (descriptors by number, timers by task), so that one thread's per-event work is not the
+   limit of the program. */
+struct reactor {
+  pthread_mutex_t mu;
+  int ep, evfd;
+  ei_wait **heap;
+  size_t hn, hcap;
+  fdent *fds;
+  size_t nfds;
+  int64_t wake_at; /* when the reactor will next look at the timers */
+  ei_thread th;
+};
+#define EI_SHARDS 8
+static struct reactor RX[EI_SHARDS];
+static int nshards;
+
+static int64_t mono_ns(void) {
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  return (int64_t)t.tv_sec * 1000000000 + (int64_t)t.tv_nsec;
+}
+
+static void heap_swap(struct reactor *r, size_t i, size_t j) {
+  ei_wait *a = r->heap[i];
+  r->heap[i] = r->heap[j];
+  r->heap[j] = a;
+  r->heap[i]->hidx = (int)i;
+  r->heap[j]->hidx = (int)j;
+}
+static void heap_up(struct reactor *r, size_t i) {
+  while (i > 0 && r->heap[(i - 1) / 2]->dl > r->heap[i]->dl) {
+    heap_swap(r, i, (i - 1) / 2);
+    i = (i - 1) / 2;
+  }
+}
+static void heap_down(struct reactor *r, size_t i) {
+  for (;;) {
+    size_t lc = 2 * i + 1, rc = lc + 1, m = i;
+    if (lc < r->hn && r->heap[lc]->dl < r->heap[m]->dl) m = lc;
+    if (rc < r->hn && r->heap[rc]->dl < r->heap[m]->dl) m = rc;
+    if (m == i) return;
+    heap_swap(r, i, m);
+    i = m;
+  }
+}
+static bool heap_push(struct reactor *r, ei_wait *w) {
+  if (r->hn == r->hcap) {
+    size_t nc = r->hcap ? r->hcap * 2 : 1024;
+    ei_wait **nh = realloc(r->heap, nc * sizeof *nh);
+    if (!nh) return false;
+    r->heap = nh;
+    r->hcap = nc;
+  }
+  r->heap[r->hn] = w;
+  w->hidx = (int)r->hn;
+  r->hn++;
+  heap_up(r, r->hn - 1);
+  return true;
+}
+static void heap_remove(struct reactor *r, ei_wait *w) {
+  if (w->hidx < 0) return;
+  size_t i = (size_t)w->hidx;
+  r->hn--;
+  if (i != r->hn) {
+    r->heap[i] = r->heap[r->hn];
+    r->heap[i]->hidx = (int)i;
+    heap_down(r, i);
+    heap_up(r, i);
+  }
+  w->hidx = -1;
+}
+
+static void reactor_poke(struct reactor *r) {
+  uint64_t one = 1;
+  ssize_t nw = write(r->evfd, &one, sizeof one);
+  (void)nw;
+}
+
+static void monitor_poke(void) { reactor_poke(&RX[0]); }
+
+/* (r->mu held) Takes w out of its descriptor's lists. */
+static void wait_unlink(ei_wait *w) {
+  struct reactor *r = w->rx;
+  if (w->fd < 0 || (size_t)w->fd >= r->nfds) return;
+  fdent *e = &r->fds[w->fd];
+  for (ei_wait **pp = &e->rd; *pp; pp = &(*pp)->rd_next) {
+    if (*pp == w) {
+      *pp = w->rd_next;
+      break;
+    }
+  }
+  for (ei_wait **pp = &e->wr; *pp; pp = &(*pp)->wr_next) {
+    if (*pp == w) {
+      *pp = w->wr_next;
+      break;
+    }
+  }
+}
+
+/* (r->mu held) Finishes w: unlinks it, records the result, readies its task. */
+static void wait_complete(ei_wait *w, int64_t result) {
+  struct reactor *r = w->rx;
+  wait_unlink(w);
+  heap_remove(r, w);
+  w->result = result;
+  w->done = true;
+  task_unpark(w->task);
+}
+
+/* (r->mu held) Arms the descriptor for what its waiters want; false if it can't be polled. */
+static bool fd_arm(struct reactor *r, int32_t fd) {
+  fdent *e = &r->fds[fd];
+  struct epoll_event ev;
+  memset(&ev, 0, sizeof ev);
+  ev.events = EPOLLONESHOT | (e->rd ? (uint32_t)EPOLLIN : 0u) | (e->wr ? (uint32_t)EPOLLOUT : 0u);
+  ev.data.u64 = (uint64_t)fd;
+  if (epoll_ctl(r->ep, EPOLL_CTL_MOD, fd, &ev) == 0) return true;
+  if (errno == ENOENT && epoll_ctl(r->ep, EPOLL_CTL_ADD, fd, &ev) == 0) return true;
+  return false;
+}
+
+static void reactor_event(struct reactor *r, int32_t fd, uint32_t events) {
+  if (fd < 0 || (size_t)fd >= r->nfds) return;
+  fdent *e = &r->fds[fd];
+  int64_t f = 0;
+  if (events & EPOLLIN) f |= 1;
+  if (events & EPOLLOUT) f |= 2;
+  if (events & EPOLLERR) f |= 4;
+  if (events & EPOLLHUP) f |= 8;
+  bool bad = (events & (EPOLLERR | EPOLLHUP)) != 0;
+  if ((f & 1) || bad) {
+    while (e->rd) wait_complete(e->rd, f);
+  }
+  if ((f & 2) || bad) {
+    while (e->wr) wait_complete(e->wr, f);
+  }
+  if ((e->rd || e->wr) && !fd_arm(r, fd)) {
+    while (e->rd) wait_complete(e->rd, -EBADF);
+    while (e->wr) wait_complete(e->wr, -EBADF);
+  }
+}
+
+/* The starvation guard: all workers stuck (a blocking call, a long loop) with work queued
+   gets another worker, up to EIDER_WORKERS_MAX. */
+static void monitor_tick(void) {
+  static uint64_t last[EI_MAX_WORKERS];
+  int n = atomic_load(&S.nw);
+  bool stuck = true, queued = false;
+  for (int i = 0; i < n; i++) {
+    ei_worker *w = S.ws[i];
+    pthread_mutex_lock(&w->qmu);
+    if (w->qlen > 0) queued = true;
+    pthread_mutex_unlock(&w->qmu);
+    uint64_t tk = atomic_load_explicit(&w->ticks, memory_order_relaxed);
+    if (tk != last[i]) stuck = false;
+    last[i] = tk;
+  }
+  if (!queued) {
+    atomic_store(&S.watch, false);
+    return;
+  }
+  if (stuck && atomic_load(&S.nidle) == 0) worker_add();
+}
+
+static void *reactor_main(void *arg) {
+  struct reactor *r = arg;
+  struct epoll_event evs[64];
+  for (;;) {
+    int64_t now = mono_ns();
+    pthread_mutex_lock(&r->mu);
+    int tmo = -1;
+    if (r->hn > 0) {
+      int64_t d = r->heap[0]->dl - now;
+      int64_t ms = d <= 0 ? 0 : (d + 999999) / 1000000;
+      tmo = ms > 3600000 ? 3600000 : (int)ms;
+      r->wake_at = r->heap[0]->dl;
+    } else {
+      r->wake_at = INT64_MAX;
+    }
+    pthread_mutex_unlock(&r->mu);
+    if (r == &RX[0] && atomic_load(&S.watch) && (tmo < 0 || tmo > 10)) tmo = 10;
+    int n = epoll_wait(r->ep, evs, 64, tmo);
+    if (n < 0) n = 0;
+    pthread_mutex_lock(&r->mu);
+    for (int i = 0; i < n; i++) {
+      if (evs[i].data.u64 == UINT64_MAX) {
+        uint64_t v;
+        ssize_t nr = read(r->evfd, &v, sizeof v);
+        (void)nr;
+      } else {
+        reactor_event(r, (int32_t)evs[i].data.u64, evs[i].events);
+      }
+    }
+    now = mono_ns();
+    while (r->hn > 0 && r->heap[0]->dl <= now) wait_complete(r->heap[0], 0);
+    pthread_mutex_unlock(&r->mu);
+    if (r == &RX[0] && atomic_load(&S.watch)) monitor_tick();
+  }
+  return NULL;
+}
+
+/* A task waits for fd (interest 1 readable, 2 writable; fd < 0: just for the time) until dl.
+   Result as ec_fd_wait: the flags, 0 at the deadline, -errno. */
+static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int64_t dl) {
+  struct reactor *r = &RX[(fd >= 0 ? (unsigned)fd : (unsigned)t->id) % (unsigned)nshards];
+  ei_wait w;
+  memset(&w, 0, sizeof w);
+  w.task = t;
+  w.fd = fd;
+  w.interest = interest;
+  w.dl = dl;
+  w.hidx = -1;
+  w.rx = r;
+  pthread_mutex_lock(&r->mu);
+  if (fd >= 0) {
+    if ((size_t)fd >= r->nfds) {
+      size_t nn = (size_t)fd + 64;
+      fdent *nf = realloc(r->fds, nn * sizeof *nf);
+      if (!nf) {
+        pthread_mutex_unlock(&r->mu);
+        return -ENOMEM;
+      }
+      memset(nf + r->nfds, 0, (nn - r->nfds) * sizeof *nf);
+      r->fds = nf;
+      r->nfds = nn;
+    }
+    fdent *e = &r->fds[fd];
+    if (interest & 1) {
+      w.rd_next = e->rd;
+      e->rd = &w;
+    }
+    if (interest & 2) {
+      w.wr_next = e->wr;
+      e->wr = &w;
+    }
+    if (!fd_arm(r, fd)) {
+      int err = errno;
+      /* a regular file (EPERM) is always ready; anything else is an error */
+      int64_t res = err == EPERM ? (int64_t)(interest & 3) : -(int64_t)err;
+      wait_unlink(&w);
+      pthread_mutex_unlock(&r->mu);
+      return res;
+    }
+  }
+  if (dl != INT64_MAX) {
+    if (!heap_push(r, &w)) {
+      wait_unlink(&w);
+      pthread_mutex_unlock(&r->mu);
+      return -ENOMEM;
+    }
+    if (dl < r->wake_at) reactor_poke(r);
+  }
+  pthread_mutex_unlock(&r->mu);
+  for (;;) {
+    pthread_mutex_lock(&r->mu);
+    bool d = w.done;
+    pthread_mutex_unlock(&r->mu);
+    if (d) break;
+    task_park(t);
+  }
+  return w.result;
+}
+
+#define EC_NOT_A_TASK INT64_MIN
+typedef struct {
+  int64_t (*fd_wait)(int32_t fd, int32_t interest, int64_t timeout_ms);
+  int64_t (*sleep_ns)(int64_t ns);
+} ec_block_ops;
+extern _Atomic(const ec_block_ops *) ec_block_hook __attribute__((weak));
+
+static int64_t hook_fd_wait(int32_t fd, int32_t interest, int64_t timeout_ms) {
+  ei_task *t = task_self();
+  if (!t || timeout_ms == 0) return EC_NOT_A_TASK;
+  int64_t dl = INT64_MAX;
+  if (timeout_ms > 0) {
+    int64_t now = mono_ns();
+    dl = timeout_ms > (INT64_MAX - now) / 1000000 ? INT64_MAX : now + timeout_ms * 1000000;
+  }
+  return task_wait(t, fd, interest, dl);
+}
+
+static int64_t hook_sleep_ns(int64_t ns) {
+  ei_task *t = task_self();
+  if (!t) return EC_NOT_A_TASK;
+  if (ns <= 0) {
+    task_yield_now(t);
+    return 0;
+  }
+  int64_t now = mono_ns();
+  task_wait(t, -1, 0, ns > INT64_MAX - now ? INT64_MAX : now + ns);
+  return 0;
+}
+
+static const ec_block_ops block_ops = {hook_fd_wait, hook_sleep_ns};
+
+static int64_t env_int(const char *name, int64_t dflt) {
+  const char *v = getenv(name);
+  if (!v || !*v) return dflt;
+  char *end = NULL;
+  long long x = strtoll(v, &end, 10);
+  return end && !*end && x > 0 ? (int64_t)x : dflt;
+}
+
+
+/* After fork(2) the child has one thread: no workers, no reactor, locks that may have been
+   held by threads that are gone. The scheduler starts afresh on the child's first spawn. */
+static void sched_atfork_child(void) {
+  pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
+  pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
+  S.mu = m;
+  S.cv = cv;
+  for (int i = 0; i < EI_SHARDS; i++) {
+    struct reactor *r = &RX[i];
+    r->mu = m;
+    if (r->ep >= 0) close(r->ep);
+    if (r->evfd >= 0) close(r->evfd);
+    r->ep = r->evfd = -1;
+    r->hn = 0;
+    r->nfds = 0;
+    free(r->fds);
+    r->fds = NULL;
+  }
+  stk_mu = m;
+  join_mu = m;
+  join_cv = cv;
+  thread_joiners = 0;
+  for (int i = 0; i < EI_MAX_WORKERS; i++) S.ws[i] = NULL;
+  atomic_store(&S.nw, 0);
+  atomic_store(&S.nidle, 0);
+  atomic_store(&S.nsearch, 0);
+  atomic_store(&S.watch, false);
+  atomic_store(&S.live, 0);
+  S.wakeups = 0;
+  S.on = false;
+  stk_cached = 0; /* the cached mappings are the parent's; the child maps its own */
+  tls_task_set(NULL, NULL);
+  if (&ec_block_hook) atomic_store(&ec_block_hook, NULL);
+  pthread_once_t once = PTHREAD_ONCE_INIT;
+  S.once = once;
+}
+
+/* Starts the workers and the reactor (once). S.on says whether tasks are in use: not with
+   EIDER_TASKS=threads, or if the system refused anything. */
+static void sched_init(void) {
+  static bool atfork_set;
+  if (!atfork_set) {
+    atfork_set = true;
+    pthread_atfork(NULL, NULL, sched_atfork_child);
+  }
+  const char *mode = getenv("EIDER_TASKS");
+  if (mode && strcmp(mode, "threads") == 0) return;
+  long cpus = sysconf(_SC_NPROCESSORS_ONLN);
+  int nw = (int)env_int("EIDER_WORKERS", cpus < 4 ? 4 : (cpus > 64 ? 64 : cpus));
+  if (nw > EI_MAX_WORKERS) nw = EI_MAX_WORKERS;
+  int maxw = (int)env_int("EIDER_WORKERS_MAX", 256);
+  if (maxw < nw) maxw = nw;
+  if (maxw > EI_MAX_WORKERS) maxw = EI_MAX_WORKERS;
+  S.max_tasks = env_int("EIDER_TASK_MAX", 1000000);
+  S.stack_size = (size_t)env_int("EIDER_TASK_STACK", (int64_t)EI_THREAD_STACK);
+  if (S.stack_size < ((size_t)64 << 10)) S.stack_size = (size_t)64 << 10;
+  nshards = nw / 2 < 1 ? 1 : (nw / 2 > EI_SHARDS ? EI_SHARDS : nw / 2);
+  for (int k = 0; k < EI_SHARDS; k++) {
+    struct reactor *r = &RX[k];
+    r->ep = r->evfd = -1;
+  }
+  for (int k = 0; k < nshards; k++) {
+    struct reactor *r = &RX[k];
+    r->ep = epoll_create1(EPOLL_CLOEXEC);
+    r->evfd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (r->ep < 0 || r->evfd < 0) return;
+    struct epoll_event ev;
+    memset(&ev, 0, sizeof ev);
+    ev.events = EPOLLIN;
+    ev.data.u64 = UINT64_MAX;
+    if (epoll_ctl(r->ep, EPOLL_CTL_ADD, r->evfd, &ev) != 0) return;
+  }
+  pthread_once(&fault_once, fault_handlers_install);
+  S.maxw = nw;
+  for (int i = 0; i < nw; i++) {
+    if (!worker_add()) {
+      if (i == 0) return;
+      break;
+    }
+  }
+  S.maxw = maxw;
+  for (int k = 0; k < nshards; k++) {
+    RX[k].th.run = reactor_main;
+    RX[k].th.arg = &RX[k];
+    RX[k].th.task = NULL;
+    if (!thread_start_guarded(&RX[k].th)) return;
+  }
+  if (&ec_block_hook) atomic_store(&ec_block_hook, &block_ops);
+  S.on = true;
+}
+
+/* Whether spawn makes tasks (starts the scheduler on first use). */
+static bool tasks_on(void) {
+  pthread_once(&S.once, sched_init);
+  return S.on;
+}
+#endif /* EI_TASKS */
+
 #endif
 
 void ei_thread_start(ei_thread *t, void *(*run)(void *), void *arg) {
@@ -670,8 +1778,15 @@ void ei_thread_start(ei_thread *t, void *(*run)(void *), void *arg) {
   t->arg = arg;
   t->map = NULL;
   t->map_len = 0;
+  t->task = NULL;
 #ifdef EI_RT_PROFILE
   ei_prof_ev(EI_PEV_SPAWN, 0);
+#endif
+#if defined(EI_TASKS)
+  if (tasks_on()) {
+    t->task = (struct ei_task *)task_create(run, arg);
+    return;
+  }
 #endif
 #if defined(EI_GUARDED_STACKS)
   pthread_once(&fault_once, fault_handlers_install);
@@ -684,6 +1799,15 @@ void ei_thread_start(ei_thread *t, void *(*run)(void *), void *arg) {
 }
 
 void ei_thread_join(ei_thread *t) {
+#if defined(EI_TASKS)
+  if (t->task) {
+    task_join((ei_task *)t->task);
+    ei_mutex_lock(&t->mu);
+    t->joined = true;
+    ei_mutex_unlock(&t->mu);
+    return;
+  }
+#endif
   ei_mutex_lock(&t->mu);
   if (!t->joined) {
     if (pthread_join(t->th, NULL) != 0) {
@@ -702,6 +1826,12 @@ void ei_thread_join(ei_thread *t) {
 
 void ei_thread_destroy(ei_thread *t) {
   ei_thread_join(t);
+#if defined(EI_TASKS)
+  if (t->task) {
+    free(t->task);
+    t->task = NULL;
+  }
+#endif
   ei_mutex_destroy(&t->mu);
 }
 
@@ -765,6 +1895,7 @@ void ei_chan_init(ei_chan *c, uint64_t elem_size) {
   c->size = elem_size;
   c->head = c->len = c->cap = 0;
   c->closed = false;
+  c->wq_head = c->wq_tail = NULL;
 }
 
 /* Element i of the ring (0 = oldest); i < len. */
@@ -794,6 +1925,9 @@ void ei_chan_send(ei_chan *c, const void *elem) {
   memcpy(slot(c, c->len), elem, (size_t)c->size);
   c->len++;
   pthread_cond_signal(&c->cv);
+#if defined(EI_TASKS)
+  wq_wake(c, false);
+#endif
   ei_mutex_unlock(&c->mu);
 }
 
@@ -802,7 +1936,11 @@ bool ei_chan_recv(ei_chan *c, void *out) {
 #ifdef EI_RT_PROFILE
   uint64_t waited = c->len == 0 && !c->closed && prof_conc_on() ? prof_now() : 0;
 #endif
+#if defined(EI_TASKS)
+  while (c->len == 0 && !c->closed) chan_wait(c);
+#else
   while (c->len == 0 && !c->closed) pthread_cond_wait(&c->cv, &c->mu.mu);
+#endif
 #ifdef EI_RT_PROFILE
   if (waited) waited = prof_now() - waited + 1;
 #endif
@@ -827,6 +1965,9 @@ void ei_chan_close(ei_chan *c) {
   ei_mutex_lock(&c->mu);
   c->closed = true;
   pthread_cond_broadcast(&c->cv);
+#if defined(EI_TASKS)
+  wq_wake(c, true);
+#endif
   ei_mutex_unlock(&c->mu);
 }
 

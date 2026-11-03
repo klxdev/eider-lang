@@ -1,0 +1,90 @@
+// Tasks (docs/design/lightweight-tasks.md, docs/runtime.md "Tasks: measured"): the cost of
+// `spawn` + `join`, a ping-pong between two tasks over channels, a fan-in of many senders on
+// one channel, and tasks that sleep. The output is the same on every run (the sums);
+// `sh scripts/bench.sh` times the whole program.
+
+import std.chan
+import std.time
+
+fn spawn_join(n: i64) -> i64 uses threads {
+    var total: i64 = 0
+    var batch: List[Task[i64]] = List.new()
+    for i in 0..n {
+        batch.push(spawn(|| -> i64 i * 2))
+        if batch.len() == 1000 {
+            for t in batch { total += t.join() }
+            batch = List.new()
+        }
+    }
+    for t in batch { total += t.join() }
+    total
+}
+
+fn ping_pong(rounds: i64) -> i64 uses threads {
+    let ping: Chan[i64] = Chan.new()
+    let pong: Chan[i64] = Chan.new()
+    let a = ping
+    let b = pong
+    let echo = spawn(|| -> i64 {
+        var n: i64 = 0
+        var going = true
+        while going {
+            match a.recv() {
+                Some(v) => { b.send(v + 1); n += 1 }
+                None => { going = false }
+            }
+        }
+        n
+    })
+    var sum: i64 = 0
+    for i in 0..rounds {
+        ping.send(i)
+        match pong.recv() {
+            Some(v) => { sum += v }
+            None => {}
+        }
+    }
+    ping.close()
+    sum + echo.join()
+}
+
+fn fan_in(senders: i64, each: i64) -> i64 uses threads {
+    let c: Chan[i64] = Chan.new()
+    var ts: List[Task[i64]] = List.new()
+    for s in 0..senders {
+        let cc = c
+        ts.push(spawn(|| -> i64 {
+            for k in 0..each { cc.send(k) }
+            0
+        }))
+    }
+    var sum: i64 = 0
+    for i in 0..senders * each {
+        match c.recv() {
+            Some(v) => { sum += v }
+            None => {}
+        }
+    }
+    for t in ts { let z = t.join() }
+    sum
+}
+
+fn sleepers(n: i64) -> i64 uses threads, clock {
+    var ts: List[Task[i64]] = List.new()
+    for i in 0..n {
+        ts.push(spawn(|| -> i64 {
+            for k in 0..3 { time.sleep_ms(2) }
+            i
+        }))
+    }
+    var sum: i64 = 0
+    for t in ts { sum += t.join() }
+    sum
+}
+
+fn main() uses io, threads, clock {
+    print(spawn_join(20000))
+    print(ping_pong(20000))
+    print(fan_in(100, 500))
+    print(sleepers(2000))
+}

@@ -57,7 +57,7 @@ design.
 - `char`, `Decimal` and `BigInt`, the integer widths `i8`, `i16`, `u16`, `i128`, `u128`,
   `isize`;
 - `dyn Trait` (dynamic dispatch);
-- lightweight (stackless) tasks, `select` in the language, structured concurrency;
+- `select` in the language, a stackless transform for tasks (tasks are stackful, C830);
 - attributes, comptime reflection;
 - a comptime interpreter (comptime constants are computed by compiling and running C, and
   only integers and `bool` are allowed);

@@ -30,7 +30,7 @@ What is different:
 - **Capabilities**: a function that does I/O says `uses io, fs, ...`, and a dependency gets
   only the capabilities your `eider.toml` grants. Rust has no equivalent.
 - Missing today: `dyn Trait`, macros (by design: `comptime` instead), `async`
-  (by design: blocking code on threads; stackless tasks planned without colouring),
+  (by design: any function may block, and a task that blocks parks without colouring),
   closures that mutate captures (pass `inout` or use a `Ref`), slices and views.
 - Records are built positionally, `Point(1, 2)`; enum variants are in scope unqualified
   (`Some`, `Circle(r)`).
@@ -53,9 +53,9 @@ What is different:
   `Chan` and std's channels and locks, and everything else crosses by value. There is no
   race detector because there is nothing for it to find.
 - **Generics with bounds** (`fn max[T: Ord](...)`), compiled per type.
-- `spawn` starts an OS thread today, not a goroutine; std/task's groups and tokens are
-  `errgroup` and `context` (cancellation and deadlines flowing down). Lightweight tasks
-  are planned with the same APIs.
+- `spawn` starts a task on a stack of its own, scheduled onto a few threads, like a goroutine
+  (without growable stacks and without preemption); std/task's groups and tokens are
+  `errgroup` and `context` (cancellation and deadlines flowing down).
 - `std/chan`'s channels are bounded by default, take a deadline on every operation, and
   have `select` (a function over cases, not a statement).
 - Overflow traps instead of wrapping; use `+%` to wrap.

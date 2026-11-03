@@ -1,18 +1,18 @@
 # Concurrency
 
-Eider programs run code in parallel on OS threads. The language has one way to start a
-thread, `spawn`, and three built-in handle types: `Task[T]` (a running thread and its
-result), `Mutex[T]` (a value behind a lock) and `Chan[T]` (a queue). Threads share data only
-through these handles; everything else a thread gets is its own value. That rules out data
-races without a borrow checker: there is no way to name the same memory from two threads
+Eider programs run code in parallel in lightweight tasks. The language has one way to start
+a task, `spawn`, and three built-in handle types: `Task[T]` (a running task and its
+result), `Mutex[T]` (a value behind a lock) and `Chan[T]` (a queue). Tasks share data only
+through these handles; everything else a task gets is its own value. That rules out data
+races without a borrow checker: there is no way to name the same memory from two tasks
 except through a lock or a queue.
 
-Starting a thread needs the `threads` [capability](capabilities.md). The handles' methods
+Starting a task needs the `threads` [capability](capabilities.md). The handles' methods
 need none.
 
 ## `spawn` and `Task[T]`
 
-`spawn(f)` starts a new thread that runs `f` and returns a `Task[T]` for it, where `T` is
+`spawn(f)` starts a new task that runs `f` and returns a `Task[T]` for it, where `T` is
 `f`'s result type (it may be `()`). `f` must be a closure with no parameters (E0401 for one
 that takes parameters or never returns, E0405 for anything but exactly one argument). The
 closure is checked without an expected type, so a block body needs its result type written
@@ -21,9 +21,9 @@ closure is checked without an expected type, so a block body needs its result ty
 
 The closure's captures are copied into it when it is created, as for every closure
 ([memory model](memory.md#closures-capture-snapshots)), and made unique before the thread
-starts, so the new thread shares no buffer with the spawning one.
+starts, so the new task shares no buffer with the spawning one.
 
-`t.join()` waits for the thread to finish and returns a copy of its result. It may be called
+`t.join()` waits for the task to finish and returns a copy of its result. It may be called
 any number of times, from any thread holding the handle; each call gets its own copy. `Task`
 has no other methods and no associated functions (E0115).
 
@@ -62,6 +62,37 @@ fn main() {
 A thread is joined when the last handle to its Task is dropped, so no thread outlives the
 last handle to it, and `main` never returns with a spawned thread still running. Dropping
 the last handle on the task's own thread traps (`cannot join a thread`).
+
+## Tasks and threads
+
+A task is a function running on a stack of its own (8 MiB of address space, of which only the
+touched pages are memory: a task that is parked holds about 5 KiB). The runtime runs tasks on
+a pool of worker threads (`EIDER_WORKERS`, default the number of CPUs, at least 4), takes
+tasks from one worker's queue for another that has none, and parks a task that has to wait:
+`Chan.recv` (and so `Lock`, `select`, groups, pools), `join`, sleeping and waiting for a
+descriptor (`std/fd`, `std/stream`) switch back to the worker, which runs another task. The
+program doesn't say so anywhere: any function may block, nothing is coloured, and a
+process holds a hundred thousand tasks where it held a few thousand threads.
+
+What the program still has to know:
+
+- A task is not preempted. One that computes for a long time, or blocks in a system call
+  (`read` on a blocking descriptor, a C library), keeps its worker; when every worker has
+  been stuck for 10 ms with tasks waiting, the runtime starts another (up to
+  `EIDER_WORKERS_MAX`, default 256). Prefer waits that park (`fd.wait_ready`,
+  non-blocking descriptors) to blocking system calls.
+- A task may not wait while it holds a `Mutex` (inside `Mutex.update`): that is a trap,
+  `cannot wait while holding a Mutex`.
+- The stack is fixed at spawn: 8 MiB of address space, `EIDER_TASK_STACK` bytes to change it
+  (a smaller stack makes page tables smaller at 100,000 tasks). Overflowing it is the usual
+  `stack overflow` trap, from the task's own guard page. Each stack is two mappings, so
+  Linux's `vm.max_map_count` (65,530 by default on many systems) limits the live tasks of one
+  process to about 32,000 until it is raised.
+- `EIDER_TASK_MAX` (default 1,000,000) bounds the live tasks: `spawn` past it traps with
+  `too many tasks`.
+- `EIDER_TASKS=threads` makes `spawn` start an OS thread, as before (for debugging, and the
+  only mode where the platform has no task support: tasks need Linux on x86-64, or Linux
+  with glibc).
 
 ## `Task.catch(f)`: containing a trap
 
@@ -266,7 +297,7 @@ or `spawn` is [E0806](errors.md#e0806) there.
 
 ## Library support
 
-`std` builds structured concurrency on these primitives, on OS threads:
+`std` builds structured concurrency on these primitives, on tasks:
 
 - [`std/task`](api:std/task): cancellation tokens with deadlines, task groups that wait for
   all their children and cancel siblings on failure, a fixed worker pool;
@@ -275,8 +306,7 @@ or `spawn` is [E0806](errors.md#e0806) there.
 - [`std/atomic`](api:std/atomic): 64-bit atomic integers with explicit memory orderings;
 - [`std/event`](api:std/event): an event loop with timers over the OS poller.
 
-> **Note:** `spawn` starts an OS thread today. Lightweight stackless tasks, where the
-> compiler turns functions that use a blocking capability into resumable state machines
-> scheduled on a pool over the event loop (roadmap P0.2), are planned and not implemented;
-> `std/task`'s API is meant to run on them unchanged. A `select` built into the language is
-> part of the same item. See the [roadmap](../../design/roadmap.md).
+> **Note:** tasks are stackful (decision C830): the stackless design of C4, with the compiler
+> turning blocking functions into state machines, was set aside for the reasons in
+> [docs/design/lightweight-tasks.md](../../design/lightweight-tasks.md). A `select` built into the
+> language is still open.

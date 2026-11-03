@@ -115,8 +115,9 @@ let signal = watcher.join()    // 15 for SIGTERM, 2 for SIGINT
 
 - The server speaks plain HTTP: run it on loopback or a private interface behind a
   TLS-terminating proxy. TLS 1.3 written in Eider is planned.
-- One OS thread serves one connection at a time, from a fixed pool; stackless tasks, which
-  lift this without changing the server's API, are planned.
+- One OS thread serves one connection at a time, from a fixed pool; serving a connection
+  per task, which lifts this without changing the server's API, is the next step
+  (docs/design/lightweight-tasks.md, M4).
 - A trap in a handler ends the process ([Errors](errors.md)): validate input before
   arithmetic and indexing.
 - Shared state goes in a `std/sync` `Lock[T]` ([Concurrency](concurrency.md)): handlers run

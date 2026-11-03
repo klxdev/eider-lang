@@ -764,11 +764,11 @@ fn main() uses io, threads {
 2
 ```
 
-`spawn` starts an OS thread running a closure and gives a `Task[T]`; `join` waits for its
-result. Threads share data only through `Mutex[T]` and `Chan[T]` handles; everything else a
-thread gets is its own copy, so data races can't be written. `std/chan` adds bounded
+`spawn` starts a lightweight task running a closure and gives a `Task[T]`; `join` waits for its
+result. Tasks share data only through `Mutex[T]` and `Chan[T]` handles; everything else a
+task gets is its own copy, so data races can't be written. `std/chan` adds bounded
 channels with deadlines and `select`, `std/task` cancellation tokens, task groups and a
-thread pool ([Concurrency](concurrency.md)). Lightweight stackless tasks are planned.
+worker pool ([Concurrency](concurrency.md)). A task that waits parks; it does not hold a thread.
 
 ## Modules and packages
 
