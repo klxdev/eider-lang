@@ -791,13 +791,23 @@ static struct {
   pthread_mutex_t mu; /* the idle workers */
   pthread_cond_t cv;
   atomic_int nidle, nsearch;
+  atomic_int polling;  /* 1 while an idle worker is the poller: it waits for descriptors and timers */
+  atomic_int nsleep;   /* workers asleep on cv */
+  atomic_int_least64_t poll_until; /* ns: the earliest timer the poller waits for */
+  atomic_int nwaits;   /* registered descriptor and timer waits */
+  int mep, evfd;       /* the poller's epoll set (over the reactors' sets), its wake-up */
   int wakeups;
   atomic_bool watch;
+  pthread_mutex_t mon_mu; /* the monitor thread's sleep */
+  pthread_cond_t mon_cv;
+  atomic_bool mon_idle;
+  bool mon_poked;
+  ei_thread mon_th;
   atomic_uint_least64_t next_id;
   atomic_int_least64_t live;
   int64_t max_tasks;
   size_t stack_size;
-} S = {.once = PTHREAD_ONCE_INIT, .mu = PTHREAD_MUTEX_INITIALIZER, .cv = PTHREAD_COND_INITIALIZER};
+} S = {.once = PTHREAD_ONCE_INIT, .mu = PTHREAD_MUTEX_INITIALIZER, .cv = PTHREAD_COND_INITIALIZER, .mon_mu = PTHREAD_MUTEX_INITIALIZER, .mon_cv = PTHREAD_COND_INITIALIZER, .mep = -1, .evfd = -1};
 
 static _Thread_local ei_worker *cur_worker;
 static _Thread_local ei_task *cur_task;
@@ -968,21 +978,42 @@ static ei_task *steal(ei_worker *w) {
   return NULL;
 }
 
-static void monitor_poke(void);
+static void mon_wake(void);
+
+/* Makes the poller (an idle worker blocked in epoll_wait) return. */
+static void poll_poke(void) {
+  uint64_t one = 1;
+  ssize_t nw = write(S.evfd, &one, sizeof one);
+  (void)nw;
+}
 
 /* Wakes an idle worker to look for work, unless one is looking already (it wakes the next one
-   when it finds some). */
+   when it finds some). A sleeper first; else the poller, which is idle too. */
 static void notify_one(void) {
   if (atomic_load(&S.nidle) > 0 && atomic_load(&S.nsearch) == 0) {
+    if (atomic_load(&S.nsleep) == 0 && atomic_load(&S.polling)) {
+      poll_poke();
+      return;
+    }
     pthread_mutex_lock(&S.mu);
     S.wakeups++;
     pthread_cond_signal(&S.cv);
     pthread_mutex_unlock(&S.mu);
   } else if (atomic_load(&S.nidle) == 0) {
-    /* work is queued and every worker is busy: have the reactor watch for stuck workers */
-    if (!atomic_exchange(&S.watch, true)) monitor_poke();
+    /* work is queued and every worker is busy: have the monitor watch for stuck workers */
+    if (!atomic_exchange(&S.watch, true)) mon_wake();
   }
 }
+
+/* The tasks a poll readied, collected (by the thread that polls) so that it runs the first
+   itself instead of handing every one to a worker. */
+typedef struct {
+  ei_task *t[128];
+  int n;
+} ei_batch;
+static _Thread_local ei_batch *cur_batch;
+__attribute__((noinline)) static ei_batch *batch_get(void) { return cur_batch; }
+__attribute__((noinline)) static void batch_set(ei_batch *b) { cur_batch = b; }
 
 /* Makes t runnable: on the queue of the worker calling, else the global queue. */
 static void task_enqueue(ei_task *t) {
@@ -1003,7 +1034,9 @@ static void task_unpark(ei_task *t) {
     int s = atomic_load(&t->state);
     if (s == T_PARKED) {
       if (atomic_compare_exchange_weak(&t->state, &s, T_READY)) {
-        task_enqueue(t);
+        ei_batch *b = batch_get();
+        if (b && b->n < 128) b->t[b->n++] = t;
+        else task_enqueue(t);
         return;
       }
     } else if (s == T_RUNNING) {
@@ -1104,6 +1137,14 @@ static void *worker_main(void *p) {
   return NULL;
 }
 
+static ei_task *poller_wait(ei_worker *w);
+
+/* A worker stops being idle. The last one to stop (every worker busy) wakes the monitor, which
+   polls for descriptors while no worker does. */
+static void idle_leave(void) {
+  if (atomic_fetch_sub(&S.nidle, 1) == 1) mon_wake();
+}
+
 static ei_task *find_task(ei_worker *w) {
   for (;;) {
     ei_task *t = NULL;
@@ -1129,14 +1170,42 @@ static ei_task *find_task(ei_worker *w) {
     t = lq_pop(w);
     if (!t) t = steal(w);
     if (t) {
-      atomic_fetch_sub(&S.nidle, 1);
+      idle_leave();
       return t;
     }
+    /* one idle worker at a time waits for descriptors and timers (decision C842): an event then
+       runs its task on the worker that saw it */
+    if (atomic_exchange(&S.polling, 1) == 0) {
+      /* work queued before the flag was visible is found now; later work pokes us */
+      t = lq_pop(w);
+      if (!t) t = steal(w);
+      if (t) {
+        atomic_store(&S.polling, 0);
+        idle_leave();
+        return t;
+      }
+      t = poller_wait(w);
+      if (t) {
+        idle_leave();
+        /* someone else polls from now on */
+        if (atomic_load(&S.nsleep) > 0) {
+          pthread_mutex_lock(&S.mu);
+          S.wakeups++;
+          pthread_cond_signal(&S.cv);
+          pthread_mutex_unlock(&S.mu);
+        }
+        return t;
+      }
+      idle_leave();
+      continue;
+    }
     pthread_mutex_lock(&S.mu);
+    atomic_fetch_add(&S.nsleep, 1);
     while (S.wakeups == 0) pthread_cond_wait(&S.cv, &S.mu);
     S.wakeups--;
+    atomic_fetch_sub(&S.nsleep, 1);
     pthread_mutex_unlock(&S.mu);
-    atomic_fetch_sub(&S.nidle, 1);
+    idle_leave();
     atomic_fetch_add_explicit(&w->ticks, 1, memory_order_relaxed);
   }
 }
@@ -1372,18 +1441,18 @@ typedef struct {
   ei_wait *rd, *wr;
 } fdent;
 
-/* A reactor: an epoll set, a timer heap and the waits on its descriptors, with a thread. There are
-   a few (descriptors by number, timers by task), so that one thread's per-event work is not the
-   limit of the program. */
+/* A reactor: an epoll set, a timer heap and the waits on its descriptors. There are a few
+   (descriptors by number, timers by task), so that the locks and lists are not the limit of the
+   program. The sets are polled by whichever idle worker is the poller (find_task), or by the
+   monitor when none is. */
 struct reactor {
   pthread_mutex_t mu;
-  int ep, evfd;
+  int ep;
   ei_wait **heap;
   size_t hn, hcap;
   fdent *fds;
   size_t nfds;
-  int64_t wake_at; /* when the reactor will next look at the timers */
-  ei_thread th;
+  atomic_int_least64_t next_dl; /* the earliest timer (ns), INT64_MAX if none */
 };
 #define EI_SHARDS 8
 static struct reactor RX[EI_SHARDS];
@@ -1418,6 +1487,7 @@ static void heap_down(struct reactor *r, size_t i) {
     i = m;
   }
 }
+static void heap_top(struct reactor *r) { atomic_store(&r->next_dl, r->hn ? r->heap[0]->dl : INT64_MAX); }
 static bool heap_push(struct reactor *r, ei_wait *w) {
   if (r->hn == r->hcap) {
     size_t nc = r->hcap ? r->hcap * 2 : 1024;
@@ -1430,6 +1500,7 @@ static bool heap_push(struct reactor *r, ei_wait *w) {
   w->hidx = (int)r->hn;
   r->hn++;
   heap_up(r, r->hn - 1);
+  heap_top(r);
   return true;
 }
 static void heap_remove(struct reactor *r, ei_wait *w) {
@@ -1443,15 +1514,9 @@ static void heap_remove(struct reactor *r, ei_wait *w) {
     heap_up(r, i);
   }
   w->hidx = -1;
+  heap_top(r);
 }
 
-static void reactor_poke(struct reactor *r) {
-  uint64_t one = 1;
-  ssize_t nw = write(r->evfd, &one, sizeof one);
-  (void)nw;
-}
-
-static void monitor_poke(void) { reactor_poke(&RX[0]); }
 
 /* (r->mu held) Takes w out of its descriptor's lists. */
 static ei_wait **wnext(ei_wait *w, int32_t fd, int dir) { return &w->nx[w->fd == fd ? 0 : 1][dir]; }
@@ -1535,44 +1600,141 @@ static void monitor_tick(void) {
   }
   if (!queued) {
     atomic_store(&S.watch, false);
+    /* work queued while we looked saw the flag set and did not set it: look again */
+    for (int i = 0; i < n; i++) {
+      ei_worker *w = S.ws[i];
+      pthread_mutex_lock(&w->qmu);
+      bool q = w->qlen > 0;
+      pthread_mutex_unlock(&w->qmu);
+      if (q) {
+        atomic_store(&S.watch, true);
+        break;
+      }
+    }
     return;
   }
   if (stuck && atomic_load(&S.nidle) == 0) worker_add();
 }
 
-static void *reactor_main(void *arg) {
-  struct reactor *r = arg;
+static int64_t timers_next(void) {
+  int64_t m = INT64_MAX;
+  for (int k = 0; k < nshards; k++) {
+    int64_t d = atomic_load(&RX[k].next_dl);
+    if (d < m) m = d;
+  }
+  return m;
+}
+
+/* One reactor's ready descriptors (without waiting), then its due timers. */
+static void shard_poll(struct reactor *r) {
   struct epoll_event evs[64];
-  for (;;) {
-    int64_t now = mono_ns();
-    pthread_mutex_lock(&r->mu);
-    int tmo = -1;
-    if (r->hn > 0) {
-      int64_t d = r->heap[0]->dl - now;
-      int64_t ms = d <= 0 ? 0 : (d + 999999) / 1000000;
-      tmo = ms > 3600000 ? 3600000 : (int)ms;
-      r->wake_at = r->heap[0]->dl;
+  int n = epoll_wait(r->ep, evs, 64, 0);
+  if (n < 0) n = 0;
+  pthread_mutex_lock(&r->mu);
+  for (int i = 0; i < n; i++) reactor_event(r, (int32_t)evs[i].data.u64, evs[i].events);
+  pthread_mutex_unlock(&r->mu);
+}
+
+static void shard_timers(struct reactor *r, int64_t now) {
+  if (atomic_load(&r->next_dl) > now) return;
+  pthread_mutex_lock(&r->mu);
+  while (r->hn > 0 && r->heap[0]->dl <= now) wait_complete(r->heap[0], 0);
+  pthread_mutex_unlock(&r->mu);
+}
+
+/* Waits up to timeout_ms (-1: forever) for a descriptor of any reactor or a poke, then completes
+   what is ready and what is due; the tasks that become runnable are in b. Any thread may call
+   it, also several at a time (registrations are one-shot, a wait completes once). */
+static void netpoll(int timeout_ms, ei_batch *b) {
+  struct epoll_event evs[16];
+  int n = epoll_wait(S.mep, evs, 16, timeout_ms);
+  if (n < 0) n = 0;
+  b->n = 0;
+  batch_set(b);
+  for (int i = 0; i < n; i++) {
+    uint64_t d = evs[i].data.u64;
+    if (d == UINT64_MAX) {
+      uint64_t v;
+      ssize_t nr = read(S.evfd, &v, sizeof v);
+      (void)nr;
     } else {
-      r->wake_at = INT64_MAX;
+      shard_poll(&RX[d]);
     }
-    pthread_mutex_unlock(&r->mu);
-    if (r == &RX[0] && atomic_load(&S.watch) && (tmo < 0 || tmo > 10)) tmo = 10;
-    int n = epoll_wait(r->ep, evs, 64, tmo);
-    if (n < 0) n = 0;
-    pthread_mutex_lock(&r->mu);
-    for (int i = 0; i < n; i++) {
-      if (evs[i].data.u64 == UINT64_MAX) {
-        uint64_t v;
-        ssize_t nr = read(r->evfd, &v, sizeof v);
-        (void)nr;
-      } else {
-        reactor_event(r, (int32_t)evs[i].data.u64, evs[i].events);
+  }
+  int64_t now = mono_ns();
+  for (int k = 0; k < nshards; k++) shard_timers(&RX[k], now);
+  batch_set(NULL);
+}
+
+/* The idle worker that holds the poller role waits here; S.polling is clear again on return.
+   Gives back the first task that became runnable (the rest go on w's queue), or NULL (poked,
+   or only a timer fired with no task behind it). */
+static ei_task *poller_wait(ei_worker *w) {
+  int64_t next = timers_next();
+  atomic_store(&S.poll_until, next);
+  int64_t again = timers_next(); /* a timer added meanwhile saw the old poll_until */
+  if (again < next) {
+    next = again;
+    atomic_store(&S.poll_until, next);
+  }
+  int tmo = -1;
+  if (next != INT64_MAX) {
+    int64_t d = next - mono_ns();
+    int64_t ms = d <= 0 ? 0 : (d + 999999) / 1000000;
+    tmo = ms > 3600000 ? 3600000 : (int)ms;
+  }
+  ei_batch b;
+  netpoll(tmo, &b);
+  atomic_store(&S.poll_until, INT64_MAX);
+  atomic_store(&S.polling, 0);
+  if (b.n == 0) return NULL;
+  for (int i = 1; i < b.n; i++) lq_push(w, b.t[i]);
+  if (b.n > 1) notify_one();
+  return b.t[0];
+}
+
+/* The monitor: while every worker is busy (or work is queued with all busy) it ticks every 2 ms:
+   it runs the starvation guard, and polls for descriptors and timers itself while no worker
+   does (a program that keeps all its workers running). It sleeps while some worker is idle. */
+static bool mon_needed(void) {
+  return atomic_load(&S.watch) || atomic_load(&S.nidle) == 0;
+}
+
+static void mon_wake(void) {
+  if (!atomic_load(&S.mon_idle)) return;
+  pthread_mutex_lock(&S.mon_mu);
+  S.mon_poked = true;
+  pthread_cond_signal(&S.mon_cv);
+  pthread_mutex_unlock(&S.mon_mu);
+}
+
+static void *monitor_main(void *arg) {
+  (void)arg;
+  int64_t last_tick = 0;
+  for (;;) {
+    if (!mon_needed()) {
+      pthread_mutex_lock(&S.mon_mu);
+      atomic_store(&S.mon_idle, true);
+      if (!mon_needed()) {
+        while (!S.mon_poked) pthread_cond_wait(&S.mon_cv, &S.mon_mu);
       }
+      S.mon_poked = false;
+      atomic_store(&S.mon_idle, false);
+      pthread_mutex_unlock(&S.mon_mu);
+      continue;
     }
-    now = mono_ns();
-    while (r->hn > 0 && r->heap[0]->dl <= now) wait_complete(r->heap[0], 0);
-    pthread_mutex_unlock(&r->mu);
-    if (r == &RX[0] && atomic_load(&S.watch)) monitor_tick();
+    struct timespec ts = {0, 2 * 1000 * 1000};
+    nanosleep(&ts, NULL);
+    int64_t now = mono_ns();
+    if (now - last_tick >= 10 * 1000 * 1000) {
+      last_tick = now;
+      monitor_tick();
+    }
+    if (atomic_load(&S.nidle) == 0 && !atomic_load(&S.polling) && atomic_load(&S.nwaits) > 0) {
+      ei_batch b;
+      netpoll(0, &b);
+      for (int i = 0; i < b.n; i++) task_enqueue(b.t[i]);
+    }
   }
   return NULL;
 }
@@ -1609,6 +1771,7 @@ static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int32_t fd2, 
     if (a == 1) return PK_FLAG;
   }
   int64_t res = 0;
+  if (atomic_fetch_add(&S.nwaits, 1) == 0 && atomic_load(&S.nidle) == 0) mon_wake();
   pthread_mutex_lock(&r->mu);
   if (w.done) goto finish; /* unparked while we were attaching */
   if (fd >= 0) {
@@ -1651,7 +1814,8 @@ static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int32_t fd2, 
       res = -ENOMEM;
       goto failed;
     }
-    if (dl < r->wake_at) reactor_poke(r);
+    /* an earlier timer than the poller waits for: have it look again */
+    if (atomic_load(&S.polling) && dl < atomic_load(&S.poll_until)) poll_poke();
   }
   pthread_mutex_unlock(&r->mu);
   for (;;) {
@@ -1665,6 +1829,7 @@ static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int32_t fd2, 
 finish:
   res = w.result;
   pthread_mutex_unlock(&r->mu);
+  atomic_fetch_sub(&S.nwaits, 1);
   if (pk) ec_pk_detach(pk, res >= 0 && (res & PK_FLAG) != 0);
   return res;
 failed:
@@ -1673,6 +1838,7 @@ failed:
   wait_unlink(&w);
   heap_remove(r, &w);
   pthread_mutex_unlock(&r->mu);
+  atomic_fetch_sub(&S.nwaits, 1);
   if (pk) ec_pk_detach(pk, 0);
   return res;
 }
@@ -1740,12 +1906,24 @@ static void sched_atfork_child(void) {
   pthread_cond_t cv = PTHREAD_COND_INITIALIZER;
   S.mu = m;
   S.cv = cv;
+  S.mon_mu = m;
+  S.mon_cv = cv;
+  bool had = S.mep >= 0; /* the reactors exist only if the scheduler got as far as making them */
+  if (S.mep >= 0) close(S.mep);
+  if (S.evfd >= 0) close(S.evfd);
+  S.mep = S.evfd = -1;
+  atomic_store(&S.polling, 0);
+  atomic_store(&S.nsleep, 0);
+  atomic_store(&S.nwaits, 0);
+  atomic_store(&S.poll_until, INT64_MAX);
+  atomic_store(&S.mon_idle, false);
+  S.mon_poked = false;
   for (int i = 0; i < EI_SHARDS; i++) {
     struct reactor *r = &RX[i];
     r->mu = m;
-    if (r->ep >= 0) close(r->ep);
-    if (r->evfd >= 0) close(r->evfd);
-    r->ep = r->evfd = -1;
+    if (had && r->ep >= 0) close(r->ep);
+    r->ep = -1;
+    atomic_store(&r->next_dl, INT64_MAX);
     r->hn = 0;
     r->nfds = 0;
     free(r->fds);
@@ -1792,18 +1970,30 @@ static void sched_init(void) {
   nshards = nw / 2 < 1 ? 1 : (nw / 2 > EI_SHARDS ? EI_SHARDS : nw / 2);
   for (int k = 0; k < EI_SHARDS; k++) {
     struct reactor *r = &RX[k];
-    r->ep = r->evfd = -1;
+    r->ep = -1;
+    atomic_store(&r->next_dl, INT64_MAX);
   }
-  for (int k = 0; k < nshards; k++) {
-    struct reactor *r = &RX[k];
-    r->ep = epoll_create1(EPOLL_CLOEXEC);
-    r->evfd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-    if (r->ep < 0 || r->evfd < 0) return;
+  S.mep = epoll_create1(EPOLL_CLOEXEC);
+  S.evfd = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+  if (S.mep < 0 || S.evfd < 0) return;
+  atomic_store(&S.poll_until, INT64_MAX);
+  {
     struct epoll_event ev;
     memset(&ev, 0, sizeof ev);
     ev.events = EPOLLIN;
     ev.data.u64 = UINT64_MAX;
-    if (epoll_ctl(r->ep, EPOLL_CTL_ADD, r->evfd, &ev) != 0) return;
+    if (epoll_ctl(S.mep, EPOLL_CTL_ADD, S.evfd, &ev) != 0) return;
+  }
+  for (int k = 0; k < nshards; k++) {
+    struct reactor *r = &RX[k];
+    r->ep = epoll_create1(EPOLL_CLOEXEC);
+    if (r->ep < 0) return;
+    /* the poller waits on the reactors' sets through its own: a set is readable while it has events */
+    struct epoll_event ev;
+    memset(&ev, 0, sizeof ev);
+    ev.events = EPOLLIN;
+    ev.data.u64 = (uint64_t)k;
+    if (epoll_ctl(S.mep, EPOLL_CTL_ADD, r->ep, &ev) != 0) return;
   }
   pthread_once(&fault_once, fault_handlers_install);
   S.maxw = nw;
@@ -1814,12 +2004,10 @@ static void sched_init(void) {
     }
   }
   S.maxw = maxw;
-  for (int k = 0; k < nshards; k++) {
-    RX[k].th.run = reactor_main;
-    RX[k].th.arg = &RX[k];
-    RX[k].th.task = NULL;
-    if (!thread_start_guarded(&RX[k].th)) return;
-  }
+  S.mon_th.run = monitor_main;
+  S.mon_th.arg = NULL;
+  S.mon_th.task = NULL;
+  if (!thread_start_guarded(&S.mon_th)) return;
   if (&ec_block_hook) atomic_store(&ec_block_hook, &block_ops);
   S.on = true;
 }

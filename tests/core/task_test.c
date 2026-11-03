@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -671,6 +672,53 @@ static void test_parker_fork(void) {
 }
 
 
+// ---- an idle program is idle: tasks blocked on descriptors and long timers use no CPU
+
+static void *idle_fd_waiter(void *arg) {
+  int *fds = arg;
+  ec_fd_wait(fds[0], 1, -1);
+  return NULL;
+}
+
+static void *idle_sleeper(void *arg) {
+  (void)arg;
+  ec_sleep_ns(3600LL * 1000000000LL);
+  return NULL;
+}
+
+static double cpu_s(void) {
+  struct rusage ru;
+  getrusage(RUSAGE_SELF, &ru);
+  return (double)ru.ru_utime.tv_sec + (double)ru.ru_stime.tv_sec + (double)(ru.ru_utime.tv_usec + ru.ru_stime.tv_usec) / 1e6;
+}
+
+static void test_idle_cpu(void) {
+  enum { W = 200, Z = 200 };
+  static int pipes[W][2];
+  static ei_thread wt[W], zt[Z];
+  for (int i = 0; i < W; i++) {
+    CHECK(pipe(pipes[i]) == 0);
+    ei_thread_start(&wt[i], idle_fd_waiter, pipes[i]);
+  }
+  for (int i = 0; i < Z; i++) ei_thread_start(&zt[i], idle_sleeper, NULL);
+  struct timespec ts = {0, 200 * 1000 * 1000};
+  nanosleep(&ts, NULL); /* everything parks, the pool settles */
+  double c0 = cpu_s();
+  ts.tv_nsec = 0;
+  ts.tv_sec = 1;
+  nanosleep(&ts, NULL);
+  double used = cpu_s() - c0;
+  CHECK(used < 0.15); /* a second of waiting: a busy loop would be near 1.0 */
+  for (int i = 0; i < W; i++) {
+    CHECK(write(pipes[i][1], "x", 1) == 1);
+    ei_thread_join(&wt[i]);
+    ei_thread_destroy(&wt[i]);
+    close(pipes[i][0]);
+    close(pipes[i][1]);
+  }
+  /* the sleepers stay (an hour): their tasks are abandoned with the process */
+}
+
 /* TASK_TEST_V=1 names each test as it starts; TASK_TEST_ONLY=parker runs those whose name has it */
 #define RUN(f)                                                                  \
   do {                                                                          \
@@ -706,6 +754,7 @@ int main(int argc, char **argv) {
   RUN(test_fd_wait2);
   RUN(test_trap_across_park);
   RUN(test_starvation_guard);
+  RUN(test_idle_cpu);
   RUN(test_parker_basic);
   RUN(test_parker_stale_and_many);
   RUN(test_parker_many_tasks);
