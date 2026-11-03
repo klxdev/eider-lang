@@ -1,0 +1,13 @@
+ok true
+ok false
+err cancelled
+err deadline exceeded
+true
+err cancelled
+true
+true
+Interrupted: read: cancelled
+read 3
+TimedOut
+0
+exit 0

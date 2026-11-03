@@ -34,6 +34,7 @@ import core.os
 import std.error
 import std.time
 import std.net
+import std.task
 
 // ---- errors
 
@@ -406,6 +407,52 @@ impl Fd {
             if dl.expired() { return Err(timed_out(what)) }
         }
         Ok(())
+    }
+}
+
+impl Fd {
+    /// `wait` that also ends when `tok` is cancelled or expires (decision C841): Err of kind
+    /// `Interrupted` ("<what>: cancelled") for a cancelled token, `TimedOut` for an expired
+    /// one or for `dl`.
+    fn wait_tok(self, interest: i32, tok: task.Token, dl: time.Deadline, what: str) -> Result[(), Error] uses io, clock {
+        match tok.wait_fd(self.fd, interest, dl) {
+            Ok(true) => Ok(())
+            Ok(false) => Err(timed_out(what))
+            Err(r) => {
+                if r == String.from("deadline exceeded") { return Err(timed_out(what)) }
+                let mut m = String.from(what)
+                m.push_str(": ")
+                m.append(r)
+                Err(Error(Interrupted, m))
+            }
+        }
+    }
+
+    /// `read_by` that `tok.cancel()` interrupts: the wait ends at once with `Interrupted`, and
+    /// nothing is consumed. The token's own deadline applies too.
+    fn read_tok(inout self, max: usize, tok: task.Token) -> Result[List[u8], Error] uses io, clock {
+        if max == 0 { return Err(bad_max()) }
+        while true {
+            self.wait_tok(READY_READ, tok, time.never(), "read")?
+            let n = sys.read_fd(self.fd, max as i64)
+            if n >= 0 { return Ok(sys.take()) }
+            if os.err_kind(n) != 1 { return Err(os_error("read", n)) }
+        }
+        Ok(List.new())
+    }
+
+    /// `write_by` that `tok.cancel()` interrupts: `Interrupted`, and nothing is written.
+    fn write_tok(inout self, data: List[u8], tok: task.Token) -> Result[usize, Error] uses io, clock {
+        if data.len() == 0 { return Ok(0) }
+        while true {
+            self.wait_tok(READY_WRITE, tok, time.never(), "write")?
+            if self.fd == 1 || self.fd == 2 { return std_write(self.fd, data) }
+            sys.send(data)
+            let n = os.fd_write(self.fd)
+            if n >= 0 { return Ok(n as usize) }
+            if os.err_kind(n) != 1 { return Err(os_error("write", n)) }
+        }
+        Ok(0)
     }
 }
 

@@ -3,8 +3,8 @@
 //! - `Token`: a cancellation token with an optional deadline. Tokens form a tree: cancelling a
 //!   token cancels every token made from it, and a child's deadline is never later than its
 //!   parent's. A token past its deadline counts as cancelled. Cancellation is cooperative:
-//!   code checks `is_cancelled`/`check`, or waits with the token's deadline or a `cancel_case`
-//!   in a select; nothing is interrupted from outside.
+//!   code checks `is_cancelled`/`check`, or waits with the token's deadline, a `cancel_case`
+//!   in a select, or `wait_fd` for a descriptor; nothing is interrupted from outside.
 //! - `Group[T]`: a parent that starts children (each gets the group's token) and waits for
 //!   all of them. The first child that fails cancels the others; `wait` always waits for
 //!   every child (no child outlives its group), then gives every result in start order or
@@ -22,8 +22,10 @@
 //! These run on OS threads; when the compiler makes stackless tasks from functions that use a
 //! blocking capability (C4), the same API runs them on the pool's workers instead.
 
+import core.os
 import std.sync
 import std.chan
+import std.fd
 import std.time
 
 const NEVER: i64 = 9223372036854775807
@@ -116,6 +118,56 @@ impl Token {
         let mut cases: List[chan.Case[bool]] = List.new()
         cases.push(c)
         chan.select(cases, dl).is_some()
+    }
+
+    /// Waits until the descriptor `f` is ready for `interest` (`fd.READY_READ`, `fd.READY_WRITE`,
+    /// or both), the token is cancelled or expires, or `dl` passes: Ok(true) when `f` is ready
+    /// (also when the next read or write would report an error or end of file), Ok(false) when
+    /// `dl` passed, Err("cancelled") or Err("deadline exceeded") when the token ended first
+    /// (it is checked first: a cancelled token waits for nothing). A task or thread in this
+    /// wait is woken by `cancel` at once, not at its own deadline (decision C841). Cancel-safe:
+    /// it only waits.
+    fn wait_fd(self, f: i32, interest: i32, dl: time.Deadline) -> Result[bool, String] uses io, clock {
+        match self.reason() {
+            Some(r) => { return Err(r) }
+            None => {}
+        }
+        let me = sync.parker()
+        // register in the same critical section that looks at the state (rule 2 of std/sync)
+        let c = self.st.modify(|inout t: TokSt| -> bool {
+            if !t.cancelled { t.waiters.push(me) }
+            t.cancelled
+        })
+        let until = dl.earlier(self.deadline())
+        let mut out: Result[bool, String] = Ok(false)
+        if c {
+            out = Err(String.from("cancelled"))
+        } else {
+            while true {
+                let n = os.fd_wait_ev(f, interest, me.h, until.timeout_ms())
+                if n < 0 {
+                    out = Err(fd.error("wait", n))
+                    break
+                }
+                if (n & 255) != 0 {
+                    out = Ok(true)
+                    break
+                }
+                if n != 0 || until.expired() {
+                    // the unpark (a cancel) or the deadline of the token or of `dl`
+                    match self.reason() {
+                        Some(r) => { out = Err(r) }
+                        None => { out = Ok(false) }
+                    }
+                    if n != 0 && out.is_ok() { continue }
+                    break
+                }
+            }
+        }
+        // leave the token's list before closing the parker (rule 1)
+        self.st.modify(|inout t: TokSt| -> () { t.waiters = sync.without(t.waiters, me) })
+        me.close()
+        out
     }
 
     /// A select case that is ready, producing `u`, once the token is cancelled or expires.

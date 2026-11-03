@@ -1,0 +1,158 @@
+// Cancellation reaches descriptor waits (decision C841): `Token.wait_fd` and the stream
+// `Fd.read_tok`/`write_tok` end at once when the token is cancelled or expires, not at their
+// own deadline, in a task or a thread; a ready descriptor and a cancel can race and either
+// outcome is whole (the byte is never lost).
+
+import core.sys
+import std.fd
+import std.stream
+import std.task
+import std.time
+
+fn show(r: Result[bool, String]) -> String {
+    match r {
+        Ok(b) => "ok {b}"
+        Err(e) => "err {e}"
+    }
+}
+
+fn basics() uses io, clock {
+    let p = fd.pipe().unwrap()
+    // ready
+    let w = fd.write(p.w, sys.lit("A"))
+    let t1 = task.root()
+    print(show(t1.wait_fd(p.r, fd.READY_READ, time.after_ms(1000))))
+    let b = fd.read(p.r, 8)
+    // nothing: the deadline passes first
+    print(show(t1.wait_fd(p.r, fd.READY_READ, time.after_ms(30))))
+    // a token that is cancelled already waits for nothing
+    let t2 = task.root()
+    t2.cancel()
+    print(show(t2.wait_fd(p.r, fd.READY_READ, time.after_ms(1000))))
+    // a token whose deadline passes first
+    let t3 = task.root_until(time.after_ms(40))
+    let t0 = time.mono_ms()
+    print(show(t3.wait_fd(p.r, fd.READY_READ, time.never())))
+    print(time.mono_ms() - t0 < 1000)
+    let c1 = fd.close(p.r)
+    let c2 = fd.close(p.w)
+}
+
+/// A task waits on a pipe with a long deadline; the cancel ends the wait at once.
+fn cancel_wakes() -> bool uses io, threads, clock {
+    let p = fd.pipe().unwrap()
+    let r = p.r
+    let tok = task.root()
+    let waiter = spawn(|| -> String {
+        let t0 = time.mono_ms()
+        let res = show(tok.wait_fd(r, fd.READY_READ, time.after_ms(20000)))
+        if time.mono_ms() - t0 > 5000 { return String.from("late") }
+        res
+    })
+    time.sleep_ms(60)
+    tok.cancel()
+    let res = waiter.join()
+    print(res)
+    let c1 = fd.close(p.r)
+    let c2 = fd.close(p.w)
+    res == String.from("err cancelled")
+}
+
+/// 400 tasks wait on children of one token; cancelling the root wakes them all.
+fn many_waiters(n: i64) -> bool uses io, threads, clock {
+    let p = fd.pipe().unwrap()
+    let r = p.r
+    let root = task.root()
+    var ts: List[Task[i64]] = List.new()
+    for i in 0..n {
+        let kid = root.child()
+        ts.push(spawn(|| -> i64 {
+            match kid.wait_fd(r, fd.READY_READ, time.after_ms(20000)) {
+                Ok(b) => 0
+                Err(e) => 1
+            }
+        }))
+    }
+    time.sleep_ms(100)
+    let t0 = time.mono_ms()
+    root.cancel()
+    var cancelled: i64 = 0
+    for t in ts { cancelled += t.join() }
+    let c1 = fd.close(p.r)
+    let c2 = fd.close(p.w)
+    cancelled == n && time.mono_ms() - t0 < 3000
+}
+
+/// The stream calls: Interrupted for a cancel, nothing consumed.
+fn streams() uses io, threads, clock {
+    let p = fd.pipe().unwrap()
+    let r = p.r
+    let tok = task.root()
+    let reader = spawn(|| -> String {
+        var s = stream.Fd(r)
+        match s.read_tok(16, tok) {
+            Ok(b) => "read {b.len()}"
+            Err(e) => "{e.kind}: {e.message}"
+        }
+    })
+    time.sleep_ms(60)
+    tok.cancel()
+    print(reader.join())
+    // the same descriptor still reads what arrives, with another token
+    let w = fd.write(p.w, sys.lit("abc"))
+    var s = stream.Fd(r)
+    match s.read_tok(16, task.root()) {
+        Ok(b) => print("read {b.len()}")
+        Err(e) => print("{e.kind}")
+    }
+    // a token that expired: TimedOut
+    var s2 = stream.Fd(r)
+    match s2.read_tok(16, task.root_until(time.after_ms(30))) {
+        Ok(b) => print("read {b.len()}")
+        Err(e) => print("{e.kind}")
+    }
+    let c1 = fd.close(p.r)
+    let c2 = fd.close(p.w)
+}
+
+/// A byte arrives while the token is cancelled: either result is whole, and the byte is
+/// still there when the wait said Cancelled.
+fn race(rounds: i64) -> i64 uses io, threads, clock {
+    var bad: i64 = 0
+    var ready: i64 = 0
+    var cancelled: i64 = 0
+    for i in 0..rounds {
+        let p = fd.pipe().unwrap()
+        let r = p.r
+        let wr = p.w
+        let tok = task.root()
+        let waiter = spawn(|| -> String show(tok.wait_fd(r, fd.READY_READ, time.after_ms(5000))))
+        time.sleep_ns((i % 25) * 20000)
+        if i % 2 == 0 {
+            let w = fd.write(wr, sys.lit("7"))
+            tok.cancel()
+        } else {
+            tok.cancel()
+            let w = fd.write(wr, sys.lit("7"))
+        }
+        let res = waiter.join()
+        if res == String.from("ok true") { ready += 1 } else if res == String.from("err cancelled") { cancelled += 1 } else { bad += 1 }
+        // either way the byte is readable afterwards
+        match fd.read_by(r, 8, time.after_ms(1000)) {
+            Ok(x) => { if x.is_none() { bad += 1 } }
+            Err(e) => { bad += 1 }
+        }
+        let c1 = fd.close(p.r)
+        let c2 = fd.close(p.w)
+    }
+    if ready + cancelled != rounds { bad += 1 }
+    bad
+}
+
+fn main() uses io, threads, clock {
+    basics()
+    print(cancel_wakes())
+    print(many_waiters(400))
+    streams()
+    print(race(400))
+}
