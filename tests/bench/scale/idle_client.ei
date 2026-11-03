@@ -1,0 +1,43 @@
+// The client side of idle_server.ei: opens TARGET connections to PORTS consecutive ports from
+// PORT on 127.0.0.1, keeps them open and silent, prints `CONNECTED n`, waits for end of file
+// on stdin, exits.
+//   PORT=19000 PORTS=40 TARGET=100000 idle_client
+
+import core.sys
+import std.env
+import std.fd
+import std.net
+import std.stream
+import std.time
+
+fn number(name: str, dflt: i64) -> i64 uses io {
+    match env.get(sys.lit(name)) {
+        Some(v) => {
+            var n: i64 = 0
+            for b in v { n = n * 10 + (b - 48) as i64 }
+            n
+        }
+        None => dflt
+    }
+}
+
+fn main() uses io, net, clock {
+    let port = number("PORT", 19000)
+    let ports = number("PORTS", 40)
+    let target = number("TARGET", 100000)
+    var open: List[i32] = List.new()
+    var failed: i64 = 0
+    for i in 0..target {
+        let a = net.ipv4(127, 0, 0, 1, (port + i % ports) as i32)
+        match stream.connect_by(a, time.after_ms(10000)) {
+            Ok(s) => { open.push(s.fd) }
+            Err(e) => {
+                failed += 1
+                if failed == 1 { print("first failure at {i}: {e.message}") }
+            }
+        }
+    }
+    print("CONNECTED {open.len()} failed {failed}")
+    let r = fd.read(0, 1)
+    env.exit(0)
+}

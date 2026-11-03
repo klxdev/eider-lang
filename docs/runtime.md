@@ -455,7 +455,14 @@ Linux 7.2, 16 CPUs, gcc -O2, `tests/bench/scale/tasks_scale.ei` (`TASKS=n`, run
 | release and join of 100,000 | | 10 to 12 us each (most of it unmapping the stacks past the cache of 4,096) |
 | echo server, 1,000 connections, 50 round trips each (tests/bench/scale/echo.ei) | 216,000 round trips/s | 190,000 (one reactor thread: 57,000; eight: see C835) |
 | echo server, 10,000 connections | `cannot create a thread` | 146,000 round trips/s |
+| idle connections, one task each parked on its socket (`scripts/idle-bench.sh N`, tests/bench/scale/idle_server.ei) | `cannot create a thread` far below 10,000 | 100,000: 459 MiB resident (4.8 KB each, 2 mappings each), 262,074 reached in 111 s: 1.2 GiB, 524,252 mappings; the system as a whole (sockets included) falls by 14.6 KB per connection |
 | the compiler's own `emit-llvm` run (`bench.sh` self) | 375 ms | 377 ms (interleaved, 9 runs each; the compiler does not spawn) |
+
+The idle-connection run asked for 500,000 and stalled at 262,074 descriptors (the script reports a
+30 s stall; the cause was not found: the mapping and descriptor limits were not reached). The per
+task cost is flat from 20,000 to 262,000, and the kernel's socket memory is about two thirds of
+the system's cost per connection, so a stackless transform (M4) would save at most a third of
+the memory of a million idle connections.
 
 The echo server is slower than threads at 1,000 connections because every wake-up passes
 through a reactor thread and a worker (two hand-offs where a blocked thread has one); a worker

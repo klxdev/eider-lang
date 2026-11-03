@@ -1,0 +1,80 @@
+// Idle connections (docs/runtime.md "Tasks: measured", M4 of docs/design/lightweight-tasks.md):
+// a server with a task per connection, each parked on its socket. Run it, then idle_client.ei
+// against it (scripts/idle-bench.sh does both and measures the server process):
+//   PORT=19000 PORTS=40 TARGET=100000 idle_server
+// Listens on PORTS consecutive ports from PORT (a client's ephemeral ports give 28,000
+// connections per destination port), accepts TARGET connections, prints `READY n`, then waits
+// for end of file on stdin (so a script can measure the process) and exits.
+
+import core.sys
+import std.env
+import std.fd
+import std.net
+import std.stream
+import std.sync
+import std.task
+import std.time
+
+fn number(name: str, dflt: i64) -> i64 uses io {
+    match env.get(sys.lit(name)) {
+        Some(v) => {
+            var n: i64 = 0
+            for b in v { n = n * 10 + (b - 48) as i64 }
+            n
+        }
+        None => dflt
+    }
+}
+
+fn idle_conn(raw: i32, up: sync.Lock[i64]) uses io, clock {
+    up.modify(|inout n: i64| -> () { n += 1 })
+    // parked until the peer sends or closes (neither happens while the script measures)
+    let r = fd.wait_ready(raw, fd.READY_READ, time.never())
+    let c = fd.close(raw)
+}
+
+fn acceptor(l: i32, up: sync.Lock[i64]) uses io, net, clock, threads {
+    var held: List[Task[()]] = List.new()
+    while true {
+        match stream.accept_by(l, time.never()) {
+            Ok(c) => {
+                let raw = c.fd.fd
+                held.push(spawn(|| idle_conn(raw, up)))
+            }
+            Err(e) => {
+                // out of descriptors or the peer went: look again soon
+                time.sleep_ms(10)
+            }
+        }
+    }
+}
+
+fn listen_on(a: net.Addr) -> i32 uses net {
+    let s = net.socket(a.family, net.STREAM, true).unwrap()
+    let o = net.set_option(s, net.REUSE_ADDR, 1).unwrap()
+    let b = net.bind(s, a).unwrap()
+    let l = net.listen(s, 4096).unwrap()
+    s
+}
+
+fn main() uses io, net, clock, threads {
+    let port = number("PORT", 19000)
+    let ports = number("PORTS", 40)
+    let target = number("TARGET", 100000)
+    let up: sync.Lock[i64] = sync.lock(0)
+    var acceptors: List[Task[()]] = List.new()
+    for i in 0..ports {
+        let l = listen_on(net.ipv4(127, 0, 0, 1, (port + i) as i32))
+        let u = up
+        acceptors.push(spawn(|| acceptor(l, u)))
+    }
+    var seen: i64 = 0
+    while seen < target {
+        time.sleep_ms(100)
+        seen = up.get()
+    }
+    print("READY {seen}")
+    // wait for end of file on stdin: the script measures now
+    let r = fd.read(0, 1)
+    env.exit(0)
+}
