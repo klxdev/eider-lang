@@ -1,0 +1,32 @@
+// --profile: tasks (scripts/test-compiler.sh, "profile"). Twenty tasks each sleep, wait for a
+// descriptor with a deadline, wait on a channel and end; main joins them. The waits are counted
+// where the task waits (sleep, fd), the tasks where they were spawned (task), the joins in main.
+import core.sys
+import std.fd
+import std.time
+
+fn worker(c: Chan[i64], r: i32, k: i64) -> i64 uses io, clock {
+    time.sleep_ms(5)
+    let ready = fd.wait_ready(r, fd.READY_READ, time.after_ms(5))
+    match c.recv() {
+        Some(v) => v + k
+        None => 0
+    }
+}
+
+fn main() uses io, threads, clock {
+    let p = fd.pipe().unwrap()
+    let c: Chan[i64] = Chan.new()
+    let mut ts: List[Task[i64]] = List.new()
+    for k in 0..20 {
+        let cc = c
+        let rr = p.r
+        let kk: i64 = k as i64
+        ts.push(spawn(|| -> i64 worker(cc, rr, kk)))
+    }
+    time.sleep_ms(50)
+    for k in 0..20 { c.send(1) }
+    let mut sum: i64 = 0
+    for t in ts { sum += t.join() }
+    print(sum)
+}

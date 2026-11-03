@@ -1390,6 +1390,7 @@ typedef struct {
   int64_t (*sleep_ns)(int64_t ns);
   int64_t (*fd_wait2)(int32_t fd, int32_t interest, int32_t fd2, int32_t interest2, int64_t timeout_ms);
   int64_t (*wait_ev)(int32_t fd, int32_t interest, int64_t parker, int64_t timeout_ms);
+  void (*dump)(void);
 } ec_block_ops;
 _Atomic(const ec_block_ops *) ec_block_hook;
 
@@ -1872,6 +1873,15 @@ static int64_t pk_wait(int32_t fd, int32_t interest, int64_t h, int64_t timeout_
   }
   if (res >= 0 && pend) res |= PK_FLAG;
   return res;
+}
+
+/* Prints the live tasks to stderr (number, state, what each waits for, how long, its function):
+   1 when there is a scheduler to ask, 0 when the program runs on threads. */
+EC_FN(int64_t, ec_task_dump, (void)) {
+  const ec_block_ops *blk = atomic_load(&ec_block_hook);
+  if (!blk || !blk->dump) return 0;
+  blk->dump();
+  return 1;
 }
 
 /* Waits until unparked or timeout_ms passes (< 0 forever, 0 not at all): 1 when unparked (the

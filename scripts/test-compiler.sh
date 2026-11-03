@@ -715,7 +715,7 @@ at() { grep -n -F "$1" "$2" | head -1 | cut -d: -f1; }
 pfail=0
 pcheck() { if ! grep -q -- "$1" "$2"; then echo "FAIL profile: $3 (no \`$1\` in $2)"; pfail=1; fi; }
 pbuild() { EIDER_CACHE=off $new build compiler/tests/profile/$1.ei --profile -o $pdir/$1 >$pdir/$1.build 2>&1 || { echo "FAIL profile: build $1"; cat $pdir/$1.build; pfail=1; }; }
-for t in cow conc cpu ref_trap; do pbuild $t; done
+for t in cow conc tasks cpu ref_trap; do pbuild $t; done
 # memory events
 (cd $pdir && EIDER_PROF=$pdir/cow.prof ./cow >cow.out 2>&1)
 src=compiler/tests/profile/cow.ei
@@ -740,6 +740,15 @@ pcheck '"key":"work","value":"bump"' $p "conc: the label"
 # (9 threads: main and 8 spawns; main ends too, since it runs on a runtime thread: ei_main)
 pcheck '"threads_started":9,"threads_exited":9' $p "conc: threads"
 grep -q '^320$' $pdir/conc.out || { echo "FAIL profile: conc output"; pfail=1; }
+# tasks: the waits of tasks (descriptor, timer, join) and the tasks where they were spawned
+(cd $pdir && EIDER_PROF=$pdir/tasks.prof ./tasks >tasks.out 2>&1)
+p=$pdir/tasks.prof
+src=compiler/tests/profile/tasks.ei
+pcheck "\"kind\":\"task\",\"fn\":$(fnid main $p),\"line\":$(at 'ts.push(spawn(' $src),\"n\":20," $p "tasks: 20 tasks, counted where they were spawned"
+pcheck '"kind":"sleep",' $p "tasks: timer waits"
+pcheck '"kind":"fd",' $p "tasks: descriptor waits"
+pcheck '"kind":"join",' $p "tasks: join waits"
+grep -q '^210$' $pdir/tasks.out || { echo "FAIL profile: tasks output"; pfail=1; }
 # cpu samples, labels, a snapshot and the file at exit
 (cd $pdir && EIDER_PROF=$pdir/cpu.prof EIDER_PROF_HZ=500 ./cpu >cpu.out 2>&1)
 p=$pdir/cpu.prof

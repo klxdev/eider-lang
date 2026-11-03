@@ -746,9 +746,15 @@ struct ei_task {
   bool in_wq;
   ei_task *joiners;
   ei_try_frame *try_top;
+  /* what it waits for, for the listing (written by the task, read by the dump) */
+  atomic_int wkind, wflags;
+  atomic_int_least64_t warg, warg2, wsince;
+  ei_task *rprev, *rnext; /* the registry of live tasks */
 #ifdef EI_RT_PROFILE
   uint16_t pdepth;
   ei_prof_frame *pframes;
+  uint64_t pwhere; /* the spawn site (ei_prof_here) */
+  uint64_t pborn;
 #endif
 #ifdef EI_TASK_ASAN
   void *fake;
@@ -1090,6 +1096,8 @@ static void switch_in(ei_worker *w, ei_task *t) {
   tls_task_set(w, NULL);
 }
 
+static void reg_remove(ei_task *t);
+
 static void *worker_main(void *p) {
   ei_worker *w = p;
   tls_task_set(w, NULL);
@@ -1122,6 +1130,10 @@ static void *worker_main(void *p) {
       lq_push(w, t);
       break;
     default: /* Y_EXIT */
+      reg_remove(t);
+#ifdef EI_RT_PROFILE
+      if (t->pwhere) ei_prof_at(EI_PEV_TASK, t->pwhere, prof_now() - t->pborn + 1);
+#endif
 #ifdef EI_TASK_TSAN
       __tsan_destroy_fiber(t->fiber);
 #endif
@@ -1230,6 +1242,100 @@ static bool worker_add(void) {
   return true;
 }
 
+// ---- the registry of live tasks and the listing (decision C843)
+
+enum { W_NONE, W_CHAN, W_JOIN, W_FD, W_PARK, W_SLEEP };
+#define REG_SHARDS 16
+static struct {
+  pthread_mutex_t mu;
+  ei_task *head;
+} REG[REG_SHARDS];
+static atomic_int dump_req;
+
+
+static int64_t mono_ns(void);
+
+static void reg_add(ei_task *t) {
+  int k = (int)(t->id % REG_SHARDS);
+  pthread_mutex_lock(&REG[k].mu);
+  t->rprev = NULL;
+  t->rnext = REG[k].head;
+  if (REG[k].head) REG[k].head->rprev = t;
+  REG[k].head = t;
+  pthread_mutex_unlock(&REG[k].mu);
+}
+
+static void reg_remove(ei_task *t) {
+  int k = (int)(t->id % REG_SHARDS);
+  pthread_mutex_lock(&REG[k].mu);
+  if (t->rprev) t->rprev->rnext = t->rnext;
+  else REG[k].head = t->rnext;
+  if (t->rnext) t->rnext->rprev = t->rprev;
+  pthread_mutex_unlock(&REG[k].mu);
+}
+
+/* A task is about to park for `kind`. */
+static void wait_set(ei_task *t, int kind, int64_t arg, int64_t arg2, int flags) {
+  atomic_store_explicit(&t->warg, arg, memory_order_relaxed);
+  atomic_store_explicit(&t->warg2, arg2, memory_order_relaxed);
+  atomic_store_explicit(&t->wflags, flags, memory_order_relaxed);
+  atomic_store_explicit(&t->wsince, mono_ns(), memory_order_relaxed);
+  atomic_store_explicit(&t->wkind, kind, memory_order_release);
+}
+static void wait_clear(ei_task *t) { atomic_store_explicit(&t->wkind, W_NONE, memory_order_release); }
+
+/* Prints every live task: number, state, what it waits for and for how long, the function it
+   runs (an address: `addr2line -e program`). EIDER_TASK_DUMP=1 and SIGQUIT, or task.dump(). */
+static void task_dump_all(void) {
+  static const char *const st[] = {"running", "parked", "notified", "ready"};
+  int64_t now = mono_ns();
+  long live = (long)atomic_load(&S.live);
+  fprintf(stderr, "== tasks: %ld live, %d workers (%d idle) ==\n", live, atomic_load(&S.nw), atomic_load(&S.nidle));
+  for (int k = 0; k < REG_SHARDS; k++) {
+    pthread_mutex_lock(&REG[k].mu);
+    for (ei_task *t = REG[k].head; t; t = t->rnext) {
+      int state = atomic_load(&t->state);
+      int kind = atomic_load_explicit(&t->wkind, memory_order_acquire);
+      char what[96] = "";
+      int64_t a = atomic_load_explicit(&t->warg, memory_order_relaxed);
+      int64_t b = atomic_load_explicit(&t->warg2, memory_order_relaxed);
+      int fl = atomic_load_explicit(&t->wflags, memory_order_relaxed);
+      if (state == T_PARKED || state == T_NOTIFIED) {
+        switch (kind) {
+        case W_CHAN: snprintf(what, sizeof what, "channel %p", (void *)(uintptr_t)a); break;
+        case W_JOIN: snprintf(what, sizeof what, "join #%lld", (long long)a); break;
+        case W_FD:
+          snprintf(what, sizeof what, "fd %lld %s", (long long)a, (fl & 3) == 3 ? "read/write" : (fl & 2) ? "write" : "read");
+          if (b >= 0) snprintf(what + strlen(what), sizeof what - strlen(what), " and fd %lld", (long long)b);
+          if (fl & 16) snprintf(what + strlen(what), sizeof what - strlen(what), " or unpark");
+          break;
+        case W_PARK: snprintf(what, sizeof what, "unpark"); break;
+        case W_SLEEP: snprintf(what, sizeof what, "sleep"); break;
+        default: break;
+        }
+      }
+      int64_t since = atomic_load_explicit(&t->wsince, memory_order_relaxed);
+      char dur[32] = "";
+      if (*what && since > 0) snprintf(dur, sizeof dur, " for %.3f s", (double)(now - since) / 1e9);
+      fprintf(stderr, "  #%llu %s%s%s%s  run %p\n", (unsigned long long)t->id, st[state & 3], *what ? ": " : "", what, dur, (void *)(uintptr_t)t->run);
+    }
+    pthread_mutex_unlock(&REG[k].mu);
+  }
+  fflush(stderr);
+}
+
+static void dump_handler(int sig) {
+  (void)sig;
+  atomic_store(&dump_req, 1);
+  int e = errno;
+  if (S.evfd >= 0) {
+    uint64_t one = 1;
+    ssize_t nw = write(S.evfd, &one, sizeof one);
+    (void)nw;
+  }
+  errno = e;
+}
+
 // ---- parking
 
 /* Called by a task: switch to its worker's loop and wait there to be unparked. A task
@@ -1333,20 +1439,30 @@ static ei_task *task_create(void *(*run)(void *), void *arg) {
   t->fiber = __tsan_create_fiber(0);
 #endif
   ctx_make(&t->ctx, t->map + t->guard, t->map_len - t->guard, t);
+#ifdef EI_RT_PROFILE
+  t->pwhere = ei_prof_here();
+  t->pborn = prof_now();
+#endif
+  reg_add(t);
   task_enqueue(t);
   return t;
 }
 
 /* Task.join: parks the calling task, or blocks the calling thread, until t has ended. */
 static void task_join(ei_task *t) {
+#ifdef EI_RT_PROFILE
+  uint64_t jt0 = !t->done && prof_conc_on() ? prof_now() : 0;
+#endif
   pthread_mutex_lock(&join_mu);
   while (!t->done) {
     ei_task *me = task_self();
     if (me) {
       me->wnext = t->joiners;
       t->joiners = me;
+      wait_set(me, W_JOIN, (int64_t)t->id, -1, 0);
       pthread_mutex_unlock(&join_mu);
       task_park(me);
+      wait_clear(me);
       pthread_mutex_lock(&join_mu);
       /* woken for another reason (a stale permit): unlink and wait again */
       if (!t->done) {
@@ -1364,6 +1480,9 @@ static void task_join(ei_task *t) {
     }
   }
   pthread_mutex_unlock(&join_mu);
+#ifdef EI_RT_PROFILE
+  if (jt0) prof_wait(EI_PEV_JOIN, prof_now() - jt0 + 1);
+#endif
 }
 
 // ---- channels: waiting tasks
@@ -1411,8 +1530,10 @@ static void chan_wait(ei_chan *c) {
     return;
   }
   wq_push(c, me);
+  wait_set(me, W_CHAN, (int64_t)(uintptr_t)c, -1, 0);
   ei_mutex_unlock(&c->mu);
   task_park(me);
+  wait_clear(me);
   ei_mutex_lock(&c->mu);
   if (me->in_wq) wq_remove(c, me);
 }
@@ -1657,6 +1778,7 @@ static void netpoll(int timeout_ms, ei_batch *b) {
       uint64_t v;
       ssize_t nr = read(S.evfd, &v, sizeof v);
       (void)nr;
+      if (atomic_exchange(&dump_req, 0)) task_dump_all();
     } else {
       shard_poll(&RX[d]);
     }
@@ -1725,6 +1847,7 @@ static void *monitor_main(void *arg) {
     }
     struct timespec ts = {0, 2 * 1000 * 1000};
     nanosleep(&ts, NULL);
+    if (atomic_exchange(&dump_req, 0)) task_dump_all();
     int64_t now = mono_ns();
     if (now - last_tick >= 10 * 1000 * 1000) {
       last_tick = now;
@@ -1771,6 +1894,9 @@ static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int32_t fd2, 
     if (a == 1) return PK_FLAG;
   }
   int64_t res = 0;
+#ifdef EI_RT_PROFILE
+  uint64_t pt0 = prof_conc_on() ? prof_now() : 0;
+#endif
   if (atomic_fetch_add(&S.nwaits, 1) == 0 && atomic_load(&S.nidle) == 0) mon_wake();
   pthread_mutex_lock(&r->mu);
   if (w.done) goto finish; /* unparked while we were attaching */
@@ -1818,6 +1944,8 @@ static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int32_t fd2, 
     if (atomic_load(&S.polling) && dl < atomic_load(&S.poll_until)) poll_poke();
   }
   pthread_mutex_unlock(&r->mu);
+  if (fd >= 0) wait_set(t, W_FD, fd, fd2, (interest & 3) | (pk ? 16 : 0));
+  else wait_set(t, pk ? W_PARK : W_SLEEP, 0, -1, 0);
   for (;;) {
     pthread_mutex_lock(&r->mu);
     bool d = w.done;
@@ -1825,12 +1953,16 @@ static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int32_t fd2, 
     if (d) break;
     task_park(t);
   }
+  wait_clear(t);
   pthread_mutex_lock(&r->mu);
 finish:
   res = w.result;
   pthread_mutex_unlock(&r->mu);
   atomic_fetch_sub(&S.nwaits, 1);
   if (pk) ec_pk_detach(pk, res >= 0 && (res & PK_FLAG) != 0);
+#ifdef EI_RT_PROFILE
+  if (pt0) prof_wait(fd >= 0 ? EI_PEV_FD : pk ? EI_PEV_PARK : EI_PEV_SLEEP, prof_now() - pt0 + 1);
+#endif
   return res;
 failed:
   /* not registered (or not for long): out of the lists and the heap, a wake that came is moot */
@@ -1840,6 +1972,9 @@ failed:
   pthread_mutex_unlock(&r->mu);
   atomic_fetch_sub(&S.nwaits, 1);
   if (pk) ec_pk_detach(pk, 0);
+#ifdef EI_RT_PROFILE
+  if (pt0) prof_wait(fd >= 0 ? EI_PEV_FD : pk ? EI_PEV_PARK : EI_PEV_SLEEP, prof_now() - pt0 + 1);
+#endif
   return res;
 }
 
@@ -1849,6 +1984,7 @@ typedef struct {
   int64_t (*sleep_ns)(int64_t ns);
   int64_t (*fd_wait2)(int32_t fd, int32_t interest, int32_t fd2, int32_t interest2, int64_t timeout_ms);
   int64_t (*wait_ev)(int32_t fd, int32_t interest, int64_t parker, int64_t timeout_ms);
+  void (*dump)(void);
 } ec_block_ops;
 extern _Atomic(const ec_block_ops *) ec_block_hook __attribute__((weak));
 
@@ -1888,7 +2024,7 @@ static int64_t hook_sleep_ns(int64_t ns) {
   return 0;
 }
 
-static const ec_block_ops block_ops = {hook_fd_wait, hook_sleep_ns, hook_fd_wait2, hook_wait_ev};
+static const ec_block_ops block_ops = {hook_fd_wait, hook_sleep_ns, hook_fd_wait2, hook_wait_ev, task_dump_all};
 
 static int64_t env_int(const char *name, int64_t dflt) {
   const char *v = getenv(name);
@@ -1929,6 +2065,11 @@ static void sched_atfork_child(void) {
     free(r->fds);
     r->fds = NULL;
   }
+  for (int k = 0; k < REG_SHARDS; k++) {
+    REG[k].mu = m;
+    REG[k].head = NULL;
+  }
+  atomic_store(&dump_req, 0);
   stk_mu = m;
   join_mu = m;
   join_cv = cv;
@@ -1964,6 +2105,7 @@ static void sched_init(void) {
   int maxw = (int)env_int("EIDER_WORKERS_MAX", 256);
   if (maxw < nw) maxw = nw;
   if (maxw > EI_MAX_WORKERS) maxw = EI_MAX_WORKERS;
+  for (int k = 0; k < REG_SHARDS; k++) pthread_mutex_init(&REG[k].mu, NULL);
   S.max_tasks = env_int("EIDER_TASK_MAX", 1000000);
   S.stack_size = (size_t)env_int("EIDER_TASK_STACK", (int64_t)EI_THREAD_STACK);
   if (S.stack_size < ((size_t)64 << 10)) S.stack_size = (size_t)64 << 10;
@@ -2004,6 +2146,18 @@ static void sched_init(void) {
     }
   }
   S.maxw = maxw;
+  {
+    const char *d = getenv("EIDER_TASK_DUMP");
+    if (d && *d && strcmp(d, "0") != 0) {
+      struct sigaction sa;
+      memset(&sa, 0, sizeof sa);
+      sa.sa_handler = dump_handler;
+      sa.sa_flags = SA_RESTART;
+      sigemptyset(&sa.sa_mask);
+      sigaction(SIGQUIT, &sa, NULL);
+
+    }
+  }
   S.mon_th.run = monitor_main;
   S.mon_th.arg = NULL;
   S.mon_th.task = NULL;

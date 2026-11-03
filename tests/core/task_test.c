@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/resource.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -719,6 +720,124 @@ static void test_idle_cpu(void) {
   /* the sleepers stay (an hour): their tasks are abandoned with the process */
 }
 
+// ---- the listing of live tasks: what each waits for
+
+int64_t ec_task_dump(void);
+
+static int dump_pipe[2];
+static int64_t dump_parker;
+static ei_chan dump_chan;
+static ei_thread dump_sleeper_th;
+
+static void *dump_fd_task(void *arg) {
+  (void)arg;
+  ec_fd_wait(dump_pipe[0], 1, -1);
+  return NULL;
+}
+static void *dump_sleep_task(void *arg) {
+  (void)arg;
+  ec_sleep_ns(60LL * 1000000000LL);
+  return NULL;
+}
+static void *dump_park_task(void *arg) {
+  (void)arg;
+  ec_parker_park(dump_parker, -1);
+  return NULL;
+}
+static void *dump_chan_task(void *arg) {
+  (void)arg;
+  int64_t v;
+  ei_chan_recv(&dump_chan, &v);
+  return NULL;
+}
+static void *dump_join_task(void *arg) {
+  (void)arg;
+  ei_thread_join(&dump_sleeper_th);
+  return NULL;
+}
+
+/* Runs f with stderr into a file; the text it printed (a static buffer). */
+static char cap[16384];
+static const char *capture(void (*f)(void)) {
+  char path[] = "/tmp/task_dump_XXXXXX";
+  int tmp = mkstemp(path);
+  fflush(stderr);
+  int saved = dup(2);
+  dup2(tmp, 2);
+  f();
+  fflush(stderr);
+  dup2(saved, 2);
+  close(saved);
+  lseek(tmp, 0, SEEK_SET);
+  ssize_t n = read(tmp, cap, sizeof cap - 1);
+  cap[n < 0 ? 0 : n] = 0;
+  close(tmp);
+  unlink(path);
+  return cap;
+}
+
+static void do_dump(void) { ec_task_dump(); }
+
+static void test_task_dump(void) {
+  CHECK(pipe(dump_pipe) == 0);
+  dump_parker = ec_parker_new();
+  ei_chan_init(&dump_chan, sizeof(int64_t));
+  ei_thread a, c, d, e;
+  ei_thread_start(&a, dump_fd_task, NULL);
+  ei_thread_start(&dump_sleeper_th, dump_sleep_task, NULL);
+  ei_thread_start(&c, dump_park_task, NULL);
+  ei_thread_start(&d, dump_chan_task, NULL);
+  ei_thread_start(&e, dump_join_task, NULL);
+
+  struct timespec ts = {0, 150 * 1000 * 1000};
+  nanosleep(&ts, NULL);
+  const char *out = capture(do_dump);
+  CHECK(strstr(out, "== tasks:") != NULL);
+  CHECK(strstr(out, "parked: fd ") != NULL && strstr(out, " read") != NULL);
+  CHECK(strstr(out, "parked: sleep") != NULL);
+  CHECK(strstr(out, "parked: unpark") != NULL);
+  CHECK(strstr(out, "parked: channel ") != NULL);
+  CHECK(strstr(out, "parked: join #") != NULL);
+  CHECK(strstr(out, " run 0x") != NULL);
+  /* the same listing on SIGQUIT (EIDER_TASK_DUMP=1 was set before the scheduler started) */
+  char path[] = "/tmp/task_quit_XXXXXX";
+  int tmp = mkstemp(path);
+  fflush(stderr);
+  int saved = dup(2);
+  dup2(tmp, 2);
+  kill(getpid(), SIGQUIT);
+  int seen = 0;
+  for (int i = 0; i < 200 && !seen; i++) {
+    struct timespec w = {0, 10 * 1000 * 1000};
+    nanosleep(&w, NULL);
+    struct stat st;
+    if (fstat(tmp, &st) == 0 && st.st_size > 20) seen = 1;
+  }
+  fflush(stderr);
+  dup2(saved, 2);
+  close(saved);
+  lseek(tmp, 0, SEEK_SET);
+  ssize_t n = read(tmp, cap, sizeof cap - 1);
+  cap[n < 0 ? 0 : n] = 0;
+  close(tmp);
+  unlink(path);
+  CHECK(seen && strstr(cap, "== tasks:") != NULL);
+  /* release them: the sleeper is left (a minute), so the join task too */
+  CHECK(write(dump_pipe[1], "x", 1) == 1);
+  ec_parker_unpark(dump_parker);
+  int64_t one = 1;
+  ei_chan_send(&dump_chan, &one);
+  ei_thread_join(&a);
+  ei_thread_join(&c);
+  ei_thread_join(&d);
+  ei_thread_destroy(&a);
+  ei_thread_destroy(&c);
+  ei_thread_destroy(&d);
+  close(dump_pipe[0]);
+  close(dump_pipe[1]);
+  ec_parker_close(dump_parker);
+}
+
 /* TASK_TEST_V=1 names each test as it starts; TASK_TEST_ONLY=parker runs those whose name has it */
 #define RUN(f)                                                                  \
   do {                                                                          \
@@ -745,6 +864,7 @@ int main(int argc, char **argv) {
     return failures ? 1 : 0;
   }
   setenv("EIDER_WORKERS", "2", 1);
+  setenv("EIDER_TASK_DUMP", "1", 1);
   setenv("EIDER_WORKERS_MAX", "64", 1);
   ei_set_file("task_test");
   RUN(test_many_blocked);
@@ -755,6 +875,7 @@ int main(int argc, char **argv) {
   RUN(test_trap_across_park);
   RUN(test_starvation_guard);
   RUN(test_idle_cpu);
+  RUN(test_task_dump);
   RUN(test_parker_basic);
   RUN(test_parker_stale_and_many);
   RUN(test_parker_many_tasks);

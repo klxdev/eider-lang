@@ -49,7 +49,7 @@ _Thread_local ei_prof_frame ei_prof_spill;
 #define PK_COW 4
 #define PK_KINDS 5
 static const char *const prof_kind_names[PK_KINDS] = {"cpu", "alloc", "lock", "recv", "cow"};
-static const char *const prof_ev_names[EI_PEV_KINDS] = {"", "cow", "copy", "drop", "grow", "rehash", "ref", "alloc", "lock", "recv", "spawn"};
+static const char *const prof_ev_names[EI_PEV_KINDS] = {"", "cow", "copy", "drop", "grow", "rehash", "ref", "alloc", "lock", "recv", "spawn", "fd", "sleep", "park", "join", "task"};
 
 /* a frame as samples and the stack table keep it */
 typedef struct { uint32_t fn; int32_t line; } prof_fr;
@@ -262,10 +262,9 @@ static uint64_t prof_site_key(uint32_t kind) {
   return ((uint64_t)kind << 56) | ((uint64_t)(fn & 0xFFFFFF) << 32) | (uint32_t)line;
 }
 
-/* The site of `kind` at the current position (NULL when the table is full). */
-static prof_site *prof_site_at(uint32_t kind) {
+/* The site with this key (NULL when the table is full). */
+static prof_site *prof_site_for(uint64_t key) {
   if (!sites) return NULL;
-  uint64_t key = prof_site_key(kind);
   size_t i = (size_t)ei_hash_u64(key) & (PROF_SITES - 1);
   for (size_t c = 0; c < PROF_SITES; c++) {
     prof_site *s = &sites[i];
@@ -281,6 +280,9 @@ static prof_site *prof_site_at(uint32_t kind) {
   atomic_fetch_add_explicit(&prof_sites_lost, 1, memory_order_relaxed);
   return NULL;
 }
+
+/* The site of `kind` at the current position. */
+static prof_site *prof_site_at(uint32_t kind) { return prof_site_for(prof_site_key(kind)); }
 
 /* Each thread counts into a small cache of its own sites (slots), and a slot's counts go to
    the shared site when the slot is taken for another site or the thread ends; the writer adds
@@ -359,6 +361,19 @@ void ei_prof_ev(int32_t kind, uint64_t n) {
   }
 }
 
+/* The current position as a token for ei_prof_at (0: not profiling or no frame). */
+uint64_t ei_prof_here(void) {
+  if (prof_off || !atomic_load_explicit(&prof_inited, memory_order_relaxed) || ei_prof_depth == 0) return 0;
+  return prof_site_key(0);
+}
+
+/* An event of `kind` at the position `here` came from: task ends are counted where the task was
+   spawned, from the worker that ran it. */
+void ei_prof_at(int32_t kind, uint64_t here, uint64_t n) {
+  if (prof_off || !atomic_load_explicit(&prof_inited, memory_order_relaxed) || kind <= 0 || kind >= EI_PEV_KINDS || !here) return;
+  prof_count(prof_site_for(((uint64_t)kind << 56) | (here & 0x00FFFFFFFFFFFFFFull)), n);
+}
+
 /* A wait of ns nanoseconds (kind EI_PEV_LOCK or EI_PEV_RECV) at the current position. */
 /* Every wait is counted at its site; a stack is taken once per PROF_WAIT_RATE ns waited by
    the thread (weighted by the time since the last one), because the stack table's lock would
@@ -368,6 +383,7 @@ static _Thread_local int64_t prof_wait_left[2] = {PROF_WAIT_RATE, PROF_WAIT_RATE
 static void prof_wait(int32_t kind, uint64_t ns) {
   if (prof_off) return;
   prof_count(prof_site_at((uint32_t)kind), ns);
+  if (kind != EI_PEV_LOCK && kind != EI_PEV_RECV) return; /* descriptor, timer, parker and join waits: counted, no stacks */
   int k = kind == EI_PEV_LOCK ? 0 : 1;
   prof_wait_left[k] -= (int64_t)ns;
   if (prof_wait_left[k] <= 0) {

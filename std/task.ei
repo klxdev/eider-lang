@@ -203,6 +203,12 @@ impl Token {
     }
 }
 
+/// Prints the live tasks to stderr: number, state (running, parked, ready), what a parked one
+/// waits for and for how long, and the address of its function (`addr2line -e program`). The
+/// same listing as `SIGQUIT` gives with `EIDER_TASK_DUMP=1`. Does nothing with
+/// `EIDER_TASKS=threads`.
+pub fn dump() uses io { os.task_dump() }
+
 // ---- groups
 
 /// A task group (see the module comment). Start children with `spawn` (a thread each) or

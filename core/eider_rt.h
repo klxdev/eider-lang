@@ -416,8 +416,17 @@ void ei_prof_init(const ei_prof_table *t);
 #define EI_PEV_LOCK 8
 #define EI_PEV_RECV 9
 #define EI_PEV_SPAWN 10
-#define EI_PEV_KINDS 11
+#define EI_PEV_FD 11    /* waits (ns) of a task for a descriptor, at the waiting position */
+#define EI_PEV_SLEEP 12 /* ... for a timer */
+#define EI_PEV_PARK 13  /* ... for a Parker */
+#define EI_PEV_JOIN 14  /* ... for another task to end */
+#define EI_PEV_TASK 15  /* tasks that ended, with the ns they lived, at their spawn site */
+#define EI_PEV_KINDS 16
 void ei_prof_ev(int32_t kind, uint64_t n);
+/* The current Eider position as a token (0: none), and an event of `kind` counted at such a
+   position later, from another thread (a task's end is counted at the site that spawned it). */
+uint64_t ei_prof_here(void);
+void ei_prof_at(int32_t kind, uint64_t here, uint64_t n);
 /* After a test's longjmp: the frames above `depth` are gone. */
 static inline void ei_prof_unwind(uint32_t depth) { ei_prof_depth = (uint16_t)depth; }
 #endif
