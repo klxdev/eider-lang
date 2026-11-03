@@ -15,6 +15,13 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
   code and Markdown; eider-analyzer and tree-sitter-eider follow (`attribute_list` node). An
   attribute's diagnostics now point at its name, not at the `@`.
 
+**New:**
+
+- **std/serial** (#100): the data model and the traits of format-neutral serialization: `Serialize`
+  and `Deserialize` for types, `Serializer` and `Deserializer` for formats, implementations for the
+  built-in types, errors that name the path, and `Value` with `to_value`/`from_value`. See
+  docs/compiler.md "C8.61".
+
 ## 0.5.0
 
 The runtime and the standard library grow up for services: a trap can be contained, Maps hash

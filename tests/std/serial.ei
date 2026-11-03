@@ -1,0 +1,223 @@
+// std/serial: the data model, the four traits, the built-in implementations and serial.Value, with
+// hand-written serial.Serialize and serial.Deserialize for a record and an enum (docs/compiler.md, "C8.61").
+import std.bytes
+import std.serial
+
+
+type Point = { x: i64, y: i64 }
+
+impl serial.Serialize for Point {
+    fn serialize[S: serial.Serializer](self, inout s: S) -> Result[(), serial.Error] {
+        s.begin_record(2)?
+        s.field("x".bytes())?
+        self.x.serialize(inout s)?
+        s.field("y".bytes())?
+        self.y.serialize(inout s)?
+        s.end_record()
+    }
+}
+
+impl serial.Deserialize for Point {
+    fn deserialize[D: serial.Deserializer](d: D) -> Result[Point, serial.Error] {
+        if d.kind() != serial.KMap { return Err(serial.expected(d, "a map")) }
+        let x = match d.get("x".bytes()) {
+            Some(c) => i64.deserialize(c)?
+            None => { return Err(serial.fail(d, "missing field `x`")) }
+        }
+        let y = match d.get("y".bytes()) {
+            Some(c) => i64.deserialize(c)?
+            None => { return Err(serial.fail(d, "missing field `y`")) }
+        }
+        Ok(Point(x, y))
+    }
+}
+
+type Shape =
+    | Dot
+    | Circle(r: i64)
+
+impl serial.Serialize for Shape {
+    fn serialize[S: serial.Serializer](self, inout s: S) -> Result[(), serial.Error] {
+        match self {
+            Dot => s.string("Dot".bytes())
+            Circle(r) => {
+                s.begin_variant("Circle".bytes(), "kind".bytes(), 1)?
+                s.field("r".bytes())?
+                r.serialize(inout s)?
+                s.end_variant()
+            }
+        }
+    }
+}
+
+type Doc = { name: String, tags: List[String], origin: Point, note: Option[String], count: u8, extra: Map[String, i64], shape: Shape }
+
+impl serial.Serialize for Doc {
+    fn serialize[S: serial.Serializer](self, inout s: S) -> Result[(), serial.Error] {
+        s.begin_record(7)?
+        s.field("name".bytes())?
+        self.name.serialize(inout s)?
+        s.field("tags".bytes())?
+        self.tags.serialize(inout s)?
+        s.field("origin".bytes())?
+        self.origin.serialize(inout s)?
+        s.field("note".bytes())?
+        self.note.serialize(inout s)?
+        s.field("count".bytes())?
+        self.count.serialize(inout s)?
+        s.field("extra".bytes())?
+        self.extra.serialize(inout s)?
+        s.field("shape".bytes())?
+        self.shape.serialize(inout s)?
+        s.end_record()
+    }
+}
+
+fn show_value(v: serial.Value) -> List[u8] {
+    match v {
+        serial.VNull => "null".bytes()
+        serial.VBool(b) => if b { "true".bytes() } else { "false".bytes() }
+        serial.VInt(n) => bytes.from_i64(n)
+        serial.VUint(n) => bytes.from_u64(n)
+        serial.VFloat(_) => "float".bytes()
+        serial.VStr(s) => {
+            let mut o = "\"".bytes()
+            bytes.append(inout o, s)
+            o.push(34)
+            o
+        }
+        serial.VBytes(_) => "bytes".bytes()
+        serial.VList(xs) => {
+            let mut o = "[".bytes()
+            for i in 0..xs.len() {
+                if i > 0 { bytes.append(inout o, ", ".bytes()) }
+                bytes.append(inout o, show_value(xs[i].copy()))
+            }
+            o.push(93)
+            o
+        }
+        serial.VMap(es) => {
+            let mut o = r"{".bytes()
+            for i in 0..es.len() {
+                if i > 0 { bytes.append(inout o, ", ".bytes()) }
+                bytes.append(inout o, es[i].key.copy())
+                bytes.append(inout o, ": ".bytes())
+                bytes.append(inout o, show_value(es[i].value.copy()))
+            }
+            bytes.append(inout o, r"}".bytes())
+            o
+        }
+        serial.VTime(_) => "time".bytes()
+    }
+}
+
+fn text(b: List[u8]) -> String { String.from_bytes(b).unwrap_or(String.from("?")) }
+
+fn point_of(v: serial.Value) -> Result[Point, serial.Error] { serial.from_value(v) }
+fn ints_of(v: serial.Value) -> Result[List[i64], serial.Error] { serial.from_value(v) }
+fn map_of(v: serial.Value) -> Result[Map[String, i64], serial.Error] { serial.from_value(v) }
+fn i32_of(v: serial.Value) -> Result[i32, serial.Error] { serial.from_value(v) }
+fn u8_of(v: serial.Value) -> Result[u8, serial.Error] { serial.from_value(v) }
+fn opt_of(v: serial.Value) -> Result[Option[String], serial.Error] { serial.from_value(v) }
+
+fn f64_of(v: serial.Value) -> Result[f64, serial.Error] { serial.from_value(v) }
+fn u64_of(v: serial.Value) -> Result[u64, serial.Error] { serial.from_value(v) }
+fn bytes_of(v: serial.Value) -> Result[serial.Bytes, serial.Error] { serial.from_value(v) }
+fn nested_of(v: serial.Value) -> Result[Map[String, List[i64]], serial.Error] { serial.from_value(v) }
+
+// numbers, bytes, time and a wrong value deep in a map of lists
+fn more() uses io {
+    match serial.to_value(2.5) {
+        Ok(v) => match f64_of(v) {
+            Ok(x) => print(x)
+            Err(e) => print(text(serial.error_text(e)))
+        }
+        Err(_) => print("bad")
+    }
+    match u64_of(serial.VInt(5)) {
+        Ok(x) => print(x)
+        Err(e) => print(text(serial.error_text(e)))
+    }
+    match u64_of(serial.VInt(-5)) {
+        Ok(_) => print("unexpected")
+        Err(e) => print(text(serial.error_text(e)))
+    }
+    match bytes_of(serial.VBytes("ab".bytes())) {
+        Ok(b) => print(b.data.len())
+        Err(e) => print(text(serial.error_text(e)))
+    }
+    match bytes_of(serial.VStr("ab".bytes())) {
+        Ok(_) => print("unexpected")
+        Err(e) => print(text(serial.error_text(e)))
+    }
+    let mut inner: List[serial.Value] = List.new()
+    inner.push(serial.VInt(1))
+    inner.push(serial.VBool(true))
+    let mut es: List[serial.Entry] = List.new()
+    es.push(serial.Entry("a".bytes(), serial.VList(inner)))
+    match nested_of(serial.VMap(es)) {
+        Ok(_) => print("unexpected")
+        Err(e) => print(text(serial.error_text(e)))
+    }
+}
+
+fn main() uses io {
+    more()
+    let mut tags: List[String] = List.new()
+    tags.push(String.from("a"))
+    tags.push(String.from("b"))
+    let mut extra: Map[String, i64] = Map.new()
+    extra.insert(String.from("z"), 26)
+    extra.insert(String.from("k"), 11)
+    let d = Doc(String.from("doc"), tags, Point(1, -2), None, 7, extra, Circle(3))
+    let v = match serial.to_value(d) {
+        Ok(x) => x
+        Err(e) => {
+            print(text(serial.error_text(e)))
+            return
+        }
+    }
+    print(text(show_value(v.copy())))
+    // reading back, with a wrong serial.member
+    let rp: Result[Point, serial.Error] = serial.from_value(v.copy())
+    match rp {
+        Ok(_) => print("unexpected")
+        Err(e) => print(text(serial.error_text(e)))
+    }
+    match serial.member(v.copy(), "origin") {
+        Some(o) => match point_of(o) {
+            Ok(p) => print(p.y)
+            Err(e) => print(text(serial.error_text(e)))
+        }
+        None => print("no origin")
+    }
+    match serial.member(v.copy(), "tags") {
+        Some(t) => match ints_of(t) {
+            Ok(_) => print("unexpected")
+            Err(e) => print(text(serial.error_text(e)))
+        }
+        None => print("no tags")
+    }
+    match serial.member(v.copy(), "extra") {
+        Some(t) => match map_of(t) {
+            Ok(m) => print(m.len())
+            Err(e) => print(text(serial.error_text(e)))
+        }
+        None => print("no extra")
+    }
+    match serial.member(v.copy(), "count") {
+        Some(t) => match i32_of(t) {
+            Ok(n) => print(n)
+            Err(e) => print("bad")
+        }
+        None => {}
+    }
+    match u8_of(serial.VInt(300)) {
+        Ok(_) => print("unexpected")
+        Err(e) => print(text(serial.error_text(e)))
+    }
+    match opt_of(serial.VNull) {
+        Ok(o) => print(o.is_none())
+        Err(_) => print("bad")
+    }
+}

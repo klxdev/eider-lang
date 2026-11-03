@@ -4393,3 +4393,38 @@ a line into one group; `scripts/migrate-attrs.sh` runs it over directories. No o
 compiler/, core/ or std/ used an attribute, so the seed needed no staging (seed/README.md,
 "Bootstrapping a change in what source means"). `eiderc fmt` works on tokens and needed no change: a
 group is an open bracket like any other. Attributes on enum variant payload fields stay unsupported.
+
+## C8.61: std/serial, the data model and its traits (#100)
+
+Decision C814. Code: std/serial.ei; tests: tests/std/serial.ei.
+
+Serialization is split in two halves that meet in a data model of ten kinds: bool, signed and unsigned
+integer, float, string, bytes, option, list, map with string keys, record, variant, and time (a
+`time.DateTime`, a calendar time with an offset). `Serialize` and `Deserialize` are the traits of types;
+`Serializer` and `Deserializer` are the traits of formats, and a format never sees a user type.
+
+A `Serializer` is written to, event by event (`begin_list`/`end_list`, `begin_map`/`key`/`end_map`,
+`begin_record`/`field`/`end_record`, `begin_variant`/`field`/`end_variant`, the scalars, `none`,
+`merge_next`), and every call can fail, so a TOML writer can refuse a list of mixed types at the
+element. An absent option is `none()`; a present one is just its value (so `Some(None)` and `None` are
+one thing in the data model, as in JSON). A variant without fields is a `string`.
+
+A `Deserializer` is not a pull parser but a cursor on one value of a document that is already parsed
+(`kind`, the `read_*` of the scalars, `len`, `at(i)`, `get(key)`, `key_at(i)`, `value_at(i)`), small and
+freely copied; `at`, `get` and `value_at` return a cursor of the same type, with the path extended. This
+is what makes a record readable in any order of members, a missing member an error naming the path, and
+an unknown member detectable, without a mutable decoding state; the price is that a format parses the
+whole document first (what eider-json and eider-toml do anyway). A genuinely streaming reader is a
+different trait that can sit beside this one. Errors are one type, `serial.Error { path, msg }`, for
+every format, with `error_text`, `expected` and `fail` to build them.
+
+Choices made on Claude's recommendation, and why: the traits are separate for the two directions (a type
+can be one only, as in the issue); a map's keys are strings (`Map[String, T]` has the implementations; a
+key that is not text has no meaning in JSON or TOML); a `Kind` and a `Value` have `K`/`V`-prefixed
+variants, because variant names are unique in a module and a variant called `List` hides the type; bytes
+are their own type, `serial.Bytes`, since a `List[u8]` is a list of numbers; there is no `f32` yet
+because the language has no use for it here (`f64` is the float of the data model). `Value` and
+`ValueSerializer`/`ValueDeserializer` are the format called "value", complete enough to test a type
+without a text format and to move data between formats. The explicit-type-argument form
+`from_string[T](s)` is not syntax in Eider (a call takes no type arguments), so a reader's result type
+comes from the expected type: `let r: Result[T, serial.Error] = serial.from_value(v)`.

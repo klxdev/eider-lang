@@ -1,0 +1,15 @@
+2.5
+5
+the number is out of range
+2
+expected bytes, found a string
+a[1]: expected an integer, found a boolean
+{name: "doc", tags: ["a", "b"], origin: {x: 1, y: -2}, note: null, count: 7, extra: {k: 11, z: 26}, shape: {kind: "Circle", r: 3}}
+missing field `x`
+-2
+[0]: expected an integer, found a string
+2
+7
+expected a u8, the number is out of range
+true
+exit 0

@@ -21,6 +21,7 @@ channels, tasks, the event loop) has its own page, docs/runtime.md.
 | **`deque`**, **`set`**, **`heap`** | `Deque[T]`; `Set[T: Hash + Eq]`; `Heap[T: Ord]` (min or max) and a stable priority `Queue[T]` | none |
 | **`encoding`** | hex, base64 (standard and URL-safe, padded or not, strict decoding), little/big-endian integers | none |
 | **`cli`** | a program's flags and subcommands derived from a record and an enum: `cli.parse`, `cli.command`, `@[cli(name, short, help, default)]`, generated `--help`, every problem reported at once; `cli.Value` for your own field types | `io` to report |
+| **`serial`** | format-neutral serialization over a data model (bool, integers, floats, string, bytes, option, list, map, record, variant, time): the traits `Serialize`, `Deserialize` (for types) and `Serializer`, `Deserializer` (for formats), implementations for the built-in types, `Bytes`, and `Value`, the data model as a tree with `to_value` and `from_value`; errors name the path (`items[3].qty`) | none |
 | **`testing`** | `assert_eq` with a diff, `Suite`, `diff_lines`, `table`, `bench`, `fuzz`, `temp_dir`; test doubles: `FakeClock`, scripted Reader and Writer, an in-memory pipe | `io` to print |
 
 The modules in bold are layer/std's first wave (decisions C23 to C29, C36 and C37). Their tests are in

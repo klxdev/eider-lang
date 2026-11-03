@@ -1,0 +1,660 @@
+//! std/serial: format-neutral serialization (#100, #156; docs/compiler.md "C8.61").
+//!
+//! A type says what it is made of, a format says how that is written. Between them is the data
+//! model: `bool`, signed and unsigned integers, floats, strings, bytes, an option (absent or
+//! one value), a list, a map with string keys, a record (named fields), a variant (a name and
+//! named fields) and a time (a calendar date and time with an offset).
+//!
+//! - `Serialize` and `Deserialize` are implemented by types: this module has them for the
+//!   built-in types, and you write them for yours. A type with no implementation cannot be
+//!   serialized.
+//! - `Serializer` and `Deserializer` are implemented by formats (eider-json, eider-toml, ...):
+//!   they see only the data model, never a user type. A `Serializer` is written to, event by
+//!   event, in order. A `Deserializer` is a cursor on one value of a document that is already
+//!   parsed: it reads that value as a scalar, or goes to a list element or a map member, and
+//!   every error it makes names the path to the value (`items[3].qty`).
+//! - `Value` is the data model as a tree. `to_value` and `from_value` go between a type and a
+//!   `Value`, which also makes a reference format for tests.
+//!
+//! Differences between formats are the format's business: a TOML writer leaves out an absent
+//! option, a JSON writer writes `null`; a reader of either gives `None` for what is not there.
+//! A hand-written implementation that needs to treat a format differently asks `s.format()`
+//! (`"json"`, `"toml"`, `"value"`, ...).
+//!
+//! Enums: a variant without fields is its name, as a string. One with fields is a record of its
+//! fields (named by the field, a positional field by its index) under the variant's name
+//! (`{"Circle": {"r": 2}}`), or, when the enum has a tag key (`@[serial(tag = "kind")]`), a
+//! record with the tag first (`{"kind": "Circle", "r": 2}`). A format that has no use for the
+//! distinction writes it its own way.
+
+import std.bytes
+import std.time
+
+/// Why serializing or deserializing failed, and where: `path` names the value (`items[3].qty`,
+/// empty for the document itself).
+pub type Error = { path: List[u8], msg: List[u8] }
+
+/// "<path>: <msg>", or the message alone at the top.
+pub fn error_text(e: Error) -> List[u8] {
+    if e.path.len() == 0 { return e.msg.copy() }
+    let mut m = e.path.copy()
+    bytes.append(inout m, ": ".bytes())
+    bytes.append(inout m, e.msg)
+    m
+}
+
+/// An error with no path yet.
+pub fn error(msg: str) -> Error { Error(List.new(), msg.bytes()) }
+
+/// The kinds of the data model, as a `Deserializer` sees a value. `Int` is any number without
+/// a fraction, `Float` any other.
+pub type Kind =
+    | KNull
+    | KBool
+    | KInt
+    | KFloat
+    | KStr
+    | KBytes
+    | KList
+    | KMap
+    | KTime
+
+/// A path with a field appended: `a.b`, and `b` when the path is empty.
+pub fn path_field(path: List[u8], name: List[u8]) -> List[u8] {
+    let mut p = path.copy()
+    if p.len() > 0 { p.push(46) }
+    bytes.append(inout p, name)
+    p
+}
+
+/// A path with an index appended: `a[3]`.
+pub fn path_index(path: List[u8], i: usize) -> List[u8] {
+    let mut p = path.copy()
+    p.push(91)
+    bytes.append(inout p, bytes.from_u64(i as u64))
+    p.push(93)
+    p
+}
+
+/// A format's writer. The calls come in document order; a `begin_*` is closed by its `end_*`,
+/// and between them a list has its elements (each a complete value: a scalar or a
+/// begin/end pair), a map or a record or a variant has `key` (or `field`) and then the value.
+/// Every call may fail (a TOML table cannot hold a list of mixed types); the caller stops
+/// at the first error.
+pub trait Serializer {
+    /// The format's name: `"json"`, `"toml"`, `"value"`.
+    fn format(self) -> str
+    fn bool(inout self, v: bool) -> Result[(), Error]
+    fn int(inout self, v: i64) -> Result[(), Error]
+    fn uint(inout self, v: u64) -> Result[(), Error]
+    fn float(inout self, v: f64) -> Result[(), Error]
+    /// UTF-8 text.
+    fn string(inout self, v: List[u8]) -> Result[(), Error]
+    fn bytes(inout self, v: List[u8]) -> Result[(), Error]
+    fn time(inout self, v: time.DateTime) -> Result[(), Error]
+    /// An absent option. A present one is just its value.
+    fn none(inout self) -> Result[(), Error]
+    fn begin_list(inout self, len: usize) -> Result[(), Error]
+    fn end_list(inout self) -> Result[(), Error]
+    fn begin_map(inout self, len: usize) -> Result[(), Error]
+    fn key(inout self, k: List[u8]) -> Result[(), Error]
+    fn end_map(inout self) -> Result[(), Error]
+    fn begin_record(inout self, len: usize) -> Result[(), Error]
+    fn field(inout self, name: List[u8]) -> Result[(), Error]
+    fn end_record(inout self) -> Result[(), Error]
+    /// A variant with fields: `name` of the enum `type_name`, with `len` fields (written with
+    /// `field`), tagged by the key `tag` unless that is empty (then by the variant's name as
+    /// the one key of a record).
+    fn begin_variant(inout self, name: List[u8], tag: List[u8], len: usize) -> Result[(), Error]
+    fn end_variant(inout self) -> Result[(), Error]
+    /// The next record written is merged into the record open now: its `begin_record` and
+    /// `end_record` write nothing and its fields become the open record's (`json(flatten)`).
+    fn merge_next(inout self) -> Result[(), Error]
+}
+
+/// A cursor on one value of a parsed document. It is a small value, copied freely; the
+/// getters go to a child (`at`, `get`, `key_at`, `value_at`) and the readers take the value as
+/// a type. A reader that does not find what it is asked for returns an `Error` that names the
+/// path: use `serial.expected`.
+pub trait Deserializer {
+    fn format(self) -> str
+    /// The path to this value: `items[3].qty`, empty for the document itself.
+    fn path(self) -> List[u8]
+    fn kind(self) -> Kind
+    fn read_bool(self) -> Result[bool, Error]
+    /// An integer in the range of an i64.
+    fn read_i64(self) -> Result[i64, Error]
+    /// An integer in the range of a u64.
+    fn read_u64(self) -> Result[u64, Error]
+    /// Any number.
+    fn read_f64(self) -> Result[f64, Error]
+    fn read_string(self) -> Result[List[u8], Error]
+    fn read_bytes(self) -> Result[List[u8], Error]
+    fn read_time(self) -> Result[time.DateTime, Error]
+    /// The number of elements of a list, or of members of a map.
+    fn len(self) -> usize
+    /// Element `i` of a list.
+    fn at(self, i: usize) -> Result[Self, Error]
+    /// The member `key` of a map, None when it is not there.
+    fn get(self, key: List[u8]) -> Option[Self]
+    /// The key of member `i` of a map, in the document's order.
+    fn key_at(self, i: usize) -> List[u8]
+    /// The value of member `i` of a map.
+    fn value_at(self, i: usize) -> Self
+}
+
+/// A value that can be written to any format.
+pub trait Serialize {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error]
+}
+
+/// A value that can be read from any format. `missing` is the value of a record field whose
+/// member is absent: Some(None) for an Option, else None (the member is required).
+pub trait Deserialize {
+    fn deserialize[D: Deserializer](d: D) -> Result[Self, Error]
+    fn missing() -> Option[Self] { None }
+}
+
+/// The error for a value of the wrong kind: "expected <what>, found <kind>" at the path.
+pub fn expected[D: Deserializer](d: D, what: str) -> Error {
+    let mut m = "expected ".bytes()
+    bytes.append(inout m, what.bytes())
+    bytes.append(inout m, ", found ".bytes())
+    bytes.append(inout m, kind_name(d.kind()).bytes())
+    Error(d.path(), m)
+}
+
+/// An error with this message at the path of `d`.
+pub fn fail[D: Deserializer](d: D, msg: str) -> Error { Error(d.path(), msg.bytes()) }
+
+/// The name of a kind: "null", "a boolean", ...
+pub fn kind_name(k: Kind) -> str {
+    match k {
+        KNull => "null"
+        KBool => "a boolean"
+        KInt => "an integer"
+        KFloat => "a number"
+        KStr => "a string"
+        KBytes => "bytes"
+        KList => "a list"
+        KMap => "a map"
+        KTime => "a time"
+    }
+}
+
+// ---- the built-in types
+
+fn int_in_range[D: Deserializer](d: D, what: str, lo: i64, hi: i64) -> Result[i64, Error] {
+    let v = d.read_i64()?
+    if v < lo || v > hi {
+        let mut m = "expected ".bytes()
+        bytes.append(inout m, what.bytes())
+        bytes.append(inout m, ", the number is out of range".bytes())
+        return Err(Error(d.path(), m))
+    }
+    Ok(v)
+}
+
+impl Serialize for bool {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] { s.bool(self) }
+}
+impl Deserialize for bool {
+    fn deserialize[D: Deserializer](d: D) -> Result[bool, Error] { d.read_bool() }
+}
+
+impl Serialize for i64 {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] { s.int(self) }
+}
+impl Deserialize for i64 {
+    fn deserialize[D: Deserializer](d: D) -> Result[i64, Error] { d.read_i64() }
+}
+
+impl Serialize for i32 {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] { s.int(self as i64) }
+}
+impl Deserialize for i32 {
+    fn deserialize[D: Deserializer](d: D) -> Result[i32, Error] {
+        let v = int_in_range(d, "an i32", -2147483648, 2147483647)?
+        Ok(v as i32)
+    }
+}
+
+impl Serialize for u8 {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] { s.uint(self as u64) }
+}
+impl Deserialize for u8 {
+    fn deserialize[D: Deserializer](d: D) -> Result[u8, Error] {
+        let v = int_in_range(d, "a u8", 0, 255)?
+        Ok(v as u8)
+    }
+}
+
+impl Serialize for u32 {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] { s.uint(self as u64) }
+}
+impl Deserialize for u32 {
+    fn deserialize[D: Deserializer](d: D) -> Result[u32, Error] {
+        let v = int_in_range(d, "a u32", 0, 4294967295)?
+        Ok(v as u32)
+    }
+}
+
+impl Serialize for u64 {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] { s.uint(self) }
+}
+impl Deserialize for u64 {
+    fn deserialize[D: Deserializer](d: D) -> Result[u64, Error] { d.read_u64() }
+}
+
+impl Serialize for usize {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] { s.uint(self as u64) }
+}
+impl Deserialize for usize {
+    fn deserialize[D: Deserializer](d: D) -> Result[usize, Error] {
+        let v = d.read_u64()?
+        Ok(v as usize)
+    }
+}
+
+impl Serialize for f64 {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] { s.float(self) }
+}
+impl Deserialize for f64 {
+    fn deserialize[D: Deserializer](d: D) -> Result[f64, Error] { d.read_f64() }
+}
+
+impl Serialize for String {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] { s.string(self.bytes()) }
+}
+impl Deserialize for String {
+    fn deserialize[D: Deserializer](d: D) -> Result[String, Error] {
+        let b = d.read_string()?
+        match String.from_bytes(b) {
+            Ok(x) => Ok(x)
+            Err(_) => Err(fail(d, "a string with a NUL character"))
+        }
+    }
+}
+
+impl Serialize for str {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] { s.string(self.bytes()) }
+}
+
+/// Bytes, as opposed to a list of numbers: a format writes them its own way (base64 text in
+/// JSON, an array of integers in TOML).
+pub type Bytes = { data: List[u8] }
+
+impl Serialize for Bytes {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] { s.bytes(self.data) }
+}
+impl Deserialize for Bytes {
+    fn deserialize[D: Deserializer](d: D) -> Result[Bytes, Error] {
+        let b = d.read_bytes()?
+        Ok(Bytes(b))
+    }
+}
+
+impl Serialize for time.DateTime {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] { s.time(self) }
+}
+impl Deserialize for time.DateTime {
+    fn deserialize[D: Deserializer](d: D) -> Result[time.DateTime, Error] { d.read_time() }
+}
+
+impl[T: Serialize] Serialize for List[T] {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] {
+        s.begin_list(self.len())?
+        for x in self { x.serialize(inout s)? }
+        s.end_list()
+    }
+}
+impl[T: Deserialize] Deserialize for List[T] {
+    fn deserialize[D: Deserializer](d: D) -> Result[List[T], Error] {
+        if d.kind() != KList { return Err(expected(d, "a list")) }
+        let mut out: List[T] = List.new()
+        for i in 0..d.len() {
+            let c = d.at(i)?
+            out.push(T.deserialize(c)?)
+        }
+        Ok(out)
+    }
+}
+
+impl[T: Serialize] Serialize for Option[T] {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] {
+        match self {
+            Some(x) => x.serialize(inout s)
+            None => s.none()
+        }
+    }
+}
+impl[T: Deserialize] Deserialize for Option[T] {
+    fn deserialize[D: Deserializer](d: D) -> Result[Option[T], Error] {
+        if d.kind() == KNull { return Ok(None) }
+        let v = T.deserialize(d)?
+        Ok(Some(v))
+    }
+    fn missing() -> Option[Option[T]] { Some(None) }
+}
+
+impl[T: Serialize] Serialize for Map[String, T] {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] {
+        // in key order, so equal Maps give equal documents
+        let mut ks = self.keys()
+        sort_keys(inout ks)
+        s.begin_map(ks.len())?
+        for k in ks {
+            s.key(k.bytes())?
+            match self.get(k) {
+                Some(v) => v.serialize(inout s)?
+                None => s.none()?
+            }
+        }
+        s.end_map()
+    }
+}
+impl[T: Deserialize] Deserialize for Map[String, T] {
+    fn deserialize[D: Deserializer](d: D) -> Result[Map[String, T], Error] {
+        if d.kind() != KMap { return Err(expected(d, "a map")) }
+        let mut out: Map[String, T] = Map.new()
+        for i in 0..d.len() {
+            let k = match String.from_bytes(d.key_at(i)) {
+                Ok(x) => x
+                Err(_) => { return Err(fail(d, "a key with a NUL character")) }
+            }
+            out.insert(k, T.deserialize(d.value_at(i))?)
+        }
+        Ok(out)
+    }
+}
+
+fn sort_keys(inout xs: List[String]) {
+    // insertion sort: maps are small
+    for i in 1..xs.len() {
+        let mut j = i.copy()
+        while j > 0 && xs[j - 1] > xs[j] {
+            let a = xs[j - 1].replace(String.from(""))
+            let b = xs[j].replace(a)
+            xs[j - 1] = b
+            j -= 1
+        }
+    }
+}
+
+// ---- Value: the data model as a tree
+
+/// One member of a `VMap`.
+pub type Entry = { key: List[u8], value: Value }
+
+/// A value of the data model. A record, a map and a variant with fields are all a `VMap` (in
+/// the order they were written); a variant without fields is a `VStr`; an absent option is
+/// `VNull`, a present one its value.
+pub type Value =
+    | VNull
+    | VBool(bool)
+    | VInt(i64)
+    | VUint(u64)
+    | VFloat(f64)
+    | VStr(List[u8])
+    | VBytes(List[u8])
+    | VList(List[Value])
+    | VMap(List[Entry])
+    | VTime(time.DateTime)
+
+/// The member `key` of a `VMap`, None when `v` is not one or has no such member.
+pub fn member(v: Value, key: str) -> Option[Value] {
+    let k = key.bytes()
+    match v {
+        VMap(es) => {
+            for e in es {
+                if bytes.eq(e.key, k) { return Some(e.value) }
+            }
+            None
+        }
+        _ => None
+    }
+}
+
+/// `x` as a `Value`.
+pub fn to_value[T: Serialize](x: T) -> Result[Value, Error] {
+    let mut s = ValueSerializer(List.new(), None, false)
+    x.serialize(inout s)?
+    match s.out {
+        Some(v) => Ok(v)
+        None => Err(error("nothing was written"))
+    }
+}
+
+/// The value of type T in `v`.
+pub fn from_value[T: Deserialize](v: Value) -> Result[T, Error] {
+    T.deserialize(ValueDeserializer(v, List.new()))
+}
+
+/// What a `ValueSerializer` has open: a list, or a map, record or variant filled with entries
+/// (`plain`: not a variant with the name as the one key).
+type Frame = { is_list: bool, items: List[Value], entries: List[Entry], key: List[u8], variant: List[u8], plain: bool, merged: bool }
+
+/// Writes a `Value` (`to_value`): the format named "value".
+pub type ValueSerializer = { stack: List[Frame], out: Option[Value], merge: bool }
+
+impl ValueSerializer {
+    fn put(inout self, v: Value) -> Result[(), Error] {
+        let n = self.stack.len()
+        if n == 0 {
+            if self.out.is_some() { return Err(error("a second value at the top")) }
+            self.out = Some(v)
+            return Ok(())
+        }
+        if self.stack[n - 1].is_list {
+            self.stack[n - 1].items.push(v)
+        } else {
+            // a merged record's members go to the record it is merged into
+            let k = self.stack[n - 1].key.copy()
+            let mut i = n - 1
+            while self.stack[i].merged && i > 0 { i -= 1 }
+            self.stack[i].entries.push(Entry(k, v))
+        }
+        Ok(())
+    }
+
+    fn open(inout self, is_list: bool) {
+        self.stack.push(Frame(is_list, List.new(), List.new(), List.new(), List.new(), true, false))
+    }
+
+    fn close(inout self) -> Frame {
+        let n = self.stack.len()
+        let f = self.stack[n - 1].copy()
+        self.stack.pop()
+        f
+    }
+}
+
+impl Serializer for ValueSerializer {
+    fn format(self) -> str { "value" }
+    fn bool(inout self, v: bool) -> Result[(), Error] { self.put(VBool(v)) }
+    fn int(inout self, v: i64) -> Result[(), Error] { self.put(VInt(v)) }
+    fn uint(inout self, v: u64) -> Result[(), Error] { self.put(VUint(v)) }
+    fn float(inout self, v: f64) -> Result[(), Error] { self.put(VFloat(v)) }
+    fn string(inout self, v: List[u8]) -> Result[(), Error] { self.put(VStr(v)) }
+    fn bytes(inout self, v: List[u8]) -> Result[(), Error] { self.put(VBytes(v)) }
+    fn time(inout self, v: time.DateTime) -> Result[(), Error] { self.put(VTime(v)) }
+    fn none(inout self) -> Result[(), Error] { self.put(VNull) }
+    fn begin_list(inout self, len: usize) -> Result[(), Error] {
+        self.open(true)
+        Ok(())
+    }
+    fn end_list(inout self) -> Result[(), Error] {
+        let f = self.close()
+        self.put(VList(f.items))
+    }
+    fn begin_map(inout self, len: usize) -> Result[(), Error] {
+        self.open(false)
+        Ok(())
+    }
+    fn key(inout self, k: List[u8]) -> Result[(), Error] {
+        let n = self.stack.len()
+        self.stack[n - 1].key = k
+        Ok(())
+    }
+    fn end_map(inout self) -> Result[(), Error] {
+        let f = self.close()
+        self.put(VMap(f.entries))
+    }
+    fn begin_record(inout self, len: usize) -> Result[(), Error] {
+        self.open(false)
+        if self.merge {
+            self.merge = false
+            let n = self.stack.len()
+            self.stack[n - 1].merged = true
+        }
+        Ok(())
+    }
+    fn merge_next(inout self) -> Result[(), Error] {
+        self.merge = true
+        Ok(())
+    }
+    fn field(inout self, name: List[u8]) -> Result[(), Error] {
+        let n = self.stack.len()
+        self.stack[n - 1].key = name
+        Ok(())
+    }
+    fn end_record(inout self) -> Result[(), Error] {
+        let f = self.close()
+        if f.merged { return Ok(()) }
+        self.put(VMap(f.entries))
+    }
+    fn begin_variant(inout self, name: List[u8], tag: List[u8], len: usize) -> Result[(), Error] {
+        self.open(false)
+        let n = self.stack.len()
+        if tag.len() > 0 {
+            self.stack[n - 1].entries.push(Entry(tag, VStr(name)))
+        } else {
+            self.stack[n - 1].plain = false
+            self.stack[n - 1].variant = name
+        }
+        Ok(())
+    }
+    fn end_variant(inout self) -> Result[(), Error] {
+        let f = self.close()
+        if f.plain { return self.put(VMap(f.entries)) }
+        let mut one: List[Entry] = List.new()
+        one.push(Entry(f.variant, VMap(f.entries)))
+        self.put(VMap(one))
+    }
+}
+
+/// Reads a `Value` (`from_value`): a cursor on `v`, `path` the path to it.
+pub type ValueDeserializer = { v: Value, path: List[u8] }
+
+/// A reader of `v`.
+pub fn reader(v: Value) -> ValueDeserializer { ValueDeserializer(v, List.new()) }
+
+impl Deserializer for ValueDeserializer {
+    fn format(self) -> str { "value" }
+    fn path(self) -> List[u8] { self.path.copy() }
+    fn kind(self) -> Kind {
+        match self.v {
+            VNull => KNull
+            VBool(_) => KBool
+            VInt(_) => KInt
+            VUint(_) => KInt
+            VFloat(_) => KFloat
+            VStr(_) => KStr
+            VBytes(_) => KBytes
+            VList(_) => KList
+            VMap(_) => KMap
+            VTime(_) => KTime
+        }
+    }
+    fn read_bool(self) -> Result[bool, Error] {
+        match self.v {
+            VBool(b) => Ok(b)
+            _ => Err(expected(self, "a boolean"))
+        }
+    }
+    fn read_i64(self) -> Result[i64, Error] {
+        match self.v {
+            VInt(n) => Ok(n)
+            VUint(u) => {
+                if u > 9223372036854775807 { return Err(fail(self, "the number is out of range")) }
+                Ok(u as i64)
+            }
+            _ => Err(expected(self, "an integer"))
+        }
+    }
+    fn read_u64(self) -> Result[u64, Error] {
+        match self.v {
+            VInt(n) => {
+                if n < 0 { return Err(fail(self, "the number is out of range")) }
+                Ok(n as u64)
+            }
+            VUint(u) => Ok(u)
+            _ => Err(expected(self, "an integer"))
+        }
+    }
+    fn read_f64(self) -> Result[f64, Error] {
+        match self.v {
+            VFloat(f) => Ok(f)
+            VInt(n) => Ok(n as f64)
+            VUint(u) => Ok(u as f64)
+            _ => Err(expected(self, "a number"))
+        }
+    }
+    fn read_string(self) -> Result[List[u8], Error] {
+        match self.v {
+            VStr(s) => Ok(s)
+            _ => Err(expected(self, "a string"))
+        }
+    }
+    fn read_bytes(self) -> Result[List[u8], Error] {
+        match self.v {
+            VBytes(b) => Ok(b)
+            _ => Err(expected(self, "bytes"))
+        }
+    }
+    fn read_time(self) -> Result[time.DateTime, Error] {
+        match self.v {
+            VTime(t) => Ok(t)
+            _ => Err(expected(self, "a time"))
+        }
+    }
+    fn len(self) -> usize {
+        match self.v {
+            VList(xs) => xs.len()
+            VMap(es) => es.len()
+            _ => 0
+        }
+    }
+    fn at(self, i: usize) -> Result[ValueDeserializer, Error] {
+        match self.v {
+            VList(xs) => {
+                if i < xs.len() { return Ok(ValueDeserializer(xs[i].copy(), path_index(self.path, i))) }
+                Err(fail(self, "no such element"))
+            }
+            _ => Err(expected(self, "a list"))
+        }
+    }
+    fn get(self, key: List[u8]) -> Option[ValueDeserializer] {
+        match self.v {
+            VMap(es) => {
+                for e in es {
+                    if bytes.eq(e.key, key) { return Some(ValueDeserializer(e.value.copy(), path_field(self.path, key))) }
+                }
+                None
+            }
+            _ => None
+        }
+    }
+    fn key_at(self, i: usize) -> List[u8] {
+        match self.v {
+            VMap(es) => es[i].key.copy()
+            _ => List.new()
+        }
+    }
+    fn value_at(self, i: usize) -> ValueDeserializer {
+        match self.v {
+            VMap(es) => ValueDeserializer(es[i].value.copy(), path_field(self.path, es[i].key))
+            _ => ValueDeserializer(VNull, self.path.copy())
+        }
+    }
+}
