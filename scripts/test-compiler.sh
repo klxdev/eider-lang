@@ -730,7 +730,7 @@ pcheck "\"kind\":\"rehash\",\"fn\":$(fnid index $p),\"line\":$(at 'm.insert(i' $
 pcheck "\"kind\":\"drop\",\"fn\":$(fnid guarded $p),\"line\":$(at 'let g = Guard(i)' $src),\"n\":20," $p "cow: 20 Drop calls in guarded"
 pcheck '"live":0,"live_n":0' $p "cow: nothing live at the end"
 # waits and labels on threads
-(cd $pdir && EIDER_PROF=$pdir/conc.prof ./conc >conc.out 2>&1)
+(cd $pdir && EIDER_TASKS=threads EIDER_PROF=$pdir/conc.prof ./conc >conc.out 2>&1)
 p=$pdir/conc.prof
 src=compiler/tests/profile/conc.ei
 pcheck "\"kind\":\"lock\",\"fn\":$(fnid bump $p),\"line\":$(at 'm.update(' $src)," $p "conc: lock waits in bump"
