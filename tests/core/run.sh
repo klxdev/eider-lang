@@ -63,8 +63,8 @@ task() {
   if ! $CC $STRICT "$@" -o "$T/task_$name" tests/core/task_test.c core/eider_rt.c core/eider_core.c -pthread 2>"$T/log"; then
     echo "FAIL task ($name): build"; cat "$T/log"; fail=1; return
   fi
-  if "$T/task_$name" >"$T/out" 2>&1; then
-    echo "ok   task ($name): $(tail -1 "$T/out")"
+  if "$T/task_$name" >"$T/out" 2>&1 && "$T/task_$name" threads >>"$T/out" 2>&1; then
+    echo "ok   task ($name): $(tail -2 "$T/out" | tr '\n' ' ')"
   else
     echo "FAIL task ($name)"; cat "$T/out"; fail=1
   fi

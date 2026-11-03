@@ -329,6 +329,7 @@ descriptors; each registration carries a 64-bit token that comes back with its e
 | `int64_t ec_waker_wake(int32_t wfd)` | | `0`: the read end becomes readable. Safe from any thread and from a signal handler; waking an already-woken waker is not an error. Drain it with `ec_read_fd(r, 4096)` (until `-EAGAIN`) |
 | `int64_t ec_fd_wait(int32_t fd, int32_t interest, int64_t timeout_ms)` | | one descriptor's readiness, without a poller (`poll(2)`): `interest` `1` readable, `2` writable, or both (anything else `-EINVAL`); waits at most `timeout_ms` (`< 0` forever, `0` not at all). The flags that are set (`1` readable, `2` writable, `4` error, `8` hang-up; error and hang-up are reported whatever the interest), or `0` when the time ran out; `-EBADF` for a descriptor that isn't open. A signal doesn't end the wait: it resumes with the time left (measured on the monotonic clock). This is how a thread blocks on its own waker with a deadline (std/sync's Parker) and how std/fd waits for one descriptor |
 | `int64_t ec_fd_wait2(int32_t fd, int32_t interest, int32_t fd2, int32_t interest2, int64_t timeout_ms)` | | two descriptors' readiness at once (`poll(2)` on both), each with its own `interest` as in `ec_fd_wait`; the flags of `fd` in bits 0-3 and of `fd2` in bits 4-7, `0` when the time ran out, `-EBADF` if either is not open. How a connection waits for its socket and a server's stop signal without a poller of its own (std/fd `wait_ready2`). In a task it parks the task like `ec_fd_wait` (the descriptors must differ for that; equal ones block the thread) |
+| `int64_t ec_fd_wait_ev(int32_t fd, int32_t interest, int64_t parker, int64_t timeout_ms)` | | `ec_fd_wait` that also ends when the parker (below) is unparked: the descriptor's flags, plus `256` if the parker's permit was taken (the permit is then gone); both can be set; `0` at the deadline; `-EBADF` for a handle that is not a parker. How a wait on a descriptor is cancelled (std/task `Token.wait_fd`) |
 
 Event record: u64 token; u32 flags: `1` readable, `2` writable, `4` error (read `ec_sock_error`),
 `8` hang-up (no more writing is possible), `16` the peer has finished sending (reads will hit
@@ -344,6 +345,26 @@ Differences a caller must allow for (the event loop in layer/runtime does):
   descriptor of the open file closes (a `dup` keeps it alive). Remove before closing.
 - On 32-bit macOS and BSD the token travels in a pointer-sized field, so only its low 32 bits
   survive.
+
+## Parkers
+
+A Parker is what one thread or task waits on and another wakes: a permit (an unpark leaves one,
+a park takes it; several unparks before a park are one) and at most one waiter, named by a
+handle. It is a small entry in a table of the core, not a descriptor, so a hundred thousand
+tasks can each wait on one. A handle carries a generation: after `ec_parker_close` it is
+refused (`-EBADF`), also when its slot has been reused. Safe from any thread; `ec_parker_unpark`
+is not async-signal-safe (it takes a lock).
+
+| Function | Arguments | Result |
+|---|---|---|
+| `int64_t ec_parker_new(void)` | | the handle (> 0), or `-ENOMEM` / `-EMFILE` (4 million parkers) |
+| `int64_t ec_parker_park(int64_t h, int64_t timeout_ms)` | | waits until unparked or `timeout_ms` passes (`< 0` forever, `0` not at all): `1` unparked (the permit is taken), `0` the time ran out, `-EBADF`. In a task it parks the task (core/RUNTIME.md "Tasks"), else the thread waits on a waker of its own |
+| `int64_t ec_parker_unpark(int64_t h)` | | `0`; wakes the waiter or leaves the permit; `-EBADF` for a closed handle (ignored by callers) |
+| `int64_t ec_parker_clear(int64_t h)` | | `0`; takes the permit away without waiting |
+| `int64_t ec_parker_close(int64_t h)` | | `0`; the handle is dead from now on. Close a parker only when nobody waits on it |
+
+After `fork` the child's parkers keep their permits and have no waiters (the parent's threads and
+tasks are not there). `ec_fd_wait_ev` (Readiness) waits for a descriptor and a parker at once.
 
 ## Time
 

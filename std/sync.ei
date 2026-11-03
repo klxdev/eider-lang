@@ -6,16 +6,17 @@
 //!   no other holder, so crossing threads copies nothing of it ("No copies" below). (The
 //!   built-in Mutex can't do this: `update` returns nothing, and `get` then `set` is not
 //!   atomic.)
-//! - `Parker`: a thread waits on its own Parker with a deadline; any other thread unparks it.
-//!   It is an OS waker (core/ABI.md "Readiness"), waited on with `fd_wait`, so a wait ends on
-//!   time without a timer thread.
+//! - `Parker`: a thread or task waits on its own Parker with a deadline; any other unparks it.
+//!   It is a small object of the core (core/ABI.md "Parkers": a handle to a permit, no
+//!   descriptor), so a hundred thousand tasks can wait on one each; a task that parks gives
+//!   its worker to another task (decision C836).
 //!
 //! Blocking structures (std/chan, std/task) combine them the same way: a waiter puts its
 //! Parker in a list inside the Lock's state and parks; whoever changes the state wakes the
 //! Parkers in the list, under the lock. Two rules make that safe:
 //!   1. Waking happens with the lock held, and a waiter takes its Parker out of every list
-//!      (under each lock) before it closes it. So no thread ever wakes a closed Parker (its
-//!      descriptor number could have been reused by then).
+//!      (under each lock) before it closes it. (A handle that is closed is refused, not
+//!      reused, so a stray unpark would be harmless; the rule keeps the lists clean.)
 //!   2. A waiter checks the state and registers in the same critical section, and every change
 //!      that could let it proceed wakes the list after it, so no wake-up is lost.
 //!
@@ -34,7 +35,6 @@
 //! changes go through `modify`.
 
 import core.os
-import std.poll
 import std.time
 
 /// A value one thread at a time holds (see the module comment). Copies of a Lock share it.
@@ -106,15 +106,14 @@ impl[T] Lock[T] {
     }
 }
 
-/// A thread's wake-up handle (an OS waker). Make one with `parker()`, close it with `close`
-/// once it is in no waiter list (rule 1 above).
-pub type Parker = { w: poll.Waker }
+/// A wake-up handle of a thread or task (a handle to a core Parker). Make one with `parker()`,
+/// close it with `close` once it is in no waiter list (rule 1 above).
+pub type Parker = { h: i64 }
 
 pub fn parker() -> Parker uses io {
-    match poll.waker() {
-        Ok(w) => Parker(w)
-        Err(e) => panic("sync.parker: cannot make a waker")
-    }
+    let h = os.parker_new()
+    if h < 0 { panic("sync.parker: cannot make a parker") }
+    Parker(h)
 }
 
 impl Parker {
@@ -122,33 +121,30 @@ impl Parker {
     /// the wait counts (it is not lost); several unparks before a wait are one.
     fn park(self, dl: time.Deadline) -> bool uses io, clock {
         while true {
-            let r = os.fd_wait(self.w.r, 1, dl.timeout_ms())
-            if r > 0 {
-                poll.drain(self.w)
-                return true
-            }
+            let r = os.parker_park(self.h, dl.timeout_ms())
+            if r > 0 { return true }
             if r < 0 { panic("sync.park: wait on a closed parker") }
             if dl.expired() { return false }
         }
         false
     }
 
-    /// Wakes the thread parked on it (or makes its next park return at once).
+    /// Wakes the thread or task parked on it (or makes its next park return at once).
     fn unpark(self) uses io {
-        os.waker_wake(self.w.w)
+        os.parker_unpark(self.h)
     }
 
     /// Clears a pending unpark without waiting.
-    fn clear(self) uses io { poll.drain(self.w) }
+    fn clear(self) uses io { os.parker_clear(self.h) }
 
-    fn close(self) uses io { poll.close_waker(self.w) }
+    fn close(self) uses io { os.parker_close(self.h) }
 
-    /// Identifies the Parker while it is open (its descriptor).
-    fn id(self) -> i32 { self.w.r }
+    /// Identifies the Parker while it is open.
+    fn id(self) -> i64 { self.h }
 }
 
 /// A stand-in for "no Parker" (an operation that doesn't register).
-pub fn no_parker() -> Parker { Parker(poll.Waker(-1, -1)) }
+pub fn no_parker() -> Parker { Parker(0) }
 
 /// Unparks every Parker in `ws` (call it with the lock that guards `ws` held).
 pub fn wake_all(ws: List[Parker]) uses io {
@@ -169,7 +165,7 @@ pub fn wake_one(inout ws: List[Parker]) uses io {
 pub fn without(ws: List[Parker], p: Parker) -> List[Parker] {
     let mut out: List[Parker] = List.new()
     for q in ws {
-        if q.w.r != p.w.r { out.push(q) }
+        if q.h != p.h { out.push(q) }
     }
     out
 }

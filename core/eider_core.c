@@ -1380,6 +1380,19 @@ EC_FN(int64_t, ec_dns_reverse, (int32_t flags)) {
   return 0;
 }
 
+/* Blocking calls of a task (core/RUNTIME.md "Tasks"): the runtime's scheduler registers these
+   when it starts; a call made in a task parks the task instead of blocking its thread. A hook
+   answers EC_NOT_A_TASK when the caller is not a task (the core then blocks as usual), so the
+   core knows nothing about the scheduler and a program without one never sets the hook. */
+#define EC_NOT_A_TASK INT64_MIN
+typedef struct {
+  int64_t (*fd_wait)(int32_t fd, int32_t interest, int64_t timeout_ms);
+  int64_t (*sleep_ns)(int64_t ns);
+  int64_t (*fd_wait2)(int32_t fd, int32_t interest, int32_t fd2, int32_t interest2, int64_t timeout_ms);
+  int64_t (*wait_ev)(int32_t fd, int32_t interest, int64_t parker, int64_t timeout_ms);
+} ec_block_ops;
+_Atomic(const ec_block_ops *) ec_block_hook;
+
 // ---- readiness (ABI.md "Readiness")
 
 #define EC_POLL_MAX 1024
@@ -1474,6 +1487,18 @@ EC_FN(int64_t, ec_poll_wait, (int32_t pfd, int32_t max, int64_t timeout_ms)) {
   if (max <= 0) return -EINVAL;
   int m = max < EC_POLL_MAX ? max : EC_POLL_MAX;
   int64_t t = timeout_ms < 0 ? -1 : timeout_ms > INT_MAX ? INT_MAX : timeout_ms;
+  if (t != 0) {
+    /* a task waits on the poller's own descriptor (it is readable while events are pending), so
+       the worker is free meanwhile; what is ready is then collected without waiting */
+    const ec_block_ops *blk = atomic_load(&ec_block_hook);
+    if (blk) {
+      int64_t r = blk->fd_wait(pfd, 1, t);
+      if (r != EC_NOT_A_TASK) {
+        if (r < 0) return r;
+        t = 0;
+      }
+    }
+  }
 #if defined(EC_EPOLL)
   struct epoll_event *ev = malloc((size_t)m * sizeof *ev);
   if (!ev) return -ENOMEM;
@@ -1566,17 +1591,303 @@ EC_FN(int64_t, ec_waker_wake, (int32_t wfd)) {
   return 0;
 }
 
-/* Blocking calls of a task (core/RUNTIME.md "Tasks"): the runtime's scheduler registers these
-   when it starts; a call made in a task parks the task instead of blocking its thread. A hook
-   answers EC_NOT_A_TASK when the caller is not a task (the core then blocks as usual), so the
-   core knows nothing about the scheduler and a program without one never sets the hook. */
-#define EC_NOT_A_TASK INT64_MIN
+// ---- parkers (ABI.md "Parkers")
+
+/* A Parker is a table entry named by a generation-checked handle (like the atomic cells): a
+   permit that one unpark leaves and one park takes, and at most one waiter. A thread waits on
+   its own thread-local waker; a task's wait is a record in the scheduler, attached through
+   ec_pk_attach (the scheduler's side of this protocol, core/RUNTIME.md "Tasks"). An entry is
+   guarded by one of a few stripe mutexes, held while the waiter is woken, so a waiter that
+   detaches (under the same mutex) is never woken afterwards and its record can go. */
+#define PK_STRIPES 128
+#define PK_CHUNK 4096
+#define PK_CHUNKS 1024 /* 4M parkers */
+#define PK_FLAG 0x100  /* the parker was unparked (in the result of a wait) */
 typedef struct {
-  int64_t (*fd_wait)(int32_t fd, int32_t interest, int64_t timeout_ms);
-  int64_t (*sleep_ns)(int64_t ns);
-  int64_t (*fd_wait2)(int32_t fd, int32_t interest, int32_t fd2, int32_t interest2, int64_t timeout_ms);
-} ec_block_ops;
-_Atomic(const ec_block_ops *) ec_block_hook;
+  void *waiter;
+  void (*wake)(void *);
+  uint32_t gen, next;
+  uint8_t used, permit;
+} pk_ent;
+static _Atomic(pk_ent *) pk_tab[PK_CHUNKS];
+static pthread_mutex_t pk_stripe[PK_STRIPES];
+static pthread_mutex_t pk_glob = PTHREAD_MUTEX_INITIALIZER;
+static _Atomic uint32_t pk_n; /* entries made; those up to here have a chunk */
+static uint32_t pk_free;      /* the free list (entry numbers), under pk_glob */
+static pthread_once_t pk_once = PTHREAD_ONCE_INIT;
+
+static void pk_reinit(void) {
+  for (int i = 0; i < PK_STRIPES; i++) pthread_mutex_init(&pk_stripe[i], NULL);
+}
+
+static void pk_atfork_child(void) {
+  pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
+  pk_glob = m;
+  pk_reinit();
+  /* the waiters were threads and tasks of the parent: none of them exists here */
+  uint32_t n = atomic_load(&pk_n);
+  for (uint32_t i = 1; i <= n; i++) {
+    pk_ent *c = atomic_load(&pk_tab[(i - 1) / PK_CHUNK]);
+    c[(i - 1) % PK_CHUNK].waiter = NULL;
+  }
+}
+
+static void pk_init(void) {
+  pk_reinit();
+  pthread_atfork(NULL, NULL, pk_atfork_child);
+}
+
+static pk_ent *pk_at(uint32_t idx) { return &atomic_load_explicit(&pk_tab[(idx - 1) / PK_CHUNK], memory_order_acquire)[(idx - 1) % PK_CHUNK]; }
+
+/* The entry of handle h with its stripe locked (*mp), or NULL for a handle that is not (or no
+   longer) a parker. */
+static pk_ent *pk_lock(int64_t h, pthread_mutex_t **mp) {
+  if (h <= 0) return NULL;
+  uint32_t idx = (uint32_t)(uint64_t)h, gen = (uint32_t)((uint64_t)h >> 32);
+  if (idx == 0 || idx > atomic_load(&pk_n)) return NULL;
+  pk_ent *e = pk_at(idx);
+  pthread_mutex_t *m = &pk_stripe[(idx - 1) % PK_STRIPES];
+  pthread_mutex_lock(m);
+  if (!e->used || e->gen != gen) {
+    pthread_mutex_unlock(m);
+    return NULL;
+  }
+  *mp = m;
+  return e;
+}
+
+/* A new parker: its handle (> 0), or -errno. */
+EC_FN(int64_t, ec_parker_new, (void)) {
+  pthread_once(&pk_once, pk_init);
+  pthread_mutex_lock(&pk_glob);
+  uint32_t idx = pk_free;
+  if (idx) {
+    pk_free = pk_at(idx)->next;
+  } else {
+    uint32_t n = atomic_load(&pk_n);
+    if (n >= (uint32_t)PK_CHUNK * PK_CHUNKS) {
+      pthread_mutex_unlock(&pk_glob);
+      return -EMFILE;
+    }
+    if (n % PK_CHUNK == 0) {
+      pk_ent *c = calloc(PK_CHUNK, sizeof *c);
+      if (!c) {
+        pthread_mutex_unlock(&pk_glob);
+        return -ENOMEM;
+      }
+      atomic_store_explicit(&pk_tab[n / PK_CHUNK], c, memory_order_release);
+    }
+    idx = n + 1;
+    atomic_store(&pk_n, idx);
+  }
+  pthread_mutex_unlock(&pk_glob);
+  pk_ent *e = pk_at(idx);
+  pthread_mutex_t *m = &pk_stripe[(idx - 1) % PK_STRIPES];
+  pthread_mutex_lock(m);
+  e->used = 1;
+  e->permit = 0;
+  e->waiter = NULL;
+  if (e->gen == 0) e->gen = 1;
+  int64_t h = (int64_t)(((uint64_t)e->gen << 32) | idx);
+  pthread_mutex_unlock(m);
+  return h;
+}
+
+EC_FN(int64_t, ec_parker_close, (int64_t h)) {
+  pthread_mutex_t *m;
+  pk_ent *e = pk_lock(h, &m);
+  if (!e) return -EBADF;
+  uint32_t idx = (uint32_t)(uint64_t)h;
+  e->used = 0;
+  e->waiter = NULL;
+  e->permit = 0;
+  e->gen = (e->gen + 1) & 0x7fffffffu;
+  if (e->gen == 0) e->gen = 1;
+  pthread_mutex_unlock(m);
+  pthread_mutex_lock(&pk_glob);
+  e->next = pk_free;
+  pk_free = idx;
+  pthread_mutex_unlock(&pk_glob);
+  return 0;
+}
+
+/* Leaves a permit and wakes the waiter, if there is one. A handle that is closed is ignored. */
+EC_FN(int64_t, ec_parker_unpark, (int64_t h)) {
+  pthread_mutex_t *m;
+  pk_ent *e = pk_lock(h, &m);
+  if (!e) return -EBADF;
+  e->permit = 1;
+  if (e->waiter) e->wake(e->waiter);
+  pthread_mutex_unlock(m);
+  return 0;
+}
+
+/* Takes the permit away without waiting. */
+EC_FN(int64_t, ec_parker_clear, (int64_t h)) {
+  pthread_mutex_t *m;
+  pk_ent *e = pk_lock(h, &m);
+  if (!e) return -EBADF;
+  e->permit = 0;
+  pthread_mutex_unlock(m);
+  return 0;
+}
+
+/* The scheduler's side: attach a waiter record (and the function that completes it) to the
+   parker, unless a permit is there (taken: 1). detach removes it (taking the permit if the
+   wait ended by it: consume) and says whether a permit is there. */
+int64_t ec_pk_attach(int64_t h, void *waiter, void (*wake)(void *)) {
+  pthread_mutex_t *m;
+  pk_ent *e = pk_lock(h, &m);
+  if (!e) return -EBADF;
+  if (e->permit) {
+    e->permit = 0;
+    pthread_mutex_unlock(m);
+    return 1;
+  }
+  e->waiter = waiter;
+  e->wake = wake;
+  pthread_mutex_unlock(m);
+  return 0;
+}
+
+int64_t ec_pk_detach(int64_t h, int consume) {
+  pthread_mutex_t *m;
+  pk_ent *e = pk_lock(h, &m);
+  if (!e) return 0;
+  e->waiter = NULL;
+  int got = e->permit;
+  if (got && consume) e->permit = 0;
+  pthread_mutex_unlock(m);
+  return got;
+}
+
+/* A thread's own waker, made when it first parks. */
+typedef struct {
+  int r, w;
+} pk_waker;
+static pthread_key_t pk_key;
+static pthread_once_t pk_key_once = PTHREAD_ONCE_INIT;
+
+static void pk_waker_free(void *p) {
+  pk_waker *k = p;
+  if (k->r >= 0) close(k->r);
+  if (k->w >= 0 && k->w != k->r) close(k->w);
+  free(k);
+}
+static void pk_key_make(void) { pthread_key_create(&pk_key, pk_waker_free); }
+
+static pk_waker *pk_thread_waker(void) {
+  pthread_once(&pk_key_once, pk_key_make);
+  pk_waker *k = pthread_getspecific(pk_key);
+  if (k) return k;
+  k = malloc(sizeof *k);
+  if (!k) return NULL;
+#if defined(__linux__)
+  k->r = k->w = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+  if (k->r < 0) {
+    free(k);
+    return NULL;
+  }
+#else
+  int p[2];
+  if (cloexec_pipe(p) != 0 || set_cloexec_nonblock(p[0], 1) != 0 || set_cloexec_nonblock(p[1], 1) != 0) {
+    free(k);
+    return NULL;
+  }
+  k->r = p[0];
+  k->w = p[1];
+#endif
+  pthread_setspecific(pk_key, k);
+  return k;
+}
+
+static void pk_wake_fd(void *w) { ec_waker_wake((int32_t)(intptr_t)w); }
+
+static int64_t poll_flags(short revents);
+static int64_t mono_ms(void);
+
+/* Waits for the parker's permit, and for fd if it is >= 0: the fd's flags, plus PK_FLAG if the
+   permit was taken; 0 when timeout_ms ran out; -errno. */
+static int64_t pk_wait(int32_t fd, int32_t interest, int64_t h, int64_t timeout_ms) {
+  pthread_mutex_t *m;
+  pk_ent *e = pk_lock(h, &m);
+  if (!e) return -EBADF;
+  if (e->permit) {
+    e->permit = 0;
+    pthread_mutex_unlock(m);
+    return PK_FLAG;
+  }
+  pthread_mutex_unlock(m);
+  const ec_block_ops *blk = atomic_load(&ec_block_hook);
+  if (blk && blk->wait_ev) {
+    int64_t r = blk->wait_ev(fd, interest, h, timeout_ms);
+    if (r != EC_NOT_A_TASK) return r;
+  }
+  if (timeout_ms == 0 && fd < 0) return 0;
+  pk_waker *k = pk_thread_waker();
+  if (!k) return -EMFILE;
+  int64_t got = ec_pk_attach(h, (void *)(intptr_t)k->w, pk_wake_fd);
+  if (got < 0) return got;
+  if (got == 1) return PK_FLAG;
+  struct pollfd p[2];
+  int np = 0;
+  if (fd >= 0) {
+    p[np].fd = fd;
+    p[np].events = (short)(((interest & 1) ? POLLIN : 0) | ((interest & 2) ? POLLOUT : 0));
+    np++;
+  }
+  p[np].fd = k->r;
+  p[np].events = POLLIN;
+  np++;
+  int64_t end = timeout_ms > 0 ? mono_ms() + timeout_ms : 0;
+  int64_t res = 0;
+  for (;;) {
+    int64_t left = timeout_ms < 0 ? -1 : timeout_ms == 0 ? 0 : end - mono_ms();
+    if (timeout_ms > 0 && left < 0) left = 0;
+    int t = left > INT_MAX ? INT_MAX : (int)left;
+    p[0].revents = p[np - 1].revents = 0;
+    int n = poll(p, (nfds_t)np, t);
+    if (n < 0 && errno == EINTR) continue;
+    if (n < 0) {
+      res = fail();
+      break;
+    }
+    if (n == 0) {
+      if (left > INT_MAX) continue;
+      break;
+    }
+    if (np == 2 && (p[0].revents & POLLNVAL)) {
+      res = -EBADF;
+      break;
+    }
+    if (np == 2) res = poll_flags(p[0].revents); /* the parker's side is read from the permit below */
+    break;
+  }
+  int64_t pend = ec_pk_detach(h, 1);
+  /* no wake can arrive now: empty the waker */
+  {
+    uint64_t sink[8];
+    while (read(k->r, sink, sizeof sink) > 0) {
+    }
+  }
+  if (res >= 0 && pend) res |= PK_FLAG;
+  return res;
+}
+
+/* Waits until unparked or timeout_ms passes (< 0 forever, 0 not at all): 1 when unparked (the
+   permit is taken), 0 when the time ran out, -errno (-EBADF: not a parker). */
+EC_FN(int64_t, ec_parker_park, (int64_t h, int64_t timeout_ms)) {
+  int64_t r = pk_wait(-1, 0, h, timeout_ms);
+  if (r < 0) return r;
+  return (r & PK_FLAG) ? 1 : 0;
+}
+
+/* ec_fd_wait that also ends when the parker is unparked: the flags as ec_fd_wait plus 256 if
+   the permit was taken. How a wait on a descriptor is cancelled (std/task Token.wait_fd). */
+EC_FN(int64_t, ec_fd_wait_ev, (int32_t fd, int32_t interest, int64_t h, int64_t timeout_ms)) {
+  if ((interest & 3) == 0 || (interest & ~3) != 0 || fd < 0) return -EINVAL;
+  return pk_wait(fd, interest, h, timeout_ms);
+}
 
 /* Milliseconds on the monotonic clock (for ec_fd_wait's deadline). */
 static int64_t mono_ms(void) {

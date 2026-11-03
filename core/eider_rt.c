@@ -1350,6 +1350,11 @@ static void chan_wait(ei_chan *c) {
 
 // ---- the reactor: descriptors and timers (ec_fd_wait and ec_sleep_ns of a task)
 
+/* core's parkers (core/eider_core.c): a wait attaches its record to one so that an unpark ends it */
+#define PK_FLAG 0x100
+extern int64_t ec_pk_attach(int64_t h, void *waiter, void (*wake)(void *)) __attribute__((weak));
+extern int64_t ec_pk_detach(int64_t h, int consume) __attribute__((weak));
+
 struct reactor;
 typedef struct ei_wait ei_wait;
 struct ei_wait {
@@ -1360,6 +1365,7 @@ struct ei_wait {
   struct reactor *rx;
   int hidx; /* index in the timer heap, or -1 */
   bool done;
+  int64_t pk; /* the parker (core's handle) whose unpark also ends the wait, or 0 */
   ei_wait *nx[2][2]; /* the links in the descriptors' lists: [first or second][read or write] */
 };
 typedef struct {
@@ -1571,9 +1577,19 @@ static void *reactor_main(void *arg) {
   return NULL;
 }
 
-/* A task waits for fd (interest 1 readable, 2 writable; fd < 0: just for the time) until dl.
-   Result as ec_fd_wait: the flags, 0 at the deadline, -errno. */
-static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int32_t fd2, int32_t interest2, int64_t dl) {
+/* The parker's unpark ends the wait (called by core with the parker's lock held). */
+static void pk_wake_wait(void *p) {
+  ei_wait *w = p;
+  struct reactor *r = w->rx;
+  pthread_mutex_lock(&r->mu);
+  if (!w->done) wait_complete(w, PK_FLAG);
+  pthread_mutex_unlock(&r->mu);
+}
+
+/* A task waits for fd (interest 1 readable, 2 writable; fd < 0: just for the time) until dl,
+   and for the parker pk (0: none) to be unparked. Result as ec_fd_wait: the flags, 0 at the
+   deadline, -errno; PK_FLAG added when the parker's permit was taken. */
+static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int32_t fd2, int32_t interest2, int64_t dl, int64_t pk) {
   struct reactor *r = &RX[(fd >= 0 ? (unsigned)fd : (unsigned)t->id) % (unsigned)nshards];
   ei_wait w;
   memset(&w, 0, sizeof w);
@@ -1585,15 +1601,24 @@ static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int32_t fd2, 
   w.dl = dl;
   w.hidx = -1;
   w.rx = r;
+  w.pk = pk;
+  if (pk) {
+    /* the lock order is the parker's, then the reactor's (an unpark wakes us under the former) */
+    int64_t a = ec_pk_attach(pk, &w, pk_wake_wait);
+    if (a < 0) return a;
+    if (a == 1) return PK_FLAG;
+  }
+  int64_t res = 0;
   pthread_mutex_lock(&r->mu);
+  if (w.done) goto finish; /* unparked while we were attaching */
   if (fd >= 0) {
     int32_t top = fd2 > fd ? fd2 : fd;
     if ((size_t)top >= r->nfds) {
       size_t nn = (size_t)top + 64;
       fdent *nf = realloc(r->fds, nn * sizeof *nf);
       if (!nf) {
-        pthread_mutex_unlock(&r->mu);
-        return -ENOMEM;
+        res = -ENOMEM;
+        goto failed;
       }
       memset(nf + r->nfds, 0, (nn - r->nfds) * sizeof *nf);
       r->fds = nf;
@@ -1617,17 +1642,14 @@ static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int32_t fd2, 
       if (fds[k] < 0 || fd_arm(r, fds[k])) continue;
       int err = errno;
       /* a regular file (EPERM) is always ready; anything else is an error */
-      int64_t res = err == EPERM ? (int64_t)(ints[k] & 3) << (4 * k) : -(int64_t)err;
-      wait_unlink(&w);
-      pthread_mutex_unlock(&r->mu);
-      return res;
+      res = err == EPERM ? (int64_t)(ints[k] & 3) << (4 * k) : -(int64_t)err;
+      goto failed;
     }
   }
   if (dl != INT64_MAX) {
     if (!heap_push(r, &w)) {
-      wait_unlink(&w);
-      pthread_mutex_unlock(&r->mu);
-      return -ENOMEM;
+      res = -ENOMEM;
+      goto failed;
     }
     if (dl < r->wake_at) reactor_poke(r);
   }
@@ -1639,7 +1661,20 @@ static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int32_t fd2, 
     if (d) break;
     task_park(t);
   }
-  return w.result;
+  pthread_mutex_lock(&r->mu);
+finish:
+  res = w.result;
+  pthread_mutex_unlock(&r->mu);
+  if (pk) ec_pk_detach(pk, res >= 0 && (res & PK_FLAG) != 0);
+  return res;
+failed:
+  /* not registered (or not for long): out of the lists and the heap, a wake that came is moot */
+  w.done = true;
+  wait_unlink(&w);
+  heap_remove(r, &w);
+  pthread_mutex_unlock(&r->mu);
+  if (pk) ec_pk_detach(pk, 0);
+  return res;
 }
 
 #define EC_NOT_A_TASK INT64_MIN
@@ -1647,6 +1682,7 @@ typedef struct {
   int64_t (*fd_wait)(int32_t fd, int32_t interest, int64_t timeout_ms);
   int64_t (*sleep_ns)(int64_t ns);
   int64_t (*fd_wait2)(int32_t fd, int32_t interest, int32_t fd2, int32_t interest2, int64_t timeout_ms);
+  int64_t (*wait_ev)(int32_t fd, int32_t interest, int64_t parker, int64_t timeout_ms);
 } ec_block_ops;
 extern _Atomic(const ec_block_ops *) ec_block_hook __attribute__((weak));
 
@@ -1659,13 +1695,19 @@ static int64_t deadline_of(int64_t timeout_ms) {
 static int64_t hook_fd_wait(int32_t fd, int32_t interest, int64_t timeout_ms) {
   ei_task *t = task_self();
   if (!t || timeout_ms == 0) return EC_NOT_A_TASK;
-  return task_wait(t, fd, interest, -1, 0, deadline_of(timeout_ms));
+  return task_wait(t, fd, interest, -1, 0, deadline_of(timeout_ms), 0);
 }
 
 static int64_t hook_fd_wait2(int32_t fd, int32_t interest, int32_t fd2, int32_t interest2, int64_t timeout_ms) {
   ei_task *t = task_self();
   if (!t || timeout_ms == 0 || fd < 0 || fd2 < 0 || fd == fd2) return EC_NOT_A_TASK;
-  return task_wait(t, fd, interest, fd2, interest2, deadline_of(timeout_ms));
+  return task_wait(t, fd, interest, fd2, interest2, deadline_of(timeout_ms), 0);
+}
+
+static int64_t hook_wait_ev(int32_t fd, int32_t interest, int64_t pk, int64_t timeout_ms) {
+  ei_task *t = task_self();
+  if (!t) return EC_NOT_A_TASK;
+  return task_wait(t, fd, interest, -1, 0, deadline_of(timeout_ms), pk);
 }
 
 static int64_t hook_sleep_ns(int64_t ns) {
@@ -1676,11 +1718,11 @@ static int64_t hook_sleep_ns(int64_t ns) {
     return 0;
   }
   int64_t now = mono_ns();
-  task_wait(t, -1, 0, -1, 0, ns > INT64_MAX - now ? INT64_MAX : now + ns);
+  task_wait(t, -1, 0, -1, 0, ns > INT64_MAX - now ? INT64_MAX : now + ns, 0);
   return 0;
 }
 
-static const ec_block_ops block_ops = {hook_fd_wait, hook_sleep_ns, hook_fd_wait2};
+static const ec_block_ops block_ops = {hook_fd_wait, hook_sleep_ns, hook_fd_wait2, hook_wait_ev};
 
 static int64_t env_int(const char *name, int64_t dflt) {
   const char *v = getenv(name);

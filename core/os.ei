@@ -208,6 +208,21 @@ pub fn fd_wait(fd: i32, interest: i32, timeout_ms: i64) -> i64 uses io, ffi { un
 extern "c" fn ec_fd_wait2(fd: i32, interest: i32, fd2: i32, interest2: i32, timeout_ms: i64) -> i64
 pub fn fd_wait2(fd: i32, interest: i32, fd2: i32, interest2: i32, timeout_ms: i64) -> i64 uses io, ffi { unsafe { ec_fd_wait2(fd, interest, fd2, interest2, timeout_ms) } }
 
+// parkers (core/ABI.md "Parkers"): a handle (> 0), unpark leaves a permit, park takes it
+extern "c" fn ec_parker_new() -> i64
+extern "c" fn ec_parker_park(h: i64, timeout_ms: i64) -> i64
+extern "c" fn ec_parker_unpark(h: i64) -> i64
+extern "c" fn ec_parker_clear(h: i64) -> i64
+extern "c" fn ec_parker_close(h: i64) -> i64
+extern "c" fn ec_fd_wait_ev(fd: i32, interest: i32, h: i64, timeout_ms: i64) -> i64
+pub fn parker_new() -> i64 uses io, ffi { unsafe { ec_parker_new() } }
+pub fn parker_park(h: i64, timeout_ms: i64) -> i64 uses io, ffi { unsafe { ec_parker_park(h, timeout_ms) } }
+pub fn parker_unpark(h: i64) -> i64 uses io, ffi { unsafe { ec_parker_unpark(h) } }
+pub fn parker_clear(h: i64) -> i64 uses io, ffi { unsafe { ec_parker_clear(h) } }
+pub fn parker_close(h: i64) -> i64 uses io, ffi { unsafe { ec_parker_close(h) } }
+// one descriptor's readiness, or the parker's unpark (256 is added to the flags when its permit was taken)
+pub fn fd_wait_ev(fd: i32, interest: i32, h: i64, timeout_ms: i64) -> i64 uses io, ffi { unsafe { ec_fd_wait_ev(fd, interest, h, timeout_ms) } }
+
 // atomic cells (core/ABI.md "Atomic cells"). No real capability: like a Mutex, a cell is
 // memory shared between threads, not the OS, so these take only `ffi` (which stays in core).
 extern "c" fn ec_atomic_new(v: i64) -> i64

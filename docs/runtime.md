@@ -21,7 +21,7 @@ The std modules, bottom up:
 |---|---|---|
 | `std/time` | `Duration`, `Deadline` (and the clocks, sleeping) | `clock` where the clock is read |
 | `std/atomic` | `Atomic`: shared 64-bit integers with orderings | none |
-| `std/sync` | `Lock[T]` (state changed under a lock, with a result), `Parker` (wait with a deadline, woken from any thread) | `io` for Parkers (descriptors), `clock` for deadlines |
+| `std/sync` | `Lock[T]` (state changed under a lock, with a result), `Parker` (wait with a deadline, woken from any thread) | `io` for Parkers (a table entry of the core), `clock` for deadlines |
 | `std/chan` | `Channel[T]` (bounded by default), `select` over channels, timers and tokens | `io, clock` to wait; `io` to wake |
 | `std/task` | `Token` (cancellation and deadlines), `Group[T]` (structured task groups), `Pool` (worker threads) | `threads` to start threads; `io, clock` to wait |
 | `std/event` | `Loop`: a poller, a waker and a timer heap | `io`, `clock` |
@@ -115,13 +115,15 @@ machine:
 | copy-on-write unshares in std/sync | 64.3 M, 2.9 GiB | 13.3 M, 566 MiB, all of them `kv.keys` results (one per key returned); `kv.get` about 1 per call |
 | top site | `sync.Lock[kv.Kv].with` (44% of CPU) | `os.sock_send` (13.3%); `Lock.modify` 8% |
 
-`sync.Parker` is a thread's wake-up handle: an OS waker. `park(dl)` waits on it with
-`ec_fd_wait` until another thread calls `unpark` or the deadline passes; an unpark that came
-first is not lost. Every blocking structure here is a Lock whose state holds lists of the
+`sync.Parker` is a thread's or task's wake-up handle: a small object of the core (a generation-
+checked handle to a permit, core/ABI.md "Parkers"; no descriptor, so 100,000 tasks can each wait
+on one). `park(dl)` waits on it until another thread calls `unpark` or the deadline passes; an
+unpark that came first is not lost. Every blocking structure here is a Lock whose state holds lists of the
 Parkers waiting on it, with two rules (std/sync's module comment):
 
 1. Wake under the lock, and leave every list (under its lock) before closing a Parker, so a
-   closed Parker (whose descriptor number may be reused) is never woken.
+   closed Parker is never woken (a stale handle is refused by its generation, so a stray unpark
+   would be harmless; the rule keeps the lists clean).
 2. Check the state and register in one critical section; everything that changes the state
    wakes the list afterwards. No wake-up is lost.
 
@@ -416,7 +418,7 @@ calls pays most. `EIDER_PROF=off` leaves only the shadow stack.
 |---|---|---|
 | Atomics for Eider as handles to core-owned cells, freed explicitly | the language has no shared memory outside its handles, and a copied record would be a second atomic; handles are safe (generation-checked, cells never freed) and need no compiler change | a built-in `Atomic` handle type (the next step: reference-counted, no `free`); atomics on Mutex (not atomics) |
 | Checked `add`/`sub` by compare-and-swap; `wrapping_add` separately | Eider arithmetic traps on overflow; hardware fetch-add wraps | wrapping only (Rust's choice) |
-| A thread waits on an OS waker with `poll(2)` (`ec_fd_wait`), not a condition variable | the waker already exists (ABI "Readiness"), works with a deadline on the monotonic clock, and is what tasks will park on in an event loop | `pthread_cond_timedwait` in the runtime with a per-thread condvar (needs thread-locals or a new handle type) |
+| A thread waits on an OS waker with `poll(2)` (a per-thread eventfd), not a condition variable; a task parks in the scheduler (C836). The Parker itself is a core object, not a descriptor | the waker already exists (ABI "Readiness"), works with a deadline on the monotonic clock, and lets a thread wait for a descriptor and a Parker in one `poll` (`ec_fd_wait_ev`) | `pthread_cond_timedwait` in the runtime with a per-thread condvar (needs thread-locals or a new handle type) |
 | `Lock[T]` as a one-value channel of `Option[T]`, changed in place by `modify(f: fn(inout T) -> R)`, the value sent back with no other holder (C320) | atomic read-modify-write of any state with a result, copying none of it, on the existing seed (std/sync builds with the seed and with eiderc) | `Mutex.update(fn(inout T) -> R)` making the closure's captures and its result unique instead of the value (O(1) for any value, not one visit per buffer; a compiler change, so std could use it only after a seed regeneration, and a captured Ref would have to trap); a runtime primitive (the core can't walk Eider values); handing the value over without making it unique (unsound: the result and the captures may share its buffers) |
 | Wake one waiter of a channel side per value or place, handed on by a woken waiter that doesn't use it (C321) | n idle receivers cost one wake-up per value, not n; correct with select and deadlines because every way out of a wait that doesn't take hands the wake-up on | wake every waiter (correct, simpler, a thundering herd: what it was until C321) |
 | Bounded channels need capacity >= 1 | rendezvous channels need a different protocol | capacity 0 later |
@@ -429,7 +431,7 @@ calls pays most. `EIDER_PROF=off` leaves only the shadow stack.
 
 `spawn` starts a task (docs/design/lightweight-tasks.md): a function on a guarded stack of its
 own, run by `EIDER_WORKERS` worker threads that take tasks from one another. The library of
-this page did not change: `Parker.park` is `ec_fd_wait` on a waker, `Chan.recv` is the
+this page did not change: `Parker.park` is `ec_parker_park`, `Chan.recv` is the
 runtime's, `Task.join` the runtime's, `time.sleep` is `ec_sleep_ns`; in a task each of them parks
 the task, so `Lock`, channels, `select`, tokens, groups and `Pool` (whose workers are tasks now)
 run on tasks as they were written. core/RUNTIME.md "Tasks" has the contract.
@@ -471,8 +473,8 @@ Pool numbers above come from threads; the Pool is the same code on tasks now.
    guarded runtime thread, so an overflow there is a `stack overflow` trap too
    (core/RUNTIME.md "Stack overflow").
 3. ~~**Stackless tasks (C4).**~~ Done as stackful tasks (C830, "Tasks" above). Still open:
-   `Parker` as a core object instead of an eventfd per wait, `Loop` on the reactor,
-   cancellation reaching descriptor waits, a kqueue reactor. A pool job that waits for other
+   a kqueue reactor (`Parker` is a core object, `Loop` runs on the reactor and cancellation
+   reaches descriptor waits: M3, C840 to C843). A pool job that waits for other
    jobs of the same pool can still exhaust the pool's own workers (they are tasks now, so
    only the pool's size, not the machine's thread limit, bounds it).
 4. Optional, smaller: `Chan.try_recv` and a timed `recv` on the built-in channel would let
@@ -496,6 +498,6 @@ Pool numbers above come from threads; the Pool is the same code on tasks now.
 - A value given to `Channel.send` (or `Pool.submit`) is a borrow, so the parts the caller
   still shares are copied when it crosses (a job closure's captures, for instance); moving a
   caller's temporary needs the compiler.
-- Each wait makes one OS waker (an eventfd on Linux) for its duration, and a woken waiter
+- Each wait makes one Parker (a table entry, no descriptor) for its duration, and a woken waiter
   that finds nothing (another thread was first) waits again.
 - Timers have millisecond resolution.

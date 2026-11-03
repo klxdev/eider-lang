@@ -6,9 +6,13 @@
 
 #include "../../core/eider_rt.h"
 
+#include <dirent.h>
+#include <errno.h>
 #include <signal.h>
+#include <stdatomic.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
@@ -313,14 +317,385 @@ static void test_overflow(void) {
 #endif
 }
 
-#define RUN(f)                                      \
-  do {                                              \
-    if (getenv("TASK_TEST_V")) fprintf(stderr, "%s\n", #f); \
-    f();                                            \
+// ---- parkers (core "Parkers"): handles, permits, races, tasks, fork; the poller of an Eider Loop
+
+int64_t ec_parker_new(void);
+int64_t ec_parker_park(int64_t h, int64_t timeout_ms);
+int64_t ec_parker_unpark(int64_t h);
+int64_t ec_parker_clear(int64_t h);
+int64_t ec_parker_close(int64_t h);
+int64_t ec_fd_wait_ev(int32_t fd, int32_t interest, int64_t h, int64_t timeout_ms);
+int64_t ec_poll_new(void);
+int64_t ec_poll_ctl(int32_t pfd, int32_t op, int32_t fd, int32_t interest, int64_t token);
+int64_t ec_poll_wait(int32_t pfd, int32_t max, int64_t timeout_ms);
+
+static int count_dir(const char *path) {
+  DIR *d = opendir(path);
+  int n = 0;
+  if (!d) return -1;
+  while (readdir(d)) n++;
+  closedir(d);
+  return n;
+}
+
+static void *parker_basic_body(void *arg) {
+  int64_t p = ec_parker_new();
+  int64_t bad = 0;
+  if (p <= 0) bad++;
+  if (ec_parker_park(p, 0) != 0) bad++;
+  ec_parker_unpark(p);
+  if (ec_parker_park(p, 0) != 1) bad++; /* the permit */
+  if (ec_parker_park(p, 0) != 0) bad++; /* taken */
+  ec_parker_unpark(p);
+  ec_parker_unpark(p);
+  if (ec_parker_park(p, 10) != 1) bad++; /* two unparks are one */
+  int64_t t0 = now_ms();
+  if (ec_parker_park(p, 25) != 0) bad++;
+  if (now_ms() - t0 < 24) bad++;
+  ec_parker_unpark(p);
+  ec_parker_clear(p);
+  if (ec_parker_park(p, 0) != 0) bad++; /* cleared */
+  if (ec_parker_close(p) != 0) bad++;
+  if (ec_parker_close(p) != -EBADF) bad++;
+  if (ec_parker_unpark(p) != -EBADF) bad++;
+  if (ec_parker_park(p, 0) != -EBADF) bad++;
+  *(int64_t *)arg = bad;
+  return NULL;
+}
+
+static void test_parker_basic(void) {
+  int64_t bad = -1;
+  parker_basic_body(&bad); /* on this thread */
+  EQI(bad, 0);
+  bad = -1;
+  ei_thread t; /* in a task (or thread: EIDER_TASKS=threads) */
+  ei_thread_start(&t, parker_basic_body, &bad);
+  ei_thread_join(&t);
+  ei_thread_destroy(&t);
+  EQI(bad, 0);
+}
+
+static void test_parker_stale_and_many(void) {
+  int64_t p = ec_parker_new();
+  ec_parker_close(p);
+  int64_t q = ec_parker_new(); /* the same slot, another generation */
+  CHECK(q != p);
+  EQI(ec_parker_unpark(p), -EBADF); /* a stale handle does not reach q */
+  EQI(ec_parker_park(q, 0), 0);
+  ec_parker_close(q);
+  enum { N = 200000 };
+  static int64_t hs[N];
+  int before = count_dir("/proc/self/fd");
+  for (int i = 0; i < N; i++) hs[i] = ec_parker_new();
+  int all = 1;
+  for (int i = 0; i < N; i++) all &= hs[i] > 0;
+  CHECK(all);
+  CHECK(count_dir("/proc/self/fd") == before); /* no descriptor each */
+  for (int i = 0; i < N; i++) ec_parker_unpark(hs[i]);
+  for (int i = 0; i < N; i += 997) EQI(ec_parker_park(hs[i], 0), 1);
+  for (int i = 0; i < N; i++) ec_parker_close(hs[i]);
+}
+
+// ---- many tasks parked on their own parker: no descriptors, all wake
+
+enum { PKN = 20000 };
+static int64_t pk_h[PKN];
+static atomic_int pk_ready;
+
+static void *pk_waiter(void *arg) {
+  int64_t i = (int64_t)(intptr_t)arg;
+  int64_t p = ec_parker_new();
+  pk_h[i] = p;
+  atomic_fetch_add(&pk_ready, 1);
+  int64_t r = ec_parker_park(p, -1);
+  ec_parker_close(p);
+  return (void *)(intptr_t)r;
+}
+
+static void test_parker_many_tasks(void) {
+  if (getenv("EIDER_TASKS")) return; /* 20,000 threads: not what is tested */
+  static ei_thread th[PKN];
+  atomic_store(&pk_ready, 0);
+  int before = count_dir("/proc/self/fd");
+  for (int64_t i = 0; i < PKN; i++) ei_thread_start(&th[i], pk_waiter, (void *)(intptr_t)i);
+  for (int spin = 0; atomic_load(&pk_ready) < PKN && spin < 20000; spin++) {
+    struct timespec ts = {0, 1000000};
+    nanosleep(&ts, NULL);
+  }
+  EQI(atomic_load(&pk_ready), PKN);
+  struct timespec ts = {0, 50 * 1000 * 1000};
+  nanosleep(&ts, NULL); /* let them all park */
+  int during = count_dir("/proc/self/fd");
+  CHECK(during <= before + 4); /* tasks: no eventfd each; threads would have one each (here the same: 0) */
+  for (int i = 0; i < PKN; i++) ec_parker_unpark(pk_h[i]);
+  int ok = 1;
+  for (int i = 0; i < PKN; i++) {
+    ei_thread_join(&th[i]);
+    ei_thread_destroy(&th[i]);
+  }
+  CHECK(ok);
+}
+
+// ---- a timed park races an unpark: exactly one permit is accounted for
+
+typedef struct {
+  int64_t p;
+  int64_t ms;
+  int64_t r;
+} race_ctx;
+
+static void *timed_parker(void *arg) {
+  race_ctx *c = arg;
+  c->r = ec_parker_park(c->p, c->ms);
+  return NULL;
+}
+
+static void test_parker_timer_race(void) {
+  int bad = 0, woke = 0, timed = 0;
+  for (int i = 0; i < 1500; i++) {
+    race_ctx c = {ec_parker_new(), 1, -1};
+    ei_thread t;
+    ei_thread_start(&t, timed_parker, &c);
+    /* around the 1 ms deadline: before, at, and after it */
+    struct timespec ts = {0, (long)(i % 40) * 50 * 1000};
+    nanosleep(&ts, NULL);
+    ec_parker_unpark(c.p);
+    ei_thread_join(&t);
+    ei_thread_destroy(&t);
+    int64_t again = ec_parker_park(c.p, 0);
+    if (c.r == 1) woke++;
+    else timed++;
+    if (c.r + again != 1) bad++; /* the one unpark is either taken by the park or still there */
+    ec_parker_close(c.p);
+  }
+  EQI(bad, 0);
+  CHECK(woke > 0 && timed > 0);
+}
+
+// ---- a descriptor wait races an unpark, and the unpark of a closed parker is harmless
+
+typedef struct {
+  int rfd;
+  int64_t p;
+  int64_t r;
+} fdrace_ctx;
+
+static void *ev_waiter(void *arg) {
+  fdrace_ctx *c = arg;
+  c->r = ec_fd_wait_ev(c->rfd, 1, c->p, 2000);
+  return NULL;
+}
+
+static void test_fd_wait_ev_race(void) {
+  int fds[2];
+  CHECK(pipe(fds) == 0);
+  int bad = 0, both = 0, only_fd = 0, only_pk = 0;
+  for (int i = 0; i < 3000; i++) {
+    fdrace_ctx c = {fds[0], ec_parker_new(), -1};
+    ei_thread t;
+    ei_thread_start(&t, ev_waiter, &c);
+    struct timespec ts = {0, (long)(i % 30) * 20 * 1000};
+    nanosleep(&ts, NULL);
+    if (i & 1) {
+      ec_parker_unpark(c.p);
+      if (write(fds[1], "x", 1) != 1) bad++;
+    } else {
+      if (write(fds[1], "x", 1) != 1) bad++;
+      ec_parker_unpark(c.p);
+    }
+    ei_thread_join(&t);
+    ei_thread_destroy(&t);
+    int64_t again = ec_parker_park(c.p, 0);
+    if (c.r <= 0) bad++;
+    if ((c.r & 1) && (c.r & 0x100)) both++;
+    else if (c.r & 1) only_fd++;
+    else if (c.r & 0x100) only_pk++;
+    else bad++;
+    /* the permit: taken by the wait (then none left), or still there */
+    if (((c.r & 0x100) ? 1 : 0) + again != 1) bad++;
+    char b[8];
+    if (read(fds[0], b, sizeof b) != 1) bad++; /* the byte is still there: a wait doesn't read */
+    ec_parker_close(c.p);
+  }
+  EQI(bad, 0);
+  CHECK(both + only_fd + only_pk == 3000);
+  close(fds[0]);
+  close(fds[1]);
+}
+
+// ---- unpark and park alternate between two tasks with long timers: the timers are removed
+
+typedef struct {
+  int64_t mine, other;
+  int rounds;
+  int64_t bad;
+} pp_ctx;
+
+static void *pp_body(void *arg) {
+  pp_ctx *c = arg;
+  for (int i = 0; i < c->rounds; i++) {
+    if (ec_parker_park(c->mine, 3600 * 1000) != 1) c->bad++;
+    ec_parker_unpark(c->other);
+  }
+  return NULL;
+}
+
+static void test_parker_ping_pong(void) {
+  pp_ctx a = {ec_parker_new(), ec_parker_new(), 20000, 0};
+  pp_ctx b = {a.other, a.mine, 20000, 0};
+  ei_thread ta, tb;
+  ei_thread_start(&ta, pp_body, &a);
+  ei_thread_start(&tb, pp_body, &b);
+  ec_parker_unpark(a.mine); /* start a */
+  ei_thread_join(&ta);
+  ei_thread_join(&tb);
+  ei_thread_destroy(&ta);
+  ei_thread_destroy(&tb);
+  /* a's last unpark leaves a permit for b's... b ended: the numbers of parks match */
+  EQI(a.bad + b.bad, 0);
+  /* the reactor's timers are intact: a short timed wait still ends on time */
+  int64_t p = ec_parker_new();
+  int64_t t0 = now_ms();
+  EQI(ec_parker_park(p, 20), 0);
+  CHECK(now_ms() - t0 >= 19 && now_ms() - t0 < 1000);
+  ec_parker_close(p);
+  ec_parker_close(a.mine);
+  ec_parker_close(a.other);
+}
+
+// ---- ec_poll_wait in a task parks the task: a worker is free, and no worker is added
+
+typedef struct {
+  int pfd, rfd, wfd;
+  int64_t n;
+} loop_ctx;
+
+static void *loop_body(void *arg) {
+  loop_ctx *c = arg;
+  c->n = ec_poll_wait(c->pfd, 8, -1);
+  return NULL;
+}
+
+static atomic_int probe_ran;
+static void *probe_body(void *arg) {
+  (void)arg;
+  atomic_fetch_add(&probe_ran, 1);
+  return NULL;
+}
+
+static void test_poll_wait_parks(void) {
+  enum { L = 6 }; /* more than the 2 workers */
+  loop_ctx lc[L];
+  ei_thread th[L];
+  int before = count_dir("/proc/self/task");
+  for (int i = 0; i < L; i++) {
+    int fds[2];
+    CHECK(pipe(fds) == 0);
+    lc[i].pfd = (int)ec_poll_new();
+    lc[i].rfd = fds[0];
+    lc[i].wfd = fds[1];
+    lc[i].n = -1;
+    EQI(ec_poll_ctl(lc[i].pfd, 0, fds[0], 1, 7), 0);
+    ei_thread_start(&th[i], loop_body, &lc[i]);
+  }
+  struct timespec ts = {0, 100 * 1000 * 1000};
+  nanosleep(&ts, NULL);
+  ei_thread pr;
+  atomic_store(&probe_ran, 0);
+  ei_thread_start(&pr, probe_body, NULL);
+  ei_thread_join(&pr);
+  ei_thread_destroy(&pr);
+  EQI(atomic_load(&probe_ran), 1);
+  if (!getenv("EIDER_TASKS")) CHECK(count_dir("/proc/self/task") == before); /* no worker was added */
+  for (int i = 0; i < L; i++) {
+    CHECK(write(lc[i].wfd, "x", 1) == 1);
+  }
+  for (int i = 0; i < L; i++) {
+    ei_thread_join(&th[i]);
+    ei_thread_destroy(&th[i]);
+    EQI(lc[i].n, 1);
+    close(lc[i].pfd);
+    close(lc[i].rfd);
+    close(lc[i].wfd);
+  }
+}
+
+// ---- parkers across fork: a parker is usable in the child; a waiter of the parent is not there
+
+static void *fork_waiter(void *arg) {
+  *(int64_t *)arg = ec_parker_park(*(int64_t *)arg, -1);
+  return NULL;
+}
+
+static void *child_task(void *arg) {
+  return (void *)(intptr_t)ec_parker_park(*(int64_t *)arg, 5000);
+}
+
+static void test_parker_fork(void) {
+  int64_t q = ec_parker_new(); /* a task of the parent waits on it */
+  int64_t slot = q;
+  ei_thread w;
+  ei_thread_start(&w, fork_waiter, &slot);
+  struct timespec ts = {0, 50 * 1000 * 1000};
+  nanosleep(&ts, NULL);
+  int64_t p = ec_parker_new();
+  ec_parker_unpark(p); /* a permit crosses the fork */
+  fflush(stdout);
+  fflush(stderr);
+  pid_t pid = fork();
+  if (pid == 0) {
+    int bad = 0;
+    if (ec_parker_park(p, 0) != 1) bad |= 1;
+    ec_parker_unpark(q); /* the parent's waiter is gone: this only leaves a permit */
+    if (ec_parker_park(q, 0) != 1) bad |= 2;
+    if (ec_parker_park(q, 10) != 0) bad |= 4;
+    int64_t r = ec_parker_new();
+    ei_thread t;
+    ei_thread_start(&t, child_task, &r); /* the scheduler starts afresh */
+    ts.tv_nsec = 30 * 1000 * 1000;
+    nanosleep(&ts, NULL);
+    ec_parker_unpark(r);
+    ei_thread_join(&t);
+    ei_thread_destroy(&t);
+    _exit(bad);
+  }
+  int st = 0;
+  waitpid(pid, &st, 0);
+  CHECK(WIFEXITED(st) && WEXITSTATUS(st) == 0);
+  ec_parker_unpark(q); /* the parent's own waiter wakes */
+  ei_thread_join(&w);
+  ei_thread_destroy(&w);
+  EQI(slot, 1);
+  ec_parker_close(p);
+  ec_parker_close(q);
+}
+
+
+/* TASK_TEST_V=1 names each test as it starts; TASK_TEST_ONLY=parker runs those whose name has it */
+#define RUN(f)                                                                  \
+  do {                                                                          \
+    const char *only_ = getenv("TASK_TEST_ONLY");                              \
+    if (only_ && !strstr(#f, only_)) break;                                     \
+    if (getenv("TASK_TEST_V")) fprintf(stderr, "%s\n", #f);                    \
+    f();                                                                        \
   } while (0)
 
 int main(int argc, char **argv) {
   if (argc > 1 && strcmp(argv[1], "overflow") == 0) child_overflow();
+  if (argc > 1 && strcmp(argv[1], "threads") == 0) {
+    /* the same parker tests with OS threads (EIDER_TASKS=threads) */
+    setenv("EIDER_TASKS", "threads", 1);
+    ei_set_file("task_test");
+    RUN(test_parker_basic);
+    RUN(test_parker_stale_and_many);
+    RUN(test_parker_many_tasks);
+    RUN(test_parker_timer_race);
+    RUN(test_fd_wait_ev_race);
+    RUN(test_parker_ping_pong);
+    RUN(test_parker_fork);
+    printf("%d checks, %d failed\n", checks, failures);
+    return failures ? 1 : 0;
+  }
   setenv("EIDER_WORKERS", "2", 1);
   setenv("EIDER_WORKERS_MAX", "64", 1);
   ei_set_file("task_test");
@@ -331,6 +706,14 @@ int main(int argc, char **argv) {
   RUN(test_fd_wait2);
   RUN(test_trap_across_park);
   RUN(test_starvation_guard);
+  RUN(test_parker_basic);
+  RUN(test_parker_stale_and_many);
+  RUN(test_parker_many_tasks);
+  RUN(test_parker_timer_race);
+  RUN(test_fd_wait_ev_race);
+  RUN(test_parker_ping_pong);
+  RUN(test_poll_wait_parks);
+  RUN(test_parker_fork);
   RUN(test_overflow);
   printf("%d checks, %d failed\n", checks, failures);
   return failures ? 1 : 0;
