@@ -5,7 +5,35 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
-## Unreleased (0.5.0, runtime and std)
+## 0.5.0
+
+The runtime and the standard library grow up for services: a trap can be contained, Maps hash
+with a secret seed, byte transfer across the C ABI is bulk, closures and references stop copying
+what they only read, and the tools gain a linter, `expand`, test options and a command-line
+library. A package needs `eider = "0.5"` (E0811 otherwise; the seed needed the bootstrap in
+seed/README.md after a MINOR bump). Siblings: every tool and library moves to 0.5.0.
+
+**Breaking, read before upgrading** (before 1.0 a MINOR may break):
+
+- **The iteration order of a Map is unspecified** (#55): Maps hash with SipHash-1-3 under a random
+  per-Map key, so the order differs between Maps and between runs. Code and tests that printed a
+  Map in slot order must sort or aggregate (`Map.deterministic()` for tests).
+- **`extern "c"` parameters of type `List[u8]` cross as a pointer and a length** (#63): a C
+  function declared with one takes two C parameters now. `core/sys` and the core's `ec_*` ABI use
+  it (`ec_in_set`, `ec_in_append`, `ec_out_copy`).
+- **Closures run before their call returns capture by reference** (#4) and read-only references
+  through heap memory are pointers (#1): a program that relied on the snapshot (a closure given to
+  a List combinator, `Ref.read`/`update` or `Mutex.update` that sees later writes) behaves as the
+  variable, not its copy.
+- **eider-http**: `Request`, `Response` and `Msg` gained fields and `Config` gained `plan`; code
+  that builds them by position must use field names (see its CHANGELOG).
+- **New lints** (#113): `eiderc lint` is separate from `check`, but the compiler package denies
+  `unused_uses`, and a package's `[lints]` table is now read (an unknown lint name in `@allow` is
+  E0821).
+- **`std/cli`** (#114) is new std API; `std/testing`, `std/time` and `std/task` gained functions
+  (no removals).
+- **Map and SipHash**: Maps run slower on the Map benchmark (1.8 times), the compiler itself no
+  slower.
 
 - **Tools and services** (#102, #103, #113, #85, #114, #30, #5; partly): `comptime embed("path")`
   embeds a package file as a `str` constant (C807); `eiderc lint` with groups, `[lints]` in
@@ -32,6 +60,20 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 - **In-place List operations** (#16): `sort.sort_in_place`, `sort_in_place_by` and `reverse_in_place`, `insert`, `remove`, `truncate`, `remove_range`, `extend`,
   `swap`, `slice` and `List.filled`; stream buffers compact in place. Views that share a buffer
   are not done. Decision C800.
+- **Closures by reference** (#4): a closure that is the argument of a call that runs it before
+  returning captures the variable's address instead of a copy. Decision C763.
+- **References as pointers** (#1; partly): a read-only `let` reference through a List element, a Box
+  or a record with its own Drop is a pointer, refreshed after a write that may move its buffer.
+  Mutable aliases are not (follow-up #157). Decision C764.
+
+**Not done, filed as follow-ups** (the items stay open): #16 views that share a buffer (zero-copy
+slices); #54 turning a handler's trap into a 500 (the libraries side); #1 pointers for mutable
+aliases (#157); #102 embedding binary files as `List[u8]` (#160); #103 printing a specialization as
+Eider source and naming the asking call (#159); #113 the rest of the issue; #30 coverage report for
+`eiderc test` (#158); #114 the rest of the issue; #5 std on the new base (`sys.lit` outside the
+core is gone from proc, profile and testing; the rest remains, LAYERS.md "Known limits"). Libraries:
+eider-http #5 (tracing, partly), eider-rpc #1 (typed services; Connect and trait reflection for
+stubs remain), eider-openapi #1 (partly).
 
 ## 0.4.0
 
