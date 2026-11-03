@@ -25,8 +25,15 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
   `json.from_bytes`/`from_string` (the type to read is the expected one). Errors are `serial.Error`
   (`path: message`, with no `$.`), `@[json(...)]` keeps its keys and `@[serial(...)]` is the neutral
   form. eider-rpc (`serial.Serialize` methods) and eider-openapi (`Schematic` is opted into,
-  an enum without `tag` is keyed by the variant's name) follow. A record with a `json(flatten)` field
-  accepts unknown members for now.
+  an enum without `tag` is keyed by the variant's name) follow.
+
+- **`Error` has a third field and `deserialize_flat` a second parameter** (#165, #166, #101):
+  `serial.Error` is `{path, msg, more}` (build one with `serial.error(msg)` or `serial.error_at(path,
+  msg)`; `serial.errors(e)` and `serial.messages(e)` list every failure in it), and a type with its
+  own `deserialize_flat` takes `inout known: List[List[u8]]` and adds the member names it takes.
+  Decoding a list or a map now reports the failures of all its elements, not the first. A derived
+  record with a `json(flatten)` field and a derived enum now reject unknown members like any record
+  does (`unknown = "ignore"` allows them; it is a key of `serial` too now).
 
 **New:**
 
@@ -34,6 +41,18 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
   and `Deserialize` for types, `Serializer` and `Deserializer` for formats, implementations for the
   built-in types, errors that name the path, and `Value` with `to_value`/`from_value`. See
   docs/compiler.md "C8.61".
+- **Per-field adapters** (#164): `@[serial(with = unix_millis)]` (or `json(...)`, `toml(...)`) names an
+  imported module; the derived code calls its `serialize` and `deserialize` for the field instead of
+  the field type's own. An `attr` key marked `@[names_module]` takes a module name; the module's
+  functions are called with `attr[A](f).key.fn(args)` in derivations. docs/compiler.md "C8.63".
+- **Validation attributes** (#101): `@[check(min, max, min_len, max_len, format, one_of, by)]` on
+  fields, enforced when a derived `Deserialize` reads a record, all violations of a record reported at
+  once with the path of each (`lines[2].qty: must be at least 1`). `format` names a validator of the new
+  `std/validate` (email, uuid, uri, date, date-time, ipv4, hostname), `by` a module of yours.
+  eider-openapi's `Schematic` reads the same rules into the schema, and its schema validation checks
+  the formats. docs/compiler.md "C8.64".
+- **TOML is a `std/serial` format** (#167): eider-toml has `toml.to_string`, `from_string`, ... over a
+  complete TOML 1.0 parser (`toml.doc`).
 - **`@[derive(Serialize, Deserialize)]`** (#156): serialization for your records and enums from one
   attribute vocabulary, `serial(name, skip, default, rename_all, tag)`, with `json(...)` and
   `toml(...)` overriding it per format (unknown keys are E0821). docs/compiler.md "C8.62".

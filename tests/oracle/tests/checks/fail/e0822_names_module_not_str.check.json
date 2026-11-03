@@ -1,0 +1,1 @@
+{"error":"E0822","span":{"file":"tests/checks/fail/e0822_names_module_not_str.ei","line":4,"col":31},"message":"a `@[names_module]` key is a str: its value names a module"}

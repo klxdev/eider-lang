@@ -1,0 +1,47 @@
+// std/validate: the named formats of `@[check(format = ...)]`.
+import std.validate
+
+fn t(format: str, v: str) uses io {
+    let ok = validate.valid(format, v.bytes())
+    print("{format} {v}: {ok}")
+}
+
+fn main() uses io {
+    t("email", "ann@example.com")
+    t("email", "a.b+c_d%e-f@sub.example.co")
+    t("email", "ann@example")
+    t("email", "ann@@example.com")
+    t("email", "@example.com")
+    t("email", ".ann@example.com")
+    t("email", "an..n@example.com")
+    t("email", "ann@-example.com")
+    t("email", "ann@example.c")
+    t("email", "ann@exa mple.com")
+    t("email", "ann example.com")
+    t("uuid", "123e4567-e89b-12d3-a456-426614174000")
+    t("uuid", "123e4567e89b12d3a456426614174000")
+    t("uuid", "123e4567-e89b-12d3-a456-42661417400g")
+    t("uri", "https://example.com/a?b=c")
+    t("uri", "mailto:ann@example.com")
+    t("uri", "example.com")
+    t("uri", "http://exa mple.com")
+    t("uri", "1http://x")
+    t("date", "2024-02-29")
+    t("date", "2023-02-29")
+    t("date", "2023-13-01")
+    t("date", "2023-4-01")
+    t("date-time", "2024-02-29T12:00:00Z")
+    t("date-time", "2024-02-29T12:00:00+02:00")
+    t("date-time", "2024-02-29 12:00")
+    t("ipv4", "192.168.0.1")
+    t("ipv4", "256.1.1.1")
+    t("ipv4", "1.2.3")
+    t("ipv4", "01.2.3.4")
+    t("hostname", "example.com")
+    t("hostname", "localhost")
+    t("hostname", "-bad.example")
+    t("hostname", "a..b")
+    t("nonsense", "x")
+    print(validate.known("email"))
+    print(validate.known("emial"))
+}

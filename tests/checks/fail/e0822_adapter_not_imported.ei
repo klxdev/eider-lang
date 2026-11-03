@@ -1,0 +1,9 @@
+// expect: E0822 7:34
+import std.serial
+
+// `with` names a module: a module that was not imported is refused
+
+@[derive(Serialize, Deserialize)]
+type Account = { @[serial(with = nowhere)] balance: i64 }
+
+fn main() {}

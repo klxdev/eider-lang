@@ -58,7 +58,9 @@ The type to read is the expected one, as in the `let` above. What the attributes
 | a type | `rename_all = "camelCase"` | every key in that case (`snake_case`, `kebab-case`, `SCREAMING_SNAKE_CASE` too) |
 | an enum | `tag = "kind"` | the discriminator's key; without it a variant is keyed by its name |
 | a variant | `name = "box"` | the variant's name |
-| a type | `unknown = "ignore"` | (`json` only) members no field takes are allowed (default: an error) |
+| a type | `unknown = "ignore"` | members no field takes are allowed (default: an error); a record, or an enum variant's body |
+| a field | `with = module` | the field is written and read by `module.serialize` and `module.deserialize` (below) |
+| a field | `check(...)` | rules the value must meet when read (below) |
 
 `serial(...)` applies to every format. `json(...)` takes the same keys and wins for JSON, so a
 type can be `@[serial(name = "email")]` everywhere and `@[json(name = "mail")]` in JSON
@@ -121,8 +123,69 @@ A number must fit the field's type exactly (no rounding, no wrapping), a string 
 (tests/fuzz_test.ei, `sh scripts/fuzz.sh`) runs mutated documents through the readers and
 checks that each one reads or is rejected with a message, and that what reads round-trips.
 
-A record that has a `flatten` field accepts members it does not know, because the flattened
-record shares the object; that gap is tracked as an issue.
+A record with a `flatten` field rejects unknown members too: the names the flattened record
+takes count as the outer record's own. A derived enum rejects members of a variant that are
+neither its fields nor the tag.
+
+## Validation
+
+`@[check(...)]` states what a value must be, and a derived `Deserialize` enforces it while it
+reads:
+
+```eider,ignore
+@[derive(Serialize, Deserialize)]
+type Product = {
+    @[check(min_len = 3, max_len = 12)] sku: String,
+    @[check(min = 0, max = 1_000_000)] price_cents: i64,
+    @[check(format = "email")] contact: Option[String],
+    @[check(one_of = "new,used")] condition: String,
+    @[check(min_len = 1, max_len = 10)] tags: List[String],
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `min`, `max` | the range of a number (inclusive); through `Option`, and for each element of a `List` or `Map` |
+| `min_len`, `max_len` | the size of the field: characters of a `String`, items of a `List`, entries of a `Map` |
+| `format` | `email`, `uuid`, `uri`, `date`, `date-time`, `ipv4` or `hostname` (`std/validate`, no patterns) |
+| `one_of` | the allowed strings, comma separated |
+| `by = module` | `pub fn validate(v: T) -> Result[(), String]` in a module of yours, for a rule of your own |
+
+Every violation of a record is reported at once, each with the path of its field (`serial.Error`
+keeps the others in `more`; `serial.messages(e)` lists them):
+
+```text
+sku: must have at least 3 characters
+price_cents: must be at least 0
+contact: must be an email address
+tags[2]: ...
+```
+
+eider-openapi's `Schematic` puts the same rules in the schema (`minimum`, `minLength`, `format`,
+`enum`), so the documentation and the decoder cannot disagree, and a typed handler answers 400 with
+one field error per violation. Float bounds and a rule that depends on two fields are code, not
+attributes: write them in a `by` module or after reading.
+
+## Another representation for one field
+
+`@[serial(with = unix_millis)]` (or `json(with = ...)`, `toml(with = ...)` for one format) names an
+imported module that writes and reads the field instead of the type's own implementation:
+
+```eider,ignore
+import app.unix_millis
+
+@[derive(Serialize, Deserialize)]
+type Event = { name: String, @[serial(with = unix_millis)] at: time.DateTime }
+```
+
+```eider,ignore
+// app/unix_millis.ei
+pub fn serialize[S: serial.Serializer](v: time.DateTime, inout s: S) -> Result[(), serial.Error] { ... }
+pub fn deserialize[D: serial.Deserializer](d: D) -> Result[time.DateTime, serial.Error] { ... }
+```
+
+The field's type needs no `Serialize` or `Deserialize` of its own. A missing member is an error
+unless the field is `default`.
 
 ## Your own encoding
 

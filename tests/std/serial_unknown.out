@@ -1,0 +1,8 @@
+external: ok
+external, extra: Line: unknown field `color`
+unit: ok
+tagged: ok
+tagged, extra: unknown field `size`
+tagged, extra on a line: unknown field `size`
+lenient, extra: ok
+exit 0

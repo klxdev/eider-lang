@@ -1,0 +1,6 @@
+{name=ann balance=-40 key=secret:7 debt=5 bonus=-2}
+40
+7
+5
+2
+missing field `key`

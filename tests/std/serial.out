@@ -8,6 +8,7 @@ a[1]: expected an integer, found a boolean
 missing field `x`
 -2
 [0]: expected an integer, found a string
+[1]: expected an integer, found a string
 2
 7
 expected a u8, the number is out of range

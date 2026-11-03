@@ -1,0 +1,27 @@
+-- valid
+ok Ann 2
+-- valid, no ref
+ok Ann 1
+-- many
+name: must have at least 2 characters
+email: must be an email address
+priority: must be one of "low", "medium", "high"
+delta: must be at most 5
+delta: must be even
+scores[1]: must be at least 0
+scores[2]: must be at least 0
+ref_id: must be a UUID
+ratio: must be at least 1
+-- lines
+lines[0].sku: must have at least 2 characters
+lines[0].qty: must be at least 1
+lines[0].price_cents: must be at least 0
+lines[2].qty: must be at most 99
+-- too few lines
+lines: must have at least 1 item
+-- long name
+name: must have at most 5 characters
+-- misuse
+mail: unknown format `emial` (the formats: email, uuid, uri, date, date-time, ipv4, hostname)
+word: @[check(min)] does not apply to this type
+n: @[check(format)] does not apply to this type

@@ -1,0 +1,68 @@
+// Per-field adapters (#164): `@[serial(with = module)]` and `@[json(with = module)]` name an imported
+// module whose `serialize` and `deserialize` write and read the field, in place of the type's own.
+import adapt.negated
+import adapt.secret_text
+import std.bytes
+import std.serial
+
+@[derive(Serialize, Deserialize)]
+type Account = {
+    name: String,
+    @[serial(with = negated)] balance: i64,
+    @[serial(with = secret_text)] key: secret_text.Secret,
+    @[json(with = negated)] debt: i64,
+    @[serial(with = negated, default)] bonus: i64,
+}
+
+fn text(b: List[u8]) -> String { String.from_bytes(b).unwrap_or(String.from("?")) }
+
+fn show(v: serial.Value) -> List[u8] {
+    match v {
+        serial.VInt(n) => bytes.from_i64(n)
+        serial.VStr(s) => s
+        serial.VMap(es) => {
+            let mut o = "{{".bytes()
+            for i in 0..es.len() {
+                if i > 0 { o.push(32) }
+                bytes.append(inout o, es[i].key.copy())
+                o.push(61)
+                bytes.append(inout o, show(es[i].value.copy()))
+            }
+            o.push(125)
+            o
+        }
+        _ => "?".bytes()
+    }
+}
+
+fn main() uses io {
+    let a = Account(String.from("ann"), 40, secret_text.Secret(7), 5, 2)
+    let v = match serial.to_value(a) {
+        Ok(x) => x
+        Err(e) => {
+            print(text(serial.error_text(e)))
+            return
+        }
+    }
+    // the "value" format is neither json nor toml: debt uses its own implementation
+    print(text(show(v.copy())))
+    let back: Result[Account, serial.Error] = serial.from_value(v)
+    match back {
+        Ok(b) => {
+            print(b.balance)
+            print(b.key.v)
+            print(b.debt)
+            print(b.bonus)
+        }
+        Err(e) => print(text(serial.error_text(e)))
+    }
+    // a missing adapted field is an error, unless `default`
+    let mut es: List[serial.Entry] = List.new()
+    es.push(serial.Entry("name".bytes(), serial.VStr("bo".bytes())))
+    es.push(serial.Entry("balance".bytes(), serial.VInt(-3)))
+    let partial: Result[Account, serial.Error] = serial.from_value(serial.VMap(es))
+    match partial {
+        Ok(_) => print("unexpected")
+        Err(e) => print(text(serial.error_text(e)))
+    }
+}

@@ -1,0 +1,1 @@
+{"error":"E0822","span":{"file":"tests/checks/fail/e0822_adapter_not_imported.ei","line":7,"col":34},"message":"`nowhere` is not an imported module","help":"import the module first: `import ...`; the key names it by the last part of its path"}

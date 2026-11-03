@@ -1,0 +1,38 @@
+email ann@example.com: true
+email a.b+c_d%e-f@sub.example.co: true
+email ann@example: false
+email ann@@example.com: false
+email @example.com: false
+email .ann@example.com: false
+email an..n@example.com: false
+email ann@-example.com: false
+email ann@example.c: false
+email ann@exa mple.com: false
+email ann example.com: false
+uuid 123e4567-e89b-12d3-a456-426614174000: true
+uuid 123e4567e89b12d3a456426614174000: false
+uuid 123e4567-e89b-12d3-a456-42661417400g: false
+uri https://example.com/a?b=c: true
+uri mailto:ann@example.com: true
+uri example.com: false
+uri http://exa mple.com: false
+uri 1http://x: false
+date 2024-02-29: true
+date 2023-02-29: false
+date 2023-13-01: false
+date 2023-4-01: false
+date-time 2024-02-29T12:00:00Z: true
+date-time 2024-02-29T12:00:00+02:00: true
+date-time 2024-02-29 12:00: false
+ipv4 192.168.0.1: true
+ipv4 256.1.1.1: false
+ipv4 1.2.3: false
+ipv4 01.2.3.4: false
+hostname example.com: true
+hostname localhost: true
+hostname -bad.example: false
+hostname a..b: false
+nonsense x: false
+true
+false
+exit 0

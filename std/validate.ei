@@ -1,0 +1,212 @@
+//! std/validate: the named formats of `@[check(format = "...")]` (docs/compiler.md "C8.63"), as
+//! plain functions on bytes. No patterns: each format is a few rules written out, and each is
+//! the format JSON Schema (and OpenAPI) of the same name describes, so a derived schema and a
+//! derived decoder agree.
+//!
+//! - `email`: one `@`, a local part of 1 to 64 letters, digits and ``. _ % + -`` (no leading,
+//!   trailing or doubled dot), a domain of at least two labels (letters, digits, hyphens inside),
+//!   a last label of two or more letters; at most 254 bytes in all.
+//! - `uuid`: `8-4-4-4-12` hexadecimal digits.
+//! - `uri`: a scheme (`letter (letter | digit | + | - | .)*`), `:`, and something after it; no
+//!   spaces or control characters.
+//! - `date`: `YYYY-MM-DD`, a real calendar date.
+//! - `date-time`: RFC 3339 (`2024-02-29T12:00:00Z`, `+02:00`).
+//! - `ipv4`: four decimal numbers 0 to 255 without leading zeros.
+//! - `hostname`: dot-separated labels of 1 to 63 letters, digits and hyphens (not at the ends),
+//!   at most 253 bytes.
+
+import std.bytes
+import std.time
+
+/// The formats `valid` knows, for messages.
+pub fn names() -> str { "email, uuid, uri, date, date-time, ipv4, hostname" }
+
+/// Whether `name` is a format `valid` knows.
+pub fn known(name: str) -> bool {
+    let n = name.bytes()
+    for f in ["email", "uuid", "uri", "date", "date-time", "ipv4", "hostname"] {
+        if bytes.eq(n, f.bytes()) { return true }
+    }
+    false
+}
+
+/// Whether `v` is valid in the format `name` (an unknown format is not: check `known`).
+pub fn valid(name: str, v: List[u8]) -> bool {
+    let n = name.bytes()
+    if bytes.eq(n, "email".bytes()) { return email(v) }
+    if bytes.eq(n, "uuid".bytes()) { return uuid(v) }
+    if bytes.eq(n, "uri".bytes()) { return uri(v) }
+    if bytes.eq(n, "date".bytes()) { return date(v) }
+    if bytes.eq(n, "date-time".bytes()) { return date_time(v) }
+    if bytes.eq(n, "ipv4".bytes()) { return ipv4(v) }
+    if bytes.eq(n, "hostname".bytes()) { return hostname(v) }
+    false
+}
+
+fn is_letter(c: u8) -> bool { (c >= 65 && c <= 90) || (c >= 97 && c <= 122) }
+
+fn is_alnum(c: u8) -> bool { is_letter(c) || bytes.is_digit(c) }
+
+fn is_hex(c: u8) -> bool { bytes.is_digit(c) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70) }
+
+/// A DNS-style label: letters, digits and hyphens, no hyphen at either end, 1 to 63 long.
+fn label(v: List[u8], from: usize, to: usize) -> bool {
+    if to <= from || to - from > 63 { return false }
+    if v[from] == 45 || v[to - 1] == 45 { return false }
+    for i in from..to {
+        if !(is_alnum(v[i]) || v[i] == 45) { return false }
+    }
+    true
+}
+
+/// Dot-separated labels in v[from..]: how many, and whether they are all valid; the last label
+/// is returned by its start.
+fn labels(v: List[u8], from: usize) -> (usize, bool, usize) {
+    let mut count: usize = 0
+    let mut start = from.copy()
+    let mut i = from.copy()
+    let mut last = from.copy()
+    while i <= v.len() {
+        if i == v.len() || v[i] == 46 {
+            if !label(v, start, i) { return (count, false, last) }
+            count += 1
+            last = start.copy()
+            start = i + 1
+        }
+        i += 1
+    }
+    (count, true, last)
+}
+
+pub fn email(v: List[u8]) -> bool {
+    if v.len() > 254 { return false }
+    let at = match bytes.find_byte(v, 64, 0) {
+        Some(i) => i
+        None => { return false }
+    }
+    if bytes.find_byte(v, 64, at + 1).is_some() { return false }
+    // the local part
+    if at == 0 || at > 64 { return false }
+    if v[0] == 46 || v[at - 1] == 46 { return false }
+    for i in 0..at {
+        let c = v[i]
+        let ok = is_alnum(c) || c == 46 || c == 95 || c == 37 || c == 43 || c == 45
+        if !ok { return false }
+        if c == 46 && i + 1 < at && v[i + 1] == 46 { return false }
+    }
+    // the domain: two labels at least, the last of letters only
+    let r = labels(v, at + 1)
+    if !r.1 || r.0 < 2 { return false }
+    let tld = r.2
+    if v.len() - tld < 2 { return false }
+    for i in tld..v.len() {
+        if !is_letter(v[i]) { return false }
+    }
+    true
+}
+
+pub fn uuid(v: List[u8]) -> bool {
+    if v.len() != 36 { return false }
+    for i in 0..v.len() {
+        if i == 8 || i == 13 || i == 18 || i == 23 {
+            if v[i] != 45 { return false }
+        } else if !is_hex(v[i]) {
+            return false
+        }
+    }
+    true
+}
+
+pub fn uri(v: List[u8]) -> bool {
+    if v.len() < 3 || !is_letter(v[0]) { return false }
+    let mut i: usize = 1
+    while i < v.len() && (is_alnum(v[i]) || v[i] == 43 || v[i] == 45 || v[i] == 46) { i += 1 }
+    if i >= v.len() || v[i] != 58 || i + 1 >= v.len() { return false }
+    for j in 0..v.len() {
+        if v[j] <= 32 || v[j] == 127 { return false }
+    }
+    true
+}
+
+fn num(v: List[u8], from: usize, to: usize) -> i64 {
+    let mut n: i64 = 0
+    for i in from..to { n = n * 10 + (v[i] - 48) as i64 }
+    n
+}
+
+fn all_digits(v: List[u8], from: usize, to: usize) -> bool {
+    for i in from..to {
+        if !bytes.is_digit(v[i]) { return false }
+    }
+    true
+}
+
+pub fn date(v: List[u8]) -> bool {
+    if v.len() != 10 || v[4] != 45 || v[7] != 45 { return false }
+    if !all_digits(v, 0, 4) || !all_digits(v, 5, 7) || !all_digits(v, 8, 10) { return false }
+    let y = num(v, 0, 4)
+    let m = num(v, 5, 7)
+    let d = num(v, 8, 10)
+    if m < 1 || m > 12 || d < 1 { return false }
+    let leap = (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+    let mut dim: i64 = 31
+    if m == 4 || m == 6 || m == 9 || m == 11 {
+        dim = 30
+    } else if m == 2 {
+        dim = if leap { 29 } else { 28 }
+    }
+    d <= dim
+}
+
+pub fn date_time(v: List[u8]) -> bool {
+    match time.parse_rfc3339(v) {
+        Ok(_) => true
+        Err(_) => false
+    }
+}
+
+pub fn ipv4(v: List[u8]) -> bool {
+    let parts = bytes.split(v, 46)
+    if parts.len() != 4 { return false }
+    for p in parts {
+        if p.len() == 0 || p.len() > 3 || !all_digits(p, 0, p.len()) { return false }
+        if p.len() > 1 && p[0] == 48 { return false }
+        if num(p, 0, p.len()) > 255 { return false }
+    }
+    true
+}
+
+pub fn hostname(v: List[u8]) -> bool {
+    if v.len() == 0 || v.len() > 253 { return false }
+    let r = labels(v, 0)
+    r.1
+}
+
+/// What a value of format `name` is, for "must be ...": "an email address".
+pub fn describe(name: str) -> str {
+    let n = name.bytes()
+    if bytes.eq(n, "email".bytes()) { return "an email address" }
+    if bytes.eq(n, "uuid".bytes()) { return "a UUID" }
+    if bytes.eq(n, "uri".bytes()) { return "a URI" }
+    if bytes.eq(n, "date".bytes()) { return "a date (YYYY-MM-DD)" }
+    if bytes.eq(n, "date-time".bytes()) { return "an RFC 3339 date-time" }
+    if bytes.eq(n, "ipv4".bytes()) { return "an IPv4 address" }
+    "a hostname"
+}
+
+/// `describe` for a format named in bytes (empty for an unknown one).
+pub fn describe_named(name: List[u8]) -> List[u8] {
+    for f in ["email", "uuid", "uri", "date", "date-time", "ipv4", "hostname"] {
+        if bytes.eq(name, f.bytes()) { return describe(f).bytes() }
+    }
+    List.new()
+}
+
+/// Whether `v` is valid in the format named `name` (bytes, as a schema holds it): None when
+/// `name` is not one of the formats here (a schema may carry any annotation, such as `int64`).
+pub fn valid_named(name: List[u8], v: List[u8]) -> Option[bool] {
+    for f in ["email", "uuid", "uri", "date", "date-time", "ipv4", "hostname"] {
+        if bytes.eq(name, f.bytes()) { return Some(valid(f, v)) }
+    }
+    None
+}

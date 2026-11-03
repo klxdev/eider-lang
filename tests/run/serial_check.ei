@@ -1,0 +1,109 @@
+// Validation attributes (#101): `@[check(...)]` is enforced while a derived Deserialize reads
+// a record, every violation is reported at once with the path of its field.
+import adapt.even
+import std.bytes
+import std.serial
+
+@[derive(Serialize, Deserialize)]
+type Line = {
+    @[check(min_len = 2, max_len = 8)] sku: String,
+    @[check(min = 1, max = 99)] qty: u32,
+    @[check(min = 0)] price_cents: i64,
+}
+
+@[derive(Serialize, Deserialize)]
+type Order = {
+    @[check(min_len = 2, max_len = 5)] name: String,
+    @[check(format = "email")] email: String,
+    @[check(one_of = "low,medium,high")] priority: String,
+    @[check(min = -5, max = 5, by = even)] delta: i64,
+    @[check(min_len = 1, max_len = 2)] lines: List[Line],
+    @[check(min = 0)] scores: List[i64],
+    @[check(format = "uuid")] ref_id: Option[String],
+    @[check(max = 10)] extra: Map[String, i64],
+    @[check(min = 1)] ratio: f64,
+}
+
+// keys that do not fit the field are violations of their own
+@[derive(Serialize, Deserialize)]
+type Misuse = { @[check(format = "emial")] mail: String, @[check(min = 1)] word: String, @[check(format = "email")] n: i64 }
+
+fn text(b: List[u8]) -> String { String.from_bytes(b).unwrap_or(String.from("?")) }
+
+fn s(x: str) -> serial.Value { serial.VStr(x.bytes()) }
+
+fn i(n: i64) -> serial.Value { serial.VInt(n) }
+
+fn e(k: str, v: serial.Value) -> serial.Entry { serial.Entry(k.bytes(), v) }
+
+fn list(xs: List[serial.Value]) -> serial.Value { serial.VList(xs) }
+
+fn line(sku: str, qty: i64, price: i64) -> serial.Value {
+    let mut es: List[serial.Entry] = List.new()
+    es.push(e("sku", s(sku)))
+    es.push(e("qty", i(qty)))
+    es.push(e("price_cents", i(price)))
+    serial.VMap(es)
+}
+
+fn order(name: str, mail: str, prio: str, delta: i64, lines: List[serial.Value], scores: List[serial.Value], ref_id: serial.Value, ratio: f64) -> serial.Value {
+    let mut extra: List[serial.Entry] = List.new()
+    extra.push(e("a", i(3)))
+    extra.push(e("b", i(8)))
+    let mut es: List[serial.Entry] = List.new()
+    es.push(e("name", s(name)))
+    es.push(e("email", s(mail)))
+    es.push(e("priority", s(prio)))
+    es.push(e("delta", i(delta)))
+    es.push(e("lines", list(lines)))
+    es.push(e("scores", list(scores)))
+    es.push(e("ref_id", ref_id))
+    es.push(e("extra", serial.VMap(extra)))
+    es.push(e("ratio", serial.VFloat(ratio)))
+    serial.VMap(es)
+}
+
+fn show(label: str, v: serial.Value) uses io {
+    let r: Result[Order, serial.Error] = serial.from_value(v)
+    print("-- {label}")
+    match r {
+        Ok(o) => print("ok {o.name} {o.lines.len()}")
+        Err(err) => print(text(serial.error_text(err)))
+    }
+}
+
+fn ls(a: serial.Value) -> List[serial.Value] {
+    let mut xs: List[serial.Value] = List.new()
+    xs.push(a)
+    xs
+}
+
+fn main() uses io {
+    let mut two = ls(line("x1", 2, 100))
+    two.push(line("y2", 1, 5))
+    let mut sc = ls(i(1))
+    sc.push(i(2))
+    show("valid", order("Ann", "ann@example.com", "low", 4, two.copy(), sc.copy(), s("123e4567-e89b-12d3-a456-426614174000"), 1.5))
+    show("valid, no ref", order("Ann", "ann@example.com", "high", -2, ls(line("x1", 99, 0)), List.new(), serial.VNull, 1.0))
+    // every violation at once
+    let mut three = ls(line("s", 0, -1))
+    three.push(line("ok1", 5, 5))
+    three.push(line("ok2", 100, 5))
+    let mut neg = ls(i(3))
+    neg.push(i(-4))
+    neg.push(i(-1))
+    show("many", order("A", "nope", "urgent", 7, ls(line("ok", 1, 0)), neg, s("zz"), 0.5))
+    show("lines", order("Ann", "ann@example.com", "low", 0, three, List.new(), serial.VNull, 1.0))
+    show("too few lines", order("Ann", "a@b.co", "low", 0, List.new(), List.new(), serial.VNull, 1.0))
+    show("long name", order("Abcdef", "a@b.co", "low", 0, ls(line("ab", 1, 0)), List.new(), serial.VNull, 1.0))
+    let mut ms: List[serial.Entry] = List.new()
+    ms.push(e("mail", s("a@b.co")))
+    ms.push(e("word", s("w")))
+    ms.push(e("n", i(1)))
+    let mr: Result[Misuse, serial.Error] = serial.from_value(serial.VMap(ms))
+    print("-- misuse")
+    match mr {
+        Ok(_) => print("ok?")
+        Err(err) => print(text(serial.error_text(err)))
+    }
+}

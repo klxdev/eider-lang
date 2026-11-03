@@ -4405,7 +4405,7 @@ integer, float, string, bytes, option, list, map with string keys, record, varia
 
 A `Serializer` is written to, event by event (`begin_list`/`end_list`, `begin_map`/`key`/`end_map`,
 `begin_record`/`field`/`end_record`, `begin_variant`/`field`/`end_variant`, the scalars, `none`,
-`merge_next`), and every call can fail, so a TOML writer can refuse a list of mixed types at the
+`merge_next`), and every call can fail, so a TOML writer can refuse an absent option in a list at the
 element. An absent option is `none()`; a present one is just its value (so `Some(None)` and `None` are
 one thing in the data model, as in JSON). A variant without fields is a `string`.
 
@@ -4472,12 +4472,93 @@ variants and, inside them, to the field names. A record reads its members in any
 an error naming the path unless the field is an Option (`missing`), `default` or `skip` (the type's
 Default), and an unknown member is an error unless `unknown = "ignore"` for the format.
 
-Escape hatches. (1) the per-format attributes above; (3) a hand-written `impl Serialize for T` (or
-Deserialize) that branches on `s.format()`; both are in. (2) A per-field adapter module
-(`json(with = unix_millis)`) is not: an attribute value is an integer, bool or text, and naming a module
-needs a new kind of value and a way for the derived body to call into it; a field wanting another
-representation can use a type of its own with its own impl meanwhile. Limits found: a record with a
-`flatten` field (json only) accepts unknown members, because the names the flattened type takes are not
-known to the outer record (the flattened type reads through `deserialize_flat`, which does not reject
-members it does not know; a type with its own `deserialize` that can be flattened defines it too); a variant's payload fields take no attributes (the syntax allows none); there is no reflected
-type name, so the data model's `begin_record` takes only the number of fields.
+Escape hatches. (1) the per-format attributes above; (2) a per-field adapter module,
+`serial(with = module)` (C8.63); (3) a hand-written `impl Serialize for T` (or Deserialize) that
+branches on `s.format()`. Limits found: a variant's payload fields take no attributes (the syntax
+allows none); there is no reflected type name, so the data model's `begin_record` takes only the
+number of fields. Unknown members: a record rejects the ones neither its own nor taken by a flattened
+field (C8.63), an enum the ones neither the tag nor a field of the variant.
+
+## C8.63: field adapters, unknown members (#164, #165, #166)
+
+Decisions C818 and C819. Code: compiler/parse.ei (`attr_decl`), compiler/check.ei (`is_module_key`,
+`module_value`, `ct_module_call`, `field_skipped`); std/serial.ei (`which`, `read_one`,
+`reject_unknown`, `deserialize_record`, `deserialize_enum`); tests: tests/run/serial_with.ei,
+tests/std/serial_unknown.ei, tests/checks/fail/e0822_adapter_not_imported.ei and
+e0822_names_module_not_str.ei.
+
+**A key that names a module.** The keys of an `attr` declaration may now carry attributes. One is
+built in: `@[names_module]` on a `str` key (anything else is E0822) says its value is the name of a
+module the file imports, written as the import names it (`import app.unix_millis`, then `with =
+unix_millis`). `check_attr_use` resolves it where the attribute is written (`resolve.alias_pre`; a
+name that is no imported module is E0822) and keeps the module's prefix in the attribute's value; the
+value of the key in `attr[A](x)` stays a str (the name, empty when not given), so `comptime if
+attr[A](f).key != ""` works. The word `module` is a keyword, hence `names_module`.
+
+In a derivation `attr[A](f).key.fn(args)` calls `fn` of that module with `args`
+(`ct_module_call`, tried first by `method_call_in`): the module is the one the attribute named,
+whichever module the derivation is written in. `E0830` when the key names no module for this field,
+E0112 when the module has no such function, E0801 when it is private. In the bounds pass (a type
+parameter) the call is checked in its instances.
+
+**Adapters.** `serial`, `json` and `toml` have `@[names_module] with`. The adapter module has
+`pub fn serialize[S: Serializer](v: T, inout s: S) -> Result[(), Error]` and
+`pub fn deserialize[D: Deserializer](d: D) -> Result[T, Error]` for the field's type T. The
+derived bodies pick the module for the format being read or written (`serial.which`: the format's
+own `with`, else `serial`'s, else the type's own implementation), so `@[json(with = as_text)]`
+changes only JSON. A field with `serial(with = m)` does not need Serialize or Deserialize for its
+type, and the tree check (E0833) leaves it out. A member that is absent is an error naming it
+(`missing field`) unless the field is `default` (which needs the type's Default): an adapter is not
+asked about an absent member, so an `Option` field with an adapter needs `default`.
+
+**Unknown members.** A derived record reads its fields and then rejects any member that is neither
+its own nor taken by a flattened field. `Deserialize.deserialize_flat(d, inout known)` is how a
+flattened type adds the member names it takes (its own flattened fields' too), so the outer
+record knows the union (#165). A derived enum rejects, in a variant's body, the members that are
+neither its fields nor the tag (#166). `unknown = "ignore"` allows them and is a key of `serial` as
+well as of `json` and `toml`. The check happens after the fields are read, so a missing or ill-typed
+field is reported before an unknown member. A hand-written type that can be flattened defines
+`deserialize_flat` with the new parameter and pushes the names it reads.
+
+## C8.64: validation, `@[check(...)]` (#101)
+
+Decision C820. Code: std/serial.ei (`attr check`, `Checkable`, `Counted`, `check_size`,
+`deserialize_record`, `Error.more`, `errors`, `messages`, `combine`); std/validate.ei; tests:
+tests/run/serial_check.ei, tests/std/validate.ei; eider-openapi derive.ei (`refine`) and
+tests/derive_test.ei.
+
+```eider
+@[derive(Serialize, Deserialize)]
+type Product = {
+    @[check(min_len = 3, max_len = 12)] sku: String,
+    @[check(min = 0, max = 1_000_000)] price_cents: i64,
+    @[check(format = "email")] contact: Option[String],
+    @[check(one_of = "new,used")] condition: String,
+    @[check(min_len = 1, max_len = 10)] tags: List[String],
+}
+```
+
+The keys are small and compose: `min`, `max` (value range of a number, inclusive; through `Option`,
+and for each element of a `List` or `Map`), `min_len`, `max_len` (size of the field itself: the
+characters of a String, the items of a List, the entries of a Map), `format` (a named validator in
+`std/validate`: `email`, `uuid`, `uri`, `date`, `date-time`, `ipv4`, `hostname`; plain functions,
+no patterns), `one_of` (the allowed strings, comma separated) and `by` (a module with `pub fn
+validate(v: T) -> Result[(), String]`, run on the field's value; a custom rule, which schemas do not
+describe). A key that is left alone is not checked. Attribute keys are integers, bool and str, so
+float bounds are not expressible yet; a `min` on a `f64` field compares with the integer.
+
+**When.** The derived `deserialize` of a record, after the record is read, runs the rules of its
+fields in field order and reports every violation together, each with the path of its field in the
+document (`lines[2].qty: must be at least 1`). `serial.Error` is `{path, msg, more}`: the first
+violation and the others in `more` (`serial.errors(e)` and `messages(e)` list them, `error_text`
+prints one line each). A list or map reads all its elements and reports the failures of all of
+them. A violation inside a nested record is that record's error: the parent's remaining fields
+are not judged (the parent is not built), so fix those first and read again. A key that does not fit
+the field (`min` on a `String`, `format` on a number) and an unknown `format` are violations too, so
+the first read of the type shows the mistake. Writing is not checked.
+
+**Schemas agree.** eider-openapi's `Schematic` applies the same keys to a field's schema:
+`minimum`/`maximum`, `minLength`/`maxLength` (strings) and `minItems`/`maxItems` (lists), `format`
+and `enum`, with the value rules going to the elements of arrays and maps; the schema validator
+checks the formats that `std/validate` knows, with the same words the decoder uses. A typed handler's
+400 has one field error per violation.

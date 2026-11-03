@@ -1,0 +1,10 @@
+import std.serial
+
+// an adapter module: `serial(with = negated)` writes an i64 negated and reads it back
+
+pub fn serialize[S: serial.Serializer](v: i64, inout s: S) -> Result[(), serial.Error] { s.int(0 - v) }
+
+pub fn deserialize[D: serial.Deserializer](d: D) -> Result[i64, serial.Error] {
+    let n = d.read_i64()?
+    Ok(0 - n)
+}

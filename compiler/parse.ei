@@ -685,7 +685,8 @@ fn at_attr_decl(p: P) -> bool {
 }
 
 /// `attr name { key: Type = default, ... }`: an attribute's declaration, a record type
-/// whose fields may have defaults (IType h=1).
+/// whose fields may have defaults (IType h=1). A key may carry `@[names_module]` (its value names an
+/// imported module, #164).
 fn attr_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
     adv(inout p)
     let name = ident(inout p)?
@@ -694,6 +695,7 @@ fn attr_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
     while true {
         skip_nl(inout p)
         if eat(inout p, lex.RBrace) { break }
+        let kattrs = attributes(inout p)?
         let f = ident(inout p)?
         expect(inout p, lex.Colon)?
         let ft = ty(inout p)?
@@ -704,7 +706,9 @@ fn attr_decl(inout p: P, public: u32) -> Result[u32, diag.Diag] {
             skip_nl(inout p)
             fnode.c = expr(inout p)? + 1
         }
-        members.push(add(inout p, fnode))
+        let fid = add(inout p, fnode)
+        attach(inout p, fid, kattrs)
+        members.push(fid)
         skip_nl(inout p)
         if !eat(inout p, lex.Comma) && !is(p, lex.RBrace) { return Err(err(p, r"expected `,` or `}`")) }
     }

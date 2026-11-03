@@ -30,22 +30,58 @@
 
 import std.bytes
 import std.time
+import std.validate
 
 /// Why serializing or deserializing failed, and where: `path` names the value (`items[3].qty`,
-/// empty for the document itself).
-pub type Error = { path: List[u8], msg: List[u8] }
+/// empty for the document itself). `more` holds the other failures found in the same pass
+/// (check violations of other fields or list elements, `@[check]`), each with its own path.
+pub type Error = { path: List[u8], msg: List[u8], more: List[Error] }
 
-/// "<path>: <msg>", or the message alone at the top.
+/// "<path>: <msg>", or the message alone at the top; one more line for each of `more`.
 pub fn error_text(e: Error) -> List[u8] {
-    if e.path.len() == 0 { return e.msg.copy() }
     let mut m = e.path.copy()
-    bytes.append(inout m, ": ".bytes())
+    if e.path.len() > 0 { bytes.append(inout m, ": ".bytes()) }
     bytes.append(inout m, e.msg)
+    for x in e.more {
+        m.push(10)
+        bytes.append(inout m, error_text(x))
+    }
     m
 }
 
+/// Every failure in `e`, itself first, as a flat list (each with an empty `more`).
+pub fn errors(e: Error) -> List[Error] {
+    let mut out: List[Error] = List.new()
+    out.push(error_at(e.path.copy(), e.msg.copy()))
+    for x in e.more {
+        for y in errors(x) { out.push(y) }
+    }
+    out
+}
+
+/// Each failure in `e` as a line of text ("path: message"), in order.
+pub fn messages(e: Error) -> List[List[u8]] {
+    let mut out: List[List[u8]] = List.new()
+    for x in errors(e) { out.push(error_text(x)) }
+    out
+}
+
+/// One error for several: the first, with the rest in `more`. `xs` must not be empty.
+pub fn combine(xs: List[Error]) -> Error {
+    let mut flat: List[Error] = List.new()
+    for x in xs {
+        for y in errors(x) { flat.push(y) }
+    }
+    let mut first = flat[0].copy()
+    for i in 1..flat.len() { first.more.push(flat[i].copy()) }
+    first
+}
+
 /// An error with no path yet.
-pub fn error(msg: str) -> Error { Error(List.new(), msg.bytes()) }
+pub fn error(msg: str) -> Error { Error(List.new(), msg.bytes(), List.new()) }
+
+/// An error with this message at `path`.
+pub fn error_at(path: List[u8], msg: List[u8]) -> Error { Error(path, msg, List.new()) }
 
 /// The kinds of the data model, as a `Deserializer` sees a value. `Int` is any number without
 /// a fraction, `Float` any other.
@@ -80,7 +116,7 @@ pub fn path_index(path: List[u8], i: usize) -> List[u8] {
 /// A format's writer. The calls come in document order; a `begin_*` is closed by its `end_*`,
 /// and between them a list has its elements (each a complete value: a scalar or a
 /// begin/end pair), a map or a record or a variant has `key` (or `field`) and then the value.
-/// Every call may fail (a TOML table cannot hold a list of mixed types); the caller stops
+/// Every call may fail (a TOML list cannot hold an absent option); the caller stops
 /// at the first error.
 pub trait Serializer {
     /// The format's name: `"json"`, `"toml"`, `"value"`.
@@ -158,13 +194,20 @@ pub trait Serialize {
 @[derive]
 pub trait Deserialize {
     fn deserialize[D: Deserializer](d: D) -> Result[Self, Error] {
-        comptime if is_enum_type[Self] { deserialize_enum(d) } else { deserialize_record(d, false) }
+        comptime if is_enum_type[Self] {
+            deserialize_enum(d)
+        } else {
+            let mut known: List[List[u8]] = List.new()
+            deserialize_record(d, false, inout known)
+        }
     }
     /// Reads the type from a map that holds the members of other fields too, as a `flatten`ed
-    /// field does (`json(flatten)`): the derived reading does not reject members it does not
-    /// know. A type with its own `deserialize` that can be flattened defines this as well.
-    fn deserialize_flat[D: Deserializer](d: D) -> Result[Self, Error] {
-        comptime if is_enum_type[Self] { deserialize_enum(d) } else { deserialize_record(d, true) }
+    /// field does (`json(flatten)`): it does not reject members it does not know, and adds the
+    /// names of the members it takes (and its own flattened fields') to `known`, so the outer
+    /// record can reject the rest. A type with its own `deserialize` that can be flattened
+    /// defines this as well.
+    fn deserialize_flat[D: Deserializer](d: D, inout known: List[List[u8]]) -> Result[Self, Error] {
+        comptime if is_enum_type[Self] { deserialize_enum(d) } else { deserialize_record(d, true, inout known) }
     }
     fn missing() -> Option[Self] { None }
 }
@@ -175,11 +218,11 @@ pub fn expected[D: Deserializer](d: D, what: str) -> Error {
     bytes.append(inout m, what.bytes())
     bytes.append(inout m, ", found ".bytes())
     bytes.append(inout m, kind_name(d.kind()).bytes())
-    Error(d.path(), m)
+    error_at(d.path(), m)
 }
 
 /// An error with this message at the path of `d`.
-pub fn fail[D: Deserializer](d: D, msg: str) -> Error { Error(d.path(), msg.bytes()) }
+pub fn fail[D: Deserializer](d: D, msg: str) -> Error { error_at(d.path(), msg.bytes()) }
 
 /// The name of a kind: "null", "a boolean", ...
 pub fn kind_name(k: Kind) -> str {
@@ -204,7 +247,7 @@ fn int_in_range[D: Deserializer](d: D, what: str, lo: i64, hi: i64) -> Result[i6
         let mut m = "expected ".bytes()
         bytes.append(inout m, what.bytes())
         bytes.append(inout m, ", the number is out of range".bytes())
-        return Err(Error(d.path(), m))
+        return Err(error_at(d.path(), m))
     }
     Ok(v)
 }
@@ -295,7 +338,7 @@ impl Serialize for str {
 }
 
 /// Bytes, as opposed to a list of numbers: a format writes them its own way (base64 text in
-/// JSON, an array of integers in TOML).
+/// JSON and TOML).
 pub type Bytes = { data: List[u8] }
 
 impl Serialize for Bytes {
@@ -326,10 +369,15 @@ impl[T: Deserialize] Deserialize for List[T] {
     fn deserialize[D: Deserializer](d: D) -> Result[List[T], Error] {
         if d.kind() != KList { return Err(expected(d, "a list")) }
         let mut out: List[T] = List.new()
+        let mut errs: List[Error] = List.new()
         for i in 0..d.len() {
             let c = d.at(i)?
-            out.push(T.deserialize(c)?)
+            match T.deserialize(c) {
+                Ok(x) => out.push(x)
+                Err(e) => errs.push(e)
+            }
         }
+        if errs.len() > 0 { return Err(combine(errs)) }
         Ok(out)
     }
 }
@@ -371,13 +419,18 @@ impl[T: Deserialize] Deserialize for Map[String, T] {
     fn deserialize[D: Deserializer](d: D) -> Result[Map[String, T], Error] {
         if d.kind() != KMap { return Err(expected(d, "a map")) }
         let mut out: Map[String, T] = Map.new()
+        let mut errs: List[Error] = List.new()
         for i in 0..d.len() {
             let k = match String.from_bytes(d.key_at(i)) {
                 Ok(x) => x
                 Err(_) => { return Err(fail(d, "a key with a NUL character")) }
             }
-            out.insert(k, T.deserialize(d.value_at(i))?)
+            match T.deserialize(d.value_at(i)) {
+                Ok(x) => out.insert(k, x)
+                Err(e) => errs.push(e)
+            }
         }
+        if errs.len() > 0 { return Err(combine(errs)) }
         Ok(out)
     }
 }
@@ -446,7 +499,7 @@ pub fn from_value[T: Deserialize](v: Value) -> Result[T, Error] {
 
 /// What a `ValueSerializer` has open: a list, or a map, record or variant filled with entries
 /// (`plain`: not a variant with the name as the one key).
-type Frame = { is_list: bool, items: List[Value], entries: List[Entry], key: List[u8], variant: List[u8], plain: bool, merged: bool }
+pub type Frame = { is_list: bool, items: List[Value], entries: List[Entry], key: List[u8], variant: List[u8], plain: bool, merged: bool }
 
 /// Writes a `Value` (`to_value`): the format named "value".
 pub type ValueSerializer = { stack: List[Frame], out: Option[Value], merge: bool }
@@ -673,6 +726,290 @@ impl Deserializer for ValueDeserializer {
     }
 }
 
+// ---- validation: `@[check(...)]` (docs/compiler.md, "C8.63")
+
+/// Rules for the value of a field, enforced when a derived `Deserialize` reads the record, and
+/// read by schema derivations (eider-openapi's `Schematic`) so documentation and checking
+/// agree. Every key is optional; what is left at its default is not checked.
+///
+/// - `min`, `max`: the least and greatest value (inclusive) of a number field. An `Option`
+///   field is checked when present; a `List` or `Map` field checks each element.
+/// - `min_len`, `max_len`: the fewest and most characters of a `String`, items of a `List`,
+///   entries of a `Map` (the container itself, not its elements).
+/// - `format`: a name from `std/validate` (`email`, `uuid`, `uri`, `date`, `date-time`, `ipv4`,
+///   `hostname`) for a `String`.
+/// - `one_of`: the allowed values of a `String`, comma separated (`"low,medium,high"`).
+/// - `by`: a module of yours with `pub fn validate(v: T) -> Result[(), String]` for the field's
+///   type; the `Err` text is the violation. Schemas do not describe it.
+///
+/// Every violation of a record is reported at once, each at the path of its field
+/// (`lines[2].qty: must be at least 1`). A key that does not fit the field's type (`min` on a
+/// `String`) is itself a violation, so it shows the first time the type is read.
+pub attr check {
+    min: i64 = -9223372036854775807 - 1,
+    max: i64 = 9223372036854775807,
+    min_len: i64 = 0,
+    max_len: i64 = -1,
+    format: str = "",
+    one_of: str = "",
+    @[names_module] by: str = "",
+}
+
+/// The value of `check.min` and `check.max` when they are not set.
+pub const NO_MIN: i64 = -9223372036854775807 - 1
+pub const NO_MAX: i64 = 9223372036854775807
+
+fn violation(path: List[u8], msg: List[u8], inout errs: List[Error]) { errs.push(error_at(path.copy(), msg)) }
+
+fn misapplied(path: List[u8], key: str, inout errs: List[Error]) {
+    let mut m = "@[check(".bytes()
+    bytes.append(inout m, key.bytes())
+    bytes.append(inout m, ")] does not apply to this type".bytes())
+    violation(path, m, inout errs)
+}
+
+fn range_violation(v: i64, r: check, path: List[u8], inout errs: List[Error]) {
+    if r.min != NO_MIN && v < r.min {
+        let mut m = "must be at least ".bytes()
+        bytes.append(inout m, bytes.from_i64(r.min))
+        violation(path, m, inout errs)
+    }
+    if r.max != NO_MAX && v > r.max {
+        let mut m = "must be at most ".bytes()
+        bytes.append(inout m, bytes.from_i64(r.max))
+        violation(path, m, inout errs)
+    }
+}
+
+fn not_text_rules(r: check, path: List[u8], inout errs: List[Error]) {
+    if r.format.len() > 0 { misapplied(path.copy(), "format", inout errs) }
+    if r.one_of.len() > 0 { misapplied(path.copy(), "one_of", inout errs) }
+}
+
+/// A value the rules of `@[check]` can judge.
+pub trait Checkable {
+    /// Appends a violation for each of `r`'s rules that `self` breaks; `path` names the value.
+    fn check_value(self, r: check, path: List[u8], inout errs: List[Error])
+}
+
+/// A value with a size `@[check(min_len, max_len)]` can judge.
+pub trait Counted {
+    /// The size, None when the value is absent (an `Option`).
+    fn count(self) -> Option[usize]
+    /// What `count` counts, in the singular: "character", "item", "entry".
+    fn noun(self) -> str
+}
+
+/// Checks the size of `v` against `min_len` and `max_len`.
+pub fn check_size[F: Counted](v: F, r: check, path: List[u8], inout errs: List[Error]) {
+    match v.count() {
+        Some(n) => {
+            if (n as i64) < r.min_len {
+                let mut m = "must have at least ".bytes()
+                // the same words eider-openapi's schema validation uses
+                if r.min_len == 1 && bytes.eq(v.noun().bytes(), "character".bytes()) {
+                    m = "must not be empty".bytes()
+                } else {
+                    bytes.append(inout m, bytes.from_i64(r.min_len))
+                    m.push(32)
+                    bytes.append(inout m, plural(v.noun(), r.min_len))
+                }
+                violation(path.copy(), m, inout errs)
+            }
+            if r.max_len >= 0 && (n as i64) > r.max_len {
+                let mut m = "must have at most ".bytes()
+                bytes.append(inout m, bytes.from_i64(r.max_len))
+                m.push(32)
+                bytes.append(inout m, plural(v.noun(), r.max_len))
+                violation(path.copy(), m, inout errs)
+            }
+        }
+        None => {}
+    }
+}
+
+/// `noun` in the plural unless `n` is 1: "item" -> "items", "entry" -> "entries".
+fn plural(noun: str, n: i64) -> List[u8] {
+    let mut w = noun.bytes()
+    if n == 1 { return w }
+    if w[w.len() - 1] == 121 {
+        w.pop()
+        bytes.append(inout w, "ies".bytes())
+    } else {
+        w.push(115)
+    }
+    w
+}
+
+impl Counted for String {
+    fn count(self) -> Option[usize] {
+        // characters: the bytes that start a UTF-8 sequence
+        let mut n: usize = 0
+        for b in self.bytes() {
+            if b < 128 || b >= 192 { n += 1 }
+        }
+        Some(n)
+    }
+    fn noun(self) -> str { "character" }
+}
+
+impl[T] Counted for List[T] {
+    fn count(self) -> Option[usize] { Some(self.len()) }
+    fn noun(self) -> str { "item" }
+}
+
+impl[T] Counted for Map[String, T] {
+    fn count(self) -> Option[usize] { Some(self.len()) }
+    fn noun(self) -> str { "entry" }
+}
+
+impl[T: Counted] Counted for Option[T] {
+    fn count(self) -> Option[usize] {
+        match self {
+            Some(x) => x.count()
+            None => None
+        }
+    }
+    fn noun(self) -> str {
+        match self {
+            Some(x) => x.noun()
+            None => ""
+        }
+    }
+}
+
+impl Checkable for String {
+    fn check_value(self, r: check, path: List[u8], inout errs: List[Error]) {
+        if r.min != NO_MIN { misapplied(path.copy(), "min", inout errs) }
+        if r.max != NO_MAX { misapplied(path.copy(), "max", inout errs) }
+        let b = self.bytes()
+        if r.format.len() > 0 {
+            if !validate.known(r.format) {
+                let mut m = "unknown format `".bytes()
+                bytes.append(inout m, r.format.bytes())
+                bytes.append(inout m, "` (the formats: ".bytes())
+                bytes.append(inout m, validate.names().bytes())
+                m.push(41)
+                violation(path.copy(), m, inout errs)
+            } else if !validate.valid(r.format, b) {
+                let mut m = "must be ".bytes()
+                bytes.append(inout m, validate.describe(r.format).bytes())
+                violation(path.copy(), m, inout errs)
+            }
+        }
+        if r.one_of.len() > 0 {
+            let allowed = bytes.split(r.one_of.bytes(), 44)
+            if !allowed.contains(b) {
+                let mut quoted: List[List[u8]] = List.new()
+                for a in allowed {
+                    let mut q = "\"".bytes()
+                    bytes.append(inout q, a)
+                    q.push(34)
+                    quoted.push(q)
+                }
+                let mut m = "must be one of ".bytes()
+                bytes.append(inout m, bytes.join(quoted, ", ".bytes()))
+                violation(path.copy(), m, inout errs)
+            }
+        }
+    }
+}
+
+impl Checkable for i64 {
+    fn check_value(self, r: check, path: List[u8], inout errs: List[Error]) {
+        not_text_rules(r, path.copy(), inout errs)
+        range_violation(self, r, path, inout errs)
+    }
+}
+
+impl Checkable for i32 {
+    fn check_value(self, r: check, path: List[u8], inout errs: List[Error]) {
+        not_text_rules(r, path.copy(), inout errs)
+        range_violation(self as i64, r, path, inout errs)
+    }
+}
+
+impl Checkable for u8 {
+    fn check_value(self, r: check, path: List[u8], inout errs: List[Error]) {
+        not_text_rules(r, path.copy(), inout errs)
+        range_violation(self as i64, r, path, inout errs)
+    }
+}
+
+impl Checkable for u32 {
+    fn check_value(self, r: check, path: List[u8], inout errs: List[Error]) {
+        not_text_rules(r, path.copy(), inout errs)
+        range_violation(self as i64, r, path, inout errs)
+    }
+}
+
+impl Checkable for u64 {
+    fn check_value(self, r: check, path: List[u8], inout errs: List[Error]) {
+        not_text_rules(r, path.copy(), inout errs)
+        // above the range of an i64 it is above any `max`
+        if self > 9223372036854775807 {
+            if r.max != NO_MAX {
+                let mut m = "must be at most ".bytes()
+                bytes.append(inout m, bytes.from_i64(r.max))
+                violation(path, m, inout errs)
+            }
+            return
+        }
+        range_violation(self as i64, r, path, inout errs)
+    }
+}
+
+impl Checkable for usize {
+    fn check_value(self, r: check, path: List[u8], inout errs: List[Error]) {
+        let v = self as u64
+        v.check_value(r, path, inout errs)
+    }
+}
+
+impl Checkable for f64 {
+    fn check_value(self, r: check, path: List[u8], inout errs: List[Error]) {
+        not_text_rules(r, path.copy(), inout errs)
+        if r.min != NO_MIN && self < (r.min as f64) {
+            let mut m = "must be at least ".bytes()
+            bytes.append(inout m, bytes.from_i64(r.min))
+            violation(path.copy(), m, inout errs)
+        }
+        if r.max != NO_MAX && self > (r.max as f64) {
+            let mut m = "must be at most ".bytes()
+            bytes.append(inout m, bytes.from_i64(r.max))
+            violation(path.copy(), m, inout errs)
+        }
+    }
+}
+
+impl[T: Checkable] Checkable for Option[T] {
+    fn check_value(self, r: check, path: List[u8], inout errs: List[Error]) {
+        match self {
+            Some(x) => x.check_value(r, path, inout errs)
+            None => {}
+        }
+    }
+}
+
+impl[T: Checkable] Checkable for List[T] {
+    fn check_value(self, r: check, path: List[u8], inout errs: List[Error]) {
+        for i in 0..self.len() { self[i].check_value(r, path_index(path, i), inout errs) }
+    }
+}
+
+impl[T: Checkable] Checkable for Map[String, T] {
+    fn check_value(self, r: check, path: List[u8], inout errs: List[Error]) {
+        let mut ks = self.keys()
+        sort_keys(inout ks)
+        for k in ks {
+            match self.get(k) {
+                Some(v) => v.check_value(r, path_field(path, k.bytes()), inout errs)
+                None => {}
+            }
+        }
+    }
+}
+
 // ---- attributes and derivation (docs/compiler.md, "C8.61")
 
 /// How a type, field or variant maps to the data model, for every format. On a field: `name`
@@ -681,16 +1018,16 @@ impl Deserializer for ValueDeserializer {
 /// variant: `name`. On a type: `rename_all` (`snake_case`, `camelCase`, `kebab-case` or
 /// `SCREAMING_SNAKE_CASE`, for the names of its fields or variants), `tag` (an enum's tag key;
 /// without one a variant with fields is written under its name).
-pub attr serial { name: str = "", skip: bool = false, default: bool = false, rename_all: str = "", tag: str = "" }
+pub attr serial { name: str = "", skip: bool = false, default: bool = false, rename_all: str = "", tag: str = "", unknown: str = "", @[names_module] with: str = "" }
 
 /// `serial` for JSON only: what is set here wins over `serial`. Also `flatten` (a record
 /// field whose members are the outer object's; a record that has one accepts unknown members)
 /// and `unknown` (`deny`, the default, or `ignore`: what reading does with a member no field
 /// takes).
-pub attr json { name: str = "", skip: bool = false, default: bool = false, rename_all: str = "", tag: str = "", flatten: bool = false, unknown: str = "" }
+pub attr json { name: str = "", skip: bool = false, default: bool = false, rename_all: str = "", tag: str = "", flatten: bool = false, unknown: str = "", @[names_module] with: str = "" }
 
 /// `serial` for TOML only: what is set here wins over `serial`; `unknown` as in `json`.
-pub attr toml { name: str = "", skip: bool = false, default: bool = false, rename_all: str = "", tag: str = "", unknown: str = "" }
+pub attr toml { name: str = "", skip: bool = false, default: bool = false, rename_all: str = "", tag: str = "", unknown: str = "", @[names_module] with: str = "" }
 
 fn is_format(fmt: str, name: str) -> bool { bytes.eq(fmt.bytes(), name.bytes()) }
 
@@ -700,6 +1037,19 @@ pub fn pick(fmt: str, neutral: str, json: str, toml: str) -> str {
     if is_format(fmt, "toml") && toml.len() > 0 { return toml }
     neutral
 }
+
+/// Which adapter module a field uses for the format `fmt`: 1 the `json` one, 2 the `toml` one,
+/// 3 the `serial` one, 0 none (the type's own `Serialize`/`Deserialize`). Each argument says
+/// whether that attribute names a module (`with`).
+pub fn which(fmt: str, json: bool, toml: bool, neutral: bool) -> u32 {
+    if json && is_format(fmt, "json") { return 1 }
+    if toml && is_format(fmt, "toml") { return 2 }
+    if neutral { return 3 }
+    0
+}
+
+/// A value of type F from the cursor `d` (F from the context).
+fn read_one[F: Deserialize, D: Deserializer](d: D) -> Result[F, Error] { F.deserialize(d) }
 
 /// The flag for the format `fmt`: set neutrally or for it.
 pub fn flag(fmt: str, neutral: bool, json: bool, toml: bool) -> bool {
@@ -771,7 +1121,16 @@ pub fn serialize_record[T, S: Serializer](x: T, inout s: S) -> Result[(), Error]
             } else {
                 s.field(member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule))?
             }
-            x.[f].serialize(inout s)?
+            let w = which(fmt, attr[json](f).with != "", attr[toml](f).with != "", attr[serial](f).with != "")
+            if w == 1 {
+                comptime if attr[json](f).with != "" { attr[json](f).with.serialize(x.[f], inout s)? } else { panic("serial: no adapter") }
+            } else if w == 2 {
+                comptime if attr[toml](f).with != "" { attr[toml](f).with.serialize(x.[f], inout s)? } else { panic("serial: no adapter") }
+            } else if w == 3 {
+                comptime if attr[serial](f).with != "" { attr[serial](f).with.serialize(x.[f], inout s)? } else { panic("serial: no adapter") }
+            } else {
+                comptime if attr[serial](f).with == "" { x.[f].serialize(inout s)? } else { panic("serial: no adapter") }
+            }
         }
     }
     s.end_record()
@@ -816,6 +1175,14 @@ pub fn serialize_enum[T, S: Serializer](x: T, inout s: S) -> Result[(), Error] {
 
 fn default_value[F: Default]() -> F { F.default() }
 
+/// The error for a member `key` that the map `d` is at does not have.
+fn missing_field[D: Deserializer](d: D, key: List[u8]) -> Error {
+    let mut m = "missing field `".bytes()
+    bytes.append(inout m, key)
+    m.push(96)
+    error_at(d.path(), m)
+}
+
 /// Member `key` of the map `d` is at, read; absent: F.missing(), else an error.
 fn member_value[F: Deserialize, D: Deserializer](d: D, key: List[u8]) -> Result[F, Error] {
     match d.get(key.copy()) {
@@ -827,7 +1194,7 @@ fn member_value[F: Deserialize, D: Deserializer](d: D, key: List[u8]) -> Result[
                     let mut m = "missing field `".bytes()
                     bytes.append(inout m, key)
                     m.push(96)
-                    Err(Error(d.path(), m))
+                    Err(error_at(d.path(), m))
                 }
             }
         }
@@ -840,52 +1207,107 @@ fn member_or_default[F: Deserialize + Default, D: Deserializer](d: D, key: List[
 }
 
 /// A flattened field: its type reads the same map.
-fn flat_value[F: Deserialize, D: Deserializer](d: D) -> Result[F, Error] { F.deserialize_flat(d) }
+fn flat_value[F: Deserialize, D: Deserializer](d: D, inout known: List[List[u8]]) -> Result[F, Error] { F.deserialize_flat(d, inout known) }
+
+/// An error for the first member of the map `d` is at that is not in `known`.
+fn reject_unknown[D: Deserializer](d: D, known: List[List[u8]]) -> Result[(), Error] {
+    for i in 0..d.len() {
+        let k = d.key_at(i)
+        if !known.contains(k) {
+            let mut m = "unknown field `".bytes()
+            bytes.append(inout m, k)
+            m.push(96)
+            return Err(error_at(d.path(), m))
+        }
+    }
+    Ok(())
+}
 
 /// A record from a map: each field from its member. `part`: the map is shared with other
-/// fields (a flattened record), so members the record does not know are not its to judge.
-pub fn deserialize_record[T, D: Deserializer](d: D, part: bool) -> Result[T, Error] {
+/// fields (a flattened record), so members the record does not know are not its to judge: it
+/// adds the names it takes to `outer` and the record that holds it rejects the rest.
+pub fn deserialize_record[T, D: Deserializer](d: D, part: bool, inout outer: List[List[u8]]) -> Result[T, Error] {
     if d.kind() != KMap { return Err(expected(d, "a map")) }
     let fmt = d.format()
     let rule = pick(fmt, attr[serial](T).rename_all, attr[json](T).rename_all, attr[toml](T).rename_all)
+    // the names of the members this record takes; a flattened field's come as it is read
     let mut known: List[List[u8]] = List.new()
-    let mut flat = false
     comptime for f in fields(T) {
-        if attr[json](f).flatten && is_format(fmt, "json") { flat = true }
-        known.push(member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule))
-    }
-    // unknown members are errors unless the type allows them, or a flattened field may take them
-    let policy = pick(fmt, "", attr[json](T).unknown, attr[toml](T).unknown)
-    if !flat && !part && !bytes.eq(policy.bytes(), "ignore".bytes()) {
-        for i in 0..d.len() {
-            let k = d.key_at(i)
-            if !known.contains(k) {
-                let mut m = "unknown field `".bytes()
-                bytes.append(inout m, k)
-                m.push(96)
-                return Err(Error(d.path(), m))
-            }
+        if !(attr[json](f).flatten && is_format(fmt, "json")) {
+            known.push(member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule))
         }
     }
-    Ok(T(comptime for f in fields(T) {
-        comptime if attr[serial](f).skip || attr[json](f).skip || attr[toml](f).skip {
-            default_value()
-        } else {
-            comptime if attr[json](f).flatten {
-                if is_format(fmt, "json") {
-                    flat_value(d)?
-                } else {
-                    member_value(d, member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule))?
-                }
+    let out = T(comptime for f in fields(T) {
+            comptime if attr[serial](f).skip || attr[json](f).skip || attr[toml](f).skip {
+                default_value()
             } else {
-                comptime if attr[serial](f).default || attr[json](f).default || attr[toml](f).default {
-                    member_or_default(d, member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule))?
+                comptime if attr[serial](f).with != "" || attr[json](f).with != "" || attr[toml](f).with != "" {
+                    match d.get(member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule)) {
+                        Some(c) => {
+                            let w = which(fmt, attr[json](f).with != "", attr[toml](f).with != "", attr[serial](f).with != "")
+                            if w == 1 {
+                                comptime if attr[json](f).with != "" { attr[json](f).with.deserialize(c)? } else { panic("serial: no adapter") }
+                            } else if w == 2 {
+                                comptime if attr[toml](f).with != "" { attr[toml](f).with.deserialize(c)? } else { panic("serial: no adapter") }
+                            } else if w == 3 {
+                                comptime if attr[serial](f).with != "" { attr[serial](f).with.deserialize(c)? } else { panic("serial: no adapter") }
+                            } else {
+                                comptime if attr[serial](f).with == "" { read_one(c)? } else { panic("serial: no adapter") }
+                            }
+                        }
+                        None => {
+                            comptime if attr[serial](f).default || attr[json](f).default || attr[toml](f).default {
+                                default_value()
+                            } else {
+                                return Err(missing_field(d, member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule)))
+                            }
+                        }
+                    }
                 } else {
-                    member_value(d, member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule))?
+                    comptime if attr[json](f).flatten {
+                        if is_format(fmt, "json") {
+                            flat_value(d, inout known)?
+                        } else {
+                            member_value(d, member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule))?
+                        }
+                    } else {
+                        comptime if attr[serial](f).default || attr[json](f).default || attr[toml](f).default {
+                            member_or_default(d, member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule))?
+                        } else {
+                            member_value(d, member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule))?
+                        }
+                    }
+                }
+            }
+        })
+    // `@[check(...)]`: every violation of this record's fields at once
+    let mut bad: List[Error] = List.new()
+    comptime for f in fields(T) {
+        comptime if has_attr[check](f) && !attr[serial](f).skip && !attr[json](f).skip && !attr[toml](f).skip {
+            let cpath = path_field(d.path(), member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule))
+            comptime if attr[check](f).min != NO_MIN || attr[check](f).max != NO_MAX || attr[check](f).format != "" || attr[check](f).one_of != "" {
+                out.[f].check_value(attr[check](f), cpath.copy(), inout bad)
+            }
+            comptime if attr[check](f).min_len != 0 || attr[check](f).max_len != -1 {
+                check_size(out.[f], attr[check](f), cpath.copy(), inout bad)
+            }
+            comptime if attr[check](f).by != "" {
+                match attr[check](f).by.validate(out.[f]) {
+                    Ok(_) => {}
+                    Err(msg) => bad.push(error_at(cpath.copy(), msg.bytes()))
                 }
             }
         }
-    }))
+    }
+    if bad.len() > 0 { return Err(combine(bad)) }
+    if part {
+        for k in known { outer.push(k) }
+        return Ok(out)
+    }
+    // unknown members are errors unless the type allows them
+    let policy = pick(fmt, attr[serial](T).unknown, attr[json](T).unknown, attr[toml](T).unknown)
+    if !bytes.eq(policy.bytes(), "ignore".bytes()) { reject_unknown(d, known)? }
+    Ok(out)
 }
 
 /// An enum from a string (a variant without fields) or a map: the tag key names the variant,
@@ -907,7 +1329,7 @@ pub fn deserialize_enum[T, D: Deserializer](d: D) -> Result[T, Error] {
                     let mut m = "missing the tag `".bytes()
                     bytes.append(inout m, tag.bytes())
                     m.push(96)
-                    return Err(Error(d.path(), m))
+                    return Err(error_at(d.path(), m))
                 }
             }
         } else {
@@ -921,13 +1343,20 @@ pub fn deserialize_enum[T, D: Deserializer](d: D) -> Result[T, Error] {
     let body = enum_body(d, external)
     comptime for v in variants(T) {
         if bytes.eq(name, member_name(v.name, pick(fmt, attr[serial](v).name, attr[json](v).name, attr[toml](v).name), rule)) {
+            let policy = pick(fmt, attr[serial](T).unknown, attr[json](T).unknown, attr[toml](T).unknown)
+            if !bytes.eq(policy.bytes(), "ignore".bytes()) && body.kind() == KMap {
+                let mut known: List[List[u8]] = List.new()
+                if tag.len() > 0 { known.push(tag.bytes()) }
+                comptime for f in fields(v) { known.push(member_name(f.name, "", rule)) }
+                reject_unknown(body, known)?
+            }
             return Ok(v(comptime for f in fields(v) { member_value(body, member_name(f.name, "", rule))? }))
         }
     }
     let mut m = "unknown variant `".bytes()
     bytes.append(inout m, name)
     m.push(96)
-    Err(Error(d.path(), m))
+    Err(error_at(d.path(), m))
 }
 
 /// The cursor on a variant's fields: the one member of the map, or the map itself.

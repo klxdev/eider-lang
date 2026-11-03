@@ -23,3 +23,8 @@ type Shape =
     skip,
 )]
 pub fn f(@[other] a: i32, @[json(skip)] inout b: i32, c: i32) {}
+
+pub attr serial {
+    name: str = "",
+    @[names_module] with: str = "",
+}

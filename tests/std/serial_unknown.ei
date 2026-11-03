@@ -1,0 +1,69 @@
+// std/serial: unknown members of derived enums are errors like a record's (#166), unless the
+// type says `unknown = "ignore"`; through the "value" format.
+import std.bytes
+import std.serial
+
+@[derive(Serialize, Deserialize)]
+type Plain =
+    | Dot
+    | Line(len: i64)
+
+@[derive(Serialize, Deserialize), serial(tag = "kind")]
+type Tagged =
+    | TDot
+    | TLine(len: i64)
+
+@[derive(Serialize, Deserialize), serial(tag = "kind", unknown = "ignore")]
+type Lenient =
+    | LLine(len: i64)
+
+fn text(b: List[u8]) -> String { String.from_bytes(b).unwrap_or(String.from("?")) }
+
+fn entry(k: str, v: serial.Value) -> serial.Entry { serial.Entry(k.bytes(), v) }
+
+fn map2(a: serial.Entry, b: serial.Entry) -> serial.Value {
+    let mut es: List[serial.Entry] = List.new()
+    es.push(a)
+    es.push(b)
+    serial.VMap(es)
+}
+
+fn map1(a: serial.Entry) -> serial.Value {
+    let mut es: List[serial.Entry] = List.new()
+    es.push(a)
+    serial.VMap(es)
+}
+
+fn plain(label: str, v: serial.Value) uses io {
+    let r: Result[Plain, serial.Error] = serial.from_value(v)
+    match r {
+        Ok(_) => print("{label}: ok")
+        Err(e) => print("{label}: {text(serial.error_text(e))}")
+    }
+}
+
+fn tagged(label: str, v: serial.Value) uses io {
+    let r: Result[Tagged, serial.Error] = serial.from_value(v)
+    match r {
+        Ok(_) => print("{label}: ok")
+        Err(e) => print("{label}: {text(serial.error_text(e))}")
+    }
+}
+
+fn main() uses io {
+    plain("external", map1(entry("Line", map1(entry("len", serial.VInt(3))))))
+    plain("external, extra", map1(entry("Line", map2(entry("len", serial.VInt(3)), entry("color", serial.VInt(1))))))
+    plain("unit", serial.VStr("Dot".bytes()))
+    tagged("tagged", map2(entry("kind", serial.VStr("TLine".bytes())), entry("len", serial.VInt(3))))
+    tagged("tagged, extra", map2(entry("kind", serial.VStr("TDot".bytes())), entry("size", serial.VInt(3))))
+    tagged("tagged, extra on a line", map2(entry("kind", serial.VStr("TLine".bytes())), entry("size", serial.VInt(3))))
+    let mut es3: List[serial.Entry] = List.new()
+    es3.push(entry("kind", serial.VStr("LLine".bytes())))
+    es3.push(entry("len", serial.VInt(3)))
+    es3.push(entry("size", serial.VInt(9)))
+    let lenient: Result[Lenient, serial.Error] = serial.from_value(serial.VMap(es3))
+    match lenient {
+        Ok(_) => print("lenient, extra: ok")
+        Err(e) => print("lenient, extra: {text(serial.error_text(e))}")
+    }
+}

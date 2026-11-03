@@ -29,6 +29,17 @@ out where the attribute is used; one without must be given. `attr` is a word wit
 meaning only at the start of an item followed by a name and `{`, so it stays usable as a name
 everywhere else.
 
+## A key that names a module
+
+A `str` key marked `@[names_module]` takes the name of an imported module as its value
+(`std/serial`'s `with`: `@[serial(with = unix_millis)]`). The name is checked where it is written
+(E0822 if it is no imported module). A derivation calls the module's functions with
+`attr[A](f).with.serialize(...)`; the value read as data is the module's name as a `str`.
+
+```eider,ignore
+pub attr serial { name: str = "", @[names_module] with: str = "" }
+```
+
 ## Using an attribute
 
 `@[` opens a group, a comma-separated list of attributes that ends at `]`; it is the only

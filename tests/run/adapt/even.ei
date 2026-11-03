@@ -1,0 +1,6 @@
+// a validator module for `@[check(by = even)]`: `validate` for the field's type
+
+pub fn validate(v: i64) -> Result[(), String] {
+    if v % 2 == 0 { return Ok(()) }
+    Err(String.from("must be even"))
+}

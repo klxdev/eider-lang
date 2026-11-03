@@ -57,3 +57,11 @@
     arg (AttrArg 22:5 key=name
       value (EStr 22:12 value="f"))
     arg (AttrArg 23:5 key=skip)))
+(IType 27:10 name=serial pub attr
+  member (Field 28:5 name=name
+    type (TName 28:11 name=str)
+    default (EStr 28:17 value=""))
+  member (Field 29:21 name=with
+    type (TName 29:27 name=str)
+    default (EStr 29:33 value="")
+    attribute (Attr 29:7 name=names_module)))

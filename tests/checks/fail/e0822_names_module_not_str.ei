@@ -1,0 +1,6 @@
+// expect: E0822 4:31
+import std.serial
+
+attr tag { @[names_module] n: i64 = 0 }
+
+fn main() {}

@@ -7836,6 +7836,10 @@ fn trait_call(inout c: C, n: ast.Node, tk: u64, exp: u32) -> Result[V, diag.Diag
 
 /// `want`: the trait whose method is called (`Trait.m(x)`, with `n.a` the receiver `x`), else 0.
 fn method_call_in(inout c: C, n: ast.Node, exp: u32, want: u64) -> Result[V, diag.Diag] {
+    match ct_module_call(inout c, n, exp)? {
+        Some(v) => { return Ok(v) }
+        None => {}
+    }
     match ct_matches(inout c, n)? {
         Some(v) => { return Ok(v) }
         None => {}
@@ -9487,8 +9491,9 @@ type ALit = { ty: u32, n: u64, s: List[u8] }
 /// definition) with its values by field.
 type AttrUse = { m: u32, owner: u32, def: u32, vals: List[ALit] }
 
-/// A declared attribute: its definition, and per field whether it has a default and which.
-type AttrDef = { def: u32, has: List[bool], vals: List[ALit] }
+/// A declared attribute: its definition, and per field whether it has a default and which, and
+/// whether the key is a `@[names_module]` key (its value names an imported module, ALit.n its prefix).
+type AttrDef = { def: u32, has: List[bool], vals: List[ALit], mods: List[bool] }
 
 /// What reflection keeps: declared attributes, the attribute uses, the comptime bindings in
 /// scope ("Reflection" below).
@@ -9566,6 +9571,31 @@ fn attr_value(inout c: C, m: u32, e: u32, ty: u32) -> Result[ALit, diag.Diag] {
     Err(errh("E0822", n.line, n.col, s("attribute values must be literals or constants"), "an attribute is data the compiler keeps; compute other values in code that reads it"))
 }
 
+/// Whether the key `fnode` of an attribute declaration in module m says `@[names_module]`: its value
+/// names an imported module (#164).
+fn is_module_key(c: C, m: u32, fnode: u32) -> bool {
+    let a = c.p.mods[m as usize].ast
+    for at in ast.attrs_of(a, fnode) {
+        let an = a.nodes[at as usize]
+        if an.b == 0 && is_word(c, an.a, "names_module") { return true }
+    }
+    false
+}
+
+/// The value of a `@[names_module]` key: the name of a module imported by module m. `n` is the prefix
+/// its items carry, `s` its name as written.
+fn module_value(c: C, m: u32, e: u32, ty: u32, key: List[u8]) -> Result[ALit, diag.Diag] {
+    let n = ndm(c, m, e)
+    if n.kind != ast.EIdent || n.b != 0 {
+        return Err(errh("E0822", n.line, n.col, q("key `", key, "` names a module"), "write the name an `import` gives the module, e.g. `import app.unix_millis` then `with = unix_millis`"))
+    }
+    let pre = resolve.alias_pre(c.p, m, n.a, n.line, n.col)
+    if pre == 0 {
+        return Err(errh("E0822", n.line, n.col, q("`", nm(c, n.a), "` is not an imported module"), "import the module first: `import ...`; the key names it by the last part of its path"))
+    }
+    Ok(ALit(ty, pre as u64, nm(c, n.a)))
+}
+
 /// Check attribute declaration `node` (an IType h=1) of module m: key types and defaults.
 fn check_attr_decl(inout c: C, m: u32, node: u32) -> Result[bool, diag.Diag] {
     let n = ndm(c, m, node)
@@ -9574,10 +9604,12 @@ fn check_attr_decl(inout c: C, m: u32, node: u32) -> Result[bool, diag.Diag] {
     let d = c.t.defs[di as usize].copy()
     let mut has: List[bool] = List.new()
     let mut vals: List[ALit] = List.new()
+    let mut mods: List[bool] = List.new()
     let mut res: Result[bool, diag.Diag] = Ok(true)
     for i in 0..n.f {
         let fnode = ndm(c, m, atm(c, m, n.e, i))
         let ft = types.field(c.t, d.start, i).ty
+        mods.push(is_module_key(c, m, atm(c, m, n.e, i)))
         let k = types.kind(c.t, ft)
         if k != types.T_INT && k != types.T_BOOL && k != types.T_STR && !poisoned(c, ft) {
             let tn = ndm(c, m, fnode.b)
@@ -9585,6 +9617,10 @@ fn check_attr_decl(inout c: C, m: u32, node: u32) -> Result[bool, diag.Diag] {
             has.push(false)
             vals.push(ALit(ft, 0, List.new()))
             continue
+        }
+        if mods[i as usize] && k != types.T_STR {
+            let tn = ndm(c, m, fnode.b)
+            res = Err(in_file(c, err("E0822", tn.line, tn.col, s("a `@[names_module]` key is a str: its value names a module")), m))
         }
         if fnode.c == 0 {
             has.push(false)
@@ -9603,7 +9639,7 @@ fn check_attr_decl(inout c: C, m: u32, node: u32) -> Result[bool, diag.Diag] {
             }
         }
     }
-    c.rx.defs.push(AttrDef(di, has, vals))
+    c.rx.defs.push(AttrDef(di, has, vals, mods))
     res
 }
 
@@ -9715,6 +9751,13 @@ fn check_attr_use(inout c: C, m: u32, owner: u32, an: ast.Node, inout seen: List
         }
         return Ok(true)
     }
+    // `@[names_module]` on a key of an `attr` declaration: its value names an imported module (#164)
+    if di == NONE && an.b == 0 && bytes.eq(name, s("names_module")) {
+        let on = ndm(c, m, owner)
+        if on.kind != ast.Field { return Err(err("E0822", an.line, an.col, s("`names_module` goes on a key of an `attr` declaration"))) }
+        if an.d > 0 { return Err(err("E0821", an.line, an.col, s("`@[names_module]` takes no keys"))) }
+        return Ok(true)
+    }
     if di == NONE {
         let mut d = err("E0820", an.line, an.col, q("unknown attribute `", name, "`"))
         let mut best: List[u8] = List.new()
@@ -9771,7 +9814,11 @@ fn check_attr_use(inout c: C, m: u32, owner: u32, an: ast.Node, inout seen: List
             }
             vals[fi as usize] = ALit(ft, 1, List.new())
         } else {
-            vals[fi as usize] = attr_value(inout c, m, x.b - 1, ft)?
+            if ad.mods[fi as usize] {
+                vals[fi as usize] = module_value(c, m, x.b - 1, ft, kn)?
+            } else {
+                vals[fi as usize] = attr_value(inout c, m, x.b - 1, ft)?
+            }
         }
     }
     for i in 0..d.len {
@@ -9876,14 +9923,17 @@ fn tree_lacks(c: C, ti: u32, tk: u64, ty: u32, depth: u32) -> u32 {
     ty
 }
 
-/// Whether node `fnode` of module m has an attribute with the bool key `skip` set (`serial`,
+/// Whether node `fnode` of module m has an attribute with the bool key `skip` set or `serial(with = ...)` (`serial`,
 /// `json`, `toml`, or the attribute of a trait of yours).
 fn field_skipped(c: C, m: u32, fnode: u32) -> bool {
     for u in c.rx.found {
         if u.m != m || u.owner != fnode { continue }
         let d = c.t.defs[u.def as usize]
         for i in 0..d.len {
-            if bytes.eq(nm(c, types.field(c.t, d.start, i).name), s("skip")) && u.vals[i as usize].n == 1 { return true }
+            let kn = nm(c, types.field(c.t, d.start, i).name)
+            if bytes.eq(kn, s("skip")) && u.vals[i as usize].n == 1 { return true }
+            // a neutral adapter (`serial(with = m)`) stands for the field's own implementation
+            if bytes.eq(kn, s("with")) && u.vals[i as usize].n != 0 && bytes.eq(nm(c, resolve.key_sym(d.key)), s("serial")) { return true }
         }
     }
     false
@@ -10322,6 +10372,50 @@ fn ct_field(inout c: C, n: ast.Node) -> Result[Option[V], diag.Diag] {
     if bytes.eq(w, s("index")) { return Ok(Some(const_v(inout c, types.USIZE, fold.of_u64(b.idx as u64)))) }
     let what = if b.kind == B_VARIANT { "variant" } else { "field" }
     Err(r_err(n, q2("a reflected ", s(what), " has `name` and `index`, not `", w, "`")))
+}
+
+/// `attr[A](x).key.f(args)` where `key` is a `@[names_module]` key of A: a call of `f` in the module
+/// the attribute names (`@[serial(with = unix_millis)]`: `attr[serial](f).with.serialize(...)`
+/// calls `unix_millis.serialize(...)`). None for any other call.
+fn ct_module_call(inout c: C, n: ast.Node, exp: u32) -> Result[Option[V], diag.Diag] {
+    let r = nd(c, n.a)
+    if r.kind != ast.EField { return Ok(None) }
+    let rr = nd(c, r.a)
+    if rr.kind != ast.EReflect || rr.a != ast.R_ATTR { return Ok(None) }
+    let ar = ct_attr(inout c, rr)?
+    let d = c.t.defs[ar.di as usize].copy()
+    let fi = match types.find_field(c.t, d, r.b) {
+        Some(i) => i
+        None => { return Ok(None) }
+    }
+    let ai = attr_def_ix(c, ar.di)
+    if ai == NONE || !c.rx.defs[ai as usize].mods[fi as usize] { return Ok(None) }
+    if ar.unknown {
+        // the bounds pass: its instances check the call
+        let pt = poison(inout c)
+        for i in 0..n.d {
+            let a = nd(c, at(c, n.c, i))
+            if a.c != 1 { expr(inout c, a.a, pt)? }
+        }
+        return Ok(Some(poison_v(inout c)))
+    }
+    let v = ar.vals[fi as usize].copy()
+    if v.n == 0 {
+        return Err(errh("E0830", r.line, r.col, q("the attribute key `", nm(c, r.b), "` names no module here"), "test it first: `comptime if attr[A](x).key != \"\"`"))
+    }
+    let k = resolve.key(v.n as u32, n.b)
+    let fx = mget(c.fns, k)
+    if fx == NONE {
+        let fd = err("E0112", n.line, n.col, q2("module `", v.s, "` has no function `", nm(c, n.b), "`"))
+        return Ok(Some(fail_call(inout c, fd, n.c, n.d)?))
+    }
+    let f = c.fdefs[fx as usize]
+    if !visible(c, f.md, f.public) {
+        let rd = errh("E0801", n.line, n.col, q2("function `", nm(c, n.b), "` is private to module `", mod_shown(c, f.md), "`"), "mark it `pub` in its own file to use it from other modules")
+        record(inout c, rd)
+    }
+    let label = kt(c, k)
+    Ok(Some(call_decl(inout c, n, label, fx, no_subst(), no_recv(), exp, false)?))
 }
 
 /// `v.matches(x)`: None unless the receiver is a variant binding and the method `matches`.

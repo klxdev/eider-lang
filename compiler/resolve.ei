@@ -159,7 +159,7 @@ fn owns(p: Program, m: u32, sym: u32) -> bool {
 
 /// The prefix that alias `sym` stands for at (line, col) in module m (the last import of
 /// that alias before the position, as if the parser mapped them while it reads).
-fn alias_pre(p: Program, m: u32, sym: u32, line: u32, col: u32) -> u32 {
+pub fn alias_pre(p: Program, m: u32, sym: u32, line: u32, col: u32) -> u32 {
     let mut pre: u32 = 0
     for a in p.mods[m as usize].aliases {
         if a.sym == sym && (a.line < line || (a.line == line && a.col < col)) { pre = a.pre }
