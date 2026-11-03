@@ -4428,3 +4428,56 @@ because the language has no use for it here (`f64` is the float of the data mode
 without a text format and to move data between formats. The explicit-type-argument form
 `from_string[T](s)` is not syntax in Eider (a call takes no type arguments), so a reader's result type
 comes from the expected type: `let r: Result[T, serial.Error] = serial.from_value(v)`.
+
+## C8.62: opt-in derivation, `@[derive(Serialize, Deserialize)]` and the tree check (#156)
+
+Decisions C815 and C816. Code: compiler/check.ei (`opted_in`, `derivable_named`, `check_derive_trees`,
+`tree_lacks`, `attr_named`'s fallback); std/serial.ei (the attributes and the derived bodies); tests:
+tests/std/serial_derive.ei, tests/run/derive.ei, tests/checks/fail/e0833_*.ei.
+
+**Opt-in.** C8.42 gave every record and enum the default methods of a `@[derive]` trait. Now `@[derive]`
+on a trait only makes it derivable, and a record or enum has it by derivation only when its declaration
+says `@[derive(Trait, ...)]` (the name of the trait; `derived_by` asks `opted_in`) and no impl of the
+trait names the type. `@[derive(...)]` on a record or enum takes trait names (E0821 for a name that is
+no derivable trait, E0822 for `key = value` or a placement elsewhere); on a trait it still takes none.
+Nothing else about the mechanism changed: the default bodies are specialized per type like before.
+
+**The tree check (E0833).** A derived body goes over the fields, so every part must have the trait. The
+body would find a missing one only when it is specialized, deep in generic code. After the attributes
+are checked (pass 6b), `check_derive_trees` goes over the fields of each type that derives a trait and
+names the first part that lacks it, with the path: `Checkout.session: type Session is not Serialize`
+(`Shape.Circle.r` for a variant's field), and the fixes. A part has the trait when an impl is written
+for its type or the type derives it; `List[T]`, `Box[T]`, a `Map[String, T]` (a Map's key must be a
+`String`) and any generic type with an impl are looked into for their type arguments; a type
+parameter is not (its instances are checked). A field with a bool attribute key `skip` set is not a
+part. The specialization still reports its own error afterwards (E0115 inside the body); the first
+diagnostic is the tree check's.
+
+**Serialization.** std/serial declares the traits `Serialize` and `Deserialize` as `@[derive]` with
+reflective defaults (`serialize_record`, `serialize_enum`, `deserialize_record`, `deserialize_enum`), so
+`@[derive(Serialize, Deserialize)]` (one direction alone is fine) is all a type needs. The attributes are
+declared there too: `serial(name, skip, default, rename_all, tag)` for every format, and `json` and `toml`
+with the same keys plus `flatten` and `unknown` (json) or `unknown` (toml), which win over `serial` for
+their format when set (a non-empty text, a true flag: a format cannot switch a neutral `skip` off). A
+name `serial`, `json` or `toml` that no module of the program declares or imports as an alias resolves
+to std.serial's (`attr_named`), so `@[json(name = "x")]` needs no `import json` of the right library; an
+unknown key is E0821 like for any attribute. The derived bodies ask the format's name at run time
+(`s.format()`) to pick the effective value, a string compare per field; the attribute values themselves
+are comptime constants.
+
+Enums: a variant without fields is its name as a string; one with fields is a record of its fields under
+the variant's name (`{"Circle": {"r": 2}}`), or, with `serial(tag = "kind")`, a record with the tag first
+(`{"kind": "Circle", "r": 2}`); positional fields are named by their index. `rename_all` applies to the
+variants and, inside them, to the field names. A record reads its members in any order, a missing one is
+an error naming the path unless the field is an Option (`missing`), `default` or `skip` (the type's
+Default), and an unknown member is an error unless `unknown = "ignore"` for the format.
+
+Escape hatches. (1) the per-format attributes above; (3) a hand-written `impl Serialize for T` (or
+Deserialize) that branches on `s.format()`; both are in. (2) A per-field adapter module
+(`json(with = unix_millis)`) is not: an attribute value is an integer, bool or text, and naming a module
+needs a new kind of value and a way for the derived body to call into it; a field wanting another
+representation can use a type of its own with its own impl meanwhile. Limits found: a record with a
+`flatten` field (json only) accepts unknown members, because the names the flattened type takes are not
+known to the outer record (the flattened type reads through `deserialize_flat`, which does not reject
+members it does not know; a type with its own `deserialize` that can be flattened defines it too); a variant's payload fields take no attributes (the syntax allows none); there is no reflected
+type name, so the data model's `begin_record` takes only the number of fields.

@@ -1,0 +1,10 @@
+// expect: E0821 7:10
+// derive names a trait that is not declared derivable
+@[derive]
+trait Enc {
+    fn enc(self) -> i64 { 1 }
+}
+@[derive(Nope)]
+type Point = { x: i64 }
+
+fn main() {}

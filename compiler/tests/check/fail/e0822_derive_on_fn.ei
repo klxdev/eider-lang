@@ -1,0 +1,4 @@
+// expect: E0822 3:3
+// derive goes on a trait, or on a record or enum
+@[derive(Enc)]
+fn main() {}

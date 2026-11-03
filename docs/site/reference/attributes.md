@@ -105,8 +105,9 @@ own name.
 
 ## The built-in attributes
 
-Two attributes need no declaration. `@[derive]` marks a trait whose reflective default methods
-implement it for types (see [Traits](traits.md)). `@[allow(lint, ...)]` silences lints of
+Two attributes need no declaration. `@[derive]` on a trait makes it derivable, and
+`@[derive(Trait, ...)]` on a record or enum derives those traits for it from the trait's
+reflective default methods (see [Traits](traits.md)). `@[allow(lint, ...)]` silences lints of
 `eiderc lint` (see the [compiler tooling](../tooling/compiler.md#lints)) in the function,
 `impl` or `trait` it precedes: it takes lint names, groups or `all` and nothing else (E0821
 for an unknown name, E0822 for `key = value`).

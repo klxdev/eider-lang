@@ -2604,12 +2604,41 @@ fn trait_derives(c: C, ti: u32) -> bool {
     false
 }
 
-/// Whether record or enum ty has `@[derive]` trait ti by derivation: no impl of the trait
-/// names its type.
+/// Whether the declaration of record or enum ty says `@[derive(Name)]` for trait ti's name
+/// (docs/compiler.md, "C8.62": a derivable trait is opt-in, per type).
+fn opted_in(c: C, ti: u32, ty: u32) -> bool {
+    let td = tmpl_of(c, ty)
+    if td.node == NONE { return false }
+    let tr = c.trs[ti as usize]
+    let tname = ndm(c, tr.m, tr.node).a
+    let a = c.p.mods[td.md as usize].ast
+    for at in ast.attrs_of(a, td.node) {
+        let an = a.nodes[at as usize]
+        if an.b != 0 || !is_word(c, an.a, "derive") { continue }
+        for j in 0..an.d {
+            let x = ndm(c, td.md, atm(c, td.md, an.c, j))
+            if x.a == tname { return true }
+        }
+    }
+    false
+}
+
+/// The derivable trait (declared `@[derive]`) named `sym`: its index into trs, or NONE.
+fn derivable_named(c: C, sym: u32) -> u32 {
+    for ti in 0..c.trs.len() {
+        let tr = c.trs[ti]
+        if ndm(c, tr.m, tr.node).a == sym && trait_derives(c, ti as u32) { return ti as u32 }
+    }
+    NONE
+}
+
+/// Whether record or enum ty has `@[derive]` trait ti by derivation: its declaration opts in
+/// with `@[derive(Trait)]` and no impl of the trait names its type.
 fn derived_by(c: C, ti: u32, ty: u32) -> bool {
     let k = types.kind(c.t, ty)
     if k != types.T_RECORD && k != types.T_ENUM { return false }
     if !trait_derives(c, ti) { return false }
+    if !opted_in(c, ti, ty) { return false }
     let h = head_of(c, ty)
     for im in c.timpls {
         if mget(c.traits, im.tkey) != ti { continue }
@@ -4050,6 +4079,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
     }
     // 6b. attributes: declarations, then uses ("Attributes")
     check_attrs(inout c)
+    check_derive_trees(inout c)
     c.cur_all = true
     c.cur_mod = resolve.NOMOD
     // 7. signatures of every concrete function, then of every concrete method
@@ -9587,6 +9617,12 @@ fn attr_named(c: C, m: u32, an: ast.Node) -> u32 {
         let k2 = resolve.name_key(c.p, m, an.a, an.a + 1, an.line, an.col)
         let d2 = mget(c.tmpl, k2)
         if d2 != NONE && is_attr_def(c, d2) && resolve.key_pre(k2) != 0 { return d2 }
+        // `serial`, `json` and `toml` are std.serial's, whoever's `import json` that is (C8.62)
+        for di in 0..c.t.defs.len() {
+            if !is_attr_def(c, di as u32) { continue }
+            let d = c.t.defs[di]
+            if d.public && resolve.key_sym(d.key) == an.a && bytes.eq(mod_shown(c, d.md), s("std.serial")) { return di as u32 }
+        }
     }
     NONE
 }
@@ -9641,6 +9677,27 @@ fn check_attr_use(inout c: C, m: u32, owner: u32, an: ast.Node, inout seen: List
             let mut e = err("E0821", an.line, an.col, s("`@[derive]` takes no keys"))
             e.help = s("write `@[derive]` alone before a trait")
             return Err(e)
+        }
+        return Ok(true)
+    }
+    // `@[derive(Trait, ...)]` on a record or enum opts it in to those derivable traits (C8.62)
+    if di == NONE && an.b == 0 && bytes.eq(name, s("derive")) {
+        let on = ndm(c, m, owner)
+        if on.kind != ast.IType || on.h != 0 {
+            return Err(err("E0822", an.line, an.col, s("`derive` goes on a trait, alone, or on a record or enum, naming traits")))
+        }
+        for j in 0..an.d {
+            let x = ndm(c, m, atm(c, m, an.c, j))
+            if x.b != 0 { return Err(err("E0822", x.line, x.col, s("`derive` takes trait names, not `key = value`"))) }
+            if derivable_named(c, x.a) == NONE {
+                let mut e = err("E0821", x.line, x.col, q("`derive` names no derivable trait `", nm(c, x.a), "`"))
+                let mut names: List[List[u8]] = List.new()
+                for ti in 0..c.trs.len() {
+                    if trait_derives(c, ti as u32) { names.push(nm(c, ndm(c, c.trs[ti].m, c.trs[ti].node).a)) }
+                }
+                e.help = if names.len() > 0 { q("traits declared `@[derive]`: ", bytes.join(names, s(", ")), "") } else { s("no trait is declared `@[derive]` in this program") }
+                return Err(e)
+            }
         }
         return Ok(true)
     }
@@ -9768,6 +9825,141 @@ fn check_attrs(inout c: C) {
     }
     c.cur_all = true
     c.cur_mod = resolve.NOMOD
+}
+
+// ---- The tree of a derived trait (docs/compiler.md, "C8.62")
+//
+// A record or enum that says `@[derive(Trait)]` has the trait through the trait's reflective
+// default methods, which go over its fields, so every part of it must have the trait too. The
+// bodies would find a part that lacks it only when they are specialized, deep in generic code;
+// this pass names the field instead (E0833): `Checkout.session: type Session is not
+// Serialize`. A part has the trait when its type has an impl of it, or derives it; the
+// built-in containers and any generic type with an impl are looked into for their type
+// arguments. A field with a `skip` key set (`serial`, `json`, `toml`) is not a part.
+
+/// Whether a type has an impl of trait tk written for it (not a derivation).
+fn has_impl(c: C, tk: u64, ty: u32) -> bool {
+    for im in c.timpls {
+        if im.tkey != tk { continue }
+        let n = ndm(c, im.md, im.node)
+        let gs = gparams(c, im.md, n.c, n.d)
+        let mut sb = no_subst()
+        if unify_ast(c, im.md, n.b, ty, inout sb, gs) { return true }
+    }
+    false
+}
+
+/// The first part of ty that lacks trait ti (key tk): a type id, or NONE when none does.
+fn tree_lacks(c: C, ti: u32, tk: u64, ty: u32, depth: u32) -> u32 {
+    if depth > 12 || ty == NONE || poisoned(c, ty) { return NONE }
+    let k = types.kind(c.t, ty)
+    if k == types.T_PARAM { return NONE }
+    let t = types.get(c.t, ty)
+    if k == types.T_LIST || k == types.T_BOX { return tree_lacks(c, ti, tk, t.a, depth + 1) }
+    if k == types.T_MAP {
+        if types.kind(c.t, t.a) != types.T_STRING { return t.a }
+        return tree_lacks(c, ti, tk, t.b, depth + 1)
+    }
+    if k == types.T_RECORD || k == types.T_ENUM {
+        if !has_impl(c, tk, ty) && !derived_by(c, ti, ty) { return ty }
+        // Option[T], a generic type of yours: the type arguments take part
+        let d = types.def_of(c.t, ty)
+        if d.args != types.NOTY {
+            for a in types.list_items(c.t, d.args) {
+                let r = tree_lacks(c, ti, tk, a, depth + 1)
+                if r != NONE { return r }
+            }
+        }
+        return NONE
+    }
+    if implements(c, tk, ty) { return NONE }
+    ty
+}
+
+/// Whether node `fnode` of module m has an attribute with the bool key `skip` set (`serial`,
+/// `json`, `toml`, or the attribute of a trait of yours).
+fn field_skipped(c: C, m: u32, fnode: u32) -> bool {
+    for u in c.rx.found {
+        if u.m != m || u.owner != fnode { continue }
+        let d = c.t.defs[u.def as usize]
+        for i in 0..d.len {
+            if bytes.eq(nm(c, types.field(c.t, d.start, i).name), s("skip")) && u.vals[i as usize].n == 1 { return true }
+        }
+    }
+    false
+}
+
+fn check_derive_trees(inout c: C) {
+    let its = items(c.p)
+    for it in its {
+        let n = ndm(c, it.m, it.node)
+        if n.kind != ast.IType || n.h != 0 { continue }
+        let a = c.p.mods[it.m as usize].ast.copy()
+        let k = resolve.item_key(c.p, it.m, n.a)
+        let di = mget(c.tmpl, k)
+        if di == NONE { continue }
+        let d = c.t.defs[di as usize].copy()
+        for at in ast.attrs_of(a, it.node) {
+            let an = a.nodes[at as usize]
+            if an.b != 0 || !is_word(c, an.a, "derive") { continue }
+            for j in 0..an.d {
+                let x = ndm(c, it.m, atm(c, it.m, an.c, j))
+                let ti = derivable_named(c, x.a)
+                if ti == NONE { continue }
+                let tr = c.trs[ti as usize]
+                let tname = nm(c, ndm(c, tr.m, tr.node).a)
+                let tk = resolve.item_key(c.p, tr.m, ndm(c, tr.m, tr.node).a)
+                let tyname = nm(c, n.a)
+                if !d.is_enum {
+                    for i in 0..d.len {
+                        let f = types.field(c.t, d.start, i)
+                        if field_skipped(c, it.m, atm(c, it.m, n.e, i)) { continue }
+                        let bad = tree_lacks(c, ti, tk, f.ty, 0)
+                        if bad != NONE {
+                            let fname = nm(c, f.name)
+                            derive_part_error(inout c, it.m, f.line, f.col, tyname, fname, tname, bad)
+                        }
+                    }
+                } else {
+                    for vi in 0..d.len {
+                        let v = types.variant(c.t, d, vi)
+                        let vnode = ndm(c, it.m, atm(c, it.m, n.e, vi))
+                        for fi in 0..v.flen {
+                            let f = types.field(c.t, v.fstart, fi)
+                            let bad = tree_lacks(c, ti, tk, f.ty, 0)
+                            if bad == NONE { continue }
+                            let mut path = tyname.copy()
+                            path.push(46)
+                            bytes.append(inout path, nm(c, vnode.a))
+                            let fname = nm(c, f.name)
+                            derive_part_error(inout c, it.m, f.line, f.col, path, fname, tname, bad)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn derive_part_error(inout c: C, m: u32, line: u32, col: u32, owner: List[u8], field: List[u8], trait_name: List[u8], bad: u32) {
+    let mut msg = owner.copy()
+    msg.push(46)
+    bytes.append(inout msg, field)
+    bytes.append(inout msg, s(": type "))
+    bytes.append(inout msg, ts(c, bad))
+    bytes.append(inout msg, s(" is not "))
+    bytes.append(inout msg, trait_name)
+    let mut e = err("E0833", line, col, msg)
+    let mut h = s("mark ")
+    bytes.append(inout h, ts(c, bad))
+    bytes.append(inout h, s(" with `@[derive("))
+    bytes.append(inout h, trait_name)
+    bytes.append(inout h, s(")]`, implement "))
+    bytes.append(inout h, trait_name)
+    bytes.append(inout h, s(" for it, or leave the field out (`@[serial(skip)]` for Serialize and Deserialize)"))
+    e.help = h
+    let ef = in_file(c, e, m)
+    record(inout c, ef)
 }
 
 /// The values of attribute di on node `owner` of module m, if it has it.

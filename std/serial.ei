@@ -6,8 +6,9 @@
 //! named fields) and a time (a calendar date and time with an offset).
 //!
 //! - `Serialize` and `Deserialize` are implemented by types: this module has them for the
-//!   built-in types, and you write them for yours. A type with no implementation cannot be
-//!   serialized.
+//!   built-in types, `@[derive(Serialize, Deserialize)]` makes them for your records and enums
+//!   (either direction alone is fine), and you can write them by hand. A type with no
+//!   implementation cannot be serialized: nothing is derived without the marker.
 //! - `Serializer` and `Deserializer` are implemented by formats (eider-json, eider-toml, ...):
 //!   they see only the data model, never a user type. A `Serializer` is written to, event by
 //!   event, in order. A `Deserializer` is a cursor on one value of a document that is already
@@ -143,15 +144,28 @@ pub trait Deserializer {
     fn value_at(self, i: usize) -> Self
 }
 
-/// A value that can be written to any format.
+/// A value that can be written to any format. Implement it by hand, or derive it with
+/// `@[derive(Serialize)]` (records and enums).
+@[derive]
 pub trait Serialize {
-    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error]
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] {
+        comptime if is_enum_type[Self] { serialize_enum(self, inout s) } else { serialize_record(self, inout s) }
+    }
 }
 
 /// A value that can be read from any format. `missing` is the value of a record field whose
 /// member is absent: Some(None) for an Option, else None (the member is required).
+@[derive]
 pub trait Deserialize {
-    fn deserialize[D: Deserializer](d: D) -> Result[Self, Error]
+    fn deserialize[D: Deserializer](d: D) -> Result[Self, Error] {
+        comptime if is_enum_type[Self] { deserialize_enum(d) } else { deserialize_record(d, false) }
+    }
+    /// Reads the type from a map that holds the members of other fields too, as a `flatten`ed
+    /// field does (`json(flatten)`): the derived reading does not reject members it does not
+    /// know. A type with its own `deserialize` that can be flattened defines this as well.
+    fn deserialize_flat[D: Deserializer](d: D) -> Result[Self, Error] {
+        comptime if is_enum_type[Self] { deserialize_enum(d) } else { deserialize_record(d, true) }
+    }
     fn missing() -> Option[Self] { None }
 }
 
@@ -657,4 +671,267 @@ impl Deserializer for ValueDeserializer {
             _ => ValueDeserializer(VNull, self.path.copy())
         }
     }
+}
+
+// ---- attributes and derivation (docs/compiler.md, "C8.61")
+
+/// How a type, field or variant maps to the data model, for every format. On a field: `name`
+/// (the key it is written under; default the field's name), `skip` (never written; read as
+/// its Default), `default` (when absent on reading: its Default instead of an error). On a
+/// variant: `name`. On a type: `rename_all` (`snake_case`, `camelCase`, `kebab-case` or
+/// `SCREAMING_SNAKE_CASE`, for the names of its fields or variants), `tag` (an enum's tag key;
+/// without one a variant with fields is written under its name).
+pub attr serial { name: str = "", skip: bool = false, default: bool = false, rename_all: str = "", tag: str = "" }
+
+/// `serial` for JSON only: what is set here wins over `serial`. Also `flatten` (a record
+/// field whose members are the outer object's; a record that has one accepts unknown members)
+/// and `unknown` (`deny`, the default, or `ignore`: what reading does with a member no field
+/// takes).
+pub attr json { name: str = "", skip: bool = false, default: bool = false, rename_all: str = "", tag: str = "", flatten: bool = false, unknown: str = "" }
+
+/// `serial` for TOML only: what is set here wins over `serial`; `unknown` as in `json`.
+pub attr toml { name: str = "", skip: bool = false, default: bool = false, rename_all: str = "", tag: str = "", unknown: str = "" }
+
+fn is_format(fmt: str, name: str) -> bool { bytes.eq(fmt.bytes(), name.bytes()) }
+
+/// The text for the format `fmt`: the one set for it, else the neutral one.
+pub fn pick(fmt: str, neutral: str, json: str, toml: str) -> str {
+    if is_format(fmt, "json") && json.len() > 0 { return json }
+    if is_format(fmt, "toml") && toml.len() > 0 { return toml }
+    neutral
+}
+
+/// The flag for the format `fmt`: set neutrally or for it.
+pub fn flag(fmt: str, neutral: bool, json: bool, toml: bool) -> bool {
+    neutral || (is_format(fmt, "json") && json) || (is_format(fmt, "toml") && toml)
+}
+
+/// The key of a field or variant named `name`: `rename` if given, else `name` in the case
+/// `rule` names.
+pub fn member_name(name: str, rename: str, rule: str) -> List[u8] {
+    if rename.len() > 0 { return rename.bytes() }
+    let src = name.bytes()
+    let r = rule.bytes()
+    if r.len() == 0 { return src }
+    // the words: split at `_` and before an upper-case letter after a lower-case one
+    let mut words: List[List[u8]] = List.new()
+    let mut cur: List[u8] = List.new()
+    for i in 0..src.len() {
+        let c = src[i]
+        let is_up = c >= 65 && c <= 90
+        let prev_lower = i > 0 && src[i - 1] >= 97 && src[i - 1] <= 122
+        if c == 95 || (is_up && prev_lower) {
+            if cur.len() > 0 { words.push(cur.replace(List.new())) }
+            if c == 95 { continue }
+        }
+        cur.push(lower(c))
+    }
+    if cur.len() > 0 { words.push(cur) }
+    let mut out: List[u8] = List.new()
+    let camel = bytes.eq(r, "camelCase".bytes())
+    let kebab = bytes.eq(r, "kebab-case".bytes())
+    let scream = bytes.eq(r, "SCREAMING_SNAKE_CASE".bytes())
+    for i in 0..words.len() {
+        let wd = words[i].copy()
+        if i > 0 && !camel { if kebab { out.push(45) } else { out.push(95) } }
+        for j in 0..wd.len() {
+            let c = wd[j]
+            if (camel && i > 0 && j == 0) || scream { out.push(upper(c)) } else { out.push(c) }
+        }
+    }
+    out
+}
+
+fn lower(c: u8) -> u8 {
+    if c >= 65 && c <= 90 { return c + 32 }
+    c
+}
+
+fn upper(c: u8) -> u8 {
+    if c >= 97 && c <= 122 { return c - 32 }
+    c
+}
+
+/// A record as a record of the data model: one field per field of the type (`serial`, `json`
+/// and `toml`: renamed, skipped, flattened).
+pub fn serialize_record[T, S: Serializer](x: T, inout s: S) -> Result[(), Error] {
+    let fmt = s.format()
+    let rule = pick(fmt, attr[serial](T).rename_all, attr[json](T).rename_all, attr[toml](T).rename_all)
+    let mut n: usize = 0
+    comptime for f in fields(T) {
+        if !flag(fmt, attr[serial](f).skip, attr[json](f).skip, attr[toml](f).skip) {
+            if !(attr[json](f).flatten && is_format(fmt, "json")) { n += 1 }
+        }
+    }
+    s.begin_record(n)?
+    comptime for f in fields(T) {
+        if !flag(fmt, attr[serial](f).skip, attr[json](f).skip, attr[toml](f).skip) {
+            if attr[json](f).flatten && is_format(fmt, "json") {
+                s.merge_next()?
+            } else {
+                s.field(member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule))?
+            }
+            x.[f].serialize(inout s)?
+        }
+    }
+    s.end_record()
+}
+
+/// The member names of record type T for the format `fmt` ("json", "toml"), in field order,
+/// skipped fields left out. `proto` only names the type (pass `none`).
+pub fn member_names[T](proto: Option[T], fmt: str) -> List[List[u8]] {
+    let rule = pick(fmt, attr[serial](T).rename_all, attr[json](T).rename_all, attr[toml](T).rename_all)
+    let mut out: List[List[u8]] = List.new()
+    comptime for f in fields(T) {
+        if !flag(fmt, attr[serial](f).skip, attr[json](f).skip, attr[toml](f).skip) {
+            out.push(member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule))
+        }
+    }
+    out
+}
+
+/// An enum: a variant without fields as its name (a string), one with fields as a record of
+/// its fields under its name, or, with a tag key (`serial(tag = "kind")`), as one with the tag
+/// first.
+pub fn serialize_enum[T, S: Serializer](x: T, inout s: S) -> Result[(), Error] {
+    let fmt = s.format()
+    let rule = pick(fmt, attr[serial](T).rename_all, attr[json](T).rename_all, attr[toml](T).rename_all)
+    let tag = pick(fmt, attr[serial](T).tag, attr[json](T).tag, attr[toml](T).tag)
+    comptime for v in variants(T) {
+        if v.matches(x) {
+            let name = member_name(v.name, pick(fmt, attr[serial](v).name, attr[json](v).name, attr[toml](v).name), rule)
+            let mut n: usize = 0
+            comptime for f in fields(v) { n += 1 }
+            if n == 0 { return s.string(name) }
+            s.begin_variant(name, tag.bytes(), n)?
+            comptime for f in fields(v) {
+                s.field(member_name(f.name, "", rule))?
+                x.[f].serialize(inout s)?
+            }
+            return s.end_variant()
+        }
+    }
+    Err(error("a value of no variant"))
+}
+
+fn default_value[F: Default]() -> F { F.default() }
+
+/// Member `key` of the map `d` is at, read; absent: F.missing(), else an error.
+fn member_value[F: Deserialize, D: Deserializer](d: D, key: List[u8]) -> Result[F, Error] {
+    match d.get(key.copy()) {
+        Some(c) => F.deserialize(c)
+        None => {
+            match F.missing() {
+                Some(v) => Ok(v)
+                None => {
+                    let mut m = "missing field `".bytes()
+                    bytes.append(inout m, key)
+                    m.push(96)
+                    Err(Error(d.path(), m))
+                }
+            }
+        }
+    }
+}
+
+fn member_or_default[F: Deserialize + Default, D: Deserializer](d: D, key: List[u8]) -> Result[F, Error] {
+    if d.get(key.copy()).is_none() { return Ok(F.default()) }
+    member_value(d, key)
+}
+
+/// A flattened field: its type reads the same map.
+fn flat_value[F: Deserialize, D: Deserializer](d: D) -> Result[F, Error] { F.deserialize_flat(d) }
+
+/// A record from a map: each field from its member. `part`: the map is shared with other
+/// fields (a flattened record), so members the record does not know are not its to judge.
+pub fn deserialize_record[T, D: Deserializer](d: D, part: bool) -> Result[T, Error] {
+    if d.kind() != KMap { return Err(expected(d, "a map")) }
+    let fmt = d.format()
+    let rule = pick(fmt, attr[serial](T).rename_all, attr[json](T).rename_all, attr[toml](T).rename_all)
+    let mut known: List[List[u8]] = List.new()
+    let mut flat = false
+    comptime for f in fields(T) {
+        if attr[json](f).flatten && is_format(fmt, "json") { flat = true }
+        known.push(member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule))
+    }
+    // unknown members are errors unless the type allows them, or a flattened field may take them
+    let policy = pick(fmt, "", attr[json](T).unknown, attr[toml](T).unknown)
+    if !flat && !part && !bytes.eq(policy.bytes(), "ignore".bytes()) {
+        for i in 0..d.len() {
+            let k = d.key_at(i)
+            if !known.contains(k) {
+                let mut m = "unknown field `".bytes()
+                bytes.append(inout m, k)
+                m.push(96)
+                return Err(Error(d.path(), m))
+            }
+        }
+    }
+    Ok(T(comptime for f in fields(T) {
+        comptime if attr[serial](f).skip || attr[json](f).skip || attr[toml](f).skip {
+            default_value()
+        } else {
+            comptime if attr[json](f).flatten {
+                if is_format(fmt, "json") {
+                    flat_value(d)?
+                } else {
+                    member_value(d, member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule))?
+                }
+            } else {
+                comptime if attr[serial](f).default || attr[json](f).default || attr[toml](f).default {
+                    member_or_default(d, member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule))?
+                } else {
+                    member_value(d, member_name(f.name, pick(fmt, attr[serial](f).name, attr[json](f).name, attr[toml](f).name), rule))?
+                }
+            }
+        }
+    }))
+}
+
+/// An enum from a string (a variant without fields) or a map: the tag key names the variant,
+/// else the one key of the map does.
+pub fn deserialize_enum[T, D: Deserializer](d: D) -> Result[T, Error] {
+    let fmt = d.format()
+    let rule = pick(fmt, attr[serial](T).rename_all, attr[json](T).rename_all, attr[toml](T).rename_all)
+    let tag = pick(fmt, attr[serial](T).tag, attr[json](T).tag, attr[toml](T).tag)
+    let k = d.kind()
+    let mut name: List[u8] = List.new()
+    let mut external = false
+    if k == KStr {
+        name = d.read_string()?
+    } else if k == KMap {
+        if tag.len() > 0 {
+            match d.get(tag.bytes()) {
+                Some(c) => { name = c.read_string()? }
+                None => {
+                    let mut m = "missing the tag `".bytes()
+                    bytes.append(inout m, tag.bytes())
+                    m.push(96)
+                    return Err(Error(d.path(), m))
+                }
+            }
+        } else {
+            if d.len() != 1 { return Err(fail(d, "expected a map with the variant's name as its one key")) }
+            name = d.key_at(0)
+            external = true
+        }
+    } else {
+        return Err(expected(d, "a string or a map"))
+    }
+    let body = enum_body(d, external)
+    comptime for v in variants(T) {
+        if bytes.eq(name, member_name(v.name, pick(fmt, attr[serial](v).name, attr[json](v).name, attr[toml](v).name), rule)) {
+            return Ok(v(comptime for f in fields(v) { member_value(body, member_name(f.name, "", rule))? }))
+        }
+    }
+    let mut m = "unknown variant `".bytes()
+    bytes.append(inout m, name)
+    m.push(96)
+    Err(Error(d.path(), m))
+}
+
+/// The cursor on a variant's fields: the one member of the map, or the map itself.
+fn enum_body[D: Deserializer](d: D, external: bool) -> D {
+    if external { return d.value_at(0) }
+    d
 }

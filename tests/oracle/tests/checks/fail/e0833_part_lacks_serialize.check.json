@@ -1,0 +1,1 @@
+{"error":"E0833","span":{"file":"tests/checks/fail/e0833_part_lacks_serialize.ei","line":11,"col":5},"message":"Checkout.session: type Session is not Serialize","help":"mark Session with `@[derive(Serialize)]`, implement Serialize for it, or leave the field out (`@[serial(skip)]` for Serialize and Deserialize)"}

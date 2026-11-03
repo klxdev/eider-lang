@@ -1,5 +1,5 @@
 compile-fail tests (tests/checks/fail)
-  ok   derive_part_lacks.ei         E0115 at 7:22
+  ok   derive_part_lacks.ei         E0833 at 14:5
   ok   e0001_import_from.ei         E0001 at 3:14
   ok   e0001_import_wildcard.ei     E0001 at 3:12
   ok   e0001_missing_brace.ei       E0001 at 5:1
@@ -128,6 +128,7 @@ compile-fail tests (tests/checks/fail)
   ok   e0830_reflect_kind.ei        E0830 at 4:30
   ok   e0831_comptime_only_value.ei E0831 at 5:17
   ok   e0832_comptime_condition.ei  E0832 at 3:17
+  ok   e0833_part_lacks_serialize.ei E0833 at 11:5
 
 compile-pass tests (tests/checks/pass)
   ok   pass_attributes.ei
@@ -146,5 +147,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-144 passed, 0 failed; error-code coverage 72/72
+145 passed, 0 failed; error-code coverage 73/73
 --- exit 0

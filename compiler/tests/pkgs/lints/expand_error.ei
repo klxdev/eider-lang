@@ -1,6 +1,8 @@
 // pkgtest: check
 // an error inside a specialization names the iteration (type and field) and the
 // specialization (docs/compiler.md, "C8.57")
+attr enc { skip: bool = false }
+
 @[derive]
 trait Enc {
     fn enc(self, inout out: String) {
@@ -14,7 +16,8 @@ impl Enc for i64 {
     fn enc(self, inout out: String) { out.append(String.from_int(self)) }
 }
 
-type Point = { x: i64, y: f64 }
+@[derive(Enc)]
+type Point = { x: i64, @[enc(skip)] y: f64 }
 
 fn main() uses io {
     let mut s = String.from("")

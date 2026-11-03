@@ -1,0 +1,15 @@
+// expect: E0833 11:5
+import std.serial
+
+type Session = { token: String }
+
+@[derive(Serialize)]
+type Item = { name: String }
+
+@[derive(Serialize)]
+type Checkout = {
+    session: Session,
+    items: List[Item],
+}
+
+fn main() {}

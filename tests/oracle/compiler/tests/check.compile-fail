@@ -706,12 +706,14 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0820_attr_qualified.ei      E0820 at 3:3
   ok   e0820_attr_unknown.ei        E0820 at 4:3 (fix compiles)
   ok   e0821_attr_key.ei            E0821 at 4:12 (fix compiles)
+  ok   e0821_derive_unknown_trait.ei E0821 at 7:10
   ok   e0822_attr_bare_key.ei       E0822 at 3:8
   ok   e0822_attr_key_twice.ei      E0822 at 3:21
   ok   e0822_attr_key_type.ei       E0822 at 2:17
   ok   e0822_attr_not_const.ei      E0822 at 3:16
   ok   e0822_attr_required.ei       E0822 at 3:3
   ok   e0822_attr_twice.ei          E0822 at 3:9
+  ok   e0822_derive_on_fn.ei        E0822 at 3:3
   ok   e0830_field_of_other_type.ei E0830 at 6:9
   ok   e0830_field_unknown_member.ei E0830 at 5:17
   ok   e0830_fields_of_enum.ei      E0830 at 4:30
@@ -721,6 +723,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0831_reflected_value.ei     E0831 at 5:17
   ok   e0832_break.ei               E0832 at 5:9
   ok   e0832_runtime_condition.ei   E0832 at 3:17
+  ok   e0833_variant_part.ei        E0833 at 14:14
 
 compile-pass tests (compiler/tests/check/pass)
   ok   attrs.ei
@@ -803,6 +806,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-801 passed, 0 failed; error-code coverage 62/72
+804 passed, 0 failed; error-code coverage 63/73
 codes without a compile-fail test: E0118 E0302 E0310 E0402 E0607 E0608 E0806 E0808 E0812 E0813
 --- exit 0

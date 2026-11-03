@@ -119,11 +119,13 @@ are checked at each call with the concrete type: calling a method whose impl dec
 `uses io` needs `io` in the caller, also through a generic function (the instance for that
 type then needs it; see [Capabilities](capabilities.md)).
 
-**Derived traits.** A trait declared `@[derive]` gives its methods to every record and enum
-that has no impl of it, with the trait's default bodies, which usually go over the type's own
-fields or variants with [comptime reflection](reflection.md) (`Self` is then the record or
-enum, `is_enum_type[Self]` tells the two apart). This is how a library derives a codec, a printer
-or a comparison without macros: it is ordinary generic code, instantiated per type.
+**Derived traits.** A trait declared `@[derive]` can be derived: a record or enum that says
+`@[derive(Trait)]` and has no impl of it gets the trait's default methods, whose bodies usually go
+over the type's own fields or variants with [comptime reflection](reflection.md) (`Self` is then the
+record or enum, `is_enum_type[Self]` tells the two apart). This is how a library derives a codec, a
+printer or a comparison without macros: it is ordinary generic code, instantiated per type. Nothing
+is derived without the marker, so a type that was not meant to have the trait cannot be given it by
+accident.
 
 ```eider
 @[derive]
@@ -150,8 +152,11 @@ impl Describe for i32 {
     fn describe(self, inout out: String) { out.append(String.from_int(self as i64)) }
 }
 
+@[derive(Describe)]
 type Point = { x: i32, y: i32 }
+@[derive(Describe)]
 type Light = | Red | Green
+@[derive(Describe)]
 type Pole = { at: Point, state: Light }
 
 // the type's own package can still implement the trait
@@ -178,14 +183,15 @@ fn main() uses io {
 #tag
 ```
 
-A type has the trait by derivation only when no impl of the trait names its type (any
-`impl[T] Describe for Wrapper[T]` counts), and only a record or an enum does: integers,
-`String`, `List` and the like need an impl, which the library provides. A part that lacks the
-trait is an error where the default body uses it, and the help names the field: "in the
-`comptime for` iteration over field `n` of Cache". `@[derive]` takes no keys and goes only on a
-trait (E0820 elsewhere unless an `attr` of that name exists). The derived methods are the
-trait's defaults checked for the type, so they cost what generic instantiation costs and
-nothing more.
+A type has the trait by derivation only when it names the trait in `@[derive(...)]` and no impl of
+the trait names its type (any `impl[T] Describe for Wrapper[T]` counts), and only a record or an
+enum can: integers, `String`, `List` and the like need an impl, which the library provides. Every
+part of a type that derives a trait must have it too, and the compiler checks that where the type is
+declared: a part that lacks it is E0833 at the field, naming the path (`Pole.at: type Point is not
+Describe`), with the fixes (derive it, implement it, or leave the field out with an attribute that
+has a `skip` key). `@[derive]` on a trait takes no keys, and `@[derive(...)]` on a type takes only
+the names of derivable traits (E0821 otherwise). The derived methods are the trait's defaults checked
+for the type, so they cost what generic instantiation costs and nothing more.
 
 ## Associated types
 

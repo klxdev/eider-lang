@@ -1,0 +1,122 @@
+// std/serial: @[derive(Serialize, Deserialize)] (docs/compiler.md, "C8.62"): records and enums
+// with no impl, the neutral attribute `serial`, per-format `json` and `toml`, defaults and skips,
+// renames, an enum's tag, and errors with paths, through the `Value` format.
+import std.bytes
+import std.serial
+
+
+// types with no impl: the derivation does it
+@[derive(Serialize, Deserialize)]
+type Point = { x: i64, y: i64 }
+
+@[derive(Serialize, Deserialize)]
+type Shape =
+    | Dot
+    | Circle(r: i64)
+    | Rect(w: i64, h: i64)
+
+@[derive(Serialize, Deserialize), serial(tag = "kind", rename_all = "snake_case")]
+type Event =
+    | Started
+    | LoggedIn(user_id: i64)
+
+@[derive(Serialize, Deserialize), serial(rename_all = "camelCase")]
+type Doc = {
+    @[serial(name = "id")] doc_id: i64,
+    display_name: String,
+    @[serial(skip)] cache: List[u8],
+    @[serial(default)] retries: i64,
+    @[json(name = "jsonOnly"), toml(name = "tomlOnly")] other: i64,
+    note: Option[String],
+    origin: Point,
+    shapes: List[Shape],
+    ev: Event,
+    @[json(flatten)] pos: Point,
+}
+
+fn show_value(v: serial.Value) -> List[u8] {
+    match v {
+        serial.VNull => "null".bytes()
+        serial.VBool(b) => if b { "true".bytes() } else { "false".bytes() }
+        serial.VInt(n) => bytes.from_i64(n)
+        serial.VUint(n) => bytes.from_u64(n)
+        serial.VFloat(_) => "float".bytes()
+        serial.VStr(s) => {
+            let mut o = "\"".bytes()
+            bytes.append(inout o, s)
+            o.push(34)
+            o
+        }
+        serial.VBytes(_) => "bytes".bytes()
+        serial.VList(xs) => {
+            let mut o = "[".bytes()
+            for i in 0..xs.len() {
+                if i > 0 { bytes.append(inout o, ", ".bytes()) }
+                bytes.append(inout o, show_value(xs[i].copy()))
+            }
+            o.push(93)
+            o
+        }
+        serial.VMap(es) => {
+            let mut o = r"{".bytes()
+            for i in 0..es.len() {
+                if i > 0 { bytes.append(inout o, ", ".bytes()) }
+                bytes.append(inout o, es[i].key.copy())
+                bytes.append(inout o, ": ".bytes())
+                bytes.append(inout o, show_value(es[i].value.copy()))
+            }
+            bytes.append(inout o, r"}".bytes())
+            o
+        }
+        serial.VTime(_) => "time".bytes()
+    }
+}
+
+fn text(b: List[u8]) -> String { String.from_bytes(b).unwrap_or(String.from("?")) }
+
+fn doc_of(v: serial.Value) -> Result[Doc, serial.Error] { serial.from_value(v) }
+
+fn main() uses io {
+    let mut shapes: List[Shape] = List.new()
+    shapes.push(Dot)
+    shapes.push(Circle(2))
+    shapes.push(Rect(3, 4))
+    let d = Doc(7, String.from("Ada"), List.new(), 3, 9, None, Point(1, 2), shapes, LoggedIn(5), Point(8, 9))
+    let v = match serial.to_value(d) {
+        Ok(x) => x
+        Err(e) => {
+            print(text(serial.error_text(e)))
+            return
+        }
+    }
+    print(text(show_value(v.copy())))
+    match doc_of(v.copy()) {
+        Ok(back) => {
+            print(back.doc_id)
+            print(back.display_name)
+            print(back.retries)
+            print(back.shapes.len())
+        }
+        Err(e) => print(text(serial.error_text(e)))
+    }
+    // a missing field, an unknown one, a wrong kind: the path names the place
+    match serial.member(v.copy(), "shapes") {
+        Some(t) => match shapes_of(t) {
+            Ok(xs) => print(xs.len())
+            Err(e) => print(text(serial.error_text(e)))
+        }
+        None => {}
+    }
+    match shapes_of(serial.VList(one(serial.VStr("Hex".bytes())))) {
+        Ok(_) => print("unexpected")
+        Err(e) => print(text(serial.error_text(e)))
+    }
+}
+
+fn one(v: serial.Value) -> List[serial.Value] {
+    let mut xs: List[serial.Value] = List.new()
+    xs.push(v)
+    xs
+}
+
+fn shapes_of(v: serial.Value) -> Result[List[Shape], serial.Error] { serial.from_value(v) }

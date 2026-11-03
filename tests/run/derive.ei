@@ -65,10 +65,14 @@ impl[T: Enc] Enc for List[T] {
     }
 }
 
+@[derive(Enc)]
 type Point = { x: i64, y: i64 }
 type Cache = { n: u8 }
+@[derive(Enc)]
 type Line = { from: Point, to: Point, tags: List[String], @[enc(skip)] cache: Cache }
+@[derive(Enc)]
 type Shape = | Circle(r: i64) | Rect(w: i64, h: i64) | Empty
+@[derive(Enc)]
 type Wrap[T] = { inner: T, ok: bool }
 
 // the owning package overrides the derived implementation
@@ -79,6 +83,7 @@ impl Enc for Secret {
     fn tag() -> str { "own" }
 }
 
+@[derive(Enc)]
 type Holder = { s: Secret, p: Point }
 
 fn show[T: Enc](x: T) -> String {

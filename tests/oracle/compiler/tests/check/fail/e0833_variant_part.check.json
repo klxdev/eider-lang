@@ -1,0 +1,1 @@
+{"error":"E0833","span":{"file":"compiler/tests/check/fail/e0833_variant_part.ei","line":14,"col":14},"message":"Shape.Circle.r: type Inner is not Enc","help":"mark Inner with `@[derive(Enc)]`, implement Enc for it, or leave the field out (`@[serial(skip)]` for Serialize and Deserialize)"}

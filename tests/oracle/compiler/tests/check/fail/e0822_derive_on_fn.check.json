@@ -1,0 +1,1 @@
+{"error":"E0822","span":{"file":"compiler/tests/check/fail/e0822_derive_on_fn.ei","line":3,"col":3},"message":"`derive` goes on a trait, alone, or on a record or enum, naming traits"}

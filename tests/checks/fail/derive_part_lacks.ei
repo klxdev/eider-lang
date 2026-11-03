@@ -1,4 +1,4 @@
-// expect: E0115 7:22
+// expect: E0833 14:5
 // a derived implementation names the field whose type lacks the trait
 @[derive]
 trait Enc {
@@ -9,7 +9,10 @@ trait Enc {
     }
 }
 
-type Cache = { n: u8 }
+@[derive(Enc)]
+type Cache = {
+    n: u8,
+}
 
 fn show[T: Enc](x: T) -> String {
     let mut out = String.from("")

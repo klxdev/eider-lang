@@ -15,12 +15,28 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
   code and Markdown; eider-analyzer and tree-sitter-eider follow (`attribute_list` node). An
   attribute's diagnostics now point at its name, not at the `@`.
 
+- **Derivation is opt-in** (#156): a `@[derive]` trait is derived only for the records and enums that
+  say `@[derive(Trait)]`, and every part of such a type must have the trait (E0833, with the path).
+  Libraries with a derivable trait (eider-json, eider-openapi) are updated: see their changelogs.
+
+- **eider-json is a format for std/serial** (#156): `json.Encode`, `Decode`, `Reader`, `DecodeError`,
+  `to_json` and `from_json` are gone. A type is `@[derive(Serialize, Deserialize)]` (or has its own
+  impls), goes to JSON with `json.to_bytes`/`to_string` and comes back with
+  `json.from_bytes`/`from_string` (the type to read is the expected one). Errors are `serial.Error`
+  (`path: message`, with no `$.`), `@[json(...)]` keeps its keys and `@[serial(...)]` is the neutral
+  form. eider-rpc (`serial.Serialize` methods) and eider-openapi (`Schematic` is opted into,
+  an enum without `tag` is keyed by the variant's name) follow. A record with a `json(flatten)` field
+  accepts unknown members for now.
+
 **New:**
 
 - **std/serial** (#100): the data model and the traits of format-neutral serialization: `Serialize`
   and `Deserialize` for types, `Serializer` and `Deserializer` for formats, implementations for the
   built-in types, errors that name the path, and `Value` with `to_value`/`from_value`. See
   docs/compiler.md "C8.61".
+- **`@[derive(Serialize, Deserialize)]`** (#156): serialization for your records and enums from one
+  attribute vocabulary, `serial(name, skip, default, rename_all, tag)`, with `json(...)` and
+  `toml(...)` overriding it per format (unknown keys are E0821). docs/compiler.md "C8.62".
 
 ## 0.5.0
 

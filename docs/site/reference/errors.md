@@ -2093,3 +2093,33 @@ fn main() { f(1) }
 ```
 
 Fix: an ordinary `if` for a value known only at run time.
+
+## E0833
+
+**A part of a derived type lacks the trait.** A record or enum that says `@[derive(Trait)]` has the
+trait's default methods go over its fields, so every field must have the trait as well; this
+reports the first one that doesn't, with the path and the type: `Checkout.session: type Session
+is not Serialize`. A built-in container is looked into for its type arguments (`List[Item]`
+reports `Item`). A field with a `skip` key set (`@[serial(skip)]`) is not a part.
+
+```eider,compile_fail=E0833
+@[derive]
+trait Describe {
+    fn describe(self, inout out: String) {
+        comptime for f in fields(Self) { self.[f].describe(inout out) }
+    }
+}
+
+impl Describe for i32 {
+    fn describe(self, inout out: String) { out.append(String.from_int(self as i64)) }
+}
+
+type Session = { id: i32 }
+
+@[derive(Describe)]
+type Checkout = { session: Session }
+
+fn main() {}
+```
+
+Fix: derive it for `Session` (`@[derive(Describe)]`), implement it, or skip the field.

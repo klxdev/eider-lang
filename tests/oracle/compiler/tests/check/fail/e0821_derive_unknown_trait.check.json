@@ -1,0 +1,1 @@
+{"error":"E0821","span":{"file":"compiler/tests/check/fail/e0821_derive_unknown_trait.ei","line":7,"col":10},"message":"`derive` names no derivable trait `Nope`","help":"traits declared `@[derive]`: Enc"}
