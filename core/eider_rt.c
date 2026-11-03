@@ -1451,9 +1451,12 @@ static ei_task *task_create(void *(*run)(void *), void *arg) {
 /* Task.join: parks the calling task, or blocks the calling thread, until t has ended. */
 static void task_join(ei_task *t) {
 #ifdef EI_RT_PROFILE
-  uint64_t jt0 = !t->done && prof_conc_on() ? prof_now() : 0;
+  uint64_t jt0 = 0;
 #endif
   pthread_mutex_lock(&join_mu);
+#ifdef EI_RT_PROFILE
+  if (!t->done && prof_conc_on()) jt0 = prof_now(); /* t->done is guarded by join_mu */
+#endif
   while (!t->done) {
     ei_task *me = task_self();
     if (me) {
