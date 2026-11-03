@@ -67,10 +67,10 @@ seed/README.md after a MINOR bump). Siblings: every tool and library moves to 0.
   Mutable aliases are not (follow-up #157). Decision C764.
 
 **Not done, filed as follow-ups** (the items stay open): #16 views that share a buffer (zero-copy
-slices); #54 turning a handler's trap into a 500 (the libraries side); #1 pointers for mutable
+slices); #54 turning a handler's trap into a 500 in eider-http (only the std side is done); #1 pointers for mutable
 aliases (#157); #102 embedding binary files as `List[u8]` (#160); #103 printing a specialization as
-Eider source and naming the asking call (#159); #113 the rest of the issue; #30 coverage report for
-`eiderc test` (#158); #114 the rest of the issue; #5 std on the new base (`sys.lit` outside the
+Eider source and naming the asking call (#159); #113 the copy and cycle lints (#11), lints for dependencies and a fix for `needless_copy`; #30 coverage report for
+`eiderc test` (#158); #114 a reflective `std/config` (#161), shell completions and flag groups; #5 std on the new base (`sys.lit` outside the
 core is gone from proc, profile and testing; the rest remains, LAYERS.md "Known limits"). Libraries:
 eider-http #5 (tracing, partly), eider-rpc #1 (typed services; Connect and trait reflection for
 stubs remain), eider-openapi #1 (partly).
