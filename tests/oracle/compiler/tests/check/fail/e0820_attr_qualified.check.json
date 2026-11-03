@@ -1,1 +1,1 @@
-{"error":"E0820","span":{"file":"compiler/tests/check/fail/e0820_attr_qualified.ei","line":3,"col":1},"message":"unknown attribute `nope`","help":"an attribute is declared with `attr name { ... }` in the package that owns it; import that package to use its attributes"}
+{"error":"E0820","span":{"file":"compiler/tests/check/fail/e0820_attr_qualified.ei","line":3,"col":3},"message":"unknown attribute `nope`","help":"an attribute is declared with `attr name { ... }` in the package that owns it; import that package to use its attributes"}

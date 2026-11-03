@@ -1,0 +1,22 @@
+attr json { name: str = "", skip: bool = false }
+attr doc { text: str }
+
+// @json(not_this) in a comment
+@[doc(text = "a (paren) \"quote\"")]
+type Point = {
+    @[json(name = "X"), doc(text = "x")] x: i32,
+    @[json(skip)]
+    @[doc(text = "y")]
+    y: i32,
+}
+
+type Shape =
+    | @[json(name = "c")] Circle(r: i64)
+    | Empty
+
+@[allow(unused_uses)]
+fn f() {}
+
+fn main() {
+    let s = "@json(in_string)"
+}

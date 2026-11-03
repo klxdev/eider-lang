@@ -1,6 +1,6 @@
 // expect: E0115 7:22
 // a derived implementation names the field whose type lacks the trait
-@derive
+@[derive]
 trait Enc {
     fn enc(self, inout out: String) {
         comptime for f in fields(Self) {

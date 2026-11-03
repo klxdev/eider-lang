@@ -6,8 +6,8 @@ version = 1
 [[package]]
 name = "json"
 version = "0.5.0"
-source = "git+https://github.com/klxdev/eider-json.git#b891b6ad08be207c3a09a2465c326e86aa089047"
-hash = "sha256-35f3c583cac6e8a9ad0b73fa0caaa21cb60f89a2f0b95d864d82d09a226d6d2d"
+source = "git+https://github.com/klxdev/eider-json.git#f5268dbea5087c6bc81574c36243b07331ecb42f"
+hash = "sha256-cddd870311f54483c4b6f956784318bbf938a6fe422622e7bcdc7e5906fe3ffe"
 
 [[package]]
 name = "markdown"

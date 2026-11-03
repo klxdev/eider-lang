@@ -3616,8 +3616,8 @@ check.ei ("Attributes": `check_attrs`, pass 6b); tests: compiler/tests/check/{fa
 `*attr*`, compiler/tests/parse_ok/attrs.ei, tests/checks `*attribute*`; docs:
 docs/site/reference/attributes.md.
 
-**Syntax.** `@name`, `@name(key = value, flag)`, `@alias.name(...)`, before an item (the
-newlines after an attribute are skipped), before a record field and after a variant's `|`.
+**Syntax.** (C8.60 replaced the bare `@name(...)` with the group `@[name(key = value, flag), alias.name(...)]`.) A group goes before an item (the
+newlines after it are skipped), before a record field, a parameter and after a variant's `|`.
 `attr name { key: T = default, ... }` declares one: `attr` is an identifier, and a word only
 where an item starts with `attr`, a name and `{` (no keyword, so `attr` stays a name; the
 reflection call `attr[A](x)` is another place it is read). The lexer's `@` was a bad
@@ -3716,7 +3716,7 @@ dump.ei, check.ei ("Derived traits": `trait_derives`, `derived_by`, `derived_tra
 tests/checks/fail/derive_part_lacks.ei; docs: docs/site/reference/traits.md ("Derived
 traits"), docs/site/guide/json.md; eider-json 0.3.1.
 
-**`@derive`.** A trait item with the attribute `@derive` (built in: no `attr` declares it,
+**`@[derive]`.** A trait item with the attribute `@[derive]` (built in: no `attr` declares it,
 `check_attr_use` accepts it on a trait with no keys and E0820/E0821 apply elsewhere) is a
 derived trait. A record or enum has it when no impl of the trait names its type's head
 (`derived_by`; a bounded or generic impl for the head also turns it off, so
@@ -3724,7 +3724,7 @@ derived trait. A record or enum has it when no impl of the trait names its type'
 registered for it: there is no impl node, so nothing is instantiated until used.
 
 **Where it applies.** `implements` (a bound: `x: T` with `T: Enc`) answers yes for such a
-type without looking at its parts, because a part may be `@json(skip)`ped by the trait's
+type without looking at its parts, because a part may be `@[json(skip)]`ped by the trait's
 own default. Method lookup falls back to `derived_method` when the type has no method of
 that name: a FnDef for the trait's method, made once, with `dflt` set and no impl (`inode`
 NONE), so `instantiate`/`inst_name` treat Self as part of the key as they do for an
@@ -3799,7 +3799,7 @@ such method, or one without `self`), requires a first argument (E0405) and `inou
 when the method's `self` is (E0304, with a fix to add it), and re-enters `method_call_in` with
 the call rewritten as `x.m(rest)` (receiver `n.a` is the first argument's expression, the
 argument list starts one slot later) and `want` set to the trait's key. With `want` the
-built-in methods are skipped, only the trait's `Meth`s (and `@derive` default, `derived_method`)
+built-in methods are skipped, only the trait's `Meth`s (and `@[derive]` default, `derived_method`)
 are candidates, and a language trait with no impl (a derived `Show`) goes through
 `trait_method`. A type that does not implement the trait is E0115 ("has no method `m` from
 trait `T`"). `want` is a parameter, not state, so the arguments' own calls are unaffected.
@@ -4369,3 +4369,27 @@ fields (so a subcommand's flags are a record); explicit type arguments in a call
 float parser's error text is std/strings'. Not done: std/config loading a typed record (the reflective
 form announced in its header), shell completions, flag groups and aliases, environment fallbacks.
 
+
+## C8.60: grouped attributes, the only form (#155)
+
+Decision C813. Code: compiler/parse.ei (`attributes`, `attribute`), compiler/migrate.ei
+(`run_attrs`), scripts/migrate-attrs.sh; tests: compiler/tests/parse_ok/attrs.ei,
+compiler/tests/check/fail/attr_bare.ei.
+
+An attribute is written `@[a, b(key = value)]`; the bare `@name(...)` is gone. `@[` opens a
+comma-separated list and ends at the matching `]`; the list may span lines, and several groups may
+follow one another. A group stands inline before the thing it applies to, or alone on the lines above
+it. It applies to an item, a record field, an enum variant or a fn parameter (before `inout`); the
+checker validates and records it for all of them (`ast.attrs`, keyed by the node), and only
+reflection reads the ones on fields, variants and types. `@` followed by anything but `[` is the
+parse error ``expected `[` after `@`: attributes are written `@[name(...), ...]` ``. Every attribute
+node now starts at its own name (it started at the `@`), so a diagnostic about the second attribute of
+a group points at it.
+
+No lookahead is needed: `@[` cannot mean anything else, unlike a bare `[...]` (indexing, list
+literals, generics, comma-free fields). `eiderc migrate-attrs <file> [--json]` rewrites a file (or a
+Markdown file's ```eider blocks) with each bare attribute in the new form, joining the ones in a row on
+a line into one group; `scripts/migrate-attrs.sh` runs it over directories. No other code in
+compiler/, core/ or std/ used an attribute, so the seed needed no staging (seed/README.md,
+"Bootstrapping a change in what source means"). `eiderc fmt` works on tokens and needed no change: a
+group is an open bracket like any other. Attributes on enum variant payload fields stay unsupported.

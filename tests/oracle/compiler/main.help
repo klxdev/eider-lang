@@ -27,7 +27,7 @@ usage:
                                              modules; no file: the package here; `--list` lists them; levels also come from
                                              [lints] in eider.toml; exit 1 if a denied lint is hit
   eiderc expand <file.ei> [<name>]           the specialized IR of the bodies that use comptime reflection (for example
-                                             `@derive`d methods); <name>: every function whose name contains it
+                                             `@[derive]`d methods); <name>: every function whose name contains it
   eiderc caps <file.ei>                      each package's capability use, one JSON line per capability
   eiderc migrate-var <file.ei>               print the file with its `var`s rewritten as `let mut` (deprecated `var`)
   eiderc migrate-imports <file.ei> [--json]  print the file with its quoted imports in the dotted form
@@ -36,6 +36,8 @@ usage:
                                              each literal with braces meaning what it meant before
                                              literals interpolated: a raw string, or braces doubled
                                              (--portable: written as escapes)
+  eiderc migrate-attrs <file> [--json]       print the file (.ei, or a .md's eider blocks) with each bare `@name(...)`
+                                             attribute written `@[name(...)]` (the only form)
   eiderc audit-refs <file.ei> [--json]       every write that changes what a `let` reference sees (it was a copy
                                              before C8.6), with the `.copy()` that keeps the old meaning
   eiderc ide <file.ei> [--overlay <path> <text>]  print the IDE analysis (ide.ei): symbols, refs, types;

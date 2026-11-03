@@ -22,4 +22,4 @@
                   recv (EIdent 4:69 name=out)
                   arg (EArg 4:82
                     expr (EStr 4:82 value="r"))))))))))
-  attribute (Attr 1:1 name=derive))
+  attribute (Attr 1:3 name=derive))

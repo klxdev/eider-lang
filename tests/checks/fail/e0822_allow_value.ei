@@ -1,5 +1,5 @@
-// expect: E0822 3:8
+// expect: E0822 3:9
 
-@allow(unused_uses = true)
+@[allow(unused_uses = true)]
 fn f() {}
 fn main() {}

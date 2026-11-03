@@ -25,8 +25,8 @@ sep = NL | ";"
 
 ```text
 file        = { sep } { attrs item { sep } }
-attrs       = { attribute { NEWLINE } }
-attribute   = "@" IDENT ["." IDENT] [ "(" [ attr_arg { "," attr_arg } [","] ] ")" ]
+attrs       = { "@" "[" attribute { "," attribute } [","] "]" { NEWLINE } }
+attribute   = IDENT ["." IDENT] [ "(" [ attr_arg { "," attr_arg } [","] ] ")" ]
 attr_arg    = IDENT ["=" expr]
 item        = import | module_line
             | ["pub"] type_item
@@ -63,7 +63,7 @@ vfield      = [IDENT ":"] type
 fn_item      = fn_signature block
 fn_signature = "fn" IDENT [generics] "(" [ param { "," param } [","] ] ")"
                ["->" type] ["uses" IDENT { "," IDENT }]
-param        = ["inout"] "self" | ["inout"] IDENT ":" type
+param        = attrs ["inout"] "self" | attrs ["inout"] IDENT ":" type
 
 const_item  = "const" IDENT ":" type "=" ["comptime"] expr
 trait_item  = "trait" IDENT "{" { sep } { fn_signature [block] { sep } } "}"

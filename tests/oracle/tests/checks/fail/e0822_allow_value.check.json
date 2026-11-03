@@ -1,1 +1,1 @@
-{"error":"E0822","span":{"file":"tests/checks/fail/e0822_allow_value.ei","line":3,"col":8},"message":"`@allow` takes lint names, not `key = value`"}
+{"error":"E0822","span":{"file":"tests/checks/fail/e0822_allow_value.ei","line":3,"col":9},"message":"`allow` takes lint names, not `key = value`"}

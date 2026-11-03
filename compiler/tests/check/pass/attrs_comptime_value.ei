@@ -3,8 +3,8 @@
 attr a { n: i64 = 0 }
 const LEVEL: i64 = comptime level()
 const K: i64 = comptime 2 + 2
-type T = { @a(n = K) x: i64 }
-@a(n = K)
+type T = { @[a(n = K)] x: i64 }
+@[a(n = K)]
 fn f() {}
 fn level() -> i64 {
     comptime for g in fields(T) { return attr[a](g).n }

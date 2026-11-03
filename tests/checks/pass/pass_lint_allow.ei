@@ -1,14 +1,14 @@
 // `@allow` names lints or groups on functions, impls and traits
-@allow(unused_uses)
+@[allow(unused_uses)]
 fn f() uses io { let x = 1 }
 
 type T = { v: i32 }
-@allow(caps, perf)
+@[allow(caps, perf)]
 impl T {
     fn g(self) -> i32 uses clock { self.v }
 }
 
-@allow(all)
+@[allow(all)]
 fn h() {}
 
 fn main() uses io, clock {

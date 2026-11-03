@@ -1,9 +1,9 @@
 attr json { name: str = "", skip: bool = false }
 
 type User = {
-    @json(name = "user_id") id: u64,
+    @[json(name = "user_id")] id: u64,
     name: String,
-    @json(skip) cache: List[u8],
+    @[json(skip)] cache: List[u8],
 }
 
 fn main() uses io {

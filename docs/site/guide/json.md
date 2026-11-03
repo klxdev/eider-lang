@@ -2,10 +2,10 @@
 
 [eider-json](https://github.com/klxdev/eider-json) turns your records and enums into JSON
 and back with codecs it derives from their fields. There is nothing to write and no
-generator: `Encode` and `Decode` are [`@derive` traits](../reference/traits.md) whose
+generator: `Encode` and `Decode` are [`@[derive]` traits](../reference/traits.md) whose
 default methods go over a type's fields with [comptime
 reflection](../reference/reflection.md), so every record and enum has them, and the
-`@json(...)` [attribute](../reference/attributes.md) shapes the result. This guide builds a
+`@[json(...)]` [attribute](../reference/attributes.md) shapes the result. This guide builds a
 small API type, then shows what decoding rejects and why.
 
 The examples need the json package (see [Building services](services.md) for adding a
@@ -17,13 +17,13 @@ dependency), so they are shown, not run here. eider-json's own tests
 ```eider,ignore
 import json
 
-@json(rename_all = "camelCase")
+@[json(rename_all = "camelCase")]
 type User = {
-    @json(name = "id") user_id: u64,
+    @[json(name = "id")] user_id: u64,
     display_name: String,
     email: Option[String],
-    @json(default) score: i32,
-    @json(skip) cache: List[u8],
+    @[json(default)] score: i32,
+    @[json(skip)] cache: List[u8],
 }
 
 fn main() uses io {
@@ -62,16 +62,16 @@ An `Option` field may be missing (it decodes as `None`) and is written as `null`
 `None`. Every other field is required unless it says `default`.
 
 A misspelled key is a compile error with a fix, because the attribute is declared by the
-package: `@json(nmae = "id")` is E0821, "attribute `json` has no key `nmae`", fixed to
+package: `@[json(nmae = "id")]` is E0821, "attribute `json` has no key `nmae`", fixed to
 `name`.
 
 ## An enum
 
 ```eider,ignore
-@json(tag = "kind", rename_all = "snake_case")
+@[json(tag = "kind", rename_all = "snake_case")]
 type Shape =
     | Circle(radius: i64)
-    | @json(name = "box") Rect(w: i64, h: i64)
+    | @[json(name = "box")] Rect(w: i64, h: i64)
     | Empty
 ```
 

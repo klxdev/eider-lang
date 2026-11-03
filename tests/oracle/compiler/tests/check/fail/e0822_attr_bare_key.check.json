@@ -1,1 +1,1 @@
-{"error":"E0822","span":{"file":"compiler/tests/check/fail/e0822_attr_bare_key.ei","line":3,"col":7},"message":"key `name` needs a value (str)","help":"write `name = ...`"}
+{"error":"E0822","span":{"file":"compiler/tests/check/fail/e0822_attr_bare_key.ei","line":3,"col":8},"message":"key `name` needs a value (str)","help":"write `name = ...`"}

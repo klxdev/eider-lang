@@ -2,24 +2,26 @@ import eiderc.tests.check.lib.tag
 attr json { name: str = "", skip: bool = false, depth: i64 = -1 }
 const DEPTH: i64 = 4
 
-@json(name = "pt", depth = DEPTH)
-@tag(weight = -2, on)
+@[json(name = "pt", depth = DEPTH)]
+@[tag(weight = -2, on)]
 type Point = {
-    @json(name = "X") x: i32,
-    @json(skip)
-    @tag.note(text = "kept as is")
+    @[json(name = "X")] x: i32,
+    @[json(skip)]
+    @[tag.note(text = "kept as is")]
     y: i32,
 }
 
 type Shape =
-    | @json(name = "circle") Circle(r: i64)
-    | @tag Empty
+    | @[json(name = "circle")] Circle(r: i64)
+    | @[tag] Empty
 
-@json
+fn twice(@[json(skip)] n: i32) -> i32 { n * 2 }
+
+@[json]
 fn main() uses io {
     let p = Point(1, 2)
     // an attribute's declaration is a record type too
     let j = json("a", true, 0)
-    print(p.x + p.y)
+    print(twice(p.x) + p.y)
     print(j.name)
 }

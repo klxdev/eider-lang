@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"./compiler/tests/parse/attr_group_close.ei","line":1,"col":14},"message":"expected `,` or `]`"}

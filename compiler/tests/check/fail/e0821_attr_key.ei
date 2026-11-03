@@ -1,6 +1,6 @@
-// expect: E0821 4:11
+// expect: E0821 4:12
 attr json { name: str = "", skip: bool = false }
 type B = {
-    @json(nmae = "x") x: i32,
+    @[json(nmae = "x")] x: i32,
 }
 fn main() {}

@@ -1,4 +1,5 @@
-// migrate: `eiderc migrate-strings` (docs/compiler.md, "C8.28: string literals", decision U29).
+// migrate: `eiderc migrate-strings` (docs/compiler.md, "C8.28: string literals", decision U29)
+// and `eiderc migrate-attrs` ("C8.60: grouped attributes").
 //
 // Every plain string literal interpolates (`"n = {n}"`). Code written before that has
 // literals with braces that meant themselves; this rewrites each of them so that it means
@@ -303,6 +304,139 @@ pub fn run(file: List[u8], src: List[u8], json: bool, portable: bool) -> List[u8
         // the JSON object starts with "error":"E0000" (16 bytes with its brace)
         out.push(123)
         bytes.append(inout out, sys.lit("\"migrate\":\"string-literal\""))
+        bytes.append(inout out, bytes.slice(j, 16, j.len()))
+        out.push(10)
+    }
+    out
+}
+
+// ---- migrate-attrs: the bare `@name(...)` becomes `@[name(...)]`
+
+/// The offset just past the attribute at i (after its `@`): a dotted name and, when `(`
+/// follows, its balanced parentheses (strings skipped).
+fn attr_end(src: List[u8], end: usize, i: usize) -> usize {
+    let mut c = Cur(i, 1, 1)
+    while c.i < end && (ident_char(src[c.i]) || src[c.i] == 46) { step(src, inout c) }
+    if at(src, c.i) != 40 { return c.i }
+    let mut depth: u32 = 0
+    while c.i < end {
+        let b = src[c.i]
+        if b == 34 {
+            if multi_open(src, c.i) { skip_multi(src, end, inout c) } else { skip_plain(src, end, inout c) }
+            continue
+        }
+        if b == 40 { depth += 1 }
+        if b == 41 {
+            depth -= 1
+            if depth == 0 {
+                step(src, inout c)
+                return c.i
+            }
+        }
+        step(src, inout c)
+    }
+    c.i
+}
+
+/// The fixes for the bare attributes of src[start..end): the ones in a row on a line become
+/// one group.
+fn scan_attrs(src: List[u8], start: usize, end: usize, line: u32, inout fixes: List[diag.Fix]) {
+    let mut c = Cur(start, line, 1)
+    while c.i < end {
+        let b = src[c.i]
+        if b == 47 && at(src, c.i + 1) == 47 {
+            while c.i < end && src[c.i] != 10 { step(src, inout c) }
+        } else if b == 47 && at(src, c.i + 1) == 42 {
+            step(src, inout c)
+            step(src, inout c)
+            while c.i < end && !(src[c.i] == 42 && at(src, c.i + 1) == 47) { step(src, inout c) }
+            if c.i < end {
+                step(src, inout c)
+                step(src, inout c)
+            }
+        } else if ident_char(b) {
+            let w0 = c.copy()
+            while c.i < end && ident_char(src[c.i]) { step(src, inout c) }
+            if c.i == w0.i + 1 && b == 114 && (at(src, c.i) == 34 || at(src, c.i) == 35) { skip_raw(src, end, inout c) }
+        } else if b == 34 {
+            if multi_open(src, c.i) { skip_multi(src, end, inout c) } else { skip_plain(src, end, inout c) }
+        } else if b == 64 && ident_char(at(src, c.i + 1)) {
+            let s0 = c.copy()
+            let mut texts: List[List[u8]] = List.new()
+            while true {
+                let from = c.i + 1
+                let e = attr_end(src, end, from)
+                texts.push(bytes.slice(src, from, e))
+                while c.i < e { step(src, inout c) }
+                let mut j = c.i.copy()
+                while at(src, j) == 32 || at(src, j) == 9 { j += 1 }
+                if j < end && at(src, j) == 64 && ident_char(at(src, j + 1)) {
+                    while c.i < j { step(src, inout c) }
+                } else {
+                    break
+                }
+            }
+            let mut new: List[u8] = List.new()
+            bytes.append(inout new, sys.lit("@["))
+            for k in 0..texts.len() {
+                if k > 0 { bytes.append(inout new, sys.lit(", ")) }
+                bytes.append(inout new, texts[k])
+            }
+            new.push(93)
+            fixes.push(diag.Fix(s0.line, s0.col, (c.i - s0.i) as u64, new))
+        } else {
+            step(src, inout c)
+        }
+    }
+}
+
+/// `eiderc migrate-attrs`: the file with its bare attributes in groups (a `.md`: its ```eider
+/// blocks only), or with `json` one line per fix.
+pub fn run_attrs(file: List[u8], src: List[u8], json: bool) -> List[u8] {
+    let md = bytes.ends_with(file, sys.lit(".md"))
+    let mut fs: List[diag.Fix] = List.new()
+    if !md {
+        scan_attrs(src, 0, src.len(), 1, inout fs)
+    } else {
+        let mut i: usize = 0
+        let mut line: u32 = 1
+        let mut in_block = false
+        let mut bstart: usize = 0
+        let mut bline: u32 = 0
+        while i < src.len() {
+            let mut j = i.copy()
+            while j < src.len() && src[j] != 10 { j += 1 }
+            let mut k = i.copy()
+            while k < j && src[k] == 32 { k += 1 }
+            let fence = starts(src, k, "```")
+            if in_block && fence {
+                scan_attrs(src, bstart, i, bline, inout fs)
+                in_block = false
+            } else if !in_block && fence && starts(src, k + 3, "eider") {
+                in_block = true
+                bstart = j + 1
+                bline = line + 1
+            }
+            i = j + 1
+            line += 1
+        }
+    }
+    if !json {
+        let mut out = src.copy()
+        let mut k = fs.len()
+        while k > 0 {
+            k -= 1
+            out = diag.apply_fix(out, fs[k])
+        }
+        return out
+    }
+    let mut out: List[u8] = List.new()
+    for f in fs {
+        let mut d = diag.new("E0000", f.line, f.col, sys.lit("an attribute is written `@[name(...)]`: rewritten"))
+        d.fix = Some(f)
+        let j = diag.json(d, file)
+        out.push(123)
+        bytes.append(inout out, sys.lit("\"migrate\":\"attribute\""))
         bytes.append(inout out, bytes.slice(j, 16, j.len()))
         out.push(10)
     }

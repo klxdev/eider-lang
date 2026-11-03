@@ -93,8 +93,8 @@ impl Text for String {
 
 type Job = {
     id: i64,
-    @show(name = "title") name: String,
-    @show(skip) lock: Mutex[i64],
+    @[show(name = "title")] name: String,
+    @[show(skip)] lock: Mutex[i64],
 }
 
 fn line[T](x: T) -> String {
@@ -186,7 +186,7 @@ leave a `comptime for`.
 A reflective body is checked once per type it is used for, with the `comptime for` loops
 unrolled over that type's fields or variants. `eiderc expand file.ei` prints those
 specializations as the typed IR the backends compile (the same text `eiderc ir` prints for
-them), so what a `@derive`d method does for `Point` can be read, not guessed; `eiderc expand
+them), so what a `@[derive]`d method does for `Point` can be read, not guessed; `eiderc expand
 file.ei Point.enc` prints the functions with that text in their name. The language server
 answers the same question through the custom request `eider/expand` (the specializations for
 the symbol at a position), and a call of a derived method already goes to the trait's

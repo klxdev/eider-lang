@@ -1993,19 +1993,19 @@ a/b
 
 ## E0820
 
-**An unknown attribute**: `@name` where no attribute `name` is declared in the module, by
-the module an import alias `name` names, or (for `@alias.name`) by that module. Reported at
-the `@`. When a declared attribute is close, the fix renames it. See
+**An unknown attribute**: `@[name]` where no attribute `name` is declared in the module, by
+the module an import alias `name` names, or (for `alias.name` in a group) by that module. Reported at
+the attribute's name. When a declared attribute is close, the fix renames it. See
 [Attributes](attributes.md).
 
 ```eider,compile_fail=E0820
 attr json { name: str = "" }
 
-@jsno(name = "id")
+@[jsno(name = "id")]
 fn main() {}
 ```
 
-Fix: use a declared attribute (`@json`), or import the package that declares it.
+Fix: use a declared attribute (`@[json]`), or import the package that declares it.
 
 ## E0821
 
@@ -2015,7 +2015,7 @@ have. Reported at the key, with a fix when a key is close (else the help lists t
 ```eider,compile_fail=E0821
 attr json { name: str = "" }
 
-@json(nam = "id")
+@[json(nam = "id")]
 fn main() {}
 ```
 
@@ -2025,18 +2025,18 @@ Fix: use one of the declared keys.
 
 **A bad attribute declaration or argument**: a key whose type isn't an integer type, `bool`
 or `str`; a value that isn't a literal or a constant; a key given twice, or an attribute
-given twice on one item; a bare key (`@json(skip)`) that isn't a `bool`; a key without a
+given twice on one item; a bare key (`@[json(skip)]`) that isn't a `bool`; a key without a
 default that the use leaves out. Reported at the declaration's type, the value, the key or
 the `@`.
 
 ```eider,compile_fail=E0822
 attr route { path: str }
 
-@route
+@[route]
 fn main() {}
 ```
 
-Fix: give the key (`@route(path = "/")`), or a default in the declaration
+Fix: give the key (`@[route(path = "/")]`), or a default in the declaration
 (`attr route { path: str = "/" }`).
 
 ## E0830

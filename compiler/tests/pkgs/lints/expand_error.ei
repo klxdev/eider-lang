@@ -1,7 +1,7 @@
 // pkgtest: check
 // an error inside a specialization names the iteration (type and field) and the
 // specialization (docs/compiler.md, "C8.57")
-@derive
+@[derive]
 trait Enc {
     fn enc(self, inout out: String) {
         comptime for f in fields(Self) {

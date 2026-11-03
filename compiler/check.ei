@@ -2593,7 +2593,7 @@ fn implements(c: C, tk: u64, ty: u32) -> bool {
 
 // ---- Derived traits (docs/compiler.md, "C8.42")
 
-/// Whether trait ti (index into trs) is declared `@derive`.
+/// Whether trait ti (index into trs) is declared `@[derive]`.
 fn trait_derives(c: C, ti: u32) -> bool {
     let tr = c.trs[ti as usize]
     let a = c.p.mods[tr.m as usize].ast
@@ -2604,7 +2604,7 @@ fn trait_derives(c: C, ti: u32) -> bool {
     false
 }
 
-/// Whether record or enum ty has `@derive` trait ti by derivation: no impl of the trait
+/// Whether record or enum ty has `@[derive]` trait ti by derivation: no impl of the trait
 /// names its type.
 fn derived_by(c: C, ti: u32, ty: u32) -> bool {
     let k = types.kind(c.t, ty)
@@ -2627,7 +2627,7 @@ fn derived_trait(c: C, tk: u64, ty: u32) -> bool {
     derived_by(c, ti, ty)
 }
 
-/// The default method `name` that record or enum ty gets from a `@derive` trait it has by
+/// The default method `name` that record or enum ty gets from a `@[derive]` trait it has by
 /// derivation: a FnDef for the trait's method (made once) whose Self the caller sets; NONE
 /// when there is none.
 fn derived_method(inout c: C, ty: u32, name: u32, want: u64) -> u32 {
@@ -9442,7 +9442,7 @@ fn thread_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
 // whose keys are integers, bool or str, each with a default or required. `@name(key =
 // value, flag)` on an item, a record field or a variant uses one: `name` is an attribute of
 // the module, or the attribute named like an import alias in the module the alias names
-// (`import json` then `@json(...)`), or `@alias.name(...)`. Each value is a literal or a
+// (`import json` then `@[json(...)]`), or `@[alias.name(...)]`. Each value is a literal or a
 // constant of the key's type; a bare key sets a bool key to true. The checked values are
 // kept (`Reflect.found`), in the attribute's field order with the defaults filled in, for
 // comptime reflection (`attr[A](x)`, "Reflection" below); nothing else reads them.
@@ -9635,23 +9635,23 @@ fn lint_names() -> List[List[u8]] {
 fn check_attr_use(inout c: C, m: u32, owner: u32, an: ast.Node, inout seen: List[u32]) -> Result[bool, diag.Diag] {
     let di = attr_named(c, m, an)
     let name = nm(c, an.a)
-    // `@derive` on a trait is built in (docs/compiler.md, "C8.42")
+    // `@[derive]` on a trait is built in (docs/compiler.md, "C8.42")
     if di == NONE && an.b == 0 && bytes.eq(name, s("derive")) && ndm(c, m, owner).kind == ast.ITrait {
         if an.d > 0 {
-            let mut e = err("E0821", an.line, an.col, s("`@derive` takes no keys"))
-            e.help = s("write `@derive` alone before a trait")
+            let mut e = err("E0821", an.line, an.col, s("`@[derive]` takes no keys"))
+            e.help = s("write `@[derive]` alone before a trait")
             return Err(e)
         }
         return Ok(true)
     }
-    // `@allow(lint, ...)` is built in: it silences those lints in the item (docs/compiler.md, "C8.56")
+    // `@[allow(lint, ...)]` is built in: it silences those lints in the item (docs/compiler.md, "C8.56")
     if di == NONE && an.b == 0 && bytes.eq(name, s("allow")) {
         for j in 0..an.d {
             let x = ndm(c, m, atm(c, m, an.c, j))
             let kn = nm(c, x.a)
-            if x.b != 0 { return Err(err("E0822", x.line, x.col, s("`@allow` takes lint names, not `key = value`"))) }
+            if x.b != 0 { return Err(err("E0822", x.line, x.col, s("`allow` takes lint names, not `key = value`"))) }
             if !lint.known(kn) {
-                let mut e = err("E0821", x.line, x.col, q("`@allow` names no lint or group `", kn, "`"))
+                let mut e = err("E0821", x.line, x.col, q("`allow` names no lint or group `", kn, "`"))
                 e.help = q("lints: ", bytes.join(lint_names(), s(", ")), "")
                 return Err(e)
             }
@@ -9663,8 +9663,8 @@ fn check_attr_use(inout c: C, m: u32, owner: u32, an: ast.Node, inout seen: List
         let mut best: List[u8] = List.new()
         if an.b == 0 { best = closest(name, attr_names(c, m)) }
         if best.len() > 0 {
-            d.help = q("did you mean `@", best, "`?")
-            d.fix = Some(diag.Fix(an.line, an.col + 1, name.len() as u64, best))
+            d.help = q("did you mean `", best, "`?")
+            d.fix = Some(diag.Fix(an.line, an.col, name.len() as u64, best))
         } else {
             d.help = s(r"an attribute is declared with `attr name { ... }` in the package that owns it; import that package to use its attributes")
         }

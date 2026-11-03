@@ -1,7 +1,7 @@
 // pkgtest: expand
 // `eiderc expand`: the specialized IR of the bodies that used comptime reflection, here
 // the `@derive`d `enc` for two types (docs/compiler.md, "C8.57")
-@derive
+@[derive]
 trait Enc {
     fn enc(self, inout out: String) {
         comptime for f in fields(Self) {

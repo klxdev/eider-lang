@@ -118,7 +118,7 @@ fn usage_text() -> List[u8] {
         "                                             modules; no file: the package here; `--list` lists them; levels also come from",
         "                                             [lints] in eider.toml; exit 1 if a denied lint is hit",
         "  eiderc expand <file.ei> [<name>]           the specialized IR of the bodies that use comptime reflection (for example",
-        "                                             `@derive`d methods); <name>: every function whose name contains it",
+        "                                             `@[derive]`d methods); <name>: every function whose name contains it",
         "  eiderc caps <file.ei>                      each package's capability use, one JSON line per capability",
         "  eiderc migrate-var <file.ei>               print the file with its `var`s rewritten as `let mut` (deprecated `var`)",
         "  eiderc migrate-imports <file.ei> [--json]  print the file with its quoted imports in the dotted form",
@@ -127,6 +127,8 @@ fn usage_text() -> List[u8] {
         "                                             each literal with braces meaning what it meant before",
         "                                             literals interpolated: a raw string, or braces doubled",
         "                                             (--portable: written as escapes)",
+        "  eiderc migrate-attrs <file> [--json]       print the file (.ei, or a .md's eider blocks) with each bare `@name(...)`",
+        "                                             attribute written `@[name(...)]` (the only form)",
         "  eiderc audit-refs <file.ei> [--json]       every write that changes what a `let` reference sees (it was a copy",
         "                                             before C8.6), with the `.copy()` that keeps the old meaning",
         "  eiderc ide <file.ei> [--overlay <path> <text>]  print the IDE analysis (ide.ei): symbols, refs, types;",
@@ -189,7 +191,7 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] {
 }
 
 fn known_cmd(c: List[u8]) -> bool {
-    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "migrate-imports") || is(c, "migrate-strings") || is(c, "audit-refs") || is(c, "doc") || is(c, "fmt") || is(c, "emit-llvm") || is(c, "cache") || is(c, "lint") || is(c, "expand")
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "migrate-imports") || is(c, "migrate-strings") || is(c, "migrate-attrs") || is(c, "audit-refs") || is(c, "doc") || is(c, "fmt") || is(c, "emit-llvm") || is(c, "cache") || is(c, "lint") || is(c, "expand")
 }
 
 /// The entry module of the package in the current directory (`eiderc lint` with no file).
@@ -671,7 +673,7 @@ fn test_flags(a: Args) -> List[List[u8]] {
 }
 
 /// `eiderc expand <file> [<name>]` (docs/compiler.md, "C8.57"): the specialized IR of the
-/// instances whose body used comptime reflection (what a `@derive`d method or a generic
+/// instances whose body used comptime reflection (what a `@[derive]`d method or a generic
 /// reflective function became for each type), or of every function whose name contains
 /// `<name>`.
 fn run_expand(c: check.C, a: Args) uses io {
@@ -815,6 +817,11 @@ fn main() uses io, fs, net, clock {
     if is(a.cmd, "migrate-strings") {
         // docs/compiler.md, "C8.28: string literals"
         io.out(migrate.run(a.file, src, a.json, a.portable))
+        return
+    }
+    if is(a.cmd, "migrate-attrs") {
+        // docs/compiler.md, "C8.60: grouped attributes"
+        io.out(migrate.run_attrs(a.file, src, a.json))
         return
     }
     if is(a.cmd, "migrate-imports") {

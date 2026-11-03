@@ -4,12 +4,12 @@
 fn quiet() uses io { let x = 1 }
 fn some() uses io, clock { print(1) }
 fn two() uses fs, io, clock, net { print(2) }
-@allow(unused_uses)
+@[allow(unused_uses)]
 fn silenced() uses io { let x = 1 }
-@allow(all)
+@[allow(all)]
 fn silenced_all() uses io { let x = 1 }
 type Box1 = { v: i32 }
-@allow(unused_uses)
+@[allow(unused_uses)]
 impl Box1 {
     fn get(self) -> i32 uses clock { self.v }
 }

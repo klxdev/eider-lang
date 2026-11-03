@@ -3,7 +3,7 @@
 // type's own fields and variants; the type's package can still implement it.
 attr enc { skip: bool = false }
 
-@derive
+@[derive]
 trait Enc {
     fn enc(self, inout out: String) {
         comptime if is_enum_type[Self] {
@@ -67,7 +67,7 @@ impl[T: Enc] Enc for List[T] {
 
 type Point = { x: i64, y: i64 }
 type Cache = { n: u8 }
-type Line = { from: Point, to: Point, tags: List[String], @enc(skip) cache: Cache }
+type Line = { from: Point, to: Point, tags: List[String], @[enc(skip)] cache: Cache }
 type Shape = | Circle(r: i64) | Rect(w: i64, h: i64) | Empty
 type Wrap[T] = { inner: T, ok: bool }
 

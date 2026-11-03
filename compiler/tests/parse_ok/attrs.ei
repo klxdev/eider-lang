@@ -2,21 +2,24 @@ import x.m
 
 pub attr json { name: str = "", skip: bool = false, level: i32 = -1 }
 
-@json(name = "pt", level = 2)
-@other
+@[json(name = "pt", level = 2), other]
 type Point = {
-    @json(name = "X") x: i32,
-    @json(skip)
-    @m.note(text = "y")
+    @[json(name = "X")] x: i32,
+    @[json(skip), m.note(text = "y")]
     y: i32,
+    @[
+        json(skip),
+        other,
+    ]
+    z: i32,
 }
 
 type Shape =
-    | @json(name = "circle") Circle(r: i64)
+    | @[json(name = "circle")] Circle(r: i64)
     | Empty
 
-@json(
+@[json(
     name = "f",
     skip,
-)
-pub fn f() {}
+)]
+pub fn f(@[other] a: i32, @[json(skip)] inout b: i32, c: i32) {}

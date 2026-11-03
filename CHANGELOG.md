@@ -5,6 +5,16 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## 0.6.0 (unreleased)
+
+**Breaking, read before upgrading** (before 1.0 a MINOR may break):
+
+- **Attributes are written `@[a, b(key = value)]`, and only so** (#155): the bare `@name(...)` is a
+  syntax error. A group goes inline or on its own lines above an item, a record field, a variant or
+  (new) a fn parameter. `eiderc migrate-attrs <file>` and `scripts/migrate-attrs.sh <dir>...` rewrite
+  code and Markdown; eider-analyzer and tree-sitter-eider follow (`attribute_list` node). An
+  attribute's diagnostics now point at its name, not at the `@`.
+
 ## 0.5.0
 
 The runtime and the standard library grow up for services: a trap can be contained, Maps hash

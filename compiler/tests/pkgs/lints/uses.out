@@ -4,49 +4,49 @@ warning[unused_uses]: `quiet` declares capability `io` in `uses` but its body ne
   |
 4 | fn quiet() uses io { let x = 1 }
   |                 ^
-  help: remove it from `uses` (least privilege), or silence this with `@allow(unused_uses)` on the function
+  help: remove it from `uses` (least privilege), or silence this with `@[allow(unused_uses)]` on the function
   fix: at 4:11 delete 8 insert ""
 warning[unused_uses]: `some` declares capability `clock` in `uses` but its body never needs it
   --> compiler/tests/pkgs/lints/uses.ei:5:20
   |
 5 | fn some() uses io, clock { print(1) }
   |                    ^
-  help: remove it from `uses` (least privilege), or silence this with `@allow(unused_uses)` on the function
+  help: remove it from `uses` (least privilege), or silence this with `@[allow(unused_uses)]` on the function
   fix: at 5:16 delete 9 insert "io"
 warning[unused_uses]: `two` declares capability `fs` in `uses` but its body never needs it
   --> compiler/tests/pkgs/lints/uses.ei:6:15
   |
 6 | fn two() uses fs, io, clock, net { print(2) }
   |               ^
-  help: remove it from `uses` (least privilege), or silence this with `@allow(unused_uses)` on the function
+  help: remove it from `uses` (least privilege), or silence this with `@[allow(unused_uses)]` on the function
   fix: at 6:15 delete 18 insert "io"
 warning[unused_uses]: `two` declares capability `clock` in `uses` but its body never needs it
   --> compiler/tests/pkgs/lints/uses.ei:6:23
   |
 6 | fn two() uses fs, io, clock, net { print(2) }
   |                       ^
-  help: remove it from `uses` (least privilege), or silence this with `@allow(unused_uses)` on the function
+  help: remove it from `uses` (least privilege), or silence this with `@[allow(unused_uses)]` on the function
   fix: at 6:15 delete 18 insert "io"
 warning[unused_uses]: `two` declares capability `net` in `uses` but its body never needs it
   --> compiler/tests/pkgs/lints/uses.ei:6:30
   |
 6 | fn two() uses fs, io, clock, net { print(2) }
   |                              ^
-  help: remove it from `uses` (least privilege), or silence this with `@allow(unused_uses)` on the function
+  help: remove it from `uses` (least privilege), or silence this with `@[allow(unused_uses)]` on the function
   fix: at 6:15 delete 18 insert "io"
 warning[unused_uses]: `Box1.put` declares capability `clock` in `uses` but its body never needs it
   --> compiler/tests/pkgs/lints/uses.ei:17:30
    |
 17 |     fn put(self) -> i32 uses clock { self.v }
    |                              ^
-  help: remove it from `uses` (least privilege), or silence this with `@allow(unused_uses)` on the function
+  help: remove it from `uses` (least privilege), or silence this with `@[allow(unused_uses)]` on the function
   fix: at 17:24 delete 11 insert ""
 warning[unused_uses]: `generic` declares capability `io` in `uses` but its body never needs it
   --> compiler/tests/pkgs/lints/uses.ei:19:31
    |
 19 | fn generic[T](x: T) -> T uses io { x }
    |                               ^
-  help: remove it from `uses` (least privilege), or silence this with `@allow(unused_uses)` on the function
+  help: remove it from `uses` (least privilege), or silence this with `@[allow(unused_uses)]` on the function
   fix: at 19:25 delete 8 insert ""
 0 denied, 7 warnings
 --- exit 0

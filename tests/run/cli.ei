@@ -4,24 +4,24 @@ import std.io
 import std.bytes
 
 type Serve = {
-    @cli(help = "address to listen on", default = ":8080") addr: String,
-    @cli(short = "w", help = "worker tasks", default = "4") workers: i64,
-    @cli(short = "v", help = "log every request") verbose: bool,
-    @cli(name = "tag", help = "labels, repeatable") tags: List[String],
+    @[cli(help = "address to listen on", default = ":8080")] addr: String,
+    @[cli(short = "w", help = "worker tasks", default = "4")] workers: i64,
+    @[cli(short = "v", help = "log every request")] verbose: bool,
+    @[cli(name = "tag", help = "labels, repeatable")] tags: List[String],
     limit: Option[u32],
     max_conns: u64,
 }
 
 type ServeFlags = {
     addr: String,
-    @cli(short = "w", default = "2") workers: i64,
+    @[cli(short = "w", default = "2")] workers: i64,
 }
 
 type MigrateFlags = { steps: Option[i64], dry_run: bool }
 
 type Cmd =
-    | @cli(help = "run the server") Serve(opts: ServeFlags)
-    | @cli(help = "apply migrations") MigrateUp(opts: MigrateFlags)
+    | @[cli(help = "run the server")] Serve(opts: ServeFlags)
+    | @[cli(help = "apply migrations")] MigrateUp(opts: MigrateFlags)
 
 fn words(line: str) -> List[List[u8]] {
     if line.len() == 0 { return List.new() }

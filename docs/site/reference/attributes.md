@@ -1,14 +1,15 @@
 # Attributes
 
 An attribute is a piece of typed data attached to an item, a record field or a variant:
-`@json(name = "user_id")`. Attributes do nothing by themselves. The compiler checks them
+`@[json(name = "user_id")]`. Attributes do nothing by themselves. The compiler checks them
 against the attribute's declaration and keeps their values, and only code that reads them
 with [comptime reflection](reflection.md) gives them a meaning: a JSON codec renames a field,
 a schema generator documents it.
 
 ```text
 attr_decl = ["pub"] "attr" name "{" { key ":" type ["=" literal] "," } "}"
-attribute = "@" name ["." name] ["(" { key ["=" expr] "," } ")"]
+attribute_group = "@" "[" attribute { "," attribute } [","] "]"
+attribute       = name ["." name] ["(" { key ["=" expr] "," } ")"]
 ```
 
 ## Declaring an attribute
@@ -30,24 +31,26 @@ everywhere else.
 
 ## Using an attribute
 
-An attribute goes on the line before an item (`type`, `fn`, `const`, `trait`, `impl`, `attr`)
-or a record field, or after the `|` of a variant, as many as needed:
+`@[` opens a group, a comma-separated list of attributes that ends at `]`; it is the only
+way to write an attribute. A group goes inline before the thing it applies to, or alone on
+the line above it (the list may span lines, and groups may follow one another). It applies to
+an item (`type`, `fn`, `const`, `trait`, `impl`, `attr`), a record field, a variant (after
+its `|`) or a function parameter (before `inout`):
 
 ```eider
 attr json { name: str = "", skip: bool = false }
 attr doc { text: str }
 
-@doc(text = "A registered user.")
+@[doc(text = "A registered user.")]
 type User = {
-    @json(name = "user_id") id: u64,
+    @[json(name = "user_id")] id: u64,
     name: String,
-    @json(skip)
-    @doc(text = "computed, never sent")
+    @[json(skip), doc(text = "computed, never sent")]
     score: i64,
 }
 
 type Event =
-    | @json(name = "joined") Joined(id: u64)
+    | @[json(name = "joined")] Joined(id: u64)
     | Left
 
 fn main() uses io {
@@ -64,15 +67,16 @@ The arguments are `key = value`, or a bare `key` for `key = true` (bool keys onl
 value is a literal or a constant of the key's type, checked like a constant (E0401 for a
 value of the wrong type, E0822 for anything that isn't a constant); a `comptime` constant
 counts. Leaving out the
-parentheses (`@json`) gives every key its default.
+parentheses (`@[json]`) gives every key its default. `@` not followed by `[` is a syntax error;
+`eiderc migrate-attrs` rewrites code written with the bare `@name(...)` of earlier versions.
 
-Which attribute `@name` means:
+Which attribute `name` in a group means:
 
 - an attribute `name` declared in the same module;
 - else, when `name` is an import alias, the attribute `name` of the module it names: after
-  `import json` (a package whose entry module declares `attr json`), `@json(...)` is that
+  `import json` (a package whose entry module declares `attr json`), `json(...)` is that
   attribute, which is how a package names its attribute after itself;
-- `@alias.name(...)` is the attribute `name` of the module `alias` names (it must be `pub`,
+- `alias.name(...)` is the attribute `name` of the module `alias` names (it must be `pub`,
   else E0801).
 
 ## Errors
@@ -89,7 +93,7 @@ Which attribute `@name` means:
 attr json { name: str = "", skip: bool = false }
 
 type User = {
-    @json(nmae = "user_id") id: u64,
+    @[json(nmae = "user_id")] id: u64,
 }
 
 fn main() {}
@@ -101,14 +105,14 @@ own name.
 
 ## The built-in attributes
 
-Two attributes need no declaration. `@derive` marks a trait whose reflective default methods
-implement it for types (see [Traits](traits.md)). `@allow(lint, ...)` silences lints of
+Two attributes need no declaration. `@[derive]` marks a trait whose reflective default methods
+implement it for types (see [Traits](traits.md)). `@[allow(lint, ...)]` silences lints of
 `eiderc lint` (see the [compiler tooling](../tooling/compiler.md#lints)) in the function,
 `impl` or `trait` it precedes: it takes lint names, groups or `all` and nothing else (E0821
 for an unknown name, E0822 for `key = value`).
 
 ```eider
-@allow(unused_uses)
+@[allow(unused_uses)]
 fn reserved() uses io {
     // the capability is declared for the callers that will need it
 }

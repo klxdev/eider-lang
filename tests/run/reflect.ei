@@ -109,9 +109,9 @@ fn double_ints(inout p: Pair) {
     }
 }
 
-type Pair = { a: i64, @enc(name = "label") b: String, c: i64, @enc(skip) lock: Mutex[i64] }
+type Pair = { a: i64, @[enc(name = "label")] b: String, c: i64, @[enc(skip)] lock: Mutex[i64] }
 
-type Cfg = { n: i64, on: bool, name: String, xs: List[String], @enc(skip) seen: List[u8] }
+type Cfg = { n: i64, on: bool, name: String, xs: List[String], @[enc(skip)] seen: List[u8] }
 
 type Shape = | Circle(r: i64) | Rect(w: i64, h: i64) | Empty
 

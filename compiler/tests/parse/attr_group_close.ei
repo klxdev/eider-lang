@@ -1,0 +1,2 @@
+@[json(skip) other]
+type Point = { x: i32 }

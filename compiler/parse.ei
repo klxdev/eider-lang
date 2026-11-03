@@ -613,11 +613,10 @@ fn item(inout p: P, inout items: List[u32]) -> Result[bool, diag.Diag] {
 
 // ---- attributes (docs/compiler.md, "C8.40: attributes")
 
-/// `@name`, `@name(key = value, flag)`, `@alias.name(...)`.
+/// One attribute of a group: `name`, `name(key = value, flag)`, `alias.name(...)`.
 fn attribute(inout p: P) -> Result[u32, diag.Diag] {
-    let at = expect(inout p, lex.At)?
     let nm = ident(inout p)?
-    let mut n = mk(ast.Attr, at.line, at.col)
+    let mut n = mk(ast.Attr, nm.line, nm.col)
     n.a = nm.sym
     match qualified(inout p, nm.sym) {
         Some(q) => {
@@ -652,11 +651,22 @@ fn attribute(inout p: P) -> Result[u32, diag.Diag] {
     Ok(add(inout p, n))
 }
 
-/// The attributes before an item, field or variant (each followed by newlines or not).
+/// The attributes before an item, field, variant or parameter: each group is
+/// `@[a, b(key = value), ...]` (an attribute list may span lines), followed by newlines or not.
+/// `@name` without the brackets is not a form of its own.
 fn attributes(inout p: P) -> Result[List[u32], diag.Diag] {
     let mut out: List[u32] = List.new()
     while is(p, lex.At) {
-        out.push(attribute(inout p)?)
+        adv(inout p)
+        if !is(p, lex.LBracket) { return Err(err(p, "expected `[` after `@`: attributes are written `@[name(...), ...]`")) }
+        adv(inout p)
+        while true {
+            skip_nl(inout p)
+            if eat(inout p, lex.RBracket) { break }
+            out.push(attribute(inout p)?)
+            skip_nl(inout p)
+            if !eat(inout p, lex.Comma) && !is(p, lex.RBracket) { return Err(err(p, "expected `,` or `]`")) }
+        }
         skip_nl(inout p)
     }
     Ok(out)
@@ -1100,6 +1110,7 @@ fn fn_decl(inout p: P, allow_no_body: bool, flags: u32) -> Result[u32, diag.Diag
     while true {
         skip_nl(inout p)
         if eat(inout p, lex.RParen) { break }
+        let pattrs = attributes(inout p)?
         let inout_flag = eat_kw(inout p, intern.K_INOUT)
         let n = ident(inout p)?
         let mut pn = mk(ast.Param, n.line, n.col)
@@ -1113,7 +1124,9 @@ fn fn_decl(inout p: P, allow_no_body: bool, flags: u32) -> Result[u32, diag.Diag
             expect(inout p, lex.Colon)?
             pn.b = ty(inout p)?
         }
-        params.push(add(inout p, pn))
+        let pid = add(inout p, pn)
+        attach(inout p, pid, pattrs)
+        params.push(pid)
         skip_nl(inout p)
         if !eat(inout p, lex.Comma) && !is(p, lex.RParen) { return Err(err(p, "expected `,` or `)`")) }
     }

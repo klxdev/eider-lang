@@ -61,7 +61,8 @@
 #             compiler check, pass the package tests, and give a compiler that emits the same
 #             C (and whose own C, with every import dotted, is compiler/'s);
 #             `eiderc migrate-var` of compiler/tests/migrate/*.ei equals the hand-checked .out;
-#             `eiderc migrate-strings` of compiler/tests/migrate_strings/*.src likewise.
+#             `eiderc migrate-strings` of compiler/tests/migrate_strings/*.src likewise,
+#             and `eiderc migrate-attrs` of compiler/tests/migrate_attrs/*.src.
 #   meaning:  tests/std, packages/*/tests and examples/*/tests give their .out when built by this
 #             compiler (references by default) as well as by the seed (verify.sh); an
 #             X.next.out is this compiler's expected output where it deliberately differs
@@ -621,6 +622,16 @@ for f in compiler/tests/migrate_strings/*.src; do
   if [ -n "$BLESS" ] && [ ! -f "$g.out" ]; then cp $tmp/ms "$g.out"; cp $tmp/msp "$g.portable"; cp $tmp/msj "$g.json"; fi
   cp $tmp/ms $tmp/migrated.ei
   if cmp -s $tmp/ms "$g.out" && cmp -s $tmp/msp "$g.portable" && cmp -s $tmp/msj "$g.json" && $new check $tmp/migrated.ei >/dev/null 2>&1; then echo "ok   migrate-strings $f"; else echo "FAIL migrate-strings $f"; diff "$g.out" $tmp/ms | head -10; fail=1; fi
+done
+# migrate-attrs: `eiderc migrate-attrs` of compiler/tests/migrate_attrs/*.src gives the hand-checked
+# .out (and the result parses), --json the .json
+for f in compiler/tests/migrate_attrs/*.src; do
+  g=${f%.src}
+  $new migrate-attrs "$f" >$tmp/ma 2>&1
+  $new migrate-attrs "$f" --json >$tmp/maj 2>&1
+  if [ -n "$BLESS" ] && [ ! -f "$g.out" ]; then cp $tmp/ma "$g.out"; cp $tmp/maj "$g.json"; fi
+  cp $tmp/ma $tmp/migrated.ei
+  if cmp -s $tmp/ma "$g.out" && cmp -s $tmp/maj "$g.json" && $new check $tmp/migrated.ei >/dev/null 2>&1; then echo "ok   migrate-attrs $f"; else echo "FAIL migrate-attrs $f"; diff "$g.out" $tmp/ma | head -10; fail=1; fi
 done
 # migrate-var: `eiderc migrate-var` of compiler/tests/migrate/*.ei gives the hand-checked .out,
 # which checks

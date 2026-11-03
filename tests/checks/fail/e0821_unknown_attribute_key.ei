@@ -1,4 +1,4 @@
-// expect: E0821 3:7
+// expect: E0821 3:8
 attr json { name: str = "" }
-@json(nam = "id")
+@[json(nam = "id")]
 fn main() {}

@@ -1,4 +1,4 @@
-// expect: E0820 3:1
+// expect: E0820 3:3
 import eiderc.tests.check.lib.tag
-@tag.nope
+@[tag.nope]
 fn main() {}

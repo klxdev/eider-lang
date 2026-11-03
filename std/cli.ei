@@ -7,9 +7,9 @@
 //!     import std.cli
 //!
 //!     type Serve = {
-//!         @cli(help = "address to listen on", default = ":8080") addr: String,
-//!         @cli(short = "w", help = "worker tasks", default = "4") workers: i64,
-//!         @cli(short = "v", help = "log every request") verbose: bool,
+//!         @[cli(help = "address to listen on", default = ":8080")] addr: String,
+//!         @[cli(short = "w", help = "worker tasks", default = "4")] workers: i64,
+//!         @[cli(short = "v", help = "log every request")] verbose: bool,
 //!         tags: List[String],
 //!     }
 //!
@@ -27,7 +27,7 @@
 //! the rest against that record.
 //! A field type is any `cli.Value`: the integer types, `f64`, `bool`, `String`, and `Option`
 //! and `List` of those; implement `Value` for your own (an enum, a duration) to add more.
-//! The attribute is `@cli(name, short, help, default)`; `name` renames the flag (the field
+//! The attribute is `@[cli(name, short, help, default)]`; `name` renames the flag (the field
 //! name with `_` as `-` is the default), `default` is the flag's text when it is left out.
 //!
 //! Every problem is collected, not just the first: an unknown flag, a missing value, a value
@@ -38,7 +38,7 @@ import std.env
 import std.error
 import std.strings
 
-/// `@cli(...)` on a field (or a variant, for its `help`).
+/// `@[cli(...)]` on a field (or a variant, for its `help`).
 pub attr cli { name: str = "", short: str = "", help: str = "", default: str = "" }
 
 /// A type a flag can have.
@@ -458,7 +458,7 @@ pub fn arguments() -> List[List[u8]] uses io {
 
 /// Parse `args` as a subcommand and its flags: the first word is a variant of the enum `C` in
 /// kebab case, whose one payload field is the record of its flags (`Serve(opts: ServeOpts)`);
-/// the rest are parsed against that record. The `@cli(help = "...")` of a variant is its line
+/// the rest are parsed against that record. The `@[cli(help = "...")]` of a variant is its line
 /// in the command list.
 pub fn command[C](program: str, about: str, args: List[List[u8]]) -> Result[Parsed[C], Error] {
     let mut names: List[String] = List.new()

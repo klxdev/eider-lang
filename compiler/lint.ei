@@ -7,7 +7,7 @@
 // allow (not reported), warn (reported) or deny (reported, and the exit code is 1). A
 // setting names a lint, a group, or `all`; a more specific setting beats a less specific
 // one, and between two of the same kind the later wins (eider.toml, then the command line).
-// `@allow(name, ...)` before a fn, an impl or a trait silences those lints in its body.
+// `@[allow(name, ...)]` before a fn, an impl or a trait silences those lints in its body.
 
 import core.sys
 import std.bytes
@@ -315,7 +315,7 @@ fn unused_uses(p: resolve.Program, col: Collected) -> List[Hit] {
             bytes.append(inout msg, intern.name(p.names, cn.a))
             bytes.append(inout msg, sys.lit("` in `uses` but its body never needs it"))
             let mut d = diag.new("unused_uses", cn.line, cn.col, msg)
-            d.help = sys.lit("remove it from `uses` (least privilege), or silence this with `@allow(unused_uses)` on the function")
+            d.help = sys.lit("remove it from `uses` (least privilege), or silence this with `@[allow(unused_uses)]` on the function")
             d.fix = fix
             out.push(Hit("unused_uses", r.m, r.node, d))
         }

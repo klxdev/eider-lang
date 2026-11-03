@@ -1,1 +1,1 @@
-{"error":"E0820","span":{"file":"tests/checks/fail/e0820_unknown_attribute.ei","line":4,"col":1},"message":"unknown attribute `jsno`","help":"did you mean `@json`?","fix":{"at":{"line":4,"col":2},"delete":4,"insert":"json"}}
+{"error":"E0820","span":{"file":"tests/checks/fail/e0820_unknown_attribute.ei","line":4,"col":3},"message":"unknown attribute `jsno`","help":"did you mean `json`?","fix":{"at":{"line":4,"col":3},"delete":4,"insert":"json"}}

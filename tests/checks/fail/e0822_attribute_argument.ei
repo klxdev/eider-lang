@@ -1,4 +1,4 @@
-// expect: E0822 3:1
+// expect: E0822 3:3
 attr route { path: str }
-@route
+@[route]
 fn main() {}

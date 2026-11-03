@@ -1,1 +1,1 @@
-{"error":"E0822","span":{"file":"compiler/tests/check/fail/e0822_attr_twice.ei","line":3,"col":7},"message":"attribute `json` is given twice here"}
+{"error":"E0822","span":{"file":"compiler/tests/check/fail/e0822_attr_twice.ei","line":3,"col":9},"message":"attribute `json` is given twice here"}

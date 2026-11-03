@@ -1,1 +1,1 @@
-{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_attr_value_type.ei","line":4,"col":18},"message":"expected str, found i32"}
+{"error":"E0401","span":{"file":"compiler/tests/check/fail/e0401_attr_value_type.ei","line":4,"col":19},"message":"expected str, found i32"}

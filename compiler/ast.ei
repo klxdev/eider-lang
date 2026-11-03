@@ -45,7 +45,7 @@
 //            (IType h=1: an attribute declaration `attr name { key: T = default }`, a record
 //                whose Field nodes have c=default+1; docs/compiler.md, "C8.40: attributes")
 // attributes Attr a=name sym b=qual+1 [c/d]=AttrArg e=1 with parentheses
-//            AttrArg a=key sym b=value+1 (0: a bare key, `@json(skip)`)
+//            AttrArg a=key sym b=value+1 (0: a bare key, `@[json(skip)]`)
 //            the attributes of an item, field or variant are `attrs`: node id -> start * 2^32
 //                + count of its Attr nodes in extra
 // reflection (docs/compiler.md, "C8.41: comptime reflection")

@@ -1,1 +1,1 @@
-{"error":"E0801","span":{"file":"compiler/tests/check/fail/e0801_attr_private.ei","line":3,"col":1},"message":"attribute `secret` is private to module `compiler/tests/check/fail/../lib/tag.ei`"}
+{"error":"E0801","span":{"file":"compiler/tests/check/fail/e0801_attr_private.ei","line":3,"col":3},"message":"attribute `secret` is private to module `compiler/tests/check/fail/../lib/tag.ei`"}

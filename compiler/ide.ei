@@ -24,7 +24,7 @@
 //       (warnings for level warn, errors for deny)
 //   pub type Expansion = { name: List[u8], file: List[u8], line: u32, col: u32, text: List[u8] }
 //       expansions: one per specialization of a body that uses comptime reflection (a
-//       `@derive`d method for a type): the instance's name, the position of the reflective
+//       `@[derive]`d method for a type): the instance's name, the position of the reflective
 //       declaration it came from (go to it for the trait's body; the analysis's refs already
 //       lead there from a call), and the specialized body, as `eiderc expand` prints it. In
 //       Analysis as `expansions`
@@ -105,7 +105,7 @@ pub type TypeAt = { span: Span, text: List[u8] }
 
 pub type Analysis = { diags: List[diag.Diag], symbols: List[Symbol], refs: List[Ref], types: List[TypeAt], files: List[List[u8]], lints: List[lint.Finding], expansions: List[Expansion] }
 
-/// A specialization of a body that uses comptime reflection (a `@derive`d method for a type, a
+/// A specialization of a body that uses comptime reflection (a `@[derive]`d method for a type, a
 /// reflective generic function for its type arguments): `name` as the typed IR names it, the
 /// position of the declaration it was specialized from (the trait's reflective body), and
 /// the specialized body as `eiderc expand` prints it.
