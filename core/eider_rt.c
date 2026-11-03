@@ -1354,13 +1354,13 @@ struct reactor;
 typedef struct ei_wait ei_wait;
 struct ei_wait {
   ei_task *task;
-  int32_t fd, interest;
+  int32_t fd, interest, fd2, interest2; /* fd2 < 0: no second descriptor */
   int64_t dl; /* ns on the monotonic clock */
   int64_t result;
   struct reactor *rx;
   int hidx; /* index in the timer heap, or -1 */
   bool done;
-  ei_wait *rd_next, *wr_next;
+  ei_wait *nx[2][2]; /* the links in the descriptors' lists: [first or second][read or write] */
 };
 typedef struct {
   ei_wait *rd, *wr;
@@ -1448,20 +1448,22 @@ static void reactor_poke(struct reactor *r) {
 static void monitor_poke(void) { reactor_poke(&RX[0]); }
 
 /* (r->mu held) Takes w out of its descriptor's lists. */
+static ei_wait **wnext(ei_wait *w, int32_t fd, int dir) { return &w->nx[w->fd == fd ? 0 : 1][dir]; }
+
 static void wait_unlink(ei_wait *w) {
   struct reactor *r = w->rx;
-  if (w->fd < 0 || (size_t)w->fd >= r->nfds) return;
-  fdent *e = &r->fds[w->fd];
-  for (ei_wait **pp = &e->rd; *pp; pp = &(*pp)->rd_next) {
-    if (*pp == w) {
-      *pp = w->rd_next;
-      break;
-    }
-  }
-  for (ei_wait **pp = &e->wr; *pp; pp = &(*pp)->wr_next) {
-    if (*pp == w) {
-      *pp = w->wr_next;
-      break;
+  int32_t fds[2] = {w->fd, w->fd2};
+  for (int k = 0; k < 2; k++) {
+    int32_t fd = fds[k];
+    if (fd < 0 || (size_t)fd >= r->nfds) continue;
+    fdent *e = &r->fds[fd];
+    for (int dir = 0; dir < 2; dir++) {
+      for (ei_wait **pp = dir ? &e->wr : &e->rd; *pp; pp = wnext(*pp, fd, dir)) {
+        if (*pp == w) {
+          *pp = *wnext(w, fd, dir);
+          break;
+        }
+      }
     }
   }
 }
@@ -1497,11 +1499,12 @@ static void reactor_event(struct reactor *r, int32_t fd, uint32_t events) {
   if (events & EPOLLERR) f |= 4;
   if (events & EPOLLHUP) f |= 8;
   bool bad = (events & (EPOLLERR | EPOLLHUP)) != 0;
+  /* a wait on two descriptors reports the second's flags in bits 4 to 7 */
   if ((f & 1) || bad) {
-    while (e->rd) wait_complete(e->rd, f);
+    while (e->rd) wait_complete(e->rd, e->rd->fd == fd ? f : f << 4);
   }
   if ((f & 2) || bad) {
-    while (e->wr) wait_complete(e->wr, f);
+    while (e->wr) wait_complete(e->wr, e->wr->fd == fd ? f : f << 4);
   }
   if ((e->rd || e->wr) && !fd_arm(r, fd)) {
     while (e->rd) wait_complete(e->rd, -EBADF);
@@ -1570,20 +1573,23 @@ static void *reactor_main(void *arg) {
 
 /* A task waits for fd (interest 1 readable, 2 writable; fd < 0: just for the time) until dl.
    Result as ec_fd_wait: the flags, 0 at the deadline, -errno. */
-static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int64_t dl) {
+static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int32_t fd2, int32_t interest2, int64_t dl) {
   struct reactor *r = &RX[(fd >= 0 ? (unsigned)fd : (unsigned)t->id) % (unsigned)nshards];
   ei_wait w;
   memset(&w, 0, sizeof w);
   w.task = t;
   w.fd = fd;
   w.interest = interest;
+  w.fd2 = fd2;
+  w.interest2 = interest2;
   w.dl = dl;
   w.hidx = -1;
   w.rx = r;
   pthread_mutex_lock(&r->mu);
   if (fd >= 0) {
-    if ((size_t)fd >= r->nfds) {
-      size_t nn = (size_t)fd + 64;
+    int32_t top = fd2 > fd ? fd2 : fd;
+    if ((size_t)top >= r->nfds) {
+      size_t nn = (size_t)top + 64;
       fdent *nf = realloc(r->fds, nn * sizeof *nf);
       if (!nf) {
         pthread_mutex_unlock(&r->mu);
@@ -1593,19 +1599,25 @@ static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int64_t dl) {
       r->fds = nf;
       r->nfds = nn;
     }
-    fdent *e = &r->fds[fd];
-    if (interest & 1) {
-      w.rd_next = e->rd;
-      e->rd = &w;
+    int32_t fds[2] = {fd, fd2};
+    int32_t ints[2] = {interest, interest2};
+    for (int k = 0; k < 2; k++) {
+      if (fds[k] < 0) continue;
+      fdent *e = &r->fds[fds[k]];
+      if (ints[k] & 1) {
+        *wnext(&w, fds[k], 0) = e->rd;
+        e->rd = &w;
+      }
+      if (ints[k] & 2) {
+        *wnext(&w, fds[k], 1) = e->wr;
+        e->wr = &w;
+      }
     }
-    if (interest & 2) {
-      w.wr_next = e->wr;
-      e->wr = &w;
-    }
-    if (!fd_arm(r, fd)) {
+    for (int k = 0; k < 2; k++) {
+      if (fds[k] < 0 || fd_arm(r, fds[k])) continue;
       int err = errno;
       /* a regular file (EPERM) is always ready; anything else is an error */
-      int64_t res = err == EPERM ? (int64_t)(interest & 3) : -(int64_t)err;
+      int64_t res = err == EPERM ? (int64_t)(ints[k] & 3) << (4 * k) : -(int64_t)err;
       wait_unlink(&w);
       pthread_mutex_unlock(&r->mu);
       return res;
@@ -1634,18 +1646,26 @@ static int64_t task_wait(ei_task *t, int32_t fd, int32_t interest, int64_t dl) {
 typedef struct {
   int64_t (*fd_wait)(int32_t fd, int32_t interest, int64_t timeout_ms);
   int64_t (*sleep_ns)(int64_t ns);
+  int64_t (*fd_wait2)(int32_t fd, int32_t interest, int32_t fd2, int32_t interest2, int64_t timeout_ms);
 } ec_block_ops;
 extern _Atomic(const ec_block_ops *) ec_block_hook __attribute__((weak));
+
+static int64_t deadline_of(int64_t timeout_ms) {
+  if (timeout_ms < 0) return INT64_MAX;
+  int64_t now = mono_ns();
+  return timeout_ms > (INT64_MAX - now) / 1000000 ? INT64_MAX : now + timeout_ms * 1000000;
+}
 
 static int64_t hook_fd_wait(int32_t fd, int32_t interest, int64_t timeout_ms) {
   ei_task *t = task_self();
   if (!t || timeout_ms == 0) return EC_NOT_A_TASK;
-  int64_t dl = INT64_MAX;
-  if (timeout_ms > 0) {
-    int64_t now = mono_ns();
-    dl = timeout_ms > (INT64_MAX - now) / 1000000 ? INT64_MAX : now + timeout_ms * 1000000;
-  }
-  return task_wait(t, fd, interest, dl);
+  return task_wait(t, fd, interest, -1, 0, deadline_of(timeout_ms));
+}
+
+static int64_t hook_fd_wait2(int32_t fd, int32_t interest, int32_t fd2, int32_t interest2, int64_t timeout_ms) {
+  ei_task *t = task_self();
+  if (!t || timeout_ms == 0 || fd < 0 || fd2 < 0 || fd == fd2) return EC_NOT_A_TASK;
+  return task_wait(t, fd, interest, fd2, interest2, deadline_of(timeout_ms));
 }
 
 static int64_t hook_sleep_ns(int64_t ns) {
@@ -1656,11 +1676,11 @@ static int64_t hook_sleep_ns(int64_t ns) {
     return 0;
   }
   int64_t now = mono_ns();
-  task_wait(t, -1, 0, ns > INT64_MAX - now ? INT64_MAX : now + ns);
+  task_wait(t, -1, 0, -1, 0, ns > INT64_MAX - now ? INT64_MAX : now + ns);
   return 0;
 }
 
-static const ec_block_ops block_ops = {hook_fd_wait, hook_sleep_ns};
+static const ec_block_ops block_ops = {hook_fd_wait, hook_sleep_ns, hook_fd_wait2};
 
 static int64_t env_int(const char *name, int64_t dflt) {
   const char *v = getenv(name);

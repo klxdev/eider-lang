@@ -1574,6 +1574,7 @@ EC_FN(int64_t, ec_waker_wake, (int32_t wfd)) {
 typedef struct {
   int64_t (*fd_wait)(int32_t fd, int32_t interest, int64_t timeout_ms);
   int64_t (*sleep_ns)(int64_t ns);
+  int64_t (*fd_wait2)(int32_t fd, int32_t interest, int32_t fd2, int32_t interest2, int64_t timeout_ms);
 } ec_block_ops;
 _Atomic(const ec_block_ops *) ec_block_hook;
 
@@ -1618,6 +1619,48 @@ EC_FN(int64_t, ec_fd_wait, (int32_t fd, int32_t interest, int64_t timeout_ms)) {
     if (p.revents & POLLERR) f |= 4;
     if (p.revents & POLLHUP) f |= 8;
     return f;
+  }
+}
+
+/* Two descriptors' readiness at once (poll(2) on both): the flags of `fd` in bits 0-3, those of
+   `fd2` in bits 4-7 (the same flags as ec_fd_wait), 0 when the time ran out. How a connection waits
+   for its socket and for the server's stop signal without a poller of its own. */
+static int64_t poll_flags(short revents) {
+  int64_t f = 0;
+  if (revents & POLLIN) f |= 1;
+  if (revents & POLLOUT) f |= 2;
+  if (revents & POLLERR) f |= 4;
+  if (revents & POLLHUP) f |= 8;
+  return f;
+}
+
+EC_FN(int64_t, ec_fd_wait2, (int32_t fd, int32_t interest, int32_t fd2, int32_t interest2, int64_t timeout_ms)) {
+  if ((interest & 3) == 0 || (interest & ~3) != 0 || (interest2 & 3) == 0 || (interest2 & ~3) != 0) return -EINVAL;
+  const ec_block_ops *blk = atomic_load(&ec_block_hook);
+  if (blk) {
+    int64_t r = blk->fd_wait2(fd, interest, fd2, interest2, timeout_ms);
+    if (r != EC_NOT_A_TASK) return r;
+  }
+  struct pollfd p[2];
+  p[0].fd = fd;
+  p[0].events = (short)(((interest & 1) ? POLLIN : 0) | ((interest & 2) ? POLLOUT : 0));
+  p[1].fd = fd2;
+  p[1].events = (short)(((interest2 & 1) ? POLLIN : 0) | ((interest2 & 2) ? POLLOUT : 0));
+  int64_t end = timeout_ms > 0 ? mono_ms() + timeout_ms : 0;
+  for (;;) {
+    int64_t left = timeout_ms < 0 ? -1 : timeout_ms == 0 ? 0 : end - mono_ms();
+    if (timeout_ms > 0 && left < 0) left = 0;
+    int t = left > INT_MAX ? INT_MAX : (int)left;
+    p[0].revents = p[1].revents = 0;
+    int n = poll(p, 2, t);
+    if (n < 0 && errno == EINTR) continue;
+    if (n < 0) return fail();
+    if (n == 0) {
+      if (left > INT_MAX) continue;
+      return 0;
+    }
+    if ((p[0].revents | p[1].revents) & POLLNVAL) return -EBADF;
+    return poll_flags(p[0].revents) | (poll_flags(p[1].revents) << 4);
   }
 }
 

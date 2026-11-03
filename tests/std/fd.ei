@@ -5,10 +5,11 @@ import core.sys
 import std.fs
 import std.fd
 import std.io
+import std.time
 
 fn show(b: List[u8]) uses io, ffi { io.outln(b) }
 
-fn run() -> Result[bool, String] uses io, fs, ffi {
+fn run() -> Result[bool, String] uses io, fs, ffi, clock {
     let dir = sys.lit("target/tmp/std_fd")
     fs.remove_all(dir)?
     fs.mkdir_all(dir)?
@@ -87,11 +88,25 @@ fn run() -> Result[bool, String] uses io, fs, ffi {
     fd.close(p.w)?
     print(fd.read(p.r, 10)?.len())
     fd.close(p.r)?
+    // two descriptors at once
+    let a2 = fd.pipe()?
+    let b2 = fd.pipe()?
+    let none = fd.wait_ready2(a2.r, fd.READY_READ, b2.r, fd.READY_READ, time.after_ms(20))?
+    print("nothing: {none.first} {none.second}")
+    fd.write_all(b2.w, sys.lit("x"))?
+    let second = fd.wait_ready2(a2.r, fd.READY_READ, b2.r, fd.READY_READ, time.after_ms(1000))?
+    print("second: {second.first} {second.second}")
+    let both = fd.wait_ready2(a2.w, fd.READY_WRITE, b2.r, fd.READY_READ, time.never())?
+    print("both: {both.first} {both.second}")
+    fd.close(a2.r)?
+    fd.close(a2.w)?
+    fd.close(b2.r)?
+    fd.close(b2.w)?
     fs.remove_all(dir)?
     Ok(true)
 }
 
-fn main() uses io, fs, ffi {
+fn main() uses io, fs, ffi, clock {
     match run() {
         Ok(_) => print("done")
         Err(e) => print(e)

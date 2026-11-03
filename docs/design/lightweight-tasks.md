@@ -1,6 +1,6 @@
 # Lightweight tasks (#14, decision C4, C830 to C838)
 
-Status: M1 implemented in 0.6.0, M2 and M3 follow (see "Milestones").
+Status: M1 and M2 implemented in 0.6.0, M3 and M4 open (see "Milestones").
 
 ## Goal
 
@@ -205,7 +205,7 @@ cost grows with the worker count (the spawner pays for waking sleepers).
 | M | What | State |
 |---|---|---|
 | M1 | Runtime: tasks with guarded stacks, context switch, workers with stealing and a starvation guard, park/unpark, `Chan.recv`, `join`, `fd_wait` and `sleep` park (epoll reactors, timer heaps), fork safety, sanitizer support; `spawn` makes tasks; tests (tests/core/task_test.c, tests/std/tasks.ei), benches, docs | done in 0.6.0 |
-| M2 | Waiting on two descriptors without a poller (`ec_fd_wait2`, N4), so a connection waits for its socket and the server's stop signal at once; eider-http serves a task per connection with the same `serve` API | eider-http local commits |
+| M2 | Waiting on two descriptors without a poller (`ec_fd_wait2`, N4), so a connection waits for its socket and the server's stop signal at once; eider-http serves a task per connection with the same `serve` API | done (eider-http: local commit) |
 | M3 | Cancellation that reaches descriptor waits for tokens (`wait_cancel`), `Parker` as a core object (no eventfd per wait), `Loop` on the reactor, a task listing and `task` records in the profile, a worker that polls when idle | open; needs the user's go-ahead on C830 first |
 | M4 | Optional: a stackless transform for leaf waiters if a million idle connections must fit in a few hundred MB | only if measurements ask |
 

@@ -80,6 +80,7 @@ int64_t ec_wait(int32_t pid, int32_t nohang);
 int64_t ec_kill(int32_t pid, int32_t sig);
 int64_t ec_getpid(void);
 int64_t ec_fd_wait(int32_t fd, int32_t interest, int64_t timeout_ms);
+int64_t ec_fd_wait2(int32_t fd, int32_t interest, int32_t fd2, int32_t interest2, int64_t timeout_ms);
 int64_t ec_atomic_new(int64_t v);
 int64_t ec_atomic_free(int64_t h);
 int64_t ec_atomic_load(int64_t h, int32_t order);
@@ -978,6 +979,28 @@ static void test_fd_wait(void) {
   EQI(ec_fd_wait(r, 4, 0), -EINVAL);
   ec_fd_close(r);
   EQI(ec_fd_wait(r, 1, 0), -EBADF);
+  /* two descriptors: the first's flags in bits 0-3, the second's in 4-7 */
+  EQI(ec_pipe(), 0);
+  int r1 = out_i32(0), w1 = out_i32(4);
+  EQI(ec_pipe(), 0);
+  int r2 = out_i32(0), w2 = out_i32(4);
+  EQI(ec_fd_wait2(r1, 1, r2, 1, 0), 0);
+  EQI(ec_fd_wait2(w1, 2, r2, 1, 0), 2); /* the first is writable */
+  EQI(ec_fd_wait2(r1, 1, w2, 2, 0), 2 << 4);
+  EQI(ec_fd_wait2(w1, 2, w2, 2, 0), 2 | (2 << 4));
+  CHECK(ec_fd_wait2(r1, 1, r2, 1, 30) == 0);
+  late_fd = w2;
+  pthread_t t2;
+  pthread_create(&t2, NULL, late_writer, NULL);
+  EQI(ec_fd_wait2(r1, 1, r2, 1, -1), 1 << 4); /* the second becomes readable */
+  pthread_join(t2, NULL);
+  EQI(ec_fd_wait2(r1, 0, r2, 1, 0), -EINVAL);
+  EQI(ec_fd_wait2(r1, 1, r2, 4, 0), -EINVAL);
+  ec_fd_close(r1);
+  ec_fd_close(w1);
+  ec_fd_close(r2);
+  ec_fd_close(w2);
+  EQI(ec_fd_wait2(r1, 1, r2, 1, 0), -EBADF);
 }
 
 // ---- atomic cells

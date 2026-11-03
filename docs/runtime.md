@@ -25,7 +25,7 @@ The std modules, bottom up:
 | `std/chan` | `Channel[T]` (bounded by default), `select` over channels, timers and tokens | `io, clock` to wait; `io` to wake |
 | `std/task` | `Token` (cancellation and deadlines), `Group[T]` (structured task groups), `Pool` (worker threads) | `threads` to start threads; `io, clock` to wait |
 | `std/event` | `Loop`: a poller, a waker and a timer heap | `io`, `clock` |
-| `std/fd` | `wait_ready`, `read_by`: one descriptor with a deadline | `io, clock` |
+| `std/fd` | `wait_ready`, `read_by`: one descriptor with a deadline; `wait_ready2`: two descriptors at once | `io, clock` |
 | `std/profile` | the profiler from inside the program: start, stop, reset, snapshots, labels ("Profiler") | `fs` to write a snapshot, `io, clock` to capture one |
 
 Each function declares exactly the capabilities it reaches (C8.5): atomics and Locks need

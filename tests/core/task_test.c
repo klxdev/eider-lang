@@ -15,6 +15,7 @@
 
 int64_t ec_sleep_ns(int64_t ns);
 int64_t ec_fd_wait(int32_t fd, int32_t interest, int64_t timeout_ms);
+int64_t ec_fd_wait2(int32_t fd, int32_t interest, int32_t fd2, int32_t interest2, int64_t timeout_ms);
 
 static int failures, checks;
 static void check(int ok, const char *what, int line) {
@@ -162,6 +163,32 @@ static void test_fd_wait(void) {
   close(fds[1]);
 }
 
+static void *pair_waiter(void *arg) {
+  pipe_ctx *p = arg; /* rfd: the first pipe's read end, wfd: the second's */
+  p->timed_out = ec_fd_wait2(p->rfd, 1, p->wfd, 1, 30);
+  p->got = ec_fd_wait2(p->rfd, 1, p->wfd, 1, 5000);
+  return NULL;
+}
+
+static void test_fd_wait2(void) {
+  int a[2], b[2];
+  CHECK(pipe(a) == 0 && pipe(b) == 0);
+  pipe_ctx p = {a[0], b[0], -1, -1};
+  ei_thread t;
+  ei_thread_start(&t, pair_waiter, &p);
+  struct timespec ts = {0, 100 * 1000 * 1000};
+  nanosleep(&ts, NULL);
+  CHECK(write(b[1], "y", 1) == 1);
+  ei_thread_join(&t);
+  ei_thread_destroy(&t);
+  EQI(p.timed_out, 0);
+  EQI(p.got, 1 << 4); /* the second descriptor is readable */
+  close(a[0]);
+  close(a[1]);
+  close(b[0]);
+  close(b[1]);
+}
+
 // ---- the starvation guard: more tasks stuck in blocking reads than workers
 
 static void *blocked_reader(void *arg) {
@@ -301,6 +328,7 @@ int main(int argc, char **argv) {
   RUN(test_tree);
   RUN(test_sleep_overlaps);
   RUN(test_fd_wait);
+  RUN(test_fd_wait2);
   RUN(test_trap_across_park);
   RUN(test_starvation_guard);
   RUN(test_overflow);

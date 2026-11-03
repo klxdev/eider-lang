@@ -27,5 +27,8 @@ cannot stat target/tmp/std_fd/missing: No such file or directory
 would block
 through the pipe
 0
+nothing: 0 0
+second: 0 1
+both: 2 1
 done
 exit 0

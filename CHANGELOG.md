@@ -50,7 +50,10 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
   inside `Mutex.update` (`cannot wait while holding a Mutex`), and the profiler counts workers,
   not spawns, as threads. `EIDER_TASKS=threads` restores a thread per `spawn`. Linux only (x86-64
   assembly switch, `ucontext` with glibc); elsewhere threads. The rest of #14 (eider-http on
-  tasks, cancellation of descriptor waits, a core `Parker`, a kqueue reactor) is open.
+  tasks is eider-http's, cancellation of descriptor waits, a core `Parker`, a kqueue reactor are open).
+- **`fd.wait_ready2`** (`ec_fd_wait2`): wait for either of two descriptors, each with its own
+  interest, with a deadline; a connection waits for its socket and a server's stop signal with no
+  poller of its own (N4). In a task it parks like `fd.wait_ready`.
 - **std/serial** (#100): the data model and the traits of format-neutral serialization: `Serialize`
   and `Deserialize` for types, `Serializer` and `Deserializer` for formats, implementations for the
   built-in types, errors that name the path, and `Value` with `to_value`/`from_value`. See

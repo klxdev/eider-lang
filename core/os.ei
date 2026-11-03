@@ -204,6 +204,10 @@ pub fn getpid() -> i64 uses io, ffi { unsafe { ec_getpid() } }
 extern "c" fn ec_fd_wait(fd: i32, interest: i32, timeout_ms: i64) -> i64
 pub fn fd_wait(fd: i32, interest: i32, timeout_ms: i64) -> i64 uses io, ffi { unsafe { ec_fd_wait(fd, interest, timeout_ms) } }
 
+// two descriptors' readiness at once: the first's flags in bits 0-3, the second's in bits 4-7
+extern "c" fn ec_fd_wait2(fd: i32, interest: i32, fd2: i32, interest2: i32, timeout_ms: i64) -> i64
+pub fn fd_wait2(fd: i32, interest: i32, fd2: i32, interest2: i32, timeout_ms: i64) -> i64 uses io, ffi { unsafe { ec_fd_wait2(fd, interest, fd2, interest2, timeout_ms) } }
+
 // atomic cells (core/ABI.md "Atomic cells"). No real capability: like a Mutex, a cell is
 // memory shared between threads, not the OS, so these take only `ffi` (which stays in core).
 extern "c" fn ec_atomic_new(v: i64) -> i64

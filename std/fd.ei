@@ -111,6 +111,24 @@ pub fn wait_ready(fd: i32, interest: i32, dl: time.Deadline) -> Result[bool, Str
     Ok(false)
 }
 
+/// What `wait_ready2` saw: the readiness flags of each descriptor (1 readable, 2 writable,
+/// 4 error, 8 hang-up; 0: nothing). Both zero: the deadline passed.
+pub type Ready2 = { first: i32, second: i32 }
+
+/// Waits until either of two descriptors is ready for its interest, or `dl` passes: the way a
+/// connection waits for its socket and for a server's stop signal at once, with no poller of
+/// its own. In a task it parks the task (decision C835); in a thread it is one `poll(2)`. The
+/// descriptors must differ. Cancel-safe: it only waits.
+pub fn wait_ready2(fd: i32, interest: i32, fd2: i32, interest2: i32, dl: time.Deadline) -> Result[Ready2, String] uses io, clock {
+    while true {
+        let n = os.fd_wait2(fd, interest, fd2, interest2, dl.timeout_ms())
+        if n < 0 { return Err(error("wait", n)) }
+        if n > 0 { return Ok(Ready2((n & 15) as i32, ((n >> 4) & 15) as i32)) }
+        if dl.expired() { return Ok(Ready2(0, 0)) }
+    }
+    Ok(Ready2(0, 0))
+}
+
 /// `read` with a deadline: Ok(None) when nothing arrived before `dl`, else as `read` (empty
 /// at end of file). Waits first, so it works on blocking descriptors too, provided nobody
 /// else reads `fd` between the wait and the read. Cancel-safe: nothing is consumed on time-out.

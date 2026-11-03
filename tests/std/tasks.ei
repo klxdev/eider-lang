@@ -81,6 +81,34 @@ fn pipe_wait() -> String uses io, threads, clock {
     "{n} {z}"
 }
 
+fn two_descriptors() -> String uses io, threads, clock {
+    let a = fd.pipe().unwrap()
+    let b = fd.pipe().unwrap()
+    let ar = a.r
+    let br = b.r
+    let bw = b.w
+    let waiter = spawn(|| -> String {
+        // neither is ready: both flags 0 at the deadline; then the second one becomes readable
+        let first = fd.wait_ready2(ar, fd.READY_READ, br, fd.READY_READ, time.after_ms(30)).unwrap()
+        let second = fd.wait_ready2(ar, fd.READY_READ, br, fd.READY_READ, time.after_ms(5000)).unwrap()
+        "{first.first}{first.second} {second.first}{second.second}"
+    })
+    let writer = spawn(|| -> i64 {
+        time.sleep_ms(100)
+        match fd.write_all(bw, sys.lit("x")) {
+            Ok(w) => 0
+            Err(e) => 1
+        }
+    })
+    let r = waiter.join()
+    let z = writer.join()
+    let c1 = fd.close(a.r)
+    let c2 = fd.close(a.w)
+    let c3 = fd.close(b.r)
+    let c4 = fd.close(b.w)
+    r
+}
+
 fn trap_after_park() -> String uses io, threads, clock {
     let c: Chan[i64] = Chan.new()
     let cc = c
@@ -147,6 +175,7 @@ fn main() uses io, threads, clock {
     print(chain(200))
     print(sleeping_overlaps(1000))
     print(pipe_wait())
+    print(two_descriptors())
     print(trap_after_park())
     print(locks(50, 200))
     print(group_of_tasks(300))
