@@ -1,0 +1,51 @@
+name: macOS release candidate
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package-and-shop:
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ secrets.EIDER_READ_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Require access to the private library and example repositories
+        run: test -n "$GH_TOKEN" || { echo 'Set EIDER_READ_TOKEN with read access to klxdev Eider repositories'; exit 1; }
+      - name: Build tools and pinned library sources
+        run: |
+          brew install llvm lld gnu-tar coreutils
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+          for library in json toml markdown; do gh repo clone "klxdev/eider-$library" "../eider-$library"; done
+      - name: Build and smoke-test the standalone release archive
+        run: sh scripts/package-native.sh
+      - name: Signed installer and toolchain regression tests
+        env:
+          EIDER_CRYPTO: awslc-noasm
+        run: |
+          scripts/ei test packages/eider/tests/target_test.ei
+          sh tests/eider/run.sh
+      - name: Shopping service against this toolchain
+        env:
+          EIDER_TOOLCHAIN: ${{ github.workspace }}
+        run: |
+          mkdir -p target/ci-bin
+          printf '#!/bin/sh\nexec "%s/scripts/eider" "$@"\n' "$GITHUB_WORKSPACE" > target/ci-bin/eider
+          chmod +x target/ci-bin/eider
+          export PATH="$GITHUB_WORKSPACE/target/ci-bin:$PATH"
+          export EIDER_CRYPTO=awslc-noasm
+          gh repo clone klxdev/eider-example-shopping-service ../shopping-service
+          cd ../shopping-service
+          sh scripts/build.sh
+          cd web && npx playwright install chromium && cd ..
+          SKIP_BUILD=1 sh scripts/test.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: darwin-aarch64-release
+          path: target/release/assets/v*/eider-*-darwin-aarch64*
+          if-no-files-found: error

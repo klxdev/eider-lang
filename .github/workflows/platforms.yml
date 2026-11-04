@@ -1,0 +1,40 @@
+name: Native platforms
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Linux build tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y clang lld
+      - name: macOS build tools
+        if: runner.os == 'macOS'
+        run: |
+          brew install llvm lld
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+      - name: Bootstrap, language, standard library, wasm and optimized native build
+        run: sh scripts/check-platform.sh
+      - name: Keep failure logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failures-${{ matrix.os }}
+          path: |
+            target/std-fail
+            target/eiderc.build.log.*

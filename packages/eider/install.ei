@@ -1,6 +1,6 @@
 //! install: downloading, checking and unpacking a release's files.
 //!
-//! A release has, for each target (`linux-x86_64`, `linux-aarch64`), the toolchain archive
+//! A release has, for each target (`linux-x86_64`, `linux-aarch64`, `darwin-aarch64`), the toolchain archive
 //! `eider-<version>-<target>.tar.gz` and the standalone command `eider-<version>-<target>`,
 //! plus `SHA256SUMS` (every file's SHA-256) and `SHA256SUMS.minisig`, its minisign signature
 //! (docs/site/tooling/releases.md). Before anything is unpacked or installed:
@@ -53,7 +53,23 @@ fn argv3(a: str, b: str, c: List[u8]) -> List[List[u8]] {
     v
 }
 
-/// This machine's target, `linux-<arch>` (EIDER_TARGET overrides it).
+/// A supported release target from uname's system and architecture.
+pub fn target_for(system: List[u8], arch: List[u8]) -> Result[List[u8], String] {
+    let arm = bytes.eq(arch, "aarch64".bytes()) || bytes.eq(arch, "arm64".bytes())
+    if bytes.eq(system, "Linux".bytes()) {
+        if arm { return Ok("linux-aarch64".bytes()) }
+        if bytes.eq(arch, "x86_64".bytes()) || bytes.eq(arch, "amd64".bytes()) { return Ok("linux-x86_64".bytes()) }
+    }
+    if bytes.eq(system, "Darwin".bytes()) && arm { return Ok("darwin-aarch64".bytes()) }
+    let mut m = String.from("there are no Eider releases for ")
+    m.append(text(system))
+    m.push_str(" ")
+    m.append(text(arch))
+    m.push_str(" yet (linux-x86_64, linux-aarch64, darwin-aarch64); build eider-lang from source")
+    Err(m)
+}
+
+/// This machine's target (EIDER_TARGET overrides it).
 pub fn target() -> Result[List[u8], String] uses io, fs, net {
     let t = getenv("EIDER_TARGET")
     if t.len() > 0 { return Ok(t) }
@@ -63,25 +79,7 @@ pub fn target() -> Result[List[u8], String] uses io, fs, net {
     let o = run(argv)?
     let parts = bytes.split(bytes.trim(o.out), 32)
     if parts.len() != 2 { return Err(errs("cannot tell this machine's system and architecture (uname -sm)")) }
-    if !bytes.eq(parts[0], "Linux".bytes()) {
-        let mut m = String.from("there are no Eider releases for ")
-        m.append(text(parts[0]))
-        m.push_str(" yet (linux-x86_64 and linux-aarch64 only); build eider-lang from source")
-        return Err(m)
-    }
-    let a = parts[1]
-    let mut out = "linux-".bytes()
-    if bytes.eq(a, "x86_64".bytes()) || bytes.eq(a, "amd64".bytes()) {
-        bytes.append(inout out, "x86_64".bytes())
-    } else if bytes.eq(a, "aarch64".bytes()) || bytes.eq(a, "arm64".bytes()) {
-        bytes.append(inout out, "aarch64".bytes())
-    } else {
-        let mut m = String.from("there are no Eider releases for ")
-        m.append(text(a))
-        m.push_str(" yet (linux-x86_64 and linux-aarch64 only)")
-        return Err(m)
-    }
-    Ok(out)
+    target_for(parts[0], parts[1])
 }
 
 /// The release key: EIDER_RELEASE_PUBKEY (a .pub file or the key's line), else the embedded one.

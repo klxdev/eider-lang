@@ -66,18 +66,13 @@
 #define USE_EVP_AEAD_CHACHA 1
 #endif
 
-/* Eider binds externs by raw symbol name; pin it where the platform decorates C names
-   (Mach-O), as eider_core.c does. */
-#if defined(__APPLE__)
-#define EC_SYM(n) __asm__(#n)
-#else
+/* Match the platform C symbol convention used by LLVM IR and the bootstrap. */
 #define EC_SYM(n)
-#endif
 #define EC_FN(ret, name, params) ret name params EC_SYM(name); ret name params
 
 /* Inputs larger than this are refused (ELENGTH): the EVP_CIPHER and HMAC key interfaces
    take `int` lengths. */
-#define MAX_INPUT ((size_t)INT_MAX - 64)
+#define EIDER_CRYPTO_MAX_INPUT ((size_t)INT_MAX - 64)
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -95,7 +90,7 @@ static int64_t done(int64_t r) {
 static int split(const unsigned char **base, size_t *total, const int64_t *lens, int n, const unsigned char **parts, size_t *last) {
   size_t len;
   const unsigned char *p = ec_ext_in(&len);
-  if (len > MAX_INPUT) return 0;
+  if (len > EIDER_CRYPTO_MAX_INPUT) return 0;
   size_t at = 0;
   for (int i = 0; i < n; i++) {
     if (lens[i] < 0 || (uint64_t)lens[i] > len - at) return 0;

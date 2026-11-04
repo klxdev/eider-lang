@@ -749,6 +749,11 @@ fn thin_lto(cc: List[u8], dir: List[u8]) -> bool uses io, fs, net {
     argv.push(cc.copy())
     argv.push(s("-flto=thin"))
     argv.push(s("-fuse-ld=lld"))
+    // Probe the ELF-only options used by the real link too. Mach-O lld can accept
+    // -flto=thin but rejects these flags: fall back to native objects there.
+    argv.push(s("-no-pie"))
+    argv.push(s("-Wl,--thinlto-jobs=1"))
+    argv.push(s("-Wl,--thinlto-cache-policy=prune_interval=15m"))
     argv.push(s("-o"))
     argv.push(fs.join(dir, s("lto_probe")))
     argv.push(src)
