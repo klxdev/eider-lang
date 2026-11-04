@@ -2095,6 +2095,16 @@ fn primary(inout p: P) -> Result[u32, diag.Diag] {
         if t.val == intern.K_IF as u64 { return if_expr(inout p) }
         if t.val == intern.K_MATCH as u64 { return match_expr(inout p) }
         let n = ident(inout p)?
+        // `List[a, b]`: a List literal (docs/compiler.md, "C8.73"); `List` is a type, never a value
+        if is(p, lex.LBracket) && bytes.eq(intern.name(p.names, n.sym), sys.lit("List")) {
+            adv(inout p)
+            let es = list_elems(inout p)?
+            let mut ln = mk(ast.EArray, n.line, n.col)
+            ln.c = list(inout p, es)
+            ln.d = es.len() as u32
+            ln.e = 1
+            return Ok(add(inout p, ln))
+        }
         let mut node = mk(ast.EIdent, n.line, n.col)
         node.a = n.sym
         match qualified(inout p, n.sym) {
@@ -2191,6 +2201,24 @@ fn is_enum_of(inout p: P) -> Result[u32, diag.Diag] {
     n.a = ast.R_IS_ENUM
     n.b = target
     Ok(add(inout p, n))
+}
+
+/// The elements of a List literal after its `[`: `a, b, c]` (a trailing comma and newlines
+/// allowed; `]` alone is the empty list).
+fn list_elems(inout p: P) -> Result[List[u32], diag.Diag] {
+    let mut es: List[u32] = List.new()
+    skip_nl(inout p)
+    if eat(inout p, lex.RBracket) { return Ok(es) }
+    es.push(expr(inout p)?)
+    while true {
+        skip_nl(inout p)
+        if eat(inout p, lex.RBracket) { break }
+        if !eat(inout p, lex.Comma) { return Err(err(p, "expected `,` or `]`")) }
+        skip_nl(inout p)
+        if eat(inout p, lex.RBracket) { break }
+        es.push(expr(inout p)?)
+    }
+    Ok(es)
 }
 
 fn else_branch(inout p: P) -> Result[u32, diag.Diag] {

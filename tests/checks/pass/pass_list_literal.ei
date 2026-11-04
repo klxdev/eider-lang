@@ -1,0 +1,12 @@
+type Tag = { name: String }
+fn count(xs: List[String]) -> usize { xs.len() }
+fn main() {
+    let a = List[1, 2, 3]
+    let b: List[u8] = List[1, 2]
+    let c: List[Tag] = List[]
+    let d = List[Tag("x".to_string()), Tag("y".to_string())]
+    let e = List[List[1], List[]]
+    let n = count(List["a".to_string(), "b".to_string()])
+    let f = List[if n > 1 { 1 } else { 2 }, 3,]
+    let g = [1, 2, 3]
+}

@@ -26,6 +26,9 @@ Group 1, language and compiler ergonomics (more items come before the release).
 - **`if`, `match` and blocks as call arguments** (#48): `add(if c { 1 } else { 2 }, 3)`,
   `xs.push(match n { 0 => 1, _ => 2 })`, `Point(if c { 1 } else { 2 }, y)`; an earlier argument keeps the value it had
   before the form ran. Still E0103 as an operand or a field initializer.
+- **List literals** (#49): `List[1, 2, 3]`, `List["a".to_string()]` and the empty `List[]` (with a type from
+  context); with an expected type the elements take its element type (`let xs: List[u8] = List[1, 2]`). `[a, b]` is
+  still a fixed array. tree-sitter-eider has a `list_expression`.
 - Fixes: an error in a `test` block names its own file (#162; the compiler's recorded expectations
   that had the stale file are re-blessed); `eiderc lint` takes a module or package with no `main` (#163);
   a method chain of hundreds of calls compiles (#153: the Eider `main` has a 512 MiB stack, `EIDER_MAIN_STACK`).

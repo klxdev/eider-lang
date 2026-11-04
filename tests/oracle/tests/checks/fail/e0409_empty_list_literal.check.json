@@ -1,0 +1,1 @@
+{"error":"E0409","span":{"file":"tests/checks/fail/e0409_empty_list_literal.ei","line":3,"col":14},"message":"cannot infer the element type of an empty List literal","help":"annotate the binding, e.g. `let xs: List[i32] = List[]`"}

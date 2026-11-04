@@ -152,9 +152,38 @@ must be `bool`: integers are not conditions.
 | `(a, b)`, `(a,)` | a tuple |
 | `[a, b, c]` | an array `[T; 3]`; every element has the first one's type |
 | `[x; 4]` | an array of 4 copies of `x` (the length is an integer literal, at least 1) |
+| `List[a, b, c]` | a `List[T]`; every element has the type of the expected List's element, else the first one's |
+| `List[]` | an empty `List[T]`; needs the type from context (E0409) |
 
-An empty array literal `[]` has no length to give a type to; there are no `List` literals
-(build Lists with `List.new()` and `push`).
+An empty array literal `[]` has no length to give a type to. `List[a, b, c]` is a List
+literal: it evaluates the elements in order and builds a new List holding them (a trailing
+comma and newlines between elements are fine, and an element may be an `if`, `match` or
+block). With an expected type (`let xs: List[u8] = List[1, 2]`, a parameter, a return type) the
+elements take its element type, so integer literals and `None` come out right. `List` is a
+type name, so `List[` in an expression is always this literal, never an index; a fixed array
+`[a, b]` is never converted to a `List`.
+
+```eider
+fn total(xs: List[i64]) -> i64 {
+    let mut t = 0
+    for x in xs { t += x }
+    t
+}
+
+fn main() uses io {
+    let names = List["ada".to_string(), "grace".to_string()]
+    print(names)
+    print(total(List[10, 20, 30]))
+    let none: List[String] = List[]
+    print(none.len())
+}
+```
+
+```output
+["ada", "grace"]
+60
+0
+```
 
 ## Names
 

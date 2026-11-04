@@ -1,0 +1,41 @@
+(IFn 1:4 name=f end=1:26
+  param (Param 1:6 name=x
+    type (TName 1:9 name=i32))
+  ret (TGeneric 1:17 name=List
+    arg (TName 1:22 name=i32))
+  body (Block 1:27 end=10:1
+    stmt (SLet 2:5 name=a
+      init (EArray 2:13 list
+        elem (EInt 2:18 value=1)
+        elem (EInt 2:21 value=2)
+        elem (EIdent 2:24 name=x)))
+    stmt (SLet 3:5 name=b
+      type (TGeneric 3:12 name=List
+        arg (TName 3:17 name=i32))
+      init (EArray 3:24 list))
+    stmt (SLet 4:5 name=c
+      init (EArray 4:13 list
+        elem (EArray 5:9 list
+          elem (EInt 5:14 value=1))
+        elem (EArray 6:9 list
+          elem (EInt 6:14 value=2))))
+    stmt (SLet 8:5 name=d
+      init (EArray 8:13
+        elem (EInt 8:14 value=1)
+        elem (EInt 8:17 value=2)))
+    stmt (SExpr 9:5
+      expr (EArray 9:5 list
+        elem (EBinary 9:12 op=`+`
+          lhs (EIdent 9:10 name=x)
+          rhs (EInt 9:14 value=1))
+        elem (EIf 9:17
+          cond (EBinary 9:22 op=`>`
+            lhs (EIdent 9:20 name=x)
+            rhs (EInt 9:24 value=0))
+          then (Block 9:26 end=9:30
+            stmt (SExpr 9:28
+              expr (EInt 9:28 value=1)))
+          else (EBlock 9:37
+            block (Block 9:37 end=9:41
+              stmt (SExpr 9:39
+                expr (EInt 9:39 value=2)))))))))

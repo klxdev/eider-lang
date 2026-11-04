@@ -1,0 +1,10 @@
+fn f(x: i32) -> List[i32] {
+    let a = List[1, 2, x]
+    let b: List[i32] = List[]
+    let c = List[
+        List[1],
+        List[2,],
+    ]
+    let d = [1, 2]
+    List[x + 1, if x > 0 { 1 } else { 2 }]
+}

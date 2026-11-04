@@ -1,0 +1,4 @@
+// expect: E0401 3:25
+fn main() {
+    let xs = List[1, 2, "three"]
+}

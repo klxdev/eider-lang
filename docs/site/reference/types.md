@@ -405,7 +405,8 @@ fn main() uses io {
 `[T; N]` is a fixed-size sequence of N values of type T, stored inline (copied by value).
 N is an integer literal, at least 1 (E0111 for 0). Array literals are `[a, b, c]` and
 `[x; N]` (N copies of x; x can't own heap memory, E0401). An array literal is never a
-`List`: `let l: List[i32] = [1, 2]` is E0401.
+`List`: `let l: List[i32] = [1, 2]` is E0401; write the List literal `List[1, 2]`
+(see [Expressions](expressions.md#literals)).
 
 Indexing `a[i]` needs `i: usize` and is bounds-checked: a constant index out of range is
 E0503, a variable one traps `index out of bounds`. Elements of a writable array can be

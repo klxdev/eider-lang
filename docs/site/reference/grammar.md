@@ -180,6 +180,7 @@ call_args = "(" [ ["inout"] expr { "," ["inout"] expr } [","] ] ")"
 primary   = INT | FLOAT | string | "true" | "false"
           | "(" ")" | "(" expr ")" | "(" expr "," [ expr { "," expr } [","] ] ")"
           | "[" "]" | "[" expr { "," expr } [","] "]" | "[" expr ";" INT "]"
+          | "List" "[" [ expr { "," expr } [","] ] "]"
           | block
           | "unsafe" block
           | closure

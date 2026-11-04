@@ -61,6 +61,7 @@ compile-fail tests (tests/checks/fail)
   ok   e0310_errdefer_without_result.ei E0310 at 3:5 (fix compiles)
   ok   e0401_closure_wrong_return.ei E0401 at 4:28
   ok   e0401_fn_caps_mismatch.ei    E0401 at 3:5
+  ok   e0401_list_literal_mixed.ei  E0401 at 3:25
   ok   e0401_map_equality.ei        E0401 at 5:18
   ok   e0401_missing_return.ei      E0401 at 4:1
   ok   e0401_mixed_widths.ei        E0401 at 2:34
@@ -75,6 +76,7 @@ compile-fail tests (tests/checks/fail)
   ok   e0409_cannot_infer.ei        E0409 at 3:13
   ok   e0409_chan.ei                E0409 at 3:18
   ok   e0409_closure_param_untyped.ei E0409 at 3:14
+  ok   e0409_empty_list_literal.ei  E0409 at 3:14
   ok   e0409_infer_result_param.ei  E0409 at 5:13
   ok   e0409_list_new_uninferred.ei E0409 at 3:18
   ok   e0410_pattern_arity.ei       E0410 at 5:9
@@ -151,6 +153,7 @@ compile-pass tests (tests/checks/pass)
   ok   pass_let_else.ei
   ok   pass_lint_allow.ei
   ok   pass_list_inplace.ei
+  ok   pass_list_literal.ei
   ok   pass_match_all.ei
   ok   pass_shadow_in_inner_scope.ei
   ok   pass_type_args.ei
@@ -158,5 +161,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-156 passed, 0 failed; error-code coverage 74/74
+159 passed, 0 failed; error-code coverage 74/74
 --- exit 0

@@ -4689,3 +4689,26 @@ method call's receiver is not snapshotted either. Because the temporary holds an
 reference to a place, `evaluated_first` holds for a value form: `xs.push(if xs.len() > 3 { 1 } else { 2 })`
 does not conflict with the `inout` receiver.
 
+## C8.73: List literals, `List[a, b, c]` (#49)
+
+Decision C854. Code: parse.ei (the identifier branch of `primary`; `list_elems`), ast.ei (`EArray` e=1),
+dump.ei (`list` flag), check.ei (`array_lit` hands e=1 to `list_lit`). Tests: tests/run/list_literal.ei,
+tests/checks/pass/pass_list_literal.ei, tests/checks/fail/{e0409_empty_list_literal,e0401_list_literal_mixed}.ei,
+compiler/tests/parse_ok/list_literal.ei. **Design.** A List literal is `List[` elements `]`, with the
+type's own name, because `List` is a type and never a value: in an expression `List` is followed by `.`
+(`List.new()`, `List.filled`) or, now, by `[`; the parser takes `List` immediately followed by `[` as the
+literal (a local variable called `List` would no longer be indexable, and none exists), and the type
+`List[i32]` is only parsed where a type is expected. Alternatives: `[a, b]` typed by the expectation (the
+fixed array and the List would then be one syntax whose type depends on context, and `let xs = [1, 2]`
+would still be an array), a macro-like `list![..]` (a second kind of call syntax), `[..].to_list()` (needs
+an array method and a temporary array). `List[]` is the empty list and needs its type from context
+(E0409, like `List.new()`). **Semantics.** The elements are evaluated in order, as the elements of an array
+literal are, then a new List (`B_LIST_NEW`) takes each by `B_LIST_PUSH`, as `map` builds its result: the
+IR and every backend are unchanged, and there is no copy of an array. The element type is the expected
+List's (so `let xs: List[u8] = List[1, 2]` and `List[Some(1), None]` check), else the first element's; a
+later element of another type is E0401 at that element. An element may be an `if`/`match`/block ("C8.72";
+`list_lit` allows them and snapshots earlier variable reads as a call does). The syntax tree is the
+`EArray` node with e=1, so every walker (resolve, ide, the closure-capture walk) already covers it.
+tree-sitter-eider has a `list_expression` whose first token is `List[` (one token: `List.new()` and the
+type `List[i32]` stay identifiers).
+

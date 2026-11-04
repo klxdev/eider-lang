@@ -7077,6 +7077,7 @@ fn cast(inout c: C, n: ast.Node) -> Result[V, diag.Diag] {
 }
 
 fn array_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
+    if n.e == 1 { return list_lit(inout c, n, exp) }
     let mut exp_elem = NONE
     if exp != NONE && types.kind(c.t, exp) == types.T_ARRAY { exp_elem = types.get(c.t, exp).a }
     if n.d == 0 { return Err(err("E0401", n.line, n.col, s("cannot infer the element type of an empty array"))) }
@@ -7099,6 +7100,54 @@ fn array_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     let ty = types.array(inout c.t, first, n.d)
     let start = ir.list(inout c.ir, ops)
     Ok(v_of(ty, emit_val(inout c, ir.S_ARRAY, 0, start, n.d, ty, ty, n.line)))
+}
+
+/// `List[a, b, c]` ("C8.73"): the elements are evaluated in order, then a new List is built and
+/// each element pushed. The element type is the expected List's, else that of the first element.
+fn list_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
+    let mut exp_elem = NONE
+    if exp != NONE && types.kind(c.t, exp) == types.T_LIST { exp_elem = types.get(c.t, exp).a }
+    if n.d == 0 && exp_elem == NONE {
+        if poisoned(c, exp) { return Ok(poison_v(inout c)) }
+        return Err(errh("E0409", n.line, n.col, s("cannot infer the element type of an empty List literal"), r"annotate the binding, e.g. `let xs: List[i32] = List[]`"))
+    }
+    let mut vs: List[V] = List.new()
+    let mut first = exp_elem.copy()
+    // (an element may be an `if`, `match` or block, as a call's argument may: "C8.72")
+    let mut later_vf: List[bool] = List.new()
+    let mut seen_vf = false
+    let mut k = n.d.copy()
+    while k > 0 {
+        k -= 1
+        later_vf.push(seen_vf)
+        if is_value_form(c, at(c, n.c, k)) {
+            seen_vf = true
+            c.vf_args.insert(at(c, n.c, k), true)
+        }
+    }
+    for i in 0..n.d {
+        let x = at(c, n.c, i)
+        let mut v = expr(inout c, x, first)?
+        if later_vf[(n.d - 1 - i) as usize] { v = snap_read(inout c, v, n.line) }
+        if first != NONE && !same(c, v.ty, first) && !poisoned(c, first) && !poisoned(c, v.ty) {
+            let xn = nd(c, x)
+            return Err(mismatch(c, xn.line, xn.col, first, v.ty))
+        }
+        if first == NONE || poisoned(c, first) { first = v.ty }
+        vs.push(v)
+    }
+    if first == types.UNIT || first == types.NEVER {
+        return Err(err("E0401", n.line, n.col, s("a List can't hold values of type ()")))
+    }
+    let ty = types.list_of(inout c.t, first)
+    let mut ops: List[u32] = List.new()
+    for v in vs { ops.push(take(inout c, v, n.line)) }
+    let out = builtin_op(inout c, ir.B_LIST_NEW, List.new(), ty, n.line)
+    if ops.len() > 0 {
+        let outp = place_of_op(inout c, out, ty, n.line) + ir.ARG_PLACE
+        for o in ops { builtin_op(inout c, ir.B_LIST_PUSH, two(outp, o), types.UNIT, n.line) }
+    }
+    Ok(v_of(ty, out))
 }
 
 fn tuple_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {

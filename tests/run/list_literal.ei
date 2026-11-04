@@ -1,0 +1,65 @@
+// `List[a, b, c]`: a List literal (docs/site/reference/expressions.md); `[a, b]` stays a fixed array.
+type Item = { name: String, qty: i32 }
+
+fn total(xs: List[i32]) -> i32 {
+    let mut t = 0
+    for x in xs { t += x }
+    t
+}
+
+fn names(xs: List[String]) -> usize {
+    let mut n: usize = 0
+    for x in xs { n += x.len() }
+    n
+}
+
+fn make(n: i32) -> List[String] {
+    List["a".to_string(), "b{n}".to_string()]
+}
+
+fn empty() -> List[i32] { List[] }
+
+fn main() uses io {
+    let xs = List[3, 1, 2]
+    print(xs)
+    print(xs.len())
+    print(total(List[10, 20, 30]))
+    print(total(List[]))
+    print(names(List["x".to_string(), "yz".to_string()]))
+    print(make(7))
+    print(empty().len())
+    // an expected List type gives the element type; the array stays an array
+    let big: List[i64] = List[1, 2, 3]
+    print(big)
+    let arr = [1, 2, 3]
+    print(len(arr))
+    let opts: List[Option[i32]] = List[Some(1), None, Some(3)]
+    print(opts)
+    let nested = List[List[1, 2], List[], List[3]]
+    print(nested)
+    let items = List[Item("p".to_string(), 2), Item("q".to_string(), 3)]
+    let mut q = 0
+    for i in items { q += i.qty }
+    print(q)
+    let mut ys = List[1, 2]
+    ys.push(3)
+    print(ys)
+    // elements are evaluated in order, and may be value forms
+    let c = true
+    let zs = List[if c { 1 } else { 2 }, match ys.len() { 3 => 30, _ => 0 }, total(ys)]
+    print(zs)
+    let multi = List[
+        "one".to_string(),
+        "two".to_string(),
+    ]
+    print(multi)
+    for s in List["x", "y"] { print(s) }
+}
+
+test "list literals" {
+    let a = List[1, 2, 3]
+    assert(a.len() == 3)
+    assert(a[1] == 2)
+    let e: List[String] = List[]
+    assert(e.len() == 0)
+}

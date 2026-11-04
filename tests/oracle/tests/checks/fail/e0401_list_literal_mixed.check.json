@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"tests/checks/fail/e0401_list_literal_mixed.ei","line":3,"col":25},"message":"expected i32, found str"}

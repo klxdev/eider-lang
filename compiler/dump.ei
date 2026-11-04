@@ -206,7 +206,10 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             child(inout out, p, "expr", n.a, d)
             child(inout out, p, "type", n.b, d)
         }
-        ast.EArray => kids(inout out, p, "elem", n.c, n.d, d)
+        ast.EArray => {
+            flag(inout out, "list", n.e == 1)
+            kids(inout out, p, "elem", n.c, n.d, d)
+        }
         ast.ERepeat => {
             put(inout out, " count=")
             num(inout out, n.b as u64)

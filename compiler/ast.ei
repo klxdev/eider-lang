@@ -13,7 +13,7 @@
 //            EUnary a=op (0 neg, 1 not, 2 bitwise not `~`) b=operand  EBinary a=op (OP_*) b=lhs c=rhs
 //            ECall a=callee sym b=qual+1 [c/d]=args [e/f]=type arguments written out (`f[T](x)`; f=0: none)  EMethod a=recv b=name sym [c/d]=args
 //            EField a=recv b=name sym              EIndex a=recv b=index
-//            ECast a=expr b=type                   EArray [c/d]   ERepeat a=elem b=count
+//            ECast a=expr b=type                   EArray [c/d] (e=1: `List[a, b]`, a List literal)   ERepeat a=elem b=count
 //            ETuple [c/d]   ETry a   EUnsafe a=block   EBlock a=block
 //            ELambda a=body g=ret+1 [c/d]=LParam   EIf a=cond b=then c=else+1
 //            EMatch a=scrutinee [c/d]=Arm e/f=line/col just past the scrutinee, end span =
