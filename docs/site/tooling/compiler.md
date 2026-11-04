@@ -45,6 +45,7 @@ and exit code 2. With no arguments at all, eiderc prints its usage to stderr and
 | `emit-llvm <file> [--test] [--lib] [--wasm]` | The LLVM IR that `build`, `run` and `test` compile (`--test`: with the test driver, as `test` builds it; `--lib`: as a library, with entry points for the exports; `--wasm`: as a WebAssembly module). See [The LLVM backend](llvm.md). |
 | `caps <file>` | Each package's capability use, one JSON line per (package, capability), with the first function that uses it: `{"package":..., "dir":..., "cap":"fs", "kind":"uses", "fn":"save", "file":"notes.ei", "line":4, "col":70}`; `kind` is `uses`, `extern` or `unsafe`. Imports that can't be loaded are left out silently. See [Capabilities](../guide/capabilities.md). |
 | `expand <file> [<name>]` | The specialized typed IR of the function instances whose body used comptime reflection (`comptime for`, `comptime if`): for a `@[derive]`d method, what it became for each type, with the loops over the fields unrolled. With `<name>`, every function whose name contains it (`expand file.ei Point.enc`). Exits 1 when nothing matches. An error inside such a specialization names the iteration and the specialization (`help: in the comptime for iteration over field y of Point; while specializing Point.enc`). See [Reflection](../reference/reflection.md#reading-a-specialization). |
+| `fmt [--write\|--check] <file\|dir>` | The file in the canonical layout; `--write` rewrites in place, `--check` lists the files that would change. See [Formatting](#formatting). |
 | `lint [<file>] [--json] [--deny\|--warn\|--allow <lint\|group\|all>]... [--list]` | The lints of the file's package, in the form of diagnostics (`warning[unused_uses]: ...`, `error[...]` for a denied lint), with machine-applicable fixes where there is one; `--json` prints one JSON object per finding (`lint`, `level`, `span`, `message`, `help`, `fix`). With no file it lints the package in the current directory (its entry module); a library module or package with no `main` is linted like a program. Levels come from `[lints]` in the package's `eider.toml` and the options, which are applied after it; `--list` prints every lint with its group and default level. Exits 1 if a denied lint was hit, 2 for an unusable `[lints]`. The code must check first. See [Lints](#lints). |
 | `ide <file> [--overlay <path> <text>]...` | The analysis an editor uses (`compiler/ide.ei`): files, diagnostics, symbols with their spans and types, references, and the type at each expression. `--overlay <path> <text>` (repeatable) analyses `<path>` as if it contained the contents of the file `<text>`, for unsaved buffers. |
 
@@ -77,6 +78,7 @@ print `eiderc <version>` (`eiderc 0.1.0`) and exit 0: the toolchain's version, f
 | `--wasm-core` | `build`, `check`, `emit-llvm` | build the program as a WebAssembly core module (see `build --wasm-core`) |
 | `--test` | `emit-llvm` | include the test driver |
 | `--compile-fail` | `test` | run a compile-fail suite (`<dir>` instead of a file) |
+| `--write`, `--check` | `fmt` | rewrite the files in place; list the files whose layout would change (see [Formatting](#formatting)) |
 | `--json` | every command that reports errors; `audit-refs` | diagnostics as JSON, one object per line on stdout |
 | `--max-errors <n>` | every command that reports errors | show at most `n` errors (default 100; `0` shows all) |
 | `--all-errors` | `parse` | every syntax error, then the tree |
@@ -118,20 +120,35 @@ hints through the `lints` of `eiderc ide`, with the same fixes.
 
 ## Formatting
 
-`eiderc fmt <file.ei>` prints the file in the one canonical layout; it has no options (the
-file is not rewritten: `eiderc fmt f.ei > f.new && mv f.new f.ei`). It fixes layout that has no
-meaning and nothing else: the indentation (four spaces per open bracket, four more on a
-continuation line), runs of spaces between tokens, trailing white space, tabs, CRLF, blank
-lines (at most one in a row), the newline at the end. Tokens, comments and strings are copied
-byte for byte and no space is added or removed between tokens, so line breaks and the spacing
-inside a line stay yours.
+```text
+eiderc fmt <file.ei>            print the file in the canonical layout
+eiderc fmt --write <file|dir>   rewrite the files in place; prints `formatted <path>` for each that changed
+eiderc fmt --check <file|dir>   print the path of each file that would change; exit 1 if there is any
+```
+
+With a directory, `--write` and `--check` take every `.ei` file under it (`eiderc fmt --write .`),
+skipping `target`, `.git`, `.vendor` and `node_modules`. A file that is already formatted is not
+touched. There is no configuration: the layout is the one below, and formatting is idempotent.
+`--write` and `--check` exclude each other, a directory needs one of them, and a file that is
+refused (below) is reported on stderr (`eiderc: fmt: <path>: <why>`) and makes the exit code 1 while
+the other files are still done.
+
+It fixes layout that has no meaning and nothing else: the indentation (four spaces per open
+bracket, four more on a continuation line), runs of spaces between tokens, trailing white space,
+tabs, CRLF, blank lines (at most one in a row), the newline at the end. Tokens, comments and
+strings are copied byte for byte and no space is added or removed between tokens, so line breaks
+and the spacing inside a line stay yours. A `"""` multi-line string is one token: the line it
+starts on is indented like any other, and its lines (text, and the indentation of its closing
+line that the string removes) stay exactly as written.
 
 It checks its own work: the output must lex to the same tokens as the input and formatting it
 again must change nothing, else it prints an error (`internal error: ...`, exit 1) and no text.
-A file with a lexing error, or with a `"""` multi-line string (its lines are text, which a
-layout pass must not touch), is refused. `tests/fmt/run.sh` runs it over every `.ei` file of the
-repository, compares diagnostics before and after, and fuzzes the layout (random indentation,
-tabs, CRLF, trailing white space).
+A file with a lexing error is refused. `tests/fmt/run.sh` runs it over every `.ei` file of the
+repository, compares diagnostics before and after, fuzzes the layout (random indentation,
+tabs, CRLF, trailing white space) and tests `--write` and `--check`.
+
+In an editor, eider-analyzer answers `textDocument/formatting` with the same layout (see
+[Editors](editors.md)); with another client, `eiderc fmt --write %` on save does it.
 
 ## Debugging
 

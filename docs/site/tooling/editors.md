@@ -23,6 +23,7 @@ The paths below are placeholders: `/path/to/eider-lang`, `/path/to/eider-analyze
 | go to definition, references | every name the checker resolved, across modules: locals, parameters, items, fields, methods, variants, module aliases |
 | hover | the symbol's signature or type, and the type at the cursor |
 | folding ranges | multi-line items and runs of imports |
+| formatting | `eiderc fmt`'s layout for the whole buffer (format on save, `vim.lsp.buf.format()`); `eiderc fmt --write .` does the same from a shell |
 | semantic tokens | namespaces, types, variants, fields, functions, methods, parameters, variables, constants, traits |
 | completion | names in scope; after `.`, a module's public items or the fields and methods of the receiver's type |
 

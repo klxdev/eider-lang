@@ -42,7 +42,7 @@ import eiderc.llvm
 import eiderc.llvm_abi as abi
 import eiderc.wasm
 import eiderc.pkgtest
-import eiderc.fmt
+import eiderc.fmtcmd
 import eiderc.sanitize
 import eiderc.suite
 import eiderc.ide
@@ -71,6 +71,9 @@ type Args = {
     lints: List[lint.Setting],
     /// `lint --list`
     list: bool,
+    /// `fmt --write`, `fmt --check` (fmtcmd.ei)
+    write: bool,
+    check: bool,
 }
 
 /// Comparisons go through a function so no owned temporary sits in an `else if` condition
@@ -135,7 +138,8 @@ fn usage_text() -> List[u8] {
         "                                             --overlay (repeatable) reads <path> from the file <text>",
         "  eiderc doc <file.ei | dir> [--json] [--private]  the API of a package directory or a program's package:",
         "                                             items, signatures, doc comments (doc.ei); --private: also non-pub items",
-        "  eiderc fmt <file.ei>                       print the file in the canonical layout (fmt.ei; no options)",
+        "  eiderc fmt <file.ei>                       print the file in the canonical layout (fmt.ei)",
+        "  eiderc fmt --write|--check <file|dir>      rewrite the files in place / list the files whose layout would change",
         "  eiderc help | --help | -h                  print this text",
         "  eiderc version | --version                 print `eiderc <version>` (VERSION; docs/site/tooling/releases.md)",
         "",
@@ -238,6 +242,8 @@ fn parse_args() -> Args uses io, fs {
     let mut crypto: List[u8] = List.new()
     let mut lints: List[lint.Setting] = List.new()
     let mut list = false
+    let mut write = false
+    let mut check = false
     let mut bench = false
     let mut fuzz: u64 = 0
     let mut filter: List[u8] = List.new()
@@ -308,6 +314,10 @@ fn parse_args() -> Args uses io, fs {
             i += 1
         } else if is(a, "--list") {
             list = true
+        } else if is(a, "--write") {
+            write = true
+        } else if is(a, "--check") {
+            check = true
         } else if is(a, "--bench") {
             bench = true
         } else if is(a, "--fuzz") {
@@ -387,7 +397,8 @@ fn parse_args() -> Args uses io, fs {
     if (bench || fuzz > 0) && !is(cmd, "test") { usage_error(sys.lit("`--bench` and `--fuzz` go with `test`")) }
     if filter.len() > 0 && !(is(cmd, "test") || is(cmd, "expand")) { usage_error(sys.lit("`--filter` goes with `test`")) }
     if (lints.len() > 0 || list) && !is(cmd, "lint") { usage_error(sys.lit("`--deny`, `--warn`, `--allow` and `--list` go with `lint`")) }
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, wasm_core, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, debug, crypto, portable, filter, bench, fuzz, lints, list)
+    if (write || check) && !is(cmd, "fmt") { usage_error(sys.lit("`--write` and `--check` go with `fmt`")) }
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, wasm_core, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, debug, crypto, portable, filter, bench, fuzz, lints, list, write, check)
 }
 
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
@@ -787,6 +798,11 @@ fn main() uses io, fs, net, clock {
         io.out(lint.list())
         return
     }
+    if is(a.cmd, "fmt") {
+        // docs/site/tooling/compiler.md, "Formatting"
+        env.exit(fmtcmd.run(a.file, a.write, a.check))
+        return
+    }
     let src = match fs.read(a.file) {
         Ok(s) => s
         Err(e) => {
@@ -796,19 +812,6 @@ fn main() uses io, fs, net, clock {
             env.exit(2)
             return
         }
-    }
-    if is(a.cmd, "fmt") {
-        // docs/site/tooling/compiler.md, "Formatting"
-        let f = fmt.format(src)
-        if f.ok {
-            io.out(f.text)
-        } else {
-            let mut m = sys.lit("eiderc: fmt: ")
-            bytes.append(inout m, f.why)
-            io.errln(m)
-            env.exit(1)
-        }
-        return
     }
     if is(a.cmd, "migrate-var") {
         migrate_var(a, src)

@@ -1,0 +1,106 @@
+// fmtcmd: the command line of `eiderc fmt` (docs/site/tooling/compiler.md, "Formatting").
+//
+//   eiderc fmt <file.ei>             print the canonical layout (fmt.ei) to stdout
+//   eiderc fmt --write <file|dir>    rewrite the file in place (every .ei file under a directory),
+//                                    only when its layout changes; prints `formatted <path>`
+//   eiderc fmt --check <file|dir>    print the path of each file that would change; exit 1 if any
+//
+// A file that is refused (a lexing error) is reported as `eiderc: fmt: <path>: <why>` and makes
+// the exit code 1; the other files are still done.
+
+import core.sys
+import std.bytes
+import std.fs
+import std.io
+import eiderc.fmt
+
+fn skipped() -> List[List[u8]] {
+    let mut out: List[List[u8]] = List.new()
+    out.push(sys.lit("target"))
+    out.push(sys.lit(".git"))
+    out.push(sys.lit(".vendor"))
+    out.push(sys.lit("node_modules"))
+    out
+}
+
+/// The `.ei` files under `root` (a file is itself), sorted; build output, VCS and vendored
+/// directories are skipped.
+fn files_of(root: List[u8]) -> Result[List[List[u8]], String] uses fs {
+    if !fs.is_dir(root) {
+        let mut one: List[List[u8]] = List.new()
+        one.push(root)
+        return Ok(one)
+    }
+    let rel = fs.walk(root, skipped())?
+    let mut out: List[List[u8]] = List.new()
+    for r in rel {
+        if bytes.ends_with(r, sys.lit(".ei")) { out.push(fs.join(root, r)) }
+    }
+    Ok(out)
+}
+
+fn say(prefix: str, path: List[u8], rest: List[u8]) -> List[u8] {
+    let mut m = sys.lit(prefix)
+    bytes.append(inout m, path)
+    bytes.append(inout m, rest)
+    m
+}
+
+fn why(path: List[u8], text: List[u8]) -> List[u8] {
+    say("eiderc: fmt: ", path, bytes.concat(sys.lit(": "), text))
+}
+
+/// Run the command; the exit code.
+pub fn run(path: List[u8], write: bool, check: bool) -> i32 uses io, fs {
+    if write && check {
+        io.errln(sys.lit("eiderc: fmt: `--write` and `--check` exclude each other"))
+        return 2
+    }
+    let many = fs.is_dir(path)
+    if many && !write && !check {
+        io.errln(sys.lit("eiderc: fmt: a directory needs `--write` or `--check`"))
+        return 2
+    }
+    let files = match files_of(path) {
+        Ok(f) => f
+        Err(e) => {
+            io.errln(why(path, e.bytes()))
+            return 2
+        }
+    }
+    let mut code: i32 = 0
+    for f in files {
+        let src = match fs.read(f) {
+            Ok(s) => s
+            Err(e) => {
+                io.errln(why(f, e.bytes()))
+                code = 1
+                continue
+            }
+        }
+        let r = fmt.format(src)
+        if !r.ok {
+            io.errln(why(f, r.why))
+            code = 1
+            continue
+        }
+        if !write && !check {
+            io.out(r.text)
+            continue
+        }
+        if bytes.eq(src, r.text) { continue }
+        if check {
+            io.outln(f)
+            code = 1
+            continue
+        }
+        match fs.write(f, r.text) {
+            Ok(_) => io.outln(say("formatted ", f, List.new()))
+            Err(e) => {
+                io.errln(why(f, e.bytes()))
+                code = 1
+            }
+        }
+    }
+    code
+}

@@ -11,8 +11,9 @@
 //   - blank lines: at most one in a row, none at the start of the file; the file ends with
 //     exactly one newline.
 // Spaces are never added or removed between tokens that had some, and tokens, comments and
-// strings are copied byte for byte (a block comment keeps its inside as it is), so what the
-// parser sees is the same. A file with a `"""` string is refused (its lines are text).
+// strings are copied byte for byte (a block comment keeps its inside as it is, and so does a
+// `"""` string: one token, so its lines are text the layout pass never sees), so what the
+// parser sees is the same.
 //
 // It checks itself: the formatted text must lex to the same tokens (kind, value, text and
 // string table, Newline tokens apart from the ones at the ends) and formatting it again
@@ -86,10 +87,6 @@ fn pass(src: List[u8]) -> Fmt {
     let mut names = intern.new()
     let lx = lex.lex_all(src, inout names)
     if lx.diags.len() > 0 { return Fmt(false, List.new(), lx.diags[0].msg.copy()) }
-    match bytes.find(src, s("\"\"\""), 0) {
-        Some(_) => { return failed("a file with a multi-line string (\"\"\") is not formatted") }
-        None => {}
-    }
     let toks = lx.lexed.toks
     let n = src.len()
     let mut out: List[u8] = List.new()

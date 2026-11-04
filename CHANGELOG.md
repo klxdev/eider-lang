@@ -32,6 +32,9 @@ Group 1, language and compiler ergonomics (more items come before the release).
 - **Checked integer arithmetic** (#144): `import std.checked` adds `checked_add`, `checked_sub`, `checked_mul`,
   `checked_div`, `checked_rem` (and `checked_neg` on signed types) to every integer type; they return `Option[T]`
   where the operator would trap.
+- **`eiderc fmt --write` and `--check`** (#150): rewrite a file or every `.ei` file under a directory in place
+  (`eiderc fmt --write .`), or list the files whose layout would change (exit 1); files with `"""` strings are
+  formatted now; eider-analyzer answers `textDocument/formatting` with the same layout.
 - Fixes: an error in a `test` block names its own file (#162; the compiler's recorded expectations
   that had the stale file are re-blessed); `eiderc lint` takes a module or package with no `main` (#163);
   a method chain of hundreds of calls compiles (#153: the Eider `main` has a 512 MiB stack, `EIDER_MAIN_STACK`).

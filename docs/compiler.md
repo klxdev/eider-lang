@@ -4725,3 +4725,20 @@ the six impls are textually the same. Methods are visible once the module is imp
 `u32` edge sets against `i64` and `u64`; `i64` and `u64` edges against the explicit bounds tests the
 methods replace).
 
+## C8.75: `eiderc fmt --write` and multi-line strings (#150)
+
+Decision C856. `compiler/fmtcmd.ei` is the command line: `run(path, write, check)` lists the `.ei` files
+(`fs.walk` of a directory minus `target`, `.git`, `.vendor`, `node_modules`; a file is itself), formats each
+with `fmt.format` and prints the text (a single file, no flag), writes it when it differs (`--write`, one
+`formatted <path>` line each) or lists it (`--check`, exit 1). `main.ei` only parses the two flags (Args
+`write`, `check`; usage error with any other command) and hands over before it reads the file. The `"""`
+refusal in `fmt.pass` is gone: the lexer returns the whole string (opening line, text, closing line) as one
+token, `pass` copies a token's bytes and never looks inside, and the shape check compares token text, so the
+string's lines and the indentation its closing delimiter removes stay as written, while the line the string
+starts on is indented like any other. tests/fmt/run.sh now formats every file of the repository that lexes
+(it refused 6 with `"""` before) and tests `--check`/`--write` on a directory (a multi-line string, CRLF, a clean
+file left untouched, `target/` skipped, a file that does not lex making the exit code 1).
+eider-analyzer's `textDocument/formatting` (`lsp_features.formatting`, through `lsp_analysis.format`) returns the
+formatted buffer as one edit over the whole text, `[]` when nothing changes and `null` for a buffer that does
+not lex.
+

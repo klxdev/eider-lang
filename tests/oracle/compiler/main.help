@@ -44,7 +44,8 @@ usage:
                                              --overlay (repeatable) reads <path> from the file <text>
   eiderc doc <file.ei | dir> [--json] [--private]  the API of a package directory or a program's package:
                                              items, signatures, doc comments (doc.ei); --private: also non-pub items
-  eiderc fmt <file.ei>                       print the file in the canonical layout (fmt.ei; no options)
+  eiderc fmt <file.ei>                       print the file in the canonical layout (fmt.ei)
+  eiderc fmt --write|--check <file|dir>      rewrite the files in place / list the files whose layout would change
   eiderc help | --help | -h                  print this text
   eiderc version | --version                 print `eiderc <version>` (VERSION; docs/site/tooling/releases.md)
 
