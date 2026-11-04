@@ -6345,7 +6345,9 @@ fn match_arms(inout c: C, m: ast.Node, i: u32, a: Arms, sc: Scrut, dest: Dest, e
     let then = ir.close(inout c.ir, tm)
     let r1 = finish_arm(c, m, i, result, t)?
     let em = ir.open(c.ir)
-    let r = match_arms(inout c, m, i + 1, a, sc, dest, sibling_exp(c, dest, exp, r1), r1)?
+    // (the seed doesn't evaluate a call argument before an `inout` access yet: bound first)
+    let exp2 = sibling_exp(c, dest, exp, r1)
+    let r = match_arms(inout c, m, i + 1, a, sc, dest, exp2, r1)?
     let els = ir.close(inout c.ir, em)
     emit(inout c, ir.S_IF, 0, cond, then, els, 0, m.line)
     Ok(r)

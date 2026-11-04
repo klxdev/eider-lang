@@ -5,6 +5,24 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## 0.7.0 (unreleased)
+
+Group 1, language and compiler ergonomics (more items come before the release).
+
+- **Type arguments at a call** (#149): `decode[Order](text)`, `make[i32]()`; fewer than the function
+  has leaves the rest to inference, more is E0405. A `let` annotation now reaches the callee's `Ok`/`Some`
+  type through `?` (`let order: Order = decode(text)?`). eider-analyzer and tree-sitter-eider follow
+  (`call_expression` has a `type_arguments` field).
+- **Arms inform each other** (#143): `None`, `List.new()` and an integer literal in a `match` or `if` with no
+  expected type take their type from a sibling arm (the arms above, or an `x as T` arm anywhere).
+- **`panic` takes a `String`** (#47); std/testing's `assert_eq`, `assert_ne` and `assert_ok` stop the
+  test with their message as the panic message (and no longer need `uses io`).
+- **An argument that is a call is evaluated before an `inout` access** (#145): `svc.add("a", schema(svc.add("b", x)))`
+  and `xs.push(xs.len())` check; a place or an operator argument still conflicts (E0301).
+- Fixes: an error in a `test` block names its own file (#162; the compiler's recorded expectations
+  that had the stale file are re-blessed); `eiderc lint` takes a module or package with no `main` (#163);
+  a method chain of hundreds of calls compiles (#153: the Eider `main` has a 512 MiB stack, `EIDER_MAIN_STACK`).
+
 ## 0.6.1
 
 A patch for the clang that builds programs. Nothing in the language, std or the siblings changes
