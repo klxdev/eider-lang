@@ -128,7 +128,7 @@ fn main() uses io {
 ```
 
 Only some positions may hold an `if`, `match` or block used for its value: a statement, a
-function's final expression, and the right side of `let`, `=` and `return` (E0103; see
+function's final expression, a call argument, and the right side of `let`, `=` and `return` (E0103; see
 [Expressions](expressions.md)).
 
 ### Capabilities

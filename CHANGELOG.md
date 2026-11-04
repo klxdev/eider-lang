@@ -23,6 +23,9 @@ Group 1, language and compiler ergonomics (more items come before the release).
   does (`let Some(x) = find(id) else { return Err(..) }`); the names are in scope for the rest of the
   block. The `else` block must end with `return`, `break`, `continue`, `panic` or a call that never
   returns (new error E0120). tree-sitter-eider and eider-analyzer follow.
+- **`if`, `match` and blocks as call arguments** (#48): `add(if c { 1 } else { 2 }, 3)`,
+  `xs.push(match n { 0 => 1, _ => 2 })`, `Point(if c { 1 } else { 2 }, y)`; an earlier argument keeps the value it had
+  before the form ran. Still E0103 as an operand or a field initializer.
 - Fixes: an error in a `test` block names its own file (#162; the compiler's recorded expectations
   that had the stale file are re-blessed); `eiderc lint` takes a module or package with no `main` (#163);
   a method chain of hundreds of calls compiles (#153: the Eider `main` has a 512 MiB stack, `EIDER_MAIN_STACK`).

@@ -66,6 +66,7 @@ compile-fail tests (tests/checks/fail)
   ok   e0401_mixed_widths.ei        E0401 at 2:34
   ok   e0401_narrowing.ei           E0401 at 3:16
   ok   e0401_repeat_owned.ei        E0401 at 3:21
+  ok   e0401_value_arg_unit.ei      E0401 at 4:17
   ok   e0402_null.ei                E0402 at 3:16
   ok   e0405_closure_arity.ei       E0405 at 4:22
   ok   e0405_type_args_count.ei     E0405 at 4:13
@@ -153,8 +154,9 @@ compile-pass tests (tests/checks/pass)
   ok   pass_match_all.ei
   ok   pass_shadow_in_inner_scope.ei
   ok   pass_type_args.ei
+  ok   pass_value_args.ei
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-154 passed, 0 failed; error-code coverage 74/74
+156 passed, 0 failed; error-code coverage 74/74
 --- exit 0

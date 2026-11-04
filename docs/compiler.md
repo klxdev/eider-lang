@@ -4668,3 +4668,24 @@ for a refutable one, whose help now mentions `let ... else`). The bindings are t
 (references into a place scrutinee, as in "References"). tree-sitter-eider: `let_declaration` takes a
 `variant_pattern` or `record_pattern` and an optional `alternative` block, and `if_expression` is
 `prec.right` so that `let P = if c { a } else { b } else { r }` gives the first `else` to the `if`.
+
+## C8.72: `if`, `match` and blocks as call arguments (#48)
+
+Decision C853. Code: check.ei (`allow_value_args`, `value_arg`, `snap_read`, `value_arg_after`; `C.vf_args`;
+`evaluated_first`). Tests: tests/run/value_args.ei, tests/checks/pass/pass_value_args.ei,
+tests/checks/fail/e0401_value_arg_unit.ei. `call` and `method_call` put the arguments that are an
+`EIf`, `EMatch`, `EBlock` or `EUnsafe` into `vf_args` before they check anything; `expr` takes the
+value-form case of its fallback arm (the former E0103) for exactly those nodes, so a value form
+anywhere else (an operand, a record literal's field) is E0103 as before. `value_arg` makes a
+temporary of no type yet, `compile_value`s the form into it (`Dest(D_VAR, ..)`, as `let x = if ...`
+does) and sets the temporary's type to the type of the arms (E0401 for `()` and for `!`), then
+`mk_fresh`es it: an owned result is a registered temporary that the call takes like the result of
+a call. Evaluation order is the written order. A statement inside the form may assign a variable an
+earlier argument read, and the IR reads a variable into a temporary that is only a borrowed copy, so
+when a later argument of a function or constructor call is a value form (`value_arg_after`) every
+earlier argument that is a variable or place read is snapshotted (`snap_read`: a copy, or a clone of
+an owned value, registered for drop). Builtins (`xs.push(..)`, `print`) take no snapshots, and a
+method call's receiver is not snapshotted either. Because the temporary holds an owned value, no
+reference to a place, `evaluated_first` holds for a value form: `xs.push(if xs.len() > 3 { 1 } else { 2 })`
+does not conflict with the `inout` receiver.
+

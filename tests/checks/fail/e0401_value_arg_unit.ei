@@ -1,0 +1,5 @@
+// expect: E0401 4:17
+fn add(a: i32, b: i32) -> i32 { a + b }
+fn main() {
+    let n = add(if true { 1 }, 2)
+}

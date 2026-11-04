@@ -315,6 +315,9 @@ pub type C = {
     try_exp: u32,
     try_line: u32,
     try_col: u32,
+    /// the `if`/`match`/block nodes that are arguments of a call being checked: values there
+    /// (docs/compiler.md, "C8.72")
+    vf_args: Map[u32, bool],
 }
 
 /// `impl From[Source] for Target` (module md, IImpl node) and its `from` method (FnDef fd).
@@ -3778,7 +3781,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C {
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
         0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false, Rec(false, List.new(), List.new()),
         List.new(), List.new(), false, Map.new(), false, false, Map.new(), List.new(), lt, no_refs(),
-        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), no_reflect(), List.new(), List.new(), 0, lint.new_collected(), NONE, 0, 0)
+        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), no_reflect(), List.new(), List.new(), 0, lint.new_collected(), NONE, 0, 0, Map.new())
 }
 
 /// Every item of the program in load order (resolve.ei), as (module, node) pairs.
@@ -6655,9 +6658,51 @@ fn expr_raw(inout c: C, e: u32, exp: u32) -> Result[V, diag.Diag] {
         ast.EError => Err(quiet())
         _ => {
             // EIf, EMatch, EBlock, EUnsafe in expression position
-            Err(errh("E0103", n.line, n.col, s("`if`, `match` and blocks can only be used as a statement, a function's final expression, or the right side of `let`, `=` or `return`"), r"bind the result first: `let x = match ... { ... }`, then use `x`"))
+            if c.vf_args.contains(e) { return value_arg(inout c, e, n, exp) }
+            Err(errh("E0103", n.line, n.col, s("`if`, `match` and blocks can only be used as a statement, a function's final expression, a call argument, or the right side of `let`, `=` or `return`"), r"bind the result first: `let x = match ... { ... }`, then use `x`"))
         }
     }
+}
+
+/// An `if`, `match` or block as a call's argument ("C8.72"): compiled into a temporary of the
+/// type of its arms, which the call then takes like the result of a call.
+fn value_arg(inout c: C, e: u32, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
+    let l = tmp(inout c, exp, n.line)
+    let t = compile_value(inout c, e, Dest(D_VAR, l), exp)?
+    if t == types.NEVER { return Err(err("E0401", n.line, n.col, s("this expression never produces a value"))) }
+    check_bindable(c, t, t, n.line, n.col)?
+    ir.set_local_ty(inout c.ir, l, t)
+    Ok(mk_fresh(inout c, v_of(t, ir.op_local(inout c.ir, l, t)), n.line))
+}
+
+/// The arguments of call n (ECall or EMethod) that are an `if`, `match` or block are values.
+fn allow_value_args(inout c: C, n: ast.Node) {
+    for i in 0..n.d {
+        let x = arg_expr(c, at(c, n.c, i))
+        if is_value_form(c, x) { c.vf_args.insert(x, true) }
+    }
+}
+
+/// Whether any of the `len` arguments (an Arg list at `start`) after the i-th is an `if`,
+/// `match` or block.
+fn value_arg_after(c: C, start: u32, len: u32, i: u32) -> bool {
+    for j in i + 1..len {
+        if is_value_form(c, arg_expr(c, at(c, start, j))) { return true }
+    }
+    false
+}
+
+/// An argument that reads a variable or a place, when a later argument is a value form: its value
+/// at that point (the value form may assign to what it read), as a copy.
+fn snap_read(inout c: C, v: V, line: u32) -> V {
+    if !ir.op_is_local(c.ir, v.op) || is_fresh(c, v.op) { return v }
+    if !owns(c, v.ty) {
+        let t = tmp(inout c, v.ty, line)
+        emit(inout c, ir.S_COPY, t, v.op, 0, 0, v.ty, line)
+        return v_of(v.ty, ir.op_local(inout c.ir, t, v.ty))
+    }
+    let o = take(inout c, v, line)
+    mk_fresh(inout c, v_of(v.ty, o), line)
 }
 
 /// A name that isn't a local: a constant, a unit variant, or an error.
@@ -7190,6 +7235,7 @@ fn variant_index(c: C, ty: u32, sym: u32) -> u32 {
 fn arg_expr(c: C, a: u32) -> u32 { nd(c, a).a }
 
 fn call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
+    allow_value_args(inout c, n)
     at_pos(inout c, n.line, n.col)
     let r = call_in(inout c, n, exp)
     end_pos(inout c)
@@ -7296,7 +7342,8 @@ fn construct(inout c: C, line: u32, col: u32, di: u32, vkey: u64, start: u32, le
         let fa = fas[i as usize]
         let mut hint = NONE
         if !has_unbound(c, d.md, fa, sb, gs) { hint = resolve_with(inout c, d.md, fa, sb)? }
-        let v = expr(inout c, a.a, hint)?
+        let mut v = expr(inout c, a.a, hint)?
+        if value_arg_after(c, start, len, i) { v = snap_read(inout c, v, x.line) }
         if poisoned(c, v.ty) { tainted = true }
         if hint != NONE {
             if !same(c, v.ty, hint) { return Err(mismatch(c, x.line, x.col, hint, v.ty)) }
@@ -7335,6 +7382,8 @@ fn construct(inout c: C, line: u32, col: u32, di: u32, vkey: u64, start: u32, le
 fn evaluated_first(c: C, e: u32) -> bool {
     let n = nd(c, e)
     if n.kind == ast.ECall || n.kind == ast.EMethod { return true }
+    // (a value form is compiled into a temporary of its own: "C8.72")
+    if is_value_form(c, e) { return true }
     if n.kind == ast.ETry || n.kind == ast.ECast { return evaluated_first(c, n.a) }
     false
 }
@@ -7583,7 +7632,8 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
                     hint2 = inst_fn_type(inout c, xi)
                 }
             }
-            let v = expr(inout c, a.a, hint2)?
+            let mut v = expr(inout c, a.a, hint2)?
+            if value_arg_after(c, n.c, n.d, i) { v = snap_read(inout c, v, x.line) }
             ty = v.ty
             args.push(v.op)
         }
@@ -7815,6 +7865,7 @@ fn label_of(c: C, head: List[u8], name: u32) -> List[u8] {
 }
 
 fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
+    allow_value_args(inout c, n)
     at_pos(inout c, n.line, n.col)
     let r = method_call_in(inout c, n, exp, 0)
     end_pos(inout c)

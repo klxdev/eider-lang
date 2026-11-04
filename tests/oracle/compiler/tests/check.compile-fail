@@ -40,8 +40,6 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0102_payload_covered.ei     E0102 at 7:9
   ok   e0102_range_covered.ei       E0102 at 5:9
   ok   e0103_block_in_binary.ei     E0103 at 3:17
-  ok   e0103_ffi_unsafe_as_argument.ei E0103 at 4:11
-  ok   e0103_if_as_argument.ei      E0103 at 4:7
   ok   e0107_alias_duplicate.ei     E0107 at 4:6
   ok   e0107_assoc_twice_in_impl.ei E0107 at 9:10
   ok   e0107_assoc_twice_in_trait.ei E0107 at 4:10
@@ -755,6 +753,8 @@ compile-pass tests (compiler/tests/check/pass)
   ok   ffi_closure_in_unsafe.ei
   ok   ffi_mod.ei
   ok   ffi_types.ei
+  ok   ffi_unsafe_as_argument.ei
+  ok   if_as_argument.ei
   ok   s1_gen_option_ok.ei
   ok   s1_gen_unused_generic.ei
   ok   s1_generic_impl.ei

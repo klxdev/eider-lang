@@ -185,9 +185,9 @@ one
 ## E0103
 
 **`if`, `match` or a block used inside a larger expression.** They are expressions, but
-only in these positions: as a statement, as a function's (or block's) final expression, and
-as the right side of `let`, `=` or `return`. Elsewhere (an operand of `+`, a call argument)
-bind the result first.
+only in these positions: as a statement, as a function's (or block's) final expression, as
+an argument of a call, and as the right side of `let`, `=` or `return`. Elsewhere (an operand
+of `+`, a field initializer in a record literal's braces) bind the result first.
 
 ```eider,compile_fail=E0103
 fn sign(n: i32) -> i32 {

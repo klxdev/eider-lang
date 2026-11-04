@@ -42,7 +42,7 @@ A call to an extern function needs both:
 `unsafe` is lexical: it covers the calls written inside the block, including inside a
 closure written in the block. An `unsafe { ... }` block is an expression whose value is its
 last expression, subject to the same positions rule as other blocks (as a statement, a final
-expression, or the right side of `let`, `=` or `return`; E0103 elsewhere).
+expression, a call argument, or the right side of `let`, `=` or `return`; E0103 elsewhere).
 
 ```eider
 extern "c" fn abs(n: i32) -> i32

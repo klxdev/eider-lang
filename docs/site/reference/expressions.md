@@ -353,10 +353,35 @@ and `unsafe { ... }` are expressions, but only in these positions:
 - as a statement;
 - as the last expression of a block or function body, or as a closure's or match arm's
   body;
-- as the right side of `let`, of an assignment, or of `return`.
+- as the right side of `let`, of an assignment, or of `return`;
+- as an argument of a call: a function, a method, a variant or record constructor or a
+  builtin (`add(if c { 1 } else { 2 }, 3)`, `xs.push(match n { 0 => 1, _ => 2 })`).
 
-Anywhere else (an operand, a call argument, a field initializer) is E0103: bind the value
-to a name first.
+Anywhere else (an operand, a field initializer) is E0103: bind the value to a name first.
+
+A value form that is an argument is computed into a temporary when its turn comes, in the
+order the arguments are written, so an earlier argument has the value it had before the
+form ran (`f(x, { x = 100; 3 })` passes the old `x`), and the form is finished before an
+`inout` access of the call begins. Its type is the type of its arms (E0401 for `()`).
+
+```eider
+fn add(a: i32, b: i32) -> i32 { a + b }
+
+fn main() uses io {
+    let n = 3
+    print(add(if n > 2 { 10 } else { 0 }, match n {
+        3 => 5
+        _ => 0
+    }))
+    let mut x = 1
+    print(add(x, { x = 100; 3 }))
+}
+```
+
+```output
+15
+4
+```
 
 ```eider
 fn sign(n: i32) -> i32 {

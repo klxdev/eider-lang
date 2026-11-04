@@ -1,0 +1,80 @@
+// `if`, `match` and blocks as call arguments (docs/site/reference/expressions.md): a function's,
+// a method's, a constructor's, a builtin's. An earlier argument keeps the value it had.
+type Point = { x: i32, y: i32 }
+type Mode = | Fast | Slow(i32)
+type Item = { name: String, qty: i32 }
+
+fn add(a: i32, b: i32) -> i32 { a + b }
+fn show(s: String, n: i32) -> String { "{s}:{n}" }
+fn total(xs: List[Item]) -> i32 {
+    let mut t = 0
+    for i in xs { t += i.qty }
+    t
+}
+
+impl Item {
+    fn with(self, name: String, qty: i32) -> Item { Item(name, qty + self.qty) }
+}
+
+fn pick(m: Mode) -> i32 {
+    add(1, match m {
+        Fast => 10
+        Slow(n) => n * 2
+    })
+}
+
+fn label(n: i32) -> String {
+    show(match n {
+        0 => "zero".to_string()
+        1 => "one".to_string()
+        _ => "many".to_string()
+    }, n)
+}
+
+fn early(xs: List[i32]) -> i32 {
+    add(1, if xs.len() == 0 { return -1 } else { xs[0] })
+}
+
+fn main() uses io {
+    let c = true
+    print(add(if c { 1 } else { 2 }, 5))
+    print(pick(Fast))
+    print(pick(Slow(4)))
+    print(label(0))
+    print(label(7))
+    print(early(List.new()))
+    let mut xs: List[i32] = List.new()
+    xs.push(1)
+    print(early(xs))
+    // an earlier argument is read before the value form runs
+    let mut x = 1
+    print(add(x, { x = 100; 3 }))
+    let mut s = "a".to_string()
+    print(show(s, { s = "b".to_string(); 1 }))
+    print(s)
+    let mut ys: List[i32] = List.new()
+    ys.push(if c { 7 } else { 8 })
+    ys.push(match ys.len() { 1 => 9, _ => 0 })
+    print(ys)
+    let p = Point(if c { 1 } else { 2 }, match x { 100 => 5, _ => 6 })
+    print(p.y)
+    print(Some(if c { "t".to_string() } else { "f".to_string() }))
+    print(show(if c { "yes".to_string() } else { "no".to_string() }, 3))
+    let label2 = "n".to_string()
+    print(show(label2, if x > 5 { 1 } else { 0 }))
+    let it = Item("a".to_string(), 2)
+    let it2 = it.with(if c { "b".to_string() } else { "c".to_string() }, match 3 { 3 => 30, _ => 0 })
+    print(it2.qty)
+    let mut items: List[Item] = List.new()
+    items.push(Item(if c { "p".to_string() } else { "q".to_string() }, 4))
+    items.push(if items.len() > 0 { it2.copy() } else { it.copy() })
+    print(total(items))
+    print(max_of(if c { 3 } else { 9 }, if c { 4 } else { 0 }))
+}
+
+fn max_of(a: i32, b: i32) -> i32 { if a > b { a } else { b } }
+
+test "value forms as arguments" {
+    let n = 3
+    assert(add(if n > 2 { 1 } else { 0 }, match n { 3 => 2, _ => 0 }) == 3)
+}

@@ -220,8 +220,8 @@ arm        = pattern { "|" pattern } "=>"
 - `if let P = e { A } else { B }` is parsed as `match e { P => { A } _ => { B } }` (with an
   empty `B` when there is no `else`).
 - `if`, `match`, blocks and `unsafe` blocks parse anywhere a primary does; the checker
-  allows them only as a statement, a final expression, or the right side of `let`, `=` and
-  `return` (E0103).
+  allows them only as a statement, a final expression, a call argument, or the right side of
+  `let`, `=` and `return` (E0103).
 
 ## Patterns
 

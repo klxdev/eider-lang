@@ -245,7 +245,7 @@ around in core.
 | **16-bit integers** | `encoding.u16_le` returns a u32 | `u16`/`i16` |
 | ~~**String literal escapes**~~ `\r`, `\xNN`, `\u{...}` | done (docs/compiler.md "C8.17"; `\0` refused: strings hold no NUL); http writes `\r\n` literals | |
 | ~~**`panic` with a computed message**~~ | done (#47, docs/compiler.md "C8.70"): `panic` takes a `String`; `assert_eq`, `assert_ne` and `assert_ok` panic with their message, and no longer need `uses io` | |
-| **`if`/`match` as a call argument** (E0103) | values are bound to a `let` first | expression-position `if` |
+| ~~**`if`/`match` as a call argument**~~ | done (#48, docs/compiler.md "C8.72"): `f(if c { a } else { b })` and `match` check | |
 | **Floats** (C9) | no float formatting or parsing in `fmt`/`strings` | f64 |
 | **Calling a trait method by its trait** (`time.Clock.sleep(c, d)`) | method syntax only (`c.sleep(d)`), which is ambiguous if a type has an own method of that name | qualified calls |
 

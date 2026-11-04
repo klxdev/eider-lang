@@ -1,0 +1,9 @@
+type Point = { x: i32, y: i32 }
+fn add(a: i32, b: i32) -> i32 { a + b }
+fn f(c: bool, o: Option[i32]) -> i32 {
+    let p = Point(if c { 1 } else { 2 }, match o { Some(v) => v, None => 0 })
+    let mut xs: List[i32] = List.new()
+    xs.push(if c { 1 } else { 2 })
+    add(p.x, { let k = p.y; k + 1 })
+}
+fn main() {}

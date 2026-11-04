@@ -162,7 +162,7 @@ for several statements), or one of `return`, `break`, `continue` and `assert`; a
 assignment needs a block (`Some(mut v) => { v += 1 }`).
 
 As an expression, every arm's value must have the same type (E0401), and the `match` is
-subject to the positions rule for `if`, `match` and blocks (E0103, see
+subject to the positions rule for `if`, `match` and blocks (E0103; a call argument is allowed, see
 [Expressions](expressions.md#if)).
 
 **Guards.** `pattern if cond =>` runs the arm only when the pattern matches and `cond`, a
