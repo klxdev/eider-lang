@@ -185,11 +185,34 @@ leave a `comptime for`.
 
 A reflective body is checked once per type it is used for, with the `comptime for` loops
 unrolled over that type's fields or variants. `eiderc expand file.ei` prints those
-specializations as the typed IR the backends compile (the same text `eiderc ir` prints for
-them), so what a `@[derive]`d method does for `Point` can be read, not guessed; `eiderc expand
-file.ei Point.enc` prints the functions with that text in their name. The language server
+specializations as Eider source, so what a `@[derive]`d method does for `Point` can be read,
+not guessed:
+
+```text
+// requested by the call at app.ei:24:26
+fn Point.enc(self: Point, inout out: String) {
+    // iteration of an unrolled `comptime for`
+    {
+        self.x.enc(inout out)
+    }
+    // iteration of an unrolled `comptime for`
+    {
+        self.y.enc(inout out)
+    }
+}
+```
+
+The source is read back from the typed IR the backends compile: temporaries are folded into
+the expressions that use them, fields are named, and the operations the source never spells
+(clones, drops, bounds-check markers) are left out, so it is for reading, not for compiling
+again. `eiderc expand --ir file.ei` prints the IR itself (the text `eiderc ir` prints for
+those functions). `eiderc expand file.ei Point.enc` prints the functions with that text in
+their name. The comment above a specialization names the call that asked for it; when that call
+is itself inside another specialization, the chain follows (`requested by the call at
+app.ei:8:22 (in `Pair.enc`), requested by the call at app.ei:24:26`). The language server
 answers the same question through the custom request `eider/expand` (the specializations for
-the symbol at a position), and a call of a derived method already goes to the trait's
-reflective body. When the body fails to check for one type, the error names the iteration
-(`field y of Point`) and the specialization (`while specializing Point.enc`).
+the symbol at a position, as source), and a call of a derived method already goes to the
+trait's reflective body. When the body fails to check for one type, the error names the
+iteration (`field y of Point`), the specialization (`while specializing Point.enc`) and the
+call that asked for it (`requested by the call at app.ei:15:5`).
 

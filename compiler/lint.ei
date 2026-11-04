@@ -84,7 +84,8 @@ pub type CapRec = { m: u32, node: u32, used: u32 }
 pub type Collected = { used: u32, cur: u32, recs: List[CapRec], hits: List[Hit], refl: bool, reflective: List[Refl] }
 
 /// An instance whose body used comptime reflection: its IR function and the declaration (module, fn node) it was specialized from.
-pub type Refl = { f: u32, m: u32, node: u32 }
+/// `req`: the call that asked for it, as `requested by the call at file:line:col` (empty if none).
+pub type Refl = { f: u32, m: u32, node: u32, req: List[u8] }
 
 pub fn new_collected() -> Collected { Collected(0, 4294967295, List.new(), List.new(), false, List.new()) }
 

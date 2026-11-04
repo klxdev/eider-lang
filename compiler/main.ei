@@ -43,6 +43,7 @@ import eiderc.llvm_abi as abi
 import eiderc.wasm
 import eiderc.pkgtest
 import eiderc.fmtcmd
+import eiderc.expsrc
 import eiderc.sanitize
 import eiderc.suite
 import eiderc.ide
@@ -74,6 +75,8 @@ type Args = {
     /// `fmt --write`, `fmt --check` (fmtcmd.ei)
     write: bool,
     check: bool,
+    /// `expand --ir`: the typed IR instead of source (expsrc.ei)
+    ir_text: bool,
 }
 
 /// Comparisons go through a function so no owned temporary sits in an `else if` condition
@@ -120,8 +123,9 @@ fn usage_text() -> List[u8] {
         "  eiderc lint [<file.ei>] [--json] [--deny|--warn|--allow <lint|group|all>]...  the lints (lint.ei) of a package's",
         "                                             modules; no file: the package here; `--list` lists them; levels also come from",
         "                                             [lints] in eider.toml; exit 1 if a denied lint is hit",
-        "  eiderc expand <file.ei> [<name>]           the specialized IR of the bodies that use comptime reflection (for example",
-        "                                             `@[derive]`d methods); <name>: every function whose name contains it",
+        "  eiderc expand <file.ei> [<name>] [--ir]    the specialized bodies that use comptime reflection (for example `@[derive]`d",
+        "                                             methods) as Eider source, with the call that asked for each (--ir: as typed IR);",
+        "                                             <name>: every function whose name contains it",
         "  eiderc caps <file.ei>                      each package's capability use, one JSON line per capability",
         "  eiderc migrate-var <file.ei>               print the file with its `var`s rewritten as `let mut` (deprecated `var`)",
         "  eiderc migrate-imports <file.ei> [--json]  print the file with its quoted imports in the dotted form",
@@ -244,6 +248,7 @@ fn parse_args() -> Args uses io, fs {
     let mut list = false
     let mut write = false
     let mut check = false
+    let mut ir_text = false
     let mut bench = false
     let mut fuzz: u64 = 0
     let mut filter: List[u8] = List.new()
@@ -318,6 +323,8 @@ fn parse_args() -> Args uses io, fs {
             write = true
         } else if is(a, "--check") {
             check = true
+        } else if is(a, "--ir") {
+            ir_text = true
         } else if is(a, "--bench") {
             bench = true
         } else if is(a, "--fuzz") {
@@ -398,7 +405,8 @@ fn parse_args() -> Args uses io, fs {
     if filter.len() > 0 && !(is(cmd, "test") || is(cmd, "expand")) { usage_error(sys.lit("`--filter` goes with `test`")) }
     if (lints.len() > 0 || list) && !is(cmd, "lint") { usage_error(sys.lit("`--deny`, `--warn`, `--allow` and `--list` go with `lint`")) }
     if (write || check) && !is(cmd, "fmt") { usage_error(sys.lit("`--write` and `--check` go with `fmt`")) }
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, wasm_core, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, debug, crypto, portable, filter, bench, fuzz, lints, list, write, check)
+    if ir_text && !is(cmd, "expand") { usage_error(sys.lit("`--ir` goes with `expand`")) }
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, wasm_core, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, debug, crypto, portable, filter, bench, fuzz, lints, list, write, check, ir_text)
 }
 
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
@@ -689,11 +697,22 @@ fn test_flags(a: Args) -> List[List[u8]] {
 /// `<name>`.
 fn run_expand(c: check.C, a: Args) uses io {
     let mut want: List[u32] = List.new()
+    let mut notes: List[List[u8]] = List.new()
     if a.filter.len() == 0 {
-        for r in c.lint.reflective { want.push(r.f) }
+        for r in c.lint.reflective {
+            want.push(r.f)
+            notes.push(r.req.copy())
+        }
     } else {
         for i in 0..c.ir.fns.len() {
-            if bytes.find(c.ir.fns[i].name, a.filter, 0).is_some() { want.push(i as u32) }
+            if bytes.find(c.ir.fns[i].name, a.filter, 0).is_some() {
+                want.push(i as u32)
+                let mut req: List[u8] = List.new()
+                for r in c.lint.reflective {
+                    if r.f == i as u32 { req = r.req.copy() }
+                }
+                notes.push(req)
+            }
         }
     }
     if want.len() == 0 {
@@ -701,7 +720,11 @@ fn run_expand(c: check.C, a: Args) uses io {
         env.exit(1)
         return
     }
-    io.out(ir.dump_fns(c.ir, c.t, c.p.names, want))
+    if a.ir_text {
+        io.out(ir.dump_fns(c.ir, c.t, c.p.names, want))
+    } else {
+        io.out(expsrc.dump(c.ir, c.t, c.p.names, want, notes))
+    }
 }
 
 /// `eiderc lint` (lint.ei): the findings for the modules of the entry file's package, in

@@ -1,0 +1,120 @@
+// pkgtest: expand
+// the specializations as Eider source (docs/compiler.md, "C8.76"): the unrolled `comptime for`, the `comptime if`
+// that left a field out, folded temporaries, named locals, an enum, a generic type, and the chain of calls that
+// asked for each instance
+// Reflective default implementations (docs/compiler.md, "C8.42"): `@derive` on a trait makes a
+// record or enum that doesn't implement it have it, by the trait's default methods run over the
+// type's own fields and variants; the type's package can still implement it.
+attr enc { skip: bool = false }
+
+@[derive]
+trait Enc {
+    fn enc(self, inout out: String) {
+        comptime if is_enum_type[Self] {
+            comptime for v in variants(Self) {
+                if v.matches(self) {
+                    out.push_str(v.name)
+                    out.push_str("(")
+                    let mut first = true
+                    comptime for f in fields(v) {
+                        if !first { out.push_str(" ") }
+                        first = false
+                        self.[f].enc(inout out)
+                    }
+                    out.push_str(")")
+                }
+            }
+        } else {
+            out.push_str(r"{")
+            let mut first = true
+            comptime for f in fields(Self) {
+                comptime if !attr[enc](f).skip {
+                    if !first { out.push_str(", ") }
+                    first = false
+                    out.push_str(f.name)
+                    out.push_str("=")
+                    self.[f].enc(inout out)
+                }
+            }
+            out.push_str(r"}")
+        }
+    }
+    fn tag() -> str { "derived" }
+}
+
+impl Enc for i64 {
+    fn enc(self, inout out: String) { out.append(String.from_int(self)) }
+}
+
+impl Enc for bool {
+    fn enc(self, inout out: String) { if self { out.push_str("true") } else { out.push_str("false") } }
+}
+
+impl Enc for String {
+    fn enc(self, inout out: String) {
+        out.push_str("'")
+        out.append(self)
+        out.push_str("'")
+    }
+}
+
+impl[T: Enc] Enc for List[T] {
+    fn enc(self, inout out: String) {
+        out.push_str("[")
+        for i in 0..self.len() {
+            if i > 0 { out.push_str(" ") }
+            self[i].enc(inout out)
+        }
+        out.push_str("]")
+    }
+}
+
+@[derive(Enc)]
+type Point = { x: i64, y: i64 }
+type Cache = { n: u8 }
+@[derive(Enc)]
+type Line = { from: Point, to: Point, tags: List[String], @[enc(skip)] cache: Cache }
+@[derive(Enc)]
+type Shape = | Circle(r: i64) | Rect(w: i64, h: i64) | Empty
+@[derive(Enc)]
+type Wrap[T] = { inner: T, ok: bool }
+
+// the owning package overrides the derived implementation
+type Secret = { key: String }
+
+impl Enc for Secret {
+    fn enc(self, inout out: String) { out.push_str("<secret>") }
+    fn tag() -> str { "own" }
+}
+
+@[derive(Enc)]
+type Holder = { s: Secret, p: Point }
+
+fn show[T: Enc](x: T) -> String {
+    let mut out = String.from("")
+    x.enc(inout out)
+    out
+}
+
+fn tag_of[T: Enc](x: T) -> str { T.tag() }
+
+fn main() uses io {
+    let mut tags: List[String] = List.new()
+    tags.push(String.from("a"))
+    tags.push(String.from("b"))
+    let mut pts: List[Point] = List.new()
+    pts.push(Point(1, 1))
+    pts.push(Point(2, 2))
+    print(show(Point(1, 2)))
+    print(show(Line(Point(0, 0), Point(3, 4), tags, Cache(1))))
+    print(show(Circle(5)))
+    print(show(Rect(2, 3)))
+    print(show(Empty))
+    print(show(Wrap(Point(7, 8), true)))
+    print(show(pts))
+    print(show(Secret(String.from("k"))))
+    print(show(Holder(Secret(String.from("k")), Point(5, 6))))
+    print(tag_of(Point(0, 0)))
+    print(tag_of(Secret(String.from("k"))))
+    print(Point.tag())
+}

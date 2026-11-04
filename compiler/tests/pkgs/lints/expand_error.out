@@ -4,6 +4,6 @@ error[E0115]: type f64 has no method `enc`
    |
 10 |             self.[f].enc(inout out)
    |                      ^
-  help: in the `comptime for` iteration over field `y` of Point; while specializing `Point.enc` (`eiderc expand` prints it)
+  help: in the `comptime for` iteration over field `y` of Point; while specializing `Point.enc` (`eiderc expand` prints it); requested by the call at compiler/tests/pkgs/lints/expand_error.ei:24:19
 error: 1 error
 --- exit 1

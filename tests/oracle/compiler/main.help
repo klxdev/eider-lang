@@ -26,8 +26,9 @@ usage:
   eiderc lint [<file.ei>] [--json] [--deny|--warn|--allow <lint|group|all>]...  the lints (lint.ei) of a package's
                                              modules; no file: the package here; `--list` lists them; levels also come from
                                              [lints] in eider.toml; exit 1 if a denied lint is hit
-  eiderc expand <file.ei> [<name>]           the specialized IR of the bodies that use comptime reflection (for example
-                                             `@[derive]`d methods); <name>: every function whose name contains it
+  eiderc expand <file.ei> [<name>] [--ir]    the specialized bodies that use comptime reflection (for example `@[derive]`d
+                                             methods) as Eider source, with the call that asked for each (--ir: as typed IR);
+                                             <name>: every function whose name contains it
   eiderc caps <file.ei>                      each package's capability use, one JSON line per capability
   eiderc migrate-var <file.ei>               print the file with its `var`s rewritten as `let mut` (deprecated `var`)
   eiderc migrate-imports <file.ei> [--json]  print the file with its quoted imports in the dotted form

@@ -80,6 +80,9 @@ type FnDef = {
 /// symbols in `capl` [cstart, clen).
 type Inst = {
     fd: u32, sstart: u32, slen: u32, ir: u32, ret: u32, pstart: u32, plen: u32, cstart: u32, clen: u32,
+    /// who asked for the instance first: the module and the position (line * 2^32 + column; 0:
+    /// not a call) of the call being checked, and the instance whose body it is in (NONE: none)
+    rm: u32, rpos: u64, rq: u32,
 }
 
 /// A substitution of type parameters (symbols; `Self` is intern.S_SELF_TYPE) by types.
@@ -4806,6 +4809,12 @@ fn instantiate(inout c: C, fi: u32, sb: Subst) -> Result[u32, diag.Diag] {
     }
     inst.sstart = c.sub_s.len() as u32
     inst.slen = sb.syms.len() as u32
+    // the call being checked asked for it (docs/compiler.md, "C8.76")
+    if c.rf.wpos.len() > 0 {
+        inst.rm = c.am.copy()
+        inst.rpos = c.rf.wpos[c.rf.wpos.len() - 1]
+    }
+    inst.rq = c.rx.cur.copy()
     for i in 0..sb.syms.len() {
         c.sub_s.push(sb.syms[i])
         c.sub_t.push(sb.tys[i])
@@ -4885,7 +4894,7 @@ fn signature(inout c: C, fi: u32) -> Result[Inst, diag.Diag] {
     for x in ps { c.ptys.push(x) }
     let cstart = c.capl.len() as u32
     for x in caps { c.capl.push(x) }
-    Ok(Inst(fi, 0, 0, NONE, ret, pstart, ps.len() as u32, cstart, caps.len() as u32))
+    Ok(Inst(fi, 0, 0, NONE, ret, pstart, ps.len() as u32, cstart, caps.len() as u32, resolve.NOMOD, 0, NONE))
 }
 
 // ---- Capability sets (docs/compiler.md, "C8.46")
@@ -5039,6 +5048,7 @@ fn trap_file(inout c: C, m: u32) -> u32 {
 }
 
 fn check_test(inout c: C, m: u32, n: ast.Node) -> Result[bool, diag.Diag] {
+    c.rx.cur = NONE
     c.tsubst = no_subst()
     c.lint.cur = resolve.NOSYM
     c.cur_all = true
@@ -5068,6 +5078,7 @@ fn check_test(inout c: C, m: u32, n: ast.Node) -> Result[bool, diag.Diag] {
 fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] {
     let dstart = c.diags.len()
     c.lint.refl = false
+    c.rx.cur = ii
     let r = check_fn_body(inout c, ii)
     // what a body needs is known only when it checked cleanly (an error or a skipped statement
     // may have hidden a use): `unused_uses` judges no other
@@ -5078,10 +5089,16 @@ fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] {
     if !c.lint.refl { return r }
     let irf = c.insts[ii as usize].ir.copy()
     let fdr = c.fdefs[c.insts[ii as usize].fd as usize].copy()
-    c.lint.reflective.push(lint.Refl(irf, fdr.md, fdr.node))
+    let req = requested_by(c, ii)
+    c.lint.reflective.push(lint.Refl(irf, fdr.md, fdr.node, req.copy()))
     let mut note = s("while specializing `")
     bytes.append(inout note, c.ir.fns[irf as usize].name)
     bytes.append(inout note, s("` (`eiderc expand` prints it)"))
+    if req.len() > 0 {
+        note.push(59)
+        note.push(32)
+        bytes.append(inout note, req)
+    }
     for i in dstart..c.diags.len() {
         let mut d = c.diags[i].copy()
         d.help = joined_help(d.help, note)
@@ -5095,6 +5112,48 @@ fn check_fn(inout c: C, ii: u32) -> Result[bool, diag.Diag] {
         }
         Ok(x) => { return Ok(x) }
     }
+}
+
+/// `file:line:col` of the call that asked for instance ii, or empty if none did.
+fn request_pos(c: C, ii: u32) -> List[u8] {
+    let inst = c.insts[ii as usize]
+    if inst.rm == resolve.NOMOD || inst.rpos == 0 { return List.new() }
+    let mut o = c.p.mods[inst.rm as usize].path.copy()
+    o.push(58)
+    bytes.append(inout o, bytes.from_u64(inst.rpos / 4294967296))
+    o.push(58)
+    bytes.append(inout o, bytes.from_u64(inst.rpos % 4294967296))
+    o
+}
+
+/// Which call asked for the specialization of instance ii ("C8.76"): `requested by the call at
+/// f.ei:19:5`, and while the asking call is itself in a reflective specialization, `(in
+/// `Pair.enc`), requested by the call at ...` up the chain. Empty if no call is known.
+fn requested_by(c: C, ii: u32) -> List[u8] {
+    let first = request_pos(c, ii)
+    if first.len() == 0 { return List.new() }
+    let mut out = s("requested by the call at ")
+    bytes.append(inout out, first)
+    let mut cur = c.insts[ii as usize].rq.copy()
+    let mut depth = 0
+    while depth < 8 && cur != NONE {
+        let mut refl = false
+        for r in c.lint.reflective {
+            if r.f == c.insts[cur as usize].ir { refl = true }
+        }
+        if !refl { break }
+        bytes.append(inout out, s(" (in `"))
+        bytes.append(inout out, c.ir.fns[c.insts[cur as usize].ir as usize].name)
+        out.push(96)
+        out.push(41)
+        let up = request_pos(c, cur)
+        if up.len() == 0 { break }
+        bytes.append(inout out, s(", requested by the call at "))
+        bytes.append(inout out, up)
+        cur = c.insts[cur as usize].rq.copy()
+        depth += 1
+    }
+    out
 }
 
 fn joined_help(h: List[u8], note: List[u8]) -> List[u8] {
@@ -9701,9 +9760,9 @@ type AttrDef = { def: u32, has: List[bool], vals: List[ALit], mods: List[bool] }
 
 /// What reflection keeps: declared attributes, the attribute uses, the comptime bindings in
 /// scope ("Reflection" below).
-type Reflect = { defs: List[AttrDef], found: List[AttrUse], binds: List[CtBind] }
+type Reflect = { defs: List[AttrDef], found: List[AttrUse], binds: List[CtBind], cur: u32 }
 
-fn no_reflect() -> Reflect { Reflect(List.new(), List.new(), List.new()) }
+fn no_reflect() -> Reflect { Reflect(List.new(), List.new(), List.new(), NONE) }
 
 /// Whether type definition di is an attribute's declaration.
 fn is_attr_def(c: C, di: u32) -> bool {

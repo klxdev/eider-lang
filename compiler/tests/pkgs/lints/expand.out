@@ -1,42 +1,26 @@
 
-fn Pair.enc -> ()
-  %0 param self: Pair
-  %1 inout out: String
-  %2 temp: Point
-  %3 temp: i64
-  {
-    loop {
-      %2 = read %0.0
-      call Point.enc(%2, inout %1)
-    } step {
-      break
+// requested by the call at compiler/tests/pkgs/lints/expand.ei:24:26
+fn Pair.enc(self: Pair, inout out: String) {
+    // iteration of an unrolled `comptime for`
+    {
+        self.a.enc(inout out)
     }
-    loop {
-      %3 = read %0.1
-      call i64.enc(%3, inout %1)
-    } step {
-      break
+    // iteration of an unrolled `comptime for`
+    {
+        self.b.enc(inout out)
     }
-  }
+}
 
-fn Point.enc -> ()
-  %0 param self: Point
-  %1 inout out: String
-  %2 temp: i64
-  %3 temp: i64
-  {
-    loop {
-      %2 = read %0.0
-      call i64.enc(%2, inout %1)
-    } step {
-      break
+// requested by the call at compiler/tests/pkgs/lints/expand.ei:8:22 (in `Pair.enc`), requested by the call at compiler/tests/pkgs/lints/expand.ei:24:26
+fn Point.enc(self: Point, inout out: String) {
+    // iteration of an unrolled `comptime for`
+    {
+        self.x.enc(inout out)
     }
-    loop {
-      %3 = read %0.1
-      call i64.enc(%3, inout %1)
-    } step {
-      break
+    // iteration of an unrolled `comptime for`
+    {
+        self.y.enc(inout out)
     }
-  }
+}
 --- stderr
 --- exit 0

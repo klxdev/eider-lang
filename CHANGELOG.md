@@ -35,6 +35,10 @@ Group 1, language and compiler ergonomics (more items come before the release).
 - **`eiderc fmt --write` and `--check`** (#150): rewrite a file or every `.ei` file under a directory in place
   (`eiderc fmt --write .`), or list the files whose layout would change (exit 1); files with `"""` strings are
   formatted now; eider-analyzer answers `textDocument/formatting` with the same layout.
+- **`eiderc expand` prints Eider source** (#159): the specialization of a reflective body (`@[derive]`d methods) as
+  the code a person would have written for that type, under a comment naming the call that asked for it; `--ir`
+  prints the typed IR as before. An error inside a specialization now also says `requested by the call at
+  file:line:col` (a chain through nested specializations). eider-analyzer's `eider/expand` serves the source.
 - Fixes: an error in a `test` block names its own file (#162; the compiler's recorded expectations
   that had the stale file are re-blessed); `eiderc lint` takes a module or package with no `main` (#163);
   a method chain of hundreds of calls compiles (#153: the Eider `main` has a 512 MiB stack, `EIDER_MAIN_STACK`).

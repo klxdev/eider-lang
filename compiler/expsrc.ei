@@ -1,0 +1,828 @@
+// expsrc: the typed IR of a function printed back as Eider source (`eiderc expand`,
+// docs/compiler.md, "C8.76"). The checker unrolls `comptime for` and resolves `comptime if`
+// straight into IR, so a specialization has no source of its own; this module reads the
+// IR back as the code a person would have written for that type:
+//
+//   - the IR's temporaries are folded into the expression that uses them (one definition,
+//     one use, nothing emitted between them), so `%2 = read %0.0; call i64.enc(%2, inout %1)`
+//     is `self.x.enc(inout out)`; a temporary with several uses, or whose evaluation would
+//     change order, is a `let tN = ...` line;
+//   - field names come from the type, `a.f(b)` for a call of a function whose first
+//     parameter is `self`;
+//   - ownership operations the source does not spell (`clone`, `drop`, `move`, reference
+//     notes and bounds-check markers) are left out;
+//   - an unrolled `comptime for` iteration is a block under a `// iteration` comment.
+//
+// It is for reading: the text is meant to be understood, not compiled again (the IR is what
+// the backends use, `eiderc expand --ir` prints that).
+
+import core.sys
+import std.bytes
+import eiderc.ast
+import eiderc.intern
+import eiderc.types
+import eiderc.ir
+import eiderc.diag
+
+/// An inlined temporary waiting for its use: its text, whether evaluating it has an effect
+/// (a call: it must keep its place in the order), and whether it needs parentheses as an operand.
+type Pend = { l: u32, text: List[u8], eff: bool, compound: bool }
+
+type St = {
+    ir: ir.Ir,
+    t: types.Types,
+    names: intern.Interner,
+    lstart: u32,
+    /// reads and definitions of each local of the function
+    nuse: List[u32],
+    defs: List[u32],
+    /// locals that are written after their definition (`let mut`)
+    stored: List[bool],
+    counting: bool,
+    pend: List[Pend],
+    /// temporaries the statement being printed has read from `pend`
+    taken: List[u32],
+    /// temporaries printed as a name from now on (flushed)
+    named: List[u32],
+    out: List[u8],
+}
+
+fn put(inout st: St, x: str) { bytes.append(inout st.out, sys.lit(x)) }
+fn putb(inout st: St, x: List[u8]) { bytes.append(inout st.out, x) }
+
+fn s(x: str) -> List[u8] { sys.lit(x) }
+
+fn cat(a: List[u8], b: List[u8]) -> List[u8] { bytes.concat(a, b) }
+
+fn indent(inout st: St, depth: u32) {
+    for i in 0..depth { put(inout st, "    ") }
+}
+
+fn local_of(st: St, l: u32) -> ir.Local { st.ir.locals[(st.lstart + l) as usize].copy() }
+
+fn tname(l: u32) -> List[u8] {
+    let mut n = s("t")
+    bytes.append(inout n, bytes.from_u64(l as u64))
+    n
+}
+
+fn lname(st: St, l: u32) -> List[u8] {
+    let lc = local_of(st, l)
+    if lc.kind == ir.L_TEMP { return tname(l) }
+    intern.name(st.names, lc.name)
+}
+
+fn ty_text(st: St, ty: u32) -> List[u8] {
+    let mut o: List[u8] = List.new()
+    types.show_into(inout o, st.t, st.names, ty)
+    o
+}
+
+fn find_pend(st: St, l: u32) -> Option[usize] {
+    for i in 0..st.pend.len() {
+        if st.pend[i].l == l { return Some(i) }
+    }
+    None
+}
+
+fn is_named(st: St, l: u32) -> bool { st.named.contains(l) }
+
+// ---- operands and places
+
+fn quoted(x: List[u8]) -> List[u8] {
+    let mut raw: List[u8] = List.new()
+    diag.debug_str(inout raw, x)
+    // a brace in a literal is an interpolation hole: double it
+    let mut o: List[u8] = List.new()
+    for c in raw {
+        o.push(c)
+        if c == 123 || c == 125 { o.push(c) }
+    }
+    o
+}
+
+fn hex(v: u64) -> List[u8] {
+    let mut o = s("0x")
+    let mut started = false
+    let mut i: i64 = 15
+    while i >= 0 {
+        let d = ((v / pow16(i as u32)) % 16) as u8
+        if d != 0 || started || i == 0 {
+            started = true
+            if d < 10 { o.push(48 + d) } else { o.push(87 + d) }
+        }
+        i -= 1
+    }
+    o
+}
+
+fn pow16(n: u32) -> u64 {
+    let mut r: u64 = 1
+    for i in 0..n { r = r *% 16 }
+    r
+}
+
+/// An operand of an operator as text: a folded compound expression is parenthesized.
+fn op(inout st: St, id: u32) -> List[u8] { opx(inout st, id, true) }
+
+/// An operand standing alone (an argument, a condition, a value): never parenthesized.
+fn ob(inout st: St, id: u32) -> List[u8] { opx(inout st, id, false) }
+
+/// An operand as text. Reading a temporary that is waiting takes its text.
+fn opx(inout st: St, id: u32, wrap: bool) -> List[u8] {
+    let x = st.ir.ops[id as usize].copy()
+    if x.kind == ir.O_INT {
+        let ik = types.ik(st.t, x.ty)
+        if types.signed(ik) && x.v >= 9223372036854775808 {
+            return cat(s("-"), bytes.from_u64(0 -% x.v))
+        }
+        return bytes.from_u64(x.v)
+    }
+    if x.kind == ir.O_BOOL { if x.v == 1 { return s("true") } else { return s("false") } }
+    if x.kind == ir.O_STR { return quoted(st.ir.strs[x.a as usize]) }
+    if x.kind == ir.O_UNIT { return s("()") }
+    if x.kind == ir.O_FLOAT { return cat(cat(s("float("), hex(x.v)), s(")")) }
+    use_local(inout st, x.a, wrap)
+}
+
+/// A read of local `l`: counted in the first pass, in the second the waiting text of a
+/// folded temporary, else its name. `operand`: wrap a compound expression in parentheses.
+fn use_local(inout st: St, l: u32, operand: bool) -> List[u8] {
+    if st.counting {
+        st.nuse[l as usize] = st.nuse[l as usize] + 1
+        return lname(st, l)
+    }
+    if !is_named(st, l) {
+        match find_pend(st, l) {
+            Some(i) => {
+                let p = st.pend[i].copy()
+                st.taken.push(l)
+                if operand && p.compound { return cat(cat(s("("), p.text), s(")")) }
+                return p.text
+            }
+            None => {}
+        }
+    }
+    lname(st, l)
+}
+
+fn field_name(st: St, base_ty: u32, i: u32) -> List[u8] {
+    let ty = st.t.tys[base_ty as usize]
+    if ty.kind == types.T_RECORD {
+        let d = types.def_of(st.t, base_ty)
+        if i < d.len { return intern.name(st.names, types.field(st.t, d.start, i).name) }
+    }
+    bytes.from_u64(i as u64)
+}
+
+fn place(inout st: St, id: u32) -> List[u8] {
+    let x = st.ir.places[id as usize].copy()
+    if x.kind == ir.P_LOCAL {
+        // (a place is never folded: it counts twice)
+        if st.counting {
+            st.nuse[x.a as usize] = st.nuse[x.a as usize] + 2
+        }
+        return lname(st, x.a)
+    }
+    if x.kind == ir.P_FIELD {
+        let base_ty = st.ir.places[x.a as usize].ty.copy()
+        let b = place(inout st, x.a)
+        return cat(cat(b, s(".")), field_name(st, base_ty, x.b))
+    }
+    if x.kind == ir.P_INDEX {
+        let b = place(inout st, x.a)
+        let i = ob(inout st, x.b)
+        return cat(cat(cat(b, s("[")), i), s("]"))
+    }
+    if x.kind == ir.P_PAYLOAD {
+        let b = place(inout st, x.a)
+        let mut o = cat(b, s(".<variant "))
+        bytes.append(inout o, bytes.from_u64(x.b as u64))
+        bytes.append(inout o, s(">."))
+        bytes.append(inout o, bytes.from_u64(x.c as u64))
+        return o
+    }
+    let b = place(inout st, x.a)
+    cat(s("*"), b)
+}
+
+/// The arguments of a call as text (an `inout` place with its keyword).
+fn args(inout st: St, start: u32, n: u32) -> List[List[u8]] {
+    let mut out: List[List[u8]] = List.new()
+    for i in 0..n {
+        let a = st.ir.extra[(start + i) as usize].copy()
+        if a >= ir.ARG_PLACE {
+            out.push(cat(s("inout "), place(inout st, a - ir.ARG_PLACE)))
+        } else {
+            out.push(ob(inout st, a))
+        }
+    }
+    out
+}
+
+fn join(xs: List[List[u8]], from: usize) -> List[u8] {
+    let mut o: List[u8] = List.new()
+    let mut i = from.copy()
+    while i < xs.len() {
+        if i > from { bytes.append(inout o, s(", ")) }
+        bytes.append(inout o, xs[i])
+        i += 1
+    }
+    o
+}
+
+fn call_text(name: List[u8], xs: List[List[u8]]) -> List[u8] {
+    cat(cat(cat(diag.demangle(name), s("(")), join(xs, 0)), s(")"))
+}
+
+/// The method name of a function named `Type.method` or `Type[args].method`: after the last
+/// `.` outside brackets (empty if none).
+fn method_of(name: List[u8]) -> List[u8] {
+    let mut depth: i64 = 0
+    let mut at: i64 = -1
+    for i in 0..name.len() {
+        let c = name[i]
+        if c == 91 { depth += 1 }
+        if c == 93 { depth -= 1 }
+        if c == 46 && depth == 0 { at = i as i64 }
+    }
+    if at < 0 { return List.new() }
+    bytes.slice(name, (at + 1) as usize, name.len())
+}
+
+fn recv_text(r: List[u8]) -> List[u8] {
+    // `inout x` as a receiver is just x
+    if bytes.starts_with(r, s("inout ")) { return bytes.slice(r, 6, r.len()) }
+    r
+}
+
+/// Whether the first parameter of function `f` is called `self`.
+fn has_self(st: St, f: u32) -> bool {
+    let fd = st.ir.fns[f as usize].copy()
+    if fd.lcount == 0 || fd.nparams == 0 { return false }
+    let l = st.ir.locals[fd.lstart as usize].copy()
+    l.kind != ir.L_TEMP && bytes.eq(intern.name(st.names, l.name), s("self"))
+}
+
+fn builtin_is_static(b: u32) -> bool {
+    b == ir.B_STR_FROM || b == ir.B_STR_FROM_INT || b == ir.B_LIST_NEW || b == ir.B_MAP_NEW || b == ir.B_BOX_NEW ||
+        b == ir.B_SPAWN || b == ir.B_MUTEX_NEW || b == ir.B_CHAN_NEW || b == ir.B_REF_NEW || b == ir.B_DEFAULT ||
+        b == ir.B_STR_PAD || b == ir.B_FMT_INT || b == ir.B_FMT_FLOAT || b == ir.B_LIST_FILLED ||
+        b == ir.B_MAP_DETERMINISTIC || b == ir.B_TASK_CATCH || b == ir.B_STR_FROM_BYTES
+}
+
+fn static_name(st: St, b: u32, ty: u32) -> List[u8] {
+    if b == ir.B_STR_FROM { return s("String.from") }
+    if b == ir.B_STR_FROM_INT { return s("String.from_int") }
+    if b == ir.B_LIST_NEW { return s("List.new") }
+    if b == ir.B_MAP_NEW { return s("Map.new") }
+    if b == ir.B_BOX_NEW { return s("Box.new") }
+    if b == ir.B_SPAWN { return s("spawn") }
+    if b == ir.B_MUTEX_NEW { return s("Mutex.new") }
+    if b == ir.B_CHAN_NEW { return s("Chan.new") }
+    if b == ir.B_REF_NEW { return s("Ref.new") }
+    if b == ir.B_DEFAULT { return cat(ty_text(st, ty), s(".default")) }
+    if b == ir.B_LIST_FILLED { return s("List.filled") }
+    if b == ir.B_MAP_DETERMINISTIC { return s("Map.deterministic") }
+    if b == ir.B_TASK_CATCH { return s("Task.catch") }
+    if b == ir.B_STR_FROM_BYTES { return s("String.from_bytes") }
+    if b == ir.B_STR_PAD { return s("str_pad") }
+    if b == ir.B_FMT_INT { return s("fmt_int") }
+    s("fmt_float")
+}
+
+// ---- statements
+
+/// The right-hand side of statement `x` as text, and whether it is an effect (a call),
+/// compound (needs parentheses as an operand) or not an expression at all (kind is
+/// returned as 0 for `none`, 1 for a value, 2 for a value with an effect).
+type Rhs = { text: List[u8], kind: u32, compound: bool }
+
+fn none() -> Rhs { Rhs(List.new(), 0, false) }
+fn value(text: List[u8]) -> Rhs { Rhs(text, 1, false) }
+fn compound(text: List[u8]) -> Rhs { Rhs(text, 1, true) }
+fn effect(text: List[u8]) -> Rhs { Rhs(text, 2, false) }
+
+fn rhs(inout st: St, x: ir.Stmt) -> Rhs {
+    let k = x.kind
+    if k == ir.S_COPY || k == ir.S_CLONE { return value(ob(inout st, x.a)) }
+    if k == ir.S_READ {
+        return value(place(inout st, x.a))
+    }
+    if k == ir.S_MOVE { return value(place(inout st, x.a)) }
+    if k == ir.S_UNARY {
+        let v = op(inout st, x.b)
+        let mut o: List[u8] = List.new()
+        if x.a == ir.U_NEG { o.push(45) }
+        if x.a == ir.U_NOT { o.push(33) }
+        if x.a == ir.U_BNOT { o.push(126) }
+        bytes.append(inout o, v)
+        return compound(o)
+    }
+    if k == ir.S_BINARY {
+        let l = op(inout st, x.b)
+        let r = op(inout st, x.c)
+        let mut o = l.copy()
+        o.push(32)
+        bytes.append(inout o, s(ast.op_text(x.a)))
+        o.push(32)
+        bytes.append(inout o, r)
+        return compound(o)
+    }
+    if k == ir.S_CAST {
+        let v = op(inout st, x.a)
+        return compound(cat(cat(v, s(" as ")), ty_text(st, x.ty)))
+    }
+    if k == ir.S_CALL {
+        let xs = args(inout st, x.b, x.c)
+        let name = st.ir.fns[x.a as usize].name.copy()
+        let m = method_of(name)
+        if m.len() > 0 && xs.len() > 0 && has_self(st, x.a) {
+            let mut o = recv_text(xs[0])
+            o.push(46)
+            bytes.append(inout o, m)
+            o.push(40)
+            bytes.append(inout o, join(xs, 1))
+            o.push(41)
+            return effect(o)
+        }
+        return effect(call_text(name, xs))
+    }
+    if k == ir.S_RECORD {
+        let xs = args(inout st, x.b, x.c)
+        return value(call_text(ty_text(st, x.ty), xs))
+    }
+    if k == ir.S_VARIANT {
+        let xs = args(inout st, x.b, x.c)
+        let mut n = ty_text(st, x.ty)
+        bytes.append(inout n, s(".<variant "))
+        bytes.append(inout n, bytes.from_u64(x.a as u64))
+        bytes.append(inout n, s(">"))
+        return value(call_text(n, xs))
+    }
+    if k == ir.S_ARRAY {
+        let xs = args(inout st, x.b, x.c)
+        return value(cat(cat(s("["), join(xs, 0)), s("]")))
+    }
+    if k == ir.S_REPEAT {
+        let v = op(inout st, x.a)
+        let mut o = cat(s("["), v)
+        bytes.append(inout o, s("; "))
+        bytes.append(inout o, bytes.from_u64(x.b as u64))
+        o.push(93)
+        return value(o)
+    }
+    if k == ir.S_TUPLE {
+        let xs = args(inout st, x.b, x.c)
+        return value(cat(cat(s("("), join(xs, 0)), s(")")))
+    }
+    if k == ir.S_TAG {
+        let p = place(inout st, x.a)
+        let mut o = cat(p, s(" is <variant "))
+        bytes.append(inout o, bytes.from_u64(x.b as u64))
+        o.push(62)
+        return compound(o)
+    }
+    if k == ir.S_NOWMS { return effect(s("now_ms()")) }
+    if k == ir.S_BUILTIN {
+        let xs = args(inout st, x.b, x.c)
+        if builtin_is_static(x.a) { return effect(call_text(static_name(st, x.a, x.ty), xs)) }
+        let name = s(ir.builtin_name(x.a))
+        if xs.len() == 0 { return effect(call_text(name, xs)) }
+        let mut o = recv_text(xs[0])
+        o.push(46)
+        bytes.append(inout o, name)
+        o.push(40)
+        bytes.append(inout o, join(xs, 1))
+        o.push(41)
+        return effect(o)
+    }
+    if k == ir.S_CALLV {
+        let f = op(inout st, x.a)
+        let xs = args(inout st, x.b, x.c)
+        return effect(cat(cat(cat(f, s("(")), join(xs, 0)), s(")")))
+    }
+    if k == ir.S_FNREF { return value(diag.demangle(st.ir.fns[x.a as usize].name)) }
+    if k == ir.S_CLOSURE {
+        let xs = args(inout st, x.b, x.c)
+        let mut o = s("closure ")
+        bytes.append(inout o, diag.demangle(st.ir.fns[x.a as usize].name))
+        o.push(40)
+        bytes.append(inout o, join(xs, 0))
+        o.push(41)
+        return value(o)
+    }
+    if k == ir.S_DYN {
+        let xs = args(inout st, x.b, x.c)
+        return value(call_text(s("dyn"), xs))
+    }
+    if k == ir.S_DYNCALL {
+        let f = op(inout st, x.a)
+        let xs = args(inout st, x.b, x.c)
+        return effect(cat(cat(cat(f, s(".dyncall(")), join(xs, 0)), s(")")))
+    }
+    none()
+}
+
+fn is_expr_kind(k: u32) -> bool {
+    k == ir.S_COPY || k == ir.S_READ || k == ir.S_UNARY || k == ir.S_BINARY || k == ir.S_CAST || k == ir.S_CALL ||
+        k == ir.S_RECORD || k == ir.S_VARIANT || k == ir.S_ARRAY || k == ir.S_REPEAT || k == ir.S_TAG ||
+        k == ir.S_NOWMS || k == ir.S_TUPLE || k == ir.S_CLONE || k == ir.S_MOVE || k == ir.S_BUILTIN ||
+        k == ir.S_CLOSURE || k == ir.S_FNREF || k == ir.S_CALLV || k == ir.S_DYN || k == ir.S_DYNCALL
+}
+
+/// Operations the source does not spell.
+fn is_silent(k: u32) -> bool {
+    k == ir.S_DROP || k == ir.S_NOTE || k == ir.S_CHECK || k == ir.S_ADDR
+}
+
+/// The local statement `x` defines, if any.
+fn dst_of(x: ir.Stmt) -> u32 {
+    if is_expr_kind(x.kind) { return x.dst }
+    ir.NONE
+}
+
+// ---- the first pass: reads and definitions
+
+fn count_block(inout st: St, b: u32) {
+    let bl = st.ir.blocks[b as usize].copy()
+    for i in 0..bl.len {
+        let id = st.ir.extra[(bl.start + i) as usize].copy()
+        count_stmt(inout st, id)
+    }
+}
+
+fn count_stmt(inout st: St, id: u32) {
+    let x = st.ir.stmts[id as usize].copy()
+    let k = x.kind
+    if is_expr_kind(k) {
+        let r = rhs(inout st, x)
+        if x.dst != ir.NONE { st.defs[x.dst as usize] = st.defs[x.dst as usize] + 1 }
+        return
+    }
+    if k == ir.S_STORE {
+        let p = place(inout st, x.a)
+        let v = op(inout st, x.b)
+        let mut pid = x.a.copy()
+        while st.ir.places[pid as usize].kind != ir.P_LOCAL { pid = st.ir.places[pid as usize].a.copy() }
+        st.stored[st.ir.places[pid as usize].a as usize] = true
+        return
+    }
+    if k == ir.S_PRINT || k == ir.S_PANIC || k == ir.S_ASSERT {
+        let v = op(inout st, x.a)
+        return
+    }
+    if k == ir.S_RETURN {
+        if x.a > 0 {
+            let v = op(inout st, x.a - 1)
+        }
+        return
+    }
+    if k == ir.S_IF {
+        let v = op(inout st, x.a)
+        count_block(inout st, x.b)
+        count_block(inout st, x.c)
+        return
+    }
+    if k == ir.S_LOOP {
+        count_block(inout st, x.a)
+        count_block(inout st, x.b)
+    }
+}
+
+// ---- the second pass: text
+
+/// Print the statements still waiting that the statement just rendered did not take, as
+/// `let` lines, oldest first, and forget the others (the statement's text has them).
+fn flush(inout st: St, depth: u32) {
+    for i in 0..st.pend.len() {
+        let p = st.pend[i].copy()
+        if st.taken.contains(p.l) { continue }
+        indent(inout st, depth)
+        put(inout st, "let ")
+        putb(inout st, tname(p.l))
+        put(inout st, " = ")
+        putb(inout st, p.text)
+        put(inout st, "\n")
+        st.named.push(p.l)
+    }
+    st.pend = List.new()
+    st.taken = List.new()
+}
+
+/// Whether the statement rendered with what is waiting takes an effect that is older than
+/// one it leaves behind (the left-behind one is printed first, so the order of the effects
+/// would change). Such a taken effect is named from now on: the caller renders again.
+fn settle(inout st: St) -> bool {
+    let mut last: i64 = -1
+    for i in 0..st.pend.len() {
+        if st.pend[i].eff && !st.taken.contains(st.pend[i].l) { last = i as i64 }
+    }
+    let mut again = false
+    for i in 0..st.pend.len() {
+        if (i as i64) < last && st.pend[i].eff && st.taken.contains(st.pend[i].l) {
+            st.named.push(st.pend[i].l)
+            again = true
+        }
+    }
+    again
+}
+
+/// Write one line of statement text after the waiting temporaries it did not take.
+fn emit_line(inout st: St, depth: u32, text: List[u8]) {
+    flush(inout st, depth)
+    indent(inout st, depth)
+    putb(inout st, text)
+    put(inout st, "\n")
+}
+
+fn block(inout st: St, b: u32, depth: u32) {
+    let bl = st.ir.blocks[b as usize].copy()
+    for i in 0..bl.len {
+        let id = st.ir.extra[(bl.start + i) as usize].copy()
+        stmt(inout st, id, depth)
+    }
+    // anything still waiting is printed
+    st.taken = List.new()
+    flush(inout st, depth)
+}
+
+/// A jump that leaves the block of an unrolled iteration (the wrapper loop's body is the
+/// iteration; the loop itself only lets `continue` leave it).
+fn has_jump(st: St, b: u32) -> bool {
+    let bl = st.ir.blocks[b as usize].copy()
+    for i in 0..bl.len {
+        let x = st.ir.stmts[st.ir.extra[(bl.start + i) as usize] as usize].copy()
+        if x.kind == ir.S_BREAK || x.kind == ir.S_CONTINUE { return true }
+        if x.kind == ir.S_IF && (has_jump(st, x.b) || has_jump(st, x.c)) { return true }
+        if x.kind == ir.S_LOOP && has_jump(st, x.a) { return true }
+    }
+    false
+}
+
+/// `loop { ... } step { break }` with no jump inside: the unrolled iteration of a
+/// `comptime for` (the checker emits exactly this).
+fn is_iteration(st: St, x: ir.Stmt) -> bool {
+    let sb = st.ir.blocks[x.b as usize].copy()
+    if sb.len != 1 { return false }
+    let only = st.ir.stmts[st.ir.extra[sb.start as usize] as usize].copy()
+    if only.kind != ir.S_BREAK || only.a != 0 { return false }
+    !has_jump(st, x.a)
+}
+
+/// Render the right-hand side of `x` against what is waiting, rendering again once if an
+/// effect would be taken out of order.
+fn render(inout st: St, x: ir.Stmt) -> Rhs {
+    st.taken = List.new()
+    let r = rhs(inout st, x)
+    if settle(inout st) {
+        st.taken = List.new()
+        return rhs(inout st, x)
+    }
+    r
+}
+
+fn stmt(inout st: St, id: u32, depth: u32) {
+    let x = st.ir.stmts[id as usize].copy()
+    let k = x.kind
+    if is_silent(k) { return }
+    st.taken = List.new()
+    if is_expr_kind(k) {
+        let r = render(inout st, x)
+        let d = x.dst
+        if d == ir.NONE {
+            // a call whose result is not used
+            emit_line(inout st, depth, r.text)
+            return
+        }
+        let lc = local_of(st, d)
+        let is_temp = lc.kind == ir.L_TEMP
+        if is_temp && st.defs[d as usize] == 1 && st.nuse[d as usize] == 1 {
+            // folded into its use; it consumed what it read
+            let mut eff = r.kind == 2
+            for tl in st.taken {
+                match find_pend(st, tl) {
+                    Some(i) => { if st.pend[i].eff { eff = true } }
+                    None => {}
+                }
+            }
+            let mut keep: List[Pend] = List.new()
+            for p in st.pend {
+                if !st.taken.contains(p.l) { keep.push(p) }
+            }
+            st.pend = keep
+            st.pend.push(Pend(d, r.text, eff, r.compound))
+            return
+        }
+        if is_temp && st.nuse[d as usize] == 0 {
+            // a result nobody reads: a call stays as a statement, a plain value is dropped
+            if r.kind == 2 { emit_line(inout st, depth, r.text) }
+            return
+        }
+        define(inout st, depth, x, lc, r.text)
+        return
+    }
+    if k == ir.S_STORE {
+        st.taken = List.new()
+        let mut p = place(inout st, x.a)
+        let mut v = ob(inout st, x.b)
+        if settle(inout st) {
+            st.taken = List.new()
+            p = place(inout st, x.a)
+            v = ob(inout st, x.b)
+        }
+        emit_line(inout st, depth, cat(cat(p, s(" = ")), v))
+        return
+    }
+    if k == ir.S_PRINT || k == ir.S_PANIC || k == ir.S_ASSERT {
+        let mut v = ob(inout st, x.a)
+        if settle(inout st) {
+            st.taken = List.new()
+            v = ob(inout st, x.a)
+        }
+        let mut name = s("print")
+        if k == ir.S_PANIC { name = s("panic") }
+        if k == ir.S_ASSERT { name = s("assert") }
+        let mut line = cat(cat(name, s("(")), v)
+        if k == ir.S_ASSERT && x.b > 0 {
+            bytes.append(inout line, s(", "))
+            bytes.append(inout line, quoted(st.ir.strs[(x.b - 1) as usize]))
+        }
+        line.push(41)
+        emit_line(inout st, depth, line)
+        return
+    }
+    if k == ir.S_RETURN {
+        if x.a > 0 {
+            let v = ob(inout st, x.a - 1)
+            emit_line(inout st, depth, cat(s("return "), v))
+        } else {
+            emit_line(inout st, depth, s("return"))
+        }
+        return
+    }
+    if k == ir.S_BREAK || k == ir.S_CONTINUE {
+        let mut line = if k == ir.S_BREAK { s("break") } else { s("continue") }
+        if x.a > 0 {
+            bytes.append(inout line, s(" /* leaves "))
+            bytes.append(inout line, bytes.from_u64(x.a as u64 + 1))
+            bytes.append(inout line, s(" loops */"))
+        }
+        emit_line(inout st, depth, line)
+        return
+    }
+    if k == ir.S_IF {
+        let c = ob(inout st, x.a)
+        emit_line(inout st, depth, cat(cat(s("if "), c), s(" \x7b")))
+        block(inout st, x.b, depth + 1)
+        let eb = st.ir.blocks[x.c as usize].copy()
+        if eb.len > 0 {
+            indent(inout st, depth)
+            put(inout st, "\x7d else \x7b\n")
+            block(inout st, x.c, depth + 1)
+        }
+        indent(inout st, depth)
+        put(inout st, "\x7d\n")
+        return
+    }
+    if k == ir.S_LOOP {
+        st.taken = List.new()
+        flush(inout st, depth)
+        if is_iteration(st, x) {
+            indent(inout st, depth)
+            put(inout st, "// iteration of an unrolled `comptime for`\n")
+            indent(inout st, depth)
+            put(inout st, "\x7b\n")
+            block(inout st, x.a, depth + 1)
+            indent(inout st, depth)
+            put(inout st, "\x7d\n")
+            return
+        }
+        indent(inout st, depth)
+        put(inout st, "loop \x7b\n")
+        block(inout st, x.a, depth + 1)
+        let sb = st.ir.blocks[x.b as usize].copy()
+        if sb.len > 0 {
+            indent(inout st, depth)
+            put(inout st, "\x7d step \x7b\n")
+            block(inout st, x.b, depth + 1)
+        }
+        indent(inout st, depth)
+        put(inout st, "\x7d\n")
+        return
+    }
+}
+
+/// `let x = ...` for a local with one definition, `x = ...` for one with several.
+fn define(inout st: St, depth: u32, x: ir.Stmt, lc: ir.Local, text: List[u8]) {
+    let d = x.dst
+    let mut line: List[u8] = List.new()
+    if st.defs[d as usize] == 1 {
+        if lc.kind == ir.L_VAR || st.stored[d as usize] { bytes.append(inout line, s("let mut ")) } else { bytes.append(inout line, s("let ")) }
+    }
+    bytes.append(inout line, lname(st, d))
+    bytes.append(inout line, s(" = "))
+    bytes.append(inout line, text)
+    emit_line(inout st, depth, line)
+}
+
+// ---- functions
+
+fn header(inout st: St, f: ir.Fn) {
+    put(inout st, "fn ")
+    putb(inout st, diag.demangle(f.name))
+    put(inout st, "(")
+    for i in 0..f.nparams {
+        let lc = local_of(st, i)
+        if i > 0 { put(inout st, ", ") }
+        if lc.kind == ir.L_INOUT { put(inout st, "inout ") }
+        if lc.kind == ir.L_CAPTURE || lc.kind == ir.L_CAPREF { put(inout st, "capture ") }
+        putb(inout st, lname(st, i))
+        put(inout st, ": ")
+        putb(inout st, ty_text(st, lc.ty))
+    }
+    put(inout st, ")")
+    if f.ret != types.UNIT {
+        put(inout st, " -> ")
+        putb(inout st, ty_text(st, f.ret))
+    }
+    if f.caps.len() > 0 {
+        put(inout st, " uses ")
+        putb(inout st, f.caps)
+    }
+    put(inout st, " \x7b\n")
+}
+
+/// One function as source into `st.out`.
+fn put_fn(inout st: St, f: ir.Fn, note: List[u8]) {
+    st.lstart = f.lstart
+    st.nuse = List.new()
+    st.defs = List.new()
+    st.stored = List.new()
+    for i in 0..f.lcount {
+        st.nuse.push(0)
+        st.defs.push(0)
+        st.stored.push(false)
+    }
+    st.pend = List.new()
+    st.taken = List.new()
+    st.named = List.new()
+    st.counting = true
+    count_block(inout st, f.body - 1)
+    st.counting = false
+    st.out = List.new()
+    if note.len() > 0 {
+        put(inout st, "// ")
+        putb(inout st, note)
+        put(inout st, "\n")
+    }
+    if f.is_test { put(inout st, "test ") }
+    header(inout st, f)
+    // locals assigned in more than one place are declared first
+    for i in 0..f.lcount {
+        let lc = local_of(st, i)
+        if st.defs[i as usize] > 1 && lc.kind != ir.L_PARAM && lc.kind != ir.L_INOUT {
+            indent(inout st, 1)
+            put(inout st, "let mut ")
+            putb(inout st, lname(st, i))
+            put(inout st, ": ")
+            putb(inout st, ty_text(st, lc.ty))
+            put(inout st, "\n")
+        }
+    }
+    block(inout st, f.body - 1, 1)
+    put(inout st, "\x7d\n")
+}
+
+/// The source of each function in `want` (indexes into the IR's functions, with a comment
+/// line each in `notes`, empty for none), in `want`'s order.
+pub fn dump_each(g: ir.Ir, t: types.Types, names: intern.Interner, want: List[u32], notes: List[List[u8]]) -> List[List[u8]] {
+    let mut st = St(g, t, names, 0, List.new(), List.new(), List.new(), true, List.new(), List.new(), List.new(), List.new())
+    let mut out: List[List[u8]] = List.new()
+    for j in 0..want.len() {
+        let fd = g.fns[want[j] as usize]
+        if fd.body == 0 {
+            out.push(List.new())
+            continue
+        }
+        let note: List[u8] = if j < notes.len() { notes[j].copy() } else { List.new() }
+        put_fn(inout st, fd, note)
+        out.push(st.out.copy())
+    }
+    out
+}
+
+/// The functions in `want` as one text, in the order of the program (a blank line before each).
+pub fn dump(g: ir.Ir, t: types.Types, names: intern.Interner, want: List[u32], notes: List[List[u8]]) -> List[u8] {
+    let texts = dump_each(g, t, names, want, notes)
+    let mut out: List[u8] = List.new()
+    for i in 0..g.fns.len() {
+        for j in 0..want.len() {
+            if want[j] == i as u32 && texts[j].len() > 0 {
+                out.push(10)
+                bytes.append(inout out, texts[j])
+            }
+        }
+    }
+    out
+}

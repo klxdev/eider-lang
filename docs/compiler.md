@@ -4326,9 +4326,7 @@ analyzer's `eider/expand` request picks those from the declaration at the cursor
 with the type's at the cursor). The IDE has no new go-to-definition to add: a call of a derived method
 resolves to the trait method in `refs` (tests/run/derive.ei's ide dump).
 
-Not done: printing the specialization as Eider source (it would need the checker to keep each
-iteration's bindings as AST), and a call-site chain (which call asked for the instance): the help
-names the specialization, not who requested it.
+Source text and the requesting call came after: "C8.76".
 
 ## C8.58: testing for services (#30)
 
@@ -4742,3 +4740,32 @@ eider-analyzer's `textDocument/formatting` (`lsp_features.formatting`, through `
 formatted buffer as one edit over the whole text, `[]` when nothing changes and `null` for a buffer that does
 not lex.
 
+## C8.76: `eiderc expand` as source, and who asked (#159)
+
+Decision C857. Code: compiler/expsrc.ei (new), check.ei (`Inst.rm/rpos/rq`, `Reflect.cur`, `request_pos`,
+`requested_by`, `check_fn`), lint.ei (`Refl.req`), main.ei (`run_expand`, `--ir`), ide.ei (`Expansion.text`).
+
+**Source.** `expsrc.dump` reads the IR of a function back as Eider. Two passes over the statements: the first
+counts the reads and definitions of each local, the second prints. A temporary with one definition and one read is
+not printed where it is defined: it waits (`Pend`) with its text and is substituted where it is read, in
+parentheses when it is an operator expression used as an operand; a temporary with several reads is a `let tN`
+line, one assigned in several places is declared `let mut tN: T` first. Calls keep their written order: a
+waiting call that a statement does not read is printed first as a `let`, and a call it does read that is older
+than one it leaves behind is printed that way too (`settle`). A local that is written after its definition is
+`let mut`. Field names come from the record type (`self.x`), a call whose callee's first parameter is `self` is
+`recv.method(args)`, builtins are methods of their first argument (`out.push_str(..)`) or constructors
+(`List.new()`). Operations the source does not spell (`S_DROP`, `S_NOTE`, `S_CHECK`, `S_ADDR`) are skipped, `clone`
+and `move` print their operand. The wrapper the checker emits for an unrolled iteration (`loop { .. } step { break }`
+with no jump inside) is a block under `// iteration of an unrolled `comptime for``; other loops print as
+`loop { .. } step { .. }`. The result is for reading (variants print as `<variant n>`, a float literal as its bits);
+`eiderc expand --ir` and `eiderc ir` print the IR itself. Tests: compiler/tests/pkgs/lints/expand_src.ei (the derive
+test's `Enc` over records, an enum, a generic type, a skipped field), expand.ei (two types), expand_ir.ei (`--ir`).
+
+**Who asked.** `instantiate` stores, when it first creates an instance, the module and position of the innermost
+entry of the checker's write-position stack (`at_pos`, pushed by every call, method call and assignment: the
+protection rule's) and `c.rx.cur`, the instance whose body is being checked (`check_fn`; NONE in a test). When a
+reflective specialization is recorded (`check_fn`), `requested_by` renders `requested by the call at f.ei:L:C`,
+and for a requester that is itself reflective ` (in `Pair.enc`), requested by the call at ..` up to eight levels;
+that text is the end of the diagnostic's help and the comment above the function in `expand`. An instance
+requested outside any call (an operator's trait, a `?` conversion) has no clause. The position is the call
+node's (the method name for a method call), not the start of the statement.

@@ -1,0 +1,26 @@
+// pkgtest: expand --ir
+// `eiderc expand --ir`: the typed IR of the same specializations (docs/compiler.md, "C8.57", "C8.76")
+// the `@derive`d `enc` for two types (docs/compiler.md, "C8.57")
+@[derive]
+trait Enc {
+    fn enc(self, inout out: String) {
+        comptime for f in fields(Self) {
+            self.[f].enc(inout out)
+        }
+    }
+}
+
+impl Enc for i64 {
+    fn enc(self, inout out: String) { out.append(String.from_int(self)) }
+}
+
+@[derive(Enc)]
+type Point = { x: i64, y: i64 }
+@[derive(Enc)]
+type Pair = { a: Point, b: i64 }
+
+fn main() uses io {
+    let mut s = String.from("")
+    Pair(Point(1, 2), 3).enc(inout s)
+    print(s)
+}

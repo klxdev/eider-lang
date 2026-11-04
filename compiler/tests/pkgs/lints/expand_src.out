@@ -1,0 +1,190 @@
+
+// requested by the call at compiler/tests/pkgs/lints/expand_src.ei:95:7
+fn Holder.enc(self: Holder, inout out: String) {
+    out.push_str("{{")
+    let mut first = true
+    // iteration of an unrolled `comptime for`
+    {
+        if !first {
+            out.push_str(", ")
+        }
+        first = false
+        out.push_str("s")
+        out.push_str("=")
+        self.s.enc(inout out)
+    }
+    // iteration of an unrolled `comptime for`
+    {
+        if !first {
+            out.push_str(", ")
+        }
+        first = false
+        out.push_str("p")
+        out.push_str("=")
+        self.p.enc(inout out)
+    }
+    out.push_str("}}")
+}
+
+// requested by the call at compiler/tests/pkgs/lints/expand_src.ei:36:30 (in `Holder.enc`), requested by the call at compiler/tests/pkgs/lints/expand_src.ei:95:7
+fn Point.enc(self: Point, inout out: String) {
+    out.push_str("{{")
+    let mut first = true
+    // iteration of an unrolled `comptime for`
+    {
+        if !first {
+            out.push_str(", ")
+        }
+        first = false
+        out.push_str("x")
+        out.push_str("=")
+        self.x.enc(inout out)
+    }
+    // iteration of an unrolled `comptime for`
+    {
+        if !first {
+            out.push_str(", ")
+        }
+        first = false
+        out.push_str("y")
+        out.push_str("=")
+        self.y.enc(inout out)
+    }
+    out.push_str("}}")
+}
+
+// requested by the call at compiler/tests/pkgs/lints/expand_src.ei:95:7
+fn Wrap[Point].enc(self: Wrap[Point], inout out: String) {
+    out.push_str("{{")
+    let mut first = true
+    // iteration of an unrolled `comptime for`
+    {
+        if !first {
+            out.push_str(", ")
+        }
+        first = false
+        out.push_str("inner")
+        out.push_str("=")
+        self.inner.enc(inout out)
+    }
+    // iteration of an unrolled `comptime for`
+    {
+        if !first {
+            out.push_str(", ")
+        }
+        first = false
+        out.push_str("ok")
+        out.push_str("=")
+        self.ok.enc(inout out)
+    }
+    out.push_str("}}")
+}
+
+// requested by the call at compiler/tests/pkgs/lints/expand_src.ei:95:7
+fn Shape.enc(self: Shape, inout out: String) {
+    // iteration of an unrolled `comptime for`
+    {
+        if self is <variant 0> {
+            out.push_str("Circle")
+            out.push_str("(")
+            let mut first = true
+            // iteration of an unrolled `comptime for`
+            {
+                if !first {
+                    out.push_str(" ")
+                }
+                first = false
+                if self is <variant 0> {
+                } else {
+                    panic("`x.[f]`: the value is not variant `Circle`")
+                }
+                self.<variant 0>.0.enc(inout out)
+            }
+            out.push_str(")")
+        }
+    }
+    // iteration of an unrolled `comptime for`
+    {
+        if self is <variant 1> {
+            out.push_str("Rect")
+            out.push_str("(")
+            let mut first = true
+            // iteration of an unrolled `comptime for`
+            {
+                if !first {
+                    out.push_str(" ")
+                }
+                first = false
+                if self is <variant 1> {
+                } else {
+                    panic("`x.[f]`: the value is not variant `Rect`")
+                }
+                self.<variant 1>.0.enc(inout out)
+            }
+            // iteration of an unrolled `comptime for`
+            {
+                if !first {
+                    out.push_str(" ")
+                }
+                first = false
+                if self is <variant 1> {
+                } else {
+                    panic("`x.[f]`: the value is not variant `Rect`")
+                }
+                self.<variant 1>.1.enc(inout out)
+            }
+            out.push_str(")")
+        }
+    }
+    // iteration of an unrolled `comptime for`
+    {
+        if self is <variant 2> {
+            out.push_str("Empty")
+            out.push_str("(")
+            let mut first = true
+            out.push_str(")")
+        }
+    }
+}
+
+// requested by the call at compiler/tests/pkgs/lints/expand_src.ei:95:7
+fn Line.enc(self: Line, inout out: String) {
+    out.push_str("{{")
+    let mut first = true
+    // iteration of an unrolled `comptime for`
+    {
+        if !first {
+            out.push_str(", ")
+        }
+        first = false
+        out.push_str("from")
+        out.push_str("=")
+        self.from.enc(inout out)
+    }
+    // iteration of an unrolled `comptime for`
+    {
+        if !first {
+            out.push_str(", ")
+        }
+        first = false
+        out.push_str("to")
+        out.push_str("=")
+        self.to.enc(inout out)
+    }
+    // iteration of an unrolled `comptime for`
+    {
+        if !first {
+            out.push_str(", ")
+        }
+        first = false
+        out.push_str("tags")
+        out.push_str("=")
+        self.tags.enc(inout out)
+    }
+    // iteration of an unrolled `comptime for`
+    {
+    }
+    out.push_str("}}")
+}
+--- stderr
+--- exit 0
