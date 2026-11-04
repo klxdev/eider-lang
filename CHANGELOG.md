@@ -5,6 +5,43 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## 0.6.1
+
+A patch for the clang that builds programs. Nothing in the language, std or the siblings changes
+(eider-analyzer, tree-sitter-eider, eider-profiler and the libraries stay at 0.6.0).
+
+**Tested with clang 17.0.6, 20.1.8, 22.1.8 and 23.1.5** (upstream LLVM releases): for each, the
+compiler was built with it, then the compile-fail suite, the run tests and the whole oracle
+(`scripts/test-compiler.sh`: every run test again at `-O2`, under UBSan, with the allocation
+counter, and so on) passed with that clang as `EIDER_LLVM_CC`. The floor stays clang 17.
+`RELEASE.toml` records the versions of each release as `clang_tested`.
+
+- **LLVM 23 float constants** (#168): LLVM 23 deprecates the old spellings of floating-point
+  constants (a hex double, and `bitcast (i32 .. to float)` for an f32) for `f0x<bits>`. The
+  backend writes `f0x` (16 hex digits for an f64, 8 for an f32) when the clang that builds the IR is
+  23 or newer and the old form otherwise: LLVM 17 to 22 reject `f0x`. The choice is made once, in
+  `driver.llvm_f0x`, from `clang --version`; `EIDER_LLVM_FLOAT=f0x` or `=hex` forces either
+  (and `emit-llvm` follows the clang it finds). compiler/tests/llvm/fconst.sh runs a program of float
+  edge cases in each spelling, and has clang 23 read `inf`, NaN with payloads, `-0`, subnormals and f32
+  constants in both spellings as the same module.
+- **`scripts/clang-matrix.sh` and the `llvms` verify leg** (#169): builds the compiler and runs the
+  suites with clang 17, 20, 22 and 23 (downloaded upstream releases, SHA-256 pinned, cached in
+  `~/.cache/eider/clang`; `--fetch`, `--list`, `--quick`). `scripts/verify.sh` runs it as the `llvms`
+  leg (with `--quick`, for the versions other than the `clang` on `PATH`); a version that isn't
+  installed is a skipped leg with the reason, and `scripts/release.sh` refuses a verify run that
+  skipped it. docs/site/tooling/llvm.md, "Clang versions".
+- **Release builds link with `-no-pie`** (#169, found by the matrix): an upstream clang links a
+  position-independent executable by default, and the ThinLTO link of a release build (`build`
+  without `run`) then failed in lld with `relocation R_X86_64_32 cannot be used against local
+  symbol` on the C core that `$CC` had compiled non-PIC (Fedora's gcc and clang default to non-PIE,
+  which hid it). Every upstream clang from 17 to 23 failed; none of the other suites noticed because
+  `run` builds at `-O0`, without LTO.
+- **`scripts/version.sh bump` in a worktree** (#184): `rewrite_series` matched `*/.claude/*` against
+  the absolute path, so a bump run in a checkout under `.claude/worktrees/` skipped every `eider =
+  "x.y"` pin; paths are matched relative to the repository root now. eider-example-shopping-service
+  is a sibling of version.sh (VERSION at 0.6.0, `eider` pins checked and bumped); eider-http-testclient
+  is not one: it is an old working copy of eider-http, not a repository of its own.
+
 ## 0.6.0
 
 Serialization and tasks. Types serialize themselves with one `@[derive(Serialize, Deserialize)]`
