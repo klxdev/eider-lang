@@ -539,6 +539,25 @@ if cmp -s $tmp/c1 $tmp/c2 && grep -q 'f_util__0geo__name' $tmp/c1; then pk_ok=$(
 pk_total=$((pk_total + 1))
 if [ "$pk_ok" = "$pk_total" ]; then v="ok  "; else v="FAIL"; fi
 echo "$v packages: $pk_ok/$pk_total multi-package cases (compiler/tests/pkgs) give their .out, and the same LLVM IR from a copy"
+# coverage: `test --coverage --lcov` (cover.ei, docs/compiler.md "C8.77") gives the recorded report and
+# tracefile for a file whose tests run threads (the shared counters) and for a package (one merged report over
+# the files' runs); `.out` is the report, then the lcov file
+cv_ok=1
+mkdir -p target/cov
+outcome $new test compiler/tests/cover/threads.ei --coverage --lcov $(pwd)/target/cov/threads.info
+{ cat $tmp/out; norm <target/cov/threads.info; } >$tmp/covt
+if [ -n "$BLESS" ]; then cp $tmp/covt compiler/tests/cover/threads.out; fi
+cmp -s $tmp/covt compiler/tests/cover/threads.out || { echo "FAIL coverage threads.ei"; diff compiler/tests/cover/threads.out $tmp/covt | head -10; cv_ok=0; fail=1; }
+(cd compiler/tests/cover/pkg && "$anew" test --coverage --lcov $(pwd)/../../../../target/cov/pkg.info) >$tmp/o 2>$tmp/e
+cv_code=$?
+{ cat $tmp/o; echo "--- stderr"; cat $tmp/e; echo "--- exit $cv_code"; norm <target/cov/pkg.info; } | norm >$tmp/covp
+if [ -n "$BLESS" ]; then cp $tmp/covp compiler/tests/cover/pkg.out; fi
+cmp -s $tmp/covp compiler/tests/cover/pkg.out || { echo "FAIL coverage pkg"; diff compiler/tests/cover/pkg.out $tmp/covp | head -10; cv_ok=0; fail=1; }
+# the program without --coverage has no probes
+$new emit-llvm compiler/tests/cover/threads.ei --test >$tmp/o 2>&1
+grep -q ei_cov_hit $tmp/o && { echo "FAIL coverage: emit-llvm without --coverage mentions ei_cov_hit"; cv_ok=0; fail=1; }
+if [ $cv_ok = 1 ]; then v="ok  "; else v="FAIL"; fi
+echo "$v coverage: test --coverage and --lcov (a file with threads, a package) give the recorded report and tracefile"
 # migration: the staged rewrites to package imports (scripts/migrate-imports.sh) and away
 # from `uses ffi` outside core (scripts/migrate-caps.sh), on a copy of core, std, packages
 # and compiler, give a toolchain this compiler checks, whose package tests pass (what the

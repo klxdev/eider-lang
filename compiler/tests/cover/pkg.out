@@ -1,0 +1,37 @@
+== shapes.ei
+test area ... ok
+
+1 tests, 0 failed
+== sub/extra.ei
+test area ... ok
+test describe and twice ... ok
+
+2 tests, 0 failed
+
+2 files, 3 tests, 0 failed
+coverage (lines of the package's modules that the tests ran):
+  shapes.ei     5/9      55.5%  not run: 12, 14, 19-20
+  sub/extra.ei  1/1      100.0%
+  total         6/10     60.0%
+--- stderr
+--- exit 0
+TN:
+SF:<root>/compiler/tests/cover/pkg/shapes.ei
+DA:4,10
+DA:5,2
+DA:7,2
+DA:11,2
+DA:12,0
+DA:13,1
+DA:14,0
+DA:19,0
+DA:20,0
+LF:9
+LH:5
+end_of_record
+TN:
+SF:<root>/compiler/tests/cover/pkg/sub/extra.ei
+DA:4,1
+LF:1
+LH:1
+end_of_record

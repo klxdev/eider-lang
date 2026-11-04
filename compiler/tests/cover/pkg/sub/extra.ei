@@ -1,0 +1,10 @@
+import covpkg.shapes
+
+pub fn twice(n: i32) -> i32 {
+    n * 2
+}
+
+test "describe and twice" {
+    assert(shapes.describe(1).len() == 3)
+    assert(twice(21) == 42)
+}

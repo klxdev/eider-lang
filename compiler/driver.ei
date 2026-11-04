@@ -893,13 +893,27 @@ pub fn build_llvm(lnames: List[List[u8]], lls: List[List[u8]], file: List[u8], o
 /// (a program killed by signal n exits 128 + n). `args` are the program's arguments (`eiderc
 /// run x.ei [--] args...`; none for `test`); `envs`: `NAME=value` settings the program starts with.
 pub fn run_llvm(lnames: List[List[u8]], lls: List[List[u8]], file: List[u8], release: bool, libs: List[List[u8]], debug: bool, prof: bool, args: List[List[u8]], envs: List[List[u8]], jobs: u64) uses io, fs, net, clock {
+    let r = run_llvm_ran(lnames, lls, file, release, libs, debug, prof, args, envs, jobs, false)
+    env.exit(r.code)
+}
+
+/// What a run left: the exit code, and (when asked) the coverage counts the program wrote.
+pub type Ran = { code: i32, cov: List[u8] }
+
+/// `run_llvm` that returns instead of exiting. With `cov`, the program is started with
+/// EIDER_COVERAGE naming a file in the work directory (the runtime's ei_cov_hit writes its
+/// counters there at exit) and `Ran.cov` is that file's text.
+pub fn run_llvm_ran(lnames: List[List[u8]], lls: List[List[u8]], file: List[u8], release: bool, libs: List[List[u8]], debug: bool, prof: bool, args: List[List[u8]], envs: List[List[u8]], jobs: u64, cov: bool) -> Ran uses io, fs, net, clock {
     let dir = work_dir()
     let exe = compile_llvm(lnames, lls, dir, fs.join(dir, stem(file)), release, libs, debug, prof, jobs, false)
     let mut argv: List[List[u8]] = List.new()
+    let covfile = fs.join(dir, s("coverage.txt"))
+    let mut envs2 = envs.copy()
+    if cov { envs2.push(bytes.concat(s("EIDER_COVERAGE="), covfile.copy())) }
     // `NAME=value` settings for the program (`eiderc test --filter`, --bench, --fuzz): through env(1)
-    if envs.len() > 0 {
+    if envs2.len() > 0 {
         argv.push(s("env"))
-        for x in envs { argv.push(x) }
+        for x in envs2 { argv.push(x) }
     }
     argv.push(exe)
     for x in args { argv.push(x) }
@@ -911,8 +925,15 @@ pub fn run_llvm(lnames: List[List[u8]], lls: List[List[u8]], file: List[u8], rel
             3
         }
     }
+    let mut counts: List[u8] = List.new()
+    if cov {
+        match fs.read(covfile) {
+            Ok(t) => { counts = t }
+            Err(_) => {}
+        }
+    }
     fs.remove_all(dir)
-    env.exit(code)
+    Ran(code, counts)
 }
 
 /// `eiderc build --lib`: the library's IR compiled with -O2 -fPIC, with the C core.

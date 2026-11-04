@@ -4345,8 +4345,7 @@ program` because the C core has no `setenv`. Benchmarks and fuzz targets are lib
 benchmark is a smoke test in a plain run. A fuzz case is reproducible from (seed, case number); the
 generator draws a length up to 64 and random bytes, case 0 being the empty input.
 
-Not done: a coverage report (it needs per-statement counters in the backend and a mapping back to
-lines; filed as a follow-up), `eiderc test` discovering `bench`/`fuzz` as separate kinds, the
+Not done: `eiderc test` discovering `bench`/`fuzz` as separate kinds, the
 timing statistics of a benchmark (median, spread), and a fuzz corpus directory on disk.
 
 ## C8.59: std/cli (#114)
@@ -4769,3 +4768,32 @@ and for a requester that is itself reflective ` (in `Pair.enc`), requested by th
 that text is the end of the diagnostic's help and the comment above the function in `expand`. An instance
 requested outside any call (an operator's trait, a `?` conversion) has no clause. The position is the call
 node's (the method name for a method call), not the start of the statement.
+
+## C8.77: `eiderc test --coverage` (#158)
+
+Decision C858. Code: compiler/cover.ei (new), main.ei (`--coverage`, `--lcov`, `--coverage-data`, `finish_coverage`),
+driver.ei (`run_llvm_ran`: `run_llvm` that returns, and reads the counts file), pkgtest.ei (a package run), core/
+eider_rt.{h,c} (`ei_cov_hit`). Tests: compiler/tests/cover/ (threads.ei, pkg/), scripts/test-compiler.sh "coverage".
+
+`cover.instrument` runs on the IR after checking, before `lower.P` is built from it. It declares `ei_cov_hit` as an
+extern function (`ir.add_extern`) and, in every function that is not a `test` block and whose module is one of the entry
+file's package (`mods[m].pkg == mods[0].pkg`, not the prelude; `Fn.file` is the module index), rebuilds each block
+(`Ir.blocks` is a start and a length into `extra`, so the new run is appended and the block repointed; a block shared
+by two statements is done once) with a probe call before each segment that has a statement with a line. A segment is
+the statements of a block up to and including an `if` or a loop, or the rest of the block after one; the `if`'s and
+loop's own blocks are walked recursively. The probe's operand is a `u32` literal, its id the index into the plan's
+probe list (at most `MAX_PROBES`, `EI_COV_MAX` in the runtime). Nothing else in the compiler changes: the call is an
+ordinary S_CALL of an extern, lowered by llvm.ei as any other, and the counters live in the runtime, so the units of
+llvm_units.ei share them and no module-level global is needed. `ei_cov_hit` allocates its table on first use
+(`pthread_once`), adds with a relaxed `atomic_fetch_add`, and registers an `atexit` that writes the nonzero counters
+to `$EIDER_COVERAGE` (`run_llvm_ran` sets it to a file in the work directory and reads it after the run; a run that
+is killed leaves no counts). `cover.data` maps ids to `path<TAB>line<TAB>count` for every line a probe covers (zero
+for the ones no test ran; paths normalized, a line in several probes or instances summed), `cover.merge` sums several
+such texts (a package run: `pkgtest.run` gives each file's `eiderc test` a `--coverage-data` file in a work directory),
+`report` prints the table (`ran/lines`, tenths of a percent rounded down, the lines not run as ranges) and `lcov` the
+tracefile (absolute `SF:` paths).
+
+Precision: a line counts when its segment started. A trap, `return` or `?` in the middle of a segment leaves the
+rest of it counted; the `?` and `match` arms are `if`s, so they split segments, and calls that panic are the case
+left. Generic functions are counted per instance (a line is run if any instance ran it); code nothing instantiates has
+no IR and is not listed. `--coverage` with `--profile` is a usage error.

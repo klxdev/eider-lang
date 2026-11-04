@@ -547,6 +547,7 @@ Also in the core, for the LLVM backend's IR (#128), which can't name C types or 
 | derived Show of numbers and quoted text | `ei_str_push_i64`, `ei_str_push_u64`, `ei_str_push_quoted` |
 | `main` returning `Err` | `ei_main_error(text)`, `ei_main_error_i`, `ei_main_error_u`: flush stdout, then `error: ...` on stderr |
 | the test driver | `ei_test`, `ei_tests_done` (above) |
+| `eiderc test --coverage` | `ei_cov_hit(id)`: a relaxed atomic increment of probe `id`'s counter (up to `EI_COV_MAX`); at exit the nonzero counters are written to the file `$EIDER_COVERAGE` names, as `<id> <count>` lines |
 | handle objects (Task, Mutex, Chan) | `ei_h_new(size, chan_elem)` (a thread-safe count, a lock, a thread, a channel of `chan_elem`-byte elements when it is above 0, and `size` bytes of the program's data, 16-byte aligned), `ei_h_data`, `ei_h_inc`, `ei_h_dec` (true when that was the last holder), `ei_h_lock`/`unlock`, `ei_h_start(h, run)` (runs `run(h)` on a runtime thread), `ei_h_join`, `ei_h_chan`, `ei_h_free` (joins a started thread, destroys the lock and the channel, frees; the program drops its data first) |
 
 The buffer counts and the Ref checks are inline in the IR as they are in the header.

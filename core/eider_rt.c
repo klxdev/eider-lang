@@ -2525,6 +2525,29 @@ int32_t ei_tests_done(int32_t total, int32_t failed) {
   return failed ? 1 : 0;
 }
 
+// coverage (eiderc test --coverage): probe counters, written to $EIDER_COVERAGE when the process exits
+static _Atomic(uint64_t) *ei_cov_counts;
+static pthread_once_t ei_cov_once = PTHREAD_ONCE_INIT;
+static void ei_cov_dump(void) {
+  const char *path = getenv("EIDER_COVERAGE");
+  if (!path || !ei_cov_counts) return;
+  FILE *f = fopen(path, "w");
+  if (!f) return;
+  for (uint32_t i = 0; i < EI_COV_MAX; i++) {
+    uint64_t n = atomic_load_explicit(&ei_cov_counts[i], memory_order_relaxed);
+    if (n) fprintf(f, "%" PRIu32 " %" PRIu64 "\n", i, n);
+  }
+  fclose(f);
+}
+static void ei_cov_setup(void) {
+  ei_cov_counts = calloc(EI_COV_MAX, sizeof(uint64_t));
+  if (ei_cov_counts) atexit(ei_cov_dump);
+}
+void ei_cov_hit(uint32_t id) {
+  pthread_once(&ei_cov_once, ei_cov_setup);
+  if (ei_cov_counts && id < EI_COV_MAX) atomic_fetch_add_explicit(&ei_cov_counts[id], 1, memory_order_relaxed);
+}
+
 // handle objects: the parts, then the program's data (16-byte aligned: more than any Eider value needs)
 typedef struct {
   ei_rc rc;

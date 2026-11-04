@@ -14,6 +14,7 @@ usage:
                                              (else $EIDER_CRYPTO, [crypto] provider in eider.toml, awslc; built when missing)
   eiderc build|run|test <file.ei> --profile[=cpu,mem,conc]  with the profiler (docs/runtime.md "Profiler")
   eiderc test <file.ei> [-l lib]             run the `test` blocks (a module with no `main` too)
+  eiderc test [<file.ei>] --coverage [--lcov FILE]  also report which lines of the package's modules the tests ran
   eiderc test                                run the tests of every module of the package in this directory
   eiderc build|run|test ... -j N             compile at most N units at once (default $EIDER_JOBS, else one per CPU)
   eiderc cache size|clean|trim               the cache's use; remove every entry; apply EIDER_CACHE_MAX now

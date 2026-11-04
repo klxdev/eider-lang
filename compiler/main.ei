@@ -44,6 +44,7 @@ import eiderc.wasm
 import eiderc.pkgtest
 import eiderc.fmtcmd
 import eiderc.expsrc
+import eiderc.cover
 import eiderc.sanitize
 import eiderc.suite
 import eiderc.ide
@@ -77,6 +78,11 @@ type Args = {
     check: bool,
     /// `expand --ir`: the typed IR instead of source (expsrc.ei)
     ir_text: bool,
+    /// `test --coverage`, `--lcov FILE` (cover.ei), and `--coverage-data FILE`, which a package run
+    /// gives each file's run so that it writes its lines there instead of printing a report
+    coverage: bool,
+    lcov: List[u8],
+    cov_data: List[u8],
 }
 
 /// Comparisons go through a function so no owned temporary sits in an `else if` condition
@@ -111,6 +117,7 @@ fn usage_text() -> List[u8] {
         "                                             (else $EIDER_CRYPTO, [crypto] provider in eider.toml, awslc; built when missing)",
         "  eiderc build|run|test <file.ei> --profile[=cpu,mem,conc]  with the profiler (docs/runtime.md \"Profiler\")",
         "  eiderc test <file.ei> [-l lib]             run the `test` blocks (a module with no `main` too)",
+        "  eiderc test [<file.ei>] --coverage [--lcov FILE]  also report which lines of the package's modules the tests ran",
         "  eiderc test                                run the tests of every module of the package in this directory",
         "  eiderc build|run|test ... -j N             compile at most N units at once (default $EIDER_JOBS, else one per CPU)",
         "  eiderc cache size|clean|trim               the cache's use; remove every entry; apply EIDER_CACHE_MAX now",
@@ -249,6 +256,9 @@ fn parse_args() -> Args uses io, fs {
     let mut write = false
     let mut check = false
     let mut ir_text = false
+    let mut coverage = false
+    let mut lcov: List[u8] = List.new()
+    let mut cov_data: List[u8] = List.new()
     let mut bench = false
     let mut fuzz: u64 = 0
     let mut filter: List[u8] = List.new()
@@ -325,6 +335,18 @@ fn parse_args() -> Args uses io, fs {
             check = true
         } else if is(a, "--ir") {
             ir_text = true
+        } else if is(a, "--coverage") {
+            coverage = true
+        } else if is(a, "--lcov") {
+            if i >= argv.len() { usage_error(sys.lit("`--lcov` needs a file name")) }
+            lcov = argv[i]
+            coverage = true
+            i += 1
+        } else if is(a, "--coverage-data") {
+            if i >= argv.len() { usage_error(sys.lit("`--coverage-data` needs a file name")) }
+            cov_data = argv[i]
+            coverage = true
+            i += 1
         } else if is(a, "--bench") {
             bench = true
         } else if is(a, "--fuzz") {
@@ -406,7 +428,10 @@ fn parse_args() -> Args uses io, fs {
     if (lints.len() > 0 || list) && !is(cmd, "lint") { usage_error(sys.lit("`--deny`, `--warn`, `--allow` and `--list` go with `lint`")) }
     if (write || check) && !is(cmd, "fmt") { usage_error(sys.lit("`--write` and `--check` go with `fmt`")) }
     if ir_text && !is(cmd, "expand") { usage_error(sys.lit("`--ir` goes with `expand`")) }
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, wasm_core, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, debug, crypto, portable, filter, bench, fuzz, lints, list, write, check, ir_text)
+    if coverage && !is(cmd, "test") { usage_error(sys.lit("`--coverage`, `--lcov` and `--coverage-data` go with `test`")) }
+    if coverage && compile_fail { usage_error(sys.lit("`--coverage` measures `test` blocks, not a compile-fail suite")) }
+    if coverage && (profile > 0) { usage_error(sys.lit("`--coverage` and `--profile` don't go together")) }
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, wasm_core, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, debug, crypto, portable, filter, bench, fuzz, lints, list, write, check, ir_text, coverage, lcov, cov_data)
 }
 
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
@@ -691,6 +716,22 @@ fn test_flags(a: Args) -> List[List[u8]] {
     out
 }
 
+/// After a `test --coverage` run: its lines go to `--coverage-data` (a package run merges
+/// them), else the report is printed and `--lcov` written (cover.ei, docs/compiler.md "C8.77").
+fn finish_coverage(a: Args, plan: cover.Plan, counts: List[u8]) uses io, fs {
+    let d = cover.data(plan, counts)
+    if a.cov_data.len() > 0 {
+        match fs.write(a.cov_data, d) {
+            Ok(_) => {}
+            Err(e) => io.errln(bytes.concat(sys.lit("eiderc: coverage: "), e.bytes()))
+        }
+        return
+    }
+    let mut texts: List[List[u8]] = List.new()
+    texts.push(d)
+    cover.output(texts, a.lcov)
+}
+
 /// `eiderc expand <file> [<name>]` (docs/compiler.md, "C8.57"): the specialized IR of the
 /// instances whose body used comptime reflection (what a `@[derive]`d method or a generic
 /// reflective function became for each type), or of every function whose name contains
@@ -802,7 +843,7 @@ fn main() uses io, fs, net, clock {
     let a = parse_args()
     if a.compile_fail { env.exit(suite.run(a.file)) }
     if is(a.cmd, "test") && a.file.len() == 0 {
-        env.exit(pkgtest.run(env.args()[0], test_flags(a)))
+        env.exit(pkgtest.run(env.args()[0], test_flags(a), a.coverage, a.lcov))
         return
     }
     if is(a.cmd, "cache") {
@@ -927,7 +968,18 @@ fn main() uses io, fs, net, clock {
     let c = k.c
     if backend {
         let tests = a.tests || is(a.cmd, "test")
-        let lp = lower.P(c.ir, c.t, c.p.names)
+        let mut lp = lower.P(c.ir, c.t, c.p.names)
+        // `test --coverage`: probes in the modules of the test file's package (cover.ei)
+        let mut plan = cover.Plan(List.new(), List.new())
+        if a.coverage {
+            let mut covered: List[bool] = List.new()
+            let mut cpaths: List[List[u8]] = List.new()
+            for mi in 0..c.p.mods.len() {
+                covered.push((mi as u32) != c.p.prelude && c.p.mods[mi].pkg == c.p.mods[0].pkg)
+                cpaths.push(c.p.mods[mi].path.copy())
+            }
+            plan = cover.instrument(inout lp.ir, covered, cpaths)
+        }
         if is(a.cmd, "emit-header") {
             if a.wasm { io.out(wasm.header(lp)) } else { io.out(lower.header(lp, driver.lib_name(a.file, a.out))) }
             return
@@ -983,6 +1035,10 @@ fn main() uses io, fs, net, clock {
             }
             if is(a.cmd, "build") {
                 driver.build_llvm(lnames, lls, a.file, a.out, libs, a.debug, a.profile > 0, a.jobs)
+            } else if a.coverage {
+                let r = driver.run_llvm_ran(lnames, lls, a.file, a.release, libs, a.debug, a.profile > 0, a.pargs, test_env(a), a.jobs, true)
+                finish_coverage(a, plan, r.cov)
+                env.exit(r.code)
             } else {
                 driver.run_llvm(lnames, lls, a.file, a.release, libs, a.debug, a.profile > 0, a.pargs, test_env(a), a.jobs)
             }

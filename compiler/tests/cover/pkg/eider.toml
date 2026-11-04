@@ -1,0 +1,4 @@
+[package]
+name = "covpkg"
+version = "0.1.0"
+eider = "0.6"

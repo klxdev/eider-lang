@@ -1,0 +1,360 @@
+// cover: `eiderc test --coverage` (docs/compiler.md, "C8.77"). Line coverage of the modules of the
+// test file's package, measured by probes in the IR rather than by a change to the backend:
+//
+//   - `instrument` adds a call of the runtime's `ei_cov_hit(id)` (an `extern "c"` function, core/
+//     eider_rt.c: a relaxed atomic increment of a counter, safe from any thread, shared by all the
+//     units of the LLVM module because it lives in the runtime) at the start of each segment of
+//     each function of those modules: a block, or the run of statements after an `if` or a loop
+//     inside one. The lines of the segment's statements (the line every statement carries for trap
+//     messages) are what a hit covers. `test` blocks are not instrumented, so the lines counted are
+//     the code under test.
+//   - the program writes `<id> <count>` for each probe it ran to $EIDER_COVERAGE when it exits;
+//   - `data` maps that back to `path<TAB>line<TAB>count` for every executable line (zero for the
+//     ones no test ran), `report` and `lcov` print one or more such texts (a package's files are
+//     merged by summing).
+
+import core.sys
+import std.bytes
+import std.fs
+import std.io
+import eiderc.types
+import eiderc.ir
+
+/// The runtime has room for this many probes; a program with more leaves the rest unmeasured.
+pub const MAX_PROBES: usize = 262144
+
+/// One probe: the module it is in and the lines a hit covers.
+pub type Probe = { file: u32, lines: List[u32] }
+
+/// The probes of an instrumented program.
+pub type Plan = { probes: List[Probe], paths: List[List[u8]] }
+
+type Cv = { probes: List[Probe], seen: List[bool], hit: u32, file: u32 }
+
+/// Instrument `g`: the functions from the modules `covered` (by module index; `paths` their file
+/// names) call the runtime's counter. Returns the probes.
+pub fn instrument(inout g: ir.Ir, covered: List[bool], paths: List[List[u8]]) -> Plan {
+    let n = g.fns.len()
+    let hit = ir.declare_fn(inout g, sys.lit("ei_cov_hit"), false)
+    let mut ps: List[u32] = List.new()
+    ps.push(types.U32)
+    ir.add_extern(inout g, hit, sys.lit("ei_cov_hit"), ps, types.UNIT)
+    let mut st = Cv(List.new(), List.new(), hit, 0)
+    for i in 0..g.blocks.len() { st.seen.push(false) }
+    for f in 0..n {
+        let fd = g.fns[f].copy()
+        if fd.body == 0 || fd.is_test { continue }
+        if fd.file as usize >= covered.len() || !covered[fd.file as usize] { continue }
+        st.file = fd.file.copy()
+        walk(inout g, inout st, fd.body - 1)
+    }
+    Plan(st.probes, paths)
+}
+
+/// The probe call for `id` as a statement of `g`.
+fn probe_stmt(inout g: ir.Ir, hit: u32, id: u64, line: u32) -> u32 {
+    let a = ir.op_int(inout g, types.U32, id)
+    let mut one: List[u32] = List.new()
+    one.push(a)
+    let at = ir.list(inout g, one)
+    g.stmts.push(ir.Stmt(ir.S_CALL, ir.NONE, hit, at, 1, types.UNIT, line))
+    (g.stmts.len() - 1) as u32
+}
+
+fn walk(inout g: ir.Ir, inout st: Cv, b: u32) {
+    if st.seen[b as usize] { return }
+    st.seen[b as usize] = true
+    let bl = g.blocks[b as usize].copy()
+    let mut ids: List[u32] = List.new()
+    for i in 0..bl.len { ids.push(g.extra[(bl.start + i) as usize]) }
+    // the segments: a new one starts after each `if` and loop (their branches are blocks of their own)
+    let mut segs: List[List[u32]] = List.new()
+    let mut seglines: List[List[u32]] = List.new()
+    let mut cur: List[u32] = List.new()
+    let mut curl: List[u32] = List.new()
+    for id in ids {
+        let s = g.stmts[id as usize].copy()
+        cur.push(id)
+        if s.line > 0 && !curl.contains(s.line) { curl.push(s.line) }
+        if s.kind == ir.S_IF {
+            walk(inout g, inout st, s.b)
+            walk(inout g, inout st, s.c)
+            segs.push(cur)
+            seglines.push(curl)
+            cur = List.new()
+            curl = List.new()
+        } else if s.kind == ir.S_LOOP {
+            walk(inout g, inout st, s.a)
+            walk(inout g, inout st, s.b)
+            segs.push(cur)
+            seglines.push(curl)
+            cur = List.new()
+            curl = List.new()
+        }
+    }
+    segs.push(cur)
+    seglines.push(curl)
+    // the probe statements first (their operands go to `extra`), then the block as one run
+    let mut probes: List[u32] = List.new()
+    for k in 0..segs.len() {
+        if seglines[k].len() > 0 && st.probes.len() < MAX_PROBES {
+            let pid = st.probes.len() as u64
+            st.probes.push(Probe(st.file, seglines[k].copy()))
+            probes.push(probe_stmt(inout g, st.hit, pid, seglines[k][0]))
+        } else {
+            probes.push(ir.NONE)
+        }
+    }
+    let start = g.extra.len() as u32
+    let mut n: u32 = 0
+    for k in 0..segs.len() {
+        if probes[k] != ir.NONE {
+            g.extra.push(probes[k])
+            n += 1
+        }
+        for id in segs[k] {
+            g.extra.push(id)
+            n += 1
+        }
+    }
+    g.blocks[b as usize] = ir.Block(start, n)
+}
+
+// ---- data: path<TAB>line<TAB>count
+
+fn key_of(path: List[u8], line: u64) -> List[u8] {
+    let mut k = path.copy()
+    k.push(0)
+    let d = bytes.from_u64(line)
+    let mut pad: usize = 10
+    while pad > d.len() {
+        k.push(48)
+        pad -= 1
+    }
+    bytes.append(inout k, d)
+    k
+}
+
+/// The text `path<TAB>line<TAB>count` for every executable line of the plan's modules, given the
+/// program's `<id> <count>` output.
+pub fn data(plan: Plan, counts: List[u8]) -> List[u8] {
+    let mut by_id: Map[u64, u64] = Map.new()
+    for l in bytes.lines(counts) {
+        let parts = bytes.split(l, 32)
+        if parts.len() != 2 { continue }
+        match bytes.parse_u64(parts[0]) {
+            Some(id) => {
+                match bytes.parse_u64(parts[1]) {
+                    Some(c) => { by_id.insert(id, c) }
+                    None => {}
+                }
+            }
+            None => {}
+        }
+    }
+    let mut total: Map[List[u8], u64] = Map.new()
+    let mut keys: List[List[u8]] = List.new()
+    for id in 0..plan.probes.len() {
+        let pr = plan.probes[id].copy()
+        let c = match by_id.get(id as u64) {
+            Some(x) => x
+            None => 0
+        }
+        for ln in pr.lines {
+            let k = key_of(fs.normalize(plan.paths[pr.file as usize].copy()), ln as u64)
+            match total.get(k.copy()) {
+                Some(old) => { total.insert(k, old + c) }
+                None => {
+                    keys.push(k.copy())
+                    total.insert(k, c)
+                }
+            }
+        }
+    }
+    let mut out: List[u8] = List.new()
+    for k in fs.sort(keys) {
+        let at = k.len() - 11
+        bytes.append(inout out, bytes.slice(k, 0, at))
+        out.push(9)
+        bytes.append(inout out, bytes.from_u64(parse_line(k, at + 1)))
+        out.push(9)
+        bytes.append(inout out, bytes.from_u64(total.get(k.copy()).unwrap_or(0)))
+        out.push(10)
+    }
+    out
+}
+
+fn parse_line(k: List[u8], from: usize) -> u64 {
+    bytes.parse_u64(bytes.slice(k, from, k.len())).unwrap_or(0)
+}
+
+/// One file of a merged report: its lines in order with their counts.
+pub type Cov = { path: List[u8], lines: List[u32], counts: List[u64] }
+
+/// The files of one or more `data` texts, summing the counts of a line that is in several, in
+/// path order.
+pub fn merge(texts: List[List[u8]]) -> List[Cov] {
+    let mut total: Map[List[u8], u64] = Map.new()
+    let mut keys: List[List[u8]] = List.new()
+    for t in texts {
+        for l in bytes.lines(t) {
+            let parts = bytes.split(l, 9)
+            if parts.len() != 3 { continue }
+            let ln = bytes.parse_u64(parts[1]).unwrap_or(0)
+            let c = bytes.parse_u64(parts[2]).unwrap_or(0)
+            let k = key_of(parts[0].copy(), ln)
+            match total.get(k.copy()) {
+                Some(old) => { total.insert(k, old + c) }
+                None => {
+                    keys.push(k.copy())
+                    total.insert(k, c)
+                }
+            }
+        }
+    }
+    let mut out: List[Cov] = List.new()
+    for k in fs.sort(keys) {
+        let at = k.len() - 11
+        let path = bytes.slice(k, 0, at)
+        let ln = parse_line(k, at + 1) as u32
+        let c = total.get(k.copy()).unwrap_or(0)
+        if out.len() == 0 || !bytes.eq(out[out.len() - 1].path, path) {
+            out.push(Cov(path, List.new(), List.new()))
+        }
+        let last = out.len() - 1
+        out[last].lines.push(ln)
+        out[last].counts.push(c)
+    }
+    out
+}
+
+// ---- the report
+
+fn pad_to(inout o: List[u8], n: usize) {
+    while o.len() < n { o.push(32) }
+}
+
+fn tenths(covered: u64, total: u64) -> List[u8] {
+    let t: u64 = if total == 0 { 0 } else { covered * 1000 / total }
+    let mut o = bytes.from_u64(t / 10)
+    o.push(46)
+    bytes.append(inout o, bytes.from_u64(t % 10))
+    o.push(37)
+    o
+}
+
+/// The lines no test ran, as ranges: `14, 20-22`.
+fn missed(c: Cov) -> List[u8] {
+    let mut o: List[u8] = List.new()
+    let mut i: usize = 0
+    while i < c.lines.len() {
+        if c.counts[i] > 0 {
+            i += 1
+            continue
+        }
+        // a range of consecutive lines (in source numbers) with no hit
+        let a = c.lines[i].copy()
+        let mut b = a.copy()
+        let mut j = i + 1
+        while j < c.lines.len() && c.counts[j] == 0 && c.lines[j] <= b + 1 {
+            b = c.lines[j].copy()
+            j += 1
+        }
+        if o.len() > 0 { bytes.append(inout o, sys.lit(", ")) }
+        bytes.append(inout o, bytes.from_u64(a as u64))
+        if b > a {
+            o.push(45)
+            bytes.append(inout o, bytes.from_u64(b as u64))
+        }
+        i = j
+    }
+    o
+}
+
+/// The per-file table and a total line.
+pub fn report(files: List[Cov]) -> List[u8] {
+    let mut width: usize = 5
+    for c in files {
+        if c.path.len() > width { width = c.path.len() }
+    }
+    let mut o = sys.lit("coverage (lines of the package's modules that the tests ran):\n")
+    let mut all_c: u64 = 0
+    let mut all_t: u64 = 0
+    for c in files {
+        let mut hit: u64 = 0
+        for n in c.counts {
+            if n > 0 { hit += 1 }
+        }
+        let total = c.lines.len() as u64
+        all_c += hit
+        all_t += total
+        let mut row = sys.lit("  ")
+        bytes.append(inout row, c.path.copy())
+        pad_to(inout row, width + 4)
+        let frac = bytes.concat(bytes.from_u64(hit), bytes.concat(sys.lit("/"), bytes.from_u64(total)))
+        bytes.append(inout row, frac)
+        pad_to(inout row, width + 13)
+        bytes.append(inout row, tenths(hit, total))
+        let m = missed(c.copy())
+        if m.len() > 0 {
+            bytes.append(inout row, sys.lit("  not run: "))
+            bytes.append(inout row, m)
+        }
+        bytes.append(inout o, row)
+        o.push(10)
+    }
+    let mut row = sys.lit("  total")
+    pad_to(inout row, width + 4)
+    bytes.append(inout row, bytes.concat(bytes.from_u64(all_c), bytes.concat(sys.lit("/"), bytes.from_u64(all_t))))
+    pad_to(inout row, width + 13)
+    bytes.append(inout row, tenths(all_c, all_t))
+    bytes.append(inout o, row)
+    o.push(10)
+    o
+}
+
+/// Print the report of the merged `data` texts, and write `lcov` (a file name; empty: none).
+pub fn output(texts: List[List[u8]], lcov_file: List[u8]) uses io, fs {
+    let files = merge(texts)
+    io.out(report(files))
+    if lcov_file.len() > 0 {
+        let cwd = match fs.cwd() {
+            Ok(x) => x
+            Err(_) => sys.lit(".")
+        }
+        match fs.write(lcov_file, lcov(files, cwd)) {
+            Ok(_) => {}
+            Err(e) => io.errln(bytes.concat(sys.lit("eiderc: coverage: "), e.bytes()))
+        }
+    }
+}
+
+/// lcov's tracefile format (`genhtml`, editors): `SF`, `DA:<line>,<count>`, `LF`, `LH`. A relative
+/// path is made absolute against `cwd`.
+pub fn lcov(files: List[Cov], cwd: List[u8]) -> List[u8] {
+    let mut o: List[u8] = List.new()
+    for c in files {
+        bytes.append(inout o, sys.lit("TN:\nSF:"))
+        if c.path.len() > 0 && c.path[0] == 47 {
+            bytes.append(inout o, c.path.copy())
+        } else {
+            bytes.append(inout o, fs.join(cwd, c.path.copy()))
+        }
+        o.push(10)
+        let mut hit: u64 = 0
+        for i in 0..c.lines.len() {
+            bytes.append(inout o, sys.lit("DA:"))
+            bytes.append(inout o, bytes.from_u64(c.lines[i] as u64))
+            o.push(44)
+            bytes.append(inout o, bytes.from_u64(c.counts[i]))
+            o.push(10)
+            if c.counts[i] > 0 { hit += 1 }
+        }
+        bytes.append(inout o, sys.lit("LF:"))
+        bytes.append(inout o, bytes.from_u64(c.lines.len() as u64))
+        bytes.append(inout o, sys.lit("\nLH:"))
+        bytes.append(inout o, bytes.from_u64(hit))
+        bytes.append(inout o, sys.lit("\nend_of_record\n"))
+    }
+    o
+}

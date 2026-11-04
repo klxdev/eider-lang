@@ -311,4 +311,28 @@ options for every file of the package.
 A service tests its routes in-process with `http/testing` (eider-http): a client that calls a
 router or a middleware stack directly, no port.
 
-Coverage reports are not available yet.
+## Coverage
+
+`eiderc test --coverage file.ei` runs the tests and then prints which lines of the file's
+package's modules they ran (the code under test: `test` blocks themselves are not counted):
+
+```text
+coverage (lines of the package's modules that the tests ran):
+  shapes.ei     5/9      55.5%  not run: 12, 14, 19-20
+  sub/extra.ei  1/1      100.0%
+  total         6/10     60.0%
+```
+
+`--lcov FILE` also writes lcov's tracefile format (`SF:`, `DA:<line>,<hits>`, `LF:`, `LH:`),
+which `genhtml` and editors read; it implies `--coverage`. With no file, `eiderc test --coverage`
+runs the package's files and prints one report over all of them, summing the hits of a line
+that several runs reach.
+
+The compiler adds a counter at the start of each run of statements (a function body, a branch
+of an `if` or `match`, a loop body, the statements after either), so a line counts as run when
+the segment it is in started; a line a trap or a `return` cut short in the middle of a segment
+still counts. The counters are atomic and shared by every thread of the test. A build with
+`--coverage` is a different program from one without (it has the counter calls), so it has its
+own cache entry; the counts come back through a file the runtime writes when the test process
+exits. Lines of code that is never instantiated (a generic function nothing calls) have no code
+and are not listed.

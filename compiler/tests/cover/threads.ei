@@ -1,0 +1,27 @@
+// `eiderc test --coverage`: the counters are shared by threads (relaxed atomics), so the 4 x 250
+// calls of `bump` are all counted (line 4, the body of `bump` and the update closure's, is 2000)
+fn bump(m: Mutex[i32]) {
+    m.update(|x: i32| -> i32 x + 1)
+}
+
+fn skipped(n: i32) -> i32 {
+    n + 1
+}
+
+test "threads count" {
+    let m = Mutex.new(0)
+    let mut ts: List[Task[i32]] = List.new()
+    for i in 0..4 {
+        let mm = m
+        ts.push(spawn(|| -> i32 {
+            for j in 0..250 {
+                bump(mm)
+            }
+            return 0
+        }))
+    }
+    for t in ts {
+        let r = t.join()
+    }
+    assert(m.get() == 1000)
+}

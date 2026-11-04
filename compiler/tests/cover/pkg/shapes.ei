@@ -1,0 +1,26 @@
+// `eiderc test --coverage` on a package (docs/compiler.md, "C8.77"): the lines of this module that
+// its own test and sub/extra.ei run
+pub fn area(w: i32, h: i32) -> i32 {
+    if w <= 0 || h <= 0 {
+        return 0
+    }
+    w * h
+}
+
+pub fn describe(n: i32) -> String {
+    match n {
+        0 => String.from("none")
+        1 => String.from("one")
+        _ => String.from("many")
+    }
+}
+
+pub fn never_called() -> i32 {
+    let x = 40
+    x + 2
+}
+
+test "area" {
+    assert(area(3, 4) == 12)
+    assert(area(0, 4) == 0)
+}

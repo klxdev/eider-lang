@@ -11,6 +11,8 @@ import std.fs
 import std.io
 import std.env
 import std.proc
+import eiderc.cover
+import eiderc.driver
 
 fn s(x: str) -> List[u8] { sys.lit(x) }
 
@@ -73,7 +75,7 @@ fn summary(out: List[u8]) -> Option[(u64, u64)] {
 }
 
 /// Runs every test of the package in the current directory; the exit code (0: all passed).
-pub fn run(me: List[u8], flags: List[List[u8]]) -> i32 uses io, fs, net {
+pub fn run(me: List[u8], flags: List[List[u8]], coverage: bool, lcov: List[u8]) -> i32 uses io, fs, net, clock {
     if !fs.exists(s("eider.toml")) {
         io.errln(s("eiderc: `test` with no file runs a package's tests: there is no eider.toml here"))
         return 2
@@ -84,6 +86,9 @@ pub fn run(me: List[u8], flags: List[List[u8]]) -> i32 uses io, fs, net {
     let mut total: u64 = 0
     let mut failed: u64 = 0
     let mut broken: u64 = 0
+    // `--coverage`: each file's run writes its lines to a file here, and one report merges them
+    let covdir = if coverage { driver.try_work_dir() } else { List.new() }
+    let mut covfiles: List[List[u8]] = List.new()
     for f in files {
         let mut name = f.copy()
         if bytes.starts_with(name, s("./")) { name = bytes.slice(name, 2, name.len()) }
@@ -94,6 +99,12 @@ pub fn run(me: List[u8], flags: List[List[u8]]) -> i32 uses io, fs, net {
         argv.push(me.copy())
         argv.push(s("test"))
         for x in flags { argv.push(x) }
+        if covdir.len() > 0 {
+            let cf = fs.join(covdir.copy(), bytes.concat(bytes.from_u64(covfiles.len() as u64), s(".txt")))
+            argv.push(s("--coverage-data"))
+            argv.push(cf.copy())
+            covfiles.push(cf)
+        }
         argv.push(f)
         let r = proc.run_with(argv, proc.captured())
         match r {
@@ -131,6 +142,17 @@ pub fn run(me: List[u8], flags: List[List[u8]]) -> i32 uses io, fs, net {
         bytes.append(inout m, s(" files did not run"))
     }
     io.outln(m)
+    if covdir.len() > 0 {
+        let mut texts: List[List[u8]] = List.new()
+        for cf in covfiles {
+            match fs.read(cf) {
+                Ok(t) => texts.push(t)
+                Err(_) => {}
+            }
+        }
+        fs.remove_all(covdir)
+        cover.output(texts, lcov)
+    }
     if failed > 0 || broken > 0 { return 1 }
     0
 }

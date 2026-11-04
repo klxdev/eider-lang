@@ -1,0 +1,18 @@
+test threads count ... ok
+
+1 tests, 0 failed
+coverage (lines of the package's modules that the tests ran):
+  compiler/tests/cover/threads.ei  4/5      80.0%  not run: 8
+  total                            4/5      80.0%
+--- stderr
+--- exit 0
+TN:
+SF:<root>/compiler/tests/cover/threads.ei
+DA:4,2000
+DA:8,0
+DA:17,1012
+DA:18,1000
+DA:20,4
+LF:5
+LH:4
+end_of_record

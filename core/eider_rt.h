@@ -662,6 +662,12 @@ int32_t ei_test(const char *name, void (*fn)(void));
 /* After the tests: `\n<total> tests, <failed> failed`, the leak report when none failed (with
    EI_RT_COUNT_ALLOCS); the exit code (1 if any failed). */
 int32_t ei_tests_done(int32_t total, int32_t failed);
+/* `eiderc test --coverage` (docs/compiler.md, "C8.77"): the compiler adds a call of ei_cov_hit(id) to the start of
+   each segment of the code under test. The counters are relaxed atomics (safe from any thread); at exit the
+   nonzero ones are written to the file named by $EIDER_COVERAGE, one `<id> <count>` line each (nothing if it is
+   unset). At most EI_COV_MAX probes; a larger id is ignored. */
+#define EI_COV_MAX 262144u
+void ei_cov_hit(uint32_t id);
 
 /* Handle objects (Task, Mutex, Chan): one allocation with a thread-safe count of holders, a
    lock, a thread, a channel of `chan_elem`-byte elements (when chan_elem > 0), and `size`

@@ -32,6 +32,7 @@ and exit code 2. With no arguments at all, eiderc prints its usage to stderr and
 | `run <file> [--release] [-l lib] [--] [args...]` | Build (`-O0`, or `-O2` with `--release`) and run the program with `args`; exits with the program's exit code (128 + n if it was killed by signal n). Words after the file that aren't options go to the program, and so does everything after `--` (`eiderc run server.ei -- --port 80`). `run --lib` and `run --wasm` only build, like `build`. |
 | `test <file> [--release] [-l lib]` | Build the file with a test driver and run its `test` blocks: one `test <name> ... ok` or `FAILED` line each, then `N tests, M failed`; exits 1 if any failed. `--lib` and `--wasm` are ignored. |
 | `test <file> --filter NAME [--bench] [--fuzz N]` | Run only the test blocks whose name contains `NAME` (the others are counted as filtered out), and pass `--bench` and `--fuzz N` to `std/testing`'s `bench` and `fuzz` (see [Testing](../guide/testing.md#filters-tables-benchmarks-and-fuzz-targets)). With no file, the options go to every file of the package. The settings reach the program as `EIDER_TEST_FILTER`, `EIDER_TEST_BENCH` and `EIDER_TEST_FUZZ`. |
+| `test [<file>] --coverage [--lcov FILE]` | Run the tests as above, then print which lines of the package's modules (the test file's package, not std or dependencies; `test` blocks excluded) they ran: one row per file with `ran/lines`, the percentage and the lines no test ran, and a total. `--lcov FILE` also writes an lcov tracefile (and implies `--coverage`). With no file, one report covers the whole package. See [Testing](../guide/testing.md#coverage). |
 | `test --compile-fail [<dir>]` | Run a compile-fail suite: every `<dir>/fail/*.ei` must fail with the code and position in its `// expect: CODE LINE:COL` header (and its fix, if any, must not lead back to the same error), every `<dir>/pass/*.ei` must compile. Default `<dir>`: `tests/checks`. Exits 1 if any case failed. See [Testing](../guide/testing.md#compile-fail-tests). |
 
 ### Inspecting
@@ -78,6 +79,7 @@ print `eiderc <version>` (`eiderc 0.1.0`) and exit 0: the toolchain's version, f
 | `--wasm-core` | `build`, `check`, `emit-llvm` | build the program as a WebAssembly core module (see `build --wasm-core`) |
 | `--test` | `emit-llvm` | include the test driver |
 | `--compile-fail` | `test` | run a compile-fail suite (`<dir>` instead of a file) |
+| `--coverage`, `--lcov FILE` | `test` | report line coverage; write an lcov tracefile (see [Testing](../guide/testing.md#coverage)). `--coverage-data FILE` is what a package run gives each file's run: it writes the file's lines there instead of printing |
 | `--ir` | `expand` | print the typed IR of the specializations instead of Eider source |
 | `--write`, `--check` | `fmt` | rewrite the files in place; list the files whose layout would change (see [Formatting](#formatting)) |
 | `--json` | every command that reports errors; `audit-refs` | diagnostics as JSON, one object per line on stdout |
