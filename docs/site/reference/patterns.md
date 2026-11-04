@@ -116,10 +116,13 @@ true
 | `if let p = e { } else { }` | any | no |
 | `while let p = e { }` | any | no |
 | `let (p, q) = e` | a tuple pattern (the `let` form starts with `(`) | yes (E0101) |
+| `let p = e else { }` | any (starts with a variant or record name, or `(`) | no; the `else` block must leave the scope |
 | `for x in e`, `for (p, q) in e` | a name, or a pattern in parentheses | yes (E0101) |
 
-A `let` destructures only tuples: there is no `let Point(x, y) = p` or
-`let Some(x) = o`; use `match` or `if let` for records and variants.
+A plain `let` destructures only tuples: there is no `let Point(x, y) = p` or
+`let Some(x) = o`; use `match` or `if let` for records and variants, or
+[`let ... else`](statements.md#let-else) when the rest of the block needs the bindings and
+the other case leaves the scope.
 
 `if let p = e { A } else { B }` is the same as `match e { p => { A } _ => { B } }`, and
 `while let` is described in [Statements](statements.md#while). An `else` may be followed by

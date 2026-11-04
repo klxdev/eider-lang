@@ -1,0 +1,99 @@
+// `let PATTERN = e else { ... }`: the pattern's bindings scope over the rest of the block, the
+// else block must leave it (docs/site/reference/statements.md).
+type Point = { x: i32, y: i32 }
+type Shape = | Dot(Point) | Line(Point, Point) | Empty
+
+fn at(xs: List[String], i: usize) -> Option[String] {
+    if i < xs.len() { Some(xs[i].copy()) } else { None }
+}
+
+fn pos(n: i32) -> Option[i32] {
+    if n > 0 { Some(n) } else { None }
+}
+
+fn first_len(xs: List[String]) -> usize {
+    let Some(s) = at(xs, 0) else { return 0 }
+    s.len()
+}
+
+fn sum(a: i32, b: i32) -> Result[i32, String] {
+    let Some(x) = pos(a) else { return Err("a is {a}") }
+    let Some(y) = pos(b) else { return Err("b is {b}") }
+    Ok(x + y)
+}
+
+fn span(s: Shape) -> i32 {
+    let Line(Point { x: x0, y: _ }, Point { x: x1, y: _ }) = s else { return 0 }
+    x1 - x0
+}
+
+fn parse_all(texts: List[String]) -> i32 {
+    let mut total = 0
+    for i in 0..texts.len() {
+        let Some(t) = at(texts, i) else { continue }
+        let Some(n) = pos(t.len() as i32 - 1) else { continue }
+        total += n
+    }
+    total
+}
+
+fn until_empty(texts: List[String]) -> usize {
+    let mut n: usize = 0
+    for i in 0..texts.len() {
+        let Some(t) = at(texts, i) else { break }
+        let Some(_) = pos(t.len() as i32 - 1) else { break }
+        n += 1
+    }
+    n
+}
+
+fn shadow(o: Option[i32]) -> i32 {
+    let Some(o) = o else { return -1 }
+    o * 2
+}
+
+fn effects(inout log: List[String], o: Option[i32]) -> i32 {
+    defer log.push("leave".to_string())
+    log.push("enter".to_string())
+    let Some(v) = o else {
+        log.push("none".to_string())
+        return 0
+    }
+    log.push("some {v}".to_string())
+    v
+}
+
+fn main() uses io {
+    let mut xs: List[String] = List.new()
+    print(first_len(xs))
+    xs.push("hello".to_string())
+    print(first_len(xs))
+    print(sum(1, 2))
+    print(sum(0, 2))
+    print(sum(1, -4))
+    print(span(Line(Point(3, 0), Point(10, 0))))
+    print(span(Empty))
+    print(span(Dot(Point(1, 1))))
+    xs.push("".to_string())
+    xs.push("abc".to_string())
+    print(parse_all(xs))
+    print(until_empty(xs))
+    print(shadow(Some(21)))
+    print(shadow(None))
+    let mut log: List[String] = List.new()
+    print(effects(inout log, Some(5)))
+    print(effects(inout log, None))
+    for l in log { print(l) }
+    let Some(last) = at(xs, 2) else { return }
+    print(last)
+    let Some(gone) = at(xs, 9) else {
+        print("done")
+        return
+    }
+    print(gone)
+}
+
+test "let else in a test block" {
+    let Some(v) = pos(4) else { panic("no") }
+    assert(v == 4)
+}

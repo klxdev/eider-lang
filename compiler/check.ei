@@ -5376,7 +5376,7 @@ fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     match missing {
         Some(w) => {
             let pn = nd(c, n.a)
-            return Err(errh("E0101", pn.line, pn.col, q("refutable pattern in `let`: `", w[0], "` is not matched"), "use `match` or `if let` for patterns that can fail"))
+            return Err(errh("E0101", pn.line, pn.col, q("refutable pattern in `let`: `", w[0], "` is not matched"), r"use `match`, `if let`, or `let ... else { ... }` for patterns that can fail"))
         }
         None => {}
     }
@@ -6283,6 +6283,10 @@ fn compile_match(inout c: C, m: ast.Node, dest: Dest, exp: u32) -> Result[u32, d
         pres.push(pre)
         if !useful && !c.pat_bad {
             let p0 = nd(c, at(c, arm.c, 0))
+            if m.g == 1 {
+                // the else block of a `let ... else` whose pattern matches every value
+                return Err(errh("E0102", p0.line, p0.col, s("unreachable `else`: the pattern of this `let` matches every value"), r"drop the `else { ... }`, or use a pattern that can fail"))
+            }
             return Err(err("E0102", p0.line, p0.col, s("unreachable arm: everything it matches is already handled above")))
         }
         arm_binds.push(binds)
@@ -6345,9 +6349,7 @@ fn match_arms(inout c: C, m: ast.Node, i: u32, a: Arms, sc: Scrut, dest: Dest, e
     let then = ir.close(inout c.ir, tm)
     let r1 = finish_arm(c, m, i, result, t)?
     let em = ir.open(c.ir)
-    // (the seed doesn't evaluate a call argument before an `inout` access yet: bound first)
-    let exp2 = sibling_exp(c, dest, exp, r1)
-    let r = match_arms(inout c, m, i + 1, a, sc, dest, exp2, r1)?
+    let r = match_arms(inout c, m, i + 1, a, sc, dest, sibling_exp(c, dest, exp, r1), r1)?
     let els = ir.close(inout c.ir, em)
     emit(inout c, ir.S_IF, 0, cond, then, els, 0, m.line)
     Ok(r)
@@ -6385,6 +6387,11 @@ fn arm_body(inout c: C, m: ast.Node, i: u32, binds: List[Bind], pre: List[u32], 
     }
     pop_frame(inout c, t != types.NEVER)
     pop_scope(inout c)
+    // the else block of a `let ... else` (a match with g=1, "C8.71") must leave the scope
+    if m.g == 1 && i == 1 && t != types.NEVER && !poisoned(c, t) {
+        let eb = nd(c, arm.a)
+        return Err(errh("E0120", eb.line, eb.col, s("the `else` block of a `let` must not fall through"), "end it with `return`, `break`, `continue`, `panic` or a call that never returns"))
+    }
     Ok(t)
 }
 

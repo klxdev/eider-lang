@@ -1,0 +1,6 @@
+// expect: E0102 3:5
+fn f(p: (i32, i32)) -> i32 {
+    let (a, b) = p else { return 0 }
+    a + b
+}
+fn main() {}

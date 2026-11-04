@@ -132,6 +132,7 @@ stmt       = let_stmt
 
 label      = IDENT ":"
 let_stmt   = ("let" ["mut"] | "var") IDENT [":" type] "=" expr
+           | "let" pattern "=" expr "else" block
            | ("let" ["mut"] | "var") "(" pattern_list ")" "=" expr
 assign_op  = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>="
 
@@ -213,6 +214,9 @@ arm        = pattern { "|" pattern } "=>"
   other `a.b` is a field access. Inside an import's `{ }`, newlines are skipped. `import
   std.*` and `from` after an import path are E0001 (no wildcard or `from` imports). `null` in an expression is E0402.
 - `[x; N]` needs an integer literal N of at least 1.
+- `let P = e else { E }` (P starts with a name followed by `(`, `{` or `.`, or with `(`; `else` on
+  the line of the expression) is parsed, with the statements after it in its block `R`, as
+  `match e { P => { R } _ => { E } }`; the checker requires `E` to diverge (E0120).
 - `if let P = e { A } else { B }` is parsed as `match e { P => { A } _ => { B } }` (with an
   empty `B` when there is no `else`).
 - `if`, `match`, blocks and `unsafe` blocks parse anywhere a primary does; the checker

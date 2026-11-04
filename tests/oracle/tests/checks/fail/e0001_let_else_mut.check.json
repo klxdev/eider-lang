@@ -1,0 +1,1 @@
+{"error":"E0001","span":{"file":"tests/checks/fail/e0001_let_else_mut.ei","line":3,"col":25},"message":"write `mut` on the bindings of a `let ... else` pattern (`let Some(mut x) = e else { ... }`), not after `let`"}

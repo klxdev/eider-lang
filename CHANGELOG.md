@@ -19,6 +19,10 @@ Group 1, language and compiler ergonomics (more items come before the release).
   test with their message as the panic message (and no longer need `uses io`).
 - **An argument that is a call is evaluated before an `inout` access** (#145): `svc.add("a", schema(svc.add("b", x)))`
   and `xs.push(xs.len())` check; a place or an operator argument still conflicts (E0301).
+- **`let PATTERN = e else { ... }`** (#106): bind a pattern that can fail and leave the scope when it
+  does (`let Some(x) = find(id) else { return Err(..) }`); the names are in scope for the rest of the
+  block. The `else` block must end with `return`, `break`, `continue`, `panic` or a call that never
+  returns (new error E0120). tree-sitter-eider and eider-analyzer follow.
 - Fixes: an error in a `test` block names its own file (#162; the compiler's recorded expectations
   that had the stale file are re-blessed); `eiderc lint` takes a module or package with no `main` (#163);
   a method chain of hundreds of calls compiles (#153: the Eider `main` has a 512 MiB stack, `EIDER_MAIN_STACK`).

@@ -577,6 +577,51 @@ g
 w
 ```
 
+## E0120
+
+The **`else` block of a `let ... else` falls through**: the block runs when the pattern does
+not match, and then the statements after the `let` would use names that were never bound.
+It must end with `return`, `break`, `continue`, `panic` or a call that never returns.
+
+```eider,compile_fail=E0120
+fn first_even(xs: List[i32]) -> Option[i32] {
+    for x in xs {
+        if x % 2 == 0 { return Some(x) }
+    }
+    None
+}
+
+fn main() uses io {
+    let xs: List[i32] = List.new()
+    let Some(n) = first_even(xs) else { print("none") }
+    print(n)
+}
+```
+
+Fix: leave the scope.
+
+```eider
+fn first_even(xs: List[i32]) -> Option[i32] {
+    for x in xs {
+        if x % 2 == 0 { return Some(x) }
+    }
+    None
+}
+
+fn main() uses io {
+    let xs: List[i32] = List.new()
+    let Some(n) = first_even(xs) else {
+        print("none")
+        return
+    }
+    print(n)
+}
+```
+
+```output
+none
+```
+
 ## E0201
 
 A **missing capability**. A call to a function that `uses` a capability (`print` needs

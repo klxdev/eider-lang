@@ -87,6 +87,7 @@ fn main() uses io {
 ```text
 let_stmt = "let" ["mut"] name [":" type] "=" expr
          | "let" tuple_pattern "=" expr
+         | "let" pattern "=" expr "else" block
 ```
 
 `let` declares a variable and initializes it; every variable is initialized (there is no
@@ -138,6 +139,62 @@ fn main() uses io {
 ```
 
 A value of type `()` can't be bound (E0401).
+
+### `let ... else`
+
+`let PATTERN = e else { ... }` binds the names of a pattern that can fail, and leaves the
+scope when it does. The pattern starts with a variant or record name (`Some(x)`,
+`Ok(Point { x, y })`, `m.Some(x)`) or with `(`; the bindings are in scope for the rest of
+the block, so there is no nesting. The `else` block must end the scope: `return`, `break`,
+`continue`, `panic`, or a call that never returns (E0120 if it can fall through). A pattern
+that matches every value has no use for an `else` (E0102). Put `mut` on a binding
+(`let Some(mut n) = e else { ... }`), not after `let`.
+
+`let P = e else { E }` followed by the rest `R` of the block is the same as
+`match e { P => { R } _ => { E } }`, so the bindings follow the rules of `match`
+([Memory model](memory.md)).
+
+```eider
+fn first_even(xs: List[i32]) -> Option[i32] {
+    for x in xs {
+        if x % 2 == 0 { return Some(x) }
+    }
+    None
+}
+
+fn halve(xs: List[i32]) -> Result[i32, str] {
+    let Some(n) = first_even(xs) else { return Err("no even number") }
+    Ok(n / 2)
+}
+
+fn main() uses io {
+    let mut xs: List[i32] = List.new()
+    print(halve(xs))
+    xs.push(3)
+    xs.push(8)
+    print(halve(xs))
+}
+```
+
+```output
+Err("no even number")
+Ok(4)
+```
+
+```eider,compile_fail=E0120
+fn first_even(xs: List[i32]) -> Option[i32] {
+    for x in xs {
+        if x % 2 == 0 { return Some(x) }
+    }
+    None
+}
+
+fn main() uses io {
+    let xs: List[i32] = List.new()
+    let Some(n) = first_even(xs) else { print("none") }
+    print(n)
+}
+```
 
 ### `var` (deprecated)
 

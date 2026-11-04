@@ -1,0 +1,8 @@
+// expect: E0120 5:31
+fn pos(n: i32) -> Option[i32] { if n > 0 { Some(n) } else { None } }
+fn f(n: i32) -> i32 {
+    let mut total = 0
+    let Some(v) = pos(n) else { total += 1 }
+    v + total
+}
+fn main() {}

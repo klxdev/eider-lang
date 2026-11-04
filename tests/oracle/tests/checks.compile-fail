@@ -2,11 +2,13 @@ compile-fail tests (tests/checks/fail)
   ok   derive_part_lacks.ei         E0833 at 14:5
   ok   e0001_import_from.ei         E0001 at 3:14
   ok   e0001_import_wildcard.ei     E0001 at 3:12
+  ok   e0001_let_else_mut.ei        E0001 at 3:25
   ok   e0001_missing_brace.ei       E0001 at 5:1
   ok   e0002_bitwise_needs_parens.ei E0002 at 3:11 (fix compiles)
   ok   e0101_enum_missing.ei        E0101 at 4:3
   ok   e0101_int_no_wildcard.ei     E0101 at 3:3
   ok   e0102_duplicate_arm.ei       E0102 at 6:5
+  ok   e0102_let_else_irrefutable.ei E0102 at 3:5
   ok   e0103_match_in_expr.ei       E0103 at 4:14
   ok   e0107_duplicate_fn.ei        E0107 at 3:4
   ok   e0108_recursive_type.ei      E0108 at 2:6
@@ -21,6 +23,7 @@ compile-fail tests (tests/checks/fail)
   ok   e0117_or_pattern_names.ei    E0117 at 5:18
   ok   e0118_empty_range.ei         E0118 at 4:9
   ok   e0119_ambiguous_method.ei    E0119 at 9:13
+  ok   e0120_let_else_falls_through.ei E0120 at 5:31
   ok   e0201_cap_param_call.ei      E0201 at 4:5 (fix compiles)
   ok   e0201_comptime_io.ei         E0201 at 4:25
   ok   e0201_dyn_call_capability.ei E0201 at 4:25 (fix compiles)
@@ -144,6 +147,7 @@ compile-pass tests (tests/checks/pass)
   ok   pass_dyn_trait.ei
   ok   pass_import_and_ffi.ei
   ok   pass_inout_and_var.ei
+  ok   pass_let_else.ei
   ok   pass_lint_allow.ei
   ok   pass_list_inplace.ei
   ok   pass_match_all.ei
@@ -152,5 +156,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-150 passed, 0 failed; error-code coverage 73/73
+154 passed, 0 failed; error-code coverage 74/74
 --- exit 0

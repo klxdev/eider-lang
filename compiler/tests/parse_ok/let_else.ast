@@ -1,0 +1,84 @@
+(IFn 1:4 name=f end=1:59
+  param (Param 1:6 name=o
+    type (TGeneric 1:9 name=Option
+      arg (TName 1:16 name=i32)))
+  param (Param 1:22 name=r
+    type (TGeneric 1:25 name=Result
+      arg (TTuple 1:32
+        elem (TName 1:33 name=i32)
+        elem (TName 1:38 name=i32))
+      arg (TName 1:44 name=String)))
+  ret (TName 1:56 name=i32)
+  body (Block 1:60 end=8:1
+    stmt (SExpr 2:5
+      expr (EMatch 2:5 end=8:1
+        scrutinee (EIdent 2:19 name=o)
+        arm (Arm 2:5
+          pat (PVariant 2:9 name=Some
+            sub (PName 2:14 name=a))
+          body (EBlock 2:5
+            block (Block 2:5 end=8:1
+              stmt (SExpr 3:5
+                expr (EMatch 3:5 end=8:1
+                  scrutinee (EIdent 3:23 name=o)
+                  arm (Arm 3:5
+                    pat (PVariant 3:9 name=Some
+                      sub (PName 3:18 name=b mut))
+                    body (EBlock 3:5
+                      block (Block 3:5 end=8:1
+                        stmt (SExpr 6:5
+                          expr (EMatch 6:5 end=8:1
+                            scrutinee (EIdent 6:22 name=r)
+                            arm (Arm 6:5
+                              pat (PVariant 6:9 name=Ok
+                                sub (PTuple 6:12
+                                  sub (PName 6:13 name=c)
+                                  sub (PName 6:16 name=d)))
+                              body (EBlock 6:5
+                                block (Block 6:5 end=8:1
+                                  stmt (SExpr 7:5
+                                    expr (EBinary 7:15 op=`+`
+                                      lhs (EBinary 7:11 op=`+`
+                                        lhs (EBinary 7:7 op=`+`
+                                          lhs (EIdent 7:5 name=a)
+                                          rhs (EIdent 7:9 name=b))
+                                        rhs (EIdent 7:13 name=c))
+                                      rhs (EIdent 7:17 name=d))))))
+                            arm (Arm 6:29
+                              pat (PWild 6:5)
+                              body (EBlock 6:29
+                                block (Block 6:29 end=6:42
+                                  stmt (SExpr 6:31
+                                    expr (ECall 6:31 name=panic
+                                      arg (EArg 6:37
+                                        expr (EStr 6:37 value="x"))))))))))))
+                  arm (Arm 3:30
+                    pat (PWild 3:5)
+                    body (EBlock 3:30
+                      block (Block 3:30 end=5:5
+                        stmt (SReturn 4:9
+                          value (EInt 4:16 value=1))))))))))
+        arm (Arm 2:26
+          pat (PWild 2:5)
+          body (EBlock 2:26
+            block (Block 2:26 end=2:37
+              stmt (SReturn 2:28
+                value (EInt 2:35 value=0)))))))))
+(IFn 9:4 name=g end=9:21
+  param (Param 9:6 name=o
+    type (TGeneric 9:9 name=Option
+      arg (TName 9:16 name=i32)))
+  body (Block 9:22 end=11:1
+    stmt (SExpr 10:5
+      expr (EMatch 10:5 end=11:1
+        scrutinee (EIdent 10:19 name=o)
+        arm (Arm 10:5
+          pat (PVariant 10:9 name=Some
+            sub (PName 10:14 name=a))
+          body (EBlock 10:5
+            block (Block 10:5 end=11:1)))
+        arm (Arm 10:26
+          pat (PWild 10:5)
+          body (EBlock 10:26
+            block (Block 10:26 end=10:35
+              stmt (SReturn 10:28))))))))

@@ -17,12 +17,13 @@
 //            ETuple [c/d]   ETry a   EUnsafe a=block   EBlock a=block
 //            ELambda a=body g=ret+1 [c/d]=LParam   EIf a=cond b=then c=else+1
 //            EMatch a=scrutinee [c/d]=Arm e/f=line/col just past the scrutinee, end span =
-//                closing brace
+//                closing brace; g=1: made from `let PAT = e else { ... }` (docs/compiler.md, "C8.71")
 //            EArg a=expr b=inout (call arguments)  LParam a=sym b=type+1 c=1 for `inout x`
 //            Arm [c/d]=pats a=body b=1 if body is a statement
 // stmts      Block [c/d]=stmts, end span = closing brace
 //            SLet a=sym b=type+1 c=init d=0 `let`, 1 `var`, 2 `let mut` e/f=line/col just past
-//                the initializer      SLetPat a=pat c=init d e f as SLet
+//                the initializer      SLetPat a=pat c=init d e f as SLet, g=else block+1
+//                (`let PAT = e else { ... }`; the parser folds it into an EMatch with the rest of the block)
 //            SAssign a=target b=op+1 (0 plain) c=value   SExpr a
 //            SWhile a=cond b=block   SFor a=var sym b=lo c=hi d=block   SForEach a=var b=iter d=block
 //                e=pattern+1 (`for (k, v) in e`; a is then 0)

@@ -1,0 +1,14 @@
+type Point = { x: i32, y: i32 }
+fn pos(n: i32) -> Option[i32] { if n > 0 { Some(n) } else { None } }
+fn f(n: i32, r: Result[Point, String]) -> Result[i32, String] {
+    let Some(a) = pos(n) else { return Err("none".to_string()) }
+    let Ok(Point { x, y }) = r else { return Err("err".to_string()) }
+    let Some(b) = pos(x + y) else { return Err("sum".to_string()) }
+    Ok(a + b)
+}
+fn main() {
+    for i in 0..3 {
+        let Some(v) = pos(i) else { continue }
+        let Some(w) = pos(v) else { break }
+    }
+}

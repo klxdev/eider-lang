@@ -1290,9 +1290,10 @@ pub fn block(inout p: P) -> Result[u32, diag.Diag] {
         if is(p, lex.RBrace) {
             let t = cur(p)
             adv(inout p)
+            let folded = fold_let_else(inout p, stmts, t.line, t.col)
             let mut n = mk(ast.Block, open.line, open.col)
-            n.c = list(inout p, stmts)
-            n.d = stmts.len() as u32
+            n.c = list(inout p, folded)
+            n.d = folded.len() as u32
             n.end_line = t.line
             n.end_col = t.col
             return Ok(add(inout p, n))
@@ -1326,13 +1327,78 @@ pub fn block(inout p: P) -> Result[u32, diag.Diag] {
     }
     // unclosed (only after an error): the block ends before the end of the file or the item
     let e = prev_end(p)
+    let folded = fold_let_else(inout p, stmts, e.line, e.col)
     let mut n = mk(ast.Block, open.line, open.col)
-    n.c = list(inout p, stmts)
-    n.d = stmts.len() as u32
+    n.c = list(inout p, folded)
+    n.d = folded.len() as u32
     n.end_line = e.line
     n.end_col = e.col
     Ok(add(inout p, n))
 }
+
+/// `let PAT = EXPR else { ELSE }` (docs/compiler.md, "C8.71") is
+/// `match EXPR { PAT => { REST } _ => { ELSE } }` where REST is what follows the `let` in its
+/// block (so the bindings scope over it) and the match carries g=1: the checker requires the
+/// else block to diverge (E0120). The statements of `stmts` that are such a `let` (an SLetPat
+/// with g = else block + 1) are folded from the last to the first.
+fn fold_let_else(inout p: P, stmts: List[u32], end_line: u32, end_col: u32) -> List[u32] {
+    let mut out: List[u32] = stmts.copy()
+    let mut i = out.len()
+    while i > 0 {
+        i -= 1
+        let sn = p.ast.nodes[out[i] as usize].copy()
+        if sn.kind != ast.SLetPat || sn.g == 0 { continue }
+        let mut rest: List[u32] = List.new()
+        for j in i + 1..out.len() { rest.push(out[j]) }
+        while out.len() > i { out.pop() }
+        let mut rb = mk(ast.Block, sn.line, sn.col)
+        rb.c = list(inout p, rest)
+        rb.d = rest.len() as u32
+        rb.end_line = end_line
+        rb.end_col = end_col
+        let rbid = add(inout p, rb)
+        let mut then_e = mk(ast.EBlock, sn.line, sn.col)
+        then_e.a = rbid
+        let then_id = add(inout p, then_e)
+        let mut pats1: List[u32] = List.new()
+        pats1.push(sn.a)
+        let mut arm1 = mk(ast.Arm, sn.line, sn.col)
+        arm1.a = then_id
+        arm1.c = list(inout p, pats1)
+        arm1.d = 1
+        let a1 = add(inout p, arm1)
+        let eblk = nd_of(p, sn.g - 1)
+        let mut els_e = mk(ast.EBlock, eblk.line, eblk.col)
+        els_e.a = sn.g - 1
+        let els = add(inout p, els_e)
+        let mut pats2: List[u32] = List.new()
+        pats2.push(add(inout p, mk(ast.PWild, sn.line, sn.col)))
+        let mut arm2 = mk(ast.Arm, eblk.line, eblk.col)
+        arm2.a = els
+        arm2.c = list(inout p, pats2)
+        arm2.d = 1
+        let a2 = add(inout p, arm2)
+        let mut arms: List[u32] = List.new()
+        arms.push(a1)
+        arms.push(a2)
+        let mut m = mk(ast.EMatch, sn.line, sn.col)
+        m.a = sn.c
+        m.c = list(inout p, arms)
+        m.d = 2
+        m.e = sn.e
+        m.f = sn.f
+        m.g = 1
+        m.end_line = end_line
+        m.end_col = end_col
+        let mid = add(inout p, m)
+        let mut st = mk(ast.SExpr, sn.line, sn.col)
+        st.a = mid
+        out.push(add(inout p, st))
+    }
+    out
+}
+
+fn nd_of(p: P, id: u32) -> ast.Node { p.ast.nodes[id as usize].copy() }
 
 fn assign_op(k: lex.Kind) -> u32 {
     match k {
@@ -1359,6 +1425,14 @@ fn at_mut(p: P) -> bool {
     let t = cur(p)
     if t.val <= intern.LAST_KEYWORD as u64 { return false }
     bytes.eq(intern.name(p.names, t.val as u32), sys.lit("mut"))
+}
+
+/// Whether a `let` is followed by a pattern that is not a plain name: `Some(x)`, `Point { x, y }`,
+/// `m.Some(x)` (a parenthesized tuple pattern is tested apart).
+fn at_let_pattern(p: P) -> bool {
+    if !is(p, lex.Ident) || cur(p).val <= intern.LAST_KEYWORD as u64 { return false }
+    let k = kind_at(p, p.i + 1)
+    k == lex.LParen || k == lex.LBrace || k == lex.Dot
 }
 
 /// `name: for ...` / `name: while ...`: a loop label (docs/compiler.md, "C8.22").
@@ -1401,7 +1475,7 @@ fn stmt(inout p: P) -> Result[u32, diag.Diag] {
             mutable = 2
             adv(inout p)
         }
-        if is(p, lex.LParen) {
+        if is(p, lex.LParen) || at_let_pattern(p) {
             let pat = pattern(inout p)?
             expect(inout p, lex.Eq)?
             skip_nl(inout p)
@@ -1412,6 +1486,12 @@ fn stmt(inout p: P) -> Result[u32, diag.Diag] {
             let ie = prev_end(p)
             n.e = ie.line
             n.f = ie.col
+            if is_kw(p, intern.K_ELSE) {
+                // `let PAT = EXPR else { ... }`: folded with the rest of the block by `block`
+                if mutable != 0 { return Err(err(p, r"write `mut` on the bindings of a `let ... else` pattern (`let Some(mut x) = e else { ... }`), not after `let`")) }
+                adv(inout p)
+                n.g = block(inout p)? + 1
+            }
             return Ok(add(inout p, n))
         }
         let name = ident(inout p)?

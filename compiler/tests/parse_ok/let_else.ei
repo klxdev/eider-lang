@@ -1,0 +1,11 @@
+fn f(o: Option[i32], r: Result[(i32, i32), String]) -> i32 {
+    let Some(a) = o else { return 0 }
+    let Some(mut b) = o else {
+        return 1
+    }
+    let Ok((c, d)) = r else { panic("x") }
+    a + b + c + d
+}
+fn g(o: Option[i32]) {
+    let Some(a) = o else { return }
+}

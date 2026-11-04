@@ -1,0 +1,6 @@
+// expect: E0001 3:25
+fn f(o: Option[i32]) -> i32 {
+    let mut Some(v) = o else { return 0 }
+    v
+}
+fn main() {}

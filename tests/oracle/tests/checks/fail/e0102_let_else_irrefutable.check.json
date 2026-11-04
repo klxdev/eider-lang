@@ -1,0 +1,1 @@
+{"error":"E0102","span":{"file":"tests/checks/fail/e0102_let_else_irrefutable.ei","line":3,"col":5},"message":"unreachable `else`: the pattern of this `let` matches every value","help":"drop the `else { ... }`, or use a pattern that can fail"}

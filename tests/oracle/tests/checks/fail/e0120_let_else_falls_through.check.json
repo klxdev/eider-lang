@@ -1,0 +1,1 @@
+{"error":"E0120","span":{"file":"tests/checks/fail/e0120_let_else_falls_through.ei","line":5,"col":31},"message":"the `else` block of a `let` must not fall through","help":"end it with `return`, `break`, `continue`, `panic` or a call that never returns"}

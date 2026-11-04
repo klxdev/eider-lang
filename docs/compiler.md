@@ -4647,3 +4647,24 @@ may be `str` or `String`; `S_PANIC`'s `ty` is the message's type), llvm.ei (`S_P
 String's text pointer as `print` does). Test: compiler/tests/run/panic_string.ei (stdout flushed,
 then `eider: runtime error: bad value 7 (...)`, exit 101). std/testing's assertions use it.
 The comptime interpreter reads the message bytes of either type (`S_PANIC`).
+
+## C8.71: `let PATTERN = e else { ... }` (#106)
+
+Decision C852. Code: parse.ei (`stmt`: `at_let_pattern`, the `else` of an `SLetPat`; `fold_let_else`,
+called by `block`), ast.ei (`SLetPat` g = else block + 1; `EMatch` g = 1), check.ei (`arm_body`: E0120;
+`compile_match`'s unreachable-arm error: E0102 with its own text). Tests: tests/run/let_else.ei,
+tests/checks/{fail/e0120_let_else_falls_through,fail/e0102_let_else_irrefutable,fail/e0001_let_else_mut,pass/pass_let_else}.ei,
+compiler/tests/parse_ok/let_else.ei. The form is parsed, like `if let`, into a `match`: `block` collects
+its statements, and every `SLetPat` that has an else block takes the statements after it as the body of
+the first arm, so the pattern's bindings scope over them and a chain of `let ... else` nests to the
+right. The match is the block's last statement, so a trailing expression is the block's value. Its
+second arm is `_ => { ELSE }`, and `EMatch` g=1 tells the checker that arm must have type `!`
+(E0120 otherwise; a poisoned type is not judged). A pattern that matches everything leaves that `_` arm
+unreachable, which is the existing E0102, worded for the `else`. The statement starts a pattern, not a
+name, when `let` is followed by `(`, or by a name and then `(`, `{` or `.` (`at_let_pattern`); `mut` goes
+on the bindings, `let mut Some(x) = ..` is E0001 (what would it make mutable?). The `else` must be on
+the line of the expression. Without `else` a pattern after `let` is checked as before (tuples only; E0101
+for a refutable one, whose help now mentions `let ... else`). The bindings are those of a `match`
+(references into a place scrutinee, as in "References"). tree-sitter-eider: `let_declaration` takes a
+`variant_pattern` or `record_pattern` and an optional `alternative` block, and `if_expression` is
+`prec.right` so that `let P = if c { a } else { b } else { r }` gives the first `else` to the `if`.
