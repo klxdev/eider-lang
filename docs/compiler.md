@@ -4797,3 +4797,23 @@ Precision: a line counts when its segment started. A trap, `return` or `?` in th
 rest of it counted; the `?` and `match` arms are `if`s, so they split segments, and calls that panic are the case
 left. Generic functions are counted per instance (a line is run if any instance ran it); code nothing instantiates has
 no IR and is not listed. `--coverage` with `--profile` is a usage error.
+
+## C8.78: `run --watch` and `test --watch` (#147)
+
+Decision C859. Code: compiler/watch.ei (new), main.ei (`--watch`, `--no-opt`, `run_watch`), driver.ei (`build_llvm` takes
+`release`). Tests: tests/watch/run.sh (a leg of scripts/verify.sh).
+
+`eider run` and `eider test` pass their arguments to `eiderc`, so the watch lives in eiderc and `eider` has nothing to add.
+`watch.run_program` loops: read the program's files (`resolve.load_from` on the entry file, whatever failed to load left
+out; the modules' paths, their directories, eider.toml and eider.lock) and their modification times (`std/fd.stat_path`),
+run `eiderc build --no-opt FILE -o <work dir>/program ...` (a subprocess with the terminal as its output, so errors print
+as they do for `build`), start the program with `std/child` (stdio inherited, arguments passed), then poll every 200 ms for
+a change (waiting 100 ms more once there is one), for the program ending (reported once) and for SIGINT/SIGTERM
+(`std/signal.watch`). A change stops the program (`child.kill` TERM, `try_wait` every 25 ms for three seconds, then
+KILL) and starts the cycle over, which reads the file set again. Starting the executable directly is the point: through
+`eiderc run` the program is `ec_run`'s child in the same process group, so killing eiderc would orphan it. The new `build
+--no-opt` is `build_llvm` with `release` false, the optimization level `run` and `test` use. `watch.run_tests` runs
+`eiderc test ARGS` as a subprocess to completion; it compares the modification times from before the run, so a change made
+during it runs the tests again at once. With no file the set is every `.ei` file under the directory (skipping `target`, `.git`,
+`.vendor`, `node_modules`). Not done: inotify/kqueue (polling is the portable form), a `--watch` for `check` and `build`.
+

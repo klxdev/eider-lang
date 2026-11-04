@@ -8,6 +8,8 @@ usage:
   eiderc build --wasm <file.ei> [-o name]    build <name>.wasm, <name>.d.ts and <name>.js (needs clang for wasm32 and wasm-ld)
   eiderc build --wasm-core <file.ei> [-o out.wasm]  build the program as a WebAssembly module that imports
                                              only the C core's ABI (env.ec_*; the seed: seed/README.md)
+  eiderc run|test <file.ei> --watch          run again (stopping the program first) whenever a file it loads changes
+  eiderc build --no-opt <file.ei>            compile at -O0 (what run and test do)
   eiderc run <file.ei> [--release] [-l lib] [--] [args...]  build and run (-O0 unless --release);
                                              the arguments after the file (every one after `--`) go to the program
   eiderc build|run|test <file.ei> --crypto <backend>  the crypto backend a program importing core/crypto links

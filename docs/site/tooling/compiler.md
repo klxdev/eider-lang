@@ -29,6 +29,7 @@ and exit code 2. With no arguments at all, eiderc prints its usage to stderr and
 | `build --lib <file> [-o name]` | Build `lib<name>.a`, `lib<name>.so` and `<name>.h` from the file's `export fn`s (in `-o`'s directory, else the working directory; `name` defaults to the file's stem) and print `built <a>, <so>, <h>`. The library contains the Eider runtime and the C core. See [FFI](../guide/ffi.md). |
 | `build --wasm <file> [-o name]` | Build `<name>.wasm`, `<name>.d.ts` and `<name>.js` and print `built <wasm>, <d.ts>, <js>`. Needs clang with the wasm32 target and `wasm-ld`. See [WebAssembly](../guide/wasm.md). |
 | `build --wasm-core <file> [-o out.wasm]` | Build a program (with `main`) as a WebAssembly *core module*: it exports `_start` and imports only the C core's functions (`env.ec_*`), so a host linking `core/eider_core.c` runs it with files, arguments, the environment and processes as a native program has them. This is how the compiler's seed is made (`seed/README.md`). |
+| `run <file> --watch [...]`, `test [<file>] --watch [...]` | Run again whenever a file the program loads changes. See [Watching](#watching). |
 | `run <file> [--release] [-l lib] [--] [args...]` | Build (`-O0`, or `-O2` with `--release`) and run the program with `args`; exits with the program's exit code (128 + n if it was killed by signal n). Words after the file that aren't options go to the program, and so does everything after `--` (`eiderc run server.ei -- --port 80`). `run --lib` and `run --wasm` only build, like `build`. |
 | `test <file> [--release] [-l lib]` | Build the file with a test driver and run its `test` blocks: one `test <name> ... ok` or `FAILED` line each, then `N tests, M failed`; exits 1 if any failed. `--lib` and `--wasm` are ignored. |
 | `test <file> --filter NAME [--bench] [--fuzz N]` | Run only the test blocks whose name contains `NAME` (the others are counted as filtered out), and pass `--bench` and `--fuzz N` to `std/testing`'s `bench` and `fuzz` (see [Testing](../guide/testing.md#filters-tables-benchmarks-and-fuzz-targets)). With no file, the options go to every file of the package. The settings reach the program as `EIDER_TEST_FILTER`, `EIDER_TEST_BENCH` and `EIDER_TEST_FUZZ`. |
@@ -80,6 +81,8 @@ print `eiderc <version>` (`eiderc 0.1.0`) and exit 0: the toolchain's version, f
 | `--test` | `emit-llvm` | include the test driver |
 | `--compile-fail` | `test` | run a compile-fail suite (`<dir>` instead of a file) |
 | `--coverage`, `--lcov FILE` | `test` | report line coverage; write an lcov tracefile (see [Testing](../guide/testing.md#coverage)). `--coverage-data FILE` is what a package run gives each file's run: it writes the file's lines there instead of printing |
+| `--watch` | `run`, `test` | rebuild and run again when a file changes (see [Watching](#watching)) |
+| `--no-opt` | `build` | compile at `-O0`, as `run` and `test` do (the watch uses it) |
 | `--ir` | `expand` | print the typed IR of the specializations instead of Eider source |
 | `--write`, `--check` | `fmt` | rewrite the files in place; list the files whose layout would change (see [Formatting](#formatting)) |
 | `--json` | every command that reports errors; `audit-refs` | diagnostics as JSON, one object per line on stdout |
@@ -152,6 +155,31 @@ tabs, CRLF, trailing white space) and tests `--write` and `--check`.
 
 In an editor, eider-analyzer answers `textDocument/formatting` with the same layout (see
 [Editors](editors.md)); with another client, `eiderc fmt --write %` on save does it.
+
+## Watching
+
+`eiderc run --watch app.ei [args]` builds the program, starts it, and when a file it loads changes
+stops it (SIGTERM, SIGKILL after three seconds) and builds and starts it again. It builds at `-O0` like
+`run` (`--release` for `-O2`), takes the options of `run` (`-l`, `-g`, `--crypto`, `-j`, and the program's
+arguments after the file or `--`), and prints what it does on stderr with a `[watch]` prefix:
+
+```text
+[watch] sub/msg.ei changed; rebuilding
+[watch] the program exited with code 0; waiting for a change
+[watch] the build failed; waiting for a change
+```
+
+`eiderc test --watch [file]` runs the tests, and again whenever a file changes: after a run it waits (a run in
+progress is never interrupted, and a change made during it starts the next run at once). With no file it runs the
+package's tests as `eiderc test` does and watches every `.ei` file under the current directory, and `--filter`,
+`--bench`, `--fuzz`, `--coverage` and `--lcov` are passed on.
+
+What is watched is what the compiler loaded: the entry file's modules (imports, dependencies and the standard library
+included), the directory of each (so a new file is noticed), and `eider.toml` and `eider.lock`. Files are polled by
+modification time every 200 ms and a change is waited on for 100 ms more, so an editor's burst of writes is one restart.
+The set is read again at every restart, so a new import is watched from then on. A build that fails prints its errors and
+the watch waits for the next change. Ctrl-C (SIGINT) and SIGTERM stop the program and end the watch (exit 130 and
+143). `eider run --watch` and `eider test --watch` are the same commands.
 
 ## Debugging
 

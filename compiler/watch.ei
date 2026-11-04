@@ -1,0 +1,288 @@
+// watch: `eiderc run --watch` and `eiderc test --watch` (docs/site/tooling/compiler.md, "Watching").
+//
+//   run:  build the program (`eiderc build --no-opt`, the same code `run` compiles), start it, and when a
+//         file it loads changes stop it (SIGTERM, then SIGKILL after 3 s) and build and start it again;
+//   test: run `eiderc test` and when a file it loads changes run it again (a run in progress is never
+//         interrupted).
+//
+// The files are what the compiler loads: the entry file's module graph (resolve.load_from), plus the
+// directory of each module (so a new file there is noticed) and the package's eider.toml and eider.lock;
+// with `test` and no file, every `.ei` file under the current directory. They are polled by modification time
+// every 200 ms; a change is waited on for 100 ms more, so an editor's burst of writes is one restart. A file
+// that is missing counts as a change when it appears. The set is read again at every restart, so a new
+// import is watched from then on.
+//
+// A build that fails prints its errors and the watch waits for the next change. Ctrl-C (SIGINT) and SIGTERM
+// stop the program and end the watch.
+
+import core.sys
+import std.bytes
+import std.fs
+import std.fd
+import std.io
+import std.time
+import std.proc
+import std.child
+import std.signal
+import eiderc.intern
+import eiderc.lex
+import eiderc.parse
+import eiderc.resolve
+import eiderc.driver
+
+fn s(x: str) -> List[u8] { sys.lit(x) }
+
+/// The `[watch]` line on stderr.
+fn say(msg: List[u8]) uses io {
+    io.errln(bytes.concat(s("[watch] "), msg))
+}
+
+fn stamp(path: List[u8]) -> i64 uses fs {
+    match fd.stat_path(path, true) {
+        Ok(st) => st.mtime_ns
+        Err(_) => -1
+    }
+}
+
+fn stamps_of(paths: List[List[u8]]) -> List[i64] uses fs {
+    let mut out: List[i64] = List.new()
+    for p in paths { out.push(stamp(p)) }
+    out
+}
+
+fn changed(paths: List[List[u8]], before: List[i64]) -> Option[List[u8]] uses fs {
+    for i in 0..paths.len() {
+        if stamp(paths[i]) != before[i] { return Some(paths[i].copy()) }
+    }
+    None
+}
+
+fn add_unique(inout out: List[List[u8]], p: List[u8]) {
+    for q in out {
+        if bytes.eq(q, p) { return }
+    }
+    out.push(p)
+}
+
+/// The files and directories the program rooted at `file` depends on.
+fn loaded(file: List[u8]) -> List[List[u8]] uses io, fs {
+    let mut out: List[List[u8]] = List.new()
+    out.push(file.copy())
+    let src: List[u8] = match fs.read(file) {
+        Ok(t) => t
+        Err(_) => List.new()
+    }
+    let mut names = intern.new()
+    let lx = lex.lex_all(src, inout names)
+    let pr = parse.parse_all(lx.lexed, names)
+    let ld = resolve.load_from(file, src, pr.p, resolve.disk())
+    for m in ld.p.mods {
+        if m.path.len() > 0 { add_unique(inout out, m.path.copy()) }
+    }
+    let mut dirs: List[List[u8]] = List.new()
+    for p in out { add_unique(inout dirs, fs.dirname(p.copy())) }
+    for d in dirs { add_unique(inout out, d) }
+    add_unique(inout out, s("eider.toml"))
+    add_unique(inout out, s("eider.lock"))
+    out
+}
+
+/// Every `.ei` file under the current directory, and its directories (`test` with no file).
+fn package_files() -> List[List[u8]] uses fs {
+    let mut skip: List[List[u8]] = List.new()
+    skip.push(s("target"))
+    skip.push(s(".git"))
+    skip.push(s(".vendor"))
+    skip.push(s("node_modules"))
+    let mut out: List[List[u8]] = List.new()
+    let rel: List[List[u8]] = match fs.walk(s("."), skip) {
+        Ok(r) => r
+        Err(_) => List.new()
+    }
+    for r in rel {
+        if bytes.ends_with(r, s(".ei")) {
+            add_unique(inout out, r.copy())
+            add_unique(inout out, fs.dirname(r))
+        }
+    }
+    add_unique(inout out, s("."))
+    add_unique(inout out, s("eider.toml"))
+    add_unique(inout out, s("eider.lock"))
+    out
+}
+
+/// A stop request (SIGINT or SIGTERM) has arrived: its exit code, else 0.
+fn stop_code() -> i32 uses io {
+    match signal.pending() {
+        Ok(xs) => {
+            for x in xs {
+                if x == signal.INT { return 130 }
+                if x == signal.TERM { return 143 }
+            }
+            0
+        }
+        Err(_) => 0
+    }
+}
+
+/// Wait for a change in `paths` since `before` (None if a stop request came first: its code).
+fn wait_change(paths: List[List[u8]], before: List[i64]) -> Result[List[u8], i32] uses io, fs, clock {
+    while true {
+        let c = stop_code()
+        if c != 0 { return Err(c) }
+        time.sleep_ms(200)
+        match changed(paths, before) {
+            Some(p) => {
+                // an editor's burst of writes is one change
+                time.sleep_ms(100)
+                return Ok(p)
+            }
+            None => {}
+        }
+    }
+    Err(0)
+}
+
+/// SIGTERM, then SIGKILL after three seconds; reaps the child.
+fn stop_child(c: child.Child) uses io, fs, net, clock {
+    let t1 = child.kill(c.pid, signal.TERM)
+    let mut waited: i64 = 0
+    while waited < 3000 {
+        match child.try_wait(c.pid) {
+            Ok(Some(_)) => { return }
+            Ok(None) => {}
+            Err(_) => { return }
+        }
+        time.sleep_ms(25)
+        waited += 25
+    }
+    let t2 = child.kill(c.pid, signal.KILL)
+    let w = child.wait(c.pid)
+}
+
+fn exit_text(e: child.Exit) -> List[u8] {
+    if e.signal != 0 { return bytes.concat(s("killed by signal "), bytes.from_u64(e.signal as u64)) }
+    bytes.concat(s("exited with code "), bytes.from_u64(e.code as u64))
+}
+
+/// `eiderc run --watch`: `flags` are passed to `build` (`-l lib`, `-g`, `--crypto`, `-j`), `pargs` to the program.
+pub fn run_program(me: List[u8], file: List[u8], release: bool, flags: List[List[u8]], pargs: List[List[u8]]) -> i32 uses io, fs, net, clock {
+    let dir = driver.try_work_dir()
+    if dir.len() == 0 {
+        io.errln(s("eiderc: watch: cannot create a work directory"))
+        return 3
+    }
+    let exe = fs.join(dir.copy(), s("program"))
+    let w1 = signal.watch(signal.INT)
+    let w2 = signal.watch(signal.TERM)
+    let mut code: i32 = 0
+    while true {
+        let paths = loaded(file.copy())
+        let before = stamps_of(paths)
+        let mut argv: List[List[u8]] = List.new()
+        argv.push(me.copy())
+        argv.push(s("build"))
+        if !release { argv.push(s("--no-opt")) }
+        argv.push(file.copy())
+        argv.push(s("-o"))
+        argv.push(exe.copy())
+        for x in flags { argv.push(x.copy()) }
+        let built = match proc.run(argv) {
+            Ok(n) => n
+            Err(e) => {
+                io.errln(e.bytes())
+                code = 3
+                break
+            }
+        }
+        let mut running: Option[child.Child] = None
+        if built == 0 {
+            let mut pv: List[List[u8]] = List.new()
+            pv.push(exe.copy())
+            for x in pargs { pv.push(x.copy()) }
+            match child.start(pv, child.INHERIT, child.INHERIT, child.INHERIT) {
+                Ok(c) => { running = Some(c) }
+                Err(e) => { io.errln(e.bytes()) }
+            }
+        } else {
+            say(s("the build failed; waiting for a change"))
+        }
+        let mut reported = built != 0
+        let mut stop = 0
+        let mut cause: List[u8] = List.new()
+        while true {
+            stop = stop_code()
+            if stop != 0 { break }
+            time.sleep_ms(200)
+            match running {
+                Some(c) => {
+                    match child.try_wait(c.pid) {
+                        Ok(Some(e)) => {
+                            running = None
+                            reported = true
+                            say(bytes.concat(s("the program "), bytes.concat(exit_text(e), s("; waiting for a change"))))
+                        }
+                        Ok(None) => {}
+                        Err(_) => {}
+                    }
+                }
+                None => {}
+            }
+            match changed(paths, before) {
+                Some(p) => {
+                    cause = p
+                    time.sleep_ms(100)
+                    break
+                }
+                None => {}
+            }
+        }
+        match running {
+            Some(c) => { stop_child(c) }
+            None => {}
+        }
+        if stop != 0 {
+            code = stop
+            break
+        }
+        say(bytes.concat(cause, s(" changed; rebuilding")))
+    }
+    fs.remove_all(dir)
+    code
+}
+
+/// `eiderc test --watch`: run `eiderc test` with `args` (the file, if any, and the options) whenever a
+/// file changes. `file` empty: the package in this directory.
+pub fn run_tests(me: List[u8], file: List[u8], args: List[List[u8]]) -> i32 uses io, fs, net, clock {
+    let w1 = signal.watch(signal.INT)
+    let w2 = signal.watch(signal.TERM)
+    while true {
+        let paths = if file.len() > 0 { loaded(file.copy()) } else { package_files() }
+        let before = stamps_of(paths)
+        let mut argv: List[List[u8]] = List.new()
+        argv.push(me.copy())
+        argv.push(s("test"))
+        for x in args { argv.push(x.copy()) }
+        let code = match proc.run(argv) {
+            Ok(n) => n
+            Err(e) => {
+                io.errln(e.bytes())
+                return 3
+            }
+        }
+        let stop = stop_code()
+        if stop != 0 { return stop }
+        // (a change during the run is seen at once)
+        match changed(paths, before) {
+            Some(p) => { say(bytes.concat(p, s(" changed during the run; running again"))) }
+            None => {
+                say(bytes.concat(s("the tests exited with code "), bytes.concat(bytes.from_u64(code as u64), s("; waiting for a change"))))
+                match wait_change(paths, before) {
+                    Ok(p) => { say(bytes.concat(p, s(" changed; running the tests"))) }
+                    Err(c) => { return c }
+                }
+            }
+        }
+    }
+    0
+}

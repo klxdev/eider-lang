@@ -42,6 +42,9 @@ Group 1, language and compiler ergonomics (more items come before the release).
 - **`eiderc test --coverage`** (#158): after the tests, a per-file table of the lines of the package's modules they ran
   (and the lines they did not), `--lcov FILE` for lcov's tracefile; with no file, one report over the package. The
   counters are shared by all threads and all units of the build.
+- **`eiderc run --watch` and `eiderc test --watch`** (#147; `eider run --watch` and `eider test --watch` are the same):
+  rebuild and restart the program (SIGTERM, then the new build) or rerun the tests whenever a file the compiler loaded
+  changes. `eiderc build --no-opt` compiles at `-O0` as `run` does.
 - Fixes: an error in a `test` block names its own file (#162; the compiler's recorded expectations
   that had the stale file are re-blessed); `eiderc lint` takes a module or package with no `main` (#163);
   a method chain of hundreds of calls compiles (#153: the Eider `main` has a 512 MiB stack, `EIDER_MAIN_STACK`).

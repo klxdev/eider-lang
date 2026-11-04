@@ -45,6 +45,7 @@ import eiderc.pkgtest
 import eiderc.fmtcmd
 import eiderc.expsrc
 import eiderc.cover
+import eiderc.watch
 import eiderc.sanitize
 import eiderc.suite
 import eiderc.ide
@@ -83,6 +84,9 @@ type Args = {
     coverage: bool,
     lcov: List[u8],
     cov_data: List[u8],
+    /// `run --watch`, `test --watch` (watch.ei); `build --no-opt`: compile at -O0 as `run` does
+    watch: bool,
+    no_opt: bool,
 }
 
 /// Comparisons go through a function so no owned temporary sits in an `else if` condition
@@ -111,6 +115,8 @@ fn usage_text() -> List[u8] {
         "  eiderc build --wasm <file.ei> [-o name]    build <name>.wasm, <name>.d.ts and <name>.js (needs clang for wasm32 and wasm-ld)",
         "  eiderc build --wasm-core <file.ei> [-o out.wasm]  build the program as a WebAssembly module that imports",
         "                                             only the C core's ABI (env.ec_*; the seed: seed/README.md)",
+        "  eiderc run|test <file.ei> --watch          run again (stopping the program first) whenever a file it loads changes",
+        "  eiderc build --no-opt <file.ei>            compile at -O0 (what run and test do)",
         "  eiderc run <file.ei> [--release] [-l lib] [--] [args...]  build and run (-O0 unless --release);",
         "                                             the arguments after the file (every one after `--`) go to the program",
         "  eiderc build|run|test <file.ei> --crypto <backend>  the crypto backend a program importing core/crypto links",
@@ -257,6 +263,8 @@ fn parse_args() -> Args uses io, fs {
     let mut check = false
     let mut ir_text = false
     let mut coverage = false
+    let mut watch = false
+    let mut no_opt = false
     let mut lcov: List[u8] = List.new()
     let mut cov_data: List[u8] = List.new()
     let mut bench = false
@@ -335,6 +343,10 @@ fn parse_args() -> Args uses io, fs {
             check = true
         } else if is(a, "--ir") {
             ir_text = true
+        } else if is(a, "--watch") {
+            watch = true
+        } else if is(a, "--no-opt") {
+            no_opt = true
         } else if is(a, "--coverage") {
             coverage = true
         } else if is(a, "--lcov") {
@@ -428,10 +440,13 @@ fn parse_args() -> Args uses io, fs {
     if (lints.len() > 0 || list) && !is(cmd, "lint") { usage_error(sys.lit("`--deny`, `--warn`, `--allow` and `--list` go with `lint`")) }
     if (write || check) && !is(cmd, "fmt") { usage_error(sys.lit("`--write` and `--check` go with `fmt`")) }
     if ir_text && !is(cmd, "expand") { usage_error(sys.lit("`--ir` goes with `expand`")) }
+    if watch && !(is(cmd, "run") || is(cmd, "test")) { usage_error(sys.lit("`--watch` goes with `run` and `test`")) }
+    if watch && (compile_fail || lib || wasm || wasm_core) { usage_error(sys.lit("`--watch` runs programs and tests: not with --compile-fail, --lib or --wasm")) }
+    if no_opt && !is(cmd, "build") { usage_error(sys.lit("`--no-opt` goes with `build`")) }
     if coverage && !is(cmd, "test") { usage_error(sys.lit("`--coverage`, `--lcov` and `--coverage-data` go with `test`")) }
     if coverage && compile_fail { usage_error(sys.lit("`--coverage` measures `test` blocks, not a compile-fail suite")) }
     if coverage && (profile > 0) { usage_error(sys.lit("`--coverage` and `--profile` don't go together")) }
-    Args(cmd, file, json, out, release, tests, lib, libs, wasm, wasm_core, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, debug, crypto, portable, filter, bench, fuzz, lints, list, write, check, ir_text, coverage, lcov, cov_data)
+    Args(cmd, file, json, out, release, tests, lib, libs, wasm, wasm_core, compile_fail, overlay, max_errors, all_errors, private, profile, pargs, jobs, debug, crypto, portable, filter, bench, fuzz, lints, list, write, check, ir_text, coverage, lcov, cov_data, watch, no_opt)
 }
 
 /// Print `d` as tests/oracle records: JSON on stdout, or the rendered form (against the source of
@@ -838,9 +853,44 @@ fn run_cache(a: Args) uses io, fs, clock {
     io.outln(m)
 }
 
+/// `run --watch` and `test --watch` (watch.ei): the options that matter to the build or the tests are
+/// passed on to the commands the watch starts.
+fn run_watch(a: Args) -> i32 uses io, fs, net, clock {
+    let me = env.args()[0]
+    let mut fl: List[List[u8]] = List.new()
+    for l in a.libs {
+        fl.push(sys.lit("-l"))
+        fl.push(l.copy())
+    }
+    if a.crypto.len() > 0 {
+        fl.push(sys.lit("--crypto"))
+        fl.push(a.crypto.copy())
+    }
+    if a.jobs > 0 {
+        fl.push(sys.lit("-j"))
+        fl.push(bytes.from_u64(a.jobs))
+    }
+    if is(a.cmd, "run") {
+        if a.debug { fl.push(sys.lit("-g")) }
+        return watch.run_program(me, a.file, a.release, fl, a.pargs)
+    }
+    let mut args: List[List[u8]] = List.new()
+    for x in fl { args.push(x) }
+    if a.release { args.push(sys.lit("--release")) }
+    for x in test_flags(a) { args.push(x) }
+    if a.coverage { args.push(sys.lit("--coverage")) }
+    if a.lcov.len() > 0 {
+        args.push(sys.lit("--lcov"))
+        args.push(a.lcov.copy())
+    }
+    if a.file.len() > 0 { args.push(a.file.copy()) }
+    watch.run_tests(me, a.file, args)
+}
+
 fn main() uses io, fs, net, clock {
     sanitize.run_if_asked()
     let a = parse_args()
+    if a.watch { env.exit(run_watch(a)) }
     if a.compile_fail { env.exit(suite.run(a.file)) }
     if is(a.cmd, "test") && a.file.len() == 0 {
         env.exit(pkgtest.run(env.args()[0], test_flags(a), a.coverage, a.lcov))
@@ -1034,7 +1084,7 @@ fn main() uses io, fs, net, clock {
                 }
             }
             if is(a.cmd, "build") {
-                driver.build_llvm(lnames, lls, a.file, a.out, libs, a.debug, a.profile > 0, a.jobs)
+                driver.build_llvm(lnames, lls, a.file, a.out, libs, a.debug, a.profile > 0, a.jobs, !a.no_opt)
             } else if a.coverage {
                 let r = driver.run_llvm_ran(lnames, lls, a.file, a.release, libs, a.debug, a.profile > 0, a.pargs, test_env(a), a.jobs, true)
                 finish_coverage(a, plan, r.cov)

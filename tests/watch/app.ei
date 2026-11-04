@@ -1,0 +1,17 @@
+// tests/watch/run.sh: a program that says which version of sub/msg.ei it was built from, writes its pid to the file
+// named by its first argument, and then waits (until `eiderc run --watch` stops it)
+import core.sys
+import std.bytes
+import std.child
+import std.env
+import std.fs
+import std.io
+import std.time
+import sub.msg
+
+fn main() uses io, fs, net, clock {
+    let args = env.args()
+    let r = fs.write(args[1], bytes.from_u64(child.id() as u64))
+    io.outln(sys.lit(msg.msg()))
+    time.sleep_ms(600000)
+}

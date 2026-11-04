@@ -1,0 +1,6 @@
+// tests/watch/run.sh: a test that fails until sub/answer.ei is changed
+import sub.answer
+
+test "answer" {
+    assert(answer.answer() == 42)
+}

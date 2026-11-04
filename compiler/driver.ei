@@ -870,14 +870,14 @@ fn lcc_argv(lcc: List[u8]) -> List[List[u8]] {
 }
 
 /// `eiderc build`: an -O2 executable at `out` (default: the source file's stem).
-pub fn build_llvm(lnames: List[List[u8]], lls: List[List[u8]], file: List[u8], out: List[u8], libs: List[List[u8]], debug: bool, prof: bool, jobs: u64) uses io, fs, net, clock {
+pub fn build_llvm(lnames: List[List[u8]], lls: List[List[u8]], file: List[u8], out: List[u8], libs: List[List[u8]], debug: bool, prof: bool, jobs: u64, release: bool) uses io, fs, net, clock {
     let mut dest = out.copy()
     if dest.len() == 0 { dest = stem(file) }
     let dir = work_dir()
     if cache_dir().len() == 0 {
-        compile_llvm(lnames, lls, dir, dest, true, libs, debug, prof, jobs, false)
+        compile_llvm(lnames, lls, dir, dest, release, libs, debug, prof, jobs, false)
     } else {
-        let path = compile_llvm(lnames, lls, dir, fs.join(dir, stem(file)), true, libs, debug, prof, jobs, false)
+        let path = compile_llvm(lnames, lls, dir, fs.join(dir, stem(file)), release, libs, debug, prof, jobs, false)
         // a new file rather than a rewrite of the old one, which may be running
         fs.remove_all(dest)
         let mut cp: List[List[u8]] = List.new()

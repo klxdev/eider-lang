@@ -79,6 +79,8 @@ if [ "$1" = "--leg" ]; then
     fi
     # eiderc fmt: idempotent over every .ei file, tokens and diagnostics unchanged, a layout fuzz
     sh tests/fmt/run.sh target/eiderc-next > $S/fmt 2>&1 && grep "^ok" $S/fmt || { echo "FAIL fmt: sh tests/fmt/run.sh"; grep -v "^fmt:" $S/fmt | head -12; }
+    # eiderc run --watch and test --watch: restart on a change, stop the program, a build error, signals
+    sh tests/watch/run.sh target/eiderc-next > $S/watch 2>&1 && grep "^ok" $S/watch || { echo "FAIL watch: sh tests/watch/run.sh"; cat $S/watch | head -12; }
     printf 'int x;\n' > $S/wasm.c
     if "${WASM_CC:-clang}" --target=wasm32 -c -o $S/wasm.o $S/wasm.c 2>/dev/null && command -v wasm-ld >/dev/null && command -v node >/dev/null; then
       sh tests/wasm/run.sh || echo "FAIL tests/wasm"
