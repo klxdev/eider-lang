@@ -5999,6 +5999,14 @@ fn unify(c: C, a: u32, b: u32, line: u32, col: u32) -> Result[u32, diag.Diag] {
     Err(err("E0401", line, col, q2("branches have different types: ", ts(c, a), " and ", ts(c, b), "")))
 }
 
+/// The expectation for the branch after one of type `t` when the whole `if`/`match` has none:
+/// that type, so `None`, `List.new()` and a literal in a later branch take it from a sibling
+/// ("C8.69"). Not for `()` or `!`, nor when the value is discarded.
+fn sibling_exp(c: C, dest: Dest, exp: u32, t: u32) -> u32 {
+    if exp != NONE || dest.kind == D_DISCARD || t == types.UNIT || t == types.NEVER || t == NONE || poisoned(c, t) { return exp }
+    t
+}
+
 fn compile_if(inout c: C, n: ast.Node, dest: Dest, exp: u32) -> Result[u32, diag.Diag] {
     if n.d == 1 { return ct_compile_if(inout c, n, dest, exp) }
     let cv = expr(inout c, n.a, types.BOOL)?
@@ -6017,10 +6025,12 @@ fn compile_if(inout c: C, n: ast.Node, dest: Dest, exp: u32) -> Result[u32, diag
     let el = nd(c, n.c - 1)
     let em = ir.open(c.ir)
     let mut t2 = types.UNIT
+    // the else branch takes the type of the then branch where nothing else says ("C8.69")
+    let exp2 = sibling_exp(c, dest, exp, t1)
     if el.kind == ast.EBlock {
-        t2 = block_body(inout c, el.a, dest, exp)?
+        t2 = block_body(inout c, el.a, dest, exp2)?
     } else {
-        t2 = compile_value(inout c, n.c - 1, dest, exp)?
+        t2 = compile_value(inout c, n.c - 1, dest, exp2)?
     }
     let els = ir.close(inout c.ir, em)
     emit(inout c, ir.S_IF, 0, cv.op, then, els, 0, n.line)
@@ -6286,7 +6296,27 @@ fn compile_match(inout c: C, m: ast.Node, dest: Dest, exp: u32) -> Result[u32, d
         None => {}
     }
     let ar = Arms(alts, alt_start, arm_binds, pres)
-    match_arms(inout c, m, 0, ar, sc, dest, exp, types.NEVER)
+    // with no expectation, an arm `x as T` says what a literal or `None` above it is ("C8.69")
+    let mut exp0 = exp.copy()
+    if exp0 == NONE && dest.kind != D_DISCARD {
+        for i in 0..m.d {
+            let arm = nd(c, at(c, m.c, i))
+            if arm.b == 1 { continue }
+            let body = nd(c, arm.a)
+            if body.kind != ast.ECast { continue }
+            let am = c.am.copy()
+            match resolve_ty(inout c, am, body.b) {
+                Ok(t) => {
+                    if types.is_int(c.t, t) || types.is_float(c.t, t) {
+                        exp0 = t
+                        break
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+    }
+    match_arms(inout c, m, 0, ar, sc, dest, exp0, types.NEVER)
 }
 
 /// A match's scrutinee as its bindings need it: a place (`is_ref`) rooted at variable `rk`,
@@ -6315,7 +6345,7 @@ fn match_arms(inout c: C, m: ast.Node, i: u32, a: Arms, sc: Scrut, dest: Dest, e
     let then = ir.close(inout c.ir, tm)
     let r1 = finish_arm(c, m, i, result, t)?
     let em = ir.open(c.ir)
-    let r = match_arms(inout c, m, i + 1, a, sc, dest, exp, r1)?
+    let r = match_arms(inout c, m, i + 1, a, sc, dest, sibling_exp(c, dest, exp, r1), r1)?
     let els = ir.close(inout c.ir, em)
     emit(inout c, ir.S_IF, 0, cond, then, els, 0, m.line)
     Ok(r)

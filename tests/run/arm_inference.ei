@@ -1,0 +1,56 @@
+// The arms of a `match` or `if` that has no expected type inform each other: `None`, `List.new()`
+// and an integer literal take their type from a sibling (docs/site/reference/expressions.md).
+type Rule = { code: i32 }
+
+fn lookup(s: i32) -> i32 { s * 10 }
+
+fn code_of(r: Rule) -> i32 { r.code }
+
+fn describe(code: Option[i32]) -> String {
+    let c = match code {
+        Some(s) => Some(lookup(s))
+        None => None
+    }
+    match c {
+        Some(v) => "some {v}"
+        None => "none".to_string()
+    }
+}
+
+fn widen(e: Option[Rule]) -> i64 {
+    // a literal arm takes the type of the cast arm below it, and above it
+    let n = match e {
+        Some(r) => code_of(r) as i64
+        None => 0
+    }
+    let m = match e {
+        None => 0
+        Some(r) => code_of(r) as i64
+    }
+    n + m
+}
+
+fn two() -> List[i32] {
+    let mut xs: List[i32] = List.new()
+    xs.push(1)
+    xs.push(2)
+    xs
+}
+
+fn sizes(flag: bool) -> usize {
+    let xs = if flag { two() } else { List.new() }
+    xs.len()
+}
+
+fn main() uses io {
+    print(describe(Some(4)))
+    print(describe(None))
+    print(widen(Some(Rule(7))))
+    print(widen(None))
+    let v = if true { Some(3) } else { None }
+    print(v.unwrap())
+    let w = if false { Some(3) } else { None }
+    print(w.is_none())
+    print(sizes(true))
+    print(sizes(false))
+}

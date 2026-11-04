@@ -382,6 +382,31 @@ big
 `match e { arms }` is described in [Patterns](patterns.md#match). As a value, every arm
 has the same type; the positions rule above applies.
 
+Where the value has no expected type (a `let` with no annotation), the arms inform each other,
+in order: after the first arm that has a type (not `()` and not a diverging one), each later
+arm is checked against it, so `None`, `List.new()` and an integer literal take the type of the arm
+above them, and an arm `x as i64` anywhere in the `match` gives a literal above it its integer or
+float type. The `else` of an `if` takes the type of the `then` branch the same way.
+
+```eider
+fn main() uses io {
+    let code: Option[i32] = Some(4)
+    let next = match code {
+        Some(c) => Some(c * 10)
+        None => None
+    }
+    let wide = match next {
+        Some(n) => n as i64
+        None => 0
+    }
+    print(wide)
+}
+```
+
+```output
+40
+```
+
 ## Blocks
 
 `{ statements }` is an expression whose value is its last statement's value (see

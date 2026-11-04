@@ -4627,3 +4627,15 @@ has its own slot; shrinking them is the backend's (#129), and until then the sta
 512 MiB of address space (`MAP_NORESERVE`, touched pages only; `EIDER_MAIN_STACK` changes it). The
 compiler is one program, so this is its fix too: a chain of a thousand calls checks. A program that
 recurses forever now touches up to 512 MiB before `stack overflow` is reported.
+
+## C8.69: arms inform each other (#143)
+
+Decision C850. Code: check.ei (`sibling_exp`, `compile_if`, `match_arms`, the cast scan in
+`compile_match`). Test: tests/run/arm_inference.ei. An arm is checked once and its IR is emitted as it
+is checked, so the expectation of an arm can only come from what is already known. With no expected
+type (`exp` is NONE) and a value that is bound (not `D_DISCARD`), the type of the arms before
+(`match_arms`' `result`; the `then` branch for an `if`) becomes the expectation of the next one
+unless it is `()` or `!`; and `compile_match` first scans the arms for a body `x as T` with T an
+integer or float and uses it as the starting expectation, which makes `0` above `n as i64` an i64.
+Not done: an arm that needs a type (E0409) above the arm that has it, other than by a cast; the
+expectation is a hint, so a sibling of another type is still E0401 at the `unify` of the arms.
