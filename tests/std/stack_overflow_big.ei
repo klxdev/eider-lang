@@ -1,0 +1,17 @@
+// A frame larger than the 64 KiB stack guard of a thread must not step over it (#196): the
+// prologue of a big frame probes its pages, so the overflow ends the program with the runtime
+// error and exit code 101, not a bare segmentation fault. The frame is 320 KB, the stack 8 MiB.
+
+fn deep(n: i64, stop: i64) -> i64 {
+    if n == stop { return 0 }
+    var pad: [i64; 40000] = [0; 40000]
+    pad[(n % 40000) as usize] = n
+    deep(n + 1, stop) + pad[(n % 40000) as usize] - n + 1
+}
+
+fn main() uses io, threads {
+    let ok = spawn(|| -> i64 { deep(0, 10) })
+    print(ok.join())
+    let bad = spawn(|| -> i64 { deep(0, -1) })
+    print(bad.join())
+}

@@ -384,9 +384,12 @@ Every thread `ei_thread_start` starts (each `spawn`) runs on one anonymous mappi
 runtime's own, lowest address first: a 64 KiB alternate signal stack (or `SIGSTKSZ` if that
 is larger), a 64 KiB guard with no access, then an 8 MiB stack (`EI_THREAD_STACK`,
 `EI_THREAD_GUARD`, `EI_THREAD_ALTSTACK` in eider_rt.h; sizes rounded up to whole pages). The
-stack grows down into the guard, so an overflow, even by a frame larger than a page, faults
-there rather than in some other mapping. (Before, threads had the C library's default stack,
-whose guard on glibc is one page.)
+stack grows down into the guard, so an overflow faults there rather than in some other
+mapping, provided no frame steps over the guard: the LLVM backend gives every function of a
+non-WebAssembly target the attribute `"probe-stack"="inline-asm"`, so the prologue of a frame
+larger than a page touches each of its pages from the top down (a frame of 260 KiB was able to
+jump the 64 KiB guard and end in a bare SIGSEGV, #196). A function with a small frame pays
+nothing. (Before, threads had the C library's default stack, whose guard on glibc is one page.)
 
 On the first thread start the runtime installs, once, a handler for `SIGSEGV` and `SIGBUS`
 that runs on the alternate stack (`SA_ONSTACK`), keeping the handlers that were there before.

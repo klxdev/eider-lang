@@ -194,7 +194,8 @@ Every thread of a program runs on an 8 MiB stack with a guard region (`main` on 
 `EIDER_MAIN_STACK` bytes to change it: address space only, a page counts when it is touched).
 `main` runs on a runtime thread of its own, not on the process's initial stack; overflowing a
 stack is reported as the trap `stack overflow` (exit 101), after what `print` buffered is
-written.
+written. This holds for a function with a large frame too: its prologue touches the pages of the
+frame in order, so no frame can jump over the guard.
 
 ## `panic` and `assert`
 

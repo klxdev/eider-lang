@@ -4709,6 +4709,33 @@ later element of another type is E0401 at that element. An element may be an `if
 tree-sitter-eider has a `list_expression` whose first token is `List[` (one token: `List.new()` and the
 type `List[i32]` stay identifiers).
 
+## C8.80: stack probes, and the size of the main stack (#196)
+
+Decisions C870, C871. Code: `probe_attr` in compiler/llvm.ei. Tests: compiler/tests/run/stack_overflow_big_frame.ei
+(recursion with a 320 KB frame on `main`, under the plain run, ASan and UBSan; TSan is skipped as for
+stack_overflow_main.ei), tests/std/stack_overflow_big.ei (the same on a spawned thread). A thread has a
+64 KiB guard below its stack; a function whose frame was larger than that (`method_call_in` has about
+260 KiB) could move the stack pointer from above the guard to below it in one step, and its first access
+landed in whatever was mapped there: a bare SIGSEGV (exit 139) instead of the trap. Every function the
+backend defines (not for wasm32, which has no guard) now has `"probe-stack"="inline-asm"`: LLVM's
+prologue for a frame over a page touches each page from the top down, so the first access below the
+stack is in the guard, whatever the frame. No cost for a small frame, one store per page for a large
+one; the price is that the pages of a big frame count as touched (the 1000-call method chain of
+tests/run/long_method_chain.ei now uses about 350 MB of the stack where it touched 205 MB).
+
+Smaller frames (lifetime markers, so locals share slots) are not done: the backend gives every IR local
+and temporary its own entry alloca and has no scope information to place `llvm.lifetime.start/end`
+on; getting it wrong corrupts a live value, and the probe makes frame size a cost, not a hazard. It is
+still the lever for #129.
+
+The 512 MiB main stack stays. Measured with stage 2 on this machine: a program that recurses forever
+touches the whole stack before it traps (0.28 s, 526 MB resident); 128 MiB takes 0.07 s and 133 MB,
+64 MiB 0.03 s. What needs the size is the compiler itself: a chain of 1000 calls was a clean trap at
+256 MiB (and a SIGSEGV at 128 MiB before the probe), 350 MB resident at 512. Lowering the default
+would make the compiler reject chains it accepts today, to save memory only a runaway program uses, and
+it is reserved address space, not committed memory. `EIDER_MAIN_STACK` lowers it per run (a container
+with a small memory limit can set it). Revisit when frames shrink (#129).
+
 ## C8.74: checked integer arithmetic (#144)
 
 Decision C855. No compiler change: std/checked.ei adds inherent methods to the integer types

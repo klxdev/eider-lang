@@ -1,0 +1,3 @@
+10
+eider: runtime error: stack overflow (tests/std/stack_overflow_big.ei:0)
+exit 101

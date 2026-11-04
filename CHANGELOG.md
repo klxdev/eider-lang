@@ -32,6 +32,7 @@ Group 1, language and compiler ergonomics (more items come before the release).
 - **Checked integer arithmetic** (#144): `import std.checked` adds `checked_add`, `checked_sub`, `checked_mul`,
   `checked_div`, `checked_rem` (and `checked_neg` on signed types) to every integer type; they return `Option[T]`
   where the operator would trap.
+<<<<<<< HEAD
 - **`eiderc fmt --write` and `--check`** (#150): rewrite a file or every `.ei` file under a directory in place
   (`eiderc fmt --write .`), or list the files whose layout would change (exit 1); files with `"""` strings are
   formatted now; eider-analyzer answers `textDocument/formatting` with the same layout.
@@ -45,6 +46,12 @@ Group 1, language and compiler ergonomics (more items come before the release).
 - **`eiderc run --watch` and `eiderc test --watch`** (#147; `eider run --watch` and `eider test --watch` are the same):
   rebuild and restart the program (SIGTERM, then the new build) or rerun the tests whenever a file the compiler loaded
   changes. `eiderc build --no-opt` compiles at `-O0` as `run` does.
+=======
+- **A big frame can't skip the stack guard** (#196): every function has `"probe-stack"="inline-asm"`, so
+  a frame larger than the 64 KiB guard (the checker has frames of 260 KiB) touches its pages in order and an
+  overflow is the `stack overflow` trap (exit 101), not SIGSEGV. The 512 MiB main stack stays (measured in
+  docs/compiler.md "C8.80").
+>>>>>>> 161d1ff (Stack probes: no frame steps over the stack guard (#196))
 - Fixes: an error in a `test` block names its own file (#162; the compiler's recorded expectations
   that had the stale file are re-blessed); `eiderc lint` takes a module or package with no `main` (#163);
   a method chain of hundreds of calls compiles (#153: the Eider `main` has a 512 MiB stack, `EIDER_MAIN_STACK`).

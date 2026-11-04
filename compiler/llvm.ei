@@ -3723,6 +3723,7 @@ fn function(inout e: E, p: lower.P, f: u32) -> bool {
     bytes.append(inout h, lit("("))
     bytes.append(inout h, signature_params(inout e, p, sg, internal))
     if internal { bytes.append(inout h, lit(") unnamed_addr nounwind")) } else { bytes.append(inout h, lit(") nounwind")) }
+    bytes.append(inout h, probe_attr(e))
     if e.dbg { bytes.append(inout h, num(" !dbg !", e.sp as u64)) }
     bytes.append(inout h, lit(" \x7b\nentry:\n"))
     flush_fn(inout e, h)
@@ -4234,7 +4235,9 @@ fn gfn_end(inout e: E, p: lower.P, gf: GF) {
     bytes.append(inout h, gf.name)
     bytes.append(inout h, lit("("))
     bytes.append(inout h, signature_params(inout e, p, gf.sig, false))
-    bytes.append(inout h, lit(") unnamed_addr nounwind \x7b\nentry:\n"))
+    bytes.append(inout h, lit(") unnamed_addr nounwind"))
+    bytes.append(inout h, probe_attr(e))
+    bytes.append(inout h, lit(" \x7b\nentry:\n"))
     flush_fn(inout e, h)
     e.gdef.insert(h64(gf.name), true)
 }
@@ -6914,6 +6917,14 @@ fn main_fn(inout e: E, p: lower.P, file: List[u8], f: u32) {
     entry_main(inout e, p)
 }
 
+/// The attribute that makes the prologue of a frame larger than a page touch every page of it
+/// from the top down (stack probing), so no frame steps over the 64 KiB guard of a thread
+/// (#196). WebAssembly has no guard to skip.
+fn probe_attr(e: E) -> List[u8] {
+    if e.lay.wasm { return lit("") }
+    lit(" \"probe-stack\"=\"inline-asm\"")
+}
+
 /// `main`: the runtime runs ei_main_body on its guarded thread.
 fn entry_main(inout e: E, p: lower.P) {
     declare(inout e, lit("ei_main"), lit("declare i32 @ei_main(ptr)"))
@@ -7010,6 +7021,7 @@ fn export_fns(inout e: E, p: lower.P) {
         bytes.append(inout h, lit("("))
         bytes.append(inout h, signature_params(inout e, p, gf.sig, false))
         bytes.append(inout h, lit(") nounwind"))
+        bytes.append(inout h, probe_attr(e))
         if e.lay.wasm && !raw {
             bytes.append(inout h, lit(" \"wasm-export-name\"=\""))
             bytes.append(inout h, name)
