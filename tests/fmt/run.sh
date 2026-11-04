@@ -75,8 +75,8 @@ for f in compiler/tests/parse_ok/*.ei compiler/tests/check/pass/*.ei compiler/te
   # (next to the original, so that its imports still resolve)
   side="$(dirname "$f")/zz_fmtcheck_$$.ei"
   cp $T/a.ei "$side"
-  $E check --json "$f" 2>&1 | sed 's/"line":[0-9]*,"col":[0-9]*//g; s/"file":"[^"]*"//g; s/"fix":{[^}]*}//g' > $T/c1
-  $E check --json "$side" 2>&1 | sed 's/"line":[0-9]*,"col":[0-9]*//g; s/"file":"[^"]*"//g; s/"fix":{[^}]*}//g' > $T/c2
+  $E check --json "$f" 2>&1 | sed 's/"line":[0-9]*,"col":[0-9]*//g; s/"file":"[^"]*"//g; s/"fix":{[^}]*}//g; s/requested by the call at [^ ",)]*//g' > $T/c1
+  $E check --json "$side" 2>&1 | sed 's/"line":[0-9]*,"col":[0-9]*//g; s/"file":"[^"]*"//g; s/"fix":{[^}]*}//g; s/requested by the call at [^ ",)]*//g' > $T/c2
   rm -f "$side"
   cmp -s $T/c1 $T/c2 || { echo "FAIL fmt $f: diagnostics differ after formatting"; diff $T/c1 $T/c2 | head -4; fail=1; }
   c=$((c + 1))
@@ -106,6 +106,8 @@ for f in $(find . -name '*.ei' -not -path './target/*' -not -path './.vendor/*' 
   $E fmt "$f" > $T/a.ei 2>/dev/null || continue
   # (lines inside a block comment are left as they are, so files with one are not mangled)
   grep -q '/\*' "$f" && continue
+  # (and with a multi-line string: its lines are text, so indenting them changes the program)
+  grep -q '"""' "$f" && continue
   awk -v seed="$seed" "$awk_mangle" "$f" > $T/m.ei
   if ! $E fmt $T/m.ei > $T/b.ei 2> $T/err; then echo "FAIL fmt fuzz $f (seed $seed): $(cat $T/err)"; cp $T/m.ei $T/fail_$k.ei; fail=1; continue; fi
   if ! cmp -s $T/a.ei $T/b.ei; then echo "FAIL fmt fuzz $f (seed $seed): the mangled file formats differently"; diff $T/a.ei $T/b.ei | head -6; cp $T/m.ei $T/fail_$k.ei; fail=1; fi
