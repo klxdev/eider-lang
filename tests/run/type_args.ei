@@ -1,0 +1,59 @@
+// Type arguments written out in a call, `f[T](x)` (docs/site/reference/generics.md), and a
+// binding's type reaching the generic result of a call under `?`.
+type Reading = { id: i32, label: String }
+
+impl Default for Reading {
+    fn default() -> Reading { Reading(1, "r".to_string()) }
+}
+
+fn make[T: Default]() -> T { T.default() }
+
+fn decode[T: Default](ok: bool) -> Result[T, String] {
+    if ok { Ok(T.default()) } else { Err("no".to_string()) }
+}
+
+fn pair[A, B](a: A, b: B) -> (A, B) { (a, b) }
+
+fn wrap[T](x: T) -> Option[T] { Some(x) }
+
+fn load(ok: bool) -> Result[i32, String] {
+    // the annotation reaches decode's T through `?`
+    let n: i32 = decode(ok)?
+    // written out
+    let m = decode[i64](ok)?
+    Ok(n + (m as i32))
+}
+
+fn first(ok: bool) -> Option[i32] {
+    let v: i32 = wrap(7)?
+    if ok { Some(v) } else { None }
+}
+
+fn main() uses io {
+    let a = make[i32]()
+    let b = make[String]()
+    print(a)
+    print(b.len())
+    let p = pair[i64, String](3, "x".to_string())
+    print(p.0)
+    print(p.1)
+    // the result of a call with type arguments is a receiver like any other
+    let r = decode[bool](true).map_err(|e| e.len())
+    print(r.is_ok())
+    print(decode[Reading](true).is_ok())
+    let rd = make[Reading]()
+    print(rd.label)
+    // fewer type arguments than parameters: the rest is inferred
+    let q = pair[i64](5, true)
+    print(q.1)
+    match load(true) {
+        Ok(v) => print(v)
+        Err(e) => print(e)
+    }
+    match load(false) {
+        Ok(v) => print(v)
+        Err(e) => print(e)
+    }
+    print(first(true).unwrap())
+    print(first(false).is_none())
+}

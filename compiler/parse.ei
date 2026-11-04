@@ -1757,6 +1757,30 @@ fn at_chain_line(p: P) -> bool {
     kind_at(p, j) == lex.Dot
 }
 
+/// Whether the `[` at the current token opens the type arguments of a call: a type list that
+/// closes with `]` followed by `(` (`xs[i](...)` is no call: it stays an index, then E0001).
+/// The position is left where it was.
+fn type_args_ahead(inout p: P) -> bool {
+    let save = p.i.copy()
+    adv(inout p)
+    let mut ok = false
+    while true {
+        skip_nl(inout p)
+        match ty(inout p) {
+            Ok(_) => {}
+            Err(_) => { break }
+        }
+        skip_nl(inout p)
+        if eat(inout p, lex.RBracket) {
+            ok = is(p, lex.LParen)
+            break
+        }
+        if !eat(inout p, lex.Comma) { break }
+    }
+    p.i = save
+    ok
+}
+
 fn postfix(inout p: P) -> Result[u32, diag.Diag] {
     let mut e = primary(inout p)?
     while true {
@@ -1772,6 +1796,28 @@ fn postfix(inout p: P) -> Result[u32, diag.Diag] {
             n.b = en.b
             n.c = list(inout p, a)
             n.d = a.len() as u32
+            e = add(inout p, n)
+        } else if is(p, lex.LBracket) && p.ast.nodes[e as usize].kind == ast.EIdent && type_args_ahead(inout p) {
+            // `f[T, U](args)`: a call with its type arguments written out (docs/compiler.md, "C8.66")
+            let en = p.ast.nodes[e as usize].copy()
+            adv(inout p)
+            let mut targs: List[u32] = List.new()
+            while true {
+                skip_nl(inout p)
+                targs.push(ty(inout p)?)
+                skip_nl(inout p)
+                if eat(inout p, lex.RBracket) { break }
+                expect(inout p, lex.Comma)?
+            }
+            adv(inout p)
+            let a = args(inout p)?
+            let mut n = mk(ast.ECall, en.line, en.col)
+            n.a = en.a
+            n.b = en.b
+            n.c = list(inout p, a)
+            n.d = a.len() as u32
+            n.e = list(inout p, targs)
+            n.f = targs.len() as u32
             e = add(inout p, n)
         } else if is(p, lex.Dot) && kind_at(p, p.i + 1) == lex.LBracket {
             // `x.[f]`: the field a `comptime for` variable names (docs/compiler.md, "C8.41")

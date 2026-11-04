@@ -170,15 +170,19 @@ A name may be qualified by a module alias (`geo.area`, `geo.Point`), see
 ## Calls
 
 ```text
-call = name "(" [arg {"," arg} [","]] ")"
+call = name ["[" type {"," type} "]"] "(" [arg {"," arg} [","]] ")"
 arg  = ["inout"] expr
 ```
 
 Only a name can be called: a function, a local variable or parameter holding a function
 value, a qualified name (`geo.area(s)`), a record or variant constructor, or a built-in
 function. Calling any other expression (`make()(3)`, `(f)(3)`) is E0001 "only named
-functions can be called": bind the value to a name first. There is no syntax for explicit
-type arguments; they are inferred (see [Traits and generics](traits.md#inference)).
+functions can be called": bind the value to a name first. The type arguments of a generic
+function are inferred (see [Traits and generics](traits.md#inference)) or written after the
+name, `parse[Order](text)`; naming fewer than the function has leaves the rest to inference,
+more is E0405. Writing them is how a type parameter that only the result mentions is fixed
+where no annotation says it, and the call is an expression like any other (`decode[Order](s)?`,
+`decode[Order](s).map_err(show)`).
 
 The arguments must match the parameters in number (E0405) and type (E0401). An argument for
 an `inout` parameter is written `inout place` (E0304 without it, with a fix) and must be a
@@ -398,6 +402,10 @@ has the same type; the positions rule above applies.
 Using `?` on another type, or in a function whose result isn't the same kind (an `Option`
 `?` in a function returning a `Result`), is E0406. Before returning, `?` drops what the
 function's scopes own, as `return` does. It is a postfix operator: `parse(s)?.len()`.
+
+The type a `let` annotates reaches through the `?` to the call it is applied to:
+`let order: Order = decode(text)?` fixes the `T` of `fn decode[T](..) -> Result[T, E]` to
+`Order`. (The error type is not fixed by it: it converts through `From`, as above.)
 
 ```eider
 fn digit(s: str) -> Result[i32, str] {

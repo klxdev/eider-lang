@@ -153,8 +153,8 @@ called on the type name. See [Impls](#impls).
 ### Generic functions
 
 `fn name[T, U: Bound + Other](...)` declares type parameters, with optional trait bounds.
-The type arguments are always inferred; there is no syntax to write them at a call. See
-[Traits and generics](traits.md).
+The type arguments are inferred at a call, or written out: `make[i32]()` (see
+[Calls](expressions.md#calls)). See [Traits and generics](traits.md).
 
 ## Records
 

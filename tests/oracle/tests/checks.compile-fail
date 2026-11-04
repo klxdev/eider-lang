@@ -65,11 +65,13 @@ compile-fail tests (tests/checks/fail)
   ok   e0401_repeat_owned.ei        E0401 at 3:21
   ok   e0402_null.ei                E0402 at 3:16
   ok   e0405_closure_arity.ei       E0405 at 4:22
+  ok   e0405_type_args_count.ei     E0405 at 4:13
   ok   e0405_wrong_arity.ei         E0405 at 4:3
   ok   e0406_try_in_non_result.ei   E0406 at 7:20
   ok   e0409_cannot_infer.ei        E0409 at 3:13
   ok   e0409_chan.ei                E0409 at 3:18
   ok   e0409_closure_param_untyped.ei E0409 at 3:14
+  ok   e0409_infer_result_param.ei  E0409 at 5:13
   ok   e0409_list_new_uninferred.ei E0409 at 3:18
   ok   e0410_pattern_arity.ei       E0410 at 5:9
   ok   e0411_ref_in_mutex.ei        E0411 at 4:23
@@ -146,8 +148,9 @@ compile-pass tests (tests/checks/pass)
   ok   pass_list_inplace.ei
   ok   pass_match_all.ei
   ok   pass_shadow_in_inner_scope.ei
+  ok   pass_type_args.ei
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-147 passed, 0 failed; error-code coverage 73/73
+150 passed, 0 failed; error-code coverage 73/73
 --- exit 0

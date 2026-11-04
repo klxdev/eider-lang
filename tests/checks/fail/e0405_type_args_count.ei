@@ -1,0 +1,5 @@
+// expect: E0405 4:13
+fn id[T](x: T) -> T { x }
+fn main() {
+    let n = id[i32, i64](1)
+}

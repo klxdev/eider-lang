@@ -1,0 +1,8 @@
+// expect: E0409 5:13
+fn make[T]() -> Result[T, String] { Err("x".to_string()) }
+fn run() -> Result[i32, String] {
+    // no annotation: nothing says what T is
+    let v = make()?
+    Ok(1)
+}
+fn main() {}

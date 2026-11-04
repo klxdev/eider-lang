@@ -1,0 +1,1 @@
+{"error":"E0409","span":{"file":"tests/checks/fail/e0409_infer_result_param.ei","line":5,"col":13},"message":"cannot infer type parameter `T` of `make`","help":"add a type annotation to the binding that receives the result (it reaches through `?`), or write the type argument: `make[...](...)`"}

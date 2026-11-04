@@ -1,0 +1,54 @@
+(IFn 1:4 name=id end=1:20
+  generic (GParam 1:7 name=T)
+  param (Param 1:10 name=x
+    type (TName 1:13 name=T))
+  ret (TName 1:19 name=T)
+  body (Block 1:21 end=1:25
+    stmt (SExpr 1:23
+      expr (EIdent 1:23 name=x))))
+(IFn 2:4 name=pair end=2:36
+  generic (GParam 2:9 name=A)
+  generic (GParam 2:12 name=B)
+  param (Param 2:15 name=a
+    type (TName 2:18 name=A))
+  param (Param 2:21 name=b
+    type (TName 2:24 name=B))
+  ret (TTuple 2:30
+    elem (TName 2:31 name=A)
+    elem (TName 2:34 name=B))
+  body (Block 2:37 end=2:46
+    stmt (SExpr 2:39
+      expr (ETuple 2:39
+        elem (EIdent 2:40 name=a)
+        elem (EIdent 2:43 name=b)))))
+(IFn 3:4 name=main end=3:10
+  body (Block 3:11 end=10:1
+    stmt (SLet 4:5 name=a
+      init (ECall 4:13 name=id
+        targ (TName 4:16 name=i32)
+        arg (EArg 4:21
+          expr (EInt 4:21 value=1))))
+    stmt (SLet 5:5 name=p
+      init (ECall 5:13 name=pair
+        targ (TGeneric 5:18 name=List
+          arg (TName 5:23 name=i32))
+        targ (TGeneric 5:29 name=Map
+          arg (TName 5:33 name=str)
+          arg (TName 5:38 name=bool))
+        arg (EArg 5:45
+          expr (EMethod 5:50 name=new
+            recv (EIdent 5:45 name=List)))
+        arg (EArg 5:57
+          expr (EMethod 5:61 name=new
+            recv (EIdent 5:57 name=Map)))))
+    stmt (SLet 6:5 name=q
+      init (ECall 6:13 name=id
+        targ (TName 7:9 name=i64)
+        arg (EArg 8:7
+          expr (EInt 8:7 value=2))))
+    stmt (SLet 9:5 name=r
+      init (EMethod 9:24 name=copy
+        recv (ECall 9:13 name=id
+          targ (TName 9:16 name=i32)
+          arg (EArg 9:21
+            expr (EInt 9:21 value=3)))))))

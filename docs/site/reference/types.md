@@ -766,9 +766,9 @@ fn main() uses io {
 Types are inferred locally, from initializers and from the expected type:
 
 - a `let` without an annotation takes its initializer's type;
-- generic functions infer their type arguments from the expected type, the receiver and
-  the arguments, in that order (see [Traits and generics](traits.md#inference)); there is
-  no syntax for explicit type arguments at a call;
+- generic functions infer their type arguments from the expected type (also through a `?`
+  applied to the call), the receiver and the arguments, in that order (see [Traits and
+  generics](traits.md#inference)); `f[T](x)` writes them out;
 - closure parameters take their types from the fn type the closure is passed as;
 - `List.new()`, `Map.new()`, `Chan.new()`, `None` and `T.default()` need an expected type.
 

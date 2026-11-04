@@ -310,6 +310,11 @@ pub type C = {
     used: u32,
     /// what `eiderc lint` needs (compiler/lint.ei, docs/compiler.md "C8.56")
     lint: lint.Collected,
+    /// the type an enclosing `?` expects of its operand's Ok/Some payload, and the position of
+    /// the operand call it is for (NONE: none; docs/compiler.md, "C8.66")
+    try_exp: u32,
+    try_line: u32,
+    try_col: u32,
 }
 
 /// `impl From[Source] for Target` (module md, IImpl node) and its `from` method (FnDef fd).
@@ -3773,7 +3778,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C {
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
         0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false, Rec(false, List.new(), List.new()),
         List.new(), List.new(), false, Map.new(), false, false, Map.new(), List.new(), lt, no_refs(),
-        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), no_reflect(), List.new(), List.new(), 0, lint.new_collected())
+        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), no_reflect(), List.new(), List.new(), 0, lint.new_collected(), NONE, 0, 0)
 }
 
 /// Every item of the program in load order (resolve.ei), as (module, node) pairs.
@@ -7042,7 +7047,16 @@ fn tuple_lit(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
 fn try_op(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     if c.lam_expr { return Err(unsup(n.line, n.col, "`?` in a closure without a block body")) }
     let hint = ct_try_hint(inout c, exp)
-    let v = expr(inout c, n.a, hint)?
+    // a binding's type reaches the operand call through the `?` ("C8.66")
+    let on = nd(c, n.a)
+    if exp != NONE && !poisoned(c, exp) && (on.kind == ast.ECall || on.kind == ast.EMethod) {
+        c.try_exp = exp
+        c.try_line = on.line
+        c.try_col = on.col
+    }
+    let ov = expr(inout c, n.a, hint)
+    c.try_exp = NONE
+    let v = ov?
     if poisoned(c, v.ty) || poisoned(c, c.ret) { return Ok(poison_v(inout c)) }
     let vt = types.get(c.t, v.ty)
     if vt.kind != types.T_ENUM {
@@ -7366,6 +7380,25 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
         let fd = err("E0115", n.line, n.col, q2("`", label, "` takes `self`; call it as `value.", nm(c, fnode.a), "(...)`"))
         return fail_call(inout c, fd, n.c, n.d)
     }
+    // type arguments written out: `f[T](x)` ("C8.66"); fewer than the function has leaves the
+    // rest to inference
+    if n.kind == ast.ECall && n.f > 0 {
+        let mut own: List[u32] = List.new()
+        for j in 0..fnode.d {
+            let gp = ndm(c, fm, atm(c, fm, fnode.c, j))
+            if gp.e != 1 { own.push(gp.a) }
+        }
+        if n.f > own.len() as u32 {
+            let fd = err("E0405", n.line, n.col, q3("`", label, "` takes ", num(own.len() as u64), " type argument(s), but ", num(n.f as u64), " were given"))
+            return fail_call(inout c, fd, n.c, n.d)
+        }
+        for j in 0..n.f {
+            let am = c.am.copy()
+            let tn = at(c, n.e, j)
+            let t = resolve_ty(inout c, am, tn)?
+            subst_set(inout sb, own[j as usize], t)
+        }
+    }
     let skip: u32 = if recv.has { 1 } else { 0 }
     let np = fnode.f - skip
     if n.d != np {
@@ -7373,6 +7406,21 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
         return fail_call(inout c, fd, n.c, n.d)
     }
     let mut tainted = poisoned(c, exp) || (recv.has && poisoned(c, recv.pv.ty))
+    // what the `?` around this call expects of its Ok/Some payload binds the first type argument
+    // of a Result/Option return type ("C8.66"); the error type is left to `From`
+    let tex = c.try_exp.copy()
+    let mut for_try = tex != NONE && c.try_line == n.line && c.try_col == n.col
+    c.try_exp = NONE
+    if for_try && fnode.g > 0 {
+        let rn = ndm(c, fm, fnode.g - 1)
+        if rn.kind == ast.TGeneric && rn.d >= 1 {
+            let rk = resolve.name_key(c.p, fm, rn.a, rn.b, rn.line, rn.col)
+            if is_root(rk, c.w.result) || is_root(rk, c.w.option) {
+                let mut s3 = sb.copy()
+                if unify_ast(c, fm, atm(c, fm, rn.c, 0), tex, inout s3, gs) { sb = s3 }
+            }
+        }
+    }
     // bind type parameters from the expected type, then from the receiver type
     if fnode.g > 0 && exp != NONE {
         let mut s2 = sb.copy()
@@ -7511,7 +7559,11 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
         // nothing to infer from an error value
         if subst_get(sb, gn.a) == NONE && tainted { return Ok(poison_v(inout c)) }
         if subst_get(sb, gn.a) == NONE {
-            return Err(errh("E0409", n.line, n.col, q2("cannot infer type parameter `", nm(c, gn.a), "` of `", label, "`"), "add a type annotation to the binding that receives the result"))
+            let mut ed = err("E0409", n.line, n.col, q2("cannot infer type parameter `", nm(c, gn.a), "` of `", label, "`"))
+            ed.help = s("add a type annotation to the binding that receives the result")
+            // (the annotation reaches through a `?`; a call to a function can name the argument)
+            if n.kind == ast.ECall { ed.help = q("add a type annotation to the binding that receives the result (it reaches through `?`), or write the type argument: `", nm(c, fnode.a), "[...](...)`") }
+            return Err(ed)
         }
     }
     if target != NONE && subst_get(sb, intern.S_SELF_TYPE) == NONE {

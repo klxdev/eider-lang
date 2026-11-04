@@ -475,11 +475,14 @@ fn main() uses io {
 
 ### Inference
 
-Type arguments are never written at a call (`make[i32]()` is a syntax error); they are
-inferred in a fixed order: from the expected type of the call (an annotated `let`, a
-parameter, a return type), then the receiver of a method call, then the arguments left to
-right. A type parameter that none of them fixes is E0409 ("cannot infer type parameter `T`
-of `make`"), whose help says to annotate the binding:
+Type arguments are inferred in a fixed order: from the expected type of the call (an
+annotated `let`, a parameter, a return type; for `f(x)?` the type is that of the `Ok` or
+`Some` payload, so `let n: i32 = decode(s)?` fixes `T` of `fn decode[T](s) -> Result[T, E]`),
+then the receiver of a method call, then the arguments left to right. They can be written
+at a call instead, `make[i32]()` (the first ones only, the rest are inferred; more than the
+function has is E0405). A type parameter that none of them fixes is E0409 ("cannot infer
+type parameter `T` of `make`"), whose help says to annotate the binding or write the
+argument:
 
 ```eider,compile_fail=E0409
 fn make[T]() -> List[T] { List.new() }

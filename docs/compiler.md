@@ -4582,3 +4582,26 @@ error. A test block now sets `err_mod` to its module first.
 `check`, `test` and now `lint`, unless `--lib`/`--wasm` is given. `eiderc lint` with no file lints the
 entry module of the package in the current directory (`<name>.ei` unless `eider.toml` says otherwise);
 a package that is a library therefore lints like an application.
+
+## C8.66: type arguments at a call, and a binding's type through `?` (#149)
+
+Decision C847. Code: parse.ei (`type_args_ahead`, the type-argument branch of `postfix`; `ECall`
+slots e/f hold the type nodes, ast.ei), dump.ei (`targ` children), check.ei (`call_decl`: the
+explicit arguments are resolved in the caller's module and bound before inference; `try_op` sets
+`C.try_exp`/`try_line`/`try_col`, which `call_decl` consumes for the call at that position).
+Tests: tests/run/type_args.ei, tests/checks/fail/e0405_type_args_count.ei and
+e0409_infer_result_param.ei, tests/checks/pass/pass_type_args.ei, compiler/tests/parse_ok/type_args.ei.
+
+**Syntax.** `postfix` accepts `[type, ...]` after a path when the matching `]` is followed by `(`;
+it checks by parsing the types ahead and rewinding (`type_args_ahead`), so `xs[i](3)` is still an
+index followed by the old E0001, and `a[b](c)` with a variable `b` is read as a call with a type
+argument named `b` (E0111 unknown type). Type arguments are the first `n` type parameters of the
+function (the `uses E` capability parameters do not count); more than it has is E0405.
+
+**Through `?`.** `let n: T = f(x)?` hands `T` to the operand call as `try_exp`. If the callee's return
+type is written `Result[A, B]` or `Option[A]`, `A` is unified with it before the call's own expected
+type is. The error type is not bound (it converts through `From`), and a callee returning an alias
+or another generic wrapper gets no hint. It is a hint only: a failed unification is dropped, as for
+the expected type.
+
+E0409's help for a call now says both ways: annotate the binding, or write the type argument.

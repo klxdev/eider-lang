@@ -172,7 +172,8 @@ mul_expr  = cast_expr { ("*" | "/" | "%" | "*%") cast_expr }
 cast_expr = unary { "as" type }
 unary     = ("-" | "!" | "~") unary | postfix
 
-postfix   = primary { call_args | "." (IDENT | INT) [call_args] | "[" expr "]" | "?" }
+postfix   = primary { type_args call_args | call_args | "." (IDENT | INT) [call_args] | "[" expr "]" | "?" }
+type_args = "[" type { "," type } "]"      (only after a path, and only when `(` follows the `]`)
 call_args = "(" [ ["inout"] expr { "," ["inout"] expr } [","] ] ")"
 
 primary   = INT | FLOAT | string | "true" | "false"
@@ -201,7 +202,9 @@ arm        = pattern { "|" pattern } "=>"
   comparison that is an unparenthesized `|`, `^` or `&`, are E0002. A shift may be an
   operand of `|`, `^`, `&`, and a comparison may compare shifts (see
   [Expressions](expressions.md#bitwise-operators-need-parentheses)).
-- A call `( ... )` may only follow a `path` (a name or `alias.name`): any other callee is
+- A call `( ... )` may only follow a `path` (a name or `alias.name`), which may carry
+  `[type, ...]` type arguments (`[` starts them only if the matching `]` is followed by `(`;
+  `xs[i](3)` is an index, then E0001): any other callee is
   E0001 "only named functions can be called". After `.`, a name followed by `(` is a
   method call; otherwise a field. An `INT` after `.` is a tuple element (`t.0`).
 - In a postfix chain, a newline followed by a line starting with `.` continues the chain.

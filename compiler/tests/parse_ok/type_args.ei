@@ -1,0 +1,10 @@
+fn id[T](x: T) -> T { x }
+fn pair[A, B](a: A, b: B) -> (A, B) { (a, b) }
+fn main() {
+    let a = id[i32](1)
+    let p = pair[List[i32], Map[str, bool]](List.new(), Map.new())
+    let q = id[
+        i64
+    ](2)
+    let r = id[i32](3).copy()
+}

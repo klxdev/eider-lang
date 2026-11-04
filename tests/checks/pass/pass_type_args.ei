@@ -1,0 +1,15 @@
+fn id[T](x: T) -> T { x }
+fn make[T: Default]() -> T { T.default() }
+fn dec[T: Default](ok: bool) -> Result[T, String] {
+    if ok { Ok(T.default()) } else { Err("no".to_string()) }
+}
+fn load() -> Result[i32, String] {
+    let a: i32 = dec(true)?
+    let b = dec[i64](true)?
+    Ok(a + (b as i32))
+}
+fn main() {
+    let x = id[i32](1)
+    let y = make[String]()
+    let z = dec[bool](true).is_ok()
+}
