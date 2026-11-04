@@ -1,0 +1,9 @@
+--- stderr
+error[unused_result]: the `Result[i32, String]` of this expression is dropped, and an error in it goes unnoticed
+  --> compiler/tests/pkgs/lints/libmod.ei:7:5
+  |
+7 |     r()
+  |     ^
+  help: handle it (`match`, `?`), or write `let _ = ...` to drop it on purpose
+1 denied, 0 warnings
+--- exit 1

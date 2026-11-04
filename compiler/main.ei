@@ -877,9 +877,9 @@ fn main() uses io, fs, net, clock {
     let audit = is(a.cmd, "audit-refs")
     let k = if audit { check.check_audit(ev.p) } else { check.check_all(ev.p, a.lib, a.wasm) }
     for d in k.diags {
-        // a module with no `main` can be checked and tested (`check`, `test`): it is only a
+        // a module with no `main` can be checked, tested and linted (`check`, `test`, `lint`): it is only a
         // program that needs one (docs/compiler.md, "Library modules")
-        let module_ok = (is(a.cmd, "check") || is(a.cmd, "test")) && !a.lib && !a.wasm && !a.wasm_core
+        let module_ok = (is(a.cmd, "check") || is(a.cmd, "test") || is(a.cmd, "lint")) && !a.lib && !a.wasm && !a.wasm_core
         if module_ok && bytes.eq(sys.lit(d.code), sys.lit("E0112")) && d.line == 1 && d.col == 1 && bytes.eq(d.msg, sys.lit("no `main` function")) { continue }
         diags.push(d)
     }
