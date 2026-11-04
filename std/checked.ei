@@ -56,6 +56,52 @@ impl i32 {
     }
 }
 
+impl i16 {
+    /// `self + other`, or None if the sum doesn't fit.
+    fn checked_add(self, other: i16) -> Option[i16] {
+        let r = self +% other
+        if (other >= 0 && r < self) || (other < 0 && r >= self) { return None }
+        Some(r)
+    }
+    /// `self - other`, or None if the difference doesn't fit.
+    fn checked_sub(self, other: i16) -> Option[i16] {
+        let r = self -% other
+        if (other >= 0 && r > self) || (other < 0 && r <= self) { return None }
+        Some(r)
+    }
+    /// `self * other`, or None if the product doesn't fit.
+    fn checked_mul(self, other: i16) -> Option[i16] {
+        if self == 0 || other == 0 { return Some(0) }
+        if other == -1 {
+            if self == -32768 { return None }
+            return Some(0 - self)
+        }
+        if self == -1 {
+            if other == -32768 { return None }
+            return Some(0 - other)
+        }
+        let r = self *% other
+        if r / other != self { return None }
+        Some(r)
+    }
+    /// `self / other` (truncating toward zero), or None if `other` is 0 or the quotient doesn't
+    /// fit (`MIN / -1`).
+    fn checked_div(self, other: i16) -> Option[i16] {
+        if other == 0 || (self == -32768 && other == -1) { return None }
+        Some(self / other)
+    }
+    /// `self % other`, or None if `other` is 0 or the remainder traps (`MIN % -1`).
+    fn checked_rem(self, other: i16) -> Option[i16] {
+        if other == 0 || (self == -32768 && other == -1) { return None }
+        Some(self % other)
+    }
+    /// `-self`, or None for `MIN`.
+    fn checked_neg(self) -> Option[i16] {
+        if self == -32768 { return None }
+        Some(0 - self)
+    }
+}
+
 impl i64 {
     /// `self + other`, or None if the sum doesn't fit.
     fn checked_add(self, other: i64) -> Option[i64] {
@@ -128,6 +174,37 @@ impl u8 {
     }
     /// `self % other`, or None if `other` is 0.
     fn checked_rem(self, other: u8) -> Option[u8] {
+        if other == 0 { return None }
+        Some(self % other)
+    }
+}
+
+impl u16 {
+    /// `self + other`, or None if the sum doesn't fit.
+    fn checked_add(self, other: u16) -> Option[u16] {
+        let r = self +% other
+        if r < self { return None }
+        Some(r)
+    }
+    /// `self - other`, or None if `other` is larger than `self`.
+    fn checked_sub(self, other: u16) -> Option[u16] {
+        if other > self { return None }
+        Some(self - other)
+    }
+    /// `self * other`, or None if the product doesn't fit.
+    fn checked_mul(self, other: u16) -> Option[u16] {
+        if self == 0 || other == 0 { return Some(0) }
+        let r = self *% other
+        if r / other != self { return None }
+        Some(r)
+    }
+    /// `self / other`, or None if `other` is 0.
+    fn checked_div(self, other: u16) -> Option[u16] {
+        if other == 0 { return None }
+        Some(self / other)
+    }
+    /// `self % other`, or None if `other` is 0.
+    fn checked_rem(self, other: u16) -> Option[u16] {
         if other == 0 { return None }
         Some(self % other)
     }

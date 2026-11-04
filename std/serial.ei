@@ -266,6 +266,16 @@ impl Deserialize for i64 {
     fn deserialize[D: Deserializer](d: D) -> Result[i64, Error] { d.read_i64() }
 }
 
+impl Serialize for i16 {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] { s.int(self as i64) }
+}
+impl Deserialize for i16 {
+    fn deserialize[D: Deserializer](d: D) -> Result[i16, Error] {
+        let v = int_in_range(d, "an i16", -32768, 32767)?
+        Ok(v as i16)
+    }
+}
+
 impl Serialize for i32 {
     fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] { s.int(self as i64) }
 }
@@ -283,6 +293,16 @@ impl Deserialize for u8 {
     fn deserialize[D: Deserializer](d: D) -> Result[u8, Error] {
         let v = int_in_range(d, "a u8", 0, 255)?
         Ok(v as u8)
+    }
+}
+
+impl Serialize for u16 {
+    fn serialize[S: Serializer](self, inout s: S) -> Result[(), Error] { s.uint(self as u64) }
+}
+impl Deserialize for u16 {
+    fn deserialize[D: Deserializer](d: D) -> Result[u16, Error] {
+        let v = int_in_range(d, "a u16", 0, 65535)?
+        Ok(v as u16)
     }
 }
 
@@ -922,6 +942,13 @@ impl Checkable for i64 {
     }
 }
 
+impl Checkable for i16 {
+    fn check_value(self, r: check, path: List[u8], inout errs: List[Error]) {
+        not_text_rules(r, path.copy(), inout errs)
+        range_violation(self as i64, r, path, inout errs)
+    }
+}
+
 impl Checkable for i32 {
     fn check_value(self, r: check, path: List[u8], inout errs: List[Error]) {
         not_text_rules(r, path.copy(), inout errs)
@@ -931,6 +958,13 @@ impl Checkable for i32 {
 
 impl Checkable for u8 {
     fn check_value(self, r: check, path: List[u8], inout errs: List[Error]) {
+        not_text_rules(r, path.copy(), inout errs)
+        range_violation(self as i64, r, path, inout errs)
+    }
+}
+
+impl Checkable for u16 {
+    fn check_value(self, r: check, path: List[u16], inout errs: List[Error]) {
         not_text_rules(r, path.copy(), inout errs)
         range_violation(self as i64, r, path, inout errs)
     }

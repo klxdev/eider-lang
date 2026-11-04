@@ -286,16 +286,11 @@ fn read_be(b: List[u8], at: usize, n: usize) -> Option[u64] {
     Some(v)
 }
 
-/// Appends the low 16 bits of `v` (traps if `v` doesn't fit).
-pub fn push_u16_le(inout out: List[u8], v: u32) {
-    assert v <= 65535, "push_u16: value doesn't fit in 16 bits"
-    push_le(inout out, v as u64, 2)
-}
+/// Appends the 16 bits of `v`, least significant byte first.
+pub fn push_u16_le(inout out: List[u8], v: u16) { push_le(inout out, v as u64, 2) }
 
-pub fn push_u16_be(inout out: List[u8], v: u32) {
-    assert v <= 65535, "push_u16: value doesn't fit in 16 bits"
-    push_be(inout out, v as u64, 2)
-}
+/// Appends the 16 bits of `v`, most significant byte first.
+pub fn push_u16_be(inout out: List[u8], v: u16) { push_be(inout out, v as u64, 2) }
 
 pub fn push_u32_le(inout out: List[u8], v: u32) { push_le(inout out, v as u64, 4) }
 pub fn push_u32_be(inout out: List[u8], v: u32) { push_be(inout out, v as u64, 4) }
@@ -307,14 +302,14 @@ pub fn push_i64_le(inout out: List[u8], v: i64) { push_le(inout out, bits64(v), 
 pub fn push_i64_be(inout out: List[u8], v: i64) { push_be(inout out, bits64(v), 8) }
 
 /// The 16-bit value at `b[at..at+2]`, or None if `b` is too short.
-pub fn u16_le(b: List[u8], at: usize) -> Option[u32] {
+pub fn u16_le(b: List[u8], at: usize) -> Option[u16] {
     let v = read_le(b, at, 2)?
-    Some(v as u32)
+    Some(v as u16)
 }
 
-pub fn u16_be(b: List[u8], at: usize) -> Option[u32] {
+pub fn u16_be(b: List[u8], at: usize) -> Option[u16] {
     let v = read_be(b, at, 2)?
-    Some(v as u32)
+    Some(v as u16)
 }
 
 pub fn u32_le(b: List[u8], at: usize) -> Option[u32] {
