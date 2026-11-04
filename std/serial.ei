@@ -964,7 +964,7 @@ impl Checkable for u8 {
 }
 
 impl Checkable for u16 {
-    fn check_value(self, r: check, path: List[u16], inout errs: List[Error]) {
+    fn check_value(self, r: check, path: List[u8], inout errs: List[Error]) {
         not_text_rules(r, path.copy(), inout errs)
         range_violation(self as i64, r, path, inout errs)
     }
