@@ -2274,12 +2274,13 @@ static void *main_run(void *p) {
 }
 #endif
 
-/* AddressSanitizer warns about every no-return call (a trap) on a stack over 64 MiB, so a
-   program built with it keeps the stack of a spawned thread unless EIDER_MAIN_STACK says. */
-#if defined(__SANITIZE_ADDRESS__)
+/* AddressSanitizer warns about every no-return call (a trap) on a stack over 64 MiB, and
+   ThreadSanitizer shadows every byte of a stack that deep recursion touches, so a program built
+   with either keeps the stack of a spawned thread unless EIDER_MAIN_STACK says. */
+#if defined(__SANITIZE_ADDRESS__) || defined(__SANITIZE_THREAD__)
 #define EI_MAIN_STACK_DEFAULT EI_THREAD_STACK
 #elif defined(__has_feature)
-#if __has_feature(address_sanitizer)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
 #define EI_MAIN_STACK_DEFAULT EI_THREAD_STACK
 #endif
 #endif

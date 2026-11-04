@@ -412,8 +412,9 @@ at least 64 KiB), not the 8 MiB of a spawned thread: the mapping is `MAP_NORESER
 address space and only the pages a program touches. The compiler's checker recurses once per
 call of a method chain with frames of a few hundred KiB, and a chain of 300 calls needs most of
 100 MiB (eider-lang#153). If the system refuses the mapping, `main` gets the usual 8 MiB; so does a
-program built with AddressSanitizer, which warns about every trap (a no-return call) on a stack over
-64 MiB, unless `EIDER_MAIN_STACK` is set.
+program built with AddressSanitizer (which warns about every trap, a no-return call, on a stack over
+64 MiB) or ThreadSanitizer (which shadows the stack deep recursion touches), unless
+`EIDER_MAIN_STACK` is set.
 
 | Function | Contract |
 |---|---|
