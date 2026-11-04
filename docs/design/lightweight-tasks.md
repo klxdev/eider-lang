@@ -211,7 +211,7 @@ cost grows with the worker count (the spawner pays for waking sleepers).
 
 ## Open (for the user)
 
-1. C830 replaces the stackless half of C4. Confirm, or the remaining milestones change shape.
+1. ~~C830 replaces the stackless half of C4.~~ Confirmed by the user, 2026-11-04.
 2. Dedicated OS threads: `spawn` always makes tasks; code that must have its own thread
    (a blocking C library, thread-local C state) has `EIDER_TASKS=threads` as a process-wide
    switch only. A per-spawn form (`thread.spawn`) needs a compiler builtin.
