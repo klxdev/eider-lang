@@ -997,7 +997,7 @@ pk=$(pwd)/target/pkgtest
 newabs=$(cd "$(dirname "$new")" && pwd)/$(basename "$new")
 rm -rf $pk
 mkdir -p $pk/tests $pk/target $pk/examples
-printf '[package]\nname = "pk"\nversion = "0.1.0"\neider = "0.6"\n' >$pk/eider.toml
+printf '[package]\nname = "pk"\nversion = "0.1.0"\neider = "0.7"\n' >$pk/eider.toml
 printf 'pub fn double(n: i32) -> i32 { n * 2 }\n\ntest "double" {\n    assert double(4) == 8\n}\n' >$pk/lib.ei
 printf 'import pk.lib\n\ntest "uses the lib" {\n    assert lib.double(3) == 6\n}\n' >$pk/tests/more_test.ei
 printf 'test "skipped: examples/ is not run" {\n    assert 1 == 2\n}\n' >$pk/examples/e.ei

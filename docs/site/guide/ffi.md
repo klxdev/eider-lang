@@ -113,7 +113,6 @@ EIDER_CFLAGS="-L/opt/foo/lib" scripts/ei run app.ei -l foo
 - No pointers, buffers, structs or callbacks cross into C from Eider. A C API that needs
   them is wrapped in a small C function first, or bound by passing data a byte at a time
   as `core/sys.ei` does.
-- No floating-point types yet.
 - An extern can't be used as a function value (it would escape `unsafe`).
 - Extern functions are global names, not namespaced by module.
 - Extern declarations use an ELF assembler label for the symbol; Mach-O (macOS) would need

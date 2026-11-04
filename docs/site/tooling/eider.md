@@ -9,7 +9,7 @@ It is written in Eider (`packages/eider` in eider-lang).
 eider toolchain install          # the latest release, which becomes the default
 eider run hello.ei               # eiderc run, with the selected toolchain
 eider new warehouse              # a new package (eider-pkg init)
-eider add json --git https://github.com/klxdev/eider-json.git --version 0.6.0
+eider add json --git https://github.com/klxdev/eider-json.git --version 0.7.0
                                  # a dependency, granted what it uses
 eider update                     # stops if a dependency now uses more; --grant json accepts
 eider +0.1.0 test lib.ei         # one command with another installed version
@@ -86,7 +86,7 @@ When the version asked for isn't installed, eider stops and names the command th
 installs it:
 
 ```text
-eider: /home/me/warehouse/eider.toml (eider = "0.6") asks for Eider 0.6, which is not installed. Run `eider toolchain install 0.6` (or set EIDER_AUTO_INSTALL=1, or `auto_install = true` in config.toml, to install it when needed)
+eider: /home/me/warehouse/eider.toml (eider = "0.7") asks for Eider 0.7, which is not installed. Run `eider toolchain install 0.7` (or set EIDER_AUTO_INSTALL=1, or `auto_install = true` in config.toml, to install it when needed)
 ```
 
 With `EIDER_AUTO_INSTALL=1` (or `auto_install = true` in config.toml) it installs the

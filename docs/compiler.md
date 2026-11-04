@@ -4709,96 +4709,6 @@ later element of another type is E0401 at that element. An element may be an `if
 tree-sitter-eider has a `list_expression` whose first token is `List[` (one token: `List.new()` and the
 type `List[i32]` stay identifiers).
 
-## C8.80: stack probes, and the size of the main stack (#196)
-
-Decisions C870, C871. Code: `probe_attr` in compiler/llvm.ei. Tests: compiler/tests/run/stack_overflow_big_frame.ei
-(recursion with a 320 KB frame on `main`, under the plain run, ASan and UBSan; TSan is skipped as for
-stack_overflow_main.ei), tests/std/stack_overflow_big.ei (the same on a spawned thread). A thread has a
-64 KiB guard below its stack; a function whose frame was larger than that (`method_call_in` has about
-260 KiB) could move the stack pointer from above the guard to below it in one step, and its first access
-landed in whatever was mapped there: a bare SIGSEGV (exit 139) instead of the trap. Every function the
-backend defines (not for wasm32, which has no guard) now has `"probe-stack"="inline-asm"`: LLVM's
-prologue for a frame over a page touches each page from the top down, so the first access below the
-stack is in the guard, whatever the frame. No cost for a small frame, one store per page for a large
-one; the price is that the pages of a big frame count as touched (the 1000-call method chain of
-tests/run/long_method_chain.ei now uses about 350 MB of the stack where it touched 205 MB).
-
-Smaller frames (lifetime markers, so locals share slots) are not done: the backend gives every IR local
-and temporary its own entry alloca and has no scope information to place `llvm.lifetime.start/end`
-on; getting it wrong corrupts a live value, and the probe makes frame size a cost, not a hazard. It is
-still the lever for #129.
-
-The 512 MiB main stack stays. Measured with stage 2 on this machine: a program that recurses forever
-touches the whole stack before it traps (0.28 s, 526 MB resident); 128 MiB takes 0.07 s and 133 MB,
-64 MiB 0.03 s. What needs the size is the compiler itself: a chain of 1000 calls was a clean trap at
-256 MiB (and a SIGSEGV at 128 MiB before the probe), 350 MB resident at 512. Lowering the default
-would make the compiler reject chains it accepts today, to save memory only a runaway program uses, and
-it is reserved address space, not committed memory. `EIDER_MAIN_STACK` lowers it per run (a container
-with a small memory limit can set it). Revisit when frames shrink (#129).
-
-## C8.81: named arguments and default arguments (#110)
-
-Decision C872. Code: `args` and `fn_decl` in compiler/parse.ei; `arrange`, `check_param_defaults`, `named_mark`,
-`note_unnamed` and `call_decl` in compiler/check.ei; `default_text` in compiler/doc.ei. Tests:
-tests/run/named_args.ei and named_args_mod.ei (with tests/run/mods/options.ei), tests/checks/{fail,pass}
-(`e0121_*`, `e0122_*`, `e0405_missing_argument`, `e0401_default_type`, `pass_named_args`),
-compiler/tests/parse_ok/named_args.ei, compiler/tests/doc/shapes (`open`).
-
-Syntax. A call argument `name = value` is an `EArg` with d = the name's symbol + 1 (an assignment is a statement,
-so `IDENT =` could not start an expression and nothing parses differently); a parameter `name: T = e` is a
-`Param` with d = the default's expression + 1. The tree of a program that uses neither is unchanged.
-
-Arrangement. `call_decl` (every call of a function or method declared with `fn` ends there) calls
-`arrange`, which maps the written arguments to the parameters: positional ones fill the parameters from
-the first; a named one finds its parameter by name, and must be after the last one filled (named arguments
-follow the parameters' order, as in Swift: that keeps evaluation in the order written, which is the order
-the arguments are checked and emitted in); a positional argument after a named one, a name that is not a
-parameter, a parameter given twice, and a named argument out of order are E0121; a parameter left without
-an argument and without a default is E0405 (the old "takes N argument(s)" message when the function has no
-defaults and the call names nothing). The rest of `call_decl` runs over the parameters instead of the
-written arguments: where `arrange` left a gap the operand is the default's.
-
-Defaults. `check_param_defaults` runs once, after the constants and before any body: for every function
-(and the methods of traits, which cannot have one) it checks the rules of E0122, resolves the parameter's
-type, checks the default expression against it in the declaring module (so a private `const` of that module
-resolves, and no local of a caller can capture the name) with the IR it emits discarded, and requires the
-result to be a constant operand (`O_INT`, `O_BOOL`, `O_STR`, `O_FLOAT`). The operand is kept in
-`C.argdef`, keyed by (module, Param's default node); a call that leaves the argument out pushes that
-operand. Operands of constants are global to the IR, not to a function, so a default can be used from any
-body. No expression is evaluated at a call, nothing is copied into the caller's tree, and a default costs
-what a literal at the call would.
-
-Not covered, on purpose. Named arguments of constructors, builtins and function values: `call` and
-`method_call` mark a call that has named arguments (`C.named_pos`), `call_decl` clears the mark, and a call
-that finishes with it set is E0121 (so a new callee path cannot silently ignore a name). A default in the
-signature of a trait method and of an impl of a trait is E0122: a call through a bound `T: Trait` would
-use the trait's parameters, and the two could differ. Reordering named arguments and a default that
-is an expression (`now_ms()`, `List.new()`) are open.
-
-Tools. `eiderc doc` prints `name: T = default`. tree-sitter-eider: `named_argument` and the `default` field
-of a `parameter`. eider-analyzer: a definition request on a named argument's name finds the parameter.
-
-## C8.82: 16-bit integers, `u16` and `i16` (#44)
-
-Decision C873. Code: compiler/types.ei (`IK_I16`, `IK_U16`, type ids), and the width tables of check, fold, lower, llvm,
-llvm_abi, pats, interp, wasm and consteval. Tests: tests/run/int16.ei, int16_overflow.ei, int16_cast.ei,
-int16_ffi.ei; tests/checks/fail/e0501_{u16,i16}_literal, e0401_u16_negate, e0401_u16_i16_mix.
-
-The integer kinds are 0 to 5 as before (`i32 i64 u8 u32 u64 usize`) and `i16`, `u16` are 6 and 7. The type id of an
-integer is its kind, so the fixed ids of `bool`, `str`, `()`, `!`, `String`, `f32` and `f64` moved up by two
-(`types.BOOL` is 8, `CAPS0` 15), and the names `well_known` lists are in the same order. Everything else is the
-same code at another width: literals check against `imin`/`imax`, `as` conversions against `lower.kmin`/`kmax`
-(a conversion that doesn't fit traps, as for the other kinds), arithmetic uses LLVM's overflow intrinsics on `i16`,
-the wrapping operators and the bitwise operators fold at 16 bits (`fold.wrap`), a pattern's domain is
-`Iv(0, 65535)` or the biased i16 range (exhaustiveness of `-32768..=32767`), and the comptime interpreter
-cuts values to 16 bits (sign-extending `i16`). A value is widened to 64 bits for printing, formatting and hashing,
-as `u8` and `i32` are. At the C boundary `u16` is `zeroext` and `i16` `signext` (clang's x86-64 convention for
-narrow integers), a record field is 2 bytes with alignment 2, the header spells `uint16_t` and `int16_t`, and
-WebAssembly exports them as numbers.
-
-`std/encoding` returns `u16` from `u16_le`/`u16_be` and takes one in `push_u16_le`/`push_u16_be` (a value that
-doesn't fit no longer needs a check), and `std/checked` has `checked_*` for both kinds.
-
 ## C8.74: checked integer arithmetic (#144)
 
 Decision C855. No compiler change: std/checked.ei adds inherent methods to the integer types
@@ -4906,4 +4816,94 @@ KILL) and starts the cycle over, which reads the file set again. Starting the ex
 `eiderc test ARGS` as a subprocess to completion; it compares the modification times from before the run, so a change made
 during it runs the tests again at once. With no file the set is every `.ei` file under the directory (skipping `target`, `.git`,
 `.vendor`, `node_modules`). Not done: inotify/kqueue (polling is the portable form), a `--watch` for `check` and `build`.
+
+## C8.80: stack probes, and the size of the main stack (#196)
+
+Decisions C870, C871. Code: `probe_attr` in compiler/llvm.ei. Tests: compiler/tests/run/stack_overflow_big_frame.ei
+(recursion with a 320 KB frame on `main`, under the plain run, ASan and UBSan; TSan is skipped as for
+stack_overflow_main.ei), tests/std/stack_overflow_big.ei (the same on a spawned thread). A thread has a
+64 KiB guard below its stack; a function whose frame was larger than that (`method_call_in` has about
+260 KiB) could move the stack pointer from above the guard to below it in one step, and its first access
+landed in whatever was mapped there: a bare SIGSEGV (exit 139) instead of the trap. Every function the
+backend defines (not for wasm32, which has no guard) now has `"probe-stack"="inline-asm"`: LLVM's
+prologue for a frame over a page touches each page from the top down, so the first access below the
+stack is in the guard, whatever the frame. No cost for a small frame, one store per page for a large
+one; the price is that the pages of a big frame count as touched (the 1000-call method chain of
+tests/run/long_method_chain.ei now uses about 350 MB of the stack where it touched 205 MB).
+
+Smaller frames (lifetime markers, so locals share slots) are not done: the backend gives every IR local
+and temporary its own entry alloca and has no scope information to place `llvm.lifetime.start/end`
+on; getting it wrong corrupts a live value, and the probe makes frame size a cost, not a hazard. It is
+still the lever for #129.
+
+The 512 MiB main stack stays. Measured with stage 2 on this machine: a program that recurses forever
+touches the whole stack before it traps (0.28 s, 526 MB resident); 128 MiB takes 0.07 s and 133 MB,
+64 MiB 0.03 s. What needs the size is the compiler itself: a chain of 1000 calls was a clean trap at
+256 MiB (and a SIGSEGV at 128 MiB before the probe), 350 MB resident at 512. Lowering the default
+would make the compiler reject chains it accepts today, to save memory only a runaway program uses, and
+it is reserved address space, not committed memory. `EIDER_MAIN_STACK` lowers it per run (a container
+with a small memory limit can set it). Revisit when frames shrink (#129).
+
+## C8.81: named arguments and default arguments (#110)
+
+Decision C872. Code: `args` and `fn_decl` in compiler/parse.ei; `arrange`, `check_param_defaults`, `named_mark`,
+`note_unnamed` and `call_decl` in compiler/check.ei; `default_text` in compiler/doc.ei. Tests:
+tests/run/named_args.ei and named_args_mod.ei (with tests/run/mods/options.ei), tests/checks/{fail,pass}
+(`e0121_*`, `e0122_*`, `e0405_missing_argument`, `e0401_default_type`, `pass_named_args`),
+compiler/tests/parse_ok/named_args.ei, compiler/tests/doc/shapes (`open`).
+
+Syntax. A call argument `name = value` is an `EArg` with d = the name's symbol + 1 (an assignment is a statement,
+so `IDENT =` could not start an expression and nothing parses differently); a parameter `name: T = e` is a
+`Param` with d = the default's expression + 1. The tree of a program that uses neither is unchanged.
+
+Arrangement. `call_decl` (every call of a function or method declared with `fn` ends there) calls
+`arrange`, which maps the written arguments to the parameters: positional ones fill the parameters from
+the first; a named one finds its parameter by name, and must be after the last one filled (named arguments
+follow the parameters' order, as in Swift: that keeps evaluation in the order written, which is the order
+the arguments are checked and emitted in); a positional argument after a named one, a name that is not a
+parameter, a parameter given twice, and a named argument out of order are E0121; a parameter left without
+an argument and without a default is E0405 (the old "takes N argument(s)" message when the function has no
+defaults and the call names nothing). The rest of `call_decl` runs over the parameters instead of the
+written arguments: where `arrange` left a gap the operand is the default's.
+
+Defaults. `check_param_defaults` runs once, after the constants and before any body: for every function
+(and the methods of traits, which cannot have one) it checks the rules of E0122, resolves the parameter's
+type, checks the default expression against it in the declaring module (so a private `const` of that module
+resolves, and no local of a caller can capture the name) with the IR it emits discarded, and requires the
+result to be a constant operand (`O_INT`, `O_BOOL`, `O_STR`, `O_FLOAT`). The operand is kept in
+`C.argdef`, keyed by (module, Param's default node); a call that leaves the argument out pushes that
+operand. Operands of constants are global to the IR, not to a function, so a default can be used from any
+body. No expression is evaluated at a call, nothing is copied into the caller's tree, and a default costs
+what a literal at the call would.
+
+Not covered, on purpose. Named arguments of constructors, builtins and function values: `call` and
+`method_call` mark a call that has named arguments (`C.named_pos`), `call_decl` clears the mark, and a call
+that finishes with it set is E0121 (so a new callee path cannot silently ignore a name). A default in the
+signature of a trait method and of an impl of a trait is E0122: a call through a bound `T: Trait` would
+use the trait's parameters, and the two could differ. Reordering named arguments and a default that
+is an expression (`now_ms()`, `List.new()`) are open.
+
+Tools. `eiderc doc` prints `name: T = default`. tree-sitter-eider: `named_argument` and the `default` field
+of a `parameter`. eider-analyzer: a definition request on a named argument's name finds the parameter.
+
+## C8.82: 16-bit integers, `u16` and `i16` (#44)
+
+Decision C873. Code: compiler/types.ei (`IK_I16`, `IK_U16`, type ids), and the width tables of check, fold, lower, llvm,
+llvm_abi, pats, interp, wasm and consteval. Tests: tests/run/int16.ei, int16_overflow.ei, int16_cast.ei,
+int16_ffi.ei; tests/checks/fail/e0501_{u16,i16}_literal, e0401_u16_negate, e0401_u16_i16_mix.
+
+The integer kinds are 0 to 5 as before (`i32 i64 u8 u32 u64 usize`) and `i16`, `u16` are 6 and 7. The type id of an
+integer is its kind, so the fixed ids of `bool`, `str`, `()`, `!`, `String`, `f32` and `f64` moved up by two
+(`types.BOOL` is 8, `CAPS0` 15), and the names `well_known` lists are in the same order. Everything else is the
+same code at another width: literals check against `imin`/`imax`, `as` conversions against `lower.kmin`/`kmax`
+(a conversion that doesn't fit traps, as for the other kinds), arithmetic uses LLVM's overflow intrinsics on `i16`,
+the wrapping operators and the bitwise operators fold at 16 bits (`fold.wrap`), a pattern's domain is
+`Iv(0, 65535)` or the biased i16 range (exhaustiveness of `-32768..=32767`), and the comptime interpreter
+cuts values to 16 bits (sign-extending `i16`). A value is widened to 64 bits for printing, formatting and hashing,
+as `u8` and `i32` are. At the C boundary `u16` is `zeroext` and `i16` `signext` (clang's x86-64 convention for
+narrow integers), a record field is 2 bytes with alignment 2, the header spells `uint16_t` and `int16_t`, and
+WebAssembly exports them as numbers.
+
+`std/encoding` returns `u16` from `u16_le`/`u16_be` and takes one in `push_u16_le`/`push_u16_be` (a value that
+doesn't fit no longer needs a check), and `std/checked` has `checked_*` for both kinds.
 

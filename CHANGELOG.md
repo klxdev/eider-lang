@@ -5,9 +5,35 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
-## 0.7.0 (unreleased)
+## 0.7.0
 
-Group 1, language and compiler ergonomics (more items come before the release).
+For Eider 0.7 (`eider = "0.7"`). The language gets named and default arguments, `let PATTERN = e else`, `List[...]`
+literals, type arguments at a call, `if`/`match`/blocks as call arguments and the 16-bit integers `u16` and `i16`;
+std gets `std/checked`; the tooling gets `eiderc fmt --write/--check`, `eiderc test --coverage`, `--watch` for `run`
+and `test`, `eiderc expand` as Eider source, and stack probes on every frame. eider-analyzer and tree-sitter-eider
+follow; eider-toml, eider-json, eider-markdown, eider-http, eider-rpc, eider-openapi and eider-profiler change only
+their version (they work with the 0.7 compiler as they are).
+
+**Breaking** (a MINOR release before 1.0 may break compatibility):
+
+- `panic` takes a `String` (#47), not a `str`; `panic("x")` becomes `panic("x".to_string())`. std/testing's
+  `assert_eq`, `assert_ne` and `assert_ok` stop the test with their message as the panic message and no longer need
+  `uses io`.
+- The compiler's type ids moved up by two (#44): `i16` and `u16` are integer kinds 6 and 7, so `bool`, `str`, `()`, `!`,
+  `String`, `f32` and `f64` have new ids (`types.BOOL` is 8). Anything that reads a type id from the compiler (IR text
+  with `%t<id>`, the typed IR of `eiderc expand --ir`, a tool built on `compiler/`) sees the shift; rebuild it.
+- `std/encoding`'s `u16_le`, `u16_be` return `Option[u16]` (was `Option[u32]`) and `push_u16_le`, `push_u16_be` take a
+  `u16` (was `u32`).
+- Some programs that were E0103 are legal now: an `if`, `match` or block as an argument of a call (#48) and a call
+  as an `inout` argument (#145). A test or tool that expects that error for them has to change; the operand and
+  field-initializer cases stay E0103, and a place or operator argument is still E0301.
+- A package that says `eider = "0.6"` is refused by a 0.7 toolchain (E0811).
+
+**Not done in 0.7.0**: the rest of #150 (rename, workspace symbols, signature help, inlay hints, grammar generation);
+explicit type arguments on method calls (#149 covers calls to functions); place arguments as two-phase borrows; a
+`None` arm first in a `match` with no expected type (still E0409); and #2, #59, #29, #36, #37, #104 and #116.
+
+Language and std:
 
 - **Type arguments at a call** (#149): `decode[Order](text)`, `make[i32]()`; fewer than the function
   has leaves the rest to inference, more is E0405. A `let` annotation now reaches the callee's `Ok`/`Some`

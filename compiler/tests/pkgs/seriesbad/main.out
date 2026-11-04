@@ -4,6 +4,6 @@ error[E0811]: package `seriesbad` has `eider = "0.1.0"` (<root>/compiler/tests/p
   |
 1 | // pkgtest: check
   | ^
-  help: write the toolchain MAJOR.MINOR the package needs, like `eider = "0.6"`
+  help: write the toolchain MAJOR.MINOR the package needs, like `eider = "0.7"`
 error: 1 error
 --- exit 1
