@@ -592,7 +592,12 @@ static size_t page_round(size_t n, size_t p) { return (n + p - 1) / p * p; }
 
 /* One mmap: n bytes of private, zeroed, readable and writable memory, or NULL. */
 static unsigned char *map_anon(size_t n) {
+#ifdef MAP_NORESERVE
+  /* (a stack: only what is touched counts, as for the stacks of tasks) */
+  void *m = mmap(NULL, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+#else
   void *m = mmap(NULL, n, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+#endif
   return m == MAP_FAILED ? NULL : (unsigned char *)m;
 }
 
@@ -645,10 +650,12 @@ static void *thread_main(void *p) {
   return r;
 }
 
-/* Starts t on a mapping of its own; false if the system refused (then nothing is left). */
-static bool thread_start_guarded(ei_thread *t) {
+/* Starts t on a mapping of its own with a stack of `want` bytes (rounded up to whole pages);
+   false if the system refused (then nothing is left). */
+static bool thread_start_sized(ei_thread *t, size_t want) {
   size_t alt, guard, stack;
   stack_parts(&alt, &guard, &stack);
+  stack = page_round(want, page_size());
   size_t len = alt + guard + stack;
   unsigned char *m = map_anon(len);
   if (!m) return false;
@@ -667,6 +674,9 @@ static bool thread_start_guarded(ei_thread *t) {
   }
   return ok;
 }
+
+/* ... with the stack every spawned thread has. */
+static bool thread_start_guarded(ei_thread *t) { return thread_start_sized(t, EI_THREAD_STACK); }
 
 // ---- tasks (core/RUNTIME.md "Tasks", docs/design/lightweight-tasks.md). `spawn` makes a task:
 // a function on a stack of its own (the guarded mapping of a thread, mostly untouched), run by
@@ -2264,6 +2274,19 @@ static void *main_run(void *p) {
 }
 #endif
 
+/* AddressSanitizer warns about every no-return call (a trap) on a stack over 64 MiB, so a
+   program built with it keeps the stack of a spawned thread unless EIDER_MAIN_STACK says. */
+#if defined(__SANITIZE_ADDRESS__)
+#define EI_MAIN_STACK_DEFAULT EI_THREAD_STACK
+#elif defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define EI_MAIN_STACK_DEFAULT EI_THREAD_STACK
+#endif
+#endif
+#ifndef EI_MAIN_STACK_DEFAULT
+#define EI_MAIN_STACK_DEFAULT EI_MAIN_STACK
+#endif
+
 int ei_main(int (*body)(void)) {
 #if defined(EI_GUARDED_STACKS)
   main_ctx m;
@@ -2277,7 +2300,14 @@ int ei_main(int (*body)(void)) {
     memset(&t, 0, sizeof t);
     t.run = main_run;
     t.arg = &m;
-    if (thread_start_guarded(&t)) {
+    /* the Eider main has a larger stack than a spawned thread (EI_MAIN_STACK; EIDER_MAIN_STACK
+       bytes to change it): recursion that the program's own shape makes deep, such as the
+       compiler checking a chain of hundreds of method calls, needs room, and only the pages
+       that are touched are real memory. Without that much address space it gets the usual one. */
+    const char *ms = getenv("EIDER_MAIN_STACK");
+    long long want = ms && *ms ? strtoll(ms, NULL, 10) : 0;
+    if (want < (long long)(64 << 10)) want = (long long)EI_MAIN_STACK_DEFAULT;
+    if (thread_start_sized(&t, (size_t)want) || thread_start_guarded(&t)) {
       /* the body exits the process itself when it calls exit (env.exit, a trap) */
       int r = pthread_join(t.th, NULL);
       map_release(t.map, t.map_len);

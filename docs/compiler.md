@@ -4615,3 +4615,15 @@ call (or `?`/`as` of one) has finished, with a new owned value, when the access 
 it read is held. E0301 stays for an argument that is a place (a variable, field, element: it may
 carry a reference), an operator and a value form (`if`, `match`, block), as in the existing
 tests (compiler/tests/check/fail/e0301_*).
+
+## C8.68: a larger stack for `main` (#153)
+
+Decision C849. Code: core/eider_rt.c (`thread_start_sized`, `ei_main`), core/eider_rt.h
+(`EI_MAIN_STACK`). Test: tests/run/long_method_chain.ei (two chains of 300 calls). A method chain
+is a left-nested tree, and `method_call_in` (262 KiB of frame in the optimized build) and its
+callees recurse once per call, so the 8 MiB of a runtime thread held about twenty calls. The
+frames are big because the LLVM backend emits no lifetime markers, so every local of a function
+has its own slot; shrinking them is the backend's (#129), and until then the stack of `main` is
+512 MiB of address space (`MAP_NORESERVE`, touched pages only; `EIDER_MAIN_STACK` changes it). The
+compiler is one program, so this is its fix too: a chain of a thousand calls checks. A program that
+recurses forever now touches up to 512 MiB before `stack overflow` is reported.

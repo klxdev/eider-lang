@@ -588,6 +588,8 @@ typedef struct {
 /* The stack of a thread ei_thread_start starts, and its guard (bytes; the guard is rounded up
    to whole pages). */
 #define EI_THREAD_STACK ((size_t)8 << 20)
+/* The stack of the Eider `main` (ei_main), address space only until touched. */
+#define EI_MAIN_STACK ((size_t)512 << 20)
 #define EI_THREAD_GUARD ((size_t)64 << 10)
 #define EI_THREAD_ALTSTACK ((size_t)64 << 10)
 /* Starts run(arg) on a guarded stack; traps "cannot create a thread". */

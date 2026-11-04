@@ -407,12 +407,20 @@ targets) starts threads with the C library's default stack and no handler.
 
 ### The main thread: `ei_main`
 
+The Eider `main` has a stack of 512 MiB (`EI_MAIN_STACK`; `EIDER_MAIN_STACK` bytes to change it,
+at least 64 KiB), not the 8 MiB of a spawned thread: the mapping is `MAP_NORESERVE`, so it costs
+address space and only the pages a program touches. The compiler's checker recurses once per
+call of a method chain with frames of a few hundred KiB, and a chain of 300 calls needs most of
+100 MiB (eider-lang#153). If the system refuses the mapping, `main` gets the usual 8 MiB; so does a
+program built with AddressSanitizer, which warns about every trap (a no-return call) on a stack over
+64 MiB, unless `EIDER_MAIN_STACK` is set.
+
 | Function | Contract |
 |---|---|
 | `int ei_main(int (*body)(void))` | the program entry: generated C `main` is `return ei_main(ei_main_body);`, where `ei_main_body` is what `main` used to be (`ei_set_file`, the file and profiler tables, the Eider `main` or the test driver, the leak check, the exit code). Runs `body` on a runtime thread with a guarded stack and returns its result |
 
 The Eider `main` runs on a runtime thread like every spawned one: the same mapping
-(alternate stack, guard, 8 MiB stack) and the same fault handler, so overflowing it is the
+(alternate stack, guard, 512 MiB stack, see above) and the same fault handler, so overflowing it is the
 trap `eider: runtime error: stack overflow (<file>:0)`, exit 101, with what `print`
 buffered flushed first (compiler/tests/run/stack_overflow_main.ei; tests/core's
 `test_main_entry`). Before, the Eider `main` ran on the kernel's stack, which has no guard
@@ -454,9 +462,9 @@ Why a thread rather than a guard and alternate stack on the kernel's main stack 
 - **WebAssembly.** One thread and no signals: core/wasm's `ei_main` calls `body` directly
   (modules are libraries and have no generated `main` today), so nothing changes there.
 - **Cost.** One `mmap`, one thread start and one join per program run (tens of
-  microseconds); the stack is the runtime's 8 MiB instead of the kernel's `ulimit -s`
-  (8 MiB by default on Linux), so a program that relied on a larger `ulimit -s` for deep
-  recursion on the main thread now traps at 8 MiB, like a spawned thread.
+  microseconds); the stack is the runtime's 512 MiB (address space; since 0.7: it was 8 MiB,
+  like a spawned thread's) instead of the kernel's `ulimit -s`, so a program that relied on a
+  larger `ulimit -s` for deep recursion on the main thread has room for it.
 
 Sanitizers: under ASan and TSan the handler sees overflows in instrumented C (tests/core,
 the main entry too), but TSan can itself run out of stack inside its own runtime when Eider

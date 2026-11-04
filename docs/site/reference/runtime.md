@@ -190,9 +190,11 @@ fn main() {
 
 ### Stack overflow
 
-Every thread of a program runs on an 8 MiB stack with a guard region, `main` included (it
-runs on a runtime thread of its own, not on the process's initial stack); overflowing it is
-reported as the trap `stack overflow` (exit 101), after what `print` buffered is written.
+Every thread of a program runs on an 8 MiB stack with a guard region (`main` on 512 MiB,
+`EIDER_MAIN_STACK` bytes to change it: address space only, a page counts when it is touched).
+`main` runs on a runtime thread of its own, not on the process's initial stack; overflowing a
+stack is reported as the trap `stack overflow` (exit 101), after what `print` buffered is
+written.
 
 ## `panic` and `assert`
 
