@@ -1,0 +1,155 @@
+// std/checked: checked_add, checked_sub, checked_mul, checked_div, checked_rem and checked_neg
+// against wider arithmetic (every u8 pair through i32, edge sets of i32 and u32 through i64 and
+// u64) and, at the edges of i64 and u64, against the hand-written bounds tests they replace.
+
+import std.checked
+
+const I64_MIN: i64 = -9223372036854775807 - 1
+const I64_MAX: i64 = 9223372036854775807
+
+// the i32 that w is, if it fits
+fn narrow32(w: i64) -> Option[i32] {
+    if w >= -2147483648 && w <= 2147483647 { Some(w as i32) } else { None }
+}
+
+fn narrow8(w: i32) -> Option[u8] {
+    if w >= 0 && w <= 255 { Some(w as u8) } else { None }
+}
+
+fn narrow_u32(w: u64) -> Option[u32] {
+    if w <= 4294967295 { Some(w as u32) } else { None }
+}
+
+fn t_i32() {
+    let vals = List[-2147483648, -2147483647, -65536, -2, -1, 0, 1, 2, 46340, 46341, 65536, 2147483646, 2147483647]
+    let mut n = 0
+    for a in vals {
+        for b in vals {
+            let wa = a as i64
+            let wb = b as i64
+            assert a.checked_add(b) == narrow32(wa + wb)
+            assert a.checked_sub(b) == narrow32(wa - wb)
+            assert a.checked_mul(b) == narrow32(wa * wb)
+            if b == 0 {
+                assert a.checked_div(b) == None
+                assert a.checked_rem(b) == None
+            } else {
+                assert a.checked_div(b) == narrow32(wa / wb)
+                // (the operator traps on MIN % -1, though the wide remainder is 0)
+                if a == -2147483648 && b == -1 {
+                    assert a.checked_rem(b) == None
+                } else {
+                    assert a.checked_rem(b) == narrow32(wa % wb)
+                }
+            }
+            n += 1
+        }
+        assert a.checked_neg() == narrow32(0 - (a as i64))
+    }
+    assert n == 169
+}
+
+fn t_u8() {
+    for i in 0..256 {
+        for j in 0..256 {
+            let a = i as u8
+            let b = j as u8
+            assert a.checked_add(b) == narrow8(i + j)
+            assert a.checked_sub(b) == narrow8(i - j)
+            assert a.checked_mul(b) == narrow8(i * j)
+            if j == 0 {
+                assert a.checked_div(b) == None
+                assert a.checked_rem(b) == None
+            } else {
+                assert a.checked_div(b) == narrow8(i / j)
+                assert a.checked_rem(b) == narrow8(i % j)
+            }
+        }
+    }
+}
+
+fn t_u32() {
+    let vals = List[0 as u32, 1, 2, 65535, 65536, 65537, 2147483648, 4294967294, 4294967295]
+    for a in vals {
+        for b in vals {
+            let wa = a as u64
+            let wb = b as u64
+            assert a.checked_add(b) == narrow_u32(wa + wb)
+            assert a.checked_mul(b) == narrow_u32(wa * wb)
+            if wa >= wb {
+                assert a.checked_sub(b) == Some((wa - wb) as u32)
+            } else {
+                assert a.checked_sub(b) == None
+            }
+            if b == 0 {
+                assert a.checked_div(b) == None
+                assert a.checked_rem(b) == None
+            } else {
+                assert a.checked_div(b) == narrow_u32(wa / wb)
+                assert a.checked_rem(b) == narrow_u32(wa % wb)
+            }
+        }
+    }
+}
+
+fn t_i64() {
+    assert I64_MAX.checked_add(1) == None
+    assert I64_MAX.checked_add(0) == Some(I64_MAX)
+    assert I64_MAX.checked_add(I64_MIN) == Some(-1)
+    assert I64_MIN.checked_add(-1) == None
+    assert I64_MIN.checked_sub(1) == None
+    assert I64_MIN.checked_sub(-1) == Some(I64_MIN + 1)
+    assert I64_MAX.checked_sub(-1) == None
+    assert (0 as i64).checked_sub(I64_MIN) == None
+    assert (-1 as i64).checked_sub(I64_MIN) == Some(I64_MAX)
+    assert I64_MIN.checked_mul(-1) == None
+    assert (-1 as i64).checked_mul(I64_MIN) == None
+    assert I64_MIN.checked_mul(1) == Some(I64_MIN)
+    assert I64_MIN.checked_mul(0) == Some(0)
+    assert I64_MAX.checked_mul(2) == None
+    assert I64_MAX.checked_mul(-1) == Some(-I64_MAX)
+    assert (3037000499 as i64).checked_mul(3037000499) == Some(9223372030926249001)
+    assert (3037000500 as i64).checked_mul(3037000500) == None
+    assert (-3037000500 as i64).checked_mul(3037000500) == None
+    assert (-4611686018427387904 as i64).checked_mul(2) == Some(I64_MIN)
+    assert (4611686018427387904 as i64).checked_mul(2) == None
+    assert I64_MIN.checked_div(-1) == None
+    assert I64_MIN.checked_div(1) == Some(I64_MIN)
+    assert I64_MIN.checked_rem(-1) == None
+    assert (7 as i64).checked_div(0) == None
+    assert (-7 as i64).checked_div(2) == Some(-3)
+    assert (-7 as i64).checked_rem(2) == Some(-1)
+    assert I64_MIN.checked_neg() == None
+    assert I64_MAX.checked_neg() == Some(-I64_MAX)
+}
+
+fn t_u64() {
+    let max: u64 = 18446744073709551615
+    assert max.checked_add(1) == None
+    assert max.checked_add(0) == Some(max)
+    assert (0 as u64).checked_sub(1) == None
+    assert max.checked_sub(max) == Some(0)
+    assert max.checked_mul(2) == None
+    assert max.checked_mul(1) == Some(max)
+    assert max.checked_mul(0) == Some(0)
+    assert (4294967296 as u64).checked_mul(4294967296) == None
+    assert (4294967295 as u64).checked_mul(4294967297) == Some(max)
+    assert (9223372036854775808 as u64).checked_mul(2) == None
+    assert (9223372036854775807 as u64).checked_mul(2) == Some(18446744073709551614)
+    assert max.checked_div(0) == None
+    assert max.checked_div(max) == Some(1)
+    assert max.checked_rem(10) == Some(5)
+    let z: usize = 0
+    assert z.checked_sub(1) == None
+    assert (5 as usize).checked_sub(2) == Some(3)
+    assert (18446744073709551615 as usize).checked_add(1) == None
+}
+
+fn main() uses io {
+    t_i32()
+    t_u8()
+    t_u32()
+    t_i64()
+    t_u64()
+    print("checked ok")
+}

@@ -4712,3 +4712,16 @@ later element of another type is E0401 at that element. An element may be an `if
 tree-sitter-eider has a `list_expression` whose first token is `List[` (one token: `List.new()` and the
 type `List[i32]` stay identifiers).
 
+## C8.74: checked integer arithmetic (#144)
+
+Decision C855. No compiler change: std/checked.ei adds inherent methods to the integer types
+(`impl i32 { fn checked_add(self, other: i32) -> Option[i32] ... }`, as std/math does for `f64`), written
+with the wrapping operators and comparisons (the overflow of `a +% b` is seen from the result: `r < a`
+for unsigned, the sign of `b` against the order of `r` and `a` for signed; a product by
+`r / b != a`, with `MIN * -1` and `-1 * MIN` taken first because `MIN / -1` traps). The file is
+generated from one template per kind (signed: `i32`, `i64`; unsigned: `u8`, `u32`, `u64`, `usize`), so
+the six impls are textually the same. Methods are visible once the module is imported
+(`import std.checked`). Test: tests/std/checked.ei (every `u8` pair against `i32` arithmetic; `i32` and
+`u32` edge sets against `i64` and `u64`; `i64` and `u64` edges against the explicit bounds tests the
+methods replace).
+

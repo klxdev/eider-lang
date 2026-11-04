@@ -137,6 +137,36 @@ fn main() uses io {
 
 See [Runtime behaviour](runtime.md#traps) for what a trap does.
 
+### Checked arithmetic
+
+`import std.checked` adds methods that return an `Option` where the operator would trap,
+for every integer type: `a.checked_add(b)`, `checked_sub`, `checked_mul`, `checked_div`,
+`checked_rem` (`None` for a zero divisor, and for `MIN / -1` and `MIN % -1` of a signed
+type), and `checked_neg` for the signed types (`None` for `MIN`). A service can validate
+an untrusted number with them instead of a hand-written bounds test.
+
+```eider
+import std.checked
+
+fn main() uses io {
+    let a: i32 = 2147483647
+    print(a.checked_add(1))
+    print(a.checked_sub(1))
+    let n: u8 = 200
+    print(n.checked_mul(2))
+    print(n.checked_div(0))
+    print((7 as i64).checked_div(2))
+}
+```
+
+```output
+None
+Some(2147483646)
+None
+None
+Some(3)
+```
+
 ### Comparison
 
 All integer types have `==`, `!=`, `<`, `<=`, `>`, `>=`, by value. Comparisons don't chain:

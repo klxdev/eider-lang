@@ -1,0 +1,227 @@
+//! std/checked: integer arithmetic that returns an `Option` instead of trapping, for every
+//! integer type: `a.checked_add(b)`, `checked_sub`, `checked_mul`, `checked_div`, `checked_rem`
+//! (and `checked_neg` for the signed types). `None` is where the plain operator would trap:
+//! an overflow, a zero divisor, or `MIN / -1` (docs/site/reference/types.md, "Arithmetic and
+//! overflow"). Pure Eider over the wrapping operators; no capability.
+//!
+//! A service validates an untrusted number before it uses it, and a trap ends the service:
+//! `price.checked_mul(qty)` gives `None` for a quantity that overflows, which the caller
+//! answers as an error.
+//!
+//! `import std.checked` makes the methods available.
+
+impl i32 {
+    /// `self + other`, or None if the sum doesn't fit.
+    fn checked_add(self, other: i32) -> Option[i32] {
+        let r = self +% other
+        if (other >= 0 && r < self) || (other < 0 && r >= self) { return None }
+        Some(r)
+    }
+    /// `self - other`, or None if the difference doesn't fit.
+    fn checked_sub(self, other: i32) -> Option[i32] {
+        let r = self -% other
+        if (other >= 0 && r > self) || (other < 0 && r <= self) { return None }
+        Some(r)
+    }
+    /// `self * other`, or None if the product doesn't fit.
+    fn checked_mul(self, other: i32) -> Option[i32] {
+        if self == 0 || other == 0 { return Some(0) }
+        if other == -1 {
+            if self == -2147483648 { return None }
+            return Some(0 - self)
+        }
+        if self == -1 {
+            if other == -2147483648 { return None }
+            return Some(0 - other)
+        }
+        let r = self *% other
+        if r / other != self { return None }
+        Some(r)
+    }
+    /// `self / other` (truncating toward zero), or None if `other` is 0 or the quotient doesn't
+    /// fit (`MIN / -1`).
+    fn checked_div(self, other: i32) -> Option[i32] {
+        if other == 0 || (self == -2147483648 && other == -1) { return None }
+        Some(self / other)
+    }
+    /// `self % other`, or None if `other` is 0 or the remainder traps (`MIN % -1`).
+    fn checked_rem(self, other: i32) -> Option[i32] {
+        if other == 0 || (self == -2147483648 && other == -1) { return None }
+        Some(self % other)
+    }
+    /// `-self`, or None for `MIN`.
+    fn checked_neg(self) -> Option[i32] {
+        if self == -2147483648 { return None }
+        Some(0 - self)
+    }
+}
+
+impl i64 {
+    /// `self + other`, or None if the sum doesn't fit.
+    fn checked_add(self, other: i64) -> Option[i64] {
+        let r = self +% other
+        if (other >= 0 && r < self) || (other < 0 && r >= self) { return None }
+        Some(r)
+    }
+    /// `self - other`, or None if the difference doesn't fit.
+    fn checked_sub(self, other: i64) -> Option[i64] {
+        let r = self -% other
+        if (other >= 0 && r > self) || (other < 0 && r <= self) { return None }
+        Some(r)
+    }
+    /// `self * other`, or None if the product doesn't fit.
+    fn checked_mul(self, other: i64) -> Option[i64] {
+        if self == 0 || other == 0 { return Some(0) }
+        if other == -1 {
+            if self == -9223372036854775808 { return None }
+            return Some(0 - self)
+        }
+        if self == -1 {
+            if other == -9223372036854775808 { return None }
+            return Some(0 - other)
+        }
+        let r = self *% other
+        if r / other != self { return None }
+        Some(r)
+    }
+    /// `self / other` (truncating toward zero), or None if `other` is 0 or the quotient doesn't
+    /// fit (`MIN / -1`).
+    fn checked_div(self, other: i64) -> Option[i64] {
+        if other == 0 || (self == -9223372036854775808 && other == -1) { return None }
+        Some(self / other)
+    }
+    /// `self % other`, or None if `other` is 0 or the remainder traps (`MIN % -1`).
+    fn checked_rem(self, other: i64) -> Option[i64] {
+        if other == 0 || (self == -9223372036854775808 && other == -1) { return None }
+        Some(self % other)
+    }
+    /// `-self`, or None for `MIN`.
+    fn checked_neg(self) -> Option[i64] {
+        if self == -9223372036854775808 { return None }
+        Some(0 - self)
+    }
+}
+
+impl u8 {
+    /// `self + other`, or None if the sum doesn't fit.
+    fn checked_add(self, other: u8) -> Option[u8] {
+        let r = self +% other
+        if r < self { return None }
+        Some(r)
+    }
+    /// `self - other`, or None if `other` is larger than `self`.
+    fn checked_sub(self, other: u8) -> Option[u8] {
+        if other > self { return None }
+        Some(self - other)
+    }
+    /// `self * other`, or None if the product doesn't fit.
+    fn checked_mul(self, other: u8) -> Option[u8] {
+        if self == 0 || other == 0 { return Some(0) }
+        let r = self *% other
+        if r / other != self { return None }
+        Some(r)
+    }
+    /// `self / other`, or None if `other` is 0.
+    fn checked_div(self, other: u8) -> Option[u8] {
+        if other == 0 { return None }
+        Some(self / other)
+    }
+    /// `self % other`, or None if `other` is 0.
+    fn checked_rem(self, other: u8) -> Option[u8] {
+        if other == 0 { return None }
+        Some(self % other)
+    }
+}
+
+impl u32 {
+    /// `self + other`, or None if the sum doesn't fit.
+    fn checked_add(self, other: u32) -> Option[u32] {
+        let r = self +% other
+        if r < self { return None }
+        Some(r)
+    }
+    /// `self - other`, or None if `other` is larger than `self`.
+    fn checked_sub(self, other: u32) -> Option[u32] {
+        if other > self { return None }
+        Some(self - other)
+    }
+    /// `self * other`, or None if the product doesn't fit.
+    fn checked_mul(self, other: u32) -> Option[u32] {
+        if self == 0 || other == 0 { return Some(0) }
+        let r = self *% other
+        if r / other != self { return None }
+        Some(r)
+    }
+    /// `self / other`, or None if `other` is 0.
+    fn checked_div(self, other: u32) -> Option[u32] {
+        if other == 0 { return None }
+        Some(self / other)
+    }
+    /// `self % other`, or None if `other` is 0.
+    fn checked_rem(self, other: u32) -> Option[u32] {
+        if other == 0 { return None }
+        Some(self % other)
+    }
+}
+
+impl u64 {
+    /// `self + other`, or None if the sum doesn't fit.
+    fn checked_add(self, other: u64) -> Option[u64] {
+        let r = self +% other
+        if r < self { return None }
+        Some(r)
+    }
+    /// `self - other`, or None if `other` is larger than `self`.
+    fn checked_sub(self, other: u64) -> Option[u64] {
+        if other > self { return None }
+        Some(self - other)
+    }
+    /// `self * other`, or None if the product doesn't fit.
+    fn checked_mul(self, other: u64) -> Option[u64] {
+        if self == 0 || other == 0 { return Some(0) }
+        let r = self *% other
+        if r / other != self { return None }
+        Some(r)
+    }
+    /// `self / other`, or None if `other` is 0.
+    fn checked_div(self, other: u64) -> Option[u64] {
+        if other == 0 { return None }
+        Some(self / other)
+    }
+    /// `self % other`, or None if `other` is 0.
+    fn checked_rem(self, other: u64) -> Option[u64] {
+        if other == 0 { return None }
+        Some(self % other)
+    }
+}
+
+impl usize {
+    /// `self + other`, or None if the sum doesn't fit.
+    fn checked_add(self, other: usize) -> Option[usize] {
+        let r = self +% other
+        if r < self { return None }
+        Some(r)
+    }
+    /// `self - other`, or None if `other` is larger than `self`.
+    fn checked_sub(self, other: usize) -> Option[usize] {
+        if other > self { return None }
+        Some(self - other)
+    }
+    /// `self * other`, or None if the product doesn't fit.
+    fn checked_mul(self, other: usize) -> Option[usize] {
+        if self == 0 || other == 0 { return Some(0) }
+        let r = self *% other
+        if r / other != self { return None }
+        Some(r)
+    }
+    /// `self / other`, or None if `other` is 0.
+    fn checked_div(self, other: usize) -> Option[usize] {
+        if other == 0 { return None }
+        Some(self / other)
+    }
+    /// `self % other`, or None if `other` is 0.
+    fn checked_rem(self, other: usize) -> Option[usize] {
+        if other == 0 { return None }
+        Some(self % other)
+    }
+}

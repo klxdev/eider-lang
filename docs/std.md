@@ -172,6 +172,15 @@ characters. `put_*` forms append to a String, and a `Builder` collects pieces (`
 optional sign, digits, a `.` fraction, an exponent, or `inf`/`infinity`/`nan`) and return a
 `ParseError`; there is no locale. `std/math` (below) has the functions.
 
+## Checked arithmetic (`std/checked`)
+
+`import std.checked` adds `checked_add`, `checked_sub`, `checked_mul`, `checked_div` and
+`checked_rem` to `i32`, `i64`, `u8`, `u32`, `u64` and `usize`, and `checked_neg` to the signed
+ones (#144). Each returns `Option[T]`: `None` where the plain operator would trap (an
+overflow, a zero divisor, `MIN / -1`). They are Eider over the wrapping operators, so
+nothing in the compiler or runtime changed (docs/compiler.md "C8.74"); `tests/std/checked.ei`
+compares them with wider arithmetic for every `u8` pair and the edges of the other types.
+
 ## Math (`std/math`)
 
 Methods on `f64` and `f32` over libm (core/libm.ei; no capability): `sqrt`, `cbrt`, `pow`, `powi`,
