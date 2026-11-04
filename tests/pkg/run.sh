@@ -174,7 +174,7 @@ check "eider.toml after add" "[package]
 name = \"app\"
 version = \"0.1.0\"
 main = \"main.ei\"
-eider = \"0.5\"
+eider = \"0.6\"
 
 [deps.geom]
 path = \"../geom\"

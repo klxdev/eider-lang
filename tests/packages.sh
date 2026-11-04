@@ -8,6 +8,7 @@
 # tested there, and against this checkout by scripts/check-tools.sh.
 cd "$(dirname "$0")/.." || exit 1
 fail=0
+root=$(pwd)
 novendor=
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
@@ -20,7 +21,12 @@ case $? in
 esac
 for f in packages/*/tests/*.ei .vendor/*/tests/*.ei; do
   [ -f "$f" ] && [ -f "${f%.ei}.out" ] || continue
-  got=$(scripts/ei run "$f" 2>&1)
+  # a pinned library's tests run from its own root, as its repository's scripts/test.sh does
+  # (eider-toml's serial_test reads tests/sample.toml)
+  case $f in
+    .vendor/*) lib=${f%%/tests/*}; got=$(cd "$lib" && "$root/scripts/ei" run "${f#"$lib"/}" 2>&1 < /dev/null) ;;
+    *) got=$(scripts/ei run "$f" 2>&1) ;;
+  esac
   if [ "$got" = "$(cat "${f%.ei}.out")" ]; then echo "ok   $f"
   # a test that loads a pinned library which isn't there (E0810 at .vendor/<name>)
   elif [ -n "$novendor" ] && printf '%s\n' "$got" | grep -q 'E0810.*/\.vendor/'; then echo "skip packages: $f loads a pinned library: $novendor"
