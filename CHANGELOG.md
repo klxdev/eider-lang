@@ -5,7 +5,15 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
-## 0.6.0 (unreleased)
+## 0.6.0
+
+Serialization and tasks. Types serialize themselves with one `@[derive(Serialize, Deserialize)]`
+into any format (JSON and TOML ship), with validation and per-field adapters; attributes are
+grouped as `@[...]`; and `spawn` makes lightweight stackful tasks, so a server holds a connection
+per task. A package needs `eider = "0.6"` (E0811 otherwise; the seed needed the bootstrap in
+seed/README.md after a MINOR bump). Siblings: every tool and library moves to 0.6.0 (eider-analyzer
+and tree-sitter-eider understand `@[...]`, `std/serial` and `@[check]`; eider-profiler reports task
+waits; eider-http serves a task per connection).
 
 **Breaking, read before upgrading** (before 1.0 a MINOR may break):
 
@@ -37,20 +45,27 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 
 **New:**
 
-- **Lightweight tasks** (#14, decision C830, docs/design/lightweight-tasks.md): `spawn` starts a task,
-  a function on a stack of its own (8 MiB of address space, a guard page, only the touched pages
-  are memory) run by a pool of worker threads with work stealing. Waiting parks the task instead
-  of blocking a thread: `Chan.recv` (so `Lock`, `select`, groups, pools), `join`, `time.sleep`
-  and descriptor waits (`std/fd`, `std/stream`, through an epoll reactor with a timer heap). The
-  language, `Task`, channels, tokens and groups are unchanged. 100,000 blocked tasks take about
-  450 MiB (threads fail between 1,500 and 5,000 here), a warm spawn and join takes 1.4 to 7 us
-  (40 us for a thread), an echo server holds 10,000 connections at 146,000 round trips a second. Tasks are stackful, not the compiler-generated state machines of C4. What
-  changes for programs: a task is not preempted (a runaway loop or a blocking system call holds a
-  worker; after 10 ms the runtime starts another, up to `EIDER_WORKERS_MAX`), a task cannot wait
-  inside `Mutex.update` (`cannot wait while holding a Mutex`), and the profiler counts workers,
-  not spawns, as threads. `EIDER_TASKS=threads` restores a thread per `spawn`. Linux only (x86-64
-  assembly switch, `ucontext` with glibc); elsewhere threads. The rest of #14 (eider-http on
-  tasks is eider-http's, cancellation of descriptor waits, a core `Parker`, a kqueue reactor are open).
+- **Lightweight tasks** (#14, decisions C830 to C839, docs/design/lightweight-tasks.md): `spawn` starts
+  a task, a function on a stack of its own (8 MiB of address space, a guard page, only the touched
+  pages are memory) run by a pool of worker threads with work stealing. Waiting parks the task
+  instead of blocking a thread: `Chan.recv` (so `Lock`, `select`, groups, pools), `join`,
+  `time.sleep` and descriptor waits (`std/fd`, `std/stream`, through epoll reactors with timer
+  heaps). The language, `Task`, channels, tokens and groups are unchanged. 100,000 blocked tasks
+  take about 450 MiB (threads fail between 1,500 and 5,000 here), a warm spawn and join takes 1.4
+  to 7 us (40 us for a thread), an echo server holds 10,000 connections at 146,000 round trips a
+  second, and 262,000 idle connections (one task each) take 1.2 GiB. Tasks are stackful, not the
+  compiler-generated state machines of C4. What changes for programs: a task is not preempted (a
+  runaway loop or a blocking system call holds a worker; after 10 ms the runtime starts another, up
+  to `EIDER_WORKERS_MAX`), a task cannot wait inside `Mutex.update` (`cannot wait while holding a
+  Mutex`), and the profiler counts workers, not spawns, as threads. `EIDER_TASKS=threads` restores a
+  thread per `spawn`. Also done (M3): cancellation reaches descriptor waits (`wait_cancel`, #176),
+  `Parker` is a core object and `Loop` polls on the reactor (#177), an idle worker polls
+  descriptors and timers itself (#175), and a listing of live tasks and `task` records in the
+  profile (#178). Linux only (x86-64 assembly switch, `ucontext` with glibc); elsewhere threads.
+  Not done: a kqueue reactor and aarch64 assembly for macOS/BSD, a per-spawn form for a dedicated
+  OS thread (needs a compiler builtin), and M4, a stackless transform for leaf waiters (measured:
+  it would save at most a third of the memory of a million idle connections; docs/runtime.md
+  "Tasks: measured").
 - **`fd.wait_ready2`** (`ec_fd_wait2`): wait for either of two descriptors, each with its own
   interest, with a deadline; a connection waits for its socket and a server's stop signal with no
   poller of its own (N4). In a task it parks like `fd.wait_ready`.
@@ -73,6 +88,11 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 - **`@[derive(Serialize, Deserialize)]`** (#156): serialization for your records and enums from one
   attribute vocabulary, `serial(name, skip, default, rename_all, tag)`, with `json(...)` and
   `toml(...)` overriding it per format (unknown keys are E0821). docs/compiler.md "C8.62".
+
+**Not done** (the items stay open or are filed): tasks off Linux and the other tasks items listed
+above (#14); a stackless transform (M4) only if measurements ask; the derive-based `std/config` of
+#161 and the other 0.5.0 follow-ups are unchanged. Libraries: eider-http #5 (tracing, partly),
+eider-rpc #1 (Connect and trait reflection for stubs), eider-openapi #1 (partly).
 
 ## 0.5.0
 

@@ -1,7 +1,7 @@
 [package]
 name = "eider"
 version = "0.1.0"
-eider = "0.5"
+eider = "0.6"
 main = "main.ei"
 description = "eider: the Eider command, which installs toolchains and runs their eiderc, eider-pkg and eider-doc"
 
