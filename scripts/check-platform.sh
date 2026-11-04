@@ -13,7 +13,7 @@ else
   for source in tests/std/*.ei; do
     case $source in */math.ei|*/profile.ei|*/signal.ei) echo "skip macOS baseline: $source"; continue ;; esac
     input=${source%.ei}.in; [ -f "$input" ] || input=/dev/null
-    got=$(EIDER_STD_TEST=set scripts/ei run "$source" < "$input" 2>&1; printf '\nexit %s' "$?")
+    got=$(EIDER_STD_TEST=set scripts/ei run "$source" < "$input" 2>&1; printf 'exit %s\n' "$?")
     [ "$got" = "$(cat "${source%.ei}.out")" ] || { printf '%s\n' "$got"; echo "FAIL $source"; exit 1; }
     echo "ok $source"
   done
