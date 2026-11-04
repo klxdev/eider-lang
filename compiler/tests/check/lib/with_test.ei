@@ -1,4 +1,4 @@
-// Helper module with a failing test block (checked with the entry file's err_mod).
+// Helper module with a failing test block: the error names this file, not the entry file (eider-lang#162).
 pub fn one() -> i32 { 1 }
 
 test "in a module" {

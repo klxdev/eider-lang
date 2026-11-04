@@ -1,0 +1,9 @@
+// pkgtest: test
+// An error inside a `test` block of a file with no `main` names this file, with its line and
+// column (eider-lang#162): it used to name the first imported module
+import std.strings
+import app.util
+
+test "t" {
+    let n: i64 = "x".nope()
+}

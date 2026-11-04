@@ -1,0 +1,8 @@
+--- stderr
+error[E0115]: type str has no method `nope`
+  --> compiler/tests/pkgs/app/test_error_test.ei:8:22
+  |
+8 |     let n: i64 = "x".nope()
+  |                      ^
+error: 1 error
+--- exit 1

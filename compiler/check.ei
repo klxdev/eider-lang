@@ -4127,10 +4127,11 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
         subst_set(inout sb, intern.S_SELF_TYPE, self_ty)
         instantiate(inout c, fi, sb)?
     }
-    // tests (checked with every capability; err_mod is left as it was, as tests/oracle expects)
+    // tests (checked with every capability); an error in one names the file of its module
     for it in its {
         let n = ndm(c, it.m, it.node)
         if n.kind == ast.ITest {
+            c.err_mod = it.m
             c.seen = List.new()
             let sp = snap(c)
             let r = check_test(inout c, it.m, n)

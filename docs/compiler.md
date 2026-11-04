@@ -4562,3 +4562,23 @@ the first read of the type shows the mistake. Writing is not checked.
 and `enum`, with the value rules going to the elements of arrays and maps; the schema validator
 checks the formats that `std/validate` knows, with the same words the decoder uses. A typed handler's
 400 has one field error per violation.
+
+## C8.65: tests name their file; lint takes libraries (#162, #163)
+
+Decisions C845, C846. Code: check.ei (the tests loop of `check_all` sets `err_mod` to the
+module of the test), main.ei (`module_ok`). Tests: compiler/tests/check/fail/e0401_module_test_names_its_file.ei
+and e0110_mod_test_local_named_like_fn.ei (a test block of an imported module: the diagnostic names that module's
+file), compiler/tests/pkgs/app/test_error_test.ei (`eiderc test` of a file with no `main`: the error is
+reported at the line of the test file, not at the first imported module), compiler/tests/pkgs/lints/libmod.ei
+(`eiderc lint` of a module with no `main`).
+
+**Errors in tests.** The checker reports an error in the file of `err_mod`, the module of the item
+being checked. Function bodies and signatures set it; test blocks did not ("left as it was, as the
+recorded expectations have it"), so an error in a test of a file with no `main` was reported against
+whatever module the previous item belonged to (a std module), with the line and column of the real
+error. A test block now sets `err_mod` to its module first.
+
+**Lint and `main`.** The checker's E0112 "no `main` function" at 1:1 is dropped by the driver for
+`check`, `test` and now `lint`, unless `--lib`/`--wasm` is given. `eiderc lint` with no file lints the
+entry module of the package in the current directory (`<name>.ei` unless `eider.toml` says otherwise);
+a package that is a library therefore lints like an application.

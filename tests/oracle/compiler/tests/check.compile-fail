@@ -406,12 +406,12 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0401_mod_point_wrong.ei     E0401 at 3:49
   ok   e0401_mod_type_display.ei    E0401 at 4:27
   ok   e0401_mod_variant_of_other_enum.ei E0401 at 5:9
+  ok   e0401_module_test_names_its_file.ei E0401 at 5:18
   ok   e0401_negate_bool.ei         E0401 at 3:13
   ok   e0401_negate_unsigned_literal.ei E0401 at 3:18
   ok   e0401_negate_unsigned_value.ei E0401 at 2:21
   ok   e0401_not_int.ei             E0401 at 3:14
   ok   e0401_opt_print.ei           E0401 at 2:27
-  ok   e0401_order_module_test_stale_file.ei E0401 at 5:18
   ok   e0401_order_test_before_bodies.ei E0401 at 6:17
   ok   e0401_ordering_bools.ei      E0401 at 4:15
   ok   e0401_panic_non_str.ei       E0401 at 3:11
