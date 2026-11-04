@@ -47,7 +47,8 @@ needed in CI.
 Build an Apple Silicon artifact on an Apple Silicon Mac, from a committed checkout:
 
 ```sh
-brew install gnu-tar coreutils
+brew install gnu-tar coreutils openssl@3
+export PATH="$(brew --prefix openssl@3)/bin:$PATH"
 sh scripts/package-native.sh
 ```
 

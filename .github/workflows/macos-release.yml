@@ -18,9 +18,10 @@ jobs:
         run: test -n "$GH_TOKEN" || { echo 'Set EIDER_READ_TOKEN with read access to klxdev Eider repositories'; exit 1; }
       - name: Build tools and pinned library sources
         run: |
-          brew install llvm lld gnu-tar coreutils
+          brew install llvm lld gnu-tar coreutils openssl@3
           echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
           echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix openssl@3)/bin" >> "$GITHUB_PATH"
           for library in json toml markdown; do gh repo clone "klxdev/eider-$library" "../eider-$library"; done
       - name: Build and smoke-test the standalone release archive
         run: sh scripts/package-native.sh

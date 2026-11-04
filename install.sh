@@ -92,8 +92,8 @@ case $releases in
     tag=$(tr ',' '\n' < "$work/release.json" | sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
     # each asset's API URL and name: the "url" of an asset (…/releases/assets/<id>) comes
     # just before its "name"
-    tr ',{}' '\n\n\n' < "$work/release.json" | sed -n 's/^ *"\(url\|name\)": *"\([^"]*\)".*/\1 \2/p' |
-      awk '$1 == "url" { u = ($2 ~ /\/releases\/assets\/[0-9]+$/) ? $2 : "" } $1 == "name" && u != "" { print $2, u; u = "" }' > "$work/assets"
+    tr ',{}' '\n\n\n' < "$work/release.json" |
+      awk -F '"' '$2 == "url" { u = ($4 ~ /\/releases\/assets\/[0-9]+$/) ? $4 : "" } $2 == "name" && u != "" { print $4, u; u = "" }' > "$work/assets"
     fetch() {
       u=$(awk -v n="$1" '$1 == n { print $2 }' "$work/assets")
       [ -n "$u" ] || die "release $tag has no $1"
