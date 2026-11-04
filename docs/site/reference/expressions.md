@@ -165,7 +165,7 @@ type name, so `List[` in an expression is always this literal, never an index; a
 
 ```eider
 fn total(xs: List[i64]) -> i64 {
-    let mut t = 0
+    let mut t: i64 = 0
     for x in xs { t += x }
     t
 }
