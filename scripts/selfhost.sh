@@ -17,7 +17,8 @@
 #
 # stage0 is the seed: cc seed/wasm2c.c, wasm2c seed/eiderc.wasm -> C, cc that C with
 # core/eider_core.c (only a C compiler). stage1 is compiler/ built natively by stage0, stage2
-# compiler/ built by stage1 (they need clang 17+). The seed is `build --wasm-core
+# compiler/ built by stage1 (they need clang 17+: the floor stays 17; clang 17, 20, 22 and 23
+# are tested, scripts/clang-matrix.sh). The seed is `build --wasm-core
 # compiler/main.ei`. Outputs go to target/selfhost/; each step prints its time.
 cd "$(dirname "$0")/.." || exit 1
 root=$(pwd)

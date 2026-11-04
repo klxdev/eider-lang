@@ -184,6 +184,7 @@ scripts/release.sh [--skip-verify] [--targets "linux-x86_64 linux-aarch64"] [--n
    date = "2026-10-31"
    verified = true
    backend = "c"
+   clang_tested = ["17.0.6", "20.1.8", "22.1.8", "23.1.5"]
    release_key = "51439F1DFD014199"
 
    [component.eider-lang]

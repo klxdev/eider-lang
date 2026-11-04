@@ -218,6 +218,7 @@ exits 101.
 | `EIDER_ROOT` | the toolchain, the directory holding `core/` and `std/` (default: the nearest directory above the eiderc binary, symlinks resolved, that holds `core/eider_rt.h`, else the same search from the working directory) |
 | `WASM_CC` | the clang used by `build --wasm` and `--wasm-core` (default `clang`) |
 | `EIDER_LLVM_CC` | the clang that compiles the LLVM IR of `build`, `run` and `test` (default `clang`; LLVM 17 or newer) |
+| `EIDER_LLVM_FLOAT` | `f0x` or `hex` forces the spelling of float constants in the IR; by default `f0x` when that clang is LLVM 23 or newer, else `hex` ([the LLVM backend](llvm.md#clang-versions)) |
 | `EIDER_HOME` | where package imports find git packages fetched by eider-pkg (default `~/.eider`) |
 | `TMPDIR` | work directories when neither the cache nor `<root>/target/tmp` is writable |
 

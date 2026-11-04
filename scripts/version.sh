@@ -15,7 +15,12 @@
 # eider-json, eider-markdown, eider-http, eider-rpc, eider-openapi; LAYERS.md, U19): their
 # VERSION keeps the toolchain's MAJOR.MINOR, with their own PATCH. Before 1.0 a MINOR bump
 # may break compatibility, so packages name the MAJOR.MINOR they need (`eider = "0.1"` in
-# eider.toml; the compiler refuses another, E0811).
+# eider.toml; the compiler refuses another, E0811). So is eider-example-shopping-service, the
+# example application (a VERSION, and `eider = "<MAJOR.MINOR>"` in its server/, shared/ and
+# shared-wasm/ manifests; its `version =` lines are its own packages', and verify does not
+# build it). eider-http-testclient is not one: ~/workplace/eider-http-testclient is an old
+# working copy of eider-http's repository (same origin, package `http`), not a repository of
+# its own; the test client is eider-http's `http/testing`.
 #
 # Copies of VERSION in this checkout, held equal by `check`:
 #   core/version.ei            VERSION, MAJOR, MINOR, PATCH, SERIES (what eiderc --version,
@@ -34,12 +39,12 @@
 # eider-lang bump changes core/version.ei, which the seed embeds: regenerate it).
 #
 # Siblings: EIDER_ANALYZER, TREE_SITTER_EIDER, EIDER_PROFILER, EIDER_TOML, EIDER_JSON,
-# EIDER_MARKDOWN, EIDER_HTTP, EIDER_RPC, EIDER_OPENAPI name the repositories (default
+# EIDER_MARKDOWN, EIDER_HTTP, EIDER_RPC, EIDER_OPENAPI, EIDER_EXAMPLE_SHOPPING_SERVICE name the repositories (default
 # $EIDER_SIBLINGS/<name>, EIDER_SIBLINGS defaulting to .., the directory holding this
 # checkout); one that is absent is skipped and said so.
 cd "$(dirname "$0")/.." || exit 1
 here=$(pwd -P)
-SIBLINGS="eider-analyzer tree-sitter-eider eider-profiler eider-toml eider-json eider-markdown eider-http eider-rpc eider-openapi"
+SIBLINGS="eider-analyzer tree-sitter-eider eider-profiler eider-toml eider-json eider-markdown eider-http eider-rpc eider-openapi eider-example-shopping-service"
 
 die() { echo "version.sh: $*" >&2; exit 2; }
 valid() { echo "$1" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; }
@@ -109,6 +114,14 @@ check_siblings() {
         echo "FAIL $name $sv: its scripts/version.sh check"; printf '%s\n' "$out" | sed 's/^/  /'; bad=1; continue
       fi
     fi
+    if [ ! -f "$d/scripts/version.sh" ]; then
+      # no check of its own: every `eider = "..."` in its manifests is this series
+      for f in $(cd "$d" && find . -name eider.toml -not -path '*/target/*' -not -path './.git/*' -not -path '*/node_modules/*'); do
+        if grep -q '^eider = "' "$d/$f" && ! grep -q "^eider = \"$S\"\$" "$d/$f"; then
+          echo "FAIL $name $sv: \`$(sed -n 's/^eider = //p' "$d/$f" | head -1)\` in $f, not \`\"$S\"\`"; bad=1; continue 2
+        fi
+      done
+    fi
     echo "ok   $name $sv (eider-lang $V)"
   done
   return $bad
@@ -156,8 +169,11 @@ write_here() {
 
 # every `eider = "<OLDS>"` under <dir> becomes NEWS
 rewrite_series() {
-  find "$1" -name eider.toml -not -path '*/target/*' -not -path '*/.claude/*' -not -path '*/node_modules/*' -not -path '*/.git/*' |
+  # (paths are matched relative to <dir>: a checkout that is itself under .claude/worktrees/ is
+  # searched, and the repository's own .claude/, which holds other worktrees, is not)
+  (cd "$1" && find . -name eider.toml -not -path '*/target/*' -not -path './.claude/*' -not -path '*/node_modules/*' -not -path './.git/*') |
     while read -r f; do
+      f="$1/${f#./}"
       grep -q "^eider = \"$OLDS\"\$" "$f" && rewrite "$f" '$0 == "eider = \"" o "\"" { print "eider = \"" s "\""; next } { print }'
     done
 }

@@ -141,6 +141,8 @@ type E = {
     pframe: bool,
     pf: List[u8],
     pline: u32,
+    /// float constants are written in LLVM 23's `f0x` form (F0X_LLVM; the driver decides)
+    fx: bool,
 }
 
 // ---- text
@@ -1186,7 +1188,7 @@ fn laddr(l: u32) -> List[u8] { num("%l", l as u64) }
 fn opv(inout e: E, p: lower.P, id: u32) -> List[u8] {
     let x = p.ir.ops[id as usize]
     if x.kind == ir.O_INT { return int_text(types.ik(p.t, x.ty), x.v) }
-    if x.kind == ir.O_FLOAT { return float_const(types.get(p.t, x.ty).a, x.v) }
+    if x.kind == ir.O_FLOAT { return float_const(e.fx, types.get(p.t, x.ty).a, x.v) }
     if x.kind == ir.O_BOOL {
         if x.v == 1 { return lit("true") }
         return lit("false")
@@ -7023,17 +7025,17 @@ pub const MIN_LLVM: u64 = 17
 /// the target (llvm_abi.ei: X86_64, AARCH64, WASM32 for `--wasm`/`--wasm-core`, whose module
 /// names its triple and exports `eider_<name>`; no debug info there). A function this
 /// backend can't lower is an internal error naming it and the construct.
-pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[List[u8]], dir: List[u8], debug: bool, arch: u32) -> Result[Out, List[u8]] { program_prof(p, file, tests, lib, paths, dir, debug, arch, 0, List.new()) }
+pub fn program(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[List[u8]], dir: List[u8], debug: bool, arch: u32) -> Result[Out, List[u8]] { program_prof(p, file, tests, lib, paths, dir, debug, arch, 0, List.new(), false) }
 
 /// `program` with the profiler (`what`: lower.prof_what's bits, 0 for none; `version`: the
 /// toolchain's, recorded in the profile): every function that calls or loops (lower.framed)
 /// keeps a frame on the runtime's shadow stack (eider_rt.h ei_prof_*, inline here), stores
 /// the line of each statement that calls, allocates or drops (lower.prof_marks), and the glue
 /// reports copy-on-write, growth, rehash, Drop, `.copy()` and Ref events.
-pub fn program_prof(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[List[u8]], dir: List[u8], debug: bool, arch: u32, what: u32, version: List[u8]) -> Result[Out, List[u8]] {
+pub fn program_prof(p: lower.P, file: List[u8], tests: bool, lib: bool, paths: List[List[u8]], dir: List[u8], debug: bool, arch: u32, what: u32, version: List[u8], fx: bool) -> Result[Out, List[u8]] {
     let wasm = arch == abi.WASM32
     let names = lower.c_names(p)?
-    let mut e = E(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), abi.new_lay(p, arch), List.new(), names.tys, names.fns, List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), Map.new(), 0, 0, 0, false, List.new(), 0, 0, 0, List.new(), List.new(), false, abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new(), debug, false, List.new(), List.new(), List.new(), 4, 0, 0, Map.new(), Map.new(), paths, dir, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new(), Map.new(), what, version, false, List.new(), 0)
+    let mut e = E(List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), abi.new_lay(p, arch), List.new(), names.tys, names.fns, List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), Map.new(), 0, 0, 0, false, List.new(), 0, 0, 0, List.new(), List.new(), false, abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new(), debug, false, List.new(), List.new(), List.new(), 4, 0, 0, Map.new(), Map.new(), paths, dir, List.new(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(), List.new(), Map.new(), List.new(), Map.new(), what, version, false, List.new(), 0, fx)
     let nosig = abi.Sig(abi.Arg(0, 0, 0, 0, 0, 0, 0), List.new())
     for f in 0..p.ir.fns.len() {
         e.isigs.push(nosig.copy())
@@ -7166,27 +7168,43 @@ fn is_closure_name(s: List[u8]) -> bool {
 // `reassoc`, `contract`...), so every operation is exactly the IEEE one and a program
 // means the same at -O0 and -O2. `==` is `fcmp oeq` and `!=` is `fcmp une`: NaN is unequal to
 // everything and unordered. Constants are written from their bits (a hex double, or an `i32`
-// bitcast to float), so NaN payloads and signed zeros survive.
+// bitcast to float), so NaN payloads and signed zeros survive. From LLVM 23 (F0X_LLVM) they
+// are written `f0x` and the bits in hex, 16 digits for a double and 8 for a float: LLVM 23
+// deprecates the old spellings (the choice is made once, by driver.llvm_f0x, from the clang
+// that builds the IR, and reaches here as E.fx).
+
+/// The first LLVM that reads `f0x<bits>` float constants (23.1, 2026-08-25; 22 and older
+/// reject it).
+pub const F0X_LLVM: u64 = 23
 
 fn float_ty(a: u32) -> List[u8] {
     if a == 0 { return lit("float") }
     lit("double")
 }
 
-fn hex16(v: u64) -> List[u8] {
+/// `0x` and the 16 hex digits of v, a double's bits (every LLVM since 17).
+fn hex16(v: u64) -> List[u8] { hexn(lit("0x"), v, 16) }
+
+/// `f0x` and the n hex digits of v: a double's bits (16) or a float's (8), LLVM 23's spelling.
+fn f0x(v: u64, n: u32) -> List[u8] { hexn(lit("f0x"), v, n) }
+
+fn hexn(prefix: List[u8], v: u64, n: u32) -> List[u8] {
     let hx = lit("0123456789ABCDEF")
-    let mut o = lit("0x")
-    let mut i: u32 = 16
-    while i > 0 {
-        i -= 1
-        let sh: u64 = (i * 4) as u64
+    let mut o = prefix.copy()
+    for k in 0..n {
+        let sh: u64 = ((n - 1 - k) * 4) as u64
         o.push(hx[((v >> sh) % 16) as usize])
     }
     o
 }
 
 /// The constant of float kind a (0: f32, 1: f64) with these bits.
-fn float_const(a: u32, bits: u64) -> List[u8] {
+/// With fx (LLVM 23): `f0x` and the bits, 16 digits for an f64 and 8 for an f32.
+fn float_const(fx: bool, a: u32, bits: u64) -> List[u8] {
+    if fx {
+        if a == 1 { return f0x(bits, 16) }
+        return f0x(bits % 4294967296, 8)
+    }
     if a == 1 { return hex16(bits) }
     let mut o = lit("bitcast (i32 ")
     bytes.append(inout o, bytes.from_u64(bits % 4294967296))
@@ -7236,11 +7254,18 @@ fn float_binary(inout e: E, p: lower.P, s: ir.Stmt) {
 }
 
 /// The exact value 2^n as a float constant of kind a (n: 31, 32, 63, 64 and the like).
-fn pow2_const(a: u32, n: u32, neg: bool) -> List[u8] {
-    // binary64 bits: exponent field 1023 + n, mantissa 0
+fn pow2_const(fx: bool, a: u32, n: u32, neg: bool) -> List[u8] {
     let one: u64 = 1
+    if fx && a == 0 {
+        // binary32 bits: exponent field 127 + n, mantissa 0
+        let mut b32: u64 = ((127 + n) as u64) << 23
+        if neg { b32 += one << 31 }
+        return f0x(b32, 8)
+    }
+    // binary64 bits: exponent field 1023 + n, mantissa 0 (an f32 constant too before f0x: 2^n is exact)
     let mut bits: u64 = ((1023 + n) as u64) << 52
     if neg { bits += one << 63 }
+    if fx { return f0x(bits, 16) }
     hex16(bits)
 }
 
@@ -7280,8 +7305,8 @@ fn float_cast(inout e: E, p: lower.P, s: ir.Stmt, fty: u32) {
     let t = val(inout e, catb(lit("call "), catb(ft, catb(lit(" @"), catb(tr, catb(lit("("), catb(ft, catb(lit(" "), cat(v, ")")))))))))
     let sg = types.signed(tk)
     let hb = if sg { bits - 1 } else { bits }
-    let hi = pow2_const(sa, hb, false)
-    let lo = if sg { pow2_const(sa, bits - 1, true) } else { lit("0.0") }
+    let hi = pow2_const(e.fx, sa, hb, false)
+    let lo = if sg { pow2_const(e.fx, sa, bits - 1, true) } else { lit("0.0") }
     // in range: lo <= t < hi (ordered: NaN fails both)
     let c1 = fcmp(inout e, "oge", ft, t, lo)
     let c2 = fcmp(inout e, "olt", ft, t, hi)

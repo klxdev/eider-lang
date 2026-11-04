@@ -920,7 +920,7 @@ fn main() uses io, fs, net, clock {
         }
         // the target: wasm32, else the one clang builds for (x86-64 or AArch64)
         let arch = if wt { abi.WASM32 } else { driver.target_arch() }
-        let out = match llvm.program_prof(lp, a.file, tests, a.lib, paths, here, a.debug && !wt, arch, a.profile, driver.version()) {
+        let out = match llvm.program_prof(lp, a.file, tests, a.lib, paths, here, a.debug && !wt, arch, a.profile, driver.version(), !wt && driver.llvm_f0x()) {
             Ok(o) => o
             Err(m) => {
                 let mut msg = sys.lit("eiderc: internal error: ")

@@ -8,7 +8,7 @@ eider-openapi, ...) live in repositories of their own (LAYERS.md, "Where code li
 compiler, `eiderc` (`compiler/`), is written in Eider and self-hosted: it is committed as
 WebAssembly (`seed/eiderc.wasm`) with a small translator to C (`seed/wasm2c.c`), so building
 the compiler needs only a C11 compiler; programs are built through LLVM IR and need clang 17
-or newer.
+or newer (tested with 17, 20, 22 and 23: `scripts/clang-matrix.sh`, docs/site/tooling/llvm.md).
 
 ```
 cc -o wasm2c seed/wasm2c.c && ./wasm2c seed/eiderc.wasm -o eiderc.c && cc -pthread -o eiderc eiderc.c core/eider_core.c   # the bootstrap
@@ -43,7 +43,7 @@ scripts/selfhost.sh                       # seed -> stage1 -> stage2 -> stage3, 
 
 ## Verification
 
-`scripts/verify.sh`: the compile-fail/pass suite (tests/checks: 93 files, 56/56 codes), run tests on gcc, clang, ASan+UBSan and TSan, the C core, std, packages and the package manager, the pinned libraries (fetched into `.vendor/` on first use and hash-checked against `vendor.lock`: `scripts/vendor.sh`), the docs site and its doc tests, the crypto backends that are present, the compiler against its recorded oracle (`scripts/test-compiler.sh`), the seed reproducing itself, C and C++ consumers of an exported library, the sibling repositories (editor tooling, libraries) when checked out next to this one, and a Node check of the WebAssembly build. It ends with `ALL GREEN` (naming the legs skipped for a missing toolchain).
+`scripts/verify.sh`: the compile-fail/pass suite (tests/checks: 93 files, 56/56 codes), run tests on gcc, clang, ASan+UBSan and TSan, the C core, std, packages and the package manager, the pinned libraries (fetched into `.vendor/` on first use and hash-checked against `vendor.lock`: `scripts/vendor.sh`), the docs site and its doc tests, the crypto backends that are present, the compiler against its recorded oracle (`scripts/test-compiler.sh`), the compiler and run tests with the other clang versions (17, 20, 23; the `llvms` leg), the seed reproducing itself, C and C++ consumers of an exported library, the sibling repositories (editor tooling, libraries) when checked out next to this one, and a Node check of the WebAssembly build. It ends with `ALL GREEN` (naming the legs skipped for a missing toolchain).
 
 ## Known limits
 

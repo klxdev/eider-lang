@@ -16,7 +16,7 @@
 # (scripts/verify-stamp.sh), so that scripts/release.sh and publish.sh don't repeat it.
 cd "$(dirname "$0")/.." || exit 1
 EIDER_CACHE=off; export EIDER_CACHE
-LEGS="compiler seed tools tsan asan gcc clang docs eider crypto pkg std core misc export"
+LEGS="compiler llvms seed tools tsan asan gcc clang docs eider crypto pkg std core misc export"
 
 # ---- one leg: prints its `ok`/`FAIL`/`skip` lines. Legs never touch each other's files.
 if [ "$1" = "--leg" ]; then
@@ -86,6 +86,18 @@ if [ "$1" = "--leg" ]; then
       skip "wasm: needs clang with the wasm32 target, wasm-ld and node"
     fi ;;
   gcc|clang|asan|tsan) runtests $leg ;;
+  llvms)
+    # llvms: the compiler built, the compile-fail suite and the run tests with the other clang
+    # versions the documentation claims (17, 20, 22, 23; the one on PATH is every other leg's):
+    # scripts/clang-matrix.sh --quick --except-default (#169). The full matrix, with the oracle,
+    # is `sh scripts/clang-matrix.sh` (about 14 minutes a version; 3 run before a release). A
+    # version that isn't installed (sh scripts/clang-matrix.sh --fetch downloads them) is a
+    # skipped leg with that reason, never a pass; EIDER_CLANG_VERIFY=0 leaves the leg out.
+    if [ "${EIDER_CLANG_VERIFY:-1}" = 0 ]; then skip "llvms: EIDER_CLANG_VERIFY=0"; exit 0; fi
+    sh scripts/clang-matrix.sh --quick --except-default > $S/llvms 2>&1; mrc=$?
+    while IFS= read -r l; do case $l in "skip "*) skip "llvms: ${l#skip }" ;; "ok "*) echo "$l" ;; esac; done < $S/llvms
+    if [ $mrc = 1 ] || grep -q "^FAIL" $S/llvms; then echo "FAIL llvms: sh scripts/clang-matrix.sh --quick"; grep -v "^ok\|^skip" $S/llvms | head -20
+    elif [ $mrc != 0 ] && [ $mrc != 2 ]; then echo "FAIL llvms: sh scripts/clang-matrix.sh exit $mrc"; tail -5 $S/llvms; fi ;;
   core) sh tests/core/run.sh | grep -q FAIL && echo "FAIL core" || echo "ok   core (eider_rt + eider_core, strict warnings, sanitizers when available)" ;;
   std) sh tests/std/run.sh | grep -q FAIL && echo "FAIL std" || echo "ok   std (C core + Eider std)" ;;
   misc)

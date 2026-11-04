@@ -5,7 +5,7 @@
 # (llvm_abi.ei) on records of mixed field types passed and returned by value, from C into LLVM
 # IR (the export wrappers) and from C into the runtime; a64.sh checks the same exports' AArch64
 # signatures against clang's. Then -g must describe dwarf.ei's variables and types.
-# usage: run.sh <eiderc>; exits 2 (a skip) without clang 17+.
+# fconst.sh: float constants in both spellings. usage: run.sh <eiderc>; exits 2 (a skip) without clang 17+.
 cd "$(dirname "$0")/../../.." || exit 1
 E=${1:-target/eiderc-next}
 CC=${CC:-cc}
@@ -25,6 +25,9 @@ case $? in
   2) cat $T/a64.log ;;
   *) cat $T/a64.log; exit 1 ;;
 esac
+# float constants in both spellings (the hex double and LLVM 23's f0x)
+sh compiler/tests/llvm/fconst.sh "$E" > $T/fconst.log 2>&1 || { cat $T/fconst.log; exit 1; }
+cat $T/fconst.log
 # DWARF variables and types (-g, at -O0 so nothing is optimized away): every parameter, local,
 # member and type name of dwarf.ei in the debug info (llvm-dwarfdump, else readelf)
 EIDER_CACHE=off EIDER_CFLAGS=-O0 $E build -g compiler/tests/llvm/dwarf.ei -o $T/dwarf >$T/dwarf.log 2>&1 || { echo "FAIL build -g dwarf.ei"; cat $T/dwarf.log; exit 1; }

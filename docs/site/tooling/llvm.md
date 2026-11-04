@@ -9,7 +9,8 @@ bootstrapping from the seed, still need only a C compiler (see [the bootstrap](c
 
 - clang 17 or newer (LLVM 17 introduced the opaque pointers the IR uses). eiderc runs
   `clang --version` first and stops with exit code 3 and a message when clang is missing or
-  older. `EIDER_LLVM_CC` names another clang.
+  older. `EIDER_LLVM_CC` names another clang. The versions the suites run against are
+  listed under [Clang versions](#clang-versions).
 - Only clang's driver is used (`clang -c prog.ll`). `llc`, `opt` and the LLVM libraries are
   not needed.
 - Linux on x86-64 or AArch64: the target is the one clang builds for (`clang -dumpmachine`),
@@ -81,3 +82,45 @@ sh scripts/llvm-bench.sh            # compile and run times
 
 `scripts/verify.sh` runs compiler/tests/llvm/run.sh as its "llvm" leg when clang 17+ is
 installed, and otherwise skips that leg with the reason.
+
+## Clang versions
+
+The floor is clang 17, and a release is tested against four versions, not only the clang of
+the machine it is built on: the oldest the documentation claims (17), one between (20), the
+current release (22) and the next (23). `scripts/clang-matrix.sh` builds the compiler with
+each, then runs the compile-fail suite, the run tests and the oracle (`scripts/test-compiler.sh`:
+every run test again at `-O2`, under UBSan, with the allocation counter, and so on) with that
+clang as `EIDER_LLVM_CC`:
+
+```sh
+sh scripts/clang-matrix.sh --list    # which clang each version would use
+sh scripts/clang-matrix.sh --fetch   # download what is missing (linux-x86_64), then run all four
+sh scripts/clang-matrix.sh 17 23     # just these (about 14 minutes a version)
+```
+
+The clangs come from `$EIDER_CLANG_<N>`, the cache `~/.cache/eider/clang/<X.Y.Z>/` (only
+`bin/clang` and `lib/clang` of the upstream release tarball, whose SHA-256 is pinned in the
+script), or the `clang` on `PATH` when it is that version. A version that can't be found is
+skipped with the reason and never reported as tested. `scripts/verify.sh` runs the same as
+its `llvms` leg with `--quick` (the build, the compile-fail suite and the run tests; the
+oracle is the full run's) for the versions other than the `PATH` clang, which every other
+leg covers.
+
+What differs between the versions, and where the compiler handles it:
+
+- **Float constants** (#168): LLVM 23 deprecates the old spellings (a hex double and `bitcast
+  (i32 .. to float)`) for `f0x<bits>`, 16 hex digits for an f64 and 8 for an f32. The compiler
+  writes `f0x` when the clang that builds the IR is 23 or newer and the old form otherwise
+  (`driver.llvm_f0x`, the one place; `EIDER_LLVM_FLOAT=f0x` or `=hex` forces either).
+  `emit-llvm` follows the clang it finds. compiler/tests/llvm/fconst.sh builds a program of
+  float edge cases (zeros, subnormals, extremes, f32 values, the powers of two a
+  float-to-integer conversion compares with) in each spelling and compares the output, and
+  with clang 23 or newer has clang read hand-written `inf`, NaN-with-payload, `-0`, subnormal
+  and f32 constants in both spellings as the same module. clang 22 and older reject `f0x`,
+  and the test checks that too.
+- **Linking** (#169): an upstream clang links a position-independent executable by default,
+  while the C core is compiled by `$CC`, which may not be (Fedora's gcc is not). The ThinLTO
+  link of a release build therefore passes `-no-pie`; without it lld refused the core's
+  absolute relocations with every upstream clang from 17 to 23 (Fedora's clang links non-PIE
+  and hid it).
+

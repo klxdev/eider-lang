@@ -132,6 +132,7 @@ if [ -z "$skip_verify" ]; then
   grep -q "^ok   tools" target/release-verify.log || die "verify did not build and test the siblings (its tools leg)"
   grep -q "^ok   eider" target/release-verify.log || die "verify did not run the eider leg"
   grep -q "^ok   crypto" target/release-verify.log || die "verify did not run the crypto leg"
+  grep -q "^ok   clang [0-9]* (" target/release-verify.log || die "verify did not run the llvms leg (programs built with other clang versions: sh scripts/clang-matrix.sh --fetch)"
   if sh scripts/verify-stamp.sh check-selfhost; then
     echo "release: scripts/selfhost.sh already printed SELF-HOSTED for this commit: not repeated"
   else
@@ -156,6 +157,12 @@ epoch=$(git log -1 --format=%ct HEAD)
 # the backend programs are built with: LLVM, the only one (U23; the driver asks for clang,
 # $EIDER_LLVM_CC); eider warns when clang 17+ is missing
 backend=llvm
+# the clang versions programs were built with in the verify run: the llvms leg's (`ok   clang
+# N (X.Y.Z)`) and the clang on PATH, which every other leg uses (docs/site/tooling/llvm.md)
+clang_tested=
+if [ "$verified" = true ]; then
+  clang_tested=$({ sed -n 's/^ok   clang [0-9]* (\([0-9.]*\)).*/\1/p' target/release-verify.log; "${EIDER_LLVM_CC:-clang}" --version 2>/dev/null | sed -n 's/.*clang version \([0-9][0-9.]*\).*/\1/p' | head -1; } | sort -uV | sed 's/.*/"&"/' | paste -sd, - | sed 's/,/, /g')
+fi
 host_arch=$(uname -m); case $host_arch in amd64) host_arch=x86_64 ;; arm64) host_arch=aarch64 ;; esac
 {
   echo "# RELEASE.toml: the components of Eider $V, released together (docs/site/tooling/releases.md)."
@@ -167,6 +174,7 @@ host_arch=$(uname -m); case $host_arch in amd64) host_arch=x86_64 ;; arm64) host
   echo "date = \"$(git log -1 --format=%cs HEAD)\""
   echo "verified = $verified"
   echo "backend = \"$backend\""
+  [ -z "$clang_tested" ] || echo "clang_tested = [$clang_tested]   # the clang versions programs were built and tested with (scripts/clang-matrix.sh)"
   echo "release_key = \"$key_id\"   # minisign key id of SHA256SUMS.minisig (packages/eider/release.pub)"
   for c in $COMPONENTS; do
     d=$(dir_of $c); cv=$(tr -d ' \n' < "$d/VERSION")
@@ -236,7 +244,8 @@ eider-$V-<target>.tar.gz files; \`eider toolchain install $V\` installs one
 ## Building
 
 Needs a C11 compiler (\`cc\`, or \`\$CC\`) and a POSIX system with threads to build the
-compiler, and clang 17 or newer to build programs with it (the tools are Eider programs);
+compiler, and clang 17 or newer to build programs with it (tested with the versions
+RELEASE.toml lists as \`clang_tested\`; the tools are Eider programs);
 node for regenerating or testing the grammar. The tools take the toolchain from
 \`EIDER_TOOLCHAIN\` (else the installed release \`eider\` picks): point it at ../eider-lang.
 

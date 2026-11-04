@@ -47,6 +47,7 @@ import std.io
 import std.env
 import std.proc
 import eiderc.build
+import eiderc.llvm
 import eiderc.lock
 import eiderc.toolchain
 
@@ -568,6 +569,54 @@ fn build_lib_with(h: List[u8], file: List[u8], out: List[u8], libs: List[List[u8
 // -fsanitize*/-fno-sanitize* flags (instrumentation of the IR), -g and -O<n> (after the
 // driver's own, so `EIDER_CFLAGS=-O0 eiderc build` is -O0 everywhere); $CC gets them all.
 
+/// The major version in `clang --version`'s text (the number after `version `), 0 if none.
+fn version_major(out: List[u8]) -> u64 {
+    let mut major: u64 = 0
+    match bytes.find(out, s("version "), 0) {
+        Some(i) => {
+            let mut j = i + 8
+            while j < out.len() && bytes.is_digit(out[j]) {
+                major = major * 10 + (out[j] - 48) as u64
+                j += 1
+            }
+        }
+        None => {}
+    }
+    major
+}
+
+/// The major version of the clang that builds the IR ($EIDER_LLVM_CC, default clang), 0 when
+/// it can't run (emit-llvm without clang).
+pub fn llvm_major() -> u64 uses io, fs, net {
+    let mut cc = s("clang")
+    match env.get(s("EIDER_LLVM_CC")) {
+        Some(x) => { if x.len() > 0 { cc = x } }
+        None => {}
+    }
+    let mut v: List[List[u8]] = List.new()
+    v.push(cc)
+    v.push(s("--version"))
+    match proc.run_with(v, proc.captured()) {
+        Ok(o) => { return version_major(o.out) }
+        Err(_) => {}
+    }
+    0
+}
+
+/// Whether the IR writes float constants in LLVM 23's `f0x` form (llvm.F0X_LLVM): the clang
+/// that builds it is that new. EIDER_LLVM_FLOAT=f0x or =hex forces either spelling (the hex
+/// double and bitcast form is read by every LLVM since 17). This is the one place that decides.
+pub fn llvm_f0x() -> bool uses io, fs, net {
+    match env.get(s("EIDER_LLVM_FLOAT")) {
+        Some(x) => {
+            if bytes.eq(x, s("f0x")) { return true }
+            if bytes.eq(x, s("hex")) { return false }
+        }
+        None => {}
+    }
+    llvm_major() >= llvm.F0X_LLVM
+}
+
 /// clang for the IR; exits 3 when it can't run or is older than LLVM `min`.
 pub fn llvm_cc(min: u64) -> List[u8] uses io, fs, net {
     let mut cc = s("clang")
@@ -590,17 +639,7 @@ pub fn llvm_cc(min: u64) -> List[u8] uses io, fs, net {
             List.new()
         }
     }
-    let mut major: u64 = 0
-    match bytes.find(out, s("version "), 0) {
-        Some(i) => {
-            let mut j = i + 8
-            while j < out.len() && bytes.is_digit(out[j]) {
-                major = major * 10 + (out[j] - 48) as u64
-                j += 1
-            }
-        }
-        None => {}
-    }
+    let major = version_major(out)
     if major < min {
         let mut m = s("building a program needs clang (LLVM ")
         bytes.append(inout m, bytes.from_u64(min))
@@ -771,6 +810,10 @@ fn compile_llvm(lnames: List[List[u8]], lls: List[List[u8]], dir: List[u8], exe:
         for i in 1..cc.len() { ld.push(cc[i].copy()) }
         ld.push(s("-flto=thin"))
         ld.push(s("-fuse-ld=lld"))
+        // not a PIE: the core is compiled by $CC, whose default may be non-PIE (Fedora's gcc),
+        // while an upstream clang (17 to 23, as downloaded) links PIE by default and lld then
+        // refuses the core's absolute relocations (#169)
+        ld.push(s("-no-pie"))
         let mut j = s("-Wl,--thinlto-jobs=")
         let mut n = jobs_or_default(jobs)
         if n == 0 { n = build.cpus() }

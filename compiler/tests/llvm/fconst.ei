@@ -1,0 +1,56 @@
+// Float constants in the IR, in both spellings (hex double and bitcast, or LLVM 23's f0x;
+// compiler/tests/llvm/fconst.sh builds this under each and compares with fconst.out):
+// signed zeros, subnormals, the extremes, values only f32 holds, and the exact powers of two a
+// float-to-integer conversion compares against.
+
+fn main() uses io {
+    let z = 0.0
+    let nz = -0.0
+    print(z == nz)
+    print(1.0 / nz)
+    print(1.0 / z)
+    print(1.0 / -z)
+    print(z / z != z / z)
+    print(5e-324)
+    print(2.2250738585072014e-308)
+    print(1.7976931348623157e308)
+    print(-1.7976931348623157e308)
+    print(0.1 + 0.2)
+    print(1e-45f32)
+    print(1.1754944e-38f32)
+    print(3.4028235e38f32)
+    print(-3.4028235e38f32)
+    print(0.1f32)
+    print(0.1f32 as f64)
+    print(16777217.0f32)
+    let big = 1e300
+    let tiny = 1e-300
+    print(big * big)
+    print(tiny * tiny)
+    // conversions compare with 2^8, 2^31, 2^32, 2^63 and 2^64 (f64 and f32 sources)
+    let a = 127.9
+    let b = -128.9
+    let c = 255.5
+    let d = 2147483647.5
+    let e = 4294967295.5
+    let f = 9223372036854775000.0
+    let g = 18446744073709550000.0
+    print(a as u8)
+    print(b as i32)
+    print(c as u8)
+    print(d as i32)
+    print(e as u32)
+    print(f as i64)
+    print(g as u64)
+    let a2 = 127.9f32
+    let c2 = 255.5f32
+    let d2 = 2147483520.0f32
+    let f2 = 9223371487098961920.0f32
+    let g2 = 18446742974197923840.0f32
+    print(a2 as u8)
+    print(c2 as u8)
+    print(d2 as i32)
+    print(f2 as i64)
+    print(g2 as u64)
+    print(-9223372036854775808.0 as i64)
+}
