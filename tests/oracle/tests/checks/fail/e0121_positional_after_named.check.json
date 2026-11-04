@@ -1,0 +1,1 @@
+{"error":"E0121","span":{"file":"tests/checks/fail/e0121_positional_after_named.ei","line":4,"col":14},"message":"a positional argument can't follow a named one","help":"write the named arguments last"}

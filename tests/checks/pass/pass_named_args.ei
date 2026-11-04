@@ -1,0 +1,17 @@
+const WAIT: i64 = 5
+
+fn connect(host: str, port: i64 = 80, retries: i32 = 3, wait: i64 = WAIT) -> i64 { port + retries as i64 + wait }
+
+type Pool = { n: i64 }
+
+impl Pool {
+    fn grow(self, by: i64 = 1) -> Pool { Pool(self.n + by) }
+}
+
+fn main() {
+    connect("a")
+    connect("a", 1)
+    connect("a", retries = 1)
+    connect(host = "a", wait = 1)
+    Pool(1).grow().grow(by = 2)
+}

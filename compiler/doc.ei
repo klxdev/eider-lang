@@ -572,6 +572,10 @@ fn fn_sig(b: B, m: u32, id: u32, bare: bool) -> FnSig {
         if !implicit_self {
             put(inout g, ": ")
             ty(b, m, pn.b, inout g)
+            if pn.d > 0 {
+                put(inout g, " = ")
+                putb(inout g, default_text(b, m, node(b, m, pn.d - 1)))
+            }
         }
     }
     put(inout g, ")")
@@ -946,6 +950,30 @@ fn slug(t: List[u8]) -> List[u8] {
 
 /// A constant's value as written (tokens after `=` to the end of its line, spaced as in the
 /// source), cut at 100 bytes.
+/// A default argument as written: the tokens from the expression's start to the `,` or `)` that ends it
+/// ("C8.81").
+fn default_text(b: B, m: u32, n: ast.Node) -> List[u8] {
+    let md = b.p.mods[m as usize]
+    let toks = md.toks
+    let mut i: usize = 0
+    while i < toks.len() && (toks[i].line < n.line || (toks[i].line == n.line && toks[i].col < n.col)) { i += 1 }
+    let mut out: List[u8] = List.new()
+    let mut prev_end: u32 = 0
+    while i < toks.len() {
+        let t = toks[i]
+        if t.kind == lex.Eof || t.kind == lex.Newline || t.kind == lex.Comma || t.kind == lex.RParen { break }
+        if out.len() > 0 && t.start > prev_end { out.push(32) }
+        let mut k = t.start as usize
+        while k < t.end as usize {
+            out.push(md.src[k])
+            k += 1
+        }
+        prev_end = t.end
+        i += 1
+    }
+    out
+}
+
 fn const_value(b: B, m: u32, n: ast.Node) -> List[u8] {
     let md = b.p.mods[m as usize]
     let toks = md.toks

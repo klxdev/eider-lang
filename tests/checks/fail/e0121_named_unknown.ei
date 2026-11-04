@@ -1,0 +1,5 @@
+// expect: E0121 4:18
+fn connect(host: str, port: i64 = 80) -> i64 { port }
+fn main() {
+    connect("a", retries = 3)
+}

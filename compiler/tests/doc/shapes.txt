@@ -42,6 +42,8 @@ pub fn report(s: Shape, d: time.Duration) uses io, clock
 pub fn dist(a: Point, b: geo.Vec) -> i64
     A distance through another module of the package.
 pub unsafe fn raw() -> i64
+pub fn open(path: str, retries: i32 = 3, label: str = "main", scale: f64 = -1.5) -> bool
+    Opens `path`, `retries` times at most.
 
 module shapes/util/geo (util/geo.ei)
     Vectors, in a module below the package directory (`shapes/util/geo`).

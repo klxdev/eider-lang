@@ -321,6 +321,12 @@ pub type C = {
     /// the `if`/`match`/block nodes that are arguments of a call being checked: values there
     /// (docs/compiler.md, "C8.72")
     vf_args: Map[u32, bool],
+    /// the constant value of each default argument, by (module << 32 | Param node): evaluated once,
+    /// by `check_param_defaults` (docs/compiler.md, "C8.81")
+    argdef: Map[u64, V],
+    /// the call being checked that has named arguments and wasn't handled by `call_decl` yet:
+    /// (line << 32 | col) of the call; 0: none
+    named_pos: u64,
 }
 
 /// `impl From[Source] for Target` (module md, IImpl node) and its `from` method (FnDef fd).
@@ -3784,7 +3790,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C {
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
         0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false, Rec(false, List.new(), List.new()),
         List.new(), List.new(), false, Map.new(), false, false, Map.new(), List.new(), lt, no_refs(),
-        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), no_reflect(), List.new(), List.new(), 0, lint.new_collected(), NONE, 0, 0, Map.new())
+        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), no_reflect(), List.new(), List.new(), 0, lint.new_collected(), NONE, 0, 0, Map.new(), Map.new(), 0)
 }
 
 /// Every item of the program in load order (resolve.ei), as (module, node) pairs.
@@ -4091,6 +4097,7 @@ fn run(inout c: C) -> Result[bool, diag.Diag] {
     // 6b. attributes: declarations, then uses ("Attributes")
     check_attrs(inout c)
     check_derive_trees(inout c)
+    check_param_defaults(inout c)
     c.cur_all = true
     c.cur_mod = resolve.NOMOD
     // 7. signatures of every concrete function, then of every concrete method
@@ -7345,9 +7352,179 @@ fn arg_expr(c: C, a: u32) -> u32 { nd(c, a).a }
 fn call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     allow_value_args(inout c, n)
     at_pos(inout c, n.line, n.col)
+    let saved = c.named_pos.copy()
+    c.named_pos = named_mark(c, n)
     let r = call_in(inout c, n, exp)
+    note_unnamed(inout c, n)
+    c.named_pos = saved
     end_pos(inout c)
     r
+}
+
+/// Named arguments ("C8.81"): the position that identifies call `n` when it has named arguments (else 0).
+fn named_mark(c: C, n: ast.Node) -> u64 {
+    for i in 0..n.d {
+        if nd(c, at(c, n.c, i)).d != 0 { return ((n.line as u64) << 32) | n.col as u64 }
+    }
+    0
+}
+
+/// A call with named arguments that `call_decl` didn't take (a constructor, a builtin, a closure
+/// value ...) can't have them: E0121.
+fn note_unnamed(inout c: C, n: ast.Node) {
+    if c.named_pos == 0 || c.named_pos != named_mark(c, n) { return }
+    for i in 0..n.d {
+        let a = nd(c, at(c, n.c, i))
+        if a.d != 0 {
+            record(inout c, errh("E0121", a.line, a.col, s("named arguments are only for calls of functions and methods declared with `fn`"), "constructors, builtins and function values take their arguments by position"))
+            return
+        }
+    }
+}
+
+/// Default arguments ("C8.81"): `fn f(x: i32, retries: i32 = 3)`. A default is a literal, a negative number or a
+/// constant (checked against the parameter's type here, once, where it is declared); a call that leaves the
+/// argument out takes its value. Not on `extern`/`export` functions, trait methods and their impls, `inout`
+/// parameters or parameters whose type mentions a type parameter (E0122).
+fn check_param_defaults(inout c: C) {
+    for it in items(c.p) {
+        let tn = ndm(c, it.m, it.node)
+        if tn.kind != ast.ITrait { continue }
+        for k in 0..tn.d {
+            let mn = ndm(c, it.m, atm(c, it.m, tn.c, k))
+            for j in 0..mn.f {
+                let pn = ndm(c, it.m, atm(c, it.m, mn.e, j))
+                if pn.d == 0 { continue }
+                let dx = ndm(c, it.m, pn.d - 1)
+                record(inout c, in_file(c, err("E0122", dx.line, dx.col, s("a method of a trait can't have default arguments")), it.m))
+            }
+        }
+    }
+    for fi in 0..c.fdefs.len() {
+        let f = c.fdefs[fi].copy()
+        let m = f.md.copy()
+        let fnode = ndm(c, m, f.node)
+        for j in 0..fnode.f {
+            let pn = ndm(c, m, atm(c, m, fnode.e, j))
+            if pn.d == 0 { continue }
+            let dn = pn.d - 1
+            let dx = ndm(c, m, dn)
+            let mut why: List[u8] = List.new()
+            if ast.has(fnode.b, ast.FN_EXTERN) || ast.has(fnode.b, ast.FN_EXPORT) {
+                why = s("an `extern` or `export` function can't have default arguments")
+            } else if f.dflt || (f.inode != NONE && ndm(c, m, f.inode).a != 0) {
+                why = s("a method of a trait, or of an impl of one, can't have default arguments")
+            } else if pn.c == 1 {
+                why = s("an `inout` parameter can't have a default")
+            } else {
+                let mut simple = dx.kind == ast.EInt || dx.kind == ast.EFloat || dx.kind == ast.EStr || dx.kind == ast.EBool || dx.kind == ast.EIdent
+                if dx.kind == ast.EUnary && dx.a == 0 {
+                    let ox = ndm(c, m, dx.b)
+                    simple = ox.kind == ast.EInt || ox.kind == ast.EFloat
+                }
+                if !simple { why = s("a default argument is a literal, a negative number or a constant") }
+            }
+            let mut gs = gparams(c, m, fnode.c, fnode.d)
+            if f.inode != NONE && !f.dflt {
+                let im = ndm(c, m, f.inode)
+                for g in gparams(c, m, im.c, im.d) { gs.push(g) }
+            }
+            gs.push(intern.S_SELF_TYPE)
+            if why.len() == 0 && has_unbound(c, m, pn.b, no_subst(), gs) {
+                why = s("a default argument needs a parameter type that doesn't mention a type parameter or `Self`")
+            }
+            if why.len() > 0 {
+                record(inout c, in_file(c, err("E0122", dx.line, dx.col, why), m))
+                continue
+            }
+            c.am = m
+            c.cur_mod = m
+            let ty = match resolve_with(inout c, m, pn.b, no_subst()) {
+                Ok(t) => t
+                Err(_) => { continue }
+            }
+            let mark = ir.open(c.ir)
+            let r = expr(inout c, dn, ty)
+            ir.close(inout c.ir, mark)
+            match r {
+                Err(d) => { record(inout c, in_file(c, d, m)) }
+                Ok(v) => {
+                    if !poisoned(c, v.ty) {
+                        if !same(c, v.ty, ty) {
+                            record(inout c, in_file(c, mismatch(c, dx.line, dx.col, ty, v.ty), m))
+                        } else {
+                            let ok = c.ir.ops[v.op as usize].kind
+                            if ok == ir.O_INT || ok == ir.O_BOOL || ok == ir.O_STR || ok == ir.O_FLOAT {
+                                c.argdef.insert(((m as u64) << 32) | dn as u64, v)
+                            } else {
+                                record(inout c, in_file(c, err("E0122", dx.line, dx.col, s("a default argument must be a constant of a number, bool or string type")), m))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The arguments of a call arranged by parameter ("C8.81"): `ids[j]` is the EArg node for parameter j
+/// (after `self`; NONE: the parameter's default), `widx[j]` its index among the arguments as written.
+type Arranged = { ids: List[u32], widx: List[u32] }
+
+fn arrange(inout c: C, n: ast.Node, fm: u32, fnode: ast.Node, skip: u32, np: u32, label: List[u8]) -> Result[Arranged, diag.Diag] {
+    let mut ids: List[u32] = List.new()
+    let mut widx: List[u32] = List.new()
+    let mut any_default = false
+    for j in 0..np {
+        ids.push(NONE)
+        widx.push(NONE)
+        if ndm(c, fm, atm(c, fm, fnode.e, j + skip)).d != 0 { any_default = true }
+    }
+    let mut any_named = false
+    let mut pos: u32 = 0
+    for i in 0..n.d {
+        let aid = at(c, n.c, i)
+        let a = nd(c, aid)
+        if a.d == 0 {
+            if any_named {
+                return Err(errh("E0121", a.line, a.col, s("a positional argument can't follow a named one"), "write the named arguments last"))
+            }
+            if pos >= np {
+                return Err(err("E0405", n.line, n.col, q3("`", label, "` takes ", num(np as u64), " argument(s), but ", num(n.d as u64), " were given")))
+            }
+            ids[pos as usize] = aid
+            widx[pos as usize] = i
+            pos += 1
+        } else {
+            any_named = true
+            let mut j = NONE
+            for k in 0..np {
+                if ndm(c, fm, atm(c, fm, fnode.e, k + skip)).a == a.d - 1 { j = k }
+            }
+            if j == NONE {
+                return Err(err("E0121", a.line, a.col, q2("`", label, "` has no parameter `", nm(c, a.d - 1), "`")))
+            }
+            if ids[j as usize] != NONE {
+                return Err(err("E0121", a.line, a.col, q("the argument for `", nm(c, a.d - 1), "` is given twice")))
+            }
+            if j < pos {
+                return Err(errh("E0121", a.line, a.col, q("named argument `", nm(c, a.d - 1), "` is out of order"), "named arguments follow the order of the parameters"))
+            }
+            ids[j as usize] = aid
+            widx[j as usize] = i
+            pos = j + 1
+        }
+    }
+    for j in 0..np {
+        let pn = ndm(c, fm, atm(c, fm, fnode.e, j + skip))
+        if ids[j as usize] == NONE && pn.d == 0 {
+            if !any_named && !any_default {
+                return Err(err("E0405", n.line, n.col, q3("`", label, "` takes ", num(np as u64), " argument(s), but ", num(n.d as u64), " were given")))
+            }
+            return Err(err("E0405", n.line, n.col, q2("`", label, "` is missing the argument for `", nm(c, pn.a), "`")))
+        }
+    }
+    Ok(Arranged(ids, widx))
 }
 
 fn call_in(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
@@ -7607,9 +7784,22 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
     }
     let skip: u32 = if recv.has { 1 } else { 0 }
     let np = fnode.f - skip
-    if n.d != np {
-        let fd = err("E0405", n.line, n.col, q3("`", label, "` takes ", num(np as u64), " argument(s), but ", num(n.d as u64), " were given"))
-        return fail_call(inout c, fd, n.c, n.d)
+    if c.named_pos == (((n.line as u64) << 32) | n.col as u64) { c.named_pos = 0 }
+    let arr = match arrange(inout c, n, fm, fnode, skip, np, label) {
+        Ok(x) => x
+        Err(fd) => { return fail_call(inout c, fd, n.c, n.d) }
+    }
+    // (the name of a named argument refers to its parameter)
+    if c.rec.on {
+        for j in 0..np {
+            if arr.ids[j as usize] == NONE { continue }
+            let an = nd(c, arr.ids[j as usize])
+            if an.d != 0 {
+                let pj = ndm(c, fm, atm(c, fm, fnode.e, j + skip))
+                let am = c.am.copy()
+                note_ref(inout c, am, an, fm, pj.line, pj.col)
+            }
+        }
     }
     let mut tainted = poisoned(c, exp) || (recv.has && poisoned(c, recv.pv.ty))
     // what the `?` around this call expects of its Ok/Some payload binds the first type argument
@@ -7646,8 +7836,9 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
         let r = root(c, recv.e)
         if r.ok { roots.push(canon(c, r.key)) }
     }
-    for i in 0..n.d {
-        let a = nd(c, at(c, n.c, i))
+    for i in 0..np {
+        if arr.ids[i as usize] == NONE { continue }
+        let a = nd(c, arr.ids[i as usize])
         let pn = ndm(c, fm, atm(c, fm, fnode.e, i + skip))
         if pn.c == 1 && a.b == 1 {
             let r = root(c, a.a)
@@ -7661,8 +7852,9 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
             }
         }
     }
-    for i in 0..n.d {
-        let a = nd(c, at(c, n.c, i))
+    for i in 0..np {
+        if arr.ids[i as usize] == NONE { continue }
+        let a = nd(c, arr.ids[i as usize])
         let pn = ndm(c, fm, atm(c, fm, fnode.e, i + skip))
         // (a call is evaluated before the access begins: nothing it read is still held)
         if pn.c != 1 && !evaluated_first(c, a.a) {
@@ -7691,10 +7883,21 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
             args.push(read(inout c, recv.pv.place, recv.pv.ty, 0))
         }
     }
-    for i in 0..n.d {
-        let a = nd(c, at(c, n.c, i))
-        let x = nd(c, a.a)
+    for i in 0..np {
         let pn = ndm(c, fm, atm(c, fm, fnode.e, i + skip))
+        if arr.ids[i as usize] == NONE {
+            // the parameter's default, a constant evaluated where it is declared
+            let dk = (((fm as u64) << 32) | (pn.d - 1) as u64)
+            let dv = match c.argdef.get(dk) {
+                Some(v) => v.copy()
+                None => { return Err(quiet()) }
+            }
+            args.push(dv.op)
+            arg_tys.push(dv.ty)
+            continue
+        }
+        let a = nd(c, arr.ids[i as usize])
+        let x = nd(c, a.a)
         let mut hint = NONE
         let ptn = ndm(c, fm, pn.b)
         if !has_unbound(c, fm, pn.b, sb, gs) && !(ptn.kind == ast.TFn && has_cap_var(c, fm, ptn, gs)) { hint = resolve_with(inout c, fm, pn.b, sb)? }
@@ -7741,7 +7944,7 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
                 }
             }
             let mut v = expr(inout c, a.a, hint2)?
-            if value_arg_after(c, n.c, n.d, i) { v = snap_read(inout c, v, x.line) }
+            if value_arg_after(c, n.c, n.d, arr.widx[i as usize]) { v = snap_read(inout c, v, x.line) }
             ty = v.ty
             args.push(v.op)
         }
@@ -7826,15 +8029,15 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
     }
     // a fn argument that carries capabilities, passed for a plain fn parameter, is called
     // there without a check: the caller must have them
-    for i in 0..n.d {
+    for i in 0..np {
         let pn = ndm(c, fm, atm(c, fm, fnode.e, i + skip))
         let ptn = ndm(c, fm, pn.b)
-        if ptn.kind != ast.TFn || ptn.h == 1 || i as usize >= arg_tys.len() { continue }
+        if ptn.kind != ast.TFn || ptn.h == 1 || i as usize >= arg_tys.len() || arr.ids[i as usize] == NONE { continue }
         let am = types.fn_caps(c.t, arg_tys[i as usize])
         for x in mask_syms(c, am) {
             use_cap(inout c, x)
             if !has_sym(c.caps, x) {
-                let a = nd(c, at(c, n.c, i))
+                let a = nd(c, arr.ids[i as usize])
                 let ax = nd(c, a.a)
                 let mut d = err("E0201", ax.line, ax.col, q2("passing this function to `", label, "` requires capability `", nm(c, x), "`"))
                 let ins = if c.caps.len() == 0 { q(" uses ", nm(c, x), "") } else { q(", ", nm(c, x), "") }
@@ -7975,7 +8178,11 @@ fn label_of(c: C, head: List[u8], name: u32) -> List[u8] {
 fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     allow_value_args(inout c, n)
     at_pos(inout c, n.line, n.col)
+    let saved = c.named_pos.copy()
+    c.named_pos = named_mark(c, n)
     let r = method_call_in(inout c, n, exp, 0)
+    note_unnamed(inout c, n)
+    c.named_pos = saved
     end_pos(inout c)
     r
 }

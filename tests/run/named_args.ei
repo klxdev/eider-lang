@@ -1,0 +1,77 @@
+// Named arguments and constant default arguments (#110): `f(x, retries = 3)`.
+// A default is a literal, a negative number or a constant, evaluated where it is declared; named
+// arguments follow the order of the parameters, so a call can leave out any parameter that has a default.
+const TIMEOUT: i64 = 30
+const GREETING: str = "hello"
+
+fn connect(host: str, port: i64 = 80, retries: i32 = 3, secure: bool = false, timeout: i64 = TIMEOUT) -> String {
+    "{host}:{port} retries={retries} secure={secure} timeout={timeout}"
+}
+
+fn scale(x: f64, by: f64 = 2.5, shift: i64 = -4) -> f64 {
+    x * by + (shift as f64)
+}
+
+fn greet(name: str, greeting: str = GREETING) -> String {
+    "{greeting}, {name}"
+}
+
+fn bump(inout n: i64, by: i64 = 1) {
+    n += by
+}
+
+fn trace(tag: str, v: i64) -> i64 uses io {
+    print("eval {tag}")
+    v
+}
+
+fn pair(a: i64, b: i64 = 10, c: i64 = 100) -> i64 { a + b + c }
+
+type Counter = { n: i64 }
+
+impl Counter {
+    fn add(self, by: i64 = 1, times: i64 = 1) -> Counter { Counter(self.n + by * times) }
+    fn make(start: i64 = 7) -> Counter { Counter(start) }
+}
+
+fn pick[T](a: T, b: T, flip: bool = false) -> T {
+    if flip { b } else { a }
+}
+
+fn main() uses io {
+    print(connect("a"))
+    print(connect("a", 8080))
+    print(connect("a", retries = 5))
+    print(connect("a", secure = true))
+    print(connect("a", 1, timeout = 5))
+    print(connect("a", 1, 2, true, 4))
+    print(connect("a", port = 9, secure = true))
+    print(connect(host = "h"))
+    print(connect(host = "h", port = 2, retries = 3, secure = true, timeout = 1))
+    print(scale(2.0))
+    print(scale(2.0, 3.0))
+    print(scale(2.0, shift = 10))
+    print(greet("Ada"))
+    print(greet("Ada", greeting = "hi"))
+    var n: i64 = 0
+    bump(inout n)
+    bump(inout n, 5)
+    bump(inout n, by = 10)
+    bump(n = inout n)
+    print(n)
+    // arguments are evaluated in the order they are written
+    print(pair(trace("a", 1), c = trace("c", 3)))
+    print(pair(trace("a", 1), trace("b", 2), trace("c", 3)))
+    let c = Counter.make()
+    print(c.add().n)
+    print(c.add(2).n)
+    print(c.add(times = 3).n)
+    print(c.add(by = 2, times = 3).n)
+    print(Counter.make(start = 1).n)
+    print(pick(1, 2))
+    print(pick(1, 2, flip = true))
+    print(pick("x", "y", true))
+    // a default is not part of the function's type
+    let f: fn(str, i64) -> String = |h, p| -> String { connect(h, p) }
+    print(f("z", 1))
+}

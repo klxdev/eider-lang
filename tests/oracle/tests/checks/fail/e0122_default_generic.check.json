@@ -1,0 +1,1 @@
+{"error":"E0122","span":{"file":"tests/checks/fail/e0122_default_generic.ei","line":2,"col":22},"message":"a default argument needs a parameter type that doesn't mention a type parameter or `Self`"}

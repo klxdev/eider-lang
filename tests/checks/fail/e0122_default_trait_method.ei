@@ -1,0 +1,5 @@
+// expect: E0122 3:26
+trait T {
+    fn go(self, n: i64 = 1) -> i64
+}
+fn main() {}

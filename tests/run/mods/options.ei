@@ -1,0 +1,13 @@
+// Default arguments declared in another module (tests/run/named_args_mod.ei).
+pub const LIMIT: i64 = 25
+const HIDDEN: i64 = 99
+
+pub fn fetch(path: str, limit: i64 = LIMIT, extra: i64 = HIDDEN, label: str = "none") -> String {
+    "{path} {limit} {extra} {label}"
+}
+
+pub type Pool = { size: i64 }
+
+impl Pool {
+    fn grow(self, by: i64 = LIMIT) -> Pool { Pool(self.size + by) }
+}

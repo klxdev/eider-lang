@@ -79,6 +79,9 @@ pub fn dist(a: Point, b: geo.Vec) -> i64 { geo.len(b) + a.x }
 
 pub unsafe fn raw() -> i64 { SECRET }
 
+/// Opens `path`, `retries` times at most.
+pub fn open(path: str, retries: i32 = 3, label: str = "main", scale: f64 = -1.5) -> bool { path.len() > 0 && retries > 0 }
+
 fn helper() -> i64 { 1 }
 
 type Hidden = { n: i64 }

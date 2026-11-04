@@ -238,6 +238,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
         ast.EArg => {
             flag(inout out, "inout", n.b == 1)
             flag(inout out, "spread", n.c == 1)
+            if n.d > 0 { sym(inout out, p, "name", n.d - 1) }
             child(inout out, p, "expr", n.a, d)
         }
         ast.LParam => {
@@ -384,6 +385,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
             sym(inout out, p, "name", n.a)
             flag(inout out, "inout", n.c == 1)
             child(inout out, p, "type", n.b, d)
+            opt(inout out, p, "default", n.d, d)
         }
         ast.Cap => sym(inout out, p, "name", n.a)
         ast.ITrait => {

@@ -1,0 +1,5 @@
+// expect: E0121 4:7
+fn main() {
+    let f = |a: i64| -> i64 { a }
+    f(a = 1)
+}

@@ -1,0 +1,1 @@
+{"error":"E0121","span":{"file":"tests/checks/fail/e0121_named_unknown.ei","line":4,"col":18},"message":"`connect` has no parameter `retries`"}

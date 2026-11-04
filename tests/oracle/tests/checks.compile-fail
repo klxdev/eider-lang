@@ -24,6 +24,16 @@ compile-fail tests (tests/checks/fail)
   ok   e0118_empty_range.ei         E0118 at 4:9
   ok   e0119_ambiguous_method.ei    E0119 at 9:13
   ok   e0120_let_else_falls_through.ei E0120 at 5:31
+  ok   e0121_named_closure.ei       E0121 at 4:7
+  ok   e0121_named_constructor.ei   E0121 at 4:15
+  ok   e0121_named_out_of_order.ei  E0121 at 4:17
+  ok   e0121_named_twice.ei         E0121 at 4:13
+  ok   e0121_named_unknown.ei       E0121 at 4:18
+  ok   e0121_positional_after_named.ei E0121 at 4:14
+  ok   e0122_default_generic.ei     E0122 at 2:22
+  ok   e0122_default_inout.ei       E0122 at 2:21
+  ok   e0122_default_not_constant.ei E0122 at 3:23
+  ok   e0122_default_trait_method.ei E0122 at 3:26
   ok   e0201_cap_param_call.ei      E0201 at 4:5 (fix compiles)
   ok   e0201_comptime_io.ei         E0201 at 4:25
   ok   e0201_dyn_call_capability.ei E0201 at 4:25 (fix compiles)
@@ -60,6 +70,7 @@ compile-fail tests (tests/checks/fail)
   ok   e0309_return_in_defer.ei     E0309 at 3:13
   ok   e0310_errdefer_without_result.ei E0310 at 3:5 (fix compiles)
   ok   e0401_closure_wrong_return.ei E0401 at 4:28
+  ok   e0401_default_type.ei        E0401 at 2:15
   ok   e0401_fn_caps_mismatch.ei    E0401 at 3:5
   ok   e0401_list_literal_mixed.ei  E0401 at 3:25
   ok   e0401_map_equality.ei        E0401 at 5:18
@@ -70,6 +81,7 @@ compile-fail tests (tests/checks/fail)
   ok   e0401_value_arg_unit.ei      E0401 at 4:17
   ok   e0402_null.ei                E0402 at 3:16
   ok   e0405_closure_arity.ei       E0405 at 4:22
+  ok   e0405_missing_argument.ei    E0405 at 4:5
   ok   e0405_type_args_count.ei     E0405 at 4:13
   ok   e0405_wrong_arity.ei         E0405 at 4:3
   ok   e0406_try_in_non_result.ei   E0406 at 7:20
@@ -155,11 +167,12 @@ compile-pass tests (tests/checks/pass)
   ok   pass_list_inplace.ei
   ok   pass_list_literal.ei
   ok   pass_match_all.ei
+  ok   pass_named_args.ei
   ok   pass_shadow_in_inner_scope.ei
   ok   pass_type_args.ei
   ok   pass_value_args.ei
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-159 passed, 0 failed; error-code coverage 74/74
+172 passed, 0 failed; error-code coverage 76/76
 --- exit 0

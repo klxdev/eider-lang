@@ -63,7 +63,7 @@ vfield      = [IDENT ":"] type
 fn_item      = fn_signature block
 fn_signature = "fn" IDENT [generics] "(" [ param { "," param } [","] ] ")"
                ["->" type] ["uses" IDENT { "," IDENT }]
-param        = attrs ["inout"] "self" | attrs ["inout"] IDENT ":" type
+param        = attrs ["inout"] "self" | attrs ["inout"] IDENT ":" type ["=" expr]
 
 const_item  = "const" IDENT ":" type "=" ["comptime"] expr
 trait_item  = "trait" IDENT "{" { sep } { fn_signature [block] { sep } } "}"
@@ -175,7 +175,8 @@ unary     = ("-" | "!" | "~") unary | postfix
 
 postfix   = primary { type_args call_args | call_args | "." (IDENT | INT) [call_args] | "[" expr "]" | "?" }
 type_args = "[" type { "," type } "]"      (only after a path, and only when `(` follows the `]`)
-call_args = "(" [ ["inout"] expr { "," ["inout"] expr } [","] ] ")"
+call_args = "(" [ arg { "," arg } [","] ] ")"
+arg       = [IDENT "="] ["inout"] expr          (IDENT "=" names a parameter: "Default and named arguments")
 
 primary   = INT | FLOAT | string | "true" | "false"
           | "(" ")" | "(" expr ")" | "(" expr "," [ expr { "," expr } [","] ] ")"

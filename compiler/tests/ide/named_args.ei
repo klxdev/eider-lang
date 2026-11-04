@@ -1,0 +1,12 @@
+// eiderc ide: the name of a named argument refers to its parameter, and a default argument's constant
+// is used where the default is declared (docs/compiler.md, "C8.81").
+const WAIT: i64 = 5
+
+fn connect(host: str, port: i64 = 80, wait: i64 = WAIT) -> i64 {
+    port + wait
+}
+
+fn main() uses io {
+    print(connect("a", wait = 1))
+    print(connect(host = "b", port = 2))
+}

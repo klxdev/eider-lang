@@ -1,0 +1,4 @@
+// expect: E0122 3:23
+fn one() -> i64 { 1 }
+fn f(a: i64, b: i64 = one()) -> i64 { a + b }
+fn main() {}

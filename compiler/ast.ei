@@ -18,7 +18,8 @@
 //            ELambda a=body g=ret+1 [c/d]=LParam   EIf a=cond b=then c=else+1
 //            EMatch a=scrutinee [c/d]=Arm e/f=line/col just past the scrutinee, end span =
 //                closing brace; g=1: made from `let PAT = e else { ... }` (docs/compiler.md, "C8.71")
-//            EArg a=expr b=inout (call arguments)  LParam a=sym b=type+1 c=1 for `inout x`
+//            EArg a=expr b=inout (call arguments) d=name sym+1 (`retries = 3`; 0: positional;
+//                docs/compiler.md, "C8.81")  LParam a=sym b=type+1 c=1 for `inout x`
 //            Arm [c/d]=pats a=body b=1 if body is a statement
 // stmts      Block [c/d]=stmts, end span = closing brace
 //            SLet a=sym b=type+1 c=init d=0 `let`, 1 `var`, 2 `let mut` e/f=line/col just past
@@ -39,7 +40,7 @@
 //            Field a=sym b=type             GParam a=sym [c/d]=bounds (TName) e=1: `uses E`
 //            IFn a=sym b=flags (FN_*) [c/d]=GParam [e/f]=Param g=ret+1 h=body+1 [i/j]=Cap,
 //                end span = end of the signature (where `uses` goes)
-//            Param a=sym b=type c=inout   Cap a=sym
+//            Param a=sym b=type c=inout d=default+1 (`retries: i32 = 3`; 0: none)   Cap a=sym
 //            ITrait a=sym b=public [c/d]=IFn   IImpl a=trait TName+1 b=target type [c/d]=GParam [e/f]=IFn
 //                (the trait is a TGeneric for `impl From[E] for T`)
 //            IConst a=sym b=public c=type d=value e=comptime

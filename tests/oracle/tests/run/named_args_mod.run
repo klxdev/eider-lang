@@ -1,0 +1,8 @@
+a 25 99 none
+b 25 99 x
+c 2 99 y
+d 25 5 none
+35
+11
+--- stderr
+--- exit 0

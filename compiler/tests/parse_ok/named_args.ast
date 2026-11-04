@@ -1,0 +1,41 @@
+(IFn 1:4 name=open end=1:81
+  param (Param 1:9 name=path
+    type (TName 1:15 name=str))
+  param (Param 1:20 name=retries
+    type (TName 1:29 name=i32)
+    default (EInt 1:35 value=3))
+  param (Param 1:38 name=scale
+    type (TName 1:45 name=f64)
+    default (EUnary 1:51 op=`-`
+      operand (EFloat 1:52 text=1.5)))
+  param (Param 1:57 name=name
+    type (TName 1:63 name=str)
+    default (EStr 1:69 value="x"))
+  ret (TName 1:77 name=bool)
+  body (Block 1:82 end=1:89
+    stmt (SExpr 1:84
+      expr (EBool 1:84 value=true))))
+(IFn 3:4 name=main end=3:10
+  body (Block 3:11 end=8:1
+    stmt (SExpr 4:5
+      expr (ECall 4:5 name=open
+        arg (EArg 4:10
+          expr (EStr 4:10 value="a"))))
+    stmt (SExpr 5:5
+      expr (ECall 5:5 name=open
+        arg (EArg 5:10
+          expr (EStr 5:10 value="a"))
+        arg (EArg 5:15 name=retries
+          expr (EInt 5:25 value=5))
+        arg (EArg 5:28 name=name
+          expr (EStr 5:35 value="b"))))
+    stmt (SExpr 6:5
+      expr (ECall 6:5 name=open
+        arg (EArg 6:10 name=path
+          expr (EStr 6:17 value="c"))))
+    stmt (SLet 7:5 name=r
+      init (ECall 7:13 name=open
+        arg (EArg 7:18
+          expr (EStr 7:18 value="d"))
+        arg (EArg 7:23 name=scale
+          expr (EFloat 7:31 text=2.0))))))

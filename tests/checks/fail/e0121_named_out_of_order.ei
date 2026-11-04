@@ -1,0 +1,5 @@
+// expect: E0121 4:17
+fn f(a: i64, b: i64 = 1, c: i64 = 2) -> i64 { a + b + c }
+fn main() {
+    f(1, c = 3, b = 2)
+}

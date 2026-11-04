@@ -1,0 +1,33 @@
+a:80 retries=3 secure=false timeout=30
+a:8080 retries=3 secure=false timeout=30
+a:80 retries=5 secure=false timeout=30
+a:80 retries=3 secure=true timeout=30
+a:1 retries=3 secure=false timeout=5
+a:1 retries=2 secure=true timeout=4
+a:9 retries=3 secure=true timeout=30
+h:80 retries=3 secure=false timeout=30
+h:2 retries=3 secure=true timeout=1
+1.0
+2.0
+15.0
+hello, Ada
+hi, Ada
+17
+eval a
+eval c
+14
+eval a
+eval b
+eval c
+6
+8
+9
+10
+13
+1
+1
+2
+y
+z:1 retries=3 secure=false timeout=30
+--- stderr
+--- exit 0

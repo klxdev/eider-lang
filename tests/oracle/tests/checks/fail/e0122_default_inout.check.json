@@ -1,0 +1,1 @@
+{"error":"E0122","span":{"file":"tests/checks/fail/e0122_default_inout.ei","line":2,"col":21},"message":"an `inout` parameter can't have a default"}

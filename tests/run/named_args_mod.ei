@@ -1,0 +1,16 @@
+// A default argument is evaluated in the module that declares it: it can name that module's private
+// constants, and a local of the caller with the same name doesn't capture it (#110).
+import mods.options
+
+const LIMIT: i64 = 1
+
+fn main() uses io {
+    let HIDDEN: i64 = 5
+    print(options.fetch("a"))
+    print(options.fetch("b", label = "x"))
+    print(options.fetch("c", 2, label = "y"))
+    print(options.fetch(path = "d", extra = HIDDEN))
+    let p = options.Pool(10)
+    print(p.grow().size)
+    print(p.grow(by = LIMIT).size)
+}

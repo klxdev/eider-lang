@@ -1,0 +1,1 @@
+{"error":"E0122","span":{"file":"tests/checks/fail/e0122_default_not_constant.ei","line":3,"col":23},"message":"a default argument is a literal, a negative number or a constant"}

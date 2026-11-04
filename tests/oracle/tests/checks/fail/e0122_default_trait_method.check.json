@@ -1,0 +1,1 @@
+{"error":"E0122","span":{"file":"tests/checks/fail/e0122_default_trait_method.ei","line":3,"col":26},"message":"a method of a trait can't have default arguments"}

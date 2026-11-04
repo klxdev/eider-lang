@@ -806,6 +806,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_language.ei
   ok   v0_modules.ei
 
-804 passed, 0 failed; error-code coverage 63/74
-codes without a compile-fail test: E0118 E0120 E0302 E0310 E0402 E0607 E0608 E0806 E0808 E0812 E0813
+804 passed, 0 failed; error-code coverage 63/76
+codes without a compile-fail test: E0118 E0120 E0121 E0122 E0302 E0310 E0402 E0607 E0608 E0806 E0808 E0812 E0813
 --- exit 0

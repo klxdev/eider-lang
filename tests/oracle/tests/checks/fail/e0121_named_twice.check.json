@@ -1,0 +1,1 @@
+{"error":"E0121","span":{"file":"tests/checks/fail/e0121_named_twice.ei","line":4,"col":13},"message":"the argument for `b` is given twice"}

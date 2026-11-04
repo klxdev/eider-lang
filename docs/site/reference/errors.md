@@ -622,6 +622,68 @@ fn main() uses io {
 none
 ```
 
+## E0121
+
+A **named argument** that can't be matched: `f(x, retries = 3)` names a parameter ("Default and named arguments" in
+[Items](items.md)). The name is not a parameter of the function, the parameter is already given (by a
+position or an earlier name), the named argument is out of the order of the parameters, a positional
+argument follows a named one, or the call is not of a function or method declared with `fn` (a constructor, a
+builtin, a function value).
+
+```eider,compile_fail=E0121
+fn connect(host: str, port: i64 = 80, retries: i32 = 3) -> i64 { port + retries as i64 }
+
+fn main() uses io {
+    print(connect("a", retries = 5, port = 1))
+}
+```
+
+Fix: name the arguments in the order of the parameters.
+
+```eider
+fn connect(host: str, port: i64 = 80, retries: i32 = 3) -> i64 { port + retries as i64 }
+
+fn main() uses io {
+    print(connect("a", port = 1, retries = 5))
+}
+```
+
+```output
+6
+```
+
+## E0122
+
+A **default argument** that is not allowed: on a method of a trait or of an impl of one, an `extern` or
+`export` function, an `inout` parameter, or a parameter whose type mentions a type parameter or
+`Self`; or one that is not a constant (a literal, a negative number, or a `const` name).
+
+```eider,compile_fail=E0122
+fn one() -> i64 { 1 }
+
+fn add(a: i64, b: i64 = one()) -> i64 { a + b }
+
+fn main() uses io {
+    print(add(1))
+}
+```
+
+Fix: use a constant.
+
+```eider
+const ONE: i64 = 1
+
+fn add(a: i64, b: i64 = ONE) -> i64 { a + b }
+
+fn main() uses io {
+    print(add(1))
+}
+```
+
+```output
+2
+```
+
 ## E0201
 
 A **missing capability**. A call to a function that `uses` a capability (`print` needs
@@ -1093,7 +1155,9 @@ true
 
 **Wrong number of arguments**: to a function, method, constructor, fn value or built-in
 (`Box.new`, `Mutex.new`, `Chan.new`, `spawn`, `fold`, ...), and a closure with a different
-number of parameters than the fn type expected where it is passed.
+number of parameters than the fn type expected where it is passed. With default or named
+arguments, a call that leaves out a parameter that has no default ("`f` is missing the argument
+for `b`").
 
 ```eider,compile_fail=E0405
 fn add(a: i32, b: i32) -> i32 { a + b }

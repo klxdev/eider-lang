@@ -20,7 +20,7 @@ Items are separated by newlines (or `;`). A keyword can't be used as the name of
 
 ```text
 fn_item = "fn" name [generics] "(" [params] ")" ["->" type] ["uses" cap {"," cap}] block
-param   = ["inout"] name ":" type | ["inout"] "self"
+param   = ["inout"] name ":" type ["=" default] | ["inout"] "self"
 ```
 
 A function has a name, optional type parameters (see [Traits and generics](traits.md)),
@@ -87,6 +87,52 @@ fn main() {
 ```
 
 `inout` is only valid on parameters: a type can't contain a reference (E0302).
+
+### Default and named arguments
+
+A parameter can have a **default**, written after its type: `retries: i32 = 3`. A call that leaves
+the argument out gets the default. The default is a constant: a literal, a negative number, or the
+name of a `const` of a number, `bool` or `str` type. It is checked against the parameter's type where it is
+declared and evaluated in the declaring module, so it can name that module's private constants, and a
+caller's variable of the same name never captures it.
+
+At the call, an argument can be **named**: `name = value`. Positional arguments come first; the named
+ones follow, in the order of the parameters, so a call can skip any parameter that has a default. The
+arguments are evaluated in the order they are written.
+
+```eider
+const TIMEOUT: i64 = 30
+
+fn connect(host: str, port: i64 = 80, retries: i32 = 3, timeout: i64 = TIMEOUT) -> String {
+    "{host}:{port} retries={retries} timeout={timeout}"
+}
+
+fn main() uses io {
+    print(connect("a"))
+    print(connect("a", 8080))
+    print(connect("a", retries = 5))
+    print(connect("a", 1, timeout = 5))
+    print(connect(host = "b", port = 2))
+}
+```
+
+```output
+a:80 retries=3 timeout=30
+a:8080 retries=3 timeout=30
+a:80 retries=5 timeout=30
+a:1 retries=3 timeout=5
+b:2 retries=3 timeout=30
+```
+
+Named arguments are for calls of functions and methods declared with `fn`, including the
+functions of other modules. A name that is not a parameter, a parameter given twice, a named argument
+before a later positional one or out of the parameters' order is E0121, and so is a named argument in a
+call of a record or variant constructor, a builtin or a function value (they take their arguments by
+position). A parameter without a default that the call leaves out is E0405. A default on a parameter
+that is `inout`, whose type mentions a type parameter or `Self`, or on a method of a trait or of an impl of
+one, an `extern` or `export` function, and a default that is not a constant, is E0122; a default of
+another type than the parameter's is E0401. A default is not part of the function's type: the value
+`connect` has a type with all four parameters, and a trait's method is called with all its arguments.
 
 ### Result type and body
 

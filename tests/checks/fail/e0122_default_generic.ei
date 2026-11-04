@@ -1,0 +1,3 @@
+// expect: E0122 2:22
+fn f[T](a: T, b: T = 1) -> T { b }
+fn main() {}

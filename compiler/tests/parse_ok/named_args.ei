@@ -1,0 +1,8 @@
+fn open(path: str, retries: i32 = 3, scale: f64 = -1.5, name: str = "x") -> bool { true }
+
+fn main() {
+    open("a")
+    open("a", retries = 5, name = "b")
+    open(path = "c")
+    let r = open("d", scale = 2.0)
+}

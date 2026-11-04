@@ -4736,6 +4736,48 @@ would make the compiler reject chains it accepts today, to save memory only a ru
 it is reserved address space, not committed memory. `EIDER_MAIN_STACK` lowers it per run (a container
 with a small memory limit can set it). Revisit when frames shrink (#129).
 
+## C8.81: named arguments and default arguments (#110)
+
+Decision C872. Code: `args` and `fn_decl` in compiler/parse.ei; `arrange`, `check_param_defaults`, `named_mark`,
+`note_unnamed` and `call_decl` in compiler/check.ei; `default_text` in compiler/doc.ei. Tests:
+tests/run/named_args.ei and named_args_mod.ei (with tests/run/mods/options.ei), tests/checks/{fail,pass}
+(`e0121_*`, `e0122_*`, `e0405_missing_argument`, `e0401_default_type`, `pass_named_args`),
+compiler/tests/parse_ok/named_args.ei, compiler/tests/doc/shapes (`open`).
+
+Syntax. A call argument `name = value` is an `EArg` with d = the name's symbol + 1 (an assignment is a statement,
+so `IDENT =` could not start an expression and nothing parses differently); a parameter `name: T = e` is a
+`Param` with d = the default's expression + 1. The tree of a program that uses neither is unchanged.
+
+Arrangement. `call_decl` (every call of a function or method declared with `fn` ends there) calls
+`arrange`, which maps the written arguments to the parameters: positional ones fill the parameters from
+the first; a named one finds its parameter by name, and must be after the last one filled (named arguments
+follow the parameters' order, as in Swift: that keeps evaluation in the order written, which is the order
+the arguments are checked and emitted in); a positional argument after a named one, a name that is not a
+parameter, a parameter given twice, and a named argument out of order are E0121; a parameter left without
+an argument and without a default is E0405 (the old "takes N argument(s)" message when the function has no
+defaults and the call names nothing). The rest of `call_decl` runs over the parameters instead of the
+written arguments: where `arrange` left a gap the operand is the default's.
+
+Defaults. `check_param_defaults` runs once, after the constants and before any body: for every function
+(and the methods of traits, which cannot have one) it checks the rules of E0122, resolves the parameter's
+type, checks the default expression against it in the declaring module (so a private `const` of that module
+resolves, and no local of a caller can capture the name) with the IR it emits discarded, and requires the
+result to be a constant operand (`O_INT`, `O_BOOL`, `O_STR`, `O_FLOAT`). The operand is kept in
+`C.argdef`, keyed by (module, Param's default node); a call that leaves the argument out pushes that
+operand. Operands of constants are global to the IR, not to a function, so a default can be used from any
+body. No expression is evaluated at a call, nothing is copied into the caller's tree, and a default costs
+what a literal at the call would.
+
+Not covered, on purpose. Named arguments of constructors, builtins and function values: `call` and
+`method_call` mark a call that has named arguments (`C.named_pos`), `call_decl` clears the mark, and a call
+that finishes with it set is E0121 (so a new callee path cannot silently ignore a name). A default in the
+signature of a trait method and of an impl of a trait is E0122: a call through a bound `T: Trait` would
+use the trait's parameters, and the two could differ. Reordering named arguments and a default that
+is an expression (`now_ms()`, `List.new()`) are open.
+
+Tools. `eiderc doc` prints `name: T = default`. tree-sitter-eider: `named_argument` and the `default` field
+of a `parameter`. eider-analyzer: a definition request on a named argument's name finds the parameter.
+
 ## C8.74: checked integer arithmetic (#144)
 
 Decision C855. No compiler change: std/checked.ei adds inherent methods to the integer types

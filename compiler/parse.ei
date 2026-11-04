@@ -1127,6 +1127,8 @@ fn fn_decl(inout p: P, allow_no_body: bool, flags: u32) -> Result[u32, diag.Diag
         } else {
             expect(inout p, lex.Colon)?
             pn.b = ty(inout p)?
+            // a default argument: `retries: i32 = 3` (docs/compiler.md, "C8.81")
+            if eat(inout p, lex.Eq) { pn.d = expr(inout p)? + 1 }
         }
         let pid = add(inout p, pn)
         attach(inout p, pid, pattrs)
@@ -1816,8 +1818,17 @@ fn args(inout p: P) -> Result[List[u32], diag.Diag] {
             if !eat(inout p, lex.Comma) && !is(p, lex.RParen) { return Err(err(p, "expected `,` or `)`")) }
             continue
         }
+        // `name = value`: a named argument (an assignment is a statement, so this was no expression)
+        let mut name: u32 = 0
+        if t.kind == lex.Ident && t.val > intern.LAST_KEYWORD as u64 && kind_at(p, p.i + 1) == lex.Eq {
+            name = t.val as u32 + 1
+            adv(inout p)
+            adv(inout p)
+            skip_nl(inout p)
+        }
         let io = eat_kw(inout p, intern.K_INOUT)
         let mut n = mk(ast.EArg, t.line, t.col)
+        n.d = name
         n.a = expr(inout p)?
         n.b = if io { 1 } else { 0 }
         out.push(add(inout p, n))

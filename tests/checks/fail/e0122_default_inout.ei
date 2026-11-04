@@ -1,0 +1,3 @@
+// expect: E0122 2:21
+fn f(inout a: i64 = 1) {}
+fn main() {}

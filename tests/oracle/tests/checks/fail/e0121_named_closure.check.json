@@ -1,0 +1,1 @@
+{"error":"E0121","span":{"file":"tests/checks/fail/e0121_named_closure.ei","line":4,"col":7},"message":"named arguments are only for calls of functions and methods declared with `fn`","help":"constructors, builtins and function values take their arguments by position"}
