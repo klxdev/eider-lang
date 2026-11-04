@@ -7290,6 +7290,16 @@ fn construct(inout c: C, line: u32, col: u32, di: u32, vkey: u64, start: u32, le
     Ok(v_of(ty, emit_val(inout c, ir.S_RECORD, 0, st, len, ty, ty, line)))
 }
 
+/// Whether argument e is a call (or a `?` or cast of one): it is evaluated, to a new owned
+/// value, before the `inout` access of the call it is an argument of begins, so what it read
+/// conflicts with nothing ("C8.67"; a place, an operator or a value form may hold a reference).
+fn evaluated_first(c: C, e: u32) -> bool {
+    let n = nd(c, e)
+    if n.kind == ast.ECall || n.kind == ast.EMethod { return true }
+    if n.kind == ast.ETry || n.kind == ast.ECast { return evaluated_first(c, n.a) }
+    false
+}
+
 /// Every name an argument reads (not through calls' names or value forms).
 fn idents(c: C, e: u32, inout out: List[u64]) {
     let n = nd(c, e)
@@ -7458,7 +7468,8 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
     for i in 0..n.d {
         let a = nd(c, at(c, n.c, i))
         let pn = ndm(c, fm, atm(c, fm, fnode.e, i + skip))
-        if pn.c != 1 {
+        // (a call is evaluated before the access begins: nothing it read is still held)
+        if pn.c != 1 && !evaluated_first(c, a.a) {
             let mut ids: List[u64] = List.new()
             idents(c, a.a, inout ids)
             for r in roots {

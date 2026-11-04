@@ -4605,3 +4605,13 @@ or another generic wrapper gets no hint. It is a hint only: a failed unification
 the expected type.
 
 E0409's help for a call now says both ways: annotate the binding, or write the type argument.
+
+## C8.67: arguments that are calls, before an `inout` access (#145)
+
+Decision C848. Code: check.ei (`evaluated_first`, used by the read-versus-`inout` loop of
+`call_decl`). Test: tests/run/inout_two_phase.ei. An `inout` receiver or argument is passed as a
+place and the arguments before the call are evaluated into temporaries, so an argument that is a
+call (or `?`/`as` of one) has finished, with a new owned value, when the access begins: nothing
+it read is held. E0301 stays for an argument that is a place (a variable, field, element: it may
+carry a reference), an operator and a value form (`if`, `match`, block), as in the existing
+tests (compiler/tests/check/fail/e0301_*).

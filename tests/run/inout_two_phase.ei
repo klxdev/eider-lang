@@ -1,0 +1,44 @@
+// An argument that is a call is evaluated before the `inout` access of the call it belongs to
+// begins, so it may use the same variable (docs/site/reference/memory.md, "Exclusivity").
+type Registry = { names: List[String], count: i32 }
+
+impl Registry {
+    fn add(inout self, name: String) -> i32 {
+        self.names.push(name)
+        self.count += 1
+        self.count
+    }
+
+    fn add_with(inout self, name: String, first: i32) -> i32 {
+        self.names.push(name)
+        self.count += 1
+        self.count * 100 + first
+    }
+
+    fn size(self) -> i32 { self.count }
+}
+
+fn double(n: i32) -> i32 { n * 2 }
+
+fn bump(inout r: Registry, by: i32) -> i32 {
+    r.count += by
+    r.count
+}
+
+fn main() uses io {
+    let mut r = Registry(List.new(), 0)
+    // the inner call finishes before the outer one starts
+    let a = r.add_with("b".to_string(), r.add("a".to_string()))
+    print(a)
+    print(r.add_with("d".to_string(), double(r.size())))
+    print(bump(inout r, r.size()))
+    // `?` and `as` of a call
+    print(r.add_with("e".to_string(), r.size() as i32))
+    print(r.names.len())
+    let mut xs: List[i32] = List.new()
+    xs.push(1)
+    xs.push(xs.len() as i32)
+    xs.push(double(xs.len() as i32))
+    print(xs.len())
+    print(xs[2])
+}

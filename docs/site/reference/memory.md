@@ -240,6 +240,13 @@ passed `inout` twice, or passed `inout` and also read by another argument of the
 `f(inout p.x, p.y)` conflicts too. A reference counts as the variable its place is rooted
 at: with `let o = xs[0]`, `f(inout xs, o)` is E0301 (fix: bind `o` with `.copy()`).
 
+An argument that is a call (or a `?` or `as` of one) is evaluated first, to a new value,
+before the `inout` access begins, so it may use the variable that is passed `inout`:
+`reg.add(name, reg.count())` and `xs.push(xs.len())` are fine, and so is
+`svc.add("Cart", schema(svc.add("Line", line())))` (the inner call finishes before the outer
+one starts). A place (`xs[0]`, a field, a variable) and an operator (`-p.x`) may carry a
+reference or a read, and still conflict.
+
 ```eider,compile_fail=E0301
 fn both(inout a: i32, inout b: i32) { a += b }
 
