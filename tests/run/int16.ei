@@ -1,0 +1,107 @@
+// 16-bit integers (#44): u16 and i16 with checked arithmetic, wrapping operators, bitwise operators,
+// conversions, patterns, collections, records and formatting.
+type Header = { id: u16, delta: i16, flags: u8 }
+
+fn swap_bytes(x: u16) -> u16 { (x << 8) | (x >> 8) }
+
+fn classify(x: i16) -> str {
+    match x {
+        -32768..=-1 => "negative"
+        0 => "zero"
+        1..=32767 => "positive"
+    }
+}
+
+fn band(x: u16) -> str {
+    match x {
+        0..=255 => "byte"
+        256..=65535 => "word"
+    }
+}
+
+fn add_u16(a: u16, b: u16) -> u16 { a + b }
+fn sub_i16(a: i16, b: i16) -> i16 { a - b }
+
+fn main() uses io {
+    let a: u16 = 65535
+    let b: u16 = 1
+    print(a)
+    print(a +% b)
+    print(b -% 2)
+    print(a *% a)
+    let lo: i16 = -32768
+    let hi: i16 = 32767
+    print(lo)
+    print(hi)
+    print(hi +% 1)
+    print(lo -% 1)
+    print(-(5 as i16))
+    // arithmetic and comparison
+    let x: u16 = 40000
+    let y: u16 = 30000
+    print(x > y)
+    print(x - y)
+    print(x / 7)
+    print(x % 7)
+    let p: i16 = -300
+    print(p * 100)
+    print(p / 7)
+    print(p % 7)
+    print(p < 0)
+    // bitwise and shifts
+    print(swap_bytes(0x1234))
+    print(0xF0F0 as u16 & 0x0FF0)
+    print(0xF0F0 as u16 | 0x0F0F)
+    print(0xFFFF as u16 ^ 0x00FF)
+    print(~(0x00FF as u16))
+    print((1 as u16) << 15)
+    print((-32768 as i16) >> 4)
+    print(~(0 as i16))
+    // conversions (a conversion that doesn't fit traps: tests/run/int16_cast.ei)
+    let small: u16 = 255
+    let pos: i16 = 200
+    print(a as u32)
+    print(a as i32)
+    print(small as u8)
+    print(small as i16)
+    print(lo as i64)
+    print(pos as u16)
+    print(pos as usize)
+    print(pos as u8 == 200)
+    let wide: u32 = 65535
+    print(wide as u16)
+    print(200 as u8 as i16)
+    print(hi as i32 + 1)
+    print((-5 as i16) as i64)
+    // patterns
+    print(classify(lo))
+    print(classify(0))
+    print(classify(hi))
+    print(band(255))
+    print(band(256))
+    // records, lists, maps
+    let h = Header(515, -2, 7)
+    print(h.id + 1)
+    print(h.delta * 2)
+    var ids: List[u16] = List[1, 2, 65535]
+    ids.push(h.id)
+    var total: u32 = 0
+    for v in ids { total += v as u32 }
+    print(total)
+    var m: Map[u16, i16] = Map.new()
+    m.insert(7, -7)
+    m.insert(65535, 1)
+    print(m.get(7))
+    print(m.get(65535))
+    print(m.get(8))
+    // formatting
+    print("{a} {lo} {h.id:04x} {hi:>8} {a:b}")
+    // Default, Eq, Ord, hash
+    let d: u16 = u16.default()
+    print(d == 0)
+    print(a == 65535)
+    print(lo != hi)
+    // function boundaries
+    print(add_u16(100, 200))
+    print(sub_i16(-30000, 2767))
+}

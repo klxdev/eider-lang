@@ -83,6 +83,8 @@ fn domain(ik: u32) -> Iv {
     if ik == types.IK_I32 { return Iv(TOP - 2147483648, TOP + 2147483647) }
     if ik == types.IK_I64 { return Iv(0, 18446744073709551615) }
     if ik == types.IK_U8 { return Iv(0, 255) }
+    if ik == types.IK_I16 { return Iv(TOP - 32768, TOP + 32767) }
+    if ik == types.IK_U16 { return Iv(0, 65535) }
     if ik == types.IK_U32 { return Iv(0, 4294967295) }
     Iv(0, 18446744073709551615)
 }

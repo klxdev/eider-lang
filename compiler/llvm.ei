@@ -330,6 +330,8 @@ fn int_ty(k: u32) -> str {
         1 => "i64"
         2 => "i8"
         3 => "i32"
+        6 => "i16"
+        7 => "i16"
         _ => "i64"
     }
 }
@@ -340,6 +342,8 @@ fn int_bits(k: u32) -> u32 {
         1 => 64
         2 => 8
         3 => 32
+        6 => 16
+        7 => 16
         _ => 64
     }
 }
@@ -497,6 +501,16 @@ fn int_text(k: u32, v: u64) -> List[u8] {
     }
     if k == types.IK_I32 || k == types.IK_U32 { return bytes.from_u64(v % 4294967296) }
     if k == types.IK_U8 { return bytes.from_u64(v % 256) }
+    if k == types.IK_U16 { return bytes.from_u64(v % 65536) }
+    if k == types.IK_I16 {
+        let lo = v % 65536
+        if lo >= 32768 {
+            let mut o = lit("-")
+            bytes.append(inout o, bytes.from_u64(65536 - lo))
+            return o
+        }
+        return bytes.from_u64(lo)
+    }
     bytes.from_u64(v)
 }
 
@@ -560,7 +574,8 @@ fn ext_of(p: lower.P, a: abi.Arg) -> str {
     let ty = a.ty
     if ty >= PTR { return "" }
     let t = types.get(p.t, ty)
-    if t.kind == types.T_BOOL || t.kind == types.T_UNIT || t.kind == types.T_NEVER || (t.kind == types.T_INT && t.a == types.IK_U8) { return " zeroext" }
+    if t.kind == types.T_BOOL || t.kind == types.T_UNIT || t.kind == types.T_NEVER || (t.kind == types.T_INT && (t.a == types.IK_U8 || t.a == types.IK_U16)) { return " zeroext" }
+    if t.kind == types.T_INT && t.a == types.IK_I16 { return " signext" }
     ""
 }
 
@@ -603,8 +618,10 @@ fn ret_text(inout e: E, p: lower.P, s: abi.Sig) -> List[u8] {
     let r = s.ret
     if r.kind == abi.A_VOID || r.kind == abi.A_SRET { return lit("void") }
     if r.kind == abi.A_DIRECT {
-        let mut o = lit(ext_of(p, r))
-        if o.len() > 0 { o = lit("zeroext ") }
+        let ex = ext_of(p, r)
+        let mut o = lit(ex)
+        if o.len() > 0 { o = bytes.slice(o, 1, o.len()) }
+        if o.len() > 0 { o.push(32) }
         bytes.append(inout o, vty(inout e, p, r.ty))
         return o
     }

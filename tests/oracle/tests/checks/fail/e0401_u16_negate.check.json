@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"tests/checks/fail/e0401_u16_negate.ei","line":4,"col":13},"message":"cannot negate a value of type u16"}

@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"tests/checks/fail/e0501_i16_literal.ei","line":3,"col":18},"message":"literal -32769 doesn't fit in i16"}

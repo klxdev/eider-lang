@@ -251,7 +251,7 @@ around in core.
 | ~~**Iterating a Map**~~ | done (docs/compiler.md "C8.20"): eider-http's http/metrics and eider-openapi's examples/todo iterate their Maps; `Set` keeps its List on purpose, for insertion order (C102) | an insertion-ordered Map, if more code wants that order |
 | ~~**In-place List operations**~~ (`insert`/`remove` at an index, `truncate`, `remove_range`, `extend`, `swap`, `slice`, `List.filled`) | done (docs/compiler.md "C8.49"): `BufReader` compacts in place, `tail` and `part` are one `slice` | |
 | **Zero-copy views** (a `slice` that shares the List's buffer) | `slice` copies; `Decode` returning `str` fields that share the input buffer | a read-only view type and an offset in every List (decision C800) |
-| **16-bit integers** | `encoding.u16_le` returns a u32 | `u16`/`i16` |
+| ~~**16-bit integers**~~ | done (#44, docs/compiler.md "C8.82"): `u16` and `i16`; `encoding.u16_le` returns a `u16` | |
 | ~~**String literal escapes**~~ `\r`, `\xNN`, `\u{...}` | done (docs/compiler.md "C8.17"; `\0` refused: strings hold no NUL); http writes `\r\n` literals | |
 | ~~**`panic` with a computed message**~~ | done (#47, docs/compiler.md "C8.70"): `panic` takes a `String`; `assert_eq`, `assert_ne` and `assert_ok` panic with their message, and no longer need `uses io` | |
 | ~~**`if`/`match` as a call argument**~~ | done (#48, docs/compiler.md "C8.72"): `f(if c { a } else { b })` and `match` check | |

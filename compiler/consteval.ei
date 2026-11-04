@@ -196,10 +196,10 @@ const T_UNSIGNED: u32 = 4
 fn const_kind(inout p: resolve.Program, m: u32, t: u32) -> u32 {
     let tn = p.mods[m as usize].ast.nodes[t as usize].copy()
     if tn.kind != ast.TName || tn.b != 0 { return T_NONE }
-    for w in ["i32", "i64"] {
+    for w in ["i32", "i64", "i16"] {
         if tn.a == sym(inout p, w) { return T_SIGNED }
     }
-    for w in ["u8", "u32", "u64", "usize"] {
+    for w in ["u8", "u16", "u32", "u64", "usize"] {
         if tn.a == sym(inout p, w) { return T_UNSIGNED }
     }
     if tn.a == sym(inout p, "bool") { return T_BOOL }

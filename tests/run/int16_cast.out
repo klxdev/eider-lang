@@ -1,0 +1,2 @@
+32767
+eider: runtime error: integer conversion out of range (tests/run/int16_cast.ei:6)

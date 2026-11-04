@@ -1,0 +1,7 @@
+// A conversion to i16 or u16 that doesn't fit traps (#44).
+fn main() uses io {
+    let ok: i32 = 32767
+    print(ok as i16)
+    let n: i32 = -1
+    print(n as u16)
+}

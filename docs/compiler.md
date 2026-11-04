@@ -4778,6 +4778,27 @@ is an expression (`now_ms()`, `List.new()`) are open.
 Tools. `eiderc doc` prints `name: T = default`. tree-sitter-eider: `named_argument` and the `default` field
 of a `parameter`. eider-analyzer: a definition request on a named argument's name finds the parameter.
 
+## C8.82: 16-bit integers, `u16` and `i16` (#44)
+
+Decision C873. Code: compiler/types.ei (`IK_I16`, `IK_U16`, type ids), and the width tables of check, fold, lower, llvm,
+llvm_abi, pats, interp, wasm and consteval. Tests: tests/run/int16.ei, int16_overflow.ei, int16_cast.ei,
+int16_ffi.ei; tests/checks/fail/e0501_{u16,i16}_literal, e0401_u16_negate, e0401_u16_i16_mix.
+
+The integer kinds are 0 to 5 as before (`i32 i64 u8 u32 u64 usize`) and `i16`, `u16` are 6 and 7. The type id of an
+integer is its kind, so the fixed ids of `bool`, `str`, `()`, `!`, `String`, `f32` and `f64` moved up by two
+(`types.BOOL` is 8, `CAPS0` 15), and the names `well_known` lists are in the same order. Everything else is the
+same code at another width: literals check against `imin`/`imax`, `as` conversions against `lower.kmin`/`kmax`
+(a conversion that doesn't fit traps, as for the other kinds), arithmetic uses LLVM's overflow intrinsics on `i16`,
+the wrapping operators and the bitwise operators fold at 16 bits (`fold.wrap`), a pattern's domain is
+`Iv(0, 65535)` or the biased i16 range (exhaustiveness of `-32768..=32767`), and the comptime interpreter
+cuts values to 16 bits (sign-extending `i16`). A value is widened to 64 bits for printing, formatting and hashing,
+as `u8` and `i32` are. At the C boundary `u16` is `zeroext` and `i16` `signext` (clang's x86-64 convention for
+narrow integers), a record field is 2 bytes with alignment 2, the header spells `uint16_t` and `int16_t`, and
+WebAssembly exports them as numbers.
+
+`std/encoding` returns `u16` from `u16_le`/`u16_be` and takes one in `push_u16_le`/`push_u16_be` (a value that
+doesn't fit no longer needs a check), and `std/checked` has `checked_*` for both kinds.
+
 ## C8.74: checked integer arithmetic (#144)
 
 Decision C855. No compiler change: std/checked.ei adds inherent methods to the integer types

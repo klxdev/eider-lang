@@ -31,9 +31,9 @@ true
 -1
 ```
 
-- Integers: `i32`, `i64`, `u8`, `u32`, `u64` and `usize` (sizes and indices). There are
+- Integers: `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64` and `usize` (sizes and indices). There are
   no implicit conversions: `as` converts, and a conversion whose value doesn't fit traps
-  (`integer conversion out of range`). 16-bit integers are not in the language yet.
+  (`integer conversion out of range`).
 - `bool`, `str` (string literals), `String` (owned UTF-8 text), `()` (the unit value).
 - Floats: `f32` and `f64`, IEEE 754 (`1.5`, `1e-3`, `2.5f32`). They never trap, they mix with
   nothing without `as` (`n as f64`), and `NaN != NaN`; see below and [Numbers](numbers.md).

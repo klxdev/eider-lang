@@ -1,0 +1,1 @@
+{"error":"E0501","span":{"file":"tests/checks/fail/e0501_u16_literal.ei","line":3,"col":18},"message":"literal 65536 doesn't fit in u16 (max 65535)"}

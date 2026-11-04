@@ -804,6 +804,8 @@ fn imax(k: u32) -> fold.Wide {
         1 => fold.of_u64(9223372036854775807)
         2 => fold.of_u64(255)
         3 => fold.of_u64(4294967295)
+        6 => fold.of_u64(32767)
+        7 => fold.of_u64(65535)
         _ => fold.of_u64(18446744073709551615)
     }
 }
@@ -812,6 +814,7 @@ fn imin(k: u32) -> fold.Wide {
     match k {
         0 => fold.of_neg(2147483648)
         1 => fold.of_neg(9223372036854775808)
+        6 => fold.of_neg(32768)
         _ => fold.zero()
     }
 }
@@ -2564,7 +2567,7 @@ fn head_of(c: C, ty: u32) -> u64 {
     let t = types.get(c.t, ty)
     match t.kind {
         0 => resolve.key(0, c.w.ints[t.a as usize])
-        23 => resolve.key(0, c.w.ints[(11 + t.a) as usize])
+        23 => resolve.key(0, c.w.ints[(13 + t.a) as usize])
         1 => resolve.key(0, c.w.s_bool)
         2 => resolve.key(0, c.w.s_str)
         3 => H_UNIT
@@ -3747,10 +3750,10 @@ fn dyn_method(inout c: C, n: ast.Node, pv: PV) -> Result[V, diag.Diag] {
 }
 
 fn well_known(inout names: intern.Interner) -> W {
-    // the names of the primitive types, indexed by type id (types.ei): the six integers, then
+    // the names of the primitive types, indexed by type id (types.ei): the eight integers, then
     // bool, str, (), !, String and the floats, so `int_kind` of a name is its type id
     let mut ints: List[u32] = List.new()
-    for w in ["i32", "i64", "u8", "u32", "u64", "usize", "bool", "str", "()", "!", "String", "f32", "f64"] { ints.push(sym(inout names, w)) }
+    for w in ["i32", "i64", "u8", "u32", "u64", "usize", "i16", "u16", "bool", "str", "()", "!", "String", "f32", "f64"] { ints.push(sym(inout names, w)) }
     let mut heap: List[u32] = List.new()
     for w in ["List", "Map", "Box", "Task", "Mutex", "Chan"] { heap.push(sym(inout names, w)) }
     let mut caps: List[u32] = List.new()

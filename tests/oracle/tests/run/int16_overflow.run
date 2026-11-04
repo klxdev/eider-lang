@@ -1,0 +1,4 @@
+65535
+--- stderr
+eider: runtime error: integer overflow in + (tests/run/int16_overflow.ei:2)
+--- exit 101

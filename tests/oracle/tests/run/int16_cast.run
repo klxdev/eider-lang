@@ -1,0 +1,4 @@
+32767
+--- stderr
+eider: runtime error: integer conversion out of range (tests/run/int16_cast.ei:6)
+--- exit 101

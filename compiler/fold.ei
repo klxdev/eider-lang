@@ -94,6 +94,7 @@ pub fn wrap(a: Wide, bits: u32, signed: bool) -> Wide {
         return of_u64(low)
     }
     let mut size: u64 = 256
+    if bits == 16 { size = 65536 }
     if bits == 32 { size = B32 }
     let m = low % size
     if signed && m >= size / 2 { return of_neg(size - m) }

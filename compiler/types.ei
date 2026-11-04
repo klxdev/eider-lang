@@ -94,21 +94,25 @@ pub const IK_U8: u32 = 2
 pub const IK_U32: u32 = 3
 pub const IK_U64: u32 = 4
 pub const IK_USIZE: u32 = 5
+pub const IK_I16: u32 = 6
+pub const IK_U16: u32 = 7
 
-/// Fixed type ids.
+/// Fixed type ids (the integers' are their kinds).
 pub const I32: u32 = 0
 pub const I64: u32 = 1
 pub const U8: u32 = 2
 pub const U32: u32 = 3
 pub const U64: u32 = 4
 pub const USIZE: u32 = 5
-pub const BOOL: u32 = 6
-pub const STR: u32 = 7
-pub const UNIT: u32 = 8
-pub const NEVER: u32 = 9
-pub const STRING: u32 = 10
-pub const F32: u32 = 11
-pub const F64: u32 = 12
+pub const I16: u32 = 6
+pub const U16: u32 = 7
+pub const BOOL: u32 = 8
+pub const STR: u32 = 9
+pub const UNIT: u32 = 10
+pub const NEVER: u32 = 11
+pub const STRING: u32 = 12
+pub const F32: u32 = 13
+pub const F64: u32 = 14
 
 /// "no type" / "no definition"
 pub const NOTY: u32 = 4294967295
@@ -152,7 +156,7 @@ pub type Types = {
 
 pub fn new() -> Types {
     let mut t = Types(List.new(), Map.new(), List.new(), List.new(), List.new(), Map.new(), Map.new(), List.new(), List.new())
-    for i in 0..6 { t.tys.push(Ty(T_INT, i as u32, 0, 0)) }
+    for i in 0..8 { t.tys.push(Ty(T_INT, i as u32, 0, 0)) }
     t.tys.push(Ty(T_BOOL, 0, 0, 0))
     t.tys.push(Ty(T_STR, 0, 0, 0))
     t.tys.push(Ty(T_UNIT, 0, 0, 0))
@@ -251,7 +255,7 @@ pub fn fn_plain(inout t: Types, id: u32) -> u32 {
 }
 /// The type of capability set `mask` (a substitution's value for `uses E`): all 512 are made
 /// by `new`, right after the primitive types.
-pub const CAPS0: u32 = 13
+pub const CAPS0: u32 = 15
 pub fn caps_of(mask: u32) -> u32 { CAPS0 + mask }
 pub fn dyn_of(inout t: Types, pre: u32, sym: u32) -> u32 { comp(inout t, T_DYN, pre, sym) }
 /// `Task[elem]`; also interns `fn() -> elem`, the closure a Task runs (its layout holds one).
@@ -410,17 +414,21 @@ pub fn int_name(k: u32) -> str {
         2 => "u8"
         3 => "u32"
         4 => "u64"
+        6 => "i16"
+        7 => "u16"
         _ => "usize"
     }
 }
 
-pub fn signed(k: u32) -> bool { k == IK_I32 || k == IK_I64 }
+pub fn signed(k: u32) -> bool { k == IK_I32 || k == IK_I64 || k == IK_I16 }
 
 pub fn bits(k: u32) -> u32 {
     match k {
         0 => 32
         3 => 32
         2 => 8
+        6 => 16
+        7 => 16
         _ => 64
     }
 }

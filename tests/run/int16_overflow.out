@@ -1,0 +1,2 @@
+65535
+eider: runtime error: integer overflow in + (tests/run/int16_overflow.ei:2)

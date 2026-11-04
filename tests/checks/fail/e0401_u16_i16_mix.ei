@@ -1,0 +1,6 @@
+// expect: E0401 5:17
+fn main() {
+    let a: u16 = 5
+    let b: i16 = 6
+    let c = a + b
+}

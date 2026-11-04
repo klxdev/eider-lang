@@ -54,6 +54,9 @@ Group 1, language and compiler ergonomics (more items come before the release).
   constant, named arguments follow the order of the parameters, new errors E0121 (a named argument that doesn't
   fit) and E0122 (a default that isn't allowed). `eiderc doc` shows defaults. eider-analyzer and
   tree-sitter-eider follow.
+- **16-bit integers** (#44): `u16` and `i16` with checked arithmetic, wrapping and bitwise operators, conversions,
+  patterns, `List`/`Map`/record use and the C ABI (`uint16_t`, `int16_t`); `std/encoding`'s `u16_le`, `u16_be`,
+  `push_u16_le` and `push_u16_be` use `u16`, and `std/checked` covers both.
 - Fixes: an error in a `test` block names its own file (#162; the compiler's recorded expectations
   that had the stale file are re-blessed); `eiderc lint` takes a module or package with no `main` (#163);
   a method chain of hundreds of calls compiles (#153: the Eider `main` has a 512 MiB stack, `EIDER_MAIN_STACK`).

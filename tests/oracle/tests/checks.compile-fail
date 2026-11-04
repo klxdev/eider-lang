@@ -78,6 +78,8 @@ compile-fail tests (tests/checks/fail)
   ok   e0401_mixed_widths.ei        E0401 at 2:34
   ok   e0401_narrowing.ei           E0401 at 3:16
   ok   e0401_repeat_owned.ei        E0401 at 3:21
+  ok   e0401_u16_i16_mix.ei         E0401 at 5:17
+  ok   e0401_u16_negate.ei          E0401 at 4:13
   ok   e0401_value_arg_unit.ei      E0401 at 4:17
   ok   e0402_null.ei                E0402 at 3:16
   ok   e0405_closure_arity.ei       E0405 at 4:22
@@ -95,7 +97,9 @@ compile-fail tests (tests/checks/fail)
   ok   e0411_ref_in_mutex.ei        E0411 at 4:23
   ok   e0412_spec_not_integer.ei    E0412 at 4:13 (fix compiles)
   ok   e0501_constant_overflow.ei   E0501 at 2:21
+  ok   e0501_i16_literal.ei         E0501 at 3:18
   ok   e0501_literal_out_of_range.ei E0501 at 3:15
+  ok   e0501_u16_literal.ei         E0501 at 3:18
   ok   e0502_constant_div_zero.ei   E0502 at 3:14
   ok   e0503_constant_index_oob.ei  E0503 at 4:11
   ok   e0504_nonconst_initializer.ei E0504 at 3:16
@@ -174,5 +178,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-172 passed, 0 failed; error-code coverage 76/76
+176 passed, 0 failed; error-code coverage 76/76
 --- exit 0

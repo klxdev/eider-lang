@@ -94,7 +94,7 @@ fn ts_ty(p: lower.P, ty: u32) -> str {
     let k = types.kind(p.t, ty)
     if k == types.T_BOOL { return "boolean" }
     let ik = types.ik(p.t, ty)
-    if k == types.T_INT && (ik == 1 || ik >= 4) { return "bigint" }
+    if k == types.T_INT && (ik == 1 || ik == 4 || ik == 5) { return "bigint" }
     "number"
 }
 
@@ -337,6 +337,8 @@ fn c_scalar(p: lower.P, ty: u32) -> str {
     if ik == types.IK_I64 { return "int64_t" }
     if ik == types.IK_U8 { return "uint8_t" }
     if ik == types.IK_U32 { return "uint32_t" }
+    if ik == types.IK_I16 { return "int16_t" }
+    if ik == types.IK_U16 { return "uint16_t" }
     "uint64_t"
 }
 

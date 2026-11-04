@@ -1,0 +1,1 @@
+{"error":"E0401","span":{"file":"tests/checks/fail/e0401_u16_i16_mix.ei","line":5,"col":17},"message":"expected u16, found i16","help":"there are no implicit conversions; use an explicit cast: `value as u16`"}

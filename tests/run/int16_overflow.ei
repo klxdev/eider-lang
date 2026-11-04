@@ -1,0 +1,7 @@
+// u16 and i16 arithmetic traps on overflow like the other integer types (#44).
+fn bump(x: u16) -> u16 { x + 1 }
+
+fn main() uses io {
+    print(bump(65534))
+    print(bump(65535))
+}

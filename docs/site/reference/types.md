@@ -7,7 +7,7 @@ built-in operations on each, and the `as` conversion.
 
 | Kind | Types |
 |---|---|
-| Integers | `i32`, `i64`, `u8`, `u32`, `u64`, `usize` |
+| Integers | `i16`, `i32`, `i64`, `u8`, `u16`, `u32`, `u64`, `usize` |
 | Floats | `f32`, `f64` |
 | Booleans | `bool` |
 | Text | `str` (literals), `String` (owned, growable) |
@@ -22,7 +22,7 @@ Type names are ordinary identifiers, not keywords: `i32`, `String` and `List` ar
 compiler knows. A type with parameters is written with square brackets: `List[i32]`,
 `Map[String, List[u8]]`.
 
-> **Note:** There are no `i8`, `i16`, `u16`, `i128`, `u128` or `isize`, no `char` type, no
+> **Note:** There are no `i8`, `i128`, `u128` or `isize`, no `char` type, no
 > `Decimal` or `BigInt` and no `dyn Trait`. `dyn Trait` is planned; see the
 > [roadmap](../../design/roadmap.md) (`layer/language`, P0.7).
 
@@ -30,9 +30,11 @@ compiler knows. A type with parameters is written with square brackets: `List[i3
 
 | Type | Range | C type |
 |---|---|---|
+| `i16` | -32768 to 32767 | `int16_t` |
 | `i32` | -2147483648 to 2147483647 | `int32_t` |
 | `i64` | -9223372036854775808 to 9223372036854775807 | `int64_t` |
 | `u8` | 0 to 255 | `uint8_t` |
+| `u16` | 0 to 65535 | `uint16_t` |
 | `u32` | 0 to 4294967295 | `uint32_t` |
 | `u64` | 0 to 18446744073709551615 | `uint64_t` |
 | `usize` | 0 to 18446744073709551615 | `uint64_t` (64 bits on every target) |

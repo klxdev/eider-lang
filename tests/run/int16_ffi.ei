@@ -1,0 +1,20 @@
+// u16 and i16 cross the C boundary with the right extension (#44): htons takes and returns a
+// uint16_t, labs-like functions of the C library take wider ones. The record has a 2-byte field.
+extern "c" fn htons(x: u16) -> u16
+extern "c" fn ntohs(x: u16) -> u16
+
+type Wire = { port: u16, ttl: i16 }
+
+export fn wire_port(w: Wire) -> u16 { w.port }
+export fn wire_sum(a: i16, b: i16) -> i16 { a + b }
+
+fn main() uses io, ffi {
+    let p: u16 = 0x1234
+    let swapped = unsafe { htons(p) }
+    print(swapped)
+    let back = unsafe { ntohs(swapped) }
+    print(back == p)
+    let w = Wire(8080, -1)
+    print(wire_port(w))
+    print(wire_sum(-100, 99))
+}

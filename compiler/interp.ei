@@ -207,6 +207,12 @@ fn norm(v: u64, k: u32) -> u64 {
     if k == types.IK_I64 || k == types.IK_U64 || k == types.IK_USIZE { return v }
     if k == types.IK_U8 { return v & 255 }
     if k == types.IK_U32 { return v & 4294967295 }
+    if k == types.IK_U16 { return v & 65535 }
+    if k == types.IK_I16 {
+        let lo16 = v & 65535
+        if lo16 >= 32768 { return lo16 | 18446744073709486080 }
+        return lo16
+    }
     // i32
     let lo = v & 4294967295
     if lo >= 2147483648 { return lo | 18446744069414584320 }
