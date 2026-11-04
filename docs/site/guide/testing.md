@@ -105,16 +105,16 @@ hello-world
 If `slugify` forgot the hyphen, the test would report:
 
 ```text
-test slugify ... assertion failed: values differ
+test slugify ... FAILED
+    assertion failed: values differ
    got: hello world
   want: hello-world
-  (first difference at byte 5)
-FAILED
-    assert_eq failed (std/testing.ei:65)
+  (first difference at byte 5) (std/testing.ei:65)
 ```
 
-The location is the line in std/testing that stops the test, not your call (there is no
-caller location yet); the test's name and the two values tell you which check failed.
+The message is the two values (`assert_eq` stops the test with `panic` and a computed
+message). The location is the line in std/testing that stops the test, not your call (there is
+no caller location yet); the test's name and the two values tell you which check failed.
 For text with several lines it adds a line diff (`- got`, `+ want`). `assert_ne(got, avoid)`
 and `assert_ok(result)` (the value of an `Ok`, or a failure that prints the `Err`) work the
 same way.

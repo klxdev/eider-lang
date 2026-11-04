@@ -244,7 +244,7 @@ around in core.
 | **Zero-copy views** (a `slice` that shares the List's buffer) | `slice` copies; `Decode` returning `str` fields that share the input buffer | a read-only view type and an offset in every List (decision C800) |
 | **16-bit integers** | `encoding.u16_le` returns a u32 | `u16`/`i16` |
 | ~~**String literal escapes**~~ `\r`, `\xNN`, `\u{...}` | done (docs/compiler.md "C8.17"; `\0` refused: strings hold no NUL); http writes `\r\n` literals | |
-| **`panic` with a computed message** (`panic` takes only a `str`) | `assert_eq` prints its diff to stderr, then panics with a fixed text | `panic(String)` |
+| ~~**`panic` with a computed message**~~ | done (#47, docs/compiler.md "C8.70"): `panic` takes a `String`; `assert_eq`, `assert_ne` and `assert_ok` panic with their message, and no longer need `uses io` | |
 | **`if`/`match` as a call argument** (E0103) | values are bound to a `let` first | expression-position `if` |
 | **Floats** (C9) | no float formatting or parsing in `fmt`/`strings` | f64 |
 | **Calling a trait method by its trait** (`time.Clock.sleep(c, d)`) | method syntax only (`c.sleep(d)`), which is ambiguous if a type has an own method of that name | qualified calls |
@@ -274,7 +274,7 @@ works around any of them (`stream.Kind` lost its own Show, `stream.plain` is gon
    isn't a type parameter matches any type" quirk, LEARNINGS.md), and the result is C that
    doesn't compile rather than E0401: `plain` above accepts a `Result[i32, String]`.
 3. **A trap in an imported module names the entry file**: a program `p.ei` whose `main`
-   calls `testing.assert_eq(1, 2)` reports `assert_eq failed (p.ei:65)`, line 65 being
+   calls `testing.assert_eq(1, 2)` reports its message with `(p.ei:65)`, line 65 being
    std/testing.ei's `panic`. (tests/std/testing.ei avoids pinning a trap's location.)
 4. **A derived Show of another module's enum prints the mangled name** (`stream__TimedOut`);
    `stream.Kind` had its own Show to print `TimedOut`; it is derived now.

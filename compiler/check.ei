@@ -7765,12 +7765,13 @@ fn builtin(inout c: C, n: ast.Node, which: u32) -> Result[V, diag.Diag] {
             return fail_call(inout c, fd, n.c, n.d)
         }
         let ae = arg_expr(c, at(c, n.c, 0))
-        let v = expr(inout c, ae, types.STR)?
-        if !same(c, v.ty, types.STR) {
+        // a `str` or a `String` (a computed message); the type is on the statement
+        let v = expr(inout c, ae, NONE)?
+        if !same(c, v.ty, types.STR) && !same(c, v.ty, types.STRING) {
             let x = nd(c, ae)
             return Err(mismatch(c, x.line, x.col, types.STR, v.ty))
         }
-        emit(inout c, ir.S_PANIC, 0, v.op, 0, 0, 0, n.line)
+        emit(inout c, ir.S_PANIC, 0, v.op, 0, 0, v.ty, n.line)
         return Ok(v_of(types.NEVER, ir.op_unit(inout c.ir)))
     }
     // now_ms

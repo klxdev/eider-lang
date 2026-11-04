@@ -1,0 +1,5 @@
+1
+2
+--- stderr
+eider: runtime error: bad value 7 (compiler/tests/run/panic_string.ei:10)
+--- exit 101

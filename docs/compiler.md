@@ -4639,3 +4639,11 @@ unless it is `()` or `!`; and `compile_match` first scans the arms for a body `x
 integer or float and uses it as the starting expectation, which makes `0` above `n as i64` an i64.
 Not done: an arm that needs a type (E0409) above the arm that has it, other than by a cast; the
 expectation is a hint, so a sibling of another type is still E0401 at the `unify` of the arms.
+
+## C8.70: `panic` with a computed message (#47)
+
+Decision C851. Code: check.ei (`panic` builtin: the argument is checked with no expectation and
+may be `str` or `String`; `S_PANIC`'s `ty` is the message's type), llvm.ei (`S_PANIC` loads the
+String's text pointer as `print` does). Test: compiler/tests/run/panic_string.ei (stdout flushed,
+then `eider: runtime error: bad value 7 (...)`, exit 101). std/testing's assertions use it.
+The comptime interpreter reads the message bytes of either type (`S_PANIC`).

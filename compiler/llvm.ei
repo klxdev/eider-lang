@@ -1795,8 +1795,15 @@ fn stmt(inout e: E, p: lower.P, id: u32) {
         let r = rt_call(inout e, p, "ei_now_ms", List.new(), List.new(), types.U64)
         store(inout e, p, types.U64, r, dst_addr(s.dst))
     } else if k == ir.S_PANIC {
-        let m = opv(inout e, p, s.a)
-        trap_with(inout e, m, s.line)
+        if s.ty == types.STRING {
+            // a computed message: the String's text is NUL-terminated, as for `print`
+            let a = opa(inout e, p, s.a)
+            let q = load_ptr_field(inout e, p, types.STRING, a, 0)
+            trap_with(inout e, q, s.line)
+        } else {
+            let m = opv(inout e, p, s.a)
+            trap_with(inout e, m, s.line)
+        }
     } else if k == ir.S_ASSERT {
         let c = opv(inout e, p, s.a)
         let ok = new_label(inout e)

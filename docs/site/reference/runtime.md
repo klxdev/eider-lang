@@ -198,7 +198,7 @@ written.
 
 ## `panic` and `assert`
 
-`panic(msg)` traps with the message `msg` (a `str`). It never returns, so it can stand where
+`panic(msg)` traps with the message `msg`, a `str` or a `String` (a computed message). It never returns, so it can stand where
 any type is expected, for example as a `match` arm.
 
 `assert cond` and `assert cond, "message"` are statements: when `cond` is `false` they trap

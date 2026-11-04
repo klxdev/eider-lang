@@ -64,32 +64,29 @@ pub fn difference[T: Show](what: String, got: T, want: T) -> String {
     m
 }
 
-/// Traps (exit 101) unless `got == want`, after printing both to stderr.
-pub fn assert_eq[T: Eq + Show](got: T, want: T) uses io {
+/// Traps (exit 101) unless `got == want`; the message is both values.
+pub fn assert_eq[T: Eq + Show](got: T, want: T) {
     if got == want { return }
-    io.errln(difference(String.from("assertion failed: values differ"), got, want).bytes())
-    panic("assert_eq failed")
+    panic(difference(String.from("assertion failed: values differ"), got, want))
 }
 
 /// Traps unless `got != avoid`.
-pub fn assert_ne[T: Eq + Show](got: T, avoid: T) uses io {
+pub fn assert_ne[T: Eq + Show](got: T, avoid: T) {
     if got != avoid { return }
     let mut m = String.from("assertion failed: both are ")
     m.append(got.to_string())
-    io.errln(m.bytes())
-    panic("assert_ne failed")
+    panic(m)
 }
 
-/// The value of an Ok; traps on an Err, printing the error.
-pub fn assert_ok[T, E: Show](r: Result[T, E]) -> T uses io {
+/// The value of an Ok; traps on an Err, with the error in the message.
+pub fn assert_ok[T, E: Show](r: Result[T, E]) -> T {
     match r {
         Ok(v) => v
         Err(e) => {
             let mut m = String.from("assertion failed: got Err(")
             m.append(e.to_string())
             m.push_str(")")
-            io.errln(m.bytes())
-            panic("assert_ok failed")
+            panic(m)
         }
     }
 }
