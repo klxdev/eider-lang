@@ -466,7 +466,7 @@ the memory of a million idle connections.
 
 The echo server is slower than threads at 1,000 connections because every wake-up passes
 through a reactor thread and a worker (two hand-offs where a blocked thread has one); a worker
-that polls itself when idle, as Go's does, is the known remedy and is not built. The kvstore and
+that polls itself when idle, as Go's does, is the remedy; it is built (#175) and the echo numbers above predate it. The kvstore and
 Pool numbers above come from threads; the Pool is the same code on tasks now.
 
 ## Next (needs the compiler)
