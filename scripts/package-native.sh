@@ -40,6 +40,7 @@ check() (
   echo "native: $name matches this commit and contains native-tested arm64 tools"
 )
 if [ "${1:-}" = --check ]; then check "$2"; exit; fi
+git diff --quiet HEAD || { echo "native: commit tracked changes before packaging" >&2; exit 1; }
 [ "$(uname -sm)" = 'Darwin arm64' ] || { echo 'native: needs an Apple Silicon macOS runner' >&2; exit 2; }
 TAR=${TAR:-gtar}
 "$TAR" --version | grep -q 'GNU tar' || { echo 'native: needs GNU tar (brew install gnu-tar)' >&2; exit 2; }
