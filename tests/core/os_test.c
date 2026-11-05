@@ -637,7 +637,8 @@ static void test_unix(void) {
 }
 
 /* A lookup on a thread of its own: its answer is the one ec_dns_lookup gives, a deadline passes
-   without it (flags 64: the thread waits 300 ms first), and an abandoned lookup frees itself. */
+   without it (flags 64: the thread holds the lookup until it is cancelled, so what the test sees
+   does not depend on how the threads are scheduled, #210), and an abandoned lookup frees itself. */
 static void test_dns_deadline(void) {
   ec_in_clear();
   push_str("127.0.0.1");
@@ -647,7 +648,7 @@ static void test_dns_deadline(void) {
   CHECK(j > 0);
   int64_t fd = ec_dns_job_fd(j);
   CHECK(fd >= 0);
-  EQI(ec_fd_wait((int32_t)fd, 1, 5000), 1);
+  EQI(ec_fd_wait((int32_t)fd, 1, 30000), 1);
   EQI(ec_dns_finish(j), 1);
   CHECK(ec_out_byte(0) == 1 && ec_out_byte(1) == 7 && ec_out_byte(2) == 4 && ec_out_byte(5) == 127);
   EQI(ec_out_byte(3) * 256 + ec_out_byte(4), 8080);
@@ -657,7 +658,7 @@ static void test_dns_deadline(void) {
   push_str("not-a-number");
   j = ec_dns_start(0, 1, 2);
   CHECK(j > 0);
-  EQI(ec_fd_wait((int32_t)ec_dns_job_fd(j), 1, 5000), 1);
+  EQI(ec_fd_wait((int32_t)ec_dns_job_fd(j), 1, 30000), 1);
   int64_t e = ec_dns_finish(j);
   CHECK(e <= -1000001 && e >= -1000009);
   /* a deadline passes first: nothing is readable, the job is abandoned, the thread frees it */
@@ -679,7 +680,7 @@ static void test_dns_deadline(void) {
   ec_in_push(0);
   push_str("9");
   j = ec_dns_start(4, 1, 2);
-  EQI(ec_fd_wait((int32_t)ec_dns_job_fd(j), 1, 5000), 1);
+  EQI(ec_fd_wait((int32_t)ec_dns_job_fd(j), 1, 30000), 1);
   EQI(ec_dns_cancel(j), 0);
   /* a bad family is refused, and numbers that are no job */
   EQI(ec_dns_start(5, 0, 0), -EINVAL);

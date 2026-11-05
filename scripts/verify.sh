@@ -12,6 +12,10 @@
 # a parallel run reads like a serial one, and each leg's wall time is in the `legs:` line at the
 # end. Legs that share a fixed directory under target/ (compiler -> llvm -> wasm: eiderc-next;
 # docs -> packages: eider-doc) are one leg each. `VERIFY_ONLY="std core"` runs just those legs.
+# A failing leg keeps its output under target/verify/ (#210): <leg>.out is everything the leg
+# printed, and the legs that print only a summary line for a suite (run tests, core, std, pkg,
+# export) keep the suite's full output in target/verify/<leg>.log, named in the FAIL line, so a
+# failure that does not come back can still be diagnosed. A leg that passes removes its files.
 # A green run (ALL GREEN) is recorded for this commit, the siblings' commits and the toolchain
 # (scripts/verify-stamp.sh), so that scripts/release.sh and publish.sh don't repeat it.
 cd "$(dirname "$0")/.." || exit 1
@@ -26,6 +30,8 @@ if [ "$1" = "--leg" ]; then
   trap 'rm -rf "$S"' EXIT
   # A missing toolchain is reported as `skip` with the reason, never as a pass.
   skip() { echo "skip $1"; }
+  # keep FILE NAME: FILE (a suite's full output) as target/verify/NAME.log; says where
+  keep() { mkdir -p target/verify && cp "$1" "target/verify/$2.log" && echo "     full output: target/verify/$2.log"; }
   # sanitizers are clang flags (EIDER_CFLAGS reaches clang for the IR and $CC for the core and the
   # link): clang links them when it has their runtimes, else gcc's
   san_cc() {
@@ -47,8 +53,9 @@ if [ "$1" = "--leg" ]; then
       tsan) cc=$(san_cc thread); fl="-fsanitize=thread" ;;
     esac
     if ! works $cc "$fl"; then skip "run tests ($1): toolchain not available"; return; fi
-    n=$(CC=$cc EIDER_CFLAGS="$fl" bash tests/run.sh 2>&1 | grep -vc "^ok")
-    [ "$n" = 0 ] && echo "ok   run tests ($1)" || echo "FAIL run tests ($1: CC=$cc EIDER_CFLAGS=$fl)"
+    CC=$cc EIDER_CFLAGS="$fl" bash tests/run.sh > $S/runtests 2>&1
+    n=$(grep -vc "^ok" $S/runtests)
+    [ "$n" = 0 ] && echo "ok   run tests ($1)" || { echo "FAIL run tests ($1: CC=$cc EIDER_CFLAGS=$fl)"; keep $S/runtests run-$1; }
   }
   # the vendored libraries: set by the caller (the parallel driver fetches them once)
   novendor=${VERIFY_NOVENDOR:-}
@@ -100,8 +107,14 @@ if [ "$1" = "--leg" ]; then
     while IFS= read -r l; do case $l in "skip "*) skip "llvms: ${l#skip }" ;; "ok "*) echo "$l" ;; esac; done < $S/llvms
     if [ $mrc = 1 ] || grep -q "^FAIL" $S/llvms; then echo "FAIL llvms: sh scripts/clang-matrix.sh --quick"; grep -v "^ok\|^skip" $S/llvms | head -20
     elif [ $mrc != 0 ] && [ $mrc != 2 ]; then echo "FAIL llvms: sh scripts/clang-matrix.sh exit $mrc"; tail -5 $S/llvms; fi ;;
-  core) sh tests/core/run.sh | grep -q FAIL && echo "FAIL core" || echo "ok   core (eider_rt + eider_core, strict warnings, sanitizers when available)" ;;
-  std) sh tests/std/run.sh | grep -q FAIL && echo "FAIL std" || echo "ok   std (C core + Eider std)" ;;
+  core)
+    sh tests/core/run.sh > $S/core 2>&1; crc=$?
+    if grep -q FAIL $S/core || [ $crc != 0 ]; then echo "FAIL core (exit $crc): sh tests/core/run.sh"; grep -A3 FAIL $S/core | head -12; keep $S/core core
+    else echo "ok   core (eider_rt + eider_core, strict warnings, sanitizers when available)"; fi ;;
+  std)
+    sh tests/std/run.sh > $S/std 2>&1
+    if grep -q FAIL $S/std; then echo "FAIL std: sh tests/std/run.sh"; grep -A3 FAIL $S/std | head -12; keep $S/std std
+    else echo "ok   std (C core + Eider std)"; fi ;;
   misc)
     # vendor: the releases vendor.lock pins, fetched into .vendor/<name> and hash-checked
     # (scripts/vendor.sh fetch, by the driver; a hash mismatch fails), then scripts/vendor.sh check: the pins are
@@ -154,7 +167,11 @@ if [ "$1" = "--leg" ]; then
     fi ;;
   pkg)
     if [ -n "$novendor" ]; then skip "pkg: eider-pkg $novendor"
-    else EIDERC=$(pwd)/target/eiderc-next sh tests/pkg/run.sh | grep -q FAIL && echo "FAIL pkg" || echo "ok   pkg (eider-pkg end to end, local git repos)"; fi ;;
+    else
+      EIDERC=$(pwd)/target/eiderc-next sh tests/pkg/run.sh > $S/pkg 2>&1
+      if grep -q FAIL $S/pkg; then echo "FAIL pkg: sh tests/pkg/run.sh"; grep -A3 FAIL $S/pkg | head -12; keep $S/pkg pkg
+      else echo "ok   pkg (eider-pkg end to end, local git repos)"; fi
+    fi ;;
   seed)
     # seed: stage0 from seed/eiderc.wasm with only a C compiler, the seed current (it emits compiler/'s
     # LLVM IR) and, with the clang that built it, rebuilt byte for byte (scripts/selfhost.sh
@@ -168,7 +185,9 @@ if [ "$1" = "--leg" ]; then
     while IFS= read -r l; do case $l in "skip "*) skip "${l#skip }" ;; esac; done < $S/w2c
     if [ $wrc != 0 ]; then echo "FAIL wasm2c: sh seed/tests/run.sh"; grep -A5 "^FAIL" $S/w2c | head -12
     else echo "ok   wasm2c ($(grep -c '^ok' $S/w2c) checks: $(grep '^ok' $S/w2c | sed 's/^ok   wasm2c \([a-z ]*\):.*/\1/' | paste -sd, - | sed 's/,/, /g'))"; fi ;;
-  export) bash tests/export/run.sh | tail -1 | grep -q "^ok" && echo "ok   export (C and C++ consumers)" || echo "FAIL export" ;;
+  export)
+    bash tests/export/run.sh > $S/export 2>&1
+    if tail -1 $S/export | grep -q "^ok"; then echo "ok   export (C and C++ consumers)"; else echo "FAIL export: bash tests/export/run.sh"; tail -5 $S/export; keep $S/export export; fi ;;
   tools)
     # tools: the sibling repositories (scripts/check-tools.sh; EIDER_<NAME>, else
     # $EIDER_SIBLINGS/<name>, default ../<name>): the editor tooling (eider-analyzer,
@@ -221,6 +240,9 @@ case " ${VERIFY_ONLY:-$LEGS} " in
 esac
 JOBS=${VERIFY_JOBS:-$(n=$(nproc 2>/dev/null || echo 4); [ "$n" -gt 8 ] && n=8; echo "$n")}
 RUN=${VERIFY_ONLY:-$LEGS}
+# the files a failure of a leg of this run keeps (see the top); the stale ones of a pass go
+mkdir -p target/verify
+for l in $RUN; do rm -f target/verify/$l.out target/verify/$l.log target/verify/$l-*.log; done
 # the longest legs first, so the shorter ones fill in behind them
 for l in $RUN; do echo "$l"; done > $R/queue
 cat > $R/one <<'EOF'
@@ -240,6 +262,8 @@ times=
 for l in $RUN; do
   cat $R/$l.out
   if [ "$(cat $R/$l.rc)" != 0 ]; then echo "FAIL verify leg $l did not finish (exit $(cat $R/$l.rc))"; fail=1; fi
+  # a failing leg keeps what it printed (and, from inside the leg, the suite's full output)
+  if [ "$(cat $R/$l.rc)" != 0 ] || grep -q "^FAIL" $R/$l.out; then cp $R/$l.out target/verify/$l.out; echo "     the leg's output: target/verify/$l.out"; fi
   times="$times $l=$(cat $R/$l.secs)s"
   grep -q "^FAIL" $R/$l.out && fail=1
   skipped=$((skipped + $(grep -c "^skip" $R/$l.out)))

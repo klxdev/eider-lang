@@ -1381,7 +1381,7 @@ EC_FN(int64_t, ec_dns_lookup, (int32_t family, int32_t socktype, int32_t flags))
 typedef struct dns_job {
   char *host, *serv;
   struct addrinfo hints, *res;
-  int e, rfd, wfd, delay_ms;
+  int e, rfd, wfd, hold;
   atomic_int state; /* 0 running, 1 done, 2 abandoned */
 } dns_job;
 #define DNS_JOBS 64
@@ -1399,8 +1399,11 @@ static void dns_job_free(dns_job *j) {
 
 static void *dns_thread(void *p) {
   dns_job *j = p;
-  if (j->delay_ms > 0) {
-    struct timespec t = {j->delay_ms / 1000, (long)(j->delay_ms % 1000) * 1000000L};
+  /* the test hook (ec_dns_start flags 64): the lookup waits for the caller to let go of the job
+     (ec_dns_cancel), not for a time, so a test that expects it to be still running does not depend
+     on how long a descheduled thread takes (#210); a minute at most, if the caller never does */
+  for (int i = 0; j->hold && i < 60000 && atomic_load(&j->state) != 2; i++) {
+    struct timespec t = {0, 1000000L};
     nanosleep(&t, NULL);
   }
   j->e = getaddrinfo(j->host, j->serv, &j->hints, &j->res);
@@ -1413,12 +1416,12 @@ static void *dns_thread(void *p) {
   return NULL;
 }
 
-/* in[0] host, in[1] service; family, socktype, flags as ec_dns_lookup (flags 64: the thread waits
-   300 ms before it resolves, so tests can pass a deadline). A job number (> 0), or -errno. */
+/* in[0] host, in[1] service; family, socktype, flags as ec_dns_lookup (flags 64: the thread does not
+   resolve until the job is cancelled, so tests can pass a deadline). A job number (> 0), or -errno. */
 EC_FN(int64_t, ec_dns_start, (int32_t family, int32_t socktype, int32_t flags)) {
   dns_job *j = calloc(1, sizeof *j);
   if (!j) return -ENOMEM;
-  int delay = (flags & 64) ? 300 : 0;
+  int hold = (flags & 64) != 0;
   int64_t r = dns_hints(&j->hints, family, socktype, flags & ~64);
   const char *host = arg(0), *serv = arg(1);
   if (r == 0) {
@@ -1430,7 +1433,7 @@ EC_FN(int64_t, ec_dns_start, (int32_t family, int32_t socktype, int32_t flags)) 
   if (r == 0 && (cloexec_pipe(p) != 0 || set_cloexec_nonblock(p[0], 1) != 0 || set_cloexec_nonblock(p[1], 1) != 0)) r = fail();
   j->rfd = p[0];
   j->wfd = p[1];
-  j->delay_ms = delay;
+  j->hold = hold;
   int slot = -1;
   if (r == 0) {
     pthread_mutex_lock(&dns_mu);

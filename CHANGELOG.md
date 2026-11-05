@@ -9,6 +9,8 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 
 - **Fixed: `--profile` builds kept a thread-local address across a task's park (#209).** Generated code read the shadow stack's depth through an address computed once per function (on AArch64 one `mrs TPIDR_EL0` at entry, used again at the return), and held the address of its frame in a thread's array; a task that parked and resumed on another worker popped the wrong thread's depth and stored its lines into the wrong array. Generated code now calls `ei_prof_enter`/`ei_prof_leave` in the runtime and holds no thread-local, and every task has a shadow stack of its own. `tests/core/tls_park.sh` compiles a profile build of the runtime and of a generated program for AArch64 and fails on a thread-pointer read where a park can intervene (which also found `ei_try` and `ei_chan_recv` doing it in profile builds). Validated on x86-64 and in the assembly; not run on AArch64 hardware.
 
+- **Fixed: a flake in the core verify leg under load (#210).** `test_dns_deadline` depended on a 300 ms sleep in the lookup helper that a descheduled test thread could outlast (8 copies under 48 busy loops failed 392 of 400 runs; now 0 of 400). The test hook (`ec_dns_start` flag 64) holds the lookup until it is cancelled. `scripts/verify.sh` keeps a failing leg's output in `target/verify/` (`<leg>.out`, and `<leg>.log` with the full output of the core, std, pkg, export and run-test suites it only summarised).
+
 ## 0.7.1
 
 A patch: a fix in the task runtime, three small language relaxations, name resolution with a deadline, the tooling
