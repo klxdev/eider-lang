@@ -710,7 +710,7 @@ for f in tests/run/*.ei compiler/tests/run/*.ei compiler/main.ei; do
     pototal=$((pototal + 1))
     $new emit-llvm "$f" $mode >$tmp/p1 2>&1
     # (the compiler's string constants name the profiler: only calls and its globals count)
-    if grep -q '^define' $tmp/p1 && ! grep -q 'call [^"]*@ei_prof\|^@ei_prof' $tmp/p1; then
+    if grep -q '^define' $tmp/p1 && ! grep -q '^ *\(%[A-Za-z0-9_.]* = \)\{0,1\}call [^"]*@ei_prof\|^@ei_prof' $tmp/p1; then
       pook=$((pook + 1))
     else
       echo "FAIL profile-off: emit-llvm $f $mode has the profiler in it (or failed)"
