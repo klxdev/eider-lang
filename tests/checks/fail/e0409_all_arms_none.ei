@@ -1,0 +1,7 @@
+// expect: E0409 4:14
+fn main() {
+    let r = match 1 {
+        1 => None
+        _ => None
+    }
+}

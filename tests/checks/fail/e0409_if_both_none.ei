@@ -1,0 +1,4 @@
+// expect: E0409 3:23
+fn main() {
+    let r = if true { None } else { None }
+}

@@ -1,0 +1,52 @@
+// An arm that needs a type (`None`, `List.new()`) above the arm that gives it: the match or `if`
+// has no expected type, so the arms below tell it (docs/site/reference/expressions.md).
+fn pick(code: Option[i32]) -> String {
+    let c = match code {
+        None => None
+        Some(s) => Some(s * 10)
+    }
+    match c {
+        Some(v) => "some {v}"
+        None => "none".to_string()
+    }
+}
+
+fn first_or_empty(flag: bool, n: i32) -> usize {
+    let xs = if flag { List.new() } else { List[n, n + 1] }
+    xs.len()
+}
+
+fn three(k: i32) -> usize {
+    // two arms need the type, the third has it
+    let r = match k {
+        0 => None
+        1 => None
+        _ => Some(k)
+    }
+    match r {
+        Some(_) => 1
+        None => 0
+    }
+}
+
+fn nested(a: bool, b: bool) -> Option[i32] {
+    let r = if a { None } else if b { None } else { Some(3) }
+    r
+}
+
+fn main() uses io {
+    print(pick(Some(4)))
+    print(pick(None))
+    print(first_or_empty(true, 1))
+    print(first_or_empty(false, 1))
+    print(three(0))
+    print(three(1))
+    print(three(2))
+    print(nested(true, false).is_none())
+    print(nested(false, false).is_some())
+    let cell = match 7 {
+        3 => None
+        _ => Some("seven".to_string())
+    }
+    print(cell.unwrap())
+}

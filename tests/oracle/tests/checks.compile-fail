@@ -90,10 +90,12 @@ compile-fail tests (tests/checks/fail)
   ok   e0405_type_args_count.ei     E0405 at 4:13
   ok   e0405_wrong_arity.ei         E0405 at 4:3
   ok   e0406_try_in_non_result.ei   E0406 at 7:20
+  ok   e0409_all_arms_none.ei       E0409 at 4:14
   ok   e0409_cannot_infer.ei        E0409 at 3:13
   ok   e0409_chan.ei                E0409 at 3:18
   ok   e0409_closure_param_untyped.ei E0409 at 3:14
   ok   e0409_empty_list_literal.ei  E0409 at 3:14
+  ok   e0409_if_both_none.ei        E0409 at 3:23
   ok   e0409_infer_result_param.ei  E0409 at 5:13
   ok   e0409_list_new_uninferred.ei E0409 at 3:18
   ok   e0410_pattern_arity.ei       E0410 at 5:9
@@ -160,6 +162,7 @@ compile-fail tests (tests/checks/fail)
   ok   e0833_part_lacks_serialize.ei E0833 at 11:5
 
 compile-pass tests (tests/checks/pass)
+  ok   pass_arm_below.ei
   ok   pass_attributes.ei
   ok   pass_bitwise_units_bytes.ei
   ok   pass_capabilities.ei
@@ -182,5 +185,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-180 passed, 0 failed; error-code coverage 76/76
+183 passed, 0 failed; error-code coverage 76/76
 --- exit 0

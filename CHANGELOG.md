@@ -17,6 +17,8 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 - Type arguments on method calls (#197): `x.convert[Order]()`, `Stack.new[i32]()`, `List.new[i64]()`,
   `Map.new[str, i32]()`. On `Type.f[...]` the impl's type parameters come first, then the function's own; a method
   without type parameters given some is E0405.
+- An arm that needs a type above the arm that gives it (#199): `None => None` above `Some(c) => ...`, or the `then`
+  branch of an `if` whose `else` has the type, no longer needs an annotation.
 
 ## 0.7.0
 

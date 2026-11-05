@@ -6081,15 +6081,50 @@ fn sibling_exp(c: C, dest: Dest, exp: u32, t: u32) -> u32 {
     t
 }
 
+/// The type of the else branch of `if` n, checked with its errors and code thrown away (NONE: none).
+fn else_branch_type(inout c: C, n: ast.Node, dest: Dest) -> u32 {
+    let sp = snap(c)
+    let mute = c.mute.copy()
+    let rec = c.rec.on.copy()
+    c.mute = true
+    c.rec.on = false
+    let el = nd(c, n.c - 1)
+    let r = if el.kind == ast.EBlock { block_body(inout c, el.a, dest, NONE) } else { compile_value(inout c, n.c - 1, dest, NONE) }
+    restore(inout c, sp)
+    c.mute = mute
+    c.rec.on = rec
+    match r {
+        Ok(t) => { sibling_exp(c, dest, NONE, t) }
+        Err(_) => { NONE }
+    }
+}
+
 fn compile_if(inout c: C, n: ast.Node, dest: Dest, exp: u32) -> Result[u32, diag.Diag] {
     if n.d == 1 { return ct_compile_if(inout c, n, dest, exp) }
+    let sp = snap(c)
+    let nd0 = c.diags.len()
     let cv = expr(inout c, n.a, types.BOOL)?
     if !same(c, cv.ty, types.BOOL) {
         let cn = nd(c, n.a)
         return Err(mismatch(c, cn.line, cn.col, types.BOOL, cv.ty))
     }
+    let nd1 = c.diags.len()
     let tm = ir.open(c.ir)
     let t1 = block_body(inout c, n.b, dest, exp)?
+    // `if c { None } else { Some(1) }`: the then branch needs a type (E0409, recorded by the
+    // expression) and the else branch tells it ("C8.84"): the whole `if` is checked again with it
+    if exp == NONE && n.c != 0 && dest.kind != D_DISCARD && only_cannot_infer(c, nd1) {
+        let lt = else_branch_type(inout c, n, dest)
+        if lt != NONE {
+            let _ = take_diags(inout c, nd0)
+            restore(inout c, sp)
+            return compile_if(inout c, n, dest, lt)
+        }
+    }
+    return finish_if(inout c, n, dest, exp, cv, tm, t1)
+}
+
+fn finish_if(inout c: C, n: ast.Node, dest: Dest, exp: u32, cv: V, tm: u32, t1: u32) -> Result[u32, diag.Diag] {
     let then = ir.close(inout c.ir, tm)
     if n.c == 0 {
         let els = ir.empty_block(inout c.ir)
@@ -6418,15 +6453,71 @@ fn match_arms(inout c: C, m: ast.Node, i: u32, a: Arms, sc: Scrut, dest: Dest, e
         let t = arm_body(inout c, m, i, a.arm_binds[i as usize], pre, sc, dest, exp)?
         return finish_match(c, m, i, dest, result, t)
     }
-    let tm = ir.open(c.ir)
-    let t = arm_body(inout c, m, i, a.arm_binds[i as usize], pre, sc, dest, exp)?
+    let sp = snap(c)
+    let nd0 = c.diags.len()
+    let mut exp1 = exp.copy()
+    let mut tm = ir.open(c.ir)
+    let mut t = arm_body(inout c, m, i, a.arm_binds[i as usize], pre, sc, dest, exp)?
+    // nothing above says what this arm's value is (`None` above `Some(1)`: E0409, recorded by the
+    // expression): the arms below may ("C8.84")
+    if exp == NONE && dest.kind != D_DISCARD && only_cannot_infer(c, nd0) {
+        let lt = later_arms_type(inout c, m, i, a, sc, dest, result)
+        if lt != NONE {
+            let _ = take_diags(inout c, nd0)
+            restore(inout c, sp)
+            exp1 = lt
+            tm = ir.open(c.ir)
+            t = arm_body(inout c, m, i, a.arm_binds[i as usize], pre, sc, dest, exp1)?
+        }
+    }
     let then = ir.close(inout c.ir, tm)
     let r1 = finish_arm(c, m, i, result, t)?
     let em = ir.open(c.ir)
-    let r = match_arms(inout c, m, i + 1, a, sc, dest, sibling_exp(c, dest, exp, r1), r1)?
+    let r = match_arms(inout c, m, i + 1, a, sc, dest, sibling_exp(c, dest, exp1, r1), r1)?
     let els = ir.close(inout c.ir, em)
     emit(inout c, ir.S_IF, 0, cond, then, els, 0, m.line)
     Ok(r)
+}
+
+/// Whether every diagnostic recorded since `from` is E0409 (and there is one).
+fn only_cannot_infer(c: C, from: usize) -> bool {
+    if c.diags.len() <= from { return false }
+    for i in from..c.diags.len() {
+        if !is_code(c.diags[i], "E0409") { return false }
+    }
+    true
+}
+
+/// Take the diagnostics recorded since `from` out of the record.
+fn take_diags(inout c: C, from: usize) -> List[diag.Diag] {
+    let mut out: List[diag.Diag] = List.new()
+    while c.diags.len() > from {
+        match c.diags.pop() {
+            Some(d) => { out.push(d) }
+            None => {}
+        }
+    }
+    out
+}
+
+/// The type the arms after arm i give the match, found by checking them once more with their errors
+/// and their code thrown away; NONE when they give none (a `()` or `!` value, an error, or all of them
+/// need a type too). The first arm that couldn't be typed is then checked again with it as the expected
+/// type ("C8.84").
+fn later_arms_type(inout c: C, m: ast.Node, i: u32, a: Arms, sc: Scrut, dest: Dest, result: u32) -> u32 {
+    let sp = snap(c)
+    let mute = c.mute.copy()
+    let rec = c.rec.on.copy()
+    c.mute = true
+    c.rec.on = false
+    let r = match_arms(inout c, m, i + 1, a, sc, dest, NONE, result)
+    restore(inout c, sp)
+    c.mute = mute
+    c.rec.on = rec
+    match r {
+        Ok(t) => { sibling_exp(c, dest, NONE, t) }
+        Err(_) => { NONE }
+    }
 }
 
 fn arm_pos(c: C, arm: ast.Node) -> ast.Node { nd(c, arm.a) }

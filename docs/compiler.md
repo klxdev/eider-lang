@@ -4634,7 +4634,7 @@ type (`exp` is NONE) and a value that is bound (not `D_DISCARD`), the type of th
 (`match_arms`' `result`; the `then` branch for an `if`) becomes the expectation of the next one
 unless it is `()` or `!`; and `compile_match` first scans the arms for a body `x as T` with T an
 integer or float and uses it as the starting expectation, which makes `0` above `n as i64` an i64.
-Not done: an arm that needs a type (E0409) above the arm that has it, other than by a cast; the
+Not done here (see "C8.84"): an arm that needs a type (E0409) above the arm that has it, other than by a cast; the
 expectation is a hint, so a sibling of another type is still E0401 at the `unify` of the arms.
 
 ## C8.70: `panic` with a computed message (#47)
@@ -4938,3 +4938,27 @@ of dropping the types silently.
 Not done: type arguments of a method called through a trait (`Trait.m[T](x)` reaches `call_decl` with the receiver
 moved to the first argument, so it works for the method's own parameters only), and the resolver/IDE do not index
 the written types (as for `f[T](x)`).
+
+## C8.84: an arm that needs a type above the arm that has it (#199)
+
+Decision C877. Code: check.ei (`match_arms`, `compile_if`/`finish_if`, `later_arms_type`, `else_branch_type`,
+`only_cannot_infer`, `take_diags`). Tests: tests/run/arm_inference_below.ei, tests/checks/fail/e0409_all_arms_none.ei and
+e0409_if_both_none.ei, tests/checks/pass/pass_arm_below.ei.
+
+"C8.69" gives an arm the type of the arms above it. When an arm gets none (`exp` is NONE, the value is bound) and
+the expression in it needs one, `expr` records E0409 ("cannot infer", a recovery point: the arm's value is the
+error type and checking goes on). `match_arms` notices: the arm's body recorded only E0409s (`only_cannot_infer`
+from the length of `c.diags` before it). It then checks the arms below with errors muted and the IR thrown away
+(`later_arms_type`: `snap`/`restore`, `c.mute`, `c.rec.on` off, as `run_defer` re-emits a deferred statement), which
+lets those arms use the same rule among themselves, so any number of `None` arms above one typed arm works. If that
+gives a type (not `()`, `!` or an error type), the arm's E0409s are taken out of the record, the arm's code is dropped
+(`restore` truncates the pending IR to before the arm) and the arm is checked again with the type as its expected
+type; the arms after it get the same type as their `exp`. If no arm below gives a type, the recorded E0409 stays and
+the arms are checked as before, so the error, its position and its count are those of "C8.69". `if` is the same
+with the `else` branch (`else_branch_type`): the `if` is checked again from its condition with the type as
+expectation.
+
+The cost is bounded: the second check happens only for an arm that already failed with E0409, and the arms below
+are checked once more per such arm (so n `None` arms above one typed arm check the tail about n times).
+A side effect of the first check on the checker's state that is not in `Snap` (a monomorphized instance, a lint hit)
+is kept; an instance is shared by its key, so a repeat creates nothing new.

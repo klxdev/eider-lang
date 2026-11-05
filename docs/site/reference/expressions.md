@@ -478,7 +478,11 @@ Where the value has no expected type (a `let` with no annotation), the arms info
 in order: after the first arm that has a type (not `()` and not a diverging one), each later
 arm is checked against it, so `None`, `List.new()` and an integer literal take the type of the arm
 above them, and an arm `x as i64` anywhere in the `match` gives a literal above it its integer or
-float type. The `else` of an `if` takes the type of the `then` branch the same way.
+float type. The `else` of an `if` takes the type of the `then` branch the same way. An arm that
+needs a type and has none from above (`None => None` above `Some(c) => ...`, or `List.new()`) is
+checked again with the type the arms below give, so the order of the arms does not matter; if
+none of them gives one, it is E0409 as before. The same holds for the `then` branch of an `if`
+whose `else` has the type.
 
 ```eider
 fn main() uses io {
@@ -492,11 +496,18 @@ fn main() uses io {
         None => 0
     }
     print(wide)
+    // `None` above the arm that gives the type
+    let other = match code {
+        None => None
+        Some(c) => Some(c + 1)
+    }
+    print(other.unwrap())
 }
 ```
 
 ```output
 40
+5
 ```
 
 ## Blocks

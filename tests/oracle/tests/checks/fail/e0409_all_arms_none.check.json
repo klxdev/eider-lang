@@ -1,0 +1,2 @@
+{"error":"E0409","span":{"file":"tests/checks/fail/e0409_all_arms_none.ei","line":4,"col":14},"message":"cannot infer type parameter `T` of `Option`","help":"add a type annotation, e.g. `let x: Option[i32] = None`"}
+{"error":"E0409","span":{"file":"tests/checks/fail/e0409_all_arms_none.ei","line":5,"col":14},"message":"cannot infer type parameter `T` of `Option`","help":"add a type annotation, e.g. `let x: Option[i32] = None`"}
