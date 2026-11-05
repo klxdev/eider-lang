@@ -27,7 +27,7 @@ and a `0.2` toolchain needs `0.2` tools.
 
 Library packages keep their own `version` in their `eider.toml`, and eider-pkg selects them
 by that version. The libraries and frameworks in repositories of their own (eider-toml,
-eider-json, eider-markdown, eider-http, eider-rpc, eider-openapi) follow the tools' rule
+eider-json, eider-markdown, eider-logging, eider-command, eider-http, eider-rpc, eider-openapi) follow the tools' rule
 until 1.0: their MAJOR.MINOR is the toolchain's, their PATCH their own, so `scripts/version.sh
 check-siblings` and `bump` treat them as siblings. A package you write needs only
 `eider = "<MAJOR.MINOR>"`.
@@ -151,7 +151,7 @@ It fails (exit 1, every place named) where it cannot finish: a sibling with no v
 `VERSION`, one whose own `version` line was not that `VERSION`, or text of the old series that
 remains. `check` also fails while `vendor.lock` pins a release of another series. The commands
 that need a commit come last, in the order to run them: the seed and the oracle, a commit per
-repository, `git tag` and `git push` for the six libraries and the shopping example (the
+repository, `git tag` and `git push` for the libraries and the shopping example (the
 tools' tags are printed by `release.sh`), `scripts/vendor.sh` for eider-toml, eider-json and
 eider-markdown at their new commits, and `eider-pkg update` in each directory with an
 `eider.lock`, whose pins name the new tags. Prose that names a released version ("built with

@@ -17,7 +17,7 @@ sibs=${EIDER_SIBLINGS:-$here/..}
 key() {
   if [ -n "$(git status --porcelain)" ]; then echo dirty; return 1; fi
   echo "eider-lang $(git rev-parse HEAD)"
-  for r in eider-analyzer tree-sitter-eider eider-profiler eider-toml eider-json eider-markdown eider-http eider-rpc eider-openapi; do
+  for r in eider-analyzer tree-sitter-eider eider-profiler eider-toml eider-json eider-markdown eider-logging eider-command eider-http eider-rpc eider-openapi; do
     case $r in
       eider-analyzer) d=${EIDER_ANALYZER:-$sibs/$r} ;;
       tree-sitter-eider) d=${TREE_SITTER_EIDER:-$sibs/$r} ;;
@@ -25,6 +25,8 @@ key() {
       eider-toml) d=${EIDER_TOML:-$sibs/$r} ;;
       eider-json) d=${EIDER_JSON:-$sibs/$r} ;;
       eider-markdown) d=${EIDER_MARKDOWN:-$sibs/$r} ;;
+      eider-logging) d=${EIDER_LOGGING:-$sibs/$r} ;;
+      eider-command) d=${EIDER_COMMAND:-$sibs/$r} ;;
       eider-http) d=${EIDER_HTTP:-$sibs/$r} ;;
       eider-rpc) d=${EIDER_RPC:-$sibs/$r} ;;
       eider-openapi) d=${EIDER_OPENAPI:-$sibs/$r} ;;

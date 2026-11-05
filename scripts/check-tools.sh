@@ -3,14 +3,14 @@
 # (eider-analyzer, the language server; tree-sitter-eider, the grammar Neovim highlights
 # with), which must keep up with the language (a syntax or IDE-visible change updates them
 # in the same wave: LAYERS.md, "Tooling"), and the libraries and frameworks that left this
-# repository (LAYERS.md, "Where code lives"; eider-toml, eider-json, eider-markdown,
+# repository (LAYERS.md, "Where code lives"; eider-toml, eider-json, eider-markdown, eider-logging, eider-command,
 # eider-http, eider-rpc, eider-openapi), which must keep building and passing their tests
 # on it. This is the "tools" leg of scripts/verify.sh.
 #
 #   scripts/check-tools.sh
 #
 # Where the repositories are: EIDER_<NAME> for each (EIDER_ANALYZER, TREE_SITTER_EIDER,
-# EIDER_TOML, EIDER_JSON, EIDER_MARKDOWN, EIDER_HTTP, EIDER_RPC, EIDER_OPENAPI), else
+# EIDER_TOML, EIDER_JSON, EIDER_MARKDOWN, EIDER_LOGGING, EIDER_COMMAND, EIDER_HTTP, EIDER_RPC, EIDER_OPENAPI), else
 # $EIDER_SIBLINGS/<repository> (EIDER_SIBLINGS: default .., the directory holding this
 # checkout). One that is absent is `skip`, so a plain checkout stays green.
 #
@@ -84,7 +84,7 @@ fi
 
 # The libraries' checkouts, exported as the EIDER_<NAME> their scripts/env.sh reads (json
 # falls back to .vendor/json, the release this checkout pins).
-LIBS="toml json markdown http rpc openapi"
+LIBS="toml json markdown logging command http rpc openapi"
 for n in $LIBS; do
   var=EIDER_$(echo "$n" | tr 'a-z' 'A-Z')
   if d=$(repo_dir "eider-$n" "$var"); then eval "$var=\$d"; export "$var"; else unset "$var"; fi
@@ -148,7 +148,7 @@ fi
 
 # ---- the libraries and frameworks
 # needs <name>: the git dependencies (other than json) it can't build without
-needs() { case $1 in http) echo "" ;; rpc|openapi) echo "http" ;; *) echo "" ;; esac; }
+needs() { case $1 in http) echo "logging" ;; rpc|openapi) echo "http logging" ;; *) echo "" ;; esac; }
 for n in $LIBS; do
   var=EIDER_$(echo "$n" | tr 'a-z' 'A-Z')
   eval "d=\${$var:-}"
