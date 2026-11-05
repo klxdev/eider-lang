@@ -1,6 +1,6 @@
 [package]
 name = "doc"
-version = "0.7.2"
+version = "0.7.3"
 eider = "0.7"
 main = "main.ei"
 description = "eider-doc: documentation sites from Markdown pages and `eiderc doc --json`, and doc tests"

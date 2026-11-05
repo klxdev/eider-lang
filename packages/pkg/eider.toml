@@ -1,6 +1,6 @@
 [package]
 name = "pkg"
-version = "0.7.2"
+version = "0.7.3"
 eider = "0.7"
 main = "main.ei"
 description = "eider-pkg: the Eider package manager"

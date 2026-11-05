@@ -5,7 +5,15 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
-## 0.7.3 (unreleased)
+## 0.7.3
+
+A patch that reshapes the library layer: logging and the command line leave std for libraries of their own, and
+compression and TLS 1.3 arrive as libraries. Four new repositories, all at 0.7.0: eider-logging
+(`logging`), eider-command (`command`), eider-compression (`compression`), eider-tls (`tls`). eider-http moves to 0.7.2
+(logging, `Content-Encoding`), eider-analyzer to 0.7.2 (its std module list), the shopping example to 0.7.1. Breaking
+before 1.0, with no shim: `import std.log` is `import logging`, `import std.cli` is `import command`, and the
+attribute `@[cli(...)]` is `@[command(...)]`. Not in this release: eider-http over TLS (needs the crypto package
+shipped; see the issues on it) and RSA in the crypto package.
 
 - **`std/log` and `std/cli` are libraries now (#216, #217, #213; decision C896).** Fix forward, no shim: `std/log.ei`, `std/cli.ei` and their tests are removed from std. The code lives on in two new repositories, **eider-logging** (package `logging`: `import logging`, `logging.new(logging.Info)`; adds the level `Off`, a memory sink for tests and `Logger.with_context` for trace ids) and **eider-command** (package `command`: `import command`, `command.parse`; adds bash, zsh and fish completion scripts and `tool help <command>`). To migrate: a `[deps.logging]` / `[deps.command]` table in `eider.toml` (repositories klxdev/eider-logging and klxdev/eider-command; logging is granted `uses = ["io", "clock"]`, command `uses = ["io"]`), `import logging` for `import std.log` (`log.` becomes `logging.`), and for `std.cli`: `import command`, `@[command(...)]` for `@[cli(...)]` (an attribute is named after its package, like `@[json(...)]`), `command.subcommands` for `cli.command`. eider-http (`http/server`, `http/middleware`, `http/trace`, `http/service`) and the shopping example use eider-logging. The compiler is unchanged, so is the seed; eider-analyzer's session golden lost the two std modules in its completion list.
 
