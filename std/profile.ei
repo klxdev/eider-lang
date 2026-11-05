@@ -47,7 +47,7 @@ pub fn reset() { prof.reset() }
 
 fn failure(what: str, r: i64) -> String {
     let mut m = String.from(what)
-    if r == -38 {
+    if !enabled() {
         m.append(String.from("not built with --profile"))
     } else {
         m.append(sys.error_text(r))

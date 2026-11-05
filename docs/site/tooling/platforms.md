@@ -29,8 +29,7 @@ instead, and packaging refuses a dependency on a Homebrew or build-directory lib
 WebAssembly tests and optimized native compilation on Linux x86-64, Linux AArch64 and
 macOS arm64. Linux also runs the complete C runtime and standard-library suites.
 
-The macOS standard-library gate explicitly reports the existing `math`, `profile` and
-`signal` failures as skipped. The full C runtime suite also has Linux-specific errno,
+The macOS standard-library gate explicitly reports the existing `signal` failure as skipped. The full C runtime suite also has Linux-specific errno,
 `/proc`, profiler and task-dump expectations. These are follow-up work: a successful
 platform gate is **not** the full `scripts/verify.sh` result, and does not grant a release's
 `verified = true`. The existing release verification requirement remains in force.

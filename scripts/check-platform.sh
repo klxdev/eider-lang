@@ -11,7 +11,7 @@ else
   # Known macOS failures are documented in tooling/platforms.md; do not label this a
   # full runtime verification. Keep the useful platform-independent/std I/O gate.
   for source in tests/std/*.ei; do
-    case $source in */math.ei|*/profile.ei|*/signal.ei) echo "skip macOS baseline: $source"; continue ;; esac
+    case $source in */signal.ei) echo "skip macOS baseline: $source"; continue ;; esac
     input=${source%.ei}.in; [ -f "$input" ] || input=/dev/null
     got=$(status=0; EIDER_STD_TEST=set scripts/ei run "$source" < "$input" 2>&1 || status=$?; printf 'exit %s\n' "$status")
     [ "$got" = "$(cat "${source%.ei}.out")" ] || { printf '%s\n' "$got"; echo "FAIL $source"; exit 1; }
@@ -30,3 +30,6 @@ scripts/ei test target/platform/smoke.ei
 # Optimized multi-unit link: a Mach-O linker must fall back without ELF-only options.
 scripts/ei build target/platform/smoke.ei -o target/platform/smoke
 [ "$(target/platform/smoke)" = 'platform smoke' ]
+
+scripts/ei test tests/std/math.ei
+scripts/ei test tests/std/profile.ei
