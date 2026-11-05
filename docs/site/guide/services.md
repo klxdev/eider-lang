@@ -14,6 +14,8 @@ complete example with an end-to-end test.
 | [eider-json](https://github.com/klxdev/eider-json) | `json` | RFC 8259 JSON: an arena value tree, strict parsing with positions, writing, and typed values with derived codecs ([Deriving JSON](json.md)) |
 | [eider-toml](https://github.com/klxdev/eider-toml) | `toml` | the TOML subset of `eider.toml` and `eider.lock` |
 | [eider-markdown](https://github.com/klxdev/eider-markdown) | `markdown` | a CommonMark subset plus GFM tables, rendered to safe HTML |
+| [eider-logging](https://github.com/klxdev/eider-logging) | `logging` | structured logging as JSON lines: levels (and `Off`), typed fields, context fields for trace ids, a memory sink for tests |
+| [eider-command](https://github.com/klxdev/eider-command) | `command` | a program's command line derived from a record: flags, subcommands, generated help, bash/zsh/fish completions |
 
 The guides:
 
