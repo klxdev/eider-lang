@@ -181,6 +181,76 @@ spawned. The profiler's shadow stack moves with the task (saved at park, restore
 are `thread` records and tasks show in a `task` record (M2). The stack-overflow report is the
 same message from the task's own guard.
 
+## Thread-locals across a park (#204, C875)
+
+A task that parks resumes on any worker, so after a park every `_Thread_local` is another
+thread's, and a thread-local address computed before the park is stale. The runtime has five
+kinds of thread-local that tasks touch: `cur_task`/`cur_worker`, `cur_batch` (the readied-task
+batch), `try_top` (the `Task.catch` frames, saved to the task at a switch), `held_n`/`held_locks`
+(the built-in `Mutex`es this thread holds), and `guard_lo`/`guard_hi` (the stack-overflow guard,
+set by `switch_in`). The first three groups are read through `noinline` accessors (`task_self`,
+`batch_get`, `try_get`), which is the rule: **a function that can park reads a thread-local only
+through an out-of-line function**.
+
+*The bug.* `task_park` read `held_n` directly (`if (held_n != 0) trap`), and the parking
+callers (`Task.join`, `Chan.recv`, `task_wait`) call it in a loop: park, wake, re-check. On
+x86-64 every thread-local access is `%fs:offset` and nothing can go stale. On AArch64 the thread
+pointer is `mrs TPIDR_EL0`, which LLVM and gcc treat as a constant of the function and hoist out
+of the loop (zig 0.13's clang at `-O1` to `-O3`: `ei_thread_join` keeps it in `x27` and reads
+`held_n` as `[x27, x20]` on every iteration, `swapcontext` in between). The second iteration of
+a task that was resumed on another worker therefore read the held-lock count of the thread it
+ran on *before* the park, while that thread's current task was calling `held_add`/`held_del`
+on it: a data race on `held_n`, between tasks, reported between "the sides of a park". It is also
+a correctness bug (a task could read a stale non-zero count and trap `cannot wait while holding
+a Mutex` without holding one, or read zero while holding one), not only a TSan report; the
+x86-64 legs cannot see it.
+
+*The same shape in `ei_try`.* After a trap's `longjmp` it released `held_locks[..]` and set
+`held_n` directly in its own frame, on a thread pointer read before `fn` ran (`x21` in the
+AArch64 code), and `fn` may have parked and moved. Fixed the same way (`held_unwind`, out of
+line).
+
+*The same class in `ec_poll_wait`, reproduced on x86-64.* It cleared the calling thread's output
+buffer (`out_len = 0`), parked in the block hook, and after the wake-up wrote the events with
+`out_put` in the same function: the compiler had computed the buffer's address before the park, so
+a task that woke on another worker filled the buffer of the worker it had left (and left the
+current worker's buffer, which the Eider caller reads, stale), and `errno` after the wake-up had
+the same hazard. ThreadSanitizer reports it on x86-64 as soon as the context switch is the
+`swapcontext` one (`-DEI_TASK_UCONTEXT`, which AArch64 uses; the hand-written x86-64 switch
+shifts the timing enough to hide it): a data race in `out_put`, between two tasks on one worker,
+in `tests/core/task_test.c` (`test_poll_wait_parks`). That is the signature of #204 (tasks on one
+worker racing on a thread-local), and `tests/core/run.sh` now runs the task test with
+`-DEI_TASK_UCONTEXT` under TSan and ASan. The wait is split: `ec_poll_wait` parks and calls the
+out-of-line `poll_collect`, which resets the buffer on the thread it is on and collects.
+
+*What was checked and is not a problem.* The fiber annotations: every switch of a task or a
+worker (`switch_in`, `task_park`, `task_yield_now`, `task_main`'s exit) calls
+`__tsan_switch_to_fiber(target, 0)` (with synchronisation) immediately before the context
+switch, `__tsan_destroy_fiber` happens on the worker after the exit switch, and the fiber is
+created in `task_create`, so each switch is a release/acquire pair and the fibers on one thread
+are totally ordered; there is no resume path without it. `held_n`/`held_locks` being per-thread
+while tasks interleave on a thread is sound because `task_park` refuses to park with
+`held_n != 0`: at every switch the thread's list is empty, so the next task starts from zero.
+`worker_main` and `switch_in` read thread-locals before and after a switch but always run on the
+worker's own thread. `map_rng`, `trap_jmp` and the `eider_core.c` buffers are used between
+calls that do not park. `ei_prof_depth` and the shadow stack (profile builds) are saved and
+restored by `switch_in`; the generated code reads `ei_prof_depth` directly, which has the same
+hazard in a function that parks between two uses and is open (profile builds only).
+
+*Evidence, and its limits.* There is no AArch64 hardware or `qemu-user` here, and TSan does not
+run under qemu, so the race was not reproduced. What is established is the assembly: compiling
+`core/eider_rt.c` with `zig cc -target aarch64-linux-gnu -O2 -S` before the change shows
+`TPIDR_EL0` read in `ei_thread_join`, `ei_chan_recv` and `task_wait` (each calls `swapcontext`)
+with the register used by the `held_n` read in the loop; after the change none of them reads it.
+`tests/core/tls_park.sh` (run by `tests/core/run.sh`, skipped without zig) compiles the runtime
+that way at `-O1`, `-O2` and `-O3` and fails if a function that calls `swapcontext` reads
+`TPIDR_EL0`, other than `worker_main`; it fails on the old source. Validated on x86-64: the
+change is a no-op there (the TSan, ASan, gcc and clang legs, the task tests also with
+`-DEI_TASK_UCONTEXT` under TSan and ASan, which is the context switch AArch64 uses). Not
+validated until it runs on AArch64: that `tests/std/tasks.ei`, `sync.ei`, `chan.ei` and
+`tests/core/task_test.c` pass under TSan there. If a race is left after this, it is not this
+one.
+
 ## Costs and what proves them
 
 Measured on this machine (Linux 7.2, 16 CPUs), reproducible with `sh scripts/task-bench.sh`,

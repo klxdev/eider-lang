@@ -1483,8 +1483,16 @@ EC_FN(int64_t, ec_poll_ctl, (int32_t pfd, int32_t op, int32_t fd, int32_t intere
    out = that many 16-byte records (event_put). flags: 1 readable, 2 writable, 4 error,
    8 hang-up, 16 the peer finished sending. A signal ends the wait early: what is ready then
    (the signal pipe, if the signal is watched) is collected without waiting again. */
+/* The thread-local state a poll uses (out, errno) is touched only here and in poll_collect, never
+   in the function that parks: a task resumes on another thread, and a thread-local address
+   computed before the park (AArch64 keeps the thread pointer in a register, x86-64 compilers
+   keep a computed address) would write the buffer of the thread it left (#204,
+   docs/design/lightweight-tasks.md "Thread-locals across a park"). */
+__attribute__((noinline)) static void out_reset(void) { out_len = 0; }
+__attribute__((noinline)) static int64_t poll_collect(int32_t pfd, int m, int64_t t);
+
 EC_FN(int64_t, ec_poll_wait, (int32_t pfd, int32_t max, int64_t timeout_ms)) {
-  out_len = 0;
+  out_reset();
   if (max <= 0) return -EINVAL;
   int m = max < EC_POLL_MAX ? max : EC_POLL_MAX;
   int64_t t = timeout_ms < 0 ? -1 : timeout_ms > INT_MAX ? INT_MAX : timeout_ms;
@@ -1500,6 +1508,11 @@ EC_FN(int64_t, ec_poll_wait, (int32_t pfd, int32_t max, int64_t timeout_ms)) {
       }
     }
   }
+  return poll_collect(pfd, m, t);
+}
+
+__attribute__((noinline)) static int64_t poll_collect(int32_t pfd, int m, int64_t t) {
+  out_len = 0; /* a task that parked is on another thread now: this is that thread's buffer */
 #if defined(EC_EPOLL)
   struct epoll_event *ev = malloc((size_t)m * sizeof *ev);
   if (!ev) return -ENOMEM;

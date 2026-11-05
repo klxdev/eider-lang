@@ -109,4 +109,19 @@ sanitizer ubsan-trap -fsanitize=undefined -fsanitize-trap=undefined
 sanitizer ubsan-trap,portable -fsanitize=undefined -fsanitize-trap=undefined -DEI_RT_PORTABLE
 sanitizer asan+ubsan -fsanitize=address,undefined -fno-sanitize-recover=undefined
 sanitizer tsan -fsanitize=thread
+# the task test with the ucontext switch (what AArch64 uses) under the sanitizers: it found a
+# thread-local used across a park in ec_poll_wait on x86-64 (#204)
+task_san() {
+  name=$1; shift
+  printf 'int main(void) { return 0; }\n' > "$T/probe.c"
+  if $CC "$@" -o "$T/probe" "$T/probe.c" -pthread >/dev/null 2>&1 && "$T/probe" >/dev/null 2>&1; then
+    task "$name" -O1 -g "$@" -DEI_TASK_UCONTEXT -DEI_TEST_SANITIZED
+  else
+    echo "skip task ($name): $CC cannot build or run with $*"
+  fi
+}
+task_san tsan,ucontext -fsanitize=thread
+task_san asan+ubsan,ucontext -fsanitize=address,undefined -fno-sanitize-recover=undefined
+# the thread pointer across a park, on the architecture that caches it (#204)
+sh tests/core/tls_park.sh || fail=1
 exit $fail

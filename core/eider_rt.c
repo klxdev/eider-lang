@@ -478,6 +478,14 @@ void ei_mutex_unlock(ei_mutex *m) {
 __attribute__((noinline)) static ei_try_frame *try_get(void) { return try_top; }
 __attribute__((noinline)) static void try_set(ei_try_frame *f) { try_top = f; }
 __attribute__((noinline)) static uint32_t held_get(void) { return held_n; }
+/* Releases the locks held beyond the first `keep`, on the thread the caller runs on now. ei_try
+   calls it after a trap's longjmp, and the task may have parked and moved inside fn: its own
+   frame must not touch held_n/held_locks (a thread pointer read before fn is a stale one). */
+__attribute__((noinline)) static void held_unwind(uint32_t keep) {
+  uint32_t top = held_n < EI_HELD_MAX ? held_n : EI_HELD_MAX;
+  while (top > keep) pthread_mutex_unlock(&held_locks[--top]->mu);
+  held_n = keep;
+}
 
 int32_t ei_try(void (*fn)(void *, void *), void *a, void *b, ei_String *msg) {
   ei_try_frame fr;
@@ -496,9 +504,7 @@ int32_t ei_try(void (*fn)(void *, void *), void *a, void *b, ei_String *msg) {
   /* a trap ended fn: its frames are gone without their drops (values they owned leak), so the
      locks they held are released and the thread goes on */
   try_set(fr.prev);
-  uint32_t top = held_n < EI_HELD_MAX ? held_n : EI_HELD_MAX;
-  while (top > fr.held) pthread_mutex_unlock(&held_locks[--top]->mu);
-  held_n = fr.held;
+  held_unwind(fr.held);
 #ifdef EI_RT_PROFILE
   ei_prof_unwind(fr.depth);
 #endif
@@ -1354,7 +1360,11 @@ static void dump_handler(int sig) {
    lock needs no release after the switch. Callers re-check what they wait for: a permit can
    be left over. */
 static void task_park(ei_task *t) {
-  if (held_n != 0) ei_trap("cannot wait while holding a Mutex", 0);
+  /* held_get, not held_n: park callers loop (join, recv, wait), so the compiler hoists the
+     thread pointer out of the loop (AArch64 does; x86-64 addresses TLS through %fs each time) and
+     the second iteration would read the held count of the thread the task ran on before it parked
+     (docs/design/lightweight-tasks.md, "Thread-locals across a park", #204). */
+  if (held_get() != 0) ei_trap("cannot wait while holding a Mutex", 0);
   ei_worker *w = t->w;
   w->yield = Y_PARK;
 #ifdef EI_TASK_ASAN

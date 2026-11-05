@@ -5,6 +5,16 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## 0.7.1 (unreleased)
+
+- Fixed (#204): on AArch64 the task runtime read the thread pointer once per function, so a task that parked in
+  `join`, `Chan.recv` or a wait and resumed on another worker read that worker's old `held_n`: a data race that
+  ThreadSanitizer reported in tests/std/tasks.ei, sync.ei and chan.ei, and a possible false `cannot wait while holding
+  a Mutex`. The thread-locals are read out of line now (docs/design/lightweight-tasks.md, "Thread-locals across a
+  park"); a core test checks the AArch64 code. The sanitizer result on AArch64 itself comes from CI.
+  The same hazard made `ec_poll_wait` (`std/event` `Loop.poll` in a task) write its events into the output buffer of
+  the worker the task had left; ThreadSanitizer showed it on x86-64 with the `ucontext` switch.
+
 ## 0.7.0
 
 For Eider 0.7 (`eider = "0.7"`). The language gets named and default arguments, `let PATTERN = e else`, `List[...]`
