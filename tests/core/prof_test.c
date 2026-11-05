@@ -9,6 +9,7 @@
 #define EI_RT_PROFILE 1
 #include "eider_rt.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
@@ -101,7 +102,7 @@ int main(int argc, char **argv) {
   ei_set_file("prof_test.ei");
   /* the thread counts below are for one OS thread per spawn; tasks are profiled on their workers */
   setenv("EIDER_TASKS", "threads", 1);
-  CHECK(ec_prof(0, 0) == -38); /* no profiler before init: -ENOSYS */
+  CHECK(ec_prof(0, 0) == -ENOSYS); /* no profiler before init: -ENOSYS */
   ei_prof_init(&tab);
   ei_prof_init(&tab); /* idempotent */
   CHECK(ec_prof(0, 0) == 3); /* profiling and sampling */

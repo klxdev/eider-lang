@@ -145,7 +145,7 @@ mkdir -p target/runtest
 frontmsg='"error":"(E0001|E0002|E0402)"|"error":"E0302".*"message":"`inout` is only valid on function parameters'
 front() {
   case "$1" in *"\"file\":\"$2\""*) ;; *) return ;; esac
-  echo "$1" | grep -E "$frontmsg"
+  printf '%s\n' "$1" | grep -E "$frontmsg"
 }
 fail=0
 n=0
@@ -157,7 +157,7 @@ for f in $(find . -name '*.ei' -not -path './target/*' -not -path './.claude/*' 
   [ -f "$p" ] && want=$(cat "$p")
   got=$(front "$($new check --json "$f" 2>/dev/null | head -1 | norm)" "$f")
   if [ -n "$BLESS" ]; then
-    if [ -n "$got" ]; then mkdir -p "$(dirname "$p")"; echo "$got" >"$p"; else rm -f "$p"; fi
+    if [ -n "$got" ]; then mkdir -p "$(dirname "$p")"; printf '%s\n' "$got" >"$p"; else rm -f "$p"; fi
     want=$got
   fi
   if [ "$want" != "$got" ]; then
@@ -622,7 +622,7 @@ for f in tests/std/*.ei packages/*/tests/*.ei examples/*/tests/*.ei; do
   if [ "$got" = "$(cat "$want")" ]; then m_ok=$((m_ok + 1))
   # a package test that loads a pinned library which isn't there (E0810 at .vendor/<name>)
   elif [ -n "$novendor" ] && printf '%s\n' "$got" | grep -q 'E0810.*/\.vendor/'; then m_n=$((m_n - 1)); m_skip="$m_skip $f"
-  else echo "FAIL meaning: $f"; echo "$got" | diff "$want" - | head -10; fail=1; fi
+  else echo "FAIL meaning: $f"; printf '%s\n' "$got" | diff "$want" - | head -10; fail=1; fi
 done
 [ "$m_ok" = "$m_n" ] && echo "ok   meaning: $m_ok/$m_n std, package and example tests give their .out with references by default"
 [ -n "$m_skip" ] && echo "skip meaning: $(printf '%s\n' $m_skip | paste -sd, - | sed 's/,/, /g') (they load a pinned library): $novendor"

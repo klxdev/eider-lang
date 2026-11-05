@@ -282,6 +282,8 @@ static void test_trap_across_park(void) {
 
 // ---- a stack overflow in a task is reported from its guard
 
+static const char *self_path;
+
 static int64_t deep(int64_t n) {
   volatile char pad[512];
   pad[0] = (char)n;
@@ -307,7 +309,7 @@ static void test_overflow(void) {
   if (pid == 0) {
     /* a fresh process: a fork would have no workers */
     if (!freopen("/dev/null", "w", stderr)) _exit(3);
-    execl("/proc/self/exe", "task_test", "overflow", (char *)NULL);
+    execl(self_path, "task_test", "overflow", (char *)NULL);
     _exit(3);
   }
   int st = 0;
@@ -848,6 +850,7 @@ static void test_task_dump(void) {
   } while (0)
 
 int main(int argc, char **argv) {
+  self_path = argv[0];
   if (argc > 1 && strcmp(argv[1], "overflow") == 0) child_overflow();
   if (argc > 1 && strcmp(argv[1], "threads") == 0) {
     /* the same parker tests with OS threads (EIDER_TASKS=threads) */
