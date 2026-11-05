@@ -122,6 +122,8 @@ if [ "$1" = "--leg" ]; then
     # vendor-layout: vendored copies are in .vendor/ only; nothing mentions the layout before it (#130, C400)
     sh scripts/check-vendor-layout.sh > $S/vlayout 2>&1 && cat $S/vlayout || { echo "FAIL vendor-layout"; head -24 $S/vlayout; }
     sh scripts/version.sh check > $S/version 2>&1 && cat $S/version || { echo "FAIL version: sh scripts/version.sh check"; sed 's/^/  /' $S/version; }
+    # version bump (#205), against a copy of this checkout and fake siblings
+    sh tests/version/run.sh > $S/versionbump 2>&1 && cat $S/versionbump || { echo "FAIL version bump: sh tests/version/run.sh"; head -20 $S/versionbump; }
     # the gdb and lldb printers (debug/), against fake values
     sh tests/debug/run.sh target/eiderc-next > $S/debug 2>&1 && cat $S/debug || { echo "FAIL debug printers: sh tests/debug/run.sh"; cat $S/debug; } ;;
   docs)

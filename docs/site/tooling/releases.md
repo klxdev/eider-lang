@@ -130,6 +130,33 @@ BLESS=1 sh scripts/test-compiler.sh    # E0811's message names the MAJOR.MINOR: 
 then a section for the new version in each bumped repository's `CHANGELOG.md`, and a commit
 in each.
 
+A bump does the rest of the release prep itself (#205), in eider-lang and in every sibling
+found:
+
+- a sibling's own version: each `[package]` `version` that was its old `VERSION` in its
+  eider.toml files, whether or not it has a `scripts/version.sh` (eider-profiler has none; the
+  cli package of eider-rpc and of eider-openapi follow their repository);
+- on a minor or major bump, the dependency pins: every `[deps.*]` table whose `git` is a
+  sibling's repository (`eider-json`, `eider-http`, ...) gets that sibling's new `version`, in
+  the siblings and the shopping example. A pin is a minimum version (eider-pkg), so a patch
+  bump rewrites none;
+- the series and version text: `eider = "<series>"` (also inside a quoted string of a test
+  script), `this toolchain is <series>`, `port it to <series>`, `eider toolchain install
+  <series>`, the `"toolchain"` of the `eiderc doc` goldens, the analyzer's session goldens
+  (`serverInfo`), `eider add ... --version` lines for the libraries and the version/series
+  output block of this page. Changelogs, `docs/decisions.md`, `docs/compiler.md`, the research
+  and design notes and the seed are history and stay as they are.
+
+It fails (exit 1, every place named) where it cannot finish: a sibling with no valid
+`VERSION`, one whose own `version` line was not that `VERSION`, or text of the old series that
+remains. `check` also fails while `vendor.lock` pins a release of another series. The commands
+that need a commit come last, in the order to run them: the seed and the oracle, a commit per
+repository, `git tag` and `git push` for the six libraries and the shopping example (the
+tools' tags are printed by `release.sh`), `scripts/vendor.sh` for eider-toml, eider-json and
+eider-markdown at their new commits, and `eider-pkg update` in each directory with an
+`eider.lock`, whose pins name the new tags. Prose that names a released version ("built with
+the published toolchain 0.7.0") is not rewritten.
+
 ## Releasing
 
 A release is published as a GitHub Release of klxdev/eider-lang, tagged `v<version>`. The

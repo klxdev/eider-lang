@@ -25,6 +25,11 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 - `net.lookup_by(host, service, family, kind, dl)` (#59): name resolution that gives up at a deadline, in a task or a
   thread (core: `ec_dns_start`, `ec_dns_job_fd`, `ec_dns_finish`, `ec_dns_cancel`). An abandoned lookup ends when the
   system's resolver returns. The `http` client taking a host name is for eider-http.
+- `scripts/version.sh bump` (#205) now does the release prep that was edited by hand in 0.6.0 and 0.7.0: the siblings' own
+  `version` lines (eider-profiler included), the `[deps.*]` pins on other siblings, the series and version text of docs,
+  tests and goldens (the oracle's E0811 text, the `eiderc doc` goldens, the analyzer's session goldens), and it fails
+  loudly, naming each place, where it cannot; `check` fails while vendor.lock pins another series; the tag commands for the
+  six libraries and the shopping example are printed. `tests/version/run.sh` tests it against a copy (a verify leg).
 
 ## 0.7.0
 
