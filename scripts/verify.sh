@@ -192,7 +192,7 @@ if [ "$1" = "--leg" ]; then
     # tools: the sibling repositories (scripts/check-tools.sh; EIDER_<NAME>, else
     # $EIDER_SIBLINGS/<name>, default ../<name>): the editor tooling (eider-analyzer,
     # tree-sitter-eider) and the libraries and frameworks (eider-toml, eider-json,
-    # eider-markdown, eider-logging, eider-command, eider-http, eider-rpc, eider-openapi), built and tested against this
+    # eider-markdown, eider-logging, eider-command, eider-http, eider-rpc, eider-openapi, eider-compression), built and tested against this
     # checkout, and every sibling's VERSION has this MAJOR.MINOR (the `ok   versions:` line). A
     # part whose repository or tool is missing is a skipped leg, so a plain checkout stays green.
     sh scripts/check-tools.sh > $S/tools 2>&1; trc=$?
