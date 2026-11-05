@@ -186,3 +186,11 @@ fn main() uses io {
     }
     print("{tried} round trips, {bad} wrong")
 }
+
+
+test "canonical NaNs have stable bits and sort after infinity" {
+    assert math.nan().to_bits() == 9221120237041090560
+    assert math.nan_f32().to_bits() == 2143289344
+    assert math.infinity().total_cmp(math.nan()) == Less
+    assert math.nan().total_cmp(math.nan()) == Equal
+}

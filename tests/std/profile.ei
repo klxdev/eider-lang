@@ -25,3 +25,12 @@ fn main() uses io, fs, clock {
     let s = profile.with_label_bytes(List.new(), List.new(), || -> String { String.from("bytes") })
     print(s)
 }
+
+
+test "an absent profiler reports its build requirement on every platform" {
+    assert !profile.enabled()
+    match profile.capture() {
+        Ok(_) => panic("capture without a profiler unexpectedly succeeded")
+        Err(e) => assert e == String.from("profile: cannot write a snapshot: not built with --profile")
+    }
+}
