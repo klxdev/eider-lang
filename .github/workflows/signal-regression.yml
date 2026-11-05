@@ -1,0 +1,21 @@
+name: Pending signal regression
+on:
+  pull_request:
+    paths:
+      - 'core/**'
+      - 'tests/core/signal_mask_test.c'
+      - 'tests/core/signal-mask.sh'
+      - '.github/workflows/signal-regression.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pending-signal:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: sh tests/core/signal-mask.sh
