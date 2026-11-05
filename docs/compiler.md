@@ -4987,3 +4987,27 @@ What is not relaxed, because it is passed as a reference to the place: a variabl
 an `as` to the value's own type, and two `inout` arguments of one root. The adversarial cases are in the E0301 tests above.
 Operators were E0301 in 0.7.0 as a precaution ("C8.67"); no program that compiled changes, and programs that were E0301
 now compile, so the two oracle cases that used an operator now use a place.
+
+## C8.86: name resolution with a deadline (#59)
+
+Decision C879. Code: core/eider_core.c (`ec_dns_start`, `ec_dns_job_fd`, `ec_dns_finish`, `ec_dns_cancel`; the hints and
+the result records of `ec_dns_lookup` are `dns_hints` and `dns_collect` now), core/os.ei, std/net.ei (`lookup_by`, `resolved`),
+core/ABI.md ("Name resolution"). Tests: tests/core/os_test.c (`test_dns_deadline`, also under ASan and TSan),
+tests/std/net.ei.
+
+`getaddrinfo` blocks and cannot be interrupted, so a deadline can only stop waiting for it. `ec_dns_start` copies host and
+service, starts a detached pthread that runs `getaddrinfo`, and returns a job number (a slot of a 64-entry table).
+The job owns a pipe: the thread writes one byte when it is done, so the caller waits for the read end with
+`ec_fd_wait`, which parks a task and takes a deadline like any other wait (`fd.wait_ready`). The job's `state` is 0
+running, 1 done, 2 abandoned. The thread writes the byte, then moves running to done; if that fails, the job was
+abandoned in between and the thread frees it. `ec_dns_finish` collects the records into the caller's `out` on the
+caller's thread (the thread-locals of "Thread-locals across a park" are never touched by the resolver thread) and frees
+the job; `ec_dns_cancel` moves running to abandoned (the thread frees the job when the resolver returns) or, for a
+finished one, frees it. So an abandoned lookup costs a thread until the resolver gives up (the system's resolver
+timeout, seconds) and nothing else: no handle to join, which is why a `spawn` and a `Chan` could not do it (the last
+`Task` handle joins its thread). At most 64 lookups are pending at once (`-EMFILE`; a program that abandons more than
+that in a resolver timeout gets the error, not unbounded threads).
+
+`net.lookup_by(host, service, family, kind, dl)` is `lookup` with `dl`: an error naming the host and "the deadline
+passed" at the deadline. Not done: `http/client` accepting a host name (acceptance of #59) belongs to eider-http, which can
+call `net.lookup_by` now.

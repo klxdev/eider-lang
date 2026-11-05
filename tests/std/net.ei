@@ -156,7 +156,7 @@ fn unix_socket() -> Result[bool, String] uses io, fs, net, ffi {
     Ok(true)
 }
 
-fn names() -> Result[bool, String] uses io, net, ffi {
+fn names() -> Result[bool, String] uses io, net, clock, ffi {
     let all = net.lookup(sys.lit("localhost"), sys.lit("80"), 0, net.STREAM)?
     var loopback = all.len() > 0
     for a in all {
@@ -165,6 +165,11 @@ fn names() -> Result[bool, String] uses io, net, ffi {
         if a.family == net.IPV6 && !bytes.eq(a.ip, net.ipv6_loopback(0).ip) { loopback = false }
     }
     print(loopback)
+    // with a deadline: the same answer, from the thread the runtime resolves on
+    let by = net.lookup_by(sys.lit("localhost"), sys.lit("80"), 0, net.STREAM, time.after_ms(10000))?
+    print(by.len() == all.len())
+    let num = net.lookup_by(sys.lit("127.0.0.1"), sys.lit("8080"), 4, net.STREAM, time.never())?
+    show(net.text(num[0]))
     show(net.text(net.parse(sys.lit("10.1.2.3"), 8080)?))
     show(net.text(net.parse(sys.lit("::1"), 443)?))
     show(net.text(net.parse(sys.lit("2001:db8::ff00:42:8329"), 1)?))

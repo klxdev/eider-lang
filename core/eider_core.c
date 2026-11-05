@@ -41,6 +41,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#include <sched.h>
 #include <signal.h>
 #include <stddef.h>
 #include <stdatomic.h>
@@ -1327,21 +1328,20 @@ static int64_t eai_status(int e) {
 /* in = host NUL service (either may be empty). family 0 any, 4, 6; socktype 0 any, 1 stream,
    2 datagram; flags 1 passive, 2 numeric host only, 4 address-config. The number of results;
    out = per result: 1 byte socktype (1/2/0 other), 1 byte A, the address (A bytes). */
-EC_FN(int64_t, ec_dns_lookup, (int32_t family, int32_t socktype, int32_t flags)) {
-  struct addrinfo hints, *res = NULL;
-  memset(&hints, 0, sizeof hints);
-  hints.ai_family = family == 0 ? AF_UNSPEC : family == 4 ? AF_INET : family == 6 ? AF_INET6 : -1;
-  hints.ai_socktype = socktype == 0 ? 0 : sock_type(socktype);
-  if (hints.ai_family == -1 || hints.ai_socktype < 0 || flags < 0 || flags > 7) return -EINVAL;
-  if (flags & 1) hints.ai_flags |= AI_PASSIVE;
-  if (flags & 2) hints.ai_flags |= AI_NUMERICHOST;
-  if (flags & 4) hints.ai_flags |= AI_ADDRCONFIG;
-  const char *host = arg(0), *serv = arg(1);
-  if (host && !*host) host = NULL;
-  if (serv && !*serv) serv = NULL;
-  out_len = 0;
-  int e = getaddrinfo(host, serv, &hints, &res);
-  if (e != 0) return eai_status(e);
+/* The getaddrinfo hints for (family, socktype, flags) of ec_dns_lookup; 0, or -EINVAL. */
+static int dns_hints(struct addrinfo *hints, int32_t family, int32_t socktype, int32_t flags) {
+  memset(hints, 0, sizeof *hints);
+  hints->ai_family = family == 0 ? AF_UNSPEC : family == 4 ? AF_INET : family == 6 ? AF_INET6 : -1;
+  hints->ai_socktype = socktype == 0 ? 0 : sock_type(socktype);
+  if (hints->ai_family == -1 || hints->ai_socktype < 0 || flags < 0 || flags > 7) return -EINVAL;
+  if (flags & 1) hints->ai_flags |= AI_PASSIVE;
+  if (flags & 2) hints->ai_flags |= AI_NUMERICHOST;
+  if (flags & 4) hints->ai_flags |= AI_ADDRCONFIG;
+  return 0;
+}
+
+/* The records of a getaddrinfo result into out; their number. */
+static int64_t dns_collect(struct addrinfo *res) {
   int64_t count = 0;
   for (struct addrinfo *ai = res; ai; ai = ai->ai_next) {
     if (ai->ai_family != AF_INET && ai->ai_family != AF_INET6) continue;
@@ -1356,8 +1356,158 @@ EC_FN(int64_t, ec_dns_lookup, (int32_t family, int32_t socktype, int32_t flags))
     out_p[at + 1] = (unsigned char)(out_len - at - 2);
     count++;
   }
+  return count;
+}
+
+EC_FN(int64_t, ec_dns_lookup, (int32_t family, int32_t socktype, int32_t flags)) {
+  struct addrinfo hints, *res = NULL;
+  if (dns_hints(&hints, family, socktype, flags) != 0) return -EINVAL;
+  const char *host = arg(0), *serv = arg(1);
+  if (host && !*host) host = NULL;
+  if (serv && !*serv) serv = NULL;
+  out_len = 0;
+  int e = getaddrinfo(host, serv, &hints, &res);
+  if (e != 0) return eai_status(e);
+  int64_t count = dns_collect(res);
   freeaddrinfo(res);
   return count;
+}
+
+/* ---- name resolution with a deadline (decision C879). getaddrinfo can't be interrupted, so a
+   lookup that must be abandoned at a deadline runs on a thread of its own: ec_dns_start starts
+   it, its read end becomes readable when it is done (the caller waits for that with
+   ec_fd_wait, which parks a task), ec_dns_finish collects the result, ec_dns_cancel lets go of
+   a lookup nobody waits for any more: the thread then frees it when getaddrinfo returns. */
+typedef struct dns_job {
+  char *host, *serv;
+  struct addrinfo hints, *res;
+  int e, rfd, wfd, delay_ms;
+  atomic_int state; /* 0 running, 1 done, 2 abandoned */
+} dns_job;
+#define DNS_JOBS 64
+static dns_job *dns_jobs[DNS_JOBS];
+static pthread_mutex_t dns_mu = PTHREAD_MUTEX_INITIALIZER;
+
+static void dns_job_free(dns_job *j) {
+  if (j->res) freeaddrinfo(j->res);
+  free(j->host);
+  free(j->serv);
+  close(j->rfd);
+  close(j->wfd);
+  free(j);
+}
+
+static void *dns_thread(void *p) {
+  dns_job *j = p;
+  if (j->delay_ms > 0) {
+    struct timespec t = {j->delay_ms / 1000, (long)(j->delay_ms % 1000) * 1000000L};
+    nanosleep(&t, NULL);
+  }
+  j->e = getaddrinfo(j->host, j->serv, &j->hints, &j->res);
+  /* signal first: after the state changes to done the caller may free the job */
+  char b = 1;
+  ssize_t w = write(j->wfd, &b, 1);
+  (void)w;
+  int running = 0;
+  if (!atomic_compare_exchange_strong(&j->state, &running, 1)) dns_job_free(j); /* abandoned */
+  return NULL;
+}
+
+/* in[0] host, in[1] service; family, socktype, flags as ec_dns_lookup (flags 64: the thread waits
+   300 ms before it resolves, so tests can pass a deadline). A job number (> 0), or -errno. */
+EC_FN(int64_t, ec_dns_start, (int32_t family, int32_t socktype, int32_t flags)) {
+  dns_job *j = calloc(1, sizeof *j);
+  if (!j) return -ENOMEM;
+  int delay = (flags & 64) ? 300 : 0;
+  int64_t r = dns_hints(&j->hints, family, socktype, flags & ~64);
+  const char *host = arg(0), *serv = arg(1);
+  if (r == 0) {
+    j->host = host && *host ? strdup(host) : NULL;
+    j->serv = serv && *serv ? strdup(serv) : NULL;
+    if ((host && *host && !j->host) || (serv && *serv && !j->serv)) r = -ENOMEM;
+  }
+  int p[2] = {-1, -1};
+  if (r == 0 && (cloexec_pipe(p) != 0 || set_cloexec_nonblock(p[0], 1) != 0 || set_cloexec_nonblock(p[1], 1) != 0)) r = fail();
+  j->rfd = p[0];
+  j->wfd = p[1];
+  j->delay_ms = delay;
+  int slot = -1;
+  if (r == 0) {
+    pthread_mutex_lock(&dns_mu);
+    for (int i = 0; i < DNS_JOBS && slot < 0; i++)
+      if (!dns_jobs[i]) slot = i;
+    if (slot >= 0) dns_jobs[slot] = j;
+    pthread_mutex_unlock(&dns_mu);
+    if (slot < 0) r = -EMFILE;
+  }
+  if (r == 0) {
+    pthread_t th;
+    pthread_attr_t at;
+    pthread_attr_init(&at);
+    pthread_attr_setdetachstate(&at, PTHREAD_CREATE_DETACHED);
+    int pe = pthread_create(&th, &at, dns_thread, j);
+    pthread_attr_destroy(&at);
+    if (pe != 0) {
+      pthread_mutex_lock(&dns_mu);
+      dns_jobs[slot] = NULL;
+      pthread_mutex_unlock(&dns_mu);
+      r = -pe;
+    }
+  }
+  if (r != 0) {
+    if (p[0] >= 0) close(p[0]);
+    if (p[1] >= 0) close(p[1]);
+    free(j->host);
+    free(j->serv);
+    free(j);
+    return r;
+  }
+  return slot + 1;
+}
+
+/* Takes job out of the table: its record, or NULL for a number that is no job. */
+static dns_job *dns_take(int64_t job) {
+  if (job < 1 || job > DNS_JOBS) return NULL;
+  pthread_mutex_lock(&dns_mu);
+  dns_job *j = dns_jobs[job - 1];
+  pthread_mutex_unlock(&dns_mu);
+  return j;
+}
+
+static void dns_untable(int64_t job) {
+  pthread_mutex_lock(&dns_mu);
+  dns_jobs[job - 1] = NULL;
+  pthread_mutex_unlock(&dns_mu);
+}
+
+/* The descriptor to wait on (readable once the lookup is done), or -EINVAL. */
+EC_FN(int64_t, ec_dns_job_fd, (int64_t job)) {
+  dns_job *j = dns_take(job);
+  return j ? j->rfd : -EINVAL;
+}
+
+/* The result of a finished lookup, as ec_dns_lookup gives it (the number of records in out, or a
+   resolver status), and the job is gone; -EAGAIN while it still runs (the job stays). */
+EC_FN(int64_t, ec_dns_finish, (int64_t job)) {
+  dns_job *j = dns_take(job);
+  if (!j) return -EINVAL;
+  for (int i = 0; i < 2000 && atomic_load(&j->state) == 0; i++) sched_yield();
+  if (atomic_load(&j->state) == 0) return -EAGAIN;
+  dns_untable(job);
+  out_len = 0;
+  int64_t r = j->e != 0 ? eai_status(j->e) : dns_collect(j->res);
+  dns_job_free(j);
+  return r;
+}
+
+/* Lets go of a lookup: the thread frees it if it is still running. 0, or -EINVAL. */
+EC_FN(int64_t, ec_dns_cancel, (int64_t job)) {
+  dns_job *j = dns_take(job);
+  if (!j) return -EINVAL;
+  dns_untable(job);
+  int running = 0;
+  if (!atomic_compare_exchange_strong(&j->state, &running, 2)) dns_job_free(j);
+  return 0;
 }
 
 /* in = address. flags 1 numeric host, 2 numeric service, 4 name required, 8 datagram

@@ -10,7 +10,7 @@ channels, tasks, the event loop) has its own page, docs/runtime.md.
 |---|---|---|
 | `bytes` | text as `List[u8]`: compare, find, split, trim, decimal conversion | none |
 | `fs`, `io`, `env`, `proc` | files and directories by path; stdout/stderr/stdin as raw bytes; the environment; running a program to completion | `fs`; `io`; `io`; `io, fs, net` |
-| `fd`, `net`, `poll`, `time`, `random`, `signal`, `child` | the thin OS layer over core/ABI.md (descriptors, sockets and DNS, readiness, clocks and `Duration`/`Deadline`, the CSPRNG, signals, child processes) | as each call |
+| `fd`, `net`, `poll`, `time`, `random`, `signal`, `child` | the thin OS layer over core/ABI.md (descriptors, sockets and DNS, readiness, clocks and `Duration`/`Deadline`, the CSPRNG, signals, child processes); `net.lookup_by(host, service, family, kind, dl)` resolves with a deadline (a thread of the runtime's own does the `getaddrinfo`; at the deadline the lookup is abandoned and the answer dropped) | as each call (`lookup_by`: `net, io, clock`) |
 | `atomic`, `sync`, `chan`, `task`, `event` | the runtime layer (docs/runtime.md) | as each call |
 | **`stream`** | `Reader`/`Writer`, typed `Error`s, `BufReader`/`BufWriter`, streams over descriptors (files, pipes, sockets, child streams, stdin/stdout/stderr) and memory; deadlines on everything | `io` (+ `clock` for deadlines); `fs` to open files, `net` to connect and accept |
 | **`path`** | POSIX paths as bytes: join, parent, file_name, extension, stem, normalize, components, relative_to | none |

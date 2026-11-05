@@ -62,6 +62,10 @@ int64_t ec_sock_name(int32_t fd, int32_t peer);
 int64_t ec_sock_setopt(int32_t fd, int32_t opt, int64_t value);
 int64_t ec_sock_getopt(int32_t fd, int32_t opt);
 int64_t ec_dns_lookup(int32_t family, int32_t socktype, int32_t flags);
+int64_t ec_dns_start(int32_t family, int32_t socktype, int32_t flags);
+int64_t ec_dns_job_fd(int64_t job);
+int64_t ec_dns_finish(int64_t job);
+int64_t ec_dns_cancel(int64_t job);
 int64_t ec_dns_reverse(int32_t flags);
 int64_t ec_poll_new(void);
 int64_t ec_poll_ctl(int32_t pfd, int32_t op, int32_t fd, int32_t interest, int64_t token);
@@ -632,6 +636,61 @@ static void test_unix(void) {
   EQI(ec_sock_pair(7), -EINVAL);
 }
 
+/* A lookup on a thread of its own: its answer is the one ec_dns_lookup gives, a deadline passes
+   without it (flags 64: the thread waits 300 ms first), and an abandoned lookup frees itself. */
+static void test_dns_deadline(void) {
+  ec_in_clear();
+  push_str("127.0.0.1");
+  ec_in_push(0);
+  push_str("8080");
+  int64_t j = ec_dns_start(4, 1, 2);
+  CHECK(j > 0);
+  int64_t fd = ec_dns_job_fd(j);
+  CHECK(fd >= 0);
+  EQI(ec_fd_wait((int32_t)fd, 1, 5000), 1);
+  EQI(ec_dns_finish(j), 1);
+  CHECK(ec_out_byte(0) == 1 && ec_out_byte(1) == 7 && ec_out_byte(2) == 4 && ec_out_byte(5) == 127);
+  EQI(ec_out_byte(3) * 256 + ec_out_byte(4), 8080);
+  EQI(ec_dns_finish(j), -EINVAL); /* the job is gone */
+  /* a resolver error comes through finish, with the status ec_dns_lookup gives */
+  ec_in_clear();
+  push_str("not-a-number");
+  j = ec_dns_start(0, 1, 2);
+  CHECK(j > 0);
+  EQI(ec_fd_wait((int32_t)ec_dns_job_fd(j), 1, 5000), 1);
+  int64_t e = ec_dns_finish(j);
+  CHECK(e <= -1000001 && e >= -1000009);
+  /* a deadline passes first: nothing is readable, the job is abandoned, the thread frees it */
+  for (int round = 0; round < 3; round++) {
+    ec_in_clear();
+    push_str("127.0.0.1");
+    ec_in_push(0);
+    push_str("9");
+    j = ec_dns_start(4, 1, 2 | 64);
+    CHECK(j > 0);
+    EQI(ec_fd_wait((int32_t)ec_dns_job_fd(j), 1, 30), 0);
+    EQI(ec_dns_finish(j), -EAGAIN); /* still running */
+    EQI(ec_dns_cancel(j), 0);
+    EQI(ec_dns_cancel(j), -EINVAL);
+  }
+  /* cancelling a lookup that is already done frees it at once */
+  ec_in_clear();
+  push_str("127.0.0.1");
+  ec_in_push(0);
+  push_str("9");
+  j = ec_dns_start(4, 1, 2);
+  EQI(ec_fd_wait((int32_t)ec_dns_job_fd(j), 1, 5000), 1);
+  EQI(ec_dns_cancel(j), 0);
+  /* a bad family is refused, and numbers that are no job */
+  EQI(ec_dns_start(5, 0, 0), -EINVAL);
+  EQI(ec_dns_job_fd(0), -EINVAL);
+  EQI(ec_dns_finish(1000), -EINVAL);
+  EQI(ec_dns_cancel(-3), -EINVAL);
+  /* let the abandoned threads end before the leak checks of a sanitizer */
+  struct timespec ts = {0, 500 * 1000000L};
+  nanosleep(&ts, NULL);
+}
+
 static void test_dns(void) {
   /* localhost: every result is a loopback address with the asked-for port */
   ec_in_clear();
@@ -1125,6 +1184,7 @@ int main(int argc, char **argv) {
   test_udp();
   test_unix();
   test_dns();
+  test_dns_deadline();
   test_waker();
   test_time();
   test_random();

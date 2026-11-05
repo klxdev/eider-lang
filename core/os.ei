@@ -50,6 +50,10 @@ extern "c" fn ec_sock_name(fd: i32, peer: i32) -> i64
 extern "c" fn ec_sock_setopt(fd: i32, opt: i32, value: i64) -> i64
 extern "c" fn ec_sock_getopt(fd: i32, opt: i32) -> i64
 extern "c" fn ec_dns_lookup(family: i32, kind: i32, flags: i32) -> i64
+extern "c" fn ec_dns_start(family: i32, kind: i32, flags: i32) -> i64
+extern "c" fn ec_dns_job_fd(job: i64) -> i64
+extern "c" fn ec_dns_finish(job: i64) -> i64
+extern "c" fn ec_dns_cancel(job: i64) -> i64
 extern "c" fn ec_dns_reverse(flags: i32) -> i64
 extern "c" fn ec_poll_new() -> i64
 extern "c" fn ec_poll_ctl(pfd: i32, op: i32, fd: i32, interest: i32, token: i64) -> i64
@@ -161,6 +165,10 @@ pub fn sock_name(fd: i32, peer: bool) -> i64 uses net, ffi {
 pub fn sock_setopt(fd: i32, opt: i32, value: i64) -> i64 uses net, ffi { unsafe { ec_sock_setopt(fd, opt, value) } }
 pub fn sock_getopt(fd: i32, opt: i32) -> i64 uses net, ffi { unsafe { ec_sock_getopt(fd, opt) } }
 pub fn dns_lookup(family: i32, kind: i32, flags: i32) -> i64 uses net, ffi { unsafe { ec_dns_lookup(family, kind, flags) } }
+pub fn dns_start(family: i32, kind: i32, flags: i32) -> i64 uses net, ffi { unsafe { ec_dns_start(family, kind, flags) } }
+pub fn dns_job_fd(job: i64) -> i64 uses net, ffi { unsafe { ec_dns_job_fd(job) } }
+pub fn dns_finish(job: i64) -> i64 uses net, ffi { unsafe { ec_dns_finish(job) } }
+pub fn dns_cancel(job: i64) -> i64 uses net, ffi { unsafe { ec_dns_cancel(job) } }
 pub fn dns_reverse(flags: i32) -> i64 uses net, ffi { unsafe { ec_dns_reverse(flags) } }
 
 // readiness

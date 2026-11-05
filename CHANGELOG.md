@@ -22,6 +22,9 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 - Operator arguments of a call with an `inout` receiver or argument (#198): `p.add(-p.x)`, `bump(inout n, n + 1)` were
   E0301 and compile now, as a call argument did since 0.7.0. A place argument (`p.add(p.x)`) is still E0301. A test
   that expects E0301 for an operator argument has to name a place.
+- `net.lookup_by(host, service, family, kind, dl)` (#59): name resolution that gives up at a deadline, in a task or a
+  thread (core: `ec_dns_start`, `ec_dns_job_fd`, `ec_dns_finish`, `ec_dns_cancel`). An abandoned lookup ends when the
+  system's resolver returns. The `http` client taking a host name is for eider-http.
 
 ## 0.7.0
 

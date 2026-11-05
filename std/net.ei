@@ -7,6 +7,7 @@ import core.sys
 import core.os
 import std.bytes
 import std.fd
+import std.time
 
 /// Address families.
 pub const IPV4: i32 = 4
@@ -354,6 +355,11 @@ fn resolve(host: List[u8], service: List[u8], family: i32, kind: i32, flags: i32
     p.push(service)
     sys.send_all(p)
     let n = os.dns_lookup(family, kind, flags)
+    resolved(host, n)
+}
+
+/// The addresses of the lookup that returned `n` (the core's result), or its error.
+fn resolved(host: List[u8], n: i64) -> Result[List[Addr], String] uses net {
     if n < 0 {
         let mut m = String.from("cannot resolve ")
         m.append(sys.to_string(host))
@@ -370,6 +376,36 @@ fn resolve(host: List[u8], service: List[u8], family: i32, kind: i32, flags: i32
         at = at + 2 + len
     }
     Ok(out)
+}
+
+/// `lookup` that gives up at `dl`: the resolver can't be interrupted, so it runs on a thread of
+/// the runtime's own while the caller waits (a task parks) for the answer or the deadline; at the
+/// deadline the lookup is abandoned (the thread ends when the resolver returns and its answer is
+/// dropped) and the result is an error saying so. A deadline that has passed still returns an
+/// answer that is already there. Cancel-safe: it only waits.
+pub fn lookup_by(host: List[u8], service: List[u8], family: i32, kind: i32, dl: time.Deadline) -> Result[List[Addr], String] uses net, io, clock {
+    let mut p: List[List[u8]] = List.new()
+    p.push(host)
+    p.push(service)
+    sys.send_all(p)
+    let job = os.dns_start(family, kind, 0)
+    if job < 0 { return resolved(host, job) }
+    let rfd = os.dns_job_fd(job) as i32
+    let ready = match fd.wait_ready(rfd, fd.READY_READ, dl) {
+        Ok(r) => r
+        Err(e) => {
+            os.dns_cancel(job)
+            return Err(e)
+        }
+    }
+    if !ready {
+        os.dns_cancel(job)
+        let mut m = String.from("cannot resolve ")
+        m.append(sys.to_string(host))
+        m.push_str(": the deadline passed")
+        return Err(m)
+    }
+    resolved(host, os.dns_finish(job))
 }
 
 /// The host name and service name of an address (numeric when `numeric`, or when no name is
