@@ -5,6 +5,16 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## 0.7.4 (unreleased)
+
+- New library eider-postgres (#36): a PostgreSQL client in Eider (`postgres`), protocol v3 over std/net. Cleartext,
+  MD5 and SCRAM-SHA-256 authentication, simple and extended queries with a prepared-statement cache, text and binary
+  results, typed errors with every field, transactions and savepoints (`transaction` rolls back on Err or trap), COPY,
+  cancellation and deadlines, LISTEN/NOTIFY, a bounded connection pool, typed queries from records through
+  std/serial, and TLS through eider-tls in `postgres.secure`. Tested against PostgreSQL 16, 17 and 18 in a podman
+  container (skipped without podman). Registered with the other libraries in the release scripts (version.sh,
+  check-tools.sh, verify-stamp.sh) and LAYERS.md.
+
 ## 0.7.3
 
 A patch that reshapes the library layer: logging and the command line leave std for libraries of their own, and
