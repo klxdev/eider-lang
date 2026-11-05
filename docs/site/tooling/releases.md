@@ -27,7 +27,7 @@ and a `0.2` toolchain needs `0.2` tools.
 
 Library packages keep their own `version` in their `eider.toml`, and eider-pkg selects them
 by that version. The libraries and frameworks in repositories of their own (eider-toml,
-eider-json, eider-markdown, eider-http, eider-rpc, eider-openapi) follow the tools' rule
+eider-json, eider-markdown, eider-http, eider-rpc, eider-openapi, eider-compression) follow the tools' rule
 until 1.0: their MAJOR.MINOR is the toolchain's, their PATCH their own, so `scripts/version.sh
 check-siblings` and `bump` treat them as siblings. A package you write needs only
 `eider = "<MAJOR.MINOR>"`.
