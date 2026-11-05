@@ -25,6 +25,12 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 - `net.lookup_by(host, service, family, kind, dl)` (#59): name resolution that gives up at a deadline, in a task or a
   thread (core: `ec_dns_start`, `ec_dns_job_fd`, `ec_dns_finish`, `ec_dns_cancel`). An abandoned lookup ends when the
   system's resolver returns. The `http` client taking a host name is for eider-http.
+- The editor tooling of #150 (eider-analyzer and tree-sitter-eider repositories): rename (with prepareRename; refused when
+  the renamed program would not compile), signature help, inlay hints (binding types, parameter names), workspace symbols,
+  `Run test` code lenses, the quick fix "Add the missing arm", and the grammar's keywords and primitive types generated from the
+  compiler's (`scripts/gen-lexicon.sh`). Declined, with the reasons in eider-analyzer's README: debug lenses, capability
+  inlay hints, filling all arms at once, a workspace-wide index, generating the grammar's rules.
+
 - `scripts/version.sh bump` (#205) now does the release prep that was edited by hand in 0.6.0 and 0.7.0: the siblings' own
   `version` lines (eider-profiler included), the `[deps.*]` pins on other siblings, the series and version text of docs,
   tests and goldens (the oracle's E0811 text, the `eiderc doc` goldens, the analyzer's session goldens), and it fails

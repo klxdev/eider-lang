@@ -24,8 +24,19 @@ The paths below are placeholders: `/path/to/eider-lang`, `/path/to/eider-analyze
 | hover | the symbol's signature or type, and the type at the cursor |
 | folding ranges | multi-line items and runs of imports |
 | formatting | `eiderc fmt`'s layout for the whole buffer (format on save, `vim.lsp.buf.format()`); `eiderc fmt --write .` does the same from a shell |
+| rename | any function, method, type, variant, field, constant, trait, parameter, local or label, from its declaration or a use, across files; refused with the reason for a module, a keyword or taken name, a toolchain symbol, and when the renamed program would not compile (the server analyses it again with the edits applied) |
+| signature help | the signature of the function, method, variant or record constructor being called, with the parameter the cursor is in (by position, or the one a named argument names) |
+| inlay hints | the type of a `let`/`var` binding written without one, and the parameter name before each positional argument (`by:`) |
+| workspace symbols | types, variants, functions, methods, constants and traits of the open documents and the modules they import (not the toolchain's) |
+| code lenses | `Run test` on each `test` block (the command `eider.runTest`, which the client runs: `eiderc test <file>`) |
+| quick fix | besides the compiler's fixes, "Add the missing arm" for a non-exhaustive `match` (one arm per application) |
 | semantic tokens | namespaces, types, variants, fields, functions, methods, parameters, variables, constants, traits |
 | completion | names in scope; after `.`, a module's public items or the fields and methods of the receiver's type |
+
+Not provided, because the compiler's ide API cannot answer them correctly yet: debug lenses (no debug
+adapter), inlay hints for capabilities, filling all missing arms at once (the checker reports one unhandled
+value), renaming a module or file, and a workspace-wide symbol index (only open documents and their imports
+are searched). eider-analyzer's README lists them.
 
 Unsaved buffers are analysed from memory (the compiler's overlays). Edits are debounced, so
 a burst of typing costs one analysis. When a buffer doesn't parse, a lexical fallback
@@ -121,6 +132,13 @@ An external scanner handles Eider's newline-terminated statements the way the pa
 Queries: `highlights.scm`, `locals.scm`, `folds.scm`, `indents.scm`, `injections.scm` and
 `textobjects.scm` (functions, types, parameters, calls, blocks, loops, ... for
 nvim-treesitter-textobjects).
+
+The keywords and the primitive types are generated from the compiler's own tables
+(`scripts/gen-lexicon.sh` reads `compiler/intern.ei` and `compiler/types.ei`; `--check` runs in
+`scripts/check-eider-lang.sh`, so a keyword or type added to the compiler fails the tools leg until the
+lexicon is regenerated). The rules are written by hand: the compiler's parser is recursive descent,
+with no grammar to generate them from, and `check-eider-lang.sh` parses every `.ei` file of the
+repository to keep them in step.
 
 The tree-sitter CLI is a pinned development dependency:
 
