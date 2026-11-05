@@ -5,6 +5,10 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## 0.7.3 (unreleased)
+
+- **New library: eider-compression (#37).** `compression` in a repository of its own (like eider-toml, eider-json, eider-http): deflate (RFC 1951), zlib (RFC 1950) and gzip (RFC 1952) with CRC-32 and Adler-32, and zstd (RFC 8878), all in Eider and needing no capability. Whole-buffer functions (`gzip.decompress`, `gzip.compress`, ...) and streams that work in chunks (`Decoder`/`Encoder` with `feed`/`write`, `flush`, `finish`, and `std/stream` Readers and Writers in `compression.streams`); `compression.codec` picks a format by Content-Encoding name. Decoding hostile input never traps (every failure is a `compression.Error` with a kind and an input offset) and `compression.Limits` (maximum output, maximum ratio, zstd window, gzip header size) stops a decompression bomb before its output exists. eider-compression's CHANGELOG has the details and what the zstd encoder does not do (no Huffman-coded literals, no dictionaries). The siblings registry (`scripts/version.sh`, `scripts/check-tools.sh`, verify's tools leg, `scripts/verify-stamp.sh`, LAYERS.md, docs/site/tooling/releases.md) lists it, so `check-siblings`, `bump` and verify treat it as the other libraries.
+
 ## 0.7.2
 
 A patch: the profile-build thread-local hazard (#209), a core verify flake (#210), and the HTTP and service hardening
