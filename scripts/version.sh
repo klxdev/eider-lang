@@ -240,9 +240,11 @@ rewrite_text() {
     echo "s/(\"toolchain\": ?\")$ov(\")/\\1$rt_nv\\2/g" >> "$sedf"
     # the language server's session goldens: serverInfo of the initialize reply
     echo "s/(\"name\": ?\"eider-analyzer\", ?\"version\": ?\")$ov(\")/\\1$rt_nv\\2/g" >> "$sedf"
-    # `eider add json --git .../eider-json.git --version 0.6.0`: a library follows the toolchain on a minor/major bump
-    [ "$rt_kind" = patch ] || echo "/klxdev\\/eider-[a-z]+\\.git/ s/(--version )$ov( |\$)/\\1$rt_nv\\2/g" >> "$sedf"
   fi
+  # `eider add json --git .../eider-json.git --version 0.6.0`: a library follows the toolchain on a minor/major bump.
+  # Its version is the library's, not eider-lang's: after a patch release (0.7.1) the docs still name 0.7.0, so
+  # any patch of the old series is rewritten
+  [ "$rt_kind" = patch ] || [ "$rt_os" = "$rt_ns" ] || echo "/klxdev\\/eider-[a-z]+\\.git/ s/(--version )$os\\.[0-9]+( |\$)/\\1$rt_nv\\2/g" >> "$sedf"
   for f in $(text_files "$rt_d"); do
     f="$rt_d/$f"
     sed -E -f "$sedf" "$f" > "$f.tmp" || { rm -f "$f.tmp"; continue; }

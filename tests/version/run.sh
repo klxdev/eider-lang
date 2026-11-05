@@ -34,6 +34,7 @@ lacks() {
 
 OLD=$(tr -d ' \n' < VERSION)
 case $OLD in 0.*) ;; *) echo "skip version: the test assumes a 0.x VERSION (it is $OLD)"; exit 0 ;; esac
+LIB=${OLD%.*}.0  # the libraries and tools sit at the series .0 or at their own patch; the test fakes .0
 OLDS=${OLD%.*}; m=${OLDS#0.}; NEWS=0.$((m + 1)); NEW=$NEWS.0
 
 # a workspace: a copy of this checkout's files, as a repository (the bump wants a clean VERSION), and fakes
@@ -43,15 +44,15 @@ mkws() { # dir
   (cd "$w/eider-lang" && git init -q . && git add -A && git -c user.name=t -c user.email=t@t commit -q -m copy)
   # eider-json: no scripts/version.sh, a docs example, a changelog (history)
   mkdir -p "$w/eider-json/docs"
-  echo "$OLD" > "$w/eider-json/VERSION"
-  printf '[package]\nname = "json"\nversion = "%s"\neider = "%s"\n' "$OLD" "$OLDS" > "$w/eider-json/eider.toml"
-  printf 'eider add json --git https://github.com/klxdev/eider-json.git --version %s\nsome other --version %s stays\n' "$OLD" "$OLD" > "$w/eider-json/docs/use.md"
-  printf '## %s\n\nneeds `eider = "%s"`\n' "$OLD" "$OLDS" > "$w/eider-json/CHANGELOG.md"
+  echo "$LIB" > "$w/eider-json/VERSION"
+  printf '[package]\nname = "json"\nversion = "%s"\neider = "%s"\n' "$LIB" "$OLDS" > "$w/eider-json/eider.toml"
+  printf 'eider add json --git https://github.com/klxdev/eider-json.git --version %s\nsome other --version %s stays\n' "$LIB" "$LIB" > "$w/eider-json/docs/use.md"
+  printf '## %s\n\nneeds `eider = "%s"`\n' "$LIB" "$OLDS" > "$w/eider-json/CHANGELOG.md"
   # eider-http: has scripts/version.sh (sync/check like the real ones), pins json (git first), a lock
   mkdir -p "$w/eider-http/scripts"
-  echo "$OLD" > "$w/eider-http/VERSION"
-  printf '[package]\nname = "http"\nversion = "%s"\neider = "%s"\n\n[deps.json]\ngit = "https://github.com/klxdev/eider-json.git"\nversion = "%s"\n' "$OLD" "$OLDS" "$OLD" > "$w/eider-http/eider.toml"
-  printf '# eider.lock\nversion = 1\n\n[[package]]\nname = "json"\nversion = "%s"\n' "$OLD" > "$w/eider-http/eider.lock"
+  echo "$LIB" > "$w/eider-http/VERSION"
+  printf '[package]\nname = "http"\nversion = "%s"\neider = "%s"\n\n[deps.json]\ngit = "https://github.com/klxdev/eider-json.git"\nversion = "%s"\n' "$LIB" "$OLDS" "$LIB" > "$w/eider-http/eider.toml"
+  printf '# eider.lock\nversion = 1\n\n[[package]]\nname = "json"\nversion = "%s"\n' "$LIB" > "$w/eider-http/eider.lock"
   cat > "$w/eider-http/scripts/version.sh" <<'EOS'
 #!/bin/sh
 cd "$(dirname "$0")/.." || exit 1
@@ -64,18 +65,18 @@ esac
 EOS
   # eider-analyzer's session goldens name the server version
   mkdir -p "$w/eider-analyzer/tests/sessions"
-  echo "$OLD" > "$w/eider-analyzer/VERSION"
-  printf '[package]\nname = "analyzer"\nversion = "%s"\neider = "%s"\n' "$OLD" "$OLDS" > "$w/eider-analyzer/eider.toml"
-  printf '{"result":{"serverInfo":{"name":"eider-analyzer","version":"%s"}}}\n' "$OLD" > "$w/eider-analyzer/tests/sessions/a.out"
+  echo "$LIB" > "$w/eider-analyzer/VERSION"
+  printf '[package]\nname = "analyzer"\nversion = "%s"\neider = "%s"\n' "$LIB" "$OLDS" > "$w/eider-analyzer/eider.toml"
+  printf '{"result":{"serverInfo":{"name":"eider-analyzer","version":"%s"}}}\n' "$LIB" > "$w/eider-analyzer/tests/sessions/a.out"
   # eider-profiler: no version.sh; its cli package follows its version; pins with version BEFORE git
   mkdir -p "$w/eider-profiler/cli"
-  echo "$OLD" > "$w/eider-profiler/VERSION"
-  printf '[package]\nname = "profiler"\nversion = "%s"\neider = "%s"\n\n[deps.json]\nversion = "%s"\ngit = "https://github.com/klxdev/eider-json.git"\n\n[deps.local]\npath = "../x"\nversion = "9.9.9"\n' "$OLD" "$OLDS" "$OLD" > "$w/eider-profiler/eider.toml"
-  printf '[package]\nname = "cli"\nversion = "%s"\neider = "%s"\n' "$OLD" "$OLDS" > "$w/eider-profiler/cli/eider.toml"
+  echo "$LIB" > "$w/eider-profiler/VERSION"
+  printf '[package]\nname = "profiler"\nversion = "%s"\neider = "%s"\n\n[deps.json]\nversion = "%s"\ngit = "https://github.com/klxdev/eider-json.git"\n\n[deps.local]\npath = "../x"\nversion = "9.9.9"\n' "$LIB" "$OLDS" "$LIB" > "$w/eider-profiler/eider.toml"
+  printf '[package]\nname = "cli"\nversion = "%s"\neider = "%s"\n' "$LIB" "$OLDS" > "$w/eider-profiler/cli/eider.toml"
   # the shopping example: no root manifest; its packages' own versions are theirs
   mkdir -p "$w/eider-example-shopping-service/server"
-  echo "$OLD" > "$w/eider-example-shopping-service/VERSION"
-  printf '[package]\nname = "server"\nversion = "0.1.0"\neider = "%s"\n\n[deps.http]\ngit = "https://github.com/klxdev/eider-http.git"\nversion = "%s"\n' "$OLDS" "$OLD" > "$w/eider-example-shopping-service/server/eider.toml"
+  echo "$LIB" > "$w/eider-example-shopping-service/VERSION"
+  printf '[package]\nname = "server"\nversion = "0.1.0"\neider = "%s"\n\n[deps.http]\ngit = "https://github.com/klxdev/eider-http.git"\nversion = "%s"\n' "$OLDS" "$LIB" > "$w/eider-example-shopping-service/server/eider.toml"
   printf 'version = 1\n' > "$w/eider-example-shopping-service/server/eider.lock"
 }
 bump() { # ws args...: run the copy's script against the fakes
@@ -113,7 +114,7 @@ check "json VERSION" "$NEW" "$(cat "$W/eider-json/VERSION")"
 has "json own version (no version.sh)" "$W/eider-json/eider.toml" "version = \"$NEW\""
 has "json eider series" "$W/eider-json/eider.toml" "eider = \"$NEWS\""
 has "json docs: eider add --version" "$W/eider-json/docs/use.md" "klxdev/eider-json.git --version $NEW"
-has "json docs: another --version stays" "$W/eider-json/docs/use.md" "some other --version $OLD stays"
+has "json docs: another --version stays" "$W/eider-json/docs/use.md" "some other --version $LIB stays"
 has "json changelog is history" "$W/eider-json/CHANGELOG.md" "needs \`eider = \"$OLDS\"\`"
 has "http own version (version.sh sync)" "$W/eider-http/eider.toml" "version = \"$NEW\""
 has "http pin on json (git first)" "$W/eider-http/eider.toml" "git = \"https://github.com/klxdev/eider-json.git\"
@@ -140,7 +141,7 @@ printf '%s\n' "$out" | grep -q "$W/eider-http\$" && ok || no "prints the re-lock
 chk=$(cd "$L" && sh scripts/version.sh check 2>&1); crc=$?
 check "check fails on vendor.lock's old series" 1 $crc
 printf '%s\n' "$chk" | grep -q 'vendor.lock' && ok || no "check names vendor.lock" "$chk"
-sed "s/^version = \"$OLD\"/version = \"$NEW\"/" "$L/vendor.lock" > "$L/vendor.lock.new" && mv "$L/vendor.lock.new" "$L/vendor.lock"
+sed "s/^version = \"$LIB\"/version = \"$NEW\"/" "$L/vendor.lock" > "$L/vendor.lock.new" && mv "$L/vendor.lock.new" "$L/vendor.lock"
 chk=$(cd "$L" && sh scripts/version.sh check 2>&1); crc=$?
 check "check passes once vendor.lock is re-pinned" 0 $crc
 [ $crc = 0 ] || printf '%s\n' "$chk" | head
@@ -151,20 +152,21 @@ check "the real tree is untouched" "$OLD" "$(tr -d ' \n' < "$root/VERSION")"
 # a patch bump of eider-lang: the version text only, the series text stays
 W=$T/b; mkws "$W"; L=$W/eider-lang
 PATCHV=$OLDS.$((${OLD##*.} + 1))
+LPATCH=$OLDS.$((${LIB##*.} + 1))
 out=$(bump "$W" bump patch); rc=$?
 check "patch bump exits 0" 0 $rc
 check "patch VERSION" "$PATCHV" "$(cat "$L/VERSION")"
 has "patch doc golden" "$L/compiler/tests/doc/geo.json" "\"toolchain\":\"$PATCHV\""
 has "patch keeps the series text" "$L/compiler/tests/pkgs/series/main.out" "this toolchain is $OLDS"
-check "patch leaves a sibling" "$OLD" "$(cat "$W/eider-json/VERSION")"
+check "patch leaves a sibling" "$LIB" "$(cat "$W/eider-json/VERSION")"
 out=$(bump "$W" bump patch eider-json); rc=$?
 check "patch bump of a sibling exits 0" 0 $rc
-check "sibling patch VERSION" "$PATCHV" "$(cat "$W/eider-json/VERSION")"
-has "sibling patch own version" "$W/eider-json/eider.toml" "version = \"$PATCHV\""
-has "sibling patch tag command" /dev/stdin "git -C $W/eider-json tag -a v$PATCHV" <<EOF
+check "sibling patch VERSION" "$LPATCH" "$(cat "$W/eider-json/VERSION")"
+has "sibling patch own version" "$W/eider-json/eider.toml" "version = \"$LPATCH\""
+has "sibling patch tag command" /dev/stdin "git -C $W/eider-json tag -a v$LPATCH" <<EOF
 $out
 EOF
-has "a pin is a minimum: not rewritten" "$W/eider-http/eider.toml" "version = \"$OLD\""
+has "a pin is a minimum: not rewritten" "$W/eider-http/eider.toml" "version = \"$LIB\""
 
 # failing loudly: a sibling with no valid VERSION, and one whose own line is not its VERSION
 W=$T/c; mkws "$W"

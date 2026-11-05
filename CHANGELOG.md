@@ -45,7 +45,8 @@ its pins.
   `version` lines (eider-profiler included), the `[deps.*]` pins on other siblings, the series and version text of docs,
   tests and goldens (the oracle's E0811 text, the `eiderc doc` goldens, the analyzer's session goldens), and it fails
   loudly, naming each place, where it cannot; `check` fails while vendor.lock pins another series; the tag commands for the
-  six libraries and the shopping example are printed. `tests/version/run.sh` tests it against a copy (a verify leg).
+  six libraries and the shopping example are printed. `tests/version/run.sh` tests it against a copy (a verify leg). A minor bump from a patch release (0.7.1) rewrites the docs' `eider add ... --version 0.7.0` of a library too, which
+  follow the library's version, not eider-lang's; the test fakes the libraries at the series' `.0`.
 
 **Not done / not validated**
 
