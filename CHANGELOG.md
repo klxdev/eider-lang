@@ -5,7 +5,13 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
-## 0.7.1 (unreleased)
+## 0.7.1
+
+A patch: a fix in the task runtime, three small language relaxations, name resolution with a deadline, the tooling
+of #150 and #116, and `scripts/version.sh bump` doing the release prep. Nothing breaks. eider-analyzer and
+tree-sitter-eider move to 0.7.1 (their own CHANGELOGs); the libraries (eider-toml, eider-json, eider-markdown,
+eider-http, eider-rpc, eider-openapi), eider-profiler and the shopping example stay at 0.7.0, and vendor.lock keeps
+its pins.
 
 - Fixed (#204): on AArch64 the task runtime read the thread pointer once per function, so a task that parked in
   `join`, `Chan.recv` or a wait and resumed on another worker read that worker's old `held_n`: a data race that
@@ -30,18 +36,28 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
   `install.sh --toolchain-version V` installs a given toolchain (`0.7`, `0.7.1`) after eider, and points at `eider new`.
   The project's pin is `eider = "MAJOR.MINOR"` in eider.toml, as before, which `new`/`init` write (documented in
   docs/site/tooling/eider.md, "Pinning a project's toolchain"); an exact-patch pin is declined (a patch does not break).
-
 - The editor tooling of #150 (eider-analyzer and tree-sitter-eider repositories): rename (with prepareRename; refused when
   the renamed program would not compile), signature help, inlay hints (binding types, parameter names), workspace symbols,
   `Run test` code lenses, the quick fix "Add the missing arm", and the grammar's keywords and primitive types generated from the
   compiler's (`scripts/gen-lexicon.sh`). Declined, with the reasons in eider-analyzer's README: debug lenses, capability
   inlay hints, filling all arms at once, a workspace-wide index, generating the grammar's rules.
-
 - `scripts/version.sh bump` (#205) now does the release prep that was edited by hand in 0.6.0 and 0.7.0: the siblings' own
   `version` lines (eider-profiler included), the `[deps.*]` pins on other siblings, the series and version text of docs,
   tests and goldens (the oracle's E0811 text, the `eiderc doc` goldens, the analyzer's session goldens), and it fails
   loudly, naming each place, where it cannot; `check` fails while vendor.lock pins another series; the tag commands for the
   six libraries and the shopping example are printed. `tests/version/run.sh` tests it against a copy (a verify leg).
+
+**Not done / not validated**
+
+- #204 is fixed by reading the AArch64 assembly the compiler emits and is validated on x86-64 only (gcc, clang, ASan,
+  TSan, including the `ucontext` switch) and by `tests/core/tls_park.sh`, which checks the code compiled for
+  aarch64-linux-gnu. It has NOT run on real AArch64 hardware. The `ei_prof_depth` reads in profile builds have the same
+  hazard and are still open.
+- #198 is the operator-argument half only: a place argument (`p.add(p.x)`) is still E0301.
+- #59 is core and std only; the part of eider-http that takes a host name is open (that repository).
+- #150 and eider-analyzer#1 are partial. Declined: debug lenses, capability inlay hints, filling all arms at once,
+  module and file rename, a workspace-wide symbol index, generating the grammar's rules.
+- #116 declined an exact-patch toolchain pin (`eider = "MAJOR.MINOR"` stays).
 
 ## 0.7.0
 
