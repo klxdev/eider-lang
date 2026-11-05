@@ -5,6 +5,10 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## 0.7.3 (unreleased)
+
+- **`std/log` and `std/cli` are libraries now (#216, #217, #213; decision C896).** Fix forward, no shim: `std/log.ei`, `std/cli.ei` and their tests are removed from std. The code lives on in two new repositories, **eider-logging** (package `logging`: `import logging`, `logging.new(logging.Info)`; adds the level `Off`, a memory sink for tests and `Logger.with_context` for trace ids) and **eider-command** (package `command`: `import command`, `command.parse`; adds bash, zsh and fish completion scripts and `tool help <command>`). To migrate: a `[deps.logging]` / `[deps.command]` table in `eider.toml` (repositories klxdev/eider-logging and klxdev/eider-command; logging is granted `uses = ["io", "clock"]`, command `uses = ["io"]`), `import logging` for `import std.log` (`log.` becomes `logging.`), and for `std.cli`: `import command`, `@[command(...)]` for `@[cli(...)]` (an attribute is named after its package, like `@[json(...)]`), `command.subcommands` for `cli.command`. eider-http (`http/server`, `http/middleware`, `http/trace`, `http/service`) and the shopping example use eider-logging. The compiler is unchanged, so is the seed; eider-analyzer's session golden lost the two std modules in its completion list.
+
 ## 0.7.2
 
 A patch: the profile-build thread-local hazard (#209), a core verify flake (#210), and the HTTP and service hardening

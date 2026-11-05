@@ -4353,7 +4353,11 @@ timing statistics of a benchmark (median, spread), and a fuzz corpus directory o
 
 ## C8.59: std/cli (#114)
 
-Decision C811. Code: std/cli.ei; tests: tests/run/cli.ei.
+Decision C811. Code: std/cli.ei; tests: tests/run/cli.ei. **Moved out of std in 0.7.3 (C896)**: the
+code and tests are now the eider-command library's (`command.ei`, `tests/command_test.ei`), the attribute
+`cli` became `command` (an attribute is named after the package that declares it, so `import command`
+gives `@[command(...)]`), and `cli.command` became `command.subcommands`. The text below describes the
+design as it was in std.
 
 `record_of[R](inout st)` is `R(comptime for f in fields(R) { value_of(inout st, f.name, attr[cli](f).name,
 .short, .help, .default) })`, the "building values" form of reflection with the argument's type

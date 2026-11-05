@@ -61,18 +61,22 @@ EIDER_PKG_OVERRIDE=http=../eider-http,rpc=../eider-rpc,json=../eider-json eider-
 
 ## Logging, configuration and shutdown
 
-Three std modules every service wants, so that they look the same in each one.
+Logging is a library, [eider-logging](https://github.com/klxdev/eider-logging) (it was `std/log`
+up to Eider 0.7.2); configuration and shutdown are std modules every service wants, so that they
+look the same in each one.
 
-**`std/log`** writes one JSON object per line to stderr (or stdout), with a level, fields that
-every record of a logger carries, and typed fields per record:
+**`eider-logging`** (`import logging`) writes one JSON object per line to stderr (or stdout), with
+a level, fields that every record of a logger carries, and typed fields per record. A level `Off`
+silences a logger, a memory sink (`logging.memory()`, `logging.to_memory`) keeps the records for a
+test, and `with_context` adds fields such as trace ids to every record:
 
 ```eider,ignore
-import std.log
+import logging
 
 fn main() uses io, clock {
-    let lg = log.new(log.Info).with(log.fields().text("service", String.from("kv")))
-    lg.info("listening", log.fields().text("addr", String.from(":8080")).int("workers", 4))
-    lg.debug("not written", log.fields())
+    let lg = logging.new(logging.Info).with(logging.fields().text("service", String.from("kv")))
+    lg.info("listening", logging.fields().text("addr", String.from(":8080")).int("workers", 4))
+    lg.debug("not written", logging.fields())
 }
 ```
 
