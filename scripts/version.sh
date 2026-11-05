@@ -12,7 +12,7 @@
 # tree-sitter-eider and eider-profiler, each have their own VERSION, with the same
 # MAJOR.MINOR and their own PATCH; they are released together (scripts/release.sh). So,
 # before 1.0, are the libraries and frameworks in repositories of their own (eider-toml,
-# eider-json, eider-markdown, eider-http, eider-rpc, eider-openapi; LAYERS.md, U19): their
+# eider-json, eider-markdown, eider-http, eider-rpc, eider-openapi, eider-compression; LAYERS.md, U19): their
 # VERSION keeps the toolchain's MAJOR.MINOR, with their own PATCH. Before 1.0 a MINOR bump
 # may break compatibility, so packages name the MAJOR.MINOR they need (`eider = "0.1"` in
 # eider.toml; the compiler refuses another, E0811). So is eider-example-shopping-service, the
@@ -60,12 +60,12 @@
 # directories whose eider.lock needs `eider-pkg update`.
 #
 # Siblings: EIDER_ANALYZER, TREE_SITTER_EIDER, EIDER_PROFILER, EIDER_TOML, EIDER_JSON,
-# EIDER_MARKDOWN, EIDER_HTTP, EIDER_RPC, EIDER_OPENAPI, EIDER_EXAMPLE_SHOPPING_SERVICE name the repositories (default
+# EIDER_MARKDOWN, EIDER_HTTP, EIDER_RPC, EIDER_OPENAPI, EIDER_COMPRESSION, EIDER_EXAMPLE_SHOPPING_SERVICE name the repositories (default
 # $EIDER_SIBLINGS/<name>, EIDER_SIBLINGS defaulting to .., the directory holding this
 # checkout); one that is absent is skipped and said so.
 cd "$(dirname "$0")/.." || exit 1
 here=$(pwd -P)
-SIBLINGS="eider-analyzer tree-sitter-eider eider-profiler eider-toml eider-json eider-markdown eider-http eider-rpc eider-openapi eider-example-shopping-service"
+SIBLINGS="eider-analyzer tree-sitter-eider eider-profiler eider-toml eider-json eider-markdown eider-http eider-rpc eider-openapi eider-compression eider-example-shopping-service"
 
 die() { echo "version.sh: $*" >&2; exit 2; }
 valid() { echo "$1" | grep -Eq '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'; }
@@ -395,7 +395,7 @@ bump() {
   if [ "$kind" != patch ]; then
     echo "  then, once each library is committed (vendor.lock and the lock files pin their commits):"
     echo "  tag the siblings that publish.sh and release.sh do not (the libraries and the example; release.sh prints the three tools'):"
-    for name in eider-toml eider-json eider-markdown eider-http eider-rpc eider-openapi eider-example-shopping-service; do
+    for name in eider-toml eider-json eider-markdown eider-http eider-rpc eider-openapi eider-compression eider-example-shopping-service; do
       d=$(sibling_dir "$name"); [ -n "$d" ] && tag_command "$d" "$name" "$NEWV" "$NEWV"
     done
     echo "  sh scripts/vendor.sh toml <commit of eider-toml's $NEWV>   # likewise json, markdown: vendor.lock names $S releases"
@@ -407,7 +407,7 @@ bump() {
       done
     done
   elif [ "$comp" != eider-lang ]; then
-    case " eider-toml eider-json eider-markdown eider-http eider-rpc eider-openapi eider-example-shopping-service " in
+    case " eider-toml eider-json eider-markdown eider-http eider-rpc eider-openapi eider-compression eider-example-shopping-service " in
       *" $comp "*) echo "  tag it (publish.sh and release.sh do not):"; tag_command "$(sibling_dir "$comp")" "$comp" "$NEWV" "$V" ;;
     esac
   fi
