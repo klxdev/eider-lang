@@ -36,7 +36,7 @@ arguments are relative to it.
 
 | Command | What it does |
 |---|---|
-| `init [name]` | Write `eider.toml` (name from the argument or the directory, version `0.1.0`, `main = "main.ei"`, `eider` the toolchain's MAJOR.MINOR) and, if there is none, a `main.ei` that prints a line. Refuses if `eider.toml` exists. |
+| `init [name] [--template cli\|lib\|service\|wasm]` | Write `eider.toml` (name from the argument or the directory, version `0.1.0`, `main = "main.ei"` or the library's `entry`, `eider` the toolchain's MAJOR.MINOR) and the template's files that do not exist yet ([Templates](#templates); default `cli`: a `main.ei` that prints a line, with a test). Refuses if `eider.toml` exists. |
 | `add <name> ...` | Append a `[deps.<name>]` table, resolve, grant the package what it uses (`uses = [...]`, sorted; see [Grants](#grants)), check grants and write `eider.lock`, printing `added <name> <version> — it uses: <caps> (granted)`. If resolution or a grant check fails, `eider.toml` is restored. `--confirm` asks first (y/N, on standard input); `--no-grant` writes no grant, and when the package uses something keeps the table but stops before writing `eider.lock`; `--uses io,fs` is an explicit grant, which must cover what the package uses. |
 | `remove <name>` | Delete the `[deps.<name>]` table (an inline `name = { ... }` entry must be removed by hand) and re-resolve. |
 | `grant <name> <cap,...>` | Add capabilities to the `uses` of `[deps.<name>]`, in place (E0204's help names this). No resolving: the next build sees it; `eider.lock`'s copy of the grants follows at the next `fetch`. |
@@ -53,6 +53,24 @@ arguments are relative to it.
 isn't already in the local mirror. Errors are printed as `eider-pkg: <message>` with exit
 code 1 on stderr (one line, except the capability diff below); stdout carries only what a
 command reports when it succeeds, notes included.
+
+## Templates
+
+`eider-pkg init --template <name>` (and `eider new <name> --template <name>`) starts the kind of project
+you want. Each writes `eider.toml` with `eider = "<the toolchain's MAJOR.MINOR>"` and the files below, none over
+an existing file, and every one has a test that passes:
+
+| Template | Files | What it is |
+|---|---|---|
+| `cli` (default) | `main.ei` | a program with a `main` that prints a line, and a test |
+| `lib` | `<name>.ei` | a library: `entry = "<name>.ei"` and no `main`, a `pub fn` and its test; importers write `import <name>` |
+| `service` | `main.ei` | an HTTP service on [eider-http](https://github.com/klxdev/eider-http): `[deps.http]` at the toolchain's MAJOR.MINOR.0 granted `clock`, `fs`, `io`, `net` and `threads`, a router with one route, `main` serving on 127.0.0.1:8080 and a test through `http/testing`; `eider-pkg fetch` (or the first build) fetches the dependency |
+| `wasm` | `<name>.ei` | a WebAssembly module: `export fn add`, built with `eider build --wasm <name>.ei -o <name>` |
+
+```sh
+eider new api --template service
+cd api && eider test main.ei
+```
 
 ## Grants
 

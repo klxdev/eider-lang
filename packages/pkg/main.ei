@@ -1,6 +1,6 @@
 //! eider-pkg: the Eider package manager.
 //!
-//!   eider-pkg [-C dir] init [name]
+//!   eider-pkg [-C dir] init [name] [--template cli|lib|service|wasm]   (templates.ei)
 //!   eider-pkg [-C dir] add <name> (--path P | --git URL (--version V | --rev R))
 //!                      [--uses a,b | --confirm | --no-grant]   grants what it uses (grants.ei)
 //!   eider-pkg [-C dir] remove <name>
@@ -41,6 +41,7 @@ import pkg.resolve
 import pkg.caps
 import pkg.override
 import pkg.grants
+import pkg.templates
 
 type Cli = { dir: List[u8], cmd: List[u8], args: List[List[u8]], offline: bool }
 
@@ -49,7 +50,7 @@ fn is(a: List[u8], s: str) -> bool { bytes.eq(a, sys.lit(s)) }
 fn say(s: str) uses io { io.outln(sys.lit(s)) }
 
 fn usage() -> String {
-    String.from("usage: eider-pkg [-C dir] (init [name] | add <name> --path P | add <name> --git URL --version V|--rev R [--uses a,b | --confirm | --no-grant] | remove <name> | grant|revoke <name> <cap,...> | fetch|update [--offline] [--grant a,b | --grant-all] | vendor | tree | hash <dir> | --version)")
+    String.from("usage: eider-pkg [-C dir] (init [name] [--template cli|lib|service|wasm] | add <name> --path P | add <name> --git URL --version V|--rev R [--uses a,b | --confirm | --no-grant] | remove <name> | grant|revoke <name> <cap,...> | fetch|update [--offline] [--grant a,b | --grant-all] | vendor | tree | hash <dir> | --version)")
 }
 
 fn parse_cli() -> Result[Cli, String] uses io, fs {
@@ -548,7 +549,36 @@ fn remove(c: Cli) -> Result[bool, String] uses io, fs, net {
 fn init(c: Cli) -> Result[bool, String] uses io, fs {
     let file = manifest.file_in(c.dir)
     if fs.exists(file) { return Err(String.from("eider.toml already exists")) }
-    let mut name = if c.args.len() > 0 { c.args[0] } else {
+    // init [name] [--template <name>]
+    let mut tmpl = sys.lit("cli")
+    let mut given: List[u8] = List.new()
+    let mut k: usize = 0
+    while k < c.args.len() {
+        let a = c.args[k]
+        if is(a, "--template") {
+            if k + 1 >= c.args.len() { return Err(String.from("--template needs a name (cli, lib, service or wasm)")) }
+            tmpl = c.args[k + 1]
+            k += 2
+            continue
+        }
+        if a.len() > 0 && a[0] == 45 {
+            let mut m = String.from("unknown option `")
+            m.append(sys.to_string(a))
+            m.push_str("` (init [name] [--template cli|lib|service|wasm])")
+            return Err(m)
+        }
+        if given.len() > 0 { return Err(String.from("init takes one name")) }
+        given = a
+        k += 1
+    }
+    if !templates.known(tmpl) {
+        let mut m = String.from("unknown template `")
+        m.append(sys.to_string(tmpl))
+        m.push_str("`; the templates are ")
+        m.append(sys.to_string(templates.names()))
+        return Err(m)
+    }
+    let mut name = if given.len() > 0 { given } else {
         match bytes.rfind_byte(c.dir, 47) {
             Some(i) => bytes.slice(c.dir, i + 1, c.dir.len())
             None => c.dir
@@ -567,20 +597,19 @@ fn init(c: Cli) -> Result[bool, String] uses io, fs {
     if !manifest.valid_name(clean) {
         return Err(String.from("can't derive a package name from the directory; pass one: eider-pkg init <name>"))
     }
-    let mut t = sys.lit("[package]\nname = \"")
-    bytes.append(inout t, clean)
-    bytes.append(inout t, sys.lit("\"\nversion = \"0.1.0\"\nmain = \"main.ei\"\neider = \""))
-    bytes.append(inout t, sys.lit(version.SERIES))
-    bytes.append(inout t, sys.lit("\"\n"))
     fs.mkdir_all(c.dir)?
-    fs.write(file, t)?
-    let main_file = fs.join(c.dir, sys.lit("main.ei"))
-    if !fs.exists(main_file) {
-        fs.write(main_file, sys.lit("import core.sys\nimport std.io\n\nfn main() uses io {{\n    io.outln(sys.lit(\"hello from eider\"))\n}}\n"))?
+    fs.write(file, templates.manifest(tmpl, clean))?
+    for f in templates.files(tmpl, clean) {
+        let path = fs.join(c.dir, f.path)
+        if !fs.exists(path) { fs.write(path, f.text)? }
     }
     let mut l = sys.lit("created package `")
     bytes.append(inout l, clean)
     l.push(96)
+    if !bytes.eq(tmpl, sys.lit("cli")) {
+        bytes.append(inout l, sys.lit(" from the template "))
+        bytes.append(inout l, tmpl)
+    }
     io.outln(l)
     Ok(true)
 }

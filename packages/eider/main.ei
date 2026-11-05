@@ -668,7 +668,8 @@ fn main() uses io, fs, net {
     if is(cmd, "eider-pkg") { run_tool(t, t.pkg, rest, "eider-pkg") }
     if is(cmd, "eider-doc") || is(cmd, "doc") { run_tool(t, t.doc, rest, "eider-doc") }
     if is(cmd, "new") {
-        if rest.len() != 1 || (rest[0].len() > 0 && rest[0][0] == 45) { usage_error("eider new <name>: a new package in the directory <name>") }
+        let with_template = rest.len() == 3 && is(rest[1], "--template")
+        if !(rest.len() == 1 || with_template) || (rest[0].len() > 0 && rest[0][0] == 45) { usage_error("eider new <name> [--template cli|lib|service|wasm]: a new package in the directory <name>") }
         if fs.exists(rest[0]) {
             let mut m = text(rest[0])
             m.push_str(" exists already (eider init makes a package in an existing directory)")
@@ -679,6 +680,10 @@ fn main() uses io, fs, net {
         args.push(rest[0])
         args.push("init".bytes())
         args.push(rest[0])
+        if with_template {
+            args.push("--template".bytes())
+            args.push(rest[2])
+        }
         run_tool(t, t.pkg, args, "eider-pkg")
     }
     if pkg_cmd(cmd) {

@@ -50,7 +50,7 @@ mkrel() {
     printf '#!/bin/sh\necho "%s %s root=$EIDER_ROOT eiderc=$EIDERC args: $*"\n' "$p" "$v" > "$s/bin/$p"
     chmod 755 "$s/bin/$p"
   done
-  printf '#!/bin/sh\necho "fake eider %s"\n' "$v" > "$s/bin/eider"; chmod 755 "$s/bin/eider"
+  printf '#!/bin/sh\ncase "$1" in toolchain) echo "fake eider %s: $*" ;; *) echo "fake eider %s" ;; esac\n' "$v" "$v" > "$s/bin/eider"; chmod 755 "$s/bin/eider"
   echo "$v" > "$s/VERSION"
   printf '[toolchain]\nversion = "%s"\ntarget = "%s"\nbackend = "llvm"\n' "$v" "$TGT" > "$s/toolchain.toml"
   tar -C "$T/stage-$v" -czf "$d/eider-$v-$TGT.tar.gz" "eider-$v-$TGT"
@@ -129,6 +129,9 @@ out=$(CWD=$P e update --grant http); check "update --grant -> eider-pkg" "eider-
 out=$(CWD=$P e update --grant-all); check "update --grant-all -> eider-pkg" "args: update --grant-all" "$out"
 out=$(CWD=$P e add http --git u --version 0.2.0 --confirm); check "add --confirm -> eider-pkg" "args: add http --git u --version 0.2.0 --confirm" "$out"
 out=$(e new demo); check "new" "eider-pkg 1.2.0 root=$H/toolchains/1.2.0 eiderc=$H/toolchains/1.2.0/bin/eiderc args: -C demo init demo" "$out"
+out=$(e new demo2 --template lib); check "new --template" "args: -C demo2 init demo2 --template lib" "$out"
+out=$(e new demo3 --template); check "new --template needs a name" "eider new <name> [--template cli|lib|service|wasm]" "$out"
+out=$(e new --template lib demo4); check "new takes the name first" "eider new <name> [--template cli|lib|service|wasm]" "$out"
 mkdir -p "$T/exists"; out=$(e new exists); check "new: the directory exists" "exists already" "$out"
 out=$(e doc build --out site); check "doc -> eider-doc" "eider-doc 1.2.0 root=$H/toolchains/1.2.0 eiderc=$H/toolchains/1.2.0/bin/eiderc args: build --out site" "$out"
 out=$(e eiderc --help); check "eiderc --help" "eiderc 1.2.0 root=" "$out"
@@ -211,6 +214,13 @@ else
 fi
 out=$(cd "$T" && env EIDER_HOME="$T/inst2" EIDER_RELEASES="file://$REL" EIDER_RELEASE_PUBKEY="$T/test.pub" sh "$root/install.sh" --version 1.2.3 2>&1)
 check "install.sh (a release directory)" "installed $T/inst2/bin/eider (fake eider 1.2.3" "$out"
+out=$(cd "$T" && env EIDER_HOME="$T/inst4" EIDER_RELEASES="file://$REL" EIDER_RELEASE_PUBKEY="$T/test.pub" sh "$root/install.sh" --version 1.2.3 --toolchain 2>&1)
+check "install.sh --toolchain installs the latest toolchain" "fake eider 1.2.3: toolchain install" "$out"
+check "install.sh --toolchain points at eider new" "eider new hello --template cli" "$out"
+out=$(cd "$T" && env EIDER_HOME="$T/inst5" EIDER_RELEASES="file://$REL" EIDER_RELEASE_PUBKEY="$T/test.pub" sh "$root/install.sh" --version 1.2.3 --toolchain-version 1.2 2>&1)
+check "install.sh --toolchain-version installs that toolchain" "fake eider 1.2.3: toolchain install 1.2" "$out"
+out=$(cd "$T" && env EIDER_HOME="$T/inst5" sh "$root/install.sh" --toolchain-version 2>&1); check "install.sh --toolchain-version needs a version" "--toolchain-version needs a version" "$out"
+out=$(cd "$T" && env EIDER_HOME="$T/inst5" sh "$root/install.sh" --bogus 2>&1); check "install.sh lists its options" "(--version V, --toolchain, --toolchain-version V, --modify-path)" "$out"
 out=$(cd "$T" && env EIDER_HOME="$T/inst3" EIDER_RELEASES="file://$REL" EIDER_RELEASE_PUBKEY="$T/test.pub" sh "$root/install.sh" --version 2.0.1 2>&1)
 check "install.sh refuses changed SHA256SUMS" "refusing: SHA256SUMS.minisig does not verify" "$out"
 out=$(cd "$T" && env EIDER_HOME="$T/inst3" EIDER_RELEASES="file://$REL" EIDER_RELEASE_PUBKEY="$T/test.pub" sh "$root/install.sh" --version 2.0.3 2>&1)

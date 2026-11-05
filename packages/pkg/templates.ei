@@ -1,0 +1,73 @@
+//! templates: the files `eider-pkg init --template <name>` (and `eider new <name> --template
+//! <name>`) writes (#116). Four kinds of project:
+//!
+//!   cli      a program with a `main` and a test (the default)
+//!   lib      a library: `entry = "<name>.ei"`, a `pub fn` and its test, no `main`
+//!   service  an HTTP service on eider-http (a git dependency at the toolchain's MAJOR.MINOR.0,
+//!            granted what the server uses) with a router and a test through http/testing
+//!   wasm     a WebAssembly module: `export fn`s, built with `eider build --wasm <name>.ei`
+//!
+//! Every manifest says `eider = "<MAJOR.MINOR>"` (the toolchain's), so `eider` picks this
+//! toolchain for the directory. A template writes only files that do not exist yet.
+
+import core.sys
+import core.version
+import std.bytes
+
+pub type File = { path: List[u8], text: List[u8] }
+
+/// The template names, for the error that lists them.
+pub fn names() -> List[u8] { sys.lit("cli, lib, service, wasm") }
+
+pub fn known(t: List[u8]) -> bool {
+    bytes.eq(t, sys.lit("cli")) || bytes.eq(t, sys.lit("lib")) || bytes.eq(t, sys.lit("service")) || bytes.eq(t, sys.lit("wasm"))
+}
+
+fn is(t: List[u8], s: str) -> bool { bytes.eq(t, sys.lit(s)) }
+
+/// The manifest of package `name` from template `t`.
+pub fn manifest(t: List[u8], name: List[u8]) -> List[u8] {
+    let mut m = sys.lit("[package]\nname = \"")
+    bytes.append(inout m, name)
+    bytes.append(inout m, sys.lit("\"\nversion = \"0.1.0\"\n"))
+    if is(t, "lib") || is(t, "wasm") {
+        bytes.append(inout m, sys.lit("entry = \""))
+        bytes.append(inout m, name)
+        bytes.append(inout m, sys.lit(".ei\"\n"))
+    } else {
+        bytes.append(inout m, sys.lit("main = \"main.ei\"\n"))
+    }
+    bytes.append(inout m, sys.lit("eider = \""))
+    bytes.append(inout m, sys.lit(version.SERIES))
+    bytes.append(inout m, sys.lit("\"\n"))
+    if is(t, "service") {
+        bytes.append(inout m, sys.lit("\n# the HTTP server and router; granted what the server uses (the compiler checks it, E0204)\n"))
+        bytes.append(inout m, sys.lit("[deps.http]\ngit = \"https://github.com/klxdev/eider-http.git\"\nversion = \""))
+        bytes.append(inout m, sys.lit(version.SERIES))
+        bytes.append(inout m, sys.lit(".0\"\nuses = [\"clock\", \"fs\", \"io\", \"net\", \"threads\"]\n"))
+    }
+    m
+}
+
+/// The source files of the template (the manifest is `manifest`).
+pub fn files(t: List[u8], name: List[u8]) -> List[File] {
+    let mut out: List[File] = List.new()
+    if is(t, "lib") {
+        let mut p = name.copy()
+        bytes.append(inout p, sys.lit(".ei"))
+        out.push(File(p, sys.lit("//! A library: `pub` items are what importers see (`import NAME`).\n\n/// The sum of two numbers.\npub fn add(a: i32, b: i32) -> i32 {{\n    a + b\n}}\n\ntest \"add\" {{\n    assert add(2, 3) == 5\n}}\n")))
+        return out
+    }
+    if is(t, "wasm") {
+        let mut p = name.copy()
+        bytes.append(inout p, sys.lit(".ei"))
+        out.push(File(p, sys.lit("// A WebAssembly module: build it with `eider build --wasm NAME.ei -o NAME`.\n// `export fn`s are the module's exports; records and lists cannot cross the boundary yet,\n// so use numbers, or text in and out.\n\nexport fn add(a: i64, b: i64) -> i64 {{\n    a + b\n}}\n\ntest \"add\" {{\n    assert add(2, 3) == 5\n}}\n")))
+        return out
+    }
+    if is(t, "service") {
+        out.push(File(sys.lit("main.ei"), sys.lit("import std.net\nimport std.task\nimport http\nimport http.server\nimport http.router\nimport http.testing\n\nfn app() -> router.Router {{\n    let mut r = router.new()\n    r.get(\"/hello/:name\", |q: http.Request| -> http.Response {{\n        http.respond(200, \"text/plain\", q.param(\"name\").unwrap())\n    }})\n    r\n}}\n\nfn main() uses io, net, clock, threads {{\n    let srv = server.listen(net.ipv4(127, 0, 0, 1, 8080), server.config()).unwrap()\n    let stats = srv.serve(router.handler(app()), task.root()).unwrap()\n}}\n\ntest \"hello\" {{\n    let c = testing.client(router.handler(app()))\n    let r = c.get(\"/hello/eider\")\n    assert testing.is(r, 200, \"text/plain\")\n}}\n")))
+        return out
+    }
+    out.push(File(sys.lit("main.ei"), sys.lit("import core.sys\nimport std.io\n\nfn greeting(name: str) -> String {{\n    let mut s = String.from(\"hello from \")\n    s.push_str(name)\n    s\n}}\n\nfn main() uses io {{\n    io.outln(greeting(\"eider\").bytes())\n}}\n\ntest \"greeting\" {{\n    assert greeting(\"eider\").len() == 16\n}}\n")))
+    out
+}

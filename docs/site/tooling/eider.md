@@ -9,6 +9,7 @@ It is written in Eider (`packages/eider` in eider-lang).
 eider toolchain install          # the latest release, which becomes the default
 eider run hello.ei               # eiderc run, with the selected toolchain
 eider new warehouse              # a new package (eider-pkg init)
+eider new api --template service   # or lib, wasm; cli is the default
 eider add json --git https://github.com/klxdev/eider-json.git --version 0.7.0
                                  # a dependency, granted what it uses
 eider update                     # stops if a dependency now uses more; --grant json accepts
@@ -26,6 +27,7 @@ GitHub token with read access to it: `GH_TOKEN`, else `GITHUB_TOKEN`, else the o
 gh release download --repo klxdev/eider-lang --pattern install.sh
 sh install.sh                    # eider into ~/.eider/bin
 sh install.sh --toolchain        # ... and then `eider toolchain install`
+sh install.sh --toolchain-version 0.7   # ... and then `eider toolchain install 0.7`
 sh install.sh --modify-path      # ... and add ~/.eider/bin to PATH in ~/.profile (and
                                  #     ~/.bashrc, ~/.zshrc when they exist)
 ```
@@ -57,7 +59,7 @@ from source: [Getting started](../guide/getting-started.md).
 | `eider build\|run\|test\|check\|emit-llvm\|emit-header\|caps\|ir\|... <args>` | the toolchain's `eiderc` with these arguments ([eiderc](compiler.md)) |
 | `eider run --watch app.ei`, `eider test --watch` | rebuild and restart the program (or rerun the tests) whenever a file it loads changes ([Watching](compiler.md#watching)) |
 | `eider doc <args>` | the toolchain's `eider-doc` ([eider-doc](eider-doc.md)) |
-| `eider new <name>` | a new package in `<name>/` (`eider-pkg -C <name> init <name>`) |
+| `eider new <name> [--template cli\|lib\|service\|wasm]` | a new package in `<name>/` (`eider-pkg -C <name> init <name> [--template ...]`; [templates](eider-pkg.md#templates)) |
 | `eider init\|add\|remove\|grant\|revoke\|fetch\|update\|vendor\|tree <args>` | the toolchain's `eider-pkg` ([eider-pkg](eider-pkg.md)) |
 | `eider grant <pkg> <cap,...>`, `eider revoke <pkg> <cap,...>` | edit a dependency's capability grant in `eider.toml` (E0204's help names `eider grant`); `eider add` writes the grant and `eider fetch\|update --grant <pkg>` (or `--grant-all`) accepts one that grew ([Grants](eider-pkg.md#grants)) |
 | `eider eiderc\|eider-pkg\|eider-doc <args>` | that program, with any arguments (`eider eiderc doc --json lib.ei`) |
@@ -97,6 +99,15 @@ was chosen and why:
 0.1.0 (/home/me/.eider/toolchains/0.1.0)
   chosen by /home/me/warehouse/eider.toml (eider = "0.1")
 ```
+
+### Pinning a project's toolchain
+
+A project's toolchain is pinned by its `eider.toml`: `eider = "MAJOR.MINOR"` under `[package]`
+(which `eider new` and `eider-pkg init` write, for the toolchain that made them). Inside the
+project `eider` runs the newest installed patch of that series, installing it first with
+`EIDER_AUTO_INSTALL=1`, and the compiler refuses a toolchain of another series (E0811). A pin to an
+exact patch version is not provided: a patch release does not break compatibility
+([Versions and releases](releases.md)), so the series is the unit; to try one patch, `eider +0.7.1 ...`.
 
 ## Where things go
 

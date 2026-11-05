@@ -1,7 +1,7 @@
 #!/bin/sh
 # install.sh: install `eider`, the Eider command, into ~/.eider/bin (docs/site/tooling/eider.md).
 #
-#   sh install.sh [--version <version>] [--toolchain] [--modify-path]
+#   sh install.sh [--version <version>] [--toolchain | --toolchain-version <version>] [--modify-path]
 #
 # Downloads `eider-<version>-linux-<arch>` from the latest release of klxdev/eider-lang (or
 # --version's), with SHA256SUMS and SHA256SUMS.minisig, and checks before installing:
@@ -14,6 +14,9 @@
 #
 #   --version V      a release other than the latest (0.1.0)
 #   --toolchain      then run `eider toolchain install` (the latest toolchain, as default)
+#   --toolchain-version V   then run `eider toolchain install V` (V: MAJOR.MINOR.PATCH, or a
+#                    MAJOR.MINOR series for its newest patch), to start on a toolchain other than
+#                    the latest: the one a project's eider.toml `eider = "MAJOR.MINOR"` asks for
 #   --modify-path    append the PATH line to ~/.profile (and ~/.bashrc, ~/.zshrc when they
 #                    exist); without it the script only prints the line
 #
@@ -29,14 +32,16 @@ EIDER_PUBKEY=RWSZQQH9HZ9DUczdsxRctXcTuoj372VcNm6IrijiVqJ8sj3Dbrb3nzrl
 die() { echo "install.sh: $*" >&2; exit 1; }
 version=latest
 toolchain=
+tc_version=
 modify_path=
 while [ $# -gt 0 ]; do
   case $1 in
     --version) [ $# -ge 2 ] || die "--version needs a version"; version=${2#v}; shift 2 ;;
     --toolchain) toolchain=1; shift ;;
+    --toolchain-version) [ $# -ge 2 ] || die "--toolchain-version needs a version"; toolchain=1; tc_version=${2#v}; shift 2 ;;
     --modify-path) modify_path=1; shift ;;
     -h|--help) sed -n '2,/^set -eu/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 0 ;;
-    *) die "unknown option $1 (--version V, --toolchain, --modify-path)" ;;
+    *) die "unknown option $1 (--version V, --toolchain, --toolchain-version V, --modify-path)" ;;
   esac
 done
 
@@ -185,7 +190,9 @@ if [ -z "$major" ] || [ "$major" -lt 17 ]; then
   echo "install.sh: warning: building Eider programs needs clang from LLVM 17 or newer ($cc: ${major:+LLVM $major}${major:-not found}); install it (Fedora: dnf install clang; Debian/Ubuntu: apt install clang-17 or newer), or set EIDER_LLVM_CC" >&2
 fi
 if [ -n "$toolchain" ]; then
-  EIDER_HOME=$home "$home/bin/eider" toolchain install
+  # shellcheck disable=SC2086
+  EIDER_HOME=$home "$home/bin/eider" toolchain install $tc_version
+  echo "install.sh: start a project with: eider new hello --template cli   (cli, lib, service or wasm)"
 else
   echo "install.sh: then install a toolchain: eider toolchain install"
 fi

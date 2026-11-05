@@ -25,6 +25,12 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 - `net.lookup_by(host, service, family, kind, dl)` (#59): name resolution that gives up at a deadline, in a task or a
   thread (core: `ec_dns_start`, `ec_dns_job_fd`, `ec_dns_finish`, `ec_dns_cancel`). An abandoned lookup ends when the
   system's resolver returns. The `http` client taking a host name is for eider-http.
+- Onboarding (#116): `eider-pkg init [name] --template cli|lib|service|wasm` and `eider new <name> --template ...` write a
+  working project of that kind with a passing test (`service` depends on eider-http at the toolchain's series);
+  `install.sh --toolchain-version V` installs a given toolchain (`0.7`, `0.7.1`) after eider, and points at `eider new`.
+  The project's pin is `eider = "MAJOR.MINOR"` in eider.toml, as before, which `new`/`init` write (documented in
+  docs/site/tooling/eider.md, "Pinning a project's toolchain"); an exact-patch pin is declined (a patch does not break).
+
 - The editor tooling of #150 (eider-analyzer and tree-sitter-eider repositories): rename (with prepareRename; refused when
   the renamed program would not compile), signature help, inlay hints (binding types, parameter names), workspace symbols,
   `Run test` code lenses, the quick fix "Add the missing arm", and the grammar's keywords and primitive types generated from the

@@ -136,6 +136,50 @@ check "init writes a program with package imports" 'import core.sys
 import std.io' "$(head -2 "$T/app/main.ei")"
 check "init twice" "eider-pkg: eider.toml already exists
 exit 1" "$(pkg app init)"
+# templates (#116): each kind of project, written, built and tested with the compiler
+check "init --template lib" "created package \`mylib\` from the template lib
+exit 0" "$(pkg mylib init --template lib)"
+check "lib manifest has an entry and no main" '[package]
+name = "mylib"
+version = "0.1.0"
+entry = "mylib.ei"
+eider = "0.7"' "$(cat "$T/mylib/eider.toml")"
+check "lib tests pass" "test add ... ok
+
+1 tests, 0 failed
+exit 0" "$(cd "$T/mylib" && "$EC" test mylib.ei 2>&1; echo "exit $?")"
+check "init --template wasm" "created package \`mywasm\` from the template wasm
+exit 0" "$(pkg mywasm init --template wasm)"
+check "wasm module builds" "built mywasm.wasm, mywasm.d.ts, mywasm.js
+exit 0" "$(cd "$T/mywasm" && "$EC" build --wasm mywasm.ei -o mywasm 2>&1; echo "exit $?")"
+check "init cli --template cli names the package" "created package \`tool\`
+exit 0" "$(pkg tool init tool --template cli)"
+check "cli template tests pass" "test greeting ... ok
+
+1 tests, 0 failed
+exit 0" "$(cd "$T/tool" && "$EC" test main.ei 2>&1; echo "exit $?")"
+check "init --template service" "created package \`svc\` from the template service
+exit 0" "$(pkg svc init --template service)"
+check "service manifest depends on eider-http at the toolchain's series" '[package]
+name = "svc"
+version = "0.1.0"
+main = "main.ei"
+eider = "0.7"
+
+# the HTTP server and router; granted what the server uses (the compiler checks it, E0204)
+[deps.http]
+git = "https://github.com/klxdev/eider-http.git"
+version = "0.7.0"
+uses = ["clock", "fs", "io", "net", "threads"]' "$(cat "$T/svc/eider.toml")"
+check "service has a router and a test" "1 1" "$(grep -c 'router.new()' "$T/svc/main.ei") $(grep -c '^test "hello"' "$T/svc/main.ei")"
+check "an unknown template" "eider-pkg: unknown template \`nope\`; the templates are cli, lib, service, wasm
+exit 1" "$(pkg bad1 init --template nope)"
+check "--template needs a name" "eider-pkg: --template needs a name (cli, lib, service or wasm)
+exit 1" "$(pkg bad2 init --template)"
+check "an unknown option" "eider-pkg: unknown option \`--frob\` (init [name] [--template cli|lib|service|wasm])
+exit 1" "$(pkg bad3 init --frob)"
+check "a template writes no file over an existing one" "keep
+exit 0" "$(mkdir -p "$T/keep" && printf 'keep\n' > "$T/keep/mylib.ei" && pkg keep init mylib --template lib >/dev/null; cat "$T/keep/mylib.ei"; echo "exit 0")"
 # streams: an error is one line on stderr and nothing on stdout, exit 1; a usage error the
 # same; what a command reports when it succeeds goes to stdout, nothing to stderr, exit 0
 streams() { p=$1; shift; scripts/eider-pkg -C "$T/$p" "$@" >"$T/so" 2>"$T/se"; s=$?; printf 'stdout: [%s]\nstderr: [%s]\nexit %s\n' "$(cat "$T/so")" "$(cat "$T/se")" $s; }
@@ -143,7 +187,7 @@ check "an error goes to stderr" "stdout: []
 stderr: [eider-pkg: eider.toml already exists]
 exit 1" "$(streams app init)"
 check "a usage error goes to stderr" "stdout: []
-stderr: [eider-pkg: usage: eider-pkg [-C dir] (init [name] | add <name> --path P | add <name> --git URL --version V|--rev R [--uses a,b | --confirm | --no-grant] | remove <name> | grant|revoke <name> <cap,...> | fetch|update [--offline] [--grant a,b | --grant-all] | vendor | tree | hash <dir> | --version)]
+stderr: [eider-pkg: usage: eider-pkg [-C dir] (init [name] [--template cli|lib|service|wasm] | add <name> --path P | add <name> --git URL --version V|--rev R [--uses a,b | --confirm | --no-grant] | remove <name> | grant|revoke <name> <cap,...> | fetch|update [--offline] [--grant a,b | --grant-all] | vendor | tree | hash <dir> | --version)]
 exit 1" "$(streams app frobnicate)"
 check "a missing eider.toml goes to stderr" "stdout: []
 stderr: [eider-pkg: cannot read <T>/nowhere/eider.toml: No such file or directory]
