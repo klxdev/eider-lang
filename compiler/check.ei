@@ -7757,12 +7757,15 @@ fn construct(inout c: C, line: u32, col: u32, di: u32, vkey: u64, start: u32, le
     Ok(v_of(ty, emit_val(inout c, ir.S_RECORD, 0, st, len, ty, ty, line)))
 }
 
-/// Whether argument e is a call (or a `?` or cast of one): it is evaluated, to a new owned
-/// value, before the `inout` access of the call it is an argument of begins, so what it read
-/// conflicts with nothing ("C8.67"; a place, an operator or a value form may hold a reference).
+/// Whether argument e is a call (or a `?` or cast of one), or an operator: it is evaluated, to a
+/// new owned value, before the `inout` access of the call it is an argument of begins, so what it
+/// read conflicts with nothing ("C8.67", "C8.85"; a place may hold a reference, and so may a cast
+/// to its own type, which is the operand itself).
 fn evaluated_first(c: C, e: u32) -> bool {
     let n = nd(c, e)
     if n.kind == ast.ECall || n.kind == ast.EMethod { return true }
+    // (an operator emits its statement, into a temporary, where it is written: "C8.85")
+    if n.kind == ast.EBinary || n.kind == ast.EUnary { return true }
     // (a value form is compiled into a temporary of its own: "C8.72")
     if is_value_form(c, e) { return true }
     if n.kind == ast.ETry || n.kind == ast.ECast { return evaluated_first(c, n.a) }

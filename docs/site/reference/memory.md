@@ -240,12 +240,20 @@ passed `inout` twice, or passed `inout` and also read by another argument of the
 `f(inout p.x, p.y)` conflicts too. A reference counts as the variable its place is rooted
 at: with `let o = xs[0]`, `f(inout xs, o)` is E0301 (fix: bind `o` with `.copy()`).
 
-An argument that is a call (or a `?` or `as` of one) is evaluated first, to a new value,
-before the `inout` access begins, so it may use the variable that is passed `inout`:
-`reg.add(name, reg.count())` and `xs.push(xs.len())` are fine, and so is
+An argument that is a call (or a `?` or `as` of one) or an operator expression (`-p.x`,
+`n + 1`, `a == b && c`) is evaluated first, to a new value, before the `inout` access begins,
+so it may use the variable that is passed `inout`: `reg.add(name, reg.count())`,
+`xs.push(xs.len())` and `p.add(-p.x)` are fine, and so is
 `svc.add("Cart", schema(svc.add("Line", line())))` (the inner call finishes before the outer
-one starts). A place (`xs[0]`, a field, a variable) and an operator (`-p.x`) may carry a
-reference or a read, and still conflict.
+one starts). Why this is sound: arguments are evaluated left to right into temporaries, and
+the `inout` place is only used by the call itself, after the last argument is done; a call
+or an operator produces a value of its own (an operator's result is a number, a bool or a
+fresh string, never one of its operands), so nothing it read is still referenced when the
+access begins, and a later write to the variable cannot reach it. A place (`xs[0]`, a field,
+a variable) is passed as a read-only reference to where it is, so it still conflicts
+(`p.add(p.x)` is E0301: the callee would see `p.x` change under it), and so does
+`xs[0] as i32` on an `i32` list, since a conversion to the value's own type is the place
+itself; bind a copy first (`let n = p.x.copy()`).
 
 ```eider,compile_fail=E0301
 fn both(inout a: i32, inout b: i32) { a += b }

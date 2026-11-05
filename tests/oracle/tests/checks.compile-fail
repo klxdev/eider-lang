@@ -47,7 +47,10 @@ compile-fail tests (tests/checks/fail)
   ok   e0203_unknown_capability.ei  E0203 at 2:16
   ok   e0204_ungranted_ffi.ei       E0204 at 2:1
   ok   e0204_ungranted_fs.ei        E0204 at 2:1
+  ok   e0301_field_arg_receiver.ei  E0301 at 6:18
   ok   e0301_inout_and_read.ei      E0301 at 6:14
+  ok   e0301_place_arg_receiver.ei  E0301 at 7:13
+  ok   e0301_same_type_cast_place.ei E0301 at 7:15
   ok   e0301_two_inout.ei           E0301 at 6:23
   ok   e0302_inout_in_field.ei      E0302 at 2:21
   ok   e0302_inout_in_return.ei     E0302 at 2:11
@@ -185,5 +188,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-183 passed, 0 failed; error-code coverage 76/76
+186 passed, 0 failed; error-code coverage 76/76
 --- exit 0

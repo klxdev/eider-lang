@@ -1,0 +1,1 @@
+{"error":"E0301","span":{"file":"tests/checks/fail/e0301_same_type_cast_place.ei","line":7,"col":15},"message":"`p` is borrowed mutably by another argument of this call and can't be read here"}

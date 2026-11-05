@@ -1,7 +1,7 @@
-// expect: E0301 6:19
+// expect: E0301 6:21
 type P = { x: i32, y: i32 }
 fn both(inout a: P, b: i32) {}
 fn main() {
     var p = P(1, 2)
-    both(inout p, -p.x)
+    both(inout p, p.x)
 }

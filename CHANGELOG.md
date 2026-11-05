@@ -19,6 +19,9 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
   without type parameters given some is E0405.
 - An arm that needs a type above the arm that gives it (#199): `None => None` above `Some(c) => ...`, or the `then`
   branch of an `if` whose `else` has the type, no longer needs an annotation.
+- Operator arguments of a call with an `inout` receiver or argument (#198): `p.add(-p.x)`, `bump(inout n, n + 1)` were
+  E0301 and compile now, as a call argument did since 0.7.0. A place argument (`p.add(p.x)`) is still E0301. A test
+  that expects E0301 for an operator argument has to name a place.
 
 ## 0.7.0
 

@@ -223,8 +223,8 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0301_closure_inout_twice.ei E0301 at 5:22
   ok   e0301_field_roots.ei         E0301 at 6:20
   ok   e0301_index_roots.ei         E0301 at 5:26
-  ok   e0301_method_style_roots.ei  E0301 at 6:19
-  ok   e0301_read_in_binary.ei      E0301 at 5:9
+  ok   e0301_method_style_roots.ei  E0301 at 6:21
+  ok   e0301_read_before_inout.ei   E0301 at 5:7
   ok   e0303_assign_call_result.ei  E0303 at 5:10
   ok   e0303_assign_captured.ei     E0303 at 4:31
   ok   e0303_assign_constant.ei     E0303 at 4:5

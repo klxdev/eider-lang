@@ -4962,3 +4962,28 @@ The cost is bounded: the second check happens only for an arm that already faile
 are checked once more per such arm (so n `None` arms above one typed arm check the tail about n times).
 A side effect of the first check on the checker's state that is not in `Snap` (a monomorphized instance, a lint hit)
 is kept; an instance is shared by its key, so a repeat creates nothing new.
+
+## C8.85: operator arguments of an `inout` call (#198)
+
+Decision C878. Code: check.ei (`evaluated_first`, used by the read-versus-`inout` loop of `call_decl`). Tests:
+tests/run/inout_two_phase_ops.ei; tests/checks/fail/e0301_place_arg_receiver.ei, e0301_field_arg_receiver.ei,
+e0301_same_type_cast_place.ei; compiler/tests/check/fail/e0301_read_before_inout.ei and e0301_method_style_roots.ei
+(both were operator cases and now name a place).
+
+"C8.67" let an argument that is a call (or `?`/`as` of one) read the variable passed `inout`. A binary or unary operator
+(`+ - * / % & | ^ << >> == != < <= > >= && || ! ~`, unary `-`) is now the same. The argument for it:
+
+1. `call_decl` lowers the arguments in order, each to an operand; only the `inout` receiver and `inout` arguments are
+   passed as places (`ARG_PLACE`), and a place is only used by the call statement itself. So everything an argument
+   computes is emitted before the call, i.e. before the `inout` access.
+2. An operator's operand is always a statement's result: `binary`, `negate`, `bit_not` and `!` end in `emit_val`
+   (`S_BINARY`, `S_UNARY`) or in a constant, and `&&`/`||` in a temporary assigned in an `if`. None returns one of its
+   operands (the one place where `expr` does that, `x as T` to the value's own type, is why a cast of a place stays out).
+   So the argument is a fresh scalar (integer, float, bool), not a reference to anything the call can modify.
+3. What the operator read has been read when it is emitted; the callee gets the value. An operator whose operand is a
+   call that takes the same variable `inout` is two sequential accesses, as `f(inout v, g(inout v))` is already.
+
+What is not relaxed, because it is passed as a reference to the place: a variable, field or element (`f(inout p, p.x)`),
+an `as` to the value's own type, and two `inout` arguments of one root. The adversarial cases are in the E0301 tests above.
+Operators were E0301 in 0.7.0 as a precaution ("C8.67"); no program that compiled changes, and programs that were E0301
+now compile, so the two oracle cases that used an operator now use a place.

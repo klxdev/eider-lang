@@ -1,0 +1,1 @@
+{"error":"E0301","span":{"file":"tests/checks/fail/e0301_place_arg_receiver.ei","line":7,"col":13},"message":"`p` is borrowed mutably by another argument of this call and can't be read here"}

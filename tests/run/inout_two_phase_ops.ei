@@ -1,0 +1,40 @@
+// An argument that is an operator is evaluated, to a new value, before the `inout` access of the
+// call it belongs to begins, so it may read the variable that is passed `inout`
+// (docs/site/reference/memory.md, "Exclusivity"). A place argument still conflicts.
+type P = { x: i32, tags: List[i32] }
+
+impl P {
+    fn add(inout self, n: i32) {
+        self.x += n
+        self.tags.push(n)
+    }
+}
+
+fn bump(inout a: i32, by: i32) { a += by }
+
+fn grow(inout xs: List[i32], n: i32, ok: bool) {
+    if ok { xs.push(n) }
+}
+
+fn main() uses io {
+    let mut p = P(1, List.new())
+    p.add(p.x * 2)
+    p.add(-p.x)
+    print(p.x)
+    print(p.tags.len())
+    let mut xs: List[i32] = List[1, 2, 3]
+    xs.push(xs[0] + xs[1])
+    xs.push(xs[xs.len() - 1] * 10)
+    grow(inout xs, xs.len() as i32 + 1, xs[0] == 1 && xs.len() > 2)
+    print(xs.len())
+    print(xs[3])
+    print(xs[4])
+    print(xs[5])
+    let mut n = 5
+    bump(inout n, n + 1)
+    bump(inout n, ~n & 1)
+    print(n)
+    let mut flags: List[bool] = List.new()
+    flags.push(!flags.contains(true))
+    print(flags[0])
+}
