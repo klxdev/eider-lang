@@ -82,7 +82,10 @@ compile-fail tests (tests/checks/fail)
   ok   e0401_u16_negate.ei          E0401 at 4:13
   ok   e0401_value_arg_unit.ei      E0401 at 4:17
   ok   e0402_null.ei                E0402 at 3:16
+  ok   e0405_builtin_type_args_count.ei E0405 at 3:19
   ok   e0405_closure_arity.ei       E0405 at 4:22
+  ok   e0405_method_type_args_count.ei E0405 at 5:18
+  ok   e0405_method_type_args_none.ei E0405 at 4:16
   ok   e0405_missing_argument.ei    E0405 at 4:5
   ok   e0405_type_args_count.ei     E0405 at 4:13
   ok   e0405_wrong_arity.ei         E0405 at 4:3
@@ -171,6 +174,7 @@ compile-pass tests (tests/checks/pass)
   ok   pass_list_inplace.ei
   ok   pass_list_literal.ei
   ok   pass_match_all.ei
+  ok   pass_method_type_args.ei
   ok   pass_named_args.ei
   ok   pass_shadow_in_inner_scope.ei
   ok   pass_type_args.ei
@@ -178,5 +182,5 @@ compile-pass tests (tests/checks/pass)
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-176 passed, 0 failed; error-code coverage 76/76
+180 passed, 0 failed; error-code coverage 76/76
 --- exit 0

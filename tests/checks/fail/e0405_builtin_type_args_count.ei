@@ -1,0 +1,4 @@
+// expect: E0405 3:19
+fn main() {
+    let xs = List.new[i32, i64]()
+}

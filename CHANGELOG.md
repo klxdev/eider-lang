@@ -14,6 +14,9 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
   park"); a core test checks the AArch64 code. The sanitizer result on AArch64 itself comes from CI.
   The same hazard made `ec_poll_wait` (`std/event` `Loop.poll` in a task) write its events into the output buffer of
   the worker the task had left; ThreadSanitizer showed it on x86-64 with the `ucontext` switch.
+- Type arguments on method calls (#197): `x.convert[Order]()`, `Stack.new[i32]()`, `List.new[i64]()`,
+  `Map.new[str, i32]()`. On `Type.f[...]` the impl's type parameters come first, then the function's own; a method
+  without type parameters given some is E0405.
 
 ## 0.7.0
 

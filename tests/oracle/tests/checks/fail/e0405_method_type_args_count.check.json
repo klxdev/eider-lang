@@ -1,0 +1,1 @@
+{"error":"E0405","span":{"file":"tests/checks/fail/e0405_method_type_args_count.ei","line":5,"col":18},"message":"`M.pick` takes 1 type argument(s), but 2 were given"}

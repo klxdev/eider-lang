@@ -1,0 +1,1 @@
+{"error":"E0405","span":{"file":"tests/checks/fail/e0405_builtin_type_args_count.ei","line":3,"col":19},"message":"`List.new` takes 1 type argument(s), but 2 were given"}

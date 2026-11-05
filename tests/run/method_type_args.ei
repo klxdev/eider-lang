@@ -1,0 +1,52 @@
+// Type arguments written out on a method call, `x.f[T]()`, and on an associated function,
+// `Type.f[T]()` (docs/site/reference/generics.md).
+type Meter = { v: i32 }
+
+impl Meter {
+    // a type parameter that only the result mentions
+    fn conv[T: Default](self) -> T { T.default() }
+    fn pick[A, B](self, a: A, b: B) -> A { a }
+    fn zero[T: Default]() -> T { T.default() }
+}
+
+type Stack[T] = { items: List[T] }
+
+impl[T] Stack[T] {
+    fn new() -> Stack[T] { Stack(List.new()) }
+    fn push_one(inout self, x: T) { self.items.push(x) }
+    fn size(self) -> usize { self.items.len() }
+    fn conv[U: Default](self) -> U { U.default() }
+    // the impl's parameters come first, then the method's own
+    fn with[U: Default](x: T) -> (Stack[T], U) { (Stack(List[x]), U.default()) }
+}
+
+fn main() uses io {
+    let m = Meter(3)
+    let a = m.conv[i64]()
+    let b = m.conv[String]()
+    print(a)
+    print(b.len())
+    // fewer than the method has: the rest is inferred
+    print(m.pick[i32, str](7, "x"))
+    print(m.pick[i32](8, true))
+    // the result of a call with type arguments is a receiver like any other
+    print(m.conv[i32]() + 5)
+    print(Meter.zero[bool]())
+    let mut s = Stack.new[i32]()
+    s.push_one(4)
+    print(s.size())
+    print(s.conv[u8]())
+    let (t, d) = Stack.with[str, i64]("k")
+    print(t.size())
+    print(d)
+    // the built-in types' constructors: the type arguments are the type's own
+    let mut xs = List.new[i64]()
+    xs.push(1)
+    print(xs.len())
+    let mut mp = Map.new[str, i32]()
+    mp.insert("a", 2)
+    print(mp.len())
+    let ch = Chan.new[i32]()
+    ch.send(5)
+    print(ch.recv())
+}

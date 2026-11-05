@@ -1,0 +1,5 @@
+// expect: E0405 4:16
+fn main() {
+    let mut xs: List[i32] = List.new()
+    let n = xs.len[i32]()
+}

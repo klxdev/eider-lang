@@ -4907,3 +4907,34 @@ WebAssembly exports them as numbers.
 `std/encoding` returns `u16` from `u16_le`/`u16_be` and takes one in `push_u16_le`/`push_u16_be` (a value that
 doesn't fit no longer needs a check), and `std/checked` has `checked_*` for both kinds.
 
+
+## C8.83: type arguments on method calls (#197)
+
+Decision C876. Code: parse.ei (the `.name` branch of `postfix`: `type_args_ahead`, then the types; `EMethod` slots
+e/f as for `ECall`, ast.ei), dump.ei (`targ` children), check.ei (`call_decl`, the `n.f > 0` block now also for
+`EMethod`; `method_call_in` for the built-in constructors; `method_call` for the unused case; `C.targs_at`).
+Tests: tests/run/method_type_args.ei, tests/checks/fail/e0405_method_type_args_{count,none}.ei and
+e0405_builtin_type_args_count.ei, tests/checks/pass/pass_method_type_args.ei,
+compiler/tests/parse_ok/method_type_args.ei.
+
+**Syntax.** After the name of a method call, `[` opens type arguments exactly when the matching `]` is followed by
+`(` (the rule of "C8.66"); otherwise it is an index of the field. `x.f[T](y)` and `Type.f[T](y)` are the same
+`EMethod` node as `x.f(y)` with the types in e/f.
+
+**Which parameters.** `call_decl` binds the written types, resolved in the caller's module, in this order: for
+`x.f[...]` (a receiver) the method's own type parameters, since the receiver already fixed the impl's; for
+`Type.f[...]` (no receiver) the impl's type parameters first, then the function's own, so `Stack.new[i32]()` of
+`impl[T] Stack[T]` fixes `T`, and `Stack.with[str, i64]("k")` fixes `T` then `U`. Capability parameters
+(`uses E`) never count. More than there are is E0405; fewer leaves the rest to inference. A trait default method
+(`dflt`) has only `Self`, which is never written, so `Type.f[...]` on one takes the function's own parameters only.
+
+**Built-in types.** `List.new[T]()`, `Map.new[K, V]()`, `Chan.new[T]()`, `Mutex.new[T](v)`, `Box.new[T](v)` and the
+other built-in statics build the type from the written arguments and check the call as if that type were the
+expected type (so they need no annotation, E0409); a wrong count is E0405. Built-in instance methods
+(`xs.len[T]()`) and any other callee that takes no type arguments leave `C.targs_at` (the position of the call that
+used its arguments) unset, and `method_call` reports E0405 "takes no type arguments" at the method name, instead
+of dropping the types silently.
+
+Not done: type arguments of a method called through a trait (`Trait.m[T](x)` reaches `call_decl` with the receiver
+moved to the first argument, so it works for the method's own parameters only), and the resolver/IDE do not index
+the written types (as for `f[T](x)`).

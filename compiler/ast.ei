@@ -11,7 +11,7 @@
 //                h=1: has `uses`, [i/j]=Cap (`fn() -> T uses io + E`; docs/compiler.md, "C8.46")
 // exprs      EInt a=tok   EFloat a=tok (its text is in the source; the token's val is the f32/f64 suffix: 0, 32, 64)   EStr a=str   EBool a=0/1   EIdent a=sym b=qual+1
 //            EUnary a=op (0 neg, 1 not, 2 bitwise not `~`) b=operand  EBinary a=op (OP_*) b=lhs c=rhs
-//            ECall a=callee sym b=qual+1 [c/d]=args [e/f]=type arguments written out (`f[T](x)`; f=0: none)  EMethod a=recv b=name sym [c/d]=args
+//            ECall a=callee sym b=qual+1 [c/d]=args [e/f]=type arguments written out (`f[T](x)`; f=0: none)  EMethod a=recv b=name sym [c/d]=args [e/f]=type arguments (`x.f[T](y)`, `Type.f[T]()`; f=0: none)
 //            EField a=recv b=name sym              EIndex a=recv b=index
 //            ECast a=expr b=type                   EArray [c/d] (e=1: `List[a, b]`, a List literal)   ERepeat a=elem b=count
 //            ETuple [c/d]   ETry a   EUnsafe a=block   EBlock a=block

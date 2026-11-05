@@ -1934,7 +1934,20 @@ fn postfix(inout p: P) -> Result[u32, diag.Diag] {
             } else {
                 fsym = ident(inout p)?.sym
             }
-            if is(p, lex.LParen) {
+            if is(p, lex.LParen) || (is(p, lex.LBracket) && type_args_ahead(inout p)) {
+                // `x.f(args)`, and `x.f[T](args)` / `Type.f[T](args)` with the type arguments written
+                // out (docs/compiler.md, "C8.83")
+                let mut targs: List[u32] = List.new()
+                if is(p, lex.LBracket) {
+                    adv(inout p)
+                    while true {
+                        skip_nl(inout p)
+                        targs.push(ty(inout p)?)
+                        skip_nl(inout p)
+                        if eat(inout p, lex.RBracket) { break }
+                        expect(inout p, lex.Comma)?
+                    }
+                }
                 adv(inout p)
                 let a = args(inout p)?
                 let mut n = mk(ast.EMethod, ft.line, ft.col)
@@ -1942,6 +1955,10 @@ fn postfix(inout p: P) -> Result[u32, diag.Diag] {
                 n.b = fsym
                 n.c = list(inout p, a)
                 n.d = a.len() as u32
+                if targs.len() > 0 {
+                    n.e = list(inout p, targs)
+                    n.f = targs.len() as u32
+                }
                 e = add(inout p, n)
             } else {
                 let mut n = mk(ast.EField, ft.line, ft.col)

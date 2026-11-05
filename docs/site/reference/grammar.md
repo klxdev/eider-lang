@@ -208,8 +208,8 @@ arm        = pattern { "|" pattern } "=>"
 - A call `( ... )` may only follow a `path` (a name or `alias.name`), which may carry
   `[type, ...]` type arguments (`[` starts them only if the matching `]` is followed by `(`;
   `xs[i](3)` is an index, then E0001): any other callee is
-  E0001 "only named functions can be called". After `.`, a name followed by `(` is a
-  method call; otherwise a field. An `INT` after `.` is a tuple element (`t.0`).
+  E0001 "only named functions can be called". After `.`, a name followed by `(`, or by
+  `[type, ...]` type arguments and `(`, is a method call; otherwise a field. An `INT` after `.` is a tuple element (`t.0`).
 - In a postfix chain, a newline followed by a line starting with `.` continues the chain.
 - `path` is `IDENT`, `alias.IDENT` when `alias` is an import alias of the file, or
   `ns.module.IDENT` when `ns` is a package namespace the file imports (`import std`); any

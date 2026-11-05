@@ -290,6 +290,44 @@ fn main() uses io {
 42
 ```
 
+### Type arguments on a method call
+
+A generic method's type arguments are written after its name, `x.convert[Order]()`, and an
+associated function's after the function, `Stack.new[i32]()`; as for a function
+([Calls](#calls)), naming fewer than the method has leaves the rest to inference and more is
+E0405. On `x.m[...]` they are the method's own type parameters (the receiver fixes the impl's).
+On `Type.f[...]` the impl's type parameters come first, then the function's own: for
+`impl[T] Stack[T] { fn new() -> Stack[T] }`, `Stack.new[i32]()` is a `Stack[i32]`, and for
+`fn with[U](x: T)` in the same impl, `Stack.with[str, i64]("k")` fixes `T` and `U`. The
+constructors of the built-in types take the type's own arguments and need no annotation:
+`List.new[i64]()`, `Map.new[str, i32]()`, `Chan.new[u8]()`, `Box.new[i32](5)`. A method that
+has no type parameters, a built-in method like `xs.len`, takes none: E0405 "takes no type
+arguments".
+
+```eider
+type Stack[T] = { items: List[T] }
+
+impl[T] Stack[T] {
+    fn new() -> Stack[T] { Stack(List.new()) }
+    fn size(self) -> usize { self.items.len() }
+    fn empty[U: Default](self) -> U { U.default() }
+}
+
+fn main() uses io {
+    let s = Stack.new[i32]()
+    print(s.size())
+    print(s.empty[bool]())
+    let xs = List.new[str]()
+    print(xs.len())
+}
+```
+
+```output
+0
+false
+0
+```
+
 ## Fields and tuple elements
 
 `e.f` reads field `f` of a record; `e.0`, `e.1`, ... read tuple elements (`t.0.1` reads

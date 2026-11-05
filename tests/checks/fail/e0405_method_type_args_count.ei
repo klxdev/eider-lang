@@ -1,0 +1,6 @@
+// expect: E0405 5:18
+type M = { v: i32 }
+impl M { fn pick[A](self, a: A) -> A { a } }
+fn main() {
+    let n = M(1).pick[i32, i64](2)
+}

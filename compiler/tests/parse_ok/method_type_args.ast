@@ -1,0 +1,33 @@
+(IFn 2:4 name=main end=2:10
+  body (Block 2:11 end=8:1
+    stmt (SLet 3:5 name=a
+      init (EMethod 3:15 name=f
+        recv (EIdent 3:13 name=x)
+        targ (TName 3:17 name=i32)))
+    stmt (SLet 4:5 name=b
+      init (EMethod 4:18 name=make
+        recv (EIdent 4:13 name=Type)
+        targ (TName 4:23 name=A)
+        targ (TName 4:26 name=B)
+        arg (EArg 4:29
+          expr (EInt 4:29 value=1))
+        arg (EArg 4:32
+          expr (EInt 4:32 value=2))))
+    stmt (SLet 5:5 name=c
+      init (EMethod 5:26 name=len
+        recv (EMethod 5:16 name=get
+          recv (EIdent 5:13 name=xs)
+          targ (TName 5:20 name=T)
+          arg (EArg 5:23
+            expr (EInt 5:23 value=0)))))
+    stmt (SLet 6:5 name=d
+      init (EMethod 6:18 name=new
+        recv (EIdent 6:13 name=List)
+        targ (TName 6:22 name=i64)))
+    stmt (SLet 7:5 name=e
+      init (EMethod 7:15 name=f
+        recv (EIdent 7:13 name=x)
+        targ (TGeneric 7:17 name=Map
+          arg (TName 7:21 name=str)
+          arg (TGeneric 7:26 name=List
+            arg (TName 7:31 name=i32)))))))

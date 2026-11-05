@@ -1,0 +1,11 @@
+type M = { v: i32 }
+impl M {
+    fn conv[T: Default](self) -> T { T.default() }
+    fn zero[T: Default]() -> T { T.default() }
+}
+fn main() {
+    let a = M(1).conv[i64]()
+    let b = M.zero[String]()
+    let c = List.new[i32]()
+    let d = Map.new[str, bool]()
+}

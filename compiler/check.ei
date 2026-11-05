@@ -327,6 +327,8 @@ pub type C = {
     /// the call being checked that has named arguments and wasn't handled by `call_decl` yet:
     /// (line << 32 | col) of the call; 0: none
     named_pos: u64,
+    /// the method call (line << 32 | col) whose written type arguments were used (docs/compiler.md, "C8.83")
+    targs_at: u64,
 }
 
 /// `impl From[Source] for Target` (module md, IImpl node) and its `from` method (FnDef fd).
@@ -3793,7 +3795,7 @@ fn new_checker(p: resolve.Program, lib: bool) -> C {
         no_subst(), List.new(), List.new(), List.new(), List.new(), List.new(), Map.new(), List.new(),
         0, Map.new(), true, resolve.NOMOD, resolve.NOMOD, types.UNIT, List.new(), 0, 0, 0, 0, no_hint(), 0, false, lib, 0, false, Rec(false, List.new(), List.new()),
         List.new(), List.new(), false, Map.new(), false, false, Map.new(), List.new(), lt, no_refs(),
-        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), no_reflect(), List.new(), List.new(), 0, lint.new_collected(), NONE, 0, 0, Map.new(), Map.new(), 0)
+        Aliases(Map.new(), List.new(), List.new()), List.new(), List.new(), no_reflect(), List.new(), List.new(), 0, lint.new_collected(), NONE, 0, 0, Map.new(), Map.new(), 0, 0)
 }
 
 /// Every item of the program in load order (resolve.ei), as (module, node) pairs.
@@ -7768,8 +7770,17 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
     }
     // type arguments written out: `f[T](x)` ("C8.66"); fewer than the function has leaves the
     // rest to inference
-    if n.kind == ast.ECall && n.f > 0 {
+    if (n.kind == ast.ECall || n.kind == ast.EMethod) && n.f > 0 {
         let mut own: List[u32] = List.new()
+        // `Type.f[A, B](...)`: the parameters of the impl come first, then the method's own ("C8.83")
+        if n.kind == ast.EMethod && !recv.has && !f.dflt && f.inode != NONE {
+            let im = ndm(c, fm, f.inode)
+            for j in 0..im.d {
+                let gp = ndm(c, fm, atm(c, fm, im.c, j))
+                if gp.e != 1 { own.push(gp.a) }
+            }
+        }
+        c.targs_at = ((n.line as u64) << 32) | n.col as u64
         for j in 0..fnode.d {
             let gp = ndm(c, fm, atm(c, fm, fnode.c, j))
             if gp.e != 1 { own.push(gp.a) }
@@ -8185,6 +8196,19 @@ fn method_call(inout c: C, n: ast.Node, exp: u32) -> Result[V, diag.Diag] {
     c.named_pos = named_mark(c, n)
     let r = method_call_in(inout c, n, exp, 0)
     note_unnamed(inout c, n)
+    // type arguments that no callee took: `x.len[T]()` ("C8.83")
+    let mut unused = false
+    if n.f > 0 && c.targs_at != (((n.line as u64) << 32) | n.col as u64) {
+        match r {
+            Ok(_) => { unused = true }
+            Err(_) => {}
+        }
+    }
+    if unused {
+        c.named_pos = saved
+        end_pos(inout c)
+        return Err(err("E0405", n.line, n.col, q("`", nm(c, n.b), "` takes no type arguments")))
+    }
     c.named_pos = saved
     end_pos(inout c)
     r
@@ -8369,6 +8393,31 @@ fn method_call_in(inout c: C, n: ast.Node, exp: u32, want: u64) -> Result[V, dia
         }
         let x = resolve.key_sym(static_head)
         let heap_head = resolve.key_pre(static_head) == 0 && (has_sym(c.w.heap, x) || x == c.w.s_string)
+        if heap_head && n.f > 0 && builtin_static(c, x, n.b) {
+            // `List.new[i64]()`, `Map.new[str, i32]()`, `Chan.new[u8]()`: the type arguments are the
+            // type's own, and stand for the annotation of the binding ("C8.83")
+            let bk = builtin_head_kind(c, static_head)
+            let want: u32 = if bk == types.T_MAP { 2 } else { 1 }
+            if n.f != want {
+                return Err(err("E0405", n.line, n.col, q3("`", label_of(c, nm(c, x), n.b), "` takes ", num(want as u64), " type argument(s), but ", num(n.f as u64), " were given")))
+            }
+            let am = c.am.copy()
+            let mut targs: List[u32] = List.new()
+            for j in 0..n.f { targs.push(resolve_ty(inout c, am, at(c, n.e, j))?) }
+            let mut et = NONE
+            if bk == types.T_LIST { et = types.list_of(inout c.t, targs[0]) }
+            if bk == types.T_BOX { et = types.box_of(inout c.t, targs[0]) }
+            if bk == types.T_MUTEX { et = types.mutex_of(inout c.t, targs[0]) }
+            if bk == types.T_CHAN { et = types.chan_of(inout c.t, targs[0]) }
+            if bk == types.T_MAP {
+                check_map_key(c, targs[0], n.line, n.col)?
+                et = types.map_of(inout c.t, targs[0], targs[1])
+            }
+            if et != NONE {
+                c.targs_at = ((n.line as u64) << 32) | n.col as u64
+                return heap_static(inout c, n, x, et)
+            }
+        }
         if heap_head && builtin_static(c, x, n.b) { return heap_static(inout c, n, x, exp) }
         if is_word(c, n.b, "from") && has_from(c, static_head) { return from_call(inout c, n, static_head, exp) }
         let scands = meth_cands(c, static_head, n.b, 0)

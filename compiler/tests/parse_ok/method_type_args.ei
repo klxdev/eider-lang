@@ -1,0 +1,8 @@
+// Type arguments on a method call and on an associated function (docs/compiler.md, "C8.83").
+fn main() {
+    let a = x.f[i32]()
+    let b = Type.make[A, B](1, 2)
+    let c = xs.get[T](0).len()
+    let d = List.new[i64]()
+    let e = x.f[Map[str, List[i32]]]()
+}

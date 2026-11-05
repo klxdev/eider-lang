@@ -192,6 +192,7 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
         ast.EMethod => {
             sym(inout out, p, "name", n.b)
             child(inout out, p, "recv", n.a, d)
+            kids(inout out, p, "targ", n.e, n.f, d)
             kids(inout out, p, "arg", n.c, n.d, d)
         }
         ast.EField => {
