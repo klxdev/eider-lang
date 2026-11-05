@@ -4,13 +4,13 @@
 # with), which must keep up with the language (a syntax or IDE-visible change updates them
 # in the same wave: LAYERS.md, "Tooling"), and the libraries and frameworks that left this
 # repository (LAYERS.md, "Where code lives"; eider-toml, eider-json, eider-markdown, eider-logging, eider-command,
-# eider-http, eider-rpc, eider-openapi, eider-compression), which must keep building and passing their tests
+# eider-http, eider-rpc, eider-openapi, eider-compression, eider-tls), which must keep building and passing their tests
 # on it. This is the "tools" leg of scripts/verify.sh.
 #
 #   scripts/check-tools.sh
 #
 # Where the repositories are: EIDER_<NAME> for each (EIDER_ANALYZER, TREE_SITTER_EIDER,
-# EIDER_TOML, EIDER_JSON, EIDER_MARKDOWN, EIDER_LOGGING, EIDER_COMMAND, EIDER_HTTP, EIDER_RPC, EIDER_OPENAPI, EIDER_COMPRESSION), else
+# EIDER_TOML, EIDER_JSON, EIDER_MARKDOWN, EIDER_LOGGING, EIDER_COMMAND, EIDER_HTTP, EIDER_RPC, EIDER_OPENAPI, EIDER_COMPRESSION, EIDER_TLS, EIDER_TLS), else
 # $EIDER_SIBLINGS/<repository> (EIDER_SIBLINGS: default .., the directory holding this
 # checkout). One that is absent is `skip`, so a plain checkout stays green.
 #
@@ -84,7 +84,7 @@ fi
 
 # The libraries' checkouts, exported as the EIDER_<NAME> their scripts/env.sh reads (json
 # falls back to .vendor/json, the release this checkout pins).
-LIBS="toml json markdown logging command http rpc openapi compression"
+LIBS="toml json markdown logging command http rpc openapi compression tls"
 for n in $LIBS; do
   var=EIDER_$(echo "$n" | tr 'a-z' 'A-Z')
   if d=$(repo_dir "eider-$n" "$var"); then eval "$var=\$d"; export "$var"; else unset "$var"; fi
