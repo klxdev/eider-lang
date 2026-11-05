@@ -24,9 +24,10 @@ their version (they work with the 0.7 compiler as they are).
   with `%t<id>`, the typed IR of `eiderc expand --ir`, a tool built on `compiler/`) sees the shift; rebuild it.
 - `std/encoding`'s `u16_le`, `u16_be` return `Option[u16]` (was `Option[u32]`) and `push_u16_le`, `push_u16_be` take a
   `u16` (was `u32`).
-- Some programs that were E0103 are legal now: an `if`, `match` or block as an argument of a call (#48) and a call
-  as an `inout` argument (#145). A test or tool that expects that error for them has to change; the operand and
-  field-initializer cases stay E0103, and a place or operator argument is still E0301.
+- Some programs that were errors are legal now. An `if`, `match` or block as an argument of a call (#48) was E0103;
+  an argument that is a call, in a call that takes `inout` (`xs.push(xs.len())`, #145), was E0301. A test or tool
+  that expects those errors has to change; the operand and field-initializer cases stay E0103, and a place or
+  operator argument is still E0301.
 - A package that says `eider = "0.6"` is refused by a 0.7 toolchain (E0811).
 
 **Not done in 0.7.0**: the rest of #150 (rename, workspace symbols, signature help, inlay hints, grammar generation);
