@@ -5,7 +5,13 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
-## 0.7.2 (unreleased)
+## 0.7.2
+
+A patch: the profile-build thread-local hazard (#209), a core verify flake (#210), and the HTTP and service hardening
+that lives in the libraries. eider-http and eider-rpc move to 0.7.1 (their own CHANGELOGs; both break record
+constructors and module names, before 1.0); the other libraries, eider-analyzer, tree-sitter-eider and eider-profiler
+stay where they are. Nothing in the language changed, so the tools are unchanged. Service rate limiting is on by
+default in eider-http's `service.options()` (1000/s, burst 2000 per address).
 
 - **Fixed: `--profile` builds kept a thread-local address across a task's park (#209).** Generated code read the shadow stack's depth through an address computed once per function (on AArch64 one `mrs TPIDR_EL0` at entry, used again at the return), and held the address of its frame in a thread's array; a task that parked and resumed on another worker popped the wrong thread's depth and stored its lines into the wrong array. Generated code now calls `ei_prof_enter`/`ei_prof_leave` in the runtime and holds no thread-local, and every task has a shadow stack of its own. `tests/core/tls_park.sh` compiles a profile build of the runtime and of a generated program for AArch64 and fails on a thread-pointer read where a park can intervene (which also found `ei_try` and `ei_chan_recv` doing it in profile builds). Validated on x86-64 and in the assembly; not run on AArch64 hardware.
 
