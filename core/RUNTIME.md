@@ -486,8 +486,8 @@ before the profiler existed (tests/core/run.sh checks that no profiler code is l
 
 | In `eider_rt.h` (inline, generated code) | Contract |
 |---|---|
-| `ei_prof_frame` `{ volatile float fn, line; }`, `ei_prof_stack[EI_PROF_DEPTH]`, `ei_prof_depth` (thread-local) | the shadow stack: 512 frames per thread, deeper ones write `ei_prof_spill`; floats so the stores alias none of the program's data, volatile so they happen where written and in order (the signal handler reads them on the same thread) |
-| `ei_prof_frame *ei_prof_enter(uint32_t fn)`, `ei_prof_leave(void)`, `ei_prof_unwind(depth)` | push (line 0), pop, and reset after a test's longjmp |
+| `ei_prof_frame` `{ volatile float fn, line; }`, `EI_PROF_DEPTH` | the shadow stack: 512 frames and one spill frame for deeper ones, per thread, and per task while it runs (it goes with the task when it moves between workers); floats so the stores alias none of the program's data, volatile so they happen where written and in order (the signal handler reads them on the same thread) |
+| `ei_prof_frame *ei_prof_enter(uint32_t fn)`, `ei_prof_leave(void)`, `ei_prof_depth_get(void)`, `ei_prof_unwind(depth)` | push (line 0), pop, the depth (`ei_try` saves it), and reset after a test's or a trap's longjmp. Out of line and `noinline` (eider_prof.c): generated code and the runtime reach the thread-local depth and stack only through them, never through an address of their own, because a task that parks resumes on another thread (C875, C894) |
 | `ei_prof_ev(kind, n)` | an event at the current position: `EI_PEV_COW`, `COPY`, `DROP`, `GROW`, `REHASH` from glue (n bytes), `REF` before a Ref conflict's trap |
 | `ei_prof_init(const ei_prof_table *)` | generated `main` (and test `main`), after `ei_set_file`: the name table (`names[fn]`, `file_of[fn]`, `files`), what to profile (`EI_PROF_CPU`, `MEM`, `CONC`) and the program |
 

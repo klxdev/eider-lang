@@ -3939,10 +3939,13 @@ compiler). The runtime side, the file format and the overhead are docs/runtime.m
   includes core/eider_prof.c (and the core objects are cached apart: the argv and
   eider_prof.c's bytes are in the key).
 - **Shadow frames** (`function`, `lower.framed`, `prof_enter`). A function whose body calls
-  (S_CALL, S_CALLV) or loops takes the next frame of the runtime's thread-local shadow stack
-  (`ei_prof_stack`, `ei_prof_depth`, `ei_prof_spill`, through `llvm.threadlocal.address`, with
-  volatile float stores as eider_rt.h's `ei_prof_enter` does) at entry, and pops it
-  (`prof_leave`) before every `ret`. Straight-line code that calls nothing gets no frame: it
+  (S_CALL, S_CALLV) or loops takes the next frame of the shadow stack by calling the runtime's
+  `ei_prof_enter(id)` at entry, which returns the frame (the function keeps the address of its
+  line field and stores lines through it), and pops it with `ei_prof_leave()` (`prof_leave`)
+  before every `ret`. The calls are out of line so that the generated code reads no thread-local
+  of its own: a thread-local address kept across a task's park is another thread's afterwards
+  (decisions C875, C894; `tests/core/tls_park.sh` compiles a profile build for AArch64 and fails
+  on any read of the thread pointer). Straight-line code that calls nothing gets no frame: it
   counts for its caller, as if inlined.
 - **Lines** (`lower.prof_marks`, `prof_line`): the frame's line is stored before a statement
   that calls, runs a builtin, makes a closure, builds a record with its own Drop, drops an

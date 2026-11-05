@@ -83,6 +83,20 @@ prof() {
   fi
 }
 
+# proftask NAME FLAGS...: the shadow stack across a task's park (#209): the profiling runtime
+# with its tasks on 4 workers, parking and moving between them
+proftask() {
+  name=$1; shift
+  if ! $CC $STRICT -DEI_RT_PROFILE "$@" -I core -o "$T/proftask_$name" tests/core/prof_task_test.c core/eider_rt.c core/eider_core.c -pthread 2>"$T/log"; then
+    echo "FAIL proftask ($name): build"; cat "$T/log"; fail=1; return
+  fi
+  if EIDER_WORKERS=4 EIDER_PROF="$T/proftask_$name.prof" "$T/proftask_$name" >"$T/out" 2>&1; then
+    echo "ok   proftask ($name): $(tail -1 "$T/out")"
+  else
+    echo "FAIL proftask ($name)"; cat "$T/out"; fail=1
+  fi
+}
+
 # sanitizer NAME FLAGS...: run under FLAGS if a trivial program builds and runs with them
 sanitizer() {
   name=$1; shift
@@ -91,6 +105,7 @@ sanitizer() {
     run "$name" -O1 -g "$@"
     core "$name" -O1 -g "$@"
     prof "$name" -O1 -g "$@"
+    proftask "$name" -O1 -g "$@"
     task "$name" -O1 -g "$@" -DEI_TEST_SANITIZED
   else
     echo "skip rt ($name): $CC cannot build or run with $*"
@@ -102,6 +117,8 @@ run portable -O0 -DEI_RT_PORTABLE
 run count-allocs -O0 -DEI_RT_COUNT_ALLOCS
 core O2 -O2
 prof O2 -O2
+proftask O2 -O2
+proftask ucontext -O2 -DEI_TASK_UCONTEXT
 task O2 -O2
 task ucontext -O2 -DEI_TASK_UCONTEXT
 prof count-allocs -O0 -DEI_RT_COUNT_ALLOCS

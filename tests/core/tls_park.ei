@@ -1,0 +1,36 @@
+// The program tests/core/tls_park.sh compiles with --profile for AArch64 (#209): framed functions
+// that call, loop, and park (join, a channel receive, a sleep), the shapes in which a
+// thread-local address computed once per function would be kept across a park. It is only
+// compiled, never run.
+import std.time
+
+fn leaf(n: i64) -> i64 {
+    let mut s: i64 = 0
+    for i in 0..n { s += i }
+    s
+}
+
+fn waiter(c: Chan[i64], rounds: i64) -> i64 uses clock {
+    let mut total: i64 = 0
+    for i in 0..rounds {
+        time.sleep_ms(1)
+        match c.recv() {
+            Some(v) => { total += v + leaf(i) }
+            None => { total += 0 }
+        }
+    }
+    total
+}
+
+fn main() uses threads, clock {
+    let c: Chan[i64] = Chan.new()
+    let mut ts: List[Task[i64]] = List.new()
+    for k in 0..4 {
+        let cc = c
+        ts.push(spawn(|| -> i64 waiter(cc, 3)))
+    }
+    for i in 0..12 { c.send(i as i64) }
+    let mut sum: i64 = 0
+    for t in ts { sum += t.join() }
+    c.send(sum)
+}

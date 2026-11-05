@@ -4074,44 +4074,22 @@ fn di_struct(inout e: E, name: List[u8], bits: u64, ms: List[u32]) -> u32 {
     id
 }
 
-// ---- --profile: the shadow stack (core/eider_rt.h ei_prof_*, the runtime's thread-locals)
+// ---- --profile: the shadow stack (core/eider_rt.h ei_prof_*)
 
-fn tls(inout e: E, name: str, ty: str) -> List[u8] {
-    let mut d = lit("@")
-    bytes.append(inout d, lit(name))
-    bytes.append(inout d, lit(" = external thread_local global "))
-    bytes.append(inout d, lit(ty))
-    declare(inout e, lit(name), d)
-    declare(inout e, lit("llvm.threadlocal.address.p0"), lit("declare ptr @llvm.threadlocal.address.p0(ptr)"))
-    val(inout e, catb(lit("call ptr @llvm.threadlocal.address.p0(ptr @"), cat(lit(name), ")")))
-}
-
-/// ei_prof_enter(id): the next frame (or the spill frame past EI_PROF_DEPTH) gets the function
-/// and line 0; returns its address.
+/// ei_prof_enter(id) (the runtime's: out of line, so that no thread-local address of ours can
+/// be kept across a task's park, decision C894): pushes the frame, with the function and line
+/// 0, and returns the address of its line field (the frame's second float).
 fn prof_enter(inout e: E, id: u64) -> List[u8] {
-    let dp = tls(inout e, "ei_prof_depth", "i16")
-    let st = tls(inout e, "ei_prof_stack", r"[512 x { float, float }]")
-    let sp = tls(inout e, "ei_prof_spill", r"{ float, float }")
-    let d = val(inout e, catb(lit("load volatile i16, ptr "), dp))
-    let dw = val(inout e, catb(lit("zext i16 "), cat(d, " to i64")))
-    let inb = val(inout e, catb(lit("icmp ult i64 "), cat(dw, ", 512")))
-    let fa = val(inout e, catb(lit(r"getelementptr inbounds [512 x { float, float }], ptr "), catb(st, catb(lit(", i64 0, i64 "), dw))))
-    let f = val(inout e, catb(lit("select i1 "), catb(inb, catb(lit(", ptr "), catb(fa, catb(lit(", ptr "), sp))))))
-    stmt_text(inout e, catb(lit("store volatile float "), catb(num("", id), catb(lit(".0, ptr "), f))))
-    let la = val(inout e, catb(lit(r"getelementptr inbounds { float, float }, ptr "), cat(f, ", i32 0, i32 1")))
-    stmt_text(inout e, catb(lit("store volatile float 0.0, ptr "), la))
-    let d1 = val(inout e, catb(lit("add i16 "), cat(d, ", 1")))
-    stmt_text(inout e, catb(lit("store volatile i16 "), catb(d1, catb(lit(", ptr "), dp))))
-    la
+    declare(inout e, lit("ei_prof_enter"), lit("declare ptr @ei_prof_enter(i32)"))
+    let f = val(inout e, catb(lit("call ptr @ei_prof_enter(i32 "), cat(num("", id), ")")))
+    val(inout e, catb(lit(r"getelementptr inbounds { float, float }, ptr "), cat(f, ", i32 0, i32 1")))
 }
 
 /// ei_prof_leave() before a return of a framed function.
 fn prof_leave(inout e: E) {
     if !e.pframe { return }
-    let dp = tls(inout e, "ei_prof_depth", "i16")
-    let d = val(inout e, catb(lit("load volatile i16, ptr "), dp))
-    let d1 = val(inout e, catb(lit("sub i16 "), cat(d, ", 1")))
-    stmt_text(inout e, catb(lit("store volatile i16 "), catb(d1, catb(lit(", ptr "), dp))))
+    declare(inout e, lit("ei_prof_leave"), lit("declare void @ei_prof_leave()"))
+    stmt_text(inout e, lit("call void @ei_prof_leave()"))
 }
 
 /// The frame's line before a statement that calls, allocates or drops (unless it is set).

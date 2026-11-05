@@ -32,9 +32,43 @@
 #define PROF_THREAD_TIMERS 1
 #endif
 
-_Thread_local ei_prof_frame ei_prof_stack[EI_PROF_DEPTH];
-_Thread_local volatile uint16_t ei_prof_depth;
-_Thread_local ei_prof_frame ei_prof_spill;
+/* The thread's own shadow stack (+1: the spill frame), what it runs when no task is current, and
+   the stack of the task that is (shadow_cur; the scheduler sets it, ei_prof_task_in). Only the
+   functions below touch these, each reading the thread-local itself and returning: nothing that
+   can park holds an address of one (core/eider_rt.h, "shadow stack"). */
+static _Thread_local ei_prof_frame shadow_own[EI_PROF_DEPTH + 1];
+static _Thread_local ei_prof_frame *volatile shadow_cur;
+static _Thread_local volatile uint16_t shadow_depth;
+
+static ei_prof_frame *shadow_stack(void) {
+  ei_prof_frame *s = shadow_cur;
+  return s ? s : shadow_own;
+}
+
+__attribute__((noinline)) ei_prof_frame *ei_prof_enter(uint32_t fn) {
+  uint16_t d = shadow_depth;
+  ei_prof_frame *f = &shadow_stack()[d < EI_PROF_DEPTH ? d : EI_PROF_DEPTH];
+  f->fn = (float)fn;
+  f->line = 0.0f;
+  shadow_depth = (uint16_t)(d + 1);
+  return f;
+}
+__attribute__((noinline)) void ei_prof_leave(void) { shadow_depth = (uint16_t)(shadow_depth - 1); }
+__attribute__((noinline)) uint32_t ei_prof_depth_get(void) { return shadow_depth; }
+__attribute__((noinline)) void ei_prof_unwind(uint32_t depth) { shadow_depth = (uint16_t)depth; }
+
+ei_prof_frame *ei_prof_task_stack_new(void) { return malloc(sizeof(ei_prof_frame) * (EI_PROF_DEPTH + 1)); }
+__attribute__((noinline)) void ei_prof_task_in(ei_prof_frame *stack, uint32_t depth) {
+  shadow_depth = 0;
+  shadow_cur = stack;
+  shadow_depth = (uint16_t)depth;
+}
+__attribute__((noinline)) uint32_t ei_prof_task_out(void) {
+  uint32_t d = shadow_depth;
+  shadow_depth = 0;
+  shadow_cur = NULL;
+  return d;
+}
 
 #define PROF_SDEPTH 128
 #define PROF_RING 128
@@ -220,12 +254,13 @@ static void prof_fr_of(prof_fr *r, const ei_prof_frame *f) {
 
 /* The calling thread's shadow stack (at most PROF_SDEPTH innermost frames) into f. */
 static uint32_t prof_capture(prof_fr *f, uint32_t *trunc) {
-  uint32_t d = ei_prof_depth;
+  uint32_t d = shadow_depth;
+  ei_prof_frame *stack = shadow_stack();
   uint32_t real = d > EI_PROF_DEPTH ? EI_PROF_DEPTH : d;
   uint32_t k = real > PROF_SDEPTH ? PROF_SDEPTH : real;
   *trunc = real > k || d > EI_PROF_DEPTH;
-  for (uint32_t i = 0; i < k; i++) prof_fr_of(&f[i], &ei_prof_stack[real - k + i]);
-  if (d > EI_PROF_DEPTH && k > 0) prof_fr_of(&f[k - 1], &ei_prof_spill);
+  for (uint32_t i = 0; i < k; i++) prof_fr_of(&f[i], &stack[real - k + i]);
+  if (d > EI_PROF_DEPTH && k > 0) prof_fr_of(&f[k - 1], &stack[EI_PROF_DEPTH]);
   return k;
 }
 
@@ -250,12 +285,12 @@ static prof_site *sites;
 static atomic_uint_least64_t prof_sites_lost;
 
 static uint64_t prof_site_key(uint32_t kind) {
-  uint32_t d = ei_prof_depth;
+  uint32_t d = shadow_depth;
   uint32_t fn = 0;
   int32_t line = 0;
   if (d > 0) {
     prof_fr r;
-    prof_fr_of(&r, d <= EI_PROF_DEPTH ? &ei_prof_stack[d - 1] : &ei_prof_spill);
+    prof_fr_of(&r, &shadow_stack()[d <= EI_PROF_DEPTH ? d - 1 : EI_PROF_DEPTH]);
     fn = r.fn;
     line = r.line;
   }
@@ -347,7 +382,7 @@ static void prof_add(prof_site *g, int64_t n, int64_t w, int64_t dn, int64_t dw)
 
 static void prof_count(prof_site *g, uint64_t w) { prof_add(g, 1, (int64_t)w, 0, 0); }
 
-void ei_prof_ev(int32_t kind, uint64_t n) {
+__attribute__((noinline)) void ei_prof_ev(int32_t kind, uint64_t n) {
   if (prof_off || !atomic_load_explicit(&prof_inited, memory_order_relaxed) || kind <= 0 || kind >= EI_PEV_KINDS) return;
   /* the memory events only when memory is profiled; Ref conflicts and spawns always */
   if (!prof_mem && kind != EI_PEV_REF && kind != EI_PEV_SPAWN) return;
@@ -362,14 +397,14 @@ void ei_prof_ev(int32_t kind, uint64_t n) {
 }
 
 /* The current position as a token for ei_prof_at (0: not profiling or no frame). */
-uint64_t ei_prof_here(void) {
-  if (prof_off || !atomic_load_explicit(&prof_inited, memory_order_relaxed) || ei_prof_depth == 0) return 0;
+__attribute__((noinline)) uint64_t ei_prof_here(void) {
+  if (prof_off || !atomic_load_explicit(&prof_inited, memory_order_relaxed) || shadow_depth == 0) return 0;
   return prof_site_key(0);
 }
 
 /* An event of `kind` at the position `here` came from: task ends are counted where the task was
    spawned, from the worker that ran it. */
-void ei_prof_at(int32_t kind, uint64_t here, uint64_t n) {
+__attribute__((noinline)) void ei_prof_at(int32_t kind, uint64_t here, uint64_t n) {
   if (prof_off || !atomic_load_explicit(&prof_inited, memory_order_relaxed) || kind <= 0 || kind >= EI_PEV_KINDS || !here) return;
   prof_count(prof_site_for(((uint64_t)kind << 56) | (here & 0x00FFFFFFFFFFFFFFull)), n);
 }
@@ -380,7 +415,7 @@ void ei_prof_at(int32_t kind, uint64_t here, uint64_t n) {
    otherwise serialize threads that wait often (a busy sync.Lock waits on every call). */
 #define PROF_WAIT_RATE 1000000
 static _Thread_local int64_t prof_wait_left[2] = {PROF_WAIT_RATE, PROF_WAIT_RATE};
-static void prof_wait(int32_t kind, uint64_t ns) {
+__attribute__((noinline)) static void prof_wait(int32_t kind, uint64_t ns) {
   if (prof_off) return;
   prof_count(prof_site_at((uint32_t)kind), ns);
   if (kind != EI_PEV_LOCK && kind != EI_PEV_RECV) return; /* descriptor, timer, parker and join waits: counted, no stacks */

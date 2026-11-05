@@ -370,7 +370,7 @@ the profile (or its last reset), sizes bytes.
 
 | Piece | Where | Why |
 |---|---|---|
-| shadow stack: `ei_prof_enter`/`leave`, `ei_pf->line = N` | generated C, inline in core/eider_rt.h | portable stacks with Eider names and lines; volatile float stores (alias nothing the program has) |
+| shadow stack: `ei_prof_enter`/`leave` (calls), `ei_pf->line = N` (a volatile float store) | the calls in core/eider_prof.c, out of line; the stores in generated code | portable stacks with Eider names and lines; volatile float stores (alias nothing the program has); the calls so that generated code keeps no thread-local address across a task's park, and the frame lives in the task's own array (C894) |
 | signal handler, per-thread rings | core/eider_prof.c | async-signal-safe: atomics and plain stores only; one ring per thread (single producer: the handler on that thread; single consumer: the collector) |
 | per-thread timers | core/eider_prof.c | Linux: `timer_create` on the thread's CPU clock (or the monotonic clock) with `SIGEV_THREAD_ID`, so each thread is sampled for its own time; elsewhere one `ITIMER_PROF`, whose SIGPROF lands on a running thread |
 | collector thread | core/eider_prof.c | drains the rings every 20 ms into the stack table, samples the heap every 100 ms, writes the file on SIGUSR2; it blocks every signal |

@@ -493,7 +493,7 @@ int32_t ei_try(void (*fn)(void *, void *), void *a, void *b, ei_String *msg) {
   fr.msg = NULL;
   fr.held = held_get();
 #ifdef EI_RT_PROFILE
-  fr.depth = ei_prof_depth;
+  fr.depth = ei_prof_depth_get();
 #endif
   try_set(&fr);
   if (setjmp(fr.jb) == 0) {
@@ -1081,8 +1081,10 @@ static void switch_in(ei_worker *w, ei_task *t) {
   guard_lo = (uintptr_t)t->map;
   guard_hi = guard_lo + t->guard;
 #ifdef EI_RT_PROFILE
-  ei_prof_depth = t->pdepth;
-  if (t->pdepth > 0 && t->pframes) memcpy(ei_prof_stack, t->pframes, sizeof(ei_prof_frame) * (t->pdepth < EI_PROF_DEPTH ? t->pdepth : EI_PROF_DEPTH));
+  /* the task's shadow stack goes with it, so the frame addresses its functions hold stay theirs
+     when it resumes on another worker (a NULL one, out of memory, runs on the thread's own) */
+  if (!t->pframes) t->pframes = ei_prof_task_stack_new();
+  ei_prof_task_in(t->pframes, t->pdepth);
 #endif
   atomic_store(&t->state, T_RUNNING);
   atomic_fetch_add_explicit(&w->ticks, 1, memory_order_relaxed);
@@ -1101,13 +1103,7 @@ static void switch_in(ei_worker *w, ei_task *t) {
   guard_lo = w->glo;
   guard_hi = w->ghi;
 #ifdef EI_RT_PROFILE
-  t->pdepth = ei_prof_depth;
-  if (t->pdepth > 0) {
-    size_t n = t->pdepth < EI_PROF_DEPTH ? t->pdepth : EI_PROF_DEPTH;
-    if (!t->pframes) t->pframes = malloc(sizeof(ei_prof_frame) * EI_PROF_DEPTH);
-    if (t->pframes) memcpy(t->pframes, ei_prof_stack, sizeof(ei_prof_frame) * n);
-  }
-  ei_prof_depth = 0;
+  t->pdepth = (uint16_t)ei_prof_task_out();
 #endif
   tls_task_set(w, NULL);
 }

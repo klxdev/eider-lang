@@ -233,9 +233,33 @@ while tasks interleave on a thread is sound because `task_park` refuses to park 
 `held_n != 0`: at every switch the thread's list is empty, so the next task starts from zero.
 `worker_main` and `switch_in` read thread-locals before and after a switch but always run on the
 worker's own thread. `map_rng`, `trap_jmp` and the `eider_core.c` buffers are used between
-calls that do not park. `ei_prof_depth` and the shadow stack (profile builds) are saved and
-restored by `switch_in`; the generated code reads `ei_prof_depth` directly, which has the same
-hazard in a function that parks between two uses and is open (profile builds only).
+calls that do not park. The shadow stack of a profile build was the exception, and is fixed
+(#209, C894): see "The shadow stack of a profile build" below.
+
+*The shadow stack of a profile build (#209, C894).* Generated code of a `--profile` build used
+to push and pop its frames inline, through `llvm.threadlocal.address` of `ei_prof_depth`,
+`ei_prof_stack` and `ei_prof_spill`. The intrinsic is a pure function of the symbol, so LLVM
+computes each address once per function and keeps it across the calls in the body: in the
+AArch64 code of a framed function that joins, receives or sleeps, `mrs TPIDR_EL0` ran once at
+entry and the result stayed in a callee-saved register (or a stack slot) until the `ret` that
+popped the frame, 191 reads in `tests/core/tls_park.ei` and none after the fix. A task that parked
+and resumed on another worker then popped the depth of the worker it had left, and its line
+stores went to that worker's array. The line stores are a hazard on x86-64 too: the address of the
+frame, `ei_pf`, was an address in a thread's array held across the park (the scheduler copied
+the task's frames into the new thread's array when it resumed, so the task's own frame was at the
+same index in another array). The fix has two parts. The depth, the stack and the spill frame are
+reached only through out-of-line runtime functions (`ei_prof_enter`, `ei_prof_leave`,
+`ei_prof_depth_get`, `ei_prof_unwind`, marked `noinline`: eider_prof.c is part of eider_rt.c's
+translation unit, and an inlined accessor was caught by `tests/core/tls_park.sh` reading
+`TPIDR_EL0` in `ei_try`), so generated code holds no thread-local address at all; and a task has
+a shadow stack of its own (`EI_PROF_DEPTH + 1` frames, made when it first runs, freed when it ends)
+that `switch_in` makes current and `switch_out` takes off, so the frame address a function got at
+entry is still its frame after any number of parks and moves, and nothing is copied at a switch.
+The runtime's own reads were checked the same way: `prof_wait`, `ei_prof_ev`, `ei_prof_here`
+and `ei_prof_at` (called after a park by `ei_chan_recv`, the join and the waits) are `noinline`
+too. The cost is a call per framed function and per return in a profile build; a call-heavy
+`fib(36)` is 0.19 s against 0.25 s with the inline version on x86-64 (and 0.06 s without
+`--profile`), so it did not get slower.
 
 *Evidence, and its limits.* There is no AArch64 hardware or `qemu-user` here, and TSan does not
 run under qemu, so the race was not reproduced. What is established is the assembly: compiling

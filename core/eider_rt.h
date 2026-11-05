@@ -372,21 +372,32 @@ static inline uint64_t ei_buf_count(const void *d) { return d ? ((const ei_buf_h
    stalls x86 decoders. Every id and line below 2^24 is exact in a float. */
 typedef struct { volatile float fn, line; } ei_prof_frame;
 #define EI_PROF_DEPTH 512
-extern _Thread_local ei_prof_frame ei_prof_stack[EI_PROF_DEPTH];
-/* the frames in use (modulo 2^16: deeper recursion than that shows wrong stacks until it
-   unwinds, and is then right again) */
-extern _Thread_local volatile uint16_t ei_prof_depth;
-/* where frames deeper than EI_PROF_DEPTH write (a sample keeps the outermost frames) */
-extern _Thread_local ei_prof_frame ei_prof_spill;
-static inline ei_prof_frame *ei_prof_enter(uint32_t fn) {
-  uint16_t d = ei_prof_depth;
-  ei_prof_frame *f = d < EI_PROF_DEPTH ? &ei_prof_stack[d] : &ei_prof_spill;
-  f->fn = (float)fn;
-  f->line = 0.0f;
-  ei_prof_depth = (uint16_t)(d + 1);
-  return f;
-}
-static inline void ei_prof_leave(void) { ei_prof_depth = (uint16_t)(ei_prof_depth - 1); }
+/* The shadow stack is storage of EI_PROF_DEPTH frames plus one more, the spill frame frames
+   deeper than that write (a sample keeps the outermost frames). A thread has one of its own;
+   a task has one that goes with it when it moves between worker threads (eider_rt.c,
+   switch_in), so the frame address a function got at entry stays the address of its frame
+   after a park. The depth (modulo 2^16: deeper recursion than that shows wrong stacks until it
+   unwinds, and is then right again) is the running thread's, and the task's while it runs.
+   Generated code reaches the stack and the depth only through the functions below, never
+   through a thread-local of its own: a thread-local's address, computed once and kept in a
+   register (AArch64 reads TPIDR_EL0 once per function), is another thread's after the task
+   parks and resumes on another worker (decision C875, C894). These are out of line, in
+   eider_prof.c, for that reason: the cost of a call is the price of a profile build. */
+/* Pushes a frame for Eider function `fn` (line 0) and returns it. */
+ei_prof_frame *ei_prof_enter(uint32_t fn);
+/* Pops the top frame. */
+void ei_prof_leave(void);
+/* The frames in use (ei_try saves it), and after a test's or a trap's longjmp: the frames above
+   `depth` are gone. */
+uint32_t ei_prof_depth_get(void);
+void ei_prof_unwind(uint32_t depth);
+/* The scheduler's (eider_rt.c switch_in): a task's shadow stack storage (EI_PROF_DEPTH + 1
+   frames; NULL when out of memory, and the task then runs on the thread's own), made when it first
+   runs and freed when it ends; made current with its depth when the task starts to run, and
+   taken off again, returning the depth, when it stops. */
+ei_prof_frame *ei_prof_task_stack_new(void);
+void ei_prof_task_in(ei_prof_frame *stack, uint32_t depth);
+uint32_t ei_prof_task_out(void);
 /* The program's name table, from generated main: names[i] and files[file_of[i]] for fn i
    (names[0] is unused); `what` is the --profile selection (EI_PROF_CPU | ...). */
 typedef struct {
@@ -427,8 +438,6 @@ void ei_prof_ev(int32_t kind, uint64_t n);
    position later, from another thread (a task's end is counted at the site that spawned it). */
 uint64_t ei_prof_here(void);
 void ei_prof_at(int32_t kind, uint64_t here, uint64_t n);
-/* After a test's longjmp: the frames above `depth` are gone. */
-static inline void ei_prof_unwind(uint32_t depth) { ei_prof_depth = (uint16_t)depth; }
 #endif
 
 // ---- Ref[T] (docs/compiler.md, "C8.7"): a shared buffer (the count above, not atomic: a
