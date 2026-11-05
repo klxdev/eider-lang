@@ -17,13 +17,14 @@
 # entry outside its directory or a link, a wrong toolchain.toml). `ok`/`FAIL`/`skip` lines,
 # exit 1 on any failure. Needs what scripts/eider needs (a crypto backend: skip without it).
 cd "$(dirname "$0")/../.." || exit 1
-root=$(pwd)
+root=$(pwd -P)
 ver=$(head -1 "$root/VERSION")   # eider reports the toolchain version it was built from
 if ! why=$(sh scripts/crypto-build.sh --check 2>&1); then echo "skip eider: needs a crypto backend (${why#crypto-build: }; sh scripts/fetch-awslc.sh)"; exit 0; fi
 sh scripts/eider --build-only >/dev/null 2>&1 || { echo "FAIL eider: scripts/eider --build-only"; sh scripts/eider --build-only 2>&1 | tail -10; exit 1; }
 E=$root/target/eider
 SIGN=$root/target/eider-sign
 T=$(mktemp -d)
+T=$(cd "$T" && pwd -P)
 trap 'kill $srv 2>/dev/null; rm -rf "$T"' EXIT
 srv=
 fail=0
@@ -167,7 +168,9 @@ mkrel 2.0.2 "$T/other.key"
 out=$(e toolchain install 2.0.2); check "signed by another key" "the signature was made by key" "$out"
 mkrel 2.0.3 "$T/test.key" 2.0.9
 out=$(e toolchain install 2.0.3); check "another release's signed sums" "refusing release v2.0.3: its signed SHA256SUMS is for \`eider 2.0.9\`, not \`eider 2.0.3\`" "$out"
-mkrel 2.0.4; sed -i 's/release:eider 2.0.4/release:eider 2.0.4 extra/' "$REL/v2.0.4/SHA256SUMS.minisig"
+mkrel 2.0.4
+sed 's/release:eider 2.0.4/release:eider 2.0.4 extra/' "$REL/v2.0.4/SHA256SUMS.minisig" > "$T/changed.minisig"
+mv "$T/changed.minisig" "$REL/v2.0.4/SHA256SUMS.minisig"
 out=$(e toolchain install 2.0.4); check "a changed trusted comment" "the trusted comment's signature does not match" "$out"
 mkrel 2.0.5; rm "$REL/v2.0.5/SHA256SUMS.minisig"
 out=$(e toolchain install 2.0.5); check "no signature" "has no SHA256SUMS.minisig" "$out"

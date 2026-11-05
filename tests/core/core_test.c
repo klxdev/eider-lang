@@ -340,6 +340,7 @@ static void test_no_fd_leak(void) {
 /* Concurrent runs from several threads: no thread's pipes reach another thread's child (the
    in/out buffers are thread-local). Only where the core has atomic close-on-exec pipes
    (pipe2, Linux); elsewhere ABI.md documents the pipe/fcntl window, which this would hit. */
+#if defined(__linux__)
 static char thread_want[8192];
 static void *runner(void *p) {
   intptr_t bad = 0;
@@ -367,6 +368,8 @@ static void test_threads(void) {
   EQI(bad, 0);
   CHECK(no_zombies());
 }
+
+#endif
 
 static void on_alarm(int s) { (void)s; }
 
