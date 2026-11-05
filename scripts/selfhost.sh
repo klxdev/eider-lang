@@ -30,10 +30,10 @@ CC=${CC:-cc}
 LCC=${EIDER_LLVM_CC:-clang}
 src=compiler/main.ei
 
-now() { date +%s%N; }
+now() { date +%s; }
 t0=0
 step() { printf '%-48s' "$1"; t0=$(now); }
-ok() { echo "ok ($(( ($(now) - t0) / 1000000 )) ms)"; }
+ok() { echo "ok ($(( $(now) - t0 )) s)"; }
 die() { echo "FAIL"; [ -n "$2" ] && sed 's/^/    /' "$2" | head -40; echo "selfhost: $1"; exit 1; }
 has_clang() {
   major=$("$LCC" --version 2>/dev/null | sed -n 's/.*version \([0-9][0-9]*\)\..*/\1/p' | head -1)

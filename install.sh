@@ -46,13 +46,20 @@ api=${EIDER_GITHUB_API:-https://api.github.com}
 key=${EIDER_RELEASE_PUBKEY:-$EIDER_PUBKEY}
 [ -f "$key" ] && key=$(sed -n 2p "$key")
 
-case $(uname -s) in Linux) ;; *) die "there are no Eider releases for $(uname -s) yet (linux-x86_64 and linux-aarch64)" ;; esac
-case $(uname -m) in
-  x86_64|amd64) target=linux-x86_64 ;;
-  aarch64|arm64) target=linux-aarch64 ;;
-  *) die "there are no Eider releases for $(uname -m) yet (linux-x86_64 and linux-aarch64)" ;;
+case $(uname -s):$(uname -m) in
+  Linux:x86_64|Linux:amd64) target=linux-x86_64 ;;
+  Linux:aarch64|Linux:arm64) target=linux-aarch64 ;;
+  Darwin:aarch64|Darwin:arm64) target=darwin-aarch64 ;;
+  *) die "there are no Eider releases for $(uname -sm) yet (linux-x86_64, linux-aarch64, darwin-aarch64)" ;;
 esac
-for t in sha256sum base64 dd od; do command -v $t >/dev/null || die "needs $t"; done
+for t in base64 dd od; do command -v $t >/dev/null || die "needs $t"; done
+if command -v sha256sum >/dev/null 2>&1; then
+  sha256() { sha256sum "$1" | cut -d' ' -f1; }
+elif command -v shasum >/dev/null 2>&1; then
+  sha256() { shasum -a 256 "$1" | cut -d' ' -f1; }
+else
+  die "needs sha256sum or shasum"
+fi
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -85,8 +92,8 @@ case $releases in
     tag=$(tr ',' '\n' < "$work/release.json" | sed -n 's/^ *"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
     # each asset's API URL and name: the "url" of an asset (…/releases/assets/<id>) comes
     # just before its "name"
-    tr ',{}' '\n\n\n' < "$work/release.json" | sed -n 's/^ *"\(url\|name\)": *"\([^"]*\)".*/\1 \2/p' |
-      awk '$1 == "url" { u = ($2 ~ /\/releases\/assets\/[0-9]+$/) ? $2 : "" } $1 == "name" && u != "" { print $2, u; u = "" }' > "$work/assets"
+    tr ',{}' '\n\n\n' < "$work/release.json" |
+      awk -F '"' '$2 == "url" { u = ($4 ~ /\/releases\/assets\/[0-9]+$/) ? $4 : "" } $2 == "name" && u != "" { print $4, u; u = "" }' > "$work/assets"
     fetch() {
       u=$(awk -v n="$1" '$1 == n { print $2 }' "$work/assets")
       [ -n "$u" ] || die "release $tag has no $1"
@@ -159,7 +166,7 @@ esac
 want=$(awk -v n="$name" '$2 == n || $2 == "*" n { print $1 }' "$work/SHA256SUMS")
 [ -n "$want" ] || die "SHA256SUMS does not list $name"
 fetch "$name" "$work/eider"
-got=$(sha256sum "$work/eider" | cut -d' ' -f1)
+got=$(sha256 "$work/eider")
 [ "$got" = "$want" ] || die "refusing $name: its SHA-256 is $got, but the signed SHA256SUMS says $want"
 
 # ---- install
@@ -167,7 +174,7 @@ mkdir -p "$home/bin"
 cp "$work/eider" "$home/bin/eider.new"
 chmod 755 "$home/bin/eider.new"
 mv -f "$home/bin/eider.new" "$home/bin/eider"
-echo "install.sh: installed $home/bin/eider ($("$home/bin/eider" --version); signature checked with $verified, checksum with sha256sum)"
+echo "install.sh: installed $home/bin/eider ($("$home/bin/eider" --version); signature checked with $verified, SHA-256 checked)"
 line="export PATH=\"$home/bin:\$PATH\""
 if [ -n "$modify_path" ]; then
   for rc in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do

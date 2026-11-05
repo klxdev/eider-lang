@@ -1,0 +1,14 @@
+import std.bytes
+import eider.install
+
+test "release targets follow the OS and architecture" {
+    assert bytes.eq(install.target_for("Linux".bytes(), "x86_64".bytes()).unwrap(), "linux-x86_64".bytes())
+    assert bytes.eq(install.target_for("Linux".bytes(), "amd64".bytes()).unwrap(), "linux-x86_64".bytes())
+    assert bytes.eq(install.target_for("Linux".bytes(), "aarch64".bytes()).unwrap(), "linux-aarch64".bytes())
+    assert bytes.eq(install.target_for("Linux".bytes(), "arm64".bytes()).unwrap(), "linux-aarch64".bytes())
+    assert bytes.eq(install.target_for("Darwin".bytes(), "arm64".bytes()).unwrap(), "darwin-aarch64".bytes())
+    assert bytes.eq(install.target_for("Darwin".bytes(), "aarch64".bytes()).unwrap(), "darwin-aarch64".bytes())
+    assert install.target_for("Darwin".bytes(), "x86_64".bytes()).is_err()
+    assert install.target_for("Windows_NT".bytes(), "arm64".bytes()).is_err()
+    assert install.target_for("Linux".bytes(), "riscv64".bytes()).is_err()
+}

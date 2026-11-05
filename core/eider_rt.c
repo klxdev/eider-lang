@@ -213,7 +213,11 @@ uint64_t ei_grow_cap(uint64_t cap, uint64_t len, uint64_t extra, uint64_t min) {
 
 /* OS randomness from the core (core/eider_core.c); weak so the runtime also links without it
    (then Map seeds are the fixed deterministic one). */
+#if defined(__APPLE__)
+extern int64_t ec_random_fill(void *dst, uint64_t n) __attribute__((weak_import));
+#else
 extern int64_t ec_random_fill(void *dst, uint64_t n) __attribute__((weak));
+#endif
 
 static _Thread_local struct { uint64_t k0, k1, ctr; bool ready; } map_rng;
 

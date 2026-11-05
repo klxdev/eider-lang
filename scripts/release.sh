@@ -44,17 +44,24 @@ cd "$(dirname "$0")/.." || exit 1
 here=$(pwd -P)
 skip_verify=
 binaries=1
-TARGETS="linux-x86_64 linux-aarch64"
+case $(uname -s) in
+  Darwin) TARGETS=darwin-aarch64 ;;
+  *) TARGETS="linux-x86_64 linux-aarch64" ;;
+esac
+native_assets=
+TAR=${TAR:-tar}
+command -v gtar >/dev/null 2>&1 && TAR=${TAR_GNU:-gtar}
 while [ $# -gt 0 ]; do
   case $1 in
     --skip-verify) skip_verify=1; shift ;;
+    --native-assets) [ $# -ge 2 ] || { echo "release: --native-assets needs a directory" >&2; exit 2; }; native_assets=$(cd "$2" && pwd -P) || exit 2; shift 2 ;;
     --no-binaries) binaries=; shift ;;
     --targets) [ $# -ge 2 ] || { echo "release: --targets needs a list" >&2; exit 2; }; TARGETS=$2; shift 2 ;;
     *) echo "usage: scripts/release.sh [--skip-verify] [--targets \"linux-x86_64 linux-aarch64\"] [--no-binaries]" >&2; exit 2 ;;
   esac
 done
 for t in $TARGETS; do
-  case $t in linux-x86_64|linux-aarch64) ;; *) echo "release: unknown target $t (linux-x86_64, linux-aarch64)" >&2; exit 2 ;; esac
+  case $t in linux-x86_64|linux-aarch64|darwin-aarch64) ;; *) echo "release: unknown target $t (linux-x86_64, linux-aarch64, darwin-aarch64)" >&2; exit 2 ;; esac
 done
 die() { echo "release: $*" >&2; exit 1; }
 V=$(tr -d ' \n' < VERSION)
@@ -99,14 +106,30 @@ fi
 
 # ---- the build tools for the binaries (checked before the long verify run)
 if [ -n "$binaries" ]; then
+  "$TAR" --version | grep -q 'GNU tar' || die "release packaging needs GNU tar (macOS: brew install gnu-tar)"
+  linux_targets=
+  for target in $TARGETS; do
+    case $target in
+      linux-*) linux_targets=1 ;;
+      darwin-aarch64)
+        if [ -n "$native_assets" ]; then
+          sh scripts/package-native.sh --check "$native_assets" || die "invalid macOS artifacts"
+        elif [ "$(uname -sm)" != 'Darwin arm64' ]; then
+          die "darwin-aarch64 needs an Apple Silicon runner or --native-assets from that runner"
+        fi ;;
+    esac
+  done
+  if [ -n "$linux_targets" ]; then
   if [ -n "${ZIG:-}" ]; then zig=$ZIG
   elif command -v zig >/dev/null 2>&1 && zig version >/dev/null 2>&1; then zig=$(command -v zig)
   elif command -v mise >/dev/null 2>&1 && [ -x "$(mise where zig 2>/dev/null)/zig" ]; then zig=$(mise where zig)/zig
   else die "the release binaries are built with zig (zig cc -target <arch>-linux-musl): install it (mise use -g zig@0.13), or set ZIG, or pass --no-binaries"
   fi
   zig_version=$("$zig" version)
+  fi
   sh scripts/crypto-build.sh --check awslc-noasm >/dev/null 2>&1 || die "eider needs the AWS-LC sources: sh scripts/fetch-awslc.sh"
-  for t in file readelf; do command -v $t >/dev/null || die "the smoke tests need $t"; done
+  command -v file >/dev/null || die "the smoke tests need file"
+  if [ -n "$linux_targets" ]; then command -v readelf >/dev/null || die "the Linux smoke tests need readelf"; fi
   sh scripts/vendor.sh fetch >/dev/null || die "eider-pkg, eider-doc and eider need the pinned libraries: sh scripts/vendor.sh fetch"
 fi
 
@@ -163,6 +186,7 @@ clang_tested=
 if [ "$verified" = true ]; then
   clang_tested=$({ sed -n 's/^ok   clang [0-9]* (\([0-9.]*\)).*/\1/p' target/release-verify.log; "${EIDER_LLVM_CC:-clang}" --version 2>/dev/null | sed -n 's/.*clang version \([0-9][0-9.]*\).*/\1/p' | head -1; } | sort -uV | sed 's/.*/"&"/' | paste -sd, - | sed 's/,/, /g')
 fi
+host_system=$(uname -s)
 host_arch=$(uname -m); case $host_arch in amd64) host_arch=x86_64 ;; arm64) host_arch=aarch64 ;; esac
 {
   echo "# RELEASE.toml: the components of Eider $V, released together (docs/site/tooling/releases.md)."
@@ -194,8 +218,13 @@ host_arch=$(uname -m); case $host_arch in amd64) host_arch=x86_64 ;; arm64) host
       echo "[target.$t]"
       echo "archive = \"$name-$t.tar.gz\""
       echo "eider = \"$name-$t\""
+      if [ "$t" = darwin-aarch64 ]; then
+        echo 'built_with = "native clang; bundled AWS-LC"'
+        echo 'tested = true    # package-native.sh builds and runs the unpacked toolchain on macOS arm64'
+        continue
+      fi
       echo "built_with = \"zig $zig_version cc -target $arch-linux-musl (static)\""
-      if [ "$arch" = "$host_arch" ]; then
+      if [ "$host_system" = Linux ] && [ "$arch" = "$host_arch" ]; then
         echo "tested = true    # smoke-tested on $(uname -sm): --version, a program built and run"
       else
         echo "tested = false   # cross-built on $(uname -sm); untested until an $arch machine or CI exists (file and readelf checks only)"
@@ -237,7 +266,7 @@ packages say \`eider = "$S"\` in their eider.toml, and the compiler refuses any 
 | tree-sitter-eider/ | $(tr -d ' \n' < "$B/tree-sitter-eider/VERSION") | the tree-sitter grammar (Neovim and others) |
 | eider-profiler/ | $(tr -d ' \n' < "$B/eider-profiler/VERSION") | profiles of Eider programs |
 
-Prebuilt toolchains (linux-x86_64, linux-aarch64) are the release's
+Prebuilt toolchains (linux-x86_64, linux-aarch64, darwin-aarch64) are the release's
 eider-$V-<target>.tar.gz files; \`eider toolchain install $V\` installs one
 (eider-lang/docs/site/tooling/eider.md).
 
@@ -277,7 +306,7 @@ EOF
 
 # reproducible archives: tarball <dir under $out> <file>
 tarball() {
-  tar -C "$out" --sort=name --mtime="@$epoch" --owner=0 --group=0 --numeric-owner --format=gnu \
+  "$TAR" -C "$out" --sort=name --mtime="@$epoch" --owner=0 --group=0 --numeric-owner --format=gnu \
     --mode='u+rwX,go+rX,go-w' -cf - "$1" | gzip -n -9 > "$2" || die "tar failed (GNU tar is needed)"
 }
 tarball "$name" "$B.tar.gz"
@@ -298,6 +327,14 @@ if [ -n "$binaries" ]; then
   mkdir -p "$hello"
   printf 'import core.version\n\nfn main() uses io {\n    print("hello from eider")\n    print(version.VERSION)\n}\n' > "$hello/hello.ei"
   for t in $TARGETS; do
+    if [ "$t" = darwin-aarch64 ]; then
+      if [ -n "$native_assets" ]; then
+        cp "$native_assets/$name-$t" "$native_assets/$name-$t.tar.gz" "$A/"
+      else
+        sh scripts/package-native.sh || die "native macOS packaging failed"
+      fi
+      continue
+    fi
     arch=${t#linux-}
     W=$out/build/$t
     mkdir -p "$W/bin"
@@ -368,7 +405,7 @@ EOF
     tarball "$name-$t" "$A/$name-$t.tar.gz"
     cp "$W/bin/eider" "$A/$name-$t"
     # smoke tests on a machine of this architecture: run the unpacked toolchain
-    if [ "$arch" = "$host_arch" ]; then
+    if [ "$host_system" = Linux ] && [ "$arch" = "$host_arch" ]; then
       U=$out/build/unpack-$t
       rm -rf "$U"; mkdir -p "$U"
       tar -C "$U" -xzf "$A/$name-$t.tar.gz"

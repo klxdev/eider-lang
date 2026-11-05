@@ -33,8 +33,14 @@ bad() { echo "FAIL eider: $1"; [ -n "${2:-}" ] && printf '%s\n' "$2" | head -8 |
 # check <name> <expected substring> <output>
 check() { case $3 in *"$2"*) ok ;; *) bad "$1: expected \`$2\`" "$3" ;; esac; }
 
-export EIDER_TARGET=linux-x86_64
-TGT=linux-x86_64
+case $(uname -s):$(uname -m) in
+  Linux:x86_64|Linux:amd64) TGT=linux-x86_64 ;;
+  Linux:aarch64|Linux:arm64) TGT=linux-aarch64 ;;
+  Darwin:arm64|Darwin:aarch64) TGT=darwin-aarch64 ;;
+  *) echo "skip eider: unsupported host $(uname -sm)"; exit 0 ;;
+esac
+# Leave EIDER_TARGET unset: test native detection in eider and install.sh together.
+unset EIDER_TARGET
 "$SIGN" keygen "$T/test.key" "$T/test.pub" >/dev/null || { echo "FAIL eider: keygen"; exit 1; }
 "$SIGN" keygen "$T/other.key" "$T/other.pub" >/dev/null
 REL=$T/releases

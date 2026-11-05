@@ -337,3 +337,8 @@ if is(a, "--version") {
 ```
 
 (`eider,ignore`: a fragment of eider-doc's `main`.)
+
+## Native macOS builds
+
+See [Native platform builds](platforms.md) for Apple Silicon packaging, CI verification
+limits, and assembling macOS artifacts with the Linux release before signing checksums.

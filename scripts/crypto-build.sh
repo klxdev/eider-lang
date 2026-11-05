@@ -61,6 +61,9 @@ awslc() {
   [ $mode = check ] && return 0
   lists=universal
   defs=$AWSLC_DEFS
+  # Darwin's sysctl headers need BSD typedefs hidden by strict _XOPEN_SOURCE.
+  # Ask the compiler's target, since release builds may cross-compile from macOS.
+  case $($CC -dumpmachine 2>/dev/null) in *darwin*) defs="$defs -D_DARWIN_C_SOURCE=1" ;; esac
   arch=portable
   # libcrypto's objects: awslc-aead (the glue's EVP_AEAD path, the one BoringSSL takes for
   # ChaCha20-Poly1305) reuses awslc's
@@ -116,12 +119,13 @@ openssl() {
   mkdir -p "$out"
   lib=
   if pkg-config --exists 'libcrypto >= 3.0' 2>/dev/null; then lib=$(pkg-config --variable=libdir libcrypto); fi
-  if [ -z "$lib" ] || [ ! -e "$lib/libcrypto.so" ]; then
+  if [ -z "$lib" ] || { [ ! -e "$lib/libcrypto.so" ] && [ ! -e "$lib/libcrypto.dylib" ] && [ ! -e "$lib/libcrypto.a" ]; }; then
     for d in ${EIDER_OPENSSL_LIB:-} /usr/lib64 /usr/lib/x86_64-linux-gnu /usr/lib/aarch64-linux-gnu /usr/lib /usr/local/lib64 /usr/local/lib; do
       if [ -e "$d/libcrypto.so.3" ]; then ln -sf "$d/libcrypto.so.3" "$out/libcrypto.so"; lib=$out; break; fi
+      if [ -e "$d/libcrypto.dylib" ]; then lib=$d; break; fi
     done
   fi
-  [ -n "$lib" ] || unavailable "no libcrypto.so.3 found (set EIDER_OPENSSL_LIB)"
+  [ -n "$lib" ] || unavailable "no OpenSSL 3 library found (set EIDER_OPENSSL_LIB to its directory)"
   [ $mode = check ] && return 0
   echo "$lib" > "$out/extra_libdir"
   glue "$inc" "-L$lib -lcrypto"

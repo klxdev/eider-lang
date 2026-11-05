@@ -29,9 +29,14 @@ die() { echo "publish: $*" >&2; exit 1; }
 want=
 dry=
 skip=
-for a in "$@"; do
+targets=
+native_assets=
+while [ $# -gt 0 ]; do
+  a=$1; shift
   case $a in
     --dry-run) dry=1 ;;
+    --targets) [ $# -gt 0 ] || die "--targets needs a list"; targets=$1; shift ;;
+    --native-assets) [ $# -gt 0 ] || die "--native-assets needs a directory"; native_assets=$1; shift ;;
     --skip-verify) skip=--skip-verify ;;
     -*) die "unknown option $a (--dry-run, --skip-verify)" ;;
     *) [ -z "$want" ] || die "one version only"; want=${a#v} ;;
@@ -61,7 +66,11 @@ id=$(sed -n '1s/.*minisign public key //p' target/publish-key.pub)
 grep -q "PUBLIC_KEY: str = \"$line\"" packages/eider/release_key.ei || die "$key is not the key embedded in packages/eider/release_key.ei (sh scripts/release-key.sh --embed, then commit)"
 grep -q "^EIDER_PUBKEY=$line\$" install.sh || die "$key is not the key in install.sh (sh scripts/release-key.sh --embed, then commit)"
 echo "publish: release key $id ($key)"
-sh scripts/release.sh $skip || die "scripts/release.sh failed"
+set --
+[ -z "$skip" ] || set -- "$@" "$skip"
+[ -z "$targets" ] || set -- "$@" --targets "$targets"
+[ -z "$native_assets" ] || set -- "$@" --native-assets "$native_assets"
+sh scripts/release.sh "$@" || die "scripts/release.sh failed"
 A=target/release/assets/v$V
 [ -f "$A/SHA256SUMS" ] || die "release.sh wrote no $A/SHA256SUMS"
 grep -q "^verified = true" target/release/eider-$V/RELEASE.toml || [ -n "$skip" ] || die "RELEASE.toml does not say verified = true"
@@ -73,7 +82,8 @@ target/eider-sign sign "$key" "$A/SHA256SUMS" "$trusted" "signature from the Eid
 target/eider-sign verify packages/eider/release.pub "$A/SHA256SUMS" >/dev/null || die "the signature does not verify with packages/eider/release.pub"
 echo "publish: signed $A/SHA256SUMS (SHA256SUMS.minisig, key $id)"
 arch=$(uname -m); case $arch in amd64) arch=x86_64 ;; arm64) arch=aarch64 ;; esac
-eider=$(pwd -P)/$A/eider-$V-linux-$arch
+case $(uname -s) in Darwin) system=darwin ;; *) system=linux ;; esac
+eider=$(pwd -P)/$A/eider-$V-$system-$arch
 if [ -x "$eider" ]; then
   T=$(mktemp -d)
   trap 'rm -rf "$T"' EXIT
@@ -83,7 +93,7 @@ if [ -x "$eider" ]; then
   [ "$got" = published ] || die "the installed release did not run a program: $got"
   echo "publish: installed $V from $A with its own eider, and ran a program with it"
 else
-  echo "publish: no eider for linux-$arch in the release: the install check is skipped"
+  echo "publish: no eider for $system-$arch in the release: the install check is skipped"
 fi
 
 # ---- 4. the tag, the push, the GitHub release

@@ -74,13 +74,9 @@
 #define EC_KQUEUE 1
 #endif
 
-/* Eider declares externs as `T f(...) __asm__("f")`, i.e. by raw symbol name. Where the
-   platform decorates C names (Mach-O prefixes `_`), pin the raw name (GNU C extension). */
-#if defined(__APPLE__)
-#define EC_SYM(n) __asm__(#n)
-#else
+/* LLVM IR and the C bootstrap both use the platform C symbol convention.
+   Let Mach-O apply its underscore prefix to match their ec_* references. */
 #define EC_SYM(n)
-#endif
 #define EC_FN(ret, name, params) ret name params EC_SYM(name); ret name params
 
 /* Per-thread, so Eider threads (spawn) can do I/O independently. */
