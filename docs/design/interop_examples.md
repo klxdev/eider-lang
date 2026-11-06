@@ -20,7 +20,7 @@ const char *sqlite3_errmsg(sqlite3 *db);
 import c "sqlite3.h" as raw          // bindings generated at compile time
 
 fn open_raw(path: str) -> i32 uses ffi {
-  var db: *raw.sqlite3 = null
+  let mut db: *raw.sqlite3 = null
   return unsafe { raw.sqlite3_open(path.cstr(), &db) }
 }
 ```
@@ -68,7 +68,7 @@ fn setup(path: str) -> Result[(), sqlite.Error] uses ffi, fs {
 ```zig
 // third_party/mathx/mathx.zig
 export fn mathx_dot(a: [*]const f64, b: [*]const f64, len: usize) f64 {
-    var sum: f64 = 0;
+    let mut sum: f64 = 0;
     for (0..len) |i| sum += a[i] * b[i];
     return sum;
 }
@@ -241,7 +241,7 @@ fn mean(xs: List[f64]) -> Result[f64, py.Error] uses python {
 import std.js as js
 
 fn check_rule(rule: str, qty: i64) -> Result[bool, js.Error] uses js {
-  var rt = js.Runtime.new({ memory_bytes: 16_000_000, timeout_ms: 50 })
+  let mut rt = js.Runtime.new({ memory_bytes: 16_000_000, timeout_ms: 50 })
   let f = rt.eval(rule)?                     // e.g. "(qty) => qty > 10"
   return f.call([js.Value.int(qty)])?.to[bool]()
 }

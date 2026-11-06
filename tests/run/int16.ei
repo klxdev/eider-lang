@@ -83,12 +83,12 @@ fn main() uses io {
     let h = Header(515, -2, 7)
     print(h.id + 1)
     print(h.delta * 2)
-    var ids: List[u16] = List[1, 2, 65535]
+    let mut ids: List[u16] = List[1, 2, 65535]
     ids.push(h.id)
-    var total: u32 = 0
+    let mut total: u32 = 0
     for v in ids { total += v as u32 }
     print(total)
-    var m: Map[u16, i16] = Map.new()
+    let mut m: Map[u16, i16] = Map.new()
     m.insert(7, -7)
     m.insert(65535, 1)
     print(m.get(7))

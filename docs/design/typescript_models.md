@@ -82,7 +82,7 @@ export(ts) fn advance(order: Order, event: Event, inv: Inventory)
   -> Result[Order, FulfillError]
   uses clock
 {
-  var o = order
+  let mut o = order.copy()
   f.advance(inout o, event, inv)?
   return Ok(o)
 }
@@ -90,7 +90,7 @@ export(ts) fn advance(order: Order, event: Event, inv: Inventory)
 export(ts) fn reserve_all(inv: Inventory, lines: List[Line])
   -> Result[Inventory, FulfillError]
 {
-  var next = inv
+  let mut next = inv.copy()
   next.reserve_all(lines)?
   return Ok(next)
 }

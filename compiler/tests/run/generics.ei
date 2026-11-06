@@ -14,7 +14,7 @@ type Pt = { x: i32, y: i32 }
 
 impl Show for Pt {
     fn show(self) -> String {
-        var s = String.from_int(self.x as i64)
+        let mut s = String.from_int(self.x as i64)
         s.push_str(",")
         s.append(String.from_int(self.y as i64))
         s
@@ -41,7 +41,7 @@ fn swap[A, B](p: Pair[A, B]) -> Pair[B, A] { Pair(p.b, p.a) }
 fn twice[T](x: T) -> (T, T) { (x, x) }
 
 fn show_all[T: Show](xs: List[T]) -> String {
-    var out = String.from("[")
+    let mut out = String.from("[")
     for x in xs {
         out.append(x.show())
         out.push_str(";")
@@ -70,7 +70,7 @@ fn quarter(n: i32) -> Option[i32] {
 fn digit(s: String) -> Result[i32, String] {
     if s == String.from("1") { return Ok(1) }
     if s == String.from("2") { return Ok(2) }
-    var e = String.from("not a digit: ")
+    let mut e = String.from("not a digit: ")
     e.append(s)
     Err(e)
 }
@@ -96,26 +96,26 @@ fn main() uses io {
     let (u1, _) = twice(5 as i64)
     print(u1)
 
-    var s: Stack[String] = Stack(List.new())
+    let mut s: Stack[String] = Stack(List.new())
     print(s.top().is_none())
     s.push(String.from("bottom"))
     s.push(String.from("top"))
     print(s.size())
     print(s.top().unwrap_or(String.from("?")))
-    var n: Stack[i32] = Stack(List.new())
+    let mut n: Stack[i32] = Stack(List.new())
     n.push(3)
     print(n.top().unwrap_or(0))
-    var lists: Stack[List[i32]] = Stack(List.new())
-    var l: List[i32] = List.new()
+    let mut lists: Stack[List[i32]] = Stack(List.new())
+    let mut l: List[i32] = List.new()
     l.push(1)
     lists.push(l)
     print(lists.top().unwrap_or(List.new()).len())
 
-    var pts: List[Pt] = List.new()
+    let mut pts: List[Pt] = List.new()
     pts.push(Pt(1, 2))
     pts.push(Pt(3, 4))
     print(show_all(pts))
-    var bs: List[bool] = List.new()
+    let mut bs: List[bool] = List.new()
     bs.push(true)
     bs.push(false)
     print(show_all(bs))

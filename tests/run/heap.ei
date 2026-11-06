@@ -22,7 +22,7 @@ fn label(n: i32) -> Result[String, String] {
 
 fn both(a: i32, b: i32) -> Result[String, String] {
     let x = label(a)?
-    var y = label(b)?
+    let mut y = label(b)?
     y.push_str("/")
     y.append(x)
     Ok(y)
@@ -37,8 +37,8 @@ fn first_long(words: List[String], min: usize) -> Option[String] {
 }
 
 fn count_to(limit: usize) -> usize {
-    var l: List[String] = List.new()
-    var i: usize = 0
+    let mut l: List[String] = List.new()
+    let mut i: usize = 0
     while i < limit {
         let s = String.from_int(i as i64)
         i += 1
@@ -77,7 +77,7 @@ fn main() uses io {
         Ok(s) => print(s)
         Err(m) => print(m)
     }
-    var words: List[String] = List.new()
+    let mut words: List[String] = List.new()
     words.push(String.from("hi"))
     words.push(String.from("hello"))
     words.push(String.from("hey"))
@@ -86,11 +86,11 @@ fn main() uses io {
         None => print("none")
     }
     print(count_to(100))
-    var name = String.from("orig")
+    let mut name = String.from("orig")
     rename(inout name)
     print(name)
-    var m: Map[String, List[i32]] = Map.new()
-    var nums: List[i32] = List.new()
+    let mut m: Map[String, List[i32]] = Map.new()
+    let mut nums: List[i32] = List.new()
     nums.push(1)
     nums.push(2)
     m.insert(String.from("a"), nums)

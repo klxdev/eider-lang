@@ -10,9 +10,9 @@
   body (Block 4:48 end=55:1
     stmt (SLet 5:5 name=a
       init (EInt 5:13 value=1))
-    stmt (SLet 5:16 name=b mut
-      type (TName 5:23 name=i32)
-      init (EInt 5:29 value=2))
+    stmt (SLet 5:16 name=b let_mut
+      type (TName 5:27 name=i32)
+      init (EInt 5:33 value=2))
     stmt (SLetPat 6:5
       pat (PTuple 6:9
         sub (PName 6:10 name=c)
@@ -24,10 +24,10 @@
         elem (ETuple 6:27
           elem (EInt 6:28 value=4)
           elem (EInt 6:31 value=5))))
-    stmt (SLetPat 7:5 mut
+    stmt (SLetPat 7:5
       pat (PTuple 7:9
-        sub (PName 7:10 name=e)
-        sub (PName 7:13 name=f))
+        sub (PName 7:14 name=e mut)
+        sub (PName 7:21 name=f mut))
       init (ETuple 8:9
         elem (EInt 8:10 value=6)
         elem (EInt 8:13 value=7)))

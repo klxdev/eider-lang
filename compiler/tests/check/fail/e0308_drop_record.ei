@@ -4,7 +4,7 @@ impl Drop for R {
     fn drop(inout self) {}
 }
 fn main() uses io {
-    var r = R(List.new())
+    let mut r = R(List.new())
     let xs = r.xs
     r = R(List.new())
     print(xs.len())

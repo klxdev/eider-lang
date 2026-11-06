@@ -2,6 +2,6 @@
 type P = { x: i32 }
 fn swap(inout a: P, inout b: P) {}
 fn main() {
-  var p = P(1)
+  let mut p = P(1)
   swap(inout p, inout p)
 }

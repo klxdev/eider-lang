@@ -95,20 +95,20 @@ fn main() uses io {
     print(1 << 4 == 16)       // true (a shift may be compared)
     print(0xF0 >> 4 & 0x3)    // 3 (a shift may be an operand of &)
     print("compound")
-    var x: u32 = 1
+    let mut x: u32 = 1
     x <<= 20     // 1048576
     x |= 7       // 1048583
     x &= 0xFF    // 7
     x ^= 2       // 5
     x >>= 1      // 2
     print(x)
-    var y: i32 = -64
+    let mut y: i32 = -64
     y >>= 3
     print(y)     // -8
     y <<= 2
     print(y)     // -32
     // operands are evaluated left to right, once
-    var i: u32 = 0
+    let mut i: u32 = 0
     let z = next(inout i) | (next(inout i) << 4)
     print(z)     // 1 | (2 << 4) = 33
 }

@@ -17,7 +17,7 @@ shown.
 | [Types](types.md) | integers, `bool`, text, tuples, arrays, `List`, `Map`, `Box`, fn types, `Option`/`Result`, aliases, overflow, `as` |
 | [Items](items.md) | functions, records, enums, traits, impls, constants, `pub`, tests, `main` |
 | [Expressions](expressions.md) | operators and precedence, calls, methods, fields, indexing, closures, `if`, `match`, blocks, `?` |
-| [Statements](statements.md) | `let`, `let mut`, `var`, assignment, `while`, `while let`, `for`, labels, `return`, `assert` |
+| [Statements](statements.md) | `let`, `let mut`, assignment, `while`, `while let`, `for`, labels, `return`, `assert` |
 | [Patterns](patterns.md) | every pattern form, `mut` bindings, exhaustiveness |
 | [Memory model](memory.md) | places and references, `inout`, the protection rule, copy-on-write, `.copy()`, `take`/`replace`, `Ref[T]`, drops |
 | [Traits and generics](traits.md) | user traits, generics and bounds, the operation traits, `From`, `Default`, the orphan rule |

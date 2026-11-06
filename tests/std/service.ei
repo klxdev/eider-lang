@@ -11,7 +11,7 @@ fn main() uses io, fs, net, clock, threads {
     // SIGTERM cancels the root and the group's children see it
     let root = task.root()
     let w = service.cancel_on_term(root).unwrap()
-    var g: task.Group[i64] = task.group(root)
+    let mut g: task.Group[i64] = task.group(root)
     for i in 0..3 {
         let k = i as i64
         g.spawn(|t: task.Token| -> Result[i64, String] {

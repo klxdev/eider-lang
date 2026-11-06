@@ -1,9 +1,9 @@
 // expect: E0308 9:12
 fn main() uses io {
-    var xs: List[i32] = List.new()
+    let mut xs: List[i32] = List.new()
     xs.push(1)
     let o = xs[0]
-    var i = 0
+    let mut i = 0
     while i < 3 {
         print(o)
         xs.push(i)

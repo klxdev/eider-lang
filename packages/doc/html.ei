@@ -37,7 +37,7 @@ pub fn rel(page: List[u8], to: List[u8]) -> List[u8] {
 
 fn is_keyword(w: List[u8]) -> bool {
     for k in [
-        "fn", "let", "mut", "var", "if", "else", "while", "for", "in", "return", "match", "true",
+        "fn", "let", "mut", "if", "else", "while", "for", "in", "return", "match", "true",
         "false", "uses", "test", "assert", "inout", "as", "const", "import", "break", "continue",
         "trait", "impl", "pub", "comptime", "extern", "export", "unsafe", "type", "self", "Self", "spawn",
     ] {

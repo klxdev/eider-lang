@@ -5,23 +5,23 @@
 type State = { names: Map[i32, String], log: List[String], rows: List[List[i32]], steps: i32 }
 
 fn step(s: State, i: i32) -> State {
-    var t = s
+    let mut t = s.copy()
     t.steps += 1
     if i % 1000 == 0 { t.log.push(String.from_int(i as i64)) }
     t
 }
 
 fn main() uses io {
-    var names: Map[i32, String] = Map.new()
+    let mut names: Map[i32, String] = Map.new()
     for i in 0..2000 { names.insert(i, String.from_int(i as i64)) }
-    var rows: List[List[i32]] = List.new()
+    let mut rows: List[List[i32]] = List.new()
     for i in 0..200 {
-        var row: List[i32] = List.new()
+        let mut row: List[i32] = List.new()
         for j in 0..50 { row.push(i * j) }
         rows.push(row)
     }
-    var s = State(names, List.new(), rows, 0)
-    var keep: List[State] = List.new()
+    let mut s = State(names, List.new(), rows, 0)
+    let mut keep: List[State] = List.new()
     for i in 0..20000 {
         s = step(s, i)
         if i % 100 == 0 { keep.push(s) }

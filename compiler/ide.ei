@@ -44,7 +44,7 @@
 //   order, the prelude last): one SK_MODULE per module (span 1:1-1:1, detail its path), its
 //   items, variants, named fields, functions, methods (container: the trait, or the impl's
 //   type when that is declared in the same module), parameters (closure parameters too),
-//   constants, traits, tests, and the locals of every body (`let`/`var`, `for` variables,
+//   constants, traits, tests, and the locals of every body (`let`/`let mut`, `for` variables,
 //   pattern bindings), and loop labels (SK_LABEL: `outer: for ...`, span the label's name,
 //   container the enclosing function, detail `outer: for` or `outer: while`). A pattern
 //   name counts as a binding unless it is a variant name (or the checker resolved it as one).

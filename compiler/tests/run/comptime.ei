@@ -7,8 +7,8 @@ import eiderc.tests.run.lib.ct_mod
 type Pt = { x: i32, y: i32 }
 
 fn fib(n: u32) -> u64 {
-    var a: u64 = 0
-    var b: u64 = 1
+    let mut a: u64 = 0
+    let mut b: u64 = 1
     for i in 0..n {
         let t = a + b
         a = b
@@ -18,11 +18,11 @@ fn fib(n: u32) -> u64 {
 }
 
 fn primes(limit: i32) -> List[i32] {
-    var l: List[i32] = List.new()
-    var n = 2
+    let mut l: List[i32] = List.new()
+    let mut n = 2
     while n < limit {
-        var d = 2
-        var prime = true
+        let mut d = 2
+        let mut prime = true
         while d * d <= n {
             if n % d == 0 { prime = false }
             d = d + 1
@@ -34,7 +34,7 @@ fn primes(limit: i32) -> List[i32] {
 }
 
 fn total(xs: List[i32]) -> i32 {
-    var t = 0
+    let mut t = 0
     for x in xs { t = t + x }
     return t
 }
@@ -47,7 +47,7 @@ fn pick[T](a: T, b: T, first: bool) -> T {
 fn area(p: Pt) -> i32 { return p.x * p.y }
 
 fn word_len() -> u8 {
-    var s = String.from("comptime")
+    let mut s = String.from("comptime")
     s.push_str("!")
     return s.len() as u8
 }

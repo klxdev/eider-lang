@@ -17,7 +17,7 @@ pub fn origin[T](z: T) -> Point[T] { Point(z, z) }
 pub fn total[A: Area](a: A, b: A) -> u32 { a.area() + b.area() }
 fn hidden() -> u32 { 1 }
 pub fn names() -> List[String] {
-    var l: List[String] = List.new()
+    let mut l: List[String] = List.new()
     l.push(String.from("a"))
     l
 }

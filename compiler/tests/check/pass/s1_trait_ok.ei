@@ -13,7 +13,7 @@ impl Sq {
 }
 fn total[T: Area](a: T, b: T) -> u32 { a.area() + b.area() }
 fn main() uses io {
-    var s = Sq.new(2)
+    let mut s = Sq.new(2)
     s.grow(1)
     print(s.area())
     print(total(s, s.double()))

@@ -6,8 +6,7 @@
 // usage error (exit 2). `lex` dumps tokens (one per line: line:col kind [value]), `parse`
 // the AST (dump.ei), `ir` the typed IR (ir.ei); `build`, `run` and `test` go through
 // driver.ei, `test --compile-fail` through suite.ei, `caps` through resolve.caps_json ("C8.5"),
-// `migrate-imports` through resolve.import_fixes ("C8.26"), `migrate-var` through check.var_fixes ("C8.6": the file with every `var` it can rewrite as
-// `let mut`, on stdout; the file must check, apart from having no `main`), `audit-refs`
+// `migrate-imports` through resolve.import_fixes ("C8.26"), `audit-refs`
 // through check.check_audit (every write that changes what a `let` or pattern reference
 // sees, which code written when `let` copied didn't mean; then the errors, if any).
 // `--lib` checks (and emits) the file as a library: no `main`, at least one `export fn`.
@@ -140,7 +139,6 @@ fn usage_text() -> List[u8] {
         "                                             methods) as Eider source, with the call that asked for each (--ir: as typed IR);",
         "                                             <name>: every function whose name contains it",
         "  eiderc caps <file.ei>                      each package's capability use, one JSON line per capability",
-        "  eiderc migrate-var <file.ei>               print the file with its `var`s rewritten as `let mut` (deprecated `var`)",
         "  eiderc migrate-imports <file.ei> [--json]  print the file with its quoted imports in the dotted form",
         "                                             (--json: the fixes, one JSON line each)",
         "  eiderc migrate-strings <file> [--json] [--portable]  print the file (.ei, or a .md's eider blocks) with",
@@ -212,7 +210,7 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] {
 }
 
 fn known_cmd(c: List[u8]) -> bool {
-    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-var") || is(c, "migrate-imports") || is(c, "migrate-strings") || is(c, "migrate-attrs") || is(c, "audit-refs") || is(c, "doc") || is(c, "fmt") || is(c, "emit-llvm") || is(c, "cache") || is(c, "lint") || is(c, "expand")
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-imports") || is(c, "migrate-strings") || is(c, "migrate-attrs") || is(c, "audit-refs") || is(c, "doc") || is(c, "fmt") || is(c, "emit-llvm") || is(c, "cache") || is(c, "lint") || is(c, "expand")
 }
 
 /// The entry module of the package in the current directory (`eiderc lint` with no file).
@@ -589,40 +587,6 @@ fn run_doc(a: Args) uses io, fs {
     }
 }
 
-/// `eiderc migrate-var` (docs/compiler.md, "C8.6"): the file with every `var` the checker
-/// can rewrite as `let mut`. The file is checked as the entry (a module without `main` is
-/// fine), else, when that fails (a module whose own names clash with the entry's builtins,
-/// like a `fn print`), as the module a one-line entry next to it imports.
-fn migrate_var(a: Args, src: List[u8]) uses io, fs {
-    let first = migration(a.file, src, a.file)
-    if first.ok {
-        emit_migrated(src, first.fixes)
-        return
-    }
-    let mut dir = sys.lit(".")
-    let mut base = a.file.copy()
-    match bytes.rfind_byte(a.file, 47) {
-        Some(i) => {
-            dir = bytes.slice(a.file, 0, i + 1)
-            base = bytes.slice(a.file, i + 1, a.file.len())
-        }
-        None => {}
-    }
-    // (in the file's directory made absolute, so the entry is in the file's package)
-    let mut entry = canon(dir)
-    entry.push(47)
-    bytes.append(inout entry, sys.lit("__migrate_var__.ei"))
-    let mut esrc = sys.lit("import \"")
-    bytes.append(inout esrc, base)
-    bytes.append(inout esrc, sys.lit("\"\nfn main() \x7b\x7d\n"))
-    let second = migration(entry, esrc, a.file)
-    if second.ok {
-        emit_migrated(src, second.fixes)
-        return
-    }
-    fail(first.diags, a, src)
-}
-
 /// `eiderc audit-refs`: one finding per line (`--json`: a JSON object per line, with "audit"
 /// in place of "error"; else rendered as notes), then (human output) how many there are.
 fn audit_report(hits: List[diag.Diag], a: Args, src: List[u8]) uses io, fs {
@@ -658,49 +622,6 @@ fn audit_report(hits: List[diag.Diag], a: Args, src: List[u8]) uses io, fs {
         bytes.append(inout m, bytes.from_u64(hits.len() as u64))
         bytes.append(inout m, sys.lit(" write(s) change what a reference sees"))
         io.errln(m)
-    }
-}
-
-fn emit_migrated(src: List[u8], fixes: List[diag.Fix]) uses io {
-    let mut out = src.copy()
-    for f in fixes { out = diag.apply_fix(out, f) }
-    io.out(out)
-}
-
-/// What checking the program of `entry` (source `esrc`) gives for the module of file
-/// `target`: its `var` rewrites, or the diagnostics (a missing `main` aside).
-type Migration = { ok: bool, fixes: List[diag.Fix], diags: List[diag.Diag] }
-
-fn migration(entry: List[u8], esrc: List[u8], target: List[u8]) -> Migration uses io, fs {
-    let mut names = intern.new()
-    let lx = lex.lex_all(esrc, inout names)
-    let pr = parse.parse_all(lx.lexed, names)
-    let mut diags = front.merge(lx.diags, pr.diags)
-    let mut ld = resolve.load_from(entry, esrc, pr.p, resolve.disk())
-    resolve.note_syntax(inout ld.p, 0, diags)
-    for d in ld.diags { diags.push(d) }
-    let none: List[diag.Fix] = List.new()
-    if ld.fatal { return Migration(false, none, diags) }
-    let ev = consteval.eval_all(ld.p)
-    for d in ev.diags { diags.push(d) }
-    let k = check.check_all(ev.p, false, false)
-    for d in k.diags { diags.push(d) }
-    let mut real: List[diag.Diag] = List.new()
-    for d in diags {
-        if !(bytes.eq(sys.lit(d.code), sys.lit("E0112")) && d.line == 1 && d.col == 1) { real.push(d) }
-    }
-    if real.len() > 0 { return Migration(false, none, real) }
-    let want = canon(target)
-    for m in 0..k.c.p.mods.len() {
-        if bytes.eq(canon(k.c.p.mods[m].path), want) { return Migration(true, check.var_fixes(k.c, m as u32), real) }
-    }
-    Migration(false, none, real)
-}
-
-fn canon(path: List[u8]) -> List[u8] uses fs {
-    match fs.canonical(path) {
-        Ok(x) => x
-        Err(_) => path
     }
 }
 
@@ -926,10 +847,6 @@ fn main() uses io, fs, net, clock {
             env.exit(2)
             return
         }
-    }
-    if is(a.cmd, "migrate-var") {
-        migrate_var(a, src)
-        return
     }
     if is(a.cmd, "migrate-strings") {
         // docs/compiler.md, "C8.28: string literals"

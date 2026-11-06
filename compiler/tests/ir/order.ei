@@ -9,10 +9,10 @@ fn next(inout n: i32) -> i32 {
 const K: i32 = 2 * 21
 
 fn main() uses io {
-    var n = 0
+    let mut n = 0
     // left to right: the read of n happens before next() changes it
     let a = n + next(inout n)
-    var p = P(a, [K; 3])
+    let mut p = P(a, [K; 3])
     // the index is evaluated before the value; the element is read after it (compound)
     p.xs[next(inout n) as usize] += next(inout n)
     let ok = a > 0 && p.xs[0] == K

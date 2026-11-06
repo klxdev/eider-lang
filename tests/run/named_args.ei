@@ -53,7 +53,7 @@ fn main() uses io {
     print(scale(2.0, shift = 10))
     print(greet("Ada"))
     print(greet("Ada", greeting = "hi"))
-    var n: i64 = 0
+    let mut n: i64 = 0
     bump(inout n)
     bump(inout n, 5)
     bump(inout n, by = 10)

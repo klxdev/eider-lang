@@ -1,0 +1,5 @@
+// expect: E0001 3:5
+fn main() uses io {
+    var (a, b) = (1, 2)
+    print(a + b)
+}

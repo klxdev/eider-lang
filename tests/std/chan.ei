@@ -20,8 +20,8 @@ fn show(m: Msg) -> String {
 fn sent(s: chan.Send[i64]) -> String {
     match s {
         chan.Sent => String.from("sent")
-        chan.Full(v) => { var o = String.from("full "); o.append(String.from_int(v)); o }
-        chan.Rejected(v) => { var o = String.from("rejected "); o.append(String.from_int(v)); o }
+        chan.Full(v) => { let mut o = String.from("full "); o.append(String.from_int(v)); o }
+        chan.Rejected(v) => { let mut o = String.from("rejected "); o.append(String.from_int(v)); o }
     }
 }
 
@@ -71,7 +71,7 @@ fn main() uses io, clock, threads {
     // 4 producers x 2000 values through capacity 8 into 4 consumers: nothing lost or doubled
     let q: chan.Channel[i64] = chan.bounded(8)
     let done: chan.Channel[i64] = chan.bounded(8)
-    var ps: List[Task[i32]] = List.new()
+    let mut ps: List[Task[i32]] = List.new()
     for p in 0..4 {
         let qq = q
         let base = p as i64 * 100000
@@ -80,12 +80,12 @@ fn main() uses io, clock, threads {
             0
         }))
     }
-    var cs: List[Task[i64]] = List.new()
+    let mut cs: List[Task[i64]] = List.new()
     for k in 0..4 {
         let qq = q
         cs.push(spawn(|| -> i64 {
-            var sum: i64 = 0
-            var going = true
+            let mut sum: i64 = 0
+            let mut going = true
             while going {
                 match qq.recv(time.never()) {
                     chan.Value(v) => { sum += v }
@@ -98,7 +98,7 @@ fn main() uses io, clock, threads {
     }
     for p in ps { let z = p.join() }
     q.close()
-    var total: i64 = 0
+    let mut total: i64 = 0
     for k in cs { total += k.join() }
     // sum of base + i over 4 producers: 4 * (0..2000 sum) + 2000 * (0+1+2+3) * 100000
     print(total == 4 * 1999000 + 2000 * 600000)
@@ -133,7 +133,7 @@ fn main() uses io, clock, threads {
     let u: chan.Channel[i64] = chan.unbounded()
     for i in 0..10000 { u.try_send(i as i64) }
     print(u.len())
-    var us: i64 = 0
+    let mut us: i64 = 0
     for i in 0..10000 {
         match u.try_recv() {
             chan.Value(v) => { us += v }
@@ -145,7 +145,7 @@ fn main() uses io, clock, threads {
 
     // owned values: strings and lists move through; what is left queued is dropped with it
     let sc: chan.Channel[List[String]] = chan.bounded(4)
-    var l: List[String] = List.new()
+    let mut l: List[String] = List.new()
     l.push(String.from("a"))
     l.push(String.from("b"))
     sc.try_send(l)
@@ -159,7 +159,7 @@ fn main() uses io, clock, threads {
     // select: channels of different types, a timer, a deadline, a closed channel
     let nums: chan.Channel[i64] = chan.bounded(4)
     let words: chan.Channel[String] = chan.bounded(4)
-    var cases: List[chan.Case[Msg]] = List.new()
+    let mut cases: List[chan.Case[Msg]] = List.new()
     cases.push(nums.recv_case(|o: Option[i64]| -> Msg {
         match o {
             Some(n) => Num(n)
@@ -188,12 +188,12 @@ fn main() uses io, clock, threads {
     print(show(chan.select(cases, time.after_ms(5000)).unwrap()))
     let z = sender.join()
     // a timer case wins when nothing else comes
-    var with_timer = cases
+    let mut with_timer = cases.copy()
     with_timer.push(chan.timer_case(time.after_ms(20), Tick))
     print(show(chan.select(with_timer, time.after_ms(5000)).unwrap()))
     // both ready many times: each is picked sometimes, and nothing is lost
-    var a = 0
-    var b = 0
+    let mut a = 0
+    let mut b = 0
     for i in 0..200 {
         nums.try_send(1)
         words.try_send(String.from("w"))

@@ -11,7 +11,7 @@ fn main() uses io, ffi {
                 Ok(b) => print(bytes.eq(a, b))
                 Err(e) => print(e)
             }
-            var varied = false
+            let mut varied = false
             for x in a {
                 if x != a[0] { varied = true }
             }
@@ -37,8 +37,8 @@ fn main() uses io, ffi {
         }
         Err(e) => print(e)
     }
-    var in_range = true
-    var seen_top = false
+    let mut in_range = true
+    let mut seen_top = false
     for i in 0..200 {
         match random.below(3) {
             Ok(v) => {

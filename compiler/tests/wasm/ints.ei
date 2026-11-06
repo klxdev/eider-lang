@@ -7,7 +7,7 @@ export fn u8_next(v: u8) -> u8 { return v + 1 }
 export fn u32_max() -> u32 { return 4294967295 }
 export fn u64_big(v: u64) -> u64 { return v * 1000000000 }
 export fn usize_len(n: usize) -> usize {
-    var l: List[i32] = List.new()
+    let mut l: List[i32] = List.new()
     for i in 0..n { l.push(i as i32) }
     return l.len()
 }

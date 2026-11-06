@@ -79,8 +79,8 @@ fn main() uses io {
 
     // the total order
     let ord = [math.neg_infinity(), -1.5, -0.0, 0.0, 1.5, math.infinity(), nan]
-    var inorder = true
-    var i: usize = 1
+    let mut inorder = true
+    let mut i: usize = 1
     while i < 7 {
         if ord[i - 1].total_cmp(ord[i]) != Less { inorder = false }
         i += 1
@@ -158,10 +158,10 @@ fn main() uses io {
     print(strings.parse_f32("1e-46"))
 
     // text -> float -> text round-trips for random bit patterns
-    var x: u64 = 88172645463325252
-    var bad = 0
-    var tried = 0
-    var n = 0
+    let mut x: u64 = 88172645463325252
+    let mut bad = 0
+    let mut tried = 0
+    let mut n = 0
     while n < 20000 {
         x = x ^ (x << 13)
         x = x ^ (x >> 7)

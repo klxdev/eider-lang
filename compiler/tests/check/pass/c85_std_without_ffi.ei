@@ -10,7 +10,7 @@ import core.sys
 
 /// Pure: bytes and the core's text helpers need nothing.
 fn label(n: u64) -> List[u8] {
-    var t = sys.lit("n=")
+    let mut t = sys.lit("n=")
     bytes.append(inout t, bytes.from_u64(n))
     t
 }

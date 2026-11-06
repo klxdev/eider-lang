@@ -6,7 +6,7 @@ fn pick(c: bool) -> String {
 }
 
 fn longest(xs: List[String]) -> String {
-    var best = String.from("")
+    let mut best = String.from("")
     for i in 0..xs.len() {
         let cur = xs[i]
         if cur.len() > best.len() { best = cur }
@@ -27,7 +27,7 @@ fn find_named(items: List[Tagged], want: str) -> Option[List[String]] {
 }
 
 fn drain(inout l: List[String]) -> usize {
-    var n: usize = 0
+    let mut n: usize = 0
     while l.pop().is_some() { n += 1 }
     n
 }
@@ -35,13 +35,13 @@ fn drain(inout l: List[String]) -> usize {
 fn main() uses io {
     print(pick(true))
     print(pick(false))
-    var xs: List[String] = List.new()
+    let mut xs: List[String] = List.new()
     xs.push(String.from("aa"))
     xs.push(String.from("bbbb"))
     xs.push(String.from("c"))
     print(longest(xs))
-    var items: List[Tagged] = List.new()
-    var tags: List[String] = List.new()
+    let mut items: List[Tagged] = List.new()
+    let mut tags: List[String] = List.new()
     tags.push(String.from("t1"))
     items.push(Named(String.from("bob"), tags))
     items.push(Anon)
@@ -58,7 +58,7 @@ fn main() uses io {
     if let Some(t) = find_named(items, "zed") { print(t.len()) } else { print("no zed") }
     print(drain(inout xs))
     print(xs.len())
-    var s = String.from("a")
+    let mut s = String.from("a")
     s = if s.len() > 5 { String.from("long") } else { String.from("short") }
     print(s)
     let arr = [String.from("p"), String.from("q")]

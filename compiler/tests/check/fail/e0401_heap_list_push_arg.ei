@@ -1,3 +1,3 @@
 // expect: E0401 3:12
-fn main() { var l: List[i32] = List.new()
+fn main() { let mut l: List[i32] = List.new()
     l.push(true) }

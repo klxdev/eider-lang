@@ -42,9 +42,11 @@ fn make(big: bool) -> dyn Shape {
 }
 
 fn grow(s: dyn Shape) -> dyn Shape {
-    var t = s
-    t.scale(3)
-    t
+    // a List element is its own value (`.copy()` doesn't exist for dyn)
+    let mut l: List[dyn Shape] = List.new()
+    l.push(s)
+    l[0].scale(3)
+    l[0]
 }
 
 // Drop runs through the vtable
@@ -78,15 +80,16 @@ fn main() uses io {
     print(a.double_area())
     print(b.double_area())
     a.announce()
-    var shapes: List[dyn Shape] = List.new()
+    let mut shapes: List[dyn Shape] = List.new()
     shapes.push(Rect(1, 1))
     shapes.push(Circle(3))
     shapes.push(make(true))
     print(total(shapes))
     // mutation through inout self; a copy is its own value
-    var c = a
-    c.scale(4)
-    print(c.area())
+    let mut cs: List[dyn Shape] = List.new()
+    cs.push(a)
+    cs[0].scale(4)
+    print(cs[0].area())
     print(a.area())
     let g = grow(make(false))
     print(g.area())

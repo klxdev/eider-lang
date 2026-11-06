@@ -1,5 +1,5 @@
 // mode: build
-fn main() uses io { var s = String.from("a")
+fn main() uses io { let mut s = String.from("a")
     s = String.from("b")
     let t = s
     s = t

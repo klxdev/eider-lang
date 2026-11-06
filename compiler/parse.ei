@@ -276,7 +276,28 @@ fn starts_stmt(p: P, j: usize) -> bool {
     let t = p.toks[j]
     if !(t.kind == lex.Ident) { return false }
     let v = t.val
-    v == intern.K_LET as u64 || v == intern.K_VAR as u64 || v == intern.K_WHILE as u64 || v == intern.K_FOR as u64 || v == intern.K_RETURN as u64 || v == intern.K_BREAK as u64 || v == intern.K_CONTINUE as u64 || v == intern.K_ASSERT as u64 || v == intern.K_IF as u64 || v == intern.K_MATCH as u64
+    v == intern.K_LET as u64 || v == intern.K_WHILE as u64 || v == intern.K_FOR as u64 || v == intern.K_RETURN as u64 || v == intern.K_BREAK as u64 || v == intern.K_CONTINUE as u64 || v == intern.K_ASSERT as u64 || v == intern.K_IF as u64 || v == intern.K_MATCH as u64
+}
+
+/// Whether the statement at token `j` is written with the removed `var`: `var x ...` or
+/// `var (a, b) = ...` (a call `var(x)` of a function of that name is not).
+fn at_removed_var(p: P, j: usize) -> bool {
+    if j >= p.toks.len() || p.toks[j].kind != lex.Ident || p.toks[j].val != intern.S_VAR as u64 { return false }
+    if name_at(p, j + 1) { return true }
+    if kind_at(p, j + 1) != lex.LParen { return false }
+    let mut depth: u32 = 0
+    let mut k = j + 1
+    while k < p.toks.len() {
+        let kd = p.toks[k].kind
+        if kd == lex.LParen { depth += 1 }
+        if kd == lex.RParen {
+            depth -= 1
+            if depth == 0 { return kind_at(p, k + 1) == lex.Eq }
+        }
+        if kd == lex.Newline || kd == lex.Eof { return false }
+        k += 1
+    }
+    false
 }
 
 fn line_start(p: P, j: usize) -> bool { j == 0 || p.toks[j - 1].kind == lex.Newline }
@@ -1469,9 +1490,15 @@ fn stmt(inout p: P) -> Result[u32, diag.Diag] {
         p.ast.nodes[s as usize].j = t.col
         return Ok(s)
     }
-    if is_kw(p, intern.K_LET) || is_kw(p, intern.K_VAR) {
-        // d: 0 `let`, 1 `var` (deprecated), 2 `let mut`
-        let mut mutable: u32 = if is_kw(p, intern.K_VAR) { 1 } else { 0 }
+    if at_removed_var(p, p.i) {
+        // docs/compiler.md, "C8.6" (decision C897): `var` is gone, with no warning stage
+        let mut d = err_at(t.line, t.col, sys.lit("`var` was removed: write `let mut`"))
+        d.help = sys.lit("`var x = e` made a mutable variable that owned a copy of `e`: write `let mut x = e` for a fresh value, `let mut x = e.copy()` for a copy of a place (a `let mut` of a place is an alias of it) and `let (mut a, mut b) = e` for a pattern")
+        return Err(d)
+    }
+    if is_kw(p, intern.K_LET) {
+        // d: 0 `let`, 2 `let mut` (1 was the removed `var`)
+        let mut mutable: u32 = 0
         adv(inout p)
         if mutable == 0 && at_mut(p) {
             mutable = 2

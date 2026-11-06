@@ -1,5 +1,5 @@
 // expect: E0401 4:5
 fn main() {
-    var s = String.from("a")
+    let mut s = String.from("a")
     s |= s
 }

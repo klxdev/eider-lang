@@ -23,7 +23,7 @@ fn main() uses io {
     let both = compose(add3, double)
     print(both(1))
 
-    var xs: List[i32] = List.new()
+    let mut xs: List[i32] = List.new()
     for i in 1..6 { xs.push(i) }
     let squares = xs.map(|x| x * x)
     print(squares.sum())
@@ -32,12 +32,12 @@ fn main() uses io {
     print(xs.fold(100, |acc, x| acc - x))
     print(xs.any(|x| x > 4))
     print(xs.all(|x| x > 4))
-    var seen: List[String] = List.new()
+    let mut seen: List[String] = List.new()
     let names = xs.map(|x| String.from_int(x as i64))
     for n in names { seen.push(n) }
     print(seen.len())
     let joined = names.fold(String.from(""), |acc, n| {
-        var r = acc
+        let mut r = acc.copy()
         r.append(n)
         r
     })

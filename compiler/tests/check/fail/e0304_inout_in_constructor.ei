@@ -1,6 +1,6 @@
 // expect: E0304 5:21
 type P = { x: i32 }
 fn main() {
-    var x = 1
+    let mut x = 1
     let p = P(inout x)
 }

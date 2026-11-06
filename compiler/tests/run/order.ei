@@ -46,17 +46,17 @@ fn main() uses io {
     print(bx == Full(P(18, 19, 20)))
 
     // inout arguments interleaved with reads
-    var l = 0
+    let mut l = 0
     let s = log(inout l, 1) + log(inout l, 2) * log(inout l, 3)
     print(s)
     print(l)
 
     // the index is evaluated before the right-hand side; compound assignment reads once
-    var a = [0, 0, 0, 0]
+    let mut a = [0, 0, 0, 0]
     a[ix(1)] = t(21)
     a[ix(2)] += t(22)
     print(a[1] + a[2])
-    var g = [[0, 0], [0, 0]]
+    let mut g = [[0, 0], [0, 0]]
     g[ix(1)][ix(0)] = t(23)
     print(g[1][0])
 
@@ -90,10 +90,10 @@ fn main() uses io {
     } else {
         print(0)
     }
-    var k = 0
+    let mut k = 0
     while t(k) < 2 { k += 1 }
     for i in t(41)..t(43) { print(i * 10) }
-    var total = 0
+    let mut total = 0
     for v in [t(44), t(45)] { total += v }
     print(total)
 

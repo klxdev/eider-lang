@@ -557,7 +557,7 @@ fn total(shapes: List[dyn Shape]) -> i64 {
 }
 
 fn main() uses io {
-    var shapes: List[dyn Shape] = List.new()
+    let mut shapes: List[dyn Shape] = List.new()
     shapes.push(Rect(2, 3))
     shapes.push(Circle(2))
     print(total(shapes))
@@ -581,7 +581,7 @@ fn main() uses io {
   pushed into a `List[dyn Trait]`, or `x as dyn Trait`. A type that doesn't implement it is
   E0601.
 - **A `dyn Trait` owns its value**, like a closure owns what it captured: copying it
-  (`var c = a`) copies the value, `inout self` methods change the value it holds, and
+  (an element pushed into a List) copies the value, `inout self` methods change the value it holds, and
   dropping it runs the value's `Drop` through the vtable. `Box[dyn Trait]`, `Option[dyn Trait]`
   and records holding one work like any type. A `dyn Trait` has no `==`, order, hash or text.
 - **Capabilities are checked at the call**, against the trait's declaration, because the

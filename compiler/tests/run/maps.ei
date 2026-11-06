@@ -2,7 +2,7 @@
 // contains, remove, len, is_empty, growth past several rehashes, removing and inserting
 // again, owned values, and copies that don't share.
 fn count_words(ws: List[String]) -> Map[String, i32] {
-    var m: Map[String, i32] = Map.new()
+    let mut m: Map[String, i32] = Map.new()
     for w in ws {
         let old = m.get(w).unwrap_or(0)
         m.insert(w, old + 1)
@@ -11,10 +11,10 @@ fn count_words(ws: List[String]) -> Map[String, i32] {
 }
 
 fn main() uses io {
-    var m: Map[u64, u64] = Map.new()
+    let mut m: Map[u64, u64] = Map.new()
     print(m.len())
     print(m.is_empty())
-    var i: u64 = 0
+    let mut i: u64 = 0
     while i < 1000 {
         m.insert(i * 7, i)
         i += 1
@@ -38,27 +38,27 @@ fn main() uses io {
     print(m.get(7).unwrap_or(0))
     print(m.len())
 
-    var neg: Map[i32, bool] = Map.new()
+    let mut neg: Map[i32, bool] = Map.new()
     neg.insert(-1, true)
     neg.insert(-2147483647 - 1, false)
     print(neg.get(-1).unwrap_or(false))
     print(neg.contains(-2147483647 - 1))
     print(neg.contains(1))
 
-    var flags: Map[bool, str] = Map.new()
+    let mut flags: Map[bool, str] = Map.new()
     flags.insert(true, "yes")
     flags.insert(false, "no")
     print(flags.get(true).unwrap_or("?"))
     print(flags.get(false).unwrap_or("?"))
 
-    var lits: Map[str, i32] = Map.new()
+    let mut lits: Map[str, i32] = Map.new()
     lits.insert("a", 1)
     lits.insert("b", 2)
     lits.insert("a", 3)
     print(lits.get("a").unwrap_or(0))
     print(lits.len())
 
-    var ws: List[String] = List.new()
+    let mut ws: List[String] = List.new()
     ws.push(String.from("the"))
     ws.push(String.from("cat"))
     ws.push(String.from("the"))
@@ -70,7 +70,7 @@ fn main() uses io {
     print(counts.get(String.from("dog")).unwrap_or(0))
     print(counts.len())
 
-    var owners: Map[u32, String] = Map.new()
+    let mut owners: Map[u32, String] = Map.new()
     owners.insert(1, String.from("ann"))
     owners.insert(2, String.from("bob"))
     owners.insert(1, String.from("cy"))
@@ -83,8 +83,8 @@ fn main() uses io {
     print(owners.len())
     print(copy.len())
     print(copy.contains(2))
-    var lists: Map[String, List[i32]] = Map.new()
-    var l: List[i32] = List.new()
+    let mut lists: Map[String, List[i32]] = Map.new()
+    let mut l: List[i32] = List.new()
     l.push(1)
     lists.insert(String.from("k"), l)
     l.push(2)

@@ -563,7 +563,7 @@ impl Handler for Prefix {
 }
 
 fn main() uses io {
-    var routes: List[dyn Handler] = List.new()
+    let mut routes: List[dyn Handler] = List.new()
     routes.push(Fixed(200))
     routes.push(Prefix("/api", 201))
     for r in routes { print(r.handle("/api/x")) }

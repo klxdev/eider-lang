@@ -29,7 +29,7 @@ fn speed(m: Mode, o: Option[i32]) -> i32 {
 }
 
 fn total(shapes: List[sh.Shape], inout count: i32) -> i32 {
-    var sum = 0
+    let mut sum = 0
     for s in shapes {
         sum += s.area()
         count += 1
@@ -50,8 +50,8 @@ fn main() uses io {
     let p = sh.make(1, 2)
     let ints = Pair(p.x, p.y)
     let flags = Pair(true, false)
-    var n = 0
-    var shapes: List[sh.Shape] = List.new()
+    let mut n = 0
+    let mut shapes: List[sh.Shape] = List.new()
     shapes.push(sh.Circle(2))
     shapes.push(sh.Rect(p, sh.Point(3, 4)))
     let add = |a: i32, b: i32| a + b
@@ -61,7 +61,7 @@ fn main() uses io {
 }
 
 test "totals" {
-    var n = 0
+    let mut n = 0
     let none: List[sh.Shape] = List.new()
     assert total(none, inout n) == 0
 }

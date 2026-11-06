@@ -11,9 +11,9 @@ type Cell = { v: Mutex[i32] }
 
 /// An insertion sort for any ordered type.
 fn sort[T: Ord + Copy](inout xs: List[T]) {
-    var i: usize = 1
+    let mut i: usize = 1
     while i < xs.len() {
-        var j = i
+        let mut j = i.copy()
         while j > 0 && xs[j] < xs[j - 1] {
             let t = xs[j].copy()
             xs[j] = xs[j - 1]
@@ -34,9 +34,9 @@ fn main() uses io {
     print(P(1, -2))
     print(Circle(3))
     print(Rect(4, 5))
-    var none_tags: List[str] = List.new()
+    let mut none_tags: List[str] = List.new()
     print(Person(String.from("Ada \"Countess\" \\ of tab\there"), none_tags, 36))
-    var tags: List[str] = List.new()
+    let mut tags: List[str] = List.new()
     tags.push("math")
     tags.push("line\nbreak")
     print(Person(String.from("Ada"), tags, 36))
@@ -49,10 +49,10 @@ fn main() uses io {
     let ok: Result[(), str] = Ok(())
     print(ok)
     print(Box.new(P(0, 0)))
-    var m: Map[str, i32] = Map.new()
+    let mut m: Map[str, i32] = Map.new()
     m.insert("k", 1)
     print(m)
-    var ps: List[P] = List.new()
+    let mut ps: List[P] = List.new()
     print(ps)
     ps.push(P(1, 2))
     ps.push(P(3, 4))
@@ -61,7 +61,7 @@ fn main() uses io {
     // to_string and show
     let s = Rect(1, 2).to_string()
     print(s.len())
-    var out = String.from("[")
+    let mut out = String.from("[")
     P(9, 9).show(inout out)
     out.push_str("] ")
     (7 as u64).show(inout out)
@@ -73,9 +73,9 @@ fn main() uses io {
     print(Circle(1) == Circle(1))
     print(Circle(1) == Rect(1, 1))
     print(Some(P(1, 2)) == Some(P(1, 2)))
-    var m1: Map[String, List[i32]] = Map.new()
-    var m2: Map[String, List[i32]] = Map.new()
-    var one2: List[i32] = List.new()
+    let mut m1: Map[String, List[i32]] = Map.new()
+    let mut m2: Map[String, List[i32]] = Map.new()
+    let mut one2: List[i32] = List.new()
     one2.push(1)
     one2.push(2)
     m1.insert(String.from("a"), one2)
@@ -94,8 +94,8 @@ fn main() uses io {
     print(Circle(9) < Rect(0, 0))
     print(Rect(1, 2) <= Rect(1, 2))
     print(Dot > Rect(5, 5))
-    var la: List[i32] = List.new()
-    var lb: List[i32] = List.new()
+    let mut la: List[i32] = List.new()
+    let mut lb: List[i32] = List.new()
     la.push(1)
     lb.push(1)
     lb.push(0)
@@ -104,19 +104,19 @@ fn main() uses io {
     print(P(1, 2).compare(P(0, 5)))
     print(String.from("abc").compare(String.from("abd")))
     print(7.compare(3))
-    var words: List[String] = List.new()
+    let mut words: List[String] = List.new()
     words.push(String.from("pear"))
     words.push(String.from("apple"))
     words.push(String.from("fig"))
     sort(inout words)
     print(words)
-    var pts: List[P] = List.new()
+    let mut pts: List[P] = List.new()
     pts.push(P(2, 1))
     pts.push(P(1, 5))
     pts.push(P(1, -1))
     sort(inout pts)
     print(pts)
-    var shapes: List[Shape] = List.new()
+    let mut shapes: List[Shape] = List.new()
     shapes.push(Dot)
     shapes.push(Rect(2, 2))
     shapes.push(Circle(5))
@@ -125,30 +125,30 @@ fn main() uses io {
     print(shapes)
 
     // Map keys: any Hash + Eq type
-    var at: Map[P, String] = Map.new()
+    let mut at: Map[P, String] = Map.new()
     at.insert(P(0, 0), String.from("origin"))
     at.insert(P(1, 0), String.from("east"))
     at.insert(P(0, 0), String.from("still origin"))
     print(at.len())
     print(at.get(P(0, 0)).unwrap_or(String.from("?")))
     print(at.contains(P(5, 5)))
-    var by_shape: Map[Shape, i32] = Map.new()
+    let mut by_shape: Map[Shape, i32] = Map.new()
     by_shape.insert(Circle(1), 1)
     by_shape.insert(Rect(1, 1), 2)
     by_shape.insert(Dot, 3)
     print(by_shape.get(Rect(1, 1)).unwrap_or(0))
     print(by_shape.remove(Dot))
     print(by_shape.len())
-    var seen: Map[(String, u8), bool] = Map.new()
+    let mut seen: Map[(String, u8), bool] = Map.new()
     seen.insert((String.from("a"), 1), true)
     print(seen.contains((String.from("a"), 1)))
     print(seen.contains((String.from("a"), 2)))
-    var lists: Map[List[i32], i32] = Map.new()
+    let mut lists: Map[List[i32], i32] = Map.new()
     lists.insert(la, 10)
     print(lists.get(la).unwrap_or(0))
-    var many: Map[P, i32] = Map.new()
+    let mut many: Map[P, i32] = Map.new()
     for i in 0..100 { many.insert(P(i, i * 2), i) }
-    var sum = 0
+    let mut sum = 0
     for i in 0..100 { sum += many.get(P(i, i * 2)).unwrap_or(0) }
     print(sum)
     print(P(1, 2).hash() == P(1, 2).hash())
@@ -156,7 +156,7 @@ fn main() uses io {
 
     // .copy(): a full clone; heap buffers are shared until written, a Mutex gets a new one
     let q = Person(String.from("Q"), tags, 1)
-    var q2 = q.copy()
+    let mut q2 = q.copy()
     q2.name.push_str("2")
     print(q.name)
     print(q2.name)

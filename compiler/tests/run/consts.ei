@@ -43,7 +43,7 @@ fn main() uses io {
     print(classify(I32_MAX))
     print(classify(0))
     print(classify(NEG))
-    var n = I32_MAX
+    let mut n = I32_MAX
     n -= 1
     print(n)
     print(I32_MAX +% 1 == I32_MIN)

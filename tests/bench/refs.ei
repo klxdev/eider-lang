@@ -3,11 +3,11 @@
 type Order = { qty: i32, price: i32, weight: i32, name: String }
 
 fn main() uses io {
-    var orders: List[Order] = List.new()
+    let mut orders: List[Order] = List.new()
     for i in 0..1000 {
         orders.push(Order(i, i * 3, i % 7, String.from("order")))
     }
-    var total: i64 = 0
+    let mut total: i64 = 0
     for round in 0..40000 {
         for i in 0..orders.len() {
             let o = orders[i]

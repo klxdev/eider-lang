@@ -11,7 +11,7 @@ fn main() uses io {
             print(sys.to_string(x.name))
             print(sys.to_string(x.entry))
             for i in 0..x.deps.len() {
-                var t = sys.to_string(x.deps[i])
+                let mut t = sys.to_string(x.deps[i])
                 t.push_str(" uses [")
                 for j in 0..x.grants[i].len() {
                     if j > 0 { t.push_str(", ") }
@@ -32,7 +32,7 @@ fn main() uses io {
     match l {
         Ok(ps) => {
             for p in ps {
-                var t = sys.to_string(p.name)
+                let mut t = sys.to_string(p.name)
                 if p.git {
                     t.push_str(" git ")
                     t.append(sys.to_string(lock.store_leaf(p.name, p.hash)))

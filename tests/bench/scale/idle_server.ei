@@ -18,7 +18,7 @@ import std.time
 fn number(name: str, dflt: i64) -> i64 uses io {
     match env.get(sys.lit(name)) {
         Some(v) => {
-            var n: i64 = 0
+            let mut n: i64 = 0
             for b in v { n = n * 10 + (b - 48) as i64 }
             n
         }
@@ -34,7 +34,7 @@ fn idle_conn(raw: i32, up: sync.Lock[i64]) uses io, clock {
 }
 
 fn acceptor(l: i32, up: sync.Lock[i64]) uses io, net, clock, threads {
-    var held: List[Task[()]] = List.new()
+    let mut held: List[Task[()]] = List.new()
     while true {
         match stream.accept_by(l, time.never()) {
             Ok(c) => {
@@ -62,13 +62,13 @@ fn main() uses io, net, clock, threads {
     let ports = number("PORTS", 40)
     let target = number("TARGET", 100000)
     let up: sync.Lock[i64] = sync.lock(0)
-    var acceptors: List[Task[()]] = List.new()
+    let mut acceptors: List[Task[()]] = List.new()
     for i in 0..ports {
         let l = listen_on(net.ipv4(127, 0, 0, 1, (port + i) as i32))
         let u = up
         acceptors.push(spawn(|| acceptor(l, u)))
     }
-    var seen: i64 = 0
+    let mut seen: i64 = 0
     while seen < target {
         time.sleep_ms(100)
         seen = up.get()

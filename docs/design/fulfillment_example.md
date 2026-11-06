@@ -140,7 +140,7 @@ fn advance(inout order: Order, event: Event, inv: Inventory)
     (Pending, StartPick(p)) => Picking(p, clock.now())
 
     (Picking(_, _), Pack) => {
-      var picked = List[Picked].new()
+      let mut picked = List[Picked].new()
       for line in order.lines {
         picked.push(Picked(inv.lookup(line.sku)?, line.qty))
       }
@@ -180,7 +180,7 @@ fn process_batch(orders: List[Order], inv: Shared[Mutex[Inventory]])
   uses clock, threads
 {
   let tasks = orders.map(|order| spawn {
-    var o = order                                  // each task owns its copy
+    let mut o = order                                  // each task owns its copy
     inv.lock(|inout stock| stock.reserve_all(o.lines))?
     let view = inv.lock(|stock| stock)             // read-only snapshot
     advance(inout o, StartPick(1), view)?
@@ -206,7 +206,7 @@ fn print_label(tracking: str) -> Result[(), str] uses ffi {
 
 ```eider
 test "reserve_all rolls back on shortage" {
-  var inv = Inventory.with_stock([(Sku("A"), 5), (Sku("B"), 1)])
+  let mut inv = Inventory.with_stock([(Sku("A"), 5), (Sku("B"), 1)])
   let r = inv.reserve_all([Line(Sku("A"), 3), Line(Sku("B"), 2)])
   assert r == Err(OutOfStock(Sku("B"), 2, 1))
   assert inv.stock[Sku("A")] == 5

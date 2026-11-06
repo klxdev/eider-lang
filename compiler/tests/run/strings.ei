@@ -5,8 +5,8 @@ type Named = { name: String, n: i32 }
 type Tag = | Plain(s: String) | Num(n: i64) | Nothing
 
 fn build(n: i32) -> String {
-    var s = String.from("<")
-    var i = 0
+    let mut s = String.from("<")
+    let mut i = 0
     while i < n {
         s.append(String.from_int(i as i64))
         s.push_str(",")
@@ -22,7 +22,7 @@ fn main() uses io {
     let empty = String.from("")
     print(empty.len())
     print(empty.is_empty())
-    var s = String.from("ab")
+    let mut s = String.from("ab")
     s.push_str("cd")
     print(s)
     print(s.len())
@@ -51,10 +51,10 @@ fn main() uses io {
     print(Plain(String.from("p")) == Plain(String.from("q")))
     print(Num(3) == Num(3))
     print(Nothing == Plain(String.from("")))
-    var xs: List[String] = List.new()
+    let mut xs: List[String] = List.new()
     xs.push(String.from("one"))
     xs.push(String.from("two"))
-    var ys: List[String] = List.new()
+    let mut ys: List[String] = List.new()
     ys.push(String.from("one"))
     ys.push(String.from("two"))
     print(xs == ys)

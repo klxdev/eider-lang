@@ -5,7 +5,7 @@ type Handler = { name: String, run: fn(i32) -> String }
 
 fn make(prefix: String) -> fn(i32) -> String {
     |n| -> String {
-        var s = prefix
+        let mut s = prefix.copy()
         s.append(String.from_int(n as i64))
         s
     }
@@ -16,7 +16,7 @@ fn twice(f: fn(i32) -> i32, x: i32) -> i32 { f(f(x)) }
 fn inc(x: i32) -> i32 { x + 1 }
 
 fn apply_all(fs: List[fn(i32) -> i32], x: i32) -> i32 {
-    var v = x
+    let mut v = x.copy()
     for f in fs { v = f(v) }
     v
 }
@@ -24,7 +24,7 @@ fn apply_all(fs: List[fn(i32) -> i32], x: i32) -> i32 {
 fn wrap[T](x: T) -> fn() -> T { || x }
 
 fn main() uses io {
-    var name = String.from("snap")
+    let mut name = String.from("snap")
     let show = || name.len()
     name.push_str("shot")
     print(show())
@@ -34,7 +34,7 @@ fn main() uses io {
     print(hi(1))
     let copy = hi
     print(copy(2))
-    var hs: List[Handler] = List.new()
+    let mut hs: List[Handler] = List.new()
     hs.push(Handler(String.from("a"), make(String.from("A"))))
     hs.push(Handler(String.from("b"), |n| String.from_int((n * 2) as i64)))
     for h in hs {
@@ -50,7 +50,7 @@ fn main() uses io {
     print(twice(inc, 1))
     let k = 10
     print(twice(|x| x * k, 1))
-    var fs: List[fn(i32) -> i32] = List.new()
+    let mut fs: List[fn(i32) -> i32] = List.new()
     fs.push(inc)
     fs.push(|x| x * 3)
     let words = String.from("abcd")
@@ -68,12 +68,12 @@ fn main() uses io {
     print(ws())
     let wi = wrap(42)
     print(wi())
-    var parts: List[String] = List.new()
+    let mut parts: List[String] = List.new()
     parts.push(String.from("x"))
     let total = parts.fold(0 as usize, |acc, p| acc + p.len())
     print(total)
     let counted = parts.map(|p| -> String {
-        var r = p
+        let mut r = p.copy()
         r.push_str("!")
         r
     })

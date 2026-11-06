@@ -131,9 +131,9 @@ stmt       = let_stmt
            | expr [assign_op expr]
 
 label      = IDENT ":"
-let_stmt   = ("let" ["mut"] | "var") IDENT [":" type] "=" expr
+let_stmt   = "let" ["mut"] IDENT [":" type] "=" expr
            | "let" pattern "=" expr "else" block
-           | ("let" ["mut"] | "var") "(" pattern_list ")" "=" expr
+           | "let" ["mut"] "(" pattern_list ")" "=" expr
 assign_op  = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>="
 
 while_stmt = "while" expr block

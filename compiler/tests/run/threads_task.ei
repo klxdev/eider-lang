@@ -5,9 +5,9 @@
 type Report = { name: String, parts: List[String], score: i64 }
 
 fn words(n: i32) -> List[String] {
-    var out: List[String] = List.new()
+    let mut out: List[String] = List.new()
     for i in 0..n {
-        var w = String.from("w")
+        let mut w = String.from("w")
         w.append(String.from_int(i as i64))
         out.push(w)
     }
@@ -16,7 +16,7 @@ fn words(n: i32) -> List[String] {
 
 fn report(n: i32) -> Report uses threads {
     let t = spawn(|| -> Report {
-        var name = String.from("r")
+        let mut name = String.from("r")
         name.append(String.from_int(n as i64))
         return Report(name, words(n), (n * 10) as i64)
     })
@@ -26,8 +26,8 @@ fn report(n: i32) -> Report uses threads {
 /// Parallel sum by recursive splitting: every level spawns two more Tasks.
 fn psum(lo: i64, hi: i64, depth: i32) -> i64 uses threads {
     if depth == 0 || hi - lo < 2 {
-        var s: i64 = 0
-        var i = lo
+        let mut s: i64 = 0
+        let mut i = lo.copy()
         while i < hi {
             s = s + i
             i = i + 1
@@ -43,11 +43,11 @@ fn psum(lo: i64, hi: i64, depth: i32) -> i64 uses threads {
 /// A Task handle shared with other threads: each joins it and gets its own copy.
 fn shared_join(n: i32) -> i32 uses threads {
     let t = spawn(|| -> String {
-        var s = String.from("")
+        let mut s = String.from("")
         for i in 0..100 { s.push_str("ab") }
         return s
     })
-    var js: List[Task[i32]] = List.new()
+    let mut js: List[Task[i32]] = List.new()
     for i in 0..n {
         let tt = t
         js.push(spawn(|| -> i32 {
@@ -56,7 +56,7 @@ fn shared_join(n: i32) -> i32 uses threads {
             return s.len() as i32 + again.len() as i32
         }))
     }
-    var total = 0
+    let mut total = 0
     for j in js { total = total + j.join() }
     total + t.join().len() as i32
 }
@@ -77,13 +77,13 @@ fn fire_and_forget(n: i32) -> i64 uses threads {
 
 /// Captures are snapshots: the spawned closure gets its own copy of a String and a List.
 fn snapshots() -> String uses threads {
-    var s = String.from("before")
-    var l: List[i32] = List.new()
+    let mut s = String.from("before")
+    let mut l: List[i32] = List.new()
     l.push(1)
     let t = spawn(|| -> String {
-        var mine = s
+        let mut mine = s.copy()
         mine.push_str("+thread")
-        var ll = l
+        let mut ll = l.copy()
         ll.push(2)
         mine.append(String.from_int(ll.len() as i64))
         return mine
@@ -91,7 +91,7 @@ fn snapshots() -> String uses threads {
     s.push_str("+main")
     l.push(9)
     l.push(9)
-    var r = t.join()
+    let mut r = t.join()
     r.push_str(" ")
     r.append(s)
     r.append(String.from_int(l.len() as i64))
@@ -107,16 +107,16 @@ fn misc() -> i64 uses io, threads {
         Some(x) => print(x)
         None => print("none")
     }
-    var ts: List[Task[List[i64]]] = List.new()
+    let mut ts: List[Task[List[i64]]] = List.new()
     for i in 0..10 {
         ts.push(spawn(|| -> List[i64] {
-            var l: List[i64] = List.new()
+            let mut l: List[i64] = List.new()
             for k in 0..i { l.push(k as i64) }
             return l
         }))
     }
-    var acc: i64 = 0
-    var k = ts.len()
+    let mut acc: i64 = 0
+    let mut k = ts.len()
     while k > 0 {
         k -= 1
         let l = ts[k].join()
@@ -129,7 +129,7 @@ fn misc() -> i64 uses io, threads {
 fn nest(depth: i32) -> String uses threads {
     if depth == 0 { return String.from(".") }
     let t = spawn(|| -> String {
-        var s = String.from_int(depth as i64)
+        let mut s = String.from_int(depth as i64)
         let inner = spawn(|| -> String nest(depth - 1))
         s.append(inner.join())
         return s
@@ -149,9 +149,9 @@ fn main() uses io, threads {
     print(snapshots())
     print(misc())
     print(nest(12))
-    var many: List[Task[String]] = List.new()
+    let mut many: List[Task[String]] = List.new()
     for i in 0..200 { many.push(spawn(|| -> String String.from_int(i as i64))) }
-    var total = 0
+    let mut total = 0
     for t in many { total = total + t.join().len() as i32 }
     print(total)
 }

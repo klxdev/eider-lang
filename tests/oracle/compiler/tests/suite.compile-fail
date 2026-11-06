@@ -1,6 +1,6 @@
 compile-fail tests (compiler/tests/suite/fail)
   FAIL compiles.ei                  compiled, expected E0303 at 3:3
-  ok   fix_after_unicode.ei         E0304 at 3:50 (fix compiles)
+  ok   fix_after_unicode.ei         E0304 at 3:54 (fix compiles)
   ok   fix_next.ei                  E0303 at 4:3 (fix resolves it; next: E0110)
   FAIL no_header.ei                 missing `// expect: CODE LINE:COL` header
   FAIL wrong_code.ei                expected E0110 at 3:3, got E0303 at 4:3: cannot assign to `n`: it is not mutable

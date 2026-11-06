@@ -76,14 +76,14 @@ import std.math
 import std.sort
 
 fn main() uses io {
-    var xs: List[f64] = List.new()
+    let mut xs: List[f64] = List.new()
     xs.push(2.5)
     xs.push(0.0 / 0.0)
     xs.push(-1.0)
     xs.push(7.0)
     let sorted = sort.sort_by(xs, |a: f64, b: f64| -> Ordering a.total_cmp(b))
     print(sorted)
-    var best = xs[0]
+    let mut best = xs[0].copy()
     for x in xs { best = best.max(x) }
     print(best)
 }

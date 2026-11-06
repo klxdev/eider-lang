@@ -259,13 +259,11 @@ pub fn node(inout out: List[u8], p: parse.P, id: u32, depth: u32) {
         }
         ast.SLet => {
             sym(inout out, p, "name", n.a)
-            flag(inout out, "mut", n.d == 1)
             flag(inout out, "let_mut", n.d == 2)
             opt(inout out, p, "type", n.b, d)
             child(inout out, p, "init", n.c, d)
         }
         ast.SLetPat => {
-            flag(inout out, "mut", n.d == 1)
             flag(inout out, "let_mut", n.d == 2)
             child(inout out, p, "pat", n.a, d)
             child(inout out, p, "init", n.c, d)

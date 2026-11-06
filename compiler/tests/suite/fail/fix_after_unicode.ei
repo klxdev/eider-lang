@@ -1,3 +1,3 @@
-// expect: E0304 3:50
+// expect: E0304 3:54
 fn bump(inout n: i32) { n += 1 }
-fn main() uses io { var n = 1; print("éü"); bump(n) }
+fn main() uses io { let mut n = 1; print("éü"); bump(n) }

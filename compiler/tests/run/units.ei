@@ -42,7 +42,7 @@ fn main() uses io {
     print(name(both(1, 2)))    // ok
     early(0)
     early(5)                   // 5
-    var xs: List[i32] = List.new()
+    let mut xs: List[i32] = List.new()
     xs.push(4)
     match found(xs, 4) {
         Some(()) => print("found")   // found

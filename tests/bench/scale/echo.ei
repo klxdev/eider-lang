@@ -17,7 +17,7 @@ import std.time
 fn number(name: str, dflt: i64) -> i64 uses io {
     match env.get(sys.lit(name)) {
         Some(v) => {
-            var n: i64 = 0
+            let mut n: i64 = 0
             for b in v { n = n * 10 + (b - 48) as i64 }
             n
         }
@@ -26,8 +26,8 @@ fn number(name: str, dflt: i64) -> i64 uses io {
 }
 
 fn serve_conn(raw: i32) -> i64 uses io, clock {
-    var echoed: i64 = 0
-    var going = true
+    let mut echoed: i64 = 0
+    let mut going = true
     while going {
         match fd.read_by(raw, 4096, time.after_ms(30000)) {
             Ok(Some(b)) => {
@@ -49,7 +49,7 @@ fn serve_conn(raw: i32) -> i64 uses io, clock {
 }
 
 fn accept_loop(l: i32, n: i64) -> i64 uses io, net, clock, threads {
-    var served: List[Task[i64]] = List.new()
+    let mut served: List[Task[i64]] = List.new()
     for i in 0..n {
         match stream.accept_by(l, time.after_ms(30000)) {
             Ok(c) => {
@@ -59,7 +59,7 @@ fn accept_loop(l: i32, n: i64) -> i64 uses io, net, clock, threads {
             Err(e) => {}
         }
     }
-    var total: i64 = 0
+    let mut total: i64 = 0
     for t in served { total += t.join() }
     total
 }
@@ -68,7 +68,7 @@ fn client(a: net.Addr, rounds: i64, ready: Chan[i64], go: Chan[i64]) -> i64 uses
     let msg = sys.lit("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")
     match stream.connect_by(a, time.after_ms(30000)) {
         Ok(s) => {
-            var ok: i64 = 0
+            let mut ok: i64 = 0
             ready.send(1)
             let g = go.recv()
             for r in 0..rounds {
@@ -76,7 +76,7 @@ fn client(a: net.Addr, rounds: i64, ready: Chan[i64], go: Chan[i64]) -> i64 uses
                     Ok(w) => {}
                     Err(e) => { return ok }
                 }
-                var got: usize = 0
+                let mut got: usize = 0
                 while got < msg.len() {
                     match fd.read_by(s.fd, 4096, time.after_ms(30000)) {
                         Ok(Some(b)) => {
@@ -115,20 +115,20 @@ fn main() uses io, net, clock, threads {
     let server = spawn(|| -> i64 accept_loop(l, conns))
     let ready: Chan[i64] = Chan.new()
     let go: Chan[i64] = Chan.new()
-    var cs: List[Task[i64]] = List.new()
+    let mut cs: List[Task[i64]] = List.new()
     let tc = time.mono_ns()
     for i in 0..conns {
         let r = ready
         let g = go
         cs.push(spawn(|| -> i64 client(a, rounds, r, g)))
     }
-    var up: i64 = 0
+    let mut up: i64 = 0
     for i in 0..conns { up += ready.recv().unwrap() }
     let t0 = time.mono_ns()
     let cms = (t0 - tc) / 1000000
     print("{up} connections established in {cms} ms")
     go.close()
-    var trips: i64 = 0
+    let mut trips: i64 = 0
     for t in cs { trips += t.join() }
     let t1 = time.mono_ns()
     let echoed = server.join()

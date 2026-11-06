@@ -3,18 +3,18 @@
 // copy-on-write makes a copy O(1) and copies only the snapshots that change.
 
 fn total(l: List[String]) -> usize {
-    var n: usize = 0
+    let mut n: usize = 0
     for s in l { n += s.len() }
     n
 }
 
 fn main() uses io {
-    var base: List[String] = List.new()
+    let mut base: List[String] = List.new()
     for i in 0..3000 { base.push(String.from_int(i as i64)) }
-    var snaps: List[List[String]] = List.new()
-    var acc: usize = 0
+    let mut snaps: List[List[String]] = List.new()
+    let mut acc: usize = 0
     for r in 0..3000 {
-        var c = base
+        let mut c = base.copy()
         if r % 500 == 0 { c[0].push_str("changed") }
         acc += c.len()
         snaps.push(c)

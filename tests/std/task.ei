@@ -60,7 +60,7 @@ fn main() uses io, clock, threads {
     // a select between a channel and a token
     let jobs: chan.Channel[i64] = chan.bounded(4)
     let stop = root.child()
-    var cases: List[chan.Case[i64]] = List.new()
+    let mut cases: List[chan.Case[i64]] = List.new()
     cases.push(jobs.recv_case(|o: Option[i64]| -> i64 { o.unwrap_or(-2) }))
     cases.push(stop.cancel_case(-1 as i64))
     jobs.try_send(5)
@@ -69,7 +69,7 @@ fn main() uses io, clock, threads {
     print(chan.select(cases, time.never()).unwrap())
 
     // a group on threads: every result, in start order
-    var g: task.Group[i64] = task.group(root)
+    let mut g: task.Group[i64] = task.group(root)
     for i in 0..8 {
         let k = i as i64
         g.spawn(|t: task.Token| -> Result[i64, String] {
@@ -86,7 +86,7 @@ fn main() uses io, clock, threads {
     // cancelled doesn't run at all, so under load the count would depend on thread start-up)
     let finished = atomic.new(0)
     let nstarted = atomic.new(0)
-    var h: task.Group[i64] = task.group(root)
+    let mut h: task.Group[i64] = task.group(root)
     for i in 0..6 {
         let k = i as i64
         let fin = finished
@@ -115,7 +115,7 @@ fn main() uses io, clock, threads {
 
     // a group's deadline reaches its children
     let t1 = time.mono_ns()
-    var d: task.Group[i64] = task.group_until(root, time.after_ms(30))
+    let mut d: task.Group[i64] = task.group_until(root, time.after_ms(30))
     for i in 0..3 {
         d.spawn(|t: task.Token| -> Result[i64, String] {
             while !t.is_cancelled() { time.sleep_ms(1) }
@@ -131,7 +131,7 @@ fn main() uses io, clock, threads {
 
     // cancelling the parent reaches a running group
     let p = root.child()
-    var pg: task.Group[i64] = task.group(p)
+    let mut pg: task.Group[i64] = task.group(p)
     pg.spawn(|t: task.Token| -> Result[i64, String] {
         t.wait(time.after_ms(10000))
         t.check()?
@@ -142,7 +142,7 @@ fn main() uses io, clock, threads {
     print(err_of(pg.wait()))
     // a group made under a cancelled parent: its children don't run
     let ran = atomic.new(0)
-    var late: task.Group[i64] = task.group(p)
+    let mut late: task.Group[i64] = task.group(p)
     let rr = ran
     late.spawn(|t: task.Token| -> Result[i64, String] {
         rr.add(1, atomic.SeqCst)
@@ -155,15 +155,15 @@ fn main() uses io, clock, threads {
     // the pool: jobs, futures, a group on the pool
     let pool = task.pool(4, 16)
     print(pool.size())
-    var fs: List[task.Future[i64]] = List.new()
+    let mut fs: List[task.Future[i64]] = List.new()
     for i in 0..20 {
         let k = i as i64
         fs.push(pool.run(|| -> i64 { k * 10 }, time.never()).unwrap())
     }
-    var sum: i64 = 0
+    let mut sum: i64 = 0
     for f in fs { sum += f.get(time.never()).unwrap() }
     print(sum)
-    var pgr: task.Group[i64] = task.group(root)
+    let mut pgr: task.Group[i64] = task.group(root)
     for i in 0..10 {
         let k = i as i64
         pgr.spawn_on(pool, |t: task.Token| -> Result[i64, String] { Ok(k + 100) })

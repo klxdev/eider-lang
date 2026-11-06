@@ -1,7 +1,7 @@
 // expect: E0308 7:13
 type Job = | Pending(String) | Done
 fn main() uses io {
-    var j = Pending(String.from("x"))
+    let mut j = Pending(String.from("x"))
     match j {
         Pending(name) => {
             j = Done

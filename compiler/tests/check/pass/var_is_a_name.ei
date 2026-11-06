@@ -1,0 +1,10 @@
+// `var` is an ordinary name since 0.7.5 (it was a keyword): a variable, a function, a field.
+type Cell = { var: i32 }
+
+fn var(x: i32) -> i32 { x + 1 }
+
+fn main() uses io {
+    let c = Cell(3)
+    let n = var(c.var)
+    print(n)
+}

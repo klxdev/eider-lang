@@ -71,8 +71,8 @@ fn main() uses io {
 
 `let mut x = e` where `e` is a place binds `x` as a **mutable alias** of the place: writes
 through `x` change the place, and writes to the place are seen through `x`. The place's root
-variable must itself be writable: a `let mut` binding, an `inout` parameter, a mutable alias
-(or a deprecated `var`). An alias can't add write access, so a `let mut` of a read-only
+variable must itself be writable: a `let mut` binding, an `inout` parameter, a mutable alias).
+An alias can't add write access, so a `let mut` of a read-only
 place (a parameter, a `let` binding, a `for` variable, a captured variable) is
 [E0307](errors.md#e0307); the fix is to take a `.copy()`.
 
@@ -468,13 +468,11 @@ root
 top
 ```
 
-## `var` (deprecated)
+## An independent copy
 
-`var x = e` declares a mutable variable that always owns its own copy of the value, even when
-`e` is a place: it is the meaning `let` had before references. It still works, without a
-warning. `eiderc migrate-var <file>` rewrites `var x = place` as `let mut x = place.copy()`
-and `var x = fresh` as `let mut x = fresh`, leaving the few cases where `.copy()` would mean
-something else (a Mutex inside, an own `Copy` or `Drop`, generic bodies).
+A `let mut` of a place is an alias, so a variable that must not change the place takes a copy:
+`let mut v = orders[0].copy()`. Eider has no other spelling for a mutable variable that owns
+a copy (`var` was removed in 0.7.5).
 
 ```eider
 type Order = { qty: i32 }
@@ -482,7 +480,7 @@ type Order = { qty: i32 }
 fn main() uses io {
     let mut orders: List[Order] = List.new()
     orders.push(Order(1))
-    var v = orders[0]          // an independent copy
+    let mut v = orders[0].copy()   // an independent copy
     v.qty = 1000
     print(orders[0].qty)
 }

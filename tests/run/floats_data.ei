@@ -21,7 +21,7 @@ fn find(xs: List[f64], t: f64) -> Option[usize] {
 }
 
 fn main() uses io, threads {
-    var m: Map[String, f64] = Map.new()
+    let mut m: Map[String, f64] = Map.new()
     m.insert(String.from("a"), 1.5)
     m.insert(String.from("b"), -0.25)
     print(m.get(String.from("a")))
@@ -33,12 +33,12 @@ fn main() uses io, threads {
     print(Rect(1.0, 2.0))
     let (a, b) = pair()
     print(a + (b as f64))
-    var acc = Acc(0.0, 0, List.new())
+    let mut acc = Acc(0.0, 0, List.new())
     acc.total += 2.5
     acc.count += 1
     acc.items.push(1.5)
     print(acc)
-    var l: List[f64] = List.new()
+    let mut l: List[f64] = List.new()
     l.push(1.0)
     l.push(3.0)
     print(find(l, 3.0))
@@ -48,10 +48,10 @@ fn main() uses io, threads {
     let t = spawn(|| -> f64 { 2.0 * 21.0 })
     print(t.join())
     let arr: [f32; 3] = [1.5, 2.5, 3.5]
-    var s: f32 = 0.0
+    let mut s: f32 = 0.0
     for v in arr { s += v }
     print(s)
-    var fs: List[f64] = List.new()
+    let mut fs: List[f64] = List.new()
     fs.push(0.5)
     fs.push(0.25)
     print(fs.map(|x: f64| -> f64 { x * 2.0 }))

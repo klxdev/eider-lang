@@ -12,7 +12,7 @@ fn area(s: Shape) -> u32 {
 
 fn pick(c: bool, n: i64) -> i64 {
     let x = if c { n } else { -n }
-    var y: i64 = 0
+    let mut y: i64 = 0
     y = match x {
         0 => 1
         _ => x
@@ -25,7 +25,7 @@ fn pick(c: bool, n: i64) -> i64 {
 }
 
 fn sum(xs: [u8; 4]) -> u32 {
-    var t: u32 = 0
+    let mut t: u32 = 0
     for x in xs { t += x as u32 }
     t
 }

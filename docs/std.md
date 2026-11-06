@@ -306,6 +306,7 @@ String is an `error.Error`, "Errors and std/error" above).
 - After P0.2 (lightweight tasks): `Fd` waits park the task instead of the thread; the API
   stays.
 - `dyn Error` causes (P0.7), so a Failure can keep a stream.Error's kind.
-- `var` is gone from std except six shares of generic or Copy-less values out of read-only
-  parameters (decision C100), which wait for a way to copy those (a `Copy`-free share).
+- `var` is gone from std (and the language, decision C897): the last one, std/sort's
+  `var a = xs`, is a List built by pushing the elements, which needs neither a `Copy` bound
+  nor a mutable alias of a read-only parameter.
 - ~~Seeded SipHash Map (C6)~~ (done, C805: unspecified order, `Map.deterministic()`), ~~RFC 3339 and wall-clock types~~ (done, C806), `BTreeMap`, RwLock/Once, logging and config (roadmap layer/std).

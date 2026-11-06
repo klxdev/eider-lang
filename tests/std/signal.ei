@@ -39,7 +39,7 @@ fn run() -> Result[bool, String] uses io, fs, net, ffi {
     }
     // a child's exit
     signal.watch(signal.CHLD)?
-    var argv: List[List[u8]] = List.new()
+    let mut argv: List[List[u8]] = List.new()
     argv.push(sys.lit("sh"))
     argv.push(sys.lit("-c"))
     argv.push(sys.lit("exit 4"))
@@ -66,8 +66,8 @@ fn run() -> Result[bool, String] uses io, fs, net, ffi {
     }
     // graceful shutdown: serve until TERM arrives
     signal.watch(signal.TERM)?
-    var served = 0
-    var running = true
+    let mut served = 0
+    let mut running = true
     while running {
         let ev = poll.wait(p, 4, 0)?
         if ev.len() > 0 {

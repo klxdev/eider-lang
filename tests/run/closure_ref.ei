@@ -14,20 +14,20 @@ fn total(inout ys: List[i32], bump: i32) -> i32 {
 
 fn main() uses io {
     let base = 10
-    var xs: List[i32] = List.new()
+    let mut xs: List[i32] = List.new()
     for i in 1..6 { xs.push(i) }
     print(xs.map(|x| x + base).sum())
     print(xs.fold(0, |a, x| a + x * base))
     print(xs.filter(|x| x > base / 5).len())
 
     // strings, lists and records are used in place
-    var words: List[String] = List.new()
+    let mut words: List[String] = List.new()
     words.push(String.from("a"))
     words.push(String.from("bbb"))
     let suffix = String.from("-end")
     let lens = words.map(|w| w.len() + suffix.len())
     print(lens.sum())
-    var ps: List[P] = List.new()
+    let mut ps: List[P] = List.new()
     ps.push(P(String.from("x"), 1))
     ps.push(P(String.from("yy"), 2))
     let tags = xs.map(|x| ps.len() as i32 + x)
@@ -50,14 +50,14 @@ fn main() uses io {
     print(nested.sum())
 
     // an `inout` parameter and a variable of the enclosing closure
-    var zs: List[i32] = List.new()
+    let mut zs: List[i32] = List.new()
     zs.push(1)
     print(total(inout zs, 3))
     let outer = xs.map(|x| xs.map(|y| x * y + base).sum())
     print(outer.sum())
 
     // stored or returned closures keep the value they captured
-    var k = 1
+    let mut k = 1
     let add_k = adder(k)
     k = 100
     print(add_k(1))

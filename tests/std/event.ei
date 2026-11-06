@@ -10,7 +10,7 @@ import std.poll
 fn name(e: event.Event, a: i64, b: i64, c: i64) -> String {
     match e {
         event.Ready(t, ev) => {
-            var s = String.from("ready ")
+            let mut s = String.from("ready ")
             s.append(String.from_int(t))
             if ev.readable { s.push_str(" r") }
             s
@@ -26,7 +26,7 @@ fn name(e: event.Event, a: i64, b: i64, c: i64) -> String {
 }
 
 fn main() uses io, clock, threads {
-    var lp = event.new().unwrap()
+    let mut lp = event.new().unwrap()
     print(lp.next_timer().is_never())
     let t0 = time.mono_ns()
     let a = lp.timer_after(time.millis(30))
@@ -37,8 +37,8 @@ fn main() uses io, clock, threads {
     print(lp.cancel_timer(x))
     print(lp.cancel_timer(x))
     print(lp.timers())
-    var fired = 0
-    var early = false
+    let mut fired = 0
+    let mut early = false
     while fired < 3 {
         for e in lp.poll(time.after_ms(5000)).unwrap() {
             let s = name(e, a, b, c)
@@ -92,22 +92,22 @@ fn main() uses io, clock, threads {
     lp.watch(p.r, poll.READ, 9).unwrap()
     for e in lp.poll(time.after_ms(5000)).unwrap() { print(name(e, a, b, tm)) }
     lp.unwatch(p.r).unwrap()
-    var ids: List[i64] = List.new()
+    let mut ids: List[i64] = List.new()
     let base = time.after_ms(5)
     for i in 0..500 {
         // deadlines in a scrambled order
         let k = (i * 7919) % 500
         ids.push(lp.timer_at(time.at_mono_ns(base.mono_ns() + k as i64 * 10000)))
     }
-    var last: i64 = -1
-    var in_order = true
-    var n = 0
+    let mut last: i64 = -1
+    let mut in_order = true
+    let mut n = 0
     while n < 500 {
         for e in lp.poll(time.after_ms(5000)).unwrap() {
             match e {
                 event.Timer(id) => {
                     // ids[i] is due at k(i) * 10 us; ordered by due time
-                    var i: usize = 0
+                    let mut i: usize = 0
                     while ids[i] != id { i += 1 }
                     let k = ((i * 7919) % 500) as i64
                     if k < last { in_order = false }

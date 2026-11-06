@@ -63,7 +63,7 @@ fn many_waiters(n: i64) -> bool uses io, threads, clock {
     let p = fd.pipe().unwrap()
     let r = p.r
     let root = task.root()
-    var ts: List[Task[i64]] = List.new()
+    let mut ts: List[Task[i64]] = List.new()
     for i in 0..n {
         let kid = root.child()
         ts.push(spawn(|| -> i64 {
@@ -76,7 +76,7 @@ fn many_waiters(n: i64) -> bool uses io, threads, clock {
     time.sleep_ms(100)
     let t0 = time.mono_ms()
     root.cancel()
-    var cancelled: i64 = 0
+    let mut cancelled: i64 = 0
     for t in ts { cancelled += t.join() }
     let c1 = fd.close(p.r)
     let c2 = fd.close(p.w)
@@ -89,7 +89,7 @@ fn streams() uses io, threads, clock {
     let r = p.r
     let tok = task.root()
     let reader = spawn(|| -> String {
-        var s = stream.Fd(r)
+        let mut s = stream.Fd(r)
         match s.read_tok(16, tok) {
             Ok(b) => "read {b.len()}"
             Err(e) => "{e.kind}: {e.message}"
@@ -100,13 +100,13 @@ fn streams() uses io, threads, clock {
     print(reader.join())
     // the same descriptor still reads what arrives, with another token
     let w = fd.write(p.w, sys.lit("abc"))
-    var s = stream.Fd(r)
+    let mut s = stream.Fd(r)
     match s.read_tok(16, task.root()) {
         Ok(b) => print("read {b.len()}")
         Err(e) => print("{e.kind}")
     }
     // a token that expired: TimedOut
-    var s2 = stream.Fd(r)
+    let mut s2 = stream.Fd(r)
     match s2.read_tok(16, task.root_until(time.after_ms(30))) {
         Ok(b) => print("read {b.len()}")
         Err(e) => print("{e.kind}")
@@ -118,9 +118,9 @@ fn streams() uses io, threads, clock {
 /// A byte arrives while the token is cancelled: either result is whole, and the byte is
 /// still there when the wait said Cancelled.
 fn race(rounds: i64) -> i64 uses io, threads, clock {
-    var bad: i64 = 0
-    var ready: i64 = 0
-    var cancelled: i64 = 0
+    let mut bad: i64 = 0
+    let mut ready: i64 = 0
+    let mut cancelled: i64 = 0
     for i in 0..rounds {
         let p = fd.pipe().unwrap()
         let r = p.r

@@ -5,14 +5,14 @@
 type Item = { name: String, parts: List[String] }
 
 fn item(n: i64) -> Item {
-    var ps: List[String] = List.new()
+    let mut ps: List[String] = List.new()
     ps.push(String.from_int(n))
     ps.push(String.from("part"))
     Item(String.from_int(n * 10), ps)
 }
 
 fn find(limit: i64, want: i64) -> Option[Item] uses io {
-    var i: i64 = 0
+    let mut i: i64 = 0
     while i < limit {
         let it = item(i)
         let other = item(i + 100)
@@ -34,7 +34,7 @@ fn find(limit: i64, want: i64) -> Option[Item] uses io {
 fn parse(s: String) -> Result[i64, String] {
     if s == String.from("one") { return Ok(1) }
     if s == String.from("two") { return Ok(2) }
-    var e = String.from("bad: ")
+    let mut e = String.from("bad: ")
     e.append(s)
     Err(e)
 }
@@ -64,7 +64,7 @@ fn classify(n: i64) -> String {
         }
         1 => String.from("one")
         _ => {
-            var s = String.from("many:")
+            let mut s = String.from("many:")
             s.append(label)
             s
         }
@@ -72,11 +72,11 @@ fn classify(n: i64) -> String {
 }
 
 fn nested(n: i64) -> i64 {
-    var total: i64 = 0
-    var i: i64 = 0
+    let mut total: i64 = 0
+    let mut i: i64 = 0
     while true {
         let outer = item(i)
-        var j: i64 = 0
+        let mut j: i64 = 0
         while true {
             let inner = item(j)
             if j == 2 { break }
@@ -118,7 +118,7 @@ fn main() uses io {
     print(classify(5))
     print(nested(1))
     print(nested(9))
-    var k = 0
+    let mut k = 0
     for w in [String.from("a"), String.from("bb"), String.from("ccc")] {
         k += 1
         if w.len() == 1 { continue }
@@ -126,7 +126,7 @@ fn main() uses io {
         print(w)
     }
     print(k)
-    var acc: List[String] = List.new()
+    let mut acc: List[String] = List.new()
     for i in 0..20 {
         let s = String.from_int(i as i64)
         if i % 5 == 0 { acc.push(s) }

@@ -39,7 +39,7 @@ fn weight(s: Shape) -> i64 {
             (dx * dx + dy * dy) as i64
         }
         Poly(pts, c) => {
-            var t: i64 = 0
+            let mut t: i64 = 0
             for q in pts { t += q.x as i64 }
             match c {
                 Red => t
@@ -65,7 +65,7 @@ fn grade(n: u32) -> Color {
 fn main() uses io {
     let o = Point(0, 0)
     let tri = [Point(1, 2), Point(3, 4), Point(5, 6)]
-    var shapes = [Nothing; 14]
+    let mut shapes = [Nothing; 14]
     shapes[0] = Dot(o)
     shapes[1] = Dot(Point(1, 0))
     shapes[2] = Line(Point(0, 5), Point(7, 0))
@@ -101,7 +101,7 @@ fn main() uses io {
     print(c == Green)
 
     // payload fields read back after copies and updates
-    var copy = shapes[5]
+    let mut copy = shapes[5].copy()
     shapes[5] = Nothing
     print(describe(copy))
     copy = Dot(Point(-3, 3))

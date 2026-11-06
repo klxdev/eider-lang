@@ -7,7 +7,7 @@ fn main() uses io {
     print(p.1)
     print(x)
     if y { print(1) }
-    var q: (u8, (i32, i32)) = (1, (2, 3))
+    let mut q: (u8, (i32, i32)) = (1, (2, 3))
     q.1.0 = 5
     match q {
         (1, (a, _)) => print(a)

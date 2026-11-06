@@ -3,11 +3,11 @@
 // compile). eiderc deliberately evaluates it like any other temporary; hand-written .out.
 fn main() uses io {
     let log = Mutex.new(String.from("abc"))
-    var out = String.from("")
+    let mut out = String.from("")
     out.append(String.from_int(log.get().len() as i64))
     print(out)
     let l: List[String] = List.new()
-    var o2 = String.from("")
+    let mut o2 = String.from("")
     o2.append(String.from_int(l.len() as i64))
     print(o2)
 }

@@ -1,5 +1,5 @@
 // mode: build
 fn mk() -> String { String.from("a") }
-fn main() uses io { var i = 0
+fn main() uses io { let mut i = 0
     while mk() == String.from("a") && i < 3 { i += 1 }
     print(i) }

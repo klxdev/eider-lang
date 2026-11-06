@@ -1,5 +1,5 @@
 // mode: build
 fn get[K: Hash + Eq, V](m: Map[K, V], k: K) -> Option[V] { m.get(k) }
-fn main() uses io { var m: Map[u32, bool] = Map.new()
+fn main() uses io { let mut m: Map[u32, bool] = Map.new()
     m.insert(1, true)
     print(get(m, 1).unwrap()) }

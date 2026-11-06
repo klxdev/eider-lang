@@ -55,7 +55,7 @@ fn swap_first(inout h: Hand, inout other: Hand) {
 }
 
 fn total(h: Hand) -> u32 {
-    var sum: u32 = 0
+    let mut sum: u32 = 0
     for c in h.cards {
         sum += c.rank as u32
     }
@@ -63,8 +63,8 @@ fn total(h: Hand) -> u32 {
 }
 
 fn count_down(n: u32) -> u32 {
-    var i = n
-    var steps: u32 = 0
+    let mut i = n.copy()
+    let mut steps: u32 = 0
     while true {
         if i == 0 { break }
         i -= 1
@@ -107,11 +107,11 @@ fn widen(a: u8, b: u32, c: i64) -> u64 {
 }
 
 fn main() uses io, clock {
-    var card = Card(1, Hearts)
+    let mut card = Card(1, Hearts)
     bump(inout card)
     let hand = Hand([card, Card(5, Spades), Card(7, Suit.Hearts)], NAME)
-    var a = hand
-    var b = Hand([Card(2, Spades); 3], "b")
+    let mut a = hand.copy()
+    let mut b = Hand([Card(2, Spades); 3], "b")
     swap_first(inout a, inout b)
     print(total(a))
     print(area(Rect(2, 3)) + area(Dot))
@@ -130,7 +130,7 @@ fn main() uses io, clock {
     let t = now_ms()
     assert t >= 0, "time runs forward"
     let grid = [[0; 2]; 2]
-    var g = grid
+    let mut g = grid.copy()
     g[1][0] = 9
     print(g[1][0] + grid[0][1])
 }

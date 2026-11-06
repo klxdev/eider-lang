@@ -33,7 +33,7 @@ fn main() uses io, threads {
 
     // 8 threads x 5000 increments, three ways
     let n = atomic.new(0)
-    var ts: List[Task[i32]] = List.new()
+    let mut ts: List[Task[i32]] = List.new()
     for i in 0..8 {
         let c = n
         let k = i
@@ -44,8 +44,8 @@ fn main() uses io, threads {
                 } else if k % 3 == 1 {
                     c.update(atomic.AcqRel, |v| v + 1)
                 } else {
-                    var seen = c.load(atomic.Relaxed)
-                    var done = false
+                    let mut seen = c.load(atomic.Relaxed)
+                    let mut done = false
                     while !done {
                         match c.compare_exchange(seen, seen + 1, atomic.SeqCst) {
                             Ok(v) => { done = true }
@@ -64,7 +64,7 @@ fn main() uses io, threads {
     // a ticket counter handing out unique numbers: every number exactly once
     let next = atomic.new(0)
     let seen: Chan[i64] = Chan.new()
-    var ws: List[Task[i32]] = List.new()
+    let mut ws: List[Task[i32]] = List.new()
     for i in 0..4 {
         let nx = next
         let out = seen
@@ -75,10 +75,10 @@ fn main() uses io, threads {
     }
     for t in ws { let z = t.join() }
     seen.close()
-    var marks: List[bool] = List.new()
+    let mut marks: List[bool] = List.new()
     for i in 0..1000 { marks.push(false) }
-    var dups = 0
-    var going = true
+    let mut dups = 0
+    let mut going = true
     while going {
         match seen.recv() {
             Some(v) => {
@@ -88,7 +88,7 @@ fn main() uses io, threads {
             None => { going = false }
         }
     }
-    var all = true
+    let mut all = true
     for m in marks { if !m { all = false } }
     print(all)
     print(dups)
@@ -98,7 +98,7 @@ fn main() uses io, threads {
     let lock = atomic.new(0)
     let inside = atomic.new(0)
     let overlaps = atomic.new(0)
-    var ls: List[Task[i32]] = List.new()
+    let mut ls: List[Task[i32]] = List.new()
     for i in 0..4 {
         let l = lock
         let ins = inside

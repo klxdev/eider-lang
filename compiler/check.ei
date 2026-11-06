@@ -101,7 +101,7 @@ type ConstDef = { key: u64, md: u32, public: bool, ty: u32, has_k: bool, k: fold
 
 /// A local variable in scope. `key` is its name key (pattern bindings can carry a module
 /// prefix, see resolve.ei); (line, col) is where it is declared (E0305) and (dline, dcol)
-/// the `let`/`var` it comes from, for the E0303 fix. (aline, acol) is the declaration the
+/// the `let` it comes from, for the E0303 fix. (aline, acol) is the declaration the
 /// IDE recording names (a closure's captured copy keeps its original's). A reference (C8.6:
 /// a `let` or pattern binding of a place, or a `let mut` / `mut` one) has no storage of its
 /// own: `alias` is the place it names (else NONE), `refid` its RefInfo and `aroot` the key of
@@ -353,7 +353,7 @@ fn no_hint() -> LamHint { LamHint(false, List.new(), NONE, false) }
 // and of name-like expressions (identifiers, fields, calls, method calls). Positions are
 // those of AST nodes: a use is the node's (line, col) in module `m` (`qual`: the node is
 // `alias.Name` and starts at the alias); a declaration is the (line, col) of the node that
-// declares it in module `tm` (an item's name, a parameter, a `let`/`var`/`for` statement, a
+// declares it in module `tm` (an item's name, a parameter, a `let`/`for` statement, a
 // pattern name, a field). Nothing else in the checker reads the recording, and when it is
 // off every note is a test of one bool, so `check`, `build` and the IR are unchanged.
 
@@ -1095,8 +1095,8 @@ fn bind_value(inout c: C, l: u32, ty: u32, place: u32) {
 // place's current value, and becomes a value only where it escapes (stored, returned,
 // captured), through the ordinary `take` clone. Pattern bindings of a place scrutinee are
 // references the same way (`mut x`: an alias). A fresh value (a call, a literal, a
-// constructor, an operation) is owned, as before; `var` keeps making its own copy
-// (deprecated: `eiderc migrate-var` rewrites it, "Migration of var" below).
+// constructor, an operation) is owned, as before. (`var`, which made its own copy, is
+// gone: a syntax error since 0.7.5, decision C897.)
 //
 // The protection rule: while a reference is alive (until its last use, on any path), no
 // write may free, move or reinterpret memory it points into. Every binding (N_DEF), use
@@ -1127,23 +1127,20 @@ type RefInfo = { place: u32, key: u64, line: u32, col: u32, mutable: bool, fix: 
 /// or a resizing builtin (`what`), at (line, col) of module m.
 type WriteInfo = { place: u32, kind: u32, what: List[u8], line: u32, col: u32, m: u32 }
 
-/// The edits that rewrite one `var` (module m) as `let mut` ("Migration of var").
-type VarSite = { m: u32, fixes: List[diag.Fix] }
-
 /// The checker's reference state: every reference and noted write of the program, the IR
 /// functions that have references, the stack of source positions writes are reported at
-/// (the innermost assignment or call being checked), the `var` rewrites, and whether the
+/// (the innermost assignment or call being checked), and whether the
 /// body being checked has a reference (so other bodies note no writes).
 /// With `audit` (`eiderc audit-refs`, "Audit" below), `hits` collects every write that
 /// changes what a live reference sees without invalidating it.
 type Refs = {
-    refs: List[RefInfo], writes: List[WriteInfo], fns: Map[u32, bool], wpos: List[u64], vars: List[VarSite], any: bool,
+    refs: List[RefInfo], writes: List[WriteInfo], fns: Map[u32, bool], wpos: List[u64], any: bool,
     audit: bool, hits: List[diag.Diag],
     /// per noted write: the pointer references live after it that it may move ("C8.54")
     refresh: Map[u32, List[u32]],
 }
 
-fn no_refs() -> Refs { Refs(List.new(), List.new(), Map.new(), List.new(), List.new(), false, false, List.new(), Map.new()) }
+fn no_refs() -> Refs { Refs(List.new(), List.new(), Map.new(), List.new(), false, false, List.new(), Map.new()) }
 
 fn ref_note(inout c: C, kind: u32, i: u32) { ir.emit(inout c.ir, ir.S_NOTE, 0, kind, i, 0, 0, 0) }
 
@@ -1172,7 +1169,7 @@ fn canon(c: C, k: u64) -> u64 {
     v.aroot
 }
 
-/// Whether the variable key k may be written through (a `var`, a `let mut`, an `inout`
+/// Whether the variable key k may be written through (a `let mut`, an `inout`
 /// parameter, a mutable alias).
 fn writable(c: C, k: u64) -> bool {
     let li = lookup(c, k)
@@ -1637,7 +1634,7 @@ fn audit_write(inout c: C, f: u32, wi: WriteInfo, live: List[u32]) {
             None => false
         }
         if !fixed && rf.generic { d.help = s("bind a copy to keep the old meaning: `.copy()`, with a `Copy` bound on the type parameter") }
-        if !fixed && !rf.generic { d.help = s("its type has no Copy: bind it with `var` (deprecated, but a share of the value, as `let` made before C8.6)") }
+        if !fixed && !rf.generic { d.help = s("its type has no Copy: move the value out of a writable place with `take` or `replace`, or keep an index instead of a second binding") }
         d.fix = rf.fix
         c.rf.hits.push(in_file(c, d, wi.m))
     }
@@ -5297,7 +5294,7 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] {
             // fix's `.copy()` makes it)
             let place_init = ref_init(c, n.c)
             let alias_ro = place_init && n.d == 2 && !writable(c, root(c, n.c).key)
-            if place_init && n.d != 1 && !alias_ro { return let_ref(inout c, n, declared) }
+            if place_init && !alias_ro { return let_ref(inout c, n, declared) }
             let kind = if n.d == 0 { ir.L_LET } else { ir.L_VAR }
             let mut fin = declared.copy()
             let mut l: u32 = 0
@@ -5323,7 +5320,6 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] {
             }
             register(inout c, l, fin)
             declare(inout c, local_at(resolve.key(0, n.a), fin, n.d != 0, n.line, n.col, l))?
-            if n.d == 1 { note_var(inout c, n, place_init, fin, List.new()) }
             Ok(types.UNIT)
         }
         ast.SLetPat => let_pat(inout c, n)
@@ -5400,9 +5396,9 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] {
 /// `let PAT = init`.
 fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     let init = nd(c, n.c)
-    // of a place (not `var`): the bindings are references into it ("References")
+    // of a place: the bindings are references into it ("References")
     let place_init = ref_init(c, n.c)
-    let is_ref = place_init && n.d != 1
+    let is_ref = place_init
     let mut vty: u32 = 0
     let mut acc: u32 = 0
     if is_ref {
@@ -5456,7 +5452,7 @@ fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     }
     let rk: u64 = if is_ref { root(c, n.c).key } else { 0 }
     for b in lw.binds {
-        let mutable = n.d == 1 || b.mutable
+        let mutable = b.mutable
         if is_ref {
             if !b.mutable || writable(c, rk) {
                 let fx = copy_fix(c, vty, n.e, n.f)
@@ -5475,7 +5471,6 @@ fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
         bind_value(inout c, l, b.ty, b.place)
         declare(inout c, Local(b.key, b.ty, mutable, false, true, b.line, b.col, l, n.line, n.col, b.line, b.col, NONE, NONE, 0, false))?
     }
-    if n.d == 1 { note_var(inout c, n, place_init, vty, lw.binds) }
     Ok(types.UNIT)
 }
 
@@ -5507,102 +5502,6 @@ fn let_ref(inout c: C, n: ast.Node, declared: u32) -> Result[u32, diag.Diag] {
     let v = new_ref(inout c, key, fin, pv.place, n.d == 2, rk, n.line, n.col, fx)
     declare(inout c, v)?
     Ok(types.UNIT)
-}
-
-// ---- Migration of `var` (docs/compiler.md, "C8.6")
-//
-// `var` is deprecated: `var x = place` is `let mut x = place.copy()` (a `var` makes its own
-// value), `var x = fresh` is `let mut x = fresh`, `var (a, b) = e` is `let (mut a, mut b) = e`
-// (with `.copy()` when e is a place). Every `var` of a body checked with concrete types is
-// recorded with those edits; `eiderc migrate-var` applies them. A `var` of a place whose
-// type lacks Copy, or of a place in a generic body (where `.copy()` may need a bound), is left.
-
-fn note_var(inout c: C, n: ast.Node, place: bool, ty: u32, binds: List[Bind]) {
-    // (in a generic body only a fresh value: `.copy()` of a place could need a bound)
-    if (place && generic_body(c)) || poisoned(c, ty) { return }
-    let mut fx: List[diag.Fix] = List.new()
-    if place {
-        // `.copy()` must make what `var` made: the implicit copy, which shares a Mutex and a
-        // record with its own Drop and never runs an own `copy`
-        let mut seen: Map[u32, bool] = Map.new()
-        if copy_differs(c, ty, inout seen) { return }
-        match copy_fix(c, ty, n.e, n.f) {
-            Some(f) => fx.push(f)
-            None => { return }
-        }
-    }
-    if n.kind == ast.SLet {
-        fx.push(diag.Fix(n.line, n.col, 3, s("let mut")))
-    } else {
-        fx.push(diag.Fix(n.line, n.col, 3, s("let")))
-        for b in binds {
-            if !b.mutable { fx.push(diag.Fix(b.line, b.col, 0, s("mut "))) }
-        }
-    }
-    c.rf.vars.push(VarSite(c.am, fx))
-}
-
-/// Whether `.copy()` of a ty differs from the copy binding and passing make: ty holds a
-/// Mutex (`.copy()` makes a new one), a record with its own Drop (`.copy()` gives it a buffer
-/// of its own) or a type with its own Copy (`.copy()` runs it).
-fn copy_differs(c: C, ty: u32, inout seen: Map[u32, bool]) -> bool {
-    if seen.contains(ty) { return false }
-    seen.insert(ty, true)
-    let t = types.get(c.t, ty)
-    let k = t.kind
-    if k == types.T_MUTEX || k == types.T_REF { return true }
-    if k == types.T_LIST || k == types.T_BOX || k == types.T_ARRAY { return copy_differs(c, t.a, inout seen) }
-    if k == types.T_MAP { return copy_differs(c, t.a, inout seen) || copy_differs(c, t.b, inout seen) }
-    if k == types.T_TUPLE {
-        for x in types.elems(c.t, ty) {
-            if copy_differs(c, x, inout seen) { return true }
-        }
-        return false
-    }
-    if k != types.T_RECORD && k != types.T_ENUM { return false }
-    if custom(c, TR_COPY, ty) || has_drop(c, ty) { return true }
-    let d = c.t.defs[t.a as usize]
-    if d.is_enum {
-        for i in 0..d.len {
-            let v = types.variant(c.t, d, i)
-            for j in 0..v.flen {
-                if copy_differs(c, types.field(c.t, v.fstart, j).ty, inout seen) { return true }
-            }
-        }
-        return false
-    }
-    for j in 0..d.len {
-        if copy_differs(c, types.field(c.t, d.start, j).ty, inout seen) { return true }
-    }
-    false
-}
-
-/// The edits that rewrite the `var`s of module m (each edit once, last in the file first, so
-/// they can be applied in order).
-pub fn var_fixes(c: C, m: u32) -> List[diag.Fix] {
-    let mut all: List[diag.Fix] = List.new()
-    for v in c.rf.vars {
-        if v.m != m { continue }
-        for f in v.fixes {
-            let mut dup = false
-            for g in all {
-                if g.line == f.line && g.col == f.col { dup = true }
-            }
-            if !dup { all.push(f) }
-        }
-    }
-    // insertion sort, by position, descending
-    let mut out: List[diag.Fix] = List.new()
-    for f in all {
-        let mut i: usize = 0
-        while i < out.len() && (out[i].line > f.line || (out[i].line == f.line && out[i].col > f.col)) { i += 1 }
-        let mut next: List[diag.Fix] = List.new()
-        for j in 0..i { next.push(out[j]) }
-        next.push(f)
-        for j in i..out.len() { next.push(out[j]) }
-        out = next
-    }
-    out
 }
 
 /// A loop of statement n begins (its frames from `base`): its label, if any, must not be

@@ -38,12 +38,12 @@ fn main() uses io, clock, threads {
         first(xs, 4)
     }, time.never()).unwrap()
     print(bad2.get(time.never()).is_none())
-    var futs: List[task.Future[i64]] = List.new()
+    let mut futs: List[task.Future[i64]] = List.new()
     for i in 0..10 {
         let k = i as i64
         futs.push(pool.run(|| -> i64 { k + 1 }, time.never()).unwrap())
     }
-    var sum: i64 = 0
+    let mut sum: i64 = 0
     for f in futs { sum += f.get(time.never()).unwrap() }
     print(sum)
     // a job without a future
@@ -51,7 +51,7 @@ fn main() uses io, clock, threads {
     let tail = pool.run(|| -> i64 { 1 }, time.never()).unwrap()
     print(tail.get(time.never()).unwrap())
     // the worker records the trap after its catch, and `tail` may run on the other worker first
-    var waited = 0
+    let mut waited = 0
     while pool.traps().len() == 0 && waited < 2000 {
         time.sleep_ms(5)
         waited += 1
@@ -62,7 +62,7 @@ fn main() uses io, clock, threads {
     pool.shutdown()
 
     // a group: a child that traps fails the group and cancels the others
-    var g: task.Group[i64] = task.group(task.root())
+    let mut g: task.Group[i64] = task.group(task.root())
     g.spawn(|tk: task.Token| -> Result[i64, String] { Ok(boom(4)) })
     g.spawn(|tk: task.Token| -> Result[i64, String] {
         tk.wait(time.after_ms(2000))

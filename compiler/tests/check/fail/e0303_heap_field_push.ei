@@ -1,5 +1,5 @@
 // expect: E0303 5:5
 type R = { l: List[i32] }
-fn main() { var l: List[i32] = List.new()
+fn main() { let mut l: List[i32] = List.new()
     let r = R(l)
     r.l.push(1) }

@@ -148,7 +148,7 @@ compile_fail "mixed int widths" expect E0401 at 2:12 {
 ```eider
 compile_fail "null literal" expect E0402 at 2:16 {
   fn f() -> Item {
-    var x: Item = null
+    let mut x: Item = null
     return x
   }
 }
@@ -175,7 +175,7 @@ compile_fail "constant overflow" expect E0501 at 1:15 {
 
 compile_fail "comptime overflow" expect E0501 at 4:5 {
   comptime fn f() -> u32 {
-    var n: u32 = 4_000_000_000
+    let mut n: u32 = 4_000_000_000
     n + n
   }
   const X = f()

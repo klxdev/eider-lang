@@ -11,8 +11,9 @@
     type (TName 5:27 name=Job))
   ret (TName 5:35 name=i32)
   body (Block 5:39 end=18:1
-    stmt (SLet 6:5 name=ys mut
-      init (EIdent 6:14 name=xs))
+    stmt (SLet 6:5 name=ys let_mut
+      init (EMethod 6:21 name=copy
+        recv (EIdent 6:18 name=xs)))
     stmt (SLet 7:5 name=a let_mut
       init (EIndex 7:19
         recv (EIdent 7:17 name=ys)
@@ -29,8 +30,9 @@
         elem (EInt 9:26 value=4)))
     stmt (SLet 10:5 name=mut
       init (EInt 10:15 value=5))
-    stmt (SLet 11:5 name=mut2 mut
-      init (EIdent 11:16 name=mut))
+    stmt (SLet 11:5 name=mut2 let_mut
+      init (EMethod 11:24 name=copy
+        recv (EIdent 11:20 name=mut)))
     stmt (SExpr 12:5
       expr (EMatch 12:5 end=15:5
         scrutinee (EMethod 12:13 name=copy

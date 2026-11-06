@@ -16,7 +16,7 @@ fn total(xs: List[dyn Shape]) -> i64 {
   t
 }
 fn main() uses io {
-  var xs: List[dyn Shape] = List.new()
+  let mut xs: List[dyn Shape] = List.new()
   xs.push(Sq(2))
   xs.push(Sq(3) as dyn Shape)
   xs[0].grow(2)

@@ -9,7 +9,7 @@ import std.child
 import std.signal
 
 fn sh(script: str) -> List[List[u8]] uses ffi {
-    var a: List[List[u8]] = List.new()
+    let mut a: List[List[u8]] = List.new()
     a.push(sys.lit("sh"))
     a.push(sys.lit("-c"))
     a.push(sys.lit(script))
@@ -17,7 +17,7 @@ fn sh(script: str) -> List[List[u8]] uses ffi {
 }
 
 fn read_all(f: i32) -> Result[List[u8], String] uses io, ffi {
-    var all: List[u8] = List.new()
+    let mut all: List[u8] = List.new()
     while true {
         let b = fd.read(f, 4096)?
         if b.len() == 0 { break }
@@ -59,7 +59,7 @@ fn run() -> Result[bool, String] uses io, fs, net, ffi {
         Err(m) => print(m)
     }
     // not startable
-    var bad: List[List[u8]] = List.new()
+    let mut bad: List[List[u8]] = List.new()
     bad.push(sys.lit("eider-no-such-program"))
     match child.start(bad, child.INHERIT, child.PIPE, child.PIPE) {
         Ok(_) => print("unexpected")

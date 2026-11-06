@@ -5,13 +5,13 @@
 // pass) checks that no count is touched by two threads. Expected output: cow_threads.out.
 
 fn join_all(l: List[String]) -> String {
-    var s = String.from("")
+    let mut s = String.from("")
     for x in l { s.append(x) }
     s
 }
 
 fn words(n: i32) -> List[String] {
-    var l: List[String] = List.new()
+    let mut l: List[String] = List.new()
     for i in 0..n { l.push(String.from_int(i as i64)) }
     l
 }
@@ -19,23 +19,23 @@ fn words(n: i32) -> List[String] {
 /// Every thread captures a copy of one shared List of Strings and changes its copy.
 fn captures(threads: i32) -> i64 uses threads {
     let base = words(50)
-    var ts: List[Task[i64]] = List.new()
+    let mut ts: List[Task[i64]] = List.new()
     for i in 0..threads {
         let mine = base
         let other = base
         ts.push(spawn(|| -> i64 {
-            var l = mine
+            let mut l = mine.copy()
             for j in 0..100 {
                 l.push(String.from("x"))
                 l[0].push_str("y")
                 let keep = other
-                var k = keep
+                let mut k = keep.copy()
                 k.pop()
             }
             return l.len() as i64 + l[0].len() as i64
         }))
     }
-    var total: i64 = 0
+    let mut total: i64 = 0
     for t in ts { total += t.join() }
     total + base.len() as i64 + base[0].len() as i64
 }
@@ -45,16 +45,16 @@ fn captures(threads: i32) -> i64 uses threads {
 fn mutex(threads: i32) -> String uses threads {
     let seed = words(10)
     let m = Mutex.new(seed)
-    var ts: List[Task[()]] = List.new()
+    let mut ts: List[Task[()]] = List.new()
     for i in 0..threads {
         let mm = m
         let extra = seed
         ts.push(spawn(|| -> () {
             for j in 0..50 {
-                var got = mm.get()
+                let mut got = mm.get()
                 got[0].push_str("g")
                 mm.update(|l: List[String]| -> List[String] {
-                    var n = l
+                    let mut n = l.copy()
                     n.push(String.from("u"))
                     if n.len() > 40 { return extra }
                     return n
@@ -64,9 +64,9 @@ fn mutex(threads: i32) -> String uses threads {
         }))
     }
     for t in ts { t.join() }
-    var after = m.get()
+    let mut after = m.get()
     after.push(String.from("end"))
-    var s = join_all(seed)
+    let mut s = join_all(seed)
     s.push_str(" ")
     s.append(String.from_int(seed.len() as i64))
     s.push_str(" ")
@@ -78,12 +78,12 @@ fn mutex(threads: i32) -> String uses threads {
 fn channel(producers: i32) -> i64 uses threads {
     let c: Chan[List[String]] = Chan.new()
     let shared = words(20)
-    var ts: List[Task[()]] = List.new()
+    let mut ts: List[Task[()]] = List.new()
     for i in 0..producers {
         let cc = c
         let src = shared
         ts.push(spawn(|| -> () {
-            var mine = src
+            let mut mine = src.copy()
             for j in 0..100 {
                 cc.send(mine)
                 mine[0].push_str("s")
@@ -93,13 +93,13 @@ fn channel(producers: i32) -> i64 uses threads {
     }
     let r = c
     let consumer = spawn(|| -> i64 {
-        var n: i64 = 0
-        var seen: List[List[String]] = List.new()
-        var k = 0
+        let mut n: i64 = 0
+        let mut seen: List[List[String]] = List.new()
+        let mut k = 0
         while k < producers * 100 {
             match r.recv() {
                 Some(l) => {
-                    var x = l
+                    let mut x = l.copy()
                     x[1].push_str("r")
                     n += x.len() as i64
                     seen.push(l)
@@ -121,21 +121,21 @@ fn channel(producers: i32) -> i64 uses threads {
 fn joins(threads: i32) -> i64 uses threads {
     let w = words(30)
     let task = spawn(|| -> List[String] {
-        var l = w
+        let mut l = w.copy()
         l.push(String.from("done"))
         return l
     })
-    var ts: List[Task[i64]] = List.new()
+    let mut ts: List[Task[i64]] = List.new()
     for i in 0..threads {
         let tt = task
         ts.push(spawn(|| -> i64 {
-            var l = tt.join()
+            let mut l = tt.join()
             l[0].push_str("j")
             l.push(String.from("more"))
             return l.len() as i64 + l[0].len() as i64
         }))
     }
-    var total: i64 = 0
+    let mut total: i64 = 0
     for t in ts { total += t.join() }
     let last = task.join()
     total + last.len() as i64 + last[0].len() as i64

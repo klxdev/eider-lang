@@ -9,7 +9,7 @@ trait Describe {
 impl String {
     fn twice(self) -> usize { self.len() * 2 }
     fn shout(self) -> String {
-        var s = self
+        let mut s = self.copy()
         s.push_str("!")
         s
     }
@@ -43,7 +43,7 @@ impl Box[u8] {
 
 impl Describe for Mutex[i32] {
     fn describe(self) -> String {
-        var s = String.from("mutex ")
+        let mut s = String.from("mutex ")
         s.append(String.from_int(self.get() as i64))
         s
     }
@@ -51,7 +51,7 @@ impl Describe for Mutex[i32] {
 
 impl Describe for String {
     fn describe(self) -> String {
-        var s = String.from("string ")
+        let mut s = String.from("string ")
         s.append(self)
         s
     }
@@ -71,15 +71,15 @@ fn main() uses io {
     let x: i32 = 4
     print(x.dbl())            // 8
     print(true.flip())        // false
-    var l: List[u32] = List.new()
+    let mut l: List[u32] = List.new()
     l.push(5)
     l.push(6)
     print(l.second())         // 6
-    var names: List[String] = List.new()
+    let mut names: List[String] = List.new()
     names.push(String.from("a"))
     names.push(String.from("b"))
     print(names.second())     // b
-    var m: Map[i32, i32] = Map.new()
+    let mut m: Map[i32, i32] = Map.new()
     m.insert(1, 2)
     print(m.size2())          // 2
     let b = Box.new(40 as u8)

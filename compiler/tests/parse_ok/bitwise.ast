@@ -28,8 +28,9 @@
           lhs (EIdent 7:13 name=a)
           rhs (EIdent 7:17 name=b))
         rhs (EIdent 7:21 name=x)))
-    stmt (SLet 8:5 name=w mut
-      init (EIdent 8:13 name=a))
+    stmt (SLet 8:5 name=w let_mut
+      init (EMethod 8:19 name=copy
+        recv (EIdent 8:17 name=a)))
     stmt (SAssign 9:5 op=`<<=`
       target (EIdent 9:5 name=w)
       value (EInt 9:11 value=3))

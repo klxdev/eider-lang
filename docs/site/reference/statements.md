@@ -196,12 +196,11 @@ fn main() uses io {
 }
 ```
 
-### `var` (deprecated)
+### `var` (removed)
 
-`var x = e` declares a mutable variable that always holds its own copy of `e` (the meaning
-`let` had before references). It still works; new code writes `let mut x = e` for a fresh
-value and `let mut x = e.copy()` for a copy of a place. `eiderc migrate-var <file>` prints a
-file with its `var`s rewritten that way. See [Memory model](memory.md#var-deprecated).
+`var` is not a keyword any more (0.7.5): `var x = e` is the syntax error
+[E0001](errors.md#e0001) whose help shows `let mut x = e` (a fresh value) and
+`let mut x = e.copy()` (a copy of a place).
 
 ## Assignment
 
@@ -210,7 +209,7 @@ assign_stmt = place assign_op expr
 assign_op   = "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "&=" | "|=" | "^=" | "<<=" | ">>="
 ```
 
-The left side is a place rooted at a writable variable: a `let mut` (or `var`) variable,
+The left side is a place rooted at a writable variable: a `let mut` variable,
 an `inout` parameter, or a mutable alias, followed by any chain of fields (`p.x`), tuple
 elements (`t.0`) and indices (`xs[i]`, `grid[i][j]`). Anything else is E0303.
 
