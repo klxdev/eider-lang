@@ -5,7 +5,7 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
-## 0.7.4 (unreleased)
+## 0.7.4
 
 - New library eider-postgres (#36): a PostgreSQL client in Eider (`postgres`), protocol v3 over std/net. Cleartext,
   MD5 and SCRAM-SHA-256 authentication, simple and extended queries with a prepared-statement cache, text and binary
