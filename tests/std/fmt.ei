@@ -4,7 +4,7 @@
 import std.fmt
 
 fn q(s: String) -> String {
-    var o = String.from("[")
+    let mut o = String.from("[")
     o.append(s)
     o.push_str("]")
     o
@@ -47,11 +47,11 @@ fn main() uses io {
     print(fmt.grouped(1000, "_"))
     print(fmt.grouped(0, ","))
 
-    var out = String.from("x=")
+    let mut out = String.from("x=")
     fmt.put_int(inout out, -3, s.width(3))
     print(q(out))
 
-    var b = fmt.builder()
+    let mut b = fmt.builder()
     b.add("status ")
     b.add_int(200)
     b.add_byte(32)

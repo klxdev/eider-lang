@@ -1,7 +1,7 @@
 // expect: E0301 6:26
 fn both(inout a: List[i32], inout b: List[i32]) { a.push(b.len() as i32) }
 fn main() uses io {
-    var xs: List[i32] = List.new()
+    let mut xs: List[i32] = List.new()
     let mut ys = xs
     both(inout xs, inout ys)
     print(xs.len())

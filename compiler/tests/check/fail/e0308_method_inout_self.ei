@@ -4,7 +4,7 @@ impl Stack {
     fn push(inout self, x: i32) { self.items.push(x) }
 }
 fn main() uses io {
-    var s = Stack(List.new())
+    let mut s = Stack(List.new())
     s.push(1)
     let top = s.items[0]
     print(top)

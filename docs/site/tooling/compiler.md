@@ -55,7 +55,6 @@ and exit code 2. With no arguments at all, eiderc prints its usage to stderr and
 
 | Command | What it does |
 |---|---|
-| `migrate-var <file>` | Print the file with each deprecated `var` rewritten as `let mut` (with `.copy()` where `var` copied a place), leaving the few cases where that would change the meaning. `scripts/migrate-var.sh` runs it over directories. |
 | `migrate-strings <file> [--json] [--portable]` | Print the file (`.ei`, or a `.md`'s eider code blocks) with each string literal that has a brace rewritten to mean what it meant before literals interpolated: a raw string when it has no backslash, else with its braces doubled; `--json` prints the fixes, `--portable` writes the braces as `\x7b`/`\x7d`. `scripts/migrate-strings.sh` runs it over files and directories |
 | `audit-refs <file> [--json]` | For code written when `let` copied: every write that changes what a live `let` or pattern reference sees, as a `note[audit]` with the `.copy()` that keeps the old meaning (with `--json`, a JSON object per line with `"audit":"reference"`); then `audit-refs: N write(s) change what a reference sees`. Exits 1 if the program has errors. |
 

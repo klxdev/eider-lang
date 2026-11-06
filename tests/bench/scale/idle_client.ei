@@ -13,7 +13,7 @@ import std.time
 fn number(name: str, dflt: i64) -> i64 uses io {
     match env.get(sys.lit(name)) {
         Some(v) => {
-            var n: i64 = 0
+            let mut n: i64 = 0
             for b in v { n = n * 10 + (b - 48) as i64 }
             n
         }
@@ -25,8 +25,8 @@ fn main() uses io, net, clock {
     let port = number("PORT", 19000)
     let ports = number("PORTS", 40)
     let target = number("TARGET", 100000)
-    var open: List[i32] = List.new()
-    var failed: i64 = 0
+    let mut open: List[i32] = List.new()
+    let mut failed: i64 = 0
     for i in 0..target {
         let a = net.ipv4(127, 0, 0, 1, (port + i % ports) as i32)
         match stream.connect_by(a, time.after_ms(10000)) {

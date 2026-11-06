@@ -5,9 +5,9 @@ impl[T] W[T] {
     fn put(inout self, x: T) { self.v = x }
 }
 fn main() uses io {
-    var w = W(5)
+    let mut w = W(5)
     w.put(6)
     print(w.get())
-    var b = W(true)
+    let mut b = W(true)
     print(b.get())
 }

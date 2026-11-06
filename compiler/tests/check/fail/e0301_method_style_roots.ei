@@ -2,6 +2,6 @@
 type P = { x: i32, y: i32 }
 fn both(inout a: P, b: i32) {}
 fn main() {
-    var p = P(1, 2)
+    let mut p = P(1, 2)
     both(inout p, p.x)
 }

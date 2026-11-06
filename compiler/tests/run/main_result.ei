@@ -3,7 +3,7 @@
 
 fn parse(s: str) -> Result[i32, String] {
     if s == "7" { return Ok(7) }
-    var m = String.from("not a number: ")
+    let mut m = String.from("not a number: ")
     m.push_str(s)
     Err(m)
 }

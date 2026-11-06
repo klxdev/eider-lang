@@ -3,7 +3,7 @@ type Order = { qty: i32, name: String, tags: List[String] }
 type Job = | Pending(Order) | Held(i32) | Done
 
 fn total(orders: List[Order]) -> i32 {
-    var t = 0
+    let mut t = 0
     for i in 0..orders.len() {
         let o = orders[i]
         t += o.qty
@@ -12,7 +12,7 @@ fn total(orders: List[Order]) -> i32 {
 }
 
 fn main() uses io {
-    var orders: List[Order] = List.new()
+    let mut orders: List[Order] = List.new()
     orders.push(Order(1, String.from("a"), List.new()))
     // plain writes while a reference is alive
     let o = orders[0]
@@ -40,7 +40,7 @@ fn main() uses io {
         orders.push(Order(i as i32, String.from("d"), List.new()))
     }
     // a mutable alias writes the place; replacing the enum after its payload's last use
-    var jobs: List[Job] = List.new()
+    let mut jobs: List[Job] = List.new()
     jobs.push(Held(1))
     match jobs[0] {
         Held(mut d) => {

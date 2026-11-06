@@ -86,15 +86,18 @@ it can't be read.
 
 ## Keywords
 
-These 31 words are reserved and can't be used as names (E0001 "`fn` is a keyword and can't
+These 30 words are reserved and can't be used as names (E0001 "`fn` is a keyword and can't
 be used as a name"):
 
 ```text
 as        assert    break     comptime  const     continue  else      export
 extern    false     fn        for       if        impl      import    in
 inout     let       match     module    null      pub       return    test
-trait     true      type      unsafe    uses      var       while
+trait     true      type      unsafe    uses      while
 ```
+
+`var`, the 0.6 spelling of a mutable variable that copies, is not reserved any more: a
+statement that starts with `var` and a name is E0001 with a help that shows `let mut`.
 
 `null` is reserved so that it can't mean anything: using it is E0402 ("absence is modelled
 with Option[T]").

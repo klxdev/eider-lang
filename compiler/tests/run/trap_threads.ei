@@ -24,7 +24,7 @@ fn main() uses io, threads {
 
 test "threads in a test" {
     let m = Mutex.new(0)
-    var ts: List[Task[i32]] = List.new()
+    let mut ts: List[Task[i32]] = List.new()
     for i in 0..4 {
         let mm = m
         ts.push(spawn(|| -> i32 {

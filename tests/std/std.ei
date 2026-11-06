@@ -16,7 +16,7 @@ fn files() -> Result[bool, String] uses io, fs {
     fs.append(fs.join(d, sys.lit("x.txt")), sys.lit("three"))?
     fs.write(fs.join(root, sys.lit("top.txt")), sys.lit(""))?
     for l in bytes.lines(fs.read(fs.join(d, sys.lit("x.txt")))?) { show(l) }
-    var skip: List[List[u8]] = List.new()
+    let mut skip: List[List[u8]] = List.new()
     for f in fs.walk(root, skip)? { show(f) }
     let copy = sys.lit("target/tmp/std_test_copy")
     fs.remove_all(copy)?
@@ -65,7 +65,7 @@ fn text() uses io {
 }
 
 fn procs() uses io, fs, net {
-    var argv: List[List[u8]] = List.new()
+    let mut argv: List[List[u8]] = List.new()
     argv.push(sys.lit("sh"))
     argv.push(sys.lit("-c"))
     argv.push(sys.lit("printf captured; exit 3"))
@@ -80,7 +80,7 @@ fn procs() uses io, fs, net {
         Ok(_) => print("unexpected")
         Err(e) => print(e)
     }
-    var bad: List[List[u8]] = List.new()
+    let mut bad: List[List[u8]] = List.new()
     bad.push(sys.lit("eider-no-such-program"))
     match proc.run(bad) {
         Ok(_) => print("unexpected")
@@ -111,7 +111,7 @@ fn procs() uses io, fs, net {
 }
 
 fn sh(script: str) -> List[List[u8]] {
-    var a: List[List[u8]] = List.new()
+    let mut a: List[List[u8]] = List.new()
     a.push(sys.lit("sh"))
     a.push(sys.lit("-c"))
     a.push(sys.lit(script))
@@ -121,7 +121,7 @@ fn sh(script: str) -> List[List[u8]] {
 fn show_output(r: Result[proc.Output, String]) uses io {
     match r {
         Ok(o) => {
-            var l: List[List[u8]] = List.new()
+            let mut l: List[List[u8]] = List.new()
             l.push(bytes.from_i64(o.code as i64))
             l.push(o.out)
             l.push(o.err)

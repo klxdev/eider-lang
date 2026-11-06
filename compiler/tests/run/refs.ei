@@ -28,7 +28,7 @@ fn days(j: Job) -> i32 {
 }
 
 fn main() uses io {
-    var orders: List[Order] = List.new()
+    let mut orders: List[Order] = List.new()
     orders.push(order(1, 5, "apple"))
     orders.push(order(2, 7, "pear"))
 
@@ -40,7 +40,7 @@ fn main() uses io {
     print(o.name)
 
     // the index is evaluated once, when the reference is bound
-    var i: usize = 1
+    let mut i: usize = 1
     let p = orders[i]
     i = 0
     print(p.id)
@@ -71,7 +71,7 @@ fn main() uses io {
     let f = first(orders)
     orders[0].qty = 1
     print(f.qty)
-    var kept: List[Order] = List.new()
+    let mut kept: List[Order] = List.new()
     kept.push(o)
     orders[0].qty = 2
     print(kept[0].qty)
@@ -86,7 +86,7 @@ fn main() uses io {
     print(all.len())
 
     // references into nested places, and through an `inout` parameter
-    var shop = Shop(orders.copy(), true)
+    let mut shop = Shop(orders.copy(), true)
     bump_all(inout shop)
     let names = shop.orders[2].name
     print(names)
@@ -96,7 +96,7 @@ fn main() uses io {
     print(flag)
 
     // pattern bindings of a place refer into it; `mut` ones are aliases into the payload
-    var jobs: List[Job] = List.new()
+    let mut jobs: List[Job] = List.new()
     jobs.push(Held(1))
     jobs.push(Pending(order(4, 2, "kiwi")))
     jobs.push(Done)
@@ -118,7 +118,7 @@ fn main() uses io {
     let (a, mut b) = (shop.orders[0].qty, 5)
     b += a
     print(b)
-    var pair = (1, String.from("one"))
+    let mut pair = (1, String.from("one"))
     let (n, s) = pair
     pair.0 = 2
     pair.1.push_str("!")
@@ -134,8 +134,8 @@ fn main() uses io {
     print(orders.len())
     print(orders[orders.len() - 1].id)
 
-    // `var` (deprecated) still makes its own copy
-    var v = orders[0]
+    // `.copy()` makes its own copy (what `var` did)
+    let mut v = orders[0].copy()
     v.qty = 1000
     print(orders[0].qty)
 }

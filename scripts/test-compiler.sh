@@ -57,10 +57,9 @@
 #   unit:     programs in compiler/tests/unit that drive a compiler module (sha256.ei) must
 #             print their .out.
 #   migration: the staged rewrites (scripts/migrate-imports.sh, migrate-caps.sh,
-#             migrate-var.sh, migrate-imports-dotted.sh) on a copy of core, std, packages and
+#             migrate-imports-dotted.sh) on a copy of core, std, packages and
 #             compiler check, pass the package tests, and give a compiler that emits the same
 #             C (and whose own C, with every import dotted, is compiler/'s);
-#             `eiderc migrate-var` of compiler/tests/migrate/*.ei equals the hand-checked .out;
 #             `eiderc migrate-strings` of compiler/tests/migrate_strings/*.src likewise,
 #             and `eiderc migrate-attrs` of compiler/tests/migrate_attrs/*.src.
 #   meaning:  tests/std, packages/*/tests and examples/*/tests give their .out when built by this
@@ -571,13 +570,7 @@ cp -R core std packages compiler .vendor $mig/
 sh scripts/migrate-imports.sh $mig/core $mig/std $mig/packages $mig/compiler >$tmp/mig 2>&1
 # and the staged removal of `uses ffi` (scripts/migrate-caps.sh, docs/compiler.md "C8.5")
 sh scripts/migrate-caps.sh $mig/core $mig/std $mig/packages $mig/compiler >$tmp/migc 2>&1
-# and the deprecated `var` rewritten as `let mut` (scripts/migrate-var.sh, docs/compiler.md
-# "C8.6"): none is left in core or the compiler (std and the packages keep the `var`s of
-# places in generic bodies, which `.copy()` could need a bound for), and the migrated
-# compiler, built by this one, emits the same LLVM IR for compiler/ as this one (meaning unchanged)
-EIDER_ROOT=$mig EIDERC=$new sh scripts/migrate-var.sh $mig/core $mig/std $mig/packages $mig/compiler/*.ei >$tmp/migv 2>&1
 mig_ok=1
-grep -n '^[[:space:]]*var[[:space:]]' $mig/core/*.ei $mig/compiler/*.ei >$tmp/migvl && { echo "FAIL migration: \`var\` is left in"; sed "s|$mig/||" $tmp/migvl | head -10; cat $tmp/migv | grep -v '^migrated' | head -5; mig_ok=0; }
 # and every quoted import in the dotted form (scripts/migrate-imports-dotted.sh, docs/compiler.md
 # "C8.26"), compiler/ and what the seed builds included: none is left outside compiler/tests
 # (which keeps the quoted form's own tests), and this compiler's IR for the migrated compiler is
@@ -602,7 +595,7 @@ for f in packages/*/tests/*.ei; do
   EIDER_ROOT=$mig $new run $mig/$f >$tmp/mo 2>&1
   cmp -s $tmp/mo "${f%.ei}.out" || { echo "FAIL migration: run $f"; diff "${f%.ei}.out" $tmp/mo | head -10; mig_ok=0; }
 done
-if [ $mig_ok = 1 ]; then echo "ok   migration: $(wc -l <$tmp/mig) files rewritten to package imports, $(grep -c '^migrated' $tmp/migd) to dotted imports (the compiler's IR unchanged), $(wc -l <$tmp/migc) without \`uses ffi\` and $(grep -c '^migrated' $tmp/migv) without \`var\` ($(cat $mig/std/*.ei $mig/packages/*/*.ei | grep -c '^[[:space:]]*var[[:space:]]') generic ones left) check and pass their package tests; the migrated compiler emits the same IR"; else fail=1; fi
+if [ $mig_ok = 1 ]; then echo "ok   migration: $(wc -l <$tmp/mig) files rewritten to package imports, $(grep -c '^migrated' $tmp/migd) to dotted imports (the compiler's IR unchanged), $(wc -l <$tmp/migc) without \`uses ffi\`; they check and pass their package tests; the migrated compiler emits the same IR"; else fail=1; fi
 fi
 # meaning: std's, the packages' and the examples' tests (run by verify.sh with the seed, where
 # `let` copies) give their .out with this compiler too, where `let` of a place is a reference
@@ -652,14 +645,6 @@ for f in compiler/tests/migrate_attrs/*.src; do
   cp $tmp/ma $tmp/migrated.ei
   if cmp -s $tmp/ma "$g.out" && cmp -s $tmp/maj "$g.json" && $new check $tmp/migrated.ei >/dev/null 2>&1; then echo "ok   migrate-attrs $f"; else echo "FAIL migrate-attrs $f"; diff "$g.out" $tmp/ma | head -10; fail=1; fi
 done
-# migrate-var: `eiderc migrate-var` of compiler/tests/migrate/*.ei gives the hand-checked .out,
-# which checks
-for f in compiler/tests/migrate/*.ei; do
-  $new migrate-var "$f" >$tmp/mv 2>&1
-  cp $tmp/mv $tmp/migrated.ei
-  if cmp -s $tmp/mv "${f%.ei}.out" && $new check $tmp/migrated.ei >/dev/null 2>&1; then echo "ok   migrate-var $f"; else echo "FAIL migrate-var $f"; diff "${f%.ei}.out" $tmp/mv | head -10; fail=1; fi
-done
-
 # compile-fail: `eiderc test --compile-fail` against the recorded runner output (the oracle's
 # <dir>.compile-fail: the output, then `--- exit <code>`)
 for d in compiler/tests/check compiler/tests/suite; do

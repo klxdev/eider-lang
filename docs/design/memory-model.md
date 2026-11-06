@@ -59,7 +59,7 @@ Simple like Go and Zig, with the memory-safety and correctness guarantees of Rus
 
 Implemented by C8.6 (docs/compiler.md, "C8.6: references by default", which records the
 details decided there: the protection rule is E0308 with a `.copy()` fix, a mutable alias of
-a read-only place is E0307, `var` is rewritten by `eiderc migrate-var`, and `eiderc
+a read-only place is E0307, `var` was rewritten by `eiderc migrate-var` and removed in 0.7.5, and `eiderc
 audit-refs` lists the writes whose meaning changed when `let` stopped copying).
 
 **What a reference is.** A reference is its *place* (root variable, fields, element indices,
@@ -350,11 +350,11 @@ true?
 1. ✅ Copy-on-write for heap types: runtime and lowering only, no semantic change (C8.1).
 2. ✅ References by default, `let mut` aliases, `.copy()` and the protection rule: checker
    analysis on place paths, new errors with fixes, lowering (a reference is its place,
-   re-derived at each use: no clone, no drop; C8.6). `var` keeps working as a deprecated
-   spelling with an automatic fix: `var x = place` becomes `let mut x = place.copy()`,
-   `var x = fresh` becomes `let mut x = fresh` (`eiderc migrate-var`). Read-only references
-   through heap memory are pointers (C8.54); open: pointers for mutable aliases, migrating the repository
-   off `var` and retiring it ([#2](https://github.com/klxdev/eider-lang/issues/2)).
+   re-derived at each use: no clone, no drop; C8.6). `var` was a deprecated
+   spelling with an automatic fix (`var x = place` became `let mut x = place.copy()`, `var x = fresh`
+   `let mut x = fresh`; `eiderc migrate-var`) and is a syntax error since 0.7.5 (C897,
+   [#2](https://github.com/klxdev/eider-lang/issues/2)). Read-only references
+   through heap memory are pointers (C8.54); open: pointers for mutable aliases.
 3. ✅ `Ref[T]` on the existing handle machinery (C8.7).
 4. ✅ Non-escaping closures capture by reference (C8.53).
 5. ❓ Later: projections for std accessors; lints for real copies and `Ref` cycles
@@ -386,7 +386,7 @@ true?
 No design question is open. Work still to do on the model:
 
 - [#1](https://github.com/klxdev/eider-lang/issues/1) C pointer variables for references (done for read-only references; mutable aliases remain).
-- [#2](https://github.com/klxdev/eider-lang/issues/2) Retire `var`.
+- [#2](https://github.com/klxdev/eider-lang/issues/2) Retire `var` (done in 0.7.5, C897).
 - [#3](https://github.com/klxdev/eider-lang/issues/3) `Ref[T]`: inout fn values and the export boundary.
 - [#4](https://github.com/klxdev/eider-lang/issues/4) Closures capture by reference (non-escaping ones).
 - [#11](https://github.com/klxdev/eider-lang/issues/11) Projections and copy/cycle lints.

@@ -16,7 +16,7 @@ fn rss_kb() -> i64 uses fs {
         Ok(text) => {
             for l in bytes.lines(text) {
                 if l.len() > 6 && l[0] == 86 && l[1] == 109 && l[2] == 82 && l[3] == 83 && l[4] == 83 {
-                    var n: i64 = 0
+                    let mut n: i64 = 0
                     for b in l {
                         if b >= 48 && b <= 57 { n = n * 10 + (b - 48) as i64 }
                     }
@@ -32,7 +32,7 @@ fn rss_kb() -> i64 uses fs {
 fn count() -> i64 uses io {
     match env.get(sys.lit("TASKS")) {
         Some(v) => {
-            var n: i64 = 0
+            let mut n: i64 = 0
             for b in v { n = n * 10 + (b - 48) as i64 }
             n
         }
@@ -44,7 +44,7 @@ fn main() uses io, threads, clock, fs {
     let n = count()
     let base = rss_kb()
     let c: Chan[i64] = Chan.new()
-    var ts: List[Task[i64]] = List.new()
+    let mut ts: List[Task[i64]] = List.new()
     let t0 = time.mono_ns()
     for i in 0..n {
         let cc = c
@@ -67,7 +67,7 @@ fn main() uses io, threads, clock, fs {
     print("memory: {kib} KiB above the start, {per} bytes per blocked task")
     let t2 = time.mono_ns()
     for i in 0..n { c.send(i) }
-    var sum: i64 = 0
+    let mut sum: i64 = 0
     for t in ts { sum += t.join() }
     let t3 = time.mono_ns()
     let rel = (t3 - t2) / n
@@ -75,8 +75,8 @@ fn main() uses io, threads, clock, fs {
     print("sum ok: {sum == n * (n - 1) / 2}")
     // warm: stacks are reused, nothing blocks
     let t4 = time.mono_ns()
-    var done: i64 = 0
-    var batch: List[Task[i64]] = List.new()
+    let mut done: i64 = 0
+    let mut batch: List[Task[i64]] = List.new()
     for i in 0..n {
         batch.push(spawn(|| -> i64 i))
         if batch.len() == 1000 {

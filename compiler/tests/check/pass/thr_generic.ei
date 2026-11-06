@@ -1,8 +1,8 @@
 type Cell[T] = { m: Mutex[T] }
 fn get_it[T](m: Mutex[T]) -> T { m.get() }
 fn all[T](c: Chan[T]) -> List[T] {
-    var out: List[T] = List.new()
-    var go = true
+    let mut out: List[T] = List.new()
+    let mut go = true
     while go {
         match c.recv() {
             Some(x) => out.push(x)

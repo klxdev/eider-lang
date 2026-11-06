@@ -8,7 +8,7 @@ type Outer = { inner: Inner, extra: Option[Inner], pair: (String, List[i32]) }
 type Tree = | Leaf(v: i32) | Node(l: Box[Tree], r: Box[Tree], name: String)
 
 fn mk_inner(l: str) -> Inner {
-    var t: List[String] = List.new()
+    let mut t: List[String] = List.new()
     t.push(String.from(l))
     Inner(t, String.from(l))
 }
@@ -24,7 +24,7 @@ fn names(t: Tree) -> String {
     match t {
         Leaf(_) => String.from(".")
         Node(l, r, n) => {
-            var s = n
+            let mut s = n.copy()
             s.append(names(l.get()))
             s.append(names(r.get()))
             s
@@ -38,8 +38,8 @@ fn bump(inout o: Outer) {
 }
 
 fn main() uses io {
-    var o = Outer(mk_inner("a"), Some(mk_inner("b")), (String.from("p"), List.new()))
-    var copy = o
+    let mut o = Outer(mk_inner("a"), Some(mk_inner("b")), (String.from("p"), List.new()))
+    let mut copy = o.copy()
     copy.inner.label.push_str("!")
     copy.inner.tags.push(String.from("c"))
     print(o.inner.label)
@@ -60,7 +60,7 @@ fn main() uses io {
     o.pair = (String.from("q"), List.new())
     print(o.pair.0)
 
-    var arr = [String.from("x"), String.from("y")]
+    let mut arr = [String.from("x"), String.from("y")]
     let arr2 = arr.copy()
     arr[0].push_str("x")
     print(arr[0])
@@ -69,31 +69,31 @@ fn main() uses io {
     let t = Node(Box.new(Leaf(1)), Box.new(Node(Box.new(Leaf(2)), Box.new(Leaf(3)), String.from("in"))), String.from("top"))
     print(sum(t))
     print(names(t))
-    var b = Box.new(mk_inner("boxed"))
+    let mut b = Box.new(mk_inner("boxed"))
     let b2 = b.copy()
     b.set(mk_inner("reset"))
     print(b.get().label)
     print(b2.get().label)
-    var bl: Box[List[i32]] = Box.new(List.new())
-    var inner = bl.get()
+    let mut bl: Box[List[i32]] = Box.new(List.new())
+    let mut inner = bl.get()
     inner.push(4)
     bl.set(inner)
     print(bl.get().len())
     print(bl == Box.new(inner))
 
-    var ls: List[Inner] = List.new()
+    let mut ls: List[Inner] = List.new()
     ls.push(mk_inner("l0"))
     ls.push(mk_inner("l1"))
     let picked = ls[1].copy()
     ls[1].label.push_str("-changed")
     print(picked.label)
     print(ls[1].label)
-    var tuples: List[(String, i32)] = List.new()
+    let mut tuples: List[(String, i32)] = List.new()
     tuples.push((String.from("t"), 1))
     let (ts, tn) = tuples[0]
     print(ts)
     print(tn)
-    var opts: List[Option[String]] = List.new()
+    let mut opts: List[Option[String]] = List.new()
     opts.push(Some(String.from("o")))
     opts.push(None)
     print(opts[0].is_some())

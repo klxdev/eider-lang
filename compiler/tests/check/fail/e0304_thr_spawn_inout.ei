@@ -1,5 +1,5 @@
 // expect: E0304 4:25
 fn main() uses io, threads {
-    var f = || -> i32 1
+    let mut f = || -> i32 1
     let t = spawn(inout f)
 }

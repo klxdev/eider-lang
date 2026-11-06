@@ -6,7 +6,7 @@ type Item = { name: String, tags: List[String], score: i32 }
 type Tree = | Leaf(v: i32) | Node(l: Box[Tree], r: Box[Tree])
 
 fn shout(s: String) -> String {
-    var t = s
+    let mut t = s.copy()
     t.push_str("!")
     t
 }
@@ -29,7 +29,7 @@ fn sum_tree(t: Tree) -> i32 {
 }
 
 fn join(l: List[String]) -> String {
-    var s = String.from("")
+    let mut s = String.from("")
     for x in l {
         s.append(x)
         s.push_str(",")
@@ -40,11 +40,11 @@ fn join(l: List[String]) -> String {
 fn main() uses io {
     // String: copy then change either side
     let a = String.from("abc")
-    var b = a
+    let mut b = a.copy()
     b.push_str("d")
     print(a)
     print(b)
-    var c = b
+    let mut c = b.copy()
     b.push_str("e")
     c.push_str("X")
     print(b)
@@ -52,64 +52,64 @@ fn main() uses io {
     print(shout(a))
     print(a)
     // self-append of a shared String
-    var d = a
+    let mut d = a.copy()
     let e = d.copy()
     d.append(e)
     print(d)
     print(e)
 
     // List[i32]: copy, then change through index, push, pop, inout, clear
-    var l1: List[i32] = List.new()
+    let mut l1: List[i32] = List.new()
     for i in 0..5 { l1.push(i) }
-    var l2 = l1
+    let mut l2 = l1.copy()
     l2[0] = 100
     l2.push(5)
     print(l1[0])
     print(l1.len())
     print(l2[0])
     print(l2.len())
-    var l3 = l1
+    let mut l3 = l1.copy()
     let popped = l3.pop().unwrap()
     print(popped)
     print(l3.len())
     print(l1.len())
-    var l4 = l1
+    let mut l4 = l1.copy()
     bump(inout l4)
     print(l1[0])
     print(l4[0])
     print(l4[5])
-    var l5 = l1
+    let mut l5 = l1.copy()
     l5.clear()
     print(l5.len())
     print(l1.len())
 
     // a List of Strings shared, then one element changed (in place and replaced)
-    var names: List[String] = List.new()
+    let mut names: List[String] = List.new()
     names.push(String.from("ann"))
     names.push(String.from("bob"))
     names.push(String.from("cy"))
-    var copy = names
+    let mut copy = names.copy()
     copy[1].push_str("by")
     print(join(names))
     print(join(copy))
-    var copy2 = copy
+    let mut copy2 = copy.copy()
     copy2[2] = String.from("dee")
     print(join(copy))
     print(join(copy2))
     let one = names[0]
-    var held = one
+    let mut held = one.copy()
     held.push_str("e")
     print(names[0])
     print(held)
 
     // nested containers: a List of Lists, changed two levels down
-    var grid: List[List[i32]] = List.new()
+    let mut grid: List[List[i32]] = List.new()
     for i in 0..3 {
-        var row: List[i32] = List.new()
+        let mut row: List[i32] = List.new()
         for j in 0..3 { row.push(i * 3 + j) }
         grid.push(row)
     }
-    var g2 = grid
+    let mut g2 = grid.copy()
     g2[1][2] = -1
     g2[2].push(42)
     print(grid[1][2])
@@ -117,16 +117,16 @@ fn main() uses io {
     print(g2[1][2])
     print(g2[2].len())
     let row0 = grid[0]
-    var r0 = row0
+    let mut r0 = row0.copy()
     r0[0] = 7
     print(grid[0][0])
     print(r0[0])
 
     // records holding owned fields, copied and changed through inout
-    var tags: List[String] = List.new()
+    let mut tags: List[String] = List.new()
     tags.push(String.from("t"))
     let it = Item(String.from("first"), tags, 1)
-    var it2 = it
+    let mut it2 = it.copy()
     rename(inout it2, "second")
     it2.score = 2
     print(it.name)
@@ -135,9 +135,9 @@ fn main() uses io {
     print(it2.name)
     print(it2.tags[0])
     print(it2.score)
-    var items: List[Item] = List.new()
+    let mut items: List[Item] = List.new()
     items.push(it)
-    var items2 = items
+    let mut items2 = items.copy()
     items2[0].tags.push(String.from("u"))
     items2[0].name.push_str("!")
     print(items[0].tags.len())
@@ -146,12 +146,12 @@ fn main() uses io {
     print(items2[0].name)
 
     // Map values: copy, then insert, overwrite, remove, and change a value's String
-    var m: Map[String, List[String]] = Map.new()
-    var v: List[String] = List.new()
+    let mut m: Map[String, List[String]] = Map.new()
+    let mut v: List[String] = List.new()
     v.push(String.from("x"))
     m.insert(String.from("k"), v)
-    var m2 = m
-    var got = m2.get(String.from("k")).unwrap()
+    let mut m2 = m.copy()
+    let mut got = m2.get(String.from("k")).unwrap()
     got.push(String.from("y"))
     m2.insert(String.from("k"), got)
     m2.insert(String.from("j"), List.new())
@@ -159,14 +159,14 @@ fn main() uses io {
     print(m2.get(String.from("k")).unwrap().len())
     print(m.contains(String.from("j")))
     print(m2.contains(String.from("j")))
-    var m3 = m2
+    let mut m3 = m2.copy()
     let gone = m3.remove(String.from("k"))
     print(gone)
     print(m2.contains(String.from("k")))
     print(m3.contains(String.from("k")))
-    var counts: Map[i32, i32] = Map.new()
+    let mut counts: Map[i32, i32] = Map.new()
     for i in 0..100 { counts.insert(i, i) }
-    var counts2 = counts
+    let mut counts2 = counts.copy()
     for i in 0..100 { counts2.insert(i, i * 2) }
     for i in 100..200 { counts2.insert(i, 1) }
     print(counts.get(50).unwrap())
@@ -176,7 +176,7 @@ fn main() uses io {
 
     // Box: copy then set either side; a shared tree
     let bx = Box.new(String.from("boxed"))
-    var bx2 = bx
+    let mut bx2 = bx.copy()
     bx2.set(String.from("reboxed"))
     print(bx.get())
     print(bx2.get())
@@ -184,10 +184,10 @@ fn main() uses io {
     let t2 = t
     print(sum_tree(t))
     print(sum_tree(t2))
-    var bl = Box.new(names)
-    var bl2 = bl
+    let mut bl = Box.new(names)
+    let mut bl2 = bl.copy()
     let inner = bl2.get()
-    var changed = inner
+    let mut changed = inner.copy()
     changed.push(String.from("zed"))
     bl2.set(changed)
     print(bl.get().len())
@@ -202,7 +202,7 @@ fn main() uses io {
     }
     print(o.unwrap())
     let pair = (String.from("p"), names)
-    var pair2 = pair
+    let mut pair2 = pair.copy()
     pair2.0.push_str("q")
     pair2.1.pop()
     print(pair.0)
@@ -211,14 +211,14 @@ fn main() uses io {
     print(pair2.1.len())
 
     // closures capture snapshots
-    var cap = String.from("cap")
+    let mut cap = String.from("cap")
     let f = || cap.len()
     cap.push_str("tured")
     print(f())
     print(cap)
 
     // a long String built by appends (amortised growth)
-    var long = String.from("")
+    let mut long = String.from("")
     for i in 0..10000 { long.push_str("ab") }
     let snapshot = long.copy()
     long.push_str("c")

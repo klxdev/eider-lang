@@ -1,5 +1,5 @@
 // expect: E0401 4:5
 fn main() {
-    var b = true
+    let mut b = true
     b += false
 }

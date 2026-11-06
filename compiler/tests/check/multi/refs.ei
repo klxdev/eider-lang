@@ -7,7 +7,7 @@ fn read_only(o: Order) -> i32 {
     p.qty
 }
 fn main() uses io {
-    var xs: List[Order] = List.new()
+    let mut xs: List[Order] = List.new()
     xs.push(Order(1))
     let a = xs[0]
     xs.push(Order(2))

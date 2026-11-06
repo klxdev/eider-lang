@@ -1,4 +1,4 @@
 // expect: E0001 4:15
-fn main() uses io { var l: List[fn(i32) -> i32] = List.new()
+fn main() uses io { let mut l: List[fn(i32) -> i32] = List.new()
     l.push(|x| x + 1)
     print(l[0](2)) }

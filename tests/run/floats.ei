@@ -112,17 +112,17 @@ fn main() uses io {
     print("{a} and {b} and {c:6.2}")
 
     // compound assignment, loops
-    var t = 1.0
+    let mut t = 1.0
     t += 0.5
     t *= 4.0
     t -= 1.0
     t /= 2.0
     print(t)
-    var acc = 0.0
+    let mut acc = 0.0
     for i in 0..10 { acc += 0.1 }
     print(acc)
-    var k = 0
-    var h = 1.0
+    let mut k = 0
+    let mut h = 1.0
     while h > 1e-3 {
         h = h / 2.0
         k += 1
@@ -134,7 +134,7 @@ fn main() uses io {
     print(id(1.5f32))
     let scale = |q: f64| -> f64 { q * a }
     print(scale(4.0))
-    var ys: List[f64] = List.new()
+    let mut ys: List[f64] = List.new()
     ys.push(1.5)
     ys.push(2.25)
     ys.push(-0.75)

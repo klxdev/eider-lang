@@ -9,14 +9,14 @@ fn swap(inout xs: List[i32], i: usize, j: usize) {
 }
 
 fn main() uses io {
-    var p = P(1, List.new())
+    let mut p = P(1, List.new())
     let old = p.x
     p.x += 1
     print(old)
     let snap = p
     p.tags.push(String.from("t"))
     print(snap.tags.len())
-    var pair = (1, 2)
+    let mut pair = (1, 2)
     let (a, b) = pair
     pair.0 = b
     print(a)
@@ -27,7 +27,7 @@ fn main() uses io {
     let d = p.x
     print(d)
     p.x = 5
-    var xs: List[i32] = List.new()
+    let mut xs: List[i32] = List.new()
     xs.push(1)
     xs.push(2)
     swap(inout xs, 0, 1)

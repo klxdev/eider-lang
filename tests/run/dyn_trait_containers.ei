@@ -34,7 +34,7 @@ fn main() uses io {
         Some(s) => print(s.area())
         None => print(0)
     }
-    var xs: List[dyn Shape] = List.new()
+    let mut xs: List[dyn Shape] = List.new()
     xs.push(Rect(1, 5))
     xs.push(Pair(1, 2))
     match first(xs) {
@@ -46,7 +46,7 @@ fn main() uses io {
     xs[1].say()
     let r: Ref[dyn Shape] = Ref.new(Rect(7, 1))
     print(r.get().area())
-    var d: dyn Shape = Rect(1, 1)
+    let mut d: dyn Shape = Rect(1, 1)
     d.bump()
     d.bump()
     d.say()

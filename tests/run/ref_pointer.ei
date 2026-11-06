@@ -5,7 +5,7 @@ type Shape = | Circle(r: i32) | Rect(w: i32, h: i32)
 type Holder = { shapes: List[Shape], total: i32 }
 
 fn order(q: i32, n: str) -> Order {
-    var tags: List[i32] = List.new()
+    let mut tags: List[i32] = List.new()
     tags.push(q)
     tags.push(q + 1)
     Order(q, String.from(n), tags)
@@ -24,7 +24,7 @@ fn area(s: Shape) -> i32 {
 }
 
 fn main() uses io {
-    var orders: List[Order] = List.new()
+    let mut orders: List[Order] = List.new()
     orders.push(order(1, "a"))
     orders.push(order(2, "bb"))
     orders.push(order(3, "ccc"))
@@ -57,7 +57,7 @@ fn main() uses io {
     print(t.tags.len())
 
     // in a loop: a reference per iteration, writes to the other elements, a shared buffer
-    var sum = 0
+    let mut sum = 0
     for i in 0..orders.len() {
         let cur = orders[i]
         let j = (i + 1) % orders.len()
@@ -77,7 +77,7 @@ fn main() uses io {
     print(last.qty)
 
     // payload references into a record's List
-    var h = Holder(List.new(), 0)
+    let mut h = Holder(List.new(), 0)
     h.shapes.push(Circle(2))
     h.shapes.push(Rect(3, 4))
     let sh = h.shapes[1]

@@ -9,7 +9,7 @@ fn main() uses io, threads {
     print(work(5))
 
     let m = Mutex.new(0)
-    var ts: List[Task[i32]] = List.new()
+    let mut ts: List[Task[i32]] = List.new()
     for i in 0..4 {
         let mm = m
         ts.push(spawn(|| -> i32 {
@@ -29,8 +29,8 @@ fn main() uses io, threads {
         cc.close()
         return 0
     })
-    var sum = 0
-    var going = true
+    let mut sum = 0
+    let mut going = true
     while going {
         match c.recv() {
             Some(v) => { sum = sum + v }

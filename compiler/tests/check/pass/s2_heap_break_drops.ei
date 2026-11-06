@@ -1,6 +1,6 @@
 // mode: build
 fn main() uses io {
-    var i = 0
+    let mut i = 0
     while i < 3 {
         let s = String.from("a")
         if i == 1 { break }

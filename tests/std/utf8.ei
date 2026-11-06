@@ -5,38 +5,38 @@
 import std.utf8
 
 fn bs(xs: List[i32]) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     for x in xs { out.push(x as u8) }
     out
 }
 
 fn l1(a: i32) -> List[i32] {
-    var o: List[i32] = List.new()
+    let mut o: List[i32] = List.new()
     o.push(a)
     o
 }
 
 fn l2(a: i32, b: i32) -> List[i32] {
-    var o = l1(a)
+    let mut o = l1(a)
     o.push(b)
     o
 }
 
 fn l3(a: i32, b: i32, c: i32) -> List[i32] {
-    var o = l2(a, b)
+    let mut o = l2(a, b)
     o.push(c)
     o
 }
 
 fn l4(a: i32, b: i32, c: i32, d: i32) -> List[i32] {
-    var o = l3(a, b, c)
+    let mut o = l3(a, b, c)
     o.push(d)
     o
 }
 
 fn show(name: str, b: List[u8]) uses io {
     let d = utf8.decode(b, 0)
-    var line = String.from(name)
+    let mut line = String.from(name)
     line.push_str(": cp=")
     line.append(d.cp.to_string())
     line.push_str(" len=")
@@ -72,13 +72,13 @@ fn main() uses io {
     show("empty", List.new())
 
     // maximal subparts: E2 82 then 'A' is two items (one replacement, 'A')
-    var mixed = bs(l3(226, 130, 65))
+    let mut mixed = bs(l3(226, 130, 65))
     print(utf8.decode_all(mixed))
     print(utf8.first_invalid(mixed))
     print(utf8.first_invalid("ok".bytes()))
 
     // encode round trips across the length boundaries
-    var all_ok = true
+    let mut all_ok = true
     for cp in [0, 127, 128, 2047, 2048, 55295, 57344, 65535, 65536, 1114111] {
         let e = utf8.encode(cp as u32)
         let d = utf8.decode(e, 0)
@@ -91,7 +91,7 @@ fn main() uses io {
 
     // iteration
     let text = "héllo €".bytes()
-    var cps: List[u32] = List.new()
+    let mut cps: List[u32] = List.new()
     for c in utf8.chars(text) { cps.push(c) }
     print(cps)
     print(utf8.count(text))
@@ -100,7 +100,7 @@ fn main() uses io {
     print(utf8.is_boundary(text, text.len()))
 
     // lossy: invalid bytes and NUL become U+FFFD
-    var raw = "a".bytes()
+    let mut raw = "a".bytes()
     raw.push(255)
     raw.push(0)
     for b in "z€".bytes() { raw.push(b) }

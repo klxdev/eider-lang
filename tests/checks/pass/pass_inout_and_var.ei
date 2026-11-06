@@ -6,8 +6,8 @@ fn two(inout a: P, inout b: P) {
   bump(inout b)
 }
 fn main() {
-  var a = P(1)
-  var b = P(2)
+  let mut a = P(1)
+  let mut b = P(2)
   two(inout a, inout b)
   bump(inout a)
 }

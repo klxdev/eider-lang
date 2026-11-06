@@ -13,7 +13,7 @@ import std.time
 
 fn blocked_then_released(n: i64) -> i64 uses io, threads, clock {
     let c: Chan[i64] = Chan.new()
-    var ts: List[Task[i64]] = List.new()
+    let mut ts: List[Task[i64]] = List.new()
     for i in 0..n {
         let cc = c
         ts.push(spawn(|| -> i64 {
@@ -25,7 +25,7 @@ fn blocked_then_released(n: i64) -> i64 uses io, threads, clock {
     }
     time.sleep_ms(50)
     for i in 1..n + 1 { c.send(i) }
-    var sum: i64 = 0
+    let mut sum: i64 = 0
     for t in ts { sum += t.join() }
     sum
 }
@@ -38,14 +38,14 @@ fn chain(depth: i64) -> i64 uses threads {
 
 fn sleeping_overlaps(n: i64) -> bool uses io, threads, clock {
     let t0 = time.mono_ms()
-    var ts: List[Task[i64]] = List.new()
+    let mut ts: List[Task[i64]] = List.new()
     for i in 0..n {
         ts.push(spawn(|| -> i64 {
             time.sleep_ms(200)
             1
         }))
     }
-    var done: i64 = 0
+    let mut done: i64 = 0
     for t in ts { done += t.join() }
     let took = time.mono_ms() - t0
     done == n && took >= 200 && took < 2000
@@ -131,7 +131,7 @@ fn trap_after_park() -> String uses io, threads, clock {
 
 fn locks(n: i64, each: i64) -> i64 uses io, threads, clock {
     let l: sync.Lock[i64] = sync.lock(0)
-    var ts: List[Task[i64]] = List.new()
+    let mut ts: List[Task[i64]] = List.new()
     for i in 0..n {
         let ll = l
         ts.push(spawn(|| -> i64 {
@@ -144,7 +144,7 @@ fn locks(n: i64, each: i64) -> i64 uses io, threads, clock {
 }
 
 fn group_of_tasks(n: i64) -> String uses io, threads, clock {
-    var g: task.Group[i64] = task.group(task.root())
+    let mut g: task.Group[i64] = task.group(task.root())
     for i in 0..n {
         g.spawn(|tok: task.Token| -> Result[i64, String] {
             time.sleep_ms(10)
@@ -160,12 +160,12 @@ fn group_of_tasks(n: i64) -> String uses io, threads, clock {
 fn pool_jobs(n: i64) -> i64 uses io, threads, clock {
     let p = task.pool(4, 64)
     let total: sync.Lock[i64] = sync.lock(0)
-    var futs: List[task.Future[i64]] = List.new()
+    let mut futs: List[task.Future[i64]] = List.new()
     for i in 0..n {
         let k = i
         futs.push(p.run(|| -> i64 { k * 2 }, time.never()).unwrap())
     }
-    var sum: i64 = 0
+    let mut sum: i64 = 0
     for f in futs { sum += f.get(time.never()).unwrap() }
     p.shutdown()
     sum
@@ -174,8 +174,8 @@ fn pool_jobs(n: i64) -> i64 uses io, threads, clock {
 /// A Loop's poll in a task parks the task (the Loop's descriptor goes to the reactor): more
 /// loops than workers all wait at once, and each is woken from outside.
 fn loops_in_tasks(n: i64) -> bool uses io, threads, clock {
-    var loops: List[event.Loop] = List.new()
-    var ts: List[Task[i64]] = List.new()
+    let mut loops: List[event.Loop] = List.new()
+    let mut ts: List[Task[i64]] = List.new()
     for i in 0..n {
         let lp = event.new().unwrap()
         loops.push(lp)
@@ -189,7 +189,7 @@ fn loops_in_tasks(n: i64) -> bool uses io, threads, clock {
     time.sleep_ms(100)
     let t0 = time.mono_ms()
     for lp in loops { let w = lp.wake() }
-    var woken: i64 = 0
+    let mut woken: i64 = 0
     for t in ts { woken += t.join() }
     woken == n && time.mono_ms() - t0 < 3000
 }

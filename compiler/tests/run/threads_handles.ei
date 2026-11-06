@@ -15,12 +15,12 @@ fn square(x: i32) -> i64 { (x as i64) * (x as i64) }
 /// Workers take requests from one channel and answer on the reply channel each carries.
 fn serve(workers: i32, requests: i32) -> i64 uses threads {
     let pool = Pool(Chan.new(), Mutex.new(0))
-    var ts: List[Task[i32]] = List.new()
+    let mut ts: List[Task[i32]] = List.new()
     for w in 0..workers {
         let p = pool
         ts.push(spawn(|| -> i32 {
-            var served = 0
-            var going = true
+            let mut served = 0
+            let mut going = true
             while going {
                 match p.jobs.recv() {
                     Some(m) => {
@@ -39,21 +39,21 @@ fn serve(workers: i32, requests: i32) -> i64 uses threads {
             return served
         }))
     }
-    var replies: List[Chan[i64]] = List.new()
+    let mut replies: List[Chan[i64]] = List.new()
     for i in 0..requests {
         let r: Chan[i64] = Chan.new()
         pool.jobs.send(Work(i, r))
         replies.push(r)
     }
     for w in 0..workers { pool.jobs.send(Stop) }
-    var total: i64 = 0
+    let mut total: i64 = 0
     for r in replies {
         match r.recv() {
             Some(v) => { total = total + v }
             None => {}
         }
     }
-    var served = 0
+    let mut served = 0
     for t in ts { served = served + t.join() }
     total + (served + pool.done.get()) as i64
 }
@@ -65,7 +65,7 @@ fn chain() -> i32 {
     let head = Node(1, Some(mid))
     let alias = last
     alias.set(Node(30, None))
-    var sum = head.v
+    let mut sum = head.v.copy()
     match head.next {
         Some(m) => {
             let n = m.get()
@@ -85,8 +85,8 @@ fn nested_handles() -> i64 uses threads {
     let tasks: Chan[Task[i64]] = Chan.new()
     for i in 0..8 { tasks.send(spawn(|| -> i64 square(i))) }
     tasks.close()
-    var acc: i64 = 0
-    var going = true
+    let mut acc: i64 = 0
+    let mut going = true
     while going {
         match tasks.recv() {
             Some(t) => { acc = acc + t.join() }
@@ -111,16 +111,16 @@ fn seven() -> i32 { 7 }
 
 /// The same fn value spawned several times (each Task owns a copy of its environment).
 fn reuse() -> i32 uses threads {
-    var label = String.from("abc")
+    let mut label = String.from("abc")
     let f = || -> i32 label.len() as i32
     let g: fn() -> i32 = seven
-    var ts: List[Task[i32]] = List.new()
+    let mut ts: List[Task[i32]] = List.new()
     for i in 0..5 {
         ts.push(spawn(f))
         ts.push(spawn(g))
     }
     label.push_str("defg")
-    var total = 0
+    let mut total = 0
     for t in ts { total = total + t.join() }
     total
 }

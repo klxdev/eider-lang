@@ -4,7 +4,7 @@
 
 fn deep(n: i64, stop: i64) -> i64 {
     if n == stop { return 0 }
-    var pad: [i64; 32] = [0; 32]
+    let mut pad: [i64; 32] = [0; 32]
     pad[(n % 32) as usize] = n
     deep(n + 1, stop) + pad[(n % 32) as usize] - n + 1
 }

@@ -1,6 +1,6 @@
 // expect: E0301 5:7
 fn f(n: i32, inout a: i32) {}
 fn main() {
-    var x = 1
+    let mut x = 1
     f(x, inout x)
 }

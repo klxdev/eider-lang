@@ -21,7 +21,7 @@ fn text(b: List[u8]) -> String {
 
 // "|" stands for a carriage return (string literals have no \r)
 fn crlf(s: str) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     for b in s.bytes() {
         let c: u8 = if b == 124 { 13 } else { b }
         out.push(c)
@@ -30,15 +30,15 @@ fn crlf(s: str) -> List[u8] {
 }
 
 fn bytes2(a: u8, b: u8) -> List[u8] {
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     out.push(a)
     out.push(b)
     out
 }
 
 fn memory() -> Result[(), stream.Error] uses io {
-    var r = stream.reader(crlf("one\ntwo|\nthree"))
-    var br = stream.buffered_with(r, 3)
+    let mut r = stream.reader(crlf("one\ntwo|\nthree"))
+    let mut br = stream.buffered_with(r, 3)
     while true {
         match br.read_line(100)? {
             Some(l) => print(text(l))
@@ -46,8 +46,8 @@ fn memory() -> Result[(), stream.Error] uses io {
         }
     }
     // the Bytes reader reads lines itself
-    var b = stream.reader_str("a\nb\n\nc")
-    var n = 0
+    let mut b = stream.reader_str("a\nb\n\nc")
+    let mut n = 0
     while true {
         match b.read_line() {
             Some(l) => {
@@ -60,7 +60,7 @@ fn memory() -> Result[(), stream.Error] uses io {
     print(n)
 
     // limits: a line longer than max is InvalidData, and the bytes stay buffered
-    var lim = stream.buffered_with(stream.reader_str("abcdefgh\nij\n"), 2)
+    let mut lim = stream.buffered_with(stream.reader_str("abcdefgh\nij\n"), 2)
     match lim.read_line(4) {
         Ok(_) => print("no limit")
         Err(e) => {
@@ -72,14 +72,14 @@ fn memory() -> Result[(), stream.Error] uses io {
     print(text(lim.read_line(100)?.unwrap()))
 
     // read_until keeps the delimiter; the last piece has none
-    var u = stream.buffered(stream.reader_str("k=v;x=y;tail"))
+    let mut u = stream.buffered(stream.reader_str("k=v;x=y;tail"))
     print(text(u.read_until(59, 100)?))
     print(text(u.read_until(59, 100)?))
     print(text(u.read_until(59, 100)?))
     print(u.read_until(59, 100)?.len())
 
     // peek doesn't consume; read_exact; UnexpectedEof
-    var p = stream.buffered_with(stream.reader_str("HTTP/1.1 200"), 4)
+    let mut p = stream.buffered_with(stream.reader_str("HTTP/1.1 200"), 4)
     print(text(p.peek(6)?))
     print(text(p.read_exact(9)?))
     print(text(p.read_to_end()?))
@@ -89,29 +89,29 @@ fn memory() -> Result[(), stream.Error] uses io {
     }
 
     // generic helpers
-    var all = stream.reader("abc".bytes())
+    let mut all = stream.reader("abc".bytes())
     print(text(stream.read_all(inout all)?))
-    var ex = stream.reader_str("12345")
+    let mut ex = stream.reader_str("12345")
     print(text(stream.read_exact(inout ex, 3)?))
     match stream.read_exact(inout ex, 3) {
         Ok(_) => print("no eof")
         Err(e) => print(e.kind == stream.UnexpectedEof)
     }
-    var bad = stream.reader(bytes2(104, 255))
+    let mut bad = stream.reader(bytes2(104, 255))
     match stream.read_text(inout bad) {
         Ok(_) => print("valid?")
         Err(e) => print(e)
     }
 
     // max 0 is an error
-    var z = stream.reader_str("x")
+    let mut z = stream.reader_str("x")
     match z.read(0) {
         Ok(_) => print("read 0?")
         Err(e) => print(e.kind)
     }
 
     // writing: Buffer, BufWriter, Discard, copy
-    var w = stream.buffered_writer_with(stream.buffer(), 4)
+    let mut w = stream.buffered_writer_with(stream.buffer(), 4)
     stream.write_str(inout w, "ab")?
     print(w.pending())
     print(w.inner().len())
@@ -123,16 +123,16 @@ fn memory() -> Result[(), stream.Error] uses io {
     print(w.pending())
     print(w.inner().text()?)
 
-    var src = stream.buffered_with(stream.reader_str("copy me through"), 5)
-    var dst = stream.buffer()
+    let mut src = stream.buffered_with(stream.reader_str("copy me through"), 5)
+    let mut dst = stream.buffer()
     print(stream.copy(inout src, inout dst)?)
     print(dst.text()?)
-    var d = stream.discard()
+    let mut d = stream.discard()
     stream.write_all(inout d, "12345678".bytes())?
     print(d.count)
 
     // a BufReader over a BufReader
-    var nested = stream.buffered_with(stream.buffered_with(stream.reader_str("x\ny\n"), 1), 3)
+    let mut nested = stream.buffered_with(stream.buffered_with(stream.reader_str("x\ny\n"), 1), 3)
     print(text(nested.read_line(10)?.unwrap()))
     print(text(nested.read_line(10)?.unwrap()))
     print(nested.read_line(10)?.is_none())
@@ -142,23 +142,23 @@ fn memory() -> Result[(), stream.Error] uses io {
 fn files() -> Result[(), stream.Error] uses io, fs {
     fs.mkdir_all("target/tmp".bytes())
     let path = "target/tmp/stream_test.txt".bytes()
-    var f = stream.create(path)?
-    var bw = stream.buffered_writer(f)
+    let mut f = stream.create(path)?
+    let mut bw = stream.buffered_writer(f)
     for i in 0..1000 {
-        var line = String.from("line ")
+        let mut line = String.from("line ")
         line.append(i.to_string())
         line.push_str("\n")
         stream.write_string(inout bw, line)?
     }
     bw.flush()?
     f.close()?
-    var g = stream.open_append(path)?
+    let mut g = stream.open_append(path)?
     stream.write_str(inout g, "last")?
     g.close()?
 
-    var r = stream.buffered(stream.open_read(path)?)
-    var count = 0
-    var last = String.from("")
+    let mut r = stream.buffered(stream.open_read(path)?)
+    let mut count = 0
+    let mut last = String.from("")
     while true {
         match r.read_line(64)? {
             Some(l) => {
@@ -183,8 +183,8 @@ fn files() -> Result[(), stream.Error] uses io, fs {
 
 fn pipes() -> Result[(), stream.Error] uses io, clock {
     let p = stream.pipe()?
-    var r = stream.buffered(p.r)
-    var w = p.w
+    let mut r = stream.buffered(p.r)
+    let mut w = p.w.copy()
     stream.write_str(inout w, "partial")?
     // no newline yet: the deadline passes, and nothing is lost
     match r.read_line_by(100, time.after_ms(20)) {
@@ -204,19 +204,19 @@ fn pipes() -> Result[(), stream.Error] uses io, clock {
 
     // a raw read with a deadline that has passed
     let q = stream.pipe()?
-    var qr = q.r
+    let mut qr = q.r.copy()
     match qr.read_by(10, time.now()) {
         Ok(_) => print("data?")
         Err(e) => print(e.kind == stream.TimedOut)
     }
     // a non-blocking pipe end behaves the same as a blocking one
     q.r.set_nonblocking(true)?
-    var qw = q.w
+    let mut qw = q.w.copy()
     stream.write_str(inout qw, "nb")?
     print(text(qr.read(10)?))
     // writes with a deadline: fill the pipe until it's full, then time out
     q.w.set_nonblocking(true)?
-    var big: List[u8] = List.new()
+    let mut big: List[u8] = List.new()
     for i in 0..300000 { big.push(120) }
     match stream.write_all_by(inout qw, big, time.after_ms(30)) {
         Ok(()) => print("no time-out")
@@ -243,15 +243,15 @@ fn sockets() -> Result[(), stream.Error] uses io, net, clock {
         Err(m) => return Err(stream.error_text(stream.Other, m))
     }
     // nobody accepts yet: the connection still completes (the backlog takes it)
-    var c = stream.connect_by(addr, time.after_ms(2000))?
+    let mut c = stream.connect_by(addr, time.after_ms(2000))?
     let acc = stream.accept_by(lfd, time.after_ms(2000))?
-    var s = acc.fd
+    let mut s = acc.fd.copy()
     print(acc.peer.family == net.IPV4)
     stream.write_str(inout c, "ping\n")?
-    var sr = stream.buffered(s)
+    let mut sr = stream.buffered(s)
     print(text(sr.read_line_by(100, time.after_ms(2000))?.unwrap()))
     stream.write_all_by(inout s, "pong\n".bytes(), time.after_ms(2000))?
-    var cr = stream.buffered(c)
+    let mut cr = stream.buffered(c)
     print(text(cr.read_line_by(100, time.after_ms(2000))?.unwrap()))
     // nothing more: the read times out
     match cr.read_line_by(100, time.after_ms(20)) {
@@ -278,17 +278,17 @@ fn sockets() -> Result[(), stream.Error] uses io, net, clock {
 
 // a child's stdout and stdin as streams
 fn children() -> Result[(), stream.Error] uses io, fs, net, clock {
-    var argv: List[List[u8]] = List.new()
+    let mut argv: List[List[u8]] = List.new()
     argv.push("cat".bytes())
     let c = match child.start(argv, child.PIPE, child.PIPE, child.INHERIT) {
         Ok(c) => c
         Err(m) => return Err(stream.error_text(stream.Other, m))
     }
-    var to = stream.buffered_writer(stream.fd(c.stdin))
+    let mut to = stream.buffered_writer(stream.fd(c.stdin))
     stream.write_str(inout to, "through\na child\n")?
     to.flush()?
     to.inner().close()?
-    var from = stream.buffered(stream.fd(c.stdout))
+    let mut from = stream.buffered(stream.fd(c.stdout))
     while true {
         match from.read_line_by(100, time.after_ms(5000))? {
             Some(l) => print(text(l))
@@ -305,10 +305,10 @@ fn children() -> Result[(), stream.Error] uses io, fs, net, clock {
 
 fn ordering() -> Result[(), stream.Error] uses io {
     print("printed first")
-    var out = stream.stdout()
+    let mut out = stream.stdout()
     stream.write_str(inout out, "written second\n")?
     print("printed third")
-    var bo = stream.buffered_writer(stream.stdout())
+    let mut bo = stream.buffered_writer(stream.stdout())
     stream.write_str(inout bo, "buffered fourth\n")?
     bo.flush()?
     Ok(())

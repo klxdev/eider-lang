@@ -21,13 +21,13 @@ fn count(m: Map[u32, String], k: u32) -> Option[usize] {
 }
 
 fn main() uses io {
-    var tags: List[String] = List.new()
+    let mut tags: List[String] = List.new()
     tags.push(String.from("a"))
-    var n = Named(String.from("x"), tags)
+    let mut n = Named(String.from("x"), tags)
     n.name = String.from("y")
     n.tags.push(n.name)
     print(label(n))
-    var i = 0
+    let mut i = 0
     while i < 3 {
         let t = String.from_int(i as i64)
         i += 1
@@ -38,10 +38,10 @@ fn main() uses io {
         Some(s) => print(s)
         None => {}
     }
-    var m: Map[u32, String] = Map.new()
+    let mut m: Map[u32, String] = Map.new()
     m.insert(1, String.from("one"))
     print(count(m, 1).unwrap_or(0))
-    var b = Box.new(String.from("boxed"))
+    let mut b = Box.new(String.from("boxed"))
     b.set(String.from("again"))
     print(b.get())
 }

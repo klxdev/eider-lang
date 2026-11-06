@@ -15,7 +15,7 @@ fn main() uses io {
         n
     }
     print(say(1))
-    var l: List[i32] = List.new()
+    let mut l: List[i32] = List.new()
     l.push(1)
     l.push(2)
     let big = l.map(|x| x * 10).filter(|x| x > 10)

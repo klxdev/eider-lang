@@ -6,6 +6,8 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0001_mod_parse_error_in_module.ei E0001 at 2:14
   ok   e0001_precision_digits.ei    E0001 at 4:18
   ok   e0001_precision_max.ei       E0001 at 4:20
+  ok   e0001_var_removed.ei         E0001 at 3:5
+  ok   e0001_var_removed_pattern.ei E0001 at 3:5
   ok   e0002_add_and.ei             E0002 at 3:11 (fix compiles)
   ok   e0002_and_eq.ei              E0002 at 3:11 (fix compiles)
   ok   e0002_and_or.ei              E0002 at 3:11 (fix compiles)
@@ -628,7 +630,7 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0605_eq_on_param.ei         E0605 at 2:36 (fix compiles)
   ok   e0605_for_param.ei           E0605 at 2:39 (fix compiles)
   ok   e0605_impl_param.ei          E0605 at 4:67 (fix compiles)
-  ok   e0605_map_key_param.ei       E0605 at 3:12 (fix compiles)
+  ok   e0605_map_key_param.ei       E0605 at 3:16 (fix compiles)
   ok   e0605_ord_extra_bound.ei     E0605 at 2:40 (fix compiles)
   ok   e0605_print_param.ei         E0605 at 2:41 (fix compiles)
   ok   e0605_take_needs_default.ei  E0605 at 3:40 (fix compiles)
@@ -805,7 +807,8 @@ compile-pass tests (compiler/tests/check/pass)
   ok   thr_types.ei
   ok   v0_language.ei
   ok   v0_modules.ei
+  ok   var_is_a_name.ei
 
-804 passed, 0 failed; error-code coverage 63/76
+807 passed, 0 failed; error-code coverage 63/76
 codes without a compile-fail test: E0118 E0120 E0121 E0122 E0302 E0310 E0402 E0607 E0608 E0806 E0808 E0812 E0813
 --- exit 0

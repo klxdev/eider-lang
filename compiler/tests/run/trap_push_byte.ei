@@ -4,7 +4,7 @@
 fn add(inout s: String, b: u8) { s.push_byte(b) }
 
 fn main() uses io {
-    var s = String.from("ok")
+    let mut s = String.from("ok")
     add(inout s, 33)
     print(s)
     add(inout s, 195)

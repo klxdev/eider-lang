@@ -52,13 +52,13 @@ fn parse(n: i32) -> Result[i32, str] {
 }
 
 fn total_until_three(c: Count) -> Result[i32, str] {
-    var t = 0
+    let mut t = 0
     for i in c { t += parse(i)? }
     Ok(t)
 }
 
 fn main() uses io {
-    var sum = 0
+    let mut sum = 0
     for i in Count(0, 5) { sum += i }
     print(sum)
     let c = Count(10, 13)
@@ -70,7 +70,7 @@ fn main() uses io {
         if i > 7 { break }
         print(i)
     }
-    var pairs = 0
+    let mut pairs = 0
     for i in Count(0, 3) {
         for j in Count(0, i) { pairs += j }
     }
@@ -86,14 +86,14 @@ fn main() uses io {
         Ok(v) => print(v)
         Err(e) => print(e)
     }
-    var names: List[String] = List.new()
+    let mut names: List[String] = List.new()
     names.push(String.from("a"))
     names.push(String.from("b"))
     names.push(String.from("c"))
-    var rev = String.from("")
+    let mut rev = String.from("")
     for s in back(names) { rev.append(s) }
     print(rev)
-    var nums: List[i32] = List.new()
+    let mut nums: List[i32] = List.new()
     nums.push(1)
     nums.push(2)
     for x in back(nums) { print(x) }

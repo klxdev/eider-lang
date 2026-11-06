@@ -11,9 +11,9 @@ import std.time
 // case; a line that doesn't arrive in time is answered "timeout" and the service goes on
 // (BufReader keeps the partial line, so nothing is lost); "quit" ends it.
 fn serve[R: stream.Reader, W: stream.Writer](r: R, inout w: W) -> Result[i32, stream.Error] uses io, clock {
-    var br = stream.buffered(r)
-    var bw = stream.buffered_writer(w)
-    var served = 0
+    let mut br = stream.buffered(r)
+    let mut bw = stream.buffered_writer(w)
+    let mut served = 0
     while true {
         let line = match br.read_line_by(64, time.after_ms(1000)) {
             Ok(Some(l)) => l
@@ -25,7 +25,7 @@ fn serve[R: stream.Reader, W: stream.Writer](r: R, inout w: W) -> Result[i32, st
             }
         }
         if line == "quit".bytes() { break }
-        var up: List[u8] = List.new()
+        let mut up: List[u8] = List.new()
         for b in line {
             let c: u8 = if b >= 97 && b <= 122 { b - 32 } else { b }
             up.push(c)
@@ -54,7 +54,7 @@ fn allow[C: time.Clock](inout l: Limiter, c: C) -> bool uses clock {
 }
 
 fn steps() -> List[testing.Step] {
-    var s: List[testing.Step] = List.new()
+    let mut s: List[testing.Step] = List.new()
     s.push(testing.Data("hello\nwor".bytes()))
     s.push(testing.Pause)
     s.push(testing.Data("ld\nquit\nignored\n".bytes()))
@@ -64,48 +64,48 @@ fn steps() -> List[testing.Step] {
 fn checks(inout t: testing.Suite) -> Result[(), stream.Error] uses io, clock {
 
     // the service over a script: 2-byte reads, a pause in the middle of a line
-    var out = testing.sink(3)
+    let mut out = testing.sink(3)
     let n = testing.assert_ok(serve(testing.script(steps(), 2), inout out))
     t.eq("served", n, 2)
     t.eq("answers", out.text(), String.from("HELLO\ntimeout\nWORLD\n"))
     t.eq("flushed once", out.flush_count(), 1)
 
     // a scripted error reaches the caller with its kind
-    var fs: List[testing.Step] = List.new()
+    let mut fs: List[testing.Step] = List.new()
     fs.push(testing.Data("a\n".bytes()))
     fs.push(testing.Fail(stream.ConnectionReset))
-    var o2 = testing.sink(0)
+    let mut o2 = testing.sink(0)
     match serve(testing.script(fs, 0), inout o2) {
         Ok(_) => t.check("reset reported", false)
         Err(e) => t.eq("reset kind", e.kind, stream.ConnectionReset)
     }
 
     // a sink that fails after 4 bytes: write_all reports it, flush keeps the rest
-    var bad = testing.failing_sink(0, 4, stream.BrokenPipe)
-    var bw = stream.buffered_writer(bad)
+    let mut bad = testing.failing_sink(0, 4, stream.BrokenPipe)
+    let mut bw = stream.buffered_writer(bad)
     stream.write_str(inout bw, "abcdefgh")?
     match bw.flush() {
         Ok(()) => t.check("flush fails", false)
         Err(e) => t.eq("broken pipe", e.kind, stream.BrokenPipe)
     }
     t.eq("kept the rest", bw.pending(), 4)
-    var healed = bw.inner()
+    let mut healed = bw.inner()
     healed.heal()
-    var bw2 = stream.buffered_writer(healed)
+    let mut bw2 = stream.buffered_writer(healed)
     stream.write_all(inout bw2, "rest".bytes())?
     bw2.flush()?
     t.eq("after healing", bw2.inner().text(), String.from("abcdrest"))
     // a deadline write on a failing sink times out
-    var slow = testing.failing_sink(0, 0, stream.Other)
+    let mut slow = testing.failing_sink(0, 0, stream.Other)
     match stream.write_all_by(inout slow, "x".bytes(), time.never()) {
         Ok(()) => t.check("times out", false)
         Err(e) => t.eq("timed out", e.to_string(), String.from("write: timed out after 0 of 1 bytes"))
     }
 
     // chunks: short reads add up
-    var ch = testing.chunks("0123456789".bytes(), 3)
-    var reads = 0
-    var got: List[u8] = List.new()
+    let mut ch = testing.chunks("0123456789".bytes(), 3)
+    let mut reads = 0
+    let mut got: List[u8] = List.new()
     while true {
         let c = stream.read_all_by(inout ch, time.never())?
         if c.len() == 0 { break }
@@ -116,27 +116,24 @@ fn checks(inout t: testing.Suite) -> Result[(), stream.Error] uses io, clock {
     t.check("script finished", ch.finished())
 
     // the in-memory pipe
-    let p = testing.pipe()
-    var pw = p.w
-    var pr = p.r
-    stream.write_str(inout pw, "ping\n")?
-    var br = stream.buffered(pr)
+    let mut p = testing.pipe()
+    stream.write_str(inout p.w, "ping\n")?
+    let mut br = stream.buffered(p.r)
     t.eq("pipe line", br.read_line(10)?, Some("ping".bytes()))
     match br.read_line_by(10, time.never()) {
         Ok(_) => t.check("empty pipe times out", false)
         Err(e) => t.eq("empty pipe", e.kind, stream.TimedOut)
     }
-    match stream.read_exact(inout pr, 1) {
+    match stream.read_exact(inout p.r, 1) {
         Ok(_) => t.check("empty pipe would block", false)
         Err(e) => t.eq("would block", e.kind, stream.WouldBlock)
     }
     p.w.close()
     let none: Option[List[u8]] = None
     t.eq("closed pipe ends", br.read_line(10)?, none)
-    let q = testing.pipe()
+    let mut q = testing.pipe()
     q.r.close()
-    var qw = q.w
-    match stream.write_str(inout qw, "x") {
+    match stream.write_str(inout q.w, "x") {
         Ok(()) => t.check("broken pipe", false)
         Err(e) => t.eq("reader gone", e.kind, stream.BrokenPipe)
     }
@@ -144,7 +141,7 @@ fn checks(inout t: testing.Suite) -> Result[(), stream.Error] uses io, clock {
     // the fake clock: shared by copies, moved by advance and sleep
     let clk = testing.fake_clock(1000, 1700000000000000000)
     let c2 = clk
-    var lim = Limiter(2, time.seconds(1), 0, 0)
+    let mut lim = Limiter(2, time.seconds(1), 0, 0)
     t.eq("first", allow(inout lim, clk), true)
     t.eq("second", allow(inout lim, clk), true)
     t.eq("third refused", allow(inout lim, clk), false)
@@ -169,7 +166,7 @@ fn checks(inout t: testing.Suite) -> Result[(), stream.Error] uses io, clock {
 }
 
 fn main() uses io, clock {
-    var t = testing.suite("std/testing")
+    let mut t = testing.suite("std/testing")
     testing.assert_ok(checks(inout t))
 
     // diff_lines
@@ -179,7 +176,7 @@ fn main() uses io, clock {
 
     // a failing check, to pin the message assert_eq prints too (a trap's location in an
     // imported module names the wrong file, docs/std.md, so the trap itself isn't pinned)
-    var demo = testing.suite("demo")
+    let mut demo = testing.suite("demo")
     let want = String.from("line one\nline two\n")
     let have = String.from("line one\nline 2\n")
     print(demo.eq("text", have, want))

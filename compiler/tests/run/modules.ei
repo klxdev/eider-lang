@@ -15,7 +15,7 @@ fn name(d: geo.Dir) -> str {
 }
 
 fn main() uses io {
-    var p = geo.Pos(geo.ORIGIN, geo.ORIGIN)
+    let mut p = geo.Pos(geo.ORIGIN, geo.ORIGIN)
     p = geo.apply(p, geo.Step(geo.North, 3))
     p = geo.apply(p, geo.Step(geo.East, 2))
     p = geo.apply(p, g.Stay)
@@ -25,7 +25,7 @@ fn main() uses io {
     print(p.x * 10 + p.y)
     geo.walk(inout p, geo.West)
     print(p.x)
-    var d = geo.South
+    let mut d = geo.South
     for i in 0..5 {
         print(d)
         print(name(d))

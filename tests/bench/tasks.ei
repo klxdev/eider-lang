@@ -7,8 +7,8 @@ import std.chan
 import std.time
 
 fn spawn_join(n: i64) -> i64 uses threads {
-    var total: i64 = 0
-    var batch: List[Task[i64]] = List.new()
+    let mut total: i64 = 0
+    let mut batch: List[Task[i64]] = List.new()
     for i in 0..n {
         batch.push(spawn(|| -> i64 i * 2))
         if batch.len() == 1000 {
@@ -26,8 +26,8 @@ fn ping_pong(rounds: i64) -> i64 uses threads {
     let a = ping
     let b = pong
     let echo = spawn(|| -> i64 {
-        var n: i64 = 0
-        var going = true
+        let mut n: i64 = 0
+        let mut going = true
         while going {
             match a.recv() {
                 Some(v) => { b.send(v + 1); n += 1 }
@@ -36,7 +36,7 @@ fn ping_pong(rounds: i64) -> i64 uses threads {
         }
         n
     })
-    var sum: i64 = 0
+    let mut sum: i64 = 0
     for i in 0..rounds {
         ping.send(i)
         match pong.recv() {
@@ -50,7 +50,7 @@ fn ping_pong(rounds: i64) -> i64 uses threads {
 
 fn fan_in(senders: i64, each: i64) -> i64 uses threads {
     let c: Chan[i64] = Chan.new()
-    var ts: List[Task[i64]] = List.new()
+    let mut ts: List[Task[i64]] = List.new()
     for s in 0..senders {
         let cc = c
         ts.push(spawn(|| -> i64 {
@@ -58,7 +58,7 @@ fn fan_in(senders: i64, each: i64) -> i64 uses threads {
             0
         }))
     }
-    var sum: i64 = 0
+    let mut sum: i64 = 0
     for i in 0..senders * each {
         match c.recv() {
             Some(v) => { sum += v }
@@ -70,14 +70,14 @@ fn fan_in(senders: i64, each: i64) -> i64 uses threads {
 }
 
 fn sleepers(n: i64) -> i64 uses threads, clock {
-    var ts: List[Task[i64]] = List.new()
+    let mut ts: List[Task[i64]] = List.new()
     for i in 0..n {
         ts.push(spawn(|| -> i64 {
             for k in 0..3 { time.sleep_ms(2) }
             i
         }))
     }
-    var sum: i64 = 0
+    let mut sum: i64 = 0
     for t in ts { sum += t.join() }
     sum
 }

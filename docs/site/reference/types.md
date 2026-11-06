@@ -262,11 +262,11 @@ fn main() uses io {
     print("{x:.2} [{x:8.3}] [{x:<8.1}] [{x:+.0}] [{x:08.2}]")
     print((1e20).to_i32())
     print((12.9).to_i32())
-    var xs = [3.5, -1.0, 2.25]
-    var best = xs[0]
+    let mut xs = [3.5, -1.0, 2.25]
+    let mut best = xs[0].copy()
     for v in xs { best = best.max(v) }
     print(best)
-    var ys: List[f64] = List.new()
+    let mut ys: List[f64] = List.new()
     ys.push(2.5)
     ys.push(-1.0)
     ys.push(0.5)

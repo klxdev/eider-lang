@@ -25,12 +25,12 @@ fn pick(n: i32) -> str {
 
 fn main() uses io {
   // left-to-right evaluation of operands and arguments
-  var log = 0
+  let mut log = 0
   let r = trace(1, inout log) + trace(2, inout log) * trace(3, inout log)
   print(r)        // 7
   print(log)      // 123
 
-  var log2 = 0
+  let mut log2 = 0
   let s = sum3(trace(4, inout log2), trace(5, inout log2), trace(6, inout log2))
   print(s)        // 15
   print(log2)     // 456
@@ -44,17 +44,17 @@ fn main() uses io {
   print(c)
 
   // while condition with a call is re-evaluated each iteration
-  var k = 0
+  let mut k = 0
   while trace(k, inout log) < 3 { k += 1 }
   print(k)        // 3
 
   // nested arrays, records, value semantics
-  var g = Grid([[1, 2, 3], [4, 5, 6]], "grid")
+  let mut g = Grid([[1, 2, 3], [4, 5, 6]], "grid")
   let copy = g.copy()
   g.cells[1][2] = 60
   print(g.cells[1][2])      // 60
   print(copy.cells[1][2])   // 6
-  var row = [0; 4]
+  let mut row = [0; 4]
   row[3] = 7
   print(row[3] as i64 + 1)  // 8
   print(len(row))           // 4

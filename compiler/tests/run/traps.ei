@@ -75,7 +75,7 @@ test "i32 negation overflows" {
 }
 
 test "i32 compound assignment overflows" {
-    var x = id_i32(2147483647)
+    let mut x = id_i32(2147483647)
     x += id_i32(1)
 }
 
@@ -140,7 +140,7 @@ test "i64 negation overflows" {
 }
 
 test "i64 compound assignment overflows" {
-    var x = id_i64(9223372036854775807)
+    let mut x = id_i64(9223372036854775807)
     x += id_i64(1)
 }
 
@@ -175,7 +175,7 @@ test "u8 sub below zero" {
 }
 
 test "u8 compound assignment overflows" {
-    var x = id_u8(255)
+    let mut x = id_u8(255)
     x += id_u8(1)
 }
 
@@ -210,7 +210,7 @@ test "u32 sub below zero" {
 }
 
 test "u32 compound assignment overflows" {
-    var x = id_u32(4294967295)
+    let mut x = id_u32(4294967295)
     x += id_u32(1)
 }
 
@@ -245,7 +245,7 @@ test "u64 sub below zero" {
 }
 
 test "u64 compound assignment overflows" {
-    var x = id_u64(18446744073709551615)
+    let mut x = id_u64(18446744073709551615)
     x += id_u64(1)
 }
 
@@ -280,7 +280,7 @@ test "usize sub below zero" {
 }
 
 test "usize compound assignment overflows" {
-    var x = id_usize(18446744073709551615)
+    let mut x = id_usize(18446744073709551615)
     x += id_usize(1)
 }
 
@@ -479,13 +479,13 @@ test "index far past the end" {
 }
 
 test "store out of bounds" {
-    var a: [u8; 4] = [0; 4]
+    let mut a: [u8; 4] = [0; 4]
     a[id_usize(4)] = 1
     assert a[0] == 1
 }
 
 test "inner index of a nested array" {
-    var g = [[1, 2], [3, 4], [5, 6]]
+    let mut g = [[1, 2], [3, 4], [5, 6]]
     g[id_usize(2)][id_usize(2)] += 1
 }
 
@@ -495,7 +495,7 @@ test "outer index of a nested array" {
 }
 
 test "passes between the traps" {
-    var a = [10, 20, 30]
+    let mut a = [10, 20, 30]
     a[id_usize(2)] = 31
     assert a[2] == 31
     assert len(a) == 3
@@ -504,7 +504,7 @@ test "passes between the traps" {
 fn bump(inout x: i32) { x += 1 }
 
 test "inout argument out of bounds" {
-    var a = [1, 2]
+    let mut a = [1, 2]
     bump(inout a[id_usize(2)])
 }
 

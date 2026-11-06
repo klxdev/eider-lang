@@ -3,7 +3,7 @@
 import eiderc.sha256
 
 fn show(d: List[u8]) uses io {
-    var t = String.from("")
+    let mut t = String.from("")
     for b in d {
         let hi = b / 16
         let lo = b % 16
@@ -20,27 +20,27 @@ fn hexd(n: u8) -> str {
 
 fn main() uses io {
     let s = sha256.new()
-    var empty: List[u8] = List.new()
+    let mut empty: List[u8] = List.new()
     show(sha256.digest(s, empty))
     // "abc"
-    var abc: List[u8] = List.new()
+    let mut abc: List[u8] = List.new()
     abc.push(97)
     abc.push(98)
     abc.push(99)
     show(sha256.digest(s, abc))
     // "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"
-    var long: List[u8] = List.new()
+    let mut long: List[u8] = List.new()
     for i in 0..14 {
         for j in 0..4 { long.push((97 + i + j) as u8) }
     }
     show(sha256.digest(s, long))
-    var a: List[u8] = List.new()
+    let mut a: List[u8] = List.new()
     for i in 0..120 {
         a.push(97)
         if i == 54 || i == 55 || i == 62 || i == 63 || i == 118 { show(sha256.digest(s, a)) }
     }
     // 100,000 bytes: many blocks
-    var m: List[u8] = List.new()
+    let mut m: List[u8] = List.new()
     for i in 0..100000 { m.push(97) }
     show(sha256.digest(s, m))
 }

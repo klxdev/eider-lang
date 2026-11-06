@@ -15,7 +15,7 @@ fn step(inout c: Counter) -> u32 {
 }
 
 test "passes" {
-    var c = Counter(0)
+    let mut c = Counter(0)
     assert step(inout c) == 1
     assert step(inout c) == 2, "second step"
 }
@@ -45,20 +45,20 @@ test "100% \"quoted\" name\twith tab" {
 }
 
 test "panics" {
-    var c = Counter(0)
+    let mut c = Counter(0)
     step(inout c)
     if c.n == 1 { panic("counter at one") }
 }
 
 test "last one passes" {
     let xs = [1, 2, 3]
-    var t = 0
+    let mut t = 0
     for x in xs { t += x }
     assert t == 6
 }
 
 fn main() uses io {
     print("main runs")
-    var c = Counter(5)
+    let mut c = Counter(5)
     print(step(inout c))
 }

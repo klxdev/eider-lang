@@ -3,7 +3,7 @@
 // the loop walks nor what the reference meant before C8.6 (a copy): no finding.
 // Expected: loop.out (empty).
 fn main() uses io {
-    var xs: List[i32] = List.new()
+    let mut xs: List[i32] = List.new()
     xs.push(1)
     let all = xs
     for x in all {

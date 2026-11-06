@@ -6,7 +6,7 @@ type Stats = { hits: i64, names: List[String] }
 
 fn counter(threads: i32, per: i32) -> i64 uses threads {
     let m = Mutex.new(0 as i64)
-    var ts: List[Task[i32]] = List.new()
+    let mut ts: List[Task[i32]] = List.new()
     for i in 0..threads {
         let mm = m
         ts.push(spawn(|| -> i32 {
@@ -23,7 +23,7 @@ fn many(threads: i32) -> String uses threads {
     let a = Mutex.new(0)
     let b = Mutex.new(1000000)
     let log = Mutex.new(String.from(""))
-    var ts: List[Task[()]] = List.new()
+    let mut ts: List[Task[()]] = List.new()
     for i in 0..threads {
         let aa = a
         let bb = b
@@ -34,14 +34,14 @@ fn many(threads: i32) -> String uses threads {
                 bb.update(|x: i32| -> i32 x - 1)
             }
             ll.update(|s: String| -> String {
-                var t = s
+                let mut t = s.copy()
                 t.push_str("x")
                 return t
             })
         }))
     }
     for t in ts { t.join() }
-    var out = String.from_int(a.get() as i64)
+    let mut out = String.from_int(a.get() as i64)
     out.push_str(" ")
     out.append(String.from_int(b.get() as i64))
     out.push_str(" ")
@@ -53,13 +53,13 @@ fn many(threads: i32) -> String uses threads {
 /// A record with a List inside, updated by many threads.
 fn stats(threads: i32, per: i32) -> Stats uses threads {
     let m = Mutex.new(Stats(0, List.new()))
-    var ts: List[Task[i32]] = List.new()
+    let mut ts: List[Task[i32]] = List.new()
     for i in 0..threads {
         let mm = m
         ts.push(spawn(|| -> i32 {
             for j in 0..per {
                 mm.update(|s: Stats| -> Stats {
-                    var n = s.names
+                    let mut n = s.names.copy()
                     if n.len() < 10 { n.push(String.from("n")) }
                     return Stats(s.hits + 1, n)
                 })
@@ -75,14 +75,14 @@ fn stats(threads: i32, per: i32) -> Stats uses threads {
 /// Mutex alone.
 fn set_and_get() -> usize {
     let m: Mutex[List[String]] = Mutex.new(List.new())
-    var l: List[String] = List.new()
+    let mut l: List[String] = List.new()
     l.push(String.from("a"))
     m.set(l)
-    var g = m.get()
+    let mut g = m.get()
     g.push(String.from("b"))
     g.push(String.from("c"))
     m.set(g)
-    var h = m.get()
+    let mut h = m.get()
     h.clear()
     m.get().len() + h.len()
 }
@@ -90,11 +90,11 @@ fn set_and_get() -> usize {
 /// Racing `set`s and `get`s of owned values: every `get` sees one whole value.
 fn racing_sets(threads: i32) -> bool uses threads {
     let m = Mutex.new(String.from("aaaa"))
-    var ts: List[Task[bool]] = List.new()
+    let mut ts: List[Task[bool]] = List.new()
     for i in 0..threads {
         let mm = m
         ts.push(spawn(|| -> bool {
-            var ok = true
+            let mut ok = true
             for j in 0..300 {
                 if j % 2 == 0 { mm.set(String.from("bbbb")) } else { mm.set(String.from("cccc")) }
                 let s = mm.get()
@@ -103,7 +103,7 @@ fn racing_sets(threads: i32) -> bool uses threads {
             return ok
         }))
     }
-    var all = true
+    let mut all = true
     for t in ts {
         if !t.join() { all = false }
     }
@@ -119,7 +119,7 @@ fn main() uses io, threads {
     print(s.names.len())
     print(set_and_get())
     print(racing_sets(8))
-    var total: i64 = 0
+    let mut total: i64 = 0
     for r in 0..10 { total = total + counter(4, 250) }
     print(total)
 }

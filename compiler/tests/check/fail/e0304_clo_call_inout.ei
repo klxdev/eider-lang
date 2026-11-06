@@ -1,4 +1,4 @@
 // expect: E0304 4:21
 fn main() { let f = |x: i32| x
-    var z = 1
+    let mut z = 1
     let y = f(inout z) }

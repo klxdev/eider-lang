@@ -1,0 +1,4 @@
+fn main() uses io {
+    var n = 1
+    n += 1
+}

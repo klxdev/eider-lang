@@ -34,7 +34,7 @@ fn main() uses io {
     let t = (p.a, p.b)
     let (x, y) = t
     if x { print(y) }
-    var s = Sq(2)
+    let mut s = Sq(2)
     s.grow(1)
     print(total(s, Sq(1)))
     if let Ok(q) = quarter(8) { print(q) }

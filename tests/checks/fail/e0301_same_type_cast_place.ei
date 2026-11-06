@@ -2,7 +2,7 @@
 type P = { x: i32 }
 impl P { fn add(inout self, n: i32) { self.x += n } }
 fn main() {
-    var p = P(1)
+    let mut p = P(1)
     p.add(1)
     p.add(p.x as i32)
 }

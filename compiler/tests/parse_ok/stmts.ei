@@ -2,9 +2,9 @@
 import eiderc.lex
 
 fn stmts(xs: List[i32], o: Option[i32]) -> i32 {
-    let a = 1; var b: i32 = 2
+    let a = 1; let mut b: i32 = 2
     let (c, (d, _)) = (3, (4, 5))
-    var (e, f) =
+    let (mut e, mut f) =
         (6, 7)
     b = 1
     b += 1

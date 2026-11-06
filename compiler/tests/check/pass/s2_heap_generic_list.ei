@@ -3,7 +3,7 @@ fn first[T](l: List[T]) -> Option[T] {
     if l.len() == 0 { return None }
     Some(l[0])
 }
-fn main() uses io { var l: List[String] = List.new()
+fn main() uses io { let mut l: List[String] = List.new()
     l.push(String.from("a"))
     match first(l) {
         Some(s) => print(s)

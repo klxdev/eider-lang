@@ -57,7 +57,7 @@ expected. The lexer reports an unexpected character, an unterminated string lite
 block comment, an unknown or refused string escape (`\0`, `\x80`, `\u{d800}`, ...; see
 [Lexical structure](lexical.md)), an integer literal that is too large or `0x` without
 digits. The parser reports a missing token (`expected `)``, `expected `}``), a keyword
-used as a name, a missing newline or `;` between two statements on one line, `pub` on a
+used as a name, a missing newline or `;` between two statements on one line, the removed `var`, `pub` on a
 `test` or an `impl`, bounds on a type declaration's parameters, an `extern "c"` function
 with a body, and a call of something that isn't a name (`only named functions can be
 called`). The checker also reports one E0001: an or-pattern (`A(x) | B(x)`) that binds
@@ -81,6 +81,18 @@ fn main() uses io {
 
 ```output
 3
+```
+
+A statement that starts with the removed `var` is also E0001, with a help that shows `let mut`
+(`var x = e` was a mutable variable that owned a copy of `e`; a fresh `e` needs nothing more,
+and a place takes `.copy()`):
+
+```eider,compile_fail=E0001
+fn main() uses io {
+    var n = 1
+    n += 1
+    print(n)
+}
 ```
 
 ## E0002

@@ -3,12 +3,12 @@
 type Job = | Held(i32) | Done
 
 fn refs(xs: List[i32], j: Job) -> i32 {
-    var ys = xs
+    let mut ys = xs.copy()
     let mut a = ys[0]
     let mut b: i32 = 2
     let (mut c, d) = (3, 4)
     let mut = 5
-    var mut2 = mut
+    let mut mut2 = mut.copy()
     match j.copy() {
         Held(mut n) => { n += 1 }
         Done => {}

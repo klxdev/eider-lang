@@ -1,8 +1,8 @@
 // heap types inside the module are fine; only the boundary is restricted
 export fn count(n: i32) -> i32 {
-    var m: Map[i32, List[i32]] = Map.new()
+    let mut m: Map[i32, List[i32]] = Map.new()
     for i in 0..n {
-        var l: List[i32] = List.new()
+        let mut l: List[i32] = List.new()
         l.push(i)
         m.insert(i, l)
     }

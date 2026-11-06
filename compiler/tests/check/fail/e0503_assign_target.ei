@@ -1,5 +1,5 @@
 // expect: E0503 4:7
 fn main() {
-    var a = [0; 4]
+    let mut a = [0; 4]
     a[4] = 1
 }

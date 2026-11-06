@@ -405,6 +405,3 @@ The model is small, but it is not free of trade-offs:
 The design and the decisions behind it are in the repository's
 `docs/design/memory-model.md`.
 
-> **Note:** `var` is the deprecated spelling of a mutable binding that copies. Existing code
-> can be rewritten mechanically with `scripts/ei migrate-var file.ei`; new code uses
-> `let mut`.

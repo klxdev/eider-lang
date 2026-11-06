@@ -39,13 +39,13 @@ fn bump(inout n: u8) -> u8 {
 }
 
 fn untouched(a: Acc) -> i64 {
-    var b = a
+    let mut b = a.copy()
     b.total = 0
     a.total + b.total
 }
 
 fn main() uses io {
-    var a = Acc(0, 0, [0, 0, 0])
+    let mut a = Acc(0, 0, [0, 0, 0])
     add(inout a, 5)
     add_twice(inout a, 7)
     print(a.total)
@@ -53,15 +53,15 @@ fn main() uses io {
     print(a.last[0] * 100 + a.last[1] * 10 + a.last[2])
     print(untouched(a))
 
-    var x = 1
-    var y = 2
+    let mut x = 1
+    let mut y = 2
     swap(inout x, inout y)
     print(x * 10 + y)
-    var pair = [3, 4]
+    let mut pair = [3, 4]
     swap(inout pair[0], inout y)
     print(pair[0] * 10 + y)
 
-    var g = Grid([[0, 0, 0], [0, 0, 0]], "first")
+    let mut g = Grid([[0, 0, 0], [0, 0, 0]], "first")
     fill(inout g.cells[1], 10)
     fill(inout g.cells[0], 20)
     print(g.cells[1][2] as u32 + g.cells[0][0] as u32)
@@ -72,21 +72,21 @@ fn main() uses io {
     print(bump(inout g.cells[0][1]) + bump(inout g.cells[0][1]))
     print(g.cells[0][1])
 
-    var accs = [a, a]
+    let mut accs = [a, a]
     add(inout accs[1], -100)
     print(accs[0].total)
     print(accs[1].total)
-    var i: usize = 0
+    let mut i: usize = 0
     while i < 2 {
         add(inout accs[i], 1)
         i += 1
     }
     print(accs[0].count + accs[1].count)
 
-    var c = Has(a)
+    let mut c = Has(a)
     match c {
         Has(inner) => {
-            var v = inner
+            let mut v = inner.copy()
             add(inout v, 1000)
             print(v.total)
         }

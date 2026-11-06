@@ -20,7 +20,10 @@ pub fn sort_by[T](xs: List[T], cmp: fn(T, T) -> Ordering) -> List[T] {
     let n = xs.len()
     if n < 2 { return xs }
     // insertion sort on each run of RUN elements
-    var a = xs
+    // an independent List: `.copy()` would need `T: Copy`, and `let mut a = xs` would be a
+    // mutable alias of a read-only parameter (E0307)
+    let mut a: List[T] = List.new()
+    for x in xs { a.push(x) }
     let mut lo: usize = 0
     while lo < n {
         let hi = if lo + RUN < n { lo + RUN } else { n }

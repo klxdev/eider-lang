@@ -10,14 +10,14 @@ fn new_log() -> Log { Log(Mutex.new(List.new())) }
 
 fn note(log: Log, id: i32) {
     log.m.update(|l| {
-        var x = l
+        let mut x = l.copy()
         x.push(id)
         x
     })
 }
 
 fn dump(log: Log, what: str) uses io {
-    var s = String.from(what)
+    let mut s = String.from(what)
     s.push_str(":")
     for x in log.m.get() {
         s.push_str(" ")
@@ -84,17 +84,19 @@ fn main() uses io, threads {
     }
     dump(log, "reverse order")
     {
-        var a = g(3, log)
-        var b = a
+        let mut a = g(3, log)
+        let mut held: List[Guard] = List.new()
+        held.push(a)
         a.id = 4
-        print(b.id)
+        print(held[0].id)
     }
     dump(log, "written while shared")
     {
-        var r = Res(5, log)
-        var s = r
+        let mut r = Res(5, log)
+        let mut held: List[Res] = List.new()
+        held.push(r)
         r.id = 6
-        print(s.id)
+        print(held[0].id)
         print(r.id)
     }
     dump(log, "own copy")
@@ -104,11 +106,11 @@ fn main() uses io, threads {
     }
     dump(log, "drop before fields")
     {
-        var l: List[Guard] = List.new()
+        let mut l: List[Guard] = List.new()
         l.push(g(9, log))
         l.push(g(10, log))
         let l2 = l
-        var m: Map[i32, Guard] = Map.new()
+        let mut m: Map[i32, Guard] = Map.new()
         m.insert(1, g(11, log))
         m.insert(1, g(12, log))
         print(l2.len() + m.len())
@@ -132,7 +134,7 @@ fn main() uses io, threads {
     print(early(log, false))
     dump(log, "return")
     {
-        var i = 0
+        let mut i = 0
         while i < 3 {
             let t = g(40 + i, log)
             i += 1
@@ -150,7 +152,7 @@ fn main() uses io, threads {
     {
         let copied = g(50, log)
         let one: Mutex[Guard] = Mutex.new(g(80, log))
-        var ts: List[Task[i32]] = List.new()
+        let mut ts: List[Task[i32]] = List.new()
         for k in 0..4 {
             ts.push(spawn(|| -> i32 {
                 let mine = g(60 + k, log)
@@ -158,7 +160,7 @@ fn main() uses io, threads {
                 copied.id + mine.id
             }))
         }
-        var sum = 0
+        let mut sum = 0
         for t in ts { sum += t.join() }
         print(sum)
         let ch: Chan[Guard] = Chan.new()
@@ -169,7 +171,7 @@ fn main() uses io, threads {
             0
         })
         prod.join()
-        var got = 0
+        let mut got = 0
         while true {
             match ch.recv() {
                 Some(x) => { got += x.id }
@@ -178,10 +180,10 @@ fn main() uses io, threads {
         }
         print(got)
     }
-    var all = log.m.get()
-    var sorted: List[i32] = List.new()
+    let mut all = log.m.get()
+    let mut sorted: List[i32] = List.new()
     for want in [50, 60, 61, 62, 63, 70, 71, 80, 90, 91, 92, 93] {
-        var n = 0
+        let mut n = 0
         for x in all {
             if x == want { n += 1 }
         }

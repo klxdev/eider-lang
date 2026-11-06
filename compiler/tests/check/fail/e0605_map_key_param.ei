@@ -1,10 +1,10 @@
-// expect: E0605 3:12
+// expect: E0605 3:16
 fn count[K](ks: List[K]) -> usize {
-    var m: Map[K, bool] = Map.new()
+    let mut m: Map[K, bool] = Map.new()
     for k in ks { m.insert(k, true) }
     m.len()
 }
 fn main() uses io {
-    var ks: List[i32] = List.new()
+    let mut ks: List[i32] = List.new()
     print(count(ks))
 }

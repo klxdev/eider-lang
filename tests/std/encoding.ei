@@ -10,7 +10,7 @@ fn show_dec(r: Result[List[u8], encoding.DecodeError]) -> String {
         Ok(b) => {
             match String.from_bytes(b) {
                 Ok(s) => {
-                    var o = String.from("ok \"")
+                    let mut o = String.from("ok \"")
                     o.append(s)
                     o.push_str("\"")
                     o
@@ -19,7 +19,7 @@ fn show_dec(r: Result[List[u8], encoding.DecodeError]) -> String {
             }
         }
         Err(e) => {
-            var o = String.from("err ")
+            let mut o = String.from("err ")
             o.append(e.to_string())
             o
         }
@@ -27,7 +27,7 @@ fn show_dec(r: Result[List[u8], encoding.DecodeError]) -> String {
 }
 
 fn main() uses io {
-    var b: List[u8] = List.new()
+    let mut b: List[u8] = List.new()
     for x in [0, 1, 127, 128, 254, 255] { b.push(x as u8) }
     print(encoding.hex(b))
     print(encoding.hex_upper(b))
@@ -40,7 +40,7 @@ fn main() uses io {
     // RFC 4648 section 10
     for v in ["", "f", "fo", "foo", "foob", "fooba", "foobar"] {
         let e = encoding.base64(v.bytes())
-        var line = String.from(v)
+        let mut line = String.from(v)
         line.push_str(" -> ")
         line.append(e)
         line.push_str(" | ")
@@ -49,7 +49,7 @@ fn main() uses io {
         line.append(show_dec(encoding.unbase64(e.bytes())))
         print(line)
     }
-    var odd: List[u8] = List.new()
+    let mut odd: List[u8] = List.new()
     for x in [251, 255, 191] { odd.push(x as u8) }
     print(encoding.base64(odd))
     print(encoding.base64_url(odd))
@@ -71,11 +71,11 @@ fn main() uses io {
     print(show_dec(encoding.unbase64_url("Zm9vY".bytes())))
 
     // every byte, every length up to 20, both alphabets, padded and not
-    var all: List[u8] = List.new()
+    let mut all: List[u8] = List.new()
     for i in 0..256 { all.push(i as u8) }
-    var ok = encoding.unbase64(encoding.base64(all).bytes()) == Ok(all)
+    let mut ok = encoding.unbase64(encoding.base64(all).bytes()) == Ok(all)
     for n in 0..20 {
-        var part: List[u8] = List.new()
+        let mut part: List[u8] = List.new()
         for i in 0..n { part.push(((i * 37 + 11) % 256) as u8) }
         if encoding.unbase64(encoding.base64(part).bytes()) != Ok(part) { ok = false }
         if encoding.unbase64_url(encoding.base64_url(part).bytes()) != Ok(part) { ok = false }
@@ -86,7 +86,7 @@ fn main() uses io {
     print(ok)
 
     print("integers")
-    var out: List[u8] = List.new()
+    let mut out: List[u8] = List.new()
     encoding.push_u16_be(inout out, 258)
     encoding.push_u16_le(inout out, 258)
     encoding.push_u32_be(inout out, 4294967295)

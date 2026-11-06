@@ -5,9 +5,9 @@
 type Job = { id: i32, name: String, tags: List[String] }
 
 fn job(i: i32) -> Job {
-    var name = String.from("job")
+    let mut name = String.from("job")
     name.append(String.from_int(i as i64))
-    var tags: List[String] = List.new()
+    let mut tags: List[String] = List.new()
     tags.push(String.from("t"))
     Job(i, name, tags)
 }
@@ -16,7 +16,7 @@ fn job(i: i32) -> Job {
 /// channel closes. The main thread closes it after joining every producer.
 fn crowd(np: i32, nc: i32, per: i32) -> i64 uses threads {
     let c: Chan[Job] = Chan.new()
-    var producers: List[Task[i32]] = List.new()
+    let mut producers: List[Task[i32]] = List.new()
     for p in 0..np {
         let cc = c
         producers.push(spawn(|| -> i32 {
@@ -24,12 +24,12 @@ fn crowd(np: i32, nc: i32, per: i32) -> i64 uses threads {
             return per
         }))
     }
-    var consumers: List[Task[i64]] = List.new()
+    let mut consumers: List[Task[i64]] = List.new()
     for q in 0..nc {
         let cc = c
         consumers.push(spawn(|| -> i64 {
-            var sum: i64 = 0
-            var going = true
+            let mut sum: i64 = 0
+            let mut going = true
             while going {
                 match cc.recv() {
                     Some(j) => { sum = sum + j.id as i64 + j.name.len() as i64 + j.tags.len() as i64 }
@@ -39,18 +39,18 @@ fn crowd(np: i32, nc: i32, per: i32) -> i64 uses threads {
             return sum
         }))
     }
-    var sent = 0
+    let mut sent = 0
     for t in producers { sent = sent + t.join() }
     c.close()
-    var total: i64 = 0
+    let mut total: i64 = 0
     for t in consumers { total = total + t.join() }
     total + sent as i64
 }
 
 fn expected(np: i32, per: i32) -> i64 {
-    var total: i64 = 0
+    let mut total: i64 = 0
     for i in 0..np * per {
-        var name = String.from("job")
+        let mut name = String.from("job")
         name.append(String.from_int(i as i64))
         total = total + i as i64 + name.len() as i64 + 1
     }
@@ -61,7 +61,7 @@ fn expected(np: i32, per: i32) -> i64 {
 fn wake_all(n: i32) -> i32 uses threads {
     let c: Chan[String] = Chan.new()
     let started: Chan[i32] = Chan.new()
-    var ts: List[Task[i32]] = List.new()
+    let mut ts: List[Task[i32]] = List.new()
     for i in 0..n {
         let cc = c
         let st = started
@@ -82,7 +82,7 @@ fn wake_all(n: i32) -> i32 uses threads {
         }
     }
     c.close()
-    var got = 0
+    let mut got = 0
     for t in ts { got = got + t.join() }
     got
 }
@@ -93,7 +93,7 @@ fn abandon() -> usize uses threads {
     let cc = c
     let t = spawn(|| -> usize {
         for i in 0..50 {
-            var l: List[String] = List.new()
+            let mut l: List[String] = List.new()
             l.push(String.from("x"))
             l.push(String.from_int(i as i64))
             cc.send(l)
@@ -108,8 +108,8 @@ fn drain_after_close() -> i32 {
     let c: Chan[String] = Chan.new()
     for i in 0..10 { c.send(String.from_int(i as i64)) }
     c.close()
-    var n = 0
-    var going = true
+    let mut n = 0
+    let mut going = true
     while going {
         match c.recv() {
             Some(s) => { n = n + s.len() as i32 }
@@ -126,15 +126,14 @@ fn drain_after_close() -> i32 {
 
 /// A pipeline: stage k reads from its input and writes to its output; FIFO order is kept.
 fn pipeline(stages: i32, n: i32) -> i64 uses threads {
-    let first: Chan[i64] = Chan.new()
-    var input = first
-    var ts: List[Task[i32]] = List.new()
+    let mut qs: List[Chan[i64]] = List.new()
+    for k in 0..stages + 1 { qs.push(Chan.new()) }
+    let mut ts: List[Task[i32]] = List.new()
     for s in 0..stages {
-        let out: Chan[i64] = Chan.new()
-        let i2 = input
-        let o2 = out
+        let i2 = qs[s as usize]
+        let o2 = qs[s as usize + 1]
         ts.push(spawn(|| -> i32 {
-            var going = true
+            let mut going = true
             while going {
                 match i2.recv() {
                     Some(v) => o2.send(v * 2 + 1)
@@ -144,15 +143,14 @@ fn pipeline(stages: i32, n: i32) -> i64 uses threads {
             o2.close()
             return 0
         }))
-        input = out
     }
-    for i in 0..n { first.send(i as i64) }
-    first.close()
-    var acc: i64 = 0
-    var pos: i64 = 0
-    var going = true
+    for i in 0..n { qs[0].send(i as i64) }
+    qs[0].close()
+    let mut acc: i64 = 0
+    let mut pos: i64 = 0
+    let mut going = true
     while going {
-        match input.recv() {
+        match qs[stages as usize].recv() {
             Some(v) => {
                 acc = acc + v * (pos + 1)
                 pos = pos + 1

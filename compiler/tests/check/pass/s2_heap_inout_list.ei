@@ -1,5 +1,5 @@
 // mode: build
 fn add(inout l: List[i32], x: i32) { l.push(x) }
-fn main() uses io { var l: List[i32] = List.new()
+fn main() uses io { let mut l: List[i32] = List.new()
     add(inout l, 1)
     print(l.len()) }

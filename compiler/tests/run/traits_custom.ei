@@ -14,7 +14,7 @@ fn lower(b: u8) -> u8 {
 impl Eq for Name {
     fn eq(self, other: Name) -> bool {
         if self.text.len() != other.text.len() { return false }
-        var i: usize = 0
+        let mut i: usize = 0
         while i < self.text.len() {
             if lower(self.text.byte(i)) != lower(other.text.byte(i)) { return false }
             i += 1
@@ -25,8 +25,8 @@ impl Eq for Name {
 
 impl Hash for Name {
     fn hash(self) -> u64 {
-        var h: u64 = 7
-        var i: usize = 0
+        let mut h: u64 = 7
+        let mut i: usize = 0
         while i < self.text.len() {
             h = h *% 31 +% lower(self.text.byte(i)) as u64
             i += 1
@@ -76,9 +76,9 @@ impl[T: Show] Show for Tagged[T] {
 type Queue = { jobs: List[Job], name: Name }
 
 fn sort[T: Ord + Copy](inout xs: List[T]) {
-    var i: usize = 1
+    let mut i: usize = 1
     while i < xs.len() {
-        var j = i
+        let mut j = i.copy()
         while j > 0 && xs[j] < xs[j - 1] {
             let t = xs[j].copy()
             xs[j] = xs[j - 1]
@@ -96,17 +96,17 @@ fn main() uses io {
     print(a != Name(String.from("Bob")))
     print(a.eq(b))
     print(a.hash() == b.hash())
-    var ages: Map[Name, i32] = Map.new()
+    let mut ages: Map[Name, i32] = Map.new()
     ages.insert(a, 36)
     ages.insert(b, 37)
     print(ages.len())
     print(ages.get(Name(String.from("ADA"))).unwrap_or(0))
-    var names: List[Name] = List.new()
+    let mut names: List[Name] = List.new()
     names.push(Name(String.from("x")))
     print(names.contains(Name(String.from("X"))))
     print(Some(a) == Some(b))
 
-    var jobs: List[Job] = List.new()
+    let mut jobs: List[Job] = List.new()
     jobs.push(Job(1, 5))
     jobs.push(Job(2, 9))
     jobs.push(Job(3, 5))
@@ -120,7 +120,7 @@ fn main() uses io {
     print(Some(Job(6, 2)))
     let q = Queue(jobs, Name(String.from("main")))
     print(q)
-    var by_job: Map[Job, str] = Map.new()
+    let mut by_job: Map[Job, str] = Map.new()
     by_job.insert(Job(1, 1), "one")
     print(by_job.get(Job(1, 1)).unwrap_or("?"))
 
@@ -128,7 +128,7 @@ fn main() uses io {
     let d2 = d.copy()
     let d3 = d2.copy()
     print(d3.copies)
-    var docs: List[Doc] = List.new()
+    let mut docs: List[Doc] = List.new()
     docs.push(d3)
     let docs2 = docs.copy()
     print(docs2[0].copies)
@@ -136,7 +136,7 @@ fn main() uses io {
 
     print(Tagged("n", 5))
     print(Tagged("job", Job(9, 9)))
-    var line = String.from("> ")
+    let mut line = String.from("> ")
     Tagged("p", (1, "two")).show(inout line)
     print(line)
 }

@@ -27,7 +27,7 @@ fn main() uses io {
     }
     print(p.x)
     print(p.y)
-    var x: i32 = 0
+    let mut x: i32 = 0
     x = match get(true) {
         Good(x) => x * 2
         Bad(_) => 1

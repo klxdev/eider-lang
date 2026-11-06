@@ -1,7 +1,7 @@
 //! fuzz: the mutation half of the differential fuzzer (main.ei runs the compilers).
 //!
 //! A deterministic PRNG, a tokenizer for Eider source over bytes, and the two mutation
-//! strategies: `semantic` (type names, literals, identifiers, operators, let/var) and
+//! strategies: `semantic` (type names, literals, identifiers, operators, let/mut) and
 //! `wild` (any token replaced, deleted, extended or prefixed). Pure apart from `sys.lit`.
 
 import core.sys
@@ -53,11 +53,11 @@ pub fn tables() -> Tables {
     Tables(
         words("i32~i64~u8~u32~u64~usize~bool~str"),
         words("0~1~2~255~256~4294967296~18446744073709551615~18446744073709551616"),
-        words("let~var~if~else~while~for~return~break~continue~match~inout~true~false~fn~pub~uses~io~clock~as~_"),
+        words("let~mut~if~else~while~for~return~break~continue~match~inout~true~false~fn~pub~uses~io~clock~as~_"),
         words(" + 1~ * 300~ / 0~ == true~ as u8~.x~[0]~[9]~ as usize~ + true~ << 40~ & 1"),
         words("==~<~+~-~*~/~%~&&~||~+%~*%~&~|~^~<<~>>"),
         words("true~false~1~\"s\""),
-        words("let~var"),
+        words("let~mut"),
         words("inout ~-~!"),
         words("inout ~-~!~return ~unsafe "),
     )

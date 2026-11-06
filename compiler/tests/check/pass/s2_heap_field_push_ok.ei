@@ -1,6 +1,6 @@
 // mode: build
 type R = { l: List[i32] }
-fn main() uses io { var l: List[i32] = List.new()
-    var r = R(l)
+fn main() uses io { let mut l: List[i32] = List.new()
+    let mut r = R(l)
     r.l.push(1)
     print(r.l.len()) }

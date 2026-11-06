@@ -1,7 +1,7 @@
 // expect: E0308 7:8
 type P = { x: i32 }
 fn main() uses io {
-    var ps: List[P] = List.new()
+    let mut ps: List[P] = List.new()
     ps.push(P(1))
     let mut p = ps[0]
     ps.push(P(2))

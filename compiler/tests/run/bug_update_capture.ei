@@ -6,14 +6,14 @@ fn main() uses io, threads {
     let m = Mutex.new(String.from("a"))
     let suffix = String.from("bc")
     m.update(|s: String| -> String {
-        var t = s
+        let mut t = s.copy()
         t.append(suffix)
         return t
     })
     print(m.get())
     // a stored closure, used twice
     let add = |s: String| -> String {
-        var t = s
+        let mut t = s.copy()
         t.append(suffix)
         return t
     }
@@ -23,7 +23,7 @@ fn main() uses io, threads {
     // from several threads, capturing a handle and a String
     let n = Mutex.new(0)
     let step = Mutex.new(3)
-    var ts: List[Task[i32]] = List.new()
+    let mut ts: List[Task[i32]] = List.new()
     for i in 0..8 {
         let nn = n
         let ss = step

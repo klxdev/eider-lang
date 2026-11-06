@@ -57,7 +57,7 @@ test "i64 shift by a negative count" {
 }
 
 test "i64 shift by 64 in a compound assignment" {
-    var x = id_i64(5)
+    let mut x = id_i64(5)
     x >>= id_i64(64)
     assert false, "not reached"
 }

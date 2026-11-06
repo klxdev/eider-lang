@@ -13,7 +13,7 @@ fn count(inout calls: u32) -> [u8; 2] {
 
 fn main() uses io {
     print(len(make(7)))
-    var calls: u32 = 0
+    let mut calls: u32 = 0
     let total = len(count(inout calls)) + len(count(inout calls))
     print(total)
     print(calls)

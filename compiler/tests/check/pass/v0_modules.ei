@@ -20,7 +20,7 @@ fn main() uses io {
     print(label(shapes.Blue))
     print(ch.is_red(shapes.Green))
     print(shapes.uses_helper(1) + shapes.shadow(2) + ch.calls_root())
-    var p = shapes.origin()
+    let mut p = shapes.origin()
     shapes.bump(inout p)
     let q: shapes.Point = shapes.Point(p.x, shapes.ORIGIN_X)
     print(q.x)

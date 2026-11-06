@@ -4,19 +4,19 @@ import std.sort
 type P = { k: i64, tag: i64 }
 
 fn mk(items: [i64; 12]) -> List[i64] {
-    var l: List[i64] = List.new()
+    let mut l: List[i64] = List.new()
     for x in items { l.push(x) }
     l
 }
 
 fn main() uses io {
-    var xs = mk([5, 3, 9, 1, 3, 7, 0, -4, 8, 2, 2, 6])
+    let mut xs = mk([5, 3, 9, 1, 3, 7, 0, -4, 8, 2, 2, 6])
     sort.sort_in_place(inout xs)
     print(xs)
     sort.reverse_in_place(inout xs)
     print(xs)
     // against the stable sort, on a few hundred pseudo-random values
-    var big: List[i64] = List.new()
+    let mut big: List[i64] = List.new()
     let mut s: i64 = 12345
     for _ in 0..500 {
         s = (s * 1103515245 + 12345) % 2147483648
@@ -25,27 +25,27 @@ fn main() uses io {
     let want = sort.sort(big.copy())
     sort.sort_in_place(inout big)
     print(big == want)
-    var empty: List[i64] = List.new()
+    let mut empty: List[i64] = List.new()
     sort.sort_in_place(inout empty)
-    var one: List[i64] = List.new()
+    let mut one: List[i64] = List.new()
     one.push(1)
     sort.reverse_in_place(inout one)
     print(empty.len() + one.len())
-    var ps: List[P] = List.new()
+    let mut ps: List[P] = List.new()
     ps.push(P(2, 0))
     ps.push(P(1, 1))
     ps.push(P(2, 2))
     ps.push(P(0, 3))
     sort.sort_in_place_by(inout ps, |a: P, b: P| -> Ordering a.k.compare(b.k))
-    var ks: List[i64] = List.new()
+    let mut ks: List[i64] = List.new()
     for p in ps { ks.push(p.k) }
     print(ks)
     // a shared List is copied first, the other holder keeps its order
-    var orig: List[i64] = List.new()
+    let mut orig: List[i64] = List.new()
     orig.push(3)
     orig.push(2)
     orig.push(1)
-    var mine = orig.copy()
+    let mut mine = orig.copy()
     sort.sort_in_place(inout mine)
     print("{orig} {mine}")
 }

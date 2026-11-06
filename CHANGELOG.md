@@ -5,6 +5,17 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## 0.7.5 (unreleased)
+
+- **`var` is removed (#2; decision C897).** Fix forward, no warning stage and no shim: a statement that starts with `var`
+  is the syntax error E0001 "`var` was removed: write `let mut`", whose help shows the replacements (`let mut x = e`, `let mut
+  x = e.copy()` for a copy of a place, `let (mut a, mut b) = e`); there is no machine-applicable fix, because
+  `let mut x = place` is an alias, not the copy `var` made. `var` is no longer a keyword (30 keywords; it is an ordinary name
+  now), `eiderc migrate-var` and `scripts/migrate-var.sh` are gone (eiderc 0.7.4 and earlier still rewrite old code). The
+  repository is migrated: compiler/, std/, core/, packages/, tests/, examples/, the docs' code blocks and the library
+  repositories (eider-http, eider-tls); std's last `var` (std/sort) is a List built by pushing, with no `Copy` bound added.
+  eider-analyzer and tree-sitter-eider drop `var` from their keyword lists and the lexicon.
+
 ## 0.7.3
 
 A patch that reshapes the library layer: logging and the command line leave std for libraries of their own, and

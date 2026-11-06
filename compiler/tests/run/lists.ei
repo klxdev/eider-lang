@@ -4,16 +4,16 @@
 type P = { x: i32, y: i32 }
 
 fn total(xs: List[i64]) -> i64 {
-    var t: i64 = 0
+    let mut t: i64 = 0
     for x in xs { t += x }
     t
 }
 
 fn main() uses io {
-    var xs: List[i64] = List.new()
+    let mut xs: List[i64] = List.new()
     print(xs.len())
     print(xs.is_empty())
-    var i: i64 = 0
+    let mut i: i64 = 0
     while i < 100 {
         xs.push(i * i)
         i += 1
@@ -42,16 +42,16 @@ fn main() uses io {
     xs.push(5)
     print(xs[0])
 
-    var grid: List[List[u8]] = List.new()
+    let mut grid: List[List[u8]] = List.new()
     for r in 0..3 {
-        var row: List[u8] = List.new()
+        let mut row: List[u8] = List.new()
         for c in 0..4 { row.push((r * 4 + c) as u8) }
         grid.push(row)
     }
     grid[1][2] = 200
     print(grid[1][2])
     print(grid[2][3])
-    var n: usize = 0
+    let mut n: usize = 0
     for row in grid {
         for v in row { n += v as usize }
     }
@@ -61,7 +61,7 @@ fn main() uses io {
     print(first.len())
     print(grid[0].len())
 
-    var ps: List[P] = List.new()
+    let mut ps: List[P] = List.new()
     ps.push(P(1, 2))
     ps.push(P(3, 4))
     ps[1].x = 30
@@ -69,12 +69,12 @@ fn main() uses io {
     print(ps.contains(P(1, 2)))
     print(ps.contains(P(3, 4)))
 
-    var arrs: List[[i32; 3]] = List.new()
+    let mut arrs: List[[i32; 3]] = List.new()
     arrs.push([1, 2, 3])
     arrs[0][2] = 7
     print(arrs[0][2])
 
-    var words: List[String] = List.new()
+    let mut words: List[String] = List.new()
     words.push(String.from("alpha"))
     words.push(String.from("be"))
     words.push(String.from("gamma"))
@@ -86,7 +86,7 @@ fn main() uses io {
     print(words.any(|w| w.len() == 2))
     print(words.all(|w| w.len() > 2))
     let joined = words.fold(String.from(""), |acc, w| -> String {
-        var r = acc
+        let mut r = acc.copy()
         r.append(w)
         r
     })
@@ -97,8 +97,8 @@ fn main() uses io {
         None => {}
     }
     print(words.len())
-    var a: List[i32] = List.new()
-    var b: List[i32] = List.new()
+    let mut a: List[i32] = List.new()
+    let mut b: List[i32] = List.new()
     a.push(1)
     b.push(1)
     print(a == b)

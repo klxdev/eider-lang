@@ -2,13 +2,13 @@
 fn main() uses io {
     let m = Mutex.new(String.from("a"))
     m.update(|s: String| -> String {
-        var t = s
+        let mut t = s.copy()
         t.push_str("b")
         return t
     })
     print(m.get())
     let c: Chan[List[i32]] = Chan.new()
-    var l: List[i32] = List.new()
+    let mut l: List[i32] = List.new()
     l.push(1)
     c.send(l)
     c.close()

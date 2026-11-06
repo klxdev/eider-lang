@@ -32,10 +32,10 @@ fn tcp_echo() -> Result[bool, String] uses io, net, ffi {
     let at_once = net.connect(cs, net.ipv4(127, 0, 0, 1, port))?
     poll.add(p, ls, poll.READ, LISTENER)?
     poll.add(p, cs, poll.WRITE, CLIENT)?
-    var conn: i32 = -1
-    var reply: List[u8] = List.new()
-    var done = false
-    var rounds = 0
+    let mut conn: i32 = -1
+    let mut reply: List[u8] = List.new()
+    let mut done = false
+    let mut rounds = 0
     while !done && rounds < 50 {
         rounds += 1
         let events = poll.wait(p, 8, 2000)?
@@ -158,7 +158,7 @@ fn unix_socket() -> Result[bool, String] uses io, fs, net, ffi {
 
 fn names() -> Result[bool, String] uses io, net, clock, ffi {
     let all = net.lookup(sys.lit("localhost"), sys.lit("80"), 0, net.STREAM)?
-    var loopback = all.len() > 0
+    let mut loopback = all.len() > 0
     for a in all {
         if a.port != 80 { loopback = false }
         if a.family == net.IPV4 && a.ip[0] != 127 { loopback = false }

@@ -197,7 +197,7 @@ by them.
 **Groups** (structured concurrency). A child cannot outlive its group:
 
 ```
-var g: task.Group[Reply] = task.group_until(tok, time.after_ms(500))
+let mut g: task.Group[Reply] = task.group_until(tok, time.after_ms(500))
 for b in backends { g.spawn(|t: task.Token| -> Result[Reply, String] { ask(b, t) }) }
 let replies = g.wait()?          // every result in start order, or the first error
 ```
@@ -252,7 +252,7 @@ a bug to fix, and one that restarts workers has a better answer than leaking.
 ## Event loop and timers (`std/event`)
 
 ```
-var lp = event.new()?
+let mut lp = event.new()?
 lp.watch(sock, poll.READ, 1)?
 let t = lp.timer_after(time.seconds(5))
 while running {

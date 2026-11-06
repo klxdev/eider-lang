@@ -2,7 +2,7 @@
 // the host through the loader's `imports`.
 extern "c" fn host_scale(v: i32) -> i32
 export fn scaled_sum(n: i32) -> i32 uses ffi {
-    var t: i32 = 0
+    let mut t: i32 = 0
     for i in 0..n {
         let k = unsafe { host_scale(i) }
         t = t + k

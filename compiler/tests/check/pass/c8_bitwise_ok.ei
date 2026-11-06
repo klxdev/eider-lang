@@ -16,19 +16,19 @@ fn cmp(a: i64) -> bool { a << 1 == 4 && (a & 1) == 0 && -a >> 1 < 0 }
 fn casts(b: u8) -> u32 { b as u32 << 8 | 255 }
 
 fn compound() {
-    var a: i32 = 1
+    let mut a: i32 = 1
     a &= 3
     a |= 4
     a ^= 5
     a <<= 6
     a >>= 7
-    var b: u8 = 1
+    let mut b: u8 = 1
     b <<= 7
-    var c: usize = 1
+    let mut c: usize = 1
     c <<= 63
-    var d: i64 = -1
+    let mut d: i64 = -1
     d >>= 63
-    var e: u64 = 0
+    let mut e: u64 = 0
     e |= ~e
 }
 

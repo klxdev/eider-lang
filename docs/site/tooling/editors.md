@@ -26,7 +26,7 @@ The paths below are placeholders: `/path/to/eider-lang`, `/path/to/eider-analyze
 | formatting | `eiderc fmt`'s layout for the whole buffer (format on save, `vim.lsp.buf.format()`); `eiderc fmt --write .` does the same from a shell |
 | rename | any function, method, type, variant, field, constant, trait, parameter, local or label, from its declaration or a use, across files; refused with the reason for a module, a keyword or taken name, a toolchain symbol, and when the renamed program would not compile (the server analyses it again with the edits applied) |
 | signature help | the signature of the function, method, variant or record constructor being called, with the parameter the cursor is in (by position, or the one a named argument names) |
-| inlay hints | the type of a `let`/`var` binding written without one, and the parameter name before each positional argument (`by:`) |
+| inlay hints | the type of a `let`/`let mut` binding written without one, and the parameter name before each positional argument (`by:`) |
 | workspace symbols | types, variants, functions, methods, constants and traits of the open documents and the modules they import (not the toolchain's) |
 | code lenses | `Run test` on each `test` block (the command `eider.runTest`, which the client runs: `eiderc test <file>`) |
 | quick fix | besides the compiler's fixes, "Add the missing arm" for a non-exhaustive `match` (one arm per application) |

@@ -4,8 +4,8 @@
 import std.time
 
 fn main() uses io, clock, ffi {
-    var prev = time.mono_ns()
-    var forward = true
+    let mut prev = time.mono_ns()
+    let mut forward = true
     for i in 0..10000 {
         let t = time.mono_ns()
         if t < prev { forward = false }

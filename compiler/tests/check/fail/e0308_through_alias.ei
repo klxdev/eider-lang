@@ -1,6 +1,6 @@
 // expect: E0308 7:9
 fn main() uses io {
-    var xs: List[i32] = List.new()
+    let mut xs: List[i32] = List.new()
     xs.push(1)
     let mut all = xs
     let one = xs[0]

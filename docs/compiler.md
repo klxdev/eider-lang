@@ -163,8 +163,9 @@ seed supports:
 - `uses ffi` everywhere stays in the compiler until the next seed: the seed asks for `ffi`
   along call chains, the compiler it builds no longer does ("C8.5: capabilities per
   package"; scripts/migrate-caps.sh removes it then).
-- `var`, not `let mut`, until a seed has 8.6 ("C8.6: references by default";
-  scripts/migrate-var.sh rewrites it then). compiler/ is built by the seed with the old
+- `var` is gone (a syntax error since 0.7.5, "C8.6: references by default", "Removal of `var`"):
+  a mutable variable is `let mut x = fresh`, or `let mut x = place.copy()` for an independent
+  copy of a place (a `let mut` of a place is an alias). compiler/ is built by the seed with the old
   meaning of `let` (a copy) and by itself with the new one (a reference), so a `let` of a
   place whose place is written while the binding is used later takes `.copy()`, which means
   the same under both.
@@ -1319,7 +1320,7 @@ and leaves the analyzer building.
 | 1 | **8.3 Package-qualified modules** (done: "C8.3: packages and modules"; package imports in compiler/, std/, packages/ after the next seed) | module identity = (package, path) instead of file stem (no more E0808 for two packages' `util.ei`); bare `import "json"` resolved through `eider.lock`; the `deps/` link farm retired | — |
 | 2 | **8.4 Operation traits** (done: "C8.4: operation traits") | `Copy`, `Eq`, `Ord`, `Hash`, `Show`, `Iter`, `Drop` in the core prelude; automatic derive; orphan rule; generic bounds with suggested fixes; Map keys any `Hash + Eq`; `for` over any `Iter` | 8.1, 8.2 |
 | 2 | **8.5 Capability encapsulation** (done: "C8.5: capabilities per package"; `uses ffi` removed from the repository after the next seed) | `ffi` becomes a property of a package (granted in eider.toml); std callers stop writing `uses ffi`; the compiler reports each package's real capability use and eider-pkg checks grants from that instead of scanning text | 8.3 |
-| 3 | **8.6 References by default** (done but for C pointer variables: "C8.6: references by default"; `var` migrated after the next seed) | `let` binds a read-only reference to a place, `let mut` a mutable alias, fresh values are owned; `.copy()`; pattern bindings the same; the protection rule (no invalidating write while a reference is alive) with fixes; references are C pointers; `var` deprecated with a mechanical fix | 8.1, 8.4 |
+| 3 | **8.6 References by default** (done but for C pointer variables: "C8.6: references by default"; `var` removed in 0.7.5) | `let` binds a read-only reference to a place, `let mut` a mutable alias, fresh values are owned; `.copy()`; pattern bindings the same; the protection rule (no invalidating write while a reference is alive) with fixes; references are C pointers; `var` deprecated with a mechanical fix | 8.1, 8.4 |
 | 3 | **8.7 `Ref[T]`** (done: "C8.7: `Ref[T]`") | shared mutable handle with scoped `read`/`update`, run-time conflict check, not sendable | 8.4 |
 | 4 | **8.8 Closures by reference** | non-escaping closures capture by reference | 8.6 |
 | 4 | **8.9 Std on the new base** | std speaks `String`, uses traits and references; `List[u8]` workarounds and `sys.lit` byte loops go | 8.2, 8.4, 8.5, 8.6 |
@@ -1992,11 +1993,11 @@ when building).
 Wave 3, item 8.6 (docs/design/memory-model.md, "Bindings", "The protection rule", "Build
 order" 2): `let` of a place refers to it, `let mut` is a mutable alias, fresh values are
 owned, pattern bindings do the same, invalidating writes while a reference is alive are
-errors with a fix, and `var` is deprecated with a mechanical rewrite. Code: check.ei's
-"References" and "Migration of `var`" sections (and `let_ref`, `let_pat`, `compile_match`,
-`arm_body`, `call_decl`'s exclusivity), parse.ei (`at_mut`), ir.ei (S_NOTE, S_CHECK),
-lower.ei (S_CHECK), main.ei (`eiderc migrate-var`), scripts/migrate-var.sh. `compiler/`
-uses none of the new syntax until the next seed.
+errors with a fix, and `var` was deprecated with a mechanical rewrite (`eiderc migrate-var`)
+and removed in 0.7.5 ("Removal of `var`" below). Code: check.ei's "References" section (and
+`let_ref`, `let_pat`, `compile_match`, `arm_body`, `call_decl`'s exclusivity), parse.ei
+(`at_mut`, `at_removed_var`), ir.ei (S_NOTE, S_CHECK), lower.ei (S_CHECK). `compiler/`
+used none of the new syntax until the seed that has it.
 
 **Bindings.**
 
@@ -2007,7 +2008,7 @@ uses none of the new syntax until the next seed.
   so x sees every write to it. Anything else (a call, a literal, a constructor, an
   operation, `if`/`match`/block, a field of a call's result) is fresh and owned, as before.
 - `let mut x = place` is a mutable alias (Reading A): writes through x write the place, and
-  writes to the place are seen through x. The place's variable must be writable (`var`,
+  writes to the place are seen through x. The place's variable must be writable (a
   `let mut`, an `inout` parameter, a mutable alias); otherwise **E0307** "`let mut x` would
   be a mutable alias of `p`, which is read-only", with the fix `.copy()` after the
   initializer (when the type has Copy), and checking goes on as if the fix were there.
@@ -2028,13 +2029,13 @@ uses none of the new syntax until the next seed.
   loop runs over a snapshot of the List taken when it starts (as over an array or a Map,
   "C8.20"); before, it read the List place again at each iteration, so it saw the body's
   writes and pushes.
-- `var` (deprecated) keeps making its own copy, so every existing `var` means what it did.
+- `var` (deprecated; removed in 0.7.5) kept making its own copy, so every existing `var` meant what it did.
 - Exclusivity (E0301) counts a reference as the variable its place is rooted at: `f(inout
   xs, o)` with `o = xs[0]` is E0301 "`o` refers into `xs`, which is borrowed mutably by
   another argument of this call" (fix: `.copy()` at o's binding), and `f(inout ys, inout
   xs)` with `ys` an alias of `xs` is E0301 too.
-- Assigning to a `let` reference is E0303 as for any `let` (message, help and fix unchanged:
-  the fix still says `var`, whose copy is what the old program meant).
+- Assigning to a `let` reference is E0303 as for any `let` (message, help and fix unchanged
+  while `var` existed; the fix `let mut` is the one the checker offers now).
 
 **The protection rule** (E0308). While a reference is alive, until its last use on any
 path, no write may free, move or reinterpret memory it points into. The checker notes in
@@ -2117,7 +2118,8 @@ removed from the IR before checking ends; S_CHECK lowers to the place's bounds c
     own Copy: `.copy()` runs it), a `var` of a place in a generic body (`.copy()` could need a bound; a fresh value there is rewritten),
     and code no concrete body checks.
 
-**Migration of `var`.** `eiderc migrate-var <file>` prints the file with its rewrites; the
+**Migration of `var`** (historical: `eiderc migrate-var` and scripts/migrate-var.sh were removed
+with `var`, "Removal of `var`" below; eiderc 0.7.4 and earlier still have them). `eiderc migrate-var <file>` prints the file with its rewrites; the
 file is checked as the entry (a module without `main` is fine), else as the module a
 one-line entry in its directory imports (a module whose names clash with the entry's
 builtins, like compiler/lower.ei's `fn print`). scripts/migrate-var.sh runs it over files
@@ -2178,9 +2180,9 @@ seed. The `for x in r` over a reference r to a List kept r alive for the whole l
 was read again each iteration), so a push to it in the body was reported too; since C303 the
 loop takes a snapshot when it starts, which is r's last use there.
 
-There is no way in 8.6 other than the deprecated `var` to take a share of a value without
-Copy out of a place before replacing the place (`let k = t.kids; t.kids = List.new()`): a
-`take`/`replace` accessor (8.15, projections) is the natural successor.
+There was no way in 8.6 other than the deprecated `var` to take a share of a value without
+Copy out of a place before replacing the place (`let k = t.kids; t.kids = List.new()`): the
+`take`/`replace` accessor (C8.15) is its successor, and `var` is gone ("Removal of `var`").
 
 **Codes.** New: E0307 (a mutable alias of a read-only place), E0308 (the protection rule).
 Changed: none of the existing messages; E0301 gains the two reference cases above.
@@ -2208,7 +2210,7 @@ its own Drop, through an alias of the list, no fix for a Chan and in a generic b
 `e0307_mut_alias_of_param`, `e0308_push_while_referenced`; pass: `c86_refs_ok` (what the
 rule allows); several errors: compiler/tests/check/multi/refs.ei; parse:
 compiler/tests/parse_ok/refs.ei (`let mut`, `mut` patterns, a variable named `mut`);
-migration: compiler/tests/migrate/var.ei and test-compiler.sh's migration leg.
+migration: test-compiler.sh's migration leg. (compiler/tests/migrate/var.ei was removed with `eiderc migrate-var`.)
 
 **Benchmarks** (`REPS=15 sh scripts/bench.sh target/eiderc-before:target/before target/eiderc-after`, before =
 eiderc at b1aae4c, after = eiderc built by itself with C8.6, 16 cores, gcc -O2, median
@@ -2224,9 +2226,38 @@ place): 137,817 to 137,518 lines in all, clone and drop call sites 7,750 to 7,48
 tests/bench/state.ei 76 to 74).
 
 **Remaining.** C pointer variables for references through heap memory: done for read-only
-references in C8.54 (choice 1 no longer holds for them). After the next seed: run scripts/migrate-var.sh on compiler/, std/,
-core/, packages/, tests/ and examples/, drop `var` from "Writing the compiler in today's
-Eider", and decide when `var` becomes an error.
+references in C8.54 (choice 1 no longer holds for them). `var` is removed ("Removal of `var`").
+
+**Removal of `var`** (0.7.5, issue #2, decision C897). `var` becomes a compile error at once,
+with no warning stage (fix forward: a new language keeps no second spelling and no
+compatibility period; the deprecation C33 said was silent had lasted since 0.6). A statement
+that starts with `var` and a name, or with `var (...) =`, is the syntax error **E0001**
+"`var` was removed: write `let mut`" at the keyword; its help shows the replacements
+(`let mut x = e`, `let mut x = e.copy()` for a copy of a place, `let (mut a, mut b) = e`); there
+is no machine-applicable fix, because `let mut x = place` is an alias of the place, not the copy
+`var` made, and only the author knows which was meant. The word is not reserved any more:
+`var` is an ordinary identifier (`intern.S_VAR`, interned after `Self` so that the parser can
+recognise the removed statement; `K_VAR` is gone and the keyword ids after `let` moved down
+by one, `LAST_KEYWORD` is 29), so the generated lexicon of the tools (scripts/gen-lexicon.sh)
+has 30 keywords and eider-analyzer and tree-sitter-eider no longer know `var`. No new error
+code: it is E0001, like the bare `@name(...)` removed by C813; `eiderc migrate-var`,
+scripts/migrate-var.sh, `check.var_fixes` and the migration leg's `var` step are removed (the
+rewrite needs the old parser; use eiderc 0.7.4 or earlier on old code).
+
+The repository was migrated first with the seed's `eiderc migrate-var` (scripts/migrate-var.sh
+over compiler/, std/, core/, packages/, tests/, examples/), which rewrote every `var` it could;
+the rest were compile-fail cases, parse tests and code in a generic body or of a type without
+a usable `.copy()`, done by hand: statement-start `var x = fresh` became `let mut`, `var x =
+place` `let mut x = place.copy()` (Copy types), and the cases that relied on a `var` sharing a
+value became an element of a List (which owns its copy): traits_drop's two "written while
+shared" cases, tests/run/dyn_trait.ei (a `dyn` has no `.copy()`), and threads_chan's pipeline
+(a Chan has no Copy, so the channels live in a List). std had one `var` left, not six (C100 counted
+std/task's, which the later work had already removed): std/sort's `var a = xs` is a List built
+by `for x in xs { a.push(x) }`, an independent copy that needs neither `T: Copy` (which
+`xs.copy()` would add to the public API) nor a mutable alias of a read-only parameter (E0307).
+No language feature was needed; a way to copy a Copy-free share stays unneeded as long as an
+element pushed into a List is the copy. The sibling libraries and docs were migrated the same
+way (code blocks of the docs, the guide and the reference included).
 
 ## C8.7: `Ref[T]`
 
@@ -2597,7 +2628,7 @@ Map, a range ..." (oracle: the three cases with that help).
 ## C8.15: take and replace
 
 Wave 4, the `take`/`replace` part of item 8.15 (C8.6 "Choices the charter left open": the
-successor of `var` for values without Copy). Code: check.ei (`take_replace`, reached from
+successor of `var` for values without Copy; `var` itself was removed in 0.7.5). Code: check.ei (`take_replace`, reached from
 `method_call_in`).
 
 - `x.replace(v) -> T` moves the value out of the place x (a variable, field or element: no

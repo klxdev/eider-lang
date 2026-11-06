@@ -23,7 +23,7 @@ fn text(s: String, t: str) -> bool {
     let c: String = s.slice(0, 1)
     let d: List[u8] = t.bytes()
     let e: Result[String, usize] = String.from_bytes(d)
-    var f = c
+    let mut f = c.copy()
     f.push_byte(33)
     a == b && s < f && t >= "a" && s.bytes_twice() > 0 && e.is_ok() && t.len() > 0
 }

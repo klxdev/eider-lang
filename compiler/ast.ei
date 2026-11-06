@@ -22,7 +22,7 @@
 //                docs/compiler.md, "C8.81")  LParam a=sym b=type+1 c=1 for `inout x`
 //            Arm [c/d]=pats a=body b=1 if body is a statement
 // stmts      Block [c/d]=stmts, end span = closing brace
-//            SLet a=sym b=type+1 c=init d=0 `let`, 1 `var`, 2 `let mut` e/f=line/col just past
+//            SLet a=sym b=type+1 c=init d=0 `let`, 2 `let mut` (1 was `var`) e/f=line/col just past
 //                the initializer      SLetPat a=pat c=init d e f as SLet, g=else block+1
 //                (`let PAT = e else { ... }`; the parser folds it into an EMatch with the rest of the block)
 //            SAssign a=target b=op+1 (0 plain) c=value   SExpr a
