@@ -630,6 +630,12 @@ void ei_chan_send(ei_chan *c, const void *elem);
    closed and empty (returns false). */
 bool ei_chan_recv(ei_chan *c, void *out);
 void ei_chan_close(ei_chan *c);
+/* For std/sync's Lock (core/RUNTIME.md "Lock-like channels"): after a receive that took the one
+   element of a lock channel, ei_guard_enter records that channel on the innermost ei_try frame;
+   ei_guard_leave forgets it before the element is sent back. A trap contained by that ei_try
+   meanwhile sends the channel a zero-filled element (the lock's "poisoned" marker). */
+void ei_guard_enter(void);
+void ei_guard_leave(void);
 /* Queued elements, for dropping them: only valid while the caller is the sole owner. */
 uint64_t ei_chan_len(const ei_chan *c);
 void *ei_chan_at(ei_chan *c, uint64_t i);

@@ -21,7 +21,7 @@ The std modules, bottom up:
 |---|---|---|
 | `std/time` | `Duration`, `Deadline` (and the clocks, sleeping) | `clock` where the clock is read |
 | `std/atomic` | `Atomic`: shared 64-bit integers with orderings | none |
-| `std/sync` | `Lock[T]` (state changed under a lock, with a result), `Parker` (wait with a deadline, woken from any thread) | `io` for Parkers (a table entry of the core), `clock` for deadlines |
+| `std/sync` | `Lock[T]` (state changed under a lock, with a result; poisoned by a contained trap in its closure, `poisoned()`/`reset(v)`), `Parker` (wait with a deadline, woken from any thread) | `io` for Parkers (a table entry of the core), `clock` for deadlines |
 | `std/chan` | `Channel[T]` (bounded by default), `select` over channels, timers and tokens | `io, clock` to wait; `io` to wake |
 | `std/task` | `Token` (cancellation and deadlines), `Group[T]` (structured task groups), `Pool` (worker threads) | `threads` to start threads; `io, clock` to wait |
 | `std/event` | `Loop`: a poller, a waker and a timer heap | `io`, `clock` |
@@ -241,11 +241,16 @@ returns), counts of shared handles stay up; (2) the locks of the built-in `Mutex
 runtime's channel and task locks) that the abandoned frames held are released, and the value is
 as the closure left it, which a trap in the middle of a multi-step update can leave logically
 inconsistent; (3) a `sync.Lock` (std/sync, the lock under channels, groups and tokens) whose
-`modify` closure trapped has lost its value: the lock stays empty and every later user waits
-forever, so closures given to `modify` should not trap (use checked arithmetic or the built-in
-`Mutex` for state a handler may corrupt); (4) a stack overflow, `env.exit` and a trap on a thread
+`modify`, `with` or `update` closure trapped is **poisoned** (decision C900): the value it took
+out is gone (the closure changed it in place, so it cannot be restored soundly), and every later
+`get`, `modify`, `with` and `update` traps at once with `sync.Lock is poisoned ...`, also in
+threads and tasks that were already waiting for it; none waits forever. `Lock.poisoned()` asks,
+and `Lock.reset(v)` makes the Lock hold `v` again. A program that wants the old value to
+survive a trap uses the built-in `Mutex` (below) or catches inside the closure; (4) a stack overflow, `env.exit` and a trap on a thread
 with no `catch` around it end the process; (5) shared state the handler changed before the trap
-(a Map in a `Mutex`, a counter) keeps those changes: the catch undoes nothing. A leak per trap is
+(a Map in a `Mutex`, a counter) keeps those changes: the catch undoes nothing.
+
+*How a Lock is poisoned.* `Lock[T]` is a channel holding one `Slot[T]` (`Poisoned | Full(T)`); `modify` receives it and tells the runtime (`ei_guard_enter`, core/RUNTIME.md "Lock-like channels"), which records the channel on the innermost `Task.catch` frame, and `ei_guard_leave` forgets it before the value is sent back. A trap contained by that frame sends the channel an all-zero element, which is `Poisoned` (the variant is declared first and carries nothing); a waiter blocked on the channel gets it at once, puts it back for the next user and traps. The same covers a Lock taken in a nested `modify` (each is recorded), a pool job, `spawn_caught`, a group child and a lightweight task that parked inside the closure and moved threads (the record is on the task's catch frame, not the thread). The other holders of state across a closure need nothing: the built-in `Mutex` keeps its value and releases its lock (above), `Chan` hands out values (a received value that a trapping frame had is lost, the channel is fine), and std has no RwLock or Once (a Once built on a Lock would inherit the poison). A leak per trap is
 the price of not paying for unwinding on every call; a server that traps often is a server with
 a bug to fix, and one that restarts workers has a better answer than leaking.
 
@@ -419,7 +424,7 @@ calls pays most. `EIDER_PROF=off` leaves only the shadow stack.
 | Atomics for Eider as handles to core-owned cells, freed explicitly | the language has no shared memory outside its handles, and a copied record would be a second atomic; handles are safe (generation-checked, cells never freed) and need no compiler change | a built-in `Atomic` handle type (the next step: reference-counted, no `free`); atomics on Mutex (not atomics) |
 | Checked `add`/`sub` by compare-and-swap; `wrapping_add` separately | Eider arithmetic traps on overflow; hardware fetch-add wraps | wrapping only (Rust's choice) |
 | A thread waits on an OS waker with `poll(2)` (a per-thread eventfd), not a condition variable; a task parks in the scheduler (C836). The Parker itself is a core object, not a descriptor | the waker already exists (ABI "Readiness"), works with a deadline on the monotonic clock, and lets a thread wait for a descriptor and a Parker in one `poll` (`ec_fd_wait_ev`) | `pthread_cond_timedwait` in the runtime with a per-thread condvar (needs thread-locals or a new handle type) |
-| `Lock[T]` as a one-value channel of `Option[T]`, changed in place by `modify(f: fn(inout T) -> R)`, the value sent back with no other holder (C320) | atomic read-modify-write of any state with a result, copying none of it, on the existing seed (std/sync builds with the seed and with eiderc) | `Mutex.update(fn(inout T) -> R)` making the closure's captures and its result unique instead of the value (O(1) for any value, not one visit per buffer; a compiler change, so std could use it only after a seed regeneration, and a captured Ref would have to trap); a runtime primitive (the core can't walk Eider values); handing the value over without making it unique (unsound: the result and the captures may share its buffers) |
+| `Lock[T]` as a one-value channel of `Slot[T]` (`Poisoned | Full(T)`; an `Option[T]` before C900), changed in place by `modify(f: fn(inout T) -> R)`, the value sent back with no other holder (C320) | atomic read-modify-write of any state with a result, copying none of it, on the existing seed (std/sync builds with the seed and with eiderc) | `Mutex.update(fn(inout T) -> R)` making the closure's captures and its result unique instead of the value (O(1) for any value, not one visit per buffer; a compiler change, so std could use it only after a seed regeneration, and a captured Ref would have to trap); a runtime primitive (the core can't walk Eider values); handing the value over without making it unique (unsound: the result and the captures may share its buffers) |
 | Wake one waiter of a channel side per value or place, handed on by a woken waiter that doesn't use it (C321) | n idle receivers cost one wake-up per value, not n; correct with select and deadlines because every way out of a wait that doesn't take hands the wake-up on | wake every waiter (correct, simpler, a thundering herd: what it was until C321) |
 | Bounded channels need capacity >= 1 | rendezvous channels need a different protocol | capacity 0 later |
 | Deadlines fixed in tokens at creation, no timer thread | every wait is bounded by the token's deadline anyway | a timer thread cancelling tokens |

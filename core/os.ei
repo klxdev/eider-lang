@@ -228,6 +228,12 @@ pub fn parker_park(h: i64, timeout_ms: i64) -> i64 uses io, ffi { unsafe { ec_pa
 pub fn parker_unpark(h: i64) -> i64 uses io, ffi { unsafe { ec_parker_unpark(h) } }
 pub fn parker_clear(h: i64) -> i64 uses io, ffi { unsafe { ec_parker_clear(h) } }
 pub fn parker_close(h: i64) -> i64 uses io, ffi { unsafe { ec_parker_close(h) } }
+// lock channels (core/RUNTIME.md "Lock-like channels"): the two runtime (ei_*, not ec_*) calls std/sync's
+// Lock makes around the closure it runs with its value taken out; only `ffi`, so no caller needs a capability
+extern "c" fn ei_guard_enter()
+extern "c" fn ei_guard_leave()
+pub fn guard_enter() uses ffi { unsafe { ei_guard_enter() } }
+pub fn guard_leave() uses ffi { unsafe { ei_guard_leave() } }
 // the live tasks, listed on stderr (1; 0 when the program runs on threads)
 extern "c" fn ec_task_dump() -> i64
 pub fn task_dump() -> i64 uses io, ffi { unsafe { ec_task_dump() } }

@@ -137,6 +137,10 @@ int32_t ei_try(void (*fn)(void *, void *), void *a, void *b, ei_String *msg) {
   return 0;
 }
 
+/* No threads, no containment: nothing to record (core/RUNTIME.md "Lock-like channels"). */
+void ei_guard_enter(void) {}
+void ei_guard_leave(void) {}
+
 /* In-place List operations (docs/compiler.md "C8.49"). The caller owns the buffer (it made it
    unique). ei_list_open opens a gap of n elements at index `at` (<= *len): grows the buffer
    if needed, moves the tail up and adds n to *len; the gap is uninitialised. ei_list_close

@@ -188,6 +188,12 @@ read-modify-write operations that need to report something: `l.modify(|inout s: 
 { ... })` changes the value in place (nothing of it is copied), `l.with(|s: T| -> (T, R)
 ...)` builds a new value, `l.update(f)` and `l.get()` are as for a Mutex.
 
+If a trap that is contained (`Task.catch`, a pool job, `spawn_caught`) ends one of those
+closures, the Lock is *poisoned*: the value it had taken out is lost (the closure changed it in
+place, so it cannot be restored soundly), and every later `get`, `modify`, `with` and `update`
+traps at once with `sync.Lock is poisoned`, also in threads already waiting for it, rather than
+waiting forever. `l.poisoned()` is true until `l.reset(v)` makes the Lock hold `v` again.
+
 ## `Chan[T]`
 
 A `Chan[T]` is an unbounded FIFO queue shared by every copy of the handle: any number of
