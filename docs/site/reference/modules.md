@@ -228,6 +228,7 @@ grants = ["net", "io"]
 The compiler reads it to find a package's directory:
 
 - a `path+<dir>` source is `<dir>`, relative to the lock file;
+- a `toolchain+<dir>` source is `<dir>` below the toolchain's root (`toolchain+packages/crypto`: a package the toolchain ships);
 - a `git+` source is `.vendor/<name>` beside the lock when that directory exists, else the
   package store, `$EIDER_HOME/pkg/<name>-<the first 16 hex digits of the hash>`
   (`EIDER_HOME` defaults to `~/.eider`).

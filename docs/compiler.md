@@ -1403,7 +1403,7 @@ letter, the path one or more non-empty segments. (So a path import without its e
 - The default alias is the last segment: `json`, `util` for `"json/util"`, `fs` for `"std/fs"`.
 - A dependency's directory comes from **eider.lock**: the lock of the program's root package
   (the entry file's; when the entry file is in no package, the importing package's own). A
-  `path+<dir>` source is `<dir>` relative to the lock; a `git+` source is `.vendor/<name>`
+  `path+<dir>` source is `<dir>` relative to the lock; a `toolchain+<dir>` source is `<dir>` below the toolchain root (`packages/crypto`, decision C898); a `git+` source is `.vendor/<name>`
   beside the lock when that directory exists, else the store's `$EIDER_HOME/pkg/<name>-<the
   first 16 hex digits of the locked content hash>` (`EIDER_HOME` defaults to `~/.eider`):
   exactly where `eider-pkg fetch` and `eider-pkg vendor` put it. No lock, no entry for the

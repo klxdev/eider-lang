@@ -41,6 +41,16 @@ which most programs shouldn't pay for; services will depend on the package expli
 bindings are in core because they are unmanaged code; everything with logic is in the
 package.
 
+Why a package *of the toolchain* and not a repository of its own (decision C898): the package is a thin
+layer over the bindings in `core/crypto.ei` and the backend `libeider_crypto.a`, which are
+versioned with the toolchain (the ABI between them changes in lockstep, `core/ABI.md`), and a
+backend is built per target with the toolchain's own release tooling. A repository of its own
+would need a second release train and a compatibility matrix between a crypto tag and a
+toolchain, for one package that cannot work with another toolchain. So a toolchain ships
+`packages/crypto` and the backend built for its target, and a manifest declares it as
+`[deps.crypto]` with `toolchain = true` (docs/site/tooling/eider-pkg.md); libraries on it
+(eider-tls, eider-postgres, eider-sql) are ordinary git dependencies.
+
 ## The ABI
 
 `eider_crypto.h` has the full contract. The core rules hold (core/ABI.md): fixed-width types,
@@ -147,6 +157,13 @@ words of the backend.s `libs` file to the cc argv (a shared libcrypto outside th
 paths also gets an rpath), and puts the SHA-256 of the archive in the program.s cache key, so a
 rebuilt backend relinks. A program that does not import it is untouched (no script is run).
 Decision C802.
+
+An installed toolchain has no `scripts/`: it ships AWS-LC's portable build for its target,
+`lib/crypto/awslc-noasm/libeider_crypto.a` with its `libs` file (decision C898), and the driver
+links that when there is no `scripts/crypto-build.sh` next to `core/`. There `awslc` and
+`awslc-noasm` name it; `openssl`, `libressl`, `awslc-aead` and the sanitizer build
+(`EIDER_CRYPTO_SAN`) need an eider-lang checkout. The archive is built for the release's target
+with zig against musl and links into programs built with the host's libc.
 
 ```sh
 sh scripts/fetch-awslc.sh                  # once: the pinned AWS-LC sources (offline: EIDER_AWSLC_TARBALL=<file>)

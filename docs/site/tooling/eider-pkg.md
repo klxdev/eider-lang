@@ -37,7 +37,7 @@ arguments are relative to it.
 | Command | What it does |
 |---|---|
 | `init [name] [--template cli\|lib\|service\|wasm]` | Write `eider.toml` (name from the argument or the directory, version `0.1.0`, `main = "main.ei"` or the library's `entry`, `eider` the toolchain's MAJOR.MINOR) and the template's files that do not exist yet ([Templates](#templates); default `cli`: a `main.ei` that prints a line, with a test). Refuses if `eider.toml` exists. |
-| `add <name> ...` | Append a `[deps.<name>]` table, resolve, grant the package what it uses (`uses = [...]`, sorted; see [Grants](#grants)), check grants and write `eider.lock`, printing `added <name> <version> — it uses: <caps> (granted)`. If resolution or a grant check fails, `eider.toml` is restored. `--confirm` asks first (y/N, on standard input); `--no-grant` writes no grant, and when the package uses something keeps the table but stops before writing `eider.lock`; `--uses io,fs` is an explicit grant, which must cover what the package uses. |
+| `add <name> (--path P \| --git URL ... \| --toolchain)` | Append a `[deps.<name>]` table, resolve, grant the package what it uses (`uses = [...]`, sorted; see [Grants](#grants)), check grants and write `eider.lock`, printing `added <name> <version> — it uses: <caps> (granted)`. If resolution or a grant check fails, `eider.toml` is restored. `--confirm` asks first (y/N, on standard input); `--no-grant` writes no grant, and when the package uses something keeps the table but stops before writing `eider.lock`; `--uses io,fs` is an explicit grant, which must cover what the package uses. |
 | `remove <name>` | Delete the `[deps.<name>]` table (an inline `name = { ... }` entry must be removed by hand) and re-resolve. |
 | `grant <name> <cap,...>` | Add capabilities to the `uses` of `[deps.<name>]`, in place (E0204's help names this). No resolving: the next build sees it; `eider.lock`'s copy of the grants follows at the next `fetch`. |
 | `revoke <name> <cap,...>` | Take capabilities out of it, the same way. A package that still uses one fails to build (E0204), and `fetch` stops on it, until it is granted again. |
@@ -149,6 +149,10 @@ path = "../geom"            # a local directory
 git = "https://example.com/edge.git"
 rev = "main"                # a branch, tag or commit instead of a version
 
+[deps.crypto]
+toolchain = true            # a package the toolchain ships (only `crypto`), versioned with it
+uses = ["io"]
+
 [policy]                    # optional: what this package may grant (see Grants)
 deny = ["ffi"]
 [policy.allow]
@@ -159,8 +163,18 @@ unused_uses = "deny"
 ```
 
 Unknown keys are errors (a typo like `verison` is caught). A dependency needs exactly one of
-`path` and `git`; a git dependency exactly one of `version` and `rev`; a path dependency
-neither. `uses` takes `io`, `fs`, `net`, `clock`, `threads` and `ffi`. `eider` must be a
+`path`, `git` and `toolchain = true`; a git dependency exactly one of `version` and `rev`; a
+path or toolchain dependency neither.
+
+`toolchain = true` names a package the toolchain itself ships under its `packages/` (today
+`crypto`, with the AWS-LC backend that a program importing it links; `add crypto --toolchain`
+writes the table). It is not fetched and has no version of its own to ask for: it is the
+running toolchain's, and `eider = "MAJOR.MINOR"` in `[package]` says which toolchain that
+is. Unlike a path dependency a git package may have one, so a library on crypto (eider-tls,
+eider-postgres, eider-sql) is consumable through git by a user with only an installed
+toolchain. Grants (`uses`) apply to it as to any dependency, and two packages in a graph can
+not mean different things by `crypto` (a path or git `crypto` next to the toolchain's is an
+error). Other names are refused; the toolchain's `core` and `std` need no declaration. `uses` takes `io`, `fs`, `net`, `clock`, `threads` and `ffi`. `eider` must be a
 MAJOR.MINOR (`"0.1"`, not `"0.1.0"`); eider-pkg checks its form, the compiler checks it
 against the toolchain on every build.
 
@@ -194,7 +208,8 @@ grants = []
 ```
 
 Every package in the graph is listed once: its version, where it comes from (a path, or a
-git URL and the exact commit), for git packages the SHA-256 content hash of its files, the
+git URL and the exact commit, or `toolchain+packages/crypto`: a directory below the running
+toolchain's root), for git packages the SHA-256 content hash of its files, the
 names of its dependencies, and the capabilities it was granted. A package whose directory,
 lock entry or files are missing when the compiler needs it is E0810, with the fix
 `run eider-pkg fetch in <dir>`.

@@ -34,7 +34,9 @@
 #   this checkout) with its git dependencies taken from the sibling checkouts (EIDER_PKG_OVERRIDE,
 #   through the EIDER_<NAME> its scripts/env.sh reads), json from .vendor/json when there is
 #   no eider-json checkout. One whose dependency has no checkout is skipped (it would need
-#   the network). The store is a fresh $EIDER_HOME.
+#   the network). The store is a fresh $EIDER_HOME. crypto (eider-tls, eider-postgres,
+#   eider-sql) is no dependency to fetch: it is the toolchain's own package (`[deps.crypto]
+#   toolchain = true`, docs/decisions.md C898), this checkout's packages/crypto here.
 # eider-pkg (for the analyzer and the libraries) needs .vendor/toml, and json's fallback
 # .vendor/json: both are fetched by scripts/vendor.sh (from the checkouts when they are here);
 # what needs one that can't be fetched is skipped.
@@ -148,7 +150,7 @@ fi
 
 # ---- the libraries and frameworks
 # needs <name>: the git dependencies (other than json) it can't build without
-needs() { case $1 in http) echo "logging" ;; rpc|openapi) echo "http logging" ;; *) echo "" ;; esac; }
+needs() { case $1 in http) echo "logging" ;; rpc|openapi) echo "http logging" ;; postgres) echo "tls" ;; sql) echo "postgres tls" ;; *) echo "" ;; esac; }
 for n in $LIBS; do
   var=EIDER_$(echo "$n" | tr 'a-z' 'A-Z')
   eval "d=\${$var:-}"

@@ -244,12 +244,15 @@ scripts/release.sh [--skip-verify] [--targets "linux-x86_64 linux-aarch64"] [--n
    release tooling only, because it cross-compiles against musl out of the box (`mise use
    -g zig@0.13`, or `ZIG=<path>`); the language and the toolchain still need only a C
    compiler. `eider-<version>-<target>.tar.gz` holds `eider-<version>-<target>/` with
-   `bin/{eiderc,eider-pkg,eider-doc,eider}`, `core/`, `std/`, `VERSION`, `toolchain.toml`
-   and a README; `eider-<version>-<target>` is `eider` alone, for `install.sh` and `eider
+   `bin/{eiderc,eider-pkg,eider-doc,eider}`, `core/`, `std/`, `compiler/`, `packages/crypto/`
+   and `lib/crypto/awslc-noasm/` (AWS-LC built for the target with the same zig, the backend a
+   program that imports crypto links: decision C898), `VERSION`, `toolchain.toml` and a README; `eider-<version>-<target>` is `eider` alone, for `install.sh` and `eider
    self update`. Smoke tests: `file` and `readelf` check that every binary is a static
    executable for the target's machine, and on a machine of the target's architecture
    each `--version` is run and a program is built and run with the unpacked toolchain,
-   through `eiderc` and through `eider`. **linux-aarch64 is cross-built and untested**
+   through `eiderc` and through `eider`, and a project with `[deps.crypto] toolchain = true`
+   is fetched, built and run with the unpacked toolchain alone (no `scripts/`, no AWS-LC
+   sources); `readelf` checks the machine of the shipped `libeider_crypto.a` too. **linux-aarch64 is cross-built and untested**
    beyond `file` and `readelf` until an arm64 machine or CI exists (`tested = false`).
 5. **The assets.** `target/release/assets/v<version>/` collects the two toolchain archives,
    the two `eider` binaries, the source bundle, `RELEASE.toml`, `install.sh` and

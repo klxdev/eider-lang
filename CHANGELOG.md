@@ -5,6 +5,20 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## 0.7.6 (unreleased)
+
+- **The crypto package ships in the toolchain (#222; decision C898).** A toolchain archive now holds `packages/crypto` and
+  `lib/crypto/awslc-noasm/` (AWS-LC's portable build for its target, `libeider_crypto.a`, 3.4 MB), and a manifest says
+  `[deps.crypto]` with `toolchain = true` (`eider-pkg add crypto --toolchain`) to use it, with `uses` granted like for any
+  dependency. eider-pkg resolves it under the toolchain's root, eider.lock records it as `toolchain+packages/crypto`,
+  and a git package may have one, which a path dependency forbids: eider-tls, eider-postgres and eider-sql no longer need
+  an eider-lang checkout (their `scripts/env.sh` links and the README caveats are gone; each has an Unreleased entry).
+  A program that imports crypto links the backend the toolchain ships when it has no `scripts/crypto-build.sh`
+  (`awslc` and `awslc-noasm` name it; `openssl`, `libressl`, `awslc-aead` and the sanitizer build need a checkout).
+  `scripts/release.sh` builds a project with a toolchain dependency on crypto with each unpacked archive and checks
+  the archive's machine; `tests/pkg/toolchain.sh` does it against a toolchain layout without `scripts/`. The
+  aarch64 archive's backend is cross-built and, like the rest of that archive, not run.
+
 ## 0.7.5
 
 A patch with one breaking change: `var` is removed from the language. eider-analyzer moves to 0.7.3, tree-sitter-eider

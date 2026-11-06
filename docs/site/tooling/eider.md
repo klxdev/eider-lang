@@ -118,6 +118,8 @@ exact patch version is not provided: a patch release does not break compatibilit
     bin/eiderc  bin/eider-pkg  bin/eider-doc  bin/eider
     core/  std/  VERSION  toolchain.toml  README.md
     compiler/                 the compiler's sources, for tools that use its modules (from 0.1.1/0.2.0; not in 0.1.0)
+    packages/crypto/          the crypto package, `[deps.crypto] toolchain = true` (from 0.7.6)
+    lib/crypto/awslc-noasm/   AWS-LC for the toolchain's target (libeider_crypto.a), linked by a program that imports crypto
   downloads/                  a release's files while they are checked (removed after)
   config.toml                 default = "0.1.0", auto_install = false, releases = "..."
   git/  pkg/  index/  tmp/    eider-pkg's package store (eider-pkg.md)

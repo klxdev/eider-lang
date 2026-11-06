@@ -185,6 +185,7 @@ fn add_libs(inout argv: List[List[u8]], libs: List[List[u8]]) {
 // nearest one above the entry file), else awslc. `crypto_libs` returns what to add to the
 // `-l` list: `-L<dir>` flags, the library names of the backend's `libs` file, and
 // `@eider-crypto:<hash>`, the SHA-256 of the archive, which is part of the program's cache key.
+// An installed toolchain has no scripts/: it ships lib/crypto/awslc-noasm/ (shipped_backend; C898).
 
 /// Whether one of the loaded modules `paths` is core/crypto.
 pub fn uses_crypto(paths: List[List[u8]]) -> bool {
