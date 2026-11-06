@@ -7,6 +7,11 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
 
 ## 0.7.4
 
+A patch: two new libraries for databases, eider-postgres (`postgres`, a PostgreSQL client with a pool, typed queries
+and TLS through eider-tls) and eider-sql (`sql`, migrations, a database-free SQL checker, `eider-sql gen` for typed
+code, a safe query builder). Both are new repositories at 0.7.0. Nothing in the language or std changes.
+Both depend on eider-tls and the crypto package by path until the crypto package is shipped (see the issues on it).
+
 - New library eider-postgres (#36): a PostgreSQL client in Eider (`postgres`), protocol v3 over std/net. Cleartext,
   MD5 and SCRAM-SHA-256 authentication, simple and extended queries with a prepared-statement cache, text and binary
   results, typed errors with every field, transactions and savepoints (`transaction` rolls back on Err or trap), COPY,
