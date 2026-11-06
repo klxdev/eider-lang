@@ -1,0 +1,183 @@
+// A sync.Lock whose modify/with/update closure trapped, the trap contained (decision C803,
+// issue #211): the Lock is poisoned, so later get/modify trap at once (also in threads that were
+// already waiting) instead of waiting forever, and Lock.reset(v) makes it usable again. A Copy
+// value and a heap value, with/update, nested locks, a waiter, many tasks racing a trapping
+// modify, a pool job, and the built-in Mutex (usable again by itself).
+import std.strings
+import std.sync
+import std.task
+import std.time
+
+fn boom(n: i64) -> i64 {
+    let big: i64 = 9223372036854775807
+    big + n
+}
+
+fn first(xs: List[i64], i: usize) -> i64 { xs[i] }
+
+fn why(e: String) -> String {
+    if strings.contains(e, "poisoned") { return String.from("poisoned") }
+    let mut ps: List[String] = List.new()
+    ps.push(String.from("trap:"))
+    ps.push(e)
+    strings.join(ps, " ")
+}
+
+fn kind(r: Result[i64, String]) -> String {
+    match r {
+        Ok(v) => {
+            let mut ps: List[String] = List.new()
+            ps.push(String.from("ok"))
+            ps.push(String.from_int(v))
+            strings.join(ps, " ")
+        }
+        Err(e) => why(e)
+    }
+}
+
+fn kind_u(r: Result[(), String]) -> String {
+    match r {
+        Ok(_) => String.from("ok")
+        Err(e) => why(e)
+    }
+}
+
+fn main() uses io, clock, threads {
+    // a Copy value: the trap comes before any write
+    let c: sync.Lock[i64] = sync.lock(10)
+    print(c.poisoned())
+    print(kind(task.catch(|| -> i64 { c.modify(|inout v: i64| -> i64 { boom(v) }) })))
+    print(c.poisoned())
+    // every operation fails fast, and the message says what to do
+    print(kind(task.catch(|| -> i64 { c.get() })))
+    print(kind(task.catch(|| -> i64 { c.modify(|inout v: i64| -> i64 { v += 1
+        v }) })))
+    print(kind(task.catch(|| -> i64 { c.with(|v: i64| -> (i64, i64) (v, v)) })))
+    print(kind_u(task.catch(|| -> () { c.update(|v: i64| -> i64 { v + 1 }) })))
+    // a failed use put the poison back: still poisoned, still failing
+    print(c.poisoned())
+    c.reset(7)
+    print(c.poisoned())
+    print(c.get())
+    c.modify(|inout v: i64| -> () { v += 1 })
+    print(c.get())
+
+    // a heap value changed in place before the trap: gone (poisoned), not half-restored
+    let h: sync.Lock[List[i64]] = sync.lock(List.new())
+    h.modify(|inout xs: List[i64]| -> () { xs.push(1) })
+    print(kind(task.catch(|| -> i64 {
+        h.modify(|inout xs: List[i64]| -> i64 {
+            xs.push(2)
+            first(xs, 9)
+        })
+    })))
+    print(h.poisoned())
+    print(kind(task.catch(|| -> i64 { h.modify(|inout xs: List[i64]| -> i64 { xs.len() as i64 }) })))
+    let fresh: List[i64] = List.new()
+    h.reset(fresh)
+    print(h.modify(|inout xs: List[i64]| -> i64 {
+        xs.push(5)
+        xs.len() as i64
+    }))
+
+    // with and update trap too
+    let w = sync.lock(String.from("abc"))
+    print(kind(task.catch(|| -> i64 { w.with(|s: String| -> (String, i64) { (s, boom(1)) }) })))
+    print(w.poisoned())
+    w.reset(String.from("x"))
+    print(kind_u(task.catch(|| -> () { w.update(|s: String| -> String { String.from_int(boom(1)) }) })))
+    print(w.poisoned())
+    w.reset(String.from("y"))
+    print(w.get())
+
+    // a thread already waiting for the Lock when the holder traps: it is woken and fails
+    let l: sync.Lock[i64] = sync.lock(0)
+    let waiter = task.spawn_caught(|| -> i64 {
+        time.sleep_ms(30)
+        l.get()
+    })
+    let holder = task.spawn_caught(|| -> i64 {
+        l.modify(|inout v: i64| -> i64 {
+            time.sleep_ms(150)
+            boom(v + 1)
+        })
+    })
+    print(kind(holder.join()))
+    print(kind(waiter.join()))
+    print(l.poisoned())
+
+    // nested locks: a trap in the inner closure poisons both while the outer is held...
+    let outer: sync.Lock[i64] = sync.lock(1)
+    let inner: sync.Lock[i64] = sync.lock(2)
+    print(kind(task.catch(|| -> i64 {
+        outer.modify(|inout a: i64| -> i64 {
+            inner.modify(|inout b: i64| -> i64 { boom(b) })
+        })
+    })))
+    print(outer.poisoned())
+    print(inner.poisoned())
+    // ...and a trap contained inside the outer closure poisons only the inner one
+    outer.reset(1)
+    inner.reset(2)
+    let got = outer.modify(|inout a: i64| -> String {
+        kind(task.catch(|| -> i64 { inner.modify(|inout b: i64| -> i64 { boom(b) }) }))
+    })
+    print(got)
+    print(outer.poisoned())
+    print(inner.poisoned())
+    print(outer.get())
+
+    // many threads racing a trapping modify: all finish, each sees a total or the poison
+    let race: sync.Lock[i64] = sync.lock(0)
+    let mut ts: List[Task[Result[i64, String]]] = List.new()
+    for i in 0..12 {
+        ts.push(task.spawn_caught(|| -> i64 {
+            let mut done: i64 = 0
+            for j in 0..200 {
+                race.modify(|inout v: i64| -> () {
+                    if i == 5 && j == 100 { boom(1) }
+                    v += 1
+                })
+                done += 1
+            }
+            done
+        }))
+    }
+    let mut oks: i64 = 0
+    let mut bad: i64 = 0
+    let mut own: i64 = 0
+    for t in ts {
+        match t.join() {
+            Ok(n) => { oks += 1 }
+            Err(e) => {
+                bad += 1
+                if strings.contains(e, "poisoned") { own += 1 }
+            }
+        }
+    }
+    // thread 5 trapped on its own; the others finished or were stopped by the poison
+    print(oks + bad)
+    print(bad >= 1)
+    print(race.poisoned())
+    race.reset(0)
+    print(race.get())
+
+    // a pool job that traps in modify: the worker goes on, the Lock is poisoned, a later job
+    // sees that at once
+    let pool = task.pool(2, 8)
+    let pl: sync.Lock[i64] = sync.lock(3)
+    let j1 = pool.run(|| -> i64 { pl.modify(|inout v: i64| -> i64 { boom(v) }) }, time.never()).unwrap()
+    print(kind(j1.result(time.never()).unwrap()))
+    let j2 = pool.run(|| -> i64 { pl.get() }, time.never()).unwrap()
+    print(kind(j2.result(time.never()).unwrap()))
+    pl.reset(4)
+    let j3 = pool.run(|| -> i64 { pl.get() }, time.never()).unwrap()
+    print(kind(j3.result(time.never()).unwrap()))
+    pool.shutdown()
+
+    // the built-in Mutex needs none of this: usable again, value as the closure left it
+    let m = Mutex.new(1)
+    print(task.catch(|| -> () { m.update(|v: i32| -> i32 { v + 2147483647 }) }).is_err())
+    print(m.get())
+    print("done")
+}

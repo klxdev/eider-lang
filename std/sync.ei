@@ -1,7 +1,9 @@
 //! std/sync: the two primitives the rest of the runtime layer is built from (docs/runtime.md).
 //!
 //! - `Lock[T]`: a value that one thread at a time holds, changed in place by a closure that
-//!   also returns a result: an atomic read-modify-write of any state. It is a channel holding
+//!   also returns a result: an atomic read-modify-write of any state. (A trap contained while a
+//!   closure holds the value poisons the Lock: later uses trap with a message, `reset(v)`
+//!   recovers; decision C903.) It is a channel holding
 //!   exactly one value: taking the lock receives the value, releasing it sends it back, with
 //!   no other holder, so crossing threads copies nothing of it ("No copies" below). (The
 //!   built-in Mutex can't do this: `update` returns nothing, and `get` then `set` is not
@@ -25,8 +27,8 @@
 //! "C8.1"), so whatever the sender still shares is copied. Arguments are borrows, and a
 //! variable given to `send` is shared, not moved: `send(s)` with `s` alive copies all of
 //! `s`, and so did the old `with`, whose closure's `(s, r)` shared all of `s`. So the channel
-//! holds an `Option[T]`: `modify` lets the closure change the payload in place, and sends
-//! `o.take()`, which moves the Option out of its variable, so what is sent has exactly one
+//! holds a `Slot[T]` (`Full(value)`, or `Poisoned` after a trap): `modify` lets the closure change
+//! the payload in place, and sends `grab(o)`, which moves the Slot out of its variable, so what is sent has exactly one
 //! holder and making it unique visits each of its buffers once and copies none. `with` and
 //! `update` drop the value they lent their closure before sending what it returned, for the
 //! same reason. What is still copied is only what really is shared: a part of the value that
@@ -37,19 +39,43 @@
 import core.os
 import std.time
 
+/// What a Lock's channel holds. `Poisoned` is declared first and has no payload: the runtime
+/// puts a zero-filled element (tag 0) into the channel when a trap that was contained ends a
+/// holder (core/RUNTIME.md "Lock-like channels"), and all-zero bytes are `Poisoned`.
+pub type Slot[T] = | Poisoned | Full(T)
+
 /// A value one thread at a time holds (see the module comment). Copies of a Lock share it.
-/// The channel holds `Some(value)` while nobody holds the lock.
-pub type Lock[T] = { ch: Chan[Option[T]] }
+/// The channel holds `Full(value)` while nobody holds the lock, and `Poisoned` after a trap
+/// ended a `modify`, `with` or `update` closure that held the value (below).
+pub type Lock[T] = { ch: Chan[Slot[T]] }
 
 pub fn lock[T](v: T) -> Lock[T] {
-    let c: Chan[Option[T]] = Chan.new()
-    c.send(Some(v))
+    let c: Chan[Slot[T]] = Chan.new()
+    c.send(Full(v))
     Lock(c)
 }
 
+const POISONED: str = "sync.Lock is poisoned: a trap ended a closure that held its value (Lock.reset(v) makes it usable again)"
+
 /// What the channel holds, with no other holder (the Option the receive made is dropped on
-/// return).
-fn take[T](ch: Chan[Option[T]]) -> Option[T] { ch.recv().unwrap() }
+/// return), and the runtime told that this thread has the value out until `release`, so a
+/// contained trap poisons the lock instead of leaving it empty. A poisoned lock is put back
+/// as it was (for the next user and `reset`) and traps.
+fn take[T](ch: Chan[Slot[T]]) -> Slot[T] {
+    let s = ch.recv().unwrap()
+    os.guard_enter()
+    match s {
+        Poisoned => {
+            os.guard_leave()
+            ch.send(Poisoned)
+            panic(POISONED)
+        }
+        Full(_) => s
+    }
+}
+
+/// The value is back in `o` (or the closure returned): the runtime need not poison.
+fn release() { os.guard_leave() }
 
 /// `with`'s step: `f` on a borrow of `v`, whose new value replaces `v` (once this returns,
 /// nothing else holds it), and `f`'s result.
@@ -59,20 +85,38 @@ fn apply[T, R](inout v: T, f: fn(T) -> (T, R)) -> R {
     r
 }
 
+/// The slot moved out of `o`, which is left `Poisoned`: what is sent has one holder. (`let r = o`
+/// would alias `o`, the match makes the new slot.)
+fn grab[T](inout o: Slot[T]) -> Slot[T] {
+    let r = match o {
+        Full(v) => Full(v)
+        Poisoned => Poisoned
+    }
+    o = Poisoned
+    r
+}
+
 impl[T] Lock[T] {
     /// Runs `f` on the value itself with the lock held and returns `f`'s result: `f` changes
     /// the value in place, and nothing of it is copied ("No copies" above). Other threads
     /// using the Lock wait meanwhile, so `f` should be short and must not use the same Lock
     /// (that waits for itself forever). Not cancellable (it never waits for anything but the
     /// lock).
+    ///
+    /// A trap in `f` that is contained (`Task.catch`, a pool job, `spawn_caught`; decision
+    /// C803) poisons the Lock: the value is gone (`f` may have changed it half way, and it
+    /// cannot be restored soundly: it was changed in place), and every later `modify`, `with`,
+    /// `update` and `get` traps with a message, at once and also in threads that were already
+    /// waiting, instead of waiting forever. `reset(v)` makes it usable again.
     fn modify[R](self, f: fn(inout T) -> R) -> R {
         let mut o = take(self.ch)
         // an Option, since R may be () (which can't be bound)
         let r: Option[R] = match o {
-            Some(mut v) => Some(f(inout v))
-            None => None
+            Full(mut v) => Some(f(inout v))
+            Poisoned => None
         }
-        self.ch.send(o.take())
+        release()
+        self.ch.send(grab(inout o))
         r.unwrap()
     }
 
@@ -82,27 +126,50 @@ impl[T] Lock[T] {
     fn with[R](self, f: fn(T) -> (T, R)) -> R {
         let mut o = take(self.ch)
         let r: Option[R] = match o {
-            Some(mut v) => Some(apply(inout v, f))
-            None => None
+            Full(mut v) => Some(apply(inout v, f))
+            Poisoned => None
         }
-        self.ch.send(o.take())
+        release()
+        self.ch.send(grab(inout o))
         r.unwrap()
     }
 
     /// Replaces the value with `f(value)` (prefer `modify` for changes, as for `with`).
     fn update(self, f: fn(T) -> T) {
         let mut o = take(self.ch)
-        let mut n: Option[T] = match o {
-            Some(v) => Some(f(v))
-            None => None
+        let mut n: Slot[T] = match o {
+            Full(v) => Full(f(v))
+            Poisoned => Poisoned
         }
-        o = None
-        self.ch.send(n.take())
+        o = Poisoned
+        release()
+        self.ch.send(grab(inout n))
     }
 
     /// A copy of the value.
     fn get(self) -> T {
         self.modify(|inout s: T| -> T s)
+    }
+
+    /// Whether a trap poisoned the Lock (and `reset` has not made it usable again). Waits for
+    /// a holder like any use.
+    fn poisoned(self) -> bool {
+        let mut o = self.ch.recv().unwrap()
+        let p = match o {
+            Poisoned => true
+            Full(_) => false
+        }
+        self.ch.send(grab(inout o))
+        p
+    }
+
+    /// Makes the Lock hold `v` again, whether it was poisoned or not (the old value is dropped).
+    /// Waits for a holder like any use. This is how a program goes on after a contained trap
+    /// in a closure that held the Lock: put back a value known to be sound.
+    fn reset(self, v: T) {
+        let mut o = self.ch.recv().unwrap()
+        o = Poisoned
+        self.ch.send(Full(v))
     }
 }
 

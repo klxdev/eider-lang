@@ -67,6 +67,8 @@ typedef struct ei_try_frame {
   struct ei_try_frame *prev;
   char *volatile msg;
   uint32_t held; /* ei_mutex locks this thread held when the frame was made */
+  ei_chan **guards; /* channels whose element a ei_guard_enter holder has out (below), innermost last */
+  uint32_t nguards, capguards;
 #ifdef EI_RT_PROFILE
   uint32_t depth;
 #endif
@@ -487,11 +489,63 @@ __attribute__((noinline)) static void held_unwind(uint32_t keep) {
   held_n = keep;
 }
 
+/* ---- lock-like channels (std/sync Lock, issue #211). A `Lock[T]` is a channel that holds one
+   element; `modify` receives it, runs the closure and sends it back, so a trap in the closure
+   (contained by ei_try) would leave the channel empty for good. The holder tells the runtime:
+   ei_guard_enter() right after its receive records that channel (the one the thread last
+   received from) on the innermost ei_try frame, ei_guard_leave() removes it before the element
+   is sent back. If a trap ends the frame while the channel is still recorded, ei_try puts a
+   zero-filled element into it: std/sync's `Slot` type has its payload-free variant `Poisoned`
+   first, so all-zero bytes (tag 0) are `Poisoned` and every later user finds it at once and
+   traps with a message, instead of waiting forever. Nothing is recorded outside an ei_try
+   (a trap there ends the process). */
+static _Thread_local ei_chan *last_recv;
+__attribute__((noinline)) static ei_chan *last_recv_get(void) { return last_recv; }
+__attribute__((noinline)) static void last_recv_set(ei_chan *c) { last_recv = c; }
+
+void ei_guard_enter(void) {
+  ei_try_frame *f = try_get();
+  ei_chan *c = last_recv_get();
+  if (!f || !c) return;
+  if (f->nguards == f->capguards) {
+    uint32_t nc = f->capguards ? f->capguards * 2 : 4;
+    ei_chan **ng = realloc(f->guards, (size_t)nc * sizeof *ng);
+    if (!ng) return; /* no room to remember it: the trap would leave the lock empty, as before */
+    f->guards = ng;
+    f->capguards = nc;
+  }
+  f->guards[f->nguards++] = c;
+}
+
+void ei_guard_leave(void) {
+  ei_try_frame *f = try_get();
+  if (f && f->nguards > 0) f->nguards--;
+}
+
+/* A trap ended fn: every channel still recorded gets its poison element (innermost first). */
+__attribute__((noinline)) static void guards_poison(ei_try_frame *fr) {
+  while (fr->nguards > 0) {
+    ei_chan *c = fr->guards[--fr->nguards];
+    ei_mutex_lock(&c->mu);
+    bool room = !c->closed && c->len == 0 && c->cap > 0;
+    ei_mutex_unlock(&c->mu);
+    if (!room) continue; /* not the usual empty lock channel (never expected): leave it */
+    void *z = calloc(1, (size_t)c->size ? (size_t)c->size : 1);
+    if (!z) continue;
+    ei_chan_send(c, z);
+    free(z);
+  }
+  free(fr->guards);
+  fr->guards = NULL;
+}
+
 int32_t ei_try(void (*fn)(void *, void *), void *a, void *b, ei_String *msg) {
   ei_try_frame fr;
   fr.prev = try_get();
   fr.msg = NULL;
   fr.held = held_get();
+  fr.guards = NULL;
+  fr.nguards = fr.capguards = 0;
 #ifdef EI_RT_PROFILE
   fr.depth = ei_prof_depth_get();
 #endif
@@ -499,12 +553,14 @@ int32_t ei_try(void (*fn)(void *, void *), void *a, void *b, ei_String *msg) {
   if (setjmp(fr.jb) == 0) {
     fn(a, b);
     try_set(fr.prev);
+    free(fr.guards);
     return 0;
   }
   /* a trap ended fn: its frames are gone without their drops (values they owned leak), so the
      locks they held are released and the thread goes on */
   try_set(fr.prev);
   held_unwind(fr.held);
+  guards_poison(&fr);
 #ifdef EI_RT_PROFILE
   ei_prof_unwind(fr.depth);
 #endif
@@ -2402,6 +2458,7 @@ bool ei_chan_recv(ei_chan *c, void *out) {
 #ifdef EI_RT_PROFILE
   if (waited) prof_wait(EI_PEV_RECV, waited);
 #endif
+  last_recv_set(c);
   return true;
 }
 

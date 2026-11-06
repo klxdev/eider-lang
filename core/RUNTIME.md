@@ -131,7 +131,7 @@ is the catch's. The design (decision C803) and its limits:
   the closure left it (it may be logically inconsistent: the traps are checked operations,
   none leaves a half-built buffer except an out-of-memory in the middle of a `Chan` send).
   A lock that is a channel holding the value (std/sync's `Lock`) is not an `ei_mutex`: its
-  `modify` took the value out, so a trap in `f` loses it and the lock stays empty.
+  `modify` took the value out, so a trap in `f` loses it; see "Lock-like channels" below.
 - **Not contained.** Stack overflow (the fault handler ends the process with 101 from the
   signal handler: it cannot `longjmp` off a stack that is exhausted), `env.exit`, `_exit`, a
   signal that kills the process, and a trap in a thread that has no `ei_try` around it (as before:
@@ -139,6 +139,21 @@ is the catch's. The design (decision C803) and its limits:
   In a WebAssembly module a trap is `unreachable` and cannot be caught: `ei_try` just
   calls `fn`.
 - A profiled build (`--profile`) restores the shadow stack depth like a failed test.
+
+### Lock-like channels
+
+`void ei_guard_enter(void)` / `void ei_guard_leave(void)` (decision C903, issue #211). A
+`std/sync` `Lock[T]` is a channel holding one `Slot[T]` element that `modify` receives and sends
+back; a contained trap in between would leave the channel empty for ever. Right after its
+receive the holder calls `ei_guard_enter`, which records the channel that thread last received
+from (`ei_chan_recv` remembers it per thread) on the innermost `ei_try` frame (the frame is the
+task's, so it follows a task that parks in the closure and resumes on another thread);
+`ei_guard_leave` removes the innermost record, before the element is sent back. When a trap ends
+the frame while records remain, `ei_try` (after releasing the locks) sends each such channel one
+zero-filled element, if the channel is open and empty. The contract with std/sync: `Slot`'s first
+variant, `Poisoned`, carries nothing, so all-zero bytes (tag 0, docs/compiler.md "C8.1" layout) are
+`Poisoned`; nothing else in the runtime reads the element. Outside an `ei_try` both calls do
+nothing (a trap there ends the process); the WebAssembly runtime has them as no-ops.
 
 ## Map hashing
 

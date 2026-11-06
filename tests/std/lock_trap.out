@@ -1,0 +1,41 @@
+false
+trap: integer overflow in + (tests/std/lock_trap.ei:13)
+true
+poisoned
+poisoned
+poisoned
+poisoned
+true
+false
+7
+8
+trap: index out of bounds (tests/std/lock_trap.ei:16)
+true
+poisoned
+1
+trap: integer overflow in + (tests/std/lock_trap.ei:13)
+true
+trap: integer overflow in + (tests/std/lock_trap.ei:13)
+true
+y
+trap: integer overflow in + (tests/std/lock_trap.ei:13)
+poisoned
+true
+trap: integer overflow in + (tests/std/lock_trap.ei:13)
+true
+true
+trap: integer overflow in + (tests/std/lock_trap.ei:13)
+false
+true
+1
+12
+true
+true
+0
+trap: integer overflow in + (tests/std/lock_trap.ei:13)
+poisoned
+ok 4
+true
+1
+done
+exit 0

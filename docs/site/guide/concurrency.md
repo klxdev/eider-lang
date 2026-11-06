@@ -422,8 +422,9 @@ What is safe afterwards, because nothing is unwound:
 - Locks of the built-in `Mutex`, channels and tasks held by those frames are released. The value
   in a `Mutex` is as the closure left it: a trap in the middle of a multi-step update leaves it
   half updated, so update in one step.
-- A `sync.Lock` whose `modify` closure trapped has lost its value: it stays empty and every later
-  use waits forever. Closures given to `modify` must not trap.
+- A `sync.Lock` whose `modify`, `with` or `update` closure trapped is poisoned: the value it held
+  is gone, and every later `get`, `modify`, `with` and `update` traps at once with `sync.Lock is
+  poisoned`, instead of waiting forever. `l.poisoned()` asks and `l.reset(v)` puts a value back.
 - A stack overflow, `env.exit` and a trap on a thread with no `catch` around it end the process.
 - It is for requests and jobs, not for programs that expect to trap: a server that traps often
   has a bug to fix, and every trap leaks.

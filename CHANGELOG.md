@@ -40,6 +40,8 @@ repository and the fourteen libraries were migrated).
   (compiler/tests/run/refs.ei, tests/run/ref_pointer.ei, tests/bench/refs.ei) and seventeen E0301/E0307/E0308 compile-fail
   cases that used a number now use a String or a Drop record. eider-analyzer: its codes fixture follows.
 
+- **A `sync.Lock` is poisoned by a contained trap in its closure, not left empty (#211; decision C903).** A trap contained with `Task.catch` (also a pool job, `spawn_caught`, a group child) while `modify`, `with` or `update` held the value used to leave the Lock empty, and every later `get`/`modify` blocked for ever. Now the runtime puts a poison marker into it: waiters already blocked wake, and every later use traps at once with `sync.Lock is poisoned ...`; `Lock.poisoned()` asks and `Lock.reset(v)` makes it usable again. The value that was taken out is not restored (the closure changed it in place). The runtime gains `ei_guard_enter`/`ei_guard_leave` (core/RUNTIME.md "Lock-like channels"), bound in core/os.ei with only `ffi`.
+
 ## 0.7.6
 
 A patch that unblocks the network libraries. The crypto package ships in the toolchain (`[deps.crypto] toolchain = true`),
