@@ -5,7 +5,14 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
-## 0.7.6 (unreleased)
+## 0.7.6
+
+A patch that unblocks the network libraries. The crypto package ships in the toolchain (`[deps.crypto] toolchain = true`),
+so eider-tls, eider-postgres and eider-sql build and are consumed with an installed toolchain and no checkout; the crypto
+package gains RSA (PKCS#1 v1.5 and PSS), ECDSA and ECDH on P-384 and ECDSA with SHA-384/512, so 117 of the 121 roots of the
+system CA bundle now verify; eider-tls speaks the new schemes; and eider-http serves and fetches https and wss through a
+`Transport` layer (eider-http 0.7.4). Libraries: eider-tls 0.7.2, eider-postgres 0.7.2, eider-sql 0.7.2, eider-http 0.7.4.
+The aarch64 crypto backend is cross-built only; it has not been run on ARM hardware.
 
 - **The crypto package ships in the toolchain (#222; decision C898).** A toolchain archive now holds `packages/crypto` and
   `lib/crypto/awslc-noasm/` (AWS-LC's portable build for its target, `libeider_crypto.a`, 3.4 MB), and a manifest says
