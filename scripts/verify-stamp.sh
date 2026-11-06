@@ -17,7 +17,7 @@ sibs=${EIDER_SIBLINGS:-$here/..}
 key() {
   if [ -n "$(git status --porcelain)" ]; then echo dirty; return 1; fi
   echo "eider-lang $(git rev-parse HEAD)"
-  for r in eider-analyzer tree-sitter-eider eider-profiler eider-toml eider-json eider-markdown eider-logging eider-command eider-http eider-rpc eider-openapi eider-compression eider-tls eider-postgres; do
+  for r in eider-analyzer tree-sitter-eider eider-profiler eider-toml eider-json eider-markdown eider-logging eider-command eider-http eider-rpc eider-openapi eider-compression eider-tls eider-postgres eider-sql; do
     case $r in
       eider-analyzer) d=${EIDER_ANALYZER:-$sibs/$r} ;;
       tree-sitter-eider) d=${TREE_SITTER_EIDER:-$sibs/$r} ;;
@@ -33,6 +33,7 @@ key() {
       eider-compression) d=${EIDER_COMPRESSION:-$sibs/$r} ;;
       eider-tls) d=${EIDER_TLS:-$sibs/$r} ;;
       eider-postgres) d=${EIDER_POSTGRES:-$sibs/$r} ;;
+      eider-sql) d=${EIDER_SQL:-$sibs/$r} ;;
     esac
     if [ ! -d "$d" ]; then echo "$r absent"; continue; fi
     if [ -n "$(git -C "$d" status --porcelain 2>/dev/null)" ]; then echo "$r dirty"; continue; fi
