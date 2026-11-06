@@ -12,7 +12,9 @@
 # --san: also run the RFC vectors with the glue and the program under ASan+UBSan.
 #
 # For each backend: rfc.ei (RFC 8439, 7748, 8032, 5869, 4231 and the package's misuse
-# checks), cavp.ei (NIST CAVP), wycheproof.ei. Then cross.ei: every pair of backends must
+# checks), cavp.ei (NIST CAVP), wycheproof.ei, pubkey.ei (RSA, P-384, keys from DER: openssl-made
+# vectors, the key policy, negatives) and openssl-diff.sh (the system openssl command signs and
+# verifies in both directions). Then cross.ei: every pair of backends must
 # give byte-identical results for each deterministic operation both provide, and each one
 # verifies the others' fresh P-256 (random k) and Ed25519 signatures.
 # Output: `ok`, `FAIL` and `skip` lines; exit 1 on any failure.
@@ -43,7 +45,7 @@ for b in $want; do
     esac
   fi
   have="$have $b"
-  for t in rfc cavp wycheproof; do
+  for t in rfc cavp wycheproof pubkey; do
     if [ $t = wycheproof ] && [ $json = no ]; then echo "skip crypto wycheproof ($b): needs .vendor/json ($jwhy; sh scripts/vendor.sh fetch json)"; continue; fi
     start=$(date +%s)
     if scripts/ei-crypto --crypto "$b" run "tests/crypto/$t.ei" > "$out/$b.$t" 2>&1; then
@@ -52,16 +54,22 @@ for b in $want; do
       echo "FAIL crypto $t ($b): see $out/$b.$t"; grep FAIL "$out/$b.$t" | head -5; tail -2 "$out/$b.$t"; fail=1
     fi
   done
+  # the differential half: the system openssl command signs and verifies against this backend
+  sh tests/crypto/openssl-diff.sh "$b" > "$out/$b.diff" 2>&1; drc=$?
+  cat "$out/$b.diff"
+  [ $drc = 0 ] || fail=1
   if [ $json = no ]; then :
   elif scripts/ei-crypto --crypto "$b" run tests/crypto/cross.ei > "$out/$b.cross" 2>&1; then :; else
     echo "FAIL crypto cross emit ($b): see $out/$b.cross"; fail=1
   fi
   if [ $san = 1 ]; then
-    if EIDER_CFLAGS="-fsanitize=address,undefined -fno-sanitize-recover=undefined" scripts/ei-crypto --san --crypto "$b" run tests/crypto/rfc.ei > "$out/$b.san" 2>&1; then
-      echo "ok   crypto rfc under ASan+UBSan ($b, glue and program instrumented)"
-    else
-      echo "FAIL crypto rfc under ASan+UBSan ($b): see $out/$b.san"; fail=1
-    fi
+    for st in rfc pubkey; do
+      if EIDER_CFLAGS="-fsanitize=address,undefined -fno-sanitize-recover=undefined" scripts/ei-crypto --san --crypto "$b" run tests/crypto/$st.ei > "$out/$b.san.$st" 2>&1; then
+        echo "ok   crypto $st under ASan+UBSan ($b, glue and program instrumented)"
+      else
+        echo "FAIL crypto $st under ASan+UBSan ($b): see $out/$b.san.$st"; fail=1
+      fi
+    done
   fi
 done
 
@@ -75,7 +83,7 @@ for a in "$@"; do
     [ "$a" = "$b" ] && continue
     if [ "$a" \< "$b" ]; then
       r=$(awk '
-        $1 == "p256sig" || $1 == "ed25519sig" { next }
+        $1 == "p256sig" || $1 == "ed25519sig" || $1 == "p384sig" || $1 == "p256sha384sig" || $1 == "rsapsssig" { next }
         NR == FNR { v[$1] = $2; next }
         ($1 in v) { if (v[$1] == "unsupported" || $2 == "unsupported") { skip++ } else if (v[$1] == $2) { same++ } else { diff++; print "differs: " $1 > "/dev/stderr" } }
         END { printf "%d %d %d", same, diff, skip }' "$out/$a.cross" "$out/$b.cross" 2>"$out/$a-$b.diff")

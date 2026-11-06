@@ -1,5 +1,6 @@
 // Wycheproof vectors (tests/crypto/vectors/wycheproof_*.json, C2SP/wycheproof testvectors_v1):
-// X25519, Ed25519, ECDSA P-256/SHA-256, ECDH P-256, AES-GCM, ChaCha20-Poly1305, HKDF, HMAC.
+// X25519, Ed25519, ECDSA P-256/SHA-256, ECDH P-256, RSA PKCS#1 v1.5 and PSS verification, ECDSA P-384 (SHA-384, SHA-512, DER and
+// P1363), ECDH P-384, AES-GCM, ChaCha20-Poly1305, HKDF, HMAC.
 //
 // "valid" must succeed with the expected output and "invalid" must fail, on every backend.
 // "acceptable" (legal but unusual inputs, e.g. a non-canonical X25519 u-coordinate) may go
@@ -227,6 +228,187 @@ fn ecdh(inout t: vec.Tally) uses io, fs {
     report_acc(f, acc)
 }
 
+// ---------------------------------------------------------------- RSA, ECDSA P-384, ECDH P-384
+
+fn hash_named(s: List[u8]) -> Option[crypto.Hash] {
+    if bytes.eq(s, "SHA-256".bytes()) { return Some(crypto.Sha256) }
+    if bytes.eq(s, "SHA-384".bytes()) { return Some(crypto.Sha384) }
+    if bytes.eq(s, "SHA-512".bytes()) { return Some(crypto.Sha512) }
+    None
+}
+
+// Verify with a key parsed from the group's SubjectPublicKeyInfo and again with the key built from
+// (n, e); both must give the same answer, and the answer must be the expected one.
+pub type RsaKeys = { spki: Option[crypto.RsaPublic], ne: Option[crypto.RsaPublic] }
+
+fn rsa_keys(d: json.Doc, g: u32) -> RsaKeys {
+    let mut a: Option[crypto.RsaPublic] = None
+    match crypto.public_key_from_spki(hex_of(d, g, "publicKeyDer")) {
+        Ok(k) => {
+            match k {
+                crypto.RsaKey(r) => { a = Some(r) }
+                _ => {}
+            }
+        }
+        Err(_) => {}
+    }
+    let mut b: Option[crypto.RsaPublic] = None
+    let pk = json.field(d, g, "publicKey").unwrap()
+    match crypto.rsa_public_from_ne(hex_of(d, pk, "modulus"), hex_of(d, pk, "publicExponent")) {
+        Ok(r) => { b = Some(r) }
+        Err(_) => {}
+    }
+    RsaKeys(a, b)
+}
+
+fn rsa_one(k: Option[crypto.RsaPublic], pss: bool, h: crypto.Hash, salt: usize, msg: List[u8], sig: List[u8]) -> bool {
+    match k {
+        Some(key) => {
+            if pss { return crypto.rsa_pss_verify(key, h, salt, msg, crypto.rsa_signature(sig)) }
+            crypto.rsa_pkcs1_verify(key, h, msg, crypto.rsa_signature(sig))
+        }
+        None => false
+    }
+}
+
+fn rsa_check(inout t: vec.Tally, inout acc: Acc, f: str, d: json.Doc, g: u32, tc: u32, pss: bool, h: crypto.Hash, salt: usize) uses io {
+    let keys = rsa_keys(d, g)
+    let sig = hex_of(d, tc, "sig")
+    let msg = hex_of(d, tc, "msg")
+    let r1 = rsa_one(keys.spki, pss, h, salt, msg.copy(), sig.copy())
+    let r2 = rsa_one(keys.ne, pss, h, salt, msg, sig)
+    let w = what(f, d, tc)
+    vec.check(inout t, r1 == r2, vec.label("rsa: SPKI key and (n, e) key disagree", w.copy()))
+    judge(inout t, inout acc, expect(d, tc), r1, !r1, w)
+}
+
+fn rsa_sig(inout t: vec.Tally, f: str) uses io, fs {
+    let d = doc(f)
+    let mut acc = Acc(0, 0)
+    for g in groups(d) {
+        let h = hash_named(str_of(d, g, "sha"))
+        match h {
+            Some(hh) => {
+                for tc in tests_of(d, g) { rsa_check(inout t, inout acc, f, d, g, tc, false, hh, 0) }
+            }
+            None => { vec.skip(inout t, tests_of(d, g).len() as u64) }
+        }
+    }
+    report_acc(f, acc)
+}
+
+fn rsa_pss(inout t: vec.Tally, f: str) uses io, fs {
+    let d = doc(f)
+    let mut acc = Acc(0, 0)
+    for g in groups(d) {
+        let h = hash_named(str_of(d, g, "sha"))
+        let same_mgf = bytes.eq(str_of(d, g, "sha"), str_of(d, g, "mgfSha"))
+        let bits = int_of(d, g, "keySize")
+        match h {
+            Some(hh) => {
+                if same_mgf && bits >= 2048 {
+                    let salt = int_of(d, g, "sLen") as usize
+                    for tc in tests_of(d, g) { rsa_check(inout t, inout acc, f, d, g, tc, true, hh, salt) }
+                } else {
+                    vec.skip(inout t, tests_of(d, g).len() as u64)
+                }
+            }
+            None => { vec.skip(inout t, tests_of(d, g).len() as u64) }
+        }
+    }
+    report_acc(f, acc)
+}
+
+// ECDSA on P-384 (or any curve/hash pair) from a Wycheproof file; `raw` is the P1363 form (r || s)
+fn ecdsa_ec(inout t: vec.Tally, f: str, c: crypto.EcCurve, raw: bool) uses io, fs {
+    let d = doc(f)
+    let mut acc = Acc(0, 0)
+    for g in groups(d) {
+        let h = hash_named(str_of(d, g, "sha")).unwrap()
+        let pkobj = json.field(d, g, "publicKey").unwrap()
+        let pkb = hex_of(d, pkobj, "uncompressed")
+        // the same key from its SubjectPublicKeyInfo
+        let mut spki_ok = false
+        match crypto.public_key_from_spki(hex_of(d, g, "publicKeyDer")) {
+            Ok(k) => {
+                match k {
+                    crypto.EcKey(e) => { spki_ok = eqb(e.bytes, pkb) }
+                    _ => {}
+                }
+            }
+            Err(_) => {}
+        }
+        vec.check(inout t, spki_ok, vec.label("ecdsa: public key from SPKI", f.bytes()))
+        for tc in tests_of(d, g) {
+            let e = expect(d, tc)
+            let mut valid = false
+            match crypto.ec_public_key(c, pkb.copy()) {
+                Ok(pk) => {
+                    let s = hex_of(d, tc, "sig")
+                    if raw {
+                        match crypto.ec_signature_raw(c, s) {
+                            Ok(sg) => { valid = crypto.ec_verify(pk, h, hex_of(d, tc, "msg"), sg) }
+                            Err(_) => {}
+                        }
+                    } else {
+                        valid = crypto.ec_verify(pk, h, hex_of(d, tc, "msg"), crypto.ec_signature_der(s))
+                    }
+                }
+                Err(_) => {}
+            }
+            judge(inout t, inout acc, e, valid, !valid, what(f, d, tc))
+        }
+    }
+    report_acc(f, acc)
+}
+
+fn scalar_n(b: List[u8], n: usize) -> List[u8] {
+    let mut i: usize = 0
+    while b.len() - i > n && b[i] == 0 { i += 1 }
+    let mut out: List[u8] = List.new()
+    let mut pad = n - (b.len() - i)
+    while pad > 0 {
+        out.push(0)
+        pad -= 1
+    }
+    bytes.append(inout out, bytes.slice(b, i, b.len()))
+    out
+}
+
+fn ecdh384(inout t: vec.Tally) uses io, fs {
+    let f = "wycheproof_ecdh_secp384r1_ecpoint_test.json"
+    let d = doc(f)
+    let mut acc = Acc(0, 0)
+    for g in groups(d) {
+        for tc in tests_of(d, g) {
+            let e = expect(d, tc)
+            let mut ok = false
+            let mut failed = false
+            let priv = hex_of(d, tc, "private")
+            if priv.len() > 49 {
+                failed = true
+            } else {
+                match crypto.ec_secret(crypto.P384, scalar_n(priv, 48)) {
+                    Ok(sk) => {
+                        match crypto.ec_public_key(crypto.P384, hex_of(d, tc, "public")) {
+                            Ok(pk) => {
+                                match crypto.ec_agree(sk, pk) {
+                                    Ok(z) => { ok = eqb(z.bytes, hex_of(d, tc, "shared")) }
+                                    Err(_) => { failed = true }
+                                }
+                            }
+                            Err(_) => { failed = true }
+                        }
+                    }
+                    Err(_) => { failed = true }
+                }
+            }
+            judge(inout t, inout acc, e, ok, failed, what(f, d, tc))
+        }
+    }
+    report_acc(f, acc)
+}
+
 fn aead(inout t: vec.Tally, f: str, chacha: bool) uses io, fs {
     let d = doc(f)
     let mut acc = Acc(0, 0)
@@ -308,6 +490,16 @@ fn main() uses io, fs {
     ed25519(inout t)
     ecdsa(inout t)
     ecdh(inout t)
+    for f in ["wycheproof_rsa_signature_2048_sha256_test.json", "wycheproof_rsa_signature_2048_sha384_test.json", "wycheproof_rsa_signature_2048_sha512_test.json", "wycheproof_rsa_signature_3072_sha256_test.json", "wycheproof_rsa_signature_3072_sha512_test.json", "wycheproof_rsa_signature_4096_sha256_test.json", "wycheproof_rsa_signature_4096_sha512_test.json", "wycheproof_rsa_signature_8192_sha256_test.json"] {
+        rsa_sig(inout t, f)
+    }
+    for f in ["wycheproof_rsa_pss_2048_sha256_mgf1_0_test.json", "wycheproof_rsa_pss_2048_sha256_mgf1_32_test.json", "wycheproof_rsa_pss_2048_sha384_mgf1_48_test.json", "wycheproof_rsa_pss_3072_sha256_mgf1_32_test.json", "wycheproof_rsa_pss_4096_sha256_mgf1_32_test.json", "wycheproof_rsa_pss_4096_sha512_mgf1_32_test.json", "wycheproof_rsa_pss_4096_sha512_mgf1_64_test.json", "wycheproof_rsa_pss_misc_test.json"] {
+        rsa_pss(inout t, f)
+    }
+    ecdsa_ec(inout t, "wycheproof_ecdsa_secp384r1_sha384_test.json", crypto.P384, false)
+    ecdsa_ec(inout t, "wycheproof_ecdsa_secp384r1_sha512_test.json", crypto.P384, false)
+    ecdsa_ec(inout t, "wycheproof_ecdsa_secp384r1_sha384_p1363_test.json", crypto.P384, true)
+    ecdh384(inout t)
     aead(inout t, "wycheproof_aes_gcm_test.json", false)
     aead(inout t, "wycheproof_chacha20_poly1305_test.json", true)
     hkdf(inout t, "wycheproof_hkdf_sha256_test.json", crypto.Sha256)

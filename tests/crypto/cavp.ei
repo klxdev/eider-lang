@@ -1,5 +1,7 @@
 // NIST CAVP vectors (tests/crypto/vectors/cavp_*.rsp): SHA-2, SHA-3, HMAC, AES-GCM,
-// ECDSA P-256 (key pairs, signature verification, generated signatures), ECDH P-256.
+// ECDSA P-256 (key pairs, signature verification, generated signatures), ECDH P-256, and for
+// 0.7.6: ECDSA P-384 (SHA-256/384/512) and P-256 with SHA-384/512, ECDH P-384, RSA SigVer
+// (PKCS#1 v1.5 and PSS, FIPS 186-3).
 
 import std.bytes
 import std.io
@@ -148,6 +150,149 @@ fn ecdh(inout t: vec.Tally) uses io, fs {
     }
 }
 
+// ---------------------------------------------------------------- P-384, SHA-384/512 pairings, RSA
+
+// "[P-384,SHA-384]" -> curve, hash
+fn sec_curve(r: vec.Rec) -> crypto.EcCurve {
+    if bytes.starts_with(r.section, "[P-384".bytes()) { return crypto.P384 }
+    crypto.P256
+}
+
+fn sec_hash(r: vec.Rec) -> crypto.Hash {
+    if bytes.find(r.section, "SHA-512".bytes(), 0).is_some() { return crypto.Sha512 }
+    if bytes.find(r.section, "SHA-384".bytes(), 0).is_some() { return crypto.Sha384 }
+    crypto.Sha256
+}
+
+fn ecdsa_more(inout t: vec.Tally) uses io, fs {
+    for r in vec.records(vec.read_vectors("cavp_ecdsa_KeyPair_P384.rsp")) {
+        if !vec.has(r, "d") { continue }
+        let sk = must(crypto.ec_secret(crypto.P384, vec.get_hex(r, "d")), "ec_secret")
+        let pk = must(crypto.ec_public(sk), "ec_public")
+        vec.check(inout t, eqb(pk.bytes, point(r, "Qx", "Qy")), "p384 key pair (CAVP KeyPair)".bytes())
+        // signing with each hash (random k): verifies, strict DER, round-trips through r || s
+        for h in [crypto.Sha256, crypto.Sha384, crypto.Sha512] {
+            let msg = vec.get_hex(r, "Qx")
+            let sig = must(crypto.ec_sign(sk, h, msg.copy()), "ec_sign")
+            vec.check(inout t, crypto.ec_verify(pk, h, msg.copy(), crypto.ec_signature_der(sig.der.copy())), "ecdsa p384 sign then verify".bytes())
+            let raw = must(crypto.ec_signature_to_raw(crypto.P384, crypto.ec_signature_der(sig.der.copy())), "ec_signature_to_raw")
+            let back = must(crypto.ec_signature_raw(crypto.P384, raw), "ec_signature_raw")
+            vec.check(inout t, eqb(back.der, sig.der), "ecdsa p384: DER and r || s round trip".bytes())
+            let mut m2 = msg.copy()
+            m2[0] = m2[0] ^ 1
+            vec.check(inout t, !crypto.ec_verify(pk, h, m2, sig), "ecdsa p384: altered message".bytes())
+        }
+    }
+    for r in vec.records(vec.read_vectors("cavp_ecdsa_SigVer_P384_P256_SHA2.rsp")) {
+        if !vec.has(r, "Msg") { continue }
+        let c = sec_curve(r)
+        let n = crypto.ec_scalar_len(c)
+        let mut rs = vec.get_hex(r, "R")
+        let mut ss = vec.get_hex(r, "S")
+        // values print without leading zero bytes in some records: left-pad
+        rs = scalar_pad(rs, n)
+        ss = scalar_pad(ss, n)
+        bytes.append(inout rs, ss)
+        let sig = must(crypto.ec_signature_raw(c, rs), "ec_signature_raw")
+        let want = bytes.starts_with(vec.get(r, "Result"), "P".bytes())
+        let got = match crypto.ec_public_key(c, point(r, "Qx", "Qy")) {
+            Ok(pk) => crypto.ec_verify(pk, sec_hash(r), vec.get_hex(r, "Msg"), sig)
+            Err(_) => false
+        }
+        vec.check(inout t, got == want, vec.label("ecdsa SigVer (P-384 / P-256 with SHA-2)", vec.get(r, "Result")))
+    }
+    for r in vec.records(vec.read_vectors("cavp_ecdsa_SigGen_P384_P256_SHA2.rsp")) {
+        if !vec.has(r, "Msg") { continue }
+        let c = sec_curve(r)
+        let n = crypto.ec_scalar_len(c)
+        let msg = vec.get_hex(r, "Msg")
+        let pk = must(crypto.ec_public_key(c, point(r, "Qx", "Qy")), "ec_public_key")
+        let mut rs = scalar_pad(vec.get_hex(r, "R"), n)
+        bytes.append(inout rs, scalar_pad(vec.get_hex(r, "S"), n))
+        let sig = must(crypto.ec_signature_raw(c, rs), "ec_signature_raw")
+        vec.check(inout t, crypto.ec_verify(pk, sec_hash(r), msg.copy(), sig), "ecdsa SigGen (P-384 / P-256 with SHA-2): recorded signature".bytes())
+        let mut m2 = msg.copy()
+        m2[0] = m2[0] ^ 1
+        vec.check(inout t, !crypto.ec_verify(pk, sec_hash(r), m2, sig), "ecdsa SigGen: altered message".bytes())
+    }
+}
+
+fn scalar_pad(b: List[u8], n: usize) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut pad = n - b.len()
+    while pad > 0 {
+        out.push(0)
+        pad -= 1
+    }
+    bytes.append(inout out, b)
+    out
+}
+
+fn ecdh384(inout t: vec.Tally) uses io, fs {
+    for r in vec.records(vec.read_vectors("cavp_ecdh_P384.rsp")) {
+        if !vec.has(r, "dIUT") { continue }
+        let sk = must(crypto.ec_secret(crypto.P384, vec.get_hex(r, "dIUT")), "ec_secret")
+        let mine = must(crypto.ec_public(sk), "ec_public")
+        vec.check(inout t, eqb(mine.bytes, point(r, "QIUTx", "QIUTy")), "ecdh p384: our public key".bytes())
+        let peer = must(crypto.ec_public_key(crypto.P384, point(r, "QCAVSx", "QCAVSy")), "ec_public_key")
+        match crypto.ec_agree(sk, peer) {
+            Ok(z) => vec.check(inout t, eqb(z.bytes, vec.get_hex(r, "ZIUT")), vec.label("ecdh p384", vec.get(r, "COUNT")))
+            Err(_) => vec.check(inout t, false, vec.label("ecdh p384", vec.get(r, "COUNT")))
+        }
+    }
+}
+
+// hex of a number printed without a leading zero nibble: left-pad to whole bytes
+fn hexp(r: vec.Rec, key: str) -> List[u8] {
+    let v = vec.get(r, key)
+    if v.len() % 2 == 1 {
+        let mut p: List[u8] = List.new()
+        p.push(48)
+        bytes.append(inout p, v)
+        return vec.unhex(p)
+    }
+    vec.unhex(v)
+}
+
+fn rsa_hash(r: vec.Rec) -> crypto.Hash {
+    let a = vec.get(r, "SHAAlg")
+    if bytes.eq(a, "SHA512".bytes()) { return crypto.Sha512 }
+    if bytes.eq(a, "SHA384".bytes()) { return crypto.Sha384 }
+    crypto.Sha256
+}
+
+// FIPS 186-3 RSA SigVer. 1024-bit keys are outside the key policy (2048..8192) and must be
+// refused whatever the signature says.
+fn rsa_cavp(inout t: vec.Tally, file: str, pss: bool) uses io, fs {
+    for r in vec.records(vec.read_vectors(file)) {
+        if !vec.has(r, "Msg") { continue }
+        let want = bytes.starts_with(vec.get(r, "Result"), "P".bytes())
+        let n = hexp(r, "n")
+        let small = n.len() < 256
+        let mut got = false
+        match crypto.rsa_public_from_ne(n, hexp(r, "e")) {
+            Ok(pk) => {
+                let sig = crypto.rsa_signature(hexp(r, "S"))
+                if pss {
+                    // NIST writes "SaltVal = 00" for an empty salt (the file headers say "Salt len: 0")
+                    let sv = vec.get(r, "SaltVal")
+                    let salt = if bytes.eq(sv, "00".bytes()) { vec.unhex(sv).len() - 1 } else { vec.unhex(sv).len() }
+                    got = crypto.rsa_pss_verify(pk, rsa_hash(r), salt, hexp(r, "Msg"), sig)
+                } else {
+                    got = crypto.rsa_pkcs1_verify(pk, rsa_hash(r), hexp(r, "Msg"), sig)
+                }
+            }
+            Err(_) => {}
+        }
+        let what = if pss { "rsa SigVer PSS" } else { "rsa SigVer PKCS1" }
+        if small {
+            vec.check(inout t, !got, vec.label("rsa 1024-bit key refused by the key policy", vec.get(r, "Result")))
+        } else {
+            vec.check(inout t, got == want, vec.label(what, vec.get(r, "Result")))
+        }
+    }
+}
+
 fn main() uses io, fs {
     let mut t = vec.tally()
     sha_file(inout t, "cavp_SHA256ShortMsg.rsp", crypto.Sha256, "sha256")
@@ -163,6 +308,10 @@ fn main() uses io, fs {
     gcm_file(inout t, "cavp_gcmDecrypt128_iv96_tag128.rsp", crypto.Aes128Gcm, true)
     gcm_file(inout t, "cavp_gcmDecrypt256_iv96_tag128.rsp", crypto.Aes256Gcm, true)
     ecdsa(inout t)
+    ecdsa_more(inout t)
+    rsa_cavp(inout t, "cavp_rsa_SigVer15.rsp", false)
+    rsa_cavp(inout t, "cavp_rsa_SigVerPSS.rsp", true)
     ecdh(inout t)
+    ecdh384(inout t)
     vec.finish(t, "cavp")
 }

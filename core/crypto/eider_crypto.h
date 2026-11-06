@@ -51,7 +51,25 @@
 #define EC_CRYPTO_ED25519 31
 #define EC_CRYPTO_ECDSA_P256_SHA256 32
 #define EC_CRYPTO_ECDH_P256 33
+#define EC_CRYPTO_ECDSA_P256_SHA384 34
+#define EC_CRYPTO_ECDSA_P384_SHA384 35
+#define EC_CRYPTO_ECDH_P384 36
+#define EC_CRYPTO_RSA_PKCS1_SHA256 37 /* RSA verify and sign, PKCS#1 v1.5 (the SHA-384/512 forms are the same code) */
+#define EC_CRYPTO_RSA_PSS_SHA256 38   /* RSASSA-PSS with MGF1 of the same hash */
 #define EC_CRYPTO_RANDOM 40
+
+/* curves (ec_crypto_ec_*) */
+#define EC_CRYPTO_CURVE_P256 1
+#define EC_CRYPTO_CURVE_P384 2
+
+/* RSA signature schemes (ec_crypto_rsa_*) */
+#define EC_CRYPTO_RSA_PKCS1 1
+#define EC_CRYPTO_RSA_PSS 2
+
+/* key kinds returned by ec_crypto_spki_parse and ec_crypto_priv_parse */
+#define EC_CRYPTO_KEY_RSA 1
+#define EC_CRYPTO_KEY_P256 2
+#define EC_CRYPTO_KEY_P384 3
 
 /* backend families (ec_crypto_backend) */
 #define EC_CRYPTO_OPENSSL 1
@@ -99,6 +117,34 @@ int64_t ec_crypto_p256_public(void);               /* in = private; out = public
 int64_t ec_crypto_p256_sign(void);                 /* in = private, message; out = DER signature (random k) */
 int64_t ec_crypto_p256_verify(int64_t sig_len);    /* in = public, signature, message; 1 valid, 0 not */
 int64_t ec_crypto_p256_ecdh(void);                 /* in = private, peer public; out = x-coordinate (32) */
+
+/* ---- ECDSA and ECDH on P-256 (curve 1) and P-384 (curve 2). Private key: big-endian scalar of 32 or
+   48 bytes; public key: uncompressed point 04 || x || y (65 or 97 bytes); signature: DER
+   ECDSA-Sig-Value. `hash` is EC_CRYPTO_SHA256, _SHA384 or _SHA512 with either curve; k is random
+   (RAND_bytes through the library). The p256 functions above are these with curve 1 and SHA-256. */
+int64_t ec_crypto_ec_public(int32_t curve);                              /* in = private; out = public (EKEY unless 0 < d < n) */
+int64_t ec_crypto_ec_sign(int32_t curve, int32_t hash);                  /* in = private, message; out = DER signature */
+int64_t ec_crypto_ec_verify(int32_t curve, int32_t hash, int64_t sig_len); /* in = public, signature, message; 1 valid, 0 not */
+int64_t ec_crypto_ec_ecdh(int32_t curve);                                /* in = private, peer public; out = x-coordinate */
+
+/* ---- RSA (PKCS#1 v1.5 and RSASSA-PSS, hash EC_CRYPTO_SHA256/384/512, PSS with MGF1 of the same hash).
+   A public key is a blob n_len (4 bytes big endian) || n || e (unsigned big endian); a private key is
+   DER (PKCS#8 or PKCS#1). Key policy, the same on every backend: 2048..8192 bits, odd modulus, odd e
+   with 3 <= e < 2^33 and e < n. Verification takes the message (hashed inside) and a signature of exactly
+   the modulus size; a key outside the policy is EKEY (the package says "not valid"). */
+int64_t ec_crypto_rsa_verify(int32_t scheme, int32_t hash, int64_t salt_len, int64_t key_len, int64_t sig_len);
+/*   in = key blob, signature, message; 1 valid, 0 not. salt_len: the PSS salt length that must be present (ignored for PKCS#1) */
+int64_t ec_crypto_rsa_sign(int32_t scheme, int32_t hash, int64_t salt_len, int64_t key_len);
+/*   in = private key DER, message; out = signature. PSS uses a random salt of salt_len bytes */
+
+/* ---- key import. in = DER SubjectPublicKeyInfo; out = kind || key: for EC_CRYPTO_KEY_RSA the RSA
+   public blob, for _P256/_P384 the uncompressed point. EKEY if it is anything else (other curves,
+   explicit curve parameters, RSASSA-PSS-restricted keys, Ed25519), outside the RSA policy, or has
+   trailing bytes. */
+int64_t ec_crypto_spki_parse(void);
+/*   in = DER private key (PKCS#8, PKCS#1 RSAPrivateKey or SEC1 ECPrivateKey); out = kind || the RSA
+     public blob (the private key stays in the caller's DER), or kind || the 32/48-byte scalar */
+int64_t ec_crypto_priv_parse(void);
 
 /* ---- constant time: in = a, b (len bytes each); 1 if equal. Time depends only on len. */
 int64_t ec_crypto_ct_equal(int64_t len);

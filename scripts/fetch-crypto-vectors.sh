@@ -29,6 +29,26 @@ get $W/hkdf_sha256_test.json bb2b462a38b251cb52a2aede706d6d4b62b26864f4e80c95497
 get $W/hkdf_sha384_test.json 69ff6ea3657bb9c1b8cdffbbb4e7832353d08fd15c0d9997b03f7a6b180e3678 hkdf_sha384_test.json
 get $W/hmac_sha256_test.json 2d201cfa61d1bf95e6f5d07d96634b4a348b31e8eaa277ad7c8d09677b7a743f hmac_sha256_test.json
 get $W/hmac_sha384_test.json 28b9776e979dd755d852ca471043ea6cedce8b15f7a28abdf6ea9efd982b43c0 hmac_sha384_test.json
+get $W/ecdh_secp384r1_ecpoint_test.json ffa7835fe1de359dff762c8f1272b98acebd5578e2f855d969051ff956c6dca3 ecdh_secp384r1_ecpoint_test.json
+get $W/ecdsa_secp384r1_sha384_p1363_test.json e27344bf6daae75fa19663620883809f91c79fc4b4420eff9eae8036b34476be ecdsa_secp384r1_sha384_p1363_test.json
+get $W/ecdsa_secp384r1_sha384_test.json 8a5b3ae1760975143414811f13588c24d951d9d8c904195087ba327591dfe9cc ecdsa_secp384r1_sha384_test.json
+get $W/ecdsa_secp384r1_sha512_test.json f44bae32e419fc75c5b5af751cff4e35145cfbcc24944e378d5f30889d310513 ecdsa_secp384r1_sha512_test.json
+get $W/rsa_pss_2048_sha256_mgf1_0_test.json b22a8d9a2e7e47f681d0ff1d1a55455daaf325d989c64ad005f848bd50b9b4c0 rsa_pss_2048_sha256_mgf1_0_test.json
+get $W/rsa_pss_2048_sha256_mgf1_32_test.json 7f6efafc160f4816b96cbf1c12188a31051d7e3f001e27505d9edb5f2a0e325c rsa_pss_2048_sha256_mgf1_32_test.json
+get $W/rsa_pss_2048_sha384_mgf1_48_test.json 66d464778b0b2f683a1d1a20e94f77e9472b8cc393b45f423fa08a48e677063c rsa_pss_2048_sha384_mgf1_48_test.json
+get $W/rsa_pss_3072_sha256_mgf1_32_test.json cca48433e6d1accb57f65b3396c4f4dd93c776467101c3f0948e74c283fd4749 rsa_pss_3072_sha256_mgf1_32_test.json
+get $W/rsa_pss_4096_sha256_mgf1_32_test.json e627cbf5139a01e0a446c4fe15911f6268224fdd3ef4a1eb714b3942b5686410 rsa_pss_4096_sha256_mgf1_32_test.json
+get $W/rsa_pss_4096_sha512_mgf1_32_test.json af1e1c1c593edf91be3e9880927231d57f9df082f2d8caec2a61d9874ade101f rsa_pss_4096_sha512_mgf1_32_test.json
+get $W/rsa_pss_4096_sha512_mgf1_64_test.json c93ceaa56a190c9fd4707441c5c6a75839f108202d88aec891697f9623042547 rsa_pss_4096_sha512_mgf1_64_test.json
+get $W/rsa_pss_misc_test.json 1fac515f67fea8ccbf44ea08fde2de00cd76169f774a54ce2994c9963c31e84f rsa_pss_misc_test.json
+get $W/rsa_signature_2048_sha256_test.json 94a917b01ff50fb874cfc05bf29b4af44868d944a6558201cf18380da93fb393 rsa_signature_2048_sha256_test.json
+get $W/rsa_signature_2048_sha384_test.json c571c105d261c0ff588a2888a529f152563fb3b77894b7620d4e4f8f934f2c1d rsa_signature_2048_sha384_test.json
+get $W/rsa_signature_2048_sha512_test.json 16ea24b039905d054bdb6004f5fd179374e150b7b6d73a7ba654b6d00eab12ef rsa_signature_2048_sha512_test.json
+get $W/rsa_signature_3072_sha256_test.json 0f5f18cabfaad3e2792e82f7e9882f8999049b456714de924b8a5e202f61ca43 rsa_signature_3072_sha256_test.json
+get $W/rsa_signature_3072_sha512_test.json 09aa3336fdb7be216180ce944ca7b2a052e1de38c210435c19506327d4a36ebd rsa_signature_3072_sha512_test.json
+get $W/rsa_signature_4096_sha256_test.json 957aca128e30bd02c8982f8ca482d6521d16683f4bbc3f193cdfd4c8f04bc667 rsa_signature_4096_sha256_test.json
+get $W/rsa_signature_4096_sha512_test.json 9d6e67b1eb0d7040db411835238efd20e9302399a258bdff82de3f38e0f2855a rsa_signature_4096_sha512_test.json
+get $W/rsa_signature_8192_sha256_test.json 86df4075b4ce5954726abfa00cc19ebe8b608d6d99094d5e123d6a3a86568bd9 rsa_signature_8192_sha256_test.json
 for f in "$tmp"/*.json; do cp "$f" "$out/wycheproof_$(basename "$f")"; done
 
 N=https://csrc.nist.gov/CSRC/media/Projects/Cryptographic-Algorithm-Validation-Program/documents
@@ -37,8 +57,9 @@ get $N/sha3/sha-3bytetestvectors.zip cd07701af2e47f5cc889d642528b4bf11f8b6eb5579
 get $N/mac/hmactestvectors.zip 418c3837d38f249d6668146bd0090db24dd3c02d2e6797e3de33860a387ae4bd hmac.zip
 get $N/mac/gcmtestvectors.zip f9fc479e134cde2980b3bb7cddbcb567b2cd96fd753835243ed067699f26a023 gcm.zip
 get $N/dss/186-4ecdsatestvectors.zip fe47cc92b4cee418236125c9ffbcd9bb01c8c34e74a4ba195d954bcb72824752 ecdsa.zip
+get $N/dss/186-3rsatestvectors.zip 8405aeb3572a4f98ed4b1a3ccb3f2f49e725462dd28ec4759d6a15d88855d19c rsa.zip
 get $N/components/ecccdhtestvectors.zip 5fff092551f2d72e89a3d9362711878708f9a14b502f0dfae819649105b0ea39 ecdh.zip
-for z in sha sha3 hmac gcm ecdsa ecdh; do unzip -q -o -j -d "$tmp/$z" "$tmp/$z.zip"; done
+for z in sha sha3 hmac gcm ecdsa rsa ecdh; do unzip -q -o -j -d "$tmp/$z" "$tmp/$z.zip"; done
 
 # whole files
 for f in SHA256ShortMsg SHA384ShortMsg SHA512ShortMsg; do tr -d '\r' < "$tmp/sha/$f.rsp" > "$out/cavp_$f.rsp"; done
@@ -71,6 +92,30 @@ pick "$tmp/ecdsa/SigVer.rsp" '\[P-256,SHA-256\]' 0 > "$out/cavp_ecdsa_SigVer_P25
 pick "$tmp/ecdsa/SigGen.rsp" '\[P-256,SHA-256\]' 0 > "$out/cavp_ecdsa_SigGen_P256_SHA256.rsp"
 pick "$tmp/ecdsa/KeyPair.rsp" '\[P-256\]' 0 > "$out/cavp_ecdsa_KeyPair_P256.rsp"
 pick "$tmp/ecdh/KAS_ECC_CDH_PrimitiveTest.txt" '\[P-256\]' 0 > "$out/cavp_ecdh_P256.rsp"
+# P-384 and the SHA-384/512 pairings (ecdsa_secp384r1_sha384 and ecdsa_secp256r1_sha384 of TLS and X.509)
+pick "$tmp/ecdsa/SigVer.rsp" '\[P-384,SHA-(256|384|512)\]|\[P-256,SHA-(384|512)\]' 0 > "$out/cavp_ecdsa_SigVer_P384_P256_SHA2.rsp"
+pick "$tmp/ecdsa/SigGen.rsp" '\[P-384,SHA-(256|384|512)\]|\[P-256,SHA-(384|512)\]' 0 > "$out/cavp_ecdsa_SigGen_P384_P256_SHA2.rsp"
+pick "$tmp/ecdsa/KeyPair.rsp" '\[P-384\]' 0 > "$out/cavp_ecdsa_KeyPair_P384.rsp"
+pick "$tmp/ecdh/KAS_ECC_CDH_PrimitiveTest.txt" '\[P-384\]' 0 > "$out/cavp_ecdh_P384.rsp"
+# RSA SigVer (FIPS 186-3, PKCS#1 v1.5 and PSS): the SHA-256/384/512 records of every modulus size
+# (1024, 2048, 3072), each record carrying its n; d and the EM debug lines are dropped. For PSS the
+# salt length is the length of SaltVal.
+rsaver() { # file label
+  tr -d '\r' < "$1" | awk -v lab="$2" '
+    BEGIN { print "# selected from " lab " (scripts/fetch-crypto-vectors.sh): the SHA-256/384/512 records, n repeated in each; d and EM lines dropped" }
+    /^\[mod = / { gsub(/[\[\] ]/, ""); mod = $0; next }
+    /^n = / { n = $0; next }
+    /^SHAAlg = / { sha = $0; e = ""; msg = ""; sig = ""; salt = ""; next }
+    /^e = / { e = $0; next }
+    /^Msg = / { msg = $0; next }
+    /^S = / { sig = $0; next }
+    /^SaltVal = / { salt = $0; next }
+    /^Result = / {
+      if (sha ~ /SHA(256|384|512)$/) { print ""; print "[" lab " " mod "]"; print n; print e; print sha; print msg; print sig; if (salt != "") print salt; print substr($0, 1, 10) }
+    }'
+}
+rsaver "$tmp/rsa/SigVer15_186-3.rsp" "RSA SigVer PKCS1-v1_5" > "$out/cavp_rsa_SigVer15.rsp"
+rsaver "$tmp/rsa/SigVerPSS_186-3.rsp" "RSA SigVer PSS" > "$out/cavp_rsa_SigVerPSS.rsp"
 
 # ---------------------------------------------------------------- RFC test vectors
 # Transcribed by program from the RFC texts into one .rsp-style file: each record names

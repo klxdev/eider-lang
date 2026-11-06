@@ -68,7 +68,7 @@ pub fn backend() -> Backend {
 pub fn provider() -> List[u8] { abi.provider() }
 
 /// Every algorithm, for `supports`. HMAC and HKDF exist with SHA-256, SHA-384 and SHA-512.
-pub type Alg = | Hashing(h: Hash) | Hmac(h: Hash) | Hkdf(h: Hash) | Sealing(a: Aead) | X25519Agreement | Ed25519Signing | P256Signing | P256Agreement | Randomness
+pub type Alg = | Hashing(h: Hash) | Hmac(h: Hash) | Hkdf(h: Hash) | Sealing(a: Aead) | X25519Agreement | Ed25519Signing | P256Signing | P256Agreement | P256Sha384Signing | P384Signing | P384Agreement | RsaPkcs1Signing | RsaPssSigning | Randomness
 
 // the HMAC / HKDF id for a SHA-2 hash, else -1
 fn mac_id(h: Hash, base: i32) -> i32 {
@@ -90,6 +90,11 @@ fn alg_id(a: Alg) -> i32 {
         Ed25519Signing => abi.ED25519
         P256Signing => abi.ECDSA_P256_SHA256
         P256Agreement => abi.ECDH_P256
+        P256Sha384Signing => abi.ECDSA_P256_SHA384
+        P384Signing => abi.ECDSA_P384_SHA384
+        P384Agreement => abi.ECDH_P384
+        RsaPkcs1Signing => abi.RSA_PKCS1_SHA256
+        RsaPssSigning => abi.RSA_PSS_SHA256
         Randomness => abi.RANDOM
     }
 }
@@ -411,10 +416,10 @@ pub fn p256_agree(s: P256Secret, peer: P256Public) -> Result[SharedSecret, Error
 /// A DER signature from its encoding (checked only when verified).
 pub fn p256_signature_der(der: List[u8]) -> P256Signature { P256Signature(der) }
 
-// DER INTEGER for a 32-byte unsigned big-endian value: minimal, positive
-fn der_int(v: List[u8], at: usize) -> List[u8] {
+// DER INTEGER for a `size`-byte unsigned big-endian value: minimal, positive
+fn der_int(v: List[u8], at: usize, size: usize) -> List[u8] {
     let mut i = at.copy()
-    let end = at + 32
+    let end = at + size
     while i < end - 1 && v[i] == 0 { i += 1 }
     let mut out: List[u8] = List.new()
     out.push(2)
@@ -432,33 +437,38 @@ fn der_int(v: List[u8], at: usize) -> List[u8] {
     out
 }
 
-/// A signature from the fixed-size form r || s (64 bytes, as NIST vectors and JOSE give it).
-pub fn p256_signature_raw(rs: List[u8]) -> Result[P256Signature, Error] {
-    if rs.len() != 64 { return Err(BadLength) }
-    let r = der_int(rs, 0)
-    let s = der_int(rs, 32)
+// SEQUENCE { INTEGER r, INTEGER s } from r || s, `size` bytes each (at most 48: one length byte)
+fn der_pair(rs: List[u8], size: usize) -> List[u8] {
+    let r = der_int(rs, 0, size)
+    let s = der_int(rs, size, size)
     let mut der: List[u8] = List.new()
     der.push(48)
     der.push((r.len() + s.len()) as u8)
     for x in r { der.push(x) }
     for x in s { der.push(x) }
-    Ok(P256Signature(der))
+    der
 }
 
-// one strict DER INTEGER at `at`, appended to `out` as 32 big-endian bytes; the next offset
-fn der_read_int(d: List[u8], at: usize, inout out: List[u8]) -> Option[usize] {
+/// A signature from the fixed-size form r || s (64 bytes, as NIST vectors and JOSE give it).
+pub fn p256_signature_raw(rs: List[u8]) -> Result[P256Signature, Error] {
+    if rs.len() != 64 { return Err(BadLength) }
+    Ok(P256Signature(der_pair(rs, 32)))
+}
+
+// one strict DER INTEGER at `at`, appended to `out` as `size` big-endian bytes; the next offset
+fn der_read_int(d: List[u8], at: usize, size: usize, inout out: List[u8]) -> Option[usize] {
     if at + 2 > d.len() || d[at] != 2 { return None }
     let n = d[at + 1] as usize
     let start = at + 2
-    if n == 0 || n > 33 || start + n > d.len() { return None }
+    if n == 0 || n > size + 1 || start + n > d.len() { return None }
     // positive and minimal
     if d[start] >= 128 { return None }
     if n > 1 && d[start] == 0 && d[start + 1] < 128 { return None }
     let mut i = start.copy()
     if d[i] == 0 && n > 1 { i += 1 }
     let len = start + n - i
-    if len > 32 { return None }
-    let mut pad = 32 - len
+    if len > size { return None }
+    let mut pad = size - len
     while pad > 0 {
         out.push(0)
         pad -= 1
@@ -470,23 +480,330 @@ fn der_read_int(d: List[u8], at: usize, inout out: List[u8]) -> Option[usize] {
     Some(start + n)
 }
 
+// r || s of a strict DER ECDSA-Sig-Value with `size`-byte integers
+fn der_to_raw(d: List[u8], size: usize) -> Result[List[u8], Error] {
+    if d.len() < 8 || d[0] != 48 || (d[1] as usize) != d.len() - 2 { return Err(BadLength) }
+    let mut out: List[u8] = List.new()
+    let next = match der_read_int(d, 2, size, inout out) {
+        Some(n) => n
+        None => return Err(BadLength)
+    }
+    let end = match der_read_int(d, next, size, inout out) {
+        Some(n) => n
+        None => return Err(BadLength)
+    }
+    if end != d.len() { return Err(BadLength) }
+    Ok(out)
+}
+
 impl P256Signature {
     /// r || s (64 bytes), or Err(BadLength) if this is not one strict DER ECDSA-Sig-Value.
-    fn raw(self) -> Result[List[u8], Error] {
-        let d = self.der
-        if d.len() < 8 || d[0] != 48 || (d[1] as usize) != d.len() - 2 { return Err(BadLength) }
-        let mut out: List[u8] = List.new()
-        let next = match der_read_int(d, 2, inout out) {
-            Some(n) => n
-            None => return Err(BadLength)
-        }
-        let end = match der_read_int(d, next, inout out) {
-            Some(n) => n
-            None => return Err(BadLength)
-        }
-        if end != d.len() { return Err(BadLength) }
-        Ok(out)
+    fn raw(self) -> Result[List[u8], Error] { der_to_raw(self.der, 32) }
+}
+
+// ------------------------------------------------------------------ ECDSA and ECDH on P-256 and P-384
+
+// The p256_* functions above are ECDSA with SHA-256 on P-256. These take the curve and the
+// hash: P-256 and P-384 with SHA-256, SHA-384 or SHA-512 (the pairs TLS 1.2/1.3 and X.509
+// use are P-256/SHA-256, P-384/SHA-384, P-256/SHA-384 and P-256/SHA-512; any pairing works).
+// Another `Hash` is Err(Unsupported) when signing and "not valid" when verifying.
+
+pub type EcCurve = | P256 | P384
+
+fn curve_id(c: EcCurve) -> i32 {
+    match c {
+        P256 => abi.CURVE_P256
+        P384 => abi.CURVE_P384
     }
+}
+
+/// The private scalar size in bytes: 32 or 48.
+pub fn ec_scalar_len(c: EcCurve) -> usize {
+    match c {
+        P256 => 32
+        P384 => 48
+    }
+}
+
+/// The uncompressed point size in bytes: 65 or 97.
+pub fn ec_point_len(c: EcCurve) -> usize { 1 + 2 * ec_scalar_len(c) }
+
+/// A private scalar d, 0 < d < n, big-endian, `ec_scalar_len` bytes.
+pub type EcSecret = { curve: EcCurve, bytes: List[u8] }
+/// An uncompressed point 04 || x || y.
+pub type EcPublic = { curve: EcCurve, bytes: List[u8] }
+/// An ECDSA signature, DER-encoded.
+pub type EcSignature = { der: List[u8] }
+
+pub fn ec_secret(c: EcCurve, b: List[u8]) -> Result[EcSecret, Error] {
+    if b.len() != ec_scalar_len(c) { return Err(BadLength) }
+    let _ = lift(abi.ec_public(curve_id(c), b.copy()))?
+    Ok(EcSecret(c, b))
+}
+
+pub fn ec_generate(c: EcCurve) -> Result[EcSecret, Error] uses io {
+    let mut tries = 0
+    while tries < 16 {
+        let b = random_bytes(ec_scalar_len(c))?
+        match ec_secret(c, b) {
+            Ok(s) => return Ok(s)
+            Err(e) => {
+                match e {
+                    InvalidKey => {}
+                    _ => return Err(e)
+                }
+            }
+        }
+        tries += 1
+    }
+    Err(Failed)
+}
+
+/// A public key from its encoding: the form is checked here (length, 04 first), that the
+/// point is on the curve whenever it is used.
+pub fn ec_public_key(c: EcCurve, b: List[u8]) -> Result[EcPublic, Error] {
+    if b.len() != ec_point_len(c) || b[0] != 4 { return Err(BadLength) }
+    Ok(EcPublic(c, b))
+}
+
+pub fn ec_public(s: EcSecret) -> Result[EcPublic, Error] {
+    let b = lift(abi.ec_public(curve_id(s.curve), s.bytes))?
+    Ok(EcPublic(s.curve, b))
+}
+
+/// ECDSA over hash(msg) with a fresh random nonce from the backend.
+pub fn ec_sign(s: EcSecret, h: Hash, msg: List[u8]) -> Result[EcSignature, Error] uses io {
+    let b = lift(abi.ec_sign(curve_id(s.curve), hash_id(h), s.bytes, msg))?
+    Ok(EcSignature(b))
+}
+
+/// True only for a valid signature by `pk` over hash(msg).
+pub fn ec_verify(pk: EcPublic, h: Hash, msg: List[u8], sig: EcSignature) -> bool {
+    abi.ec_verify(curve_id(pk.curve), hash_id(h), pk.bytes, sig.der, msg).unwrap_or(false)
+}
+
+/// ECDH: the x-coordinate of d * peer. Err(InvalidKey) if the curves differ or `peer` is not on the curve.
+pub fn ec_agree(s: EcSecret, peer: EcPublic) -> Result[SharedSecret, Error] {
+    if curve_id(s.curve) != curve_id(peer.curve) { return Err(InvalidKey) }
+    let b = lift(abi.ec_ecdh(curve_id(s.curve), s.bytes, peer.bytes))?
+    Ok(SharedSecret(b))
+}
+
+/// A DER signature from its encoding (checked only when verified).
+pub fn ec_signature_der(der: List[u8]) -> EcSignature { EcSignature(der) }
+
+/// A signature from the fixed-size form r || s (twice the scalar size, as JOSE and NIST vectors give it).
+pub fn ec_signature_raw(c: EcCurve, rs: List[u8]) -> Result[EcSignature, Error] {
+    let size = ec_scalar_len(c)
+    if rs.len() != 2 * size { return Err(BadLength) }
+    Ok(EcSignature(der_pair(rs, size)))
+}
+
+/// r || s of a signature on `c`, or Err(BadLength) if it is not one strict DER ECDSA-Sig-Value.
+pub fn ec_signature_to_raw(c: EcCurve, sig: EcSignature) -> Result[List[u8], Error] { der_to_raw(sig.der, ec_scalar_len(c)) }
+
+// ------------------------------------------------------------------ RSA
+
+// RSA signatures, PKCS#1 v1.5 (RFC 8017 8.2) and RSASSA-PSS (8.1; MGF1 with the signature's
+// hash, trailer 0xbc), with SHA-256, SHA-384 or SHA-512. Messages are hashed inside; a
+// signature is exactly as long as the modulus.
+//
+// Key policy, the same on every backend (the core checks it): modulus 2048 to 8192 bits and
+// odd; public exponent odd, 3 <= e < 2^33 (3 and 65537 occur in certificates; the exponent
+// is public, and e = 1, even exponents and larger ones are refused); a key outside it is
+// Err(InvalidKey) to build and "not valid" to verify with. 1024-bit keys are refused on
+// purpose. Key generation is not offered (keys come from files and certificates).
+// Private-key operations use the backend's own: blinding is on (OpenSSL, LibreSSL and
+// AWS-LC blind by default) and the result is checked before it is returned; the Eider code
+// holds no secret-dependent branch.
+
+/// An RSA public key (the core's blob: n_len (4 bytes big endian), n, e).
+pub type RsaPublic = { blob: List[u8] }
+/// An RSA private key: its DER (PKCS#8 or PKCS#1), and the public key.
+pub type RsaPrivate = { der: List[u8], public: RsaPublic }
+pub type RsaSignature = { bytes: List[u8] }
+
+fn be32(v: usize) -> List[u8] {
+    let mut o: List[u8] = List.new()
+    o.push(((v / 16777216) % 256) as u8)
+    o.push(((v / 65536) % 256) as u8)
+    o.push(((v / 256) % 256) as u8)
+    o.push((v % 256) as u8)
+    o
+}
+
+fn strip_zeros(b: List[u8]) -> List[u8] {
+    let mut i: usize = 0
+    while i < b.len() && b[i] == 0 { i += 1 }
+    let mut o: List[u8] = List.new()
+    while i < b.len() {
+        o.push(b[i])
+        i += 1
+    }
+    o
+}
+
+fn blob_nlen(blob: List[u8]) -> usize {
+    (blob[0] as usize) * 16777216 + (blob[1] as usize) * 65536 + (blob[2] as usize) * 256 + (blob[3] as usize)
+}
+
+// the n of a blob
+fn blob_n(blob: List[u8]) -> List[u8] {
+    let nl = blob_nlen(blob)
+    let mut o: List[u8] = List.new()
+    let mut i: usize = 4
+    while i < 4 + nl && i < blob.len() {
+        o.push(blob[i])
+        i += 1
+    }
+    o
+}
+
+// the e of a blob
+fn blob_e(blob: List[u8]) -> List[u8] {
+    let mut o: List[u8] = List.new()
+    let mut i = 4 + blob_nlen(blob)
+    while i < blob.len() {
+        o.push(blob[i])
+        i += 1
+    }
+    o
+}
+
+// a blob the core accepts under the key policy: probed with an empty signature, which the core
+// answers EKEY for a bad key and 0 (not valid) for a good key
+fn rsa_blob_checked(blob: List[u8]) -> Result[RsaPublic, Error] {
+    if blob.len() < 6 { return Err(BadLength) }
+    match abi.rsa_verify(abi.RSA_PKCS1, abi.SHA256, 0, blob.copy(), List.new(), List.new()) {
+        Ok(_) => Ok(RsaPublic(blob))
+        Err(s) => Err(error_of(s))
+    }
+}
+
+/// A public key from the modulus and exponent (unsigned big-endian; leading zeros are dropped).
+pub fn rsa_public_from_ne(n: List[u8], e: List[u8]) -> Result[RsaPublic, Error] {
+    let n1 = strip_zeros(n)
+    let e1 = strip_zeros(e)
+    if n1.len() == 0 || e1.len() == 0 || n1.len() > 1024 || e1.len() > 8 { return Err(InvalidKey) }
+    let mut blob = be32(n1.len())
+    for x in n1 { blob.push(x) }
+    for x in e1 { blob.push(x) }
+    rsa_blob_checked(blob)
+}
+
+/// The modulus of the key, unsigned big-endian.
+pub fn rsa_modulus(pk: RsaPublic) -> List[u8] { blob_n(pk.blob) }
+
+/// The public exponent, unsigned big-endian.
+pub fn rsa_exponent(pk: RsaPublic) -> List[u8] { blob_e(pk.blob) }
+
+/// The modulus length in bits.
+pub fn rsa_bits(pk: RsaPublic) -> usize {
+    let n = blob_n(pk.blob)
+    let first = n[0] as usize
+    let mut bits = n.len() * 8
+    let mut bit: usize = 128
+    while bit > first {
+        bits -= 1
+        bit = bit / 2
+    }
+    bits
+}
+
+fn tail(r: List[u8]) -> List[u8] {
+    let mut o: List[u8] = List.new()
+    let mut i: usize = 1
+    while i < r.len() {
+        o.push(r[i])
+        i += 1
+    }
+    o
+}
+
+/// A private key from DER (PKCS#8 PrivateKeyInfo or PKCS#1 RSAPrivateKey; no trailing bytes).
+pub fn rsa_private_from_der(der: List[u8]) -> Result[RsaPrivate, Error] {
+    let r = lift(abi.priv_parse(der.copy()))?
+    if r.len() < 2 || r[0] != abi.KEY_RSA { return Err(InvalidKey) }
+    Ok(RsaPrivate(der, RsaPublic(tail(r))))
+}
+
+pub fn rsa_public_of(sk: RsaPrivate) -> RsaPublic { sk.public }
+
+pub fn rsa_signature(b: List[u8]) -> RsaSignature { RsaSignature(b) }
+
+fn sha2(h: Hash) -> bool {
+    match h {
+        Sha256 => true
+        Sha384 => true
+        Sha512 => true
+        _ => false
+    }
+}
+
+/// RSASSA-PKCS1-v1_5 over hash(msg); true only for a valid signature.
+pub fn rsa_pkcs1_verify(pk: RsaPublic, h: Hash, msg: List[u8], sig: RsaSignature) -> bool {
+    if !sha2(h) { return false }
+    abi.rsa_verify(abi.RSA_PKCS1, hash_id(h), 0, pk.blob, sig.bytes, msg).unwrap_or(false)
+}
+
+/// RSASSA-PSS over hash(msg), MGF1 with `h`, the signature's salt exactly `salt_len` bytes.
+pub fn rsa_pss_verify(pk: RsaPublic, h: Hash, salt_len: usize, msg: List[u8], sig: RsaSignature) -> bool {
+    if !sha2(h) || salt_len > 1024 { return false }
+    abi.rsa_verify(abi.RSA_PSS, hash_id(h), salt_len as i64, pk.blob, sig.bytes, msg).unwrap_or(false)
+}
+
+/// RSASSA-PSS as TLS 1.3 (RFC 8446 4.2.3) and RFC 4055 for sha256/384/512 use it: the salt is as long as the hash.
+pub fn rsa_pss_verify_tls(pk: RsaPublic, h: Hash, msg: List[u8], sig: RsaSignature) -> bool {
+    rsa_pss_verify(pk, h, hash_len(h), msg, sig)
+}
+
+/// RSASSA-PKCS1-v1_5 signature (deterministic; blinded by the backend).
+pub fn rsa_pkcs1_sign(sk: RsaPrivate, h: Hash, msg: List[u8]) -> Result[RsaSignature, Error] uses io {
+    if !sha2(h) { return Err(Unsupported) }
+    let b = lift(abi.rsa_sign(abi.RSA_PKCS1, hash_id(h), 0, sk.der, msg))?
+    Ok(RsaSignature(b))
+}
+
+/// RSASSA-PSS signature with a random salt of `salt_len` bytes.
+pub fn rsa_pss_sign(sk: RsaPrivate, h: Hash, salt_len: usize, msg: List[u8]) -> Result[RsaSignature, Error] uses io {
+    if !sha2(h) { return Err(Unsupported) }
+    if salt_len > 1024 { return Err(BadLength) }
+    let b = lift(abi.rsa_sign(abi.RSA_PSS, hash_id(h), salt_len as i64, sk.der, msg))?
+    Ok(RsaSignature(b))
+}
+
+/// RSASSA-PSS with a salt as long as the hash (TLS 1.3, X.509 sha256/384/512 parameters).
+pub fn rsa_pss_sign_tls(sk: RsaPrivate, h: Hash, msg: List[u8]) -> Result[RsaSignature, Error] uses io {
+    rsa_pss_sign(sk, h, hash_len(h), msg)
+}
+
+// ------------------------------------------------------------------ keys from DER
+
+/// A public key out of a SubjectPublicKeyInfo.
+pub type PublicKey = | RsaKey(k: RsaPublic) | EcKey(k: EcPublic)
+
+/// A private key out of PKCS#8 / PKCS#1 / SEC1 DER.
+pub type PrivateKey = | RsaPrivateKey(k: RsaPrivate) | EcPrivateKey(k: EcSecret)
+
+/// Parses a DER SubjectPublicKeyInfo (RSA by the key policy above, or EC on P-256 or P-384
+/// with named-curve parameters). Anything else, and trailing bytes, is Err(InvalidKey).
+pub fn public_key_from_spki(der: List[u8]) -> Result[PublicKey, Error] {
+    let r = lift(abi.spki_parse(der))?
+    if r.len() < 2 { return Err(Failed) }
+    if r[0] == abi.KEY_RSA { return Ok(RsaKey(RsaPublic(tail(r)))) }
+    if r[0] == abi.KEY_P256 { return Ok(EcKey(EcPublic(P256, tail(r)))) }
+    if r[0] == abi.KEY_P384 { return Ok(EcKey(EcPublic(P384, tail(r)))) }
+    Err(InvalidKey)
+}
+
+/// Parses a DER private key: PKCS#8 or PKCS#1 RSA, SEC1 or PKCS#8 EC on P-256 or P-384.
+pub fn private_key_from_der(der: List[u8]) -> Result[PrivateKey, Error] {
+    let r = lift(abi.priv_parse(der.copy()))?
+    if r.len() < 2 { return Err(Failed) }
+    if r[0] == abi.KEY_RSA { return Ok(RsaPrivateKey(RsaPrivate(der, RsaPublic(tail(r))))) }
+    if r[0] == abi.KEY_P256 { return Ok(EcPrivateKey(EcSecret(P256, tail(r)))) }
+    if r[0] == abi.KEY_P384 { return Ok(EcPrivateKey(EcSecret(P384, tail(r)))) }
+    Err(InvalidKey)
 }
 
 // ------------------------------------------------------------------ constant time

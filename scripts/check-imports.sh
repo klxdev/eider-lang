@@ -48,6 +48,7 @@ tests/checks/fail/e0809_not_a_dependency.ei
 tests/crypto/bench.ei
 tests/crypto/cavp.ei
 tests/crypto/cross.ei
+tests/crypto/pubkey.ei
 tests/crypto/rfc.ei
 tests/crypto/wycheproof.ei
 EOF

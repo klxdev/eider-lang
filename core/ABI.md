@@ -546,8 +546,9 @@ volatile function pointer to `memset`, so it is not removed as a dead store.
 ## Crypto
 
 `core/crypto/eider_crypto.h` is the crypto half of the ABI: `ec_crypto_*` operations
-(hashes, HMAC, HKDF, AEAD, X25519, Ed25519, P-256, constant-time compare, randomness, and a
-capability query), one call sequence into an OpenSSL-compatible libcrypto each, in the one
+(hashes, HMAC, HKDF, AEAD, X25519, Ed25519, ECDSA and ECDH on P-256 and P-384 with SHA-256/384/512,
+RSA PKCS#1 v1.5 and PSS verification and signing, key import from DER (SubjectPublicKeyInfo, PKCS#8,
+PKCS#1, SEC1), constant-time compare, randomness, and a capability query), one call sequence into an OpenSSL-compatible libcrypto each, in the one
 file `core/crypto/eider_crypto.c`. The rules above hold: fixed-width arguments, inputs
 concatenated in `in` (every part's length but the last passed as an argument), results in
 `out`, status codes `< 0` (`EC_CRYPTO_E*`, -5001..-5005, disjoint from `-errno`). In
@@ -555,7 +556,9 @@ addition every operation zeroes `in` before it returns and empties `out` when it
 `ec_crypto_wipe` zeroes both once Eider has copied a result. Eider binds them in
 `core/crypto.ei` (core's second module with `extern`, binding only `ec_crypto_*`). The
 backend library is chosen at link time; a program that doesn't import `core/crypto` links
-none. Contract, backends, the API subset and tests: `core/crypto/README.md`.
+none. An RSA public key crosses as a blob `n_len (4 bytes, big endian) || n || e` and a private key as its
+DER; the key policy (2048-8192 bits, odd n, odd e with 3 <= e < 2^33) is the glue's, the same on every
+backend. Contract, backends, the API subset and tests: `core/crypto/README.md`.
 
 ## Backends
 
