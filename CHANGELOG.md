@@ -5,7 +5,12 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
-## 0.7.5 (unreleased)
+## 0.7.5
+
+A patch with one breaking change: `var` is removed from the language. eider-analyzer moves to 0.7.3, tree-sitter-eider
+to 0.7.2, and the libraries that used `var` (eider-http 0.7.3, eider-tls 0.7.1, eider-postgres 0.7.1, eider-sql 0.7.1)
+are migrated; the other libraries did not use it. Code for 0.7.5 that still says `var` fails with E0001, and the help
+shows the `let mut` replacement; mind that `let mut x = place` is an alias, where `var` made a copy.
 
 - **`var` is removed (#2; decision C897).** Fix forward, no warning stage and no shim: a statement that starts with `var`
   is the syntax error E0001 "`var` was removed: write `let mut`", whose help shows the replacements (`let mut x = e`, `let mut
