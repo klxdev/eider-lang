@@ -1274,6 +1274,9 @@ fn locate(inout p: Program, m: u32, spec: List[u8], n: ast.Node) -> Result[List[
                     } else {
                         dir = join(join(eider_home(), sys.lit("pkg")), lock.store_leaf(head, e.hash))
                     }
+                } else if e.tool {
+                    // a package the toolchain ships (packages/crypto): under its root
+                    dir = fs.normalize(join(toolchain_root(), e.path))
                 } else {
                     dir = fs.normalize(join(ld, e.path))
                 }

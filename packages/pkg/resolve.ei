@@ -16,9 +16,11 @@ import pkg.caps
 import pkg.override
 import pkg.grants
 
-pub type Opts = { home: List[u8], offline: bool, use_lock: bool, locked: List[lockfile.Pkg], vendor: List[u8], overrides: List[override.Override] }
+/// `toolchain` is the running toolchain's root (EIDER_ROOT): where the packages it ships
+/// (`toolchain = true` dependencies) are.
+pub type Opts = { home: List[u8], offline: bool, use_lock: bool, locked: List[lockfile.Pkg], vendor: List[u8], overrides: List[override.Override], toolchain: List[u8] }
 
-type Req = { name: List[u8], git: bool, loc: List[u8], want: List[u8], is_rev: bool, grants: List[List[u8]], by: List[u8] }
+type Req = { name: List[u8], git: bool, tool: bool, loc: List[u8], want: List[u8], is_rev: bool, grants: List[List[u8]], by: List[u8] }
 
 pub type Edge = { from: List[u8], to: List[u8], grants: List[List[u8]] }
 
@@ -44,14 +46,24 @@ fn req_of(d: manifest.Dep, base: List[u8], by: List[u8], by_git: bool) -> Result
                 m.push_str("` comes from git but has a path dependency on `")
                 m.append(text(d.name))
                 m.push_str("`; published packages can only depend on git packages")
+                if manifest.shipped(d.name) {
+                    m.push_str(" (`")
+                    m.append(text(d.name))
+                    m.push_str("` comes with the toolchain: write `[deps.")
+                    m.append(text(d.name))
+                    m.push_str("] toolchain = true`)")
+                }
                 return Err(m)
             }
             let loc = if p.len() > 0 && p[0] == 47 { fs.normalize(p) } else { fs.normalize(fs.join(base, p)) }
-            Ok(Req(d.name, false, loc, none, false, d.grants, by))
+            Ok(Req(d.name, false, false, loc, none, false, d.grants, by))
         }
         manifest.Git(url, v, r) => {
-            if r.len() > 0 { return Ok(Req(d.name, true, url, r, true, d.grants, by)) }
-            Ok(Req(d.name, true, url, v, false, d.grants, by))
+            if r.len() > 0 { return Ok(Req(d.name, true, false, url, r, true, d.grants, by)) }
+            Ok(Req(d.name, true, false, url, v, false, d.grants, by))
+        }
+        manifest.Toolchain => {
+            Ok(Req(d.name, false, true, bytes.concat(sys.lit("packages/"), d.name), none, false, d.grants, by))
         }
     }
 }
@@ -107,7 +119,7 @@ fn mismatch(what: str, name: List[u8], a: List[u8], b: List[u8]) -> String {
 /// Fetch (if needed) and read one requirement's package.
 fn visit(o: Opts, r: Req) -> Result[lockfile.Pkg, String] uses io, fs, net {
     let none: List[u8] = List.new()
-    let mut dir = r.loc.copy()
+    let mut dir = if r.tool { fs.join(o.toolchain, r.loc) } else { r.loc.copy() }
     let mut commit = none.copy()
     let mut hash = none.copy()
     let mut overridden = false
@@ -149,6 +161,15 @@ fn visit(o: Opts, r: Req) -> Result[lockfile.Pkg, String] uses io, fs, net {
             dir = ex.dir
             hash = ex.hash
         }
+    } else if r.tool && !fs.is_dir(dir) {
+        let mut m = String.from("`")
+        m.append(text(r.name))
+        m.push_str("` is a package of the toolchain, but this one (")
+        m.append(text(o.toolchain))
+        m.push_str(") has no ")
+        m.append(text(r.loc))
+        m.push_str(": install a release (`eider toolchain install`) or use an eider-lang checkout")
+        return Err(m)
     } else if !fs.is_dir(dir) {
         let mut m = String.from("path dependency `")
         m.append(text(r.name))
@@ -186,7 +207,7 @@ fn visit(o: Opts, r: Req) -> Result[lockfile.Pkg, String] uses io, fs, net {
     let mut deps: List[List[u8]] = List.new()
     for d in m.deps { deps.push(d.name) }
     let grants: List[List[u8]] = List.new()
-    Ok(lockfile.Pkg(r.name, m.version, r.git, r.loc, r.want, r.is_rev, commit, hash, dir, deps, grants))
+    Ok(lockfile.Pkg(r.name, m.version, r.git, r.tool, r.loc, r.want, r.is_rev, commit, hash, dir, deps, grants))
 }
 
 fn contains(xs: List[List[u8]], x: List[u8]) -> bool {
@@ -212,7 +233,7 @@ fn select(nodes: List[lockfile.Pkg], name: List[u8]) -> Result[lockfile.Pkg, Str
             best = match best {
                 None => Some(n)
                 Some(b) => {
-                    if b.git != n.git || !bytes.eq(b.loc, n.loc) {
+                    if b.git != n.git || b.tool != n.tool || !bytes.eq(b.loc, n.loc) {
                         return Err(mismatch("two different packages are named", name, b.loc, n.loc))
                     }
                     if b.is_rev || n.is_rev {

@@ -840,4 +840,6 @@ exit 1" "$(pkg bad fetch)"
 check "--version" "eider-pkg $(cat VERSION)
 exit 0" "$(scripts/eider-pkg --version 2>&1; echo "exit $?")"
 
+sh tests/pkg/toolchain.sh || fail=1
+
 exit $fail

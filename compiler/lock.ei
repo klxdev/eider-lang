@@ -18,8 +18,10 @@ import std.bytes
 pub type Manifest = { name: List[u8], entry: List[u8], deps: List[List[u8]], grants: List[List[List[u8]]], eider: List[u8], lints: List[List[u8]], lint_levels: List[List[u8]] }
 
 /// One `[[package]]` of eider.lock: `path` is the directory of a `path+<dir>` source
-/// (relative to the lock's directory unless absolute), `hash` the content hash of a git one.
-pub type Locked = { name: List[u8], git: bool, path: List[u8], hash: List[u8] }
+/// (relative to the lock's directory unless absolute) or of a `toolchain+<dir>` one (`tool`:
+/// relative to the toolchain's root, e.g. `packages/crypto`), `hash` the content hash of a
+/// git one.
+pub type Locked = { name: List[u8], git: bool, tool: bool, path: List[u8], hash: List[u8] }
 
 /// A package name: lowercase letters, digits and `_`, starting with a letter.
 pub fn valid_name(n: List[u8]) -> bool {
@@ -68,13 +70,15 @@ pub fn lockfile(src: List[u8]) -> Result[List[Locked], List[u8]] {
         let source = text_at(doc, bytes.concat(pre, sys.lit("source")))
         let none: List[u8] = List.new()
         if bytes.starts_with(source, sys.lit("path+")) {
-            out.push(Locked(name, false, bytes.slice(source, 5, source.len()), none))
+            out.push(Locked(name, false, false, bytes.slice(source, 5, source.len()), none))
+        } else if bytes.starts_with(source, sys.lit("toolchain+")) {
+            out.push(Locked(name, false, true, bytes.slice(source, 10, source.len()), none))
         } else if bytes.starts_with(source, sys.lit("git+")) {
-            out.push(Locked(name, true, none, text_at(doc, bytes.concat(pre, sys.lit("hash")))))
+            out.push(Locked(name, true, false, none, text_at(doc, bytes.concat(pre, sys.lit("hash")))))
         } else {
             let mut m = sys.lit("package `")
             bytes.append(inout m, name)
-            bytes.append(inout m, sys.lit("` has no `path+` or `git+` source"))
+            bytes.append(inout m, sys.lit("` has no `path+`, `git+` or `toolchain+` source"))
             return Err(m)
         }
         n += 1

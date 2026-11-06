@@ -253,6 +253,27 @@ fn crypto_script(mode: str, provider: List[u8]) -> List[u8] uses io, fs, net {
     }
 }
 
+/// The directory of the backend an installed toolchain ships: <root>/lib/crypto/awslc-noasm,
+/// AWS-LC's portable build for the toolchain's target, which is what `awslc` and
+/// `awslc-noasm` name there; any other provider needs a checkout (scripts/crypto-build.sh).
+fn shipped_backend(provider: List[u8]) -> List[u8] uses io, fs {
+    let name = s("awslc-noasm")
+    let dir = fs.join(fs.join(root(), s("lib/crypto")), name)
+    if !(bytes.eq(provider, s("awslc")) || bytes.eq(provider, name)) {
+        let mut m = s("this toolchain has no crypto backend `")
+        bytes.append(inout m, provider)
+        bytes.append(inout m, s("`: an installed toolchain ships awslc (AWS-LC, the portable build); the others are built from an eider-lang checkout (scripts/crypto-build.sh)"))
+        fail(m, 3)
+    }
+    if !fs.exists(fs.join(dir, s("libeider_crypto.a"))) {
+        let mut m = s("the toolchain at ")
+        bytes.append(inout m, root())
+        bytes.append(inout m, s(" has neither scripts/crypto-build.sh nor lib/crypto/awslc-noasm/libeider_crypto.a, so a program that imports crypto has no backend to link"))
+        fail(m, 3)
+    }
+    dir
+}
+
 /// What a program that imports core/crypto adds to its link (see above); nothing when it
 /// doesn't. `opt` is `--crypto`'s value ("" when not given).
 pub fn crypto_libs(paths: List[List[u8]], file: List[u8], opt: List[u8]) -> List[List[u8]] uses io, fs, net {
@@ -271,8 +292,22 @@ pub fn crypto_libs(paths: List[List[u8]], file: List[u8], opt: List[u8]) -> List
         let ok = (b >= 97 && b <= 122) || (b >= 48 && b <= 57) || b == 45
         if !ok { fail(s("the crypto backend is a name: awslc, awslc-noasm, awslc-aead, openssl or libressl"), 2) }
     }
-    let dirs = bytes.split(bytes.trim(crypto_script("--libdir", provider)), 58)
-    let words = bytes.split(bytes.trim(crypto_script("--libs", provider)), 32)
+    let mut dirs: List[List[u8]] = List.new()
+    let mut words: List[List[u8]] = List.new()
+    if fs.exists(fs.join(root(), s("scripts/crypto-build.sh"))) {
+        dirs = bytes.split(bytes.trim(crypto_script("--libdir", provider)), 58)
+        words = bytes.split(bytes.trim(crypto_script("--libs", provider)), 32)
+    } else {
+        // an installed toolchain has no build scripts: it ships the backend built for its
+        // target, lib/crypto/<backend>/ (docs/decisions.md C898)
+        let d = shipped_backend(provider)
+        dirs.push(d)
+        let libs: List[u8] = match fs.read(fs.join(d, s("libs"))) {
+            Ok(x) => x
+            Err(_) => s("-l eider_crypto")
+        }
+        words = bytes.split(bytes.trim(libs), 32)
+    }
     for i in 0..dirs.len() {
         if dirs[i].len() == 0 { continue }
         let mut l = s("-L")

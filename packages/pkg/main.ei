@@ -1,7 +1,7 @@
 //! eider-pkg: the Eider package manager.
 //!
 //!   eider-pkg [-C dir] init [name] [--template cli|lib|service|wasm]   (templates.ei)
-//!   eider-pkg [-C dir] add <name> (--path P | --git URL (--version V | --rev R))
+//!   eider-pkg [-C dir] add <name> (--path P | --toolchain | --git URL (--version V | --rev R))
 //!                      [--uses a,b | --confirm | --no-grant]   grants what it uses (grants.ei)
 //!   eider-pkg [-C dir] remove <name>
 //!   eider-pkg [-C dir] grant <name> <cap,...>   add to the `uses` of [deps.<name>]
@@ -50,7 +50,7 @@ fn is(a: List[u8], s: str) -> bool { bytes.eq(a, sys.lit(s)) }
 fn say(s: str) uses io { io.outln(sys.lit(s)) }
 
 fn usage() -> String {
-    String.from("usage: eider-pkg [-C dir] (init [name] [--template cli|lib|service|wasm] | add <name> --path P | add <name> --git URL --version V|--rev R [--uses a,b | --confirm | --no-grant] | remove <name> | grant|revoke <name> <cap,...> | fetch|update [--offline] [--grant a,b | --grant-all] | vendor | tree | hash <dir> | --version)")
+    String.from("usage: eider-pkg [-C dir] (init [name] [--template cli|lib|service|wasm] | add <name> --path P | add <name> --toolchain | add <name> --git URL --version V|--rev R [--uses a,b | --confirm | --no-grant] | remove <name> | grant|revoke <name> <cap,...> | fetch|update [--offline] [--grant a,b | --grant-all] | vendor | tree | hash <dir> | --version)")
 }
 
 fn parse_cli() -> Result[Cli, String] uses io, fs {
@@ -158,7 +158,7 @@ fn sync_from(c: Cli, use_lock: bool, offline: bool, vendor: List[u8], acc: Accep
     }
     let locked = lockfile.load(c.dir)?
     let home = store.home()?
-    let o = resolve.Opts(home, offline, use_lock, locked, vendor, override.from_env()?)
+    let o = resolve.Opts(home, offline, use_lock, locked, vendor, override.from_env()?, tc)
     let mut g = resolve.resolve(root, o)?
     let mut direct: List[List[u8]] = List.new()
     for d in root.deps { direct.push(d.name) }
@@ -321,7 +321,7 @@ fn vendor(c: Cli) -> Result[bool, String] uses io, fs, net {
 
 // ---- manifest editing
 
-/// `add <name> (--path P | --git URL (--version V | --rev R)) [--uses a,b | --confirm | --no-grant]`:
+/// `add <name> (--path P | --toolchain | --git URL (--version V | --rev R)) [--uses a,b | --confirm | --no-grant]`:
 /// append the `[deps.<name>]` table, then sync, granting the package what it uses (or what
 /// `--uses` says, which must cover it; or asking first; or nothing).
 fn add(c: Cli) -> Result[bool, String] uses io, fs, net {
@@ -355,6 +355,11 @@ fn add(c: Cli) -> Result[bool, String] uses io, fs, net {
         }
         if is(flag, "--no-grant") {
             acc.no_grant = true
+            i += 1
+            continue
+        }
+        if is(flag, "--toolchain") {
+            bytes.append(inout table, sys.lit("toolchain = true\n"))
             i += 1
             continue
         }

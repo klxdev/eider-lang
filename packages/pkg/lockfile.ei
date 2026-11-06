@@ -19,11 +19,14 @@ import toml
 import pkg.manifest
 
 /// One resolved package. `loc` is the git URL or the absolute directory of a path package;
-/// `want` is the version or rev that was asked for; `dir` is where its files are.
+/// `want` is the version or rev that was asked for; `dir` is where its files are. A `tool`
+/// package (`toolchain = true`) comes with the toolchain: `loc` is its directory below the
+/// toolchain's root (`packages/crypto`), and its version is the toolchain's.
 pub type Pkg = {
     name: List[u8],
     version: List[u8],
     git: bool,
+    tool: bool,
     loc: List[u8],
     want: List[u8],
     is_rev: bool,
@@ -102,11 +105,13 @@ pub fn render(pkgs: List[Pkg], root: List[u8]) -> List[u8] {
         bytes.append(inout out, sys.lit("\n[[package]]\n"))
         line(inout out, "name", toml.quote(p.name))
         line(inout out, "version", toml.quote(p.version))
-        let mut src = if p.git { sys.lit("git+") } else { sys.lit("path+") }
+        let mut src = if p.git { sys.lit("git+") } else if p.tool { sys.lit("toolchain+") } else { sys.lit("path+") }
         if p.git {
             bytes.append(inout src, p.loc)
             src.push(35)
             bytes.append(inout src, p.commit)
+        } else if p.tool {
+            bytes.append(inout src, p.loc)
         } else {
             bytes.append(inout src, relative(root, p.loc))
         }
@@ -170,12 +175,16 @@ pub fn load(root: List[u8]) -> Result[List[Pkg], String] uses fs {
                 None => { return Err(manifest.at(file, 1, 1, String.from("bad git source in lockfile; run `eider-pkg update`"))) }
             }
             let want = if rev.len() > 0 { rev } else { field(doc, prefix, "version") }
-            Pkg(name, field(doc, prefix, "version"), true, bytes.slice(rest, 0, hashpos), want, rev.len() > 0,
+            Pkg(name, field(doc, prefix, "version"), true, false, bytes.slice(rest, 0, hashpos), want, rev.len() > 0,
                 bytes.slice(rest, hashpos + 1, rest.len()), field(doc, prefix, "hash"), none, list_field(doc, prefix, "deps"), list_field(doc, prefix, "grants"))
+        } else if bytes.starts_with(src, sys.lit("toolchain+")) {
+            // the directory is the running toolchain's (resolve.visit sets it)
+            let rel = bytes.slice(src, 10, src.len())
+            Pkg(name, field(doc, prefix, "version"), false, true, rel, none, false, none, none, none, list_field(doc, prefix, "deps"), list_field(doc, prefix, "grants"))
         } else {
             let rel = bytes.slice(src, 5, src.len())
             let dir = fs.normalize(fs.join(root, rel))
-            Pkg(name, field(doc, prefix, "version"), false, dir, none, false, none, none, dir, list_field(doc, prefix, "deps"), list_field(doc, prefix, "grants"))
+            Pkg(name, field(doc, prefix, "version"), false, false, dir, none, false, none, none, dir, list_field(doc, prefix, "deps"), list_field(doc, prefix, "grants"))
         }
         pkgs.push(p)
         n += 1

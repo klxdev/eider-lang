@@ -28,10 +28,14 @@
 #    eider-<VERSION>-<target>.tar.gz holds eider-<VERSION>-<target>/: bin/{eiderc, eider-pkg,
 #    eider-doc, eider}, core/, std/, compiler/ (the compiler's sources without its tests: the
 #    eiderc package, which eider-analyzer imports from the toolchain it is built with),
+#    packages/crypto (the crypto package, `[deps.crypto] toolchain = true`) and lib/crypto/
+#    awslc-noasm/ (AWS-LC built for the target, `libeider_crypto.a`: what a program that imports
+#    crypto links, compiler/driver.ei shipped_backend; the glue is scripts/crypto-build.sh's),
 #    VERSION, toolchain.toml and README.md; `eider` alone is
 #    eider-<VERSION>-<target>. Smoke tests: `file` and `readelf` (static, the right machine)
 #    on every binary; on a machine of the target's architecture also each --version, and a
-#    program built and run with the unpacked toolchain, through eiderc and through eider.
+#    program built and run with the unpacked toolchain, through eiderc and through eider, and a
+#    project with `[deps.crypto] toolchain = true` fetched, built and run with it alone.
 #    linux-aarch64 is cross-built, and untested beyond file and readelf until an arm64
 #    machine or CI exists (RELEASE.toml says `tested = false`).
 # 5. Collects the release's files in target/release/assets/v<VERSION>/, what publish.sh
@@ -293,7 +297,7 @@ if [ -n "$binaries" ]; then
   # C, the prelude, the modules), and compiler/ without its tests (the eiderc package, for
   # tools that import the compiler's modules: eider-analyzer)
   mkdir -p "$out/build/src"
-  git archive --format=tar HEAD -- core std compiler debug VERSION ':(exclude)compiler/tests' | tar -C "$out/build/src" -xf -
+  git archive --format=tar HEAD -- core std compiler debug packages/crypto VERSION ':(exclude)compiler/tests' | tar -C "$out/build/src" -xf -
   hello=$out/build/hello
   mkdir -p "$hello"
   printf 'import core.version\n\nfn main() uses io {\n    print("hello from eider")\n    print(version.VERSION)\n}\n' > "$hello/hello.ei"
@@ -328,12 +332,21 @@ if [ -n "$binaries" ]; then
       readelf -l "$f" | grep -q INTERP && die "$t: $b asks for a dynamic loader (an INTERP header)"
     done
     echo "release: $t: file, readelf: 4 static $arch executables"
+    # the crypto backend the toolchain ships is for the target too
+    got=$(readelf -h "$W/crypto/awslc-noasm/libeider_crypto.a" | sed -n 's/^ *Machine: *//p' | sort -u)
+    [ "$got" = "$machine" ] || die "$t: lib/crypto/awslc-noasm/libeider_crypto.a: readelf says Machine: $got, not $machine"
     # the toolchain directory
     T=$out/$name-$t
     rm -rf "$T"
     mkdir -p "$T/bin"
     cp "$W/bin/eiderc" "$W/bin/eider-pkg" "$W/bin/eider-doc" "$W/bin/eider" "$T/bin/"
     cp -R "$out/build/src/core" "$out/build/src/std" "$out/build/src/compiler" "$out/build/src/debug" "$out/build/src/VERSION" "$T/"
+    # crypto: the package (its source) and AWS-LC's portable build for this target, the
+    # backend a program that imports it links (compiler/driver.ei shipped_backend;
+    # docs/decisions.md C898)
+    mkdir -p "$T/packages" "$T/lib/crypto/awslc-noasm"
+    cp -R "$out/build/src/packages/crypto" "$T/packages/"
+    cp "$W/crypto/awslc-noasm/libeider_crypto.a" "$W/crypto/awslc-noasm/libs" "$T/lib/crypto/awslc-noasm/"
     tested=$(sed -n "/^\[target.$t\]/,/^\[/s/^tested = \([a-z]*\).*/\1/p" "$B/RELEASE.toml")
     {
       echo "# toolchain.toml: an Eider toolchain, installed by \`eider toolchain install\` (docs/site/tooling/eider.md)."
@@ -349,6 +362,8 @@ if [ -n "$binaries" ]; then
       echo "# bin/eiderc (the compiler; it builds programs with clang 17+, \$EIDER_LLVM_CC, and \$CC), bin/eider-pkg,"
       echo "# bin/eider-doc, bin/eider; core/ and std/ (eiderc finds them above its own directory);"
       echo "# compiler/, the compiler's sources (the eiderc package eider-analyzer imports)"
+      echo "# packages/crypto, the crypto package (a manifest says [deps.crypto] toolchain = true), and lib/crypto/awslc-noasm/,"
+      echo "# AWS-LC's portable build for this target, which a program that imports crypto links"
     } > "$T/toolchain.toml"
     cat > "$T/README.md" <<EOF
 # Eider $V for $t
@@ -356,7 +371,9 @@ if [ -n "$binaries" ]; then
 The Eider toolchain: \`bin/eiderc\` (the compiler), \`bin/eider-pkg\` (packages),
 \`bin/eider-doc\` (documentation), \`bin/eider\` (the command that selects a toolchain and
 runs these), with \`core/\` and \`std/\`, and \`compiler/\`, the compiler's sources (the
-\`eiderc\` package, for tools that import its modules, such as eider-analyzer). Static
+\`eiderc\` package, for tools that import its modules, such as eider-analyzer), and
+\`packages/crypto\` with \`lib/crypto/awslc-noasm/\` (AWS-LC for this target): a package says
+\`[deps.crypto]\` with \`toolchain = true\` to use crypto. Static
 executables; building a program needs a C compiler (\`cc\`, or \`\$CC\`). Usually installed
 and run through \`eider\`:
 
@@ -384,6 +401,22 @@ EOF
       got=$(cd "$hello" && env -u EIDER_ROOT EIDER_TOOLCHAIN="$here/$UT" EIDER_HOME="$here/$U/home" EIDER_CACHE=off "$here/$UT/bin/eider" run hello.ei 2>&1)
       [ "$got" = "$(printf 'hello from eider\n%s' "$V")" ] || die "$t: the unpacked eider did not run a program: $got"
       echo "release: $t: --version of each, and a program built and run through eiderc and through eider"
+      # crypto comes with the toolchain: a project with `[deps.crypto] toolchain = true` is
+      # fetched and built with only the unpacked toolchain (no scripts/, no AWS-LC sources)
+      [ -f "$UT/packages/crypto/crypto.ei" ] && [ -f "$UT/lib/crypto/awslc-noasm/libeider_crypto.a" ] && [ ! -e "$UT/scripts" ] ||
+        die "$t: the toolchain archive has no packages/crypto or lib/crypto/awslc-noasm (or has scripts/)"
+      ch=$out/build/crypto-hello
+      rm -rf "$ch"; mkdir -p "$ch"
+      printf '[package]\nname = "cryptohello"\nversion = "0.1.0"\neider = "%s"\n\n[deps.crypto]\ntoolchain = true\nuses = ["io"]\n' "$S" > "$ch/eider.toml"
+      printf 'import std.encoding\nimport crypto\n\nfn main() uses io {\n    print(encoding.hex(crypto.sha256("abc".bytes())))\n}\n' > "$ch/main.ei"
+      got=$(cd "$ch" && env -u EIDER_TOOLCHAIN -u EIDER_CRYPTO EIDER_ROOT="$here/$UT" EIDERC="$here/$UT/bin/eiderc" EIDER_HOME="$here/$U/home" EIDER_CACHE=off "$here/$UT/bin/eider-pkg" fetch 2>&1) ||
+        die "$t: the unpacked eider-pkg could not fetch a project with a toolchain dependency on crypto: $got"
+      want=ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+      got=$(cd "$ch" && env -u EIDER_ROOT -u EIDER_TOOLCHAIN -u EIDER_CRYPTO EIDER_CACHE=off "$here/$UT/bin/eiderc" run main.ei 2>&1)
+      [ "$got" = $want ] || die "$t: the unpacked eiderc did not build and run a program that imports crypto: $got"
+      got=$(cd "$ch" && env -u EIDER_ROOT -u EIDER_CRYPTO EIDER_TOOLCHAIN="$here/$UT" EIDER_HOME="$here/$U/home" EIDER_CACHE=off "$here/$UT/bin/eider" run main.ei 2>&1)
+      [ "$got" = $want ] || die "$t: the unpacked eider did not build and run a program that imports crypto: $got"
+      echo "release: $t: a project with [deps.crypto] toolchain = true fetched, built and run with the unpacked toolchain alone"
     else
       echo "release: $t: cross-built, not run (no $arch machine here): untested beyond file and readelf"
     fi

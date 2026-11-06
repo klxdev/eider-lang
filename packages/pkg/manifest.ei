@@ -27,7 +27,7 @@ import std.fs
 import toml
 import pkg.semver
 
-pub type Source = | Path(dir: List[u8]) | Git(url: List[u8], version: List[u8], rev: List[u8])
+pub type Source = | Path(dir: List[u8]) | Git(url: List[u8], version: List[u8], rev: List[u8]) | Toolchain
 
 pub type Dep = { name: List[u8], source: Source, grants: List[List[u8]], line: u32 }
 
@@ -58,6 +58,22 @@ fn bad(file: List[u8], line: u32, m: str) -> String { at(file, line, 1, String.f
 /// (`import "std/fs"`) and no manifest declares (their eider.toml files are the compiler's,
 /// never loaded here).
 pub fn toolchain_name(n: List[u8]) -> bool { bytes.eq(n, sys.lit("core")) || bytes.eq(n, sys.lit("std")) }
+
+/// The packages a toolchain ships besides `core` and `std`, under its `packages/`, which a
+/// manifest names with `[deps.<name>] toolchain = true` (resolve.ei): their code and the
+/// library they link (crypto's backend) are the toolchain's, versioned with it.
+pub fn shipped_names() -> List[List[u8]] {
+    let mut out: List[List[u8]] = List.new()
+    out.push(sys.lit("crypto"))
+    out
+}
+
+pub fn shipped(n: List[u8]) -> bool {
+    for x in shipped_names() {
+        if bytes.eq(n, x) { return true }
+    }
+    false
+}
 
 pub fn valid_name(n: List[u8]) -> bool {
     if n.len() == 0 { return false }
@@ -135,7 +151,7 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
     // every key must be one we know: catches typos like `verison`
     // crypto.provider: the backend scripts/crypto-build.sh links (packages/crypto, core/crypto/README.md)
     let top_ok = ["package.name", "package.version", "package.entry", "package.main", "package.description", "package.eider", "crypto.provider"]
-    let dep_ok = ["path", "git", "version", "rev", "uses"]
+    let dep_ok = ["path", "git", "version", "rev", "uses", "toolchain"]
     for e in doc {
         let mut ok = false
         for i in 0..7 {
@@ -160,7 +176,7 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
             match bytes.find_byte(rest, 46, 0) {
                 Some(dot) => {
                     let field = bytes.slice(rest, dot + 1, rest.len())
-                    for i in 0..5 {
+                    for i in 0..6 {
                         if bytes.eq(field, sys.lit(dep_ok[i as usize])) { ok = true }
                     }
                 }
@@ -255,7 +271,30 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
             }
             None => {}
         }
-        let source = match (path, git) {
+        let mut tool = false
+        match toml.get(doc, key("deps.", dn, ".toolchain")) {
+            Some(e) => {
+                match e.val {
+                    toml.Bool(b) => { tool = b }
+                    _ => { return Err(bad(file, e.line, "`toolchain` must be true (or left out)")) }
+                }
+            }
+            None => {}
+        }
+        if tool {
+            if path.is_some() || git.is_some() || ver.is_some() || rev.is_some() {
+                return Err(bad(file, line, "a toolchain dependency takes no `path`, `git`, `version` or `rev`: the package comes with the toolchain"))
+            }
+            if !shipped(dn) {
+                let mut m = String.from("`")
+                m.append(sys.to_string(dn))
+                m.push_str("` is not a package this toolchain ships (")
+                m.append(sys.to_string(bytes.join(shipped_names(), sys.lit(", "))))
+                m.push_str(")")
+                return Err(at(file, line, 1, m))
+            }
+        }
+        let source = if tool { Toolchain } else { match (path, git) {
             (Some(p), None) => {
                 if ver.is_some() || rev.is_some() { return Err(bad(file, line, "a path dependency takes no `version` or `rev`")) }
                 Path(p)
@@ -271,9 +310,9 @@ pub fn parse(src: List[u8], file: List[u8], dir: List[u8]) -> Result[Manifest, S
                     _ => { return Err(bad(file, line, "give either `version` or `rev`, not both")) }
                 }
             }
-            (None, None) => { return Err(bad(file, line, "a dependency needs `path` or `git`")) }
+            (None, None) => { return Err(bad(file, line, "a dependency needs `path`, `git` or `toolchain = true`")) }
             _ => { return Err(bad(file, line, "give either `path` or `git`, not both")) }
-        }
+        } }
         deps.push(Dep(dn, source, grants, line))
     }
     Ok(Manifest(name, version, entry, main, deps, dir, policy_of(doc, file)?))
