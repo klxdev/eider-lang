@@ -1,0 +1,9 @@
+// expect: E0308 7:3
+type Order = { qty: i32, name: String }
+fn bump(inout o: Order) { o.qty += 1 }
+fn main() uses io {
+  let mut o = Order(1, String.from("a"))
+  let n = o.name
+  bump(inout o)
+  print(n)
+}

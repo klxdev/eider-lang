@@ -240,15 +240,17 @@ fn Option[usize].unwrap_or -> usize
   %0 param self: Option[usize]
   %1 param default: usize
   %2 temp: bool
-  %3 temp: usize
+  %3 let v: usize
   %4 temp: usize
+  %5 temp: usize
   {
     %2 = tag %0 is <0>
     if %2 {
       %3 = read %0.<0>.0
-      return %3
-    } else {
-      %4 = read %1
+      %4 = read %3
       return %4
+    } else {
+      %5 = read %1
+      return %5
     }
   }

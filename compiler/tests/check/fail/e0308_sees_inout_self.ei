@@ -1,0 +1,11 @@
+// expect: E0308 7:14
+type O = { qty: i32, name: String }
+impl O {
+    fn bump(inout self) { self.qty += 1 }
+    fn go(inout self) uses io {
+        let n = self.name
+        self.bump()
+        print(n)
+    }
+}
+fn main() {}

@@ -1,7 +1,7 @@
 // expect: E0301 6:21
-type P = { x: i32, y: i32 }
-fn both(inout a: P, b: i32) {}
+type P = { x: List[i32], y: i32 }
+fn both(inout a: P, b: List[i32]) {}
 fn main() {
-    let mut p = P(1, 2)
+    let mut p = P(List.new(), 2)
     both(inout p, p.x)
 }

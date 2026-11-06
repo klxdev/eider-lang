@@ -1,5 +1,6 @@
 // References through a List: many uses of one element (a pointer since C8.54) between writes
-// to other elements.
+// to another List (a write to another element of the same List while the reference is used
+// later is E0308: "Scalars are copied" in docs/compiler.md, "C8.6").
 type Order = { qty: i32, price: i32, weight: i32, name: String }
 
 fn main() uses io {
@@ -7,6 +8,8 @@ fn main() uses io {
     for i in 0..1000 {
         orders.push(Order(i, i * 3, i % 7, String.from("order")))
     }
+    let mut bumps: List[i32] = List.new()
+    for _ in 0..1000 { bumps.push(0) }
     let mut total: i64 = 0
     for round in 0..40000 {
         for i in 0..orders.len() {
@@ -14,7 +17,7 @@ fn main() uses io {
             let v = o.qty * o.price + o.weight * o.qty - o.price + o.weight * 2 + o.name.len() as i32
             total += v as i64
             if o.weight == 3 {
-                orders[(i + 1) % 1000].qty += 1
+                bumps[(i + 1) % 1000] += 1
             }
             total += o.price as i64
         }

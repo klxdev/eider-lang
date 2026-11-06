@@ -96,10 +96,13 @@ is known; it is needed for `List.new()`, `Map.new()`, `None` and the like (E0409
 
 - `let x = e` binds a name that can't be assigned to or mutated through (E0303). When `e`
   is a *place* (a variable, a field, an element: `orders[i].items`), `x` is a read-only
-  reference to that place and sees later writes to it; otherwise `x` owns the fresh value.
-- `let mut x = e` declares a mutable variable. Of a fresh value it is an ordinary mutable
-  local. Of a place it is a *mutable alias*: writes through `x` change the place. The place
-  must be writable (E0307 otherwise; take a `.copy()`).
+  reference to that place, and the place can't be written while `x` is still used later
+  (E0308); but when its type is a scalar (a number, `bool`, `str` or an enum without payloads)
+  `x` is a copy (`let start = i` keeps its value when `i += 1` follows); otherwise `x` owns
+  the fresh value.
+- `let mut x = e` declares a mutable variable. Of a fresh value, or of a scalar place, it is
+  an ordinary mutable local. Of any other place it is a *mutable alias*: writes through `x`
+  change the place. The place must be writable (E0307 otherwise; take a `.copy()`).
 - `let (a, b) = e` destructures a tuple with an irrefutable pattern (E0101 for a refutable
   one; E0410 for the wrong number of elements). Each name may be `mut` on its own
   (`let (mut a, b) = e`); `let mut (a, b)` doesn't exist.

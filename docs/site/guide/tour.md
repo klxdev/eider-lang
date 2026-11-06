@@ -619,8 +619,10 @@ A closure whose body is a block or `if` needs its result type written: `|x| -> i
 ## References: `let`, `let mut` and `.copy()`
 
 Binding something doesn't copy it. `let x = place` (a variable, a field, an element) makes
-`x` a read-only reference to that place; `let mut x = place` a mutable alias; `.copy()` an
-independent value. A fresh value (a call's result, a literal) is simply owned:
+`x` a read-only reference to that place (a number, bool or other scalar is simply copied);
+`let mut x = place` a mutable alias; `.copy()` an independent value. A fresh value (a call's
+result, a literal) is simply owned, and the place of a reference can't be written while the
+reference is still used later:
 
 ```eider
 type Order = { item: String, qty: i32 }
@@ -631,8 +633,8 @@ fn main() uses io {
     orders.push(Order(String.from("cake"), 2))
 
     let first = orders[0]           // a reference: nothing is copied
-    orders[0].qty = 5
-    print(first.qty)                // sees the change
+    print(first.item)               // its last use
+    orders[0].qty = 5               // so this write is fine
 
     let mut second = orders[1]      // a mutable alias
     second.qty += 10
@@ -645,7 +647,7 @@ fn main() uses io {
 ```
 
 ```output
-5
+tea
 12
 12
 ```

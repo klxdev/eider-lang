@@ -1,7 +1,7 @@
 // expect: E0301 6:18
-type P = { x: i32 }
-fn f(inout a: P, b: i32) {}
+type P = { x: List[i32] }
+fn f(inout a: P, b: List[i32]) {}
 fn main() {
-    let mut p = P(1)
+    let mut p = P(List.new())
     f(inout p, p.x)
 }

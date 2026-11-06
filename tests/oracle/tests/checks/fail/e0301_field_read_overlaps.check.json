@@ -1,0 +1,1 @@
+{"error":"E0301","span":{"file":"tests/checks/fail/e0301_field_read_overlaps.ei","line":7,"col":20},"message":"`s.d` is borrowed mutably by another argument of this call and can't be read here"}

@@ -8,13 +8,14 @@ the [memory model design note](../../design/memory-model.md).
 
 The rules in short:
 
-1. `let x = place` names that place (a read-only reference); `let x = fresh` owns the value.
+1. `let x = place` names that place (a read-only reference), except that a number, bool, `str`
+   or payload-free enum is copied; `let x = fresh` owns the value.
 2. To change something through a name, bind it `let mut` (a mutable alias) or pass it
    `inout`. For an independent value, call `.copy()`.
 3. A reference lives inside its scope. When it escapes (returned, stored, captured, sent to a
    thread) the value is copied, cheaply, because heap data is shared copy-on-write.
-4. While a reference is alive, no write may free, move or replace the memory it points into
-   (the protection rule, checked at compile time).
+4. While a reference is alive, no write may change what it names, and none may free, move or
+   replace the memory it points into (the protection rule, checked at compile time).
 5. To share mutable state beyond a scope use [`Ref[T]`](#reft) (one thread) or
    [`Mutex[T]`](concurrency.md#mutext) (threads).
 
@@ -30,26 +31,29 @@ elements of any of those (`make().x`, `load()[0]`).
 
 ## `let`: references and owned values
 
-`let x = e` where `e` is a place binds `x` as a **read-only reference** to that place. `x` has
-no storage of its own: every use of `x` reads the place as it is at that use, so `x` sees
-every later write to the place. Index expressions in the place are evaluated once, when `x`
-is bound (and bounds-checked then, even if `x` is never read).
+`let x = e` where `e` is a place binds `x` as a **read-only reference** to that place, unless
+the type is a scalar (below). `x` has no storage of its own: every use of `x` reads the place
+as it is at that use. So that a reference never shows a change the program didn't mean, a
+write to the place (or to a part of it, or to the place it is part of) while `x` is still
+used later is [E0308](errors.md#e0308); see [the protection rule](#the-protection-rule).
+Index expressions in the place are evaluated once, when `x` is bound (and bounds-checked
+then, even if `x` is never read).
 
 `let x = e` where `e` is fresh binds `x` as the **owner** of the value.
 
 A `let` binding can't be assigned to and can't be changed through (E0303).
 
 ```eider
-type Order = { id: i32, qty: i32 }
+type Order = { id: i32, qty: i32, name: String }
 
 fn main() uses io {
     let mut orders: List[Order] = List.new()
-    orders.push(Order(1, 5))
-    orders.push(Order(2, 7))
+    orders.push(Order(1, 5, String.from("a")))
+    orders.push(Order(2, 7, String.from("b")))
 
     let o = orders[0]          // a reference to orders[0]
-    orders[0].qty = 6          // a plain write to the place
-    print(o.qty)               // o sees it
+    print(o.name)              // o's last use
+    orders[0].qty = 6          // so this write is fine
 
     let mut i: usize = 1
     let p = orders[i]          // the index is evaluated here, once
@@ -62,19 +66,77 @@ fn main() uses io {
 ```
 
 ```output
-6
+a
 2
 2
 ```
 
+### Scalars are copied
+
+A `let` of a place whose type is a **scalar** copies the value instead of naming the place:
+an integer, a float, a `bool`, a `str`, or an enum none of whose variants has fields. They
+are as cheap to copy as to name, and a name that changes when the place is written is never
+what the program means by `let start = i`:
+
+```eider
+type Cidr = { bits: usize, name: String }
+
+fn count(c: Cidr) -> usize {
+    let mut left = c.bits      // c is read-only, and left is a copy
+    let mut n: usize = 0
+    while left > 0 {
+        left -= 1
+        n += 1
+    }
+    n
+}
+
+fn main() uses io {
+    let mut i = 0
+    let start = i              // a copy
+    i += 1
+    print(start)
+    print(i)
+    print(count(Cidr(3, String.from("c"))))
+}
+```
+
+```output
+0
+1
+3
+```
+
+The copy is made where the `let` is, also for `let mut` (so a `let mut` of a scalar place of a
+read-only variable is no E0307) and for the read-only bindings of a pattern of a place
+(`Pending(n)`, `let (a, b) = pair`). A `mut` pattern binding (`Pending(mut n)`) is still an
+alias into the place, which is the way to change an enum's payload in place. Everything else
+that is not fresh, a record, a tuple, an array, a String, a List, a Map, an enum with fields,
+a `Box`, a closure, is named, not copied.
+
+A reference to a non-scalar place is changed to a copy with `.copy()`:
+
+```eider,compile_fail=E0308
+type Order = { id: i32, qty: i32, name: String }
+
+fn main() uses io {
+    let mut o = Order(1, 5, String.from("a"))
+    let name = o.name          // a reference to o.name
+    o.name = String.from("b")  // changes what `name` names
+    print(name)
+}
+```
+
+Fix: `let name = o.name.copy()`, or use `name` before the write.
+
 ## `let mut`: mutable aliases and mutable locals
 
-`let mut x = e` where `e` is a place binds `x` as a **mutable alias** of the place: writes
-through `x` change the place, and writes to the place are seen through `x`. The place's root
-variable must itself be writable: a `let mut` binding, an `inout` parameter, a mutable alias).
-An alias can't add write access, so a `let mut` of a read-only
+`let mut x = e` where `e` is a place of a non-scalar type binds `x` as a **mutable alias** of
+the place: writes through `x` change the place, and writes to the place are seen through `x`.
+The place's root variable must itself be writable: a `let mut` binding, an `inout`
+parameter, a mutable alias). An alias can't add write access, so a `let mut` of a read-only
 place (a parameter, a `let` binding, a `for` variable, a captured variable) is
-[E0307](errors.md#e0307); the fix is to take a `.copy()`.
+[E0307](errors.md#e0307); the fix is to take a `.copy()`. (A scalar place is copied, above.)
 
 `let mut x = e` where `e` is fresh is an ordinary mutable local that owns its value.
 
@@ -85,7 +147,7 @@ fn main() uses io {
     let mut orders: List[Order] = List.new()
     orders.push(Order(1, 5))
 
-    let mut m = orders[0]      // a mutable alias
+    let mut m = orders[0]      // a mutable alias (an Order is not a scalar)
     m.qty += 1
     print(orders[0].qty)
     orders[0].qty = 0
@@ -121,8 +183,9 @@ name follows it, so `let mut = 1` declares a variable named `mut`.
 
 Bindings in `match`, `if let`, `while let` and `let (..) =` patterns follow the same rule as
 `let`. When the scrutinee is a place, each binding is a read-only reference into it (into the
-payload of an enum variant, a tuple element, ...). A binding written `mut x` is a mutable
-alias into the place, which must be writable (E0307 otherwise). When the scrutinee is fresh,
+payload of an enum variant, a tuple element, ...), or a copy when its type is a scalar. A
+binding written `mut x` is a mutable alias into the place, which must be writable (E0307
+otherwise). When the scrutinee is fresh,
 each binding owns its part, and `mut` makes it a mutable local. See
 [patterns](patterns.md).
 
@@ -234,11 +297,22 @@ a reference (E0302).
 
 ### Exclusivity
 
-An `inout` argument is exclusive for the duration of the call: the same variable can't be
-passed `inout` twice, or passed `inout` and also read by another argument of the same call
-([E0301](errors.md#e0301)). The check works on the root variable of each place, so
-`f(inout p.x, p.y)` conflicts too. A reference counts as the variable its place is rooted
-at: with `let o = xs[0]`, `f(inout xs, o)` is E0301 (fix: bind `o` with `.copy()`).
+An `inout` argument is exclusive for the duration of the call: nothing it borrows can be
+borrowed again by the same call, neither `inout` nor read by another argument or by the
+receiver ([E0301](errors.md#e0301)). The check works on a variable and the **fields below
+it**, so the fields of one record are separate places:
+
+- `feed(inout s.d, inout s.pending)` and `s.d.feed(inout s.pending)` are fine (`d` and
+  `pending` are disjoint), also through `self` and nested fields (`inout a.b.x` and
+  `inout a.c`);
+- overlapping paths conflict: `f(inout s.d, inout s.d.tags)`, `f(inout s, inout s.d)`,
+  `f(inout s.d, s.d)`, `s.d.peek(inout s.d)` (a receiver that is read counts as a read of
+  its place);
+- an index borrows the whole container, since the compiler does not compare the values of
+  two indices: `f(inout xs[0], inout xs[1])` is E0301, and so is `f(inout s.items[i],
+  s.items[j])`; `s.a[0]` and `s.b[0]` are disjoint;
+- a reference counts as its whole variable: with `let o = xs[0]`, `f(inout xs, o)` is E0301
+  (fix: bind `o` with `.copy()`), and so is `f(inout s.a, o)` for `let o = s.b`.
 
 An argument that is a call (or a `?` or `as` of one) or an operator expression (`-p.x`,
 `n + 1`, `a == b && c`) is evaluated first, to a new value, before the `inout` access begins,
@@ -249,11 +323,21 @@ one starts). Why this is sound: arguments are evaluated left to right into tempo
 the `inout` place is only used by the call itself, after the last argument is done; a call
 or an operator produces a value of its own (an operator's result is a number, a bool or a
 fresh string, never one of its operands), so nothing it read is still referenced when the
-access begins, and a later write to the variable cannot reach it. A place (`xs[0]`, a field,
-a variable) is passed as a read-only reference to where it is, so it still conflicts
-(`p.add(p.x)` is E0301: the callee would see `p.x` change under it), and so does
-`xs[0] as i32` on an `i32` list, since a conversion to the value's own type is the place
-itself; bind a copy first (`let n = p.x.copy()`).
+access begins, and a later write to the variable cannot reach it.
+
+A **place of a scalar type** (a number, a bool, a `str`, an enum without payloads) is read
+the same way: the argument is a copy of the number, taken before the access begins, so the
+callee cannot see the place change under it. `p.add(p.x)`, `both(inout x, x)`,
+`bump(inout s, s.k)` and `f(x, inout x)` are fine (a *two-phase* rule, as for calls). The
+same place of any other type (a String, a List, a record, an array, a tuple) is passed as a
+read-only reference to where it is, so it still conflicts: `p.add(p.name)` is E0301 (the
+callee would see `p.name` change under it); bind a copy first (`let n = p.name.copy()`).
+
+What stays rejected, and why: a non-scalar place read next to an `inout` of an overlapping
+place, because the callee holds a reference and writes through the other; an element of a
+list beside an `inout` of another element of the same list (or of the list); a reference
+(`let o = ...`) beside an `inout` of the variable it refers into, even of another field, since
+a reference is tracked as its whole variable.
 
 ```eider,compile_fail=E0301
 fn both(inout a: i32, inout b: i32) { a += b }
@@ -266,14 +350,15 @@ fn main() {
 
 ## The protection rule
 
-While a reference is alive (from its binding to its last use, on any path), no write may
-free, move or replace memory it points into. Violations are [E0308](errors.md#e0308), at the
-write.
+While a read-only reference is alive (from its binding to its last use, on any path), no
+write may change what it names, and none may free, move or replace memory it points into.
+Violations are [E0308](errors.md#e0308), at the write.
 
-A write to place `P` **invalidates** a live reference to place `R` when `P` is a prefix of
-`R` (any two indices compare as equal: `orders[i]` and `orders[j]` are the same for this
-rule) and the rest of `R`'s path, after `P`, passes through heap memory (a List element, a
-field of a record that has its own `Drop`) or an enum payload. The writes considered are:
+A write to place `P` **changes** a live reference to place `R` when `P` and `R` overlap: one
+is a prefix of the other (any two indices compare as equal: `orders[i]` and `orders[j]` are
+the same for this rule). It **invalidates** it when `P` is a prefix of `R` and the rest of
+`R`'s path, after `P`, passes through heap memory (a List element, a field of a record that has
+its own `Drop`) or an enum payload. The writes considered are:
 
 - an assignment or compound assignment to `P`;
 - passing `P` as an `inout` argument (also as the `inout self` of a method, or a closure's
@@ -281,33 +366,37 @@ field of a record that has its own `Drop`) or an enum payload. The writes consid
 - a resizing method on `P`: `push`, `pop`, `clear`, `insert`, `remove`, `push_str`,
   `append`, `push_byte`, and `take`/`replace`.
 
-**Allowed** while references are alive:
+**Allowed** while a reference is alive:
 
-- plain writes to scalar fields and elements (`orders[0].qty = 5`);
-- writes through mutable aliases;
-- a write that replaces exactly the referenced value (`orders[0] = o2` while
-  `o = orders[0]`: `o` then sees `o2`);
-- resizing a container the reference names rather than points into (`let all = orders;
-  orders.push(x)`: `all` sees the new length);
 - any write after the reference's last use, or on a path that never reaches a later use
   (`if done { xs.clear(); return }`);
-- a loop whose body binds a fresh reference each iteration.
+- writes to places the reference does not overlap: another variable, another field of the
+  same record (`let n = o.name` then `o.qty = 5`), another field of a tuple;
+- writes through a mutable alias (`let mut m = orders[0]`, a `mut` pattern binding), which is
+  how a place is written through a name; an alias is a write to the place it names, so a
+  read-only reference to that place that is used later is overlapped by it like by any
+  other write;
+- writes to the place of a **scalar**, which `let` copied (the binding is no reference);
+- a loop whose body binds a fresh reference each iteration;
+- a closure that captured the reference: it captured a copy.
 
-**Rejected:** `xs.push(..)` while a reference into `xs[..]` is alive; assigning a new List
-or record over a place a reference points into; replacing an enum value while a binding
-refers into its payload (`j = Done` inside `match j { Pending(name) => .. }`); passing
-`inout xs` while a reference points into its elements; and the next iteration of a loop
-reaching a write while a reference from before the loop is still used.
+**Rejected:** assigning, resizing or passing `inout` any place that overlaps a reference
+that is used later. A reference to an element (`let o = orders[0]`) is overlapped by a write
+to *any* element of the list, to a field of one, and to the list. Assigning a new List or
+record over a place a reference points into, `xs.push(..)` while a reference into `xs[..]` is
+alive, replacing an enum value while a binding refers into its payload (`j = Done` inside
+`match j { Pending(name) => .. }`), and the next iteration of a loop reaching a write while a
+reference from before the loop is still used are the cases that also free or move memory.
 
 ```eider,compile_fail=E0308
-type Order = { qty: i32 }
+type Order = { qty: i32, name: String }
 
 fn main() uses io {
     let mut orders: List[Order] = List.new()
-    orders.push(Order(1))
+    orders.push(Order(1, String.from("a")))
     let o = orders[0]
-    orders.push(Order(2))      // may move the buffer o points into
-    print(o.qty)               // o is used after the change
+    orders[0].qty = 5          // changes what o names
+    print(o.name)              // o is used after the change
 }
 ```
 
@@ -326,14 +415,18 @@ fn main() uses io {
     print(o.qty)               // last use of o
     orders.push(Order(2))      // fine: o is no longer alive
     let all = orders           // a reference to the List itself
+    print(all.len())           // last use of all
     orders.push(Order(3))
-    print(all.len())           // sees the push
+    let c = orders[0].copy()   // a copy: orders may change while c is used
+    orders.clear()
+    print(c.qty)
 }
 ```
 
 ```output
 1
-3
+2
+1
 ```
 
 Map values and Box contents are never places (`get` returns a value), so nothing refers into

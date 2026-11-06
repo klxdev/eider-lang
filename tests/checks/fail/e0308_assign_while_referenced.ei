@@ -1,0 +1,8 @@
+// expect: E0308 6:3
+type Order = { qty: i32, name: String }
+fn main() uses io {
+  let mut o = Order(1, String.from("a"))
+  let n = o.name
+  o.name = String.from("b")
+  print(n)
+}

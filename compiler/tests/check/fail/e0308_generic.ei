@@ -8,7 +8,7 @@ fn last_then_clear[T](inout xs: List[T]) -> usize {
     0
 }
 fn main() uses io {
-    let mut xs: List[i32] = List.new()
-    xs.push(3)
+    let mut xs: List[String] = List.new()
+    xs.push(String.from("a"))
     print(last_then_clear(inout xs))
 }

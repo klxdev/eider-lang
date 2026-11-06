@@ -1,0 +1,13 @@
+// expect: E0308 8:13
+type O = { qty: i32, name: String }
+type Job = | Run(O) | Idle
+fn main() uses io {
+    let mut j = Run(O(1, String.from("a")))
+    match j {
+        Run(o) => {
+            j = Idle
+            print(o.name)
+        }
+        Idle => {}
+    }
+}

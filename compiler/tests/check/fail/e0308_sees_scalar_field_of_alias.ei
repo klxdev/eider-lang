@@ -1,0 +1,9 @@
+// expect: E0308 7:5
+type O = { qty: i32, name: String }
+fn main() uses io {
+    let mut os: List[O] = List.new()
+    os.push(O(1, String.from("a")))
+    let first = os[0]
+    os[0].qty = 2
+    print(first.name)
+}

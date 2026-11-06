@@ -1,0 +1,1 @@
+{"error":"E0308","span":{"file":"compiler/tests/check/fail/e0308_sees_field.ei","line":6,"col":5},"message":"can't assign to `o.name` while `n` refers to `o.name` (bound on line 5)","help":"`n` is used after this write and would see the new value; use it before the write, or bind a copy with `.copy()`","fix":{"at":{"line":5,"col":19},"delete":0,"insert":".copy()"}}

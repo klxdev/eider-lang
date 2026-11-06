@@ -1,0 +1,61 @@
+// A `let` of a scalar place copies it; what a read-only reference may do with writes elsewhere.
+type O = { qty: i32, name: String, tags: List[String] }
+type Cidr = { bits: usize, name: String }
+type Color = | Red | Green
+
+fn left(c: Cidr) -> usize {
+    let mut left = c.bits
+    left += 1
+    left
+}
+
+fn main() uses io {
+    let mut o = O(1, String.from("a"), List.new())
+    let q = o.qty
+    o.qty = 2
+    print(q)
+    let col = Red
+    let mut cs = [col, Green]
+    let c0 = cs[0]
+    cs[0] = Green
+    match c0 {
+        Red => print("r")
+        Green => print("g")
+    }
+    // other fields, other variables, and a closure that captured a reference
+    let n = o.name
+    let f = || -> usize { n.len() }
+    o.qty += 1
+    o.tags.push(String.from("t"))
+    let mut other = O(0, String.from("b"), List.new())
+    let m = other.name
+    o.name = String.from("c")
+    other.qty = 5
+    print(m)
+    o.name.push_str("!")
+    print(f())
+    // a reference used before the push
+    let mut xs: List[String] = List.new()
+    xs.push(String.from("x"))
+    let x = xs[0]
+    print(x)
+    xs.push(String.from("y"))
+    // a `for` loop's variable is a copy of each element
+    for e in xs {
+        xs.push(e.copy())
+        break
+    }
+    // an alias dead after the loop that writes
+    let k = xs[0]
+    print(k)
+    for i in 0..2 { xs[0].push_str("z") }
+    // two-phase: a scalar place argument beside an `inout` borrow of the same variable
+    let mut t = O(1, String.from("t"), List.new())
+    t.qty = grow(inout t, t.qty)
+    print(t.qty)
+}
+
+fn grow(inout o: O, by: i32) -> i32 {
+    o.qty += by
+    o.qty
+}

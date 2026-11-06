@@ -1,6 +1,6 @@
 // expect: E0308 5:9
 fn main() uses io {
-    let mut o: Option[i32] = Some(1)
+    let mut o: Option[String] = Some(String.from("a"))
     if let Some(v) = o {
         o = None
         print(v)

@@ -1,8 +1,16 @@
-// A `let` reference through heap memory is a pointer (docs/compiler.md, "C8.54"). Writes that
-// un-share the buffers it points into (copy-on-write) leave it pointing at the variable's data.
+// A `let` reference through heap memory is a pointer (docs/compiler.md, "C8.54"). A write to a
+// place the reference doesn't overlap can still un-share (copy-on-write) a buffer on the way to
+// it, which moves the data: the reference is set again after such a write. The writes that
+// overlap a live reference are errors (E0308, "Scalars are copied"), so what moves buffers
+// under a reference is a write to another field of a record with its own Drop (its fields live
+// in a shared buffer) while the record is shared.
 type Order = { qty: i32, name: String, tags: List[i32] }
 type Shape = | Circle(r: i32) | Rect(w: i32, h: i32)
-type Holder = { shapes: List[Shape], total: i32 }
+type Pack = { items: List[Order], shapes: List[Shape], hits: i32, label: String }
+
+impl Drop for Pack {
+    fn drop(inout self) {}
+}
 
 fn order(q: i32, n: str) -> Order {
     let mut tags: List[i32] = List.new()
@@ -11,10 +19,7 @@ fn order(q: i32, n: str) -> Order {
     Order(q, String.from(n), tags)
 }
 
-fn bump(inout o: Order) {
-    o.qty += 100
-    o.tags.push(7)
-}
+fn hit(inout n: i32) { n += 100 }
 
 fn area(s: Shape) -> i32 {
     match s {
@@ -23,75 +28,64 @@ fn area(s: Shape) -> i32 {
     }
 }
 
+fn pack() -> Pack {
+    let mut p = Pack(List.new(), List.new(), 0, String.from("p"))
+    p.items.push(order(1, "a"))
+    p.items.push(order(2, "bb"))
+    p.items.push(order(3, "ccc"))
+    p.shapes.push(Circle(2))
+    p.shapes.push(Rect(3, 4))
+    p
+}
+
 fn main() uses io {
-    let mut orders: List[Order] = List.new()
-    orders.push(order(1, "a"))
-    orders.push(order(2, "bb"))
-    orders.push(order(3, "ccc"))
-
-    // the buffer is shared with `keep`; the write to orders[0] un-shares it
-    let keep = orders.copy()
-    let o = orders[1]
+    let mut p = pack()
+    // the record's buffer is shared with `spare`; each write below un-shares it, once
+    let mut spare: List[Pack] = List.new()
+    spare.push(p)
+    let o = p.items[1]
+    let sh = p.shapes[1]
     print(o.qty)
-    orders[0].qty = 99
+    p.hits = 5
     print(o.qty)
-    orders[1].qty = 7
-    print(o.qty)
-    print(keep[1].qty)
-    print(keep[0].qty)
+    print(area(sh))
+    spare.push(p)
+    p.label.push_str("!")
+    print(o.name)
+    spare.push(p)
+    hit(inout p.hits)
+    print(o.tags.len())
+    print(p.hits)
+    print(spare.len())
 
-    // an `inout` call on another element, and a push into another element's list
-    let t = orders[2]
-    bump(inout orders[0])
-    orders[0].tags.push(5)
-    print(t.qty + t.tags.len() as i32)
-    print(o.name.len())
-
-    // a reference into a reference
-    let first = orders[0]
-    let tg = first.tags
-    orders[2].qty = 31
-    orders[2].tags.push(9)
-    print(tg.len())
-    print(first.qty)
-    print(t.tags.len())
-
-    // in a loop: a reference per iteration, writes to the other elements, a shared buffer
+    // a reference per iteration, writes to another field of the shared record
     let mut sum = 0
-    for i in 0..orders.len() {
-        let cur = orders[i]
-        let j = (i + 1) % orders.len()
-        let snap = orders.copy()
-        orders[j].qty += 1
-        sum += cur.qty * 2 + cur.name.len() as i32 + snap[j].qty
+    for i in 0..p.items.len() {
+        let cur = p.items[i]
+        spare.push(p)
+        p.hits += 1
+        sum += cur.qty * 2 + cur.name.len() as i32 + p.hits
     }
     print(sum)
 
     // a reference live across a branch that writes
-    let last = orders[2]
+    let last = p.items[2]
     if sum > 0 {
-        let other = orders.copy()
-        orders[0].qty = 5
-        print(other[0].qty)
+        spare.push(p)
+        p.label.push_str("?")
+        print(spare[spare.len() - 1].label.len())
     }
     print(last.qty)
 
-    // payload references into a record's List
-    let mut h = Holder(List.new(), 0)
-    h.shapes.push(Circle(2))
-    h.shapes.push(Rect(3, 4))
-    let sh = h.shapes[1]
-    let shared = h.shapes.copy()
-    h.total = 5
-    h.shapes[0] = Rect(1, 1)
-    print(area(sh))
-    match h.shapes[1] {
+    // payload references
+    match p.shapes[1] {
         Rect(w, hh) => {
-            h.total += 1
+            spare.push(p)
+            p.hits += 1
             print(w + hh)
         }
         Circle(r) => print(r)
     }
-    print(shared.len())
-    print(h.total)
+    print(p.hits)
+    print(spare[0].hits)
 }

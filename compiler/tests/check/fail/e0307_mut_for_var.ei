@@ -1,8 +1,8 @@
 // expect: E0307 4:21
 fn main() uses io {
-    for x in 0..3 {
+    for x in [String.from("a")] {
         let mut y = x
-        y += 1
+        y.push_str("b")
         print(y)
     }
 }

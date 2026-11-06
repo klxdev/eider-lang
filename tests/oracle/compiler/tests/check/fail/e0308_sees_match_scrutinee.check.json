@@ -1,0 +1,1 @@
+{"error":"E0308","span":{"file":"compiler/tests/check/fail/e0308_sees_match_scrutinee.ei","line":8,"col":13},"message":"can't assign to `j` while `o` refers into it","help":"`o` is used after this change, which may free, move or replace what it refers to; use it before the change, or bind a copy with `.copy()`","fix":{"at":{"line":6,"col":12},"delete":0,"insert":".copy()"}}

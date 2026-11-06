@@ -1,0 +1,11 @@
+// expect: E0308 5:5
+type Pair[T] = { a: T, b: T }
+fn swap_first[T](inout p: Pair[T]) {
+    let t = p.a
+    p.a = p.b
+    p.b = t
+}
+fn main() {
+    let mut p = Pair(String.from("x"), String.from("y"))
+    swap_first(inout p)
+}

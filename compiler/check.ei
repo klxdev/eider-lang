@@ -1131,16 +1131,13 @@ type WriteInfo = { place: u32, kind: u32, what: List[u8], line: u32, col: u32, m
 /// functions that have references, the stack of source positions writes are reported at
 /// (the innermost assignment or call being checked), and whether the
 /// body being checked has a reference (so other bodies note no writes).
-/// With `audit` (`eiderc audit-refs`, "Audit" below), `hits` collects every write that
-/// changes what a live reference sees without invalidating it.
 type Refs = {
     refs: List[RefInfo], writes: List[WriteInfo], fns: Map[u32, bool], wpos: List[u64], any: bool,
-    audit: bool, hits: List[diag.Diag],
     /// per noted write: the pointer references live after it that it may move ("C8.54")
     refresh: Map[u32, List[u32]],
 }
 
-fn no_refs() -> Refs { Refs(List.new(), List.new(), Map.new(), List.new(), false, false, List.new(), Map.new()) }
+fn no_refs() -> Refs { Refs(List.new(), List.new(), Map.new(), List.new(), false, Map.new()) }
 
 fn ref_note(inout c: C, kind: u32, i: u32) { ir.emit(inout c.ir, ir.S_NOTE, 0, kind, i, 0, 0, 0) }
 
@@ -1184,6 +1181,22 @@ fn copy_fix(c: C, ty: u32, line: u32, col: u32) -> Option[diag.Fix] {
     // (in a generic body `.copy()` may need a bound the fix can't add as well: no fix there)
     if line == 0 || generic_body(c) || poisoned(c, ty) || !has_trait(c, TR_COPY, ty) { return None }
     Some(diag.Fix(line, col, 0, s(".copy()")))
+}
+
+/// Whether a `let` of a place of type ty copies the value instead of referring to the place: a
+/// number, a bool, a `str` or an enum without payloads is as cheap to copy as to name, and a
+/// reference to it would show later writes to the place through the binding (docs/compiler.md,
+/// "C8.6", "Scalars are copied", decision C900).
+fn scalar_copy(c: C, ty: u32) -> bool {
+    let t = types.get(c.t, ty)
+    if t.kind == types.T_INT || t.kind == types.T_FLOAT || t.kind == types.T_BOOL || t.kind == types.T_STR || t.kind == types.T_UNIT { return true }
+    if t.kind != types.T_ENUM { return false }
+    let d = c.t.defs[t.a as usize]
+    if !d.is_enum { return false }
+    for i in 0..d.len {
+        if types.variant(c.t, d, i).flen > 0 { return false }
+    }
+    !has_drop(c, ty)
 }
 
 /// Whether the body being checked is an instance of a generic one (its type parameters
@@ -1557,12 +1570,21 @@ fn check_write(inout c: C, f: u32, w: u32, live: List[u32], inout seen: List[u64
         if ri.rl != NONE && refresh_needed(c, ri.place, wi.place) { moved.push(r) }
     }
     if moved.len() > 0 { c.rf.refresh.insert(w, moved) }
-    if c.rf.audit { audit_write(inout c, f, wi, live) }
     let mut best = NONE
     for r in live {
         if (best == NONE || r < best) && invalidates(c, c.rf.refs[r as usize].place, wi.place) { best = r }
     }
-    if best == NONE { return }
+    if best == NONE {
+        // not freeing anything, but the write changes what a live read-only reference sees
+        // ("Scalars are copied" in docs/compiler.md, "C8.6")
+        for r in live {
+            let ri = c.rf.refs[r as usize].copy()
+            if (best == NONE || r < best) && !ri.mutable && overlaps(c, ri.place, wi.place) { best = r }
+        }
+        if best == NONE { return }
+        sees_error(inout c, f, wi, best, inout seen, inout found)
+        return
+    }
     // once per write (generic bodies are checked once per instance)
     let key = (wi.m as u64) * 1099511627776 + (wi.line as u64) * 1048576 + wi.col as u64
     if seen.contains(key) { return }
@@ -1592,16 +1614,44 @@ fn check_write(inout c: C, f: u32, w: u32, live: List[u32], inout seen: List[u64
     found.push(Found(d, wi.m))
 }
 
-// ---- Audit (`eiderc audit-refs`, docs/compiler.md "C8.6")
-//
-// Code written when `let` copied a place means something else now wherever it writes the
-// place while the binding is still used: the binding sees the write. Invalidating writes are
-// E0308; the audit reports the others, each with the `.copy()` that restores the old meaning
-// (none in a generic body or for a type without Copy). It covers `let` and pattern
-// references (both were copies), not `let mut` / `mut` aliases (new code means the alias).
+/// E0308 for a write to a place a live read-only reference names or contains (nothing is freed:
+/// the reference would see the new value, which is never what a binding is meant to show).
+fn sees_error(inout c: C, f: u32, wi: WriteInfo, best: u32, inout seen: List[u64], inout found: List[Found]) {
+    let key = (wi.m as u64) * 1099511627776 + (wi.line as u64) * 1048576 + wi.col as u64
+    if seen.contains(key) { return }
+    seen.push(key)
+    let rf = c.rf.refs[best as usize]
+    let pn = place_name(c, f, wi.place)
+    let rn = kt(c, rf.key)
+    let rp = place_name(c, f, rf.place)
+    let mut msg: List[u8] = List.new()
+    if wi.kind == W_RESIZE {
+        msg = q3("can't call `", wi.what, "` on `", pn, "` while `", rn, "` refers to ")
+    } else if wi.kind == W_INOUT {
+        msg = q2("can't pass `", pn, "` as `inout` while `", rn, "` refers to ")
+    } else {
+        msg = q2("can't assign to `", pn, "` while `", rn, "` refers to ")
+    }
+    bytes.append(inout msg, q("`", rp, "`"))
+    bytes.append(inout msg, s(" (bound on line "))
+    bytes.append(inout msg, num(rf.line as u64))
+    bytes.append(inout msg, s(")"))
+    let mut d = err("E0308", wi.line, wi.col, msg)
+    let mut h = q("`", rn, "` is used after this write and would see the new value; use it before the write")
+    let has_fix = match rf.fix {
+        Some(_) => true
+        None => false
+    }
+    if has_fix || rf.generic { bytes.append(inout h, s(", or bind a copy with `.copy()`")) }
+    if rf.generic && !has_fix { bytes.append(inout h, s(" (with a `Copy` bound on its type parameter)")) }
+    d.help = h
+    d.fix = rf.fix
+    found.push(Found(d, wi.m))
+}
 
 /// Whether a write to place w changes what reference place r sees: same root, and one path
-/// a prefix of the other (any two indices count as equal).
+/// a prefix of the other (any two indices count as equal). A read-only reference may not see a
+/// write ("Scalars are copied" in docs/compiler.md, "C8.6").
 fn overlaps(c: C, r: u32, w: u32) -> bool {
     if place_root(c, r) != place_root(c, w) { return false }
     let mut rs: List[Step] = List.new()
@@ -1614,57 +1664,6 @@ fn overlaps(c: C, r: u32, w: u32) -> bool {
         i += 1
     }
     true
-}
-
-fn audit_write(inout c: C, f: u32, wi: WriteInfo, live: List[u32]) {
-    for r in live {
-        let rf = c.rf.refs[r as usize]
-        if rf.mutable || !overlaps(c, rf.place, wi.place) || invalidates(c, rf.place, wi.place) { continue }
-        // (repeats, from the instances of a generic body, go in audit_hits)
-        let rn = kt(c, rf.key)
-        let mut msg = q2("this write changes what `", rn, "` sees (`", place_name(c, f, wi.place), "`): `")
-        bytes.append(inout msg, rn)
-        bytes.append(inout msg, s("` is a reference since C8.6, it used to be a copy (line "))
-        bytes.append(inout msg, num(rf.line as u64))
-        bytes.append(inout msg, s(")"))
-        let mut d = err("audit", wi.line, wi.col, msg)
-        d.help = s("bind a copy to keep the old meaning: `.copy()`")
-        let fixed = match rf.fix {
-            Some(_) => true
-            None => false
-        }
-        if !fixed && rf.generic { d.help = s("bind a copy to keep the old meaning: `.copy()`, with a `Copy` bound on the type parameter") }
-        if !fixed && !rf.generic { d.help = s("its type has no Copy: move the value out of a writable place with `take` or `replace`, or keep an index instead of a second binding") }
-        d.fix = rf.fix
-        c.rf.hits.push(in_file(c, d, wi.m))
-    }
-}
-
-/// `check_all` with the audit on.
-pub fn check_audit(p: resolve.Program) -> Checked {
-    let mut c = new_checker(p, false)
-    c.rf.audit = true
-    finish(inout c)
-}
-
-/// The audit's findings, by file (the entry's first), line and column.
-pub fn audit_hits(c: C) -> List[diag.Diag] {
-    let mut out: List[diag.Diag] = List.new()
-    for d in c.rf.hits {
-        let mut i: usize = 0
-        while i < out.len() && before_or_same(out[i], d) { i += 1 }
-        let mut next: List[diag.Diag] = List.new()
-        for j in 0..i { next.push(out[j]) }
-        next.push(d)
-        for j in i..out.len() { next.push(out[j]) }
-        out = next
-    }
-    diag.dedup(out)
-}
-
-fn before_or_same(a: diag.Diag, b: diag.Diag) -> bool {
-    if !bytes.eq(a.file, b.file) { return a.file.len() == 0 || (b.file.len() > 0 && bytes.compare(a.file, b.file) < 0) }
-    a.line < b.line || (a.line == b.line && a.col <= b.col)
 }
 
 /// Remove the S_NOTEs from every block (they are the checker's own; lowering never sees them).
@@ -5308,7 +5307,7 @@ fn stmt(inout c: C, st: u32) -> Result[u32, diag.Diag] {
                 let v = expr(inout c, n.c, declared)?
                 if fin == NONE { fin = v.ty }
                 check_bindable(c, v.ty, fin, init.line, init.col)?
-                if alias_ro {
+                if alias_ro && !scalar_copy(c, v.ty) {
                     let what = q("`let mut ", nm(c, n.a), "`")
                     let rr = root(c, n.c)
                     let ad = alias_error(c, rr.line, rr.col, what, rr.key, copy_fix(c, fin, n.e, n.f))
@@ -5453,7 +5452,9 @@ fn let_pat(inout c: C, n: ast.Node) -> Result[u32, diag.Diag] {
     let rk: u64 = if is_ref { root(c, n.c).key } else { 0 }
     for b in lw.binds {
         let mutable = b.mutable
-        if is_ref {
+        if is_ref && !b.mutable && scalar_copy(c, b.ty) {
+            // (a scalar binding is a copy)
+        } else if is_ref {
             if !b.mutable || writable(c, rk) {
                 let fx = copy_fix(c, vty, n.e, n.f)
                 let mut v = new_ref(inout c, b.key, b.ty, b.place, b.mutable, rk, b.line, b.col, fx)
@@ -5497,6 +5498,13 @@ fn let_ref(inout c: C, n: ast.Node, declared: u32) -> Result[u32, diag.Diag] {
     if c.rec.on && init.kind == ast.EField { note_ty(inout c, init, pv.ty) }
     let fin = if declared != NONE { declared } else { pv.ty }
     check_bindable(c, pv.ty, fin, init.line, init.col)?
+    if scalar_copy(c, pv.ty) && same(c, pv.ty, fin) {
+        // a scalar is copied, not named: later writes to the place don't show through x
+        let l =ir.local(inout c.ir, n.a, fin, if n.d == 0 { ir.L_LET } else { ir.L_VAR }, n.line)
+        emit(inout c, ir.S_READ, l, pv.place, 0, 0, fin, n.line)
+        declare(inout c, local_at(key, fin, n.d != 0, n.line, n.col, l))?
+        return Ok(types.UNIT)
+    }
     let rk = root(c, n.c).key
     let fx = copy_fix(c, fin, n.e, n.f)
     let v = new_ref(inout c, key, fin, pv.place, n.d == 2, rk, n.line, n.col, fx)
@@ -6471,7 +6479,9 @@ fn bind_arm(inout c: C, binds: List[Bind], pre: List[u32], sc: Scrut, own: bool)
             declare(inout c, local_plain(b.key, b.ty, false, b.line, b.col, l))?
             continue
         }
-        if sc.is_ref {
+        if sc.is_ref && !b.mutable && scalar_copy(c, b.ty) {
+            // (a scalar binding is a copy)
+        } else if sc.is_ref {
             if !b.mutable || writable(c, sc.rk) {
                 let fx = copy_fix(c, sc.ty, sc.line, sc.col)
                 let mut v = new_ref(inout c, b.key, b.ty, b.place, b.mutable, sc.rk, b.line, b.col, fx)
@@ -7671,6 +7681,122 @@ fn evaluated_first(c: C, e: u32) -> bool {
     false
 }
 
+/// A borrow for the exclusivity of a call: the variable a place is rooted at (a reference counts
+/// as the variable it refers into) and the fields below it, up to the first element (an index
+/// borrows the whole container, so `xs[0]` and `xs[1]` overlap, but `s.a` and `s.b` don't).
+/// A reference covers its whole variable. ("Exclusivity" in docs/compiler.md, "C8.6", C901.)
+type Bor = { key: u64, path: List[u32], alias: bool }
+
+/// Whether place expression e has an element (or a reflected field) below its fields.
+fn path_closed(c: C, e: u32) -> bool {
+    let n = nd(c, e)
+    if n.kind == ast.EIndex || n.kind == ast.EFieldAt { return true }
+    if n.kind == ast.EField { return path_closed(c, n.a) }
+    false
+}
+
+/// The field names of place expression e, from its root variable down.
+fn field_path(c: C, e: u32) -> List[u32] {
+    let n = nd(c, e)
+    if n.kind == ast.EField {
+        let mut p = field_path(c, n.a)
+        if !path_closed(c, n.a) { p.push(n.b) }
+        return p
+    }
+    if n.kind == ast.EIndex || n.kind == ast.EFieldAt { return field_path(c, n.a) }
+    List.new()
+}
+
+/// The borrow of place expression e (rooted at r).
+fn bor_of(c: C, r: Root, e: u32) -> Bor {
+    let ck = canon(c, r.key)
+    if ck != r.key { return Bor(ck, List.new(), true) }
+    Bor(ck, field_path(c, e), false)
+}
+
+/// Whether two borrows overlap: the same variable, and one's fields a prefix of the other's.
+fn bor_overlap(a: Bor, b: Bor) -> bool {
+    if a.key != b.key { return false }
+    let n = if a.path.len() < b.path.len() { a.path.len() } else { b.path.len() }
+    for i in 0..n {
+        if a.path[i] != b.path[i] { return false }
+    }
+    true
+}
+
+/// A place an argument reads, with the borrow it needs.
+type Rd = { b: Bor, k: u64, line: u32, col: u32 }
+
+/// Every place an argument reads (like `idents`, but a chain of fields and elements is one read of
+/// the fields it selects: `p.x` reads only `p.x`, not all of `p`).
+fn reads(c: C, e: u32, inout out: List[Rd]) {
+    let n = nd(c, e)
+    if n.kind == ast.EField || n.kind == ast.EIndex || n.kind == ast.EFieldAt {
+        let r = root(c, e)
+        if r.ok {
+            out.push(Rd(bor_of(c, r, e), r.key, r.line, r.col))
+            // the index expressions along the chain
+            let mut x = n.copy()
+            while x.kind == ast.EField || x.kind == ast.EIndex || x.kind == ast.EFieldAt {
+                if x.kind == ast.EIndex { reads(c, x.b, inout out) }
+                x = nd(c, x.a)
+            }
+            return
+        }
+    }
+    if n.kind == ast.EIdent {
+        let k = ekey(c, n)
+        out.push(Rd(Bor(canon(c, k), List.new(), canon(c, k) != k), k, n.line, n.col))
+        return
+    }
+    match n.kind {
+        ast.EUnary => reads(c, n.b, inout out)
+        ast.ECast => reads(c, n.a, inout out)
+        ast.EField => reads(c, n.a, inout out)
+        ast.EFieldAt => reads(c, n.a, inout out)
+        ast.ERepeat => reads(c, n.a, inout out)
+        ast.EHole => reads(c, n.a, inout out)
+        ast.EFmt => { for i in 0..n.d { reads(c, at(c, n.c, i), inout out) } }
+        ast.ETry => reads(c, n.a, inout out)
+        ast.EBinary => {
+            reads(c, n.b, inout out)
+            reads(c, n.c, inout out)
+        }
+        ast.EIndex => {
+            reads(c, n.a, inout out)
+            reads(c, n.b, inout out)
+        }
+        ast.ECall => { for i in 0..n.d { reads(c, arg_expr(c, at(c, n.c, i)), inout out) } }
+        ast.EMethod => {
+            reads(c, n.a, inout out)
+            for i in 0..n.d { reads(c, arg_expr(c, at(c, n.c, i)), inout out) }
+        }
+        ast.EArray => { for i in 0..n.d { reads(c, at(c, n.c, i), inout out) } }
+        ast.ETuple => { for i in 0..n.d { reads(c, at(c, n.c, i), inout out) } }
+        _ => {}
+    }
+}
+
+/// The borrow as the message names it: `s.d.buf`.
+fn bor_name(c: C, b: Bor) -> List[u8] {
+    let mut t = kt(c, b.key)
+    for f in b.path {
+        t.push(46)
+        bytes.append(inout t, nm(c, f))
+    }
+    t
+}
+
+/// E0301 for an argument that reads place `rd` while `b` is borrowed mutably by the call.
+fn read_conflict(c: C, line: u32, col: u32, rd: Rd, b: Bor) -> diag.Diag {
+    if rd.k != b.key { return alias_read_error(c, line, col, rd.k, b.key) }
+    if b.path.len() > 0 || rd.b.path.len() > 0 {
+        if rd.b.path.len() == b.path.len() { return err("E0301", line, col, q("`", bor_name(c, b), "` is borrowed mutably by another argument of this call and can't be read here")) }
+        return err("E0301", line, col, q2("`", bor_name(c, rd.b), "` overlaps `", bor_name(c, b), "`, which is borrowed mutably by another argument of this call and can't be read here"))
+    }
+    err("E0301", line, col, q("`", kt(c, b.key), "` is borrowed mutably by another argument of this call and can't be read here"))
+}
+
 /// Every name an argument reads (not through calls' names or value forms).
 fn idents(c: C, e: u32, inout out: List[u64]) {
     let n = nd(c, e)
@@ -7836,12 +7962,12 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
             if unify_ast(c, fm, target, st, inout s2, gs) { sb = s2 }
         }
     }
-    // exclusivity of inout borrows
-    let mut roots: List[u64] = List.new()
-    // (a reference counts as the variable its place is rooted at: `canon`)
+    // exclusivity of inout borrows: by variable and the fields below it (`s.a` and `s.b` are
+    // disjoint; an index or a reference borrows the whole container or variable)
+    let mut roots: List[Bor] = List.new()
     if recv.has && ndm(c, fm, atm(c, fm, fnode.e, 0)).c == 1 {
         let r = root(c, recv.e)
-        if r.ok { roots.push(canon(c, r.key)) }
+        if r.ok { roots.push(bor_of(c, r, recv.e)) }
     }
     for i in 0..np {
         if arr.ids[i as usize] == NONE { continue }
@@ -7850,31 +7976,52 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
         if pn.c == 1 && a.b == 1 {
             let r = root(c, a.a)
             if r.ok {
-                let rk = canon(c, r.key)
-                if roots.contains(rk) {
-                    if rk != r.key { return Err(err("E0301", r.line, r.col, q2("`", kt(c, r.key), "` is an alias of `", kt(c, rk), "`, which is borrowed mutably more than once in this call"))) }
+                let bw = bor_of(c, r, a.a)
+                for o in roots {
+                    if !bor_overlap(o, bw) { continue }
+                    if bw.alias { return Err(err("E0301", r.line, r.col, q2("`", kt(c, r.key), "` is an alias of `", kt(c, bw.key), "`, which is borrowed mutably more than once in this call"))) }
+                    if o.path.len() == bw.path.len() && o.path.len() > 0 { return Err(err("E0301", r.line, r.col, q("`", bor_name(c, bw), "` is borrowed mutably more than once in this call"))) }
+                    if o.path.len() > 0 || bw.path.len() > 0 { return Err(err("E0301", r.line, r.col, q2("`", bor_name(c, bw), "` overlaps `", bor_name(c, o), "`, which is borrowed mutably more than once in this call"))) }
                     return Err(err("E0301", r.line, r.col, q("`", kt(c, r.key), "` is borrowed mutably more than once in this call")))
                 }
-                roots.push(rk)
+                roots.push(bw)
             }
         }
     }
+    // The place arguments that read what the call borrows. A call, an operator or a value form is
+    // evaluated first, to a value of its own, so what it read conflicts with nothing; so is a
+    // number, bool or enum tag read from a place: it is copied into the argument before the access
+    // begins, and the callee can't see the place change under it (two-phase, decision C902), which
+    // is decided once the argument has a type, below. Any other place is passed as a reference to
+    // where it is, and conflicts.
+    let mut late: List[Option[diag.Diag]] = List.new()
     for i in 0..np {
+        late.push(None)
         if arr.ids[i as usize] == NONE { continue }
         let a = nd(c, arr.ids[i as usize])
         let pn = ndm(c, fm, atm(c, fm, fnode.e, i + skip))
-        // (a call is evaluated before the access begins: nothing it read is still held)
         if pn.c != 1 && !evaluated_first(c, a.a) {
-            let mut ids: List[u64] = List.new()
-            idents(c, a.a, inout ids)
-            for r in roots {
-                for k in ids {
-                    if canon(c, k) == r {
-                        let x = nd(c, a.a)
-                        if k != r { return Err(alias_read_error(c, x.line, x.col, k, r)) }
-                        return Err(err("E0301", x.line, x.col, q("`", kt(c, r), "` is borrowed mutably by another argument of this call and can't be read here")))
-                    }
+            let mut rds: List[Rd] = List.new()
+            reads(c, a.a, inout rds)
+            let x = nd(c, a.a)
+            let mut found = false
+            for o in roots {
+                for rd in rds {
+                    if found || !bor_overlap(o, rd.b) { continue }
+                    found = true
+                    late[i as usize] = Some(read_conflict(c, x.line, x.col, rd, o))
                 }
+            }
+        }
+    }
+    // the receiver, when it is read (not `inout`) and a place: the callee holds a reference to it
+    if recv.has && ndm(c, fm, atm(c, fm, fnode.e, 0)).c != 1 && roots.len() > 0 && !evaluated_first(c, recv.e) && !scalar_copy(c, recv.pv.ty) {
+        let mut rds: List[Rd] = List.new()
+        reads(c, recv.e, inout rds)
+        let x = nd(c, recv.e)
+        for o in roots {
+            for rd in rds {
+                if bor_overlap(o, rd.b) { return Err(read_conflict(c, x.line, x.col, rd, o)) }
             }
         }
     }
@@ -7951,6 +8098,14 @@ fn call_decl(inout c: C, n: ast.Node, label: List[u8], fi: u32, sb0: Subst, recv
                 }
             }
             let mut v = expr(inout c, a.a, hint2)?
+            match late[i as usize] {
+                Some(ld) => {
+                    // a number, bool or enum tag read from a place is a value by the time the call starts
+                    if !scalar_copy(c, v.ty) { return Err(ld) }
+                    v = snap_read(inout c, v, x.line)
+                }
+                None => {}
+            }
             if value_arg_after(c, n.c, n.d, arr.widx[i as usize]) { v = snap_read(inout c, v, x.line) }
             ty = v.ty
             args.push(v.op)
@@ -8690,7 +8845,7 @@ fn trait_method(inout c: C, n: ast.Node, pv: PV, tr: u32) -> Result[V, diag.Diag
         }
         let rr = root(c, n.a)
         let ar = root(c, a.a)
-        if rr.ok && ar.ok && canon(c, rr.key) == canon(c, ar.key) {
+        if rr.ok && ar.ok && bor_overlap(bor_of(c, rr, n.a), bor_of(c, ar, a.a)) {
             let r = nd(c, n.a)
             if canon(c, rr.key) != rr.key { return Err(alias_read_error(c, r.line, r.col, rr.key, canon(c, ar.key))) }
             return Err(err("E0301", r.line, r.col, q("`", kt(c, rr.key), "` is borrowed mutably by another argument of this call and can't be read here")))
@@ -9448,15 +9603,17 @@ fn call_value(inout c: C, n: ast.Node, label: List[u8], fv: V) -> Result[V, diag
         }
     }
     // exclusivity of the inout arguments (as for a named function's)
-    let mut roots: List[u64] = List.new()
+    let mut roots: List[Bor] = List.new()
     for i in 0..n.d {
         let a = nd(c, at(c, n.c, i))
         if a.b == 1 && types.kind(c.t, ps[i as usize]) == types.T_INOUT {
             let r = root(c, a.a)
             if r.ok {
-                let rk = canon(c, r.key)
-                if roots.contains(rk) { return Err(err("E0301", r.line, r.col, q("`", kt(c, r.key), "` is borrowed mutably more than once in this call"))) }
-                roots.push(rk)
+                let bw = bor_of(c, r, a.a)
+                for o in roots {
+                    if bor_overlap(o, bw) { return Err(err("E0301", r.line, r.col, q("`", kt(c, r.key), "` is borrowed mutably more than once in this call"))) }
+                }
+                roots.push(bw)
             }
         }
     }
@@ -9480,14 +9637,23 @@ fn call_value(inout c: C, n: ast.Node, label: List[u8], fv: V) -> Result[V, diag
             args.push(pv.place + ir.ARG_PLACE)
             continue
         }
-        let mut ids: List[u64] = List.new()
-        idents(c, a.a, inout ids)
-        for rk in roots {
-            for k in ids {
-                if canon(c, k) == rk { return Err(err("E0301", x.line, x.col, q("`", kt(c, rk), "` is borrowed mutably by another argument of this call and can't be read here"))) }
+        let mut rds: List[Rd] = List.new()
+        reads(c, a.a, inout rds)
+        let mut late: Option[diag.Diag] = None
+        let mut hit = evaluated_first(c, a.a)
+        for o in roots {
+            for rd in rds {
+                if !hit && bor_overlap(o, rd.b) {
+                    hit = true
+                    late = Some(err("E0301", x.line, x.col, q("`", kt(c, o.key), "` is borrowed mutably by another argument of this call and can't be read here")))
+                }
             }
         }
         let v = expr(inout c, a.a, t)?
+        match late {
+            Some(ld) => { if !scalar_copy(c, v.ty) { return Err(ld) } }
+            None => {}
+        }
         if !same(c, v.ty, t) { return Err(mismatch(c, x.line, x.col, t, v.ty)) }
         args.push(v.op)
     }

@@ -1,0 +1,21 @@
+// mode: build
+// A `let` of a scalar place copies it: the later write doesn't show through (C900).
+type Cidr = { bits: usize, name: String }
+fn left(c: Cidr) -> usize {
+  let mut left = c.bits
+  left += 1
+  left
+}
+fn main() uses io {
+  let mut i = 0
+  let start = i
+  i += 1
+  assert start == 0
+  assert i == 1
+  let mut c = Cidr(3, String.from("c"))
+  let b = c.bits
+  c.bits = 4
+  assert b == 3
+  assert left(c) == 5
+  print(start)
+}

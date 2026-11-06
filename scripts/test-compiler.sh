@@ -66,8 +66,6 @@
 #             compiler (references by default) as well as by the seed (verify.sh); an
 #             X.next.out is this compiler's expected output where it deliberately differs
 #             from the seed's (it replaces X.out with the next seed).
-#   audit-refs: `eiderc audit-refs --json` of compiler/tests/audit/*.ei equals the hand-checked
-#             .out (the writes that change what a `let` reference sees).
 #   packages: compiler/tests/pkgs, packages with eider.toml and eider.lock (two packages
 #             with a util.ei, a dependency chain, vendored (.vendor/) and store dependencies, the
 #             package-import errors E0808/E0809/E0810, capability grants and E0204, `eiderc
@@ -599,7 +597,7 @@ if [ $mig_ok = 1 ]; then echo "ok   migration: $(wc -l <$tmp/mig) files rewritte
 fi
 # meaning: std's, the packages' and the examples' tests (run by verify.sh with the seed, where
 # `let` copies) give their .out with this compiler too, where `let` of a place is a reference
-# (docs/compiler.md, "C8.6"); a difference is code that relied on the copy (`eiderc audit-refs`)
+# (docs/compiler.md, "C8.6"); a difference is code that relied on the copy
 m_ok=0; m_n=0; m_skip=
 for f in tests/std/*.ei packages/*/tests/*.ei examples/*/tests/*.ei; do
   [ -f "${f%.ei}.out" ] || continue
@@ -619,11 +617,6 @@ for f in tests/std/*.ei packages/*/tests/*.ei examples/*/tests/*.ei; do
 done
 [ "$m_ok" = "$m_n" ] && echo "ok   meaning: $m_ok/$m_n std, package and example tests give their .out with references by default"
 [ -n "$m_skip" ] && echo "skip meaning: $(printf '%s\n' $m_skip | paste -sd, - | sed 's/,/, /g') (they load a pinned library): $novendor"
-# audit-refs: `eiderc audit-refs --json` of compiler/tests/audit/*.ei gives the hand-checked .out
-for f in compiler/tests/audit/*.ei; do
-  $new audit-refs --json "$f" >$tmp/ar 2>&1
-  if cmp -s $tmp/ar "${f%.ei}.out"; then echo "ok   audit-refs $f"; else echo "FAIL audit-refs $f"; diff "${f%.ei}.out" $tmp/ar | head -10; fail=1; fi
-done
 # migrate-strings: `eiderc migrate-strings` of compiler/tests/migrate_strings/*.src gives the
 # hand-checked .out (and the result checks), --portable the .portable, --json the .json
 for f in compiler/tests/migrate_strings/*.src; do

@@ -232,8 +232,8 @@ fn main() uses io {
 What a binding holds depends on the scrutinee (see [Memory model](memory.md#pattern-bindings)):
 
 - When the scrutinee is a place (a variable, field or element), a plain binding `x` is a
-  read-only reference into it, and `mut x` a mutable alias: writes through it change the
-  place. The place must be writable for `mut` (E0307).
+  read-only reference into it (a copy when its type is a scalar), and `mut x` a mutable alias:
+  writes through it change the place. The place must be writable for `mut` (E0307).
 - When the scrutinee is a fresh value (a call, a literal, a constructor), each binding owns
   its part; `mut` makes it a mutable local.
 - In `for` patterns each binding owns a copy of its part.

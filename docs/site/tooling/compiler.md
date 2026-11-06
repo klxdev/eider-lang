@@ -56,7 +56,6 @@ and exit code 2. With no arguments at all, eiderc prints its usage to stderr and
 | Command | What it does |
 |---|---|
 | `migrate-strings <file> [--json] [--portable]` | Print the file (`.ei`, or a `.md`'s eider code blocks) with each string literal that has a brace rewritten to mean what it meant before literals interpolated: a raw string when it has no backslash, else with its braces doubled; `--json` prints the fixes, `--portable` writes the braces as `\x7b`/`\x7d`. `scripts/migrate-strings.sh` runs it over files and directories |
-| `audit-refs <file> [--json]` | For code written when `let` copied: every write that changes what a live `let` or pattern reference sees, as a `note[audit]` with the `.copy()` that keeps the old meaning (with `--json`, a JSON object per line with `"audit":"reference"`); then `audit-refs: N write(s) change what a reference sees`. Exits 1 if the program has errors. |
 
 ### Help and version
 
@@ -84,7 +83,7 @@ print `eiderc <version>` (`eiderc 0.1.0`) and exit 0: the toolchain's version, f
 | `--no-opt` | `build` | compile at `-O0`, as `run` and `test` do (the watch uses it) |
 | `--ir` | `expand` | print the typed IR of the specializations instead of Eider source |
 | `--write`, `--check` | `fmt` | rewrite the files in place; list the files whose layout would change (see [Formatting](#formatting)) |
-| `--json` | every command that reports errors; `audit-refs` | diagnostics as JSON, one object per line on stdout |
+| `--json` | every command that reports errors | diagnostics as JSON, one object per line on stdout |
 | `--max-errors <n>` | every command that reports errors | show at most `n` errors (default 100; `0` shows all) |
 | `--all-errors` | `parse` | every syntax error, then the tree |
 | `--overlay <path> <text>` | `ide` | read `<path>` from the file `<text>` |

@@ -1,7 +1,7 @@
 // expect: E0308 6:5
 fn main() uses io {
-    let mut xs: List[i32] = List.new()
-    xs.push(1)
+    let mut xs: List[String] = List.new()
+    xs.push(String.from("a"))
     let first = xs[0]
     xs = List.new()
     print(first)

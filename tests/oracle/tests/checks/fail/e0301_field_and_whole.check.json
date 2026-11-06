@@ -1,0 +1,1 @@
+{"error":"E0301","span":{"file":"tests/checks/fail/e0301_field_and_whole.ei","line":7,"col":27},"message":"`s` overlaps `s.d`, which is borrowed mutably more than once in this call"}

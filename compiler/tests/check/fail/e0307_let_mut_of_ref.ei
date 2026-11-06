@@ -1,9 +1,9 @@
 // expect: E0307 7:17
-type P = { x: i32, y: i32 }
+type P = { x: i32, name: String }
 fn main() uses io {
     let mut ps: List[P] = List.new()
-    ps.push(P(1, 2))
+    ps.push(P(1, String.from("a")))
     let r = ps[0]
-    let mut q = r.x
+    let mut q = r.name
     print(q)
 }

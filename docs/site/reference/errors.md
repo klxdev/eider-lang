@@ -783,35 +783,68 @@ uses = ["fs"]
 
 ## E0301
 
-**Exclusivity of `inout`**: a variable passed `inout` to a call can't be passed again in
-the same call, neither `inout` nor as an ordinary argument, since the callee could see it
-change while reading it. A reference (a `let` of a place) counts as the variable it is
-rooted at, so passing `xs` `inout` and a reference into `xs` in one call is E0301 too
-(with a `.copy()` fix at the reference's binding).
+**Exclusivity of `inout`**: a place passed `inout` to a call can't be borrowed again in the
+same call, neither `inout` nor as an ordinary argument or receiver, since the callee could
+see it change while reading it. Places are compared by variable and field path: the
+fields of one record are separate (`feed(inout s.d, inout s.pending)` is fine), overlapping
+paths (`s` and `s.d`, `s.d` and `s.d.tags`) and two elements of one list (`xs[0]`, `xs[1]`)
+conflict. A reference (a `let` of a place) counts as the whole variable it is rooted at, so
+passing `xs` `inout` and a reference into `xs` in one call is E0301 too (with a `.copy()` fix
+at the reference's binding). A number, bool, `str` or payload-free enum read from a place is
+a copy by the time the call starts, so `bump(inout s, s.k)` and `p.add(p.x)` are fine; the
+same read of a String, List, record or tuple is not (bind a `.copy()` first). See
+[Memory model](memory.md#exclusivity).
 
 ```eider,compile_fail=E0301
-fn add_to(inout total: i32, n: i32) { total += n }
+fn add_to(inout total: List[i32], more: List[i32]) { total.push(more.len() as i32) }
 fn main() uses io {
-    let mut t = 1
+    let mut t: List[i32] = List.new()
     add_to(inout t, t)
-    print(t)
+    print(t.len())
 }
 ```
 
 Fix: copy the value first.
 
 ```eider
-fn add_to(inout total: i32, n: i32) { total += n }
+fn add_to(inout total: List[i32], more: List[i32]) { total.push(more.len() as i32) }
 fn main() uses io {
-    let mut t = 1
+    let mut t: List[i32] = List.new()
     let n = t.copy()
     add_to(inout t, n)
-    print(t)
+    print(t.len())
 }
 ```
 
 ```output
-2
+1
+```
+
+Disjoint fields are no conflict, and a scalar read from a place is a value before the access
+begins:
+
+```eider
+type D = { n: i32, log: List[String] }
+type S = { d: D, pending: List[String], k: i32 }
+
+fn feed(inout d: D, inout buf: List[String]) {
+    d.n += 1
+    buf.push(String.from("fed"))
+}
+fn grow(inout s: S, by: i32) { s.k += by }
+
+fn main() uses io {
+    let mut s = S(D(0, List.new()), List.new(), 2)
+    feed(inout s.d, inout s.pending)
+    grow(inout s, s.k)
+    print(s.pending.len())
+    print(s.k)
+}
+```
+
+```output
+1
+4
 ```
 
 ## E0302
@@ -973,7 +1006,9 @@ fn main() uses io {
 A **mutable alias of a read-only place**: `let mut x = p` (or a `mut x` pattern binding into
 `p`) where `p` is a parameter, a `let` binding or a reference that can't be written. An
 alias can't add write access. The compiler offers the fix `.copy()` after the initializer,
-which makes `x` an independent value (writes then change only the copy).
+which makes `x` an independent value (writes then change only the copy). A place of a
+scalar type (a number, bool, `str` or payload-free enum) is no case: `let mut left = c.bits`
+copies it, whoever owns `c`.
 
 ```eider,compile_fail=E0307
 type P = { x: i32 }
@@ -1003,14 +1038,17 @@ fn main() uses io { print(bumped(P(1))) }
 
 ## E0308
 
-The **protection rule**: while a reference (a `let` or pattern binding of a place) is still
-used later, no write may free, move or replace memory it points into: `push`, `pop`,
-`clear`, `insert`, `remove`, `push_str`, `append` or `push_byte` on a List or String it
-points into, assigning over the place that holds it (or the enum value whose payload it
-binds), `take`/`replace`, and passing that place `inout`. Plain writes to scalar fields and
-elements are allowed. The compiler offers the fix `.copy()` at the reference's binding
-(none in a generic body or for a type without `Copy`); the other fix is to use the
-reference before the write. See [Memory model](memory.md).
+The **protection rule**: while a read-only reference (a `let` or pattern binding of a
+non-scalar place) is still used later, no write may change what it names, and none may free,
+move or replace memory it points into: an assignment to the place or to a part of it or to
+the place it is part of, `push`, `pop`, `clear`, `insert`, `remove`, `push_str`, `append` or
+`push_byte` on a List or String, `take`/`replace`, and passing such a place `inout` (also as
+`inout self`). Two indices compare as equal, so a reference to `orders[0]` is changed by a
+write to `orders[1]`. A scalar `let` is a copy, so writes to its place are no case. The
+message says `refers into it` where the write frees or moves memory the reference points
+into (and `refers to` where it changes what it names). The compiler offers the fix `.copy()`
+at the reference's binding (none in a generic body or for a type without `Copy`); the other
+fix is to use the reference before the write. See [Memory model](memory.md).
 
 ```eider,compile_fail=E0308
 fn main() uses io {

@@ -7,7 +7,7 @@ program against and the handful of errors that enforce it, each with its fix.
 ## The six rules
 
 1. **Everything is a value.** Binding or passing something doesn't copy it: `let x = place`
-   refers to the place.
+   refers to the place (a number, bool or other scalar is simply copied).
 2. **To change something through a binding, declare it `let mut`** (a mutable alias of the
    place) **or pass it `inout`.** To get an independent value, call `.copy()`.
 3. **A reference lives inside its scope.** When it escapes (returned, stored, sent to a
@@ -28,8 +28,12 @@ A *place* is a variable, a field or an element, or any chain of them:
 literal, a constructor, an arithmetic result) is a *fresh value*.
 
 - `let x = place` binds a **read-only reference**. Nothing is copied; every use of `x`
-  reads the place as it is at that moment, so `x` sees later writes to it.
-- `let mut x = place` binds a **mutable alias**: writing through `x` writes the place.
+  reads the place as it is at that moment, which is why the compiler refuses a write to
+  that place while `x` is still used later (E0308, below). A number, a bool, a `str` or an
+  enum without payloads is a **scalar**: `let start = i` copies it, so `i += 1` afterwards
+  doesn't change `start`.
+- `let mut x = place` binds a **mutable alias**: writing through `x` writes the place (a
+  scalar place is copied, as above).
 - `let x = fresh` and `let mut x = fresh` **own** the value, as in any language.
 - `x.copy()` is a fresh value: an independent clone that shares nothing with `x`.
 
@@ -41,18 +45,18 @@ fn main() uses io {
     accounts.push(Account(String.from("ada"), 100))
 
     let view = accounts[0]             // read-only reference
+    print(view.owner)                  // reads the place; last use of view
     let mut acct = accounts[0]         // mutable alias
     let snapshot = accounts[0].copy()  // independent value
 
     acct.balance += 50
-    print(view.balance)                // the reference sees the write
-    print(accounts[0].balance)         // so does the place itself
-    print(snapshot.balance)            // the copy doesn't
+    print(accounts[0].balance)         // the place itself changed
+    print(snapshot.balance)            // the copy didn't
 }
 ```
 
 ```output
-150
+ada
 150
 100
 ```
@@ -132,8 +136,9 @@ fn main() uses io {
 ["new", "urgent"]
 ```
 
-An `inout` argument is exclusive for the call: the same variable can't also be passed as
-another argument (E0301). There are no `mut` parameters; to change a local copy of a
+An `inout` argument is exclusive for the call: the same variable (or a field of it that
+overlaps) can't also be passed as another argument (E0301); different fields of one record
+can (`feed(inout s.decoder, inout s.pending)`). There are no `mut` parameters; to change a local copy of a
 parameter, write `let mut x = x.copy()`.
 
 ## Escapes become values
@@ -191,23 +196,24 @@ References make one new kind of mistake possible: changing a place in a way that
 moves or reinterprets the memory a reference still points into. Eider forbids exactly that,
 at compile time:
 
-> While a reference is alive (until its last use), no write may free, move or replace the
-> memory it points into.
+> While a reference is alive (until its last use), no write may change what it names, and
+> none may free, move or replace the memory it points into.
 
 Allowed while a reference is alive:
 
-- writing a scalar field or element (`orders[0].qty = 5`; the reference sees it);
-- writing through a `let mut` alias;
-- replacing the very place a reference names (`orders[0] = other`; the reference then
-  sees `other`);
-- resizing a container you hold a reference *to* (not *into*);
+- writing a scalar field or element (`orders[0].qty = 5`), because the `let` of a scalar
+  copied it: there is no reference;
+- writing another field, another variable, anything the reference does not overlap
+  (`let n = o.name`, then `o.qty = 5`);
 - anything after the reference's last use, or on a path that never reaches it.
 
-Rejected (E0308): resizing a List or String a reference points into (`push`, `pop`,
-`clear`, `push_str`, `append`, `push_byte`), assigning over a String, List or record that contains what it points
-into, replacing an enum whose payload it points into, or passing such a place `inout`.
-Element indices aren't tracked: a reference to `orders[i]` and a `push` to `orders`
-conflict whatever `i` is.
+Rejected (E0308): any assignment to a place that overlaps a reference that is used later
+(`let o = orders[0]`, `orders[0].qty = 5`, `print(o.name)`), resizing a List or String a
+reference points into (`push`, `pop`, `clear`, `push_str`, `append`, `push_byte`), assigning
+over a String, List or record that contains what it names, replacing an enum whose payload
+it points into, or passing such a place `inout`. Element indices aren't tracked: a reference
+to `orders[i]` and a write to `orders[j]`, or a `push` to `orders`, conflict whatever `i`
+and `j` are.
 
 ## Common errors and their fixes
 
@@ -321,7 +327,10 @@ Declare it `let mut total = 0`.
 ### E0301: two arguments touching the same variable
 
 An `inout` argument is exclusive for the call. Passing the same variable twice, or passing
-it `inout` while another argument refers into it, is E0301:
+it `inout` while another argument refers into it, is E0301. Different fields of one record
+are different places (`feed(inout s.d, inout s.pending)`), and a number read from a place is a
+value before the call starts (`bump(inout s, s.k)`); two elements of one list, and a String,
+List or record read beside an `inout` of an overlapping place, are not:
 
 ```eider,compile_fail=E0301
 fn move_all(inout from: List[i32], inout to: List[i32]) {

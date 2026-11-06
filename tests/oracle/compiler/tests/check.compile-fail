@@ -295,6 +295,15 @@ compile-fail tests (compiler/tests/check/fail)
   ok   e0308_no_copy.ei             E0308 at 6:8
   ok   e0308_pop.ei                 E0308 at 7:8 (fix compiles)
   ok   e0308_push.ei                E0308 at 7:12 (fix compiles)
+  ok   e0308_sees_container.ei      E0308 at 5:8 (fix compiles)
+  ok   e0308_sees_field.ei          E0308 at 6:5 (fix compiles)
+  ok   e0308_sees_generic.ei        E0308 at 5:5
+  ok   e0308_sees_inout_arg.ei      E0308 at 7:5 (fix compiles)
+  ok   e0308_sees_inout_self.ei     E0308 at 7:14 (fix compiles)
+  ok   e0308_sees_loop.ei           E0308 at 7:9 (fix compiles)
+  ok   e0308_sees_match_scrutinee.ei E0308 at 8:13 (fix compiles)
+  ok   e0308_sees_scalar_field_of_alias.ei E0308 at 7:5 (fix compiles)
+  ok   e0308_sees_tuple_pattern.ei  E0308 at 5:12 (fix compiles)
   ok   e0308_take_while_referenced.ei E0308 at 7:18 (fix compiles)
   ok   e0308_through_alias.ei       E0308 at 7:9 (fix compiles)
   ok   e0309_break_in_defer.ei      E0309 at 4:28
@@ -734,6 +743,7 @@ compile-pass tests (compiler/tests/check/pass)
   ok   c84_traits_ok.ei
   ok   c85_std_without_ffi.ei
   ok   c86_refs_ok.ei
+  ok   c87_scalar_copy_ok.ei
   ok   c8_bitwise_ok.ei
   ok   c8_gaps_ok.ei
   ok   comptime_chain.ei
@@ -809,6 +819,6 @@ compile-pass tests (compiler/tests/check/pass)
   ok   v0_modules.ei
   ok   var_is_a_name.ei
 
-807 passed, 0 failed; error-code coverage 63/76
+817 passed, 0 failed; error-code coverage 63/76
 codes without a compile-fail test: E0118 E0120 E0121 E0122 E0302 E0310 E0402 E0607 E0608 E0806 E0808 E0812 E0813
 --- exit 0

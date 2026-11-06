@@ -2,70 +2,76 @@
 fn area -> u32
   %0 param s: Shape
   %1 temp: bool
-  %2 temp: u32
+  %2 let r: u32
   %3 temp: u32
   %4 temp: u32
   %5 temp: u32
-  %6 temp: bool
+  %6 temp: u32
   %7 temp: bool
   %8 temp: bool
-  %9 temp: u32
-  %10 temp: bool
-  %11 temp: u32
-  %12 temp: bool
+  %9 temp: bool
+  %10 temp: u32
+  %11 temp: bool
+  %12 temp: u32
   %13 temp: bool
   %14 temp: bool
-  %15 temp: u32
-  %16 temp: bool
+  %15 temp: bool
+  %16 temp: u32
   %17 temp: bool
-  %18 temp: u32
-  %19 temp: u32
-  %20 temp: u32
+  %18 temp: bool
+  %19 let w: u32
+  %20 let h: u32
+  %21 temp: u32
+  %22 temp: u32
+  %23 temp: u32
   {
     %1 = tag %0 is <0>
     if %1 {
       %2 = read %0.<0>.0
-      %3 = 3u32 * %2  @6
-      %4 = read %0.<0>.0
-      %5 = %3 * %4  @6
-      return %5
+      %3 = read %2
+      %4 = 3u32 * %3  @6
+      %5 = read %2
+      %6 = %4 * %5  @6
+      return %6
     } else {
-      %8 = tag %0 is <1>
+      %9 = tag %0 is <1>
+      %8 = %9
+      if %8 {
+        %10 = read %0.<1>.0
+        %11 = %10 == 1u32
+        %8 = %11
+      } else {
+      }
+      if %8 {
+        %12 = read %0.<1>.1
+        %13 = %12 == 1u32
+        %8 = %13
+      } else {
+      }
       %7 = %8
       if %7 {
-        %9 = read %0.<1>.0
-        %10 = %9 == 1u32
-        %7 = %10
       } else {
-      }
-      if %7 {
-        %11 = read %0.<1>.1
-        %12 = %11 == 1u32
-        %7 = %12
-      } else {
-      }
-      %6 = %7
-      if %6 {
-      } else {
-        %14 = tag %0 is <1>
-        %13 = %14
-        if %13 {
-          %15 = read %0.<1>.0
-          %16 = %15 == 0u32
-          %13 = %16
+        %15 = tag %0 is <1>
+        %14 = %15
+        if %14 {
+          %16 = read %0.<1>.0
+          %17 = %16 == 0u32
+          %14 = %17
         } else {
         }
-        %6 = %13
+        %7 = %14
       }
-      if %6 {
+      if %7 {
         return 1u32
       } else {
-        %17 = tag %0 is <1>
-        if %17 {
-          %18 = read %0.<1>.0
-          %19 = read %0.<1>.1
-          %20 = %18 * %19  @8
-          return %20
+        %18 = tag %0 is <1>
+        if %18 {
+          %19 = read %0.<1>.0
+          %20 = read %0.<1>.1
+          %21 = read %19
+          %22 = read %20
+          %23 = %21 * %22  @8
+          return %23
         } else {
           return 0u32
         }

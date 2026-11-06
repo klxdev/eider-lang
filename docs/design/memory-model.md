@@ -59,8 +59,8 @@ Simple like Go and Zig, with the memory-safety and correctness guarantees of Rus
 
 Implemented by C8.6 (docs/compiler.md, "C8.6: references by default", which records the
 details decided there: the protection rule is E0308 with a `.copy()` fix, a mutable alias of
-a read-only place is E0307, `var` was rewritten by `eiderc migrate-var` and removed in 0.7.5, and `eiderc
-audit-refs` lists the writes whose meaning changed when `let` stopped copying).
+a read-only place is E0307, `var` was rewritten by `eiderc migrate-var` and removed in 0.7.5, and since
+0.7.7 a `let` of a scalar copies and no write may change what a live reference names).
 
 **What a reference is.** A reference is its *place* (root variable, fields, element indices,
 payloads), with every index evaluated once at the binding (and bounds-checked there); the

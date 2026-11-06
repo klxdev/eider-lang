@@ -1,0 +1,1 @@
+{"error":"E0301","span":{"file":"tests/checks/fail/e0301_same_list_two_elements.ei","line":5,"col":28},"message":"`xs` is borrowed mutably more than once in this call"}

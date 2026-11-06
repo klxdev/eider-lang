@@ -1,0 +1,10 @@
+// expect: E0308 7:9
+type O = { qty: i32, name: String }
+fn main() uses io {
+    let mut o = O(1, String.from("a"))
+    let n = o.name
+    for i in 0..3 {
+        o.name = String.from("b")
+    }
+    print(n)
+}

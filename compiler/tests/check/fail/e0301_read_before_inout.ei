@@ -1,6 +1,6 @@
 // expect: E0301 5:7
-fn f(n: i32, inout a: i32) {}
+fn f(n: List[i32], inout a: List[i32]) {}
 fn main() {
-    let mut x = 1
+    let mut x: List[i32] = List.new()
     f(x, inout x)
 }

@@ -47,10 +47,14 @@ compile-fail tests (tests/checks/fail)
   ok   e0203_unknown_capability.ei  E0203 at 2:16
   ok   e0204_ungranted_ffi.ei       E0204 at 2:1
   ok   e0204_ungranted_fs.ei        E0204 at 2:1
+  ok   e0301_field_and_whole.ei     E0301 at 7:27
   ok   e0301_field_arg_receiver.ei  E0301 at 6:18
+  ok   e0301_field_read_overlaps.ei E0301 at 7:20
   ok   e0301_inout_and_read.ei      E0301 at 6:14
+  ok   e0301_overlapping_fields.ei  E0301 at 7:27
   ok   e0301_place_arg_receiver.ei  E0301 at 7:13
-  ok   e0301_same_type_cast_place.ei E0301 at 7:15
+  ok   e0301_receiver_read_overlaps.ei E0301 at 8:7
+  ok   e0301_same_list_two_elements.ei E0301 at 5:28
   ok   e0301_two_inout.ei           E0301 at 6:23
   ok   e0302_inout_in_field.ei      E0302 at 2:21
   ok   e0302_inout_in_return.ei     E0302 at 2:11
@@ -63,8 +67,10 @@ compile-fail tests (tests/checks/fail)
   ok   e0306_break_outside_loop.ei  E0306 at 3:3
   ok   e0306_unknown_label.ei       E0306 at 3:42
   ok   e0307_mut_alias_of_param.ei  E0307 at 4:17 (fix compiles)
+  ok   e0308_assign_while_referenced.ei E0308 at 6:3 (fix compiles)
   ok   e0308_closure_captures_reference.ei E0308 at 7:12 (fix compiles)
   ok   e0308_extend_list_while_referenced.ei E0308 at 7:12 (fix compiles)
+  ok   e0308_inout_while_referenced.ei E0308 at 7:3 (fix compiles)
   ok   e0308_insert_list_while_referenced.ei E0308 at 7:12 (fix compiles)
   ok   e0308_push_while_referenced.ei E0308 at 7:12 (fix compiles)
   ok   e0308_remove_list_while_referenced.ei E0308 at 7:23 (fix compiles)
@@ -182,11 +188,13 @@ compile-pass tests (tests/checks/pass)
   ok   pass_match_all.ei
   ok   pass_method_type_args.ei
   ok   pass_named_args.ei
+  ok   pass_scalar_let_copies.ei
   ok   pass_shadow_in_inner_scope.ei
+  ok   pass_two_phase_and_fields.ei
   ok   pass_type_args.ei
   ok   pass_value_args.ei
   ok   pass_value_forms.ei
   ok   pass_wrapping_and_cast.ei
 
-186 passed, 0 failed; error-code coverage 76/76
+194 passed, 0 failed; error-code coverage 76/76
 --- exit 0

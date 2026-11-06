@@ -6,9 +6,7 @@
 // usage error (exit 2). `lex` dumps tokens (one per line: line:col kind [value]), `parse`
 // the AST (dump.ei), `ir` the typed IR (ir.ei); `build`, `run` and `test` go through
 // driver.ei, `test --compile-fail` through suite.ei, `caps` through resolve.caps_json ("C8.5"),
-// `migrate-imports` through resolve.import_fixes ("C8.26"), `audit-refs`
-// through check.check_audit (every write that changes what a `let` or pattern reference
-// sees, which code written when `let` copied didn't mean; then the errors, if any).
+// `migrate-imports` through resolve.import_fixes ("C8.26").
 // `--lib` checks (and emits) the file as a library: no `main`, at least one `export fn`.
 // `-l <lib>` (repeatable) links a C library into build, run, test and build --lib.
 // `--wasm` checks (and emits) the file as a WebAssembly module (a library whose exports take
@@ -147,8 +145,6 @@ fn usage_text() -> List[u8] {
         "                                             (--portable: written as escapes)",
         "  eiderc migrate-attrs <file> [--json]       print the file (.ei, or a .md's eider blocks) with each bare `@name(...)`",
         "                                             attribute written `@[name(...)]` (the only form)",
-        "  eiderc audit-refs <file.ei> [--json]       every write that changes what a `let` reference sees (it was a copy",
-        "                                             before C8.6), with the `.copy()` that keeps the old meaning",
         "  eiderc ide <file.ei> [--overlay <path> <text>]  print the IDE analysis (ide.ei): symbols, refs, types;",
         "                                             --overlay (repeatable) reads <path> from the file <text>",
         "  eiderc doc <file.ei | dir> [--json] [--private]  the API of a package directory or a program's package:",
@@ -210,7 +206,7 @@ fn quoted(pre: str, a: List[u8]) -> List[u8] {
 }
 
 fn known_cmd(c: List[u8]) -> bool {
-    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-imports") || is(c, "migrate-strings") || is(c, "migrate-attrs") || is(c, "audit-refs") || is(c, "doc") || is(c, "fmt") || is(c, "emit-llvm") || is(c, "cache") || is(c, "lint") || is(c, "expand")
+    is(c, "lex") || is(c, "parse") || is(c, "check") || is(c, "ir") || is(c, "emit-header") || is(c, "build") || is(c, "run") || is(c, "test") || is(c, "ide") || is(c, "caps") || is(c, "migrate-imports") || is(c, "migrate-strings") || is(c, "migrate-attrs") || is(c, "doc") || is(c, "fmt") || is(c, "emit-llvm") || is(c, "cache") || is(c, "lint") || is(c, "expand")
 }
 
 /// The entry module of the package in the current directory (`eiderc lint` with no file).
@@ -587,44 +583,6 @@ fn run_doc(a: Args) uses io, fs {
     }
 }
 
-/// `eiderc audit-refs`: one finding per line (`--json`: a JSON object per line, with "audit"
-/// in place of "error"; else rendered as notes), then (human output) how many there are.
-fn audit_report(hits: List[diag.Diag], a: Args, src: List[u8]) uses io, fs {
-    for d in hits {
-        if a.json {
-            let j = diag.json(d, a.file)
-            // {"error":"audit", ... -> {"audit":"reference", ...
-            let mut out = sys.lit("\x7b\"audit\":\"reference\"")
-            bytes.append(inout out, bytes.slice(j, 16, j.len()))
-            io.outln(out)
-        } else {
-            // rendered like a diagnostic, as a note: `note[audit]: ...`
-            let mut d2 = d.copy()
-            d2.msg = diag.demangle(d.msg)
-            let elsewhere = d2.file.len() > 0 && !bytes.eq(d2.file, a.file)
-            let mut text: List[u8] = List.new()
-            if elsewhere {
-                let other: List[u8] = match fs.read(d2.file) {
-                    Ok(t) => t
-                    Err(_) => List.new()
-                }
-                text = diag.render(d2, d2.file, other)
-            } else {
-                text = diag.render(d2, a.file, src)
-            }
-            let mut out = sys.lit("note")
-            bytes.append(inout out, bytes.slice(text, 5, text.len()))
-            io.err(out)
-        }
-    }
-    if !a.json {
-        let mut m = sys.lit("audit-refs: ")
-        bytes.append(inout m, bytes.from_u64(hits.len() as u64))
-        bytes.append(inout m, sys.lit(" write(s) change what a reference sees"))
-        io.errln(m)
-    }
-}
-
 /// The settings `eiderc test` starts the test program with: `--filter NAME` (only the tests whose
 /// name contains it run; the runtime's ei_test), `--bench` (std/testing's `bench` measures) and
 /// `--fuzz N` (std/testing's `fuzz` runs N cases).
@@ -908,19 +866,13 @@ fn main() uses io, fs, net, clock {
     // `comptime` constants are evaluated between loading and checking, as tests/oracle expects
     let ev = consteval.eval_all(ld.p)
     for d in ev.diags { diags.push(d) }
-    let audit = is(a.cmd, "audit-refs")
-    let k = if audit { check.check_audit(ev.p) } else { check.check_all(ev.p, a.lib, a.wasm) }
+    let k = check.check_all(ev.p, a.lib, a.wasm)
     for d in k.diags {
         // a module with no `main` can be checked, tested and linted (`check`, `test`, `lint`): it is only a
         // program that needs one (docs/compiler.md, "Library modules")
         let module_ok = (is(a.cmd, "check") || is(a.cmd, "test") || is(a.cmd, "lint")) && !a.lib && !a.wasm && !a.wasm_core
         if module_ok && bytes.eq(sys.lit(d.code), sys.lit("E0112")) && d.line == 1 && d.col == 1 && bytes.eq(d.msg, sys.lit("no `main` function")) { continue }
         diags.push(d)
-    }
-    if audit {
-        audit_report(check.audit_hits(k.c), a, src)
-        if diags.len() > 0 { fail(diags, a, src) }
-        return
     }
     // nothing is lowered after an error
     if diags.len() > 0 { fail(diags, a, src) }

@@ -1,8 +1,8 @@
 // expect: E0308 7:8
 fn main() uses io {
-    let mut xs: List[List[i32]] = List.new()
+    let mut xs: List[List[String]] = List.new()
     xs.push(List.new())
-    xs[0].push(1)
+    xs[0].push(String.from("a"))
     let n = xs[0][0]
     xs.pop()
     print(n)

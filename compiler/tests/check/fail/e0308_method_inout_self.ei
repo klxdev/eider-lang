@@ -1,14 +1,14 @@
 // expect: E0308 12:7
-type Stack = { items: List[i32] }
+type Stack = { items: List[String] }
 impl Stack {
-    fn push(inout self, x: i32) { self.items.push(x) }
+    fn push(inout self, x: String) { self.items.push(x) }
 }
 fn main() uses io {
     let mut s = Stack(List.new())
-    s.push(1)
+    s.push(String.from("a"))
     let top = s.items[0]
     print(top)
     let again = s.items[0]
-    s.push(2)
+    s.push(String.from("b"))
     print(again)
 }

@@ -1,1 +1,1 @@
-{"error":"E0301","span":{"file":"tests/checks/fail/e0301_field_arg_receiver.ei","line":6,"col":18},"message":"`p` is borrowed mutably by another argument of this call and can't be read here"}
+{"error":"E0301","span":{"file":"tests/checks/fail/e0301_field_arg_receiver.ei","line":6,"col":18},"message":"`p.x` overlaps `p`, which is borrowed mutably by another argument of this call and can't be read here"}

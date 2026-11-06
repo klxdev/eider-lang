@@ -1,9 +1,9 @@
 // expect: E0308 7:9
 fn main() uses io {
-    let mut xs: List[i32] = List.new()
-    xs.push(1)
+    let mut xs: List[String] = List.new()
+    xs.push(String.from("a"))
     let mut all = xs
     let one = xs[0]
-    all.push(2)
+    all.push(String.from("b"))
     print(one)
 }

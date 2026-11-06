@@ -41,8 +41,6 @@ usage:
                                              (--portable: written as escapes)
   eiderc migrate-attrs <file> [--json]       print the file (.ei, or a .md's eider blocks) with each bare `@name(...)`
                                              attribute written `@[name(...)]` (the only form)
-  eiderc audit-refs <file.ei> [--json]       every write that changes what a `let` reference sees (it was a copy
-                                             before C8.6), with the `.copy()` that keeps the old meaning
   eiderc ide <file.ei> [--overlay <path> <text>]  print the IDE analysis (ide.ei): symbols, refs, types;
                                              --overlay (repeatable) reads <path> from the file <text>
   eiderc doc <file.ei | dir> [--json] [--private]  the API of a package directory or a program's package:

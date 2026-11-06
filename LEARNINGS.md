@@ -19,7 +19,7 @@
 - Top-level `uses` is not valid; capabilities are per-fn. `for i in 0..4` with literal bounds gives i32 (cast to index).
 - Type decl variants need a leading `|`. Prelude (Option/Result) is Eider source in `core/prelude.ei`, parsed before user items.
 - Stripping redundant parentheses from generated C must be string-literal aware; clang warns on `if ((a == b))`.
-- References (C8.6): `let` of a place no longer copies, so code that read a place into a `let` and then wrote the place silently changes meaning. `eiderc audit-refs` reports every write overlapping a live reference (not only invalidating ones) with a `.copy()` fix that keeps the old meaning under both the seed and the new compiler; run it on code written before C8.6 when it merges.
+- References (C8.6, C900): `let` of a place of a non-scalar type names the place, and the checker refuses a write to an overlapping place while the reference is used later (E0308, with a `.copy()` fix); a scalar (number, bool, `str`, payload-free enum) is copied by `let`. Old code that read a place into a `let` and wrote the place afterwards is E0308 now, not a silent change (`eiderc audit-refs` is gone).
 - Ownership model (S2): value semantics. Reading owned data out of a place clones; fresh rvalues (temporaries) move. Params are borrowed. Frames = per-block drop lists; return/break/continue/`?` drop outer frames. Pattern bindings clone (no aliasing).
 - A mutating method receiver (push/insert/...) must stay a place; never hoist it into a by-value temp while ordering operands (that leaked a List in the first draft).
 - Closures capture a snapshot (clone) in a heap env; can't mutate captured vars. Value-form closure bodies (`if`/`match`/block) need a return type from context or `-> T`.

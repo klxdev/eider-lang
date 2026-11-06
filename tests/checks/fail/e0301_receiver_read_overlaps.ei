@@ -1,0 +1,9 @@
+// expect: E0301 8:7
+type D = { n: i32, tags: List[u8] }
+type S = { d: D, pending: List[u8] }
+impl D { fn peek(self, inout other: D) {} }
+fn main() {
+    let mut s = S(D(1, List.new()), List.new())
+    s.pending.push(1)
+    s.d.peek(inout s.d)
+}

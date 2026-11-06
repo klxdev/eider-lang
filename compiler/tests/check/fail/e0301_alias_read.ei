@@ -1,9 +1,9 @@
 // expect: E0301 7:18
-type P = { x: i32, tags: List[i32] }
-fn add(inout p: P, n: i32) { p.tags.push(n) }
+type P = { name: String, tags: List[i32] }
+fn add(inout p: P, n: String) { p.tags.push(1) }
 fn main() uses io {
-    let mut p = P(1, List.new())
-    let x = p.x
+    let mut p = P(String.from("a"), List.new())
+    let x = p.name
     add(inout p, x)
     print(p.tags.len())
 }

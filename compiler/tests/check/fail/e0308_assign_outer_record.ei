@@ -1,8 +1,8 @@
 // expect: E0308 7:5
-type Inv = { items: List[i32], n: i32 }
+type Inv = { items: List[String], n: i32 }
 fn main() uses io {
     let mut inv = Inv(List.new(), 0)
-    inv.items.push(4)
+    inv.items.push(String.from("a"))
     let it = inv.items[0]
     inv = Inv(List.new(), 1)
     print(it)

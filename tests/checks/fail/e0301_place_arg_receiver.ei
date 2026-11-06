@@ -1,8 +1,8 @@
 // expect: E0301 7:13
-type P = { x: i32 }
-impl P { fn add(inout self, n: i32) { self.x += n } }
+type P = { x: List[i32] }
+impl P { fn add(inout self, n: List[i32]) { self.x.push(1) } }
 fn main() {
-    let mut p = P(1)
-    p.add(1)
+    let mut p = P(List.new())
+    p.add(List.new())
     p.add(p.x)
 }

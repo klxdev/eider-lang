@@ -1,0 +1,116 @@
+// A `let` of a scalar place copies it (docs/compiler.md, "C8.6", "Scalars are copied", C900);
+// two-phase scalar arguments of an `inout` call (C902); disjoint fields borrowed together
+// (C901). Expected output: scalar_copy.out.
+type Cidr = { bits: usize, name: String }
+type Color = | Red | Green
+type Cell = | Num(i32) | Text(String)
+type D = { n: i32, log: List[String] }
+type S = { d: D, pending: List[String], k: i32, color: Color, label: str }
+
+fn count(c: Cidr) -> usize {
+    let mut left = c.bits
+    let mut n: usize = 0
+    while left > 0 {
+        left -= 1
+        n += 1
+    }
+    n + c.bits
+}
+
+fn feed(inout d: D, inout buf: List[String]) {
+    d.n += 1
+    buf.push(String.from("fed"))
+    d.log.push(String.from("log"))
+}
+
+fn add(inout a: i32, b: i32) uses io {
+    a += 10
+    print(b)
+}
+
+impl S {
+    fn go(inout self) { feed(inout self.d, inout self.pending) }
+    fn grow(inout self, by: i32) { self.k += by }
+}
+
+fn main() uses io {
+    // the issue: start is a copy
+    let mut i = 0
+    let start = i
+    i += 1
+    print(start)
+    print(i)
+
+    // fields, elements, bools, enums without payloads, str
+    let mut s = S(D(0, List.new()), List.new(), 5, Red, "one")
+    let k = s.k
+    let col = s.color
+    let lab = s.label
+    s.k = 6
+    s.color = Green
+    s.label = "two"
+    print(k)
+    print(lab)
+    match col {
+        Red => print("red")
+        Green => print("green")
+    }
+    let mut xs = [1, 2, 3]
+    let x1 = xs[1]
+    xs[1] = 20
+    print(x1)
+    let mut flag = true
+    let f0 = flag
+    flag = false
+    print(f0)
+
+    // `let mut` of a scalar place copies it too, also of a read-only place
+    let mut m = s.k
+    m += 100
+    print(s.k)
+    print(count(Cidr(3, String.from("c"))))
+
+    // pattern bindings of scalars are copies; a non-scalar one is a reference
+    let mut cells: List[Cell] = List.new()
+    cells.push(Num(7))
+    cells.push(Text(String.from("t")))
+    match cells[0] {
+        Num(n) => {
+            cells[0] = Num(8)
+            print(n)
+        }
+        Text(t) => print(t)
+    }
+    let mut pair = (1, String.from("p"))
+    let (pn, ps) = pair
+    pair.0 = 2
+    print(pn)
+    print(ps)
+    // a `mut` pattern binding is still an alias into the place
+    match cells[0] {
+        Num(mut n) => { n += 1 }
+        Text(_) => {}
+    }
+    match cells[0] {
+        Num(n) => print(n)
+        Text(_) => {}
+    }
+
+    // two-phase: a scalar read from a place is a value before the access begins
+    let mut a = 1
+    add(inout a, a)
+    print(a)
+    add(inout s.k, s.k)
+    print(s.k)
+    s.grow(s.k)
+    print(s.k)
+    s.grow(-s.k)
+    print(s.k)
+
+    // disjoint fields
+    s.go()
+    feed(inout s.d, inout s.pending)
+    print(s.d.n)
+    print(s.pending.len())
+    print(s.d.log.len())
+}

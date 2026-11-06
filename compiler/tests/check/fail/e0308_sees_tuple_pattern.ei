@@ -1,0 +1,8 @@
+// expect: E0308 5:12
+fn main() uses io {
+    let mut pair = (1, String.from("one"))
+    let (n, s) = pair
+    pair.1.push_str("!")
+    print(n)
+    print(s)
+}

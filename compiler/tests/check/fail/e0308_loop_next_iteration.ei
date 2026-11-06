@@ -1,12 +1,12 @@
 // expect: E0308 9:12
 fn main() uses io {
-    let mut xs: List[i32] = List.new()
-    xs.push(1)
+    let mut xs: List[String] = List.new()
+    xs.push(String.from("a"))
     let o = xs[0]
     let mut i = 0
     while i < 3 {
         print(o)
-        xs.push(i)
+        xs.push(String.from("b"))
         i += 1
     }
 }

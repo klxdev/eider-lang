@@ -59,19 +59,21 @@ fn main -> () uses io
   %4 temp: i32
   %5 temp: (bool, i32)
   %6 let t: (bool, i32)
-  %7 temp: bool
-  %8 temp: i32
-  %9 temp: Sq
-  %10 var s: Sq
+  %7 let x: bool
+  %8 let y: i32
+  %9 temp: bool
+  %10 temp: i32
   %11 temp: Sq
-  %12 temp: Sq
-  %13 temp: u32
-  %14 temp: Result[u32, bool]
-  %15 temp: bool
-  %16 let q: u32
-  %17 temp: u32
-  %18 temp: Result[u32, bool]
+  %12 var s: Sq
+  %13 temp: Sq
+  %14 temp: Sq
+  %15 temp: u32
+  %16 temp: Result[u32, bool]
+  %17 temp: bool
+  %18 let q: u32
   %19 temp: u32
+  %20 temp: Result[u32, bool]
+  %21 temp: u32
   {
     %0 = Pair[i32, bool](1i32, true)
     %1 = call swap[i32, bool](%0)
@@ -81,29 +83,31 @@ fn main -> () uses io
     %5 = tuple (bool, i32)(%3, %4)
     %6 = %5
     %7 = read %6.0
-    if %7 {
-      %8 = read %6.1
-      print %8
+    %8 = read %6.1
+    %9 = read %7
+    if %9 {
+      %10 = read %8
+      print %10
     } else {
     }
-    %9 = Sq(2u32)
-    %10 = %9
-    call Sq.grow(inout %10, 1u32)
-    %11 = read %10
-    %12 = Sq(1u32)
-    %13 = call total[Sq](%11, %12)
-    print %13
-    %14 = call quarter(8u32)
-    %15 = tag %14 is <0>
-    if %15 {
-      %16 = read %14.<0>.0
-      %17 = read %16
-      print %17
+    %11 = Sq(2u32)
+    %12 = %11
+    call Sq.grow(inout %12, 1u32)
+    %13 = read %12
+    %14 = Sq(1u32)
+    %15 = call total[Sq](%13, %14)
+    print %15
+    %16 = call quarter(8u32)
+    %17 = tag %16 is <0>
+    if %17 {
+      %18 = read %16.<0>.0
+      %19 = read %18
+      print %19
     } else {
     }
-    %18 = call half(3u32)
-    %19 = call Result[u32, bool].unwrap_or(%18, 0u32)
-    print %19
+    %20 = call half(3u32)
+    %21 = call Result[u32, bool].unwrap_or(%20, 0u32)
+    print %21
   }
 
 fn Sq.area -> u32
@@ -164,15 +168,17 @@ fn Result[u32, bool].unwrap_or -> u32
   %0 param self: Result[u32, bool]
   %1 param default: u32
   %2 temp: bool
-  %3 temp: u32
+  %3 let v: u32
   %4 temp: u32
+  %5 temp: u32
   {
     %2 = tag %0 is <0>
     if %2 {
       %3 = read %0.<0>.0
-      return %3
-    } else {
-      %4 = read %1
+      %4 = read %3
       return %4
+    } else {
+      %5 = read %1
+      return %5
     }
   }

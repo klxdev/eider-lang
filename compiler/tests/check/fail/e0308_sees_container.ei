@@ -1,0 +1,7 @@
+// expect: E0308 5:8
+fn main() uses io {
+    let mut xs: List[String] = List.new()
+    let all = xs
+    xs.push(String.from("a"))
+    print(all.len())
+}

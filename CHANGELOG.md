@@ -5,6 +5,41 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## 0.7.7 (unreleased)
+
+The checker's rules for names, borrows and arguments, three of them breaking (fix forward, no shim; the
+repository and the fourteen libraries were migrated).
+
+- **A `let` of a scalar copies; no write under a live reference (#183; decision C900).** `let start = i; i += 1`
+  silently changed `start` because a `let` of a place is a reference. Now a `let` or `let mut` of a place of a
+  scalar type (an integer, a float, a `bool`, a `str`, `()` or an enum without payloads) takes a copy, as do the
+  read-only bindings of a pattern of a place; `let mut left = c.bits` of a read-only `c` is no longer E0307. For
+  every other type the `let` still names the place, and a write to an overlapping place (an assignment, a
+  resizing method, an `inout` argument, `inout self`; two indices count as equal) while the reference is used later
+  is **E0308** "can't assign to `p.name` while `n` refers to `p.name` (bound on line 5)", with the fix `.copy()` at
+  the binding. Code that relied on a reference seeing a write (`let o = orders[0]; orders[0].qty = 5; print(o.qty)`
+  now binds `o.qty` first or copies) must say so; `mut` pattern bindings and `let mut` of a non-scalar place are
+  still mutable aliases. `eiderc audit-refs` is removed: the checker reports every site it listed. The change fixed
+  a bug of the compiler itself: `let in_ret = p.in_ret; p.in_ret = false` in the parser was always `false`, so
+  `fn make() -> fn() uses io` gave the *type* the capability instead of the function (against C642 and
+  docs/site/reference/grammar.md); it now declares a function that uses `io`, and a result type with capabilities is
+  written in parentheses or through an alias (tests/checks/fail/e0401_fn_caps_mismatch.ei).
+- **Disjoint fields are borrowed together (#219; decision C901).** E0301 compares variables and the fields below
+  them: `s.d.feed(inout s.pending)`, `f(inout a.b.x, inout a.c)` and the same through `self` compile. Overlapping
+  paths (`s` and `s.d`, `s.d` and `s.d.tags`), two elements of one list and a reference (which counts as its whole
+  variable) are still E0301, and a read-only receiver that is a place now counts as a read (`s.d.peek(inout s.d)`
+  was accepted). The messages name the places (`s.d.tags` overlaps `s.d`).
+- **Scalar places are two-phase arguments (#198; decision C902).** A place of a scalar type read beside an `inout`
+  borrow of the same variable is a copy made before the access begins: `p.add(p.x)`, `bump(inout s, s.k)`,
+  `both(inout x, x)` and `f(x, inout x)` compile. A String, List, record, tuple or array place is passed as a
+  reference and stays E0301 (`.copy()` it first). Together with calls (0.7.0) and operators (0.7.1) that is the
+  sound part of two-phase borrows; a full reservation rule would pass references the callee could see change.
+- Tests and docs: compiler/tests/run/scalar_copy.ei, `e0308_sees_*`, `e0301_*` field cases and
+  `pass_two_phase_and_fields`; docs/site/reference/memory.md (bindings, exclusivity, the protection rule),
+  errors.md (E0301, E0307, E0308), docs/compiler.md "C8.6". The tests that exercised "a reference sees writes"
+  (compiler/tests/run/refs.ei, tests/run/ref_pointer.ei, tests/bench/refs.ei) and seventeen E0301/E0307/E0308 compile-fail
+  cases that used a number now use a String or a Drop record. eider-analyzer: its codes fixture follows.
+
 ## 0.7.6
 
 A patch that unblocks the network libraries. The crypto package ships in the toolchain (`[deps.crypto] toolchain = true`),

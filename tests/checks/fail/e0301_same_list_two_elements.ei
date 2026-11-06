@@ -1,0 +1,6 @@
+// expect: E0301 5:28
+fn two(inout a: List[u8], inout b: List[u8]) {}
+fn main() {
+    let mut xs: List[List[u8]] = List.new()
+    two(inout xs[0], inout xs[1])
+}

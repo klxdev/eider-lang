@@ -1,0 +1,8 @@
+// expect: E0301 7:27
+type D = { n: i32, tags: List[u8] }
+type S = { d: D, pending: List[u8] }
+fn feed(inout d: D, inout buf: List[u8]) {}
+fn main() {
+    let mut s = S(D(1, List.new()), List.new())
+    feed(inout s.d, inout s.d.tags)
+}

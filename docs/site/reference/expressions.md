@@ -215,8 +215,9 @@ where no annotation says it, and the call is an expression like any other (`deco
 
 The arguments must match the parameters in number (E0405) and type (E0401). An argument for
 an `inout` parameter is written `inout place` (E0304 without it, with a fix) and must be a
-writable place; a place passed `inout` can't appear again in the same call (E0301; see
-[Memory model](memory.md#parameters-and-inout)). Ordinary arguments are passed as
+writable place; a place passed `inout` can't be borrowed again in the same call (E0301; the
+fields of a record are separate places, and a number read from a place is a value before the
+call starts; see [Memory model](memory.md#exclusivity)). Ordinary arguments are passed as
 read-only references: nothing is copied.
 
 Calling a function that `uses` a capability needs the caller to declare it too (E0201, see

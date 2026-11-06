@@ -1,0 +1,37 @@
+// mode: build
+// Scalars read from a place are copied before an `inout` access begins (two-phase, decision C902),
+// and disjoint fields of one record can be borrowed together (decision C901).
+type D = { n: i32, tags: List[u8] }
+type S = { d: D, pending: List[u8], k: i32, other: List[u8] }
+
+fn feed(inout d: D, inout buf: List[u8]) {
+    d.n += 1
+    buf.push(1)
+}
+fn add(inout a: i32, b: i32) { a += b }
+fn bump(inout s: S, n: i32) { s.k += n }
+impl S {
+    fn feed_pending(inout self) { feed(inout self.d, inout self.pending) }
+    fn grow(inout self, n: i32) { self.k += n }
+}
+impl D { fn note(inout self, n: i32) { self.n += n } }
+
+fn main() {
+    let mut s = S(D(1, List.new()), List.new(), 5, List.new())
+    feed(inout s.d, inout s.pending)
+    feed(inout s.d, inout s.other)
+    s.feed_pending()
+    add(inout s.k, s.k)
+    add(inout s.k, s.d.n)
+    add(inout s.k, s.k as i32 + 1)
+    bump(inout s, s.k)
+    s.grow(s.k)
+    s.grow(-s.k)
+    s.grow(s.k as i32)
+    s.d.note(s.k)
+    let mut x = 1
+    add(inout x, x)
+    add(inout x, x)
+    let mut u: List[u8] = List.new()
+    u.push(1)
+}

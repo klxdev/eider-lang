@@ -2004,11 +2004,13 @@ used none of the new syntax until the seed that has it.
 - `let x = e` where e is a place rooted at a variable in scope (a variable, a field, an
   element, any chain of them: `orders[i].items[j]`) binds a read-only reference: x has no
   storage of its own; it names that place, whose indices are evaluated once, when x is bound
-  (and bounds-checked then: S_CHECK). Every use of x reads the place as it is at that use,
-  so x sees every write to it. Anything else (a call, a literal, a constructor, an
-  operation, `if`/`match`/block, a field of a call's result) is fresh and owned, as before.
-- `let mut x = place` is a mutable alias (Reading A): writes through x write the place, and
-  writes to the place are seen through x. The place's variable must be writable (a
+  (and bounds-checked then: S_CHECK). Every use of x reads the place as it is at that use;
+  since 0.7.7 no write to the place may happen while x is still used later (E0308, "Scalars
+  are copied" below), and a place of a scalar type is copied instead of named. Anything else
+  (a call, a literal, a constructor, an operation, `if`/`match`/block, a field of a call's
+  result) is fresh and owned, as before.
+- `let mut x = place` is a mutable alias (Reading A) of a non-scalar place: writes through x
+  write the place, and writes to the place are seen through x. (A scalar place is copied.) The place's variable must be writable (a
   `let mut`, an `inout` parameter, a mutable alias); otherwise **E0307** "`let mut x` would
   be a mutable alias of `p`, which is read-only", with the fix `.copy()` after the
   initializer (when the type has Copy), and checking goes on as if the fix were there.
@@ -2030,7 +2032,8 @@ used none of the new syntax until the seed that has it.
   "C8.20"); before, it read the List place again at each iteration, so it saw the body's
   writes and pushes.
 - `var` (deprecated; removed in 0.7.5) kept making its own copy, so every existing `var` meant what it did.
-- Exclusivity (E0301) counts a reference as the variable its place is rooted at: `f(inout
+- Exclusivity (E0301) counts a reference as the variable its place is rooted at (the whole
+  variable, whatever field it names; "Exclusivity by field path" below): `f(inout
   xs, o)` with `o = xs[0]` is E0301 "`o` refers into `xs`, which is borrowed mutably by
   another argument of this call" (fix: `.copy()` at o's binding), and `f(inout ys, inout
   xs)` with `ys` an alias of `xs` is E0301 too.
@@ -2051,12 +2054,13 @@ when P is a prefix of R, comparing any two indices as equal (the charter: `order
 resize of `orders` conflict whatever `i` is), and the rest of R's path goes through heap
 memory (a List element, the fields of a record with its own Drop) or an enum payload. So:
 
-- allowed: plain writes to scalar fields and elements, writes through aliases, a write that
-  replaces the referenced value itself (`orders[0] = o2` while `o = orders[0]`: o then sees
-  o2), a resize of a container a reference names rather than points into (`let all =
-  orders; orders.push(x)`: all sees it), any write after the last use, a write on a path
-  that never reaches a use (`if ... { xs.clear(); return }`), a loop body binding a new
-  reference each iteration;
+- allowed: writes to places the reference does not overlap (another variable, another field
+  of the same record), any write after the last use, a write on a path that never reaches a
+  use (`if ... { xs.clear(); return }`), a loop body binding a new reference each iteration,
+  and plain writes to scalar fields and elements whose `let` is a copy (0.7.7: the
+  references this section used to allow to see such writes, a write that replaced the
+  referenced value itself and the resize of a container a reference names, are E0308 now,
+  see "Scalars are copied");
 - errors: `xs.push` while a reference into `xs[..]` is alive; `xs = ...` or `inv = ...`
   while one points into their elements; `j = Done` while a binding refers into j's payload;
   `f(inout xs)` while one points into xs's elements.
@@ -2131,58 +2135,13 @@ compiler, built by this one, emits byte-identical C for compiler/ (its meaning i
 unchanged). compiler/tests/migrate/var.ei has the hand-checked expected rewrite (var.out).
 
 **Existing code under the new meaning.** A `let` of a place whose place is written while the
-binding is still used later now sees the write; under the old meaning it kept its copy. The
-audit (`eiderc audit-refs`, below; first a throwaway build of the same check) found every
-such site in the repository:
-in compiler/ (114 bindings: `let start = l` before `step(inout l)`, `let d = c.t.defs[i]`
-before `f(inout c, d)`, ...), std/fs.ei, packages (json, toml, pkg, fuzz) and the tests
-(compiler/tests/run/{closures2,cow,inout,lists,maps,owned,text_cow,traits_*}.ei,
-compiler/tests/check/pass/v0_language.ei, tests/run/order.ei). Each got `.copy()` at the
-binding, which the seed also understands (8.4), so those programs mean what they meant under
-both compilers; the sorts in compiler/tests/run/traits_{custom,derived,generic}.ei, whose
-`let t = xs[j]` swap is generic, got the `+ Copy` bound E0605 asks for, and
-compiler/tests/run/traits_drop.ei's "written while shared" cases use `var` (their point is
-the implicit share, which `.copy()` of a record with its own Drop doesn't make). The recorded
-outputs are unchanged. After that the audit reports only the new tests.
-
-**Audit: `eiderc audit-refs <file> [--json]`.** For code written when `let` copied (other
-branches, old packages): every write that changes what a live `let` or pattern reference
-sees without invalidating it (an invalidating one is E0308), where the binding used to keep
-its own copy and now sees the change. A write overlaps a reference when they have the same
-root and one's path is a prefix of the other's (indices compared as equal); `let mut` and
-`mut` aliases are left out (new code means the alias). Each finding is a `note[audit]`
-(stderr, rendered like a diagnostic, then `audit-refs: N write(s) change what a reference
-sees`) or, with `--json`, a JSON object per line on stdout like a diagnostic's, with
-`"audit":"reference"` in place of `"error"` and the machine-applicable `.copy()` fix at
-the binding (none in a generic body or for a type without Copy). The program's errors
-follow (exit 1); findings alone exit 0. Applying every fix gives the old meaning back, under
-both the seed and the new compiler. Test: compiler/tests/audit/refs.ei (a swap, a counter, a
-record snapshot, a tuple pattern; a `.copy()` and a binding not used after the write are not
-reported), and loop.ei (a push to the List a `for` runs over through a reference), against their hand-checked .out. Run on the whole repository after the merge of
-layer/runtime (std/{time,atomic,sync,chan,task,event}.ei, std/fd, std/poll, tests/std,
-tests/core, examples/ and the rest): 4 sites, all in std/event.ei (the timer heap's two
-swaps and two ids read before `self` changes); and after the merge of layer/services
-(packages/http, examples/kvstore): 3 sites in packages/http/parse.ei (`let m = p.m` before
-`p.m = empty_msg()`, and two positions read before the parser moves on). All got `.copy()`;
-nothing else, and nothing in examples/kvstore. After the merge of layer/std (stream, path,
-strings, utf8, fmt, sort, deque, set, heap, encoding, testing): 4 findings and 3 E0301s in
-generic code, which has no machine-applicable fix (`.copy()` of a `T` would need a bound):
-swaps in std/heap.ei and std/sort.ei and a moved element in std/set.ei now bind with `var`
-(the implicit share `let` made, no bound needed), and integer positions in std/heap.ei,
-std/strings.ei and std/stream.ei got `.copy()`. One finding had no fix because the type has
-no Copy: std/task.ei's `let k = t.kids` before `t.kids = List.new()` (a List of Tokens,
-which hold a Chan) silently became the empty list, so cancelling a token no longer cancelled
-its children and http's server test hung under this compiler; it binds with `var` now, and
-the audit's help says to for such types. That finding was missed by the first sweep, which
-only applied fixes, and is the reason for test-compiler.sh's "meaning" leg: tests/std, the
-packages' and the examples' tests must give their .out under this compiler as well as the
-seed. The `for x in r` over a reference r to a List kept r alive for the whole loop (the List
-was read again each iteration), so a push to it in the body was reported too; since C303 the
-loop takes a snapshot when it starts, which is r's last use there.
-
-There was no way in 8.6 other than the deprecated `var` to take a share of a value without
-Copy out of a place before replacing the place (`let k = t.kids; t.kids = List.new()`): the
-`take`/`replace` accessor (C8.15) is its successor, and `var` is gone ("Removal of `var`").
+binding is still used later saw the write; under the old meaning it kept its copy. `eiderc
+audit-refs` (0.6 to 0.7.6) listed every such site; the repository's were fixed with `.copy()`
+(compiler/, std, packages, tests: 114 bindings in compiler/ alone). Since 0.7.7 the checker
+refuses every such site itself (E0308, "Scalars are copied" below), so `audit-refs` and its tests
+were removed. The sort in compiler/tests/run/traits_{custom,derived,generic}.ei got the `+ Copy`
+bound E0605 asks for, and std/task.ei moves a token's children out with `take` (a List of Tokens
+has no Copy).
 
 **Codes.** New: E0307 (a mutable alias of a read-only place), E0308 (the protection rule).
 Changed: none of the existing messages; E0301 gains the two reference cases above.
@@ -2201,7 +2160,7 @@ reference to the list itself, nested places through `inout`, `mut` payload alias
 `match`, `if let`, tuple patterns of a place and of a fresh tuple, references bound again in
 a loop that grows the list, `var` still copying); compiler/tests/run/traps.ei now also traps
 an out-of-bounds reference that is never read (S_CHECK). Compile-fail (compiler/tests/check/
-fail): `e0307_*` (parameter, `let` binding, reference, pattern binding, `let` pattern,
+fail; the cases with a number in them use a String since 0.7.7, "Scalars are copied"): `e0307_*` (parameter, `let` binding, reference, pattern binding, `let` pattern,
 closure capture, `for` variable; every fix compiles), `e0308_*` (push, clear, pop,
 assigning the list and the enclosing record, an enum payload in `match` and `if let`, an
 `inout` argument and `inout self`, the next loop iteration, a mutable alias, a record with
@@ -2258,6 +2217,93 @@ by `for x in xs { a.push(x) }`, an independent copy that needs neither `T: Copy`
 No language feature was needed; a way to copy a Copy-free share stays unneeded as long as an
 element pushed into a List is the copy. The sibling libraries and docs were migrated the same
 way (code blocks of the docs, the guide and the reference included).
+
+**Scalars are copied; reads of a reference are not changed under it** (0.7.7, issue #183, decision
+C900). Code: check.ei (`scalar_copy`, `let_ref`, `let_pat`, `bind_arm`, `check_write`, `sees_error`);
+`audit-refs` is removed (`check_audit`, `audit_hits`, the `Refs.audit` flag, compiler/tests/audit).
+
+- **Scalars.** `scalar_copy(ty)`: an integer, a float, a `bool`, a `str`, `()` or an enum none of whose
+  variants has fields (and no own Drop). A `let x = place` and a `let mut x = place` of such a type are a
+  local initialised with `S_READ` of the place, not a reference: `let start = i; i += 1` leaves `start`
+  alone, and `let mut left = c.bits` of a read-only `c` is no E0307 (the case of eider-http's
+  `Cidr`). The read-only bindings of a pattern of a place (`let (a, b) = pair`, `Pending(n)`) copy a scalar
+  the same way (`let_pat`, `bind_arm`); a `mut x` pattern binding stays an alias into the place, the only
+  way to change an enum's payload in place. A type that is not a scalar keeps the reference.
+  Why not larger types: a reference to a record or a String saves a copy that matters (a clone is a
+  count increment for heap data, but a record of scalars is a memcpy per `let`), and the rule below
+  makes the reference safe. A `u8` is a scalar; there is no `char` type.
+- **No write under a live reference.** `check_write` (the backward liveness of the protection rule)
+  also refuses a write that does not free anything: a write to P while a live read-only reference to R is
+  used later, when P and R overlap (one's path is a prefix of the other's, any two indices equal;
+  `overlaps`). E0308 with the message "can't assign to `p.name` while `n` refers to `p.name` (bound
+  on line 5)" (`refers to` where the write only changes what the reference names; `refers into it` stays for
+  the writes that free or move what it points into, as before), the help "`n` is used after this write and
+  would see the new value; use it before the write, or bind a copy with `.copy()`" and the `.copy()` fix
+  at the binding (none in a generic body or for a type without Copy). Mutable aliases (`let mut`, `mut`
+  patterns) are not references for this check, but a write through one is a write to the place, so a
+  read-only reference to it that is used later is overlapped by it. Not noted, as before: `swap`
+  (no memory is freed or moved) and writes to temporaries.
+- **Live** is the protection rule's: until the last use on any path, loops to a fixed point,
+  `break`/`continue`/`return`/`panic` cut paths. A closure that captures the reference uses it where
+  the closure is made (the capture is a copy); `for x in r` uses `r` where the loop starts (it iterates a
+  snapshot); a `match` on a place uses the scrutinee's references in the arms that use their bindings.
+  Shadowing is E0305 in the same scope, so an inner scope's binding is another reference. Inout arguments:
+  `f(inout p)` is a write to `p` (W_INOUT) and is E0308 with a live reference to any part of `p`.
+- **Why a compile error and not a copy for the rest.** The protection rule already made references
+  into containers sound; the other half of the old design (a reference sees later writes) was a
+  silent data bug (eider-tls lost a TLS alert, std/time had `let start = i`, the compiler's own
+  `P.in_ret` was read as a snapshot but read as the field: `let in_ret = p.in_ret; p.in_ret = false`
+  made `-> fn() uses io` a type with capabilities, against C642 and docs/site/reference/grammar.md; the
+  scalar copy fixed that with no change to parse.ei, and tests/checks/fail/e0401_fn_caps_mismatch.ei
+  now writes the type in parentheses).
+- **Cost.** Index equality makes `let o = orders[i]` ... `orders[j].qty += 1` ... `use(o)` an error
+  even when `i != j`; the fix is `.copy()` or reading `o` first (tests/bench/refs.ei now writes to
+  another List). In the repository: 3 tests that exercised "a reference sees writes" were rewritten
+  (compiler/tests/run/refs.ei, tests/run/ref_pointer.ei, tests/bench/refs.ei), 9 compile-fail cases
+  that used an `i32` List use a String; no source in compiler/, std, core, packages or the 14 sibling
+  libraries needed a change (their tests pass), apart from eider-analyzer's tests/fixtures/codes.ei.
+- **Tests.** compiler/tests/run/scalar_copy.ei (`.out`); compiler/tests/check/fail/e0308_sees_* (a
+  field, an element, a container, a loop, `inout self`, an `inout` argument, a tuple pattern, a
+  `match` scrutinee, a generic body), pass/c87_scalar_copy_ok.ei (scalars, other fields, a closure,
+  shadowing, a `for` over the list the body writes, a dead reference);
+  tests/checks/{fail/e0308_assign_while_referenced, fail/e0308_inout_while_referenced,
+  pass/pass_scalar_let_copies}.ei.
+
+**Exclusivity by field path** (0.7.7, issue #219, decision C901). Code: check.ei (`Bor`, `bor_of`,
+`bor_overlap`, `field_path`, `reads`, `read_conflict`, `call_decl`, `call_value`, `trait_method`'s `show`).
+E0301 compared the root variables of two places, so `s.d.feed(inout s.pending)` (an `inout` receiver
+`s.d` and an `inout` argument of one record `s`) was "borrowed mutably more than once". A borrow is now
+the variable and the field names below it, up to the first element (`field_path`; an index or a reflected
+field `x.[f]` ends the path, so `xs[0]` and `xs[1]` overlap, as do `s.items[i]` and `s.items[j]`, while
+`s.a[0]` and `s.b[0]` do not). Two borrows overlap when the variables are the same and one path is a
+prefix of the other (`bor_overlap`). A reference is the whole variable (its path is empty): the place a
+reference names is an IR place, not a name path, and the conservative answer needs no mapping. The
+messages are the old ones where the paths are empty; with fields they name the places (`` `s.d.tags`
+overlaps `s.d`, which is borrowed mutably more than once in this call ``). Soundness: two places with
+different first differing field are different memory, also in a record with its own Drop (its fields
+live in one shared buffer; the first `inout` makes it unique and the second finds it unique, and a read
+only receiver pointer into the old buffer reads the same bytes: copy-on-write copies, it never frees the
+old buffer while another owner holds it); the callee cannot reach the record by another path because
+values hold no references (E0302) and a closure captures copies. The same check now covers a read-only
+**receiver** that is a place of a non-scalar type (`s.d.peek(inout s.d)` was accepted and passed one
+location both as `const` and `noalias`). Tests: tests/checks/pass/pass_two_phase_and_fields.ei,
+tests/checks/fail/e0301_{overlapping_fields,field_and_whole,same_list_two_elements,field_read_overlaps,receiver_read_overlaps}.ei.
+
+**Two-phase arguments of scalar places** (0.7.7, issue #198, decision C902). Code: check.ei (`call_decl`
+and `call_value`: `late`). 0.7.0 evaluated an argument that is a call before the `inout` access ("C8.67"),
+0.7.1 an operator ("C8.85"). A *place* argument of a scalar type is now the same: the check cannot decide
+before the argument has a type, so the conflict is recorded (`late`) and decided after `expr`: a scalar
+(`scalar_copy`) is snapshotted into a temporary (`snap_read`) and is no conflict, so `p.add(p.x)`,
+`bump(inout s, s.k)`, `both(inout x, x)` and `f(x, inout x)` compile, and the callee sees the value the
+place had before the access began (tests/run: compiler/tests/run/scalar_copy.ei). Why it is sound: the
+temporary is written by an `S_COPY` before the call statement, and a scalar parameter is by-value
+whatever the ABI. Everything else stays E0301, because a read-only parameter of any other type is a
+reference to the caller's place: a String, List, record, tuple or array place, a payload-carrying enum, a
+reference (`let o = ...`) to anything, an element of a list beside an `inout` of the list or of another
+element, and any read through the same receiver. A full two-phase borrow (a *reservation* of the `inout`
+place that allows reads until the call starts) would also accept `p.add(p.name)`; it is unsound here
+because the callee receives a reference to `p.name` and a pointer to `p` and sees both, so the read
+would have to be copied first, which is what `.copy()` says.
 
 ## C8.7: `Ref[T]`
 
@@ -4232,10 +4278,12 @@ un-share the buffer before each write it makes.
   the reference loads it (`paddr` of a `P_LOCAL` whose local is `L_REF`). No debug variable
   is declared for it. Comptime (`interp.ei`) keeps the place id in the local and resolves
   paths through it, so it sees the variable's current data without any pointer.
-- **Tests.** `tests/run/ref_pointer.ei` (un-sharing writes to other elements, `inout` calls,
-  a push into another element's list, a reference into a reference, loops with a shared
-  buffer, a branch that writes, enum payloads in a record's List), run at -O2 under the
-  sanitizers by test-compiler.sh; `tests/bench/refs.ei`.
+- **Tests.** `tests/run/ref_pointer.ei` (a record with its own Drop shared with a List, so
+  that the writes to its other fields un-share its buffer under a reference into it: scalar and
+  String fields, an `inout` call, a loop, a branch, an enum payload in its List; since 0.7.7 the
+  writes to *other elements* of a List are E0308, so the buffers only move under writes to
+  places the reference does not overlap), run at -O2 under the sanitizers by test-compiler.sh;
+  `tests/bench/refs.ei`.
 - **Not done.** Mutable aliases as pointers: each write through one would have to un-share the
   buffer on its path first (and so would the binding), and a buffer shared again later
   would make a stale pointer write into data another variable sees.

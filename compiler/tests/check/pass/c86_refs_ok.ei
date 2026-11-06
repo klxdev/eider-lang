@@ -14,18 +14,29 @@ fn total(orders: List[Order]) -> i32 {
 fn main() uses io {
     let mut orders: List[Order] = List.new()
     orders.push(Order(1, String.from("a"), List.new()))
-    // plain writes while a reference is alive
-    let o = orders[0]
+    // a scalar is copied by `let`: plain writes to its place are fine while it is used
+    let q0 = orders[0].qty
     orders[0].qty = 5
     orders[0].name.push_str("!")
     orders[0].tags.push(String.from("t"))
-    print(o.qty)
+    print(q0)
+    // a write to another variable, or to a place the reference doesn't overlap
+    let o = orders[0]
+    let mut other = 0
+    other += 1
+    print(o.name)
+    print(other)
+    let mut pair = (1, String.from("x"))
+    let (pn, ps) = pair
+    pair.0 = 2
+    print(pn)
+    print(ps)
     // a resize after the last use
     orders.push(Order(2, String.from("b"), List.new()))
-    // a reference to the container itself is not into it
+    // a reference to the container itself, used before the push
     let all = orders
-    orders.push(Order(3, String.from("c"), List.new()))
     print(all.len())
+    orders.push(Order(3, String.from("c"), List.new()))
     // a reference used only on paths that don't reach the change
     let p = orders[1]
     if p.qty > 100 {

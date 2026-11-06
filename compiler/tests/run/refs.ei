@@ -32,12 +32,19 @@ fn main() uses io {
     orders.push(order(1, 5, "apple"))
     orders.push(order(2, 7, "pear"))
 
-    // a reference sees plain writes to its place
+    // a `let` of a place names it, so the binding reads the place's current value; a write to
+    // the place while the binding is still used later is E0308, so it is used before
     let o = orders[0]
-    orders[0].qty = 6
-    orders[0].name.push_str("s")
     print(o.qty)
     print(o.name)
+    orders[0].qty = 6
+    orders[0].name.push_str("s")
+
+    // a scalar is copied by `let`: the later write doesn't show through q
+    let q = orders[0].qty
+    orders[0].qty = 60
+    print(q)
+    orders[0].qty = 6
 
     // the index is evaluated once, when the reference is bound
     let mut i: usize = 1
@@ -72,18 +79,19 @@ fn main() uses io {
     orders[0].qty = 1
     print(f.qty)
     let mut kept: List[Order] = List.new()
-    kept.push(o)
+    let o2 = orders[0]
+    kept.push(o2)
     orders[0].qty = 2
     print(kept[0].qty)
-    let get = || -> i32 { o.qty }
+    let o3 = orders[0]
+    let get = || -> i32 { o3.qty }
     orders[0].qty = 3
     print(get())
-    print(o.qty)
 
-    // a reference to the container itself sees it grow
+    // a reference to the container itself
     let all = orders
-    orders.push(order(3, 1, "fig"))
     print(all.len())
+    orders.push(order(3, 1, "fig"))
 
     // references into nested places, and through an `inout` parameter
     let mut shop = Shop(orders.copy(), true)
@@ -121,9 +129,10 @@ fn main() uses io {
     let mut pair = (1, String.from("one"))
     let (n, s) = pair
     pair.0 = 2
-    pair.1.push_str("!")
     print(n)
     print(s)
+    pair.1.push_str("!")
+    print(pair.1)
 
     // a reference in a loop is bound again each iteration, so the list may grow after its use
     for _ in 0..3 {

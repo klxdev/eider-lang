@@ -1,5 +1,5 @@
 // expect: E0401 3:5
-fn pick(f: fn() uses io) -> fn() uses fs {
+fn pick(f: fn() uses io) -> (fn() uses fs) {
     f
 }
 fn main() {}

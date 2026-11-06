@@ -1,0 +1,1 @@
+{"error":"E0308","span":{"file":"tests/checks/fail/e0308_assign_while_referenced.ei","line":6,"col":3},"message":"can't assign to `o.name` while `n` refers to `o.name` (bound on line 5)","help":"`n` is used after this write and would see the new value; use it before the write, or bind a copy with `.copy()`","fix":{"at":{"line":5,"col":17},"delete":0,"insert":".copy()"}}
