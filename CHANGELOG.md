@@ -5,7 +5,13 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
-## 0.7.7 (unreleased)
+## 0.7.7
+
+A patch of correctness fixes in the checker and the runtime, three of them breaking: a `let` of a scalar now copies
+(#183), a write under a live reference is E0308, and a `sync.Lock` is poisoned by a contained trap instead of
+deadlocking (#211; `Lock.reset` recovers). Disjoint fields of one record can be borrowed together (#219) and scalar
+places are two-phase arguments (#198). eider-analyzer moves to 0.7.4 (a fixture); the other libraries needed no change
+and stay where they are. `eiderc audit-refs` is removed.
 
 The checker's rules for names, borrows and arguments, three of them breaking (fix forward, no shim; the
 repository and the fourteen libraries were migrated).

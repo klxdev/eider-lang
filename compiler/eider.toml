@@ -1,6 +1,6 @@
 [package]
 name = "eiderc"
-version = "0.7.6"
+version = "0.7.7"
 eider = "0.7"
 main = "main.ei"
 description = "The Eider compiler, written in Eider (see docs/compiler.md)"
