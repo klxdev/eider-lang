@@ -56,7 +56,25 @@ fn named2(a: str, b: str, n: usize) -> List[u8] {
     m
 }
 
-fn emit() uses io {
+// the RSA-2048 fixture key (tests/crypto/vectors/openssl_pubkey.rsp)
+fn fixture_rsa() -> crypto.RsaPrivate uses io, fs {
+    for r in vec.records(vec.read_vectors("openssl_pubkey.rsp")) {
+        if bytes.eq(vec.get(r, "Name"), "rsa2048".bytes()) && bytes.eq(vec.get(r, "Kind"), "key".bytes()) {
+            return crypto.rsa_private_from_der(vec.get_hex(r, "Pkcs8")).unwrap()
+        }
+    }
+    panic("cross: no fixture key")
+}
+
+fn spki_hex(r: crypto.RsaPrivate) -> List[u8] uses io, fs {
+    for rec in vec.records(vec.read_vectors("openssl_pubkey.rsp")) {
+        if bytes.eq(vec.get(rec, "Name"), "rsa2048".bytes()) && bytes.eq(vec.get(rec, "Kind"), "key".bytes()) { return vec.get(rec, "Spki") }
+    }
+    panic("cross: no fixture key")
+}
+
+fn emit() uses io, fs {
+    let rsa = fixture_rsa()
     let sizes: [usize; 7] = [0, 1, 55, 64, 129, 1000, 16384]
     let hashes = [crypto.Sha256, crypto.Sha384, crypto.Sha512, crypto.Sha3_256, crypto.Sha3_384, crypto.Sha3_512, crypto.Blake2b256, crypto.Blake2b512]
     let hnames = ["sha256", "sha384", "sha512", "sha3_256", "sha3_384", "sha3_512", "blake2b256", "blake2b512"]
@@ -97,6 +115,15 @@ fn emit() uses io {
         let pbp = crypto.p256_public(pb).unwrap()
         line(named("p256_public", n), crypto.p256_public(pa).map(|p| p.bytes))
         line(named("p256_agree", n), crypto.p256_agree(pa, pbp).map(|s| s.bytes))
+        // P-384, and RSA PKCS#1 v1.5 (deterministic) with the fixture key
+        let qa = crypto.ec_secret(crypto.P384, crypto.digest(crypto.Sha384, msg(40, n as u32 + 16)).unwrap()).unwrap()
+        let qb = crypto.ec_secret(crypto.P384, crypto.digest(crypto.Sha384, msg(40, n as u32 + 17)).unwrap()).unwrap()
+        let qbp = crypto.ec_public(qb).unwrap()
+        line(named("p384_public", n), crypto.ec_public(qa).map(|p| p.bytes))
+        line(named("p384_agree", n), crypto.ec_agree(qa, qbp).map(|s| s.bytes))
+        line(named("rsa_pkcs1_sha256", n), crypto.rsa_pkcs1_sign(rsa, crypto.Sha256, m.copy()).map(|s| s.bytes))
+        line(named("rsa_pkcs1_sha384", n), crypto.rsa_pkcs1_sign(rsa, crypto.Sha384, m.copy()).map(|s| s.bytes))
+        line(named("rsa_pkcs1_sha512", n), crypto.rsa_pkcs1_sign(rsa, crypto.Sha512, m.copy()).map(|s| s.bytes))
     }
     // fresh signatures, random k (and a random key) for the other backends to verify
     let mut j: u32 = 0
@@ -112,6 +139,34 @@ fn emit() uses io {
         l.push(32)
         bytes.append(inout l, bytes.hex(sig.der))
         io.outln(l)
+        // P-384 (SHA-384, random k) and P-256 with SHA-384
+        let k384 = crypto.ec_generate(crypto.P384).unwrap()
+        let g384 = crypto.ec_sign(k384, crypto.Sha384, m.copy()).unwrap()
+        let mut q = "p384sig ".bytes()
+        bytes.append(inout q, bytes.hex(crypto.ec_public(k384).unwrap().bytes))
+        q.push(32)
+        bytes.append(inout q, bytes.hex(m.copy()))
+        q.push(32)
+        bytes.append(inout q, bytes.hex(g384.der))
+        io.outln(q)
+        let k256 = crypto.ec_generate(crypto.P256).unwrap()
+        let g256 = crypto.ec_sign(k256, crypto.Sha384, m.copy()).unwrap()
+        let mut q2 = "p256sha384sig ".bytes()
+        bytes.append(inout q2, bytes.hex(crypto.ec_public(k256).unwrap().bytes))
+        q2.push(32)
+        bytes.append(inout q2, bytes.hex(m.copy()))
+        q2.push(32)
+        bytes.append(inout q2, bytes.hex(g256.der))
+        io.outln(q2)
+        // RSA-PSS (random salt) with the fixture key, the public key as an SPKI
+        let gp = crypto.rsa_pss_sign_tls(rsa, crypto.Sha256, m.copy()).unwrap()
+        let mut rp = "rsapsssig ".bytes()
+        bytes.append(inout rp, spki_hex(rsa))
+        rp.push(32)
+        bytes.append(inout rp, bytes.hex(m.copy()))
+        rp.push(32)
+        bytes.append(inout rp, bytes.hex(gp.bytes))
+        io.outln(rp)
         let seed = crypto.ed25519_generate().unwrap()
         let epk = crypto.ed25519_public(seed).unwrap()
         let esig = crypto.ed25519_sign(seed, m.copy()).unwrap()
@@ -143,6 +198,26 @@ fn verify(path: List[u8]) uses io, fs {
             let mut m2 = m.copy()
             m2.push(1)
             vec.check(inout t, !crypto.p256_verify(pk, m2, sig), "p256 signature from another backend, altered message".bytes())
+        }
+        if bytes.eq(parts[0], "p384sig".bytes()) || bytes.eq(parts[0], "p256sha384sig".bytes()) {
+            let c = if bytes.eq(parts[0], "p384sig".bytes()) { crypto.P384 } else { crypto.P256 }
+            let pk = crypto.ec_public_key(c, vec.unhex(parts[1])).unwrap()
+            let sig = crypto.ec_signature_der(vec.unhex(parts[3]))
+            vec.check(inout t, crypto.ec_verify(pk, crypto.Sha384, m.copy(), crypto.ec_signature_der(sig.der.copy())), "ecdsa/sha384 signature from another backend".bytes())
+            let mut m2 = m.copy()
+            m2.push(1)
+            vec.check(inout t, !crypto.ec_verify(pk, crypto.Sha384, m2, sig), "ecdsa/sha384 signature from another backend, altered message".bytes())
+        }
+        if bytes.eq(parts[0], "rsapsssig".bytes()) {
+            let pk = match crypto.public_key_from_spki(vec.unhex(parts[1])).unwrap() {
+                crypto.RsaKey(r) => r
+                _ => panic("cross: not an RSA key")
+            }
+            let sig = crypto.rsa_signature(vec.unhex(parts[3]))
+            vec.check(inout t, crypto.rsa_pss_verify_tls(pk, crypto.Sha256, m.copy(), crypto.rsa_signature(sig.bytes.copy())), "rsa-pss signature from another backend".bytes())
+            let mut m2 = m.copy()
+            m2.push(1)
+            vec.check(inout t, !crypto.rsa_pss_verify_tls(pk, crypto.Sha256, m2, sig), "rsa-pss signature from another backend, altered message".bytes())
         }
         if bytes.eq(parts[0], "ed25519sig".bytes()) {
             let pk = crypto.ed25519_public_key(vec.unhex(parts[1])).unwrap()

@@ -32,6 +32,14 @@ extern "c" fn ec_crypto_p256_public() -> i64
 extern "c" fn ec_crypto_p256_sign() -> i64
 extern "c" fn ec_crypto_p256_verify(sig_len: i64) -> i64
 extern "c" fn ec_crypto_p256_ecdh() -> i64
+extern "c" fn ec_crypto_ec_public(curve: i32) -> i64
+extern "c" fn ec_crypto_ec_sign(curve: i32, hash: i32) -> i64
+extern "c" fn ec_crypto_ec_verify(curve: i32, hash: i32, sig_len: i64) -> i64
+extern "c" fn ec_crypto_ec_ecdh(curve: i32) -> i64
+extern "c" fn ec_crypto_rsa_verify(scheme: i32, hash: i32, salt_len: i64, key_len: i64, sig_len: i64) -> i64
+extern "c" fn ec_crypto_rsa_sign(scheme: i32, hash: i32, salt_len: i64, key_len: i64) -> i64
+extern "c" fn ec_crypto_spki_parse() -> i64
+extern "c" fn ec_crypto_priv_parse() -> i64
 extern "c" fn ec_crypto_ct_equal(len: i64) -> i64
 
 // status codes (eider_crypto.h)
@@ -63,7 +71,21 @@ pub const X25519: i32 = 30
 pub const ED25519: i32 = 31
 pub const ECDSA_P256_SHA256: i32 = 32
 pub const ECDH_P256: i32 = 33
+pub const ECDSA_P256_SHA384: i32 = 34
+pub const ECDSA_P384_SHA384: i32 = 35
+pub const ECDH_P384: i32 = 36
+pub const RSA_PKCS1_SHA256: i32 = 37
+pub const RSA_PSS_SHA256: i32 = 38
 pub const RANDOM: i32 = 40
+
+// curves, RSA schemes and key kinds (eider_crypto.h)
+pub const CURVE_P256: i32 = 1
+pub const CURVE_P384: i32 = 2
+pub const RSA_PKCS1: i32 = 1
+pub const RSA_PSS: i32 = 2
+pub const KEY_RSA: u8 = 1
+pub const KEY_P256: u8 = 2
+pub const KEY_P384: u8 = 3
 
 // backend families (ec_crypto_backend)
 pub const OPENSSL: i32 = 1
@@ -230,6 +252,63 @@ pub fn p256_verify(public: List[u8], der_sig: List[u8], msg: List[u8]) -> Result
 pub fn p256_ecdh(private: List[u8], peer: List[u8]) -> Result[List[u8], i64] uses ffi {
     send2(private, peer)
     let s = unsafe { ec_crypto_p256_ecdh() }
+    result(s)
+}
+
+pub fn ec_public(curve: i32, private: List[u8]) -> Result[List[u8], i64] uses ffi {
+    sys.send(private)
+    let s = unsafe { ec_crypto_ec_public(curve) }
+    result(s)
+}
+
+/// A DER ECDSA signature over hash(msg) on `curve`; k comes from the backend's CSPRNG.
+pub fn ec_sign(curve: i32, hash_alg: i32, private: List[u8], msg: List[u8]) -> Result[List[u8], i64] uses io, ffi {
+    send2(private, msg)
+    let s = unsafe { ec_crypto_ec_sign(curve, hash_alg) }
+    result(s)
+}
+
+pub fn ec_verify(curve: i32, hash_alg: i32, public: List[u8], der_sig: List[u8], msg: List[u8]) -> Result[bool, i64] uses ffi {
+    let sn = der_sig.len() as i64
+    send3(public, der_sig, msg)
+    let s = unsafe { ec_crypto_ec_verify(curve, hash_alg, sn) }
+    check(s)
+}
+
+pub fn ec_ecdh(curve: i32, private: List[u8], peer: List[u8]) -> Result[List[u8], i64] uses ffi {
+    send2(private, peer)
+    let s = unsafe { ec_crypto_ec_ecdh(curve) }
+    result(s)
+}
+
+/// `key` is an RSA public key blob (n_len as 4 bytes big endian, n, e).
+pub fn rsa_verify(scheme: i32, hash_alg: i32, salt_len: i64, key: List[u8], sig: List[u8], msg: List[u8]) -> Result[bool, i64] uses ffi {
+    let kn = key.len() as i64
+    let sn = sig.len() as i64
+    send3(key, sig, msg)
+    let s = unsafe { ec_crypto_rsa_verify(scheme, hash_alg, salt_len, kn, sn) }
+    check(s)
+}
+
+/// `key` is a PKCS#8 or PKCS#1 private key in DER. PSS draws `salt_len` random bytes.
+pub fn rsa_sign(scheme: i32, hash_alg: i32, salt_len: i64, key: List[u8], msg: List[u8]) -> Result[List[u8], i64] uses io, ffi {
+    let kn = key.len() as i64
+    send2(key, msg)
+    let s = unsafe { ec_crypto_rsa_sign(scheme, hash_alg, salt_len, kn) }
+    result(s)
+}
+
+/// kind (KEY_*) || RSA public key blob, or kind || uncompressed point, from a DER SubjectPublicKeyInfo.
+pub fn spki_parse(der: List[u8]) -> Result[List[u8], i64] uses ffi {
+    sys.send(der)
+    let s = unsafe { ec_crypto_spki_parse() }
+    result(s)
+}
+
+/// kind || RSA public key blob, or kind || scalar, from a DER private key (PKCS#8, PKCS#1, SEC1).
+pub fn priv_parse(der: List[u8]) -> Result[List[u8], i64] uses ffi {
+    sys.send(der)
+    let s = unsafe { ec_crypto_priv_parse() }
     result(s)
 }
 

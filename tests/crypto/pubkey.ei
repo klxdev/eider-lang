@@ -1,0 +1,567 @@
+// RSA (PKCS#1 v1.5 and PSS), ECDSA with SHA-256/384/512 on P-256 and P-384, ECDH P-384, and keys
+// from DER: keys and signatures made by the system openssl (tests/crypto/vectors/openssl_pubkey.rsp,
+// made by gen-pubkey-fixtures.sh), the key policy, the misuse checks and the negative cases,
+// against whichever backend this program is linked with (tests/crypto/run.sh runs it on each).
+//
+// With $PUBKEY_DIFF=<dir> it runs the differential half instead: tests/crypto/openssl-diff.sh
+// prepares <dir>/plan.txt, the keys and openssl's signatures; this program verifies those,
+// signs the same messages and writes the signatures for openssl to verify.
+
+import std.bytes
+import std.env
+import std.fs
+import std.io
+import vec
+import "../../packages/crypto/crypto.ei"
+
+fn eqb(a: List[u8], b: List[u8]) -> bool { bytes.eq(a, b) }
+
+fn text(s: List[u8], t: str) -> bool { bytes.eq(s, t.bytes()) }
+
+fn hash_of(s: List[u8]) -> crypto.Hash {
+    if text(s, "sha384") { return crypto.Sha384 }
+    if text(s, "sha512") { return crypto.Sha512 }
+    crypto.Sha256
+}
+
+fn num(s: List[u8]) -> usize { bytes.parse_u64(s).unwrap_or(0) as usize }
+
+fn flip(b: List[u8], at: usize) -> List[u8] {
+    let mut c = b.copy()
+    c[at] = c[at] ^ 1
+    c
+}
+
+fn key_rec(recs: List[vec.Rec], name: str) -> vec.Rec {
+    for r in recs {
+        if text(vec.get(r, "Kind"), "key") && text(vec.get(r, "Name"), name) { return r }
+    }
+    panic("pubkey: missing fixture key")
+}
+
+fn key_rec_b(recs: List[vec.Rec], name: List[u8]) -> vec.Rec {
+    for r in recs {
+        if text(vec.get(r, "Kind"), "key") && bytes.eq(vec.get(r, "Name"), name) { return r }
+    }
+    panic("pubkey: missing fixture key")
+}
+
+// "tag (detail)" from two byte strings
+fn lab(a: List[u8], b: List[u8]) -> List[u8] {
+    let mut m = a.copy()
+    bytes.append(inout m, " (".bytes())
+    bytes.append(inout m, b)
+    m.push(41)
+    m
+}
+
+fn rsa_pub_b(recs: List[vec.Rec], name: List[u8]) -> Option[crypto.RsaPublic] {
+    match crypto.public_key_from_spki(vec.get_hex(key_rec_b(recs, name), "Spki")) {
+        Ok(k) => {
+            match k {
+                crypto.RsaKey(r) => Some(r)
+                _ => None
+            }
+        }
+        Err(_) => None
+    }
+}
+
+fn rsa_pub(recs: List[vec.Rec], name: str) -> Option[crypto.RsaPublic] {
+    match crypto.public_key_from_spki(vec.get_hex(key_rec(recs, name), "Spki")) {
+        Ok(k) => {
+            match k {
+                crypto.RsaKey(r) => Some(r)
+                _ => None
+            }
+        }
+        Err(_) => None
+    }
+}
+
+fn is_err[T](r: Result[T, crypto.Error]) -> bool {
+    match r {
+        Ok(_) => false
+        Err(_) => true
+    }
+}
+
+fn is_invalid_key[T](r: Result[T, crypto.Error]) -> bool {
+    match r {
+        Ok(_) => false
+        Err(e) => {
+            match e {
+                crypto.InvalidKey => true
+                _ => false
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- keys
+
+fn keys(inout t: vec.Tally, recs: List[vec.Rec]) uses io {
+    for name in ["rsa2048", "rsa3072", "rsa4096", "rsa2048e3"] {
+        let r = key_rec(recs, name)
+        let pk = rsa_pub(recs, name)
+        match pk {
+            Some(k) => {
+                let want_bits: usize = if name == "rsa3072" { 3072 } else if name == "rsa4096" { 4096 } else { 2048 }
+                vec.check(inout t, crypto.rsa_bits(k) == want_bits, vec.label("rsa key size", name.bytes()))
+                let want_e = if name == "rsa2048e3" { vec.h("03") } else { vec.h("010001") }
+                vec.check(inout t, eqb(crypto.rsa_exponent(k), want_e), vec.label("rsa exponent", name.bytes()))
+                // the same key from (n, e), and from the private keys in both DER forms
+                match crypto.rsa_public_from_ne(crypto.rsa_modulus(k), crypto.rsa_exponent(k)) {
+                    Ok(k2) => vec.check(inout t, eqb(k2.blob, k.blob), vec.label("rsa key from (n, e)", name.bytes()))
+                    Err(_) => vec.check(inout t, false, vec.label("rsa key from (n, e)", name.bytes()))
+                }
+                for form in ["Pkcs8", "Pkcs1"] {
+                    match crypto.rsa_private_from_der(vec.get_hex(r, form)) {
+                        Ok(sk) => vec.check(inout t, eqb(crypto.rsa_public_of(sk).blob, k.blob), vec.label("rsa private key DER: public half matches", name.bytes()))
+                        Err(_) => vec.check(inout t, false, vec.label("rsa private key DER", name.bytes()))
+                    }
+                    match crypto.private_key_from_der(vec.get_hex(r, form)) {
+                        Ok(pk2) => {
+                            match pk2 {
+                                crypto.RsaPrivateKey(_) => vec.check(inout t, true, "private_key_from_der".bytes())
+                                _ => vec.check(inout t, false, "private_key_from_der: kind".bytes())
+                            }
+                        }
+                        Err(_) => vec.check(inout t, false, "private_key_from_der".bytes())
+                    }
+                }
+                // trailing bytes, truncation, garbage
+                let mut spki = vec.get_hex(r, "Spki")
+                let cut = bytes.slice(spki, 0, spki.len() - 1)
+                spki.push(0)
+                vec.check(inout t, is_err(crypto.public_key_from_spki(spki)), vec.label("spki with a trailing byte refused", name.bytes()))
+                vec.check(inout t, is_err(crypto.public_key_from_spki(cut)), vec.label("truncated spki refused", name.bytes()))
+                let mut pk8 = vec.get_hex(r, "Pkcs8")
+                pk8.push(0)
+                vec.check(inout t, is_err(crypto.rsa_private_from_der(pk8)), vec.label("private key with a trailing byte refused", name.bytes()))
+            }
+            None => vec.check(inout t, false, vec.label("rsa spki", name.bytes()))
+        }
+    }
+    // 1024-bit RSA is outside the key policy
+    let small = key_rec(recs, "rsa1024")
+    vec.check(inout t, is_invalid_key(crypto.public_key_from_spki(vec.get_hex(small, "Spki"))), "1024-bit spki refused".bytes())
+    vec.check(inout t, is_invalid_key(crypto.rsa_private_from_der(vec.get_hex(small, "Pkcs8"))), "1024-bit private key refused".bytes())
+    vec.check(inout t, is_invalid_key(crypto.rsa_private_from_der(vec.get_hex(small, "Pkcs1"))), "1024-bit PKCS#1 private key refused".bytes())
+    // EC keys: SPKI, SEC1, PKCS#8
+    for name in ["p256", "p384"] {
+        let r = key_rec(recs, name)
+        let c = if name == "p384" { crypto.P384 } else { crypto.P256 }
+        let mut point: List[u8] = List.new()
+        match crypto.public_key_from_spki(vec.get_hex(r, "Spki")) {
+            Ok(k) => {
+                match k {
+                    crypto.EcKey(e) => {
+                        point = e.bytes
+                        vec.check(inout t, e.curve == c && point.len() == crypto.ec_point_len(c), vec.label("ec spki", name.bytes()))
+                    }
+                    _ => vec.check(inout t, false, vec.label("ec spki: kind", name.bytes()))
+                }
+            }
+            Err(_) => vec.check(inout t, false, vec.label("ec spki", name.bytes()))
+        }
+        for form in ["Sec1", "Pkcs8"] {
+            match crypto.private_key_from_der(vec.get_hex(r, form)) {
+                Ok(k) => {
+                    match k {
+                        crypto.EcPrivateKey(s) => {
+                            let p = crypto.ec_public(s).unwrap()
+                            vec.check(inout t, eqb(p.bytes, point) && s.curve == c, vec.label("ec private key DER: public matches the spki", name.bytes()))
+                        }
+                        _ => vec.check(inout t, false, vec.label("ec private key DER: kind", name.bytes()))
+                    }
+                }
+                Err(_) => vec.check(inout t, false, vec.label("ec private key DER", name.bytes()))
+            }
+        }
+        vec.check(inout t, is_err(crypto.rsa_private_from_der(vec.get_hex(r, "Pkcs8"))), vec.label("ec key refused as an rsa key", name.bytes()))
+    }
+    vec.check(inout t, is_err(crypto.public_key_from_spki(List.new())), "empty spki refused".bytes())
+    vec.check(inout t, is_err(crypto.public_key_from_spki(vec.rep(48, 200))), "garbage spki refused".bytes())
+    vec.check(inout t, is_err(crypto.private_key_from_der(vec.rep(48, 200))), "garbage private key refused".bytes())
+}
+
+// ---------------------------------------------------------------- the key policy
+
+fn be(n: usize, top: u8, last: u8) -> List[u8] {
+    // n bytes, the first `top`, the last `last`, zeros between (n >= 2)
+    let mut b: List[u8] = List.new()
+    b.push(top)
+    let mut i: usize = 1
+    while i < n - 1 {
+        b.push(0)
+        i += 1
+    }
+    b.push(last)
+    b
+}
+
+fn policy(inout t: vec.Tally) uses io {
+    let e65537 = vec.h("010001")
+    // modulus size: 2047 bits no, 2048 yes, 8192 yes, 8193 no
+    vec.check(inout t, is_invalid_key(crypto.rsa_public_from_ne(be(256, 64, 1), e65537.copy())), "n of 2047 bits refused".bytes())
+    vec.check(inout t, crypto.rsa_public_from_ne(be(256, 128, 1), e65537.copy()).is_ok(), "n of 2048 bits accepted".bytes())
+    vec.check(inout t, crypto.rsa_public_from_ne(be(1024, 128, 1), e65537.copy()).is_ok(), "n of 8192 bits accepted".bytes())
+    vec.check(inout t, is_err(crypto.rsa_public_from_ne(be(1025, 1, 1), e65537.copy())), "n of 8193 bits refused".bytes())
+    vec.check(inout t, is_invalid_key(crypto.rsa_public_from_ne(vec.h("03"), vec.h("03"))), "tiny modulus refused".bytes())
+    vec.check(inout t, is_invalid_key(crypto.rsa_public_from_ne(be(128, 128, 1), e65537.copy())), "1024-bit modulus refused".bytes())
+    vec.check(inout t, is_invalid_key(crypto.rsa_public_from_ne(be(256, 128, 2), e65537.copy())), "even modulus refused".bytes())
+    let mut padded = vec.rep(0, 3)
+    bytes.append(inout padded, be(256, 128, 1))
+    match crypto.rsa_public_from_ne(padded, e65537.copy()) {
+        Ok(k) => vec.check(inout t, crypto.rsa_bits(k) == 2048 && crypto.rsa_modulus(k).len() == 256, "leading zero bytes of n are dropped".bytes())
+        Err(_) => vec.check(inout t, false, "leading zero bytes of n are dropped".bytes())
+    }
+    // public exponent: 3 and 65537 yes; 1, 0, even, and 34 bits no; 33 bits yes
+    vec.check(inout t, crypto.rsa_public_from_ne(be(256, 128, 1), vec.h("03")).is_ok(), "e = 3 accepted".bytes())
+    vec.check(inout t, crypto.rsa_public_from_ne(be(256, 128, 1), vec.h("0000010001")).is_ok(), "e with leading zeros accepted".bytes())
+    vec.check(inout t, is_invalid_key(crypto.rsa_public_from_ne(be(256, 128, 1), vec.h("01"))), "e = 1 refused".bytes())
+    vec.check(inout t, is_err(crypto.rsa_public_from_ne(be(256, 128, 1), vec.h("00"))), "e = 0 refused".bytes())
+    vec.check(inout t, is_invalid_key(crypto.rsa_public_from_ne(be(256, 128, 1), vec.h("010000"))), "even e refused".bytes())
+    vec.check(inout t, is_invalid_key(crypto.rsa_public_from_ne(be(256, 128, 1), vec.h("02"))), "e = 2 refused".bytes())
+    vec.check(inout t, crypto.rsa_public_from_ne(be(256, 128, 1), vec.h("0100000001")).is_ok(), "e of 33 bits accepted".bytes())
+    vec.check(inout t, is_invalid_key(crypto.rsa_public_from_ne(be(256, 128, 1), vec.h("0200000001"))), "e of 34 bits refused".bytes())
+    vec.check(inout t, is_err(crypto.rsa_public_from_ne(be(256, 128, 1), vec.rep(255, 9))), "e of 72 bits refused".bytes())
+    vec.check(inout t, is_err(crypto.rsa_public_from_ne(List.new(), e65537.copy())), "empty n refused".bytes())
+    vec.check(inout t, is_err(crypto.rsa_public_from_ne(be(256, 128, 1), List.new())), "empty e refused".bytes())
+}
+
+// ---------------------------------------------------------------- signatures from openssl, negatives, signing
+
+fn verify_rsa(k: crypto.RsaPublic, pss: bool, h: crypto.Hash, salt: usize, msg: List[u8], sig: List[u8]) -> bool {
+    if pss { return crypto.rsa_pss_verify(k, h, salt, msg, crypto.rsa_signature(sig)) }
+    crypto.rsa_pkcs1_verify(k, h, msg, crypto.rsa_signature(sig))
+}
+
+fn ec_pub(recs: List[vec.Rec], name: str) -> crypto.EcPublic {
+    match crypto.public_key_from_spki(vec.get_hex(key_rec(recs, name), "Spki")) {
+        Ok(k) => {
+            match k {
+                crypto.EcKey(e) => e
+                _ => panic("pubkey: not an EC key")
+            }
+        }
+        Err(_) => panic("pubkey: bad EC spki")
+    }
+}
+
+fn ec_sec(recs: List[vec.Rec], name: str) -> crypto.EcSecret {
+    match crypto.private_key_from_der(vec.get_hex(key_rec(recs, name), "Sec1")) {
+        Ok(k) => {
+            match k {
+                crypto.EcPrivateKey(s) => s
+                _ => panic("pubkey: not an EC private key")
+            }
+        }
+        Err(_) => panic("pubkey: bad EC private key")
+    }
+}
+
+fn rsa_priv(recs: List[vec.Rec], name: str, form: str) -> crypto.RsaPrivate {
+    crypto.rsa_private_from_der(vec.get_hex(key_rec(recs, name), form)).unwrap()
+}
+
+fn rsa_priv_b(recs: List[vec.Rec], name: List[u8], form: str) -> crypto.RsaPrivate {
+    crypto.rsa_private_from_der(vec.get_hex(key_rec_b(recs, name), form)).unwrap()
+}
+
+// label with a str and the tag bytes
+fn lab2(what: str, tag: List[u8]) -> List[u8] { lab(what.bytes(), tag) }
+
+fn signatures(inout t: vec.Tally, recs: List[vec.Rec]) uses io {
+    let mut n_rsa: u64 = 0
+    for r in recs {
+        if !text(vec.get(r, "Kind"), "sig") { continue }
+        let name = vec.get(r, "Name")
+        let sc = vec.get(r, "Scheme")
+        let h = hash_of(vec.get(r, "Hash"))
+        let salt = num(vec.get(r, "Salt"))
+        let msg = vec.get_hex(r, "Msg")
+        let sig = vec.get_hex(r, "Sig")
+        let tag = lab(bytes.concat(sc.copy(), vec.get(r, "Hash")), name.copy())
+        if text(sc, "ecdsa") {
+            let c = if bytes.starts_with(name, "p384".bytes()) { crypto.P384 } else { crypto.P256 }
+            let pk = ec_pub(recs, if c == crypto.P384 { "p384" } else { "p256" })
+            let s = crypto.ec_signature_der(sig.copy())
+            vec.check(inout t, crypto.ec_verify(pk, h, msg.copy(), crypto.ec_signature_der(sig.copy())), lab2("openssl ecdsa signature verifies", tag.copy()))
+            // negatives: other hash, flipped message bit, flipped signature bit, truncated, extra byte, empty
+            let other = if h == crypto.Sha256 { crypto.Sha384 } else { crypto.Sha256 }
+            vec.check(inout t, !crypto.ec_verify(pk, other, msg.copy(), crypto.ec_signature_der(sig.copy())), lab2("ecdsa: hash mismatch", tag.copy()))
+            vec.check(inout t, !crypto.ec_verify(pk, h, flip(msg.copy(), 3), crypto.ec_signature_der(sig.copy())), lab2("ecdsa: altered message", tag.copy()))
+            vec.check(inout t, !crypto.ec_verify(pk, h, msg.copy(), crypto.ec_signature_der(flip(sig.copy(), sig.len() - 5))), lab2("ecdsa: altered signature", tag.copy()))
+            vec.check(inout t, !crypto.ec_verify(pk, h, msg.copy(), crypto.ec_signature_der(bytes.slice(sig, 0, sig.len() - 1))), lab2("ecdsa: short signature", tag.copy()))
+            let mut longer = sig.copy()
+            longer.push(0)
+            vec.check(inout t, !crypto.ec_verify(pk, h, msg.copy(), crypto.ec_signature_der(longer)), lab2("ecdsa: signature with a trailing byte", tag.copy()))
+            vec.check(inout t, !crypto.ec_verify(pk, h, msg.copy(), crypto.ec_signature_der(List.new())), lab2("ecdsa: empty signature", tag.copy()))
+            // the other curve's key does not verify it
+            let wrong = ec_pub(recs, if c == crypto.P384 { "p256" } else { "p384" })
+            vec.check(inout t, !crypto.ec_verify(wrong, h, msg.copy(), s), lab2("ecdsa: wrong key", tag.copy()))
+            continue
+        }
+        n_rsa += 1
+        let pss = text(sc, "pss")
+        let k = rsa_pub_b(recs, name.copy()).unwrap()
+        vec.check(inout t, verify_rsa(k, pss, h, salt, msg.copy(), sig.copy()), lab2("openssl rsa signature verifies", tag.copy()))
+        // negatives
+        vec.check(inout t, !verify_rsa(k, pss, h, salt, flip(msg.copy(), 0), sig.copy()), lab2("rsa: altered message", tag.copy()))
+        vec.check(inout t, !verify_rsa(k, pss, h, salt, msg.copy(), flip(sig.copy(), 10)), lab2("rsa: altered signature", tag.copy()))
+        vec.check(inout t, !verify_rsa(k, pss, h, salt, msg.copy(), flip(sig.copy(), sig.len() - 1)), lab2("rsa: altered signature (last byte)", tag.copy()))
+        vec.check(inout t, !verify_rsa(k, pss, h, salt, msg.copy(), bytes.slice(sig, 0, sig.len() - 1)), lab2("rsa: short signature", tag.copy()))
+        vec.check(inout t, !verify_rsa(k, pss, h, salt, msg.copy(), bytes.slice(sig, 1, sig.len())), lab2("rsa: signature without its first byte", tag.copy()))
+        let mut longer = sig.copy()
+        longer.push(0)
+        vec.check(inout t, !verify_rsa(k, pss, h, salt, msg.copy(), longer), lab2("rsa: long signature", tag.copy()))
+        let mut lead = vec.rep(0, 1)
+        bytes.append(inout lead, sig.copy())
+        vec.check(inout t, !verify_rsa(k, pss, h, salt, msg.copy(), lead), lab2("rsa: signature with a leading zero byte", tag.copy()))
+        vec.check(inout t, !verify_rsa(k, pss, h, salt, msg.copy(), List.new()), lab2("rsa: empty signature", tag.copy()))
+        vec.check(inout t, !verify_rsa(k, pss, h, salt, msg.copy(), vec.rep(0, sig.len())), lab2("rsa: zero signature", tag.copy()))
+        vec.check(inout t, !verify_rsa(k, pss, h, salt, msg.copy(), vec.rep(255, sig.len())), lab2("rsa: signature above the modulus", tag.copy()))
+        let other = if h == crypto.Sha256 { crypto.Sha384 } else { crypto.Sha256 }
+        vec.check(inout t, !verify_rsa(k, pss, other, salt, msg.copy(), sig.copy()), lab2("rsa: hash mismatch", tag.copy()))
+        // padding mismatch: a PSS signature is no PKCS#1 signature and the other way round
+        vec.check(inout t, !verify_rsa(k, !pss, h, salt, msg.copy(), sig.copy()), lab2("rsa: wrong padding scheme", tag.copy()))
+        if pss {
+            vec.check(inout t, !verify_rsa(k, true, h, salt + 1, msg.copy(), sig.copy()), lab2("rsa pss: wrong salt length (+1)", tag.copy()))
+            if salt > 0 { vec.check(inout t, !verify_rsa(k, true, h, salt - 1, msg.copy(), sig.copy()), lab2("rsa pss: wrong salt length (-1)", tag.copy())) }
+            if salt == crypto.hash_len(h) { vec.check(inout t, crypto.rsa_pss_verify_tls(k, h, msg.copy(), crypto.rsa_signature(sig.copy())), lab2("rsa pss: TLS salt length", tag.copy())) }
+            if salt != crypto.hash_len(h) { vec.check(inout t, !crypto.rsa_pss_verify_tls(k, h, msg.copy(), crypto.rsa_signature(sig.copy())), lab2("rsa pss: TLS refuses another salt length", tag.copy())) }
+        }
+        // another key of the same size does not verify it
+        let other_key = if bytes.eq(name, "rsa2048".bytes()) { rsa_pub(recs, "rsa2048e3").unwrap() } else { rsa_pub(recs, "rsa2048").unwrap() }
+        if sig.len() == 256 { vec.check(inout t, !verify_rsa(other_key, pss, h, salt, msg.copy(), sig.copy()), lab2("rsa: wrong key", tag.copy())) }
+        // signing: PKCS#1 v1.5 is deterministic, so it must reproduce openssl's bytes; PSS verifies, with openssl's salt length
+        for form in ["Pkcs8", "Pkcs1"] {
+            let sk = rsa_priv_b(recs, name.copy(), form)
+            if pss {
+                let mine = crypto.rsa_pss_sign(sk, h, salt, msg.copy()).unwrap()
+                vec.check(inout t, verify_rsa(k, true, h, salt, msg.copy(), mine.bytes.copy()) && mine.bytes.len() == sig.len(), lab2("rsa pss sign then verify", tag.copy()))
+                let second = crypto.rsa_pss_sign(sk, h, salt, msg.copy()).unwrap()
+                if salt > 0 { vec.check(inout t, !eqb(mine.bytes, second.bytes), lab2("rsa pss: the salt is random", tag.copy())) }
+            } else {
+                let mine = crypto.rsa_pkcs1_sign(sk, h, msg.copy()).unwrap()
+                vec.check(inout t, eqb(mine.bytes, sig.copy()), lab2("rsa pkcs1 signature equals openssl's", tag.copy()))
+            }
+        }
+    }
+    vec.check(inout t, n_rsa >= 12, "rsa signature fixtures present".bytes())
+}
+
+// ---------------------------------------------------------------- misuse and the rest
+
+fn misuse(inout t: vec.Tally, recs: List[vec.Rec]) uses io {
+    let msg = "eider public-key misuse checks".bytes()
+    let sk = rsa_priv(recs, "rsa2048", "Pkcs8")
+    let pk = crypto.rsa_public_of(sk)
+    // hashes other than SHA-2: refused to sign, never valid
+    vec.check(inout t, !crypto.rsa_pkcs1_verify(pk, crypto.Sha3_256, msg.copy(), crypto.rsa_signature(vec.rep(1, 256))), "rsa verify with SHA3 is false".bytes())
+    vec.check(inout t, is_err(crypto.rsa_pkcs1_sign(sk, crypto.Sha3_256, msg.copy())), "rsa sign with SHA3 is an error".bytes())
+    vec.check(inout t, is_err(crypto.rsa_pss_sign(sk, crypto.Blake2b256, 32, msg.copy())), "rsa pss sign with BLAKE2 is an error".bytes())
+    vec.check(inout t, is_err(crypto.rsa_pss_sign(sk, crypto.Sha256, 2000, msg.copy())), "rsa pss: salt length beyond the limit is an error".bytes())
+    // a salt that cannot fit in the modulus (2048 bits, SHA-256: at most 256 - 32 - 2 = 222 bytes)
+    vec.check(inout t, is_err(crypto.rsa_pss_sign(sk, crypto.Sha256, 223, msg.copy())), "rsa pss: salt too long for the modulus is an error".bytes())
+    vec.check(inout t, crypto.rsa_pss_sign(sk, crypto.Sha256, 222, msg.copy()).is_ok(), "rsa pss: the longest salt that fits".bytes())
+    // empty and large messages
+    let sizes: [usize; 4] = [0, 1, 1000, 100000]
+    for n in sizes {
+        let m = vec.rep(7, n)
+        let s1 = crypto.rsa_pkcs1_sign(sk, crypto.Sha384, m.copy()).unwrap()
+        vec.check(inout t, crypto.rsa_pkcs1_verify(pk, crypto.Sha384, m.copy(), s1), vec.label("rsa pkcs1 message size", bytes.from_u64(n as u64)))
+        let s2 = crypto.rsa_pss_sign_tls(sk, crypto.Sha512, m.copy()).unwrap()
+        vec.check(inout t, crypto.rsa_pss_verify_tls(pk, crypto.Sha512, m.copy(), s2), vec.label("rsa pss message size", bytes.from_u64(n as u64)))
+    }
+    // a private key is not a public key and an RSA key is not an EC key
+    vec.check(inout t, is_err(crypto.public_key_from_spki(vec.get_hex(key_rec(recs, "rsa2048"), "Pkcs8"))), "a private key is not an spki".bytes())
+    vec.check(inout t, is_err(crypto.private_key_from_der(vec.get_hex(key_rec(recs, "rsa2048"), "Spki"))), "an spki is not a private key".bytes())
+
+    // EC: lengths, ranges, curve mixups
+    vec.check(inout t, is_err(crypto.ec_secret(crypto.P384, vec.rep(1, 32))), "p384 scalar of 32 bytes".bytes())
+    vec.check(inout t, is_err(crypto.ec_secret(crypto.P256, vec.rep(1, 48))), "p256 scalar of 48 bytes".bytes())
+    vec.check(inout t, is_invalid_key(crypto.ec_secret(crypto.P384, vec.rep(0, 48))), "p384 scalar zero".bytes())
+    vec.check(inout t, is_invalid_key(crypto.ec_secret(crypto.P384, vec.rep(255, 48))), "p384 scalar above the order".bytes())
+    vec.check(inout t, is_err(crypto.ec_public_key(crypto.P384, vec.rep(4, 65))), "p384 point of 65 bytes".bytes())
+    vec.check(inout t, is_err(crypto.ec_public_key(crypto.P256, vec.rep(4, 97))), "p256 point of 97 bytes".bytes())
+    let a = crypto.ec_generate(crypto.P384).unwrap()
+    let b = crypto.ec_generate(crypto.P384).unwrap()
+    let pa = crypto.ec_public(a).unwrap()
+    let pb = crypto.ec_public(b).unwrap()
+    vec.check(inout t, pa.bytes.len() == 97 && pa.bytes[0] == 4, "p384 public key is 97 bytes".bytes())
+    let ab = crypto.ec_agree(a, pb).unwrap()
+    let ba = crypto.ec_agree(b, pa).unwrap()
+    vec.check(inout t, eqb(ab.bytes, ba.bytes) && ab.bytes.len() == 48, "p384 ecdh agrees both ways".bytes())
+    let p256 = crypto.ec_public(crypto.ec_generate(crypto.P256).unwrap()).unwrap()
+    vec.check(inout t, is_err(crypto.ec_agree(a, p256)), "ecdh across curves is an error".bytes())
+    let mut off = pb.bytes.copy()
+    off[96] = off[96] ^ 1
+    match crypto.ec_public_key(crypto.P384, off.copy()) {
+        Ok(bad) => {
+            vec.check(inout t, is_err(crypto.ec_agree(a, bad)), "p384 ecdh with a point off the curve".bytes())
+            vec.check(inout t, !crypto.ec_verify(bad, crypto.Sha384, msg.copy(), crypto.ec_signature_der(vec.h("3006020101020101"))), "p384 verify with a point off the curve".bytes())
+        }
+        Err(_) => vec.check(inout t, false, "p384 off-curve point construction".bytes())
+    }
+    // ECDSA with every curve/hash pair: sign, verify, DER and r || s forms, random k
+    for c in [crypto.P256, crypto.P384] {
+        let s = crypto.ec_generate(c).unwrap()
+        let p = crypto.ec_public(s).unwrap()
+        for h in [crypto.Sha256, crypto.Sha384, crypto.Sha512] {
+            let g1 = crypto.ec_sign(s, h, msg.copy()).unwrap()
+            let g2 = crypto.ec_sign(s, h, msg.copy()).unwrap()
+            vec.check(inout t, crypto.ec_verify(p, h, msg.copy(), crypto.ec_signature_der(g1.der.copy())), "ecdsa sign then verify, every curve and hash".bytes())
+            vec.check(inout t, !eqb(g1.der, g2.der), "ecdsa: k is random".bytes())
+            let raw = crypto.ec_signature_to_raw(c, crypto.ec_signature_der(g1.der.copy())).unwrap()
+            vec.check(inout t, raw.len() == 2 * crypto.ec_scalar_len(c), "ecdsa: r || s length".bytes())
+            let back = crypto.ec_signature_raw(c, raw.copy()).unwrap()
+            vec.check(inout t, eqb(back.der, g1.der), "ecdsa: DER and r || s round trip".bytes())
+            vec.check(inout t, crypto.ec_verify(p, h, msg.copy(), back), "ecdsa: verify the rebuilt DER".bytes())
+            // the other hashes do not verify it
+            for h2 in [crypto.Sha256, crypto.Sha384, crypto.Sha512] {
+                if h2 != h { vec.check(inout t, !crypto.ec_verify(p, h2, msg.copy(), crypto.ec_signature_der(g1.der.copy())), "ecdsa: hash mismatch".bytes()) }
+            }
+            vec.check(inout t, is_err(crypto.ec_signature_to_raw(c, crypto.ec_signature_der(bytes.slice(g1.der, 0, g1.der.len() - 1)))), "ecdsa: truncated DER is not convertible".bytes())
+        }
+        vec.check(inout t, is_err(crypto.ec_sign(s, crypto.Sha3_256, msg.copy())), "ecdsa sign with SHA3 is an error".bytes())
+        vec.check(inout t, is_err(crypto.ec_signature_raw(c, vec.rep(1, 63))), "ecdsa: r || s of 63 bytes".bytes())
+    }
+    // the older P-256 functions still agree with the general ones
+    let s256 = crypto.p256_generate().unwrap()
+    let sig256 = crypto.p256_sign(s256, msg.copy()).unwrap()
+    let as_ec = crypto.EcPublic(crypto.P256, crypto.p256_public(s256).unwrap().bytes)
+    vec.check(inout t, crypto.ec_verify(as_ec, crypto.Sha256, msg.copy(), crypto.ec_signature_der(sig256.der)), "p256_sign verifies through ec_verify".bytes())
+
+    // capabilities
+    vec.check(inout t, crypto.supports(crypto.RsaPkcs1Signing) && crypto.supports(crypto.RsaPssSigning), "backend supports RSA".bytes())
+    vec.check(inout t, crypto.supports(crypto.P384Signing) && crypto.supports(crypto.P384Agreement) && crypto.supports(crypto.P256Sha384Signing), "backend supports P-384 and ECDSA with SHA-384".bytes())
+}
+
+// ---------------------------------------------------------------- differential half (against openssl)
+
+fn read_file(path: List[u8]) -> List[u8] uses fs {
+    match fs.read(path) {
+        Ok(b) => b
+        Err(_) => panic("pubkey: cannot read a file of the differential test")
+    }
+}
+
+fn join_path(dir: List[u8], name: str) -> List[u8] {
+    let mut p = dir.copy()
+    p.push(47)
+    bytes.append(inout p, name.bytes())
+    p
+}
+
+fn path_of(dir: List[u8], a: List[u8], suffix: str) -> List[u8] {
+    let mut n = a.copy()
+    bytes.append(inout n, suffix.bytes())
+    let mut p = dir.copy()
+    p.push(47)
+    bytes.append(inout p, n)
+    p
+}
+
+// plan.txt lines: "<n> <key> <scheme> <hash> <salt>"; keys are <key>.pkcs8 / .sec1 / .spki in the directory,
+// the message is msg.bin, openssl's signature <n>.openssl.sig, ours <n>.eider.sig
+fn differential(inout t: vec.Tally, dir: List[u8]) uses io, fs {
+    let msg = read_file(join_path(dir.copy(), "msg.bin"))
+    for line in bytes.lines(read_file(join_path(dir.copy(), "plan.txt"))) {
+        let f = bytes.split(bytes.trim(line), 32)
+        if f.len() < 5 { continue }
+        let id = f[0]
+        let key = f[1]
+        let sc = f[2]
+        let h = hash_of(f[3])
+        let salt = num(f[4])
+        let theirs = read_file(path_of(dir.copy(), id.copy(), ".openssl.sig"))
+        let pub_der = read_file(path_of(dir.copy(), key.copy(), ".spki"))
+        let tag = lab(bytes.concat(sc.copy(), f[3].copy()), key.copy())
+        if text(sc, "ecdsa") {
+            let pk = match crypto.public_key_from_spki(pub_der) {
+                Ok(k) => {
+                    match k {
+                        crypto.EcKey(e) => e
+                        _ => panic("pubkey: spki is not an EC key")
+                    }
+                }
+                Err(_) => panic("pubkey: bad spki")
+            }
+            vec.check(inout t, crypto.ec_verify(pk, h, msg.copy(), crypto.ec_signature_der(theirs)), vec.label("openssl ecdsa signature verifies here", tag.copy()))
+            let sk = match crypto.private_key_from_der(read_file(path_of(dir.copy(), key.copy(), ".sec1"))) {
+                Ok(k) => {
+                    match k {
+                        crypto.EcPrivateKey(s) => s
+                        _ => panic("pubkey: key is not EC")
+                    }
+                }
+                Err(_) => panic("pubkey: bad EC key")
+            }
+            let mine = crypto.ec_sign(sk, h, msg.copy()).unwrap()
+            let _ = fs.write(path_of(dir.copy(), id.copy(), ".eider.sig"), mine.der)
+            continue
+        }
+        let pss = text(sc, "pss")
+        let pk = match crypto.public_key_from_spki(pub_der) {
+            Ok(k) => {
+                match k {
+                    crypto.RsaKey(r) => r
+                    _ => panic("pubkey: spki is not an RSA key")
+                }
+            }
+            Err(_) => panic("pubkey: bad spki")
+        }
+        vec.check(inout t, verify_rsa(pk, pss, h, salt, msg.copy(), theirs.copy()), vec.label("openssl rsa signature verifies here", tag.copy()))
+        let sk = crypto.rsa_private_from_der(read_file(path_of(dir.copy(), key.copy(), ".pkcs8"))).unwrap()
+        let mine = if pss { crypto.rsa_pss_sign(sk, h, salt, msg.copy()).unwrap() } else { crypto.rsa_pkcs1_sign(sk, h, msg.copy()).unwrap() }
+        if !pss { vec.check(inout t, eqb(mine.bytes, theirs), vec.label("pkcs1 signature equals openssl's", tag.copy())) }
+        let _ = fs.write(path_of(dir.copy(), id.copy(), ".eider.sig"), mine.bytes)
+    }
+    // ECDH P-384 (and P-256) against `openssl pkeyutl -derive`: our shared secret goes to <key>.eider.ecdh
+    for pair in ["p384 p384b", "p256 p256b"] {
+        let f = bytes.split(pair.bytes(), 32)
+        let c = if text(f[0], "p384") { crypto.P384 } else { crypto.P256 }
+        let sk = match crypto.private_key_from_der(read_file(path_of(dir.copy(), f[0].copy(), ".sec1"))) {
+            Ok(k) => {
+                match k {
+                    crypto.EcPrivateKey(s) => s
+                    _ => panic("pubkey: key is not EC")
+                }
+            }
+            Err(_) => panic("pubkey: bad EC key")
+        }
+        let peer = match crypto.public_key_from_spki(read_file(path_of(dir.copy(), f[1].copy(), ".spki"))) {
+            Ok(k) => {
+                match k {
+                    crypto.EcKey(e) => e
+                    _ => panic("pubkey: not EC")
+                }
+            }
+            Err(_) => panic("pubkey: bad spki")
+        }
+        let z = crypto.ec_agree(sk, peer).unwrap()
+        let _ = fs.write(path_of(dir.copy(), f[0].copy(), ".eider.ecdh"), bytes.hex(z.bytes))
+        vec.check(inout t, c == peer.curve, "ecdh peer curve".bytes())
+    }
+}
+
+fn main() uses io, fs {
+    let mut t = vec.tally()
+    match env.get("PUBKEY_DIFF".bytes()) {
+        Some(dir) => {
+            differential(inout t, dir)
+            vec.finish(t, "pubkey differential")
+        }
+        None => {
+            let recs = vec.records(vec.read_vectors("openssl_pubkey.rsp"))
+            keys(inout t, recs.copy())
+            policy(inout t)
+            signatures(inout t, recs.copy())
+            misuse(inout t, recs)
+            vec.finish(t, "pubkey")
+        }
+    }
+}

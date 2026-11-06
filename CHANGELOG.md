@@ -5,6 +5,21 @@ share `VERSION`. eider-analyzer, tree-sitter-eider and eider-profiler have the s
 MAJOR.MINOR and their own PATCH, and are released together with it. Before 1.0 a MINOR
 may break compatibility. The release process: docs/site/tooling/releases.md.
 
+## 0.7.6 (unreleased)
+
+- **crypto: RSA, ECDSA P-384 and ECDSA with SHA-384/512 (#221; decision C898).** `packages/crypto` gains RSASSA-PKCS1-v1_5
+  and RSASSA-PSS verification and signing with SHA-256/384/512 (`rsa_pkcs1_verify`, `rsa_pss_verify` with an exact salt
+  length, `rsa_pss_verify_tls` with the hash length, `rsa_pkcs1_sign`, `rsa_pss_sign`, `rsa_pss_sign_tls`), RSA keys from
+  SubjectPublicKeyInfo, PKCS#8, PKCS#1 or (n, e) (`public_key_from_spki`, `private_key_from_der`, `rsa_public_from_ne`,
+  `rsa_private_from_der`; moduli of 2048 to 8192 bits, odd exponents 3 <= e < 2^33, the same on every backend), ECDSA and
+  ECDH on P-256 and P-384 with any of SHA-256/384/512 (`ec_secret`, `ec_public`, `ec_sign`, `ec_verify`, `ec_agree`,
+  DER and r || s forms), and `supports` for each. RSA key generation and encryption are not offered. The core's ABI
+  gets `ec_crypto_ec_*`, `ec_crypto_rsa_*`, `ec_crypto_spki_parse` and `ec_crypto_priv_parse` (core/ABI.md, core/crypto/README.md);
+  it is the same glue file against the OpenSSL API, so AWS-LC, OpenSSL 3 and LibreSSL provide all of it. Tests on every
+  backend: Wycheproof RSA PKCS#1 (8 files) and PSS (8), ECDSA P-384 (3), ECDH P-384; NIST CAVP RSA SigVer, ECDSA P-384
+  and P-256 with SHA-384/512, ECDH P-384; keys and signatures made by the system openssl, and a differential test in both
+  directions against the `openssl` command (10 987 Wycheproof and 1 781 CAVP checks pass on each backend).
+
 ## 0.7.5
 
 A patch with one breaking change: `var` is removed from the language. eider-analyzer moves to 0.7.3, tree-sitter-eider

@@ -32,7 +32,7 @@ libcrypto                     AWS-LC | OpenSSL 3 | LibreSSL | BoringSSL
 `core/crypto.ei` is in the `core` package, which holds `ffi` (docs/compiler.md "C8.5"), so
 callers outside core need no `ffi`. Capabilities: everything is pure computation and needs
 nothing, except what reads the outside world's randomness: `random`, the `*_generate`
-functions, `random_nonce` and `p256_sign` (random k) declare `io`, as core/os.ei's OS
+functions, `random_nonce`, `p256_sign`, `ec_sign` (random k) and `rsa_pss_sign`, `rsa_pkcs1_sign` (blinding and the PSS salt draw from it) declare `io`, as core/os.ei's OS
 randomness does (decision C11).
 
 Why `packages/crypto` and not `std/crypto`: LAYERS.md puts in std only what most programs
@@ -66,14 +66,19 @@ written since the last wipe, so it stays cheap).
 | `ec_crypto_x25519_public()` / `ec_crypto_x25519()` | private / private, peer | public / shared (`EKEY` if all zero) |
 | `ec_crypto_ed25519_public()` / `_sign()` / `_verify()` | seed / seed, msg / public, sig, msg | public / signature / 1 or 0 |
 | `ec_crypto_p256_public()` / `_sign()` / `_verify(sig_len)` / `_ecdh()` | d / d, msg / public, DER sig, msg / d, peer | 65-byte point / DER signature / 1 or 0 / 32-byte x |
+| `ec_crypto_ec_public(curve)` / `_ec_sign(curve, hash)` / `_ec_verify(curve, hash, sig_len)` / `_ec_ecdh(curve)` | d / d, msg / public, DER sig, msg / d, peer | point (65 or 97 bytes) / DER signature / 1 or 0 / x (32 or 48 bytes); `curve` 1 = P-256, 2 = P-384, `hash` SHA-256, SHA-384 or SHA-512 with either (the `p256_*` calls are these with curve 1 and SHA-256) |
+| `ec_crypto_rsa_verify(scheme, hash, salt_len, key_len, sig_len)` | key blob, sig, msg | 1 or 0; `scheme` 1 = PKCS#1 v1.5, 2 = RSASSA-PSS (MGF1 of the same hash, exactly `salt_len` salt bytes) |
+| `ec_crypto_rsa_sign(scheme, hash, salt_len, key_len)` | private key DER, msg | signature (modulus length) |
+| `ec_crypto_spki_parse()` / `ec_crypto_priv_parse()` | DER SubjectPublicKeyInfo / DER private key (PKCS#8, PKCS#1, SEC1) | kind (1 RSA, 2 P-256, 3 P-384) followed by the RSA key blob or the point / the RSA public blob or the scalar |
 | `ec_crypto_ct_equal(len)` | a, b | 1 if equal (`CRYPTO_memcmp`) |
 | `ec_crypto_wipe()` | | zeroes and empties `in` and `out` |
 
 Status codes: `EUNSUPPORTED` -5001, `ELENGTH` -5002, `EKEY` -5003, `EAUTH` -5004,
 `EBACKEND` -5005 (disjoint from the core's `-errno`). Formats: AEAD nonces are 12 bytes and
 tags 16 (the only sizes every backend takes for all three AEADs); P-256 keys are a 32-byte
-big-endian scalar and a 65-byte uncompressed point, ECDSA signatures DER (as TLS and X.509
-carry them; packages/crypto converts to and from r ‖ s in Eider), ECDSA hashes with SHA-256.
+big-endian scalar and a 65-byte uncompressed point, P-384 the same with 48-byte scalars and 97-byte
+points; ECDSA signatures are DER (as TLS and X.509 carry them; packages/crypto converts to and from r ‖ s in
+Eider). An RSA public key travels as a blob `n_len (4 bytes, big endian) ‖ n ‖ e`, a private key as its DER.
 Ed25519 is pure Ed25519 with the 32-byte seed as the private key. A key the library can't
 decode on a verify path is "not valid" (0), never an error, so backends that reject a key at
 import and those that reject it at verification answer alike.
@@ -89,6 +94,8 @@ import and those that reject it at verification answer alike.
 | AES-128-GCM, AES-256-GCM | yes | yes | yes | yes |
 | ChaCha20-Poly1305 | yes (EVP_CIPHER; `awslc-aead`: EVP_AEAD) | yes | yes | yes (EVP_AEAD) |
 | X25519, Ed25519, ECDSA P-256 (SHA-256), ECDH P-256 | yes | yes | yes | yes |
+| ECDSA P-384 and P-256 with SHA-256/384/512, ECDH P-384 | yes | yes | yes | yes (by the code) |
+| RSA PKCS#1 v1.5 and RSASSA-PSS (SHA-256/384/512) verify and sign, 2048-8192 bits; keys from SPKI, PKCS#8, PKCS#1, SEC1 | yes | yes | yes | yes (by the code) |
 | `RAND_bytes`, `CRYPTO_memcmp` | yes | yes | yes | yes |
 
 `ec_crypto_supports` reports this at run time; packages/crypto returns `Err(Unsupported)` for
@@ -125,6 +132,14 @@ Every function and macro `eider_crypto.c` uses, so a new backend can be checked 
   `EC_POINT_point2oct(POINT_CONVERSION_UNCOMPRESSED)`, `EC_POINT_free`, `EVP_PKEY_new`,
   `EVP_PKEY_set1_EC_KEY`, `EVP_PKEY_get0_EC_KEY`, `BN_bin2bn`, `BN_new`, `BN_is_zero`,
   `BN_cmp`, `BN_free`, `BN_clear_free`.
+- **P-384 and the generic curve code:** the same `EC_KEY` functions with `NID_secp384r1`; `EVP_PKEY_base_id`,
+  `EC_GROUP_get_curve_name`, `BN_bn2binpad`, `BN_num_bits`, `BN_num_bytes`, `BN_is_odd`.
+- **RSA:** `RSA_new`, `RSA_set0_key`, `RSA_get0_key`, `RSA_size`, `RSA_free`, `EVP_PKEY_set1_RSA`,
+  `EVP_PKEY_get0_RSA` (the deprecated legacy accessors, as for EC), `EVP_PKEY_CTX_set_rsa_padding`
+  (`RSA_PKCS1_PADDING`, `RSA_PKCS1_PSS_PADDING`), `EVP_PKEY_CTX_set_rsa_pss_saltlen`,
+  `EVP_PKEY_CTX_set_rsa_mgf1_md`, with `EVP_DigestSignInit`/`EVP_DigestSign` and `EVP_DigestVerifyInit`/
+  `EVP_DigestVerify`; keys from DER with `d2i_PUBKEY` (SubjectPublicKeyInfo) and `d2i_AutoPrivateKey`
+  (PKCS#8, PKCS#1 and SEC1 in one call).
 - **Other:** `RAND_bytes`, `CRYPTO_memcmp`, `OPENSSL_cleanse`, `OpenSSL_version
   (OPENSSL_VERSION)`, `ERR_clear_error`.
 - **Family detection:** `OPENSSL_IS_AWSLC`, `OPENSSL_IS_BORINGSSL`, `LIBRESSL_VERSION_NUMBER`,
@@ -135,6 +150,33 @@ LibreSSL (`EC_GROUP_get_order` is used); `EVP_PKEY_HKDF` extract with an empty I
 OpenSSL 3 and fails in AWS-LC and LibreSSL, so HKDF-Extract is computed as what RFC 5869
 defines it to be, `HMAC(salt, IKM)` (an empty salt is HashLen zeros, which HMAC's key padding
 makes identical); an all-zero X25519 result is refused by the glue whatever the library does.
+
+## RSA, P-384 and the key policy
+
+Verification and signing are what X.509 chains and TLS servers need; nothing else of RSA is offered
+(no encryption or key transport, no key generation: keys come from files and certificates).
+
+- **Schemes:** RSASSA-PKCS1-v1_5 and RSASSA-PSS with SHA-256, SHA-384 or SHA-512; PSS uses MGF1 with the
+  same hash and the trailer 0xbc, and the salt length is an argument, exactly: `rsa_pss_verify_tls` and
+  `rsa_pss_sign_tls` use the hash length (TLS 1.3 and RFC 4055), the general forms any length up to what
+  fits. A PSS signature is no PKCS#1 signature and the other way round; a signature is exactly as long
+  as the modulus (the glue checks this itself: the libraries differ on short ones).
+- **Key policy (the same on every backend, checked by the glue):** modulus 2048 to 8192 bits and odd;
+  public exponent odd, 3 <= e < 2^33, e < n. The hard cap of 8192 bits is what the 2^33 exponent
+  bound and the verification cost allow without a denial-of-service lever (verification time is quadratic
+  in the size); 3 and 65537 are accepted because certificates in the wild carry them (e = 3 is not unsafe
+  for verification); 1024-bit keys are refused on purpose (the NIST CAVP vectors with 1024-bit keys are
+  checked to be refused). A key outside the policy is `EKEY` from the key calls and "not valid" from the
+  package's verify functions. RSASSA-PSS-typed keys (the `id-RSASSA-PSS` key OID) are not accepted by
+  `ec_crypto_spki_parse`; certificates signed with RSASSA-PSS by an `rsaEncryption` key are fine.
+- **Side channels:** private-key operations are the library's: RSA blinding is on by default in OpenSSL 3,
+  LibreSSL and AWS-LC (and BoringSSL), the CRT result is verified before it is returned (a fault in one
+  half does not leak a factor), and ECDSA signing draws k from the library's CSPRNG (`RAND_bytes`; the
+  libraries' own constant-time scalar multiplication for P-256 and P-384: AWS-LC's s2n-bignum/fiat code,
+  OpenSSL's `ecp_nistz256` / `ecp_nistp`, LibreSSL's generic code with its blinding of the scalar). The
+  glue and the package branch only on lengths and public data. The tests do not measure timing.
+- **P-384:** `ec_crypto_ec_*` with curve 2; the hash is independent of the curve, so ECDSA with SHA-384 on
+  P-256 (`ecdsa_secp256r1_sha384` of X.509) and SHA-256 on P-384 work too.
 
 ## Choosing a backend
 
@@ -227,13 +269,15 @@ and from `scripts/verify.sh` for all of them, with `--san`):
 | Program | Vectors | Checks per backend |
 |---|---|---|
 | `rfc.ei` | RFC 8439 2.8.2 and A.5, RFC 7748 5.2 (incl. 1 and 1000 iterations) and 6.1, RFC 8032 7.1 (tests 1, 2, 3, SHA(abc)), RFC 5869 A.1-A.3, RFC 4231 4.2-4.8 (SHA-256/384/512), plus the package's misuse checks (tampered ciphertext/tag/AAD/nonce give `AuthFailed` and no plaintext, wrong lengths, out-of-range P-256 scalars, HKDF limits, constant-time compare, DER conversion, empty inputs) | 110 |
-| `cavp.ei` | NIST CAVP: SHA-256/384/512 and SHA3-256/384/512 ShortMsg, SHA-256 LongMsg (3), HMAC SHA-256/384/512 (20 per tag size), AES-128/256-GCM encrypt and decrypt (96-bit IV, 128-bit tag, incl. tag failures), ECDSA P-256 KeyPair, SigVer, SigGen, sign-then-verify, ECDH P-256 (KAS ECC CDH) | 1082 |
-| `wycheproof.ei` | Wycheproof (C2SP, commit d17cc89): X25519, Ed25519, ECDSA P-256/SHA-256, ECDH P-256, AES-GCM, ChaCha20-Poly1305, HKDF-SHA-256/384, HMAC-SHA-256/384; valid must pass, invalid must fail, acceptable may go either way (counted; identical on every backend: X25519 223 of 254 accepted, the rest are all-zero shared secrets, which the glue refuses) | 2533 (+192 skipped: IV/tag sizes the package doesn't offer) |
+| `cavp.ei` | NIST CAVP: SHA-256/384/512 and SHA3-256/384/512 ShortMsg, SHA-256 LongMsg (3), HMAC SHA-256/384/512 (20 per tag size), AES-128/256-GCM encrypt and decrypt (96-bit IV, 128-bit tag, incl. tag failures), ECDSA P-256 KeyPair, SigVer, SigGen, sign-then-verify, ECDH P-256 (KAS ECC CDH); P-384 with SHA-256/384/512 and P-256 with SHA-384/512 (SigVer, SigGen, KeyPair), ECDH P-384, FIPS 186-3 RSA SigVer PKCS#1 v1.5 and PSS (SHA-256/384/512, moduli 1024 (must be refused), 2048, 3072; 162 records each) | 1781 |
+| `wycheproof.ei` | Wycheproof (C2SP, commit d17cc89): X25519, Ed25519, ECDSA P-256/SHA-256, ECDH P-256, AES-GCM, ChaCha20-Poly1305, HKDF-SHA-256/384, HMAC-SHA-256/384, RSA PKCS#1 v1.5 (`rsa_signature_{2048,3072,4096,8192}_sha{256,384,512}`: 8 files, each key built from its SPKI and from (n, e), which must agree), RSA-PSS (`rsa_pss_*`: 7 files + `rsa_pss_misc`, groups with SHA-1 or a different MGF1 hash skipped), ECDSA P-384 (`ecdsa_secp384r1_sha384`, `_sha512`, `_sha384_p1363`), ECDH P-384 (`ecdh_secp384r1_ecpoint`); valid must pass, invalid must fail, acceptable may go either way (counted; identical on every backend: X25519 223 of 254 accepted, the rest are all-zero shared secrets, which the glue refuses; every acceptable RSA and P-384 case is refused) | 10987 (+324 skipped: IV/tag sizes the package doesn't offer, SHA-1, MGF1 with another hash) |
+| `pubkey.ei` | RSA and EC keys and signatures made by the system `openssl` (`vectors/openssl_pubkey.rsp`, `gen-pubkey-fixtures.sh`: 7 keys incl. 1024-bit, e = 3 and P-384; 20 signatures: PKCS#1 v1.5 (Eider must reproduce openssl's bytes), PSS with salt 0, 20 and the hash length, ECDSA with three hashes on two curves), the key policy (2047/2048/8192/8193 bits, e = 1, 2, 3, 65537, 2^32+1, 2^33+1, even n, tiny n), key parsing from SPKI, PKCS#8, PKCS#1 and SEC1 (trailing bytes, truncation, wrong kinds), and per signature the negatives: altered message, signature or key, short, long, leading-zero, all-zero and above-the-modulus signatures, hash mismatch, PKCS#1 vs PSS, salt length off by one, wrong curve; signing every scheme (random salt and k), message sizes up to 100 kB, ECDH P-384 | 461 |
+| `openssl-diff.sh` | the system `openssl` command, both directions, fresh keys each run (RSA 2048/3072/4096/e = 3, P-256, P-384): it signs 21 combinations (PKCS#1 with 3 hashes, PSS with 5 salt and hash pairs, ECDSA with 3 hashes on 2 curves) and Eider verifies them; Eider signs the same and `openssl dgst -verify` checks; PKCS#1 signatures must be byte-identical; ECDH P-256/P-384 secrets compared with `openssl pkeyutl -derive` | 29 per backend (`skip` without an openssl command) |
 | `cross.ei` | every pair of backends: byte-identical output for each deterministic operation both provide (hashes, HMAC, HKDF, AEAD seal, Ed25519 sign, X25519, P-256 public and ECDH over 7 message sizes: 147-154 outputs per pair), and each backend verifies the others' fresh P-256 (random k) and Ed25519 signatures | 24 per pair |
 
 The vectors are committed in `tests/crypto/vectors/` (`scripts/fetch-crypto-vectors.sh`
 re-creates them from pinned upstream files: Wycheproof JSON unmodified, NIST files whole or
-whole sections, the RFC vectors transcribed by program from the RFC texts). The glue builds
+whole sections, the RFC vectors transcribed by program from the RFC texts). (RSA and P-384 vectors: `scripts/fetch-crypto-vectors.sh` also fetches the Wycheproof `rsa_*` and `*_secp384r1_*` files and NIST's `186-3rsatestvectors.zip`.) The glue builds
 with `-Wall -Wextra -Wpedantic -Wshadow -Wstrict-prototypes -Wmissing-prototypes -Werror`
 against every backend's headers; `--san` runs the RFC vectors with the glue and the program
 under ASan+UBSan.
@@ -278,4 +322,5 @@ about 190-320 MB/s and 65-75 MB/s.
 | `../crypto.ei` | the Eider bindings |
 | `scripts/fetch-awslc.sh`, `scripts/crypto-build.sh`, `scripts/ei-crypto`, `scripts/crypto-bench.sh`, `scripts/fetch-crypto-vectors.sh` | fetch, build, run, benchmark, vectors |
 | `packages/crypto/` | the package |
+| `tests/crypto/pubkey.ei`, `openssl-diff.sh`, `gen-pubkey-fixtures.sh`, `vectors/openssl_pubkey.rsp` | RSA/P-384 tests and their openssl-made fixtures |
 | `tests/crypto/` | vectors and tests |
