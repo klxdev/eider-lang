@@ -14,6 +14,12 @@ may break compatibility. The release process: docs/site/tooling/releases.md.
   std/serial, and TLS through eider-tls in `postgres.secure`. Tested against PostgreSQL 16, 17 and 18 in a podman
   container (skipped without podman). Registered with the other libraries in the release scripts (version.sh,
   check-tools.sh, verify-stamp.sh) and LAYERS.md.
+- New library eider-sql (#104): checked SQL on eider-postgres (`sql`). A SQL checker with no database (lexer, DDL
+  reader, SELECT/INSERT/UPDATE/DELETE checker that infers parameter types and result columns; `unsupported:` for CTEs,
+  subqueries and the like; agrees with PostgreSQL's Describe on a 165-query corpus), usable at compile time through
+  `embed` and `comptime` (a bad query fails the build), the `eider-sql check|gen|schema|migrate|status` program (typed
+  Eider modules from annotated `.sql` files, the sqlc design), forward-only checksummed migrations under an advisory
+  lock, transaction helpers, `load_many`, and a typed injection-safe builder. Registered with the other libraries.
 
 ## 0.7.3
 
