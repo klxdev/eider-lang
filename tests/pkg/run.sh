@@ -187,7 +187,7 @@ check "an error goes to stderr" "stdout: []
 stderr: [eider-pkg: eider.toml already exists]
 exit 1" "$(streams app init)"
 check "a usage error goes to stderr" "stdout: []
-stderr: [eider-pkg: usage: eider-pkg [-C dir] (init [name] [--template cli|lib|service|wasm] | add <name> --path P | add <name> --git URL --version V|--rev R [--uses a,b | --confirm | --no-grant] | remove <name> | grant|revoke <name> <cap,...> | fetch|update [--offline] [--grant a,b | --grant-all] | vendor | tree | hash <dir> | --version)]
+stderr: [eider-pkg: usage: eider-pkg [-C dir] (init [name] [--template cli|lib|service|wasm] | add <name> --path P | add <name> --toolchain | add <name> --git URL --version V|--rev R [--uses a,b | --confirm | --no-grant] | remove <name> | grant|revoke <name> <cap,...> | fetch|update [--offline] [--grant a,b | --grant-all] | vendor | tree | hash <dir> | --version)]
 exit 1" "$(streams app frobnicate)"
 check "a missing eider.toml goes to stderr" "stdout: []
 stderr: [eider-pkg: cannot read <T>/nowhere/eider.toml: No such file or directory]
