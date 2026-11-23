@@ -289,13 +289,15 @@ outcome() {
 }
 has_tests() { grep -q '^test ' "$1"; }
 # ASan/TSan need runtime libraries that may not be installed; UBSan in trap mode needs none
+# The probe uses setjmp/longjmp, which traps and the test driver rely on: a sanitizer that cannot follow them (TSan
+# on glibc 2.4x here: "can't find longjmp buf") would fail every trapping program, so it is skipped with the others.
 sans="undefined"
-printf 'int main(void){return 0;}\n' >$tmp/probe.c
+printf '#include <setjmp.h>\nstatic jmp_buf j;\nstatic void jump(void) { longjmp(j, 1); }\nint main(void) { if (setjmp(j) == 0) jump(); return 0; }\n' >$tmp/probe.c
 for s in address thread; do
-  if ${CC:-cc} -fsanitize=$s -o $tmp/probe $tmp/probe.c 2>/dev/null; then
+  if ${CC:-cc} -fsanitize=$s -o $tmp/probe $tmp/probe.c 2>/dev/null && $tmp/probe >/dev/null 2>&1; then
     sans="$sans $s"
   else
-    echo "     skip $s sanitizer: its runtime library is not installed"
+    echo "     skip $s sanitizer: its runtime library is not installed, or it cannot run a program that uses longjmp"
   fi
 done
 rtotal=0
@@ -763,8 +765,8 @@ grep -q '^false$' $pdir/off.out || { echo "FAIL profile: EIDER_PROF=off still pr
 pcheck '"kind":"ref",' $pdir/ref.prof "ref_trap: the conflict"
 # under the sanitizers the toolchain has (ASan+UBSan, TSan), the waits program again
 for san in "address,undefined" thread; do
-  printf 'int main(void){return 0;}\n' > $pdir/probe.c
-  ${CC:-cc} -fsanitize=$san -o $pdir/probe $pdir/probe.c 2>/dev/null && $pdir/probe || { echo "skip profile: no -fsanitize=$san"; continue; }
+  printf '#include <setjmp.h>\nstatic jmp_buf j;\nstatic void jump(void) { longjmp(j, 1); }\nint main(void) { if (setjmp(j) == 0) jump(); return 0; }\n' > $pdir/probe.c
+  ${CC:-cc} -fsanitize=$san -o $pdir/probe $pdir/probe.c 2>/dev/null && $pdir/probe >/dev/null 2>&1 || { echo "skip profile: no -fsanitize=$san"; continue; }
   for t in conc cow; do
     EIDER_CACHE=off EIDER_CFLAGS="-fsanitize=$san -fno-sanitize-recover=all -g" $new build compiler/tests/profile/$t.ei --profile -o $pdir/$t.san >$pdir/san.log 2>&1 || { echo "FAIL profile: build $t (-fsanitize=$san)"; pfail=1; continue; }
     (cd $pdir && TSAN_OPTIONS="halt_on_error=1 exitcode=66" EIDER_PROF=$pdir/$t.san.prof ./$t.san >$t.san.out 2>&1) || { echo "FAIL profile: $t under -fsanitize=$san"; head -20 $pdir/$t.san.out; pfail=1; }

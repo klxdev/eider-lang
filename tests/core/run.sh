@@ -100,7 +100,7 @@ proftask() {
 # sanitizer NAME FLAGS...: run under FLAGS if a trivial program builds and runs with them
 sanitizer() {
   name=$1; shift
-  printf 'int main(void) { return 0; }\n' > "$T/probe.c"
+  printf '#include <setjmp.h>\nstatic jmp_buf j;\nstatic void jump(void) { longjmp(j, 1); }\nint main(void) { if (setjmp(j) == 0) jump(); return 0; }\n' > "$T/probe.c"
   if $CC "$@" -o "$T/probe" "$T/probe.c" -pthread >/dev/null 2>&1 && "$T/probe" >/dev/null 2>&1; then
     run "$name" -O1 -g "$@"
     core "$name" -O1 -g "$@"
@@ -130,7 +130,7 @@ sanitizer tsan -fsanitize=thread
 # thread-local used across a park in ec_poll_wait on x86-64 (#204)
 task_san() {
   name=$1; shift
-  printf 'int main(void) { return 0; }\n' > "$T/probe.c"
+  printf '#include <setjmp.h>\nstatic jmp_buf j;\nstatic void jump(void) { longjmp(j, 1); }\nint main(void) { if (setjmp(j) == 0) jump(); return 0; }\n' > "$T/probe.c"
   if $CC "$@" -o "$T/probe" "$T/probe.c" -pthread >/dev/null 2>&1 && "$T/probe" >/dev/null 2>&1; then
     task "$name" -O1 -g "$@" -DEI_TASK_UCONTEXT -DEI_TEST_SANITIZED
   else

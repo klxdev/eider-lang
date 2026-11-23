@@ -27,8 +27,9 @@ done
 
 T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
-printf 'int main(void) { return 0; }\n' > "$T/probe.c"
-if ${CC:-cc} -fsanitize=thread -o "$T/probe" "$T/probe.c" 2>/dev/null && "$T/probe"; then
+# (the probe uses longjmp, which traps rely on: a TSan that cannot follow it is skipped)
+printf '#include <setjmp.h>\nstatic jmp_buf j;\nstatic void jump(void) { longjmp(j, 1); }\nint main(void) { if (setjmp(j) == 0) jump(); return 0; }\n' > "$T/probe.c"
+if ${CC:-cc} -fsanitize=thread -o "$T/probe" "$T/probe.c" 2>/dev/null && "$T/probe" >/dev/null 2>&1; then
   runs=${EIDER_TSAN_RUNS:-3}
   for t in atomic sync chan chan_wake task task_trap lock_trap event service tasks cancel_fd; do
     f=tests/std/$t.ei

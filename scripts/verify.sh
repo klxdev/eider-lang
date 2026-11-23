@@ -42,7 +42,8 @@ if [ "$1" = "--leg" ]; then
     echo clang
   }
   # can this C compiler build and run a trivial program with these flags?
-  works() { printf 'int main(void){return 0;}\n' > $S/probe.c && $1 $2 -o $S/probe $S/probe.c 2>/dev/null && $S/probe; }
+  # (the probe uses longjmp, which traps rely on: a sanitizer that cannot follow it, as TSan on glibc 2.4x, is skipped)
+  works() { printf '#include <setjmp.h>\nstatic jmp_buf j;\nstatic void jump(void) { longjmp(j, 1); }\nint main(void) { if (setjmp(j) == 0) jump(); return 0; }\n' > $S/probe.c && $1 $2 -o $S/probe $S/probe.c 2>/dev/null && $S/probe >/dev/null 2>&1; }
   # the run tests with $CC linking (gcc, clang), then under ASan+UBSan and TSan; the
   # sanitizer legs run the programs at -O0 (the `run` default): the sanitizers find the same
   # bugs, and the programs build faster
